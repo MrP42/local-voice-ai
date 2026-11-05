@@ -15,6 +15,9 @@ struct SpeechVoiceOption: Identifiable {
 struct SpeechVoicePicker: View {
     @ObservedObject var model: VoiceModel
     @State private var germanOnly = true
+    #if os(iOS)
+    @ObservedObject private var phonon = PhononEngine.shared
+    #endif
     private var voices: [SpeechVoiceOption] { model.availableVoices.filter { !germanOnly || $0.language.hasPrefix("de") } }
     var body: some View {
         List {
@@ -25,10 +28,34 @@ struct SpeechVoicePicker: View {
                 } label: {
                     HStack { Text("Systemstimme"); Spacer(); if model.selectedVoiceID.isEmpty { Image(systemName: "checkmark") } }
                 }.buttonStyle(.borderless).accessibilityIdentifier("voice-system")
-                if !model.selectedVoiceID.isEmpty, !model.availableVoices.contains(where: { $0.id == model.selectedVoiceID }) {
+                if !model.selectedVoiceID.isEmpty, !model.selectedVoiceID.hasPrefix("phonon:"), !model.availableVoices.contains(where: { $0.id == model.selectedVoiceID }) {
                     Text("Gewählte Stimme derzeit nicht verfügbar. Antworten verwenden vorübergehend die Systemstimme.").font(.caption)
                 }
             }
+            #if os(iOS)
+            ForEach(PhononEngine.languages, id: \.self) { language in
+                if let names = phonon.voices[language] {
+                    Section(PhononEngine.sectionTitle(language)) {
+                        ForEach(names, id: \.self) { name in
+                            let id = PhononEngine.identifier(language: language, voice: name)
+                            HStack(spacing: 8) {
+                                Button { model.selectedVoiceID = id } label: {
+                                    HStack {
+                                        Text(name).font(.subheadline)
+                                        Spacer(minLength: 2)
+                                        if model.selectedVoiceID == id { Image(systemName: "checkmark").font(.caption) }
+                                    }.contentShape(Rectangle())
+                                }.buttonStyle(.borderless)
+                                    .accessibilityValue(model.selectedVoiceID == id ? "Ausgewählt" : "Nicht ausgewählt")
+                                Button(model.previewingVoiceID == id ? "Hörprobe stoppen" : "Hörprobe anhören",
+                                       systemImage: model.previewingVoiceID == id ? "stop.fill" : "play.fill") { model.previewPhonon(id) }
+                                    .labelStyle(.iconOnly).buttonStyle(.borderless).frame(minWidth: 44, minHeight: 44)
+                            }
+                        }
+                    }
+                }
+            }
+            #endif
             Section("Verfügbare Stimmen") {
                 ForEach(voices) { voice in
                     HStack(spacing: 8) {
@@ -55,7 +82,12 @@ struct SpeechVoicePicker: View {
             }
         }
         .navigationTitle("Stimme")
-        .task { model.refreshVoices() }
+        .task {
+            model.refreshVoices()
+            #if os(iOS)
+            await phonon.refresh()
+            #endif
+        }
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         .scrollContentBackground(.hidden).background(VoicePalette.background)

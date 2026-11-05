@@ -86,6 +86,21 @@ struct LibraryTab: View {
                 // Diagnose-Startargumente für Simulator-Bilder, kein Produktpfad.
                 let args = ProcessInfo.processInfo.arguments
                 if let i = args.firstIndex(of: "--pair-url"), i + 1 < args.count, let url = URL(string: args[i + 1]) { PairingFlow.shared.open(url) }
+                if args.contains("--phonon-probe") {
+                    // Geräteprobe ohne Bedienung: Ergebnis landet in Documents/phonon-probe.txt.
+                    let out = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("phonon-probe.txt")
+                    await PhononEngine.shared.refresh()
+                    var log = "Stimmen: \(PhononEngine.shared.voices.mapValues(\.count))\n"
+                    for (language, sentence) in [("de", "Guten Tag. Das ist Phonon auf dem iPhone."), ("en", "Hello. This is Phonon on the iPhone.")] {
+                        guard let voice = PhononEngine.shared.voices[language]?.first else { continue }
+                        let start = Date()
+                        do {
+                            try await PhononEngine.shared.speak(sentence, voice: "\(language):\(voice)")
+                            log += "\(language) \(voice): \(Date().timeIntervalSince(start)) s\n"
+                        } catch { log += "\(language) FEHLER \(error)\n" }
+                    }
+                    try? log.write(to: out, atomically: true, encoding: .utf8)
+                }
                 if let i = args.firstIndex(of: "--sync-test"), i + 1 < args.count, LibrarySync.shared.account == nil {
                     await LibrarySync.shared.login(email: "test@example.com", password: "geheim", url: args[i + 1], deviceName: "Simulator")
                 }
@@ -207,6 +222,7 @@ struct LibraryShelf: View {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Buch oder Hörbuch hinzufügen", systemImage: "plus") { importing = true }.accessibilityIdentifier("libraryAdd")
             }
+            ToolbarItem(placement: .topBarTrailing) { SettingsButton() }
             ToolbarItem(placement: .topBarLeading) {
                 Button { showSync = true } label: {
                     Image(systemName: sync.account == nil ? "icloud.slash" : (sync.error != nil ? "exclamationmark.icloud" : "checkmark.icloud"))
@@ -281,7 +297,7 @@ struct LibraryBookDetail: View {
                 }
                 HStack(spacing: 10) {
                     if hasText {
-                        Button { playback.openReadAloud(book, autoplay: true); playback.presented = playback.book != nil } label: {
+                        Button { playback.openReadAloud(book); playback.presented = playback.book != nil } label: {
                             Label("Text vorlesen", systemImage: "book").frame(maxWidth: .infinity, minHeight: 44)
                         }.buttonStyle(.bordered).accessibilityIdentifier("readAloud")
                     }
@@ -327,7 +343,7 @@ struct LibraryBookDetail: View {
                             playback.openAudiobook(book, autoplay: false)
                             guard playback.book?.id == book.id else { return }
                             playback.seek(toMs: LibraryTracks.total(TrackPosition(index: i, offsetMs: 0), in: tracks))
-                            playback.play(); playback.presented = true
+                            playback.presented = true
                         } label: {
                             HStack(spacing: 12) {
                                 Text("Teil \(i + 1) · \(t.title)").lineLimit(2)
@@ -521,16 +537,19 @@ struct LibraryMiniPlayer: View {
                 }.frame(minHeight: 44).contentShape(Rectangle())
             }.buttonStyle(.plain).accessibilityLabel("\(playback.title), zum Player")
             Button { playback.toggle() } label: {
-                Image(systemName: playback.playing ? "pause.fill" : "play.fill").font(.headline)
-                    .foregroundStyle(VoicePalette.ink).frame(width: 44, height: 44).background(VoicePalette.brand, in: Circle())
-            }.accessibilityLabel(playback.playing ? "Pause" : "Abspielen")
+                Group {
+                    if playback.preparing { ProgressView().tint(VoicePalette.ink) }
+                    else { Image(systemName: playback.playing ? "pause.fill" : "play.fill").font(.headline) }
+                }
+                .foregroundStyle(VoicePalette.ink).frame(width: 44, height: 44).background(VoicePalette.brand, in: Circle())
+            }.accessibilityLabel(playback.preparing ? "Wird vorbereitet, abbrechen" : playback.playing ? "Pause" : "Abspielen")
         }
         .padding(.horizontal, 8).frame(minHeight: 60)
         .background(VoicePalette.ink, in: RoundedRectangle(cornerRadius: 14))
     }
     private var subtitle: String {
         playback.mode == .audiobook ? "\(playback.currentChapter?.title ?? "Teil \(playback.trackIndex + 1)") · \(LibraryFormat.clock(playback.positionMs)) · zum Player"
-                                    : "Text wird vorgelesen · zum Player"
+                                    : "\(playback.preparing ? "Wird vorbereitet" : playback.playing ? "Text wird vorgelesen" : "Text pausiert") · zum Player"
     }
 }
 
@@ -557,7 +576,7 @@ struct FollowText<Row: View>: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 4) {
-                    ForEach(Array(paragraphs.enumerated()), id: \.offset) { i, p in row(i, p).id(i) }
+                    ForEach(paragraphs.indices, id: \.self) { i in row(i, paragraphs[i]).id(i) }
                 }.padding(.horizontal, 12).padding(.vertical, 12)
             }
             .simultaneousGesture(DragGesture().onChanged { _ in pausedUntil = Date().addingTimeInterval(5); showReturn = true })
@@ -569,10 +588,12 @@ struct FollowText<Row: View>: View {
                     }.buttonStyle(.borderedProminent).tint(VoicePalette.ink).foregroundStyle(VoicePalette.brand).padding(12)
                 }
             }
-            .onChange(of: current, initial: true) { _, value in
+            .onAppear { proxy.scrollTo(current, anchor: .center) }  // ohne Animation: sonst baut die Liste jede Zeile bis dorthin
+            .onChange(of: current) { old, value in
                 guard Date() >= pausedUntil else { return }
                 showReturn = false
-                withAnimation { proxy.scrollTo(value, anchor: .center) }
+                if abs(value - old) > 3 { proxy.scrollTo(value, anchor: .center) }
+                else { withAnimation { proxy.scrollTo(value, anchor: .center) } }
             }
         }
     }
@@ -618,9 +639,12 @@ struct PlayButton: View {
     @ObservedObject var playback = LibraryPlayback.shared
     var body: some View {
         Button { playback.toggle() } label: {
-            Image(systemName: playback.playing ? "pause.fill" : "play.fill").font(.title).foregroundStyle(VoicePalette.brand)
-                .frame(width: 64, height: 64).background(VoicePalette.ink, in: Circle())
-        }.accessibilityLabel(playback.playing ? "Pause" : "Abspielen")
+            Group {
+                if playback.preparing { ProgressView().tint(VoicePalette.brand) }
+                else { Image(systemName: playback.playing ? "pause.fill" : "play.fill").font(.title) }
+            }
+            .foregroundStyle(VoicePalette.brand).frame(width: 64, height: 64).background(VoicePalette.ink, in: Circle())
+        }.accessibilityLabel(playback.preparing ? "Wird vorbereitet, abbrechen" : playback.playing ? "Pause" : "Abspielen")
     }
 }
 
@@ -628,31 +652,32 @@ struct PlayButton: View {
 
 struct LibraryReadAloudView: View {
     @ObservedObject var playback = LibraryPlayback.shared
+    @ObservedObject var look = ReaderAppearance.shared
     @State private var voices = false
 
     private func highlighted(_ p: TextParagraph) -> AttributedString {
         var s = AttributedString(p.text)
-        guard let r = playback.wordRange, let range = Range(r, in: p.text), let a = AttributedString.Index(range.lowerBound, within: s),
+        guard let r = playback.sentenceRange, let range = Range(r, in: p.text), let a = AttributedString.Index(range.lowerBound, within: s),
               let b = AttributedString.Index(range.upperBound, within: s) else { return s }
-        s[a..<b].backgroundColor = VoicePalette.ink
-        s[a..<b].foregroundColor = VoicePalette.brand
+        s[a..<b].backgroundColor = look.sentenceBackground
         return s
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            PlayerHeader(title: "\(playback.title) · Text", subtitle: playback.playing ? "wird vorgelesen" : "pausiert")
+            PlayerHeader(title: "\(playback.title) · Text", subtitle: playback.preparing ? "wird vorbereitet" : playback.playing ? "wird vorgelesen" : "pausiert",
+                         trailing: AnyView(ReaderAppearanceButton()))
             Divider()
             FollowText(paragraphs: playback.paragraphs, current: playback.paragraphIndex) { i, p in
                 Text(i == playback.paragraphIndex ? highlighted(p) : AttributedString(p.text))
-                    .font(p.heading ? .custom("Georgia-Bold", size: 21, relativeTo: .title3) : .custom("Georgia", size: 18, relativeTo: .body))
-                    .foregroundStyle(i == playback.paragraphIndex ? VoicePalette.text : VoicePalette.secondaryText)
-                    .lineSpacing(5).fixedSize(horizontal: false, vertical: true)
+                    .font(look.font(heading: p.heading))
+                    .foregroundStyle(i == playback.paragraphIndex ? look.text : look.muted)
+                    .lineSpacing(look.lineSpacing).fixedSize(horizontal: false, vertical: true)
                     .padding(10).frame(maxWidth: .infinity, alignment: .leading)
-                    .background(i == playback.paragraphIndex ? Color.yellow.opacity(0.22) : Color.clear, in: RoundedRectangle(cornerRadius: 10))
                     .contentShape(Rectangle()).onTapGesture { playback.jump(toParagraph: i) }
                     .accessibilityAddTraits(.isButton).accessibilityHint("Liest ab diesem Absatz vor")
             }
+            .background(look.background)
             VStack(spacing: 8) {
                 Text("Absatz antippen, um ab dort vorzulesen").font(.caption).foregroundStyle(VoicePalette.secondaryText)
                 HStack {
@@ -663,9 +688,9 @@ struct LibraryReadAloudView: View {
                 }.font(.caption).foregroundStyle(VoicePalette.secondaryText)
                 HStack {
                     RateMenu()
-                    Spacer(); ControlButton(title: "Absatz zurück", systemImage: "backward.fill") { playback.step(paragraphs: -1) }
+                    Spacer(); ControlButton(title: "Satz zurück", systemImage: "backward.fill") { playback.step(sentences: -1) }
                     Spacer(); PlayButton()
-                    Spacer(); ControlButton(title: "Absatz vor", systemImage: "forward.fill") { playback.step(paragraphs: 1) }
+                    Spacer(); ControlButton(title: "Satz vor", systemImage: "forward.fill") { playback.step(sentences: 1) }
                     Spacer(); ControlButton(title: "Stimme", systemImage: "person.wave.2") { voices = true }
                 }
             }.padding(.horizontal, 20).padding(.vertical, 10).background(.bar)
@@ -675,16 +700,36 @@ struct LibraryReadAloudView: View {
     }
 
     private var currentVoiceName: String {
-        (playback.voiceIdentifier.flatMap { AVSpeechSynthesisVoice(identifier: $0) } ?? LibraryPlayback.defaultVoice())?.name ?? "System"
+        if let phonon = PhononEngine.voiceName(playback.voiceIdentifier) { return PhononEngine.displayName(phonon) }
+        return (playback.voiceIdentifier.flatMap { AVSpeechSynthesisVoice(identifier: $0) } ?? LibraryPlayback.defaultVoice())?.name ?? "System"
     }
 }
 
 private struct VoiceList: View {
     @ObservedObject var playback = LibraryPlayback.shared
+    @ObservedObject var phonon = PhononEngine.shared
     @Environment(\.dismiss) private var dismiss
     var body: some View {
         NavigationStack {
             List {
+                ForEach(PhononEngine.languages, id: \.self) { language in
+                    if let names = phonon.voices[language] {
+                        Section {
+                            ForEach(names, id: \.self) { name in
+                                let id = PhononEngine.identifier(language: language, voice: name)
+                                Button { playback.voiceIdentifier = id; dismiss() } label: {
+                                    HStack {
+                                        Text(name)
+                                        Spacer()
+                                        if id == playback.voiceIdentifier { Image(systemName: "checkmark") }
+                                    }.frame(minHeight: 44).contentShape(Rectangle())
+                                }.buttonStyle(.plain)
+                            }
+                        } header: { Text(PhononEngine.sectionTitle(language)) } footer: {
+                            Text("Läuft auf dem iPhone. Markiert wird der Absatz statt des Worts. Die erste Nutzung einer Sprache dauert einige Sekunden.")
+                        }
+                    }
+                }
                 Section {
                     ForEach(LibraryPlayback.germanVoices, id: \.identifier) { v in
                         Button {
@@ -705,6 +750,7 @@ private struct VoiceList: View {
                 }
             }
             .navigationTitle("Stimme").navigationBarTitleDisplayMode(.inline)
+            .task { await phonon.refresh() }
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Fertig") { dismiss() } } }
         }
     }
@@ -746,6 +792,12 @@ struct LibrarySyncSheet: View {
                     } footer: { Text("Dasselbe Konto wie in der Desktop-App unter Einstellungen › Konto & Geräte. Das Passwort verlässt das iPhone nicht; daraus wird nur hier der Schlüssel berechnet.") }
                     LibraryStorageSummary()
                     Section("Server") { TextField("Server", text: $url).keyboardType(.URL).textInputAutocapitalization(.never) }
+                    Section {
+                        Link("Passwort vergessen?", destination: URL(string: "\(url.trimmingCharacters(in: .whitespaces))/admin/password/forgot") ?? URL(string: LibrarySync.defaultHub + "/admin/password/forgot")!)
+                            .frame(minHeight: 44)
+                    } footer: {
+                        Text("Nach einer Änderung des Passworts musst du dich auch am PC neu anmelden. Aus dem Passwort entsteht der Schlüssel; beide Geräte brauchen denselben.")
+                    }
                     Section {
                         Button {
                             Task { await sync.login(email: email, password: password, url: url, deviceName: device); if sync.account != nil { password = "" } }

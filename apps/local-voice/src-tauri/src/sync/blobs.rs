@@ -1,7 +1,7 @@
 //! Dateiablage des Bibliothek-Syncs (lva#210, Spec
 //! `docs/superpowers/specs/2026-11-02-bibliothek-sync.md`, Abschnitt „Dateien“).
 //!
-//! Eine Datei (Buchtext, Cover, Hörbuchteil) wird in Stücke zu 4 MiB Klartext
+//! Eine Datei (Buchtext, Cover, Hörbuchteil) wird in Stücke zu 3 MiB Klartext
 //! geteilt; jedes Stück ist einzeln mit XChaCha20-Poly1305 versiegelt
 //! (`nonce ‖ chiffrat ‖ tag`, roh). Die Blob-Kennung ist
 //! `hex(SHA-256(key ‖ "lv-blob-v1" ‖ SHA-256(klartext)))`: gleiche Datei,
@@ -19,8 +19,16 @@ use std::collections::BTreeMap;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
-/// Klartext je Stück.
-pub const CHUNK_PLAIN: usize = 4 * 1024 * 1024;
+/// Klartext je Stück. Das Hosting lehnt Anfragen ab etwa 5 MiB vor PHP ab; base64 und
+/// JSON machen aus einem Stück rund das 1,34-Fache.
+pub const CHUNK_PLAIN: usize = 3 * 1024 * 1024;
+/// Bis hierher bleibt eine Datei ein einziges Stück (Anfrage rund 4,9 MiB). So stimmen die
+/// früher mit 4-MiB-Stücken hochgeladenen Dateien weiter: Mehr als ein Stück kam nie durch.
+pub const ONE_CHUNK_MAX: u64 = 3_827_302;
+/// Größte Datei, die mit 4-MiB-Stücken noch als ein Stück durchkam (Anfrage knapp 5 MiB).
+/// Darüber bis `ONE_CHUNK_MAX` kann dieselbe Blob-Kennung am Hub ein Stück oder zwei Stücke
+/// haben, und der Verweis kann beides sagen: Lesen endet deshalb, sobald `size` da ist.
+pub const LEGACY_ONE_CHUNK_MAX: u64 = 3_932_054;
 const NONCE_LEN: usize = 24;
 const TAG_LEN: usize = 16;
 /// Obergrenze des Hubs (`VoiceBlobService::MAX_CHUNKS`).
@@ -60,7 +68,10 @@ pub fn blob_id(key: &[u8; KEY_LEN], plaintext_sha256: &[u8; 32]) -> String {
 
 /// Anzahl der Stücke: eine leere Datei ist ein (leeres) Stück.
 pub fn chunk_count(size: u64) -> u64 {
-    size.div_ceil(CHUNK_PLAIN as u64).max(1)
+    if size <= ONE_CHUNK_MAX {
+        return 1;
+    }
+    size.div_ceil(CHUNK_PLAIN as u64)
 }
 
 pub fn chunk_aad(user_id: i64, blob_id: &str, index: u64) -> Vec<u8> {
@@ -221,7 +232,11 @@ pub enum Source {
 impl Source {
     fn read_chunk(&self, index: u64, size: u64) -> Result<Vec<u8>, String> {
         let start = index * CHUNK_PLAIN as u64;
-        let len = (size.saturating_sub(start)).min(CHUNK_PLAIN as u64) as usize;
+        let len = if size <= ONE_CHUNK_MAX {
+            size as usize
+        } else {
+            (size.saturating_sub(start)).min(CHUNK_PLAIN as u64) as usize
+        };
         match self {
             Source::Bytes(b) => Ok(b
                 .get(start as usize..start as usize + len)
@@ -354,6 +369,9 @@ pub async fn download(
             h.update(&plain);
             file.write_all(&plain)
                 .map_err(|e| HubError::Other(format!("{}: {e}", tmp.display())))?;
+            if total == size {
+                break; // Alt-Blob: ein Stück, obwohl die Rechnung zwei ergibt
+            }
         }
         file.sync_all()
             .map_err(|e| HubError::Other(format!("{}: {e}", tmp.display())))?;
@@ -562,22 +580,30 @@ mod tests {
     fn stueckzahl() {
         assert_eq!(chunk_count(0), 1);
         assert_eq!(chunk_count(1), 1);
-        assert_eq!(chunk_count(CHUNK_PLAIN as u64), 1);
-        assert_eq!(chunk_count(CHUNK_PLAIN as u64 + 1), 2);
+        assert_eq!(chunk_count(ONE_CHUNK_MAX), 1);
+        assert_eq!(chunk_count(ONE_CHUNK_MAX + 1), 2);
+        assert_eq!(chunk_count(LEGACY_ONE_CHUNK_MAX), 2);
+        assert_eq!(chunk_count(2 * CHUNK_PLAIN as u64), 2);
+        assert_eq!(chunk_count(2 * CHUNK_PLAIN as u64 + 1), 3);
     }
 
     #[test]
     fn stuecke_einer_datei() {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("teil.mp3");
-        let data: Vec<u8> = (0..(CHUNK_PLAIN + 10)).map(|i| (i % 251) as u8).collect();
+        let data: Vec<u8> = (0..(ONE_CHUNK_MAX as usize + 10))
+            .map(|i| (i % 251) as u8)
+            .collect();
         std::fs::write(&p, &data).unwrap();
         let src = Source::File(p.clone());
         let size = data.len() as u64;
         assert_eq!(src.read_chunk(0, size).unwrap(), data[..CHUNK_PLAIN]);
         assert_eq!(src.read_chunk(1, size).unwrap(), data[CHUNK_PLAIN..]);
         let bytes = Source::Bytes(data.clone());
-        assert_eq!(bytes.read_chunk(1, size).unwrap().len(), 10);
+        assert_eq!(
+            bytes.read_chunk(1, size).unwrap().len(),
+            data.len() - CHUNK_PLAIN
+        );
 
         let mut cache = BTreeMap::new();
         let mut budget = 1;

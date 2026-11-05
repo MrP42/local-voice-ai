@@ -73,4 +73,15 @@ final class DesktopVectorTests: XCTestCase {
         XCTAssertEqual(try SyncedBook.decode(data).book.favorite, true)
         XCTAssertEqual(try JSONDecoder().decode(LibraryBook.self, from: Data(#"{"id":"a","title":"b"}"#.utf8)).favorite, false)
     }
+
+    func testChunkCountMatchesDesktopAndFitsHosting() {
+        XCTAssertEqual(LibrarySyncFormat.chunkCount(size: 0), 1)
+        XCTAssertEqual(LibrarySyncFormat.chunkCount(size: LibrarySyncFormat.oneChunkMaxBytes), 1)
+        XCTAssertEqual(LibrarySyncFormat.chunkCount(size: LibrarySyncFormat.oneChunkMaxBytes + 1), 2)
+        XCTAssertEqual(LibrarySyncFormat.chunkCount(size: 2 * LibrarySyncFormat.chunkPlainBytes), 2)
+        XCTAssertEqual(LibrarySyncFormat.chunkCount(size: 2 * LibrarySyncFormat.chunkPlainBytes + 1), 3)
+        // Größte Anfrage: Nonce, Tag, base64, etwas JSON; gemessen geht 4,9 MiB.
+        let body = (LibrarySyncFormat.oneChunkMaxBytes + 40 + 2) / 3 * 4 + 200
+        XCTAssertLessThan(Double(body), 4.9 * 1024 * 1024)
+    }
 }

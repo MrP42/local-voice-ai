@@ -117,8 +117,35 @@ public enum LibrarySyncFormat {
     public static let collectionBook = "book"
     public static let collectionProgress = "progress"
     public static let collectionBookmark = "bookmark"
-    /// Klartext in den Stücken einer Datei.
-    public static let chunkPlainBytes = 4 * 1024 * 1024
+    /// Klartext in den Stücken einer Datei. Das Hosting lehnt Anfragen ab etwa 5 MiB ab;
+    /// base64 und JSON machen aus einem Stück rund das 1,34-Fache.
+    public static let chunkPlainBytes = 3 * 1024 * 1024
+    /// Bis hierher bleibt eine Datei ein einziges Stück, wie `ONE_CHUNK_MAX` am Desktop.
+    /// So stimmen früher mit 4-MiB-Stücken hochgeladene Dateien weiter.
+    public static let oneChunkMaxBytes = 3_827_302
+
+    /// Größte Datei, die mit 4-MiB-Stücken noch als ein Stück durchkam (`LEGACY_ONE_CHUNK_MAX`).
+    public static let legacyOneChunkMaxBytes = 3_932_054
+
+    /// Dieselbe Kennung kann am Hub ein oder zwei Stücke haben, der Verweis sagt beides:
+    /// Stück 0 lesen und nur weitergehen, wenn die Datei noch nicht vollständig ist.
+    public static func mayBeLegacySingleChunk(size: Int) -> Bool { size > oneChunkMaxBytes && size <= legacyOneChunkMaxBytes }
+
+    /// Stück, ab dem eine Teildatei weitergeladen wird; `nil`: Sie ist vollständig.
+    public static func resumeChunk(size: Int, chunks: Int, partialBytes: Int, chunkPlainBytes: Int = chunkPlainBytes) -> Int? {
+        if size > 0, partialBytes == size { return nil }
+        if chunks <= 1 { return 0 }
+        // Alt-Blob oder zwei Stücke: Abgerissenes lässt sich nicht zuordnen, also von vorn.
+        if mayBeLegacySingleChunk(size: size) { return partialBytes == chunkPlainBytes ? 1 : 0 }
+        return min(partialBytes / chunkPlainBytes, chunks - 1)
+    }
+
+    public static func chunkCount(size: Int) -> Int {
+        size <= oneChunkMaxBytes ? 1 : (size + chunkPlainBytes - 1) / chunkPlainBytes
+    }
+
+    /// Klartext, den ein Stück dieser Datei höchstens trägt.
+    public static func chunkLimit(size: Int) -> Int { size <= oneChunkMaxBytes ? size : chunkPlainBytes }
     /// Größter Klartext eines Objekts (wie `MAX_PLAINTEXT` am Desktop).
     public static let maxPlaintext = 256 * 1024
 

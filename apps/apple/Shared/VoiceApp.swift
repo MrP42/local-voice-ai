@@ -74,7 +74,7 @@ private struct VoiceHome: View {
     @State private var watchPath: [WatchDestination] = []
     #endif
     #if os(iOS)
-    @State private var showModels = false
+    @ObservedObject private var settings = AppSettings.shared
     @State private var query = ""
     @State private var selectedHistoryNote: Entry?
     @FocusState private var searchFocused: Bool
@@ -162,7 +162,7 @@ private struct VoiceHome: View {
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .topBarTrailing) {
-                        Button("Einstellungen", systemImage: "slider.horizontal.3") { showModels = true }.accessibilityIdentifier("settings")
+                        SettingsButton().accessibilityIdentifier("settings")
                     }
                 }
             }
@@ -206,11 +206,13 @@ private struct VoiceHome: View {
                 }
                 .navigationTitle("Verlauf")
                 .navigationBarTitleDisplayMode(.inline)
+                .toolbar { ToolbarItem(placement: .topBarTrailing) { SettingsButton() } }
 
             }.tabItem { Label("Verlauf", systemImage: "clock.arrow.circlepath") }.tag(1)
             LibraryTab().tabItem { Label("Bibliothek", systemImage: "books.vertical") }.tag(3)
         }
-        .sheet(isPresented: $showModels) { ModelPanel(model: model) }
+        .sheet(isPresented: $settings.shown) { ModelPanel(model: model) }
+        .task { await PhononEngine.shared.refresh() }
         // „Öffnen in“ Local Voice: Datei vormerken, zu den Transkripten wechseln; dort folgt die Bestätigung.
         .onOpenURL { url in
             if url.isFileURL { IncomingFiles.shared.add(url); tab = 2 } else { PairingFlow.shared.open(url) }
