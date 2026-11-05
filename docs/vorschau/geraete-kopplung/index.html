@@ -59,8 +59,8 @@ ol{margin:0;padding-left:20px}ol li{margin-bottom:10px}
 .warnbox{display:flex;gap:8px;background:var(--warnBg);color:var(--warn);border-radius:4px;padding:10px 12px}
 .ghostqr{opacity:.15;filter:blur(2px)}
 .stage{display:none}
-body[data-s=qr] .s-qr,body[data-s=bestaetigen] .s-bestaetigen,body[data-s=verbunden] .s-verbunden,body[data-s=abgelaufen] .s-abgelaufen,body[data-s=widerrufen] .s-widerrufen,body[data-s=netzfehler] .s-netzfehler,body[data-s=abgebrochen] .s-abgebrochen{display:block}
-body[data-s=qr] .scrim,body[data-s=bestaetigen] .scrim,body[data-s=verbunden] .scrim,body[data-s=abgelaufen] .scrim,body[data-s=widerrufen] .scrim,body[data-s=netzfehler] .scrim,body[data-s=abgebrochen] .scrim{display:flex}
+body[data-s=qr] .s-qr,body[data-s=bestaetigen] .s-bestaetigen,body[data-s=verbunden] .s-verbunden,body[data-s=abgelaufen] .s-abgelaufen,body[data-s=widerrufen] .s-widerrufen,body[data-s=netzfehler] .s-netzfehler,body[data-s=unbestaetigt] .s-unbestaetigt,body[data-s=abgebrochen] .s-abgebrochen{display:block}
+body[data-s=qr] .scrim,body[data-s=bestaetigen] .scrim,body[data-s=verbunden] .scrim,body[data-s=abgelaufen] .scrim,body[data-s=widerrufen] .scrim,body[data-s=netzfehler] .scrim,body[data-s=unbestaetigt] .scrim,body[data-s=abgebrochen] .scrim{display:flex}
 .mob{display:none}
 @media (max-width:720px){
  nav.app,.topics{display:none}.mob{display:flex}
@@ -102,7 +102,7 @@ body[data-s=qr] .scrim,body[data-s=bestaetigen] .scrim,body[data-s=verbunden] .s
    <div class="ico" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="5.5" y="1.75" width="9" height="16.5" rx="2"/><path d="M8.5 15.5h3"/></svg></div>
    <div class="grow"><h3>Handy verbinden</h3>
     <div class="muted">QR-Code mit der iPhone-App scannen. Das iPhone nutzt dann dieses Konto, ohne Passwort.</div></div>
-   <button class="btn primary" onclick="go('qr')">QR-Code anzeigen</button>
+   <button class="btn primary" id="open-qr" onclick="go('qr',this)">QR-Code anzeigen</button>
   </div>
  </section>
 
@@ -113,7 +113,8 @@ body[data-s=qr] .scrim,body[data-s=bestaetigen] .scrim,body[data-s=verbunden] .s
    <tbody>
     <tr><td><b>Arbeitsplatz-PC</b><span class="tag">dieses Gerät</span><div class="small muted mob">seit 14.09.2026</div></td><td class="hide-m">14.09.2026</td><td>gerade eben</td><td class="act"></td></tr>
     <tr><td><b>MacBook</b><div class="small muted mob">seit 02.10.2026</div></td><td class="hide-m">02.10.2026</td><td>gestern, 21:40</td><td class="act" style="text-align:right"><button class="btn danger" onclick="go('widerrufen')">Abmelden</button></td></tr>
-    <tr><td><b>iPhone von Patrick</b><span class="tag">per QR</span><div class="small muted mob">seit 05.11.2026</div></td><td class="hide-m">05.11.2026</td><td>vor 1 Minute</td><td class="act" style="text-align:right"><button class="btn danger" onclick="go('widerrufen')">Abmelden</button></td></tr>
+    <tr><td><b>iPhone von Patrick</b><span class="tag">per QR</span><div class="small muted mob">seit 05.11.2026</div></td><td class="hide-m">05.11.2026</td><td>vor 1 Minute</td><td class="act" style="text-align:right"><button class="btn danger" id="rev-iphone" onclick="go('widerrufen',this)">Abmelden</button></td></tr>
+    <tr><td><b>iPad Küche</b><span class="tag">per QR über „iPhone von Patrick“</span><div class="small muted mob">seit 05.11.2026</div></td><td class="hide-m">05.11.2026</td><td>vor 3 Minuten</td><td class="act" style="text-align:right"><button class="btn danger" onclick="go('widerrufen',this)">Abmelden</button></td></tr>
    </tbody>
   </table>
   <p class="small muted" style="margin:12px 0 0">„Abmelden“ sperrt den Zugang des Geräts zum Konto sofort. Bereits geladene Inhalte bleiben auf dem Gerät.</p>
@@ -182,10 +183,19 @@ body[data-s=qr] .scrim,body[data-s=bestaetigen] .scrim,body[data-s=verbunden] .s
    <p class="muted small">Zeigen Sie einen neuen Code an und scannen Sie ihn direkt am PC. Passiert das wiederholt, verbinden Sie das Handy in einem anderen Netz.</p>
    <div class="foot"><button class="btn" onclick="go('liste')">Schließen</button><button class="btn primary" onclick="go('qr')">Neuen Code</button></div>
   </div>
+  <!-- Bestaetigung fehlt / ungueltig -->
+  <div class="stage s-unbestaetigt">
+   <button class="close" aria-label="Schließen" onclick="go('liste')">✕</button>
+   <h3>Verbindung nicht bestätigt</h3>
+   <div class="warnbox" role="alert" style="margin:16px 0"><span aria-hidden="true">⚠</span><span>„iPhone von Patrick“ hat den Zugang erhalten, aber den Empfang des Schlüssels nicht gültig bestätigt. Das kann ein Verbindungsabbruch sein, im schlimmsten Fall ein fremdes Gerät.</span></div>
+   <p class="muted small">Empfehlung: Gerät jetzt abmelden und neu verbinden. Haben Sie das iPhone gerade in der Hand und zeigt es „Verbunden“, können Sie es behalten.</p>
+   <div class="foot"><button class="btn" onclick="go('liste')">Behalten</button><button class="btn primary" style="background:var(--danger);border-color:var(--danger)" onclick="go('liste')">Gerät abmelden</button></div>
+  </div>
   <!-- Widerruf -->
   <div class="stage s-widerrufen">
    <h3>„iPhone von Patrick“ abmelden?</h3>
    <p class="muted">Das Gerät kann danach nicht mehr abgleichen. Bereits geladene Inhalte bleiben dort, bis Sie sie in der iPhone-App löschen. Zum erneuten Verbinden genügt ein neuer QR-Code.</p>
+   <div class="warnbox" style="margin-top:8px"><span aria-hidden="true">⚠</span><span><b>Ebenfalls abgemeldet werden</b> (über dieses Gerät verbunden):<ul style="margin:6px 0 0;padding-left:18px"><li>iPad Küche</li></ul></span></div>
    <div class="foot"><button class="btn" onclick="go('liste')">Abbrechen</button><button class="btn primary" style="background:var(--danger);border-color:var(--danger)" onclick="go('liste')">Abmelden</button></div>
   </div>
  </div>
@@ -194,10 +204,13 @@ body[data-s=qr] .scrim,body[data-s=bestaetigen] .scrim,body[data-s=verbunden] .s
 <script>
 const p=new URLSearchParams(location.search);
 if(p.get('theme')==='dark')document.documentElement.dataset.theme='dark';
-const FIRST={qr:'.s-qr .foot .btn',bestaetigen:'.s-bestaetigen .foot .btn',verbunden:'.s-verbunden .btn',abgelaufen:'.s-abgelaufen .btn.primary',widerrufen:'.s-widerrufen .foot .btn',netzfehler:'.s-netzfehler .btn.primary',abgebrochen:'.s-abgebrochen .btn.primary'};
-function go(s){document.body.dataset.s=s;history.replaceState(null,'','?'+(p.get('theme')?'theme='+p.get('theme')+'&':'')+'s='+s);
+const FIRST={qr:'.s-qr .foot .btn',bestaetigen:'.s-bestaetigen .foot .btn',verbunden:'.s-verbunden .btn',abgelaufen:'.s-abgelaufen .btn.primary',widerrufen:'.s-widerrufen .foot .btn',netzfehler:'.s-netzfehler .btn.primary',abgebrochen:'.s-abgebrochen .btn.primary',unbestaetigt:'.s-unbestaetigt .foot .btn'};
+let opener=null;
+function go(s,from){const was=document.body.dataset.s;if(from)opener=from;else if(was==='liste'&&s!=='liste')opener=document.activeElement;
+ document.body.dataset.s=s;history.replaceState(null,'','?'+(p.get('theme')?'theme='+p.get('theme')+'&':'')+'s='+s);
  const open=s!=='liste';for(const el of document.querySelectorAll('.top,.frame'))el.inert=open;
- if(open){const f=document.querySelector(FIRST[s]);if(f)f.focus({preventScroll:true});}}
+ if(open){const f=document.querySelector(FIRST[s]);if(f)f.focus({preventScroll:true});}
+ else if(was&&was!=='liste'){const back=opener&&document.contains(opener)?opener:document.getElementById('open-qr');back.focus({preventScroll:true});opener=null;}}
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&document.body.dataset.s!=='liste')go('liste');
  if(e.key!=='Tab'||document.body.dataset.s==='liste')return;
  const st=document.querySelector('.s-'+document.body.dataset.s);const f=[...st.querySelectorAll('button')];if(!f.length)return;

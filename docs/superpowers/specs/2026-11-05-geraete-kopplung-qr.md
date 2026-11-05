@@ -127,7 +127,23 @@ Desktop (angemeldet: T_d, K)                Hub                           iPhone
 | `rejected` | reject | – | – | sealed gelöscht |
 | `expired` | Frist, 3 Fehlversuche, C falsch, neuer Start | – | – | sealed, poll-Hash gelöscht |
 
-Regeln: jeder Übergang ist `UPDATE … WHERE status = <von> AND expires_ts >= jetzt`;
+**Serialisierung (Codex Runde 2):** Start, Abholung (`approved → done` mit Token-Ausstellung)
+und Widerruf laufen je Konto unter **einer** Konto-Sperre (`GET_LOCK('voice_pair_<konto>')`
++ Transaktion). Daraus folgt:
+- **Start** prüft, dass das Starter-Token aktiv ist; Verwerfen alter und Anlegen der neuen
+  Kopplung sind atomar.
+- **Abholung** prüft in der Transaktion erneut, dass das Starter-Token aktiv ist; sonst wird
+  die Kopplung verworfen und kein Token ausgestellt.
+- **Widerruf** (`revokeChain`) widerruft das Gerät und **alle Nachkommen** – auch das
+  aufrufende Gerät, wenn es zur Kette gehört – und verwirft alle offenen Kopplungen, die ein
+  Gerät der Kette gestartet hat. Da die Abholung dieselbe Sperre nimmt, gibt es nur zwei
+  Reihenfolgen: Abholung zuerst → das neue Token ist Kind und wird mit widerrufen;
+  Widerruf zuerst → die Abholung findet einen widerrufenen Starter und stellt nichts aus.
+  Direkter Selbstwiderruf in der Geräteliste bleibt 409 (dafür „Abmelden“).
+- Tests: Widerruf vor Abholung (auch mit veralteter Zeile), Abholung vor Widerruf,
+  Kind widerruft Elternteil, claim bei ausgeschöpften Fehlversuchen, reject nach Frist.
+
+Regeln: jeder Übergang ist `UPDATE … WHERE status = <von> AND expires_ts >= jetzt AND failed_attempts < 3`;
 der Verlierer erhält 409/410. `reject` nach `done` antwortet **409 mit `status: done`**,
 der Desktop bietet dann „Gerät abmelden“ an. Der Token-Klartext steht nur in der einen
 Antwort, im Hub nur sein Hash. Widerruf wirkt sofort (kein Auth-Cache, `verify` je Aufruf).
@@ -173,7 +189,8 @@ Tests für 5.2/5.3 entstehen mit P3/P4 gegen die Testvektoren.
    verlangen `voice.sync` **explizit** (ein Agenten-Token mit `*` genügt nicht).
 6. Je Konto höchstens **eine** offene Kopplung; ein neuer Start verwirft die alte.
 7. Offene Routen (claim, reveal, result, confirm): Body ≤ 8 KB; IP-Drosselung claim
-   10/15 min, Abfragen 120/min. Hinter CGNAT kann ein Dritter im selben Netz die Kopplung
+   10/15 min, Abfragen 120/min (erst Zeile reservieren, dann zählen: kein Rennen um den
+   letzten Platz). Hinter CGNAT kann ein Dritter im selben Netz die Kopplung
    stören (akzeptiert). Unbekannt, abgelaufen, verwendet und falsches Geheimnis antworten
    gleich (410).
 8. Flüchtige Schlüssel (`d_sk`, `p_sk`, `z`, `s`, `q`) nur im Speicher, danach genullt.
@@ -182,7 +199,7 @@ Tests für 5.2/5.3 entstehen mit P3/P4 gegen die Testvektoren.
     wurden (Kette, `VoicePairingService::revokeChain`), damit ein abgemeldetes Gerät keinen
     Zugang über selbst ausgestellte Tokens behält. Gilt für „Abmelden“ in der Geräteliste
     und für das eigene Abmelden (`/auth/logout`). Die Oberfläche nennt vorher, welche Geräte
-    mit abgemeldet werden.
+    mit abgemeldet werden (`revokes_with` in `GET /devices`).
 12. Betrieb: `post_max_size` des Hubs klein halten (offene Routen prüfen nur
     `Content-Length`); Drosselungszeilen (`login_attempts`, `pair-*`) räumt der Hub nach einem Tag gelegentlich ab.
 11. Gerätetokens laufen wie Login-Tokens nicht ab (Entscheidung D15); Kontrolle über die
@@ -207,7 +224,7 @@ Tests für 5.2/5.3 entstehen mit P3/P4 gegen die Testvektoren.
 | POST | `/api/v1/voice/pair/{id}/reject` | Starter-Token | 200 oder 409 `{status}` |
 | GET | `/api/v1/voice/pair/{id}/result` | `X-Pairing-Token` | 202 waiting · 200 challenge+n_d · 403 rejected · 200 `{token, sealed, user}` einmalig · 410 |
 | POST | `/api/v1/voice/pair/{id}/confirm` | `X-Pairing-Token` | `{confirm}` einmalig |
-| GET | `/api/v1/voice/devices` | `voice.sync` explizit | id, Name, angelegt, zuletzt aktiv, `current`, `via_pairing`, `paired_by` |
+| GET | `/api/v1/voice/devices` | `voice.sync` explizit | id, Name, angelegt, zuletzt aktiv, `current`, `via_pairing`, `paired_by`, `revokes_with` |
 | POST | `/api/v1/voice/devices/{id}/revoke` | `voice.sync` explizit | Widerruf inkl. Kette (nicht das eigene → 409) |
 
 ## 8 · Oberfläche Desktop

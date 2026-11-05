@@ -1,995 +1,684 @@
 {
+ "hinweis": "Desktop 1440: Zeigerziele ≥24 px; 390 px und iPhone: Touchziele ≥44 px. verstoesse listet Unterschreitungen der jeweiligen Regel.",
  "touchziele": [
   {
-   "seite": "desktop",
+   "seite": "desktop-app",
    "zustand": "liste",
    "breite": 1440,
+   "regel": "Zeiger ≥ 24×24 px (WCAG 2.5.8)",
    "ziele": [
     {
-     "text": "⌂  Start",
-     "w": 232,
-     "h": 40
+     "ziel": "⌂ Start",
+     "breite": 232,
+     "hoehe": 40
     },
     {
-     "text": "⟲  Verlauf",
-     "w": 232,
-     "h": 40
+     "ziel": "⟲ Verlauf",
+     "breite": 232,
+     "hoehe": 40
     },
     {
-     "text": "👥  Aufnahmen",
-     "w": 232,
-     "h": 40
+     "ziel": "👥 Aufnahmen",
+     "breite": 232,
+     "hoehe": 40
     },
     {
-     "text": "🔊  Vorlesen",
-     "w": 232,
-     "h": 40
+     "ziel": "🔊 Vorlesen",
+     "breite": 232,
+     "hoehe": 40
     },
     {
-     "text": "☏  Sprachgespräch",
-     "w": 232,
-     "h": 40
+     "ziel": "☏ Sprachgespräch",
+     "breite": 232,
+     "hoehe": 40
     },
     {
-     "text": "⚙  Einstellungen",
-     "w": 232,
-     "h": 40
+     "ziel": "⚙ Einstellungen",
+     "breite": 232,
+     "hoehe": 40
     },
     {
-     "text": "Abmelden",
-     "w": 95,
-     "h": 32
+     "ziel": "Abmelden",
+     "breite": 95,
+     "hoehe": 32
     },
     {
-     "text": "QR-Code anzeigen",
-     "w": 154,
-     "h": 32
+     "ziel": "QR-Code anzeigen",
+     "breite": 154,
+     "hoehe": 32
     },
     {
-     "text": "Abmelden",
-     "w": 95,
-     "h": 32
+     "ziel": "Abmelden",
+     "breite": 95,
+     "hoehe": 32
     },
     {
-     "text": "Abmelden",
-     "w": 95,
-     "h": 32
+     "ziel": "Abmelden",
+     "breite": 95,
+     "hoehe": 32
+    },
+    {
+     "ziel": "Abmelden",
+     "breite": 95,
+     "hoehe": 32
     }
    ],
-   "unter44": []
+   "verstoesse": []
   },
   {
-   "seite": "desktop",
+   "seite": "desktop-app",
    "zustand": "qr",
    "breite": 1440,
+   "regel": "Zeiger ≥ 24×24 px (WCAG 2.5.8)",
    "ziele": [
     {
-     "text": "⌂  Start",
-     "w": 232,
-     "h": 40
+     "ziel": "Schließen",
+     "breite": 32,
+     "hoehe": 32
     },
     {
-     "text": "⟲  Verlauf",
-     "w": 232,
-     "h": 40
+     "ziel": "Abbrechen",
+     "breite": 101,
+     "hoehe": 32
     },
     {
-     "text": "👥  Aufnahmen",
-     "w": 232,
-     "h": 40
-    },
-    {
-     "text": "🔊  Vorlesen",
-     "w": 232,
-     "h": 40
-    },
-    {
-     "text": "☏  Sprachgespräch",
-     "w": 232,
-     "h": 40
-    },
-    {
-     "text": "⚙  Einstellungen",
-     "w": 232,
-     "h": 40
-    },
-    {
-     "text": "Abmelden",
-     "w": 95,
-     "h": 32
-    },
-    {
-     "text": "QR-Code anzeigen",
-     "w": 154,
-     "h": 32
-    },
-    {
-     "text": "Abmelden",
-     "w": 95,
-     "h": 32
-    },
-    {
-     "text": "Abmelden",
-     "w": 95,
-     "h": 32
-    },
-    {
-     "text": "✕",
-     "w": 32,
-     "h": 32
-    },
-    {
-     "text": "Abbrechen",
-     "w": 101,
-     "h": 32
-    },
-    {
-     "text": "Weiter (Demo)",
-     "w": 123,
-     "h": 32
+     "ziel": "Weiter (Demo)",
+     "breite": 123,
+     "hoehe": 32
     }
    ],
-   "unter44": []
+   "verstoesse": []
   },
   {
-   "seite": "desktop",
+   "seite": "desktop-app",
    "zustand": "bestaetigen",
    "breite": 1440,
+   "regel": "Zeiger ≥ 24×24 px (WCAG 2.5.8)",
    "ziele": [
     {
-     "text": "⌂  Start",
-     "w": 232,
-     "h": 40
+     "ziel": "Nein, abbrechen",
+     "breite": 137,
+     "hoehe": 32
     },
     {
-     "text": "⟲  Verlauf",
-     "w": 232,
-     "h": 40
-    },
-    {
-     "text": "👥  Aufnahmen",
-     "w": 232,
-     "h": 40
-    },
-    {
-     "text": "🔊  Vorlesen",
-     "w": 232,
-     "h": 40
-    },
-    {
-     "text": "☏  Sprachgespräch",
-     "w": 232,
-     "h": 40
-    },
-    {
-     "text": "⚙  Einstellungen",
-     "w": 232,
-     "h": 40
-    },
-    {
-     "text": "Abmelden",
-     "w": 95,
-     "h": 32
-    },
-    {
-     "text": "QR-Code anzeigen",
-     "w": 154,
-     "h": 32
-    },
-    {
-     "text": "Abmelden",
-     "w": 95,
-     "h": 32
-    },
-    {
-     "text": "Abmelden",
-     "w": 95,
-     "h": 32
-    },
-    {
-     "text": "Nein, abbrechen",
-     "w": 137,
-     "h": 32
-    },
-    {
-     "text": "Ja, verbinden",
-     "w": 118,
-     "h": 32
+     "ziel": "Ja, verbinden",
+     "breite": 118,
+     "hoehe": 32
     }
    ],
-   "unter44": []
+   "verstoesse": []
   },
   {
-   "seite": "desktop",
+   "seite": "desktop-app",
    "zustand": "verbunden",
    "breite": 1440,
+   "regel": "Zeiger ≥ 24×24 px (WCAG 2.5.8)",
    "ziele": [
     {
-     "text": "⌂  Start",
-     "w": 232,
-     "h": 40
-    },
-    {
-     "text": "⟲  Verlauf",
-     "w": 232,
-     "h": 40
-    },
-    {
-     "text": "👥  Aufnahmen",
-     "w": 232,
-     "h": 40
-    },
-    {
-     "text": "🔊  Vorlesen",
-     "w": 232,
-     "h": 40
-    },
-    {
-     "text": "☏  Sprachgespräch",
-     "w": 232,
-     "h": 40
-    },
-    {
-     "text": "⚙  Einstellungen",
-     "w": 232,
-     "h": 40
-    },
-    {
-     "text": "Abmelden",
-     "w": 95,
-     "h": 32
-    },
-    {
-     "text": "QR-Code anzeigen",
-     "w": 154,
-     "h": 32
-    },
-    {
-     "text": "Abmelden",
-     "w": 95,
-     "h": 32
-    },
-    {
-     "text": "Abmelden",
-     "w": 95,
-     "h": 32
-    },
-    {
-     "text": "Fertig",
-     "w": 65,
-     "h": 32
+     "ziel": "Fertig",
+     "breite": 65,
+     "hoehe": 32
     }
    ],
-   "unter44": []
+   "verstoesse": []
   },
   {
-   "seite": "desktop",
+   "seite": "desktop-app",
    "zustand": "abgelaufen",
    "breite": 1440,
+   "regel": "Zeiger ≥ 24×24 px (WCAG 2.5.8)",
    "ziele": [
     {
-     "text": "⌂  Start",
-     "w": 232,
-     "h": 40
+     "ziel": "Schließen",
+     "breite": 32,
+     "hoehe": 32
     },
     {
-     "text": "⟲  Verlauf",
-     "w": 232,
-     "h": 40
+     "ziel": "Schließen",
+     "breite": 93,
+     "hoehe": 32
     },
     {
-     "text": "👥  Aufnahmen",
-     "w": 232,
-     "h": 40
-    },
-    {
-     "text": "🔊  Vorlesen",
-     "w": 232,
-     "h": 40
-    },
-    {
-     "text": "☏  Sprachgespräch",
-     "w": 232,
-     "h": 40
-    },
-    {
-     "text": "⚙  Einstellungen",
-     "w": 232,
-     "h": 40
-    },
-    {
-     "text": "Abmelden",
-     "w": 95,
-     "h": 32
-    },
-    {
-     "text": "QR-Code anzeigen",
-     "w": 154,
-     "h": 32
-    },
-    {
-     "text": "Abmelden",
-     "w": 95,
-     "h": 32
-    },
-    {
-     "text": "Abmelden",
-     "w": 95,
-     "h": 32
-    },
-    {
-     "text": "✕",
-     "w": 32,
-     "h": 32
-    },
-    {
-     "text": "Schließen",
-     "w": 93,
-     "h": 32
-    },
-    {
-     "text": "Neuen Code",
-     "w": 110,
-     "h": 32
+     "ziel": "Neuen Code",
+     "breite": 110,
+     "hoehe": 32
     }
    ],
-   "unter44": []
+   "verstoesse": []
   },
   {
-   "seite": "desktop",
+   "seite": "desktop-app",
    "zustand": "widerrufen",
    "breite": 1440,
+   "regel": "Zeiger ≥ 24×24 px (WCAG 2.5.8)",
    "ziele": [
     {
-     "text": "⌂  Start",
-     "w": 232,
-     "h": 40
+     "ziel": "Abbrechen",
+     "breite": 101,
+     "hoehe": 32
     },
     {
-     "text": "⟲  Verlauf",
-     "w": 232,
-     "h": 40
-    },
-    {
-     "text": "👥  Aufnahmen",
-     "w": 232,
-     "h": 40
-    },
-    {
-     "text": "🔊  Vorlesen",
-     "w": 232,
-     "h": 40
-    },
-    {
-     "text": "☏  Sprachgespräch",
-     "w": 232,
-     "h": 40
-    },
-    {
-     "text": "⚙  Einstellungen",
-     "w": 232,
-     "h": 40
-    },
-    {
-     "text": "Abmelden",
-     "w": 95,
-     "h": 32
-    },
-    {
-     "text": "QR-Code anzeigen",
-     "w": 154,
-     "h": 32
-    },
-    {
-     "text": "Abmelden",
-     "w": 95,
-     "h": 32
-    },
-    {
-     "text": "Abmelden",
-     "w": 95,
-     "h": 32
-    },
-    {
-     "text": "Abbrechen",
-     "w": 101,
-     "h": 32
-    },
-    {
-     "text": "Abmelden",
-     "w": 95,
-     "h": 32
+     "ziel": "Abmelden",
+     "breite": 95,
+     "hoehe": 32
     }
    ],
-   "unter44": []
+   "verstoesse": []
   },
   {
-   "seite": "desktop",
+   "seite": "desktop-app",
    "zustand": "netzfehler",
    "breite": 1440,
+   "regel": "Zeiger ≥ 24×24 px (WCAG 2.5.8)",
    "ziele": [
     {
-     "text": "⌂  Start",
-     "w": 232,
-     "h": 40
+     "ziel": "Schließen",
+     "breite": 32,
+     "hoehe": 32
     },
     {
-     "text": "⟲  Verlauf",
-     "w": 232,
-     "h": 40
+     "ziel": "Schließen",
+     "breite": 93,
+     "hoehe": 32
     },
     {
-     "text": "👥  Aufnahmen",
-     "w": 232,
-     "h": 40
-    },
-    {
-     "text": "🔊  Vorlesen",
-     "w": 232,
-     "h": 40
-    },
-    {
-     "text": "☏  Sprachgespräch",
-     "w": 232,
-     "h": 40
-    },
-    {
-     "text": "⚙  Einstellungen",
-     "w": 232,
-     "h": 40
-    },
-    {
-     "text": "Abmelden",
-     "w": 95,
-     "h": 32
-    },
-    {
-     "text": "QR-Code anzeigen",
-     "w": 154,
-     "h": 32
-    },
-    {
-     "text": "Abmelden",
-     "w": 95,
-     "h": 32
-    },
-    {
-     "text": "Abmelden",
-     "w": 95,
-     "h": 32
-    },
-    {
-     "text": "✕",
-     "w": 32,
-     "h": 32
-    },
-    {
-     "text": "Schließen",
-     "w": 93,
-     "h": 32
-    },
-    {
-     "text": "Erneut versuchen",
-     "w": 146,
-     "h": 32
+     "ziel": "Erneut versuchen",
+     "breite": 146,
+     "hoehe": 32
     }
    ],
-   "unter44": []
+   "verstoesse": []
   },
   {
-   "seite": "desktop",
+   "seite": "desktop-app",
    "zustand": "abgebrochen",
    "breite": 1440,
+   "regel": "Zeiger ≥ 24×24 px (WCAG 2.5.8)",
    "ziele": [
     {
-     "text": "⌂  Start",
-     "w": 232,
-     "h": 40
+     "ziel": "Schließen",
+     "breite": 32,
+     "hoehe": 32
     },
     {
-     "text": "⟲  Verlauf",
-     "w": 232,
-     "h": 40
+     "ziel": "Schließen",
+     "breite": 93,
+     "hoehe": 32
     },
     {
-     "text": "👥  Aufnahmen",
-     "w": 232,
-     "h": 40
-    },
-    {
-     "text": "🔊  Vorlesen",
-     "w": 232,
-     "h": 40
-    },
-    {
-     "text": "☏  Sprachgespräch",
-     "w": 232,
-     "h": 40
-    },
-    {
-     "text": "⚙  Einstellungen",
-     "w": 232,
-     "h": 40
-    },
-    {
-     "text": "Abmelden",
-     "w": 95,
-     "h": 32
-    },
-    {
-     "text": "QR-Code anzeigen",
-     "w": 154,
-     "h": 32
-    },
-    {
-     "text": "Abmelden",
-     "w": 95,
-     "h": 32
-    },
-    {
-     "text": "Abmelden",
-     "w": 95,
-     "h": 32
-    },
-    {
-     "text": "✕",
-     "w": 32,
-     "h": 32
-    },
-    {
-     "text": "Schließen",
-     "w": 93,
-     "h": 32
-    },
-    {
-     "text": "Neuen Code",
-     "w": 110,
-     "h": 32
+     "ziel": "Neuen Code",
+     "breite": 110,
+     "hoehe": 32
     }
    ],
-   "unter44": []
+   "verstoesse": []
   },
   {
-   "seite": "desktop",
+   "seite": "desktop-app",
+   "zustand": "unbestaetigt",
+   "breite": 1440,
+   "regel": "Zeiger ≥ 24×24 px (WCAG 2.5.8)",
+   "ziele": [
+    {
+     "ziel": "Schließen",
+     "breite": 32,
+     "hoehe": 32
+    },
+    {
+     "ziel": "Behalten",
+     "breite": 86,
+     "hoehe": 32
+    },
+    {
+     "ziel": "Gerät abmelden",
+     "breite": 134,
+     "hoehe": 32
+    }
+   ],
+   "verstoesse": []
+  },
+  {
+   "seite": "desktop-app",
    "zustand": "liste",
    "breite": 390,
+   "regel": "Touch ≥ 44×44 px",
    "ziele": [
     {
-     "text": "Abmelden",
-     "w": 316,
-     "h": 44
+     "ziel": "Abmelden",
+     "breite": 316,
+     "hoehe": 44
     },
     {
-     "text": "QR-Code anzeigen",
-     "w": 316,
-     "h": 44
+     "ziel": "QR-Code anzeigen",
+     "breite": 316,
+     "hoehe": 44
     },
     {
-     "text": "Abmelden",
-     "w": 95,
-     "h": 44
+     "ziel": "Abmelden",
+     "breite": 95,
+     "hoehe": 44
     },
     {
-     "text": "Abmelden",
-     "w": 95,
-     "h": 44
+     "ziel": "Abmelden",
+     "breite": 95,
+     "hoehe": 44
+    },
+    {
+     "ziel": "Abmelden",
+     "breite": 95,
+     "hoehe": 44
     }
    ],
-   "unter44": []
+   "verstoesse": []
   },
   {
-   "seite": "desktop",
+   "seite": "desktop-app",
    "zustand": "qr",
    "breite": 390,
+   "regel": "Touch ≥ 44×44 px",
    "ziele": [
     {
-     "text": "Abmelden",
-     "w": 316,
-     "h": 44
+     "ziel": "Schließen",
+     "breite": 44,
+     "hoehe": 44
     },
     {
-     "text": "QR-Code anzeigen",
-     "w": 316,
-     "h": 44
+     "ziel": "Abbrechen",
+     "breite": 175,
+     "hoehe": 44
     },
     {
-     "text": "Abmelden",
-     "w": 95,
-     "h": 44
-    },
-    {
-     "text": "Abmelden",
-     "w": 95,
-     "h": 44
-    },
-    {
-     "text": "✕",
-     "w": 44,
-     "h": 44
-    },
-    {
-     "text": "Abbrechen",
-     "w": 175,
-     "h": 44
-    },
-    {
-     "text": "Weiter (Demo)",
-     "w": 175,
-     "h": 44
+     "ziel": "Weiter (Demo)",
+     "breite": 175,
+     "hoehe": 44
     }
    ],
-   "unter44": []
+   "verstoesse": []
   },
   {
-   "seite": "desktop",
+   "seite": "desktop-app",
    "zustand": "bestaetigen",
    "breite": 390,
+   "regel": "Touch ≥ 44×44 px",
    "ziele": [
     {
-     "text": "Abmelden",
-     "w": 316,
-     "h": 44
+     "ziel": "Nein, abbrechen",
+     "breite": 175,
+     "hoehe": 44
     },
     {
-     "text": "QR-Code anzeigen",
-     "w": 316,
-     "h": 44
-    },
-    {
-     "text": "Abmelden",
-     "w": 95,
-     "h": 44
-    },
-    {
-     "text": "Abmelden",
-     "w": 95,
-     "h": 44
-    },
-    {
-     "text": "Nein, abbrechen",
-     "w": 175,
-     "h": 44
-    },
-    {
-     "text": "Ja, verbinden",
-     "w": 175,
-     "h": 44
+     "ziel": "Ja, verbinden",
+     "breite": 175,
+     "hoehe": 44
     }
    ],
-   "unter44": []
+   "verstoesse": []
   },
   {
-   "seite": "desktop",
+   "seite": "desktop-app",
    "zustand": "verbunden",
    "breite": 390,
+   "regel": "Touch ≥ 44×44 px",
    "ziele": [
     {
-     "text": "Abmelden",
-     "w": 316,
-     "h": 44
-    },
-    {
-     "text": "QR-Code anzeigen",
-     "w": 316,
-     "h": 44
-    },
-    {
-     "text": "Abmelden",
-     "w": 95,
-     "h": 44
-    },
-    {
-     "text": "Abmelden",
-     "w": 95,
-     "h": 44
-    },
-    {
-     "text": "Fertig",
-     "w": 358,
-     "h": 44
+     "ziel": "Fertig",
+     "breite": 358,
+     "hoehe": 44
     }
    ],
-   "unter44": []
+   "verstoesse": []
   },
   {
-   "seite": "desktop",
+   "seite": "desktop-app",
    "zustand": "abgelaufen",
    "breite": 390,
+   "regel": "Touch ≥ 44×44 px",
    "ziele": [
     {
-     "text": "Abmelden",
-     "w": 316,
-     "h": 44
+     "ziel": "Schließen",
+     "breite": 44,
+     "hoehe": 44
     },
     {
-     "text": "QR-Code anzeigen",
-     "w": 316,
-     "h": 44
+     "ziel": "Schließen",
+     "breite": 175,
+     "hoehe": 44
     },
     {
-     "text": "Abmelden",
-     "w": 95,
-     "h": 44
-    },
-    {
-     "text": "Abmelden",
-     "w": 95,
-     "h": 44
-    },
-    {
-     "text": "✕",
-     "w": 44,
-     "h": 44
-    },
-    {
-     "text": "Schließen",
-     "w": 175,
-     "h": 44
-    },
-    {
-     "text": "Neuen Code",
-     "w": 175,
-     "h": 44
+     "ziel": "Neuen Code",
+     "breite": 175,
+     "hoehe": 44
     }
    ],
-   "unter44": []
+   "verstoesse": []
   },
   {
-   "seite": "desktop",
+   "seite": "desktop-app",
    "zustand": "widerrufen",
    "breite": 390,
+   "regel": "Touch ≥ 44×44 px",
    "ziele": [
     {
-     "text": "Abmelden",
-     "w": 316,
-     "h": 44
+     "ziel": "Abbrechen",
+     "breite": 175,
+     "hoehe": 44
     },
     {
-     "text": "QR-Code anzeigen",
-     "w": 316,
-     "h": 44
-    },
-    {
-     "text": "Abmelden",
-     "w": 95,
-     "h": 44
-    },
-    {
-     "text": "Abmelden",
-     "w": 95,
-     "h": 44
-    },
-    {
-     "text": "Abbrechen",
-     "w": 175,
-     "h": 44
-    },
-    {
-     "text": "Abmelden",
-     "w": 175,
-     "h": 44
+     "ziel": "Abmelden",
+     "breite": 175,
+     "hoehe": 44
     }
    ],
-   "unter44": []
+   "verstoesse": []
   },
   {
-   "seite": "desktop",
+   "seite": "desktop-app",
    "zustand": "netzfehler",
    "breite": 390,
+   "regel": "Touch ≥ 44×44 px",
    "ziele": [
     {
-     "text": "Abmelden",
-     "w": 316,
-     "h": 44
+     "ziel": "Schließen",
+     "breite": 44,
+     "hoehe": 44
     },
     {
-     "text": "QR-Code anzeigen",
-     "w": 316,
-     "h": 44
+     "ziel": "Schließen",
+     "breite": 175,
+     "hoehe": 44
     },
     {
-     "text": "Abmelden",
-     "w": 95,
-     "h": 44
-    },
-    {
-     "text": "Abmelden",
-     "w": 95,
-     "h": 44
-    },
-    {
-     "text": "✕",
-     "w": 44,
-     "h": 44
-    },
-    {
-     "text": "Schließen",
-     "w": 175,
-     "h": 44
-    },
-    {
-     "text": "Erneut versuchen",
-     "w": 175,
-     "h": 44
+     "ziel": "Erneut versuchen",
+     "breite": 175,
+     "hoehe": 44
     }
    ],
-   "unter44": []
+   "verstoesse": []
   },
   {
-   "seite": "desktop",
+   "seite": "desktop-app",
    "zustand": "abgebrochen",
    "breite": 390,
+   "regel": "Touch ≥ 44×44 px",
    "ziele": [
     {
-     "text": "Abmelden",
-     "w": 316,
-     "h": 44
+     "ziel": "Schließen",
+     "breite": 44,
+     "hoehe": 44
     },
     {
-     "text": "QR-Code anzeigen",
-     "w": 316,
-     "h": 44
+     "ziel": "Schließen",
+     "breite": 175,
+     "hoehe": 44
     },
     {
-     "text": "Abmelden",
-     "w": 95,
-     "h": 44
-    },
-    {
-     "text": "Abmelden",
-     "w": 95,
-     "h": 44
-    },
-    {
-     "text": "✕",
-     "w": 44,
-     "h": 44
-    },
-    {
-     "text": "Schließen",
-     "w": 175,
-     "h": 44
-    },
-    {
-     "text": "Neuen Code",
-     "w": 175,
-     "h": 44
+     "ziel": "Neuen Code",
+     "breite": 175,
+     "hoehe": 44
     }
    ],
-   "unter44": []
+   "verstoesse": []
+  },
+  {
+   "seite": "desktop-app",
+   "zustand": "unbestaetigt",
+   "breite": 390,
+   "regel": "Touch ≥ 44×44 px",
+   "ziele": [
+    {
+     "ziel": "Schließen",
+     "breite": 44,
+     "hoehe": 44
+    },
+    {
+     "ziel": "Behalten",
+     "breite": 175,
+     "hoehe": 44
+    },
+    {
+     "ziel": "Gerät abmelden",
+     "breite": 175,
+     "hoehe": 44
+    }
+   ],
+   "verstoesse": []
   },
   {
    "seite": "iphone",
    "zustand": "scan",
    "breite": 390,
+   "regel": "Touch ≥ 44×44 px",
    "ziele": [
     {
-     "text": "‹ Konto",
-     "w": 70,
-     "h": 44
+     "ziel": "Zurück",
+     "breite": 70,
+     "hoehe": 44
     },
     {
-     "text": "Stattdessen mit Passwort anmel",
-     "w": 358,
-     "h": 50
+     "ziel": "Stattdessen mit Passwort anmelden",
+     "breite": 358,
+     "hoehe": 50
     }
    ],
-   "unter44": []
+   "verstoesse": []
   },
   {
    "seite": "iphone",
    "zustand": "code",
    "breite": 390,
+   "regel": "Touch ≥ 44×44 px",
    "ziele": [
     {
-     "text": "‹ Konto",
-     "w": 70,
-     "h": 44
+     "ziel": "Zurück",
+     "breite": 70,
+     "hoehe": 44
     },
     {
-     "text": "Abbrechen",
-     "w": 358,
-     "h": 50
+     "ziel": "Abbrechen",
+     "breite": 358,
+     "hoehe": 50
     }
    ],
-   "unter44": []
+   "verstoesse": []
   },
   {
    "seite": "iphone",
    "zustand": "verbunden",
    "breite": 390,
+   "regel": "Touch ≥ 44×44 px",
    "ziele": [
     {
-     "text": "‹ Konto",
-     "w": 70,
-     "h": 44
+     "ziel": "Zurück",
+     "breite": 70,
+     "hoehe": 44
     },
     {
-     "text": "Fertig",
-     "w": 358,
-     "h": 50
+     "ziel": "Fertig",
+     "breite": 358,
+     "hoehe": 50
     }
    ],
-   "unter44": []
+   "verstoesse": []
   },
   {
    "seite": "iphone",
    "zustand": "abgelehnt",
    "breite": 390,
+   "regel": "Touch ≥ 44×44 px",
    "ziele": [
     {
-     "text": "‹ Konto",
-     "w": 70,
-     "h": 44
+     "ziel": "Zurück",
+     "breite": 70,
+     "hoehe": 44
     },
     {
-     "text": "Erneut scannen",
-     "w": 358,
-     "h": 50
+     "ziel": "Erneut scannen",
+     "breite": 358,
+     "hoehe": 50
     }
    ],
-   "unter44": []
+   "verstoesse": []
   },
   {
    "seite": "iphone",
    "zustand": "verwendet",
    "breite": 390,
+   "regel": "Touch ≥ 44×44 px",
    "ziele": [
     {
-     "text": "‹ Konto",
-     "w": 70,
-     "h": 44
+     "ziel": "Zurück",
+     "breite": 70,
+     "hoehe": 44
     },
     {
-     "text": "Neuen Code scannen",
-     "w": 358,
-     "h": 50
+     "ziel": "Neuen Code scannen",
+     "breite": 358,
+     "hoehe": 50
     }
    ],
-   "unter44": []
+   "verstoesse": []
   },
   {
    "seite": "iphone",
    "zustand": "netz",
    "breite": 390,
+   "regel": "Touch ≥ 44×44 px",
    "ziele": [
     {
-     "text": "‹ Konto",
-     "w": 70,
-     "h": 44
+     "ziel": "Zurück",
+     "breite": 70,
+     "hoehe": 44
     },
     {
-     "text": "Erneut versuchen",
-     "w": 358,
-     "h": 50
+     "ziel": "Erneut versuchen",
+     "breite": 358,
+     "hoehe": 50
     },
     {
-     "text": "Abbrechen",
-     "w": 358,
-     "h": 50
+     "ziel": "Abbrechen",
+     "breite": 358,
+     "hoehe": 50
     }
    ],
-   "unter44": []
+   "verstoesse": []
   }
  ],
- "fokus": [
+ "tastatur": [
   {
-   "zustand": "qr",
-   "tabFolge": [
+   "dialog": "qr",
+   "startFokus": "Abbrechen",
+   "tab": [
     "Weiter (Demo)",
-    "✕",
+    "Schließen",
     "Abbrechen",
-    "Weiter (Demo)"
-   ]
+    "Weiter (Demo)",
+    "Schließen"
+   ],
+   "shiftTab": [
+    "Weiter (Demo)",
+    "Abbrechen",
+    "Schließen",
+    "Weiter (Demo)",
+    "Abbrechen"
+   ],
+   "hintergrund": {
+    "frameInert": true,
+    "topInert": true,
+    "fokusImDialog": true,
+    "mausklick": "blockiert"
+   },
+   "escape": {
+    "zustand": "liste",
+    "fokus": "open-qr",
+    "frameInert": false
+   }
   },
   {
-   "zustand": "bestaetigen",
-   "tabFolge": [
+   "dialog": "bestaetigen",
+   "startFokus": "Nein, abbrechen",
+   "tab": [
+    "Ja, verbinden",
+    "Nein, abbrechen",
+    "Ja, verbinden",
+    "Nein, abbrechen",
+    "Ja, verbinden"
+   ],
+   "shiftTab": [
+    "Nein, abbrechen",
     "Ja, verbinden",
     "Nein, abbrechen",
     "Ja, verbinden",
     "Nein, abbrechen"
-   ]
+   ],
+   "hintergrund": {
+    "frameInert": true,
+    "topInert": true,
+    "fokusImDialog": true,
+    "mausklick": "blockiert"
+   },
+   "escape": {
+    "zustand": "liste",
+    "fokus": "open-qr",
+    "frameInert": false
+   }
+  },
+  {
+   "dialog": "widerrufen",
+   "startFokus": "Abbrechen",
+   "tab": [
+    "Abmelden",
+    "Abbrechen",
+    "Abmelden",
+    "Abbrechen",
+    "Abmelden"
+   ],
+   "shiftTab": [
+    "Abbrechen",
+    "Abmelden",
+    "Abbrechen",
+    "Abmelden",
+    "Abbrechen"
+   ],
+   "hintergrund": {
+    "frameInert": true,
+    "topInert": true,
+    "fokusImDialog": true,
+    "mausklick": "blockiert"
+   },
+   "escape": {
+    "zustand": "liste",
+    "fokus": "rev-iphone",
+    "frameInert": false
+   }
+  },
+  {
+   "dialog": "unbestaetigt",
+   "startFokus": "Behalten",
+   "tab": [
+    "Gerät abmelden",
+    "Schließen",
+    "Behalten",
+    "Gerät abmelden",
+    "Schließen"
+   ],
+   "shiftTab": [
+    "Gerät abmelden",
+    "Behalten",
+    "Schließen",
+    "Gerät abmelden",
+    "Behalten"
+   ],
+   "hintergrund": {
+    "frameInert": true,
+    "topInert": true,
+    "fokusImDialog": true,
+    "mausklick": "blockiert"
+   },
+   "escape": {
+    "zustand": "liste",
+    "fokus": "open-qr",
+    "frameInert": false
+   }
   }
  ],
  "scroll": [
@@ -1009,6 +698,20 @@
   },
   {
    "zustand": "abgebrochen",
+   "scrollH": 312,
+   "clientH": 312,
+   "overflowY": "auto",
+   "seiteHorizontal": false
+  },
+  {
+   "zustand": "widerrufen",
+   "scrollH": 326,
+   "clientH": 326,
+   "overflowY": "auto",
+   "seiteHorizontal": false
+  },
+  {
+   "zustand": "unbestaetigt",
    "scrollH": 312,
    "clientH": 312,
    "overflowY": "auto",
