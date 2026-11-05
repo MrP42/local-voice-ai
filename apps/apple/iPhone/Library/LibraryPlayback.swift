@@ -54,6 +54,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
     private var pausedParagraph: Int?
     private var phononTask: Task<Void, Never>?
     private var phononFailed = false
+    private var phononPaused = false
     /// Erst nach abgeschlossenem Sprung an die gespeicherte Stelle sichern.
     private var seekSettled = true
     private var lastTextSave = Date.distantPast
@@ -225,6 +226,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
     private var phononVoice: String? { phononFailed ? nil : PhononEngine.voiceName(voiceIdentifier) }
 
     private func stopPhonon() {
+        phononPaused = false
         phononTask?.cancel(); phononTask = nil
         PhononEngine.shared.silence()
     }
@@ -237,7 +239,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
         updateNowPlaying()
         phononTask = Task { [weak self] in
             do {
-                try await PhononEngine.shared.speak(p.text, voice: voice)
+                try await PhononEngine.shared.speak(p.text, voice: voice, rate: self?.rate ?? 1)
                 guard !Task.isCancelled else { return }
                 self?.paragraphFinished()
             } catch is CancellationError {
@@ -278,6 +280,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
         else {
             // Pausiert: alte Äußerung verwerfen, damit Weiter am neuen Absatz beginnt.
             if synth.isPaused { currentUtterance = nil; synth.stopSpeaking(at: .immediate) }
+            stopPhonon()
             pausedParagraph = nil
             wordRange = nil
             saveText(at: paragraphs[index].start)
@@ -312,7 +315,9 @@ final class LibraryPlayback: NSObject, ObservableObject {
         switch mode {
         case .audiobook: player?.playImmediately(atRate: rate); playing = true
         case .readAloud:
-            if synth.isPaused, pausedParagraph == paragraphIndex { synth.continueSpeaking(); playing = true } else { speakCurrent() }
+            if phononPaused, PhononEngine.shared.resume() { phononPaused = false; playing = true }
+            else if synth.isPaused, pausedParagraph == paragraphIndex { synth.continueSpeaking(); playing = true }
+            else { speakCurrent() }
         case nil: return
         }
         updateNowPlaying()
@@ -322,8 +327,8 @@ final class LibraryPlayback: NSObject, ObservableObject {
         switch mode {
         case .audiobook: player?.pause(); saveAudio()
         case .readAloud:
-            // Phonon lässt sich nicht anhalten: „Weiter“ beginnt den Absatz neu.
-            if phononTask != nil { stopPhonon() } else { synth.pauseSpeaking(at: .word); pausedParagraph = paragraphIndex }
+            if phononTask != nil { PhononEngine.shared.pause(); phononPaused = true }
+            else { synth.pauseSpeaking(at: .word); pausedParagraph = paragraphIndex }
         case nil: break
         }
         playing = false
@@ -348,7 +353,9 @@ final class LibraryPlayback: NSObject, ObservableObject {
 
     private func applyRate() {
         if mode == .audiobook, playing { player?.rate = rate }
-        if mode == .readAloud, playing, phononVoice == nil { speakCurrent() }  // Phonon kennt kein Tempo
+        if mode == .readAloud {
+            if phononTask != nil { PhononEngine.shared.setRate(rate) } else if playing { speakCurrent() }
+        }
     }
 
     func sleep(minutes: Int?) {

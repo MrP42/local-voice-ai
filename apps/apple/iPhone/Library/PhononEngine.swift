@@ -1,4 +1,56 @@
 import Foundation
+#if PHONON
+import AVFoundation
+
+/// Wiedergabe für Phonon. Eigener Player statt `PhononPlayer`, weil das Vorlesen echtes
+/// Pausieren und ein Tempo braucht: `AVAudioUnitTimePitch` ändert es ohne Tonhöhe.
+private final class PhononAudio: @unchecked Sendable {
+    private let engine = AVAudioEngine()
+    private let node = AVAudioPlayerNode()
+    private let pitch = AVAudioUnitTimePitch()
+    private let format = AVAudioFormat(standardFormatWithSampleRate: Phonon.sampleRate, channels: 1)!
+
+    init(rate: Float) throws {
+        pitch.rate = rate
+        engine.attach(node); engine.attach(pitch)
+        engine.connect(node, to: pitch, format: format)
+        engine.connect(pitch, to: engine.mainMixerNode, format: format)
+        try engine.start()
+        node.play()
+    }
+
+    deinit { node.stop(); engine.stop() }
+
+    private func buffer(_ samples: [Float]) -> AVAudioPCMBuffer? {
+        guard !samples.isEmpty, let buf = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(samples.count)) else { return nil }
+        buf.frameLength = AVAudioFrameCount(samples.count)
+        samples.withUnsafeBufferPointer { buf.floatChannelData![0].update(from: $0.baseAddress!, count: samples.count) }
+        return buf
+    }
+
+    func enqueue(_ samples: [Float]) { if let buf = buffer(samples) { node.scheduleBuffer(buf) } }
+
+    /// Kehrt zurück, wenn alles Eingereihte gespielt ist. Eine Pause verlängert das Warten.
+    func finished() async {
+        guard let tail = buffer([Float](repeating: 0, count: 240)) else { return }
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+                node.scheduleBuffer(tail, completionCallbackType: .dataPlayedBack) { _ in done.resume() }
+            }
+        } onCancel: { [node] in node.stop() }
+    }
+
+    func pause() { node.pause() }
+    /// `false`, wenn die Audio-Engine inzwischen steht (Anruf, Aufnahme, Routenwechsel).
+    func resume() -> Bool {
+        if !engine.isRunning { guard (try? engine.start()) != nil else { return false } }
+        node.play()
+        return true
+    }
+    func setRate(_ rate: Float) { pitch.rate = rate }
+    func stop() { node.stop() }
+}
+#endif
 
 /// Phonon-Stimmen fürs Vorlesen (Neural Engine, alles auf dem Gerät). Das Paket liegt
 /// nur als arm64 vor, daher gibt es Phonon nur im Gerätebau (`PHONON`), nicht im
@@ -43,7 +95,7 @@ final class PhononEngine: ObservableObject {
     /// Höchstens ein Modell im Speicher; ein laufendes Laden wird geteilt.
     private var loaded: (language: String, tts: Phonon)?
     private var loading_: (language: String, task: Task<Phonon, Error>)?
-    private var player: PhononPlayer?
+    private var player: PhononAudio?
     private var refreshTask: Task<Void, Never>?
 
     private func dropped(_ language: String) -> URL {
@@ -123,34 +175,34 @@ final class PhononEngine: ObservableObject {
     }
 
     /// Text sprechen und zurückkehren, wenn er zu Ende gespielt ist. Abbruch über die Task.
-    func speak(_ text: String, voice name: String) async throws {
+    func speak(_ text: String, voice name: String, rate: Float = 1) async throws {
         guard let parts = Self.parts(name) else { throw PhononUnavailable() }
         let tts = try await engine(parts.language)
         try Task.checkCancellation()
         if tts.voice != parts.voice { try await tts.setVoice(parts.voice) }
         try Task.checkCancellation()
         // Je Äußerung ein neuer Player: Nach Anruf, Aufnahme oder Routenwechsel steht die alte Audio-Engine.
-        let player = try PhononPlayer(configureSession: false)
+        let player = try PhononAudio(rate: rate)
         self.player = player
-        var firstChunk: Date?
-        var samples = 0
         for try await chunk in tts.stream(text) {
             try Task.checkCancellation()
             player.enqueue(chunk)
-            if firstChunk == nil { firstChunk = Date() }
-            samples += chunk.count
         }
-        // Erzeugt wird schneller als gespielt: auf das Ende der Wiedergabe warten.
-        guard let firstChunk else { return }
-        let rest = Double(samples) / Phonon.sampleRate - Date().timeIntervalSince(firstChunk) + 0.15
-        if rest > 0 { try await Task.sleep(nanoseconds: UInt64(rest * 1_000_000_000)) }
+        await player.finished()
+        try Task.checkCancellation()
     }
 
+    func pause() { player?.pause() }
+    func resume() -> Bool { player?.resume() ?? false }
+    func setRate(_ rate: Float) { player?.setRate(rate) }
     func silence() { player?.stop(); player = nil }
     #else
     var modelAvailable: Bool { false }
     func refresh() async {}
-    func speak(_ text: String, voice name: String) async throws { throw PhononUnavailable() }
+    func speak(_ text: String, voice name: String, rate: Float = 1) async throws { throw PhononUnavailable() }
+    func pause() {}
+    func resume() -> Bool { false }
+    func setRate(_ rate: Float) {}
     func silence() {}
     #endif
 }

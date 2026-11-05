@@ -719,7 +719,7 @@ private struct VoiceList: View {
                                 }.buttonStyle(.plain)
                             }
                         } header: { Text(PhononEngine.sectionTitle(language)) } footer: {
-                            Text("Läuft auf dem iPhone. Markiert wird der Absatz statt des Worts, das Tempo lässt sich nicht ändern. Die erste Nutzung einer Sprache dauert einige Sekunden.")
+                            Text("Läuft auf dem iPhone. Markiert wird der Absatz statt des Worts. Die erste Nutzung einer Sprache dauert einige Sekunden.")
                         }
                     }
                 }
