@@ -1,0 +1,34 @@
+{
+  "schema": "lva-buch-gespraech-offsets@1",
+  "note": "Offsets sind UTF-16-Einheiten im Originaltext (JavaScript-String-Länge). Prüfen: Stück start/end zeigt auf exakt den erwarteten Originaltext; Seite stimmt; Zitat liegt wörtlich bei [start,end).",
+  "cases": [
+    {
+      "id": "emoji-und-umlaute",
+      "text": "# Kapitel\n\n{{S. 1}}\nDer Fluß 🌊 war groß. „Grüße“, sagte Jörg.\n",
+      "quote": "„Grüße“, sagte Jörg.",
+      "expect_page": 1,
+      "note": "🌊 zählt 2 UTF-16-Einheiten; ß und Anführungszeichen je 1."
+    },
+    {
+      "id": "seitenwechsel-im-absatz",
+      "text": "# Kapitel\n\n{{S. 4}}\nDer erste Satz steht auf Seite vier. Der zweite Satz {{S. 5}}beginnt auf Seite vier und endet auf Seite fünf. Der dritte Satz steht auf Seite fünf.\n",
+      "quote": "Der dritte Satz steht auf Seite fünf.",
+      "expect_page": 5,
+      "note": "Seitenmarke mitten im Absatz: Zitatseite = letzte Marke vor dem Zitatanfang; Marke selbst nie im Zitat."
+    },
+    {
+      "id": "sprecher-und-stil",
+      "text": "# Kapitel\n\n{{S. 2}}\n<Anna> [calm] Ich bleibe hier, sagte sie leise.\n",
+      "quote": "Ich bleibe hier, sagte sie leise.",
+      "expect_page": 2,
+      "note": "Sprecher- und Stilmarken sind nicht im Zitat, Offsets zeigen trotzdem in den Originaltext."
+    },
+    {
+      "id": "grenze-schneidet",
+      "text": "# Kapitel\n\n{{S. 1}}\nSatz eins ist frei. Satz zwei ist frei. Satz drei ist geheim.\n",
+      "frontier_after": "Satz zwei ist frei.",
+      "expect_chunk_ends_with": "Satz zwei ist frei.",
+      "note": "frontier = Offset direkt nach „Satz zwei ist frei.“ plus 3 Zeichen in Satz drei; Stück endet an der Satzgrenze davor."
+    }
+  ]
+}

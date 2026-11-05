@@ -82,6 +82,10 @@ final class LibraryPlayback: NSObject, ObservableObject {
     private var seekSettled = true
     private var lastTextSave = Date.distantPast
     private var sessionObservers: [NSObjectProtocol] = []
+    /// Buch-Gespräch (G5): Solange das Blatt offen ist, hält die Pause-Taste (AirPods, Sperrbildschirm) die Antwort
+    /// an statt die Wiedergabe. Gibt `true` zurück, wenn der Befehl verbraucht wurde.
+    enum RemoteCommand { case play, pause, toggle }
+    var remoteIntercept: ((RemoteCommand) -> Bool)?
 
     init(library: PhoneLibrary? = nil) {
         self.library = library ?? .shared
@@ -454,6 +458,25 @@ final class LibraryPlayback: NSObject, ObservableObject {
         if busy { speakCurrent() } else { discardPausedSpeech(); prepareVoice() }
     }
 
+    /// Belegkarte des Buch-Gesprächs: an eine Stelle im Originaltext springen (UTF-16-Offset). Die Stelle zählt
+    /// nicht als gelesen. `autoplay`: dort vorlesen bzw. das Hörbuch abspielen („Ab hier vorlesen“).
+    func jump(toOffset offset: Int, autoplay: Bool) {
+        guard book != nil, let mode, !paragraphs.isEmpty else { return }
+        let target = max(0, offset)
+        if mode == .audiobook {
+            if let map = followMap { seek(toMs: map.ms(atChars: Double(target))) }
+            if autoplay { play() }
+            return
+        }
+        let index = LibraryText.paragraphIndex(paragraphs, at: Double(target))
+        let local = max(0, target - paragraphs[index].textStart)
+        let ranges = sentenceRanges(index)
+        let here = Cursor(paragraph: index, sentence: LibraryText.sentenceIndex(ranges, at: local))
+        move(to: here)
+        saveText(at: chars(of: here), jumped: true)
+        if autoplay { speakCurrent() } else if busy { speakCurrent() } else { discardPausedSpeech(); prepareVoice() }
+    }
+
     /// Satz vor oder zurück. Zuletzt gelesene Sätze liegen noch im Speicher und klingen sofort.
     func step(sentences delta: Int) {
         guard mode == .readAloud else { return }
@@ -482,7 +505,8 @@ final class LibraryPlayback: NSObject, ObservableObject {
         let previous = library.record(library.textKey(book))
         var rec = LibraryProgress.recordPosition(previous, to: Double(chars), length: Double(text.utf16.count),
                                                  unit: .chars, mode: .heard, now: PhoneLibrary.nowMs())
-        if jumped { rec.heard = previous?.heard ?? []; rec.finished = previous?.finished }
+        // Ein Sprung ist nicht gelesen: weder Bereiche noch Lesegrenze (Buch-Gespräch) rücken vor.
+        if jumped { rec.heard = previous?.heard ?? []; rec.frontier = previous?.frontier; rec.finished = previous?.finished }
         if let heard { rec = LibraryProgress.markHeard(rec, from: Double(heard.lowerBound), to: Double(heard.upperBound)) }
         library.put(library.textKey(book), rec)
         lastTextSave = Date()
@@ -597,9 +621,12 @@ final class LibraryPlayback: NSObject, ObservableObject {
         guard !remoteReady else { return }
         remoteReady = true
         let c = MPRemoteCommandCenter.shared()
-        c.playCommand.addTarget { [weak self] _ in MainActor.assumeIsolated { self?.play() }; return .success }
-        c.pauseCommand.addTarget { [weak self] _ in MainActor.assumeIsolated { self?.pause() }; return .success }
-        c.togglePlayPauseCommand.addTarget { [weak self] _ in MainActor.assumeIsolated { self?.toggle() }; return .success }
+        c.playCommand.addTarget { [weak self] _ in
+            MainActor.assumeIsolated { if self?.remoteIntercept?(.play) != true { self?.play() } }; return .success }
+        c.pauseCommand.addTarget { [weak self] _ in
+            MainActor.assumeIsolated { if self?.remoteIntercept?(.pause) != true { self?.pause() } }; return .success }
+        c.togglePlayPauseCommand.addTarget { [weak self] _ in
+            MainActor.assumeIsolated { if self?.remoteIntercept?(.toggle) != true { self?.toggle() } }; return .success }
         c.skipBackwardCommand.preferredIntervals = [15]
         c.skipForwardCommand.preferredIntervals = [15]
         c.skipBackwardCommand.addTarget { [weak self] _ in

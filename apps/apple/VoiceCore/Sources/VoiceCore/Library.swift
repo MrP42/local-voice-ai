@@ -150,13 +150,16 @@ public struct ProgressRecord: Codable, Equatable, Sendable {
     public var updated: Double
     public var finished: Bool?
     public var unit: ProgressUnit?
+    /// Weitester gelesener oder gehörter Stand in der Einheit des Datensatzes (Buch-Gespräch, Lesegrenze).
+    /// Optional und nur steigend: Zurückblättern, Zurückspulen und Zusammenführen senken ihn nie.
+    public var frontier: Double?
 
     public init(offset: Double, anchor: String? = nil, length: Double, heard: [ProgressRange] = [], read: [ProgressRange] = [],
-                updated: Double, finished: Bool? = nil, unit: ProgressUnit? = nil) {
+                updated: Double, finished: Bool? = nil, unit: ProgressUnit? = nil, frontier: Double? = nil) {
         self.offset = offset; self.anchor = anchor; self.length = length; self.heard = heard
-        self.read = read; self.updated = updated; self.finished = finished; self.unit = unit
+        self.read = read; self.updated = updated; self.finished = finished; self.unit = unit; self.frontier = frontier
     }
-    enum CodingKeys: String, CodingKey { case offset, anchor, length, heard, read, updated, finished, unit }
+    enum CodingKeys: String, CodingKey { case offset, anchor, length, heard, read, updated, finished, unit, frontier }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         offset = try c.decode(Double.self, forKey: .offset)
@@ -167,6 +170,7 @@ public struct ProgressRecord: Codable, Equatable, Sendable {
         updated = try c.decodeIfPresent(Double.self, forKey: .updated) ?? 0
         finished = try c.decodeIfPresent(Bool.self, forKey: .finished)
         unit = try? c.decodeIfPresent(ProgressUnit.self, forKey: .unit)
+        frontier = (try? c.decodeIfPresent(Double.self, forKey: .frontier)).flatMap { $0 }.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil }
     }
 }
 
@@ -213,7 +217,46 @@ public enum LibraryProgress {
         merged.read = mergeRanges(older.read + newer.read)
         merged.length = max(newer.length, older.length)
         if older.finished == true || newer.finished == true { merged.finished = true }
+        let known = [older.frontier, newer.frontier].compactMap { $0 }
+        let ends = rangesEnd(merged)
+        merged.frontier = known.isEmpty && ends == 0 ? nil : max(known.max() ?? 0, ends)
         return merged
+    }
+
+    /// Größtes Ende aller gehörten und gelesenen Bereiche; 0 ohne Bereiche.
+    static func rangesEnd(_ rec: ProgressRecord) -> Double {
+        (rec.heard + rec.read).reduce(0) { $1.count == 2 && $1[1].isFinite ? max($0, $1[1]) : $0 }
+    }
+
+    /// Neuer Wert des Feldes `frontier`: nie unter dem alten, nie unter den Bereichsenden; 0 bleibt 0 (nicht nil).
+    /// Ein Altbestand ohne Feld startet bei seinem bisherigen Stand (`reach`), ein frischer Datensatz bei 0:
+    /// ein erster Sprung hebt die Grenze nicht.
+    static func risenFrontier(prev: ProgressRecord?, rec: ProgressRecord) -> Double {
+        let before = prev.map { $0.frontier ?? reach($0) } ?? 0
+        return max(before, rangesEnd(rec), rec.finished == true ? rec.length : 0)
+    }
+
+    /// Weitester Stand eines Datensatzes in seiner Einheit: Feld und Bereiche; fehlt beides, gilt `offset`
+    /// (Altbestand, Plan §3.0). „Fertig“ zählt als ganzer Text.
+    public static func reach(_ rec: ProgressRecord) -> Double {
+        if rec.finished == true, rec.length > 0 { return rec.length }
+        if let frontier = rec.frontier { return max(frontier, rangesEnd(rec)) }
+        let ends = rangesEnd(rec)
+        if ends > 0 { return ends }
+        return max(0, rec.offset.isFinite ? rec.offset : 0)
+    }
+
+    /// Lesegrenze des Buch-Gesprächs: `max(gelesen, gehört)` als UTF-16-Offset im Originaltext (Plan §3.0).
+    /// Der Hörstand zählt nur mit echter Zeitachse (Abgleich), nie mit der linearen Schätzung. `nil`, wenn
+    /// nichts bekannt ist (Kern: Antwort „Ich kenne deine Leseposition noch nicht“).
+    public static func frontier(text: ProgressRecord?, audio: ProgressRecord?, map: FollowMap?) -> Int? {
+        var best = 0.0
+        if let text { best = max(best, reach(text)) }
+        if let audio, let map, !map.approximate {
+            let ms = reach(audio)
+            if ms > 0 { best = max(best, map.chars(atMs: ms)) }
+        }
+        return best > 0 ? Int(best.rounded(.down)) : nil
     }
 
     /// Wiedergabe lief von der bisherigen Stelle nach `to`. Kleine Schritte
@@ -229,6 +272,7 @@ public enum LibraryProgress {
             if mode == .read { rec.read = mergeRanges(rec.read + [[from, to]]) } else { rec.heard = mergeRanges(rec.heard + [[from, to]]) }
         }
         if rec.length > 0 && covered(rec.heard + rec.read) >= rec.length * 0.98 { rec.finished = true }
+        rec.frontier = risenFrontier(prev: prev, rec: rec)
         return rec
     }
 
@@ -238,6 +282,7 @@ public enum LibraryProgress {
         var out = rec
         out.heard = mergeRanges(rec.heard + [[from, to]])
         if out.length > 0 && covered(out.heard + out.read) >= out.length * 0.98 { out.finished = true }
+        out.frontier = risenFrontier(prev: rec, rec: out)
         return out
     }
 
