@@ -27,6 +27,7 @@
 pub mod chunk;
 pub mod index;
 pub mod model;
+pub mod progress;
 pub mod prompt;
 pub mod retrieve;
 

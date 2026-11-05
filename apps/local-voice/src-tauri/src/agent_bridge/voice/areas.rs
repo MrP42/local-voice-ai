@@ -22,16 +22,25 @@ pub enum Area {
     Conversations,
     Calendar,
     Tts,
+    /// Globaler Abrufindex (lva#325): Buchtext bis zur Lesegrenze.
+    Books,
+    /// Globaler Abrufindex: Notizen zu Büchern (Spoilerregel wie Bücher).
+    BookNotes,
+    /// Globaler Abrufindex: KI-Dokumente der Buch-KI (eigene Freigabe, Codex M1).
+    KiDocs,
 }
 
 impl Area {
-    pub const ALL: [Area; 6] = [
+    pub const ALL: [Area; 9] = [
         Area::Meetings,
         Area::Transcripts,
         Area::Dictations,
         Area::Conversations,
         Area::Calendar,
         Area::Tts,
+        Area::Books,
+        Area::BookNotes,
+        Area::KiDocs,
     ];
 
     /// Schluessel in der Einstellung und im Frontend.
@@ -43,6 +52,9 @@ impl Area {
             Area::Conversations => "conversations",
             Area::Calendar => "calendar",
             Area::Tts => "tts",
+            Area::Books => "books",
+            Area::BookNotes => "book_notes",
+            Area::KiDocs => "ki_docs",
         }
     }
 
@@ -59,18 +71,21 @@ impl Area {
             Area::Conversations => "frühere Gespräche",
             Area::Calendar => "Termine",
             Area::Tts => "Vorlesen-Seiten",
+            Area::Books => "Bücher",
+            Area::BookNotes => "Buchnotizen",
+            Area::KiDocs => "KI-Dokumente",
         }
     }
 
-    fn bit(self) -> u8 {
-        1 << (self as u8)
+    fn bit(self) -> u16 {
+        1 << (self as u16)
     }
 }
 
 /// Die freigegebenen Bereiche (klein, kopierbar).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Areas {
-    bits: u8,
+    bits: u16,
 }
 
 impl Areas {
@@ -82,7 +97,7 @@ impl Areas {
     /// Aus der Einstellung: `keys` ist `voice_call_knowledge`, `read_transcripts` der Unterschalter
     /// `voice_call_read_transcripts`. Unbekannte Schluessel zaehlen nicht (fail closed).
     pub fn from_settings(keys: &[String], read_transcripts: bool) -> Self {
-        let mut bits = 0u8;
+        let mut bits = 0u16;
         for key in keys {
             if let Some(area) = Area::parse(key) {
                 if area != Area::Transcripts {
@@ -151,7 +166,7 @@ mod tests {
         assert!(a.is_empty());
         assert_eq!(a, Areas::none());
         assert!(a.granted().is_empty());
-        assert_eq!(a.missing().len(), 5, "Transkripte fehlen nicht eigens");
+        assert_eq!(a.missing().len(), 8, "Transkripte fehlen nicht eigens");
         // Der Unterschalter allein gibt nichts frei.
         assert!(Areas::from_settings(&[], true).is_empty());
     }
@@ -191,7 +206,17 @@ mod tests {
             true,
         );
         assert_eq!(all.granted().len(), 6);
-        assert!(all.missing().is_empty());
+        assert_eq!(
+            all.missing(),
+            vec![Area::Books, Area::BookNotes, Area::KiDocs],
+            "die Bereiche des Abrufindex sind eigene Freigaben"
+        );
+        let every = Areas::from_settings(
+            &Area::ALL.iter().map(|a| a.key().to_string()).collect::<Vec<_>>(),
+            true,
+        );
+        assert_eq!(every.granted().len(), Area::ALL.len());
+        assert!(every.missing().is_empty());
     }
 
     #[test]

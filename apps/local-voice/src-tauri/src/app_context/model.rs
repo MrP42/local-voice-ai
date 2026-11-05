@@ -46,6 +46,12 @@ impl SourceKind {
         SourceKind::ALL.into_iter().find(|k| k.key() == key)
     }
 
+    /// Quellen, die immer zu einem Buch gehören: ohne `book_id` werden sie
+    /// nicht aufgenommen.
+    pub fn requires_book(self) -> bool {
+        matches!(self, SourceKind::BookNote | SourceKind::KiDoc)
+    }
+
     /// Bezeichnung im Prompt (und damit, was das Modell sagen darf).
     pub fn label(self) -> &'static str {
         match self {

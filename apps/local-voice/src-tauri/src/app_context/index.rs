@@ -106,6 +106,14 @@ impl AppIndex {
         self.postings.get(term).map_or(0, |p| p.len() as u32)
     }
 
+    /// Alle lebenden Stücke.
+    pub fn slots(&self) -> impl Iterator<Item = (usize, &Stored)> {
+        self.slots
+            .iter()
+            .enumerate()
+            .filter_map(|(i, s)| s.as_ref().map(|s| (i, s)))
+    }
+
     pub fn get(&self, slot: usize) -> Option<&Stored> {
         self.slots.get(slot).and_then(Option::as_ref)
     }
@@ -154,7 +162,9 @@ impl AppIndex {
     /// (Umklassifizierung), wird es entfernt.
     pub fn upsert(&mut self, doc: &ContextDoc) -> bool {
         let key = doc.key();
-        if doc.restricted {
+        // `restricted` nie; zwingend buchbezogene Quellen ohne Buchbezug auch
+        // nicht (Spoilerschutz ließe sich sonst umgehen, Codex P1 Must-fix 1).
+        if doc.restricted || (doc.kind.requires_book() && doc.book_id.is_none()) {
             let had = self.docs.contains_key(&key);
             self.remove(&key);
             return had;
