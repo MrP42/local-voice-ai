@@ -14,7 +14,10 @@
 //! (`OBJECT_ID_RE` im wai-portal); die Spec schreibt `models/<id>`. Hier steht
 //! `_`, beim Lesen gelten beide Trenner.
 //!
-//! * `models_<desktop_device_id>` -- `{v:1, models:[{id,label,provider,context_tokens}], updated_at}`
+//! * `models_<desktop_device_id>_<geraet>` -- je freigegebenem iPhone eine eigene,
+//!   mit dessen Relay-Schluessel signierte Liste, siehe [`ModelsPayload`]
+//!   (`<geraet>` = [`device_key`] des iPhones). Das fruehere gemeinsame Objekt
+//!   `models_<desktop_device_id>` wird nicht mehr geschrieben und beim Start geloescht.
 //! * `req_<request_id>` -- siehe [`ReqPayload`]
 //! * `resp_<request_id>` -- siehe [`RespPayload`]
 //!
@@ -34,8 +37,33 @@
 //!   model_id, prompt_sha256, request_id, system_sha256, v`
 //! * Antwort: `device_id, done, error ("" ohne), model_tuple, request_id, seq,
 //!   text_sha256, v`
+//! * Modellliste: `desktop_device_id, device_id, issued_at (Unix-Sekunden),
+//!   models (nach `id` bytegenau aufsteigend sortiert, je Eintrag mit den
+//!   Schluesseln context_tokens, id, label, provider), v`; `mac` liegt ausserhalb
 //!
 //! `usage` ist nicht Teil des MAC.
+//!
+//! Zeichenketten werden von [`json_quote`] maskiert: nur `"` `\\` `\n` `\r` `\t`
+//! mit Kuerzel, alle anderen Zeichen unter 0x20 als `\u00xx` (Kleinbuchstaben),
+//! alles Uebrige roh als UTF-8 (auch U+2028 und Emoji).
+//!
+//! # Antworten (R3) und Fehlercodes
+//!
+//! Beim Annehmen schreibt der PC sofort `seq 1` mit leerem Text und
+//! `model_tuple "pending"` (Lebenszeichen vor der 15-s-Frist des iPhones).
+//! Abweisungen tragen `model_tuple "unknown"`, `done:true` und `error`:
+//! `not_allowed` (Funktion/Modell nicht freigegeben), `limit` (Groesse,
+//! `max_tokens`, Stunden-/Tagesgrenze, schon eine Anfrage offen),
+//! `model_unavailable`, `clock` (Uhrzeit passt nicht, siehe [`CLOCK_SKEW_S`]),
+//! `timeout`, `llm_failed`.
+//!
+//! # Einrichtungscode und Freigabe (R1)
+//!
+//! Der Code gilt 10 Minuten und genau einmal: die Freigabe ist `pending`, bis
+//! die erste gueltige (authentische) Anfrage des iPhones eintrifft; danach ist
+//! sie aktiv, der Code verbraucht. Ohne diese erste Anfrage verfaellt die
+//! Freigabe samt Schluessel nach 10 Minuten. Erneutes Anzeigen erzeugt einen
+//! neuen Schluessel; der alte ist sofort ungueltig.
 //!
 //! Datenschutz (R5): nichts aus `system`, `prompt` oder der Antwort geht ins
 //! Log; das Log kennt nur Zaehler und Fehlercodes.
@@ -50,8 +78,9 @@ use hmac::{Hmac, Mac};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::AppHandle;
@@ -72,10 +101,20 @@ pub const MAX_TOKENS_LIMIT: u32 = 800;
 pub const MAX_PER_HOUR: usize = 30;
 pub const MAX_PER_DAY: usize = 200;
 /// Fristen (R11), in Sekunden: `expires_at = created_at + 90`; der PC nimmt nur
-/// an, wenn noch mindestens 65 bleiben; Uhrabweichung hoechstens 120.
+/// an, wenn noch mindestens 65 bleiben.
+///
+/// Uhrabweichung: `created_at` darf von der PC-Uhr um hoechstens 120 s
+/// abweichen, und zwar **in beide Richtungen** (iPhone-Uhr geht vor oder nach).
+/// Zusaetzlich verlangt die 65-s-Regel, dass die Anfrage hoechstens 25 s nach
+/// `created_at` (nach PC-Uhr) eintrifft; wer spaeter oder mit mehr als 25 s
+/// nachgehender Uhr sendet, bekommt ebenfalls `clock`. Eine authentische, aber
+/// zeitlich unpassende Anfrage wird mit `error:"clock"` beantwortet (nie still
+/// verworfen), damit das iPhone „Uhr pruefen“ zeigen kann.
 pub const REQUEST_WINDOW_S: i64 = 90;
 pub const MIN_REMAINING_S: i64 = 65;
 pub const CLOCK_SKEW_S: i64 = 120;
+/// Einrichtungscode: gueltig 10 Minuten.
+pub const CODE_TTL_MS: i64 = 10 * 60 * 1000;
 /// Zeitrahmen eines Modellaufrufs (R11).
 pub const CALL_TIMEOUT: Duration = Duration::from_secs(60);
 /// Abfragetakt des Hubs, solange das Relay angeboten wird.
@@ -113,6 +152,8 @@ pub const ERR_MODEL_UNAVAILABLE: &str = "model_unavailable";
 pub const ERR_TIMEOUT: &str = "timeout";
 pub const ERR_LLM_FAILED: &str = "llm_failed";
 pub const ERR_NOT_ALLOWED: &str = "not_allowed";
+pub const ERR_LIMIT: &str = "limit";
+pub const ERR_CLOCK: &str = "clock";
 
 // ------------------------------------------------------------- Nutzlasten --
 
@@ -131,12 +172,21 @@ pub struct ModelEntry {
     pub context_tokens: u32,
 }
 
-/// `models_<desktop_device_id>`.
+/// `models_<desktop_device_id>_<geraet>`: die Modelle, die dieses iPhone nutzen
+/// darf, mit HMAC ueber [`models_canonical`] (Schluessel dieses Geraets).
+/// Entspricht `BookTalkRelayModelList` im iPhone-Client.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct ModelsPayload {
     pub v: u32,
+    /// Geraete-Kennung dieses PCs (Absender).
+    pub desktop_device_id: String,
+    /// Geraete-Kennung des iPhones, fuer das die Liste gilt.
+    pub device_id: String,
+    /// Unix-Sekunden der Veroeffentlichung.
+    pub issued_at: i64,
     pub models: Vec<ModelEntry>,
-    pub updated_at: i64,
+    /// Nicht Teil der Signatur.
+    pub mac: String,
 }
 
 /// `req_<request_id>`: die fertig gebaute, signierte Anfrage des iPhones.
@@ -282,6 +332,60 @@ pub fn resp_canonical(r: &RespPayload) -> String {
     )
 }
 
+/// Kanonische Zeichenfolge einer Modellliste (wie `BookTalkRelayModelList.canonical`):
+/// Schluessel alphabetisch, `v` mitsigniert, `mac` nicht; die Eintraege nach
+/// `id` (UTF-8-Bytes) sortiert, je `context_tokens, id, label, provider`.
+pub fn models_canonical(p: &ModelsPayload) -> String {
+    let mut sorted: Vec<&ModelEntry> = p.models.iter().collect();
+    sorted.sort_by(|a, b| a.id.as_bytes().cmp(b.id.as_bytes()));
+    let models: Vec<String> = sorted
+        .iter()
+        .map(|m| {
+            format!(
+                "{{\"context_tokens\":{},\"id\":{},\"label\":{},\"provider\":{}}}",
+                m.context_tokens,
+                json_quote(&m.id),
+                json_quote(&m.label),
+                json_quote(&m.provider)
+            )
+        })
+        .collect();
+    format!(
+        "{{\"desktop_device_id\":{},\"device_id\":{},\"issued_at\":{},\"models\":[{}],\"v\":{}}}",
+        json_quote(&p.desktop_device_id),
+        json_quote(&p.device_id),
+        p.issued_at,
+        models.join(","),
+        p.v
+    )
+}
+
+/// Modellliste fuer ein Geraet bauen und signieren (`now_ms` -> `issued_at` in Sekunden).
+pub fn signed_models(
+    desktop_device_id: &str,
+    grant: &DeviceGrant,
+    key: &[u8],
+    mut models: Vec<ModelEntry>,
+    now_ms: i64,
+) -> ModelsPayload {
+    models.sort_by(|a, b| a.id.as_bytes().cmp(b.id.as_bytes()));
+    let mut p = ModelsPayload {
+        v: PAYLOAD_VERSION,
+        desktop_device_id: desktop_device_id.to_string(),
+        device_id: grant.device_id.clone(),
+        issued_at: now_ms.div_euclid(1000),
+        models,
+        mac: String::new(),
+    };
+    p.mac = mac_hex(key, models_canonical(&p).as_bytes());
+    p
+}
+
+/// Modellliste pruefen (so, wie das iPhone es tut; hier fuer die Tests).
+pub fn models_mac_ok(key: &[u8], p: &ModelsPayload) -> bool {
+    mac_ok(key, models_canonical(p).as_bytes(), &p.mac)
+}
+
 /// Antwort pruefen (so, wie das iPhone es tut; hier fuer die Tests).
 pub fn resp_mac_ok(key: &[u8], r: &RespPayload) -> bool {
     mac_ok(key, resp_canonical(r).as_bytes(), &r.mac)
@@ -356,7 +460,19 @@ pub struct DeviceGrant {
     pub functions: Vec<String>,
     pub model_ids: Vec<String>,
     pub created_at_ms: i64,
+    /// Ablauf der Freigabe (90 Tage), getrennt vom Ablauf des Codes.
     pub expires_at_ms: i64,
+    /// `false`, solange noch keine gueltige Anfrage des iPhones eingetroffen ist.
+    #[serde(default = "default_true")]
+    pub activated: bool,
+    /// Bis dahin gilt der Einrichtungscode (und damit eine noch nicht
+    /// aktivierte Freigabe).
+    #[serde(default)]
+    pub code_expires_at_ms: i64,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl DeviceGrant {
@@ -364,8 +480,14 @@ impl DeviceGrant {
         B64.decode(&self.key_b64).ok().filter(|k| k.len() == 32)
     }
 
+    /// Gueltig: nicht abgelaufen, und entweder aktiviert oder der Code gilt noch.
     pub fn active(&self, now_ms: i64) -> bool {
-        self.expires_at_ms > now_ms
+        self.expires_at_ms > now_ms && (self.activated || self.code_expires_at_ms > now_ms)
+    }
+
+    /// Noch nicht benutzt, Code noch gueltig.
+    pub fn pending(&self, now_ms: i64) -> bool {
+        !self.activated && self.code_expires_at_ms > now_ms
     }
 }
 
@@ -419,10 +541,11 @@ impl RelayStore {
 
     /// Anfrage merken; `accepted` zaehlt gegen die Stunden- und Tagesgrenze.
     pub fn record(&mut self, request_id: &str, device_key: &str, accepted: bool, expires_ms: i64, now_ms: i64) {
+        // Auch bei einer Anfrage mit abwegiger Uhrzeit mindestens `SEEN_GRACE_MS` ab jetzt sperren.
         let until = if accepted {
             (expires_ms + SEEN_GRACE_MS).max(now_ms + DAY_MS)
         } else {
-            expires_ms + SEEN_GRACE_MS
+            expires_ms.max(now_ms) + SEEN_GRACE_MS
         };
         self.seen.push(Seen {
             request_id: request_id.to_string(),
@@ -434,6 +557,24 @@ impl RelayStore {
 
     pub fn prune(&mut self, now_ms: i64) {
         self.seen.retain(|s| s.until_ms > now_ms);
+        // Nie benutzter Einrichtungscode abgelaufen: Freigabe samt Schluessel weg.
+        self.grants.retain(|g| g.activated || g.code_expires_at_ms > now_ms);
+    }
+
+    /// Erste gueltige Anfrage des iPhones: Freigabe aktivieren (der Code ist damit
+    /// verbraucht). `true`, wenn sie vorher noch `pending` war.
+    pub fn activate(&mut self, device_id: &str, key_id: &str) -> bool {
+        match self
+            .grants
+            .iter_mut()
+            .find(|g| g.device_id == device_id && g.key_id == key_id && !g.activated)
+        {
+            Some(g) => {
+                g.activated = true;
+                true
+            }
+            None => false,
+        }
     }
 
     /// Angenommene Anfragen eines Geraets seit `since_ms`.
@@ -465,19 +606,63 @@ fn store_path(app: &AppHandle) -> Result<PathBuf, String> {
 
 static STORE_LOCK: Mutex<()> = Mutex::new(());
 
+/// Ergebnis des Lesens der Ablage.
+enum Loaded {
+    Missing,
+    Ok(RelayStore),
+    /// Inhalt nicht lesbar als `RelayStore`.
+    Corrupt,
+    /// Datei da, aber nicht zu lesen (Rechte, Sperre): nichts anfassen.
+    Unreadable,
+}
+
+fn read_store(path: &Path) -> Loaded {
+    match std::fs::read_to_string(path) {
+        Ok(raw) => match serde_json::from_str(&raw) {
+            Ok(store) => Loaded::Ok(store),
+            Err(_) => Loaded::Corrupt,
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Loaded::Missing,
+        Err(_) => Loaded::Unreadable,
+    }
+}
+
+/// Lesen unter der Sperre (auch fuer den Widerrufs-Test laufender Anfragen).
+/// Eine fehlende oder unlesbare Ablage gilt als leer; geschrieben wird hier nie.
 pub fn load_store(path: &Path) -> RelayStore {
-    std::fs::read_to_string(path)
-        .ok()
-        .and_then(|raw| serde_json::from_str(&raw).ok())
-        .unwrap_or_default()
+    let _guard = STORE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    match read_store(path) {
+        Loaded::Ok(store) => store,
+        _ => RelayStore::default(),
+    }
 }
 
 /// Laden, aendern, schreiben -- unter einer Sperre, weil Oberflaeche und
-/// Schleife dieselbe Datei benutzen.
+/// Schleife dieselbe Datei benutzen. Geschrieben wird nur bei echter
+/// Aenderung, atomar (Nachbardatei + Umbenennen). Eine nicht lesbare Datei
+/// wird nie mit einem Standardwert ueberschrieben: ein Parse-Fehler legt sie
+/// beiseite (`.defekt-<zeit>`), das Relay bleibt aus (keine Freigaben), bis
+/// neu freigegeben wird; eine unlesbare Datei ergibt einen Fehler.
 pub fn update_store<R>(path: &Path, f: impl FnOnce(&mut RelayStore) -> R) -> Result<R, String> {
     let _guard = STORE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let mut store = load_store(path);
+    let mut store = match read_store(path) {
+        Loaded::Ok(store) => store,
+        Loaded::Missing => RelayStore::default(),
+        Loaded::Corrupt => {
+            let mut name = path.file_name().map(|n| n.to_os_string()).unwrap_or_default();
+            name.push(format!(".defekt-{}", now_ms()));
+            std::fs::rename(path, path.with_file_name(name))
+                .map_err(|e| format!("Relay-Ablage defekt und nicht beiseite zu legen: {e}"))?;
+            log::warn!("Buch-Relay: Ablage unlesbar, beiseite gelegt; das Relay bleibt aus, bis neu freigegeben wird");
+            RelayStore::default()
+        }
+        Loaded::Unreadable => return Err("Relay-Ablage nicht lesbar".into()),
+    };
+    let before = store.clone();
     let out = f(&mut store);
+    if store == before {
+        return Ok(out);
+    }
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("Datenverzeichnis: {e}"))?;
     }
@@ -488,7 +673,9 @@ pub fn update_store<R>(path: &Path, f: impl FnOnce(&mut RelayStore) -> R) -> Res
 
 /// Einrichtungscode fuer das iPhone: `lvrelay1:` plus JSON `{v, key_id, k
 /// (base64url, 32 Byte), desktop_device_id, desktop_name, device_id, model_ids,
-/// expires_at (Unix-Sekunden)}` -- wie `BookTalkRelayEnrollment` im iPhone-Client.
+/// expires_at, grant_expires_at}` -- wie `BookTalkRelayEnrollment` im iPhone-Client.
+/// `expires_at` = Ablauf des **Codes** (10 Minuten, Unix-Sekunden),
+/// `grant_expires_at` = Ablauf der **Freigabe** (90 Tage, Unix-Sekunden).
 pub fn pairing_code(desktop_device_id: &str, desktop_name: &str, grant: &DeviceGrant) -> String {
     let key = B64.decode(&grant.key_b64).unwrap_or_default();
     let body = serde_json::json!({
@@ -499,11 +686,14 @@ pub fn pairing_code(desktop_device_id: &str, desktop_name: &str, grant: &DeviceG
         "desktop_name": desktop_name,
         "device_id": grant.device_id,
         "model_ids": grant.model_ids,
-        "expires_at": grant.expires_at_ms.div_euclid(1000),
+        "expires_at": grant.code_expires_at_ms.div_euclid(1000),
+        "grant_expires_at": grant.expires_at_ms.div_euclid(1000),
     });
     format!("lvrelay1:{body}")
 }
 
+/// Neue Freigabe: frischer Schluessel, `pending` bis zur ersten gueltigen
+/// Anfrage, Code 10 Minuten, Freigabe 90 Tage.
 pub fn new_grant(device_id: &str, name: &str, model_ids: Vec<String>, now_ms: i64) -> DeviceGrant {
     let mut key = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut key);
@@ -517,7 +707,29 @@ pub fn new_grant(device_id: &str, name: &str, model_ids: Vec<String>, now_ms: i6
         model_ids,
         created_at_ms: now_ms,
         expires_at_ms: now_ms + GRANT_DAYS * DAY_MS,
+        activated: false,
+        code_expires_at_ms: now_ms + CODE_TTL_MS,
     }
+}
+
+/// QR-Code als SVG (Bibliothek `qrcode`, MIT OR Apache-2.0): ein Pfad aus
+/// Einzelmodulen, mit Ruhezone, ohne Skripte; die Oberflaeche zeigt ihn als Bild.
+pub fn qr_svg(text: &str) -> Result<String, String> {
+    use qrcode::{Color, EcLevel, QrCode};
+    let code = QrCode::with_error_correction_level(text.as_bytes(), EcLevel::M)
+        .map_err(|e| format!("QR-Code: {e}"))?;
+    let width = code.width();
+    let quiet = 4;
+    let size = width + 2 * quiet;
+    let mut path = String::new();
+    for (i, c) in code.to_colors().into_iter().enumerate() {
+        if c == Color::Dark {
+            path.push_str(&format!("M{} {}h1v1h-1z", i % width + quiet, i / width + quiet));
+        }
+    }
+    Ok(format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 {size} {size}\" shape-rendering=\"crispEdges\"><rect width=\"{size}\" height=\"{size}\" fill=\"#fff\"/><path d=\"{path}\" fill=\"#000\"/></svg>"
+    ))
 }
 
 // ------------------------------------------------------------ Modellliste --
@@ -599,9 +811,57 @@ pub fn published_models(eligible: &[ModelEntry], grants: &[DeviceGrant], now_ms:
         .collect()
 }
 
-/// Fingerabdruck der Liste (ohne `updated_at`): nur bei Aenderung neu veroeffentlichen.
-pub fn models_fingerprint(models: &[ModelEntry]) -> String {
-    sha256_hex(&serde_json::to_string(models).unwrap_or_default())
+/// Fingerabdruck einer Geraeteliste (ohne `updated_at`, mit Schluessel-ID, weil
+/// ein neuer Schluessel eine neu signierte Liste braucht).
+pub fn models_fingerprint(key_id: &str, models: &[ModelEntry]) -> String {
+    sha256_hex(&format!("{key_id}|{}", serde_json::to_string(models).unwrap_or_default()))
+}
+
+/// Objekt-Kennung der Liste fuer ein Geraet: `models_<desktop>_<geraet>`.
+pub fn list_object_id(desktop_device_id: &str, device_key: &str) -> String {
+    object_id(Kind::Models, &format!("{desktop_device_id}_{device_key}"))
+}
+
+/// Die Liste je gueltiger Freigabe (auch einer noch nicht aktivierten, damit
+/// das iPhone nach dem Einlesen des Codes die Modelle sieht): die
+/// eingeschalteten, bereiten Modelle, die die Freigabe erlaubt. Geraete ohne
+/// Modell bekommen keine Liste.
+pub fn device_lists(
+    eligible: &[ModelEntry],
+    grants: &[DeviceGrant],
+    now_ms: i64,
+) -> BTreeMap<String, (DeviceGrant, Vec<ModelEntry>)> {
+    grants
+        .iter()
+        .filter(|g| g.active(now_ms))
+        .filter_map(|g| {
+            let entries: Vec<ModelEntry> = eligible
+                .iter()
+                .filter(|m| g.model_ids.iter().any(|id| id == &m.id))
+                .cloned()
+                .collect();
+            (!entries.is_empty()).then(|| (g.device_key.clone(), (g.clone(), entries)))
+        })
+        .collect()
+}
+
+/// Beim Start: das fruehere gemeinsame `models_<desktop>` und Listen von
+/// Geraeten ohne gueltige Freigabe loeschen (Hub-Objekte haben keine TTL).
+async fn sweep_lists(ctx: &Arc<Ctx>, st: &mut LoopState, keep: &BTreeSet<String>) -> Result<(), HubError> {
+    let status = ctx.client.status().await?;
+    st.devices = status.devices.clone();
+    st.devices_at = Some(Instant::now());
+    if status.objects.get(COLLECTION).copied().unwrap_or(0) == 0 {
+        return Ok(());
+    }
+    ctx.put(&object_id(Kind::Models, &ctx.cfg.device_id), None).await?;
+    let own = device_key(&ctx.cfg.device_id);
+    for d in &status.devices {
+        if valid_device_key(&d.device) && d.device != own && !keep.contains(&d.device) {
+            ctx.put(&list_object_id(&ctx.cfg.device_id, &d.device), None).await?;
+        }
+    }
+    Ok(())
 }
 
 /// Einstellungen so, dass das Modell `model_id` das aktive ist (mit Effort,
@@ -639,7 +899,8 @@ pub enum Verdict {
 
 /// Prueft eine entschluesselte Anfrage in der Reihenfolge der Spec (11.7):
 /// Freigabe und MAC zuerst, damit ein Unbefugter weder Antworten noch
-/// Eintraege in der Replay-Sperre ausloest.
+/// Eintraege in der Replay-Sperre ausloest. Nur eine authentische Anfrage
+/// (`Accept`/`Reject`) aktiviert eine noch `pending` Freigabe.
 pub fn check_request(object_request_id: &str, req: &ReqPayload, gate: &Gate<'_>) -> Verdict {
     if req.v != PAYLOAD_VERSION {
         return Verdict::Ignore("version");
@@ -661,18 +922,18 @@ pub fn check_request(object_request_id: &str, req: &ReqPayload, gate: &Gate<'_>)
     if !mac_ok(&key, req_canonical(req).as_bytes(), &req.mac) {
         return Verdict::Ignore("mac");
     }
-    let now_s = gate.now_ms.div_euclid(1000);
-    if (req.created_at - now_s).abs() > CLOCK_SKEW_S {
-        return Verdict::Ignore("uhrzeit");
-    }
+    // Ab hier ist die Anfrage authentisch (MAC stimmt): zeitlich Unpassendes
+    // wird mit `clock` beantwortet, nicht still verworfen (Wiederholungen sperrt
+    // die Replay-Sperre).
     if req.expires_at != req.created_at + REQUEST_WINDOW_S {
         return Verdict::Ignore("frist");
     }
-    if req.expires_at - now_s < MIN_REMAINING_S {
-        return Verdict::Ignore("abgelaufen");
-    }
     if gate.store.has_seen(&req.request_id) {
         return Verdict::Ignore("replay");
+    }
+    let now_s = gate.now_ms.div_euclid(1000);
+    if (req.created_at - now_s).abs() > CLOCK_SKEW_S || req.expires_at - now_s < MIN_REMAINING_S {
+        return Verdict::Reject(ERR_CLOCK);
     }
     if req.function != FUNCTION || !grant.functions.iter().any(|f| f == &req.function) {
         return Verdict::Reject(ERR_NOT_ALLOWED);
@@ -685,18 +946,18 @@ pub fn check_request(object_request_id: &str, req: &ReqPayload, gate: &Gate<'_>)
     }
     let (sys, prompt) = (req.system.chars().count(), req.prompt.chars().count());
     if sys > MAX_SYSTEM_CHARS || sys + prompt > MAX_PROMPT_CHARS {
-        return Verdict::Reject(ERR_NOT_ALLOWED);
+        return Verdict::Reject(ERR_LIMIT);
     }
     if req.max_tokens == 0 || req.max_tokens > MAX_TOKENS_LIMIT {
-        return Verdict::Reject(ERR_NOT_ALLOWED);
+        return Verdict::Reject(ERR_LIMIT);
     }
     if gate.store.accepted_since(&dkey, gate.now_ms - 3_600_000) >= MAX_PER_HOUR
         || gate.store.accepted_since(&dkey, gate.now_ms - DAY_MS) >= MAX_PER_DAY
     {
-        return Verdict::Reject(ERR_NOT_ALLOWED);
+        return Verdict::Reject(ERR_LIMIT);
     }
     if gate.busy {
-        return Verdict::Reject(ERR_NOT_ALLOWED);
+        return Verdict::Reject(ERR_LIMIT);
     }
     Verdict::Accept
 }
@@ -783,6 +1044,11 @@ impl Progress {
         r
     }
 
+    /// Lebenszeichen beim Annehmen: `seq 1`, leerer Text, `model_tuple "pending"`.
+    pub fn start(&mut self) -> RespPayload {
+        self.build("", MODEL_PENDING, false, None, None)
+    }
+
     /// Zwischenstand, nur wenn der Text seit dem letzten Schreiben gewachsen ist.
     pub fn update(&mut self, text: &str) -> Option<RespPayload> {
         let text = clip_text(text, MAX_RESP_BYTES);
@@ -866,15 +1132,45 @@ struct Shared {
     busy: Busy,
     /// Zuletzt bekannte Revision je Objekt (Basis fuer das naechste Schreiben).
     revisions: HashMap<String, i64>,
+    /// Abbruchsignale laufender Anfragen, nach `request_id`.
+    cancels: HashMap<String, Arc<AtomicBool>>,
 }
 
+impl Shared {
+    /// Abbrechen, falls die Anfrage laeuft. `true`, wenn es eine gab.
+    fn cancel(&self, request_id: &str) -> bool {
+        match self.cancels.get(request_id) {
+            Some(flag) => {
+                flag.store(true, Ordering::SeqCst);
+                true
+            }
+            None => false,
+        }
+    }
+}
+
+/// Der Zustand ueberlebt die Takte: jeder Takt baut einen neuen [`Ctx`], alle
+/// teilen dasselbe `Arc<Mutex<Shared>>` aus dem [`LoopState`].
 struct Ctx {
     cfg: SyncConfig,
     key: [u8; crypto::KEY_LEN],
     key_id: String,
     client: HubClient,
     store_path: PathBuf,
-    shared: Mutex<Shared>,
+    shared: Arc<Mutex<Shared>>,
+}
+
+impl Ctx {
+    fn new(cfg: SyncConfig, key: [u8; crypto::KEY_LEN], store_path: PathBuf, shared: Arc<Mutex<Shared>>) -> Self {
+        Self {
+            key_id: crypto::key_id(&key),
+            client: HubClient::new(&cfg.url, &cfg.token),
+            key,
+            cfg,
+            store_path,
+            shared,
+        }
+    }
 }
 
 /// Ausgang eines Schreibversuchs.
@@ -983,14 +1279,17 @@ impl Ctx {
 struct LoopState {
     /// Konto, fuer das der Zustand gilt (Geraet + Benutzer + Hub).
     account: Option<String>,
-    published_hash: Option<String>,
+    /// Fingerabdruck der veroeffentlichten Liste je Geraet (`device_key`).
+    published_lists: HashMap<String, String>,
+    /// Alle Modelle, die mindestens ein Geraet nutzen darf.
     published: Vec<ModelEntry>,
     /// Beim Start geprueft, ob eine alte Modellliste im Hub steht (Relay aus).
     swept: bool,
     cursor: Option<i64>,
     devices: Vec<HubDevice>,
     devices_at: Option<Instant>,
-    ctx: Option<Arc<Ctx>>,
+    /// Laufende Anfragen, Revisionen und Abbruchsignale ueber alle Takte.
+    shared: Arc<Mutex<Shared>>,
 }
 
 /// Hintergrundschleife; vom Sync-Start aus gestartet. Beobachtet die
@@ -1029,20 +1328,9 @@ async fn tick(app: &AppHandle, st: &mut LoopState) -> Duration {
     let Ok(key) = cfg.key() else {
         return IDLE_TICK;
     };
-    // Laufende Anfragen und Revisionen leben ueber die Takte hinweg.
-    let carried = st
-        .ctx
-        .as_ref()
-        .map(|c| std::mem::take(&mut *c.shared.lock().unwrap_or_else(|e| e.into_inner())));
-    let ctx = Arc::new(Ctx {
-        key_id: crypto::key_id(&key),
-        client: HubClient::new(&cfg.url, &cfg.token),
-        key,
-        cfg,
-        store_path,
-        shared: Mutex::new(carried.unwrap_or_default()),
-    });
-    st.ctx = Some(ctx.clone());
+    // Laufende Anfragen und Revisionen leben ueber die Takte hinweg: jeder
+    // Takt bekommt denselben geteilten Zustand.
+    let ctx = Arc::new(Ctx::new(cfg, key, store_path, st.shared.clone()));
     let settings = crate::settings::get_settings(app);
     match run_tick(&ctx, st, &settings).await {
         Ok(delay) => delay,
@@ -1059,7 +1347,6 @@ async fn run_tick(
     st: &mut LoopState,
     settings: &AppSettings,
 ) -> Result<Duration, HubError> {
-    let own_models_id = object_id(Kind::Models, &ctx.cfg.device_id);
     let now = now_ms();
 
     // Dauerhafter Zustand: abgelaufene Eintraege weg, faellige Loeschungen holen.
@@ -1079,36 +1366,54 @@ async fn run_tick(
         Vec::new()
     };
     let models = published_models(&eligible, &store.grants, now);
+    // Je freigegebenem Geraet eine eigene, mit dessen Schluessel signierte Liste.
+    let lists = device_lists(&eligible, &store.grants, now);
 
     if !wanted || models.is_empty() {
-        // Ausgeschaltet, ohne Freigabe oder ohne bereites Modell: Liste zurueckziehen (R10).
-        if st.published_hash.take().is_some() {
-            ctx.put(&own_models_id, None).await?;
+        // Ausgeschaltet, ohne Freigabe oder ohne bereites Modell: Listen zurueckziehen (R10).
+        let stale: Vec<String> = st.published_lists.drain().map(|(k, _)| k).collect();
+        let had_lists = !stale.is_empty();
+        for key in stale {
+            ctx.put(&list_object_id(&ctx.cfg.device_id, &key), None).await?;
+        }
+        if had_lists {
             st.published.clear();
             st.cursor = None;
         } else if !st.swept {
-            let status = ctx.client.status().await?;
-            if status.objects.get(COLLECTION).copied().unwrap_or(0) > 0 {
-                ctx.put(&own_models_id, None).await?;
-            }
+            sweep_lists(ctx, st, &BTreeSet::new()).await?;
         }
         st.swept = true;
         run_cleanup(ctx, due).await;
         return Ok(IDLE_TICK);
     }
-    st.swept = true;
+    if !st.swept {
+        sweep_lists(ctx, st, &lists.keys().cloned().collect()).await?;
+        st.swept = true;
+    }
 
-    // Modellliste: bei Aenderung neu veroeffentlichen.
-    let fingerprint = models_fingerprint(&models);
-    if st.published_hash.as_deref() != Some(fingerprint.as_str()) {
-        let payload = ModelsPayload {
-            v: PAYLOAD_VERSION,
-            models: models.clone(),
-            updated_at: now,
+    // Modellliste je Geraet: bei Aenderung neu veroeffentlichen, bei Wegfall loeschen.
+    let gone: Vec<String> = st
+        .published_lists
+        .keys()
+        .filter(|k| !lists.contains_key(*k))
+        .cloned()
+        .collect();
+    for key in gone {
+        ctx.put(&list_object_id(&ctx.cfg.device_id, &key), None).await?;
+        st.published_lists.remove(&key);
+    }
+    for (dkey, (grant, entries)) in &lists {
+        let fingerprint = models_fingerprint(&grant.key_id, entries);
+        if st.published_lists.get(dkey) == Some(&fingerprint) {
+            continue;
+        }
+        let Some(key) = grant.key() else {
+            continue;
         };
-        ctx.put_json(&own_models_id, &payload).await?;
-        st.published_hash = Some(fingerprint);
-        log::info!("Buch-Relay: {} Modell(e) veroeffentlicht", models.len());
+        let payload = signed_models(&ctx.cfg.device_id, grant, &key, entries.clone(), now);
+        ctx.put_json(&list_object_id(&ctx.cfg.device_id, dkey), &payload).await?;
+        st.published_lists.insert(dkey.clone(), fingerprint);
+        log::info!("Buch-Relay: {} Modell(e) veroeffentlicht", entries.len());
     }
     st.published = models;
     run_cleanup(ctx, due).await;
@@ -1165,8 +1470,10 @@ async fn handle_remote(ctx: &Arc<Ctx>, st: &mut LoopState, settings: &AppSetting
     };
     match kind {
         Kind::Resp => {
-            // Das iPhone hat die Antwort gelesen und geloescht: nichts mehr zu tun.
+            // Das iPhone hat die Antwort gelesen und geloescht -- oder, solange die
+            // Anfrage noch laeuft, aufgegeben: dann den CLI-Prozess beenden.
             if remote.deleted {
+                cancel_request(ctx, id);
                 ctx.remember(&remote.object_id, remote.revision);
                 let oid = remote.object_id.clone();
                 let _ = update_store(&ctx.store_path, |s| s.cleanup.retain(|c| c.object_id != oid));
@@ -1175,7 +1482,21 @@ async fn handle_remote(ctx: &Arc<Ctx>, st: &mut LoopState, settings: &AppSetting
         Kind::Req if !remote.deleted => {
             handle_request(ctx, st, settings, remote, id).await;
         }
+        // Das iPhone loescht `req` (Abbruch, R10): laufenden Aufruf beenden.
+        Kind::Req => cancel_request(ctx, id),
         _ => {}
+    }
+}
+
+/// Eine laufende Anfrage abbrechen (iPhone hat `req`/`resp` geloescht).
+fn cancel_request(ctx: &Ctx, request_id: &str) {
+    let cancelled = ctx
+        .shared
+        .lock()
+        .map(|s| s.cancel(request_id))
+        .unwrap_or(false);
+    if cancelled {
+        log::info!("Buch-Relay: Anfrage vom iPhone abgebrochen");
     }
 }
 
@@ -1210,20 +1531,33 @@ async fn handle_request(
             store,
         };
         let mut verdict = check_request(request_id, &req, &gate);
-        let grant = store.grant_for(&req.device_id, &req.key_id, now).cloned();
         let dkey = device_key(&req.device_id);
+        // Erste authentische Anfrage: Freigabe aktivieren, der Code ist verbraucht.
+        if matches!(verdict, Verdict::Accept | Verdict::Reject(_))
+            && store.activate(&req.device_id, &req.key_id)
+        {
+            log::info!("Buch-Relay: Freigabe aktiviert (erste gueltige Anfrage)");
+        }
+        let grant = store.grant_for(&req.device_id, &req.key_id, now).cloned();
         match verdict {
             Verdict::Accept => {
                 let began = ctx
                     .shared
                     .lock()
-                    .map(|mut s| s.busy.try_begin(&remote.device_id, request_id))
+                    .map(|mut s| {
+                        let ok = s.busy.try_begin(&remote.device_id, request_id);
+                        if ok {
+                            s.cancels
+                                .insert(request_id.to_string(), Arc::new(AtomicBool::new(false)));
+                        }
+                        ok
+                    })
                     .unwrap_or(false);
                 if began {
                     // Dauerhaft vermerken, bevor irgendetwas laeuft (R2).
                     store.record(request_id, &dkey, true, req.expires_at * 1000, now);
                 } else {
-                    verdict = Verdict::Reject(ERR_NOT_ALLOWED);
+                    verdict = Verdict::Reject(ERR_LIMIT);
                     store.record(request_id, &dkey, false, req.expires_at * 1000, now);
                 }
             }
@@ -1267,7 +1601,7 @@ async fn handle_request(
         }
         (Verdict::Ignore(why), _) => {
             log::info!("Buch-Relay: Anfrage uebergangen ({why})");
-            if matches!(why, "abgelaufen" | "uhrzeit" | "frist") {
+            if matches!(why, "frist") {
                 tauri::async_runtime::spawn(async move {
                     let _ = ctx.put(&req_object, None).await;
                 });
@@ -1313,8 +1647,25 @@ fn still_authorized(path: &Path, device_id: &str, key_id: &str) -> bool {
 /// Eine Anfrage beantworten: Modell isoliert aufrufen, den Text jede Sekunde
 /// zurueckschreiben, am Ende `done`, `resp` zum Loeschen vormerken.
 async fn process(ctx: &Arc<Ctx>, settings: &AppSettings, config_id: &str, req: ReqPayload, sender: &str, key: &[u8]) {
-    use crate::llm_client::{send_chat_completion_stream, CliMeta, StreamMessage, CLI_META, CLI_TIMEOUT};
+    use crate::llm_client::{
+        send_chat_completion_stream, CliMeta, StreamMessage, CLI_CANCEL, CLI_MAX_TOKENS, CLI_META, CLI_TIMEOUT,
+    };
     let mut progress = Progress::new(&req.request_id, &req.device_id, key);
+    // Das Abbruchsignal gehoert dieser Anfrage; verlassen wir `process` auf
+    // irgendeinem Weg, wird es gesetzt und ein noch laufender CLI-Prozess beendet.
+    let cancel = ctx
+        .shared
+        .lock()
+        .ok()
+        .and_then(|s| s.cancels.get(&req.request_id).cloned())
+        .unwrap_or_default();
+    let _cancel_on_exit = CancelOnDrop(cancel.clone());
+    // Lebenszeichen vor der 15-s-Frist des iPhones.
+    let started = progress.start();
+    if let Ok(Written::Gone) = ctx.put_json(&object_id(Kind::Resp, &req.request_id), &started).await {
+        end_busy(ctx, sender, &req.request_id);
+        return;
+    }
     let call = settings_for_model(settings, config_id);
     let resolved = crate::managers::meetings::llm_call::resolve_provider_coded(&call);
     let (provider, model, api_key) = match resolved {
@@ -1351,13 +1702,19 @@ async fn process(ctx: &Arc<Ctx>, settings: &AppSettings, config_id: &str, req: R
         meta.clone(),
         CLI_TIMEOUT.scope(
             CALL_TIMEOUT,
-            send_chat_completion_stream(
-                crate::managers::usage::Purpose::Chat,
-                &provider,
-                api_key,
-                &model,
-                messages,
-                &on_delta,
+            CLI_CANCEL.scope(
+                cancel.clone(),
+                CLI_MAX_TOKENS.scope(
+                    req.max_tokens,
+                    send_chat_completion_stream(
+                        crate::managers::usage::Purpose::Chat,
+                        &provider,
+                        api_key,
+                        &model,
+                        messages,
+                        &on_delta,
+                    ),
+                ),
             ),
         ),
     );
@@ -1384,14 +1741,15 @@ async fn process(ctx: &Arc<Ctx>, settings: &AppSettings, config_id: &str, req: R
             }
         }
     };
-    if !still_authorized(&ctx.store_path, &req.device_id, &req.key_id) {
+    // Abbruch durch das iPhone (req/resp geloescht): nichts mehr schreiben.
+    if cancel.load(Ordering::SeqCst) || !still_authorized(&ctx.store_path, &req.device_id, &req.key_id) {
         end_busy(ctx, sender, &req.request_id);
         return;
     }
     let info = meta.lock().map(|m| m.clone()).unwrap_or_default();
-    // R7: das Modell laut CLI-Ausgabe; nennt sie keines, gilt das angefragte (der Aufruf
-    // geht mit `-m <Modell>` und ohne Ausweichen hinaus).
-    let model_tuple = info.model.clone().unwrap_or_else(|| req.model_id.clone());
+    // R7: das Modell laut CLI-Ausgabe; nennt sie keines, melden wir `unknown`
+    // (nie die angefragte Kennung: das iPhone behandelt `unknown` als ungeprueft).
+    let model_tuple = info.model.clone().unwrap_or_else(|| MODEL_UNKNOWN.to_string());
     let usage = (info.prompt_tokens + info.completion_tokens > 0).then(|| Usage {
         input_tokens: info.prompt_tokens,
         output_tokens: info.completion_tokens,
@@ -1432,6 +1790,16 @@ async fn finish(
 fn end_busy(ctx: &Ctx, sender: &str, request_id: &str) {
     if let Ok(mut s) = ctx.shared.lock() {
         s.busy.end(sender, request_id);
+        s.cancels.remove(request_id);
+    }
+}
+
+/// Setzt das Abbruchsignal beim Verlassen von `process`.
+struct CancelOnDrop(Arc<AtomicBool>);
+
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::SeqCst);
     }
 }
 
@@ -1458,7 +1826,21 @@ pub struct RelayGrantInfo {
     pub key_id: String,
     pub model_ids: Vec<String>,
     pub created_at_ms: f64,
+    /// Ablauf der Freigabe (90 Tage).
     pub expires_at_ms: f64,
+    /// `true`, solange das iPhone den Einrichtungscode noch nicht benutzt hat.
+    pub pending: bool,
+    /// Ablauf des Einrichtungscodes (10 Minuten ab Erzeugung).
+    pub code_expires_at_ms: f64,
+}
+
+/// Einrichtungscode zum Anzeigen: Text (Rueckfall), QR-Bild (SVG) und Fristen.
+#[derive(Serialize, Debug, Clone, specta::Type)]
+pub struct RelayPairing {
+    pub code: String,
+    pub qr_svg: String,
+    pub code_expires_at_ms: f64,
+    pub grant_expires_at_ms: f64,
 }
 
 /// Ein Modell, das am PC fuer das Relay in Frage kommt.
@@ -1485,6 +1867,8 @@ pub fn booktalk_relay_grants(app: AppHandle) -> Result<Vec<RelayGrantInfo>, Stri
             model_ids: g.model_ids.clone(),
             created_at_ms: g.created_at_ms as f64,
             expires_at_ms: g.expires_at_ms as f64,
+            pending: g.pending(now),
+            code_expires_at_ms: g.code_expires_at_ms as f64,
         })
         .collect())
 }
@@ -1526,8 +1910,20 @@ async fn resolve_device_id(client: &HubClient, key: &str) -> Result<Option<Strin
     Ok(None)
 }
 
+fn pairing_of(cfg: &SyncConfig, grant: &DeviceGrant) -> Result<RelayPairing, String> {
+    let code = pairing_code(&cfg.device_id, &cfg.device_name, grant);
+    Ok(RelayPairing {
+        qr_svg: qr_svg(&code)?,
+        code,
+        code_expires_at_ms: grant.code_expires_at_ms as f64,
+        grant_expires_at_ms: grant.expires_at_ms as f64,
+    })
+}
+
 /// Ein iPhone freigeben (R1): neuer Relay-Schluessel, die gewaehlten Modelle,
-/// 90 Tage. Gibt den Einrichtungscode zurueck, den das iPhone einliest.
+/// 90 Tage. Gibt den Einrichtungscode (Text und QR) zurueck, den das iPhone
+/// einliest. Die Freigabe ist erst nach der ersten gueltigen Anfrage des iPhones
+/// aktiv; ohne sie verfaellt sie samt Schluessel nach 10 Minuten.
 #[tauri::command]
 #[specta::specta]
 pub async fn booktalk_relay_authorize(
@@ -1535,7 +1931,7 @@ pub async fn booktalk_relay_authorize(
     device_key: String,
     name: String,
     model_ids: Vec<String>,
-) -> Result<String, String> {
+) -> Result<RelayPairing, String> {
     if !valid_device_key(&device_key) {
         return Err("Ungueltige Geraetekennung.".into());
     }
@@ -1559,24 +1955,34 @@ pub async fn booktalk_relay_authorize(
         .map_err(|e| e.to_string())?
         .ok_or("Dieses Geraet hat noch nichts abgeglichen; bitte zuerst am iPhone synchronisieren.")?;
     let grant = new_grant(&device_id, name.trim(), chosen, now_ms());
-    let code = pairing_code(&cfg.device_id, &cfg.device_name, &grant);
+    let pairing = pairing_of(&cfg, &grant)?;
     update_store(&store_path(&app)?, |s| s.add_grant(grant))?;
     wake();
-    Ok(code)
+    Ok(pairing)
 }
 
-/// Einrichtungscode einer bestehenden Freigabe noch einmal zeigen.
+/// Einrichtungscode noch einmal zeigen: erzeugt einen **neuen** Schluessel
+/// (der alte ist sofort ungueltig), die Freigabe ist wieder `pending`, der
+/// Code gilt wieder 10 Minuten. Name, Modelle und Geraet bleiben.
 #[tauri::command]
 #[specta::specta]
-pub fn booktalk_relay_pairing_code(app: AppHandle, device_key: String) -> Result<String, String> {
+pub fn booktalk_relay_renew_code(app: AppHandle, device_key: String) -> Result<RelayPairing, String> {
     let cfg = account::load(&app).ok_or("Nicht angemeldet")?;
-    let store = load_store(&store_path(&app)?);
-    let grant = store
-        .grants
-        .iter()
-        .find(|g| g.device_key == device_key && g.active(now_ms()))
-        .ok_or("Keine Freigabe fuer dieses Geraet.")?;
-    Ok(pairing_code(&cfg.device_id, &cfg.device_name, grant))
+    let now = now_ms();
+    let grant = update_store(&store_path(&app)?, |s| {
+        let old = s
+            .grants
+            .iter()
+            .find(|g| g.device_key == device_key && g.expires_at_ms > now)
+            .cloned()?;
+        let fresh = new_grant(&old.device_id, &old.name, old.model_ids.clone(), now);
+        s.add_grant(fresh.clone());
+        Some(fresh)
+    })?
+    .ok_or("Keine Freigabe fuer dieses Geraet.")?;
+    let pairing = pairing_of(&cfg, &grant)?;
+    wake();
+    Ok(pairing)
 }
 
 /// Freigabe entziehen (R10): Schluessel loeschen, Modellliste neu bewerten

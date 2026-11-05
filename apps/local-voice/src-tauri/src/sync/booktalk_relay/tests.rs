@@ -35,6 +35,8 @@ fn grant(models: &[&str]) -> DeviceGrant {
         model_ids: models.iter().map(|m| m.to_string()).collect(),
         created_at_ms: NOW - 1000,
         expires_at_ms: NOW + 1_000_000,
+        activated: true,
+        code_expires_at_ms: 0,
     }
 }
 
@@ -116,7 +118,7 @@ fn golden_antworten_kanonische_zeichenfolge_und_mac() {
     let g = golden();
     let key = unhex(g["key_hex"].as_str().unwrap()).unwrap();
     let cases = g["responses"].as_array().unwrap();
-    assert_eq!(cases.len(), 3);
+    assert_eq!(cases.len(), 6);
     for case in cases {
         let resp: RespPayload = serde_json::from_value(case["response"].clone()).unwrap();
         assert_eq!(resp_canonical(&resp), case["canonical"].as_str().unwrap());
@@ -141,6 +143,78 @@ fn golden_antworten_kanonische_zeichenfolge_und_mac() {
         None,
     );
     assert_eq!(serde_json::to_value(&failed).unwrap(), cases[2]["response"]);
+    // Lebenszeichen beim Annehmen und Abweisung mit Code: byte-gleich.
+    let start = Progress::new("0123456789abcdef0123456789abcdef", PHONE, &key).start();
+    assert_eq!(serde_json::to_value(&start).unwrap(), cases[3]["response"]);
+    assert_eq!((start.seq, start.text.as_str(), start.model_tuple.as_str(), start.done), (1, "", "pending", false));
+    let clock = Progress::new("0123456789abcdef0123456789abcdef", PHONE, &key).finish(
+        "",
+        MODEL_UNKNOWN,
+        Some(ERR_CLOCK),
+        None,
+    );
+    assert_eq!(serde_json::to_value(&clock).unwrap(), cases[4]["response"]);
+    assert_eq!(clock.error.as_deref(), Some("clock"));
+    // Steuer- und Nicht-ASCII-Zeichen in model_tuple und error.
+    let special: RespPayload = serde_json::from_value(cases[5]["response"].clone()).unwrap();
+    assert!(special.model_tuple.contains('\u{8}') && special.model_tuple.contains('\u{2028}'));
+    assert!(special.error.as_deref().unwrap().contains('😀'));
+    let mut p = Progress::new("0123456789abcdef0123456789abcdef", PHONE, &key);
+    p.update("x");
+    let again = p.finish(&special.text, &special.model_tuple, special.error.as_deref(), None);
+    assert_eq!(again.mac, special.mac);
+}
+
+#[test]
+fn golden_anfrage_mit_steuer_und_nicht_ascii_zeichen() {
+    let g = golden();
+    let key = unhex(g["key_hex"].as_str().unwrap()).unwrap();
+    let case = &g["request_special"];
+    let req: ReqPayload = serde_json::from_value(case["request"].clone()).unwrap();
+    assert!(req.model_id.contains('\u{c}') && req.model_id.contains('\u{1}') && req.model_id.contains('😀'));
+    assert_eq!(req_canonical(&req), case["canonical"].as_str().unwrap());
+    assert!(case["canonical"].as_str().unwrap().contains("\\u0008\\u000c\\u0001"));
+    assert_eq!(mac_hex(&key, req_canonical(&req).as_bytes()), case["mac"].as_str().unwrap());
+    assert!(mac_ok(&key, req_canonical(&req).as_bytes(), &req.mac));
+}
+
+#[test]
+fn golden_signierte_modellliste() {
+    let g = golden();
+    let key = unhex(g["key_hex"].as_str().unwrap()).unwrap();
+    let case = &g["model_list"];
+    let payload: ModelsPayload = serde_json::from_value(case["list"].clone()).unwrap();
+    assert_eq!(models_canonical(&payload), case["canonical"].as_str().unwrap());
+    assert_eq!(mac_hex(&key, models_canonical(&payload).as_bytes()), case["mac"].as_str().unwrap());
+    assert!(models_mac_ok(&key, &payload));
+    let ids: Vec<&str> = payload.models.iter().map(|m| m.id.as_str()).collect();
+    assert_eq!(ids, ["gpt-6.1-sol", "sonnet"], "nach id sortiert");
+    // Was der PC selbst baut (aus unsortierter Eingabe), ist byte-gleich.
+    let grant = DeviceGrant {
+        device_id: payload.device_id.clone(),
+        ..grant(&["sonnet", "gpt-6.1-sol"])
+    };
+    let mut input = payload.models.clone();
+    input.reverse();
+    let built = signed_models(&payload.desktop_device_id, &grant, &key, input, payload.issued_at * 1000 + 123);
+    assert_eq!(serde_json::to_value(&built).unwrap(), case["list"]);
+    // Jede Aenderung bricht den MAC; `mac` selbst liegt ausserhalb der Signatur.
+    let tamper: [fn(&mut ModelsPayload); 7] = [
+        |p| p.models[0].id.push('x'),
+        |p| p.models[0].provider = "claude_cli".into(),
+        |p| p.models[0].context_tokens += 1,
+        |p| p.models[0].label.push('!'),
+        |p| p.device_id = "ffffffffffffffffffffffffffffffff".into(),
+        |p| p.issued_at += 1,
+        |p| p.v = 2,
+    ];
+    for f in tamper {
+        let mut bad = payload.clone();
+        f(&mut bad);
+        assert!(!models_mac_ok(&key, &bad));
+    }
+    assert!(!models_mac_ok(&[1u8; 32], &payload), "Schluessel eines anderen Geraets");
+    assert!(!models_canonical(&payload).contains("\"mac\""));
 }
 
 #[test]
@@ -158,7 +232,9 @@ fn golden_einrichtungscode_entspricht_dem_ios_format() {
         functions: vec![FUNCTION.into()],
         model_ids: vec!["sonnet".into(), "gpt-6.1-sol".into()],
         created_at_ms: 0,
-        expires_at_ms: want["expires_at"].as_i64().unwrap() * 1000,
+        expires_at_ms: want["grant_expires_at"].as_i64().unwrap() * 1000,
+        activated: false,
+        code_expires_at_ms: want["expires_at"].as_i64().unwrap() * 1000,
     };
     let code = pairing_code(
         want["desktop_device_id"].as_str().unwrap(),
@@ -168,6 +244,10 @@ fn golden_einrichtungscode_entspricht_dem_ios_format() {
     let body = code.strip_prefix("lvrelay1:").expect("Praefix lvrelay1:");
     let got: serde_json::Value = serde_json::from_str(body).unwrap();
     assert_eq!(got, want);
+    assert!(
+        want["grant_expires_at"].as_i64() > want["expires_at"].as_i64(),
+        "Codeablauf (10 min) vor Freigabeablauf (90 Tage)"
+    );
     // Der Code der Golden-Datei liest sich gleich.
     let golden_body: serde_json::Value =
         serde_json::from_str(e["code"].as_str().unwrap().strip_prefix("lvrelay1:").unwrap()).unwrap();
@@ -187,27 +267,28 @@ fn json_quote_maskiert_wie_die_swift_fassung() {
 
 #[test]
 fn models_payload_hat_genau_die_formen_der_spec() {
-    let payload = ModelsPayload {
-        v: 1,
-        models: vec![entry("sonnet")],
-        updated_at: 1_730_000_000_000,
-    };
+    let g = grant(&["sonnet"]);
+    let payload = signed_models("desk-1", &g, &KEY, vec![entry("sonnet")], 1_730_000_000_000);
     assert_eq!(
         serde_json::to_value(&payload).unwrap(),
         json!({
             "v": 1,
+            "desktop_device_id": "desk-1",
+            "device_id": PHONE,
+            "issued_at": 1730000000_i64,
             "models": [{
                 "id": "sonnet",
                 "label": "Claude Sonnet",
                 "provider": "claude_cli",
                 "context_tokens": 200000
             }],
-            "updated_at": 1730000000000_i64
+            "mac": payload.mac
         })
     );
+    assert!(models_mac_ok(&KEY, &payload));
     let back: ModelsPayload = serde_json::from_value(serde_json::to_value(&payload).unwrap()).unwrap();
-    assert_eq!(back.models[0].id, "sonnet");
     assert_eq!(back.models[0].config_id, "", "config_id geht nie in den Hub");
+    assert!(models_mac_ok(&KEY, &back));
 }
 
 #[test]
@@ -265,6 +346,10 @@ fn objekt_kennungen_beide_trenner_und_pruefung() {
     assert!(!valid_request_id(&"x".repeat(49)));
     assert!(object_id(Kind::Resp, &"x".repeat(48)).len() <= 64);
     assert!(object_id(Kind::Models, &"f".repeat(32)).len() <= 64);
+    // Liste je Geraet: models_<desktop>_<geraet> bleibt unter den 64 Zeichen des Hubs.
+    let list = list_object_id(&"f".repeat(32), &device_key(PHONE));
+    assert!(list.len() <= 64, "{list}");
+    assert_eq!(parse_object_id(&list).map(|(k, _)| k), Some(Kind::Models));
 }
 
 #[test]
@@ -406,30 +491,65 @@ fn replay_sperre_ueberlebt_neustart_und_ablauf() {
 }
 
 #[test]
-fn abgelaufene_und_schief_datierte_anfragen_werden_ignoriert() {
+fn abgelaufene_und_schief_datierte_anfragen_bekommen_clock() {
     let published = [entry("sonnet")];
     let s = store(&["sonnet"]);
     let r = signed("r-1", "sonnet");
     let mut g = gate(&published, &s);
-    // R11: weniger als 65 s Rest.
+    // R11: weniger als 65 s Rest -> authentisch, aber zeitlich unpassend: `clock`.
     g.now_ms = (r.expires_at - MIN_REMAINING_S + 1) * 1000;
-    assert_eq!(check_request("r-1", &r, &g), Verdict::Ignore("abgelaufen"));
+    assert_eq!(check_request("r-1", &r, &g), Verdict::Reject(ERR_CLOCK));
     g.now_ms = (r.expires_at - MIN_REMAINING_S) * 1000;
     assert_eq!(check_request("r-1", &r, &g), Verdict::Accept);
     g.now_ms = (r.expires_at + 5) * 1000;
-    assert_eq!(check_request("r-1", &r, &g), Verdict::Ignore("abgelaufen"));
-    // Uhr des iPhones geht um mehr als 120 s falsch.
+    assert_eq!(check_request("r-1", &r, &g), Verdict::Reject(ERR_CLOCK));
+    // Uhr des iPhones geht um mehr als 120 s falsch -- symmetrisch in beide Richtungen.
     let mut early = signed("r-1", "sonnet");
     early.created_at = CREATED + CLOCK_SKEW_S + 5;
     early.expires_at = early.created_at + REQUEST_WINDOW_S;
     resign(&mut early);
     g.now_ms = CREATED * 1000;
-    assert_eq!(check_request("r-1", &early, &g), Verdict::Ignore("uhrzeit"));
+    assert_eq!(check_request("r-1", &early, &g), Verdict::Reject(ERR_CLOCK), "iPhone-Uhr geht vor");
+    let mut ahead = signed("r-1", "sonnet");
+    ahead.created_at = CREATED + CLOCK_SKEW_S;
+    ahead.expires_at = ahead.created_at + REQUEST_WINDOW_S;
+    resign(&mut ahead);
+    assert_eq!(check_request("r-1", &ahead, &g), Verdict::Accept, "genau 120 s vor: noch gueltig");
+    let mut late = signed("r-1", "sonnet");
+    late.created_at = CREATED - CLOCK_SKEW_S - 5;
+    late.expires_at = late.created_at + REQUEST_WINDOW_S;
+    resign(&mut late);
+    assert_eq!(check_request("r-1", &late, &g), Verdict::Reject(ERR_CLOCK), "iPhone-Uhr geht nach");
+    // Eine nicht authentische Anfrage mit falscher Zeit bleibt unbeantwortet.
+    let mut forged = early.clone();
+    forged.mac = "00".repeat(32);
+    assert_eq!(check_request("r-1", &forged, &g), Verdict::Ignore("mac"));
     // Frist nicht 90 s.
     let mut long = signed("r-1", "sonnet");
     long.expires_at = long.created_at + 600;
     resign(&mut long);
     assert_eq!(check_request("r-1", &long, &gate(&published, &s)), Verdict::Ignore("frist"));
+}
+
+#[test]
+fn clock_antwort_wird_nur_einmal_gegeben() {
+    let published = [entry("sonnet")];
+    let mut s = store(&["sonnet"]);
+    let mut early = signed("r-1", "sonnet");
+    early.created_at = CREATED + 1000;
+    early.expires_at = early.created_at + REQUEST_WINDOW_S;
+    resign(&mut early);
+    assert_eq!(check_request("r-1", &early, &gate(&published, &s)), Verdict::Reject(ERR_CLOCK));
+    s.record("r-1", &device_key(PHONE), false, early.expires_at * 1000, NOW);
+    assert_eq!(check_request("r-1", &early, &gate(&published, &s)), Verdict::Ignore("replay"));
+    // Auch bei weit zurueckliegender `created_at` bleibt die Sperre mindestens 10 min ab jetzt.
+    let mut s = store(&["sonnet"]);
+    s.record("old", &device_key(PHONE), false, 1000, NOW);
+    assert!(s.has_seen("old"));
+    s.prune(NOW + SEEN_GRACE_MS - 1);
+    assert!(s.has_seen("old"));
+    s.prune(NOW + SEEN_GRACE_MS + 1);
+    assert!(!s.has_seen("old"));
 }
 
 #[test]
@@ -440,28 +560,28 @@ fn grenzen_groesse_tokens_stunde_tag_parallel() {
     let mut big = signed("r-1", "sonnet");
     big.prompt = "ä".repeat(MAX_PROMPT_CHARS);
     resign(&mut big);
-    assert_eq!(check_request("r-1", &big, &gate(&published, &s)), Verdict::Reject(ERR_NOT_ALLOWED));
+    assert_eq!(check_request("r-1", &big, &gate(&published, &s)), Verdict::Reject(ERR_LIMIT));
     let mut sys = signed("r-1", "sonnet");
     sys.system = "x".repeat(MAX_SYSTEM_CHARS + 1);
     resign(&mut sys);
-    assert_eq!(check_request("r-1", &sys, &gate(&published, &s)), Verdict::Reject(ERR_NOT_ALLOWED));
+    assert_eq!(check_request("r-1", &sys, &gate(&published, &s)), Verdict::Reject(ERR_LIMIT));
     let mut tokens = signed("r-1", "sonnet");
     tokens.max_tokens = MAX_TOKENS_LIMIT + 1;
     resign(&mut tokens);
-    assert_eq!(check_request("r-1", &tokens, &gate(&published, &s)), Verdict::Reject(ERR_NOT_ALLOWED));
+    assert_eq!(check_request("r-1", &tokens, &gate(&published, &s)), Verdict::Reject(ERR_LIMIT));
     tokens.max_tokens = MAX_TOKENS_LIMIT;
     resign(&mut tokens);
     assert_eq!(check_request("r-1", &tokens, &gate(&published, &s)), Verdict::Accept);
     tokens.max_tokens = 0;
     resign(&mut tokens);
-    assert_eq!(check_request("r-1", &tokens, &gate(&published, &s)), Verdict::Reject(ERR_NOT_ALLOWED));
+    assert_eq!(check_request("r-1", &tokens, &gate(&published, &s)), Verdict::Reject(ERR_LIMIT));
     // 30 je Stunde.
     for i in 0..MAX_PER_HOUR {
         s.record(&format!("h-{i}"), &dkey, true, NOW, NOW - 60_000);
     }
     assert_eq!(
         check_request("r-1", &signed("r-1", "sonnet"), &gate(&published, &s)),
-        Verdict::Reject(ERR_NOT_ALLOWED)
+        Verdict::Reject(ERR_LIMIT)
     );
     // 29 reichen noch.
     let mut s29 = store(&["sonnet"]);
@@ -476,7 +596,7 @@ fn grenzen_groesse_tokens_stunde_tag_parallel() {
     }
     assert_eq!(
         check_request("r-1", &signed("r-1", "sonnet"), &gate(&published, &s)),
-        Verdict::Reject(ERR_NOT_ALLOWED)
+        Verdict::Reject(ERR_LIMIT)
     );
     assert_eq!(s.accepted_since("anderes", NOW - DAY_MS * 2), 0, "andere Geraete zaehlen getrennt");
 }
@@ -489,7 +609,7 @@ fn zweite_parallele_anfrage_desselben_geraets_wird_abgewiesen() {
     assert!(busy.try_begin(PHONE, "r-1"));
     let mut g = gate(&published, &s);
     g.busy = busy.is_busy(PHONE);
-    assert_eq!(check_request("r-2", &signed("r-2", "sonnet"), &g), Verdict::Reject(ERR_NOT_ALLOWED));
+    assert_eq!(check_request("r-2", &signed("r-2", "sonnet"), &g), Verdict::Reject(ERR_LIMIT));
     assert!(!busy.try_begin(PHONE, "r-2"));
     assert!(busy.try_begin("tablet", "r-3"));
     busy.end(PHONE, "r-2");
@@ -535,6 +655,8 @@ fn abgelaufene_freigabe_gilt_nicht() {
 fn neue_freigabe_hat_frischen_schluessel_und_90_tage() {
     let g = new_grant(PHONE, "Patricks iPhone", vec!["a".into()], NOW);
     assert_eq!(g.expires_at_ms - g.created_at_ms, 90 * DAY_MS);
+    assert!(!g.activated, "pending bis zur ersten gueltigen Anfrage");
+    assert_eq!(g.code_expires_at_ms - g.created_at_ms, 10 * 60 * 1000);
     assert_eq!(g.key().unwrap().len(), 32);
     assert_eq!(g.key_id, key_id_of(&g.key().unwrap()));
     assert_eq!(g.device_key, device_key(PHONE));
@@ -802,9 +924,10 @@ fn veroeffentlicht_wird_nur_was_ein_geraet_nutzen_darf() {
     let mut expired = grant(&["gpt-6.1-sol"]);
     expired.expires_at_ms = NOW - 1;
     assert!(published_models(&eligible, &[expired], NOW).is_empty());
-    let a = models_fingerprint(&published_models(&eligible, &g, NOW));
+    let a = models_fingerprint(&g[0].key_id, &published_models(&eligible, &g, NOW));
     let g2 = [grant(&["gpt-6.1-sol", "sonnet"])];
-    assert_ne!(a, models_fingerprint(&published_models(&eligible, &g2, NOW)));
+    assert_ne!(a, models_fingerprint(&g[0].key_id, &published_models(&eligible, &g2, NOW)));
+    assert_ne!(a, models_fingerprint("anderer-schluessel", &published_models(&eligible, &g, NOW)), "neuer Schluessel = neu signieren");
 }
 
 #[test]
@@ -818,4 +941,199 @@ fn aufruf_einstellungen_machen_das_modell_zum_aktiven() {
     assert_eq!(provider.id, "codex_cli");
     assert!(model.starts_with("gpt-6.1-sol"));
     assert!(Cli::from_base_url(&provider.base_url).is_some());
+}
+
+// ---- Runde 5b: Zustand ueber Takte, Ablage, Freigabe, Abbruch ---------------------
+
+fn test_cfg() -> SyncConfig {
+    SyncConfig {
+        url: "http://127.0.0.1:9".into(),
+        token: "t".into(),
+        device_id: "desk0123456789abcdef0123456789abcd".into(),
+        device_name: "PC".into(),
+        user_id: 1,
+        user_email: "a@example.org".into(),
+        enc_key_b64: B64.encode([5u8; 32]),
+    }
+}
+
+fn ctx_from(st: &LoopState, path: &Path) -> Arc<Ctx> {
+    Arc::new(Ctx::new(test_cfg(), [5u8; 32], path.to_path_buf(), st.shared.clone()))
+}
+
+#[test]
+fn belegt_status_und_abbruch_ueberleben_mehrere_takte() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("booktalk_relay.json");
+    let st = LoopState::default();
+    // Takt 1: Anfrage 1 laeuft.
+    let tick1 = ctx_from(&st, &path);
+    assert!(tick1.shared.lock().unwrap().busy.try_begin(PHONE, "r-1"));
+    let flag = Arc::new(AtomicBool::new(false));
+    tick1.shared.lock().unwrap().cancels.insert("r-1".into(), flag.clone());
+    // Takt 2 (neuer Ctx): dieselbe Anfrage ist weiter belegt, zweite wird abgewiesen.
+    let tick2 = ctx_from(&st, &path);
+    assert!(tick2.shared.lock().unwrap().busy.is_busy(PHONE));
+    assert!(!tick2.shared.lock().unwrap().busy.try_begin(PHONE, "r-2"));
+    // Abbruch ueber den neuen Takt erreicht das Signal der alten Anfrage.
+    cancel_request(&tick2, "r-1");
+    assert!(flag.load(Ordering::SeqCst));
+    // Ende ueber Takt 3 gibt das Geraet frei; die naechste Anfrage laeuft wieder.
+    let tick3 = ctx_from(&st, &path);
+    end_busy(&tick3, PHONE, "r-1");
+    assert!(!tick1.shared.lock().unwrap().busy.is_busy(PHONE), "alle Takte sehen dasselbe");
+    assert!(tick3.shared.lock().unwrap().cancels.is_empty());
+    assert!(tick3.shared.lock().unwrap().busy.try_begin(PHONE, "r-2"));
+    assert!(tick1.shared.lock().unwrap().busy.is_busy(PHONE));
+    // Revisionen werden ebenfalls geteilt.
+    tick1.remember("resp_x", 7);
+    assert_eq!(tick3.revision("resp_x"), 7);
+}
+
+#[test]
+fn ablage_wird_nur_bei_aenderung_geschrieben() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("booktalk_relay.json");
+    update_store(&path, |s| s.add_grant(grant(&["sonnet"]))).unwrap();
+    let t0 = std::fs::metadata(&path).unwrap().modified().unwrap();
+    std::thread::sleep(Duration::from_millis(30));
+    // Nichts zu aendern (Takt: prune ohne Treffer, kein Cleanup): keine neue Datei.
+    update_store(&path, |s| s.prune(NOW)).unwrap();
+    update_store(&path, |s| s.cleanup.retain(|c| c.due_ms > 0)).unwrap();
+    assert_eq!(std::fs::metadata(&path).unwrap().modified().unwrap(), t0);
+    update_store(&path, |s| s.record("r-1", "k", true, NOW, NOW)).unwrap();
+    assert!(std::fs::metadata(&path).unwrap().modified().unwrap() > t0);
+    // Keine Reste der atomaren Schreibweise.
+    let names: Vec<String> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names, ["booktalk_relay.json"]);
+}
+
+#[test]
+fn defekte_ablage_wird_beiseite_gelegt_nie_ueberschrieben() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("booktalk_relay.json");
+    std::fs::write(&path, "{ kaputt").unwrap();
+    // Lesen aendert nichts und liefert keine Freigaben.
+    assert!(load_store(&path).grants.is_empty());
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "{ kaputt");
+    // Ein Takt ohne Aenderung legt die Datei beiseite, schreibt aber keine neue.
+    update_store(&path, |s| s.prune(NOW)).unwrap();
+    assert!(!path.exists());
+    let aside: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(aside.len(), 1);
+    assert!(aside[0].starts_with("booktalk_relay.json.defekt-"), "{aside:?}");
+    assert_eq!(std::fs::read_to_string(dir.path().join(&aside[0])).unwrap(), "{ kaputt");
+    // Das Relay ist aus (keine Freigabe), bis neu freigegeben wird.
+    assert!(!still_authorized(&path, PHONE, "k"));
+    update_store(&path, |s| s.add_grant(grant(&["sonnet"]))).unwrap();
+    assert!(load_store(&path).grants.len() == 1);
+}
+
+#[test]
+fn freigabe_ist_pending_bis_zur_ersten_gueltigen_anfrage() {
+    let mut s = RelayStore::default();
+    let g = new_grant(PHONE, "iPhone", vec!["sonnet".into()], NOW);
+    let key_id = g.key_id.clone();
+    s.add_grant(g.clone());
+    assert!(g.pending(NOW) && g.active(NOW), "Code gilt, Freigabe nutzbar fuer die erste Anfrage");
+    assert!(s.grant_for(PHONE, &key_id, NOW + 9 * 60_000).is_some());
+    // Code nach 10 Minuten ohne Nutzung: Freigabe samt Schluessel verfaellt.
+    assert!(s.grant_for(PHONE, &key_id, NOW + CODE_TTL_MS + 1).is_none());
+    let mut expired = s.clone();
+    expired.prune(NOW + CODE_TTL_MS + 1);
+    assert!(expired.grants.is_empty());
+    // Erste authentische Anfrage aktiviert; danach laeuft nur noch die Freigabe (90 Tage).
+    assert!(s.activate(PHONE, &key_id));
+    assert!(!s.activate(PHONE, &key_id), "nur einmal");
+    s.prune(NOW + CODE_TTL_MS + 1);
+    assert_eq!(s.grants.len(), 1);
+    assert!(s.grant_for(PHONE, &key_id, NOW + CODE_TTL_MS + 1).is_some());
+    assert!(!s.grants[0].pending(NOW));
+    assert!(s.grant_for(PHONE, &key_id, NOW + 91 * DAY_MS).is_none());
+    // Fremder Schluessel aktiviert nichts.
+    let mut s2 = RelayStore::default();
+    s2.add_grant(new_grant(PHONE, "x", vec![], NOW));
+    assert!(!s2.activate(PHONE, "0000000000000000"));
+}
+
+#[test]
+fn alte_ablage_ohne_neue_felder_bleibt_aktiv() {
+    let old = r#"{"grants":[{"device_id":"p","device_key":"k","name":"n","key_id":"i","key_b64":"AA==",
+        "functions":["book_talk"],"model_ids":[],"created_at_ms":0,"expires_at_ms":9999999999999}]}"#;
+    let s: RelayStore = serde_json::from_str(old).unwrap();
+    assert!(s.grants[0].activated && s.grants[0].active(NOW));
+}
+
+#[test]
+fn erneutes_anzeigen_erzeugt_neuen_schluessel_und_entwertet_den_alten() {
+    let mut s = RelayStore::default();
+    let first = new_grant(PHONE, "iPhone", vec!["sonnet".into()], NOW);
+    s.add_grant(first.clone());
+    s.activate(PHONE, &first.key_id);
+    let fresh = new_grant(&first.device_id, &first.name, first.model_ids.clone(), NOW + 5000);
+    s.add_grant(fresh.clone());
+    assert_eq!(s.grants.len(), 1);
+    assert_ne!(first.key_id, fresh.key_id);
+    assert!(s.grant_for(PHONE, &first.key_id, NOW + 6000).is_none(), "alter Schluessel ungueltig");
+    assert!(s.grant_for(PHONE, &fresh.key_id, NOW + 6000).is_some());
+    // Eine mit dem alten Schluessel signierte Anfrage wird ignoriert.
+    let published = [entry("sonnet")];
+    let mut old_signed = signed("r-1", "sonnet");
+    old_signed.key_id = first.key_id.clone();
+    let key = first.key().unwrap();
+    old_signed.mac = mac_hex(&key, req_canonical(&old_signed).as_bytes());
+    let mut g = gate(&published, &s);
+    g.now_ms = NOW + 6000;
+    assert_eq!(check_request("r-1", &old_signed, &g), Verdict::Ignore("keine_freigabe"));
+}
+
+#[test]
+fn einrichtungscode_traegt_code_und_freigabeablauf_getrennt() {
+    let g = new_grant(PHONE, "iPhone", vec!["sonnet".into()], 1_793_900_000_000);
+    let code = pairing_code("desk-1", "PC", &g);
+    let v: serde_json::Value = serde_json::from_str(code.strip_prefix("lvrelay1:").unwrap()).unwrap();
+    assert_eq!(v["expires_at"], 1_793_900_600_i64);
+    assert_eq!(v["grant_expires_at"], 1_793_900_000_i64 + 90 * 86_400);
+}
+
+#[test]
+fn qr_bild_ist_ein_skriptfreies_svg_mit_ruhezone() {
+    let g = new_grant(PHONE, "iPhone", vec!["sonnet".into()], NOW);
+    let code = pairing_code("desk-1", "PC", &g);
+    let svg = qr_svg(&code).unwrap();
+    assert!(svg.starts_with("<svg ") && svg.ends_with("</svg>"));
+    assert!(svg.contains("viewBox=\"0 0 ") && svg.contains("<path d=\"M"));
+    assert!(!svg.contains("<script") && !svg.contains("onload"));
+    assert!(qr_svg(&"x".repeat(10_000)).is_err(), "zu lang fuer einen QR-Code: Fehler statt Absturz");
+}
+
+#[test]
+fn listen_je_geraet_nur_mit_erlaubten_modellen() {
+    let published = [entry("sonnet"), entry("gpt-6.1-sol")];
+    let mut a = grant(&["sonnet"]);
+    a.device_key = "aaaaaaaaaaaa".into();
+    let mut b = grant(&["sonnet", "gpt-6.1-sol", "unbekannt"]);
+    b.device_key = "bbbbbbbbbbbb".into();
+    let mut none = grant(&["nichts"]);
+    none.device_key = "cccccccccccc".into();
+    let mut expired = grant(&["sonnet"]);
+    expired.device_key = "dddddddddddd".into();
+    expired.expires_at_ms = NOW - 1;
+    let lists = device_lists(&published, &[a, b, none, expired], NOW);
+    assert_eq!(lists.keys().cloned().collect::<Vec<_>>(), ["aaaaaaaaaaaa", "bbbbbbbbbbbb"]);
+    assert_eq!(lists["aaaaaaaaaaaa"].1.len(), 1);
+    assert_eq!(lists["bbbbbbbbbbbb"].1.len(), 2);
+}
+
+#[test]
+fn abgewiesene_anfrage_ist_unknown_mit_code_und_mac() {
+    let end = Progress::new("r-1", PHONE, &KEY).finish("", MODEL_UNKNOWN, Some(ERR_LIMIT), None);
+    assert_eq!((end.model_tuple.as_str(), end.error.as_deref(), end.done, end.seq), ("unknown", Some("limit"), true, 1));
+    assert!(resp_mac_ok(&KEY, &end));
 }

@@ -108,6 +108,8 @@ argon2 = "0.5"
 hkdf = "0.12"
 zeroize = "1"
 base64 = "0.22"
+# Einrichtungscode des Abo-Relays als QR-Bild (lva#320), MIT OR Apache-2.0.
+qrcode = { version = "0.14", default-features = false }
 # ADR-0024: gemeinsamer Kontospeicher der Suite (vendort aus wai-sdk, siehe vendor/wai-konto/VENDOR.toml)
 wai-konto = { path = "vendor/wai-konto" }
 # ADR-0026 PR-7 (Epic wai-sdk#1047): Suite-Projekte und Recherche, vendort aus wai-sdk

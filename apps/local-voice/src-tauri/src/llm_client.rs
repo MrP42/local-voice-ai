@@ -443,6 +443,17 @@ tokio::task_local! {
     pub static CLI_META: std::sync::Arc<std::sync::Mutex<CliMeta>>;
 }
 
+tokio::task_local! {
+    /// Abbruchsignal fuer CLI-Aufrufe im aktuellen Task (Relay: Widerruf,
+    /// Zeitablauf, Abbruch durch das iPhone). Gesetzt beendet es den Prozessbaum.
+    pub static CLI_CANCEL: std::sync::Arc<std::sync::atomic::AtomicBool>;
+}
+
+tokio::task_local! {
+    /// Obergrenze der Ausgabe-Token fuer CLI-Aufrufe im aktuellen Task (Relay).
+    pub static CLI_MAX_TOKENS: u32;
+}
+
 fn call_cli(
     cli: crate::managers::llm::cli::Cli,
     binary: &std::path::Path,
@@ -450,10 +461,14 @@ fn call_cli(
     system: Option<&str>,
     user: &str,
     limit: Option<std::time::Duration>,
+    opts: &crate::managers::llm::cli::CallOptions,
 ) -> Result<crate::managers::llm::cli::CliReply, String> {
     use crate::managers::llm::cli;
     match limit {
-        Some(t) => cli::call_with_timeout(cli, binary, model, system, user, t),
+        Some(t) => cli::call_with_options(cli, binary, model, system, user, t, opts),
+        None if opts.cancel.is_some() || opts.max_tokens.is_some() => {
+            cli::call_with_options(cli, binary, model, system, user, cli::CALL_TIMEOUT, opts)
+        }
         None => cli::call(cli, binary, model, system, user),
     }
 }
@@ -482,15 +497,20 @@ async fn send_cli(
     };
     let model = model.to_string();
     let limit = CLI_TIMEOUT.try_with(|t| *t).ok();
+    let opts = cli::CallOptions {
+        cancel: CLI_CANCEL.try_with(|c| c.clone()).ok(),
+        max_tokens: CLI_MAX_TOKENS.try_with(|n| *n).ok(),
+    };
     let first = {
-        let (binary, model, system, user_content) = (
+        let (binary, model, system, user_content, opts) = (
             binary.clone(),
             model.clone(),
             system.clone(),
             user_content.clone(),
+            opts.clone(),
         );
         tokio::task::spawn_blocking(move || {
-            call_cli(cli, &binary, &model, system.as_deref(), &user_content, limit)
+            call_cli(cli, &binary, &model, system.as_deref(), &user_content, limit, &opts)
         })
         .await
         .map_err(|e| format!("cli_failed: {e}"))?
@@ -498,6 +518,15 @@ async fn send_cli(
     let reply = match first {
         Ok(reply) => reply,
         Err(e) => {
+            // Nach einem Abbruch weder merken noch aktualisieren noch wiederholen.
+            let aborted = cli::is_cancelled(&e)
+                || opts
+                    .cancel
+                    .as_ref()
+                    .is_some_and(|c| c.load(std::sync::atomic::Ordering::SeqCst));
+            if aborted {
+                return Err(e);
+            }
             // Ursache merken (fuer die Fehlermeldung des Protokolls).
             crate::managers::llm::cli_update::remember_error(&e);
             // Ist die CLI zu alt, aktualisiert die App sie und versucht es einmal neu.
@@ -513,7 +542,7 @@ async fn send_cli(
             // Die aktualisierte CLI liegt am selben Ort; neu suchen, falls der Pfad wechselte.
             let binary = cli::locate(cli).unwrap_or(binary);
             tokio::task::spawn_blocking(move || {
-                call_cli(cli, &binary, &model, system.as_deref(), &user_content, limit)
+                call_cli(cli, &binary, &model, system.as_deref(), &user_content, limit, &opts)
             })
             .await
             .map_err(|e| format!("cli_failed: {e}"))?

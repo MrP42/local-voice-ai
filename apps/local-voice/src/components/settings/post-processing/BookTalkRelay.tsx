@@ -5,14 +5,19 @@ import {
   type HubDevice,
   type RelayGrantInfo,
   type RelayModelInfo,
+  type RelayPairing,
 } from "@/bindings";
 import { useSettings } from "../../../hooks/useSettings";
 import { ToggleSwitch } from "../../ui/ToggleSwitch";
 
+/** Zwischenablage nach dem Kopieren des Codes nach dieser Zeit leeren. */
+const CLIPBOARD_CLEAR_MS = 60_000;
+
 /**
  * „iPhone darf Abo-Modelle nutzen“ (lva#320, Spec 11.3/11.7): Schalter (Standard aus),
- * Freigabe je iPhone mit gewählten Modellen (R1), Einrichtungscode für das Gerät und
- * Widerruf (R10). Der Relay-Schlüssel entsteht am PC und verlässt ihn nur im Code.
+ * Freigabe je iPhone mit gewählten Modellen (R1), Einrichtungscode (QR, Text als
+ * Rückfall; 10 Minuten, einmalig) und Widerruf (R10). Der Relay-Schlüssel entsteht
+ * am PC und verlässt ihn nur im Code; „Neuen Code erzeugen“ macht den alten ungültig.
  */
 export const BookTalkRelay: React.FC = () => {
   const { t } = useTranslation();
@@ -21,7 +26,8 @@ export const BookTalkRelay: React.FC = () => {
   const [models, setModels] = useState<RelayModelInfo[]>([]);
   const [grants, setGrants] = useState<RelayGrantInfo[]>([]);
   const [devices, setDevices] = useState<HubDevice[]>([]);
-  const [codes, setCodes] = useState<Record<string, string>>({});
+  const [codes, setCodes] = useState<Record<string, RelayPairing>>({});
+  const [now, setNow] = useState(() => Date.now());
   const [names, setNames] = useState<Record<string, string>>({});
   const [picked, setPicked] = useState<Record<string, string[]>>({});
   const [error, setError] = useState<string | null>(null);
@@ -45,6 +51,19 @@ export const BookTalkRelay: React.FC = () => {
     if (enabled) void reload();
   }, [enabled, reload]);
 
+  useEffect(() => {
+    if (Object.keys(codes).length === 0) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [codes]);
+
+  const copyCode = (code: string) => {
+    void navigator.clipboard?.writeText(code);
+    window.setTimeout(() => {
+      void navigator.clipboard?.writeText("");
+    }, CLIPBOARD_CLEAR_MS);
+  };
+
   const grantOf = (key: string) => grants.find((g) => g.device_key === key);
   const chosen = (key: string) => picked[key] ?? models.map((m) => m.id);
 
@@ -63,9 +82,14 @@ export const BookTalkRelay: React.FC = () => {
     }
   };
 
-  const showCode = async (key: string) => {
-    const res = await commands.booktalkRelayPairingCode(key);
-    if (res.status === "ok") setCodes((c) => ({ ...c, [key]: res.data }));
+  const renewCode = async (key: string) => {
+    const res = await commands.booktalkRelayRenewCode(key);
+    if (res.status === "ok") {
+      setCodes((c) => ({ ...c, [key]: res.data }));
+      await reload();
+    } else {
+      setError(String(res.error));
+    }
   };
 
   const revoke = async (key: string) => {
@@ -130,20 +154,27 @@ export const BookTalkRelay: React.FC = () => {
                   {grant ? (
                     <div className="space-y-2">
                       <p className="text-xs text-text/70">
-                        {t("settings.llm.functions.relay.granted", {
-                          date: new Date(
-                            grant.expires_at_ms,
-                          ).toLocaleDateString(),
-                        })}{" "}
+                        {grant.pending
+                          ? t("settings.llm.functions.relay.pendingNote", {
+                              time: new Date(
+                                grant.code_expires_at_ms,
+                              ).toLocaleTimeString(),
+                            })
+                          : t("settings.llm.functions.relay.granted", {
+                              date: new Date(
+                                grant.expires_at_ms,
+                              ).toLocaleDateString(),
+                            })}{" "}
                         · {grant.model_ids.join(", ")}
                       </p>
                       <div className="flex gap-2">
                         <button
                           type="button"
                           className="px-2 py-1 rounded border border-mid-gray/40"
-                          onClick={() => void showCode(d.device)}
+                          title={t("settings.llm.functions.relay.renewNote")}
+                          onClick={() => void renewCode(d.device)}
                         >
-                          {t("settings.llm.functions.relay.showCode")}
+                          {t("settings.llm.functions.relay.renew")}
                         </button>
                         <button
                           type="button"
@@ -211,27 +242,47 @@ export const BookTalkRelay: React.FC = () => {
                     </div>
                   )}
                   {codes[d.device] && (
-                    <div className="space-y-1">
-                      <p className="text-xs text-text/60">
-                        {t("settings.llm.functions.relay.code")}
-                      </p>
-                      <textarea
-                        readOnly
-                        rows={3}
-                        className="w-full rounded border border-mid-gray/40 bg-transparent px-2 py-1 font-mono text-xs"
-                        value={codes[d.device]}
-                        data-relay-code
-                        onFocus={(e) => e.currentTarget.select()}
-                      />
-                      <button
-                        type="button"
-                        className="px-2 py-1 rounded border border-mid-gray/40"
-                        onClick={() =>
-                          void navigator.clipboard?.writeText(codes[d.device])
-                        }
-                      >
-                        {t("settings.llm.functions.relay.copy")}
-                      </button>
+                    <div className="space-y-2">
+                      {codes[d.device].code_expires_at_ms <= now ? (
+                        <p className="text-xs text-text/60" role="status">
+                          {t("settings.llm.functions.relay.codeExpired")}
+                        </p>
+                      ) : (
+                        <>
+                          <p className="text-xs text-text/60">
+                            {t("settings.llm.functions.relay.scan")}
+                          </p>
+                          <img
+                            className="w-48 h-48 rounded bg-white"
+                            alt={t("settings.llm.functions.relay.qrAlt")}
+                            data-relay-qr
+                            src={`data:image/svg+xml;utf8,${encodeURIComponent(
+                              codes[d.device].qr_svg,
+                            )}`}
+                          />
+                          <p className="text-xs text-text/60">
+                            {t("settings.llm.functions.relay.codeFallback")}
+                          </p>
+                          <textarea
+                            readOnly
+                            rows={3}
+                            className="w-full rounded border border-mid-gray/40 bg-transparent px-2 py-1 font-mono text-xs"
+                            value={codes[d.device].code}
+                            data-relay-code
+                            onFocus={(e) => e.currentTarget.select()}
+                          />
+                          <button
+                            type="button"
+                            className="px-2 py-1 rounded border border-mid-gray/40"
+                            onClick={() => copyCode(codes[d.device].code)}
+                          >
+                            {t("settings.llm.functions.relay.copy")}
+                          </button>
+                          <p className="text-xs text-text/60">
+                            {t("settings.llm.functions.relay.clipboardNote")}
+                          </p>
+                        </>
+                      )}
                     </div>
                   )}
                 </li>

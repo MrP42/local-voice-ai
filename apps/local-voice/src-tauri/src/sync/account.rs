@@ -62,11 +62,29 @@ pub fn save(app: &AppHandle, cfg: &SyncConfig) -> Result<(), String> {
     Ok(())
 }
 
-/// Unix: Datei von Anfang an mit 0600 anlegen. Windows: nach dem Schreiben
-/// die Vererbung kappen und nur den aktuellen Benutzer eintragen (icacls);
-/// schlaegt das fehl, ist das ein Speicherfehler, kein Hinweis.
-#[cfg(unix)]
+/// Atomar und privat schreiben: erst in eine Nachbardatei (`<name>.tmp`, von
+/// Anfang an nur fuer den Benutzer), dann umbenennen. Ein Absturz mitten im
+/// Schreiben laesst die alte Datei heil; eine halbe Datei gibt es nie.
 pub(super) fn write_private(path: &std::path::Path, bytes: &[u8]) -> Result<(), String> {
+    let mut tmp_name = path
+        .file_name()
+        .map(|n| n.to_os_string())
+        .unwrap_or_default();
+    tmp_name.push(".tmp");
+    let tmp = path.with_file_name(tmp_name);
+    if let Err(e) = write_private_tmp(&tmp, bytes) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+    std::fs::rename(&tmp, path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("Datei ersetzen: {e}")
+    })
+}
+
+/// Unix: Datei von Anfang an mit 0600 anlegen.
+#[cfg(unix)]
+fn write_private_tmp(path: &std::path::Path, bytes: &[u8]) -> Result<(), String> {
     use std::io::Write as _;
     use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
     let mut f = std::fs::OpenOptions::new()
@@ -75,38 +93,47 @@ pub(super) fn write_private(path: &std::path::Path, bytes: &[u8]) -> Result<(), 
         .truncate(true)
         .mode(0o600)
         .open(path)
-        .map_err(|e| format!("sync.json anlegen: {e}"))?;
+        .map_err(|e| format!("Datei anlegen: {e}"))?;
     f.write_all(bytes)
-        .map_err(|e| format!("sync.json schreiben: {e}"))?;
+        .map_err(|e| format!("Datei schreiben: {e}"))?;
+    f.sync_all().map_err(|e| format!("Datei sichern: {e}"))?;
     // Bestehende Datei: Rechte nachziehen (mode gilt nur beim Anlegen).
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-        .map_err(|e| format!("sync.json Rechte: {e}"))
+        .map_err(|e| format!("Datei Rechte: {e}"))
 }
 
+/// Windows: nach dem Schreiben die Vererbung kappen und nur den aktuellen
+/// Benutzer eintragen (icacls, ohne Konsolenfenster). Schlaegt icacls fehl,
+/// bleibt die Datei bestehen (sie liegt im Profil des Benutzers); das ist nur
+/// eine Warnung -- ein Fehlschlag darf nie Daten loeschen.
 #[cfg(windows)]
-pub(super) fn write_private(path: &std::path::Path, bytes: &[u8]) -> Result<(), String> {
-    std::fs::write(path, bytes).map_err(|e| format!("sync.json schreiben: {e}"))?;
+fn write_private_tmp(path: &std::path::Path, bytes: &[u8]) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+    std::fs::write(path, bytes).map_err(|e| format!("Datei schreiben: {e}"))?;
     let user = std::env::var("USERNAME").unwrap_or_default();
     if user.is_empty() {
-        return Err("sync.json Rechte: Benutzername unbekannt".into());
+        log::warn!("Dateirechte nicht gesetzt: Benutzername unbekannt");
+        return Ok(());
     }
     let status = std::process::Command::new("icacls")
         .arg(path)
         .args(["/inheritance:r", "/grant:r", &format!("{user}:(R,W)")])
+        .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
-        .status()
-        .map_err(|e| format!("sync.json Rechte (icacls): {e}"))?;
-    if !status.success() {
-        let _ = std::fs::remove_file(path);
-        return Err("sync.json Rechte konnten nicht gesetzt werden".into());
+        .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
+        .status();
+    match status {
+        Ok(s) if s.success() => {}
+        Ok(_) => log::warn!("Dateirechte nicht gesetzt (icacls meldet Fehler)"),
+        Err(e) => log::warn!("Dateirechte nicht gesetzt (icacls: {e})"),
     }
     Ok(())
 }
 
 #[cfg(not(any(unix, windows)))]
-pub(super) fn write_private(path: &std::path::Path, bytes: &[u8]) -> Result<(), String> {
-    std::fs::write(path, bytes).map_err(|e| format!("sync.json schreiben: {e}"))
+fn write_private_tmp(path: &std::path::Path, bytes: &[u8]) -> Result<(), String> {
+    std::fs::write(path, bytes).map_err(|e| format!("Datei schreiben: {e}"))
 }
 
 pub fn remove(app: &AppHandle) {
@@ -148,6 +175,26 @@ mod tests {
         assert!(valid_device_id(&id));
         assert!(!valid_device_id("kurz"));
         assert!(!valid_device_id("hat leerzeichen!"));
+    }
+
+    #[test]
+    fn schreiben_ist_atomar_und_hinterlaesst_keine_tmp_datei() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("x.json");
+        write_private(&path, b"eins").unwrap();
+        write_private(&path, b"zwei").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"zwei");
+        let names: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, vec!["x.json".to_string()]);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
     }
 
     #[test]

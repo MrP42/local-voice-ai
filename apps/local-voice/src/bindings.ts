@@ -1001,9 +1001,9 @@ async booktalkRelayModels() : Promise<Result<RelayModelInfo[], string>> {
 }
 },
 /**
- * Ein iPhone freigeben; gibt den Einrichtungscode zurück.
+ * Ein iPhone freigeben; gibt den Einrichtungscode (Text und QR) zurück.
  */
-async booktalkRelayAuthorize(deviceKey: string, name: string, modelIds: string[]) : Promise<Result<string, string>> {
+async booktalkRelayAuthorize(deviceKey: string, name: string, modelIds: string[]) : Promise<Result<RelayPairing, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("booktalk_relay_authorize", { deviceKey, name, modelIds }) };
 } catch (e) {
@@ -1012,11 +1012,11 @@ async booktalkRelayAuthorize(deviceKey: string, name: string, modelIds: string[]
 }
 },
 /**
- * Einrichtungscode einer bestehenden Freigabe.
+ * Einrichtungscode noch einmal zeigen: erzeugt einen neuen Schlüssel, der alte ist sofort ungültig.
  */
-async booktalkRelayPairingCode(deviceKey: string) : Promise<Result<string, string>> {
+async booktalkRelayRenewCode(deviceKey: string) : Promise<Result<RelayPairing, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("booktalk_relay_pairing_code", { deviceKey }) };
+    return { status: "ok", data: await TAURI_INVOKE("booktalk_relay_renew_code", { deviceKey }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -9425,11 +9425,27 @@ export type HistoryUpdatePayload = { action: "added"; entry: HistoryEntry } | { 
 /**
  * Eine Freigabe, wie die Oberfläche sie zeigt (ohne Schlüssel).
  */
-export type RelayGrantInfo = { device_key: string; name: string; key_id: string; model_ids: string[]; created_at_ms: number; expires_at_ms: number }
+export type RelayGrantInfo = { device_key: string; name: string; key_id: string; model_ids: string[]; created_at_ms: number; 
+/**
+ * Ablauf der Freigabe (90 Tage).
+ */
+expires_at_ms: number; 
+/**
+ * `true`, solange das iPhone den Einrichtungscode noch nicht benutzt hat.
+ */
+pending: boolean; 
+/**
+ * Ablauf des Einrichtungscodes (10 Minuten ab Erzeugung).
+ */
+code_expires_at_ms: number }
 /**
  * Ein Modell, das am PC für das Relay in Frage kommt.
  */
 export type RelayModelInfo = { id: string; label: string; provider: string }
+/**
+ * Einrichtungscode zum Anzeigen: Text (Rückfall), QR-Bild (SVG) und Fristen.
+ */
+export type RelayPairing = { code: string; qr_svg: string; code_expires_at_ms: number; grant_expires_at_ms: number }
 export type HubDevice = { device: string; last_push?: string | null }
 export type HubStatus = { hub_seq?: number; objects?: Partial<{ [key in string]: number }>; devices?: HubDevice[] }
 /**

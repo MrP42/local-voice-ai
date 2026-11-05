@@ -1985,7 +1985,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             sync::booktalk_relay::booktalk_relay_grants,
             sync::booktalk_relay::booktalk_relay_models,
             sync::booktalk_relay::booktalk_relay_authorize,
-            sync::booktalk_relay::booktalk_relay_pairing_code,
+            sync::booktalk_relay::booktalk_relay_renew_code,
             sync::booktalk_relay::booktalk_relay_revoke,
             sync::sync_logout,
             sync::sync_status,
