@@ -124,6 +124,13 @@ public enum LibrarySyncFormat {
     /// So stimmen früher mit 4-MiB-Stücken hochgeladene Dateien weiter.
     public static let oneChunkMaxBytes = 3_827_302
 
+    /// Größte Datei, die mit 4-MiB-Stücken noch als ein Stück durchkam (`LEGACY_ONE_CHUNK_MAX`).
+    public static let legacyOneChunkMaxBytes = 3_932_054
+
+    /// Dieselbe Kennung kann am Hub ein oder zwei Stücke haben, der Verweis sagt beides:
+    /// Stück 0 lesen und nur weitergehen, wenn die Datei noch nicht vollständig ist.
+    public static func mayBeLegacySingleChunk(size: Int) -> Bool { size > oneChunkMaxBytes && size <= legacyOneChunkMaxBytes }
+
     public static func chunkCount(size: Int) -> Int {
         size <= oneChunkMaxBytes ? 1 : (size + chunkPlainBytes - 1) / chunkPlainBytes
     }

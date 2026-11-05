@@ -252,7 +252,7 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
                         try Self.append(staged: file, to: target.appendingPathExtension("part"), key: key, userId: userId,
                                         blob: part.blob, index: index, chunkPlainBytes: chunk)
                     }.value
-                    if index == part.chunks - 1 {
+                    if index == part.chunks - 1 || size == part.size {
                         guard size == part.size else {
                             try? FileManager.default.removeItem(at: target.appendingPathExtension("part"))
                             throw LibrarySync.SyncError.corrupt("Größe von \(part.file)")

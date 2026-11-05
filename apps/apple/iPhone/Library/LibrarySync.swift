@@ -393,6 +393,7 @@ final class LibrarySync: ObservableObject {
         let partial = Self.fileSize(part) ?? 0
         var have = min(partial / chunk, ref.chunks)
         if have == ref.chunks, partial != ref.size { have = ref.chunks - 1 }  // abgerissenes Einzelstück neu holen
+        if LibrarySyncFormat.mayBeLegacySingleChunk(size: ref.size), partial != ref.size { have = 0 }
         let key = [UInt8](acc.key), userId = acc.userId
         progress(have * chunk)
         for index in have..<ref.chunks {
@@ -409,6 +410,7 @@ final class LibrarySync: ObservableObject {
                 return index * chunk + plain.count
             }.value
             progress(written)
+            if written == ref.size { break }  // Alt-Blob: ein Stück, obwohl die Rechnung zwei ergibt
         }
         guard Self.fileSize(part) == ref.size else {
             try? fm.removeItem(at: part); throw SyncError.corrupt("Größe")

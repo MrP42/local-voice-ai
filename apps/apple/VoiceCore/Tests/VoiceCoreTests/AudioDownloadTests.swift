@@ -43,6 +43,23 @@ final class AudioDownloadTests: XCTestCase {
         XCTAssertNil(AudioDownload.nextChunk(part, .init(complete: false, partialBytes: 7), chunkPlainBytes: chunk))
     }
 
+    func testLegacyBlobBetweenOneChunkLimitsAsksForSecondChunkOnlyIfNeeded() {
+        let size = LibrarySyncFormat.oneChunkMaxBytes + 1000
+        let plain = LibrarySyncFormat.chunkPlainBytes
+        let part = AudioDownload.Part(blob: "d", size: size, chunks: 2, file: "teil_004.m4a")
+        let job = AudioDownload.Job(bookId: "b", parts: [part])
+        func missing(_ partial: Int) -> [Int] {
+            AudioDownload.missingChunks(job, states: [.init(complete: false, partialBytes: partial)], staged: [], inFlight: [], chunkPlainBytes: plain).map(\.index)
+        }
+        XCTAssertEqual(missing(0), [0], "nicht gleich Stück 1 anfordern: Am Hub gibt es vielleicht nur eins")
+        XCTAssertEqual(missing(size), [], "Alt-Blob: ein Stück reicht")
+        XCTAssertEqual(missing(plain), [1], "neues Format: Stück 0 war 3 MiB")
+        XCTAssertEqual(missing(plain + 5), [0], "abgerissen: von vorn")
+        let legacyRef = AudioDownload.Part(blob: "e", size: LibrarySyncFormat.legacyOneChunkMaxBytes, chunks: 1, file: "teil_005.m4a")
+        XCTAssertEqual(AudioDownload.nextChunk(legacyRef, .init(complete: false, partialBytes: 0), chunkPlainBytes: plain), 0)
+        XCTAssertNil(AudioDownload.nextChunk(legacyRef, .init(complete: false, partialBytes: legacyRef.size), chunkPlainBytes: plain))
+    }
+
     func testSpaceProblem() {
         let fmt: (Int64) -> String = { "\($0) B" }
         XCTAssertNil(AudioDownload.spaceProblem(remainingBytes: 100, freeBytes: nil, format: fmt))

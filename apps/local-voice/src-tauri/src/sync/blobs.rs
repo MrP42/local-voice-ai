@@ -25,6 +25,10 @@ pub const CHUNK_PLAIN: usize = 3 * 1024 * 1024;
 /// Bis hierher bleibt eine Datei ein einziges Stück (Anfrage rund 4,9 MiB). So stimmen die
 /// früher mit 4-MiB-Stücken hochgeladenen Dateien weiter: Mehr als ein Stück kam nie durch.
 pub const ONE_CHUNK_MAX: u64 = 3_827_302;
+/// Größte Datei, die mit 4-MiB-Stücken noch als ein Stück durchkam (Anfrage knapp 5 MiB).
+/// Darüber bis `ONE_CHUNK_MAX` kann dieselbe Blob-Kennung am Hub ein Stück oder zwei Stücke
+/// haben, und der Verweis kann beides sagen: Lesen endet deshalb, sobald `size` da ist.
+pub const LEGACY_ONE_CHUNK_MAX: u64 = 3_932_054;
 const NONCE_LEN: usize = 24;
 const TAG_LEN: usize = 16;
 /// Obergrenze des Hubs (`VoiceBlobService::MAX_CHUNKS`).
@@ -365,6 +369,9 @@ pub async fn download(
             h.update(&plain);
             file.write_all(&plain)
                 .map_err(|e| HubError::Other(format!("{}: {e}", tmp.display())))?;
+            if total == size {
+                break; // Alt-Blob: ein Stück, obwohl die Rechnung zwei ergibt
+            }
         }
         file.sync_all()
             .map_err(|e| HubError::Other(format!("{}: {e}", tmp.display())))?;
@@ -575,6 +582,7 @@ mod tests {
         assert_eq!(chunk_count(1), 1);
         assert_eq!(chunk_count(ONE_CHUNK_MAX), 1);
         assert_eq!(chunk_count(ONE_CHUNK_MAX + 1), 2);
+        assert_eq!(chunk_count(LEGACY_ONE_CHUNK_MAX), 2);
         assert_eq!(chunk_count(2 * CHUNK_PLAIN as u64), 2);
         assert_eq!(chunk_count(2 * CHUNK_PLAIN as u64 + 1), 3);
     }

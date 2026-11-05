@@ -58,11 +58,12 @@ public enum AudioDownload {
 
     /// Nächstes Stück, das an ein Teil angehängt werden muss (`nil`: Teil fertig).
     public static func nextChunk(_ part: Part, _ state: PartState, chunkPlainBytes: Int) -> Int? {
-        if state.complete { return nil }
+        if state.complete || state.partialBytes == part.size { return nil }
+        // Alt-Blob oder zwei Stücke: Abgerissenes lässt sich nicht zuordnen, also von vorn.
+        if LibrarySyncFormat.mayBeLegacySingleChunk(size: part.size) { return state.partialBytes == chunkPlainBytes ? 1 : 0 }
         let have = min(state.partialBytes / chunkPlainBytes, part.chunks)
-        if have < part.chunks { return have }
         // Ein Einzelstück kann größer sein als `chunkPlainBytes`: Abgerissen wird es neu geholt.
-        return state.partialBytes == part.size ? nil : part.chunks - 1
+        return have < part.chunks ? have : part.chunks - 1
     }
 
     /// Fehlende Stücke in Hörreihenfolge, ohne angekommene und laufende; höchstens `limit`.
@@ -74,7 +75,9 @@ public enum AudioDownload {
         for (p, part) in job.parts.enumerated() {
             let state = p < states.count ? states[p] : PartState(complete: false, partialBytes: 0)
             guard let first = nextChunk(part, state, chunkPlainBytes: chunkPlainBytes) else { continue }
-            for i in first..<part.chunks {
+            // Ob es ein zweites Stück gibt, zeigt erst das erste.
+            let last = LibrarySyncFormat.mayBeLegacySingleChunk(size: part.size) ? first + 1 : part.chunks
+            for i in first..<min(last, part.chunks) {
                 let key = ChunkKey(part: p, index: i)
                 if staged.contains(key) || inFlight.contains(key) { continue }
                 out.append(key)
