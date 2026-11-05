@@ -63,6 +63,10 @@ pub struct SyncEngine {
     status: Mutex<SyncStatus>,
     run_lock: tokio::sync::Mutex<()>,
     notify: Notify,
+    /// Wartezeiten fehlgeschlagener Dateien beim nächsten Lauf verwerfen: beim
+    /// App-Start und bei „Jetzt abgleichen“. Sonst wartet eine Datei nach einem
+    /// behobenen Hub-Fehler bis zu 6 Stunden.
+    retry_files: std::sync::atomic::AtomicBool,
 }
 
 impl Default for SyncEngine {
@@ -71,6 +75,7 @@ impl Default for SyncEngine {
             status: Mutex::new(SyncStatus::default()),
             run_lock: tokio::sync::Mutex::new(()),
             notify: Notify::new(),
+            retry_files: std::sync::atomic::AtomicBool::new(true),
         }
     }
 }
@@ -80,6 +85,17 @@ fn now_ms() -> f64 {
 }
 
 impl SyncEngine {
+    /// Beim nächsten Lauf alle Dateien sofort erneut versuchen.
+    pub fn retry_files_now(&self) {
+        self.retry_files
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    fn take_retry_files(&self) -> bool {
+        self.retry_files
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+    }
+
     pub fn status(&self) -> SyncStatus {
         self.status.lock().map(|s| s.clone()).unwrap_or_default()
     }
@@ -228,6 +244,9 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
     let my_key_id = crypto::key_id(&key);
     let client = HubClient::new(&cfg.url, &cfg.token);
     let mut led = ledger::load(app);
+    if app.state::<SyncEngine>().take_retry_files() {
+        led.failed.clear();
+    }
     let mut changed = false;
     let mut warning: Option<String> = None;
     let mut removed: Vec<String> = Vec::new();
