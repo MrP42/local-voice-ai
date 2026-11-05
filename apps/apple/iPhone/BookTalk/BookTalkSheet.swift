@@ -13,16 +13,24 @@ private enum BookTalkColors {
 /// Knopf „Fragen“ im Player (Vorlesen und Hörbuch): öffnet das Blatt für das laufende Buch.
 struct BookTalkButton: View {
     @ObservedObject var playback = LibraryPlayback.shared
+    /// Nur Symbol, für die Kopfzeile des Einheits-Players.
+    var compact = false
     @State private var shown = false
+
+    init(compact: Bool = false) { self.compact = compact }
 
     var body: some View {
         Button { shown = true } label: {
-            Label("Fragen", systemImage: "questionmark.bubble")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.white)
-                .padding(.horizontal, 14)
-                .frame(minHeight: 44)
-                .background(BookTalkColors.fill, in: Capsule())
+            if compact {
+                Image(systemName: "questionmark.bubble").font(.title3).frame(width: 44, height: 44)
+            } else {
+                Label("Fragen", systemImage: "questionmark.bubble")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 14)
+                    .frame(minHeight: 44)
+                    .background(BookTalkColors.fill, in: Capsule())
+            }
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Fragen zum Buch")
