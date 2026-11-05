@@ -50,6 +50,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
     private var currentUtterance: AVSpeechUtterance?
     /// Absatz, in dem das Vorlesen pausiert wurde; nach einem Sprung neu sprechen.
     private var pausedParagraph: Int?
+    private var phononTask: Task<Void, Never>?
     /// Erst nach abgeschlossenem Sprung an die gespeicherte Stelle sichern.
     private var seekSettled = true
     private var lastTextSave = Date.distantPast
@@ -217,12 +218,43 @@ final class LibraryPlayback: NSObject, ObservableObject {
         if autoplay { play() }
     }
 
+    private var phononVoice: String? { PhononEngine.voiceName(voiceIdentifier) }
+
+    private func stopPhonon() {
+        phononTask?.cancel(); phononTask = nil
+        PhononEngine.shared.silence()
+    }
+
+    /// Phonon liefert keine Wortzeiten: markiert wird der Absatz, nicht das Wort.
+    private func speakPhonon(_ p: TextParagraph, voice: String) {
+        wordRange = nil
+        pausedParagraph = nil
+        playing = true
+        updateNowPlaying()
+        phononTask = Task { [weak self] in
+            do {
+                try await PhononEngine.shared.speak(p.text, voice: voice)
+                guard !Task.isCancelled else { return }
+                self?.paragraphFinished()
+            } catch is CancellationError {
+            } catch {
+                guard !Task.isCancelled, let self else { return }
+                // Nicht verstummen: mit der Systemstimme weiterlesen.
+                self.error = "Phonon konnte nicht sprechen, die Systemstimme liest weiter. (\(error.localizedDescription))"
+                self.voiceIdentifier = nil
+                self.speakCurrent()
+            }
+        }
+    }
+
     private func speakCurrent() {
         guard paragraphs.indices.contains(paragraphIndex) else { playing = false; return }
         currentUtterance = nil
+        stopPhonon()
         synth.stopSpeaking(at: .immediate)
         activateSession()
         let p = paragraphs[paragraphIndex]
+        if let voice = phononVoice { speakPhonon(p, voice: voice); return }
         let u = AVSpeechUtterance(string: p.text)
         u.voice = voiceIdentifier.flatMap { AVSpeechSynthesisVoice(identifier: $0) } ?? Self.defaultVoice()
         u.rate = AVSpeechUtteranceDefaultSpeechRate * rate
@@ -285,7 +317,9 @@ final class LibraryPlayback: NSObject, ObservableObject {
     func pause() {
         switch mode {
         case .audiobook: player?.pause(); saveAudio()
-        case .readAloud: synth.pauseSpeaking(at: .word); pausedParagraph = paragraphIndex
+        case .readAloud:
+            // Phonon lässt sich nicht anhalten: „Weiter“ beginnt den Absatz neu.
+            if phononTask != nil { stopPhonon() } else { synth.pauseSpeaking(at: .word); pausedParagraph = paragraphIndex }
         case nil: break
         }
         playing = false
@@ -297,7 +331,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
 
     func stop() {
         if mode == .audiobook { player?.pause(); saveAudio() }
-        if mode == .readAloud { currentUtterance = nil; synth.stopSpeaking(at: .immediate) }
+        if mode == .readAloud { currentUtterance = nil; stopPhonon(); synth.stopSpeaking(at: .immediate) }
         removeObservers()
         player?.replaceCurrentItem(with: nil)
         playing = false; book = nil; mode = nil; wordRange = nil; info = nil
@@ -310,7 +344,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
 
     private func applyRate() {
         if mode == .audiobook, playing { player?.rate = rate }
-        if mode == .readAloud, playing { speakCurrent() }
+        if mode == .readAloud, playing, phononVoice == nil { speakCurrent() }  // Phonon kennt kein Tempo
     }
 
     func sleep(minutes: Int?) {
@@ -422,16 +456,21 @@ extension LibraryPlayback: AVSpeechSynthesizerDelegate {
     nonisolated func speechSynthesizer(_ s: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
         let id = ObjectIdentifier(utterance)
         Task { @MainActor in
-            guard let current = self.currentUtterance, ObjectIdentifier(current) == id,
-                  self.mode == .readAloud, self.playing else { return }
-            let finished = self.paragraphIndex
-            guard self.paragraphs.indices.contains(finished) else { return }
-            let p = self.paragraphs[finished]
-            let next = finished + 1 < self.paragraphs.count ? self.paragraphs[finished + 1].start : p.end
-            // Stand = Beginn des nächsten Absatzes, damit Weiterlesen nicht wiederholt.
-            self.saveText(at: next, heard: p.start..<p.end)
-            if finished + 1 < self.paragraphs.count { self.paragraphIndex = finished + 1; self.speakCurrent() }
-            else { self.playing = false; self.wordRange = nil; self.currentUtterance = nil; self.library.flush() }
+            guard let current = self.currentUtterance, ObjectIdentifier(current) == id else { return }
+            self.paragraphFinished()
         }
+    }
+
+    /// Absatz zu Ende gesprochen, von der Systemstimme oder von Phonon.
+    fileprivate func paragraphFinished() {
+        guard mode == .readAloud, playing else { return }
+        let finished = paragraphIndex
+        guard paragraphs.indices.contains(finished) else { return }
+        let p = paragraphs[finished]
+        let next = finished + 1 < paragraphs.count ? paragraphs[finished + 1].start : p.end
+        // Stand = Beginn des nächsten Absatzes, damit Weiterlesen nicht wiederholt.
+        saveText(at: next, heard: p.start..<p.end)
+        if finished + 1 < paragraphs.count { paragraphIndex = finished + 1; speakCurrent() }
+        else { playing = false; wordRange = nil; currentUtterance = nil; phononTask = nil; library.flush() }
     }
 }

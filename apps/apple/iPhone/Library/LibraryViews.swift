@@ -674,16 +674,35 @@ struct LibraryReadAloudView: View {
     }
 
     private var currentVoiceName: String {
-        (playback.voiceIdentifier.flatMap { AVSpeechSynthesisVoice(identifier: $0) } ?? LibraryPlayback.defaultVoice())?.name ?? "System"
+        if let phonon = PhononEngine.voiceName(playback.voiceIdentifier) { return "\(phonon) (Phonon)" }
+        return (playback.voiceIdentifier.flatMap { AVSpeechSynthesisVoice(identifier: $0) } ?? LibraryPlayback.defaultVoice())?.name ?? "System"
     }
 }
 
 private struct VoiceList: View {
     @ObservedObject var playback = LibraryPlayback.shared
+    @ObservedObject var phonon = PhononEngine.shared
     @Environment(\.dismiss) private var dismiss
     var body: some View {
         NavigationStack {
             List {
+                if phonon.modelAvailable {
+                    Section {
+                        if phonon.loading { HStack { ProgressView(); Text("Phonon wird vorbereitet …") }.frame(minHeight: 44) }
+                        ForEach(phonon.voices, id: \.self) { name in
+                            let id = PhononEngine.voicePrefix + name
+                            Button { playback.voiceIdentifier = id; dismiss() } label: {
+                                HStack {
+                                    Text(name)
+                                    Spacer()
+                                    if id == playback.voiceIdentifier { Image(systemName: "checkmark") }
+                                }.frame(minHeight: 44).contentShape(Rectangle())
+                            }.buttonStyle(.plain)
+                        }
+                    } header: { Text("Phonon") } footer: {
+                        Text("Läuft auf dem iPhone. Markiert wird der Absatz statt des Worts, das Tempo lässt sich nicht ändern.")
+                    }
+                }
                 Section {
                     ForEach(LibraryPlayback.germanVoices, id: \.identifier) { v in
                         Button {
@@ -704,6 +723,7 @@ private struct VoiceList: View {
                 }
             }
             .navigationTitle("Stimme").navigationBarTitleDisplayMode(.inline)
+            .task { if phonon.modelAvailable { try? await phonon.prepare() } }
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Fertig") { dismiss() } } }
         }
     }
