@@ -53,8 +53,7 @@ unterhalten, in einem natürlichen Gespräch mit vollem Kontext zu allen Inhalte
 - Befehle: `app_context_warm()` (beim Gesprächsstart, baut/lädt Index im Hintergrund) und
   `app_context_retrieve(query, previous?) -> ContextHits` (Ziel **< 30 ms** bei 50 Büchern).
 - Jeder Abruf läuft durch das Tor mit Audit (Ziel `app_context · voice_orchestrator`, nie Inhalte).
-- Index nur im Speicher plus Cache unter `app_data/app_context/` (nur Token-Statistik und Hashes,
-  keine Volltexte außerhalb der bestehenden Speicherorte).
+- Index nur im Arbeitsspeicher, kein Plattencache (M2).
 
 ### A2 Globale Gesprächsseite `globalSide.ts` (Frontend)
 
@@ -87,12 +86,125 @@ eigener Schritt (Erkennungsmodell muss Streaming können) und nicht Teil dieses 
 
 ### A4 Datenschutz und Grenzen
 
-- Nur freigegebene Bereiche; Bücher und Buchnotizen sind neue Bereiche `books`, `book_notes`
-  (inkl. KI-Dokumente) in `areas.rs`, Standard aus.
+- Nur freigegebene Bereiche; neue Bereiche `books`, `book_notes`, `ki_docs` in `areas.rs`, Standard aus (Matrix: M1).
 - Souveränitätsstufe „nur lokal“: Abrufkontext geht nie an Cloud-Modelle. Bei Relay/Cloud-Sprecher
   wird pro Gespräch einmal gefragt („Inhalte an <Anbieter> senden?“), Antwort an Gespräch gebunden.
 - Inhalte sind Daten, keine Anweisungen (Kennzeichnung im Prompt), nie im Log, nie im Audit.
 - Besondere Kategorien (Datenklasse `restricted` in Gesprächen) werden nicht indiziert.
+
+## Abstimmung Nachbar-Threads (05.11. 23:25)
+
+- Buch-Thread: keine Bedenken gegen Wiederverwendung von `lex`, `retrieve::Bm25`, `index::build`
+  (bleiben unverändert; Prompt-Tuning dort nur in `prompt.rs`, feat/324).
+- Buchtext global nur bis Lesegrenze. Die Cloud-Freigabe je Verbindung und Modell (`consent_key`)
+  gilt auch für globale Anfragen mit Buchauszügen (statt eigener Rückfrage).
+- Wechsel „Allgemein“/„Im Buch“: abgebrochene Antworten nie in den Buch-Verlauf schreiben (§3.7).
+- iOS-Einstieg: `BookTalkButton`/`BookTalkSheet(book:)` aus `BookPlayer.swift` direkt nutzen.
+
+## Runde 2: Codex-Must-fixes eingearbeitet (05.11. 23:40)
+
+### M1 Freigabematrix (vor Indexierung UND vor Ausgabe geprüft)
+
+| Quelle | Bereich (`voice_call_knowledge`) | Indiziert | Ausschluss |
+|---|---|---|---|
+| Bücher (Text) | `books` | ja, bis Lesegrenze sichtbar | – |
+| Buchnotizen | `book_notes` | ja | Spoilerregel M3 |
+| KI-Dokumente (Buch-KI) | `ki_docs` (eigene Freigabe) | ja | Spoilerregel M3 |
+| Besprechungen (Notizen, Protokoll) | `meetings` | ja | Datenklasse `restricted`/besondere Kategorie |
+| Transkripte | `transcripts` (nur mit `meetings`) | ja | wie oben |
+| Diktate | `dictations` | ja | wie oben |
+| Frühere Gespräche | `conversations` | ja, ohne laufendes Gespräch | `restricted`, besondereKategorie; Gespräche über ein Buch: M3 |
+| Vorlesen-Seiten | `tts` | ja | – |
+| Termine, Tagesüberblick | `calendar` | **nein** (bleibt Werkzeug, zeitraumbasiert) | – |
+| Profil, Einstellungen, Schlüssel | – | **nie** | – |
+
+`restricted` (auch abgeleitet: Protokoll, Zusammenfassung, Gesprächsbeitrag aus restricted-Quelle)
+wird nie aufgenommen; eine Umklassifizierung entfernt das Dokument (`upsert` mit `restricted`).
+Vor der Ausgabe prüft `retrieve` erneut den Bereich und die Lesegrenze.
+
+### M2 Löschung und Widerruf
+
+- Index nur im Arbeitsspeicher. **Kein Plattencache** (keine Token-Statistik auf Platte) – damit
+  entfällt die Aufbewahrungsfrage; Neuaufbau beim ersten Gespräch nach Start (~1 s bei 50 Büchern,
+  im Hintergrund, Abruf wartet nicht, sondern sucht im bis dahin Fertigen).
+- Jede Entfernung (Löschen, Ändern, Umklassifizieren, Bereich entzogen, Schalter aus) erhöht
+  `epoch`. Abrufergebnisse tragen `epoch`; die Gesprächsseite verwirft Ergebnisse, Prompt-Kontext und
+  laufende Modellanfragen mit älterem Stand (`voice_call_cancel`), späte Ereignisse werden verworfen.
+- Schalter aus ⇒ `revoke(None)`: Index leer, keine Hintergrundarbeit, kein Vorwärmen, kein Abruf.
+- Änderungen kommen über die bestehenden Busse (Bibliothek, Besprechungen, Gespräche, Diktate):
+  betroffenes Dokument wird sofort entfernt und erst danach neu aufgenommen.
+
+### M3 Spoilergrenze für alles mit Buchbezug
+
+- Abgeleitete Inhalte tragen `book_id` und `book_upto` (belegte Spanne: Notiz = Ankeroffset,
+  KI-Dokument = Ende des zusammengefassten Bereichs, Buchgespräch = höchster zitierter Offset).
+- Sichtbar nur, wenn `book_upto ≤ frontier`; unklare Spanne ⇒ unsichtbar (auch der Titel), außer
+  bei ausdrücklicher Ganzes-Buch-Freigabe **pro Buch**.
+- Buchtext: überspannende Stücke werden gekürzt und nur mit dem gekürzten Text bewertet.
+- Vor der Übergabe an den Prompt prüft die App-Schicht die Grenze erneut gegen die aktuelle
+  Leseposition (Grenze kann sich nur nach vorne bewegen; bei Rücksprung gilt die neue).
+
+### M4 Belegprüfung und Eval-Tor
+
+- `[Q<k>]` gilt nur, wenn k im Abruf dieses Durchgangs vorkam, `version` (Quellhash) und
+  `epoch` noch aktuell sind und das Sprungziel existiert; sonst wird die Marke entfernt und der
+  Satz als „ohne Beleg“ angezeigt. Für Bücher zusätzlich die Satzfenster-Prüfung aus `book_ai::talk::cite`.
+- Eval-Tor (≥ 30 Fragen je Kategorie, synthetische Fixtures `tooling/fixtures/app-context/`):
+  Antworttreue, Belegdeckung ≥ 80 %, **0 Spoiler, 0 Widerrufslecks, 0 Cloud-Lecks unter „nur lokal“,
+  0 befolgte Injektionen**. Eine einzige Sicherheitsverletzung blockiert die Freischaltung.
+  Ergebnis je (Modell, `PROMPT_VERSION`, Prüfversion).
+
+### M5 Spekulation (L1)
+
+- Spekulativer Abruf nur **lokal**: Abruf + Prompt bauen, keine Modell-, TTS- oder Cloud-Aufrufe.
+- Ergebnis gebunden an (Turn-Id, Transkript-Hash, `epoch`, Freigabestand). Verworfen bei `resume`,
+  abweichendem Finaltranskript, Abbruch, Seitenwechsel oder neuem Stand.
+- Höchstens ein spekulativer Abruf gleichzeitig; Abruf läuft auf dem Blocking-Pool mit Zeitlimit
+  50 ms. Gemessen: Treffer/Fehlstart/verworfen, CPU-Zeit.
+
+### M6 Cloud
+
+- „Nur lokal“ sperrt technisch jede Übertragung von Abrufkontext (Sprecher, Denker, Relay,
+  Fallbacks), unabhängig von jeder Zustimmung.
+- Sonst Zustimmung gebunden an (Anbieter, Modellroute, Bereiche, Gespräch) – baut auf `consent_key`
+  des Buch-Gesprächs auf. Jede Änderung ⇒ neue Zustimmung. Laufende Übertragung sichtbar markiert
+  (Infozeile „Inhalte gehen an <Anbieter>“).
+
+### M7 Messvorschrift
+
+| Zeitpunkt | Quelle |
+|---|---|
+| t0 Sprechende | letzter Frame über Schwelle (`lastSpeechAt`, nicht `end`-Ereignis) |
+| t1 STT final, t2 Abruf fertig, t3 Prompt fertig, t4 erstes Token, t5 erstes TTS-Audio fertig, t6 hörbarer Inhalt (Wiedergabestart) | `TurnMetrics` erweitert |
+| tR Rückmeldung (Ton/Füllsatz) | getrennt; zählt **nicht** als Inhalt |
+
+Kennzahlen: `t6−t0` (Inhalt) und `tR−t0` (Rückmeldung) getrennt. Nenner = abgeschlossene Durchgänge;
+Abbrüche, Barge-in, Fehler und Zeitüberschreitungen (> 10 s) werden gezählt und getrennt berichtet,
+nicht in p50/p95 gemischt. Stichprobe ≥ 100 Durchgänge je Stufe. Fehlstarts der Spekulation getrennt.
+Der Füllsatz nach 600 ms erfüllt das 500-ms-Ziel ausdrücklich nicht; das 500-ms-Ziel für die
+Rückmeldung wird nur mit einem kurzen Quittungston (≤ 150 ms Audio, lokal) erreicht.
+
+### M8 Reproduzierbare Freischaltung
+
+- L1–L7 je einzeln gegen dieselbe Basis (alle aus), warm und kalt getrennt, auf Patricks PC.
+  Bericht mit Hardware, Modell, Quantisierung, Datenumfang (Bücher/Stücke), Last.
+- „Letzte 50 Durchgänge“ in der Infozeile ist nur Betriebsanzeige, kein Nachweis.
+- Standard aus: kein Indexaufbau, kein Vorwärmen, kein Abruf (Test). Freischaltung erst nach
+  bestandenem Eval-Tor und ausdrücklicher Bereichswahl.
+
+### Antworten Codex auf die offenen Fragen
+
+1. Immer abrufen, sobald Funktion und Bereiche frei sind. „Kein Treffer“ über **Termabdeckung je
+   Treffer** (vorläufig ≥ 34 % der Suchterme) statt nur relativer 40 %; Kalibrierung im Eval.
+2. Siehe M5. 3. Lesegrenze für alle abgeleiteten Quellen, ganzes Buch nur pro Buch. 4. Siehe M6.
+
+## Stand P1 (Code)
+
+`src-tauri/src/app_context/` (rein): `model`, `chunk`, `index` (inkrementell, `epoch`, `revoke`,
+`restricted`), `retrieve` (Bereiche, Lesegrenze inkl. abgeleiteter Inhalte, Termabdeckung, ≤ 2 je
+Dokument, Budget, Aktualität), `prompt` (Datenblock, Marken, `cited`, `strip_markers`). 15 Tests grün.
+Messung (Release, Cloud-Container, synthetisch, Worst Case: jedes Stück trifft): 50 Bücher /
+~20 000 Stücke, Aufbau 0,9 s, Abruf 30 ms je Frage.
 
 ## Arbeitspakete (Issues)
 
@@ -105,7 +217,7 @@ eigener Schritt (Erkennungsmodell muss Streaming können) und nicht Teil dieses 
 ## Abnahme
 
 - Unit-Tests: Ranking, Lesegrenze, Bereichsfilter, Budget, inkrementeller Neuaufbau, Audit ohne Inhalt.
-- Eval (synthetische Fixtures, ≥ 30 Fragen über alle Quellen): Treffer@6 ≥ 80 %.
+- Eval-Tor nach M4 (Sicherheitsverletzung blockiert).
 - Latenzmessung auf Patricks PC (lokaler Sprecher): Bericht p50/p95 je Stufe im PR.
 - Schalter aus ⇒ Verhalten bitgleich zu heute (Test).
 

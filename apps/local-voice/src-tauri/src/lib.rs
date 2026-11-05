@@ -1,6 +1,8 @@
 mod actions;
 mod agent; // C1 (Goal Lokaler Agent)
 pub mod agent_bridge; // A7
+#[allow(dead_code)] // P1: wird mit P2 (App-Schicht) angebunden
+mod app_context; // Globaler Sprachassistent: Abrufindex über alle Inhalte
 mod appdata_migration;
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 mod apple_intelligence;
