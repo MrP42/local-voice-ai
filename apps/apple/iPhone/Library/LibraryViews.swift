@@ -642,31 +642,34 @@ struct PlayButton: View {
 
 struct LibraryReadAloudView: View {
     @ObservedObject var playback = LibraryPlayback.shared
+    @ObservedObject var look = ReaderAppearance.shared
     @State private var voices = false
 
     private func highlighted(_ p: TextParagraph) -> AttributedString {
         var s = AttributedString(p.text)
         guard let r = playback.wordRange, let range = Range(r, in: p.text), let a = AttributedString.Index(range.lowerBound, within: s),
               let b = AttributedString.Index(range.upperBound, within: s) else { return s }
-        s[a..<b].backgroundColor = VoicePalette.ink
-        s[a..<b].foregroundColor = VoicePalette.brand
+        s[a..<b].backgroundColor = look.wordBackground
+        s[a..<b].foregroundColor = look.wordText
         return s
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            PlayerHeader(title: "\(playback.title) · Text", subtitle: playback.playing ? "wird vorgelesen" : "pausiert")
+            PlayerHeader(title: "\(playback.title) · Text", subtitle: playback.playing ? "wird vorgelesen" : "pausiert",
+                         trailing: AnyView(ReaderAppearanceButton()))
             Divider()
             FollowText(paragraphs: playback.paragraphs, current: playback.paragraphIndex) { i, p in
                 Text(i == playback.paragraphIndex ? highlighted(p) : AttributedString(p.text))
-                    .font(p.heading ? .custom("Georgia-Bold", size: 21, relativeTo: .title3) : .custom("Georgia", size: 18, relativeTo: .body))
-                    .foregroundStyle(i == playback.paragraphIndex ? VoicePalette.text : VoicePalette.secondaryText)
-                    .lineSpacing(5).fixedSize(horizontal: false, vertical: true)
+                    .font(look.font(heading: p.heading))
+                    .foregroundStyle(i == playback.paragraphIndex ? look.text : look.muted)
+                    .lineSpacing(look.lineSpacing).fixedSize(horizontal: false, vertical: true)
                     .padding(10).frame(maxWidth: .infinity, alignment: .leading)
                     .background(i == playback.paragraphIndex ? Color.yellow.opacity(0.22) : Color.clear, in: RoundedRectangle(cornerRadius: 10))
                     .contentShape(Rectangle()).onTapGesture { playback.jump(toParagraph: i) }
                     .accessibilityAddTraits(.isButton).accessibilityHint("Liest ab diesem Absatz vor")
             }
+            .background(look.background)
             VStack(spacing: 8) {
                 Text("Absatz antippen, um ab dort vorzulesen").font(.caption).foregroundStyle(VoicePalette.secondaryText)
                 HStack {
