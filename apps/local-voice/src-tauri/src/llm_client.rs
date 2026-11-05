@@ -424,6 +424,40 @@ async fn send_inner(
     ))
 }
 
+tokio::task_local! {
+    /// Zeitgrenze fuer CLI-Aufrufe im aktuellen Task (Relay fuer das iPhone:
+    /// 60 s statt der ueblichen Obergrenze). Ohne Wert gilt die Voreinstellung.
+    pub static CLI_TIMEOUT: std::time::Duration;
+}
+
+/// Was ein CLI-Aufruf ueber sich verraten hat: tatsaechliches Modell und Token.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CliMeta {
+    pub model: Option<String>,
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
+}
+
+tokio::task_local! {
+    /// Ablage fuer [`CliMeta`] im aktuellen Task (Relay: `model_tuple` der Antwort).
+    pub static CLI_META: std::sync::Arc<std::sync::Mutex<CliMeta>>;
+}
+
+fn call_cli(
+    cli: crate::managers::llm::cli::Cli,
+    binary: &std::path::Path,
+    model: &str,
+    system: Option<&str>,
+    user: &str,
+    limit: Option<std::time::Duration>,
+) -> Result<crate::managers::llm::cli::CliReply, String> {
+    use crate::managers::llm::cli;
+    match limit {
+        Some(t) => cli::call_with_timeout(cli, binary, model, system, user, t),
+        None => cli::call(cli, binary, model, system, user),
+    }
+}
+
 /// Abo-Modell ueber die CLI. Ein Schema wandert in den Systemtext (die CLIs
 /// kennen keine strukturierte Ausgabe); ein Codeblock um das JSON wird entfernt.
 async fn send_cli(
@@ -447,6 +481,7 @@ async fn send_cli(
         None => system_prompt,
     };
     let model = model.to_string();
+    let limit = CLI_TIMEOUT.try_with(|t| *t).ok();
     let first = {
         let (binary, model, system, user_content) = (
             binary.clone(),
@@ -455,7 +490,7 @@ async fn send_cli(
             user_content.clone(),
         );
         tokio::task::spawn_blocking(move || {
-            cli::call(cli, &binary, &model, system.as_deref(), &user_content)
+            call_cli(cli, &binary, &model, system.as_deref(), &user_content, limit)
         })
         .await
         .map_err(|e| format!("cli_failed: {e}"))?
@@ -478,13 +513,22 @@ async fn send_cli(
             // Die aktualisierte CLI liegt am selben Ort; neu suchen, falls der Pfad wechselte.
             let binary = cli::locate(cli).unwrap_or(binary);
             tokio::task::spawn_blocking(move || {
-                cli::call(cli, &binary, &model, system.as_deref(), &user_content)
+                call_cli(cli, &binary, &model, system.as_deref(), &user_content, limit)
             })
             .await
             .map_err(|e| format!("cli_failed: {e}"))?
             .inspect_err(|e| crate::managers::llm::cli_update::remember_error(e))?
         }
     };
+    let _ = CLI_META.try_with(|m| {
+        if let Ok(mut m) = m.lock() {
+            *m = CliMeta {
+                model: reply.model.clone(),
+                prompt_tokens: reply.prompt_tokens,
+                completion_tokens: reply.completion_tokens,
+            };
+        }
+    });
     let text = if wants_json {
         strip_code_fence(&reply.text)
     } else {

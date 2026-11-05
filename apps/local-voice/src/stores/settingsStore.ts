@@ -256,6 +256,9 @@ const settingUpdaters: {
     commands.changeMeetingDefaultTemplateSetting(
       (value as string | null) ?? null,
     ),
+  // lva#320
+  book_talk_relay_enabled: (value) =>
+    commands.changeBookTalkRelaySetting(value as boolean),
   // M4-P4b
   meeting_semantic_search: (value) =>
     commands.changeMeetingSemanticSearchSetting(value as boolean),

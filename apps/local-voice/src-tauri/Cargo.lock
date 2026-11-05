@@ -3979,6 +3979,7 @@ dependencies = [
  "handy-keys",
  "hf-hub",
  "hkdf 0.12.4",
+ "hmac 0.12.1",
  "hoersync",
  "hound",
  "krilla",

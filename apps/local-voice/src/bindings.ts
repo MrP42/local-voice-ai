@@ -968,6 +968,72 @@ async rechercheLoeschen(id: string) : Promise<Result<null, string>> {
 }
 },
 /**
+ * Schalter „iPhone darf Abo-Modelle nutzen“ (lva#320).
+ */
+async changeBookTalkRelaySetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_book_talk_relay_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Freigaben der iPhones für das Abo-Relay (ohne Schlüssel).
+ */
+async booktalkRelayGrants() : Promise<Result<RelayGrantInfo[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("booktalk_relay_grants") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Abo-Modelle dieses PCs, die ein iPhone nutzen könnte (bereite CLIs).
+ */
+async booktalkRelayModels() : Promise<Result<RelayModelInfo[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("booktalk_relay_models") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Ein iPhone freigeben; gibt den Einrichtungscode zurück.
+ */
+async booktalkRelayAuthorize(deviceKey: string, name: string, modelIds: string[]) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("booktalk_relay_authorize", { deviceKey, name, modelIds }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Einrichtungscode einer bestehenden Freigabe.
+ */
+async booktalkRelayPairingCode(deviceKey: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("booktalk_relay_pairing_code", { deviceKey }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Freigabe eines iPhones entziehen.
+ */
+async booktalkRelayRevoke(deviceKey: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("booktalk_relay_revoke", { deviceKey }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Geräteliste und Zähler vom Hub (für die Konto-Gruppe).
  */
 async syncHubStatus() : Promise<Result<HubStatus, string>> {
@@ -7846,6 +7912,12 @@ book_talk_cloud_consent?: string[];
  */
 book_talk_enabled?: boolean; 
 /**
+ * Buch-Gespraech (lva#320, Spec 11.3): Das gekoppelte iPhone darf die
+ * freigegebenen Abo-Modelle (Claude, Codex) ueber diesen PC nutzen. Standard
+ * aus; nur dann veroeffentlicht der PC seine Modellliste im Hub.
+ */
+book_talk_relay_enabled?: boolean;
+/**
  * Stimmprofile 2a: Vorschläge „klingt wie …, zusammenführen?“ aus Stimmabdrücken
  * innerhalb einer Besprechung (CAM++). Wirkt erst, wenn das Modell per Knopf
  * geladen ist; ohne den Schluessel gilt `true`. Kein Abgleich ueber Besprechungen.
@@ -9350,6 +9422,14 @@ export type HfAccessStatus = { present: boolean; source: HfAccessSource | null;
 problem: string | null }
 export type HistoryEntry = { id: number; file_name: string; timestamp: number; saved: boolean; title: string; transcription_text: string; post_processed_text: string | null; post_process_prompt: string | null; post_process_requested: boolean }
 export type HistoryUpdatePayload = { action: "added"; entry: HistoryEntry } | { action: "updated"; entry: HistoryEntry } | { action: "deleted"; id: number } | { action: "toggled"; id: number }
+/**
+ * Eine Freigabe, wie die Oberfläche sie zeigt (ohne Schlüssel).
+ */
+export type RelayGrantInfo = { device_key: string; name: string; key_id: string; model_ids: string[]; created_at_ms: number; expires_at_ms: number }
+/**
+ * Ein Modell, das am PC für das Relay in Frage kommt.
+ */
+export type RelayModelInfo = { id: string; label: string; provider: string }
 export type HubDevice = { device: string; last_push?: string | null }
 export type HubStatus = { hub_seq?: number; objects?: Partial<{ [key in string]: number }>; devices?: HubDevice[] }
 /**

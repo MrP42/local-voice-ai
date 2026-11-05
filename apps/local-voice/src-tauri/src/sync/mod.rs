@@ -6,6 +6,7 @@
 
 pub mod account;
 pub mod blobs;
+pub mod booktalk_relay;
 pub mod books;
 pub mod client;
 pub mod collect;

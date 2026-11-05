@@ -205,7 +205,7 @@ pub(crate) fn codex_models_in(home: Option<&Path>) -> Vec<CliModel> {
     models
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Cli {
     Claude,
     Codex,
@@ -267,6 +267,10 @@ pub struct CliReply {
     pub text: String,
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
+    /// Das Modell, das die CLI laut ihrer Ausgabe tatsaechlich benutzt hat
+    /// (Claude: Schluessel von `modelUsage`; Codex: Feld `model` eines
+    /// Ereignisses). `None`, wenn die Ausgabe es nicht nennt.
+    pub model: Option<String>,
 }
 
 /// Wo liegt die CLI? PATH zuerst, dann die ueblichen Installationsorte.
@@ -640,7 +644,20 @@ pub(crate) fn parse_claude(stdout: &str) -> Result<CliReply, String> {
             + n("cache_creation_input_tokens")
             + n("cache_read_input_tokens"),
         completion_tokens: n("output_tokens"),
+        model: claude_model_of(&v),
     })
+}
+
+/// Das tatsaechliche Modell aus `modelUsage` (genau ein Eintrag), sonst aus `model`.
+pub(crate) fn claude_model_of(v: &serde_json::Value) -> Option<String> {
+    if let Some(map) = v.get("modelUsage").and_then(|m| m.as_object()) {
+        // Mehrere Modelle (z. B. ein Hilfsmodell): das mit den meisten Ausgabetoken.
+        return map
+            .iter()
+            .max_by_key(|(_, u)| u.get("outputTokens").and_then(|t| t.as_u64()).unwrap_or(0))
+            .map(|(k, _)| k.clone());
+    }
+    v.get("model").and_then(|m| m.as_str()).map(str::to_string)
 }
 
 /// Liest die JSONL-Ereignisse von `codex exec --json`: die Antwort ist die
@@ -650,10 +667,19 @@ pub(crate) fn parse_codex(stdout: &str) -> Result<CliReply, String> {
     let mut error = None;
     let mut failed = None;
     let (mut pin, mut pout) = (0, 0);
+    let mut model: Option<String> = None;
     for line in stdout.lines() {
         let Ok(ev) = serde_json::from_str::<serde_json::Value>(line) else {
             continue;
         };
+        if model.is_none() {
+            model = ev
+                .get("model")
+                .or_else(|| ev.get("item").and_then(|i| i.get("model")))
+                .and_then(|m| m.as_str())
+                .filter(|m| !m.is_empty())
+                .map(str::to_string);
+        }
         match ev.get("type").and_then(|t| t.as_str()) {
             Some("item.completed") => {
                 let item = ev.get("item");
@@ -695,10 +721,97 @@ pub(crate) fn parse_codex(stdout: &str) -> Result<CliReply, String> {
             text,
             prompt_tokens: pin,
             completion_tokens: pout,
+            model,
         }),
         (None, Some(e)) => Err(classify_error(&e)),
         (None, None) => Err("cli_bad_output: Codex lieferte keine Antwort".to_string()),
     }
+}
+
+/// Schalter, ohne die der Aufruf nicht isoliert ist (Spec 11.7 R4). Fehlt einer
+/// in der Hilfe der installierten CLI, wird das Modell nicht fuer das Relay angeboten.
+pub fn required_flags(cli: Cli) -> &'static [&'static str] {
+    match cli {
+        Cli::Claude => &[
+            "--output-format",
+            "--tools",
+            "--no-session-persistence",
+            "--setting-sources",
+            "--strict-mcp-config",
+            "--mcp-config",
+            "--disable-slash-commands",
+            "--system-prompt",
+        ],
+        Cli::Codex => &["--json", "--sandbox", "--ephemeral", "--skip-git-repo-check"],
+    }
+}
+
+/// Fehlende Pflichtschalter in einem Hilfetext.
+pub fn missing_flags(cli: Cli, help: &str) -> Vec<&'static str> {
+    required_flags(cli)
+        .iter()
+        .copied()
+        .filter(|f| !help.contains(f))
+        .collect()
+}
+
+/// Umgebungsvariablen, die die CLI auf kostenpflichtige API-Abrechnung stellen.
+pub fn api_key_vars(cli: Cli) -> &'static [&'static str] {
+    match cli {
+        Cli::Claude => &["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"],
+        Cli::Codex => &["OPENAI_API_KEY", "CODEX_API_KEY"],
+    }
+}
+
+/// Ist fuer die CLI ein API-Schluessel in der Umgebung gesetzt? (Spec 11.7 R6)
+pub fn api_key_in_env(cli: Cli) -> bool {
+    api_key_vars(cli)
+        .iter()
+        .any(|v| std::env::var_os(v).is_some_and(|x| !x.is_empty()))
+}
+
+/// Ist die CLI installiert, per Abo angemeldet, ohne API-Schluessel in der
+/// Umgebung und kennt sie alle Isolationsschalter? Blockiert (startet die CLI
+/// mehrfach) -- auf einem Blocking-Thread ausfuehren und das Ergebnis merken.
+pub fn relay_ready(cli: Cli) -> bool {
+    if api_key_in_env(cli) {
+        return false;
+    }
+    let st = status(cli);
+    if !st.installed || st.logged_in != Some(true) {
+        return false;
+    }
+    let Some(binary) = locate(cli) else {
+        return false;
+    };
+    let (program, mut argv) = launcher(&binary);
+    match cli {
+        Cli::Claude => argv.push("--help".into()),
+        Cli::Codex => argv.extend(["exec".to_string(), "--help".to_string()]),
+    }
+    let mut cmd = Command::new(program);
+    cmd.args(&argv)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    let Some(out) = cmd
+        .spawn()
+        .ok()
+        .and_then(|child| run_with_timeout(child, None, STATUS_TIMEOUT).ok())
+    else {
+        return false;
+    };
+    let help = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    missing_flags(cli, &help).is_empty()
 }
 
 /// Fehler der CLI in Codes, die die Oberflaeche erklaeren kann.

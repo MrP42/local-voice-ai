@@ -6,6 +6,7 @@ import { useSettings } from "../../../hooks/useSettings";
 import { modelLabel } from "@/lib/modelNames";
 import { SettingsGroup } from "../../ui/SettingsGroup";
 import { SettingContainer } from "../../ui/SettingContainer";
+import { BookTalkRelay } from "./BookTalkRelay";
 
 /** Funktionen mit eigener Modellwahl (wie `LLM_FUNCTIONS` in Rust). */
 export const LLM_FUNCTIONS = [
@@ -66,6 +67,7 @@ export const FunctionModels: React.FC<Props> = ({
           run={run}
         />
       ))}
+      <BookTalkRelay />
       <ul
         className="px-4 py-2 text-xs text-text/60 space-y-0.5 list-disc list-inside"
         data-function-notes

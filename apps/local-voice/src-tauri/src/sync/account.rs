@@ -66,7 +66,7 @@ pub fn save(app: &AppHandle, cfg: &SyncConfig) -> Result<(), String> {
 /// die Vererbung kappen und nur den aktuellen Benutzer eintragen (icacls);
 /// schlaegt das fehl, ist das ein Speicherfehler, kein Hinweis.
 #[cfg(unix)]
-fn write_private(path: &std::path::Path, bytes: &[u8]) -> Result<(), String> {
+pub(super) fn write_private(path: &std::path::Path, bytes: &[u8]) -> Result<(), String> {
     use std::io::Write as _;
     use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
     let mut f = std::fs::OpenOptions::new()
@@ -84,7 +84,7 @@ fn write_private(path: &std::path::Path, bytes: &[u8]) -> Result<(), String> {
 }
 
 #[cfg(windows)]
-fn write_private(path: &std::path::Path, bytes: &[u8]) -> Result<(), String> {
+pub(super) fn write_private(path: &std::path::Path, bytes: &[u8]) -> Result<(), String> {
     std::fs::write(path, bytes).map_err(|e| format!("sync.json schreiben: {e}"))?;
     let user = std::env::var("USERNAME").unwrap_or_default();
     if user.is_empty() {
@@ -105,7 +105,7 @@ fn write_private(path: &std::path::Path, bytes: &[u8]) -> Result<(), String> {
 }
 
 #[cfg(not(any(unix, windows)))]
-fn write_private(path: &std::path::Path, bytes: &[u8]) -> Result<(), String> {
+pub(super) fn write_private(path: &std::path::Path, bytes: &[u8]) -> Result<(), String> {
     std::fs::write(path, bytes).map_err(|e| format!("sync.json schreiben: {e}"))
 }
 
