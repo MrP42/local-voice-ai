@@ -723,9 +723,21 @@ pub fn default_voice_in(voices: &[VoiceDescriptor]) -> Option<String> {
         .map(|v| v.id.clone())
 }
 
-/// Die Vorgabestimme `voice` einmalig übernehmen (rein, unter der Sperre aufgerufen).
-/// `Ok(true)`: gewählt. `Ok(false)`: schon einmal geschehen, oder Phonon liest bereits mit einer
-/// eigens gewählten Stimme (die bleibt). Merkt sich in beiden Fällen, dass es geschehen ist.
+/// Hat der Nutzer schon irgendeine Stimme ausdrücklich gewählt, egal bei welchem Anbieter? Dann
+/// gilt sie, und die Vorgabe wird nur als erledigt gemerkt. Wahl heißt: eine andere Engine als die
+/// Werksvorgabe, eine Fish- oder Piper-Stimme oder eine gemerkte Anbieter-Stimme.
+pub fn has_own_voice_choice(settings: &AppSettings) -> bool {
+    let factory_engine = crate::settings::get_default_settings().tts_engine;
+    settings.tts_engine != factory_engine
+        || settings.tts_voice.is_some()
+        || settings.tts_piper_voice.is_some()
+        || !settings.tts_providers.voices.is_empty()
+}
+
+/// Die Vorgabestimme `voice` einmalig übernehmen (rein, unter der Sperre aufgerufen, also auf dem
+/// Stand im Moment des Schreibens: eine Wahl, die der Nutzer während der Stimmenabfrage getroffen
+/// hat, zählt mit). `Ok(true)`: gewählt. `Ok(false)`: schon einmal geschehen, oder der Nutzer hat
+/// schon selbst gewählt ([`has_own_voice_choice`]; die Wahl bleibt, die Vorgabe gilt als erledigt).
 /// Prüft die Guardrails wie jede Wahl ([`select_in`]): ohne Opt-in, Lizenz-Zustimmung und
 /// eingerichtetes Modell wird nichts gewählt und nichts gemerkt (Fehler).
 pub fn apply_default_voice_in(
@@ -734,12 +746,15 @@ pub fn apply_default_voice_in(
     voice: &str,
 ) -> Result<bool, TtsError> {
     let id = DEFAULT_VOICE_PROVIDER;
-    let providers = &settings.tts_providers;
-    if providers.default_voice_applied.iter().any(|p| p == id) {
+    if settings
+        .tts_providers
+        .default_voice_applied
+        .iter()
+        .any(|p| p == id)
+    {
         return Ok(false);
     }
-    let own_choice = engine::provider_id_from_setting(&settings.tts_engine).as_deref() == Some(id)
-        && providers.voices.contains_key(id);
+    let own_choice = has_own_voice_choice(settings);
     if !own_choice {
         select_in(settings, snapshot, id, Some(voice.to_string()))?;
     }
@@ -813,7 +828,13 @@ pub(crate) async fn apply_default_voice(app: &AppHandle) {
             let _ = tauri::Emitter::emit(app, DEFAULT_VOICE_EVENT, ());
         }
         Ok(false) => {}
-        Err(e) => log::warn!("Vorgabestimme nicht gewählt: {}", e.message),
+        Err(e) => {
+            // Freigabe inzwischen widerrufen o. Ä.: beim nächsten Anlass erneut versuchen.
+            *DEFAULT_VOICE_TRIED
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = None;
+            log::warn!("Vorgabestimme nicht gewählt: {}", e.message);
+        }
     }
 }
 
@@ -1179,6 +1200,10 @@ mod tests {
         let (p, snap) = approved_phonon();
         let mut s = crate::settings::get_default_settings();
         s.tts_providers = p;
+        assert!(
+            !has_own_voice_choice(&s),
+            "Werksstand ist keine eigene Wahl"
+        );
         assert!(apply_default_voice_in(&mut s, &snap, "Anton").unwrap());
         assert_eq!(s.tts_engine, "provider:phonon");
         assert_eq!(
@@ -1193,19 +1218,61 @@ mod tests {
         assert_eq!(s.tts_providers.default_voice_applied, ["phonon"]);
     }
 
-    /// Liest Phonon schon mit einer eigens gewählten Stimme, bleibt sie; gemerkt wird trotzdem.
+    /// Jede ausdrückliche Wahl bleibt, egal bei welchem Anbieter (Codex P1): Fish-Stimme,
+    /// Piper-Stimme, eine gemerkte Phonon-Stimme bei aktivem anderem Anbieter, eine aktive
+    /// Phonon-Stimme. Gemerkt wird trotzdem, die Vorgabe gilt als erledigt.
     #[test]
-    fn vorgabestimme_ueberschreibt_keine_gewaehlte_phonon_stimme() {
+    fn vorgabestimme_ueberschreibt_keine_eigene_wahl_bei_keinem_anbieter() {
         let (p, snap) = approved_phonon();
-        let mut s = crate::settings::get_default_settings();
-        s.tts_providers = p;
-        select_in(&mut s, &snap, "phonon", Some("Nele".into())).unwrap();
-        assert!(!apply_default_voice_in(&mut s, &snap, "Anton").unwrap());
-        assert_eq!(
-            s.tts_providers.voices.get("phonon").map(String::as_str),
-            Some("Nele")
-        );
-        assert_eq!(s.tts_providers.default_voice_applied, ["phonon"]);
+        let base = {
+            let mut s = crate::settings::get_default_settings();
+            s.tts_providers = p;
+            s
+        };
+        let cases: [(&str, fn(&mut AppSettings)); 4] = [
+            ("Fish-Stimme", |s| s.tts_voice = Some("patrick".into())),
+            ("Piper-Stimme", |s| {
+                s.tts_engine = "piper".into();
+                s.tts_piper_voice = Some("de_DE-thorsten-high".into());
+            }),
+            ("gemerkte Phonon-Stimme", |s| {
+                s.tts_providers
+                    .voices
+                    .insert("phonon".into(), "Nele".into());
+            }),
+            ("aktive Phonon-Stimme", |s| {
+                s.tts_engine = "provider:phonon".into();
+                s.tts_providers
+                    .voices
+                    .insert("phonon".into(), "Nele".into());
+            }),
+        ];
+        for (name, choose) in cases {
+            let mut s = base.clone();
+            choose(&mut s);
+            let before = (
+                s.tts_engine.clone(),
+                s.tts_voice.clone(),
+                s.tts_piper_voice.clone(),
+                s.tts_providers.voices.clone(),
+            );
+            assert!(has_own_voice_choice(&s), "{name}");
+            assert!(
+                !apply_default_voice_in(&mut s, &snap, "Anton").unwrap(),
+                "{name}"
+            );
+            assert_eq!(
+                (
+                    s.tts_engine.clone(),
+                    s.tts_voice.clone(),
+                    s.tts_piper_voice.clone(),
+                    s.tts_providers.voices.clone(),
+                ),
+                before,
+                "{name}: die Wahl bleibt"
+            );
+            assert_eq!(s.tts_providers.default_voice_applied, ["phonon"], "{name}");
+        }
     }
 
     /// Ohne Freigabe (Opt-in oder Lizenz fehlt) wird nichts gewählt und nichts gemerkt: die
