@@ -80,7 +80,7 @@ async function setup(page: Page, theme: "light" | "dark") {
 const callsOf = (page: Page) =>
   page.evaluate(() => (window as unknown as { __calls: [string, unknown][] }).__calls);
 
-test("Fussleiste: 24 px, Modelle des Moduls links, ohne Version, Reihenfolge rechts", async ({ page }) => {
+test("Fussleiste: 24 px, Modelle des Moduls links, Version ganz rechts", async ({ page }) => {
   await setup(page, "light");
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
@@ -91,11 +91,16 @@ test("Fussleiste: 24 px, Modelle des Moduls links, ohne Version, Reihenfolge rec
     expect((await b.boundingBox())!.height).toBe(22);
 
   // Patrick 02.11. (löst ADR-0027 E7 ab): die Modelle des geöffneten Moduls
-  // stehen links unten; die Version nur bei Update.
+  // stehen links unten. Patrick 05.11. (#281): die Version immer ganz rechts.
   await expect(bar.getByTestId("fuss-modelle")).toHaveAttribute("data-modul", "home");
   await expect(bar.locator("[data-llm-selector]")).toHaveCount(1);
   await expect(bar.locator("[data-model-status]")).toHaveCount(1);
-  await expect(bar.locator("[data-testid=footer-version]")).toHaveCount(0);
+  const version = bar.getByTestId("footer-version");
+  await expect(version).toHaveText("v0.21.30");
+  await expect(version).toHaveAccessibleName(/^v0\.21\.30, /);
+  const barBox = (await bar.boundingBox())!;
+  const versionBox = (await version.boundingBox())!;
+  expect(barBox.x + barBox.width - (versionBox.x + versionBox.width)).toBeLessThan(16);
 
   // Mikrofon: nur Symbol und Pfeil, Name im Tooltip
   const mic = bar.locator("[data-mic-selector]");
@@ -325,6 +330,13 @@ for (const theme of ["dark", "light"] as const) {
     await page.screenshot({ path: `${SHOTS}/${theme}-1440-vorlesen.png`, animations: "disabled" });
     await page.getByRole("navigation", { name: "Hauptnavigation" }).getByRole("button", { name: "Start", exact: true }).click();
     await page.setViewportSize({ width: 390, height: 844 });
+    // Auch schmal: Version sichtbar ganz rechts, auf der Höhe der einzeiligen Leiste.
+    const schmal = (await page.locator(".lv-statusbar").boundingBox())!;
+    const v = (await page.locator(".lv-statusbar").getByTestId("footer-version").boundingBox())!;
+    expect(v.y).toBeGreaterThanOrEqual(schmal.y - 1);
+    expect(v.y + v.height).toBeLessThanOrEqual(schmal.y + schmal.height + 1);
+    expect(v.x + v.width).toBeLessThanOrEqual(390);
+    expect(v.x + v.width).toBeGreaterThan(390 - 16);
     await page.screenshot({ path: `${SHOTS}/${theme}-390-rahmen.png`, animations: "disabled" });
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     expect(overflow).toBeLessThanOrEqual(0);

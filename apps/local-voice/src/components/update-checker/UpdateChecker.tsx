@@ -325,7 +325,7 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
   versionClickRef.current = onVersionClick;
   const status = getUpdateStatusText();
   const versionSichtbar =
-    !nurBeiUpdate || !!offered || isChecking || isInstalling;
+    !!version && (!nurBeiUpdate || !!offered || isChecking || isInstalling);
   const versionTitle = offered
     ? t("footer.updateAvailableTitle", { version: offered.version })
     : t("footer.checkForUpdates");
@@ -421,7 +421,7 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
             onClick={() => void onVersionClick()}
             disabled={isChecking || isInstalling}
             title={versionTitle}
-            aria-label={versionTitle}
+            aria-label={`v${version}, ${versionTitle}`}
             className={`tabular-nums transition-colors disabled:opacity-50 ${
               offered
                 ? "text-logo-primary font-medium hover:text-logo-primary/80"

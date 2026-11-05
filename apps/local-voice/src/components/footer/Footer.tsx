@@ -68,10 +68,10 @@ const Footer: React.FC<{ section?: string }> = ({ section }) => {
     const fetchVersion = async () => {
       try {
         const appVersion = await getVersion();
-        setVersion(appVersion);
+        setVersion(appVersion ?? "");
       } catch (error) {
+        // Ohne Kernantwort keine erfundene Nummer: dann bleibt die Stelle leer.
         console.error("Failed to get app version:", error);
-        setVersion("0.1.2");
       }
     };
 
@@ -109,7 +109,7 @@ const Footer: React.FC<{ section?: string }> = ({ section }) => {
         {/* Rechts (ADR-0027 E7, Codex 01.11.): nur Mikrofon und Telefon.
             Speicher/GPU, Fish-Server und Schild nur als bewusst
             eingeschaltete Diagnose (Profilmenü ▸ Hilfe), einklappbar. Die
-            Version nur, wenn ein Update bereitsteht (sonst in „Über“). */}
+            Version steht immer ganz rechts (Patrick 05.11., #281). */}
         <div className="flex items-center gap-0.5 shrink-0">
           {diagnose !== "aus" && (
             <span className="lv-diagnose" data-diagnose={diagnose}>
@@ -148,7 +148,7 @@ const Footer: React.FC<{ section?: string }> = ({ section }) => {
           </span>
           {/* Update: sucht beim Start und auf Wunsch (Profilmenü ▸ Hilfe);
               ein gefundenes meldet sich als Fenster mit den Release-Notes. */}
-          <UpdateChecker version={version} nurBeiUpdate />
+          <UpdateChecker version={version} />
         </div>
       </div>
     </div>
