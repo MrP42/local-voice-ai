@@ -383,6 +383,34 @@ impl HubClient {
         Ok(bytes)
     }
 
+    /// Aufruf der Kopplungs- und Geräte-Routen (`/api/v1/voice/pair/*`,
+    /// `/api/v1/voice/devices*`). Liefert HTTP-Status und JSON-Körper, weil die
+    /// Kopplung 409/410 selbst auswertet; nur Netzfehler sind `Err`.
+    pub async fn call_json(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: Option<&serde_json::Value>,
+    ) -> Result<(u16, serde_json::Value), HubError> {
+        let mut rb = self.auth(
+            http_with(Duration::from_secs(15))?.request(method, format!("{}{path}", self.url)),
+        );
+        if let Some(b) = body {
+            rb = rb.json(b);
+        }
+        let res = rb
+            .send()
+            .await
+            .map_err(|e| HubError::Other(format!("Hub nicht erreichbar: {e}")))?;
+        let status = res.status().as_u16();
+        if status == 401 {
+            return Err(HubError::Unauthorized);
+        }
+        let text = res.text().await.unwrap_or_default();
+        let json = serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
+        Ok((status, json))
+    }
+
     pub async fn logout(&self) -> Result<(), HubError> {
         let res = self
             .auth(http()?.post(format!("{}/api/v1/voice/auth/logout", self.url)))

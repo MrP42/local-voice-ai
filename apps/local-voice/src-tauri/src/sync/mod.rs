@@ -12,6 +12,8 @@ pub mod collect;
 pub mod crypto;
 pub mod engine;
 pub mod ledger;
+pub mod pairing;
+pub mod pairing_proto;
 
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 pub use engine::{start, SyncEngine, SyncStatus};

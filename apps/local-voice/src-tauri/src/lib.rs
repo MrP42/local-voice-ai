@@ -357,6 +357,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     // Geraete-Sync: Status-Objekt fuer die Oberflaeche; die Schleife startet
     // nach dem Setup und laeuft nur, wenn sync.json existiert.
     app_handle.manage(sync::SyncEngine::default());
+    app_handle.manage(sync::pairing::PairingState::default());
     sync::start(app_handle.clone());
     // ADR-0024: gemeinsamer Kontospeicher der Suite (nur lokales Profil).
     konto::init(app_handle);
@@ -2012,6 +2013,12 @@ fn specta_builder() -> Builder<tauri::Wry> {
             projekte::befehle::recherche_lesen,
             projekte::befehle::recherche_loeschen,
             sync::sync_hub_status,
+            sync::pairing::pair_start,
+            sync::pairing::pair_poll,
+            sync::pairing::pair_approve,
+            sync::pairing::pair_cancel,
+            sync::pairing::sync_devices,
+            sync::pairing::sync_revoke_device,
             shortcut::change_tts_engine_setting,
             shortcut::change_tts_piper_voice_setting,
             shortcut::change_tts_piper_auto_language_setting,
