@@ -35,7 +35,13 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
     @Published var reachable = false
     @Published var availableVoices: [SpeechVoiceOption] = []
     @Published var selectedVoiceID = UserDefaults.standard.string(forKey: "selectedVoiceID") ?? "" {
-        didSet { UserDefaults.standard.set(selectedVoiceID, forKey: "selectedVoiceID") }
+        didSet {
+            UserDefaults.standard.set(selectedVoiceID, forKey: "selectedVoiceID")
+            #if os(iOS)
+            // Eine Stimme für die ganze App: auch Vorlesen in der Bibliothek.
+            if LibraryPlayback.shared.voiceIdentifier != selectedVoiceID { LibraryPlayback.shared.voiceIdentifier = selectedVoiceID }
+            #endif
+        }
     }
     @Published private(set) var previewingVoiceID: String?
     @Published private(set) var playingRecordingId: UUID?
@@ -196,7 +202,7 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
                 self.endConversation()
                 self.stopOriginalPlayback()
                 if self.recording { self.stop() }
-                self.speaker.stopSpeaking(at: .immediate)
+                self.stopAllSpeech()
                 self.status = "Audio unterbrochen – gespeicherte Inhalte bleiben erhalten"
                 self.recordDiagnostic("audio_interrupted")
             }
@@ -402,7 +408,7 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
         }
         endConversation()
         currentUtterance = nil; speakingId = nil
-        speaker.stopSpeaking(at: .immediate)
+        stopAllSpeech()
         stopOriginalPlayback()
         guard let url = recordingURL(id) else { originalPlaybackFailed(id, message: "Originalaufnahme auf diesem Gerät nicht verfügbar"); return }
         do {
@@ -459,7 +465,7 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
         if LibraryPlayback.shared.playing { LibraryPlayback.shared.pause() }
         #endif
         currentUtterance = nil; speakingId = nil
-        speaker.stopSpeaking(at: .immediate)
+        stopAllSpeech()
         if handsFreeEnabled {
             if conversationId == nil { newConversation() }
             conversationRunning = true
@@ -472,7 +478,7 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
     }
     func newConversation() {
         endConversation()
-        speaker.stopSpeaking(at: .immediate)
+        stopAllSpeech()
         conversationId = UUID()
         UserDefaults.standard.set(conversationId?.uuidString, forKey: "conversationId")
     }
@@ -484,7 +490,7 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
     }
     func stopConversation() {
         endConversation()
-        speaker.stopSpeaking(at: .immediate)
+        stopAllSpeech()
         status = "Gespräch beendet · Verlauf gespeichert"
     }
     private func handleAnswer(_ text: String, id: UUID) {
@@ -529,17 +535,63 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
         if active { jobs?.start() }
         #endif
     }
-    func speak(_ text: String, id: UUID) {
+    private func stopAllSpeech() {
+        speaker.stopSpeaking(at: .immediate)
+        #if os(iOS)
+        phononReply?.cancel(); phononReply = nil
+        PhononEngine.shared.silence()
+        #endif
+    }
+
+    #if os(iOS)
+    private var phononReply: Task<Void, Never>?
+
+    /// Antwort oder Hörprobe mit Phonon. Fällt Phonon aus, spricht die Systemstimme.
+    private func speakPhonon(_ text: String, voice: String, id: UUID?, preview: String? = nil) {
+        speakingId = id; previewingVoiceID = preview
+        if id != nil { status = "Antwort wird gesprochen" }
+        phononReply = Task { [weak self] in
+            do {
+                try await PhononEngine.shared.speak(text, voice: voice)
+                guard !Task.isCancelled, let self else { return }
+                let done = self.speakingId
+                self.phononReply = nil; self.speakingId = nil; self.previewingVoiceID = nil
+                if !self.recording { self.status = "Bereit" }
+                if let done { self.continueConversation(after: done) }
+            } catch is CancellationError {
+            } catch {
+                guard !Task.isCancelled, let self else { return }
+                self.phononReply = nil; self.previewingVoiceID = nil
+                if let id { self.speak(text, id: id, forceSystem: true) } else { self.status = "Hörprobe konnte nicht gestartet werden" }
+            }
+        }
+    }
+
+    func previewPhonon(_ id: String) {
+        if previewingVoiceID == id { stopPlayback(); return }
+        stopPlayback()
+        guard let voice = PhononEngine.voiceName(id) else { return }
+        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio)
+        try? AVAudioSession.sharedInstance().setActive(true)
+        let sample = voice.hasPrefix("de:") ? "Hallo, so klingt meine Stimme. Ich lese dir deine Bücher und Antworten vor." : "Hello, this is how my voice sounds."
+        speakPhonon(sample, voice: voice, id: nil, preview: id)
+    }
+    #endif
+
+    func speak(_ text: String, id: UUID, forceSystem: Bool = false) {
         guard !recording else { return }
         previewingVoiceID = nil
         stopOriginalPlayback()
-        speaker.stopSpeaking(at: .immediate)
+        stopAllSpeech()
         do {
             try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio)
             #if os(iOS)
             try AVAudioSession.sharedInstance().setActive(true)
             #endif
             let spoken = (try? AttributedString(markdown: text)).map { String($0.characters) } ?? text
+            #if os(iOS)
+            if !forceSystem, let voice = PhononEngine.voiceName(selectedVoiceID) { speakPhonon(spoken, voice: voice, id: id); return }
+            #endif
             let utterance = AVSpeechUtterance(string: spoken)
             utterance.voice = AVSpeechSynthesisVoice(identifier: selectedVoiceID) ?? AVSpeechSynthesisVoice(language: "de-DE")
             speakingId = id; speechStarted = Date()
@@ -548,7 +600,7 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
             speaker.speak(utterance); status = "Antwort wird gesprochen"
         } catch { endConversation(); status = "Audio nicht verfügbar – Antwort ist gespeichert" }
     }
-    func stopPlayback() { endConversation(); stopOriginalPlayback(); previewingVoiceID = nil; speaker.stopSpeaking(at: .immediate); status = "Wiedergabe gestoppt"; recordDiagnostic("playback_stopped") }
+    func stopPlayback() { endConversation(); stopOriginalPlayback(); previewingVoiceID = nil; stopAllSpeech(); status = "Wiedergabe gestoppt"; recordDiagnostic("playback_stopped") }
     func refreshVoices() {
         availableVoices = AVSpeechSynthesisVoice.speechVoices().map(SpeechVoiceOption.init).sorted {
             if $0.language.hasPrefix("de") != $1.language.hasPrefix("de") { return $0.language.hasPrefix("de") }

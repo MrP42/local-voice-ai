@@ -221,6 +221,7 @@ struct LibraryShelf: View {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Buch oder Hörbuch hinzufügen", systemImage: "plus") { importing = true }.accessibilityIdentifier("libraryAdd")
             }
+            ToolbarItem(placement: .topBarTrailing) { SettingsButton() }
             ToolbarItem(placement: .topBarLeading) {
                 Button { showSync = true } label: {
                     Image(systemName: sync.account == nil ? "icloud.slash" : (sync.error != nil ? "exclamationmark.icloud" : "checkmark.icloud"))
@@ -781,6 +782,12 @@ struct LibrarySyncSheet: View {
                     } footer: { Text("Dasselbe Konto wie in der Desktop-App unter Einstellungen › Konto & Geräte. Das Passwort verlässt das iPhone nicht; daraus wird nur hier der Schlüssel berechnet.") }
                     LibraryStorageSummary()
                     Section("Server") { TextField("Server", text: $url).keyboardType(.URL).textInputAutocapitalization(.never) }
+                    Section {
+                        Link("Passwort vergessen?", destination: URL(string: "\(url.trimmingCharacters(in: .whitespaces))/admin/password/forgot") ?? URL(string: LibrarySync.defaultHub + "/admin/password/forgot")!)
+                            .frame(minHeight: 44)
+                    } footer: {
+                        Text("Nach einer Änderung des Passworts musst du dich auch am PC neu anmelden. Aus dem Passwort entsteht der Schlüssel; beide Geräte brauchen denselben.")
+                    }
                     Section {
                         Button {
                             Task { await sync.login(email: email, password: password, url: url, deviceName: device); if sync.account != nil { password = "" } }

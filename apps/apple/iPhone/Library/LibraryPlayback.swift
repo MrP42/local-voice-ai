@@ -27,8 +27,10 @@ final class LibraryPlayback: NSObject, ObservableObject {
     @Published private(set) var paragraphs: [TextParagraph] = []
     @Published private(set) var paragraphIndex = 0
     @Published private(set) var wordRange: NSRange?
-    @Published var voiceIdentifier: String? = UserDefaults.standard.string(forKey: "library.voice") {
-        didSet { UserDefaults.standard.set(voiceIdentifier, forKey: "library.voice") }
+    /// Dieselbe Stimme wie in den Einstellungen (`VoiceModel.selectedVoiceID`).
+    @Published var voiceIdentifier: String? = UserDefaults.standard.string(forKey: "selectedVoiceID")
+        ?? UserDefaults.standard.string(forKey: "library.voice") {
+        didSet { if VoiceModel.shared.selectedVoiceID != (voiceIdentifier ?? "") { VoiceModel.shared.selectedVoiceID = voiceIdentifier ?? "" } }
     }
     @Published var error: String?
     /// Vollbild-Player sichtbar (Hören mit Mitlesen oder Vorlesen).
@@ -51,6 +53,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
     /// Absatz, in dem das Vorlesen pausiert wurde; nach einem Sprung neu sprechen.
     private var pausedParagraph: Int?
     private var phononTask: Task<Void, Never>?
+    private var phononFailed = false
     /// Erst nach abgeschlossenem Sprung an die gespeicherte Stelle sichern.
     private var seekSettled = true
     private var lastTextSave = Date.distantPast
@@ -206,6 +209,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
         if self.book?.id != book.id || mode != .readAloud {
             stop()
             guard let text = library.text(book) else { error = "Der Text ist nicht auf dem iPhone."; return }
+            phononFailed = false
             self.book = book; mode = .readAloud
             self.text = text
             paragraphs = LibraryText.paragraphs(text)
@@ -218,7 +222,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
         if autoplay { play() }
     }
 
-    private var phononVoice: String? { PhononEngine.voiceName(voiceIdentifier) }
+    private var phononVoice: String? { phononFailed ? nil : PhononEngine.voiceName(voiceIdentifier) }
 
     private func stopPhonon() {
         phononTask?.cancel(); phononTask = nil
@@ -241,7 +245,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
                 guard !Task.isCancelled, let self else { return }
                 // Nicht verstummen: mit der Systemstimme weiterlesen.
                 self.error = "Phonon konnte nicht sprechen, die Systemstimme liest weiter. (\(error.localizedDescription))"
-                self.voiceIdentifier = nil
+                self.phononFailed = true  // nur bis zum nächsten Öffnen; die Wahl bleibt
                 self.speakCurrent()
             }
         }

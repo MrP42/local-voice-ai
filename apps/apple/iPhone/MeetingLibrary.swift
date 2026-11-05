@@ -435,6 +435,7 @@ struct MeetingLibraryView: View {
             }
             .background(VoicePalette.background)
             .navigationTitle("Transkripte").navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .topBarTrailing) { SettingsButton() } }
             .fullScreenCover(isPresented: $recordLive) { LiveMeetingScreen(library: library) }
             .fileImporter(isPresented: $importer, allowedContentTypes: [.audio, .movie], allowsMultipleSelection: false) { result in
                 switch result {

@@ -7,6 +7,10 @@ import Foundation
 /// Je Sprache ein eigenes Modell. Die Modelle stehen nicht im Repo und nicht in der App:
 /// Die deutschen Gewichte sind CC BY-NC. Sie werden einmalig nach `Documents/PhononDE`
 /// bzw. `Documents/PhononEN` gelegt und von dort nach Application Support übernommen.
+struct PhononUnavailable: LocalizedError {
+    var errorDescription: String? { "Phonon ist nicht verfügbar." }
+}
+
 @MainActor
 final class PhononEngine: ObservableObject {
     static let shared = PhononEngine()
@@ -36,8 +40,11 @@ final class PhononEngine: ObservableObject {
     static func sectionTitle(_ language: String) -> String { language == "de" ? "Phonon Deutsch" : "Phonon Englisch" }
 
     #if PHONON
-    private var loaded: [String: Phonon] = [:]
+    /// Höchstens ein Modell im Speicher; ein laufendes Laden wird geteilt.
+    private var loaded: (language: String, tts: Phonon)?
+    private var loading_: (language: String, task: Task<Phonon, Error>)?
     private var player: PhononPlayer?
+    private var refreshTask: Task<Void, Never>?
 
     private func dropped(_ language: String) -> URL {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -46,6 +53,12 @@ final class PhononEngine: ObservableObject {
 
     private func installed(_ language: String) -> URL {
         PhononModels.defaultDirectory.deletingLastPathComponent().appendingPathComponent("models-\(language)", isDirectory: true)
+    }
+
+    nonisolated private static func built(_ dir: URL) -> Int? {
+        guard let data = try? Data(contentsOf: dir.appendingPathComponent("bundle.json")),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return (json["built"] as? NSNumber)?.intValue
     }
 
     nonisolated private static func voiceList(_ dir: URL) -> [String]? {
@@ -58,11 +71,26 @@ final class PhononEngine: ObservableObject {
 
     /// Modelle übernehmen und ihre Stimmen zeigen; geladen wird erst beim Sprechen.
     func refresh() async {
+        // Gleichzeitige Aufrufe warten auf denselben Lauf, sonst sähen sie noch keine Stimmen.
+        if let running = refreshTask { await running.value; return }
+        let task = Task { await scanModels() }
+        refreshTask = task
+        await task.value
+        refreshTask = nil
+    }
+
+    private func scanModels() async {
         var found: [String: [String]] = [:]
         for language in Self.languages {
             let source = dropped(language), target = installed(language)
             let list = await Task.detached(priority: .userInitiated) { () -> [String]? in
-                if Self.voiceList(source) != nil, (try? PhononModels.install(bundled: source, to: target)) != nil {
+                // Nur eine vollständige, neue Kopie übernehmen, sonst bleibt das Vorhandene samt
+                // übersetzten Modellen. `isInstalled` taugt nur für die Quelle: Core ML lässt im
+                // Ziel nach dem Übersetzen nicht alle Dateien des Pakets stehen.
+                if PhononModels.isInstalled(at: source), Self.built(source) != Self.built(target) {
+                    try? PhononModels.install(bundled: source, to: target)
+                }
+                if Self.built(source) != nil, Self.built(source) == Self.built(target) {
                     try? FileManager.default.removeItem(at: source)  // nicht doppelt belegen
                 }
                 return Self.voiceList(target)
@@ -71,42 +99,58 @@ final class PhononEngine: ObservableObject {
             if let list { found[language] = list.count > 1 ? list.filter { $0 != "default" }.sorted() : list }
         }
         voices = found
+        // Vorgabe einmalig: Anton, sobald das Modell da ist; danach gilt die eigene Wahl.
+        let defaults = UserDefaults.standard
+        if !defaults.bool(forKey: "voice.antonDefault"), found["de"]?.contains("Anton") == true {
+            defaults.set(true, forKey: "voice.antonDefault")
+            VoiceModel.shared.selectedVoiceID = Self.identifier(language: "de", voice: "Anton")
+        }
     }
 
     /// Beim ersten Mal übersetzt Core ML das Modell für dieses Gerät (einige Sekunden).
     private func engine(_ language: String) async throws -> Phonon {
-        if let tts = loaded[language] { return tts }
-        loading = true; defer { loading = false }
+        if let loaded, loaded.language == language { return loaded.tts }
+        if let loading_, loading_.language == language { return try await loading_.task.value }
         if voices.isEmpty { await refresh() }
-        let tts = try await Phonon.load(models: installed(language), language: language == "de" ? .german : .english)
-        loaded[language] = tts
-        if player == nil { player = try PhononPlayer(configureSession: false) }
+        let dir = installed(language), lang: Language = language == "de" ? .german : .english
+        let task = Task { try await Phonon.load(models: dir, language: lang) }
+        loading_ = (language, task)
+        loading = true
+        defer { loading = false; if loading_?.language == language { loading_ = nil } }
+        let tts = try await task.value
+        loaded = (language, tts)
         return tts
     }
 
     /// Text sprechen und zurückkehren, wenn er zu Ende gespielt ist. Abbruch über die Task.
     func speak(_ text: String, voice name: String) async throws {
-        guard let parts = Self.parts(name) else { throw CancellationError() }
+        guard let parts = Self.parts(name) else { throw PhononUnavailable() }
         let tts = try await engine(parts.language)
-        guard let player else { return }
+        try Task.checkCancellation()
         if tts.voice != parts.voice { try await tts.setVoice(parts.voice) }
-        let started = Date()
+        try Task.checkCancellation()
+        // Je Äußerung ein neuer Player: Nach Anruf, Aufnahme oder Routenwechsel steht die alte Audio-Engine.
+        let player = try PhononPlayer(configureSession: false)
+        self.player = player
+        var firstChunk: Date?
         var samples = 0
         for try await chunk in tts.stream(text) {
             try Task.checkCancellation()
             player.enqueue(chunk)
+            if firstChunk == nil { firstChunk = Date() }
             samples += chunk.count
         }
         // Erzeugt wird schneller als gespielt: auf das Ende der Wiedergabe warten.
-        let rest = Double(samples) / Phonon.sampleRate - Date().timeIntervalSince(started)
+        guard let firstChunk else { return }
+        let rest = Double(samples) / Phonon.sampleRate - Date().timeIntervalSince(firstChunk) + 0.15
         if rest > 0 { try await Task.sleep(nanoseconds: UInt64(rest * 1_000_000_000)) }
     }
 
-    func silence() { player?.stop() }
+    func silence() { player?.stop(); player = nil }
     #else
     var modelAvailable: Bool { false }
     func refresh() async {}
-    func speak(_ text: String, voice name: String) async throws {}
+    func speak(_ text: String, voice name: String) async throws { throw PhononUnavailable() }
     func silence() {}
     #endif
 }
