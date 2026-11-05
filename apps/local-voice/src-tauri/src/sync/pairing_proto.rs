@@ -104,16 +104,27 @@ pub fn commitment(id: &str, p_pk: &[u8; LEN], n_p: &[u8; LEN], name: &str) -> [u
 
 /// `mac = HMAC(q, "LV-PAIR-CLAIM-v2" ‖ id ‖ C)`.
 pub fn claim_mac(q: &[u8; LEN], id: &str, commit: &[u8; LEN]) -> [u8; LEN] {
-    hmac(q, &[CLAIM, id.as_bytes(), commit]).finalize().into_bytes().into()
+    hmac(q, &[CLAIM, id.as_bytes(), commit])
+        .finalize()
+        .into_bytes()
+        .into()
 }
 
 /// Prüft `mac` in konstanter Zeit.
 pub fn verify_claim_mac(q: &[u8; LEN], id: &str, commit: &[u8; LEN], mac: &[u8; LEN]) -> bool {
-    hmac(q, &[CLAIM, id.as_bytes(), commit]).verify_slice(mac).is_ok()
+    hmac(q, &[CLAIM, id.as_bytes(), commit])
+        .verify_slice(mac)
+        .is_ok()
 }
 
 /// Sechsstelliger Vergleichscode, mit führenden Nullen.
-pub fn sas(id: &str, d_pk: &[u8; LEN], p_pk: &[u8; LEN], n_p: &[u8; LEN], n_d: &[u8; LEN]) -> String {
+pub fn sas(
+    id: &str,
+    d_pk: &[u8; LEN],
+    p_pk: &[u8; LEN],
+    n_p: &[u8; LEN],
+    n_d: &[u8; LEN],
+) -> String {
     let h = sha(&[SAS, id.as_bytes(), d_pk, p_pk, n_p, n_d]);
     let v = u32::from_be_bytes([h[0], h[1], h[2], h[3]]) % 1_000_000;
     format!("{v:06}")
@@ -177,8 +188,14 @@ pub fn payload_json(k: &[u8; LEN], email: &str, user_id: i64) -> Zeroizing<Strin
     let k_b64 = Zeroizing::new(b64u(k));
     let key_id = super::crypto::key_id(k);
     Zeroizing::new(
-        serde_json::to_string(&SealPayload { v: 1, k: &k_b64, email, user_id, key_id: &key_id })
-            .expect("feste Struktur ist serialisierbar"),
+        serde_json::to_string(&SealPayload {
+            v: 1,
+            k: &k_b64,
+            email,
+            user_id,
+            key_id: &key_id,
+        })
+        .expect("feste Struktur ist serialisierbar"),
     )
 }
 
@@ -194,7 +211,13 @@ pub fn seal(
     let cipher = XChaCha20Poly1305::new(s.into());
     let aad = seal_aad(id, d_pk, p_pk);
     let ct = cipher
-        .encrypt(XNonce::from_slice(nonce), Payload { msg: plaintext, aad: &aad })
+        .encrypt(
+            XNonce::from_slice(nonce),
+            Payload {
+                msg: plaintext,
+                aad: &aad,
+            },
+        )
         .map_err(|_| "Versiegeln fehlgeschlagen".to_string())?;
     let mut out = Vec::with_capacity(NONCE_LEN + ct.len());
     out.extend_from_slice(nonce);
@@ -204,17 +227,25 @@ pub fn seal(
 
 /// Bestätigung des iPhones: `HMAC(s, "LV-PAIR-CONFIRM-v2" ‖ id)`, konstante Zeit.
 pub fn verify_confirm(s: &[u8; LEN], id: &str, confirm: &[u8; LEN]) -> bool {
-    hmac(s, &[CONFIRM, id.as_bytes()]).verify_slice(confirm).is_ok()
+    hmac(s, &[CONFIRM, id.as_bytes()])
+        .verify_slice(confirm)
+        .is_ok()
 }
 
 #[cfg(test)]
 pub fn confirm_mac(s: &[u8; LEN], id: &str) -> [u8; LEN] {
-    hmac(s, &[CONFIRM, id.as_bytes()]).finalize().into_bytes().into()
+    hmac(s, &[CONFIRM, id.as_bytes()])
+        .finalize()
+        .into_bytes()
+        .into()
 }
 
 /// Vergleich zweier 32-Byte-Werte ohne frühen Ausstieg.
 pub fn ct_eq(a: &[u8; LEN], b: &[u8; LEN]) -> bool {
-    a.iter().zip(b.iter()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+    a.iter()
+        .zip(b.iter())
+        .fold(0u8, |acc, (x, y)| acc | (x ^ y))
+        == 0
 }
 
 #[cfg(test)]
@@ -296,7 +327,10 @@ mod tests {
         let p_pk = public_key(&StaticSecret::from(k32(&v, "eingaben", "p_sk")));
         let n_p = k32(&v, "eingaben", "n_p");
         let name = v["zusatz_utf8"]["device_name"].as_str().unwrap();
-        assert_eq!(name.len() as u64, v["zusatz_utf8"]["laenge_bytes"].as_u64().unwrap());
+        assert_eq!(
+            name.len() as u64,
+            v["zusatz_utf8"]["laenge_bytes"].as_u64().unwrap()
+        );
         assert_eq!(
             b64u(&commitment(id, &p_pk, &n_p, name)),
             v["zusatz_utf8"]["phone_commit"]

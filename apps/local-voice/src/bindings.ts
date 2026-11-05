@@ -1013,8 +1013,8 @@ async pairApprove() : Promise<Result<PairView, string>> {
 }
 },
 /**
- * „Nein, abbrechen“ oder Dialog schließen. Ist die Kopplung schon abgeholt
- * (Hub 409 `done`), wird das neue Gerät zum Abmelden angeboten.
+ * „Nein, abbrechen“ oder Dialog schließen. Nach der Freigabe wird am Hub geklärt,
+ * ob das iPhone schon abgeholt hat (dann Gerät zum Abmelden anbieten).
  */
 async pairCancel() : Promise<Result<PairView, string>> {
     try {

@@ -176,7 +176,8 @@ fn qr_svg(uri: &str) -> Result<String, String> {
 /// `localvoice://pair?v=2&h=<hub>&p=<id>&s=<secret>&q=<q>&k=<d_pk>`; `h` ist die
 /// URL-kodierte Basisadresse des Hubs.
 pub fn pair_uri(hub: &str, id: &str, secret: &str, q: &[u8; LEN], d_pk: &[u8; LEN]) -> String {
-    let h: String = url::form_urlencoded::byte_serialize(hub.trim_end_matches('/').as_bytes()).collect();
+    let h: String =
+        url::form_urlencoded::byte_serialize(hub.trim_end_matches('/').as_bytes()).collect();
     format!(
         "localvoice://pair?v=2&h={h}&p={id}&s={secret}&q={}&k={}",
         proto::b64u(q),
@@ -195,7 +196,10 @@ impl Session {
 
     fn remaining(&self) -> u32 {
         // Aufrunden: die Anzeige erreicht 0 erst, wenn die Frist im Kern abgelaufen ist.
-        let ms = self.deadline.saturating_duration_since(Instant::now()).as_millis();
+        let ms = self
+            .deadline
+            .saturating_duration_since(Instant::now())
+            .as_millis();
         ms.div_ceil(1000) as u32
     }
 
@@ -206,7 +210,9 @@ impl Session {
                 .then(|| self.qr_svg.clone()),
             remaining_s: self.remaining(),
             device_name: self.name.clone(),
-            sas: (stage == PairStage::Sas).then(|| self.sas.clone()).flatten(),
+            sas: (stage == PairStage::Sas)
+                .then(|| self.sas.clone())
+                .flatten(),
             reason,
             suspect: None,
         }
@@ -215,7 +221,10 @@ impl Session {
     /// Kopplung am Hub verwerfen, Fehler egal. Nach einem Abbruch ab
     /// `challenge` entsteht kein neues `n_d` (Spec 5.2, letzte Zeile).
     async fn reject_quiet(&self) {
-        let _ = self.client().call_json(Method::POST, &self.path("/reject"), Some(&json!({}))).await;
+        let _ = self
+            .client()
+            .call_json(Method::POST, &self.path("/reject"), Some(&json!({})))
+            .await;
     }
 
     async fn abort(&self, reason: &str) -> PairView {
@@ -261,7 +270,10 @@ impl Session {
     }
 
     fn confirm_ok(&self, j: &Value) -> bool {
-        match (j["phone_confirm"].as_str().map(proto::b64u32), self.s.as_ref()) {
+        match (
+            j["phone_confirm"].as_str().map(proto::b64u32),
+            self.s.as_ref(),
+        ) {
             (Some(Ok(c)), Some(s)) => proto::verify_confirm(s, &self.id, &c),
             _ => false,
         }
@@ -278,7 +290,9 @@ impl Session {
         let now = Instant::now();
         match self.phase {
             Phase::WaitConfirm if now >= self.deadline + CONFIRM_GRACE => {
-                return self.settle("Das iPhone hat die Verbindung nicht bestätigt.").await;
+                return self
+                    .settle("Das iPhone hat die Verbindung nicht bestätigt.")
+                    .await;
             }
             Phase::WaitConfirm => {}
             _ if now >= self.deadline => {
@@ -289,7 +303,11 @@ impl Session {
             _ => {}
         }
 
-        let (status, j) = match self.client().call_json(Method::GET, &self.path(""), None).await {
+        let (status, j) = match self
+            .client()
+            .call_json(Method::GET, &self.path(""), None)
+            .await
+        {
             Ok(r) => r,
             Err(HubError::Unauthorized) => {
                 return self.view(
@@ -301,7 +319,10 @@ impl Session {
                 return match self.phase {
                     Phase::WaitScan => self.view(PairStage::Network, Some(e.to_string())),
                     Phase::WaitConfirm => self.view(PairStage::WaitConfirm, None),
-                    _ => self.abort("Verbindung zum Hub unterbrochen. Kopplung abgebrochen.").await,
+                    _ => {
+                        self.abort("Verbindung zum Hub unterbrochen. Kopplung abgebrochen.")
+                            .await
+                    }
                 };
             }
         };
@@ -312,7 +333,9 @@ impl Session {
             );
         }
         if status != 200 {
-            return self.abort(&hub_message(&j, "Der Hub hat die Kopplung abgelehnt.")).await;
+            return self
+                .abort(&hub_message(&j, "Der Hub hat die Kopplung abgelehnt."))
+                .await;
         }
         let hub_status = j["status"].as_str().unwrap_or("");
 
@@ -322,7 +345,9 @@ impl Session {
             (Phase::WaitReveal, "claimed" | "challenged") => {
                 // Das festgehaltene C darf sich nie ändern.
                 if !self.commit_unchanged(&j) {
-                    return self.abort("Sicherheitsprüfung fehlgeschlagen. Kopplung abgebrochen.").await;
+                    return self
+                        .abort("Sicherheitsprüfung fehlgeschlagen. Kopplung abgebrochen.")
+                        .await;
                 }
                 self.view(PairStage::Qr, None)
             }
@@ -334,7 +359,8 @@ impl Session {
                     if self.confirm_ok(&j) {
                         self.view(PairStage::Connected, None)
                     } else {
-                        self.unconfirmed("Die Bestätigung des iPhones ist ungültig.").await
+                        self.unconfirmed("Die Bestätigung des iPhones ist ungültig.")
+                            .await
                     }
                 }
             },
@@ -343,8 +369,14 @@ impl Session {
                 Some("Das iPhone hat die Freigabe nicht rechtzeitig abgeholt.".into()),
             ),
             (_, "expired") => self.view(PairStage::Expired, None),
-            (_, "rejected") => self.view(PairStage::Aborted, Some("Die Kopplung wurde abgebrochen.".into())),
-            _ => self.abort("Unerwarteter Zustand. Kopplung abgebrochen.").await,
+            (_, "rejected") => self.view(
+                PairStage::Aborted,
+                Some("Die Kopplung wurde abgebrochen.".into()),
+            ),
+            _ => {
+                self.abort("Unerwarteter Zustand. Kopplung abgebrochen.")
+                    .await
+            }
         }
     }
 
@@ -363,7 +395,9 @@ impl Session {
             Ok((c, mac, name))
         })();
         let Ok((c, mac, name)) = parsed else {
-            return self.abort("Antwort des Hubs unvollständig. Kopplung abgebrochen.").await;
+            return self
+                .abort("Antwort des Hubs unvollständig. Kopplung abgebrochen.")
+                .await;
         };
         if !proto::verify_claim_mac(&self.q, &self.id, &c, &mac) {
             return self
@@ -371,7 +405,9 @@ impl Session {
                 .await;
         }
         if !proto::valid_name(&name) {
-            return self.abort("Der Gerätename ist ungültig. Kopplung abgebrochen.").await;
+            return self
+                .abort("Der Gerätename ist ungültig. Kopplung abgebrochen.")
+                .await;
         }
         // C und Name einmalig festhalten; nur dieser Name wird angezeigt und geprüft.
         self.commit = Some(c);
@@ -379,15 +415,25 @@ impl Session {
 
         let n_d = random32();
         let body = json!({ "desktop_nonce": proto::b64u(n_d.as_ref()) });
-        match self.client().call_json(Method::POST, &self.path("/challenge"), Some(&body)).await {
+        match self
+            .client()
+            .call_json(Method::POST, &self.path("/challenge"), Some(&body))
+            .await
+        {
             Ok((200, _)) => {
                 self.phase = Phase::WaitReveal;
                 // Der Desktop rechnet mit seinem eigenen n_d, nie mit einem Wert vom Hub.
                 self.n_d = Some(*n_d);
                 self.view(PairStage::Qr, None)
             }
-            Ok((_, j)) => self.abort(&hub_message(&j, "Der Hub hat die Kopplung abgebrochen.")).await,
-            Err(_) => self.abort("Verbindung zum Hub unterbrochen. Kopplung abgebrochen.").await,
+            Ok((_, j)) => {
+                self.abort(&hub_message(&j, "Der Hub hat die Kopplung abgebrochen."))
+                    .await
+            }
+            Err(_) => {
+                self.abort("Verbindung zum Hub unterbrochen. Kopplung abgebrochen.")
+                    .await
+            }
         }
     }
 
@@ -476,7 +522,10 @@ fn ended(stage: PairStage, reason: &str) -> PairView {
 /// Eine laufende Kopplung wird ersetzt (der Hub verwirft sie beim neuen Start).
 #[tauri::command]
 #[specta::specta]
-pub async fn pair_start(app: AppHandle, state: State<'_, PairingState>) -> Result<PairView, String> {
+pub async fn pair_start(
+    app: AppHandle,
+    state: State<'_, PairingState>,
+) -> Result<PairView, String> {
     let cfg = account::load(&app).ok_or("Zuerst hier anmelden.")?;
     let key = Zeroizing::new(cfg.key()?);
     let mut guard = state.lock().await;
@@ -488,7 +537,10 @@ pub async fn pair_start(app: AppHandle, state: State<'_, PairingState>) -> Resul
         .await
         .map_err(|e| e.to_string())?;
     if status != 200 {
-        return Err(hub_message(&j, "Die Kopplung konnte nicht gestartet werden."));
+        return Err(hub_message(
+            &j,
+            "Die Kopplung konnte nicht gestartet werden.",
+        ));
     }
     let id = j["pair_id"].as_str().unwrap_or_default().to_string();
     let secret = Zeroizing::new(j["secret"].as_str().unwrap_or_default().to_string());
@@ -570,19 +622,34 @@ pub async fn pair_approve(state: State<'_, PairingState>) -> Result<PairView, St
         let payload = proto::payload_json(&session.key, &session.email, session.user_id);
         let mut nonce = [0u8; proto::NONCE_LEN];
         OsRng.fill_bytes(&mut nonce);
-        proto::seal(s, &session.id, &session.d_pk, &p_pk, payload.as_bytes(), &nonce)?
+        proto::seal(
+            s,
+            &session.id,
+            &session.d_pk,
+            &p_pk,
+            payload.as_bytes(),
+            &nonce,
+        )?
     };
     session.approve_sent = true;
     let res = session
         .client()
-        .call_json(Method::POST, &session.path("/approve"), Some(&json!({ "sealed": sealed })))
+        .call_json(
+            Method::POST,
+            &session.path("/approve"),
+            Some(&json!({ "sealed": sealed })),
+        )
         .await;
     let view = match res {
         Ok((200, _)) => {
             session.phase = Phase::WaitConfirm;
             session.view(PairStage::WaitConfirm, None)
         }
-        Ok((_, j)) => session.abort(&hub_message(&j, "Die Freigabe wurde abgelehnt.")).await,
+        Ok((_, j)) => {
+            session
+                .abort(&hub_message(&j, "Die Freigabe wurde abgelehnt."))
+                .await
+        }
         Err(e) => session.abort(&e.to_string()).await,
     };
     if view.stage.is_final() {
@@ -621,7 +688,11 @@ pub async fn sync_devices(app: AppHandle) -> Result<Vec<PairedDevice>, String> {
 pub async fn sync_revoke_device(app: AppHandle, id: i64) -> Result<(), String> {
     let cfg = account::load(&app).ok_or("Nicht angemeldet")?;
     let (status, j) = HubClient::new(&cfg.url, &cfg.token)
-        .call_json(Method::POST, &format!("/api/v1/voice/devices/{id}/revoke"), Some(&json!({})))
+        .call_json(
+            Method::POST,
+            &format!("/api/v1/voice/devices/{id}/revoke"),
+            Some(&json!({})),
+        )
         .await
         .map_err(|e| e.to_string())?;
     if status == 200 {
