@@ -342,13 +342,21 @@ impl Player for RodioPlayer {
         let sink = rodio::Sink::connect_new(stream.mixer());
         let mut applied_volume = controls.volume();
         sink.set_volume(applied_volume);
-        // Tempo: jedes Stück wird beim Anhängen zeitgestreckt (gleiche
-        // Tonhöhe); ein Dreh am Regler gilt ab dem nächsten Stück.
+        // Tempo: ein durchgehender Zeitstrecker über alle Stücke, damit an
+        // Stückgrenzen nichts bricht (#314). Ein Dreh am Regler gilt ab dem
+        // nächsten Stück; der alte Strecker gibt vorher seinen Rest aus.
         let mut follow_controls = |sink: &rodio::Sink| {
             let volume = controls.volume();
             if (volume - applied_volume).abs() > f32::EPSILON {
                 sink.set_volume(volume);
                 applied_volume = volume;
+            }
+        };
+        type Key = (u16, u32, u32);
+        let mut stretcher: Option<(Key, super::stretch::SpeechStretcher)> = None;
+        let append = |sink: &rodio::Sink, ch: u16, rate: u32, samples: Vec<f32>| {
+            if !samples.is_empty() {
+                sink.append(rodio::buffer::SamplesBuffer::new(ch, rate, samples));
             }
         };
         // Annehmen, solange der Sender lebt.
@@ -363,21 +371,33 @@ impl Player for RodioPlayer {
                     if seg.channels == 0 || seg.sample_rate == 0 || seg.samples.is_empty() {
                         continue;
                     }
-                    let samples = super::dsp::time_stretch(
-                        &seg.samples,
-                        seg.channels,
-                        seg.sample_rate,
-                        controls.speed(),
-                    );
-                    sink.append(rodio::buffer::SamplesBuffer::new(
-                        seg.channels,
-                        seg.sample_rate,
-                        samples,
-                    ));
+                    let speed = controls.speed();
+                    let key = (seg.channels, seg.sample_rate, speed.to_bits());
+                    let mut samples = Vec::new();
+                    if stretcher.as_ref().is_none_or(|(k, _)| *k != key) {
+                        if let Some(((ch, rate, _), mut old)) = stretcher.take() {
+                            append(&sink, ch, rate, old.flush());
+                        }
+                        stretcher = Some((
+                            key,
+                            super::stretch::SpeechStretcher::new(
+                                seg.channels,
+                                seg.sample_rate,
+                                speed,
+                            ),
+                        ));
+                    }
+                    if let Some((_, s)) = stretcher.as_mut() {
+                        samples = s.push(&seg.samples);
+                    }
+                    append(&sink, seg.channels, seg.sample_rate, samples);
                 }
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => break,
             }
+        }
+        if let Some(((ch, rate, _), mut s)) = stretcher.take() {
+            append(&sink, ch, rate, s.flush());
         }
         // Ausspielen, was noch angehängt ist.
         while !sink.empty() {

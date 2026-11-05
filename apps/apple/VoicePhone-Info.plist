@@ -37,10 +37,23 @@
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
 	<string>0.2.0</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>de.localvoice.pairing</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>localvoice</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundleVersion</key>
 	<string>2</string>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<false/>
+	<key>NSCameraUsageDescription</key>
+	<string>Scannt den Kopplungscode, den die Desktop-App am PC anzeigt.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Nimmt deine ausdrücklich gestarteten Sprachnotizen und Besprechungen auf.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>

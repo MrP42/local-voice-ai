@@ -108,6 +108,10 @@ pub struct TtsProvidersSettings {
     /// Auswahl, Sichtbarkeit, Hörproben); nur die Beschriftung wechselt ([`apply_voice_names`]).
     /// Gilt für alle Anbieter mit Stimmenliste und für Piper (`piper` → Katalog-Kennung).
     pub voice_names: BTreeMap<String, BTreeMap<String, String>>,
+    /// Anbieter, deren Vorgabestimme die App schon einmal selbst gewählt hat (Phonon: Anton,
+    /// sobald der Anbieter freigegeben und das deutsche Modell da ist; wie am iPhone). Danach gilt
+    /// nur noch die eigene Wahl. Setzt allein die App (`apply_default_voice`), nie ein Befehl.
+    pub default_voice_applied: Vec<String>,
 }
 
 /// Kennung der Standardstimme eines Anbieters (immer sichtbar, nie abwählbar).

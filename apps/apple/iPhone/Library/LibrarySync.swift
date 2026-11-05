@@ -6,6 +6,15 @@ import Security
 /// Abgleich der Bibliothek mit dem Hub (Epic #210, P6), nach
 /// docs/superpowers/specs/2026-11-02-bibliothek-sync.md. Gleiches Konto und
 /// gleicher Schlüssel wie die Desktop-App; der Server sieht nur Chiffrat.
+/// Anfragen an den Hub folgen keiner Umleitung: Sonst gingen Token, Schlüsseldaten oder der
+/// Kopplungs-Claim an einen Server, den niemand bestätigt hat. Die 3xx-Antwort gilt als Fehler.
+final class NoRedirects: NSObject, URLSessionTaskDelegate, Sendable {
+    static let shared = NoRedirects()
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest) async -> URLRequest? { nil }
+}
+
 @MainActor
 final class LibrarySync: ObservableObject {
     static let shared = LibrarySync()
@@ -113,6 +122,22 @@ final class LibrarySync: ObservableObject {
             self.error = error.localizedDescription
             status = "Nicht angemeldet"
         }
+    }
+
+    /// Konto aus der Geräte-Kopplung übernehmen: wie `login`, nur ohne Passwort.
+    func adopt(_ paired: PairedAccount) throws {
+        guard account == nil else { throw PairingError.adoptFailed("Dieses iPhone ist schon angemeldet.") }
+        var id = [UInt8](repeating: 0, count: 16)
+        guard SecRandomCopyBytes(kSecRandomDefault, 16, &id) == errSecSuccess else { throw PairingError.adoptFailed("Zufallszahlen nicht verfügbar.") }
+        let mail = paired.email.lowercased()
+        let acc = Account(url: paired.hub, email: mail, userId: paired.userId, token: paired.token, key: Data(paired.key),
+                          deviceId: id.map { String(format: "%02x", $0) }.joined(), deviceName: paired.deviceName)
+        guard Keychain.save(acc) else { throw PairingError.adoptFailed("Das Konto konnte nicht im Schlüsselbund gespeichert werden.") }
+        account = acc
+        error = nil
+        ledger = SyncLedger(); saveLedger()
+        status = "Angemeldet als \(mail)"
+        Task { await self.run() }
     }
 
     func logout() async {
@@ -348,7 +373,7 @@ final class LibrarySync: ObservableObject {
             return (size, Data(hasher.finalize()))
         }.value
         let blob = LibrarySyncFormat.blobId(key: key, plaintextSha256: digest)
-        let chunks = max(1, (size + LibrarySyncFormat.chunkPlainBytes - 1) / LibrarySyncFormat.chunkPlainBytes)
+        let chunks = LibrarySyncFormat.chunkCount(size: size)
         let ref = BlobRef(blob: blob, size: size, chunks: chunks, type: type, file: file)
         if ledger.uploaded.contains(blob) { return ref }
         let (infoCode, infoData) = try await Self.send(acc.url + "/api/v1/voice/blobs/\(blob)", method: "GET", token: acc.token, bulk: wifiOnly)
@@ -363,12 +388,12 @@ final class LibrarySync: ObservableObject {
             let body = try await Task.detached(priority: .utility) { () throws -> Data in
                 let h = try FileHandle(forReadingFrom: url); defer { try? h.close() }
                 try h.seek(toOffset: UInt64(index * LibrarySyncFormat.chunkPlainBytes))
-                let plain = try h.read(upToCount: LibrarySyncFormat.chunkPlainBytes) ?? Data()
+                let plain = try h.read(upToCount: max(1, LibrarySyncFormat.chunkLimit(size: size))) ?? Data()
                 let sealed = Data(try LibrarySyncFormat.sealChunk(key: key, userId: userId, blobId: blob, index: index, plain: [UInt8](plain)))
                 return try JSONSerialization.data(withJSONObject: [
                     "data": sealed.base64EncodedString(),
                     "sha256": SHA256.hash(data: sealed).map { String(format: "%02x", $0) }.joined(),
-                ])
+                ], options: .withoutEscapingSlashes)  // „\\/“ machte die Anfrage rund 1,5 % größer
             }.value
             let (code, data) = try await Self.send(acc.url + "/api/v1/voice/blobs/\(blob)/chunks/\(index)", method: "POST", token: acc.token, body: body, bulk: wifiOnly)
             guard code == 200 else { throw Self.httpError(code, data) }
@@ -390,11 +415,13 @@ final class LibrarySync: ObservableObject {
             fm.createFile(atPath: part.path, contents: nil, attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication])
         }
         let chunk = LibrarySyncFormat.chunkPlainBytes
-        var have = (Self.fileSize(part) ?? 0) / chunk
-        have = min(have, ref.chunks)
+        let partial = Self.fileSize(part) ?? 0
+        // Der Bereich der Alt-Blobs kennt keine sichere Wiederaufnahme; hier läuft alles nacheinander.
+        let legacy = LibrarySyncFormat.mayBeLegacySingleChunk(size: ref.size) && partial != ref.size
+        let first = legacy ? 0 : LibrarySyncFormat.resumeChunk(size: ref.size, chunks: ref.chunks, partialBytes: partial) ?? ref.chunks
         let key = [UInt8](acc.key), userId = acc.userId
-        progress(have * chunk)
-        for index in have..<ref.chunks {
+        progress(first * chunk)
+        for index in first..<ref.chunks {
             let (code, data) = try await Self.send(acc.url + "/api/v1/voice/blobs/\(ref.blob)/chunks/\(index)", method: "GET", token: acc.token, bulk: wifiOnly)
             guard code == 200 else { throw Self.httpError(code, data) }
             let written = try await Task.detached(priority: .utility) { () throws -> Int in
@@ -408,6 +435,7 @@ final class LibrarySync: ObservableObject {
                 return index * chunk + plain.count
             }.value
             progress(written)
+            if written == ref.size { break }  // Alt-Blob: ein Stück, obwohl die Rechnung zwei ergibt
         }
         guard Self.fileSize(part) == ref.size else {
             try? fm.removeItem(at: part); throw SyncError.corrupt("Größe")
@@ -568,7 +596,7 @@ final class LibrarySync: ObservableObject {
         req.setValue("application/json", forHTTPHeaderField: "Accept")
         if let body { req.httpBody = body; req.setValue("application/json", forHTTPHeaderField: "Content-Type") }
         if let token { req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
-        let (data, response) = try await URLSession.shared.data(for: req)
+        let (data, response) = try await URLSession.shared.data(for: req, delegate: NoRedirects.shared)
         return ((response as? HTTPURLResponse)?.statusCode ?? 0, data)
     }
 

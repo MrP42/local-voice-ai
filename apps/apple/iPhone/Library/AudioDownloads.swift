@@ -25,6 +25,8 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
     /// Aufträgen, die hier nicht (mehr) stehen, ändern nichts an der Buchführung.
     private var inFlight: [String: [Int: AudioDownload.ChunkKey]] = [:]
     /// Fehlversuche je Stück (`<buch>|<teil>|<stück>`); erst nach dreien schlägt das Laden fehl.
+    /// Je laufendem Auftrag; endet mit ihm, damit ein späteres Laden wieder zurückfallen darf.
+    private var legacyFallbacks: [String: AudioDownload.LegacyFallback] = [:]
     private var retries: [String: Int] = [:]
     private var assembling: Set<String> = []
     private var waiters: [String: [CheckedContinuation<Bool, Never>]] = [:]
@@ -131,6 +133,7 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
 
     /// Ladevorgang verwerfen (Hörbuch wird entfernt oder Buch gelöscht).
     func discard(_ id: String) {
+        legacyFallbacks[id] = nil
         guard jobs[id] != nil || inFlight[id] != nil else { return }
         jobs[id] = nil; done[id] = nil
         persist(); resolve(id, false)
@@ -252,7 +255,7 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
                         try Self.append(staged: file, to: target.appendingPathExtension("part"), key: key, userId: userId,
                                         blob: part.blob, index: index, chunkPlainBytes: chunk)
                     }.value
-                    if index == part.chunks - 1 {
+                    if index == part.chunks - 1 || size == part.size {
                         guard size == part.size else {
                             try? FileManager.default.removeItem(at: target.appendingPathExtension("part"))
                             throw LibrarySync.SyncError.corrupt("Größe von \(part.file)")
@@ -297,6 +300,7 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
     }
 
     private func finish(_ id: String) {
+        legacyFallbacks[id] = nil
         jobs[id] = nil; done[id] = nil
         inFlight[id] = nil
         try? FileManager.default.removeItem(at: stagingDir(id))
@@ -306,6 +310,7 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
     }
 
     private func fail(_ id: String, _ message: String) {
+        legacyFallbacks[id] = nil
         guard jobs[id] != nil else { return }
         jobs[id]?.phase = .failed; jobs[id]?.message = message
         persist(); resolve(id, false)
@@ -375,23 +380,36 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
     nonisolated func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
         let status = (downloadTask.response as? HTTPURLResponse)?.statusCode ?? 0
         let description = downloadTask.taskDescription, taskID = downloadTask.taskIdentifier
+        let finalURL = downloadTask.response?.url
         // Die Datei verschwindet, sobald diese Methode zurückkehrt: synchron verschieben.
-        MainActor.assumeIsolated { self.received(description, taskID: taskID, status: status, file: location) }
+        MainActor.assumeIsolated { self.received(description, taskID: taskID, status: status, file: location, finalURL: finalURL) }
     }
 
-    private func received(_ description: String?, taskID: Int, status: Int, file: URL) {
+    private func received(_ description: String?, taskID: Int, status: Int, file: URL, finalURL: URL?) {
         guard let parsed = AudioDownload.parseTask(description) else { return }
         let id = parsed.bookId, key = parsed.key
         inFlight[id]?[taskID] = nil
         guard let job = jobs[id], job.phase == .running else { return }
         // Buch inzwischen gelöscht (auch von einem anderen Gerät): Ordner nicht neu anlegen.
         guard library.books.contains(where: { $0.id == id }) else { discard(id); return }
+        // Hintergrund-Sessions folgen Umleitungen, ohne zu fragen: Wenigstens das Ergebnis verwerfen.
+        if let finalURL, let hub = LibrarySync.shared.account.flatMap({ URL(string: $0.url) }), !AudioDownload.sameOrigin(finalURL, hub) {
+            fail(id, "Der Server hat auf eine andere Adresse umgeleitet. Das Laden wurde abgebrochen.")
+            return
+        }
         if status == 401 { fail(id, "Die Anmeldung ist abgelaufen. Bitte unter „Konto & Sync“ neu anmelden."); return }
+        let name = AudioDownload.taskDescription(bookId: id, key)
+        if status == 404, job.parts.indices.contains(key.part),
+           legacyFallbacks[id, default: .init()].shouldRestart(job.parts[key.part], index: key.index, task: name) {
+            _ = try? FileManager.default.removeItem(at: audioDir(id).appendingPathComponent(job.parts[key.part].file).appendingPathExtension("part"))
+            pump(id)
+            return
+        }
         guard status == 200 else {
             retry(id, key, "Der Server antwortet mit Fehler \(status). Bereits geladene Teile bleiben erhalten, es geht an derselben Stelle weiter.")
             return
         }
-        retries[AudioDownload.taskDescription(bookId: id, key)] = nil
+        retries[name] = nil
         // Doppelt geladen (z. B. nach einem Neustart): schon angehängt, nicht noch einmal ablegen.
         guard !alreadyAppended(key, job, states(job)) else { assemble(id); return }
         let target = stagingDir(id).appendingPathComponent(AudioDownload.stagedName(key))

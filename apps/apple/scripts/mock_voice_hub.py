@@ -3,11 +3,13 @@
 Nur Testzwecke, alles im Speicher, ein Benutzer (id 7)."""
 import base64, hashlib, json, re, sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import mock_pairing
 
 OBJECTS = {}   # (coll, id) -> dict
 SEQ = [0]
 BLOBS = {}     # blob -> {"chunks": {idx: bytes}, "complete": bool, "count": int}
 LOG = []
+PAIRING = [None]  # mock_pairing.Desktop, wenn mit --pair gestartet
 
 class H(BaseHTTPRequestHandler):
     def _json(self, code, obj):
@@ -24,6 +26,7 @@ class H(BaseHTTPRequestHandler):
     def do_GET(self):
         LOG.append(("GET", self.path))
         p = self.path
+        if PAIRING[0] and re.match(r"^/api/v1/voice/pair/[^/]+/result$", p): return self._json(*PAIRING[0].result())
         if p.startswith("/api/v1/voice/sync/pull"):
             since = int(re.search(r"since=(\d+)", p).group(1)); limit = int(re.search(r"limit=(\d+)", p).group(1))
             rows = sorted([o for o in OBJECTS.values() if o["server_seq"] > since], key=lambda o: o["server_seq"])[:limit]
@@ -49,6 +52,9 @@ class H(BaseHTTPRequestHandler):
     def do_POST(self):
         LOG.append(("POST", self.path))
         p = self.path; body = self._body()
+        if PAIRING[0] and p == "/api/v1/voice/pair/claim": return self._json(*PAIRING[0].claim(body))
+        if PAIRING[0] and p.endswith("/reveal"): return self._json(*PAIRING[0].reveal(body))
+        if PAIRING[0] and p.endswith("/confirm"): return self._json(*PAIRING[0].confirm(body))
         if p == "/api/v1/voice/auth/login":
             if body.get("password") != "geheim": return self._json(401, {"error": {"code": "invalid_credentials", "message": "E-Mail oder Passwort stimmen nicht."}})
             return self._json(200, {"token": "wai_pat_test", "user": {"id": 7, "email": body["email"]}, "server_time": "now"})
@@ -85,6 +91,9 @@ class H(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     srv = ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1])), H)
+    if "--pair" in sys.argv:
+        PAIRING[0] = mock_pairing.Desktop(f"http://127.0.0.1:{sys.argv[1]}")
+        print(PAIRING[0].uri(), flush=True)
     try: srv.serve_forever()
     finally:
         print(json.dumps({"objects": len(OBJECTS), "blobs": {k[:8]: {"complete": v["complete"], "chunks": len(v["chunks"])} for k, v in BLOBS.items()},
@@ -93,4 +102,7 @@ if __name__ == "__main__":
 # Simulator-Probe (Debug-Build):
 #   python3 apps/apple/scripts/mock_voice_hub.py 8765 &
 #   xcrun simctl launch <sim> de.localvoice.prototype --library-tab --sync-test http://127.0.0.1:8765 [--library-listen]
+# Kopplung: mit --pair startet der Nachbau auch die PC-Seite und gibt den Link aus; dann
+#   xcrun simctl launch <sim> de.localvoice.prototype --library-tab --pair-auto
+#   xcrun simctl openurl <sim> '<Link>'
 # Passwort des Test-Kontos: geheim. Der Nachbau prüft weder Token noch Kontingent.

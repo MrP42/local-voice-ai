@@ -4041,6 +4041,39 @@ async meetingVoiceMatchDismiss(meetingId: string, channel: number, a: number, b:
     else return { status: "error", error: e  as any };
 }
 },
+async meetingDiarizationModelStatus() : Promise<Result<DiarizationModelStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_diarization_model_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Laedt das Modell, nur auf Knopfdruck (oder `--provision`). Fortschritt
+ * ueber `model-download-progress`, Ende ueber `model-download-complete`.
+ * Wirkt ab der naechsten Sprechertrennung (Stopp, Import, Neu-Transkription).
+ */
+async meetingDiarizationModelDownload() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_diarization_model_download") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Bricht einen laufenden Download ab; die Teildatei bleibt fuer die
+ * Fortsetzung liegen. Ohne laufenden Download ohne Wirkung.
+ */
+async meetingDiarizationModelCancel() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_diarization_model_cancel") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async meetingVoiceprintStatus() : Promise<Result<VoiceprintStatus, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("meeting_voiceprint_status") };
@@ -8840,6 +8873,11 @@ export type DetectMode =
  * Wo gerechnet wird.
  */
 export type Device = "cpu" | "cuda" | "metal" | "remote"
+export type DiarizationModelStatus = { 
+/**
+ * Katalogkennung (fuer die Fortschrittsereignisse `model-download-*`).
+ */
+model_id: string; model_ready: boolean; downloading: boolean; size_mb: number }
 /**
  * What happens to the system's audio output while a dictation runs, so
  * music or a video neither disturbs the speaker nor ends up in the recording.
@@ -11956,7 +11994,13 @@ visible_voices: Partial<{ [key in string]: string[] }>;
  * Auswahl, Sichtbarkeit, Hörproben); nur die Beschriftung wechselt ([`apply_voice_names`]).
  * Gilt für alle Anbieter mit Stimmenliste und für Piper (`piper` → Katalog-Kennung).
  */
-voice_names: Partial<{ [key in string]: Partial<{ [key in string]: string }> }> }
+voice_names: Partial<{ [key in string]: Partial<{ [key in string]: string }> }>; 
+/**
+ * Anbieter, deren Vorgabestimme die App schon einmal selbst gewählt hat (Phonon: Anton,
+ * sobald der Anbieter freigegeben und das deutsche Modell da ist; wie am iPhone). Danach gilt
+ * nur noch die eigene Wahl. Setzt allein die App (`apply_default_voice`), nie ein Befehl.
+ */
+default_voice_applied: string[] }
 export type TtsRuntimeStatus = { 
 /**
  * `windows-x64`, `macos-aarch64`, ... (wie im Katalog).

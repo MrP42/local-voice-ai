@@ -59,8 +59,31 @@ public enum AudioDownload {
     /// Nächstes Stück, das an ein Teil angehängt werden muss (`nil`: Teil fertig).
     public static func nextChunk(_ part: Part, _ state: PartState, chunkPlainBytes: Int) -> Int? {
         if state.complete { return nil }
-        let have = min(state.partialBytes / chunkPlainBytes, part.chunks)
-        return have < part.chunks ? have : nil
+        return LibrarySyncFormat.resumeChunk(size: part.size, chunks: part.chunks, partialBytes: state.partialBytes, chunkPlainBytes: chunkPlainBytes)
+    }
+
+    /// Stück 1 fehlt am Hub: Es war ein Alt-Blob aus einem Stück, die Teildatei ist abgerissen
+    /// und muss neu von Stück 0 geladen werden.
+    public static func restartsWhenMissing(_ part: Part, index: Int) -> Bool {
+        index == 1 && LibrarySyncFormat.mayBeLegacySingleChunk(size: part.size)
+    }
+
+    /// Merkt sich je Auftrag, ob der Rückfall auf Stück 0 schon genutzt ist. Unabhängig von den
+    /// allgemeinen Fehlversuchen: Ein Netzfehler vorher darf ihn nicht verbrauchen.
+    public struct LegacyFallback: Sendable {
+        private var used: Set<String> = []
+        public init() {}
+
+        /// `true`: Teildatei verwerfen und neu beginnen. Fehlt das Stück danach wieder, ist es ein Fehler.
+        public mutating func shouldRestart(_ part: Part, index: Int, task: String) -> Bool {
+            restartsWhenMissing(part, index: index) && used.insert(task).inserted
+        }
+    }
+
+    /// Selbe Herkunft: Schema, Host und Port stimmen überein.
+    public static func sameOrigin(_ a: URL, _ b: URL) -> Bool {
+        func port(_ url: URL) -> Int? { url.port ?? (url.scheme?.lowercased() == "https" ? 443 : url.scheme?.lowercased() == "http" ? 80 : nil) }
+        return a.scheme?.lowercased() == b.scheme?.lowercased() && a.host?.lowercased() == b.host?.lowercased() && port(a) == port(b)
     }
 
     /// Fehlende Stücke in Hörreihenfolge, ohne angekommene und laufende; höchstens `limit`.
@@ -72,7 +95,9 @@ public enum AudioDownload {
         for (p, part) in job.parts.enumerated() {
             let state = p < states.count ? states[p] : PartState(complete: false, partialBytes: 0)
             guard let first = nextChunk(part, state, chunkPlainBytes: chunkPlainBytes) else { continue }
-            for i in first..<part.chunks {
+            // Ob es ein zweites Stück gibt, zeigt erst das erste.
+            let last = LibrarySyncFormat.mayBeLegacySingleChunk(size: part.size) ? first + 1 : part.chunks
+            for i in first..<min(last, part.chunks) {
                 let key = ChunkKey(part: p, index: i)
                 if staged.contains(key) || inFlight.contains(key) { continue }
                 out.append(key)

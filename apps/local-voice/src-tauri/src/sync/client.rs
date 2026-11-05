@@ -150,7 +150,7 @@ fn http() -> Result<reqwest::Client, HubError> {
     http_with(Duration::from_secs(30))
 }
 
-/// Stücke der Dateiablage tragen bis zu 4 MiB; langsame Leitungen brauchen Zeit.
+/// Stücke der Dateiablage tragen bis zu 3,65 MiB; langsame Leitungen brauchen Zeit.
 fn http_with(timeout: Duration) -> Result<reqwest::Client, HubError> {
     reqwest::Client::builder()
         .timeout(timeout)

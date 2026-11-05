@@ -488,6 +488,200 @@ html[data-fluent] .lva-logo__accent {
   pointer-events: none;
 }
 
+/* ============================================================
+   Kompakter Spur-Player (AudioPlayer `dense`, Bedienfeld der Aufnahmen)
+
+   Ein Einzeiler je Spur nach dem Fluent-2-Medienmuster:
+   Beschriftung · [-10 ▶ +30] · Zeitstrahl · Zeit · Tempo.
+   Zeigerziele >= 24 px (in px, weil die Wurzelschrift skaliert); Play 28 px als einziger Akzent. Wird die Spalte
+   schmal, entfallen zuerst die Sprungknoepfe, dann die Gesamtdauer --
+   ueber eine Container-Abfrage, damit die Zeile nie umbricht.
+   ============================================================ */
+.mplayer {
+  container-type: inline-size;
+  min-width: 0;
+}
+.mplayer__row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+}
+.mplayer__label {
+  flex: none;
+  width: 66px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--colorNeutralForeground2);
+}
+.mplayer__transport {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  gap: 0.125rem;
+}
+.mplayer__skip {
+  display: contents;
+}
+.mplayer__transport .mbtn {
+  --_mb-size: 24px;
+  --_mb-ico: 16px;
+  color: var(--colorNeutralForeground2);
+}
+.mplayer__transport .mbtn:hover {
+  color: var(--colorNeutralForeground1);
+}
+.mplayer__transport .mplayer__play {
+  --_mb-size: 28px;
+  --_mb-ico: 13px;
+  margin-inline: 0.125rem;
+  color: var(--colorNeutralForegroundOnBrand);
+}
+.mplayer__transport .mplayer__play:hover {
+  color: var(--colorNeutralForegroundOnBrand);
+  box-shadow: none;
+}
+
+/* Zeitstrahl wie der Fluent-Slider: 4-px-Schiene, Brand-Fuellung bis zur
+   Position, runder Griff mit Ring in der Flaechenfarbe. Die Trefferflaeche
+   ist 24 px hoch, auch wenn die Schiene schmal bleibt. */
+.mplayer__seek {
+  flex: 1 1 auto;
+  min-width: 48px;
+  height: 24px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  --_rail: color-mix(in srgb, var(--colorNeutralForeground1) 22%, transparent);
+  --_fill: var(--colorBrandBackground);
+  /* Aeusserer Ring des Griffs: deutlich staerker als die Schiene, damit der
+     Griff auch im Dunkelmodus >= 3:1 gegen die Flaeche steht. */
+  --_ring: color-mix(in srgb, var(--colorNeutralForeground1) 60%, transparent);
+  /* Fuellkante unter der Griffmitte: der Griff (14 px) laeuft von 7 px bis
+     Breite - 7 px, nicht von 0 bis 100 %. */
+  --_seek-at: calc(7px + (100% - 14px) * var(--_seek, 0));
+}
+.mplayer__seek::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(
+    to right,
+    var(--_fill) 0 var(--_seek-at),
+    var(--_rail) var(--_seek-at) 100%
+  );
+}
+.mplayer__seek::-moz-range-track {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--_rail);
+}
+.mplayer__seek::-moz-range-progress {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--_fill);
+}
+.mplayer__seek::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  box-sizing: border-box;
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  border-radius: 50%;
+  background: var(--_fill);
+  border: 2px solid var(--colorNeutralBackground1);
+  box-shadow: 0 0 0 1px var(--_ring);
+  transition: transform 120ms ease;
+}
+.mplayer__seek::-moz-range-thumb {
+  box-sizing: border-box;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--_fill);
+  border: 2px solid var(--colorNeutralBackground1);
+  box-shadow: 0 0 0 1px var(--_ring);
+}
+.mplayer__seek:hover::-webkit-slider-thumb,
+.mplayer__seek:active::-webkit-slider-thumb {
+  transform: scale(1.15);
+}
+.mplayer__seek:hover {
+  --_fill: var(--colorBrandBackgroundHover);
+}
+.mplayer__seek:focus {
+  outline: none;
+}
+.mplayer__seek:focus-visible {
+  outline: 2px solid var(--colorStrokeFocus2);
+  outline-offset: 1px;
+  border-radius: 4px;
+}
+
+.mplayer__time {
+  flex: none;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--colorNeutralForeground1);
+}
+.mplayer__elapsed {
+  display: inline-block;
+  text-align: end;
+}
+.mplayer__total {
+  color: var(--colorNeutralForeground3);
+}
+
+/* Tempo: schlichter Textschalter (Fluent "subtle", 24 px), hervorgehoben
+   nur, wenn vom Normaltempo abweicht. */
+.mplayer .mplayer__rate {
+  flex: none;
+  min-width: 32px;
+  height: 24px;
+  padding: 0 0.375rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--colorNeutralForeground2);
+  cursor: pointer;
+}
+.mplayer .mplayer__rate:hover {
+  background: var(--colorSubtleBackgroundHover);
+  color: var(--colorNeutralForeground1);
+}
+.mplayer .mplayer__rate[data-changed] {
+  background: var(--colorBrandBackground2);
+  color: var(--colorBrandForeground1);
+}
+.mplayer .mplayer__rate:focus-visible {
+  outline: 2px solid var(--colorStrokeFocus2);
+  outline-offset: 1px;
+}
+
+@container (max-width: 380px) {
+  .mplayer__skip {
+    display: none;
+  }
+}
+@container (max-width: 280px) {
+  .mplayer__total {
+    display: none;
+  }
+  .mplayer__label {
+    width: auto;
+    max-width: 56px;
+  }
+}
+
 .workspace-home {
   display: flex;
   flex-direction: column;

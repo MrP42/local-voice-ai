@@ -2151,3 +2151,68 @@ test.describe("Hervorhebung ohne Umbruchwechsel", () => {
     expect(bg).not.toBe("rgba(0, 0, 0, 0)");
   });
 });
+
+test("Buch mit Vorspann: Play beginnt beim Vorwort, ohne Vorwort beim ersten Kapitel", async ({
+  page,
+}) => {
+  const prose = Array.from(
+    { length: 6 },
+    (_, i) => `Satz ${i + 1}: Die Stunden vergingen zäh, und Mara lauschte auf jedes Geräusch.`,
+  ).join(" ");
+  const text = [
+    "# Die Leuchtturmwärterin",
+    "von Anna Muster",
+    "# Inhalt",
+    "Vorwort",
+    "Kapitel 1",
+    "Kapitel 2",
+    "# Impressum",
+    "© 2024 Verlag Beispiel. Alle Rechte vorbehalten.",
+    "ISBN 978-3-00-000000-0",
+    "# Vorwort",
+    `Vorwortanfang. ${prose}`,
+    "# Kapitel 1",
+    `Kapitelanfang. ${prose}`,
+    prose,
+    "# Kapitel 2",
+    prose,
+    prose,
+    prose,
+  ].join("\n\n");
+  await open(page, text);
+  const toc = page.getByTestId("reader-contents");
+  const entries = toc.getByTestId("reader-contents-entry");
+  // Vorspann bleibt erreichbar, ist aber gedämpft; „Start“ steht beim Vorwort.
+  await expect(entries.nth(1)).toHaveAttribute("data-front", "1");
+  await expect(entries.nth(2)).toHaveAttribute("data-front", "1");
+  await expect(entries.nth(3).getByTestId("reader-contents-start")).toBeVisible();
+  await expect(toc.getByTestId("reader-read-preface")).toBeChecked();
+
+  await playFromBar(page, "Vorlesen");
+  await expect.poll(async () => (await calls(page, "tts_speak_text_from")).length).toBe(1);
+  const [withPreface] = await calls(page, "tts_speak_text_from");
+  expect(
+    String(withPreface.text)
+      .slice(Number(withPreface.charOffset))
+      .startsWith("Vorwort"),
+  ).toBe(true);
+  expect(await calls(page, "tts_speak_text")).toHaveLength(0);
+
+  // Ohne Vorwort: Start beim ersten Kapitel, die Wahl bleibt gespeichert.
+  await page.reload();
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "Vorlesen", exact: true })
+    .click();
+  await toc.getByTestId("reader-read-preface").uncheck();
+  await expect(entries.nth(3)).toHaveAttribute("data-front", "1");
+  await expect(entries.nth(4).getByTestId("reader-contents-start")).toBeVisible();
+  await playFromBar(page, "Vorlesen");
+  await expect.poll(async () => (await calls(page, "tts_speak_text_from")).length).toBe(1);
+  const [withoutPreface] = await calls(page, "tts_speak_text_from");
+  expect(
+    String(withoutPreface.text)
+      .slice(Number(withoutPreface.charOffset))
+      .startsWith("Kapitel 1"),
+  ).toBe(true);
+});

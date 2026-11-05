@@ -48,14 +48,14 @@ Zurückschreiben verloren.
   Bücher über 256 KiB ankommen. Die Vorlesen-Seite bleibt am Desktop die Quelle.
 - **Blob-Kennung:** `hex(SHA-256(key ‖ "lv-blob-v1" ‖ SHA-256(klartext)))`. Gleiche Datei ergibt
   dieselbe Kennung (kein Doppel-Upload), der Server kann sie keinem Inhalt zuordnen.
-- **Stücke:** Klartext in 4-MiB-Stücke, jedes einzeln mit XChaCha20-Poly1305 versiegelt,
+- **Stücke:** Klartext in 3-MiB-Stücke (Dateien bis 3 827 302 Byte bleiben ein Stück; das Hosting lehnt Anfragen ab etwa 5 MiB ab), jedes einzeln mit XChaCha20-Poly1305 versiegelt,
   AAD `user_id ␟ blob ␟ <blob_id> ␟ <index>`, Stück = `nonce ‖ chiffrat ‖ tag` (roh).
   Transport als JSON `{data: base64, sha256: hex(SHA-256(stück))}` an
   `POST /api/v1/voice/blobs/{id}/chunks/{n}`, Abschluss `POST …/{id}/commit {chunks}`.
 - **Reihenfolge beim Hochladen:** erst alle Dateien des Buchs hochladen und abschließen, dann
   das `book`-Objekt pushen. Ein Gerät sieht so nie ein Buch, dessen Dateien fehlen.
 - `audio[].file` ist genau der Dateiname aus `audio.tracks[].file` (bzw. `audio.file` bei einem
-  Teil), ohne Pfad. Eine leere Datei hat 1 Stück: `chunks = max(1, ceil(size / 4 MiB))`.
+  Teil), ohne Pfad. Eine leere Datei hat 1 Stück: `chunks = size <= 3827302 ? 1 : ceil(size / 3 MiB)`.
 - **Herunterladen:** iPhone lädt Text sofort (Cover folgt; bis dahin erzeugtes Cover), Hörbuchteile erst beim ersten Öffnen
   (oder auf Wunsch), Einstellung „nur im WLAN“. Stücke einzeln prüfen (sha256 und Tag), dann
   Stück für Stück in `<ziel>.part` schreiben (Wiederaufnahme am ersten fehlenden Stück), erst
