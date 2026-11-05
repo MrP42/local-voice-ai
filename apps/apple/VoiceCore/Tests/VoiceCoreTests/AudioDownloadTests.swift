@@ -66,6 +66,23 @@ final class AudioDownloadTests: XCTestCase {
         XCTAssertEqual(LibrarySyncFormat.resumeChunk(size: 0, chunks: 1, partialBytes: 0), 0)
     }
 
+    func testTwoChunkRefWithRealSingleChunkBlobFallsBackToChunkZero() {
+        let size = LibrarySyncFormat.oneChunkMaxBytes + 1000
+        let plain = LibrarySyncFormat.chunkPlainBytes
+        let part = AudioDownload.Part(blob: "f", size: size, chunks: 2, file: "teil_006.m4a")
+        // Abgerissene Teildatei von genau 3 MiB: Das sieht aus wie ein fertiges erstes Stück.
+        XCTAssertEqual(AudioDownload.nextChunk(part, .init(complete: false, partialBytes: plain), chunkPlainBytes: plain), 1)
+        // Der Hub antwortet 404, die Teildatei wird verworfen und es geht bei Stück 0 weiter.
+        XCTAssertTrue(AudioDownload.restartsWhenMissing(part, index: 1))
+        XCTAssertEqual(AudioDownload.nextChunk(part, .init(complete: false, partialBytes: 0), chunkPlainBytes: plain), 0)
+        // Stück 0 trägt die ganze Datei.
+        XCTAssertNil(AudioDownload.nextChunk(part, .init(complete: false, partialBytes: size), chunkPlainBytes: plain))
+        // Außerhalb des Bereichs bleibt ein fehlendes Stück ein Fehler.
+        XCTAssertFalse(AudioDownload.restartsWhenMissing(part, index: 0))
+        let big = AudioDownload.Part(blob: "g", size: 3 * plain, chunks: 3, file: "teil_007.m4a")
+        XCTAssertFalse(AudioDownload.restartsWhenMissing(big, index: 1))
+    }
+
     func testSpaceProblem() {
         let fmt: (Int64) -> String = { "\($0) B" }
         XCTAssertNil(AudioDownload.spaceProblem(remainingBytes: 100, freeBytes: nil, format: fmt))

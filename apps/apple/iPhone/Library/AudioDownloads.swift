@@ -387,11 +387,19 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
         // Buch inzwischen gelöscht (auch von einem anderen Gerät): Ordner nicht neu anlegen.
         guard library.books.contains(where: { $0.id == id }) else { discard(id); return }
         if status == 401 { fail(id, "Die Anmeldung ist abgelaufen. Bitte unter „Konto & Sync“ neu anmelden."); return }
+        let name = AudioDownload.taskDescription(bookId: id, key)
+        if status == 404, job.parts.indices.contains(key.part), retries[name] == nil,
+           AudioDownload.restartsWhenMissing(job.parts[key.part], index: key.index) {
+            retries[name] = 1  // nur einmal: Fehlt das Stück wirklich, gilt danach der normale Fehlerweg
+            _ = try? FileManager.default.removeItem(at: audioDir(id).appendingPathComponent(job.parts[key.part].file).appendingPathExtension("part"))
+            pump(id)
+            return
+        }
         guard status == 200 else {
             retry(id, key, "Der Server antwortet mit Fehler \(status). Bereits geladene Teile bleiben erhalten, es geht an derselben Stelle weiter.")
             return
         }
-        retries[AudioDownload.taskDescription(bookId: id, key)] = nil
+        retries[name] = nil
         // Doppelt geladen (z. B. nach einem Neustart): schon angehängt, nicht noch einmal ablegen.
         guard !alreadyAppended(key, job, states(job)) else { assemble(id); return }
         let target = stagingDir(id).appendingPathComponent(AudioDownload.stagedName(key))

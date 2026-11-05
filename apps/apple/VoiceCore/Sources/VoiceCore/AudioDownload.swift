@@ -62,6 +62,12 @@ public enum AudioDownload {
         return LibrarySyncFormat.resumeChunk(size: part.size, chunks: part.chunks, partialBytes: state.partialBytes, chunkPlainBytes: chunkPlainBytes)
     }
 
+    /// Stück 1 fehlt am Hub: Es war ein Alt-Blob aus einem Stück, die Teildatei ist abgerissen
+    /// und muss neu von Stück 0 geladen werden.
+    public static func restartsWhenMissing(_ part: Part, index: Int) -> Bool {
+        index == 1 && LibrarySyncFormat.mayBeLegacySingleChunk(size: part.size)
+    }
+
     /// Fehlende Stücke in Hörreihenfolge, ohne angekommene und laufende; höchstens `limit`.
     public static func missingChunks(_ job: Job, states: [PartState], staged: Set<ChunkKey>, inFlight: Set<ChunkKey>,
                                      chunkPlainBytes: Int, limit: Int = window) -> [ChunkKey] {

@@ -391,7 +391,9 @@ final class LibrarySync: ObservableObject {
         }
         let chunk = LibrarySyncFormat.chunkPlainBytes
         let partial = Self.fileSize(part) ?? 0
-        let first = LibrarySyncFormat.resumeChunk(size: ref.size, chunks: ref.chunks, partialBytes: partial) ?? ref.chunks
+        // Der Bereich der Alt-Blobs kennt keine sichere Wiederaufnahme; hier läuft alles nacheinander.
+        let legacy = LibrarySyncFormat.mayBeLegacySingleChunk(size: ref.size) && partial != ref.size
+        let first = legacy ? 0 : LibrarySyncFormat.resumeChunk(size: ref.size, chunks: ref.chunks, partialBytes: partial) ?? ref.chunks
         let key = [UInt8](acc.key), userId = acc.userId
         progress(first * chunk)
         for index in first..<ref.chunks {
