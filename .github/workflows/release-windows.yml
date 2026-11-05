@@ -24,6 +24,14 @@ on:
     tags:
       - "app-v*"
   workflow_dispatch:
+    inputs:
+      repack_tag:
+        description: >-
+          Nur die portablen ZIPs eines bestehenden Releases neu bauen und ersetzen
+          (z. B. app-v0.23.0). Baut die EXE aus diesem Tag, nimmt das Packskript aus dem
+          gestarteten Zweig; Installer und latest.json bleiben unberuehrt.
+        required: false
+        default: ""
 
 concurrency:
   group: release-windows-${{ github.ref }}
@@ -49,6 +57,22 @@ jobs:
 
       - name: Checkout repository
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      # Nachpacken: Quellen des Release-Tags, aber Packskript, Paketdateien und
+      # Release-Text aus dem gestarteten Stand (dort liegt die Korrektur).
+      - name: Check out release tag for repack
+        if: inputs.repack_tag != ''
+        shell: bash
+        working-directory: .
+        run: |
+          set -euo pipefail
+          FIX_SHA="$(git rev-parse HEAD)"
+          git checkout --quiet "${{ inputs.repack_tag }}"
+          git checkout "$FIX_SHA" -- apps/local-voice/scripts/build-portable-zip.ps1 \
+            apps/local-voice/scripts/release-body.md apps/local-voice/src-tauri/portable
+          git status --short
 
       - name: Read version from tauri.conf.json
         id: version
@@ -155,7 +179,18 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Read release body
+        id: body
+        shell: bash
+        run: |
+          {
+            echo "text<<RELEASE_BODY_EOF"
+            cat scripts/release-body.md
+            echo "RELEASE_BODY_EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Build and publish
+        if: inputs.repack_tag == ''
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -169,16 +204,7 @@ jobs:
           projectPath: apps/local-voice
           tagName: app-v${{ steps.version.outputs.version }}
           releaseName: Local Voice AI ${{ steps.version.outputs.version }}
-          releaseBody: |
-            Windows-Build von Local Voice AI.
-
-            | Datei | Wofür |
-            |---|---|
-            | `Local Voice AI_<Version>_x64-setup.exe` | Installer. Die installierte App aktualisiert sich hierauf selbst. |
-            | `LocalVoiceAI_<Version>_x64-portable.zip` | Portable Version ohne Installation (nur die App, Modelle werden bei Bedarf geladen). |
-            | `LocalVoiceAI_<Version>_x64-portable-offline.teil1vonN.zip` … | Portable Offline-Version: ALLE Teile herunterladen und in denselben Ordner entpacken. Enthält Nemotron 3.5 ASR, Phonon (Programm, Modelle, Stimmen), die lokale KI-Laufzeit (Vulkan/CPU) und Qwen 3.5 4B; läuft ohne Internet. Das Sprachmodell wird beim ersten Start aus den Teilen zusammengesetzt (einmalig, ca. 1 min). |
-
-            Anleitung und Datenablage: `LIESMICH-PORTABLE.txt` im ZIP. Lizenzen: `THIRD-PARTY-NOTICES.md`; das deutsche Phonon-Modell steht unter CC BY-NC 4.0 (nur nicht-kommerzielle Nutzung).
+          releaseBody: ${{ steps.body.outputs.text }}
           # Published, not draft: `releases/latest/download/latest.json` — the
           # updater endpoint — does not resolve to a draft.
           releaseDraft: false
@@ -189,6 +215,18 @@ jobs:
           # SPIRV-Headers der Schritte oben; build.rs buendelt ggml-vulkan.dll
           # ueber transcribe-libs/ (tauri.windows.conf.json), keine Extra-Ressource.
           args: --features gpu-vulkan --bundles nsis,updater
+
+      # Nachpacken: dieselbe EXE wie im Release (gleicher Tag, gleiche Features), ohne Bundle
+      # und ohne Veroeffentlichung; der Release-Text wird auf den korrigierten Stand gebracht.
+      - name: Build executable for repack
+        if: inputs.repack_tag != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          pnpm tauri build --no-bundle --features gpu-vulkan
+          gh release edit "app-v${{ steps.version.outputs.version }}" --notes-file scripts/release-body.md --repo "$GITHUB_REPOSITORY"
 
       # Portable Versionen (ZIP, ohne Installation). Packt die EXE, die tauri-action eben
       # gebaut hat; siehe scripts/build-portable-zip.ps1. continue-on-error: ein Fehler hier
@@ -216,10 +254,9 @@ jobs:
         run: |
           $env:TMP = $env:RUNNER_TEMP; $env:TEMP = $env:RUNNER_TEMP
           $out = Join-Path $env:RUNNER_TEMP 'portable-offline'
-          # -RequireHfToken: lieber kein Offline-Paket als eines ohne deutsche Phonon-Stimme, das
-          # die Release-Notizen falsch beschreibt. Nach dem Anlegen des Secrets per
-          # workflow_dispatch neu laufen lassen.
-          ./scripts/build-portable-zip.ps1 -Release -Offline -SmokeTest -RequireHfToken -OutDir $out
+          # Ohne HF_TOKEN fehlt nur das deutsche Phonon-Modell (gated); alles andere ist
+          # oeffentlich. Was drin ist, steht in INHALT.txt im ZIP und als Warnung im Lauf.
+          ./scripts/build-portable-zip.ps1 -Release -Offline -SmokeTest -OutDir $out
           gh release upload "app-v${{ steps.version.outputs.version }}" (Get-ChildItem $out -File).FullName --clobber --repo "$env:GITHUB_REPOSITORY"
           if ($LASTEXITCODE -ne 0) { throw "gh release upload failed" }
         env:
