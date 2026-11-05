@@ -232,7 +232,11 @@ final class LibraryPlayback: NSObject, ObservableObject {
             self.book = book; mode = .readAloud
             self.text = text
             paragraphs = LibraryText.paragraphs(text)
-            let offset = library.record(library.textKey(book))?.offset ?? 0
+            // Ohne gemerkte Stelle beim ersten Inhalt beginnen, nicht bei Titelei,
+            // Inhaltsverzeichnis oder Impressum (wie am Desktop, lva#295).
+            let readPreface = UserDefaults.standard.object(forKey: BookStart.readPrefaceKey) as? Bool ?? true
+            let offset = library.record(library.textKey(book))?.offset
+                ?? Double(BookStart.start(text, readPreface: readPreface).offset)
             let index = LibraryText.paragraphIndex(paragraphs, at: offset)
             move(to: Cursor(paragraph: index, sentence: 0))
             if paragraphs.indices.contains(index) {
