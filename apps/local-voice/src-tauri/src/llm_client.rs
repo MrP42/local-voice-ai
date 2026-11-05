@@ -510,7 +510,15 @@ async fn send_cli(
             opts.clone(),
         );
         tokio::task::spawn_blocking(move || {
-            call_cli(cli, &binary, &model, system.as_deref(), &user_content, limit, &opts)
+            call_cli(
+                cli,
+                &binary,
+                &model,
+                system.as_deref(),
+                &user_content,
+                limit,
+                &opts,
+            )
         })
         .await
         .map_err(|e| format!("cli_failed: {e}"))?
@@ -542,7 +550,15 @@ async fn send_cli(
             // Die aktualisierte CLI liegt am selben Ort; neu suchen, falls der Pfad wechselte.
             let binary = cli::locate(cli).unwrap_or(binary);
             tokio::task::spawn_blocking(move || {
-                call_cli(cli, &binary, &model, system.as_deref(), &user_content, limit, &opts)
+                call_cli(
+                    cli,
+                    &binary,
+                    &model,
+                    system.as_deref(),
+                    &user_content,
+                    limit,
+                    &opts,
+                )
             })
             .await
             .map_err(|e| format!("cli_failed: {e}"))?

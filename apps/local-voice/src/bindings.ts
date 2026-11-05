@@ -685,6 +685,77 @@ async syncLogin(email: string, password: string, deviceName: string, url: string
 }
 },
 /**
+ * Schalter „iPhone darf Abo-Modelle nutzen" (Einstellungen -> Modelle je
+ * Funktion). Veroeffentlicht oder loescht die Modellliste sofort. Ohne
+ * Freigabe je Geraet ([`booktalk_relay_authorize`]) bleibt sie leer.
+ */
+async changeBookTalkRelaySetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_book_talk_relay_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async booktalkRelayGrants() : Promise<Result<RelayGrantInfo[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("booktalk_relay_grants") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Die Abo-Modelle dieses PCs, die ein iPhone nutzen koennte (bereite CLIs).
+ */
+async booktalkRelayModels() : Promise<Result<RelayModelInfo[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("booktalk_relay_models") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Ein iPhone freigeben (R1): neuer Relay-Schluessel, die gewaehlten Modelle,
+ * 90 Tage. Gibt den Einrichtungscode (Text und QR) zurueck, den das iPhone
+ * einliest. Die Freigabe ist erst nach der ersten gueltigen Anfrage des iPhones
+ * aktiv; ohne sie verfaellt sie samt Schluessel nach 10 Minuten.
+ */
+async booktalkRelayAuthorize(deviceKey: string, name: string, modelIds: string[]) : Promise<Result<RelayPairing, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("booktalk_relay_authorize", { deviceKey, name, modelIds }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Einrichtungscode noch einmal zeigen: erzeugt einen **neuen** Schluessel
+ * (der alte ist sofort ungueltig), die Freigabe ist wieder `pending`, der
+ * Code gilt wieder 10 Minuten. Name, Modelle und Geraet bleiben.
+ */
+async booktalkRelayRenewCode(deviceKey: string) : Promise<Result<RelayPairing, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("booktalk_relay_renew_code", { deviceKey }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Freigabe entziehen (R10): Schluessel loeschen, Modellliste neu bewerten
+ * (leer = zurueckziehen); laufende Anfragen werden beim naechsten Takt verworfen.
+ */
+async booktalkRelayRevoke(deviceKey: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("booktalk_relay_revoke", { deviceKey }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Abmelden: Token im Hub widerrufen (best effort), Konto und Ledger löschen.
  * Die Seiten bleiben auf diesem Gerät.
  */
@@ -962,72 +1033,6 @@ async rechercheLesen(id: string) : Promise<Result<RechercheSicht, string>> {
 async rechercheLoeschen(id: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("recherche_loeschen", { id }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Schalter „iPhone darf Abo-Modelle nutzen“ (lva#320).
- */
-async changeBookTalkRelaySetting(enabled: boolean) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("change_book_talk_relay_setting", { enabled }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Freigaben der iPhones für das Abo-Relay (ohne Schlüssel).
- */
-async booktalkRelayGrants() : Promise<Result<RelayGrantInfo[], string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("booktalk_relay_grants") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Abo-Modelle dieses PCs, die ein iPhone nutzen könnte (bereite CLIs).
- */
-async booktalkRelayModels() : Promise<Result<RelayModelInfo[], string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("booktalk_relay_models") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Ein iPhone freigeben; gibt den Einrichtungscode (Text und QR) zurück.
- */
-async booktalkRelayAuthorize(deviceKey: string, name: string, modelIds: string[]) : Promise<Result<RelayPairing, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("booktalk_relay_authorize", { deviceKey, name, modelIds }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Einrichtungscode noch einmal zeigen: erzeugt einen neuen Schlüssel, der alte ist sofort ungültig.
- */
-async booktalkRelayRenewCode(deviceKey: string) : Promise<Result<RelayPairing, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("booktalk_relay_renew_code", { deviceKey }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Freigabe eines iPhones entziehen.
- */
-async booktalkRelayRevoke(deviceKey: string) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("booktalk_relay_revoke", { deviceKey }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -5657,11 +5662,13 @@ async bookAiDocumentExport(pageId: string, id: string, path: string) : Promise<R
 }
 },
 /**
- * Frage an ein Buch. Geprüfte Sätze kommen vorab als `book-talk-event`, das Ergebnis
- * ist die endgültige Antwort (auch als `done`). Bereich und Grenze gelten für genau
- * diese Anfrage. Ohne Modell, ohne Freigabe oder ohne Budgetnachweis kommt eine Antwort
- * `found_only` mit Grund; `Err` nur bei ungültiger Anfrage, laufender Frage,
- * ausgeschaltetem Schalter und Abbruch.
+ * Frage an ein Buch. Geprüfte Sätze kommen vorab als `sentence`-Ereignis,
+ * das Ergebnis ist die endgültige Antwort (auch als `done`). Bereich und
+ * Grenze gelten für genau diese Anfrage. Ohne Eval-Freigabe für das
+ * aufgelöste Modell, ohne Modell, ohne Cloud-Freigabe, offline oder ohne
+ * Budgetnachweis kommt eine Antwort `found_only` mit Grund. `Err` nur bei
+ * ungültiger Anfrage, laufender Frage, ausgeschaltetem Schalter und Abbruch
+ * (`cancelled`, dann `failed`-Ereignis, nichts wird gespeichert).
  */
 async bookTalkAsk(req: BookTalkRequest) : Promise<Result<BookTalkAnswer, string>> {
     try {
@@ -5672,8 +5679,9 @@ async bookTalkAsk(req: BookTalkRequest) : Promise<Result<BookTalkAnswer, string>
 }
 },
 /**
- * Bricht eine laufende Frage ab; es kommt nur noch `failed { cancelled }`, nichts wird
- * gespeichert. `false`, wenn zu dieser Anfrage kein Lauf (mehr) existiert.
+ * Bricht eine laufende Frage ab; es kommt nur noch `failed { cancelled }`,
+ * nichts wird gespeichert. `false`, wenn zu dieser Anfrage kein Lauf
+ * (mehr) existiert.
  */
 async bookTalkCancel(requestId: string) : Promise<boolean> {
     return await TAURI_INVOKE("book_talk_cancel", { requestId });
@@ -5701,8 +5709,8 @@ async bookTalkClear(bookId: string) : Promise<Result<null, string>> {
 }
 },
 /**
- * Sprachbefehl erkennen (ohne Modell). „Ja“ ist nur dann ein Befehl (`read_citation`),
- * wenn die letzte Antwort die Stelle zum Vorlesen anbot.
+ * Sprachbefehl erkennen (ohne Modell). „Ja“ ist nur dann ein Befehl
+ * (`read_citation`), wenn die letzte Antwort die Stelle zum Vorlesen anbot.
  */
 async bookTalkCommand(bookId: string, text: string) : Promise<Result<BookTalkCommand | null, string>> {
     try {
@@ -7997,7 +8005,7 @@ book_talk_enabled?: boolean;
  * freigegebenen Abo-Modelle (Claude, Codex) ueber diesen PC nutzen. Standard
  * aus; nur dann veroeffentlicht der PC seine Modellliste im Hub.
  */
-book_talk_relay_enabled?: boolean;
+book_talk_relay_enabled?: boolean; 
 /**
  * Stimmprofile 2a: Vorschläge „klingt wie …, zusammenführen?“ aus Stimmabdrücken
  * innerhalb einer Besprechung (CAM++). Wirkt erst, wenn das Modell per Knopf
@@ -8437,20 +8445,20 @@ export type BookPreview = { title: string; pages: number; voices: PackageVoice[]
 /**
  * Die Antwort in zwei Formen (D5; Form wie `BookTalkAnswer` im Vertrag).
  */
-export type BookTalkAnswer = { intent: BookTalkIntent; sentences: BookTalkSentence[]; text: string;
+export type BookTalkAnswer = { intent: BookTalkIntent; sentences: BookTalkSentence[]; text: string; 
 /**
  * Sprechfassung: Satz-Sprechfassungen, dann Rückfrage bzw. „bis Seite N“.
  */
-speech: string; citations: BookTalkCitation[];
+speech: string; citations: BookTalkCitation[]; 
 /**
  * Ohne belegte Modellantwort: nur Fundstellen oder ein Hinweis.
  */
-found_only: boolean;
+found_only: boolean; 
 /**
  * Grund für `found_only` (Codes des Vertrags oder `no_hits`); fehlt, wenn
  * das Modell Sätze lieferte, aber keiner belegbar war.
  */
-reason?: string | null;
+reason?: string | null; 
 /**
  * Verworfene (unbelegte) Sätze der Modellantwort.
  */
@@ -8458,15 +8466,15 @@ dropped: number; scope: BookTalkScope; frontier: number }
 /**
  * Ein Beleg: Stelle im Buch mit wörtlichem Zitat (Form wie `Citation` im Vertrag).
  */
-export type BookTalkCitation = {
+export type BookTalkCitation = { 
 /**
  * Auszugsnummer `Q<k>` im Prompt.
  */
-q: number;
+q: number; 
 /**
  * Seite aus der letzten Seitenmarke vor `start`; fehlt, wenn keine kam.
  */
-page?: number | null; chapter_index: number; chapter_title: string;
+page?: number | null; chapter_index: number; chapter_title: string; 
 /**
  * UTF-16-Offsets im Originaltext (Ende exklusiv).
  */
@@ -8475,7 +8483,7 @@ start: number; end: number; quote: string }
  * Ein Sprachbefehl, Form wie `Command` im Vertrag: `{ "kind": "jump" }`.
  */
 export type BookTalkCommand = { kind: BookTalkCommandKind }
-export type BookTalkCommandKind = "jump" | "read_citation" |
+export type BookTalkCommandKind = "jump" | "read_citation" | 
 /**
  * „Ja“: nach der Rückfrage „Soll ich dir die Stelle vorlesen?“ gleich
  * `ReadCitation`, sonst eine Frage (siehe `resolve_confirm`).
@@ -8491,28 +8499,36 @@ export type BookTalkIntent = "recap" | "locate" | "explain" | "question"
  * Anfrage (Form wie `BookTalkRequest` im Vertrag). Bereich und Grenze gelten
  * für genau diese Anfrage.
  */
-export type BookTalkRequest = { book_id: string; request_id: string; question: string;
+export type BookTalkRequest = { book_id: string; request_id: string; question: string; 
 /**
  * Spoilergrenze: weitester gelesener oder gehörter Stand (UTF-16 im
  * Originaltext). Fehlt sie, gilt Schutz mit 0 (`no_frontier`).
  */
 frontier?: number | null; scope: BookTalkScope; input: BookTalkInput }
 /**
- * Bereich der Suche (D4): nur der gelesene oder gehörte Teil (Standard) oder das ganze Buch.
+ * Bereich der Suche (D4).
  */
-export type BookTalkScope = "until_position" | "book"
+export type BookTalkScope = 
+/**
+ * Nur der gelesene oder gehörte Teil (Standard).
+ */
+"until_position" | 
+/**
+ * Das ganze Buch.
+ */
+"book"
 /**
  * Ein geprüfter Satz (Form wie `Sentence` im Vertrag).
  */
-export type BookTalkSentence = { index: number;
+export type BookTalkSentence = { index: number; 
 /**
  * Satz ohne `[Q<k>]`-Marker.
  */
-text: string;
+text: string; 
 /**
  * Sprechfassung, der erste belegte Satz mit gesprochenem Zitat.
  */
-speech: string; citations: BookTalkCitation[];
+speech: string; citations: BookTalkCitation[]; 
 /**
  * Allgemeinwissen, ohne Beleg.
  */
@@ -9503,30 +9519,6 @@ export type HfAccessStatus = { present: boolean; source: HfAccessSource | null;
 problem: string | null }
 export type HistoryEntry = { id: number; file_name: string; timestamp: number; saved: boolean; title: string; transcription_text: string; post_processed_text: string | null; post_process_prompt: string | null; post_process_requested: boolean }
 export type HistoryUpdatePayload = { action: "added"; entry: HistoryEntry } | { action: "updated"; entry: HistoryEntry } | { action: "deleted"; id: number } | { action: "toggled"; id: number }
-/**
- * Eine Freigabe, wie die Oberfläche sie zeigt (ohne Schlüssel).
- */
-export type RelayGrantInfo = { device_key: string; name: string; key_id: string; model_ids: string[]; created_at_ms: number; 
-/**
- * Ablauf der Freigabe (90 Tage).
- */
-expires_at_ms: number; 
-/**
- * `true`, solange das iPhone den Einrichtungscode noch nicht benutzt hat.
- */
-pending: boolean; 
-/**
- * Ablauf des Einrichtungscodes (10 Minuten ab Erzeugung).
- */
-code_expires_at_ms: number }
-/**
- * Ein Modell, das am PC für das Relay in Frage kommt.
- */
-export type RelayModelInfo = { id: string; label: string; provider: string }
-/**
- * Einrichtungscode zum Anzeigen: Text (Rückfall), QR-Bild (SVG) und Fristen.
- */
-export type RelayPairing = { code: string; qr_svg: string; code_expires_at_ms: number; grant_expires_at_ms: number }
 export type HubDevice = { device: string; last_push?: string | null }
 export type HubStatus = { hub_seq?: number; objects?: Partial<{ [key in string]: number }>; devices?: HubDevice[] }
 /**
@@ -11304,6 +11296,30 @@ export type RecordingRetentionPeriod = "never" | "preserve_limit" | "days_3" | "
  */
 export type ReferenceAnalysis = { quiet: boolean; suggested_tags: string[] }
 /**
+ * Eine Freigabe, wie die Oberflaeche sie zeigt (ohne Schluessel).
+ */
+export type RelayGrantInfo = { device_key: string; name: string; key_id: string; model_ids: string[]; created_at_ms: number; 
+/**
+ * Ablauf der Freigabe (90 Tage).
+ */
+expires_at_ms: number; 
+/**
+ * `true`, solange das iPhone den Einrichtungscode noch nicht benutzt hat.
+ */
+pending: boolean; 
+/**
+ * Ablauf des Einrichtungscodes (10 Minuten ab Erzeugung).
+ */
+code_expires_at_ms: number }
+/**
+ * Ein Modell, das am PC fuer das Relay in Frage kommt.
+ */
+export type RelayModelInfo = { id: string; label: string; provider: string }
+/**
+ * Einrichtungscode zum Anzeigen: Text (Rueckfall), QR-Bild (SVG) und Fristen.
+ */
+export type RelayPairing = { code: string; qr_svg: string; code_expires_at_ms: number; grant_expires_at_ms: number }
+/**
  * Zustand eines Laufs (Spalte `workflow_runs.state`, CHECK in der Migration).
  */
 export type RunState = 
@@ -11594,20 +11610,20 @@ export type StoredSegment = { segment_index: number; text: string; start_ms: num
  */
 words?: WordTime[] | null }
 /**
- * Phase of the streaming overlay card, emitted to drive its UI state.
- */
-/**
  * Ein gespeicherter Wechsel (Form wie `StoredTurn` im Vertrag).
  */
-export type StoredTurn = { question: string; answer: BookTalkAnswer; scope: BookTalkScope;
+export type StoredTurn = { question: string; answer: BookTalkAnswer; scope: BookTalkScope; 
 /**
  * Spoilergrenze (UTF-16 im Originaltext) zum Zeitpunkt der Frage.
  */
-frontier: number; input: BookTalkInput;
+frontier: number; input: BookTalkInput; 
 /**
  * Zeitpunkt (RFC 3339, UTC).
  */
 at: string }
+/**
+ * Phase of the streaming overlay card, emitted to drive its UI state.
+ */
 export type StreamPhase = 
 /**
  * Receiving audio / live text (or waiting for the stream to begin). Rust
