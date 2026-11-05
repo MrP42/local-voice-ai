@@ -214,7 +214,9 @@ private struct VoiceHome: View {
         .sheet(isPresented: $settings.shown) { ModelPanel(model: model) }
         .task { await PhononEngine.shared.refresh() }
         // „Öffnen in“ Local Voice: Datei vormerken, zu den Transkripten wechseln; dort folgt die Bestätigung.
-        .onOpenURL { url in if url.isFileURL { IncomingFiles.shared.add(url); tab = 2 } }
+        .onOpenURL { url in
+            if url.isFileURL { IncomingFiles.shared.add(url); tab = 2 } else { PairingFlow.shared.open(url) }
+        }
         #endif
     }
 
