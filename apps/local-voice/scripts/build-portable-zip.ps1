@@ -6,9 +6,10 @@
 #     onnxruntime, VC++-Laufzeit; der Installer legt sie ebenfalls neben die EXE),
 #   - src-tauri/resources/ als resources\ (wie tauri.windows.conf.json),
 #   - die Markierungsdatei `portable` (portable.rs: alle Daten nach Data\ neben der EXE),
-#   - LIESMICH-PORTABLE.txt.
-# Damit ist der Inhalt derselbe wie bei einer portablen Installation über den NSIS-Installer,
-# nur ohne Installer.
+#   - LIESMICH-PORTABLE.txt, LIZENZEN-MODELLE.txt, INHALT.txt,
+#   - vorinstallierte Modelle unter Data\ (`--provision`): immer mindestens die
+#     Spracherkennung Nemotron 3.5 ASR, vorausgewaehlt, damit die App ohne Download startet
+#     (Patrick 05.11.2026). Silero VAD steckt ohnehin in resources\.
 #
 # Aufruf aus apps/local-voice (PowerShell 7, nach `npx tauri build ...`):
 #   pwsh scripts/build-portable-zip.ps1                     # Version aus tauri.conf.json
@@ -18,7 +19,7 @@
 #   pwsh scripts/build-portable-zip.ps1 -Release -Offline -SmokeTest
 #        # Offline-Paket: Modelle vorinstallieren (HF_TOKEN fuer Phonon DE), auf ZIPs <2 GiB verteilen
 #
-# Ergebnis: <OutDir>/LocalVoiceAI_<Version>_x64-portable.zip und .zip.sha256; mit -Offline
+# Ergebnis: <OutDir>/LocalVoiceAI_<Version>_x64-portable.zip (App + Nemotron, ~0,8 GB) und .zip.sha256; mit -Offline
 # LocalVoiceAI_<Version>_x64-portable-offline.teil<N>von<M>.zip (je < 2 GiB, alle in denselben
 # Ordner entpacken; geteilte Modelle setzt die App beim ersten Start zusammen, portable_parts.rs).
 # Exit-Code 0 nur, wenn alle Pflichtteile vorhanden sind (und der Rauchtest besteht).
@@ -41,6 +42,8 @@ param(
         'llm-qwen3.5-4b-q4',
         'spk-campplus-voxceleb-16k'
     ),
+    # Katalogkennungen ohne -Offline: nur die Spracherkennung (passt in eine ZIP < 2 GiB).
+    [string[]]$ProvisionBasic = @('nemotron-3.5-asr-streaming-0.6b-Q8_0'),
     # Mit -Release: ohne HF_TOKEN abbrechen statt das deutsche Phonon-Modell auszulassen.
     [switch]$RequireHfToken
 )
@@ -105,6 +108,20 @@ function Invoke-App([string[]]$AppArgs, [string]$LogName) {
     return $p.ExitCode
 }
 
+# Hugging-Face-Cache fuer Kindprozesse umlenken; gibt die alten Werte zum Wiederherstellen zurueck.
+$HfVars = @('HF_HOME', 'HF_HUB_CACHE', 'HUGGINGFACE_HUB_CACHE')
+function Set-HfCache([string]$HfHome) {
+    $saved = @{}
+    foreach ($v in $HfVars) { $saved[$v] = [Environment]::GetEnvironmentVariable($v) }
+    [Environment]::SetEnvironmentVariable('HF_HUB_CACHE', $null)
+    [Environment]::SetEnvironmentVariable('HUGGINGFACE_HUB_CACHE', $null)
+    [Environment]::SetEnvironmentVariable('HF_HOME', $HfHome)
+    return $saved
+}
+function Restore-HfCache([hashtable]$Saved) {
+    foreach ($v in $HfVars) { [Environment]::SetEnvironmentVariable($v, $Saved[$v]) }
+}
+
 function Split-LargeFile([System.IO.FileInfo]$File) {
     $hash = (Get-FileHash $File.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
     $names = @()
@@ -146,17 +163,44 @@ try {
     # Den Text teilt sich die App mit dem NSIS-Installer (Option "Portable Installation").
     [System.IO.File]::WriteAllText((Join-Path $root 'portable'), 'Handy Portable Mode', [System.Text.Encoding]::ASCII)
 
-    if ($Offline) {
+    # Jede portable ZIP bringt Modelle mit: ohne -Offline die Spracherkennung, mit -Offline alles.
+    if ($true) {
         Copy-Item (Join-Path $tauriDir 'portable/LIZENZEN-MODELLE.txt') (Join-Path $root 'LIZENZEN-MODELLE.txt')
-        $ids = @($Provision)
+        $ids = if ($Offline) { @($Provision) } else { @($ProvisionBasic) }
         if (-not $env:HF_TOKEN -and ($ids -contains 'phonon-40m-de')) {
             if ($Release -and $RequireHfToken) { throw 'HF_TOKEN fehlt: phonon-40m-de ist auf Hugging Face zugangsbeschraenkt.' }
             Write-Warning 'HF_TOKEN fehlt: das deutsche Phonon-Modell (gated) wird ausgelassen, Englisch bleibt.'
+            if ($env:GITHUB_ACTIONS) { Write-Host '::warning::HF_TOKEN fehlt: Offline-Paket ohne deutsches Phonon-Modell' }
             $ids = @($ids | Where-Object { $_ -ne 'phonon-40m-de' })
         }
         Write-Host "Vorinstallieren: $($ids -join ', ')"
-        $code = Invoke-App @('--provision', ($ids -join ',')) 'provision'
+        # Spracherkennungsmodelle von Hugging Face landen im HF-Cache (HF_HOME, sonst
+        # ~/.cache/huggingface), nicht unter Data\. Eigener, leerer Cache fuer den Lauf;
+        # danach werden die Dateien nach Data\models kopiert. Dort erkennt model.rs sie als
+        # installiert (Ablage im Modellordner, wie beim Spiegel-Download).
+        # HF_HUB_CACHE/HUGGINGFACE_HUB_CACHE haetten Vorrang vor HF_HOME: fuer den Lauf entfernen.
+        $hfHome = Join-Path $stage 'hf-cache'
+        $hfSaved = Set-HfCache $hfHome
+        try {
+            $code = Invoke-App @('--provision', ($ids -join ',')) 'provision'
+        } finally { Restore-HfCache $hfSaved }
         if ($code -ne 0) { throw ("--provision endete mit Exit-Code {0}" -f $code) }
+        $modelsDir = Join-Path $root 'Data/models'
+        New-Item -ItemType Directory -Force $modelsDir | Out-Null
+        $snapshots = @(Get-ChildItem (Join-Path $hfHome 'hub') -Directory -Filter 'models--*' -ErrorAction SilentlyContinue |
+            ForEach-Object { Get-ChildItem (Join-Path $_.FullName 'snapshots') -Directory -ErrorAction SilentlyContinue })
+        foreach ($snap in $snapshots) {
+            # Snapshot-Eintraege sind oft Symlinks auf Blobs; File.Copy kopiert den Inhalt.
+            Get-ChildItem $snap.FullName -File -Force | ForEach-Object {
+                [System.IO.File]::Copy($_.FullName, (Join-Path $modelsDir $_.Name), $true)
+                Write-Host ("  aus HF-Cache: {0} ({1:N0} MB)" -f $_.Name, ((Get-Item (Join-Path $modelsDir $_.Name)).Length / 1MB))
+            }
+        }
+        Remove-Item $hfHome -Recurse -Force -ErrorAction SilentlyContinue
+        # Ohne diese Pruefung entstuende still eine ZIP, die Nemotron wieder herunterlaedt.
+        if (-not (Get-ChildItem $modelsDir -File -Filter 'nemotron-3.5-asr-*.gguf' -ErrorAction SilentlyContinue)) {
+            throw 'Nemotron 3.5 ASR fehlt nach --provision in Data\models'
+        }
 
         # Nur die Modellablagen und die Voreinstellung mitnehmen; alles Rechnerspezifische
         # (Protokolle, WebView-Zwischenspeicher, Geraete-Probe, Geheimnisse) bleibt draussen.
@@ -170,7 +214,19 @@ try {
         # keine Einstellungen gibt; Entpacken ueber einen bestehenden Ordner aendert nichts.
         $store = Join-Path $data 'settings_store.json'
         if (-not (Test-Path $store)) { throw 'Voreinstellung fehlt: --provision hat Data\settings_store.json nicht geschrieben' }
-        Move-Item $store (Join-Path $data 'settings_store.seed.json') -Force
+        # Einrichtung gilt als erledigt: das Modell ist schon da und gewaehlt; die Abfrage der
+        # Mikrofonrechte laeuft in App.tsx auch fuer wiederkehrende Nutzer.
+        $seedJson = Get-Content $store -Raw | ConvertFrom-Json
+        if (-not ($seedJson.PSObject.Properties.Name -contains 'settings')) { throw 'Voreinstellung ohne Schluessel settings' }
+        $seedJson.settings | Add-Member -NotePropertyName onboarding_completed -NotePropertyValue $true -Force
+        if (-not $seedJson.settings.selected_model) { throw 'Voreinstellung ohne gewaehlte Spracherkennung' }
+        Write-Host "Voreingestellt: Spracherkennung $($seedJson.settings.selected_model)"
+        [System.IO.File]::WriteAllText((Join-Path $data 'settings_store.seed.json'),
+            ($seedJson | ConvertTo-Json -Depth 100), (New-Object System.Text.UTF8Encoding $false))
+        Remove-Item $store -Force
+        # Was tatsaechlich drin ist (z. B. ohne Phonon DE, wenn HF_TOKEN fehlte).
+        $inhalt = @('Vorinstallierte Modelle (Katalogkennungen):') + ($ids | ForEach-Object { "  - $_" })
+        [System.IO.File]::WriteAllLines((Join-Path $root 'INHALT.txt'), $inhalt, (New-Object System.Text.UTF8Encoding $false))
         Get-ChildItem $data -Recurse -File | Where-Object { $_.Length -gt $ZipBudget } | ForEach-Object { Split-LargeFile $_ }
         Write-Host 'Inhalt Data\ im Paket:'
         Get-ChildItem $data -Recurse -File | ForEach-Object {
@@ -233,7 +289,7 @@ try {
         foreach ($z in $zips) { Expand-Archive -Path $z -DestinationPath $probe -Force }
         $probeRoot = Join-Path $probe $folderName
         $must = @('local-voice-ai.exe', 'portable', 'LIESMICH-PORTABLE.txt', 'resources/default_settings.json')
-        if ($Offline) { $must += @('LIZENZEN-MODELLE.txt', 'Data/settings_store.seed.json') }
+        $must += @('LIZENZEN-MODELLE.txt', 'INHALT.txt', 'Data/settings_store.seed.json')
         foreach ($f in $must) {
             if (-not (Test-Path (Join-Path $probeRoot $f))) { throw "Rauchtest: $f fehlt im ZIP" }
         }
@@ -244,18 +300,22 @@ try {
         $null = $p.Handle
         if (-not $p.WaitForExit(60000)) { $p.Kill(); throw 'Rauchtest: --help haengt' }
         if ($p.ExitCode -ne 0) { throw ("Rauchtest: --help endete mit Exit-Code 0x{0:X8}" -f $p.ExitCode) }
-        if ($Offline) {
+        if ($true) {
             # Ein headless Lauf setzt geteilte Dateien zusammen (portable_parts.rs) und listet
             # die Spracherkennung; die vorinstallierten Modelle muessen als installiert gelten.
             $listOut = Join-Path $stage 'list.out.txt'
+            # Leerer HF-Cache: ein Modell aus dem Cache des Bau-Rechners darf nicht mitzaehlen.
+            $hfSaved = Set-HfCache (Join-Path $stage 'hf-empty')
             $p = Start-Process -FilePath (Join-Path $probeRoot 'local-voice-ai.exe') -ArgumentList @('--list-models') `
                 -WorkingDirectory $probeRoot -PassThru -NoNewWindow -RedirectStandardOutput $listOut -RedirectStandardError (Join-Path $stage 'list.err.txt')
             $null = $p.Handle
-            if (-not $p.WaitForExit(15 * 60 * 1000)) { $p.Kill(); throw 'Rauchtest: --list-models haengt' }
+            $finished = $p.WaitForExit(15 * 60 * 1000)
+            Restore-HfCache $hfSaved
+            if (-not $finished) { $p.Kill(); throw 'Rauchtest: --list-models haengt' }
             $list = Get-Content $listOut -Raw
             Write-Host $list
             if ($p.ExitCode -ne 0) { throw "Rauchtest: --list-models Exit-Code $($p.ExitCode)" }
-            if ($list -notmatch '(?m)^\s*✓') { throw 'Rauchtest: kein Spracherkennungsmodell als installiert erkannt' }
+            if ($list -notmatch '(?m)^\s*✓.*nemotron-3\.5-asr') { throw 'Rauchtest: Nemotron 3.5 ASR nicht als installiert erkannt' }
             $left = @(Get-ChildItem (Join-Path $probeRoot 'Data') -Recurse -File -Filter '*.teile.json')
             if ($left.Count -gt 0) { throw "Rauchtest: nicht zusammengesetzt: $($left.FullName -join ', ')" }
         }

@@ -1,13 +1,13 @@
 # Portable Windows-Version (ohne Installation)
 
-Stand: 04.11.2026, ab Release 0.23.0.
+Stand: 05.11.2026, ab Release 0.23.0. Seit 05.11. bringt auch die kleine ZIP Nemotron mit (Patrick: „bei der portable version sollte das Nemotron modell bereits ohne download verfügbar sein“). Die ZIPs von app-v0.23.0 wurden dafür nachgepackt.
 
 ## Varianten je Release
 
 | Datei | Inhalt | Größe (ca.) |
 |---|---|---|
 | `Local Voice AI_<V>_x64-setup.exe` | Installer, aktualisiert sich selbst | ~150 MB |
-| `LocalVoiceAI_<V>_x64-portable.zip` | Portabel, nur die App. Modelle werden bei Bedarf geladen. | ~150 MB |
+| `LocalVoiceAI_<V>_x64-portable.zip` | Portabel: App und Spracherkennung Nemotron 3.5 ASR (vorinstalliert und eingestellt, Diktat ohne Download). Weitere Modelle werden bei Bedarf geladen. | ~0,8 GB |
 | `LocalVoiceAI_<V>_x64-portable-offline.teil<N>von<M>.zip` | Portabel und vollständig offline, siehe unten. Alle Teile in **denselben** Ordner entpacken. | ~4 GB gesamt |
 
 GitHub nimmt je Release-Datei höchstens 2 GiB an. Die Gesamtgröße eines Releases ist nicht begrenzt. Das Offline-Paket wird deshalb auf mehrere ZIPs unter 1,9 GiB verteilt. Dateien über diesem Budget teilt das Bauskript in Stücke zu 1,5 GiB. Das betrifft derzeit nur das Sprachmodell mit 2,7 GB. Die App setzt die Stücke beim ersten Start wieder zusammen und prüft dabei Größe und SHA-256 (`src-tauri/src/portable_parts.rs`). Fehlt ein Teil, bleibt alles liegen und die App startet trotzdem. Das Modell gilt dann bis zum nächsten Start als nicht installiert.
@@ -48,7 +48,9 @@ Die Wahl von Qwen 3.5 4B: Es ist der Nachfolger des Katalog-Standards Qwen3 4B u
 - **Risiko:** Wird das Paket in einem kommerziellen Rahmen eingesetzt oder weitergegeben, etwa als bezahlte Leistung von Wolff.ai, deckt die Lizenz das deutsche Modell nicht. Für die Nutzung in der öffentlichen Verwaltung ist „nicht-kommerziell“ nicht abschließend geklärt. Hier vor dem Produktivbetrieb die Rechtsabteilung bzw. den Lizenzgeber fragen. In diesen Fällen das Paket ohne `phonon-40m-de` bauen (`-Provision` ohne die Kennung): Englisch und die Windows-Stimmen bleiben verfügbar.
 - Programm `ptts`, das englische Modell und alle Stimmen-Dateien stehen unter MIT bzw. Apache-2.0 und sind frei weitergebbar, mit Lizenztext.
 
-Hinweis für den Bau: Das deutsche Modell lässt sich nur mit einem Hugging-Face-Token laden, dessen Konto die Bedingungen angenommen hat. Repository-Secret `HF_TOKEN`. Fehlt es, bricht der Workflow nur den Offline-Schritt ab (`-RequireHfToken`). Installer und leichte ZIP erscheinen trotzdem. Nach dem Anlegen des Secrets den Workflow per „Run workflow“ (workflow_dispatch) erneut starten. Lokal ohne `-RequireHfToken` wird das deutsche Modell mit Warnung ausgelassen.
+Hinweis für den Bau: Das deutsche Modell lässt sich nur mit einem Hugging-Face-Token laden, dessen Konto die Bedingungen angenommen hat. Repository-Secret `HF_TOKEN`. Fehlt es, enthält das Offline-Paket alles außer dem deutschen Phonon-Modell (Warnung im Lauf, `INHALT.txt` im ZIP). Mit `-RequireHfToken` bricht das Skript stattdessen ab.
+
+**Nachpacken eines bestehenden Releases:** Actions → „Release (Windows)“ → Run workflow mit `repack_tag` (z. B. `app-v0.23.0`). Die EXE wird aus dem Tag gebaut, Packskript, Paketdateien und Release-Text kommen aus dem gestarteten Zweig. Ersetzt werden nur die portablen ZIPs, SBOM und Hinweise. Installer und `latest.json` bleiben unverändert.
 
 ## Datenablage und Verhalten
 
@@ -67,6 +69,6 @@ pwsh scripts/build-portable-zip.ps1 -Release -SmokeTest              # leicht, a
 $env:HF_TOKEN = '…'; pwsh scripts/build-portable-zip.ps1 -Release -Offline -SmokeTest
 ```
 
-`-Offline` startet die EXE mit `--provision <Kennungen>`. Das ist derselbe Ladeweg wie die Modellseite, mit Prüfsummen und Installationsmarken, nur ohne Oberfläche. Rechnerspezifisches wie Logs, WebView-Cache und Geräte-Probe entfernt das Skript anschließend. Danach teilt es große Dateien und verteilt alles auf die ZIPs. Der Rauchtest entpackt alle Teile in einen Ordner. Er startet `--help` als DLL-Probe und `--list-models`, um das Zusammensetzen und ein installiertes Spracherkennungsmodell zu prüfen.
+`-Offline` startet die EXE mit `--provision <Kennungen>`. Das ist derselbe Ladeweg wie die Modellseite, mit Prüfsummen und Installationsmarken, nur ohne Oberfläche. Rechnerspezifisches wie Logs, WebView-Cache und Geräte-Probe entfernt das Skript anschließend. Danach teilt es große Dateien und verteilt alles auf die ZIPs. Ohne `-Offline` installiert `--provision` nur Nemotron. Die Voreinstellung (`selected_model`, `onboarding_completed`) liegt als Seed bei, die App startet ohne Modellauswahl. Der Rauchtest entpackt alle Teile in einen Ordner. Er startet `--help` als DLL-Probe und `--list-models`, um das Zusammensetzen und ein installiertes Spracherkennungsmodell zu prüfen, bei beiden Varianten.
 
 Der Release-Workflow (`.github/workflows/release-windows.yml`) führt beide Varianten nach dem Installer aus und hängt ZIPs und `.sha256` an das Release.
