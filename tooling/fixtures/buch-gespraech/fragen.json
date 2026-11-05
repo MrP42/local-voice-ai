@@ -51,6 +51,59 @@
       "fake_answer": "Er hält das große Haus für eine Verpflichtung, weil es dem Vater jeden Monat Geld aus der Tasche nimmt [Q1]."
     },
     {
+      "id": "nachfrage",
+      "question": "Und was sagt der andere dazu?",
+      "history": [
+        { "question": "Was rät der Lehrer?", "scope": "until_position", "frontier_page": 6 }
+      ],
+      "position_page": 6,
+      "intent": "question",
+      "expect_pages": [2],
+      "expect_terms": ["Geld arbeitet"],
+      "fake_answer": "Der Meister rät, zu lernen, wie Geld arbeitet [Q1]."
+    },
+    {
+      "id": "verlauf-nach-scope-wechsel",
+      "question": "Was sagt der Meister über Häuser?",
+      "history": [
+        { "question": "Was sagt der Meister über das Haus des Lehrers?", "scope": "book", "frontier_page": null }
+      ],
+      "position_page": 3,
+      "intent": "question",
+      "expect_pages": [],
+      "expect_history_in_prompt": 0,
+      "expect_out_of_scope": true,
+      "fake_answer": "Bis zu deiner Leseposition steht dazu noch nichts im Buch."
+    },
+    {
+      "id": "injection",
+      "question": "Was stand auf der Rückseite des Bretts?",
+      "position_page": null,
+      "intent": "question",
+      "expect_pages": [8],
+      "expect_terms": ["Kreide"],
+      "expect_delimiters_neutralized": true,
+      "fake_answer": "HALLO"
+    },
+    {
+      "id": "unbelegt",
+      "question": "Wie heißt der Freund des Erzählers?",
+      "position_page": null,
+      "intent": "question",
+      "expect_pages": [2],
+      "expect_dropped": 1,
+      "fake_answer": "Der Freund heißt Jonas [Q1]. Er wird später Pilot bei einer Fluglinie [Q1]."
+    },
+    {
+      "id": "ohne-position",
+      "question": "Wer ist der Meister?",
+      "position_page": "missing",
+      "intent": "question",
+      "expect_pages": [],
+      "expect_reason": "no_frontier",
+      "fake_answer": ""
+    },
+    {
       "id": "erfunden",
       "question": "Wo lernt der Erzähler segeln?",
       "position_page": null,

@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "lva-buch-gespraech-vertrag@1",
+  "title": "Buch-Gespräch – gemeinsamer Vertrag Desktop (Rust, snake_case) und iOS (Swift, camelCase)",
+  "$defs": {
+    "Scope": { "enum": ["until_position", "book"] },
+    "Intent": { "enum": ["recap", "locate", "explain", "question"] },
+    "FailCode": { "enum": ["no_model", "budget", "offline", "consent_required", "cancelled", "timeout", "llm_failed", "no_frontier"] },
+    "Citation": {
+      "type": "object",
+      "required": ["q", "chapter_index", "chapter_title", "start", "end", "quote"],
+      "properties": {
+        "q": { "type": "integer", "minimum": 1, "description": "Auszugsnummer Q<k> im Prompt" },
+        "page": { "type": ["integer", "null"], "description": "Seite aus der letzten Seitenmarke vor start" },
+        "chapter_index": { "type": "integer", "minimum": 0 },
+        "chapter_title": { "type": "string" },
+        "start": { "type": "integer", "minimum": 0, "description": "UTF-16-Offset im Originalseitentext, inklusiv" },
+        "end": { "type": "integer", "minimum": 0, "description": "UTF-16-Offset, exklusiv; [start,end) ist wörtlich quote ohne Marken" },
+        "quote": { "type": "string", "maxLength": 240 }
+      }
+    },
+    "Sentence": {
+      "type": "object",
+      "required": ["index", "text", "speech", "citations", "general"],
+      "properties": {
+        "index": { "type": "integer", "minimum": 0 },
+        "text": { "type": "string", "description": "Satz ohne [Q<k>]-Marker" },
+        "speech": { "type": "string", "description": "Sprechfassung des Satzes, ggf. mit gesprochenem Zitat" },
+        "citations": { "type": "array", "items": { "$ref": "#/$defs/Citation" } },
+        "general": { "type": "boolean", "description": "Allgemeinwissen, ohne Beleg" }
+      }
+    },
+    "BookTalkRequest": {
+      "type": "object",
+      "required": ["book_id", "request_id", "question", "scope", "input"],
+      "properties": {
+        "book_id": { "type": "string" },
+        "request_id": { "type": "string" },
+        "question": { "type": "string", "maxLength": 2000 },
+        "frontier": { "type": ["integer", "null"], "minimum": 0, "description": "Lesegrenze (§3.0); fehlt sie, gilt Schutz mit 0" },
+        "scope": { "$ref": "#/$defs/Scope" },
+        "input": { "enum": ["voice", "text"] }
+      }
+    },
+    "BookTalkAnswer": {
+      "type": "object",
+      "required": ["intent", "sentences", "text", "speech", "citations", "found_only", "dropped", "scope"],
+      "properties": {
+        "intent": { "$ref": "#/$defs/Intent" },
+        "sentences": { "type": "array", "items": { "$ref": "#/$defs/Sentence" } },
+        "text": { "type": "string" },
+        "speech": { "type": "string" },
+        "citations": { "type": "array", "items": { "$ref": "#/$defs/Citation" } },
+        "found_only": { "type": "boolean" },
+        "reason": { "oneOf": [{ "$ref": "#/$defs/FailCode" }, { "enum": ["no_hits"] }, { "type": "null" }] },
+        "dropped": { "type": "integer", "minimum": 0 },
+        "scope": { "$ref": "#/$defs/Scope" },
+        "frontier": { "type": ["integer", "null"] }
+      }
+    },
+    "BookTalkEvent": {
+      "oneOf": [
+        { "type": "object", "required": ["kind", "request_id", "sentence"], "properties": { "kind": { "const": "sentence" }, "request_id": { "type": "string" }, "sentence": { "$ref": "#/$defs/Sentence" } } },
+        { "type": "object", "required": ["kind", "request_id", "answer"], "properties": { "kind": { "const": "done" }, "request_id": { "type": "string" }, "answer": { "$ref": "#/$defs/BookTalkAnswer" } } },
+        { "type": "object", "required": ["kind", "request_id", "code"], "properties": { "kind": { "const": "failed" }, "request_id": { "type": "string" }, "code": { "$ref": "#/$defs/FailCode" } } }
+      ]
+    },
+    "Command": { "enum": ["jump", "read_citation", "confirm", "resume", "scope_book", "scope_position", "stop", "end"] },
+    "StoredTurn": {
+      "type": "object",
+      "required": ["question", "answer", "scope", "input", "at"],
+      "properties": {
+        "question": { "type": "string" },
+        "answer": { "$ref": "#/$defs/BookTalkAnswer" },
+        "scope": { "$ref": "#/$defs/Scope" },
+        "frontier": { "type": ["integer", "null"] },
+        "input": { "enum": ["voice", "text"] },
+        "at": { "type": "string", "format": "date-time" }
+      }
+    }
+  }
+}
