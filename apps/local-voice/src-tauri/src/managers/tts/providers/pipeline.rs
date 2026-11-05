@@ -493,6 +493,9 @@ mod tests {
                 .push((t.to_string(), o.voice.clone()));
             self.inner.synthesize(t, o, c)
         }
+        fn use_subject(&self) -> UseSubject {
+            self.inner.use_subject()
+        }
         fn cache_tag(&self, v: Option<&str>) -> String {
             self.inner.cache_tag(v)
         }
@@ -1445,7 +1448,9 @@ mod tests {
             .collect();
         for (base_url, expected) in [(None, 3usize), (Some("http://127.0.0.1:8880"), 0)] {
             let log = Arc::new(VoiceLog {
-                inner: MockProvider::new().with_id("zzz").with_subject("m", base_url),
+                inner: MockProvider::new()
+                    .with_id("zzz")
+                    .with_subject("m", base_url),
                 calls: Mutex::new(Vec::new()),
             });
             let reg = registry_with(log.clone());
@@ -1473,10 +1478,19 @@ mod tests {
                 }
                 assert!(Instant::now() < deadline, "Vorpuffer haengt");
             }
-            let calls: Vec<String> = log.calls.lock().unwrap().iter().map(|c| c.0.clone()).collect();
+            let calls: Vec<String> = log
+                .calls
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|c| c.0.clone())
+                .collect();
             assert_eq!(calls.len(), expected, "{base_url:?}: {calls:?}");
             if expected > 0 {
-                assert!(calls[0].contains("Nummer 2"), "nach dem bereiten Satz 1: {calls:?}");
+                assert!(
+                    calls[0].contains("Nummer 2"),
+                    "nach dem bereiten Satz 1: {calls:?}"
+                );
             }
         }
     }

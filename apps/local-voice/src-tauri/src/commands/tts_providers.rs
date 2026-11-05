@@ -544,7 +544,7 @@ pub async fn tts_provider_set_enabled(
         set_enabled_in(&mut s.tts_providers, &registry, &id, enabled)
     })?;
     if enabled {
-        apply_default_voice(&app).await;
+        spawn_default_voice(&app);
     }
     Ok(())
 }
@@ -573,9 +573,10 @@ pub async fn tts_provider_acknowledge_license(
             &now,
         )
     })?;
-    // Erst mit der Zustimmung ist Phonon benutzbar: jetzt die Vorgabestimme (Anton) wählen,
-    // bevor die Oberfläche die Einstellungen neu liest.
-    apply_default_voice(&app).await;
+    // Erst mit der Zustimmung ist Phonon benutzbar: jetzt die Vorgabestimme (Anton) wählen. Im
+    // Hintergrund, damit der Klick nicht auf die Stimmenliste wartet; die Oberfläche liest die
+    // Einstellungen auf das Ereignis hin neu.
+    spawn_default_voice(&app);
     Ok(ack)
 }
 
@@ -749,6 +750,16 @@ pub fn apply_default_voice_in(
     Ok(!own_choice)
 }
 
+/// Modellstand, für den die Stimmenliste in dieser Sitzung schon gelesen wurde (siehe
+/// [`apply_default_voice`]).
+static DEFAULT_VOICE_TRIED: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// [`apply_default_voice`] im Hintergrund (Befehle kehren sofort zurück).
+pub(crate) fn spawn_default_voice(app: &AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move { apply_default_voice(&app).await });
+}
+
 /// Phonon mit Anton als Vorgabe fürs Vorlesen, sobald Phonon freigegeben (Opt-in, Lizenz) und das
 /// deutsche Modell eingerichtet ist — einmalig, danach gilt die eigene Wahl. Läuft beim Start und
 /// nach Opt-in bzw. Lizenz-Zustimmung; setzt selbst nie eine Freigabe. Still, wenn etwas fehlt.
@@ -756,7 +767,12 @@ pub(crate) async fn apply_default_voice(app: &AppHandle) {
     let id = DEFAULT_VOICE_PROVIDER;
     let tts = manager(app);
     let snapshot = tts.provider_snapshot();
-    if snapshot.settings.default_voice_applied.iter().any(|p| p == id) {
+    if snapshot
+        .settings
+        .default_voice_applied
+        .iter()
+        .any(|p| p == id)
+    {
         return;
     }
     if snapshot.checked(id).is_err() {
@@ -765,9 +781,27 @@ pub(crate) async fn apply_default_voice(app: &AppHandle) {
     let Some(provider) = snapshot.registry.get(id) else {
         return;
     };
+    // Je Modellstand höchstens EINE Stimmenliste pro Sitzung: fehlt Anton (nur englisches Modell),
+    // startet nicht jeder weitere Anlass erneut einen Phonon-Prozess.
+    let model = provider.use_subject().model;
+    {
+        let mut tried = DEFAULT_VOICE_TRIED
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if tried.as_deref() == Some(model.as_str()) {
+            return;
+        }
+        *tried = Some(model);
+    }
     let voices = match tokio::time::timeout(VOICES_LIMIT, provider.list_voices(None)).await {
         Ok(Ok(voices)) => voices,
-        _ => return,
+        _ => {
+            // Zeitüberschreitung oder Fehler: beim nächsten Anlass erneut versuchen.
+            *DEFAULT_VOICE_TRIED
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = None;
+            return;
+        }
     };
     let Some(voice) = default_voice_in(&voices) else {
         return;

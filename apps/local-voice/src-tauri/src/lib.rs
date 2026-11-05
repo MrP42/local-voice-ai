@@ -335,12 +335,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     app_handle.manage(tts_manager);
     // Phonon mit Anton als Vorgabestimme, wenn Phonon schon freigegeben und eingerichtet ist
     // (einmalig; auch für bestehende Installationen).
-    {
-        let app = app_handle.clone();
-        tauri::async_runtime::spawn(async move {
-            commands::tts_providers::apply_default_voice(&app).await;
-        });
-    }
+    commands::tts_providers::spawn_default_voice(app_handle);
     app_handle.manage(tts_model_manager);
     app_handle.manage(llm_runtime);
     app_handle.manage(llm_server);
