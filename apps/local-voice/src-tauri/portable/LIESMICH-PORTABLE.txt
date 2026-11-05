@@ -82,6 +82,8 @@ Adminrechte) und öffnet die Anmeldung im Browser. Es bleibt danach
 auf dem Rechner und liegt nicht im Ordner dieser App.
 Gemini und die API-Verbindungen brauchen einen API-Schlüssel; der Knopf
 an der Verbindung öffnet die Schlüsselseite des Anbieters.
+Das voreingestellte Regelwerk "EU" sperrt diese Anbieter. Zum Nutzen in den
+Einstellungen unter "Regelwerk" auf "Keine Einschränkung" umstellen.
 
 Hinweise
 --------

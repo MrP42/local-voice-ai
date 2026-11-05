@@ -2663,7 +2663,6 @@
           "loggedOut": "Nicht angemeldet. Die Anmeldung öffnet ein Fenster und danach den Browser.",
           "unknown": "Die Anmeldung ließ sich nicht prüfen.",
           "login": "Anmelden",
-          "loginFailed": "Das Anmeldefenster ließ sich nicht öffnen.",
           "setup": "Einrichten und anmelden",
           "missing": {
             "claude_cli": "Claude Code fehlt auf diesem Rechner. „Einrichten und anmelden“ lädt das offizielle Programm von Anthropic (ohne Adminrechte) und öffnet danach die Anmeldung im Browser. Ohne Claude-Abo geht es mit der Verbindung „Anthropic“ und einem API-Schlüssel.",
@@ -2713,6 +2712,7 @@
       },
       "connections": {
         "getApiKey": "API-Schlüssel beim Anbieter holen",
+        "blockedUnderEu": "Das Regelwerk „EU“ sperrt diesen Anbieter. Zum Nutzen in diesen Einstellungen unter „Regelwerk“ auf „Keine Einschränkung“ umstellen.",
         "title": "Verbindungen",
         "empty": "Noch keine Verbindung. Wähle unten einen Anbieter — lokal oder in der Cloud.",
         "add": "Anbieter hinzufügen…",
@@ -4939,7 +4939,7 @@
       "done": "Codex-CLI aktualisiert ({{version}})",
       "retry": "Bitte den Vorgang jetzt noch einmal starten.",
       "failed": "Die Codex-CLI konnte nicht aktualisiert werden",
-      "manual": "Die Codex-CLI muss von Hand aktualisiert werden (npm i -g @openai/codex@latest)"
+      "manual": "Die Codex-CLI muss von Hand aktualisiert werden (npm i -g @openai/codex@latest oder offizieller Installer)"
     },
     "title_one": "Neues Sprachmodell verfügbar",
     "title_other": "{{count}} neue Sprachmodelle verfügbar",

@@ -404,13 +404,15 @@ fn login_command_line(program: &Path, argv: &[String]) -> String {
 fn setup_script(cli: Cli) -> &'static str {
     match cli {
         Cli::Claude => {
-            "irm https://claude.ai/install.ps1 | iex; \
+            "$ErrorActionPreference = 'Stop'; \
+             irm https://claude.ai/install.ps1 | iex; \
              & \"$env:USERPROFILE\\.local\\bin\\claude.exe\" auth login; \
              exit $LASTEXITCODE"
         }
         // Ohne die Variable fragt der Installer am Ende "Start Codex now?".
         Cli::Codex => {
-            "$env:CODEX_NON_INTERACTIVE = '1'; \
+            "$ErrorActionPreference = 'Stop'; \
+             $env:CODEX_NON_INTERACTIVE = '1'; \
              irm https://chatgpt.com/codex/install.ps1 | iex; \
              & \"$env:LOCALAPPDATA\\Programs\\OpenAI\\Codex\\bin\\codex.exe\" login; \
              exit $LASTEXITCODE"
@@ -447,8 +449,14 @@ pub fn open_setup(cli: Cli) -> Result<(), String> {
 }
 
 #[cfg(not(windows))]
-pub fn open_setup(_cli: Cli) -> Result<(), String> {
-    Err("cli_failed: Bitte die CLI im Terminal installieren.".to_string())
+pub fn open_setup(cli: Cli) -> Result<(), String> {
+    Err(format!(
+        "cli_failed: Bitte im Terminal installieren: {}",
+        match cli {
+            Cli::Claude => "curl -fsSL https://claude.ai/install.sh | bash",
+            Cli::Codex => "curl -fsSL https://chatgpt.com/codex/install.sh | sh",
+        }
+    ))
 }
 
 /// Oeffnet die Anmeldung der CLI in einem eigenen Konsolenfenster. Sie laeuft
@@ -706,7 +714,7 @@ pub(crate) fn classify_error(msg: &str) -> String {
         // Meist ist die Codex-CLI zu alt fuer das Modell (06.10.2026: 0.153.3
         // lehnt gpt-6.1-sol ab, 0.160.1 nimmt es an).
         format!(
-            "cli_model_not_in_plan: Dieses Modell nimmt der Server von der installierten              Codex-CLI nicht an. Meist hilft ein Update: npm i -g @openai/codex@latest ({msg})"
+            "cli_model_not_in_plan: Dieses Modell nimmt der Server von der installierten              Codex-CLI nicht an. Meist hilft ein Update: npm i -g @openai/codex@latest, oder den offiziellen Installer erneut ausfuehren ({msg})"
         )
     } else if lower.contains("usage limit") || lower.contains("rate limit") || lower.contains("429")
     {
@@ -1067,7 +1075,12 @@ mod tests {
 
     #[test]
     fn setup_runs_the_official_installer_and_then_the_login() {
-        assert!(setup_script(Cli::Claude).starts_with("irm https://claude.ai/install.ps1 | iex;"));
+        // Ohne `Stop` endete ein gescheiterter Download mit Exit 0, und das
+        // Fenster schloss sich ohne Meldung.
+        for cli in [Cli::Claude, Cli::Codex] {
+            assert!(setup_script(cli).starts_with("$ErrorActionPreference = 'Stop';"));
+        }
+        assert!(setup_script(Cli::Claude).contains("irm https://claude.ai/install.ps1 | iex;"));
         assert!(setup_script(Cli::Claude).contains("claude.exe\" auth login;"));
         assert!(
             setup_script(Cli::Codex).contains("irm https://chatgpt.com/codex/install.ps1 | iex;")
