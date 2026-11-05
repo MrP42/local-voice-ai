@@ -58,6 +58,12 @@ final class AudioDownloadTests: XCTestCase {
         let legacyRef = AudioDownload.Part(blob: "e", size: LibrarySyncFormat.legacyOneChunkMaxBytes, chunks: 1, file: "teil_005.m4a")
         XCTAssertEqual(AudioDownload.nextChunk(legacyRef, .init(complete: false, partialBytes: 0), chunkPlainBytes: plain), 0)
         XCTAssertNil(AudioDownload.nextChunk(legacyRef, .init(complete: false, partialBytes: legacyRef.size), chunkPlainBytes: plain))
+        // Abgerissen bei genau 3 MiB: Der Verweis kennt nur Stück 0.
+        XCTAssertEqual(AudioDownload.nextChunk(legacyRef, .init(complete: false, partialBytes: plain), chunkPlainBytes: plain), 0)
+        // Teildatei schon vollständig, neuer Verweis sagt zwei Stücke: nichts mehr holen.
+        XCTAssertNil(LibrarySyncFormat.resumeChunk(size: size, chunks: 2, partialBytes: size))
+        XCTAssertEqual(LibrarySyncFormat.resumeChunk(size: 7 * 1024 * 1024, chunks: 3, partialBytes: 3 * 1024 * 1024 + 5), 1)
+        XCTAssertEqual(LibrarySyncFormat.resumeChunk(size: 0, chunks: 1, partialBytes: 0), 0)
     }
 
     func testSpaceProblem() {

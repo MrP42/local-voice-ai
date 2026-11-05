@@ -131,6 +131,15 @@ public enum LibrarySyncFormat {
     /// Stück 0 lesen und nur weitergehen, wenn die Datei noch nicht vollständig ist.
     public static func mayBeLegacySingleChunk(size: Int) -> Bool { size > oneChunkMaxBytes && size <= legacyOneChunkMaxBytes }
 
+    /// Stück, ab dem eine Teildatei weitergeladen wird; `nil`: Sie ist vollständig.
+    public static func resumeChunk(size: Int, chunks: Int, partialBytes: Int, chunkPlainBytes: Int = chunkPlainBytes) -> Int? {
+        if size > 0, partialBytes == size { return nil }
+        if chunks <= 1 { return 0 }
+        // Alt-Blob oder zwei Stücke: Abgerissenes lässt sich nicht zuordnen, also von vorn.
+        if mayBeLegacySingleChunk(size: size) { return partialBytes == chunkPlainBytes ? 1 : 0 }
+        return min(partialBytes / chunkPlainBytes, chunks - 1)
+    }
+
     public static func chunkCount(size: Int) -> Int {
         size <= oneChunkMaxBytes ? 1 : (size + chunkPlainBytes - 1) / chunkPlainBytes
     }

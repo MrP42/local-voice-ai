@@ -58,12 +58,8 @@ public enum AudioDownload {
 
     /// Nächstes Stück, das an ein Teil angehängt werden muss (`nil`: Teil fertig).
     public static func nextChunk(_ part: Part, _ state: PartState, chunkPlainBytes: Int) -> Int? {
-        if state.complete || state.partialBytes == part.size { return nil }
-        // Alt-Blob oder zwei Stücke: Abgerissenes lässt sich nicht zuordnen, also von vorn.
-        if LibrarySyncFormat.mayBeLegacySingleChunk(size: part.size) { return state.partialBytes == chunkPlainBytes ? 1 : 0 }
-        let have = min(state.partialBytes / chunkPlainBytes, part.chunks)
-        // Ein Einzelstück kann größer sein als `chunkPlainBytes`: Abgerissen wird es neu geholt.
-        return have < part.chunks ? have : part.chunks - 1
+        if state.complete { return nil }
+        return LibrarySyncFormat.resumeChunk(size: part.size, chunks: part.chunks, partialBytes: state.partialBytes, chunkPlainBytes: chunkPlainBytes)
     }
 
     /// Fehlende Stücke in Hörreihenfolge, ohne angekommene und laufende; höchstens `limit`.

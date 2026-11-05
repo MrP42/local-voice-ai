@@ -391,12 +391,10 @@ final class LibrarySync: ObservableObject {
         }
         let chunk = LibrarySyncFormat.chunkPlainBytes
         let partial = Self.fileSize(part) ?? 0
-        var have = min(partial / chunk, ref.chunks)
-        if have == ref.chunks, partial != ref.size { have = ref.chunks - 1 }  // abgerissenes Einzelstück neu holen
-        if LibrarySyncFormat.mayBeLegacySingleChunk(size: ref.size), partial != ref.size { have = 0 }
+        let first = LibrarySyncFormat.resumeChunk(size: ref.size, chunks: ref.chunks, partialBytes: partial) ?? ref.chunks
         let key = [UInt8](acc.key), userId = acc.userId
-        progress(have * chunk)
-        for index in have..<ref.chunks {
+        progress(first * chunk)
+        for index in first..<ref.chunks {
             let (code, data) = try await Self.send(acc.url + "/api/v1/voice/blobs/\(ref.blob)/chunks/\(index)", method: "GET", token: acc.token, bulk: wifiOnly)
             guard code == 200 else { throw Self.httpError(code, data) }
             let written = try await Task.detached(priority: .utility) { () throws -> Int in
