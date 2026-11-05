@@ -209,7 +209,7 @@ pub fn recommended_parallel(
     let by_ram = (hw.ram_total_mb > 0).then(|| {
         let budget = hw
             .ram_total_mb
-            .saturating_sub(crate::process_guard::RAM_RESERVE_MB)
+            .saturating_sub(crate::process_guard::reserve_for_total_mb(hw.ram_total_mb))
             / 2;
         ((budget / ram_per_run_mb) as usize).max(1)
     });
@@ -362,7 +362,7 @@ pub fn decide(
 /// RAM-Bedarf einer eigenen Engine mit diesem Modell: wie das Live-Modell
 /// (`final_pass::ram_need_mb`), plus die Systemreserve.
 pub fn ram_gate_mb(size_mb: u64) -> u64 {
-    ram_need_mb(size_mb) + crate::process_guard::RAM_RESERVE_MB
+    ram_need_mb(size_mb) + crate::process_guard::ram_reserve_mb()
 }
 
 /// Bedarf im Grafikspeicher: das Modell plus ein Viertel (Arbeitsspeicher der
@@ -1578,7 +1578,7 @@ mod tests {
         let need = ram_gate_mb(1_600);
         assert_eq!(
             need,
-            ram_need_mb(1_600) + crate::process_guard::RAM_RESERVE_MB
+            ram_need_mb(1_600) + crate::process_guard::ram_reserve_mb()
         );
         assert!(
             plan_extra_slot(1_600, false, &hw(Some(need), false, None)).is_ok(),

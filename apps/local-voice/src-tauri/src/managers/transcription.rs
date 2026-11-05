@@ -1161,7 +1161,7 @@ impl TranscriptionManager {
                         // Nichts laden: ein geladenes Modell bleibt, die Aufnahme
                         // laeuft damit weiter (oder meldet, dass keins geladen ist).
                         let message = crate::process_guard::check_ram_for_start(
-                            need_mb.saturating_sub(crate::process_guard::RAM_RESERVE_MB),
+                            need_mb.saturating_sub(crate::process_guard::ram_reserve_mb()),
                         )
                             .err()
                             .unwrap_or_else(|| {
@@ -2847,7 +2847,7 @@ pub fn plan_live_load(
     let available = free_ram_mb.saturating_add(reclaimable_mb);
     let need = |size_mb: u64| {
         crate::managers::meetings::final_pass::ram_need_mb(size_mb)
-            + crate::process_guard::RAM_RESERVE_MB
+            + crate::process_guard::ram_reserve_mb()
     };
     if available >= need(target_size_mb) {
         return LiveLoadPlan::Target;
@@ -3672,10 +3672,8 @@ mod tests {
 
     // ---- P1i: RAM-Tor fuers Live-Modell der Besprechung -----------------------
 
-    const RESERVE: u64 = crate::process_guard::RAM_RESERVE_MB;
-
     fn need(size_mb: u64) -> u64 {
-        crate::managers::meetings::final_pass::ram_need_mb(size_mb) + RESERVE
+        crate::managers::meetings::final_pass::ram_need_mb(size_mb) + crate::process_guard::ram_reserve_mb()
     }
 
     // ---- U7: eigene Engine fuer weitere gleichzeitige Importe -------------------
@@ -3786,7 +3784,7 @@ mod tests {
     #[test]
     fn a_model_of_unknown_size_still_needs_the_minimum() {
         assert!(matches!(
-            plan_live_load(0, None, RESERVE + 100, 0),
+            plan_live_load(0, None, crate::process_guard::ram_reserve_mb() + 100, 0),
             LiveLoadPlan::Refuse { .. }
         ));
         assert_eq!(plan_live_load(0, None, need(0), 0), LiveLoadPlan::Target);

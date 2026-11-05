@@ -73,6 +73,13 @@ Voraussetzungen
   - Für Spracherkennung auf der Grafikkarte ein aktueller Grafiktreiber
     mit Vulkan; sonst rechnet die App auf der CPU.
 
+Claude und ChatGPT nutzen
+-------------------------
+Die Abo-Verbindungen laufen über Claude Code bzw. die Codex CLI. Beide
+sind nicht Teil der ZIP und müssen auf dem Rechner installiert sein.
+Die Verbindung zeigt in den Einstellungen, ob das Programm da ist, und
+bietet "Anmelden" an. Ohne diese Programme geht es mit einem API-Schlüssel.
+
 Hinweise
 --------
   - Installierte und portable Version laufen nicht gleichzeitig: Es kann

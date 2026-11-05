@@ -46,7 +46,7 @@ use super::basis::{self, DocBasis};
 use super::doc_types::{self, DocHead, DocProfile};
 use super::llm_call::{
     ask_json, build_head_with, duration_label, head_facts_block, is_splittable_error,
-    is_truncation_error, mm_ss, resolve_provider_coded, retry_chunk, should_retry, sorted_segments,
+    is_truncation_error, mm_ss, ram_probe_for, resolve_provider_coded, retry_chunk, should_retry, sorted_segments,
     AskOptions, SemanticRetry,
 };
 use super::notes::blocks::{run_blocks, Step, Work};
@@ -2006,7 +2006,10 @@ pub async fn generate_minutes_with_basis(
         meeting_id,
         template_id,
         doc_basis,
-        Limits::default(),
+        Limits {
+            free_mb: ram_probe_for(settings),
+            ..Limits::default()
+        },
         on_progress,
     )
     .await
@@ -2030,7 +2033,10 @@ pub async fn generate_document_with_settings(
         meeting_id,
         doc_type,
         doc_basis,
-        Limits::default(),
+        Limits {
+            free_mb: ram_probe_for(settings),
+            ..Limits::default()
+        },
         on_progress,
     )
     .await
