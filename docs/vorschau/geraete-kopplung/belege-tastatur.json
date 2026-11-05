@@ -1,0 +1,158 @@
+{
+ "hinweis": "Desktop 1440: Zeigerziele ≥24 px; 390 px und iPhone: Touchziele ≥44 px. verstoesse listet Unterschreitungen der jeweiligen Regel.",
+ "tastatur": [
+  {
+   "dialog": "qr",
+   "startFokus": "Abbrechen",
+   "tab": [
+    "Weiter (Demo)",
+    "Schließen",
+    "Abbrechen",
+    "Weiter (Demo)",
+    "Schließen"
+   ],
+   "shiftTab": [
+    "Weiter (Demo)",
+    "Abbrechen",
+    "Schließen",
+    "Weiter (Demo)",
+    "Abbrechen"
+   ],
+   "hintergrund": {
+    "frameInert": true,
+    "topInert": true,
+    "fokusImDialog": true,
+    "mausklick": "blockiert"
+   },
+   "escape": {
+    "zustand": "liste",
+    "fokus": "open-qr",
+    "frameInert": false
+   }
+  },
+  {
+   "dialog": "bestaetigen",
+   "startFokus": "Nein, abbrechen",
+   "tab": [
+    "Ja, verbinden",
+    "Nein, abbrechen",
+    "Ja, verbinden",
+    "Nein, abbrechen",
+    "Ja, verbinden"
+   ],
+   "shiftTab": [
+    "Nein, abbrechen",
+    "Ja, verbinden",
+    "Nein, abbrechen",
+    "Ja, verbinden",
+    "Nein, abbrechen"
+   ],
+   "hintergrund": {
+    "frameInert": true,
+    "topInert": true,
+    "fokusImDialog": true,
+    "mausklick": "blockiert"
+   },
+   "escape": {
+    "zustand": "liste",
+    "fokus": "open-qr",
+    "frameInert": false
+   }
+  },
+  {
+   "dialog": "widerrufen",
+   "startFokus": "Abbrechen",
+   "tab": [
+    "Abmelden",
+    "Abbrechen",
+    "Abmelden",
+    "Abbrechen",
+    "Abmelden"
+   ],
+   "shiftTab": [
+    "Abbrechen",
+    "Abmelden",
+    "Abbrechen",
+    "Abmelden",
+    "Abbrechen"
+   ],
+   "hintergrund": {
+    "frameInert": true,
+    "topInert": true,
+    "fokusImDialog": true,
+    "mausklick": "blockiert"
+   },
+   "escape": {
+    "zustand": "liste",
+    "fokus": "rev-iphone",
+    "frameInert": false
+   }
+  },
+  {
+   "dialog": "unbestaetigt",
+   "startFokus": "Behalten",
+   "tab": [
+    "Gerät abmelden",
+    "Schließen",
+    "Behalten",
+    "Gerät abmelden",
+    "Schließen"
+   ],
+   "shiftTab": [
+    "Gerät abmelden",
+    "Behalten",
+    "Schließen",
+    "Gerät abmelden",
+    "Behalten"
+   ],
+   "hintergrund": {
+    "frameInert": true,
+    "topInert": true,
+    "fokusImDialog": true,
+    "mausklick": "blockiert"
+   },
+   "escape": {
+    "zustand": "liste",
+    "fokus": "open-qr",
+    "frameInert": false
+   }
+  }
+ ],
+ "scroll": [
+  {
+   "zustand": "qr",
+   "scrollH": 648,
+   "clientH": 515,
+   "overflowY": "auto",
+   "seiteHorizontal": false
+  },
+  {
+   "zustand": "bestaetigen",
+   "scrollH": 410,
+   "clientH": 410,
+   "overflowY": "auto",
+   "seiteHorizontal": false
+  },
+  {
+   "zustand": "abgebrochen",
+   "scrollH": 312,
+   "clientH": 312,
+   "overflowY": "auto",
+   "seiteHorizontal": false
+  },
+  {
+   "zustand": "widerrufen",
+   "scrollH": 326,
+   "clientH": 326,
+   "overflowY": "auto",
+   "seiteHorizontal": false
+  },
+  {
+   "zustand": "unbestaetigt",
+   "scrollH": 312,
+   "clientH": 312,
+   "overflowY": "auto",
+   "seiteHorizontal": false
+  }
+ ]
+}

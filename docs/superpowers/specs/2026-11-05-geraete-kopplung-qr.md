@@ -189,8 +189,11 @@ Tests für 5.2/5.3 entstehen mit P3/P4 gegen die Testvektoren.
    verlangen `voice.sync` **explizit** (ein Agenten-Token mit `*` genügt nicht).
 6. Je Konto höchstens **eine** offene Kopplung; ein neuer Start verwirft die alte.
 7. Offene Routen (claim, reveal, result, confirm): Body ≤ 8 KB; IP-Drosselung claim
-   10/15 min, Abfragen 120/min (erst Zeile reservieren, dann zählen: kein Rennen um den
-   letzten Platz). Hinter CGNAT kann ein Dritter im selben Netz die Kopplung
+   10/15 min, Abfragen 120/min. Zähler je Schlüssel in `voice_rate_limits` (eine Zeile,
+   festes Fenster), Vergabe atomar per bedingtem `UPDATE … WHERE hits < Grenze` bzw.
+   Fensterneustart oder `INSERT` auf eindeutigem Schlüssel (`VoicePairingService::rateHit`):
+   kein Rennen um den letzten Platz. Schlüssel = Route + IP-Präfix (IPv4 /24, IPv6 /48,
+   per `inet_pton`). Hinter CGNAT kann ein Dritter im selben Netz die Kopplung
    stören (akzeptiert). Unbekannt, abgelaufen, verwendet und falsches Geheimnis antworten
    gleich (410).
 8. Flüchtige Schlüssel (`d_sk`, `p_sk`, `z`, `s`, `q`) nur im Speicher, danach genullt.
@@ -200,10 +203,11 @@ Tests für 5.2/5.3 entstehen mit P3/P4 gegen die Testvektoren.
     Zugang über selbst ausgestellte Tokens behält. Gilt für „Abmelden“ in der Geräteliste
     und für das eigene Abmelden (`/auth/logout`). Die Oberfläche nennt vorher, welche Geräte
     mit abgemeldet werden (`revokes_with` in `GET /devices`).
-12. Betrieb: `post_max_size` des Hubs klein halten (offene Routen prüfen nur
-    `Content-Length`); Drosselungszeilen (`login_attempts`, `pair-*`) räumt der Hub nach einem Tag gelegentlich ab.
 11. Gerätetokens laufen wie Login-Tokens nicht ab (Entscheidung D15); Kontrolle über die
     Geräteliste.
+12. Betrieb: `post_max_size` des Hubs klein halten (offene Routen prüfen nur
+    `Content-Length`); Drosselungszeilen (`login_attempts`, `voice_rate_limits`) räumt der
+    Hub nach einem Tag gelegentlich ab.
 
 ## 6 · Audit (Hub, `AuditService::log`, Hash-Kette)
 
