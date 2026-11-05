@@ -245,3 +245,51 @@ Datei `tooling/fixtures/buch-gespraech/vertrag.schema.json` (JSON Schema), Rust-
 - Dynamic Type bis AX-Größen: Blatt scrollt, Knöpfe brechen um, nichts abgeschnitten (Bild i3 mit großer Schrift).
 - VoiceOver/Screenreader: Beschriftungen und Ansagen je Zustand (hört zu, denkt nach, spricht, Antwort fertig mit Anzahl Belege).
 - Tastatur Desktop: Leertaste halten = sprechen (nur wenn Fokus nicht im Textfeld), G = Gespräch an/aus, Esc beendet, Tab-Reihenfolge Bereichsknopf → Verlauf (Belegchips) → Sprechen → Textfeld → Senden.
+
+## 11. Runde 5: echte Antworten und Abo-Modelle (lva#320, Patrick 05.11. 19:54)
+
+Gerätetest: Das iPhone zeigte nur Fundstellen. Ursachen: Foundation Models ohne Tokenzähler (harte Budgetregel), Gemma braucht ein neueres llama.xcframework, Schalter aus. Patrick will LLM-Antworten mit Modellwahl, auch Claude- und Codex-Abo.
+
+### 11.1 Apple-Modell nutzbar machen
+
+- Budgetprofil `apple-fm@1`: Obergrenze = UTF-8-Bytes aller Texte + 600 Token Rahmen; Kontext 4096, Ausgabe 400. Das Profil gilt als „gemessen“, sobald der Gerätetest (Tokenverbrauch über `exceededContextWindowSize`-Grenzsuche mit Fixtures) es bestätigt; bis dahin läuft es als Vorschau.
+- Meldet das Modell trotzdem Überlauf: **eine** Wiederholung mit halbem Auszugsbudget, danach `found_only` (`budget`).
+
+### 11.2 Modellwahl
+
+| Eintrag | Ort | Kennzeichnung |
+|---|---|---|
+| Apple-Systemmodell | iPhone | „Lokal“ |
+| Gemma 4 E2B | iPhone | „Lokal“ (nach Download, braucht neues xcframework) |
+| Claude (Abo) – Modelle wie am PC freigegeben | über deinen PC → Anthropic | „Cloud · über deinen PC“ |
+| Codex (Abo) – Modelle wie am PC freigegeben | über deinen PC → OpenAI | „Cloud · über deinen PC“ |
+
+Die Liste der Abo-Modelle veröffentlicht der PC selbst (§11.3). Standard bleibt das lokale Modell. Die Wahl gilt je Gerät für die Funktion `book_talk`.
+
+### 11.3 Relay über den PC
+
+Abo-Modelle laufen nur über die CLI auf dem PC (Claude Code, Codex). Das iPhone schickt deshalb die **fertig gebaute Anfrage** über den bestehenden Ende-zu-Ende-verschlüsselten Hub an den gekoppelten PC:
+
+- Sammlung `booktalk_relay` im Hub (Schlüssel und Verschlüsselung wie die übrigen Sync-Objekte).
+  - `models/<desktop_device_id>`: vom PC veröffentlichte Liste `{v:1, models:[{id, label, provider:"claude_cli"|"codex_cli", context_tokens}], updated_at}`; nur Modelle, die am PC eingeschaltet sind, und nur wenn am PC „iPhone darf Abo-Modelle nutzen“ an ist (Standard aus, Schalter in Einstellungen → Modelle je Funktion).
+  - `req/<request_id>`: `{v:1, request_id, model_id, system, prompt, max_tokens, created_at, expires_at}` (Ablauf 90 s).
+  - `resp/<request_id>`: `{v:1, request_id, seq, text, done, error?:"model_unavailable"|"timeout"|"llm_failed"|"not_allowed", usage?}`; der PC überschreibt das Objekt fortlaufend (Revision steigt) mit dem bisher erzeugten Text, etwa jede Sekunde, zuletzt mit `done:true`.
+- Der PC prüft: Absender ist ein gekoppeltes Gerät desselben Kontos, Modell steht in seiner veröffentlichten Liste, Anfrage nicht abgelaufen, höchstens eine laufende Anfrage je Gerät. Er ruft das Modell über `llm_client` ohne Werkzeuge mit Zeitrahmen 60 s auf, loggt keine Inhalte und löscht `req`/`resp` nach Abschluss (bzw. das iPhone nach dem Lesen).
+- Solange eine Anfrage offen ist, fragt der PC den Hub alle 1,5 s ab (sonst normaler Sync-Takt); das iPhone fragt `resp` alle 1 s ab. Erwartete Latenz bis erster Text: 3–8 s; die Oberfläche zeigt „Frage geht an deinen PC …“, die Sprachausgabe spielt den Füller.
+- **Spoiler und Belege bleiben auf dem iPhone:** Auswahl der Auszüge (nur vor der Grenze), Prompt-Bau und satzweise Belegprüfung laufen im iPhone-Kern; der PC sieht nur Frage, Verlauf und die ausgewählten Auszüge und gibt Rohtext zurück.
+- Budget: Profil `relay-cli@1` (Bytes + 2.000 Token Rahmen ≤ gemeldete `context_tokens`), Auszüge bis ~20.000 Zeichen.
+- Ist der PC nicht erreichbar (keine Antwort binnen 15 s auf `req`): `found_only` mit Grund `offline` und Hinweis „Dein PC antwortet nicht“.
+
+### 11.4 Kennzeichnung und Freigabe
+
+- Vor der ersten Anfrage je Modell: Dialog „Buchauszüge (bis ca. 20.000 Zeichen je Frage), deine Frage und die letzten zwei Wechsel gehen verschlüsselt an deinen PC und von dort an Anthropic bzw. OpenAI (dein Abo). Nie Audio, nie das ganze Buch.“ → „Freigeben“ / „Abbrechen“. Widerrufbar im Blattmenü.
+- Jede Cloud-Antwort trägt in der Kopfzeile „Claude Sonnet · Cloud über deinen PC“; der Modellknopf im Blattkopf zeigt eine Wolke, solange ein Cloud-Modell gewählt ist.
+
+### 11.5 Freischaltung
+
+Patrick hat LLM-Antworten ausdrücklich angefordert. Der Schalter „KI-Antworten“ wird deshalb sichtbar als **Vorschau** angeboten: an = generierte Antworten mit Hinweis „Vorschau – Modell noch nicht im Prüflauf bestanden“, solange für das Tupel (Modell, Prompt-, Prüfversion) kein Eintrag im Eval-Nachweis existiert. Mit bestandenem Tor entfällt der Hinweis. Standard für neue Installationen bleibt aus.
+
+### 11.6 Sonstiges
+
+- Belegchips zeigen „S. n“ (ohne Seite: „Kap. n“), der Kapiteltitel steht erst in der Belegkarte.
+- `recap` („Um was ging es bisher?“) liefert mit Modell eine chronologische Zusammenfassung; ohne Modell die letzten Fundstellen **mit** Kapitelüberschriften statt zweier zufälliger Sätze.
