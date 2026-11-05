@@ -107,6 +107,11 @@ argon2 = "0.5"
 hkdf = "0.12"
 zeroize = "1"
 base64 = "0.22"
+# Geraete-Kopplung per QR (local-voice-ai#289): X25519 (BSD-3-Clause),
+# HMAC (RustCrypto, MIT/Apache-2.0), QR-Code als SVG (MIT/Apache-2.0).
+x25519-dalek = { version = "2", features = ["static_secrets", "zeroize"] }
+hmac = "0.12"
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 # ADR-0024: gemeinsamer Kontospeicher der Suite (vendort aus wai-sdk, siehe vendor/wai-konto/VENDOR.toml)
 wai-konto = { path = "vendor/wai-konto" }
 # ADR-0026 PR-7 (Epic wai-sdk#1047): Suite-Projekte und Recherche, vendort aus wai-sdk

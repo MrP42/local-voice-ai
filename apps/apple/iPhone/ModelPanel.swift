@@ -30,6 +30,7 @@ struct ModelPanel: View {
                 }
                 Section { Button { accountShown = true } label: { Label("Konto & Sync", systemImage: "icloud") } }
                 Section("Mikrofon & Gespräch") { MicrophoneSettings(model: model) }
+                BookTalkSettings()
                 Section {
                     Text(model.providerDescription).font(.caption).foregroundStyle(VoicePalette.secondaryText)
                     ForEach(model.installedModels) { item in modelRow(item) }

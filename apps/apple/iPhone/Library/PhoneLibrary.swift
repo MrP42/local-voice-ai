@@ -133,6 +133,7 @@ final class PhoneLibrary: ObservableObject {
     func removeRemote(id: String) {
         guard let book = books.first(where: { $0.id == id }) else { return }
         try? FileManager.default.removeItem(at: dir(book))
+        BookTalkHistoryStore(directory: BookTalkHistoryStore.standardDirectory()).clear(bookId: book.id)
         for key in [textKey(book), audioKey(book)] { progress[Self.storageKey(key)] = nil }
         writeProgress()
         reload()
@@ -211,6 +212,7 @@ final class PhoneLibrary: ObservableObject {
 
     func delete(_ book: LibraryBook) {
         try? FileManager.default.removeItem(at: dir(book))
+        BookTalkHistoryStore(directory: BookTalkHistoryStore.standardDirectory()).clear(bookId: book.id)
         for key in [textKey(book), audioKey(book)] { progress[Self.storageKey(key)] = nil }
         writeProgress()
         reload()

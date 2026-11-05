@@ -77,6 +77,7 @@ struct LibraryTab: View {
 
     var body: some View {
         NavigationStack { LibraryShelf() }
+            .onAppear { playback.warmUp() }
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 if playback.book != nil && !playback.presented { LibraryMiniPlayer().padding(.horizontal, 8).padding(.bottom, 6) }
             }
@@ -625,13 +626,64 @@ struct PlayerHeader: View {
 
 struct RateMenu: View {
     @ObservedObject var playback = LibraryPlayback.shared
+    @State private var flowShown = false
     var body: some View {
         Menu {
             ForEach([0.8, 1.0, 1.2, 1.5, 2.0], id: \.self) { r in Button(String(format: "%.1f×", r).replacingOccurrences(of: ".", with: ",")) { playback.rate = Float(r) } }
+            if playback.mode == .readAloud {
+                Section("Sprachfluss") {
+                    ForEach(SpeechFlowSheet.presets, id: \.value) { preset in
+                        Button { playback.flow = preset.value } label: {
+                            if abs(playback.flow - preset.value) < 0.01 { Label(preset.title, systemImage: "checkmark") } else { Text(preset.title) }
+                        }
+                    }
+                    Button("Feineinstellung …") { flowShown = true }
+                }
+            }
         } label: {
             VStack(spacing: 2) { Text(String(format: "%.1f×", playback.rate).replacingOccurrences(of: ".", with: ",")).font(.headline); Text("Tempo").font(.caption2) }
                 .frame(minWidth: 56, minHeight: 44)
-        }.buttonStyle(.plain).accessibilityLabel("Tempo")
+        }.buttonStyle(.plain).accessibilityLabel("Tempo und Sprachfluss")
+        .sheet(isPresented: $flowShown) { SpeechFlowSheet().presentationDetents([.medium]) }
+    }
+}
+
+/// Sprachfluss beim Vorlesen: Pausen an Komma, Satz- und Absatzende.
+struct SpeechFlowSheet: View {
+    struct Preset: Hashable { let title: String; let value: Double }
+    static let presets = [Preset(title: "Zügig", value: SpeechFlow.brisk), Preset(title: "Hörbuch", value: SpeechFlow.audiobook),
+                          Preset(title: "Ruhig", value: SpeechFlow.calm)]
+    @ObservedObject var playback = LibraryPlayback.shared
+    @Environment(\.dismiss) private var dismiss
+    @State private var value = LibraryPlayback.shared.flow
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Picker("Vorgabe", selection: Binding(get: { Self.presets.first { abs($0.value - value) < 0.01 }?.value ?? -1 },
+                                                          set: { if $0 >= 0 { value = $0; playback.flow = $0 } })) {
+                        ForEach(Self.presets, id: \.value) { Text($0.title).tag($0.value) }
+                        if !Self.presets.contains(where: { abs($0.value - value) < 0.01 }) { Text("Eigene").tag(-1.0) }
+                    }.pickerStyle(.segmented).labelsHidden()
+                } footer: { Text("Hörbuch entspricht dem üblichen Vortrag von Hörbüchern.") }
+                Section("Feineinstellung") {
+                    HStack {
+                        Text("Zügig").font(.caption)
+                        Slider(value: $value, in: 0...1) { editing in if !editing { playback.flow = value } }
+                            .accessibilityLabel("Sprachfluss")
+                            .accessibilityValue(SpeechFlow(value).title)
+                        Text("Ruhig").font(.caption)
+                    }.frame(minHeight: 44)
+                    let f = SpeechFlow(value)
+                    LabeledContent("Pause am Komma", value: "\(Int(f.commaMs)) ms")
+                    LabeledContent("Pause zwischen Sätzen", value: "\(Int(f.sentenceMs)) ms")
+                    LabeledContent("Pause am Absatzende", value: "\(Int(f.paragraphMs)) ms")
+                }
+            }
+            .navigationTitle("Sprachfluss").navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Fertig") { playback.flow = value; dismiss() } } }
+        }
     }
 }
 
@@ -679,7 +731,11 @@ struct LibraryReadAloudView: View {
             }
             .background(look.background)
             VStack(spacing: 8) {
-                Text("Absatz antippen, um ab dort vorzulesen").font(.caption).foregroundStyle(VoicePalette.secondaryText)
+                HStack {
+                    Text("Absatz antippen, um ab dort vorzulesen").font(.caption).foregroundStyle(VoicePalette.secondaryText)
+                    Spacer()
+                    BookTalkButton()
+                }
                 HStack {
                     let rec = playback.book.map { PhoneLibrary.shared.record(PhoneLibrary.shared.textKey($0)) } ?? nil
                     Text("Text: \(LibraryFormat.percent(LibraryProgress.fraction(rec))) gelesen")

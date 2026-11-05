@@ -117,6 +117,9 @@ struct LibraryListenView: View {
         let chapter = chapters.isEmpty ? nil : chapters[min(index, chapters.count - 1)]
         let position = scrubbing ?? playback.positionMs
         VStack(spacing: 8) {
+            if let book = playback.book, library.hasText(book) {
+                HStack { Spacer(); BookTalkButton() }
+            }
             Button { chaptersShown = true } label: {
                 HStack(spacing: 10) {
                     Image(systemName: "list.bullet").font(.body.weight(.semibold)).foregroundStyle(VoicePalette.accent)
