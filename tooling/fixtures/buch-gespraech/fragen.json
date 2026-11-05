@@ -1,0 +1,63 @@
+{
+  "schema": "lva-buch-gespraech-fixtures@1",
+  "book": "buch.txt",
+  "title": "Zwei Lehrmeister",
+  "note": "Synthetischer Text, frei erfunden. position = Seite, bis zu der gelesen wurde (Spoilerschutz); null = ganzes Buch.",
+  "questions": [
+    {
+      "id": "zwei-vaeter",
+      "question": "Warum gibt es zwei Väter in dem Buch, und wo wird das erklärt?",
+      "position_page": 6,
+      "intent": "locate",
+      "expect_pages": [2],
+      "expect_terms": ["Lehrer", "Meister"],
+      "fake_answer": "Der Erzähler hat zwei Lehrmeister: seinen eigenen Vater, den Lehrer, und Konrad Ilg, den Vater seines Freundes, den Meister [Q1]. Ihre Ratschläge widersprechen sich oft [Q2]."
+    },
+    {
+      "id": "bisher",
+      "question": "Was ist in diesem Kapitel bisher passiert?",
+      "position_page": 5,
+      "intent": "recap",
+      "expect_pages": [4, 5],
+      "expect_terms": ["Werkstatt", "Vogelhäuser"],
+      "fake_answer": "Der Erzähler fegt für zehn Euro in der Werkstatt und beschwert sich [Q1]. Der Meister streicht den Lohn [Q2], darauf bauen die Jungen Vogelhäuser aus Holzresten [Q2]."
+    },
+    {
+      "id": "vermoegenswert",
+      "question": "Erklär mir, was mit einem Vermögenswert gemeint ist.",
+      "position_page": 7,
+      "intent": "explain",
+      "expect_pages": [6],
+      "expect_terms": ["Tasche"],
+      "fake_answer": "Ein Vermögenswert bringt jeden Monat Geld in die Tasche, eine Verpflichtung nimmt Geld heraus [Q1]. Allgemein: Gemeint sind etwa Mieteinnahmen oder Unternehmensanteile."
+    },
+    {
+      "id": "spoiler",
+      "question": "Was sagt der Meister über das Haus des Lehrers?",
+      "position_page": 3,
+      "intent": "question",
+      "expect_pages": [],
+      "expect_terms": [],
+      "expect_out_of_scope": true,
+      "fake_answer": "Bis zu deiner Leseposition steht dazu noch nichts im Buch."
+    },
+    {
+      "id": "haus-ganzes-buch",
+      "question": "Was sagt der Meister über das Haus des Lehrers?",
+      "position_page": null,
+      "intent": "question",
+      "expect_pages": [6],
+      "expect_terms": ["Verpflichtung"],
+      "fake_answer": "Er hält das große Haus für eine Verpflichtung, weil es dem Vater jeden Monat Geld aus der Tasche nimmt [Q1]."
+    },
+    {
+      "id": "erfunden",
+      "question": "Wo lernt der Erzähler segeln?",
+      "position_page": null,
+      "intent": "locate",
+      "expect_pages": [],
+      "expect_terms": [],
+      "fake_answer": "Davon steht nichts im Buch [Q9]."
+    }
+  ]
+}
