@@ -187,10 +187,27 @@ final class LibraryPlayback: NSObject, ObservableObject {
 
     /// Ein Einstieg für alles: öffnet das Buch mit der gemerkten Quelle und Ansicht.
     /// Liegt das Hörbuch nicht auf dem iPhone, liest die Stimme; ohne Text spielt nur das Hörbuch.
-    func open(_ book: LibraryBook, autoplay: Bool = false) {
+    /// `prefer`: Quelle für diesen Aufruf erzwingen (z. B. Hörbuch-Teil im Buchdetail) und merken.
+    func open(_ book: LibraryBook, autoplay: Bool = false, prefer: PlayerSource? = nil) {
         let d = UserDefaults.standard
+        // Läuft das Buch schon, bleibt die Quelle; nur den Buchstand auffrischen (z. B. Hörbuch inzwischen geladen).
+        if self.book?.id == book.id, let current = source, prefer == nil || prefer == current {
+            self.book = book
+            if autoplay && !busy { play() }
+            presented = true
+            return
+        }
+        if let prefer, self.book?.id == book.id, source != nil {
+            self.book = book
+            switchSource(to: prefer)
+            if autoplay && !busy { play() }
+            presented = true
+            return
+        }
         let hasText = library.hasText(book)
-        let source = PlayerSource.initial(stored: d.string(forKey: Self.sourceKey(book.id)), audioLocal: library.hasAudio(book), hasText: hasText)
+        let stored = prefer?.rawValue ?? d.string(forKey: Self.sourceKey(book.id))
+        let source = PlayerSource.initial(stored: stored, audioLocal: library.hasAudio(book) && audioFilesPresent(book), hasText: hasText)
+        if let source { d.set(source.rawValue, forKey: Self.sourceKey(book.id)) }
         switch source {
         case .audiobook: openAudiobook(book, autoplay: autoplay)
         case .voice: openReadAloud(book, autoplay: autoplay)
@@ -229,9 +246,12 @@ final class LibraryPlayback: NSObject, ObservableObject {
             offset = paragraphs.indices.contains(paragraphIndex) ? chars(of: Cursor(paragraph: paragraphIndex, sentence: sentenceIndex)) : 0
         }
         let keep = surface
+        // Schlaftimer über den Wechsel retten (stop() setzt ihn zurück); „Kapitelende“ gilt nur fürs Hörbuch.
+        let sleepUntil = sleepEnds
         switch target {
         case .audiobook:
-            guard library.hasAudio(book) else { error = "Das Hörbuch ist nicht auf dem iPhone. Bitte zuerst im Buch laden."; return }
+            // Vor stop() prüfen: ein gescheiterter Wechsel darf den laufenden Player nicht leeren.
+            guard library.hasAudio(book), audioFilesPresent(book) else { error = "Das Hörbuch ist nicht vollständig auf dem iPhone. Bitte zuerst im Buch laden."; return }
             openAudiobook(book)
         case .voice:
             guard library.hasText(book) else { return }
@@ -241,6 +261,14 @@ final class LibraryPlayback: NSObject, ObservableObject {
         surface = keep
         UserDefaults.standard.set(target.rawValue, forKey: Self.sourceKey(book.id))
         jump(toOffset: offset, autoplay: wasPlaying)
+        if let sleepUntil, sleepUntil > Date() { armSleep(until: sleepUntil) }
+    }
+
+    /// Liegen alle Teile des Hörbuchs als Datei vor?
+    private func audioFilesPresent(_ book: LibraryBook) -> Bool {
+        guard let audio = book.audio, !audio.allTracks.isEmpty else { return false }
+        let dir = library.dir(book).appendingPathComponent("audio")
+        return audio.allTracks.allSatisfy { FileManager.default.fileExists(atPath: dir.appendingPathComponent($0.file).path) }
     }
 
     // MARK: Hörbuch
@@ -569,6 +597,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
     /// nicht als gelesen. `autoplay`: dort vorlesen bzw. das Hörbuch abspielen („Ab hier vorlesen“).
     func jump(toOffset offset: Int, autoplay: Bool) {
         guard book != nil, let mode, !paragraphs.isEmpty else { return }
+        if autoplay { leaveReadingForPlayback() }
         let target = max(0, offset)
         if mode == .audiobook {
             if let map = followMap { seek(toMs: map.ms(atChars: Double(target))) }
@@ -632,6 +661,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
     // MARK: Gemeinsam
 
     func play() {
+        leaveReadingForPlayback()
         activateSession()
         switch mode {
         case .audiobook: player?.playImmediately(atRate: rate); playing = true
@@ -709,6 +739,19 @@ final class LibraryPlayback: NSObject, ObservableObject {
         return art
     }
 
+    /// Wiedergabe in „Lesen“ (Mini-Player, Sperrbildschirm, Beleg im Buch-Gespräch): sichtbar mitlesen.
+    private func leaveReadingForPlayback() {
+        guard surface == .read, let book else { return }
+        surface = .readListen; resumeAfterReading = false
+        UserDefaults.standard.set(PlayerSurface.readListen.rawValue, forKey: Self.surfaceKey(book.id))
+    }
+
+    private func armSleep(until end: Date) {
+        sleepEnds = end
+        sleepTimer = Timer.scheduledTimer(withTimeInterval: max(1, end.timeIntervalSinceNow), repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.pause(); self?.sleepEnds = nil }
+        }
+    }
     private func cancelSleep() { sleepTimer?.invalidate(); sleepTimer = nil; sleepEnds = nil; sleepAtMs = nil }
 
     private func removeObservers() {

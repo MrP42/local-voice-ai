@@ -341,8 +341,7 @@ struct LibraryBookDetail: View {
                     let current = audioRec.map { LibraryTracks.position(of: $0.offset, in: tracks).index }
                     ForEach(Array(tracks.enumerated()), id: \.offset) { i, t in
                         Button {
-                            playback.open(book)
-                            if playback.source != .audiobook { playback.switchSource(to: .audiobook) }
+                            playback.open(book, prefer: .audiobook)
                             guard playback.book?.id == book.id, playback.source == .audiobook else { return }
                             playback.seek(toMs: LibraryTracks.total(TrackPosition(index: i, offsetMs: 0), in: tracks))
                         } label: {

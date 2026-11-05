@@ -93,7 +93,8 @@ struct ReadAlongText: View {
 
     var body: some View {
         let mark = playback.readingMark
-        let current = mark?.paragraph ?? playback.paragraphIndex
+        // Im Hörbuch ist paragraphIndex der (alte) Cursor der Stimme: ohne Markierung nichts hervorheben.
+        let current = mark?.paragraph ?? (playback.source == .voice ? playback.paragraphIndex : -1)
         VStack(spacing: 0) {
             FollowText(paragraphs: playback.paragraphs, current: current, follow: follow) { i, p in
                 let here = i == current ? mark : nil
