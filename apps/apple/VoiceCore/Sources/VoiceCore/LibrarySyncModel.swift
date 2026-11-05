@@ -117,8 +117,19 @@ public enum LibrarySyncFormat {
     public static let collectionBook = "book"
     public static let collectionProgress = "progress"
     public static let collectionBookmark = "bookmark"
-    /// Klartext in den Stücken einer Datei.
-    public static let chunkPlainBytes = 4 * 1024 * 1024
+    /// Klartext in den Stücken einer Datei. Das Hosting lehnt Anfragen ab etwa 5 MiB ab;
+    /// base64 und JSON machen aus einem Stück rund das 1,34-Fache.
+    public static let chunkPlainBytes = 3 * 1024 * 1024
+    /// Bis hierher bleibt eine Datei ein einziges Stück, wie `ONE_CHUNK_MAX` am Desktop.
+    /// So stimmen früher mit 4-MiB-Stücken hochgeladene Dateien weiter.
+    public static let oneChunkMaxBytes = 3_827_302
+
+    public static func chunkCount(size: Int) -> Int {
+        size <= oneChunkMaxBytes ? 1 : (size + chunkPlainBytes - 1) / chunkPlainBytes
+    }
+
+    /// Klartext, den ein Stück dieser Datei höchstens trägt.
+    public static func chunkLimit(size: Int) -> Int { size <= oneChunkMaxBytes ? size : chunkPlainBytes }
     /// Größter Klartext eines Objekts (wie `MAX_PLAINTEXT` am Desktop).
     public static let maxPlaintext = 256 * 1024
 

@@ -348,7 +348,7 @@ final class LibrarySync: ObservableObject {
             return (size, Data(hasher.finalize()))
         }.value
         let blob = LibrarySyncFormat.blobId(key: key, plaintextSha256: digest)
-        let chunks = max(1, (size + LibrarySyncFormat.chunkPlainBytes - 1) / LibrarySyncFormat.chunkPlainBytes)
+        let chunks = LibrarySyncFormat.chunkCount(size: size)
         let ref = BlobRef(blob: blob, size: size, chunks: chunks, type: type, file: file)
         if ledger.uploaded.contains(blob) { return ref }
         let (infoCode, infoData) = try await Self.send(acc.url + "/api/v1/voice/blobs/\(blob)", method: "GET", token: acc.token, bulk: wifiOnly)
@@ -363,7 +363,7 @@ final class LibrarySync: ObservableObject {
             let body = try await Task.detached(priority: .utility) { () throws -> Data in
                 let h = try FileHandle(forReadingFrom: url); defer { try? h.close() }
                 try h.seek(toOffset: UInt64(index * LibrarySyncFormat.chunkPlainBytes))
-                let plain = try h.read(upToCount: LibrarySyncFormat.chunkPlainBytes) ?? Data()
+                let plain = try h.read(upToCount: max(1, LibrarySyncFormat.chunkLimit(size: size))) ?? Data()
                 let sealed = Data(try LibrarySyncFormat.sealChunk(key: key, userId: userId, blobId: blob, index: index, plain: [UInt8](plain)))
                 return try JSONSerialization.data(withJSONObject: [
                     "data": sealed.base64EncodedString(),
