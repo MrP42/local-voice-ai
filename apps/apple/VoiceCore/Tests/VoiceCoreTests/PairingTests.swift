@@ -141,6 +141,8 @@ private final class Ticker: @unchecked Sendable {
     private let lock = NSLock()
     private var seconds = 0.0
     func next() -> TimeInterval { lock.withLock { seconds += 10; return seconds } }
+    func current() -> TimeInterval { lock.withLock { seconds } }
+    func jump(_ by: TimeInterval) { lock.withLock { seconds += by } }
 }
 
 private actor Recorder {
@@ -399,6 +401,35 @@ final class PairingTests: XCTestCase {
         XCTAssertFalse(confirmed, "nur 200 ist eine Bestätigung")
     }
 
+    func testSlowAccountDecisionPastDeadlineStoresNothing() async throws {
+        let hub = FakeHub()
+        let start = Date()
+        await hub.set { $0.expiresAt = ISO8601DateFormatter().string(from: start.addingTimeInterval(100)) }
+        let clock = Ticker()
+        let recorder = Recorder()
+        let session = PairingSession(code: try await hub.code, name: "iPhone", transport: hub, pause: { _ in },
+                                     now: { start.addingTimeInterval(clock.current()) })
+        do {
+            _ = try await session.run(stage: { _ in }, approve: { _ in clock.jump(200); return true }, adopt: { await recorder.add($0) })
+            XCTFail("hätte scheitern müssen")
+        } catch { XCTAssertEqual(error as? PairingError, .expired) }
+        let adopted = await recorder.adopted
+        XCTAssertTrue(adopted.isEmpty)
+        let confirms = await hub.confirms
+        XCTAssertTrue(confirms.isEmpty)
+    }
+
+    func testDeclinedAccountStoresNothing() async throws {
+        let hub = FakeHub(), recorder = Recorder()
+        let session = PairingSession(code: try await hub.code, name: "iPhone", transport: hub, pause: { _ in })
+        do {
+            _ = try await session.run(stage: { _ in }, approve: { _ in false }, adopt: { await recorder.add($0) })
+            XCTFail("hätte scheitern müssen")
+        } catch { XCTAssertEqual(error as? PairingError, .declined) }
+        let adopted = await recorder.adopted
+        XCTAssertTrue(adopted.isEmpty)
+    }
+
     func testClaimNeedsValidFutureExpiry() async {
         let past = FakeHub()
         await past.set { $0.expiresAt = "2020-01-01T00:00:00Z" }
@@ -447,7 +478,7 @@ final class PairingTests: XCTestCase {
         do {
             _ = try await session.run(stage: { _ in }, adopt: { _ in })
             XCTFail("hätte scheitern müssen")
-        } catch { XCTAssertEqual(error as? PairingError, .offline) }
+        } catch { XCTAssertEqual(error as? PairingError, .expired) }
         let polls = await hub.polls
         XCTAssertLessThan(polls, 20)
     }

@@ -10,7 +10,7 @@ import CryptoKit
 public enum PairingError: LocalizedError, Equatable {
     case invalidCode, outdatedCode, insecureHub
     case expired, rejected, nonceChanged, commitmentFailed, nameRejected
-    case badResponse, openFailed, keyMismatch, offline, timedOut, declined, tooManyAttempts, serverFailed
+    case badResponse, openFailed, keyMismatch, offline, declined, tooManyAttempts, serverFailed
     case adoptFailed(String)
 
     public var errorDescription: String? {
@@ -27,7 +27,6 @@ public enum PairingError: LocalizedError, Equatable {
         case .openFailed: return "Der Schlüssel vom PC ließ sich nicht öffnen. Am PC dieses Gerät abmelden und neu beginnen."
         case .keyMismatch: return "Der Schlüssel vom PC passt nicht zum Konto. Am PC dieses Gerät abmelden und neu beginnen."
         case .offline: return "Keine Verbindung zum Server. Bitte am PC einen neuen Code anzeigen."
-        case .timedOut: return "Der PC hat nicht rechtzeitig geantwortet. Bitte neu beginnen."
         case .declined: return "Kopplung abgebrochen."
         case .tooManyAttempts: return "Zu viele Versuche aus diesem Netz. Bitte in einer Viertelstunde erneut versuchen."
         case .serverFailed: return "Der Server hat gerade ein Problem. Bitte gleich am PC einen neuen Code anzeigen."
@@ -276,10 +275,12 @@ public struct PairingSession: Sendable {
         self.now = now
     }
 
+    /// `approve` darf nach dem Öffnen noch nachfragen; danach gilt die Frist erneut.
     /// `adopt` speichert das Konto. Erst danach geht die Bestätigung an den Hub.
     /// Rückgabe: ob die Bestätigung sicher angekommen ist. Sonst ist sie unklar, das Konto steht trotzdem.
     @discardableResult
     public func run(stage: @escaping @Sendable (PairingStage) async -> Void,
+                    approve: @Sendable (PairedAccount) async -> Bool = { _ in true },
                     adopt: @Sendable (PairedAccount) async throws -> Void) async throws -> Bool {
         defer { code.q.wipe() }  // bei Erfolg, Fehler und Abbruch
         let phonePublic = [UInt8](phoneKey.publicKey.rawRepresentation)
@@ -290,7 +291,6 @@ public struct PairingSession: Sendable {
 
         var desktopNonce: [UInt8]?
         var revealTries = 0
-        var lostContact = false
         let started = now()
         let deadline = min(expires, started.addingTimeInterval(Self.maxSeconds))
         func wait() async throws {
@@ -306,11 +306,9 @@ public struct PairingSession: Sendable {
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
-                lostContact = true
                 try await wait()
                 continue
             }
-            lostContact = false
             switch answer.0 {
             case 200:
                 guard let json = (try? JSONSerialization.jsonObject(with: answer.1)) as? [String: Any],
@@ -332,7 +330,7 @@ public struct PairingSession: Sendable {
                     guard revealTries > 0 else { throw PairingError.badResponse }
                     guard now() <= deadline else { throw PairingError.expired }
                     await stage(.opening)
-                    return try await finish(json, phonePublic: phonePublic, poll: poll, adopt: adopt)
+                    return try await finish(json, phonePublic: phonePublic, poll: poll, deadline: deadline, approve: approve, adopt: adopt)
                 case "waiting":
                     break
                 default:
@@ -351,7 +349,7 @@ public struct PairingSession: Sendable {
             }
             try await wait()
         }
-        throw lostContact ? PairingError.offline : PairingError.timedOut
+        throw PairingError.expired
     }
 
     private func claim(_ phonePublic: [UInt8]) async throws -> (poll: String, expires: Date) {
@@ -408,7 +406,8 @@ public struct PairingSession: Sendable {
         }
     }
 
-    private func finish(_ json: [String: Any], phonePublic: [UInt8], poll: String,
+    private func finish(_ json: [String: Any], phonePublic: [UInt8], poll: String, deadline: Date,
+                        approve: @Sendable (PairedAccount) async -> Bool,
                         adopt: @Sendable (PairedAccount) async throws -> Void) async throws -> Bool {
         guard let token = json["token"] as? String, !token.isEmpty, let sealed = json["sealed"] as? String,
               let user = json["user"] as? [String: Any], let userId = (user["id"] as? NSNumber)?.int64Value,
@@ -431,7 +430,11 @@ public struct PairingSession: Sendable {
               payload.email.caseInsensitiveCompare(hubEmail) == .orderedSame else { throw PairingError.keyMismatch }
 
         try Task.checkCancellation()
-        try await adopt(PairedAccount(hub: code.hub, email: hubEmail, userId: userId, token: token, key: key, deviceName: name))
+        let account = PairedAccount(hub: code.hub, email: hubEmail, userId: userId, token: token, key: key, deviceName: name)
+        guard await approve(account) else { throw PairingError.declined }
+        try Task.checkCancellation()
+        guard now() <= deadline else { throw PairingError.expired }
+        try await adopt(account)
 
         // Das Konto steht: Die Bestätigung geht auch raus, wenn die Oberfläche inzwischen weg ist.
         let tag = PairingProto.b64u(PairingProto.confirm(s: s, id: code.id))

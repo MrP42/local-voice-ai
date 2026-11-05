@@ -37,6 +37,15 @@ final class AudioDownloadTests: XCTestCase {
         XCTAssertNil(AudioDownload.nextChunk(job().parts[0], .init(complete: true, partialBytes: 0), chunkPlainBytes: chunk))
     }
 
+    func testSameOrigin() throws {
+        let hub = try XCTUnwrap(URL(string: "https://portal.wolffappliedai.de"))
+        let same = try XCTUnwrap(URL(string: "https://PORTAL.wolffappliedai.de:443/api/v1/voice/blobs/a/chunks/0"))
+        XCTAssertTrue(AudioDownload.sameOrigin(same, hub))
+        for other in ["https://evil.example/x", "http://portal.wolffappliedai.de/x", "https://portal.wolffappliedai.de:8443/x"] {
+            XCTAssertFalse(AudioDownload.sameOrigin(try XCTUnwrap(URL(string: other)), hub))
+        }
+    }
+
     func testSpaceProblem() {
         let fmt: (Int64) -> String = { "\($0) B" }
         XCTAssertNil(AudioDownload.spaceProblem(remainingBytes: 100, freeBytes: nil, format: fmt))

@@ -375,17 +375,23 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
     nonisolated func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
         let status = (downloadTask.response as? HTTPURLResponse)?.statusCode ?? 0
         let description = downloadTask.taskDescription, taskID = downloadTask.taskIdentifier
+        let finalURL = downloadTask.response?.url
         // Die Datei verschwindet, sobald diese Methode zurückkehrt: synchron verschieben.
-        MainActor.assumeIsolated { self.received(description, taskID: taskID, status: status, file: location) }
+        MainActor.assumeIsolated { self.received(description, taskID: taskID, status: status, file: location, finalURL: finalURL) }
     }
 
-    private func received(_ description: String?, taskID: Int, status: Int, file: URL) {
+    private func received(_ description: String?, taskID: Int, status: Int, file: URL, finalURL: URL?) {
         guard let parsed = AudioDownload.parseTask(description) else { return }
         let id = parsed.bookId, key = parsed.key
         inFlight[id]?[taskID] = nil
         guard let job = jobs[id], job.phase == .running else { return }
         // Buch inzwischen gelöscht (auch von einem anderen Gerät): Ordner nicht neu anlegen.
         guard library.books.contains(where: { $0.id == id }) else { discard(id); return }
+        // Hintergrund-Sessions folgen Umleitungen, ohne zu fragen: Wenigstens das Ergebnis verwerfen.
+        if let finalURL, let hub = LibrarySync.shared.account.flatMap({ URL(string: $0.url) }), !AudioDownload.sameOrigin(finalURL, hub) {
+            fail(id, "Der Server hat auf eine andere Adresse umgeleitet. Das Laden wurde abgebrochen.")
+            return
+        }
         if status == 401 { fail(id, "Die Anmeldung ist abgelaufen. Bitte unter „Konto & Sync“ neu anmelden."); return }
         guard status == 200 else {
             retry(id, key, "Der Server antwortet mit Fehler \(status). Bereits geladene Teile bleiben erhalten, es geht an derselben Stelle weiter.")
@@ -429,12 +435,6 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
             try? await Task.sleep(nanoseconds: UInt64(1 << attempt) * 1_000_000_000)
             pump(id)
         }
-    }
-
-    /// Wie `NoRedirects`: Das Token geht an keinen anderen Server.
-    nonisolated func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
-                                newRequest request: URLRequest, completionHandler: @escaping @Sendable (URLRequest?) -> Void) {
-        completionHandler(nil)
     }
 
     nonisolated func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {

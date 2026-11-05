@@ -125,10 +125,13 @@ final class PairingFlow: ObservableObject {
             do {
                 let confirmed = try await session.run(stage: { stage in
                     await MainActor.run { self?.show(stage, run) }
+                }, approve: { paired in
+                    await self?.approve(paired, ask: ask, run: run) ?? false
                 }, adopt: { paired in
-                    guard let self else { throw PairingError.declined }
-                    try await self.adopt(paired, ask: ask, run: run)
-                    await MainActor.run { email = paired.email }
+                    try await MainActor.run {
+                        try LibrarySync.shared.adopt(paired)
+                        email = paired.email
+                    }
                 })
                 if self?.generation == run { self?.phase = .done(email: email, confirmed: confirmed) }
             } catch is CancellationError {
@@ -143,15 +146,14 @@ final class PairingFlow: ObservableObject {
         if generation == run { phase = .running(stage) }
     }
 
-    private func adopt(_ paired: PairedAccount, ask: Bool, run: Int) async throws {
-        guard generation == run else { throw CancellationError() }
-        if ask && !autoAccept {
-            phase = .confirmAccount(paired.email)
-            let accepted = await withCheckedContinuation { decision = $0 }
-            guard accepted, generation == run else { throw PairingError.declined }
-            phase = .running(.opening)
-        }
-        try LibrarySync.shared.adopt(paired)
+    private func approve(_ paired: PairedAccount, ask: Bool, run: Int) async -> Bool {
+        guard generation == run else { return false }
+        guard ask && !autoAccept else { return true }
+        phase = .confirmAccount(paired.email)
+        let accepted = await withCheckedContinuation { decision = $0 }
+        guard accepted, generation == run else { return false }
+        phase = .running(.opening)
+        return true
     }
 
     func decide(_ accepted: Bool) {
@@ -251,7 +253,7 @@ private struct PairingSheet: View {
                 VStack(alignment: .leading, spacing: 6) {
                     if code.hub != LibrarySync.defaultHub { Text("Dieser Code nennt einen anderen Server als üblich. Nur fortfahren, wenn du ihm vertraust.") }
                     if viaLink { Text("Nur fortfahren, wenn du das Verbinden gerade selbst am eigenen PC gestartet hast.") }
-                }
+                }.foregroundStyle(.primary.opacity(0.75))
             }
             Section { Button("Verbinden") { flow.begin(code, viaLink: viaLink) } }
         }
@@ -267,7 +269,7 @@ private struct PairingSheet: View {
                     .accessibilityLabel(sas.map(String.init).joined(separator: " "))
                 Text("Steht derselbe Code am PC? Dann dort bestätigen. Wenn nicht, am PC abbrechen.")
                     .multilineTextAlignment(.center).foregroundStyle(.primary.opacity(0.75))
-                ProgressView("Bitte am PC bestätigen")
+                ProgressView { Text("Bitte am PC bestätigen").foregroundStyle(.primary.opacity(0.75)) }
             }.padding(.horizontal, 24).padding(.vertical, 80).frame(maxWidth: .infinity)
         }
     }
