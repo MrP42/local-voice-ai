@@ -24,6 +24,26 @@ final class BookTalkFrontierTests: XCTestCase {
         XCTAssertEqual(rec.frontier, 1_000, "Sprung ist nicht gelesen")
     }
 
+    func testFirstJumpOnFreshRecordKeepsFrontierAtZero() {
+        let jumped = LibraryProgress.recordPosition(nil, to: 40_000, length: 50_000, unit: .chars, now: 1)
+        XCTAssertEqual(jumped.frontier, 0, "0 bleibt 0 und wird nicht zu nil")
+        XCTAssertEqual(LibraryProgress.reach(jumped), 0, "kein Rueckfall auf den Offset, wenn das Feld da ist")
+        XCTAssertNil(LibraryProgress.frontier(text: jumped, audio: nil, map: nil))
+        let again = LibraryProgress.recordPosition(jumped, to: 90_000, length: 50_000, unit: .chars, now: 2)
+        XCTAssertEqual(again.frontier, 0)
+        let merged = LibraryProgress.merge(jumped, again)
+        XCTAssertEqual(merged.frontier, 0)
+        let heard = LibraryProgress.markHeard(jumped, from: 0, to: 0)
+        XCTAssertEqual(heard.frontier, 0)
+    }
+
+    func testLegacyRecordKeepsOffsetUntilFirstWrite() {
+        let legacy = ProgressRecord(offset: 7_000, length: 50_000, updated: 1)
+        XCTAssertEqual(LibraryProgress.reach(legacy), 7_000)
+        let next = LibraryProgress.recordPosition(legacy, to: 7_100, length: 50_000, unit: .chars, now: 2)
+        XCTAssertEqual(next.frontier, 7_100)
+    }
+
     func testMarkHeardRaisesFrontierToRangeEnd() {
         let base = ProgressRecord(offset: 500, length: 10_000, heard: [[0, 500]], updated: 1, frontier: 500)
         let out = LibraryProgress.markHeard(base, from: 500, to: 6_000)

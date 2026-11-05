@@ -217,7 +217,9 @@ public enum LibraryProgress {
         merged.read = mergeRanges(older.read + newer.read)
         merged.length = max(newer.length, older.length)
         if older.finished == true || newer.finished == true { merged.finished = true }
-        merged.frontier = raised(merged.frontier, older.frontier, rangesEnd(merged))
+        let known = [older.frontier, newer.frontier].compactMap { $0 }
+        let ends = rangesEnd(merged)
+        merged.frontier = known.isEmpty && ends == 0 ? nil : max(known.max() ?? 0, ends)
         return merged
     }
 
@@ -226,17 +228,21 @@ public enum LibraryProgress {
         (rec.heard + rec.read).reduce(0) { $1.count == 2 && $1[1].isFinite ? max($0, $1[1]) : $0 }
     }
 
-    /// Nur steigend: das Größte aus allen Werten; 0 und nil ergeben nil.
-    static func raised(_ values: Double?...) -> Double? {
-        let top = values.reduce(0) { max($0, $1 ?? 0) }
-        return top > 0 ? top : nil
+    /// Neuer Wert des Feldes `frontier`: nie unter dem alten, nie unter den Bereichsenden; 0 bleibt 0 (nicht nil).
+    /// Ein Altbestand ohne Feld startet bei seinem bisherigen Stand (`reach`), ein frischer Datensatz bei 0:
+    /// ein erster Sprung hebt die Grenze nicht.
+    static func risenFrontier(prev: ProgressRecord?, rec: ProgressRecord) -> Double {
+        let before = prev.map { $0.frontier ?? reach($0) } ?? 0
+        return max(before, rangesEnd(rec), rec.finished == true ? rec.length : 0)
     }
 
     /// Weitester Stand eines Datensatzes in seiner Einheit: Feld und Bereiche; fehlt beides, gilt `offset`
     /// (Altbestand, Plan §3.0). „Fertig“ zählt als ganzer Text.
     public static func reach(_ rec: ProgressRecord) -> Double {
         if rec.finished == true, rec.length > 0 { return rec.length }
-        if let known = raised(rec.frontier, rangesEnd(rec)) { return known }
+        if let frontier = rec.frontier { return max(frontier, rangesEnd(rec)) }
+        let ends = rangesEnd(rec)
+        if ends > 0 { return ends }
         return max(0, rec.offset.isFinite ? rec.offset : 0)
     }
 
@@ -266,7 +272,7 @@ public enum LibraryProgress {
             if mode == .read { rec.read = mergeRanges(rec.read + [[from, to]]) } else { rec.heard = mergeRanges(rec.heard + [[from, to]]) }
         }
         if rec.length > 0 && covered(rec.heard + rec.read) >= rec.length * 0.98 { rec.finished = true }
-        rec.frontier = raised(prev?.frontier, rangesEnd(rec))
+        rec.frontier = risenFrontier(prev: prev, rec: rec)
         return rec
     }
 
@@ -276,7 +282,7 @@ public enum LibraryProgress {
         var out = rec
         out.heard = mergeRanges(rec.heard + [[from, to]])
         if out.length > 0 && covered(out.heard + out.read) >= out.length * 0.98 { out.finished = true }
-        out.frontier = raised(rec.frontier, rangesEnd(out))
+        out.frontier = risenFrontier(prev: rec, rec: out)
         return out
     }
 

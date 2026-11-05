@@ -48,42 +48,86 @@ final class BookTalkListener {
     private var volatile = ""
     private(set) var running = false
     private var finishing = false
+    /// `start()` läuft (Berechtigung, Erkennerwahl, Engine): nicht erneut betretbar.
+    private var starting = false
+    /// Jeder Start und jedes `cancel()` zählt hoch; ein Start, dessen Token veraltet ist, baut sich selbst zurück.
+    private var token = 0
+    /// `finish()` kam, bevor die Aufnahme lief: wird nach dem Start sofort nachgeholt.
+    private var pendingFinish: Bool?
 
-    /// Laufende Äußerung läuft oder wird gerade abgeschlossen.
-    var isBusy: Bool { running || finishing }
+    /// Start, Aufnahme oder Abschluss laufen.
+    var isBusy: Bool { starting || running || finishing }
 
     // MARK: Start
 
     func start(mode: Mode, languageCode: String?) async throws {
         guard !isBusy else { return }
+        token += 1
+        let mine = token
+        starting = true
+        pendingFinish = nil
+        defer { starting = false }
+        Self.removeStaleRecordings()
+        do {
+            try await run(mode: mode, languageCode: languageCode, token: mine)
+        } catch {
+            // Auch bei Abbruch während des Starts: dieser Aufruf besitzt die Ressourcen und räumt sie auf.
+            await teardown(finalize: false)
+            discardWhisperFile()
+            pendingFinish = nil
+            throw error
+        }
+        if let noSpeech = pendingFinish {
+            pendingFinish = nil
+            starting = false
+            finish(noSpeech: noSpeech)
+        }
+    }
+
+    private func run(mode: Mode, languageCode: String?, token mine: Int) async throws {
         guard await AVAudioApplication.requestRecordPermission() else { throw ListenError.microphone }
+        try checkCurrent(mine)
         stable = ""; volatile = ""
         let english = languageCode?.lowercased().hasPrefix("en") == true
         let locale = Locale(identifier: english ? "en-US" : "de-DE")
         var transcriber: SpeechTranscriber?
         if SpeechTranscriber.isAvailable, let supported = await SpeechTranscriber.supportedLocale(equivalentTo: locale) {
+            try checkCurrent(mine)
             let candidate = SpeechTranscriber(locale: supported, transcriptionOptions: [], reportingOptions: [.volatileResults], attributeOptions: [])
-            if await AssetInventory.status(forModules: [candidate]) == .installed { transcriber = candidate }
+            let status = await AssetInventory.status(forModules: [candidate])
+            try checkCurrent(mine)
+            if status == .installed { transcriber = candidate }
         }
         if transcriber == nil, !Self.whisperInstalled { throw ListenError.noRecognizer }
 
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetooth, .defaultToSpeaker])
         try session.setActive(true)
-        // Echo-Unterdrückung und Rauschminderung; schlägt es fehl, bleibt der Modus `.voiceChat`.
-        try? engine.inputNode.setVoiceProcessingEnabled(true)
+        // Echo-Unterdrückung und Rauschminderung; ohne sie hörte das Mikrofon die Antwort mit: lieber sauber scheitern.
+        do { try engine.inputNode.setVoiceProcessingEnabled(true) } catch { throw ListenError.engine }
 
         tap.reset(pushToTalk: mode == .pushToTalk)
         tap.onSpeechStarted = { [weak self] in Task { @MainActor in self?.onSpeechStarted?() } }
         tap.onEnd = { [weak self] noSpeech in Task { @MainActor in self?.finish(noSpeech: noSpeech) } }
-        do {
-            if let transcriber { try await startAnalyzer(transcriber) } else { try startWhisperFile() }
-            observe()
-            try installTapAndStart()
-        } catch {
-            await teardown(finalize: false)
-            discardWhisperFile()
-            throw error
+        if let transcriber { try await startAnalyzer(transcriber) } else { try startWhisperFile() }
+        try checkCurrent(mine)
+        observe()
+        try installTapAndStart()
+        // Ein `cancel()` zwischen Engine-Start und hier lässt `start()` zurückbauen.
+        try checkCurrent(mine)
+    }
+
+    private func checkCurrent(_ mine: Int) throws {
+        if token != mine { throw CancellationError() }
+    }
+
+    /// Reste einer früheren Sitzung (Absturz, Beenden während der Aufnahme).
+    private static func removeStaleRecordings() {
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory
+        let names = (try? fm.contentsOfDirectory(atPath: dir.path)) ?? []
+        for name in names where name.hasPrefix("booktalk-") && name.hasSuffix(".caf") {
+            try? fm.removeItem(at: dir.appendingPathComponent(name))
         }
     }
 
@@ -137,11 +181,7 @@ final class BookTalkListener {
     }
 
     private func installTapAndStart() throws {
-        engine.inputNode.removeTap(onBus: 0)
-        let micFormat = engine.inputNode.outputFormat(forBus: 0)
-        guard micFormat.sampleRate > 0, tap.prepareConverters(from: micFormat) else { throw ListenError.format }
-        let tap = self.tap
-        engine.inputNode.installTap(onBus: 0, bufferSize: 4096, format: micFormat) { buffer, _ in tap.handle(buffer) }
+        guard tap.install(on: engine) else { throw ListenError.format }
         engine.prepare()
         do { try engine.start() } catch { throw ListenError.engine }
         tap.setAccepting(true)
@@ -150,8 +190,10 @@ final class BookTalkListener {
 
     // MARK: Ende
 
-    /// Äußerung beenden: erkannten Text abholen und `onFinished(.text)` melden.
+    /// Äußerung beenden: erkannten Text abholen und `onFinished(.text)` melden. Kommt es während des Starts,
+    /// wird es nach dem Start nachgeholt.
     func finish(noSpeech: Bool = false) {
+        if starting { pendingFinish = noSpeech; return }
         guard running, !finishing else { return }
         finishing = true
         Task { await complete(noSpeech: noSpeech) }
@@ -160,6 +202,10 @@ final class BookTalkListener {
     /// Verwerfen, nichts melden (Barge-in, Bereichswechsel, Hintergrund).
     func cancel() {
         guard isBusy else { return }
+        token += 1
+        pendingFinish = nil
+        // Während des Starts räumt `start()` selbst auf; beim Abschluss wird nichts mehr gemeldet.
+        guard !starting, !finishing else { return }
         finishing = true
         Task {
             await teardown(finalize: false)
@@ -168,15 +214,27 @@ final class BookTalkListener {
         }
     }
 
+    /// Wie `cancel()`, kehrt aber erst zurück, wenn Mikrofon und Sitzung wirklich frei sind (höchstens ~4 s).
+    func cancelAndWait() async {
+        cancel()
+        var waited = 0
+        while isBusy, waited < 200 {
+            try? await Task.sleep(for: .milliseconds(20))
+            waited += 1
+        }
+    }
+
     private func complete(noSpeech: Bool) async {
+        let mine = token
         let usedAnalyzer = analyzer != nil
         await teardown(finalize: usedAnalyzer && !noSpeech)
         var text = (stable + (volatile.isEmpty ? "" : (stable.isEmpty ? "" : " ") + volatile)).trimmingCharacters(in: .whitespacesAndNewlines)
-        if let url = whisperFile, !noSpeech {
+        if let url = whisperFile, !noSpeech, token == mine {
             text = await Self.whisper(url)
         }
         discardWhisperFile()
         finishing = false
+        guard token == mine else { return }
         onFinished?(noSpeech || text.isEmpty ? .noSpeech : .text(text))
     }
 
@@ -191,11 +249,13 @@ final class BookTalkListener {
     private func interrupted(_ why: String) {
         guard running, !finishing else { return }
         finishing = true
+        let mine = token
         let partial = (stable + " " + volatile).trimmingCharacters(in: .whitespacesAndNewlines)
         Task {
             await teardown(finalize: false)
             discardWhisperFile()
             finishing = false
+            guard token == mine else { return }
             onFinished?(.interrupted(why, partial: partial))
         }
     }
@@ -220,7 +280,9 @@ final class BookTalkListener {
         }
         results = nil; analyzer = nil
         tap.clear()
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        // Nicht deaktivieren: Antwort (Anton) und Vorlesen brauchen sofort wieder eine Wiedergabe-Sitzung.
+        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio)
+        try? AVAudioSession.sharedInstance().setActive(true)
     }
 
     private func observe() {
@@ -282,8 +344,18 @@ private final class TapState: @unchecked Sendable {
         self.file = file
     }
 
-    /// Wandler für das aktuelle Mikrofonformat; `false`, wenn einer fehlt.
-    func prepareConverters(from mic: AVAudioFormat) -> Bool {
+    /// Wandler für das aktuelle Mikrofonformat und Tap auf der Engine. Absichtlich hier (nicht isoliert), damit der
+    /// Rückruf nicht den Main Actor erbt: er läuft auf dem Audio-Thread. `false`, wenn ein Wandler fehlt.
+    func install(on engine: AVAudioEngine) -> Bool {
+        let node = engine.inputNode
+        node.removeTap(onBus: 0)
+        let mic = node.outputFormat(forBus: 0)
+        guard mic.sampleRate > 0, prepareConverters(from: mic) else { return false }
+        node.installTap(onBus: 0, bufferSize: 4096, format: mic) { [self] buffer, _ in handle(buffer) }
+        return true
+    }
+
+    private func prepareConverters(from mic: AVAudioFormat) -> Bool {
         lock.lock(); defer { lock.unlock() }
         if let analyzerFormat { toAnalyzer = AVAudioConverter(from: mic, to: analyzerFormat) }
         toFile = AVAudioConverter(from: mic, to: fileFormat)

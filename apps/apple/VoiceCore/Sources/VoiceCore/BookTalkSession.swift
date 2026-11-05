@@ -51,6 +51,12 @@ public actor BookTalkSession {
 
     public func clearHistory() { history.removeAll() }
 
+    /// Setzt den Verlauf auf einen Stand der Oberflaeche zurueck (hoechstens `maxStoredTurns`). Die App ruft das nach einem
+    /// Abbruch, damit ein Wechsel, den die Anzeige verworfen hat, nicht doch im Prompt oder auf der Platte landet.
+    public func restore(history turns: [BookTalkStoredTurn]) {
+        history = turns.count > Self.maxStoredTurns ? Array(turns.suffix(Self.maxStoredTurns)) : turns
+    }
+
     /// Bricht eine laufende Frage ab: nur noch `.failed(.cancelled)`, nichts wird gespeichert.
     public func cancel(requestId: String) { active[requestId]?() }
 

@@ -38,7 +38,7 @@ struct BookTalkSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @ScaledMetric(relativeTo: .body) private var micSize: CGFloat = 72
-    @State private var micDown = false
+    @GestureState private var micPressed = false
     @FocusState private var fieldFocused: Bool
 
     init(book: LibraryBook) {
@@ -62,7 +62,8 @@ struct BookTalkSheet: View {
             await talk.open()
         }
         .onDisappear { talk.teardown() }
-        .onChange(of: scenePhase) { _, phase in if phase != .active { talk.sceneInactive() } }
+        .onChange(of: scenePhase) { _, phase in if phase != .active { talk.sceneInactive(background: phase == .background) } }
+        .onChange(of: micPressed) { _, down in if down { talk.pressDown() } else { talk.pressUp() } }
         .alert("Spätere Kapitel einbeziehen?", isPresented: $talk.confirmingBook) {
             Button("Abbrechen", role: .cancel) {}
             Button("Einbeziehen") { talk.confirmBookScope() }
@@ -271,9 +272,7 @@ struct BookTalkSheet: View {
             .frame(width: micSize, height: micSize)
             .background(listening ? VoicePalette.danger : BookTalkColors.fill, in: Circle())
             .contentShape(Circle())
-            .gesture(DragGesture(minimumDistance: 0)
-                .onChanged { _ in if !micDown { micDown = true; talk.pressDown() } }
-                .onEnded { _ in micDown = false; talk.pressUp() })
+            .gesture(DragGesture(minimumDistance: 0).updating($micPressed) { _, state, _ in state = true })
             .opacity(talk.loading ? 0.5 : 1)
             .accessibilityElement()
             .accessibilityLabel(talk.micLabel)
@@ -452,7 +451,7 @@ private struct FlowLayout: Layout {
 struct BookTalkSettings: View {
     @AppStorage(BookTalkEngine.enabledKey) private var enabled = false
     @AppStorage(BookTalkModelChoice.key) private var choice = BookTalkModelChoice.apple.rawValue
-    @AppStorage(BookTalkController.antonKey) private var anton = true
+    @State private var anton = BookTalkController.storedSpeaksAloud()
     @State private var confirming = false
     @State private var cleared = false
 
@@ -463,6 +462,7 @@ struct BookTalkSettings: View {
                 ForEach(BookTalkModelChoice.allCases) { Text($0.title).tag($0.rawValue) }
             }
             Toggle("Antworten mit Anton sprechen", isOn: $anton)
+                .onChange(of: anton) { _, value in UserDefaults.standard.set(value, forKey: BookTalkController.antonKey) }
             Button("Alle Buchgespräche löschen", role: .destructive) { confirming = true }
                 .frame(minHeight: 44)
             if cleared { Text("Alle Buchgespräche sind gelöscht.").font(.caption) }

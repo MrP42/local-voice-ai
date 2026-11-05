@@ -161,7 +161,10 @@ int lv_llama_chat(LVLlamaModel *value, const char *head, const char *system, con
     std::vector<llama_token> tokens;
     if (!append_tokens(vocab, head, true, tokens) || !append_tokens(vocab, system, false, tokens)
         || !append_tokens(vocab, middle, true, tokens) || !append_tokens(vocab, user, false, tokens)
-        || !append_tokens(vocab, tail, true, tokens)) return 4;
+        || !append_tokens(vocab, tail, true, tokens)) return 12;
+    // Nie über das Training hinaus: sonst Qualitätsverlust oder Absturz bei langen Kontexten.
+    const int32_t n_train = llama_model_n_ctx_train(value->model);
+    if (n_train > 0 && n_ctx > n_train) n_ctx = n_train;
     if (tokens.empty() || tokens.size() + static_cast<size_t>(max_tokens) > static_cast<size_t>(n_ctx)) return 4;
 
     auto cp = llama_context_default_params();
@@ -192,8 +195,9 @@ int lv_llama_chat(LVLlamaModel *value, const char *head, const char *system, con
         auto token = llama_sampler_sample(sampler.get(), context.get(), -1);
         if (llama_vocab_is_eog(vocab, token)) break;
         char piece[512];
+        // Negativ = Puffer zu klein (llama.cpp meldet die nötige Länge als negative Zahl).
         const int size = llama_token_to_piece(vocab, token, piece, sizeof(piece), 0, true);
-        if (size < 0 || size > static_cast<int>(sizeof(piece))) return 8;
+        if (size < 0) return 8;
         pending.append(piece, static_cast<size_t>(size));
         const size_t ready = utf8_complete_prefix(pending);
         if (ready > 0) {

@@ -26,7 +26,8 @@ int32_t lv_llama_count(LVLlamaModel *model, const char *text, int32_t special);
 typedef int32_t (*LVTokenSink)(const char *utf8, int32_t length, void *context);
 // Prompt = head + system + middle + user + tail; head/middle/tail werden mit Sondertoken tokenisiert,
 // system und user nie. 0 = ok; 1 Eingabe, 2 Modell ist nur Wortschatz, 3 Kontext, 4 Prompt + max_tokens > n_ctx,
-// 5 decode, 7 abgebrochen oder Zeitrahmen (120 s), 8 Token zu lang.
+// 5 decode, 7 abgebrochen oder Zeitrahmen (120 s), 8 Token zu lang, 12 Tokenisierung fehlgeschlagen.
+// n_ctx wird auf die Trainingslänge des Modells begrenzt.
 int lv_llama_chat(LVLlamaModel *model, const char *head, const char *system, const char *middle, const char *user,
                   const char *tail, int32_t max_tokens, int32_t n_ctx, LVTokenSink sink, void *context,
                   LVCancellation *cancellation);
