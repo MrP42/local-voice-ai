@@ -12,9 +12,11 @@ import {
 import type { BookTalkScope } from "@/bindings";
 import { Button } from "../../../ui/Button";
 import { Dialog } from "../../../ui/Dialog";
+import { scopeText, type ScopeLimit } from "./pages";
 
 /**
- * Kopf der Gesprächsspalte (lva#309): Bereichsknopf „Bis S. n geschützt ▾“ mit
+ * Kopf der Gesprächsspalte (lva#309): Bereichsknopf „Bis S. n geschützt ▾“ (ohne
+ * Seitenmarken „Bis Kap. k“, bei Grenze 0 „Bis zum Anfang“) mit
  * Menü, Bestätigung für „Ganzes Buch“ (gilt, bis Spalte oder Gespräch
  * schließen) und das Menü „Weitere Aktionen“: Verlauf leeren, Schalter „KI-
  * Antworten (Vorschau)“ (Plan §11.5) und Widerruf der Cloud-Freigabe (§11.4).
@@ -24,7 +26,7 @@ import { Dialog } from "../../../ui/Dialog";
  */
 export function ScopeBar({
   scope,
-  page,
+  limit,
   onScope,
   onClear,
   canClear,
@@ -34,8 +36,8 @@ export function ScopeBar({
   onRevoke,
 }: {
   scope: BookTalkScope;
-  /** Seite an der Lesegrenze; `null`, wenn keine Seitenmarken vorliegen. */
-  page: number | null;
+  /** Konkrete Lesegrenze für Knopf, Ansage und Rückfrage (Seite, Kapitel oder Anfang). */
+  limit: ScopeLimit;
   onScope(scope: BookTalkScope): void;
   onClear(): void;
   canClear: boolean;
@@ -126,16 +128,12 @@ export function ScopeBar({
     };
   }, [menu]);
 
-  const label = book
-    ? t("tts.bookTalk.scope.book")
-    : page !== null
-      ? t("tts.bookTalk.scope.until", { page })
-      : t("tts.bookTalk.scope.untilHere");
-  const aria = book
-    ? t("tts.bookTalk.scope.ariaBook")
-    : page !== null
-      ? t("tts.bookTalk.scope.ariaUntil", { page })
-      : t("tts.bookTalk.scope.ariaUntilHere");
+  const text = (variant: "label" | "aria" | "phrase") => {
+    const { key, values } = scopeText(limit, variant);
+    return t(`tts.bookTalk.scope.${key}`, values);
+  };
+  const label = book ? t("tts.bookTalk.scope.book") : text("label");
+  const aria = book ? t("tts.bookTalk.scope.ariaBook") : text("aria");
 
   const choose = (next: BookTalkScope) => {
     closeMenu(true);
@@ -145,7 +143,7 @@ export function ScopeBar({
     }
     if (next === scope) return;
     onScope(next);
-    setAnnounce(t("tts.bookTalk.scope.changedUntil"));
+    setAnnounce(t("tts.bookTalk.scope.changedUntil", { limit: text("phrase") }));
   };
 
   return (
@@ -318,7 +316,7 @@ export function ScopeBar({
         }
       >
         <p className="text-sm" data-testid="booktalk-scope-confirm-text">
-          {t("tts.bookTalk.scope.confirmBody")}
+          {t("tts.bookTalk.scope.confirmBody", { limit: text("phrase") })}
         </p>
       </Dialog>
     </div>

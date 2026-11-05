@@ -6,6 +6,7 @@ import { CitationCard } from "./CitationCard";
 import { BOOKTALK_ROOT_ATTR } from "./keys";
 import { ScopeBar } from "./ScopeBar";
 import { citationsOf, type Turn } from "./turns";
+import type { ScopeLimit } from "./pages";
 import type { BookTalkState } from "./useBookTalk";
 import type { BookVoice } from "./useBookVoice";
 import "./booktalk.css";
@@ -28,8 +29,8 @@ export interface BookTalkColumnProps {
   talk: BookTalkState;
   /** `null`, wenn kein Mikrofon-Zugang besteht (nur Text). */
   voice: BookVoice | null;
-  /** Seite an der Lesegrenze (`null` ohne Seitenmarken). */
-  page: number | null;
+  /** Konkrete Lesegrenze (Seite, Kapitel oder Anfang). */
+  limit: ScopeLimit;
   /** Seite, an der das Vorlesen für das Gespräch pausiert wurde. */
   pausedPage: number | null;
   /** Schalter `book_talk_enabled`: aus = Fundstellen-Modus mit Hinweis. */
@@ -55,7 +56,7 @@ export interface BookTalkColumnProps {
 export function BookTalkColumn({
   talk,
   voice,
-  page,
+  limit,
   pausedPage,
   enabled,
   onEnabled,
@@ -127,7 +128,7 @@ export function BookTalkColumn({
     >
       <ScopeBar
         scope={talk.scope}
-        page={page}
+        limit={limit}
         onScope={(s) => (voice ? voice.setScope(s) : talk.setScope(s))}
         onClear={() => void talk.clear()}
         canClear={talk.turns.length > 0}

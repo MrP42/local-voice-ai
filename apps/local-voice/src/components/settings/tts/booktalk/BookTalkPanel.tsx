@@ -11,7 +11,7 @@ import {
   pendingConsent,
   withoutConsent,
 } from "./consent";
-import { pageAt } from "./pages";
+import { pageAt, scopeLimit } from "./pages";
 import type { BookTalkPort } from "./port";
 import { useBookTalk } from "./useBookTalk";
 import { useBookVoice, type BookTalkHost } from "./useBookVoice";
@@ -25,6 +25,7 @@ import { useBookVoice, type BookTalkHost } from "./useBookVoice";
 export function BookTalkPanel({
   bookId,
   text,
+  chapterStarts = [],
   frontier,
   host,
   port = tauriBookTalkPort,
@@ -34,6 +35,8 @@ export function BookTalkPanel({
   bookId: string;
   /** Originaltext des Buchs (für die Seitenzahl an der Lesegrenze). */
   text: string;
+  /** Kapitelanfänge (UTF-16) aus dem Inhaltsverzeichnis, für „Bis Kap. k“ ohne Seitenmarken. */
+  chapterStarts?: readonly number[];
   /** Lesegrenze (UTF-16); `undefined`, solange sie unbekannt ist. */
   frontier(): number | undefined;
   host: BookTalkHost;
@@ -108,7 +111,7 @@ export function BookTalkPanel({
       <BookTalkColumn
         talk={talk}
         voice={voice}
-        page={boundary !== undefined ? pageAt(text, boundary) : null}
+        limit={scopeLimit(text, boundary, chapterStarts)}
         pausedPage={pausedAt !== null ? pageAt(text, pausedAt) : null}
         enabled={enabled}
         onEnabled={(on) => void updateSetting("book_talk_enabled", on)}

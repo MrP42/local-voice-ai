@@ -239,6 +239,23 @@ test("Spalte zeigt den Schutzbereich und Vorschläge", async ({ page }) => {
   await expect(page.getByTestId("booktalk-suggestions")).toBeVisible();
 });
 
+test("Bereichsknopf nennt die konkrete Grenze (Kapitel ohne Seitenmarken, Anfang bei 0)", async ({ page }) => {
+  await open(page);
+  // Der Teststext hat keine Seitenmarken, aber eine Überschrift: Kapitel 1.
+  const scope = page.getByTestId("booktalk-scope");
+  await expect(scope).toHaveText("Bis Kap. 1 geschützt");
+  await expect(scope).toHaveAttribute("aria-label", "Bereich: bis Kapitel 1 geschützt. Ändern");
+  await scope.click();
+  await page.getByTestId("booktalk-scope-book").click();
+  await expect(page.getByTestId("booktalk-scope-confirm-text")).toContainText("Bisher geschützt bis Kapitel 1.");
+  await page.getByTestId("booktalk-scope-confirm").click();
+  await expect(scope).toHaveText("Ganzes Buch");
+  await scope.click();
+  await page.getByTestId("booktalk-scope-until").click();
+  await expect(scope).toHaveText("Bis Kap. 1 geschützt");
+  await expect(page.getByRole("status").filter({ hasText: "Bereich:" })).toContainText("bis Kapitel 1 geschützt");
+});
+
 test("Ganzes Buch braucht eine Bestätigung", async ({ page }) => {
   await open(page);
   await page.getByTestId("booktalk-scope").click();
@@ -499,7 +516,9 @@ test("Reiter und Menüs: Fokus, Pfeiltasten, tabpanel", async ({ page }) => {
 });
 
 for (const theme of ["light", "dark"]) {
-  for (const width of [1440]) {
+  for (const width of [1440, 879, 768, 641]) {
+    // Zwischenbreiten: hell überall, dunkel nur bei 768 (Spalte statt Blatt ab 641 px).
+    if (width !== 1440 && width !== 768 && theme === "dark") continue;
     test(`Vorschau ${width} ${theme}`, async ({ page }) => {
       test.skip(!process.env.BOOKTALK_SHOTS, "nur mit BOOKTALK_SHOTS");
       await open(page, { width, theme });
@@ -520,5 +539,121 @@ for (const theme of ["light", "dark"]) {
     await page.screenshot({
       path: `../../docs/vorschau/buch-gespraech-desktop/390-blatt-${theme}.png`,
     });
+  });
+}
+
+test("schmal: Schließen-× im Blatt ist mindestens 44 × 44 px", async ({ page }) => {
+  await open(page, { width: 390, height: 800 });
+  const close = page.locator(".kidoc-sheet").getByRole("button", { name: "Schließen" });
+  await expect(close).toBeVisible();
+  const box = await close.boundingBox();
+  expect(box).not.toBeNull();
+  expect(box!.width).toBeGreaterThanOrEqual(44);
+  expect(box!.height).toBeGreaterThanOrEqual(44);
+});
+
+interface Pair {
+  name: string;
+  need: number;
+  fg: string;
+  bg: string;
+  ratio: number;
+}
+
+/** WCAG-Kontrast (2.x) zweier Elemente: Vordergrund gegen die tatsächlich dahinterliegende Fläche. */
+const measure = (page: Page, items: { name: string; sel: string; need: number; kind: "text" | "border" }[]) =>
+  page.evaluate((items) => {
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = 1;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
+    const rgba = (css: string): [number, number, number, number] => {
+      ctx.clearRect(0, 0, 1, 1);
+      ctx.fillStyle = "#000";
+      ctx.fillStyle = css;
+      ctx.fillRect(0, 0, 1, 1);
+      const d = ctx.getImageData(0, 0, 1, 1).data;
+      return [d[0], d[1], d[2], d[3] / 255];
+    };
+    const over = (top: number[], base: number[]) => {
+      const a = top[3];
+      return [0, 1, 2].map((i) => top[i] * a + base[i] * (1 - a)).concat(1);
+    };
+    // Hintergrund von innen nach außen sammeln und von außen nach innen mischen.
+    const backdrop = (el: Element, includeSelf: boolean) => {
+      const layers: number[][] = [];
+      for (let n: Element | null = includeSelf ? el : el.parentElement; n; n = n.parentElement) {
+        const c = rgba(getComputedStyle(n).backgroundColor);
+        if (c[3] > 0) layers.push(c);
+        if (c[3] === 1) break;
+      }
+      return layers.reverse().reduce<number[]>((acc, l) => over(l, acc), [255, 255, 255, 1]);
+    };
+    const lum = (c: number[]) => {
+      const [r, g, b] = c.slice(0, 3).map((v) => {
+        const x = v / 255;
+        return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4;
+      });
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    };
+    const ratio = (a: number[], b: number[]) => {
+      const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
+      return (hi + 0.05) / (lo + 0.05);
+    };
+    const hex = (c: number[]) => "#" + c.slice(0, 3).map((v) => Math.round(v).toString(16).padStart(2, "0")).join("");
+    return items.map(({ name, sel, need, kind }) => {
+      const el = document.querySelector(sel);
+      if (!el) throw new Error(`nicht gefunden: ${sel}`);
+      const cs = getComputedStyle(el);
+      const own = backdrop(el, true);
+      const behind = backdrop(el, false);
+      // Text liegt auf der eigenen Fläche, ein Rand grenzt die Fläche gegen die Umgebung ab.
+      const fg = kind === "text" ? over(rgba(cs.color), own) : over(rgba(cs.borderTopColor), behind);
+      const bg = kind === "text" ? own : behind;
+      return { name, need, fg: hex(fg), bg: hex(bg), ratio: Math.round(ratio(fg, bg) * 100) / 100 };
+    });
+  }, items);
+
+for (const theme of ["light", "dark"]) {
+  test(`Kontraste der Spaltenfarben ${theme}`, async ({ page }) => {
+    await open(page, { theme });
+    const rows: Pair[] = [];
+    rows.push(
+      ...(await measure(page, [
+        { name: "Nebentext (leerer Verlauf)", sel: ".bt__empty", need: 4.5, kind: "text" },
+        { name: "Bereichsknopf Text", sel: '[data-testid="booktalk-scope"]', need: 4.5, kind: "text" },
+        { name: "Bereichsknopf Rand", sel: '[data-testid="booktalk-scope"]', need: 3, kind: "border" },
+      ])),
+    );
+    await page.getByTestId("booktalk-input").fill("Wo steht der Leuchtturm?");
+    await page.getByTestId("booktalk-send").click();
+    await page.getByTestId("booktalk-chip").first().click();
+    await expect(page.getByTestId("booktalk-card-quote")).toBeVisible();
+    rows.push(
+      ...(await measure(page, [
+        { name: "Text (Antwort)", sel: ".bt__answer p", need: 4.5, kind: "text" },
+        { name: "Text (eigene Frage)", sel: ".bt__user", need: 4.5, kind: "text" },
+        { name: "Nebentext (Frageart)", sel: ".bt__meta", need: 4.5, kind: "text" },
+        { name: "Nebentext (Beleg-Fundort)", sel: ".bt__where", need: 4.5, kind: "text" },
+        { name: "Nebentext (Vorschau-Hinweis)", sel: ".bt__preview", need: 4.5, kind: "text" },
+        { name: "Belegchip Text", sel: '[data-testid="booktalk-chip"]', need: 4.5, kind: "text" },
+        { name: "Vorschau-Badge Text", sel: ".bt__preview .bt__tag", need: 4.5, kind: "text" },
+        { name: "Vorschau-Badge Rand", sel: ".bt__preview .bt__tag", need: 3, kind: "border" },
+        { name: "Eingabefeld Rand", sel: ".bt__field", need: 3, kind: "border" },
+      ])),
+    );
+    await page.getByTestId("booktalk-scope").click();
+    await page.getByTestId("booktalk-scope-book").click();
+    await page.getByTestId("booktalk-scope-confirm").click();
+    rows.push(
+      ...(await measure(page, [
+        { name: "Bereichsknopf „Ganzes Buch“ Text", sel: '[data-testid="booktalk-scope"]', need: 4.5, kind: "text" },
+        { name: "Bereichsknopf „Ganzes Buch“ Rand", sel: '[data-testid="booktalk-scope"]', need: 3, kind: "border" },
+      ])),
+    );
+    if (process.env.BOOKTALK_CONTRAST_OUT) {
+      const fs = await import("node:fs");
+      fs.writeFileSync(`${process.env.BOOKTALK_CONTRAST_OUT}.${theme}.json`, JSON.stringify(rows, null, 1));
+    }
+    for (const r of rows) expect(r.ratio, `${r.name}: ${r.fg} auf ${r.bg}`).toBeGreaterThanOrEqual(r.need);
   });
 }

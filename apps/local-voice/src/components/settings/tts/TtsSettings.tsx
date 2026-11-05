@@ -2244,12 +2244,14 @@ export const TtsSettings = () => {
     },
     [],
   );
+  const chapterStarts = useMemo(() => contents.map((e) => e.start), [contents]);
   const renderTalk = (onNavigate?: () => void) =>
     activePage ? (
       <BookTalkPanel
         key={activePage}
         bookId={activePage}
         text={spokenText}
+        chapterStarts={chapterStarts}
         frontier={frontierOfBook}
         host={talkHost}
         onNavigate={onNavigate}
