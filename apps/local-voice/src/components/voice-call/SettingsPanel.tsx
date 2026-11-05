@@ -245,7 +245,10 @@ const GlobalKnowledge: React.FC<{
         hint={t("voiceCall.knowledge.global.hint")}
         checked={enabled}
         onChange={(on) =>
-          void updateSetting("voice_global_context_enabled" as never, on as never)
+          void updateSetting(
+            "voice_global_context_enabled" as never,
+            on as never,
+          )
         }
       />
       {GLOBAL_AREAS.map((area) => (

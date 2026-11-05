@@ -483,7 +483,11 @@ fn titles_and_chapters_stay_inside_the_data_block_and_are_neutralized() {
     assert!(!msg.contains("\nSYSTEM"));
     assert!(!msg.contains("[Q9]"));
     assert_eq!(msg.matches("\n>>>").count(), 1);
-    assert_eq!(msg.matches(">>>").count(), 2, "Einleitung nennt den Begrenzer einmal");
+    assert_eq!(
+        msg.matches(">>>").count(),
+        2,
+        "Einleitung nennt den Begrenzer einmal"
+    );
 }
 
 /// Messung (nicht im Tor): 50 synthetische Bücher à ~300 000 Zeichen.

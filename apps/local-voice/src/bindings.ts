@@ -5752,6 +5752,63 @@ async changeBookTalkCloudConsentSetting(providers: string[]) : Promise<Result<nu
 }
 },
 /**
+ * Vorwärmen beim Gesprächsstart: Index im Hintergrund aufbauen bzw. abgleichen.
+ * Schalter aus oder keine Bereiche: nichts geschieht (Index wird geleert).
+ */
+async appContextWarm() : Promise<Result<AppContextStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("app_context_warm") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Zustand des Index (Einstellungen, Infozeile).
+ */
+async appContextStatus() : Promise<AppContextStatus> {
+    return await TAURI_INVOKE("app_context_status");
+},
+/**
+ * Abruf für eine Frage. Lokal, ohne Modell. Jeder Abruf läuft durch das Tor
+ * mit Audit (ohne Inhalte). Schalter aus oder keine Bereiche: leeres Ergebnis
+ * ohne Audit (es wurde nichts gelesen).
+ */
+async appContextRetrieve(req: AppContextRequest) : Promise<Result<ContextHits, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("app_context_retrieve", { req }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Kontextnachricht für den Sprecher (gleiche Regeln wie im Kern, damit die
+ * Oberfläche keinen eigenen Prompt baut). `None` ohne Treffer.
+ */
+async appContextMessage(hits: ContextHits, german: boolean) : Promise<string | null> {
+    return await TAURI_INVOKE("app_context_message", { hits, german });
+},
+/**
+ * Prüft die Belege einer Antwort gegen den aktuellen Stand: Marken, die es
+ * in diesem Abruf gab, deren Quelle unverändert (`version`) und deren Stand
+ * (`epoch`) aktuell ist. Liefert die gültigen Belegnummern.
+ */
+async appContextVerify(answer: string, hits: ContextHits) : Promise<number[]> {
+    return await TAURI_INVOKE("app_context_verify", { answer, hits });
+},
+/**
+ * Schalter „Globales Wissen im Sprachgespräch“ (Standard aus).
+ */
+async changeVoiceGlobalContextEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_voice_global_context_enabled_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Eine Textfassung exportieren. Das Format ergibt sich aus der Endung
  * (`epub`, `pdf`, `docx`, `md`, `txt`). Rückgabe: der geschriebene Pfad.
  */
@@ -7646,6 +7703,30 @@ integration_id: string; created_at: number; last_used_at: number | null; revoked
 export type AgentClientView = { client: AgentClient; tools: ToolView[] }
 export type AntwortSicht = { text: string; citations: number[]; unsupported: boolean }
 /**
+ * Anfrage an den Abruf.
+ */
+export type AppContextRequest = { question: string; 
+/**
+ * Letzte Nutzerfrage (nur bei Rückbezug verwendet).
+ */
+previous: string | null; 
+/**
+ * Das laufende Gespräch: bleibt verborgen.
+ */
+conversation_id: string | null; 
+/**
+ * Bücher (Seiten-Ids) mit ausdrücklicher Ganzes-Buch-Freigabe.
+ */
+whole_books?: string[] }
+/**
+ * Zustand für die Oberfläche (Infozeile, Einstellungen).
+ */
+export type AppContextStatus = { enabled: boolean; areas: SourceKind[]; documents: number; chunks: number; epoch: number; 
+/**
+ * Dauer des letzten Abgleichs (ms); 0, wenn keiner lief.
+ */
+sync_ms: number }
+/**
  * The container-level `serde(default)` (backed by the `Default` impl below)
  * guarantees every field — including ones added in the future — falls back to
  * its `get_default_settings()` value when missing from a stored settings
@@ -8148,6 +8229,12 @@ voice_call_read_transcripts?: boolean;
  * `meetings`. Getrennt von den Rechten externer Agenten.
  */
 voice_call_knowledge?: string[]; 
+/**
+ * Globaler Sprachassistent (lva#325): Abrufindex über die freigegebenen Bereiche
+ * (`voice_call_knowledge`, inkl. `books`, `book_notes`, `ki_docs`). Standard AUS: dann
+ * kein Indexaufbau, kein Vorwärmen, kein Abruf. Freischaltung erst nach Eval-Tor (Plan M8).
+ */
+voice_global_context_enabled?: boolean; 
 /**
  * Stufe 3 des Sprachgesprächs: aus Korrekturen lernen (ADR-0021). Standard AUS; ohne diesen
  * Schalter wird kein Paar gespeichert.
@@ -9018,6 +9105,40 @@ export type ComplianceProfile =
  */
 "none"
 /**
+ * Ein Treffer für Prompt und Verlauf.
+ */
+export type ContextHit = { 
+/**
+ * Belegnummer `Q<k>`, ab 1 in Rangfolge.
+ */
+k: number; kind: SourceKind; title: string; 
+/**
+ * Kapitel (nur Bücher).
+ */
+chapter: string | null; at_ms: number; excerpt: string; jump: Jump; score: number; 
+/**
+ * Quellversion (Hash des Dokuments beim Abruf), für die Belegprüfung.
+ */
+version: string }
+/**
+ * Ergebnis eines Abrufs.
+ */
+export type ContextHits = { hits: ContextHit[]; 
+/**
+ * Bereiche, die freigegeben waren (für die Anzeige „gesucht in …“).
+ */
+searched: SourceKind[]; 
+/**
+ * Dauer des Abrufs (ms), für die Latenzmessung.
+ */
+retrieve_ms: number; 
+/**
+ * Stand des Index beim Abruf. Jede Löschung, jeder Widerruf und jede
+ * Umklassifizierung erhöht ihn; ein Ergebnis mit älterem Stand ist
+ * ungültig und wird verworfen (Codex Must-fix 2).
+ */
+epoch: number }
+/**
  * Verknüpfte Quelle (Vertrag `ContextSource`).
  */
 export type ContextSource = { 
@@ -9703,6 +9824,14 @@ export type JobRunState = "running" |
  * Stopp ist verlangt, der laufende Block wird noch fertig.
  */
 "stopping"
+/**
+ * Sprungziel eines Treffers in der App.
+ */
+export type Jump = { kind: SourceKind; id: string; 
+/**
+ * UTF-16-Offset im Original (Bücher) bzw. Zeichenoffset (sonst).
+ */
+offset: number; page: number | null; book_id: string | null }
 /**
  * Zustand des Schlüssels für die Oberfläche; nie der Schlüssel selbst.
  */
@@ -11508,6 +11637,11 @@ projector_size_mb: number;
  */
 availability: string }
 export type SoundTheme = "marimba" | "pop" | "custom"
+/**
+ * Art einer Quelle. Der Schlüssel (`key`) ist zugleich der Bereich in der
+ * Freigabe des Sprachgesprächs.
+ */
+export type SourceKind = "book" | "book_note" | "ki_doc" | "meeting" | "dictation" | "conversation" | "tts_page"
 /**
  * Eine Aufnahme, die in das Projekt-Protokoll einging. `index` zaehlt ab 1 in
  * chronologischer Reihenfolge (`R1`, `R2` im Prompt, `A1`, `A2` im Markdown).

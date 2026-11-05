@@ -70,7 +70,10 @@ export interface PreparedContext {
   promptMs: number;
 }
 
-export type Call = <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
+export type Call = <T>(
+  cmd: string,
+  args?: Record<string, unknown>,
+) => Promise<T>;
 
 export interface PrepareInput {
   turnId: string;
@@ -172,9 +175,13 @@ export class GlobalContext {
    * Das gültige Ergebnis für einen Schritt: nur, wenn Transkript und
    * Indexstand noch stimmen; sonst `null` (dann neu holen).
    */
-  async take(turnId: string, transcript: string): Promise<PreparedContext | null> {
+  async take(
+    turnId: string,
+    transcript: string,
+  ): Promise<PreparedContext | null> {
     const p = this.pending.get(turnId);
-    if (!p || this.keys.get(turnId) !== `${turnId}\u001f${transcript}`) return null;
+    if (!p || this.keys.get(turnId) !== `${turnId}\u001f${transcript}`)
+      return null;
     const ctx = await p;
     if (!ctx || ctx.hits.epoch < this.epoch) return null;
     return ctx;

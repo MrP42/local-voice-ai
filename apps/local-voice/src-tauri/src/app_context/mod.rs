@@ -33,4 +33,6 @@ pub mod retrieve;
 pub mod service;
 
 #[cfg(test)]
+mod eval_tests;
+#[cfg(test)]
 mod tests;

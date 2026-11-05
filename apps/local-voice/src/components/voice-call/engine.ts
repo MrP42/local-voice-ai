@@ -102,7 +102,12 @@ export interface CallCallbacks {
   /** Globaler Sprachassistent (lva#325): geprüfte Belege einer Antwort. */
   onCitations?(turnId: string, hits: ContextHit[]): void;
   /** Zeitpunkte des Kontexts (Messung t2/t3, Plan M7). */
-  onContextTiming?(turnId: string, retrieveMs: number, promptMs: number, hits: number): void;
+  onContextTiming?(
+    turnId: string,
+    retrieveMs: number,
+    promptMs: number,
+    hits: number,
+  ): void;
 }
 
 interface ChatMessage {
@@ -206,7 +211,7 @@ export class VoiceCallEngine {
    * Anbieter folgt mit P5).
    */
   private globalContext = new GlobalContext(
-    <T,>(cmd: string, args?: Record<string, unknown>) => invoke<T>(cmd, args),
+    <T>(cmd: string, args?: Record<string, unknown>) => invoke<T>(cmd, args),
   );
   private speakerLocal = false;
   private unwatch: (() => void) | null = null;

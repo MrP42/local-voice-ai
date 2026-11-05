@@ -281,8 +281,7 @@ fn collect_conversations(app: &AppHandle) -> Vec<ContextDoc> {
             if conv.archived {
                 return None;
             }
-            let restricted =
-                conv.scope.data_class == RESTRICTED || conv.scope.special_category;
+            let restricted = conv.scope.data_class == RESTRICTED || conv.scope.special_category;
             let text = detail
                 .entries
                 .iter()
@@ -576,8 +575,7 @@ fn retrieve_blocking(app: &AppHandle, req: &AppContextRequest) -> Result<Context
         .ok_or_else(|| "Die Datenbank ist noch nicht bereit.".to_string())?;
     let conn = store.get_connection().map_err(|e| e.to_string())?;
     let now = now_ms();
-    let integration =
-        clients::ensure_agent_integration(&conn, now).map_err(|e| e.to_string())?;
+    let integration = clients::ensure_agent_integration(&conn, now).map_err(|e| e.to_string())?;
     let mut keys: Vec<&str> = allowed.iter().map(|k| k.key()).collect();
     keys.sort_unstable();
     let audit_args = json!({ "areas": keys });
