@@ -59,6 +59,10 @@ ersetzt; QR, ECDH und Oberfläche bleiben.
 
 QR-Inhalt: `localvoice://pair?v=2&h=<hub>&p=<id>&s=<secret>&q=<q>&k=<d_pk>`
 
+`h` ist die Basisadresse des Hubs ohne Schrägstrich am Ende, URL-kodiert
+(`https%3A%2F%2Fportal.wolffappliedai.de`). Das iPhone nimmt nur `https` an (im Test
+zusätzlich `http://localhost`/`127.0.0.1`), wie der Desktop beim Anmelden.
+
 ### 4.3 Ablauf
 
 ```
@@ -269,5 +273,5 @@ Ort: **Einstellungen › Konto & Geräte**, unter der Sync-Karte.
 |---|---|---|
 | P1 | local-voice-ai | dieses Konzept, D15, Issue #289 |
 | P2 | wai-portal | Migration `voice_pairings`, Controller, Tests, Audit |
-| P3 | local-voice-ai | Rust `sync/pairing.rs` (X25519 `x25519-dalek`, BSD-3), QR (`qrcode`, MIT/Apache), Tauri-Befehle, Dialog + Geräteliste; Vorschau → Codex |
+| P3 | local-voice-ai | Rust `sync/pairing_proto.rs` (Kryptografie, Testvektoren) + `sync/pairing.rs` (Automat 5.2, Befehle `pair_start/poll/approve/cancel`, `sync_devices`, `sync_revoke_device`), X25519 `x25519-dalek` (BSD-3), QR `qrcode` (MIT/Apache), Dialog `PairPhoneDialog` + Geräteliste `PairPhoneCard`; Ende-zu-Ende-Test gegen echten Hub `tooling/pairing-e2e` |
 | P4 | local-voice-ai `apps/apple` | Scanner, Claim, SAS, Öffnen von `sealed` (CryptoKit Curve25519 + HKDF; XChaCha wie `SyncCrypto`), Keychain |

@@ -18,6 +18,15 @@ final class LibraryPlayback: NSObject, ObservableObject {
     @Published private(set) var totalMs: Double = 0
     @Published private(set) var trackIndex = 0
     @Published var rate: Float = 1.0 { didSet { applyRate() } }
+    /// Sprachfluss beim Vorlesen mit Phonon: 0 zügig, 0,5 Hörbuch, 1 ruhig (`SpeechFlow`).
+    @Published var flow: Double = SpeechFlow.stored().value {
+        didSet {
+            UserDefaults.standard.set(flow, forKey: SpeechFlow.storageKey)
+            guard mode == .readAloud, oldValue != flow else { return }
+            // Während Phonon noch lädt nichts tun: read() liest Tempo und Fluss erst danach.
+            if phononTask != nil, phononPaused { discardPausedSpeech() } else if playing, phononTask != nil { speakCurrent() }
+        }
+    }
     @Published private(set) var sleepEnds: Date?
     /// Schlaftimer „Ende des Kapitels“: Hörposition, an der angehalten wird.
     @Published private(set) var sleepAtMs: Double?
@@ -73,6 +82,10 @@ final class LibraryPlayback: NSObject, ObservableObject {
     private var seekSettled = true
     private var lastTextSave = Date.distantPast
     private var sessionObservers: [NSObjectProtocol] = []
+    /// Buch-Gespräch (G5): Solange das Blatt offen ist, hält die Pause-Taste (AirPods, Sperrbildschirm) die Antwort
+    /// an statt die Wiedergabe. Gibt `true` zurück, wenn der Befehl verbraucht wurde.
+    enum RemoteCommand { case play, pause, toggle }
+    var remoteIntercept: ((RemoteCommand) -> Bool)?
 
     init(library: PhoneLibrary? = nil) {
         self.library = library ?? .shared
@@ -158,6 +171,8 @@ final class LibraryPlayback: NSObject, ObservableObject {
         let index = min(max(0, position.index), urls.count - 1)
         trackIndex = index
         let item = AVPlayerItem(url: urls[index])
+        // Höchste Qualität beim Tempo (iOS-Standard ist .timeDomain, #314).
+        item.audioTimePitchAlgorithm = .spectral
         if player == nil { player = AVPlayer() }
         player?.replaceCurrentItem(with: item)
         seekSettled = position.offsetMs <= 0
@@ -230,7 +245,11 @@ final class LibraryPlayback: NSObject, ObservableObject {
             self.book = book; mode = .readAloud
             self.text = text
             paragraphs = LibraryText.paragraphs(text)
-            let offset = library.record(library.textKey(book))?.offset ?? 0
+            // Ohne gemerkte Stelle beim ersten Inhalt beginnen, nicht bei Titelei,
+            // Inhaltsverzeichnis oder Impressum (wie am Desktop, lva#295).
+            let readPreface = UserDefaults.standard.object(forKey: BookStart.readPrefaceKey) as? Bool ?? true
+            let offset = library.record(library.textKey(book))?.offset
+                ?? Double(BookStart.start(text, readPreface: readPreface).offset)
             let index = LibraryText.paragraphIndex(paragraphs, at: offset)
             move(to: Cursor(paragraph: index, sentence: 0))
             if paragraphs.indices.contains(index) {
@@ -326,12 +345,13 @@ final class LibraryPlayback: NSObject, ObservableObject {
         }
     }
 
-    private func nextSentence(_ generation: Int) -> String? {
+    private func nextSentence(_ generation: Int) -> PhononSentence? {
         guard generation == readGeneration, let c = nextToSynthesize else { return nil }
         nextToSynthesize = cursor(after: c)
         let ranges = sentenceRanges(c.paragraph)
         guard ranges.indices.contains(c.sentence) else { return nil }
-        return (paragraphs[c.paragraph].text as NSString).substring(with: ranges[c.sentence])
+        let text = (paragraphs[c.paragraph].text as NSString).substring(with: ranges[c.sentence])
+        return PhononSentence(text: text, paragraphEnd: c.sentence == ranges.count - 1)
     }
 
     private func audioStarted(_ generation: Int) {
@@ -396,6 +416,14 @@ final class LibraryPlayback: NSObject, ObservableObject {
         PhononEngine.shared.prepare(voice: voice, sentences: upcoming)
     }
 
+    /// Bibliothek geöffnet: Modell und Stimme schon laden, bevor ein Buch gewählt ist.
+    /// Das erste Laden (Core ML) dauert einige Sekunden; danach beginnt Vorlesen sofort.
+    func warmUp() {
+        // Mit offenem Buch läuft schon die Vorschau der nächsten Sätze; nicht abbrechen.
+        guard book == nil, !busy, phononTask == nil, let voice = phononVoice else { return }
+        PhononEngine.shared.prepare(voice: voice)
+    }
+
     /// Pausierte Äußerung verwerfen: Weiter beginnt am aktuellen Satz.
     private func discardPausedSpeech() {
         if synth.isPaused { currentUtterance = nil; synth.stopSpeaking(at: .immediate) }
@@ -430,6 +458,25 @@ final class LibraryPlayback: NSObject, ObservableObject {
         if busy { speakCurrent() } else { discardPausedSpeech(); prepareVoice() }
     }
 
+    /// Belegkarte des Buch-Gesprächs: an eine Stelle im Originaltext springen (UTF-16-Offset). Die Stelle zählt
+    /// nicht als gelesen. `autoplay`: dort vorlesen bzw. das Hörbuch abspielen („Ab hier vorlesen“).
+    func jump(toOffset offset: Int, autoplay: Bool) {
+        guard book != nil, let mode, !paragraphs.isEmpty else { return }
+        let target = max(0, offset)
+        if mode == .audiobook {
+            if let map = followMap { seek(toMs: map.ms(atChars: Double(target))) }
+            if autoplay { play() }
+            return
+        }
+        let index = LibraryText.paragraphIndex(paragraphs, at: Double(target))
+        let local = max(0, target - paragraphs[index].textStart)
+        let ranges = sentenceRanges(index)
+        let here = Cursor(paragraph: index, sentence: LibraryText.sentenceIndex(ranges, at: local))
+        move(to: here)
+        saveText(at: chars(of: here), jumped: true)
+        if autoplay { speakCurrent() } else if busy { speakCurrent() } else { discardPausedSpeech(); prepareVoice() }
+    }
+
     /// Satz vor oder zurück. Zuletzt gelesene Sätze liegen noch im Speicher und klingen sofort.
     func step(sentences delta: Int) {
         guard mode == .readAloud else { return }
@@ -458,7 +505,8 @@ final class LibraryPlayback: NSObject, ObservableObject {
         let previous = library.record(library.textKey(book))
         var rec = LibraryProgress.recordPosition(previous, to: Double(chars), length: Double(text.utf16.count),
                                                  unit: .chars, mode: .heard, now: PhoneLibrary.nowMs())
-        if jumped { rec.heard = previous?.heard ?? []; rec.finished = previous?.finished }
+        // Ein Sprung ist nicht gelesen: weder Bereiche noch Lesegrenze (Buch-Gespräch) rücken vor.
+        if jumped { rec.heard = previous?.heard ?? []; rec.frontier = previous?.frontier; rec.finished = previous?.finished }
         if let heard { rec = LibraryProgress.markHeard(rec, from: Double(heard.lowerBound), to: Double(heard.upperBound)) }
         library.put(library.textKey(book), rec)
         lastTextSave = Date()
@@ -522,7 +570,10 @@ final class LibraryPlayback: NSObject, ObservableObject {
     private func applyRate() {
         if mode == .audiobook, playing { player?.rate = rate }
         if mode == .readAloud {
-            if phononTask != nil { PhononEngine.shared.setRate(rate) } else if playing { speakCurrent() }
+            // Phonon: Das Tempo steckt im erzeugten Ton, also am aktuellen Satz neu ansetzen
+            // (aus dem Satzspeicher sofort). Pausiert gilt es beim Weiterlesen.
+            PhononEngine.shared.setRate(rate)
+            if phononTask != nil, phononPaused { discardPausedSpeech() } else if playing { speakCurrent() }
         }
     }
 
@@ -570,9 +621,12 @@ final class LibraryPlayback: NSObject, ObservableObject {
         guard !remoteReady else { return }
         remoteReady = true
         let c = MPRemoteCommandCenter.shared()
-        c.playCommand.addTarget { [weak self] _ in MainActor.assumeIsolated { self?.play() }; return .success }
-        c.pauseCommand.addTarget { [weak self] _ in MainActor.assumeIsolated { self?.pause() }; return .success }
-        c.togglePlayPauseCommand.addTarget { [weak self] _ in MainActor.assumeIsolated { self?.toggle() }; return .success }
+        c.playCommand.addTarget { [weak self] _ in
+            MainActor.assumeIsolated { if self?.remoteIntercept?(.play) != true { self?.play() } }; return .success }
+        c.pauseCommand.addTarget { [weak self] _ in
+            MainActor.assumeIsolated { if self?.remoteIntercept?(.pause) != true { self?.pause() } }; return .success }
+        c.togglePlayPauseCommand.addTarget { [weak self] _ in
+            MainActor.assumeIsolated { if self?.remoteIntercept?(.toggle) != true { self?.toggle() } }; return .success }
         c.skipBackwardCommand.preferredIntervals = [15]
         c.skipForwardCommand.preferredIntervals = [15]
         c.skipBackwardCommand.addTarget { [weak self] _ in

@@ -1045,6 +1045,74 @@ async syncHubStatus() : Promise<Result<HubStatus, string>> {
 }
 },
 /**
+ * „Handy verbinden“: Kopplung am Hub starten, Schlüsselpaar und q erzeugen, QR liefern.
+ * Eine laufende Kopplung wird ersetzt (der Hub verwirft sie beim neuen Start).
+ */
+async pairStart() : Promise<Result<PairView, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("pair_start") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Zustand abfragen und den Automaten einen Schritt weiterführen (Takt ≈ 1,5 s).
+ */
+async pairPoll() : Promise<Result<PairView, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("pair_poll") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * „Ja, verbinden“: Schlüssel K für das iPhone versiegeln und freigeben.
+ */
+async pairApprove() : Promise<Result<PairView, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("pair_approve") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * „Nein, abbrechen“ oder Dialog schließen. Nach der Freigabe wird am Hub geklärt,
+ * ob das iPhone schon abgeholt hat (dann Gerät zum Abmelden anbieten).
+ */
+async pairCancel() : Promise<Result<PairView, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("pair_cancel") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Liste „Verbundene Geräte“.
+ */
+async syncDevices() : Promise<Result<PairedDevice[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sync_devices") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Gerät abmelden; der Hub meldet alle über dieses Gerät gekoppelten Geräte mit ab.
+ */
+async syncRevokeDevice(id: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sync_revoke_device", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Engine des Vorlesens: "fish" (Grafikkarte), "piper" (CPU) oder
  * "provider:<id>" (Anbieter der Registry, Goal tts-provider).
  * 
@@ -10642,6 +10710,60 @@ modified_ms?: number;
  */
 preview?: string }
 export type PaginatedHistory = { entries: HistoryEntry[]; has_more: boolean }
+export type PairStage = 
+/**
+ * QR anzeigen; mit `device_name` ist das iPhone erkannt und die Verbindung entsteht.
+ */
+"qr" | 
+/**
+ * Vergleichscode zeigen, Ja/Nein abfragen.
+ */
+"sas" | 
+/**
+ * Freigegeben, warte auf die Bestätigung des iPhones.
+ */
+"wait_confirm" | "connected" | 
+/**
+ * Freigegeben, aber keine gültige Bestätigung: Gerät abmelden anbieten.
+ */
+"unconfirmed" | "expired" | "aborted" | 
+/**
+ * Hub vorübergehend nicht erreichbar, bevor das iPhone gescannt hat.
+ */
+"network"
+export type PairView = { stage: PairStage; 
+/**
+ * SVG des QR-Codes, schwarz auf weiß (nur Stufe `qr`).
+ */
+qr_svg: string | null; 
+/**
+ * Restzeit bis zum Ablauf des Codes in Sekunden.
+ */
+remaining_s: number; 
+/**
+ * Vom iPhone angegebener Name (nicht geprüft, nur angezeigt).
+ */
+device_name: string | null; 
+/**
+ * Sechsstelliger Vergleichscode.
+ */
+sas: string | null; 
+/**
+ * Begründung für Abbruch, Netzfehler oder fehlende Bestätigung.
+ */
+reason: string | null; 
+/**
+ * Bei `unconfirmed`: das neu verbundene Gerät, das abgemeldet werden sollte.
+ */
+suspect: PairedDevice | null }
+/**
+ * Ein Gerät des Kontos (`GET /api/v1/voice/devices`).
+ */
+export type PairedDevice = { id: number; name: string; created_at?: string | null; last_used_at?: string | null; current?: boolean; via_pairing?: boolean; paired_by?: number | null; 
+/**
+ * Geräte, die beim Abmelden dieses Geräts mit abgemeldet werden.
+ */
+revokes_with?: number[] }
 /**
  * Wodurch die Empfehlung begrenzt ist (fuer die Begruendung in der Oberflaeche).
  */

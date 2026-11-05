@@ -33,7 +33,6 @@ export const RemoveDialog: React.FC<{
       live = false;
     };
     // books ändert sich nur mit key
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, key]);
   const count = books.length;
   const audio = books.filter((b) => b.audio).length;
