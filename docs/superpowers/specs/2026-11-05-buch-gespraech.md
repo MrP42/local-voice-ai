@@ -1,6 +1,6 @@
 # Buch-Gespräch – per Sprache und Chat mit der KI über ein Buch sprechen
 
-Stand 05.11.2026, Runde 3 nach Codex-Must-fixes · Epic lva#307 · Pakete G1–G6 (#308–#313) · Branch `feat/307-buch-gespraech`
+Stand 05.11.2026, Runde 4: Plan und Vertrag von Codex bedingt angenommen (89af8a50) · Epic lva#307 · Pakete G1–G6 (#308–#313) · Branch `feat/307-buch-gespraech`
 Grundlagen: Buch-KI (lva#181, `book_ai/`), Besprechungs-Chat (`managers/meetings/chat/`), Sprachgespräch (`components/voice-call/`, `vendor/wai-voice/`), iOS-Reader (`apps/apple/iPhone/Library/`).
 
 ## 1. Ziel
@@ -67,8 +67,8 @@ Patrick liest oder hört ein Buch und will jederzeit nachfragen können, **vorra
 - Auswahl: die besten k Stücke + Erstnennung bei `locate`, nach Buchreihenfolge sortiert, nummeriert `Q1…Qk`.
 - Budget **hart**: `Tokens(Prompt komplett, mit Chat-Vorlage) + max_tokens ≤ Kontextgrenze`, geprüft **vor** dem Aufruf:
   - **Exakt mit dem Tokenizer des Modells**, wo verfügbar: llama.cpp (iOS `LlamaBridge` `llama_tokenize`; Desktop llama.cpp-Server `/tokenize`), Foundation Models `tokenCount(for:)` wenn das SDK es anbietet (Flag `FOUNDATION_MODELS_TOKEN_API`).
-  - **Sonst garantierte Obergrenze**: Anzahl UTF-8-Bytes des kompletten Prompts plus 64 (Vorlagen-/Sondertoken). Byte-BPE- und SentencePiece-Tokenizer mit Byte-Rückfall erzeugen nie mehr Token als Bytes. Bei Ollama setzt der Aufruf zusätzlich `num_ctx` = geprüfte Summe (≤ Modellgrenze), damit nichts still abgeschnitten wird.
-  - Cloud: Kontextgrenze aus dem Modellkatalog; Obergrenze wie oben.
+  - **Byte-Obergrenze nur für nachgewiesen unterstützte Konfigurationen**: Liste `budget_profiles` (im Code, mit Test) aus Modellfamilie, Tokenizer-Art (Byte-BPE oder SentencePiece mit Byte-Rückfall), Chat-Vorlage und deren **vollständig gemessenen Vorlagenkosten** (Rahmen-, Rollen- und Sondertoken, je Nachricht und fest). Obergrenze = UTF-8-Bytes aller Nachrichtentexte + gemessene Vorlagenkosten. Ein Profil kommt nur in die Liste, wenn ein Test mit dem echten Tokenizer an den Fixtures zeigt, dass die Obergrenze nie unterschritten wird. Bei Ollama setzt der Aufruf zusätzlich `num_ctx` = geprüfte Summe (≤ Modellgrenze).
+  - **Alle anderen Konfigurationen** (unbekanntes Modell, unbekannte Vorlage, Cloud-Modell ohne Profil, Foundation Models ohne `tokenCount`): `found_only` mit Grund `budget`, kein Aufruf. Foundation Models ist deshalb erst mit `tokenCount` oder einem gemessenen Profil nutzbar; bis dahin liefert iOS Fundstellen oder nutzt Gemma 4 E2B über llama.cpp (exakter Tokenizer).
   - Überlauf: erst rangniedrigste Auszüge streichen, dann Verlauf, dann `found_only` mit Grund `budget`. Meldet das Modell trotzdem Kontextüberlauf (`exceededContextWindowSize`, HTTP 400 context length) → `found_only`, Grund `budget`.
   - Die Zeichenzahlen unten sind nur Startwerte für die Auswahl, keine Garantie:
   - Desktop: `context_budget_tokens` wie `meetings/chat`.
@@ -110,10 +110,11 @@ Datei `tooling/fixtures/buch-gespraech/vertrag.schema.json` (JSON Schema), Rust-
   2. Die Engine (G3/G5) **verwirft** alle noch eintreffenden Ereignisse dieser `request_id`, leert die TTS-Warteschlange, stoppt die laufende Ausgabe und verwirft vorsynthetisierte Sätze.
   3. Bereits angezeigte Sätze bleiben mit Hinweis „abgebrochen, Bereich gewechselt“ sichtbar, gehen aber **nicht** in den gespeicherten Verlauf und nie in einen Prompt.
   4. Die Frage wird nicht automatisch neu gestellt; die Oberfläche bietet „Im neuen Bereich fragen“ an.
-- `BookTalkEvent` (Strom, in dieser Reihenfolge):
-  - `sentence { request_id, index, text, speech, citations[], general }` – je **geprüftem** Satz, sobald Satz und Beleg vollständig sind. G3/G5 geben `speech` sofort an die Stimme. Das erste `sentence` kann eine Preamble ersetzen; Füller nach 600 ms bleibt Aufgabe der Engine.
-  - `done { request_id, answer: BookTalkAnswer }`
-  - `failed { request_id, code }`; Codes: `no_model`, `budget`, `offline`, `consent_required`, `cancelled`, `timeout`, `llm_failed`, `no_frontier`.
+- `BookTalkEvent` (Strom, in dieser Reihenfolge; **verbindliche Form wie im Schema**, auf beiden Plattformen identisch serialisiert):
+  - `{ "kind": "sentence", "request_id", "sentence": { "index", "text", "speech", "citations": [], "general" } }` – je **geprüftem** Satz, sobald Satz und Beleg vollständig sind. G3/G5 geben `sentence.speech` sofort an die Stimme. Das erste `sentence` kann eine Preamble ersetzen; Füller nach 600 ms bleibt Aufgabe der Engine.
+  - `{ "kind": "done", "request_id", "answer": BookTalkAnswer }`
+  - `{ "kind": "failed", "request_id", "code" }`; Codes: `no_model`, `budget`, `offline`, `consent_required`, `cancelled`, `timeout`, `llm_failed`, `no_frontier`.
+  - Ereignis-Fixtures `beispiele/ereignisse/*.json` (erwartete Ereignisfolge je Fake-Antwort aus `fragen.json`) werden **auf beiden Plattformen** gegen dieselben Dateien geprüft: Rust serialisiert mit serde (`tag = "kind"`, Felder snake_case), Swift mit eigenem `Codable` in derselben snake_case-Form (keine camelCase-Abweichung auf dem Draht). G3 (TypeScript) und G5 (Swift) lesen nur diese Form.
 - `BookTalkAnswer { intent, sentences[], text, speech, citations[], found_only, reason?, dropped, scope, frontier }`
 - `Citation { q, page?, chapter_index, chapter_title, start, end, quote }`
 - `Command { kind: "jump" | "read_citation" | "confirm" | "resume" | "scope_book" | "scope_position" | "stop" | "end" }` (Schema und Spec gleich: Objekt mit `kind`).
@@ -141,6 +142,13 @@ Datei `tooling/fixtures/buch-gespraech/vertrag.schema.json` (JSON Schema), Rust-
   | Nachfragen | `expect_pages` getroffen bei Fragen mit `history` | ≥ 80 % |
 
   Ergebnis als JSON + Bericht im PR. Fällt ein Wert, bleibt `book_talk_enabled` aus.
+
+- **Gegen Scheinerfolg** (Codex Runde 3):
+  - Nenner: alle Läufe (Fragen × 3). Kein Fall fällt aus dem Nenner, auch `found_only`, Fehler, Abbruch und leere Antworten nicht.
+  - Mindestfallzahlen: ≥ 30 Fragen (≥ 90 Läufe) je Modell, davon ≥ 8 Spoiler-, ≥ 4 Injection-, ≥ 6 Nachfrage- und ≥ 10 Gegenteil-Proben. `fragen.json` wird dafür vor dem Tor auf diese Zahlen erweitert.
+  - **Mindestabdeckung**: Bei Fragen mit nicht leerem `expect_pages` müssen ≥ 80 % der Läufe eine **generierte** Buchantwort liefern (nicht `found_only`, mindestens ein behaltener Buchsatz mit Beleg). `found_only`, null behaltene Buchsätze oder `dropped` = alle Sätze zählen bei „Belegseite richtig“ und „Nachfragen“ als **nicht bestanden**. Belegtreue wird nur über behaltene Sätze gerechnet und gilt nur, wenn die Abdeckung erreicht ist.
+  - Fragen ohne erwartete Antwort (`expect_pages = []`) bestehen nur mit Nicht-im-Buch-Vorlage oder `found_only`/`no_hits`, nie mit einem behaltenen Buchsatz.
+  - **Bindung**: Die Freigabe gilt für das Tupel (Anbieter, Modell-ID mit Version bzw. GGUF-SHA-256, Prompt-Version `book_talk_prompt@n`, Prüfversion `book_talk_check@n`, Budgetprofil). Gespeichert als `book_talk_eval_pass.json` (mit Bericht-Hash); `book_talk_enabled` wirkt nur, wenn das aktuell aufgelöste Tupel einen Eintrag hat. Sonst Fundstellen-Modus. Gilt auch für Cloud-Modelle; ändert ein Anbieter das Modell hinter einer ID ohne Version, gilt es als ungeprüft.
 - Latenz: **Messstrecke** = Ende der Nutzeräußerung (VAD-Stille-Ende) bis erster Audioframe des ersten **inhaltlichen** Satzes (Füller zählen nicht). Getrennt **warm** (Modell geladen, zweite Frage) und **kalt** (erste Frage nach App-Start). Geräte: Patricks PC (GPU), Mac (Intel), iPhone. Ziele warm p95: Desktop GPU < 1,5 s, iPhone < 2,5 s; kalt wird gemessen und berichtet, ohne Ziel. Je Gerät 20 Fragen aus dem Eval-Satz.
 
 ## 4. Desktop (G1–G3)
@@ -215,6 +223,13 @@ Datei `tooling/fixtures/buch-gespraech/vertrag.schema.json` (JSON Schema), Rust-
 - `buch.txt`: synthetisches Sachbuch „Zwei Lehrmeister“ (frei erfunden, kein urheberrechtlich geschützter Text) mit Seitenmarken und Kapiteln; die Erklärung der zwei Lehrmeister steht in der Einleitung (S. 2), spätere Kapitel greifen sie auf.
 - `fragen.json`: Fragen mit Absicht, Leseposition, erwarteten Belegseiten und Schlüsselwörtern; dazu Fake-Modellantworten für die Kern-Tests.
 - `befehle.json`: Sprachbefehle de/en mit erwartetem Befehl.
+
+## 7a. Bekannte Grenzen (bewusst, Codex Runde 3)
+
+- Die lexikalische Belegprüfung erkennt **vertauschte Handelnde** („A schlug B“ vs. „B schlug A“), **Kausalität** („weil“ vs. „obwohl“) und den **Bezug einer Negation** nicht zuverlässig; sie fängt erfundene Belege, fehlende Namen/Zahlen und einfache Verneinungen ab.
+- Der Spätwort-Filter verhindert keine Spoiler, die nur aus **bereits bekannten Wörtern** bestehen („Der Meister stirbt“, wenn beide Wörter früher vorkommen). Die erste Sperre bleibt deshalb die Auswahl: Hinter der Grenze kommt nichts in den Prompt; ein Spoiler müsste aus Modellwissen über das Buch stammen.
+- Die Evals messen Stichproben und **beweisen keine vollständige Spoilerfreiheit**, gerade bei bekannten Büchern, die das Modell aus dem Training kennt. Die Oberfläche sagt das im Bereichsmenü kurz („Schützt vor Textstellen nach deiner Position; das Modell kann bekannte Bücher kennen“).
+- Feldübergreifende Regeln (z. B. `found_only` ⇒ keine `general`-Sätze, `scope = book` ⇒ keine Grenzfilter, Zitat ⊂ `[start,end)`, `reason` nur bei `found_only`) kann das JSON-Schema nicht ausdrücken; sie werden **zur Laufzeit** im Kern geprüft (Debug: Assertion, Release: Antwort verwerfen → `found_only`, Code `llm_failed`) und in den Tests abgedeckt.
 
 ## 8. Entscheide Codex (05.11.)
 
