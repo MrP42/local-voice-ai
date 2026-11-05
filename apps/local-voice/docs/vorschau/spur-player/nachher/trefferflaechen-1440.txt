@@ -1,0 +1,10 @@
+10 Sekunden zurück: 24x24 @138
+Wiedergabe: 28x28 @136
+30 Sekunden vor: 24x24 @138
+Wiedergabeposition: 137x24 @138
+Playback speed: 32x24 @138
+10 Sekunden zurück: 24x24 @181
+Wiedergabe: 28x28 @179
+30 Sekunden vor: 24x24 @181
+Wiedergabeposition: 137x24 @181
+Playback speed: 32x24 @181
