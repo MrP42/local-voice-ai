@@ -2478,6 +2478,8 @@ fn specta_builder() -> Builder<tauri::Wry> {
             book_ai::talk::book_talk_history,
             book_ai::talk::book_talk_clear,
             book_ai::talk::book_talk_command,
+            book_ai::talk::change_book_talk_enabled_setting,
+            book_ai::talk::change_book_talk_cloud_consent_setting,
             library_export::library_export_text,
             library_export::library_ffmpeg_available,
             library_export::library_export_audio,

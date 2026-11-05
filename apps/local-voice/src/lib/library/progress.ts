@@ -1,4 +1,5 @@
 import { commands } from "@/bindings";
+import { frontierOf, requestFrontier, steadyFrontier } from "./frontier";
 
 /**
  * Dauerhafter Fortschritt (lva#152, Patrick 01.11.: „der Fortschritt muss
@@ -49,6 +50,12 @@ export interface ProgressRecord {
   finished?: boolean;
   /** `chars` (Vorgabe) oder `ms`. */
   unit?: "chars" | "ms";
+  /**
+   * Lesegrenze für das Buch-Gespräch (lva#309): weitester gelesener oder
+   * gehörter Stand. Additiv und nur steigend; fehlt sie, gilt das Ende der
+   * gehörten und gelesenen Bereiche (`frontierOf`).
+   */
+  frontier?: number;
 }
 
 const storage = (): Storage | null => {
@@ -326,6 +333,8 @@ function mergeRecordText(a: string, b: string): string | null {
       read: mergeRanges([...(older.read ?? []), ...(newer.read ?? [])]),
       length: Math.max(newer.length ?? 0, older.length ?? 0),
     };
+    const frontier = Math.max(frontierOf(older), frontierOf(newer));
+    if (frontier > 0) merged.frontier = frontier;
     if (older.finished || newer.finished) merged.finished = true;
     const text = JSON.stringify(merged);
     // Unverändert gegenüber einer Seite: deren Text behalten (kein Schreiben).
@@ -361,7 +370,10 @@ export function loadProgress(key: string): ProgressRecord | null {
 }
 
 export function saveProgress(key: string, record: ProgressRecord): void {
-  setLocal(recordKey(key), JSON.stringify(record));
+  // Die Lesegrenze steigt nur: gegen den gespeicherten Stand und die eigenen Bereiche.
+  const boundary = steadyFrontier(record, loadProgress(key));
+  const stored = boundary > 0 ? { ...record, frontier: boundary } : record;
+  setLocal(recordKey(key), JSON.stringify(stored));
   window.dispatchEvent(new CustomEvent(CHANGED_EVENT, { detail: { key } }));
 }
 
@@ -483,3 +495,28 @@ export const textProgressKey = (pageId: string, tab = "original") =>
 export const audioProgressKey = (bookId: string) => `audio:${bookId}`;
 export const docProgressKey = (bookId: string, docId: string) =>
   `doc:${bookId}:${docId}`;
+
+/**
+ * Der Leser sieht den Text bis `to`: die Lesegrenze steigt dorthin (nur nach
+ * oben). Berührt weder Stelle noch Bereiche noch den Fertig-Zustand.
+ */
+export function raiseFrontier(key: string, to: number, length: number): void {
+  const prev = loadProgress(key);
+  if (!Number.isFinite(to) || to <= frontierOf(prev)) return;
+  saveProgress(key, {
+    offset: prev?.offset ?? 0,
+    anchor: prev?.anchor,
+    length: length > 0 ? length : (prev?.length ?? 0),
+    heard: prev?.heard ?? [],
+    read: prev?.read ?? [],
+    updated: prev?.updated ?? Date.now(),
+    finished: prev?.finished,
+    unit: prev?.unit ?? "chars",
+    frontier: Math.round(to),
+  });
+}
+
+/** Lesegrenze eines Buchtextes für die Anfrage; `undefined`, solange sie unbekannt ist. */
+export function bookFrontier(pageId: string): number | undefined {
+  return requestFrontier(loadProgress(textProgressKey(pageId)));
+}

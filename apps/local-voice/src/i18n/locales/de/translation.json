@@ -741,6 +741,129 @@
       "pauseItem": "{{item}} anhalten",
       "heard": "Gehört."
     },
+    "bookTalk": {
+      "tab": "Gespräch",
+      "region": "Gespräch mit dem Buch",
+      "scope": {
+        "until": "Bis S. {{page}} geschützt",
+        "untilHere": "Bis hier geschützt",
+        "book": "Ganzes Buch",
+        "ariaUntil": "Bereich: bis Seite {{page}} geschützt. Ändern",
+        "ariaUntilHere": "Bereich: bis zu deiner Leseposition geschützt. Ändern",
+        "ariaBook": "Bereich: ganzes Buch. Ändern",
+        "changedBook": "Ganzes Buch einbezogen",
+        "changedUntil": "Bereich: nur bis zu deiner Leseposition",
+        "menuLabel": "Bereich der Antworten",
+        "untilOption": "Nur bis zu deiner Position",
+        "untilHint": "Keine Textstellen nach dem, was du gelesen oder gehört hast.",
+        "bookOption": "Ganzes Buch einbeziehen …",
+        "bookHint": "Antworten dürfen auch spätere Kapitel nennen.",
+        "note": "Schützt vor Textstellen nach deiner Position; das Modell kann bekannte Bücher kennen.",
+        "confirmTitle": "Spätere Kapitel einbeziehen?",
+        "confirmBody": "Das kann die Handlung vorwegnehmen. Der Bereich gilt, bis du die Spalte oder das Gespräch schließt.",
+        "confirmOk": "Ganzes Buch einbeziehen",
+        "confirmCancel": "Abbrechen",
+        "confirmClose": "Schließen"
+      },
+      "menu": {
+        "more": "Weitere Aktionen",
+        "clear": "Verlauf leeren"
+      },
+      "turn": {
+        "spoken": "gesprochen",
+        "typed": "getippt",
+        "wholeBook": "ganzes Buch",
+        "you": "Du",
+        "answer": "Antwort",
+        "thinking": "Sucht im Buch …",
+        "cancelledScope": "abgebrochen, Bereich gewechselt",
+        "cancelled": "abgebrochen",
+        "askAgain": "Im neuen Bereich fragen",
+        "failed": "Die Antwort ist fehlgeschlagen.",
+        "general": "Allgemeinwissen, nicht aus dem Buch"
+      },
+      "found": {
+        "title": "Fundstellen",
+        "hint": {
+          "no_model": "Ohne freigegebenes Modell zeige ich nur Fundstellen.",
+          "no_hits": "Dazu finde ich im gewählten Bereich nichts.",
+          "no_frontier": "Deine Leseposition ist noch unbekannt.",
+          "budget": "Für ein Modell war die Anfrage zu groß; hier die Fundstellen.",
+          "offline": "Das Cloud-Modell ist nicht erreichbar; hier die Fundstellen.",
+          "timeout": "Das Modell hat zu lange gebraucht; hier die Fundstellen.",
+          "llm_failed": "Das Modell hat nicht geantwortet; hier die Fundstellen.",
+          "consent_required": "Für das Cloud-Modell fehlt die Freigabe; hier die Fundstellen.",
+          "other": "Ohne Modellantwort; hier die Fundstellen."
+        },
+        "consentAction": "Freigabe prüfen …"
+      },
+      "chip": {
+        "label": "S. {{page}}",
+        "labelNoPage": "Beleg",
+        "aria": "Beleg Seite {{page}}, Zitat öffnen",
+        "ariaNoPage": "Beleg, Zitat öffnen"
+      },
+      "card": {
+        "region": "Beleg",
+        "chapterPage": "{{chapter}} · Seite {{page}}",
+        "chapter": "{{chapter}}",
+        "jump": "Hinspringen",
+        "readFrom": "Ab hier vorlesen",
+        "close": "Beleg schließen"
+      },
+      "suggest": {
+        "label": "Vorschläge",
+        "recap": "Was ist bisher passiert?",
+        "who": "Wer ist wer?",
+        "last": "Erklär mir die letzte Seite"
+      },
+      "empty": "Frag zum Buch, per Sprache oder Text. Antworten nennen ihre Fundstellen.",
+      "disabled": "Fundstellen-Modus: Antworten mit KI sind noch nicht freigeschaltet. Du siehst nur Fundstellen aus dem Buch.",
+      "composer": {
+        "mic": "Frage sprechen",
+        "micStop": "Zuhören beenden",
+        "field": "Frage zum Buch",
+        "placeholder": "Frage zum Buch eingeben …",
+        "placeholderVoice": "Oder tippen …",
+        "send": "Senden",
+        "stop": "Antwort abbrechen",
+        "keys": "Leertaste halten = sprechen · G = Gespräch an/aus · Esc beendet"
+      },
+      "voice": {
+        "listening": "Hört zu – Stille beendet die Frage · Esc beendet das Gespräch",
+        "hearing": "Hört zu …",
+        "thinking": "Sucht im Buch",
+        "speaking": "Antwort wird vorgelesen",
+        "starting": "Mikrofon wird vorbereitet …",
+        "stopSpeaking": "Antwort anhalten",
+        "paused": "Vorlesen pausiert",
+        "pausedAt": "Vorlesen pausiert bei Seite {{page}}",
+        "resume": "Weiterlesen",
+        "answerDone_one": "Antwort fertig, {{count}} Beleg",
+        "answerDone_other": "Antwort fertig, {{count}} Belege",
+        "answerDoneNone": "Antwort fertig",
+        "say": {
+          "noSpot": "Es gibt noch keine Stelle.",
+          "scopeBook": "Ganzes Buch einbezogen.",
+          "scopePosition": "Nur bis zu deiner Position."
+        }
+      },
+      "consent": {
+        "title": "Buchauszüge an {{provider}} senden?",
+        "provider": "Anbieter",
+        "model": "Modell",
+        "region": "Region",
+        "regionEu": "EU",
+        "regionOther": "außerhalb der EU",
+        "regionUnknown": "unbekannt",
+        "what": "Gesendet werden deine Frage als Text, bis zu etwa 7.000 Zeichen Buchauszüge je Frage und die letzten zwei Wechsel. Nie Audio, nie das ganze Buch.",
+        "cost": "Geschätzte Kosten je Frage: ca. {{cost}} USD",
+        "costUnknown": "Kosten je Frage: Preis für dieses Modell nicht hinterlegt",
+        "revoke": "Die Freigabe lässt sich unter Einstellungen → Modelle je Funktion widerrufen.",
+        "allow": "Freigeben",
+        "deny": "Nicht senden"
+      }
+    },
     "kiDocs": {
       "tokens": {
         "estimating": "Token-Bedarf wird geschätzt …",
@@ -768,11 +891,10 @@
         "label": "Buchbereiche",
         "contents": "Inhalt",
         "notes": "Notizen",
-        "chat": "Chat",
+        "chat": "Gespräch",
         "close": "Schließen",
         "noContents": "Dieser Text hat keine Überschriften.",
-        "notesSoon": "Hier sammelst du bald markierte Begriffe und eigene Notizen zum Buch; daraus entsteht auf Wunsch eine Lernunterlage.",
-        "chatSoon": "Hier fragst du bald zum Buch und zu deinen Dokumenten; Antworten nennen ihre Fundstellen."
+        "notesSoon": "Hier sammelst du bald markierte Begriffe und eigene Notizen zum Buch; daraus entsteht auf Wunsch eine Lernunterlage."
       },
       "new": "Neu erstellen",
       "newHint": "KI-Dokument aus dem Buch erstellen: Zusammenfassung, Lernzettel, Analyse und mehr nach Vorlage.",

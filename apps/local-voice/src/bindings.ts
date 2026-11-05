@@ -5518,8 +5518,8 @@ async bookAiDocumentExport(pageId: string, id: string, path: string) : Promise<R
  * Frage an ein Buch. Geprüfte Sätze kommen vorab als `book-talk-event`, das Ergebnis
  * ist die endgültige Antwort (auch als `done`). Bereich und Grenze gelten für genau
  * diese Anfrage. Ohne Modell, ohne Freigabe oder ohne Budgetnachweis kommt eine Antwort
- * `found_only` mit Grund; `Err` nur bei ungültiger Anfrage, laufender Frage,
- * ausgeschaltetem Schalter und Abbruch.
+ * `found_only` mit Grund; `Err` nur bei ungültiger Anfrage, laufender Frage und Abbruch; bei
+ * ausgeschaltetem Schalter gilt der Fundstellen-Modus (`no_model`).
  */
 async bookTalkAsk(req: BookTalkRequest) : Promise<Result<BookTalkAnswer, string>> {
     try {
@@ -5565,6 +5565,28 @@ async bookTalkClear(bookId: string) : Promise<Result<null, string>> {
 async bookTalkCommand(bookId: string, text: string) : Promise<Result<BookTalkCommand | null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("book_talk_command", { bookId, text }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Einstellung `book_talk_enabled` (Schalter für das Gespräch mit dem Buch).
+ */
+async changeBookTalkEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_book_talk_enabled_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Einstellung `book_talk_cloud_consent` (Anbieter-IDs mit Freigabe).
+ */
+async changeBookTalkCloudConsentSetting(providers: string[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_book_talk_cloud_consent_setting", { providers }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };

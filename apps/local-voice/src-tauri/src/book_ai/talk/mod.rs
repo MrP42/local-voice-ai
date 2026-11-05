@@ -90,7 +90,6 @@ const CODE_MEMORY_LOW: &str = "memory_low";
 pub const ERR_BUSY: &str = "chat_busy";
 pub const ERR_INVALID_REQUEST: &str = "invalid_request";
 pub const ERR_BOOK_NOT_FOUND: &str = "book_not_found";
-pub const ERR_DISABLED: &str = "book_talk_disabled";
 
 pub const MAX_QUESTION_CHARS: usize = 2_000;
 pub const DEFAULT_MAX_ANSWER_TOKENS: u32 = 600;
@@ -738,8 +737,9 @@ fn now_rfc3339() -> String {
 /// Grenze gelten für genau diese Anfrage. Ohne Eval-Freigabe für das
 /// aufgelöste Modell, ohne Modell, ohne Cloud-Freigabe, offline oder ohne
 /// Budgetnachweis kommt eine Antwort `found_only` mit Grund. `Err` nur bei
-/// ungültiger Anfrage, laufender Frage, ausgeschaltetem Schalter und Abbruch
-/// (`cancelled`, dann `failed`-Ereignis, nichts wird gespeichert).
+/// ungültiger Anfrage, laufender Frage und Abbruch (`cancelled`, dann
+/// `failed`-Ereignis, nichts wird gespeichert). Bei ausgeschaltetem Schalter
+/// `book_talk_enabled` gilt der Fundstellen-Modus (`found_only`, `no_model`).
 #[tauri::command]
 #[specta::specta]
 pub async fn book_talk_ask(
@@ -759,9 +759,9 @@ pub async fn book_talk_ask(
         code.to_string()
     };
     let settings = crate::settings::get_settings(&app);
-    if !settings.book_talk_enabled {
-        return Err(fail(ERR_DISABLED));
-    }
+    // Schalter aus: Fundstellen-Modus statt Fehler (lva#309); die Oberfläche
+    // zeigt die Fundstellen mit einem Hinweis.
+    let enabled = settings.book_talk_enabled;
     let _guard = RunGuard::acquire().map_err(|e| fail(e.code))?;
     let dir = page_path(&app, &req.book_id).map_err(|_| fail(ERR_BOOK_NOT_FOUND))?;
     let text = crate::book_ai::page_text(&dir).map_err(|_| fail(ERR_BOOK_NOT_FOUND))?;
@@ -809,6 +809,7 @@ pub async fn book_talk_ask(
         )
     });
     let missing: Option<&'static str> = match &resolved {
+        _ if !enabled => Some(CODE_NO_MODEL),
         Err(_) => Some(CODE_NO_MODEL),
         Ok((provider, _, _))
             if !local && !settings.book_talk_cloud_consent.contains(&provider.id) =>
@@ -890,6 +891,29 @@ pub fn book_talk_history(app: AppHandle, book_id: String) -> Result<Vec<StoredTu
 pub fn book_talk_clear(app: AppHandle, book_id: String) -> Result<(), String> {
     let dir = page_path(&app, &book_id).map_err(|_| ERR_BOOK_NOT_FOUND.to_string())?;
     store::clear(&dir)
+}
+
+/// Einstellung `book_talk_enabled` (Schalter für das Gespräch mit dem Buch).
+#[tauri::command]
+#[specta::specta]
+pub fn change_book_talk_enabled_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = crate::settings::get_settings(&app);
+    settings.book_talk_enabled = enabled;
+    crate::settings::write_settings(&app, settings);
+    Ok(())
+}
+
+/// Einstellung `book_talk_cloud_consent` (Anbieter-IDs mit Freigabe).
+#[tauri::command]
+#[specta::specta]
+pub fn change_book_talk_cloud_consent_setting(
+    app: AppHandle,
+    providers: Vec<String>,
+) -> Result<(), String> {
+    let mut settings = crate::settings::get_settings(&app);
+    settings.book_talk_cloud_consent = providers;
+    crate::settings::write_settings(&app, settings);
+    Ok(())
 }
 
 /// Sprachbefehl erkennen (ohne Modell). „Ja“ ist nur dann ein Befehl

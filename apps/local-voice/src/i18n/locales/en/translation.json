@@ -741,6 +741,129 @@
       "pauseItem": "Pause {{item}}",
       "heard": "Heard."
     },
+    "bookTalk": {
+      "tab": "Conversation",
+      "region": "Conversation about the book",
+      "scope": {
+        "until": "Protected up to p. {{page}}",
+        "untilHere": "Protected up to here",
+        "book": "Whole book",
+        "ariaUntil": "Scope: protected up to page {{page}}. Change",
+        "ariaUntilHere": "Scope: protected up to your reading position. Change",
+        "ariaBook": "Scope: whole book. Change",
+        "changedBook": "Whole book included",
+        "changedUntil": "Scope: only up to your reading position",
+        "menuLabel": "Scope of answers",
+        "untilOption": "Only up to your position",
+        "untilHint": "No passages beyond what you have read or heard.",
+        "bookOption": "Include whole book …",
+        "bookHint": "Answers may also mention later chapters.",
+        "note": "Protects against passages after your position; the model may know famous books.",
+        "confirmTitle": "Include later chapters?",
+        "confirmBody": "This may give away the plot. The scope applies until you close the column or the conversation.",
+        "confirmOk": "Include whole book",
+        "confirmCancel": "Cancel",
+        "confirmClose": "Close"
+      },
+      "menu": {
+        "more": "More actions",
+        "clear": "Clear history"
+      },
+      "turn": {
+        "spoken": "spoken",
+        "typed": "typed",
+        "wholeBook": "whole book",
+        "you": "You",
+        "answer": "Answer",
+        "thinking": "Searching the book …",
+        "cancelledScope": "cancelled, scope changed",
+        "cancelled": "cancelled",
+        "askAgain": "Ask again in the new scope",
+        "failed": "The answer failed.",
+        "general": "General knowledge, not from the book"
+      },
+      "found": {
+        "title": "Passages",
+        "hint": {
+          "no_model": "Without an enabled model I only show passages.",
+          "no_hits": "I find nothing on that in the chosen scope.",
+          "no_frontier": "Your reading position is not known yet.",
+          "budget": "The request was too large for a model; here are the passages.",
+          "offline": "The cloud model is unreachable; here are the passages.",
+          "timeout": "The model took too long; here are the passages.",
+          "llm_failed": "The model did not answer; here are the passages.",
+          "consent_required": "The cloud model is not approved yet; here are the passages.",
+          "other": "No model answer; here are the passages."
+        },
+        "consentAction": "Review approval …"
+      },
+      "chip": {
+        "label": "p. {{page}}",
+        "labelNoPage": "Source",
+        "aria": "Source page {{page}}, open quote",
+        "ariaNoPage": "Source, open quote"
+      },
+      "card": {
+        "region": "Source",
+        "chapterPage": "{{chapter}} · page {{page}}",
+        "chapter": "{{chapter}}",
+        "jump": "Jump there",
+        "readFrom": "Read aloud from here",
+        "close": "Close source"
+      },
+      "suggest": {
+        "label": "Suggestions",
+        "recap": "What has happened so far?",
+        "who": "Who is who?",
+        "last": "Explain the last page to me"
+      },
+      "empty": "Ask about the book by voice or text. Answers cite where they come from.",
+      "disabled": "Passages mode: AI answers are not enabled yet. You only see passages from the book.",
+      "composer": {
+        "mic": "Ask by voice",
+        "micStop": "Stop listening",
+        "field": "Question about the book",
+        "placeholder": "Type a question about the book …",
+        "placeholderVoice": "Or type …",
+        "send": "Send",
+        "stop": "Cancel answer",
+        "keys": "Hold Space = speak · G = conversation on/off · Esc ends"
+      },
+      "voice": {
+        "listening": "Listening – silence ends the question · Esc ends the conversation",
+        "hearing": "Listening …",
+        "thinking": "Searching the book",
+        "speaking": "Reading the answer aloud",
+        "starting": "Preparing the microphone …",
+        "stopSpeaking": "Pause answer",
+        "paused": "Reading aloud paused",
+        "pausedAt": "Reading aloud paused at page {{page}}",
+        "resume": "Resume reading",
+        "answerDone_one": "Answer ready, {{count}} source",
+        "answerDone_other": "Answer ready, {{count}} sources",
+        "answerDoneNone": "Answer ready",
+        "say": {
+          "noSpot": "There is no passage yet.",
+          "scopeBook": "Whole book included.",
+          "scopePosition": "Only up to your position."
+        }
+      },
+      "consent": {
+        "title": "Send book excerpts to {{provider}}?",
+        "provider": "Provider",
+        "model": "Model",
+        "region": "Region",
+        "regionEu": "EU",
+        "regionOther": "outside the EU",
+        "regionUnknown": "unknown",
+        "what": "Sent: your question as text, up to about 7,000 characters of book excerpts per question and the last two exchanges. Never audio, never the whole book.",
+        "cost": "Estimated cost per question: about {{cost}} USD",
+        "costUnknown": "Cost per question: no price stored for this model",
+        "revoke": "You can revoke the approval under Settings → Models per function.",
+        "allow": "Approve",
+        "deny": "Do not send"
+      }
+    },
     "kiDocs": {
       "tokens": {
         "estimating": "Estimating token usage …",
@@ -768,11 +891,10 @@
         "label": "Book areas",
         "contents": "Contents",
         "notes": "Notes",
-        "chat": "Chat",
+        "chat": "Conversation",
         "close": "Close",
         "noContents": "This text has no headings.",
-        "notesSoon": "Soon you will collect marked terms and your own notes on the book here; on request they become a study document.",
-        "chatSoon": "Soon you will ask about the book and your documents here; answers cite where they come from."
+        "notesSoon": "Soon you will collect marked terms and your own notes on the book here; on request they become a study document."
       },
       "new": "Create new",
       "newHint": "Create an AI document from the book: summary, study notes, analysis and more from a template.",
