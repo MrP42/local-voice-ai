@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { writeFileSync } from "node:fs";
 
 // Vorlesen als Buch-Reader (lva#148): Leseansicht mit Seiten, Sprecher am Rand,
 // Hervorhebung des gelesenen Satzes, Spielerleiste mit Seitensprung, kompakte
@@ -525,5 +526,59 @@ for (const [name, answer] of [
         await page.screenshot({ path: `${DIR}/isbn-${name}-${theme}-${width}.png` });
       });
     }
+  }
+}
+
+// Vorspann überspringen (Patrick 05.11.2026): Inhaltsverzeichnis mit
+// gedämpftem Vorspann, „Start“-Marke und Schalter „Vorwort mitlesen“.
+const VORSPANN = [
+  "# Die Leuchtturmwärterin",
+  "von Anna Muster",
+  "# Inhalt",
+  "Vorwort",
+  "Kapitel 1: Die Klippe",
+  "Kapitel 2: Der Sturm",
+  "# Impressum",
+  "© 2024 Verlag Beispiel. Alle Rechte vorbehalten.",
+  "ISBN 978-3-00-000000-0",
+  "# Vorwort",
+  "Dieses Buch entstand in einem langen Winter am Meer. ".repeat(8),
+  "# Kapitel 1: Die Klippe",
+  "Der Leuchtturm stand seit über hundert Jahren auf der Klippe. ".repeat(12),
+  "# Kapitel 2: Der Sturm",
+  "In der Nacht drehte der Wind, und Mara stieg die Stufen hinauf. ".repeat(12),
+].join("\n\n");
+for (const theme of ["light", "dark"]) {
+  for (const width of [1440, 390]) {
+    test(`bild vorspann ${theme} ${width}`, async ({ page }) => {
+      test.skip(!DIR, "nur mit SCREENS_DIR");
+      await page.addInitScript((t) => {
+        (window as unknown as { __theme: string }).__theme = t;
+      }, theme);
+      await page.emulateMedia({ colorScheme: theme as "light" | "dark" });
+      await open(page, VORSPANN, 1440);
+      if (width === 390) {
+        // Schmal neu laden: der Startpunkt wird im schmalen Umbruch aufgeschlagen.
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.reload();
+      }
+      await page.getByTestId("reader-flow").waitFor();
+      if (width === 390) {
+        await page.getByTestId("book-sheet-contents").click();
+        await page.getByTestId("book-sheet-panel-contents").waitFor();
+      }
+      const toc = page.getByTestId("reader-contents").nth(width === 390 ? 1 : 0);
+      await toc.getByTestId("reader-contents-start").waitFor();
+      await page.waitForTimeout(400);
+      await page.screenshot({ path: `${DIR}/vorspann-${theme}-${width}.png` });
+      if (width === 1440)
+        await toc.screenshot({ path: `${DIR}/vorspann-${theme}-${width}-inhalt.png` });
+      const box = await toc.getByTestId("reader-read-preface").locator("xpath=..").boundingBox();
+      if (width === 390)
+        writeFileSync(
+          `${DIR}/touchziel-${theme}-390.txt`,
+          `Schalter „Vorwort mitlesen“: ${Math.round(box?.width ?? 0)} × ${Math.round(box?.height ?? 0)} px\n`,
+        );
+    });
   }
 }

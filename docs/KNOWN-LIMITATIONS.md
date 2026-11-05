@@ -106,8 +106,11 @@ zurückgelesen:
 Keine Zeichenwiederholung, keine Duplikate; nach dem Stopp wächst der Text
 höchstens um den Rest (etwa den Schlusspunkt) und wird nicht erneut eingefügt.
 
-Die Funktion ist deshalb ein normaler Opt-in-Schalter und nicht mehr zusätzlich
-hinter `experimental_enabled` gesperrt.
+Die Funktion ist deshalb ein normaler Schalter und nicht mehr zusätzlich
+hinter `experimental_enabled` gesperrt. Seit Einstellungsschema 6 (05.11.2026)
+ist sie **standardmäßig an**; bestehende Installationen wurden einmalig
+umgestellt. Vorher stand der Text bei Neuinstallationen nur in der Vorschau
+über der Diktat-Animation und kam erst nach dem Stopp ins Textfeld.
 
 ### Fokus- und Rechteprüfung je Fragment (seit D14, Issue #9)
 
