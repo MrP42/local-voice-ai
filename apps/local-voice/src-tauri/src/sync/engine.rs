@@ -177,6 +177,8 @@ impl SyncEngine {
 
 /// Hintergrundschleife: Takt oder Anstoß, dann entprellt ein Lauf.
 pub fn start(app: AppHandle) {
+    // Abo-Relay fuer das Buch-Gespraech: eigener, schneller Takt (lva#320).
+    super::booktalk_relay::start(app.clone());
     tauri::async_runtime::spawn(async move {
         let engine = app.state::<SyncEngine>();
         engine.refresh_from_config(&app);
@@ -559,6 +561,10 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
             ));
         }
         for remote in &page.objects {
+            // Das Relay hat seinen eigenen Takt und Cursor (booktalk_relay.rs).
+            if remote.collection == super::booktalk_relay::COLLECTION {
+                continue;
+            }
             if remote.device_id == cfg.device_id
                 && led
                     .get(&remote.collection, &remote.object_id)

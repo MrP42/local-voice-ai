@@ -685,6 +685,77 @@ async syncLogin(email: string, password: string, deviceName: string, url: string
 }
 },
 /**
+ * Schalter „iPhone darf Abo-Modelle nutzen" (Einstellungen -> Modelle je
+ * Funktion). Veroeffentlicht oder loescht die Modellliste sofort. Ohne
+ * Freigabe je Geraet ([`booktalk_relay_authorize`]) bleibt sie leer.
+ */
+async changeBookTalkRelaySetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_book_talk_relay_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async booktalkRelayGrants() : Promise<Result<RelayGrantInfo[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("booktalk_relay_grants") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Die Abo-Modelle dieses PCs, die ein iPhone nutzen koennte (bereite CLIs).
+ */
+async booktalkRelayModels() : Promise<Result<RelayModelInfo[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("booktalk_relay_models") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Ein iPhone freigeben (R1): neuer Relay-Schluessel, die gewaehlten Modelle,
+ * 90 Tage. Gibt den Einrichtungscode (Text und QR) zurueck, den das iPhone
+ * einliest. Die Freigabe ist erst nach der ersten gueltigen Anfrage des iPhones
+ * aktiv; ohne sie verfaellt sie samt Schluessel nach 10 Minuten.
+ */
+async booktalkRelayAuthorize(deviceKey: string, name: string, modelIds: string[]) : Promise<Result<RelayPairing, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("booktalk_relay_authorize", { deviceKey, name, modelIds }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Einrichtungscode noch einmal zeigen: erzeugt einen **neuen** Schluessel
+ * (der alte ist sofort ungueltig), die Freigabe ist wieder `pending`, der
+ * Code gilt wieder 10 Minuten. Name, Modelle und Geraet bleiben.
+ */
+async booktalkRelayRenewCode(deviceKey: string) : Promise<Result<RelayPairing, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("booktalk_relay_renew_code", { deviceKey }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Freigabe entziehen (R10): Schluessel loeschen, Modellliste neu bewerten
+ * (leer = zurueckziehen); laufende Anfragen werden beim naechsten Takt verworfen.
+ */
+async booktalkRelayRevoke(deviceKey: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("booktalk_relay_revoke", { deviceKey }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Abmelden: Token im Hub widerrufen (best effort), Konto und Ledger löschen.
  * Die Seiten bleiben auf diesem Gerät.
  */
@@ -7964,6 +8035,12 @@ book_talk_cloud_consent?: string[];
  */
 book_talk_enabled?: boolean; 
 /**
+ * Buch-Gespraech (lva#320, Spec 11.3): Das gekoppelte iPhone darf die
+ * freigegebenen Abo-Modelle (Claude, Codex) ueber diesen PC nutzen. Standard
+ * aus; nur dann veroeffentlicht der PC seine Modellliste im Hub.
+ */
+book_talk_relay_enabled?: boolean; 
+/**
  * Stimmprofile 2a: Vorschläge „klingt wie …, zusammenführen?“ aus Stimmabdrücken
  * innerhalb einer Besprechung (CAM++). Wirkt erst, wenn das Modell per Knopf
  * geladen ist; ohne den Schluessel gilt `true`. Kein Abgleich ueber Besprechungen.
@@ -11252,6 +11329,30 @@ export type RecordingRetentionPeriod = "never" | "preserve_limit" | "days_3" | "
  * übernommen werden.
  */
 export type ReferenceAnalysis = { quiet: boolean; suggested_tags: string[] }
+/**
+ * Eine Freigabe, wie die Oberflaeche sie zeigt (ohne Schluessel).
+ */
+export type RelayGrantInfo = { device_key: string; name: string; key_id: string; model_ids: string[]; created_at_ms: number; 
+/**
+ * Ablauf der Freigabe (90 Tage).
+ */
+expires_at_ms: number; 
+/**
+ * `true`, solange das iPhone den Einrichtungscode noch nicht benutzt hat.
+ */
+pending: boolean; 
+/**
+ * Ablauf des Einrichtungscodes (10 Minuten ab Erzeugung).
+ */
+code_expires_at_ms: number }
+/**
+ * Ein Modell, das am PC fuer das Relay in Frage kommt.
+ */
+export type RelayModelInfo = { id: string; label: string; provider: string }
+/**
+ * Einrichtungscode zum Anzeigen: Text (Rueckfall), QR-Bild (SVG) und Fristen.
+ */
+export type RelayPairing = { code: string; qr_svg: string; code_expires_at_ms: number; grant_expires_at_ms: number }
 /**
  * Zustand eines Laufs (Spalte `workflow_runs.state`, CHECK in der Migration).
  */

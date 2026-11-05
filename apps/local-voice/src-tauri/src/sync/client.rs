@@ -254,6 +254,32 @@ impl HubClient {
             .map_err(|e| HubError::Other(format!("Antwort unlesbar: {e}")))
     }
 
+    /// Wie [`pull`](Self::pull), aber ueber einen wiederverwendeten Client
+    /// (Verbindung bleibt offen): fuer den schnellen Takt des Abo-Relays, der
+    /// alle 1,5 s fragt und nicht jedes Mal neu verbinden soll.
+    pub async fn pull_shared(&self, since: i64, limit: u32) -> Result<PullResponse, HubError> {
+        static SHARED: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+        let client = match SHARED.get() {
+            Some(c) => c.clone(),
+            None => {
+                let c = http_with(Duration::from_secs(15))?;
+                SHARED.get_or_init(|| c).clone()
+            }
+        };
+        let res = self
+            .auth(client.get(format!("{}/api/v1/voice/sync/pull", self.url)))
+            .query(&[("since", since.to_string()), ("limit", limit.to_string())])
+            .send()
+            .await
+            .map_err(|e| HubError::Other(format!("Hub nicht erreichbar: {e}")))?;
+        if !res.status().is_success() {
+            return Err(error_from(res).await);
+        }
+        res.json::<PullResponse>()
+            .await
+            .map_err(|e| HubError::Other(format!("Antwort unlesbar: {e}")))
+    }
+
     pub async fn status(&self) -> Result<HubStatus, HubError> {
         let res = self
             .auth(http()?.get(format!("{}/api/v1/voice/sync/status", self.url)))

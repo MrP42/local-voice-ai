@@ -21,7 +21,7 @@ pub const CLAUDE_CLI_URL: &str = "cli://claude";
 pub const CODEX_CLI_URL: &str = "cli://codex";
 
 /// Wie lange ein Aufruf hoechstens dauern darf (lange Protokolle).
-const CALL_TIMEOUT: Duration = Duration::from_secs(600);
+pub(crate) const CALL_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// Claude-Modelle: Aliase (immer das neueste) und volle Namen (feste Version).
 /// Alle mit `claude -p --model … --effort low` geprueft (06.10.2026).
@@ -205,7 +205,7 @@ pub(crate) fn codex_models_in(home: Option<&Path>) -> Vec<CliModel> {
     models
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Cli {
     Claude,
     Codex,
@@ -267,6 +267,10 @@ pub struct CliReply {
     pub text: String,
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
+    /// Das Modell, das die CLI laut ihrer Ausgabe tatsaechlich benutzt hat
+    /// (Claude: Schluessel von `modelUsage`; Codex: Feld `model` eines
+    /// Ereignisses). `None`, wenn die Ausgabe es nicht nennt.
+    pub model: Option<String>,
 }
 
 /// Wo liegt die CLI? PATH zuerst, dann die ueblichen Installationsorte.
@@ -347,14 +351,74 @@ fn parse_status(cli: Cli, stdout: &str, stderr: &str) -> Option<bool> {
     }
 }
 
+/// Wie die CLI angemeldet ist. Fuer das Relay (Spec 11.7 R6) zaehlt nur ein
+/// Abo; unklare Antworten gelten nie als Abo.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthKind {
+    /// Anmeldung ueber das Abo (Claude: claude.ai-Konto bzw. Abo-Token;
+    /// Codex: ChatGPT-Konto).
+    Subscription,
+    /// API-Schluessel, Cloud-Anbieter (Bedrock/Vertex) oder sonst nicht
+    /// ueber ein Abo abgerechnet.
+    Metered,
+    /// Die Antwort der CLI laesst sich nicht deuten.
+    Unknown,
+}
+
+/// Deutet die Antwort des Anmeldestatus. Claude: `auth status --json` mit
+/// `authMethod` (`claude.ai` = Abo-Login, `oauth_token` = Abo-Token aus
+/// `claude setup-token`; alles andere, z. B. `api_key`, ist kein Abo) und
+/// `apiProvider` (nur `firstParty`, nie Bedrock/Vertex). Codex: `login status`
+/// sagt „Logged in using ChatGPT“ bzw. „Logged in using an API key“.
+pub(crate) fn parse_auth_kind(cli: Cli, stdout: &str, stderr: &str) -> AuthKind {
+    match cli {
+        Cli::Claude => {
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(stdout) else {
+                return AuthKind::Unknown;
+            };
+            if v.get("loggedIn").and_then(|b| b.as_bool()) != Some(true) {
+                return AuthKind::Unknown;
+            }
+            let method = v.get("authMethod").and_then(|m| m.as_str());
+            let provider = v.get("apiProvider").and_then(|m| m.as_str());
+            if provider.is_some_and(|p| p != "firstParty") {
+                return AuthKind::Metered;
+            }
+            match method {
+                Some("claude.ai") | Some("oauth_token") => AuthKind::Subscription,
+                Some(_) => AuthKind::Metered,
+                None => AuthKind::Unknown,
+            }
+        }
+        Cli::Codex => {
+            let text = format!("{stdout}\n{stderr}").to_ascii_lowercase();
+            if text.contains("api key") || text.contains("apikey") {
+                AuthKind::Metered
+            } else if text.contains("using chatgpt") {
+                AuthKind::Subscription
+            } else {
+                AuthKind::Unknown
+            }
+        }
+    }
+}
+
 /// Ist die CLI da, und ist man angemeldet? Blockiert -- auf einem
 /// Blocking-Thread ausfuehren.
 pub fn status(cli: Cli) -> CliStatus {
+    status_detail(cli).0
+}
+
+/// Wie [`status`], dazu die Anmeldeart (eine einzige Abfrage der CLI).
+pub fn status_detail(cli: Cli) -> (CliStatus, AuthKind) {
     let Some(binary) = locate(cli) else {
-        return CliStatus {
-            installed: false,
-            logged_in: None,
-        };
+        return (
+            CliStatus {
+                installed: false,
+                logged_in: None,
+            },
+            AuthKind::Unknown,
+        );
     };
     let (program, mut argv) = launcher(&binary);
     argv.extend(status_args(cli).iter().map(|s| s.to_string()));
@@ -368,21 +432,28 @@ pub fn status(cli: Cli) -> CliStatus {
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     }
-    let logged_in = cmd
+    let out = cmd
         .spawn()
         .ok()
         .and_then(|child| run_with_timeout(child, None, STATUS_TIMEOUT).ok())
-        .and_then(|out| {
-            parse_status(
-                cli,
-                &String::from_utf8_lossy(&out.stdout),
-                &String::from_utf8_lossy(&out.stderr),
+        .map(|out| {
+            (
+                String::from_utf8_lossy(&out.stdout).into_owned(),
+                String::from_utf8_lossy(&out.stderr).into_owned(),
             )
         });
-    CliStatus {
-        installed: true,
-        logged_in,
-    }
+    let logged_in = out.as_ref().and_then(|(o, e)| parse_status(cli, o, e));
+    let kind = out
+        .as_ref()
+        .map(|(o, e)| parse_auth_kind(cli, o, e))
+        .unwrap_or(AuthKind::Unknown);
+    (
+        CliStatus {
+            installed: true,
+            logged_in,
+        },
+        kind,
+    )
 }
 
 /// Befehlszeile fuer `cmd`: scheitert die Anmeldung, bleibt das Fenster mit
@@ -640,6 +711,40 @@ pub(crate) fn parse_claude(stdout: &str) -> Result<CliReply, String> {
             + n("cache_creation_input_tokens")
             + n("cache_read_input_tokens"),
         completion_tokens: n("output_tokens"),
+        model: claude_model_of(&v),
+    })
+}
+
+/// Das tatsaechliche Modell aus `modelUsage` (genau ein Eintrag), sonst aus `model`.
+pub(crate) fn claude_model_of(v: &serde_json::Value) -> Option<String> {
+    if let Some(map) = v.get("modelUsage").and_then(|m| m.as_object()) {
+        // Mehrere Modelle (z. B. ein Hilfsmodell): das mit den meisten Ausgabetoken.
+        return map
+            .iter()
+            .max_by_key(|(_, u)| u.get("outputTokens").and_then(|t| t.as_u64()).unwrap_or(0))
+            .map(|(k, _)| k.clone());
+    }
+    v.get("model").and_then(|m| m.as_str()).map(str::to_string)
+}
+
+/// Das Modell aus einem Codex-Ereignis: Feld `model` bzw. `model_slug` auf
+/// oberster Ebene oder eine Ebene tiefer (`item`, `msg`, `thread`, `turn`,
+/// `session`, `config`, `payload`), je nach CLI-Version.
+pub(crate) fn codex_model_of(ev: &serde_json::Value) -> Option<String> {
+    fn direct(v: &serde_json::Value) -> Option<String> {
+        ["model", "model_slug"]
+            .iter()
+            .find_map(|k| v.get(k).and_then(|m| m.as_str()))
+            .map(str::trim)
+            .filter(|m| !m.is_empty())
+            .map(str::to_string)
+    }
+    direct(ev).or_else(|| {
+        [
+            "item", "msg", "thread", "turn", "session", "config", "payload",
+        ]
+        .iter()
+        .find_map(|k| ev.get(k).and_then(direct))
     })
 }
 
@@ -650,10 +755,14 @@ pub(crate) fn parse_codex(stdout: &str) -> Result<CliReply, String> {
     let mut error = None;
     let mut failed = None;
     let (mut pin, mut pout) = (0, 0);
+    let mut model: Option<String> = None;
     for line in stdout.lines() {
         let Ok(ev) = serde_json::from_str::<serde_json::Value>(line) else {
             continue;
         };
+        if model.is_none() {
+            model = codex_model_of(&ev);
+        }
         match ev.get("type").and_then(|t| t.as_str()) {
             Some("item.completed") => {
                 let item = ev.get("item");
@@ -695,10 +804,134 @@ pub(crate) fn parse_codex(stdout: &str) -> Result<CliReply, String> {
             text,
             prompt_tokens: pin,
             completion_tokens: pout,
+            model,
         }),
         (None, Some(e)) => Err(classify_error(&e)),
         (None, None) => Err("cli_bad_output: Codex lieferte keine Antwort".to_string()),
     }
+}
+
+/// Schalter, ohne die der Aufruf nicht isoliert ist (Spec 11.7 R4). Fehlt einer
+/// in der Hilfe der installierten CLI, wird das Modell nicht fuer das Relay angeboten.
+pub fn required_flags(cli: Cli) -> &'static [&'static str] {
+    match cli {
+        Cli::Claude => &[
+            "--output-format",
+            "--tools",
+            "--no-session-persistence",
+            "--setting-sources",
+            "--strict-mcp-config",
+            "--mcp-config",
+            "--disable-slash-commands",
+            "--system-prompt",
+        ],
+        Cli::Codex => &[
+            "--json",
+            "--sandbox",
+            "--ephemeral",
+            "--skip-git-repo-check",
+        ],
+    }
+}
+
+/// Fehlende Pflichtschalter in einem Hilfetext.
+pub fn missing_flags(cli: Cli, help: &str) -> Vec<&'static str> {
+    required_flags(cli)
+        .iter()
+        .copied()
+        .filter(|f| !help.contains(f))
+        .collect()
+}
+
+/// Umgebungsvariablen, die die CLI auf kostenpflichtige API-Abrechnung stellen.
+pub fn api_key_vars(cli: Cli) -> &'static [&'static str] {
+    match cli {
+        Cli::Claude => &[
+            "ANTHROPIC_API_KEY",
+            "ANTHROPIC_AUTH_TOKEN",
+            "CLAUDE_CODE_USE_BEDROCK",
+            "CLAUDE_CODE_USE_VERTEX",
+        ],
+        Cli::Codex => &["OPENAI_API_KEY", "CODEX_API_KEY"],
+    }
+}
+
+/// Ist fuer die CLI ein API-Schluessel in der Umgebung gesetzt? (Spec 11.7 R6)
+pub fn api_key_in_env(cli: Cli) -> bool {
+    api_key_in(cli, |v| {
+        std::env::var_os(v).map(|x| x.to_string_lossy().into_owned())
+    })
+}
+
+/// Wie [`api_key_in_env`] mit frei waehlbarer Umgebung (Tests).
+pub fn api_key_in(cli: Cli, get: impl Fn(&str) -> Option<String>) -> bool {
+    api_key_vars(cli)
+        .iter()
+        .any(|v| get(v).is_some_and(|x| !x.is_empty()))
+}
+
+/// Ist die CLI installiert, per Abo angemeldet, ohne API-Schluessel in der
+/// Umgebung und kennt sie alle Isolationsschalter? Blockiert (startet die CLI
+/// mehrfach) -- auf einem Blocking-Thread ausfuehren und das Ergebnis merken.
+pub fn relay_ready(cli: Cli) -> bool {
+    if api_key_in_env(cli) {
+        return false;
+    }
+    let (st, kind) = status_detail(cli);
+    if !st.installed || st.logged_in != Some(true) || kind != AuthKind::Subscription {
+        return false;
+    }
+    let Some(binary) = locate(cli) else {
+        return false;
+    };
+    let (program, mut argv) = launcher(&binary);
+    match cli {
+        Cli::Claude => argv.push("--help".into()),
+        Cli::Codex => argv.extend(["exec".to_string(), "--help".to_string()]),
+    }
+    let mut cmd = Command::new(program);
+    cmd.args(&argv)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    let Some(out) = cmd
+        .spawn()
+        .ok()
+        .and_then(|child| run_with_timeout(child, None, STATUS_TIMEOUT).ok())
+    else {
+        return false;
+    };
+    let help = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    missing_flags(cli, &help).is_empty() && missing_relay_flags(cli, &help).is_empty()
+}
+
+/// Zusaetzlich fuers Relay: der Schalter, ueber den `max_tokens` an die CLI
+/// geht. Codex: `-c`/`--config` (`model_max_output_tokens=...`). Claude nimmt
+/// die Grenze aus der Umgebung (`CLAUDE_CODE_MAX_OUTPUT_TOKENS`), dafuer gibt
+/// es keinen Schalter in der Hilfe.
+pub fn relay_flags(cli: Cli) -> &'static [&'static str] {
+    match cli {
+        Cli::Claude => &[],
+        Cli::Codex => &["--config"],
+    }
+}
+
+/// Fehlende Relay-Schalter in einem Hilfetext.
+pub fn missing_relay_flags(cli: Cli, help: &str) -> Vec<&'static str> {
+    relay_flags(cli)
+        .iter()
+        .copied()
+        .filter(|f| !help.contains(f))
+        .collect()
 }
 
 /// Fehler der CLI in Codes, die die Oberflaeche erklaeren kann.
@@ -745,6 +978,43 @@ pub fn call_with_timeout(
     user: &str,
     timeout: Duration,
 ) -> Result<CliReply, String> {
+    call_with_options(
+        cli,
+        binary,
+        model,
+        system,
+        user,
+        timeout,
+        &CallOptions::default(),
+    )
+}
+
+/// Zusaetze eines Aufrufs.
+#[derive(Debug, Clone, Default)]
+pub struct CallOptions {
+    /// Wird es gesetzt, beendet der Aufruf den Prozessbaum und endet mit
+    /// `cli_cancelled` (Widerruf, Zeitablauf oder Abbruch durch das iPhone).
+    pub cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    /// Obergrenze der Ausgabe-Token. Claude: Umgebung
+    /// `CLAUDE_CODE_MAX_OUTPUT_TOKENS`; Codex: `-c model_max_output_tokens=N`.
+    pub max_tokens: Option<u32>,
+}
+
+/// Ob ein Fehler ein Abbruch war (dann kein Wiederholen).
+pub fn is_cancelled(err: &str) -> bool {
+    err.starts_with("cli_cancelled")
+}
+
+/// Wie [`call_with_timeout`], mit [`CallOptions`].
+pub fn call_with_options(
+    cli: Cli,
+    binary: &Path,
+    model: &str,
+    system: Option<&str>,
+    user: &str,
+    timeout: Duration,
+    opts: &CallOptions,
+) -> Result<CliReply, String> {
     // `modell@effort~fast`; auf die Kommandozeile kommt nur, was die Regeln erlaubt.
     let fast = split_fast(model).1;
     let (model, effort) = split_spec(model);
@@ -772,8 +1042,17 @@ pub fn call_with_timeout(
         // Vor dem abschliessenden "-" (Prompt aus stdin).
         let at = argv.len() - 1;
         argv.splice(at..at, codex_isolation_args(&program, &prefix)?);
+        if let Some(n) = opts.max_tokens {
+            let at = argv.len() - 1;
+            argv.splice(at..at, max_tokens_args(n));
+        }
     }
     let mut cmd = Command::new(program);
+    if cli == Cli::Claude {
+        if let Some(n) = opts.max_tokens {
+            cmd.env("CLAUDE_CODE_MAX_OUTPUT_TOKENS", n.to_string());
+        }
+    }
     cmd.args(&argv)
         .current_dir(work.path())
         .stdin(Stdio::piped())
@@ -785,7 +1064,12 @@ pub fn call_with_timeout(
         cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     }
     let child = cmd.spawn().map_err(|e| format!("cli_missing: {e}"))?;
-    let output = run_with_timeout(child, Some(stdin_text.into_bytes()), timeout)?;
+    let output = run_cancellable(
+        child,
+        Some(stdin_text.into_bytes()),
+        timeout,
+        opts.cancel.as_deref(),
+    )?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     let reply = match cli {
         Cli::Claude => parse_claude(&stdout),
@@ -799,6 +1083,11 @@ pub fn call_with_timeout(
         }
         Err(e) => Err(e),
     }
+}
+
+/// Codex: Ausgabegrenze als Konfigurationswert (`-c model_max_output_tokens=N`).
+pub(crate) fn max_tokens_args(n: u32) -> Vec<String> {
+    vec!["-c".into(), format!("model_max_output_tokens={n}")]
 }
 
 /// Wie die CLI gestartet wird -- nie ueber `cmd /C`: cmd.exe wertet
@@ -855,11 +1144,23 @@ pub(crate) fn wait_with_timeout(
 /// von Windows nur das Kind selbst. Ein unvollstaendig geschriebener Prompt
 /// ist ein Fehler, nie ein Erfolg.
 pub(crate) fn run_with_timeout(
-    mut child: std::process::Child,
+    child: std::process::Child,
     input: Option<Vec<u8>>,
     timeout: Duration,
 ) -> Result<std::process::Output, String> {
+    run_cancellable(child, input, timeout, None)
+}
+
+/// Wie [`run_with_timeout`]; wird `cancel` gesetzt, wird der Prozessbaum
+/// beendet und der Aufruf endet mit `cli_cancelled`.
+pub(crate) fn run_cancellable(
+    mut child: std::process::Child,
+    input: Option<Vec<u8>>,
+    timeout: Duration,
+    cancel: Option<&std::sync::atomic::AtomicBool>,
+) -> Result<std::process::Output, String> {
     use std::io::Read;
+    use std::sync::atomic::Ordering;
     use std::sync::mpsc;
     use std::time::Instant;
 
@@ -916,6 +1217,10 @@ pub(crate) fn run_with_timeout(
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status,
+            Ok(None) if cancel.is_some_and(|c| c.load(Ordering::SeqCst)) => {
+                kill_tree(&mut child, job);
+                return Err("cli_cancelled: Der Aufruf wurde abgebrochen".to_string());
+            }
             Ok(None) if Instant::now() >= deadline => {
                 kill_tree(&mut child, job);
                 return timed_out();
@@ -1059,6 +1364,156 @@ mod tests {
         );
         assert_eq!(parse_status(Cli::Codex, "Not logged in", ""), Some(false));
         assert_eq!(parse_status(Cli::Codex, "", ""), None);
+    }
+
+    #[test]
+    fn only_a_subscription_login_counts_for_the_relay() {
+        use AuthKind::*;
+        let claude = |json: &str| parse_auth_kind(Cli::Claude, json, "");
+        assert_eq!(
+            claude(
+                r#"{"loggedIn":true,"authMethod":"claude.ai","apiProvider":"firstParty","email":"x@example.org"}"#
+            ),
+            Subscription
+        );
+        assert_eq!(
+            claude(r#"{"loggedIn":true,"authMethod":"oauth_token","apiProvider":"firstParty"}"#),
+            Subscription
+        );
+        assert_eq!(
+            claude(r#"{"loggedIn":true,"authMethod":"claude.ai"}"#),
+            Subscription
+        );
+        assert_eq!(
+            claude(r#"{"loggedIn":true,"authMethod":"api_key","apiProvider":"firstParty"}"#),
+            Metered
+        );
+        assert_eq!(
+            claude(r#"{"loggedIn":true,"authMethod":"claude.ai","apiProvider":"bedrock"}"#),
+            Metered
+        );
+        assert_eq!(
+            claude(r#"{"loggedIn":true,"authMethod":"third_party","apiProvider":"vertex"}"#),
+            Metered
+        );
+        // Unklar ist nie ein Abo.
+        assert_eq!(claude(r#"{"loggedIn":true}"#), Unknown);
+        assert_eq!(
+            claude(r#"{"loggedIn":false,"authMethod":"claude.ai"}"#),
+            Unknown
+        );
+        assert_eq!(claude("kaputt"), Unknown);
+        assert_eq!(claude(""), Unknown);
+        let codex = |out: &str, err: &str| parse_auth_kind(Cli::Codex, out, err);
+        assert_eq!(codex("", "Logged in using ChatGPT"), Subscription);
+        assert_eq!(codex("Logged in using ChatGPT\n", ""), Subscription);
+        assert_eq!(
+            codex("", "Logged in using an API key - sk-proj-***abcd"),
+            Metered
+        );
+        assert_eq!(codex("Logged in using an API key", ""), Metered);
+        assert_eq!(codex("Not logged in", ""), Unknown);
+        assert_eq!(codex("Logged in", ""), Unknown);
+        assert_eq!(codex("", ""), Unknown);
+    }
+
+    #[test]
+    fn api_key_variables_cover_metered_billing_paths() {
+        let env = |set: &'static str| move |v: &str| (v == set).then(|| "1".to_string());
+        for v in [
+            "ANTHROPIC_API_KEY",
+            "ANTHROPIC_AUTH_TOKEN",
+            "CLAUDE_CODE_USE_BEDROCK",
+            "CLAUDE_CODE_USE_VERTEX",
+        ] {
+            assert!(api_key_in(Cli::Claude, env(v)), "{v}");
+            assert!(!api_key_in(Cli::Codex, env(v)), "{v} gilt nicht fuer Codex");
+        }
+        for v in ["OPENAI_API_KEY", "CODEX_API_KEY"] {
+            assert!(api_key_in(Cli::Codex, env(v)), "{v}");
+        }
+        assert!(!api_key_in(Cli::Claude, |_| None));
+        assert!(!api_key_in(Cli::Claude, |_| Some(String::new())));
+    }
+
+    #[test]
+    fn the_codex_model_is_read_from_several_event_shapes() {
+        let m = |s: &str| codex_model_of(&serde_json::from_str(s).unwrap());
+        assert_eq!(
+            m(r#"{"type":"thread.started","model":"gpt-6.1-sol"}"#).as_deref(),
+            Some("gpt-6.1-sol")
+        );
+        assert_eq!(
+            m(r#"{"type":"session_configured","msg":{"model":"gpt-6.1-sol"}}"#).as_deref(),
+            Some("gpt-6.1-sol")
+        );
+        assert_eq!(
+            m(r#"{"type":"turn.started","turn":{"model_slug":"gpt-6.1-sol"}}"#).as_deref(),
+            Some("gpt-6.1-sol")
+        );
+        assert_eq!(
+            m(r#"{"type":"item.completed","item":{"type":"agent_message","model":"x1"}}"#)
+                .as_deref(),
+            Some("x1")
+        );
+        assert_eq!(m(r#"{"type":"turn.completed","model":""}"#), None);
+        assert_eq!(
+            m(r#"{"type":"turn.completed","usage":{"input_tokens":1}}"#),
+            None
+        );
+        // Ohne Modellangabe bleibt es `None` (das Relay meldet dann `unknown`).
+        let out =
+            "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"Hi\"}}";
+        assert_eq!(parse_codex(out).unwrap().model, None);
+    }
+
+    #[test]
+    fn max_tokens_goes_to_codex_as_a_config_value_before_the_prompt_dash() {
+        assert_eq!(
+            max_tokens_args(400),
+            vec!["-c", "model_max_output_tokens=400"]
+        );
+        assert_eq!(relay_flags(Cli::Codex), &["--config"]);
+        assert!(relay_flags(Cli::Claude).is_empty());
+        assert_eq!(
+            missing_relay_flags(Cli::Codex, "-c, --config <key=value>"),
+            Vec::<&str>::new()
+        );
+        assert_eq!(missing_relay_flags(Cli::Codex, "--json"), vec!["--config"]);
+    }
+
+    /// Ein Abbruch beendet den Prozess, statt auf die Zeitgrenze zu warten.
+    #[cfg(unix)]
+    #[test]
+    fn cancelling_kills_the_child_process() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+        let child = Command::new("sleep")
+            .arg("60")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let flag = cancel.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(300));
+            flag.store(true, Ordering::SeqCst);
+        });
+        let t = std::time::Instant::now();
+        let err = run_cancellable(child, None, Duration::from_secs(60), Some(&cancel)).unwrap_err();
+        assert!(is_cancelled(&err), "{err}");
+        assert!(t.elapsed() < Duration::from_secs(10), "{:?}", t.elapsed());
+        // Der Prozess ist weg (wait() im Abbruch hat ihn eingesammelt).
+        let alive = Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .output()
+            .unwrap()
+            .status
+            .success();
+        assert!(!alive, "Prozess {pid} laeuft noch");
     }
 
     #[test]

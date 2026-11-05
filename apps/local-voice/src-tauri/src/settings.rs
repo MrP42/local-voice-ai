@@ -949,6 +949,11 @@ pub struct AppSettings {
     /// „durchgefallen“ (`book_talk_eval_pass.json`) nie. Aus: nur Fundstellen.
     #[serde(default)]
     pub book_talk_enabled: bool,
+    /// Buch-Gespraech (lva#320, Spec 11.3): Das gekoppelte iPhone darf die
+    /// freigegebenen Abo-Modelle (Claude, Codex) ueber diesen PC nutzen. Standard
+    /// aus; nur dann veroeffentlicht der PC seine Modellliste im Hub.
+    #[serde(default)]
+    pub book_talk_relay_enabled: bool,
     /// Stimmprofile 2a: Vorschläge „klingt wie …, zusammenführen?“ aus Stimmabdrücken
     /// innerhalb einer Besprechung (CAM++). Wirkt erst, wenn das Modell per Knopf
     /// geladen ist; ohne den Schluessel gilt `true`. Kein Abgleich ueber Besprechungen.
@@ -1959,6 +1964,7 @@ pub fn get_default_settings() -> AppSettings {
         meeting_semantic_search: true,
         book_talk_cloud_consent: Vec::new(),
         book_talk_enabled: false,
+        book_talk_relay_enabled: false,
         meeting_voice_suggestions: true,
         meeting_slide_vision: false,
         meeting_echo_cancellation: MeetingEchoCancellation::Auto,

@@ -262,6 +262,9 @@ const settingUpdaters: {
     commands.changeBookTalkEnabledSetting(value as boolean),
   book_talk_cloud_consent: (value) =>
     commands.changeBookTalkCloudConsentSetting(value as string[]),
+  // lva#320
+  book_talk_relay_enabled: (value) =>
+    commands.changeBookTalkRelaySetting(value as boolean),
   // M4-P4b
   meeting_semantic_search: (value) =>
     commands.changeMeetingSemanticSearchSetting(value as boolean),
