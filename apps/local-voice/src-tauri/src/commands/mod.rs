@@ -9,6 +9,7 @@ pub mod integrations; // A4
 pub mod integrations_m365; // A5
 pub mod llm;
 pub mod meeting_chat; // M4-P4c
+pub mod meeting_diarization; // Sprechertrennung: Modell laden (05.11.2026)
 pub mod meeting_documents; // Dokumenttypen neben dem Protokoll
 pub mod meeting_enhance;
 pub mod meeting_jobs; // P8a

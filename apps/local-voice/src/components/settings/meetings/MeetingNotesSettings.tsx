@@ -15,6 +15,7 @@ import { MeetingSelfNameSetting } from "./MeetingSelfNameSetting";
 import { MeetingSemanticSearchSetting } from "./MeetingSemanticSearchSetting";
 import { MeetingSlideVisionSetting } from "./MeetingSlideVisionSetting";
 import { MeetingVoiceSuggestionsSetting } from "./MeetingVoiceSuggestionsSetting";
+import { DiarizationModelButton } from "./DiarizationModelButton";
 
 /**
  * Die Vorgaben der Aufnahme (M1-P1f, M2-P2c2, M3-P3c), als Zeilen der
@@ -107,6 +108,17 @@ export const MeetingNotesSettings: React.FC = () => {
         descriptionMode="tooltip"
         grouped={true}
       />
+      {(getSetting("meeting_diarization") ?? "auto") !== "off" && (
+        <SettingContainer
+          title={t("settings.meetings.diarizationModel")}
+          description={t("settings.meetings.diarizationModelDescription")}
+          grouped={true}
+        >
+          <div className="flex flex-col items-end gap-1">
+            <DiarizationModelButton />
+          </div>
+        </SettingContainer>
+      )}
       <MeetingVoiceSuggestionsSetting />
       <SettingContainer
         title={t("settings.meetings.defaultTemplate")}
