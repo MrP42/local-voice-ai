@@ -8,7 +8,7 @@ import Foundation
 ///
 /// Der Former arbeitet im Strom, Stück für Stück, ohne den Satz abzuwarten:
 /// - Gleichanteil weg (einpoliger Hochpass um 19 Hz bei 24 kHz).
-/// - Stille vor dem ersten Laut bis auf `leadMs` kürzen, mit Kosinus einblenden.
+/// - Stille vor dem ersten Laut bis auf `leadMs` kürzen (leise Anlaute wie f oder h bleiben), mit Kosinus einblenden.
 /// - Stille nach dem letzten Laut auf höchstens `tailMs` kürzen, mit Kosinus ausblenden.
 /// - Am Absatzende die Pause auf mindestens `paragraphMs` auffüllen.
 /// Pausen IM Satz (Komma, Gedankenstrich) bleiben unangetastet.
@@ -30,9 +30,11 @@ public struct SentenceShaper {
     private var fadePos = 0
     private var dcX: Float = 0
     private var dcY: Float = 0
+    /// Der Filter startet auf dem ersten Wert: sonst zählte ein Gleichanteil ≥ Schwelle als Laut.
+    private var fresh = true
     private let dcPole: Float
 
-    public init(sampleRate: Double, leadMs: Double = 15, tailMs: Double = 140, paragraphMs: Double = 450) {
+    public init(sampleRate: Double, leadMs: Double = 30, tailMs: Double = 140, paragraphMs: Double = 450) {
         let frames = { (ms: Double) in max(0, Int((sampleRate * ms / 1000).rounded())) }
         lead = frames(leadMs)
         fadeIn = max(1, frames(8))
@@ -47,6 +49,7 @@ public struct SentenceShaper {
         var ready: [Float] = []
         ready.reserveCapacity(chunk.count)
         for raw in chunk {
+            if fresh { dcX = raw; fresh = false }
             let y = raw - dcX + dcPole * dcY
             dcX = raw
             dcY = y
@@ -95,6 +98,7 @@ public struct SentenceShaper {
         fadePos = 0
         dcX = 0
         dcY = 0
+        fresh = true
     }
 
     private mutating func faded(_ v: Float) -> Float {

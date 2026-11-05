@@ -334,9 +334,9 @@ pub fn soften_edges(samples: &mut [f32], channels: usize, sample_rate: u32) {
 }
 
 /// Stille vor dem ersten Laut, die stehen bleibt (Anlaut nie abschneiden).
-const EDGE_LEAD_MS: f64 = 15.0;
+const EDGE_LEAD_MS: f64 = 30.0;
 /// Längste Stille nach dem letzten Laut. Zusammen mit dem Vorlauf des
-/// nächsten Satzes ergibt das eine natürliche Satzpause von rund 0,15 s.
+/// nächsten Satzes ergibt das eine natürliche Satzpause von rund 0,17 s.
 const EDGE_TAIL_MS: f64 = 140.0;
 /// Pegel, ab dem ein Abtastwert als Laut zählt (rund −44 dBFS).
 const EDGE_THRESHOLD: f32 = 0.006;
@@ -351,15 +351,37 @@ const EDGE_THRESHOLD: f32 = 0.006;
 pub fn trim_edge_silence(samples: &mut Vec<f32>, channels: usize, sample_rate: u32) {
     let channels = channels.max(1);
     let frames = samples.len() / channels;
-    let loud = |f: usize| {
+    if frames == 0 {
+        return;
+    }
+    // Gemessen gegen den Ruhepegel am jeweiligen Rand (Mittel der ersten
+    // bzw. letzten 10 ms): sonst zählte ein Gleichanteil ≥ Schwelle schon in
+    // der Stille als Laut, und nichts würde gekürzt.
+    let edge = ((sample_rate as usize) / 100).clamp(1, frames);
+    let baseline = |range: std::ops::Range<usize>| -> Vec<f32> {
+        let n = range.len() as f64;
+        (0..channels)
+            .map(|c| {
+                (range.clone())
+                    .map(|f| samples[f * channels + c] as f64)
+                    .sum::<f64>()
+                    / n
+            })
+            .map(|m| m as f32)
+            .collect()
+    };
+    let head = baseline(0..edge);
+    let foot = baseline(frames - edge..frames);
+    let loud = |f: usize, base: &[f32]| {
         samples[f * channels..(f + 1) * channels]
             .iter()
-            .any(|v| v.abs() >= EDGE_THRESHOLD)
+            .zip(base)
+            .any(|(v, m)| (v - m).abs() >= EDGE_THRESHOLD)
     };
-    let Some(first) = (0..frames).find(|&f| loud(f)) else {
+    let Some(first) = (0..frames).find(|&f| loud(f, &head)) else {
         return;
     };
-    let last = (0..frames).rev().find(|&f| loud(f)).unwrap_or(first);
+    let last = (0..frames).rev().find(|&f| loud(f, &foot)).unwrap_or(first);
     let ms = |m: f64| (m / 1000.0 * sample_rate as f64) as usize;
     let start = first.saturating_sub(ms(EDGE_LEAD_MS));
     let end = (last + 1 + ms(EDGE_TAIL_MS)).min(frames);
@@ -386,10 +408,22 @@ mod tests {
         let mut s = [quiet(400), tone(300), quiet(300), tone(300), quiet(700)].concat();
         trim_edge_silence(&mut s, 1, rate);
         let ms = s.len() as f64 / rate as f64 * 1000.0;
-        assert!((ms - (15.0 + 900.0 + 140.0)).abs() < 3.0, "{ms} ms");
+        assert!((ms - (30.0 + 900.0 + 140.0)).abs() < 3.0, "{ms} ms");
         let mut leer = vec![0.0f32; 1000];
         trim_edge_silence(&mut leer, 1, rate);
         assert_eq!(leer.len(), 1000, "reine Stille bleibt (Pausen-Stück)");
+        // Gleichanteil über der Schwelle schon in der Stille.
+        let mut versatz: Vec<f32> = [quiet(400), tone(300), quiet(700)]
+            .concat()
+            .into_iter()
+            .map(|v| v + 0.05)
+            .collect();
+        trim_edge_silence(&mut versatz, 1, rate);
+        let ms = versatz.len() as f64 / rate as f64 * 1000.0;
+        assert!(
+            (ms - (30.0 + 300.0 + 140.0)).abs() < 3.0,
+            "Versatz: {ms} ms"
+        );
     }
 
     fn rms(samples: &[f32]) -> f64 {

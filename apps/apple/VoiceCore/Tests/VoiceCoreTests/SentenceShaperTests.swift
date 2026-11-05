@@ -22,9 +22,9 @@ final class SentenceShaperTests: XCTestCase {
     func testLongSilenceIsTrimmedToNaturalPause() {
         let out = shape(sentence(leadMs: 300, toneMs: 1000, tailMs: 600))
         let ms = Double(out.count) / rate * 1000
-        // 15 ms Vorlauf + 1000 ms Laut + höchstens 140 ms Nachklang (plus Ausschwingen
+        // 30 ms Vorlauf + 1000 ms Laut + höchstens 140 ms Nachklang (plus Ausschwingen
         // des Gleichanteilfilters) statt 300 + 600 ms Stille.
-        XCTAssertLessThan(ms, 1000 + 15 + 140 + 30)
+        XCTAssertLessThan(ms, 1000 + 30 + 140 + 30)
         XCTAssertGreaterThan(ms, 1000)
     }
 
@@ -47,6 +47,13 @@ final class SentenceShaperTests: XCTestCase {
         let s = sentence(leadMs: 0, toneMs: 300, tailMs: 400) + sentence(leadMs: 0, toneMs: 300, tailMs: 0)
         let out = shape(s)
         XCTAssertGreaterThan(Double(out.count) / rate, 0.95)
+    }
+
+    func testDcOffsetDoesNotKeepLeadingSilence() {
+        // Gleichanteil über der Schwelle schon in der Stille (Ursache des Ploppens).
+        let s = sentence(leadMs: 400, toneMs: 500, tailMs: 0).map { $0 + 0.05 }
+        let ms = Double(shape(s).count) / rate * 1000
+        XCTAssertLessThan(ms, 500 + 30 + 140 + 30)
     }
 
     func testChunkSizeDoesNotMatter() {

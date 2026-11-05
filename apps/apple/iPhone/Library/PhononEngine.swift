@@ -345,21 +345,26 @@ final class PhononEngine: ObservableObject {
             await audio.wait(below: 4)
             try check(audio)
             if let samples = cache.samples(voice, sentence) {
-                audio.enqueue(shaper.push(samples))
-                if silent { silent = false; await audible() }
+                let shaped = shaper.push(samples)
+                audio.enqueue(shaped)
+                if silent, !shaped.isEmpty { silent = false; await audible() }
             } else {
                 var samples: [Float] = []
                 for try await chunk in tts.stream(sentence) {
                     try check(audio)
-                    audio.enqueue(shaper.push(chunk))
+                    let shaped = shaper.push(chunk)
+                    audio.enqueue(shaped)
                     samples += chunk
-                    if silent { silent = false; await audible() }
+                    // Erst melden, wenn wirklich Ton eingereiht ist (die Stille davor fällt weg).
+                    if silent, !shaped.isEmpty { silent = false; await audible() }
                 }
                 // Ein Abbruch beendet den Strom auch ohne Fehler: Teilsätze nie aufheben.
                 try check(audio)
                 cache.store(voice, sentence, samples)
             }
-            audio.enqueue(shaper.finish(paragraphEnd: item.paragraphEnd))
+            let rest = shaper.finish(paragraphEnd: item.paragraphEnd)
+            audio.enqueue(rest)
+            if silent, !rest.isEmpty { silent = false; await audible() }
             audio.mark()
         }
         await audio.wait(below: 1)
