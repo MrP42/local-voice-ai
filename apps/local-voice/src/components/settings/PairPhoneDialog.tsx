@@ -268,6 +268,15 @@ export const PairPhoneDialog: React.FC<Props> = ({
           />
         )}
         <div className="space-y-3 text-sm">
+          <p className="flex gap-2 text-text/80">
+            <Lock
+              className="shrink-0 mt-0.5"
+              width={16}
+              height={16}
+              aria-hidden
+            />
+            {t("pairing.securityNote")}
+          </p>
           <ol className="list-decimal pl-5 space-y-1">
             <li>{t("pairing.step1")}</li>
             <li>{t("pairing.step2")}</li>
@@ -288,10 +297,6 @@ export const PairPhoneDialog: React.FC<Props> = ({
               {t("pairing.networkHint")}
             </p>
           )}
-          <p className="flex gap-2 text-text/60">
-            <Lock className="shrink-0" width={16} height={16} aria-hidden />
-            {t("pairing.securityNote")}
-          </p>
         </div>
       </div>
     );
@@ -309,6 +314,15 @@ export const PairPhoneDialog: React.FC<Props> = ({
             <p className="text-text/60">{t("pairing.nameByDevice")}</p>
           </div>
         </div>
+        <p className="flex gap-2 text-text/80">
+          <AlertTriangle
+            className="shrink-0 mt-0.5 text-orange-500"
+            width={16}
+            height={16}
+            aria-hidden
+          />
+          {t("pairing.sasWarning")}
+        </p>
         <p
           className="text-4xl font-semibold tracking-widest tabular-nums text-center"
           aria-label={`${t("pairing.sasLabel")}: ${sas.split("").join(" ")}`}
@@ -316,7 +330,6 @@ export const PairPhoneDialog: React.FC<Props> = ({
           {sas.slice(0, 3)} {sas.slice(3)}
         </p>
         <p className="text-center font-medium">{t("pairing.sasQuestion")}</p>
-        <p className="text-text/60">{t("pairing.sasWarning")}</p>
       </div>
     );
     footer = (
@@ -417,17 +430,19 @@ export const PairPhoneDialog: React.FC<Props> = ({
             <p className="font-medium">
               {t("pairing.revokeTitle", { name: shown.suspect.name })}
             </p>
-            <p>{t("pairing.revokeText")}</p>
             {chainNames.length > 0 && (
               <>
                 <p>{t("pairing.revokeAlso")}</p>
                 <ul className="list-disc pl-5">
                   {chainNames.map((n) => (
-                    <li key={n}>{n}</li>
+                    <li key={n} className="font-semibold text-text">
+                      {n}
+                    </li>
                   ))}
                 </ul>
               </>
             )}
+            <p>{t("pairing.revokeText")}</p>
           </div>
         )}
       </div>
@@ -458,6 +473,7 @@ export const PairPhoneDialog: React.FC<Props> = ({
       title={title}
       closeLabel={t("pairing.close")}
       className="max-w-2xl"
+      contentFades={false}
       closeOnBackdrop={false}
       footer={footer}
     >

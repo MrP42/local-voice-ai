@@ -110,6 +110,7 @@ export const PairPhoneCard: React.FC = () => {
           <Button
             variant="primary"
             size="sm"
+            className="min-h-11 sm:min-h-0"
             onClick={() => setDialog(true)}
             data-testid="pair-open"
           >
@@ -136,7 +137,10 @@ export const PairPhoneCard: React.FC = () => {
                   <th scope="col" className="py-2 font-normal">
                     {t("pairing.colDevice")}
                   </th>
-                  <th scope="col" className="py-2 font-normal">
+                  <th
+                    scope="col"
+                    className="py-2 font-normal hidden sm:table-cell"
+                  >
                     {t("pairing.colSince")}
                   </th>
                   <th scope="col" className="py-2 font-normal">
@@ -150,18 +154,18 @@ export const PairPhoneCard: React.FC = () => {
               <tbody>
                 {devices.map((d) => (
                   <tr key={d.id} className="border-t border-mid-gray/20">
-                    <td className="py-2 pr-3">
-                      <span className="font-medium">{d.name}</span>
+                    <td className="py-2 pr-3 min-w-[9rem]">
+                      <div className="font-medium break-words">{d.name}</div>
                       {d.current && (
-                        <span className="ml-2 text-text/60">
+                        <div className="text-text/60 text-xs">
                           {t("pairing.thisDevice")}
-                        </span>
+                        </div>
                       )}
                       {origin(d) && (
                         <div className="text-text/60 text-xs">{origin(d)}</div>
                       )}
                     </td>
-                    <td className="py-2 pr-3 whitespace-nowrap">
+                    <td className="py-2 pr-3 whitespace-nowrap hidden sm:table-cell">
                       {date(d.created_at)}
                     </td>
                     <td className="py-2 pr-3 whitespace-nowrap">
@@ -172,6 +176,7 @@ export const PairPhoneCard: React.FC = () => {
                         <Button
                           variant="danger-ghost"
                           size="sm"
+                          className="min-h-11 sm:min-h-0"
                           onClick={() => setRevoke(d)}
                           aria-label={`${t("pairing.logout")}: ${d.name}`}
                         >
@@ -206,6 +211,7 @@ export const PairPhoneCard: React.FC = () => {
         title={t("pairing.revokeTitle", { name: revoke?.name ?? "" })}
         closeLabel={t("pairing.close")}
         className="max-w-md"
+        contentFades={false}
         footer={
           <>
             <Button variant="secondary" onClick={() => setRevoke(null)}>
@@ -223,7 +229,6 @@ export const PairPhoneCard: React.FC = () => {
         }
       >
         <div className="space-y-3 text-sm">
-          <p>{t("pairing.revokeText")}</p>
           {also.length > 0 && (
             <div className="flex gap-2" role="alert">
               <AlertTriangle
@@ -236,7 +241,9 @@ export const PairPhoneCard: React.FC = () => {
                 <p>{t("pairing.revokeAlso")}</p>
                 <ul className="list-disc pl-5">
                   {also.map((d) => (
-                    <li key={d.id}>{d.name}</li>
+                    <li key={d.id} className="font-semibold text-text">
+                      {d.name}
+                    </li>
                   ))}
                 </ul>
                 {includesSelf && (
@@ -245,6 +252,7 @@ export const PairPhoneCard: React.FC = () => {
               </div>
             </div>
           )}
+          <p>{t("pairing.revokeText")}</p>
         </div>
       </Dialog>
     </>
