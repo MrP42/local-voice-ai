@@ -108,6 +108,20 @@ function Invoke-App([string[]]$AppArgs, [string]$LogName) {
     return $p.ExitCode
 }
 
+# Hugging-Face-Cache fuer Kindprozesse umlenken; gibt die alten Werte zum Wiederherstellen zurueck.
+$HfVars = @('HF_HOME', 'HF_HUB_CACHE', 'HUGGINGFACE_HUB_CACHE')
+function Set-HfCache([string]$HfHome) {
+    $saved = @{}
+    foreach ($v in $HfVars) { $saved[$v] = [Environment]::GetEnvironmentVariable($v) }
+    [Environment]::SetEnvironmentVariable('HF_HUB_CACHE', $null)
+    [Environment]::SetEnvironmentVariable('HUGGINGFACE_HUB_CACHE', $null)
+    [Environment]::SetEnvironmentVariable('HF_HOME', $HfHome)
+    return $saved
+}
+function Restore-HfCache([hashtable]$Saved) {
+    foreach ($v in $HfVars) { [Environment]::SetEnvironmentVariable($v, $Saved[$v]) }
+}
+
 function Split-LargeFile([System.IO.FileInfo]$File) {
     $hash = (Get-FileHash $File.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
     $names = @()
@@ -164,12 +178,12 @@ try {
         # ~/.cache/huggingface), nicht unter Data\. Eigener, leerer Cache fuer den Lauf;
         # danach werden die Dateien nach Data\models kopiert. Dort erkennt model.rs sie als
         # installiert (Ablage im Modellordner, wie beim Spiegel-Download).
+        # HF_HUB_CACHE/HUGGINGFACE_HUB_CACHE haetten Vorrang vor HF_HOME: fuer den Lauf entfernen.
         $hfHome = Join-Path $stage 'hf-cache'
-        $oldHfHome = $env:HF_HOME
-        $env:HF_HOME = $hfHome
+        $hfSaved = Set-HfCache $hfHome
         try {
             $code = Invoke-App @('--provision', ($ids -join ',')) 'provision'
-        } finally { $env:HF_HOME = $oldHfHome }
+        } finally { Restore-HfCache $hfSaved }
         if ($code -ne 0) { throw ("--provision endete mit Exit-Code {0}" -f $code) }
         $modelsDir = Join-Path $root 'Data/models'
         New-Item -ItemType Directory -Force $modelsDir | Out-Null
@@ -183,6 +197,10 @@ try {
             }
         }
         Remove-Item $hfHome -Recurse -Force -ErrorAction SilentlyContinue
+        # Ohne diese Pruefung entstuende still eine ZIP, die Nemotron wieder herunterlaedt.
+        if (-not (Get-ChildItem $modelsDir -File -Filter 'nemotron-3.5-asr-*.gguf' -ErrorAction SilentlyContinue)) {
+            throw 'Nemotron 3.5 ASR fehlt nach --provision in Data\models'
+        }
 
         # Nur die Modellablagen und die Voreinstellung mitnehmen; alles Rechnerspezifische
         # (Protokolle, WebView-Zwischenspeicher, Geraete-Probe, Geheimnisse) bleibt draussen.
@@ -287,13 +305,12 @@ try {
             # die Spracherkennung; die vorinstallierten Modelle muessen als installiert gelten.
             $listOut = Join-Path $stage 'list.out.txt'
             # Leerer HF-Cache: ein Modell aus dem Cache des Bau-Rechners darf nicht mitzaehlen.
-            $oldHfHome = $env:HF_HOME
-            $env:HF_HOME = Join-Path $stage 'hf-empty'
+            $hfSaved = Set-HfCache (Join-Path $stage 'hf-empty')
             $p = Start-Process -FilePath (Join-Path $probeRoot 'local-voice-ai.exe') -ArgumentList @('--list-models') `
                 -WorkingDirectory $probeRoot -PassThru -NoNewWindow -RedirectStandardOutput $listOut -RedirectStandardError (Join-Path $stage 'list.err.txt')
             $null = $p.Handle
             $finished = $p.WaitForExit(15 * 60 * 1000)
-            $env:HF_HOME = $oldHfHome
+            Restore-HfCache $hfSaved
             if (-not $finished) { $p.Kill(); throw 'Rauchtest: --list-models haengt' }
             $list = Get-Content $listOut -Raw
             Write-Host $list
