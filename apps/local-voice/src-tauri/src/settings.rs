@@ -821,6 +821,10 @@ pub struct AppSettings {
     /// Tonhöhe leicht — kleiner Bereich um 1.0 klingt natürlich).
     #[serde(default = "default_tts_speed")]
     pub tts_speed: f32,
+    /// Sprachfluss (0–1): Länge der Pausen an Komma, Satz- und Absatzende.
+    /// 0 zügig, 0,5 Hörbuch-Standard, 1 ruhig.
+    #[serde(default = "default_tts_flow")]
+    pub tts_flow: f32,
     /// Ausgabeformat für den Datei-Export ("wav" | "mp3" | "opus") — der
     /// Fish-Server encodiert direkt.
     #[serde(default = "default_tts_export_format")]
@@ -1130,6 +1134,10 @@ fn default_tts_normalize() -> bool {
 
 fn default_tts_speed() -> f32 {
     1.0
+}
+
+fn default_tts_flow() -> f32 {
+    0.5
 }
 
 fn default_tts_export_format() -> String {
@@ -1927,6 +1935,7 @@ pub fn get_default_settings() -> AppSettings {
         tts_enhance_strength: crate::managers::tts::enhance::Strength::default(),
         tts_reference_auto_transcribe: default_tts_reference_auto_transcribe(),
         tts_speed: default_tts_speed(),
+        tts_flow: default_tts_flow(),
         tts_export_format: default_tts_export_format(),
         tts_export_bitrate: default_tts_export_bitrate(),
         tts_context_menu: false,

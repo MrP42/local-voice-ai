@@ -1174,6 +1174,14 @@ async changeTtsSpeedSetting(value: number) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async changeTtsFlowSetting(value: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_tts_flow_setting", { value }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async changeTtsExportFormatSetting(value: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_tts_export_format_setting", { value }) };
@@ -7833,6 +7841,11 @@ tts_reference_auto_transcribe?: boolean;
  * Tonhöhe leicht — kleiner Bereich um 1.0 klingt natürlich).
  */
 tts_speed?: number; 
+/**
+ * Sprachfluss (0–1): Länge der Pausen an Komma, Satz- und Absatzende.
+ * 0 zügig, 0,5 Hörbuch-Standard, 1 ruhig.
+ */
+tts_flow?: number; 
 /**
  * Ausgabeformat für den Datei-Export ("wav" | "mp3" | "opus") — der
  * Fish-Server encodiert direkt.
