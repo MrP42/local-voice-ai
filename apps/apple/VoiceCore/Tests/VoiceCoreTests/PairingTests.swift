@@ -424,7 +424,7 @@ final class PairingTests: XCTestCase {
     func testHubExpiryLimitsWaitingAndAdopt() async throws {
         let hub = FakeHub()
         let start = Date()
-        await hub.set { $0.expiresAt = ISO8601DateFormatter().string(from: start.addingTimeInterval(45)) }  // läuft genau zwischen Abfrage und Abholung ab
+        await hub.set { $0.expiresAt = ISO8601DateFormatter().string(from: start.addingTimeInterval(55)) }  // läuft genau zwischen Abfrage und Abholung ab
         let tick = Ticker()
         let recorder = Recorder()
         let session = PairingSession(code: try await hub.code, name: "iPhone", transport: hub, pause: { _ in },
