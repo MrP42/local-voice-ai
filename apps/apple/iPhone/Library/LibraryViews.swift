@@ -85,6 +85,19 @@ struct LibraryTab: View {
             .task {
                 // Diagnose-Startargumente für Simulator-Bilder, kein Produktpfad.
                 let args = ProcessInfo.processInfo.arguments
+                if args.contains("--phonon-probe") {
+                    // Geräteprobe ohne Bedienung: Ergebnis landet in Documents/phonon-probe.txt.
+                    let out = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("phonon-probe.txt")
+                    let start = Date(); var log = "start\n"
+                    do {
+                        try await PhononEngine.shared.prepare()
+                        log += "geladen nach \(Date().timeIntervalSince(start)) s, Stimmen: \(PhononEngine.shared.voices)\n"
+                        let t = Date()
+                        try await PhononEngine.shared.speak("Guten Tag. Das ist Phonon auf dem iPhone.", voice: PhononEngine.shared.voices.first ?? "")
+                        log += "gesprochen in \(Date().timeIntervalSince(t)) s\n"
+                    } catch { log += "FEHLER \(error)\n" }
+                    try? log.write(to: out, atomically: true, encoding: .utf8)
+                }
                 if let i = args.firstIndex(of: "--sync-test"), i + 1 < args.count, LibrarySync.shared.account == nil {
                     await LibrarySync.shared.login(email: "test@example.com", password: "geheim", url: args[i + 1], deviceName: "Simulator")
                 }
@@ -674,7 +687,7 @@ struct LibraryReadAloudView: View {
     }
 
     private var currentVoiceName: String {
-        if let phonon = PhononEngine.voiceName(playback.voiceIdentifier) { return "\(phonon) (Phonon)" }
+        if let phonon = PhononEngine.voiceName(playback.voiceIdentifier) { return PhononEngine.displayName(phonon) }
         return (playback.voiceIdentifier.flatMap { AVSpeechSynthesisVoice(identifier: $0) } ?? LibraryPlayback.defaultVoice())?.name ?? "System"
     }
 }
@@ -693,7 +706,7 @@ private struct VoiceList: View {
                             let id = PhononEngine.voicePrefix + name
                             Button { playback.voiceIdentifier = id; dismiss() } label: {
                                 HStack {
-                                    Text(name)
+                                    Text(PhononEngine.displayName(name))
                                     Spacer()
                                     if id == playback.voiceIdentifier { Image(systemName: "checkmark") }
                                 }.frame(minHeight: 44).contentShape(Rectangle())

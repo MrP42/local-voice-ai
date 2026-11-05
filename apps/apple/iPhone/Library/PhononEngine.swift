@@ -18,6 +18,9 @@ final class PhononEngine: ObservableObject {
         return String(identifier.dropFirst(voicePrefix.count))
     }
 
+    /// Anzeigename; der Export nennt seine einzige Stimme „default“.
+    static func displayName(_ voice: String) -> String { voice == "default" ? "Phonon Deutsch" : voice }
+
     #if PHONON
     private var tts: Phonon?
     private var player: PhononPlayer?
