@@ -37,8 +37,6 @@ struct LocalModel: Identifiable, Sendable {
     /// Gemma 4 E2B für das Buch-Gespräch (Epic #307, G6). Q4_K_M, Apache-2.0 (Lizenz-Tag des Repos und von google/gemma-4-E2B-it).
     /// Größe und SHA-256 stammen aus den LFS-Metadaten des Hugging-Face-Repos (API `?blobs=true`, 2026-11-05),
     /// die URL ist auf diese Repo-Revision festgelegt, damit sich unter dem Namen nichts ändert.
-    /// TODO(Mac): `llama.xcframework` b5046 (setup_native_engines.py) kennt die Architektur `gemma4` noch nicht;
-    /// ohne neueres llama.cpp lädt `lv_llama_load` diese Datei nicht (Gespräch fällt dann auf Fundstellen zurück).
     static let gemmaName = "gemma-4-E2B-it-Q4_K_M.gguf"
     static let gemmaRepository = "unsloth/gemma-4-E2B-it-GGUF"
     static let gemmaRevision = "0314792d7f1f7e229411f620751375812bb9faf2"
