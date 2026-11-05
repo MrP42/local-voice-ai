@@ -102,4 +102,28 @@ final class LibraryTests: XCTestCase {
         XCTAssertEqual(LibraryTracks.position(of: 9999, in: tracks), TrackPosition(index: 1, offsetMs: 2000))
         XCTAssertEqual(LibraryTracks.total(TrackPosition(index: 1, offsetMs: 500), in: tracks), 1500)
     }
+
+    func testSentencesCoverParagraphWithoutEdges() {
+        let text = "Es war spät. Dr. Meier ging z. B. nach Hause!  War das klug? Niemand wusste es."
+        let parts = LibraryText.sentences(text).map { (text as NSString).substring(with: $0) }
+        XCTAssertEqual(parts, ["Es war spät.", "Dr. Meier ging z. B. nach Hause!", "War das klug?", "Niemand wusste es."])
+        let long = "Er traf gestern Abend Prof. Dr. Müller im Café. Dann ging er."
+        XCTAssertEqual(LibraryText.sentences(long).count, 2)
+        XCTAssertEqual(LibraryText.sentences(""), [])
+        XCTAssertEqual(LibraryText.sentences("Überschrift ohne Punkt").count, 1)
+    }
+
+    func testSentenceIndexFindsSavedPosition() {
+        let ranges = LibraryText.sentences("Erster Satz hier. Zweiter Satz hier. Dritter Satz hier.")
+        XCTAssertEqual(LibraryText.sentenceIndex(ranges, at: 0), 0)
+        XCTAssertEqual(LibraryText.sentenceIndex(ranges, at: ranges[1].location), 1)
+        XCTAssertEqual(LibraryText.sentenceIndex(ranges, at: ranges[2].location + 3), 2)
+        XCTAssertEqual(LibraryText.sentenceIndex([], at: 5), 0)
+    }
+
+    func testHeadingTextStartSkipsMarker() {
+        let p = LibraryText.paragraphs("# Titel\n\nText")
+        XCTAssertEqual(p[0].textStart, 2)
+        XCTAssertEqual(p[1].textStart, p[1].start)
+    }
 }

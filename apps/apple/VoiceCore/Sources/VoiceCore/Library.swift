@@ -1,4 +1,5 @@
 import Foundation
+import NaturalLanguage
 
 // Bibliothek (Epic #210): dasselbe Datenmodell wie die Desktop-Bibliothek
 // (`apps/local-voice/src-tauri/src/library.rs`, `src/lib/library/*.ts`), damit
@@ -246,6 +247,8 @@ public enum LibraryProgress {
 // MARK: - Zeitachse Text ↔ Hörbuch und Absätze
 
 public struct TextParagraph: Equatable, Sendable {
+    /// Beginn von `text` im Gesamttext. Bei Überschriften fehlt das Rautezeichen.
+    public var textStart: Int { heading ? end - text.utf16.count : start }
     /// Beginn und Ende im Text, in UTF-16-Einheiten.
     public var start: Int
     public var end: Int
@@ -279,6 +282,44 @@ public enum LibraryText {
         }
         push(units.count)
         return out
+    }
+
+    /// Sätze eines Absatzes als UTF-16-Bereiche, ohne Rand-Leerzeichen. Stücke, die nur aus
+    /// einer Abkürzung bestehen („z. B.“, „Dr.“), bleiben beim folgenden Satz.
+    public static func sentences(_ text: String) -> [NSRange] {
+        guard !text.isEmpty else { return [] }
+        let tokenizer = NLTokenizer(unit: .sentence)
+        tokenizer.string = text
+        var cuts: [Int] = []  // Beginn jedes Satzes
+        var pendingShort = false
+        tokenizer.enumerateTokens(in: text.startIndex..<text.endIndex) { range, _ in
+            if !pendingShort { cuts.append(NSRange(range, in: text).location) }
+            let piece = text[range].trimmingCharacters(in: .whitespacesAndNewlines)
+            let last = piece.split(separator: " ").last.map { $0.lowercased() } ?? ""
+            pendingShort = abbreviations.contains(last) || (piece.utf16.count < 12 && piece.last == "." && last.utf16.count <= 5)
+            return true
+        }
+        let all = text as NSString
+        var out: [NSRange] = []
+        for (i, start) in cuts.enumerated() {
+            let end = i + 1 < cuts.count ? cuts[i + 1] : all.length
+            var a = start, b = end
+            while a < b, isSpace(all.character(at: a)) { a += 1 }
+            while b > a, isSpace(all.character(at: b - 1)) { b -= 1 }
+            if b > a { out.append(NSRange(location: a, length: b - a)) }
+        }
+        return out
+    }
+
+    private static let abbreviations: Set<String> = ["dr.", "prof.", "hr.", "fr.", "st.", "nr.", "ca.", "bzw.", "vgl.", "z.", "b.", "d.", "h.", "u.", "a.", "s.", "mr.", "mrs.", "ms.", "vs.", "e.g.", "i.e."]
+
+    private static func isSpace(_ unit: UInt16) -> Bool {
+        unit < 128 ? (unit == 32 || (unit >= 9 && unit <= 13)) : unit == 0xA0
+    }
+
+    /// Satz, in dem die Stelle `location` des Absatzes liegt (der letzte davor, falls dazwischen).
+    public static func sentenceIndex(_ sentences: [NSRange], at location: Int) -> Int {
+        sentences.lastIndex { $0.location <= location } ?? 0
     }
 
     /// Index des Absatzes, in dem `chars` liegt (der letzte davor, falls dazwischen).

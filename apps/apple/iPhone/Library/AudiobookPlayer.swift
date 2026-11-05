@@ -26,6 +26,7 @@ enum AudiobookFormat {
 }
 
 struct LibraryListenView: View {
+    @ObservedObject var look = ReaderAppearance.shared
     @ObservedObject var playback = LibraryPlayback.shared
     @ObservedObject var library = PhoneLibrary.shared
     @State private var scrubbing: Double?
@@ -45,9 +46,12 @@ struct LibraryListenView: View {
         VStack(spacing: 0) {
             PlayerHeader(title: playback.title,
                          subtitle: chapters.count > 1 ? "Kapitel \(index + 1) von \(chapters.count)" : "Hörbuch",
-                         trailing: AnyView(Button { infoShown = true } label: {
-                             Image(systemName: "info.circle").font(.title3).frame(width: 44, height: 44)
-                         }.accessibilityLabel("Angaben zum Buch")))
+                         trailing: AnyView(HStack(spacing: 0) {
+                             if showText { ReaderAppearanceButton() }
+                             Button { infoShown = true } label: {
+                                 Image(systemName: "info.circle").font(.title3).frame(width: 44, height: 44)
+                             }.accessibilityLabel("Angaben zum Buch")
+                         }))
             Divider()
             if showText, !playback.paragraphs.isEmpty { followText } else { coverArea }
             controls(chapters: chapters, index: index)
@@ -93,8 +97,8 @@ struct LibraryListenView: View {
         let current = currentParagraph
         return VStack(spacing: 0) {
             FollowText(paragraphs: playback.paragraphs, current: current) { i, p in
-                Text(p.text).font(p.heading ? .custom("Georgia-Bold", size: 21, relativeTo: .title3) : .custom("Georgia", size: 18, relativeTo: .body))
-                    .lineSpacing(5).fixedSize(horizontal: false, vertical: true)
+                Text(p.text).font(look.font(heading: p.heading)).foregroundStyle(look.text)
+                    .lineSpacing(look.lineSpacing).fixedSize(horizontal: false, vertical: true)
                     .padding(10).frame(maxWidth: .infinity, alignment: .leading)
                     .background(i == current ? Color.yellow.opacity(0.28) : Color.clear, in: RoundedRectangle(cornerRadius: 10))
                     .contentShape(Rectangle()).onTapGesture { playback.jump(toParagraph: i) }
@@ -102,8 +106,9 @@ struct LibraryListenView: View {
                     .accessibilityHint("Springt im Hörbuch zu diesem Absatz")
             }
             Text(playback.followMap?.approximate == true ? "Ohne Zeitachse vom PC: Markierung nur geschätzt" : "Absatz antippen, um im Hörbuch dorthin zu springen")
-                .font(.caption).foregroundStyle(VoicePalette.secondaryText).padding(.vertical, 4)
+                .font(.caption).foregroundStyle(look.muted).padding(.vertical, 4)
         }
+        .background(look.background)
     }
 
     // MARK: Bedienleiste
