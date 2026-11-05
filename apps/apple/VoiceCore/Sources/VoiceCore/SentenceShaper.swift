@@ -11,7 +11,8 @@ import Foundation
 /// - Stille vor dem ersten Laut bis auf `leadMs` kürzen (leise Anlaute wie f oder h bleiben), mit Kosinus einblenden.
 /// - Stille nach dem letzten Laut auf höchstens `tailMs` kürzen, mit Kosinus ausblenden.
 /// - Am Absatzende die Pause auf mindestens `paragraphMs` auffüllen.
-/// Pausen IM Satz (Komma, Gedankenstrich) bleiben unangetastet.
+/// - Pausen IM Satz (Komma, Gedankenstrich, Grenzen der Phonon-Abschnitte) auf höchstens
+///   `innerMs` kürzen; Phonon setzt dort sonst fast eine Satzpause (Runde 2 von #314).
 public struct SentenceShaper {
     /// Pegel, ab dem ein Abtastwert als Laut zählt (rund −44 dBFS).
     public static let threshold: Float = 0.006
@@ -21,6 +22,7 @@ public struct SentenceShaper {
     private let fadeOut: Int
     private let tail: Int
     private let paragraph: Int
+    private let inner: Int
 
     private var started = false
     private var pre: [Float] = []
@@ -34,13 +36,15 @@ public struct SentenceShaper {
     private var fresh = true
     private let dcPole: Float
 
-    public init(sampleRate: Double, leadMs: Double = 30, tailMs: Double = 140, paragraphMs: Double = 450) {
+    public init(sampleRate: Double, leadMs: Double = 30, tailMs: Double = 140, paragraphMs: Double = 450,
+                innerMs: Double = 220) {
         let frames = { (ms: Double) in max(0, Int((sampleRate * ms / 1000).rounded())) }
         lead = frames(leadMs)
         fadeIn = max(1, frames(8))
         fadeOut = max(1, frames(12))
         tail = frames(tailMs)
         paragraph = frames(paragraphMs)
+        inner = max(2, frames(innerMs))
         dcPole = Float(1 - 2 * Double.pi * 19 / max(sampleRate, 1))
     }
 
@@ -64,6 +68,11 @@ public struct SentenceShaper {
                 pre = []
             }
             if abs(y) >= Self.threshold {
+                // Lange Pause im Satz: Mitte herausnehmen, Ausklang und Einsatz bleiben.
+                if hold.count > inner {
+                    let half = inner / 2
+                    hold = Array(hold.prefix(half) + hold.suffix(inner - half))
+                }
                 for v in hold { ready.append(faded(v)) }
                 hold.removeAll(keepingCapacity: true)
                 ready.append(faded(y))

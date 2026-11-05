@@ -18,6 +18,14 @@ final class LibraryPlayback: NSObject, ObservableObject {
     @Published private(set) var totalMs: Double = 0
     @Published private(set) var trackIndex = 0
     @Published var rate: Float = 1.0 { didSet { applyRate() } }
+    /// Sprachfluss beim Vorlesen mit Phonon: 0 zügig, 0,5 Hörbuch, 1 ruhig (`SpeechFlow`).
+    @Published var flow: Double = SpeechFlow.stored().value {
+        didSet {
+            UserDefaults.standard.set(flow, forKey: SpeechFlow.storageKey)
+            guard mode == .readAloud, oldValue != flow else { return }
+            if phononTask != nil, !playing { discardPausedSpeech() } else if playing, phononTask != nil { speakCurrent() }
+        }
+    }
     @Published private(set) var sleepEnds: Date?
     /// Schlaftimer „Ende des Kapitels“: Hörposition, an der angehalten wird.
     @Published private(set) var sleepAtMs: Double?
@@ -404,6 +412,13 @@ final class LibraryPlayback: NSObject, ObservableObject {
     }
 
     /// Pausierte Äußerung verwerfen: Weiter beginnt am aktuellen Satz.
+    /// Bibliothek geöffnet: Modell und Stimme schon laden, bevor ein Buch gewählt ist.
+    /// Das erste Laden (Core ML) dauert einige Sekunden; danach beginnt Vorlesen sofort.
+    func warmUp() {
+        guard !busy, phononTask == nil, let voice = phononVoice else { return }
+        PhononEngine.shared.prepare(voice: voice)
+    }
+
     private func discardPausedSpeech() {
         if synth.isPaused { currentUtterance = nil; synth.stopSpeaking(at: .immediate) }
         stopPhonon()
@@ -529,7 +544,10 @@ final class LibraryPlayback: NSObject, ObservableObject {
     private func applyRate() {
         if mode == .audiobook, playing { player?.rate = rate }
         if mode == .readAloud {
-            if phononTask != nil { PhononEngine.shared.setRate(rate) } else if playing { speakCurrent() }
+            // Phonon: Das Tempo steckt im erzeugten Ton, also am aktuellen Satz neu ansetzen
+            // (aus dem Satzspeicher sofort). Pausiert gilt es beim Weiterlesen.
+            PhononEngine.shared.setRate(rate)
+            if phononTask != nil, !playing { discardPausedSpeech() } else if playing { speakCurrent() }
         }
     }
 

@@ -3,7 +3,8 @@ import Foundation
 import AVFoundation
 
 /// Wiedergabe für Phonon. Eigener Player statt `PhononPlayer`, weil das Vorlesen echtes
-/// Pausieren und ein Tempo braucht: `AVAudioUnitTimePitch` ändert es ohne Tonhöhe.
+/// Pausieren braucht. Das Tempo steckt schon im eingereihten Ton (`SpeechStretcher`):
+/// `AVAudioUnitTimePitch` klang auch in höchster Qualität blechern (#314).
 ///
 /// `AVAudioPlayerNode.stop()` wartet synchron auf die Rückrufe der Node. Deshalb läuft alles,
 /// was blockieren kann, auf einer eigenen Warteschlange: nie auf dem Main Thread und nie in
@@ -14,7 +15,6 @@ private final class PhononAudio: @unchecked Sendable {
 
     private let engine = AVAudioEngine()
     private let node = AVAudioPlayerNode()
-    private let pitch = AVAudioUnitTimePitch()
     private let format = AVAudioFormat(standardFormatWithSampleRate: Phonon.sampleRate, channels: 1)!
     private let played: @Sendable () -> Void
     private let lock = NSLock()
@@ -24,21 +24,16 @@ private final class PhononAudio: @unchecked Sendable {
     private var stalled = false
     private var observer: NSObjectProtocol?
 
-    static func make(rate: Float, played: @escaping @Sendable () -> Void) async throws -> PhononAudio {
+    static func make(played: @escaping @Sendable () -> Void) async throws -> PhononAudio {
         try await withCheckedThrowingContinuation { done in
-            queue.async { done.resume(with: Result { try PhononAudio(rate: rate, played: played) }) }
+            queue.async { done.resume(with: Result { try PhononAudio(played: played) }) }
         }
     }
 
-    private init(rate: Float, played: @escaping @Sendable () -> Void) throws {
+    private init(played: @escaping @Sendable () -> Void) throws {
         self.played = played
-        pitch.rate = rate
-        // Höchste Qualitätsstufe des Phasenvocoders (Standard 8, Bereich 3–32).
-        // Mit 8 klang die Stimme bei jedem Tempo ≠ 1 robotisch (#314).
-        pitch.overlap = 32
-        engine.attach(node); engine.attach(pitch)
-        engine.connect(node, to: pitch, format: format)
-        engine.connect(pitch, to: engine.mainMixerNode, format: format)
+        engine.attach(node)
+        engine.connect(node, to: engine.mainMixerNode, format: format)
         try engine.start()
         node.play()
         // Neues Hardwareformat (AirPods, Mediendienste): Die Engine steht dann, ohne dass Rückrufe kommen.
@@ -65,7 +60,7 @@ private final class PhononAudio: @unchecked Sendable {
         if !isStopped, let buf = buffer(samples) { node.scheduleBuffer(buf) }
     }
 
-    /// Satzende. Der Rückruf kommt, wenn alles davor wirklich gespielt ist, auch bei anderem Tempo.
+    /// Satzende. Der Rückruf kommt, wenn alles davor wirklich gespielt ist.
     func mark() {
         guard let tail = buffer([Float](repeating: 0, count: 240)) else { return }
         let accepted = lock.withLock { () -> Bool in
@@ -114,8 +109,6 @@ private final class PhononAudio: @unchecked Sendable {
         Self.queue.async { [self] in node.play() }
         return true
     }
-
-    func setRate(_ rate: Float) { pitch.rate = rate }
 
     /// Blockiert nicht und darf mehrfach kommen.
     func shutdown() {
@@ -300,7 +293,8 @@ final class PhononEngine: ObservableObject {
             guard let self, let parts = Self.parts(name), let tts = try? await self.engine(parts.language) else { return }
             if tts.voice != parts.voice { try? await tts.setVoice(parts.voice) }
             for sentence in sentences where !Task.isCancelled && self.cache.samples(name, sentence) == nil {
-                guard let samples = try? await tts.synthesize(sentence), !Task.isCancelled else { return }
+                guard let samples = try? await tts.synthesize(SpeechText.spoken(sentence, language: parts.language)),
+                      !Task.isCancelled else { return }
                 self.cache.store(name, sentence, samples)
             }
         }
@@ -324,35 +318,39 @@ final class PhononEngine: ObservableObject {
         if tts.voice != parts.voice { try await tts.setVoice(parts.voice) }
         try Task.checkCancellation()
         // Je Lesung ein neuer Player: Nach Anruf, Aufnahme oder Routenwechsel steht die alte Audio-Engine.
-        let audio = try await PhononAudio.make(rate: requestedRate) {
+        let audio = try await PhononAudio.make {
             DispatchQueue.main.async { MainActor.assumeIsolated { played() } }
         }
         defer { audio.shutdown(); if player === audio { player = nil } }
         try Task.checkCancellation()
-        audio.setRate(requestedRate)
         player = audio
-        try await Self.pump(tts, audio, voice: name, cache: cache, next: next, audible: audible)
+        try await Self.pump(tts, audio, voice: name, language: parts.language, rate: Double(requestedRate), flow: SpeechFlow.stored(),
+                            cache: cache, next: next, audible: audible)
     }
 
     /// Erzeugen und Einreihen abseits des Main Threads. Zum hörbaren Satz liegen drei weitere bereit.
-    nonisolated private static func pump(_ tts: Phonon, _ audio: PhononAudio, voice: String, cache: SentenceAudioCache,
+    /// Je Satz: Ränder glätten und Pausen nach dem Sprachfluss setzen (`SentenceShaper`),
+    /// dann tonhöhensynchron aufs Tempo bringen (`SpeechStretcher`). Ein neues Tempo oder ein
+    /// neuer Sprachfluss gilt ab dem nächsten Lesen; `LibraryPlayback` setzt dafür am Satz neu an.
+    nonisolated private static func pump(_ tts: Phonon, _ audio: PhononAudio, voice: String, language: String, rate: Double,
+                                         flow: SpeechFlow, cache: SentenceAudioCache,
                                          next: @MainActor () -> PhononSentence?, audible: @MainActor () -> Void) async throws {
         var silent = true
-        // Ränder jedes Satzes glätten und Pausen kürzen (#314): kein Ploppen, kein Stocken.
-        var shaper = SentenceShaper(sampleRate: Phonon.sampleRate)
+        var shaper = flow.shaper(sampleRate: Phonon.sampleRate)
+        var stretcher = SpeechStretcher(sampleRate: Phonon.sampleRate, speed: rate)
         while let item = await next() {
             let sentence = item.text
             await audio.wait(below: 4)
             try check(audio)
             if let samples = cache.samples(voice, sentence) {
-                let shaped = shaper.push(samples)
+                let shaped = stretcher.push(shaper.push(samples))
                 audio.enqueue(shaped)
                 if silent, !shaped.isEmpty { silent = false; await audible() }
             } else {
                 var samples: [Float] = []
-                for try await chunk in tts.stream(sentence) {
+                for try await chunk in tts.stream(SpeechText.spoken(sentence, language: language)) {
                     try check(audio)
-                    let shaped = shaper.push(chunk)
+                    let shaped = stretcher.push(shaper.push(chunk))
                     audio.enqueue(shaped)
                     samples += chunk
                     // Erst melden, wenn wirklich Ton eingereiht ist (die Stille davor fällt weg).
@@ -362,7 +360,8 @@ final class PhononEngine: ObservableObject {
                 try check(audio)
                 cache.store(voice, sentence, samples)
             }
-            let rest = shaper.finish(paragraphEnd: item.paragraphEnd)
+            // Satzende: Strecker leeren, damit die Markierung genau am Satzende sitzt.
+            let rest = stretcher.push(shaper.finish(paragraphEnd: item.paragraphEnd)) + stretcher.flush()
             audio.enqueue(rest)
             if silent, !rest.isEmpty { silent = false; await audible() }
             audio.mark()
@@ -380,7 +379,7 @@ final class PhononEngine: ObservableObject {
 
     func pause() { player?.pause() }
     func resume() -> Bool { player?.resume() ?? false }
-    func setRate(_ rate: Float) { requestedRate = rate; player?.setRate(rate) }
+    func setRate(_ rate: Float) { requestedRate = rate }
     func silence() { player?.shutdown(); player = nil }
     #else
     var modelAvailable: Bool { false }
