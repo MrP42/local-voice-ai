@@ -43,10 +43,18 @@ final class SentenceShaperTests: XCTestCase {
         XCTAssertGreaterThan(end.count - inner.count, Int(rate * 0.35))
     }
 
-    func testPausesInsideSentenceStay() {
-        let s = sentence(leadMs: 0, toneMs: 300, tailMs: 400) + sentence(leadMs: 0, toneMs: 300, tailMs: 0)
+    func testShortPausesInsideSentenceStay() {
+        let s = sentence(leadMs: 0, toneMs: 300, tailMs: 150) + sentence(leadMs: 0, toneMs: 300, tailMs: 0)
         let out = shape(s)
-        XCTAssertGreaterThan(Double(out.count) / rate, 0.95)
+        XCTAssertGreaterThan(Double(out.count) / rate, 0.74)
+    }
+
+    func testLongPausesInsideSentenceAreShortened() {
+        // Phonon setzt zwischen seinen Abschnitten fast eine Satzpause.
+        let s = sentence(leadMs: 0, toneMs: 300, tailMs: 600) + sentence(leadMs: 0, toneMs: 300, tailMs: 0)
+        let ms = Double(shape(s).count) / rate * 1000
+        XCTAssertLessThan(ms, 300 + 220 + 300 + 30)
+        XCTAssertGreaterThan(ms, 300 + 200 + 300 - 30)
     }
 
     func testDcOffsetDoesNotKeepLeadingSilence() {
