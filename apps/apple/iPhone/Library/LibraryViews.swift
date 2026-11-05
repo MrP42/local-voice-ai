@@ -679,7 +679,11 @@ struct LibraryReadAloudView: View {
             }
             .background(look.background)
             VStack(spacing: 8) {
-                Text("Absatz antippen, um ab dort vorzulesen").font(.caption).foregroundStyle(VoicePalette.secondaryText)
+                HStack {
+                    Text("Absatz antippen, um ab dort vorzulesen").font(.caption).foregroundStyle(VoicePalette.secondaryText)
+                    Spacer()
+                    BookTalkButton()
+                }
                 HStack {
                     let rec = playback.book.map { PhoneLibrary.shared.record(PhoneLibrary.shared.textKey($0)) } ?? nil
                     Text("Text: \(LibraryFormat.percent(LibraryProgress.fraction(rec))) gelesen")

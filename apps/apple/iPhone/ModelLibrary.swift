@@ -34,7 +34,17 @@ struct LocalModel: Identifiable, Sendable {
     let label: String
     let bytes: Int64
     let sha256: String
+    /// Gemma 4 E2B für das Buch-Gespräch (Epic #307, G6). Q4_K_M, Apache-2.0 (Lizenz-Tag des Repos und von google/gemma-4-E2B-it).
+    /// Größe und SHA-256 stammen aus den LFS-Metadaten des Hugging-Face-Repos (API `?blobs=true`, 2026-11-05),
+    /// die URL ist auf diese Repo-Revision festgelegt, damit sich unter dem Namen nichts ändert.
+    /// TODO(Mac): `llama.xcframework` b5046 (setup_native_engines.py) kennt die Architektur `gemma4` noch nicht;
+    /// ohne neueres llama.cpp lädt `lv_llama_load` diese Datei nicht (Gespräch fällt dann auf Fundstellen zurück).
+    static let gemmaName = "gemma-4-E2B-it-Q4_K_M.gguf"
+    static let gemmaRepository = "unsloth/gemma-4-E2B-it-GGUF"
+    static let gemmaRevision = "0314792d7f1f7e229411f620751375812bb9faf2"
+    var isGemma: Bool { name == Self.gemmaName }
     var downloadURL: URL {
+        if isGemma { return URL(string: "https://huggingface.co/\(Self.gemmaRepository)/resolve/\(Self.gemmaRevision)/\(name)")! }
         let repository = name.hasPrefix("ggml-") ? "ggerganov/whisper.cpp" : name.contains("1.5b") ? "Qwen/Qwen2.5-1.5B-Instruct-GGUF" : "Qwen/Qwen2.5-0.5B-Instruct-GGUF"
         return URL(string: "https://huggingface.co/\(repository)/resolve/main/\(name)")!
     }
@@ -42,7 +52,8 @@ struct LocalModel: Identifiable, Sendable {
         LocalModel(name: "ggml-base.bin", label: "Whisper Base", bytes: 147951465, sha256: "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe"),
         LocalModel(name: "ggml-small.bin", label: "Whisper Small", bytes: 487601967, sha256: "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b"),
         LocalModel(name: "qwen2.5-0.5b-instruct-q4_k_m.gguf", label: "Qwen – kurze Antworten", bytes: 491400032, sha256: "74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db"),
-        LocalModel(name: "qwen2.5-1.5b-instruct-q4_k_m.gguf", label: "Qwen – Auswertungen", bytes: 1117320736, sha256: "6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e")
+        LocalModel(name: "qwen2.5-1.5b-instruct-q4_k_m.gguf", label: "Qwen – Auswertungen", bytes: 1117320736, sha256: "6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e"),
+        LocalModel(name: gemmaName, label: "Gemma 4 E2B – Buch-Gespräch", bytes: 3106738272, sha256: "740185b21d22ceb83a11c3aa62ad5842ef32c70f6096d756bbee85a1e4ec34b8")
     ]
 }
 struct InstalledModel: Identifiable, Sendable {
