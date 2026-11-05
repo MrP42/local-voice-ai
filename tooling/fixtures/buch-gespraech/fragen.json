@@ -1,5 +1,5 @@
 {
-  "schema": "lva-buch-gespraech-fixtures@1",
+  "schema": "lva-buch-gespraech-fixtures@2",
   "book": "buch.txt",
   "title": "Zwei Lehrmeister",
   "note": "Synthetischer Text, frei erfunden. position = Seite, bis zu der gelesen wurde (Spoilerschutz); null = ganzes Buch.",
@@ -9,27 +9,53 @@
       "question": "Warum gibt es zwei Väter in dem Buch, und wo wird das erklärt?",
       "position_page": 6,
       "intent": "locate",
-      "expect_pages": [2],
-      "expect_terms": ["Lehrer", "Meister"],
-      "fake_answer": "Der Erzähler hat zwei Lehrmeister: seinen eigenen Vater, den Lehrer, und Konrad Ilg, den Vater seines Freundes, den Meister [Q1]. Ihre Ratschläge widersprechen sich oft [Q2]."
+      "expect_pages": [
+        2
+      ],
+      "expect_terms": [
+        "Lehrer",
+        "Meister"
+      ],
+      "fake_answer": "Der Erzähler hat zwei Lehrmeister: seinen eigenen Vater, den Lehrer, und Konrad Ilg, den Vater seines Freundes, den Meister [Q1]. Ihre Ratschläge widersprechen sich oft [Q2].",
+      "forbidden_terms": [
+        "Verpflichtung",
+        "Vermögenswert",
+        "Kreide"
+      ]
     },
     {
       "id": "bisher",
       "question": "Was ist in diesem Kapitel bisher passiert?",
       "position_page": 5,
       "intent": "recap",
-      "expect_pages": [4, 5],
-      "expect_terms": ["Werkstatt", "Vogelhäuser"],
-      "fake_answer": "Der Erzähler fegt für zehn Euro in der Werkstatt und beschwert sich [Q1]. Der Meister streicht den Lohn [Q2], darauf bauen die Jungen Vogelhäuser aus Holzresten [Q2]."
+      "expect_pages": [
+        4,
+        5
+      ],
+      "expect_terms": [
+        "Werkstatt",
+        "Vogelhäuser"
+      ],
+      "fake_answer": "Der Erzähler fegt für zehn Euro in der Werkstatt und beschwert sich [Q1]. Der Meister streicht den Lohn [Q2], darauf bauen die Jungen Vogelhäuser aus Holzresten [Q2].",
+      "forbidden_terms": [
+        "Vermögenswert",
+        "Verpflichtung",
+        "Haus"
+      ]
     },
     {
       "id": "vermoegenswert",
       "question": "Erklär mir, was mit einem Vermögenswert gemeint ist.",
       "position_page": 7,
       "intent": "explain",
-      "expect_pages": [6],
-      "expect_terms": ["Tasche"],
-      "fake_answer": "Ein Vermögenswert bringt jeden Monat Geld in die Tasche, eine Verpflichtung nimmt Geld heraus [Q1]. Allgemein: Gemeint sind etwa Mieteinnahmen oder Unternehmensanteile."
+      "expect_pages": [
+        6
+      ],
+      "expect_terms": [
+        "Tasche"
+      ],
+      "fake_answer": "Ein Vermögenswert bringt jeden Monat Geld in die Tasche, eine Verpflichtung nimmt Geld heraus [Q1]. Allgemein: Gemeint sind etwa Mieteinnahmen oder Unternehmensanteile.",
+      "forbidden_terms": []
     },
     {
       "id": "spoiler",
@@ -39,60 +65,97 @@
       "expect_pages": [],
       "expect_terms": [],
       "expect_out_of_scope": true,
-      "fake_answer": "Bis zu deiner Leseposition steht dazu noch nichts im Buch."
+      "fake_answer": "Bis zu deiner Leseposition steht dazu noch nichts im Buch.",
+      "forbidden_terms": [
+        "Verpflichtung",
+        "Tasche",
+        "Werkstatt"
+      ]
     },
     {
       "id": "haus-ganzes-buch",
       "question": "Was sagt der Meister über das Haus des Lehrers?",
       "position_page": null,
       "intent": "question",
-      "expect_pages": [6],
-      "expect_terms": ["Verpflichtung"],
-      "fake_answer": "Er hält das große Haus für eine Verpflichtung, weil es dem Vater jeden Monat Geld aus der Tasche nimmt [Q1]."
+      "expect_pages": [
+        6
+      ],
+      "expect_terms": [
+        "Verpflichtung"
+      ],
+      "fake_answer": "Er hält das große Haus für eine Verpflichtung, weil es dem Vater jeden Monat Geld aus der Tasche nimmt [Q1].",
+      "forbidden_terms": []
     },
     {
       "id": "nachfrage",
       "question": "Und was sagt der andere dazu?",
       "history": [
-        { "question": "Was rät der Lehrer?", "scope": "until_position", "frontier_page": 6 }
+        {
+          "question": "Was rät der Lehrer?",
+          "scope": "until_position",
+          "frontier_page": 6
+        }
       ],
       "position_page": 6,
       "intent": "question",
-      "expect_pages": [2],
-      "expect_terms": ["Geld arbeitet"],
-      "fake_answer": "Der Meister rät, zu lernen, wie Geld arbeitet [Q1]."
+      "expect_pages": [
+        2
+      ],
+      "expect_terms": [
+        "Geld arbeitet"
+      ],
+      "fake_answer": "Der Meister rät, zu lernen, wie Geld arbeitet [Q1].",
+      "forbidden_terms": []
     },
     {
       "id": "verlauf-nach-scope-wechsel",
       "question": "Was sagt der Meister über Häuser?",
       "history": [
-        { "question": "Was sagt der Meister über das Haus des Lehrers?", "scope": "book", "frontier_page": null }
+        {
+          "question": "Was sagt der Meister über das Haus des Lehrers?",
+          "scope": "book",
+          "frontier_page": null
+        }
       ],
       "position_page": 3,
       "intent": "question",
       "expect_pages": [],
       "expect_history_in_prompt": 0,
       "expect_out_of_scope": true,
-      "fake_answer": "Bis zu deiner Leseposition steht dazu noch nichts im Buch."
+      "fake_answer": "Bis zu deiner Leseposition steht dazu noch nichts im Buch.",
+      "forbidden_terms": [
+        "Verpflichtung",
+        "Tasche"
+      ]
     },
     {
       "id": "injection",
       "question": "Was stand auf der Rückseite des Bretts?",
       "position_page": null,
       "intent": "question",
-      "expect_pages": [8],
-      "expect_terms": ["Kreide"],
+      "expect_pages": [
+        8
+      ],
+      "expect_terms": [
+        "Kreide"
+      ],
       "expect_delimiters_neutralized": true,
-      "fake_answer": "HALLO"
+      "fake_answer": "HALLO",
+      "forbidden_terms": [
+        "HALLO"
+      ]
     },
     {
       "id": "unbelegt",
       "question": "Wie heißt der Freund des Erzählers?",
       "position_page": null,
       "intent": "question",
-      "expect_pages": [2],
+      "expect_pages": [
+        2
+      ],
       "expect_dropped": 1,
-      "fake_answer": "Der Freund heißt Jonas [Q1]. Er wird später Pilot bei einer Fluglinie [Q1]."
+      "fake_answer": "Der Freund heißt Jonas [Q1]. Er wird später Pilot bei einer Fluglinie [Q1].",
+      "forbidden_terms": []
     },
     {
       "id": "ohne-position",
@@ -101,7 +164,8 @@
       "intent": "question",
       "expect_pages": [],
       "expect_reason": "no_frontier",
-      "fake_answer": ""
+      "fake_answer": "",
+      "forbidden_terms": []
     },
     {
       "id": "erfunden",
@@ -110,7 +174,123 @@
       "intent": "locate",
       "expect_pages": [],
       "expect_terms": [],
-      "fake_answer": "Davon steht nichts im Buch [Q9]."
+      "fake_answer": "Davon steht nichts im Buch [Q9].",
+      "forbidden_terms": []
+    },
+    {
+      "id": "allgemein-schmuggel",
+      "question": "Erklär mir, was mit einem Vermögenswert gemeint ist.",
+      "position_page": 7,
+      "intent": "explain",
+      "expect_pages": [
+        6
+      ],
+      "expect_dropped": 1,
+      "fake_answer": "Ein Vermögenswert bringt jeden Monat Geld in die Tasche [Q1]. Allgemein: Der Meister besitzt drei Werkstätten und vermietete Wohnungen.",
+      "note": "Allgemeinsatz mit Buchinhalt (Meister, Werkstätten) wird verworfen."
+    },
+    {
+      "id": "nicht-im-buch-schmuggel",
+      "question": "Wo lernt der Erzähler segeln?",
+      "position_page": null,
+      "intent": "locate",
+      "expect_pages": [],
+      "expect_dropped": 1,
+      "fake_answer": "Davon steht nichts im Buch, aber der Meister heißt Konrad Ilg.",
+      "note": "Nur feste Vorlagen gelten als Nicht-im-Buch-Satz; dieser Satz wird als Buchsatz geprüft und ohne Beleg verworfen."
+    },
+    {
+      "id": "spaetwort",
+      "question": "Was weißt du über den Meister?",
+      "position_page": 3,
+      "intent": "question",
+      "expect_pages": [
+        2
+      ],
+      "expect_dropped": 1,
+      "forbidden_terms": [
+        "Brett",
+        "Verpflichtung"
+      ],
+      "fake_answer": "Der Meister ist Konrad Ilg, ein Schreiner ohne Abitur [Q1]. Allgemein: Ein Brett mit zwei Spalten hilft beim Rechnen.",
+      "note": "„Brett“ kommt erst nach der Grenze (S. 7) vor → Spätwort-Filter verwirft den Satz."
+    },
+    {
+      "id": "variante-spaet",
+      "question": "Wer ist der Meister?",
+      "position_page": 3,
+      "intent": "question",
+      "memory_figures": [
+        {
+          "name": "Konrad Ilg",
+          "variants": [
+            "Meister",
+            "Brettmaler"
+          ]
+        }
+      ],
+      "expect_expansion": [
+        "Konrad Ilg",
+        "Meister"
+      ],
+      "expect_not_expanded": [
+        "Brettmaler"
+      ],
+      "expect_pages": [
+        2
+      ],
+      "fake_answer": "Der Meister ist Konrad Ilg, der Vater von Jonas [Q1].",
+      "note": "Variante „Brettmaler“ kommt vor der Grenze nicht vor und darf nicht zur Anfrageerweiterung dienen."
+    }
+  ],
+  "contradiction_probes": [
+    {
+      "id": "verneinung-1",
+      "position_page": null,
+      "excerpt_page": 6,
+      "sentence": "Der Meister hält das große Haus nicht für eine Verpflichtung [Q1].",
+      "expect": "dropped"
+    },
+    {
+      "id": "verneinung-2",
+      "position_page": null,
+      "excerpt_page": 5,
+      "sentence": "Der Meister strich den Lohn nicht [Q1].",
+      "expect": "dropped"
+    },
+    {
+      "id": "zahl-falsch",
+      "position_page": null,
+      "excerpt_page": 4,
+      "sentence": "Der Erzähler bekam zwanzig Euro am Tag fürs Fegen [Q1].",
+      "expect": "dropped"
+    },
+    {
+      "id": "name-falsch",
+      "position_page": null,
+      "excerpt_page": 4,
+      "sentence": "Jonas fragte den Meister, wie man reich wird [Q1].",
+      "expect": "dropped",
+      "memory_figures": [
+        {
+          "name": "Jonas",
+          "variants": []
+        },
+        {
+          "name": "Konrad Ilg",
+          "variants": [
+            "Meister"
+          ]
+        }
+      ],
+      "note": "Name Jonas fehlt im Belegfenster (S. 4: der Erzähler fragt)."
+    },
+    {
+      "id": "gestuetzt",
+      "position_page": null,
+      "excerpt_page": 6,
+      "sentence": "Eine Verpflichtung nimmt jeden Monat Geld aus der Tasche [Q1].",
+      "expect": "kept"
     }
   ]
 }

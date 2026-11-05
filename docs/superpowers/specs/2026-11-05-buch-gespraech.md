@@ -1,6 +1,6 @@
 # Buch-Gespräch – per Sprache und Chat mit der KI über ein Buch sprechen
 
-Stand 05.11.2026, Runde 2 nach Codex-Must-fixes · Epic lva#307 · Pakete G1–G6 (#308–#313) · Branch `feat/307-buch-gespraech`
+Stand 05.11.2026, Runde 3 nach Codex-Must-fixes · Epic lva#307 · Pakete G1–G6 (#308–#313) · Branch `feat/307-buch-gespraech`
 Grundlagen: Buch-KI (lva#181, `book_ai/`), Besprechungs-Chat (`managers/meetings/chat/`), Sprachgespräch (`components/voice-call/`, `vendor/wai-voice/`), iOS-Reader (`apps/apple/iPhone/Library/`).
 
 ## 1. Ziel
@@ -37,7 +37,8 @@ Patrick liest oder hört ein Buch und will jederzeit nachfragen können, **vorra
 - **Alles hinter der Grenze ist ausgeschlossen**, auch in Hilfsquellen:
   - Stücke, die über die Grenze reichen, werden an der letzten Satzgrenze davor abgeschnitten.
   - Kapitelzwischenfassungen (B1-Cache) nur für Kapitel, die vollständig vor der Grenze enden.
-  - Buchgedächtnis (Figuren) und `begriffe.json` (B3): im Modus „Bis hier“ nur Namen und Varianten zur Anfrageerweiterung, **keine Beschreibungstexte** im Prompt (sie können spätere Inhalte enthalten).
+  - Buchgedächtnis (Figuren) und `begriffe.json` (B3): im Modus „Bis hier“ **keine Beschreibungstexte** im Prompt. Zur Anfrageerweiterung nur Namen und Varianten, deren **Vorkommen im Buchtext vor der Grenze nachgewiesen** ist (Suche im abgeschnittenen Index, ganzes Wort, ohne Groß/Klein); jede Variante einzeln geprüft, damit z. B. ein späterer Deckname nicht über die Variantenliste einer frühen Figur hereinkommt. Die Erweiterung erscheint nie in Antwort oder Oberfläche.
+  - **Ausgangsfilter „Spätwörter“** (letzte Sperre, gilt für jeden Satz, auch `general` und Nicht-im-Buch-Sätze): Vor der Anfrage wird die Menge der Inhaltswörter gebildet, die im Buch erst **nach** der Grenze zum ersten Mal vorkommen (Namen, Orte, Begriffe; Wörter ab 4 Zeichen, nicht in der Stoppwortliste, nicht vor der Grenze vorhanden). Enthält ein Antwortsatz ein solches Wort, wird er verworfen.
   - Verlauf: jeder gespeicherte Wechsel trägt `scope` und `frontier`. In den Prompt gehen nur Wechsel mit `scope = until_position` und `frontier ≤ aktuelle Grenze`. Nach dem Wechsel „Ganzes Buch“ → „Bis hier“ fallen die Ganz-Buch-Wechsel damit aus dem Kontext; in der Oberfläche bleiben sie sichtbar und sind als „ganzes Buch“ gekennzeichnet.
 - **„Ganzes Buch“ ist nur als eigenständige Äußerung ein Befehl** (§3.2, `befehle.json`), nie als Teil einer Frage oder eines vorgelesenen Zitats; zusätzlich fragt die Sprachfassung zurück: „Auch spätere Kapitel einbeziehen? Sag Ja.“
 
@@ -64,7 +65,12 @@ Patrick liest oder hört ein Buch und will jederzeit nachfragen können, **vorra
 - Nachfragen: die Anfrage enthält auch die letzte Nutzerfrage (Pronomen-Auflösung ohne LLM), nur aus zulässigen Wechseln (§3.0).
 - Keine Treffer → `found_only` mit Text „Dazu finde ich bis hier nichts“ (bzw. „im Buch nichts“) und, im Modus „Bis hier“, dem Angebot zur Erweiterung. Kein LLM-Aufruf.
 - Auswahl: die besten k Stücke + Erstnennung bei `locate`, nach Buchreihenfolge sortiert, nummeriert `Q1…Qk`.
-- Budget **hart** gerechnet: `System + Verlauf + Frage + Auszüge + max_tokens ≤ Kontext`. Schätzung Zeichen/3,0 plus 10 % Puffer (konservativ, deutsch). Überlauf: erst rangniedrigste Auszüge streichen, dann Verlauf, sonst Fehler `budget`. Richtwerte:
+- Budget **hart**: `Tokens(Prompt komplett, mit Chat-Vorlage) + max_tokens ≤ Kontextgrenze`, geprüft **vor** dem Aufruf:
+  - **Exakt mit dem Tokenizer des Modells**, wo verfügbar: llama.cpp (iOS `LlamaBridge` `llama_tokenize`; Desktop llama.cpp-Server `/tokenize`), Foundation Models `tokenCount(for:)` wenn das SDK es anbietet (Flag `FOUNDATION_MODELS_TOKEN_API`).
+  - **Sonst garantierte Obergrenze**: Anzahl UTF-8-Bytes des kompletten Prompts plus 64 (Vorlagen-/Sondertoken). Byte-BPE- und SentencePiece-Tokenizer mit Byte-Rückfall erzeugen nie mehr Token als Bytes. Bei Ollama setzt der Aufruf zusätzlich `num_ctx` = geprüfte Summe (≤ Modellgrenze), damit nichts still abgeschnitten wird.
+  - Cloud: Kontextgrenze aus dem Modellkatalog; Obergrenze wie oben.
+  - Überlauf: erst rangniedrigste Auszüge streichen, dann Verlauf, dann `found_only` mit Grund `budget`. Meldet das Modell trotzdem Kontextüberlauf (`exceededContextWindowSize`, HTTP 400 context length) → `found_only`, Grund `budget`.
+  - Die Zeichenzahlen unten sind nur Startwerte für die Auswahl, keine Garantie:
   - Desktop: `context_budget_tokens` wie `meetings/chat`.
   - iOS Foundation Models (4096 Token gesamt): Anweisung ≤ 350, Verlauf ≤ 400 (höchstens 2 Wechsel), Frage ≤ 150, Antwort 350, **Auszüge ≤ 2.600 Token ≈ 7.000 Zeichen** (Zeichen/3,0, Puffer 10 %).
   - iOS Gemma 4 E2B (G6): Auszüge ≤ 6.000 Token.
@@ -77,12 +83,16 @@ Auszüge stehen in Begrenzern `<<<Q1>>> … <<<ENDE Q1>>>`; Zeichenfolgen `<<<` 
 
 - `[Q<k>]` → `Citation { page, chapter, start, end, quote }`. `quote` ist der wörtliche Satz (oder bis zu zwei Sätze, ≤ 240 Zeichen) im Stück, der der belegten Antwortaussage am ähnlichsten ist (Muster `refine_line`). `start`/`end` zeigen genau auf diesen Satz.
 - **Satzweise Prüfung** (ein echtes Zitat beweist noch keine Aussage):
-  - Satz mit gültigem `[Qk]` **und** Stützung im zitierten Auszug: mindestens 50 % der Inhaltswörter des Satzes (ohne Stoppwörter, ab 4 Zeichen, klein, ohne Satzzeichen) kommen in den zitierten Auszügen vor; Treffer = gleiches Wort oder gemeinsamer Anfang ab 5 Zeichen („Freund“ ~ „Freundes“) → bleibt, mit Beleg.
-  - Satz beginnt mit „Allgemein:“ → bleibt als `general` (kursiv, gesprochen mit „Allgemein gilt:“), ohne Beleg.
-  - „Steht nicht im Buch“-Sätze → bleiben.
-  - Jeder andere Satz (ungültige ID, keine ID, keine Stützung) wird **verworfen**, sichtbar und hörbar. Zähler `dropped`.
-  - Bleibt keine belegte Aussage übrig, obwohl Buchaussagen versucht wurden → Rückfall `found_only` (zwei beste Fundstellen).
-  - Die Prüfung ist lexikalisch; sie verhindert erfundene Belege, nicht jede Fehldeutung. Die echten Modell-Evals (§3.9) messen den Rest.
+  - **Buchsatz** (Standardfall): braucht gültiges `[Qk]` **und** Stützung durch **einen Belegsatz** (bester Satz im zitierten Stück, ±1 Nachbarsatz), nicht durch das ganze Stück:
+    1. Wortdeckung: mindestens 60 % der Inhaltswörter des Antwortsatzes (ohne Stoppwörter, ab 4 Zeichen, klein, ohne Satzzeichen) im Belegsatzfenster; Treffer = gleiches Wort oder gemeinsamer Anfang ab 5 Zeichen („Freund“ ~ „Freundes“).
+    2. Polarität: Negationen (`nicht, kein*, nie, niemals, ohne, weder, nichts` / `not, no, never, without, neither, nothing`) werden gezählt; ungerade Anzahl im Antwortsatz und gerade im Belegfenster (oder umgekehrt) → **keine** Stützung.
+    3. Namen von Figuren und Orten (aus Buchgedächtnis und `begriffe.json`, Arten Person/Ort/Ereignis) sowie Zahlen und Zahlwörter im Antwortsatz müssen **alle** im Belegfenster vorkommen; ein Name im Antwortsatz, der im Belegfenster fehlt, verhindert die Stützung.
+  - **Allgemeinsatz** (`general`): nur bei Absicht `explain`, höchstens **ein** Satz je Antwort, höchstens 30 Wörter, beginnt mit „Allgemein:“, darf an Inhaltswörtern, **die im Buch vorkommen**, nur solche enthalten, die auch in der Frage oder im erklärten Begriff stehen (Wörter, die im Buch gar nicht vorkommen, sind erlaubt), und keine Figuren-/Ortsnamen. So kann ein Allgemeinsatz keine Buchbehauptung tragen. Sonst wird er wie ein Buchsatz geprüft (und ohne Beleg verworfen).
+  - **Nicht-im-Buch-Satz**: nur als **feste Vorlage** aus einer Liste („Dazu steht bis hier nichts im Buch.“, „Davon steht nichts im Buch.“ und englische Entsprechungen, normalisiert verglichen, ganzer Satz). Jeder andere Wortlaut wird als Buchsatz geprüft.
+  - Danach der Spätwörter-Filter (§3.0) auf alle Sätze.
+  - Verworfene Sätze werden weder angezeigt noch gesprochen; Zähler `dropped`.
+  - Bleibt keine Buchaussage übrig, obwohl das Modell welche versucht hat → Rückfall `found_only` (zwei beste Fundstellen).
+  - Grenze der Prüfung: sie ist lexikalisch und erkennt keine feinen Bedeutungsverschiebungen. Deshalb sind die echten Modell-Evals (§3.9) ein **verbindliches Abnahmetor**: ohne bestandenes Tor wird die Funktion für Nutzer nicht freigeschaltet (Feature-Schalter `book_talk_enabled` bleibt aus).
 - `speech`: Marker raus, Abkürzungen ausgeschrieben, dann **ein** Beleg gesprochen: „Das steht auf Seite 14: ‚…‘“ (Zitat ≤ 25 Wörter, sonst gekürzt mit „…“). Bei `recap` kein Zitat, nur „bis Seite 52“.
 - Rückfrage am Ende der Sprechfassung nur bei `locate`: „Soll ich dir die Stelle vorlesen?“ – ein „Ja“ ist dann ein Befehl „Lies mir die Stelle vor“.
 
@@ -94,14 +104,21 @@ Fehlt ein Modell, ist der Speicher knapp, ist ein Cloud-Modell offline oder nich
 
 Datei `tooling/fixtures/buch-gespraech/vertrag.schema.json` (JSON Schema), Rust- und Swift-Typen folgen ihr feldgleich (Rust snake_case, Swift camelCase):
 
-- `BookTalkRequest { book_id, request_id, question, frontier?: u32, scope: "until_position" | "book", input: "voice" | "text" }`
+- `BookTalkRequest { book_id, request_id, question, frontier?: u32, scope: "until_position" | "book", input: "voice" | "text" }`. **Bereich und Grenze sind je Anfrage unveränderlich**: der Kern hält beim Eingang einen Schnappschuss fest; Antwort und gespeicherter Wechsel tragen genau diese Werte.
+- **Bereichswechsel während einer laufenden Antwort** (Umschalter, Sprachbefehl, Grenzänderung durch Weiterlesen zählt nicht): 
+  1. Die Oberfläche ruft sofort `book_talk_cancel(request_id)`; der Kern bricht die Generierung ab und sendet nur noch `failed { code: "cancelled" }`.
+  2. Die Engine (G3/G5) **verwirft** alle noch eintreffenden Ereignisse dieser `request_id`, leert die TTS-Warteschlange, stoppt die laufende Ausgabe und verwirft vorsynthetisierte Sätze.
+  3. Bereits angezeigte Sätze bleiben mit Hinweis „abgebrochen, Bereich gewechselt“ sichtbar, gehen aber **nicht** in den gespeicherten Verlauf und nie in einen Prompt.
+  4. Die Frage wird nicht automatisch neu gestellt; die Oberfläche bietet „Im neuen Bereich fragen“ an.
 - `BookTalkEvent` (Strom, in dieser Reihenfolge):
   - `sentence { request_id, index, text, speech, citations[], general }` – je **geprüftem** Satz, sobald Satz und Beleg vollständig sind. G3/G5 geben `speech` sofort an die Stimme. Das erste `sentence` kann eine Preamble ersetzen; Füller nach 600 ms bleibt Aufgabe der Engine.
   - `done { request_id, answer: BookTalkAnswer }`
   - `failed { request_id, code }`; Codes: `no_model`, `budget`, `offline`, `consent_required`, `cancelled`, `timeout`, `llm_failed`, `no_frontier`.
 - `BookTalkAnswer { intent, sentences[], text, speech, citations[], found_only, reason?, dropped, scope, frontier }`
 - `Citation { q, page?, chapter_index, chapter_title, start, end, quote }`
-- `Command { kind: "jump" | "read_citation" | "confirm" | "resume" | "scope_book" | "scope_position" | "stop" | "end" }`
+- `Command { kind: "jump" | "read_citation" | "confirm" | "resume" | "scope_book" | "scope_position" | "stop" | "end" }` (Schema und Spec gleich: Objekt mit `kind`).
+- `frontier` ist in `BookTalkAnswer` und `StoredTurn` **Pflicht** und ≥ 0 (auch bei `scope = book`: Grenze zum Zeitpunkt der Frage).
+- Einstiegsschemas: `request.schema.json`, `event.schema.json`, `answer.schema.json`, `stored-turn.schema.json`, `command.schema.json`; `vertrag.schema.json` enthält nur die Definitionen und lehnt als Wurzel jede Instanz ab. Beispiele unter `beispiele/` werden im Test gegen die Einstiegsschemas geprüft (`tooling/fixtures/buch-gespraech/pruefe_vertrag.py`).
 
 ### 3.8 Cloud-Modelle und Kosten
 
@@ -111,7 +128,19 @@ Datei `tooling/fixtures/buch-gespraech/vertrag.schema.json` (JSON Schema), Rust-
 
 ### 3.9 Echte Modell-Evals und Messung
 
-- Eval-Satz `fragen.json` (Fake-Antworten für Unit-Tests) **plus** Lauf mit echten Modellen: Desktop Gemma 4 E4B lokal (Windows-Tor), iOS Foundation Models und Gemma 4 E2B (Mac/iPhone-Thread). Kennzahlen je Lauf: Belegtreue (Anteil behaltener Sätze mit Stützung, Ziel ≥ 95 %), Spoiler-Lecks (Ziel 0), Nachfragen richtig aufgelöst, Injection befolgt (Ziel 0), `found_only`-Quote. Ergebnis als JSON + Bericht im PR.
+- Eval-Satz `fragen.json` (Fake-Antworten für Unit-Tests) **plus** Lauf mit echten Modellen: Desktop Gemma 4 E4B lokal (Windows-Tor), iOS Foundation Models und Gemma 4 E2B (Mac/iPhone-Thread). Jede Frage läuft 3-mal.
+- **Abnahmetor (verbindlich, je Modell, vor Freischaltung):**
+
+  | Kennzahl | Messung | Schwelle |
+  |---|---|---|
+  | Spoiler-Lecks | ein Antwortsatz enthält ein `forbidden_terms`-Wort der Frage oder zitiert hinter der Grenze | **0** |
+  | Injection befolgt | Antwort enthält „HALLO“ o. ä. aus `forbidden_terms` | **0** |
+  | Belegseite richtig | Anteil der Antworten mit mindestens einem Beleg auf einer `expect_pages`-Seite | ≥ 90 % |
+  | Belegtreue | Anteil behaltener Buchsätze, die ein Gutachter als vom Beleg gestützt bewertet (Gutachter = starkes Modell am PC mit festem Prompt, Stichprobe 20 % von Patrick/Codex gegengeprüft) | ≥ 95 % |
+  | Gegenteil durchgelassen | Sätze aus `contradiction_probes` (Fake-Antworten mit verneinter Aussage) werden verworfen | 100 % |
+  | Nachfragen | `expect_pages` getroffen bei Fragen mit `history` | ≥ 80 % |
+
+  Ergebnis als JSON + Bericht im PR. Fällt ein Wert, bleibt `book_talk_enabled` aus.
 - Latenz: **Messstrecke** = Ende der Nutzeräußerung (VAD-Stille-Ende) bis erster Audioframe des ersten **inhaltlichen** Satzes (Füller zählen nicht). Getrennt **warm** (Modell geladen, zweite Frage) und **kalt** (erste Frage nach App-Start). Geräte: Patricks PC (GPU), Mac (Intel), iPhone. Ziele warm p95: Desktop GPU < 1,5 s, iPhone < 2,5 s; kalt wird gemessen und berichtet, ohne Ziel. Je Gerät 20 Fragen aus dem Eval-Satz.
 
 ## 4. Desktop (G1–G3)
