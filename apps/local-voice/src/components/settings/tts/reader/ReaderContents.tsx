@@ -15,6 +15,14 @@ interface ReaderContentsProps {
   book?: BookInfo | null;
   /** Buchdaten per ISBN suchen (nur im Originaltext, lva#149). */
   onIsbn?: () => void;
+  /**
+   * Startpunkt des Vorlesens ohne gemerkte Stelle (erster Inhalt). Einträge
+   * davor sind Vorspann: gedämpft, aber anwählbar.
+   */
+  startAt?: number;
+  /** Nur gesetzt, wenn das Buch ein Vorwort/eine Einleitung hat. */
+  readPreface?: boolean;
+  onReadPreface?(on: boolean): void;
 }
 
 /**
@@ -28,6 +36,9 @@ export const ReaderContents: React.FC<ReaderContentsProps> = ({
   pages,
   book,
   onIsbn,
+  startAt,
+  readPreface,
+  onReadPreface,
 }) => {
   const { t } = useTranslation();
   // Einklappbar: im schmalen Fenster steht die Leiste über dem Buch.
@@ -96,6 +107,14 @@ export const ReaderContents: React.FC<ReaderContentsProps> = ({
             {entries.map((e, i) => {
               const page = pages?.[i];
               const active = i === current;
+              // Der Startpunkt steht vor dem „#“, der Eintrag beim Text dahinter.
+              const front = startAt !== undefined && e.start < startAt;
+              // Nur wenn der Startpunkt die Überschrift selbst ist (nicht Text davor).
+              const isStart =
+                startAt !== undefined &&
+                !front &&
+                e.start - startAt <= 16 &&
+                (i === 0 || entries[i - 1].start < startAt);
               return (
                 <li key={`${e.start}-${i}`}>
                   <button
@@ -105,16 +124,29 @@ export const ReaderContents: React.FC<ReaderContentsProps> = ({
                     className={`flex w-full cursor-pointer items-baseline gap-2 rounded-md py-1 pe-2 text-start text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-logo-primary ${
                       active
                         ? "bg-logo-primary/15 font-medium text-text"
-                        : "text-text/75 hover:bg-mid-gray/15 hover:text-text"
+                        : front
+                          ? "text-text/55 hover:bg-mid-gray/15 hover:text-text"
+                          : "text-text/75 hover:bg-mid-gray/15 hover:text-text"
                     }`}
+                    title={front ? t("tts.reader.frontMatter") : undefined}
+                    data-front={front ? "1" : undefined}
                     style={{
                       paddingInlineStart: `${8 + (e.level - 1) * 12}px`,
                     }}
                     data-testid="reader-contents-entry"
                   >
-                    <span className="min-w-0 flex-1 [overflow-wrap:anywhere]" title={e.title}>
+                    <span className="min-w-0 flex-1 [overflow-wrap:anywhere]" title={front ? undefined : e.title}>
                       {e.title}
                     </span>
+                    {isStart && (
+                      <span
+                        className="shrink-0 rounded bg-logo-primary/20 px-1 text-[11px] font-medium text-text"
+                        title={t("tts.reader.startHint")}
+                        data-testid="reader-contents-start"
+                      >
+                        {t("tts.reader.startHere")}
+                      </span>
+                    )}
                     {page !== null && page !== undefined && (
                       <span className="shrink-0 text-xs tabular-nums text-text/60">
                         {page + 1}
@@ -125,6 +157,19 @@ export const ReaderContents: React.FC<ReaderContentsProps> = ({
               );
             })}
           </ol>
+          {open && readPreface !== undefined && onReadPreface && (
+            <label
+              className="mt-2 flex min-h-[44px] cursor-pointer items-center gap-2 rounded-md px-2 text-xs text-text/75 hover:bg-mid-gray/15 hover:text-text sm:min-h-8"
+            >
+              <input
+                type="checkbox"
+                checked={readPreface}
+                onChange={(ev) => onReadPreface(ev.target.checked)}
+                data-testid="reader-read-preface"
+              />
+              {t("tts.reader.readPreface")}
+            </label>
+          )}
         </>
       )}
     </nav>

@@ -118,6 +118,10 @@
       "replacedAll_other": "{{count}} Stellen ersetzt."
     },
     "reader": {
+      "startHere": "Start",
+      "startHint": "Hier beginnt das Vorlesen, solange keine Stelle gemerkt ist.",
+      "frontMatter": "Vorspann – wird beim Vorlesen übersprungen, ist aber hier erreichbar",
+      "readPreface": "Vorwort und Einleitung mitlesen",
       "dockTools": "Stimme und Werkzeuge",
       "originalPage": "Seite {{page}} im Original",
       "label": "Buchseiten",
