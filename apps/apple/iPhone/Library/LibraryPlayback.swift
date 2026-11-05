@@ -307,11 +307,20 @@ final class LibraryPlayback: NSObject, ObservableObject {
                 guard !Task.isCancelled else { return }
                 self?.readingEnded(generation)
             } catch is CancellationError {
+                // Eigene Abbrüche zählen die Generation hoch; sonst wurde von außen beendet.
+                guard let self, generation == self.readGeneration else { return }
+                self.readingInterrupted()
+            } catch is PhononAudioStalled {
+                guard let self, generation == self.readGeneration else { return }
+                let resume = self.busy && !self.phononPaused
+                self.readingInterrupted()
+                if resume { self.speakCurrent() }  // am hörbaren Satz neu ansetzen
             } catch {
                 guard !Task.isCancelled, let self, generation == self.readGeneration else { return }
+                self.phononFailed = true  // nur bis zum nächsten Öffnen; die Wahl bleibt
+                if self.phononPaused { self.readingInterrupted(); return }  // Pause bleibt Pause
                 // Nicht verstummen: mit der Systemstimme weiterlesen.
                 self.error = "Phonon konnte nicht sprechen, die Systemstimme liest weiter. (\(error.localizedDescription))"
-                self.phononFailed = true  // nur bis zum nächsten Öffnen; die Wahl bleibt
                 self.speakCurrent()
             }
         }
@@ -345,6 +354,16 @@ final class LibraryPlayback: NSObject, ObservableObject {
             saveText(at: next.map { paragraphs[$0.paragraph].start } ?? p.end, heard: from..<p.end)
         }
         if let next { move(to: next) }
+    }
+
+    /// Lesung ohne eigenes Zutun zu Ende: Stand bleibt am hörbaren Satz, Weiter setzt dort an.
+    private func readingInterrupted() {
+        readGeneration += 1
+        phononTask = nil
+        phononPaused = false
+        preparing = false
+        playing = false
+        updateNowPlaying()
     }
 
     private func readingEnded(_ generation: Int) {
@@ -407,11 +426,8 @@ final class LibraryPlayback: NSObject, ObservableObject {
         guard paragraphs.indices.contains(index) else { return }
         if mode == .audiobook, let map = followMap { seek(toMs: map.ms(atChars: Double(paragraphs[index].start))); return }
         move(to: Cursor(paragraph: index, sentence: 0))
-        if busy { speakCurrent() }
-        else {
-            discardPausedSpeech()
-            saveText(at: paragraphs[index].start)
-        }
+        saveText(at: paragraphs[index].start, jumped: true)
+        if busy { speakCurrent() } else { discardPausedSpeech(); prepareVoice() }
     }
 
     /// Satz vor oder zurück. Zuletzt gelesene Sätze liegen noch im Speicher und klingen sofort.
@@ -430,15 +446,19 @@ final class LibraryPlayback: NSObject, ObservableObject {
             here = Cursor(paragraph: previous, sentence: sentenceRanges(previous).count - 1)
         }
         move(to: here)
-        if busy { speakCurrent() } else { discardPausedSpeech(); saveText(at: chars(of: here)); prepareVoice() }
+        saveText(at: chars(of: here), jumped: true)
+        if busy { speakCurrent() } else { discardPausedSpeech(); prepareVoice() }
     }
 
     func step(paragraphs delta: Int) { jump(toParagraph: min(max(0, paragraphIndex + delta), paragraphs.count - 1)) }
 
-    private func saveText(at chars: Int, heard: Range<Int>? = nil) {
+    /// `jumped`: Die Stelle wurde angesprungen, das Dazwischen zählt nicht als gehört.
+    private func saveText(at chars: Int, heard: Range<Int>? = nil, jumped: Bool = false) {
         guard let book else { return }
-        var rec = LibraryProgress.recordPosition(library.record(library.textKey(book)), to: Double(chars), length: Double(text.utf16.count),
+        let previous = library.record(library.textKey(book))
+        var rec = LibraryProgress.recordPosition(previous, to: Double(chars), length: Double(text.utf16.count),
                                                  unit: .chars, mode: .heard, now: PhoneLibrary.nowMs())
+        if jumped { rec.heard = previous?.heard ?? []; rec.finished = previous?.finished }
         if let heard { rec = LibraryProgress.markHeard(rec, from: Double(heard.lowerBound), to: Double(heard.upperBound)) }
         library.put(library.textKey(book), rec)
         lastTextSave = Date()
@@ -461,7 +481,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
         switch mode {
         case .audiobook: player?.playImmediately(atRate: rate); playing = true
         case .readAloud:
-            if preparing { return }
+            if busy { return }
             if phononPaused, PhononEngine.shared.resume() { phononPaused = false; playing = true }
             else if synth.isPaused, pausedParagraph == paragraphIndex { synth.continueSpeaking(); playing = true }
             else { speakCurrent() }
@@ -631,7 +651,7 @@ extension LibraryPlayback: AVSpeechSynthesizerDelegate {
         let p = paragraphs[finished]
         let next = finished + 1 < paragraphs.count ? paragraphs[finished + 1].start : p.end
         // Stand = Beginn des nächsten Absatzes, damit Weiterlesen nicht wiederholt.
-        saveText(at: next, heard: p.start..<p.end)
+        saveText(at: next, heard: (utteranceBase == 0 ? p.start : p.textStart + utteranceBase)..<p.end)
         if finished + 1 < paragraphs.count { move(to: Cursor(paragraph: finished + 1, sentence: 0)); speakCurrent() }
         else { playing = false; sentenceRange = nil; currentUtterance = nil; library.flush() }
     }

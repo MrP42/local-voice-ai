@@ -548,7 +548,7 @@ struct LibraryMiniPlayer: View {
     }
     private var subtitle: String {
         playback.mode == .audiobook ? "\(playback.currentChapter?.title ?? "Teil \(playback.trackIndex + 1)") · \(LibraryFormat.clock(playback.positionMs)) · zum Player"
-                                    : "\(playback.playing ? "Text wird vorgelesen" : "Text pausiert") · zum Player"
+                                    : "\(playback.preparing ? "Wird vorbereitet" : playback.playing ? "Text wird vorgelesen" : "Text pausiert") · zum Player"
     }
 }
 

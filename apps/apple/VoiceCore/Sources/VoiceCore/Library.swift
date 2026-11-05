@@ -295,7 +295,8 @@ public enum LibraryText {
         tokenizer.enumerateTokens(in: text.startIndex..<text.endIndex) { range, _ in
             if !pendingShort { cuts.append(NSRange(range, in: text).location) }
             let piece = text[range].trimmingCharacters(in: .whitespacesAndNewlines)
-            pendingShort = piece.utf16.count < 12 && piece.last == "." && (piece.split(separator: " ").last?.utf16.count ?? 0) <= 5
+            let last = piece.split(separator: " ").last.map { $0.lowercased() } ?? ""
+            pendingShort = abbreviations.contains(last) || (piece.utf16.count < 12 && piece.last == "." && last.utf16.count <= 5)
             return true
         }
         let all = text as NSString
@@ -309,6 +310,8 @@ public enum LibraryText {
         }
         return out
     }
+
+    private static let abbreviations: Set<String> = ["dr.", "prof.", "hr.", "fr.", "st.", "nr.", "ca.", "bzw.", "vgl.", "z.", "b.", "d.", "h.", "u.", "a.", "s.", "mr.", "mrs.", "ms.", "vs.", "e.g.", "i.e."]
 
     private static func isSpace(_ unit: UInt16) -> Bool {
         unit < 128 ? (unit == 32 || (unit >= 9 && unit <= 13)) : unit == 0xA0

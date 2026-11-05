@@ -107,6 +107,8 @@ final class LibraryTests: XCTestCase {
         let text = "Es war spät. Dr. Meier ging z. B. nach Hause!  War das klug? Niemand wusste es."
         let parts = LibraryText.sentences(text).map { (text as NSString).substring(with: $0) }
         XCTAssertEqual(parts, ["Es war spät.", "Dr. Meier ging z. B. nach Hause!", "War das klug?", "Niemand wusste es."])
+        let long = "Er traf gestern Abend Prof. Dr. Müller im Café. Dann ging er."
+        XCTAssertEqual(LibraryText.sentences(long).count, 2)
         XCTAssertEqual(LibraryText.sentences(""), [])
         XCTAssertEqual(LibraryText.sentences("Überschrift ohne Punkt").count, 1)
     }

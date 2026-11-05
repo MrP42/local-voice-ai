@@ -21,6 +21,8 @@ private final class PhononAudio: @unchecked Sendable {
     private var pending = 0
     private var stopped = false
     private var waiters: [(limit: Int, done: CheckedContinuation<Void, Never>)] = []
+    private var stalled = false
+    private var observer: NSObjectProtocol?
 
     static func make(rate: Float, played: @escaping @Sendable () -> Void) async throws -> PhononAudio {
         try await withCheckedThrowingContinuation { done in
@@ -36,6 +38,14 @@ private final class PhononAudio: @unchecked Sendable {
         engine.connect(pitch, to: engine.mainMixerNode, format: format)
         try engine.start()
         node.play()
+        // Neues Hardwareformat (AirPods, Mediendienste): Die Engine steht dann, ohne dass Rückrufe kommen.
+        observer = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil) { [weak self] _ in
+            Self.queue.async {
+                guard let self, !self.engine.isRunning else { return }
+                self.lock.withLock { self.stalled = true }
+                self.shutdown()
+            }
+        }
     }
 
     private func buffer(_ samples: [Float]) -> AVAudioPCMBuffer? {
@@ -45,7 +55,8 @@ private final class PhononAudio: @unchecked Sendable {
         return buf
     }
 
-    private var isStopped: Bool { lock.withLock { stopped } }
+    var isStopped: Bool { lock.withLock { stopped } }
+    var isStalled: Bool { lock.withLock { stalled } }
 
     func enqueue(_ samples: [Float]) {
         if !isStopped, let buf = buffer(samples) { node.scheduleBuffer(buf) }
@@ -113,7 +124,10 @@ private final class PhononAudio: @unchecked Sendable {
         }
         guard let waiting else { return }
         waiting.forEach { $0.resume() }
-        Self.queue.async { [self] in node.stop(); engine.stop() }
+        Self.queue.async { [self] in
+            if let observer { NotificationCenter.default.removeObserver(observer) }
+            node.stop(); engine.stop()
+        }
     }
 }
 #endif
@@ -152,6 +166,9 @@ private final class SentenceAudioCache: @unchecked Sendable {
 struct PhononUnavailable: LocalizedError {
     var errorDescription: String? { "Phonon ist nicht verfügbar." }
 }
+
+/// Die Audio-Engine steht von außen still; die Lesung kann neu beginnen.
+struct PhononAudioStalled: Error {}
 
 @MainActor
 final class PhononEngine: ObservableObject {
@@ -292,13 +309,13 @@ final class PhononEngine: ObservableObject {
               audible: @escaping @MainActor () -> Void, played: @escaping @MainActor () -> Void) async throws {
         guard let parts = Self.parts(name) else { throw PhononUnavailable() }
         prefetch?.cancel()
+        requestedRate = rate
         let tts = try await engine(parts.language)
         try Task.checkCancellation()
         if tts.voice != parts.voice { try await tts.setVoice(parts.voice) }
         try Task.checkCancellation()
-        requestedRate = rate
         // Je Lesung ein neuer Player: Nach Anruf, Aufnahme oder Routenwechsel steht die alte Audio-Engine.
-        let audio = try await PhononAudio.make(rate: rate) {
+        let audio = try await PhononAudio.make(rate: requestedRate) {
             DispatchQueue.main.async { MainActor.assumeIsolated { played() } }
         }
         defer { audio.shutdown(); if player === audio { player = nil } }
@@ -314,24 +331,33 @@ final class PhononEngine: ObservableObject {
         var silent = true
         while let sentence = await next() {
             await audio.wait(below: 4)
-            try Task.checkCancellation()
+            try check(audio)
             if let samples = cache.samples(voice, sentence) {
                 audio.enqueue(samples)
                 if silent { silent = false; await audible() }
             } else {
                 var samples: [Float] = []
                 for try await chunk in tts.stream(sentence) {
-                    try Task.checkCancellation()
+                    try check(audio)
                     audio.enqueue(chunk)
                     samples += chunk
                     if silent { silent = false; await audible() }
                 }
+                // Ein Abbruch beendet den Strom auch ohne Fehler: Teilsätze nie aufheben.
+                try check(audio)
                 cache.store(voice, sentence, samples)
             }
             audio.mark()
         }
         await audio.wait(below: 1)
+        try check(audio)
+    }
+
+    /// Eine von außen beendete Wiedergabe beendet auch das Erzeugen.
+    nonisolated private static func check(_ audio: PhononAudio) throws {
         try Task.checkCancellation()
+        if audio.isStalled { throw PhononAudioStalled() }
+        if audio.isStopped { throw CancellationError() }
     }
 
     func pause() { player?.pause() }

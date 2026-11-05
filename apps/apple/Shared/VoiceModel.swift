@@ -462,7 +462,7 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
         stopOriginalPlayback()
         #if os(iOS)
         // Aufnahme beginnt: Hörbuch oder Vorlesen anhalten, sonst landet es im Hörer und in der Aufnahme.
-        if LibraryPlayback.shared.playing { LibraryPlayback.shared.pause() }
+        if LibraryPlayback.shared.busy { LibraryPlayback.shared.pause() }
         #endif
         currentUtterance = nil; speakingId = nil
         stopAllSpeech()
@@ -539,7 +539,8 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
         speaker.stopSpeaking(at: .immediate)
         #if os(iOS)
         phononReply?.cancel(); phononReply = nil
-        PhononEngine.shared.silence()
+        // Vorlesen hält an seiner Stelle an; die Wiedergabe gehört LibraryPlayback.
+        if LibraryPlayback.shared.busy { LibraryPlayback.shared.pause() }
         #endif
     }
 
@@ -559,6 +560,9 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
                 if !self.recording { self.status = "Bereit" }
                 if let done { self.continueConversation(after: done) }
             } catch is CancellationError {
+                // Von außen beendet (Vorlesen hat übernommen): nichts bleibt als „spricht“ stehen.
+                guard !Task.isCancelled, let self else { return }
+                self.phononReply = nil; self.speakingId = nil; self.previewingVoiceID = nil
             } catch {
                 guard !Task.isCancelled, let self else { return }
                 self.phononReply = nil; self.previewingVoiceID = nil
