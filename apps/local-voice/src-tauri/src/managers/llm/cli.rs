@@ -442,9 +442,7 @@ pub fn status_detail(cli: Cli) -> (CliStatus, AuthKind) {
                 String::from_utf8_lossy(&out.stderr).into_owned(),
             )
         });
-    let logged_in = out
-        .as_ref()
-        .and_then(|(o, e)| parse_status(cli, o, e));
+    let logged_in = out.as_ref().and_then(|(o, e)| parse_status(cli, o, e));
     let kind = out
         .as_ref()
         .map(|(o, e)| parse_auth_kind(cli, o, e))

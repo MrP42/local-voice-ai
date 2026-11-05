@@ -103,7 +103,9 @@ fn write_private_tmp(path: &std::path::Path, bytes: &[u8]) -> Result<(), String>
 }
 
 /// Windows: nach dem Schreiben die Vererbung kappen und nur den aktuellen
-/// Benutzer eintragen (icacls, ohne Konsolenfenster). Schlaegt icacls fehl,
+/// Benutzer eintragen (icacls, ohne Konsolenfenster). Recht `(M)` statt
+/// `(R,W)`: das atomare Ersetzen per rename braucht DELETE auf der Zieldatei,
+/// sonst scheitert jedes zweite Schreiben mit „Zugriff verweigert“. Schlaegt icacls fehl,
 /// bleibt die Datei bestehen (sie liegt im Profil des Benutzers); das ist nur
 /// eine Warnung -- ein Fehlschlag darf nie Daten loeschen.
 #[cfg(windows)]
@@ -117,7 +119,7 @@ fn write_private_tmp(path: &std::path::Path, bytes: &[u8]) -> Result<(), String>
     }
     let status = std::process::Command::new("icacls")
         .arg(path)
-        .args(["/inheritance:r", "/grant:r", &format!("{user}:(R,W)")])
+        .args(["/inheritance:r", "/grant:r", &format!("{user}:(M)")])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
