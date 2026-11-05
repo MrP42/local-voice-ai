@@ -213,6 +213,18 @@ test("Wiederholen bei laufendem Download fokussiert Abbrechen", async ({
   await expect(page.getByTestId("diarization-model-cancel")).toBeFocused();
 });
 
+test("Downloadstart per Tastatur gibt den Fokus an Abbrechen", async ({
+  page,
+}) => {
+  await open(page, MISSING);
+  await page.evaluate(() => ((window as any).__diarSlow = true));
+  const button = page.getByTestId("diarization-model-download");
+  await button.focus();
+  await button.press("Enter");
+  await expect(button).toBeDisabled();
+  await expect(page.getByTestId("diarization-model-cancel")).toBeFocused();
+});
+
 test.describe("Abnahmebilder Sprechertrennung", () => {
   for (const width of [390, 1440]) {
     for (const theme of ["light", "dark"] as const) {

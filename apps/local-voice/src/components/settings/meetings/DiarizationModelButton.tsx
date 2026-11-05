@@ -113,6 +113,8 @@ export const DiarizationModelButton: React.FC<{
 
   const download = async () => {
     setError(false);
+    // Der fokussierte Knopf wird gleich deaktiviert: Fokus an „Abbrechen“.
+    captureFocus();
     setPercent(0);
     lastAnnounced.current = 0;
     setAnnouncement(t("settings.meetings.diarizationModelDownloading"));
@@ -160,7 +162,15 @@ export const DiarizationModelButton: React.FC<{
     if (!focusHandoff.current) return;
     focusHandoff.current = false;
     const root = rootRef.current;
-    if (!root || root.contains(document.activeElement)) return;
+    if (!root) return;
+    // Chromium lässt den Fokus auf einem soeben deaktivierten Knopf stehen;
+    // der ist aber nicht mehr bedienbar und zählt wie ein verlorener Fokus.
+    const active = document.activeElement;
+    const usable =
+      active instanceof HTMLElement &&
+      root.contains(active) &&
+      !active.matches(":disabled");
+    if (usable) return;
     // Bei laufendem Download ist der Download-Knopf deaktiviert und nicht
     // fokussierbar; dann geht der Fokus auf „Abbrechen“.
     const target =
