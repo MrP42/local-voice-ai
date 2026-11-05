@@ -297,10 +297,31 @@ pub fn should_retry(err: &str, free_mb: u64) -> bool {
     if is_memory_error(err) {
         return false;
     }
-    if free_mb != 0 && free_mb < crate::process_guard::RAM_RESERVE_MB {
+    if free_mb != 0 && free_mb < crate::process_guard::ram_reserve_mb() {
         return false;
     }
     true
+}
+
+fn ram_not_involved() -> u64 {
+    0
+}
+
+/// RAM-Messung fuer [`should_retry`] passend zum aktiven Anbieter. Nur das
+/// lokale Modell haengt am RAM dieses Rechners: bei einem Cloud- oder
+/// Abo-Anbieter hiesse jeder Fehler auf knappem RAM sonst `memory_low`, und
+/// aus "Claude nicht angemeldet" wuerde "zu wenig Arbeitsspeicher" (#283).
+/// Laeuft die Aufgabe mit `for_function`, muss die Sonde dieselben
+/// Einstellungen sehen: eine Funktion kann ein eigenes Modell haben.
+pub fn ram_probe_for(settings: &AppSettings) -> fn() -> u64 {
+    let local = settings
+        .active_post_process_provider()
+        .is_some_and(crate::managers::llm::is_local);
+    if local {
+        crate::process_guard::available_ram_mb
+    } else {
+        ram_not_involved
+    }
 }
 
 // -- Abgeschnittene und ungueltige Antworten (P1i, B11) ------------------------
@@ -767,7 +788,7 @@ mod tests {
     fn should_retry_never_repeats_a_memory_failure() {
         let ram = "Zu wenig freier Arbeitsspeicher: 1.0 GB frei, gebraucht werden etwa 4.0 GB";
         let plain = "API request failed with status 500 Internal Server Error: x";
-        let reserve = crate::process_guard::RAM_RESERVE_MB;
+        let reserve = crate::process_guard::ram_reserve_mb();
         // (Fehler, freier RAM in MB, Erwartung)
         let table: [(&str, u64, bool); 7] = [
             (ram, 64_000, false),        // RAM-Fehler: nie, egal wie viel jetzt frei ist
@@ -780,6 +801,24 @@ mod tests {
         ];
         for (err, free, expected) in table {
             assert_eq!(should_retry(err, free), expected, "{err} / {free} MB");
+        }
+    }
+
+    /// #283: "Claude nicht angemeldet" auf knappem RAM ist kein RAM-Fehler.
+    #[test]
+    fn only_the_local_provider_measures_ram() {
+        let mut settings = crate::settings::get_default_settings();
+        settings.post_process_provider_id = "anthropic".to_string();
+        let probe = ram_probe_for(&settings);
+        assert_eq!(probe(), 0);
+        assert!(should_retry("cli_not_logged_in: x", probe()));
+
+        settings.post_process_provider_id = crate::managers::llm::LOCAL_PROVIDER_ID.to_string();
+        if settings.active_post_process_provider().is_some() {
+            assert_eq!(
+                ram_probe_for(&settings) as usize,
+                crate::process_guard::available_ram_mb as usize
+            );
         }
     }
 

@@ -328,7 +328,40 @@ async llmSetAutoUpdateModels(mode: string) : Promise<Result<null, string>> {
 },
 /**
  * Erlaubt oder verbietet, dass die App die Codex-CLI selbst aktualisiert.
+ * Ist die CLI einer Abo-Verbindung installiert und angemeldet?
  */
+async llmCliStatus(kind: string) : Promise<Result<CliStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_cli_status", { kind }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Oeffnet die Anmeldung der CLI (`claude auth login`, `codex login`) in einem
+ * eigenen Fenster. Zugangsdaten bleiben bei der CLI.
+ */
+async llmCliLogin(kind: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_cli_login", { kind }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Fehlt die CLI: oeffnet ein Fenster, das sie ueber den offiziellen Installer
+ * laedt und danach ihre Anmeldung startet.
+ */
+async llmCliSetup(kind: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_cli_setup", { kind }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async llmSetCliAutoUpdate(enabled: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("llm_set_cli_auto_update", { enabled }) };
@@ -8519,6 +8552,14 @@ export type Citation = { n: number; meeting_id: string; meeting_title: string; s
  * Hoechstens 200 Zeichen aus der belegten Stelle.
  */
 quote: string }
+/**
+ * Zustand einer CLI auf diesem Rechner, fuer die Verbindungsseite.
+ */
+export type CliStatus = { installed: boolean; 
+/**
+ * `None`: die CLI hat keine lesbare Antwort gegeben.
+ */
+logged_in: boolean | null }
 export type ClipboardHandling = "dont_modify" | "copy_to_clipboard"
 export type CloneRequest = { source: CloneSource; 
 /**

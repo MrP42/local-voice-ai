@@ -10,6 +10,12 @@ Diese Version wird nicht installiert. Entpacken und starten:
   3. Beim ersten Start fragt Windows SmartScreen eventuell nach
      ("Weitere Informationen" -> "Trotzdem ausführen").
 
+Die Spracherkennung (Nemotron 3.5 ASR) ist in jeder portablen ZIP
+enthalten und eingestellt: Diktat und Transkription funktionieren sofort,
+auch ohne Internet. Welche Modelle genau dabei sind, steht in INHALT.txt.
+Weitere Modelle (lokale KI, Vorlesen) lädt die kleine ZIP bei Bedarf; die
+Offline-Version bringt sie mit.
+
 Offline-Version (mehrere ZIP-Teile)
 -----------------------------------
 Die Offline-Version bringt alles mit und braucht kein Internet:
@@ -53,7 +59,7 @@ neue Version und öffnet auf Wunsch die Download-Seite. Dann:
 
   1. App beenden (auch im Infobereich).
   2. Neue ZIP herunterladen (LocalVoiceAI_<Version>_x64-portable.zip;
-     die kleine ZIP reicht auch für die Offline-Version).
+     sie reicht auch für die Offline-Version).
   3. Über den bisherigen Ordner entpacken und vorhandene Dateien ersetzen.
      Ihre Daten im Ordner "Data" bleiben erhalten (auch die Offline-ZIPs
      überschreiben keine Einstellungen).
@@ -66,6 +72,18 @@ Voraussetzungen
     https://developer.microsoft.com/microsoft-edge/webview2/).
   - Für Spracherkennung auf der Grafikkarte ein aktueller Grafiktreiber
     mit Vulkan; sonst rechnet die App auf der CPU.
+
+Claude, ChatGPT und Gemini nutzen
+---------------------------------
+Die Abo-Verbindungen laufen über Claude Code bzw. die Codex CLI. Fehlen
+die Programme, zeigt die Verbindung in den Einstellungen "Einrichten und
+anmelden": Das lädt das offizielle Programm des Anbieters (ohne
+Adminrechte) und öffnet die Anmeldung im Browser. Es bleibt danach
+auf dem Rechner und liegt nicht im Ordner dieser App.
+Gemini und die API-Verbindungen brauchen einen API-Schlüssel; der Knopf
+an der Verbindung öffnet die Schlüsselseite des Anbieters.
+Das voreingestellte Regelwerk "EU" sperrt diese Anbieter. Zum Nutzen in den
+Einstellungen unter "Regelwerk" auf "Keine Einschränkung" umstellen.
 
 Hinweise
 --------

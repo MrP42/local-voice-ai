@@ -212,6 +212,15 @@ pub enum Cli {
 }
 
 impl Cli {
+    /// Vorlagenkennung der Verbindung (`claude_cli`, `codex_cli`).
+    pub fn from_kind(kind: &str) -> Option<Self> {
+        match kind {
+            "claude_cli" => Some(Self::Claude),
+            "codex_cli" => Some(Self::Codex),
+            _ => None,
+        }
+    }
+
     pub fn from_base_url(url: &str) -> Option<Self> {
         match url.trim_end_matches('/') {
             CLAUDE_CLI_URL => Some(Self::Claude),
@@ -283,9 +292,201 @@ pub fn locate(cli: Cli) -> Option<PathBuf> {
     if let Some(a) = &appdata {
         dirs.push(a.join("npm"));
     }
+    // Zielordner des offiziellen Codex-Installers (`open_setup`).
+    if let Some(l) = std::env::var_os("LOCALAPPDATA").map(PathBuf::from) {
+        dirs.push(l.join("Programs").join("OpenAI").join("Codex").join("bin"));
+    }
     dirs.iter()
         .flat_map(|d| names.iter().map(move |n| d.join(n)))
         .find(|p| p.is_file())
+}
+
+/// Zustand einer CLI auf diesem Rechner, fuer die Verbindungsseite.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, specta::Type)]
+pub struct CliStatus {
+    pub installed: bool,
+    /// `None`: die CLI hat keine lesbare Antwort gegeben.
+    pub logged_in: Option<bool>,
+}
+
+/// Wie lange die Statusabfrage dauern darf.
+const STATUS_TIMEOUT: Duration = Duration::from_secs(15);
+
+fn status_args(cli: Cli) -> &'static [&'static str] {
+    match cli {
+        Cli::Claude => &["auth", "status", "--json"],
+        Cli::Codex => &["login", "status"],
+    }
+}
+
+fn login_args(cli: Cli) -> &'static [&'static str] {
+    match cli {
+        Cli::Claude => &["auth", "login"],
+        Cli::Codex => &["login"],
+    }
+}
+
+/// Liest nur "angemeldet ja/nein" aus der Antwort der CLI. Konto und E-Mail,
+/// die `claude auth status` mitliefert, werden weder gespeichert noch gezeigt.
+fn parse_status(cli: Cli, stdout: &str, stderr: &str) -> Option<bool> {
+    match cli {
+        Cli::Claude => serde_json::from_str::<serde_json::Value>(stdout)
+            .ok()?
+            .get("loggedIn")?
+            .as_bool(),
+        Cli::Codex => {
+            let text = format!("{stdout}\n{stderr}").to_ascii_lowercase();
+            if text.contains("not logged in") {
+                Some(false)
+            } else if text.contains("logged in") {
+                Some(true)
+            } else {
+                None
+            }
+        }
+    }
+}
+
+/// Ist die CLI da, und ist man angemeldet? Blockiert -- auf einem
+/// Blocking-Thread ausfuehren.
+pub fn status(cli: Cli) -> CliStatus {
+    let Some(binary) = locate(cli) else {
+        return CliStatus {
+            installed: false,
+            logged_in: None,
+        };
+    };
+    let (program, mut argv) = launcher(&binary);
+    argv.extend(status_args(cli).iter().map(|s| s.to_string()));
+    let mut cmd = Command::new(program);
+    cmd.args(&argv)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    let logged_in = cmd
+        .spawn()
+        .ok()
+        .and_then(|child| run_with_timeout(child, None, STATUS_TIMEOUT).ok())
+        .and_then(|out| {
+            parse_status(
+                cli,
+                &String::from_utf8_lossy(&out.stdout),
+                &String::from_utf8_lossy(&out.stderr),
+            )
+        });
+    CliStatus {
+        installed: true,
+        logged_in,
+    }
+}
+
+/// Befehlszeile fuer `cmd`: scheitert die Anmeldung, bleibt das Fenster mit
+/// der Meldung der CLI offen, statt sich sofort zu schliessen.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn login_command_line(program: &Path, argv: &[String]) -> String {
+    let quoted: Vec<String> = std::iter::once(program.to_string_lossy().into_owned())
+        .chain(argv.iter().cloned())
+        .map(|a| format!("\"{a}\""))
+        .collect();
+    format!("/S /C \"{} || pause\"", quoted.join(" "))
+}
+
+/// PowerShell-Skript fuer [`open_setup`]: der dokumentierte Installer des
+/// Anbieters (keine Adminrechte), danach dessen eigene Anmeldung im Browser.
+/// Die App liefert das Programm nicht mit und veraendert es nicht; so bleibt
+/// es bei der Anmeldung am unveraenderten Programm, wie Anthropic sie erlaubt
+/// (code.claude.com/docs/en/legal-and-compliance, geprueft 05.11.2026).
+fn setup_script(cli: Cli) -> &'static str {
+    match cli {
+        Cli::Claude => {
+            "$ErrorActionPreference = 'Stop'; \
+             irm https://claude.ai/install.ps1 | iex; \
+             & \"$env:USERPROFILE\\.local\\bin\\claude.exe\" auth login; \
+             exit $LASTEXITCODE"
+        }
+        // Ohne die Variable fragt der Installer am Ende "Start Codex now?".
+        Cli::Codex => {
+            "$ErrorActionPreference = 'Stop'; \
+             $env:CODEX_NON_INTERACTIVE = '1'; \
+             irm https://chatgpt.com/codex/install.ps1 | iex; \
+             & \"$env:LOCALAPPDATA\\Programs\\OpenAI\\Codex\\bin\\codex.exe\" login; \
+             exit $LASTEXITCODE"
+        }
+    }
+}
+
+/// Befehlszeile fuer `cmd`. Das Skript geht als `-EncodedCommand`, damit es
+/// keine zwei Quotierungsebenen durchlaufen muss.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn setup_command_line(cli: Cli) -> String {
+    use base64::Engine;
+    let utf16: Vec<u8> = setup_script(cli)
+        .encode_utf16()
+        .flat_map(u16::to_le_bytes)
+        .collect();
+    let encoded = base64::engine::general_purpose::STANDARD.encode(utf16);
+    format!(
+        "/S /C \"powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand {encoded} || pause\""
+    )
+}
+
+/// Laedt die CLI ueber den offiziellen Installer und startet ihre Anmeldung,
+/// beides in einem eigenen Konsolenfenster.
+#[cfg(windows)]
+pub fn open_setup(cli: Cli) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+    Command::new("cmd")
+        .raw_arg(setup_command_line(cli))
+        .creation_flags(0x0000_0010) // CREATE_NEW_CONSOLE
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("cli_failed: {e}"))
+}
+
+#[cfg(not(windows))]
+pub fn open_setup(cli: Cli) -> Result<(), String> {
+    Err(format!(
+        "cli_failed: Bitte im Terminal installieren: {}",
+        match cli {
+            Cli::Claude => "curl -fsSL https://claude.ai/install.sh | bash",
+            Cli::Codex => "curl -fsSL https://chatgpt.com/codex/install.sh | sh",
+        }
+    ))
+}
+
+/// Oeffnet die Anmeldung der CLI in einem eigenen Konsolenfenster. Sie laeuft
+/// ganz in der CLI und im Browser; die App sieht davon nichts.
+#[cfg(windows)]
+pub fn open_login(cli: Cli) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+    let binary = locate(cli)
+        .ok_or_else(|| "cli_missing: Die CLI des Anbieters ist nicht installiert".to_string())?;
+    let (program, mut argv) = launcher(&binary);
+    argv.extend(login_args(cli).iter().map(|s| s.to_string()));
+    Command::new("cmd")
+        .raw_arg(login_command_line(&program, &argv))
+        .creation_flags(0x0000_0010) // CREATE_NEW_CONSOLE
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("cli_failed: {e}"))
+}
+
+#[cfg(not(windows))]
+pub fn open_login(cli: Cli) -> Result<(), String> {
+    Err(format!(
+        "cli_failed: Bitte im Terminal anmelden: {} {}",
+        if cli == Cli::Claude {
+            "claude"
+        } else {
+            "codex"
+        },
+        login_args(cli).join(" ")
+    ))
 }
 
 /// Argumente des isolierten Aufrufs (Prompt kommt ueber stdin).
@@ -513,7 +714,7 @@ pub(crate) fn classify_error(msg: &str) -> String {
         // Meist ist die Codex-CLI zu alt fuer das Modell (06.10.2026: 0.153.3
         // lehnt gpt-6.1-sol ab, 0.160.1 nimmt es an).
         format!(
-            "cli_model_not_in_plan: Dieses Modell nimmt der Server von der installierten              Codex-CLI nicht an. Meist hilft ein Update: npm i -g @openai/codex@latest ({msg})"
+            "cli_model_not_in_plan: Dieses Modell nimmt der Server von der installierten              Codex-CLI nicht an. Meist hilft ein Update: npm i -g @openai/codex@latest, oder den offiziellen Installer erneut ausfuehren ({msg})"
         )
     } else if lower.contains("usage limit") || lower.contains("rate limit") || lower.contains("429")
     {
@@ -841,6 +1042,79 @@ pub(crate) fn mcp_disable_args(list_json: &str) -> Result<Vec<String>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_login_state_is_read_from_both_clis() {
+        let logged_in = r#"{"loggedIn":true,"email":"x@example.org"}"#;
+        assert_eq!(parse_status(Cli::Claude, logged_in, ""), Some(true));
+        assert_eq!(
+            parse_status(Cli::Claude, r#"{"loggedIn":false}"#, ""),
+            Some(false)
+        );
+        assert_eq!(parse_status(Cli::Claude, "kaputt", ""), None);
+        // Codex schreibt je nach Version nach stdout oder stderr.
+        assert_eq!(
+            parse_status(Cli::Codex, "", "Logged in using ChatGPT"),
+            Some(true)
+        );
+        assert_eq!(parse_status(Cli::Codex, "Not logged in", ""), Some(false));
+        assert_eq!(parse_status(Cli::Codex, "", ""), None);
+    }
+
+    #[test]
+    fn the_login_window_stays_open_on_failure() {
+        let line = login_command_line(
+            Path::new(r"C:\Program Files\claude.exe"),
+            &["auth".to_string(), "login".to_string()],
+        );
+        assert_eq!(
+            line,
+            r#"/S /C ""C:\Program Files\claude.exe" "auth" "login" || pause""#
+        );
+    }
+
+    #[test]
+    fn setup_runs_the_official_installer_and_then_the_login() {
+        // Ohne `Stop` endete ein gescheiterter Download mit Exit 0, und das
+        // Fenster schloss sich ohne Meldung.
+        for cli in [Cli::Claude, Cli::Codex] {
+            assert!(setup_script(cli).starts_with("$ErrorActionPreference = 'Stop';"));
+        }
+        assert!(setup_script(Cli::Claude).contains("irm https://claude.ai/install.ps1 | iex;"));
+        assert!(setup_script(Cli::Claude).contains("claude.exe\" auth login;"));
+        assert!(
+            setup_script(Cli::Codex).contains("irm https://chatgpt.com/codex/install.ps1 | iex;")
+        );
+        assert!(setup_script(Cli::Codex).contains("CODEX_NON_INTERACTIVE"));
+        assert!(setup_script(Cli::Codex).contains("codex.exe\" login;"));
+
+        use base64::Engine;
+        let line = setup_command_line(Cli::Codex);
+        let encoded = line
+            .split("-EncodedCommand ")
+            .nth(1)
+            .and_then(|r| r.split(' ').next())
+            .unwrap();
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .unwrap();
+        let units: Vec<u16> = bytes
+            .chunks(2)
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .collect();
+        assert_eq!(
+            String::from_utf16(&units).unwrap(),
+            setup_script(Cli::Codex)
+        );
+        assert!(line.ends_with(" || pause\""));
+    }
+
+    #[test]
+    fn only_the_two_cli_kinds_are_accepted() {
+        assert_eq!(Cli::from_kind("claude_cli"), Some(Cli::Claude));
+        assert_eq!(Cli::from_kind("codex_cli"), Some(Cli::Codex));
+        assert_eq!(Cli::from_kind("anthropic"), None);
+    }
 
     #[test]
     fn claude_json_reply_is_parsed_with_tokens() {

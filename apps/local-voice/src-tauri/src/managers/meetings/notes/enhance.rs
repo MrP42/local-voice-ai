@@ -43,8 +43,8 @@ use super::model::{
 use super::templates::builtin_templates;
 use crate::managers::meetings::llm_call::{
     ask_json, build_head_with, head_facts_block, is_splittable_error, is_truncation_error, mm_ss,
-    resolve_provider_coded, retry_chunk, should_retry, sorted_segments, AskOptions, MeetingHead,
-    SemanticRetry,
+    ram_probe_for, resolve_provider_coded, retry_chunk, should_retry, sorted_segments, AskOptions,
+    MeetingHead, SemanticRetry,
 };
 use crate::managers::meetings::slides::prompt::{self as slide_prompt, LineStyle, SlideContext};
 use crate::managers::meetings::speakers::SpeakerDirectory;
@@ -1983,7 +1983,10 @@ pub async fn enhance_meeting_with_basis(
         meeting_id,
         template_id,
         doc_basis,
-        RunLimits::default(),
+        RunLimits {
+            free_mb: ram_probe_for(&settings.for_function(crate::settings::FN_MEETING_PROTOCOL)),
+            ..RunLimits::default()
+        },
         &progress,
     )
     .await
@@ -2316,7 +2319,10 @@ pub async fn apply_instruction(
         store,
         document_id,
         instruction,
-        RunLimits::default(),
+        RunLimits {
+            free_mb: ram_probe_for(&settings.for_function(crate::settings::FN_MEETING_PROTOCOL)),
+            ..RunLimits::default()
+        },
     )
     .await
 }

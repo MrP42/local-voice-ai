@@ -39,7 +39,8 @@ use specta::Type;
 
 use super::language::{self, name_en, normalize_code};
 use super::llm_call::{
-    ask_json, resolve_provider_coded, retry_chunk, should_retry, AskOptions, SemanticRetry,
+    ask_json, ram_probe_for, resolve_provider_coded, retry_chunk, should_retry, AskOptions,
+    SemanticRetry,
 };
 use super::notes::budget::{balanced_block_limit, pack_ranges};
 use super::store::{MeetingStore, StoredSegment};
@@ -964,7 +965,7 @@ where
                         "Übersetzung",
                         request.index,
                         request.total,
-                        |err| should_retry(err, crate::process_guard::available_ram_mb()),
+                        |err| should_retry(err, ram_probe_for(&settings)()),
                         || {
                             let (settings, request_system, request_user, expected) = (
                                 settings.clone(),

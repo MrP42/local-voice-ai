@@ -2658,6 +2658,17 @@
       }
     },
     "llm": {
+        "cliStatus": {
+          "loggedIn": "Signed in.",
+          "loggedOut": "Not signed in. Signing in opens a window and then your browser.",
+          "unknown": "The sign-in could not be checked.",
+          "login": "Sign in",
+          "setup": "Set up and sign in",
+          "missing": {
+            "claude_cli": "Claude Code is missing on this computer. “Set up and sign in” downloads the official program from Anthropic (no admin rights needed) and then opens the sign-in in your browser. Without a Claude plan, use an “Anthropic” connection with an API key.",
+            "codex_cli": "The Codex CLI is missing on this computer. “Set up and sign in” downloads the official program from OpenAI (no admin rights needed) and then opens the sign-in in your browser. Without a ChatGPT plan, use an “OpenAI” connection with an API key."
+          }
+        },
         "cli": {
           "claude_cli": "Uses your Claude subscription (Pro/Max) through the installed Claude Code. Sign in inside Claude Code itself (claude, then /login) – the app never sees credentials. Personal use only. Blocked under the \"EU\" rule set (USA, no DPA).",
           "codex_cli": "Uses your ChatGPT subscription (Plus/Pro) through the installed Codex CLI. Sign in inside Codex itself (codex login). Note: OpenAI's terms recommend API keys for programmatic use; going through the subscription is a grey area. Blocked under the \"EU\" rule set (USA, no DPA)."
@@ -2700,6 +2711,8 @@
         }
       },
       "connections": {
+        "getApiKey": "Get an API key from the provider",
+        "blockedUnderEu": "The “EU” rule set blocks this provider. To use it, change “Rule set” in these settings to “No restriction”.",
         "title": "Connections",
         "empty": "No connection yet. Pick a provider below — local or cloud.",
         "add": "Add provider…",
@@ -3803,7 +3816,7 @@
       "parallelSummaryMaximum": "Recommendation for this PC: {{count}} at a time – the app's maximum. The hardware would allow more.",
       "parallelDerivationTitle": "Derivation",
       "parallelByCpu": "Processor cores: {{cpus}} → {{count}} (one run per four cores)",
-      "parallelByRam": "Memory: {{ram}} GB → {{count}} (half after 6 GB system reserve, {{perRun}} GB per run)",
+      "parallelByRam": "Memory: {{ram}} GB → {{count}} (half after the system reserve, {{perRun}} GB per run)",
       "parallelByRamUnknown": "Memory: not measurable, no limit",
       "parallelByVram": "Graphics memory: {{vram}} GB → {{count}} ({{perRun}} GB per run)",
       "parallelByVramCpuModel": "Graphics memory: not counted, the model runs on the processor",
@@ -4926,7 +4939,7 @@
       "done": "Codex CLI updated ({{version}})",
       "retry": "Please start the operation again.",
       "failed": "The Codex CLI could not be updated",
-      "manual": "The Codex CLI has to be updated by hand (npm i -g @openai/codex@latest)"
+      "manual": "The Codex CLI has to be updated by hand (npm i -g @openai/codex@latest or the official installer)"
     },
     "title_one": "New language model available",
     "title_other": "{{count}} new language models available",

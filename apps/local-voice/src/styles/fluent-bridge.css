@@ -652,6 +652,13 @@ html:root[data-fluent][data-scheme="dark"] .lv-btn--danger-ghost.lv-btn--danger-
 .lv-status-btn:active {
   background: var(--colorSubtleBackgroundPressed);
 }
+/* Version mit Update-Angebot (#281): Akzentschrift, auch über dem
+   `color: inherit` der Statusknöpfe und beim Überfahren. */
+.lv-status-btn[data-angebot],
+.lv-status-btn[data-angebot]:hover {
+  color: var(--color-accent-text);
+  font-weight: 600;
+}
 .lv-status-btn:focus-visible {
   outline: 2px solid var(--colorStrokeFocus2);
   outline-offset: -2px;
