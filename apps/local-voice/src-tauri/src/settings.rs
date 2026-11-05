@@ -939,8 +939,10 @@ pub struct AppSettings {
     /// `consent_required`.
     #[serde(default)]
     pub book_talk_cloud_consent: Vec<String>,
-    /// Buch-Gespraech (lva#308): Feature-Schalter, Standard aus. Erst nach
-    /// bestandenem Eval-Tor (`book_talk_eval_pass.json`) fuer Nutzer gedacht.
+    /// Buch-Gespraech (lva#308): Schalter „KI-Antworten (Vorschau)“, Standard
+    /// aus. Ein: auch Tupel ohne Eval-Eintrag (ungeprueft) antworten, mit
+    /// Vorschau-Kennzeichnung in der Oberflaeche; Tupel mit Status
+    /// „durchgefallen“ (`book_talk_eval_pass.json`) nie. Aus: nur Fundstellen.
     #[serde(default)]
     pub book_talk_enabled: bool,
     /// Stimmprofile 2a: Vorschläge „klingt wie …, zusammenführen?“ aus Stimmabdrücken

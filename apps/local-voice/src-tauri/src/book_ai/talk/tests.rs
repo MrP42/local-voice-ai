@@ -1225,7 +1225,7 @@ fn the_cross_field_rules_are_checked_at_runtime() {
 }
 
 #[test]
-fn the_eval_pass_binds_provider_model_versions_and_profile() {
+fn the_eval_status_binds_provider_model_versions_and_profile() {
     let raw = format!(
         r#"[{{"provider":"ollama","model_id":"gemma4","prompt_version":"{PROMPT_VERSION}","check_version":"{CHECK_VERSION}","budget_profile":null,"report_hash":"abc"}}]"#
     );
@@ -1235,17 +1235,81 @@ fn the_eval_pass_binds_provider_model_versions_and_profile() {
         model_id: m.into(),
         budget_profile: b.map(str::to_string),
     };
+    use EvalStatus::*;
+    assert_eq!(eval_status(&passes, &t("ollama", "gemma4", None)), Passed);
     assert!(pass_covers(&passes, &t("ollama", "gemma4", None)));
-    assert!(!pass_covers(&passes, &t("ollama", "gemma4", Some("p"))));
-    assert!(!pass_covers(&passes, &t("cloud", "gemma4", None)));
-    assert!(!pass_covers(&passes, &t("ollama", "anderes", None)));
-    assert!(!pass_covers(&[], &t("ollama", "gemma4", None)));
+    assert_eq!(
+        eval_status(&passes, &t("ollama", "gemma4", Some("p"))),
+        Unchecked
+    );
+    assert_eq!(eval_status(&passes, &t("cloud", "gemma4", None)), Unchecked);
+    assert_eq!(
+        eval_status(&passes, &t("ollama", "anderes", None)),
+        Unchecked
+    );
+    assert_eq!(eval_status(&[], &t("ollama", "gemma4", None)), Unchecked);
+    // Alte Versionen = ungeprueft, auch bei „failed“.
     let stale = raw.replace(CHECK_VERSION, "book_talk_check@0");
-    assert!(!pass_covers(
-        &parse_eval_passes(&stale),
-        &t("ollama", "gemma4", None)
-    ));
+    assert_eq!(
+        eval_status(&parse_eval_passes(&stale), &t("ollama", "gemma4", None)),
+        Unchecked
+    );
+    let stale_failed = stale.replace("\"report_hash\"", "\"status\":\"failed\",\"report_hash\"");
+    assert_eq!(
+        eval_status(
+            &parse_eval_passes(&stale_failed),
+            &t("ollama", "gemma4", None)
+        ),
+        Unchecked
+    );
+    // Leerer report_hash zaehlt nicht als bestanden.
+    let empty = raw.replace("\"abc\"", "\" \"");
+    assert_eq!(
+        eval_status(&parse_eval_passes(&empty), &t("ollama", "gemma4", None)),
+        Unchecked
+    );
+    // Kaputte Datei = ungeprueft.
     assert!(parse_eval_passes("kaputt").is_empty());
+    assert_eq!(
+        eval_status(&parse_eval_passes("kaputt"), &t("ollama", "gemma4", None)),
+        Unchecked
+    );
+}
+
+#[test]
+fn a_failed_entry_blocks_the_tuple_and_wins_over_passed() {
+    let entry = |status: &str| {
+        format!(
+            r#"{{"provider":"ollama","model_id":"gemma4","prompt_version":"{PROMPT_VERSION}","check_version":"{CHECK_VERSION}","report_hash":"abc","status":"{status}"}}"#
+        )
+    };
+    let t = ModelTuple {
+        provider: "ollama".into(),
+        model_id: "gemma4".into(),
+        budget_profile: None,
+    };
+    let both = format!(r#"{{"passes":[{},{}]}}"#, entry("passed"), entry("failed"));
+    assert_eq!(
+        eval_status(&parse_eval_passes(&both), &t),
+        EvalStatus::Failed
+    );
+    let reversed = format!("[{},{}]", entry("failed"), entry("passed"));
+    assert_eq!(
+        eval_status(&parse_eval_passes(&reversed), &t),
+        EvalStatus::Failed
+    );
+    assert!(!pass_covers(&parse_eval_passes(&reversed), &t));
+}
+
+#[test]
+fn the_preview_switch_lets_unchecked_answer_but_never_failed() {
+    use EvalStatus::*;
+    assert!(answer_allowed(true, Unchecked));
+    assert!(answer_allowed(true, Passed));
+    assert!(!answer_allowed(true, Failed));
+    assert!(!answer_allowed(false, Unchecked));
+    assert!(!answer_allowed(false, Passed));
+    assert!(!answer_allowed(false, Failed));
 }
 
 #[test]

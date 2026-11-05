@@ -500,8 +500,9 @@ pub async fn run(
 /// Datei mit den bestandenen Eval-Läufen (Plan §3.9).
 pub const EVAL_PASS_FILE: &str = "book_talk_eval_pass.json";
 
-/// Ein bestandenes Abnahmetor für ein Tupel aus Anbieter, Modell, Prompt-
-/// und Prüfversion und Budgetprofil.
+/// Ein Abnahmeergebnis für ein Tupel aus Anbieter, Modell, Prompt- und
+/// Prüfversion und Budgetprofil. `status`: fehlend oder `passed` = bestanden,
+/// `failed` = durchgefallen (Spec §11.5).
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct EvalPass {
     pub provider: String,
@@ -511,6 +512,16 @@ pub struct EvalPass {
     #[serde(default)]
     pub budget_profile: Option<String>,
     pub report_hash: String,
+    #[serde(default)]
+    pub status: Option<String>,
+}
+
+/// Eval-Status eines Tupels (Spec §11.5, dreiwertig).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EvalStatus {
+    Passed,
+    Failed,
+    Unchecked,
 }
 
 #[derive(Deserialize)]
@@ -535,16 +546,38 @@ pub fn parse_eval_passes(raw: &str) -> Vec<EvalPass> {
     }
 }
 
-/// Hat das Tupel einen Eintrag mit den aktuellen Versionen von Prompt und Prüfung?
-pub fn pass_covers(passes: &[EvalPass], t: &ModelTuple) -> bool {
-    passes.iter().any(|p| {
+/// Eval-Status des Tupels. Nur Einträge mit aktuellen Versionen von Prompt und
+/// Prüfung zählen; `passed` zusätzlich nur mit nicht leerem `report_hash`.
+/// Ein `failed`-Eintrag gewinnt. Kein passender Eintrag = `Unchecked`.
+pub fn eval_status(passes: &[EvalPass], t: &ModelTuple) -> EvalStatus {
+    let mut status = EvalStatus::Unchecked;
+    for p in passes.iter().filter(|p| {
         p.provider == t.provider
             && p.model_id == t.model_id
             && p.budget_profile == t.budget_profile
             && p.prompt_version == PROMPT_VERSION
             && p.check_version == CHECK_VERSION
-            && !p.report_hash.trim().is_empty()
-    })
+    }) {
+        match p.status.as_deref().map(str::trim) {
+            Some("failed") => return EvalStatus::Failed,
+            None | Some("passed") if !p.report_hash.trim().is_empty() => {
+                status = EvalStatus::Passed;
+            }
+            _ => {}
+        }
+    }
+    status
+}
+
+/// Hat das Tupel bestanden (aktuelle Versionen)?
+pub fn pass_covers(passes: &[EvalPass], t: &ModelTuple) -> bool {
+    eval_status(passes, t) == EvalStatus::Passed
+}
+
+/// Darf das Tupel generierte Antworten liefern? Mit eingeschalteter Vorschau
+/// (`book_talk_enabled`) auch ungeprüfte, durchgefallene nie.
+pub fn answer_allowed(enabled: bool, status: EvalStatus) -> bool {
+    enabled && status != EvalStatus::Failed
 }
 
 // ---------------------------------------------------- Anbieter-Anbindung --
@@ -840,12 +873,16 @@ fn now_rfc3339() -> String {
 
 /// Frage an ein Buch. Geprüfte Sätze kommen vorab als `sentence`-Ereignis,
 /// das Ergebnis ist die endgültige Antwort (auch als `done`). Bereich und
-/// Grenze gelten für genau diese Anfrage. Ohne Eval-Freigabe für das
-/// aufgelöste Modell, ohne Modell, ohne Cloud-Freigabe, offline oder ohne
+/// Grenze gelten für genau diese Anfrage. Bei Eval-Status „durchgefallen“
+/// für das aufgelöste Modell, ohne Modell, ohne Cloud-Freigabe, offline oder ohne
 /// Budgetnachweis kommt eine Antwort `found_only` mit Grund. `Err` nur bei
 /// ungültiger Anfrage, laufender Frage und Abbruch (`cancelled`, dann
 /// `failed`-Ereignis, nichts wird gespeichert). Bei ausgeschaltetem Schalter
 /// `book_talk_enabled` gilt der Fundstellen-Modus (`found_only`, `no_model`).
+/// Der Schalter ist die Vorschau (Spec §11.5): ungeprüfte Tupel antworten,
+/// bestandene ebenso, durchgefallene nie. Das `done`-Ereignis bleibt
+/// unverändert (Vertrag ohne Zusatzfeld); die Oberfläche kennzeichnet jede
+/// generierte Antwort weiter als „Vorschau“.
 #[tauri::command]
 #[specta::specta]
 pub async fn book_talk_ask(
@@ -911,21 +948,24 @@ pub async fn book_talk_ask(
         .as_ref()
         .ok()
         .and_then(|(_, model, _)| prompt::profile_for(family_of(model)));
-    let covered = resolved.as_ref().ok().is_some_and(|(provider, model, _)| {
-        pass_covers(
-            &eval_passes(&app),
-            &ModelTuple {
-                provider: provider.id.clone(),
-                model_id: model.clone(),
-                budget_profile: profile.map(|p| p.name.to_string()),
-            },
-        )
-    });
+    let eval = resolved
+        .as_ref()
+        .ok()
+        .map(|(provider, model, _)| {
+            eval_status(
+                &eval_passes(&app),
+                &ModelTuple {
+                    provider: provider.id.clone(),
+                    model_id: model.clone(),
+                    budget_profile: profile.map(|p| p.name.to_string()),
+                },
+            )
+        })
+        .unwrap_or(EvalStatus::Unchecked);
     let missing: Option<&'static str> = match &resolved {
-        _ if !enabled => Some(CODE_NO_MODEL),
+        _ if !answer_allowed(enabled, eval) => Some(CODE_NO_MODEL),
         Err(_) => Some(CODE_NO_MODEL),
         Ok(_) if !local && !has_consent(&settings) => Some(CODE_CONSENT_REQUIRED),
-        Ok(_) if !covered => Some(CODE_NO_MODEL),
         Ok(_) if local && recorder.is_recording() && backend_cpu => Some(CODE_NO_MODEL),
         Ok(_) if crate::commands::meeting_chat::enhance_running() => Some(CODE_LLM_FAILED),
         Ok(_) => None,
