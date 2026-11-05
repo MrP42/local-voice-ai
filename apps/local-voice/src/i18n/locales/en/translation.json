@@ -118,6 +118,10 @@
       "replacedAll_other": "{{count}} spots replaced."
     },
     "reader": {
+      "startHere": "Start",
+      "startHint": "Reading aloud starts here unless a position is saved.",
+      "frontMatter": "Front matter – skipped when reading aloud, but reachable here",
+      "readPreface": "Read preface and introduction",
       "dockTools": "Voice and tools",
       "originalPage": "Page {{page}} in the original",
       "label": "Book pages",
