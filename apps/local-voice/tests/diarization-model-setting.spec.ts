@@ -192,6 +192,27 @@ test("Statusfehler nach frueherem Erfolg bleibt sichtbar und wiederholbar", asyn
   await expect(page.getByTestId("diarization-model-download")).toBeVisible();
 });
 
+test("Wiederholen bei laufendem Download fokussiert Abbrechen", async ({
+  page,
+}) => {
+  await open(page, "fail");
+  const retry = page.getByTestId("diarization-model-retry");
+  await expect(retry).toBeVisible();
+  await page.evaluate(() => {
+    (window as any).__diarStatus = {
+      model_id: "diar-sortformer-4spk-v2.1-q8",
+      model_ready: false,
+      downloading: true,
+      size_mb: 140,
+    };
+  });
+  await retry.focus();
+  await retry.press("Enter");
+  await expect(retry).toHaveCount(0);
+  await expect(page.getByTestId("diarization-model-download")).toBeDisabled();
+  await expect(page.getByTestId("diarization-model-cancel")).toBeFocused();
+});
+
 test.describe("Abnahmebilder Sprechertrennung", () => {
   for (const width of [390, 1440]) {
     for (const theme of ["light", "dark"] as const) {

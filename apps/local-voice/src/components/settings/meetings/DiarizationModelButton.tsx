@@ -42,6 +42,7 @@ export const DiarizationModelButton: React.FC<{
   const readyRef = useRef<HTMLSpanElement>(null);
   const downloadRef = useRef<HTMLButtonElement>(null);
   const retryRef = useRef<HTMLButtonElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
   /** Lag der Fokus in diesem Bereich, unmittelbar bevor sich der Zustand änderte? */
   const focusHandoff = useRef(false);
 
@@ -160,8 +161,14 @@ export const DiarizationModelButton: React.FC<{
     focusHandoff.current = false;
     const root = rootRef.current;
     if (!root || root.contains(document.activeElement)) return;
+    // Bei laufendem Download ist der Download-Knopf deaktiviert und nicht
+    // fokussierbar; dann geht der Fokus auf „Abbrechen“.
     const target =
-      readyRef.current ?? retryRef.current ?? downloadRef.current ?? null;
+      readyRef.current ??
+      retryRef.current ??
+      cancelRef.current ??
+      downloadRef.current ??
+      null;
     target?.focus();
   }, [ready, downloading, statusFailed, status]);
   const size = inline ? "sm" : "md";
@@ -230,6 +237,7 @@ export const DiarizationModelButton: React.FC<{
           </Button>
           {downloading && (
             <Button
+              ref={cancelRef}
               type="button"
               variant="ghost"
               size={size}
