@@ -184,7 +184,7 @@ Tests für 5.2/5.3 entstehen mit P3/P4 gegen die Testvektoren.
     und für das eigene Abmelden (`/auth/logout`). Die Oberfläche nennt vorher, welche Geräte
     mit abgemeldet werden.
 12. Betrieb: `post_max_size` des Hubs klein halten (offene Routen prüfen nur
-    `Content-Length`); `login_attempts` wird mit der bestehenden Bereinigung des Portals geleert.
+    `Content-Length`); Drosselungszeilen (`login_attempts`, `pair-*`) räumt der Hub nach einem Tag gelegentlich ab.
 11. Gerätetokens laufen wie Login-Tokens nicht ab (Entscheidung D15); Kontrolle über die
     Geräteliste.
 
