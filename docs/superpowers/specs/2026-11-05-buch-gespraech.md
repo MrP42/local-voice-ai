@@ -126,7 +126,7 @@ Datei `tooling/fixtures/buch-gespraech/vertrag.schema.json` (JSON Schema), Rust-
 
 - Standard: das lokale Modell. Erbt `book_talk` ein Cloud-Modell (Standardmodell oder eigene Wahl), wird **vor der ersten Übertragung** je Anbieter gefragt: Anbieter, Modell, Region (Souveränitätsstufe), was gesendet wird (Frage als Text, bis zu ~7.000 Zeichen Buchauszüge je Frage, die letzten zwei Wechsel; nie Audio, nie das ganze Buch), geschätzte Kosten je Frage (`usageCostOf`). Erst nach „Freigeben“ wird gesendet. Speicherung der Freigabe: `book_talk_cloud_consent: [provider_id]`, widerrufbar unter Einstellungen → Modelle je Funktion.
 - Ohne Freigabe oder offline: `found_only` mit Code `consent_required` bzw. `offline`. Die Souveränitätsstufe `nur_lokal` sperrt Cloud-Modelle ganz.
-- iOS V1 hat keine Cloud-Modelle.
+- iOS: Cloud-Modelle nur über das Relay zum eigenen PC (§11), nur in der separat aktivierten Vorschau, mit den Regeln aus §11.7. `nur_lokal` (am PC oder iPhone) sperrt auch das Relay.
 
 ### 3.9 Echte Modell-Evals und Messung
 
@@ -142,7 +142,7 @@ Datei `tooling/fixtures/buch-gespraech/vertrag.schema.json` (JSON Schema), Rust-
   | Gegenteil durchgelassen | Sätze aus `contradiction_probes` (Fake-Antworten mit verneinter Aussage) werden verworfen | 100 % |
   | Nachfragen | `expect_pages` getroffen bei Fragen mit `history` | ≥ 80 % |
 
-  Ergebnis als JSON + Bericht im PR. Fällt ein Wert, bleibt `book_talk_enabled` aus.
+  Ergebnis als JSON + Bericht im PR. Fällt ein Wert, bleibt `book_talk_enabled` aus. **Ausnahme Vorschau (§11.5):** generierte Antworten vor bestandenem Tor nur im separat aktivierten Vorschau-Modus und nie für Tupel mit Status „durchgefallen“.
 
 - **Gegen Scheinerfolg** (Codex Runde 3):
   - Nenner: alle Läufe (Fragen × 3). Kein Fall fällt aus dem Nenner, auch `found_only`, Fehler, Abbruch und leere Antworten nicht.
@@ -285,9 +285,29 @@ Abo-Modelle laufen nur über die CLI auf dem PC (Claude Code, Codex). Das iPhone
 - Vor der ersten Anfrage je Modell: Dialog „Buchauszüge (bis ca. 20.000 Zeichen je Frage), deine Frage und die letzten zwei Wechsel gehen verschlüsselt an deinen PC und von dort an Anthropic bzw. OpenAI (dein Abo). Nie Audio, nie das ganze Buch.“ → „Freigeben“ / „Abbrechen“. Widerrufbar im Blattmenü.
 - Jede Cloud-Antwort trägt in der Kopfzeile „Claude Sonnet · Cloud über deinen PC“; der Modellknopf im Blattkopf zeigt eine Wolke, solange ein Cloud-Modell gewählt ist.
 
-### 11.5 Freischaltung
+### 11.5 Freischaltung (Codex Runde 5, bedingtes JA)
 
-Patrick hat LLM-Antworten ausdrücklich angefordert. Der Schalter „KI-Antworten“ wird deshalb sichtbar als **Vorschau** angeboten: an = generierte Antworten mit Hinweis „Vorschau – Modell noch nicht im Prüflauf bestanden“, solange für das Tupel (Modell, Prompt-, Prüfversion) kein Eintrag im Eval-Nachweis existiert. Mit bestandenem Tor entfällt der Hinweis. Standard für neue Installationen bleibt aus.
+- **Eval-Status je Tupel, dreiwertig:** `ungeprüft` | `bestanden` | `durchgefallen`. Tupel = (Anbieter, versionierte Modell-ID bzw. GGUF-SHA-256, `book_talk_prompt@n`, `book_talk_check@n`, Budgetprofil). Datei `book_talk_eval.json` (mitgeliefert, signiert über den App-Build) mit Einträgen `{tuple, status, report_sha256}`. Kein Eintrag = `ungeprüft`. **`durchgefallen` sperrt das Tupel** für generierte Antworten, auch in der Vorschau; es bleibt der Fundstellen-Modus.
+- Unversionierte Modellnamen (z. B. CLI-Alias `sonnet`): Das tatsächliche Modell wird aus der CLI-Antwort gelesen (§11.7 R7); ist es unbekannt oder ändert es sich, gilt das Tupel als `ungeprüft` (Status wird nie übertragen).
+- **Vorschau** = eigener Schalter „KI-Antworten (Vorschau)“, Standard **aus** für neue **und** bestehende Installationen, nie automatisch an. Vor dem Einschalten steht ein Hinweis: „Vorschau: Das gewählte Modell hat den Prüflauf noch nicht bestanden. Antworten können falsch sein. Der Spoilerschutz verringert das Risiko, schließt es aber nicht aus.“
+- Jede Antwort eines `ungeprüft`-Tupels trägt sichtbar „Vorschau“; auch nach `bestanden` bleibt der Hinweis aus §7a im Bereichsmenü (kein Eval beweist Spoilerfreiheit).
+- Der Vorschau-Hinweis entfällt erst mit vollständigem §3.9-Nachweis für das Tupel.
+
+### 11.7 Sicherheitsregeln Relay (verbindlich vor Merge)
+
+**R1 Autorisierung je Gerät, Funktion, Modell.** Am PC erteilt Patrick die Freigabe ausdrücklich je iPhone („iPhone ‚Name‘ darf Abo-Modelle für Buch-Gespräch nutzen“, Modelle einzeln anhakbar). Der PC erzeugt dabei einen **Relay-Schlüssel** (32 Byte, zufällig) je Gerät. Übergabe nur an genau dieses Gerät: bevorzugt verschlüsselt an den Geräteschlüssel aus der Kopplung (falls die Kopplung einen gerätespezifischen öffentlichen Schlüssel hat), sonst per QR-Code am PC, den das iPhone scannt. Konto-Schlüssel und Hub-Zugang allein genügen nie. Der PC speichert je Gerät: Schlüssel-ID, erlaubte Funktion `book_talk`, erlaubte Modell-IDs, Ablauf (Standard 90 Tage).
+**R2 Anfrage-Authentifizierung und Replay-Schutz.** `request_id` = 128 Bit Zufall. Das iPhone signiert per HMAC-SHA-256 mit dem Relay-Schlüssel die kanonischen Metadaten `{v, request_id, device_id, key_id, function, model_id, created_at, expires_at, sha256(system), sha256(prompt), max_tokens}`. Der PC prüft MAC, Gerät, Funktion, Modell, Uhrzeit (±120 s Toleranz) und Ablauf und führt eine **dauerhafte Duplikatsperre** (gesehene `request_id`s bis Ablauf + 10 min, auf Platte). Eine erneut zugestellte Anfrage löst nie einen zweiten CLI-Aufruf aus.
+**R3 Antwortbindung.** Jede `resp`-Fassung trägt `{request_id, device_id, seq, model_tuple (tatsächliches Modell), text, done, error}` und einen HMAC mit demselben Schlüssel. Das iPhone verwirft Antworten mit falschem MAC, fremder `request_id`/`device_id`, nicht steigendem `seq` und alle Antworten auf abgebrochene oder abgelaufene Anfragen.
+**R4 Isolierte CLI.** Buchtext ist unvertrauenswürdig. Aufruf ohne Shell (Prozess mit Argumentliste), Prompt über stdin, Arbeitsverzeichnis = frisches leeres Temp-Verzeichnis, Werkzeuge, MCP-Server, Hooks, Plugins, Projekt- und Nutzeranweisungen technisch ausgeschaltet (Claude: nur `--print` mit leerer Werkzeugliste, `--strict-mcp-config` ohne Server, keine Einstellungsquellen; Codex: `exec` mit Sandbox `read-only`, ohne MCP, ohne Projektdokumente); keine geerbten Freigaben (`--dangerously-*` nie). Die genauen Schalter prüft die Umsetzung gegen die installierte CLI-Version und testet sie; fehlt einer, wird das Modell nicht veröffentlicht.
+**R5 Keine Inhalte in Spuren.** Keine Inhalte in Logs, Fehlermeldungen, Crashberichten; CLI-Sitzungsverläufe werden nicht gespeichert (Claude: `--no-session-persistence` bzw. gleichwertig; Codex: ephemerer Lauf) oder das Temp-Verzeichnis wird samt Verlauf gelöscht. Hub-Objekte haben eine **TTL**: `req` löscht der PC beim Annehmen; `resp` löscht das iPhone nach `done`, spätestens der PC nach 5 min; beim Start räumt der PC alle eigenen Relay-Objekte älter als 10 min ab, das iPhone ebenso seine.
+**R6 Kosten und Grenzen.** Nur Abo-Pfade (CLI angemeldet per Abo); ist für die CLI ein API-Schlüssel gesetzt (Umgebung), wird das Modell nicht veröffentlicht. Kein Ausweichen auf ein anderes oder kostenpflichtiges Modell. Grenzen je Gerät: `max_tokens` ≤ 800, 1 laufende Anfrage, ≤ 30 Anfragen je Stunde, ≤ 200 je Tag. Anzeige: „zählt auf dein Claude- bzw. ChatGPT-Abo-Kontingent; Zusatzkosten keine, solange kein API-Schlüssel gesetzt ist“. Das Kontingent selbst ist der App nicht bekannt und wird so benannt.
+**R7 Tatsächliches Modell.** Der PC liest das tatsächlich verwendete Modell aus der strukturierten CLI-Ausgabe (JSON) und meldet es in `model_tuple`; das iPhone zeigt es an („Claude Sonnet 5.5 · Cloud über deinen PC ‚Name‘“). Weicht es vom angefragten ab, wird die Antwort verworfen.
+**R8 Spoilergrenze und Anzeige.** Verlauf, Recap-Quellen und Metadaten (Kapiteltitel) im Prompt nur vor der Grenze (§3.0). Rohtext vom PC wird nie direkt angezeigt oder vorgelesen, sondern nur nach der satzweisen Prüfung im iPhone-Kern.
+**R9 Freigabedialog (iPhone, je Modell).** Nennt: Empfänger (dein PC ‚Name‘ → Anthropic bzw. OpenAI), tatsächliche Datenmenge der jeweiligen Anfrage (Zeichen Frage + Verlauf + Auszüge, beim ersten Mal als Höchstwert), Region (unbekannt, Anbieter nennt keine EU-Bindung für Abo-Pfade), Speicherung/Training (richtet sich nach deinem Abo-Vertrag; die App kann das nicht prüfen). `nur_lokal` sperrt das Relay auf beiden Seiten.
+**R10 Widerruf.** iPhone: Freigabe zurückziehen → keine neuen Aufrufe, laufende Anfrage abbrechen (`req` löschen), späte Antworten verwerfen. PC: Freigabe des Geräts entziehen → Schlüssel löschen, `models/` zurückziehen, laufenden CLI-Prozess beenden, spätere Anfragen mit `not_allowed` beantworten bzw. ignorieren.
+**R11 Fristen (widerspruchsfrei).** `expires_at = created_at + 90 s`. iPhone: keine erste `resp` binnen 15 s → Abbruch, `found_only offline`. PC: nimmt nur an, wenn `expires_at − jetzt ≥ 65 s`; CLI-Zeitrahmen 60 s (danach Prozess beenden, `error: timeout`). iPhone wartet insgesamt höchstens 75 s ab Absenden. Lokale Modelle: 45 s (iOS) bzw. 30 s (Desktop) wie §3.6. Die Halbierungs-Wiederholung (nur lokale Modelle, §11.1) läuft innerhalb derselben 45 s und zählt mit.
+**R12 Apple-Budget.** `apple-fm@1` gilt als **unbewiesen** und damit immer `ungeprüft` (nur Vorschau), bis die Gerätemessung das Profil belegt.
+**R13 Negativtests (vor Merge, sobald ausführbar):** falscher MAC, fremdes Gerät, nicht freigegebenes Modell, Replay derselben `request_id` (kein zweiter CLI-Start), abgelaufene Anfrage, Antwort mit falschem `seq`/`device_id`/Modell, Widerruf während laufender Anfrage, Injection-Fixture über das Relay (Werkzeuge bleiben aus), ungeprüftes Streaming (kein Satz vor der Prüfung sichtbar).
 
 ### 11.6 Sonstiges
 
