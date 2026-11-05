@@ -767,7 +767,13 @@
       },
       "menu": {
         "more": "More actions",
-        "clear": "Clear history"
+        "clear": "Clear history",
+        "preview": "AI answers (preview)",
+        "on": "on",
+        "off": "off",
+        "previewHint": "Preview: the chosen model has not passed the test run yet. Answers can be wrong. Spoiler protection lowers the risk but does not rule it out.",
+        "revoke": "Revoke cloud approval ({{model}})",
+        "revokeHint": "Afterwards the book conversation asks again before the next request."
       },
       "turn": {
         "spoken": "spoken",
@@ -780,7 +786,9 @@
         "cancelled": "cancelled",
         "askAgain": "Ask again in the new scope",
         "failed": "The answer failed.",
-        "general": "General knowledge, not from the book"
+        "general": "General knowledge, not from the book",
+        "preview": "Preview",
+        "previewHint": "The model has not passed the test run yet. Answers can be wrong."
       },
       "found": {
         "title": "Passages",
@@ -818,7 +826,7 @@
         "last": "Explain the last page to me"
       },
       "empty": "Ask about the book by voice or text. Answers cite where they come from.",
-      "disabled": "Passages mode: AI answers are not enabled yet. You only see passages from the book.",
+      "disabled": "Passages mode: AI answers are not enabled yet. You only see passages from the book. Turn on: menu \"More actions\" → AI answers (preview).",
       "composer": {
         "mic": "Ask by voice",
         "micStop": "Stop listening",
@@ -859,7 +867,7 @@
         "what": "Sent: your question as text, up to about 7,000 characters of book excerpts per question and the last two exchanges. Never audio, never the whole book.",
         "cost": "Estimated cost per question: about {{cost}} USD",
         "costUnknown": "Cost per question: no price stored for this model",
-        "revoke": "You can revoke the approval under Settings → Models per function.",
+        "revoke": "You can revoke the approval in the \"More actions\" menu of the conversation column (\"Revoke cloud approval\").",
         "allow": "Approve",
         "deny": "Do not send"
       }

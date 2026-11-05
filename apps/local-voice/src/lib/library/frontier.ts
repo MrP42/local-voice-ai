@@ -43,3 +43,27 @@ export function requestFrontier(
   const f = frontierOf(rec);
   return f > 0 ? f : undefined;
 }
+
+/** Die sichtbare Ansicht des Lesers: Anfang und Ende (UTF-16) und wie man dorthin kam. */
+export interface ReaderView {
+  start: number;
+  end: number;
+  /** Durch Weiterblättern (Taste, Pfeil, Wischen) um genau eine Ansicht, nicht durch einen Sprung. */
+  sequential: boolean;
+}
+
+/**
+ * Neue Lesegrenze, wenn der Leser eine Ansicht zeigt (Plan §3.0): nur
+ * sequentielles Weiterblättern hebt sie, und nur an die Grenze anschließend
+ * (Anfang der Ansicht höchstens an der alten Grenze, also die neue Grenze
+ * höchstens alte Grenze + eine Ansicht). Sprünge (Inhaltsverzeichnis,
+ * Lesezeichen, Suche, Seitenzahl, Belegsprung) heben nie an; die erste
+ * Ansicht ab Textanfang zählt immer. Senkt die Grenze nie.
+ */
+export function liftedFrontier(current: number, view: ReaderView): number {
+  const base = finite(current) ? current : 0;
+  if (!finite(view.start) || !finite(view.end) || view.end <= base) return base;
+  const joins = view.start <= base;
+  if (joins && (view.sequential || view.start === 0)) return view.end;
+  return base;
+}

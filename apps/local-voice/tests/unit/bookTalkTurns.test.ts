@@ -129,3 +129,29 @@ test("Belege ohne Doppelte, letzter Beleg des letzten fertigen Wechsels", () => 
   assert.equal(citationsOf(turns[0]).length, 1);
   assert.equal(lastCitation(turns)?.start, 10, "der laufende Wechsel zählt nicht");
 });
+
+test("der nachgeladene Verlauf verdrängt eine inzwischen gestellte Frage nicht", () => {
+  const stored: Turn = {
+    id: "stored-0",
+    question: "Alt",
+    input: "text",
+    scope: "until_position",
+    frontier: 10,
+    sentences: [],
+    status: "done",
+  };
+  let turns = reduceTurns([], {
+    type: "begin",
+    turn: { id: "bt-1", question: "Neu", input: "voice", scope: "until_position", frontier: 20 },
+  });
+  turns = reduceTurns(turns, { type: "load", turns: [stored] });
+  assert.deepEqual(
+    turns.map((t) => t.id),
+    ["stored-0", "bt-1"],
+    "Verlauf zuerst, die laufende Frage dahinter",
+  );
+  assert.equal(runningTurn(turns)?.id, "bt-1");
+  // Ein zweites Laden (anderes Buch) ersetzt nur gespeicherte Wechsel.
+  turns = reduceTurns(turns, { type: "load", turns: [] });
+  assert.deepEqual(turns.map((t) => t.id), ["bt-1"]);
+});

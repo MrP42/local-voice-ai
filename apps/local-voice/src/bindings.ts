@@ -5531,7 +5531,8 @@ async bookTalkAsk(req: BookTalkRequest) : Promise<Result<BookTalkAnswer, string>
 },
 /**
  * Bricht eine laufende Frage ab; es kommt nur noch `failed { cancelled }`, nichts wird
- * gespeichert. `false`, wenn zu dieser Anfrage kein Lauf (mehr) existiert.
+ * gespeichert. Trifft der Abbruch vor der Anmeldung der Frage ein, wird er vorgemerkt und
+ * gilt für sie. `false`, wenn zu dieser Anfrage kein Lauf (mehr) existiert.
  */
 async bookTalkCancel(requestId: string) : Promise<boolean> {
     return await TAURI_INVOKE("book_talk_cancel", { requestId });
@@ -5582,7 +5583,10 @@ async changeBookTalkEnabledSetting(enabled: boolean) : Promise<Result<null, stri
 }
 },
 /**
- * Einstellung `book_talk_cloud_consent` (Anbieter-IDs mit Freigabe).
+ * Einstellung `book_talk_cloud_consent` (Schlüssel `Verbindung::Modell` mit Freigabe).
+ * Doppelte und unbekannte Schlüssel fallen weg; Lesen und Schreiben laufen unter der
+ * gemeinsamen Einstellungssperre, damit kein veralteter Stand einen frischen Widerruf
+ * überschreibt.
  */
 async changeBookTalkCloudConsentSetting(providers: string[]) : Promise<Result<null, string>> {
     try {
@@ -7857,9 +7861,10 @@ meeting_default_template_id?: string | null;
  */
 meeting_semantic_search?: boolean; 
 /**
- * Buch-Gespraech (lva#308): Anbieter-IDs, an die Buchauszuege gesendet
- * werden duerfen. Lokale Anbieter brauchen keine Freigabe; ein anderer
- * Anbieter ohne Eintrag ergibt den Code `consent_required`.
+ * Buch-Gespraech (lva#308): Schluessel `Verbindung::Modell` (je Modell,
+ * lva#309), an die Buchauszuege gesendet werden duerfen. Lokale Modelle
+ * brauchen keine Freigabe; ein anderes Modell ohne Eintrag ergibt den Code
+ * `consent_required`.
  */
 book_talk_cloud_consent?: string[]; 
 /**

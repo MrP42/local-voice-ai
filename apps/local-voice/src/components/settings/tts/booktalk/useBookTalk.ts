@@ -61,6 +61,10 @@ export function useBookTalk(opts: {
   scopeRef.current = scope;
   const frontierRef = useRef(opts.frontier);
   frontierRef.current = opts.frontier;
+  const readyRef = useRef(false);
+  readyRef.current = ready;
+  /** Der Aufruf der zuletzt gestellten Frage; eine Nachfolgerin und „Verlauf leeren“ warten darauf. */
+  const inflight = useRef<Promise<void>>(Promise.resolve());
 
   // Anderes Buch oder Spalte zu: Bereich fällt auf „bis hier“ zurück, Verlauf lädt neu.
   useEffect(() => {
@@ -116,7 +120,9 @@ export function useBookTalk(opts: {
   const ask = useCallback(
     async (question: string, input: BookTalkInput) => {
       const clean = question.trim();
-      if (!clean || !bookId || runningTurn(turnsRef.current)) return;
+      // Vor dem Laden des Verlaufs gesperrt: ein späteres `load` darf keine Frage verdrängen.
+      if (!clean || !bookId || !readyRef.current || runningTurn(turnsRef.current))
+        return;
       const frontier = frontierRef.current();
       const req: BookTalkRequest = {
         book_id: bookId,
@@ -127,13 +133,21 @@ export function useBookTalk(opts: {
         input,
       };
       adopt(req);
-      try {
-        const answer = await port.ask(req);
-        dispatch({ type: "result", id: req.request_id, answer });
-      } catch (e) {
-        const code = e instanceof Error ? e.message : String(e);
-        dispatch({ type: "error", id: req.request_id, code });
-      }
+      // Der Kern lässt nur eine Antwort zugleich zu: eine abgebrochene
+      // Vorgängerin (Bereichswechsel, „Im neuen Bereich fragen“) zuerst abwarten.
+      const previous = inflight.current;
+      const call = (async () => {
+        await previous;
+        try {
+          const answer = await port.ask(req);
+          dispatch({ type: "result", id: req.request_id, answer });
+        } catch (e) {
+          const code = e instanceof Error ? e.message : String(e);
+          dispatch({ type: "error", id: req.request_id, code });
+        }
+      })();
+      inflight.current = call;
+      await call;
     },
     [port, bookId, adopt],
   );
@@ -166,6 +180,8 @@ export function useBookTalk(opts: {
   const clear = useCallback(async () => {
     if (!bookId) return;
     cancelRunning("user");
+    // Erst wenn die abgebrochene Frage zurück ist, kann sie nichts mehr nachtragen.
+    await inflight.current;
     await port.clear(bookId);
     dispatch({ type: "clear" });
   }, [port, bookId, cancelRunning]);

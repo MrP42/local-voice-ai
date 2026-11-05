@@ -206,8 +206,142 @@ test("eine neue Frage bricht die laufende ab", async () => {
   const second = t.side.chat("b", messages("Zweite"), () => {});
   await t.tick();
   assert.deepEqual(t.cancelled, ["a"]);
+  // Der Kern beendet die abgebrochene Frage; erst dann startet die zweite.
+  t.asks[0].reject(new Error("cancelled"));
+  await t.tick();
   t.asks[1].resolve(answerOf([{ index: 0, speech: "Zweite Antwort." }]));
   await Promise.all([first, second]);
+});
+
+test("die Nachfolgerin wartet auf den Aufruf der abgebrochenen Vorgängerin (kein chat_busy)", async () => {
+  const t = setup();
+  const first = t.side.chat("a", messages("Erste"), () => {});
+  await t.tick();
+  const second = t.side.chat("b", messages("Zweite"), () => {});
+  await t.tick();
+  await t.tick();
+  assert.equal(t.asks.length, 1, "der Kern hält die erste Frage noch: keine zweite Anfrage");
+  assert.equal(t.requests.length, 1);
+  t.asks[0].reject(new Error("cancelled"));
+  await t.tick();
+  await t.tick();
+  assert.equal(t.asks.length, 2, "nach der Rückkehr der ersten startet die zweite");
+  assert.equal(t.requests[1].request_id, "b");
+  t.asks[1].resolve(answerOf([{ index: 0, speech: "Zweite." }]));
+  await Promise.all([first, second]);
+});
+
+test("Abbruch während der Anmeldung am Ereignisstrom: abmelden, nicht fragen", async () => {
+  const handlers = new Set<Handler>();
+  let unsubscribed = 0;
+  let release: () => void = () => {};
+  const gate = new Promise<void>((r) => (release = r));
+  const asked: string[] = [];
+  const requests: string[] = [];
+  const port = {
+    ask: async (req: { request_id: string }) => {
+      asked.push(req.request_id);
+      return answerOf([]);
+    },
+    cancel: async () => true,
+    history: async () => [],
+    clear: async () => {},
+    command: async () => null,
+    subscribe: async (h: Handler) => {
+      await gate;
+      handlers.add(h);
+      return () => {
+        handlers.delete(h);
+        unsubscribed++;
+      };
+    },
+  };
+  const side = createBookSide(port as never, {
+    bookId: "page_1",
+    scope: () => "until_position",
+    frontier: () => 10,
+    onRequest: (r) => requests.push(r.request_id),
+    onCommand: () => {},
+  });
+  const done = side.chat("r1", messages("Frage"), () => {});
+  await new Promise((r) => setImmediate(r));
+  await side.cancelActive();
+  release();
+  await done;
+  assert.equal(unsubscribed, 1, "off() wurde aufgerufen");
+  assert.equal(handlers.size, 0);
+  assert.deepEqual(asked, [], "keine Frage nach dem Abbruch");
+  assert.deepEqual(requests, [], "die Spalte hat keine Frage aufgenommen");
+});
+
+test("Bereich und Grenze werden erst nach der Anmeldung gebildet", async () => {
+  let scope: "until_position" | "book" = "until_position";
+  let frontier = 10;
+  let release: () => void = () => {};
+  const gate = new Promise<void>((r) => (release = r));
+  const seen: { scope: string; frontier?: number }[] = [];
+  const port = {
+    ask: async (req: { scope: string; frontier?: number }) => {
+      seen.push(req);
+      return answerOf([]);
+    },
+    cancel: async () => true,
+    history: async () => [],
+    clear: async () => {},
+    command: async () => null,
+    subscribe: async () => {
+      await gate;
+      return () => {};
+    },
+  };
+  const side = createBookSide(port as never, {
+    bookId: "page_1",
+    scope: () => scope,
+    frontier: () => frontier,
+    onRequest: () => {},
+    onCommand: () => {},
+  });
+  const done = side.chat("r1", messages("Frage"), () => {});
+  await new Promise((r) => setImmediate(r));
+  scope = "book";
+  frontier = 99;
+  release();
+  await done;
+  assert.deepEqual(seen, [{ request_id: "r1", book_id: "page_1", question: "Frage", frontier: 99, scope: "book", input: "voice" }]);
+});
+
+test("ein „Ja“ nach der Rückfrage gilt vor jedem Befehl des Erkenners", async () => {
+  let commandCalls = 0;
+  let reply: { kind: string } | null = { kind: "scope_book" };
+  const commands: string[] = [];
+  const port = {
+    ask: async () => answerOf([]),
+    cancel: async () => true,
+    history: async () => [],
+    clear: async () => {},
+    command: async () => {
+      commandCalls++;
+      return reply;
+    },
+    subscribe: async () => () => {},
+  };
+  const side = createBookSide(port as never, {
+    bookId: "page_1",
+    scope: () => "until_position",
+    frontier: () => 10,
+    onRequest: () => {},
+    onCommand: (k) => {
+      commands.push(k);
+      return k === "scope_book" ? "Ganzes Buch einbezogen." : undefined;
+    },
+  });
+  await side.chat("r1", messages("Ganzes Buch"), () => {});
+  assert.equal(commandCalls, 1);
+  // „Ja“ würde der Erkenner als eigenen Befehl lesen; hier zählt die Rückfrage.
+  reply = { kind: "read_citation" };
+  await side.chat("r2", messages("Ja"), () => {});
+  assert.equal(commandCalls, 1, "der Erkenner wird nicht einmal gefragt");
+  assert.deepEqual(commands, ["scope_book"]);
 });
 
 test("Füller nach 600 ms, wenn bis dahin kein inhaltlicher Satz da ist", async () => {

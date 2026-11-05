@@ -11,15 +11,16 @@ import {
 } from "@/components/voice-call/orchestration";
 import {
   bookModelOf,
+  consentKeyOf,
   estimateAskCostUsd,
-  providerIdOf,
   withConsent,
 } from "./consent";
 
 /**
- * Freigabe für ein Cloud-Modell (lva#309, Plan §3.8): Anbieter, Modell, Region,
- * was gesendet wird, geschätzte Kosten je Frage. Erst nach „Freigeben“ wird
- * gespeichert (`book_talk_cloud_consent`) und die Frage noch einmal gestellt.
+ * Freigabe für ein Cloud-Modell (lva#309, Plan §3.8, §11.4): Anbieter, Modell,
+ * Region, was gesendet wird, geschätzte Kosten je Frage. Erscheint vor der
+ * ersten Anfrage je Modell; erst nach „Freigeben“ wird gespeichert
+ * (`book_talk_cloud_consent`, Schlüssel Verbindung + Modell) und gefragt.
  */
 export function ConsentDialog({
   open,
@@ -28,7 +29,7 @@ export function ConsentDialog({
 }: {
   open: boolean;
   onClose(): void;
-  /** Freigabe gespeichert: die Frage kann neu gestellt werden. */
+  /** Freigabe gespeichert: die wartende Frage kann gestellt werden. */
   onGranted(): void;
 }) {
   const { t, i18n } = useTranslation();
@@ -71,7 +72,7 @@ export function ConsentDialog({
     try {
       await updateSetting(
         "book_talk_cloud_consent",
-        withConsent(settings?.book_talk_cloud_consent, providerIdOf(found.connection)),
+        withConsent(settings?.book_talk_cloud_consent, consentKeyOf(found)),
       );
       onGranted();
     } finally {

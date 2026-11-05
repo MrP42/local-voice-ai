@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Mic, Pause, Send, Square } from "lucide-react";
 import type { BookTalkCitation } from "@/bindings";
 import { CitationCard } from "./CitationCard";
+import { BOOKTALK_ROOT_ATTR } from "./keys";
 import { ScopeBar } from "./ScopeBar";
 import { citationsOf, type Turn } from "./turns";
 import type { BookTalkState } from "./useBookTalk";
@@ -33,6 +34,13 @@ export interface BookTalkColumnProps {
   pausedPage: number | null;
   /** Schalter `book_talk_enabled`: aus = Fundstellen-Modus mit Hinweis. */
   enabled: boolean;
+  /** Schalter „KI-Antworten (Vorschau)“ umlegen. */
+  onEnabled(on: boolean): void;
+  /** Cloud-Modell mit Freigabe (Name) für den Menüpunkt „Freigabe widerrufen“; sonst `null`. */
+  cloud: string | null;
+  onRevoke(): void;
+  /** Frage stellen; die Hülle fragt vorher nach der Cloud-Freigabe. */
+  onAsk(question: string, input: "text" | "voice"): void;
   onJump(c: BookTalkCitation): void;
   onReadFrom(c: BookTalkCitation): void;
   /** Freigabe für ein Cloud-Modell prüfen (Antwort `consent_required`). */
@@ -50,6 +58,10 @@ export function BookTalkColumn({
   page,
   pausedPage,
   enabled,
+  onEnabled,
+  cloud,
+  onRevoke,
+  onAsk,
   onJump,
   onReadFrom,
   onConsent,
@@ -85,9 +97,9 @@ export function BookTalkColumn({
 
   const send = (text: string, input: "text" | "voice" = "text") => {
     const clean = text.trim();
-    if (!clean || talk.busy) return;
+    if (!clean || talk.busy || !talk.ready) return;
     setDraft("");
-    void talk.ask(clean, input);
+    onAsk(clean, input);
   };
 
   const phase = voice?.phase ?? "off";
@@ -106,13 +118,23 @@ export function BookTalkColumn({
               : null;
 
   return (
-    <div className="bt" data-testid="booktalk" role="region" aria-label={t("tts.bookTalk.region")}>
+    <div
+      className="bt"
+      data-testid="booktalk"
+      role="region"
+      aria-label={t("tts.bookTalk.region")}
+      {...{ [BOOKTALK_ROOT_ATTR]: "" }}
+    >
       <ScopeBar
         scope={talk.scope}
         page={page}
         onScope={(s) => (voice ? voice.setScope(s) : talk.setScope(s))}
         onClear={() => void talk.clear()}
         canClear={talk.turns.length > 0}
+        preview={enabled}
+        onPreview={onEnabled}
+        cloud={cloud}
+        onRevoke={onRevoke}
       />
       {!enabled && (
         <p className="bt__banner" role="note" data-testid="booktalk-disabled">
@@ -133,7 +155,7 @@ export function BookTalkColumn({
                 <button
                   key={key}
                   type="button"
-                  disabled={talk.busy}
+                  disabled={talk.busy || !talk.ready}
                   onClick={() => send(t(`tts.bookTalk.suggest.${key}`))}
                   data-testid={`booktalk-suggest-${key}`}
                 >
@@ -270,7 +292,7 @@ export function BookTalkColumn({
             className="bt__send"
             aria-label={t("tts.bookTalk.composer.send")}
             title={t("tts.bookTalk.composer.send")}
-            disabled={!draft.trim()}
+            disabled={!draft.trim() || !talk.ready}
             data-testid="booktalk-send"
           >
             <Send width={16} height={16} aria-hidden="true" />
@@ -333,6 +355,12 @@ function TurnView({
                 {t("tts.bookTalk.found.consentAction")}
               </button>
             )}
+          </p>
+        )}
+        {(turn.answer ? !turn.answer.found_only : turn.sentences.length > 0) && (
+          <p className="bt__preview" data-testid="booktalk-preview-tag">
+            <span className="bt__tag">{t("tts.bookTalk.turn.preview")}</span>
+            {` ${t("tts.bookTalk.turn.previewHint")}`}
           </p>
         )}
         {turn.sentences.length === 0 && turn.status === "pending" && (

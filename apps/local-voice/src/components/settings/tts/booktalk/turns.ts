@@ -78,10 +78,15 @@ const update = (
 
 const running = (t: Turn) => t.status === "pending";
 
+/** Aus dem gespeicherten Verlauf geladen (nicht in dieser Sitzung entstanden). */
+export const isStored = (t: Turn): boolean => t.id.startsWith("stored-");
+
 export function reduceTurns(turns: Turn[], action: TurnAction): Turn[] {
   switch (action.type) {
     case "load":
-      return action.turns;
+      // Der Verlauf kommt nach dem Öffnen: Wechsel, die inzwischen entstanden
+      // (laufende Frage, Sprache), bleiben und hängen hinter dem Verlauf.
+      return [...action.turns, ...turns.filter((t) => !isStored(t))];
     case "clear":
       return [];
     case "begin":

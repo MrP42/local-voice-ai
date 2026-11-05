@@ -1326,3 +1326,122 @@ async fn the_golden_event_files_match_the_core() {
             .all(|e| e["kind"] == "sentence"));
     }
 }
+
+// --------------------------------------- Abbruch und Freigabe (lva#309) ----
+
+fn sample_req(id: &str) -> BookTalkRequest {
+    BookTalkRequest {
+        book_id: "b".into(),
+        request_id: id.into(),
+        question: "Wer ist der Meister?".into(),
+        frontier: Some(10),
+        scope: BookTalkScope::UntilPosition,
+        input: BookTalkInput::Text,
+    }
+}
+
+fn sample_answer() -> BookTalkAnswer {
+    super::store::tests::turn("f", "a", BookTalkScope::UntilPosition, 10).answer
+}
+
+#[test]
+fn a_cancel_before_registration_is_remembered_by_a_tombstone() {
+    assert!(!cancel_request("early-1"));
+    let reg = CancelRegistration::new("early-1");
+    assert!(
+        reg.flag.is_cancelled(),
+        "Abbruch vor der Anmeldung geht nicht verloren"
+    );
+    // Der Grabstein ist verbraucht: dieselbe Kennung ist danach frisch.
+    drop(reg);
+    let again = CancelRegistration::new("early-1");
+    assert!(!again.flag.is_cancelled());
+    // Läuft die Anfrage, trifft der Abbruch das Flag und meldet `true`.
+    assert!(cancel_request("early-1"));
+    assert!(again.flag.is_cancelled());
+}
+
+#[test]
+fn tombstones_are_bounded() {
+    for i in 0..(MAX_TOMBSTONES + 10) {
+        cancel_request(&format!("old-{i}"));
+    }
+    let len = cancels().lock().unwrap().tombstones.len();
+    assert_eq!(len, MAX_TOMBSTONES);
+    assert!(!CancelRegistration::new("old-0").flag.is_cancelled());
+}
+
+#[test]
+fn a_cancelled_answer_is_never_stored() {
+    let dir = tempfile::tempdir().unwrap();
+    let flag = CancelFlag::default();
+    flag.cancel();
+    let err = finish_turn(dir.path(), &sample_req("c1"), &sample_answer(), &flag).unwrap_err();
+    assert_eq!(err.code, CODE_CANCELLED);
+    assert!(store::load(dir.path()).unwrap().is_empty());
+
+    let live = CancelFlag::default();
+    finish_turn(dir.path(), &sample_req("c2"), &sample_answer(), &live).unwrap();
+    assert_eq!(store::load(dir.path()).unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn a_cancelled_predecessor_frees_the_guard_within_the_retry_window() {
+    let first = CancelFlag::default();
+    let guard = RunGuard::acquire(&first).await.unwrap();
+    // Läuft die Vorgängerin unabgebrochen, gilt sofort chat_busy.
+    let second = CancelFlag::default();
+    assert_eq!(
+        RunGuard::acquire(&second).await.err().unwrap().code,
+        ERR_BUSY
+    );
+    // Abgebrochen: die neue Frage wartet kurz und kommt dann durch.
+    first.cancel();
+    let release = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        drop(guard);
+    });
+    let got = RunGuard::acquire(&second).await;
+    release.await.unwrap();
+    assert!(got.is_ok());
+}
+
+#[test]
+fn consent_is_keyed_by_connection_and_model_and_sanitized() {
+    let mut s = crate::settings::get_default_settings();
+    let conn = |id: &str| -> crate::settings::LlmConnection {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "kind": "openai", "label": id, "base_url": "https://example.invalid"
+        }))
+        .unwrap()
+    };
+    let model = |id: &str, conn_id: &str, remote: &str| -> crate::settings::LlmModelConfig {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "connection_id": conn_id, "remote_id": remote, "label": remote
+        }))
+        .unwrap()
+    };
+    s.llm_connections = vec![conn("c1"), conn("c2")];
+    s.llm_models = vec![model("m1", "c1", "gpt-a"), model("m2", "c2", "gpt-a")];
+    assert_eq!(consent_key("c1", "gpt-a"), "c1::gpt-a");
+    let out = sanitize_consent(
+        vec![
+            "c1::gpt-a".into(),
+            "c1::gpt-a".into(),
+            "c9::gpt-a".into(),
+            "c1::unbekannt".into(),
+            "c2::gpt-a".into(),
+        ],
+        &s,
+    );
+    assert_eq!(out, ["c1::gpt-a", "c2::gpt-a"]);
+
+    // Freigabe gilt nur für genau dieses Paar.
+    s.llm_active_model_id = Some("m1".into());
+    s.book_talk_cloud_consent = vec!["c2::gpt-a".into()];
+    assert!(!has_consent(&s));
+    s.book_talk_cloud_consent = vec!["c1::gpt-a".into()];
+    assert!(has_consent(&s));
+    s.llm_active_model_id = Some("m2".into());
+    assert!(!has_consent(&s));
+}

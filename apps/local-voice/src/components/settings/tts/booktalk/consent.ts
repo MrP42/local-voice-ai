@@ -46,11 +46,32 @@ export function bookModelOf(s: Partial<ModelSettings> | null): BookModel | null 
   );
 }
 
+/** Platzhalter-Adresse des lokalen Servers (`managers::llm::LOCAL_PLACEHOLDER_URL`). */
+const LOCAL_PLACEHOLDER_URL = "http://127.0.0.1:0/v1";
+
+/** Läuft das Modell über den lokalen Server? Dann verlässt nichts den Rechner (wie `is_local` in Rust). */
+export const isLocalConnection = (c: LlmConnection): boolean =>
+  c.kind === "local" ||
+  c.base_url.trim().replace(/\/+$/, "") ===
+    LOCAL_PLACEHOLDER_URL.replace(/\/+$/, "");
+
 /**
- * Anbieterkennung der Freigabe: so führt der Kern `book_talk_cloud_consent`
- * (Anbieter-Kennung = `kind` der Verbindung, wie `post_process_provider_id`).
+ * Schlüssel der Freigabe: Verbindung und Modell, nicht der Anbietertyp (Plan
+ * §3.8, §11.4 „je Modell“). Gleiche Form wie `consent_key` im Kern: zwei
+ * Verbindungen desselben Typs oder ein anderes Modell brauchen eine eigene Freigabe.
  */
-export const providerIdOf = (c: LlmConnection): string => c.kind;
+export const consentKeyOf = (b: BookModel): string =>
+  `${b.connection.id}::${b.model.remote_id}`;
+
+/** Das Modell, das eine Freigabe braucht und noch keine hat; `null`, wenn gesendet werden darf. */
+export function pendingConsent(
+  s: Partial<ModelSettings & Pick<AppSettings, "book_talk_cloud_consent">> | null,
+): BookModel | null {
+  const found = bookModelOf(s);
+  if (!found || isLocalConnection(found.connection)) return null;
+  const list = s?.book_talk_cloud_consent ?? [];
+  return list.includes(consentKeyOf(found)) ? null : found;
+}
 
 /** Geschätzte Kosten einer Frage in USD; `null`, wenn der Preis nicht hinterlegt ist. */
 export function estimateAskCostUsd(model: LlmModelConfig): number | null {
@@ -62,7 +83,15 @@ export function estimateAskCostUsd(model: LlmModelConfig): number | null {
   );
 }
 
-/** Freigabeliste mit dem Anbieter, ohne Doppelte. */
-export function withConsent(list: string[] | undefined, id: string): string[] {
-  return [...new Set([...(list ?? []), id])];
+/** Freigabeliste mit dem Schlüssel, ohne Doppelte. */
+export function withConsent(list: string[] | undefined, key: string): string[] {
+  return [...new Set([...(list ?? []), key])];
+}
+
+/** Freigabeliste ohne den Schlüssel (Widerruf). */
+export function withoutConsent(
+  list: string[] | undefined,
+  key: string,
+): string[] {
+  return (list ?? []).filter((k) => k !== key);
 }

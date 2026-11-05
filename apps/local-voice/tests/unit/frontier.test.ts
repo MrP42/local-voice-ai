@@ -3,6 +3,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   frontierOf,
+  liftedFrontier,
   requestFrontier,
   steadyFrontier,
 } from "../../src/lib/library/frontier.ts";
@@ -36,4 +37,57 @@ test("ohne Grenze fehlt sie in der Anfrage (Kern: no_frontier)", () => {
 
 test("ungültige Werte zählen nicht", () => {
   assert.equal(frontierOf({ frontier: -5, heard: [[0, Number.NaN]] }), 0);
+});
+
+test("nur sequentielles Weiterblättern hebt die Grenze, höchstens um eine Ansicht", () => {
+  // Weiterblättern an die Grenze anschließend: hebt auf das Ende der Ansicht.
+  assert.equal(
+    liftedFrontier(900, { start: 900, end: 1800, sequential: true }),
+    1800,
+  );
+  // Ansicht innerhalb des Gelesenen: nichts zu heben.
+  assert.equal(
+    liftedFrontier(900, { start: 300, end: 800, sequential: true }),
+    900,
+  );
+  // Die neue Grenze liegt nie über alter Grenze + einer Ansicht.
+  const view = { start: 500, end: 1400, sequential: true };
+  assert.ok(liftedFrontier(900, view) <= 900 + (view.end - view.start));
+});
+
+test("Sprünge heben die Grenze nie, auch nicht ans Ende des Buchs", () => {
+  // Inhaltsverzeichnis, Lesezeichen, Suche, Seitenzahl, Belegsprung, revealOffset.
+  assert.equal(
+    liftedFrontier(900, { start: 8000, end: 8900, sequential: false }),
+    900,
+  );
+  // Ein Sprung knapp hinter die Grenze (weniger als eine Ansicht) hebt ebenfalls nicht.
+  assert.equal(
+    liftedFrontier(900, { start: 900, end: 1800, sequential: false }),
+    900,
+  );
+  // Weiterblättern nach einem Sprung schließt nicht an: keine Hebung.
+  assert.equal(
+    liftedFrontier(900, { start: 8900, end: 9800, sequential: true }),
+    900,
+  );
+});
+
+test("die erste Ansicht ab Textanfang zählt, ungültige Werte nicht", () => {
+  assert.equal(
+    liftedFrontier(0, { start: 0, end: 700, sequential: false }),
+    700,
+  );
+  assert.equal(
+    liftedFrontier(0, { start: 5000, end: 5700, sequential: true }),
+    0,
+  );
+  assert.equal(
+    liftedFrontier(400, { start: Number.NaN, end: 900, sequential: true }),
+    400,
+  );
+  assert.equal(
+    liftedFrontier(400, { start: 100, end: 300, sequential: true }),
+    400,
+  );
 });

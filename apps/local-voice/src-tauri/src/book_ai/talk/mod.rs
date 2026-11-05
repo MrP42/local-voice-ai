@@ -623,45 +623,151 @@ pub fn map_error_code(err: &str) -> &'static str {
 
 static RUNNING: AtomicBool = AtomicBool::new(false);
 
+/// Wie lange eine neue Frage auf eine bereits abgebrochene Vorgängerin wartet
+/// (der Lauf der Vorgängerin endet gleich, der Wächter wird frei).
+pub const BUSY_RETRY: Duration = Duration::from_millis(300);
+const BUSY_POLL: Duration = Duration::from_millis(15);
+
+fn current_run() -> &'static Mutex<Option<CancelFlag>> {
+    static CURRENT: OnceLock<Mutex<Option<CancelFlag>>> = OnceLock::new();
+    CURRENT.get_or_init(|| Mutex::new(None))
+}
+
 struct RunGuard;
 
 impl RunGuard {
-    fn acquire() -> Result<Self, TalkError> {
+    fn try_acquire(flag: &CancelFlag) -> Result<Self, TalkError> {
         RUNNING
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .map(|_| Self)
+            .map(|_| {
+                if let Ok(mut cur) = current_run().lock() {
+                    *cur = Some(flag.clone());
+                }
+                Self
+            })
             .map_err(|_| TalkError::new(ERR_BUSY))
+    }
+
+    /// Wächter holen. Läuft noch eine Frage, die schon abgebrochen ist, wird
+    /// bis zu [`BUSY_RETRY`] gewartet statt sofort `chat_busy` zu melden.
+    async fn acquire(flag: &CancelFlag) -> Result<Self, TalkError> {
+        let deadline = tokio::time::Instant::now() + BUSY_RETRY;
+        loop {
+            match Self::try_acquire(flag) {
+                Ok(guard) => return Ok(guard),
+                Err(e) => {
+                    let predecessor_cancelled = current_run()
+                        .lock()
+                        .ok()
+                        .and_then(|cur| cur.as_ref().map(CancelFlag::is_cancelled))
+                        .unwrap_or(false);
+                    if !predecessor_cancelled || tokio::time::Instant::now() >= deadline {
+                        return Err(e);
+                    }
+                    tokio::time::sleep(BUSY_POLL).await;
+                }
+            }
+        }
     }
 }
 
 impl Drop for RunGuard {
     fn drop(&mut self) {
+        if let Ok(mut cur) = current_run().lock() {
+            *cur = None;
+        }
         RUNNING.store(false, Ordering::Release);
     }
 }
 
-fn cancels() -> &'static Mutex<HashMap<String, CancelFlag>> {
-    static CANCELS: OnceLock<Mutex<HashMap<String, CancelFlag>>> = OnceLock::new();
-    CANCELS.get_or_init(|| Mutex::new(HashMap::new()))
+/// Abbruch-Register: Flags laufender Anfragen und Grabsteine für Abbrüche, die
+/// vor der Registrierung eintrafen (Abbruch und Frage überholen sich).
+#[derive(Default)]
+struct CancelBook {
+    flags: HashMap<String, CancelFlag>,
+    tombstones: std::collections::VecDeque<String>,
 }
 
-struct CancelRegistration(String);
+const MAX_TOMBSTONES: usize = 64;
+
+fn cancels() -> &'static Mutex<CancelBook> {
+    static CANCELS: OnceLock<Mutex<CancelBook>> = OnceLock::new();
+    CANCELS.get_or_init(|| Mutex::new(CancelBook::default()))
+}
+
+/// Meldet die Anfrage an und liefert ihr Flag. Kam der Abbruch schon vorher,
+/// ist das Flag bereits gesetzt (der Grabstein wird verbraucht).
+struct CancelRegistration {
+    id: String,
+    flag: CancelFlag,
+}
 
 impl CancelRegistration {
-    fn new(request_id: &str, flag: CancelFlag) -> Self {
-        if let Ok(mut map) = cancels().lock() {
-            map.insert(request_id.to_string(), flag);
+    fn new(request_id: &str) -> Self {
+        let flag = CancelFlag::default();
+        if let Ok(mut book) = cancels().lock() {
+            if let Some(pos) = book.tombstones.iter().position(|t| t == request_id) {
+                book.tombstones.remove(pos);
+                flag.cancel();
+            }
+            book.flags.insert(request_id.to_string(), flag.clone());
         }
-        Self(request_id.to_string())
+        Self {
+            id: request_id.to_string(),
+            flag,
+        }
     }
 }
 
 impl Drop for CancelRegistration {
     fn drop(&mut self) {
-        if let Ok(mut map) = cancels().lock() {
-            map.remove(&self.0);
+        if let Ok(mut book) = cancels().lock() {
+            book.flags.remove(&self.id);
         }
     }
+}
+
+/// Bricht die Anfrage ab; ist sie noch nicht angemeldet, wird der Abbruch
+/// vorgemerkt. `true`, wenn ein laufender Lauf getroffen wurde.
+fn cancel_request(request_id: &str) -> bool {
+    let Ok(mut book) = cancels().lock() else {
+        return false;
+    };
+    if let Some(flag) = book.flags.get(request_id) {
+        flag.cancel();
+        return true;
+    }
+    if book.tombstones.len() >= MAX_TOMBSTONES {
+        book.tombstones.pop_front();
+    }
+    book.tombstones.push_back(request_id.to_string());
+    false
+}
+
+/// Antwort speichern, aber nur, wenn sie nicht abgebrochen wurde: ein Abbruch
+/// nach dem Ende der Generierung verwirft die Antwort samt Verlauf
+/// (Plan §3.7: Abgebrochenes gelangt nie in den gespeicherten Verlauf).
+fn finish_turn(
+    dir: &std::path::Path,
+    req: &BookTalkRequest,
+    answer: &BookTalkAnswer,
+    cancel: &CancelFlag,
+) -> Result<(), TalkError> {
+    if cancel.is_cancelled() {
+        return Err(TalkError::new(CODE_CANCELLED));
+    }
+    let turn = StoredTurn {
+        question: req.question.trim().to_string(),
+        answer: answer.clone(),
+        scope: req.scope,
+        frontier: req.frontier.unwrap_or(0),
+        input: req.input,
+        at: now_rfc3339(),
+    };
+    if store::append(dir, turn).is_err() {
+        log::warn!("book_talk: Verlauf nicht gespeichert");
+    }
+    Ok(())
 }
 
 /// Index je Buch im Speicher; Neuaufbau, wenn sich der Text ändert (Hash).
@@ -758,11 +864,18 @@ pub async fn book_talk_ask(
         }
         code.to_string()
     };
+    // Abbruch-Anmeldung vor jedem await: ein früher `book_talk_cancel` trifft
+    // die Anfrage sicher (laufend oder per Grabstein vorgemerkt).
+    let registration = CancelRegistration::new(&req.request_id);
+    let cancel = registration.flag.clone();
     let settings = crate::settings::get_settings(&app);
     // Schalter aus: Fundstellen-Modus statt Fehler (lva#309); die Oberfläche
     // zeigt die Fundstellen mit einem Hinweis.
     let enabled = settings.book_talk_enabled;
-    let _guard = RunGuard::acquire().map_err(|e| fail(e.code))?;
+    let _guard = RunGuard::acquire(&cancel).await.map_err(|e| fail(e.code))?;
+    if cancel.is_cancelled() {
+        return Err(fail(CODE_CANCELLED));
+    }
     let dir = page_path(&app, &req.book_id).map_err(|_| fail(ERR_BOOK_NOT_FOUND))?;
     let text = crate::book_ai::page_text(&dir).map_err(|_| fail(ERR_BOOK_NOT_FOUND))?;
     let index = cached_index(&req.book_id, &book_title(&app, &req.book_id), &text);
@@ -811,11 +924,7 @@ pub async fn book_talk_ask(
     let missing: Option<&'static str> = match &resolved {
         _ if !enabled => Some(CODE_NO_MODEL),
         Err(_) => Some(CODE_NO_MODEL),
-        Ok((provider, _, _))
-            if !local && !settings.book_talk_cloud_consent.contains(&provider.id) =>
-        {
-            Some(CODE_CONSENT_REQUIRED)
-        }
+        Ok(_) if !local && !has_consent(&settings) => Some(CODE_CONSENT_REQUIRED),
         Ok(_) if !covered => Some(CODE_NO_MODEL),
         Ok(_) if local && recorder.is_recording() && backend_cpu => Some(CODE_NO_MODEL),
         Ok(_) if crate::commands::meeting_chat::enhance_running() => Some(CODE_LLM_FAILED),
@@ -839,8 +948,6 @@ pub async fn book_talk_ask(
         profile,
         timeout: ANSWER_TIMEOUT,
     };
-    let cancel = CancelFlag::default();
-    let _registration = CancelRegistration::new(&req.request_id, cancel.clone());
     let emit_app = app.clone();
     let emit = move |event: BookTalkEvent| {
         let _ = event.emit(&emit_app);
@@ -849,32 +956,18 @@ pub async fn book_talk_ask(
         .await
         .map_err(|e| fail(e.code))?;
 
-    let turn = StoredTurn {
-        question: req.question.trim().to_string(),
-        answer: answer.clone(),
-        scope: req.scope,
-        frontier: req.frontier.unwrap_or(0),
-        input: req.input,
-        at: now_rfc3339(),
-    };
-    if store::append(&dir, turn).is_err() {
-        log::warn!("book_talk: Verlauf nicht gespeichert");
-    }
+    finish_turn(&dir, &req, &answer, &cancel).map_err(|e| fail(e.code))?;
     Ok(answer)
 }
 
 /// Bricht eine laufende Frage ab; es kommt nur noch `failed { cancelled }`,
-/// nichts wird gespeichert. `false`, wenn zu dieser Anfrage kein Lauf
-/// (mehr) existiert.
+/// nichts wird gespeichert. Trifft der Abbruch vor der Anmeldung der Frage
+/// ein, wird er vorgemerkt und gilt für sie. `false`, wenn zu dieser Anfrage
+/// kein Lauf (mehr) existiert.
 #[tauri::command]
 #[specta::specta]
 pub fn book_talk_cancel(request_id: String) -> bool {
-    cancels()
-        .lock()
-        .ok()
-        .and_then(|map| map.get(&request_id).cloned())
-        .map(|flag| flag.cancel())
-        .is_some()
+    cancel_request(&request_id)
 }
 
 /// Verlauf des Gesprächs mit einem Buch (älteste zuerst, höchstens 200 Wechsel).
@@ -903,15 +996,62 @@ pub fn change_book_talk_enabled_setting(app: AppHandle, enabled: bool) -> Result
     Ok(())
 }
 
-/// Einstellung `book_talk_cloud_consent` (Anbieter-IDs mit Freigabe).
+/// Schlüssel einer Cloud-Freigabe: Verbindung und Modell (Plan §3.8, §11.4:
+/// „je Modell“). Gleiche Form wie `consentKeyOf` in der Oberfläche.
+pub fn consent_key(connection_id: &str, model_remote_id: &str) -> String {
+    format!("{connection_id}::{model_remote_id}")
+}
+
+/// Gilt für das aufgelöste Modell (Funktion `book_talk`) eine Freigabe?
+fn has_consent(settings: &crate::settings::AppSettings) -> bool {
+    settings
+        .active_llm_model()
+        .is_some_and(|(connection, model)| {
+            settings
+                .book_talk_cloud_consent
+                .contains(&consent_key(&connection.id, &model.remote_id))
+        })
+}
+
+/// Freigabeliste bereinigen: ohne Doppelte, nur Schlüssel bekannter
+/// Verbindungs-Modell-Paare, Reihenfolge der Eingabe.
+fn sanitize_consent(
+    requested: Vec<String>,
+    settings: &crate::settings::AppSettings,
+) -> Vec<String> {
+    let known: std::collections::HashSet<String> = settings
+        .llm_models
+        .iter()
+        .filter(|m| {
+            settings
+                .llm_connections
+                .iter()
+                .any(|c| c.id == m.connection_id)
+        })
+        .map(|m| consent_key(&m.connection_id, &m.remote_id))
+        .collect();
+    let mut seen = std::collections::HashSet::new();
+    requested
+        .into_iter()
+        .filter(|k| known.contains(k) && seen.insert(k.clone()))
+        .collect()
+}
+
+/// Einstellung `book_talk_cloud_consent` (Schlüssel `Verbindung::Modell` mit
+/// Freigabe). Doppelte und unbekannte Schlüssel fallen weg; Lesen und
+/// Schreiben laufen unter der gemeinsamen Einstellungssperre, damit kein
+/// veralteter Stand einen frischen Widerruf überschreibt.
 #[tauri::command]
 #[specta::specta]
 pub fn change_book_talk_cloud_consent_setting(
     app: AppHandle,
     providers: Vec<String>,
 ) -> Result<(), String> {
+    let _guard = crate::managers::tts::providers::host::SETTINGS_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let mut settings = crate::settings::get_settings(&app);
-    settings.book_talk_cloud_consent = providers;
+    settings.book_talk_cloud_consent = sanitize_consent(providers, &settings);
     crate::settings::write_settings(&app, settings);
     Ok(())
 }

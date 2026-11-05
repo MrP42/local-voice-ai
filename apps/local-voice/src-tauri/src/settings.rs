@@ -933,9 +933,10 @@ pub struct AppSettings {
     /// heruntergeladen ist; ohne den Schluessel gilt `true`.
     #[serde(default = "default_true")]
     pub meeting_semantic_search: bool,
-    /// Buch-Gespraech (lva#308): Anbieter-IDs, an die Buchauszuege gesendet
-    /// werden duerfen. Lokale Anbieter brauchen keine Freigabe; ein anderer
-    /// Anbieter ohne Eintrag ergibt den Code `consent_required`.
+    /// Buch-Gespraech (lva#308): Schluessel `Verbindung::Modell` (je Modell,
+    /// lva#309), an die Buchauszuege gesendet werden duerfen. Lokale Modelle
+    /// brauchen keine Freigabe; ein anderes Modell ohne Eintrag ergibt den Code
+    /// `consent_required`.
     #[serde(default)]
     pub book_talk_cloud_consent: Vec<String>,
     /// Buch-Gespraech (lva#308): Feature-Schalter, Standard aus. Erst nach

@@ -90,6 +90,12 @@ interface Active {
   id: string;
   cancelled: boolean;
   wake: () => void;
+  /**
+   * Ist erst erfüllt, wenn der Aufruf `port.ask` dieser Anfrage zurück ist (der
+   * Kern gibt den Lauf-Wächter dann frei); eine Nachfolgerin wartet darauf,
+   * sonst meldet der Kern `chat_busy`.
+   */
+  settled: Promise<void>;
 }
 
 export function createBookSide(
@@ -134,22 +140,33 @@ export function createBookSide(
     question: string,
     onSentence: (text: string) => void,
   ): Promise<string> => {
-    const frontier = ctx.frontier();
-    const req: BookTalkRequest = {
-      book_id: ctx.bookId,
-      request_id: requestId,
-      question,
-      ...(frontier !== undefined ? { frontier } : {}),
-      scope: ctx.scope(),
-      input: "voice",
+    // Eine neue Frage ersetzt eine noch laufende: erst die alte abbrechen und
+    // ihren Aufruf abwarten (der Kern lässt nur eine Antwort zugleich zu).
+    if (active) {
+      const previous = active;
+      await cancelRun(previous);
+      await previous.settled;
+    }
+    // Lauf anmelden, bevor irgendetwas wartet: ein Abbruch während der
+    // Anmeldung am Ereignisstrom trifft so schon diesen Lauf.
+    let release: () => void = () => {};
+    const run: Active = {
+      id: requestId,
+      cancelled: false,
+      wake: () => {},
+      settled: new Promise<void>((resolve) => {
+        release = resolve;
+      }),
     };
-    // Eine neue Frage ersetzt eine noch laufende: erst die alte abbrechen.
-    if (active) await cancelRun(active);
-    const run: Active = { id: requestId, cancelled: false, wake: () => {} };
+    const woken = new Promise<{ cancelled: true }>((resolve) => {
+      run.wake = () => resolve({ cancelled: true });
+    });
     active = run;
     const delivered = new Map<number, string>();
     const spoken: string[] = [];
     let filler: unknown = null;
+    let off: (() => void) | null = null;
+    let asking = false;
     const stopFiller = () => {
       if (filler === null) return;
       timers.clear(filler);
@@ -168,23 +185,33 @@ export function createBookSide(
       delivered.set(e.sentence.index, e.sentence.speech);
       say(e.sentence.speech);
     };
-    const off = await port.subscribe(handle);
     try {
+      off = await port.subscribe(handle);
+      // Während der Anmeldung abgebrochen: abmelden und nichts fragen.
+      if (run.cancelled) return spoken.join(" ");
+      // Bereich und Grenze erst jetzt: sie gelten für genau diese Anfrage.
+      const frontier = ctx.frontier();
+      const req: BookTalkRequest = {
+        book_id: ctx.bookId,
+        request_id: requestId,
+        question,
+        ...(frontier !== undefined ? { frontier } : {}),
+        scope: ctx.scope(),
+        input: "voice",
+      };
       ctx.onRequest(req);
       filler = timers.set(() => {
         filler = null;
         if (run.cancelled || spoken.length > 0) return;
         say(isEnglish(question) ? FILLER_EN : FILLER_DE);
       }, fillerMs);
-      const outcome = await Promise.race([
-        port.ask(req).then(
-          (answer) => ({ answer }),
-          (error: unknown) => ({ error }),
-        ),
-        new Promise<{ cancelled: true }>((resolve) => {
-          run.wake = () => resolve({ cancelled: true });
-        }),
-      ]);
+      asking = true;
+      const asked = port.ask(req).then(
+        (answer) => ({ answer }),
+        (error: unknown) => ({ error }),
+      );
+      void asked.then(release, release);
+      const outcome = await Promise.race([asked, woken]);
       stopFiller();
       if ("cancelled" in outcome || run.cancelled) return spoken.join(" ");
       if ("error" in outcome) {
@@ -197,7 +224,9 @@ export function createBookSide(
       return spoken.join(" ");
     } finally {
       stopFiller();
-      off();
+      off?.();
+      // Wurde `port.ask` gestartet, gibt erst dessen Rückkehr die Nachfolgerin frei.
+      if (!asking) release();
       if (active === run) active = null;
     }
   };
@@ -208,12 +237,14 @@ export function createBookSide(
         [...messages].reverse().find((m) => m.role === "user")?.content.trim() ??
         "";
       if (!question) return "";
-      const command = await port.command(ctx.bookId, question).catch(() => null);
-      if (command) return runCommand(command.kind, question, onSentence);
+      // Die Antwort auf die Rückfrage „Auch spätere Kapitel einbeziehen?“ gilt
+      // zuerst: ein „Ja“ ist hier die Bestätigung, kein anderer Befehl.
       if (awaitingScope && YES.has(normalize(question))) {
         awaitingScope = false;
         return confirmScope(ctx, onSentence);
       }
+      const command = await port.command(ctx.bookId, question).catch(() => null);
+      if (command) return runCommand(command.kind, question, onSentence);
       awaitingScope = false;
       return ask(requestId, question, onSentence);
     },

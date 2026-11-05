@@ -767,7 +767,13 @@
       },
       "menu": {
         "more": "Weitere Aktionen",
-        "clear": "Verlauf leeren"
+        "clear": "Verlauf leeren",
+        "preview": "KI-Antworten (Vorschau)",
+        "on": "an",
+        "off": "aus",
+        "previewHint": "Vorschau: Das gewählte Modell hat den Prüflauf noch nicht bestanden. Antworten können falsch sein. Der Spoilerschutz verringert das Risiko, schließt es aber nicht aus.",
+        "revoke": "Cloud-Freigabe widerrufen ({{model}})",
+        "revokeHint": "Danach fragt das Buch-Gespräch vor der nächsten Anfrage erneut."
       },
       "turn": {
         "spoken": "gesprochen",
@@ -780,7 +786,9 @@
         "cancelled": "abgebrochen",
         "askAgain": "Im neuen Bereich fragen",
         "failed": "Die Antwort ist fehlgeschlagen.",
-        "general": "Allgemeinwissen, nicht aus dem Buch"
+        "general": "Allgemeinwissen, nicht aus dem Buch",
+        "preview": "Vorschau",
+        "previewHint": "Das Modell hat den Prüflauf noch nicht bestanden. Antworten können falsch sein."
       },
       "found": {
         "title": "Fundstellen",
@@ -818,7 +826,7 @@
         "last": "Erklär mir die letzte Seite"
       },
       "empty": "Frag zum Buch, per Sprache oder Text. Antworten nennen ihre Fundstellen.",
-      "disabled": "Fundstellen-Modus: Antworten mit KI sind noch nicht freigeschaltet. Du siehst nur Fundstellen aus dem Buch.",
+      "disabled": "Fundstellen-Modus: Antworten mit KI sind noch nicht freigeschaltet. Du siehst nur Fundstellen aus dem Buch. Einschalten: Menü „Weitere Aktionen“ → KI-Antworten (Vorschau).",
       "composer": {
         "mic": "Frage sprechen",
         "micStop": "Zuhören beenden",
@@ -859,7 +867,7 @@
         "what": "Gesendet werden deine Frage als Text, bis zu etwa 7.000 Zeichen Buchauszüge je Frage und die letzten zwei Wechsel. Nie Audio, nie das ganze Buch.",
         "cost": "Geschätzte Kosten je Frage: ca. {{cost}} USD",
         "costUnknown": "Kosten je Frage: Preis für dieses Modell nicht hinterlegt",
-        "revoke": "Die Freigabe lässt sich unter Einstellungen → Modelle je Funktion widerrufen.",
+        "revoke": "Die Freigabe lässt sich im Menü „Weitere Aktionen“ der Gesprächsspalte widerrufen („Cloud-Freigabe widerrufen“).",
         "allow": "Freigeben",
         "deny": "Nicht senden"
       }

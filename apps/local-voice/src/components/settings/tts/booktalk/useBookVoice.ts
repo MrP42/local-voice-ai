@@ -7,6 +7,7 @@ import {
   type CallState,
 } from "@/components/voice-call/engine";
 import { createBookSide, type BookSide } from "@/components/voice-call/bookSide";
+import { inForeignDialog, isTextEntry } from "./keys";
 import type { BookTalkPort } from "./port";
 import type { BookTalkState } from "./useBookTalk";
 
@@ -59,12 +60,6 @@ export interface BookVoice {
 /** Nach dem Loslassen der Leertaste so lange auf Sprache warten, sonst Ende (ms). */
 export const PTT_GRACE_MS = 900;
 
-const typing = (t: EventTarget | null): boolean =>
-  t instanceof Element &&
-  t.closest(
-    'input, textarea, select, button, a, [contenteditable=""], [contenteditable="true"], [role="button"], [role="menuitem"], [role="dialog"]',
-  ) !== null;
-
 /**
  * Sprachgespräch mit dem Buch (lva#309, G3): eigene Engine mit der Seite
  * „Buch“ (`bookSide.ts`), Vorlesen pausiert beim Start, Sprachbefehle über
@@ -78,6 +73,11 @@ export function useBookVoice(opts: {
   host: BookTalkHost;
   /** Ohne Buch oder bei ausgeschalteter Tastatur reagiert nichts. */
   keyboard?: boolean;
+  /**
+   * Darf eine Sitzung starten? Fehlt die Cloud-Freigabe, fragt die Oberfläche
+   * dort erst und antwortet `false` (Plan §3.8, §11.4: Dialog vor der ersten Anfrage).
+   */
+  canStart?(): boolean;
 }): BookVoice {
   const { port, bookId } = opts;
   const [phase, setPhase] = useState<VoicePhase>("off");
@@ -94,6 +94,8 @@ export function useBookVoice(opts: {
   const pttSession = useRef(false);
   const sawTurn = useRef(false);
   const pttTimer = useRef<number | null>(null);
+  /** Die Leertaste wurde losgelassen, bevor das Mikrofon bereit war: beim Zuhören auswerten. */
+  const releasedEarly = useRef(false);
   const phaseRef = useRef<VoicePhase>("off");
 
   const setPausedFlag = (paused: boolean) => {
@@ -109,6 +111,7 @@ export function useBookVoice(opts: {
     pttHeld.current = false;
     pttSession.current = false;
     sawTurn.current = false;
+    releasedEarly.current = false;
     if (pttTimer.current !== null) window.clearTimeout(pttTimer.current);
     pttTimer.current = null;
     phaseRef.current = "off";
@@ -123,6 +126,19 @@ export function useBookVoice(opts: {
       if (resumeReading) live.current.host.resumeReading();
     }
   }, []);
+
+  /**
+   * Leertaste losgelassen und das Mikrofon läuft: es schweigt; kommt innerhalb
+   * der Karenz keine Äußerung, endet die Sitzung.
+   */
+  const armRelease = useCallback((engine: VoiceCallEngine) => {
+    engine.setMuted(true);
+    if (pttTimer.current !== null) window.clearTimeout(pttTimer.current);
+    pttTimer.current = window.setTimeout(() => {
+      pttTimer.current = null;
+      if (phaseRef.current === "listening") void closeSession(true);
+    }, PTT_GRACE_MS);
+  }, [closeSession]);
 
   /** Befehl ausführen (gerufen aus der Buch-Seite, mitten im Schritt der Engine). */
   const runCommand = useCallback(
@@ -191,6 +207,11 @@ export function useBookVoice(opts: {
           phaseRef.current = s === "idle" ? "off" : s;
           setPhase(phaseRef.current);
           if (s === "thinking") sawTurn.current = true;
+          // Leertaste schon vor „bereit“ losgelassen: jetzt wirken lassen.
+          if (s === "listening" && releasedEarly.current && !pttHeld.current) {
+            releasedEarly.current = false;
+            if (engineRef.current) armRelease(engineRef.current);
+          }
           // Mit der Leertaste gestartet: nach der Antwort ist das Gespräch zu Ende.
           if (
             s === "listening" &&
@@ -217,11 +238,13 @@ export function useBookVoice(opts: {
       if (message !== "abgebrochen") setError(message);
       await closeSession(true);
     }
-  }, [bookId, port, runCommand, closeSession]);
+  }, [bookId, port, runCommand, closeSession, armRelease]);
+
+  const allowed = () => live.current.canStart?.() ?? true;
 
   const toggle = useCallback(() => {
     if (engineRef.current) void closeSession(true);
-    else void start();
+    else if (allowed()) void start();
   }, [start, closeSession]);
 
   const stopAnswer = useCallback(() => {
@@ -239,20 +262,25 @@ export function useBookVoice(opts: {
     [],
   );
 
-  // Buch gewechselt oder Spalte geschlossen: Sitzung beenden, Vorlesen bleibt pausiert.
+  // Buch gewechselt oder Spalte geschlossen: Sitzung beenden. Hat das Gespräch
+  // das Vorlesen angehalten, läuft es weiter (der Reader prüft, dass es noch
+  // dasselbe Buch ist); sonst bliebe es für immer pausiert.
   useEffect(
     () => () => {
-      void closeSession(false);
+      void closeSession(pausedByTalk.current);
     },
     [bookId, closeSession],
   );
 
-  // Tastatur: Leertaste halten = sprechen, Esc beendet Zuhören bzw. Antwort.
+  // Tastatur: Leertaste halten = sprechen, Esc beendet Zuhören bzw. Antwort,
+  // G beendet eine laufende Sitzung (die Spalte blendet sich erst danach aus).
   useEffect(() => {
     if (opts.keyboard === false || !bookId) return;
     const down = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       if (e.key === "Escape") {
+        // Esc in einem fremden Dialog gehört dem Dialog.
+        if (inForeignDialog(e.target)) return;
         if (engineRef.current) {
           e.preventDefault();
           if (live.current.talk.busy) stopAnswer();
@@ -263,12 +291,28 @@ export function useBookVoice(opts: {
         }
         return;
       }
-      if (e.key !== " " || e.repeat || typing(e.target)) return;
+      if (e.key !== " " || e.repeat) return;
+      if (isTextEntry(e.target) || inForeignDialog(e.target)) return;
       e.preventDefault();
-      // Mit laufender Sitzung hört das Mikrofon freihändig; die Leertaste startet nur eine.
-      if (engineRef.current) return;
+      const engine = engineRef.current;
+      if (engine) {
+        // Erneutes Drücken in der Karenz: das Mikrofon wieder öffnen.
+        if (pttTimer.current !== null) {
+          window.clearTimeout(pttTimer.current);
+          pttTimer.current = null;
+          pttHeld.current = true;
+          engine.setMuted(false);
+        } else if (releasedEarly.current) {
+          releasedEarly.current = false;
+          pttHeld.current = true;
+        }
+        // Sonst hört das Mikrofon freihändig; die Leertaste startet nur eine Sitzung.
+        return;
+      }
+      if (!allowed()) return;
       pttHeld.current = true;
       pttSession.current = true;
+      releasedEarly.current = false;
       void start();
     };
     const up = (e: KeyboardEvent) => {
@@ -276,20 +320,30 @@ export function useBookVoice(opts: {
       pttHeld.current = false;
       const engine = engineRef.current;
       if (!engine) return;
-      // Nach dem Loslassen schweigt das Mikrofon; kommt keine Äußerung, endet die Sitzung.
-      engine.setMuted(true);
-      pttTimer.current = window.setTimeout(() => {
-        pttTimer.current = null;
-        if (phaseRef.current === "listening") void closeSession(true);
-      }, PTT_GRACE_MS);
+      // Noch nicht bereit: merken und beim Zuhören auswerten.
+      if (phaseRef.current === "starting" || phaseRef.current === "off") {
+        releasedEarly.current = true;
+        return;
+      }
+      armRelease(engine);
+    };
+    const gate = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() !== "g" || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.repeat || !engineRef.current) return;
+      if (isTextEntry(e.target) || inForeignDialog(e.target)) return;
+      // Erst die Sitzung beenden; das erste G blendet die Spalte nicht aus.
+      e.preventDefault();
+      void closeSession(true);
     };
     window.addEventListener("keydown", down);
     window.addEventListener("keyup", up);
+    window.addEventListener("keydown", gate, true);
     return () => {
       window.removeEventListener("keydown", down);
       window.removeEventListener("keyup", up);
+      window.removeEventListener("keydown", gate, true);
     };
-  }, [opts.keyboard, bookId, start, stopAnswer, closeSession]);
+  }, [opts.keyboard, bookId, start, stopAnswer, closeSession, armRelease]);
 
   const resume = useCallback(() => {
     if (engineRef.current) void closeSession(true);

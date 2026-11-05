@@ -1,5 +1,11 @@
 import { commands } from "@/bindings";
-import { frontierOf, requestFrontier, steadyFrontier } from "./frontier";
+import {
+  frontierOf,
+  liftedFrontier,
+  requestFrontier,
+  steadyFrontier,
+  type ReaderView,
+} from "./frontier";
 
 /**
  * Dauerhafter Fortschritt (lva#152, Patrick 01.11.: „der Fortschritt muss
@@ -497,12 +503,18 @@ export const docProgressKey = (bookId: string, docId: string) =>
   `doc:${bookId}:${docId}`;
 
 /**
- * Der Leser sieht den Text bis `to`: die Lesegrenze steigt dorthin (nur nach
- * oben). Berührt weder Stelle noch Bereiche noch den Fertig-Zustand.
+ * Der Leser zeigt eine Ansicht: die Lesegrenze steigt nur bei sequentiellem
+ * Weiterblättern an die Grenze anschließend (`liftedFrontier`), nie durch
+ * Sprünge. Berührt weder Stelle noch Bereiche noch den Fertig-Zustand.
  */
-export function raiseFrontier(key: string, to: number, length: number): void {
+export function raiseFrontier(
+  key: string,
+  view: ReaderView,
+  length: number,
+): void {
   const prev = loadProgress(key);
-  if (!Number.isFinite(to) || to <= frontierOf(prev)) return;
+  const to = liftedFrontier(frontierOf(prev), view);
+  if (to <= frontierOf(prev)) return;
   saveProgress(key, {
     offset: prev?.offset ?? 0,
     anchor: prev?.anchor,
