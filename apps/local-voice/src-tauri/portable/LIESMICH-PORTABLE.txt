@@ -73,12 +73,17 @@ Voraussetzungen
   - Für Spracherkennung auf der Grafikkarte ein aktueller Grafiktreiber
     mit Vulkan; sonst rechnet die App auf der CPU.
 
-Claude und ChatGPT nutzen
--------------------------
-Die Abo-Verbindungen laufen über Claude Code bzw. die Codex CLI. Beide
-sind nicht Teil der ZIP und müssen auf dem Rechner installiert sein.
-Die Verbindung zeigt in den Einstellungen, ob das Programm da ist, und
-bietet "Anmelden" an. Ohne diese Programme geht es mit einem API-Schlüssel.
+Claude, ChatGPT und Gemini nutzen
+---------------------------------
+Die Abo-Verbindungen laufen über Claude Code bzw. die Codex CLI. Fehlen
+die Programme, zeigt die Verbindung in den Einstellungen "Einrichten und
+anmelden": Das lädt das offizielle Programm des Anbieters (ohne
+Adminrechte) und öffnet die Anmeldung im Browser. Es bleibt danach
+auf dem Rechner und liegt nicht im Ordner dieser App.
+Gemini und die API-Verbindungen brauchen einen API-Schlüssel; der Knopf
+an der Verbindung öffnet die Schlüsselseite des Anbieters.
+Das voreingestellte Regelwerk "EU" sperrt diese Anbieter. Zum Nutzen in den
+Einstellungen unter "Regelwerk" auf "Keine Einschränkung" umstellen.
 
 Hinweise
 --------

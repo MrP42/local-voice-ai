@@ -292,6 +292,10 @@ pub fn locate(cli: Cli) -> Option<PathBuf> {
     if let Some(a) = &appdata {
         dirs.push(a.join("npm"));
     }
+    // Zielordner des offiziellen Codex-Installers (`open_setup`).
+    if let Some(l) = std::env::var_os("LOCALAPPDATA").map(PathBuf::from) {
+        dirs.push(l.join("Programs").join("OpenAI").join("Codex").join("bin"));
+    }
     dirs.iter()
         .flat_map(|d| names.iter().map(move |n| d.join(n)))
         .find(|p| p.is_file())
@@ -390,6 +394,69 @@ fn login_command_line(program: &Path, argv: &[String]) -> String {
         .map(|a| format!("\"{a}\""))
         .collect();
     format!("/S /C \"{} || pause\"", quoted.join(" "))
+}
+
+/// PowerShell-Skript fuer [`open_setup`]: der dokumentierte Installer des
+/// Anbieters (keine Adminrechte), danach dessen eigene Anmeldung im Browser.
+/// Die App liefert das Programm nicht mit und veraendert es nicht; so bleibt
+/// es bei der Anmeldung am unveraenderten Programm, wie Anthropic sie erlaubt
+/// (code.claude.com/docs/en/legal-and-compliance, geprueft 05.11.2026).
+fn setup_script(cli: Cli) -> &'static str {
+    match cli {
+        Cli::Claude => {
+            "$ErrorActionPreference = 'Stop'; \
+             irm https://claude.ai/install.ps1 | iex; \
+             & \"$env:USERPROFILE\\.local\\bin\\claude.exe\" auth login; \
+             exit $LASTEXITCODE"
+        }
+        // Ohne die Variable fragt der Installer am Ende "Start Codex now?".
+        Cli::Codex => {
+            "$ErrorActionPreference = 'Stop'; \
+             $env:CODEX_NON_INTERACTIVE = '1'; \
+             irm https://chatgpt.com/codex/install.ps1 | iex; \
+             & \"$env:LOCALAPPDATA\\Programs\\OpenAI\\Codex\\bin\\codex.exe\" login; \
+             exit $LASTEXITCODE"
+        }
+    }
+}
+
+/// Befehlszeile fuer `cmd`. Das Skript geht als `-EncodedCommand`, damit es
+/// keine zwei Quotierungsebenen durchlaufen muss.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn setup_command_line(cli: Cli) -> String {
+    use base64::Engine;
+    let utf16: Vec<u8> = setup_script(cli)
+        .encode_utf16()
+        .flat_map(u16::to_le_bytes)
+        .collect();
+    let encoded = base64::engine::general_purpose::STANDARD.encode(utf16);
+    format!(
+        "/S /C \"powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand {encoded} || pause\""
+    )
+}
+
+/// Laedt die CLI ueber den offiziellen Installer und startet ihre Anmeldung,
+/// beides in einem eigenen Konsolenfenster.
+#[cfg(windows)]
+pub fn open_setup(cli: Cli) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+    Command::new("cmd")
+        .raw_arg(setup_command_line(cli))
+        .creation_flags(0x0000_0010) // CREATE_NEW_CONSOLE
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("cli_failed: {e}"))
+}
+
+#[cfg(not(windows))]
+pub fn open_setup(cli: Cli) -> Result<(), String> {
+    Err(format!(
+        "cli_failed: Bitte im Terminal installieren: {}",
+        match cli {
+            Cli::Claude => "curl -fsSL https://claude.ai/install.sh | bash",
+            Cli::Codex => "curl -fsSL https://chatgpt.com/codex/install.sh | sh",
+        }
+    ))
 }
 
 /// Oeffnet die Anmeldung der CLI in einem eigenen Konsolenfenster. Sie laeuft
@@ -647,7 +714,7 @@ pub(crate) fn classify_error(msg: &str) -> String {
         // Meist ist die Codex-CLI zu alt fuer das Modell (06.10.2026: 0.153.3
         // lehnt gpt-6.1-sol ab, 0.160.1 nimmt es an).
         format!(
-            "cli_model_not_in_plan: Dieses Modell nimmt der Server von der installierten              Codex-CLI nicht an. Meist hilft ein Update: npm i -g @openai/codex@latest ({msg})"
+            "cli_model_not_in_plan: Dieses Modell nimmt der Server von der installierten              Codex-CLI nicht an. Meist hilft ein Update: npm i -g @openai/codex@latest, oder den offiziellen Installer erneut ausfuehren ({msg})"
         )
     } else if lower.contains("usage limit") || lower.contains("rate limit") || lower.contains("429")
     {
@@ -1004,6 +1071,42 @@ mod tests {
             line,
             r#"/S /C ""C:\Program Files\claude.exe" "auth" "login" || pause""#
         );
+    }
+
+    #[test]
+    fn setup_runs_the_official_installer_and_then_the_login() {
+        // Ohne `Stop` endete ein gescheiterter Download mit Exit 0, und das
+        // Fenster schloss sich ohne Meldung.
+        for cli in [Cli::Claude, Cli::Codex] {
+            assert!(setup_script(cli).starts_with("$ErrorActionPreference = 'Stop';"));
+        }
+        assert!(setup_script(Cli::Claude).contains("irm https://claude.ai/install.ps1 | iex;"));
+        assert!(setup_script(Cli::Claude).contains("claude.exe\" auth login;"));
+        assert!(
+            setup_script(Cli::Codex).contains("irm https://chatgpt.com/codex/install.ps1 | iex;")
+        );
+        assert!(setup_script(Cli::Codex).contains("CODEX_NON_INTERACTIVE"));
+        assert!(setup_script(Cli::Codex).contains("codex.exe\" login;"));
+
+        use base64::Engine;
+        let line = setup_command_line(Cli::Codex);
+        let encoded = line
+            .split("-EncodedCommand ")
+            .nth(1)
+            .and_then(|r| r.split(' ').next())
+            .unwrap();
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .unwrap();
+        let units: Vec<u16> = bytes
+            .chunks(2)
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .collect();
+        assert_eq!(
+            String::from_utf16(&units).unwrap(),
+            setup_script(Cli::Codex)
+        );
+        assert!(line.ends_with(" || pause\""));
     }
 
     #[test]

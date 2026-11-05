@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Select as FluentSelect } from "@fluentui/react-components";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { useTranslation } from "react-i18next";
 import {
   commands,
@@ -54,12 +55,30 @@ const SUBSCRIPTION_OF: Record<string, string> = {
   openai_eu: "codex_cli",
 };
 
+/// Seite des Anbieters, auf der man einen API-Schluessel bekommt.
+const API_KEY_PAGES: Record<string, string> = {
+  gemini: "https://aistudio.google.com/apikey",
+  anthropic: "https://platform.claude.com/settings/keys",
+  openai: "https://platform.openai.com/api-keys",
+  openai_eu: "https://platform.openai.com/api-keys",
+};
+
+/// Vorlagen, die das Standard-Regelwerk "EU" sperrt. Ohne Hinweis richtet man
+/// die Verbindung ein und scheitert erst bei der Modellwahl.
+const BLOCKED_UNDER_EU = new Set([
+  "claude_cli",
+  "codex_cli",
+  "gemini",
+  "anthropic",
+  "openai",
+]);
+
 /// Zustand der CLI und der Weg zur Anmeldung: die Anmeldung selbst laeuft in
 /// der CLI, die App oeffnet sie nur und liest danach "angemeldet ja/nein".
 const CliSignIn: React.FC<{ kind: string }> = ({ kind }) => {
   const { t } = useTranslation();
   const [status, setStatus] = useState<CliStatus | null>(null);
-  const [failed, setFailed] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
   const [waiting, setWaiting] = useState(false);
   const latest = useRef(0);
 
@@ -83,19 +102,29 @@ const CliSignIn: React.FC<{ kind: string }> = ({ kind }) => {
     return () => window.removeEventListener("focus", refresh);
   }, [waiting, refresh]);
 
-  const login = async () => {
-    setFailed(false);
-    const result = await commands.llmCliLogin(kind);
+  const start = async (open: typeof commands.llmCliLogin) => {
+    setFailure(null);
+    const result = await open(kind);
     if (result.status === "ok") setWaiting(true);
-    else setFailed(true);
+    else setFailure(result.error.replace(/^cli_\w+:\s*/, ""));
   };
 
   if (!status) return null;
   if (!status.installed) {
     return (
-      <p className="text-xs text-text/80" data-cli-status="missing">
-        {t(`settings.llm.cliStatus.missing.${kind}`)}
-      </p>
+      <div className="space-y-1" data-cli-status="missing">
+        <p className="text-xs text-text/80">
+          {t(`settings.llm.cliStatus.missing.${kind}`)}
+        </p>
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => void start(commands.llmCliSetup)}
+        >
+          {t("settings.llm.cliStatus.setup")}
+        </Button>
+        {failure && <p className="text-xs text-red-500">{failure}</p>}
+      </div>
     );
   }
   if (status.logged_in === true) {
@@ -114,14 +143,14 @@ const CliSignIn: React.FC<{ kind: string }> = ({ kind }) => {
             : "settings.llm.cliStatus.unknown",
         )}
       </p>
-      <Button variant="secondary" size="sm" onClick={() => void login()}>
+      <Button
+        variant="secondary"
+        size="sm"
+        onClick={() => void start(commands.llmCliLogin)}
+      >
         {t("settings.llm.cliStatus.login")}
       </Button>
-      {failed && (
-        <p className="text-xs text-red-500">
-          {t("settings.llm.cliStatus.loginFailed")}
-        </p>
-      )}
+      {failure && <p className="text-xs text-red-500">{failure}</p>}
     </div>
   );
 };
@@ -408,6 +437,7 @@ const ConnectionRow: React.FC<RowProps> = ({
   const keyless = KEYLESS_KINDS.has(connection.kind);
   const released = new Set(models.map((m) => m.remote_id));
   const { getSetting } = useSettings();
+  const complianceProfile = getSetting("compliance_profile") ?? "eu";
   // Vom Anbieter neu angeboten, aber noch nicht freigegeben (Pruefung beim Start).
   const history = (getSetting("llm_model_history") ?? []) as LlmModelSeen[];
   const isNew = (remoteId: string) =>
@@ -554,6 +584,12 @@ const ConnectionRow: React.FC<RowProps> = ({
             connection.kind === "codex_cli") && (
             <CliSignIn kind={connection.kind} />
           )}
+          {complianceProfile === "eu" &&
+            BLOCKED_UNDER_EU.has(connection.kind) && (
+              <p className="text-xs text-text/80" data-eu-hint={connection.kind}>
+                {t("settings.llm.connections.blockedUnderEu")}
+              </p>
+            )}
           {connection.kind === "bedrock_mantle" && (
             <label className="block text-sm">
               <span className="text-text/70">
@@ -598,6 +634,17 @@ const ConnectionRow: React.FC<RowProps> = ({
                 disabled={false}
                 className="w-full mt-1"
               />
+              {API_KEY_PAGES[connection.kind] && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="mt-1"
+                  data-api-key-page={connection.kind}
+                  onClick={() => void openUrl(API_KEY_PAGES[connection.kind])}
+                >
+                  {t("settings.llm.connections.getApiKey")}
+                </Button>
+              )}
             </label>
           )}
 
