@@ -5664,11 +5664,16 @@ async bookAiDocumentExport(pageId: string, id: string, path: string) : Promise<R
 /**
  * Frage an ein Buch. Geprüfte Sätze kommen vorab als `sentence`-Ereignis,
  * das Ergebnis ist die endgültige Antwort (auch als `done`). Bereich und
- * Grenze gelten für genau diese Anfrage. Ohne Eval-Freigabe für das
- * aufgelöste Modell, ohne Modell, ohne Cloud-Freigabe, offline oder ohne
+ * Grenze gelten für genau diese Anfrage. Bei Eval-Status „durchgefallen“
+ * für das aufgelöste Modell, ohne Modell, ohne Cloud-Freigabe, offline oder ohne
  * Budgetnachweis kommt eine Antwort `found_only` mit Grund. `Err` nur bei
- * ungültiger Anfrage, laufender Frage, ausgeschaltetem Schalter und Abbruch
- * (`cancelled`, dann `failed`-Ereignis, nichts wird gespeichert).
+ * ungültiger Anfrage, laufender Frage und Abbruch (`cancelled`, dann
+ * `failed`-Ereignis, nichts wird gespeichert). Bei ausgeschaltetem Schalter
+ * `book_talk_enabled` gilt der Fundstellen-Modus (`found_only`, `no_model`).
+ * Der Schalter ist die Vorschau (Spec §11.5): ungeprüfte Tupel antworten,
+ * bestandene ebenso, durchgefallene nie. Das `done`-Ereignis bleibt
+ * unverändert (Vertrag ohne Zusatzfeld); die Oberfläche kennzeichnet jede
+ * generierte Antwort weiter als „Vorschau“.
  */
 async bookTalkAsk(req: BookTalkRequest) : Promise<Result<BookTalkAnswer, string>> {
     try {
@@ -5680,8 +5685,9 @@ async bookTalkAsk(req: BookTalkRequest) : Promise<Result<BookTalkAnswer, string>
 },
 /**
  * Bricht eine laufende Frage ab; es kommt nur noch `failed { cancelled }`,
- * nichts wird gespeichert. `false`, wenn zu dieser Anfrage kein Lauf
- * (mehr) existiert.
+ * nichts wird gespeichert. Trifft der Abbruch vor der Anmeldung der Frage
+ * ein, wird er vorgemerkt und gilt für sie. `false`, wenn zu dieser Anfrage
+ * kein Lauf (mehr) existiert.
  */
 async bookTalkCancel(requestId: string) : Promise<boolean> {
     return await TAURI_INVOKE("book_talk_cancel", { requestId });
@@ -5715,6 +5721,31 @@ async bookTalkClear(bookId: string) : Promise<Result<null, string>> {
 async bookTalkCommand(bookId: string, text: string) : Promise<Result<BookTalkCommand | null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("book_talk_command", { bookId, text }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Einstellung `book_talk_enabled` (Schalter für das Gespräch mit dem Buch).
+ */
+async changeBookTalkEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_book_talk_enabled_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Einstellung `book_talk_cloud_consent` (Schlüssel `Verbindung::Modell` mit
+ * Freigabe). Doppelte und unbekannte Schlüssel fallen weg; Lesen und
+ * Schreiben laufen unter der gemeinsamen Einstellungssperre, damit kein
+ * veralteter Stand einen frischen Widerruf überschreibt.
+ */
+async changeBookTalkCloudConsentSetting(providers: string[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_book_talk_cloud_consent_setting", { providers }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -7990,14 +8021,17 @@ meeting_default_template_id?: string | null;
  */
 meeting_semantic_search?: boolean; 
 /**
- * Buch-Gespraech (lva#308): Anbieter-IDs, an die Buchauszuege gesendet
- * werden duerfen. Lokale Anbieter brauchen keine Freigabe; ein anderer
- * Anbieter ohne Eintrag ergibt den Code `consent_required`.
+ * Buch-Gespraech (lva#308): Schluessel `Verbindung::Modell` (je Modell,
+ * lva#309), an die Buchauszuege gesendet werden duerfen. Lokale Modelle
+ * brauchen keine Freigabe; ein anderes Modell ohne Eintrag ergibt den Code
+ * `consent_required`.
  */
 book_talk_cloud_consent?: string[]; 
 /**
- * Buch-Gespraech (lva#308): Feature-Schalter, Standard aus. Erst nach
- * bestandenem Eval-Tor (`book_talk_eval_pass.json`) fuer Nutzer gedacht.
+ * Buch-Gespraech (lva#308): Schalter „KI-Antworten (Vorschau)“, Standard
+ * aus. Ein: auch Tupel ohne Eval-Eintrag (ungeprueft) antworten, mit
+ * Vorschau-Kennzeichnung in der Oberflaeche; Tupel mit Status
+ * „durchgefallen“ (`book_talk_eval_pass.json`) nie. Aus: nur Fundstellen.
  */
 book_talk_enabled?: boolean; 
 /**

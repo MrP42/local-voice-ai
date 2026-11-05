@@ -273,6 +273,7 @@
   .kidoc-new .app-select__control,
   .kidoc-sheet button {
     min-height: 44px;
+    min-width: 44px;
   }
   .kidoc-new .lv-dialog__actions button {
     flex: 1 1 100%;

@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { createPortal } from "react-dom";
 import { listen } from "@tauri-apps/api/event";
@@ -111,6 +118,7 @@ import {
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { Glyph } from "../../ui/AudioPlayer";
 import {
+  MessageSquare,
   Mic,
   PanelRightClose,
   Plug,
@@ -142,7 +150,19 @@ import { bookStart, skipHeadingMark } from "../../../lib/reader/bookStart";
 import { useKiDocuments } from "./kidocs/useKiDocuments";
 import { KiDocumentsPanel } from "./kidocs/KiDocumentsPanel";
 import { KiDocumentHeader } from "./kidocs/KiDocumentHeader";
-import { BookSheets } from "./kidocs/BookSheets";
+import {
+  BOOK_SHEETS_QUERY,
+  BookSheets,
+  type BookSheet,
+} from "./kidocs/BookSheets";
+import { inForeignDialog, isTextEntry } from "./booktalk/keys";
+import { BookTalkPanel } from "./booktalk/BookTalkPanel";
+import type { BookSpot, BookTalkHost } from "./booktalk/useBookVoice";
+import {
+  bookFrontier,
+  raiseFrontier,
+  textProgressKey,
+} from "../../../lib/library/progress";
 import { KurzbuchPanel } from "./kidocs/KurzbuchPanel";
 import { KURZBUCH_TEMPLATE_ID, parseKurzbuch } from "@/lib/kurzbuch/kurzbuch";
 import { KiDocumentDialog, type KiSelection } from "./kidocs/KiDocumentDialog";
@@ -2121,6 +2141,158 @@ export const TtsSettings = () => {
     removeBookmark(resumeKey, b.id);
     setBookmarks(loadBookmarks(resumeKey, spokenText));
   };
+  // Gespräch mit dem Buch (lva#309): Reiter „Gespräch“ in der rechten Spalte, nur
+  // im Originaltext der Leseansicht.
+  const bookTalkAvailable =
+    viewMode === "read" && tab === "original" && !!activePage;
+  const [talkStored, setTalkStored] = usePersistentState<"1" | "0">(
+    "tts.talkOpen",
+    "0",
+    (v): v is "1" | "0" => v === "1" || v === "0",
+  );
+  // Schmales Fenster: das Gespräch liegt im Blatt „Gespräch“, nie zugleich in
+  // der Spalte (zwei Panels hätten zwei Mikrofone, zwei Tastenabfragen).
+  const sheetsMode = useSyncExternalStore(
+    (cb) => {
+      const mq = window.matchMedia(BOOK_SHEETS_QUERY);
+      mq.addEventListener("change", cb);
+      return () => mq.removeEventListener("change", cb);
+    },
+    () => window.matchMedia(BOOK_SHEETS_QUERY).matches,
+    () => false,
+  );
+  const [sheet, setSheet] = useState<BookSheet | null>(null);
+  const talkShown = bookTalkAvailable && !sheetsMode && talkStored === "1";
+  // Der Leser zeigt eine Ansicht: die Lesegrenze steigt nur, wenn der Nutzer
+  // sequentiell weiterblättert und die Ansicht an die Grenze anschließt (Plan
+  // §3.0); Sprünge heben sie nie (Fortschrittsspeicher, `liftedFrontier`).
+  useEffect(() => {
+    if (!bookTalkAvailable || !activePage || !pageInfo || !spokenText) return;
+    const api = readerApiRef.current;
+    if (!api) return;
+    // Die erste Seite beginnt am Textanfang (davor kann nur Auszeichnung stehen).
+    const start = pageInfo.page === 0 ? 0 : api.offsetOfPage(pageInfo.page);
+    const nextPage = pageInfo.page + pageInfo.perView;
+    const end =
+      nextPage >= pageInfo.pages ? spokenText.length : api.offsetOfPage(nextPage);
+    if (start === null || end === null) return;
+    raiseFrontier(
+      textProgressKey(activePage),
+      { start, end, sequential: pageInfo.turnedTo === pageInfo.page },
+      spokenText.length,
+    );
+  }, [bookTalkAvailable, activePage, pageInfo, spokenText]);
+  const frontierOfBook = useCallback(
+    () => (activePage ? bookFrontier(activePage) : undefined),
+    [activePage],
+  );
+  // Sprung aus einem Beleg: der Satz bleibt 3 Sekunden über die Live-Hervorhebung markiert.
+  const [flash, setFlash] = useState<SourceRange | null>(null);
+  const flashTimer = useRef<number | null>(null);
+  const talkHostImpl: BookTalkHost = {
+    isReading: () => speaking,
+    position: () => readRange?.start ?? resumeAt,
+    pauseReading: () => {
+      talkPausedFor.current = activePage;
+      pauseSpeaking();
+    },
+    // Nur dasselbe Buch und nur, solange die Seite besteht: das Ende des
+    // Gesprächs (Spalte zu, Buchwechsel) darf nichts Fremdes vorlesen.
+    resumeReading: () => {
+      if (!talkAlive.current || talkPausedFor.current !== activePage) return;
+      void speakNow();
+    },
+    readFrom: (offset) => {
+      setFollow(true);
+      void speakFrom(offset, false);
+    },
+    jumpTo: (spot: BookSpot) => {
+      setFollow(true);
+      readerApiRef.current?.revealOffset(spot.start);
+      setFlash({ start: spot.start, end: spot.end });
+      if (flashTimer.current !== null) window.clearTimeout(flashTimer.current);
+      flashTimer.current = window.setTimeout(() => {
+        flashTimer.current = null;
+        setFlash(null);
+      }, 3000);
+    },
+  };
+  const talkPausedFor = useRef<string | null>(null);
+  const talkAlive = useRef(true);
+  useEffect(() => {
+    talkAlive.current = true;
+    return () => {
+      talkAlive.current = false;
+    };
+  }, []);
+  const talkHostRef = useRef(talkHostImpl);
+  talkHostRef.current = talkHostImpl;
+  const talkHost = useMemo<BookTalkHost>(
+    () => ({
+      isReading: () => talkHostRef.current.isReading(),
+      position: () => talkHostRef.current.position(),
+      pauseReading: () => talkHostRef.current.pauseReading(),
+      resumeReading: () => talkHostRef.current.resumeReading(),
+      readFrom: (o) => talkHostRef.current.readFrom(o),
+      jumpTo: (spot) => talkHostRef.current.jumpTo(spot),
+    }),
+    [],
+  );
+  useEffect(
+    () => () => {
+      if (flashTimer.current !== null) window.clearTimeout(flashTimer.current);
+    },
+    [],
+  );
+  const chapterStarts = useMemo(() => contents.map((e) => e.start), [contents]);
+  const renderTalk = (onNavigate?: () => void) =>
+    activePage ? (
+      <BookTalkPanel
+        key={activePage}
+        bookId={activePage}
+        text={spokenText}
+        chapterStarts={chapterStarts}
+        frontier={frontierOfBook}
+        host={talkHost}
+        onNavigate={onNavigate}
+      />
+    ) : null;
+  // Fokus beim Reiterwechsel: nach dem Wechsel steht er auf dem neuen Reiter.
+  const talkTabFocus = useRef<"talk" | "controls" | null>(null);
+  const switchTalk = (to: "1" | "0") => {
+    talkTabFocus.current = to === "1" ? "talk" : "controls";
+    setTalkStored(to);
+  };
+  useEffect(() => {
+    const want = talkTabFocus.current;
+    if (!want) return;
+    const id = want === "talk" ? "tts-tab-talk" : "tts-tab-talk-open";
+    const el = document.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+    if (!el) return;
+    talkTabFocus.current = null;
+    el.focus();
+  }, [talkStored]);
+  // „G“ blendet das Gespräch ein und aus (nicht beim Tippen, nicht bei
+  // gehaltener Taste). Läuft ein Sprachgespräch, beendet das erste „G“ es
+  // (die Sprachsteuerung fängt die Taste vorher ab und markiert sie).
+  useEffect(() => {
+    if (!bookTalkAvailable) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() !== "g" || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.repeat || e.defaultPrevented) return;
+      if (isTextEntry(e.target) || inForeignDialog(e.target)) return;
+      e.preventDefault();
+      if (sheetsMode) {
+        setSheet(sheet === "chat" ? null : "chat");
+        return;
+      }
+      switchTalk(talkStored === "1" ? "0" : "1");
+      if (rightHiddenStored === "1") setRightHidden("0");
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [bookTalkAvailable, talkStored, rightHiddenStored, sheetsMode, sheet]);
+
   // Beim Öffnen einer Seite die gemerkte Stelle aufschlagen.
   const revealedResumeFor = useRef<string | null>(null);
   useEffect(() => {
@@ -3910,6 +4082,13 @@ export const TtsSettings = () => {
                 </div>
               )}
               <BookSheets
+                open={sheet}
+                onOpenChange={setSheet}
+                renderChat={
+                  bookTalkAvailable && sheetsMode
+                    ? (close) => renderTalk(close)
+                    : undefined
+                }
                 renderContents={(close) =>
                   viewMode === "read" && contents.length > 0 ? (
                     <ReaderContents
@@ -3981,8 +4160,8 @@ export const TtsSettings = () => {
                   text={spokenText}
                   speakers={speakers}
                   lang={tab === "translation" ? targetLangCode(targetLang) : uiLang}
-                  current={sessionHere() ? readRange : null}
-                  clock={sessionHere() ? sentenceClock : null}
+                  current={flash ?? (sessionHere() ? readRange : null)}
+                  clock={flash === null && sessionHere() ? sentenceClock : null}
                   marks={readerMarks}
                   terms={tab === "original" ? bookTerms.marks : undefined}
                   onTerm={(mark) => void openTerm(mark)}
@@ -4221,6 +4400,61 @@ export const TtsSettings = () => {
                 : undefined
             }
           >
+            {talkShown && (
+              <section
+                data-testid="tts-talk-column"
+                className={`flex min-h-0 flex-col overflow-hidden rounded-lg border border-mid-gray/20 ${
+                  ws.stacked ? "flex-1" : "shrink-0"
+                }`}
+                style={ws.stacked ? undefined : { width: ws.right.width }}
+                aria-label={t("tts.bookTalk.tab")}
+              >
+                <div
+                  role="tablist"
+                  aria-label={t("tts.bookTalk.region")}
+                  className="flex shrink-0 gap-1 border-b border-mid-gray/20 px-2 pt-1"
+                  onKeyDown={(e) => {
+                    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+                    e.preventDefault();
+                    switchTalk(e.key === "ArrowLeft" ? "0" : "1");
+                  }}
+                >
+                  <button
+                    type="button"
+                    role="tab"
+                    id="tts-tab-controls-id"
+                    aria-selected={false}
+                    tabIndex={-1}
+                    className="cursor-pointer rounded-t px-3 py-1.5 text-sm text-text/70 hover:text-text"
+                    onClick={() => switchTalk("0")}
+                    data-testid="tts-tab-controls"
+                  >
+                    {t("tts.controls")}
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    id="tts-tab-talk-id"
+                    aria-selected
+                    aria-controls="tts-talk-panel"
+                    tabIndex={0}
+                    className="cursor-default border-b-2 border-logo-primary px-3 py-1.5 text-sm font-semibold"
+                    data-testid="tts-tab-talk"
+                  >
+                    {t("tts.bookTalk.tab")}
+                  </button>
+                </div>
+                <div
+                  role="tabpanel"
+                  id="tts-talk-panel"
+                  aria-labelledby="tts-tab-talk-id"
+                  className="min-h-0 flex-1"
+                >
+                  {renderTalk()}
+                </div>
+              </section>
+            )}
+            {!talkShown && (
             <aside
               data-testid="tts-controls"
               className={`tts-controls shrink-0 min-h-0 overflow-y-auto space-y-3 pe-1 ${
@@ -4251,6 +4485,17 @@ export const TtsSettings = () => {
                   Screenreader (aria-describedby) -- sonst wundert man sich,
                   warum die Marker nicht mehr umschalten. */}
                 {voiceHints}
+                {bookTalkAvailable && !sheetsMode && (
+                  <button
+                    type="button"
+                    className="flex h-9 shrink-0 cursor-pointer items-center gap-1 rounded-md px-2 text-sm text-text/80 hover:bg-mid-gray/15 hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-logo-primary"
+                    onClick={() => switchTalk("1")}
+                    data-testid="tts-tab-talk-open"
+                  >
+                    <MessageSquare width={16} height={16} aria-hidden="true" />
+                    {t("tts.bookTalk.tab")}
+                  </button>
+                )}
                 {/* Ganze Spalte ausblenden (Variante A): Stimme und Werkzeuge
                   ziehen dann in die Spielerleiste unter dem Text. */}
                 <button
@@ -4271,7 +4516,8 @@ export const TtsSettings = () => {
                 </p>
               )}
             </aside>
-            {!ws.stacked && filesCollapsed !== "1" && (
+            )}
+            {!talkShown && !ws.stacked && filesCollapsed !== "1" && (
               <ResizeHandle
                 testId="resize-right"
                 label={t("tts.layout.resizeFiles")}
@@ -4286,6 +4532,7 @@ export const TtsSettings = () => {
             {helpOpen && !rightHidden && (
               <TtsHelpDock onClose={() => setHelpOpenValue("0")} />
             )}
+            {!talkShown && (
             <FilesSidebar
               pageId={activePage}
               collapsed={filesCollapsed === "1"}
@@ -4304,6 +4551,7 @@ export const TtsSettings = () => {
                 setText(value);
               }}
             />
+            )}
           </div>
             </>
           )}
