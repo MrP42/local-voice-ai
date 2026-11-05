@@ -93,133 +93,25 @@ pub fn resample_stretch(samples: &[f32], factor: f32) -> Vec<f32> {
     out
 }
 
-/// Tempo ändern, ohne die Tonhöhe zu verschieben (WSOLA, Waveform
-/// Similarity Overlap-Add). `speed` 1,5 spielt 1,5-mal so schnell, die Stimme
-/// klingt dabei gleich — anders als beim Resampling, das die Stimme hoch
-/// (schnell) oder tief (langsam) zieht.
+/// Tempo ändern, ohne die Tonhöhe zu verschieben. `speed` 1,5 spielt
+/// 1,5-mal so schnell, die Stimme klingt dabei gleich — anders als beim
+/// Resampling, das die Stimme hoch (schnell) oder tief (langsam) zieht.
 ///
-/// `samples` ist verschachtelt (`channels` je Frame). Die Ähnlichkeitssuche
-/// läuft auf der Monosumme; alle Kanäle werden an denselben Stellen
-/// geschnitten, damit das Stereobild steht. Rahmen 25 ms, halbe Überlappung
-/// mit Hann-Fenster (summiert sich zu 1), Suchbereich ±10 ms — erst grob,
-/// dann fein, damit auch lange Sätze in wenigen Millisekunden fertig sind.
+/// Tonhöhensynchron (siehe [`super::stretch`]); bis #314 eine WSOLA mit
+/// festen Rahmen, die bei jedem Tempo ≠ 1 robotisch klang.
 ///
-/// `speed` nahe 1, ein nicht endlicher Wert oder zu wenig Signal geben eine
-/// unveränderte Kopie zurück.
+/// `samples` ist verschachtelt (`channels` je Frame). `speed` nahe 1, ein
+/// nicht endlicher Wert oder zu wenig Signal geben eine unveränderte Kopie.
 pub fn time_stretch(samples: &[f32], channels: u16, sample_rate: u32, speed: f32) -> Vec<f32> {
     let ch = channels.max(1) as usize;
     if !speed.is_finite() || (speed - 1.0).abs() < 0.01 || sample_rate == 0 {
         return samples.to_vec();
     }
-    let speed = speed.clamp(0.25, 4.0) as f64;
-    let frames = samples.len() / ch;
-    let n = ((sample_rate as f64 * 0.025) as usize).max(16) & !1;
-    let hs = n / 2;
-    let tol = ((sample_rate as f64 * 0.010) as usize).max(4);
-    if frames < n * 2 {
+    // Unter 50 ms gibt es nichts, was sich hörbar strecken ließe.
+    if samples.len() / ch < (sample_rate as usize / 20) {
         return samples.to_vec();
     }
-    let mono: Vec<f32> = if ch == 1 {
-        samples.to_vec()
-    } else {
-        samples
-            .chunks_exact(ch)
-            .map(|f| f.iter().sum::<f32>() / ch as f32)
-            .collect()
-    };
-    let window: Vec<f32> = (0..n)
-        .map(|i| {
-            let x = std::f32::consts::PI * 2.0 * i as f32 / n as f32;
-            0.5 - 0.5 * x.cos()
-        })
-        .collect();
-    let out_frames = (frames as f64 / speed).round() as usize + n;
-    let mut out = vec![0.0f32; out_frames * ch];
-    let corr = |a: usize, b: usize, step: usize| -> f32 {
-        let mut sum = 0.0f32;
-        let mut i = 0;
-        while i < n {
-            sum += mono[a + i] * mono[b + i];
-            i += step;
-        }
-        sum
-    };
-    // Erster Rahmen unverändert; danach je Rahmen die Stelle suchen, die am
-    // besten an die natürliche Fortsetzung des vorigen Rahmens anschließt.
-    let mut prev = 0usize;
-    let mut k = 0usize;
-    loop {
-        let out_at = k * hs;
-        if out_at + n > out_frames {
-            break;
-        }
-        let pos = if k == 0 {
-            0
-        } else {
-            let nominal = (k as f64 * hs as f64 * speed).round() as usize;
-            let natural = prev + hs;
-            if natural + n > frames || nominal + n > frames {
-                break;
-            }
-            let lo = nominal.saturating_sub(tol);
-            let hi = (nominal + tol).min(frames - n);
-            let mut best = nominal.min(hi);
-            let mut best_c = f32::MIN;
-            let mut cand = lo;
-            while cand <= hi {
-                let c = corr(cand, natural, 4);
-                if c > best_c {
-                    best_c = c;
-                    best = cand;
-                }
-                cand += 4;
-            }
-            let (flo, fhi) = (best.saturating_sub(3).max(lo), (best + 3).min(hi));
-            best_c = f32::MIN;
-            for cand in flo..=fhi {
-                let c = corr(cand, natural, 2);
-                if c > best_c {
-                    best_c = c;
-                    best = cand;
-                }
-            }
-            best
-        };
-        for (i, &w) in window.iter().enumerate() {
-            let src = (pos + i) * ch;
-            let dst = (out_at + i) * ch;
-            for c in 0..ch {
-                out[dst + c] += samples[src + c] * w;
-            }
-        }
-        prev = pos;
-        k += 1;
-    }
-    // Der erste halbe Rahmen hat keinen Vorgänger, der das Fenster auffüllt.
-    for (i, &w) in window.iter().enumerate().take(hs.min(out_frames)) {
-        let w = w.max(1e-3);
-        for c in 0..ch {
-            out[i * ch + c] /= w;
-        }
-    }
-    // Ebenso der letzte: ohne Nachfolger klänge er aus. Flach an beiden
-    // Rändern lassen sich gestreckte Stücke lückenlos aneinanderhängen.
-    let used = (k.saturating_sub(1) * hs + n).min(out_frames);
-    if k > 0 {
-        let last = (k - 1) * hs;
-        for (i, &w) in window.iter().enumerate().skip(hs) {
-            let at = last + i;
-            if at >= used {
-                break;
-            }
-            let w = w.max(1e-3);
-            for c in 0..ch {
-                out[at * ch + c] /= w;
-            }
-        }
-    }
-    out.truncate(used * ch);
-    out
+    super::stretch::stretch_all(samples, channels, sample_rate, speed)
 }
 
 #[cfg(test)]
