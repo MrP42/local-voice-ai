@@ -16,6 +16,8 @@ Geprüfte Pfade:
    nach dem Abmelden ist dessen Token ungültig.
 4. „Nein“ beim Vergleichscode: iPhone erhält 403.
 5. Nach dem Abbruch ist keine Kopplung mehr offen.
+6. Schließen nach der Freigabe, vor dem Abholen: Freigabe zurückgezogen, iPhone erhält 403.
+7. Schließen nach Abholen und gültiger Bestätigung: „Verbunden“, kein Abmeldeangebot.
 
 Ohne `HUB_E2E` laufen nur die Einheitstests (Testvektoren, Kodierung, QR).
 
@@ -34,5 +36,5 @@ cd local-voice-ai/tooling/pairing-e2e
 HUB_E2E=http://127.0.0.1:8099 cargo test
 ```
 
-Der Hub drosselt `claim` auf 10 je 15 Minuten und Netz; ein Lauf braucht 4.
-Bei mehr als zwei Läufen hintereinander die Datenbank mit `fresh` neu aufbauen.
+Der Hub drosselt `claim` auf 10 je 15 Minuten und Netz; ein Lauf braucht 6.
+Vor jedem weiteren Lauf innerhalb von 15 Minuten die Datenbank mit `fresh` neu aufbauen.

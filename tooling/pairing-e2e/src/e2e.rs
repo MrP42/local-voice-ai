@@ -161,4 +161,41 @@ async fn e2e_alle_pfade() {
 
     // 5) Nach Abbruch keine Kopplung mehr offen
     assert_eq!(pair_poll(st(&ps)).await.unwrap().stage, PairStage::Aborted);
+
+    // 6) Schliessen nach der Freigabe, bevor das iPhone abholt: Freigabe zurueckgezogen
+    let ps = PairingState::default();
+    pair_start(tauri::AppHandle, st(&ps)).await.unwrap();
+    let uri = ps.scanned_uri().await.unwrap();
+    let phone = Phone::scan(&uri, "iPhone Spaet", false).await;
+    pair_poll(st(&ps)).await.unwrap();
+    phone.result().await;
+    phone.reveal().await;
+    assert_eq!(pair_poll(st(&ps)).await.unwrap().stage, PairStage::Sas);
+    assert_eq!(pair_approve(st(&ps)).await.unwrap().stage, PairStage::WaitConfirm);
+    let v = pair_cancel(st(&ps)).await.unwrap();
+    assert_eq!(v.stage, PairStage::Aborted);
+    assert!(v.reason.unwrap().contains("zurückgezogen"));
+    assert_eq!(phone.result().await.0, 403);
+
+    // 7) Schliessen nach Abholung und gueltiger Bestaetigung: "Verbunden", kein Abmeldeangebot
+    let ps = PairingState::default();
+    pair_start(tauri::AppHandle, st(&ps)).await.unwrap();
+    let uri = ps.scanned_uri().await.unwrap();
+    let phone = Phone::scan(&uri, "iPhone Gut", false).await;
+    pair_poll(st(&ps)).await.unwrap();
+    phone.result().await;
+    phone.reveal().await;
+    pair_poll(st(&ps)).await.unwrap();
+    pair_approve(st(&ps)).await.unwrap();
+    assert_eq!(phone.result().await.0, 200);
+    let s = phone.s();
+    let tag = {
+        use hmac::Mac;
+        let mut m = <hmac::Hmac<sha2::Sha256> as Mac>::new_from_slice(&*s).unwrap();
+        m.update(b"LV-PAIR-CONFIRM-v2"); m.update(phone.id.as_bytes());
+        let mut t = [0u8; 32]; t.copy_from_slice(&m.finalize().into_bytes()); t
+    };
+    assert_eq!(phone.confirm(tag).await, 200);
+    let v = pair_cancel(st(&ps)).await.unwrap();
+    assert_eq!(v.stage, PairStage::Connected, "{:?}", v.reason);
 }

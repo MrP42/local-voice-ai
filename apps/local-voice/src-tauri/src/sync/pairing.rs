@@ -125,6 +125,9 @@ struct Session {
     p_pk: Option<[u8; LEN]>,
     sas: Option<String>,
     s: Option<Zeroizing<[u8; LEN]>>,
+    /// `approve` ist abgeschickt (auch bei unklarem Ausgang): ab hier nie mehr
+    /// still „abgebrochen“ melden, das iPhone hat womöglich schon ein Token.
+    approve_sent: bool,
 }
 
 /// Laufende Kopplung; höchstens eine je App.
@@ -191,7 +194,9 @@ impl Session {
     }
 
     fn remaining(&self) -> u32 {
-        self.deadline.saturating_duration_since(Instant::now()).as_secs() as u32
+        // Aufrunden: die Anzeige erreicht 0 erst, wenn die Frist im Kern abgelaufen ist.
+        let ms = self.deadline.saturating_duration_since(Instant::now()).as_millis();
+        ms.div_ceil(1000) as u32
     }
 
     fn view(&self, stage: PairStage, reason: Option<String>) -> PairView {
@@ -214,10 +219,55 @@ impl Session {
     }
 
     async fn abort(&self, reason: &str) -> PairView {
+        if self.approve_sent {
+            return self.settle(reason).await;
+        }
         self.reject_quiet().await;
         self.view(PairStage::Aborted, Some(reason.to_string()))
     }
 
+    /// Nach `approve`: Freigabe zurückziehen und am Hub klären, ob das iPhone
+    /// schon abgeholt hat. Nur wenn der Hub `done` meldet, wird ein Gerät zum
+    /// Abmelden vorgeschlagen; bei unklarem Stand nur auf die Geräteliste verwiesen.
+    async fn settle(&self, reason: &str) -> PairView {
+        let res = self
+            .client()
+            .call_json(Method::POST, &self.path("/reject"), Some(&json!({})))
+            .await;
+        match res {
+            Ok((200, _)) => self.view(
+                PairStage::Aborted,
+                Some(format!("{reason} Die Freigabe wurde zurückgezogen, das iPhone hat nichts erhalten.")),
+            ),
+            Ok((409, j)) if j["status"] == "done" => {
+                // Abgeholt: hat das iPhone inzwischen gültig bestätigt?
+                if let Ok((200, j)) = self.client().call_json(Method::GET, &self.path(""), None).await {
+                    if self.confirm_ok(&j) {
+                        return self.view(PairStage::Connected, None);
+                    }
+                }
+                self.unconfirmed("Das iPhone hat den Zugang erhalten, aber nicht gültig bestätigt.")
+                    .await
+            }
+            Ok((409, _)) | Ok((404, _)) | Ok((410, _)) => self.view(
+                PairStage::Aborted,
+                Some("Das iPhone hat die Freigabe nicht abgeholt.".into()),
+            ),
+            _ => self.view(
+                PairStage::Unconfirmed,
+                Some("Der Stand am Hub ist unklar. Bitte die Liste „Verbundene Geräte“ prüfen und ein unbekanntes Gerät abmelden.".into()),
+            ),
+        }
+    }
+
+    fn confirm_ok(&self, j: &Value) -> bool {
+        match (j["phone_confirm"].as_str().map(proto::b64u32), self.s.as_ref()) {
+            (Some(Ok(c)), Some(s)) => proto::verify_confirm(s, &self.id, &c),
+            _ => false,
+        }
+    }
+
+    /// Nur aufrufen, wenn der Hub `done` gemeldet hat.
     async fn unconfirmed(&self, reason: &str) -> PairView {
         let mut v = self.view(PairStage::Unconfirmed, Some(reason.to_string()));
         v.suspect = newest_child(&self.client()).await;
@@ -228,9 +278,7 @@ impl Session {
         let now = Instant::now();
         match self.phase {
             Phase::WaitConfirm if now >= self.deadline + CONFIRM_GRACE => {
-                return self
-                    .unconfirmed("Das iPhone hat die Verbindung nicht bestätigt.")
-                    .await;
+                return self.settle("Das iPhone hat die Verbindung nicht bestätigt.").await;
             }
             Phase::WaitConfirm => {}
             _ if now >= self.deadline => {
@@ -282,12 +330,8 @@ impl Session {
             (Phase::WaitConfirm, "approved") => self.view(PairStage::WaitConfirm, None),
             (Phase::WaitConfirm, "done") => match j["phone_confirm"].as_str() {
                 None | Some("") => self.view(PairStage::WaitConfirm, None),
-                Some(c) => {
-                    let ok = match (proto::b64u32(c), self.s.as_ref()) {
-                        (Ok(c), Some(s)) => proto::verify_confirm(s, &self.id, &c),
-                        _ => false,
-                    };
-                    if ok {
+                Some(_) => {
+                    if self.confirm_ok(&j) {
                         self.view(PairStage::Connected, None)
                     } else {
                         self.unconfirmed("Die Bestätigung des iPhones ist ungültig.").await
@@ -483,6 +527,7 @@ pub async fn pair_start(app: AppHandle, state: State<'_, PairingState>) -> Resul
         p_pk: None,
         sas: None,
         s: None,
+        approve_sent: false,
     };
     let view = session.view(PairStage::Qr, None);
     *guard = Some(session);
@@ -527,6 +572,7 @@ pub async fn pair_approve(state: State<'_, PairingState>) -> Result<PairView, St
         OsRng.fill_bytes(&mut nonce);
         proto::seal(s, &session.id, &session.d_pk, &p_pk, payload.as_bytes(), &nonce)?
     };
+    session.approve_sent = true;
     let res = session
         .client()
         .call_json(Method::POST, &session.path("/approve"), Some(&json!({ "sealed": sealed })))
@@ -545,8 +591,8 @@ pub async fn pair_approve(state: State<'_, PairingState>) -> Result<PairView, St
     Ok(view)
 }
 
-/// „Nein, abbrechen“ oder Dialog schließen. Ist die Kopplung schon abgeholt
-/// (Hub 409 `done`), wird das neue Gerät zum Abmelden angeboten.
+/// „Nein, abbrechen“ oder Dialog schließen. Nach der Freigabe wird am Hub geklärt,
+/// ob das iPhone schon abgeholt hat (dann Gerät zum Abmelden anbieten).
 #[tauri::command]
 #[specta::specta]
 pub async fn pair_cancel(state: State<'_, PairingState>) -> Result<PairView, String> {
@@ -554,16 +600,11 @@ pub async fn pair_cancel(state: State<'_, PairingState>) -> Result<PairView, Str
     let Some(session) = guard.take() else {
         return Ok(ended(PairStage::Aborted, "Abgebrochen."));
     };
-    let res = session
-        .client()
-        .call_json(Method::POST, &session.path("/reject"), Some(&json!({})))
-        .await;
-    match res {
-        Ok((409, j)) if j["status"] == "done" => Ok(session
-            .unconfirmed("Das iPhone ist bereits verbunden. Bei Zweifel hier abmelden.")
-            .await),
-        _ => Ok(session.view(PairStage::Aborted, Some("Abgebrochen.".into()))),
+    if session.approve_sent {
+        return Ok(session.settle("Abgebrochen.").await);
     }
+    session.reject_quiet().await;
+    Ok(session.view(PairStage::Aborted, Some("Abgebrochen.".into())))
 }
 
 /// Liste „Verbundene Geräte“.

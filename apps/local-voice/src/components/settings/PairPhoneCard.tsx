@@ -53,6 +53,8 @@ export const PairPhoneCard: React.FC = () => {
     else setDevices(null);
   }, [connected, load]);
 
+  const reload = useCallback(() => void load(), [load]);
+
   if (!connected) return null;
 
   const byId = new Map((devices ?? []).map((d) => [d.id, d]));
@@ -195,7 +197,7 @@ export const PairPhoneCard: React.FC = () => {
       <PairPhoneDialog
         open={dialog}
         onOpenChange={setDialog}
-        onChanged={() => void load()}
+        onChanged={reload}
       />
 
       <Dialog

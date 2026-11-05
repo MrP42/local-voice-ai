@@ -52,30 +52,51 @@ export const PairPhoneDialog: React.FC<Props> = ({
   const [busy, setBusy] = useState(false);
   const yesRef = useRef<HTMLButtonElement>(null);
   const alive = useRef(false);
+  const [confirmRevoke, setConfirmRevoke] = useState(false);
+  const [chainNames, setChainNames] = useState<string[]>([]);
 
-  const apply = useCallback(
-    (v: PairView) => {
-      if (!alive.current) return;
-      setShown(v);
-      if (v.remaining_s > 0) setDeadline(Date.now() + v.remaining_s * 1000);
-      if (v.stage === "connected") onChanged();
-    },
-    [onChanged],
-  );
+  // Rückruf über eine Referenz: ein neuer `onChanged` je Darstellung darf den
+  // Start-Effekt nicht erneut auslösen (sonst entstünde jedes Mal ein neuer Code).
+  const onChangedRef = useRef(onChanged);
+  onChangedRef.current = onChanged;
+
+  const apply = useCallback((v: PairView) => {
+    if (!alive.current) return;
+    setShown(v);
+    if (v.remaining_s > 0) setDeadline(Date.now() + v.remaining_s * 1000);
+    if (v.stage === "connected") onChangedRef.current();
+  }, []);
 
   const start = useCallback(async () => {
     setShown({ stage: "starting" });
+    setConfirmRevoke(false);
     const r = await commands.pairStart();
-    if (!alive.current) return;
+    if (!alive.current) {
+      // Während des Starts geschlossen: die eben angelegte Kopplung gleich verwerfen.
+      if (r.status === "ok") void commands.pairCancel();
+      return;
+    }
     if (r.status === "ok") apply(r.data);
     else setShown({ stage: "start_failed", reason: r.error });
   }, [apply]);
+
+  // Stufe für das Aufräumen beim Schließen oder Aushängen (z. B. Abmeldung,
+  // Seitenwechsel): eine laufende Kopplung darf nicht im Kern liegen bleiben.
+  const stageRef = useRef<string>("starting");
+  stageRef.current = shown.stage;
 
   useEffect(() => {
     alive.current = open;
     if (open) void start();
     return () => {
       alive.current = false;
+      if (
+        open &&
+        !FINAL.has(stageRef.current) &&
+        stageRef.current !== "start_failed"
+      ) {
+        void commands.pairCancel();
+      }
     };
   }, [open, start]);
 
@@ -138,6 +159,18 @@ export const PairPhoneDialog: React.FC<Props> = ({
     setBusy(false);
     if (r.status === "ok" && r.data.stage === "unconfirmed") apply(r.data);
     else onOpenChange(false);
+  };
+
+  // Vor dem Abmelden nennen, welche Geräte mit abgemeldet werden (Spec 5a Regel 10).
+  const askRevoke = async () => {
+    if (!isView(shown) || !shown.suspect) return;
+    const ids = shown.suspect.revokes_with ?? [];
+    const r = ids.length > 0 ? await commands.syncDevices() : null;
+    const byId = new Map(
+      (r?.status === "ok" ? r.data : []).map((d) => [d.id, d.name]),
+    );
+    setChainNames(ids.map((id) => byId.get(id) ?? `#${id}`));
+    setConfirmRevoke(true);
   };
 
   const revokeSuspect = async () => {
@@ -376,9 +409,27 @@ export const PairPhoneDialog: React.FC<Props> = ({
             height={18}
             aria-hidden
           />
-          {t("pairing.unconfirmed", { name })}
+          {shown.suspect ? t("pairing.unconfirmed", { name }) : shown.reason}
         </p>
         <p className="text-text/60">{t("pairing.unconfirmedHint")}</p>
+        {confirmRevoke && shown.suspect && (
+          <div className="rounded-md border border-orange-500/40 p-3 space-y-1">
+            <p className="font-medium">
+              {t("pairing.revokeTitle", { name: shown.suspect.name })}
+            </p>
+            <p>{t("pairing.revokeText")}</p>
+            {chainNames.length > 0 && (
+              <>
+                <p>{t("pairing.revokeAlso")}</p>
+                <ul className="list-disc pl-5">
+                  {chainNames.map((n) => (
+                    <li key={n}>{n}</li>
+                  ))}
+                </ul>
+              </>
+            )}
+          </div>
+        )}
       </div>
     );
     footer = (
@@ -389,10 +440,11 @@ export const PairPhoneDialog: React.FC<Props> = ({
         {shown.suspect && (
           <Button
             variant="danger"
-            onClick={() => void revokeSuspect()}
+            onClick={() => void (confirmRevoke ? revokeSuspect() : askRevoke())}
             disabled={busy}
+            data-testid="pair-revoke-suspect"
           >
-            {t("pairing.revokeDevice")}
+            {confirmRevoke ? t("pairing.logout") : t("pairing.revokeDevice")}
           </Button>
         )}
       </>

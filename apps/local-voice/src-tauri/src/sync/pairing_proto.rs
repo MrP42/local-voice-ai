@@ -68,9 +68,13 @@ pub fn valid_name(name: &str) -> bool {
         && !name.chars().any(|c| {
             c.is_control()
                 || matches!(c as u32,
-                    0x00AD | 0x061C | 0x180E
-                    | 0x200B..=0x200F | 0x202A..=0x202E | 0x2060..=0x206F
-                    | 0xFEFF | 0xFFF9..=0xFFFB
+                    // Format (Cf), Zeilen-/Absatztrenner, Füller und Privatzeichen
+                    0x00AD | 0x034F | 0x0600..=0x0605 | 0x061C | 0x06DD | 0x070F
+                    | 0x08E2 | 0x115F | 0x1160 | 0x17B4 | 0x17B5 | 0x180E
+                    | 0x200B..=0x200F | 0x2028..=0x202E | 0x2060..=0x206F
+                    | 0x3164 | 0xFEFF | 0xFFA0 | 0xFFF9..=0xFFFB
+                    | 0x110BD | 0x110CD | 0x13430..=0x1343F | 0x1BCA0..=0x1BCA3
+                    | 0x1D173..=0x1D17A | 0xE0000..=0xE0FFF
                     | 0xE000..=0xF8FF | 0xF0000..=0x10FFFF)
         })
 }
@@ -338,6 +342,11 @@ mod tests {
         assert!(!valid_name("iPhone\u{202E}enohPi"));
         assert!(!valid_name("i\u{200B}Phone"));
         assert!(!valid_name("a\nb"));
+        assert!(!valid_name("iPhone\u{E0041}"));
+        assert!(!valid_name("i\u{3164}Phone"));
+        assert!(!valid_name("a\u{2028}b"));
+        // Variationsselektoren (Mn) nimmt der Hub an, also auch hier.
+        assert!(valid_name("iPhone \u{2764}\u{FE0F}"));
         assert!(!valid_name(&"x".repeat(61)));
         assert!(valid_name(&"ä".repeat(60)));
     }
