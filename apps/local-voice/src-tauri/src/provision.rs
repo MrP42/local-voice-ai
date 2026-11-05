@@ -29,6 +29,7 @@ enum Kind {
     Llm,
     Tts,
     Voiceprint,
+    Diarization,
     Asr,
 }
 
@@ -39,6 +40,8 @@ fn kind_of(id: &str) -> Kind {
         Kind::Tts
     } else if id == crate::managers::meetings::voiceprint::MODEL_ID {
         Kind::Voiceprint
+    } else if id == crate::managers::meetings::diarize::DEFAULT_MODEL_ID {
+        Kind::Diarization
     } else {
         Kind::Asr
     }
@@ -103,6 +106,15 @@ pub fn run(app: &AppHandle, ids: &[String]) -> i32 {
             )
             .and_then(|()| {
                 crate::commands::meeting_voiceprint::meeting_voiceprint_status(app.clone())
+                    .map(|s| s.model_ready)
+            }),
+            Kind::Diarization => tauri::async_runtime::block_on(
+                crate::commands::meeting_diarization::meeting_diarization_model_download(
+                    app.clone(),
+                ),
+            )
+            .and_then(|()| {
+                crate::commands::meeting_diarization::meeting_diarization_model_status(app.clone())
                     .map(|s| s.model_ready)
             }),
             Kind::Asr => {
@@ -247,6 +259,7 @@ mod tests {
         assert_eq!(kind_of("phonon-31m-en"), Kind::Tts);
         assert_eq!(kind_of("piper-runtime"), Kind::Tts);
         assert_eq!(kind_of("spk-campplus-voxceleb-16k"), Kind::Voiceprint);
+        assert_eq!(kind_of("diar-sortformer-4spk-v2.1-q8"), Kind::Diarization);
         assert_eq!(
             kind_of("handy-computer/nemotron-3.5-asr-streaming-0.6b-gguf"),
             Kind::Asr

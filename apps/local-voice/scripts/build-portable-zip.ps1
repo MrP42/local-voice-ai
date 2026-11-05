@@ -9,7 +9,8 @@
 #   - LIESMICH-PORTABLE.txt, LIZENZEN-MODELLE.txt, INHALT.txt,
 #   - vorinstallierte Modelle unter Data\ (`--provision`): immer mindestens die
 #     Spracherkennung Nemotron 3.5 ASR, vorausgewaehlt, damit die App ohne Download startet
-#     (Patrick 05.11.2026). Silero VAD steckt ohnehin in resources\.
+#     (Patrick 05.11.2026), und die Sprechertrennung Sortformer (139 MB), damit Besprechungen
+#     Sprecher bekommen. Silero VAD steckt ohnehin in resources\.
 #
 # Aufruf aus apps/local-voice (PowerShell 7, nach `npx tauri build ...`):
 #   pwsh scripts/build-portable-zip.ps1                     # Version aus tauri.conf.json
@@ -19,7 +20,7 @@
 #   pwsh scripts/build-portable-zip.ps1 -Release -Offline -SmokeTest
 #        # Offline-Paket: Modelle vorinstallieren (HF_TOKEN fuer Phonon DE), auf ZIPs <2 GiB verteilen
 #
-# Ergebnis: <OutDir>/LocalVoiceAI_<Version>_x64-portable.zip (App + Nemotron, ~0,8 GB) und .zip.sha256; mit -Offline
+# Ergebnis: <OutDir>/LocalVoiceAI_<Version>_x64-portable.zip (App + Nemotron + Sortformer, ~0,95 GB) und .zip.sha256; mit -Offline
 # LocalVoiceAI_<Version>_x64-portable-offline.teil<N>von<M>.zip (je < 2 GiB, alle in denselben
 # Ordner entpacken; geteilte Modelle setzt die App beim ersten Start zusammen, portable_parts.rs).
 # Exit-Code 0 nur, wenn alle Pflichtteile vorhanden sind (und der Rauchtest besteht).
@@ -40,10 +41,11 @@ param(
         'phonon-runtime', 'phonon-40m-de', 'phonon-31m-en',
         'llm-runtime-windows-x64-vulkan', 'llm-runtime-windows-x64-cpu',
         'llm-qwen3.5-4b-q4',
-        'spk-campplus-voxceleb-16k'
+        'spk-campplus-voxceleb-16k',
+        'diar-sortformer-4spk-v2.1-q8'
     ),
     # Katalogkennungen ohne -Offline: nur die Spracherkennung (passt in eine ZIP < 2 GiB).
-    [string[]]$ProvisionBasic = @('nemotron-3.5-asr-streaming-0.6b-Q8_0'),
+    [string[]]$ProvisionBasic = @('nemotron-3.5-asr-streaming-0.6b-Q8_0', 'diar-sortformer-4spk-v2.1-q8'),
     # Mit -Release: ohne HF_TOKEN abbrechen statt das deutsche Phonon-Modell auszulassen.
     [switch]$RequireHfToken
 )
@@ -200,6 +202,10 @@ try {
         # Ohne diese Pruefung entstuende still eine ZIP, die Nemotron wieder herunterlaedt.
         if (-not (Get-ChildItem $modelsDir -File -Filter 'nemotron-3.5-asr-*.gguf' -ErrorAction SilentlyContinue)) {
             throw 'Nemotron 3.5 ASR fehlt nach --provision in Data\models'
+        }
+        if (($ids -contains 'diar-sortformer-4spk-v2.1-q8') -and
+            -not (Test-Path (Join-Path $modelsDir 'diarization/diar_streaming_sortformer_4spk-v2.1-Q8_0.gguf'))) {
+            throw 'Sprechertrennung (Sortformer) fehlt nach --provision in Data\models\diarization'
         }
 
         # Nur die Modellablagen und die Voreinstellung mitnehmen; alles Rechnerspezifische

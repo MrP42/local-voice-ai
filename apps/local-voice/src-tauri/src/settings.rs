@@ -1184,7 +1184,7 @@ fn default_model() -> String {
     "".to_string()
 }
 
-const CURRENT_SETTINGS_SCHEMA_VERSION: u32 = 5;
+const CURRENT_SETTINGS_SCHEMA_VERSION: u32 = 6;
 
 fn default_settings_schema_version() -> u32 {
     CURRENT_SETTINGS_SCHEMA_VERSION
@@ -1245,10 +1245,12 @@ fn default_overlay_style() -> OverlayStyle {
     return OverlayStyle::Live;
 }
 
-/// Off by default: live injection currently garbles the text (see
-/// docs/KNOWN-LIMITATIONS.md). Enable only when experimenting with it.
+/// On by default (Patrick 05.11.2026): dictated text is typed live into the
+/// focused field while speaking. The old "garbles the text" reason is gone
+/// since 6b9143e/d223fa8 (docs/KNOWN-LIMITATIONS.md, "Live-Injektion"); with it
+/// off, text only showed in the overlay preview and arrived at the very end.
 fn default_stream_injection() -> bool {
-    false
+    true
 }
 
 /// 2 rather than the library's 3: measurably quicker text while still
@@ -2380,6 +2382,17 @@ fn apply_settings_migrations(
         updated = true;
     }
 
+    // Schema 6: Live-Einfuegung beim Diktat ist jetzt Standard. Bis hier war
+    // "aus" der gespeicherte Standard und laesst sich von einem bewussten "aus"
+    // nicht unterscheiden; Folge war, dass der Text nur in der Vorschau ueber
+    // der Diktat-Animation stand und erst am Ende eingefuegt wurde (Patrick
+    // 05.11.2026). Einmalig an; wer es aus will, schaltet es wieder ab.
+    if stored_schema_version < 6 {
+        settings.stream_injection = true;
+        settings.settings_schema_version = CURRENT_SETTINGS_SCHEMA_VERSION;
+        updated = true;
+    }
+
     // One-time overlay migration (only while the new key is absent): the retired
     // overlay_position `none` meant "hide the overlay" → OverlayStyle::None; any
     // other position had it visible → Live. The position enum no longer has a
@@ -2626,11 +2639,14 @@ mod tests {
         assert_eq!(t(2.0), t(1.0));
     }
 
-    /// Live injection is off unless asked for, and asking for it is one
-    /// switch — the experimental flag is deliberately not part of it.
+    /// Live injection is on by default and is one switch — the experimental
+    /// flag is deliberately not part of it.
     #[test]
-    fn stream_injection_is_a_plain_opt_in() {
+    fn stream_injection_is_on_by_default_and_one_switch() {
         let mut settings = get_default_settings();
+        assert!(settings.stream_injection_active());
+
+        settings.stream_injection = false;
         assert!(!settings.stream_injection_active());
 
         settings.stream_injection = true;
@@ -3934,6 +3950,38 @@ mod tests {
         });
         apply_settings_migrations(&mut chosen, &raw);
         assert_eq!(chosen.meeting_import_parallel, 1);
+    }
+
+    /// Schema 6 schaltet die Live-Einfuegung einmalig ein, auch wenn sie
+    /// gespeichert aus war (alter Standard). Danach bleibt die Nutzerwahl.
+    #[test]
+    fn schema_6_turns_stream_injection_on_once() {
+        let mut settings = get_default_settings();
+        settings.stream_injection = false;
+        settings.settings_schema_version = 5;
+        let raw = serde_json::json!({
+            "settings_schema_version": 5,
+            "stream_injection": false,
+            "llm_connections": []
+        });
+        assert!(apply_settings_migrations(&mut settings, &raw));
+        assert!(settings.stream_injection);
+        assert_eq!(
+            settings.settings_schema_version,
+            CURRENT_SETTINGS_SCHEMA_VERSION
+        );
+
+        settings.stream_injection = false;
+        let raw = serde_json::json!({
+            "settings_schema_version": 6,
+            "stream_injection": false,
+            "llm_connections": []
+        });
+        apply_settings_migrations(&mut settings, &raw);
+        assert!(
+            !settings.stream_injection,
+            "Nutzerwahl bleibt nach der Migration"
+        );
     }
 
     // M3-P3b

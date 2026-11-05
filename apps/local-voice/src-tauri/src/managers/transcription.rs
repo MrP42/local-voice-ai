@@ -1160,13 +1160,11 @@ impl TranscriptionManager {
                     LiveLoadPlan::Refuse { need_mb, free_mb } => {
                         // Nichts laden: ein geladenes Modell bleibt, die Aufnahme
                         // laeuft damit weiter (oder meldet, dass keins geladen ist).
-                        let message = crate::process_guard::check_ram_for_start(
-                            need_mb.saturating_sub(crate::process_guard::ram_reserve_mb()),
-                        )
-                            .err()
-                            .unwrap_or_else(|| {
-                                format!("Zu wenig freier Arbeitsspeicher: {free_mb} MB frei, gebraucht {need_mb} MB")
-                            });
+                        let message = format!(
+                            "Zu wenig freier Arbeitsspeicher für die Live-Transkription: {:.1} GB frei, gebraucht {:.1} GB. Andere Programme schließen; nach der Aufnahme lässt sich mit „Neu transkribieren“ alles nachholen.",
+                            free_mb as f64 / 1024.0,
+                            need_mb as f64 / 1024.0
+                        );
                         warn!("meetings: Live-Modell '{target}' nicht geladen, RAM-Tor: {message}");
                         let _ = self_clone.app_handle.emit(
                             "model-state-changed",
@@ -2830,11 +2828,22 @@ pub enum LiveLoadPlan {
     Refuse { need_mb: u64, free_mb: u64 },
 }
 
-/// RAM-Tor fuers Live-Modell (wie fuer das End-Modell und die anderen
-/// Modellstarts: Bedarf = `final_pass::ram_need_mb`, dazu die Systemreserve).
+/// RAM-Tor fuers Live-Modell: Bedarf = `final_pass::ram_need_mb`, dazu
+/// [`LIVE_MODEL_RESERVE_MB`] (die Notgrenze, nicht die Server-Reserve).
 /// `free_ram_mb == 0` heisst nicht messbar und blockiert nie.
 /// `reclaimable_mb`: Speicher des Modells, das `load_model` vor dem neuen
 /// freigibt. `fallback`: (Modell-ID, Groesse in MB) des Ersatzes.
+/// Reserve, die das Live-Modell einer Besprechung dem System laesst (MB).
+///
+/// Bewusst die Notgrenze des Waechters, nicht die Server-Reserve
+/// (`ram_reserve_mb`, 3 bis 6 GB): die gilt fuer Sprachmodell-Server, die sich
+/// beliebig Speicher nehmen. Ohne Live-Modell entsteht dagegen gar kein
+/// Transkript, jeder Block wird zur Luecke "[Nicht transkribiert …]". So am
+/// 05.11.2026 auf einem 16-GB-Rechner: 0.23.0 verlangte fuer Nemotron (750 MB)
+/// 1,6 GB + 6 GB Reserve frei, lud nichts und fuellte 35 Minuten mit Luecken,
+/// waehrend "Neu transkribieren" (ohne Tor) danach problemlos lief.
+pub const LIVE_MODEL_RESERVE_MB: u64 = crate::process_guard::RAM_EMERGENCY_MB;
+
 pub fn plan_live_load(
     target_size_mb: u64,
     fallback: Option<(&str, u64)>,
@@ -2846,8 +2855,7 @@ pub fn plan_live_load(
     }
     let available = free_ram_mb.saturating_add(reclaimable_mb);
     let need = |size_mb: u64| {
-        crate::managers::meetings::final_pass::ram_need_mb(size_mb)
-            + crate::process_guard::ram_reserve_mb()
+        crate::managers::meetings::final_pass::ram_need_mb(size_mb) + LIVE_MODEL_RESERVE_MB
     };
     if available >= need(target_size_mb) {
         return LiveLoadPlan::Target;
@@ -3673,8 +3681,21 @@ mod tests {
     // ---- P1i: RAM-Tor fuers Live-Modell der Besprechung -----------------------
 
     fn need(size_mb: u64) -> u64 {
-        crate::managers::meetings::final_pass::ram_need_mb(size_mb)
-            + crate::process_guard::ram_reserve_mb()
+        crate::managers::meetings::final_pass::ram_need_mb(size_mb) + LIVE_MODEL_RESERVE_MB
+    }
+
+    /// Fall 05.11.2026: Nemotron (750 MB) auf einem 16-GB-Rechner mit 5 GB frei.
+    /// Mit der Server-Reserve (6 GB in 0.23.0) wurde nichts geladen und die
+    /// ganze Besprechung bestand aus Luecken; das Live-Modell laedt jetzt.
+    #[test]
+    fn nemotron_loads_live_on_a_busy_16_gb_machine() {
+        assert_eq!(plan_live_load(750, None, 5_000, 0), LiveLoadPlan::Target);
+        // Die Notgrenze bleibt: bei 3 GB frei laedt es nicht.
+        assert!(matches!(
+            plan_live_load(750, None, 3_000, 0),
+            LiveLoadPlan::Refuse { .. }
+        ));
+        assert!(LIVE_MODEL_RESERVE_MB < crate::process_guard::RAM_RESERVE_MIN_MB);
     }
 
     // ---- U7: eigene Engine fuer weitere gleichzeitige Importe -------------------
@@ -3785,7 +3806,7 @@ mod tests {
     #[test]
     fn a_model_of_unknown_size_still_needs_the_minimum() {
         assert!(matches!(
-            plan_live_load(0, None, crate::process_guard::ram_reserve_mb() + 100, 0),
+            plan_live_load(0, None, LIVE_MODEL_RESERVE_MB + 100, 0),
             LiveLoadPlan::Refuse { .. }
         ));
         assert_eq!(plan_live_load(0, None, need(0), 0), LiveLoadPlan::Target);

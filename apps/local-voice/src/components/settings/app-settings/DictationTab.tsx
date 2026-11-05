@@ -43,7 +43,7 @@ export const DictationTab: React.FC = () => {
   const { t } = useTranslation();
   const { getSetting } = useSettings();
   const pushToTalk = getSetting("push_to_talk");
-  const streamInjection = getSetting("stream_injection") ?? false;
+  const streamInjection = getSetting("stream_injection") ?? true;
   const isLinux = type() === "linux";
 
   return (
