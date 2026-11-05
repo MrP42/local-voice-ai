@@ -99,6 +99,7 @@ test("Fussleiste: 24 px, Modelle des Moduls links, Version ganz rechts", async (
   const version = bar.getByTestId("footer-version");
   await expect(version).toHaveText("v0.21.30");
   await expect(version).toHaveAccessibleName("v0.21.30, Nach Updates suchen");
+  await expect(version).toHaveAttribute("title", "Nach Updates suchen");
   const barBox = (await bar.boundingBox())!;
   const versionBox = (await version.boundingBox())!;
   expect(barBox.x + barBox.width - (versionBox.x + versionBox.width)).toBeLessThan(16);
