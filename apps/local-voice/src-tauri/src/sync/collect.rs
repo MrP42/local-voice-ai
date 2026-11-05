@@ -30,6 +30,7 @@ pub const SYNCED_SETTINGS: &[&str] = &[
     "tts_enhance_strength",
     "tts_reference_auto_transcribe",
     "tts_speed",
+    "tts_flow",
     "tts_export_format",
     "tts_export_bitrate",
     "tts_context_menu",

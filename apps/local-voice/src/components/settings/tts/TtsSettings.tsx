@@ -4116,6 +4116,8 @@ export const TtsSettings = () => {
                 speeds={SPEEDS}
                 speedLabel={speedLabel}
                 onSpeed={(value) => void updateSetting("tts_speed", value)}
+                flow={getSetting("tts_flow") ?? 0.5}
+                onFlow={(value) => void updateSetting("tts_flow", value)}
                 progress={
                   speakProgress && sessionHere()
                     ? {

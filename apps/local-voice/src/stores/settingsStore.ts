@@ -148,6 +148,7 @@ const settingUpdaters: {
   tts_script_check: (value) =>
     commands.changeTtsScriptCheckSetting(value as boolean),
   tts_speed: (value) => commands.changeTtsSpeedSetting(value as number),
+  tts_flow: (value) => commands.changeTtsFlowSetting(value as number),
   tts_normalize: (value) =>
     commands.changeTtsNormalizeSetting(value as boolean),
   tts_prewarm: (value) => commands.changeTtsPrewarmSetting(value as boolean),

@@ -10,6 +10,7 @@ import {
 import { Glyph } from "../../../ui/AudioPlayer";
 import type { ReaderPageInfo } from "./ReaderView";
 import { useSentenceClock, type SentenceClock } from "./useSentenceClock";
+import { FlowControl } from "./FlowControl";
 
 export const SLEEP_CHOICES = [0, 15, 30, 45, 60] as const;
 
@@ -26,6 +27,9 @@ interface ReaderPlayerBarProps {
   speeds: readonly number[];
   speedLabel(value: number): string;
   onSpeed(value: number): void;
+  /** Sprachfluss 0 (zügig) bis 1 (ruhig): Pausen an Komma, Satz- und Absatzende. */
+  flow: number;
+  onFlow(value: number): void;
   /** Satzfortschritt der Sitzung (0-basiert) — null ohne Sitzung. */
   progress: { position: number; total: number } | null;
   /** Geschätzte Gesamtdauer des Texts in Sekunden (bei Tempo 1). */
@@ -89,6 +93,8 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
   speeds,
   speedLabel,
   onSpeed,
+  flow,
+  onFlow,
   progress,
   estimateSeconds,
   clock = null,
@@ -129,6 +135,7 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
   const moreBtnRef = useRef<HTMLButtonElement>(null);
   const moreMenuRef = useRef<HTMLDivElement>(null);
   const speedHeadId = useId();
+  const flowHeadId = useId();
   const sleepHeadId = useId();
   const resumeHeadId = useId();
   const chooseSleep = (minutes: number) => {
@@ -621,30 +628,38 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
               </button>
               {speedOpen && (
                 <>
-                  <div
-                    role="listbox"
-                    aria-label={t("tts.settings.speed")}
-                    className="absolute right-0 bottom-full mb-1 w-24 rounded-lg border border-mid-gray/40 bg-background shadow-lg z-40 py-1"
-                  >
-                    {speeds.map((value) => (
-                      <button
-                        key={value}
-                        type="button"
-                        role="option"
-                        aria-selected={speed === value}
-                        onClick={() => {
-                          onSpeed(value);
-                          setSpeedOpen(false);
-                        }}
-                        className={`w-full px-3 py-1.5 text-sm text-start cursor-pointer tabular-nums hover:bg-mid-gray/15 ${
-                          speed === value
-                            ? "text-text font-medium"
-                            : "text-text/80"
-                        }`}
-                      >
-                        {speedLabel(value)}
-                      </button>
-                    ))}
+                  <div className="absolute right-0 bottom-full mb-1 w-56 rounded-lg border border-mid-gray/40 bg-background shadow-lg z-40 py-1">
+                    <div
+                      role="listbox"
+                      aria-label={t("tts.settings.speed")}
+                      className="grid grid-cols-4"
+                    >
+                      {speeds.map((value) => (
+                        <button
+                          key={value}
+                          type="button"
+                          role="option"
+                          aria-selected={speed === value}
+                          onClick={() => {
+                            onSpeed(value);
+                            setSpeedOpen(false);
+                          }}
+                          className={`px-3 py-1.5 text-sm text-center cursor-pointer tabular-nums hover:bg-mid-gray/15 ${
+                            speed === value
+                              ? "text-text font-medium"
+                              : "text-text/80"
+                          }`}
+                        >
+                          {speedLabel(value)}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="mt-1 border-t border-mid-gray/30 px-2 pt-1.5 pb-1">
+                      <div className="px-1 pb-1 text-xs text-text-muted">
+                        {t("tts.settings.flow")}
+                      </div>
+                      <FlowControl value={flow} onChange={onFlow} />
+                    </div>
                   </div>
                 </>
               )}
@@ -754,6 +769,8 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
                   role="menu"
                   aria-label={t("tts.reader.moreOptions")}
                   onKeyDown={(e) => {
+                    // Der Schieberegler (Sprachfluss) braucht seine Pfeiltasten.
+                    if ((e.target as HTMLElement).tagName === "INPUT") return;
                     if (
                       e.key !== "ArrowDown" &&
                       e.key !== "ArrowUp" &&
@@ -861,6 +878,18 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
                           {speedLabel(value)}
                         </button>
                       ))}
+                    </div>
+                  </div>
+                  <div role="group" aria-labelledby={flowHeadId}>
+                    <div
+                      id={flowHeadId}
+                      className="mt-1 border-t border-mid-gray/30 px-3 pt-1.5 pb-0.5 text-xs text-text-muted"
+                      title={t("tts.settings.flowHint")}
+                    >
+                      {t("tts.settings.flow")}
+                    </div>
+                    <div className="px-2 pb-1.5">
+                      <FlowControl value={flow} onChange={onFlow} />
                     </div>
                   </div>
                   <div role="group" aria-labelledby={sleepHeadId}>
