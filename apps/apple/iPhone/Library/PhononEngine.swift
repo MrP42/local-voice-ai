@@ -33,6 +33,9 @@ private final class PhononAudio: @unchecked Sendable {
     private init(rate: Float, played: @escaping @Sendable () -> Void) throws {
         self.played = played
         pitch.rate = rate
+        // Höchste Qualitätsstufe des Phasenvocoders (Standard 8, Bereich 3–32).
+        // Mit 8 klang die Stimme bei jedem Tempo ≠ 1 robotisch (#314).
+        pitch.overlap = 32
         engine.attach(node); engine.attach(pitch)
         engine.connect(node, to: pitch, format: format)
         engine.connect(pitch, to: engine.mainMixerNode, format: format)
@@ -163,6 +166,12 @@ private final class SentenceAudioCache: @unchecked Sendable {
 /// Je Sprache ein eigenes Modell. Die Modelle stehen nicht im Repo und nicht in der App:
 /// Die deutschen Gewichte sind CC BY-NC. Sie werden einmalig nach `Documents/PhononDE`
 /// bzw. `Documents/PhononEN` gelegt und von dort nach Application Support übernommen.
+/// Ein Satz zum Vorlesen; am Absatzende folgt eine längere Pause.
+struct PhononSentence: Sendable {
+    var text: String
+    var paragraphEnd: Bool
+}
+
 struct PhononUnavailable: LocalizedError {
     var errorDescription: String? { "Phonon ist nicht verfügbar." }
 }
@@ -299,13 +308,13 @@ final class PhononEngine: ObservableObject {
 
     /// Text sprechen und zurückkehren, wenn er zu Ende gespielt ist. Abbruch über die Task.
     func speak(_ text: String, voice name: String, rate: Float = 1) async throws {
-        var rest: String? = text
+        var rest: PhononSentence? = PhononSentence(text: text, paragraphEnd: false)
         try await read(voice: name, rate: rate, next: { defer { rest = nil }; return rest }, audible: {}, played: {})
     }
 
     /// Sätze ohne Lücke nacheinander sprechen. `next` liefert den nächsten Satz (erzeugt wird
     /// etwas im Voraus), `audible` meldet den ersten Ton, `played` das Ende jedes Satzes.
-    func read(voice name: String, rate: Float, next: @escaping @MainActor () -> String?,
+    func read(voice name: String, rate: Float, next: @escaping @MainActor () -> PhononSentence?,
               audible: @escaping @MainActor () -> Void, played: @escaping @MainActor () -> Void) async throws {
         guard let parts = Self.parts(name) else { throw PhononUnavailable() }
         prefetch?.cancel()
@@ -327,26 +336,35 @@ final class PhononEngine: ObservableObject {
 
     /// Erzeugen und Einreihen abseits des Main Threads. Zum hörbaren Satz liegen drei weitere bereit.
     nonisolated private static func pump(_ tts: Phonon, _ audio: PhononAudio, voice: String, cache: SentenceAudioCache,
-                                         next: @MainActor () -> String?, audible: @MainActor () -> Void) async throws {
+                                         next: @MainActor () -> PhononSentence?, audible: @MainActor () -> Void) async throws {
         var silent = true
-        while let sentence = await next() {
+        // Ränder jedes Satzes glätten und Pausen kürzen (#314): kein Ploppen, kein Stocken.
+        var shaper = SentenceShaper(sampleRate: Phonon.sampleRate)
+        while let item = await next() {
+            let sentence = item.text
             await audio.wait(below: 4)
             try check(audio)
             if let samples = cache.samples(voice, sentence) {
-                audio.enqueue(samples)
-                if silent { silent = false; await audible() }
+                let shaped = shaper.push(samples)
+                audio.enqueue(shaped)
+                if silent, !shaped.isEmpty { silent = false; await audible() }
             } else {
                 var samples: [Float] = []
                 for try await chunk in tts.stream(sentence) {
                     try check(audio)
-                    audio.enqueue(chunk)
+                    let shaped = shaper.push(chunk)
+                    audio.enqueue(shaped)
                     samples += chunk
-                    if silent { silent = false; await audible() }
+                    // Erst melden, wenn wirklich Ton eingereiht ist (die Stille davor fällt weg).
+                    if silent, !shaped.isEmpty { silent = false; await audible() }
                 }
                 // Ein Abbruch beendet den Strom auch ohne Fehler: Teilsätze nie aufheben.
                 try check(audio)
                 cache.store(voice, sentence, samples)
             }
+            let rest = shaper.finish(paragraphEnd: item.paragraphEnd)
+            audio.enqueue(rest)
+            if silent, !rest.isEmpty { silent = false; await audible() }
             audio.mark()
         }
         await audio.wait(below: 1)
@@ -369,7 +387,7 @@ final class PhononEngine: ObservableObject {
     func refresh() async {}
     func prepare(voice name: String, sentences: [String] = []) {}
     func speak(_ text: String, voice name: String, rate: Float = 1) async throws { throw PhononUnavailable() }
-    func read(voice name: String, rate: Float, next: @escaping @MainActor () -> String?,
+    func read(voice name: String, rate: Float, next: @escaping @MainActor () -> PhononSentence?,
               audible: @escaping @MainActor () -> Void, played: @escaping @MainActor () -> Void) async throws { throw PhononUnavailable() }
     func pause() {}
     func resume() -> Bool { false }

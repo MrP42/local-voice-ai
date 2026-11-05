@@ -158,6 +158,8 @@ final class LibraryPlayback: NSObject, ObservableObject {
         let index = min(max(0, position.index), urls.count - 1)
         trackIndex = index
         let item = AVPlayerItem(url: urls[index])
+        // Höchste Qualität beim Tempo (iOS-Standard ist .timeDomain, #314).
+        item.audioTimePitchAlgorithm = .spectral
         if player == nil { player = AVPlayer() }
         player?.replaceCurrentItem(with: item)
         seekSettled = position.offsetMs <= 0
@@ -330,12 +332,13 @@ final class LibraryPlayback: NSObject, ObservableObject {
         }
     }
 
-    private func nextSentence(_ generation: Int) -> String? {
+    private func nextSentence(_ generation: Int) -> PhononSentence? {
         guard generation == readGeneration, let c = nextToSynthesize else { return nil }
         nextToSynthesize = cursor(after: c)
         let ranges = sentenceRanges(c.paragraph)
         guard ranges.indices.contains(c.sentence) else { return nil }
-        return (paragraphs[c.paragraph].text as NSString).substring(with: ranges[c.sentence])
+        let text = (paragraphs[c.paragraph].text as NSString).substring(with: ranges[c.sentence])
+        return PhononSentence(text: text, paragraphEnd: c.sentence == ranges.count - 1)
     }
 
     private func audioStarted(_ generation: Int) {
