@@ -16,7 +16,7 @@ public struct BookTalkGemmaVariant: Equatable, Sendable {
     public static let q4KM = BookTalkGemmaVariant(quantization: "Q4_K_M", fileName: "gemma-4-E2B-it-Q4_K_M.gguf", bytes: 3106738272,
                                                   sha256: "740185b21d22ceb83a11c3aa62ad5842ef32c70f6096d756bbee85a1e4ec34b8")
     /// Vorhandene ältere Datei; wird nicht geladen, aber angenommen.
-    public static let q40 = BookTalkGemmaVariant(quantization: "q4_0", fileName: "gemma-4-E2B_q4_0-it.gguf", bytes: ,
+    public static let q40 = BookTalkGemmaVariant(quantization: "q4_0", fileName: "gemma-4-E2B_q4_0-it.gguf", bytes: 3349516256,
                                                  sha256: "e12dc03b166b654ad8e8a6671f3abcebd4bbf512696efd582b2fb27dde5bd1e6")
     public static let all = [q4KM, q40]
 
