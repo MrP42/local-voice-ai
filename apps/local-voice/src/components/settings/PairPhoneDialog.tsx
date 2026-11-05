@@ -12,6 +12,9 @@ import { commands, type PairView } from "@/bindings";
 import { Dialog } from "../ui/Dialog";
 import { Button } from "../ui/Button";
 
+/** Touchziele ≥ 44 px auf Mobilbreite und bei Touch-Bedienung (Codex-Abnahme #292). */
+const TOUCH = "max-sm:min-h-[44px] pointer-coarse:min-h-[44px]";
+
 /** Abfragetakt; der Hub drosselt offene Abfragen auf 120/min je Netz. */
 const POLL_MS = 1500;
 const FINAL = new Set(["connected", "unconfirmed", "expired", "aborted"]);
@@ -207,12 +210,12 @@ export const PairPhoneDialog: React.FC<Props> = ({
             : t("pairing.title");
 
   const newCode = (
-    <Button variant="primary" onClick={() => void start()}>
+    <Button className={TOUCH} variant="primary" onClick={() => void start()}>
       {t("pairing.newCode")}
     </Button>
   );
   const closeBtn = (label = t("pairing.close")) => (
-    <Button variant="secondary" onClick={() => void close()}>
+    <Button className={TOUCH} variant="secondary" onClick={() => void close()}>
       {label}
     </Button>
   );
@@ -246,7 +249,11 @@ export const PairPhoneDialog: React.FC<Props> = ({
     footer = (
       <>
         {closeBtn()}
-        <Button variant="primary" onClick={() => void start()}>
+        <Button
+          className={TOUCH}
+          variant="primary"
+          onClick={() => void start()}
+        >
           {t("pairing.retry")}
         </Button>
       </>
@@ -335,6 +342,7 @@ export const PairPhoneDialog: React.FC<Props> = ({
     footer = (
       <>
         <Button
+          className={TOUCH}
           variant="secondary"
           onClick={() => void reject()}
           disabled={busy}
@@ -342,6 +350,7 @@ export const PairPhoneDialog: React.FC<Props> = ({
           {t("pairing.no")}
         </Button>
         <Button
+          className={TOUCH}
           ref={yesRef}
           variant="primary"
           onClick={() => void approve()}
@@ -374,7 +383,11 @@ export const PairPhoneDialog: React.FC<Props> = ({
       </div>
     );
     footer = (
-      <Button variant="primary" onClick={() => onOpenChange(false)}>
+      <Button
+        className={TOUCH}
+        variant="primary"
+        onClick={() => onOpenChange(false)}
+      >
         {t("pairing.done")}
       </Button>
     );
@@ -449,11 +462,16 @@ export const PairPhoneDialog: React.FC<Props> = ({
     );
     footer = (
       <>
-        <Button variant="secondary" onClick={() => onOpenChange(false)}>
+        <Button
+          className={TOUCH}
+          variant="secondary"
+          onClick={() => onOpenChange(false)}
+        >
           {t("pairing.keep")}
         </Button>
         {shown.suspect && (
           <Button
+            className={TOUCH}
             variant="danger"
             onClick={() => void (confirmRevoke ? revokeSuspect() : askRevoke())}
             disabled={busy}

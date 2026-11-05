@@ -11,6 +11,9 @@ import { Dialog } from "../ui/Dialog";
 import { relativeTime } from "./tts/WorkspaceSidebars";
 import { PairPhoneDialog } from "./PairPhoneDialog";
 
+/** Touchziele ≥ 44 px auf Mobilbreite und bei Touch-Bedienung (Codex-Abnahme #292). */
+const TOUCH = "max-sm:min-h-[44px] pointer-coarse:min-h-[44px]";
+
 /** Hub liefert `Y-m-d H:i:s` in seiner Ortszeit (Europe/Berlin, wie dieser PC). */
 const hubMs = (s?: string | null) =>
   s ? Date.parse(s.replace(" ", "T")) : NaN;
@@ -110,7 +113,7 @@ export const PairPhoneCard: React.FC = () => {
           <Button
             variant="primary"
             size="sm"
-            className="min-h-11 sm:min-h-0"
+            className={TOUCH}
             onClick={() => setDialog(true)}
             data-testid="pair-open"
           >
@@ -176,7 +179,7 @@ export const PairPhoneCard: React.FC = () => {
                         <Button
                           variant="danger-ghost"
                           size="sm"
-                          className="min-h-11 sm:min-h-0"
+                          className={TOUCH}
                           onClick={() => setRevoke(d)}
                           aria-label={`${t("pairing.logout")}: ${d.name}`}
                         >
@@ -214,10 +217,15 @@ export const PairPhoneCard: React.FC = () => {
         contentFades={false}
         footer={
           <>
-            <Button variant="secondary" onClick={() => setRevoke(null)}>
+            <Button
+              className={TOUCH}
+              variant="secondary"
+              onClick={() => setRevoke(null)}
+            >
               {t("pairing.cancel")}
             </Button>
             <Button
+              className={TOUCH}
               variant="danger"
               onClick={() => void doRevoke()}
               disabled={busy}
