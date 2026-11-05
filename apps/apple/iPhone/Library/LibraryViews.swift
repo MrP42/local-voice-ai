@@ -85,6 +85,7 @@ struct LibraryTab: View {
             .task {
                 // Diagnose-Startargumente für Simulator-Bilder, kein Produktpfad.
                 let args = ProcessInfo.processInfo.arguments
+                if let i = args.firstIndex(of: "--pair-url"), i + 1 < args.count, let url = URL(string: args[i + 1]) { PairingFlow.shared.open(url) }
                 if args.contains("--phonon-probe") {
                     // Geräteprobe ohne Bedienung: Ergebnis landet in Documents/phonon-probe.txt.
                     let out = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("phonon-probe.txt")
@@ -781,6 +782,9 @@ struct LibrarySyncSheet: View {
                     LibraryStorageSummary()
                     Section { Button("Abmelden", role: .destructive) { Task { await sync.logout() } } }
                 } else {
+                    Section {
+                        Button { PairingFlow.shared.startScan() } label: { Label("Mit Desktop-App verbinden", systemImage: "qrcode.viewfinder") }
+                    } footer: { Text("Am PC unter Einstellungen › Konto & Geräte auf „Handy verbinden“ gehen und den Code scannen. Ein Passwort ist dann nicht nötig.") }
                     Section {
                         TextField("E-Mail", text: $email).textContentType(.username).keyboardType(.emailAddress).textInputAutocapitalization(.never)
                         SecureField("Passwort", text: $password).textContentType(.password)

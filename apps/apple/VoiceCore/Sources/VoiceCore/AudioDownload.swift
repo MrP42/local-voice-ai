@@ -80,6 +80,12 @@ public enum AudioDownload {
         }
     }
 
+    /// Selbe Herkunft: Schema, Host und Port stimmen überein.
+    public static func sameOrigin(_ a: URL, _ b: URL) -> Bool {
+        func port(_ url: URL) -> Int? { url.port ?? (url.scheme?.lowercased() == "https" ? 443 : url.scheme?.lowercased() == "http" ? 80 : nil) }
+        return a.scheme?.lowercased() == b.scheme?.lowercased() && a.host?.lowercased() == b.host?.lowercased() && port(a) == port(b)
+    }
+
     /// Fehlende Stücke in Hörreihenfolge, ohne angekommene und laufende; höchstens `limit`.
     public static func missingChunks(_ job: Job, states: [PartState], staged: Set<ChunkKey>, inFlight: Set<ChunkKey>,
                                      chunkPlainBytes: Int, limit: Int = window) -> [ChunkKey] {
