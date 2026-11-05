@@ -2,9 +2,10 @@
 """Install pinned public iPhone CPU dependencies. Never sends recordings or code."""
 import argparse, hashlib, pathlib, shutil, tempfile, urllib.request, zipfile
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+# llama: b10400 ist die neueste geprüfte Fassung mit Gemma 4 und Simulator-Teil; ab etwa b10750 fehlt der Simulator-Teil.
 LIBRARIES = [
     ('whisper', 'https://github.com/ggml-org/whisper.cpp/releases/download/v1.7.5/whisper-v1.7.5-xcframework.zip', 'c7faeb328620d6012e130f3d705c51a6ea6c995605f2df50f6e1ad68c59c6c4a'),
-    ('llama', 'https://github.com/ggml-org/llama.cpp/releases/download/b12119/llama-b12119-xcframework.zip', '9a170d568a0470cefddb5ddad2a5093ccbd13042077ca301cd399b11ef83e742'),
+    ('llama', 'https://github.com/ggml-org/llama.cpp/releases/download/b10400/llama-b10400-xcframework.zip', 'ba83d0e9893c76bac0d001aa3e67bb4ca0aedf1e3dec53a1afa97291818bc69b'),
 ]
 # Phonon (MIT/Apache-2.0): Kern als statische Bibliothek und Swift-Quellen. Die deutschen
 # Gewichte sind CC BY-NC und gehören weder hierher noch ins Repo (siehe PhononEngine.swift).
