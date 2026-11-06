@@ -20,5 +20,8 @@ Statische Konzeptvorschau, `vorschau.html?s=1..11&t=hell|dunkel`. Spezifikation:
 `belege.json` je Bild: `umfang` (Selektor, Zahl geprüfter/verdeckter Bedienziele und Textknoten),
 `bedienziele` (Element, Beschriftung, Rechteck x/y/w/h), `texte` (Element, Text, Schriftgröße, Kontrast nach
 Alpha-Verrechnung aller Hintergrundebenen), `zuKlein`, `abgeschnittenHorizontal`, `kontrastUnter45`.
-Ergebnis über 40 Bilder: keine Ziele unter 44 px, keine horizontal abgeschnittenen Ziele, kleinster Kontrast 4,81:1.
-Covermotive sind ausgenommen; verdeckte Elemente (hinter Dialog/Blatt) werden gezählt, nicht bewertet.
+Ergebnis über 40 Bilder (`kennzahlen.json`): 1038 Texte, 282 Ziele, keine unter 44 px, keine horizontal
+abgeschnitten, kleinster Kontrast 4,67:1 (Farben mit Alpha und Verläufen verrechnet). Coverbeschriftungen
+sind einbezogen; verdeckte Elemente (hinter Dialog/Blatt) werden gezählt, nicht bewertet.
+Grenze: Das ist eine statische Messung. Der vollständige Bediennachweis (Tastatur, Fokusführung,
+Rückgängig, Konfliktfrage) folgt mit Interaktionstests in PR 2.

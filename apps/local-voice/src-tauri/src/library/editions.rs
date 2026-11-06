@@ -16,8 +16,7 @@ use std::path::{Path, PathBuf};
 
 use super::{
     book_dir, book_locks, checked_id, core_title, cover_file, fresh_id, lock, now_ms, plain_name,
-    read_book, surnames, trash_in, write_book, AudioTrack, AudioVersion, LibraryBook, TextVersion,
-    TRASH,
+    read_book, surnames, write_book, AudioTrack, AudioVersion, LibraryBook, TextVersion, TRASH,
 };
 
 pub const SCHEMA: u32 = 2;
@@ -174,8 +173,20 @@ pub fn migrated_id(book_id: &str) -> String {
 }
 
 /// Kennung der Hauptfassung.
+/// Wirksame Hauptfassung: das Register, falls es auf eine lebende Fassung
+/// zeigt, sonst die älteste (added_ms, Kennung). Das Register selbst wird
+/// nie repariert, sonst hinge der gespeicherte Merge von der Reihenfolge ab.
 pub fn primary_id(book: &LibraryBook) -> Option<&str> {
-    book.primary.as_ref().map(|p| p.edition.as_str())
+    book.primary
+        .as_ref()
+        .map(|p| p.edition.as_str())
+        .filter(|p| book.editions.iter().any(|e| e.id == *p))
+        .or_else(|| {
+            book.editions
+                .iter()
+                .min_by(|a, b| a.added_ms.total_cmp(&b.added_ms).then(a.id.cmp(&b.id)))
+                .map(|e| e.id.as_str())
+        })
 }
 
 /// Fortschrittsschlüssel einer neuen Fassung.
@@ -197,28 +208,12 @@ fn tidy(book: &mut LibraryBook) {
         .filter(|e| !dead.contains(&e.id))
         .cloned()
         .collect();
-    if !keep.is_empty() {
-        book.editions = keep;
-    }
+    book.editions = keep;
     let bid = book.id.clone();
     for e in book.editions.iter_mut() {
         if e.audio_key.is_empty() {
             e.audio_key = new_audio_key(&bid, &e.id);
         }
-    }
-    let ok = primary_id(book).is_some_and(|p| book.editions.iter().any(|e| e.id == p));
-    if !ok {
-        let first = book
-            .editions
-            .iter()
-            .min_by(|a, b| a.added_ms.total_cmp(&b.added_ms).then(a.id.cmp(&b.id)))
-            .map(|e| e.id.clone())
-            .unwrap_or_default();
-        book.primary = Some(Stamp {
-            edition: first,
-            updated: book.primary.as_ref().map(|p| p.updated).unwrap_or(0.0),
-            device: String::new(),
-        });
     }
     book.schema = SCHEMA;
 }
@@ -226,7 +221,11 @@ fn tidy(book: &mut LibraryBook) {
 /// Schema 1 → 2 und Arbeitskopie → Hauptfassung. Idempotent und
 /// deterministisch (jedes Gerät migriert gleich).
 pub fn normalize(book: &mut LibraryBook) {
-    if book.editions.is_empty() && (book.text.is_some() || book.audio.is_some()) {
+    // Nur Schema 1 migrieren; ein Buch mit Grabsteinen war schon Schema 2.
+    if book.editions.is_empty()
+        && book.edition_tombstones.is_empty()
+        && (book.text.is_some() || book.audio.is_some())
+    {
         book.editions.push(Edition {
             id: migrated_id(&book.id),
             lang: book.language.as_deref().map(lang_code).unwrap_or_default(),
@@ -244,6 +243,14 @@ pub fn normalize(book: &mut LibraryBook) {
             device: String::new(),
             audio_paths: Vec::new(),
         });
+        // Deterministisch wie die Fassung: jedes Gerät setzt dasselbe Register.
+        if book.primary.is_none() {
+            book.primary = Some(Stamp {
+                edition: migrated_id(&book.id),
+                updated: 0.0,
+                device: String::new(),
+            });
+        }
     }
     if book.editions.is_empty() {
         return;
@@ -256,16 +263,36 @@ pub fn normalize(book: &mut LibraryBook) {
         .map(lang_code)
         .filter(|l| !l.is_empty());
     let (text, audio) = (book.text.clone(), book.audio.clone());
+    let title = Some(book.title.clone()).filter(|t| !t.trim().is_empty());
+    let (subtitle, isbn, work_key) = (
+        book.subtitle.clone(),
+        book.isbn.clone(),
+        book.work_key.clone(),
+    );
     if let Some(p) = book.editions.iter_mut().find(|e| e.id == pid) {
-        // Ein bestehender Ablauf hat die Arbeitskopie geändert: Fassung nachziehen.
-        let changed =
-            p.text != text || p.audio != audio || lang.as_ref().is_some_and(|l| *l != p.lang);
+        // Ein bestehender Ablauf hat die Arbeitskopie geändert (Inhalt oder
+        // Angaben wie Titel/ISBN): Fassung nachziehen, sonst setzt der nächste
+        // Empfang die Angaben aus der Fassung zurück.
+        let changed = p.text != text
+            || p.audio != audio
+            || lang.as_ref().is_some_and(|l| *l != p.lang)
+            // Leerer Fassungstitel erbt den Buchtitel (kein Wechsel).
+            || title.as_ref().is_some_and(|t| !p.title.is_empty() && *t != p.title)
+            || p.subtitle != subtitle
+            || p.isbn != isbn
+            || p.work_key != work_key;
         if changed {
             p.text = text;
             p.audio = audio;
             if let Some(l) = lang {
                 p.lang = l;
             }
+            if let Some(t) = title {
+                p.title = t;
+            }
+            p.subtitle = subtitle;
+            p.isbn = isbn;
+            p.work_key = work_key;
             // Echt jünger als der bisherige Stand, auch in derselben Millisekunde.
             p.updated = next_stamp(Some(p.updated));
         }
@@ -463,6 +490,9 @@ pub fn join_in(root: &Path, target_id: &str, sources: &[String]) -> Result<Libra
         let _guard = lock();
         let tdir = book_dir(root, target_id)?;
         let mut target = read_book(&tdir).ok_or("Zielbuch nicht gefunden.")?;
+        // Für die Rücknahme: Zielbuch roh, neu angelegte Cover.
+        let original = std::fs::read(tdir.join("buch.json")).map_err(|e| e.to_string())?;
+        let mut new_covers: Vec<std::path::PathBuf> = Vec::new();
         normalize(&mut target);
         let mut taken: BTreeSet<String> = target.editions.iter().map(|e| e.id.clone()).collect();
         let mut moved = Vec::new();
@@ -500,6 +530,7 @@ pub fn join_in(root: &Path, target_id: &str, sources: &[String]) -> Result<Libra
                             std::fs::create_dir_all(&covers).map_err(|e| e.to_string())?;
                             let to = covers.join(format!("{new_id}.{ext}"));
                             std::fs::copy(&c, &to).map_err(|e| format!("Cover sichern: {e}"))?;
+                            new_covers.push(to);
                         }
                     }
                     if let Some(a) = &e.audio {
@@ -517,15 +548,20 @@ pub fn join_in(root: &Path, target_id: &str, sources: &[String]) -> Result<Libra
                 target.favorite |= source.favorite;
             }
             normalize(&mut target);
-            write_book(&tdir, &target)
+            write_book(&tdir, &target)?;
+            // Unter denselben Sperren: niemand ändert die Quellen dazwischen.
+            super::trash_locked(root, sources)
         })();
         if let Err(e) = result {
+            // Ganz zurück: Ziel wie vorher, Dateien an ihren alten Ort.
+            let _ = std::fs::write(tdir.join("buch.json"), &original);
             undo_moves(&moved);
-            let _ = std::fs::remove_dir_all(tdir.join("covers").join(".tmp"));
+            for c in &new_covers {
+                let _ = std::fs::remove_file(c);
+            }
             return Err(e);
         }
     }
-    trash_in(root, sources)?;
     read_book(&book_dir(root, target_id)?).ok_or_else(|| "Buch unlesbar.".into())
 }
 
@@ -550,12 +586,16 @@ pub fn split_in(
     if book.editions.len() < 2 {
         return Err("Das Buch hat nur eine Sprachfassung.".into());
     }
+    let mut moved = Vec::new();
     if primary_id(&book) == Some(edition_id) {
         let np = new_primary.ok_or("Bitte zuerst eine andere Hauptfassung wählen.")?;
         if np == edition_id {
             return Err("Bitte eine andere Hauptfassung wählen.".into());
         }
         set_primary(&mut book, np, "")?;
+        // Cover folgt der Hauptfassung: das der abgetrennten nach covers/<ed>,
+        // von dort nimmt das neue Buch es mit.
+        swap_covers(&dir, edition_id, np, &mut moved)?;
     }
     let edition = book
         .editions
@@ -575,7 +615,6 @@ pub fn split_in(
     let ndir = book_dir(root, &new_id)?;
     // Ein Rest im Papierkorb (Cover, Metadaten) wird nicht gebraucht: die
     // Fassung trägt alles Nötige; der Papierkorb läuft normal ab.
-    let mut moved = Vec::new();
     let result = (|| -> Result<LibraryBook, String> {
         std::fs::create_dir_all(&ndir).map_err(|e| e.to_string())?;
         let mut audio = edition.audio.clone();
@@ -590,6 +629,9 @@ pub fn split_in(
             for t in super::tracks_of(a) {
                 let from = dir.join("audio").join(&t.file);
                 let to = ndir.join("audio").join(strip(&t.file));
+                if to.exists() {
+                    return Err(format!("„{}“ gibt es im neuen Buch schon.", to.display()));
+                }
                 if from.is_file() {
                     std::fs::rename(&from, &to)
                         .map_err(|e| format!("Hörbuchteil verschieben: {e}"))?;
@@ -611,8 +653,9 @@ pub fn split_in(
                 .extension()
                 .map(|x| x.to_string_lossy().to_string())
                 .unwrap_or_default();
-            std::fs::rename(&c, ndir.join(format!("cover.{ext}")))
-                .map_err(|e| format!("Cover zurücklegen: {e}"))?;
+            let to = ndir.join(format!("cover.{ext}"));
+            std::fs::rename(&c, &to).map_err(|e| format!("Cover zurücklegen: {e}"))?;
+            moved.push((c, to));
         }
         let fresh = LibraryBook {
             id: new_id.clone(),
@@ -676,10 +719,10 @@ pub fn split_in(
             Ok((kept, fresh))
         }
         Err(e) => {
+            // Dateien zurück, dann das neue Buch ganz weg (es war vorher
+            // nicht da): sonst zeigte es auf Dateien, die nicht mehr da sind.
             undo_moves(&moved);
-            if !ndir.join("buch.json").is_file() {
-                let _ = std::fs::remove_dir_all(&ndir);
-            }
+            let _ = std::fs::remove_dir_all(&ndir);
             Err(e)
         }
     }
@@ -705,6 +748,7 @@ pub fn remove_in(
     if book.editions.len() < 2 {
         return Err("Die letzte Sprachfassung lässt sich nur mit dem Buch löschen.".into());
     }
+    let mut moved = Vec::new();
     let is_primary = primary_id(&book) == Some(edition_id);
     let is_reading = book
         .reading
@@ -716,6 +760,7 @@ pub fn remove_in(
             .ok_or("Bitte zuerst eine andere Sprachfassung als Ersatz wählen.")?;
         if is_primary {
             set_primary(&mut book, np, "")?;
+            swap_covers(&dir, edition_id, np, &mut moved)?;
         }
         if is_reading {
             book.reading = Some(ReadingState {
@@ -737,8 +782,27 @@ pub fn remove_in(
         .cloned()
         .ok_or("Sprachfassung nicht gefunden.")?;
     let bin = root.join(TRASH).join(format!("{id}~{edition_id}"));
-    std::fs::create_dir_all(bin.join("audio")).map_err(|e| e.to_string())?;
-    let mut moved = Vec::new();
+    if let Err(e) = std::fs::create_dir_all(bin.join("audio")) {
+        undo_moves(&moved);
+        return Err(e.to_string());
+    }
+    // Eigenes Cover der Fassung mit in den Papierkorb (für Wiederherstellen).
+    if let Some(c) = ["jpg", "png", "webp"]
+        .iter()
+        .map(|x| dir.join("covers").join(format!("{edition_id}.{x}")))
+        .find(|p| p.is_file())
+    {
+        let ext = c
+            .extension()
+            .map(|x| x.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let to = bin.join(format!("cover.{ext}"));
+        if let Err(e) = std::fs::rename(&c, &to) {
+            undo_moves(&moved);
+            return Err(format!("Entfernen fehlgeschlagen: {e}"));
+        }
+        moved.push((c, to));
+    }
     if let Some(a) = &edition.audio {
         for t in super::tracks_of(a) {
             let from = dir.join("audio").join(&t.file);
@@ -772,8 +836,13 @@ pub fn remove_in(
 
 /// Cover tauschen, wenn die Hauptfassung wechselt: `cover.*` gehört danach
 /// zur neuen Hauptfassung, das bisherige wandert nach `covers/<alt>.*`.
-pub fn swap_covers(dir: &Path, old_primary: &str, new_primary: &str) -> Result<(), String> {
-    if old_primary == new_primary {
+pub fn swap_covers(
+    dir: &Path,
+    old_primary: &str,
+    new_primary: &str,
+    moved: &mut Vec<(PathBuf, PathBuf)>,
+) -> Result<(), String> {
+    if old_primary == new_primary || old_primary.is_empty() {
         return Ok(());
     }
     let covers = dir.join("covers");
@@ -787,39 +856,49 @@ pub fn swap_covers(dir: &Path, old_primary: &str, new_primary: &str) -> Result<(
             .extension()
             .map(|x| x.to_string_lossy().to_string())
             .unwrap_or("jpg".into());
-        std::fs::rename(&cur, covers.join(format!("{old_primary}.{ext}")))
-            .map_err(|e| format!("Cover beiseitelegen: {e}"))?;
+        let to = covers.join(format!("{old_primary}.{ext}"));
+        std::fs::rename(&cur, &to).map_err(|e| format!("Cover beiseitelegen: {e}"))?;
+        moved.push((cur, to));
     }
     if let Some(next) = incoming {
         let ext = next
             .extension()
             .map(|x| x.to_string_lossy().to_string())
             .unwrap_or("jpg".into());
-        std::fs::rename(&next, dir.join(format!("cover.{ext}")))
-            .map_err(|e| format!("Cover übernehmen: {e}"))?;
+        let to = dir.join(format!("cover.{ext}"));
+        std::fs::rename(&next, &to).map_err(|e| format!("Cover übernehmen: {e}"))?;
+        moved.push((next, to));
     }
     Ok(())
 }
 
-/// Hauptfassung wechseln samt Cover.
+/// Hauptfassung wechseln samt Cover, alles unter einer Sperre; scheitert
+/// das Schreiben, kommen die Cover zurück.
 pub fn set_primary_in(
     root: &Path,
     id: &str,
     edition_id: &str,
     device: &str,
 ) -> Result<LibraryBook, String> {
-    let dir = book_dir(root, id)?;
-    let before = read_book(&dir).ok_or("Buch nicht gefunden.")?;
-    let old = primary_id(&before).unwrap_or_default().to_string();
-    let book = update_in(root, id, |b| set_primary(b, edition_id, device))?;
+    let locks = book_locks(&[id]);
+    let _book_guards: Vec<_> = locks
+        .iter()
+        .map(|l| l.lock().unwrap_or_else(|e| e.into_inner()))
+        .collect();
     let _guard = lock();
-    swap_covers(&dir, &old, edition_id)?;
-    read_book(&dir)
-        .ok_or_else(|| "Buch unlesbar.".into())
-        .map(|b| {
-            let _ = &book;
-            b
-        })
+    let dir = book_dir(root, id)?;
+    let mut book = read_book(&dir).ok_or("Buch nicht gefunden.")?;
+    let old = primary_id(&book).unwrap_or_default().to_string();
+    set_primary(&mut book, edition_id, device)?;
+    super::validate_book(&book)?;
+    let mut moved = Vec::new();
+    let result =
+        swap_covers(&dir, &old, edition_id, &mut moved).and_then(|_| write_book(&dir, &book));
+    if let Err(e) = result {
+        undo_moves(&moved);
+        return Err(e);
+    }
+    read_book(&dir).ok_or_else(|| "Buch unlesbar.".into())
 }
 
 /// Buch unter Sperre lesen, ändern, schreiben.
@@ -850,12 +929,36 @@ pub fn set_alignment(book: &mut LibraryBook, alignment: Alignment) -> Result<(),
     if !alive(&alignment.a) || !alive(&alignment.b) || alignment.a == alignment.b {
         return Err("Sprachfassung nicht gefunden.".into());
     }
-    let a = canonical_alignment(alignment);
-    book.alignments.retain(|x| {
+    let mut a = canonical_alignment(alignment);
+    let same = |x: &Alignment| {
         let x = canonical_alignment(x.clone());
-        (x.a, x.b) != (a.a.clone(), a.b.clone())
-    });
+        (x.a, x.b) == (a.a.clone(), a.b.clone())
+    };
+    // Registerschreibung: echt jünger als der bisherige Stand dieses Paars.
+    let prev = book
+        .alignments
+        .iter()
+        .filter(|x| same(x))
+        .map(|x| x.updated)
+        .fold(None, |m: Option<f64>, u| Some(m.map_or(u, |m| m.max(u))));
+    if let Some(p) = prev {
+        a.updated = a.updated.max(p + 1.0);
+    }
+    book.alignments.retain(|x| !same(x));
     book.alignments.push(a);
+    Ok(())
+}
+
+/// Auswahl setzen (Sprachwechsel). Der Zeitstempel der Oberfläche bleibt,
+/// wird aber echt jünger als der bisherige Registerstand gemacht.
+pub fn set_reading(book: &mut LibraryBook, mut reading: ReadingState) -> Result<(), String> {
+    if !book.editions.iter().any(|e| e.id == reading.edition) {
+        return Err("Sprachfassung nicht gefunden.".into());
+    }
+    if let Some(prev) = &book.reading {
+        reading.updated = reading.updated.max(prev.updated + 1.0);
+    }
+    book.reading = Some(reading);
     Ok(())
 }
 
@@ -869,6 +972,14 @@ pub fn restore_in(
     if !valid_edition_id(edition_id) {
         return Err("Ungültige Kennung einer Sprachfassung.".into());
     }
+    let locks = book_locks(&[id]);
+    let _book_guards: Vec<_> = locks
+        .iter()
+        .map(|l| l.lock().unwrap_or_else(|e| e.into_inner()))
+        .collect();
+    let _guard = lock();
+    let dir = book_dir(root, id)?;
+    let mut book = read_book(&dir).ok_or("Buch nicht gefunden.")?;
     let bin = root.join(TRASH).join(format!("{id}~{edition_id}"));
     let raw = std::fs::read(bin.join("fassung.json")).map_err(|_| "Nicht mehr im Papierkorb.")?;
     let old: Edition = serde_json::from_slice(&raw).map_err(|e| e.to_string())?;
@@ -876,35 +987,54 @@ pub fn restore_in(
     if !valid_edition_id(&back.id) {
         return Err("Kennung zu lang.".into());
     }
-    let dir = book_dir(root, id)?;
+    // Erst prüfen, dann verschieben: eine fremde Datei gleichen Namens im
+    // Buch hält das Wiederherstellen an, der Papierkorb bleibt unberührt.
+    let tracks = old.audio.as_ref().map(super::tracks_of).unwrap_or_default();
+    let same = |a: &Path, b: &Path| std::fs::read(a).ok() == std::fs::read(b).ok();
+    for t in &tracks {
+        let (from, to) = (
+            bin.join("audio").join(&t.file),
+            dir.join("audio").join(&t.file),
+        );
+        if from.is_file() && to.exists() && !same(&from, &to) {
+            return Err(format!("„{}“ gibt es im Buch schon.", t.file));
+        }
+    }
     let mut moved = Vec::new();
-    if let Some(a) = &old.audio {
-        for t in super::tracks_of(a) {
-            let from = bin.join("audio").join(&t.file);
-            let to = dir.join("audio").join(&t.file);
+    let result = (|| -> Result<(), String> {
+        for t in &tracks {
+            let (from, to) = (
+                bin.join("audio").join(&t.file),
+                dir.join("audio").join(&t.file),
+            );
             if from.is_file() && !to.exists() {
                 std::fs::create_dir_all(dir.join("audio")).map_err(|e| e.to_string())?;
                 std::fs::rename(&from, &to).map_err(|e| e.to_string())?;
                 moved.push((from, to));
             }
         }
+        if let Some(c) = cover_file(&bin) {
+            let ext = c
+                .extension()
+                .map(|x| x.to_string_lossy().to_string())
+                .unwrap_or_default();
+            std::fs::create_dir_all(dir.join("covers")).map_err(|e| e.to_string())?;
+            let to = dir.join("covers").join(format!("{}.{ext}", back.id));
+            std::fs::rename(&c, &to).map_err(|e| e.to_string())?;
+            moved.push((c, to));
+        }
+        if !book.editions.iter().any(|e| e.id == back.id) {
+            book.editions.push(back.clone());
+        }
+        super::validate_book(&book)?;
+        write_book(&dir, &book)
+    })();
+    if let Err(e) = result {
+        undo_moves(&moved);
+        return Err(e);
     }
-    let result = update_in(root, id, |b| {
-        if !b.editions.iter().any(|e| e.id == back.id) {
-            b.editions.push(back.clone());
-        }
-        Ok(())
-    });
-    match result {
-        Ok(b) => {
-            let _ = std::fs::remove_dir_all(&bin);
-            Ok(b)
-        }
-        Err(e) => {
-            undo_moves(&moved);
-            Err(e)
-        }
-    }
+    let _ = std::fs::remove_dir_all(&bin);
+    read_book(&dir).ok_or_else(|| "Buch unlesbar.".into())
 }
 
 /// Vermutlich dieselbe Arbeit in zwei Sprachen.
@@ -1230,13 +1360,6 @@ pub fn apply_state(b: &mut LibraryBook, s: EditionState) {
         .and_then(|p| b.editions.iter().find(|e| e.id == p))
         .cloned()
     {
-        if b.primary.as_ref().map(|p| &p.edition) != Some(&e.id) {
-            b.primary = Some(Stamp {
-                edition: e.id.clone(),
-                updated: 0.0,
-                device: String::new(),
-            });
-        }
         b.text = e.text;
         b.audio = e.audio;
         b.language = (!e.lang.is_empty()).then(|| e.lang.clone());
@@ -1246,6 +1369,13 @@ pub fn apply_state(b: &mut LibraryBook, s: EditionState) {
         b.subtitle = e.subtitle;
         b.isbn = e.isbn;
         b.work_key = e.work_key;
+    } else if !b.edition_tombstones.is_empty() {
+        // Alle Fassungen sind anderswo gelöscht oder abgetrennt (gleichzeitig
+        // auf zwei Geräten): leer bleiben statt aus der Arbeitskopie eine
+        // gelöschte Fassung neu zu migrieren. Abgetrenntes lebt als eigenes
+        // Buch, Gelöschtes im Papierkorb.
+        b.text = None;
+        b.audio = None;
     }
     b.schema = SCHEMA;
 }
@@ -1260,7 +1390,8 @@ pub fn merge_incoming(
 ) -> Option<(ReadingPosition, f64)> {
     let mut theirs = incoming.clone();
     if let Some(l) = local {
-        if theirs.editions.is_empty() && !l.editions.is_empty() {
+        // Schema 2 ohne lebende Fassung (alle gelöscht) ist kein Altgerät.
+        if theirs.schema < SCHEMA && theirs.editions.is_empty() && !l.editions.is_empty() {
             // Altgerät (Schema 1): kennt nur die Arbeitskopie der Hauptfassung.
             // Sie gilt als Änderung dieser Fassung, alles andere bleibt lokal.
             let mut legacy = l.clone();
@@ -1475,6 +1606,90 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    fn cover_of(dir: &Path) -> Vec<u8> {
+        std::fs::read(cover_file(dir).unwrap()).unwrap()
+    }
+
+    /// Codex R4: Cover folgt der Hauptfassung beim Wechsel, Abtrennen,
+    /// Löschen und Wiederherstellen.
+    #[test]
+    fn cover_folgt_hauptfassung() {
+        let root = tmp();
+        let mut de = base("book_1", "Der Weg", "de");
+        de.audio = Some(audio("a.mp3"));
+        put(&root, &de, &["a.mp3"]);
+        std::fs::write(root.join("book_1/cover.jpg"), b"DE").unwrap();
+        let mut en = base("book_2", "The Way", "en");
+        en.audio = Some(audio("b.mp3"));
+        put(&root, &en, &["b.mp3"]);
+        std::fs::write(root.join("book_2/cover.jpg"), b"EN").unwrap();
+        let joined = join_in(&root, "book_1", &["book_2".into()]).unwrap();
+        let dir = root.join("book_1");
+        let de_id = primary_id(&joined).unwrap().to_string();
+        let en_id = joined
+            .editions
+            .iter()
+            .find(|e| e.id != de_id)
+            .unwrap()
+            .id
+            .clone();
+        assert_eq!(cover_of(&dir), b"DE");
+
+        // Wechsel: EN vorne, DE beiseite.
+        set_primary_in(&root, "book_1", &en_id, "pc").unwrap();
+        assert_eq!(cover_of(&dir), b"EN");
+        assert_eq!(
+            std::fs::read(dir.join(format!("covers/{de_id}.jpg"))).unwrap(),
+            b"DE"
+        );
+
+        // Löschen der Hauptfassung EN mit Ersatz DE: DE-Cover zurück vorne,
+        // EN-Cover im Papierkorb, beim Wiederherstellen unter neuer Kennung.
+        let after = remove_in(&root, "book_1", &en_id, Some(&de_id)).unwrap();
+        assert_eq!(primary_id(&after), Some(de_id.as_str()));
+        assert_eq!(cover_of(&dir), b"DE");
+        let back = restore_in(&root, "book_1", &en_id, "pc").unwrap();
+        let r_id = format!("{en_id}_r");
+        assert!(back.editions.iter().any(|e| e.id == r_id));
+        assert_eq!(
+            std::fs::read(dir.join(format!("covers/{r_id}.jpg"))).unwrap(),
+            b"EN"
+        );
+
+        // Abtrennen der Hauptfassung DE (Ersatz EN_r): neues Buch nimmt DE mit.
+        let (kept, fresh) = split_in(&root, "book_1", &de_id, Some(&r_id)).unwrap();
+        assert_eq!(primary_id(&kept), Some(r_id.as_str()));
+        assert_eq!(cover_of(&dir), b"EN");
+        assert_eq!(cover_of(&root.join(&fresh.id)), b"DE");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Fremde Datei gleichen Namens: Wiederherstellen hält an, Papierkorb bleibt.
+    #[test]
+    fn wiederherstellen_ueberschreibt_nichts() {
+        let root = tmp();
+        let mut de = base("book_1", "Der Weg", "de");
+        de.audio = Some(audio("a.mp3"));
+        put(&root, &de, &["a.mp3"]);
+        let mut en = base("book_2", "The Way", "en");
+        en.audio = Some(audio("b.mp3"));
+        put(&root, &en, &["b.mp3"]);
+        let joined = join_in(&root, "book_1", &["book_2".into()]).unwrap();
+        let p = primary_id(&joined).unwrap().to_string();
+        let other = joined.editions.iter().find(|e| e.id != p).unwrap().clone();
+        remove_in(&root, "book_1", &other.id, None).unwrap();
+        let f = other.audio.unwrap().file;
+        std::fs::write(root.join("book_1/audio").join(&f), b"fremd").unwrap();
+        assert!(restore_in(&root, "book_1", &other.id, "pc").is_err());
+        assert!(root
+            .join(TRASH)
+            .join(format!("book_1~{}", other.id))
+            .join("audio")
+            .join(&f)
+            .is_file());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn hauptfassung_nur_mit_ersatz() {
         let root = tmp();
@@ -1665,6 +1880,7 @@ mod tests {
             ..Default::default()
         });
         remote.editions[0].title = "fern".into();
+        remote.title = "fern".into(); // Schema-2-Sender spiegelt die Hauptfassung
         remote.editions[0].updated = 99.0e12;
         remote.reading = Some(ReadingState {
             edition: "ed_book_1".into(),
@@ -1843,6 +2059,57 @@ mod tests {
             });
         }
         s
+    }
+
+    /// Buch wie auf der Platte: schreiben, lesen, normalisieren.
+    fn stored(b: &LibraryBook) -> LibraryBook {
+        let mut back: LibraryBook =
+            serde_json::from_str(&serde_json::to_string(b).unwrap()).unwrap();
+        normalize(&mut back);
+        back
+    }
+
+    fn book_of(s: &EditionState) -> LibraryBook {
+        let mut b = LibraryBook {
+            id: "b".into(),
+            title: "Buch".into(),
+            schema: SCHEMA,
+            ..Default::default()
+        };
+        apply_state(&mut b, s.clone());
+        stored(&b)
+    }
+
+    /// Empfang auf `local`: wie `apply_book` (merge_incoming, schreiben, lesen).
+    fn receive(local: &LibraryBook, incoming: &LibraryBook) -> LibraryBook {
+        let mut inc = incoming.clone();
+        merge_incoming(Some(local), &mut inc);
+        stored(&inc)
+    }
+
+    /// Codex R4: Konvergenz auch über Übernehmen, Schreiben und Lesen –
+    /// das gespeicherte Register darf nicht von der Reihenfolge abhängen.
+    #[test]
+    fn gespeicherter_merge_konvergiert() {
+        let mut r = Rng(0xD1B54A32D192ED03);
+        for _ in 0..3000 {
+            let (x, y, z) = (
+                book_of(&random_state(&mut r)),
+                book_of(&random_state(&mut r)),
+                book_of(&random_state(&mut r)),
+            );
+            let a = receive(&receive(&x, &y), &z);
+            let b = receive(&x, &receive(&y, &z));
+            let c = receive(&receive(&z, &y), &x);
+            assert_eq!(state_of(&a), state_of(&b), "Reihenfolge");
+            assert_eq!(state_of(&a), state_of(&c), "Richtung");
+            assert_eq!(state_of(&receive(&a, &a)), state_of(&a), "idempotent");
+            assert_eq!(
+                a.primary,
+                merge_state(&merge_state(&state_of(&x), &state_of(&y)), &state_of(&z)).primary,
+                "Register roh"
+            );
+        }
     }
 
     #[test]

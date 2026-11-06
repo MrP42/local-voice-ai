@@ -27,8 +27,7 @@ use crate::commands::pages::write_atomic;
 
 pub mod editions;
 pub use editions::{
-    Alignment, Edition, EditionTombstone, LanguagePair, ReadingPosition,
-    ReadingState, Stamp,
+    Alignment, Edition, EditionTombstone, LanguagePair, ReadingPosition, ReadingState, Stamp,
 };
 
 static LIBRARY_LOCK: Mutex<()> = Mutex::new(());
@@ -1170,6 +1169,11 @@ fn trash_in(root: &Path, ids: &[String]) -> Result<(), String> {
         .map(|l| l.lock().unwrap_or_else(|e| e.into_inner()))
         .collect();
     let _guard = lock();
+    trash_locked(root, ids)
+}
+
+/// Wie [`trash_in`], die Sperren hält der Aufrufer (Zusammenlegen).
+fn trash_locked(root: &Path, ids: &[String]) -> Result<(), String> {
     std::fs::create_dir_all(root.join(TRASH)).map_err(|e| e.to_string())?;
     let mut moved: Vec<(PathBuf, PathBuf)> = Vec::new();
     let undo = |moved: &[(PathBuf, PathBuf)]| {
@@ -1378,13 +1382,7 @@ pub fn library_set_reading(
     reading: ReadingState,
 ) -> Result<LibraryBook, String> {
     let root = library_root(&app)?;
-    editions::update_in(&root, &id, |b| {
-        if !b.editions.iter().any(|e| e.id == reading.edition) {
-            return Err("Sprachfassung nicht gefunden.".into());
-        }
-        b.reading = Some(reading);
-        Ok(())
-    })
+    editions::update_in(&root, &id, |b| editions::set_reading(b, reading))
 }
 
 /// Kapitelzuordnung zweier Fassungen setzen (ganze Gruppenliste).

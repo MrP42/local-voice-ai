@@ -70,7 +70,11 @@ export function validGroups(groups: AlignGroup[]): boolean {
 }
 
 /** „Alle bestätigen“ ist nur bei gleicher Kapitelzahl und reinen 1:1-Gruppen erlaubt. */
-export function canConfirmAll(groups: AlignGroup[], countA: number, countB: number): boolean {
+export function canConfirmAll(
+  groups: AlignGroup[],
+  countA: number,
+  countB: number,
+): boolean {
   return (
     countA === countB &&
     groups.length === countA &&
@@ -86,7 +90,9 @@ export function proposeGroups(countA: number, countB: number): AlignGroup[] {
   let nb = 0;
   for (let i = 0; i < countA; i++) {
     const end =
-      i === countA - 1 ? countB : Math.max(nb + 1, Math.round(((i + 1) * countB) / countA));
+      i === countA - 1
+        ? countB
+        : Math.max(nb + 1, Math.round(((i + 1) * countB) / countA));
     const room = countB - (countA - 1 - i); // je folgendem a-Kapitel mindestens ein b
     const last = Math.min(end, Math.max(nb + 1, room));
     if (nb >= countB) {
@@ -123,7 +129,12 @@ export function mapPosition(
       fraction,
     };
   };
-  if (!groups || !validGroups(groups) || !from.starts.length || !to.starts.length)
+  if (
+    !groups ||
+    !validGroups(groups) ||
+    !from.starts.length ||
+    !to.starts.length
+  )
     return approx();
   const ch = chapterOf(from, offset);
   const g = groups.find((x) => x.a.includes(ch));

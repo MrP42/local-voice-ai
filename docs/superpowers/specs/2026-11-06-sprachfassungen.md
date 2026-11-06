@@ -118,6 +118,18 @@ Empfangs ergibt denselben Stand.
   Buch-Zeitstempel. Das Buchcover ist das Cover der Hauptfassung; beim Wechsel tauschen
   `cover.*` und `covers/<editionId>.*`.
 - Zuordnungen gelten nur zwischen lebenden Fassungen.
+- Gespeichert wird immer das rohe Register; die wirksame Hauptfassung (Register, sonst älteste
+  lebende Fassung) wird nur gelesen, nie zurückgeschrieben. Die Migration setzt das Register
+  deterministisch (`ed_<buch>`, 0, ""). Jede Registerschreibung am Gerät ist echt jünger als der
+  bisherige Stand (`next_stamp`), auch für `reading` und Zuordnungen aus der Oberfläche.
+  Beleg: Test `gespeicherter_merge_konvergiert` (Merge, Übernehmen, Schreiben, Lesen in drei
+  Reihenfolgen).
+- Wechselt die Hauptfassung (am Gerät oder durch den Empfang), wandert das Cover mit:
+  `cover.*` gehört zur Hauptfassung, die übrigen liegen unter `covers/<fassung>.*`. Die flachen
+  Dateiverweise `files.text/audio/cover` gehören zur Hauptfassung des **Senders**; weicht die
+  Hauptfassung nach dem Merge ab, geht der Text an dessen Fassung, das Cover bleibt.
+- Alle Fassungen gelöscht/abgetrennt (gleichzeitig): das Buch bleibt leer, nichts wird aus der
+  Arbeitskopie neu migriert (Schema 2 mit Grabsteinen ist kein Altgerät).
 - Ein Altgerät ohne `editions` liefert nur eine Änderung der Arbeitskopie der Hauptfassung; sie
   wird als neue Version dieser Fassung eingespielt, alles andere bleibt lokal.
 - Ist der lokale Buchstand neuer und ungesichert, gewinnen die lokalen Metadaten, der Fassungsteil
