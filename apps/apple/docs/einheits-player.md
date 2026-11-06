@@ -64,6 +64,8 @@ Der erste Entwurf sah in allen Ansichten außer „Lesen“ die volle Leiste vor
 | Grün | 13,7 : 1 | 10,9 : 1 | 7,6 : 1 | 1,02 |
 | Schwarz | 11,0 : 1 | 8,6 : 1 | 9,1 : 1 | 6,40 |
 
+Buchdetail „Auf dem iPhone“: `VoicePalette.success` statt Systemgrün, hell 5,8 : 1 (vorher 2,1 : 1), dunkel 9,7 : 1.
+
 Alle Textkontraste liegen über 4,5 : 1. In den hellen Themen unterscheiden sich Wort- und Satzfläche kaum in der Helligkeit, nur in der Sättigung. Deshalb ist das Wort zusätzlich **unterstrichen** (Unterscheidung nicht nur über Farbe, kein Einfluss auf den Umbruch).
 
 ### Barrierefreiheit (Codex-Auflagen 06.11.)

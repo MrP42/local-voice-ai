@@ -302,7 +302,7 @@ struct LibraryBookDetail: View {
                         if !book.authors.isEmpty { Text(book.authors.joined(separator: ", ")).font(.body) }
                         if hasText { Text("Text: \(book.text?.sourceName ?? "vorhanden")").font(.footnote).foregroundStyle(VoicePalette.secondaryText) }
                         if hasAudio { Text("Hörbuch: \(LibraryFormat.clock(total)) · \(tracks.count) \(tracks.count == 1 ? "Teil" : "Teile")").font(.footnote).foregroundStyle(VoicePalette.secondaryText) }
-                        Label("Auf dem iPhone", systemImage: "checkmark").font(.footnote.weight(.semibold)).foregroundStyle(.green)
+                        Label("Auf dem iPhone", systemImage: "checkmark").font(.footnote.weight(.semibold)).foregroundStyle(VoicePalette.success)
                     }
                 }
                 // Ein Knopf für alles: Hören, Mitlesen und Lesen wählt man im Player.
