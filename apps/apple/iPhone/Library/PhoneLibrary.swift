@@ -135,7 +135,9 @@ final class PhoneLibrary: ObservableObject {
         guard let language = ref.language, kurzbuchReady(book, ref), let file = kurzbuchFile(book, ref),
               let markdown = try? String(contentsOf: file, encoding: .utf8),
               !markdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
-        let entry = LibraryBook(id: kurzbuchEntryId(book.id, ref, language), title: "\(book.title) · Kurzbuch", addedMs: book.addedMs)
+        var entry = LibraryBook(id: kurzbuchEntryId(book.id, ref, language), title: "\(book.title) · Kurzbuch", addedMs: book.addedMs)
+        // Sprache des Kurzbuchs: wählt die Vorlesestimme (lva#352).
+        entry.language = language
         // Eine echte Buch-Kennung könnte zufällig gleich aussehen: nie in deren Ordner schreiben.
         guard !isRealBookFolder(dir(entry)) else { return nil }
         try? FileManager.default.createDirectory(at: dir(entry), withIntermediateDirectories: true)
@@ -264,6 +266,17 @@ final class PhoneLibrary: ObservableObject {
     func record(_ key: String) -> ProgressRecord? {
         guard let raw = progress[Self.storageKey(key)] else { return nil }
         return try? JSONDecoder().decode(ProgressRecord.self, from: Data(raw.utf8))
+    }
+
+    // MARK: Stimme je Buchsprache (lva#352)
+
+    /// Roh-JSON eines `tts.voice.*`-Eintrags (liegt wie am Desktop in `fortschritt.json`).
+    func voicePrefRaw(_ key: String) -> String? { progress[key] }
+    var voicePrefKeys: [String] { progress.keys.filter { $0.hasPrefix(VoicePrefs.prefix) }.sorted() }
+    func setVoicePrefRaw(_ key: String, _ raw: String) {
+        guard key.hasPrefix(VoicePrefs.prefix), progress[key] != raw else { return }
+        progress[key] = raw
+        scheduleSave()
     }
 
     func textKey(_ book: LibraryBook) -> String { LibraryProgress.textKey(pageId: book.text?.pageId ?? book.id) }
