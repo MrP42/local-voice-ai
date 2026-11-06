@@ -287,7 +287,11 @@ impl HubClient {
         objects: &[PushObject],
     ) -> Result<Vec<PushResult>, HubError> {
         let res = self
-            .auth(http()?.post(format!("{}/api/v1/voice/sync/push", self.url)))
+            // Einzelne Objekte tragen bis ~4,2 MB (lange Transkripte).
+            .auth(
+                http_with(Duration::from_secs(120))?
+                    .post(format!("{}/api/v1/voice/sync/push", self.url)),
+            )
             .json(&serde_json::json!({ "device_id": device_id, "objects": objects }))
             .send()
             .await
