@@ -201,10 +201,112 @@ async fn send_logged(
         let _ = std::fs::write(dir.join(format!("lv-{kind}.body")), body);
         log::info!("Sync-Dump: {kind} nach {}", dir.display());
     }
+    if std::env::var_os("LV_SYNC_CURL").is_some() {
+        let resp = tauri::async_runtime::spawn_blocking(move || curl_send(&req))
+            .await
+            .map_err(|e| HubError::Other(e.to_string()))?
+            .map_err(|e| HubError::Other(format!("Hub nicht erreichbar: curl: {e}")))?;
+        return Ok(reqwest::Response::from(resp));
+    }
+    let mut req = req;
+    if std::env::var_os("LV_SYNC_HOSTFIRST").is_some() {
+        // Host als erste Kopfzeile wie bei curl (hyper hängt sie sonst ans Ende).
+        if let Some(host) = req.url().host_str() {
+            let host = match req.url().port() {
+                Some(p) => format!("{host}:{p}"),
+                None => host.to_string(),
+            };
+            let mut h = reqwest::header::HeaderMap::new();
+            if let Ok(v) = reqwest::header::HeaderValue::from_str(&host) {
+                h.insert(reqwest::header::HOST, v);
+            }
+            for (k, v) in req.headers() {
+                h.append(k.clone(), v.clone());
+            }
+            *req.headers_mut() = h;
+        }
+    }
     client
         .execute(req)
         .await
         .map_err(|e| HubError::Other(format!("Hub nicht erreichbar: {e}")))
+}
+
+/// Diagnose-Umweg: dieselbe Anfrage über curl.exe senden (Konfiguration über
+/// stdin, damit das Token nicht in der Prozessliste steht).
+fn curl_send(req: &reqwest::Request) -> Result<http::Response<Vec<u8>>, String> {
+    use std::io::Write;
+    fn q(s: &str) -> String {
+        format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+    }
+    let body = req.body().and_then(|b| b.as_bytes()).unwrap_or_default();
+    // Als TempPath (Handle zu, Datei bleibt bis zum Drop), damit curl sie öffnen kann.
+    let mut body_file = tempfile::NamedTempFile::new().map_err(|e| e.to_string())?;
+    body_file.write_all(body).map_err(|e| e.to_string())?;
+    body_file.flush().map_err(|e| e.to_string())?;
+    let body_file = body_file.into_temp_path();
+    let out_file = tempfile::NamedTempFile::new()
+        .map_err(|e| e.to_string())?
+        .into_temp_path();
+    let mut cfg = String::new();
+    cfg.push_str(&format!("url = {}\n", q(req.url().as_str())));
+    cfg.push_str(&format!("request = {}\n", q(req.method().as_str())));
+    cfg.push_str(&format!(
+        "data-binary = {}\n",
+        q(&format!("@{}", body_file.display()))
+    ));
+    for (k, v) in req.headers() {
+        cfg.push_str(&format!(
+            "header = {}\n",
+            q(&format!("{k}: {}", v.to_str().unwrap_or("")))
+        ));
+    }
+    cfg.push_str(&format!(
+        "user-agent = {}\n",
+        q(concat!("local-voice-ai/", env!("CARGO_PKG_VERSION")))
+    ));
+    cfg.push_str(&format!(
+        "output = {}\n",
+        q(&out_file.display().to_string())
+    ));
+    cfg.push_str("write-out = \"%{http_code}\"\nsilent\nshow-error\nmax-time = 180\n");
+    let mut cmd = std::process::Command::new(if cfg!(windows) { "curl.exe" } else { "curl" });
+    cmd.args(["-K", "-"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    let mut child = cmd.spawn().map_err(|e| e.to_string())?;
+    child
+        .stdin
+        .take()
+        .ok_or("kein stdin")?
+        .write_all(cfg.as_bytes())
+        .map_err(|e| e.to_string())?;
+    let out = child.wait_with_output().map_err(|e| e.to_string())?;
+    let code: u16 = String::from_utf8_lossy(&out.stdout)
+        .trim()
+        .parse()
+        .map_err(|_| {
+            format!(
+                "kein Status ({})",
+                String::from_utf8_lossy(&out.stderr).trim()
+            )
+        })?;
+    let bytes = std::fs::read(&out_file).unwrap_or_default();
+    log::info!(
+        "Sync über curl: {} {} → HTTP {code}",
+        req.method(),
+        req.url().path()
+    );
+    http::Response::builder()
+        .status(code)
+        .body(bytes)
+        .map_err(|e| e.to_string())
 }
 
 fn base(url: &str) -> String {

@@ -4014,6 +4014,7 @@ dependencies = [
  "hmac 0.12.1",
  "hoersync",
  "hound",
+ "http",
  "krilla",
  "log",
  "mail-builder",
