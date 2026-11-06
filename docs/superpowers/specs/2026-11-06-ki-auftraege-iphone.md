@@ -23,10 +23,20 @@ offen bleiben. Gemma auf dem iPhone bleibt zurückgestellt und käme nur als bew
 Hub-Sammlung des Relays, keine Hub-Änderung, eigene Objektarten mit eigenen Aufräumregeln. Die kurzen Fristen von
 `req_*`/`resp_*` erfassen Aufträge nicht.
 
-**Die Relay-Regeln R1–R13 (`2026-11-05-buch-gespraech.md` §11.7) gelten vollständig.** Abweichungen sind einzeln genannt,
-bisher nur: API-Nutzung erweitert R6 und braucht eine eigene Kostenfreigabe (§5). Zusätzlich:
+**Die Relay-Regeln R1–R13 (`2026-11-05-buch-gespraech.md` §11.7) gelten.** Ausdrückliche Ausnahmen für Aufträge:
 
-- Eigene Funktionsfreigaben je Gerät und Modell („Kurzbuch“, „Übersetzen“), getrennt vom Buch-Gespräch.
+| Regel | Buch-Gespräch | Aufträge |
+|---|---|---|
+| R6 Ausgabe | `max_tokens` ≤ 800 | Grenze je Schritt aus dem Angebot, im Budget enthalten |
+| R6 Rate | 1 läuft, 30/Stunde, 200/Tag | 1 Auftrag je Gerät läuft, höchstens 5 offen, 20 je Tag |
+| R6 Pfad | nur Abo | Abo; API nur mit Funktionsfreigabe und Kostenbestätigung (§5) |
+| R8 Anzeige | satzweise Prüfung im iPhone-Kern | Gilt nicht: Kurzbuch und Übersetzung sind eigene Dokumente, keine Antworten mit Belegen. Stattdessen Kennzeichnung (§7) und Begrenzung der Quellen (§6). Texte erscheinen erst nach Ablage und Prüfung von Hash und Größe am iPhone |
+| R11 Fristen | 90 s, Antwort binnen 75 s | Angebot 10 Min, Annahme 7 Tage ab Bestätigung; je Modellaufruf 10 Min, danach Prozess beenden |
+
+Zusätzlich:
+
+- Eigene Funktionsfreigaben je Gerät, Modell, Anbieter und Pfad (Abo oder API) für „Kurzbuch“ und „Übersetzen“, getrennt vom Buch-Gespräch.
+  Modellfreigabe und Kostenbestätigung müssen zusammen die Übertragung des im Angebot genannten Buchumfangs an genau diesen Empfänger erlauben.
 - `nur_lokal` gilt auf beiden Seiten: Ist es am iPhone oder am PC gesetzt, gibt es kein Cloud-Angebot.
 - Ausführung isoliert, ohne Werkzeuge, ohne Inhalte in Protokollen.
 - **Alle** Objektarten sind per HMAC authentifiziert, auch Abbrüche. Zustände tragen eine monotone Sequenz; ältere werden verworfen.
@@ -43,6 +53,16 @@ bisher nur: API-Nutzung erweitert R6 und braucht eine eigene Kostenfreigabe (§5
 
 Der PC liest offene `job_*` beim Start und bei jedem Abgleich. Der Buchtext reist nicht im Auftrag.
 
+**Löschfristen** (Zeit nach dem genannten Ereignis; löscht der PC, das iPhone räumt eigene Reste beim Start ab):
+
+| Objekt | Frist |
+|---|---|
+| `jobquote_*`, `joboffer_*` | 1 Tag nach Ablauf des Angebots |
+| `job_*` | 30 Tage nach Endzustand |
+| `jobstate_*` | 30 Tage nach Endzustand |
+| `jobcancel_*` | mit dem Auftrag |
+| Duplikatsperren, Abbruchmarken (lokal am PC) | Annahmefrist plus 7 Tage, mindestens 30 Tage nach Endzustand |
+
 ## 4 · Angebot, Auftrag, Zustände
 
 **Bindung:** Der Auftrag authentifiziert iPhone und PC, Funktion, Quellfassung mit Inhaltshash, Lesegrenze, Parameter,
@@ -58,7 +78,9 @@ Daneben `Bestätigung nötig`, `fehlgeschlagen`, `abgebrochen`, `abgelaufen`. `f
 Übernahme und Ergebnisablage sind dauerhaft und atomar. Nach unklarem Ausgang beim Anbieter gibt es keine automatische
 kostenpflichtige Wiederholung, sondern `Bestätigung nötig`.
 
-**Wiederanlauf:** Persistente Checkpoints je Schritt. App- oder PC-Neustart setzt dort fort.
+**Wiederanlauf:** Vor jedem Anbieteraufruf wird dauerhaft ein Checkpoint `aufruf_begonnen` geschrieben, danach `aufruf_beendet` samt Ergebnis und Verbrauch.
+App- oder PC-Neustart setzt am letzten beendeten Schritt fort. Findet der Neustart `aufruf_begonnen` ohne Abschluss, ist der Ausgang unklar: Der Auftrag geht in
+`Bestätigung nötig` und wiederholt den Aufruf nie ohne neue Bestätigung; der mögliche Verbrauch zählt als angefallen.
 
 **Mehrere PCs:** Nur der im Angebot genannte PC nimmt an.
 
@@ -71,13 +93,17 @@ Kosten. Späte Ergebnisse werden nicht veröffentlicht.
 
 - Tatsächlicher Empfänger, Modell, Textumfang, Region soweit bekannt. Speicherung und Trainingsnutzung werden als unbekannt genannt, wenn sie es sind.
 - Getrennt: Geld, Token, Abo-Kontingent. „Unbekannt“ ist kein Nullpreis.
+- Ist die Geldschätzung bei einem kostenpflichtigen Pfad unbekannt, verlangt das Blatt ein numerisches Budget; ohne Budget ist der Start gesperrt.
+- Der Verbrauch wird dauerhaft über alle Schritte und Neustarts aufsummiert.
 - Budget: 125 % der Geldschätzung sind eine ausdrücklich bestätigte Obergrenze. Der PC prüft sie vor jedem Schritt einschließlich der maximalen
   Ausgabe; bei Überschreitung pausiert der Auftrag in `Bestätigung nötig`.
 - Kein Start, solange das Angebot fehlt oder abgelaufen ist.
 
 ## 6 · Lesegrenze
 
-`read_limit` ist ein eindeutiger Unicode-Offset, gebunden an die unveränderliche Quellfassung (Inhaltshash).
+`read_limit` ist ein Offset in UTF-16-Einheiten wie im Reader und im Fortschritt (`offset`), gebunden an die unveränderliche Quellfassung (Inhaltshash).
+
+Ungültige Grenze: negativ, größer als die Textlänge, mitten in einem Surrogatpaar oder Quellhash passt nicht → der PC lehnt den Auftrag ab (`fehlgeschlagen`, Grund `ungültige_lesegrenze`), ohne einen Modellaufruf. Keine stille Korrektur.
 
 - Die Quellen werden **vor jeder Verarbeitung** begrenzt, Zwischenfassungen entstehen erst danach. Fertige Zusammenfassungen nachträglich abzuschneiden entfernt Spoiler nicht.
 - Die Grenze gehört in den Cache-Schlüssel. Auch Kapitelüberschriften jenseits der Grenze fließen nicht ein.
@@ -111,10 +137,27 @@ Ausgangsfassung. Hörbuch-Fassungen sind nicht Teil dieses Auftrags. Abhängigke
 | B1 | PC: Übersetzen als Auftrag, Ergebnis als Fassung; nach #348 |
 | B2 | iPhone: Übersetzen, Zielsprache, Fassung wählen; nach PR 3 von #344 |
 
-## 10 · Abnahmetests
+## 10 · Abnahmetests (verbindlich)
 
-Bereinigungsfristen, Replay, Widerruf während eines Laufs, doppelte Zustellung, Absturz zwischen Anbieterantwort und Speicherung, Budgetüberschreitung,
-Abbruchrennen, Spoilerfälle im Cache und in Kapitelüberschriften.
+| Fall | Erwartet |
+|---|---|
+| Bereinigung | Nach den Fristen aus §3 sind die Objekte weg, Sperren erst nach ihrer Frist; laufende Aufträge bleiben unberührt |
+| Replay eines `job_*` | Keine zweite Ausführung, kein Modellaufruf, Zustand unverändert |
+| Falscher HMAC oder fremdes Gerät, auch bei `jobcancel_*` | Verworfen, kein Zustandswechsel |
+| Veralteter `jobstate_*` (kleinere Sequenz) | iPhone behält den neueren Stand |
+| Widerruf während `läuft` | Vor dem nächsten Aufruf `abgebrochen`, kein weiterer Modellaufruf, spätes Ergebnis unveröffentlicht |
+| Doppelte Zustellung desselben Auftrags | Eine Übernahme, ein Ergebnis |
+| Absturz zwischen Anbieterantwort und Speicherung | Neustart findet `aufruf_begonnen`, Zustand `Bestätigung nötig`, kein automatischer Aufruf, Verbrauch gezählt |
+| Budget überschritten, auch nur durch maximale Ausgabe des nächsten Schritts | Pause in `Bestätigung nötig` vor dem Aufruf |
+| Kostenpflichtiger Pfad ohne Schätzung und ohne Budget | Start gesperrt |
+| Abbruch gleichzeitig mit `fertig` | Genau ein Endzustand; bei Abbruch zuerst keine Veröffentlichung |
+| Angebot abgelaufen, Parameter geändert, anderes Modell | Abgelehnt, neue Bestätigung nötig |
+| PC aus | `wartend`, abbrechbar, nach 7 Tagen `abgelaufen`, nach PC-Start ohne Doppelung fortgesetzt |
+| Ergebnis-Ablage scheitert | `Ergebnisabgleich ausstehend`, kein `fertig` am iPhone |
+| Grenze im Kapitel, Text und Überschrift dahinter im Prompt | Kein Inhalt hinter der Grenze in Prompt, Zwischenfassung oder Cache |
+| Gleicher Cache mit anderer Grenze | Eigener Eintrag, keine Wiederverwendung |
+| Ungültige Grenze nach §6 | `fehlgeschlagen`, kein Modellaufruf |
+| Neue Fassung beim Übersetzen scheitert mittendrin | Keine halbe Fassung sichtbar |
 
 ## 11 · Entscheidungen von Codex (06.11.2026)
 
