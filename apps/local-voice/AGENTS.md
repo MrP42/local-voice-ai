@@ -134,6 +134,14 @@ merges the `darwin-*` entries into the release's `latest.json`. The Apple
 (iOS/watchOS) validation formerly in `apple.yml` is
 `apps/apple/scripts/validate_local.sh`.
 
+**Windows-only release (0.24.0, decided 06.11.2026).** A release may ship
+without the Mac step. Then `latest.json` has **no** `darwin-*` entries — never
+copy old Mac artifacts or entries into it under the new version. Installed Mac
+apps (currently 0.21.2) find no update for their platform and stay on their
+version until the next release with Mac artifacts (planned: 0.24.1). This
+version drift between Windows and Mac is accepted and must be noted in the
+release text.
+
 **Beta channel / self-hosted update source (wai-sdk ADR-0020).** By default the app updates
 from the GitHub releases above. For a self-hosted server with a `nacht` channel, set
 `LVA_UPDATE_BASE` (HTTPS), `LVA_UPDATE_CHANNEL` (`stable`|`nacht`) and optionally
