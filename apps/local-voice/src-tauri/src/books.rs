@@ -109,9 +109,13 @@ fn books_root(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 fn checked_book_id(id: &str) -> Result<&str, String> {
-    let ok = id
-        .strip_prefix("book_")
-        .is_some_and(|rest| !rest.is_empty() && rest.chars().all(|c| c.is_ascii_alphanumeric()));
+    let ok = id.strip_prefix("book_").is_some_and(|rest| {
+        // iPhone vergibt `book_<ms>_<6 hex>`: Unterstrich zulassen, sonst
+        // erreicht kein iPhone-Buch PC oder Mac. Bleibt ein sicherer Ordnername.
+        !rest.is_empty()
+            && rest.len() <= 64
+            && rest.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    });
     if ok {
         Ok(id)
     } else {

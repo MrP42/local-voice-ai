@@ -556,6 +556,11 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
     }
 
     // ---- Pull -----------------------------------------------------------
+    if led.rescan < ledger::RESCAN_LEVEL {
+        // Einmal alles neu einlesen: früher übersprungene Objekte kommen so an.
+        led.cursor = 0;
+        led.rescan = ledger::RESCAN_LEVEL;
+    }
     let mut since = led.cursor;
     let mut key_mismatch = false;
     let mut reset_done = false;
