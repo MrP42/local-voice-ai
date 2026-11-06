@@ -342,6 +342,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
     /// Sprache wechseln: gleiche Stelle (kapitelgenau, sonst ungefähr), Hinweis mit „Rückgängig“. Fortschritt und Auswahl
     /// gehen beim nächsten Abgleich zum PC.
     func switchLanguage(to editionId: String) {
+        pendingSwitch = nil  // eine eigene Wahl des Nutzers gilt vor dem Wechsel nach dem Laden
         guard let current = book, let mode, let raw = library.rawBook(current.id) else { return }
         let editions = BookEditions(book: raw)
         guard let target = editions.edition(editionId), let fromId = current.editionId ?? editions.readingEdition?.id, fromId != editionId else { return }
@@ -360,8 +361,8 @@ final class LibraryPlayback: NSObject, ObservableObject {
             offset = paragraphs.indices.contains(paragraphIndex) ? Double(chars(of: Cursor(paragraph: paragraphIndex, sentence: sentenceIndex))) : 0
             length = Double(text.utf16.count)
         }
-        let fromChapters = fromMedium == .audio ? EditionSwitch.audioChapters(current.audio) : EditionSwitch.textChapters(text)
-        let toChapters = toMedium == .audio ? EditionSwitch.audioChapters(view.audio) : EditionSwitch.textChapters(library.text(view) ?? "")
+        let fromChapters = fromMedium == .audio ? library.audioChapterList(current) : EditionSwitch.textChapters(text)
+        let toChapters = toMedium == .audio ? library.audioChapterList(view) : EditionSwitch.textChapters(library.text(view) ?? "")
         let toKey = toMedium == .audio ? library.audioKey(view) : library.textKey(view)
         let plan = EditionSwitch.plan(editions: editions, from: fromId, to: editionId, fromMedium: fromMedium, toMedium: toMedium,
                                       fromChapters: fromChapters, toChapters: toChapters, toKey: toKey, offset: offset, length: length)
@@ -374,10 +375,38 @@ final class LibraryPlayback: NSObject, ObservableObject {
             return
         }
         reopen(library.view(changed, editionId: editionId), medium: toMedium, autoplay: wasPlaying)
-        guard book?.id == raw.id else { return }
+        guard book?.id == raw.id, book?.editionId == editionId else {
+            // Öffnen gescheitert: Wechsel zurückrollen und die Quelle wieder öffnen, statt einen leeren Player zu lassen.
+            if let restored = library.undoSwitch(undo) {
+                reopen(library.view(restored, editionId: fromId), medium: fromMedium, autoplay: wasPlaying)
+            }
+            error = "Der Sprachwechsel war nicht möglich. Es bleibt bei der bisherigen Sprache."
+            return
+        }
         showNotice(LanguageNotice(text: plan.notice(languageName: target.languageName), undo: undo))
         Task { await LibrarySync.shared.run() }
     }
+
+    private struct PendingSwitch { let bookId: String; let edition: String; let from: String? }
+    private var pendingSwitch: PendingSwitch?
+
+    /// Fehlt das Hörbuch der Zielsprache: laden, bis dahin läuft die bisherige Sprache weiter. Nach dem Laden wird
+    /// gewechselt, sofern der Nutzer inzwischen nicht selbst gewechselt oder das Buch gewechselt hat.
+    func downloadThenSwitch(_ view: LibraryBook) {
+        guard let current = book, current.id == view.id, let target = view.editionId, target != current.editionId else { return }
+        let pending = PendingSwitch(bookId: view.id, edition: target, from: current.editionId)
+        pendingSwitch = pending
+        Task { [weak self] in
+            let loaded = await LibrarySync.shared.downloadAudio(view)
+            guard let self, let still = self.pendingSwitch, still.bookId == pending.bookId, still.edition == pending.edition else { return }
+            self.pendingSwitch = nil
+            guard loaded, let now = self.book, now.id == pending.bookId, now.editionId == pending.from else { return }
+            self.switchLanguage(to: pending.edition)
+        }
+    }
+
+    /// VoiceOver steht auf dem Hinweis: der Zehn-Sekunden-Takt hält an.
+    var noticeHeld = false
 
     /// „Rückgängig“ im Hinweis: Fassung und Stelle wie vor dem Wechsel.
     func undoLanguageSwitch() {
@@ -401,9 +430,14 @@ final class LibraryPlayback: NSObject, ObservableObject {
         noticeTask?.cancel()
         languageNotice = notice
         UIAccessibility.post(notification: .announcement, argument: notice.text + " Rückgängig möglich.")
+        noticeHeld = false
         noticeTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 10_000_000_000)
-            guard !Task.isCancelled else { return }
+            var remaining = 10
+            while remaining > 0 {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                guard !Task.isCancelled else { return }
+                if self?.noticeHeld != true { remaining -= 1 }
+            }
             self?.languageNotice = nil
         }
     }

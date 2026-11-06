@@ -70,8 +70,10 @@ final class PhoneLibrary: ObservableObject {
     /// Text des Buchs bzw. der Sicht: `text.txt` gehört der Hauptfassung, jede weitere Fassung hat ihren Text unter
     /// `editions/<fassung>/text.txt` (Sprachfassungen lva#344). Nur Sichten (`editionId`) lesen die Fassungen.
     func textURL(_ book: LibraryBook) -> URL {
-        if let id = book.editionId, Self.isSafeEditionId(id), id != flatEditionId(book) {
-            return editionTextURL(book, id)
+        if let id = book.editionId {
+            // Unsichere Kennung: kein Text, nie der flache Text einer anderen Fassung (Pfad, den es nicht gibt).
+            guard Self.isSafeEditionId(id) else { return dir(book).appendingPathComponent("editions/.ungueltig/text.txt") }
+            if id != flatEditionId(book) { return editionTextURL(book, id) }
         }
         return dir(book).appendingPathComponent("text.txt")
     }
@@ -224,6 +226,58 @@ final class PhoneLibrary: ObservableObject {
         var m = meta(book)
         m.localAudio = (m.localAudio ?? [:]).merging([file: blob]) { $1 }
         setMeta(book, m)
+    }
+
+    /// Vermerke geladener Teile löschen (Teile wurden entfernt).
+    func forgetLocalAudio(bookId: String, files: [String]) {
+        guard let book = books.first(where: { $0.id == bookId }) else { return }
+        var m = meta(book)
+        guard var known = m.localAudio, files.contains(where: { known[$0] != nil }) else { return }
+        for f in files { known[f] = nil }
+        m.localAudio = known
+        setMeta(book, m)
+    }
+
+    /// Kapitelliste des Hörbuchs einer Sicht; fehlende Teildauern kommen aus dem Cache der Hörbuchangaben.
+    func audioChapterList(_ view: LibraryBook) -> ChapterList {
+        let info = cachedAudiobookInfo(view)
+        let fallback = info?.chaptersFromFile == false ? (info?.chapters.map(\.durationMs) ?? []) : []
+        return EditionSwitch.audioChapters(view.audio, fallbackDurations: fallback)
+    }
+
+    /// Sicht auf die Fassung, zu der die flachen Dateien (`files.audio`) gehören; das Buch selbst ohne Fassungen.
+    func flatView(_ book: LibraryBook) -> LibraryBook {
+        guard book.editionId == nil, (book.editions?.arrayValue?.count ?? 0) > 1, let flat = flatEditionId(book),
+              flat != BookEditions(book: book).primaryId else { return book }
+        return view(book, editionId: flat)
+    }
+
+    /// Nur die flachen Hörbuchteile (Hauptfassung des Senders) samt `.part` und Staging entfernen; das Hörbuch weiterer
+    /// Fassungen und lokale Importe bleiben. Liefert den frei gewordenen Platz.
+    func removeFlatAudio(_ book: LibraryBook) -> Int {
+        let flat = flatView(book)
+        let fm = FileManager.default
+        let m = meta(book)
+        var names = Set(audioParts(m.files.audio).map(\.file))
+        for (i, t) in (flat.audio?.allTracks ?? []).enumerated() { names.insert(LibrarySync.audioFileName(t.file, index: i)) }
+        var freed = 0
+        for name in names {
+            for url in [audioDir(book).appendingPathComponent(name), audioDir(book).appendingPathComponent(name).appendingPathExtension("part")] {
+                freed += LibrarySync.fileSize(url) ?? 0
+                try? fm.removeItem(at: url)
+            }
+        }
+        try? fm.removeItem(at: audioDir(book).appendingPathComponent(AudioDownload.stagingFolder))
+        forgetLocalAudio(bookId: book.id, files: Array(names))
+        // Leere Hülle entfernen, damit „nichts lokal“ gilt.
+        if ((try? fm.contentsOfDirectory(atPath: audioDir(book).path)) ?? ["x"]).isEmpty { try? fm.removeItem(at: audioDir(book)) }
+        return freed
+    }
+
+    /// Fortschritt beim Empfang heben (§5.2): die Stelle der gewonnenen Auswahl, wenn der Datensatz älter ist.
+    func liftProgress(_ lift: (position: ReadingPositionRef, updated: Double)) {
+        guard let rec = LibraryProgress.lifting(record(lift.position.key), to: lift.position, updated: lift.updated) else { return }
+        put(lift.position.key, rec)
     }
 
     /// Dateien entfernen, die das Konto inzwischen ersetzt hat, damit sie neu geladen werden.
@@ -447,6 +501,7 @@ final class PhoneLibrary: ObservableObject {
         try write(book)
         var merged = meta
         merged.flatEdition = flat
+        merged.sentEditions = self.meta(book).sentEditions
         merged.localAudio = self.meta(book).localAudio  // Lokale Angabe, kommt nicht aus dem Konto.
         setMeta(book, merged)
     }

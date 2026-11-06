@@ -231,45 +231,40 @@ final class LibrarySync: ObservableObject {
                 // Eigener Stand ist neuer und wird beim Senden übertragen. War es nur ein Stern, gilt sonst das Konto.
                 if let favorite = localMeta.pendingFavorite,
                    SyncLedger.onlyFavoriteChanged(pendingFields: localMeta.pendingFields, localFields: try SyncLedger.fieldsHash(local, files: localMeta.files)) {
-                    let book = SyncLedger.mergingPendingFavorite(favorite, into: synced.book, local: local)
-                    let fields = try SyncLedger.fieldsHash(book, files: synced.files)
-                    try library.storeRemote(book, meta: .init(files: synced.files, updated: localMeta.updated, pendingFavorite: favorite, pendingFields: fields))
+                    var book = SyncLedger.mergingPendingFavorite(favorite, into: synced.book, local: local)
+                    var files = synced.files
+                    _ = keepLocalEditions(&book, files: &files, synced: synced, local: local, localMeta: localMeta)
+                    let fields = try SyncLedger.fieldsHash(book, files: files)
+                    try library.storeRemote(book, meta: .init(files: files, updated: localMeta.updated, pendingFavorite: favorite, pendingFields: fields))
+                    if let lift = BookEditions.liftedReading(local: local, incoming: book) { library.liftProgress(lift) }
                 } else if localMeta.files.kurzbuecher != synced.files.kurzbuecher {
                     // Kurzbücher entstehen nur am PC: Sie gelten immer und gehen mit dem eigenen Stand zurück.
                     library.updateFiles(local) { $0.kurzbuecher = synced.files.kurzbuecher }
                 }
             } else {
                 var book = synced.book
+                var files = synced.files
                 // Lokale Fassungen, die das Konto nicht kennt, nicht verlieren.
                 if book.text == nil, let t = local?.text { book.text = t }
                 // Sprachwechsel dieses iPhones, den der PC noch nicht kennt (lva#344), nicht überschreiben.
                 var keptReading = false
-                var keptLegacyEditions = false
-                if let local {
-                    // Altgerät ohne Fassungen: die hiesigen bleiben (der Kern führt sie ebenso zusammen).
-                    let withEditions = book.keepingEditions(from: local)
-                    let keptEditions = withEditions.editions != book.editions
-                    book = withEditions
+                var legacyKept = false
+                if let local, let localMeta {
+                    // Altgerät ohne Fassungen: die hiesigen samt Dateiverweisen bleiben (der Kern führt sie ebenso zusammen).
+                    legacyKept = keepLocalEditions(&book, files: &files, synced: synced, local: local, localMeta: localMeta)
                     let kept = book.keepingNewerReading(from: local)
-                    keptLegacyEditions = keptEditions
-                    keptReading = keptEditions || kept.reading != book.reading
+                    keptReading = legacyKept || kept.reading != book.reading
                     book = kept
                 }
-                // Altgerät: seine flachen Dateien gehören der hiesigen Hauptfassung, die Verweise der übrigen bleiben.
-                var files = synced.files
-                if let local, let localMeta, keptLegacyEditions {
-                    files = localMeta.files.receivingLegacy(synced.files, localFlat: library.flatEditionId(local, meta: localMeta),
-                                                            senderFlat: BookEditions.senderPrimary(local: local, incoming: synced.book),
-                                                            live: Set(BookEditions(book: book).editions.map(\.id)))
-                }
                 try library.storeRemote(book, meta: .init(files: files, updated: synced.updated))
-                // Der Stand weicht vom Konto ab: neu senden, also weder den Hash angleichen noch den Stand lassen.
-                // Gleicher Stand wie der zuletzt gesendete (Echo eines Altgeräts ohne Fassungsfelder): nicht erneut
-                // senden, sonst schaukelt sich der Abgleich auf. Der PC führt seine Fassungen selbst zusammen.
-                let echo = localMeta.map { $0.updated == synced.updated } ?? false
-                if keptReading, !echo { library.touch(book) }
-                if !keptReading, book.text == synced.book.text {
-                    hash = LibrarySyncFormat.canonicalHash(try SyncedBook(book: book, files: synced.files, updated: synced.updated).json())
+                if let lift = BookEditions.liftedReading(local: local, incoming: book) { library.liftProgress(lift) }
+                // Der Stand weicht vom Konto ab: neu senden. Ausnahme: Echo eines Altgeräts ohne Fassungsfelder, dessen
+                // Fassungsdaten der zuletzt gesendete Stand schon enthielt (sonst schaukelt sich der Abgleich auf).
+                // Dann gilt der lokale Stand als abgeglichen; der PC führt seine Fassungen selbst zusammen.
+                let resend = keptReading && (!legacyKept || BookEditions.needsResend(local: book, files: files, sentFingerprint: localMeta?.sentEditions, incoming: synced.book))
+                if resend { library.touch(book) }
+                if !resend, book.text == synced.book.text {
+                    hash = LibrarySyncFormat.canonicalHash(try SyncedBook(book: book, files: files, updated: synced.updated).json())
                 }
             }
         case LibrarySyncFormat.collectionProgress:
@@ -290,6 +285,18 @@ final class LibrarySync: ObservableObject {
         default: break
         }
         ledger[remote.collection, remote.objectId] = .init(revision: remote.revision, hash: hash, deleted: false)
+    }
+
+    /// Eingehendes Buch von einem Altgerät (Schema < 2, ohne Fassungen) trifft auf lokale Fassungen: Fassungen, Register
+    /// und Zuordnungen bleiben, die flachen Dateien gehören der hiesigen Hauptfassung, die übrigen Verweise bleiben.
+    private func keepLocalEditions(_ book: inout LibraryBook, files: inout BookFiles, synced: SyncedBook, local: LibraryBook, localMeta: PhoneLibrary.SyncMeta) -> Bool {
+        let withEditions = book.keepingEditions(from: local)
+        guard withEditions.editions != book.editions else { return false }
+        book = withEditions
+        files = localMeta.files.receivingLegacy(synced.files, localFlat: library.flatEditionId(local, meta: localMeta),
+                                                senderFlat: BookEditions.senderPrimary(local: local, incoming: synced.book),
+                                                live: Set(BookEditions(book: book).editions.map(\.id)))
+        return true
     }
 
     private func pushBooks(_ acc: Account) async throws {
@@ -336,6 +343,7 @@ final class LibrarySync: ObservableObject {
         }
 
         var objects: [(HubPushObject, String)] = []
+        var fingerprints: [String: String] = [:]
         for book in library.books {
             var meta = library.meta(book)
             // Eigene Dateien zuerst hochladen (Reihenfolge laut Spezifikation).
@@ -370,10 +378,16 @@ final class LibrarySync: ObservableObject {
             let entry = ledger[LibrarySyncFormat.collectionBook, book.id]
             if entry?.hash == hash || ledger.dead[SyncLedger.key(LibrarySyncFormat.collectionBook, book.id)] == hash { continue }
             if value.count > LibrarySyncFormat.maxPlaintext { markDead(LibrarySyncFormat.collectionBook, book.id, hash, "„\(book.title)“ ist zu groß für den Abgleich."); continue }
+            fingerprints[book.id] = current.editionFingerprint(files: meta.files)
             objects.append((try sealObject(LibrarySyncFormat.collectionBook, book.id, value, base: entry?.revision ?? 0, acc), hash))
         }
         try await push(objects, acc)
         for (object, hash) in objects {
+            // Angenommen: Die Fassungsdaten dieses Stands gelten als gesendet (Echo-Erkennung beim Empfang).
+            if ledger[object.collection, object.objectId]?.hash == hash, let fp = fingerprints[object.objectId],
+               let sent = library.books.first(where: { $0.id == object.objectId }) {
+                var m = library.meta(sent); m.sentEditions = fp; library.setMeta(sent, m)
+            }
             guard let book = library.books.first(where: { $0.id == object.objectId }), let local = try? localHash(book),
                   SyncLedger.clearsPendingFavorite(accepted: ledger[object.collection, object.objectId]?.hash, sent: hash, local: local) else { continue }
             library.clearPendingFavorite(bookId: book.id)
@@ -590,10 +604,11 @@ final class LibrarySync: ObservableObject {
         guard account != nil else { error = SyncError.notLoggedIn.localizedDescription; return false }
         guard !library.accountAudio(book).isEmpty, !library.hasAudio(book) else { return library.hasAudio(book) }
         let downloads = AudioDownloads.shared
-        downloads.start(book)
+        // Läuft gerade das Hörbuch einer anderen Sprache, lehnt start() ab und meldet es; nicht warten und Erfolg melden.
+        guard downloads.start(book) else { return false }
         // Hält „Nur im WLAN“ das Laden an, nicht stundenlang warten: der Zustand steht auf der Buchseite.
         if downloads.waitsForWifi(book.id) { error = SyncError.offlineRule.localizedDescription; return false }
-        return await downloads.waitUntilDone(book.id)
+        return await downloads.waitUntilDone(book)
     }
 
     /// Ein Blob ist im Konto vollständig (z. B. gerade vollständig von dort geladen).
@@ -609,7 +624,7 @@ final class LibrarySync: ObservableObject {
     /// Darf das Hörbuch vom iPhone? Ohne Netz, nur aus dem bekannten Stand.
     func offloadVerdict(_ book: LibraryBook, confirmed: Set<String>? = nil) -> AudioOffload.Verdict {
         AudioOffload.verdict(loggedIn: account != nil, synced: isSynced(book), downloading: AudioDownloads.shared.isActive(book.id),
-                             localSizes: library.localAudioSizes(book), hasLeftovers: AudioOffload.hasLeftovers(in: library.dir(book)),
+                             localSizes: library.localAudioSizes(library.flatView(book)), hasLeftovers: AudioOffload.hasLeftovers(in: library.dir(book)),
                              account: accountFiles(book), confirmed: confirmed ?? ledger.uploaded)
     }
 
@@ -652,15 +667,10 @@ final class LibrarySync: ObservableObject {
         let playback = LibraryPlayback.shared
         if playback.book?.id == book.id { playback.stop() }
         AudioDownloads.shared.discard(book.id)  // pausierte oder fehlgeschlagene Ladevorgänge
-        do {
-            let freed = try AudioOffload.remove(bookDir: library.dir(book))
-            library.reload()
-            return (.allowed, freed)
-        } catch {
-            self.error = "Entfernen fehlgeschlagen: \(error.localizedDescription)"
-            library.reload()
-            return (verdict, 0)
-        }
+        // Nur die geprüften (flachen) Teile; Hörbuch weiterer Fassungen und Importe bleiben.
+        let freed = library.removeFlatAudio(book)
+        library.reload()
+        return (.allowed, freed)
     }
 
     /// Dateiname eines Hörbuchteils auf dem iPhone: nur ein Name, nie ein Pfad.

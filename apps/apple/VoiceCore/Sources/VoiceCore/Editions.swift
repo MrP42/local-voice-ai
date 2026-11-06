@@ -365,6 +365,57 @@ extension LibraryBook {
     }
 }
 
+extension BookEditions {
+    /// Eingehendes Buch ist von einem Altgerät (Schema < 2, ohne Fassungen).
+    public static func isLegacy(_ incoming: LibraryBook) -> Bool { (incoming.schema ?? 1) < 2 && incoming.editions == nil }
+
+    /// Hat die Auswahl (`reading`) des Empfangs gewonnen, und hat sie eine Stelle, dann (Stelle, Stand), auf die der
+    /// Fortschritt der Fassung zu heben ist (§5.2, `merge_incoming`). `nil`, wenn sich die Auswahl nicht geändert hat.
+    public static func liftedReading(local: LibraryBook?, incoming: LibraryBook) -> (position: ReadingPositionRef, updated: Double)? {
+        guard let now = BookEditions(book: incoming).reading, let position = now.position else { return nil }
+        if let local, BookEditions(book: local).reading == now { return nil }
+        return (position, now.updated)
+    }
+}
+
+extension LibraryProgress {
+    /// Fortschritt beim Empfang heben (`lift_progress` im Kern): Datensatz auf die Stelle setzen, wenn er älter als
+    /// die gewonnene Auswahl ist. Bereiche, „fertig“ und alles Übrige bleiben. `nil`: nichts zu tun.
+    public static func lifting(_ record: ProgressRecord?, to position: ReadingPositionRef, updated: Double) -> ProgressRecord? {
+        var rec = record ?? ProgressRecord(offset: 0, length: 0, updated: 0)
+        guard rec.updated < updated else { return nil }
+        rec.offset = position.offset
+        rec.updated = updated
+        if position.unit == "ms" { rec.unit = .ms }
+        return rec
+    }
+}
+
+#if canImport(CryptoKit)
+extension LibraryBook {
+    /// Fingerabdruck der Fassungsdaten (Fassungen, Register, Zuordnungen, Grabsteine, Dateiverweise je Fassung).
+    public func editionFingerprint(files: BookFiles) -> String {
+        struct Parts: Encodable {
+            var schema: Int?; var primary, editions, tombstones, reading, alignments, files: PassthroughJSON?
+        }
+        let parts = Parts(schema: schema, primary: primary, editions: editions, tombstones: editionTombstones,
+                          reading: reading, alignments: alignments, files: files.editions)
+        let enc = JSONEncoder(); enc.outputFormatting = [.sortedKeys]
+        return LibrarySyncFormat.canonicalHash((try? enc.encode(parts)) ?? Data())
+    }
+}
+
+extension BookEditions {
+    /// Muss das Buch nach dem Empfang erneut gesendet werden? Nur ein Echo eines Altgeräts ohne Fassungsfelder
+    /// (`incoming`) ist ausgenommen, und nur wenn der zuletzt erfolgreich gesendete Stand (`sentFingerprint`) genau
+    /// die heutigen Fassungsdaten schon enthielt. Ist `reading`, `primary` oder eine Zuordnung neuer, gilt der Fingerabdruck nicht.
+    public static func needsResend(local: LibraryBook, files: BookFiles, sentFingerprint: String?, incoming: LibraryBook) -> Bool {
+        guard isLegacy(incoming), let sent = sentFingerprint else { return true }
+        return sent != local.editionFingerprint(files: files)
+    }
+}
+#endif
+
 #if canImport(CryptoKit)
 // MARK: - Dateien je Fassung (`files.editions[<fassung>]`)
 
@@ -416,7 +467,10 @@ extension BookFiles {
             if out.text == nil { out.text = known.text }
             if out.cover == nil { out.cover = known.cover }
             if out.audio.isEmpty { out.audio = known.audio }
-            entries[sf] = nil
+            if var rest = entries[sf]?.objectValue {
+                for field in ["text", "cover", "audio"] { rest[field] = nil }
+                entries[sf] = rest.isEmpty ? nil : .object(rest)
+            }
         }
         if let live { entries = entries.filter { live.contains($0.key) } }
         out.editions = entries.isEmpty ? nil : .object(entries)

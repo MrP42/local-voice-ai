@@ -114,7 +114,7 @@ struct LanguageSourceSheet: View {
             switch act {
             case .current: dismiss()
             case .switchTo: playback.switchLanguage(to: edition.id); dismiss()
-            case .download: downloads.start(view)
+            case .download: playback.downloadThenSwitch(view)
             case .unavailable: break
             }
         } label: {
@@ -256,6 +256,7 @@ struct LanguageBadges: View {
 /// Hinweis nach dem Sprachwechsel mit „Rückgängig“ (zehn Sekunden), sf-10 unten.
 struct LanguageNoticeBar: View {
     @ObservedObject var playback = LibraryPlayback.shared
+    @AccessibilityFocusState private var focused: Bool
 
     var body: some View {
         if let notice = playback.languageNotice {
@@ -264,6 +265,8 @@ struct LanguageNoticeBar: View {
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 8)
                 Button("Rückgängig") { withAnimation { playback.undoLanguageSwitch() } }
+                    .accessibilityFocused($focused)
+                    .onChange(of: focused) { _, held in playback.noticeHeld = held }
                     .font(.subheadline.weight(.bold)).foregroundStyle(VoicePalette.brand)
                     .frame(minWidth: 44, minHeight: 44)
                     .accessibilityHint("Stellt Sprache und Stelle wie vor dem Wechsel wieder her")

@@ -68,8 +68,11 @@ final class EditionsTests: XCTestCase {
     func testLegacyOnBothSidesUsesMigratedId() throws {
         let legacy = try JSONDecoder().decode(LibraryBook.self, from: Data(
             #"{"id":"book_1","title":"Die Verwandlung","authors":[],"added_ms":1}"#.utf8))
-        XCTAssertEqual(BookEditions.senderPrimary(local: legacy, incoming: legacy), "ed_book_1")
-        XCTAssertEqual(BookEditions.senderPrimary(local: nil, incoming: legacy), "ed_book_1")
+        // Ohne Text oder Hörbuch gibt es keine (synthetische) Fassung, im Kern ebenso.
+        let withText = try JSONDecoder().decode(LibraryBook.self, from: Data(
+            #"{"id":"book_1","title":"Die Verwandlung","authors":[],"added_ms":1,"text":{"page_id":"p","origin":"document"}}"#.utf8))
+        XCTAssertEqual(BookEditions.senderPrimary(local: withText, incoming: withText), "ed_book_1")
+        XCTAssertEqual(BookEditions.senderPrimary(local: nil, incoming: withText), "ed_book_1")
     }
 
     func testFlatEditionVermerkSurvivesCoding() throws {
@@ -187,5 +190,81 @@ final class EditionsTests: XCTestCase {
         XCTAssertNil(merged.editions?["ed_tot"])
         let movedToDead = local.receivingLegacy(BookFiles(text: blob("5")), localFlat: "ed_tot", senderFlat: "ed_b", live: ["ed_a", "ed_b"])
         XCTAssertNil(movedToDead.editions?["ed_tot"])
+    }
+
+    func testLegacyReceiveKeepsUnknownFieldsOfSenderEntry() throws {
+        var local = BookFiles(text: blob("1"))
+        local.editions = .object(["ed_b": .object(["text": try PassthroughJSON(encoding: blob("3")), "zukunft": .string("bleibt")])])
+        let merged = local.receivingLegacy(BookFiles(text: blob("5")), localFlat: "ed_b", senderFlat: "ed_b")
+        XCTAssertEqual(merged.text, blob("5"))
+        XCTAssertEqual(merged.editions?["ed_b"]?["zukunft"]?.stringValue, "bleibt")
+        XCTAssertNil(merged.editions?["ed_b"]?["text"])
+        var onlyText = BookFiles()
+        onlyText.editions = .object(["ed_b": .object(["text": try PassthroughJSON(encoding: blob("3"))])])
+        XCTAssertNil(onlyText.receivingLegacy(BookFiles(text: blob("5")), localFlat: "ed_b", senderFlat: "ed_b").editions)
+    }
+
+    // MARK: Echo-Schutz
+
+    func testNeedsResendOnlyWithoutNewEditionData() throws {
+        let local = try book(primary: "ed_b")
+        let files = BookFiles()
+        let legacy = try JSONDecoder().decode(LibraryBook.self, from: Data(
+            #"{"id":"book_1","title":"Die Verwandlung","authors":[],"added_ms":1}"#.utf8))
+        let sent = local.editionFingerprint(files: files)
+        XCTAssertFalse(BookEditions.needsResend(local: local, files: files, sentFingerprint: sent, incoming: legacy), "echtes Echo")
+        let newer = try XCTUnwrap(local.settingReading(edition: "ed_a", position: nil, device: "iphone", now: 100))
+        XCTAssertTrue(BookEditions.needsResend(local: newer, files: files, sentFingerprint: sent, incoming: legacy), "neueres reading")
+        XCTAssertTrue(BookEditions.needsResend(local: local, files: files, sentFingerprint: nil, incoming: legacy), "nie gesendet")
+        XCTAssertTrue(BookEditions.needsResend(local: local, files: files, sentFingerprint: sent, incoming: local), "kein Altgerät")
+    }
+
+    // MARK: Fortschritt beim Empfang heben
+
+    func testLiftedReadingOnlyWhenSelectionChanged() throws {
+        let reading = #""reading":{"edition":"ed_b","updated":8,"device":"pc","position":{"key":"audio:book_1:ed_b","unit":"ms","offset":1234}},"#
+        let incoming = try book(reading: reading)
+        let lift = try XCTUnwrap(BookEditions.liftedReading(local: nil, incoming: incoming))
+        XCTAssertEqual(lift.position.offset, 1234); XCTAssertEqual(lift.updated, 8)
+        XCTAssertNil(BookEditions.liftedReading(local: incoming, incoming: incoming))
+        XCTAssertNil(BookEditions.liftedReading(local: nil, incoming: try book()), "ohne reading")
+    }
+
+    func testLiftingOnlyOlderRecords() {
+        let pos = ReadingPositionRef(key: "audio:book_1:ed_b", unit: "ms", offset: 1234)
+        let old = ProgressRecord(offset: 10, length: 5000, heard: [[0, 10]], updated: 5, finished: true, unit: .ms)
+        let lifted = LibraryProgress.lifting(old, to: pos, updated: 8)
+        XCTAssertEqual(lifted?.offset, 1234); XCTAssertEqual(lifted?.updated, 8)
+        XCTAssertEqual(lifted?.heard, [[0, 10]]); XCTAssertEqual(lifted?.finished, true)
+        XCTAssertNil(LibraryProgress.lifting(ProgressRecord(offset: 10, length: 5000, updated: 9), to: pos, updated: 8))
+        XCTAssertEqual(LibraryProgress.lifting(nil, to: pos, updated: 8)?.offset, 1234)
+    }
+
+    // MARK: Wechsel ohne bekannte Länge
+
+    func testSwitchWithoutTargetLengthStartsAtBeginning() throws {
+        let editions = BookEditions(book: try book())
+        let unknown = EditionSwitch.plan(editions: editions, from: "ed_a", to: "ed_b", fromMedium: .audio, toMedium: .audio,
+                                         fromChapters: nil, toChapters: ChapterList(titles: [], starts: [], length: 0),
+                                         toKey: "audio:book_1:ed_b", offset: 100, length: 1000)
+        XCTAssertTrue(unknown.fromStart)
+        XCTAssertEqual(unknown.position.offset, 0)
+        XCTAssertTrue(unknown.notice(languageName: "English").contains("vom Anfang"))
+        XCTAssertFalse(unknown.notice(languageName: "English").contains("ungefähr"))
+        let known = EditionSwitch.plan(editions: editions, from: "ed_a", to: "ed_b", fromMedium: .audio, toMedium: .audio,
+                                       fromChapters: nil, toChapters: ChapterList(titles: [], starts: [], length: 400),
+                                       toKey: "audio:book_1:ed_b", offset: 100, length: 1000)
+        XCTAssertFalse(known.fromStart)
+        XCTAssertEqual(known.position.offset, 40, accuracy: 0.001)
+    }
+
+    func testAudioChaptersUseCachedDurationsForMissingTracks() {
+        let audio = LibraryAudioVersion(file: "a.mp3", tracks: [
+            LibraryAudioTrack(file: "a.mp3", title: "Eins", durationMs: nil),
+            LibraryAudioTrack(file: "b.mp3", title: "Zwei", durationMs: nil),
+        ])
+        XCTAssertTrue(EditionSwitch.audioChapters(audio).starts.isEmpty)
+        let list = EditionSwitch.audioChapters(audio, fallbackDurations: [100, 200])
+        XCTAssertEqual(list.starts, [0, 100]); XCTAssertEqual(list.length, 300)
     }
 }

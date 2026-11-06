@@ -63,10 +63,13 @@ public struct SwitchPlan: Equatable, Sendable {
     public var fraction: Double
     /// Ein Paar ist zugeordnet, aber diese Gruppe (oder das Paar) ist noch offen.
     public var hasAlignment: Bool
+    /// Länge der Zielfassung unbekannt: Der Wechsel beginnt am Anfang statt „ungefähr“ zu rechnen.
+    public var fromStart: Bool = false
 
     /// Hinweis nach dem Wechsel („kapitelgenau“ nur bei bestätigter Zuordnung, sonst „ungefähr“).
     public func notice(languageName: String) -> String {
         let name = languageName.isEmpty ? "der anderen Sprache" : languageName
+        if fromStart { return "Weiter auf \(name), vom Anfang: Die Länge ist noch nicht bekannt." }
         switch level {
         case .chapter:
             guard let first = chapters.first, let last = chapters.last else { return "Weiter auf \(name), kapitelgenau." }
@@ -204,18 +207,24 @@ public enum EditionSwitch {
     /// Kapitel aus den Teilen des Hörbuchs. Fehlt eine Dauer, bleiben `starts` leer; die Länge ist dann die
     /// Gesamtdauer der Datei, falls bekannt (der PC liest fehlende Dauern aus den Dateien, das iPhone rechnet
     /// bei unbekannter Gliederung ungefähr).
-    public static func audioChapters(_ audio: LibraryAudioVersion?) -> ChapterList {
+    /// `fallbackDurations`: Dauern je Teil aus dem Cache der Hörbuchangaben (`hoerbuch-info.json`) für Teile ohne Dauer.
+    public static func audioChapters(_ audio: LibraryAudioVersion?, fallbackDurations: [Double] = []) -> ChapterList {
         let tracks = audio?.allTracks ?? []
         let titles = tracks.enumerated().map { i, t in
             let trimmed = t.title.trimmingCharacters(in: .whitespacesAndNewlines)
             return trimmed.isEmpty ? "Teil \(i + 1)" : trimmed
         }
-        guard !tracks.isEmpty, tracks.allSatisfy({ ($0.durationMs ?? 0) > 0 }) else {
-            return ChapterList(titles: titles, starts: [], length: max(0, audio?.durationMs ?? 0))
+        let durations: [Double] = tracks.indices.map { i in
+            if let d = tracks[i].durationMs, d > 0 { return d }
+            return fallbackDurations.indices.contains(i) && fallbackDurations[i] > 0 ? fallbackDurations[i] : 0
+        }
+        guard !tracks.isEmpty, durations.allSatisfy({ $0 > 0 }) else {
+            let known = durations.reduce(0, +)
+            return ChapterList(titles: titles, starts: [], length: max(0, audio?.durationMs ?? 0, tracks.count == durations.filter { $0 > 0 }.count ? known : 0))
         }
         var starts: [Double] = []
         var sum = 0.0
-        for t in tracks { starts.append(sum); sum += t.durationMs ?? 0 }
+        for d in durations { starts.append(sum); sum += d }
         return ChapterList(titles: titles, starts: starts, length: sum)
     }
 
@@ -236,11 +245,14 @@ public enum EditionSwitch {
            groupsFit(found.groups, countA: fromChapters.titles.count, countB: toChapters.titles.count) {
             usable = found.groups
         }
-        let mapped = mapPosition(from: source, to: target, offset: offset, groups: usable)
+        var mapped = mapPosition(from: source, to: target, offset: offset, groups: usable)
+        // Ohne Länge der Zielfassung ist „ungefähr“ nicht berechenbar: ehrlich vom Anfang beginnen.
+        let unknownLength = mapped.level == .approx && target.length <= 0
+        if unknownLength { mapped = SwitchTarget(offset: 0, level: .approx, chapters: [], fraction: 0) }
         return SwitchPlan(from: from, to: to, fromMedium: fromMedium, toMedium: toMedium, level: mapped.level,
                           position: ReadingPositionRef(key: toKey, unit: toMedium.unit, offset: mapped.offset),
                           chapters: mapped.chapters, chapterTotal: toChapters.titles.count,
                           fromChapter: source.starts.isEmpty ? nil : chapterOf(source, offset),
-                          fraction: mapped.fraction, hasAlignment: found.alignment != nil)
+                          fraction: mapped.fraction, hasAlignment: found.alignment != nil, fromStart: unknownLength)
     }
 }

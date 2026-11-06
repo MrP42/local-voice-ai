@@ -65,29 +65,33 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
         return sync.wifiOnly && sync.expensiveNetwork
     }
 
-    /// Bis der Ladevorgang fertig ist (`true`) oder pausiert/fehlschlägt (`false`).
-    func waitUntilDone(_ id: String) async -> Bool {
-        guard jobs[id]?.phase == .running else { return jobs[id] == nil && isLocal(id) }
+    /// Bis der Ladevorgang dieser Fassung fertig ist (`true`) oder pausiert/fehlschlägt (`false`). Ein laufender Auftrag
+    /// mit anderen Teilen (andere Sprache) ist nicht der gemeinte: dann zählt nur, ob diese Fassung schon da ist.
+    func waitUntilDone(_ book: LibraryBook) async -> Bool {
+        let id = book.id
+        let job = jobs[id]
+        let mine = job.map { $0.parts == library.audioParts(library.accountAudio(book)) } ?? true
+        guard let job, job.phase == .running, mine else { return (job == nil || !mine) && library.hasAudio(book) }
         return await withCheckedContinuation { waiters[id, default: []].append($0) }
     }
-
-    private func isLocal(_ id: String) -> Bool { library.books.first { $0.id == id }.map { library.hasAudio($0) } ?? false }
 
     // MARK: Steuern
 
     /// Laden starten oder fortsetzen. Prüft vorher den freien Speicher.
-    func start(_ book: LibraryBook, allowCellular: Bool? = nil) {
-        guard LibrarySync.shared.account != nil else { return }
+    @discardableResult
+    func start(_ book: LibraryBook, allowCellular: Bool? = nil) -> Bool {
+        guard LibrarySync.shared.account != nil else { return false }
         // Sprachfassungen (lva#344): Bei einer Sicht auf eine weitere Fassung sind es deren Teile (`files.editions`).
         let refs = library.accountAudio(book)
-        guard !refs.isEmpty, !library.hasAudio(book) else { return }
+        guard !refs.isEmpty else { return false }
+        guard !library.hasAudio(book) else { return true }
         var previous = jobs[book.id]
         let parts = library.audioParts(refs)
         // Ein Auftrag je Buch: Läuft gerade das Hörbuch einer anderen Fassung (andere Dateinamen), nicht verwerfen.
         if let running = previous, running.phase == .running, running.parts != parts,
            Set(running.parts.map(\.file)).isDisjoint(with: parts.map(\.file)) {
             LibraryPlayback.shared.error = "Von diesem Buch lädt gerade das Hörbuch einer anderen Sprache. Bitte warten, bis es fertig ist."
-            return
+            return false
         }
         // Konto hat die Dateien ersetzt: Weder alte Dateien noch angefangene Teile dürfen zählen.
         library.removeStaleAudio(book)
@@ -96,13 +100,13 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
             for part in stale.parts { try? FileManager.default.removeItem(at: audioDir(book.id).appendingPathComponent(part.file).appendingPathExtension("part")) }
             previous = nil
         }
-        if previous?.phase == .running, allowCellular == nil { assemble(book.id); return }
+        if previous?.phase == .running, allowCellular == nil { assemble(book.id); return true }
         var job = AudioDownload.Job(bookId: book.id, parts: parts, allowCellular: allowCellular ?? previous?.allowCellular ?? false)
         let remaining = job.totalBytes - AudioDownload.doneBytes(job, states: states(job))
         job = AudioDownload.prepareStart(job, remainingBytes: remaining, freeBytes: library.freeBytes(), format: LibraryBytes.text, speed: &speed)
         if job.phase == .failed {
             jobs[book.id] = job; persist(); resolve(book.id, false)
-            return
+            return false
         }
         do {
             try FileManager.default.createDirectory(at: stagingDir(book.id), withIntermediateDirectories: true,
@@ -111,7 +115,7 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
         } catch {
             job = AudioDownload.failedStart(job, message: "Der Ordner für das Hörbuch lässt sich nicht anlegen: \(error.localizedDescription)", speed: &speed)
             jobs[book.id] = job; persist(); resolve(book.id, false)
-            return
+            return false
         }
         jobs[book.id] = job
         persist()
@@ -124,6 +128,7 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
             if ruleChanged { cancelTasks(id) }
             assemble(id)
         }
+        return true
     }
 
     func pause(_ id: String) {
@@ -140,8 +145,17 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
     /// Vom Nutzer abgebrochen: Auftrag verwerfen und alles Geladene löschen.
     /// Geladen wird nur, was im Konto liegt; das Hörbuch bleibt dort erhalten.
     func cancel(_ book: LibraryBook) {
+        // Nur die Teile dieses Auftrags und das Staging: das fertige Hörbuch einer anderen Fassung und lokal
+        // importierte, noch nicht hochgeladene Dateien bleiben liegen.
+        let job = jobs[book.id]
         discard(book.id)
-        _ = try? AudioOffload.remove(bookDir: library.dir(book))
+        let files = job?.parts.map(\.file) ?? []
+        for file in files {
+            let url = audioDir(book.id).appendingPathComponent(file)
+            try? FileManager.default.removeItem(at: url)
+            try? FileManager.default.removeItem(at: url.appendingPathExtension("part"))
+        }
+        library.forgetLocalAudio(bookId: book.id, files: files)
         library.reload()
     }
 

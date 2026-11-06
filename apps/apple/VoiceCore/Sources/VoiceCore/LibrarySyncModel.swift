@@ -150,9 +150,12 @@ public struct LibrarySyncMeta: Codable, Equatable, Sendable {
     /// Fassung, zu der die flachen Dateien in `files` gehören (Hauptfassung des Senders, lva#344). Fehlt bei
     /// älteren Ständen; dann gilt die Hauptfassung des Buchs.
     public var flatEdition: String?
+    /// Fingerabdruck der Fassungsdaten (`LibraryBook.editionFingerprint`) im zuletzt erfolgreich gesendeten Stand.
+    public var sentEditions: String?
 
     public init(files: BookFiles = BookFiles(), updated: Double = 0, localAudio: [String: String]? = nil,
-                pendingFavorite: Bool? = nil, pendingFields: String? = nil, flatEdition: String? = nil) {
+                pendingFavorite: Bool? = nil, pendingFields: String? = nil, flatEdition: String? = nil, sentEditions: String? = nil) {
+        self.sentEditions = sentEditions
         self.files = files; self.updated = updated; self.localAudio = localAudio
         self.pendingFavorite = pendingFavorite; self.pendingFields = pendingFields; self.flatEdition = flatEdition
     }
