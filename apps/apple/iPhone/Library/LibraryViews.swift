@@ -239,6 +239,7 @@ struct LibraryShelf: View {
                 if let error = library.error { Text(error).font(.footnote).foregroundStyle(.red) }
             }.padding(16)
         }
+        .modifier(MiniPlayerClearance())
         .background(VoicePalette.background)
         .navigationTitle("Bibliothek")
         .toolbar {
@@ -538,6 +539,7 @@ struct LibraryBookDetail: View {
                 }
             }.padding(16)
         }
+        .modifier(MiniPlayerClearance())
         .background(VoicePalette.background)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -703,6 +705,47 @@ struct AudioDownloadCard: View {
     private func fraction(_ done: Int, _ total: Int) -> Double { total > 0 ? min(1, Double(done) / Double(total)) : 0 }
 }
 
+/// Scrollflächen reichen unter den Mini-Player. Der Rand sorgt dafür, dass das Letzte frei gescrollt werden kann.
+struct MiniPlayerClearance: ViewModifier {
+    @ObservedObject var playback = LibraryPlayback.shared
+    @ScaledMetric(relativeTo: .subheadline) private var height: CGFloat = 76
+
+    func body(content: Content) -> some View {
+        content.contentMargins(.bottom, playback.book != nil && !playback.presented ? height : 0, for: .scrollContent)
+    }
+}
+
+/// Laufschrift für den Satz im Mini-Player. Passt er in die Zeile, steht er still; „Bewegung reduzieren“ zeigt ihn zweizeilig.
+struct MarqueeText: View {
+    let text: String
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var textWidth: CGFloat = 0
+    @State private var boxWidth: CGFloat = 0
+    @State private var offset: CGFloat = 0
+
+    private var overflow: CGFloat { max(0, textWidth - boxWidth) }
+
+    var body: some View {
+        if reduceMotion {
+            Text(text).font(.caption).lineLimit(2).foregroundStyle(.white.opacity(0.85))
+        } else {
+            Text(text).font(.caption).lineLimit(1).fixedSize().foregroundStyle(.white.opacity(0.85))
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { textWidth = $0 }
+                .offset(x: offset)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { boxWidth = $0 }
+                .clipped()
+                .task(id: "\(text)|\(overflow)") {
+                    offset = 0
+                    guard overflow > 0 else { return }
+                    try? await Task.sleep(nanoseconds: 700_000_000)
+                    guard !Task.isCancelled else { return }
+                    withAnimation(.linear(duration: Double(overflow) / 40)) { offset = -overflow }
+                }
+        }
+    }
+}
+
 struct LibraryMiniPlayer: View {
     @ObservedObject var playback = LibraryPlayback.shared
     var body: some View {
@@ -713,7 +756,11 @@ struct LibraryMiniPlayer: View {
                         .frame(width: 32, height: 44)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(playback.title).font(.subheadline.weight(.semibold)).lineLimit(1).foregroundStyle(.white)
-                        Text(subtitle).font(.caption).lineLimit(1).foregroundStyle(.white.opacity(0.75))
+                        if !playback.preparing, let sentence = playback.currentSentence {
+                            MarqueeText(text: sentence).accessibilityHidden(true)
+                        } else {
+                            Text(subtitle).font(.caption).lineLimit(1).foregroundStyle(.white.opacity(0.75))
+                        }
                     }
                     Spacer(minLength: 0)
                 }.frame(minHeight: 44).contentShape(Rectangle())

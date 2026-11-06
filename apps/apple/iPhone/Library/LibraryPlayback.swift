@@ -111,6 +111,12 @@ final class LibraryPlayback: NSObject, ObservableObject {
     }
 
     var title: String { book?.title ?? "" }
+    /// Gerade gelesener Satz, für das Mitlesen im Mini-Player.
+    var currentSentence: String? {
+        guard mode == .readAloud, let range = sentenceRange, paragraphs.indices.contains(paragraphIndex) else { return nil }
+        let text = paragraphs[paragraphIndex].text as NSString
+        return NSMaxRange(range) <= text.length ? text.substring(with: range) : nil
+    }
     /// Läuft oder ist auf dem Weg dorthin.
     var busy: Bool { playing || preparing }
 
