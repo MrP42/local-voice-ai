@@ -20,7 +20,8 @@
     "debug": "Debug",
     "about": "About",
     "dictationTest": "Dictation test",
-    "voiceCall": "Voice conversation",
+    "voiceCall": "Chat",
+    "voiceCallHint": "Chat with AI using text or voice.",
     "tts": "Read Aloud",
     "meetings": "Meetings",
     "settings": "Settings",
@@ -2919,7 +2920,7 @@
         },
         "effort": "Effort for {{name}}",
         "names": {
-          "voice_speaker": "Voice conversation (speaker)",
+          "voice_speaker": "Chat (answer model)",
           "meeting_protocol": "Meeting minutes and notes",
           "dictation_refine": "Dictation refinement",
           "read_aloud": "Read aloud",
@@ -7256,8 +7257,8 @@
       "denker_blocked": "The thinker model is not allowed at this sovereignty level and is not used.",
       "openSettings": "Open settings"
     },
-    "title": "Voice conversation",
-    "description": "Talk to the AI like on the phone: it listens, answers right away and you can interrupt it.",
+    "title": "Chat",
+    "description": "Write or talk to the AI like on the phone: it listens, answers right away and you can interrupt it.",
     "begin": "Start conversation",
     "end": "End conversation",
     "newConversation": "New conversation",
@@ -7349,8 +7350,8 @@
       "none": "none yet"
     },
     "info": {
-      "open": "Information about the voice conversation",
-      "title": "Voice conversation",
+      "open": "Information about the chat",
+      "title": "Chat",
       "tipInterrupt": "Interrupt: just keep talking, the AI goes quiet.",
       "tipHeadset": "A headset gives the cleanest recognition; speakers work too thanks to echo cancellation.",
       "tipText": "You can also type and attach files, with or without a running conversation.",
@@ -7500,10 +7501,10 @@
       "reset": "Reset",
       "voice": "Voice",
       "voiceHint": "Same choice as under Read Aloud; it applies there too.",
-      "note": "The model comes from Models (active model, local or API), the voice from Read Aloud (default: Anton).",
+      "note": "You choose the answer model in the chat input field; the voice also applies to Read Aloud (default: Phonon, Anton).",
       "recognitionModel": "Speech recognition model",
       "answerModel": "Answer model",
-      "answerModelHint": "The active language model from the status bar.",
+      "answerModelHint": "Chosen at the bottom of the chat input field, left of the microphone.",
       "denker": "Thinker model",
       "denkerHint": "A second, stronger model for questions that need knowledge or longer thought. The speaker stays fast and asks the thinker only when needed.",
       "denkerOff": "Off",
@@ -7519,9 +7520,9 @@
         "eu": "EU",
         "frei": "Open"
       },
-      "transcripts": "Read transcripts in voice chat",
+      "transcripts": "Read transcripts in the chat",
       "transcriptsHint": "Off by default. When on, the AI may read and search meeting transcripts. The content then goes to the answer model, with \"local only\" that means a local one only.",
-      "speakerBlocked": "The answer model is not allowed at this sovereignty level. Pick a local model (footer) or a more open level, otherwise the AI will not answer.",
+      "speakerBlocked": "The answer model is not allowed at this sovereignty level. Pick a local model in the chat input field or a more open level here, otherwise the AI will not answer.",
       "tools": "Use LVA tools",
       "toolsHint": "Read-only: the AI looks things up in the areas you share under “Knowledge”. It changes nothing, every call is in the integrations log."
     },
@@ -7658,7 +7659,7 @@
       "history": "History: find every dictation again, copy, play or transcribe it again.",
       "meetings": "Recordings: transcribe meetings live or import audio and video files.",
       "tts": "Read aloud: listen to texts and documents and save them as audio.",
-      "voice": "Voice chat: like a phone call with the AI – speak and hear the answer."
+      "voice": "Chat: write or talk to the AI and read or hear the answer."
     }
   },
   "shell": {

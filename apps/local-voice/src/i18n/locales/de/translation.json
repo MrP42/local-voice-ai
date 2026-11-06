@@ -20,7 +20,8 @@
     "debug": "Debug",
     "about": "Info",
     "dictationTest": "Diktattest",
-    "voiceCall": "Sprachgespräch",
+    "voiceCall": "Chat",
+    "voiceCallHint": "Mit der KI schreiben oder sprechen.",
     "tts": "Vorlesen",
     "meetings": "Besprechungen",
     "settings": "Einstellungen",
@@ -2395,7 +2396,7 @@
         "bindings": {
           "voice_call": {
             "name": "Hauptgespräch-Tastenkürzel",
-            "description": "Startet oder beendet das Sprachgespräch im festen Hauptgespräch, auch außerhalb der App. Die Antwort kommt als Sprache, der Text steht im Gesprächsverlauf. Reines Strg+Alt geht nicht, weil AltGr unter Windows Strg+Alt ist."
+            "description": "Startet oder beendet das gesprochene Hauptgespräch im Chat, auch außerhalb der App. Die Antwort kommt als Sprache, der Text steht im Gesprächsverlauf. Reines Strg+Alt geht nicht, weil AltGr unter Windows Strg+Alt ist."
           },
           "transcribe": {
             "name": "Transkriptions-Tastenkürzel",
@@ -2919,7 +2920,7 @@
         },
         "effort": "Effort für {{name}}",
         "names": {
-          "voice_speaker": "Sprachgespräch (Sprecher)",
+          "voice_speaker": "Chat (Antwortmodell)",
           "meeting_protocol": "Besprechungsprotokoll und Notizen",
           "dictation_refine": "Diktat-Nachbearbeitung",
           "read_aloud": "Vorlesen",
@@ -7256,8 +7257,8 @@
       "denker_blocked": "Das Denker-Modell ist bei dieser Souveränität nicht zulässig und wird nicht genutzt.",
       "openSettings": "Einstellungen öffnen"
     },
-    "title": "Sprachgespräch",
-    "description": "Mit der KI sprechen wie am Telefon: Sie hört zu, antwortet sofort und lässt sich unterbrechen.",
+    "title": "Chat",
+    "description": "Mit der KI schreiben oder sprechen wie am Telefon: Sie hört zu, antwortet sofort und lässt sich unterbrechen.",
     "begin": "Gespräch beginnen",
     "end": "Gespräch beenden",
     "newConversation": "Neues Gespräch",
@@ -7349,8 +7350,8 @@
       "none": "noch keine"
     },
     "info": {
-      "open": "Informationen zum Sprachgespräch",
-      "title": "Sprachgespräch",
+      "open": "Informationen zum Chat",
+      "title": "Chat",
       "tipInterrupt": "Unterbrechen: einfach weitersprechen, die KI verstummt.",
       "tipHeadset": "Ein Headset liefert die sauberste Erkennung; Lautsprecher gehen dank Echo-Unterdrückung auch.",
       "tipText": "Du kannst auch schreiben und Dateien anhängen, mit und ohne laufendes Gespräch.",
@@ -7500,10 +7501,10 @@
       "reset": "Zurücksetzen",
       "voice": "Stimme",
       "voiceHint": "Dieselbe Auswahl wie unter „Vorlesen“; sie gilt auch dort.",
-      "note": "Das Modell kommt aus „Modelle“ (aktives Modell, lokal oder API), die Stimme aus „Vorlesen“ (Standard: Anton).",
+      "note": "Das Antwortmodell wählst du im Eingabefeld des Chats, die Stimme gilt auch für „Vorlesen“ (Standard: Phonon, Anton).",
       "recognitionModel": "Spracherkennungsmodell",
       "answerModel": "Antwortmodell",
-      "answerModelHint": "Das aktive Sprachmodell aus der Fußleiste.",
+      "answerModelHint": "Wählst du unten im Eingabefeld des Chats, links neben dem Mikrofon.",
       "denker": "Denker-Modell",
       "denkerHint": "Ein zweites, stärkeres Modell für Fragen, die Wissen oder längeres Nachdenken brauchen. Der Sprecher bleibt schnell und fragt den Denker nur bei Bedarf.",
       "denkerOff": "Aus",
@@ -7519,9 +7520,9 @@
         "eu": "EU",
         "frei": "Frei"
       },
-      "transcripts": "Transkripte im Sprachgespräch lesen",
+      "transcripts": "Transkripte im Chat lesen",
       "transcriptsHint": "Standardmäßig aus. Ist es an, darf die KI Transkripte von Besprechungen lesen und in ihnen suchen. Der Inhalt geht dann an das Antwortmodell, bei „nur lokal“ also nur an ein lokales.",
-      "speakerBlocked": "Das Antwortmodell ist bei dieser Souveränität nicht zulässig. Wähle ein lokales Modell (Fußleiste) oder eine freiere Stufe, sonst antwortet die KI nicht.",
+      "speakerBlocked": "Das Antwortmodell ist bei dieser Souveränität nicht zulässig. Wähle im Eingabefeld des Chats ein lokales Modell oder hier eine freiere Stufe, sonst antwortet die KI nicht.",
       "tools": "LVA-Werkzeuge nutzen",
       "toolsHint": "Nur lesend: Die KI schlägt in den Bereichen nach, die du unter „Wissen“ freigibst. Sie ändert nichts, jeder Aufruf steht im Protokoll der Integrationen."
     },
@@ -7658,7 +7659,7 @@
       "history": "Verlauf: jedes Diktat wiederfinden, kopieren, anhören oder neu transkribieren.",
       "meetings": "Aufnahmen: Besprechungen live mitschreiben oder Audio- und Videodateien importieren.",
       "tts": "Vorlesen: Texte und Dokumente anhören und als Audiodatei speichern.",
-      "voice": "Sprachgespräch: wie ein Telefonat mit der KI – sprechen und die Antwort hören."
+      "voice": "Chat: mit der KI schreiben oder sprechen und die Antwort lesen oder hören."
     }
   },
   "shell": {
