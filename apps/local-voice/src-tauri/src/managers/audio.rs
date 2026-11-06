@@ -969,6 +969,10 @@ impl AudioRecordingManager {
         vad_policy: VadPolicy,
         requested_at: Instant,
     ) -> Result<(), String> {
+        // Entwicklungskanal: waehrend ein Testupdate uebergeben wird, beginnt nichts Neues.
+        if crate::dev_update::arbeit_gesperrt() {
+            return Err("Ein Update wird gerade installiert".into());
+        }
         let mut state = self.state.lock().unwrap();
 
         if let RecordingState::Idle = *state {

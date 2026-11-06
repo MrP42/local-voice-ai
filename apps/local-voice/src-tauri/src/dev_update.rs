@@ -29,11 +29,13 @@
 //! - Eine prozessgebundene Sperre (`install.lock`) gilt fuer diesen Weg und
 //!   den manuellen Klick gemeinsam.
 //!
+//! - Gemeinsames Tor (`arbeit_gesperrt`): ab der Uebergabe beginnen Diktat,
+//!   Aufnahme, Vorlesen, Import-Laeufe und schwere Schritte nicht mehr; nach
+//!   einer Karenz wird erneut geprueft, erst dann gesichert und uebergeben.
+//!
 //! Bewusste Grenzen (im PR dokumentiert): der Helfer bleibt das bestehende
-//! cmd-Skript mit festen, gefilterten Pfaden; zwischen der letzten
-//! Arbeitspruefung und dem Beenden liegt ein kurzes Fenster ohne harte
-//! Sperre neuer Arbeit; die Sicherung kopiert SQLite-Dateien im Leerlauf
-//! ohne Online-Backup-API.
+//! cmd-Skript mit festen, gefilterten Pfaden (Folge-PR); Prozesse desselben
+//! Benutzerkontos sind keine Vertrauensgrenze.
 
 use base64::Engine;
 use minisign_verify::{PublicKey, Signature};
@@ -42,7 +44,7 @@ use sha2::{Digest, Sha256};
 use specta::Type;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager};
@@ -64,10 +66,45 @@ const MAX_SICHERUNG_BYTES: u64 = 512 * 1024 * 1024;
 /// So lange muss eine neu eingespielte Fassung laufen, bis sie als gesund gilt.
 const GESUND: Duration = Duration::from_secs(120);
 /// Starts der Zielversion ohne Bestaetigung, bevor der Versuch als gescheitert gilt.
-const MAX_STARTS_OHNE_BESTAETIGUNG: u32 = 3;
+const MAX_STARTS_OHNE_BESTAETIGUNG: u32 = 1;
 
 /// Ereignis an die Oberflaeche (Hinweis unten rechts).
 pub const EVENT: &str = "lokales-testupdate";
+
+/// Gemeinsames Tor fuer Neustart und Arbeitsbeginn: geschlossen, sobald ein
+/// Testupdate uebergeben wird. Aufnahme, Diktat, Vorlesen, Import-Laeufe und
+/// schwere Schritte beginnen dann nicht (`arbeit_gesperrt`).
+static ARBEIT_GESPERRT: AtomicBool = AtomicBool::new(false);
+
+/// Fuer die Startpunkte neuer Arbeit.
+pub fn arbeit_gesperrt() -> bool {
+    ARBEIT_GESPERRT.load(Ordering::SeqCst)
+}
+
+/// Geschlossenes Tor; oeffnet beim Fallenlassen wieder (Abbruch).
+struct Tor;
+
+impl Tor {
+    fn schliessen() -> Self {
+        ARBEIT_GESPERRT.store(true, Ordering::SeqCst);
+        Tor
+    }
+
+    /// Update uebergeben: bleibt bis zum Beenden zu.
+    fn halten(self) {
+        std::mem::forget(self);
+    }
+}
+
+impl Drop for Tor {
+    fn drop(&mut self) {
+        ARBEIT_GESPERRT.store(false, Ordering::SeqCst);
+    }
+}
+
+/// Nach dem Schliessen des Tors so lange warten, bis Arbeit, die das Tor
+/// gerade noch offen sah, als beschaeftigt sichtbar ist.
+const KARENZ: Duration = Duration::from_secs(2);
 
 /// Bis wann „Später“ gilt (Unix-Sekunden).
 static AUFGESCHOBEN_BIS: AtomicU64 = AtomicU64::new(0);
@@ -201,7 +238,11 @@ pub(crate) fn kopieren_und_pruefen(
     };
     let ergebnis = (|| {
         let mut ein = std::fs::File::open(quelle).map_err(|e| format!("Installer: {e}"))?;
-        let mut aus = std::fs::File::create(ziel).map_err(|e| format!("Staging: {e}"))?;
+        let mut aus = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(ziel)
+            .map_err(|e| format!("Staging: {e}"))?;
         let mut sha = Sha256::new();
         let mut buf = vec![0u8; 1 << 20];
         loop {
@@ -256,8 +297,10 @@ pub(crate) fn kopieren_und_pruefen(
 }
 
 /// Dauerhafter Zustand im Staging-Ordner (`status.json`).
-#[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub(crate) struct Status {
+    /// Pflichtfeld: eine Datei ohne (z. B. `{}`) gilt als defekt, nicht als frisch.
+    pub schema: u32,
     /// Signierter Zeitstempel des zuletzt bestaetigt gesund laufenden Baus.
     #[serde(default)]
     pub zuletzt_zeit: u64,
@@ -337,6 +380,19 @@ impl Status {
     }
 }
 
+const STATUS_SCHEMA: u32 = 1;
+
+impl Default for Status {
+    fn default() -> Self {
+        Self {
+            schema: STATUS_SCHEMA,
+            zuletzt_zeit: 0,
+            gesperrt: Vec::new(),
+            laufend: None,
+        }
+    }
+}
+
 /// Fingerabdruck eines Funds: Pfad, Groesse und Zeit von Installer und Signatur.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Stand {
@@ -396,8 +452,12 @@ impl Gedaechtnis {
 /// Staging-Ordner fuer Pruefkopien, Status und Sicherung.
 pub(crate) fn staging_dir(app: &AppHandle) -> Option<PathBuf> {
     let dir = app.path().app_local_data_dir().ok()?.join("testupdate");
+    // Pfadkette VOR dem ersten Zugriff pruefen, und danach noch einmal.
+    if kette_umgeleitet(&dir) {
+        return None;
+    }
     std::fs::create_dir_all(&dir).ok()?;
-    Some(dir)
+    (!kette_umgeleitet(&dir)).then_some(dir)
 }
 
 /// Fehlt die Datei, ist das ein frischer Anfang. Ist sie unlesbar oder
@@ -405,7 +465,14 @@ pub(crate) fn staging_dir(app: &AppHandle) -> Option<PathBuf> {
 /// Sperrliste stillschweigend zu vergessen.
 pub(crate) fn status_lesen(dir: &Path) -> Result<Status, String> {
     match std::fs::read_to_string(dir.join("status.json")) {
-        Ok(s) => serde_json::from_str(&s).map_err(|e| format!("status.json defekt: {e}")),
+        Ok(s) => {
+            let st: Status =
+                serde_json::from_str(&s).map_err(|e| format!("status.json defekt: {e}"))?;
+            if st.schema != STATUS_SCHEMA {
+                return Err(format!("status.json: unbekanntes Schema {}", st.schema));
+            }
+            Ok(st)
+        }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Status::default()),
         Err(e) => Err(format!("status.json unlesbar: {e}")),
     }
@@ -414,13 +481,22 @@ pub(crate) fn status_lesen(dir: &Path) -> Result<Status, String> {
 /// Atomar schreiben (temp + flush + rename), damit ein Absturz keinen halben Status hinterlaesst.
 pub(crate) fn status_schreiben(dir: &Path, status: &Status) -> Result<(), String> {
     let tmp = dir.join("status.json.tmp");
+    let ziel = dir.join("status.json");
+    if kette_umgeleitet(&ziel) || kette_umgeleitet(&tmp) {
+        return Err("Status: Symlink/Junction im Pfad".into());
+    }
     let json = serde_json::to_string_pretty(status).map_err(|e| e.to_string())?;
-    let mut f = std::fs::File::create(&tmp).map_err(|e| format!("Status: {e}"))?;
+    let _ = std::fs::remove_file(&tmp);
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&tmp)
+        .map_err(|e| format!("Status: {e}"))?;
     f.write_all(json.as_bytes())
         .and_then(|()| f.sync_all())
         .map_err(|e| format!("Status: {e}"))?;
     drop(f);
-    std::fs::rename(&tmp, dir.join("status.json")).map_err(|e| format!("Status: {e}"))
+    std::fs::rename(&tmp, &ziel).map_err(|e| format!("Status: {e}"))
 }
 
 fn prozess_lebt(pid: u32) -> bool {
@@ -435,40 +511,70 @@ fn prozess_lebt(pid: u32) -> bool {
     sys.process(pid).is_some()
 }
 
-/// Gemeinsame, prozessgebundene Installationssperre fuer den automatischen
-/// und den manuellen Weg (auch ueber Instanzen hinweg). Sie gehoert der PID
-/// in der Datei; eine Sperre eines toten Prozesses ist frei.
-pub(crate) struct Sperre(PathBuf);
+/// Gemeinsame Installationssperre fuer den automatischen und den manuellen
+/// Weg (auch ueber Instanzen hinweg). Pruefen und Uebernehmen geschehen unter
+/// einer Betriebssystem-Dateisperre (`File::try_lock`), also atomar. Der
+/// Inhalt ist die PID des Besitzers: erst dieser Prozess, nach der Uebergabe
+/// der Update-Helfer, der bis zum Ende des Installers lebt. Die Sperre ist
+/// frei, sobald diese PID nicht mehr lebt.
+pub(crate) struct Sperre {
+    datei: std::fs::File,
+    uebergeben: bool,
+}
 
 impl Sperre {
     pub(crate) fn nehmen(dir: &Path) -> Option<Self> {
         let path = dir.join("install.lock");
-        if let Ok(inhalt) = std::fs::read_to_string(&path) {
-            let besitzer = inhalt.trim().parse::<u32>().ok();
-            if besitzer.is_some_and(prozess_lebt) {
-                return None;
-            }
-            let _ = std::fs::remove_file(&path);
+        if kette_umgeleitet(&path) {
+            return None;
         }
-        let mut f = std::fs::OpenOptions::new()
+        let mut datei = std::fs::OpenOptions::new()
+            .read(true)
             .write(true)
-            .create_new(true)
+            .create(true)
+            .truncate(false)
             .open(&path)
             .ok()?;
-        writeln!(f, "{}", std::process::id()).ok()?;
-        Some(Self(path))
+        datei.try_lock().ok()?;
+        let mut inhalt = String::new();
+        let _ = datei.read_to_string(&mut inhalt);
+        let besitzer = inhalt.trim().parse::<u32>().ok();
+        if besitzer.is_some_and(|pid| pid != std::process::id() && prozess_lebt(pid)) {
+            return None; // Drop gibt die OS-Sperre frei.
+        }
+        let mut s = Self {
+            datei,
+            uebergeben: false,
+        };
+        s.besitzer_schreiben(std::process::id()).ok()?;
+        Some(s)
     }
 
-    /// Erfolgreich uebergeben: die Sperre bleibt liegen, bis dieser Prozess
-    /// endet (danach ist sie frei, weil ihre PID tot ist).
-    pub(crate) fn behalten(self) {
-        std::mem::forget(self);
+    fn besitzer_schreiben(&mut self, pid: u32) -> std::io::Result<()> {
+        use std::io::Seek;
+        self.datei.set_len(0)?;
+        self.datei.seek(std::io::SeekFrom::Start(0))?;
+        writeln!(self.datei, "{pid}")?;
+        self.datei.sync_all()
+    }
+
+    /// Uebergabe an den Helfer: ab jetzt besitzt dessen PID die Sperre, bis
+    /// der Installer fertig ist und der Helfer endet.
+    pub(crate) fn uebergeben(mut self, helfer_pid: u32) {
+        if let Err(e) = self.besitzer_schreiben(helfer_pid) {
+            log::warn!("dev update: Sperre nicht an den Helfer uebergeben: {e}");
+        }
+        self.uebergeben = true;
     }
 }
 
 impl Drop for Sperre {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
+        // Ohne Uebergabe: frei fuer alle (PID 0 lebt nie als Besitzer).
+        if !self.uebergeben {
+            let _ = self.besitzer_schreiben(0);
+        }
+        let _ = self.datei.unlock();
     }
 }
 
@@ -515,7 +621,14 @@ pub(crate) fn sichern_nach(daten: &Path, staging: &Path) -> Result<(), String> {
             if summe > MAX_SICHERUNG_BYTES {
                 return Err("Sicherung groesser als 512 MB".to_string());
             }
-            std::fs::copy(&path, neu.join(entry.file_name()))
+            let ziel = neu.join(entry.file_name());
+            std::fs::copy(&path, &ziel)
+                .and_then(|_| {
+                    std::fs::OpenOptions::new()
+                        .write(true)
+                        .open(&ziel)?
+                        .sync_all()
+                })
                 .map_err(|e| format!("Sicherung {}: {e}", path.display()))?;
         }
         Ok(())
@@ -671,7 +784,22 @@ fn runde(app: &AppHandle, pubkey: &str, staging: &Path, g: &mut Gedaechtnis) -> 
     // Eigener Name je Versuch, exklusiv angelegt (kein Ueberschreiben fremder Dateien).
     let datei = format!("kandidat-{}-{}.exe", std::process::id(), jetzt());
     let kandidat = staging.join(&datei);
+    let app_name = app.package_info().name.clone();
     let geprueft = kopieren_und_pruefen(&installer, &sig, pubkey, &update.version, &kandidat)
+        .and_then(|gp| {
+            // Buildidentitaet = signierte Version: aus dem mitsignierten
+            // `version:` oder dem signierten Dateinamen. Ohne sie kein Update.
+            let signiert = gp.signiert.version.clone().or_else(|| {
+                crate::local_update::version_from_file_name(&gp.signiert.datei, &app_name)
+            });
+            if signiert.as_deref() != Some(update.version.as_str()) {
+                return Err(format!(
+                    "keine signierte Version {} (signiert: {signiert:?})",
+                    update.version
+                ));
+            }
+            Ok(gp)
+        })
         .and_then(|gp| status.zulassen(&gp).map(|()| gp));
     let geprueft = match geprueft {
         Ok(gp) => gp,
@@ -704,6 +832,17 @@ fn runde(app: &AppHandle, pubkey: &str, staging: &Path, g: &mut Gedaechtnis) -> 
         abbrechen("Aufschub/Einstellung", g, false);
         return false;
     }
+    // Tor zu: ab hier beginnt keine neue Arbeit. Nach der Karenz ist Arbeit,
+    // die das Tor eben noch offen sah, als beschaeftigt sichtbar.
+    let tor = Tor::schliessen();
+    std::thread::sleep(KARENZ);
+    if let Some(grund) = beschaeftigt(app) {
+        drop(tor);
+        abbrechen(grund, g, false);
+        return false;
+    }
+    // Bei geschlossenem Tor und ohne laufende Arbeit schreibt niemand in die
+    // Datenbanken: die Kopie ist eine ruhende Momentaufnahme.
     if let Err(e) = sichern(app, staging) {
         // Nicht alle 20 s erneut kopieren: dieser Stand ruht bis zur naechsten Testversion.
         abbrechen(&format!("Sicherung: {e}"), g, true);
@@ -713,12 +852,6 @@ fn runde(app: &AppHandle, pubkey: &str, staging: &Path, g: &mut Gedaechtnis) -> 
     // gepruefte Fassung verlangen.
     if sha256_datei(&kandidat).ok().as_deref() != Some(geprueft.sha256.as_str()) {
         abbrechen("Staging-Kopie veraendert", g, true);
-        return false;
-    }
-    // Letzte Pruefung so spaet wie moeglich: zwischen ihr und dem Beenden
-    // liegen nur noch Statusschreiben und Helferstart.
-    if let Some(grund) = beschaeftigt(app) {
-        abbrechen(grund, g, false);
         return false;
     }
     status.laufend = Some(Versuch {
@@ -735,8 +868,9 @@ fn runde(app: &AppHandle, pubkey: &str, staging: &Path, g: &mut Gedaechtnis) -> 
     }
     log::info!("dev update: installiere {} ohne Rueckfrage", update.version);
     match crate::local_update::install_staged(app, &kandidat) {
-        Ok(()) => {
-            sperre.behalten();
+        Ok(helfer_pid) => {
+            sperre.uebergeben(helfer_pid);
+            tor.halten();
             true
         }
         Err(e) => {
@@ -751,6 +885,7 @@ fn runde(app: &AppHandle, pubkey: &str, staging: &Path, g: &mut Gedaechtnis) -> 
             if let Err(e) = status_schreiben(staging, &status) {
                 log::warn!("dev update: Sperre nicht gespeichert: {e}");
             }
+            drop(tor);
             abbrechen("Helfer", g, true);
             false
         }
@@ -801,30 +936,61 @@ fn bestaetigen(app: &AppHandle, staging: &Path) {
         return;
     };
     let version = app.package_info().version.to_string();
-    let Some(v) = status.bestaetigen(&version) else {
+    let Some(v) = status.laufend.clone().filter(|v| v.version == version) else {
         return;
     };
-    let letzte = staging.join("letzte-gute-setup.exe");
-    let vorherige = staging.join("vorherige-gute-setup.exe");
-    let kandidat = staging.join(&v.datei);
-    let gedreht = (|| {
-        if kandidat.is_file() {
-            if letzte.exists() {
-                let _ = std::fs::remove_file(&vorherige);
-                std::fs::rename(&letzte, &vorherige)?;
-            }
-            std::fs::rename(&kandidat, &letzte)?;
-        }
-        std::io::Result::Ok(())
-    })();
-    if let Err(e) = gedreht {
-        log::warn!("dev update: Generationen nicht gedreht: {e}");
+    // Erst drehen, dann bestaetigen. Scheitert das Drehen, bleibt der Versuch
+    // offen (keine Bestaetigung, keine Bereinigung); der naechste Start
+    // versucht es erneut bzw. wertet ihn als gescheitert.
+    if let Err(e) = generationen_drehen(staging, &v.datei) {
+        log::warn!("dev update: Generationen nicht gedreht, keine Bestaetigung: {e}");
+        return;
     }
+    let _ = status.bestaetigen(&version);
     match status_schreiben(staging, &status) {
-        Ok(()) => log::info!("dev update: {version} bestaetigt gesund"),
+        Ok(()) => {
+            log::info!("dev update: {version} bestaetigt gesund");
+            aufraeumen_kandidaten(staging, None);
+        }
         Err(e) => log::warn!("dev update: Bestaetigung nicht gespeichert: {e}"),
     }
-    aufraeumen_kandidaten(staging, None);
+}
+
+/// Wiederanlauffaehig: `letzte` wird erst in eine Kopie `vorherige.neu`
+/// uebernommen und atomar umbenannt; dann ersetzt der Kandidat `letzte`
+/// (Umbenennen ersetzt atomar). Ist der Kandidat schon `letzte` (ein frueherer
+/// Lauf kam bis dahin), ist nichts mehr zu tun.
+pub(crate) fn generationen_drehen(staging: &Path, kandidat_datei: &str) -> std::io::Result<()> {
+    if !kandidat_datei.starts_with("kandidat-") || kandidat_datei.contains(['/', '\\', ':']) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "ungueltiger Kandidatenname im Status",
+        ));
+    }
+    let kandidat = staging.join(kandidat_datei);
+    let letzte = staging.join("letzte-gute-setup.exe");
+    let vorherige = staging.join("vorherige-gute-setup.exe");
+    if !kandidat.is_file() {
+        return if letzte.is_file() {
+            Ok(())
+        } else {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "Kandidat und letzte Generation fehlen",
+            ))
+        };
+    }
+    if letzte.is_file() {
+        let tmp = staging.join("vorherige-gute-setup.exe.neu");
+        let _ = std::fs::remove_file(&tmp);
+        std::fs::copy(&letzte, &tmp)?;
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&tmp)?
+            .sync_all()?;
+        std::fs::rename(&tmp, &vorherige)?;
+    }
+    std::fs::rename(&kandidat, &letzte)
 }
 
 /// Startet den Hintergrund-Thread. Nur Windows (nur dort gibt es den
@@ -1045,7 +1211,7 @@ mod tests {
         let s = Status {
             zuletzt_zeit: 7,
             gesperrt: vec!["x".into()],
-            laufend: None,
+            ..Default::default()
         };
         status_schreiben(dir.path(), &s).unwrap();
         assert_eq!(status_lesen(dir.path()).unwrap(), s);
@@ -1060,7 +1226,42 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("status.json"), "{kaputt").unwrap();
         assert!(status_lesen(dir.path()).is_err());
+        // `{}` ist nicht „frisch“, sondern defekt (Pflichtfeld schema).
+        std::fs::write(dir.path().join("status.json"), "{}").unwrap();
+        assert!(status_lesen(dir.path()).is_err());
+        std::fs::write(dir.path().join("status.json"), r#"{"schema":9}"#).unwrap();
+        assert!(status_lesen(dir.path()).is_err());
     }
+
+    #[test]
+    fn generationen_drehen_ist_wiederanlauffaehig() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = dir.path();
+        std::fs::write(st.join("letzte-gute-setup.exe"), "v1").unwrap();
+        std::fs::write(st.join("kandidat-1-2.exe"), "v2").unwrap();
+        generationen_drehen(st, "kandidat-1-2.exe").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(st.join("letzte-gute-setup.exe")).unwrap(),
+            "v2"
+        );
+        assert_eq!(
+            std::fs::read_to_string(st.join("vorherige-gute-setup.exe")).unwrap(),
+            "v1"
+        );
+        // Zweiter Lauf (Kandidat schon gedreht): nichts mehr zu tun, nichts verloren.
+        generationen_drehen(st, "kandidat-1-2.exe").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(st.join("vorherige-gute-setup.exe")).unwrap(),
+            "v1"
+        );
+        // Ohne Kandidat und ohne letzte Generation: Fehler, keine Bestaetigung.
+        let leer = tempfile::tempdir().unwrap();
+        assert!(generationen_drehen(leer.path(), "kandidat-9-9.exe").is_err());
+        // Fremde Pfade im Status werden nicht angefasst.
+        assert!(generationen_drehen(st, "../x.exe").is_err());
+        assert!(generationen_drehen(st, "kandidat-..\\x.exe").is_err());
+    }
+
 
     #[test]
     fn sicherung_ersetzt_die_alte_erst_nach_erfolg() {

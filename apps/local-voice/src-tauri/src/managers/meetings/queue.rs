@@ -838,7 +838,10 @@ impl Inner {
         while !self.shutdown.load(Ordering::Acquire) {
             // Eine Panik im Takt (z. B. in einer Closure) darf den Verteiler
             // nicht beenden: sonst stuende die Warteschlange fuer immer.
-            if catch_unwind(AssertUnwindSafe(|| self.tick())).is_err() {
+            // Entwicklungskanal: waehrend ein Testupdate uebergeben wird, startet kein Lauf.
+            if !crate::dev_update::arbeit_gesperrt()
+                && catch_unwind(AssertUnwindSafe(|| self.tick())).is_err()
+            {
                 error!("meetings: queue tick panicked - continuing");
             }
             self.ticks.fetch_add(1, Ordering::Release);

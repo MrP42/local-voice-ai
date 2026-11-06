@@ -293,9 +293,11 @@ fn stop(app: &AppHandle, stage: &mut Stage, binding_id: &str, hotkey_string: &st
         warn!("No action in ACTION_MAP for '{binding_id}'");
         return;
     };
+    // Vor dem Uebergang setzen: zwischen Stopp und Verarbeitung darf kein
+    // Testupdate die App beenden.
+    verarbeitung_setzen(true);
     action.stop(app, binding_id, hotkey_string);
     *stage = Stage::Processing;
-    verarbeitung_setzen(true);
 }
 
 #[cfg(test)]

@@ -215,14 +215,15 @@ pub(crate) fn install(app: &AppHandle, path: &str) -> Result<(), String> {
     let sperre = crate::dev_update::staging_dir(app)
         .and_then(|d| crate::dev_update::Sperre::nehmen(&d))
         .ok_or("Es laeuft bereits eine Installation")?;
-    spawn_helper(app, &candidate)?;
-    sperre.behalten();
+    let helfer_pid = spawn_helper(app, &candidate)?;
+    sperre.uebergeben(helfer_pid);
     Ok(())
 }
 
 /// Fuer den Entwicklungskanal: startet genau diese (schon gepruefte, private)
 /// Kopie im Staging-Ordner ueber denselben Helfer.
-pub(crate) fn install_staged(app: &AppHandle, staged: &Path) -> Result<(), String> {
+/// Rueckgabe: PID des Helfers (haelt die Installationssperre bis zum Ende).
+pub(crate) fn install_staged(app: &AppHandle, staged: &Path) -> Result<u32, String> {
     if !staged.is_file() {
         return Err(format!("{} fehlt", staged.display()));
     }
@@ -231,7 +232,7 @@ pub(crate) fn install_staged(app: &AppHandle, staged: &Path) -> Result<(), Strin
 
 /// Helfer scharf machen und die App beenden: er wartet, bis dieser Prozess
 /// wirklich weg ist (kein Kill), startet den Installer passiv und dann die App.
-fn spawn_helper(app: &AppHandle, candidate: &Path) -> Result<(), String> {
+fn spawn_helper(app: &AppHandle, candidate: &Path) -> Result<u32, String> {
     let file_name = candidate
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
@@ -282,7 +283,7 @@ del \"%~f0\"
         let cmd = std::env::var_os("SystemRoot")
             .map(|r| PathBuf::from(r).join("System32").join("cmd.exe"))
             .unwrap_or_else(|| PathBuf::from("cmd.exe"));
-        std::process::Command::new(cmd)
+        let child = std::process::Command::new(cmd)
             .args(["/C", &helper.to_string_lossy()])
             .creation_flags(CREATE_NO_WINDOW)
             .spawn()
@@ -293,7 +294,7 @@ del \"%~f0\"
             std::thread::sleep(std::time::Duration::from_millis(300));
             app.exit(0);
         });
-        Ok(())
+        Ok(child.id())
     }
     #[cfg(not(target_os = "windows"))]
     {
