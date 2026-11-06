@@ -595,6 +595,45 @@ test.describe("Lesestatistik – Infoseite", () => {
       .toContain("hand");
   });
 
+  test("Diagramm: Beschriftungen 12 px groß, Tabelle per Tastatur hin und zurück", async ({
+    page,
+  }) => {
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: width > 600 ? 1000 : 844 });
+      await mock(page, { rows: uiRows(today) });
+      await openStats(page);
+      // Gerenderte Höhe der Achsentexte (nicht nur CSS-Wert): ≥ 12 px.
+      const heights = await page
+        .locator(".rs-chart text")
+        .evaluateAll((els) =>
+          els.map(
+            (e) => (e as SVGGraphicsElement).getBoundingClientRect().height,
+          ),
+        );
+      expect(heights.length).toBeGreaterThan(5);
+      expect(Math.min(...heights)).toBeGreaterThanOrEqual(12);
+      const size = await page
+        .locator(".rs-axis")
+        .first()
+        .evaluate((e) => getComputedStyle(e).fontSize);
+      expect(size).toBe("12px");
+      // Nur Tastatur: Tab bis zum Umschalter, Enter, Tabelle da, Enter zurück.
+      const toggle = page.getByRole("button", { name: "Als Tabelle zeigen" });
+      let reached = false;
+      for (let i = 0; i < 40 && !reached; i++) {
+        await page.keyboard.press("Tab");
+        reached = await toggle.evaluate((e) => e === document.activeElement);
+      }
+      expect(reached).toBe(true);
+      await page.keyboard.press("Enter");
+      await expect(toggle).toHaveAttribute("aria-pressed", "true");
+      await expect(page.getByTestId("reading-history-table")).toBeVisible();
+      await page.keyboard.press("Enter");
+      await expect(page.getByTestId("reading-history-table")).toHaveCount(0);
+      await expect(page.locator(".rs-chart")).toBeVisible();
+    }
+  });
+
   for (const width of [1440, 390]) {
     test(`Trefferflächen ≥ 44 px (${width})`, async ({ page }) => {
       await page.setViewportSize({ width, height: width > 600 ? 1000 : 844 });
