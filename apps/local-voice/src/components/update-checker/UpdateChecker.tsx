@@ -59,7 +59,14 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
   // Update checking state
   const [isChecking, setIsChecking] = useState(false);
   const [updateAvailable, setUpdateAvailable] = useState(false);
-  const [isInstalling, setIsInstalling] = useState(false);
+  const [isInstalling, setIsInstallingState] = useState(false);
+  // Läuft schon eine Installation, ersetzt ein neuer Fund sie nicht. Das Ref
+  // wird synchron mit dem Zustand gesetzt, damit kein Ereignis dazwischenkommt.
+  const installingRef = useRef(false);
+  const setIsInstalling = (value: boolean) => {
+    installingRef.current = value;
+    setIsInstallingState(value);
+  };
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [showUpToDate, setShowUpToDate] = useState(false);
   const [showPortableUpdateDialog, setShowPortableUpdateDialog] =
@@ -206,11 +213,6 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
   // Neue Testversion im Update-Ordner (Wächter im Backend, alle 30 s): sofort
   // das Update-Fenster zeigen. Ein Klick auf „Installieren“ schließt die App,
   // installiert und startet neu, wie beim Online-Update.
-  // Läuft schon eine Installation, ersetzt ein neuer Fund sie nicht.
-  const installingRef = useRef(false);
-  useEffect(() => {
-    installingRef.current = isInstalling;
-  }, [isInstalling]);
   useEffect(() => {
     const unlisten = listen<LocalUpdate>(LOCAL_UPDATE_EVENT, (event) => {
       if (installingRef.current) return;

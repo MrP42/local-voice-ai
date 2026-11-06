@@ -219,20 +219,39 @@ impl Watch {
     }
 }
 
+type DictationState = std::sync::Arc<crate::managers::audio::AudioRecordingManager>;
+type MeetingState = std::sync::Arc<crate::managers::meetings::recorder::MeetingRecorderManager>;
+type TtsState = crate::managers::tts::TtsManager;
+
+/// Belegt beim Start des Waechters, dass die Sperr-Zustaende unter genau
+/// diesen Typen registriert sind; sonst fiele der Schutz still aus.
+fn log_busy_sources(app: &AppHandle) {
+    use tauri::Manager;
+    let (d, m, t) = (
+        app.try_state::<DictationState>().is_some(),
+        app.try_state::<MeetingState>().is_some(),
+        app.try_state::<TtsState>().is_some(),
+    );
+    if d && m && t {
+        log::info!("local update: Sperren aktiv (Diktat, Besprechung, Vorlesen)");
+    } else {
+        log::warn!("local update: Sperre fehlt: Diktat {d}, Besprechung {m}, Vorlesen {t}");
+    }
+}
+
 /// Laeuft gerade etwas, das ein Neustart zerstoeren wuerde (Diktat,
 /// Besprechungsaufnahme oder deren Abschluss, Vorlesen)? Dann wartet das
 /// Angebot bis zum naechsten Blick.
 fn busy(app: &AppHandle) -> bool {
-    use std::sync::Arc;
     use tauri::Manager;
     let dictation = app
-        .try_state::<Arc<crate::managers::audio::AudioRecordingManager>>()
+        .try_state::<DictationState>()
         .is_some_and(|m| m.is_recording());
     let meeting = app
-        .try_state::<Arc<crate::managers::meetings::recorder::MeetingRecorderManager>>()
+        .try_state::<MeetingState>()
         .is_some_and(|m| m.is_recording() || m.final_jobs_active());
     let speaking = app
-        .try_state::<crate::managers::tts::TtsManager>()
+        .try_state::<TtsState>()
         .is_some_and(|m| m.status().phase == crate::managers::tts::state::TtsPhase::Speaking);
     dictation || meeting || speaking
 }
@@ -255,6 +274,7 @@ pub fn start_watch(app: AppHandle) {
         .name("local-update-watch".into())
         .spawn(move || {
             let mut watch = Watch::default();
+            log_busy_sources(&app);
             loop {
                 std::thread::sleep(WATCH_INTERVAL);
                 let Some(update) = find_newest(&app) else {
