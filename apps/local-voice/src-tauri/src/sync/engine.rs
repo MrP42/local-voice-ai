@@ -244,8 +244,14 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
     let my_key_id = crypto::key_id(&key);
     let client = HubClient::new(&cfg.url, &cfg.token);
     let mut led = ledger::load(app);
-    if app.state::<SyncEngine>().take_retry_files() && !led.failed.is_empty() {
+    if app.state::<SyncEngine>().take_retry_files()
+        && (!led.failed.is_empty() || !led.dead.is_empty())
+    {
         led.failed.clear();
+        // Abgewiesene Objekte ebenfalls neu versuchen: Grenzen und zugelassene
+        // Sammlungen des Hubs ändern sich mit Updates. Bleibt der Grund, wird
+        // das Objekt im selben Lauf wieder als abgewiesen vermerkt.
+        led.dead.clear();
         // Sofort sichern: bricht dieser Lauf früh ab, gilt der Neuversuch trotzdem.
         ledger::save(app, &led).map_err(HubError::Other)?;
     }
