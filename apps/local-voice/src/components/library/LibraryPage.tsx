@@ -100,6 +100,11 @@ import "./fassungen.css";
 import { cleanTitle, hasTitleNoise } from "@/lib/library/names";
 import { commands } from "@/bindings";
 import { usePersistentState } from "@/hooks/usePersistentState";
+import {
+  ReadingStats,
+  ReadingStatsButton,
+  useReadingRows,
+} from "./ReadingStats";
 import "./library.css";
 
 const FILTERS: Filter[] = [
@@ -236,6 +241,9 @@ export const LibraryPage: React.FC = () => {
     isSort,
   );
   const [openId, setOpenId] = useState<string | null>(null);
+  /** Lesestatistik (lva#354): Infoseite innerhalb der Bibliothek. */
+  const [statsOpen, setStatsOpen] = useState(false);
+  const { rows: readingRows } = useReadingRows();
   /** ⋮ → „Titel bearbeiten“: Produktseite öffnet mit dem Titelfeld. */
   const [editTitleId, setEditTitleId] = useState<string | null>(null);
   const [coverFor, setCoverFor] = useState<LibraryBook | null>(null);
@@ -902,7 +910,14 @@ export const LibraryPage: React.FC = () => {
                 : t("library.drop.onFree")}
           </div>
         )}
-        {open ? (
+        {statsOpen && !open ? (
+          <ReadingStats
+            books={books ?? []}
+            onBack={() => setStatsOpen(false)}
+            onOpenBook={(id) => setOpenId(id)}
+            onBooksChanged={reload}
+          />
+        ) : open ? (
           <div data-drop-book={open.book.id} style={{ display: "contents" }}>
             <BookDetail
               view={open}
@@ -918,6 +933,11 @@ export const LibraryPage: React.FC = () => {
               editTitle={editTitleId === open.book.id}
               onCreate={(tab) => setKiFor({ book: open.book, tab })}
               onExport={() => setExportFor(open.book)}
+              allBooks={books ?? []}
+              onOpenStats={() => {
+                setOpenId(null);
+                setStatsOpen(true);
+              }}
             />
           </div>
         ) : (
@@ -933,6 +953,12 @@ export const LibraryPage: React.FC = () => {
                 />
               </div>
               <span className="library-bar__spacer" />
+              {(books?.length ?? 0) > 0 && (
+                <ReadingStatsButton
+                  rows={readingRows}
+                  onOpen={() => setStatsOpen(true)}
+                />
+              )}
               {!selecting && (books?.length ?? 0) > 0 && (
                 <Button
                   icon={<CheckSquare size={16} aria-hidden="true" />}

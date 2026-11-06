@@ -79,6 +79,17 @@ const DEFAULT_AUDIO_DEVICE: AudioDevice = {
   is_default: true,
 };
 
+const saveReadingStats = () => {
+  const s = useSettingsStore.getState().settings;
+  return commands.changeReadingStatsSetting(
+    s?.reading_goal_minutes ?? 0,
+    s?.reading_goal_days ?? 0x7f,
+    s?.reading_stats_sync ?? false,
+    s?.reading_stats_ai ?? true,
+    s?.reading_stats_paused ?? false,
+  );
+};
+
 const settingUpdaters: {
   [K in keyof Settings]?: (value: Settings[K]) => Promise<unknown>;
 } = {
@@ -287,6 +298,12 @@ const settingUpdaters: {
     commands.changeMeetingDetectModeSetting(value as DetectMode),
   meeting_detect_ignored_apps: (value) =>
     commands.changeMeetingDetectIgnoredAppsSetting((value as string[]) ?? []),
+  // lva#354 Lesestatistik: ein Befehl für alle fünf Werte (Stand nach dem Setzen).
+  reading_goal_minutes: () => saveReadingStats(),
+  reading_goal_days: () => saveReadingStats(),
+  reading_stats_sync: () => saveReadingStats(),
+  reading_stats_ai: () => saveReadingStats(),
+  reading_stats_paused: () => saveReadingStats(),
   // U7
   meeting_import_parallel: (value) =>
     commands.changeMeetingImportParallelSetting(value as number),

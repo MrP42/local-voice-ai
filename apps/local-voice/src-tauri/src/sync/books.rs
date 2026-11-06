@@ -18,6 +18,7 @@
 use super::blobs::{self, FileStamp, Source};
 use super::collect::{self, LocalObject};
 use super::crypto::KEY_LEN;
+use crate::lesestatistik::{self, COLLECTION_READLOG};
 use crate::library::{self, LibraryBook};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
@@ -840,6 +841,10 @@ pub fn collect_library(
 
     let map = progress_for_sync(&root)?;
     out.objects.extend(progress_objects(&map));
+    // Lesestatistik (lva#354): nur mit Zustimmung dieses Geräts.
+    if crate::settings::get_settings(app).reading_stats_sync {
+        out.objects.extend(readlog_objects(&root));
+    }
     Ok(out)
 }
 
@@ -918,6 +923,13 @@ pub fn local_hash(
             let _guard = library::sync_lock();
             book_hash_locked(app, key, &dir, cache)
         }
+        COLLECTION_READLOG => {
+            let _guard = library::sync_lock();
+            Ok(readlog_objects(&root)
+                .into_iter()
+                .find(|o| o.id == id)
+                .map(|o| collect::hash(&o.value)))
+        }
         _ => {
             let map = {
                 let _guard = library::sync_lock();
@@ -973,6 +985,48 @@ impl From<&str> for ApplyError {
     fn from(s: &str) -> Self {
         ApplyError::Retry(s.to_string())
     }
+}
+
+/// Lesestatistik aller Geräte als Sync-Objekte; ein unlesbarer Stand
+/// liefert nichts (und damit keine Grabsteine, die Sammlung hat keine).
+fn readlog_objects(root: &Path) -> Vec<LocalObject> {
+    lesestatistik::sync_objects(root)
+        .unwrap_or_else(|e| {
+            log::warn!("Sync: Lesestatistik übersprungen: {e}");
+            Vec::new()
+        })
+        .into_iter()
+        .map(|(id, value)| LocalObject {
+            collection: COLLECTION_READLOG,
+            id,
+            value,
+        })
+        .collect()
+}
+
+/// Lesestatistik eines Geräts und Monats einpflegen. Grabsteine des Hubs
+/// gibt es für diese Sammlung nicht (Löschen läuft über `cleared`).
+pub fn apply_readlog(
+    app: &AppHandle,
+    id: &str,
+    value: Option<&Value>,
+) -> Result<Applied, ApplyError> {
+    let Some(value) = value else {
+        return Ok(Applied::default());
+    };
+    let root = library::sync_root(app)?;
+    let _guard = library::sync_lock();
+    let changed = lesestatistik::sync_apply(&root, id, value).map_err(|e| {
+        if e.starts_with("Lesestatistik:") || e.starts_with("Lesestatistik unlesbar") {
+            invalid(e)
+        } else {
+            ApplyError::Retry(e)
+        }
+    })?;
+    Ok(Applied {
+        changed,
+        ..Default::default()
+    })
 }
 
 fn invalid(s: impl Into<String>) -> ApplyError {

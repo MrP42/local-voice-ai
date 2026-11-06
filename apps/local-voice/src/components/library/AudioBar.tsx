@@ -36,6 +36,12 @@ import {
   textProgressKey,
 } from "@/lib/library/progress";
 import { saveResumePoint } from "@/lib/reader/resumePoint";
+import {
+  addReadingProgress,
+  normalizeLang,
+  startReading,
+  stopReading,
+} from "@/lib/library/readingClock";
 import { usePersistentState } from "@/hooks/usePersistentState";
 import { probeDuration } from "@/lib/library/probe";
 import { mergeLayers, nearAnchor, spanAt } from "@/lib/library/liveSync";
@@ -146,6 +152,20 @@ export const AudioBar: React.FC<Props> = ({
   const currentRef = useRef(0);
   const [playing, setPlaying] = useState(false);
   const [at, setAt] = useState(0);
+  // Lesestatistik (lva#354): Hören zählt, solange die Leiste spielt.
+  const readLang = normalizeLang(book.language);
+  useEffect(() => {
+    const session = {
+      bookId: book.id,
+      format: "hoeren" as const,
+      lang: readLang,
+    };
+    if (playing) startReading(session);
+    else stopReading({ bookId: book.id, format: "hoeren" });
+    return () => stopReading({ bookId: book.id, format: "hoeren" });
+  }, [playing, book.id, readLang]);
+  const heardMs = useRef<number | null>(null);
+  const heardAt = useRef<number | null>(null);
   const wantPlay = useRef(true);
   const switching = useRef(false);
   /** Das Element überlebt das Abmelden des Refs beim Schließen. */
@@ -238,6 +258,17 @@ export const AudioBar: React.FC<Props> = ({
       lastSave.current = now;
       const ms = Math.round(globalMs());
       const allKnown = durRef.current.every((d) => d > 0);
+      // Gehörte Spielzeit für die Seiten der Statistik. Sprünge zählen nicht:
+      // höchstens die verstrichene Zeit mal Wiedergabetempo (bis 3×) plus 1 s.
+      const step = heardMs.current === null ? 0 : ms - heardMs.current;
+      const wall = heardAt.current === null ? 0 : now - heardAt.current;
+      heardMs.current = ms;
+      heardAt.current = now;
+      if (step > 0 && step <= Math.min(60_000, wall * 3 + 1_000))
+        addReadingProgress(
+          { bookId: book.id, format: "hoeren", lang: readLang },
+          { audioMs: step },
+        );
       // Zuerst die Textstelle, dann das Hören: Letzteres ist dann das jüngere
       // und startet beim nächsten Mal nicht an der gröberen Textstelle.
       if (text && textKey && book.text) {
@@ -251,7 +282,7 @@ export const AudioBar: React.FC<Props> = ({
       });
       if (force) void flushProgress();
     },
-    [globalMs, key, text, textKey, book.text],
+    [globalMs, key, text, textKey, book.text, book.id, readLang],
   );
   const persistRef = useRef(persist);
   persistRef.current = persist;

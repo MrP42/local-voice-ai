@@ -31,6 +31,7 @@ mod input;
 mod isbn; // lva#149: Buchdaten per ISBN aus Open Library
 mod keep_awake; // Vorlesen: Bildschirm wach halten (Sonnen-Knopf)
 mod konto; // ADR-0024 Paket 1: Suite-Profil (lokal)
+mod lesestatistik; // lva#354: Lesezeit, Seiten, Themen und Sprachen
 mod library; // lva#152: Bibliothek für Bücher und Hörbücher
 mod library_export; // lva#236: Fassungen einzeln exportieren (EPUB, PDF, Word, M4B, MP3)
 mod llm_client;
@@ -2619,6 +2620,12 @@ fn specta_builder() -> Builder<tauri::Wry> {
             library::library_merge_audio,
             library::library_progress_load,
             library::library_progress_put,
+            lesestatistik::reading_log_add,
+            lesestatistik::reading_log_rows,
+            lesestatistik::reading_log_clear,
+            lesestatistik::change_reading_stats_setting,
+            lesestatistik::reading_classify,
+            lesestatistik::reading_log_export,
             hoersync_live::audiosync_load,
             hoersync_live::audiosync_window,
             hoersync_live::audiosync_anchor,

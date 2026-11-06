@@ -887,6 +887,22 @@ pub struct AppSettings {
     /// Bei entfernten Anbietern wirkungslos.
     #[serde(default = "default_tts_tag_device")]
     pub tts_tag_device: String,
+    /// Lesestatistik (lva#354): Tagesziel in Minuten, 0 = kein Ziel.
+    #[serde(default)]
+    pub reading_goal_minutes: u32,
+    /// Wochentage mit Ziel als Bitmaske (Bit 0 = Montag … Bit 6 = Sonntag).
+    #[serde(default = "default_reading_goal_days")]
+    pub reading_goal_days: u8,
+    /// Lesestatistik zwischen eigenen Geräten abgleichen. Nur nach
+    /// ausdrücklicher Zustimmung je Gerät (Codex-Entscheid 06.11.2026).
+    #[serde(default)]
+    pub reading_stats_sync: bool,
+    /// Bücher mit einem Sprachmodell einordnen lassen (nur Metadaten).
+    #[serde(default = "default_true")]
+    pub reading_stats_ai: bool,
+    /// Erfassung pausiert: solange an, zählt dieses Gerät nichts.
+    #[serde(default)]
+    pub reading_stats_paused: bool,
     /// Sprache der Tags im Vorlesetext: "auto" (= Oberflaeche), "de", "en".
     /// Betrifft nur Anzeige und Einfuegen; die Engine bekommt immer die
     /// englische Form.
@@ -1213,6 +1229,10 @@ fn default_tts_script_check() -> bool {
 }
 
 /// T4 Auto-Tagging: Standard-Claude-Modell, wenn "Claude Haiku" gewählt ist.
+fn default_reading_goal_days() -> u8 {
+    0x7f
+}
+
 fn default_tts_tag_model() -> String {
     "claude-haiku-4-5".to_string()
 }
@@ -1970,6 +1990,11 @@ pub fn get_default_settings() -> AppSettings {
         tts_tag_provider: String::new(),
         tts_tag_model: default_tts_tag_model(),
         tts_tag_device: default_tts_tag_device(),
+        reading_goal_minutes: 0,
+        reading_goal_days: default_reading_goal_days(),
+        reading_stats_sync: false,
+        reading_stats_ai: true,
+        reading_stats_paused: false,
         tts_tag_language: default_tts_tag_language(),
         tts_autotag_presets: Vec::new(),
         tts_autotag_last: None,

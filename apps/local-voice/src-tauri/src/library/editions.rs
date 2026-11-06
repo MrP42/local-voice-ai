@@ -580,6 +580,13 @@ pub fn join_in(root: &Path, target_id: &str, sources: &[String]) -> Result<Libra
                     }
                 }
                 target.favorite |= source.favorite;
+                // Einordnung der Lesestatistik (lva#354): fehlt sie am Ziel,
+                // übernimmt es die der Quelle.
+                if target.category.is_none() && target.topics.is_empty() {
+                    target.category = source.category.clone();
+                    target.topics = source.topics.clone();
+                    target.classified_by = source.classified_by.clone();
+                }
             }
             normalize(&mut target);
             write_book(&tdir, &target)?;

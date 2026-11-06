@@ -164,6 +164,17 @@ pub struct LibraryBook {
     /// Buch (nicht zur Anzeige) und reist deshalb in der Sync-Sammlung `book` mit.
     #[serde(default)]
     pub favorite: bool,
+    /// Kategorie der Lesestatistik (lva#354): Schlüssel einer Vorlage
+    /// (`persoenlichkeit`, …) oder `eigen:<name>`. Reist mit dem Buch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    /// Freie Themen (höchstens 5), z. B. „Rhetorik“.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub topics: Vec<String>,
+    /// `ki` = Vorschlag, noch nicht bestätigt; `hand` = vom Nutzer gesetzt,
+    /// wird nie automatisch überschrieben.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub classified_by: Option<String>,
     /// Schema der Datei: fehlt = 1, ab lva#344 = 2 (Sprachfassungen).
     #[serde(default, skip_serializing_if = "is_zero")]
     pub schema: u32,
@@ -1069,8 +1080,35 @@ pub fn library_save(app: AppHandle, book: LibraryBook) -> Result<LibraryBook, St
         return Err("Das Buch ist nicht mehr in der Bibliothek.".into());
     }
     validate_book(&book)?;
+    normalize_classification(&mut book);
     write_book(&dir, &book)?;
     read_book(&dir).ok_or_else(|| "Buch nach dem Speichern unlesbar.".into())
+}
+
+/// Einordnung der Lesestatistik (lva#354) bereinigen: Kategorie kurz und
+/// ohne Steuerzeichen, Themen getrimmt, ohne Dubletten (Groß/klein egal),
+/// höchstens 5 zu je 40 Zeichen, Herkunft nur `ki` oder `hand`.
+pub fn normalize_classification(book: &mut LibraryBook) {
+    let clean = |t: &str, max: usize| -> Option<String> {
+        let t: String = t.chars().filter(|c| !c.is_control()).collect();
+        let t = t.trim();
+        (!t.is_empty()).then(|| t.chars().take(max).collect())
+    };
+    book.category = book.category.as_deref().and_then(|c| clean(c, 60));
+    let mut seen = std::collections::HashSet::new();
+    book.topics = book
+        .topics
+        .iter()
+        .filter_map(|t| clean(t, 40))
+        .filter(|t| seen.insert(t.to_lowercase()))
+        .take(5)
+        .collect();
+    if !matches!(book.classified_by.as_deref(), Some("ki" | "hand")) {
+        book.classified_by = None;
+    }
+    if book.category.is_none() && book.topics.is_empty() {
+        book.classified_by = None;
+    }
 }
 
 /// Buch aus der Bibliothek entfernen, samt Cover und importiertem Hörbuch.
@@ -2175,6 +2213,30 @@ mod tests {
             isbn: isbn.map(str::to_string),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn einordnung_wird_bereinigt() {
+        let mut b = book("X", &[], None);
+        b.category = Some("  kommunikation\n ".into());
+        b.topics = vec![
+            " Rhetorik ".into(),
+            "rhetorik".into(),
+            "".into(),
+            "A".into(),
+            "B".into(),
+            "C".into(),
+            "D".into(),
+            "E".into(),
+        ];
+        b.classified_by = Some("robot".into());
+        normalize_classification(&mut b);
+        assert_eq!(b.category.as_deref(), Some("kommunikation"));
+        assert_eq!(b.topics, vec!["Rhetorik", "A", "B", "C", "D"]);
+        assert_eq!(b.classified_by, None);
+        // Altes buch.json ohne Felder bleibt gleich serialisiert (kein Sync-Rauschen).
+        let plain = serde_json::to_value(book("Y", &[], None)).unwrap();
+        assert!(plain.get("category").is_none() && plain.get("topics").is_none());
     }
 
     #[test]
