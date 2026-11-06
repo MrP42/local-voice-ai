@@ -1,0 +1,374 @@
+{
+ "erzeugt": "2026-11-06T11:29:24.687Z",
+ "bilder": 40,
+ "je_bild": {
+  "sf-01-bibliothek-1440-hell": {
+   "texte": 66,
+   "ziele": 15,
+   "verdeckt": 0,
+   "zuKlein": 0,
+   "abgeschnitten": 0,
+   "kontrastMin": 4.67,
+   "kontrastUnter45": 0
+  },
+  "sf-01-bibliothek-390-hell": {
+   "texte": 34,
+   "ziele": 7,
+   "verdeckt": 0,
+   "zuKlein": 0,
+   "abgeschnitten": 0,
+   "kontrastMin": 4.67,
+   "kontrastUnter45": 0
+  },
+  "sf-01-bibliothek-1440-dunkel": {
+   "texte": 66,
+   "ziele": 15,
+   "verdeckt": 0,
+   "zuKlein": 0,
+   "abgeschnitten": 0,
+   "kontrastMin": 4.67,
+   "kontrastUnter45": 0
+  },
+  "sf-01-bibliothek-390-dunkel": {
+   "texte": 34,
+   "ziele": 7,
+   "verdeckt": 0,
+   "zuKlein": 0,
+   "abgeschnitten": 0,
+   "kontrastMin": 4.67,
+   "kontrastUnter45": 0
+  },
+  "sf-02-pruefen-1440-hell": {
+   "texte": 15,
+   "ziele": 4,
+   "verdeckt": 0,
+   "zuKlein": 0,
+   "abgeschnitten": 0,
+   "kontrastMin": 5.38,
+   "kontrastUnter45": 0
+  },
+  "sf-02-pruefen-390-hell": {
+   "texte": 15,
+   "ziele": 4,
+   "verdeckt": 0,
+   "zuKlein": 0,
+   "abgeschnitten": 0,
+   "kontrastMin": 5.38,
+   "kontrastUnter45": 0
+  },
+  "sf-02-pruefen-1440-dunkel": {
+   "texte": 15,
+   "ziele": 4,
+   "verdeckt": 0,
+   "zuKlein": 0,
+   "abgeschnitten": 0,
+   "kontrastMin": 6.81,
+   "kontrastUnter45": 0
+  },
+  "sf-02-pruefen-390-dunkel": {
+   "texte": 15,
+   "ziele": 4,
+   "verdeckt": 0,
+   "zuKlein": 0,
+   "abgeschnitten": 0,
+   "kontrastMin": 6.81,
+   "kontrastUnter45": 0
+  },
+  "sf-03-import-1440-hell": {
+   "texte": 10,
+   "ziele": 4,
+   "verdeckt": 0,
+   "zuKlein": 0,
+   "abgeschnitten": 0,
+   "kontrastMin": 5.38,
+   "kontrastUnter45": 0
+  },
+  "sf-03-import-390-hell": {
+   "texte": 10,
+   "ziele": 4,
+   "verdeckt": 0,
+   "zuKlein": 0,
+   "abgeschnitten": 0,
+   "kontrastMin": 5.38,
+   "kontrastUnter45": 0
+  },
+  "sf-03-import-1440-dunkel": {
+   "texte": 10,
+   "ziele": 4,
+   "verdeckt": 0,
+   "zuKlein": 0,
+   "abgeschnitten": 0,
+   "kontrastMin": 6.81,
+   "kontrastUnter45": 0
+  },
+  "sf-03-import-390-dunkel": {
+   "texte": 10,
+   "ziele": 4,
+   "verdeckt": 0,
+   "zuKlein": 0,
+   "abgeschnitten": 0,
+   "kontrastMin": 6.81,
+   "kontrastUnter45": 0
+  },
+  "sf-04-buchseite-1440-hell": {
+   "texte": 47,
+   "ziele": 17,
+   "verdeckt": 4,
+   "zuKlein": 0,
+   "abgeschnitten": 0,
+   "kontrastMin": 4.67,
+   "kontrastUnter45": 0
+  },
+  "sf-04-buchseite-390-hell": {
+   "texte": 22,
+   "ziele": 9,
+   "verdeckt": 20,
+   "zuKlein": 0,
+   "abgeschnitten": 0,
+   "kontrastMin": 4.67,
+   "kontrastUnter45": 0
+  },
+  "sf-04-buchseite-1440-dunkel": {
+   "texte": 47,
+   "ziele": 17,
+   "verdeckt": 4,
+   "zuKlein": 0,
+   "abgeschnitten": 0,
+   "kontrastMin": 4.67,
+   "kontrastUnter45": 0
+  },
+  "sf-04-buchseite-390-dunkel": {
+   "texte": 22,
+   "ziele": 9,
+   "verdeckt": 20,
+   "zuKlein": 0,
+   "abgeschnitten": 0,
+   "kontrastMin": 4.67,
+   "kontrastUnter45": 0
+  },
+  "sf-05-player-sprache-1440-hell": {
+   "texte": 31,
+   "ziele": 10,
+   "verdeckt": 0,
+   "zuKlein": 0,
+   "abgeschnitten": 0,
+   "kontrastMin": 4.81,
+   "kontrastUnter45": 0
+  },
+  "sf-05-player-sprache-390-hell": {
+   "texte": 23,
+   "ziele": 4,
+   "verdeckt": 1,
+   "zuKlein": 0,
+   "abgeschnitten": 0,
+   "kontrastMin": 4.81,
+   "kontrastUnter45": 0
+  },
+  "sf-05-player-sprache-1440-dunkel": {
+   "texte": 31,
+   "ziele": 10,
+   "verdeckt": 0,
+   "zuKlein": 0,
+   "abgeschnitten": 0,
+   "kontrastMin": 5.12,
+   "kontrastUnter45": 0
+  },
+  "sf-05-player-sprache-390-dunkel": {
+   "texte": 23,
+   "ziele": 4,
+   "verdeckt": 1,
+   "zuKlein": 0,
+   "abgeschnitten": 0,
+   "kontrastMin": 5.12,
+   "kontrastUnter45": 0
+  },
+  "sf-06-wechsel-kapitelgenau-1440-hell": {
+   "texte": 22,
+   "ziele": 8,
+   "verdeckt": 0,
+   "zuKlein": 0,
+   "abgeschnitten": 0,
+   "kontrastMin": 5.38,
+   "kontrastUnter45": 0
+  },
+  "sf-06-wechsel-kapitelgenau-390-hell": {
+   "texte": 15,
+   "ziele": 2,
+   "verdeckt": 0,
+   "zuKlein": 0,
+   "abgeschnitten": 0,
+   "kontrastMin": 5.38,
+   "kontrastUnter45": 0
+  },
+  "sf-06-wechsel-kapitelgenau-1440-dunkel": {
+   "texte": 22,
+   "ziele": 8,
+   "verdeckt": 0,
+   "zuKlein": 0,
+   "abgeschnitten": 0,
+   "kontrastMin": 6.81,
+   "kontrastUnter45": 0
+  },
+  "sf-06-wechsel-kapitelgenau-390-dunkel": {
+   "texte": 15,
+   "ziele": 2,
+   "verdeckt": 0,
+   "zuKlein": 0,
+   "abgeschnitten": 0,
+   "kontrastMin": 6.81,
+   "kontrastUnter45": 0
+  },
+  "sf-07-wechsel-ungefaehr-1440-hell": {
+   "texte": 24,
+   "ziele": 9,
+   "verdeckt": 0,
+   "zuKlein": 0,
+   "abgeschnitten": 0,
+   "kontrastMin": 5.38,
+   "kontrastUnter45": 0
+  },
+  "sf-07-wechsel-ungefaehr-390-hell": {
+   "texte": 17,
+   "ziele": 3,
+   "verdeckt": 0,
+   "zuKlein": 0,
+   "abgeschnitten": 0,
+   "kontrastMin": 5.38,
+   "kontrastUnter45": 0
+  },
+  "sf-07-wechsel-ungefaehr-1440-dunkel": {
+   "texte": 24,
+   "ziele": 9,
+   "verdeckt": 0,
+   "zuKlein": 0,
+   "abgeschnitten": 0,
+   "kontrastMin": 6.81,
+   "kontrastUnter45": 0
+  },
+  "sf-07-wechsel-ungefaehr-390-dunkel": {
+   "texte": 17,
+   "ziele": 3,
+   "verdeckt": 0,
+   "zuKlein": 0,
+   "abgeschnitten": 0,
+   "kontrastMin": 6.81,
+   "kontrastUnter45": 0
+  },
+  "sf-08-kapitel-zuordnen-1440-hell": {
+   "texte": 62,
+   "ziele": 15,
+   "verdeckt": 6,
+   "zuKlein": 0,
+   "abgeschnitten": 0,
+   "kontrastMin": 5.37,
+   "kontrastUnter45": 0
+  },
+  "sf-08-kapitel-zuordnen-390-hell": {
+   "texte": 27,
+   "ziele": 8,
+   "verdeckt": 7,
+   "zuKlein": 0,
+   "abgeschnitten": 0,
+   "kontrastMin": 5.37,
+   "kontrastUnter45": 0
+  },
+  "sf-08-kapitel-zuordnen-1440-dunkel": {
+   "texte": 62,
+   "ziele": 15,
+   "verdeckt": 6,
+   "zuKlein": 0,
+   "abgeschnitten": 0,
+   "kontrastMin": 5.75,
+   "kontrastUnter45": 0
+  },
+  "sf-08-kapitel-zuordnen-390-dunkel": {
+   "texte": 27,
+   "ziele": 8,
+   "verdeckt": 7,
+   "zuKlein": 0,
+   "abgeschnitten": 0,
+   "kontrastMin": 5.75,
+   "kontrastUnter45": 0
+  },
+  "sf-09-iphone-sprache-quelle-390-hell": {
+   "texte": 18,
+   "ziele": 5,
+   "verdeckt": 13,
+   "zuKlein": 0,
+   "abgeschnitten": 0,
+   "kontrastMin": 7.68,
+   "kontrastUnter45": 0
+  },
+  "sf-09-iphone-sprache-quelle-390-dunkel": {
+   "texte": 18,
+   "ziele": 5,
+   "verdeckt": 13,
+   "zuKlein": 0,
+   "abgeschnitten": 0,
+   "kontrastMin": 8.04,
+   "kontrastUnter45": 0
+  },
+  "sf-10-iphone-regal-390-hell": {
+   "texte": 20,
+   "ziele": 1,
+   "verdeckt": 0,
+   "zuKlein": 0,
+   "abgeschnitten": 0,
+   "kontrastMin": 6.58,
+   "kontrastUnter45": 0
+  },
+  "sf-10-iphone-regal-390-dunkel": {
+   "texte": 20,
+   "ziele": 1,
+   "verdeckt": 0,
+   "zuKlein": 0,
+   "abgeschnitten": 0,
+   "kontrastMin": 6.93,
+   "kontrastUnter45": 0
+  },
+  "sf-11-konflikt-1440-hell": {
+   "texte": 24,
+   "ziele": 9,
+   "verdeckt": 0,
+   "zuKlein": 0,
+   "abgeschnitten": 0,
+   "kontrastMin": 5.38,
+   "kontrastUnter45": 0
+  },
+  "sf-11-konflikt-390-hell": {
+   "texte": 17,
+   "ziele": 3,
+   "verdeckt": 0,
+   "zuKlein": 0,
+   "abgeschnitten": 0,
+   "kontrastMin": 5.38,
+   "kontrastUnter45": 0
+  },
+  "sf-11-konflikt-1440-dunkel": {
+   "texte": 24,
+   "ziele": 9,
+   "verdeckt": 0,
+   "zuKlein": 0,
+   "abgeschnitten": 0,
+   "kontrastMin": 6.81,
+   "kontrastUnter45": 0
+  },
+  "sf-11-konflikt-390-dunkel": {
+   "texte": 17,
+   "ziele": 3,
+   "verdeckt": 0,
+   "zuKlein": 0,
+   "abgeschnitten": 0,
+   "kontrastMin": 6.81,
+   "kontrastUnter45": 0
+  }
+ },
+ "summe": {
+  "texte": 1038,
+  "ziele": 282,
+  "zielZuKlein": 0,
+  "abgeschnitten": 0,
+  "kontrastMin": 4.67,
+  "kontrastUnter45": 0
+ }
+}
