@@ -107,6 +107,18 @@ final class DesktopVectorTests: XCTestCase {
         XCTAssertFalse(SyncLedger.clearsPendingFavorite(accepted: "h0", sent: "h1", local: "h1"), "Hub hat nicht angenommen")
     }
 
+    func testKurzbuecherFollowDesktopFormat() throws {
+        let empty = String(decoding: try JSONEncoder().encode(BookFiles()), as: UTF8.self)
+        XCTAssertFalse(empty.contains("kurzbuecher"), "ohne Kurzbuch bleibt der Hash aller Bücher gleich")
+        let json = #"{"audio":[],"kurzbuecher":[{"blob":"a","size":3,"chunks":1,"type":"md","file":"kurzbuch-de.md"}]}"#
+        let files = try JSONDecoder().decode(BookFiles.self, from: Data(json.utf8))
+        XCTAssertEqual(files.kurzbuecher.first?.file, "kurzbuch-de.md")
+        XCTAssertEqual(try JSONDecoder().decode(BookFiles.self, from: JSONEncoder().encode(files)), files)
+        XCTAssertEqual(LibraryText.kurzbuchLanguage("kurzbuch-de.md"), "de")
+        XCTAssertNil(LibraryText.kurzbuchLanguage("anderes.md"))
+        XCTAssertEqual(LibraryText.kurzbuchText("## Fazit\n\n**Wichtig** bleibt."), "## Fazit\n\nWichtig bleibt.")
+    }
+
     func testTombstoneKeepsUnsavedLocalChanges() {
         let synced = SyncLedger.Entry(revision: 3, hash: "h", deleted: false)
         XCTAssertFalse(SyncLedger.keepsAgainstTombstone(synced, localHash: "h"), "abgeglichener Stand darf weg")

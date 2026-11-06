@@ -111,6 +111,22 @@ final class PhoneLibrary: ObservableObject {
         return AudioDownload.isCurrent(parts, sizes: parts.map { LibrarySync.fileSize(audioDir(book).appendingPathComponent($0.file)) }, blobs: m.localAudio ?? [:])
     }
 
+    // MARK: Kurzbücher vom PC
+
+    func kurzbuchFile(_ book: LibraryBook, _ ref: BlobRef) -> URL {
+        dir(book).appendingPathComponent("kurzbuch", isDirectory: true).appendingPathComponent(ref.blob + ".md")
+    }
+
+    /// Kurzbuch als eigener Eintrag für den Player. Er steht nicht im Regal und hat seinen eigenen Lesestand.
+    func kurzbuchBook(_ book: LibraryBook, _ ref: BlobRef) -> LibraryBook? {
+        guard let language = LibraryText.kurzbuchLanguage(ref.file),
+              let markdown = try? String(contentsOf: kurzbuchFile(book, ref), encoding: .utf8) else { return nil }
+        let entry = LibraryBook(id: "\(book.id)_kurzbuch_\(language)", title: "\(book.title) · Kurzbuch", addedMs: book.addedMs)
+        try? FileManager.default.createDirectory(at: dir(entry), withIntermediateDirectories: true)
+        try? LibraryText.kurzbuchText(markdown).write(to: textURL(entry), atomically: true, encoding: .utf8)
+        return entry
+    }
+
     func audioParts(_ refs: [BlobRef]) -> [AudioDownload.Part] {
         refs.enumerated().map { i, ref in
             AudioDownload.Part(blob: ref.blob, size: ref.size, chunks: ref.chunks, file: LibrarySync.audioFileName(ref.file, index: i))
@@ -177,6 +193,9 @@ final class PhoneLibrary: ObservableObject {
 
     func removeRemote(id: String) {
         guard let book = books.first(where: { $0.id == id }) else { return }
+        for ref in meta(book).files.kurzbuecher {
+            if let language = LibraryText.kurzbuchLanguage(ref.file) { try? FileManager.default.removeItem(at: root.appendingPathComponent("\(id)_kurzbuch_\(language)")) }
+        }
         try? FileManager.default.removeItem(at: dir(book))
         BookTalkHistoryStore(directory: BookTalkHistoryStore.standardDirectory()).clear(bookId: book.id)
         for key in [textKey(book), audioKey(book)] { progress[Self.storageKey(key)] = nil }

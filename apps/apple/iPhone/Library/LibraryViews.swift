@@ -456,6 +456,15 @@ struct LibraryBookDetail: View {
                     }.voiceCard()
                 }
 
+                ForEach(library.meta(book).files.kurzbuecher, id: \.blob) { ref in
+                    if let entry = library.kurzbuchBook(book, ref) {
+                        Button { playback.open(entry) } label: {
+                            Label("Kurzbuch\(library.meta(book).files.kurzbuecher.count > 1 ? " · \(LibraryText.kurzbuchLanguage(ref.file) ?? "")" : "")", systemImage: "text.book.closed")
+                                .frame(maxWidth: .infinity, minHeight: 44)
+                        }.buttonStyle(.bordered)
+                    }
+                }
+
                 if tracks.count > 1 {
                     Text("HÖRBUCH-TEILE").font(.caption.weight(.semibold)).tracking(0.6).foregroundStyle(VoicePalette.secondaryText)
                     let current = audioRec.map { LibraryTracks.position(of: $0.offset, in: tracks).index }

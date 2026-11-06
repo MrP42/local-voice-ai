@@ -79,6 +79,10 @@ pub struct BookFiles {
     pub cover: Option<BlobRef>,
     #[serde(default)]
     pub audio: Vec<BlobRef>,
+    /// Kurzbücher, je Sprache das neueste (`kurzbuch-<sprache>.md`). Andere Geräte lesen
+    /// sie; erzeugt werden sie hier aus den KI-Dokumenten, geladen wird nichts zurück.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub kurzbuecher: Vec<BlobRef>,
 }
 
 impl BookFiles {
@@ -87,6 +91,7 @@ impl BookFiles {
             .iter()
             .chain(self.cover.iter())
             .chain(self.audio.iter())
+            .chain(self.kurzbuecher.iter())
     }
 
     fn is_empty(&self) -> bool {
@@ -298,6 +303,34 @@ fn page_text(app: &AppHandle, page_id: &str) -> Option<String> {
         .and_then(|v| v.get("state")?.get("text")?.as_str().map(str::to_owned))
 }
 
+/// Neuestes Kurzbuch je Sprache einer Vorlesen-Seite, nach Sprache sortiert.
+fn kurzbuecher(app: &AppHandle, page_id: &str) -> Vec<(String, String)> {
+    let Some(dir) = crate::commands::pages::page_path(app, page_id).ok().filter(|d| d.is_dir()) else {
+        return Vec::new();
+    };
+    let docs = crate::book_ai::store::list(&dir).unwrap_or_default();
+    newest_per_language(&docs)
+        .into_iter()
+        .filter_map(|(language, id)| {
+            let text = crate::book_ai::store::read_text(&dir, &id).ok()?;
+            Some((language, text))
+        })
+        .collect()
+}
+
+/// Sprache → Dokument; ohne Angabe gilt Deutsch wie bei älteren Kurzbüchern.
+fn newest_per_language(docs: &[crate::book_ai::store::KiDocument]) -> Vec<(String, String)> {
+    let mut newest: BTreeMap<String, &crate::book_ai::store::KiDocument> = BTreeMap::new();
+    for doc in docs.iter().filter(|d| d.template_id == crate::book_ai::kurzbuch::TEMPLATE_ID) {
+        let language = doc.language.clone().filter(|l| library::sync_plain_name(l)).unwrap_or_else(|| "de".into());
+        let known = newest.get(&language).map_or(f64::MIN, |d| d.modified_ms);
+        if doc.modified_ms >= known {
+            newest.insert(language, doc);
+        }
+    }
+    newest.into_iter().map(|(l, d)| (l, d.id.clone())).collect()
+}
+
 fn build_book(
     app: &AppHandle,
     key: &[u8; KEY_LEN],
@@ -377,6 +410,19 @@ fn build_book(
             {
                 files.audio.push(r.clone());
             }
+        }
+    }
+    for (language, text) in book.text.as_ref().map(|t| kurzbuecher(app, &t.page_id)).unwrap_or_default() {
+        let bytes = text.into_bytes();
+        if let Some(mut r) = BlobRef::new(key, &blobs::stamp_bytes(&bytes)) {
+            r.kind = Some("md".into());
+            r.file = Some(format!("kurzbuch-{language}.md"));
+            uploads.push(PendingUpload {
+                blob: r.clone(),
+                source: Source::Bytes(bytes),
+                stamp: None,
+            });
+            files.kurzbuecher.push(r);
         }
     }
     Ok(BookBuild {
