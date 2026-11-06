@@ -499,6 +499,11 @@ export const TtsSettings = () => {
         audio: null,
         added_ms: 0,
         finished: false,
+        // Sprachfassungen (lva#344): leer = Schema 1, der Kern migriert.
+        schema: 0,
+        editions: [],
+        edition_tombstones: [],
+        alignments: [],
         cover_path: null,
         audio_path: null,
       },

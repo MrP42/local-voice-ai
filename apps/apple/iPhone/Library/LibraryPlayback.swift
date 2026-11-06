@@ -13,11 +13,15 @@ final class LibraryPlayback: NSObject, ObservableObject {
 
     @Published private(set) var book: LibraryBook?
     @Published private(set) var mode: Mode?
-    @Published private(set) var playing = false
+    @Published private(set) var playing = false {
+        didSet { if playing != oldValue { noteSpokenClock(rate: rate) } }
+    }
     @Published private(set) var positionMs: Double = 0
     @Published private(set) var totalMs: Double = 0
     @Published private(set) var trackIndex = 0
-    @Published var rate: Float = 1.0 { didSet { applyRate() } }
+    @Published var rate: Float = 1.0 {
+        didSet { noteSpokenClock(rate: oldValue); applyRate() }
+    }
     /// Sprachfluss beim Vorlesen mit Phonon: 0 zügig, 0,5 Hörbuch, 1 ruhig (`SpeechFlow`).
     @Published var flow: Double = SpeechFlow.stored().value {
         didSet {
@@ -79,6 +83,8 @@ final class LibraryPlayback: NSObject, ObservableObject {
     /// Absatz, in dem das Vorlesen pausiert wurde; nach einem Sprung neu sprechen.
     private var pausedParagraph: Int?
     private var phononTask: Task<Void, Never>?
+    private var spokenBefore: Double = 0
+    private var spokenSince: Date?
     /// Jede neue Lesung zählt hoch; Rückmeldungen älterer werden verworfen.
     private var readGeneration = 0
     /// Nächster Satz, den Phonon erzeugt; liegt vor dem hörbaren Satz.
@@ -118,6 +124,15 @@ final class LibraryPlayback: NSObject, ObservableObject {
     }
 
     var title: String { book?.title ?? "" }
+    /// Im aktuellen Satz gesprochene Zeit bei Normaltempo, ohne Pausen. Die Anzeige rechnet daraus den Satzteil,
+    /// damit sie Pausen und das Öffnen des Players übersteht.
+    var sentenceSpokenSeconds: Double { spokenBefore + (spokenSince.map { Date().timeIntervalSince($0) } ?? 0) * Double(rate) }
+
+    private func noteSpokenClock(rate used: Float) {
+        if let since = spokenSince { spokenBefore += Date().timeIntervalSince(since) * Double(used) }
+        spokenSince = playing ? Date() : nil
+    }
+
     /// Gerade gelesener Satz, für das Mitlesen im Mini-Player.
     var currentSentence: String? {
         guard mode == .readAloud, let range = sentenceRange, paragraphs.indices.contains(paragraphIndex) else { return nil }
@@ -518,6 +533,8 @@ final class LibraryPlayback: NSObject, ObservableObject {
     }
 
     private func move(to cursor: Cursor) {
+        spokenBefore = 0
+        spokenSince = playing ? Date() : nil
         let ranges = sentenceRanges(cursor.paragraph)
         paragraphIndex = cursor.paragraph
         sentences = ranges

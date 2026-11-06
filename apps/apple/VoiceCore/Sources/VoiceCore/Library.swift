@@ -100,6 +100,15 @@ public struct LibraryBook: Codable, Equatable, Identifiable, Sendable {
     public var finished: Bool
     /// Favorit (Desktop lva#222); fehlt in älteren buch.json.
     public var favorite: Bool = false
+    /// Sprachfassungen (lva#344, Schema 2). Das iPhone reicht sie unverändert
+    /// weiter; `text`/`audio`/`language` bleiben der Spiegel der Hauptfassung.
+    public var schema: Int?
+    public var workKey: String?
+    public var editions: PassthroughJSON?
+    public var primary: PassthroughJSON?
+    public var editionTombstones: PassthroughJSON?
+    public var reading: PassthroughJSON?
+    public var alignments: PassthroughJSON?
 
     public init(id: String, title: String, authors: [String] = [], coverSource: String = "generated",
                 text: LibraryTextVersion? = nil, audio: LibraryAudioVersion? = nil, addedMs: Double, finished: Bool = false) {
@@ -110,6 +119,7 @@ public struct LibraryBook: Codable, Equatable, Identifiable, Sendable {
     enum CodingKeys: String, CodingKey {
         case id, title, subtitle, authors, language, isbn, publisher, publishDate = "publish_date", pages, description
         case metadataSource = "metadata_source", coverSource = "cover_source", text, audio, addedMs = "added_ms", finished, favorite
+        case schema, workKey = "work_key", editions, primary, editionTombstones = "edition_tombstones", reading, alignments
     }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -130,6 +140,13 @@ public struct LibraryBook: Codable, Equatable, Identifiable, Sendable {
         addedMs = try c.decodeIfPresent(Double.self, forKey: .addedMs) ?? 0
         finished = try c.decodeIfPresent(Bool.self, forKey: .finished) ?? false
         favorite = try c.decodeIfPresent(Bool.self, forKey: .favorite) ?? false
+        schema = try c.decodeIfPresent(Int.self, forKey: .schema)
+        workKey = try c.decodeIfPresent(String.self, forKey: .workKey)
+        editions = try c.decodeIfPresent(PassthroughJSON.self, forKey: .editions)
+        primary = try c.decodeIfPresent(PassthroughJSON.self, forKey: .primary)
+        editionTombstones = try c.decodeIfPresent(PassthroughJSON.self, forKey: .editionTombstones)
+        reading = try c.decodeIfPresent(PassthroughJSON.self, forKey: .reading)
+        alignments = try c.decodeIfPresent(PassthroughJSON.self, forKey: .alignments)
     }
 }
 
@@ -381,6 +398,78 @@ public enum LibraryText {
 
     /// Vorlesedauer bei normalem Tempo: rund 6 Zeichen je Wort und 150 Wörter je Minute, wie am Desktop.
     public static func listenMilliseconds(chars: Double) -> Double { max(0, chars) / 6 / 150 * 60_000 }
+
+    /// Satz in etwa gleich lange Teile für eine kleine Anzeige, nach Zeichenzahl.
+    public static func sentenceParts(_ sentence: String, maxChars: Int) -> [String] {
+        guard maxChars > 0 else { return [] }
+        return sentenceParts(sentence) { $0.count <= maxChars }
+    }
+
+    /// Satz in etwa gleich lange Teile; `fits` sagt, ob ein Text in die Anzeige passt. Geteilt wird an Leerzeichen und
+    /// nach Gedankenstrichen, bevorzugt nach einem Satzzeichen. Was allein nicht passt, wird hart geteilt.
+    /// Es geht kein Zeichen verloren.
+    public static func sentenceParts(_ sentence: String, fits: (String) -> Bool) -> [String] {
+        let tokens = partTokens(sentence, fits: fits)
+        guard !tokens.isEmpty else { return [] }
+        func pack(limit: Int?) -> [String] {
+            var parts: [String] = []
+            var current = ""
+            for token in tokens {
+                let next = current + (token.joined || current.isEmpty ? "" : " ") + token.text
+                let pause = current.last.map { ",;:—–".contains($0) } ?? false
+                let tooLong = limit.map { next.count > $0 } ?? false
+                let early = pause && limit.map { current.count * 5 >= $0 * 3 } ?? false
+                if !current.isEmpty, !fits(next) || tooLong || early {
+                    parts.append(current)
+                    current = token.text
+                } else {
+                    current = next
+                }
+            }
+            if !current.isEmpty { parts.append(current) }
+            return parts
+        }
+        // Erst sehen, wie viele Teile es braucht; dann gleichmäßig füllen statt den letzten kurz zu lassen.
+        let greedy = pack(limit: nil)
+        guard greedy.count > 1 else { return greedy }
+        let total = greedy.reduce(0) { $0 + $1.count }
+        let target = (total + greedy.count - 1) / greedy.count
+        return pack(limit: target + target / 5)
+    }
+
+    private static func partTokens(_ sentence: String, fits: (String) -> Bool) -> [(text: String, joined: Bool)] {
+        var tokens: [(text: String, joined: Bool)] = []
+        for word in sentence.split(whereSeparator: \.isWhitespace) {
+            var first = true
+            var rest = Substring(word)
+            while !rest.isEmpty {
+                // Nach einem Gedankenstrich im Wort darf getrennt werden: „eins—zwei“.
+                let end = rest.firstIndex { "—–".contains($0) }.map { rest.index(after: $0) } ?? rest.endIndex
+                var piece = rest[..<end]
+                rest = rest[end...]
+                while !piece.isEmpty {
+                    var cut = piece.endIndex
+                    while cut > piece.index(after: piece.startIndex), !fits(String(piece[..<cut])) { cut = piece.index(before: cut) }
+                    tokens.append((String(piece[..<cut]), !first))
+                    first = false
+                    piece = piece[cut...]
+                }
+            }
+        }
+        return tokens
+    }
+
+    /// Welcher Teil gerade dran ist, nach dem Anteil des Satzes, der schon gesprochen sein dürfte.
+    public static func sentencePartIndex(_ parts: [String], elapsed: Double, total: Double) -> Int {
+        guard parts.count > 1, total > 0 else { return 0 }
+        let reached = min(1, max(0, elapsed / total)) * Double(parts.reduce(0) { $0 + $1.count })
+        var sum = 0.0
+        for (index, part) in parts.enumerated() {
+            sum += Double(part.count)
+            if reached < sum { return index }
+        }
+        return parts.count - 1
+    }
 
     /// Favoriten zuerst, sonst bleibt die Reihenfolge, wie `sortViews` am Desktop.
     public static func favoritesFirst(_ books: [LibraryBook]) -> [LibraryBook] {

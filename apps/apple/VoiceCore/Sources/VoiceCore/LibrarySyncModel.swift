@@ -110,7 +110,9 @@ public struct BookFiles: Codable, Equatable, Sendable {
     public var audio: [BlobRef]
     /// Kurzbücher vom PC, je Sprache das neueste (`kurzbuch-<sprache>.md`).
     public var kurzbuecher: [KurzbuchRef]
-    enum CodingKeys: String, CodingKey { case text, cover, audio, kurzbuecher }
+    /// Dateien weiterer Sprachfassungen (lva#344), je Fassungskennung; unverändert weitergereicht.
+    public var editions: PassthroughJSON?
+    enum CodingKeys: String, CodingKey { case text, cover, audio, kurzbuecher, editions }
     public init(text: BlobRef? = nil, cover: BlobRef? = nil, audio: [BlobRef] = [], kurzbuecher: [KurzbuchRef] = []) {
         self.text = text; self.cover = cover; self.audio = audio; self.kurzbuecher = kurzbuecher
     }
@@ -120,6 +122,7 @@ public struct BookFiles: Codable, Equatable, Sendable {
         cover = try c.decodeIfPresent(BlobRef.self, forKey: .cover)
         audio = try c.decodeIfPresent([BlobRef].self, forKey: .audio) ?? []
         kurzbuecher = try c.decodeIfPresent([KurzbuchRef].self, forKey: .kurzbuecher) ?? []
+        editions = try c.decodeIfPresent(PassthroughJSON.self, forKey: .editions)
     }
     /// Leere Listen fehlen wie am Desktop, sonst ändert sich der Hash aller Bücher.
     public func encode(to encoder: Encoder) throws {
@@ -128,6 +131,7 @@ public struct BookFiles: Codable, Equatable, Sendable {
         try c.encodeIfPresent(cover, forKey: .cover)
         try c.encode(audio, forKey: .audio)
         if !kurzbuecher.isEmpty { try c.encode(kurzbuecher, forKey: .kurzbuecher) }
+        try c.encodeIfPresent(editions, forKey: .editions)
     }
     public var audioBytes: Int { audio.reduce(0) { $0 + $1.size } }
 }

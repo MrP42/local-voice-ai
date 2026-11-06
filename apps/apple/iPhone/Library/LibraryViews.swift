@@ -89,6 +89,9 @@ struct LibraryTab: View {
                 // Diagnose-Startargumente für Simulator-Bilder, kein Produktpfad.
                 let args = ProcessInfo.processInfo.arguments
                 if let i = args.firstIndex(of: "--pair-url"), i + 1 < args.count, let url = URL(string: args[i + 1]) { PairingFlow.shared.open(url) }
+                if args.contains("--library-mini"), let book = library.books.first {
+                    playback.open(book, autoplay: true); playback.presented = false
+                }
                 if args.contains("--phonon-probe") {
                     // Geräteprobe ohne Bedienung: Ergebnis landet in Documents/phonon-probe.txt.
                     let out = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("phonon-probe.txt")
@@ -747,42 +750,40 @@ struct MiniPlayerClearance: ViewModifier {
     }
 }
 
-/// Laufschrift für den Satz im Mini-Player: ein Durchlauf je Satz, nur während die Wiedergabe läuft und die App vorne ist.
-/// Passt er in die Zeile, steht er still; „Bewegung reduzieren“ zeigt ihn zweizeilig.
-struct MarqueeText: View {
+/// Der gelesene Satz im Mini-Player: Teile, die in zwei Zeilen passen, nacheinander im Takt des Vorlesens. Der Platz ist
+/// immer zwei Zeilen hoch, damit der Titel still steht. Der Teil folgt der gesprochenen Zeit aus `LibraryPlayback`.
+struct SentenceParts: View {
     let text: String
-    let moving: Bool
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.scenePhase) private var scenePhase
-    @State private var textWidth: CGFloat = 0
-    @State private var boxWidth: CGFloat = 0
-    @State private var offset: CGFloat = 0
+    @ObservedObject var playback = LibraryPlayback.shared
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @State private var width: CGFloat = 0
 
-    private var overflow: CGFloat { max(0, textWidth - boxWidth) }
-    private var runs: Bool { moving && scenePhase == .active }
+    /// Passt der Text wirklich in zwei Zeilen? Gemessen mit derselben Schrift, nicht geschätzt.
+    private func fits(_ candidate: String, font: UIFont) -> Bool {
+        let box = (candidate as NSString).boundingRect(with: CGSize(width: width, height: .greatestFiniteMagnitude),
+                                                       options: .usesLineFragmentOrigin, attributes: [.font: font], context: nil)
+        return box.height <= font.lineHeight * 2 + 1
+    }
 
     var body: some View {
-        if reduceMotion {
-            Text(text).font(.caption).lineLimit(2).foregroundStyle(.white.opacity(0.85))
-        } else {
-            Text(text).font(.caption).lineLimit(1).fixedSize().foregroundStyle(.white.opacity(0.85))
-                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { textWidth = $0 }
-                .offset(x: offset)
-                .id("\(text)|\(runs)")  // Neue Ansicht beendet einen laufenden Durchlauf wirklich.
-                // `minWidth: 0` hält den Rahmen schmal; sonst meldet er die Breite des Textes und sprengt den Mini-Player.
-                .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { boxWidth = $0 }
-                .clipped()
-                .task(id: "\(text)|\(overflow)|\(runs)") {
-                    offset = 0
-                    guard runs, overflow > 0 else { return }
-                    try? await Task.sleep(nanoseconds: 700_000_000)
-                    guard !Task.isCancelled else { return }
-                    // So lange wie der Satz gesprochen wird, damit die Anzeige mithält.
-                    let spoken = LibraryText.listenMilliseconds(chars: Double(text.utf16.count)) / 1000
-                    withAnimation(.linear(duration: max(1.5, spoken - 0.7))) { offset = -overflow }
-                }
+        let font = UIFont.preferredFont(forTextStyle: .caption1, compatibleWith: UITraitCollection(preferredContentSizeCategory: UIContentSizeCategory(typeSize)))
+        let parts = width > 0 ? LibraryText.sentenceParts(text) { fits($0, font: font) } : [text]
+        let spoken = LibraryText.listenMilliseconds(chars: Double(text.utf16.count)) / 1000
+        TimelineView(.periodic(from: .now, by: 0.25)) { _ in
+            let index = LibraryText.sentencePartIndex(parts, elapsed: playback.sentenceSpokenSeconds, total: spoken)
+            MiniPlayerLine(text: parts.indices.contains(index) ? parts[index] : text)
         }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+    }
+}
+
+/// Immer zwei Zeilen hoch, auch bei kurzem Text.
+struct MiniPlayerLine: View {
+    let text: String
+    var body: some View {
+        // Verkleinern statt kürzen, falls die Schätzung für die Teile einmal nicht reicht.
+        Text(text).font(.caption).lineLimit(2, reservesSpace: true).minimumScaleFactor(0.7).foregroundStyle(.white.opacity(0.85))
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -796,10 +797,10 @@ struct LibraryMiniPlayer: View {
                         .frame(width: 32, height: 44)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(playback.title).font(.subheadline.weight(.semibold)).lineLimit(1).foregroundStyle(.white)
-                        if playback.playing, let sentence = playback.currentSentence {
-                            MarqueeText(text: sentence, moving: playback.playing).accessibilityHidden(true)
+                        if !playback.preparing, let sentence = playback.currentSentence {
+                            SentenceParts(text: sentence).accessibilityHidden(true)
                         } else {
-                            Text(subtitle).font(.caption).lineLimit(1).foregroundStyle(.white.opacity(0.75))
+                            MiniPlayerLine(text: subtitle)
                         }
                     }
                     Spacer(minLength: 0)

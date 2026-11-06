@@ -25,6 +25,11 @@ use tauri::AppHandle;
 
 use crate::commands::pages::write_atomic;
 
+pub mod editions;
+pub use editions::{
+    Alignment, Edition, EditionTombstone, LanguagePair, ReadingPosition, ReadingState, Stamp,
+};
+
 static LIBRARY_LOCK: Mutex<()> = Mutex::new(());
 fn lock() -> MutexGuard<'static, ()> {
     LIBRARY_LOCK.lock().unwrap_or_else(|e| e.into_inner())
@@ -159,6 +164,26 @@ pub struct LibraryBook {
     /// Buch (nicht zur Anzeige) und reist deshalb in der Sync-Sammlung `book` mit.
     #[serde(default)]
     pub favorite: bool,
+    /// Schema der Datei: fehlt = 1, ab lva#344 = 2 (Sprachfassungen).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub schema: u32,
+    /// Open-Library-Werk der Hauptfassung (`/works/OL…W`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub work_key: Option<String>,
+    /// Sprachfassungen (lva#344), gleichwertig. `text`, `audio` und
+    /// `language` oben sind die Arbeitskopie der Hauptfassung.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub editions: Vec<Edition>,
+    /// Hauptfassung als zeitgestempeltes Register.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary: Option<Stamp>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub edition_tombstones: Vec<EditionTombstone>,
+    /// Zuletzt gewählte Sprachfassung samt Stelle (geräteübergreifend).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reading: Option<ReadingState>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub alignments: Vec<Alignment>,
     /// Nur zur Anzeige, wird beim Auflisten gesetzt: absoluter Pfad des Covers
     /// samt Änderungszeit (`?v=`), damit ein neues Cover sofort erscheint.
     pub cover_path: Option<String>,
@@ -169,6 +194,10 @@ pub struct LibraryBook {
     /// ist die Liste leer.
     #[serde(default)]
     pub audio_paths: Vec<String>,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
 }
 
 fn generated() -> String {
@@ -295,6 +324,8 @@ fn read_book(dir: &Path) -> Option<LibraryBook> {
             Vec::new()
         };
     }
+    editions::normalize(&mut book);
+    editions::fill_paths(dir, &mut book);
     Some(book)
 }
 
@@ -304,6 +335,8 @@ fn write_book(dir: &Path, book: &LibraryBook) -> Result<(), String> {
     stored.cover_path = None;
     stored.audio_path = None;
     stored.audio_paths = Vec::new();
+    editions::normalize(&mut stored);
+    editions::strip_paths(&mut stored);
     let json = serde_json::to_vec_pretty(&stored).map_err(|e| e.to_string())?;
     write_atomic(&dir.join("buch.json"), &json)
 }
@@ -331,6 +364,13 @@ fn plain_name(name: &str) -> bool {
 }
 
 /// Prüft die Datei der Fassung und jeden Teil wie bisher `file`.
+fn validate_book(book: &LibraryBook) -> Result<(), String> {
+    if let Some(audio) = &book.audio {
+        validate_audio_names(audio)?;
+    }
+    editions::validate(book)
+}
+
 fn validate_audio_names(audio: &AudioVersion) -> Result<(), String> {
     if !plain_name(&audio.file) {
         return Err("Ungültiger Dateiname der Audiofassung.".into());
@@ -1028,9 +1068,7 @@ pub fn library_save(app: AppHandle, book: LibraryBook) -> Result<LibraryBook, St
     if !dir.join("buch.json").is_file() && !created {
         return Err("Das Buch ist nicht mehr in der Bibliothek.".into());
     }
-    if let Some(audio) = &book.audio {
-        validate_audio_names(audio)?;
-    }
+    validate_book(&book)?;
     write_book(&dir, &book)?;
     read_book(&dir).ok_or_else(|| "Buch nach dem Speichern unlesbar.".into())
 }
@@ -1131,6 +1169,11 @@ fn trash_in(root: &Path, ids: &[String]) -> Result<(), String> {
         .map(|l| l.lock().unwrap_or_else(|e| e.into_inner()))
         .collect();
     let _guard = lock();
+    trash_locked(root, ids)
+}
+
+/// Wie [`trash_in`], die Sperren hält der Aufrufer (Zusammenlegen).
+fn trash_locked(root: &Path, ids: &[String]) -> Result<(), String> {
     std::fs::create_dir_all(root.join(TRASH)).map_err(|e| e.to_string())?;
     let mut moved: Vec<(PathBuf, PathBuf)> = Vec::new();
     let undo = |moved: &[(PathBuf, PathBuf)]| {
@@ -1259,6 +1302,107 @@ pub fn library_restore(app: AppHandle, ids: Vec<String>) -> Result<Vec<LibraryBo
 pub fn library_purge(app: AppHandle, ids: Option<Vec<String>>) -> Result<(), String> {
     let root = library_root(&app)?;
     purge_in(&root, ids.as_deref())
+}
+
+// ---------------------------------------------------------------------------
+// Sprachfassungen (lva#344)
+// ---------------------------------------------------------------------------
+
+/// Bücher als Sprachfassungen in `target_id` übernehmen (Quellen → Papierkorb).
+#[tauri::command]
+#[specta::specta]
+pub fn library_join_editions(
+    app: AppHandle,
+    target_id: String,
+    source_ids: Vec<String>,
+) -> Result<LibraryBook, String> {
+    let root = library_root(&app)?;
+    editions::join_in(&root, &target_id, &source_ids)
+}
+
+/// Sprachfassung als eigenes Buch abtrennen. Liefert [verbleibend, neu].
+#[tauri::command]
+#[specta::specta]
+pub fn library_split_edition(
+    app: AppHandle,
+    id: String,
+    edition_id: String,
+    new_primary: Option<String>,
+) -> Result<Vec<LibraryBook>, String> {
+    let root = library_root(&app)?;
+    let (kept, fresh) = editions::split_in(&root, &id, &edition_id, new_primary.as_deref())?;
+    Ok(vec![kept, fresh])
+}
+
+/// Sprachfassung löschen (Grabstein, Dateien 30 Tage im Papierkorb).
+#[tauri::command]
+#[specta::specta]
+pub fn library_remove_edition(
+    app: AppHandle,
+    id: String,
+    edition_id: String,
+    new_primary: Option<String>,
+) -> Result<LibraryBook, String> {
+    let root = library_root(&app)?;
+    editions::remove_in(&root, &id, &edition_id, new_primary.as_deref())
+}
+
+/// Gelöschte Sprachfassung zurückholen (neue Kennung `<alt>_r`).
+#[tauri::command]
+#[specta::specta]
+pub fn library_restore_edition(
+    app: AppHandle,
+    id: String,
+    edition_id: String,
+    device: String,
+) -> Result<LibraryBook, String> {
+    let root = library_root(&app)?;
+    editions::restore_in(&root, &id, &edition_id, &device)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn library_set_primary_edition(
+    app: AppHandle,
+    id: String,
+    edition_id: String,
+    device: String,
+) -> Result<LibraryBook, String> {
+    let root = library_root(&app)?;
+    editions::set_primary_in(&root, &id, &edition_id, &device)
+}
+
+/// Auswahl setzen (Sprachwechsel). Die Oberfläche schreibt vorher die
+/// Zielstelle in den Fortschritt der Zielfassung, mit demselben Zeitstempel.
+#[tauri::command]
+#[specta::specta]
+pub fn library_set_reading(
+    app: AppHandle,
+    id: String,
+    reading: ReadingState,
+) -> Result<LibraryBook, String> {
+    let root = library_root(&app)?;
+    editions::update_in(&root, &id, |b| editions::set_reading(b, reading))
+}
+
+/// Kapitelzuordnung zweier Fassungen setzen (ganze Gruppenliste).
+#[tauri::command]
+#[specta::specta]
+pub fn library_set_alignment(
+    app: AppHandle,
+    id: String,
+    alignment: Alignment,
+) -> Result<LibraryBook, String> {
+    let root = library_root(&app)?;
+    editions::update_in(&root, &id, |b| editions::set_alignment(b, alignment))
+}
+
+/// Vermutliche Sprachfassungen in der Bibliothek (nie automatisch zusammenlegen).
+#[tauri::command]
+#[specta::specta]
+pub fn library_language_pairs(app: AppHandle) -> Result<Vec<LanguagePair>, String> {
+    let root = library_root(&app)?;
+    Ok(editions::language_pairs(&list_books(&root)))
 }
 
 /// Gibt es das Werk schon? Dann soll die neue Fassung angehängt werden.
@@ -1991,9 +2135,7 @@ pub(crate) fn sync_read_book(dir: &Path) -> Option<LibraryBook> {
 }
 
 pub(crate) fn sync_write_book(dir: &Path, book: &LibraryBook) -> Result<(), String> {
-    if let Some(audio) = &book.audio {
-        validate_audio_names(audio)?;
-    }
+    validate_book(book)?;
     write_book(dir, book)
 }
 
