@@ -18,3 +18,10 @@
 {"input_tokens": 3000, "output_tokens": 5, "other": {"cache_read_input_tokens": -0}}	ok
 5	reject
 null	reject
+{"input_tokens": 3000, "output_tokens": 5, "cache_read_input_tokens": -0}, "usage\u0001cache_read_input_tokens": 1	reject
+{"input_tokens": 3000, "output_tokens": 5}, "usage\u0001cache_read_input_tokens": -0	ok
+{"input_tokens": 3000, "output_tokens": 5}, "usage": {"input_tokens": 3000, "output_tokens": 5, "cache_read_input_tokens": -0}	reject
+{"input_tokens": 3000, "output_tokens": 5, "cache_read_input_tokens": -0}, "usage": {"input_tokens": 3000, "output_tokens": 5}	ok
+{"input_tokens": 3000, "output_tokens": 5, "cache_read_input_tokens": -0, "cache_read_input_tokens": 1}	ok
+{"input_tokens": 3000, "output_tokens": 5, "cache_read_input_tokens": 1, "cache_read_input_tokens": -0}	reject
+{"input_tokens": 3000, "output_tokens": 5}, "T:x": -0, "U:cache_read_input_tokens": -0	ok

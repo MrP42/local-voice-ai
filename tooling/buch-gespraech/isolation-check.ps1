@@ -253,10 +253,16 @@ public static class LvaWin {
 "@
 }
 
-# Kleiner JSON-Scanner: liefert die ROHE Schreibweise jeder Zahl an Pfaden mit hoechstens
-# zwei Ebenen ("feld" oder "objekt<SEP>feld"); Zahlen in Arrays und tiefer werden nicht
-# erfasst. Der Pfad folgt der Struktur, nicht dem Text: ein gleichnamiges Feld in einem
-# verschachtelten Objekt davor oder ein Feld in einer Zeichenkette zaehlt nicht.
+# Kleiner JSON-Scanner: liefert die ROHE Schreibweise von Zahlen an genau zwei Positionen:
+# Top-Level-Felder (Schluessel "T:<feld>") und Felder des Top-Level-Objekts "usage"
+# (Schluessel "U:<feld>"). Das feste Praefix macht die Schluessel kollisionsfrei: ein
+# JSON-Schluessel kann nie in den Pfad eines anderen hineinspielen (kein Trennzeichen,
+# das im Schluessel vorkommen koennte). Die Schluessel werden wie in Rust/Python
+# dekodiert (Escapes), bei doppelten Schluesseln gewinnt der LETZTE: ein spaeterer Wert
+# loescht den frueheren Eintrag (auch ein Nicht-Zahlenwert oder ein ganzes neues
+# "usage"-Objekt). Zahlen in Arrays und tiefer werden nicht erfasst; die Struktur
+# bestimmt den Pfad, nicht der Text (gleichnamige Felder in verschachtelten Objekten,
+# Listen oder Zeichenketten zaehlen nicht).
 if (-not ('LvaJson' -as [type])) {
     Add-Type -TypeDefinition @"
 using System;
@@ -264,12 +270,10 @@ using System.Collections.Generic;
 using System.Text;
 
 public static class LvaJson {
-    public const char Sep = '\u0001';
-
     public static Dictionary<string, string> Numbers(string s) {
         Dictionary<string, string> d = new Dictionary<string, string>(StringComparer.Ordinal);
         int i = 0;
-        Value(s, ref i, "", d);
+        Value(s, ref i, 0, null, null, d);
         return d;
     }
 
@@ -298,9 +302,21 @@ public static class LvaJson {
         return sb.ToString();
     }
 
-    // path == null: innerhalb eines Arrays oder tiefer als zwei Ebenen, nichts erfassen.
-    static void Value(string s, ref int i, string path, Dictionary<string, string> d) {
+    static void ForgetUsage(Dictionary<string, string> d) {
+        List<string> drop = new List<string>();
+        foreach (string k in d.Keys) { if (k.StartsWith("U:", StringComparison.Ordinal)) drop.Add(k); }
+        foreach (string k in drop) d.Remove(k);
+    }
+
+    // depth: Tiefe dieses Werts (Wurzel 0); top: Schluessel des Top-Level-Eintrags, in dem
+    // der Wert steht; key: sein eigener Schluessel. Tiefe >= 3 oder in Arrays: nichts erfassen.
+    static void Value(string s, ref int i, int depth, string top, string key, Dictionary<string, string> d) {
         Skip(s, ref i);
+        string slot = null;
+        if (depth == 1) slot = "T:" + key;
+        else if (depth == 2 && top == "usage") slot = "U:" + key;
+        if (slot != null) d.Remove(slot);
+        if (depth == 1 && key == "usage") ForgetUsage(d);
         char c = s[i];
         if (c == '{') {
             i++;
@@ -308,15 +324,10 @@ public static class LvaJson {
             if (s[i] == '}') { i++; return; }
             while (true) {
                 Skip(s, ref i);
-                string key = Str(s, ref i);
+                string k = Str(s, ref i);
                 Skip(s, ref i);
                 i++;
-                string child = null;
-                if (path != null) {
-                    if (path.Length == 0) child = key;
-                    else if (path.IndexOf(Sep) < 0) child = path + Sep + key;
-                }
-                Value(s, ref i, child, d);
+                Value(s, ref i, depth + 1, depth == 0 ? k : top, k, d);
                 Skip(s, ref i);
                 if (s[i] == ',') { i++; continue; }
                 i++;
@@ -327,7 +338,7 @@ public static class LvaJson {
             Skip(s, ref i);
             if (s[i] == ']') { i++; return; }
             while (true) {
-                Value(s, ref i, null, d);
+                Value(s, ref i, 99, null, null, d);
                 Skip(s, ref i);
                 if (s[i] == ',') { i++; continue; }
                 i++;
@@ -338,7 +349,7 @@ public static class LvaJson {
         } else {
             int st = i;
             while (i < s.Length && ",}] \t\r\n".IndexOf(s[i]) < 0) i++;
-            if (path != null && (s[st] == '-' || (s[st] >= '0' && s[st] <= '9'))) d[path] = s.Substring(st, i - st);
+            if (slot != null && (s[st] == '-' || (s[st] >= '0' && s[st] <= '9'))) d[slot] = s.Substring(st, i - st);
         }
     }
 }
@@ -636,9 +647,10 @@ function Test-NonIntegerLiteral([string]$token) { return ($token -ceq '-0') -or 
 function Set-NonIntegerFields($obj, [string]$line) {
     $lits = [LvaJson]::Numbers($line)
     foreach ($name in $script:CountFieldNames) {
-        if ($lits.ContainsKey($name) -and (Test-NonIntegerLiteral $lits[$name]) -and $obj.PSObject.Properties[$name]) { $obj.$name = [double]::NaN }
-        $usageKey = 'usage' + [LvaJson]::Sep + $name
-        if ($lits.ContainsKey($usageKey) -and (Test-NonIntegerLiteral $lits[$usageKey]) -and $obj.usage -and ($obj.usage -isnot [string]) -and $obj.usage.PSObject.Properties[$name]) { $obj.usage.$name = [double]::NaN }
+        $top = 'T:' + $name
+        if ($lits.ContainsKey($top) -and (Test-NonIntegerLiteral $lits[$top]) -and $obj.PSObject.Properties[$name]) { $obj.$name = [double]::NaN }
+        $nested = 'U:' + $name
+        if ($lits.ContainsKey($nested) -and (Test-NonIntegerLiteral $lits[$nested]) -and $obj.usage -and ($obj.usage -isnot [string]) -and $obj.usage.PSObject.Properties[$name]) { $obj.usage.$name = [double]::NaN }
     }
 }
 # Eine rohe JSON-Zahl/ein Wert der Zahlenmatrix (tests/number-matrix.tsv).

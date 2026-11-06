@@ -8,3 +8,8 @@
 {"type": "system", "subtype": "thinking_tokens", "note": "\"estimated_tokens\": -0", "estimated_tokens": 5, "estimated_tokens_delta": 1}	ok
 {"type": "system", "subtype": "thinking_tokens", "estimated_tokens": 5, "estimated_tokens_delta": 1.0}	reject
 {"type": "system", "subtype": "thinking_tokens", "estimated_tokens": 1E2, "estimated_tokens_delta": 1}	reject
+{"type": "system", "subtype": "thinking_tokens", "estimated_tokens": -0, "estimated_tokens": 5, "estimated_tokens_delta": 1}	ok
+{"type": "system", "subtype": "thinking_tokens", "estimated_tokens": 5, "estimated_tokens": -0, "estimated_tokens_delta": 1}	reject
+{"type": "system", "subtype": "thinking_tokens", "estimated_tokens": -0, "estimated_tokens": "x", "estimated_tokens_delta": 1}	reject
+{"type": "system", "subtype": "thinking_tokens", "estimated_tokens\u0001x": 1, "estimated_tokens": 5, "estimated_tokens_delta": 1}	ok
+{"type": "system", "subtype": "thinking_tokens", "estimated_tokens": -0, "estimated_tokens_delta": 1}	reject
