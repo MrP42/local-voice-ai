@@ -74,6 +74,15 @@ async fn old_fixture_gives_the_expected_statuses_but_too_few_questions() {
 
     let unproven = result(&report, "unbelegt");
     assert_eq!((unproven.kept, unproven.dropped), (1, 1));
+    assert_eq!(unproven.dropped_detail.len(), 1);
+    assert!(!unproven.raw_answer.is_empty());
+    assert!(result(&report, "zwei-vaeter").raw_answer.contains("[Q"));
+    let detail_total: usize = report
+        .questions
+        .iter()
+        .map(|r| r.dropped_detail.len())
+        .sum();
+    assert_eq!(detail_total as u32, report.summary.dropped_sentences);
 
     let no_hits = result(&report, "erfunden");
     assert!(!no_hits.model_called);
@@ -165,6 +174,9 @@ async fn report_and_hash_are_stable_and_the_outputs_are_written() {
     );
     let md = std::fs::read_to_string(dir.join("bericht.md")).unwrap();
     assert!(md.contains("BESTANDEN") && md.contains(&hash));
+    assert!(md.contains("## Verworfene Sätze nach Grund"));
+    assert!(md.contains("| Grund | Code | Anzahl |") && md.contains("**Summe**"));
+    assert!(json.contains("\"raw_answer\"") && json.contains("\"dropped_detail\""));
     for threshold in [
         "mindestens 30",
         "mindestens 80.0 %",

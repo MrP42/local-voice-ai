@@ -17,14 +17,15 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
-use super::cite::CHECK_VERSION;
+use super::cite::{DropReason, CHECK_VERSION};
+use super::flow::DroppedSentence;
 use super::index::{self, BookIndex};
 use super::lex::{Entity, EntityKind};
 use super::prompt::{self, Budget, BudgetProfile, PROMPT_VERSION};
 use super::{
-    flow, intent, run, AskParams, BookTalkAnswer, BookTalkInput, BookTalkIntent, BookTalkRequest,
-    BookTalkScope, Model, ModelFuture, StoredTurn, TalkModel, DEFAULT_MAX_ANSWER_TOKENS,
-    REASON_NO_HITS,
+    flow, intent, run_traced, AskParams, BookTalkAnswer, BookTalkInput, BookTalkIntent,
+    BookTalkRequest, BookTalkScope, Model, ModelFuture, StoredTurn, TalkDiag, TalkModel,
+    DEFAULT_MAX_ANSWER_TOKENS, REASON_NO_HITS,
 };
 use crate::managers::meetings::chat::context::{budget_chars, context_budget_tokens};
 use crate::managers::meetings::chat::controller::CancelFlag;
@@ -205,6 +206,10 @@ pub struct QuestionResult {
     pub reason: Option<String>,
     pub error: Option<String>,
     pub answer: String,
+    /// Rohtext des Modells (vor Prüfung, ohne Belegmarker-Entfernung).
+    pub raw_answer: String,
+    /// Verworfene Sätze mit Grund (Satz ohne Marker, Auszugsnummern, Grund).
+    pub dropped_detail: Vec<DroppedSentence>,
     #[serde(skip)]
     pub duration_ms: u64,
 }
@@ -553,14 +558,17 @@ async fn eval_one(
     let emit = |_e: super::BookTalkEvent| {};
     let before = model.calls.load(Ordering::SeqCst);
     let started = Instant::now();
-    let outcome = run(
+    let diag = std::sync::Mutex::new(TalkDiag::default());
+    let outcome = run_traced(
         ix,
         &params,
         Model::Ready(model),
         &CancelFlag::default(),
         &emit,
+        Some(&diag),
     )
     .await;
+    let diag = diag.into_inner().unwrap_or_default();
     let duration_ms = started.elapsed().as_millis() as u64;
     let model_called = model.calls.load(Ordering::SeqCst) > before;
     let answerable =
@@ -590,8 +598,12 @@ async fn eval_one(
         reason: None,
         error: None,
         answer: String::new(),
+        raw_answer: String::new(),
+        dropped_detail: Vec::new(),
         duration_ms,
     };
+    r.raw_answer = diag.raw;
+    r.dropped_detail = diag.dropped;
     let a = match outcome {
         Ok(a) => a,
         Err(e) => {
@@ -660,6 +672,8 @@ fn skipped(q: &EvalQuestion) -> QuestionResult {
         reason: None,
         error: None,
         answer: String::new(),
+        raw_answer: String::new(),
+        dropped_detail: Vec::new(),
         duration_ms: 0,
     }
 }
@@ -811,6 +825,57 @@ fn pct(x: f64) -> String {
     format!("{:.1} %", x * 100.0)
 }
 
+/// Abschnitt „Verworfene Sätze nach Grund“: Zählung je Grund, dann je Frage
+/// die verworfenen Sätze mit Grund.
+fn dropped_md(report: &Report) -> String {
+    let mut o = String::from("\n## Verworfene Sätze nach Grund\n\n");
+    let all: Vec<&DroppedSentence> = report
+        .questions
+        .iter()
+        .flat_map(|r| r.dropped_detail.iter())
+        .collect();
+    if all.is_empty() {
+        o.push_str("Keine verworfenen Sätze mit Grund.\n");
+        return o;
+    }
+    o.push_str("| Grund | Code | Anzahl |\n|---|---|---|\n");
+    for reason in DropReason::ALL {
+        let n = all.iter().filter(|d| d.reason == reason).count();
+        o.push_str(&format!(
+            "| {} | `{}` | {} |\n",
+            reason.describe(),
+            reason.code(),
+            n
+        ));
+    }
+    o.push_str(&format!("| **Summe** | | {} |\n", all.len()));
+    for r in report
+        .questions
+        .iter()
+        .filter(|r| !r.dropped_detail.is_empty())
+    {
+        o.push_str(&format!("\n### {}\n\n", r.id));
+        for d in &r.dropped_detail {
+            let ids = if d.ids.is_empty() {
+                "ohne Beleg".to_string()
+            } else {
+                d.ids
+                    .iter()
+                    .map(|i| format!("Q{i}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            };
+            o.push_str(&format!(
+                "- `{}` ({}): {}\n",
+                d.reason.code(),
+                ids,
+                cell(&d.sentence)
+            ));
+        }
+    }
+    o
+}
+
 /// `bericht.md`: Kopf, Kennzahlen gegen die Schwellen, Tabelle je Frage und
 /// die Antworten im Wortlaut (nur hier stehen Buchinhalte).
 pub fn report_md(report: &Report, hash: &str) -> String {
@@ -925,6 +990,7 @@ pub fn report_md(report: &Report, hash: &str) -> String {
             cell(r.error.as_deref().unwrap_or("-")),
         ));
     }
+    o.push_str(&dropped_md(report));
     o.push_str("\n## Antworten im Wortlaut\n\n");
     for r in report.questions.iter().filter(|r| !r.skipped) {
         o.push_str(&format!(

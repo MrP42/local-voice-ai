@@ -508,6 +508,80 @@ fn abbreviations() -> &'static HashSet<&'static str> {
 const CLOSERS: [u16; 10] = [0x201C, 0x201D, 0x2018, 0x2019, 34, 39, 0xBB, 0xAB, 41, 93];
 const OPENERS: [u16; 9] = [0x201E, 0x201C, 0x201A, 0x2018, 34, 39, 0xBB, 0xAB, 40];
 
+/// Wörter, auf die eine Ordnungszahl („14.“) eindeutig folgt: Monatsnamen
+/// (deutsch, englisch, Kurzformen) und wenige Substantive („3. Kapitel“).
+fn ordinal_followers() -> &'static HashSet<&'static str> {
+    static SET: OnceLock<HashSet<&'static str>> = OnceLock::new();
+    SET.get_or_init(|| {
+        [
+            "januar",
+            "jänner",
+            "februar",
+            "märz",
+            "april",
+            "mai",
+            "juni",
+            "juli",
+            "august",
+            "september",
+            "oktober",
+            "november",
+            "dezember",
+            "jan",
+            "feb",
+            "mär",
+            "mrz",
+            "apr",
+            "jun",
+            "jul",
+            "aug",
+            "sep",
+            "sept",
+            "okt",
+            "nov",
+            "dez",
+            "january",
+            "february",
+            "march",
+            "may",
+            "june",
+            "july",
+            "october",
+            "december",
+            "mar",
+            "oct",
+            "dec",
+            "kapitel",
+            "stock",
+            "auflage",
+            "jahrhundert",
+            "weltkrieg",
+        ]
+        .into_iter()
+        .collect()
+    })
+}
+
+/// „14. November“, „3. Kapitel“: Zahl mit 1–2 Ziffern vor dem Punkt und ein
+/// eindeutiger Folgewort danach ist keine Satzgrenze. Vierstellige Zahlen
+/// („… 1998. November …“) bleiben eine Grenze.
+fn is_ordinal(u: &[u16], start: usize, dot: usize, next: usize) -> bool {
+    let mut d = dot;
+    while d > start && (48..=57).contains(&u[d - 1]) {
+        d -= 1;
+    }
+    let digits = dot - d;
+    if !(1..=2).contains(&digits) || (d > start && alphabetic(u[d - 1])) {
+        return false;
+    }
+    let mut e = next;
+    while e < u.len() && alphabetic(u[e]) {
+        e += 1;
+    }
+    let word = String::from_utf16_lossy(&u[next..e]).to_lowercase();
+    ordinal_followers().contains(word.as_str())
+}
+
 fn upper_or_digit(c: u16) -> bool {
     char::from_u32(u32::from(c)).is_some_and(|ch| ch.is_uppercase()) || (48..=57).contains(&c)
 }
@@ -553,6 +627,9 @@ pub fn sentence_spans(u: &[u16]) -> Vec<(usize, usize)> {
             if abbreviations().contains(word.as_str()) && word.encode_utf16().count() <= 4 {
                 boundary = false;
             }
+            if boundary && is_ordinal(u, start, i, k) {
+                boundary = false;
+            }
         }
         if boundary {
             out.push((start, j));
@@ -578,6 +655,52 @@ pub fn units(s: &str) -> Vec<u16> {
 mod tests {
     use super::*;
     use crate::book_ai::talk::testkit::{buch, offsets};
+
+    fn split(text: &str) -> Vec<String> {
+        let u = units(text);
+        sentence_spans(&u)
+            .into_iter()
+            .map(|(a, b)| String::from_utf16_lossy(&u[a..b]))
+            .collect()
+    }
+
+    #[test]
+    fn dates_and_ordinals_are_not_sentence_ends() {
+        assert_eq!(
+            split("Am 14. November 1998 strandete das Schiff. Dort stand ein Haus."),
+            [
+                "Am 14. November 1998 strandete das Schiff.",
+                "Dort stand ein Haus."
+            ]
+        );
+        for t in [
+            "Am 3. Jänner kam er an. Dann ging er.",
+            "Am 3. Dez. kam er an. Dann ging er.",
+            "Am 1. Mai war es kalt. Dann ging er.",
+            "On 14. March it began. Then it ended.",
+            "Im 2. Stock wohnte er. Dann ging er.",
+            "Im 3. Kapitel stirbt er. Dann ging er.",
+        ] {
+            assert_eq!(split(t).len(), 2, "{t}");
+        }
+    }
+
+    #[test]
+    fn a_year_at_the_end_and_real_ordinal_like_ends_stay_boundaries() {
+        assert_eq!(
+            split("Es geschah im Jahr 1998. November war kalt."),
+            ["Es geschah im Jahr 1998.", "November war kalt."]
+        );
+        assert_eq!(split("Er zählte bis 14. Der Mann ging.").len(), 2);
+        assert_eq!(split("Es waren 123. November kam.").len(), 2);
+        assert_eq!(split("Das ist Nr. 5. Dann ging er.").len(), 2);
+    }
+
+    #[test]
+    fn abbreviations_are_unchanged() {
+        assert_eq!(split("Siehe z. B. Seite 4. Dann ging er.").len(), 2);
+        assert_eq!(split("Dr. Meier kam. Er ging.").len(), 2);
+    }
 
     fn idx() -> BookIndex {
         build("Der Weg", &buch())

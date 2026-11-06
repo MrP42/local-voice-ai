@@ -4,8 +4,8 @@
 //! (Referenz, `BookTalkSession.swift`).
 
 use super::cite::{
-    best_quote, evaluate, plain, reference_sentence, speech_tail, spoken_quote, BookTalkCitation,
-    DeltaFilter, Grounding, SentenceKind, QUOTE_MAX_CHARS,
+    best_quote, evaluate_with_reason, plain, reference_sentence, speech_tail, spoken_quote,
+    BookTalkCitation, DeltaFilter, DropReason, Grounding, SentenceKind, QUOTE_MAX_CHARS,
 };
 use super::index::{sentence_spans, BookIndex};
 use super::intent::{BookTalkIntent, Lang};
@@ -34,6 +34,14 @@ impl Ctx<'_> {
     }
 }
 
+/// Ein verworfener Satz mit Grund (Diagnose, z. B. für den Eval-Bericht).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct DroppedSentence {
+    pub sentence: String,
+    pub ids: Vec<usize>,
+    pub reason: DropReason,
+}
+
 /// Sammelt den Modellstrom, prüft Satz für Satz und liefert Ereignisse.
 pub struct Collector<'a> {
     grounding: Grounding<'a>,
@@ -47,6 +55,7 @@ pub struct Collector<'a> {
     general_kept: usize,
     cited_kept: usize,
     pub dropped: u32,
+    pub dropped_detail: Vec<DroppedSentence>,
     pub has_anchor: bool,
 }
 
@@ -64,6 +73,7 @@ impl<'a> Collector<'a> {
             general_kept: 0,
             cited_kept: 0,
             dropped: 0,
+            dropped_detail: Vec::new(),
             has_anchor: false,
         }
     }
@@ -102,9 +112,19 @@ impl<'a> Collector<'a> {
                 .filter(|m| m.offset > s0 && m.offset <= s1)
                 .flat_map(|m| m.ids.clone())
                 .collect();
-            let (kind, cites) = evaluate(&sentence, &ids, &self.grounding, self.general_kept == 0);
+            let (kind, cites, reason) =
+                evaluate_with_reason(&sentence, &ids, &self.grounding, self.general_kept == 0);
             match kind {
-                SentenceKind::Dropped => self.dropped += 1,
+                SentenceKind::Dropped => {
+                    self.dropped += 1;
+                    if let Some(reason) = reason {
+                        self.dropped_detail.push(DroppedSentence {
+                            sentence,
+                            ids,
+                            reason,
+                        });
+                    }
+                }
                 SentenceKind::General => {
                     self.general_kept += 1;
                     if self.has_anchor {

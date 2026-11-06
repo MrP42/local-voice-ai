@@ -334,6 +334,26 @@ pub async fn run(
     cancel: &CancelFlag,
     emit: Emit<'_>,
 ) -> Result<BookTalkAnswer, TalkError> {
+    run_traced(index, p, model, cancel, emit, None).await
+}
+
+/// Diagnose eines Laufs (nur für den Eval): Rohtext des Modells und die
+/// verworfenen Sätze mit Grund. Ändert nichts am Ergebnis.
+#[derive(Debug, Default)]
+pub struct TalkDiag {
+    pub raw: String,
+    pub dropped: Vec<flow::DroppedSentence>,
+}
+
+/// Wie [`run`], schreibt zusätzlich Rohtext und verworfene Sätze in `diag`.
+pub async fn run_traced(
+    index: &BookIndex,
+    p: &AskParams<'_>,
+    model: Model<'_>,
+    cancel: &CancelFlag,
+    emit: Emit<'_>,
+    diag: Option<&Mutex<TalkDiag>>,
+) -> Result<BookTalkAnswer, TalkError> {
     let req = p.request;
     let question = req.question.trim();
     if question.is_empty() || question.chars().count() > MAX_QUESTION_CHARS {
@@ -480,6 +500,11 @@ pub async fn run(
     let (mut collector, failure) = match reply {
         Ok(full) => {
             st.raw = full;
+            if let Some(d) = diag {
+                if let Ok(mut d) = d.lock() {
+                    d.raw = st.raw.clone();
+                }
+            }
             for e in st.advance(true) {
                 emit(e);
             }
@@ -495,6 +520,11 @@ pub async fn run(
     };
     for e in collector.finish() {
         emit(e);
+    }
+    if let Some(d) = diag {
+        if let Ok(mut d) = d.lock() {
+            d.dropped = collector.dropped_detail.clone();
+        }
     }
 
     if !collector.has_anchor {

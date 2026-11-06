@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use serde_json::Value;
 
-use super::cite::{self, Grounding};
+use super::cite::{self, Grounding, SentenceKind};
 use super::flow::{self, Collector};
 use super::index::{self, BookIndex};
 use super::lex::{Entity, EntityKind};
@@ -911,6 +911,171 @@ fn a_general_sentence_needs_explain_and_is_limited_to_one_of_30_words() {
         run(&long, BookTalkIntent::Explain),
         1,
         "höchstens 30 Wörter"
+    );
+}
+
+// ------------------------------------------- Gründe verworfener Sätze ----
+
+fn reason_of(
+    raw: &str,
+    ids: &[usize],
+    intent: BookTalkIntent,
+    entities: &[Entity],
+    late: &HashSet<String>,
+    general_free: bool,
+) -> (SentenceKind, Option<cite::DropReason>) {
+    let ix = index_of(&buch());
+    let chunk = ix
+        .chunks
+        .iter()
+        .find(|c| c.text.contains("Vermögenswert"))
+        .unwrap();
+    let ex = [excerpt(chunk)];
+    let g = Grounding {
+        index: &ix,
+        excerpts: &ex,
+        entities,
+        intent,
+        question: "Was ist ein Vermögenswert?",
+        late_stems: late,
+        book_stems: cite::book_stems(&ix),
+    };
+    let plain = cite::evaluate(raw, ids, &g, general_free);
+    let (kind, cites, reason) = cite::evaluate_with_reason(raw, ids, &g, general_free);
+    assert_eq!(
+        (plain.0, plain.1),
+        (kind, cites),
+        "gleiche Entscheidung: {raw}"
+    );
+    assert_eq!(
+        reason.is_some(),
+        kind == SentenceKind::Dropped,
+        "Grund genau bei Dropped: {raw}"
+    );
+    (kind, reason)
+}
+
+#[test]
+fn every_drop_reason_is_named_and_decisions_stay_the_same() {
+    use cite::DropReason::*;
+    let none = HashSet::new();
+    let q = BookTalkIntent::Question;
+    let ok = "Ein Vermögenswert bringt dir jeden Monat Geld in die Tasche";
+    let check = |raw: &str, ids: &[usize], want: cite::DropReason| {
+        let (kind, reason) = reason_of(raw, ids, q, &[], &none, true);
+        assert_eq!(kind, SentenceKind::Dropped, "{raw}");
+        assert_eq!(reason, Some(want), "{raw}");
+    };
+    check(&format!("{ok}."), &[], NoCitation);
+    check(&format!("{ok}."), &[5], InvalidCitation);
+    check(&format!("{ok}."), &[0], InvalidCitation);
+    check("Raumschiffe fliegen schnell zum Mond.", &[1], NotSupported);
+    check(
+        "Ein Vermögenswert bringt dir jeden Monat nicht Geld in die Tasche.",
+        &[1],
+        NegationMismatch,
+    );
+    check(
+        "Ein Vermögenswert bringt dir jeden Monat 500 Geld in die Tasche.",
+        &[1],
+        NumberMismatch,
+    );
+    check(
+        "Allgemein: Zinsen sind schön und nützlich für alle Menschen.",
+        &[],
+        GeneralNotAllowed,
+    );
+    // gestützt: bleibt, ohne Grund
+    assert_eq!(
+        reason_of(&format!("{ok}."), &[1], q, &[], &none, true),
+        (SentenceKind::Cited, None)
+    );
+    assert_eq!(
+        reason_of("Dazu steht nichts im Buch.", &[], q, &[], &none, true),
+        (SentenceKind::Absent, None)
+    );
+}
+
+#[test]
+fn name_and_late_word_and_second_general_sentence_have_their_reasons() {
+    use cite::DropReason::*;
+    let none = HashSet::new();
+    let q = BookTalkIntent::Question;
+    let ok = "Ein Vermögenswert bringt dir jeden Monat Geld in die Tasche";
+    let merlin = [Entity {
+        name: "Merlin".into(),
+        variants: vec![],
+        kind: EntityKind::Person,
+    }];
+    let (kind, reason) = reason_of(
+        "Merlin sagte: Ein Vermögenswert bringt dir jeden Monat Geld in die Tasche.",
+        &[1],
+        q,
+        &merlin,
+        &none,
+        true,
+    );
+    assert_eq!((kind, reason), (SentenceKind::Dropped, Some(NameMismatch)));
+
+    let late: HashSet<String> = lex::content_stems("Vermögenswert");
+    assert!(!late.is_empty());
+    assert_eq!(
+        reason_of(&format!("{ok}."), &[1], q, &[], &late, true),
+        (SentenceKind::Dropped, Some(LateStems))
+    );
+
+    let general = "Allgemein: Gemeint sind etwa Mieteinnahmen oder Unternehmensanteile.";
+    let ex = BookTalkIntent::Explain;
+    assert_eq!(
+        reason_of(general, &[], ex, &[], &none, true),
+        (SentenceKind::General, None)
+    );
+    assert_eq!(
+        reason_of(general, &[], ex, &[], &none, false),
+        (SentenceKind::Dropped, Some(GeneralNotAllowed)),
+        "zweiter Allgemeinsatz"
+    );
+    assert_eq!(
+        reason_of(general, &[], q, &[], &none, true),
+        (SentenceKind::Dropped, Some(GeneralNotAllowed)),
+        "nur bei explain"
+    );
+}
+
+#[test]
+fn the_collector_records_one_detail_per_dropped_sentence() {
+    let ix = index_of(&buch());
+    let chunk = ix
+        .chunks
+        .iter()
+        .find(|c| c.text.contains("Vermögenswert"))
+        .unwrap();
+    let raw = "Ein Vermögenswert bringt dir jeden Monat Geld in die Tasche [Q1]. Raumschiffe fliegen schnell zum Mond [Q1]. Ohne Beleg hier.";
+    let late = HashSet::new();
+    let g = Grounding {
+        index: &ix,
+        excerpts: &[excerpt(chunk)],
+        entities: &[],
+        intent: BookTalkIntent::Question,
+        question: "",
+        late_stems: &late,
+        book_stems: cite::book_stems(&ix),
+    };
+    let mut c = Collector::new(g, Lang::De, "t");
+    c.feed(raw);
+    c.finish();
+    assert_eq!(c.dropped, 2);
+    let got: Vec<_> = c
+        .dropped_detail
+        .iter()
+        .map(|d| (d.reason, d.ids.clone()))
+        .collect();
+    assert_eq!(
+        got,
+        [
+            (cite::DropReason::NotSupported, vec![1]),
+            (cite::DropReason::NoCitation, vec![])
+        ]
     );
 }
 

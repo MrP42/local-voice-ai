@@ -29,7 +29,7 @@ use super::lex::{
 use super::retrieve::Excerpt;
 
 /// Version der Belegprüfung (Bindung der Eval-Freigabe).
-pub const CHECK_VERSION: &str = "book_talk_check@1";
+pub const CHECK_VERSION: &str = "book_talk_check@2";
 /// Längstes Zitat in UTF-16-Einheiten.
 pub const QUOTE_MAX_CHARS: usize = 240;
 const MIN_COVERAGE: f64 = 0.6;
@@ -194,6 +194,87 @@ pub enum SentenceKind {
     Absent,
     /// Ohne gültigen oder gestützten Beleg oder mit Spätwort: verworfen.
     Dropped,
+}
+
+/// Warum ein Satz verworfen wurde (nur Diagnose, der Entscheid fällt vorher).
+/// Bei mehreren möglichen Gründen (mehrere Belege, mehrere Fenster) gilt der
+/// Grund des weitest gekommenen Prüfschritts; die Reihenfolge der Schritte
+/// steht in [`DropReason::rank`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DropReason {
+    /// Kein `[Qk]` im Satz (und kein Allgemeinsatz-Präfix).
+    NoCitation,
+    /// Alle genannten `[Qk]` liegen außerhalb der Auszüge.
+    InvalidCitation,
+    /// Wortdeckung im Belegfenster unter 60 % (oder keine Inhaltswörter).
+    NotSupported,
+    /// Verneinungsparität stimmt nicht mit dem best passenden Teilsatz überein.
+    NegationMismatch,
+    /// Ein Name aus dem Gedächtnis steht im Satz, aber nicht im Belegfenster.
+    NameMismatch,
+    /// Zahl des Satzes steht nicht im Belegfenster.
+    NumberMismatch,
+    /// „Allgemein:“-Satz, aber nicht zulässig (Absicht, zweiter Satz, Länge,
+    /// Buchwort oder Name) und ohne tragenden Beleg.
+    GeneralNotAllowed,
+    /// Satz enthält ein Wort, das im Buch erst hinter der Leseposition vorkommt.
+    LateStems,
+}
+
+impl DropReason {
+    /// Alle Gründe in Berichtsreihenfolge.
+    pub const ALL: [DropReason; 8] = [
+        DropReason::NoCitation,
+        DropReason::InvalidCitation,
+        DropReason::NotSupported,
+        DropReason::NegationMismatch,
+        DropReason::NameMismatch,
+        DropReason::NumberMismatch,
+        DropReason::GeneralNotAllowed,
+        DropReason::LateStems,
+    ];
+
+    /// Stabiler Code (wie in `bericht.json`).
+    pub fn code(self) -> &'static str {
+        match self {
+            DropReason::NoCitation => "no_citation",
+            DropReason::InvalidCitation => "invalid_citation",
+            DropReason::NotSupported => "not_supported",
+            DropReason::NegationMismatch => "negation_mismatch",
+            DropReason::NameMismatch => "name_mismatch",
+            DropReason::NumberMismatch => "number_mismatch",
+            DropReason::GeneralNotAllowed => "general_not_allowed",
+            DropReason::LateStems => "late_stems",
+        }
+    }
+
+    /// Kurze deutsche Erklärung für den Bericht.
+    pub fn describe(self) -> &'static str {
+        match self {
+            DropReason::NoCitation => "kein [Qk] im Satz",
+            DropReason::InvalidCitation => "[Qk] außerhalb der Auszüge",
+            DropReason::NotSupported => "Wortdeckung im Belegfenster unter 60 %",
+            DropReason::NegationMismatch => "Verneinung passt nicht zum Beleg",
+            DropReason::NameMismatch => "Name steht nicht im Belegfenster",
+            DropReason::NumberMismatch => "Zahl steht nicht im Belegfenster",
+            DropReason::GeneralNotAllowed => "Allgemeinsatz unzulässig",
+            DropReason::LateStems => "Wort aus späterer Buchstelle (Spoiler)",
+        }
+    }
+
+    /// Wie weit die Prüfung kam; höher = näher an „gestützt“.
+    fn rank(self) -> u8 {
+        match self {
+            DropReason::NoCitation => 0,
+            DropReason::InvalidCitation => 1,
+            DropReason::NotSupported => 2,
+            DropReason::NegationMismatch => 3,
+            DropReason::NameMismatch => 4,
+            DropReason::NumberMismatch => 5,
+            DropReason::GeneralNotAllowed | DropReason::LateStems => 6,
+        }
+    }
 }
 
 /// Alles, was die Prüfung eines Antwortsatzes braucht.
@@ -373,39 +454,82 @@ pub fn evaluate(
     ctx: &Grounding<'_>,
     general_free: bool,
 ) -> (SentenceKind, Vec<BookTalkCitation>) {
-    let result = if is_absent_template(sentence) {
-        (SentenceKind::Absent, Vec::new())
-    } else if general_free && is_allowed_general(sentence, ctx) {
-        (SentenceKind::General, Vec::new())
-    } else {
-        let cites = ground(sentence, ids, ctx);
-        if cites.is_empty() {
-            (SentenceKind::Dropped, Vec::new())
-        } else {
-            (SentenceKind::Cited, cites)
-        }
-    };
-    if result.0 != SentenceKind::Dropped
-        && !ctx.late_stems.is_empty()
-        && !content_stems(sentence).is_disjoint(ctx.late_stems)
-    {
-        return (SentenceKind::Dropped, Vec::new());
+    let (kind, cites, _) = evaluate_with_reason(sentence, ids, ctx, general_free);
+    (kind, cites)
+}
+
+/// Wie [`evaluate`], dazu der Grund bei `Dropped` (sonst `None`). Gleiche
+/// Entscheidungen; der Grund ist reine Diagnose.
+pub fn evaluate_with_reason(
+    sentence: &str,
+    ids: &[usize],
+    ctx: &Grounding<'_>,
+    general_free: bool,
+) -> (SentenceKind, Vec<BookTalkCitation>, Option<DropReason>) {
+    if is_absent_template(sentence) {
+        return late_check(sentence, ctx, SentenceKind::Absent, Vec::new());
     }
-    result
+    if general_free && is_allowed_general(sentence, ctx) {
+        return late_check(sentence, ctx, SentenceKind::General, Vec::new());
+    }
+    match ground(sentence, ids, ctx) {
+        Ok(cites) => late_check(sentence, ctx, SentenceKind::Cited, cites),
+        Err(reason) => {
+            let reason = if has_general_prefix(sentence) {
+                DropReason::GeneralNotAllowed
+            } else {
+                reason
+            };
+            (SentenceKind::Dropped, Vec::new(), Some(reason))
+        }
+    }
+}
+
+/// Spätwörter-Filter hinter allen anderen Prüfungen.
+fn late_check(
+    sentence: &str,
+    ctx: &Grounding<'_>,
+    kind: SentenceKind,
+    cites: Vec<BookTalkCitation>,
+) -> (SentenceKind, Vec<BookTalkCitation>, Option<DropReason>) {
+    if !ctx.late_stems.is_empty() && !content_stems(sentence).is_disjoint(ctx.late_stems) {
+        return (
+            SentenceKind::Dropped,
+            Vec::new(),
+            Some(DropReason::LateStems),
+        );
+    }
+    (kind, cites, None)
 }
 
 /// Buchsatz: Stützung durch ein Belegsatzfenster; es genügt ein Fenster, das
-/// Zitat ist dessen Mittelsatz.
-fn ground(sentence: &str, ids: &[usize], ctx: &Grounding<'_>) -> Vec<BookTalkCitation> {
+/// Zitat ist dessen Mittelsatz. `Err` nennt den Grund des weitest gekommenen
+/// Prüfschritts.
+fn ground(
+    sentence: &str,
+    ids: &[usize],
+    ctx: &Grounding<'_>,
+) -> Result<Vec<BookTalkCitation>, DropReason> {
     let mut out = Vec::new();
     let mut seen: HashSet<(usize, usize)> = HashSet::new();
+    let mut worst = if ids.is_empty() {
+        DropReason::NoCitation
+    } else {
+        DropReason::InvalidCitation
+    };
     for &id in ids {
         if id < 1 || id > ctx.excerpts.len() {
             continue;
         }
         let chunk = &ctx.excerpts[id - 1].chunk;
-        let Some(q) = supported_quote(sentence, chunk, ctx) else {
-            continue;
+        let q = match supported_quote(sentence, chunk, ctx) {
+            Ok(q) => q,
+            Err(reason) => {
+                if reason.rank() > worst.rank() {
+                    worst = reason;
+                }
+                continue;
+            }
         };
         if !seen.insert((q.start, q.end)) {
             continue;
@@ -420,7 +544,10 @@ fn ground(sentence: &str, ids: &[usize], ctx: &Grounding<'_>) -> Vec<BookTalkCit
             quote: q.text,
         });
     }
-    out
+    if out.is_empty() {
+        return Err(worst);
+    }
+    Ok(out)
 }
 
 /// Zitat im Original.
@@ -439,19 +566,27 @@ fn similarity(want: &HashSet<String>, got: &HashSet<String>) -> f64 {
     want.intersection(got).count() as f64 / (want.len() as f64 * got.len() as f64).sqrt()
 }
 
-fn supported_quote(statement: &str, chunk: &Chunk, ctx: &Grounding<'_>) -> Option<Quote> {
+fn supported_quote(
+    statement: &str,
+    chunk: &Chunk,
+    ctx: &Grounding<'_>,
+) -> Result<Quote, DropReason> {
     let units = &chunk.units;
     let sentences = sentence_spans(units);
     if sentences.is_empty() {
-        return None;
+        return Err(DropReason::NotSupported);
     }
     let want: HashSet<String> = tokenize(statement).into_iter().collect();
     let mut best: Option<(f64, usize)> = None;
+    let mut worst = DropReason::NotSupported;
     for i in 0..sentences.len() {
         let w0 = sentences[i.saturating_sub(1)].0;
         let w1 = sentences[(i + 1).min(sentences.len() - 1)].1;
         let window = String::from_utf16_lossy(&units[w0..w1]);
-        if !supported(statement, &window, ctx) {
+        if let Err(reason) = supported(statement, &window, ctx) {
+            if reason.rank() > worst.rank() {
+                worst = reason;
+            }
             continue;
         }
         let got: HashSet<String> = tokenize(&String::from_utf16_lossy(
@@ -464,8 +599,8 @@ fn supported_quote(statement: &str, chunk: &Chunk, ctx: &Grounding<'_>) -> Optio
             best = Some((sc, i));
         }
     }
-    let (_, i) = best?;
-    quote(chunk, sentences[i].0, sentences[i].1)
+    let (_, i) = best.ok_or(worst)?;
+    quote(chunk, sentences[i].0, sentences[i].1).ok_or(DropReason::NotSupported)
 }
 
 /// Verneinung: Parität der Negationen im Antwortsatz gegen die Negationen der
@@ -486,27 +621,30 @@ fn clause_negations(window: &str, content: &[String]) -> usize {
     best.1
 }
 
-fn supported(sentence: &str, window: &str, ctx: &Grounding<'_>) -> bool {
+fn supported(sentence: &str, window: &str, ctx: &Grounding<'_>) -> Result<(), DropReason> {
     let answer_words = folded_words(sentence);
     let window_words = folded_words(window);
     let content = content_words(sentence);
     if content.is_empty() {
-        return false;
+        return Err(DropReason::NotSupported);
     }
     let hits = content.iter().filter(|w| covered(w, &window_words)).count();
     if (hits as f64) / (content.len() as f64) < MIN_COVERAGE {
-        return false;
+        return Err(DropReason::NotSupported);
     }
     if negation_count(&answer_words) % 2 != clause_negations(window, &content) % 2 {
-        return false;
+        return Err(DropReason::NegationMismatch);
     }
     for e in ctx.entities.iter().filter(|e| e.kind != EntityKind::Term) {
         let in_answer = e.forms().any(|f| contains(&answer_words, f));
         if in_answer && !e.forms().any(|f| contains(&window_words, f)) {
-            return false;
+            return Err(DropReason::NameMismatch);
         }
     }
-    numbers(&answer_words).is_subset(&numbers(&window_words))
+    if numbers(&answer_words).is_subset(&numbers(&window_words)) {
+        return Ok(());
+    }
+    Err(DropReason::NumberMismatch)
 }
 
 fn quote(chunk: &Chunk, from: usize, to: usize) -> Option<Quote> {
