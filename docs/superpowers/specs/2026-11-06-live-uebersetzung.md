@@ -1,6 +1,6 @@
 # Bücher live beim Vorlesen übersetzen (Entwurf)
 
-Stand 06.11.2026, **dritte Fassung** nach Codex R1 und R2 (R1 Must-fixes 1–7, R2 M1–M4 und Testauflage eingearbeitet, F1–F5 entschieden).
+Stand 06.11.2026, **dritte Fassung** nach Codex R1 und R2 (R1 Must-fixes 1–7, R2 M1–M4 und Testauflage, R3 M1–M3 eingearbeitet, F1–F5 entschieden).
 Wunsch von Patrick (06.11.2026 23:52): ein englisches Buch auf dem iPhone direkt auf Deutsch vorlesen lassen,
 Satz für Satz übersetzt, möglichst ohne Wartezeit und ohne das ganze Buch vorher zu übersetzen; Sprachwechsel
 während des Vorlesens; bei Bedarf doch das ganze Buch (auch als Kurzbuch) in einer Zielsprache anlegen, möglichst
@@ -120,8 +120,11 @@ entfällt dort.
   Ein Paar je übersetzter Quelleinheit (Satz), `q_i` = Beginn der Einheit im Quelltext, `z_i` = Beginn ihrer
   Übersetzung im Zieltext, beide **UTF-16**. `Q`/`Z` = Länge des Quell- bzw. Zieltexts (EOF-Marker).
 - **Gültigkeit:** `q` und `z` je streng monoton steigend; `0 ≤ q_i < Q`, `0 ≤ z_i < Z`; kein Wert mitten in einem
-  Surrogatpaar; `source_hash`/`target_hash` passen zu den vorliegenden Texten (§7.3 Hashvertrag). Ungültig →
-  Zuordnung wird nicht benutzt.
+  Surrogatpaar; `source_hash`/`target_hash` passen zu den vorliegenden Texten (§7.3 Hashvertrag); **und** die
+  Quellgrenzen `q_0 … q_n` stimmen **vollständig** mit den kanonischen Quelleinheiten überein, also genau den
+  Satzbeginnen aus `LibraryText.sentences` (absatzweise, absolut im normalisierten Quelltext), ohne Auslassung
+  und ohne Zusatz. Ungültig → Zuordnung wird nicht benutzt. Satzteilung ist Teil von `pipeline_version`; ändert
+  sie sich, gelten alte Zuordnungen nur, wenn die Prüfung weiter besteht.
 - **Abfrage Quelle → Ziel** für Offset `o`: `o ≥ Q` → `Z` (Buchende). Sonst `i` = größtes mit `q_i ≤ o`
   (binäre Suche); Ergebnis `z_i`. Liegt `o` im Satzinneren, springt die Position **auf den Beginn der Einheit**
   zurück (passt zum Vertrag „Beginn des nächsten ungelesenen Satzes“; der Satz wird wiederholt). Vor `q_0` → `0`.
@@ -223,8 +226,8 @@ rechnen nur mit den vom Hub gelieferten Werten und vergleichen nie eigene Uhren.
 
 | Schritt | Inhalt |
 |---|---|
-| `lease_acquire(key, owner)` | atomar, nur wenn kein gültiger Lease besteht. Antwort `{generation, expires}`; `generation` steigt je Schlüssel monoton (auch über Ablauf hinweg) |
-| `lease_renew(key, owner, generation)` | nur aktueller Besitzer und aktuelle Generation, nur vor Ablauf (Hub-Uhr). Antwort: **neues** `expires`. Takt: nach der Hälfte der vom Hub gelieferten Restlaufzeit |
+| `lease_acquire(key, owner)` | atomar, nur wenn kein gültiger Lease besteht. Antwort `{generation, expires, expires_in}`; `generation` steigt je Schlüssel monoton (auch über Ablauf hinweg) |
+| `lease_renew(key, owner, generation)` | nur aktueller Besitzer und aktuelle Generation, nur vor Ablauf (Hub-Uhr). Antwort: **neues** `expires` und `expires_in` (Restlaufzeit in Sekunden nach Hub-Uhr). Takt: der Client erneuert nach `expires_in / 2`, gemessen mit seiner **monotonen** Uhr ab Empfang der Antwort; `expires` dient nur der Anzeige |
 | `lease_status(key)` | `{owner, generation, expires_in}` oder leer; für Anzeige und Wiederaufnahme |
 | `publish(key, generation, owner, publish_id, eintrag)` | siehe unten |
 
@@ -256,6 +259,8 @@ sie vorläufig.
    den Rang nicht.
 2. Unter belegten: **kleinste Lease-Generation** gewinnt (die erste erfolgreiche Veröffentlichung).
 3. Gleichrang (zwei vorläufige oder gleiche Generation): kleinster `target_hash` (Bytevergleich der Hex-Zeichen).
+4. Letzter Tie-Breaker bei gleichem `target_hash` (inhaltsgleiche Ergebnisse): kleinste Fassungs-ID (Bytevergleich).
+   Damit gibt es immer genau einen Gewinner.
 
 Der Rang hängt nur an gespeicherten Daten, jedes Gerät berechnet denselben Gewinner. **`superseded_by`** im
 Fassungsregister zeigt immer **direkt** auf den aktuellen Gewinner (nie auf einen anderen Verlierer, daher
@@ -299,7 +304,7 @@ Metadaten im EPUB sind **unvertrauenswürdig**.
   `lva:`-Angaben und die Zuordnung als nicht vorhanden.
 - **Zuordnung** aus `lva-alignment.json` wird erst aktiviert, wenn die Quellfassung (`lva:source-edition`) auf dem
   Gerät existiert, ihr Hash `source_hash` entspricht, `target_hash` zu `lva-text.txt` passt und die Grenzen nach
-  §4.2 gültig sind. Sonst gilt die ungenaue Stufe (§4.1).
+  §4.2 gültig sind, einschließlich des vollständigen Abgleichs mit den kanonischen Quelleinheiten. Sonst gilt die ungenaue Stufe (§4.1).
 - **Herkunftsnachweis:** Wiedererkennung ohne Rückfrage nur, wenn das Gerät die `lva:edition-id` mit **genau diesem**
   Inhalts-Hash selbst kennt (lokal oder im eigenen Abgleich). Dann: „Schon in der Bibliothek“, nichts angelegt.
 - Alles andere (fremde oder unbekannte IDs, passende `book-id` mit neuem Inhalt): **Rückfrage** „Als Fassung an
@@ -376,6 +381,9 @@ Verbindliche Tests:
 | Positionswechsel am Buchende (EOF) | `Q` ↔ `Z`, kein Index außerhalb |
 | Umleitung Verlierer → Gewinner | über die gemeinsame Quelle, Satzbeginn |
 | Import-Zuordnung mit falschem Quellhash oder nicht monotonen Grenzen | nicht aktiviert, ungenaue Stufe |
+| Import-Zuordnung mit ausgelassenem Satz oder `q_i` mitten im Satz | nicht aktiviert (Abgleich mit kanonischen Einheiten scheitert) |
+| Zwei vorläufige, inhaltsgleiche Ergebnisse mit verschiedenen Fassungs-IDs | Gewinner = kleinste Fassungs-ID, auf allen Geräten gleich |
+| Erneuerungstakt bei verstellter Geräteuhr | Erneuerung nach `expires_in / 2` (monotone Uhr), Lease läuft nicht ab |
 | Export → Import auf eigenem Gerät | „Schon in der Bibliothek“ |
 | Import mit fremder/manipulierter `lva:`-ID oder falschem Inhalts-Hash | Rückfrage, neue interne IDs, nichts überschrieben |
 | Bösartiges EPUB (Pfadtraversierung, Entpackbombe, XXE, Skript) | abgewiesen bzw. entschärft |
