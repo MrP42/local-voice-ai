@@ -122,15 +122,24 @@ fn ist_umleitung(path: &Path) -> bool {
     if meta.file_type().is_symlink() {
         return true;
     }
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
-        if meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-            return true;
-        }
-    }
+    // Kein pauschaler Reparse-Punkt-Test: OneDrive-Platzhalter tragen das
+    // Attribut auch. Symlinks und Junctions meldet `is_symlink` unter Windows.
     false
+}
+
+/// SHA-256 einer Datei (letzte Pruefung der Staging-Kopie vor dem Start).
+fn sha256_datei(path: &Path) -> Result<String, String> {
+    let mut f = std::fs::File::open(path).map_err(|e| format!("{e}"))?;
+    let mut sha = Sha256::new();
+    let mut buf = vec![0u8; 1 << 20];
+    loop {
+        let n = f.read(&mut buf).map_err(|e| format!("{e}"))?;
+        if n == 0 {
+            break;
+        }
+        sha.update(&buf[..n]);
+    }
+    Ok(format!("{:x}", sha.finalize()))
 }
 
 /// Signierte Angaben aus dem trusted comment (`timestamp:N\tfile:NAME`).
@@ -615,6 +624,8 @@ fn runde(app: &AppHandle, pubkey: &str, staging: &Path, g: &mut Gedaechtnis) -> 
     if let Err(e) = sichern(app, staging) {
         log::warn!("dev update: Sicherung gescheitert, kein Update: {e}");
         let _ = std::fs::remove_file(&kandidat);
+        // Nicht alle 20 s erneut kopieren: dieser Stand ruht bis zur naechsten Testversion.
+        g.abgelehnt = Some(stand);
         return false;
     }
     status.laufend = Some(Versuch {
@@ -625,6 +636,17 @@ fn runde(app: &AppHandle, pubkey: &str, staging: &Path, g: &mut Gedaechtnis) -> 
     if let Err(e) = status_schreiben(staging, &status) {
         log::warn!("dev update: {e}; kein Update");
         let _ = std::fs::remove_file(&kandidat);
+        g.abgelehnt = Some(stand);
+        return false;
+    }
+    // Die Kopie lag waehrend des Hinweises im Staging-Ordner: unmittelbar vor
+    // dem Start noch einmal genau die gepruefte Fassung verlangen.
+    if sha256_datei(&kandidat).ok().as_deref() != Some(geprueft.sha256.as_str()) {
+        log::warn!("dev update: Staging-Kopie veraendert, kein Update");
+        status.laufend = None;
+        let _ = status_schreiben(staging, &status);
+        let _ = std::fs::remove_file(&kandidat);
+        g.abgelehnt = Some(stand);
         return false;
     }
     log::info!("dev update: installiere {} ohne Rueckfrage", update.version);
@@ -749,6 +771,7 @@ mod tests {
             g.sha256,
             "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
         );
+        assert_eq!(sha256_datei(&ziel).unwrap(), g.sha256);
     }
 
     #[test]
