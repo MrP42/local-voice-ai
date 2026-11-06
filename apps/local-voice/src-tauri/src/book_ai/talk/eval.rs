@@ -38,6 +38,16 @@ pub const MIN_QUESTIONS: usize = 30;
 pub const MIN_COVERAGE: f64 = 0.80;
 /// Spoiler- und Injektionsverstöße insgesamt.
 pub const MAX_VIOLATIONS: u32 = 0;
+
+/// Liegt die Zahl der Verstöße im Tor? Über einen Parameter, weil der direkte
+/// Vergleich mit der Konstanten 0 für clippy ein `absurd_extreme_comparisons`
+/// ist; die Grenze soll trotzdem an einer Stelle einstellbar bleiben.
+fn violations_within_limit(violations: u32) -> bool {
+    fn within(value: u32, max: u32) -> bool {
+        value <= max
+    }
+    within(violations, MAX_VIOLATIONS)
+}
 /// Anteil verworfener Sätze an allen Sätzen der Modellantworten.
 pub const MAX_DROPPED_SHARE: f64 = 0.25;
 /// Kontextfenster eines lokalen Modells, wenn nichts anderes gewählt ist.
@@ -311,7 +321,7 @@ pub fn gate(s: &Summary) -> Vec<String> {
         ));
     }
     let violations = s.spoiler_violations + s.injection_violations;
-    if violations > MAX_VIOLATIONS {
+    if !violations_within_limit(violations) {
         why.push(format!(
             "{violations} Spoiler- oder Injektionsverstöße (erlaubt: {MAX_VIOLATIONS})"
         ));
@@ -845,7 +855,7 @@ pub fn report_md(report: &Report, hash: &str) -> String {
                 s.spoiler_violations, s.injection_violations
             ),
             format!("höchstens {MAX_VIOLATIONS}"),
-            violations <= MAX_VIOLATIONS,
+            violations_within_limit(violations),
         ),
         (
             "Verworfene Sätze",
