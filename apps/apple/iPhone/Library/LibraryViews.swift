@@ -750,33 +750,26 @@ struct MiniPlayerClearance: ViewModifier {
     }
 }
 
-/// Der gelesene Satz im Mini-Player: Teile, die in zwei Zeilen passen, nacheinander im Takt des Vorlesens. Nichts wird
-/// abgeschnitten, nichts bewegt sich, und der Platz ist immer zwei Zeilen hoch, damit der Titel still steht.
+/// Der gelesene Satz im Mini-Player: Teile, die in zwei Zeilen passen, nacheinander im Takt des Vorlesens. Der Platz ist
+/// immer zwei Zeilen hoch, damit der Titel still steht. Der Teil folgt der gesprochenen Zeit aus `LibraryPlayback`.
 struct SentenceParts: View {
     let text: String
-    let running: Bool
-    let rate: Float
+    @ObservedObject var playback = LibraryPlayback.shared
     @ScaledMetric(relativeTo: .caption) private var charWidth: CGFloat = 6.4
-    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.dynamicTypeSize) private var typeSize
     @State private var width: CGFloat = 0
-    @State private var index = 0
 
-    /// Zwei Zeilen mit etwas Reserve, weil Zeilen an Wortgrenzen früher enden.
-    private var maxChars: Int { max(16, Int(width / charWidth * 2 * 0.8)) }
-    private var parts: [String] { LibraryText.sentenceParts(text, maxChars: maxChars) }
+    /// Zwei Zeilen mit Reserve, weil Zeilen an Wortgrenzen früher enden; bei sehr großer Schrift mehr davon.
+    private var maxChars: Int { max(6, Int(width / charWidth * 2 * (typeSize.isAccessibilitySize ? 0.6 : 0.8))) }
 
     var body: some View {
-        let parts = self.parts
-        MiniPlayerLine(text: parts.indices.contains(index) ? parts[index] : text)
-            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
-            .onChange(of: text) { index = 0 }
-            .task(id: "\(text)|\(index)|\(maxChars)|\(running && scenePhase == .active)") {
-                guard running, scenePhase == .active, index + 1 < parts.count else { return }
-                let share = Double(parts[index].count) / Double(max(1, parts.reduce(0) { $0 + $1.count }))
-                let spoken = LibraryText.listenMilliseconds(chars: Double(text.utf16.count)) / 1000 / Double(max(0.5, rate))
-                try? await Task.sleep(nanoseconds: UInt64(max(1, spoken * share) * 1_000_000_000))
-                if !Task.isCancelled { index += 1 }
-            }
+        let parts = LibraryText.sentenceParts(text, maxChars: maxChars)
+        let spoken = LibraryText.listenMilliseconds(chars: Double(text.utf16.count)) / 1000
+        TimelineView(.periodic(from: .now, by: 0.25)) { _ in
+            let index = LibraryText.sentencePartIndex(parts, elapsed: playback.sentenceSpokenSeconds, total: spoken)
+            MiniPlayerLine(text: parts.indices.contains(index) ? parts[index] : text)
+        }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
     }
 }
 
@@ -784,7 +777,8 @@ struct SentenceParts: View {
 struct MiniPlayerLine: View {
     let text: String
     var body: some View {
-        Text(text).font(.caption).lineLimit(2, reservesSpace: true).foregroundStyle(.white.opacity(0.85))
+        // Verkleinern statt kürzen, falls die Schätzung für die Teile einmal nicht reicht.
+        Text(text).font(.caption).lineLimit(2, reservesSpace: true).minimumScaleFactor(0.7).foregroundStyle(.white.opacity(0.85))
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
@@ -800,7 +794,7 @@ struct LibraryMiniPlayer: View {
                     VStack(alignment: .leading, spacing: 1) {
                         Text(playback.title).font(.subheadline.weight(.semibold)).lineLimit(1).foregroundStyle(.white)
                         if !playback.preparing, let sentence = playback.currentSentence {
-                            SentenceParts(text: sentence, running: playback.playing, rate: playback.rate).accessibilityHidden(true)
+                            SentenceParts(text: sentence).accessibilityHidden(true)
                         } else {
                             MiniPlayerLine(text: subtitle)
                         }

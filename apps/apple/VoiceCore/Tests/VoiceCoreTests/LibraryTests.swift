@@ -147,6 +147,18 @@ final class LibraryTests: XCTestCase {
         XCTAssertTrue(parts.allSatisfy { $0.count <= 50 })
         XCTAssertEqual(LibraryText.sentenceParts("Kurz  und\ngut.", maxChars: 50), ["Kurz und gut."])
         XCTAssertEqual(LibraryText.sentenceParts("", maxChars: 50), [])
-        XCTAssertEqual(LibraryText.sentenceParts("Donaudampfschifffahrtsgesellschaft ja", maxChars: 10), ["Donaudampfschifffahrtsgesellschaft", "ja"])
+        let long = LibraryText.sentenceParts("Donaudampfschifffahrtsgesellschaft ja", maxChars: 10)
+        XCTAssertTrue(long.allSatisfy { $0.count <= 10 }, "überlange Wörter werden geteilt")
+        XCTAssertEqual(long.joined().replacingOccurrences(of: " ", with: ""), "Donaudampfschifffahrtsgesellschaftja")
+        XCTAssertTrue(LibraryText.sentenceParts(String(repeating: "字", count: 30), maxChars: 8).allSatisfy { $0.count <= 8 }, "Schrift ohne Leerzeichen")
+    }
+
+    func testSentencePartFollowsSpokenTime() {
+        let parts = ["aaaa", "bbbb", "cc"]
+        XCTAssertEqual(LibraryText.sentencePartIndex(parts, elapsed: 0, total: 10), 0)
+        XCTAssertEqual(LibraryText.sentencePartIndex(parts, elapsed: 5, total: 10), 1)
+        XCTAssertEqual(LibraryText.sentencePartIndex(parts, elapsed: 9, total: 10), 2)
+        XCTAssertEqual(LibraryText.sentencePartIndex(parts, elapsed: 99, total: 10), 2, "Ton langsamer als geschätzt: bleibt am letzten Teil")
+        XCTAssertEqual(LibraryText.sentencePartIndex(parts, elapsed: 5, total: 0), 0)
     }
 }

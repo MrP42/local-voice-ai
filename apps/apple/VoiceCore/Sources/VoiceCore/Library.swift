@@ -382,21 +382,29 @@ public enum LibraryText {
     /// Vorlesedauer bei normalem Tempo: rund 6 Zeichen je Wort und 150 Wörter je Minute, wie am Desktop.
     public static func listenMilliseconds(chars: Double) -> Double { max(0, chars) / 6 / 150 * 60_000 }
 
-    /// Satz in etwa gleich lange Teile für eine kleine Anzeige. Geteilt wird an Leerzeichen, bevorzugt nach
-    /// einem Satzzeichen; es geht kein Wort verloren. Nur ein einzelnes überlanges Wort darf `maxChars` überschreiten.
+    /// Satz in etwa gleich lange Teile für eine kleine Anzeige. Geteilt wird an Leerzeichen, bevorzugt nach einem
+    /// Satzzeichen. Wörter über `maxChars` (auch Schriften ohne Leerzeichen) werden hart geteilt, es geht nichts verloren.
     public static func sentenceParts(_ sentence: String, maxChars: Int) -> [String] {
-        let words = sentence.split(whereSeparator: \.isWhitespace).map(String.init)
-        guard !words.isEmpty, maxChars > 0 else { return [] }
+        guard maxChars > 0 else { return [] }
+        let words = sentence.split(whereSeparator: \.isWhitespace).flatMap { word -> [String] in
+            guard word.count > maxChars else { return [String(word)] }
+            return stride(from: 0, to: word.count, by: maxChars).map { start in
+                let from = word.index(word.startIndex, offsetBy: start)
+                return String(word[from..<(word.index(from, offsetBy: maxChars, limitedBy: word.endIndex) ?? word.endIndex)])
+            }
+        }
+        guard !words.isEmpty else { return [] }
         let total = words.joined(separator: " ").count
         guard total > maxChars else { return [words.joined(separator: " ")] }
-        let target = max(1, (total + (total + maxChars - 1) / maxChars - 1) / ((total + maxChars - 1) / maxChars))
+        let count = (total + maxChars - 1) / maxChars
+        let target = (total + count - 1) / count
+        let limit = min(maxChars, target + target / 5)  // gleichmäßig statt gierig, mit etwas Spielraum
         var parts: [String] = []
         var current = ""
         for word in words {
             let next = current.isEmpty ? word : current + " " + word
-            let pause = current.last.map { ",;:—".contains($0) } ?? false
-            // Passt nicht mehr, oder Zielgröße fast erreicht und gerade ein Satzzeichen: hier teilen.
-            if !current.isEmpty, next.count > maxChars || (pause && current.count * 4 >= target * 3) {
+            let pause = current.last.map { ",;:—–".contains($0) } ?? false
+            if !current.isEmpty, next.count > limit || (pause && current.count * 4 >= target * 3) {
                 parts.append(current)
                 current = word
             } else {
@@ -405,6 +413,18 @@ public enum LibraryText {
         }
         if !current.isEmpty { parts.append(current) }
         return parts
+    }
+
+    /// Welcher Teil gerade dran ist, nach dem Anteil des Satzes, der schon gesprochen sein dürfte.
+    public static func sentencePartIndex(_ parts: [String], elapsed: Double, total: Double) -> Int {
+        guard parts.count > 1, total > 0 else { return 0 }
+        let reached = min(1, max(0, elapsed / total)) * Double(parts.reduce(0) { $0 + $1.count })
+        var sum = 0.0
+        for (index, part) in parts.enumerated() {
+            sum += Double(part.count)
+            if reached < sum { return index }
+        }
+        return parts.count - 1
     }
 
     /// Favoriten zuerst, sonst bleibt die Reihenfolge, wie `sortViews` am Desktop.
