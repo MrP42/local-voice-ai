@@ -442,7 +442,12 @@ fn stale() -> bool {
 /// dann im Hintergrund neu einsammeln.
 pub fn on_settings_changed(app: &AppHandle) {
     let settings = crate::settings::get_settings(app);
+    let before = index_read().epoch();
     apply_grants(&settings);
+    // Widerruf: laufende Antworten mit Kontext sofort abbrechen (Auflage 9).
+    if index_read().epoch() != before || !settings.voice_global_context_enabled {
+        crate::voice_call::revoke_context_requests(app);
+    }
     if settings.voice_global_context_enabled && !allowed_kinds(&settings).is_empty() {
         sync_in_background(app);
     }
@@ -632,7 +637,58 @@ fn retrieve_blocking(app: &AppHandle, req: &AppContextRequest) -> Result<Context
 #[tauri::command]
 #[specta::specta]
 pub fn app_context_message(hits: ContextHits, german: bool) -> Option<String> {
+    // Nur für den aktuellen Stand (Codex Auflage 11).
+    if index_read().epoch() != hits.epoch {
+        return None;
+    }
     super::prompt::context_message(&hits.hits, german)
+}
+
+/// Darf dieser Abruf jetzt an einen Sprecher gehen? Rein, damit testbar:
+/// Schalter an, Empfänger lokal, gleicher Stand, jede Quelle freigegeben und
+/// unverändert. Sonst geht kein Kontext an das Modell.
+pub(crate) fn admissible(
+    idx: &AppIndex,
+    allowed: &HashSet<SourceKind>,
+    enabled: bool,
+    local: bool,
+    hits: &ContextHits,
+) -> bool {
+    enabled
+        && local
+        && !hits.hits.is_empty()
+        && idx.epoch() == hits.epoch
+        && hits.hits.iter().all(|h| {
+            allowed.contains(&h.kind)
+                && idx
+                    .version(&super::model::DocKey {
+                        kind: h.kind,
+                        id: h.jump.id.clone(),
+                    })
+                    .is_some_and(|v| format!("{v:016x}") == h.version)
+        })
+}
+
+/// Kontextnachricht für einen Sprecheraufruf, unmittelbar vor dem Modellstart
+/// geprüft (Codex Auflagen 4–6): `None` heißt ohne Kontext antworten.
+pub fn bind_for_speaker(
+    app: &AppHandle,
+    ctx: &super::model::SpeakerContext,
+    local: bool,
+) -> Option<String> {
+    let settings = crate::settings::get_settings(app);
+    let allowed = allowed_kinds(&settings);
+    let idx = index_read();
+    if !admissible(
+        &idx,
+        &allowed,
+        settings.voice_global_context_enabled,
+        local,
+        &ctx.hits,
+    ) {
+        return None;
+    }
+    super::prompt::context_message(&ctx.hits.hits, ctx.german)
 }
 
 /// Prüft die Belege einer Antwort gegen den aktuellen Stand: Marken, die es

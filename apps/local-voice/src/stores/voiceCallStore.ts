@@ -14,6 +14,7 @@ import {
 import { sendFeedback } from "@/components/voice-call/speechLearning";
 import { SUBSCRIPTION_PROVIDERS } from "@/components/settings/meetings/DocUsageLine";
 import { DEFAULT_TURN_CONFIG } from "@/components/voice-call/turnTaking";
+import type { Jump } from "@/components/voice-call/globalContext";
 import {
   DEFAULT_ORCHESTRATION,
   SOUVERAENITAET_STUFEN,
@@ -98,6 +99,7 @@ export interface VoiceSource {
   kind: string;
   title: string;
   page: number | null;
+  jump: Jump;
 }
 
 export interface VoiceLine {
@@ -548,6 +550,7 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
                 kind: h.kind,
                 title: h.title,
                 page: h.jump.page,
+                jump: h.jump,
               })),
             };
             return { lines };

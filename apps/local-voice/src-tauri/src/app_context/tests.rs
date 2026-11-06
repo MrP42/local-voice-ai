@@ -549,3 +549,40 @@ fn bench_fifty_books() {
         per
     );
 }
+
+#[test]
+fn kontext_an_den_sprecher_nur_wenn_alles_stimmt() {
+    use super::service::admissible;
+    let mut idx = sample_index();
+    let ctx = Ctx::new();
+    let hits = retrieve(
+        &idx,
+        &ctx.q("Wer übernimmt die Ausschreibung der Poststelle?"),
+    );
+    assert!(!hits.hits.is_empty());
+    let all = all_kinds();
+    assert!(admissible(&idx, &all, true, true, &hits));
+    // Schalter aus, Cloud-Empfänger, Bereich entzogen: kein Kontext.
+    assert!(!admissible(&idx, &all, false, true, &hits));
+    assert!(!admissible(&idx, &all, true, false, &hits));
+    let none: HashSet<SourceKind> = HashSet::new();
+    assert!(!admissible(&idx, &none, true, true, &hits));
+    // Quelle geändert: Version passt nicht mehr.
+    let mut changed = doc(
+        SourceKind::Meeting,
+        "m1",
+        "Haushaltsrunde",
+        "Frau Berger übernimmt die Ausschreibung der Poststelle bis April.",
+    );
+    changed.at_ms = NOW;
+    idx.upsert(&changed);
+    assert!(!admissible(&idx, &all, true, true, &hits));
+    // Widerruf erhöht den Stand: auch ein frischer Abruf von davor gilt nicht.
+    let fresh = retrieve(
+        &idx,
+        &ctx.q("Wer übernimmt die Ausschreibung der Poststelle?"),
+    );
+    assert!(admissible(&idx, &all, true, true, &fresh));
+    idx.revoke(Some(SourceKind::Dictation));
+    assert!(!admissible(&idx, &all, true, true, &fresh));
+}

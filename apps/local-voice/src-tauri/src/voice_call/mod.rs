@@ -48,6 +48,9 @@ pub const EVENT: &str = "voice-call";
 static CANCELS: Lazy<Mutex<HashMap<String, Arc<Notify>>>> = Lazy::new(Default::default);
 /// Abbrüche, die vor dem Start ihrer Anfrage eintrafen (IPC-Reihenfolge ist nicht garantiert).
 static EARLY_CANCELS: Lazy<Mutex<std::collections::HashSet<String>>> = Lazy::new(Default::default);
+/// Laufende Antworten mit App-Kontext: ein Widerruf bricht sie sofort ab.
+static CONTEXT_REQUESTS: Lazy<Mutex<std::collections::HashSet<String>>> =
+    Lazy::new(Default::default);
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 pub struct VoiceCallReady {
@@ -228,6 +231,64 @@ fn warm_target(provider: &crate::settings::PostProcessProvider, model: &str) -> 
     })
 }
 
+/// Empfänger des App-Kontexts ist lokal: eingebautes Modell oder ein
+/// Endpunkt auf diesem Rechner (Loopback). Ein Ollama auf einem fremden Host
+/// zählt nicht, auch wenn er wie Ollama aussieht.
+fn receiver_is_local(provider: &crate::settings::PostProcessProvider, _model: &str) -> bool {
+    crate::managers::llm::is_local(provider) || is_loopback(&provider.base_url)
+}
+
+fn is_loopback(base_url: &str) -> bool {
+    let Ok(url) = url::Url::parse(base_url.trim()) else {
+        return false;
+    };
+    match url.host() {
+        Some(url::Host::Domain(d)) => d.eq_ignore_ascii_case("localhost"),
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
+    }
+}
+
+/// Kontextnachricht direkt vor die letzte Nutzernachricht (Prompt-Cache, L3).
+fn with_context_message(
+    mut messages: Vec<VoiceCallMessage>,
+    context: Option<String>,
+) -> Vec<VoiceCallMessage> {
+    let Some(content) = context else {
+        return messages;
+    };
+    let at = messages
+        .iter()
+        .rposition(|m| m.role == "user")
+        .unwrap_or(messages.len());
+    messages.insert(
+        at,
+        VoiceCallMessage {
+            role: "system".into(),
+            content,
+        },
+    );
+    messages
+}
+
+/// Freigaben entzogen: alle laufenden Antworten mit App-Kontext abbrechen und
+/// der Oberfläche melden, damit sie auch die Sprachausgabe stoppt (Auflagen 9/10).
+pub fn revoke_context_requests(app: &AppHandle) {
+    let ids: Vec<String> = CONTEXT_REQUESTS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .drain()
+        .collect();
+    for id in ids {
+        voice_call_cancel(id.clone());
+        let _ = app.emit(
+            EVENT,
+            serde_json::json!({"kind": "revoked", "request_id": id}),
+        );
+    }
+}
+
 /// Lädt den Sprecher. Der eingebaute Server startet über `ensure_local` (mit
 /// Speicherschutz); Ollama lädt das Modell bei einem leeren Aufruf.
 async fn warm_speaker(target: WarmTarget) -> Result<(), String> {
@@ -272,6 +333,7 @@ pub async fn voice_call_chat(
     app: AppHandle,
     request_id: String,
     messages: Vec<VoiceCallMessage>,
+    context: Option<crate::app_context::model::SpeakerContext>,
 ) -> Result<String, String> {
     // Ein vorgezogener Abbruch wird zuerst eingelöst, damit er auch bei einem Fehler unten
     // nicht ewig liegen bleibt.
@@ -286,6 +348,17 @@ pub async fn voice_call_chat(
         crate::settings::get_settings(&app).for_function(crate::settings::FN_VOICE_SPEAKER);
     let (provider, model, api_key) =
         crate::managers::meetings::llm_call::resolve_provider(&settings)?;
+    // App-Kontext nur an einen lokalen Empfänger, unmittelbar vor dem Start
+    // geprüft (Codex M5/M6); sonst antwortet das Modell ohne Kontext.
+    let context = context.and_then(|c| {
+        crate::app_context::service::bind_for_speaker(
+            &app,
+            &c,
+            receiver_is_local(&provider, &model),
+        )
+    });
+    let with_context = context.is_some();
+    let messages = with_context_message(messages, context);
     let messages: Vec<StreamMessage> = messages
         .into_iter()
         .map(|m| StreamMessage::new(&m.role, m.content))
@@ -295,6 +368,12 @@ pub async fn voice_call_chat(
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .insert(request_id.clone(), cancel.clone());
+    if with_context {
+        CONTEXT_REQUESTS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(request_id.clone());
+    }
 
     let splitter = Arc::new(Mutex::new(SentenceSplitter::new()));
     let index = Arc::new(Mutex::new(0u32));
@@ -345,6 +424,10 @@ pub async fn voice_call_chat(
     })
     .await;
     CANCELS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(&request_id);
+    CONTEXT_REQUESTS
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .remove(&request_id);
@@ -504,5 +587,50 @@ mod tests {
     #[test]
     fn rejects_odd_length() {
         assert!(pcm16_b64_to_f32(&B64.encode([1u8, 2, 3])).is_err());
+    }
+
+    #[test]
+    fn context_nur_an_lokalen_empfaenger() {
+        assert!(receiver_is_local(
+            &provider("ollama", "http://localhost:11434/v1"),
+            "m"
+        ));
+        assert!(receiver_is_local(
+            &provider("x", "http://127.0.0.1:8080/v1"),
+            "m"
+        ));
+        assert!(receiver_is_local(&provider("x", "http://[::1]:8080"), "m"));
+        // Wie Ollama, aber auf einem fremden Host: nicht lokal.
+        assert!(!receiver_is_local(
+            &provider("ollama", "http://gpu.example.com:11434"),
+            "m"
+        ));
+        assert!(!receiver_is_local(
+            &provider("openai", "https://api.example.com/v1"),
+            "m"
+        ));
+        assert!(!receiver_is_local(
+            &provider("x", "http://localhost.example.com"),
+            "m"
+        ));
+        assert!(!receiver_is_local(&provider("x", "kein url"), "m"));
+    }
+
+    #[test]
+    fn kontext_steht_vor_der_letzten_frage() {
+        let m = |r: &str, c: &str| VoiceCallMessage {
+            role: r.into(),
+            content: c.into(),
+        };
+        let msgs = vec![
+            m("system", "S"),
+            m("user", "a"),
+            m("assistant", "b"),
+            m("user", "c"),
+        ];
+        let out = with_context_message(msgs.clone(), Some("K".into()));
+        let got: Vec<&str> = out.iter().map(|m| m.content.as_str()).collect();
+        assert_eq!(got, ["S", "a", "b", "K", "c"]);
+        assert_eq!(with_context_message(msgs, None).len(), 4);
     }
 }

@@ -3788,9 +3788,9 @@ async voiceCallTranscribe(pcm16B64: string) : Promise<Result<string, string>> {
  * fertige Antwort ist der Rückgabewert. Bricht `voice_call_cancel` ab, endet
  * der Aufruf mit `Ok` und leerem Text.
  */
-async voiceCallChat(requestId: string, messages: VoiceCallMessage[]) : Promise<Result<string, string>> {
+async voiceCallChat(requestId: string, messages: VoiceCallMessage[], context: SpeakerContext | null) : Promise<Result<string, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("voice_call_chat", { requestId, messages }) };
+    return { status: "ok", data: await TAURI_INVOKE("voice_call_chat", { requestId, messages, context }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -11661,6 +11661,12 @@ segments: number }
  * Kleinbuchstaben, Ziffern und `_`).
  */
 export type SourceRef = { kind: string; ref: string; title: string | null; url: string | null }
+/**
+ * Kontext für einen Sprecheraufruf (`voice_call_chat`). Das Backend baut die
+ * Kontextnachricht selbst und nur, wenn der Empfänger lokal ist und Stand,
+ * Freigaben und Quellen noch stimmen (Codex M5/M6, Auflagen 4–6, 11).
+ */
+export type SpeakerContext = { hits: ContextHits; german: boolean }
 /**
  * Für die Oberfläche: eine Zusammenführung, die sich trennen lässt.
  */

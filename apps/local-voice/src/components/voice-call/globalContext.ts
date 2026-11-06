@@ -65,6 +65,8 @@ export interface PreparedContext {
   hits: ContextHits;
   /** `null` ohne Treffer: dann geht keine Kontextnachricht an das Modell. */
   message: string | null;
+  /** Sprache der Kontextnachricht. */
+  german: boolean;
   /** Dauer bis der Prompt-Teil fertig war (ms, Messung t2/t3). */
   retrieveMs: number;
   promptMs: number;
@@ -105,11 +107,131 @@ export function withContext(
   ];
 }
 
+/** Wohin ein Beleg führt: eine Vorlesen-Seite oder ein App-Bereich. */
+export type SourceTarget = { page: string } | { section: string } | null;
+
+/**
+ * Sprungziel eines Belegs. Bücher, Seiten und KI-Dokumente öffnen die Seite
+ * im Vorlesen (KI-Dokumente tragen die Seite vor dem `/`), Notizen ihr Buch;
+ * Besprechungen, Diktate und Gespräche ihren Bereich.
+ */
+export function sourceTarget(jump: Jump): SourceTarget {
+  switch (jump.kind) {
+    case "book":
+    case "tts_page":
+      return { page: jump.id };
+    case "ki_doc":
+      return { page: jump.book_id ?? jump.id.split("/")[0] };
+    case "book_note":
+      return jump.book_id ? { page: jump.book_id } : null;
+    case "meeting":
+      return { section: "meetings" };
+    case "dictation":
+      return { section: "history" };
+    case "conversation":
+      return { section: "voice" };
+    default:
+      return null;
+  }
+}
+
+/** Gesprochener Wechsel im Buch-Gespräch: allgemein (ganze App) oder Buch. */
+export type TalkMode = "general" | "book";
+
+const MODE_FILLERS = new Set([
+  "bitte",
+  "mal",
+  "doch",
+  "jetzt",
+  "hey",
+  "wieder",
+  "please",
+  "now",
+  "just",
+]);
+
+const MODE_FORMS: [TalkMode, boolean, string[]][] = [
+  [
+    "general",
+    true,
+    [
+      "allgemein",
+      "frag allgemein",
+      "allgemeine frage",
+      "allgemeines gespräch",
+      "außerhalb des buchs",
+      "außerhalb vom buch",
+      "über alles",
+      "in der ganzen app",
+    ],
+  ],
+  [
+    "general",
+    false,
+    ["general", "in general", "general question", "outside the book"],
+  ],
+  [
+    "book",
+    true,
+    [
+      "im buch",
+      "nur im buch",
+      "zurück zum buch",
+      "zurück ins buch",
+      "frage zum buch",
+      "zum buch",
+    ],
+  ],
+  ["book", false, ["in the book", "back to the book", "about the book"]],
+];
+
+/**
+ * Ist die ganze Äußerung ein Wechselbefehl? Wie bei den Buchbefehlen zählt nur
+ * die ganze Äußerung; „Was steht im Buch über X?“ ist eine Frage, kein Befehl.
+ */
+export function modeSwitch(
+  text: string,
+): { mode: TalkMode; german: boolean } | null {
+  const words = text
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .split(/\s+/)
+    .filter((w) => w && !MODE_FILLERS.has(w));
+  if (words.length === 0 || words.length > 5) return null;
+  const joined = words.join(" ");
+  for (const [mode, german, forms] of MODE_FORMS)
+    if (forms.includes(joined)) return { mode, german };
+  return null;
+}
+
+/** Kurze gesprochene Bestätigung des Wechsels. */
+export function modeSwitchReply(mode: TalkMode, german: boolean): string {
+  if (german)
+    return mode === "general"
+      ? "Gut, jetzt allgemein über alle freigegebenen Inhalte."
+      : "Gut, wieder nur im Buch.";
+  return mode === "general"
+    ? "Okay, now across all your shared content."
+    : "Okay, back to the book only.";
+}
+
 const MARKER = /\s*\[Q\d+\]/g;
 
 /** Belegmarken `[Qk]` für die Stimme entfernen (angezeigt, nicht gesprochen). */
 export function speakable(sentence: string): string {
   return sentence.replace(MARKER, "");
+}
+
+/**
+ * Was an `voice_call_chat` geht: nur die Treffer. Die Kontextnachricht baut
+ * das Backend selbst, und nur für einen lokalen Empfänger mit aktuellem Stand
+ * (Codex M5/M6). Ohne Treffer: kein Kontext.
+ */
+export function speakerContext(
+  ctx: PreparedContext | null,
+): { hits: ContextHits; german: boolean } | null {
+  if (!ctx || ctx.hits.hits.length === 0) return null;
+  return { hits: ctx.hits, german: ctx.german };
 }
 
 /** Verwaltet den Kontext laufender Schritte. */
@@ -135,6 +257,9 @@ export class GlobalContext {
     const key = `${input.turnId}\u001f${input.transcript}`;
     const existing = this.pending.get(input.turnId);
     if (existing && this.keys.get(input.turnId) === key) return existing;
+    // Höchstens eine Spekulation gleichzeitig (Codex Auflage 12).
+    for (const id of [...this.pending.keys()])
+      if (id !== input.turnId) this.discard(id);
     const started = this.now();
     const p = (async (): Promise<PreparedContext | null> => {
       try {
@@ -159,6 +284,7 @@ export class GlobalContext {
           transcript: input.transcript,
           hits,
           message: message ?? null,
+          german: input.german ?? true,
           retrieveMs: Math.round(retrieved - started),
           promptMs: Math.round(this.now() - started),
         };

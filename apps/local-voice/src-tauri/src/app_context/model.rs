@@ -145,3 +145,12 @@ pub struct ContextHits {
     /// ungültig und wird verworfen (Codex Must-fix 2).
     pub epoch: u32,
 }
+
+/// Kontext für einen Sprecheraufruf (`voice_call_chat`). Das Backend baut die
+/// Kontextnachricht selbst und nur, wenn der Empfänger lokal ist und Stand,
+/// Freigaben und Quellen noch stimmen (Codex M5/M6, Auflagen 4–6, 11).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Type)]
+pub struct SpeakerContext {
+    pub hits: ContextHits,
+    pub german: bool,
+}

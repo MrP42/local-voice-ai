@@ -7493,6 +7493,7 @@
     },
     "sources": {
       "label": "Quellen",
+      "open": "Quelle öffnen",
       "page": "Seite {{page}}",
       "kind": {
         "book": "Buch",

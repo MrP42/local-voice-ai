@@ -115,3 +115,55 @@ test("Belegprüfung liefert nur bestätigte Treffer", async () => {
   const _unused: ContextHits = ctx!.hits;
   assert.ok(_unused);
 });
+
+test("Sprungziel je Quellenart", async () => {
+  const { sourceTarget } =
+    await import("../../src/components/voice-call/globalContext.ts");
+  const j = (kind: string, id: string, book_id: string | null = null) =>
+    ({ kind, id, offset: 0, page: null, book_id }) as Parameters<
+      typeof sourceTarget
+    >[0];
+  assert.deepEqual(sourceTarget(j("book", "p1")), { page: "p1" });
+  assert.deepEqual(sourceTarget(j("ki_doc", "p2/d1")), { page: "p2" });
+  assert.deepEqual(sourceTarget(j("book_note", "n1", "p3")), { page: "p3" });
+  assert.equal(sourceTarget(j("book_note", "n1")), null);
+  assert.deepEqual(sourceTarget(j("meeting", "m1")), { section: "meetings" });
+  assert.deepEqual(sourceTarget(j("dictation", "7")), { section: "history" });
+});
+
+test("Wechsel allgemein / im Buch nur als ganze Äußerung", async () => {
+  const { modeSwitch, modeSwitchReply } =
+    await import("../../src/components/voice-call/globalContext.ts");
+  assert.deepEqual(modeSwitch("Allgemein, bitte."), {
+    mode: "general",
+    german: true,
+  });
+  assert.deepEqual(modeSwitch("Zurück zum Buch!"), {
+    mode: "book",
+    german: true,
+  });
+  assert.deepEqual(modeSwitch("back to the book"), {
+    mode: "book",
+    german: false,
+  });
+  assert.equal(modeSwitch("Was steht im Buch über den Leuchtturm?"), null);
+  assert.equal(modeSwitch("Ganz allgemein: wer ist Jansen?"), null);
+  assert.match(modeSwitchReply("general", true), /allgemein/);
+});
+
+test("An den Sprecher gehen nur Treffer, keine fertige Nachricht", async () => {
+  const { speakerContext } =
+    await import("../../src/components/voice-call/globalContext.ts");
+  const g = new GlobalContext(fake([1]));
+  const ctx = await g.prepare({ turnId: "t", transcript: "x", german: false });
+  assert.deepEqual(speakerContext(ctx), { hits: ctx!.hits, german: false });
+  assert.equal(speakerContext(null), null);
+});
+
+test("Höchstens eine Spekulation gleichzeitig", async () => {
+  const g = new GlobalContext(fake([1, 1]));
+  await g.prepare({ turnId: "a", transcript: "x" });
+  await g.prepare({ turnId: "b", transcript: "y" });
+  assert.equal(await g.take("a", "x"), null, "ältere Spekulation verworfen");
+  assert.ok(await g.take("b", "y"));
+});

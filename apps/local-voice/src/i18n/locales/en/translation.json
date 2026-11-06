@@ -7493,6 +7493,7 @@
     },
     "sources": {
       "label": "Sources",
+      "open": "Open source",
       "page": "page {{page}}",
       "kind": {
         "book": "Book",

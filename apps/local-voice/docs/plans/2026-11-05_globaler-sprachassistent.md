@@ -206,6 +206,31 @@ Dokument, Budget, Aktualität), `prompt` (Datenblock, Marken, `cited`, `strip_ma
 Messung (Release, Cloud-Container, synthetisch, Worst Case: jedes Stück trifft): 50 Bücher /
 ~20 000 Stücke, Aufbau 0,9 s, Abruf 30 ms je Frage.
 
+## Stand P2/P3 und Codex-Entscheid zu M5 (06.11.)
+
+Codex hat die LLM-Spekulation bei lokalem Sprecher **abgelehnt**: Sprecher und
+Denker sind getrennt wählbar, und `voice_call_chat` löst die Route je Anfrage neu
+auf. Umgesetzt (lva#328):
+
+- **Bindung im Backend:** `voice_call_chat(…, context)` bekommt nur die Treffer.
+  Das Backend baut die Kontextnachricht selbst und nur, wenn unmittelbar vor dem
+  Start gilt: Schalter an, Empfänger lokal (eingebautes Modell oder Loopback-
+  Endpunkt, kein fremder Ollama-Host), gleicher `epoch`, jede Quelle freigegeben
+  und unverändert (`service::admissible`). Sonst antwortet das Modell ohne Kontext.
+- **Spekulation nur Abruf:** Mit Kontext startet das Modell erst nach dem Commit;
+  davor prüft `take` Turn, Transkript und Stand erneut. Ohne Kontext bleibt der
+  bisherige spekulative Start (Bestand, kein Kontext betroffen).
+- **Widerruf:** Eine Freigabeänderung, die den Stand erhöht oder den Schalter
+  ausschaltet, bricht laufende Antworten mit Kontext ab (`revoked`) und stoppt die
+  Sprachausgabe. `app_context_message` prüft den Stand.
+- Höchstens eine Spekulation gleichzeitig; Logs ohne Inhalte.
+- **Wechsel im Buch-Gespräch:** „allgemein“ bzw. „im Buch/zurück zum Buch“ als
+  ganze Äußerung. Er gilt erst hörbar (nicht spekulativ), steht nicht im Verlauf;
+  „allgemein“ entstandene Beiträge gehen nicht an die Buch-Seite.
+- **Sprung aus Belegen:** Quellenliste klickbar (Seite im Vorlesen bzw. Bereich).
+- LLM-Spekulation mit Kontext erst als Folge-PR nach Codex-Auflagen 3–16, falls
+  die Messung (P4) sie braucht.
+
 ## Arbeitspakete (Issues)
 
 ### Task P1 – Abrufindex `app_context` (Rust, rein, Tests)
