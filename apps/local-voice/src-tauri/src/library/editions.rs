@@ -11,7 +11,7 @@
 //! Spezifikation: `docs/superpowers/specs/2026-11-06-sprachfassungen.md`.
 
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use super::{
@@ -514,9 +514,12 @@ pub fn join_in(root: &Path, target_id: &str, sources: &[String]) -> Result<Libra
                 }
                 // Angaben der Quell-Hauptfassung sichern, bevor die Arbeitskopie wegfällt.
                 let src_primary = primary_id(&source).map(str::to_string);
+                // Alte → neue Kennung, damit Kapitelzuordnungen mitkommen.
+                let mut renamed: BTreeMap<String, String> = BTreeMap::new();
                 for mut e in source.editions.clone() {
                     let new_id = fresh_edition_id(&taken);
                     taken.insert(new_id.clone());
+                    renamed.insert(e.id.clone(), new_id.clone());
                     if Some(&e.id) == src_primary.as_ref() {
                         e.title = source.title.clone();
                         e.subtitle = source.subtitle.clone();
@@ -566,6 +569,15 @@ pub fn join_in(root: &Path, target_id: &str, sources: &[String]) -> Result<Libra
                         e.added_ms = source.added_ms;
                     }
                     target.editions.push(e);
+                }
+                // Kapitelzuordnungen (samt Bestätigungen) unter neuen Kennungen.
+                for al in &source.alignments {
+                    if let (Some(a), Some(b)) = (renamed.get(&al.a), renamed.get(&al.b)) {
+                        let mut al = al.clone();
+                        al.a = a.clone();
+                        al.b = b.clone();
+                        target.alignments.push(canonical_alignment(al));
+                    }
                 }
                 target.favorite |= source.favorite;
             }
@@ -1261,7 +1273,6 @@ fn max_by_key<T: Clone, K: Ord>(a: Option<&T>, b: Option<&T>, key: impl Fn(&T) -
 
 /// Zwei Stände zusammenführen. Reine Funktion.
 pub fn merge_state(x: &EditionState, y: &EditionState) -> EditionState {
-    use std::collections::BTreeMap;
     // Grabsteine: Vereinigung, je Kennung der größte Zeitpunkt.
     let mut tomb: BTreeMap<String, f64> = BTreeMap::new();
     for t in x.tombstones.iter().chain(&y.tombstones) {
@@ -1764,6 +1775,63 @@ mod tests {
                 "{lang}"
             );
         }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Codex R9: Zusammenlegen nimmt die Kapitelzuordnungen der Quelle mit,
+    /// samt manueller Bestätigung, unter den neuen Kennungen.
+    #[test]
+    fn zusammenlegen_nimmt_kapitelzuordnung_mit() {
+        let root = tmp();
+        let mut de = base("book_1", "Der Weg", "de");
+        de.audio = Some(audio("a.mp3"));
+        put(&root, &de, &["a.mp3"]);
+        let mut en = base("book_2", "The Way", "en");
+        en.audio = Some(audio("b.mp3"));
+        put(&root, &en, &["b.mp3"]);
+        let mut fr = base("book_3", "Le Chemin", "fr");
+        fr.audio = Some(audio("c.mp3"));
+        put(&root, &fr, &["c.mp3"]);
+        let mut two = join_in(&root, "book_2", &["book_3".into()]).unwrap();
+        let id =
+            |b: &LibraryBook, l: &str| b.editions.iter().find(|e| e.lang == l).unwrap().id.clone();
+        let (en_id, fr_id) = (id(&two, "en"), id(&two, "fr"));
+        let groups = vec![
+            AlignGroup {
+                a: vec![0],
+                b: vec![0, 1],
+                confirmed: true,
+            },
+            AlignGroup {
+                a: vec![1],
+                b: vec![2],
+                confirmed: false,
+            },
+        ];
+        set_alignment(
+            &mut two,
+            Alignment {
+                a: en_id,
+                b: fr_id,
+                updated: 5.0,
+                device: "pc".into(),
+                groups: groups.clone(),
+            },
+        )
+        .unwrap();
+        write_book(&root.join("book_2"), &two).unwrap();
+        let all = join_in(&root, "book_1", &["book_2".into()]).unwrap();
+        let (en_new, fr_new) = (id(&all, "en"), id(&all, "fr"));
+        assert_eq!(all.alignments.len(), 1);
+        let got = canonical_alignment(all.alignments[0].clone());
+        let want = canonical_alignment(Alignment {
+            a: en_new,
+            b: fr_new,
+            updated: 5.0,
+            device: "pc".into(),
+            groups,
+        });
+        assert_eq!((got.a, got.b, got.groups), (want.a, want.b, want.groups));
         let _ = std::fs::remove_dir_all(&root);
     }
 
