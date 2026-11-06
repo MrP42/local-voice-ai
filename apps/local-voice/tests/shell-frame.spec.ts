@@ -109,14 +109,16 @@ test("Fussleiste: 24 px, Modelle des Moduls links, Version ganz rechts", async (
   await expect(mic).toHaveAttribute("aria-label", /Mikrofon: Systemvorgabe/);
   await expect(mic).toHaveText("");
 
-  // Codex 01.11.: rechts nur Mikrofon und Telefon; Speicher/GPU, Fish-Server
-  // und Schild nur als bewusst eingeschaltete Diagnose, einklappbar.
+  // Codex 01.11.: rechts Mikrofon und Telefon; Speicher/GPU und Fish-Server
+  // nur als bewusst eingeschaltete Diagnose, einklappbar. Das Schild steht
+  // wieder immer da, vor dem Mikrofon (Patrick 06.11.2026).
   await expect(bar.locator("[data-resource-meter]")).toHaveCount(0);
-  await expect(bar.locator("[data-compliance-shield]")).toHaveCount(0);
+  await expect(bar.locator("[data-compliance-shield]")).toBeVisible();
   await expect(bar.locator("[data-fish-server]")).toHaveCount(0);
   await expect(bar.getByTestId("statusbar-diagnose")).toHaveCount(0);
   const x = async (sel: string) => (await bar.locator(sel).first().boundingBox())!.x;
   expect(await x("[data-mic-selector]")).toBeLessThan(await x(".lv-call-group"));
+  expect(await x("[data-compliance-shield]")).toBeLessThan(await x("[data-mic-selector]"));
 
   // Profilmenü ▸ Hilfe ▸ Diagnose: Knopf erscheint, ausgeklappt mit Speicher
   await oeffneProfilmenue(page);
@@ -133,7 +135,7 @@ test("Fussleiste: 24 px, Modelle des Moduls links, Version ganz rechts", async (
   await diagnose.click();
   await expect(diagnose).toHaveAttribute("aria-expanded", "false");
   await expect(bar.locator("[data-resource-meter]")).toHaveCount(0);
-  await expect(bar.locator("[data-compliance-shield]")).toHaveCount(0);
+  await expect(bar.locator("[data-compliance-shield]")).toBeVisible();
   await expect(bar.locator("[data-fish-server]")).toHaveCount(0);
   // Eingeklappt bleibt eingeklappt (auch nach Neustart), Ausklappen holt alles zurück
   await page.reload();
@@ -299,7 +301,7 @@ test("Keine Titelzeile im Modul: Inhalt beginnt direkt unter der Titelleiste", a
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
   const nav = page.getByRole("navigation", { name: "Hauptnavigation" });
-  for (const label of ["Verlauf", "Aufnahmen", "Vorlesen", "Bibliothek", "Sprachgespräch"]) {
+  for (const label of ["Verlauf", "Aufnahmen", "Vorlesen", "Bibliothek", "Chat"]) {
     await nav.getByRole("button", { name: label, exact: true }).click();
     const titel = page.getByRole("heading", { level: 1, name: label, exact: true });
     await expect(titel).toHaveCount(1);

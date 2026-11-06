@@ -81,7 +81,7 @@ use knowledge::{KnowledgeSource, Need};
 /// Aufrufer im Ziel des Audit-Eintrags.
 pub const CALLER_TAG: &str = "voice_orchestrator";
 /// Name des Zugangs im `CallContext` (nur Anzeige; es gibt keinen echten Zugang).
-const CALLER_LABEL: &str = "Sprachgespräch";
+const CALLER_LABEL: &str = "Chat";
 /// Laengste Antwort an das Sprachmodell (Zeichen). Der Orchestrator kuerzt selbst bei 8000: darunter bleiben.
 pub const MAX_RESULT_CHARS: usize = 8_000;
 /// Zeichen je Transkriptseite fuer die Stimme (eine Seite samt JSON bleibt unter [`MAX_RESULT_CHARS`]).
@@ -154,7 +154,7 @@ fn read_only_entry(name: &str) -> Result<&'static CatalogEntry, String> {
         .ok_or_else(|| format!("Das Werkzeug „{}“ gibt es nicht.", shown(name)))?;
     if !is_read_only(entry) {
         return Err(
-            "Dieses Werkzeug ändert Daten und steht im Sprachgespräch nicht zur Verfügung (nur lesende Werkzeuge)."
+            "Dieses Werkzeug ändert Daten und steht im Chat nicht zur Verfügung (nur lesende Werkzeuge)."
                 .to_string(),
         );
     }
@@ -282,9 +282,8 @@ pub fn call(
     let target = resolve(name)?;
     let (tool, need, capability) = match &target {
         Target::Bridge(entry) => {
-            let area = area_of_catalog(entry).ok_or_else(|| {
-                "Dieses Werkzeug steht im Sprachgespräch nicht zur Verfügung.".to_string()
-            })?;
+            let area = area_of_catalog(entry)
+                .ok_or_else(|| "Dieses Werkzeug steht im Chat nicht zur Verfügung.".to_string())?;
             (entry.name, Need::One(area), entry.capability)
         }
         Target::Knowledge(spec) => (spec.name, spec.need, knowledge_capability(spec.name)),
