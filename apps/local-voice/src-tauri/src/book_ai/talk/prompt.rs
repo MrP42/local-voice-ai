@@ -6,6 +6,9 @@
 //! im Fremdtext werden vorher entschärft. Die Auszüge sind Buchinhalt, keine
 //! Anweisungen.
 
+use std::future::Future;
+use std::pin::Pin;
+
 use super::intent::{BookTalkIntent, Lang};
 use super::retrieve::{Excerpt, Retrieval};
 use super::BookTalkScope;
@@ -23,7 +26,7 @@ pub enum TokenizerKind {
     SentencePieceByteFallback,
 }
 
-/// Nachgewiesen unterstützte Konfiguration für die Byte-Obergrenze (Plan §3.3):
+/// Nachgewiesen unterstützte Konfiguration für eine Obergrenze (Plan §3.3):
 /// Modellfamilie, Tokenizer, Chat-Vorlage und deren **gemessene** Vorlagenkosten.
 #[derive(Debug, Clone, Copy)]
 pub struct BudgetProfile {
@@ -46,29 +49,11 @@ impl BudgetProfile {
 
 /// Profile, deren Vorlagenkosten mit dem echten Tokenizer an den Fixtures
 /// gemessen und im Test belegt sind. **Leer**: für Gemma 4 (Ollama) liegt
-/// kein Beleg vor; stattdessen gilt die beweisbare Byte-Obergrenze
-/// (`byte_bound_tokens`).
+/// kein Beleg vor; ohne exakten Zähler heißt das: nicht prüfbar (`budget`).
 pub const BUDGET_PROFILES: &[BudgetProfile] = &[];
 
 pub fn profile_for(family: &str) -> Option<&'static BudgetProfile> {
     BUDGET_PROFILES.iter().find(|p| p.family == family)
-}
-
-/// Aufschlag der Byte-Obergrenze für Chat-Vorlage und Rollen-Token
-/// (Anfang/Ende der Unterhaltung, je Nachricht Rahmen und Rolle). Die
-/// gängigen Vorlagen brauchen deutlich weniger als zehn Token je Nachricht;
-/// 64 ist bewusst großzügig, eine zu hohe Schätzung kostet nur Auszüge.
-pub const BYTE_BOUND_TEMPLATE_TOKENS: usize = 64;
-
-/// Beweisbare Obergrenze der Prompt-Token ohne Tokenizer: Ein
-/// Byte-Level-BPE-Tokenizer (und SentencePiece mit Byte-Rückfall) erzeugt nie
-/// mehr Token als der Text UTF-8-Bytes hat (jedes Token deckt mindestens ein
-/// Byte). Dazu der feste Vorlagenaufschlag. Umlaute zählen 2 Byte.
-pub fn byte_bound_tokens(system: &str, user: &str) -> usize {
-    system
-        .len()
-        .saturating_add(user.len())
-        .saturating_add(BYTE_BOUND_TEMPLATE_TOKENS)
 }
 
 /// Womit die Prompt-Größe geprüft wird (für Bericht und Prüfbindung).
@@ -78,17 +63,17 @@ pub enum BudgetMethod {
     Exact,
     /// Belegtes Budgetprofil.
     Profile(&'static str),
-    /// Byte-Obergrenze (`byte_bound_tokens`).
-    ByteBound,
+    /// Weder Zähler noch Profil: nicht prüfbar, kein Modellaufruf (`budget`).
+    Unavailable,
 }
 
 impl BudgetMethod {
-    /// Rangfolge: exakter Zähler, dann Profil, dann Byte-Obergrenze.
+    /// Rangfolge: exakter Zähler, dann geprüftes Profil, sonst nichts.
     pub fn choose(exact_available: bool, profile: Option<&BudgetProfile>) -> Self {
         match (exact_available, profile) {
             (true, _) => Self::Exact,
             (false, Some(p)) => Self::Profile(p.name),
-            (false, None) => Self::ByteBound,
+            (false, None) => Self::Unavailable,
         }
     }
 
@@ -96,24 +81,25 @@ impl BudgetMethod {
         match self {
             Self::Exact => "exact".to_string(),
             Self::Profile(name) => format!("profile:{name}"),
-            Self::ByteBound => "byte_bound".to_string(),
+            Self::Unavailable => "none".to_string(),
         }
     }
 }
 
 /// Die eine Zählfunktion von App und Eval: exakter Zähler hat Vorrang, dann
-/// das Profil, sonst die Byte-Obergrenze. Das Ergebnis ist immer eine
-/// Obergrenze oder exakt, nie eine Schätzung nach unten.
+/// das geprüfte Profil, sonst `None` (nicht prüfbar, Grund `budget`). Es gibt
+/// keine Schätzung und keine Byte-Obergrenze: für SentencePiece-Tokenizer und
+/// CLI-Anbieter mit versteckten Anweisungen ist sie nicht beweisbar.
 pub fn count_tokens(
-    exact: Option<u32>,
+    exact: Option<usize>,
     profile: Option<&BudgetProfile>,
     system: &str,
     user: &str,
-) -> usize {
+) -> Option<usize> {
     match (exact, profile) {
-        (Some(t), _) => t as usize,
-        (None, Some(p)) => p.upper_bound(system, user) as usize,
-        (None, None) => byte_bound_tokens(system, user),
+        (Some(t), _) => Some(t),
+        (None, Some(p)) => Some(p.upper_bound(system, user) as usize),
+        (None, None) => None,
     }
 }
 
@@ -140,22 +126,44 @@ impl Budget {
             instruction_chars: 1_200,
             history_chars: 3_000,
             question_chars: 800,
-            excerpt_chars,
+            excerpt_chars: excerpt_chars.min(MAX_EXCERPT_CHARS),
             answer_tokens,
             context_tokens,
         }
     }
 
-    pub fn fits(&self, instructions: &str, prompt: &str, count: TokenCount<'_>) -> bool {
-        count(instructions, prompt).is_some_and(|t| t + self.answer_tokens <= self.context_tokens)
+    pub async fn fits(&self, instructions: &str, prompt: &str, count: TokenCount<'_>) -> bool {
+        count
+            .count(instructions, prompt)
+            .await
+            .is_some_and(|t| t + self.answer_tokens <= self.context_tokens)
     }
 }
 
+/// Obergrenze der Auszugszeichen je Frage (Spec: bis ca. 20.000 Zeichen),
+/// unabhängig vom Kontextfenster.
+pub const MAX_EXCERPT_CHARS: usize = 20_000;
+
+pub type CountFuture<'a> = Pin<Box<dyn Future<Output = Option<usize>> + Send + 'a>>;
+
 /// Zählt die Prompt-Token (System, Nutzer): exakt mit dem Tokenizer des
-/// Modells, sonst als Obergrenze über ein Budgetprofil, sonst über die
-/// Byte-Obergrenze (`count_tokens`). `None` nur, wenn ein Zähler nichts
-/// liefern kann (Grund `budget`).
-pub type TokenCount<'a> = &'a dyn Fn(&str, &str) -> Option<usize>;
+/// Modells, sonst über ein geprüftes Budgetprofil (`count_tokens`). `None`,
+/// wenn nichts zählen kann (Grund `budget`). Darf asynchron sein (Server).
+pub trait Counter: Sync {
+    fn count<'a>(&'a self, system: &'a str, user: &'a str) -> CountFuture<'a>;
+}
+
+impl<F> Counter for F
+where
+    F: Fn(&str, &str) -> Option<usize> + Sync,
+{
+    fn count<'a>(&'a self, system: &'a str, user: &'a str) -> CountFuture<'a> {
+        let n = self(system, user);
+        Box::pin(std::future::ready(n))
+    }
+}
+
+pub type TokenCount<'a> = &'a dyn Counter;
 
 /// Ein früherer Wechsel für den Prompt, mit Bereich und Grenze der Entstehung.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -393,12 +401,15 @@ pub struct Fitted {
     pub dropped_history: bool,
 }
 
-/// Prompt und Auszüge so lange verkleinern, bis alles ins Kontextfenster
-/// passt: erst rangniedrigste Auszüge (mindestens einer bleibt), dann der
-/// Verlauf; sonst `None` (= Grund `budget`). Die Auszüge werden von hinten
-/// (rangniedrigste zuerst) gekürzt, mindestens einer bleibt.
+/// Prompt und Auszüge verkleinern, bis alles ins Kontextfenster passt: erst
+/// nur so viele der ranghöchsten Auszüge, wie in `MAX_EXCERPT_CHARS` und das
+/// Fenster passen (mindestens einer; hinten, also rangniedrigste, fallen
+/// zuerst), dann ohne Verlauf; sonst `None` (= Grund `budget`). Mit einem
+/// (womöglich langsamen) exakten Zähler wird nicht Schritt für Schritt
+/// gekürzt, sondern per Binärsuche über die Auszugszahl gemessen
+/// (höchstens `log2(n) + 2` Zählungen).
 #[allow(clippy::too_many_arguments)]
-pub fn fit(
+pub async fn fit(
     title: &str,
     question: &str,
     retrieval: &Retrieval,
@@ -414,33 +425,51 @@ pub fn fit(
             title, question, r, history, lang, scope, frontier, budget, h,
         )
     };
-    let mut r = retrieval.clone();
-    let mut dropped = 0;
-    loop {
-        let p = make(&r, true);
-        if budget.fits(&p.instructions, &p.prompt, count) {
-            return Some(Fitted {
-                parts: p,
-                retrieval: r,
-                dropped_excerpts: dropped,
-                dropped_history: false,
-            });
-        }
-        if r.excerpts.len() <= 1 {
-            break;
-        }
-        r = r.removing_lowest_rank();
-        dropped += 1;
+    let all = retrieval.excerpts.len();
+    let mut capped = retrieval.clone();
+    while capped.excerpts.len() > 1 && capped.excerpt_chars() > MAX_EXCERPT_CHARS {
+        capped = capped.removing_lowest_rank();
     }
+    let keep = |n: usize| {
+        let mut r = capped.clone();
+        while r.excerpts.len() > n.max(1) {
+            r = r.removing_lowest_rank();
+        }
+        r
+    };
+    let top = capped.excerpts.len();
+    let result = |r: Retrieval, p: Parts, history_dropped: bool| Fitted {
+        dropped_excerpts: all - r.excerpts.len(),
+        parts: p,
+        retrieval: r,
+        dropped_history: history_dropped,
+    };
+    let first = make(&capped, true);
+    if budget.fits(&first.instructions, &first.prompt, count).await {
+        return Some(result(capped.clone(), first, false));
+    }
+    let (mut lo, mut hi) = (1usize, top.saturating_sub(1));
+    let mut best: Option<(Retrieval, Parts)> = None;
+    while lo <= hi {
+        let mid = (lo + hi) / 2;
+        let r = keep(mid);
+        let p = make(&r, true);
+        if budget.fits(&p.instructions, &p.prompt, count).await {
+            best = Some((r, p));
+            lo = mid + 1;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    if let Some((r, p)) = best {
+        return Some(result(r, p, false));
+    }
+    let r = keep(1);
     let p = make(&r, false);
     budget
         .fits(&p.instructions, &p.prompt, count)
-        .then_some(Fitted {
-            parts: p,
-            retrieval: r,
-            dropped_excerpts: dropped,
-            dropped_history: true,
-        })
+        .await
+        .then(|| result(r, p, true))
 }
 
 #[cfg(test)]
@@ -507,16 +536,7 @@ mod tests {
     }
 
     #[test]
-    fn byte_bound_counts_multibyte_and_template() {
-        assert_eq!(byte_bound_tokens("", ""), BYTE_BOUND_TEMPLATE_TOKENS);
-        assert_eq!(
-            byte_bound_tokens("äöü", "abc"),
-            6 + 3 + BYTE_BOUND_TEMPLATE_TOKENS
-        );
-    }
-
-    #[test]
-    fn method_precedence_is_exact_then_profile_then_bytes() {
+    fn method_precedence_is_exact_then_profile_then_nothing() {
         let p = BudgetProfile {
             name: "t",
             family: "t",
@@ -531,13 +551,13 @@ mod tests {
             BudgetMethod::choose(false, Some(&p)),
             BudgetMethod::Profile("t")
         );
-        assert_eq!(BudgetMethod::choose(false, None), BudgetMethod::ByteBound);
-        assert_eq!(count_tokens(Some(5), Some(&p), "äöü", "abc"), 5);
-        assert_eq!(count_tokens(None, Some(&p), "äöü", "abc"), 6 + 3 + 16 + 16);
+        assert_eq!(BudgetMethod::choose(false, None), BudgetMethod::Unavailable);
+        assert_eq!(count_tokens(Some(5), Some(&p), "äöü", "abc"), Some(5));
         assert_eq!(
-            count_tokens(None, None, "äöü", "abc"),
-            6 + 3 + BYTE_BOUND_TEMPLATE_TOKENS
+            count_tokens(None, Some(&p), "äöü", "abc"),
+            Some(6 + 3 + 16 + 16)
         );
-        assert_eq!(BudgetMethod::ByteBound.label(), "byte_bound");
+        assert_eq!(count_tokens(None, None, "äöü", "abc"), None);
+        assert_eq!(BudgetMethod::Unavailable.label(), "none");
     }
 }

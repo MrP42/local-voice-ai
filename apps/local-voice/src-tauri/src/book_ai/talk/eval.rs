@@ -330,7 +330,7 @@ pub fn gate(s: &Summary) -> Vec<String> {
 // --------------------------------------------------------- Modell-Hüllen --
 
 /// Zählt die Modellaufrufe; die Tokenzählung bleibt die des Modells, die
-/// Budgetmethode wählt `book_ai::talk::run` (Byte-Obergrenze gemeinsam mit der App).
+/// Budgetmethode wählt `book_ai::talk::run` (exakter Zähler oder Profil, sonst kein Aufruf, gemeinsam mit der App).
 struct Counting<'m> {
     inner: &'m dyn TalkModel,
     calls: AtomicU32,
@@ -347,8 +347,12 @@ impl TalkModel for Counting<'_> {
         self.inner.complete(system, user, on_delta)
     }
 
-    fn token_count(&self, system: &str, user: &str) -> Option<u32> {
+    fn token_count<'a>(&'a self, system: &'a str, user: &'a str) -> super::prompt::CountFuture<'a> {
         self.inner.token_count(system, user)
+    }
+
+    fn context_tokens(&self) -> super::prompt::CountFuture<'_> {
+        self.inner.context_tokens()
     }
 }
 
@@ -366,6 +370,13 @@ impl TalkModel for Scripted {
             on_delta(&self.0);
             Ok(self.0.clone())
         })
+    }
+
+    /// Nur für `--provider fake`: die Antworten stehen fest, es geht kein
+    /// Aufruf an ein Modell. Kein Beleg für ein echtes Modell (der Bericht
+    /// nennt die Methode `fake`).
+    fn token_count<'a>(&'a self, system: &'a str, user: &'a str) -> super::prompt::CountFuture<'a> {
+        Box::pin(std::future::ready(Some((system.len() + user.len()) / 3)))
     }
 }
 
@@ -679,10 +690,10 @@ pub async fn run_eval(input: &EvalInput, backend: Backend<'_>, cfg: &EvalConfig)
         prompt_version: PROMPT_VERSION,
         check_version: CHECK_VERSION,
         budget_profile: cfg.profile.map(|p| p.name.to_string()),
-        token_count: cfg.token_mode(match &backend {
-            Backend::Fake => false,
-            Backend::Model(m) => m.token_count("", "").is_some(),
-        }),
+        token_count: match &backend {
+            Backend::Fake => "fake".to_string(),
+            Backend::Model(m) => cfg.token_mode(m.token_count("Probe", "Probe").await.is_some()),
+        },
         context_tokens: cfg.context_tokens,
         fixture: FixtureInfo {
             title: input.title.clone(),
@@ -1150,6 +1161,14 @@ mod tests {
                 }
             })
         }
+
+        fn token_count<'a>(
+            &'a self,
+            system: &'a str,
+            user: &'a str,
+        ) -> crate::book_ai::talk::prompt::CountFuture<'a> {
+            Box::pin(std::future::ready(Some((system.len() + user.len()) / 3)))
+        }
     }
 
     const BOOK: &str = "# Eins\n\n{{S. 1}}\nIda fuhr mit der Fähre nach Hallund. Der Kapitän hieß Henrik.\n\n{{S. 2}}\nDer Turm hat zweihundertzwölf Stufen.\n";
@@ -1202,6 +1221,6 @@ mod tests {
         assert_eq!((a.kept, a.dropped), (1, 0));
         assert_eq!(a.pages_ok, Some(true));
         assert_eq!(report.summary.spoiler_violations, 0);
-        assert_eq!(report.token_count, "byte_bound");
+        assert_eq!(report.token_count, "exact");
     }
 }

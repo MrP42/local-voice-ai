@@ -2,7 +2,11 @@
 //! aber ohne `AppHandle`, Verbrauchsbuch und Regelwerk.
 //!
 //! - `ollama`, `openai`: OpenAI-kompatibler Server (`/chat/completions`),
-//!   Anfragekörper wie `llm_client::stream_request_body`.
+//!   Anfragekörper wie `llm_client::stream_request_body`, Ausgabegrenze wie
+//!   in der App (`llm_client::apply_limits`). Ohne exakten Zähler: das
+//!   Ergebnis ist `found_only` mit `budget`, es geht kein Aufruf raus.
+//! - `local_server`: laufender llama-server (`--url http://127.0.0.1:PORT`),
+//!   mit exaktem Zähler (`count::LlamaCounter`) wie der lokale Anbieter der App.
 //! - `claude_cli`, `codex_cli`: die isolierte CLI-Anbindung
 //!   (`managers::llm::cli`), Nutzernachricht mit Rollenvorsatz wie im
 //!   `llm_client`.
@@ -14,13 +18,22 @@ use std::time::Duration;
 
 use serde_json::Value;
 
+use super::count::LlamaCounter;
+use super::prompt::CountFuture;
 use super::{map_error_code, ModelFuture, TalkError, TalkModel, CODE_LLM_FAILED, CODE_OFFLINE};
 use super::{CODE_TIMEOUT, DEFAULT_MAX_ANSWER_TOKENS};
-use crate::llm_client::{stream_request_body, StreamMessage};
+use crate::llm_client::{apply_limits, stream_request_body, StreamLimits, StreamMessage};
 use crate::managers::llm::cli::{self, CallOptions, Cli};
 
 /// Kennungen der Anbieter, die `book_talk_eval` kennt.
-pub const PROVIDERS: &[&str] = &["fake", "ollama", "openai", "claude_cli", "codex_cli"];
+pub const PROVIDERS: &[&str] = &[
+    "fake",
+    "ollama",
+    "openai",
+    "local_server",
+    "claude_cli",
+    "codex_cli",
+];
 /// Zeitgrenze eines CLI-Aufrufs.
 const CLI_TIMEOUT: Duration = Duration::from_secs(180);
 /// Zeitgrenze einer HTTP-Anfrage.
@@ -33,6 +46,9 @@ pub struct HttpModel {
     model: String,
     api_key: Option<String>,
     local: bool,
+    ollama: bool,
+    context_tokens: u32,
+    counter: Option<LlamaCounter>,
 }
 
 impl HttpModel {
@@ -41,6 +57,8 @@ impl HttpModel {
         model: &str,
         api_key: Option<String>,
         local: bool,
+        ollama: bool,
+        context_tokens: u32,
     ) -> Result<Self, String> {
         let client = reqwest::Client::builder()
             .timeout(HTTP_TIMEOUT)
@@ -52,7 +70,16 @@ impl HttpModel {
             model: model.to_string(),
             api_key: api_key.filter(|k| !k.is_empty()),
             local,
+            ollama,
+            context_tokens,
+            counter: None,
         })
+    }
+
+    /// Mit exaktem Zähler des llama-servers hinter `base_url`.
+    pub fn with_counter(mut self, base_url: &str) -> Self {
+        self.counter = LlamaCounter::new(base_url);
+        self
     }
 }
 
@@ -78,7 +105,15 @@ impl TalkModel for HttpModel {
                 StreamMessage::new("user", user),
             ];
             let mut body = stream_request_body(&self.model, &messages, false, self.local);
-            body["max_tokens"] = DEFAULT_MAX_ANSWER_TOKENS.into();
+            apply_limits(
+                &mut body,
+                self.ollama,
+                &StreamLimits {
+                    max_tokens: Some(DEFAULT_MAX_ANSWER_TOKENS),
+                    num_ctx: Some(self.context_tokens),
+                    strict: true,
+                },
+            );
             let mut request = self.client.post(&self.url).json(&body);
             if let Some(key) = &self.api_key {
                 request = request.bearer_auth(key);
@@ -108,6 +143,14 @@ impl TalkModel for HttpModel {
             on_delta(&reply);
             Ok(reply)
         })
+    }
+
+    fn token_count<'a>(&'a self, system: &'a str, user: &'a str) -> CountFuture<'a> {
+        Box::pin(async move { self.counter.as_ref()?.count(system, user).await })
+    }
+
+    fn context_tokens(&self) -> CountFuture<'_> {
+        Box::pin(async move { self.counter.as_ref()?.context().await })
     }
 }
 
@@ -153,6 +196,7 @@ impl TalkModel for CliModel {
                     &CallOptions {
                         cancel: None,
                         max_tokens: Some(DEFAULT_MAX_ANSWER_TOKENS),
+                        require_usage: true,
                     },
                 )
             })
@@ -171,9 +215,18 @@ pub fn build_model(
     base_url: Option<&str>,
     model: &str,
     api_key: Option<String>,
+    context_tokens: u32,
 ) -> Result<Option<Box<dyn TalkModel>>, String> {
     match provider {
         "fake" => Ok(None),
+        "local_server" => {
+            let url = base_url
+                .ok_or_else(|| "local_server: --url http://127.0.0.1:PORT fehlt".to_string())?;
+            let base = format!("{}/v1", url.trim_end_matches('/').trim_end_matches("/v1"));
+            let model = HttpModel::new(&base, model, None, true, false, context_tokens)?
+                .with_counter(&base);
+            Ok(Some(Box::new(model)))
+        }
         "ollama" | "openai" => {
             let default = if provider == "ollama" {
                 "http://127.0.0.1:11434/v1"
@@ -185,6 +238,8 @@ pub fn build_model(
                 model,
                 api_key,
                 provider == "ollama",
+                provider == "ollama",
+                context_tokens,
             )?;
             Ok(Some(Box::new(model)))
         }

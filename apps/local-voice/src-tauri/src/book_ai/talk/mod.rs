@@ -32,6 +32,7 @@
 pub mod adapter;
 pub mod cite;
 pub mod commands;
+pub mod count;
 pub mod eval;
 pub mod flow;
 pub mod index;
@@ -217,10 +218,17 @@ pub trait TalkModel: Send + Sync {
         on_delta: &'a (dyn Fn(&str) + Send + Sync),
     ) -> ModelFuture<'a>;
 
-    /// Exakte Tokenzahl von (System, Nutzer) mit dem Tokenizer des Modells,
-    /// falls verfügbar. Ohne sie braucht es ein Budgetprofil.
-    fn token_count(&self, _system: &str, _user: &str) -> Option<u32> {
-        None
+    /// Exakte Tokenzahl von (System, Nutzer) samt Chat-Vorlage mit dem
+    /// Tokenizer des Modells, falls verfügbar (darf den Server fragen). Ohne
+    /// sie braucht es ein geprüftes Budgetprofil, sonst gibt es keinen Aufruf.
+    fn token_count<'a>(&'a self, _system: &'a str, _user: &'a str) -> prompt::CountFuture<'a> {
+        Box::pin(std::future::ready(None))
+    }
+
+    /// Kontextfenster, das das Modell tatsächlich hat (der Server meldet es),
+    /// falls verfügbar. Das Budget nimmt das Kleinere.
+    fn context_tokens(&self) -> prompt::CountFuture<'_> {
+        Box::pin(std::future::ready(None))
     }
 }
 
@@ -297,6 +305,21 @@ impl Stream<'_> {
             self.fed = clean;
         }
         events
+    }
+}
+
+/// Zähler eines Laufs: erst der exakte des Modells, dann das Profil.
+pub struct ModelCounter<'m> {
+    pub model: &'m dyn TalkModel,
+    pub profile: Option<&'m BudgetProfile>,
+}
+
+impl prompt::Counter for ModelCounter<'_> {
+    fn count<'a>(&'a self, system: &'a str, user: &'a str) -> prompt::CountFuture<'a> {
+        Box::pin(async move {
+            let exact = self.model.token_count(system, user).await;
+            prompt::count_tokens(exact, self.profile, system, user)
+        })
     }
 }
 
@@ -378,16 +401,16 @@ pub async fn run(
         }
     };
 
-    // Budget hart und vor dem Aufruf: exakter Zähler, sonst Profil, sonst
-    // beweisbare Byte-Obergrenze (dieselbe Funktion wie im Eval).
-    let count = |system: &str, user: &str| -> Option<usize> {
-        Some(prompt::count_tokens(
-            model.token_count(system, user),
-            p.profile,
-            system,
-            user,
-        ))
+    // Budget hart und vor dem Aufruf: exakter Zähler, sonst geprüftes Profil,
+    // sonst kein Aufruf (dieselbe Logik wie im Eval).
+    let counter = ModelCounter {
+        model,
+        profile: p.profile,
     };
+    let mut budget = p.budget.clone();
+    if let Some(reported) = model.context_tokens().await {
+        budget.context_tokens = budget.context_tokens.min(reported);
+    }
     let Some(fit) = prompt::fit(
         &index.title,
         question,
@@ -396,9 +419,11 @@ pub async fn run(
         lang,
         req.scope,
         frontier_u,
-        &p.budget,
-        &count,
-    ) else {
+        &budget,
+        &counter,
+    )
+    .await
+    else {
         return Ok(finish(Fallback::found_only(
             &ctx,
             &retrieval,
@@ -461,12 +486,12 @@ pub async fn run(
             (st.collector, None)
         }
         Err(e) if e.code == CODE_CANCELLED => return Err(e),
-        // Zeitüberschreitung: halbe Antwort verwerfen (wie im Swift-Kern).
-        Err(e) if e.code == CODE_TIMEOUT => (
+        // Zeitüberschreitung, Stromabbruch, Fehler: halbe Antwort verwerfen
+        // (wie im Swift-Kern); `done` ersetzt die schon gemeldeten Sätze.
+        Err(e) => (
             Collector::new(grounding(), lang, &req.request_id),
             Some(e.code),
         ),
-        Err(e) => (st.collector, Some(e.code)),
     };
     for e in collector.finish() {
         emit(e);
@@ -592,6 +617,53 @@ struct ProviderModel {
     provider: crate::settings::PostProcessProvider,
     api_key: String,
     model: String,
+    /// Kontext, mit dem das Budget rechnet (Ollama bekommt ihn als `num_ctx`).
+    context_tokens: u32,
+    /// Exakter Zähler: nur der eingebaute lokale Server hat einen.
+    counter: tokio::sync::OnceCell<Option<count::LlamaCounter>>,
+}
+
+impl ProviderModel {
+    fn new(
+        provider: crate::settings::PostProcessProvider,
+        api_key: String,
+        model: String,
+        context_tokens: u32,
+    ) -> Self {
+        Self {
+            provider,
+            api_key,
+            model,
+            context_tokens,
+            counter: tokio::sync::OnceCell::new(),
+        }
+    }
+
+    /// Zähler des lokalen Servers (startet ihn bei Bedarf wie der Aufruf selbst).
+    async fn llama(&self) -> Option<&count::LlamaCounter> {
+        if !crate::managers::llm::is_local(&self.provider) {
+            return None;
+        }
+        self.counter
+            .get_or_init(|| async {
+                let base = crate::managers::llm::resolve_base_url(&self.provider, &self.model)
+                    .await
+                    .ok()?;
+                let counter = count::LlamaCounter::new(&base)?;
+                counter.context().await?;
+                Some(counter)
+            })
+            .await
+            .as_ref()
+    }
+
+    fn limits(&self) -> crate::llm_client::StreamLimits {
+        crate::llm_client::StreamLimits {
+            max_tokens: Some(DEFAULT_MAX_ANSWER_TOKENS),
+            num_ctx: Some(self.context_tokens),
+            strict: true,
+        }
+    }
 }
 
 impl TalkModel for ProviderModel {
@@ -606,13 +678,14 @@ impl TalkModel for ProviderModel {
                 crate::llm_client::StreamMessage::new("system", system),
                 crate::llm_client::StreamMessage::new("user", user),
             ];
-            crate::llm_client::send_chat_completion_stream(
+            crate::llm_client::send_chat_completion_stream_limited(
                 crate::managers::usage::Purpose::Chat,
                 &self.provider,
                 self.api_key.clone(),
                 &self.model,
                 messages,
                 on_delta,
+                &self.limits(),
             )
             .await
             .map_err(|e| {
@@ -621,6 +694,14 @@ impl TalkModel for ProviderModel {
                 TalkError::new(code)
             })
         })
+    }
+
+    fn token_count<'a>(&'a self, system: &'a str, user: &'a str) -> prompt::CountFuture<'a> {
+        Box::pin(async move { self.llama().await?.count(system, user).await })
+    }
+
+    fn context_tokens(&self) -> prompt::CountFuture<'_> {
+        Box::pin(async move { self.llama().await?.context().await })
     }
 }
 
@@ -941,14 +1022,9 @@ pub async fn book_talk_ask(
     } else {
         REMOTE_CONTEXT_TOKENS
     };
-    let provider_model = resolved
-        .as_ref()
-        .ok()
-        .map(|(provider, model, key)| ProviderModel {
-            provider: provider.clone(),
-            api_key: key.clone(),
-            model: model.clone(),
-        });
+    let provider_model = resolved.as_ref().ok().map(|(provider, model, key)| {
+        ProviderModel::new(provider.clone(), key.clone(), model.clone(), ctx_tokens)
+    });
     let profile = resolved
         .as_ref()
         .ok()

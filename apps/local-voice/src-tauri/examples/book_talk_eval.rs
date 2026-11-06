@@ -6,6 +6,8 @@
 //! cargo run --example book_talk_eval -- --provider ollama --model gemma3:4b --out out/eval
 //! cargo run --example book_talk_eval -- --provider openai --base-url https://api.openai.com/v1 \
 //!     --model gpt-5-mini --api-key-env OPENAI_API_KEY --out out/eval
+//! cargo run --example book_talk_eval -- --provider local_server --url http://127.0.0.1:8080 \
+//!     --model <id> --out out/eval
 //! cargo run --example book_talk_eval -- --provider claude_cli --model sonnet --out out/eval
 //! ```
 //!
@@ -21,11 +23,13 @@ use local_voice_ai_lib::book_talk_eval::{
 };
 
 const USAGE: &str = "\
-Aufruf: book_talk_eval --provider <fake|ollama|openai|claude_cli|codex_cli> [Optionen]
+Aufruf: book_talk_eval --provider <fake|ollama|openai|local_server|claude_cli|codex_cli> [Optionen]
 
   --provider <p>        Anbieter (Pflicht)
   --model <id>          Modell-ID (Pflicht außer bei fake)
   --base-url <url>      OpenAI-kompatibler Server (ollama, openai)
+  --url <url>           laufender llama-server, z. B. http://127.0.0.1:8080
+                        (local_server; mit exaktem Zähler, Kennung `local`)
   --api-key-env <NAME>  Umgebungsvariable mit dem API-Schlüssel
   --provider-id <id>    Kennung im eval-pass-Eintrag (Standard: der Anbieter);
                         muss zur Verbindung in der App passen
@@ -70,7 +74,7 @@ fn parse(argv: &[String]) -> Result<Args, String> {
         match flag.as_str() {
             "--provider" => a.provider = value()?,
             "--model" => a.model = Some(value()?),
-            "--base-url" => a.base_url = Some(value()?),
+            "--base-url" | "--url" => a.base_url = Some(value()?),
             "--api-key-env" => a.api_key_env = Some(value()?),
             "--provider-id" => a.provider_id = Some(value()?),
             "--book" => a.book = Some(PathBuf::from(value()?)),
@@ -119,9 +123,21 @@ fn run(a: Args) -> Result<i32, String> {
         .map(|name| std::env::var(name).map_err(|_| format!("Umgebungsvariable {name} fehlt")))
         .transpose()?;
     let model_id = a.model.clone().unwrap_or_else(|| "fake".to_string());
-    let model = build_model(&a.provider, a.base_url.as_deref(), &model_id, api_key)?;
-    let mut cfg = EvalConfig::new(a.provider_id.as_deref().unwrap_or(&a.provider), &model_id);
-    cfg.context_tokens = a.context_tokens.unwrap_or(DEFAULT_CONTEXT_TOKENS);
+    let context_tokens = a.context_tokens.unwrap_or(DEFAULT_CONTEXT_TOKENS);
+    let model = build_model(
+        &a.provider,
+        a.base_url.as_deref(),
+        &model_id,
+        api_key,
+        context_tokens,
+    )?;
+    let default_id = if a.provider == "local_server" {
+        "local"
+    } else {
+        &a.provider
+    };
+    let mut cfg = EvalConfig::new(a.provider_id.as_deref().unwrap_or(default_id), &model_id);
+    cfg.context_tokens = context_tokens;
     if let Some(s) = a.timeout_secs {
         cfg.timeout = Duration::from_secs(s);
     }
