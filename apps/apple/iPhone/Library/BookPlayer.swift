@@ -35,7 +35,7 @@ struct BookPlayerScreen: View {
                 }
             }
             // Lesefenster behält auch bei großer Schrift mehrere Zeilen.
-            .frame(maxWidth: .infinity, minHeight: surface == .listen ? 0 : 200, maxHeight: .infinity)
+            .frame(maxWidth: .infinity, minHeight: surface == .listen ? 0 : 230, maxHeight: .infinity)
             .layoutPriority(1)
             .background(surface == .listen ? VoicePalette.background : look.background)
             controls
@@ -136,7 +136,11 @@ struct ReadAlongText: View {
                     .accessibilityAddTraits(i == current ? [.isButton, .isSelected] : .isButton)
                     .accessibilityHint(follow ? "Springt zu diesem Absatz" : "Setzt die Stelle auf diesen Absatz")
             }
-            Text(hint(mark)).font(.caption).foregroundStyle(look.muted).padding(.vertical, 4)
+            .frame(minHeight: 200)  // Textfläche selbst, ohne Hinweiszeile
+            // Hinweis einzeilig und begrenzt: bei AX5 nahm er sonst drei Zeilen vom Lesefenster.
+            Text(hint(mark)).font(.caption).foregroundStyle(look.muted)
+                .lineLimit(1).minimumScaleFactor(0.7).dynamicTypeSize(...BookPlayerScreen.controlsCap)
+                .padding(.horizontal, 12).padding(.vertical, 4)
         }
     }
 
@@ -177,9 +181,9 @@ struct ReadingBar: View {
     var body: some View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(progressLine).font(.subheadline.weight(.semibold)).lineLimit(1)
+                Text(progressLine).font(.subheadline.weight(.semibold)).lineLimit(1).minimumScaleFactor(0.7)
                 Text(playback.source == .audiobook ? "Hörbuch pausiert" : "Vorlesen pausiert")
-                    .font(.caption).foregroundStyle(VoicePalette.text).lineLimit(1)
+                    .font(.caption).foregroundStyle(VoicePalette.text).lineLimit(1).minimumScaleFactor(0.7)
             }
             Spacer(minLength: 0)
             Button {

@@ -23,6 +23,7 @@ struct BookTalkButton: View {
         Button { shown = true } label: {
             if compact {
                 Image(systemName: "questionmark.bubble").font(.title3).frame(width: 44, height: 44)
+                    .contentShape(Rectangle())  // Trefferfläche = 44 pt, nicht nur das Symbol
             } else {
                 Label("Fragen", systemImage: "questionmark.bubble")
                     .font(.subheadline.weight(.semibold))

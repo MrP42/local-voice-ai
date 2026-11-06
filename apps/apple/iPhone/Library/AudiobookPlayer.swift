@@ -168,7 +168,7 @@ struct ChapterStepButton: View {
             VStack(spacing: 2) {
                 Image(systemName: forward ? "forward.end.fill" : "backward.end.fill").font(.title2)
                 Text("Kapitel").font(.caption2).lineLimit(1).minimumScaleFactor(0.7)
-            }.frame(minWidth: 56, minHeight: 44)
+            }.frame(minWidth: 56, minHeight: 44).contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityShowsLargeContentViewer()

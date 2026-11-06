@@ -564,15 +564,16 @@ struct LibraryPlayerScreen: View {
     }
 }
 
-/// Text mit markiertem Absatz; bei eigenem Scrollen 5 s kein Mitscrollen.
+/// Text mit markiertem Absatz. Scrollt der Nutzer selbst, folgt der Text nicht mehr, bis er
+/// „Zur aktuellen Stelle“ tippt (wie Audible): kein Zurückspringen mitten im Lesen.
 struct FollowText<Row: View>: View {
     let paragraphs: [TextParagraph]
     let current: Int
     /// Aus: kein Mitscrollen (Ansicht „Lesen“), die Stelle bleibt, wo der Nutzer liest.
     var follow = true
     let row: (Int, TextParagraph) -> Row
-    @State private var pausedUntil = Date.distantPast
-    @State private var showReturn = false
+    /// Nutzer hat selbst gescrollt: kein Mitscrollen, Knopf „Zur aktuellen Stelle“ sichtbar.
+    @State private var detached = false
 
     init(paragraphs: [TextParagraph], current: Int, follow: Bool = true, @ViewBuilder row: @escaping (Int, TextParagraph) -> Row) {
         self.paragraphs = paragraphs; self.current = current; self.follow = follow; self.row = row
@@ -583,7 +584,7 @@ struct FollowText<Row: View>: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 4) {
                     ForEach(paragraphs.indices, id: \.self) { i in row(i, paragraphs[i]).id(i) }
-                }.padding(.horizontal, 12).padding(.top, 20).padding(.bottom, 56)
+                }.padding(.horizontal, 12).padding(.top, 20).padding(.bottom, follow ? 76 : 56)  // Platz unter dem Rückkehrknopf
             }
             // Weiche Kanten oben und unten: keine halb abgeschnittene Zeile an der Kopfzeile oder am Hinweis.
             // Die Innenabstände machen jede Zeile vollständig erreichbar.
@@ -594,19 +595,33 @@ struct FollowText<Row: View>: View {
                     LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom).frame(height: 28)
                 }
             }
-            .simultaneousGesture(DragGesture().onChanged { _ in guard follow else { return }; pausedUntil = Date().addingTimeInterval(5); showReturn = true })
+            // Scrollphase statt DragGesture: eine zusätzliche Geste auf der ScrollView konkurriert bei
+            // häufigem Neuzeichnen (Wortmarkierung der Stimme) mit dem Wischen und verliert Gesten.
+            .onScrollPhaseChange { _, phase in
+                if follow, phase == .interacting { detached = true }
+            }
             .overlay(alignment: .bottomTrailing) {
-                if showReturn {
-                    Button("Zur aktuellen Stelle", systemImage: "arrow.down.to.line") {
-                        pausedUntil = .distantPast; showReturn = false
+                if follow && detached {
+                    // Nur Symbol, feste Größe: wächst bei großer Schrift nicht über den Text.
+                    Button {
+                        detached = false
                         withAnimation { proxy.scrollTo(current, anchor: .center) }
-                    }.buttonStyle(.borderedProminent).tint(VoicePalette.ink).foregroundStyle(VoicePalette.brand).padding(12)
+                    } label: {
+                        Image(systemName: "arrow.down.to.line").font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(VoicePalette.brand)
+                            .frame(width: 48, height: 48).background(VoicePalette.ink, in: Circle())
+                            .shadow(color: .black.opacity(0.25), radius: 4, y: 2)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Zur aktuellen Stelle")
+                    .accessibilityHint("Der Text folgt wieder der Wiedergabe")
+                    .accessibilityShowsLargeContentViewer { Label("Zur aktuellen Stelle", systemImage: "arrow.down.to.line") }
+                    .padding(12)
                 }
             }
             .onAppear { proxy.scrollTo(current, anchor: .center) }  // ohne Animation: sonst baut die Liste jede Zeile bis dorthin
             .onChange(of: current) { old, value in
-                guard follow, Date() >= pausedUntil else { return }
-                showReturn = false
+                guard follow, !detached else { return }
                 if abs(value - old) > 3 { proxy.scrollTo(value, anchor: .center) }
                 else { withAnimation { proxy.scrollTo(value, anchor: .center) } }
             }

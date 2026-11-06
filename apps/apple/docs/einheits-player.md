@@ -32,7 +32,7 @@ Segment oben unter der Kopfzeile, nur wenn das Buch Text hat:
 | Ansicht | Inhalt | Wiedergabe | Bedienleiste |
 |---|---|---|---|
 | **Hören** | Cover, Titel, Mitwirkende | läuft weiter | volle Leiste |
-| **Lesen & Hören** | Text, Satz hell, Wort kräftig, scrollt mit; eigenes Scrollen pausiert 5 s, „Zur aktuellen Stelle“ | läuft weiter | volle Leiste |
+| **Lesen & Hören** | Text, Satz hell, Wort kräftig, scrollt mit; eigenes Scrollen löst den Text von der Wiedergabe, bis „Zur aktuellen Stelle“ (Symbolknopf, feste Größe) getippt wird | läuft weiter | volle Leiste |
 | **Lesen** | Text ruhig, Leseposition dezent, kein Mitscrollen; Antippen setzt die Stelle | hält an | schmale Leiste: Fortschritt + „Ab hier hören“ |
 
 „Lesen“ → „Lesen & Hören“ spielt weiter, wenn vorher lief. Die Ansicht wird je Buch gemerkt (`lva.player.surface.<id>`).
@@ -72,7 +72,8 @@ Alle Textkontraste liegen über 4,5 : 1. In den hellen Themen unterscheiden sich
 - VoiceOver-Namen: Schließen („Player schließen“), Aa („Schrift und Darstellung“), Fragen („Fragen zum Buch“), ⓘ („Angaben zum Buch“), Segment („Ansicht“, Wert = aktive Ansicht), Abspielen/Pause samt Zustand „Wird vorbereitet“, Quelle (Wert = laufende Quelle), Regler „Position im Kapitel“ mit Wert, Transport mit vollen Namen („15 Sekunden zurück“, „Absatz vor“) bei kurzer sichtbarer Beschriftung.
 - Touchziele: alle Knöpfe mindestens 44 × 44 pt, das Ansicht-Segment ist ein eigenes 44-pt-Segment (das System-Segment war nur 32 pt). Transport 4 × 56 pt + 64 pt. Beschriftungen einzeilig, schrumpfen bis 70 %, statt zu kollidieren.
 - Dynamic Type: Lesetext folgt der Systemgröße (`relativeTo`) ohne Grenze. Kopfzeile, Segment und Bedienleiste wachsen nur bis xxLarge (`controlsCap`); darüber zeigt langes Drücken die Beschriftung groß (Large Content Viewer). Grund: Am iPhone SE (375 pt) mit AX5 lief die Kopfzeile in die Statusleiste, der Transport fiel aus dem Bild und vom Text blieben zwei Zeilen (Mac-Durchgang 06.11.).
-- Lesefenster: mindestens 200 pt hoch und mit Vorrang im Layout, damit beim Mitlesen und Lesen auch bei größter Schrift mehrere Zeilen sichtbar bleiben.
+- Lesefenster: Textfläche mindestens 200 pt (Bereich samt Hinweiszeile 230 pt) und mit Vorrang im Layout. Die Hinweiszeile ist einzeilig und bis xxLarge begrenzt; bei AX5 nahm sie vorher drei Zeilen weg (Mac-Durchgang 06.11., 182 pt).
+- „Zur aktuellen Stelle“: runder Symbolknopf 48 pt, wächst nicht mit der Schrift (Großansicht per langem Drücken), unter dem Text 76 pt Abstand, damit die letzte Zeile frei bleibt. Erkennung des eigenen Scrollens über die Scrollphase statt einer zusätzlichen Wischgeste, die bei laufender Wortmarkierung Gesten verlor.
 - Text: weiche Kanten oben (18 pt) und unten (28 pt), Innenabstand oben 20 pt und unten 56 pt, also ist jede Zeile vollständig erreichbar. Die laufende Stelle steht mittig.
 - **Am Gerät offen** (Patrick bzw. Mac-Thread): VoiceOver-Durchgang samt Bedienung des Reglers, größte Schriftstufe, iPhone SE/mini (375 pt), Safe Areas im Querformat.
 
