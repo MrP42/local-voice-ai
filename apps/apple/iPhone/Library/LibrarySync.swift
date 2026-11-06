@@ -266,14 +266,15 @@ final class LibrarySync: ObservableObject {
             var meta = library.meta(book)
             // Eigene Dateien zuerst hochladen (Reihenfolge laut Spezifikation).
             if meta.files.text == nil, library.hasText(book) {
-                meta.files.text = try await uploadFile(library.textURL(book), acc, type: "txt", file: nil)
-                library.setMeta(book, meta)
+                let ref = try await uploadFile(library.textURL(book), acc, type: "txt", file: nil)
+                library.updateFiles(book) { $0.text = ref }
+                meta = library.meta(book)
             }
             // Eigenes Cover (aus Hörbuchdatei oder EPUB) für die anderen Geräte hochladen.
             if meta.files.cover == nil, let url = library.coverURL(book) {
                 let ref = try await uploadFile(url, acc, type: url.pathExtension.lowercased(), file: nil)
-                meta.files.cover = ref
-                library.setMeta(book, meta)
+                library.updateFiles(book) { $0.cover = ref }
+                meta = library.meta(book)
                 library.setCoverBlob(book, ref.blob)
             }
             if meta.files.audio.isEmpty, library.hasAudio(book), let tracks = book.audio?.allTracks {
