@@ -581,3 +581,16 @@ private final class LiveOnce: @unchecked Sendable {
         return true
     }
 }
+
+/// Was nach einem Sprung (Absatz, Stelle, Satz, Öffnen ab Absatz) mit der Ausgabe passiert. Eine pausierte
+/// Tonfolge gehört zur alten Stelle und wird nie fortgesetzt, sonst zählte sie als gehört an der neuen Stelle.
+public enum LiveJumpPlan: Equatable, Sendable {
+    /// Lief oder soll laufen: an der neuen Stelle neu ansetzen.
+    case speakHere
+    /// Pausiert oder still: alte Ausgabe verwerfen, Vorlauf an der neuen Stelle vorbereiten.
+    case discardAndPrepare
+
+    public static func decide(busy: Bool, autoplay: Bool) -> LiveJumpPlan {
+        busy || autoplay ? .speakHere : .discardAndPrepare
+    }
+}

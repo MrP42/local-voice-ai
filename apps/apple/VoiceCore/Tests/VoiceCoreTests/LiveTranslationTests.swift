@@ -611,3 +611,32 @@ final class LiveWaitTests: XCTestCase {
         XCTAssertEqual(LiveWait.stallNanos, 8_000_000_000)
     }
 }
+
+final class LiveBoundaryTests: XCTestCase {
+    /// Wahl im letzten Satz eines Absatzes, danach nur einsätzige Absätze: Der Wechsel greift an der ersten
+    /// Grenze, egal ob Satz- oder Absatzende, und bleibt nicht ausstehend.
+    func testPendingSwitchAppliesAtParagraphBoundary() {
+        var sw = LiveSwitch(source: "en")
+        XCTAssertEqual(sw.select("de", busy: true, preparing: false), .scheduled)
+        // Absatzende (Systemstimme liest den Absatz am Stück) = Satzende des letzten Satzes.
+        XCTAssertEqual(sw.sentenceEnded(), .apply(LiveConfig(source: "en", target: "de"), restart: true))
+        for _ in 0..<3 { XCTAssertEqual(sw.sentenceEnded(), .none) }   // folgende Einsatz-Absätze
+        XCTAssertNil(sw.pending)
+        // Buchende mit vorgemerktem Wechsel: greift ohne Neustart.
+        XCTAssertEqual(sw.select(nil, busy: true, preparing: false), .scheduled)
+        XCTAssertEqual(sw.stopped(), .apply(nil, restart: false))
+    }
+
+    /// Öffnen ab Absatz bzw. Sprung bei pausierter Ausgabe: alte Tonfolge verwerfen statt fortsetzen.
+    func testJumpWhilePausedDiscardsOldAudio() {
+        XCTAssertEqual(LiveJumpPlan.decide(busy: false, autoplay: false), .discardAndPrepare)
+        XCTAssertEqual(LiveJumpPlan.decide(busy: true, autoplay: false), .speakHere)
+        XCTAssertEqual(LiveJumpPlan.decide(busy: false, autoplay: true), .speakHere)
+        // Stand an der Sprungstelle ohne Hörfortschritt.
+        var p = LiveProgress(at: 100)
+        p.jumped(to: 500)
+        XCTAssertEqual(p.saved, 500)
+        XCTAssertEqual(p.resumeOffset(), 500)
+        XCTAssertNil(p.heard)
+    }
+}

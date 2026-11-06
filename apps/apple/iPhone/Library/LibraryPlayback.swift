@@ -473,7 +473,14 @@ final class LibraryPlayback: NSObject, ObservableObject {
             prepareVoice()
             restoreLive(book)
         }
-        if let fromParagraph { move(to: Cursor(paragraph: fromParagraph, sentence: 0)); liveJumped(); if busy || autoplay { speakCurrent() }; return }
+        if let fromParagraph, paragraphs.indices.contains(fromParagraph) {
+            // Wie ein Sprung: Stand ohne Hörfortschritt, pausierte Ausgabe der alten Stelle verwerfen.
+            move(to: Cursor(paragraph: fromParagraph, sentence: 0))
+            liveJumped()
+            saveText(at: paragraphs[fromParagraph].start, jumped: true)
+            afterJump(autoplay: autoplay)
+            return
+        }
         if autoplay { play() }
     }
 
@@ -1050,7 +1057,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
         move(to: Cursor(paragraph: index, sentence: 0))
         liveJumped()
         saveText(at: paragraphs[index].start, jumped: true)
-        if busy { speakCurrent() } else { discardPausedSpeech(); prepareVoice() }
+        afterJump(autoplay: false)
     }
 
     /// Belegkarte des Buch-Gesprächs: an eine Stelle im Originaltext springen (UTF-16-Offset). Die Stelle zählt
@@ -1071,7 +1078,15 @@ final class LibraryPlayback: NSObject, ObservableObject {
         move(to: here)
         liveJumped()
         saveText(at: chars(of: here), jumped: true)
-        if autoplay { speakCurrent() } else if busy { speakCurrent() } else { discardPausedSpeech(); prepareVoice() }
+        afterJump(autoplay: autoplay)
+    }
+
+    /// Nach jedem Sprung (VoiceCore `LiveJumpPlan`).
+    private func afterJump(autoplay: Bool) {
+        switch LiveJumpPlan.decide(busy: busy, autoplay: autoplay) {
+        case .speakHere: speakCurrent()
+        case .discardAndPrepare: discardPausedSpeech(); prepareVoice()
+        }
     }
 
     /// Satz vor oder zurück. Zuletzt gelesene Sätze liegen noch im Speicher und klingen sofort.
@@ -1092,7 +1107,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
         move(to: here)
         liveJumped()
         saveText(at: chars(of: here), jumped: true)
-        if busy { speakCurrent() } else { discardPausedSpeech(); prepareVoice() }
+        afterJump(autoplay: false)
     }
 
     func step(paragraphs delta: Int) { jump(toParagraph: min(max(0, paragraphIndex + delta), paragraphs.count - 1)) }
@@ -1331,8 +1346,14 @@ extension LibraryPlayback: AVSpeechSynthesizerDelegate {
         let next = finished + 1 < paragraphs.count ? paragraphs[finished + 1].start : p.end
         // Stand = Beginn des nächsten Absatzes, damit Weiterlesen nicht wiederholt.
         saveText(at: next, heard: (utteranceBase == 0 ? p.start : p.textStart + utteranceBase)..<p.end)
-        if finished + 1 < paragraphs.count { move(to: Cursor(paragraph: finished + 1, sentence: 0)); speakCurrent() }
-        else { playing = false; sentenceRange = nil; currentUtterance = nil; library.flush() }
+        if finished + 1 < paragraphs.count {
+            move(to: Cursor(paragraph: finished + 1, sentence: 0))
+            _ = switchAtSentenceEnd()  // Absatzende ist auch Satzende: vorgemerkter Wechsel greift hier (Spez §5)
+            speakCurrent()
+        } else {
+            playing = false; sentenceRange = nil; currentUtterance = nil; library.flush()
+            settlePendingLive()
+        }
     }
 }
 
