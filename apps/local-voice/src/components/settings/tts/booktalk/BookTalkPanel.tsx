@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { BookTalkCitation } from "@/bindings";
+import { commands, type BookTalkCitation } from "@/bindings";
 import { CHANGED_EVENT, HYDRATED_EVENT } from "@/lib/library/progress";
 import { useSettings } from "../../../../hooks/useSettings";
 import { tauriBookTalkPort } from "./api";
 import { BookTalkColumn } from "./BookTalkColumn";
 import { ConsentDialog } from "./ConsentDialog";
+import { SubscriptionPreviewDialog } from "./SubscriptionPreviewDialog";
 import {
   bookModelOf,
   consentKeyOf,
@@ -61,6 +62,44 @@ export function BookTalkPanel({
       window.removeEventListener(HYDRATED_EVENT, read);
     };
   }, [frontier, bookId]);
+
+  // Abo-Vorschau (lva#334): `null`, solange das Gesprächsmodell kein Abo-Modell ist.
+  const [subscription, setSubscription] = useState<"on" | "off" | "reconfirm" | null>(null);
+  const [riskOpen, setRiskOpen] = useState(false);
+  const [riskSaving, setRiskSaving] = useState(false);
+  const [riskError, setRiskError] = useState<string | null>(null);
+  const refreshSubscription = useCallback(async () => {
+    try {
+      const status = await commands.bookTalkPreviewStatus();
+      if (status.status !== "ok" || !status.data.applies) return setSubscription(null);
+      const { enabled, state } = status.data;
+      setSubscription(!enabled ? "off" : state === "reconfirm" ? "reconfirm" : "on");
+    } catch {
+      setSubscription(null);
+    }
+  }, []);
+  useEffect(() => {
+    void refreshSubscription();
+  }, [refreshSubscription, settings?.llm_active_model_id, settings?.function_models]);
+  const toggleSubscription = async () => {
+    if (subscription === "on") {
+      await commands.changeBookTalkSubscriptionPreviewSetting(false, false);
+      return refreshSubscription();
+    }
+    setRiskError(null);
+    setRiskOpen(true);
+  };
+  const confirmSubscription = async () => {
+    setRiskSaving(true);
+    try {
+      const res = await commands.changeBookTalkSubscriptionPreviewSetting(true, true);
+      if (res.status === "ok") setRiskOpen(false);
+      else setRiskError(res.error);
+      await refreshSubscription();
+    } finally {
+      setRiskSaving(false);
+    }
+  };
 
   const talk = useBookTalk({ port, bookId, frontier });
   const voiceRef = useRef<ReturnType<typeof useBookVoice> | null>(null);
@@ -120,6 +159,8 @@ export function BookTalkPanel({
             ? found.model.label || found.model.remote_id
             : null
         }
+        subscription={subscription}
+        onSubscription={() => void toggleSubscription()}
         onRevoke={() => {
           if (!found) return;
           granted.current.delete(consentKeyOf(found));
@@ -132,6 +173,14 @@ export function BookTalkPanel({
         onJump={jump}
         onReadFrom={readFrom}
         onConsent={(turn) => setConsent({ resume: () => talk.askAgain(turn) })}
+      />
+      <SubscriptionPreviewDialog
+        open={riskOpen}
+        reconfirm={subscription === "reconfirm"}
+        saving={riskSaving}
+        error={riskError}
+        onConfirm={() => void confirmSubscription()}
+        onClose={() => setRiskOpen(false)}
       />
       <ConsentDialog
         open={consent !== null}

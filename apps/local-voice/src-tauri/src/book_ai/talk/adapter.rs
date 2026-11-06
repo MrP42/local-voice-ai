@@ -197,6 +197,7 @@ impl TalkModel for CliModel {
                         cancel: None,
                         max_tokens: Some(DEFAULT_MAX_ANSWER_TOKENS),
                         require_usage: true,
+                        preview: None,
                     },
                 )
             })

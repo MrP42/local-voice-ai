@@ -781,7 +781,14 @@
         "off": "off",
         "previewHint": "Preview: the chosen model has not passed the test run yet. Answers can be wrong. Spoiler protection lowers the risk but does not rule it out.",
         "revoke": "Revoke cloud approval ({{model}})",
-        "revokeHint": "Afterwards the book conversation asks again before the next request."
+        "revokeHint": "Afterwards the book conversation asks again before the next request.",
+        "subscription": "Subscription preview (Claude Code, Codex)",
+        "subscriptionState": {
+          "on": "on",
+          "off": "off",
+          "reconfirm": "confirm again"
+        },
+        "subscriptionHint": "Budget is empirical, not proven. Requests go to Anthropic or OpenAI through your subscription."
       },
       "turn": {
         "spoken": "spoken",
@@ -796,7 +803,20 @@
         "failed": "The answer failed.",
         "general": "General knowledge, not from the book",
         "preview": "Preview",
-        "previewHint": "The model has not passed the test run yet. Answers can be wrong."
+        "previewHint": "The model has not passed the test run yet. Answers can be wrong.",
+        "subscriptionHint": "Subscription preview: the budget is empirical, not proven. Answers can be wrong."
+      },
+      "subscription": {
+        "title": "Turn on the subscription preview?",
+        "reconfirm": "The CLI or the model has changed. Please confirm the preview again; until then the switch has no effect.",
+        "risk": "Budget is empirical, not proven: for a subscription it cannot be proven in advance how many tokens a call needs. The app uses safety margins and discards every reply that hints at compaction, truncation or mismatches. Answers can still be wrong.",
+        "cloud": "Requests go to Anthropic or OpenAI through your subscription. The approval is bound to the CLI version installed now; after an update you must confirm it again.",
+        "confirm": "Understood, turn on",
+        "cancel": "Cancel",
+        "error": {
+          "noCli": "No installed subscription CLI found. Install Claude Code or Codex and sign in.",
+          "other": "The preview could not be turned on."
+        }
       },
       "found": {
         "title": "Passages",

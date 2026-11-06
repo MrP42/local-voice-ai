@@ -1402,3 +1402,145 @@ fn abgewiesene_anfrage_ist_unknown_mit_code_und_mac() {
     );
     assert!(resp_mac_ok(&KEY, &end));
 }
+
+// ---- Abo-Vorschau (lva#334) ------------------------------------------------------
+
+fn identities(version: &str) -> Identities {
+    let id = |tag: &str| crate::managers::llm::preview::Identity {
+        version: version.into(),
+        sha256: tag.repeat(32),
+    };
+    Identities {
+        claude: Some(id("ab")),
+        codex: Some(id("cd")),
+    }
+}
+
+fn previewing(ctx_codex: Option<u32>, version: &str) -> AppSettings {
+    let mut s = settings_with_models();
+    s.book_talk_relay_enabled = true;
+    for m in s.llm_models.iter_mut().filter(|m| m.id == "codex:gpt") {
+        m.context_limit = ctx_codex;
+    }
+    s.book_talk_subscription_preview = true;
+    let ident = identities(version);
+    s.book_talk_preview_bindings =
+        crate::book_ai::talk::bindings_for(&s, |cli| ident.of(cli).cloned());
+    s
+}
+
+#[test]
+fn abo_modellliste_ist_ohne_vorschau_schalter_leer() {
+    let mut s = previewing(Some(272_000), "1.0");
+    s.book_talk_subscription_preview = false;
+    let eligible = eligible_models(&s, BOTH);
+    assert_eq!(eligible.len(), 2);
+    assert!(preview_models(&s, eligible, &identities("1.0")).is_empty());
+}
+
+#[test]
+fn abo_modellliste_meldet_nur_belegten_kontext_statt_pauschal_128000() {
+    let s = previewing(Some(272_000), "1.0");
+    let list = preview_models(&s, eligible_models(&s, BOTH), &identities("1.0"));
+    let seen: Vec<(&str, u32)> = list
+        .iter()
+        .map(|m| (m.id.as_str(), m.context_tokens))
+        .collect();
+    assert_eq!(seen, [("sonnet", 200_000), ("gpt-6.1-sol", 272_000)]);
+    // Codex ohne eingetragenen Kontext: nicht belegt, nicht angeboten (kein 128000).
+    let s = previewing(None, "1.0");
+    let list = preview_models(&s, eligible_models(&s, BOTH), &identities("1.0"));
+    let ids: Vec<&str> = list.iter().map(|m| m.id.as_str()).collect();
+    assert_eq!(ids, ["sonnet"]);
+    assert!(list.iter().all(|m| m.context_tokens != 128_000));
+}
+
+#[test]
+fn abo_modellliste_verlangt_ein_gueltiges_tupel() {
+    let s = previewing(Some(272_000), "1.0");
+    // Neue CLI-Version: Freigabe ungueltig, nichts wird angeboten.
+    assert!(preview_models(&s, eligible_models(&s, BOTH), &identities("1.1")).is_empty());
+    // CLI nicht lesbar: ebenso.
+    assert!(preview_models(&s, eligible_models(&s, BOTH), &Identities::default()).is_empty());
+    // Nur Claude hat sich geaendert: Codex bleibt.
+    let mut mixed = identities("1.0");
+    mixed.claude.as_mut().unwrap().sha256 = "ef".repeat(32);
+    let list = preview_models(&s, eligible_models(&s, BOTH), &mixed);
+    assert_eq!(
+        list.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+        ["gpt-6.1-sol"]
+    );
+    // Ein Modell ohne bestaetigtes Tupel (spaeter hinzugefuegt) fehlt.
+    let mut s2 = s.clone();
+    s2.book_talk_preview_bindings
+        .retain(|b| b.model_id != "sonnet");
+    let list = preview_models(&s2, eligible_models(&s2, BOTH), &identities("1.0"));
+    assert_eq!(
+        list.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+        ["gpt-6.1-sol"]
+    );
+}
+
+#[test]
+fn relay_pruefauftrag_gilt_nur_mit_gueltigem_tupel_und_traegt_die_ausgabegrenze() {
+    use crate::managers::llm::preview::{binding_for, max_output};
+    let s = previewing(Some(272_000), "1.0");
+    let call = settings_for_model(&s, "claude:sonnet");
+    let ident = identities("1.0");
+    let current = binding_for(Cli::Claude, "sonnet", ident.claude.as_ref().unwrap());
+    let check = crate::book_ai::talk::preview_check(&call, Cli::Claude, Some(current.clone()), 800)
+        .expect("gueltig");
+    assert_eq!(check.context_tokens, 200_000);
+    assert_eq!(check.max_output_tokens, max_output(800));
+    assert!(crate::book_ai::talk::preview_check(&call, Cli::Claude, None, 800).is_none());
+    let mut changed = current;
+    changed.cli_version = "2.0".into();
+    assert!(crate::book_ai::talk::preview_check(&call, Cli::Claude, Some(changed), 800).is_none());
+    let mut off = call.clone();
+    off.book_talk_subscription_preview = false;
+    let again = binding_for(Cli::Claude, "sonnet", ident.claude.as_ref().unwrap());
+    assert!(crate::book_ai::talk::preview_check(&off, Cli::Claude, Some(again), 800).is_none());
+}
+
+#[test]
+fn antworten_aus_der_vorschau_tragen_preview_ausserhalb_des_mac() {
+    let plain = Progress::new("r-p", PHONE, &KEY).finish("Text", "claude-sonnet-5-5", None, None);
+    assert!(!plain.preview);
+    let json = serde_json::to_value(&plain).unwrap();
+    assert!(
+        json.get("preview").is_none(),
+        "Standard: Feld fehlt, Golden bleibt gleich"
+    );
+    let marked = Progress::new("r-p", PHONE, &KEY).previewing().finish(
+        "Text",
+        "claude-sonnet-5-5",
+        None,
+        None,
+    );
+    assert!(marked.preview);
+    assert_eq!(
+        serde_json::to_value(&marked).unwrap()["preview"],
+        json!(true)
+    );
+    assert_eq!(marked.mac, plain.mac, "preview ist nicht Teil des MAC");
+    assert!(resp_mac_ok(&KEY, &marked));
+    let back: RespPayload = serde_json::from_value(serde_json::to_value(&marked).unwrap()).unwrap();
+    assert!(back.preview);
+}
+
+#[test]
+fn ablehnungen_der_vorschau_sind_llm_failed() {
+    use crate::managers::llm::preview::Rejection;
+    for r in [
+        Rejection {
+            code: "budget",
+            reason: "compaction",
+        },
+        Rejection {
+            code: "llm_failed",
+            reason: "usage_missing",
+        },
+    ] {
+        assert_eq!(map_error(&r.error()), ERR_LLM_FAILED);
+    }
+}

@@ -57,6 +57,8 @@ use tauri::{AppHandle, State};
 use tauri_specta::Event;
 
 use crate::commands::pages::page_path;
+use crate::managers::llm::cli::Cli;
+use crate::managers::llm::preview::{self, PreviewBinding, PreviewCheck, PreviewState};
 use crate::managers::meetings::chat::citations::strip_think;
 use crate::managers::meetings::chat::context::{budget_chars, context_budget_tokens};
 use crate::managers::meetings::chat::controller::{map_llm_error, CancelFlag};
@@ -185,6 +187,11 @@ pub struct BookTalkAnswer {
     pub dropped: u32,
     pub scope: BookTalkScope,
     pub frontier: u32,
+    /// Die Antwort stammt aus der Abo-Vorschau (lva#334: Claude Code oder
+    /// Codex ueber das Abo, Budget nur empirisch, nicht bewiesen). Die
+    /// Oberflaeche kennzeichnet sie als „Vorschau“.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub preview: bool,
 }
 
 /// Ereignis `book-talk-event` (Form wie `BookTalkEvent` im Vertrag).
@@ -252,6 +259,8 @@ pub struct AskParams<'a> {
     /// Budgetprofil der Konfiguration (`prompt::BUDGET_PROFILES`).
     pub profile: Option<&'a BudgetProfile>,
     pub timeout: Duration,
+    /// Abo-Vorschau (lva#334): jede Antwort dieses Laufs traegt `preview`.
+    pub preview: bool,
 }
 
 // ----------------------------------------------------------------- Ablauf --
@@ -339,7 +348,8 @@ pub async fn run(
     if question.is_empty() || question.chars().count() > MAX_QUESTION_CHARS {
         return Err(TalkError::new(ERR_INVALID_REQUEST));
     }
-    let done = |a: BookTalkAnswer| {
+    let done = |mut a: BookTalkAnswer| {
+        a.preview = p.preview;
         emit(BookTalkEvent::Done {
             request_id: req.request_id.clone(),
             answer: a.clone(),
@@ -621,6 +631,9 @@ struct ProviderModel {
     context_tokens: u32,
     /// Exakter Zähler: nur der eingebaute lokale Server hat einen.
     counter: tokio::sync::OnceCell<Option<count::LlamaCounter>>,
+    /// Abo-Vorschau (lva#334): empirisches Budget statt Zähler, gehärtete
+    /// Isolation, Prüfung der Antwort vor jeder Ausgabe.
+    preview: Option<PreviewCheck>,
 }
 
 impl ProviderModel {
@@ -629,6 +642,7 @@ impl ProviderModel {
         api_key: String,
         model: String,
         context_tokens: u32,
+        preview: Option<PreviewCheck>,
     ) -> Self {
         Self {
             provider,
@@ -636,6 +650,7 @@ impl ProviderModel {
             model,
             context_tokens,
             counter: tokio::sync::OnceCell::new(),
+            preview,
         }
     }
 
@@ -678,17 +693,26 @@ impl TalkModel for ProviderModel {
                 crate::llm_client::StreamMessage::new("system", system),
                 crate::llm_client::StreamMessage::new("user", user),
             ];
-            crate::llm_client::send_chat_completion_stream_limited(
+            let limits = self.limits();
+            let call = crate::llm_client::send_chat_completion_stream_limited(
                 crate::managers::usage::Purpose::Chat,
                 &self.provider,
                 self.api_key.clone(),
                 &self.model,
                 messages,
                 on_delta,
-                &self.limits(),
-            )
-            .await
-            .map_err(|e| {
+                &limits,
+            );
+            // Der CLI-Pfad gibt den Text erst nach der Prüfung an `on_delta`.
+            let result = match &self.preview {
+                Some(check) => {
+                    crate::llm_client::CLI_PREVIEW
+                        .scope(check.clone(), call)
+                        .await
+                }
+                None => call.await,
+            };
+            result.map_err(|e| {
                 let code = map_error_code(&e);
                 log::warn!("book_talk: LLM-Aufruf fehlgeschlagen ({code})");
                 TalkError::new(code)
@@ -697,11 +721,32 @@ impl TalkModel for ProviderModel {
     }
 
     fn token_count<'a>(&'a self, system: &'a str, user: &'a str) -> prompt::CountFuture<'a> {
-        Box::pin(async move { self.llama().await?.count(system, user).await })
+        Box::pin(async move {
+            if let Some(cli) = self.preview_cli() {
+                // Empirisch: Bytes (so, wie die CLI sie bekommt) plus Overhead.
+                let bytes = system.len() + crate::llm_client::dialog_line("user", user).len();
+                return usize::try_from(preview::input_estimate(cli, bytes)).ok();
+            }
+            self.llama().await?.count(system, user).await
+        })
     }
 
     fn context_tokens(&self) -> prompt::CountFuture<'_> {
-        Box::pin(async move { self.llama().await?.context().await })
+        Box::pin(async move {
+            if let Some(check) = &self.preview {
+                // Planungsgrenze: min(Kontext, Kompaktierungsschwelle).
+                return usize::try_from(preview::limit_tokens(check.context_tokens)).ok();
+            }
+            self.llama().await?.context().await
+        })
+    }
+}
+
+impl ProviderModel {
+    /// Die CLI, wenn dieses Modell in der aktiven Vorschau läuft.
+    fn preview_cli(&self) -> Option<Cli> {
+        self.preview.as_ref()?;
+        Cli::from_base_url(&self.provider.base_url)
     }
 }
 
@@ -718,6 +763,13 @@ fn family_of(model_id: &str) -> &'static str {
 /// der Anfrage enthalten) geht nirgends hin.
 pub fn map_error_code(err: &str) -> &'static str {
     let lower = err.to_lowercase();
+    // Abo-Vorschau: Budget (Kompaktierung, Überschreitung, Abschneiden) oder
+    // `llm_failed` (Nutzungsangabe, Modell).
+    match preview::rejection_code(err) {
+        Some("budget") => return CODE_BUDGET,
+        Some(_) => return CODE_LLM_FAILED,
+        None => {}
+    }
     if err.contains("Monatsbudget") {
         return CODE_BUDGET;
     }
@@ -1017,13 +1069,31 @@ pub async fn book_talk_ask(
         }
         Err(_) => (false, false),
     };
-    let ctx_tokens = if local {
-        crate::managers::llm::DEFAULT_CONTEXT_TOKENS
-    } else {
-        REMOTE_CONTEXT_TOKENS
+    // Abo-CLI nur als Vorschau: Schalter und gebundenes Tupel müssen gelten,
+    // der Kontext muss belegt sein (sonst bleibt es beim Grund `budget`).
+    let preview_check = match &resolved {
+        Ok((provider, model, _)) => match Cli::from_base_url(&provider.base_url) {
+            Some(cli) => preview_check_for(&settings, cli, model).await,
+            None => None,
+        },
+        Err(_) => None,
     };
+    let ctx_tokens = match (&preview_check, local) {
+        (Some(check), _) => check.context_tokens,
+        (None, true) => crate::managers::llm::DEFAULT_CONTEXT_TOKENS,
+        (None, false) => REMOTE_CONTEXT_TOKENS,
+    };
+    let answer_tokens = preview_check
+        .as_ref()
+        .map_or(DEFAULT_MAX_ANSWER_TOKENS, |c| c.max_output_tokens);
     let provider_model = resolved.as_ref().ok().map(|(provider, model, key)| {
-        ProviderModel::new(provider.clone(), key.clone(), model.clone(), ctx_tokens)
+        ProviderModel::new(
+            provider.clone(),
+            key.clone(),
+            model.clone(),
+            ctx_tokens,
+            preview_check.clone(),
+        )
     });
     let profile = resolved
         .as_ref()
@@ -1063,11 +1133,12 @@ pub async fn book_talk_ask(
         entities: &entities,
         budget: Budget::desktop(
             ctx_tokens as usize,
-            DEFAULT_MAX_ANSWER_TOKENS as usize,
+            answer_tokens as usize,
             budget_chars(context_budget_tokens(ctx_tokens, backend_cpu, local)),
         ),
         profile,
         timeout: ANSWER_TIMEOUT,
+        preview: preview_check.is_some(),
     };
     let emit_app = app.clone();
     let emit = move |event: BookTalkEvent| {
@@ -1115,6 +1186,185 @@ pub fn change_book_talk_enabled_setting(app: AppHandle, enabled: bool) -> Result
     settings.book_talk_enabled = enabled;
     crate::settings::write_settings(&app, settings);
     Ok(())
+}
+
+// ------------------------------------------------------ Abo-Vorschau (#334) --
+
+/// Prüfauftrag der Abo-Vorschau für dieses Modell, falls sie wirkt: Schalter
+/// an, gebundenes Tupel gültig, Kontext belegt. Rein; `current` ist das
+/// aktuelle Tupel (`None`, wenn die CLI nicht zu prüfen ist).
+pub fn preview_check(
+    settings: &crate::settings::AppSettings,
+    cli: Cli,
+    current: Option<PreviewBinding>,
+    answer_tokens: u32,
+) -> Option<PreviewCheck> {
+    let state = preview::gate(
+        settings.book_talk_subscription_preview,
+        &settings.book_talk_preview_bindings,
+        current.as_ref(),
+    );
+    if state != PreviewState::Active {
+        return None;
+    }
+    let configured = settings
+        .active_llm_model()
+        .and_then(|(_, model)| model.context_limit);
+    Some(PreviewCheck {
+        binding: current?,
+        context_tokens: preview::context_tokens(cli, configured)?,
+        max_output_tokens: preview::max_output(answer_tokens),
+    })
+}
+
+async fn preview_check_for(
+    settings: &crate::settings::AppSettings,
+    cli: Cli,
+    model: &str,
+) -> Option<PreviewCheck> {
+    if !settings.book_talk_subscription_preview {
+        return None;
+    }
+    let id = model.to_string();
+    let current = tokio::task::spawn_blocking(move || preview::current_binding(cli, &id))
+        .await
+        .ok()
+        .and_then(Result::ok);
+    preview_check(settings, cli, current, DEFAULT_MAX_ANSWER_TOKENS)
+}
+
+/// Tupel für alle eingeschalteten Abo-Modelle eingeschalteter Verbindungen
+/// (Desktop und Relay), mit der Identität, die `identity_of` je CLI liefert.
+/// CLIs ohne Identität (nicht installiert) bleiben ohne Tupel.
+pub fn bindings_for(
+    settings: &crate::settings::AppSettings,
+    identity_of: impl Fn(Cli) -> Option<preview::Identity>,
+) -> Vec<PreviewBinding> {
+    let mut out: Vec<PreviewBinding> = Vec::new();
+    for model in settings.llm_models.iter().filter(|m| m.enabled) {
+        let Some(connection) = settings
+            .llm_connections
+            .iter()
+            .find(|c| c.id == model.connection_id && c.enabled)
+        else {
+            continue;
+        };
+        let Some(cli) = Cli::from_base_url(&connection.base_url) else {
+            continue;
+        };
+        let Some(identity) = identity_of(cli) else {
+            continue;
+        };
+        let binding = preview::binding_for(cli, &model.remote_id, &identity);
+        if !out
+            .iter()
+            .any(|b| b.provider == binding.provider && b.model_id == binding.model_id)
+        {
+            out.push(binding);
+        }
+    }
+    out
+}
+
+/// Fehlercode, wenn die Vorschau ohne Risikohinweis eingeschaltet wird.
+pub const ERR_RISK_NOT_ACKNOWLEDGED: &str = "risk_not_acknowledged";
+/// Fehlercode, wenn keine CLI zu binden ist.
+pub const ERR_NO_CLI: &str = "no_cli";
+
+/// Schalter „Abo-Vorschau“ (`book_talk_subscription_preview`, Standard aus).
+/// Einschalten (und erneutes Bestätigen) geht nur nach dem Risikohinweis
+/// („Budget empirisch, nicht bewiesen; Anfragen gehen an Anthropic/OpenAI über
+/// dein Abo“): `acknowledged` kommt vom Dialog. Dabei werden Anbieter, Modell,
+/// CLI-Version und SHA-256 des Programms je Abo-Modell gebunden; weicht eines
+/// später ab, wirkt der Schalter nicht, bis erneut bestätigt wird. Ausschalten
+/// löscht die Bindung.
+#[tauri::command]
+#[specta::specta]
+pub async fn change_book_talk_subscription_preview_setting(
+    app: AppHandle,
+    enabled: bool,
+    acknowledged: bool,
+) -> Result<(), String> {
+    let bindings = if enabled {
+        if !acknowledged {
+            return Err(ERR_RISK_NOT_ACKNOWLEDGED.to_string());
+        }
+        let current = crate::settings::get_settings(&app);
+        let bound = tokio::task::spawn_blocking(move || {
+            bindings_for(&current, |cli| {
+                crate::managers::llm::cli::locate(cli)
+                    .and_then(|binary| preview::identity(&binary).ok())
+            })
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+        if bound.is_empty() {
+            return Err(ERR_NO_CLI.to_string());
+        }
+        bound
+    } else {
+        Vec::new()
+    };
+    {
+        let _guard = crate::managers::tts::providers::host::SETTINGS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let mut settings = crate::settings::get_settings(&app);
+        settings.book_talk_subscription_preview = enabled;
+        settings.book_talk_preview_bindings = bindings;
+        crate::settings::write_settings(&app, settings);
+    }
+    crate::sync::booktalk_relay::wake();
+    Ok(())
+}
+
+/// Zustand der Abo-Vorschau für die Oberfläche.
+#[derive(Debug, Clone, PartialEq, Serialize, Type)]
+pub struct BookTalkPreviewStatus {
+    /// Schalter `book_talk_subscription_preview`.
+    pub enabled: bool,
+    /// Das Gesprächsmodell ist ein Abo-Modell (CLI).
+    pub applies: bool,
+    /// `reconfirm`: der Schalter ist an, wirkt aber nicht, bis erneut bestätigt wird.
+    pub state: PreviewState,
+}
+
+/// Zustand der Abo-Vorschau für das aktuelle Gesprächsmodell.
+#[tauri::command]
+#[specta::specta]
+pub async fn book_talk_preview_status(app: AppHandle) -> Result<BookTalkPreviewStatus, String> {
+    let settings = crate::settings::get_settings(&app).for_function(crate::settings::FN_BOOK_TALK);
+    let enabled = settings.book_talk_subscription_preview;
+    let resolved = resolve_provider_coded(&settings).ok();
+    let cli = resolved
+        .as_ref()
+        .and_then(|(provider, _, _)| Cli::from_base_url(&provider.base_url));
+    let (Some(cli), Some((_, model, _))) = (cli, resolved) else {
+        return Ok(BookTalkPreviewStatus {
+            enabled,
+            applies: false,
+            state: if enabled {
+                PreviewState::Active
+            } else {
+                PreviewState::Off
+            },
+        });
+    };
+    let state = if enabled {
+        let stored = settings.book_talk_preview_bindings.clone();
+        let current = tokio::task::spawn_blocking(move || preview::current_binding(cli, &model))
+            .await
+            .ok()
+            .and_then(Result::ok);
+        preview::gate(true, &stored, current.as_ref())
+    } else {
+        PreviewState::Off
+    };
+    Ok(BookTalkPreviewStatus {
+        enabled,
+        applies: true,
+        state,
+    })
 }
 
 /// Schlüssel einer Cloud-Freigabe: Verbindung und Modell (Plan §3.8, §11.4:

@@ -271,6 +271,12 @@ pub struct CliReply {
     /// (Claude: Schluessel von `modelUsage`; Codex: Feld `model` eines
     /// Ereignisses). `None`, wenn die Ausgabe es nicht nennt.
     pub model: Option<String>,
+    /// Die Ausgabe der CLI deutet auf Kompaktierung des Kontexts hin
+    /// (`managers::llm::preview::hints`).
+    pub compacted: bool,
+    /// Die Ausgabe deutet auf eine abgeschnittene Antwort hin (`stop_reason:
+    /// max_tokens` o. ae.).
+    pub truncated: bool,
 }
 
 /// Wo liegt die CLI? PATH zuerst, dann die ueblichen Installationsorte.
@@ -699,6 +705,7 @@ pub(crate) fn parse_claude(stdout: &str) -> Result<CliReply, String> {
         .and_then(|r| r.as_str())
         .ok_or_else(|| "cli_bad_output: Claude-Antwort ohne Ergebnis".to_string())?
         .to_string();
+    let hints = super::preview::hints(&v);
     let u = v.get("usage");
     let n = |k: &str| {
         u.and_then(|u| u.get(k))
@@ -712,6 +719,8 @@ pub(crate) fn parse_claude(stdout: &str) -> Result<CliReply, String> {
             + n("cache_read_input_tokens"),
         completion_tokens: n("output_tokens"),
         model: claude_model_of(&v),
+        compacted: hints.compacted,
+        truncated: hints.truncated,
     })
 }
 
@@ -756,10 +765,14 @@ pub(crate) fn parse_codex(stdout: &str) -> Result<CliReply, String> {
     let mut failed = None;
     let (mut pin, mut pout) = (0, 0);
     let mut model: Option<String> = None;
+    let mut hints = super::preview::Hints::default();
     for line in stdout.lines() {
         let Ok(ev) = serde_json::from_str::<serde_json::Value>(line) else {
             continue;
         };
+        let h = super::preview::hints(&ev);
+        hints.compacted |= h.compacted;
+        hints.truncated |= h.truncated;
         if model.is_none() {
             model = codex_model_of(&ev);
         }
@@ -805,6 +818,8 @@ pub(crate) fn parse_codex(stdout: &str) -> Result<CliReply, String> {
             prompt_tokens: pin,
             completion_tokens: pout,
             model,
+            compacted: hints.compacted,
+            truncated: hints.truncated,
         }),
         (None, Some(e)) => Err(classify_error(&e)),
         (None, None) => Err("cli_bad_output: Codex lieferte keine Antwort".to_string()),
@@ -1002,6 +1017,12 @@ pub struct CallOptions {
     /// Eingabe- oder kein Ausgabetoken), ist der Aufruf ein Fehler
     /// (`cli_bad_output`) statt null Token. Sonst unveraendert.
     pub require_usage: bool,
+    /// Gesetzt: Aufruf der Abo-Vorschau im Buch-Gespraech (lva#334). Vorab
+    /// gilt das empirische Budget, die Isolation ist gehaertet (Hooks aus,
+    /// keine Projekt-/Nutzeranweisungen, Codex nur mit `--ignore-user-config`),
+    /// und die Antwort wird nachtraeglich fail-closed geprueft
+    /// (`preview::verify`; fehlende Nutzungsangabe zaehlt als Ablehnung).
+    pub preview: Option<super::preview::PreviewCheck>,
 }
 
 /// Ob ein Fehler ein Abbruch war (dann kein Wiederholen).
@@ -1019,6 +1040,80 @@ pub fn call_with_options(
     timeout: Duration,
     opts: &CallOptions,
 ) -> Result<CliReply, String> {
+    let result = call_inner(cli, binary, model, system, user, timeout, opts);
+    if let (Some(check), Err(e)) = (&opts.preview, &result) {
+        // Ablehnungen sind schon im Audit; hier die uebrigen Fehler (nur der Code).
+        if !e.starts_with(super::preview::REJECTED_PREFIX) {
+            let code = e.split(':').next().unwrap_or("error");
+            log::info!(
+                "{}",
+                super::preview::audit_line(&check.binding, model, None, &format!("error:{code}"))
+            );
+        }
+    }
+    result
+}
+
+/// Gemeinsame Pruefung der Vorschau: Antwort verwenden oder verwerfen, mit
+/// Audit-Zeile (ohne Inhalt) in beiden Faellen.
+fn verify_preview(
+    check: &super::preview::PreviewCheck,
+    requested: &str,
+    reply: CliReply,
+    input_bytes: usize,
+) -> Result<CliReply, String> {
+    use super::preview;
+    let verdict = preview::verify(check, requested, &reply, input_bytes);
+    let status = match &verdict {
+        Ok(()) => "ok".to_string(),
+        Err(r) => format!("rejected:{}", r.reason),
+    };
+    log::info!(
+        "{}",
+        preview::audit_line(&check.binding, requested, reply.model.as_deref(), &status)
+    );
+    verdict.map(|()| reply).map_err(|r| r.error())
+}
+
+/// Zusaetzliche Claude-Argumente der Vorschau: alle Hooks aus (`--settings`
+/// mit `disableAllHooks`, auch Hooks aus Plugins). Werkzeuge, MCP,
+/// Nutzer-/Projekteinstellungen und Slash-Befehle sind schon in
+/// [`args_without_effort`] aus.
+pub(crate) const CLAUDE_PREVIEW_ARGS: &[&str] = &["--settings", r#"{"disableAllHooks":true}"#];
+
+/// Umgebung der Claude-Vorschau: keine CLAUDE.md-Dateien und kein
+/// Auto-Memory (Nutzer- und Projektanweisungen). Die Namen stehen im
+/// Programm von Claude Code; ihre Wirkung ist nicht gemessen.
+pub(crate) const CLAUDE_PREVIEW_ENV: &[(&str, &str)] = &[
+    ("CLAUDE_CODE_DISABLE_CLAUDE_MDS", "1"),
+    ("CLAUDE_CODE_DISABLE_AUTO_MEMORY", "1"),
+];
+
+fn call_inner(
+    cli: Cli,
+    binary: &Path,
+    model: &str,
+    system: Option<&str>,
+    user: &str,
+    timeout: Duration,
+    opts: &CallOptions,
+) -> Result<CliReply, String> {
+    let requested = model.to_string();
+    let input_bytes = system.map_or(0, str::len) + user.len();
+    if let Some(check) = &opts.preview {
+        if let Err(r) = super::preview::precheck(cli, check, input_bytes) {
+            log::info!(
+                "{}",
+                super::preview::audit_line(
+                    &check.binding,
+                    &requested,
+                    None,
+                    &format!("rejected:{}", r.reason)
+                )
+            );
+            return Err(r.error());
+        }
+    }
     // `modell@effort~fast`; auf die Kommandozeile kommt nur, was die Regeln erlaubt.
     let fast = split_fast(model).1;
     let (model, effort) = split_spec(model);
@@ -1042,10 +1137,23 @@ pub fn call_with_options(
     let (program, mut argv) = launcher(binary);
     let prefix = argv.clone();
     argv.extend(args_with(cli, model, effort, fast, system));
+    if cli == Cli::Claude && opts.preview.is_some() {
+        argv.extend(CLAUDE_PREVIEW_ARGS.iter().map(|a| a.to_string()));
+    }
     if cli == Cli::Codex {
         // Vor dem abschliessenden "-" (Prompt aus stdin).
         let at = argv.len() - 1;
-        argv.splice(at..at, codex_isolation_args(&program, &prefix)?);
+        let isolation = codex_isolation_args(&program, &prefix)?;
+        // Vorschau: nur mit `--ignore-user-config` (Hooks, Plugins und
+        // Nutzeranweisungen der Konfiguration bleiben aus); der Rueckfall auf
+        // einzelne MCP-Server reicht dafuer nicht.
+        if opts.preview.is_some() && isolation != ["--ignore-user-config"] {
+            return Err(
+                "cli_failed: Isolation fuer die Vorschau nicht moeglich (--ignore-user-config fehlt)"
+                    .to_string(),
+            );
+        }
+        argv.splice(at..at, isolation);
         if let Some(n) = opts.max_tokens {
             let at = argv.len() - 1;
             argv.splice(at..at, max_tokens_args(n));
@@ -1055,6 +1163,9 @@ pub fn call_with_options(
     if cli == Cli::Claude {
         if let Some(n) = opts.max_tokens {
             cmd.env("CLAUDE_CODE_MAX_OUTPUT_TOKENS", n.to_string());
+        }
+        if opts.preview.is_some() {
+            cmd.envs(CLAUDE_PREVIEW_ENV.iter().copied());
         }
     }
     cmd.args(&argv)
@@ -1079,14 +1190,15 @@ pub fn call_with_options(
         Cli::Claude => parse_claude(&stdout),
         Cli::Codex => parse_codex(&stdout),
     };
-    match reply {
-        Ok(r) if opts.require_usage => check_usage(r),
-        Ok(r) => Ok(r),
-        Err(e) if e.starts_with("cli_bad_output") && !output.status.success() => {
+    match (reply, &opts.preview) {
+        (Ok(r), Some(check)) => verify_preview(check, &requested, r, input_bytes),
+        (Ok(r), None) if opts.require_usage => check_usage(r),
+        (Ok(r), None) => Ok(r),
+        (Err(e), _) if e.starts_with("cli_bad_output") && !output.status.success() => {
             let stderr = String::from_utf8_lossy(&output.stderr);
             Err(classify_error(stderr.lines().last().unwrap_or("")))
         }
-        Err(e) => Err(e),
+        (Err(e), _) => Err(e),
     }
 }
 
@@ -1898,5 +2010,325 @@ mod tests {
         assert_eq!(Cli::from_base_url("cli://claude"), Some(Cli::Claude));
         assert_eq!(Cli::from_base_url("cli://codex/"), Some(Cli::Codex));
         assert_eq!(Cli::from_base_url("https://api.openai.com/v1"), None);
+    }
+
+    // ---- Abo-Vorschau im Buch-Gespraech (lva#334): Fake-CLIs, kein echter Aufruf ----
+
+    use super::super::preview::{binding_for, max_output, Identity, PreviewCheck};
+
+    fn preview_check(cli: Cli, model: &str, context: u32) -> PreviewCheck {
+        PreviewCheck {
+            binding: binding_for(
+                cli,
+                model,
+                &Identity {
+                    version: "9.9.9".into(),
+                    sha256: "00".repeat(32),
+                },
+            ),
+            context_tokens: context,
+            max_output_tokens: max_output(600),
+        }
+    }
+
+    fn preview_opts(check: PreviewCheck) -> CallOptions {
+        CallOptions {
+            max_tokens: Some(600),
+            preview: Some(check),
+            ..CallOptions::default()
+        }
+    }
+
+    const GOOD_CLAUDE: &str = r#"{"type":"result","subtype":"success","is_error":false,"result":"Antwort","stop_reason":"end_turn","usage":{"input_tokens":3000,"cache_creation_input_tokens":20000,"cache_read_input_tokens":10000,"output_tokens":200},"modelUsage":{"claude-sonnet-5-5":{"outputTokens":200}}}"#;
+
+    /// Fake-Programm: protokolliert Argumente, Umgebung und Arbeitsordner in
+    /// `log.txt` neben sich und liefert den Inhalt von `reply.txt`. Mit
+    /// `help` im Hilfetext von `exec --help` (Codex).
+    #[cfg(unix)]
+    fn fake_cli(dir: &Path, reply: &str, help: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::write(dir.join("reply.txt"), reply).unwrap();
+        std::fs::write(dir.join("help.txt"), help).unwrap();
+        let script = dir.join("fakecli");
+        std::fs::write(
+            &script,
+            r#"#!/bin/sh
+D="$(dirname "$0")"
+case "$1 $2" in
+  "exec --help") cat "$D/help.txt"; exit 0 ;;
+  "mcp list") echo "[]"; exit 0 ;;
+esac
+{
+  for a in "$@"; do printf 'ARG:%s\n' "$a"; done
+  printf 'ENV_MDS:%s\n' "$CLAUDE_CODE_DISABLE_CLAUDE_MDS"
+  printf 'ENV_MEM:%s\n' "$CLAUDE_CODE_DISABLE_AUTO_MEMORY"
+  printf 'PWD:%s\n' "$(pwd)"
+  printf 'FILES:%s\n' "$(ls -A | wc -l | tr -d ' ')"
+} > "$D/log.txt"
+cat > /dev/null
+cat "$D/reply.txt"
+"#,
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        script
+    }
+
+    #[cfg(unix)]
+    fn log_of(dir: &Path) -> String {
+        std::fs::read_to_string(dir.join("log.txt")).unwrap()
+    }
+
+    #[cfg(unix)]
+    fn claude_call(dir: &Path, reply: &str, opts: &CallOptions) -> Result<CliReply, String> {
+        let bin = fake_cli(dir, reply, "");
+        call_with_options(
+            Cli::Claude,
+            &bin,
+            "sonnet",
+            Some("Systemtext"),
+            "user: Frage",
+            Duration::from_secs(30),
+            opts,
+        )
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_claude_preview_hardens_isolation_and_accepts_a_clean_reply() {
+        let dir = tempfile::tempdir().unwrap();
+        let r = claude_call(
+            dir.path(),
+            GOOD_CLAUDE,
+            &preview_opts(preview_check(Cli::Claude, "sonnet", 200_000)),
+        )
+        .expect("saubere Antwort");
+        assert_eq!(r.text, "Antwort");
+        // Claude: input + cache_creation + cache_read.
+        assert_eq!(r.prompt_tokens, 33_000);
+        let log = log_of(dir.path());
+        for want in [
+            "ARG:--tools\nARG:\n",
+            "ARG:--no-session-persistence",
+            "ARG:--setting-sources\nARG:\n",
+            "ARG:--strict-mcp-config",
+            r#"ARG:{"mcpServers":{}}"#,
+            "ARG:--disable-slash-commands",
+            "ARG:--settings\nARG:{\"disableAllHooks\":true}",
+            "ENV_MDS:1",
+            "ENV_MEM:1",
+            "FILES:0",
+        ] {
+            assert!(log.contains(want), "{want:?} fehlt:\n{log}");
+        }
+        let pwd = log.lines().find_map(|l| l.strip_prefix("PWD:")).unwrap();
+        assert!(
+            !Path::new(pwd).starts_with(dir.path()),
+            "frischer Ordner, nicht der des Programms"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn other_callers_keep_the_old_isolation() {
+        let dir = tempfile::tempdir().unwrap();
+        claude_call(dir.path(), GOOD_CLAUDE, &CallOptions::default()).unwrap();
+        let log = log_of(dir.path());
+        assert!(!log.contains("ARG:--settings\n"), "{log}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_preview_reply_is_dropped_unless_everything_checks_out() {
+        let cases: &[(&str, String, &str)] = &[
+            (
+                "ohne Nutzungsangabe",
+                r#"{"type":"result","is_error":false,"result":"A"}"#.into(),
+                "cli_preview_rejected:llm_failed:usage_missing",
+            ),
+            (
+                "Nutzung ohne Ausgabetoken",
+                GOOD_CLAUDE.replace(r#""output_tokens":200"#, r#""output_tokens":0"#),
+                "cli_preview_rejected:llm_failed:usage_missing",
+            ),
+            (
+                "anderes Modell",
+                GOOD_CLAUDE.replace("claude-sonnet-5-5", "claude-haiku-4-5-20251001"),
+                "cli_preview_rejected:llm_failed:model_mismatch",
+            ),
+            (
+                "ueber dem Kontext",
+                GOOD_CLAUDE.replace(r#""input_tokens":3000"#, r#""input_tokens":170000"#),
+                "cli_preview_rejected:budget:context_exceeded",
+            ),
+            (
+                "Kompaktierung",
+                GOOD_CLAUDE.replace(r#""is_error""#, r#""num_compactions":1,"is_error""#),
+                "cli_preview_rejected:budget:compaction",
+            ),
+            (
+                "abgeschnitten",
+                GOOD_CLAUDE.replace("end_turn", "max_tokens"),
+                "cli_preview_rejected:budget:truncated",
+            ),
+        ];
+        for (name, reply, expected) in cases {
+            let dir = tempfile::tempdir().unwrap();
+            let err = claude_call(
+                dir.path(),
+                reply,
+                &preview_opts(preview_check(Cli::Claude, "sonnet", 200_000)),
+            )
+            .expect_err(name);
+            assert!(err.starts_with(expected), "{name}: {err}");
+        }
+        // Dieselbe Antwort ohne Vorschau bleibt, wie sie war: kein Fehler.
+        let dir = tempfile::tempdir().unwrap();
+        let reply = GOOD_CLAUDE.replace("end_turn", "max_tokens");
+        assert!(claude_call(dir.path(), &reply, &CallOptions::default()).is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_budget_is_checked_before_the_cli_is_started() {
+        // Das Programm gibt es nicht: ein Start waere `cli_missing`.
+        let missing = Path::new("/nicht/vorhanden/claude");
+        let err = call_with_options(
+            Cli::Claude,
+            missing,
+            "sonnet",
+            Some("System"),
+            "Frage",
+            Duration::from_secs(5),
+            &preview_opts(preview_check(Cli::Claude, "sonnet", 40_000)),
+        )
+        .unwrap_err();
+        assert_eq!(err, "cli_preview_rejected:budget:budget_precheck");
+        // Mit Platz scheitert erst der Start.
+        let err = call_with_options(
+            Cli::Claude,
+            missing,
+            "sonnet",
+            Some("System"),
+            "Frage",
+            Duration::from_secs(5),
+            &preview_opts(preview_check(Cli::Claude, "sonnet", 200_000)),
+        )
+        .unwrap_err();
+        assert!(err.starts_with("cli_missing"), "{err}");
+    }
+
+    const GOOD_CODEX: &str = concat!(
+        r#"{"type":"thread.started","thread_id":"t","model":"gpt-6.1-sol"}"#,
+        "\n",
+        r#"{"type":"item.completed","item":{"type":"agent_message","text":"Antwort"}}"#,
+        "\n",
+        r#"{"type":"turn.completed","usage":{"input_tokens":20000,"cached_input_tokens":15000,"output_tokens":300}}"#,
+        "\n"
+    );
+
+    #[cfg(unix)]
+    fn codex_call(dir: &Path, reply: &str, help: &str, ctx: u32) -> Result<CliReply, String> {
+        let bin = fake_cli(dir, reply, help);
+        call_with_options(
+            Cli::Codex,
+            &bin,
+            "gpt-6.1-sol",
+            Some("Systemtext"),
+            "user: Frage",
+            Duration::from_secs(30),
+            &preview_opts(preview_check(Cli::Codex, "gpt-6.1-sol", ctx)),
+        )
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_codex_preview_needs_ignore_user_config_and_counts_input_without_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        let r = codex_call(dir.path(), GOOD_CODEX, "--ignore-user-config", 272_000).unwrap();
+        // Codex: input_tokens, der Cache wird nicht addiert.
+        assert_eq!((r.prompt_tokens, r.completion_tokens), (20_000, 300));
+        let log = log_of(dir.path());
+        for want in [
+            "ARG:--ignore-user-config",
+            "ARG:--sandbox\nARG:read-only",
+            "ARG:--ephemeral",
+            "FILES:0",
+        ] {
+            assert!(log.contains(want), "{want:?} fehlt:\n{log}");
+        }
+        // Ohne den Schalter nur der MCP-Rueckfall: fuer die Vorschau nicht genug.
+        let dir = tempfile::tempdir().unwrap();
+        let err = codex_call(dir.path(), GOOD_CODEX, "--json", 272_000).unwrap_err();
+        assert!(err.contains("Isolation fuer die Vorschau"), "{err}");
+        assert!(!dir.path().join("log.txt").exists(), "kein Aufruf");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_codex_preview_reply_is_dropped_on_compaction_truncation_or_overflow() {
+        let help = "--ignore-user-config";
+        let compacted = format!("{{\"type\":\"context_compacted\"}}\n{GOOD_CODEX}");
+        let cut = format!("{GOOD_CODEX}{{\"type\":\"response.incomplete\"}}\n");
+        let cases: &[(&str, String, u32, &str)] = &[
+            (
+                "Kompaktierung",
+                compacted,
+                272_000,
+                "cli_preview_rejected:budget:compaction",
+            ),
+            (
+                "abgeschnitten",
+                cut,
+                272_000,
+                "cli_preview_rejected:budget:truncated",
+            ),
+            (
+                "ueber dem Kontext",
+                GOOD_CODEX.to_string(),
+                20_100,
+                "cli_preview_rejected:budget:budget_precheck",
+            ),
+            (
+                "anderes Modell",
+                GOOD_CODEX.replace("\"model\":\"gpt-6.1-sol\"", "\"model\":\"gpt-6-luna\""),
+                272_000,
+                "cli_preview_rejected:llm_failed:model_mismatch",
+            ),
+            (
+                "ohne Nutzung",
+                GOOD_CODEX.lines().take(2).collect::<Vec<_>>().join("\n"),
+                272_000,
+                "cli_preview_rejected:llm_failed:usage_missing",
+            ),
+        ];
+        for (name, reply, ctx, expected) in cases {
+            let dir = tempfile::tempdir().unwrap();
+            let err = codex_call(dir.path(), reply, help, *ctx).expect_err(name);
+            assert!(err.starts_with(expected), "{name}: {err}");
+        }
+        // Eingabe + Ausgabe ueber dem Kontext, obwohl die Planung passte.
+        let dir = tempfile::tempdir().unwrap();
+        let big = GOOD_CODEX.replace("20000", "271900");
+        let err = codex_call(dir.path(), &big, help, 272_000).unwrap_err();
+        assert!(
+            err.starts_with("cli_preview_rejected:budget:context_exceeded"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn the_parsers_report_compaction_and_truncation_hints() {
+        let ok = parse_claude(GOOD_CLAUDE).unwrap();
+        assert!(!ok.compacted && !ok.truncated);
+        let cut = parse_claude(&GOOD_CLAUDE.replace("end_turn", "max_tokens")).unwrap();
+        assert!(cut.truncated && !cut.compacted);
+        let codex = parse_codex(GOOD_CODEX).unwrap();
+        assert!(!codex.compacted && !codex.truncated);
+        let both = parse_codex(&format!(
+            "{{\"type\":\"context_compacted\"}}\n{{\"type\":\"response.incomplete\"}}\n{GOOD_CODEX}"
+        ))
+        .unwrap();
+        assert!(both.compacted && both.truncated);
     }
 }

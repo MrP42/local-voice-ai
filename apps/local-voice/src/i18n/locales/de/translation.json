@@ -781,7 +781,14 @@
         "off": "aus",
         "previewHint": "Vorschau: Das gewählte Modell hat den Prüflauf noch nicht bestanden. Antworten können falsch sein. Der Spoilerschutz verringert das Risiko, schließt es aber nicht aus.",
         "revoke": "Cloud-Freigabe widerrufen ({{model}})",
-        "revokeHint": "Danach fragt das Buch-Gespräch vor der nächsten Anfrage erneut."
+        "revokeHint": "Danach fragt das Buch-Gespräch vor der nächsten Anfrage erneut.",
+        "subscription": "Abo-Vorschau (Claude Code, Codex)",
+        "subscriptionState": {
+          "on": "an",
+          "off": "aus",
+          "reconfirm": "erneut bestätigen"
+        },
+        "subscriptionHint": "Budget empirisch, nicht bewiesen. Anfragen gehen an Anthropic oder OpenAI über dein Abo."
       },
       "turn": {
         "spoken": "gesprochen",
@@ -796,7 +803,20 @@
         "failed": "Die Antwort ist fehlgeschlagen.",
         "general": "Allgemeinwissen, nicht aus dem Buch",
         "preview": "Vorschau",
-        "previewHint": "Das Modell hat den Prüflauf noch nicht bestanden. Antworten können falsch sein."
+        "previewHint": "Das Modell hat den Prüflauf noch nicht bestanden. Antworten können falsch sein.",
+        "subscriptionHint": "Abo-Vorschau: Das Budget ist empirisch, nicht bewiesen. Antworten können falsch sein."
+      },
+      "subscription": {
+        "title": "Abo-Vorschau einschalten?",
+        "reconfirm": "Die CLI oder das Modell hat sich geändert. Bitte bestätige die Vorschau erneut; bis dahin wirkt der Schalter nicht.",
+        "risk": "Budget empirisch, nicht bewiesen: Bei einem Abo lässt sich vorab nicht beweisen, wie viele Token ein Aufruf braucht. Die App rechnet mit Sicherheitszuschlägen und verwirft jede Antwort, die auf Kompaktierung, Abschneiden oder Abweichungen hindeutet. Antworten können trotzdem falsch sein.",
+        "cloud": "Anfragen gehen an Anthropic bzw. OpenAI über dein Abo. Die Freigabe gilt für die jetzt installierte CLI-Version; nach einem Update musst du sie erneut bestätigen.",
+        "confirm": "Verstanden, einschalten",
+        "cancel": "Abbrechen",
+        "error": {
+          "noCli": "Keine installierte Abo-CLI gefunden. Installiere Claude Code oder Codex und melde dich an.",
+          "other": "Die Vorschau konnte nicht eingeschaltet werden."
+        }
       },
       "found": {
         "title": "Fundstellen",

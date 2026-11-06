@@ -12,6 +12,7 @@ pub mod cli_update;
 pub mod context;
 pub mod estimate;
 pub mod external;
+pub mod preview;
 pub mod resources;
 pub mod runtime;
 pub mod server;

@@ -954,6 +954,19 @@ pub struct AppSettings {
     /// aus; nur dann veroeffentlicht der PC seine Modellliste im Hub.
     #[serde(default)]
     pub book_talk_relay_enabled: bool,
+    /// Buch-Gespraech (lva#334): Schalter „Abo-Vorschau“ fuer Claude Code und
+    /// Codex ueber das Abo. Standard aus; nur nach dem Risikohinweis
+    /// einschaltbar („Budget empirisch, nicht bewiesen; Anfragen gehen an
+    /// Anthropic/OpenAI ueber dein Abo“). Gilt fuer Desktop-Aufrufe und
+    /// Relay-Anfragen, aber nur mit gueltigem Tupel in
+    /// `book_talk_preview_bindings`.
+    #[serde(default)]
+    pub book_talk_subscription_preview: bool,
+    /// Buch-Gespraech (lva#334): beim Einschalten gebundene Tupel (Anbieter,
+    /// Modell, CLI-Version, SHA-256 des Programms) je Abo-Modell. Weicht eines
+    /// ab, ist die Freigabe fuer dieses Modell ungueltig (erneut bestaetigen).
+    #[serde(default)]
+    pub book_talk_preview_bindings: Vec<crate::managers::llm::preview::PreviewBinding>,
     /// Stimmprofile 2a: Vorschläge „klingt wie …, zusammenführen?“ aus Stimmabdrücken
     /// innerhalb einer Besprechung (CAM++). Wirkt erst, wenn das Modell per Knopf
     /// geladen ist; ohne den Schluessel gilt `true`. Kein Abgleich ueber Besprechungen.
@@ -1965,6 +1978,8 @@ pub fn get_default_settings() -> AppSettings {
         book_talk_cloud_consent: Vec::new(),
         book_talk_enabled: false,
         book_talk_relay_enabled: false,
+        book_talk_subscription_preview: false,
+        book_talk_preview_bindings: Vec::new(),
         meeting_voice_suggestions: true,
         meeting_slide_vision: false,
         meeting_echo_cancellation: MeetingEchoCancellation::Auto,

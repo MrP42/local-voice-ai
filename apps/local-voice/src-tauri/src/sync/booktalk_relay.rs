@@ -240,6 +240,12 @@ pub struct RespPayload {
     pub error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage: Option<Usage>,
+    /// Abo-Vorschau (lva#334): die Antwort stammt aus einem CLI-Abo mit nur
+    /// empirischem Budget. Wie `usage` nicht Teil des MAC; aeltere Clients
+    /// ignorieren das Feld (die Oberflaeche des iPhones kennzeichnet Relay-
+    /// Antworten ohne bestandene Pruefung ohnehin als Vorschau).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub preview: bool,
     pub mac: String,
 }
 
@@ -816,6 +822,84 @@ pub fn eligible_models(settings: &AppSettings, ready: Ready) -> Vec<ModelEntry> 
         })
 }
 
+/// Programm-Identitaet (Version, Pruefsumme) je CLI, fuer die Bindung der
+/// Abo-Vorschau (lva#334). `None`: CLI nicht installiert oder nicht lesbar.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Identities {
+    pub claude: Option<crate::managers::llm::preview::Identity>,
+    pub codex: Option<crate::managers::llm::preview::Identity>,
+}
+
+impl Identities {
+    pub fn of(&self, cli: Cli) -> Option<&crate::managers::llm::preview::Identity> {
+        match cli {
+            Cli::Claude => self.claude.as_ref(),
+            Cli::Codex => self.codex.as_ref(),
+        }
+    }
+}
+
+/// Die Modelle, die wirklich angeboten werden duerfen (lva#334): nur mit
+/// eingeschalteter Abo-Vorschau, gueltigem gebundenem Tupel (Anbieter, Modell,
+/// CLI-Version, SHA-256) und belegtem Kontext. `context_tokens` ist der
+/// belegte Wert (Claude 200000, Codex nur ein eingetragener), nie ein
+/// pauschaler Standard.
+pub fn preview_models(
+    settings: &AppSettings,
+    eligible: Vec<ModelEntry>,
+    identities: &Identities,
+) -> Vec<ModelEntry> {
+    use crate::managers::llm::preview;
+    if !settings.book_talk_subscription_preview {
+        return Vec::new();
+    }
+    eligible
+        .into_iter()
+        .filter_map(|mut m| {
+            let cli = match m.provider.as_str() {
+                "claude_cli" => Cli::Claude,
+                "codex_cli" => Cli::Codex,
+                _ => return None,
+            };
+            let binding = preview::binding_for(cli, &m.id, identities.of(cli)?);
+            if preview::binding_state(&settings.book_talk_preview_bindings, &binding)
+                != preview::BindingState::Valid
+            {
+                return None;
+            }
+            let configured = settings
+                .llm_models
+                .iter()
+                .find(|c| c.id == m.config_id)
+                .and_then(|c| c.context_limit);
+            m.context_tokens = preview::context_tokens(cli, configured)?;
+            Some(m)
+        })
+        .collect()
+}
+
+/// Wie [`eligible_models`], aber nur, was die Abo-Vorschau freigibt
+/// ([`preview_models`]). Liest die Programm-Identitaet der bereiten CLIs.
+async fn offered_models(settings: &AppSettings) -> Vec<ModelEntry> {
+    let eligible = eligible_models(settings, ready_now().await);
+    if eligible.is_empty() || !settings.book_talk_subscription_preview {
+        return Vec::new();
+    }
+    let identities = tokio::task::spawn_blocking(|| {
+        let of = |cli: Cli| {
+            crate::managers::llm::cli::locate(cli)
+                .and_then(|binary| crate::managers::llm::preview::identity(&binary).ok())
+        };
+        Identities {
+            claude: of(Cli::Claude),
+            codex: of(Cli::Codex),
+        }
+    })
+    .await
+    .unwrap_or_default();
+    preview_models(settings, eligible, &identities)
+}
+
 /// Veroeffentlicht wird, was mindestens ein Geraet nutzen darf (R1). Ohne
 /// Freigabe bleibt die Liste leer -- dann wird das Objekt geloescht.
 pub fn published_models(
@@ -1047,6 +1131,7 @@ pub struct Progress {
     key: Vec<u8>,
     seq: u32,
     sent_len: usize,
+    preview: bool,
 }
 
 impl Progress {
@@ -1057,7 +1142,14 @@ impl Progress {
             key: key.to_vec(),
             seq: 0,
             sent_len: 0,
+            preview: false,
         }
+    }
+
+    /// Jede weitere Antwort traegt `preview: true` (Abo-Vorschau).
+    pub fn previewing(mut self) -> Self {
+        self.preview = true;
+        self
     }
 
     fn build(
@@ -1080,6 +1172,7 @@ impl Progress {
             done,
             error: error.map(str::to_string),
             usage,
+            preview: self.preview,
             mac: String::new(),
         };
         r.mac = mac_hex(&self.key, resp_canonical(&r).as_bytes());
@@ -1426,7 +1519,7 @@ async fn run_tick(
 
     let wanted = settings.book_talk_relay_enabled && active_grants;
     let eligible = if wanted {
-        eligible_models(settings, ready_now().await)
+        offered_models(settings).await
     } else {
         Vec::new()
     };
@@ -1730,7 +1823,7 @@ async fn process(
 ) {
     use crate::llm_client::{
         send_chat_completion_stream, CliMeta, StreamMessage, CLI_CANCEL, CLI_MAX_TOKENS, CLI_META,
-        CLI_TIMEOUT,
+        CLI_PREVIEW, CLI_REQUIRE_USAGE, CLI_TIMEOUT,
     };
     let mut progress = Progress::new(&req.request_id, &req.device_id, key);
     // Das Abbruchsignal gehoert dieser Anfrage; verlassen wir `process` auf
@@ -1785,6 +1878,35 @@ async fn process(
             return;
         }
     };
+    // Abo-CLI nur als Vorschau (lva#334): Schalter, gueltiges Tupel, belegter
+    // Kontext; sonst wird nichts aufgerufen.
+    let preview_check = match Cli::from_base_url(&provider.base_url) {
+        Some(cli) => {
+            let id = model.clone();
+            let current = tokio::task::spawn_blocking(move || {
+                crate::managers::llm::preview::current_binding(cli, &id)
+            })
+            .await
+            .ok()
+            .and_then(Result::ok);
+            crate::book_ai::talk::preview_check(&call, cli, current, req.max_tokens)
+        }
+        None => None,
+    };
+    let Some(preview_check) = preview_check else {
+        finish(
+            ctx,
+            &mut progress,
+            "",
+            MODEL_UNKNOWN,
+            Some(ERR_MODEL_UNAVAILABLE),
+            None,
+        )
+        .await;
+        end_busy(ctx, sender, &req.request_id);
+        return;
+    };
+    progress = progress.previewing();
     let mut messages = Vec::new();
     if !req.system.trim().is_empty() {
         messages.push(StreamMessage::new("system", req.system.clone()));
@@ -1799,21 +1921,30 @@ async fn process(
         }
     };
     let meta = Arc::new(Mutex::new(CliMeta::default()));
-    let llm = CLI_META.scope(
-        meta.clone(),
-        CLI_TIMEOUT.scope(
-            CALL_TIMEOUT,
-            CLI_CANCEL.scope(
-                cancel.clone(),
-                CLI_MAX_TOKENS.scope(
-                    req.max_tokens,
-                    send_chat_completion_stream(
-                        crate::managers::usage::Purpose::Chat,
-                        &provider,
-                        api_key,
-                        &model,
-                        messages,
-                        &on_delta,
+    // Dasselbe Gesamtbudget und dieselbe Pruefung wie am Desktop: die Vorab-
+    // Pruefung und die Nutzungsangabe erzwingt `cli::call_with_options`, der
+    // Text kommt erst nach der Pruefung in den Puffer.
+    let llm = CLI_PREVIEW.scope(
+        preview_check,
+        CLI_REQUIRE_USAGE.scope(
+            true,
+            CLI_META.scope(
+                meta.clone(),
+                CLI_TIMEOUT.scope(
+                    CALL_TIMEOUT,
+                    CLI_CANCEL.scope(
+                        cancel.clone(),
+                        CLI_MAX_TOKENS.scope(
+                            req.max_tokens,
+                            send_chat_completion_stream(
+                                crate::managers::usage::Purpose::Chat,
+                                &provider,
+                                api_key,
+                                &model,
+                                messages,
+                                &on_delta,
+                            ),
+                        ),
                     ),
                 ),
             ),
