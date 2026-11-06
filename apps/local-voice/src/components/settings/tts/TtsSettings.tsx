@@ -119,11 +119,11 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import { Glyph } from "../../ui/AudioPlayer";
 import {
   MessageSquare,
-  Mic,
   PanelRightClose,
   Plug,
   Replace,
   Settings,
+  Speech,
   TriangleAlert,
 } from "lucide-react";
 import { VOICE_MANAGE, useVoiceChoice } from "./useVoiceChoice";
@@ -3570,7 +3570,9 @@ export const TtsSettings = () => {
                     title={`${t("tts.voices.title")}: ${option.label}`}
                     data-testid="voice-compact"
                   >
-                    <Mic width={16} height={16} aria-hidden="true" />
+                    {/* Sprechende Person statt Mikrofon (Patrick 06.11.2026):
+                        das Mikrofon steht rechts für die Aufnahme. */}
+                    <Speech width={16} height={16} aria-hidden="true" />
                     {/* Sprache der Stimme als Kürzel am Knopf (Codex zu
                         #199): englisches Buch, englische Stimme sichtbar. */}
                     {voiceLanguageOf(option.value) && (

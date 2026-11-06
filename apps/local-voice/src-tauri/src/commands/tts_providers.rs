@@ -765,6 +765,34 @@ pub fn apply_default_voice_in(
     Ok(!own_choice)
 }
 
+/// Phonon als Ersatz, wenn die gewählte Fish-Stimme hier nicht laufen kann (Fish nicht
+/// eingerichtet oder nicht unterstützt): Phonon ist die app-weite Standardstimme (Patrick
+/// 06.11.2026), eine unbrauchbare Fish-Wahl soll nicht still alle Stimmenauswahlen auf
+/// „Fish Speech – nicht eingerichtet“ stellen. Die gemerkte Phonon-Stimme hat Vorrang, sonst
+/// `fallback` (Anton). `Ok(true)`: umgestellt. Rein, unter der Sperre aufgerufen; prüft die
+/// Guardrails wie jede Wahl ([`select_in`]).
+pub fn replace_unusable_fish_in(
+    settings: &mut AppSettings,
+    snapshot: &ProviderSnapshot,
+    fish_ready: bool,
+    listed: &[VoiceDescriptor],
+    fallback: &str,
+) -> Result<bool, TtsError> {
+    if fish_ready || settings.tts_engine != policy::FISH_ID {
+        return Ok(false);
+    }
+    let id = DEFAULT_VOICE_PROVIDER;
+    let voice = settings
+        .tts_providers
+        .voices
+        .get(id)
+        .filter(|v| listed.iter().any(|l| &l.id == *v))
+        .cloned()
+        .unwrap_or_else(|| fallback.to_string());
+    select_in(settings, snapshot, id, Some(voice))?;
+    Ok(true)
+}
+
 /// Modellstand, für den die Stimmenliste in dieser Sitzung schon gelesen wurde (siehe
 /// [`apply_default_voice`]).
 static DEFAULT_VOICE_TRIED: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
@@ -782,11 +810,16 @@ pub(crate) async fn apply_default_voice(app: &AppHandle) {
     let id = DEFAULT_VOICE_PROVIDER;
     let tts = manager(app);
     let snapshot = tts.provider_snapshot();
-    if snapshot
-        .settings
-        .default_voice_applied
-        .iter()
-        .any(|p| p == id)
+    // Fish gewählt, aber hier nicht lauffähig: dann vertritt Phonon (siehe
+    // [`replace_unusable_fish_in`]), auch wenn die Vorgabe schon einmal erledigt war.
+    let fish_unusable = crate::settings::get_settings(app).tts_engine == policy::FISH_ID
+        && !tts.runtime_status().fish.ready;
+    if !fish_unusable
+        && snapshot
+            .settings
+            .default_voice_applied
+            .iter()
+            .any(|p| p == id)
     {
         return;
     }
@@ -821,6 +854,31 @@ pub(crate) async fn apply_default_voice(app: &AppHandle) {
     let Some(voice) = default_voice_in(&voices) else {
         return;
     };
+    if fish_unusable {
+        match mutate_settings(app, |s| {
+            // Der Stand im Moment des Schreibens zählt: wer inzwischen selbst gewählt hat,
+            // steht nicht mehr auf Fish, und es bleibt bei seiner Wahl.
+            let replaced = replace_unusable_fish_in(s, &snapshot, false, &voices, &voice)?;
+            if !s.tts_providers.default_voice_applied.iter().any(|p| p == id) {
+                s.tts_providers.default_voice_applied.push(id.to_string());
+            }
+            Ok(replaced)
+        }) {
+            Ok(true) => {
+                log::info!("Vorlesen: Fish nicht eingerichtet, Phonon übernimmt");
+                tts.voice_changed().await;
+                let _ = tauri::Emitter::emit(app, DEFAULT_VOICE_EVENT, ());
+            }
+            Ok(false) => {}
+            Err(e) => {
+                *DEFAULT_VOICE_TRIED
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner()) = None;
+                log::warn!("Phonon als Ersatz nicht gewählt: {}", e.message);
+            }
+        }
+        return;
+    }
     match mutate_settings(app, |s| apply_default_voice_in(s, &snapshot, &voice)) {
         Ok(true) => {
             log::info!("Vorlesen: Vorgabestimme {id}/{voice} gewählt");
@@ -1216,6 +1274,51 @@ mod tests {
         assert!(!apply_default_voice_in(&mut s, &snap, "Anton").unwrap());
         assert_eq!(s.tts_engine, "fish", "die eigene Wahl bleibt");
         assert_eq!(s.tts_providers.default_voice_applied, ["phonon"]);
+    }
+
+    /// Fish gewählt, aber hier nicht lauffähig (Patrick 06.11.2026): Phonon übernimmt, mit der
+    /// gemerkten Phonon-Stimme, sonst Anton. Ist Fish lauffähig oder eine andere Engine aktiv,
+    /// bleibt alles, wie es ist.
+    #[test]
+    fn unbrauchbare_fish_wahl_wird_durch_phonon_ersetzt() {
+        let (p, snap) = approved_phonon();
+        let list = vec![stimme("Anton"), stimme("Nele")];
+        let mut s = crate::settings::get_default_settings();
+        s.tts_providers = p.clone();
+        s.tts_engine = "fish".into();
+        s.tts_voice = Some("patrick".into());
+        s.tts_providers.voices.insert("phonon".into(), "Nele".into());
+
+        let mut ready = s.clone();
+        assert!(!replace_unusable_fish_in(&mut ready, &snap, true, &list, "Anton").unwrap());
+        assert_eq!(ready.tts_engine, "fish", "lauffähiges Fish bleibt");
+
+        assert!(replace_unusable_fish_in(&mut s, &snap, false, &list, "Anton").unwrap());
+        assert_eq!(s.tts_engine, "provider:phonon");
+        assert_eq!(
+            s.tts_providers.voices.get("phonon").map(String::as_str),
+            Some("Nele"),
+            "die gemerkte Phonon-Stimme hat Vorrang"
+        );
+
+        let mut fremd = crate::settings::get_default_settings();
+        fremd.tts_providers = p;
+        fremd.tts_engine = "fish".into();
+        fremd
+            .tts_providers
+            .voices
+            .insert("phonon".into(), "Gibtsnicht".into());
+        assert!(replace_unusable_fish_in(&mut fremd, &snap, false, &list, "Anton").unwrap());
+        assert_eq!(
+            fremd.tts_providers.voices.get("phonon").map(String::as_str),
+            Some("Anton"),
+            "unbekannte gemerkte Stimme: Anton"
+        );
+
+        let mut piper = crate::settings::get_default_settings();
+        piper.tts_engine = "piper".into();
+        assert!(!replace_unusable_fish_in(&mut piper, &snap, false, &list, "Anton").unwrap());
+        assert_eq!(piper.tts_engine, "piper");
     }
 
     /// Jede ausdrückliche Wahl bleibt, egal bei welchem Anbieter (Codex P1): Fish-Stimme,

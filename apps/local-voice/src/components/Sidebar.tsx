@@ -47,6 +47,8 @@ interface IconProps {
 
 interface SectionConfig {
   labelKey: string;
+  /** Kurzer Tooltip zum Eintrag (z. B. was „Chat“ kann). */
+  hintKey?: string;
   icon: React.ComponentType<IconProps>;
   component: React.ComponentType;
 }
@@ -69,6 +71,7 @@ export const SECTIONS_CONFIG = {
   },
   voice: {
     labelKey: "sidebar.voiceCall",
+    hintKey: "sidebar.voiceCallHint",
     icon: Phone,
     component: VoiceCallPage,
   },
@@ -148,8 +151,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const iconOnly = collapsed && !narrow;
 
   const item = (id: SidebarSection) => {
-    const { icon: Icon, labelKey } = SECTIONS_CONFIG[id];
+    const config: SectionConfig = SECTIONS_CONFIG[id];
+    const { icon: Icon, labelKey, hintKey } = config;
     const label = t(labelKey);
+    const hint = hintKey ? t(hintKey) : undefined;
     return (
       <NavItem
         key={id}
@@ -159,7 +164,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         aria-current={activeSection === id ? "page" : undefined}
         // Eingeklappt bleibt nur das Symbol; der Name steht dann im Tooltip
         // (title) und für Screenreader im aria-label.
-        title={iconOnly ? label : undefined}
+        title={iconOnly ? (hint ? `${label}: ${hint}` : label) : hint}
         aria-label={iconOnly ? label : undefined}
       >
         <Icon size={20} aria-hidden="true" />

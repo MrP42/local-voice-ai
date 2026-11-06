@@ -455,7 +455,7 @@ async function goTo(page: Page, name: string) {
 
 async function openPage(page: Page) {
   await page.goto("/");
-  await goTo(page, "Sprachgespräch");
+  await goTo(page, "Chat");
   await expect(
     page.getByRole("heading", { name: "Worüber möchtest du sprechen?" }),
   ).toBeVisible();
@@ -547,7 +547,7 @@ test.describe("Sprachgespraech", () => {
   test("Infozeile ist eine Zeile mit i-Knopf und Popover", async ({ page }) => {
     await openPage(page);
     const info = page.getByRole("button", {
-      name: "Informationen zum Sprachgespräch",
+      name: "Informationen zum Chat",
     });
     await expect(info).toBeVisible();
     const row = info.locator("xpath=..");
@@ -1013,7 +1013,7 @@ test.describe("Sprachgespraech", () => {
     await historyToggle(page).click();
     await expect(history(page)).toHaveCount(0);
     await page.reload();
-    await goTo(page, "Sprachgespräch");
+    await goTo(page, "Chat");
     await expect(emptyTitle(page)).toBeVisible();
     await expect(history(page)).toHaveCount(0);
     await historyToggle(page).click();
@@ -2559,7 +2559,7 @@ test.describe("Sprachgespraech aufgeräumte Oberfläche", () => {
     await historyToggle(page).click();
     await expect(history(page)).toHaveCount(0);
     const info = page.getByRole("button", {
-      name: "Informationen zum Sprachgespräch",
+      name: "Informationen zum Chat",
     });
     const row = info.locator("xpath=..");
     await expect(row.locator(historyToggleSelector)).toBeVisible();

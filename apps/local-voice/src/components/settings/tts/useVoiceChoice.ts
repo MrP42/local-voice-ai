@@ -209,6 +209,10 @@ export function useVoiceChoice(phase: string) {
           await updateSetting("tts_piper_voice", value.slice(6));
           await updateSetting("tts_engine", "piper");
         } else {
+          // Fish ist hier nicht eingerichtet: eine gemerkte Fish-Stimme (Reiter,
+          // Seite) darf die laufende Stimme nicht still auf „nicht eingerichtet“
+          // umstellen (Patrick 06.11.2026: Phonon ist die Standardstimme).
+          if (!fishReady) return;
           if ((getSetting("tts_engine") ?? "fish") !== "fish") {
             await updateSetting("tts_engine", "fish");
           }
@@ -217,7 +221,7 @@ export function useVoiceChoice(phase: string) {
         await commands.ttsVoiceChanged().catch(() => undefined);
       })();
     },
-    [getSetting, updateSetting, refreshSettings],
+    [getSetting, updateSetting, refreshSettings, fishReady],
   );
 
   /* Ist die gerade gewaehlte Stimme nicht eingerichtet? Dann sagt ein Hinweis
