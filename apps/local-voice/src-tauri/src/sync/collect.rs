@@ -39,8 +39,10 @@ pub const SYNCED_SETTINGS: &[&str] = &[
     "tts_tag_model",
 ];
 
-/// Größte Klartextlänge, die der Hub trägt (Spec Abschnitt 4).
-pub const MAX_PLAINTEXT: usize = 256 * 1024;
+/// Größte Klartextlänge, die der Hub trägt (Spec Abschnitt 4). 3 MiB, damit
+/// lange Transkripte in ein Objekt passen; base64 + Hülle bleibt unter der
+/// 5-MiB-Grenze des Hostings (wai-portal: MAX_PAYLOAD_BYTES 4 300 000).
+pub const MAX_PLAINTEXT: usize = 3 * 1024 * 1024;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct LocalObject {

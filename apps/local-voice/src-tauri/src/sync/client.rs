@@ -165,6 +165,11 @@ fn base(url: &str) -> String {
 
 async fn error_from(res: reqwest::Response) -> HubError {
     let status = res.status();
+    let diag = if status.is_server_error() {
+        response_diag(&res)
+    } else {
+        String::new()
+    };
     let text = res.text().await.unwrap_or_default();
     let code = serde_json::from_str::<ApiError>(&text)
         .ok()
@@ -177,7 +182,7 @@ async fn error_from(res: reqwest::Response) -> HubError {
         (s, None) => {
             // Kein JSON der App: Hosting oder PHP-Abbruch. Ein Auszug macht die Ursache im Log sichtbar.
             let hint = body_hint(&text);
-            log::warn!("Hub: HTTP {s} ohne App-Fehler, Antwort: {hint:?}");
+            log::warn!("Hub: HTTP {s} ohne App-Fehler {diag}, Antwort: {hint:?}");
             if hint.is_empty() {
                 HubError::Other(format!("HTTP {s}"))
             } else {
@@ -185,6 +190,34 @@ async fn error_from(res: reqwest::Response) -> HubError {
             }
         }
     }
+}
+
+/// Pfad (Blob-Kennung gekürzt), HTTP-Version und die Kopfzeilen, die das
+/// Hosting verraten. Ohne Token und ohne Inhalte.
+fn response_diag(res: &reqwest::Response) -> String {
+    let path: String = res
+        .url()
+        .path()
+        .split('/')
+        .map(|seg| {
+            if seg.len() == 64 && seg.bytes().all(|b| b.is_ascii_hexdigit()) {
+                format!("{}…", &seg[..8])
+            } else {
+                seg.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("/");
+    let headers: Vec<String> = res
+        .headers()
+        .iter()
+        .filter(|(k, _)| {
+            let k = k.as_str();
+            matches!(k, "server" | "content-type" | "content-length" | "via") || k.starts_with("x-")
+        })
+        .map(|(k, v)| format!("{k}={}", v.to_str().unwrap_or("?")))
+        .collect();
+    format!("[{path} {:?} {}]", res.version(), headers.join(" "))
 }
 
 /// Kurzer, einzeiliger Auszug einer Fehlerantwort ohne HTML-Tags (höchstens 160 Zeichen).
@@ -254,7 +287,11 @@ impl HubClient {
         objects: &[PushObject],
     ) -> Result<Vec<PushResult>, HubError> {
         let res = self
-            .auth(http()?.post(format!("{}/api/v1/voice/sync/push", self.url)))
+            // Einzelne Objekte tragen bis ~4,2 MB (lange Transkripte).
+            .auth(
+                http_with(Duration::from_secs(120))?
+                    .post(format!("{}/api/v1/voice/sync/push", self.url)),
+            )
             .json(&serde_json::json!({ "device_id": device_id, "objects": objects }))
             .send()
             .await
@@ -370,6 +407,12 @@ impl HubClient {
             .await
             .map_err(|e| HubError::Other(format!("Hub nicht erreichbar: {e}")))?;
         if !res.status().is_success() {
+            log::warn!(
+                "Hub: Stück {index} abgelehnt (HTTP {}), Chiffrat {} Bytes, Body ~{} Bytes",
+                res.status().as_u16(),
+                sealed.len(),
+                body.data.len() + 90
+            );
             return Err(error_from(res).await);
         }
         Ok(())
