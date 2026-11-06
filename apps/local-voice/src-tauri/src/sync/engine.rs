@@ -238,7 +238,10 @@ const TOMBSTONED: [&str; 4] = [
 fn is_library(collection: &str) -> bool {
     matches!(
         collection,
-        books::COLLECTION_BOOK | books::COLLECTION_PROGRESS | books::COLLECTION_BOOKMARK
+        books::COLLECTION_BOOK
+            | books::COLLECTION_PROGRESS
+            | books::COLLECTION_BOOKMARK
+            | crate::lesestatistik::COLLECTION_READLOG
     )
 }
 
@@ -923,6 +926,12 @@ fn apply_remote(
                 value.as_ref(),
                 synced_hash,
             )
+        }
+        crate::lesestatistik::COLLECTION_READLOG => {
+            let value = (!remote.deleted)
+                .then(|| decrypt(key, cfg, remote))
+                .transpose()?;
+            books::apply_readlog(app, &remote.object_id, value.as_ref())
         }
         other => {
             log::warn!("Sync: unbekannte Sammlung {other} übersprungen");

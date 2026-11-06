@@ -24,7 +24,7 @@ Kein eigener Menüpunkt: Einstieg aus der Bibliothek. Der Name in der Oberfläch
 | Punkt | Festlegung |
 |---|---|
 | Speicherort | `<appdata>/library/lesestatistik/` auf dem Gerät |
-| Abgleich | Nur über den bestehenden Geräte-Sync (Ende-zu-Ende verschlüsselt, nur eigene gekoppelte Geräte). Schalter „Lesestatistik zwischen meinen Geräten abgleichen“ unter Einstellungen > Allgemein > Speicher, Vorgabe **an** |
+| Abgleich | Nur über den bestehenden Geräte-Sync (Ende-zu-Ende verschlüsselt, nur eigene gekoppelte Geräte). Schalter „Lesestatistik zwischen meinen Geräten abgleichen“ (`reading_stats_sync`), **Vorgabe aus**, je Gerät; die Statistikseite fragt einmal, wenn der Geräte-Sync aktiv ist. Aus = dieses Gerät sendet nichts; Stände, die andere Geräte mit Zustimmung geteilt haben, werden angenommen |
 | KI-Einordnung | Gesendet werden nur Titel, Autor, Klappentext und die ersten 2.000 Zeichen des Buchs an das für „Bibliothek“ gewählte Modell (lokal bevorzugt). Hinweiszeile zeigt, wohin |
 | Zweck | Persönliche Übersicht für den Nutzer selbst. Nichts davon fließt in andere Funktionen (Buch-Gespräch, Vorschläge) |
 | Löschen | „Statistik löschen …“: alles oder ein Zeitraum; wirkt über den Sync auf allen Geräten (Grabstein je Gerät und Tag) |
@@ -59,7 +59,7 @@ Hören und Mitlesen gleichzeitig zählt **einmal** als `hoeren` (kein Doppelzäh
   **Buchseiten**, wenn die Seitenzahl bekannt ist (`Zeichen × Seiten / Textlänge`), sonst **Normseite**
   (1.800 Zeichen). Die Anzeige sagt, welche Umrechnung gilt.
 - Hörbuch: Anteil des Hörbuchs × Seitenzahl, wenn bekannt; mit Transkript/Mitlese-Abgleich über die Textstelle.
-  Ohne beides nur Zeit.
+  Ohne beides **nur Zeit** (Codex 06.11.), keine Schätzung über Wörter je Minute.
 - Seiten sind Schätzwerte und werden gerundet angezeigt.
 
 ### Sprache
@@ -111,7 +111,9 @@ Ein Buch mit `classified_by = "hand"` wird nie automatisch neu eingeordnet.
 ### Leseziel
 
 Synchronisierte Einstellungen (`SYNCED_SETTINGS`): `reading_goal_minutes` (0 = aus, Vorschlag 30),
-`reading_goal_days` (Wochentage, Vorgabe alle 7), `reading_stats_sync` (bool), `reading_stats_paused` (bool, gerätespezifisch).
+`reading_goal_days` (Bitmaske Mo–So, Vorgabe alle 7), `reading_stats_ai` (KI-Einordnung, Vorgabe an).
+Je Gerät: `reading_stats_sync` (Vorgabe aus), `reading_stats_paused`. Erfassung, Abgleich und KI-Einordnung
+sind getrennt schaltbar (Codex A3).
 
 ## Kategorien (Vorlagen)
 
@@ -153,7 +155,8 @@ Themen sind frei; die KI schlägt 2–4 vor, die Eingabe vervollständigt aus be
 ### Einstieg
 
 In der Bibliotheksleiste vor „Auswählen“ ein kleiner Knopf: Ring mit Tagesfortschritt + „18 / 30 Min.“
-(ohne Ziel: Diagrammsymbol + „Lesestatistik“). Unter 640 px nur Ring als 44-px-Ziel mit Beschriftung im Tooltip/aria-label.
+(ohne Ziel: Diagrammsymbol + „Lesestatistik“), Zugriffsname „Lesestatistik, heute 18 von 30 Minuten“.
+Ergänzend ein Eintrag im ⋮-Menü der Bibliothek (Codex 06.11.). Unter 640 px nur Ring als 44-px-Ziel mit Beschriftung im Tooltip/aria-label.
 Öffnet die Statistik **in der Bibliothek** wie die Buchansicht (Zurück-Pfeil, gleiche Kopfzeile, `Seitenkopf`
 bleibt „Bibliothek“, Untertitel „Lesestatistik“).
 
@@ -206,8 +209,20 @@ Daneben „Gelesen: 6 h 40 Min. · 212 Seiten · zuletzt gestern“ als Link in 
 Gemeinsame Testvektoren `docs/superpowers/specs/2026-11-06-lesestatistik-vektoren.json` sichern, dass Rust,
 TypeScript und Swift gleich zusammenführen und rechnen.
 
-## Offene Fragen an Codex
+## Entscheidungen und Auflagen (Codex, 06.11.2026, bedingt JA auf d2c8591a)
 
-1. Sync-Schalter Vorgabe an (eigene Geräte, E2E) – oder aus bis zur ausdrücklichen Zustimmung?
-2. Seiten bei Hörbüchern ohne Seitenzahl: nur Zeit (Vorschlag) oder Schätzung über 150 Wörter/Min.?
-3. Einstieg: Ring-Knopf in der Bibliotheksleiste (Vorschlag) oder nur Eintrag im ⋮-Menü der Bibliothek?
+1. Abgleich nur nach ausdrücklicher Zustimmung je Gerät (Vorgabe aus).
+2. Hörbuch ohne Seitenzahl: nur Zeit.
+3. Ring-Knopf in der Leiste mit Zugriffsname, ⋮-Menü ergänzend.
+
+- **A1** Zähler je Gerät/Buch/Tag/Format, Merge komponentenweise per Maximum, danach Geräte summieren.
+  Gleichzeitiges Lesen und Hören zählt nicht doppelt zur Zielzeit: ein Taktgeber je Gerät, Mitlesen zählt als Hören.
+- **A2** Löschen mit neuer Epoche (`since`); Grabsteine schlagen späte Offline-Daten (Eimer mit `since` ≤ Grabstein
+  zählen nie). Der Dialog nennt den Geltungsbereich („auf allen deinen Geräten, Tage x–y“).
+- **A3** Erfassung, Abgleich und KI-Einordnung getrennt schaltbar; vor externer Einordnung Anbieter und gesendete
+  Felder zeigen, lokale Modelle kennzeichnen; „Pause“ erklärt ihre Wirkung.
+- **A4** Ziele ≥ 44 px, Kontrast gemessen, Tastatur/Fokus/Schließen des Ziel-Popovers (Esc, Fokus zurück),
+  Diagrammwerte auch als Tabelle.
+- **A5** „insgesamt“ und „im Zeitraum“ klar benennen; Jahresliste als Ausschnitt kennzeichnen („7 von 41“, „Alle zeigen“).
+- **A6** Leerzustände (Erstnutzung, leerer Zeitraum, pausiert); Export/Löschen ohne Daten deaktiviert; Ziel aus
+  und Buch ohne Seitenzahl sichtbar darstellen.

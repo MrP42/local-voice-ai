@@ -37,6 +37,11 @@ pub const SYNCED_SETTINGS: &[&str] = &[
     "tts_tag_favorites",
     "tts_tag_provider",
     "tts_tag_model",
+    // Lesestatistik (lva#354): Ziel und KI-Einordnung gelten für alle Geräte;
+    // Abgleich und Pause bleiben je Gerät (Zustimmung je Gerät).
+    "reading_goal_minutes",
+    "reading_goal_days",
+    "reading_stats_ai",
 ];
 
 /// Größte Klartextlänge, die der Hub trägt (Spec Abschnitt 4). 3 MiB, damit

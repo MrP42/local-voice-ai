@@ -6826,6 +6826,50 @@ async libraryProgressPut(entries: ProgressEntry[]) : Promise<Result<null, string
 }
 },
 /**
+ * Zuwächse einbuchen (gebündelt von der Oberfläche).
+ */
+async readingLogAdd(deltas: ReadingDelta[]) : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("reading_log_add", { deltas }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Einstellungen der Lesestatistik auf einmal setzen.
+ */
+async changeReadingStatsSetting(goalMinutes: number, goalDays: number, sync: boolean, ai: boolean, paused: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_reading_stats_setting", { goalMinutes, goalDays, sync, ai, paused }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Auswertung aller Geräte.
+ */
+async readingLogRows() : Promise<Result<ReadingRow[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("reading_log_rows") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Tage `from..=to` auf allen Geräten löschen. Liefert die Zahl der Tage.
+ */
+async readingLogClear(from: string, to: string) : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("reading_log_clear", { from, to }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Gespeicherter Abgleich des Buchs (leer, wenn der Text sich geändert hat).
  */
 async audiosyncLoad(bookId: string) : Promise<Result<AudioSyncCache, string>> {
@@ -8077,6 +8121,27 @@ tts_tag_model?: string;
  * Bei entfernten Anbietern wirkungslos.
  */
 tts_tag_device?: string; 
+/**
+ * Lesestatistik (lva#354): Tagesziel in Minuten, 0 = kein Ziel.
+ */
+reading_goal_minutes?: number; 
+/**
+ * Wochentage mit Ziel als Bitmaske (Bit 0 = Montag … Bit 6 = Sonntag).
+ */
+reading_goal_days?: number; 
+/**
+ * Lesestatistik zwischen eigenen Geräten abgleichen. Nur nach
+ * ausdrücklicher Zustimmung je Gerät (Codex-Entscheid 06.11.2026).
+ */
+reading_stats_sync?: boolean; 
+/**
+ * Bücher mit einem Sprachmodell einordnen lassen (nur Metadaten).
+ */
+reading_stats_ai?: boolean; 
+/**
+ * Erfassung pausiert: solange an, zählt dieses Gerät nichts.
+ */
+reading_stats_paused?: boolean; 
 /**
  * Sprache der Tags im Vorlesetext: "auto" (= Oberflaeche), "de", "en".
  * Betrifft nur Anzeige und Einfuegen; die Engine bekommt immer die
@@ -10097,6 +10162,26 @@ export type Letterhead = { schema: string; id: string; name: string;
  * Laden eigener Profile immer auf `false` gesetzt, ein Wert aus der Datei zaehlt nie.
  */
 builtin?: boolean; firma: Firma; logo?: Logo | null; farben: Farben; fusszeile: Fusszeile }
+/**
+ * Eine Meldung der Oberfläche: Zuwachs seit der letzten Meldung.
+ */
+export type ReadingDelta = { 
+/**
+ * Ortsdatum `JJJJ-MM-TT`.
+ */
+day: string; book_id: string; 
+/**
+ * `lesen`, `hoeren` oder `vorlesen`.
+ */
+format: string; 
+/**
+ * Sprachcode (`de`, `en`, …) oder `und`.
+ */
+lang: string; sec: number; chars?: number; audio_ms?: number }
+/**
+ * Eine Zeile der Auswertung, über alle Geräte summiert.
+ */
+export type ReadingRow = { day: string; book_id: string; format: string; lang: string; sec: number; chars: number; audio_ms: number }
 export type LibraryBook = { 
 /**
  * Leer beim Anlegen; das Backend vergibt `book_<ms>`.
@@ -10116,6 +10201,20 @@ cover_source: string; text: TextVersion | null; audio: AudioVersion | null; adde
  * Buch (nicht zur Anzeige) und reist deshalb in der Sync-Sammlung `book` mit.
  */
 favorite?: boolean; 
+/**
+ * Kategorie der Lesestatistik (lva#354): Schlüssel einer Vorlage
+ * (`persoenlichkeit`, …) oder `eigen:<name>`. Reist mit dem Buch.
+ */
+category?: string | null; 
+/**
+ * Freie Themen (höchstens 5), z. B. „Rhetorik“.
+ */
+topics?: string[]; 
+/**
+ * `ki` = Vorschlag, noch nicht bestätigt; `hand` = vom Nutzer gesetzt,
+ * wird nie automatisch überschrieben.
+ */
+classified_by?: string | null; 
 /**
  * Nur zur Anzeige, wird beim Auflisten gesetzt: absoluter Pfad des Covers
  * samt Änderungszeit (`?v=`), damit ein neues Cover sofort erscheint.
