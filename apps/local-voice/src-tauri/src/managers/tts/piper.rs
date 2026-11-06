@@ -195,6 +195,33 @@ pub fn run_piper_blocking(
     run_piper_cancellable(paths, text, speed, timeout, None)
 }
 
+/// Beendet `child` samt Kindprozessen. Windows: das Job-Objekt mit
+/// KILL_ON_JOB_CLOSE schließen, ohne Job `taskkill /T`. Unix: Signal an die
+/// eigene Prozessgruppe (gestartet mit `process_group(0)`).
+fn kill_tree(child: &mut std::process::Child, job: Option<crate::process_guard::ProcessGuard>) {
+    #[cfg(windows)]
+    if job.is_none() && matches!(child.try_wait(), Ok(None)) {
+        let _ = std::process::Command::new("taskkill")
+            .args(["/PID", &child.id().to_string(), "/T", "/F"])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .output();
+    }
+    drop(job);
+    #[cfg(unix)]
+    if matches!(child.try_wait(), Ok(None)) {
+        let _ = std::process::Command::new("kill")
+            .args(["-KILL", "--", &format!("-{}", child.id())])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
 /// Wie [`run_piper_blocking`]; ein gesetztes `cancel` beendet den Prozess
 /// sofort (Prüfung alle 25 ms), statt bis zum Ende oder Timeout zu warten.
 pub fn run_piper_cancellable(
@@ -224,35 +251,26 @@ pub fn run_piper_cancellable(
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW (Muster: media.rs)
     }
+    // Eigene Prozessgruppe: Abbruch und Timeout beenden auch Kindprozesse.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("{ERR_BINARY_MISSING} ({e})"))?;
     // Job-Objekt mit KILL_ON_JOB_CLOSE: endet die App mitten in einer
     // Synthese (Beenden, Absturz), stirbt Piper mit, statt als Waise zu
     // laufen. Kein Speicherdeckel, CPU-Deckel wie bei ffmpeg.
-    #[cfg(windows)]
-    let _job = crate::process_guard::ProcessGuard::attach(
+    let mut job = crate::process_guard::ProcessGuard::attach(
         &child,
         None,
         crate::process_guard::CPU_CAP_PERCENT,
     );
 
-    // Der Text als GENAU EINE Zeile: Piper spricht je stdin-Zeile eine
-    // Äußerung — ein Satz mit hartem Umbruch käme sonst zweigeteilt heraus.
-    // Sätze sind durch `tts_max_chars` gedeckelt (≤ ~20 KB) und passen damit
-    // sicher in den Pipe-Puffer; ein Schreibfehler wird bewusst verschluckt:
-    // stirbt Piper früh, ist die Pipe zu, und die Diagnose liefern dann
-    // Exit-Status und stderr, nicht der Write.
-    if let Some(mut stdin) = child.stdin.take() {
-        use std::io::Write as _;
-        let line = text.split_whitespace().collect::<Vec<_>>().join(" ");
-        let _ = stdin.write_all(line.as_bytes());
-        let _ = stdin.write_all(b"\n");
-        // Drop schließt stdin: Piper sieht EOF und beendet sich nach der Zeile.
-    }
-
-    // stderr nebenläufig leeren, damit ein gesprächiges Piper nicht am
-    // vollen Pipe-Puffer hängen bleibt, während wir auf das Ende warten.
+    // stderr nebenläufig leeren, BEVOR geschrieben wird: ein gesprächiges
+    // Piper bleibt so nicht am vollen Puffer hängen.
     let mut stderr_pipe = child.stderr.take();
     let stderr_reader = std::thread::spawn(move || {
         let mut buf = String::new();
@@ -262,6 +280,30 @@ pub fn run_piper_cancellable(
         buf
     });
 
+    // Der Text als GENAU EINE Zeile: Piper spricht je stdin-Zeile eine
+    // Äußerung — ein Satz mit hartem Umbruch käme sonst zweigeteilt heraus.
+    // Geschrieben wird in einem eigenen Thread: liest Piper stdin nicht, hängt
+    // nur dieser Thread an der vollen Pipe, Deadline und Abbruch greifen
+    // trotzdem (das Beenden schließt die Pipe, der Schreiber endet). Ein
+    // Schreibfehler wird bewusst verschluckt: die Diagnose liefern dann
+    // Exit-Status und stderr. Drop schließt stdin: Piper sieht EOF.
+    let stdin_pipe = child.stdin.take();
+    let line = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let stdin_writer = std::thread::spawn(move || {
+        if let Some(mut stdin) = stdin_pipe {
+            use std::io::Write as _;
+            let _ = stdin.write_all(line.as_bytes());
+            let _ = stdin.write_all(b"\n");
+        }
+    });
+
+    // Den ganzen Prozessbaum beenden. Danach schließen sich die Pipes, und die
+    // I/O-Threads lassen sich einsammeln (kein Zombie, keine Waisen-Threads).
+    let stop = |child: &mut std::process::Child,
+                job: &mut Option<crate::process_guard::ProcessGuard>| {
+        kill_tree(child, job.take());
+    };
+
     // Warten mit Timeout — `std::process` kennt keins, also try_wait-Schleife.
     let deadline = std::time::Instant::now() + timeout;
     let status = loop {
@@ -269,13 +311,15 @@ pub fn run_piper_cancellable(
             Ok(Some(status)) => break status,
             Ok(None) => {
                 if cancel.is_some_and(|c| c.load(std::sync::atomic::Ordering::Acquire)) {
-                    let _ = child.kill();
-                    let _ = child.wait(); // kein Zombie
+                    stop(&mut child, &mut job);
+                    let _ = stdin_writer.join();
+                    let _ = stderr_reader.join();
                     return Err(super::providers::pipeline::CANCELLED_MESSAGE.to_string());
                 }
                 if std::time::Instant::now() >= deadline {
-                    let _ = child.kill();
-                    let _ = child.wait(); // kein Zombie
+                    stop(&mut child, &mut job);
+                    let _ = stdin_writer.join();
+                    let _ = stderr_reader.join();
                     return Err(format!(
                         "Piper hat nach {} s nicht geantwortet und wurde beendet",
                         timeout.as_secs()
@@ -283,9 +327,15 @@ pub fn run_piper_cancellable(
                 }
                 std::thread::sleep(Duration::from_millis(25));
             }
-            Err(e) => return Err(format!("Piper-Prozess nicht abfragbar: {e}")),
+            Err(e) => {
+                stop(&mut child, &mut job);
+                let _ = stdin_writer.join();
+                let _ = stderr_reader.join();
+                return Err(format!("Piper-Prozess nicht abfragbar: {e}"));
+            }
         }
     };
+    let _ = stdin_writer.join();
     let stderr = stderr_reader.join().unwrap_or_default();
     if !status.success() {
         return Err(format!(
@@ -504,7 +554,7 @@ impl TtsEngine for PiperEngine {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     // ------------------------------------------------------------------
@@ -766,11 +816,11 @@ mod tests {
     /// Ein Fake-Piper als Skript: `Ok` kopiert eine Mini-WAV an den
     /// Ausgabepfad (Argument 6), `Broken` schreibt Müll dorthin, `Fail`
     /// endet mit Exit-Code 3 und einer stderr-Zeile.
-    enum Fake {
+    pub(crate) enum Fake {
         Ok,
         Broken,
         Fail,
-        Hang,
+        Heartbeat,
     }
 
     fn write_fake_piper(dir: &Path, fake: Fake) -> PathBuf {
@@ -791,7 +841,15 @@ mod tests {
                 Fake::Fail => {
                     "@echo off\r\necho Modelldatei nicht lesbar 1>&2\r\nexit /b 3\r\n".to_string()
                 }
-                Fake::Hang => "@echo off\r\nping -n 60 127.0.0.1 > nul\r\n".to_string(),
+                // Liest stdin nie; ein Kindprozess (`start /b`) schreibt
+                // jede Sekunde einen Herzschlag, der Elternprozess wartet.
+                Fake::Heartbeat => format!(
+                    "@echo off\r\nif \"%~1\"==\"hb\" goto loop\r\n\
+                     start /b \"\" cmd /c \"%~f0\" hb\r\n\
+                     ping -n 120 127.0.0.1 > nul\r\nexit /b\r\n\
+                     :loop\r\necho x>> \"{hb}\"\r\nping -n 2 127.0.0.1 > nul\r\ngoto loop\r\n",
+                    hb = dir.join("hb").display()
+                ),
             };
             std::fs::write(&script, body).unwrap();
             script
@@ -806,10 +864,11 @@ mod tests {
                 Fake::Fail => {
                     "#!/bin/sh\necho 'Modelldatei nicht lesbar' >&2\nexit 3\n".to_string()
                 }
-                // `exec`: die PID der Datei ist der wartende Prozess selbst.
-                Fake::Hang => format!(
-                    "#!/bin/sh\necho $$ > \"{}\"\nexec sleep 60\n",
-                    dir.join("pid").display()
+                // Liest stdin nie; ein Kindprozess im Hintergrund schreibt
+                // alle 50 ms einen Herzschlag, der Elternprozess wartet.
+                Fake::Heartbeat => format!(
+                    "#!/bin/sh\n( while true; do echo x >> \"{hb}\"; sleep 0.05; done ) &\nwait\n",
+                    hb = dir.join("hb").display()
                 ),
             };
             std::fs::write(&script, body).unwrap();
@@ -818,7 +877,7 @@ mod tests {
         }
     }
 
-    fn fake_paths(dir: &Path, fake: Fake) -> PiperPaths {
+    pub(crate) fn fake_paths(dir: &Path, fake: Fake) -> PiperPaths {
         PiperPaths {
             binary: write_fake_piper(dir, fake),
             model: dir.join("eva.onnx"),
@@ -855,31 +914,56 @@ mod tests {
         assert!(err.contains("Modelldatei nicht lesbar"), "war: {err}");
     }
 
+    /// Codex-Auflage: Abbruch bei blockierendem stdin (Text größer als der
+    /// Pipe-Puffer, Piper liest nicht), Ende des ganzen Prozessbaums und
+    /// Rückkehr erst nach dem Einsammeln beider I/O-Threads. Läuft unter
+    /// Windows und Unix; die Rückkehr wird mit Zeitgrenze geprüft, damit ein
+    /// Hänger als Fehlschlag statt als stehender Testlauf sichtbar wird.
     #[test]
-    fn abbruch_beendet_den_piper_prozess() {
+    fn abbruch_beendet_den_prozessbaum_auch_bei_blockiertem_stdin() {
         use std::sync::atomic::{AtomicBool, Ordering};
         let dir = tempfile::tempdir().unwrap();
-        let paths = fake_paths(dir.path(), Fake::Hang);
+        let paths = fake_paths(dir.path(), Fake::Heartbeat);
+        let hb = dir.path().join("hb");
         let cancel = std::sync::Arc::new(AtomicBool::new(false));
-        let c2 = cancel.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(300));
-            c2.store(true, Ordering::Release);
-        });
-        let started = std::time::Instant::now();
-        let err = run_piper_cancellable(&paths, "Hallo.", None, PIPER_TIMEOUT, Some(&cancel))
-            .unwrap_err();
-        assert_eq!(err, super::super::providers::pipeline::CANCELLED_MESSAGE);
-        assert!(
-            started.elapsed() < Duration::from_secs(5),
-            "nicht erst nach dem Timeout"
-        );
-        #[cfg(target_os = "linux")]
+        let (tx, rx) = std::sync::mpsc::channel();
         {
-            let pid = std::fs::read_to_string(dir.path().join("pid")).unwrap();
-            let proc_dir = std::path::PathBuf::from(format!("/proc/{}", pid.trim()));
-            assert!(!proc_dir.exists(), "Piper-Prozess läuft nicht weiter");
+            let cancel = cancel.clone();
+            std::thread::spawn(move || {
+                let text = "wort ".repeat(400_000); // 2 MB, weit über dem Pipe-Puffer
+                let started = std::time::Instant::now();
+                let res = run_piper_cancellable(&paths, &text, None, PIPER_TIMEOUT, Some(&cancel));
+                let _ = tx.send((res, started.elapsed()));
+            });
         }
+        let len = |p: &Path| std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
+        let until = std::time::Instant::now() + Duration::from_secs(15);
+        while len(&hb) == 0 {
+            assert!(
+                std::time::Instant::now() < until,
+                "Herzschlag startet nicht"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        cancel.store(true, Ordering::Release);
+        let (res, elapsed) = rx
+            .recv_timeout(Duration::from_secs(20))
+            .expect("Rückkehr: Prozessbaum beendet, I/O-Threads eingesammelt");
+        assert_eq!(
+            res.unwrap_err(),
+            super::super::providers::pipeline::CANCELLED_MESSAGE
+        );
+        assert!(elapsed < PIPER_TIMEOUT, "nicht erst nach dem Timeout");
+        // Ein überlebender Kindprozess schriebe weiter.
+        let settle = Duration::from_millis(if cfg!(windows) { 2500 } else { 300 });
+        std::thread::sleep(settle);
+        let before = len(&hb);
+        std::thread::sleep(settle);
+        assert_eq!(
+            len(&hb),
+            before,
+            "Kindprozess läuft nach dem Abbruch weiter"
+        );
     }
 
     #[test]
