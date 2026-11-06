@@ -176,175 +176,38 @@ fn http_with(timeout: Duration) -> Result<reqwest::Client, HubError> {
     b.build().map_err(|e| HubError::Other(e.to_string()))
 }
 
-/// Anfrage senden; mit LV_SYNC_DUMP=1 vorher Kopfzeilen (ohne Authorization)
-/// und Body nach %TEMP%\lv-<kind>.headers.txt / lv-<kind>.body legen, damit
-/// sich die Anfrage exakt mit curl nachstellen lässt.
+/// POST zum Hub. Unter Windows über das System-curl (siehe `sync::curl`),
+/// sonst über reqwest. Auf reqwest wird nur zurückgefallen, wenn curl fehlt.
 async fn send_logged(
     rb: reqwest::RequestBuilder,
-    kind: &str,
+    timeout: Duration,
 ) -> Result<reqwest::Response, HubError> {
     let (client, req) = rb.build_split();
     let req = req.map_err(|e| HubError::Other(e.to_string()))?;
-    if std::env::var_os("LV_SYNC_DUMP").is_some() {
-        let dir = std::env::temp_dir();
-        let mut head = format!("{} {} {:?}\n", req.method(), req.url(), req.version());
-        for (k, v) in req.headers() {
-            if k == reqwest::header::AUTHORIZATION {
-                head.push_str("authorization: Bearer <token>\n");
-            } else {
-                head.push_str(&format!("{k}: {}\n", v.to_str().unwrap_or("?")));
-            }
-        }
-        let body = req.body().and_then(|b| b.as_bytes()).unwrap_or_default();
-        head.push_str(&format!("(body {} bytes)\n", body.len()));
-        let _ = std::fs::write(dir.join(format!("lv-{kind}.headers.txt")), head);
-        let _ = std::fs::write(dir.join(format!("lv-{kind}.body")), body);
-        log::info!("Sync-Dump: {kind} nach {}", dir.display());
-    }
-    let mut req = req;
-    if use_curl() {
-        // Unter Windows lehnt IONOS die POSTs aus reqwest/hyper am Hub ab
-        // (HTTP 500 vor PHP), dieselbe Anfrage über curl.exe geht durch
-        // (Diagnose 06.11.2026). Fehlt curl.exe, bleibt es bei reqwest.
+    let req = if super::curl::enabled() {
         let (r, back) = tauri::async_runtime::spawn_blocking(move || {
-            let r = curl_send(&req);
+            let r = super::curl::send(&req, timeout);
             (r, req)
         })
         .await
         .map_err(|e| HubError::Other(e.to_string()))?;
         match r {
             Ok(resp) => return Ok(reqwest::Response::from(resp)),
-            Err(CurlError::Missing) => {
-                log::warn!("Sync: curl.exe fehlt, sende über reqwest");
-                req = back;
+            Err(super::curl::CurlError::Missing) => {
+                log::warn!("Sync: curl fehlt, sende über reqwest");
+                back
             }
-            Err(CurlError::Failed(e)) => {
-                return Err(HubError::Other(format!("Hub nicht erreichbar: curl: {e}")))
+            Err(super::curl::CurlError::Failed(e)) => {
+                return Err(HubError::Other(format!("Hub nicht erreichbar: {e}")))
             }
         }
-    }
-    if std::env::var_os("LV_SYNC_HOSTFIRST").is_some() {
-        // Host als erste Kopfzeile wie bei curl (hyper hängt sie sonst ans Ende).
-        if let Some(host) = req.url().host_str() {
-            let host = match req.url().port() {
-                Some(p) => format!("{host}:{p}"),
-                None => host.to_string(),
-            };
-            let mut h = reqwest::header::HeaderMap::new();
-            if let Ok(v) = reqwest::header::HeaderValue::from_str(&host) {
-                h.insert(reqwest::header::HOST, v);
-            }
-            for (k, v) in req.headers() {
-                h.append(k.clone(), v.clone());
-            }
-            *req.headers_mut() = h;
-        }
-    }
+    } else {
+        req
+    };
     client
         .execute(req)
         .await
         .map_err(|e| HubError::Other(format!("Hub nicht erreichbar: {e}")))
-}
-
-/// POSTs zum Hub über curl senden? Unter Windows Standard (LV_SYNC_CURL=0
-/// schaltet ab), anderswo nur mit LV_SYNC_CURL=1.
-fn use_curl() -> bool {
-    match std::env::var("LV_SYNC_CURL").as_deref() {
-        Ok("0") => false,
-        Ok(_) => true,
-        Err(_) => cfg!(windows),
-    }
-}
-
-enum CurlError {
-    /// curl ist nicht installiert: auf reqwest zurückfallen.
-    Missing,
-    Failed(String),
-}
-
-/// Dieselbe Anfrage über curl(.exe) senden (Konfiguration über stdin,
-/// damit das Token nicht in der Prozessliste steht).
-fn curl_send(req: &reqwest::Request) -> Result<http::Response<Vec<u8>>, CurlError> {
-    curl_send_inner(req).map_err(|e| {
-        if e.kind() == std::io::ErrorKind::NotFound {
-            CurlError::Missing
-        } else {
-            CurlError::Failed(e.to_string())
-        }
-    })
-}
-
-fn curl_send_inner(req: &reqwest::Request) -> std::io::Result<http::Response<Vec<u8>>> {
-    use std::io::Write;
-    let other = |m: String| std::io::Error::other(m);
-    fn q(s: &str) -> String {
-        format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
-    }
-    let body = req.body().and_then(|b| b.as_bytes()).unwrap_or_default();
-    // Als TempPath (Handle zu, Datei bleibt bis zum Drop), damit curl sie öffnen kann.
-    let mut body_file = tempfile::NamedTempFile::new()?;
-    body_file.write_all(body)?;
-    body_file.flush()?;
-    let body_file = body_file.into_temp_path();
-    let out_file = tempfile::NamedTempFile::new()?.into_temp_path();
-    let mut cfg = String::new();
-    cfg.push_str(&format!("url = {}\n", q(req.url().as_str())));
-    cfg.push_str(&format!("request = {}\n", q(req.method().as_str())));
-    cfg.push_str(&format!(
-        "data-binary = {}\n",
-        q(&format!("@{}", body_file.display()))
-    ));
-    for (k, v) in req.headers() {
-        cfg.push_str(&format!(
-            "header = {}\n",
-            q(&format!("{k}: {}", v.to_str().unwrap_or("")))
-        ));
-    }
-    cfg.push_str(&format!(
-        "user-agent = {}\n",
-        q(concat!("local-voice-ai/", env!("CARGO_PKG_VERSION")))
-    ));
-    cfg.push_str(&format!(
-        "output = {}\n",
-        q(&out_file.display().to_string())
-    ));
-    cfg.push_str("write-out = \"%{http_code}\"\nsilent\nshow-error\nmax-time = 180\n");
-    let mut cmd = std::process::Command::new(if cfg!(windows) { "curl.exe" } else { "curl" });
-    cmd.args(["-K", "-"])
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-    }
-    let mut child = cmd.spawn()?;
-    child
-        .stdin
-        .take()
-        .ok_or_else(|| other("kein stdin".into()))?
-        .write_all(cfg.as_bytes())?;
-    let out = child.wait_with_output()?;
-    let code: u16 = String::from_utf8_lossy(&out.stdout)
-        .trim()
-        .parse()
-        .map_err(|_| {
-            other(format!(
-                "kein Status ({})",
-                String::from_utf8_lossy(&out.stderr).trim()
-            ))
-        })?;
-    let bytes = std::fs::read(&out_file).unwrap_or_default();
-    log::debug!(
-        "Sync über curl: {} {} → HTTP {code}",
-        req.method(),
-        req.url().path()
-    );
-    http::Response::builder()
-        .status(code)
-        .body(bytes)
-        .map_err(|e| other(e.to_string()))
 }
 
 fn base(url: &str) -> String {
@@ -481,7 +344,7 @@ impl HubClient {
                     .post(format!("{}/api/v1/voice/sync/push", self.url)),
             )
             .json(&serde_json::json!({ "device_id": device_id, "objects": objects }));
-        let res = send_logged(res, "push").await?;
+        let res = send_logged(res, Duration::from_secs(120)).await?;
         if !res.status().is_success() {
             return Err(error_from(res).await);
         }
@@ -589,7 +452,7 @@ impl HubClient {
                     .post(format!("{}/chunks/{index}", self.blob_url(blob_id)?)),
             )
             .json(&body);
-        let res = send_logged(res, "chunk").await?;
+        let res = send_logged(res, Duration::from_secs(180)).await?;
         if !res.status().is_success() {
             log::warn!(
                 "Hub: Stück {index} abgelehnt (HTTP {}), Chiffrat {} Bytes, Body ~{} Bytes",
