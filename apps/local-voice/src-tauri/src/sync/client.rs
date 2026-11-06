@@ -165,6 +165,11 @@ fn http_with(timeout: Duration) -> Result<reqwest::Client, HubError> {
     if std::env::var_os("LV_SYNC_IPV4").is_some() {
         b = b.local_address(Some(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)));
     }
+    // LV_SYNC_NOPROXY=1 umgeht System-Proxy (reqwest liest unter Windows die
+    // Internetoptionen, curl nicht).
+    if std::env::var_os("LV_SYNC_NOPROXY").is_some() {
+        b = b.no_proxy();
+    }
     if std::env::var_os("LV_SYNC_TITLECASE").is_some() {
         b = b.http1_title_case_headers();
     }
