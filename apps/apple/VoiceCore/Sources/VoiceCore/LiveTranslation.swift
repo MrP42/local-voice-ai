@@ -189,7 +189,9 @@ public actor LivePipeline {
 
     /// Fenster anstoßen. Die erste fehlende Einheit läuft vorrangig allein (Spez §4 Start), der Rest als
     /// Absatzstapel. Kehrt sofort zurück.
-    public func prefetch(_ units: [LiveUnit]) {
+    /// `epoch`: Epoche des Aufrufers (Sprung/Wechsel, siehe `enter`).
+    public func prefetch(_ units: [LiveUnit], epoch: Int? = nil) {
+        guard enter(epoch) else { return }
         let missing = units.filter { cache.peek(key($0)) == nil && inflight[key($0)] == nil }
         guard let first = missing.first else { return }
         start([first])
@@ -198,7 +200,8 @@ public actor LivePipeline {
 
     /// Übersetzung einer Einheit; wartet auf einen laufenden Stapel oder startet einen eigenen.
     /// Wirft `CancellationError`, wenn die Generation inzwischen gewechselt hat.
-    public func text(_ unit: LiveUnit) async throws -> String {
+    public func text(_ unit: LiveUnit, epoch: Int? = nil) async throws -> String {
+        guard enter(epoch) else { throw CancellationError() }
         let gen = generation
         let k = key(unit)
         if let hit = cache.get(k) { return hit }
@@ -216,8 +219,19 @@ public actor LivePipeline {
     }
 
     /// Sprung oder Sprachwechsel: laufende Stapel verwerfen. Fertige Übersetzungen bleiben im Speicher.
-    public func cancelPending() {
-        generation += 1
+    public func cancelPending() { invalidate(to: generation + 1) }
+
+    /// Bindet Aufrufe an die Epoche des Aufrufers (Spez §4.1). Die erste Anfrage einer neueren Epoche verwirft zuerst
+    /// alle laufenden Stapel und bestellt dann neu – im Actor und damit geordnet, ohne nebenläufiges
+    /// `cancelPending()`. Anfragen einer älteren Epoche bestellen nichts mehr.
+    private func enter(_ epoch: Int?) -> Bool {
+        guard let epoch else { return true }
+        if epoch > generation { invalidate(to: epoch) }
+        return epoch == generation
+    }
+
+    private func invalidate(to newGeneration: Int) {
+        generation = newGeneration
         for flight in inflight.values { flight.task.cancel() }
         inflight.removeAll()
     }
@@ -366,7 +380,15 @@ public struct LiveMirror: Sendable {
         return true
     }
 
-    public func text(paragraph: Int, sentence: Int) -> String? { texts[paragraph]?[sentence] }
+    /// Lesen zählt als Nutzung (LRU): der Satz rückt ans Ende der Verdrängungsreihe.
+    public mutating func text(paragraph: Int, sentence: Int) -> String? {
+        guard let value = texts[paragraph]?[sentence] else { return nil }
+        let slot = Slot(paragraph: paragraph, sentence: sentence)
+        if let i = order.firstIndex(of: slot) { order.remove(at: i); order.append(slot) }
+        return value
+    }
+    /// Nur nachsehen, ohne die Reihenfolge zu ändern.
+    public func peek(paragraph: Int, sentence: Int) -> String? { texts[paragraph]?[sentence] }
     public func paragraph(_ index: Int) -> [Int: String] { texts[index] ?? [:] }
 }
 
@@ -382,5 +404,180 @@ public enum LiveSwitchTiming: Equatable, Sendable {
     public static func decide(busy: Bool, preparing: Bool) -> LiveSwitchTiming {
         if preparing { return .restart }
         return busy ? .atSentenceEnd : .immediate
+    }
+}
+
+/// Gewähltes Sprachpaar einer Live-Sitzung.
+public struct LiveConfig: Hashable, Sendable {
+    public let source: String
+    public let target: String
+    public init(source: String, target: String) { self.source = LiveTranslation.base(source); self.target = LiveTranslation.base(target) }
+}
+
+/// Sprachwechsel als reine Zustandsmaschine (Spez §5): Ziel, Quelle, Übersetzer und Stimme wechseln immer
+/// gemeinsam. Läuft der Ton, wird nur vorgemerkt; der Wechsel greift komplett am Ende des hörbaren Satzes.
+/// Verglichen wird das ganze Paar, damit eine korrigierte Quellsprache den Übersetzer auch bei gleicher
+/// Zielsprache neu aufbaut.
+public struct LiveSwitch: Equatable, Sendable {
+    public enum Effect: Equatable, Sendable {
+        case none
+        /// Vorgemerkt, greift am Satzende.
+        case scheduled
+        /// Jetzt umstellen (`nil`: Original). `restart`: am aktuellen Satz neu ansetzen, sonst nur vorbereiten.
+        case apply(LiveConfig?, restart: Bool)
+    }
+
+    public private(set) var source: String?
+    public private(set) var active: LiveConfig?
+    /// `.some(nil)`: zurück zum Original vorgemerkt.
+    public private(set) var pending: LiveConfig??
+
+    public init(source: String? = nil) { self.source = source.map(LiveTranslation.base) }
+
+    /// Gewollte Zielsprache: vorgemerkt, sonst aktiv.
+    public var wantedTarget: String? {
+        if let pending { return pending?.target }
+        return active?.target
+    }
+
+    public mutating func select(_ target: String?, busy: Bool, preparing: Bool) -> Effect {
+        route(config(target), busy: busy, preparing: preparing)
+    }
+
+    /// Bestätigte oder korrigierte Buchsprache; die gewollte Zielsprache bleibt.
+    public mutating func changeSource(_ newSource: String?, busy: Bool, preparing: Bool) -> Effect {
+        let target = wantedTarget
+        source = newSource.map(LiveTranslation.base)
+        return route(config(target), busy: busy, preparing: preparing)
+    }
+
+    /// Hörbarer Satz zu Ende (und es geht weiter): ein vorgemerkter Wechsel greift jetzt komplett.
+    public mutating func sentenceEnded() -> Effect { take(restart: true) }
+
+    /// Pause, Unterbrechung oder Ende ohne Ton: ein vorgemerkter Wechsel greift sofort, ohne Neustart.
+    public mutating func stopped() -> Effect { take(restart: false) }
+
+    /// Das Gerät kann das Paar nicht übersetzen: zurück zum Original.
+    public mutating func fallBack() { active = nil; pending = nil }
+
+    private func config(_ target: String?) -> LiveConfig? {
+        guard let target, let source else { return nil }
+        let wanted = LiveConfig(source: source, target: target)
+        return wanted.target == wanted.source ? nil : wanted
+    }
+
+    private mutating func route(_ desired: LiveConfig?, busy: Bool, preparing: Bool) -> Effect {
+        let timing = LiveSwitchTiming.decide(busy: busy, preparing: preparing)
+        if timing == .atSentenceEnd {
+            pending = desired == active ? nil : .some(desired)
+            return pending == nil ? .none : .scheduled
+        }
+        pending = nil
+        guard desired != active else { return .none }
+        active = desired
+        return .apply(desired, restart: timing == .restart)
+    }
+
+    private mutating func take(restart: Bool) -> Effect {
+        guard let next = pending else { return .none }
+        pending = nil
+        guard next != active else { return .none }
+        active = next
+        return .apply(next, restart: restart)
+    }
+}
+
+/// Positionsvertrag beim Vorlesen (Spez §4.1): Der Stand zeigt auf den Beginn des nächsten ungelesenen Satzes und
+/// rückt nur vor, wenn ein Satz zu Ende gehört ist. Vorlauf, Pause, Unterbrechung und Unterlauf ändern ihn nie;
+/// Fortsetzen beginnt am hörbaren Satz.
+public struct LiveProgress: Equatable, Sendable {
+    /// Gespeicherter Stand (UTF-16 im Gesamttext).
+    public private(set) var saved: Int
+    /// Beginn des hörbaren Satzes; dort setzt Fortsetzen an.
+    public private(set) var audible: Int
+    /// Zuletzt als gehört gezählter Bereich.
+    public private(set) var heard: Range<Int>?
+
+    public init(at offset: Int) { saved = offset; audible = offset }
+
+    /// Satz zu Ende gehört. `next`: Beginn des nächsten Satzes und ob er im selben Absatz liegt; `nil` am Buchende.
+    public mutating func finished(sentenceStart: Int, paragraphEnd: Int, next: (start: Int, sameParagraph: Bool)?) {
+        let to = next?.start ?? paragraphEnd
+        heard = sentenceStart..<max(sentenceStart, next?.sameParagraph == true ? to : paragraphEnd)
+        saved = to
+        audible = to
+    }
+
+    /// Angesprungen: Stand an die neue Stelle, das Dazwischen zählt nicht als gehört.
+    public mutating func jumped(to offset: Int) { saved = offset; audible = offset; heard = nil }
+
+    /// Pause oder Unterbrechung mitten im Satz: nichts ändert sich, Fortsetzen wiederholt den Satz.
+    public func resumeOffset() -> Int { audible }
+}
+
+/// Warten auf einen Satz mit Unterlaufregel (Spez §4): nach `hint` Hinweis „Übersetzung lädt …“, nach `stall`
+/// Pause mit Grund. Ein Übersetzer, der Abbruch ignoriert, hält das Warten nicht auf.
+public enum LiveWait {
+    public static let hintNanos: UInt64 = 1_500_000_000
+    public static let stallNanos: UInt64 = 8_000_000_000
+
+    public enum Outcome: Sendable {
+        case text(String)
+        case failed(any Error)
+        case cancelled
+        case timedOut
+    }
+
+    public static func run(hint: UInt64 = hintNanos, stall: UInt64 = stallNanos,
+                           onHint: @escaping @Sendable () async -> Void,
+                           work: @escaping @Sendable () async throws -> String) async -> Outcome {
+        await withCheckedContinuation { (cont: CheckedContinuation<Outcome, Never>) in
+            let once = LiveOnce(cont)
+            let job = Task {
+                do { once.finish(.text(try await work())) }
+                catch is CancellationError { once.finish(.cancelled) }
+                catch { once.finish(.failed(error)) }
+            }
+            once.add(Task {
+                try? await Task.sleep(nanoseconds: hint)
+                if !Task.isCancelled { await onHint() }
+            })
+            once.add(Task {
+                try? await Task.sleep(nanoseconds: stall)
+                guard !Task.isCancelled else { return }
+                if once.finish(.timedOut) { job.cancel() }
+            })
+        }
+    }
+}
+
+/// Liefert genau ein Ergebnis und stoppt danach die Zeitgeber.
+private final class LiveOnce: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cont: CheckedContinuation<LiveWait.Outcome, Never>?
+    private var timers: [Task<Void, Never>] = []
+
+    init(_ cont: CheckedContinuation<LiveWait.Outcome, Never>) { self.cont = cont }
+
+    func add(_ timer: Task<Void, Never>) {
+        lock.lock()
+        let done = cont == nil
+        if !done { timers.append(timer) }
+        lock.unlock()
+        if done { timer.cancel() }
+    }
+
+    @discardableResult
+    func finish(_ value: LiveWait.Outcome) -> Bool {
+        lock.lock()
+        let c = cont
+        cont = nil
+        let pending = timers
+        timers = []
+        lock.unlock()
+        guard let c else { return false }
+        pending.forEach { $0.cancel() }
+        c.resume(returning: value)
+        return true
     }
 }

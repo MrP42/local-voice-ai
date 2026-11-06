@@ -419,9 +419,195 @@ final class LiveMirrorTests: XCTestCase {
         XCTAssertEqual(LiveMirror().limit, LiveTranslation.cacheLimit)
     }
 
+    func testMirrorIsRealLRU() {
+        var m = LiveMirror(limit: 3)
+        for i in 0..<3 { m.store("s\(i)", paragraph: 0, sentence: i, epoch: m.epoch) }
+        XCTAssertEqual(m.text(paragraph: 0, sentence: 0), "s0")  // Lesen zählt als Nutzung
+        m.store("s3", paragraph: 0, sentence: 3, epoch: m.epoch)
+        XCTAssertEqual(m.peek(paragraph: 0, sentence: 0), "s0")
+        XCTAssertNil(m.peek(paragraph: 0, sentence: 1))         // ältester ungenutzter fällt heraus
+        // peek ändert die Reihenfolge nicht
+        _ = m.peek(paragraph: 0, sentence: 2)
+        m.store("s4", paragraph: 0, sentence: 4, epoch: m.epoch)
+        XCTAssertNil(m.peek(paragraph: 0, sentence: 2))
+    }
+
     func testSwitchTiming() {
         XCTAssertEqual(LiveSwitchTiming.decide(busy: true, preparing: false), .atSentenceEnd)
         XCTAssertEqual(LiveSwitchTiming.decide(busy: true, preparing: true), .restart)
         XCTAssertEqual(LiveSwitchTiming.decide(busy: false, preparing: false), .immediate)
+    }
+}
+
+final class LiveJumpTests: XCTestCase {
+    /// Sprung in ein überlappendes Fenster: Der neue Wartende hängt sich nicht an den alten Auftrag. Die erste Anfrage
+    /// der neuen Epoche verwirft ihn und bestellt neu; das späte alte Ergebnis kommt weder in den Speicher noch an.
+    func testJumpIntoOverlappingWindowReorders() async throws {
+        let gate = GatedTranslator()
+        let pipe = LivePipeline(translator: gate, book: "b", sourceHash: "h", source: "en", target: "de")
+        let u = unit("Hello there")
+        await pipe.prefetch([u], epoch: 1)
+        let old = Task { try await pipe.text(u, epoch: 1) }
+        await gate.waitForCalls(1)
+        let fresh = Task { try await pipe.text(u, epoch: 2) }   // Sprung, gleiche Einheit im neuen Fenster
+        await gate.waitForCalls(2)                             // neu bestellt, nicht angehängt
+        await gate.release(.success(()))                        // alter Auftrag endet spät
+        do { _ = try await old.value; XCTFail("alte Epoche darf nicht ankommen") }
+        catch { XCTAssertTrue(error is CancellationError, "\(error)") }
+        let stale = await pipe.ready(u)
+        XCTAssertNil(stale)
+        await gate.release(.success(()))
+        let text = try await fresh.value
+        XCTAssertEqual(text, "DE:Hello there")
+        let cached = await pipe.ready(u)
+        XCTAssertEqual(cached, "DE:Hello there")
+        // Verspätete Anfragen der alten Epoche bestellen nichts mehr.
+        await pipe.prefetch([unit("Other one", paragraph: 1)], epoch: 1)
+        do { _ = try await pipe.text(unit("Late one", paragraph: 2), epoch: 1); XCTFail("erwartet Abbruch") }
+        catch { XCTAssertTrue(error is CancellationError) }
+        let started = await gate.started
+        XCTAssertEqual(started, 2)
+        let gen = await pipe.currentGeneration
+        XCTAssertEqual(gen, 2)
+    }
+
+    /// Spiegel und Pipeline zusammen: Ergebnis aus der Zeit vor dem Sprung erscheint nicht in der Anzeige.
+    func testMirrorAndPipelineAgreeOnEpoch() async throws {
+        let gate = GatedTranslator()
+        let pipe = LivePipeline(translator: gate, book: "b", sourceHash: "h", source: "en", target: "de")
+        var mirror = LiveMirror()
+        mirror.reset()                       // neue Sitzung: Epoche 1
+        let e1 = mirror.epoch
+        let u = unit("Hello there")
+        let before = Task { try? await pipe.text(u, epoch: e1) }
+        await gate.waitForCalls(1)
+        mirror.advance()                     // Sprung
+        await gate.release(.success(()))
+        let late = await before.value
+        if let late { XCTAssertFalse(mirror.store(late, paragraph: 0, sentence: 0, epoch: e1)) }
+        XCTAssertNil(mirror.peek(paragraph: 0, sentence: 0))
+    }
+}
+
+final class LiveSwitchTests: XCTestCase {
+    func testSwitchWhilePlayingWaitsForSentenceEnd() {
+        var sw = LiveSwitch(source: "en")
+        XCTAssertEqual(sw.select("de", busy: true, preparing: false), .scheduled)
+        XCTAssertNil(sw.active)                               // Ziel, Übersetzer, Stimme noch alt
+        XCTAssertEqual(sw.wantedTarget, "de")
+        XCTAssertEqual(sw.sentenceEnded(), .apply(LiveConfig(source: "en", target: "de"), restart: true))
+        XCTAssertEqual(sw.active, LiveConfig(source: "en", target: "de"))
+        XCTAssertEqual(sw.sentenceEnded(), .none)
+    }
+
+    func testImmediateAndRestart() {
+        var sw = LiveSwitch(source: "en")
+        XCTAssertEqual(sw.select("fr", busy: false, preparing: false), .apply(LiveConfig(source: "en", target: "fr"), restart: false))
+        XCTAssertEqual(sw.select("de", busy: true, preparing: true), .apply(LiveConfig(source: "en", target: "de"), restart: true))
+        XCTAssertEqual(sw.select("en", busy: false, preparing: false), .apply(nil, restart: false))  // Buchsprache = Original
+        XCTAssertEqual(sw.select(nil, busy: false, preparing: false), .none)
+    }
+
+    func testChoosingCurrentAgainCancelsPending() {
+        var sw = LiveSwitch(source: "en")
+        _ = sw.select("de", busy: false, preparing: false)
+        XCTAssertEqual(sw.select("fr", busy: true, preparing: false), .scheduled)
+        XCTAssertEqual(sw.select("de", busy: true, preparing: false), .none)
+        XCTAssertEqual(sw.sentenceEnded(), .none)
+        XCTAssertEqual(sw.active?.target, "de")
+        XCTAssertEqual(sw.select(nil, busy: true, preparing: false), .scheduled)   // zurück zum Original vorgemerkt
+        XCTAssertNil(sw.wantedTarget)
+        XCTAssertEqual(sw.sentenceEnded(), .apply(nil, restart: true))
+    }
+
+    /// Codex Must-fix 2: EN→DE läuft, Buchsprache wird auf FR korrigiert, dann wird vor dem Satzende wieder DE
+    /// gewählt. Der Übersetzer muss trotzdem auf FR→DE wechseln.
+    func testSourceCorrectionForcesRebuildEvenWithSameTarget() {
+        var sw = LiveSwitch(source: "en")
+        _ = sw.select("de", busy: false, preparing: false)
+        XCTAssertEqual(sw.changeSource("fr", busy: true, preparing: false), .scheduled)
+        XCTAssertEqual(sw.select("de", busy: true, preparing: false), .scheduled)
+        XCTAssertEqual(sw.sentenceEnded(), .apply(LiveConfig(source: "fr", target: "de"), restart: true))
+        // Pausiert: sofort.
+        XCTAssertEqual(sw.changeSource("es", busy: false, preparing: false), .apply(LiveConfig(source: "es", target: "de"), restart: false))
+        // Korrektur auf die Zielsprache selbst: Original.
+        XCTAssertEqual(sw.changeSource("de", busy: false, preparing: false), .apply(nil, restart: false))
+    }
+
+    func testPauseAppliesPendingWithoutRestart() {
+        var sw = LiveSwitch(source: "en")
+        XCTAssertEqual(sw.select("ja", busy: true, preparing: false), .scheduled)
+        XCTAssertEqual(sw.stopped(), .apply(LiveConfig(source: "en", target: "ja"), restart: false))
+        XCTAssertEqual(sw.stopped(), .none)
+        sw.fallBack()
+        XCTAssertNil(sw.active)
+    }
+
+    func testLanguageCodesAreNormalized() {
+        var sw = LiveSwitch(source: "zh_Hans")
+        XCTAssertEqual(sw.select("zh-hans", busy: false, preparing: false), .none)  // gleiche Sprache: Original
+        XCTAssertEqual(sw.select("zh-Hant", busy: false, preparing: false), .apply(LiveConfig(source: "zh-hans", target: "zh-hant"), restart: false))
+    }
+}
+
+final class LiveProgressTests: XCTestCase {
+    func testOnlyFinishedSentencesAdvance() {
+        var p = LiveProgress(at: 100)
+        // Pause oder Unterbrechung mitten im Satz: Stand bleibt, Fortsetzen wiederholt den Satz.
+        XCTAssertEqual(p.saved, 100)
+        XCTAssertEqual(p.resumeOffset(), 100)
+        p.finished(sentenceStart: 100, paragraphEnd: 180, next: (start: 130, sameParagraph: true))
+        XCTAssertEqual(p.saved, 130)
+        XCTAssertEqual(p.heard, 100..<130)
+        XCTAssertEqual(p.resumeOffset(), 130)
+        // Letzter Satz im Absatz: gehört bis Absatzende, Stand auf den nächsten Absatz.
+        p.finished(sentenceStart: 130, paragraphEnd: 180, next: (start: 182, sameParagraph: false))
+        XCTAssertEqual(p.saved, 182)
+        XCTAssertEqual(p.heard, 130..<180)
+        // Buchende.
+        p.finished(sentenceStart: 182, paragraphEnd: 200, next: nil)
+        XCTAssertEqual(p.saved, 200)
+        p.jumped(to: 10)
+        XCTAssertEqual(p.saved, 10)
+        XCTAssertNil(p.heard)
+    }
+}
+
+final class LiveWaitTests: XCTestCase {
+    private actor Flag { var set = false; func mark() { set = true } }
+
+    func testFastTranslationNeedsNoHint() async {
+        let flag = Flag()
+        let out = await LiveWait.run(hint: 200_000_000, stall: 1_000_000_000, onHint: { await flag.mark() }) { "DE:ok" }
+        guard case .text(let t) = out else { return XCTFail("\(out)") }
+        XCTAssertEqual(t, "DE:ok")
+        let hinted = await flag.set
+        XCTAssertFalse(hinted)
+    }
+
+    /// Unterlauf: erst Hinweis, dann Pause – auch wenn der Übersetzer den Abbruch ignoriert.
+    func testHintThenStallEvenIfTranslatorHangs() async {
+        let flag = Flag()
+        let gate = GatedTranslator()
+        let out = await LiveWait.run(hint: 10_000_000, stall: 150_000_000, onHint: { await flag.mark() }) {
+            try await gate.translate(["x"], from: "en", to: "de")[0]
+        }
+        guard case .timedOut = out else { return XCTFail("\(out)") }
+        let hinted = await flag.set
+        XCTAssertTrue(hinted)
+        await gate.release(.success(()))   // hängender Aufruf endet später, ohne Wirkung
+    }
+
+    func testFailureAndCancellationAreReported() async {
+        let failed = await LiveWait.run(hint: 1_000_000_000, stall: 2_000_000_000, onHint: {}) { throw Boom() }
+        guard case .failed(let e) = failed else { return XCTFail("\(failed)") }
+        XCTAssertTrue(e is Boom)
+        let cancelled = await LiveWait.run(hint: 1_000_000_000, stall: 2_000_000_000, onHint: {}) { throw CancellationError() }
+        guard case .cancelled = cancelled else { return XCTFail("\(cancelled)") }
+    }
+
+    func testDefaultsMatchSpec() {
+        XCTAssertEqual(LiveWait.hintNanos, 1_500_000_000)
+        XCTAssertEqual(LiveWait.stallNanos, 8_000_000_000)
     }
 }
