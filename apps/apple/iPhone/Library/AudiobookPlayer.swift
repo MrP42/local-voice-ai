@@ -167,10 +167,11 @@ struct ChapterStepButton: View {
         Button(action: action) {
             VStack(spacing: 2) {
                 Image(systemName: forward ? "forward.end.fill" : "backward.end.fill").font(.title2)
-                Text("Kapitel").font(.caption2).lineLimit(1)
+                Text("Kapitel").font(.caption2).lineLimit(1).minimumScaleFactor(0.7)
             }.frame(minWidth: 56, minHeight: 44)
         }
         .buttonStyle(.plain)
+        .accessibilityShowsLargeContentViewer()
         .accessibilityLabel(forward ? "Nächstes Kapitel" : "Kapitel zurück")
         .accessibilityHint(forward ? "" : "Kurz nach Kapitelbeginn ins vorige Kapitel, sonst an den Kapitelanfang")
     }

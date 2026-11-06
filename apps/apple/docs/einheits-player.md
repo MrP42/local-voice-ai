@@ -70,8 +70,9 @@ Alle Textkontraste liegen über 4,5 : 1. In den hellen Themen unterscheiden sich
 
 ### Barrierefreiheit (Codex-Auflagen 06.11.)
 - VoiceOver-Namen: Schließen („Player schließen“), Aa („Schrift und Darstellung“), Fragen („Fragen zum Buch“), ⓘ („Angaben zum Buch“), Segment („Ansicht“, Wert = aktive Ansicht), Abspielen/Pause samt Zustand „Wird vorbereitet“, Quelle (Wert = laufende Quelle), Regler „Position im Kapitel“ mit Wert, Transport mit vollen Namen („15 Sekunden zurück“, „Absatz vor“) bei kurzer sichtbarer Beschriftung.
-- Touchziele: alle Knöpfe mindestens 44 × 44 pt (Kopfzeile 4 × 44 pt plus Titel passen auch auf 375 pt). Transport 4 × 56 pt + 64 pt. Beschriftungen einzeilig, schrumpfen bei großer Schrift bis 70 %, statt zu kollidieren.
-- Dynamic Type: Lesetext folgt der Systemgröße (`relativeTo`). Das Segment ist bei xxxLarge gedeckelt, damit „Lesen & Hören“ nicht abgeschnitten wird.
+- Touchziele: alle Knöpfe mindestens 44 × 44 pt, das Ansicht-Segment ist ein eigenes 44-pt-Segment (das System-Segment war nur 32 pt). Transport 4 × 56 pt + 64 pt. Beschriftungen einzeilig, schrumpfen bis 70 %, statt zu kollidieren.
+- Dynamic Type: Lesetext folgt der Systemgröße (`relativeTo`) ohne Grenze. Kopfzeile, Segment und Bedienleiste wachsen nur bis xxLarge (`controlsCap`); darüber zeigt langes Drücken die Beschriftung groß (Large Content Viewer). Grund: Am iPhone SE (375 pt) mit AX5 lief die Kopfzeile in die Statusleiste, der Transport fiel aus dem Bild und vom Text blieben zwei Zeilen (Mac-Durchgang 06.11.).
+- Lesefenster: mindestens 200 pt hoch und mit Vorrang im Layout, damit beim Mitlesen und Lesen auch bei größter Schrift mehrere Zeilen sichtbar bleiben.
 - Text: weiche Kanten oben (18 pt) und unten (28 pt), Innenabstand oben 20 pt und unten 56 pt, also ist jede Zeile vollständig erreichbar. Die laufende Stelle steht mittig.
 - **Am Gerät offen** (Patrick bzw. Mac-Thread): VoiceOver-Durchgang samt Bedienung des Reglers, größte Schriftstufe, iPhone SE/mini (375 pt), Safe Areas im Querformat.
 

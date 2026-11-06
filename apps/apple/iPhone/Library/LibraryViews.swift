@@ -624,7 +624,7 @@ struct ControlButton: View {
                 // Große Schrift: Beschriftung schrumpft statt mit dem Nachbarn zu kollidieren.
                 Text(caption ?? title).font(.caption2).lineLimit(1).minimumScaleFactor(0.7)
             }.frame(minWidth: 56, minHeight: 44).contentShape(Rectangle())
-        }.buttonStyle(.plain).accessibilityLabel(title)
+        }.buttonStyle(.plain).accessibilityLabel(title).accessibilityShowsLargeContentViewer()
     }
 }
 

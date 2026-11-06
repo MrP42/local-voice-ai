@@ -10,15 +10,22 @@ struct BookPlayerScreen: View {
     @State private var chaptersShown = false
     @State private var infoShown = false
 
+    static let controlsCap = DynamicTypeSize.xxLarge
     private var hasText: Bool { !playback.paragraphs.isEmpty }
     private var surface: PlayerSurface { hasText ? playback.surface : .listen }
 
     var body: some View {
         VStack(spacing: 0) {
-            PlayerHeader(title: playback.title, subtitle: subtitle, trailing: AnyView(trailing))
-            if hasText {
-                SurfaceSwitch().padding(.horizontal, 16).padding(.top, 4).padding(.bottom, 8)
+            // Bedienelemente wachsen nur bis xxLarge (wie Tab- und Werkzeugleisten von iOS); darüber zeigt
+            // langes Drücken die Großansicht (Large Content Viewer). Der Lesetext skaliert voll.
+            // Grund: Bei AX5 auf 375 pt liefen Kopf und Leiste sonst aus dem Bild (Gerätedurchgang 06.11.).
+            VStack(spacing: 0) {
+                PlayerHeader(title: playback.title, subtitle: subtitle, trailing: AnyView(trailing))
+                if hasText {
+                    SurfaceSwitch().padding(.horizontal, 16).padding(.top, 2).padding(.bottom, 6)
+                }
             }
+            .dynamicTypeSize(...Self.controlsCap)
             Divider()
             Group {
                 switch surface {
@@ -27,9 +34,12 @@ struct BookPlayerScreen: View {
                 case .read: ReadAlongText(follow: false)
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // Lesefenster behält auch bei großer Schrift mehrere Zeilen.
+            .frame(maxWidth: .infinity, minHeight: surface == .listen ? 0 : 200, maxHeight: .infinity)
+            .layoutPriority(1)
             .background(surface == .listen ? VoicePalette.background : look.background)
             controls
+                .dynamicTypeSize(...Self.controlsCap)
                 .padding(.horizontal, 20).padding(.vertical, 10)
                 .background(.bar)
         }
@@ -74,16 +84,29 @@ struct BookPlayerScreen: View {
 struct SurfaceSwitch: View {
     @ObservedObject var playback = LibraryPlayback.shared
     var body: some View {
-        Picker("Ansicht", selection: Binding(get: { playback.surface }, set: { next in
-            withAnimation(.easeInOut(duration: 0.2)) { playback.show(next) }
-        })) {
-            ForEach(PlayerSurface.allCases, id: \.self) { Text($0.title).tag($0) }
+        // Eigenes Segment statt `.segmented`: das System-Segment ist nur 32 pt hoch, gefordert sind 44 pt.
+        HStack(spacing: 2) {
+            ForEach(PlayerSurface.allCases, id: \.self) { item in
+                let on = item == playback.surface
+                Button { withAnimation(.easeInOut(duration: 0.2)) { playback.show(item) } } label: {
+                    Text(item.title).font(.subheadline.weight(on ? .semibold : .regular))
+                        .lineLimit(1).minimumScaleFactor(0.75)
+                        .foregroundStyle(VoicePalette.text)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .background(on ? VoicePalette.background : Color.clear, in: RoundedRectangle(cornerRadius: 9))
+                        .shadow(color: .black.opacity(on ? 0.15 : 0), radius: 2, y: 1)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(item.title)
+                .accessibilityAddTraits(on ? [.isSelected] : [])
+                .accessibilityShowsLargeContentViewer()
+            }
         }
-        .pickerStyle(.segmented)
-        // Ab sehr großer Schrift würde „Lesen & Hören“ im Segment abgeschnitten.
-        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+        .padding(2)
+        .background(Color(.tertiarySystemFill), in: RoundedRectangle(cornerRadius: 11))
+        .accessibilityElement(children: .contain)
         .accessibilityLabel("Ansicht")
-        .accessibilityValue(playback.surface.title)
         .accessibilityIdentifier("playerSurface")
         .accessibilityHint("Wechselt zwischen Cover, Mitlesen beim Hören und reinem Lesen. Die Stelle im Buch bleibt.")
     }
@@ -156,14 +179,15 @@ struct ReadingBar: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(progressLine).font(.subheadline.weight(.semibold)).lineLimit(1)
                 Text(playback.source == .audiobook ? "Hörbuch pausiert" : "Vorlesen pausiert")
-                    .font(.caption).foregroundStyle(VoicePalette.secondaryText)
+                    .font(.caption).foregroundStyle(VoicePalette.text).lineLimit(1)
             }
             Spacer(minLength: 0)
             Button {
                 withAnimation(.easeInOut(duration: 0.2)) { playback.show(.readListen) }
                 if !playback.busy { playback.play() }
             } label: {
-                Label("Ab hier hören", systemImage: "play.fill").font(.headline).padding(.horizontal, 16).frame(minHeight: 44)
+                Label("Ab hier hören", systemImage: "play.fill").font(.headline).lineLimit(1).fixedSize()
+                    .padding(.horizontal, 16).frame(minHeight: 44)
                     .foregroundStyle(VoicePalette.brand).background(VoicePalette.ink, in: Capsule())
             }
             .buttonStyle(.plain)
@@ -240,7 +264,9 @@ struct SourceMenu: View {
             VStack(spacing: 2) {
                 Image(systemName: "arrow.left.arrow.right").font(.title2)
                 Text("Quelle").font(.caption2).lineLimit(1).minimumScaleFactor(0.7)
-            }.frame(minWidth: 56, minHeight: 44).contentShape(Rectangle())
+            }
+            .foregroundStyle(VoicePalette.text)  // nicht die App-Tönung: Gelb auf hellem Grund ist zu schwach
+            .frame(minWidth: 56, minHeight: 44).contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Quelle")
