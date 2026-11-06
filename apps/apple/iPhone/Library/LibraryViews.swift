@@ -232,6 +232,7 @@ struct LibraryShelf: View {
                     ForEach(shown) { book in
                         NavigationLink { LibraryBookDetail(bookId: book.id) } label: { ShelfItem(book: book) }.buttonStyle(.plain)
                             .overlay(alignment: .topLeading) { FavoriteStar(book: book) }
+                            .overlay(alignment: .topTrailing) { ShelfPlayButton(book: book) }
                     }
                 }
                 if library.importing { ProgressView("Importiere …") }
@@ -263,12 +264,16 @@ struct LibraryShelf: View {
 struct ShelfItem: View {
     let book: LibraryBook
     @ObservedObject var library = PhoneLibrary.shared
+    @ObservedObject var downloads = AudioDownloads.shared
     @Environment(\.dynamicTypeSize) private var typeSize
     var body: some View {
         let audio = library.hasAudio(book)
         let rec = audio || library.audioInAccount(book) ? library.record(library.audioKey(book)) : library.record(library.textKey(book))
         VStack(alignment: .leading, spacing: 5) {
             LibraryCover(title: book.title, image: library.coverThumbnail(book), titleTopInset: 24).aspectRatio(2/3, contentMode: .fit)
+            if downloads.jobs[book.id] != nil {
+                ShelfDownloadStatus(book: book)
+            } else {
             ProgressView(value: book.finished ? 1 : LibraryProgress.fraction(rec)).tint(VoicePalette.accent)
             // Fester Platz für das Symbol: Lange Angaben brechen um und rücken nicht darunter.
             metaLayout {
@@ -279,9 +284,11 @@ struct ShelfItem: View {
                     .frame(maxWidth: typeSize.isAccessibilitySize ? nil : .infinity, alignment: .leading)
                 if audio || !typeSize.isAccessibilitySize { DownloadedMark(visible: audio) }
             }
+            }
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(([book.title] + book.authors + (audio ? ["Hörbuch heruntergeladen, offline verfügbar"] : [])).joined(separator: ", "))
+        .accessibilityValue(downloads.jobs[book.id] != nil ? ShelfDownloadStatus.line(book, downloads) : "")
     }
 
     /// In sehr großer Schrift untereinander, sonst bliebe dem Text kaum Breite.
@@ -301,6 +308,66 @@ struct DownloadedMark: View {
             .foregroundStyle(VoicePalette.success)
             .opacity(visible ? 1 : 0)
             .accessibilityHidden(true)
+    }
+}
+
+/// Solange ein Hörbuch lädt, ersetzt das die Fortschrittszeile unter dem Cover.
+struct ShelfDownloadStatus: View {
+    let book: LibraryBook
+    @ObservedObject var downloads = AudioDownloads.shared
+    @ObservedObject var sync = LibrarySync.shared  // Netzwechsel ändert die Zeile auch ohne neue Bytes
+
+    var body: some View {
+        Text(Self.line(book, downloads))
+            .font(.caption).foregroundStyle(VoicePalette.secondaryText)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    static func line(_ book: LibraryBook, _ downloads: AudioDownloads) -> String {
+        let job = downloads.jobs[book.id]
+        let total = max(1, job?.totalBytes ?? 1), bytes = downloads.done[book.id] ?? 0
+        let percent = LibraryFormat.percent(min(1, Double(bytes) / Double(total)))
+        switch job?.phase {
+        case .failed: return "Laden fehlgeschlagen"
+        case .paused: return "Angehalten · \(percent)"
+        default:
+            if downloads.waitsForWifi(book.id) { return "Wartet auf WLAN · \(percent)" }
+            let rest = downloads.remainingSeconds(book.id).map { " · " + AudioDownload.remainingText($0) } ?? ""
+            return "Lädt · \(percent)\(rest)"
+        }
+    }
+}
+
+/// Startet direkt aus dem Regal: Hörbuch, wenn es geladen ist, sonst Vorlesen. Der Mini-Player übernimmt.
+struct ShelfPlayButton: View {
+    let book: LibraryBook
+    @ObservedObject var library = PhoneLibrary.shared
+
+    var body: some View {
+        if library.hasAudio(book) || library.hasText(book) { ShelfPlayControl(book: book) }
+    }
+}
+
+/// Eigene Ansicht: Die Position ändert sich beim Hören laufend, das soll keine Dateien prüfen.
+private struct ShelfPlayControl: View {
+    let book: LibraryBook
+    @ObservedObject var playback = LibraryPlayback.shared
+
+    var body: some View {
+        let current = playback.book?.id == book.id
+        Button {
+            if current { playback.toggle() } else { playback.open(book, autoplay: true); playback.presented = false }
+        } label: {
+            Group {
+                if current && playback.preparing { ProgressView().controlSize(.small).tint(.white) }
+                else { Image(systemName: current && playback.playing ? "pause.fill" : "play.fill").font(.system(size: 13, weight: .semibold)) }
+            }
+            .foregroundStyle(Color.white)
+            .frame(width: 26, height: 26).background(.black.opacity(0.45), in: Circle())
+            .padding(4).frame(width: 44, height: 44, alignment: .topTrailing).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(current && playback.busy ? "Pause" : "Abspielen"): \(book.title)")
     }
 }
 

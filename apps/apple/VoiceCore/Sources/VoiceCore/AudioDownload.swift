@@ -94,6 +94,63 @@ public enum AudioDownload {
         }
     }
 
+    /// Merkt, seit wann und ab welchem Stand ein Auftrag läuft. Pause, Fehler und Abbruch beenden die Messung,
+    /// sonst zählte die Wartezeit als langsames Laden.
+    public struct SpeedTracker: Sendable {
+        private var marks: [String: (at: Date, bytes: Int)] = [:]
+        private var expensiveNetwork: Bool?
+        public init() {}
+
+        public mutating func note(_ id: String, phase: Phase, bytes: Int, now: Date) {
+            if phase != .running { marks[id] = nil } else if marks[id] == nil { marks[id] = (now, bytes) }
+        }
+
+        public mutating func reset(_ id: String) { marks[id] = nil }
+
+        /// Netz gewechselt: Das Tempo von vorher sagt nichts mehr, und Warten auf WLAN zählt nicht.
+        public mutating func noteNetwork(expensive: Bool) {
+            if let known = expensiveNetwork, known != expensive { marks = [:] }
+            expensiveNetwork = expensive
+        }
+
+        public func remaining(_ id: String, doneBytes: Int, totalBytes: Int, now: Date) -> TimeInterval? {
+            guard let mark = marks[id] else { return nil }
+            return AudioDownload.remainingSeconds(doneBytes: doneBytes, totalBytes: totalBytes, startBytes: mark.bytes, elapsed: now.timeIntervalSince(mark.at))
+        }
+    }
+
+    /// Beginn eines Auftrags: Die Messung startet neu, zu wenig Speicher beendet ihn sofort.
+    public static func prepareStart(_ job: Job, remainingBytes: Int, freeBytes: Int64?, format: (Int64) -> String,
+                                    speed: inout SpeedTracker) -> Job {
+        speed.reset(job.bookId)
+        guard let problem = spaceProblem(remainingBytes: remainingBytes, freeBytes: freeBytes, format: format) else { return job }
+        return failedStart(job, message: problem, speed: &speed)
+    }
+
+    /// Auftrag scheitert beim Start; eine Messung darf davon nicht übrig bleiben.
+    public static func failedStart(_ job: Job, message: String, speed: inout SpeedTracker) -> Job {
+        speed.reset(job.bookId)
+        var failed = job
+        failed.phase = .failed
+        failed.message = message
+        return failed
+    }
+
+    /// Geschätzte Restzeit aus dem bisherigen Tempo; `nil`, solange die Messung zu kurz ist.
+    public static func remainingSeconds(doneBytes: Int, totalBytes: Int, startBytes: Int, elapsed: TimeInterval) -> TimeInterval? {
+        let loaded = doneBytes - startBytes
+        guard elapsed >= 3, loaded > 0, totalBytes > doneBytes else { return nil }
+        return Double(totalBytes - doneBytes) / (Double(loaded) / elapsed)
+    }
+
+    public static func remainingText(_ seconds: TimeInterval) -> String {
+        let minutes = Int((seconds / 60).rounded(.up))
+        if minutes <= 1 { return "noch unter 1 Min" }
+        if minutes < 60 { return "noch \(minutes) Min" }
+        let rest = minutes % 60
+        return rest == 0 ? "noch \(minutes / 60) Std" : "noch \(minutes / 60) Std \(rest) Min"
+    }
+
     /// Fehlende Stücke in Hörreihenfolge, ohne angekommene und laufende; höchstens `limit`.
     public static func missingChunks(_ job: Job, states: [PartState], staged: Set<ChunkKey>, inFlight: Set<ChunkKey>,
                                      chunkPlainBytes: Int, limit: Int = window) -> [ChunkKey] {

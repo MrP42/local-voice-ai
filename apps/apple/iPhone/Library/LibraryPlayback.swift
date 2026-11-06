@@ -207,14 +207,17 @@ final class LibraryPlayback: NSObject, ObservableObject {
         let hasText = library.hasText(book)
         let stored = prefer?.rawValue ?? d.string(forKey: Self.sourceKey(book.id))
         let source = PlayerSource.initial(stored: stored, audioLocal: library.hasAudio(book) && audioFilesPresent(book), hasText: hasText)
-        if let source { d.set(source.rawValue, forKey: Self.sourceKey(book.id)) }
+        // Vorlesen als Ersatz, weil das Hörbuch noch nicht geladen ist, ist keine Wahl: Nach dem Laden gilt das Hörbuch.
+        if let source, prefer != nil || library.hasAudio(book) { d.set(source.rawValue, forKey: Self.sourceKey(book.id)) }
         switch source {
-        case .audiobook: openAudiobook(book, autoplay: autoplay)
-        case .voice: openReadAloud(book, autoplay: autoplay)
+        case .audiobook: openAudiobook(book, autoplay: false)
+        case .voice: openReadAloud(book, autoplay: false)
         case nil: error = "Für dieses Buch liegt weder Text noch Hörbuch auf dem iPhone."; return
         }
         guard self.book?.id == book.id else { return }
+        // Erst die Ansicht dieses Buchs, dann abspielen: `play` richtet sich nach ihr.
         surface = PlayerSurface.initial(stored: d.string(forKey: Self.surfaceKey(book.id)), hasText: !paragraphs.isEmpty)
+        if autoplay { play() }
         presented = true
     }
 
