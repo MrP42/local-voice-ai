@@ -311,7 +311,7 @@ struct FavoriteStar: View {
                 .padding(4).frame(width: 44, height: 44, alignment: .topLeading).contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(book.favorite ? "Favorit entfernen" : "Als Favorit merken")
+        .accessibilityLabel(book.favorite ? "Aus Favoriten entfernen: \(book.title)" : "Zu Favoriten hinzufügen: \(book.title)")
     }
 }
 

@@ -197,7 +197,12 @@ final class LibrarySync: ObservableObject {
         let collections = [LibrarySyncFormat.collectionBook, LibrarySyncFormat.collectionProgress]
         guard collections.contains(remote.collection) else { return }
         if remote.deleted {
-            if remote.collection == LibrarySyncFormat.collectionBook { library.removeRemote(id: remote.objectId) }
+            if remote.collection == LibrarySyncFormat.collectionBook, let local = library.books.first(where: { $0.id == remote.objectId }) {
+                let meta = library.meta(local)
+                let hash = LibrarySyncFormat.canonicalHash(try SyncedBook(book: local, files: meta.files, updated: meta.updated).json())
+                // Ungesicherte Änderung: Buch behalten, der nächste Lauf sendet es über den Grabstein hinweg neu.
+                if !SyncLedger.keepsAgainstTombstone(ledger[remote.collection, remote.objectId], localHash: hash) { library.removeRemote(id: remote.objectId) }
+            }
             ledger[remote.collection, remote.objectId] = .init(revision: remote.revision, hash: "", deleted: true)
             return
         }
@@ -273,6 +278,7 @@ final class LibrarySync: ObservableObject {
                     refs.append(try await uploadFile(url, acc, type: nil, file: t.file))
                 }
                 meta.files.audio = refs
+                meta.localAudio = Dictionary(library.audioParts(refs).map { ($0.file, $0.blob) }, uniquingKeysWith: { $1 })
                 library.setMeta(book, meta)
             }
             let value = try SyncedBook(book: book, files: meta.files, updated: meta.updated).json()

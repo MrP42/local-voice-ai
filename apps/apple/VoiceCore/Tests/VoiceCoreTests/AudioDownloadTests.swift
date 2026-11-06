@@ -123,6 +123,16 @@ final class AudioDownloadTests: XCTestCase {
         XCTAssertTrue(again.shouldRestart(part, index: 1, task: task))
     }
 
+    func testLocalAudioMustMatchAccountVersion() {
+        let parts = [AudioDownload.Part(blob: "neu", size: 10, chunks: 1, file: "a.m4a"), AudioDownload.Part(blob: "b", size: 20, chunks: 1, file: "b.m4a")]
+        XCTAssertTrue(AudioDownload.isCurrent(parts, sizes: [10, 20], blobs: ["a.m4a": "neu", "b.m4a": "b"]))
+        XCTAssertFalse(AudioDownload.isCurrent(parts, sizes: [10, 20], blobs: ["a.m4a": "alt"]), "gleicher Name und Größe, andere Fassung")
+        XCTAssertFalse(AudioDownload.isCurrent(parts, sizes: [9, 20], blobs: [:]), "Teil abgerissen oder andere Größe")
+        XCTAssertFalse(AudioDownload.isCurrent(parts, sizes: [nil, 20], blobs: [:]), "Teil entfernt")
+        XCTAssertFalse(AudioDownload.isCurrent(parts, sizes: [10], blobs: [:]), "Teil fehlt in der Aufstellung")
+        XCTAssertTrue(AudioDownload.isCurrent(parts, sizes: [10, 20], blobs: [:]), "ältere Dateien ohne Eintrag zählen über die Größe")
+    }
+
     func testSpaceProblem() {
         let fmt: (Int64) -> String = { "\($0) B" }
         XCTAssertNil(AudioDownload.spaceProblem(remainingBytes: 100, freeBytes: nil, format: fmt))

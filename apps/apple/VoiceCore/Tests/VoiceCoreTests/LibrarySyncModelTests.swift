@@ -74,6 +74,14 @@ final class DesktopVectorTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(LibraryBook.self, from: Data(#"{"id":"a","title":"b"}"#.utf8)).favorite, false)
     }
 
+    func testTombstoneKeepsUnsavedLocalChanges() {
+        let synced = SyncLedger.Entry(revision: 3, hash: "h", deleted: false)
+        XCTAssertFalse(SyncLedger.keepsAgainstTombstone(synced, localHash: "h"), "abgeglichener Stand darf weg")
+        XCTAssertTrue(SyncLedger.keepsAgainstTombstone(synced, localHash: "favorit-geaendert"), "neuer als der Abgleich")
+        XCTAssertTrue(SyncLedger.keepsAgainstTombstone(nil, localHash: "h"), "war nie im Konto")
+        XCTAssertTrue(SyncLedger.keepsAgainstTombstone(.init(revision: 4, hash: "", deleted: true), localHash: "h"), "nach Grabstein neu entstanden")
+    }
+
     func testChunkCountMatchesDesktopAndFitsHosting() {
         XCTAssertEqual(LibrarySyncFormat.chunkCount(size: 0), 1)
         XCTAssertEqual(LibrarySyncFormat.chunkCount(size: LibrarySyncFormat.oneChunkMaxBytes), 1)

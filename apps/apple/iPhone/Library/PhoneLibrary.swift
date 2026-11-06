@@ -96,14 +96,47 @@ final class PhoneLibrary: ObservableObject {
         try? root.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]).volumeAvailableCapacityForImportantUsage
     }
 
+    /// Hörbuch vollständig auf dem iPhone, und zwar in der Fassung, die das Konto nennt.
     func hasAudio(_ book: LibraryBook) -> Bool {
-        guard let tracks = book.audio?.allTracks, !tracks.isEmpty else { return false }
-        return audioURLs(book).count == tracks.count
+        guard let tracks = book.audio?.allTracks, !tracks.isEmpty, audioURLs(book).count == tracks.count else { return false }
+        let m = meta(book)
+        guard !m.files.audio.isEmpty else { return true }  // nur lokal, noch nicht im Konto
+        let parts = audioParts(m.files.audio)
+        return AudioDownload.isCurrent(parts, sizes: parts.map { LibrarySync.fileSize(audioDir(book).appendingPathComponent($0.file)) }, blobs: m.localAudio ?? [:])
+    }
+
+    func audioParts(_ refs: [BlobRef]) -> [AudioDownload.Part] {
+        refs.enumerated().map { i, ref in
+            AudioDownload.Part(blob: ref.blob, size: ref.size, chunks: ref.chunks, file: LibrarySync.audioFileName(ref.file, index: i))
+        }
+    }
+
+    /// Geladene Fassung einer Hörbuchdatei merken.
+    func noteLocalAudio(bookId: String, file: String, blob: String) {
+        guard let book = books.first(where: { $0.id == bookId }) else { return }
+        var m = meta(book)
+        m.localAudio = (m.localAudio ?? [:]).merging([file: blob]) { $1 }
+        setMeta(book, m)
+    }
+
+    /// Dateien entfernen, die das Konto inzwischen ersetzt hat, damit sie neu geladen werden.
+    func removeStaleAudio(_ book: LibraryBook) {
+        let m = meta(book)
+        for part in audioParts(m.files.audio) {
+            let file = audioDir(book).appendingPathComponent(part.file)
+            guard let size = LibrarySync.fileSize(file) else { continue }
+            if !AudioDownload.isCurrent([part], sizes: [size], blobs: m.localAudio ?? [:]) { try? FileManager.default.removeItem(at: file) }
+        }
     }
 
     // MARK: Sync-Metadaten je Buch (`<id>/sync.json`): Dateiverweise im Konto, Stand.
 
-    struct SyncMeta: Codable { var files = BookFiles(); var updated: Double = 0 }
+    struct SyncMeta: Codable {
+        var files = BookFiles()
+        var updated: Double = 0
+        /// Dateiname → Blob der geladenen Hörbuchdatei.
+        var localAudio: [String: String]? = nil
+    }
 
     func meta(_ book: LibraryBook) -> SyncMeta {
         guard let data = try? Data(contentsOf: dir(book).appendingPathComponent("sync.json")),
@@ -127,7 +160,9 @@ final class PhoneLibrary: ObservableObject {
     /// Buch aus dem Abgleich übernehmen (ohne eigenen Stand zu erhöhen).
     func storeRemote(_ book: LibraryBook, meta: SyncMeta) throws {
         try write(book)
-        setMeta(book, meta)
+        var merged = meta
+        merged.localAudio = self.meta(book).localAudio  // Lokale Angabe, kommt nicht aus dem Konto.
+        setMeta(book, merged)
     }
 
     func removeRemote(id: String) {

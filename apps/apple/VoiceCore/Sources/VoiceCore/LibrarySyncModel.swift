@@ -216,6 +216,13 @@ public struct SyncLedger: Codable, Equatable, Sendable {
         dead = try c.decodeIfPresent([String: String].self, forKey: .dead) ?? [:]
     }
     public static func key(_ collection: String, _ objectId: String) -> String { collection + "/" + objectId }
+
+    /// Ein Grabstein löscht nur, was dem Abgleich bekannt ist. Weicht der lokale Stand vom zuletzt
+    /// abgeglichenen ab oder war nie im Konto, gibt es ungesicherte Änderungen: Das Buch bleibt.
+    public static func keepsAgainstTombstone(_ entry: Entry?, localHash: String) -> Bool {
+        guard let entry, !entry.deleted else { return true }
+        return entry.hash != localHash
+    }
     public subscript(collection: String, objectId: String) -> Entry? {
         get { entries[Self.key(collection, objectId)] }
         set { entries[Self.key(collection, objectId)] = newValue }
