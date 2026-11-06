@@ -25,45 +25,12 @@ enum AudiobookFormat {
     }
 }
 
-struct LibraryListenView: View {
-    @ObservedObject var look = ReaderAppearance.shared
+/// Cover mit Titel und Mitwirkenden: Ansicht „Hören“ des Einheits-Players.
+struct PlayerCoverArea: View {
     @ObservedObject var playback = LibraryPlayback.shared
     @ObservedObject var library = PhoneLibrary.shared
-    @State private var scrubbing: Double?
-    /// Standard: Cover. „Text“ schaltet auf Mitlesen um.
-    @State private var showText = false
-    @State private var chaptersShown = false
-    @State private var infoShown = false
-
-    private var currentParagraph: Int {
-        guard let map = playback.followMap else { return 0 }
-        return LibraryText.paragraphIndex(playback.paragraphs, at: map.chars(atMs: playback.positionMs))
-    }
 
     var body: some View {
-        let chapters = playback.chapters
-        let index = playback.chapterIndex
-        VStack(spacing: 0) {
-            PlayerHeader(title: playback.title,
-                         subtitle: chapters.count > 1 ? "Kapitel \(index + 1) von \(chapters.count)" : "Hörbuch",
-                         trailing: AnyView(HStack(spacing: 0) {
-                             if showText { ReaderAppearanceButton() }
-                             Button { infoShown = true } label: {
-                                 Image(systemName: "info.circle").font(.title3).frame(width: 44, height: 44)
-                             }.accessibilityLabel("Angaben zum Buch")
-                         }))
-            Divider()
-            if showText, !playback.paragraphs.isEmpty { followText } else { coverArea }
-            controls(chapters: chapters, index: index)
-        }
-        .background(VoicePalette.background)
-        .sheet(isPresented: $chaptersShown) { AudiobookChapterSheet() }
-        .sheet(isPresented: $infoShown) { AudiobookInfoSheet() }
-    }
-
-    // MARK: Cover
-
-    private var coverArea: some View {
         VStack(spacing: 14) {
             Spacer(minLength: 12)
             LibraryCover(title: playback.title, image: playback.book.flatMap { library.coverImage($0) })
@@ -84,58 +51,35 @@ struct LibraryListenView: View {
     private var byline: String? {
         guard let book = playback.book else { return nil }
         let authors = book.authors.isEmpty ? (playback.info?.authors ?? []) : book.authors
-        let narrators = book.audio?.narrator.map { [$0] } ?? (playback.info?.narrators ?? [])
         var parts: [String] = []
         if !authors.isEmpty { parts.append("von \(authors.joined(separator: ", "))") }
-        if !narrators.isEmpty { parts.append("gelesen von \(narrators.joined(separator: ", "))") }
+        if playback.source == .audiobook {
+            let narrators = book.audio?.narrator.map { [$0] } ?? (playback.info?.narrators ?? [])
+            if !narrators.isEmpty { parts.append("gelesen von \(narrators.joined(separator: ", "))") }
+        } else {
+            parts.append("Vorlesestimme \(playback.voiceName)")
+        }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
+}
 
-    // MARK: Mitlesen
+/// Bedienleiste für das Hörbuch: Kapitel, Regler, Fortschritt, Transport, Werkzeuge.
+struct AudiobookControls: View {
+    @ObservedObject var playback = LibraryPlayback.shared
+    @Binding var chaptersShown: Bool
+    /// Beim Mitlesen schmal: ohne Kapitelzeile und Buchfortschritt, damit der Text Platz hat.
+    let compact: Bool
+    @State private var scrubbing: Double?
 
-    private var followText: some View {
-        let current = currentParagraph
-        return VStack(spacing: 0) {
-            FollowText(paragraphs: playback.paragraphs, current: current) { i, p in
-                Text(p.text).font(look.font(heading: p.heading)).foregroundStyle(look.text)
-                    .lineSpacing(look.lineSpacing).fixedSize(horizontal: false, vertical: true)
-                    .padding(10).frame(maxWidth: .infinity, alignment: .leading)
-                    .background(i == current ? Color.yellow.opacity(0.28) : Color.clear, in: RoundedRectangle(cornerRadius: 10))
-                    .contentShape(Rectangle()).onTapGesture { playback.jump(toParagraph: i) }
-                    .accessibilityAddTraits(i == current ? [.isButton, .isSelected] : .isButton)
-                    .accessibilityHint("Springt im Hörbuch zu diesem Absatz")
-            }
-            Text(playback.followMap?.approximate == true ? "Ohne Zeitachse vom PC: Markierung nur geschätzt" : "Absatz antippen, um im Hörbuch dorthin zu springen")
-                .font(.caption).foregroundStyle(look.muted).padding(.vertical, 4)
-        }
-        .background(look.background)
-    }
+    init(chaptersShown: Binding<Bool>, compact: Bool = false) { _chaptersShown = chaptersShown; self.compact = compact }
 
-    // MARK: Bedienleiste
-
-    @ViewBuilder private func controls(chapters: [AudiobookChapter], index: Int) -> some View {
+    var body: some View {
+        let chapters = playback.chapters
+        let index = playback.chapterIndex
         let chapter = chapters.isEmpty ? nil : chapters[min(index, chapters.count - 1)]
         let position = scrubbing ?? playback.positionMs
         VStack(spacing: 8) {
-            if let book = playback.book, library.hasText(book) {
-                HStack { Spacer(); BookTalkButton() }
-            }
-            Button { chaptersShown = true } label: {
-                HStack(spacing: 10) {
-                    Image(systemName: "list.bullet").font(.body.weight(.semibold)).foregroundStyle(VoicePalette.accent)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(chapters.count > 1 ? "Kapitel \(index + 1) von \(chapters.count)" : "Inhalt").font(.caption).foregroundStyle(VoicePalette.secondaryText)
-                        Text(chapter?.title ?? playback.title).font(.subheadline.weight(.semibold)).lineLimit(1)
-                    }
-                    Spacer(minLength: 4)
-                    Image(systemName: "chevron.up").font(.footnote.weight(.semibold)).foregroundStyle(VoicePalette.secondaryText)
-                }
-                .padding(.horizontal, 12).frame(minHeight: 48)
-                .background(VoicePalette.border.opacity(0.5), in: RoundedRectangle(cornerRadius: 12))
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Inhaltsverzeichnis, Kapitel \(index + 1) von \(max(1, chapters.count)): \(chapter?.title ?? "")")
+            if !compact { chapterButton(chapters: chapters, index: index, chapter: chapter) }
 
             if let chapter {
                 // Regler über das laufende Kapitel; die Gesamtposition steht darunter.
@@ -154,26 +98,42 @@ struct LibraryListenView: View {
                 }.font(.caption.monospacedDigit()).foregroundStyle(VoicePalette.secondaryText)
             }
 
-            overall(position: position)
+            if !compact { overall(position: position) }
 
             HStack {
                 ChapterStepButton(forward: false) { playback.previousChapter() }
-                Spacer(); ControlButton(title: "15 s zurück", systemImage: "gobackward.15") { playback.skip(seconds: -15) }
+                Spacer(); ControlButton(title: "15 Sekunden zurück", systemImage: "gobackward.15", caption: "15 s") { playback.skip(seconds: -15) }
                 Spacer(); PlayButton()
-                Spacer(); ControlButton(title: "15 s vor", systemImage: "goforward.15") { playback.skip(seconds: 15) }
+                Spacer(); ControlButton(title: "15 Sekunden vor", systemImage: "goforward.15", caption: "15 s") { playback.skip(seconds: 15) }
                 Spacer(); ChapterStepButton(forward: true) { playback.nextChapter() }
                     .disabled(index + 1 >= chapters.count).opacity(index + 1 >= chapters.count ? 0.4 : 1)
             }
             HStack {
                 RateMenu()
                 Spacer(); ControlButton(title: "Inhalt", systemImage: "list.bullet.rectangle") { chaptersShown = true }
-                if !playback.paragraphs.isEmpty {
-                    Spacer(); ControlButton(title: showText ? "Cover" : "Text", systemImage: showText ? "photo" : "text.alignleft") { showText.toggle() }
-                }
+                if SourceMenu.offered { Spacer(); SourceMenu() }
                 Spacer(); SleepMenu()
             }
         }
-        .padding(.horizontal, 20).padding(.vertical, 10).background(.bar)
+    }
+
+    private func chapterButton(chapters: [AudiobookChapter], index: Int, chapter: AudiobookChapter?) -> some View {
+        Button { chaptersShown = true } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "list.bullet").font(.body.weight(.semibold)).foregroundStyle(VoicePalette.accent)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(chapters.count > 1 ? "Kapitel \(index + 1) von \(chapters.count)" : "Inhalt").font(.caption).foregroundStyle(VoicePalette.secondaryText)
+                    Text(chapter?.title ?? playback.title).font(.subheadline.weight(.semibold)).lineLimit(1)
+                }
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.up").font(.footnote.weight(.semibold)).foregroundStyle(VoicePalette.secondaryText)
+            }
+            .padding(.horizontal, 12).frame(minHeight: 48)
+            .background(VoicePalette.border.opacity(0.5), in: RoundedRectangle(cornerRadius: 12))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Inhaltsverzeichnis, Kapitel \(index + 1) von \(max(1, chapters.count)): \(chapter?.title ?? "")")
     }
 
     private func overall(position: Double) -> some View {
@@ -200,29 +160,30 @@ struct LibraryListenView: View {
 }
 
 /// „Kapitel zurück/vor“: sichtbar kurz „Kapitel“, die Richtung zeigt das Symbol.
-private struct ChapterStepButton: View {
+struct ChapterStepButton: View {
     let forward: Bool
     let action: () -> Void
     var body: some View {
         Button(action: action) {
             VStack(spacing: 2) {
                 Image(systemName: forward ? "forward.end.fill" : "backward.end.fill").font(.title2)
-                Text("Kapitel").font(.caption2).lineLimit(1)
-            }.frame(minWidth: 56, minHeight: 44)
+                Text("Kapitel").font(.caption2).lineLimit(1).minimumScaleFactor(0.7)
+            }.frame(minWidth: 56, minHeight: 44).contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityShowsLargeContentViewer()
         .accessibilityLabel(forward ? "Nächstes Kapitel" : "Kapitel zurück")
         .accessibilityHint(forward ? "" : "Kurz nach Kapitelbeginn ins vorige Kapitel, sonst an den Kapitelanfang")
     }
 }
 
-private struct SleepMenu: View {
+struct SleepMenu: View {
     @ObservedObject var playback = LibraryPlayback.shared
     var body: some View {
         let active = playback.sleepEnds != nil || playback.sleepAtMs != nil
         Menu {
             Button("Aus") { playback.sleep(minutes: nil) }
-            Button("Ende des Kapitels") { playback.sleepAtChapterEnd() }
+            if playback.source == .audiobook { Button("Ende des Kapitels") { playback.sleepAtChapterEnd() } }
             ForEach([15, 30, 45, 60], id: \.self) { m in Button("\(m) Minuten") { playback.sleep(minutes: m) } }
         } label: {
             VStack(spacing: 2) {

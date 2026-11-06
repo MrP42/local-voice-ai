@@ -50,6 +50,10 @@ final class LibraryPlayback: NSObject, ObservableObject {
     @Published var error: String?
     /// Vollbild-Player sichtbar (Hören mit Mitlesen oder Vorlesen).
     @Published var presented = false
+    /// Ansicht im Einheits-Player (Hören · Lesen & Hören · Lesen), je Buch gemerkt.
+    @Published private(set) var surface: PlayerSurface = .listen
+    /// Wort, das die Systemstimme gerade spricht (relativ zum Absatztext). Phonon liest satzweise: dort `nil`.
+    @Published private(set) var wordRange: NSRange?
 
     private let library: PhoneLibrary
     private var player: AVPlayer?
@@ -82,6 +86,9 @@ final class LibraryPlayback: NSObject, ObservableObject {
     private var seekSettled = true
     private var lastTextSave = Date.distantPast
     private var sessionObservers: [NSObjectProtocol] = []
+    /// Satzgrenzen je Absatz fürs Mitlesen im Hörbuch (NLTokenizer ist zu teuer für jeden Takt).
+    private var sentenceCache: [Int: [NSRange]] = [:]
+    private var followCache: FollowMap?
     /// Buch-Gespräch (G5): Solange das Blatt offen ist, hält die Pause-Taste (AirPods, Sperrbildschirm) die Antwort
     /// an statt die Wiedergabe. Gibt `true` zurück, wenn der Befehl verbraucht wurde.
     enum RemoteCommand { case play, pause, toggle }
@@ -138,7 +145,130 @@ final class LibraryPlayback: NSObject, ObservableObject {
     }
     var followMap: FollowMap? {
         guard let book, let audio = book.audio, !text.isEmpty else { return nil }
+        if mode == .audiobook, let followCache { return followCache }
         return FollowMap(sync: audio.sync, textLength: Double(text.utf16.count), totalMs: totalMs)
+    }
+
+    // MARK: Einheits-Player
+
+    /// Name der Vorlesestimme für die Anzeige.
+    var voiceName: String {
+        if let phonon = PhononEngine.voiceName(voiceIdentifier) { return PhononEngine.displayName(phonon) }
+        return (voiceIdentifier.flatMap { AVSpeechSynthesisVoice(identifier: $0) } ?? Self.defaultVoice())?.name ?? "System"
+    }
+
+    /// Laufende Tonquelle.
+    var source: PlayerSource? { mode == .audiobook ? .audiobook : mode == .readAloud ? .voice : nil }
+
+    /// Satzbereiche eines Absatzes, zwischengespeichert.
+    func sentences(inParagraph index: Int) -> [NSRange] {
+        if let cached = sentenceCache[index] { return cached }
+        guard paragraphs.indices.contains(index) else { return [] }
+        let ranges = LibraryText.sentences(paragraphs[index].text)
+        sentenceCache[index] = ranges
+        return ranges
+    }
+
+    /// Was beim Mitlesen markiert ist: Absatz, Satz und Wort.
+    var readingMark: ReadingMark? {
+        switch mode {
+        case .audiobook:
+            guard let map = followMap else { return nil }
+            return ReadAlong.mark(atMs: positionMs, map: map, paragraphs: paragraphs) { self.sentences(inParagraph: $0) }
+        case .readAloud:
+            guard paragraphs.indices.contains(paragraphIndex) else { return nil }
+            return ReadingMark(paragraph: paragraphIndex, sentence: sentenceRange, word: wordRange, precise: true)
+        case nil: return nil
+        }
+    }
+
+    private static func surfaceKey(_ id: String) -> String { "lva.player.surface.\(id)" }
+    private static func sourceKey(_ id: String) -> String { "lva.player.source.\(id)" }
+
+    /// Ein Einstieg für alles: öffnet das Buch mit der gemerkten Quelle und Ansicht.
+    /// Liegt das Hörbuch nicht auf dem iPhone, liest die Stimme; ohne Text spielt nur das Hörbuch.
+    /// `prefer`: Quelle für diesen Aufruf erzwingen (z. B. Hörbuch-Teil im Buchdetail) und merken.
+    func open(_ book: LibraryBook, autoplay: Bool = false, prefer: PlayerSource? = nil) {
+        let d = UserDefaults.standard
+        // Läuft das Buch schon, bleibt die Quelle; nur den Buchstand auffrischen (z. B. Hörbuch inzwischen geladen).
+        if self.book?.id == book.id, let current = source, prefer == nil || prefer == current {
+            self.book = book
+            if autoplay && !busy { play() }
+            presented = true
+            return
+        }
+        if let prefer, self.book?.id == book.id, source != nil {
+            self.book = book
+            switchSource(to: prefer)
+            if autoplay && !busy { play() }
+            presented = true
+            return
+        }
+        let hasText = library.hasText(book)
+        let stored = prefer?.rawValue ?? d.string(forKey: Self.sourceKey(book.id))
+        let source = PlayerSource.initial(stored: stored, audioLocal: library.hasAudio(book) && audioFilesPresent(book), hasText: hasText)
+        if let source { d.set(source.rawValue, forKey: Self.sourceKey(book.id)) }
+        switch source {
+        case .audiobook: openAudiobook(book, autoplay: autoplay)
+        case .voice: openReadAloud(book, autoplay: autoplay)
+        case nil: error = "Für dieses Buch liegt weder Text noch Hörbuch auf dem iPhone."; return
+        }
+        guard self.book?.id == book.id else { return }
+        surface = PlayerSurface.initial(stored: d.string(forKey: Self.surfaceKey(book.id)), hasText: !paragraphs.isEmpty)
+        presented = true
+    }
+
+    /// Ansicht wechseln, ein Tipp. „Lesen“ hält an; zurück zu „Lesen & Hören“ spielt weiter, wenn vorher lief.
+    func show(_ next: PlayerSurface) {
+        guard let book, next != surface, PlayerSurface.available(hasText: !paragraphs.isEmpty).contains(next) else { return }
+        if !next.keepsPlaying {
+            resumeAfterReading = busy
+            if busy { pause() }
+        } else if !surface.keepsPlaying {
+            if resumeAfterReading { play() }
+            resumeAfterReading = false
+        }
+        surface = next
+        UserDefaults.standard.set(next.rawValue, forKey: Self.surfaceKey(book.id))
+    }
+    private var resumeAfterReading = false
+
+    /// Hörbuch ↔ Vorlesestimme an derselben Textstelle. Läuft die Wiedergabe, läuft sie an der neuen Quelle weiter.
+    func switchSource(to target: PlayerSource) {
+        guard let book, let current = source, target != current else { return }
+        let wasPlaying = busy
+        let offset: Int
+        switch current {
+        case .audiobook:
+            guard let map = followMap else { return }
+            offset = ReadAlong.handoverChars(atMs: positionMs, map: map, paragraphs: paragraphs) { self.sentences(inParagraph: $0) }
+        case .voice:
+            offset = paragraphs.indices.contains(paragraphIndex) ? chars(of: Cursor(paragraph: paragraphIndex, sentence: sentenceIndex)) : 0
+        }
+        let keep = surface
+        // Schlaftimer über den Wechsel retten (stop() setzt ihn zurück); „Kapitelende“ gilt nur fürs Hörbuch.
+        let sleepUntil = sleepEnds
+        switch target {
+        case .audiobook:
+            // Vor stop() prüfen: ein gescheiterter Wechsel darf den laufenden Player nicht leeren.
+            guard library.hasAudio(book), audioFilesPresent(book) else { error = "Das Hörbuch ist nicht vollständig auf dem iPhone. Bitte zuerst im Buch laden."; return }
+            openAudiobook(book)
+        case .voice:
+            guard library.hasText(book) else { return }
+            openReadAloud(book)
+        }
+        guard self.book?.id == book.id, source == target else { return }
+        surface = keep
+        UserDefaults.standard.set(target.rawValue, forKey: Self.sourceKey(book.id))
+        jump(toOffset: offset, autoplay: wasPlaying)
+        if let sleepUntil, sleepUntil > Date() { armSleep(until: sleepUntil) }
+    }
+
+    /// Liegen alle Teile des Hörbuchs als Datei vor?
+    private func audioFilesPresent(_ book: LibraryBook) -> Bool {
+        guard let audio = book.audio, !audio.allTracks.isEmpty else { return false }
+        let dir = library.dir(book).appendingPathComponent("audio")
+        return audio.allTracks.allSatisfy { FileManager.default.fileExists(atPath: dir.appendingPathComponent($0.file).path) }
     }
 
     // MARK: Hörbuch
@@ -157,6 +287,8 @@ final class LibraryPlayback: NSObject, ObservableObject {
         totalMs = audio.totalDurationMs ?? tracks.reduce(0) { $0 + ($1.durationMs ?? 0) }
         text = library.text(book) ?? ""
         paragraphs = LibraryText.paragraphs(text)
+        sentenceCache = [:]
+        followCache = text.isEmpty ? nil : FollowMap(sync: audio.sync, textLength: Double(text.utf16.count), totalMs: totalMs)
         loadInfo(book)
         let start = library.record(library.audioKey(book))?.offset ?? 0
         lastSavedMs = start
@@ -245,6 +377,8 @@ final class LibraryPlayback: NSObject, ObservableObject {
             self.book = book; mode = .readAloud
             self.text = text
             paragraphs = LibraryText.paragraphs(text)
+            sentenceCache = [:]
+            followCache = nil
             // Ohne gemerkte Stelle beim ersten Inhalt beginnen, nicht bei Titelei,
             // Inhaltsverzeichnis oder Impressum (wie am Desktop, lva#295).
             let readPreface = UserDefaults.standard.object(forKey: BookStart.readPrefaceKey) as? Bool ?? true
@@ -290,6 +424,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
         sentences = ranges
         sentenceIndex = ranges.isEmpty ? 0 : min(max(0, cursor.sentence), ranges.count - 1)
         sentenceRange = ranges.isEmpty ? nil : ranges[sentenceIndex]
+        wordRange = nil
     }
 
     /// Nächster Satz; leere Absätze werden übersprungen.
@@ -462,6 +597,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
     /// nicht als gelesen. `autoplay`: dort vorlesen bzw. das Hörbuch abspielen („Ab hier vorlesen“).
     func jump(toOffset offset: Int, autoplay: Bool) {
         guard book != nil, let mode, !paragraphs.isEmpty else { return }
+        if autoplay { leaveReadingForPlayback() }
         let target = max(0, offset)
         if mode == .audiobook {
             if let map = followMap { seek(toMs: map.ms(atChars: Double(target))) }
@@ -525,6 +661,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
     // MARK: Gemeinsam
 
     func play() {
+        leaveReadingForPlayback()
         activateSession()
         switch mode {
         case .audiobook: player?.playImmediately(atRate: rate); playing = true
@@ -559,7 +696,8 @@ final class LibraryPlayback: NSObject, ObservableObject {
         if mode == .readAloud { currentUtterance = nil; stopPhonon(); synth.stopSpeaking(at: .immediate) }
         removeObservers()
         player?.replaceCurrentItem(with: nil)
-        playing = false; book = nil; mode = nil; sentenceRange = nil; sentences = []; info = nil
+        playing = false; book = nil; mode = nil; sentenceRange = nil; wordRange = nil; sentences = []; info = nil
+        sentenceCache = [:]; followCache = nil; resumeAfterReading = false
         cancelSleep()
         library.flush()
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
@@ -601,6 +739,19 @@ final class LibraryPlayback: NSObject, ObservableObject {
         return art
     }
 
+    /// Wiedergabe in „Lesen“ (Mini-Player, Sperrbildschirm, Beleg im Buch-Gespräch): sichtbar mitlesen.
+    private func leaveReadingForPlayback() {
+        guard surface == .read, let book else { return }
+        surface = .readListen; resumeAfterReading = false
+        UserDefaults.standard.set(PlayerSurface.readListen.rawValue, forKey: Self.surfaceKey(book.id))
+    }
+
+    private func armSleep(until end: Date) {
+        sleepEnds = end
+        sleepTimer = Timer.scheduledTimer(withTimeInterval: max(1, end.timeIntervalSinceNow), repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.pause(); self?.sleepEnds = nil }
+        }
+    }
     private func cancelSleep() { sleepTimer?.invalidate(); sleepTimer = nil; sleepEnds = nil; sleepAtMs = nil }
 
     private func removeObservers() {
@@ -677,7 +828,7 @@ extension LibraryPlayback: AVSpeechSynthesizerDelegate {
         let id = ObjectIdentifier(utterance)
         Task { @MainActor in
             guard let current = self.currentUtterance, ObjectIdentifier(current) == id else { return }
-            self.systemVoiceReached(range.location)
+            self.systemVoiceReached(range)
         }
     }
     nonisolated func speechSynthesizer(_ s: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
@@ -689,12 +840,17 @@ extension LibraryPlayback: AVSpeechSynthesizerDelegate {
     }
 
     /// Die Systemstimme spricht den Rest des Absatzes am Stück; hier rückt der Satz nach.
-    fileprivate func systemVoiceReached(_ location: Int) {
+    fileprivate func systemVoiceReached(_ range: NSRange) {
+        let location = range.location
+        let word = NSRange(location: utteranceBase + location, length: range.length)
         let index = LibraryText.sentenceIndex(sentences, at: utteranceBase + location)
-        guard index != sentenceIndex, paragraphs.indices.contains(paragraphIndex) else { return }
-        let here = Cursor(paragraph: paragraphIndex, sentence: index)
-        move(to: here)
-        saveText(at: chars(of: here))
+        guard paragraphs.indices.contains(paragraphIndex) else { return }
+        if index != sentenceIndex {
+            let here = Cursor(paragraph: paragraphIndex, sentence: index)
+            move(to: here)
+            saveText(at: chars(of: here))
+        }
+        wordRange = word
     }
 
     /// Absatz von der Systemstimme zu Ende gesprochen.
