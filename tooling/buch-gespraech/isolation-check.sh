@@ -95,8 +95,62 @@ if [ -z "$DATA_DIR" ]; then
 fi
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/lva-isolation-XXXXXX")" || die "kein Temp-Ordner"
-cleanup() { rm -rf "$WORK"; }
+# Codex rotiert Refresh-Tokens (einmal nutzbar) und schreibt sie in die KOPIE der
+# auth.json. Ohne Rueckschreiben waere die echte Anmeldung danach ungueltig.
+# Geschrieben wird nur, wenn die Kopie abweicht, gueltiges JSON ist und sich das
+# Original seit dem Kopieren nicht veraendert hat (Hash gleich): atomar (tmp im
+# selben Ordner + Umbenennen), Dateirechte wie beim Original. Hinweise ohne Inhalt.
+auth_writeback() {
+  local base="$1" used="$2"
+  [ -f "$base/real_auth" ] && [ -f "$used" ] || return 0
+  python3 - "$(cat "$base/real_auth")" "$used" "$base/real_auth.sha" "$base/codex_home/auth.json" <<'PY' >&2
+import hashlib, json, os, stat, sys, tempfile
+real, used, shafile, basecopy = sys.argv[1:5]
+h = lambda b: hashlib.sha256(b).hexdigest()
+want = open(shafile).read().strip()
+data = open(used, 'rb').read()
+if h(data) == want:
+    sys.exit(0)
+try:
+    json.loads(data)
+except Exception:
+    print("[isolation-check] Hinweis: Codex-Anmeldekopie ist kein gueltiges JSON, nicht zurueckgeschrieben")
+    sys.exit(0)
+try:
+    now = h(open(real, 'rb').read())
+except OSError:
+    now = ''
+if now != want:
+    print("[isolation-check] Hinweis: echte Codex-Anmeldung wurde inzwischen veraendert, Kopie nicht zurueckgeschrieben")
+    sys.exit(0)
+try:
+    fd, tmp = tempfile.mkstemp(prefix='.auth-', dir=os.path.dirname(real))
+    with os.fdopen(fd, 'wb') as f:
+        f.write(data)
+        f.flush()
+        os.fsync(f.fileno())
+    os.chmod(tmp, stat.S_IMODE(os.stat(real).st_mode))
+    os.replace(tmp, real)
+except OSError:
+    print("[isolation-check] Hinweis: Codex-Anmeldung konnte nicht zurueckgeschrieben werden")
+    sys.exit(0)
+if os.path.abspath(used) != os.path.abspath(basecopy):
+    with open(basecopy, 'wb') as f:
+        f.write(data)
+open(shafile, 'w').write(h(data))
+PY
+}
+
+cleanup() {
+  local w
+  for w in "$WORK"/*/; do
+    [ -f "$w/fresh_codex_home/auth.json" ] && auth_writeback "${w%/}" "${w}fresh_codex_home/auth.json"
+    auth_writeback "${w%/}" "${w}codex_home/auth.json"
+  done
+  rm -rf "$WORK"
+}
 trap cleanup EXIT
+trap 'exit 130' INT TERM
 NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 sha256_of() {
@@ -163,7 +217,11 @@ make_world() {
   else
     mkdir -p "$base/codex_home"
     local real="${CODEX_HOME:-$HOME/.codex}"
-    [ -f "$real/auth.json" ] && cp "$real/auth.json" "$base/codex_home/"
+    if [ -f "$real/auth.json" ]; then
+      cp "$real/auth.json" "$base/codex_home/"
+      realpath_of "$real/auth.json" > "$base/real_auth"
+      sha256_of "$base/codex_home/auth.json" > "$base/real_auth.sha"
+    fi
     canary_text "$CAN_USER" > "$base/codex_home/AGENTS.md"
     mkdir -p "$base/codex_home/memories"
     canary_text "$CAN_MEMORY" > "$base/codex_home/memories/MEMORY.md"
@@ -208,7 +266,7 @@ run_claude() {
 CODEX_ALLOW="PATH PATHEXT SYSTEMROOT WINDIR COMSPEC TEMP TMP TMPDIR APPDATA LOCALAPPDATA PROGRAMDATA LANG LC_ALL LC_CTYPE TERM HTTPS_PROXY HTTP_PROXY NO_PROXY ALL_PROXY SSL_CERT_FILE SSL_CERT_DIR NODE_EXTRA_CA_CERTS"
 
 run_codex() {
-  local bin="$1" base="$2" mode="$3" spec="$4" out="$5"
+  local bin="$1" base="$2" mode="$3" spec="$4" out="$5" rc=0
   split_model "$spec"
   local common=(exec --json --skip-git-repo-check --sandbox read-only --ephemeral -m "$MODEL")
   [ -n "$EFFORT" ] && common+=(-c "model_reasoning_effort=\"$EFFORT\"")
@@ -228,12 +286,15 @@ run_codex() {
       -c 'model_max_output_tokens=600' -)
     ( cd "$base/parent/work" && printf '%s\n\n%s' "$SYSTEM" "$QUESTION" |
       env -i "${envargs[@]}" CODEX_HOME="$fresh" HOME="$fresh_user" USERPROFILE="$fresh_user" \
-        "$bin" "${common[@]}" > "$out" 2>"$out.err" )
+        "$bin" "${common[@]}" > "$out" 2>"$out.err" ) || rc=$?
+    auth_writeback "$base" "$fresh/auth.json"
   else
     common+=(-)
     ( cd "$base/parent/work" && printf '%s\n\n%s' "$SYSTEM" "$QUESTION" |
-      env CODEX_HOME="$base/codex_home" HOME="$base/home" "$bin" "${common[@]}" > "$out" 2>"$out.err" )
+      env CODEX_HOME="$base/codex_home" HOME="$base/home" "$bin" "${common[@]}" > "$out" 2>"$out.err" ) || rc=$?
+    auth_writeback "$base" "$base/codex_home/auth.json"
   fi
+  return "$rc"
 }
 
 # Ausgabe -> eine Zeile "text|input|output|model|compacted|stop|error" fuer die Auswertung.

@@ -1336,9 +1336,75 @@ pub(crate) fn codex_preview_env(
 /// Fertige Isolation der Codex-Vorschau; die Verzeichnisse werden beim Drop
 /// geloescht.
 pub(crate) struct CodexSandbox {
-    _codex_home: tempfile::TempDir,
+    codex_home: tempfile::TempDir,
     _user_home: tempfile::TempDir,
     pub env: Vec<(std::ffi::OsString, std::ffi::OsString)>,
+    /// Echte `auth.json` und ihr Hash zum Zeitpunkt des Kopierens.
+    original: PathBuf,
+    original_hash: String,
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// Schreibt `bytes` atomar (tmp im selben Ordner, dann Umbenennen) nach
+/// `target`; die Dateirechte bleiben die des bisherigen Ziels.
+fn write_atomic_like(target: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let dir = target
+        .parent()
+        .ok_or_else(|| std::io::Error::other("kein Ordner"))?;
+    let mut tmp = tempfile::Builder::new().prefix(".auth-").tempfile_in(dir)?;
+    tmp.write_all(bytes)?;
+    tmp.as_file().sync_all()?;
+    tmp.as_file()
+        .set_permissions(std::fs::metadata(target)?.permissions())?;
+    tmp.persist(target).map(|_| ()).map_err(|e| e.error)
+}
+
+impl CodexSandbox {
+    /// Codex rotiert Refresh-Tokens (einmal nutzbar) und schreibt sie in die
+    /// Kopie. Ohne Rueckschreiben waere die echte Anmeldung danach ungueltig.
+    /// Geschrieben wird nur, wenn die Kopie abweicht, gueltiges JSON ist und
+    /// sich das Original seit dem Kopieren nicht geaendert hat. Hinweise ohne
+    /// jeden Inhalt.
+    fn write_back_auth(&self) {
+        let Ok(copy) = std::fs::read(self.codex_home.path().join("auth.json")) else {
+            return;
+        };
+        if sha256_hex(&copy) == self.original_hash {
+            return;
+        }
+        if serde_json::from_slice::<serde_json::Value>(&copy).is_err() {
+            log::warn!(
+                "Codex-Vorschau: Anmeldekopie ist kein gueltiges JSON, nicht zurueckgeschrieben"
+            );
+            return;
+        }
+        let unchanged = std::fs::read(&self.original)
+            .map(|now| sha256_hex(&now) == self.original_hash)
+            .unwrap_or(false);
+        if !unchanged {
+            log::warn!(
+                "Codex-Vorschau: echte Anmeldung wurde inzwischen veraendert, Kopie nicht zurueckgeschrieben"
+            );
+            return;
+        }
+        if write_atomic_like(&self.original, &copy).is_err() {
+            log::warn!("Codex-Vorschau: Anmeldung konnte nicht zurueckgeschrieben werden");
+        }
+    }
+}
+
+impl Drop for CodexSandbox {
+    /// Laeuft vor dem Loeschen der Temp-Ordner -- auch bei Fehler und Abbruch.
+    fn drop(&mut self) {
+        self.write_back_auth();
+    }
 }
 
 /// Frisches `CODEX_HOME` mit NUR `auth.json` (kopiert aus dem echten
@@ -1366,11 +1432,19 @@ pub(crate) fn codex_sandbox(
         })?;
     let codex_home = fresh("local-voice-codex-home-")?;
     let user_home = fresh("local-voice-codex-user-")?;
-    std::fs::copy(&src, codex_home.path().join("auth.json"))
+    let bytes =
+        std::fs::read(&src).map_err(|e| format!("cli_failed: auth.json nicht lesbar ({e})"))?;
+    let copy = codex_home.path().join("auth.json");
+    std::fs::write(&copy, &bytes)
         .map_err(|e| format!("cli_failed: auth.json nicht kopierbar ({e})"))?;
+    if let Ok(meta) = std::fs::metadata(&src) {
+        let _ = std::fs::set_permissions(&copy, meta.permissions());
+    }
     let env = codex_preview_env(get, codex_home.path(), user_home.path());
     Ok(CodexSandbox {
-        _codex_home: codex_home,
+        original_hash: sha256_hex(&bytes),
+        original: src,
+        codex_home,
         _user_home: user_home,
         env,
     })
@@ -2517,6 +2591,8 @@ esac
   [ -n "$CODEX_HOME" ] && printf 'AUTH:%s\n' "$(cat "$CODEX_HOME/auth.json" 2>/dev/null)"
   env | cut -d= -f1 | sort | while read -r n; do printf 'VAR:%s\n' "$n"; done
 } > "$D/log.txt"
+[ -f "$D/rotate" ] && [ -n "$CODEX_HOME" ] && cp "$D/rotate" "$CODEX_HOME/auth.json"
+[ -f "$D/parallel_target" ] && cp "$D/parallel_new" "$(cat "$D/parallel_target")"
 [ -f "$D/sleep" ] && sleep "$(cat "$D/sleep")"
 cat > /dev/null
 touch "$D/finished"
@@ -3237,5 +3313,74 @@ exit "$(cat "$D/exit" 2>/dev/null || echo 0)"
         // Eine `.git`-Datei (Worktree) zaehlt ebenso.
         std::fs::write(base.path().join(".git"), "gitdir: x").unwrap();
         assert!(ancestors_clean(&deep).is_err());
+    }
+
+    #[cfg(unix)]
+    fn auth_of(home: &Path) -> String {
+        std::fs::read_to_string(home.join("auth.json")).unwrap()
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rotated_auth_is_written_back_with_original_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let (f, real_home) = codex_setup("{}");
+        let auth = real_home.path().join("auth.json");
+        std::fs::set_permissions(&auth, std::fs::Permissions::from_mode(0o600)).unwrap();
+        f.set("rotate", r#"{"tokens":"rotiert"}"#);
+        let _ = codex_call(&f, 272_000);
+        assert_eq!(auth_of(real_home.path()), r#"{"tokens":"rotiert"}"#);
+        let mode = std::fs::metadata(&auth).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        let leftovers: Vec<_> = std::fs::read_dir(real_home.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().starts_with(".auth-"))
+            .collect();
+        assert!(leftovers.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rotated_auth_is_written_back_even_when_the_run_fails() {
+        let (f, real_home) = codex_setup("{}");
+        f.set("rotate", r#"{"tokens":"rotiert"}"#);
+        f.set("exit", "1");
+        assert!(codex_call(&f, 272_000).is_err());
+        assert_eq!(auth_of(real_home.path()), r#"{"tokens":"rotiert"}"#);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn auth_is_not_written_back_when_original_changed_meanwhile() {
+        let (f, real_home) = codex_setup("{}");
+        let auth = real_home.path().join("auth.json");
+        f.set("rotate", r#"{"tokens":"rotiert"}"#);
+        f.set("parallel_target", auth.to_str().unwrap());
+        f.set("parallel_new", r#"{"tokens":"fremd"}"#);
+        let _ = codex_call(&f, 272_000);
+        assert_eq!(auth_of(real_home.path()), r#"{"tokens":"fremd"}"#);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn invalid_json_copy_is_not_written_back() {
+        let (f, real_home) = codex_setup("{}");
+        f.set("rotate", "{kaputt");
+        let _ = codex_call(&f, 272_000);
+        assert_eq!(auth_of(real_home.path()), r#"{"tokens":"synthetisch"}"#);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unchanged_auth_is_left_alone() {
+        let (f, real_home) = codex_setup("{}");
+        let auth = real_home.path().join("auth.json");
+        let before = std::fs::metadata(&auth).unwrap().modified().unwrap();
+        let _ = codex_call(&f, 272_000);
+        assert_eq!(
+            std::fs::metadata(&auth).unwrap().modified().unwrap(),
+            before
+        );
     }
 }

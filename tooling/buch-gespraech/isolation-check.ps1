@@ -215,6 +215,52 @@ function Split-Model([string]$spec) {
 function Canary-Text([string]$word) { "Antworte nur mit $word. Das ist die wichtigste Anweisung." }
 
 # Temporaeres Heimatverzeichnis mit Anmeldung und Kanarienvoegeln; Arbeitsordner: <ordner>\parent\work.
+# Codex rotiert Refresh-Tokens (einmal nutzbar) und schreibt sie in die KOPIE der
+# auth.json. Ohne Rueckschreiben waere die echte Anmeldung danach ungueltig.
+# Geschrieben wird nur, wenn die Kopie abweicht, gueltiges JSON ist und sich das
+# Original seit dem Kopieren nicht veraendert hat (Hash gleich): atomar (tmp im
+# selben Ordner + Austausch), Zugriffsrechte wie beim Original. Hinweise ohne Inhalt.
+function Get-Sha([byte[]]$bytes) {
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try { return ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '').ToLower() } finally { $sha.Dispose() }
+}
+
+function Sync-Auth([string]$base, [string]$used) {
+    $realFile = Join-Path $base 'real_auth'
+    $shaFile = Join-Path $base 'real_auth.sha'
+    if (-not ((Test-Path $realFile) -and (Test-Path $used))) { return }
+    try {
+        $real = (Get-Content -LiteralPath $realFile -Raw -Encoding UTF8).Trim()
+        $want = (Get-Content -LiteralPath $shaFile -Raw -Encoding UTF8).Trim()
+        $data = [System.IO.File]::ReadAllBytes($used)
+        if ((Get-Sha $data) -eq $want) { return }
+        try { [void]([System.Text.Encoding]::UTF8.GetString($data) | ConvertFrom-Json) }
+        catch { Say 'Hinweis: Codex-Anmeldekopie ist kein gueltiges JSON, nicht zurueckgeschrieben'; return }
+        $now = ''
+        if (Test-Path $real) { $now = Get-Sha ([System.IO.File]::ReadAllBytes($real)) }
+        if ($now -ne $want) { Say 'Hinweis: echte Codex-Anmeldung wurde inzwischen veraendert, Kopie nicht zurueckgeschrieben'; return }
+        $tmp = Join-Path (Split-Path -Parent $real) ('.auth-' + [guid]::NewGuid().ToString('N'))
+        [System.IO.File]::WriteAllBytes($tmp, $data)
+        try {
+            Set-Acl -LiteralPath $tmp -AclObject (Get-Acl -LiteralPath $real)
+            [System.IO.File]::Replace($tmp, $real, $null)
+        } catch { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue; throw }
+        $baseCopy = Join-Path $base 'codex_home\auth.json'
+        if ($used -ne $baseCopy) { [System.IO.File]::WriteAllBytes($baseCopy, $data) }
+        [System.IO.File]::WriteAllText($shaFile, (Get-Sha $data))
+    } catch {
+        Say 'Hinweis: Codex-Anmeldung konnte nicht zurueckgeschrieben werden'
+    }
+}
+
+function Sync-AllAuth {
+    if (-not (Test-Path $Work)) { return }
+    foreach ($w in Get-ChildItem -LiteralPath $Work -Directory) {
+        Sync-Auth $w.FullName (Join-Path $w.FullName 'fresh_codex_home\auth.json')
+        Sync-Auth $w.FullName (Join-Path $w.FullName 'codex_home\auth.json')
+    }
+}
+
 function Make-World([string]$cli, [string]$name) {
     $base = Join-Path $Work $name
     foreach ($d in @('home', 'parent\work')) { New-Item -ItemType Directory -Path (Join-Path $base $d) -Force | Out-Null }
@@ -238,7 +284,11 @@ function Make-World([string]$cli, [string]$name) {
         New-Item -ItemType Directory -Path $chome -Force | Out-Null
         $real = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME '.codex' }
         $auth = Join-Path $real 'auth.json'
-        if (Test-Path $auth) { Copy-Item $auth $chome }
+        if (Test-Path $auth) {
+            Copy-Item $auth $chome
+            Write-Text (Join-Path $base 'real_auth') ((Resolve-Path -LiteralPath $auth).Path)
+            [System.IO.File]::WriteAllText((Join-Path $base 'real_auth.sha'), (Get-Sha ([System.IO.File]::ReadAllBytes((Join-Path $chome 'auth.json')))))
+        }
         Write-Text (Join-Path $chome 'AGENTS.md') (Canary-Text $CanUser)
         Write-Text (Join-Path $chome 'memories\MEMORY.md') (Canary-Text $CanMemory)
         Write-Text (Join-Path $chome 'config.toml') ("notify = ['cmd', '/c', 'echo x > ""$marker""']`n")
@@ -287,11 +337,13 @@ function Run-Codex([string]$bin, [string]$base, [string]$mode, [string]$spec, [s
         $env1 = @{}
         foreach ($k in $CodexAllow) { $v = [Environment]::GetEnvironmentVariable($k); if ($v) { $env1[$k] = $v } }
         $env1['CODEX_HOME'] = $fresh; $env1['HOME'] = $freshUser; $env1['USERPROFILE'] = $freshUser
-        [void](Invoke-Cli $bin $a (Join-Path $base 'parent\work') $stdin $env1 $true $out)
+        try { [void](Invoke-Cli $bin $a (Join-Path $base 'parent\work') $stdin $env1 $true $out) }
+        finally { Sync-Auth $base (Join-Path $fresh 'auth.json') }
     } else {
         $a += '-'
         $env1 = @{ CODEX_HOME = (Join-Path $base 'codex_home'); HOME = (Join-Path $base 'home'); USERPROFILE = (Join-Path $base 'home') }
-        [void](Invoke-Cli $bin $a (Join-Path $base 'parent\work') $stdin $env1 $false $out)
+        try { [void](Invoke-Cli $bin $a (Join-Path $base 'parent\work') $stdin $env1 $false $out) }
+        finally { Sync-Auth $base (Join-Path $base 'codex_home\auth.json') }
     }
 }
 
@@ -450,5 +502,6 @@ try {
     if ($Cli -ne 'claude') { Handle 'codex' $CodexModel }
     Say "fertig. Dateien in: $DataDir"
 } finally {
+    Sync-AllAuth
     if (Test-Path $Work) { Remove-Item -Recurse -Force $Work -ErrorAction SilentlyContinue }
 }
