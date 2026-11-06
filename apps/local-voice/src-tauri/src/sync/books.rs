@@ -1524,6 +1524,11 @@ fn voice_updated(raw: &str) -> f64 {
         .unwrap_or(0.0)
 }
 
+/// Gewinnt die eingehende Stimmwahl gegen die lokale? Nur wenn sie neuer ist.
+fn voice_remote_wins(local: &str, remote: &str) -> bool {
+    voice_updated(remote) > voice_updated(local)
+}
+
 /// Ein `progress`- oder `bookmark`-Objekt anwenden (`None` = Grabstein).
 pub fn apply_progress(
     app: &AppHandle,
@@ -1603,9 +1608,10 @@ pub fn apply_progress(
             let stored = match map.get(sub) {
                 // Ungesichert lokal geändert: Lesezeichen beider Seiten
                 // bleiben; eine Weiterlese-Stelle bleibt die lokale.
-                // Stimmen: der neuere Stand gewinnt.
-                Some(mine) if !local_clean && sub.starts_with(VOICE_PREFIX) => {
-                    if voice_updated(raw) > voice_updated(mine) {
+                // Stimmen: immer der neuere Stand, auch bei sauberem lokalem
+                // Stand (eine spät eintreffende ältere Wahl gewinnt nie).
+                Some(mine) if sub.starts_with(VOICE_PREFIX) => {
+                    if voice_remote_wins(mine, raw) {
                         raw.to_string()
                     } else {
                         return Ok(Applied::default());
@@ -2707,5 +2713,10 @@ mod tests {
         assert_eq!(voice_updated(r#"{"updated":12}"#), 12.0);
         assert_eq!(voice_updated("kaputt"), 0.0);
         assert!(is_bookmark_key("tts.voice.book.book_1.en"));
+        // Lokal neuer (auch sauber): eine ältere Wahl oder Aufhebung bleibt draußen.
+        let local = r#"{"phonon":"en:Zoey","updated":20}"#;
+        assert!(!voice_remote_wins(local, r#"{"phonon":"en:Mark","updated":10}"#));
+        assert!(!voice_remote_wins(local, r#"{"updated":15}"#));
+        assert!(voice_remote_wins(local, r#"{"updated":30}"#));
     }
 }

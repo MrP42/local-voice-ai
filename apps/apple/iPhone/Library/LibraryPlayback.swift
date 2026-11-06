@@ -479,8 +479,10 @@ final class LibraryPlayback: NSObject, ObservableObject {
     private func fallbackVoice(_ lang: String?) -> String? {
         guard let lang else { return nil }
         if let id = voiceIdentifier {
-            if let parts = PhononEngine.voiceName(id).flatMap(PhononEngine.parts), parts.language == lang { return nil }
-            if let v = AVSpeechSynthesisVoice(identifier: id), v.language.hasPrefix(lang) { return nil }
+            // Phonon nur, wenn der Katalog die Stimme kennt; sonst bliebe eine ungültige Kennung aktiv.
+            if let phonon = PhononEngine.voiceName(id) {
+                if phonon.hasPrefix(lang + ":"), VoicePrefs.phononIdentifier(phonon, catalog: PhononEngine.shared.voices) != nil { return nil }
+            } else if let v = AVSpeechSynthesisVoice(identifier: id), v.language.hasPrefix(lang) { return nil }
         }
         if let name = PhononEngine.shared.voices[lang]?.first { return PhononEngine.identifier(language: lang, voice: name) }
         return AVSpeechSynthesisVoice.speechVoices().filter { $0.language.hasPrefix(lang) }
