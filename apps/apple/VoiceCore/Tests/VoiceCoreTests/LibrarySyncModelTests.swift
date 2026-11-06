@@ -107,6 +107,8 @@ final class DesktopVectorTests: XCTestCase {
         XCTAssertFalse(SyncLedger.clearsPendingFavorite(accepted: "h0", sent: "h1", local: "h1"), "Hub hat nicht angenommen")
     }
 
+    /// Modelltest: prüft nur `LibrarySyncMeta.updatingFiles`. Einen echten Upload-/Pull-Ablauf deckt er nicht ab,
+    /// dafür fehlt ein Testziel für `LibrarySync`; der Ausbau ist eine eigene Aufgabe.
     func testFileUpdateKeepsStarSetDuringUpload() throws {
         // Upload beginnt, währenddessen setzt der Stern Zeitstempel und Merker; danach kommt der Verweis dazu.
         let duringUpload = LibrarySyncMeta(updated: 200, pendingFavorite: true, pendingFields: "f")
