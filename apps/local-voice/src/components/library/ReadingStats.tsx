@@ -629,7 +629,7 @@ export const ReadingStats: React.FC<{
   onOpenBook: (id: string) => void;
   onBooksChanged: () => void;
 }> = ({ books, onBack, onOpenBook, onBooksChanged }) => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { getSetting, updateSetting } = useSettings();
   const llm = useFunctionLlm("read_aloud");
   const { rows, reload } = useReadingRows();
@@ -712,9 +712,8 @@ export const ReadingStats: React.FC<{
     if (code === "und") return t("readingStats.langUnknown");
     try {
       return (
-        new Intl.DisplayNames([navigator.language], { type: "language" }).of(
-          code,
-        ) ?? code
+        new Intl.DisplayNames([i18n.language], { type: "language" }).of(code) ??
+        code
       );
     } catch {
       return code;
@@ -1150,7 +1149,10 @@ export const ReadingStats: React.FC<{
           </div>
 
           <div className="rs-grid">
-            <section className="rs-panel" aria-labelledby="rs-books">
+            <section
+              className="rs-panel rs-bookspanel"
+              aria-labelledby="rs-books"
+            >
               <h3 id="rs-books">
                 {t("readingStats.books")}
                 <span className="rs-panel__hint">
@@ -1165,7 +1167,9 @@ export const ReadingStats: React.FC<{
               <table className="rs-table rs-books">
                 <thead>
                   <tr>
-                    <th aria-label={t("readingStats.cover")} />
+                    <th>
+                      <span className="sr-only">{t("readingStats.cover")}</span>
+                    </th>
                     <th>{t("readingStats.book")}</th>
                     <th className="rs-wide">{t("readingStats.category")}</th>
                     <th>{t("readingStats.formats")}</th>

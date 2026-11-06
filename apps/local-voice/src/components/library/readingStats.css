@@ -53,20 +53,32 @@
   line-height: 28px;
   font-weight: 600;
 }
+/* Trefferfläche 44 px (Codex A4), sichtbare Pille 32 px über ::before. */
 .rs-chip {
+  position: relative;
+  isolation: isolate;
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  min-height: 32px;
-  padding: 3px 12px 3px 6px;
-  border: 1px solid var(--rs-line);
+  min-height: 44px;
+  padding: 0 12px 0 6px;
+  margin-block: -6px;
+  border: 0;
   border-radius: 999px;
   background: transparent;
   color: var(--color-text);
   font: inherit;
   cursor: pointer;
 }
-.rs-chip:hover {
+.rs-chip::before {
+  content: "";
+  position: absolute;
+  inset: 6px 0;
+  z-index: -1;
+  border: 1px solid var(--rs-line);
+  border-radius: 999px;
+}
+.rs-chip:hover::before {
   background: var(--rs-track);
 }
 .rs-chip b {
@@ -409,6 +421,20 @@
   max-height: 320px;
   overflow: auto;
 }
+.rs-bookspanel {
+  container-type: inline-size;
+}
+.rs-books td:nth-child(2) {
+  min-width: 150px;
+}
+/* Schmale Karte (zwei Spalten im Fenster): Kategorie steht im Filter und in
+   den Schwerpunkten, hier entfällt die Spalte. */
+@container (max-width: 640px) {
+  .rs-books th:nth-child(3),
+  .rs-books td:nth-child(3) {
+    display: none;
+  }
+}
 .rs-table {
   width: 100%;
   border-collapse: collapse;
@@ -606,6 +632,9 @@
     height: 44px;
     padding: 0;
     justify-content: center;
+  }
+  .rs-chip::before {
+    inset: 6px;
   }
   .rs-chip__text {
     display: none;

@@ -226,3 +226,11 @@ TypeScript und Swift gleich zusammenführen und rechnen.
 - **A5** „insgesamt“ und „im Zeitraum“ klar benennen; Jahresliste als Ausschnitt kennzeichnen („7 von 41“, „Alle zeigen“).
 - **A6** Leerzustände (Erstnutzung, leerer Zeitraum, pausiert); Export/Löschen ohne Daten deaktiviert; Ziel aus
   und Buch ohne Seitenzahl sichtbar darstellen.
+
+## Umsetzungsnotizen (Stufe 1 und 2, 06.11.)
+
+- Die KI-Einordnung sendet nur Titel, Autor und Klappentext. Ein Textanfang (`sample`) wird nicht gesendet (Feld bleibt `null`).
+- „Lesen“ zählt Zeichen nur für vorwärts geblätterte Seiten; Zurückblättern und erneutes Öffnen zählen nicht doppelt.
+- Ein ⋮-Menü auf Ebene der Bibliothek gibt es nicht (nur je Karte). Einstieg ist deshalb allein der Ring-Knopf in der Leiste, Trefferfläche 44 px (sichtbare Pille 32 px).
+- In der zweispaltigen Ansicht entfällt die Kategorie-Spalte der Büchertabelle (Container-Abfrage), die Kategorie steht in den Schwerpunkten.
+- Gemeinsame Testvektoren für Rust, TypeScript und Swift folgen mit Stufe 3 (iPhone).
