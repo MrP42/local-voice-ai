@@ -17,8 +17,11 @@ import {
   tracksOf,
 } from "./books";
 import type { AudioGroup } from "./audioGroups";
-import { audioProgressKey, removeProgress, textProgressKey } from "./progress";
+import { removeProgress, textProgressKey } from "./progress";
+import { primaryAudioKey } from "./editions";
 import { probeDuration } from "./probe";
+import { detectLanguage } from "../reader/language";
+import { langName } from "./editions";
 import {
   isSectioned,
   jobsOfTrack,
@@ -160,6 +163,11 @@ export async function addToLibrary(
   let book: LibraryBook = candidate
     ? { ...base, ...patchFrom(candidate, description) }
     : base;
+  // Sprache des neuen Textes (Sprachfassungen, lva#344): ohne Angabe aus dem Text erkennen.
+  if (file.kind === "text" && file.text && !current && !book.language) {
+    const code = detectLanguage(file.text);
+    if (code) book = { ...book, language: langName(code) || code };
+  }
 
   if (file.kind === "text" && file.text !== undefined) {
     const created = await commands.pagesCreate(book.title);
@@ -607,7 +615,7 @@ export async function addAudioGroup(
  */
 export async function cleanupReplaced(before: LibraryBook): Promise<void> {
   for (const id of pendingJobs(before)) await commands.meetingsDelete(id);
-  removeProgress(audioProgressKey(before.id));
+  removeProgress(primaryAudioKey(before));
   if (before.text?.origin === "transcript") {
     removeProgress(textProgressKey(before.text.page_id));
     await commands.pagesDelete(before.text.page_id);

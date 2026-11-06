@@ -18,11 +18,11 @@ import {
   type PreparedFile,
 } from "@/lib/library/importFile";
 import {
-  audioProgressKey,
   loadProgress,
   progressFraction,
   textProgressKey,
 } from "@/lib/library/progress";
+import { primaryAudioKey } from "@/lib/library/editions";
 import { useFileDrop } from "./useFileDrop";
 
 type Choice = "attach" | "append" | "new" | "cancel";
@@ -32,7 +32,7 @@ function progressOf(book: LibraryBook, kind: PreparedFile["kind"]): number {
   const key =
     kind === "text"
       ? book.text && textProgressKey(book.text.page_id)
-      : book.audio && audioProgressKey(book.id);
+      : book.audio && primaryAudioKey(book);
   return key ? Math.round(progressFraction(loadProgress(key)) * 100) : 0;
 }
 
@@ -62,6 +62,8 @@ interface Question {
 export function useLibraryDrop(
   books: LibraryBook[] | null,
   onChanged: () => Promise<void>,
+  /** Neu aufgenommenes Buch: als Sprachfassung eines vorhandenen anbieten (lva#344). */
+  offerFor?: (book: LibraryBook) => Promise<string>,
 ) {
   const { t } = useTranslation();
   const [question, setQuestion] = useState<Question | null>(null);
@@ -137,13 +139,14 @@ export function useLibraryDrop(
             : t("library.added", { title: book.title }),
         );
         if (!gone.current) await onChanged();
+        if (!attached && !gone.current) await offerFor?.(book);
       } catch (e) {
         toast.error(e instanceof Error ? e.message : String(e));
       } finally {
         if (!gone.current) setWorking(null);
       }
     },
-    [onChanged, t],
+    [onChanged, offerFor, t],
   );
 
   /** Eine Gruppe Audiodateien als ein Hörbuch aufnehmen. */
@@ -200,13 +203,14 @@ export function useLibraryDrop(
               : t("library.added", { title: saved.title }),
         );
         if (!gone.current) await onChanged();
+        if (!attached && !gone.current) await offerFor?.(saved);
       } catch (e) {
         toast.error(e instanceof Error ? e.message : String(e));
       } finally {
         if (!gone.current) setWorking(null);
       }
     },
-    [onChanged, t],
+    [onChanged, offerFor, t],
   );
 
   const queue = useRef(Promise.resolve());

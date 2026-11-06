@@ -35,6 +35,18 @@ import { BookCover } from "./BookCover";
 import { BookDetail } from "./BookDetail";
 import { AddBookDialog } from "./AddBookDialog";
 import { AudioBar } from "./AudioBar";
+import { AlignDialog } from "./AlignDialog";
+import { LangBadges } from "./LangBadges";
+import {
+  PairsBar,
+  PairsDialog,
+  joinPairs,
+  reportJoined,
+  useLanguagePairs,
+  type ResolvedPair,
+} from "./LanguagePairs";
+import { useEditionOffer } from "./EditionOffer";
+import { usePlayerLanguage, type Listening } from "./usePlayerLanguage";
 import { MergeDialog } from "./MergeDialog";
 import { RemoveDialog } from "./RemoveDialog";
 import { CleanTitlesDialog } from "./CleanTitlesDialog";
@@ -59,6 +71,12 @@ import {
   tracksOf,
 } from "@/lib/library/books";
 import { flushProgress, setFinished } from "@/lib/library/progress";
+import {
+  audioKeyOf,
+  editionBook,
+  readingEdition,
+  textKeyOf,
+} from "@/lib/library/editions";
 import {
   splitAudiobookGroups,
   type SplitGroup,
@@ -223,7 +241,7 @@ export const LibraryPage: React.FC = () => {
     working,
     dialog: dropDialog,
     importPaths,
-  } = useLibraryDrop(books, reload);
+  } = useLibraryDrop(books, reload, (book) => offerFor(book));
   const [query, setQuery] = useState("");
   const [filter, setFilter] = usePersistentState<Filter>(
     "library.filter",
@@ -250,10 +268,26 @@ export const LibraryPage: React.FC = () => {
     if (!openId) setEditTitleId(null);
   }, [openId]);
   const [adding, setAdding] = useState(false);
-  const [listening, setListening] = useState<{
-    book: LibraryBook;
-    follow: boolean;
+  const [listening, setListening] = useState<Listening | null>(null);
+  /** „Kapitel zuordnen“ (sf-08) für ein Paar von Sprachfassungen. */
+  const [aligning, setAligning] = useState<{
+    bookId: string;
+    pair: { a: string; b: string };
   } | null>(null);
+  const { offerFor, dialog: offerDialog } = useEditionOffer(reload);
+  const languagePairs = useLanguagePairs(books);
+  const [pairsOpen, setPairsOpen] = useState(false);
+  const [pairsBusy, setPairsBusy] = useState(false);
+  const joinChosen = async (chosen: ResolvedPair[]) => {
+    setPairsBusy(true);
+    try {
+      reportJoined(t, await joinPairs(chosen));
+    } finally {
+      setPairsBusy(false);
+      setPairsOpen(false);
+      await reload();
+    }
+  };
   /** Höhe der Hörleiste samt Lesefläche: die Seite lässt unten so viel Platz. */
   const [playerHeight, setPlayerHeight] = useState(0);
   const [merging, setMerging] = useState<{
@@ -273,7 +307,13 @@ export const LibraryPage: React.FC = () => {
     }
   });
   const listen = (book: LibraryBook, follow = false) =>
-    setListening({ book, follow });
+    setListening({
+      book,
+      follow,
+      edition: readingEdition(book)?.id ?? null,
+      startPlaying: true,
+      focusLanguage: false,
+    });
 
   // Mehrfachauswahl: Zusammenführen, Titel bereinigen, Entfernen.
   const [selecting, setSelecting] = useState(false);
@@ -331,7 +371,13 @@ export const LibraryPage: React.FC = () => {
   const views = useMemo(
     () =>
       (books ?? []).map((b) =>
-        viewOf(b, b.text ? !!pageAudio[b.text.page_id] : false),
+        viewOf(
+          b,
+          (() => {
+            const page = readingEdition(b)?.text?.page_id ?? b.text?.page_id;
+            return page ? !!pageAudio[page] : false;
+          })(),
+        ),
       ),
     // tick: Fortschritt aus dem localStorage neu lesen.
     [books, pageAudio, tick],
@@ -511,9 +557,19 @@ export const LibraryPage: React.FC = () => {
     }
   };
 
-  const playing = listening
-    ? (books?.find((b) => b.id === listening.book.id) ?? listening.book)
-    : null;
+  const {
+    playing,
+    edition: playingEdition,
+    loading: loadingEditions,
+    switchTo,
+    onDispose,
+  } = usePlayerLanguage({
+    books,
+    listening,
+    setListening,
+    reload,
+    openAlign: (bookId, pair) => setAligning({ bookId, pair }),
+  });
   const counts = useMemo(
     () =>
       Object.fromEntries(
@@ -553,23 +609,28 @@ export const LibraryPage: React.FC = () => {
    */
   const play = (v: BookView) => {
     if (
-      v.book.audio_path &&
+      v.shown.audio_path &&
       (v.resumeWith === "audio" ||
-        (v.audioSource === "audiobook" && !v.book.text))
+        (v.audioSource === "audiobook" && !v.shown.text))
     ) {
       listen(v.book);
       return;
     }
-    if (v.book.text && v.audioSource === "narrated")
-      openInReader(v.book.text.page_id, true);
-    else if (v.book.audio_path) listen(v.book);
+    if (v.shown.text && v.audioSource === "narrated")
+      openInReader(v.shown.text.page_id, true);
+    else if (v.shown.audio_path) listen(v.book);
   };
 
   const toggleFinished = async (v: BookView) => {
     const finished = !isFinished(v);
-    if (v.book.text)
-      setFinished(`text:${v.book.text.page_id}:original`, finished);
-    if (v.book.audio_path) setFinished(`audio:${v.book.id}`, finished);
+    const ed = readingEdition(v.book);
+    if (v.shown.text)
+      setFinished(
+        (ed && textKeyOf(ed)) || `text:${v.shown.text.page_id}:original`,
+        finished,
+      );
+    if (v.shown.audio_path)
+      setFinished(ed ? audioKeyOf(v.book, ed) : `audio:${v.book.id}`, finished);
     await save(v.book.id, (fresh) => ({ ...fresh, finished }));
   };
 
@@ -586,13 +647,13 @@ export const LibraryPage: React.FC = () => {
 
   const playButton = (v: BookView, className = "") =>
     !v.audioSource ? (
-      v.book.text ? (
+      v.shown.text ? (
         <button
           type="button"
           className={`library-play library-play--read ${className}`}
           onClick={(e) => {
             e.stopPropagation();
-            openInReader(v.book.text!.page_id, false);
+            openInReader(v.shown.text!.page_id, false);
           }}
           aria-label={t("library.readTitle", { title: v.book.title })}
           title={t("library.read")}
@@ -629,7 +690,7 @@ export const LibraryPage: React.FC = () => {
         percent: Math.round(v.fraction * 100),
       });
     }
-    return v.book.text || v.book.audio_path
+    return v.shown.text || v.shown.audio_path
       ? t("library.status.notStarted")
       : t("library.status.empty");
   };
@@ -648,7 +709,7 @@ export const LibraryPage: React.FC = () => {
         icon: BookOpen,
         onSelect: () => setOpenId(v.book.id),
       },
-      ...(v.book.audio_path && v.book.text
+      ...(v.shown.audio_path && v.shown.text
         ? [
             {
               id: "listen-follow",
@@ -822,6 +883,7 @@ export const LibraryPage: React.FC = () => {
               {v.book.authors.join(", ")}
             </div>
           )}
+          <LangBadges book={v.book} />
         </div>
         <span className="library-touch library-card__tools">
           <ActionMenu
@@ -918,10 +980,19 @@ export const LibraryPage: React.FC = () => {
               editTitle={editTitleId === open.book.id}
               onCreate={(tab) => setKiFor({ book: open.book, tab })}
               onExport={() => setExportFor(open.book)}
+              onAddEdition={() => setAdding(true)}
+              onAlign={(pair) => setAligning({ bookId: open.book.id, pair })}
             />
           </div>
         ) : (
           <>
+            <PairsBar
+              pairs={languagePairs.later ? [] : languagePairs.pairs}
+              busy={pairsBusy}
+              onJoin={(p) => void joinChosen([p])}
+              onReview={() => setPairsOpen(true)}
+              onLater={languagePairs.postpone}
+            />
             <div className="library-bar">
               <div className="library-bar__search">
                 <Input
@@ -1302,18 +1373,57 @@ export const LibraryPage: React.FC = () => {
             )}
           </>
         )}
-        {listening && (
+        {listening && !listening.pending && playing && playingEdition && (
           <AudioBar
-            key={`${listening.book.id}:${listening.follow}:${tracksOf(playing?.audio)
+            key={`${listening.book.id}:${playingEdition.id}:${listening.follow}:${tracksOf(
+              editionBook(playing, playingEdition).audio,
+            )
               .map((t) => t.file)
               .join("|")}`}
-            book={playing ?? listening.book}
+            book={editionBook(playing, playingEdition)}
+            edition={{
+              id: playingEdition.id,
+              audioKey: audioKeyOf(playing, playingEdition),
+              full: playing,
+            }}
             startFollow={listening.follow}
+            onDispose={onDispose}
+            startPlaying={listening.startPlaying}
+            focusLanguage={listening.focusLanguage}
+            loadingEditions={loadingEditions}
+            onSwitch={(req) => void switchTo(req)}
+            onAlign={() => {
+              const other = playing.editions.find(
+                (e) => e.id !== playingEdition.id,
+              );
+              if (other)
+                setAligning({
+                  bookId: playing.id,
+                  pair: { a: playingEdition.id, b: other.id },
+                });
+            }}
             onSave={save}
             onHeight={setPlayerHeight}
             onClose={() => setListening(null)}
           />
         )}
+        <PairsDialog
+          open={pairsOpen}
+          pairs={languagePairs.pairs}
+          busy={pairsBusy}
+          onConfirm={(chosen) => void joinChosen(chosen)}
+          onCancel={() => setPairsOpen(false)}
+        />
+        <AlignDialog
+          book={aligning ? (books?.find((b) => b.id === aligning.bookId) ?? null) : null}
+          pair={aligning?.pair ?? null}
+          onClose={() => setAligning(null)}
+          onSaved={async () => {
+            await reload();
+            setAligning(null);
+          }}
+        />
+        {offerDialog}
         <MergeDialog
           group={merging?.group ?? null}
           plan={merging?.plan ?? null}
@@ -1370,9 +1480,10 @@ export const LibraryPage: React.FC = () => {
           open={adding}
           onOpenChange={setAdding}
           onImportRest={importPaths}
-          onAdded={async (book) => {
+          onAdded={async (book, attached) => {
             await reload();
-            setOpenId(book.id);
+            const id = attached ? book.id : await offerFor(book);
+            setOpenId(id);
           }}
         />
       </div>

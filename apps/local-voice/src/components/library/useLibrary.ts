@@ -13,6 +13,7 @@ import { toast } from "sonner";
 import { listen } from "@tauri-apps/api/event";
 import i18n from "@/i18n";
 import { probeDuration } from "@/lib/library/probe";
+import { editionsOf } from "@/lib/library/editions";
 import { transcribeTracks } from "@/lib/library/importFile";
 import {
   aggregateStatus,
@@ -71,8 +72,13 @@ export function useLibrary() {
   /** Jobs in Übernahme oder übernommen: nie zweimal verarbeiten. */
   const finishing = useRef(new Set<string>());
 
+  /** Laufnummer: ein veraltetes Ergebnis überschreibt kein neueres. */
+  const loadSeq = useRef(0);
+
   const reload = useCallback(async () => {
+    const seq = ++loadSeq.current;
     const result = await commands.libraryList();
+    if (seq !== loadSeq.current) return;
     if (result.status !== "ok") {
       setBooks([]);
       return;
@@ -81,18 +87,25 @@ export function useLibrary() {
     const list = result.data ?? [];
     setBooks(list);
     // Vertonte Dateien im Seitenordner = Audiofassung einer Textfassung.
+    // Auch die Seiten der übrigen Sprachfassungen (lva#344).
+    const pageIds = [
+      ...new Set(
+        list.flatMap((b) =>
+          editionsOf(b).flatMap((e) => (e.text ? [e.text.page_id] : [])),
+        ),
+      ),
+    ];
     const entries = await Promise.all(
-      list
-        .filter((b) => b.text)
-        .map(async (b) => {
-          const files = await commands.pageFiles(b.text!.page_id);
-          return [
-            b.text!.page_id,
-            files.status === "ok" &&
-              (files.data ?? []).some((f) => AUDIO_EXT.test(f.name)),
-          ] as const;
-        }),
+      pageIds.map(async (pageId) => {
+        const files = await commands.pageFiles(pageId);
+        return [
+          pageId,
+          files.status === "ok" &&
+            (files.data ?? []).some((f) => AUDIO_EXT.test(f.name)),
+        ] as const;
+      }),
     );
+    if (seq !== loadSeq.current) return;
     setPageAudio(Object.fromEntries(entries));
   }, []);
 

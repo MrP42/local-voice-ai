@@ -1832,6 +1832,8 @@ mod tests {
             groups,
         });
         assert_eq!((got.a, got.b, got.groups), (want.a, want.b, want.groups));
+        // Version und Gerät der Zuordnung bleiben, damit der Merge sie richtig ordnet.
+        assert_eq!((got.updated, got.device.as_str()), (5.0, "pc"));
         let _ = std::fs::remove_dir_all(&root);
     }
 

@@ -7686,6 +7686,168 @@
     "suchen": "Suchen"
   },
   "library": {
+    "sf": {
+      "add": "Sprachfassung hinzufügen …",
+      "badges": "Sprachfassungen: {{langs}}. Zuletzt aktiv: {{current}}.",
+      "kind": {
+        "audio": "Hörbuch",
+        "text": "Text"
+      },
+      "notice": {
+        "close": "Hinweis schließen",
+        "undo": "Rückgängig",
+        "align": "Kapitel zuordnen …",
+        "at": ", {{at}} von {{length}}",
+        "chapter": "**{{lang}}**, kapitelgenau: Kapitel {{chapter}} von {{total}}{{at}}.",
+        "approx": "**{{lang}}**, ungefähr bei {{percent}} %.",
+        "openGroup": "Kapitel {{a}} ({{langA}}) gehört zu Kapitel {{b}} ({{langB}}), die Zuordnung ist offen.",
+        "noAlignment": "Die Kapitel sind noch nicht zugeordnet.",
+        "loading": "{{lang}} wird geladen. Es läuft weiter auf {{current}}.",
+        "failed": "Der Wechsel der Sprachfassung ist fehlgeschlagen.",
+        "undoBlocked": "Rückgängig ist nicht möglich: Die Hörleiste hat ihre Stelle nicht gesichert. Nichts wurde geändert."
+      },
+      "switch": {
+        "button": "Sprache: {{lang}}, Auswahl öffnen",
+        "menu": "Sprachfassung wählen",
+        "audio": "Hörbuch",
+        "text": "Text",
+        "noAudio": "Kein Hörbuch",
+        "noText": "Kein Text",
+        "notLocal": "Nicht auf diesem Gerät",
+        "loading": "Wird geladen",
+        "narrator": "Sprecher: {{name}}",
+        "alignedNote": "Kapitel {{a}} ↔ {{b}} sind zugeordnet: Der Wechsel trifft das Kapitel genau.",
+        "openNote": "Kapitel nicht zugeordnet: Der Wechsel ist ungefähr.",
+        "align": "Kapitel zuordnen …"
+      },
+      "pairs": {
+        "barSure": "Gleiches Buch in zwei Sprachen?",
+        "barMaybe": "Vielleicht dasselbe Buch in zwei Sprachen?",
+        "barBooks": "„{{a}}“ ({{langA}}) und „{{b}}“ ({{langB}})",
+        "more": "und {{count}} weitere",
+        "later": "Später",
+        "reviewAll": "Prüfen …",
+        "join": "Zusammenlegen",
+        "title": "Sprachfassungen prüfen",
+        "intro": "Diese Bücher könnten dasselbe Werk in verschiedenen Sprachen sein. Es wird nichts ohne Ihre Bestätigung zusammengelegt.",
+        "confirm_one": "{{count}} Paar zusammenlegen",
+        "confirm_other": "{{count}} Paare zusammenlegen",
+        "sure": "Sicher",
+        "unsure": "Unsicher",
+        "sameWork": "Gleiche Werkkennung",
+        "whyWork": "Gleiche Werkkennung: {{key}}",
+        "whyTitle": "Ähnlicher Titel, gleiche Autorin oder gleicher Autor: {{author}}",
+        "whyAuthor": "Gleiche Autorin oder gleicher Autor: {{author}}",
+        "foot": "Zusammengelegte Bücher lassen sich später wieder trennen.",
+        "joined_one": "{{count}} Paar zusammengelegt.",
+        "joined_other": "{{count}} Paare zusammengelegt."
+      },
+      "offer": {
+        "title": "„{{title}}“ hinzugefügt",
+        "same": "Das ist dasselbe Buch wie „{{title}}“ ({{info}}). Als {{lang}} Sprachfassung hinzufügen?",
+        "maybe": "Vielleicht dasselbe Buch wie „{{title}}“ ({{info}}). Als {{lang}} Sprachfassung hinzufügen?",
+        "legend": "Wie soll das Buch aufgenommen werden?",
+        "edition": "Als {{lang}} Sprachfassung hinzufügen",
+        "editionHint": "Es erscheint als eine Karte mit mehreren Sprachen.",
+        "own": "Als eigenes Buch behalten",
+        "ownHint": "Es bleibt ein eigener Eintrag in der Bibliothek.",
+        "confirm": "Übernehmen",
+        "done": "„{{title}}“ ist jetzt die {{lang}} Sprachfassung."
+      },
+      "last": {
+        "line": "Zuletzt: {{lang}}, {{kind}}, {{percent}} % · {{where}}, {{when}}",
+        "here": "an diesem Gerät",
+        "other": "auf einem anderen Gerät"
+      },
+      "section": {
+        "title": "Sprachfassungen",
+        "edition": "Fassung",
+        "progress": "Fortschritt",
+        "actions": "Aktionen",
+        "primary": "Hauptfassung",
+        "last": "Zuletzt",
+        "has": "Vorhanden",
+        "hasNot": "Nicht vorhanden",
+        "foot": "Die Hauptfassung bestimmt Titel und Cover. Gelöschte Fassungen liegen 30 Tage im Papierkorb.",
+        "alignedAll": "Alle Kapitel sind zugeordnet.",
+        "alignedSome": "Kapitel von {{a}} und {{b}} sind teilweise zugeordnet."
+      },
+      "menu": {
+        "primary": "Als Hauptfassung festlegen",
+        "align": "Kapitel zuordnen …",
+        "export": "Exportieren …",
+        "split": "Als eigenes Buch abspalten",
+        "remove": "In den Papierkorb",
+        "removeHint": "30 Tage wiederherstellbar",
+        "for": "Aktionen für {{lang}}"
+      },
+      "split": {
+        "title": "{{lang}} als eigenes Buch abspalten?",
+        "body": "„{{title}}“ wird ein eigenes Buch. Fortschritt und Dateien bleiben erhalten.",
+        "confirm": "Abspalten",
+        "done": "„{{title}}“ ist jetzt ein eigenes Buch."
+      },
+      "remove": {
+        "title": "{{lang}} in den Papierkorb legen?",
+        "body": "„{{title}}“ verschwindet aus den Sprachfassungen. Die Dateien bleiben 30 Tage erhalten.",
+        "confirm": "In den Papierkorb",
+        "done": "{{lang}} liegt im Papierkorb.",
+        "doneHint": "Rückgängig machen oder später wiederherstellen."
+      },
+      "replace": {
+        "legend": "Neue Hauptfassung wählen"
+      },
+      "graves": {
+        "title_one": "{{count}} gelöschte Sprachfassung",
+        "title_other": "{{count}} gelöschte Sprachfassungen",
+        "row": "Gelöschte Sprachfassung {{n}}, entfernt am {{date}}, noch {{days}} Tage wiederherstellbar",
+        "restore": "Wiederherstellen",
+        "done": "Sprachfassung wiederhergestellt."
+      },
+      "align": {
+        "title": "Kapitel zuordnen",
+        "intro": "„{{title}}“: {{langA}} hat {{countA}} Kapitel, {{langB}} hat {{countB}}. Bestätigen Sie jede Gruppe einzeln.",
+        "mediumLabel": "Kapitel aus",
+        "medium": {
+          "text": "Text",
+          "audio": "Hörbuch"
+        },
+        "loading": "Kapitel werden gelesen …",
+        "noChapters": "In diesem Medium gibt es keine Kapitel.",
+        "count": "{{done}} von {{total}} Gruppen bestätigt ({{countA}} und {{countB}} Kapitel)",
+        "list": "Kapitelgruppen",
+        "confirmed": "Bestätigt",
+        "confirm": "Bestätigen",
+        "confirmGroup": "Gruppe {{n}} bestätigen",
+        "confirmAll": "Alle bestätigen",
+        "save": "Speichern",
+        "saved": "Zuordnung gespeichert.",
+        "edit": "Gruppe {{n}} ändern",
+        "editMenu": "Gruppe {{n}} ändern",
+        "split": "Gruppe teilen",
+        "join": "Mit nächster Gruppe verbinden",
+        "move": {
+          "a": {
+            "next": "Grenze links nach unten",
+            "prev": "Grenze links nach oben"
+          },
+          "b": {
+            "next": "Grenze rechts nach unten",
+            "prev": "Grenze rechts nach oben"
+          }
+        },
+        "why": "„Alle bestätigen“ ist nur möglich, wenn jede Gruppe 1:1 zugeordnet ist und beide Fassungen gleich viele Kapitel haben. Sonst bitte jede Gruppe einzeln bestätigen."
+      },
+      "conflict": {
+        "text": "Auf {{device}} zuletzt **{{lang}}** gehört ({{there}}). Hier läuft {{current}}{{here}}.",
+        "iphone": "dem iPhone",
+        "other": "einem anderen Gerät",
+        "chapter": "Kapitel {{n}}",
+        "chapterHere": ", Kapitel {{n}}",
+        "go": "Dorthin wechseln",
+        "stay": "Hier bleiben"
+      }
+    },
     "fmt": {
       "text": "Text",
       "audiobook": "Hörbuch",

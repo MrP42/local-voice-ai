@@ -89,6 +89,7 @@ import {
   type LibraryKiDocRequest,
 } from "@/lib/library/books";
 import { ReaderDrop } from "@/components/library/ReaderDrop";
+import { ReaderLanguage } from "@/components/library/ReaderLanguage";
 import { ExportDialog } from "@/components/library/ExportDialog";
 import {
   clearResumePoint,
@@ -4189,6 +4190,20 @@ export const TtsSettings = () => {
                           busy={kiDocs.run !== null}
                           onExtract={() => void extractTerms()}
                           onCancel={bookTerms.cancel}
+                        />
+                      ) : undefined
+                    }
+                    language={
+                      tab === "original" && activePage ? (
+                        <ReaderLanguage
+                          page={activePage}
+                          text={spokenText}
+                          getOffset={() =>
+                            readRangeRef.current?.start ??
+                            loadResumePoint(`${activePage}:original`, spokenText) ??
+                            0
+                          }
+                          onOpen={setActivePage}
                         />
                       ) : undefined
                     }

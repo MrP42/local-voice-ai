@@ -1,5 +1,6 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
-import type { AudioVersion, LibraryBook } from "@/bindings";
+import type { AudioVersion, Edition, LibraryBook } from "@/bindings";
+import { audioKeyOf, editionBook, readingEdition } from "./editions";
 import { guessFromFileName, tracksOf } from "./names.ts";
 import { jobsOfTrack } from "./sections.ts";
 import {
@@ -32,6 +33,13 @@ export type VersionState = "ok" | "busy" | "none";
 
 export interface BookView {
   book: LibraryBook;
+  /**
+   * Das Buch aus Sicht der zuletzt aktiven Sprachfassung (lva#344): deren Text
+   * und Hörbuch. Bei nur einer Fassung ist es das Buch selbst.
+   */
+  shown: LibraryBook;
+  /** Zuletzt aktive Sprachfassung. */
+  edition: Edition | null;
   /** Fortschritt des Buchs: die zuletzt benutzte Fassung. */
   progress: ProgressRecord | null;
   fraction: number;
@@ -74,27 +82,31 @@ export type Sort = "recent" | "added" | "title" | "author";
  * Textfassung schon vertonte Dateien vorliegen (Seitenordner).
  */
 export function viewOf(book: LibraryBook, pageAudio: boolean): BookView {
-  const textRec = book.text
-    ? loadProgress(textProgressKey(book.text.page_id))
+  const edition = readingEdition(book);
+  const shown = edition ? editionBook(book, edition) : book;
+  const textRec = shown.text
+    ? loadProgress(textProgressKey(shown.text.page_id))
     : null;
-  const audioRec = book.audio_path
-    ? loadProgress(audioProgressKey(book.id))
+  const audioRec = shown.audio_path
+    ? loadProgress(
+        edition ? audioKeyOf(book, edition) : audioProgressKey(book.id),
+      )
     : null;
   const progress =
     (textRec?.updated ?? 0) >= (audioRec?.updated ?? 0) ? textRec : audioRec;
   const resumeWith: BookView["resumeWith"] =
     progress === audioRec && audioRec
       ? "audio"
-      : book.text
+      : shown.text
         ? "text"
-        : book.audio_path
+        : shown.audio_path
           ? "audio"
           : null;
   const fraction = book.finished ? 1 : progressFraction(progress);
   const textFraction = book.finished ? 1 : progressFraction(textRec);
   const audioFraction = book.finished ? 1 : progressFraction(audioRec);
-  const audioTotalMs = book.audio_path
-    ? (totalDuration(book.audio) ??
+  const audioTotalMs = shown.audio_path
+    ? (totalDuration(shown.audio) ??
       (audioRec?.unit === "ms" && audioRec.length > 0 ? audioRec.length : null))
     : null;
   const audioLeftMs =
@@ -105,18 +117,20 @@ export function viewOf(book: LibraryBook, pageAudio: boolean): BookView {
         : Math.max(0, audioTotalMs - (audioRec?.offset ?? 0));
   return {
     book,
+    shown,
+    edition,
     progress,
     fraction,
     lastUsed: Math.max(textRec?.updated ?? 0, audioRec?.updated ?? 0),
-    text: book.text ? "ok" : pendingJobs(book).length ? "busy" : "none",
-    audio: book.audio_path || pageAudio ? "ok" : "none",
+    text: shown.text ? "ok" : pendingJobs(shown).length ? "busy" : "none",
+    audio: shown.audio_path || pageAudio ? "ok" : "none",
     resumeWith,
-    audioSource: book.audio_path ? "audiobook" : pageAudio ? "narrated" : null,
-    transcription: pendingJobs(book).length
+    audioSource: shown.audio_path ? "audiobook" : pageAudio ? "narrated" : null,
+    transcription: pendingJobs(shown).length
       ? "running"
-      : book.text?.origin === "transcript"
+      : shown.text?.origin === "transcript"
         ? "done"
-        : book.audio_path && !book.text
+        : shown.audio_path && !shown.text
           ? "possible"
           : "none",
     textFraction,
@@ -161,7 +175,19 @@ export function matchesSearch(v: BookView, query: string): boolean {
   const q = fold(query.trim());
   if (!q) return true;
   const b = v.book;
-  return [b.title, b.subtitle ?? "", ...b.authors, b.audio?.narrator ?? ""]
+  // Titel und Vorleser aller Sprachfassungen zählen (lva#344).
+  const others = (b.editions ?? []).flatMap((e) => [
+    e.title,
+    e.subtitle ?? "",
+    e.audio?.narrator ?? "",
+  ]);
+  return [
+    b.title,
+    b.subtitle ?? "",
+    ...b.authors,
+    b.audio?.narrator ?? "",
+    ...others,
+  ]
     .map(fold)
     .some((s) => s.includes(q));
 }
