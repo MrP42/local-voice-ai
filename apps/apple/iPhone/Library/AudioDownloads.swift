@@ -102,7 +102,7 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
                                                     attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication])
             PhoneLibrary.excludeFromBackup(library.audioDir(book))
         } catch {
-            job.phase = .failed; job.message = "Der Ordner für das Hörbuch lässt sich nicht anlegen: \(error.localizedDescription)"
+            job = AudioDownload.failedStart(job, message: "Der Ordner für das Hörbuch lässt sich nicht anlegen: \(error.localizedDescription)", speed: &speed)
             jobs[book.id] = job; persist(); resolve(book.id, false)
             return
         }

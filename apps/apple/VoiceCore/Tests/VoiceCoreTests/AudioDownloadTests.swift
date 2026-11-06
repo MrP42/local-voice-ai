@@ -160,6 +160,8 @@ final class AudioDownloadTests: XCTestCase {
         XCTAssertNil(speed.remaining("b", doneBytes: 80, totalBytes: 100, now: start.addingTimeInterval(3650)))
     }
 
+    /// Prüft die Bausteine `prepareStart` und `failedStart`. `AudioDownloads.start` selbst liegt im App-Ziel,
+    /// für das es kein Testziel gibt; es wendet nur deren Ergebnis an.
     func testStartResetsMeasureAlsoWhenItFailsRightAway() {
         var speed = AudioDownload.SpeedTracker()
         let start = Date()
@@ -172,6 +174,11 @@ final class AudioDownloadTests: XCTestCase {
         let running = AudioDownload.prepareStart(job(), remainingBytes: 100, freeBytes: nil, format: { "\($0)" }, speed: &speed)
         XCTAssertEqual(running.phase, job().phase)
         XCTAssertNil(speed.remaining("book_1", doneBytes: 5, totalBytes: 10, now: start.addingTimeInterval(600)), "auch ein erfolgreicher Start misst neu")
+        speed.note("book_1", phase: .running, bytes: 0, now: start)
+        let noFolder = AudioDownload.failedStart(job(), message: "Ordner", speed: &speed)
+        XCTAssertEqual(noFolder.phase, .failed)
+        XCTAssertEqual(noFolder.message, "Ordner")
+        XCTAssertNil(speed.remaining("book_1", doneBytes: 5, totalBytes: 10, now: start.addingTimeInterval(600)))
     }
 
     func testNetworkChangeRestartsMeasureWithoutDownloadCallback() {

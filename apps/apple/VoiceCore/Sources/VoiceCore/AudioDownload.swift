@@ -124,9 +124,15 @@ public enum AudioDownload {
                                     speed: inout SpeedTracker) -> Job {
         speed.reset(job.bookId)
         guard let problem = spaceProblem(remainingBytes: remainingBytes, freeBytes: freeBytes, format: format) else { return job }
+        return failedStart(job, message: problem, speed: &speed)
+    }
+
+    /// Auftrag scheitert beim Start; eine Messung darf davon nicht übrig bleiben.
+    public static func failedStart(_ job: Job, message: String, speed: inout SpeedTracker) -> Job {
+        speed.reset(job.bookId)
         var failed = job
         failed.phase = .failed
-        failed.message = problem
+        failed.message = message
         return failed
     }
 
