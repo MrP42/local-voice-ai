@@ -1058,6 +1058,11 @@ pub struct AppSettings {
     /// `meetings`. Getrennt von den Rechten externer Agenten.
     #[serde(default)]
     pub voice_call_knowledge: Vec<String>,
+    /// Globaler Sprachassistent (lva#325): Abrufindex über die freigegebenen Bereiche
+    /// (`voice_call_knowledge`, inkl. `books`, `book_notes`, `ki_docs`). Standard AUS: dann
+    /// kein Indexaufbau, kein Vorwärmen, kein Abruf. Freischaltung erst nach Eval-Tor (Plan M8).
+    #[serde(default)]
+    pub voice_global_context_enabled: bool,
     /// Stufe 3 des Sprachgesprächs: aus Korrekturen lernen (ADR-0021). Standard AUS; ohne diesen
     /// Schalter wird kein Paar gespeichert.
     #[serde(default)]
@@ -1997,6 +2002,7 @@ pub fn get_default_settings() -> AppSettings {
         meeting_mcp_include_transcript: true,
         voice_call_read_transcripts: false,
         voice_call_knowledge: Vec::new(),
+        voice_global_context_enabled: false,
         speech_learning_enabled: false,
         speech_learning_auto_apply: false,
         calendar_graph_client_id: None,

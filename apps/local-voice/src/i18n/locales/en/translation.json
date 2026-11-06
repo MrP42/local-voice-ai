@@ -7526,6 +7526,21 @@
       "tools": "Use LVA tools",
       "toolsHint": "Read-only: the AI looks things up in the areas you share under “Knowledge”. It changes nothing, every call is in the integrations log."
     },
+    "sources": {
+      "label": "Sources",
+      "entry": "[Q{{k}}] {{kind}}: {{title}}",
+      "open": "Open source",
+      "page": "page {{page}}",
+      "kind": {
+        "book": "Book",
+        "book_note": "Book note",
+        "ki_doc": "AI document",
+        "meeting": "Meeting",
+        "dictation": "Dictation",
+        "conversation": "Conversation",
+        "tts_page": "Read-aloud page"
+      }
+    },
     "knowledge": {
       "intro": "What the model may look up during the conversation. Every access is logged.",
       "toolsOff": "The tools are switched off under “Models”. While they are off, the model looks nothing up.",
@@ -7555,7 +7570,24 @@
         "tts": {
           "label": "Read aloud",
           "hint": "Pages of the read-aloud library and the speech providers."
+        },
+        "books": {
+          "label": "Books",
+          "hint": "Text of your books, only up to the point you have read or listened to."
+        },
+        "book_notes": {
+          "label": "Book notes",
+          "hint": "Your notes on books, only up to your reading position."
+        },
+        "ki_docs": {
+          "label": "AI documents",
+          "hint": "Summaries and other AI documents on books, only if they reveal nothing beyond your reading position."
         }
+      },
+      "global": {
+        "title": "Global knowledge (preview)",
+        "switch": "Search all shared content",
+        "hint": "Before each answer the app searches the shared areas locally and gives the model matching excerpts with sources. Local language model only; books only up to your reading position."
       }
     }
   },

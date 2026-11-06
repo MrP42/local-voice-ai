@@ -592,14 +592,26 @@ impl TtsCore {
             // Synthese eingebacken läge es dauerhaft im Satz-Cache und gälte
             // doppelt, weil der Player bereits live skaliert.
             speed: None,
+            cancel,
         };
-        match engine {
-            EngineImpl::Fish => self.fish_synthesize(port, req).await,
-            EngineImpl::Piper(p) => p.synthesize(req).await,
-            // Ein Anbieter hört auf das Abbruch-Flag auch mitten im Satz.
-            EngineImpl::Provider(p) => p.synthesize_voiced(text, voice, cancel).await,
-            #[cfg(test)]
-            EngineImpl::Mock(mock) => mock.synthesize(req).await,
+        let work = async {
+            match engine {
+                EngineImpl::Fish => self.fish_synthesize(port, req).await,
+                EngineImpl::Piper(p) => p.synthesize(req).await,
+                // Ein Anbieter hört auf das Abbruch-Flag auch mitten im Satz.
+                EngineImpl::Provider(p) => p.synthesize_voiced(text, voice, cancel).await,
+                #[cfg(test)]
+                EngineImpl::Mock(mock) => mock.synthesize(req).await,
+            }
+        };
+        // Fish und Piper kennen kein Flag: der Satz wird beim Abbruch fallen
+        // gelassen (HTTP-Anfrage bzw. Subprozess-Future endet sofort).
+        match cancel {
+            Some(flag) => tokio::select! {
+                r = work => r,
+                _ = wait_cancelled(flag) => Err(providers::pipeline::CANCELLED_MESSAGE.to_string()),
+            },
+            None => work.await,
         }
     }
 

@@ -217,6 +217,8 @@ windows = { version = "0.61.3", features = [
   "Win32_System_Com_StructuredStorage",
   # Systemdialoge (z. B. „Nicht unterstützte 16 Bit-Anwendung“) vor Kindprozess-Starts abschalten.
   "Win32_System_Diagnostics_Debug",
+  # Piper: Prozess angehalten starten, erst nach der Job-Zuordnung fortsetzen.
+  "Win32_System_Diagnostics_ToolHelp",
   "Win32_System_LibraryLoader",
   "Win32_System_Threading",
   # Sync: System-curl über GetSystemDirectoryW finden (nicht über PATH).

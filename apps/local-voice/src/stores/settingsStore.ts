@@ -324,6 +324,9 @@ const settingUpdaters: {
     commands.changeVoiceCallReadTranscriptsSetting(value as boolean),
   voice_call_knowledge: (value) =>
     commands.changeVoiceCallKnowledgeSetting(value as string[]),
+  // lva#325: globaler Sprachassistent
+  voice_global_context_enabled: (value) =>
+    commands.changeVoiceGlobalContextEnabledSetting(value as boolean),
   // Sprachgespräch Stufe 3
   speech_learning_enabled: (value) =>
     commands.changeSpeechLearningEnabledSetting(value as boolean),

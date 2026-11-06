@@ -1,6 +1,8 @@
 mod actions;
 mod agent; // C1 (Goal Lokaler Agent)
 pub mod agent_bridge; // A7
+#[allow(dead_code)] // reine Helfer teils nur in Tests und Folgepaketen (P3/P4)
+mod app_context; // Globaler Sprachassistent: Abrufindex über alle Inhalte
 mod appdata_migration;
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 mod apple_intelligence;
@@ -2502,6 +2504,13 @@ fn specta_builder() -> Builder<tauri::Wry> {
             book_ai::talk::change_book_talk_subscription_preview_setting,
             book_ai::talk::book_talk_preview_status,
             book_ai::talk::change_book_talk_cloud_consent_setting,
+            // lva#325: globaler Sprachassistent (Abrufindex)
+            app_context::service::app_context_warm,
+            app_context::service::app_context_status,
+            app_context::service::app_context_retrieve,
+            app_context::service::app_context_message,
+            app_context::service::app_context_verify,
+            app_context::service::change_voice_global_context_enabled_setting,
             library_export::library_export_text,
             library_export::library_ffmpeg_available,
             library_export::library_export_audio,

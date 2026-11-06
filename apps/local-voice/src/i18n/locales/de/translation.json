@@ -7526,6 +7526,21 @@
       "tools": "LVA-Werkzeuge nutzen",
       "toolsHint": "Nur lesend: Die KI schlägt in den Bereichen nach, die du unter „Wissen“ freigibst. Sie ändert nichts, jeder Aufruf steht im Protokoll der Integrationen."
     },
+    "sources": {
+      "label": "Quellen",
+      "entry": "[Q{{k}}] {{kind}}: {{title}}",
+      "open": "Quelle öffnen",
+      "page": "Seite {{page}}",
+      "kind": {
+        "book": "Buch",
+        "book_note": "Buchnotiz",
+        "ki_doc": "KI-Dokument",
+        "meeting": "Besprechung",
+        "dictation": "Diktat",
+        "conversation": "Gespräch",
+        "tts_page": "Vorlesen-Seite"
+      }
+    },
     "knowledge": {
       "intro": "Was das Modell im Gespräch nachschlagen darf. Jeder Zugriff wird protokolliert.",
       "toolsOff": "Die Werkzeuge sind unter „Modelle“ ausgeschaltet. Solange sie aus sind, schlägt das Modell nichts nach.",
@@ -7555,7 +7570,24 @@
         "tts": {
           "label": "Vorlesen",
           "hint": "Seiten der Vorlesen-Bibliothek und die Sprachausgabe-Anbieter."
+        },
+        "books": {
+          "label": "Bücher",
+          "hint": "Text deiner Bücher, nur bis zu der Stelle, die du gelesen oder gehört hast."
+        },
+        "book_notes": {
+          "label": "Buchnotizen",
+          "hint": "Deine Notizen zu Büchern, nur bis zu deiner Leseposition."
+        },
+        "ki_docs": {
+          "label": "KI-Dokumente",
+          "hint": "Zusammenfassungen und andere KI-Dokumente zu Büchern, nur wenn sie nichts nach deiner Leseposition verraten."
         }
+      },
+      "global": {
+        "title": "Globales Wissen (Vorschau)",
+        "switch": "Alle freigegebenen Inhalte durchsuchen",
+        "hint": "Vor jeder Antwort sucht die App lokal in den freigegebenen Bereichen und gibt dem Modell die passenden Auszüge mit Belegen. Nur mit lokalem Sprachmodell; Bücher nur bis zu deiner Leseposition."
       }
     }
   },

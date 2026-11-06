@@ -1,7 +1,22 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Mic, Pencil } from "lucide-react";
-import type { VoiceLine } from "@/stores/voiceCallStore";
+import type { VoiceLine, VoiceSource } from "@/stores/voiceCallStore";
+import { sourceTarget } from "./globalContext";
+import { openInReader } from "@/lib/library/books";
+
+/** Beleg öffnen: Seite im Vorlesen oder den Bereich der Quelle. */
+function openSource(src: VoiceSource): void {
+  const target = sourceTarget(src.jump);
+  if (!target) return;
+  if ("page" in target) {
+    openInReader(target.page, false);
+    return;
+  }
+  window.dispatchEvent(
+    new CustomEvent("lv-navigate", { detail: { section: target.section } }),
+  );
+}
 
 const SUGGESTIONS = ["s1", "s2", "s3", "s4"] as const;
 
@@ -238,6 +253,37 @@ export const Transcript: React.FC<{
                   >
                     {line.text}
                     {line.interrupted ? " …" : ""}
+                    {line.sources && line.sources.length > 0 && (
+                      <ul
+                        aria-label={t("voiceCall.sources.label")}
+                        data-testid="voice-sources"
+                        className="m-0 mt-1.5 p-0 list-none flex flex-col gap-0.5 text-xs text-text/70"
+                      >
+                        {line.sources.map((src) => (
+                          <li key={src.k}>
+                            <button
+                              type="button"
+                              data-testid="voice-source"
+                              disabled={!sourceTarget(src.jump)}
+                              onClick={() => openSource(src)}
+                              title={t("voiceCall.sources.open")}
+                              className="text-left underline-offset-2 hover:underline disabled:no-underline disabled:cursor-default"
+                            >
+                              {t("voiceCall.sources.entry", {
+                                k: src.k,
+                                kind: t(`voiceCall.sources.kind.${src.kind}`, {
+                                  defaultValue: src.kind,
+                                }),
+                                title: src.title,
+                              })}
+                              {src.page !== null
+                                ? `, ${t("voiceCall.sources.page", { page: src.page })}`
+                                : ""}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                   </div>
                 )}
                 <div
