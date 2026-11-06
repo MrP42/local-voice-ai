@@ -46,12 +46,75 @@ impl BudgetProfile {
 
 /// Profile, deren Vorlagenkosten mit dem echten Tokenizer an den Fixtures
 /// gemessen und im Test belegt sind. **Leer**: für Gemma 4 (Ollama) liegt
-/// kein Beleg vor; ohne Profil und ohne exakten Tokenizer gibt es nur
-/// Fundstellen (Grund `budget`).
+/// kein Beleg vor; stattdessen gilt die beweisbare Byte-Obergrenze
+/// (`byte_bound_tokens`).
 pub const BUDGET_PROFILES: &[BudgetProfile] = &[];
 
 pub fn profile_for(family: &str) -> Option<&'static BudgetProfile> {
     BUDGET_PROFILES.iter().find(|p| p.family == family)
+}
+
+/// Aufschlag der Byte-Obergrenze für Chat-Vorlage und Rollen-Token
+/// (Anfang/Ende der Unterhaltung, je Nachricht Rahmen und Rolle). Die
+/// gängigen Vorlagen brauchen deutlich weniger als zehn Token je Nachricht;
+/// 64 ist bewusst großzügig, eine zu hohe Schätzung kostet nur Auszüge.
+pub const BYTE_BOUND_TEMPLATE_TOKENS: usize = 64;
+
+/// Beweisbare Obergrenze der Prompt-Token ohne Tokenizer: Ein
+/// Byte-Level-BPE-Tokenizer (und SentencePiece mit Byte-Rückfall) erzeugt nie
+/// mehr Token als der Text UTF-8-Bytes hat (jedes Token deckt mindestens ein
+/// Byte). Dazu der feste Vorlagenaufschlag. Umlaute zählen 2 Byte.
+pub fn byte_bound_tokens(system: &str, user: &str) -> usize {
+    system
+        .len()
+        .saturating_add(user.len())
+        .saturating_add(BYTE_BOUND_TEMPLATE_TOKENS)
+}
+
+/// Womit die Prompt-Größe geprüft wird (für Bericht und Prüfbindung).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BudgetMethod {
+    /// Exakter Zähler des Modell-Tokenizers.
+    Exact,
+    /// Belegtes Budgetprofil.
+    Profile(&'static str),
+    /// Byte-Obergrenze (`byte_bound_tokens`).
+    ByteBound,
+}
+
+impl BudgetMethod {
+    /// Rangfolge: exakter Zähler, dann Profil, dann Byte-Obergrenze.
+    pub fn choose(exact_available: bool, profile: Option<&BudgetProfile>) -> Self {
+        match (exact_available, profile) {
+            (true, _) => Self::Exact,
+            (false, Some(p)) => Self::Profile(p.name),
+            (false, None) => Self::ByteBound,
+        }
+    }
+
+    pub fn label(&self) -> String {
+        match self {
+            Self::Exact => "exact".to_string(),
+            Self::Profile(name) => format!("profile:{name}"),
+            Self::ByteBound => "byte_bound".to_string(),
+        }
+    }
+}
+
+/// Die eine Zählfunktion von App und Eval: exakter Zähler hat Vorrang, dann
+/// das Profil, sonst die Byte-Obergrenze. Das Ergebnis ist immer eine
+/// Obergrenze oder exakt, nie eine Schätzung nach unten.
+pub fn count_tokens(
+    exact: Option<u32>,
+    profile: Option<&BudgetProfile>,
+    system: &str,
+    user: &str,
+) -> usize {
+    match (exact, profile) {
+        (Some(t), _) => t as usize,
+        (None, Some(p)) => p.upper_bound(system, user) as usize,
+        (None, None) => byte_bound_tokens(system, user),
+    }
 }
 
 /// Feste Größen eines Aufrufs. Zeichenzahlen sind Startwerte für die Auswahl;
@@ -89,8 +152,9 @@ impl Budget {
 }
 
 /// Zählt die Prompt-Token (System, Nutzer): exakt mit dem Tokenizer des
-/// Modells, sonst als Obergrenze über ein Budgetprofil, sonst `None`
-/// (nicht prüfbar, Grund `budget`).
+/// Modells, sonst als Obergrenze über ein Budgetprofil, sonst über die
+/// Byte-Obergrenze (`count_tokens`). `None` nur, wenn ein Zähler nichts
+/// liefern kann (Grund `budget`).
 pub type TokenCount<'a> = &'a dyn Fn(&str, &str) -> Option<usize>;
 
 /// Ein früherer Wechsel für den Prompt, mit Bereich und Grenze der Entstehung.
@@ -331,8 +395,8 @@ pub struct Fitted {
 
 /// Prompt und Auszüge so lange verkleinern, bis alles ins Kontextfenster
 /// passt: erst rangniedrigste Auszüge (mindestens einer bleibt), dann der
-/// Verlauf; sonst `None` (= Grund `budget`). Ohne Zähler und ohne Profil ist
-/// nichts prüfbar.
+/// Verlauf; sonst `None` (= Grund `budget`). Die Auszüge werden von hinten
+/// (rangniedrigste zuerst) gekürzt, mindestens einer bleibt.
 #[allow(clippy::too_many_arguments)]
 pub fn fit(
     title: &str,
@@ -440,5 +504,40 @@ mod tests {
             per_message_cost: 8,
         };
         assert_eq!(p.upper_bound("äöü", "abc"), 6 + 3 + 16 + 16);
+    }
+
+    #[test]
+    fn byte_bound_counts_multibyte_and_template() {
+        assert_eq!(byte_bound_tokens("", ""), BYTE_BOUND_TEMPLATE_TOKENS);
+        assert_eq!(
+            byte_bound_tokens("äöü", "abc"),
+            6 + 3 + BYTE_BOUND_TEMPLATE_TOKENS
+        );
+    }
+
+    #[test]
+    fn method_precedence_is_exact_then_profile_then_bytes() {
+        let p = BudgetProfile {
+            name: "t",
+            family: "t",
+            tokenizer: TokenizerKind::ByteBpe,
+            template: "t",
+            fixed_cost: 16,
+            per_message_cost: 8,
+        };
+        assert_eq!(BudgetMethod::choose(true, Some(&p)), BudgetMethod::Exact);
+        assert_eq!(BudgetMethod::choose(true, None), BudgetMethod::Exact);
+        assert_eq!(
+            BudgetMethod::choose(false, Some(&p)),
+            BudgetMethod::Profile("t")
+        );
+        assert_eq!(BudgetMethod::choose(false, None), BudgetMethod::ByteBound);
+        assert_eq!(count_tokens(Some(5), Some(&p), "äöü", "abc"), 5);
+        assert_eq!(count_tokens(None, Some(&p), "äöü", "abc"), 6 + 3 + 16 + 16);
+        assert_eq!(
+            count_tokens(None, None, "äöü", "abc"),
+            6 + 3 + BYTE_BOUND_TEMPLATE_TOKENS
+        );
+        assert_eq!(BudgetMethod::ByteBound.label(), "byte_bound");
     }
 }

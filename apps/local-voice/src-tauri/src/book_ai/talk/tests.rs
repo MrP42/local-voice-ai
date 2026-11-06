@@ -612,15 +612,172 @@ fn the_hard_budget_drops_excerpts_then_history_then_fails() {
     assert!(fit(&tiny, &exact).is_none());
     assert!(
         fit(&roomy(), &none).is_none(),
-        "ohne Zähler und Profil nichts prüfbar"
+        "ein Zähler ohne Ergebnis ist nicht prüfbar"
     );
     assert!(fit(&roomy(), &profile).is_some());
 }
 
 #[test]
-fn the_empty_profile_list_means_no_unproven_byte_bound() {
+fn the_profile_list_is_empty_so_the_byte_bound_applies() {
     assert!(prompt::BUDGET_PROFILES.is_empty());
     assert!(prompt::profile_for("gemma").is_none());
+    assert_eq!(
+        prompt::BudgetMethod::choose(false, None).label(),
+        "byte_bound"
+    );
+}
+
+/// Die Byte-Obergrenze, wie sie `run` für Fits ohne Zähler und Profil nutzt.
+fn bytes_only(s: &str, u: &str) -> Option<usize> {
+    Some(prompt::count_tokens(None, None, s, u))
+}
+
+fn many_excerpts() -> (BookIndex, Retrieval) {
+    let ix = index_of(&buch());
+    let r = retrieve::retrieve(
+        &ix,
+        "Meister Lehrer Vater Geld Haus",
+        BookTalkIntent::Question,
+        None,
+        true,
+        None,
+        &[],
+        6,
+        7_500,
+    );
+    assert!(r.excerpts.len() > 2);
+    (ix, r)
+}
+
+fn fit_bytes(r: &Retrieval, b: &Budget, q: &str) -> Option<prompt::Fitted> {
+    prompt::fit(
+        "T",
+        q,
+        r,
+        &[],
+        Lang::De,
+        BookTalkScope::Book,
+        0,
+        b,
+        &bytes_only,
+    )
+}
+
+#[test]
+fn byte_bound_allows_a_request_that_fits() {
+    let (_, r) = many_excerpts();
+    let full = fit_bytes(&r, &roomy(), "Wer?").expect("passt");
+    assert_eq!(full.dropped_excerpts, 0);
+    let bound = prompt::byte_bound_tokens(&full.parts.instructions, &full.parts.prompt);
+    // Genau an der Grenze: erlaubt.
+    let edge = Budget {
+        context_tokens: bound + roomy().answer_tokens,
+        ..roomy()
+    };
+    let at_edge = fit_bytes(&r, &edge, "Wer?").expect("passt genau");
+    assert_eq!(at_edge.dropped_excerpts, 0);
+}
+
+#[test]
+fn byte_bound_trims_excerpts_from_the_back_until_it_fits() {
+    let (_, r) = many_excerpts();
+    let full = fit_bytes(&r, &roomy(), "Wer?").expect("passt");
+    let bound = prompt::byte_bound_tokens(&full.parts.instructions, &full.parts.prompt);
+    // Ein Token weniger als nötig: mindestens ein Auszug fällt weg.
+    let tight = Budget {
+        context_tokens: bound + roomy().answer_tokens - 1,
+        ..roomy()
+    };
+    let trimmed = fit_bytes(&r, &tight, "Wer?").expect("passt gekürzt");
+    assert!(trimmed.dropped_excerpts > 0);
+    let kept = trimmed.retrieval.excerpts.len();
+    assert!((1..r.excerpts.len()).contains(&kept));
+    let ids: Vec<usize> = trimmed.retrieval.excerpts.iter().map(|e| e.id).collect();
+    assert_eq!(
+        ids,
+        (1..=kept).collect::<Vec<_>>(),
+        "[Q<k>] bleibt lückenlos"
+    );
+    let used = prompt::byte_bound_tokens(&trimmed.parts.instructions, &trimmed.parts.prompt);
+    assert!(used + tight.answer_tokens <= tight.context_tokens);
+}
+
+#[test]
+fn byte_bound_gives_up_when_even_one_excerpt_does_not_fit() {
+    let (_, r) = many_excerpts();
+    let tiny = Budget {
+        context_tokens: 400,
+        ..roomy()
+    };
+    assert!(fit_bytes(&r, &tiny, "Wer?").is_none());
+    // Auch die Ausgabe zählt: Fenster kleiner als die Antwortreserve.
+    let none = Budget {
+        context_tokens: roomy().answer_tokens,
+        ..roomy()
+    };
+    assert!(fit_bytes(&r, &none, "Wer?").is_none());
+}
+
+#[test]
+fn an_exact_counter_beats_the_byte_bound() {
+    let (_, r) = many_excerpts();
+    let full = fit_bytes(&r, &roomy(), "Wer?").expect("passt");
+    let (ins, prm) = (&full.parts.instructions, &full.parts.prompt);
+    let bound = prompt::byte_bound_tokens(ins, prm);
+    let ctx = (ins.len() + prm.len()) * 2 / 3 + roomy().answer_tokens;
+    assert!(ctx < bound + roomy().answer_tokens);
+    let b = Budget {
+        context_tokens: ctx,
+        ..roomy()
+    };
+    let exact = |s: &str, u: &str| {
+        Some(prompt::count_tokens(
+            Some(((s.len() + u.len()) / 3) as u32),
+            None,
+            s,
+            u,
+        ))
+    };
+    let go_fit = |c: prompt::TokenCount<'_>| {
+        prompt::fit(
+            "T",
+            "Wer?",
+            &r,
+            &[],
+            Lang::De,
+            BookTalkScope::Book,
+            0,
+            &b,
+            c,
+        )
+    };
+    let with_exact = go_fit(&exact).expect("exakt passt voll");
+    assert_eq!(with_exact.dropped_excerpts, 0);
+    let with_bytes = go_fit(&bytes_only).expect("Bytes passt nur gekürzt");
+    assert!(with_bytes.dropped_excerpts > 0);
+    // Das Profil hat ebenfalls Vorrang vor den Bytes.
+    let profile = |s: &str, u: &str| Some(prompt::count_tokens(None, Some(&TEST_PROFILE), s, u));
+    assert!(go_fit(&profile).is_some());
+}
+
+#[test]
+fn umlauts_count_two_bytes_in_the_bound() {
+    let ascii = "u".repeat(300);
+    let umlaut = "ü".repeat(300);
+    assert_eq!(
+        prompt::byte_bound_tokens(&umlaut, "") - prompt::byte_bound_tokens(&ascii, ""),
+        300
+    );
+    let (_, r) = many_excerpts();
+    let q = |t: &str| fit_bytes(&r, &roomy(), t).expect("passt").parts;
+    let (a, u) = (q(&"u".repeat(300)), q(&"ü".repeat(300)));
+    let bound = |p: &prompt::Parts| prompt::byte_bound_tokens(&p.instructions, &p.prompt);
+    assert!(bound(&u) > bound(&a), "Mehrbyte-Frage ist teurer");
+    assert_eq!(
+        bound(&u) - bound(&a),
+        u.prompt.len() - a.prompt.len(),
+        "Bytes, nicht Zeichen"
+    );
 }
 
 // ------------------------------------------------- Belege, Prüfung ----
@@ -960,10 +1117,9 @@ async fn fallbacks_and_model_errors_become_answers_with_a_reason() {
 }
 
 #[tokio::test]
-async fn without_a_counter_or_a_measured_profile_nothing_is_called() {
+async fn without_a_counter_or_profile_the_byte_bound_decides() {
     let ix = index_of(&buch());
     let q = "Was sagt der Meister über das Haus des Lehrers?";
-    let model = Fake::new("egal");
     let req = BookTalkRequest {
         book_id: "b".into(),
         request_id: "r".into(),
@@ -972,6 +1128,8 @@ async fn without_a_counter_or_a_measured_profile_nothing_is_called() {
         scope: BookTalkScope::Book,
         input: BookTalkInput::Text,
     };
+    // Passt nach der Byte-Obergrenze: das Modell wird gefragt.
+    let model = Fake::new("Er hält das große Haus für eine Verpflichtung [Q1].");
     let out = go(
         &ix,
         &req,
@@ -984,9 +1142,28 @@ async fn without_a_counter_or_a_measured_profile_nothing_is_called() {
         &CancelFlag::default(),
     )
     .await;
+    assert_eq!(model.call_count(), 1);
+    assert!(!out.answer().found_only, "{}", out.answer().text);
+
+    // Passt nicht (auch nicht mit einem Auszug): found_only, Grund budget.
+    let none = Fake::new("egal");
+    let mut small = roomy();
+    small.context_tokens = 400;
+    let out = go(
+        &ix,
+        &req,
+        &[],
+        &[],
+        Model::Ready(&none),
+        small,
+        None,
+        Duration::from_secs(5),
+        &CancelFlag::default(),
+    )
+    .await;
     assert_eq!(out.answer().reason.as_deref(), Some(CODE_BUDGET));
     assert!(out.answer().found_only);
-    assert_eq!(model.call_count(), 0);
+    assert_eq!(none.call_count(), 0);
 
     // Mit exaktem Zähler läuft es.
     let mut counted = Fake::new("Er hält das große Haus für eine Verpflichtung [Q1].");

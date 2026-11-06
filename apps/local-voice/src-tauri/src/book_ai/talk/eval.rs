@@ -42,8 +42,6 @@ pub const MAX_VIOLATIONS: u32 = 0;
 pub const MAX_DROPPED_SHARE: f64 = 0.25;
 /// Kontextfenster eines lokalen Modells, wenn nichts anderes gewählt ist.
 pub const DEFAULT_CONTEXT_TOKENS: u32 = 8_192;
-/// Aufschlag auf die Byte-Obergrenze der Token (Vorlagenrahmen).
-const BYTE_BOUND_OVERHEAD: u32 = 64;
 const FIXED_TIME: &str = "1970-01-01T00:00:00Z";
 
 // ------------------------------------------------------------- Eingabe --
@@ -157,11 +155,9 @@ impl EvalConfig {
         }
     }
 
-    pub fn token_mode(&self) -> String {
-        match self.profile {
-            Some(p) => format!("profile:{}", p.name),
-            None => "byte_bound".to_string(),
-        }
+    /// Budgetmethode des Laufs (Rangfolge wie in der App, `BudgetMethod`).
+    pub fn token_mode(&self, exact_available: bool) -> String {
+        prompt::BudgetMethod::choose(exact_available, self.profile).label()
     }
 }
 
@@ -333,12 +329,11 @@ pub fn gate(s: &Summary) -> Vec<String> {
 
 // --------------------------------------------------------- Modell-Hüllen --
 
-/// Zählt Aufrufe und liefert, ohne Profil, die Byte-Obergrenze als
-/// Tokenzahl (ein Token hat mindestens ein Byte).
+/// Zählt die Modellaufrufe; die Tokenzählung bleibt die des Modells, die
+/// Budgetmethode wählt `book_ai::talk::run` (Byte-Obergrenze gemeinsam mit der App).
 struct Counting<'m> {
     inner: &'m dyn TalkModel,
     calls: AtomicU32,
-    byte_bound: bool,
 }
 
 impl TalkModel for Counting<'_> {
@@ -353,9 +348,6 @@ impl TalkModel for Counting<'_> {
     }
 
     fn token_count(&self, system: &str, user: &str) -> Option<u32> {
-        if self.byte_bound {
-            return Some((system.len() + user.len()) as u32 + BYTE_BOUND_OVERHEAD);
-        }
         self.inner.token_count(system, user)
     }
 }
@@ -654,7 +646,6 @@ fn skipped(q: &EvalQuestion) -> QuestionResult {
 /// Der Lauf: alle Fragen nacheinander durch die Pipeline.
 pub async fn run_eval(input: &EvalInput, backend: Backend<'_>, cfg: &EvalConfig) -> Report {
     let ix = index::build(&input.title, &input.book);
-    let byte_bound = cfg.profile.is_none();
     let mut results = Vec::with_capacity(input.questions.len());
     for q in &input.questions {
         let result = match &backend {
@@ -665,7 +656,6 @@ pub async fn run_eval(input: &EvalInput, backend: Backend<'_>, cfg: &EvalConfig)
                     let counting = Counting {
                         inner: &scripted,
                         calls: AtomicU32::new(0),
-                        byte_bound,
                     };
                     eval_one(&ix, q, &counting, cfg).await
                 }
@@ -674,7 +664,6 @@ pub async fn run_eval(input: &EvalInput, backend: Backend<'_>, cfg: &EvalConfig)
                 let counting = Counting {
                     inner: *m,
                     calls: AtomicU32::new(0),
-                    byte_bound,
                 };
                 eval_one(&ix, q, &counting, cfg).await
             }
@@ -690,7 +679,10 @@ pub async fn run_eval(input: &EvalInput, backend: Backend<'_>, cfg: &EvalConfig)
         prompt_version: PROMPT_VERSION,
         check_version: CHECK_VERSION,
         budget_profile: cfg.profile.map(|p| p.name.to_string()),
-        token_count: cfg.token_mode(),
+        token_count: cfg.token_mode(match &backend {
+            Backend::Fake => false,
+            Backend::Model(m) => m.token_count("", "").is_some(),
+        }),
         context_tokens: cfg.context_tokens,
         fixture: FixtureInfo {
             title: input.title.clone(),

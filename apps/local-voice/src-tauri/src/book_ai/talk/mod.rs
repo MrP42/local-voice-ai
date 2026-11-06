@@ -378,12 +378,15 @@ pub async fn run(
         }
     };
 
-    // Budget hart und vor dem Aufruf; ohne Zähler und Profil kein Aufruf.
+    // Budget hart und vor dem Aufruf: exakter Zähler, sonst Profil, sonst
+    // beweisbare Byte-Obergrenze (dieselbe Funktion wie im Eval).
     let count = |system: &str, user: &str| -> Option<usize> {
-        model
-            .token_count(system, user)
-            .map(|t| t as usize)
-            .or_else(|| p.profile.map(|pr| pr.upper_bound(system, user) as usize))
+        Some(prompt::count_tokens(
+            model.token_count(system, user),
+            p.profile,
+            system,
+            user,
+        ))
     };
     let Some(fit) = prompt::fit(
         &index.title,
