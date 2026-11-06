@@ -1,0 +1,346 @@
+{
+ "sf-01-bibliothek-1440-hell": {
+  "small": [],
+  "contrast": [],
+  "minContrast": 6.8
+ },
+ "sf-01-bibliothek-390-hell": {
+  "small": [],
+  "contrast": [],
+  "minContrast": 6.8
+ },
+ "sf-01-bibliothek-1440-dunkel": {
+  "small": [],
+  "contrast": [],
+  "minContrast": 7.5
+ },
+ "sf-01-bibliothek-390-dunkel": {
+  "small": [],
+  "contrast": [],
+  "minContrast": 7.5
+ },
+ "sf-02-pruefen-1440-hell": {
+  "small": [],
+  "contrast": [],
+  "minContrast": 5.4
+ },
+ "sf-02-pruefen-390-hell": {
+  "small": [],
+  "contrast": [],
+  "minContrast": 5.4
+ },
+ "sf-02-pruefen-1440-dunkel": {
+  "small": [],
+  "contrast": [],
+  "minContrast": 6.8
+ },
+ "sf-02-pruefen-390-dunkel": {
+  "small": [],
+  "contrast": [],
+  "minContrast": 6.8
+ },
+ "sf-03-import-1440-hell": {
+  "small": [],
+  "contrast": [],
+  "minContrast": 7.2
+ },
+ "sf-03-import-390-hell": {
+  "small": [],
+  "contrast": [],
+  "minContrast": 7.2
+ },
+ "sf-03-import-1440-dunkel": {
+  "small": [],
+  "contrast": [],
+  "minContrast": 6.8
+ },
+ "sf-03-import-390-dunkel": {
+  "small": [],
+  "contrast": [],
+  "minContrast": 6.8
+ },
+ "sf-04-buchseite-1440-hell": {
+  "small": [],
+  "contrast": [],
+  "minContrast": 5.6
+ },
+ "sf-04-buchseite-390-hell": {
+  "small": [],
+  "contrast": [],
+  "minContrast": 5.6
+ },
+ "sf-04-buchseite-1440-dunkel": {
+  "small": [],
+  "contrast": [],
+  "minContrast": 6
+ },
+ "sf-04-buchseite-390-dunkel": {
+  "small": [],
+  "contrast": [],
+  "minContrast": 6
+ },
+ "sf-05-player-sprache-1440-hell": {
+  "small": [],
+  "contrast": [],
+  "minContrast": 5.9
+ },
+ "sf-05-player-sprache-390-hell": {
+  "small": [],
+  "contrast": [],
+  "minContrast": 5.9
+ },
+ "sf-05-player-sprache-1440-dunkel": {
+  "small": [],
+  "contrast": [],
+  "minContrast": 6
+ },
+ "sf-05-player-sprache-390-dunkel": {
+  "small": [],
+  "contrast": [],
+  "minContrast": 6
+ },
+ "sf-06-wechsel-kapitelgenau-1440-hell": {
+  "small": [],
+  "contrast": [],
+  "minContrast": 13.9
+ },
+ "sf-06-wechsel-kapitelgenau-390-hell": {
+  "small": [],
+  "contrast": [],
+  "minContrast": 13.9
+ },
+ "sf-06-wechsel-kapitelgenau-1440-dunkel": {
+  "small": [],
+  "contrast": [],
+  "minContrast": 14.6
+ },
+ "sf-06-wechsel-kapitelgenau-390-dunkel": {
+  "small": [],
+  "contrast": [],
+  "minContrast": 14.6
+ },
+ "sf-07-wechsel-ungefaehr-1440-hell": {
+  "small": [],
+  "contrast": [],
+  "minContrast": 13.3
+ },
+ "sf-07-wechsel-ungefaehr-390-hell": {
+  "small": [],
+  "contrast": [],
+  "minContrast": 13.3
+ },
+ "sf-07-wechsel-ungefaehr-1440-dunkel": {
+  "small": [],
+  "contrast": [],
+  "minContrast": 11
+ },
+ "sf-07-wechsel-ungefaehr-390-dunkel": {
+  "small": [],
+  "contrast": [],
+  "minContrast": 11
+ },
+ "sf-08-kapitel-zuordnen-1440-hell": {
+  "small": [],
+  "contrast": [],
+  "minContrast": null
+ },
+ "sf-08-kapitel-zuordnen-390-hell": {
+  "small": [],
+  "contrast": [],
+  "minContrast": null
+ },
+ "sf-08-kapitel-zuordnen-1440-dunkel": {
+  "small": [],
+  "contrast": [],
+  "minContrast": null
+ },
+ "sf-08-kapitel-zuordnen-390-dunkel": {
+  "small": [],
+  "contrast": [],
+  "minContrast": null
+ },
+ "sf-09-iphone-sprache-quelle-390-hell": {
+  "small": [],
+  "contrast": [
+   {
+    "cls": "sub",
+    "ratio": 14.7,
+    "alpha": 0.8
+   },
+   {
+    "cls": "sh",
+    "ratio": 14.7,
+    "alpha": 0.8
+   },
+   {
+    "cls": "d",
+    "ratio": 14.7,
+    "alpha": 0.8
+   },
+   {
+    "cls": "dl",
+    "ratio": 14.7,
+    "alpha": 0.8
+   },
+   {
+    "cls": "d",
+    "ratio": 14.7,
+    "alpha": 0.8
+   },
+   {
+    "cls": "dl",
+    "ratio": 14.7,
+    "alpha": 0.8
+   },
+   {
+    "cls": "d",
+    "ratio": 14.7,
+    "alpha": 0.8
+   },
+   {
+    "cls": "sh",
+    "ratio": 14.7,
+    "alpha": 0.8
+   },
+   {
+    "cls": "d",
+    "ratio": 14.7,
+    "alpha": 0.8
+   },
+   {
+    "cls": "d",
+    "ratio": 14.7,
+    "alpha": 0.8
+   }
+  ],
+  "minContrast": 14.7
+ },
+ "sf-09-iphone-sprache-quelle-390-dunkel": {
+  "small": [],
+  "contrast": [
+   {
+    "cls": "sub",
+    "ratio": 14.5,
+    "alpha": 0.72
+   },
+   {
+    "cls": "sh",
+    "ratio": 14.5,
+    "alpha": 0.72
+   },
+   {
+    "cls": "d",
+    "ratio": 14.5,
+    "alpha": 0.72
+   },
+   {
+    "cls": "dl",
+    "ratio": 14.5,
+    "alpha": 0.72
+   },
+   {
+    "cls": "d",
+    "ratio": 14.5,
+    "alpha": 0.72
+   },
+   {
+    "cls": "dl",
+    "ratio": 14.5,
+    "alpha": 0.72
+   },
+   {
+    "cls": "d",
+    "ratio": 14.5,
+    "alpha": 0.72
+   },
+   {
+    "cls": "sh",
+    "ratio": 14.5,
+    "alpha": 0.72
+   },
+   {
+    "cls": "d",
+    "ratio": 14.5,
+    "alpha": 0.72
+   },
+   {
+    "cls": "d",
+    "ratio": 14.5,
+    "alpha": 0.72
+   }
+  ],
+  "minContrast": 14.5
+ },
+ "sf-10-iphone-regal-390-hell": {
+  "small": [],
+  "contrast": [
+   {
+    "cls": "d",
+    "ratio": 13.9,
+    "alpha": 0.8
+   },
+   {
+    "cls": "d",
+    "ratio": 13.9,
+    "alpha": 0.8
+   },
+   {
+    "cls": "d",
+    "ratio": 13.9,
+    "alpha": 0.8
+   },
+   {
+    "cls": "d",
+    "ratio": 13.9,
+    "alpha": 0.8
+   }
+  ],
+  "minContrast": 13.9
+ },
+ "sf-10-iphone-regal-390-dunkel": {
+  "small": [],
+  "contrast": [
+   {
+    "cls": "d",
+    "ratio": 16.7,
+    "alpha": 0.72
+   },
+   {
+    "cls": "d",
+    "ratio": 16.7,
+    "alpha": 0.72
+   },
+   {
+    "cls": "d",
+    "ratio": 16.7,
+    "alpha": 0.72
+   },
+   {
+    "cls": "d",
+    "ratio": 16.7,
+    "alpha": 0.72
+   }
+  ],
+  "minContrast": 16.7
+ },
+ "sf-11-konflikt-1440-hell": {
+  "small": [],
+  "contrast": [],
+  "minContrast": 13.9
+ },
+ "sf-11-konflikt-390-hell": {
+  "small": [],
+  "contrast": [],
+  "minContrast": 13.9
+ },
+ "sf-11-konflikt-1440-dunkel": {
+  "small": [],
+  "contrast": [],
+  "minContrast": 14.6
+ },
+ "sf-11-konflikt-390-dunkel": {
+  "small": [],
+  "contrast": [],
+  "minContrast": 14.6
+ }
+}
