@@ -483,7 +483,7 @@ fn newest_per_language<'a>(
 }
 
 fn build_book(
-    app: &AppHandle,
+    host: &dyn Host,
     key: &[u8; KEY_LEN],
     dir: &Path,
     book: &LibraryBook,
@@ -491,6 +491,14 @@ fn build_book(
     cache: &mut BTreeMap<String, FileStamp>,
     budget: &mut u64,
 ) -> Result<BookBuild, String> {
+    // Altbestand (flach) gehört mit Fassungen zu `ed_<buch>`, auch wenn
+    // `wanted` noch nicht lief – sonst ginge er beim Versand verloren.
+    let mut upgraded = side.clone();
+    let side = if upgrade_pending(&mut upgraded.pending, book) {
+        &upgraded
+    } else {
+        side
+    };
     let mut files = BookFiles::default();
     let mut uploads = Vec::new();
     let mut ready = true;
@@ -500,7 +508,7 @@ fn build_book(
         .text
         .as_ref()
         .filter(|t| !t.page_id.is_empty())
-        .and_then(|t| page_text(app, &t.page_id))
+        .and_then(|t| host.text(&t.page_id))
         .filter(|t| !t.is_empty());
     match text {
         Some(t) => {
@@ -601,7 +609,7 @@ fn build_book(
             .text
             .as_ref()
             .filter(|t| !t.page_id.is_empty())
-            .and_then(|t| page_text(app, &t.page_id))
+            .and_then(|t| host.text(&t.page_id))
             .filter(|t| !t.is_empty());
         match text {
             Some(t) => {
@@ -672,7 +680,7 @@ fn build_book(
     for doc in book
         .text
         .as_ref()
-        .map(|t| kurzbuecher(app, &t.page_id))
+        .map(|t| host.kurzbuecher(&t.page_id))
         .unwrap_or_default()
     {
         let bytes = doc.text.into_bytes();
@@ -788,10 +796,15 @@ pub fn collect_library(
             out.held.insert(id);
             continue;
         };
-        let mut side = read_sidecar(&dir);
+        // Altbestand (flach) vor dem Versand den Fassungen zuordnen.
+        let mut side = read_sidecar_for(&dir, Some(&book));
         // Nur noch der Zwischenspeicher: wer jetzt ungeprüft ist, wartet.
         let mut no_budget = 0;
-        let built = match build_book(app, key, &dir, &book, &side, cache, &mut no_budget) {
+        let host = AppHost {
+            app,
+            device_name: "",
+        };
+        let built = match build_book(&host, key, &dir, &book, &side, cache, &mut no_budget) {
             Ok(b) => b,
             Err(e) => {
                 // Ein Buch mit unlesbarer Datei hält den Abgleich nicht an.
@@ -912,7 +925,15 @@ pub fn local_hash(
                 prewarm(&dir, &book, cache, &mut u64::MAX);
             }
             let _guard = library::sync_lock();
-            book_hash_locked(app, key, &dir, cache)
+            book_hash_locked(
+                &AppHost {
+                    app,
+                    device_name: "",
+                },
+                key,
+                &dir,
+                cache,
+            )
         }
         _ => {
             let map = {
@@ -994,7 +1015,7 @@ fn move_to_trash(root: &Path, dir: &Path, id: &str) -> Result<(), String> {
 /// Hash des Buchs wie beim Sammeln; der Aufrufer hält die Sperre und hat
 /// die Prüfsummen vorher berechnet.
 fn book_hash_locked(
-    app: &AppHandle,
+    host: &dyn Host,
     key: &[u8; KEY_LEN],
     dir: &Path,
     cache: &mut BTreeMap<String, FileStamp>,
@@ -1002,9 +1023,9 @@ fn book_hash_locked(
     let Some(book) = library::sync_read_book(dir) else {
         return Ok(None);
     };
-    let mut side = read_sidecar(dir);
+    let mut side = read_sidecar_for(dir, Some(&book));
     let mut budget = u64::MAX;
-    let built = build_book(app, key, dir, &book, &side, cache, &mut budget)?;
+    let built = build_book(host, key, dir, &book, &side, cache, &mut budget)?;
     let updated = stamp_updated(dir, &mut side, &built.core_files)?;
     Ok(Some(collect::hash(&with_updated(
         &built.core_files,
@@ -1022,7 +1043,22 @@ pub fn apply_book(
     synced_hash: Option<&str>,
     cache: &mut BTreeMap<String, FileStamp>,
 ) -> Result<Applied, ApplyError> {
-    let root = library::sync_root(app)?;
+    let host = AppHost {
+        app,
+        device_name: "",
+    };
+    apply_book_on(&host, key, id, value, synced_hash, cache)
+}
+
+fn apply_book_on(
+    host: &dyn Host,
+    key: &[u8; KEY_LEN],
+    id: &str,
+    value: Option<&Value>,
+    synced_hash: Option<&str>,
+    cache: &mut BTreeMap<String, FileStamp>,
+) -> Result<Applied, ApplyError> {
+    let root = host.root()?;
     let dir = library::sync_book_dir(&root, id).map_err(invalid)?;
 
     // Prüfen, bevor etwas geschrieben wird.
@@ -1083,7 +1119,7 @@ pub fn apply_book(
     }
     let _guard = library::sync_lock();
     let local_hash_now = if dir.is_dir() {
-        book_hash_locked(app, key, &dir, cache)?
+        book_hash_locked(host, key, &dir, cache)?
     } else {
         None
     };
@@ -1140,7 +1176,7 @@ pub fn apply_book(
         // Dateien neuer Fassungen trotzdem holen; `updated` bleibt lokal.
         let kurzbuecher = std::mem::take(&mut side.pending.kurzbuecher);
         side.pending = pending_files(
-            &|id| page_text(app, id).is_some(),
+            &|id| host.text(id).is_some(),
             key,
             &dir,
             cache,
@@ -1164,7 +1200,7 @@ pub fn apply_book(
     write_with_covers(&dir, &incoming, moved)?;
     lift_progress_locked(&root, lift)?;
     let mut pending = pending_files(
-        &|id| page_text(app, id).is_some(),
+        &|id| host.text(id).is_some(),
         key,
         &dir,
         cache,
@@ -1181,7 +1217,7 @@ pub fn apply_book(
     side.updated = remote_updated;
     let book = library::sync_read_book(&dir).ok_or("Buch nach dem Schreiben unlesbar")?;
     let mut budget = u64::MAX;
-    let built = build_book(app, key, &dir, &book, &side, cache, &mut budget)?;
+    let built = build_book(host, key, &dir, &book, &side, cache, &mut budget)?;
     side.hash = collect::hash(&built.core_files);
     write_sidecar(&dir, &side)?;
     Ok(Applied {
@@ -1727,6 +1763,10 @@ pub fn finish_download(
     w: &Wanted,
     device_name: &str,
 ) -> Result<Option<PathBuf>, String> {
+    finish_download_on(&mut AppHost { app, device_name }, w)
+}
+
+fn finish_download_on(host: &mut dyn Host, w: &Wanted) -> Result<Option<PathBuf>, String> {
     let tmp = download_target(w);
     let _guard = library::sync_lock();
     if !w.dir.join("buch.json").is_file() {
@@ -1739,9 +1779,8 @@ pub fn finish_download(
         if let Some(book) = library::sync_read_book(&w.dir).filter(|b| !b.editions.is_empty()) {
             let mid = library::editions::migrated_id(&book.id);
             let (done, kind) = if w.what == WantedKind::Text {
-                let mut pages = AppPages { app, device_name };
                 (
-                    finish_edition_text(w, &mid, &tmp, &mut pages),
+                    finish_edition_text(w, &mid, &tmp, host),
                     WantedKind::EditionText(mid),
                 )
             } else {
@@ -1766,15 +1805,12 @@ pub fn finish_download(
                 .text
                 .as_ref()
                 .map(|t| t.page_id.clone())
-                .filter(|p| crate::commands::pages::page_path(app, p).is_ok())
+                .filter(|p| host.valid(p))
                 .unwrap_or_else(crate::commands::pages::fresh_id);
-            if collect::read_page(app, &page_id)?.is_none() {
-                collect::apply_page(
-                    app,
+            if !host.exists(&page_id)? {
+                host.create(
                     &page_id,
                     &json!({ "title": book.title, "state": { "text": text, "tab": "original" } }),
-                    None,
-                    device_name,
                 )?;
             }
             if let Some(t) = book.text.as_mut() {
@@ -1786,10 +1822,7 @@ pub fn finish_download(
             clear_pending(&w.dir, &w.what)?;
             Ok(None)
         }
-        WantedKind::EditionText(eid) => {
-            let mut pages = AppPages { app, device_name };
-            finish_edition_text(w, eid, &tmp, &mut pages)
-        }
+        WantedKind::EditionText(eid) => finish_edition_text(w, eid, &tmp, host),
         WantedKind::Cover => {
             // Erst das neue Cover ablegen, dann die alten entfernen: scheitert
             // das Umbenennen, bleibt das bisherige Cover.
@@ -1812,7 +1845,7 @@ pub fn finish_download(
             let target = w.dir.join("audio").join(f);
             // Eine abweichende Datei gleichen Namens geht in den Papierkorb.
             if target.is_file() {
-                let root = library::sync_root(app)?;
+                let root = host.root()?;
                 let aside = trash_target(&root, &format!("{}-{f}", w.book_id))?;
                 std::fs::rename(&target, &aside).map_err(|e| format!("Teil beiseitelegen: {e}"))?;
             }
@@ -1826,19 +1859,34 @@ pub fn finish_download(
     }
 }
 
-/// Seitenablage für geladene Texte; im Test ersetzbar.
-trait PageStore {
+/// Umgebung des Abgleichs (Bibliotheksordner, Seitenablage); im Test
+/// ersetzbar, damit `apply_book`/`finish_download` echt laufen.
+trait Host {
+    fn root(&self) -> Result<PathBuf, String>;
+    fn text(&self, page_id: &str) -> Option<String>;
+    fn kurzbuecher(&self, _page_id: &str) -> Vec<KurzbuchDoc> {
+        Vec::new()
+    }
     fn valid(&self, page_id: &str) -> bool;
     fn exists(&self, page_id: &str) -> Result<bool, String>;
     fn create(&mut self, page_id: &str, page: &Value) -> Result<(), String>;
 }
 
-struct AppPages<'a> {
+struct AppHost<'a> {
     app: &'a AppHandle,
     device_name: &'a str,
 }
 
-impl PageStore for AppPages<'_> {
+impl Host for AppHost<'_> {
+    fn root(&self) -> Result<PathBuf, String> {
+        library::sync_root(self.app)
+    }
+    fn text(&self, page_id: &str) -> Option<String> {
+        page_text(self.app, page_id)
+    }
+    fn kurzbuecher(&self, page_id: &str) -> Vec<KurzbuchDoc> {
+        kurzbuecher(self.app, page_id)
+    }
     fn valid(&self, page_id: &str) -> bool {
         crate::commands::pages::page_path(self.app, page_id).is_ok()
     }
@@ -1857,7 +1905,7 @@ fn finish_edition_text(
     w: &Wanted,
     eid: &str,
     tmp: &Path,
-    pages: &mut dyn PageStore,
+    pages: &mut dyn Host,
 ) -> Result<Option<PathBuf>, String> {
     let bytes = std::fs::read(tmp).map_err(|e| format!("Buchtext: {e}"));
     let _ = std::fs::remove_file(tmp);
@@ -2199,9 +2247,18 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// Seiten im Speicher; `.1` ist der Bibliotheksordner.
     #[derive(Default)]
-    struct MemPages(BTreeMap<String, Value>);
-    impl PageStore for MemPages {
+    struct MemPages(BTreeMap<String, Value>, PathBuf);
+    impl Host for MemPages {
+        fn root(&self) -> Result<PathBuf, String> {
+            Ok(self.1.clone())
+        }
+        fn text(&self, page_id: &str) -> Option<String> {
+            self.0.get(page_id)?["state"]["text"]
+                .as_str()
+                .map(str::to_owned)
+        }
         fn valid(&self, page_id: &str) -> bool {
             !page_id.is_empty()
         }
@@ -2377,6 +2434,114 @@ mod tests {
             b"EN",
             "Hauptfassung unberührt"
         );
+        assert_eq!(
+            std::fs::read(dir.join("covers/ed_book_1.jpg")).unwrap(),
+            b"DE"
+        );
+        assert!(read_sidecar(&dir).pending.is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Codex-Auflage R9 (PR 2): Altbestand → Upgrade → Hauptfassungswechsel →
+    /// Versand, bevor `wanted` lief. Der ausstehende Text und das Cover der
+    /// alten Hauptfassung gehen unter ihrer Kennung hinaus, überstehen einen
+    /// Empfang (`apply_book`) und landen über `finish_download` dort.
+    #[test]
+    fn altbestand_versand_vor_wanted_ueber_echte_einstiege() {
+        let key = [6u8; KEY_LEN];
+        let root = cover_tmp();
+        let dir = root.join("book_1");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("buch.json"),
+            r#"{"id":"book_1","title":"Der Weg","authors":[],"language":"de","cover_source":"generated",
+               "text":{"page_id":"p_1","origin":"document"},"added_ms":1,"finished":false}"#,
+        )
+        .unwrap();
+        let tref = |b: &[u8], kind: Option<&str>| {
+            let mut r = BlobRef::new(&key, &blobs::stamp_bytes(b)).unwrap();
+            r.kind = kind.map(str::to_string);
+            r
+        };
+        let (de_text, de_cover) = (tref(b"Deutsch", None), tref(b"DE", Some("jpg")));
+        write_sidecar(
+            &dir,
+            &Sidecar {
+                pending: BookFiles {
+                    text: Some(de_text.clone()),
+                    cover: Some(de_cover.clone()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let mut book = library::sync_read_book(&dir).unwrap();
+        book.editions.push(library::Edition {
+            id: "ed_en".into(),
+            lang: "en".into(),
+            title: "The Way".into(),
+            text: Some(library::TextVersion {
+                page_id: "p_en".into(),
+                origin: "document".into(),
+                source_name: None,
+            }),
+            added_ms: 2.0,
+            ..Default::default()
+        });
+        library::editions::set_primary(&mut book, "ed_en", "pc").unwrap();
+        library::sync_write_book(&dir, &book).unwrap();
+        std::fs::write(dir.join("cover.png"), b"EN").unwrap();
+        let mut host = MemPages(BTreeMap::new(), root.clone());
+        host.0.insert(
+            "p_en".into(),
+            json!({ "title": "The Way", "state": { "text": "English" } }),
+        );
+        // Versand vor `wanted`: sync.json ist noch flach.
+        assert!(read_sidecar(&dir).pending.text.is_some());
+        let book = library::sync_read_book(&dir).unwrap();
+        let side = read_sidecar(&dir);
+        let mut cache = BTreeMap::new();
+        let built = build_book(&host, &key, &dir, &book, &side, &mut cache, &mut u64::MAX).unwrap();
+        let files: BookFiles = serde_json::from_value(built.core_files["files"].clone()).unwrap();
+        let de = &files.editions["ed_book_1"];
+        assert_eq!(de.text.as_ref().map(|r| &r.blob), Some(&de_text.blob));
+        assert_eq!(de.cover.as_ref().map(|r| &r.blob), Some(&de_cover.blob));
+        let en_text = BlobRef::new(&key, &blobs::stamp_bytes(b"English")).unwrap();
+        assert_eq!(files.text.as_ref().map(|r| &r.blob), Some(&en_text.blob));
+        assert!(book_hash_locked(&host, &key, &dir, &mut cache)
+            .unwrap()
+            .is_some());
+        // Ein Gerät mit Schema 2 schickt diesen Stand neuer zurück (als Favorit).
+        let mut echo = built.core_files.clone();
+        echo["favorite"] = json!(true);
+        echo["updated"] = json!(f64::MAX / 2.0);
+        let applied = apply_book_on(&host, &key, "book_1", Some(&echo), None, &mut cache)
+            .unwrap_or_else(|e| panic!("{e:?}"));
+        assert!(
+            applied.remote_blobs.contains(&de_text.blob),
+            "{:?} / {}",
+            applied.remote_blobs,
+            built.core_files["files"]
+        );
+        // Abschluss über den echten Einstieg.
+        let wanted = wanted_in(&root).unwrap();
+        let kinds: Vec<_> = wanted.iter().map(|w| w.what.clone()).collect();
+        assert!(kinds.contains(&WantedKind::EditionText("ed_book_1".into())));
+        assert!(kinds.contains(&WantedKind::EditionCover("ed_book_1".into())));
+        for w in &wanted {
+            let bytes: &[u8] = match &w.what {
+                WantedKind::EditionText(_) => b"Deutsch",
+                WantedKind::EditionCover(_) => b"DE",
+                other => panic!("unerwartet: {other:?}"),
+            };
+            std::fs::write(download_target(w), bytes).unwrap();
+            finish_download_on(&mut host, w).unwrap();
+        }
+        assert!(library::sync_read_book(&dir).unwrap().favorite);
+        assert_eq!(host.0["p_1"]["state"]["text"], "Deutsch");
+        assert_eq!(host.0["p_en"]["state"]["text"], "English");
+        assert_eq!(std::fs::read(dir.join("cover.png")).unwrap(), b"EN");
         assert_eq!(
             std::fs::read(dir.join("covers/ed_book_1.jpg")).unwrap(),
             b"DE"
