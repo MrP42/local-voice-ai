@@ -41,6 +41,18 @@
 # die Kompaktierung ist fest in der App (PREVIEW_MAX_CONTEXT_SHARE = 0,5) und
 # gehoert nicht in die Messdatei.
 #
+# Gebunden wird das installierte ORIGINAL, es gibt keine Kopie (auch nicht in der
+# App). Der Hash wird einmal gebildet und vor UND nach jedem Lauf (auch Version)
+# erneut geprueft; weicht er ab, ist die ganze Reihe ungueltig und es wird nichts
+# geschrieben. Grenze: ein Skript kann den Start nicht an ein Handle binden; die
+# App tut das (Linux /proc/self/fd, Windows FILE_SHARE_READ). Die Hashpruefung
+# vor/nach dem Lauf erfasst Austausch und Aenderung, nicht jedes Zeitfenster.
+#
+# Messreihe-Parser (analyze-run.py, getestet mit isolation-check-test.sh): fehlende
+# oder ungueltige usage, stop_reason <> end_turn (u. a. max_tokens), Fehler,
+# unbekanntes Ereignis, Kompaktierung, Exit-Code <> 0: Lauf ungueltig, ganze Reihe
+# verworfen.
+#
 # Nur eine NATIVE Claude-Datei (ELF, Mach-O, PE) wird zugelassen; npm-/Node-/
 # Skript-Launcher werden abgelehnt (claude_not_native). Kein --bare (der
 # OAuth-Login der Anmeldung bleibt wirksam).
@@ -70,7 +82,8 @@ set -u
 CLI_SEL=claude
 CLAUDE_MODEL=""
 DATA_DIR=""
-EVENTS_FILE="$(cd "$(dirname "$0")" && pwd)/claude-events.json"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+EVENTS_FILE="$SCRIPT_DIR/claude-events.json"
 RUNS=10
 MEASURE=0
 CHECK=1
@@ -177,6 +190,32 @@ make_world() {
   printf '%s\n' "$base"
 }
 
+# Hash des gebundenen Originals; wird in handle_claude einmal gebildet.
+PINNED_SHA=""
+assert_pinned() { # $1 = Programm, $2 = vor|nach
+  [ "$(sha256_of "$1")" = "$PINNED_SHA" ] ||
+    die "Reihe ungueltig: Hash des Programms weicht $2 dem Lauf vom gebundenen Hash ab (nichts geschrieben)"
+}
+
+# Native Claude-Dateien zuerst ueber ALLE Fundstellen (PATH, ~/.local/bin,
+# ~/.claude/local, ~/.local/share/claude/versions/<neueste>), erst danach ein
+# Launcher; nur Launcher: claude_not_native. Spiegel von cli.rs (locate_native_claude).
+find_claude() {
+  local found=() d p newest
+  local IFS_OLD="$IFS"; IFS=:
+  for d in $PATH "$HOME/.local/bin" "$HOME/.claude/local"; do
+    [ -n "$d" ] && [ -f "$d/claude" ] && found+=("$d/claude")
+  done
+  IFS="$IFS_OLD"
+  newest="$(ls -1 "$HOME/.local/share/claude/versions" 2>/dev/null | sort -V | tail -1)"
+  [ -n "$newest" ] && [ -f "$HOME/.local/share/claude/versions/$newest" ] && found+=("$HOME/.local/share/claude/versions/$newest")
+  [ "${#found[@]}" -gt 0 ] || die "claude nicht gefunden (PATH, ~/.local/bin, ~/.claude/local, ~/.local/share/claude/versions)"
+  for p in "${found[@]}"; do
+    if is_native "$(realpath_of "$p")"; then printf '%s\n' "$p"; return 0; fi
+  done
+  die "claude_not_native: nur Launcher gefunden (npm-/Node-/Skript), keine native Binaerdatei"
+}
+
 # ------------------------------------------------------------------- Aufrufe --
 split_model() { # $1 = Spez -> MODEL, EFFORT
   local s="$1"
@@ -189,6 +228,9 @@ split_model() { # $1 = Spez -> MODEL, EFFORT
 # Schreibt den Exit-Code nach "$5.rc" und gibt ihn zurueck.
 run_claude() {
   local bin="$1" base="$2" mode="$3" spec="$4" out="$5" question="$6" rc=0
+  # Nur das gebundene ORIGINAL (keine Kopie): Hash vor UND nach jedem Lauf gleich,
+  # sonst ist die ganze Reihe ungueltig (nichts wird geschrieben).
+  assert_pinned "$bin" vor
   split_model "$spec"
   local args=(-p --output-format stream-json --model "$MODEL")
   [ -n "$EFFORT" ] && args+=(--effort "$EFFORT")
@@ -204,6 +246,7 @@ run_claude() {
     ( cd "$base/parent/work" && printf '%s' "$question" |
       env HOME="$base/home" CLAUDE_CODE_MAX_OUTPUT_TOKENS=600 "$bin" "${args[@]}" > "$out" 2>"$out.err" ) || rc=$?
   fi
+  assert_pinned "$bin" nach
   printf '%s' "$rc" > "$out.rc"
   return "$rc"
 }
@@ -211,115 +254,7 @@ run_claude() {
 # Auswertung eines Laufs -> eine JSON-Zeile (nur Zahlen und Marken, nie der Text).
 # Der Vertrag spiegelt contract.rs der App (gleiche Whitelist-Datei).
 analyze() { # $1 = Ausgabedatei, $2 = Whitelist, $3 = Marker
-  python3 - "$1" "$2" "$3" <<'PY'
-import json, sys
-path, events_path, marker = sys.argv[1:4]
-rc = 0
-try:
-    rc = int(open(path + ".rc").read().strip() or "0")
-except (OSError, ValueError):
-    rc = 1
-wl = json.load(open(events_path, encoding="utf-8"))
-rules = {}
-for r in wl.get("events", []):
-    rules[r["type"]] = r
-tool_blocks = set(wl.get("tool_blocks", []))
-bad, events = False, []
-try:
-    lines = [l for l in open(path, encoding="utf-8", errors="replace").read().splitlines() if l.strip()]
-except OSError:
-    lines = []
-for l in lines:
-    try:
-        events.append(json.loads(l))
-    except ValueError:
-        bad = True
-
-def label(e):
-    t = e.get("type", "?")
-    return t + "/" + e["subtype"] if isinstance(e.get("subtype"), str) else t
-
-def blocks(e):
-    c = (e.get("message") or {}).get("content")
-    if isinstance(c, str):
-        return ["text"]
-    if isinstance(c, list):
-        return [(b or {}).get("type", "?") for b in c]
-    return []
-
-def is_error(e):
-    def flagged(v):
-        return v.get("is_error") is True or v.get("error") is not None or v.get("api_error_status") is not None
-    return flagged(e) or (isinstance(e.get("message"), dict) and flagged(e["message"]))
-
-def known(e):
-    r = rules.get(e.get("type"))
-    if r is None:
-        return False
-    sub = e.get("subtype")
-    if "subtypes" in r:
-        return isinstance(sub, str) and sub in r["subtypes"]
-    return sub is None
-
-def contract(evs):
-    if not evs or label(evs[0]) != "system/init":
-        return "event_order"
-    if sum(1 for e in evs if label(e) == "system/init") != 1:
-        return "event_order"
-    results = [i for i, e in enumerate(evs) if e.get("type") == "result"]
-    for i in results:
-        if i != len(evs) - 1:
-            return "event_after_result"
-    if len(results) != 1:
-        return "event_order"
-    for e in evs:
-        bl = blocks(e)
-        if e.get("type") in tool_blocks or any(b in tool_blocks for b in bl):
-            return "tool_use"
-        if not known(e):
-            return "event_unknown"
-        if is_error(e):
-            return "error_event"
-        allowed = rules[e["type"]].get("content_blocks", [])
-        if any(b not in allowed for b in bl):
-            return "content_unknown"
-    return ""
-
-models, text, inp, out, stop, err, compacted, tool_use = set(), "", 0, 0, "", "", False, False
-for e in events:
-    t = e.get("type")
-    if t == "system" and e.get("subtype") == "compact_boundary" or "compact_metadata" in e:
-        compacted = True
-    if t == "system" and isinstance(e.get("model"), str):
-        models.add(e["model"].strip())
-    if t == "assistant" and isinstance((e.get("message") or {}).get("model"), str):
-        models.add(e["message"]["model"].strip())
-    if t == "assistant":
-        if any(b in tool_blocks for b in blocks(e)):
-            tool_use = True
-    if t == "result":
-        text = e.get("result", "") or ""
-        u = e.get("usage", {}) or {}
-        inp = sum(int(u.get(k, 0) or 0) for k in ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"))
-        out = int(u.get("output_tokens", 0) or 0)
-        for k in (e.get("modelUsage") or {}):
-            models.add(k.strip())
-        stop = e.get("stop_reason", "") or ""
-        if e.get("is_error") is not False or e.get("subtype") != "success":
-            err = e.get("subtype", "error")
-init = next((e for e in events if label(e) == "system/init"), {})
-violation = contract(events) if not bad else "bad_line"
-print(json.dumps({
-    "rc": rc, "bad": bad, "error": err, "compacted": compacted, "stop": stop,
-    "input": inp, "output": out, "models": sorted(models), "tool_use": tool_use,
-    "marker_seen": bool(marker) and marker in text,
-    "tools": init.get("tools"), "mcp": init.get("mcp_servers"),
-    "canaries": [w for w in ("KANARIE-USER", "KANARIE-PROJEKT", "KANARIE-MEMORY") if w in text],
-    "observed": sorted({label(e) for e in events}),
-    "violation": violation,
-    "ok": bool(text) and rc == 0 and not err and not bad and not compacted and violation == "",
-}))
-PY
+  python3 "$SCRIPT_DIR/analyze-run.py" "$1" "$2" "$3"
 }
 
 field() { python3 -c 'import json,sys;v=json.loads(sys.argv[1]).get(sys.argv[2]);print(v if isinstance(v,str) else json.dumps(v))' "$1" "$2"; }
@@ -468,12 +403,16 @@ PY
 # -------------------------------------------------------------------- Ablauf --
 handle_claude() { # $1 = Modellspez
   local spec="$1" provider=claude_cli bin payload version sha
-  bin="$(command -v claude)" || die "claude nicht im PATH"
+  bin="$(find_claude)" || exit 2
   payload="$(realpath_of "$bin")"
   is_native "$payload" || die "claude_not_native: $payload ist keine native Binaerdatei (npm-/Node-/Skript-Launcher werden abgelehnt)"
+  # Das Original wird EINMAL gehasht und gebunden; keine Kopie. Die Version wird
+  # mit dem Original gelesen, danach muss der Hash unveraendert sein.
+  sha="$(sha256_of "$payload")"
+  PINNED_SHA="$sha"
   version="$(version_of "$payload")"
   [ -n "$version" ] || die "claude: Version nicht lesbar"
-  sha="$(sha256_of "$payload")"
+  assert_pinned "$payload" nach
   say "claude: Version \"$version\", Programm $payload, SHA-256 $sha"
   [ "$DRY" = 1 ] && return 0
   [ -n "$spec" ] || die "--claude-model fehlt"

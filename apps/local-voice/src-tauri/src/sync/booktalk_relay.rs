@@ -69,6 +69,15 @@
 //! Log; das Log kennt nur Zaehler und Fehlercodes.
 
 use super::account::{self, SyncConfig};
+
+/// Abo-Relay (iPhone -> PC-CLI): nur fuer gekoppelte Geraete DESSELBEN Kontos.
+/// Erzwungen durch (1) Geraeteliste des Hubs desselben Benutzers (`device_listed`),
+/// (2) je iPhone ein eigener Relay-Schluessel mit MAC (Einrichtungscode am
+/// PC-Bildschirm) und (3) Siegel mit dem Benutzer als AAD. Die Anfragen gehen an
+/// die eigene, unveraenderte CLI desselben Nutzers; ein Weiterleiten fuer fremde
+/// Nutzer gibt es nicht und waere ohne Klaerung mit Anthropic nicht zulaessig
+/// (docs/buch-gespraech/abo-vorschau-lizenz.md).
+pub const SUBSCRIPTION_RELAY_SAME_ACCOUNT_ONLY: bool = true;
 use super::client::{HubClient, HubDevice, HubError, PushObject, RemoteObject};
 use super::crypto;
 use crate::managers::llm::cli::Cli;
@@ -895,7 +904,9 @@ async fn offered_models(
     }
     let identities = tokio::task::spawn_blocking(|| {
         let of = |cli: Cli| {
-            crate::managers::llm::cli::locate(cli)
+            crate::managers::llm::cli::locate_native_claude()
+                .ok()
+                .filter(|_| cli == Cli::Claude)
                 .and_then(|binary| crate::managers::llm::preview::identity(&binary).ok())
         };
         Identities {
@@ -1929,12 +1940,6 @@ async fn process(
                 req.max_tokens,
                 &ctx.evidence(),
             )
-            .map(|check| {
-                check.with_cache(
-                    ctx.evidence_dir
-                        .join(crate::managers::llm::preview::CACHE_DIR),
-                )
-            })
         }
         None => None,
     };

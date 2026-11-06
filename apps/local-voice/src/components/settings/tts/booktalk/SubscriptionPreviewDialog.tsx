@@ -65,7 +65,9 @@ export function SubscriptionPreviewDialog({
                   ? "noCli"
                   : error === "claude_not_native"
                     ? "notNative"
-                    : "other"
+                    : error === "platform_unsupported"
+                      ? "platformUnsupported"
+                      : "other"
               }`,
             )}
           </p>

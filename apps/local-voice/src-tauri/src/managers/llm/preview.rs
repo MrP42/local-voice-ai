@@ -23,15 +23,16 @@
 //!   je Tri-State ([`Tri`]) „nein“ (und der Ereignisvertrag der Version
 //!   belegt), Eingabe + Ausgabe <= Kontext. Sonst wird der Text nie an
 //!   Oberflaeche oder Sprache gegeben (Aufrufer: `cli::call_with_options`).
-//! * Bindung: bei der Bindung wird die aufgeloeste NATIVE Claude-Datei in einen
-//!   app-eigenen Cache kopiert (`<App-Daten>/booktalk-cli/<sha256>/claude`),
-//!   erneut gehasht und schreibgeschuetzt ([`bind_copy`]). Der Aufruf startet
-//!   AUSSCHLIESSLICH diese Kopie ([`LaunchCopy`]); vor dem Start und nach dem
-//!   Ende wird ihr Hash neu gebildet ([`rebind`]), aus einem offen gehaltenen
-//!   Handle (Windows: Teilen nur zum Lesen, also kein Schreiben/Umbenennen).
-//!   Restgrenze: derselbe Nutzer kann auf Unix per `chmod` die Rechte
-//!   aendern; das Handle verhindert dort keinen Austausch, der Hash NACH dem
-//!   Lauf verwirft die Antwort dann.
+//! * Bindung: gebunden wird die installierte ORIGINALDATEI (keine Kopie). Alle
+//!   Starts der Vorschau, auch `--version`, laufen ueber [`Pinned`]: Datei
+//!   offen halten, Hash aus dem Handle, Start ueber das Handle. Windows:
+//!   lokales festes Laufwerk, keine Reparse-Komponente, FILE_SHARE_READ (Schreiben
+//!   und Loeschen durch andere scheitern), Start per Pfad. Linux: Start ueber
+//!   `/proc/self/fd/<fd>`. macOS und andere Unix: gesperrt (`platform_unsupported`).
+//!   Vor dem Start und nach dem Ende wird der Hash neu gebildet ([`Pinned::verify`]).
+//!   Grenze (ausserhalb der Garantie): die FD-Bindung verhindert Pfadaustausch,
+//!   aber keine Inhaltsaenderung zwischen Hash und `exec` durch denselben
+//!   Nutzer; der Hash nach dem Lauf verwirft die Antwort dann.
 //! * Schalter: [`PreviewSwitch`] wird vor, waehrend und nach dem Aufruf
 //!   geprueft; bei „aus“ wird der Prozessbaum beendet und das Ergebnis verworfen.
 //!
@@ -218,6 +219,9 @@ pub enum Blocked {
     /// Das Claude-Programm ist keine native Binaerdatei (npm-, Node- oder
     /// Skript-Launcher): nicht bindbar.
     ClaudeNotNative,
+    /// Dieses System kann das geprueft gehaltene Programm nicht ohne
+    /// Austauschfenster starten (kein `/proc`, macOS, andere Unix): gesperrt.
+    PlatformUnsupported,
 }
 
 /// Belege fuer ein Tupel; die erste Luecke gibt den Grund.
@@ -285,6 +289,12 @@ pub fn gate(
     if !enabled {
         return Gate::state(PreviewState::Off, None);
     }
+    if !platform_supported() {
+        return Gate::state(
+            PreviewState::NotReleased,
+            Some(Blocked::PlatformUnsupported),
+        );
+    }
     let Some(current) = current else {
         return Gate::state(PreviewState::Reconfirm, Some(Blocked::NoCli));
     };
@@ -314,7 +324,9 @@ pub fn gate(
 
 /// Grund aus dem Fehlertext von [`current_binding`] bzw. [`identity`].
 pub fn blocked_of_error(err: &str) -> Blocked {
-    if err.starts_with("payload_unknown") {
+    if err.starts_with("platform_unsupported") {
+        Blocked::PlatformUnsupported
+    } else if err.starts_with("payload_unknown") {
         Blocked::PayloadUnknown
     } else if err.starts_with("claude_not_native") {
         Blocked::ClaudeNotNative
@@ -330,17 +342,6 @@ pub fn blocked_of_error(err: &str) -> Blocked {
 /// Version je Inhaltshash: der Start von `--version` passiert nicht je Frage.
 /// Der Hash selbst wird nie gemerkt, sondern bei jeder Pruefung neu gebildet.
 static VERSION_CACHE: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
-
-/// Name des Cache-Ordners im App-Datenordner.
-pub const CACHE_DIR: &str = "booktalk-cli";
-
-fn exe_name() -> &'static str {
-    if cfg!(windows) {
-        "claude.exe"
-    } else {
-        "claude"
-    }
-}
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
@@ -380,6 +381,21 @@ thread_local! {
     pub(crate) static TEST_ALLOW_SCRIPT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
+/// Hat der Dateikopf die Magic-Bytes von ELF, PE oder Mach-O?
+fn native_head(head: &[u8]) -> bool {
+    head.starts_with(&[0x7f, b'E', b'L', b'F'])
+        || head.starts_with(b"MZ")
+        || [
+            [0xfe, 0xed, 0xfa, 0xce],
+            [0xfe, 0xed, 0xfa, 0xcf],
+            [0xce, 0xfa, 0xed, 0xfe],
+            [0xcf, 0xfa, 0xed, 0xfe],
+            [0xca, 0xfe, 0xba, 0xbe],
+        ]
+        .iter()
+        .any(|m| head.starts_with(m))
+}
+
 /// Nur eine NATIVE Claude-Binaerdatei ist bindbar: kein npm-/Node-/Skript-
 /// Launcher (Shebang, `.cmd`, `.bat`, `.js`, `cli.js`, ...). Erkannt an
 /// Endung und Dateikopf (ELF, PE, Mach-O). Sonst `claude_not_native`.
@@ -404,17 +420,7 @@ pub fn check_native(path: &Path) -> Result<(), String> {
     if head.starts_with(b"#!") {
         return not_native("Skript (Shebang)");
     }
-    let native = head.starts_with(&[0x7f, b'E', b'L', b'F'])
-        || head.starts_with(b"MZ")
-        || [
-            [0xfe, 0xed, 0xfa, 0xce],
-            [0xfe, 0xed, 0xfa, 0xcf],
-            [0xce, 0xfa, 0xed, 0xfe],
-            [0xcf, 0xfa, 0xed, 0xfe],
-            [0xca, 0xfe, 0xba, 0xbe],
-        ]
-        .iter()
-        .any(|m| head.starts_with(m));
+    let native = native_head(head);
     if native {
         Ok(())
     } else {
@@ -428,165 +434,76 @@ pub fn payload_path(binary: &Path) -> Result<PathBuf, String> {
     std::fs::canonicalize(binary).map_err(|e| format!("cli_missing: {e}"))
 }
 
-/// Version und Pruefsumme der CLI. Hasht bei JEDEM Aufruf neu (kein Cache ueber
-/// Pfad/Zeit/Groesse); nur die Version wird je Inhaltshash gemerkt. Nur
-/// native Programme. Blockiert (liest die Datei, startet ggf. die CLI): auf
-/// einem Blocking-Thread ausfuehren.
-pub fn identity(binary: &Path) -> Result<Identity, String> {
-    let payload = payload_path(binary)?;
-    check_native(&payload)?;
-    let sha256 = sha256_file(&payload).map_err(|e| format!("cli_failed: {e}"))?;
-    let cached = VERSION_CACHE.lock().ok().and_then(|c| {
-        c.iter()
-            .find(|(hash, _)| *hash == sha256)
-            .map(|(_, v)| v.clone())
-    });
-    if let Some(version) = cached {
-        return Ok(Identity { version, sha256 });
-    }
-    let mut cmd = std::process::Command::new(&payload);
-    cmd.arg("--version")
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
+/// Kann dieses System genau das geprueft gehaltene Programm starten?
+/// Windows: ja (das Handle teilt nur zum Lesen, ein Austausch ist gesperrt).
+/// Linux: ja, wenn `/proc/self/fd` da ist (Start ueber den Deskriptor des
+/// gehaltenen Handles, [`Pinned::exec_path`]). macOS und andere Unix: nein,
+/// ein Start per Pfad liesse ein Austauschfenster zwischen Pruefung und `exec`.
+pub fn platform_supported() -> bool {
     #[cfg(windows)]
     {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        true
     }
-    let child = cmd.spawn().map_err(|e| format!("cli_missing: {e}"))?;
-    let out = super::cli::wait_with_timeout(child, std::time::Duration::from_secs(15))?;
-    let version = parse_version(&String::from_utf8_lossy(&out.stdout))
-        .or_else(|| parse_version(&String::from_utf8_lossy(&out.stderr)))
-        .filter(|_| out.status.success())
-        .ok_or_else(|| "cli_failed: Version der CLI nicht lesbar".to_string())?;
-    if let Ok(mut c) = VERSION_CACHE.lock() {
-        c.retain(|(hash, _)| *hash != sha256);
-        c.push((sha256.clone(), version.clone()));
-    }
-    Ok(Identity { version, sha256 })
-}
-
-/// Aktuelles Tupel fuer ein Modell: sucht die CLI und liest ihre Identitaet.
-/// Nur Claude; fuer Codex gibt es in der Vorschau kein Tupel. Blockiert.
-pub fn current_binding(cli: Cli, model_id: &str) -> Result<PreviewBinding, String> {
-    if cli != Cli::Claude {
-        return Err("codex_preview_not_available: Codex gibt es in der Vorschau nicht".to_string());
-    }
-    let binary = super::cli::locate(cli)
-        .ok_or_else(|| "cli_missing: Die CLI des Anbieters ist nicht installiert".to_string())?;
-    Ok(binding_for(cli, model_id, &identity(&binary)?))
-}
-
-// ------------------------------------------------------ Kopie im Cache --
-
-/// Pfad der Kopie zu einem Hash.
-pub fn copy_path(root: &Path, sha256: &str) -> PathBuf {
-    root.join(sha256).join(exe_name())
-}
-
-#[cfg(unix)]
-fn set_mode(path: &Path, mode: u32) -> std::io::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
-}
-
-/// Datei schreibgeschuetzt (Unix: 0500, Eigentuemer; Windows: read-only).
-fn protect_file(path: &Path) -> std::io::Result<()> {
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     {
-        set_mode(path, 0o500)
+        Path::new("/proc/self/fd").is_dir()
     }
-    #[cfg(not(unix))]
+    #[cfg(not(any(windows, target_os = "linux")))]
     {
-        let mut perms = std::fs::metadata(path)?.permissions();
-        perms.set_readonly(true);
-        std::fs::set_permissions(path, perms)
+        false
     }
 }
 
-/// Ordner schreibgeschuetzt (Unix: 0500; Windows kennt das nicht).
-fn protect_dir(path: &Path) -> std::io::Result<()> {
-    #[cfg(unix)]
-    {
-        set_mode(path, 0o500)
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = path;
-        Ok(())
-    }
-}
-
-/// Loescht einen (geschuetzten) Cache-Ordner samt Inhalt.
-fn force_remove(dir: &Path) {
-    #[cfg(unix)]
-    let _ = set_mode(dir, 0o700);
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for e in entries.flatten() {
-            #[cfg(not(unix))]
-            if let Ok(meta) = e.metadata() {
-                let mut perms = meta.permissions();
-                #[allow(clippy::permissions_set_readonly_false)]
-                perms.set_readonly(false);
-                let _ = std::fs::set_permissions(e.path(), perms);
-            }
-            #[cfg(unix)]
-            let _ = e;
-        }
-    }
-    let _ = std::fs::remove_dir_all(dir);
-}
-
-fn is_hash_dir(name: &str) -> bool {
-    name.len() == 64 && name.chars().all(|c| c.is_ascii_hexdigit())
-}
-
-/// Alte Kopien anderer Hashes und liegengebliebene Zwischenordner loeschen.
-fn cleanup_others(root: &Path, keep: &str) {
-    let Ok(entries) = std::fs::read_dir(root) else {
-        return;
+/// Windows: nur lokale, feste Laufwerke (`DRIVE_FIXED`); keine UNC-Pfade und
+/// keine Netzlaufwerke.
+#[cfg(windows)]
+fn assert_local_fixed(path: &Path) -> Result<(), String> {
+    use std::path::{Component, Prefix};
+    use windows::core::PCWSTR;
+    use windows::Win32::Storage::FileSystem::{GetDriveTypeW, DRIVE_FIXED};
+    let bad = |why: &str| Err(format!("payload_unknown: {why}"));
+    let Some(Component::Prefix(prefix)) = path.components().next() else {
+        return bad("kein Laufwerkspfad");
     };
-    for e in entries.flatten() {
-        let name = e.file_name().to_string_lossy().into_owned();
-        let owned =
-            (is_hash_dir(&name) && !name.eq_ignore_ascii_case(keep)) || name.starts_with(".stage-");
-        if owned && e.file_type().is_ok_and(|t| t.is_dir()) {
-            force_remove(&e.path());
-        }
-    }
-}
-
-/// Kein Symlink in Wurzel, Hash-Ordner und Datei; der kanonische Pfad ist
-/// genau `<kanonische Wurzel>/<hash>/<name>`.
-fn assert_no_symlinks(root: &Path, sha256: &str) -> Result<(), String> {
-    let bad = |why: &str| {
-        Err(format!(
-            "payload_unknown: Kopie nicht vertrauenswuerdig ({why})"
-        ))
+    let letter = match prefix.kind() {
+        Prefix::Disk(l) | Prefix::VerbatimDisk(l) => l,
+        _ => return bad("UNC- oder Geraetepfad"),
     };
-    let file = copy_path(root, sha256);
-    let dir = root.join(sha256);
-    for part in [root, dir.as_path(), file.as_path()] {
-        match std::fs::symlink_metadata(part) {
-            Ok(m) if m.file_type().is_symlink() => return bad("Symlink"),
-            Ok(_) => {}
-            Err(e) => return Err(format!("payload_unknown: Kopie fehlt ({e})")),
-        }
-    }
-    let (Ok(real_root), Ok(real_file)) =
-        (std::fs::canonicalize(root), std::fs::canonicalize(&file))
-    else {
-        return bad("Pfad nicht aufloesbar");
-    };
-    if real_file != real_root.join(sha256).join(exe_name()) {
-        return bad("Pfad weicht ab");
+    let root: Vec<u16> = format!("{}:\\", letter as char)
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    // SAFETY: `root` ist eine nullterminierte UTF-16-Zeichenkette, die den Aufruf ueberlebt.
+    let kind = unsafe { GetDriveTypeW(PCWSTR(root.as_ptr())) };
+    if kind != DRIVE_FIXED {
+        return bad("kein festes lokales Laufwerk");
     }
     Ok(())
 }
 
-/// Datei zum Lesen oeffnen; Windows: Teilen nur zum Lesen, solange das Handle
-/// lebt, sind Schreiben, Umbenennen und Loeschen gesperrt.
+/// Windows: keine Reparse-Komponente (Symlink, Junction, Mount) im Pfad.
+#[cfg(windows)]
+fn assert_no_reparse(path: &Path) -> Result<(), String> {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+    for part in path.ancestors() {
+        if part.file_name().is_none() {
+            continue;
+        }
+        let meta = std::fs::symlink_metadata(part)
+            .map_err(|e| format!("payload_unknown: Pfad nicht lesbar ({e})"))?;
+        if meta.file_type().is_symlink()
+            || meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+        {
+            return Err("payload_unknown: Reparse-Komponente im Pfad".to_string());
+        }
+    }
+    Ok(())
+}
+
+/// Datei zum Lesen oeffnen; Windows: GENERIC_READ und Teilen AUSSCHLIESSLICH
+/// zum Lesen (FILE_SHARE_READ), solange das Handle lebt, scheitern Schreiben,
+/// Umbenennen und Loeschen durch andere.
 fn open_pinned(path: &Path) -> std::io::Result<std::fs::File> {
     let mut opts = std::fs::OpenOptions::new();
     opts.read(true);
@@ -604,124 +521,158 @@ fn hash_handle(mut file: &std::fs::File) -> std::io::Result<String> {
     hash_reader(&mut file)
 }
 
-/// Kopiert `source` in einen Zwischenordner, hasht die KOPIE neu und legt sie
-/// geschuetzt unter `<root>/<sha256>/claude` ab. Gibt den Hash der Kopie.
-/// Eine schon vorhandene, stimmige Kopie bleibt unberuehrt.
-fn make_copy(root: &Path, source: &Path) -> Result<String, String> {
-    let real = payload_path(source)?;
-    check_native(&real)?;
-    std::fs::create_dir_all(root).map_err(|e| format!("cli_failed: {e}"))?;
-    #[cfg(unix)]
-    set_mode(root, 0o700).map_err(|e| format!("cli_failed: {e}"))?;
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_nanos());
-    let stage = root.join(format!(".stage-{}-{stamp}", std::process::id()));
-    std::fs::create_dir(&stage).map_err(|e| format!("cli_failed: {e}"))?;
-    let result = (|| -> Result<String, String> {
-        let staged = stage.join(exe_name());
-        let mut from = std::fs::File::open(&real).map_err(|e| format!("cli_missing: {e}"))?;
-        let mut to = std::fs::File::create(&staged).map_err(|e| format!("cli_failed: {e}"))?;
-        std::io::copy(&mut from, &mut to).map_err(|e| format!("cli_failed: {e}"))?;
-        to.sync_all().map_err(|e| format!("cli_failed: {e}"))?;
-        drop(to);
-        drop(from);
-        // Neu hashen: massgeblich ist der Inhalt der KOPIE.
-        let sha = sha256_file(&staged).map_err(|e| format!("cli_failed: {e}"))?;
-        protect_file(&staged).map_err(|e| format!("cli_failed: {e}"))?;
-        let target = root.join(&sha);
-        if let Ok(existing) = sha256_file(&copy_path(root, &sha)) {
-            if existing == sha {
-                return Ok(sha);
-            }
-        }
-        protect_dir(&stage).map_err(|e| format!("cli_failed: {e}"))?;
-        if target.exists() {
-            force_remove(&target);
-        }
-        std::fs::rename(&stage, &target).map_err(|e| format!("cli_failed: {e}"))?;
-        Ok(sha)
-    })();
-    if stage.exists() {
-        force_remove(&stage);
-    }
-    let sha = result?;
-    cleanup_others(root, &sha);
-    Ok(sha)
-}
-
-/// Bindung: kopiert die aufgeloeste native Claude-Datei in den Cache
-/// (`<root>/<sha256>/claude`), hasht die Kopie neu, schuetzt sie und raeumt
-/// Kopien anderer Hashes weg. Identitaet (Version, Hash) ist die der KOPIE.
-/// Blockiert.
-pub fn bind_copy(root: &Path, source: &Path) -> Result<Identity, String> {
-    let sha = make_copy(root, source)?;
-    assert_no_symlinks(root, &sha)?;
-    let identity = identity(&copy_path(root, &sha))?;
-    if !identity.sha256.eq_ignore_ascii_case(&sha) {
-        return Err("payload_unknown: Kopie weicht vom Hash ab".to_string());
-    }
-    Ok(identity)
-}
-
-/// Die Kopie, die ein Aufruf startet, mit offen gehaltenem Handle.
+/// Das installierte Original, offen gehalten und gehasht AUS DEM HANDLE. Alle
+/// Starts der Vorschau (auch `--version`) laufen ueber diese Stelle:
+///
+/// * Windows: lokales festes Laufwerk, keine Reparse-Komponente, Handle mit
+///   FILE_SHARE_READ bis zum Ende des Prozesses; Start per Pfad (der Austausch
+///   ist gesperrt).
+/// * Linux: Start ueber `/proc/self/fd/<fd>` des gehaltenen Handles; der Kernel
+///   loest den Pfad in `execve` auf, bevor `O_CLOEXEC` den Deskriptor schliesst.
+///   Ein Austausch der Datei am Pfad wirkt nicht mehr.
+/// * macOS und andere Unix: gesperrt ([`platform_supported`]).
+///
+/// Grenze (ausserhalb der Garantie): Die Bindung an das Handle verhindert
+/// Pfadaustausch, aber keine Aenderung des INHALTS zwischen Hash und `exec`
+/// durch denselben Nutzer (Unix: `chmod` und Schreiben in dieselbe Datei). Der
+/// Hash nach dem Lauf ([`Pinned::verify`]) verwirft die Antwort dann.
 #[derive(Debug)]
-pub struct LaunchCopy {
-    /// Das Programm, das gestartet wird (nie die Originaldatei).
+pub struct Pinned {
+    /// Aufgeloester Pfad der Originaldatei.
     pub path: PathBuf,
-    root: PathBuf,
     sha256: String,
     handle: std::fs::File,
 }
 
-impl LaunchCopy {
-    /// Bereitet den Start vor: Kopie zum gebundenen Hash (bei Bedarf aus
-    /// `source` neu erzeugt, aber nur zugelassen, wenn die KOPIE den Hash der
-    /// Bindung traegt), keine Symlinks, Hash aus dem offenen Handle, Version.
-    /// Jede Abweichung sperrt.
-    pub fn prepare(source: &Path, check: &PreviewCheck) -> Result<Self, Rejection> {
-        let fail = |reason| Rejection::llm(reason);
-        let Some(root) = check.cli_cache.clone() else {
-            return Err(fail("copy_unavailable"));
-        };
-        let expected = check.binding.binary_sha256.to_ascii_lowercase();
-        if !is_hash_dir(&expected) {
-            return Err(fail("binding_changed"));
+impl Pinned {
+    /// Oeffnet, prueft (nativ, Plattform) und hasht aus dem Handle.
+    pub fn open(source: &Path) -> Result<Self, String> {
+        if !platform_supported() {
+            return Err("platform_unsupported: Start nicht austauschsicher moeglich".to_string());
         }
-        let path = copy_path(&root, &expected);
-        if !path.exists() {
-            let made = make_copy(&root, source).map_err(|e| {
-                if e.starts_with("claude_not_native") {
-                    fail("claude_not_native")
-                } else {
-                    fail("payload_unknown")
-                }
-            })?;
-            if made != expected {
-                // Die Datei weicht von der Bindung ab (Update): neue Belege noetig.
-                return Err(fail("binding_changed"));
+        #[cfg(windows)]
+        {
+            let absolute = std::path::absolute(source).map_err(|e| format!("cli_missing: {e}"))?;
+            assert_no_reparse(&absolute)?;
+            assert_local_fixed(&payload_path(&absolute)?)?;
+        }
+        let path = payload_path(source)?;
+        check_native(&path)?;
+        let handle = open_pinned(&path).map_err(|e| format!("cli_missing: {e}"))?;
+        // Kopf aus dem Handle: es ist genau die Datei, die laeuft.
+        #[cfg(test)]
+        let skip = TEST_ALLOW_SCRIPT.with(std::cell::Cell::get);
+        #[cfg(not(test))]
+        let skip = false;
+        if !skip {
+            use std::io::{Read, Seek};
+            let mut head = [0u8; 4];
+            let mut h = &handle;
+            let n = h
+                .seek(std::io::SeekFrom::Start(0))
+                .and_then(|_| h.read(&mut head))
+                .map_err(|e| format!("cli_missing: {e}"))?;
+            if !native_head(&head[..n]) {
+                return Err("claude_not_native: kein ELF-, PE- oder Mach-O-Kopf".to_string());
             }
         }
-        assert_no_symlinks(&root, &expected).map_err(|_| fail("payload_unknown"))?;
-        let handle = open_pinned(&path).map_err(|_| fail("payload_unknown"))?;
-        let now = hash_handle(&handle).map_err(|_| fail("payload_unknown"))?;
-        if now != expected {
-            return Err(fail("binding_changed"));
-        }
-        rebind(&path, &check.binding)?;
+        let sha256 = hash_handle(&handle).map_err(|e| format!("cli_failed: {e}"))?;
         Ok(Self {
             path,
-            root,
-            sha256: expected,
+            sha256,
             handle,
         })
     }
 
-    /// Nach dem Lauf: Hash der Kopie aus dem Handle UND frisch vom Pfad.
+    /// SHA-256 (hex) des gehaltenen Programms (aus dem Handle gebildet).
+    pub fn sha256(&self) -> &str {
+        &self.sha256
+    }
+
+    /// Der Pfad, der an `exec` geht (siehe Typbeschreibung).
+    pub fn exec_path(&self) -> PathBuf {
+        #[cfg(test)]
+        if TEST_ALLOW_SCRIPT.with(std::cell::Cell::get) {
+            // Nur Tests: Fake-CLIs sind Skripte; ein Shebang-Start ueber einen
+            // `O_CLOEXEC`-Deskriptor ginge nicht (der Interpreter oeffnet den Pfad
+            // erst nach dem Schliessen).
+            return self.path.clone();
+        }
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::fd::AsRawFd;
+            PathBuf::from(format!("/proc/self/fd/{}", self.handle.as_raw_fd()))
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            self.path.clone()
+        }
+    }
+
+    /// Version (`--version`), gestartet ueber das gehaltene Handle, je
+    /// Inhaltshash gemerkt. Blockiert.
+    pub fn version(&self) -> Result<String, String> {
+        let cached = VERSION_CACHE.lock().ok().and_then(|c| {
+            c.iter()
+                .find(|(hash, _)| *hash == self.sha256)
+                .map(|(_, v)| v.clone())
+        });
+        if let Some(version) = cached {
+            return Ok(version);
+        }
+        let mut cmd = std::process::Command::new(self.exec_path());
+        cmd.arg("--version")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        }
+        let child = cmd.spawn().map_err(|e| format!("cli_missing: {e}"))?;
+        let out = super::cli::wait_with_timeout(child, std::time::Duration::from_secs(15))?;
+        let version = parse_version(&String::from_utf8_lossy(&out.stdout))
+            .or_else(|| parse_version(&String::from_utf8_lossy(&out.stderr)))
+            .filter(|_| out.status.success())
+            .ok_or_else(|| "cli_failed: Version der CLI nicht lesbar".to_string())?;
+        if let Ok(mut c) = VERSION_CACHE.lock() {
+            c.retain(|(hash, _)| *hash != self.sha256);
+            c.push((self.sha256.clone(), version.clone()));
+        }
+        Ok(version)
+    }
+
+    /// Bereitet einen Aufruf vor: das installierte Original, gehalten, mit dem
+    /// Hash und der Version der Bindung. Jede Abweichung sperrt.
+    pub fn prepare(source: &Path, check: &PreviewCheck) -> Result<Self, Rejection> {
+        let fail = |reason| Rejection::llm(reason);
+        let pinned = Self::open(source).map_err(|e| {
+            if e.starts_with("platform_unsupported") {
+                fail("platform_unsupported")
+            } else if e.starts_with("claude_not_native") {
+                fail("claude_not_native")
+            } else {
+                fail("payload_unknown")
+            }
+        })?;
+        if !pinned
+            .sha256
+            .eq_ignore_ascii_case(&check.binding.binary_sha256)
+        {
+            return Err(fail("binding_changed"));
+        }
+        match pinned.version() {
+            Ok(v) if v == check.binding.cli_version => Ok(pinned),
+            Ok(_) => Err(fail("binding_changed")),
+            Err(_) => Err(fail("payload_unknown")),
+        }
+    }
+
+    /// Nach dem Lauf: Hash aus dem Handle UND frisch vom Pfad.
     pub fn verify(&self) -> Result<(), Rejection> {
         let same = hash_handle(&self.handle).is_ok_and(|h| h == self.sha256)
-            && sha256_file(&self.path).is_ok_and(|h| h == self.sha256)
-            && assert_no_symlinks(&self.root, &self.sha256).is_ok();
+            && sha256_file(&self.path).is_ok_and(|h| h == self.sha256);
         if same {
             Ok(())
         } else {
@@ -730,23 +681,29 @@ impl LaunchCopy {
     }
 }
 
-/// Ist das Programm noch genau das gebundene? Vor dem Start UND nach dem Ende
-/// des Aufrufs; nach Auto-Update, Wiederholung oder Austausch weicht es ab und
-/// die Freigabe gilt nicht mehr. `binary` ist die KOPIE.
-pub fn rebind(binary: &Path, expected: &PreviewBinding) -> Result<(), Rejection> {
-    let now = match identity(binary) {
-        Ok(now) => now,
-        Err(e) if e.starts_with("claude_not_native") => {
-            return Err(Rejection::llm("claude_not_native"))
-        }
-        Err(_) => return Err(Rejection::llm("payload_unknown")),
-    };
-    if now.version == expected.cli_version
-        && now.sha256.eq_ignore_ascii_case(&expected.binary_sha256)
-    {
-        return Ok(());
+/// Version und Pruefsumme der CLI, gebildet und gestartet ueber [`Pinned`].
+/// Hasht bei JEDEM Aufruf neu; nur die Version wird je Inhaltshash gemerkt.
+/// Nur native Programme. Blockiert: auf einem Blocking-Thread ausfuehren.
+pub fn identity(binary: &Path) -> Result<Identity, String> {
+    let pinned = Pinned::open(binary)?;
+    let version = pinned.version()?;
+    pinned
+        .verify()
+        .map_err(|_| "payload_unknown: Programm waehrend der Pruefung veraendert".to_string())?;
+    Ok(Identity {
+        version,
+        sha256: pinned.sha256().to_string(),
+    })
+}
+
+/// Aktuelles Tupel fuer ein Modell: sucht die CLI und liest ihre Identitaet.
+/// Nur Claude; fuer Codex gibt es in der Vorschau kein Tupel. Blockiert.
+pub fn current_binding(cli: Cli, model_id: &str) -> Result<PreviewBinding, String> {
+    if cli != Cli::Claude {
+        return Err("codex_preview_not_available: Codex gibt es in der Vorschau nicht".to_string());
     }
-    Err(Rejection::llm("binding_changed"))
+    let binary = super::cli::locate_native_claude()?;
+    Ok(binding_for(cli, model_id, &identity(&binary)?))
 }
 
 // ------------------------------------------------------------ Schalter --
@@ -783,9 +740,6 @@ pub struct PreviewCheck {
     pub max_output_tokens: u32,
     /// Faehigkeiten und Messung dieser Version.
     pub proof: Proof,
-    /// Cache-Wurzel der Programmkopien (`<App-Daten>/booktalk-cli`). Fehlt sie,
-    /// startet nichts ([`LaunchCopy::prepare`]).
-    pub cli_cache: Option<PathBuf>,
 }
 
 impl PreviewCheck {
@@ -802,14 +756,7 @@ impl PreviewCheck {
             context_tokens,
             max_output_tokens,
             proof,
-            cli_cache: None,
         }
-    }
-
-    /// Mit der Cache-Wurzel der Programmkopien.
-    pub fn with_cache(mut self, root: PathBuf) -> Self {
-        self.cli_cache = Some(root);
-        self
     }
 
     /// Eingabe in Token-Einheiten (gemessener Overhead mit Zuschlag).
@@ -1421,6 +1368,12 @@ mod tests {
     }
 
     #[cfg(unix)]
+    fn rebind(bin: &Path, expected: &PreviewBinding) -> Result<(), Rejection> {
+        let check = fixtures::check(expected.clone(), "claude-sonnet-5-5", 200_000);
+        Pinned::prepare(bin, &check).map(|_| ())
+    }
+
+    #[cfg(unix)]
     #[test]
     fn the_hash_is_recomputed_and_a_swapped_program_breaks_the_binding() {
         TEST_ALLOW_SCRIPT.with(|f| f.set(true));
@@ -1471,134 +1424,166 @@ mod tests {
     }
 
     #[cfg(unix)]
-    fn bound_copy(root: &Path, bin: &Path) -> (Identity, PreviewCheck) {
-        let id = bind_copy(root, bin).unwrap();
+    fn bound(bin: &Path) -> (Identity, PreviewCheck) {
+        let id = identity(bin).unwrap();
         let binding = binding_for(Cli::Claude, "sonnet", &id);
-        let check = fixtures::check(binding, "claude-sonnet-5-5", 200_000).with_cache(root.into());
+        let check = fixtures::check(binding, "claude-sonnet-5-5", 200_000);
         (id, check)
     }
 
     #[cfg(unix)]
     #[test]
-    fn binding_copies_the_program_protected_and_removes_old_copies() {
-        use std::os::unix::fs::PermissionsExt;
+    fn the_preview_binds_and_starts_the_installed_original() {
         TEST_ALLOW_SCRIPT.with(|f| f.set(true));
         let dir = tempfile::tempdir().unwrap();
         let bin = fake_version_cli(dir.path(), "7.7.7 (Claude Code)", "eins");
-        let root = dir.path().join(CACHE_DIR);
-        let id = bind_copy(&root, &bin).unwrap();
+        let (id, check) = bound(&bin);
         assert_eq!(id.sha256, sha256_file(&bin).unwrap());
-        let copy = copy_path(&root, &id.sha256);
-        assert_eq!(sha256_file(&copy).unwrap(), id.sha256);
-        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
-        assert_eq!(mode(&copy), 0o500, "Datei schreibgeschuetzt");
-        assert_eq!(
-            mode(copy.parent().unwrap()),
-            0o500,
-            "Ordner schreibgeschuetzt"
-        );
-        // Erneut binden: dieselbe Kopie, nichts Liegengebliebenes.
-        assert_eq!(bind_copy(&root, &bin).unwrap(), id);
-        // Ein Update: neue Kopie, die alte ist weg, keine Zwischenordner.
-        fake_version_cli(dir.path(), "7.7.8 (Claude Code)", "zwei");
-        let id2 = bind_copy(&root, &bin).unwrap();
-        assert_ne!(id.sha256, id2.sha256);
-        assert!(!copy.exists() && !root.join(&id.sha256).exists());
-        assert!(copy_path(&root, &id2.sha256).exists());
-        let names: Vec<_> = std::fs::read_dir(&root).unwrap().flatten().collect();
-        assert_eq!(names.len(), 1, "nur die neue Kopie");
+        let pinned = Pinned::prepare(&bin, &check).unwrap();
+        assert_eq!(pinned.path, std::fs::canonicalize(&bin).unwrap());
+        assert_eq!(pinned.sha256(), id.sha256);
+        assert_eq!(pinned.verify(), Ok(()));
+        // Keine Kopie, kein Cache-Ordner.
+        let names: Vec<_> = std::fs::read_dir(dir.path()).unwrap().flatten().collect();
+        assert_eq!(names.len(), 1, "nur das Original");
     }
 
     #[cfg(unix)]
     #[test]
-    fn the_preview_starts_only_the_verified_copy() {
+    fn a_changed_or_updated_original_blocks_the_start() {
         TEST_ALLOW_SCRIPT.with(|f| f.set(true));
         let dir = tempfile::tempdir().unwrap();
         let bin = fake_version_cli(dir.path(), "7.7.7 (Claude Code)", "eins");
-        let root = dir.path().join(CACHE_DIR);
-        let (id, check) = bound_copy(&root, &bin);
-        // Das Original wird getauscht: die Kopie bleibt die gebundene und wird gestartet.
-        fake_version_cli(dir.path(), "7.7.7 (Claude Code)", "getauscht");
-        let launch = LaunchCopy::prepare(&bin, &check).unwrap();
-        assert_eq!(launch.path, copy_path(&root, &id.sha256));
-        assert_ne!(launch.path, std::fs::canonicalize(&bin).unwrap());
-        assert_eq!(launch.verify(), Ok(()));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn a_copy_that_differs_from_the_binding_blocks() {
-        use std::os::unix::fs::PermissionsExt;
-        TEST_ALLOW_SCRIPT.with(|f| f.set(true));
-        let dir = tempfile::tempdir().unwrap();
-        let bin = fake_version_cli(dir.path(), "7.7.7 (Claude Code)", "eins");
-        let root = dir.path().join(CACHE_DIR);
-        let (id, check) = bound_copy(&root, &bin);
-        let copy = copy_path(&root, &id.sha256);
-        let reason = |c: &PreviewCheck| LaunchCopy::prepare(&bin, c).unwrap_err().reason;
-        // Ohne Cache-Wurzel startet nichts.
-        let mut no_cache = check.clone();
-        no_cache.cli_cache = None;
-        assert_eq!(reason(&no_cache), "copy_unavailable");
-        // Aenderung der Kopie (gleicher Nutzer hebt den Schutz auf): Hash weicht ab.
-        std::fs::set_permissions(&copy, std::fs::Permissions::from_mode(0o700)).unwrap();
-        std::fs::write(&copy, "#!/bin/sh\n# manipuliert\n").unwrap();
+        let (_, check) = bound(&bin);
+        let reason = |c: &PreviewCheck| Pinned::prepare(&bin, c).unwrap_err().reason;
+        // Anderer Inhalt, gleiche Version: Hash weicht ab.
+        fake_version_cli(dir.path(), "7.7.7 (Claude Code)", "geaendert");
         assert_eq!(reason(&check), "binding_changed");
-        // Kopie fehlt und das Original ist nicht mehr das gebundene: neue Belege noetig.
-        std::fs::set_permissions(
-            copy.parent().unwrap(),
-            std::fs::Permissions::from_mode(0o700),
-        )
-        .unwrap();
-        std::fs::remove_dir_all(copy.parent().unwrap()).unwrap();
+        // Update: neue Version.
         fake_version_cli(dir.path(), "7.7.8 (Claude Code)", "update");
         assert_eq!(reason(&check), "binding_changed");
+        // Fehlt: nicht bestimmbar.
+        std::fs::remove_file(&bin).unwrap();
+        assert_eq!(reason(&check), "payload_unknown");
     }
 
     #[cfg(unix)]
     #[test]
-    fn a_symlink_in_the_cache_path_blocks() {
+    fn a_change_of_the_original_after_the_start_is_detected() {
         TEST_ALLOW_SCRIPT.with(|f| f.set(true));
         let dir = tempfile::tempdir().unwrap();
         let bin = fake_version_cli(dir.path(), "7.7.7 (Claude Code)", "eins");
-        let root = dir.path().join(CACHE_DIR);
-        let (id, check) = bound_copy(&root, &bin);
-        // Hash-Ordner durch einen Verweis auf einen Ordner mit gleicher Datei ersetzen.
-        let elsewhere = dir.path().join("woanders");
-        std::fs::create_dir_all(&elsewhere).unwrap();
-        std::fs::copy(copy_path(&root, &id.sha256), elsewhere.join("claude")).unwrap();
-        let hash_dir = root.join(&id.sha256);
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&hash_dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let (_, check) = bound(&bin);
+        let pinned = Pinned::prepare(&bin, &check).unwrap();
+        std::fs::write(&bin, "anders").unwrap();
+        assert_eq!(pinned.verify().unwrap_err().reason, "binding_changed");
+    }
+
+    /// Natives Programm (Systemkopie) als `Pinned`, ohne Versionsabfrage.
+    #[cfg(target_os = "linux")]
+    fn native_pinned(dir: &Path, system: &str) -> Pinned {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join("claude");
+        std::fs::copy(system, &path).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        Pinned::open(&path).unwrap()
+    }
+
+    #[cfg(target_os = "linux")]
+    fn system_binary(name: &str) -> String {
+        ["/bin", "/usr/bin"]
+            .iter()
+            .map(|d| format!("{d}/{name}"))
+            .find(|p| Path::new(p).is_file())
+            .unwrap_or_else(|| panic!("{name} fehlt"))
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_starts_the_held_handle_not_the_path_even_after_a_swap() {
+        use std::os::unix::process::CommandExt;
+        let dir = tempfile::tempdir().unwrap();
+        // Gehalten und gehasht: `true` (Exit 0).
+        let launch = native_pinned(dir.path(), &system_binary("true"));
+        let exec = launch.exec_path();
+        assert!(exec.starts_with("/proc/self/fd/"), "{exec:?}");
+        // Austauschfenster: am Kopiepfad liegt jetzt `false` (Exit 1).
+        std::fs::remove_file(&launch.path).unwrap();
+        std::fs::copy(system_binary("false"), &launch.path).unwrap();
+        // Per Pfad wuerde das ausgetauschte Programm laufen ...
+        let by_path = std::process::Command::new(&launch.path).status().unwrap();
+        assert!(!by_path.success(), "Gegenprobe: Pfadstart startet false");
+        // ... ueber den Deskriptor (O_CLOEXEC am Handle) das gehaltene `true`.
+        let by_fd = std::process::Command::new(&exec).status().unwrap();
+        assert!(by_fd.success(), "der gehaltene Inhalt muss laufen");
+        // Auch mit eigener Prozessgruppe, wie im Aufruf (anderer Startweg).
+        let mut cmd = std::process::Command::new(&exec);
+        cmd.process_group(0);
+        assert!(cmd.status().unwrap().success());
+        // Und mehrfach nacheinander (der Deskriptor bleibt im Elternprozess).
+        for _ in 0..3 {
+            assert!(std::process::Command::new(&exec)
+                .status()
+                .unwrap()
+                .success());
         }
-        std::fs::remove_dir_all(&hash_dir).unwrap();
-        std::os::unix::fs::symlink(&elsewhere, &hash_dir).unwrap();
-        let err = LaunchCopy::prepare(&bin, &check).unwrap_err();
-        assert_eq!(err.reason, "payload_unknown");
-        // Die Datei selbst als Verweis: ebenfalls gesperrt.
-        std::fs::remove_file(&hash_dir).unwrap();
-        std::fs::create_dir(&hash_dir).unwrap();
-        std::os::unix::fs::symlink(elsewhere.join("claude"), hash_dir.join("claude")).unwrap();
-        assert_eq!(
-            LaunchCopy::prepare(&bin, &check).unwrap_err().reason,
-            "payload_unknown"
+        // Der ausgetauschte Pfad faellt bei der Pruefung nach dem Lauf auf.
+        assert_eq!(launch.verify().unwrap_err().reason, "binding_changed");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_held_descriptor_is_close_on_exec() {
+        let dir = tempfile::tempdir().unwrap();
+        let launch = native_pinned(dir.path(), &system_binary("true"));
+        let fd = std::os::fd::AsRawFd::as_raw_fd(&launch.handle);
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+        assert!(
+            flags >= 0 && flags & libc::FD_CLOEXEC != 0,
+            "O_CLOEXEC erwartet"
         );
     }
 
-    #[cfg(unix)]
     #[test]
-    fn a_change_of_the_copy_after_the_start_is_detected() {
-        use std::os::unix::fs::PermissionsExt;
-        TEST_ALLOW_SCRIPT.with(|f| f.set(true));
+    fn the_gate_blocks_where_the_held_program_cannot_be_started_safely() {
+        let b = binding_for(Cli::Claude, "sonnet", &ident("2.2.2 (Claude Code)", "ab"));
+        let stored = vec![b.clone()];
+        let ev = fixtures::evidence(&[(&b, "sonnet")]);
+        let g = gate(true, &stored, Some(&b), &ev);
+        if platform_supported() {
+            assert_eq!(g.state, PreviewState::Active);
+        } else {
+            assert_eq!(
+                (g.state, g.blocked),
+                (
+                    PreviewState::NotReleased,
+                    Some(Blocked::PlatformUnsupported)
+                )
+            );
+        }
+        assert_eq!(
+            blocked_of_error("platform_unsupported: x"),
+            Blocked::PlatformUnsupported
+        );
+        // Windows und Linux (mit /proc) gelten, macOS und andere Unix nicht.
+        assert_eq!(
+            cfg!(windows) || (cfg!(target_os = "linux") && Path::new("/proc/self/fd").is_dir()),
+            platform_supported()
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_holding_the_handle_blocks_replacing_the_file() {
         let dir = tempfile::tempdir().unwrap();
-        let bin = fake_version_cli(dir.path(), "7.7.7 (Claude Code)", "eins");
-        let root = dir.path().join(CACHE_DIR);
-        let (_, check) = bound_copy(&root, &bin);
-        let launch = LaunchCopy::prepare(&bin, &check).unwrap();
-        std::fs::set_permissions(&launch.path, std::fs::Permissions::from_mode(0o700)).unwrap();
-        std::fs::write(&launch.path, "anders").unwrap();
-        assert_eq!(launch.verify().unwrap_err().reason, "binding_changed");
+        let path = dir.path().join("claude.exe");
+        std::fs::write(&path, b"MZ\x90\x00 programm").unwrap();
+        let held = open_pinned(&path).unwrap();
+        // Schreiben, Loeschen und Umbenennen scheitern, solange das Handle lebt.
+        assert!(std::fs::write(&path, b"MZ anders").is_err());
+        assert!(std::fs::remove_file(&path).is_err());
+        assert!(std::fs::rename(&path, dir.path().join("x.exe")).is_err());
+        assert_eq!(hash_handle(&held).unwrap(), sha256_file(&path).unwrap());
     }
 
     #[test]

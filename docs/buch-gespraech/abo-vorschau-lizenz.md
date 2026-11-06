@@ -1,73 +1,112 @@
-# Abo-Vorschau im Buch-Gespräch: Lizenz- und Weitergabe-Notiz
+# Abo-Vorschau im Buch-Gespräch: Lizenz- und Weitergabe-Bewertung
 
-Stand: lva#334, Phase 1 (nur Claude Code). Diese Notiz beschreibt, **was die App
-technisch tut** und welche Punkte noch gegen die Anthropic-Bedingungen geprüft
-werden müssen. Sie ist **keine Rechtsauskunft** und stellt nicht fest, dass die
-Nutzung zulässig ist. Was hier nicht belegt ist, steht als offener Punkt.
+Stand: 06.11.2026, lva#334, Phase 1 (nur Claude Code). Dies ist eine **Bewertung
+auf Grundlage der veröffentlichten Bedingungen, keine Rechtsberatung**. Sie
+stellt nicht verbindlich fest, dass eine Nutzung zulässig ist.
 
-## Was die App tut (technischer Ist-Zustand)
+## Quellen (abgerufen am 06.11.2026)
 
-- Die App startet nur die **vom Nutzer selbst installierte, unveränderte
-  Claude-Code-CLI** (native Binärdatei), lokal auf dem Rechner des Nutzers, mit
-  **dessen eigenem Login**. Die App meldet nichts an und legt keine Zugangsdaten an.
-- Die App **liest, speichert und vermittelt keine Tokens** und keine Anmelde-
-  dateien der CLI. Die Anmeldung bleibt vollständig bei der CLI. (Das
-  Prüfskript `tooling/buch-gespraech/isolation-check.sh`/`.ps1` kopiert
-  die Anmeldedatei des Nutzers nur in ein temporäres Verzeichnis auf demselben
-  Rechner, wird vom Nutzer selbst gestartet und löscht das Verzeichnis danach.)
-- Es wird **kein `--bare`** verwendet, damit der OAuth-Login der CLI gilt.
-- Die **Kopie** unter `<App-Daten>/booktalk-cli/<sha256>/claude[.exe]` ist ein
-  **lokaler, nicht weitergegebener Cache derselben Datei** (byte-gleich, per
-  SHA-256 geprüft). Sie dient nur dazu, zwischen Prüfung und Start keinen
-  Austausch der Datei zuzulassen. Sie verlässt den Rechner nicht, wird nicht
-  verändert und nicht mit der App verteilt; bei einem Update der CLI entsteht eine
-  neue Kopie, die alte wird gelöscht.
-- Die App **liefert die CLI nicht mit** und enthält keinen Teil davon.
-- Ein Aufruf entspricht einem einzelnen `claude -p`-Lauf auf Anfrage des Nutzers
-  (Buch-Frage). Die Antwort wird nur angezeigt, wenn alle Prüfungen bestehen.
-- Auf Wunsch (Relay) beantwortet derselbe Rechner Fragen des eigenen iPhones des
-  Nutzers über den eigenen Hub. Auch dort läuft die CLI lokal mit dem Login des
-  Nutzers; Text geht nur an das eigene Gerät.
-- Codex ist in der Vorschau gesperrt (Phase 2, eigenes Issue). Für Codex gilt
-  diese Notiz nicht.
+Maßgeblich (primär): Anthropic, Claude Code Docs, „Legal and compliance“,
+<https://code.claude.com/docs/en/legal-and-compliance>. Wörtliche Kurzzitate:
 
-## Offene Punkte zur Prüfung gegen die Anthropic-Bedingungen (Checkliste für Patrick)
+1. „Anthropic does not permit third-party developers to offer Claude.ai login
+   into their own applications, or to route requests through Free, Pro, Max, or
+   Ultra plan credentials on behalf of their users. Moreover, developers may not
+   collect, store, or intermediate Claude.ai credentials or session tokens —
+   sign-in to a Claude account must complete through Anthropic's own flow.“
+2. „Nor does it prevent an end user from signing in to the unmodified Claude Code
+   binary with their own Claude subscription, including where a platform hosts
+   Claude Code as described under ‚Can customers offer Claude Code in their
+   products?‘“
+3. Abschnitt „Can customers offer Claude Code in their products?“: Claude Code in
+   Produkten vorzuinstallieren oder dort auszuführen setzt die Zustimmung zu den
+   Commercial Terms voraus. Außerdem: „The Claude Code binary must not be
+   modified. Claude Code must be installed and run as published by Anthropic …“
+   und „Customers may not pay for, resell, or intermediate Claude usage on their
+   end users' behalf. Each end user must authenticate with their own … Claude
+   subscription plan credentials …“
+4. „Advertised usage limits for Pro, Max, and Ultra plans assume ordinary,
+   individual usage of Claude Code and the Agent SDK.“
 
-Nichts davon ist hier bewertet; jeder Punkt braucht eine Prüfung des aktuellen
-Wortlauts.
+Sekundär (nur Kontext, nicht maßgeblich): Anthropic hat am 19.02.2026 die
+Dokumentation zur OAuth-Nutzung in Drittanwendungen präzisiert (The Register,
+20.02.2026,
+<https://www.theregister.com/2026/02/20/anthropic_clarifies_ban_third_party_claude_access>);
+Drittanbieter-Harnesses wurden ab 2026 gesperrt bzw. abgerechnet.
 
-- [ ] **Consumer Terms** (Claude Pro/Max): Ist die Nutzung der eigenen,
-      installierten Claude-Code-CLI durch eine lokale Drittanwendung (diese App
-      startet `claude -p` im Auftrag des Nutzers) mit dem Abo-Login zulässig?
-      Gibt es Einschränkungen für automatisierten oder programmgesteuerten
-      Zugriff auf das Abo?
-- [ ] **Commercial Terms**: Falls der Nutzer ein Team- oder Enterprise-Konto
-      verwendet, gelten andere Bedingungen. Prüfen, ob die Nutzung dort anders
-      zu beurteilen ist.
-- [ ] **Nutzungsrichtlinie (Usage Policy)**: Gibt es Aussagen zur Nutzung von
-      Claude-Code-Abos in Drittanwendungen oder zum Weiterreichen von
-      Abo-Zugang an andere Nutzer oder Geräte? Das Relay an das **eigene**
-      iPhone des Nutzers einordnen.
-- [ ] **Claude-Code-Bedingungen und Dokumentation**: Gibt es eigene Bedingungen
-      für die CLI (Lizenz der Binärdatei), insbesondere zum **Kopieren** der
-      Datei in einen lokalen Cache und zum Starten der Kopie statt der
-      Originaldatei?
-- [ ] **Weitergabe**: Bestätigen, dass die App die CLI nicht mitliefert und
-      nicht verteilt (siehe oben) und dass die Kopie nur lokal liegt.
-- [ ] **Ratenbegrenzung und Fair Use**: Prüfen, ob Limits des Abos für
-      automatisierte Aufrufe gelten und wie Fehler (Limit erreicht) in der App
-      angezeigt werden sollen.
-- [ ] **Datenschutz**: Anfragen gehen über die CLI an Anthropic (Abo). Prüfen,
-      ob der Risikohinweis im Einschaltdialog dazu ausreicht.
-- [ ] **Änderungen**: Die Bedingungen können sich ändern. Stichtag der Prüfung
-      und Wiedervorlage festlegen.
+## Was die App technisch tut
 
-## Hinweis zur technischen Grenze der Kopie
+- Sie startet die **vom Nutzer selbst installierte, unveränderte** native
+  Claude-Code-Datei lokal auf dessen Rechner, mit **dessen eigenem Login**. Die
+  Anmeldung läuft ausschließlich über Anthropics eigenen Ablauf in der CLI.
+- Sie **nutzt keine Tokens, liest keine Credentials und legt keine an**. Kein
+  `--bare`, damit der OAuth-Login der CLI gilt.
+- Sie **liefert die CLI nicht mit** und enthält keinen Teil davon.
+- **Keine Binärkopie mehr.** Frühere Entwürfe legten eine lokale Kopie der Datei
+  in einen Cache; das ist **entfallen**. Gebunden und gestartet wird das
+  **installierte Original** (Hash aus dem gehaltenen Handle; Linux: Start über
+  `/proc/self/fd/<fd>`, Windows: Handle nur mit Leseteilen, nur lokale feste
+  Laufwerke ohne Reparse-Komponenten; macOS gesperrt).
+- Ein Aufruf entspricht einem einzelnen `claude -p`-Lauf auf Anfrage des Nutzers.
+  Grenzen der App: 30 Anfragen je Stunde, 200 je Tag.
+- Relay iPhone → PC: Anfragen **desselben Nutzers** von dessen gekoppeltem iPhone
+  an dessen eigene CLI. Erzwungen wird das durch die Geräteliste des Hubs
+  desselben Kontos, einen Relay-Schlüssel je iPhone (Einrichtungscode am
+  PC-Bildschirm) und das Siegel mit dem Benutzer als AAD
+  (`SUBSCRIPTION_RELAY_SAME_ACCOUNT_ONLY` in `sync/booktalk_relay.rs`).
+- Codex ist in der Vorschau gesperrt (Phase 2), **nicht bewertet**.
 
-Die Kopie ist schreibgeschützt (Datei und Ordner Unix 0500, Windows: Datei
-schreibgeschützt, beim Lauf mit Handle ohne Schreib-, Umbenenn- und Löschrecht).
-Derselbe Nutzer kann auf Unix per `chmod` die Rechte ändern; das Handle
-verhindert dort keinen Austausch. Die App prüft den Hash der Kopie vor dem Start
-und nach dem Lauf und verwirft die Antwort bei Abweichung. Das ist eine
-Schutzmaßnahme gegen versehentliche Änderungen und Auto-Updates, kein Schutz
-gegen einen böswilligen Prozess desselben Nutzers.
+## Ergebnis (drei getrennte Aussagen)
+
+**(1) Eigener Login in der unveränderten CLI ist ausdrücklich gestützt.**
+Persönliche Nutzung durch Patrick auf eigenem Gerät, mit eigener, unveränderter
+Claude-Code-Installation und eigenem Login, entspricht dem in Zitat 2 ausdrücklich
+genannten Fall („end user signing in to the unmodified Claude Code binary with
+their own Claude subscription“). Die Nutzung muss „ordinary, individual usage“
+(Zitat 4) bleiben; dafür gelten die App-Grenzen 30/h und 200/Tag.
+
+**(2) Die lokale Kopie ist entfallen; die App startet das installierte Original.**
+Damit entfällt die Frage, ob „installed and run as published“ (Zitat 3) die
+Ausführung aus einer lokalen Kopie abdeckt. Es bleibt die Frage, ob das
+Starten über ein gehaltenes Datei-Handle (Linux `/proc/self/fd`) noch „run as
+published“ ist; es ist dieselbe unveränderte Datei, nur der Pfad der
+Ausführung ist ein anderer. Das ist nicht ausdrücklich geregelt und wird als
+**Restrisiko** geführt. Grenze der Absicherung: Die Bindung an das Handle
+verhindert Pfadaustausch, aber **keine Inhaltsänderung zwischen Hash und Start
+durch denselben Nutzer**; diese liegt außerhalb der Garantie, der Hash nach dem
+Lauf verwirft die Antwort dann.
+
+**(3) Produktbetrieb erfordert die Commercial Terms, nicht erst die Weitergabe der
+Datei.** Schon das Ausführen von Claude Code **in einem Produkt** (Zitat 3), also
+eine Wolff.ai-App, die die CLI für Dritte startet, setzt die Zustimmung zu den
+Commercial Terms voraus, auch wenn die Datei nie mitgeliefert wird. Jeder Nutzer
+muss sich mit eigenem Abo selbst authentifizieren; Bündeln, Weiterverkaufen oder
+Vermitteln von Nutzung (Zitat 1 und 3) ist ausgeschlossen. Der Relay-Fall
+(„route requests … on behalf of their users“) betrifft nur Fremdnutzer: bei einer
+Produktfreigabe für Dritte Relay mit Abo sperren oder mit Anthropic klären.
+
+## Entscheidung und Verantwortung
+
+Patrick entscheidet und trägt das Risiko als Verantwortlicher. Rahmen:
+
+- **Standard aus.** Einschaltbar nur ausdrücklich, nach Risikohinweis im Dialog,
+  und **jederzeit abschaltbar** (Ausschalten löscht die Bindung).
+- **Gesperrt bis zur Klärung:** Mehrbenutzerbetrieb, fremde Konten, Weitergabe der
+  App mit dieser Funktion, Produktfreigabe. **Ausdrücklich ausgenommen** ist das
+  eigene iPhone desselben Kontos.
+- Klärung bei Anthropic (contact sales) vor jeder Produktfreigabe.
+
+## Wiedervorlage
+
+- **06.02.2027** (drei Monate nach dieser Bewertung),
+- außerdem **bei jeder Änderung der Bedingungen oder der Integration**,
+- und **zwingend vor einer Produktfreigabe**.
+
+## Offene Punkte
+
+- Restrisiko Handle-Start (siehe Aussage 2), vor Produktfreigabe bei Anthropic
+  klären.
+- Relay mit Abo bei Fremdnutzern: sperren oder klären.
+- Codex/ChatGPT: Phase 2, nicht bewertet.
+- Datenschutz: Anfragen gehen über die CLI an Anthropic; der Risikohinweis im
+  Einschaltdialog ist bei der Wiedervorlage zu prüfen.

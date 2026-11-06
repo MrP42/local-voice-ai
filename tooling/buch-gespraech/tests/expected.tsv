@@ -1,0 +1,18 @@
+# Fixture	Exit-Code	erwarteter Grund (leer = Lauf gueltig)
+ok	0	
+ok	1	exit_code
+no_usage	0	usage
+usage_string_tokens	0	usage
+usage_missing_output	0	usage
+usage_negative	0	usage
+usage_zero	0	usage
+stop_max_tokens	0	stop_reason
+stop_missing	0	stop_reason
+error_result	0	event_unknown
+error_result_flag	0	error_event
+error_flag_event	0	error_event
+unknown_event	0	event_unknown
+tool_use	0	tool_use
+compacted	0	event_unknown
+no_result	0	event_order
+bad_line	0	bad_line

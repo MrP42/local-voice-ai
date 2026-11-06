@@ -44,6 +44,16 @@
   ungueltig: es wird nichts geschrieben. Die Schwelle fuer die Kompaktierung ist fest
   in der App (PREVIEW_MAX_CONTEXT_SHARE = 0,5) und gehoert nicht in die Messdatei.
 
+  Gebunden wird das installierte ORIGINAL, es gibt keine Kopie (auch nicht in der
+  App). Das Skript haelt die Datei mit Teilen nur zum Lesen offen (Schreiben,
+  Umbenennen, Loeschen durch andere scheitern), hasht sie aus dem Handle, verlangt
+  ein lokales festes Laufwerk ohne Reparse-Komponente und prueft den Hash vor UND
+  nach jedem Lauf (auch die Version). Weicht er ab, ist die ganze Reihe ungueltig
+  und es wird nichts geschrieben. Messlauf-Parser: fehlende oder ungueltige usage,
+  stop_reason <> end_turn (u. a. max_tokens), Fehler, unbekanntes Ereignis,
+  Kompaktierung oder Exit-Code <> 0 machen den Lauf ungueltig (Spiegel von
+  analyze-run.py, getestet mit isolation-check-test.sh).
+
   Nur eine NATIVE Claude-Datei (PE, ELF, Mach-O) wird zugelassen; npm-/Node-/Skript-
   Launcher (.cmd, .js, Shebang) werden abgelehnt (claude_not_native). Kein --bare
   (der OAuth-Login der Anmeldung bleibt wirksam).
@@ -128,10 +138,72 @@ function Write-Text([string]$path, [string]$text) {
 
 function Get-Sha256([string]$path) { (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLowerInvariant() }
 
+# Native Claude-Dateien zuerst ueber ALLE Fundstellen (PATH, ~\.local\bin,
+# ~\.claude\local, ~\.local\share\claude\versions\<neueste>), erst danach ein
+# Launcher; nur Launcher: claude_not_native. Spiegel von cli.rs (locate_native_claude).
 function Find-Cli {
-    $cmd = Get-Command claude -ErrorAction SilentlyContinue | Where-Object { $_.CommandType -eq 'Application' } | Select-Object -First 1
-    if (-not $cmd) { Die 'claude nicht im PATH' }
-    return $cmd.Source
+    $found = @()
+    $found += @(Get-Command claude -All -ErrorAction SilentlyContinue | Where-Object { $_.CommandType -eq 'Application' } | ForEach-Object { $_.Source })
+    foreach ($p in @((Join-Path $HOME '.local\bin\claude.exe'), (Join-Path $HOME '.claude\local\claude.exe'))) {
+        if (Test-Path -LiteralPath $p -PathType Leaf) { $found += $p }
+    }
+    $versions = Join-Path $HOME '.local\share\claude\versions'
+    if (Test-Path -LiteralPath $versions) {
+        $newest = Get-ChildItem -LiteralPath $versions | Sort-Object { try { [version]($_.BaseName -replace '[^0-9.].*$', '') } catch { [version]'0.0' } } -Descending | Select-Object -First 1
+        if ($newest) {
+            $exe = if ($newest.PSIsContainer) { Join-Path $newest.FullName 'claude.exe' } else { $newest.FullName }
+            if (Test-Path -LiteralPath $exe -PathType Leaf) { $found += $exe }
+        }
+    }
+    if ($found.Count -eq 0) { Die 'claude nicht gefunden (PATH, ~\.local\bin, ~\.claude\local, ~\.local\share\claude\versions)' }
+    foreach ($f in $found) {
+        $item = Get-Item -LiteralPath $f
+        $real = if ($item.Target) { (Resolve-Path -LiteralPath ([string]($item.Target | Select-Object -First 1))).Path } else { $item.FullName }
+        if (Test-Native $real) { return $f }
+    }
+    Die 'claude_not_native: nur Launcher gefunden (npm-/Node-/Skript), keine native Binaerdatei'
+}
+
+# Nur lokale feste Laufwerke (keine UNC-Pfade, keine Netzlaufwerke) und keine
+# Reparse-Komponente (Symlink, Junction) im Pfad. Spiegel der App (preview.rs).
+function Assert-LocalPath([string]$path) {
+    $full = [System.IO.Path]::GetFullPath($path)
+    if ($full.StartsWith('\\')) { Die "payload_unknown: UNC- oder Geraetepfad nicht zugelassen ($full)" }
+    $root = [System.IO.Path]::GetPathRoot($full)
+    if ([System.IO.DriveInfo]::new($root).DriveType -ne [System.IO.DriveType]::Fixed) { Die "payload_unknown: kein festes lokales Laufwerk ($root)" }
+    $part = $full
+    while ($part -and ($part -ne $root)) {
+        $attr = [System.IO.File]::GetAttributes($part)
+        if (($attr -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { Die "payload_unknown: Reparse-Komponente im Pfad ($part)" }
+        $part = [System.IO.Path]::GetDirectoryName($part)
+    }
+}
+
+# Das gebundene ORIGINAL (keine Kopie): offen gehalten mit GENERIC_READ und Teilen
+# AUSSCHLIESSLICH zum Lesen (Schreiben, Umbenennen und Loeschen durch andere
+# scheitern), Hash aus diesem Handle. Vor UND nach jedem Lauf muss der Hash aus
+# dem Handle und vom Pfad gleich sein, sonst ist die ganze Reihe ungueltig.
+$script:PinHandle = $null
+$script:PinSha = ''
+$script:PinPath = ''
+function Open-Pin([string]$path) {
+    $script:PinPath = $path
+    $script:PinHandle = [System.IO.File]::Open($path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+    $script:PinSha = Get-HandleSha256
+    return $script:PinSha
+}
+function Get-HandleSha256 {
+    [void]$script:PinHandle.Seek(0, [System.IO.SeekOrigin]::Begin)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try { $bytes = $sha.ComputeHash($script:PinHandle) } finally { $sha.Dispose() }
+    return (($bytes | ForEach-Object { $_.ToString('x2') }) -join '')
+}
+function Assert-Pinned([string]$when) {
+    $fromHandle = Get-HandleSha256
+    $fromPath = Get-Sha256 $script:PinPath
+    if ($fromHandle -ne $script:PinSha -or $fromPath -ne $script:PinSha) {
+        Die "Reihe ungueltig: Hash des Programms weicht $when dem Lauf vom gebundenen Hash ab (nichts geschrieben)"
+    }
 }
 
 # Nur eine NATIVE Datei (PE, ELF, Mach-O): kein Skript, kein npm-/Node-Launcher.
@@ -233,6 +305,8 @@ function Make-World([string]$name) {
 }
 
 function Run-Claude([string]$bin, [string]$base, [string]$mode, [string]$spec, [string]$out, [string]$question) {
+    # Nur das gebundene Original, Hash vor UND nach jedem Lauf gleich.
+    Assert-Pinned 'vor'
     $s = Split-Model $spec
     $a = @('-p', '--output-format', 'stream-json', '--model', $s.Model)
     if ($s.Effort) { $a += @('--effort', $s.Effort) }
@@ -248,6 +322,7 @@ function Run-Claude([string]$bin, [string]$base, [string]$mode, [string]$spec, [
     }
     # Claude bekommt die Umgebung der App (nicht bereinigt) plus die obigen Werte.
     Invoke-Cli $bin $a (Join-Path $base 'parent\work') $question $env1 $out
+    Assert-Pinned 'nach'
 }
 
 # Ereignis-Hilfen (Spiegel von contract.rs).
@@ -297,7 +372,7 @@ function Test-Contract($evs) {
 # Auswertung eines Laufs (nur Zahlen und Marken, nie der Text).
 function Parse-Out([string]$path, [string]$marker) {
     $r = @{ Rc = 1; Bad = $false; Error = ''; Compacted = $false; Stop = ''; Input = 0; Output = 0; Models = @(); ToolUse = $false
-        MarkerSeen = $false; Tools = $null; Mcp = $null; Canaries = @(); Observed = @(); Violation = ''; Ok = $false }
+        MarkerSeen = $false; Tools = $null; Mcp = $null; Canaries = @(); Observed = @(); Violation = ''; Ok = $false; Reason = ''; UsageOk = $false }
     if (Test-Path "$path.rc") { $r.Rc = [int](Get-Content -LiteralPath "$path.rc" -Raw).Trim() }
     $evs = @()
     $lines = @()
@@ -319,9 +394,21 @@ function Parse-Out([string]$path, [string]$marker) {
         if ($t -eq 'result') {
             $text = [string]$e.result
             $u = $e.usage
-            if ($u) {
-                $r.Input = [int64]($u.input_tokens + $u.cache_creation_input_tokens + $u.cache_read_input_tokens)
-                $r.Output = [int64]$u.output_tokens
+            # Nur echte, nicht negative ganze Zahlen (kein String, kein Bool, keine Kommazahl).
+            $isCount = { param($v) (($v -is [int]) -or ($v -is [long])) -and ($v -ge 0) }
+            if ($u -and ($u -isnot [string]) -and $u.PSObject.Properties['input_tokens'] -and $u.PSObject.Properties['output_tokens'] -and
+                 (& $isCount $u.input_tokens) -and (& $isCount $u.output_tokens)) {
+                $extraOk = $true
+                foreach ($k in @('cache_creation_input_tokens', 'cache_read_input_tokens')) {
+                    if ($u.PSObject.Properties[$k] -and -not (& $isCount $u.$k)) { $extraOk = $false }
+                }
+                if ($extraOk) {
+                    $inSum = [int64]$u.input_tokens
+                    foreach ($k in @('cache_creation_input_tokens', 'cache_read_input_tokens')) { if ($u.PSObject.Properties[$k]) { $inSum += [int64]$u.$k } }
+                    $r.Input = $inSum
+                    $r.Output = [int64]$u.output_tokens
+                    $r.UsageOk = ($r.Input -gt 0) -and ($r.Output -gt 0)
+                }
             }
             if ($e.modelUsage) { foreach ($p in $e.modelUsage.PSObject.Properties) { [void]$models.Add($p.Name.Trim()) } }
             $r.Stop = [string]$e.stop_reason
@@ -333,7 +420,16 @@ function Parse-Out([string]$path, [string]$marker) {
     $r.Violation = if ($r.Bad) { 'bad_line' } else { Test-Contract $evs }
     if ($marker) { $r.MarkerSeen = $text.Contains($marker) }
     foreach ($w in @($CanUser, $CanProject, $CanMemory)) { if ($text.Contains($w)) { $r.Canaries += $w } }
-    $r.Ok = ($text.Length -gt 0) -and ($r.Rc -eq 0) -and (-not $r.Error) -and (-not $r.Bad) -and (-not $r.Compacted) -and ($r.Violation -eq '')
+    # Erster Ungueltigkeitsgrund (leer = gueltiger Lauf); unbekannt oder fehlend ist nie gueltig.
+    $r.Reason = if ($r.Rc -ne 0) { 'exit_code' }
+        elseif ($r.Violation -ne '') { $r.Violation }
+        elseif ($r.Error) { 'error_event' }
+        elseif ($r.Compacted) { 'compacted' }
+        elseif ($r.Stop -ne 'end_turn') { 'stop_reason' }
+        elseif (-not $r.UsageOk) { 'usage' }
+        elseif ($text.Length -eq 0) { 'no_text' }
+        else { '' }
+    $r.Ok = ($r.Reason -eq '')
     return $r
 }
 
@@ -457,9 +553,13 @@ function Handle([string]$spec) {
     $bin = (Get-Item -LiteralPath $found)
     $real = if ($bin.Target) { (Resolve-Path -LiteralPath ([string]($bin.Target | Select-Object -First 1))).Path } else { $bin.FullName }
     if (-not (Test-Native $real)) { Die "claude_not_native: $real ist keine native Binaerdatei (npm-/Node-/Skript-Launcher werden abgelehnt)" }
+    Assert-LocalPath $found
+    Assert-LocalPath $real
+    # Das ORIGINAL wird einmal gehasht und gebunden (Handle bis zum Ende gehalten); keine Kopie.
+    $sha = Open-Pin $real
     $version = Get-Version $real
     if (-not $version) { Die 'claude: Version nicht lesbar' }
-    $sha = Get-Sha256 $real
+    Assert-Pinned 'nach'
     Say "claude: Version `"$version`", Programm $real, SHA-256 $sha"
     if ($DryIdentity.IsPresent) { return }
     if (-not $spec) { Die '-ClaudeModel fehlt' }
@@ -478,5 +578,6 @@ try {
     Handle $ClaudeModel
     Say "fertig. Dateien in: $DataDir"
 } finally {
+    if ($script:PinHandle) { $script:PinHandle.Dispose() }
     if (Test-Path $Work) { Remove-Item -Recurse -Force $Work -ErrorAction SilentlyContinue }
 }

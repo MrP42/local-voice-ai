@@ -8524,7 +8524,12 @@ export type Blocked =
  * Das Claude-Programm ist keine native Binaerdatei (npm-, Node- oder
  * Skript-Launcher): nicht bindbar.
  */
-"claude_not_native"
+"claude_not_native" | 
+/**
+ * Dieses System kann das geprueft gehaltene Programm nicht ohne
+ * Austauschfenster starten (kein `/proc`, macOS, andere Unix): gesperrt.
+ */
+"platform_unsupported"
 export type Book = { id: string; title: string; created_ms: number; 
 /**
  * Seiten in Reihenfolge der Teile.

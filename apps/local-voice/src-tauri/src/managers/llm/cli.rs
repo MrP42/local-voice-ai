@@ -282,19 +282,25 @@ pub struct CliReply {
     pub truncated: Tri,
 }
 
-/// Wo liegt die CLI? PATH zuerst, dann die ueblichen Installationsorte.
-pub fn locate(cli: Cli) -> Option<PathBuf> {
-    let home =
-        std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(PathBuf::from);
-    let appdata = std::env::var_os("APPDATA").map(PathBuf::from);
-    let names: &[&str] = match (cli, cfg!(windows)) {
+/// Dateinamen der CLI je System.
+fn cli_names(cli: Cli) -> &'static [&'static str] {
+    match (cli, cfg!(windows)) {
         // Nur das native Programm: ein `.cmd`-Skript liefe ueber cmd.exe, und
         // der Systemprompt im Argument koennte dort Befehle einschleusen.
         (Cli::Claude, true) => &["claude.exe"],
         (Cli::Claude, false) => &["claude"],
         (Cli::Codex, true) => &["codex.cmd", "codex.exe"],
         (Cli::Codex, false) => &["codex"],
-    };
+    }
+}
+
+/// Alle bekannten Fundstellen in der Reihenfolge der Suche: PATH zuerst, dann
+/// die ueblichen Installationsorte. Nur vorhandene Dateien.
+fn candidates(cli: Cli) -> Vec<PathBuf> {
+    let home =
+        std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(PathBuf::from);
+    let appdata = std::env::var_os("APPDATA").map(PathBuf::from);
+    let names = cli_names(cli);
     let mut dirs: Vec<PathBuf> = std::env::var_os("PATH")
         .map(|p| std::env::split_paths(&p).collect())
         .unwrap_or_default();
@@ -309,9 +315,87 @@ pub fn locate(cli: Cli) -> Option<PathBuf> {
     if let Some(l) = std::env::var_os("LOCALAPPDATA").map(PathBuf::from) {
         dirs.push(l.join("Programs").join("OpenAI").join("Codex").join("bin"));
     }
+    files_in(&dirs, names)
+}
+
+fn files_in(dirs: &[PathBuf], names: &[&str]) -> Vec<PathBuf> {
     dirs.iter()
         .flat_map(|d| names.iter().map(move |n| d.join(n)))
-        .find(|p| p.is_file())
+        .filter(|p| p.is_file())
+        .collect()
+}
+
+/// Wo liegt die CLI? PATH zuerst, dann die ueblichen Installationsorte. Die
+/// erste Fundstelle gilt (unveraendert; die Vorschau waehlt mit
+/// [`locate_native_claude`]).
+pub fn locate(cli: Cli) -> Option<PathBuf> {
+    candidates(cli).into_iter().next()
+}
+
+/// Sortierschluessel eines Versionsnamens (`2.1.50`): numerische Teile, ein
+/// nicht numerischer Teil zaehlt 0.
+fn version_key(name: &str) -> Vec<u64> {
+    name.split('.')
+        .map(|p| p.parse::<u64>().unwrap_or(0))
+        .collect()
+}
+
+/// Das Programm der neuesten Version in `<Ordner>/<version>` (Datei oder
+/// Ordner mit der Programmdatei), z. B. `~/.local/share/claude/versions`.
+fn newest_version_file(versions: &Path, names: &[&str]) -> Option<PathBuf> {
+    let mut entries: Vec<(Vec<u64>, String, PathBuf)> = std::fs::read_dir(versions)
+        .ok()?
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let path = e.path();
+            let file = if path.is_file() {
+                path
+            } else {
+                names.iter().map(|n| path.join(n)).find(|p| p.is_file())?
+            };
+            Some((version_key(&name), name, file))
+        })
+        .collect();
+    entries.sort_by(|a, b| (&b.0, &b.1).cmp(&(&a.0, &a.1)));
+    entries.into_iter().next().map(|(_, _, p)| p)
+}
+
+/// Waehlt aus den Fundstellen die erste NATIVE Binaerdatei ([`preview::check_native`],
+/// ELF/PE/Mach-O) ueber ALLE Fundstellen, erst danach ein Launcher; gibt es nur
+/// Launcher, `claude_not_native`; gibt es keine, `cli_missing`.
+fn pick_native(found: &[PathBuf]) -> Result<PathBuf, String> {
+    if let Some(native) = found
+        .iter()
+        .find(|p| super::preview::check_native(p).is_ok())
+    {
+        return Ok(native.clone());
+    }
+    if found.is_empty() {
+        return Err("cli_missing: Die CLI des Anbieters ist nicht installiert".to_string());
+    }
+    Err("claude_not_native: Es wurde nur ein Launcher gefunden (npm, Node oder Skript)".to_string())
+}
+
+/// Die Claude-CLI fuer die Vorschau: native Binaerdateien zuerst (PATH, dann
+/// `~/.local/bin`, `~/.claude/local`, `~/.local/share/claude/versions/<neueste>`),
+/// ein Launcher nie. Nur gefunden, wenn ein Launcher da ist: `claude_not_native`.
+pub fn locate_native_claude() -> Result<PathBuf, String> {
+    let mut found = candidates(Cli::Claude);
+    let home =
+        std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(PathBuf::from);
+    if let Some(latest) = home.and_then(|h| {
+        newest_version_file(
+            &h.join(".local")
+                .join("share")
+                .join("claude")
+                .join("versions"),
+            cli_names(Cli::Claude),
+        )
+    }) {
+        found.push(latest);
+    }
+    pick_native(&found)
 }
 
 /// Zustand einer CLI auf diesem Rechner, fuer die Verbindungsseite.
@@ -1316,14 +1400,14 @@ fn switch_is_off(opts: &CallOptions) -> bool {
 }
 
 /// Vorab-Pruefungen der Vorschau: Codex (immer gesperrt), Schalter, Budget und
-/// Bindung ans Programm. Gibt die Kopie zurueck, die allein gestartet wird.
+/// Bindung ans Programm. Gibt das gehaltene Original zurueck, das allein gestartet wird.
 fn preview_precheck(
     cli: Cli,
     binary: &Path,
     check: &super::preview::PreviewCheck,
     input_bytes: usize,
     opts: &CallOptions,
-) -> Result<super::preview::LaunchCopy, super::preview::Rejection> {
+) -> Result<super::preview::Pinned, super::preview::Rejection> {
     use super::preview;
     if cli != Cli::Claude {
         return Err(preview::CODEX_BLOCKED);
@@ -1332,7 +1416,12 @@ fn preview_precheck(
         return Err(preview::SWITCH_OFF);
     }
     preview::precheck(check, input_bytes)?;
-    preview::LaunchCopy::prepare(binary, check)
+    // Dieselbe Wahl wie bei der Bindung: die native Claude-Datei.
+    #[cfg(not(test))]
+    let source = locate_native_claude().unwrap_or_else(|_| binary.to_path_buf());
+    #[cfg(test)]
+    let source = binary.to_path_buf();
+    preview::Pinned::prepare(&source, check)
 }
 
 fn call_inner(
@@ -1347,7 +1436,7 @@ fn call_inner(
     use super::preview;
     let requested = model.to_string();
     let input_bytes = system.map_or(0, str::len) + user.len();
-    let mut launch: Option<preview::LaunchCopy> = None;
+    let mut launch: Option<preview::Pinned> = None;
     if let Some(check) = &opts.preview {
         match preview_precheck(cli, binary, check, input_bytes, opts) {
             Ok(copy) => launch = Some(copy),
@@ -1357,8 +1446,11 @@ fn call_inner(
             }
         }
     }
-    // Die Vorschau startet AUSSCHLIESSLICH die verifizierte Kopie.
-    let binary: &Path = launch.as_ref().map_or(binary, |l| l.path.as_path());
+    // Die Vorschau startet AUSSCHLIESSLICH das gehaltene, verifizierte Original.
+    // Unter Linux ueber `/proc/self/fd/<fd>` des gehaltenen, gehashten Handles
+    // (kein Austauschfenster zwischen Pruefung und Start).
+    let exec_path = launch.as_ref().map(preview::Pinned::exec_path);
+    let binary: &Path = exec_path.as_deref().unwrap_or(binary);
     // `modell@effort~fast`; auf die Kommandozeile kommt nur, was die Regeln erlaubt.
     let fast = split_fast(model).1;
     let (model, effort) = split_spec(model);
@@ -1473,7 +1565,7 @@ fn call_inner(
     if switched || switch_is_off(opts) {
         return Err(reject(preview::SWITCH_OFF, None));
     }
-    if let Some(Err(r)) = launch.as_ref().map(preview::LaunchCopy::verify) {
+    if let Some(Err(r)) = launch.as_ref().map(preview::Pinned::verify) {
         return Err(reject(r, None));
     }
     // Exit-Code <> 0 ist nie ein Erfolg, auch wenn Text vorliegt.
@@ -1828,6 +1920,64 @@ pub(crate) fn mcp_disable_args(list_json: &str) -> Result<Vec<String>, String> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    fn write_exec(path: &Path, bytes: &[u8]) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, bytes).unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_preview_prefers_a_native_binary_over_an_earlier_launcher() {
+        let dir = tempfile::tempdir().unwrap();
+        let launcher = dir.path().join("a").join("claude");
+        let native = dir.path().join("b").join("claude");
+        write_exec(&launcher, b"#!/usr/bin/env node\n");
+        write_exec(&native, b"\x7fELF\x02\x01\x01 rest");
+        let found = files_in(&[dir.path().join("a"), dir.path().join("b")], &["claude"]);
+        assert_eq!(found, vec![launcher.clone(), native.clone()]);
+        // Nicht-Vorschau: die bisherige Wahl, die erste Fundstelle, bleibt.
+        assert_eq!(found.first(), Some(&launcher));
+        // Vorschau: das native Programm, auch wenn der Launcher zuerst steht.
+        assert_eq!(pick_native(&found), Ok(native.clone()));
+        // Mach-O und PE zaehlen ebenfalls als nativ.
+        let macho = dir.path().join("c").join("claude");
+        write_exec(&macho, &[0xcf, 0xfa, 0xed, 0xfe, 0, 0]);
+        assert_eq!(pick_native(&[launcher.clone(), macho.clone()]), Ok(macho));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_lone_launcher_is_not_native_and_nothing_is_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let launcher = dir.path().join("claude");
+        write_exec(&launcher, b"#!/bin/sh\n");
+        let err = pick_native(&[launcher]).unwrap_err();
+        assert!(err.starts_with("claude_not_native"), "{err}");
+        let none = pick_native(&[]).unwrap_err();
+        assert!(none.starts_with("cli_missing"), "{none}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_newest_installed_version_is_found() {
+        let dir = tempfile::tempdir().unwrap();
+        let versions = dir.path().join("versions");
+        for v in ["2.1.9", "2.1.50", "2.0.99"] {
+            write_exec(&versions.join(v), b"\x7fELF");
+        }
+        assert_eq!(
+            newest_version_file(&versions, &["claude"]),
+            Some(versions.join("2.1.50"))
+        );
+        assert_eq!(
+            newest_version_file(&dir.path().join("fehlt"), &["claude"]),
+            None
+        );
+    }
+
     use super::*;
 
     #[test]
@@ -2449,12 +2599,8 @@ exit "$(cat "$D/exit" 2>/dev/null || echo 0)"
             binding_for(cli, model, &preview::identity(&self.bin).unwrap())
         }
 
-        fn cache(&self) -> PathBuf {
-            self.dir.path().join("cache").join(preview::CACHE_DIR)
-        }
-
         fn check(&self, cli: Cli, model: &str, reported: &str, context: u32) -> PreviewCheck {
-            fixtures::check(self.binding(cli, model), reported, context).with_cache(self.cache())
+            fixtures::check(self.binding(cli, model), reported, context)
         }
 
         fn call(
@@ -2531,14 +2677,9 @@ exit "$(cat "$D/exit" 2>/dev/null || echo 0)"
             "kein Ergebnisobjekt in der Vorschau"
         );
         assert!(!log.contains("ARG:--bare"), "kein --bare (OAuth-Anmeldung)");
-        // Gestartet wurde die geschuetzte Kopie im App-Cache, nie das Original.
+        // Gestartet wurde das installierte Original (keine Kopie, kein Cache).
         let me = log.lines().find_map(|l| l.strip_prefix("SELF:")).unwrap();
-        let bound = preview::sha256_file(&f.bin).unwrap();
-        assert_eq!(
-            Path::new(me),
-            preview::copy_path(&f.cache(), &bound).as_path()
-        );
-        assert_ne!(Path::new(me), f.bin.as_path());
+        assert_eq!(Path::new(me), std::fs::canonicalize(&f.bin).unwrap());
         let pwd = log.lines().find_map(|l| l.strip_prefix("PWD:")).unwrap();
         assert!(!Path::new(pwd).starts_with(f.dir.path()), "frischer Ordner");
         assert!(!Path::new(pwd).exists(), "Arbeitsordner danach geloescht");
@@ -2828,26 +2969,6 @@ exit "$(cat "$D/exit" 2>/dev/null || echo 0)"
             "claude-sonnet-5-5",
             200_000,
         );
-        let cache = tempfile::tempdir().unwrap();
-        let err = call_with_options(
-            Cli::Claude,
-            Path::new("/nicht/vorhanden/claude"),
-            "sonnet",
-            Some("S"),
-            "u",
-            Duration::from_secs(5),
-            &CallOptions {
-                preview: Some(
-                    check
-                        .clone()
-                        .with_cache(cache.path().join(preview::CACHE_DIR)),
-                ),
-                ..CallOptions::default()
-            },
-        )
-        .unwrap_err();
-        assert_eq!(err, "cli_preview_rejected:llm_failed:payload_unknown");
-        // Ohne Cache-Wurzel startet nichts.
         let err = call_with_options(
             Cli::Claude,
             Path::new("/nicht/vorhanden/claude"),
@@ -2861,24 +2982,21 @@ exit "$(cat "$D/exit" 2>/dev/null || echo 0)"
             },
         )
         .unwrap_err();
-        assert_eq!(err, "cli_preview_rejected:llm_failed:copy_unavailable");
+        assert_eq!(err, "cli_preview_rejected:llm_failed:payload_unknown");
     }
 
     #[cfg(unix)]
     #[test]
-    fn a_copy_changed_during_the_call_voids_the_reply() {
-        use std::os::unix::fs::PermissionsExt;
-        // Die Kopie wird waehrend des Laufs veraendert (gleicher Nutzer hebt den Schutz auf).
+    fn an_original_changed_during_the_call_voids_the_reply() {
+        // Das Original wird waehrend des Laufs veraendert (gleicher Nutzer, in place).
         let f = claude_fake(GOOD_CLAUDE);
         let check = f.check(Cli::Claude, "sonnet", "claude-sonnet-5-5", 200_000);
-        let copy = preview::copy_path(&f.cache(), &check.binding.binary_sha256);
+        let copy = f.bin.clone();
         let swapper = std::thread::spawn({
             let log = f.dir.path().join("log.txt");
             move || {
                 for _ in 0..200 {
                     if log.exists() {
-                        std::fs::set_permissions(&copy, std::fs::Permissions::from_mode(0o700))
-                            .unwrap();
                         let mut s = std::fs::read_to_string(&copy).unwrap();
                         s.push_str("\n# getauscht\n");
                         std::fs::write(&copy, s).unwrap();
@@ -2896,29 +3014,6 @@ exit "$(cat "$D/exit" 2>/dev/null || echo 0)"
 
     #[cfg(unix)]
     #[test]
-    fn a_swapped_original_does_not_matter_the_bound_copy_runs() {
-        let f = claude_fake(GOOD_CLAUDE);
-        let check = f.check(Cli::Claude, "sonnet", "claude-sonnet-5-5", 200_000);
-        // Erster Aufruf legt die Kopie an; danach wird das Original ausgetauscht.
-        f.call(Cli::Claude, "sonnet", check.clone(), on()).unwrap();
-        let mut script = std::fs::read_to_string(&f.bin).unwrap();
-        script.push_str("\n# Update\n");
-        std::fs::write(&f.bin, script).unwrap();
-        f.call(Cli::Claude, "sonnet", check, on()).unwrap();
-        // Ohne Kopie und mit getauschtem Original: neue Belege noetig.
-        let f = claude_fake(GOOD_CLAUDE);
-        let other = f.check(Cli::Claude, "sonnet", "claude-sonnet-5-5", 200_000);
-        let mut script = std::fs::read_to_string(&f.bin).unwrap();
-        script.push_str("\n# Update\n");
-        std::fs::write(&f.bin, script).unwrap();
-        assert_eq!(
-            f.call(Cli::Claude, "sonnet", other, on()).unwrap_err(),
-            "cli_preview_rejected:llm_failed:binding_changed"
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
     fn codex_is_always_blocked_in_the_preview() {
         // Auch mit Schalter, Tupel, Belegen und einer Fake-CLI, die Erfolg meldete.
         let f = Fake::new(r#"{"type":"turn.completed"}"#, "--ignore-user-config");
@@ -2927,14 +3022,13 @@ exit "$(cat "$D/exit" 2>/dev/null || echo 0)"
             "gpt-6.1-sol",
             &preview::identity(&f.bin).unwrap(),
         );
-        let check = fixtures::check(b, "gpt-6.1-sol", 272_000).with_cache(f.cache());
+        let check = fixtures::check(b, "gpt-6.1-sol", 272_000);
         let err = f.call(Cli::Codex, "gpt-6.1-sol", check, on()).unwrap_err();
         assert_eq!(
             err,
             "cli_preview_rejected:llm_failed:codex_preview_not_available"
         );
         assert!(!f.started(), "nie gestartet");
-        assert!(!f.cache().exists(), "keine Kopie");
     }
 
     #[cfg(unix)]

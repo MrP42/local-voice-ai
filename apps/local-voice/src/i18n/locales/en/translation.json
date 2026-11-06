@@ -798,7 +798,8 @@
           "no_cli": "Not released yet: CLI not found or not readable",
           "context_unknown": "Not released yet: the context size of the model is not established",
           "codex_preview_not_available": "Preview for Codex follows",
-          "claude_not_native": "Not released yet: Claude is not a native executable (npm, Node or script launcher)"
+          "claude_not_native": "Not released yet: Claude is not a native executable (npm, Node or script launcher)",
+          "platform_unsupported": "Not released yet: Not yet available on this system"
         }
       },
       "turn": {
@@ -821,12 +822,13 @@
         "title": "Turn on the subscription preview?",
         "reconfirm": "The CLI or the model has changed. Please confirm the preview again; until then the switch has no effect.",
         "risk": "Budget is empirical, not proven: for a subscription it cannot be proven in advance how many tokens a call needs. The app uses safety margins and discards every reply that hints at compaction, truncation or mismatches. Answers can still be wrong.",
-        "cloud": "Requests go to Anthropic through your subscription. The approval applies to the Claude file installed now (a local copy in the app folder); after an update you must confirm again and create new evidence.",
+        "cloud": "Requests go to Anthropic through your subscription. The approval applies to the Claude file installed now (the installed original, no copy); after an update you must confirm again and create new evidence.",
         "confirm": "Understood, turn on",
         "cancel": "Cancel",
         "error": {
           "noCli": "No installed Claude CLI found. Install Claude Code and sign in. Codex follows later.",
           "notNative": "The Claude CLI is not a native executable (npm, Node or script launcher) and cannot be used.",
+          "platformUnsupported": "Not yet available on this system",
           "other": "The preview could not be turned on."
         }
       },

@@ -1311,14 +1311,6 @@ async fn preview_check_for(
         DEFAULT_MAX_ANSWER_TOKENS,
         &load_evidence(app),
     )
-    .and_then(|check| Some(check.with_cache(cli_cache_root(app)?)))
-}
-
-/// Cache-Wurzel der Programmkopien (`<App-Daten>/booktalk-cli`).
-pub fn cli_cache_root(app: &AppHandle) -> Option<std::path::PathBuf> {
-    crate::portable::app_data_dir(app)
-        .ok()
-        .map(|dir| dir.join(preview::CACHE_DIR))
 }
 
 /// Tupel für alle eingeschalteten Abo-Modelle eingeschalteter Verbindungen
@@ -1365,6 +1357,9 @@ pub const ERR_NO_CLI: &str = "no_cli";
 /// Fehlercode, wenn die Claude-CLI keine native Binaerdatei ist (npm-, Node-
 /// oder Skript-Launcher).
 pub const ERR_CLAUDE_NOT_NATIVE: &str = "claude_not_native";
+/// Fehlercode, wenn dieses System das geprüfte Programm nicht ohne
+/// Austauschfenster starten kann (macOS, andere Unix, Linux ohne `/proc`).
+pub const ERR_PLATFORM_UNSUPPORTED: &str = "platform_unsupported";
 
 /// Schalter „Abo-Vorschau“ (`book_talk_subscription_preview`, Standard aus).
 /// Einschalten (und erneutes Bestätigen) geht nur nach dem Risikohinweis
@@ -1384,15 +1379,25 @@ pub async fn change_book_talk_subscription_preview_setting(
         if !acknowledged {
             return Err(ERR_RISK_NOT_ACKNOWLEDGED.to_string());
         }
+        if !preview::platform_supported() {
+            return Err(ERR_PLATFORM_UNSUPPORTED.to_string());
+        }
         let current = crate::settings::get_settings(&app);
-        let cache = cli_cache_root(&app).ok_or_else(|| ERR_NO_CLI.to_string())?;
-        // Bindung = Kopie der nativen Claude-Datei in den App-Cache (Identitaet
-        // ist die der Kopie); alte Kopien anderer Hashes werden entfernt.
+        // Bindung = die installierte native Claude-Datei (keine Kopie), gehalten
+        // und gehasht ueber `preview::Pinned`.
         let (bound, not_native) = tokio::task::spawn_blocking(move || {
             let not_native = std::sync::atomic::AtomicBool::new(false);
             let bound = bindings_for(&current, |cli| {
-                let binary = crate::managers::llm::cli::locate(cli)?;
-                match preview::bind_copy(&cache, &binary) {
+                let binary = match crate::managers::llm::cli::locate_native_claude() {
+                    Ok(binary) => binary,
+                    Err(e) => {
+                        if e.starts_with("claude_not_native") {
+                            not_native.store(true, std::sync::atomic::Ordering::SeqCst);
+                        }
+                        return None;
+                    }
+                };
+                match preview::identity(&binary) {
                     Ok(identity) => Some(identity),
                     Err(e) => {
                         if e.starts_with("claude_not_native") {
