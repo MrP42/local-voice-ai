@@ -11,7 +11,7 @@
 # sichern. Geht der Schluessel verloren, sind die Freigaben einmalig neu noetig (keine Daten weg).
 # Kein Developer-ID-Zertifikat, keine Notarisierung: Gatekeeper warnt beim ersten Start wie bisher.
 #
-# Idempotent: ist die Identitaet schon gueltig im Schluesselbund, aendert das Skript nichts.
+# Idempotent: ist die Identitaet schon gueltig, erneuert das Skript nur die Freigabe fuer codesign.
 # Aufruf aus apps/local-voice:  scripts/macos-signing-setup.sh
 set -euo pipefail
 
@@ -27,7 +27,17 @@ OPENSSL=/usr/bin/openssl
 
 gueltig() { security find-identity -v -p codesigning "$KEYCHAIN" 2>/dev/null | grep -qF "\"$NAME\""; }
 
+# Ohne Partition-Liste fragt macOS bei jedem codesign im Dialog nach dem Schluessel. Ein
+# unbeaufsichtigter Bau haengt dann still (gesperrter Mac: niemand sieht die Abfrage). Nur dieser
+# Schluessel, nur Apple-Werkzeuge. Ohne -k fragt `security` das Anmeldepasswort selbst verdeckt ab,
+# es landet also weder in der Prozessliste noch in der Shell-Historie.
+codesign_freigeben() {
+  echo "macOS fragt jetzt nach dem Anmeldepasswort (Schluessel fuer codesign freigeben):"
+  security set-key-partition-list -S apple-tool:,apple:,codesign: -s -l "$NAME" "$KEYCHAIN" >/dev/null
+}
+
 if gueltig; then
+  codesign_freigeben
   echo "OK: Signieridentitaet \"$NAME\" ist bereits eingerichtet."
   exit 0
 fi
@@ -70,6 +80,7 @@ security import "$P12" -k "$KEYCHAIN" -P "$PW" -T /usr/bin/codesign -f pkcs12
 
 # Vertrauen nur fuer die Codesignatur (macOS fragt das Passwort ab).
 security add-trusted-cert -r trustRoot -p codeSign -k "$KEYCHAIN" "$CRT"
+codesign_freigeben
 
 if gueltig; then
   echo "OK: \"$NAME\" eingerichtet. Release-Builds nutzen sie ueber APPLE_SIGNING_IDENTITY."
