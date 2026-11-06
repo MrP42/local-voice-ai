@@ -305,7 +305,10 @@ fn page_text(app: &AppHandle, page_id: &str) -> Option<String> {
 
 /// Neuestes Kurzbuch je Sprache einer Vorlesen-Seite, nach Sprache sortiert.
 fn kurzbuecher(app: &AppHandle, page_id: &str) -> Vec<(String, String)> {
-    let Some(dir) = crate::commands::pages::page_path(app, page_id).ok().filter(|d| d.is_dir()) else {
+    let Some(dir) = crate::commands::pages::page_path(app, page_id)
+        .ok()
+        .filter(|d| d.is_dir())
+    else {
         return Vec::new();
     };
     let docs = crate::book_ai::store::list(&dir).unwrap_or_default();
@@ -321,8 +324,15 @@ fn kurzbuecher(app: &AppHandle, page_id: &str) -> Vec<(String, String)> {
 /// Sprache → Dokument; ohne Angabe gilt Deutsch wie bei älteren Kurzbüchern.
 fn newest_per_language(docs: &[crate::book_ai::store::KiDocument]) -> Vec<(String, String)> {
     let mut newest: BTreeMap<String, &crate::book_ai::store::KiDocument> = BTreeMap::new();
-    for doc in docs.iter().filter(|d| d.template_id == crate::book_ai::kurzbuch::TEMPLATE_ID) {
-        let language = doc.language.clone().filter(|l| library::sync_plain_name(l)).unwrap_or_else(|| "de".into());
+    for doc in docs
+        .iter()
+        .filter(|d| d.template_id == crate::book_ai::kurzbuch::TEMPLATE_ID)
+    {
+        let language = doc
+            .language
+            .clone()
+            .filter(|l| library::sync_plain_name(l))
+            .unwrap_or_else(|| "de".into());
         let known = newest.get(&language).map_or(f64::MIN, |d| d.modified_ms);
         if doc.modified_ms >= known {
             newest.insert(language, doc);
@@ -412,7 +422,12 @@ fn build_book(
             }
         }
     }
-    for (language, text) in book.text.as_ref().map(|t| kurzbuecher(app, &t.page_id)).unwrap_or_default() {
+    for (language, text) in book
+        .text
+        .as_ref()
+        .map(|t| kurzbuecher(app, &t.page_id))
+        .unwrap_or_default()
+    {
         let bytes = text.into_bytes();
         if let Some(mut r) = BlobRef::new(key, &blobs::stamp_bytes(&bytes)) {
             r.kind = Some("md".into());

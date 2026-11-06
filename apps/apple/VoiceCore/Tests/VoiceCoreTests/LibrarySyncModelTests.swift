@@ -117,6 +117,8 @@ final class DesktopVectorTests: XCTestCase {
         XCTAssertEqual(LibraryText.kurzbuchLanguage("kurzbuch-de.md"), "de")
         XCTAssertNil(LibraryText.kurzbuchLanguage("anderes.md"))
         XCTAssertEqual(LibraryText.kurzbuchText("## Fazit\n\n**Wichtig** bleibt."), "## Fazit\n\nWichtig bleibt.")
+    }
+
     func testFileUpdateKeepsStarSetDuringUpload() throws {
         // Upload beginnt, währenddessen setzt der Stern Zeitstempel und Merker; danach kommt der Verweis dazu.
         let duringUpload = LibrarySyncMeta(updated: 200, pendingFavorite: true, pendingFields: "f")
