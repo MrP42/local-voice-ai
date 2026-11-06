@@ -137,6 +137,11 @@ export const primaryAudioKey = (book: LibraryBook): string => {
   return p ? audioKeyOf(book, p) : audioProgressKey(book.id);
 };
 
+/** Fortschrittsschlüssel der Hörbücher aller Fassungen (ohne Fassungen: der des Buchs). */
+export const audioKeysOf = (book: LibraryBook): string[] => [
+  ...new Set(editionsOf(book).map((e) => audioKeyOf(book, e))),
+];
+
 /** Fortschrittsschlüssel des Textes einer Fassung (Reiter „Original“). */
 export const textKeyOf = (e: Edition): string | null =>
   e.text ? textProgressKey(e.text.page_id) : null;

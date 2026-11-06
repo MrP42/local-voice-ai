@@ -17,7 +17,8 @@ import {
   tracksOf,
 } from "./books";
 import type { AudioGroup } from "./audioGroups";
-import { audioProgressKey, removeProgress, textProgressKey } from "./progress";
+import { removeProgress, textProgressKey } from "./progress";
+import { primaryAudioKey } from "./editions";
 import { probeDuration } from "./probe";
 import { detectLanguage } from "../reader/language";
 import { langName } from "./editions";
@@ -614,7 +615,7 @@ export async function addAudioGroup(
  */
 export async function cleanupReplaced(before: LibraryBook): Promise<void> {
   for (const id of pendingJobs(before)) await commands.meetingsDelete(id);
-  removeProgress(audioProgressKey(before.id));
+  removeProgress(primaryAudioKey(before));
   if (before.text?.origin === "transcript") {
     removeProgress(textProgressKey(before.text.page_id));
     await commands.pagesDelete(before.text.page_id);

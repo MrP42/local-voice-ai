@@ -562,6 +562,7 @@ export const LibraryPage: React.FC = () => {
     edition: playingEdition,
     loading: loadingEditions,
     switchTo,
+    onDispose,
   } = usePlayerLanguage({
     books,
     listening,
@@ -1386,6 +1387,7 @@ export const LibraryPage: React.FC = () => {
               full: playing,
             }}
             startFollow={listening.follow}
+            onDispose={onDispose}
             startPlaying={listening.startPlaying}
             focusLanguage={listening.focusLanguage}
             loadingEditions={loadingEditions}

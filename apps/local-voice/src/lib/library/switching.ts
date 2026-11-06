@@ -201,8 +201,13 @@ function writeTarget(
     updated: 0,
   };
   const unit = plan.position.unit === "ms" ? "ms" : "chars";
+  // Eine als fertig markierte Zielfassung startet an der Zielstelle, nicht bei 0.
+  const { finished: _finished, ...open } = base;
+  void _finished;
+  // Erst entfernen: Schreiben führt sonst mit dem Stand („fertig“, Stelle) zusammen.
+  removeProgress(key);
   saveProgress(key, {
-    ...base,
+    ...open,
     offset: plan.position.offset,
     length: unit === "ms" ? total || base.length : textLength || base.length,
     unit,
@@ -275,8 +280,8 @@ export async function applySwitch(
 }
 
 function restoreTarget(undo: SwitchUndo): void {
+  removeProgress(undo.targetKey);
   if (undo.targetRecord) saveProgress(undo.targetKey, undo.targetRecord);
-  else removeProgress(undo.targetKey);
   if (undo.resumeKey) setLocal(undo.resumeKey, undo.resumeBefore);
 }
 

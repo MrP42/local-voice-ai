@@ -72,8 +72,13 @@ export function useLibrary() {
   /** Jobs in Übernahme oder übernommen: nie zweimal verarbeiten. */
   const finishing = useRef(new Set<string>());
 
+  /** Laufnummer: ein veraltetes Ergebnis überschreibt kein neueres. */
+  const loadSeq = useRef(0);
+
   const reload = useCallback(async () => {
+    const seq = ++loadSeq.current;
     const result = await commands.libraryList();
+    if (seq !== loadSeq.current) return;
     if (result.status !== "ok") {
       setBooks([]);
       return;
@@ -100,6 +105,7 @@ export function useLibrary() {
         ] as const;
       }),
     );
+    if (seq !== loadSeq.current) return;
     setPageAudio(Object.fromEntries(entries));
   }, []);
 

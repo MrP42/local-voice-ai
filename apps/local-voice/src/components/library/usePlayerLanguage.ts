@@ -18,6 +18,7 @@ import { chapterOf } from "@/lib/library/languageSwitch";
 import {
   flushProgress,
   loadProgress,
+  removeProgress,
   saveProgress,
 } from "@/lib/library/progress";
 import {
@@ -157,6 +158,39 @@ export function usePlayerLanguage({
       : null;
   const [loading, setLoading] = useState<ReadonlySet<string>>(new Set());
   const busy = useRef(false);
+  const currentId = useRef<string | undefined>(undefined);
+  currentId.current = listening?.book.id;
+  /** Nur das Buch ändern, für das die Aktion gestartet wurde. */
+  const patch = useCallback(
+    (id: string, next: Partial<Listening>) =>
+      setListening((l) => (l && l.book.id === id ? { ...l, ...next } : l)),
+    [setListening],
+  );
+  // Warten, bis die Leiste einer Fassung abgebaut ist und ihre Stelle gesichert hat.
+  const waiters = useRef(new Map<string, () => void>());
+  const onDispose = useCallback((editionId: string | undefined) => {
+    if (!editionId) return;
+    waiters.current.get(editionId)?.();
+    waiters.current.delete(editionId);
+  }, []);
+  const barGone = useCallback(
+    (editionId: string) =>
+      new Promise<void>((resolve) => {
+        const timer = window.setTimeout(resolve, 2000);
+        waiters.current.set(editionId, () => {
+          window.clearTimeout(timer);
+          resolve();
+        });
+      }),
+    [],
+  );
+  // Fokus und Startzustand gelten nur für den Aufbau, der sie angefordert hat.
+  useEffect(() => {
+    if (listening && (listening.focusLanguage || !listening.startPlaying))
+      setListening((l) =>
+        l ? { ...l, focusLanguage: false, startPlaying: true } : l,
+      );
+  }, [listening, setListening]);
 
   // Geladen? Dann aus der Liste der ladenden Fassungen nehmen.
   useEffect(() => {
@@ -205,18 +239,15 @@ export function usePlayerLanguage({
           { offset: req.ms, unit: "ms" },
           { wasPlaying: req.playing, total: undefined },
         );
-        setListening((l) =>
-          l
-            ? {
-                ...l,
-                book: updated,
-                edition: target.id,
-                startPlaying: req.playing,
-                focusLanguage: true,
-              }
-            : l,
-        );
+        const afterRecord = loadProgress(plan.position.key);
+        patch(playing.id, {
+          book: updated,
+          edition: target.id,
+          startPlaying: req.playing,
+          focusLanguage: true,
+        });
         await reload();
+        if (currentId.current !== playing.id) return;
         const said = describe(t as T, updated, plan);
         showNotice({
           owner: "library",
@@ -237,26 +268,35 @@ export function usePlayerLanguage({
               id: "undo",
               label: t("library.sf.notice.undo"),
               run: async () => {
+                const same = currentId.current === playing.id;
                 try {
-                  setListening((l) =>
-                    l
-                      ? {
-                          ...l,
-                          edition: undo.fromEdition,
-                          startPlaying: undo.wasPlaying,
-                          focusLanguage: true,
-                        }
-                      : l,
-                  );
-                  // Die Leiste der Zielfassung sichert beim Abbau ihre Stelle;
-                  // erst danach den Stand der Zielfassung zurücksetzen.
-                  await new Promise((resolve) =>
-                    window.setTimeout(resolve, 60),
-                  );
-                  await flushProgress();
+                  if (same) {
+                    const gone = barGone(target.id);
+                    patch(playing.id, {
+                      edition: undo.fromEdition,
+                      startPlaying: undo.wasPlaying,
+                      focusLanguage: true,
+                    });
+                    // Die Leiste der Zielfassung sichert beim Abbau ihre Stelle;
+                    // erst danach den Stand der Zielfassung zurücksetzen.
+                    await gone;
+                    await flushProgress();
+                  }
                   await undoSwitch(undo);
                   await reload();
                 } catch (e) {
+                  // Kein halber Zustand: zurück zur Zielfassung mit ihrer Stelle.
+                  if (afterRecord) {
+                    removeProgress(plan.position.key);
+                    saveProgress(plan.position.key, afterRecord);
+                  }
+                  if (same)
+                    patch(playing.id, {
+                      edition: target.id,
+                      startPlaying: false,
+                      focusLanguage: true,
+                    });
+                  await reload();
                   toast.error(e instanceof Error ? e.message : String(e));
                 }
               },
@@ -269,7 +309,7 @@ export function usePlayerLanguage({
         busy.current = false;
       }
     },
-    [playing, edition, t, setListening, reload, openAlign],
+    [playing, edition, t, patch, barGone, reload, openAlign],
   );
 
   // Konflikt (sf-11): ein anderes Gerät hat inzwischen eine andere Fassung gehört.
@@ -278,6 +318,10 @@ export function usePlayerLanguage({
   const bookId = listening?.book.id;
   useEffect(() => {
     sessionStart.current = Date.now();
+  }, [bookId]);
+  // Ein Hinweis gehört zu seinem Buch: wird ein anderes gestartet, verschwindet er.
+  useEffect(() => {
+    dismissNotice();
   }, [bookId]);
   const reading = playing?.reading;
   useEffect(() => {
@@ -322,10 +366,35 @@ export function usePlayerLanguage({
           id: "go",
           label: t("library.sf.conflict.go"),
           run: async () => {
+            if (currentId.current !== playing.id) return;
+            if (!hasAudio(playing, there)) {
+              // Das Hörbuch fehlt hier: Abgleich anstoßen, die Wiedergabe läuft weiter.
+              setLoading((prev) => new Set(prev).add(there.id));
+              void commands.syncNow().catch(() => {});
+              toast(
+                t("library.sf.notice.loading", {
+                  lang: langName(there.lang) || langShort(there.lang),
+                  current: langName(edition.lang) || langShort(edition.lang),
+                }),
+              );
+              return;
+            }
             const tk = audioKeyOf(playing, there);
-            if (reading.position && reading.position.key === tk) {
+            if (
+              reading.position &&
+              reading.position.key === tk &&
+              reading.position.unit === "ms"
+            ) {
               const rec = loadProgress(tk);
+              // Die Stelle des anderen Geräts gilt; „fertig“ der Fassung weicht ihr.
+              const { finished: _finished, ...rest } = rec ?? {
+                heard: [],
+                read: [],
+                length: 0,
+              };
+              void _finished;
               saveProgress(tk, {
+                ...rest,
                 offset: reading.position.offset,
                 length: rec?.length ?? 0,
                 heard: rec?.heard ?? [],
@@ -334,27 +403,26 @@ export function usePlayerLanguage({
                 updated: Date.now(),
               });
             }
-            setListening((l) =>
-              l
-                ? {
-                    ...l,
-                    edition: there.id,
-                    startPlaying: true,
-                    focusLanguage: true,
-                  }
-                : l,
-            );
+            patch(playing.id, {
+              edition: there.id,
+              startPlaying: true,
+              focusLanguage: true,
+            });
           },
         },
         {
           id: "stay",
           label: t("library.sf.conflict.stay"),
           run: async () => {
+            if (currentId.current !== playing.id) return;
+            // Die Stelle gilt zum Zeitpunkt des Klicks, nicht der Anzeige.
+            await flushProgress();
+            const now = loadProgress(key)?.offset ?? here;
             const r = await commands.librarySetReading(playing.id, {
               edition: edition.id,
               updated: Date.now(),
               device: deviceId(),
-              position: { key, unit: "ms", offset: here },
+              position: { key, unit: "ms", offset: now },
             });
             if (r.status !== "ok") toast.error(r.error);
             else await reload();
@@ -362,12 +430,12 @@ export function usePlayerLanguage({
         },
       ],
     });
-  }, [playing, edition, reading, t, setListening, reload]);
+  }, [playing, edition, reading, t, patch, reload]);
 
   // Beim Schließen der Leiste bleibt kein Hinweis stehen, der sich auf sie bezieht.
   useEffect(() => {
     if (!listening) dismissNotice();
   }, [listening]);
 
-  return { playing, edition, loading, switchTo };
+  return { playing, edition, loading, switchTo, onDispose };
 }

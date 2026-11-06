@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { commands, type LibraryBook } from "@/bindings";
@@ -49,6 +49,7 @@ export const ReaderLanguage: React.FC<Props> = ({
   const { t } = useTranslation();
   const [book, setBook] = useState<LibraryBook | null>(null);
   const [focus, setFocus] = useState(false);
+  const busy = useRef(false);
 
   const load = useCallback(async () => {
     const r = await commands.libraryList().catch(() => null);
@@ -71,7 +72,8 @@ export const ReaderLanguage: React.FC<Props> = ({
 
   const pick = async (toId: string) => {
     const target = editionById(book, toId);
-    if (!target?.text) return;
+    if (!target?.text || busy.current) return;
+    busy.current = true;
     const offset = getOffset();
     try {
       const plan = await planSwitch(
@@ -139,6 +141,8 @@ export const ReaderLanguage: React.FC<Props> = ({
       });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      busy.current = false;
     }
   };
 

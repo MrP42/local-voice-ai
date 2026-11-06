@@ -1,7 +1,7 @@
 import { commands, type LibraryBook, type TrashEntry } from "@/bindings";
 import { pendingJobs } from "./books";
+import { audioKeysOf, editionsOf } from "./editions";
 import {
-  audioProgressKey,
   flushProgress,
   removeProgress,
   textProgressKey,
@@ -54,7 +54,9 @@ export async function purgeBooks(books: LibraryBook[]): Promise<void> {
   if (r.status !== "ok") throw new Error(r.error);
   for (const book of books) {
     for (const job of pendingJobs(book)) await commands.meetingsDelete(job);
-    removeProgress(audioProgressKey(book.id));
+    for (const key of audioKeysOf(book)) removeProgress(key);
+    for (const e of editionsOf(book))
+      if (e.text) removeProgress(textProgressKey(e.text.page_id));
     if (book.text) {
       removeProgress(textProgressKey(book.text.page_id));
       await commands.pagesDelete(book.text.page_id);

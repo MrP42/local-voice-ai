@@ -99,6 +99,8 @@ export const AlignDialog: React.FC<Props> = ({
   } | null>(null);
   const [groups, setGroups] = useState<AlignGroup[]>([]);
   const [busy, setBusy] = useState(false);
+  /** Medium, zu dem `groups` gehören; `null` solange Kapitel geladen werden. */
+  const [ready, setReady] = useState<Medium | null>(null);
   // Ein Neuladen der Bibliothek (Sync) darf angefangene Änderungen nicht verwerfen.
   const bookRef = useRef(book);
   bookRef.current = book;
@@ -114,6 +116,7 @@ export const AlignDialog: React.FC<Props> = ({
     if (!open || !current || !pair) return;
     let stale = false;
     setLists(null);
+    setReady(null);
     void Promise.all([
       chapters(current, pair.a, medium),
       chapters(current, pair.b, medium),
@@ -124,6 +127,7 @@ export const AlignDialog: React.FC<Props> = ({
       const nb = cb?.titles.length ?? 0;
       const saved = alignmentFor(current, pair.a, pair.b).groups;
       setGroups(groupsFit(saved, na, nb) ? saved : proposeGroups(na, nb));
+      setReady(medium);
     });
     return () => {
       stale = true;
@@ -139,7 +143,8 @@ export const AlignDialog: React.FC<Props> = ({
   const nameB = langName(b?.lang);
 
   const save = async () => {
-    if (!book || !pair || !validGroups(groups)) return;
+    if (!book || !pair || !lists || ready !== medium || !validGroups(groups))
+      return;
     setBusy(true);
     try {
       const saved = await saveAlignment(
@@ -224,7 +229,7 @@ export const AlignDialog: React.FC<Props> = ({
           </Button>
           <Button
             variant="primary"
-            disabled={busy || !groups.length}
+            disabled={busy || !groups.length || !lists || ready !== medium}
             onClick={() => void save()}
             data-testid="sf-align-save"
           >

@@ -119,6 +119,8 @@ interface Props {
   focusLanguage?: boolean;
   /** Gleich losspielen (Vorgabe) oder pausiert starten. */
   startPlaying?: boolean;
+  /** Die Leiste ist abgebaut und hat ihre Stelle gesichert (Fassungs-ID). */
+  onDispose?(editionId: string | undefined): void;
   onClose(): void;
   /** Dauern am Buch sichern (useLibrary.save). */
   onSave?(
@@ -146,6 +148,7 @@ export const AudioBar: React.FC<Props> = ({
   loadingEditions,
   focusLanguage = false,
   startPlaying = true,
+  onDispose,
   onClose,
   onSave,
   startFollow = false,
@@ -481,10 +484,13 @@ export const AudioBar: React.FC<Props> = ({
     persistRef.current(true);
   }, [sectionActive]);
 
+  const disposeRef = useRef(() => onDispose?.(edition?.id));
+  disposeRef.current = () => onDispose?.(edition?.id);
   useEffect(() => {
     return () => {
       // Beim Schließen sichern, solange das Element noch Zeit kennt.
       persistRef.current(true);
+      disposeRef.current();
     };
   }, []);
 

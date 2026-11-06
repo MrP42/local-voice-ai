@@ -783,3 +783,167 @@ test("„Alle bestätigen“ bleibt gesperrt, solange Gruppen offen sind", async
   }[];
   expect(saved.alignment.groups.every((g) => g.confirmed)).toBe(true);
 });
+
+const seekTo = (page: Page, value: number) =>
+  page.getByTestId("library-audiobar-seek").evaluate((el, v) => {
+    const input = el as HTMLInputElement;
+    const set = Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      "value",
+    )!.set!;
+    set.call(input, String(v));
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  }, value);
+
+const foreignReading = (page: Page, updated: number, offset: number) =>
+  page.evaluate(
+    ({ updated, offset }) => {
+      const w = window as unknown as {
+        __books: Rec[];
+        __emit(event: string, payload: unknown): void;
+      };
+      w.__books = w.__books.map((b) =>
+        b.id !== "book_a"
+          ? b
+          : {
+              ...b,
+              reading: {
+                edition: "ed_book_a_en",
+                updated: Date.now() + updated,
+                device: "ios_beispiel",
+                position: {
+                  key: "audio:book_a:ed_book_a_en",
+                  unit: "ms",
+                  offset,
+                },
+              },
+            },
+      );
+      w.__emit("sync-changed", null);
+    },
+    { updated, offset },
+  );
+
+test("Zielfassung „fertig“: der Wechsel startet an der Zielstelle, Rückgängig stellt den Stand her", async ({
+  page,
+}) => {
+  await setup(page, [bookA()], { pageText: PAGES });
+  const finished = {
+    offset: 0,
+    length: 45000,
+    heard: [[0, 10000]],
+    read: [],
+    unit: "ms",
+    updated: 1,
+    finished: true,
+  };
+  await page.addInitScript((rec) => {
+    window.localStorage.setItem(
+      "lva.ui.progress.audio:book_a:ed_book_a_en",
+      JSON.stringify(rec),
+    );
+  }, finished);
+  await page.goto("/");
+  await play(page, "Der Prozess");
+  await pick(page, "ed_book_a_en");
+  await expect(page.getByTestId("sf-notice")).toContainText("kapitelgenau");
+  const en = await progress(page, "audio:book_a:ed_book_a_en");
+  expect(en.finished).toBeFalsy();
+  expect(en.offset).toBeGreaterThanOrEqual(15000);
+  await expect.poll(() => seconds(page)).toBeGreaterThanOrEqual(15);
+  await page.getByTestId("sf-notice-undo").click();
+  await expect(page.getByTestId("sf-switch-button")).toHaveAccessibleName(
+    /Deutsch/,
+  );
+  await expect
+    .poll(
+      async () => (await progress(page, "audio:book_a:ed_book_a_en"))?.finished,
+    )
+    .toBe(true);
+  expect((await progress(page, "audio:book_a:ed_book_a_en")).offset).toBe(0);
+});
+
+test("Konflikt: „Dorthin wechseln“ ohne lokales Hörbuch lässt die Wiedergabe unverändert", async ({
+  page,
+}) => {
+  await setup(
+    page,
+    [twoLanguages("book_a", ["Der Prozess", "The Trial"], DE3, EN3, {}, false)],
+    { pageText: PAGES },
+  );
+  await page.goto("/");
+  await play(page, "Der Prozess");
+  await page.evaluate(() => {
+    document.querySelector("audio")!.setAttribute("data-marker", "same");
+  });
+  await foreignReading(page, 5000, 30000);
+  await page.getByTestId("sf-notice-go").click();
+  expect((await calls(page, "sync_now")).length).toBeGreaterThan(0);
+  await expect(page.getByTestId("sf-switch-button")).toHaveAccessibleName(
+    /Deutsch/,
+  );
+  await expect(page.locator("audio[data-marker='same']")).toHaveCount(1);
+  await expect(page.getByText(/wird geladen/)).toBeVisible();
+});
+
+test("Konflikt: „Hier bleiben“ nimmt die Stelle beim Klick; ein anderes Buch räumt den Hinweis ab", async ({
+  page,
+}) => {
+  await setup(
+    page,
+    [bookA(), twoLanguages("book_c", ["Das Urteil", "The Verdict"], DE3, EN3)],
+    { pageText: PAGES },
+  );
+  await page.goto("/");
+  await play(page, "Der Prozess");
+  await foreignReading(page, 5000, 30000);
+  await expect(page.getByTestId("sf-notice")).toContainText("iPhone");
+  await seekTo(page, 50);
+  await page.getByTestId("sf-notice-stay").click();
+  await expect
+    .poll(async () => {
+      const last = (await calls(page, "library_set_reading")).at(-1) as
+        { reading: { position: { offset: number } } } | undefined;
+      return last?.reading.position.offset ?? 0;
+    })
+    .toBeGreaterThanOrEqual(50000);
+
+  await foreignReading(page, 20000, 31000);
+  await expect(page.getByTestId("sf-notice")).toContainText("iPhone");
+  await page.getByTestId("library-audiobar-close").click();
+  await play(page, "Das Urteil");
+  await expect(page.getByTestId("sf-notice")).toBeHidden();
+});
+
+test("Aufräumen: Ersetzen und Endgültig löschen räumen den Fortschritt der Fassungen", async ({
+  page,
+}) => {
+  const book = bookA();
+  await setup(page, [book], { pageText: PAGES });
+  await page.addInitScript(() => {
+    for (const k of ["audio:book_a", "audio:book_a:ed_book_a_en"])
+      window.localStorage.setItem(
+        `lva.ui.progress.${k}`,
+        JSON.stringify({
+          offset: 5,
+          length: 9,
+          heard: [],
+          read: [],
+          unit: "ms",
+          updated: 1,
+        }),
+      );
+  });
+  await page.goto("/");
+  await page.evaluate(async (b) => {
+    const mod = await import("/src/lib/library/importFile.ts");
+    await mod.cleanupReplaced(b as never);
+  }, book);
+  expect(await progress(page, "audio:book_a")).toBeNull();
+  expect(await progress(page, "audio:book_a:ed_book_a_en")).not.toBeNull();
+  await page.evaluate(async (b) => {
+    const mod = await import("/src/lib/library/remove.ts");
+    await mod.purgeBooks([b as never]);
+  }, book);
+  expect(await progress(page, "audio:book_a:ed_book_a_en")).toBeNull();
+});
