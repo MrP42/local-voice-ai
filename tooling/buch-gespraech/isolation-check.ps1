@@ -50,7 +50,9 @@
   vom Laufwerkswurzel bis zum Zielordner wird nacheinander per CreateFileW (P/Invoke,
   FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, Teilen Lesen/Schreiben,
   NICHT Loeschen) geoeffnet, am Handle auf FILE_ATTRIBUTE_REPARSE_POINT geprueft und
-  bis zum Ende gehalten (Umbenennen, Loeschen, Ersetzen scheitert). Die Datei wird mit
+  bis zum Ende gehalten. Ein Umbenennen gehaltener Komponenten wird unter Windows nicht
+  zuverlaessig verhindert, nur ERKANNT: Assert-Pinned (vor und nach jedem Lauf) vergleicht
+  den Endpfad des Datei-Handles und aller Elternhandles mit dem erwarteten Pfad. Die Datei wird mit
   OPEN_REPARSE_POINT, GENERIC_READ und Teilen nur Lesen geoeffnet, am Handle geprueft;
   GetFinalPathNameByHandleW muss dem erwarteten Pfad entsprechen (normalisiert,
   ohne Gross-/Kleinschreibung, ohne \\?\). Geht etwas davon nicht, bricht das Skript
@@ -264,6 +266,7 @@ function Assert-FinalPath($handle, [string]$expected, [string]$what) {
 # JEDE Elternkomponente (Wurzel zuerst) nacheinander oeffnen, am Handle pruefen, halten.
 # Die Handles bleiben in $script:PinDirs bis zum Ende des Skripts.
 $script:PinDirs = New-Object System.Collections.ArrayList
+$script:PinDirPaths = New-Object System.Collections.ArrayList
 function Hold-Chain([string]$file) {
     $dirs = New-Object System.Collections.ArrayList
     $part = [System.IO.Path]::GetDirectoryName($file)
@@ -275,6 +278,7 @@ function Hold-Chain([string]$file) {
     foreach ($d in $dirs) {
         try { $h = [LvaWin]::OpenDir($d) } catch { Die "payload_unknown: Verzeichnis nicht oeffnbar ($d)" }
         [void]$script:PinDirs.Add($h)
+        [void]$script:PinDirPaths.Add($d)
         $attr = [LvaWin]::Attributes($h)
         if (($attr -band $script:ReparseAttr) -ne 0) { Die "payload_unknown: Reparse-Komponente im Pfad ($d)" }
         if (($attr -band $script:DirAttr) -eq 0) { Die "payload_unknown: Pfadkomponente ist kein Verzeichnis ($d)" }
@@ -324,8 +328,8 @@ function Assert-LocalPath([string]$path) {
 }
 
 # Das gebundene ORIGINAL (keine Kopie): offen gehalten mit GENERIC_READ und Teilen
-# AUSSCHLIESSLICH zum Lesen (Schreiben, Umbenennen und Loeschen durch andere
-# scheitern), Hash aus diesem Handle. Vor UND nach jedem Lauf muss der Hash aus
+# AUSSCHLIESSLICH zum Lesen (Schreiben und Loeschen durch andere scheitern;
+# Umbenennen wird erkannt, siehe Assert-Pinned), Hash aus diesem Handle. Vor UND nach jedem Lauf muss der Hash aus
 # dem Handle und vom Pfad gleich sein, sonst ist die ganze Reihe ungueltig.
 $script:PinHandle = $null
 $script:PinSha = ''
@@ -355,6 +359,16 @@ function Get-HandleSha256 {
     return (($bytes | ForEach-Object { $_.ToString('x2') }) -join '')
 }
 function Assert-Pinned([string]$when) {
+    # Erkennung statt Verhinderung: Windows verhindert das Umbenennen gehaltener
+    # Komponenten nicht zuverlaessig; das Handle folgt aber, sein Endpfad aendert sich.
+    # Endpfad des Datei-Handles und ALLER Elternhandles gegen den erwarteten Pfad.
+    try {
+        $same = (Normalize-FinalPath ([LvaWin]::FinalPath($script:PinHandle.SafeFileHandle))) -eq (Normalize-FinalPath $script:PinPath)
+        for ($k = 0; $same -and $k -lt $script:PinDirs.Count; $k++) {
+            $same = (Normalize-FinalPath ([LvaWin]::FinalPath($script:PinDirs[$k]))) -eq (Normalize-FinalPath $script:PinDirPaths[$k])
+        }
+    } catch { $same = $false }
+    if (-not $same) { Die "Reihe ungueltig: Endpfad des Programms oder eines Elternordners weicht $when dem Lauf vom erwarteten Pfad ab, vermutlich umbenannt (nichts geschrieben)" }
     $fromHandle = Get-HandleSha256
     $fromPath = Get-Sha256 $script:PinPath
     if ($fromHandle -ne $script:PinSha -or $fromPath -ne $script:PinSha) {

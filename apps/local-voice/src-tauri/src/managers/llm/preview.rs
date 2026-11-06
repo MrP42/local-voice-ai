@@ -27,17 +27,25 @@
 //!   Starts der Vorschau, auch `--version`, laufen ueber [`Pinned`]: Datei
 //!   offen halten, Hash aus dem Handle, Start ueber das Handle. Windows:
 //!   lokales festes Laufwerk; JEDE Elternkomponente (Wurzel bis Zielordner)
-//!   nacheinander mit Handle geoeffnet (ohne FILE_SHARE_DELETE, Umbenennen/
-//!   Loeschen/Ersetzen scheitert) und am Handle auf Reparse-Punkte geprueft, die
-//!   Datei mit FILE_FLAG_OPEN_REPARSE_POINT und FILE_SHARE_READ, `GetFinalPathNameByHandleW`
-//!   gleich dem erwarteten Pfad; Start mit genau diesem Pfad. Geht eines davon
-//!   nicht, ist Windows gesperrt.
-//!   Akzeptiertes Restfenster der persoenlichen Vorschau: der Start bleibt
-//!   pfadbasiert, das gepruefte Handle wird nicht atomar an den neuen Prozess
-//!   uebergeben (die Handles bleiben ueber CreateProcess hinaus gehalten, sodass
-//!   Austausch und Umbenennen gesperrt sind). Inhaltsaenderungen durch denselben
-//!   Nutzer liegen ausserhalb der Garantie; der Hash nach dem Lauf verwirft dann
-//!   die Antwort. Linux: Start ueber
+//!   nacheinander mit Handle geoeffnet und am Handle auf Reparse-Punkte geprueft,
+//!   die Datei mit FILE_FLAG_OPEN_REPARSE_POINT und FILE_SHARE_READ,
+//!   `GetFinalPathNameByHandleW` gleich dem erwarteten Pfad; Start mit genau
+//!   diesem Pfad. Geht eines davon nicht, ist Windows gesperrt.
+//!   ERKENNUNG statt Verhinderung: Windows verhindert das Umbenennen gehaltener
+//!   Komponenten NICHT zuverlaessig (Umbenennen mit POSIX-Semantik gelingt trotz
+//!   fehlendem FILE_SHARE_DELETE). Das Handle folgt aber dem Umbenennen, sein
+//!   Endpfad aendert sich. [`Pinned::check_paths`] vergleicht deshalb den
+//!   Endpfad des Datei-Handles und aller Elternhandles mit dem erwarteten Pfad:
+//!   (1) direkt vor dem Start, (2) direkt nach dem Spawn (Abweichung beendet den
+//!   Prozessbaum), (3) nach dem Lauf in [`Pinned::verify`]. Abweichung:
+//!   `binding_changed`, Antwort verworfen.
+//!   Akzeptiertes Restfenster der persoenlichen Vorschau: ein Start per Handle
+//!   ist mit CreateProcessW nicht moeglich; der Start bleibt pfadbasiert, das
+//!   gepruefte Handle wird nicht atomar uebergeben. Zwischen der Pruefung (1) und
+//!   dem Start bleibt ein Fenster; Umbenennen davor, danach oder dazwischen wird
+//!   spaetestens in (2) und (3) erkannt, nicht verhindert. Inhaltsaenderungen
+//!   durch denselben Nutzer liegen ausserhalb der Garantie; der Hash nach dem
+//!   Lauf verwirft dann die Antwort. Linux: Start ueber
 //!   `/proc/self/fd/<fd>`. macOS und andere Unix: gesperrt (`platform_unsupported`).
 //!   Vor dem Start und nach dem Ende wird der Hash neu gebildet ([`Pinned::verify`]).
 //!   Grenze (ausserhalb der Garantie): die FD-Bindung verhindert Pfadaustausch,
@@ -532,14 +540,15 @@ fn normalize_final_path(p: &str) -> String {
 /// Komponente vom Laufwerkswurzel bis zum Zielordner nacheinander oeffnen, am
 /// HANDLE pruefen (kein `FILE_ATTRIBUTE_REPARSE_POINT`, Verzeichnis, Endpfad
 /// gleich dem erwarteten) und die Handles halten. Geteilt wird nur
-/// Lesen/Schreiben, NICHT Loeschen/Umbenennen: Umbenennen, Loeschen oder
-/// Ersetzen einer gehaltenen Komponente scheitert, solange das Handle lebt.
+/// Lesen/Schreiben, NICHT Loeschen (erschwert Loeschen und Ersetzen). Umbenennen
+/// wird dadurch NICHT zuverlaessig verhindert (POSIX-Semantik); es wird ueber
+/// den Endpfad der gehaltenen Handles ERKANNT ([`Pinned::check_paths`]).
 #[cfg(windows)]
 mod winpin {
     use std::fs::File;
     use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
     use std::os::windows::io::AsRawHandle;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
     const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
@@ -579,7 +588,7 @@ mod winpin {
     }
 
     /// Endpfad des Handles gleich dem erwarteten Pfad (normalisiert).
-    fn assert_final(file: &File, expected: &Path) -> Result<(), String> {
+    pub fn assert_final(file: &File, expected: &Path) -> Result<(), String> {
         let actual = super::normalize_final_path(&final_path(file)?);
         let want = super::normalize_final_path(&expected.to_string_lossy());
         if actual == want {
@@ -590,7 +599,7 @@ mod winpin {
     }
 
     /// Eine Verzeichniskomponente oeffnen und am Handle pruefen.
-    pub fn hold_dir(dir: &Path) -> Result<File, String> {
+    pub fn hold_dir(dir: &Path) -> Result<(File, PathBuf), String> {
         let handle = std::fs::OpenOptions::new()
             .access_mode(FILE_READ_ATTRIBUTES)
             .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
@@ -608,11 +617,11 @@ mod winpin {
             return Err(unknown("Pfadkomponente ist kein Verzeichnis"));
         }
         assert_final(&handle, dir)?;
-        Ok(handle)
+        Ok((handle, dir.to_path_buf()))
     }
 
     /// Alle Elternkomponenten von `file` (Wurzel zuerst) nacheinander halten.
-    pub fn hold_chain(file: &Path) -> Result<Vec<File>, String> {
+    pub fn hold_chain(file: &Path) -> Result<Vec<(File, PathBuf)>, String> {
         let mut dirs: Vec<&Path> = file.ancestors().skip(1).collect();
         if dirs.is_empty() {
             return Err(unknown("kein Elternordner"));
@@ -641,7 +650,8 @@ mod winpin {
 /// Datei zum Lesen oeffnen; Windows: GENERIC_READ, Teilen AUSSCHLIESSLICH zum
 /// Lesen (FILE_SHARE_READ) und FILE_FLAG_OPEN_REPARSE_POINT (ein Reparse-Punkt
 /// wird selbst geoeffnet, nie durchlaufen; [`winpin::verify_file`] lehnt ihn ab).
-/// Solange das Handle lebt, scheitern Schreiben, Umbenennen und Loeschen.
+/// Solange das Handle lebt, scheitern Schreiben und Loeschen; ein Umbenennen
+/// wird ueber den Endpfad erkannt ([`Pinned::check_paths`]).
 fn open_pinned(path: &Path) -> std::io::Result<std::fs::File> {
     let mut opts = std::fs::OpenOptions::new();
     opts.read(true);
@@ -667,7 +677,7 @@ fn hash_handle(mut file: &std::fs::File) -> std::io::Result<String> {
 ///   (ohne FILE_SHARE_DELETE, am Handle auf Reparse-Punkte geprueft, [`winpin`])
 ///   und auf die Datei (FILE_SHARE_READ, OPEN_REPARSE_POINT, Endpfad gleich dem
 ///   erwarteten) solange die Bindung lebt; Start mit genau dem geprueften Pfad
-///   (Umbenennen, Loeschen und Ersetzen von Datei und Eltern sind gesperrt).
+///   (Umbenennen wird erkannt, nicht verhindert: [`Pinned::check_paths`]).
 /// * Linux: Start ueber `/proc/self/fd/<fd>` des gehaltenen Handles; der Kernel
 ///   loest den Pfad in `execve` auf, bevor `O_CLOEXEC` den Deskriptor schliesst.
 ///   Ein Austausch der Datei am Pfad wirkt nicht mehr.
@@ -686,7 +696,7 @@ pub struct Pinned {
     /// Windows: Handles auf alle Elternkomponenten (Wurzel bis Zielordner),
     /// gehalten, solange die Bindung lebt.
     #[cfg(windows)]
-    _dirs: Vec<std::fs::File>,
+    dirs: Vec<(std::fs::File, PathBuf)>,
 }
 
 impl Pinned {
@@ -733,7 +743,7 @@ impl Pinned {
             sha256,
             handle,
             #[cfg(windows)]
-            _dirs: dirs,
+            dirs,
         })
     }
 
@@ -773,6 +783,7 @@ impl Pinned {
         if let Some(version) = cached {
             return Ok(version);
         }
+        self.check_paths().map_err(|r| r.error())?;
         let mut cmd = std::process::Command::new(self.exec_path());
         cmd.arg("--version")
             .stdin(std::process::Stdio::null())
@@ -822,8 +833,28 @@ impl Pinned {
         }
     }
 
-    /// Nach dem Lauf: Hash aus dem Handle UND frisch vom Pfad.
+    /// Windows: Endpfad des gehaltenen Datei-Handles und aller Elternhandles gleich
+    /// dem erwarteten Pfad? Ein Umbenennen einer Komponente aendert den Endpfad
+    /// (das Handle folgt) und wird so ERKANNT (`binding_changed`). Andere
+    /// Plattformen: bindet das Handle selbst (Linux), nichts zu pruefen.
+    pub fn check_paths(&self) -> Result<(), Rejection> {
+        #[cfg(windows)]
+        {
+            let same = winpin::assert_final(&self.handle, &self.path).is_ok()
+                && self
+                    .dirs
+                    .iter()
+                    .all(|(file, expected)| winpin::assert_final(file, expected).is_ok());
+            if !same {
+                return Err(Rejection::llm("binding_changed"));
+            }
+        }
+        Ok(())
+    }
+
+    /// Nach dem Lauf: Endpfade (Windows), Hash aus dem Handle UND frisch vom Pfad.
     pub fn verify(&self) -> Result<(), Rejection> {
+        self.check_paths()?;
         let same = hash_handle(&self.handle).is_ok_and(|h| h == self.sha256)
             && sha256_file(&self.path).is_ok_and(|h| h == self.sha256);
         if same {
@@ -1735,7 +1766,6 @@ mod tests {
         // Schreiben, Loeschen und Umbenennen scheitern, solange das Handle lebt.
         assert!(std::fs::write(&path, b"MZ anders").is_err());
         assert!(std::fs::remove_file(&path).is_err());
-        assert!(std::fs::rename(&path, dir.path().join("x.exe")).is_err());
         assert_eq!(hash_handle(&held).unwrap(), sha256_file(&path).unwrap());
     }
 
@@ -1774,7 +1804,7 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn windows_renaming_a_held_parent_fails_until_it_is_released() {
+    fn windows_renaming_a_held_parent_is_detected() {
         let root = tempfile::tempdir().unwrap();
         let outer = root.path().join("aussen");
         let inner = outer.join("innen");
@@ -1784,13 +1814,16 @@ mod tests {
         let exe = std::fs::canonicalize(&exe).unwrap();
         let chain = winpin::hold_chain(&exe).unwrap();
         assert!(chain.len() >= 3, "Wurzel bis Zielordner");
-        // Jede gehaltene Komponente laesst sich nicht umbenennen oder loeschen.
-        assert!(std::fs::rename(&inner, outer.join("anders")).is_err());
-        assert!(std::fs::rename(&outer, root.path().join("anders")).is_err());
-        assert!(std::fs::remove_dir_all(&outer).is_err());
-        assert!(exe.exists());
-        drop(chain);
-        std::fs::rename(&outer, root.path().join("anders")).unwrap();
+        let intact = |chain: &[(std::fs::File, PathBuf)]| {
+            chain
+                .iter()
+                .all(|(f, p)| winpin::assert_final(f, p).is_ok())
+        };
+        assert!(intact(&chain));
+        // Umbenennen wird nicht verhindert (POSIX-Semantik), aber erkannt: das
+        // Handle folgt, sein Endpfad weicht ab. Scheitert es doch, bleibt alles heil.
+        let renamed = std::fs::rename(&outer, root.path().join("anders")).is_ok();
+        assert_eq!(intact(&chain), !renamed);
     }
 
     #[cfg(windows)]
@@ -1824,17 +1857,22 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn windows_pinned_holds_the_chain_while_it_lives() {
+    fn windows_pinned_detects_a_renamed_parent_in_verify() {
         let root = tempfile::tempdir().unwrap();
         let dir = root.path().join("programme");
         std::fs::create_dir_all(&dir).unwrap();
         let exe = dir.join("claude.exe");
         std::fs::write(&exe, b"MZ\x90\x00 programm").unwrap();
         let pinned = Pinned::open(&exe).unwrap();
-        assert!(std::fs::rename(&dir, root.path().join("anders")).is_err());
-        assert!(std::fs::rename(&pinned.path, dir.join("x.exe")).is_err());
-        drop(pinned);
-        std::fs::rename(&dir, root.path().join("anders")).unwrap();
+        assert_eq!(pinned.check_paths(), Ok(()));
+        assert_eq!(pinned.verify(), Ok(()));
+        let renamed = std::fs::rename(&dir, root.path().join("anders")).is_ok();
+        if renamed {
+            assert_eq!(pinned.check_paths().unwrap_err().reason, "binding_changed");
+            assert_eq!(pinned.verify().unwrap_err().reason, "binding_changed");
+        } else {
+            assert_eq!(pinned.verify(), Ok(()));
+        }
     }
 
     #[test]

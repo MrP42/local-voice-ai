@@ -27,3 +27,6 @@ stop_outer_end_turn_inner_max_tokens	0	stop_reason
 stop_inner_uppercase	0	stop_reason
 stop_outer_uppercase	0	stop_reason
 event_type_uppercase	0	event_unknown
+ok_with_rate_limit_and_summary	0	
+hook_event	0	event_unknown
+rate_limit_after_result	0	event_after_result

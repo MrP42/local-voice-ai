@@ -1528,6 +1528,14 @@ fn call_inner(
         use std::os::unix::process::CommandExt;
         cmd.process_group(0);
     }
+    // Pruefung (1): Endpfade der gehaltenen Handles direkt vor dem Start (Windows:
+    // Umbenennen wird erkannt, nicht verhindert; siehe `Pinned::check_paths`).
+    if let (Some(pinned), Some(check)) = (launch.as_ref(), opts.preview.as_ref()) {
+        if let Err(r) = pinned.check_paths() {
+            audit_rejection(check, &requested, None, r.reason);
+            return Err(r.error());
+        }
+    }
     let child = cmd.spawn().map_err(|e| format!("cli_missing: {e}"))?;
     let Some(check) = &opts.preview else {
         let output = run_cancellable(
@@ -1554,6 +1562,11 @@ fn call_inner(
 
     // ---- Vorschau: laufen lassen, beobachten, danach alles pruefen. ----
     let watch = Watch::start(opts);
+    // Pruefung (2): direkt nach dem Spawn; Abweichung beendet den Prozessbaum.
+    let moved = launch
+        .as_ref()
+        .and_then(|p| p.check_paths().err())
+        .inspect(|_| watch.kill.store(true, std::sync::atomic::Ordering::SeqCst));
     let ran = run_cancellable_in(
         child,
         Some(stdin_text.into_bytes()),
@@ -1566,6 +1579,9 @@ fn call_inner(
         audit_rejection(check, &requested, actual, r.reason);
         r.error()
     };
+    if let Some(r) = moved {
+        return Err(reject(r, None));
+    }
     let output = match ran {
         Err(_) if switched => return Err(reject(preview::SWITCH_OFF, None)),
         Err(e) => return Err(e),
@@ -2858,7 +2874,7 @@ exit "$(cat "$D/exit" 2>/dev/null || echo 0)"
                 "unbekanntes Ereignis",
                 stream_with(&[(
                     r#"{"type":"assistant","message""#,
-                    "{\"type\":\"rate_limit_event\"}\n{\"type\":\"assistant\",\"message\"",
+                    "{\"type\":\"stream_event\"}\n{\"type\":\"assistant\",\"message\"",
                 )]),
                 "cli_preview_rejected:llm_failed:event_unknown",
             ),

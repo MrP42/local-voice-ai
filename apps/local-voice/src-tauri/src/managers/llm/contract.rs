@@ -250,7 +250,7 @@ mod tests {
     #[test]
     fn unknown_events_blocks_and_order_violations_are_rejected() {
         let c = Contract::builtin();
-        let unknown = r#"{"type":"rate_limit_event"}"#;
+        let unknown = r#"{"type":"stream_event"}"#;
         assert_eq!(
             c.check(&evs(&[INIT, unknown, ASSIST, RESULT])),
             Err("event_unknown")
@@ -313,6 +313,47 @@ mod tests {
         }
         let user_ok = r#"{"type":"user","message":{"content":"Frage"}}"#;
         assert_eq!(c.check(&evs(&[INIT, user_ok, ASSIST, RESULT])), Ok(()));
+    }
+
+    fn fixture(text: &str) -> Vec<Value> {
+        text.lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn measured_events_are_allowed_but_hooks_and_late_events_still_block() {
+        // Beleg: Claude Code 2.1.281, Windows, 06.11.2026 (claude-events.json, `evidence`).
+        let c = Contract::builtin();
+        let ok = fixture(include_str!(
+            "../../../../../../tooling/buch-gespraech/tests/fixtures/ok_with_rate_limit_and_summary.jsonl"
+        ));
+        // rate_limit_event, system/post_turn_summary, system/commands_changed und neue
+        // Felder am result (terminal_reason, fast_mode_state, ttft_ms) sind kein Problem.
+        assert_eq!(c.check(&ok), Ok(()));
+        assert!(c.all_known(&ok));
+        let hook = fixture(include_str!(
+            "../../../../../../tooling/buch-gespraech/tests/fixtures/hook_event.jsonl"
+        ));
+        assert_eq!(c.check(&hook), Err("event_unknown"));
+        for sub in ["hook_started", "hook_response", "hook_progress"] {
+            let ev = format!(r#"{{"type":"system","subtype":"{sub}"}}"#);
+            assert_eq!(
+                c.check(&evs(&[INIT, &ev, ASSIST, RESULT])),
+                Err("event_unknown")
+            );
+        }
+        let late = fixture(include_str!(
+            "../../../../../../tooling/buch-gespraech/tests/fixtures/rate_limit_after_result.jsonl"
+        ));
+        assert_eq!(c.check(&late), Err("event_after_result"));
+        // Mit Untertyp bleibt rate_limit_event unbekannt.
+        let sub = r#"{"type":"rate_limit_event","subtype":"x"}"#;
+        assert_eq!(
+            c.check(&evs(&[INIT, sub, ASSIST, RESULT])),
+            Err("event_unknown")
+        );
     }
 
     #[test]
