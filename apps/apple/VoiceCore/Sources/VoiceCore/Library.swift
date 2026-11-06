@@ -396,6 +396,9 @@ public enum LibraryText {
         return code.range(of: "^[a-z]{2,3}(-[a-z0-9]{2,8})?$", options: .regularExpression) != nil ? code : nil
     }
 
+    /// Vorlesedauer bei normalem Tempo: rund 6 Zeichen je Wort und 150 Wörter je Minute, wie am Desktop.
+    public static func listenMilliseconds(chars: Double) -> Double { max(0, chars) / 6 / 150 * 60_000 }
+
     /// Favoriten zuerst, sonst bleibt die Reihenfolge, wie `sortViews` am Desktop.
     public static func favoritesFirst(_ books: [LibraryBook]) -> [LibraryBook] {
         books.filter(\.favorite) + books.filter { !$0.favorite }
