@@ -100,6 +100,15 @@ public struct LibraryBook: Codable, Equatable, Identifiable, Sendable {
     public var finished: Bool
     /// Favorit (Desktop lva#222); fehlt in älteren buch.json.
     public var favorite: Bool = false
+    /// Sprachfassungen (lva#344, Schema 2). Das iPhone reicht sie unverändert
+    /// weiter; `text`/`audio`/`language` bleiben der Spiegel der Hauptfassung.
+    public var schema: Int?
+    public var workKey: String?
+    public var editions: PassthroughJSON?
+    public var primary: PassthroughJSON?
+    public var editionTombstones: PassthroughJSON?
+    public var reading: PassthroughJSON?
+    public var alignments: PassthroughJSON?
 
     public init(id: String, title: String, authors: [String] = [], coverSource: String = "generated",
                 text: LibraryTextVersion? = nil, audio: LibraryAudioVersion? = nil, addedMs: Double, finished: Bool = false) {
@@ -110,6 +119,7 @@ public struct LibraryBook: Codable, Equatable, Identifiable, Sendable {
     enum CodingKeys: String, CodingKey {
         case id, title, subtitle, authors, language, isbn, publisher, publishDate = "publish_date", pages, description
         case metadataSource = "metadata_source", coverSource = "cover_source", text, audio, addedMs = "added_ms", finished, favorite
+        case schema, workKey = "work_key", editions, primary, editionTombstones = "edition_tombstones", reading, alignments
     }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -130,6 +140,13 @@ public struct LibraryBook: Codable, Equatable, Identifiable, Sendable {
         addedMs = try c.decodeIfPresent(Double.self, forKey: .addedMs) ?? 0
         finished = try c.decodeIfPresent(Bool.self, forKey: .finished) ?? false
         favorite = try c.decodeIfPresent(Bool.self, forKey: .favorite) ?? false
+        schema = try c.decodeIfPresent(Int.self, forKey: .schema)
+        workKey = try c.decodeIfPresent(String.self, forKey: .workKey)
+        editions = try c.decodeIfPresent(PassthroughJSON.self, forKey: .editions)
+        primary = try c.decodeIfPresent(PassthroughJSON.self, forKey: .primary)
+        editionTombstones = try c.decodeIfPresent(PassthroughJSON.self, forKey: .editionTombstones)
+        reading = try c.decodeIfPresent(PassthroughJSON.self, forKey: .reading)
+        alignments = try c.decodeIfPresent(PassthroughJSON.self, forKey: .alignments)
     }
 }
 
