@@ -354,3 +354,36 @@ final class LiveTranslationTests: XCTestCase {
         XCTAssertEqual(started, 2)
     }
 }
+
+final class LiveParagraphTests: XCTestCase {
+    func testComposeMixesTranslatedAndPending() {
+        let text = "  Hello there. How are you? Fine."
+        let s = text as NSString
+        let sentences = ["Hello there.", "How are you?", "Fine."].map { s.range(of: $0) }
+        let p = LiveParagraph.compose(original: text, sentences: sentences, translated: [0: "Hallo.", 2: " Gut. "])
+        XCTAssertEqual(p.text, "  Hallo. How are you? Gut.")
+        XCTAssertEqual(p.pending, [1])
+        let shown = p.text as NSString
+        XCTAssertEqual(shown.substring(with: p.ranges[0]), "Hallo.")
+        XCTAssertEqual(shown.substring(with: p.ranges[1]), "How are you?")
+        XCTAssertEqual(shown.substring(with: p.ranges[2]), "Gut.")
+        XCTAssertNil(p.range(forSentence: 3))
+    }
+
+    func testComposeUTF16AndEmpty() {
+        let p = LiveParagraph.compose(original: "Hi 😀.", sentences: [NSRange(location: 0, length: 6)], translated: [0: "Hallo 😀 du."])
+        XCTAssertEqual((p.text as NSString).substring(with: p.ranges[0]), "Hallo 😀 du.")
+        let empty = LiveParagraph.compose(original: "", sentences: [], translated: [:])
+        XCTAssertEqual(empty.text, "")
+        // Leere Übersetzung zählt als ausstehend.
+        let blank = LiveParagraph.compose(original: "Hi.", sentences: [NSRange(location: 0, length: 3)], translated: [0: " "])
+        XCTAssertEqual(blank.text, "Hi."); XCTAssertEqual(blank.pending, [0])
+    }
+
+    func testLanguageNames() {
+        XCTAssertEqual(LiveLanguages.name("zh_Hans"), "Chinesisch (vereinfacht)")
+        XCTAssertEqual(LiveLanguages.short("zh-Hant"), "ZH")
+        XCTAssertEqual(LiveLanguages.short("en-GB"), "EN")
+        XCTAssertEqual(LiveLanguages.name("xx"), "XX")
+    }
+}
