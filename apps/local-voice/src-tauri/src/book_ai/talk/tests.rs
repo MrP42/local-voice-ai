@@ -55,7 +55,7 @@ impl Fake {
             answer: answer.to_string(),
             fail: None,
             hang: false,
-            exact: false,
+            exact: true,
             calls: Mutex::new(Vec::new()),
         }
     }
@@ -107,8 +107,9 @@ impl TalkModel for Fake {
         })
     }
 
-    fn token_count(&self, system: &str, user: &str) -> Option<u32> {
-        self.exact.then(|| ((system.len() + user.len()) / 3) as u32)
+    fn token_count<'a>(&'a self, system: &'a str, user: &'a str) -> prompt::CountFuture<'a> {
+        let n = self.exact.then(|| (system.len() + user.len()) / 3);
+        Box::pin(std::future::ready(n))
     }
 }
 
@@ -554,8 +555,17 @@ fn injection_in_the_book_cannot_forge_delimiters() {
     assert!(p.prompt.contains("‹‹‹ENDE Q1›››"));
 }
 
-#[test]
-fn the_hard_budget_drops_excerpts_then_history_then_fails() {
+async fn fit_hist(
+    r: &Retrieval,
+    hist: &[Turn],
+    b: &Budget,
+    c: prompt::TokenCount<'_>,
+) -> Option<prompt::Fitted> {
+    prompt::fit("T", "Wer?", r, hist, Lang::De, BookTalkScope::Book, 0, b, c).await
+}
+
+#[tokio::test]
+async fn the_hard_budget_drops_excerpts_then_history_then_fails() {
     let ix = index_of(&buch());
     let r = retrieve::retrieve(
         &ix,
@@ -578,20 +588,7 @@ fn the_hard_budget_drops_excerpts_then_history_then_fails() {
     let exact = |s: &str, u: &str| Some((s.len() + u.len()) / 3);
     let none = |_: &str, _: &str| -> Option<usize> { None };
     let profile = |s: &str, u: &str| Some(TEST_PROFILE.upper_bound(s, u) as usize);
-    let fit = |b: &Budget, c: prompt::TokenCount<'_>| {
-        prompt::fit(
-            "T",
-            "Wer?",
-            &r,
-            &hist,
-            Lang::De,
-            BookTalkScope::Book,
-            0,
-            b,
-            c,
-        )
-    };
-    let ample = fit(&roomy(), &exact).expect("passt");
+    let ample = fit_hist(&r, &hist, &roomy(), &exact).await.expect("passt");
     assert_eq!(ample.dropped_excerpts, 0);
     assert!(!ample.dropped_history);
     let full = (ample.parts.instructions.len() + ample.parts.prompt.len()) / 3;
@@ -600,7 +597,9 @@ fn the_hard_budget_drops_excerpts_then_history_then_fails() {
         context_tokens: 350 + full * 6 / 10,
         ..roomy()
     };
-    let some = fit(&tight, &exact).expect("passt gekürzt");
+    let some = fit_hist(&r, &hist, &tight, &exact)
+        .await
+        .expect("passt gekürzt");
     assert!(some.dropped_excerpts > 0);
     assert!(some.retrieval.excerpts.len() < r.excerpts.len());
     let ids: Vec<usize> = some.retrieval.excerpts.iter().map(|e| e.id).collect();
@@ -609,18 +608,204 @@ fn the_hard_budget_drops_excerpts_then_history_then_fails() {
         context_tokens: 400,
         ..roomy()
     };
-    assert!(fit(&tiny, &exact).is_none());
+    assert!(fit_hist(&r, &hist, &tiny, &exact).await.is_none());
     assert!(
-        fit(&roomy(), &none).is_none(),
-        "ohne Zähler und Profil nichts prüfbar"
+        fit_hist(&r, &hist, &roomy(), &none).await.is_none(),
+        "ein Zähler ohne Ergebnis ist nicht prüfbar"
     );
-    assert!(fit(&roomy(), &profile).is_some());
+    assert!(fit_hist(&r, &hist, &roomy(), &profile).await.is_some());
 }
 
 #[test]
-fn the_empty_profile_list_means_no_unproven_byte_bound() {
+fn the_profile_list_is_empty_so_only_an_exact_counter_works() {
     assert!(prompt::BUDGET_PROFILES.is_empty());
     assert!(prompt::profile_for("gemma").is_none());
+    assert_eq!(prompt::BudgetMethod::choose(false, None).label(), "none");
+    assert_eq!(prompt::count_tokens(None, None, "a", "b"), None);
+}
+
+fn many_excerpts() -> (BookIndex, Retrieval) {
+    let ix = index_of(&buch());
+    let r = retrieve::retrieve(
+        &ix,
+        "Meister Lehrer Vater Geld Haus",
+        BookTalkIntent::Question,
+        None,
+        true,
+        None,
+        &[],
+        6,
+        7_500,
+    );
+    assert!(r.excerpts.len() > 2);
+    (ix, r)
+}
+
+fn set_text(e: &mut Excerpt, s: &str) {
+    e.chunk.text = s.to_string();
+    e.chunk.units = s.encode_utf16().collect();
+}
+
+fn third(s: &str, u: &str) -> Option<usize> {
+    Some((s.len() + u.len()) / 3)
+}
+
+async fn fit_third(r: &Retrieval, b: &Budget, q: &str) -> Option<prompt::Fitted> {
+    prompt::fit("T", q, r, &[], Lang::De, BookTalkScope::Book, 0, b, &third).await
+}
+
+fn used(f: &prompt::Fitted) -> usize {
+    (f.parts.instructions.len() + f.parts.prompt.len()) / 3
+}
+
+#[tokio::test]
+async fn an_exact_count_trims_excerpts_from_the_back_until_it_fits() {
+    let (_, r) = many_excerpts();
+    let full = fit_third(&r, &roomy(), "Wer?").await.expect("passt");
+    assert_eq!(full.dropped_excerpts, 0);
+    let edge = Budget {
+        context_tokens: used(&full) + roomy().answer_tokens,
+        ..roomy()
+    };
+    let at_edge = fit_third(&r, &edge, "Wer?").await.expect("passt genau");
+    assert_eq!(at_edge.dropped_excerpts, 0);
+    let tight = Budget {
+        context_tokens: used(&full) + roomy().answer_tokens - 1,
+        ..roomy()
+    };
+    let trimmed = fit_third(&r, &tight, "Wer?").await.expect("gekürzt");
+    assert!(trimmed.dropped_excerpts > 0);
+    let kept = trimmed.retrieval.excerpts.len();
+    assert!((1..r.excerpts.len()).contains(&kept));
+    let ids: Vec<usize> = trimmed.retrieval.excerpts.iter().map(|e| e.id).collect();
+    assert_eq!(
+        ids,
+        (1..=kept).collect::<Vec<_>>(),
+        "[Q<k>] bleibt lückenlos"
+    );
+    assert!(used(&trimmed) + tight.answer_tokens <= tight.context_tokens);
+    let more = fit_third(
+        &r,
+        &Budget {
+            context_tokens: tight.context_tokens + 1_000_000,
+            ..tight.clone()
+        },
+        "Wer?",
+    )
+    .await
+    .unwrap();
+    assert_eq!(more.dropped_excerpts, 0);
+}
+
+#[tokio::test]
+async fn the_search_keeps_as_many_excerpts_as_fit_with_few_counts() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let (_, r) = many_excerpts();
+    let full = fit_third(&r, &roomy(), "Wer?").await.expect("passt");
+    let tight = Budget {
+        context_tokens: used(&full) * 6 / 10 + roomy().answer_tokens,
+        ..roomy()
+    };
+    let calls = AtomicUsize::new(0);
+    let counting = |s: &str, u: &str| {
+        calls.fetch_add(1, Ordering::SeqCst);
+        third(s, u)
+    };
+    let fitted = prompt::fit(
+        "T",
+        "Wer?",
+        &r,
+        &[],
+        Lang::De,
+        BookTalkScope::Book,
+        0,
+        &tight,
+        &counting,
+    )
+    .await
+    .expect("passt gekürzt");
+    let n = r.excerpts.len();
+    assert!(
+        calls.load(Ordering::SeqCst) <= n.ilog2() as usize + 3,
+        "Zählungen begrenzt"
+    );
+    let kept = fitted.retrieval.excerpts.len();
+    assert!(kept < n);
+    // Einer mehr passt nicht (gemessen mit demselben Zähler).
+    let mut r_more = r.clone();
+    while r_more.excerpts.len() > kept + 1 {
+        r_more = r_more.removing_lowest_rank();
+    }
+    let p = prompt::build(
+        "T",
+        "Wer?",
+        &r_more,
+        &[],
+        Lang::De,
+        BookTalkScope::Book,
+        0,
+        &tight,
+        true,
+    );
+    assert!(
+        third(&p.instructions, &p.prompt).unwrap() + tight.answer_tokens > tight.context_tokens
+    );
+}
+
+#[tokio::test]
+async fn the_excerpt_chars_are_capped_even_with_a_huge_window() {
+    let (_, r) = many_excerpts();
+    let chars = r.excerpt_chars();
+    assert!(chars > 0);
+    let cap_probe = Budget {
+        context_tokens: 10_000_000,
+        ..roomy()
+    };
+    let all = fit_third(&r, &cap_probe, "Wer?").await.expect("passt");
+    assert_eq!(all.dropped_excerpts, 0);
+    // Ein Auszug über der Grenze bleibt (mindestens einer), mehrere werden gekürzt.
+    let mut big = r.clone();
+    let n_big = big.excerpts.len();
+    for e in &mut big.excerpts {
+        set_text(
+            e,
+            &"wort ".repeat(prompt::MAX_EXCERPT_CHARS / 5 / (n_big - 1)),
+        );
+    }
+    assert!(big.excerpt_chars() > prompt::MAX_EXCERPT_CHARS);
+    let f = fit_third(&big, &cap_probe, "Wer?").await.expect("passt");
+    assert!(f.retrieval.excerpt_chars() <= prompt::MAX_EXCERPT_CHARS);
+    assert!(!f.retrieval.excerpts.is_empty());
+    assert!(f.dropped_excerpts > 0);
+    let mut one = big.clone();
+    one.excerpts.truncate(1);
+    set_text(
+        &mut one.excerpts[0],
+        &"x".repeat(prompt::MAX_EXCERPT_CHARS + 5_000),
+    );
+    let f = fit_third(&one, &cap_probe, "Wer?")
+        .await
+        .expect("einer bleibt");
+    assert_eq!(f.retrieval.excerpts.len(), 1);
+    assert_eq!(
+        Budget::desktop(8_192, 600, 99_000).excerpt_chars,
+        prompt::MAX_EXCERPT_CHARS
+    );
+}
+
+#[tokio::test]
+async fn an_exact_count_gives_up_when_even_one_excerpt_does_not_fit() {
+    let (_, r) = many_excerpts();
+    let tiny = Budget {
+        context_tokens: 400,
+        ..roomy()
+    };
+    assert!(fit_third(&r, &tiny, "Wer?").await.is_none());
+    let none = Budget {
+        context_tokens: roomy().answer_tokens,
+        ..roomy()
+    };
+    assert!(fit_third(&r, &none, "Wer?").await.is_none());
 }
 
 // ------------------------------------------------- Belege, Prüfung ----
@@ -959,25 +1144,32 @@ async fn fallbacks_and_model_errors_become_answers_with_a_reason() {
     assert_eq!(out.answer().reason.as_deref(), Some(CODE_NO_MODEL));
 }
 
-#[tokio::test]
-async fn without_a_counter_or_a_measured_profile_nothing_is_called() {
-    let ix = index_of(&buch());
-    let q = "Was sagt der Meister über das Haus des Lehrers?";
-    let model = Fake::new("egal");
-    let req = BookTalkRequest {
+fn plain_request(q: &str) -> BookTalkRequest {
+    BookTalkRequest {
         book_id: "b".into(),
         request_id: "r".into(),
         question: q.into(),
         frontier: None,
         scope: BookTalkScope::Book,
         input: BookTalkInput::Text,
-    };
+    }
+}
+
+const PLAIN_Q: &str = "Was sagt der Meister über das Haus des Lehrers?";
+const PLAIN_A: &str = "Er hält das große Haus für eine Verpflichtung [Q1].";
+
+#[tokio::test]
+async fn without_a_counter_or_profile_there_is_no_model_call() {
+    let ix = index_of(&buch());
+    let req = plain_request(PLAIN_Q);
+    let mut blind = Fake::new(PLAIN_A);
+    blind.exact = false;
     let out = go(
         &ix,
         &req,
         &[],
         &[],
-        Model::Ready(&model),
+        Model::Ready(&blind),
         roomy(),
         None,
         Duration::from_secs(5),
@@ -986,11 +1178,30 @@ async fn without_a_counter_or_a_measured_profile_nothing_is_called() {
     .await;
     assert_eq!(out.answer().reason.as_deref(), Some(CODE_BUDGET));
     assert!(out.answer().found_only);
-    assert_eq!(model.call_count(), 0);
+    assert_eq!(blind.call_count(), 0, "ohne Zähler kein Aufruf");
 
-    // Mit exaktem Zähler läuft es.
-    let mut counted = Fake::new("Er hält das große Haus für eine Verpflichtung [Q1].");
-    counted.exact = true;
+    // Mit geprüftem Profil läuft es.
+    let out = go(
+        &ix,
+        &req,
+        &[],
+        &[],
+        Model::Ready(&blind),
+        roomy(),
+        Some(&TEST_PROFILE),
+        Duration::from_secs(5),
+        &CancelFlag::default(),
+    )
+    .await;
+    assert_eq!(blind.call_count(), 1);
+    assert!(!out.answer().found_only, "{}", out.answer().text);
+}
+
+#[tokio::test]
+async fn an_exact_counter_runs_and_the_budget_overflow_is_a_budget_gap() {
+    let ix = index_of(&buch());
+    let req = plain_request(PLAIN_Q);
+    let counted = Fake::new(PLAIN_A);
     let out = go(
         &ix,
         &req,
@@ -1023,6 +1234,165 @@ async fn without_a_counter_or_a_measured_profile_nothing_is_called() {
     .await;
     assert_eq!(out.answer().reason.as_deref(), Some(CODE_BUDGET));
     assert_eq!(counted.call_count(), 1, "kein zweiter Aufruf");
+}
+
+/// Ein Modell wie der lokale Anbieter: Zähler und Kontext vom (falschen) llama-server.
+struct LlamaFake {
+    inner: Fake,
+    counter: count::LlamaCounter,
+}
+
+impl TalkModel for LlamaFake {
+    fn complete<'a>(
+        &'a self,
+        system: &'a str,
+        user: String,
+        on_delta: &'a (dyn Fn(&str) + Send + Sync),
+    ) -> ModelFuture<'a> {
+        self.inner.complete(system, user, on_delta)
+    }
+
+    fn token_count<'a>(&'a self, system: &'a str, user: &'a str) -> prompt::CountFuture<'a> {
+        Box::pin(async move { self.counter.count(system, user).await })
+    }
+
+    fn context_tokens(&self) -> prompt::CountFuture<'_> {
+        Box::pin(async move { self.counter.context().await })
+    }
+}
+
+async fn ask_llama(b: count::fake::Behaviour) -> (Outcome, LlamaFake) {
+    let server = count::fake::start(b).await;
+    let mut inner = Fake::new(PLAIN_A);
+    inner.exact = false;
+    let model = LlamaFake {
+        inner,
+        counter: count::LlamaCounter::new(&server.url).unwrap(),
+    };
+    let ix = index_of(&buch());
+    let out = go(
+        &ix,
+        &plain_request(PLAIN_Q),
+        &[],
+        &[],
+        Model::Ready(&model),
+        Budget {
+            context_tokens: 100_000,
+            ..roomy()
+        },
+        None,
+        Duration::from_secs(5),
+        &CancelFlag::default(),
+    )
+    .await;
+    (out, model)
+}
+
+#[tokio::test]
+async fn the_local_server_counter_and_its_reported_context_decide() {
+    use count::fake::Behaviour;
+    let ok = Behaviour {
+        n_ctx: 100_000,
+        ..Behaviour::default()
+    };
+    let (out, model) = ask_llama(ok.clone()).await;
+    assert_eq!(model.inner.call_count(), 1);
+    assert!(!out.answer().found_only, "{}", out.answer().text);
+
+    // Der Server meldet ein kleineres Fenster als das Budget: das gilt.
+    let (out, model) = ask_llama(Behaviour {
+        n_ctx: 700,
+        ..ok.clone()
+    })
+    .await;
+    assert_eq!(model.inner.call_count(), 0);
+    assert_eq!(out.answer().reason.as_deref(), Some(CODE_BUDGET));
+
+    // Fehlt ein Endpunkt: kein Zähler, kein Aufruf (fail-closed).
+    for b in [
+        Behaviour {
+            no_template: true,
+            ..ok.clone()
+        },
+        Behaviour {
+            no_tokenize: true,
+            ..ok.clone()
+        },
+    ] {
+        let (out, model) = ask_llama(b).await;
+        assert_eq!(model.inner.call_count(), 0);
+        assert_eq!(out.answer().reason.as_deref(), Some(CODE_BUDGET));
+    }
+}
+
+#[test]
+fn book_talk_sets_the_output_limit_for_every_provider() {
+    use crate::llm_client::{apply_limits, is_ollama, StreamLimits};
+    let provider = |id: &str, url: &str| crate::settings::PostProcessProvider {
+        id: id.into(),
+        label: id.into(),
+        base_url: url.into(),
+        allow_base_url_edit: false,
+        models_endpoint: None,
+        supports_structured_output: false,
+    };
+    let cases = [
+        ("local", "http://127.0.0.1:0/v1"),
+        ("openai", "https://api.openai.com/v1"),
+        ("ollama", "http://127.0.0.1:11434/v1"),
+        ("claude_cli", "cli://claude"),
+    ];
+    for (id, url) in cases {
+        let model = ProviderModel::new(provider(id, url), String::new(), "m".into(), 8_192);
+        let limits = model.limits();
+        assert_eq!(limits.max_tokens, Some(DEFAULT_MAX_ANSWER_TOKENS), "{id}");
+        assert_eq!(limits.num_ctx, Some(8_192));
+        assert!(limits.strict, "{id}: streng (Abschluss, CLI-Nutzung)");
+        let mut body = serde_json::json!({"model": "m"});
+        apply_limits(&mut body, is_ollama(&model.provider), &limits);
+        assert_eq!(body["max_tokens"], 600, "{id}");
+        if id == "ollama" {
+            assert_eq!(body["options"]["num_predict"], 600);
+            assert_eq!(body["options"]["num_ctx"], 8_192);
+        } else {
+            assert!(body.get("options").is_none(), "{id}");
+        }
+    }
+    let mut untouched = serde_json::json!({"model": "m"});
+    apply_limits(&mut untouched, true, &StreamLimits::default());
+    assert_eq!(
+        untouched,
+        serde_json::json!({"model": "m"}),
+        "Default = bisher"
+    );
+}
+
+#[tokio::test]
+async fn a_failed_stream_never_shows_a_partial_answer() {
+    let ix = index_of(&buch());
+    let req = plain_request(PLAIN_Q);
+    // Das Modell liefert einen belegten Satz und bricht dann ab.
+    let mut broken = Fake::new("Er hält das große Haus für eine Verpflichtung [Q1]. Und weiter");
+    broken.fail = Some(CODE_LLM_FAILED);
+    let out = go(
+        &ix,
+        &req,
+        &[],
+        &[],
+        Model::Ready(&broken),
+        roomy(),
+        None,
+        Duration::from_secs(5),
+        &CancelFlag::default(),
+    )
+    .await;
+    let a = out.answer();
+    assert!(a.found_only, "keine Teilantwort: {}", a.text);
+    assert_eq!(a.reason.as_deref(), Some(CODE_LLM_FAILED));
+    assert!(matches!(
+        out.events.last(),
+        Some(BookTalkEvent::Done { .. })
+    ));
 }
 
 #[tokio::test]

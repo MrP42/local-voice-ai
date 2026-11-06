@@ -454,6 +454,54 @@ tokio::task_local! {
     pub static CLI_MAX_TOKENS: u32;
 }
 
+tokio::task_local! {
+    /// Verlangt eine gueltige Nutzungsangabe der CLI (fehlt sie, ist der
+    /// Aufruf ein Fehler statt null Token).
+    pub static CLI_REQUIRE_USAGE: bool;
+}
+
+/// Zusaetze eines Streaming-Aufrufs fuer Aufrufer, die Ausgabegrenze und
+/// Vollstaendigkeit erzwingen muessen (Buch-Gespraech). `Default` ist das
+/// bisherige Verhalten: nichts gesetzt, nichts verlangt.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct StreamLimits {
+    /// Obergrenze der Ausgabe-Token: `max_tokens` (OpenAI-kompatibel, auch
+    /// llama-server), bei Ollama zusaetzlich `options.num_predict`, bei der
+    /// CLI die Ausgabegrenze der CLI.
+    pub max_tokens: Option<u32>,
+    /// Kontext, mit dem Ollama rechnen soll (`options.num_ctx`); sonst gilt
+    /// dessen Voreinstellung, die kleiner sein kann als der gepruefte Prompt.
+    pub num_ctx: Option<u32>,
+    /// Streng: ein Strom ohne Abschluss (`[DONE]`) oder ueber der Zeichen-
+    /// grenze und eine CLI-Antwort ohne gueltige Nutzungsangabe sind Fehler.
+    pub strict: bool,
+}
+
+/// Ist der Anbieter Ollama (Vorlage oder Standardport)?
+pub fn is_ollama(provider: &PostProcessProvider) -> bool {
+    provider.id == "ollama" || provider.base_url.contains(":11434")
+}
+
+/// Setzt die Grenzen in den Anfragekoerper. Ohne Grenzen bleibt er unveraendert.
+pub fn apply_limits(body: &mut Value, ollama: bool, limits: &StreamLimits) {
+    if let Some(n) = limits.max_tokens {
+        body["max_tokens"] = n.into();
+    }
+    if !ollama {
+        return;
+    }
+    let mut options = serde_json::Map::new();
+    if let Some(n) = limits.max_tokens {
+        options.insert("num_predict".into(), n.into());
+    }
+    if let Some(n) = limits.num_ctx {
+        options.insert("num_ctx".into(), n.into());
+    }
+    if !options.is_empty() {
+        body["options"] = Value::Object(options);
+    }
+}
+
 fn call_cli(
     cli: crate::managers::llm::cli::Cli,
     binary: &std::path::Path,
@@ -500,6 +548,7 @@ async fn send_cli(
     let opts = cli::CallOptions {
         cancel: CLI_CANCEL.try_with(|c| c.clone()).ok(),
         max_tokens: CLI_MAX_TOKENS.try_with(|n| *n).ok(),
+        require_usage: CLI_REQUIRE_USAGE.try_with(|b| *b).unwrap_or(false),
     };
     let first = {
         let (binary, model, system, user_content, opts) = (
@@ -966,14 +1015,37 @@ pub async fn send_chat_completion_stream(
     messages: Vec<StreamMessage>,
     on_delta: &(dyn Fn(&str) + Send + Sync),
 ) -> Result<String, String> {
+    send_chat_completion_stream_limited(
+        purpose,
+        provider,
+        api_key,
+        model,
+        messages,
+        on_delta,
+        &StreamLimits::default(),
+    )
+    .await
+}
+
+/// Wie [`send_chat_completion_stream`], mit Ausgabegrenze und Strenge.
+pub async fn send_chat_completion_stream_limited(
+    purpose: Purpose,
+    provider: &PostProcessProvider,
+    api_key: String,
+    model: &str,
+    messages: Vec<StreamMessage>,
+    on_delta: &(dyn Fn(&str) + Send + Sync),
+    limits: &StreamLimits,
+) -> Result<String, String> {
     // Regelwerk vor dem Budget: ein gesperrter Anbieter bekommt gar nichts.
     crate::managers::compliance::check_call(provider)?;
     usage::check_budget(provider, model)?;
     let started = std::time::Instant::now();
-    let (result, tokens) = match stream_inner(provider, api_key, model, messages, on_delta).await {
-        Ok((content, tokens)) => (Ok(content), tokens),
-        Err(e) => (Err(e), TokenUsage::default()),
-    };
+    let (result, tokens) =
+        match stream_inner(provider, api_key, model, messages, on_delta, limits).await {
+            Ok((content, tokens)) => (Ok(content), tokens),
+            Err(e) => (Err(e), TokenUsage::default()),
+        };
     let elapsed = started.elapsed().as_millis().min(u32::MAX as u128) as u32;
     usage::record_call(
         purpose,
@@ -993,6 +1065,7 @@ async fn stream_inner(
     model: &str,
     messages: Vec<StreamMessage>,
     on_delta: &(dyn Fn(&str) + Send + Sync),
+    limits: &StreamLimits,
 ) -> Result<(String, TokenUsage), String> {
     if let Some(cli) = crate::managers::llm::cli::Cli::from_base_url(&provider.base_url) {
         // Die CLI liefert am Stueck: Systemteile als Systemtext, der Rest als
@@ -1008,7 +1081,12 @@ async fn stream_inner(
             .map(|m| format!("{}: {}", m.role, m.content))
             .collect();
         let system = (!system.is_empty()).then(|| system.join("\n\n"));
-        let (reply, tokens) = send_cli(cli, model, dialog.join("\n\n"), system, None).await?;
+        let call = send_cli(cli, model, dialog.join("\n\n"), system, None);
+        let call = CLI_REQUIRE_USAGE.scope(limits.strict, call);
+        let (reply, tokens) = match limits.max_tokens {
+            Some(n) => CLI_MAX_TOKENS.scope(n, call).await?,
+            None => call.await?,
+        };
         let text = reply.content.unwrap_or_default();
         on_delta(&text);
         return Ok((text, tokens));
@@ -1020,11 +1098,15 @@ async fn stream_inner(
     debug!("Sending streaming chat completion request to: {}", url);
     let client = create_client(provider, &api_key)?;
     let local = crate::managers::llm::is_local(provider);
-    let fallback_body = stream_request_body(model, &messages, false, local);
+    let ollama = is_ollama(provider);
+    let mut fallback_body = stream_request_body(model, &messages, false, local);
+    apply_limits(&mut fallback_body, ollama, limits);
+    let mut stream_body = stream_request_body(model, &messages, true, local);
+    apply_limits(&mut stream_body, ollama, limits);
 
     let response = client
         .post(&url)
-        .json(&stream_request_body(model, &messages, true, local))
+        .json(&stream_body)
         .send()
         .await
         .map_err(|e| format!("HTTP request failed: {}", e))?;
@@ -1052,6 +1134,7 @@ async fn stream_inner(
     let mut text = String::new();
     let mut text_chars = 0usize;
     let mut tokens = TokenUsage::default();
+    let mut finished = false;
     let mut stream = response.bytes_stream();
     'read: loop {
         let wait = if text.is_empty() {
@@ -1079,6 +1162,9 @@ async fn stream_inner(
                         log::warn!(
                             "Stream: Antwort ueber {STREAM_MAX_CHARS} Zeichen, abgeschnitten"
                         );
+                        if limits.strict {
+                            return Err("Stream: Antwort zu lang".to_string());
+                        }
                         break 'read;
                     }
                     text_chars += delta_chars;
@@ -1086,7 +1172,10 @@ async fn stream_inner(
                     on_delta(&delta);
                 }
                 SseEvent::Usage(u) => tokens = u,
-                SseEvent::Done => break 'read,
+                SseEvent::Done => {
+                    finished = true;
+                    break 'read;
+                }
                 SseEvent::Error(code) => {
                     return Err(format!("Stream-Fehler vom Server ({code})"));
                 }
@@ -1095,6 +1184,9 @@ async fn stream_inner(
         if ended {
             break;
         }
+    }
+    if limits.strict && !finished {
+        return Err("Stream: ohne Abschluss beendet".to_string());
     }
     Ok((text, tokens))
 }

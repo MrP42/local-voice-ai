@@ -998,6 +998,10 @@ pub struct CallOptions {
     /// Obergrenze der Ausgabe-Token. Claude: Umgebung
     /// `CLAUDE_CODE_MAX_OUTPUT_TOKENS`; Codex: `-c model_max_output_tokens=N`.
     pub max_tokens: Option<u32>,
+    /// Fehlt die Nutzungsangabe der CLI oder ist sie ungueltig (kein
+    /// Eingabe- oder kein Ausgabetoken), ist der Aufruf ein Fehler
+    /// (`cli_bad_output`) statt null Token. Sonst unveraendert.
+    pub require_usage: bool,
 }
 
 /// Ob ein Fehler ein Abbruch war (dann kein Wiederholen).
@@ -1076,6 +1080,7 @@ pub fn call_with_options(
         Cli::Codex => parse_codex(&stdout),
     };
     match reply {
+        Ok(r) if opts.require_usage => check_usage(r),
         Ok(r) => Ok(r),
         Err(e) if e.starts_with("cli_bad_output") && !output.status.success() => {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -1083,6 +1088,14 @@ pub fn call_with_options(
         }
         Err(e) => Err(e),
     }
+}
+
+/// Fail-closed: eine Antwort ohne gueltige Nutzungsangabe ist unbrauchbar.
+pub(crate) fn check_usage(r: CliReply) -> Result<CliReply, String> {
+    if r.prompt_tokens == 0 || r.completion_tokens == 0 {
+        return Err("cli_bad_output: Antwort ohne gueltige Nutzungsangabe".to_string());
+    }
+    Ok(r)
 }
 
 /// Codex: Ausgabegrenze als Konfigurationswert (`-c model_max_output_tokens=N`).
@@ -1465,6 +1478,21 @@ mod tests {
         let out =
             "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"Hi\"}}";
         assert_eq!(parse_codex(out).unwrap().model, None);
+    }
+
+    #[test]
+    fn a_reply_without_valid_usage_is_an_error_only_when_required() {
+        let no_usage = r#"{"type":"result","is_error":false,"result":"Antwort"}"#;
+        let bad_usage = r#"{"type":"result","is_error":false,"result":"A","usage":{"input_tokens":"x","output_tokens":null}}"#;
+        let good = r#"{"type":"result","is_error":false,"result":"A","usage":{"input_tokens":3,"output_tokens":2}}"#;
+        for raw in [no_usage, bad_usage] {
+            let r = parse_claude(raw).unwrap();
+            assert_eq!((r.prompt_tokens, r.completion_tokens), (0, 0));
+            let err = check_usage(r).unwrap_err();
+            assert!(err.starts_with("cli_bad_output"), "{err}");
+        }
+        assert!(check_usage(parse_claude(good).unwrap()).is_ok());
+        assert!(!CallOptions::default().require_usage, "Default = bisher");
     }
 
     #[test]
