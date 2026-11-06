@@ -125,14 +125,17 @@ final class PhoneLibrary: ObservableObject {
         kurzbuchFile(book, ref).flatMap(LibrarySync.fileSize) == ref.size
     }
 
-    private func kurzbuchEntryId(_ bookId: String, _ language: String) -> String { "\(bookId)_kurzbuch_\(language)" }
+    /// Mit Fassung im Namen: Ein neu erzeugtes Kurzbuch beginnt mit eigenem Lesestand.
+    private func kurzbuchEntryId(_ bookId: String, _ ref: KurzbuchRef, _ language: String) -> String {
+        "\(bookId)_kurzbuch_\(language)_\(ref.blob.prefix(12))"
+    }
 
     /// Kurzbuch als eigener Eintrag für den Player. Er steht nicht im Regal und hat seinen eigenen Lesestand.
     func kurzbuchBook(_ book: LibraryBook, _ ref: KurzbuchRef) -> LibraryBook? {
         guard let language = ref.language, kurzbuchReady(book, ref), let file = kurzbuchFile(book, ref),
               let markdown = try? String(contentsOf: file, encoding: .utf8),
               !markdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
-        let entry = LibraryBook(id: kurzbuchEntryId(book.id, language), title: "\(book.title) · Kurzbuch", addedMs: book.addedMs)
+        let entry = LibraryBook(id: kurzbuchEntryId(book.id, ref, language), title: "\(book.title) · Kurzbuch", addedMs: book.addedMs)
         try? FileManager.default.createDirectory(at: dir(entry), withIntermediateDirectories: true)
         try? LibraryText.kurzbuchText(markdown).write(to: textURL(entry), atomically: true, encoding: .utf8)
         return entry
@@ -147,15 +150,17 @@ final class PhoneLibrary: ObservableObject {
         for name in (try? manager.contentsOfDirectory(atPath: folder.path)) ?? [] where !keep.contains(name) {
             try? manager.removeItem(at: folder.appendingPathComponent(name))
         }
-        removeKurzbuchEntries(bookId: book.id, keeping: Set(refs.compactMap { $0.language.map { kurzbuchEntryId(book.id, $0) } }))
+        removeKurzbuchEntries(bookId: book.id, keeping: Set(refs.compactMap { ref in ref.language.map { kurzbuchEntryId(book.id, ref, $0) } }))
     }
 
     private func removeKurzbuchEntries(bookId: String, keeping: Set<String> = []) {
         let prefix = "\(bookId)_kurzbuch_"
         var changed = false
         for name in (try? FileManager.default.contentsOfDirectory(atPath: root.path)) ?? [] where name.hasPrefix(prefix) && !keeping.contains(name) {
+            if LibraryPlayback.shared.book?.id == name { LibraryPlayback.shared.stop() }
             try? FileManager.default.removeItem(at: root.appendingPathComponent(name))
             progress[Self.storageKey(LibraryProgress.textKey(pageId: name))] = nil
+            BookTalkHistoryStore(directory: BookTalkHistoryStore.standardDirectory()).clear(bookId: name)
             changed = true
         }
         if changed { writeProgress() }

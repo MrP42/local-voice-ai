@@ -180,6 +180,11 @@ final class LibrarySync: ObservableObject {
     }
 
     private func pull(_ acc: Account) async throws {
+        // Einmalig alles neu holen: Ältere App-Fassungen haben Kurzbücher beim Lesen verworfen.
+        if !UserDefaults.standard.bool(forKey: "sync.kurzbuecherGeholt") {
+            ledger.cursor = 0
+            UserDefaults.standard.set(true, forKey: "sync.kurzbuecherGeholt")
+        }
         var more = true, restarted = false
         while more {
             let (code, data) = try await Self.send(acc.url + "/api/v1/voice/sync/pull?since=\(ledger.cursor)&limit=100", method: "GET", token: acc.token)
@@ -225,6 +230,9 @@ final class LibrarySync: ObservableObject {
                     let book = SyncLedger.mergingPendingFavorite(favorite, into: synced.book, local: local)
                     let fields = try SyncLedger.fieldsHash(book, files: synced.files)
                     try library.storeRemote(book, meta: .init(files: synced.files, updated: localMeta.updated, pendingFavorite: favorite, pendingFields: fields))
+                } else if localMeta.files.kurzbuecher != synced.files.kurzbuecher {
+                    // Kurzbücher entstehen nur am PC: Sie gelten immer und gehen mit dem eigenen Stand zurück.
+                    library.updateFiles(local) { $0.kurzbuecher = synced.files.kurzbuecher }
                 }
             } else {
                 var book = synced.book
