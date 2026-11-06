@@ -13,7 +13,7 @@
 //!   je Aufruf atomar neu angelegt (Windows: CreateDirectoryW mit geschützter
 //!   DACL nur für die Benutzer-SID, Besitzer = Benutzer; Unix: 0700), ein
 //!   vorhandenes Verzeichnis wird nie übernommen; die Antwort kommt über stdout
-//!   (höchstens 1 MiB), nicht über eine Datei;
+//!   (begrenzt auf die größte mögliche Push-Antwort), nicht über eine Datei;
 //! - Reste aus abgebrochenen Läufen räumt der nächste Aufruf weg;
 //! - Exit-Code und HTTP-Status werden streng geprüft; stderr verworfen;
 //! - Watchdog ab dem Start des Kindes (inklusive Konfigurationsübergabe);
@@ -24,6 +24,9 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant, SystemTime};
+
+use super::collect::HUB_MAX_PAYLOAD;
+use super::engine::PUSH_BATCH;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum CurlError {
@@ -43,8 +46,11 @@ const MARK: &str = "\n@@LV-HTTP-STATUS@@";
 const DIR_PREFIX: &str = "lv-curl-";
 /// Arbeitsverzeichnisse, die älter sind, stammen aus abgebrochenen Läufen.
 const STALE: Duration = Duration::from_secs(3600);
-/// Höchstgröße der Antwort auf stdout (Push/Stück antworten mit wenigen KB).
-const MAX_OUT: usize = 1024 * 1024;
+/// Höchstgröße der Antwort auf stdout. Ein Push mit `PUSH_BATCH` Objekten kann
+/// für jedes ein `superseded` mit vollem Serverobjekt (bis `HUB_MAX_PAYLOAD`
+/// base64, JSON ohne Slash-Escaping) liefern; je Objekt 64 KiB Hülle, dazu
+/// 1 MiB Reserve. Rund 70 MB; Datei-Stücke antworten mit wenigen KB.
+pub const MAX_OUT: usize = PUSH_BATCH * (HUB_MAX_PAYLOAD + 64 * 1024) + 1024 * 1024;
 
 /// POSTs zum Hub über curl? `LV_SYNC_CURL=0` schaltet ab, jeder andere Wert
 /// ein; ohne Angabe nur unter Windows.
@@ -678,10 +684,13 @@ printf '\n@@LV-HTTP-STATUS@@200'
         #[test]
         fn antwort_ueber_limit_bricht_ab() {
             let tmp = tempfile::tempdir().unwrap();
-            // 2 MiB Ausgabe, danach ein gültiger Status: muss trotzdem scheitern.
+            // Eine Ausgabe über dem Limit, danach ein gültiger Status: muss scheitern.
             let exe = script(
                 tmp.path(),
-                "cat >/dev/null; head -c 2097152 /dev/zero; printf '\\n@@LV-HTTP-STATUS@@200'",
+                &format!(
+                    "cat >/dev/null; head -c {} /dev/zero; printf '\\n@@LV-HTTP-STATUS@@200'",
+                    MAX_OUT + 1
+                ),
             );
             let err = send_with(&exe, tmp.path(), &req(b"x"), Duration::from_secs(10)).unwrap_err();
             assert_eq!(
@@ -689,6 +698,36 @@ printf '\n@@LV-HTTP-STATUS@@200'
                 CurlError::Failed("curl-Antwort zu groß, abgebrochen".into())
             );
             assert_eq!(rest(tmp.path()), 0);
+        }
+
+        /// Regression (Codex Runde 4): ein voller Push-Batch, in dem jedes Objekt
+        /// `superseded` mit 4,3-MB-Serverobjekt zurückkommt, muss durchgehen.
+        #[test]
+        fn grosse_konfliktantwort_geht_durch() {
+            let tmp = tempfile::tempdir().unwrap();
+            let payload = "A".repeat(HUB_MAX_PAYLOAD);
+            let one = format!(
+                "{{\"collection\":\"book\",\"object_id\":\"b-0000000000000000\",\"outcome\":\"superseded\",\"revision\":7,\"current\":{{\"collection\":\"book\",\"object_id\":\"b-0000000000000000\",\"revision\":7,\"key_id\":\"k1\",\"deleted\":false,\"device_id\":\"d-1\",\"payload\":\"{payload}\"}}}}"
+            );
+            let items = vec![one; PUSH_BATCH].join(",");
+            let json = format!(
+                "{{\"results\":[{items}],\"high_water_seq\":464,\"server_time\":\"2026-11-06T09:00:00Z\"}}"
+            );
+            let file = tmp.path().join("antwort.json");
+            std::fs::write(&file, &json).unwrap();
+            let exe = script(
+                tmp.path(),
+                &format!(
+                    "cat >/dev/null; cat '{}'; printf '\\n@@LV-HTTP-STATUS@@200'",
+                    file.display()
+                ),
+            );
+            let r = send_with(&exe, tmp.path(), &req(b"x"), Duration::from_secs(60)).unwrap();
+            assert_eq!(r.status(), 200);
+            assert_eq!(r.body().len(), json.len());
+            assert!(json.len() <= MAX_OUT);
+            let v: serde_json::Value = serde_json::from_slice(r.body()).unwrap();
+            assert_eq!(v["results"].as_array().unwrap().len(), PUSH_BATCH);
         }
 
         #[test]

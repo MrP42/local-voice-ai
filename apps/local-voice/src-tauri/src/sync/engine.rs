@@ -14,7 +14,10 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::Notify;
 
-const PUSH_BATCH: usize = 100;
+/// Objekte je Push. Klein gehalten, weil der Hub je `superseded` das volle
+/// Serverobjekt (bis `collect::HUB_MAX_PAYLOAD`) zurückgibt; die Antwort ist
+/// damit nach oben begrenzt (siehe `curl::MAX_OUT`).
+pub const PUSH_BATCH: usize = 16;
 /// Der Hub nimmt 512 KiB je Anfrage; darunter bleiben, sonst blockieren zwei
 /// grosse Seiten den ganzen Abgleich.
 const PUSH_BATCH_BYTES: usize = 400 * 1024;
