@@ -152,11 +152,51 @@ fn http() -> Result<reqwest::Client, HubError> {
 
 /// Stücke der Dateiablage tragen bis zu 3,65 MiB; langsame Leitungen brauchen Zeit.
 fn http_with(timeout: Duration) -> Result<reqwest::Client, HubError> {
-    reqwest::Client::builder()
+    let mut b = reqwest::Client::builder()
         .timeout(timeout)
-        .user_agent(concat!("local-voice-ai/", env!("CARGO_PKG_VERSION")))
-        .build()
-        .map_err(|e| HubError::Other(e.to_string()))
+        .user_agent(concat!("local-voice-ai/", env!("CARGO_PKG_VERSION")));
+    // Diagnose-Schalter (Hub-500 nur bei Uploads der App, 06.11.2026):
+    // LV_SYNC_TLS=native|rustls wählt den TLS-Anbieter, LV_SYNC_HTTP1=1 erzwingt HTTP/1.1.
+    match std::env::var("LV_SYNC_TLS").as_deref() {
+        Ok("native") => b = b.use_native_tls(),
+        Ok("rustls") => b = b.use_rustls_tls(),
+        _ => {}
+    }
+    if std::env::var_os("LV_SYNC_HTTP1").is_some() {
+        b = b.http1_only();
+    }
+    b.build().map_err(|e| HubError::Other(e.to_string()))
+}
+
+/// Anfrage senden; mit LV_SYNC_DUMP=1 vorher Kopfzeilen (ohne Authorization)
+/// und Body nach %TEMP%\lv-<kind>.headers.txt / lv-<kind>.body legen, damit
+/// sich die Anfrage exakt mit curl nachstellen lässt.
+async fn send_logged(
+    rb: reqwest::RequestBuilder,
+    kind: &str,
+) -> Result<reqwest::Response, HubError> {
+    let (client, req) = rb.build_split();
+    let req = req.map_err(|e| HubError::Other(e.to_string()))?;
+    if std::env::var_os("LV_SYNC_DUMP").is_some() {
+        let dir = std::env::temp_dir();
+        let mut head = format!("{} {} {:?}\n", req.method(), req.url(), req.version());
+        for (k, v) in req.headers() {
+            if k == reqwest::header::AUTHORIZATION {
+                head.push_str("authorization: Bearer <token>\n");
+            } else {
+                head.push_str(&format!("{k}: {}\n", v.to_str().unwrap_or("?")));
+            }
+        }
+        let body = req.body().and_then(|b| b.as_bytes()).unwrap_or_default();
+        head.push_str(&format!("(body {} bytes)\n", body.len()));
+        let _ = std::fs::write(dir.join(format!("lv-{kind}.headers.txt")), head);
+        let _ = std::fs::write(dir.join(format!("lv-{kind}.body")), body);
+        log::info!("Sync-Dump: {kind} nach {}", dir.display());
+    }
+    client
+        .execute(req)
+        .await
+        .map_err(|e| HubError::Other(format!("Hub nicht erreichbar: {e}")))
 }
 
 fn base(url: &str) -> String {
@@ -292,10 +332,8 @@ impl HubClient {
                 http_with(Duration::from_secs(120))?
                     .post(format!("{}/api/v1/voice/sync/push", self.url)),
             )
-            .json(&serde_json::json!({ "device_id": device_id, "objects": objects }))
-            .send()
-            .await
-            .map_err(|e| HubError::Other(format!("Hub nicht erreichbar: {e}")))?;
+            .json(&serde_json::json!({ "device_id": device_id, "objects": objects }));
+        let res = send_logged(res, "push").await?;
         if !res.status().is_success() {
             return Err(error_from(res).await);
         }
@@ -402,10 +440,8 @@ impl HubClient {
                 http_with(Duration::from_secs(180))?
                     .post(format!("{}/chunks/{index}", self.blob_url(blob_id)?)),
             )
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| HubError::Other(format!("Hub nicht erreichbar: {e}")))?;
+            .json(&body);
+        let res = send_logged(res, "chunk").await?;
         if !res.status().is_success() {
             log::warn!(
                 "Hub: Stück {index} abgelehnt (HTTP {}), Chiffrat {} Bytes, Body ~{} Bytes",
