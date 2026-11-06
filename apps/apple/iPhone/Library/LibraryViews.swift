@@ -120,6 +120,10 @@ struct LibraryTab: View {
                     if playback.source != .voice { playback.switchSource(to: .voice) }
                     playback.show(.readListen)
                 }
+                // Ansicht für Simulator-Bilder erzwingen: --player-surface listen|readListen|read (nach --library-read/-listen).
+                if let i = args.firstIndex(of: "--player-surface"), i + 1 < args.count, let surface = PlayerSurface(rawValue: args[i + 1]) {
+                    playback.show(surface)
+                }
             }
             #endif
             .alert("Bibliothek", isPresented: Binding(get: { playback.error != nil }, set: { if !$0 { playback.error = nil } })) {
