@@ -117,6 +117,15 @@ public enum VoicePrefs {
         return r > l
     }
 
+    /// Phonon-Stimme `<sprache>:<name>` als iPhone-Kennung, nur wenn der Katalog sie
+    /// kennt (Codex R2): eine fehlende Stimme führt zum Sprachstandard, nicht ins Leere.
+    public static func phononIdentifier(_ phonon: String?, catalog: [String: [String]]) -> String? {
+        guard let phonon, let cut = phonon.firstIndex(of: ":") else { return nil }
+        let lang = String(phonon[..<cut]), name = String(phonon[phonon.index(after: cut)...])
+        guard !name.isEmpty, catalog[lang]?.contains(name) == true else { return nil }
+        return "phonon:\(lang):\(name)"
+    }
+
     /// Hat dieser Eintrag eine Stimme (keine Aufhebung)?
     public static func isSet(_ raw: String?) -> Bool { decode(raw) != nil }
 }

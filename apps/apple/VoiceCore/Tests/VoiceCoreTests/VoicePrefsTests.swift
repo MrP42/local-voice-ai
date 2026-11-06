@@ -44,6 +44,19 @@ final class VoicePrefsTests: XCTestCase {
         XCTAssertFalse(VoicePrefs.newer(local: #"{"phonon":"de:A","updated":3}"#, remote: #"{"phonon":"de:B","updated":2}"#))
     }
 
+    func testPhononNurAusDemKatalog() {
+        let catalog = ["de": ["Anton", "Nele"], "en": ["Zoey"]]
+        XCTAssertEqual(VoicePrefs.phononIdentifier("de:Anton", catalog: catalog), "phonon:de:Anton")
+        XCTAssertNil(VoicePrefs.phononIdentifier("en:Mark", catalog: catalog))
+        XCTAssertNil(VoicePrefs.phononIdentifier("de:Anton", catalog: [:]))
+        // Fehlt die Buchstimme im Katalog, gilt der Sprachstandard.
+        let store = ["tts.voice.book.b1.en": #"{"phonon":"en:Mark","updated":2}"#,
+                     "tts.voice.lang.en": #"{"phonon":"en:Zoey","updated":1}"#]
+        let hit = VoicePrefs.resolve(owner: "b1", language: "en", read: { store[$0] },
+                                     toId: { VoicePrefs.phononIdentifier($0.phonon, catalog: catalog) })
+        XCTAssertEqual(hit?.id, "phonon:en:Zoey"); XCTAssertEqual(hit?.source, .language)
+    }
+
     /// Codex A1: Buchausnahme am PC aus → nach dem Abgleich auch am iPhone aus, Sprachstandard bleibt.
     func testAufhebungReistImAbgleich() {
         var store = [

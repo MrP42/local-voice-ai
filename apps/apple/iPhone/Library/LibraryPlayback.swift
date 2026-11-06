@@ -1,6 +1,7 @@
 import Foundation
 import AVFoundation
 import MediaPlayer
+import Combine
 import UIKit
 
 /// Was gerade in der Bibliothek läuft: Hörbuch oder Vorlesen. Es läuft immer
@@ -58,6 +59,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
     /// Das Buch hat eine eigene Stimme, die es auf diesem iPhone nicht gibt: es liest der Sprachstandard.
     @Published private(set) var bookVoiceMissing = false
     private var applyingVoicePref = false
+    private var catalogWatch: AnyCancellable?
     @Published var error: String?
     /// Vollbild-Player sichtbar (Hören mit Mitlesen oder Vorlesen).
     @Published var presented = false
@@ -111,6 +113,13 @@ final class LibraryPlayback: NSObject, ObservableObject {
         self.library = library ?? .shared
         super.init()
         synth.delegate = self
+        // Phonon-Katalog geladen oder geändert: gemerkte Stimme des offenen Buchs neu prüfen (lva#352).
+        catalogWatch = PhononEngine.shared.$voices.dropFirst().receive(on: RunLoop.main).sink { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.mode == .readAloud, let book = self.book else { return }
+                self.applyVoicePref(book, live: true)
+            }
+        }
         let center = NotificationCenter.default
         sessionObservers.append(center.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] note in
             let began = (note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt).flatMap(AVAudioSession.InterruptionType.init) == .began
@@ -438,15 +447,18 @@ final class LibraryPlayback: NSObject, ObservableObject {
 
     /// Gemerkte Stimme als Kennung dieses iPhones: eigene Kennung, sonst dieselbe Phonon-Stimme.
     private func voiceId(_ pref: VoicePref) -> String? {
+        let catalog = PhononEngine.shared.voices
         if let id = pref.ios {
-            if PhononEngine.voiceName(id) != nil || AVSpeechSynthesisVoice(identifier: id) != nil { return id }
+            if let phonon = PhononEngine.voiceName(id) {
+                if let ok = VoicePrefs.phononIdentifier(phonon, catalog: catalog) { return ok }
+            } else if AVSpeechSynthesisVoice(identifier: id) != nil { return id }
         }
-        guard let phonon = pref.phonon, let parts = PhononEngine.parts(phonon),
-              PhononEngine.languages.contains(parts.language) else { return nil }
-        return PhononEngine.identifier(language: parts.language, voice: parts.voice)
+        return VoicePrefs.phononIdentifier(pref.phonon, catalog: catalog)
     }
 
-    private func applyVoicePref(_ book: LibraryBook) {
+    /// `live`: wie eine eigene Wahl umschalten (laufende Lesung nimmt die neue Stimme);
+    /// beim Öffnen nicht, dort bereitet `openReadAloud` die Stimme selbst vor.
+    private func applyVoicePref(_ book: LibraryBook, live: Bool = false) {
         let lang = VoicePrefs.language(book.language)
         voiceLanguage = lang
         let owner = VoicePrefs.owner(book.id)
@@ -457,6 +469,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
         voiceScope = hasBook ? .book : (lang == nil ? nil : .language)
         // Nichts gemerkt: eine Stimme der Buchsprache statt der Stimme des vorigen Buchs.
         guard let wanted = hit?.id ?? fallbackVoice(lang), wanted != voiceIdentifier else { return }
+        if live { voiceIdentifier = wanted; return }
         applyingVoicePref = true
         voiceIdentifier = wanted
         applyingVoicePref = false
@@ -478,6 +491,8 @@ final class LibraryPlayback: NSObject, ObservableObject {
     func chooseVoice(_ id: String) {
         voiceIdentifier = id
         rememberVoice()
+        // Die gewählte Stimme gibt es: kein Ersatz-Hinweis mehr.
+        bookVoiceMissing = false
     }
 
     private var voicePrefKey: String? {
@@ -503,7 +518,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
             // Leerer Eintrag statt Löschen: reist im Abgleich wie jede Wahl (neuerer Stand gewinnt).
             if let raw = VoicePrefs.encode(VoicePref(updated: PhoneLibrary.nowMs())) { library.setVoicePrefRaw(key, raw) }
             voiceScope = .language
-            applyVoicePref(book)
+            applyVoicePref(book, live: true)
         }
     }
 
