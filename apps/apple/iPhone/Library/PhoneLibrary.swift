@@ -137,21 +137,17 @@ final class PhoneLibrary: ObservableObject {
 
     // MARK: Sync-Metadaten je Buch (`<id>/sync.json`): Dateiverweise im Konto, Stand.
 
-    struct SyncMeta: Codable {
-        var files = BookFiles()
-        var updated: Double = 0
-        /// Dateiname → Blob der geladenen Hörbuchdatei.
-        var localAudio: [String: String]? = nil
-        /// Noch nicht gesendeter Stern. Beim Holen bleibt er, der Rest kommt aus dem Konto.
-        var pendingFavorite: Bool? = nil
-        /// Angaben ohne Stern, als der Stern gesetzt wurde; nur bei abgeglichenem Stand.
-        var pendingFields: String? = nil
-    }
+    typealias SyncMeta = LibrarySyncMeta
 
     func meta(_ book: LibraryBook) -> SyncMeta {
         guard let data = try? Data(contentsOf: dir(book).appendingPathComponent("sync.json")),
               let m = try? JSONDecoder().decode(SyncMeta.self, from: data) else { return SyncMeta(updated: book.addedMs) }
         return m
+    }
+
+    /// Dateiverweis nach einem Upload eintragen. Liest frisch, denn während des Uploads kann ein Stern dazugekommen sein.
+    func updateFiles(_ book: LibraryBook, _ change: (inout BookFiles) -> Void) {
+        setMeta(book, meta(book).updatingFiles(change))
     }
 
     func setMeta(_ book: LibraryBook, _ meta: SyncMeta) {

@@ -85,6 +85,31 @@ public struct BookFiles: Codable, Equatable, Sendable {
 }
 
 /// Inhalt eines `book`-Objekts: das Buch ohne lokale Felder, Dateien, Zeitpunkt.
+/// `<buch>/sync.json`: Dateiverweise im Konto und lokaler Stand.
+public struct LibrarySyncMeta: Codable, Equatable, Sendable {
+    public var files: BookFiles
+    public var updated: Double
+    /// Dateiname → Blob der geladenen Hörbuchdatei.
+    public var localAudio: [String: String]?
+    /// Noch nicht gesendeter Stern. Beim Holen bleibt er, der Rest kommt aus dem Konto.
+    public var pendingFavorite: Bool?
+    /// Angaben ohne Stern, als der Stern gesetzt wurde; nur bei abgeglichenem Stand.
+    public var pendingFields: String?
+
+    public init(files: BookFiles = BookFiles(), updated: Double = 0, localAudio: [String: String]? = nil,
+                pendingFavorite: Bool? = nil, pendingFields: String? = nil) {
+        self.files = files; self.updated = updated; self.localAudio = localAudio
+        self.pendingFavorite = pendingFavorite; self.pendingFields = pendingFields
+    }
+
+    /// Ändert nur die Dateiverweise; Stand, Stern-Merker und geladene Fassungen bleiben.
+    public func updatingFiles(_ change: (inout BookFiles) -> Void) -> LibrarySyncMeta {
+        var copy = self
+        change(&copy.files)
+        return copy
+    }
+}
+
 public struct SyncedBook: Codable, Equatable, Sendable {
     public var book: LibraryBook
     public var files: BookFiles
