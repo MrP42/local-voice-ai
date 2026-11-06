@@ -465,7 +465,15 @@ fn adopt_audio(
     Ok(out)
 }
 
-fn undo_moves(moved: &[(PathBuf, PathBuf)]) {
+/// Eigenes Cover einer Fassung, die nicht Hauptfassung ist: `covers/<ed>.*`.
+pub fn edition_cover(dir: &Path, edition_id: &str) -> Option<PathBuf> {
+    ["jpg", "png", "webp"]
+        .iter()
+        .map(|x| dir.join("covers").join(format!("{edition_id}.{x}")))
+        .find(|p| p.is_file())
+}
+
+pub(crate) fn undo_moves(moved: &[(PathBuf, PathBuf)]) {
     for (from, to) in moved.iter().rev() {
         let _ = std::fs::rename(to, from);
     }
@@ -522,6 +530,20 @@ pub fn join_in(root: &Path, target_id: &str, sources: &[String]) -> Result<Libra
                                 .unwrap_or_default();
                         }
                         if let Some(c) = cover_file(&sdir) {
+                            let ext = c
+                                .extension()
+                                .map(|x| x.to_string_lossy().to_string())
+                                .unwrap_or("jpg".into());
+                            let covers = tdir.join("covers");
+                            std::fs::create_dir_all(&covers).map_err(|e| e.to_string())?;
+                            let to = covers.join(format!("{new_id}.{ext}"));
+                            std::fs::copy(&c, &to).map_err(|e| format!("Cover sichern: {e}"))?;
+                            new_covers.push(to);
+                        }
+                    }
+                    // Eigenes Cover einer weiteren Fassung der Quelle mitnehmen.
+                    if Some(&e.id) != src_primary.as_ref() {
+                        if let Some(c) = edition_cover(&sdir, &e.id) {
                             let ext = c
                                 .extension()
                                 .map(|x| x.to_string_lossy().to_string())
@@ -602,7 +624,8 @@ pub fn split_in(
         .iter()
         .find(|e| e.id == edition_id)
         .cloned()
-        .ok_or("Sprachfassung nicht gefunden.")?;
+        .ok_or("Sprachfassung nicht gefunden.")
+        .inspect_err(|_| undo_moves(&moved))?;
 
     // Ziel: das ursprüngliche Buch, falls seine Kennung frei ist.
     let new_id = edition
@@ -612,7 +635,7 @@ pub fn split_in(
         .filter(|o| !root.join(o).exists())
         .map(str::to_string)
         .unwrap_or_else(|| fresh_id(root));
-    let ndir = book_dir(root, &new_id)?;
+    let ndir = book_dir(root, &new_id).inspect_err(|_| undo_moves(&moved))?;
     // Ein Rest im Papierkorb (Cover, Metadaten) wird nicht gebraucht: die
     // Fassung trägt alles Nötige; der Papierkorb läuft normal ab.
     let result = (|| -> Result<LibraryBook, String> {
@@ -780,7 +803,8 @@ pub fn remove_in(
         .iter()
         .find(|e| e.id == edition_id)
         .cloned()
-        .ok_or("Sprachfassung nicht gefunden.")?;
+        .ok_or("Sprachfassung nicht gefunden.")
+        .inspect_err(|_| undo_moves(&moved))?;
     let bin = root.join(TRASH).join(format!("{id}~{edition_id}"));
     if let Err(e) = std::fs::create_dir_all(bin.join("audio")) {
         undo_moves(&moved);
@@ -816,9 +840,20 @@ pub fn remove_in(
             }
         }
     }
-    let json = serde_json::to_vec_pretty(&edition).map_err(|e| e.to_string())?;
-    let _ = std::fs::write(bin.join("fassung.json"), json);
-    let _ = std::fs::write(bin.join(super::TRASH_STAMP), format!("{}", now_ms() as i64));
+    // Ohne fassung.json ließe sich die Fassung nicht wiederherstellen:
+    // Schreibfehler brechen ab und nehmen alle Verschiebungen zurück.
+    let written = serde_json::to_vec_pretty(&edition)
+        .map_err(|e| e.to_string())
+        .and_then(|json| std::fs::write(bin.join("fassung.json"), json).map_err(|e| e.to_string()))
+        .and_then(|_| {
+            std::fs::write(bin.join(super::TRASH_STAMP), format!("{}", now_ms() as i64))
+                .map_err(|e| e.to_string())
+        });
+    if let Err(e) = written {
+        undo_moves(&moved);
+        let _ = std::fs::remove_dir_all(&bin);
+        return Err(format!("Papierkorb schreiben: {e}"));
+    }
     book.editions.retain(|e| e.id != edition_id);
     book.alignments
         .retain(|a| a.a != edition_id && a.b != edition_id);
@@ -845,6 +880,7 @@ pub fn swap_covers(
     if old_primary == new_primary || old_primary.is_empty() {
         return Ok(());
     }
+    let start = moved.len();
     let covers = dir.join("covers");
     let incoming = ["jpg", "png", "webp"]
         .iter()
@@ -866,7 +902,12 @@ pub fn swap_covers(
             .map(|x| x.to_string_lossy().to_string())
             .unwrap_or("jpg".into());
         let to = dir.join(format!("cover.{ext}"));
-        std::fs::rename(&next, &to).map_err(|e| format!("Cover übernehmen: {e}"))?;
+        if let Err(e) = std::fs::rename(&next, &to) {
+            // Halber Tausch: den ersten Schritt sofort zurücknehmen.
+            undo_moves(&moved[start..]);
+            moved.truncate(start);
+            return Err(format!("Cover übernehmen: {e}"));
+        }
         moved.push((next, to));
     }
     Ok(())
@@ -1661,6 +1702,103 @@ mod tests {
         assert_eq!(primary_id(&kept), Some(r_id.as_str()));
         assert_eq!(cover_of(&dir), b"EN");
         assert_eq!(cover_of(&root.join(&fresh.id)), b"DE");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Codex R5/2: Zusammenlegen nimmt auch die Cover weiterer Fassungen mit.
+    #[test]
+    fn zusammenlegen_nimmt_alle_cover_mit() {
+        let root = tmp();
+        let mut de = base("book_1", "Der Weg", "de");
+        de.audio = Some(audio("a.mp3"));
+        put(&root, &de, &["a.mp3"]);
+        let mut en = base("book_2", "The Way", "en");
+        en.audio = Some(audio("b.mp3"));
+        put(&root, &en, &["b.mp3"]);
+        let mut fr = base("book_3", "Le Chemin", "fr");
+        fr.audio = Some(audio("c.mp3"));
+        put(&root, &fr, &["c.mp3"]);
+        std::fs::write(root.join("book_3/cover.jpg"), b"FR").unwrap();
+        std::fs::write(root.join("book_2/cover.png"), b"EN").unwrap();
+        // book_2 hat schon zwei Fassungen: EN vorne, FR mit eigenem Cover.
+        let two = join_in(&root, "book_2", &["book_3".into()]).unwrap();
+        let fr_id = two
+            .editions
+            .iter()
+            .find(|e| e.lang == "fr")
+            .unwrap()
+            .id
+            .clone();
+        assert_eq!(
+            std::fs::read(root.join(format!("book_2/covers/{fr_id}.jpg"))).unwrap(),
+            b"FR"
+        );
+        let all = join_in(&root, "book_1", &["book_2".into()]).unwrap();
+        assert_eq!(all.editions.len(), 3);
+        let dir = root.join("book_1");
+        for (lang, bytes, ext) in [("en", &b"EN"[..], "png"), ("fr", &b"FR"[..], "jpg")] {
+            let id = &all.editions.iter().find(|e| e.lang == lang).unwrap().id;
+            assert_eq!(
+                std::fs::read(dir.join(format!("covers/{id}.{ext}"))).unwrap(),
+                bytes,
+                "{lang}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Codex R5/3: scheitert der zweite Schritt des Cover-Tauschs, ist der
+    /// erste zurückgenommen.
+    #[test]
+    fn cover_tausch_halb_wird_zurueckgenommen() {
+        let dir = tmp();
+        std::fs::write(dir.join("cover.jpg"), b"ALT").unwrap();
+        std::fs::create_dir_all(dir.join("covers")).unwrap();
+        std::fs::write(dir.join("covers/ed_neu.png"), b"NEU").unwrap();
+        std::fs::create_dir_all(dir.join("cover.png/blockiert")).unwrap();
+        let mut moved = vec![(PathBuf::from("/x"), PathBuf::from("/y"))];
+        assert!(swap_covers(&dir, "ed_alt", "ed_neu", &mut moved).is_err());
+        assert_eq!(moved.len(), 1, "fremde Einträge bleiben");
+        assert_eq!(std::fs::read(dir.join("cover.jpg")).unwrap(), b"ALT");
+        assert!(dir.join("covers/ed_neu.png").is_file());
+        assert!(!dir.join("covers/ed_alt.jpg").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Codex R5/3+4: Wechsel der Hauptfassung beim Löschen; scheitert das
+    /// Schreiben von fassung.json, sind Cover, Hörbuch und Buch unverändert.
+    #[test]
+    fn papierkorb_fehler_nimmt_alles_zurueck() {
+        let root = tmp();
+        let mut de = base("book_1", "Der Weg", "de");
+        de.audio = Some(audio("a.mp3"));
+        put(&root, &de, &["a.mp3"]);
+        std::fs::write(root.join("book_1/cover.jpg"), b"DE").unwrap();
+        let mut en = base("book_2", "The Way", "en");
+        en.audio = Some(audio("b.mp3"));
+        put(&root, &en, &["b.mp3"]);
+        std::fs::write(root.join("book_2/cover.jpg"), b"EN").unwrap();
+        let joined = join_in(&root, "book_1", &["book_2".into()]).unwrap();
+        let p = primary_id(&joined).unwrap().to_string();
+        let other = joined
+            .editions
+            .iter()
+            .find(|e| e.id != p)
+            .unwrap()
+            .id
+            .clone();
+        let before = std::fs::read(root.join("book_1/buch.json")).unwrap();
+        std::fs::create_dir_all(root.join(TRASH).join(format!("book_1~{p}/fassung.json/x")))
+            .unwrap();
+        assert!(remove_in(&root, "book_1", &p, Some(&other)).is_err());
+        let dir = root.join("book_1");
+        assert_eq!(std::fs::read(dir.join("buch.json")).unwrap(), before);
+        assert_eq!(cover_of(&dir), b"DE");
+        assert_eq!(
+            std::fs::read(dir.join(format!("covers/{other}.jpg"))).unwrap(),
+            b"EN"
+        );
+        assert!(dir.join("audio/a.mp3").is_file());
         let _ = std::fs::remove_dir_all(&root);
     }
 
