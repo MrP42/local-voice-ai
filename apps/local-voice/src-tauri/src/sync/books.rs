@@ -115,18 +115,25 @@ fn valid_language(code: &str) -> bool {
 }
 
 /// Je Sprache das zuletzt erstellte Kurzbuch, egal von welchem Gerät. Bei gleichem
-/// Datum entscheidet die Blob-Kennung, damit alle Geräte dasselbe wählen.
+/// Datum entscheiden Blob-Kennung, Modell und Quelle: Alle Geräte wählen dasselbe,
+/// gleich in welcher Reihenfolge die Stände ankommen.
 fn merge_kurzbuecher(own: &[KurzbuchRef], received: &[KurzbuchRef]) -> Vec<KurzbuchRef> {
+    fn order(a: &KurzbuchRef, b: &KurzbuchRef) -> std::cmp::Ordering {
+        let date = |k: &KurzbuchRef| k.created_ms.unwrap_or(0.0);
+        date(a)
+            .total_cmp(&date(b))
+            .then_with(|| a.blob.blob.cmp(&b.blob.blob))
+            .then_with(|| a.model.cmp(&b.model))
+            .then_with(|| a.source.cmp(&b.source))
+    }
     let mut best: BTreeMap<String, KurzbuchRef> = BTreeMap::new();
     for k in own.iter().chain(received) {
         let Some(language) = kurzbuch_language(k.blob.file.as_deref()) else {
             continue;
         };
-        let rank = |r: &KurzbuchRef| (r.created_ms.unwrap_or(0.0), r.blob.blob.clone());
-        let better = best.get(language).is_none_or(|known| {
-            let (a, b) = (rank(k), rank(known));
-            a.0 > b.0 || (a.0 == b.0 && a.1 > b.1)
-        });
+        let better = best
+            .get(language)
+            .is_none_or(|known| order(k, known).is_gt());
         if better {
             best.insert(language.to_string(), k.clone());
         }
@@ -940,7 +947,10 @@ pub fn apply_book(
     let mut side = read_sidecar(&dir);
     if existing.is_some() && !local_clean && side.updated > remote_updated {
         // Die Angaben bleiben lokal, empfangene Kurzbücher gelten trotzdem.
-        side.pending.kurzbuecher = received_kurzbuecher(&remote_files);
+        side.pending.kurzbuecher = merge_kurzbuecher(
+            &side.pending.kurzbuecher,
+            &received_kurzbuecher(&remote_files),
+        );
         write_sidecar(&dir, &side)?;
         return Ok(Applied::default());
     }
@@ -996,7 +1006,10 @@ pub fn apply_book(
         }
     }
     // Nur gültige Verweise weitergeben; sie stehen in Pfaden der anderen Geräte.
-    pending.kurzbuecher = received_kurzbuecher(&remote_files);
+    pending.kurzbuecher = merge_kurzbuecher(
+        &side.pending.kurzbuecher,
+        &received_kurzbuecher(&remote_files),
+    );
     side.pending = pending;
     side.updated = remote_updated;
     let book = library::sync_read_book(&dir).ok_or("Buch nach dem Schreiben unlesbar")?;
@@ -1353,6 +1366,21 @@ mod tests {
         let a = [k("a", "kurzbuch-de.md", 1.0)];
         let b = [k("b", "kurzbuch-de.md", 1.0)];
         assert_eq!(merge_kurzbuecher(&a, &b), merge_kurzbuecher(&b, &a));
+        // Gleiche Datei und gleiches Datum, nur andere Angaben: ebenso unabhängig von der Reihenfolge.
+        let mut x = k("c", "kurzbuch-de.md", 1.0);
+        let mut y = x.clone();
+        x.model = Some("a".into());
+        y.model = Some("b".into());
+        assert_eq!(
+            merge_kurzbuecher(std::slice::from_ref(&x), std::slice::from_ref(&y)),
+            merge_kurzbuecher(std::slice::from_ref(&y), std::slice::from_ref(&x))
+        );
+        y.model = x.model.clone();
+        y.source = Some("Kapitel 1".into());
+        assert_eq!(
+            merge_kurzbuecher(std::slice::from_ref(&x), std::slice::from_ref(&y)),
+            merge_kurzbuecher(std::slice::from_ref(&y), std::slice::from_ref(&x))
+        );
     }
 
     #[test]
