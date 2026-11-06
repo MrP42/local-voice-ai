@@ -34,8 +34,9 @@
 # nutzt (managers/llm/contract.rs; gleiche Regeln: init zuerst, genau ein result
 # zuletzt, nur Whitelist-Typen und -Inhaltsbloecke, kein tool_use, kein Fehler).
 #
-# Messreihe: jeder Lauf mit Exit-Code <> 0, Fehlerereignis, stop_reason <>
-# end_turn, Abschneiden, Kompaktierung, Modellabweichung (alle gemeldeten
+# Messreihe: jeder Lauf mit Exit-Code <> 0, Fehlerereignis, stop_reason ausser
+# end_turn/stop_sequence im Ergebnis, Abschneiden (max_tokens/aborted an
+# IRGENDEINEM Ereignis, auch in einer Zwischennachricht; wie die App), Kompaktierung, Modellabweichung (alle gemeldeten
 # Modell-IDs aller Laeufe muessen identisch sein) oder Vertragsverletzung macht
 # die GANZE Messreihe ungueltig: es wird nichts geschrieben. Die Schwelle fuer
 # die Kompaktierung ist fest in der App (PREVIEW_MAX_CONTEXT_SHARE = 0,5) und
@@ -45,8 +46,15 @@
 # App). Der Hash wird einmal gebildet und vor UND nach jedem Lauf (auch Version)
 # erneut geprueft; weicht er ab, ist die ganze Reihe ungueltig und es wird nichts
 # geschrieben. Grenze: ein Skript kann den Start nicht an ein Handle binden; die
-# App tut das (Linux /proc/self/fd, Windows FILE_SHARE_READ). Die Hashpruefung
-# vor/nach dem Lauf erfasst Austausch und Aenderung, nicht jedes Zeitfenster.
+# App tut das (Linux /proc/self/fd, Windows Handles auf alle Elternkomponenten und
+# die Datei). Die Hashpruefung vor/nach dem Lauf erfasst Austausch und
+# Aenderung, nicht jedes Zeitfenster.
+#
+# Werkzeugsperre: tools_blocked nur, wenn der Werkzeug-Vorschau-Lauf GUELTIG ist
+# (Exit 0, Vertrag erfuellt, usage ok, end_turn) UND weder Marker noch tool_use
+# zeigt. Ist IRGENDEIN Pruefaufruf ungueltig (Exit-Code <> 0, kaputte Zeile,
+# Fehlerereignis; die Vorschau-Laeufe zusaetzlich nicht gueltig), bleiben ALLE
+# Faehigkeiten false (isolation-check-test.sh prueft das mit einer Fake-CLI).
 #
 # Messreihe-Parser (analyze-run.py, getestet mit isolation-check-test.sh): fehlende
 # oder ungueltige usage, stop_reason <> end_turn (u. a. max_tokens), Fehler,
@@ -82,7 +90,7 @@ set -u
 CLI_SEL=claude
 CLAUDE_MODEL=""
 DATA_DIR=""
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EVENTS_FILE="$SCRIPT_DIR/claude-events.json"
 RUNS=10
 MEASURE=0
@@ -274,7 +282,7 @@ check_claude() { # $1 = Programm, $2 = Modellspez
   local bin="$1" spec="$2" world c i t tp
   CAP_instructions_blocked=false; CAP_project_instructions_blocked=false
   CAP_hooks_blocked=false; CAP_memory_blocked=false; CAP_tools_blocked=false
-  CAP_event_contract=false; NOTE=""
+  CAP_event_contract=false; NOTE=""; CHECK_INVALID=false
   world="$(make_world check)"
   local marker; marker="$(cat "$world/marker")"
   rm -f "$world/hook_marker"
@@ -295,8 +303,20 @@ check_claude() { # $1 = Programm, $2 = Modellspez
   run_claude "$bin" "$world" preview "$spec" "$world/tool-preview.jsonl" "$TOOL_QUESTION"
   tp="$(analyze "$world/tool-preview.jsonl" "$EVENTS_FILE" "$marker")"
   note_run "$tp"
-  if ! truthy "$i" ok; then
-    NOTE="Vorschau-Lauf ohne gueltige Antwort oder Vertragsverletzung ($(field "$i" violation)): nichts bewiesen"
+  # Ein ungueltiger Pruefaufruf macht ALLE Faehigkeiten false: Vorschau-Laeufe muessen
+  # voll gueltig sein; Kontrolllaeufe (sie duerfen Hooks/Werkzeuge zeigen) brauchen
+  # Exit 0, keine kaputte Zeile und kein Fehlerereignis.
+  local ctl
+  for ctl in "$c" "$t"; do
+    if [ "$(field "$ctl" rc)" != 0 ] || truthy "$ctl" bad || [ -n "$(field "$ctl" error)" ]; then
+      CHECK_INVALID=true
+      NOTE="Kontrolllauf ungueltig (Exit-Code <> 0, kaputte Zeile oder Fehlerereignis): nichts bewiesen"
+      return 0
+    fi
+  done
+  if ! truthy "$i" ok || ! truthy "$tp" ok; then
+    CHECK_INVALID=true
+    NOTE="Vorschau-Lauf ohne gueltige Antwort oder Vertragsverletzung (Frage: $(field "$i" reason), Werkzeug: $(field "$tp" reason)): nichts bewiesen"
     return 0
   fi
   local w
@@ -313,9 +333,11 @@ check_claude() { # $1 = Programm, $2 = Modellspez
   elif [ "$control_hook" != true ]; then NOTE="$NOTE hooks_blocked:Kontrolle_fuehrte_Hook_nicht_aus;"
   else NOTE="$NOTE hooks_blocked:Hook_lief_trotz_Isolation;"; fi
   # Werkzeuge: positive Kontrolle (ohne Sperre Wirkung) UND negative (mit Sperre keine Wirkung).
+  # Die Sperre gilt nur, wenn der negative Lauf GUELTIG ist (siehe oben, tp ok) und
+  # weder Marker noch tool_use zeigt.
   local control_effect=false preview_effect=true
   { truthy "$t" tool_use || truthy "$t" marker_seen; } && control_effect=true
-  { ! truthy "$tp" tool_use && ! truthy "$tp" marker_seen; } && preview_effect=false
+  { truthy "$tp" ok && ! truthy "$tp" tool_use && ! truthy "$tp" marker_seen; } && preview_effect=false
   python3 -c 'import json,sys;d=json.loads(sys.argv[1]);sys.exit(0 if d["tools"]==[] and d["mcp"]==[] else 1)' "$i" && local init_empty=true || local init_empty=false
   if [ "$control_effect" != true ]; then NOTE="$NOTE tools_blocked:Kontrolle_las_den_Marker_nicht;"
   elif [ "$preview_effect" = true ]; then NOTE="$NOTE tools_blocked:Werkzeug_wirkt_trotz_Sperre;"
@@ -324,7 +346,8 @@ check_claude() { # $1 = Programm, $2 = Modellspez
 }
 
 finish_event_contract() {
-  if [ "$CONTRACT_OK" = true ] && [ -n "$OBSERVED" ]; then CAP_event_contract=true
+  if [ "${CHECK_INVALID:-false}" = true ]; then CAP_event_contract=false
+  elif [ "$CONTRACT_OK" = true ] && [ -n "$OBSERVED" ]; then CAP_event_contract=true
   else CAP_event_contract=false; NOTE="$NOTE event_contract:Vertragsverletzung_oder_nichts_beobachtet;"; fi
 }
 
@@ -364,7 +387,8 @@ measure_claude() { # $1 = Programm, $2 = Modellspez, $3 = provider, $4 = Version
     [ "$(field "$r" rc)" = 0 ] || die "Messreihe ungueltig: Lauf $n mit Exit-Code <> 0 (nichts geschrieben)"
     [ "$(field "$r" violation)" = '""' ] || [ -z "$(field "$r" violation)" ] || die "Messreihe ungueltig: Lauf $n verletzt den Ereignisvertrag ($(field "$r" violation); nichts geschrieben)"
     [ -z "$(field "$r" error)" ] || die "Messreihe ungueltig: Lauf $n mit Fehlerereignis (nichts geschrieben)"
-    [ "$(field "$r" stop)" = end_turn ] || die "Messreihe ungueltig: Lauf $n mit stop_reason <> end_turn (Abschneiden; nichts geschrieben)"
+    truthy "$r" cut && die "Messreihe ungueltig: Lauf $n abgeschnitten (stop_reason max_tokens/aborted an einem Ereignis; nichts geschrieben)"
+    case "$(field "$r" stop)" in end_turn|stop_sequence) ;; *) die "Messreihe ungueltig: Lauf $n ohne regulaeren stop_reason (nichts geschrieben)" ;; esac
     truthy "$r" compacted && die "Messreihe ungueltig: Lauf $n mit Kompaktierung (nichts geschrieben)"
     truthy "$r" ok || die "Messreihe ungueltig: Lauf $n ohne gueltige Antwort (nichts geschrieben)"
     [ "$(python3 -c 'import json,sys;print(len(json.loads(sys.argv[1])["models"]))' "$r")" = 1 ] \
@@ -432,5 +456,8 @@ handle_claude() { # $1 = Modellspez
   fi
 }
 
-handle_claude "$CLAUDE_MODEL"
-say "fertig. Dateien in: $DATA_DIR"
+# Zum Testen (isolation-check-test.sh) laesst sich das Skript nur einlesen.
+if [ "${ISOLATION_CHECK_SOURCE_ONLY:-}" != 1 ]; then
+  handle_claude "$CLAUDE_MODEL"
+  say "fertig. Dateien in: $DATA_DIR"
+fi

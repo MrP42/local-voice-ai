@@ -5,12 +5,22 @@ Aufruf: analyze-run.py <Ausgabedatei> <Whitelist> <Marker> [Exit-Code]
 Ohne Exit-Code wird <Ausgabedatei>.rc gelesen. Gibt eine JSON-Zeile aus (nur
 Zahlen und Marken, nie den Text). `ok` nur, wenn der Lauf in allen Punkten
 gueltig ist: Exit-Code 0, Ereignisvertrag, kein Fehler, keine Kompaktierung,
-stop_reason == end_turn, vollstaendige und gueltige usage, Text vorhanden.
+Abschneiden (siehe unten) ausgeschlossen, vollstaendige und gueltige usage,
+Text vorhanden.
+Abschneiden wie in der App (cli.rs, parse_claude_stream): ein stop_reason aus
+CUT_STOP_REASONS an IRGENDEINEM Ereignis (Ergebnis, message.stop_reason jeder
+Nachricht, jedes andere Ereignis) oder ein subtype mit "abort" sperrt, auch wenn
+das Ergebnis end_turn meldet. Das Ergebnis selbst muss einen regulaeren
+stop_reason aus DONE_STOP_REASONS haben; fehlt er oder ist er unbekannt, ist der
+Lauf ungueltig (unbekannt ist nie Erfolg).
 `reason` nennt den ersten Grund der Ungueltigkeit. Spiegel in der App:
 cli.rs (parse_claude_stream) und contract.rs. isolation-check.ps1 spiegelt
 diese Regeln.
 """
 import json, sys
+# Spiegel von CUT_STOP_REASONS/DONE_STOP_REASONS in cli.rs.
+CUT_STOP_REASONS = ("max_tokens", "aborted", "model_context_window_exceeded")
+DONE_STOP_REASONS = ("end_turn", "stop_sequence")
 path, events_path, marker = sys.argv[1:4]
 rc = 0
 if len(sys.argv) > 4:
@@ -87,6 +97,7 @@ def contract(evs):
     return ""
 
 models, text, inp, out, stop, err, compacted, tool_use = set(), "", 0, 0, "", "", False, False
+cut = False
 usage_ok = False
 
 
@@ -98,6 +109,12 @@ for e in events:
     t = e.get("type")
     if t == "system" and e.get("subtype") == "compact_boundary" or "compact_metadata" in e:
         compacted = True
+    ev_stop = e.get("stop_reason")
+    if not isinstance(ev_stop, str):
+        ev_stop = (e.get("message") or {}).get("stop_reason") if isinstance(e.get("message"), dict) else None
+    if (isinstance(ev_stop, str) and ev_stop in CUT_STOP_REASONS) or \
+            (isinstance(e.get("subtype"), str) and "abort" in e["subtype"]):
+        cut = True
     if t == "system" and isinstance(e.get("model"), str):
         models.add(e["model"].strip())
     if t == "assistant" and isinstance((e.get("message") or {}).get("model"), str):
@@ -129,7 +146,7 @@ elif err:
     reason = "error_event"
 elif compacted:
     reason = "compacted"
-elif stop != "end_turn":
+elif cut or stop not in DONE_STOP_REASONS:
     reason = "stop_reason"
 elif not usage_ok:
     reason = "usage"
@@ -139,7 +156,7 @@ else:
     reason = ""
 print(json.dumps({
     "reason": reason,
-    "rc": rc, "bad": bad, "error": err, "compacted": compacted, "stop": stop,
+    "rc": rc, "bad": bad, "error": err, "compacted": compacted, "stop": stop, "cut": cut,
     "input": inp, "output": out, "models": sorted(models), "tool_use": tool_use,
     "marker_seen": bool(marker) and marker in text,
     "tools": init.get("tools"), "mcp": init.get("mcp_servers"),

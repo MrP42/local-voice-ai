@@ -26,8 +26,12 @@
 //! * Bindung: gebunden wird die installierte ORIGINALDATEI (keine Kopie). Alle
 //!   Starts der Vorschau, auch `--version`, laufen ueber [`Pinned`]: Datei
 //!   offen halten, Hash aus dem Handle, Start ueber das Handle. Windows:
-//!   lokales festes Laufwerk, keine Reparse-Komponente, FILE_SHARE_READ (Schreiben
-//!   und Loeschen durch andere scheitern), Start per Pfad. Linux: Start ueber
+//!   lokales festes Laufwerk; JEDE Elternkomponente (Wurzel bis Zielordner)
+//!   nacheinander mit Handle geoeffnet (ohne FILE_SHARE_DELETE, Umbenennen/
+//!   Loeschen/Ersetzen scheitert) und am Handle auf Reparse-Punkte geprueft, die
+//!   Datei mit FILE_FLAG_OPEN_REPARSE_POINT und FILE_SHARE_READ, `GetFinalPathNameByHandleW`
+//!   gleich dem erwarteten Pfad; Start mit genau diesem Pfad. Geht eines davon
+//!   nicht, ist Windows gesperrt. Linux: Start ueber
 //!   `/proc/self/fd/<fd>`. macOS und andere Unix: gesperrt (`platform_unsupported`).
 //!   Vor dem Start und nach dem Ende wird der Hash neu gebildet ([`Pinned::verify`]).
 //!   Grenze (ausserhalb der Garantie): die FD-Bindung verhindert Pfadaustausch,
@@ -501,9 +505,135 @@ fn assert_no_reparse(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Datei zum Lesen oeffnen; Windows: GENERIC_READ und Teilen AUSSCHLIESSLICH
-/// zum Lesen (FILE_SHARE_READ), solange das Handle lebt, scheitern Schreiben,
-/// Umbenennen und Loeschen durch andere.
+/// Normalisierter Vergleichswert eines Windows-Pfads (auch der Rueckgabe von
+/// `GetFinalPathNameByHandleW`): `/` zu `\`, Praefix `\\?\` entfernt, ohne
+/// abschliessenden `\`, klein geschrieben (Windows vergleicht ohne Gross-/
+/// Kleinschreibung). `\\?\UNC\...` bleibt als `unc\...` stehen und gleicht nie
+/// einem Laufwerkspfad.
+#[cfg(any(windows, test))]
+fn normalize_final_path(p: &str) -> String {
+    let s = p.replace('/', "\\");
+    let s = s.strip_prefix("\\\\?\\").unwrap_or(&s);
+    s.trim_end_matches('\\').to_lowercase()
+}
+
+/// Windows: Handles auf JEDE Elternkomponente und die Pruefung am Handle.
+///
+/// Ein Pfad, den man zuerst auf Reparse-Punkte prueft und danach oeffnet, laesst
+/// ein Austauschfenster (Junction dazwischen schieben). Deshalb hier: jede
+/// Komponente vom Laufwerkswurzel bis zum Zielordner nacheinander oeffnen, am
+/// HANDLE pruefen (kein `FILE_ATTRIBUTE_REPARSE_POINT`, Verzeichnis, Endpfad
+/// gleich dem erwarteten) und die Handles halten. Geteilt wird nur
+/// Lesen/Schreiben, NICHT Loeschen/Umbenennen: Umbenennen, Loeschen oder
+/// Ersetzen einer gehaltenen Komponente scheitert, solange das Handle lebt.
+#[cfg(windows)]
+mod winpin {
+    use std::fs::File;
+    use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
+    use std::os::windows::io::AsRawHandle;
+    use std::path::Path;
+
+    const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    pub const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    const FILE_READ_ATTRIBUTES: u32 = 0x80;
+    const FILE_SHARE_READ: u32 = 1;
+    const FILE_SHARE_WRITE: u32 = 2;
+
+    fn unknown(why: &str) -> String {
+        format!("payload_unknown: {why}")
+    }
+
+    /// Endpfad des Handles (`GetFinalPathNameByHandleW`, normalisiert, DOS-Name).
+    pub fn final_path(file: &File) -> Result<String, String> {
+        use windows::Win32::Foundation::HANDLE;
+        use windows::Win32::Storage::FileSystem::{
+            GetFinalPathNameByHandleW, FILE_NAME_NORMALIZED,
+        };
+        let handle = HANDLE(file.as_raw_handle());
+        let mut buf = vec![0u16; 1024];
+        for _ in 0..4 {
+            // SAFETY: `handle` gehoert `file` und lebt waehrend des Aufrufs; `buf`
+            // ist ein beschreibbarer Puffer der angegebenen Laenge.
+            // Flags: FILE_NAME_NORMALIZED (0) und VOLUME_NAME_DOS (0, der Standard).
+            let n = unsafe { GetFinalPathNameByHandleW(handle, &mut buf, FILE_NAME_NORMALIZED) }
+                as usize;
+            if n == 0 {
+                return Err(unknown("Endpfad des Handles nicht lesbar"));
+            }
+            if n < buf.len() {
+                return Ok(String::from_utf16_lossy(&buf[..n]));
+            }
+            buf.resize(n + 1, 0);
+        }
+        Err(unknown("Endpfad des Handles zu lang"))
+    }
+
+    /// Endpfad des Handles gleich dem erwarteten Pfad (normalisiert).
+    fn assert_final(file: &File, expected: &Path) -> Result<(), String> {
+        let actual = super::normalize_final_path(&final_path(file)?);
+        let want = super::normalize_final_path(&expected.to_string_lossy());
+        if actual == want {
+            Ok(())
+        } else {
+            Err(unknown("Endpfad des Handles weicht vom erwarteten Pfad ab"))
+        }
+    }
+
+    /// Eine Verzeichniskomponente oeffnen und am Handle pruefen.
+    pub fn hold_dir(dir: &Path) -> Result<File, String> {
+        let handle = std::fs::OpenOptions::new()
+            .access_mode(FILE_READ_ATTRIBUTES)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(dir)
+            .map_err(|e| unknown(&format!("Verzeichnis nicht oeffenbar ({e})")))?;
+        let attrs = handle
+            .metadata()
+            .map_err(|e| unknown(&format!("Attribute nicht lesbar ({e})")))?
+            .file_attributes();
+        if attrs & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return Err(unknown("Reparse-Komponente im Pfad"));
+        }
+        if attrs & FILE_ATTRIBUTE_DIRECTORY == 0 {
+            return Err(unknown("Pfadkomponente ist kein Verzeichnis"));
+        }
+        assert_final(&handle, dir)?;
+        Ok(handle)
+    }
+
+    /// Alle Elternkomponenten von `file` (Wurzel zuerst) nacheinander halten.
+    pub fn hold_chain(file: &Path) -> Result<Vec<File>, String> {
+        let mut dirs: Vec<&Path> = file.ancestors().skip(1).collect();
+        if dirs.is_empty() {
+            return Err(unknown("kein Elternordner"));
+        }
+        dirs.reverse();
+        dirs.into_iter().map(hold_dir).collect()
+    }
+
+    /// Die Zieldatei am Handle pruefen: weder Reparse-Punkt noch Verzeichnis,
+    /// Endpfad gleich dem erwarteten Pfad.
+    pub fn verify_file(file: &File, expected: &Path) -> Result<(), String> {
+        let attrs = file
+            .metadata()
+            .map_err(|e| unknown(&format!("Attribute nicht lesbar ({e})")))?
+            .file_attributes();
+        if attrs & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return Err(unknown("Reparse-Punkt als Programmdatei"));
+        }
+        if attrs & FILE_ATTRIBUTE_DIRECTORY != 0 {
+            return Err(unknown("Programmdatei ist ein Verzeichnis"));
+        }
+        assert_final(file, expected)
+    }
+}
+
+/// Datei zum Lesen oeffnen; Windows: GENERIC_READ, Teilen AUSSCHLIESSLICH zum
+/// Lesen (FILE_SHARE_READ) und FILE_FLAG_OPEN_REPARSE_POINT (ein Reparse-Punkt
+/// wird selbst geoeffnet, nie durchlaufen; [`winpin::verify_file`] lehnt ihn ab).
+/// Solange das Handle lebt, scheitern Schreiben, Umbenennen und Loeschen.
 fn open_pinned(path: &Path) -> std::io::Result<std::fs::File> {
     let mut opts = std::fs::OpenOptions::new();
     opts.read(true);
@@ -511,6 +641,7 @@ fn open_pinned(path: &Path) -> std::io::Result<std::fs::File> {
     {
         use std::os::windows::fs::OpenOptionsExt;
         opts.share_mode(1); // FILE_SHARE_READ
+        opts.custom_flags(winpin::FILE_FLAG_OPEN_REPARSE_POINT);
     }
     opts.open(path)
 }
@@ -524,9 +655,11 @@ fn hash_handle(mut file: &std::fs::File) -> std::io::Result<String> {
 /// Das installierte Original, offen gehalten und gehasht AUS DEM HANDLE. Alle
 /// Starts der Vorschau (auch `--version`) laufen ueber diese Stelle:
 ///
-/// * Windows: lokales festes Laufwerk, keine Reparse-Komponente, Handle mit
-///   FILE_SHARE_READ bis zum Ende des Prozesses; Start per Pfad (der Austausch
-///   ist gesperrt).
+/// * Windows: lokales festes Laufwerk; Handles auf alle Elternkomponenten
+///   (ohne FILE_SHARE_DELETE, am Handle auf Reparse-Punkte geprueft, [`winpin`])
+///   und auf die Datei (FILE_SHARE_READ, OPEN_REPARSE_POINT, Endpfad gleich dem
+///   erwarteten) solange die Bindung lebt; Start mit genau dem geprueften Pfad
+///   (Umbenennen, Loeschen und Ersetzen von Datei und Eltern sind gesperrt).
 /// * Linux: Start ueber `/proc/self/fd/<fd>` des gehaltenen Handles; der Kernel
 ///   loest den Pfad in `execve` auf, bevor `O_CLOEXEC` den Deskriptor schliesst.
 ///   Ein Austausch der Datei am Pfad wirkt nicht mehr.
@@ -542,6 +675,10 @@ pub struct Pinned {
     pub path: PathBuf,
     sha256: String,
     handle: std::fs::File,
+    /// Windows: Handles auf alle Elternkomponenten (Wurzel bis Zielordner),
+    /// gehalten, solange die Bindung lebt.
+    #[cfg(windows)]
+    _dirs: Vec<std::fs::File>,
 }
 
 impl Pinned {
@@ -550,15 +687,21 @@ impl Pinned {
         if !platform_supported() {
             return Err("platform_unsupported: Start nicht austauschsicher moeglich".to_string());
         }
+        let path = payload_path(source)?;
         #[cfg(windows)]
-        {
+        let dirs = {
             let absolute = std::path::absolute(source).map_err(|e| format!("cli_missing: {e}"))?;
             assert_no_reparse(&absolute)?;
-            assert_local_fixed(&payload_path(&absolute)?)?;
-        }
-        let path = payload_path(source)?;
+            assert_local_fixed(&path)?;
+            // Zuerst jede Elternkomponente halten und am Handle pruefen, erst dann
+            // die Datei oeffnen: zwischen Pruefung und Oeffnen laesst sich nichts
+            // mehr austauschen.
+            winpin::hold_chain(&path)?
+        };
         check_native(&path)?;
         let handle = open_pinned(&path).map_err(|e| format!("cli_missing: {e}"))?;
+        #[cfg(windows)]
+        winpin::verify_file(&handle, &path)?;
         // Kopf aus dem Handle: es ist genau die Datei, die laeuft.
         #[cfg(test)]
         let skip = TEST_ALLOW_SCRIPT.with(std::cell::Cell::get);
@@ -581,6 +724,8 @@ impl Pinned {
             path,
             sha256,
             handle,
+            #[cfg(windows)]
+            _dirs: dirs,
         })
     }
 
@@ -1584,6 +1729,104 @@ mod tests {
         assert!(std::fs::remove_file(&path).is_err());
         assert!(std::fs::rename(&path, dir.path().join("x.exe")).is_err());
         assert_eq!(hash_handle(&held).unwrap(), sha256_file(&path).unwrap());
+    }
+
+    #[test]
+    fn final_paths_are_compared_normalized_and_case_insensitive() {
+        let a = normalize_final_path(r"\\?\C:\Users\Wolff\.local\bin\Claude.exe");
+        assert_eq!(
+            a,
+            normalize_final_path("c:/users/wolff/.local/bin/claude.exe")
+        );
+        assert_eq!(
+            normalize_final_path(r"\\?\C:\"),
+            normalize_final_path(r"C:\")
+        );
+        assert_eq!(normalize_final_path(r"\\?\C:\a\"), "c:\\a");
+        // Ein anderer Ordner oder ein UNC-Pfad gleicht nie.
+        assert_ne!(
+            normalize_final_path(r"\\?\C:\a\b"),
+            normalize_final_path(r"C:\a\c")
+        );
+        assert_ne!(
+            normalize_final_path(r"\\?\UNC\server\share\x"),
+            normalize_final_path(r"C:\server\share\x")
+        );
+    }
+
+    #[cfg(windows)]
+    fn mklink_junction(link: &Path, target: &Path) -> bool {
+        std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(link)
+            .arg(target)
+            .output()
+            .is_ok_and(|o| o.status.success())
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_renaming_a_held_parent_fails_until_it_is_released() {
+        let root = tempfile::tempdir().unwrap();
+        let outer = root.path().join("aussen");
+        let inner = outer.join("innen");
+        std::fs::create_dir_all(&inner).unwrap();
+        let exe = inner.join("claude.exe");
+        std::fs::write(&exe, b"MZ\x90\x00 programm").unwrap();
+        let exe = std::fs::canonicalize(&exe).unwrap();
+        let chain = winpin::hold_chain(&exe).unwrap();
+        assert!(chain.len() >= 3, "Wurzel bis Zielordner");
+        // Jede gehaltene Komponente laesst sich nicht umbenennen oder loeschen.
+        assert!(std::fs::rename(&inner, outer.join("anders")).is_err());
+        assert!(std::fs::rename(&outer, root.path().join("anders")).is_err());
+        assert!(std::fs::remove_dir_all(&outer).is_err());
+        assert!(exe.exists());
+        drop(chain);
+        std::fs::rename(&outer, root.path().join("anders")).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_a_reparse_component_or_target_is_blocked() {
+        let root = tempfile::tempdir().unwrap();
+        let real = root.path().join("echt");
+        std::fs::create_dir_all(&real).unwrap();
+        let exe = real.join("claude.exe");
+        std::fs::write(&exe, b"MZ\x90\x00 programm").unwrap();
+        // Junction als Elternkomponente: am Handle erkannt, auch ohne vorherige Pfadpruefung.
+        let link = root.path().join("verweis");
+        assert!(mklink_junction(&link, &real), "mklink /J nicht moeglich");
+        let err = winpin::hold_chain(&link.join("claude.exe")).unwrap_err();
+        assert!(err.contains("Reparse"), "{err}");
+        let err = Pinned::open(&link.join("claude.exe")).unwrap_err();
+        assert!(err.starts_with("payload_unknown"), "{err}");
+        // Symbolische Verknuepfung als Zieldatei (braucht ggf. ein Recht; sonst nur die Junction).
+        let file_link = real.join("link.exe");
+        if std::os::windows::fs::symlink_file(&exe, &file_link).is_ok() {
+            let file = open_pinned(&file_link).unwrap();
+            let err = winpin::verify_file(&file, &file_link).unwrap_err();
+            assert!(err.contains("Reparse"), "{err}");
+        }
+        // Die echte Datei besteht die Pruefung am Handle, ihr Endpfad passt.
+        let canon = std::fs::canonicalize(&exe).unwrap();
+        let file = open_pinned(&canon).unwrap();
+        winpin::verify_file(&file, &canon).unwrap();
+        assert!(winpin::verify_file(&file, &real.join("anders.exe")).is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_pinned_holds_the_chain_while_it_lives() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("programme");
+        std::fs::create_dir_all(&dir).unwrap();
+        let exe = dir.join("claude.exe");
+        std::fs::write(&exe, b"MZ\x90\x00 programm").unwrap();
+        let pinned = Pinned::open(&exe).unwrap();
+        assert!(std::fs::rename(&dir, root.path().join("anders")).is_err());
+        assert!(std::fs::rename(&pinned.path, dir.join("x.exe")).is_err());
+        drop(pinned);
+        std::fs::rename(&dir, root.path().join("anders")).unwrap();
     }
 
     #[test]

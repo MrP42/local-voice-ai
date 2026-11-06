@@ -16,3 +16,10 @@ tool_use	0	tool_use
 compacted	0	event_unknown
 no_result	0	event_order
 bad_line	0	bad_line
+stop_message_max_tokens	0	stop_reason
+stop_message_aborted	0	stop_reason
+stop_message_cut_first_of_two	0	stop_reason
+stop_user_event_max_tokens	0	stop_reason
+stop_message_end_turn_ok	0	
+stop_sequence_ok	0	
+stop_result_unknown	0	stop_reason

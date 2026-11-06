@@ -38,20 +38,32 @@
   (managers/llm/contract.rs; gleiche Regeln: init zuerst, genau ein result zuletzt,
   nur Whitelist-Typen und -Inhaltsbloecke, kein tool_use, kein Fehler).
 
-  Messreihe: jeder Lauf mit Exit-Code <> 0, Fehlerereignis, stop_reason <> end_turn,
-  Abschneiden, Kompaktierung, Modellabweichung (alle gemeldeten Modell-IDs aller
+  Messreihe: jeder Lauf mit Exit-Code <> 0, Fehlerereignis, stop_reason ausser
+  end_turn/stop_sequence im Ergebnis, Abschneiden (max_tokens/aborted an IRGENDEINEM
+  Ereignis, auch einer Zwischennachricht; wie die App), Kompaktierung, Modellabweichung (alle gemeldeten Modell-IDs aller
   Laeufe muessen identisch sein) oder Vertragsverletzung macht die GANZE Messreihe
   ungueltig: es wird nichts geschrieben. Die Schwelle fuer die Kompaktierung ist fest
   in der App (PREVIEW_MAX_CONTEXT_SHARE = 0,5) und gehoert nicht in die Messdatei.
 
   Gebunden wird das installierte ORIGINAL, es gibt keine Kopie (auch nicht in der
-  App). Das Skript haelt die Datei mit Teilen nur zum Lesen offen (Schreiben,
-  Umbenennen, Loeschen durch andere scheitern), hasht sie aus dem Handle, verlangt
-  ein lokales festes Laufwerk ohne Reparse-Komponente und prueft den Hash vor UND
-  nach jedem Lauf (auch die Version). Weicht er ab, ist die ganze Reihe ungueltig
+  App). Wie die App (preview.rs, winpin): lokales festes Laufwerk; JEDE Elternkomponente
+  vom Laufwerkswurzel bis zum Zielordner wird nacheinander per CreateFileW (P/Invoke,
+  FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, Teilen Lesen/Schreiben,
+  NICHT Loeschen) geoeffnet, am Handle auf FILE_ATTRIBUTE_REPARSE_POINT geprueft und
+  bis zum Ende gehalten (Umbenennen, Loeschen, Ersetzen scheitert). Die Datei wird mit
+  OPEN_REPARSE_POINT, GENERIC_READ und Teilen nur Lesen geoeffnet, am Handle geprueft;
+  GetFinalPathNameByHandleW muss dem erwarteten Pfad entsprechen (normalisiert,
+  ohne Gross-/Kleinschreibung, ohne \\?\). Geht etwas davon nicht, bricht das Skript
+  ab. Der Hash kommt aus dem Handle und wird vor UND nach jedem Lauf (auch die Version)
+  geprueft.
+
+  Werkzeugsperre: tools_blocked nur, wenn der Werkzeug-Vorschau-Lauf GUELTIG ist
+  (Exit 0, Vertrag erfuellt, usage ok, end_turn) UND weder Marker noch tool_use zeigt.
+  Ist IRGENDEIN Pruefaufruf ungueltig, bleiben ALLE Faehigkeiten false (Spiegel von
+  isolation-check.sh, dort getestet). Weicht er ab, ist die ganze Reihe ungueltig
   und es wird nichts geschrieben. Messlauf-Parser: fehlende oder ungueltige usage,
-  stop_reason <> end_turn (u. a. max_tokens), Fehler, unbekanntes Ereignis,
-  Kompaktierung oder Exit-Code <> 0 machen den Lauf ungueltig (Spiegel von
+  Abschneiden (stop_reason max_tokens usw. an irgendeinem Ereignis), Fehler,
+  unbekanntes Ereignis, Kompaktierung oder Exit-Code <> 0 machen den Lauf ungueltig (Spiegel von
   analyze-run.py, getestet mit isolation-check-test.sh).
 
   Nur eine NATIVE Claude-Datei (PE, ELF, Mach-O) wird zugelassen; npm-/Node-/Skript-
@@ -138,6 +150,127 @@ function Write-Text([string]$path, [string]$text) {
 
 function Get-Sha256([string]$path) { (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLowerInvariant() }
 
+# P/Invoke fuer die Handle-Pruefung (Spiegel von preview.rs, Modul winpin). Nur
+# Syntax von C# 5 (Windows PowerShell 5.1).
+if (-not ('LvaWin' -as [type])) {
+    Add-Type -TypeDefinition @"
+using System;
+using System.IO;
+using System.Runtime.InteropServices;
+using System.Text;
+using Microsoft.Win32.SafeHandles;
+
+public static class LvaWin {
+    [StructLayout(LayoutKind.Sequential)]
+    struct BY_HANDLE_FILE_INFORMATION {
+        public uint dwFileAttributes;
+        public System.Runtime.InteropServices.ComTypes.FILETIME ftCreationTime;
+        public System.Runtime.InteropServices.ComTypes.FILETIME ftLastAccessTime;
+        public System.Runtime.InteropServices.ComTypes.FILETIME ftLastWriteTime;
+        public uint dwVolumeSerialNumber;
+        public uint nFileSizeHigh;
+        public uint nFileSizeLow;
+        public uint nNumberOfLinks;
+        public uint nFileIndexHigh;
+        public uint nFileIndexLow;
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    static extern SafeFileHandle CreateFileW(string name, uint access, uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool GetFileInformationByHandle(SafeFileHandle handle, out BY_HANDLE_FILE_INFORMATION info);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    static extern uint GetFinalPathNameByHandleW(SafeFileHandle handle, StringBuilder path, uint length, uint flags);
+
+    const uint FILE_READ_ATTRIBUTES = 0x80;
+    const uint GENERIC_READ = 0x80000000;
+    const uint FILE_SHARE_READ = 1;
+    const uint FILE_SHARE_WRITE = 2;
+    const uint OPEN_EXISTING = 3;
+    const uint FILE_FLAG_BACKUP_SEMANTICS = 0x02000000;
+    const uint FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000;
+
+    static SafeFileHandle Open(string path, uint access, uint share, uint flags) {
+        SafeFileHandle h = CreateFileW(path, access, share, IntPtr.Zero, OPEN_EXISTING, flags, IntPtr.Zero);
+        if (h.IsInvalid) {
+            throw new IOException("CreateFileW fehlgeschlagen (Win32-Fehler " + Marshal.GetLastWin32Error() + ")");
+        }
+        return h;
+    }
+
+    // Verzeichniskomponente: Teilen Lesen/Schreiben, NICHT Loeschen; Reparse-Punkt wird selbst geoeffnet.
+    public static SafeFileHandle OpenDir(string path) {
+        return Open(path, FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+
+    // Zieldatei: GENERIC_READ, Teilen nur Lesen, Reparse-Punkt wird selbst geoeffnet.
+    public static SafeFileHandle OpenFile(string path) {
+        return Open(path, GENERIC_READ, FILE_SHARE_READ, FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+
+    public static uint Attributes(SafeFileHandle handle) {
+        BY_HANDLE_FILE_INFORMATION info;
+        if (!GetFileInformationByHandle(handle, out info)) {
+            throw new IOException("GetFileInformationByHandle fehlgeschlagen (Win32-Fehler " + Marshal.GetLastWin32Error() + ")");
+        }
+        return info.dwFileAttributes;
+    }
+
+    // FILE_NAME_NORMALIZED | VOLUME_NAME_DOS (beide 0).
+    public static string FinalPath(SafeFileHandle handle) {
+        StringBuilder sb = new StringBuilder(1024);
+        uint n = GetFinalPathNameByHandleW(handle, sb, (uint)sb.Capacity, 0);
+        if (n > (uint)sb.Capacity) {
+            sb = new StringBuilder((int)n + 1);
+            n = GetFinalPathNameByHandleW(handle, sb, (uint)sb.Capacity, 0);
+        }
+        if (n == 0 || n > (uint)sb.Capacity) {
+            throw new IOException("GetFinalPathNameByHandleW fehlgeschlagen (Win32-Fehler " + Marshal.GetLastWin32Error() + ")");
+        }
+        return sb.ToString();
+    }
+}
+"@
+}
+
+$script:ReparseAttr = 0x400
+$script:DirAttr = 0x10
+
+# Vergleichswert eines Windows-Pfads (Spiegel von normalize_final_path in preview.rs).
+function Normalize-FinalPath([string]$p) {
+    $s = $p.Replace('/', '\')
+    if ($s.StartsWith('\\?\')) { $s = $s.Substring(4) }
+    return $s.TrimEnd('\').ToLowerInvariant()
+}
+
+function Assert-FinalPath($handle, [string]$expected, [string]$what) {
+    $actual = Normalize-FinalPath ([LvaWin]::FinalPath($handle))
+    if ($actual -ne (Normalize-FinalPath $expected)) { Die "payload_unknown: Endpfad des Handles weicht vom erwarteten Pfad ab ($what)" }
+}
+
+# JEDE Elternkomponente (Wurzel zuerst) nacheinander oeffnen, am Handle pruefen, halten.
+# Die Handles bleiben in $script:PinDirs bis zum Ende des Skripts.
+$script:PinDirs = New-Object System.Collections.ArrayList
+function Hold-Chain([string]$file) {
+    $dirs = New-Object System.Collections.ArrayList
+    $part = [System.IO.Path]::GetDirectoryName($file)
+    while ($part) {
+        [void]$dirs.Insert(0, $part)
+        $part = [System.IO.Path]::GetDirectoryName($part)
+    }
+    if ($dirs.Count -eq 0) { Die 'payload_unknown: kein Elternordner' }
+    foreach ($d in $dirs) {
+        try { $h = [LvaWin]::OpenDir($d) } catch { Die "payload_unknown: Verzeichnis nicht oeffnbar ($d)" }
+        [void]$script:PinDirs.Add($h)
+        $attr = [LvaWin]::Attributes($h)
+        if (($attr -band $script:ReparseAttr) -ne 0) { Die "payload_unknown: Reparse-Komponente im Pfad ($d)" }
+        if (($attr -band $script:DirAttr) -eq 0) { Die "payload_unknown: Pfadkomponente ist kein Verzeichnis ($d)" }
+        Assert-FinalPath $h $d $d
+    }
+}
+
 # Native Claude-Dateien zuerst ueber ALLE Fundstellen (PATH, ~\.local\bin,
 # ~\.claude\local, ~\.local\share\claude\versions\<neueste>), erst danach ein
 # Launcher; nur Launcher: claude_not_native. Spiegel von cli.rs (locate_native_claude).
@@ -188,7 +321,19 @@ $script:PinSha = ''
 $script:PinPath = ''
 function Open-Pin([string]$path) {
     $script:PinPath = $path
-    $script:PinHandle = [System.IO.File]::Open($path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+    # Erst jede Elternkomponente halten und am Handle pruefen, dann die Datei oeffnen.
+    Hold-Chain $path
+    try { $safe = [LvaWin]::OpenFile($path) } catch { Die "payload_unknown: Programmdatei nicht oeffnbar ($path)" }
+    $attr = [LvaWin]::Attributes($safe)
+    if (($attr -band $script:ReparseAttr) -ne 0) { $safe.Dispose(); Die 'payload_unknown: Reparse-Punkt als Programmdatei' }
+    if (($attr -band $script:DirAttr) -ne 0) { $safe.Dispose(); Die 'payload_unknown: Programmdatei ist ein Verzeichnis' }
+    try { Assert-FinalPath $safe $path 'Programmdatei' } catch { $safe.Dispose(); throw }
+    $script:PinHandle = New-Object System.IO.FileStream($safe, [System.IO.FileAccess]::Read, 4096, $false)
+    # Kopf aus dem Handle: es ist genau die Datei, die laeuft.
+    $head = New-Object byte[] 4
+    [void]$script:PinHandle.Seek(0, [System.IO.SeekOrigin]::Begin)
+    $n = $script:PinHandle.Read($head, 0, 4)
+    if (-not (Test-NativeHead $head $n)) { Die 'claude_not_native: kein ELF-, PE- oder Mach-O-Kopf' }
     $script:PinSha = Get-HandleSha256
     return $script:PinSha
 }
@@ -212,6 +357,10 @@ function Test-Native([string]$path) {
     if (@('.cmd', '.bat', '.js', '.mjs', '.cjs', '.ps1', '.sh', '.py', '.ts') -contains $ext) { return $false }
     $fs = [System.IO.File]::OpenRead($path)
     try { $h = New-Object byte[] 4; $n = $fs.Read($h, 0, 4) } finally { $fs.Dispose() }
+    return (Test-NativeHead $h $n)
+}
+
+function Test-NativeHead([byte[]]$h, [int]$n) {
     if ($n -ge 2 -and $h[0] -eq 0x23 -and $h[1] -eq 0x21) { return $false }
     if ($n -ge 2 -and $h[0] -eq 0x4D -and $h[1] -eq 0x5A) { return $true }
     if ($n -ge 4) {
@@ -372,7 +521,7 @@ function Test-Contract($evs) {
 # Auswertung eines Laufs (nur Zahlen und Marken, nie der Text).
 function Parse-Out([string]$path, [string]$marker) {
     $r = @{ Rc = 1; Bad = $false; Error = ''; Compacted = $false; Stop = ''; Input = 0; Output = 0; Models = @(); ToolUse = $false
-        MarkerSeen = $false; Tools = $null; Mcp = $null; Canaries = @(); Observed = @(); Violation = ''; Ok = $false; Reason = ''; UsageOk = $false }
+        Cut = $false; MarkerSeen = $false; Tools = $null; Mcp = $null; Canaries = @(); Observed = @(); Violation = ''; Ok = $false; Reason = ''; UsageOk = $false }
     if (Test-Path "$path.rc") { $r.Rc = [int](Get-Content -LiteralPath "$path.rc" -Raw).Trim() }
     $evs = @()
     $lines = @()
@@ -385,6 +534,13 @@ function Parse-Out([string]$path, [string]$marker) {
     foreach ($e in $evs) {
         $t = [string]$e.type
         if (($t -eq 'system' -and $e.subtype -eq 'compact_boundary') -or $e.PSObject.Properties['compact_metadata']) { $r.Compacted = $true }
+        # Abschneiden an IRGENDEINEM Ereignis (Spiegel von cli.rs): stop_reason am Ereignis
+        # oder an message, oder ein subtype mit "abort".
+        $evStop = $null
+        if ($e.PSObject.Properties['stop_reason'] -and $e.stop_reason -is [string]) { $evStop = $e.stop_reason }
+        elseif ($e.PSObject.Properties['message'] -and $e.message -and $e.message.PSObject.Properties['stop_reason'] -and $e.message.stop_reason -is [string]) { $evStop = $e.message.stop_reason }
+        if (($evStop -and (@('max_tokens', 'aborted', 'model_context_window_exceeded') -contains $evStop)) -or
+            ($e.PSObject.Properties['subtype'] -and $e.subtype -is [string] -and $e.subtype.Contains('abort'))) { $r.Cut = $true }
         if ($t -eq 'system' -and $e.model -is [string]) { [void]$models.Add($e.model.Trim()) }
         if ($t -eq 'assistant') {
             if ($e.message -and $e.message.model -is [string]) { [void]$models.Add($e.message.model.Trim()) }
@@ -425,7 +581,7 @@ function Parse-Out([string]$path, [string]$marker) {
         elseif ($r.Violation -ne '') { $r.Violation }
         elseif ($r.Error) { 'error_event' }
         elseif ($r.Compacted) { 'compacted' }
-        elseif ($r.Stop -ne 'end_turn') { 'stop_reason' }
+        elseif ($r.Cut -or (@('end_turn', 'stop_sequence') -notcontains $r.Stop)) { 'stop_reason' }
         elseif (-not $r.UsageOk) { 'usage' }
         elseif ($text.Length -eq 0) { 'no_text' }
         else { '' }
@@ -474,8 +630,16 @@ function Check-Cli([string]$bin, [string]$spec) {
     Run-Claude $bin $world 'preview' $spec (Join-Path $world 'tool-preview.jsonl') $ToolQuestion
     $tp = Parse-Out (Join-Path $world 'tool-preview.jsonl') $marker
     Note-Run $tp
-    if (-not $i.Ok) {
-        return @{ Caps = $caps; Notes = "Vorschau-Lauf ohne gueltige Antwort oder Vertragsverletzung ($($i.Violation)): nichts bewiesen" }
+    # Ein ungueltiger Pruefaufruf macht ALLE Faehigkeiten false (auch event_contract):
+    # Vorschau-Laeufe muessen voll gueltig sein; Kontrolllaeufe (sie duerfen Hooks und
+    # Werkzeuge zeigen) brauchen Exit 0, keine kaputte Zeile und kein Fehlerereignis.
+    foreach ($ctl in @($c, $t)) {
+        if ($ctl.Rc -ne 0 -or $ctl.Bad -or $ctl.Error) {
+            return @{ Caps = $caps; Invalid = $true; Notes = 'Kontrolllauf ungueltig (Exit-Code <> 0, kaputte Zeile oder Fehlerereignis): nichts bewiesen' }
+        }
+    }
+    if (-not $i.Ok -or -not $tp.Ok) {
+        return @{ Caps = $caps; Invalid = $true; Notes = "Vorschau-Lauf ohne gueltige Antwort oder Vertragsverletzung (Frage: $($i.Reason), Werkzeug: $($tp.Reason)): nichts bewiesen" }
     }
     $map = @(@('instructions_blocked', $CanUser), @('project_instructions_blocked', $CanProject), @('memory_blocked', $CanMemory))
     foreach ($m in $map) {
@@ -490,7 +654,8 @@ function Check-Cli([string]$bin, [string]$spec) {
     else { $notes += 'hooks_blocked:Hook_lief_trotz_Isolation' }
     # Werkzeuge: positive Kontrolle (ohne Sperre Wirkung) UND negative (mit Sperre keine Wirkung).
     $controlEffect = $t.ToolUse -or $t.MarkerSeen
-    $previewEffect = $tp.ToolUse -or $tp.MarkerSeen
+    # Die Sperre gilt nur, wenn der negative Lauf GUELTIG ist (oben) und weder Marker noch tool_use zeigt.
+    $previewEffect = (-not $tp.Ok) -or $tp.ToolUse -or $tp.MarkerSeen
     $initEmpty = ($null -ne $i.Tools) -and (@($i.Tools).Count -eq 0) -and (@($i.Mcp).Count -eq 0)
     if (-not $controlEffect) { $notes += 'tools_blocked:Kontrolle_las_den_Marker_nicht' }
     elseif ($previewEffect) { $notes += 'tools_blocked:Werkzeug_wirkt_trotz_Sperre' }
@@ -503,7 +668,8 @@ function Write-Caps([string]$provider, [string]$version, $result) {
     $path = Join-Path $DataDir 'book_talk_isolation_caps.json'
     $caps = $result.Caps
     $notes = $result.Notes
-    if ($script:ContractOk -and $script:Observed.Count -gt 0) { $caps['event_contract'] = $true }
+    if ($result.Invalid) { $notes = ($notes + '; event_contract:Pruefaufruf_ungueltig').Trim('; ') }
+    elseif ($script:ContractOk -and $script:Observed.Count -gt 0) { $caps['event_contract'] = $true }
     else { $notes = ($notes + '; event_contract:Vertragsverletzung_oder_nichts_beobachtet').Trim('; ') }
     $doc = Read-Doc $path
     $keep = @($doc.entries | Where-Object { -not ($_.cli -eq $provider -and $_.cli_version -eq $version) })
@@ -526,7 +692,8 @@ function Measure-Cli([string]$bin, [string]$spec, [string]$provider, [string]$ve
         if ($r.Rc -ne 0) { Die "Messreihe ungueltig: Lauf $n mit Exit-Code <> 0 (nichts geschrieben)" }
         if ($r.Violation -ne '') { Die "Messreihe ungueltig: Lauf $n verletzt den Ereignisvertrag ($($r.Violation); nichts geschrieben)" }
         if ($r.Error) { Die "Messreihe ungueltig: Lauf $n mit Fehlerereignis (nichts geschrieben)" }
-        if ($r.Stop -ne 'end_turn') { Die "Messreihe ungueltig: Lauf $n mit stop_reason <> end_turn (Abschneiden; nichts geschrieben)" }
+        if ($r.Cut) { Die "Messreihe ungueltig: Lauf $n abgeschnitten (stop_reason max_tokens/aborted an einem Ereignis; nichts geschrieben)" }
+        if (@('end_turn', 'stop_sequence') -notcontains $r.Stop) { Die "Messreihe ungueltig: Lauf $n ohne regulaeren stop_reason (nichts geschrieben)" }
         if ($r.Compacted) { Die "Messreihe ungueltig: Lauf $n mit Kompaktierung (nichts geschrieben)" }
         if (-not $r.Ok) { Die "Messreihe ungueltig: Lauf $n ohne gueltige Antwort (nichts geschrieben)" }
         if (@($r.Models).Count -ne 1) { Die "Messreihe ungueltig: Lauf $n meldet keine oder mehrere Modell-IDs (nichts geschrieben)" }
@@ -555,7 +722,9 @@ function Handle([string]$spec) {
     if (-not (Test-Native $real)) { Die "claude_not_native: $real ist keine native Binaerdatei (npm-/Node-/Skript-Launcher werden abgelehnt)" }
     Assert-LocalPath $found
     Assert-LocalPath $real
-    # Das ORIGINAL wird einmal gehasht und gebunden (Handle bis zum Ende gehalten); keine Kopie.
+    # Das ORIGINAL wird einmal gehasht und gebunden; keine Kopie. Open-Pin haelt zuerst
+    # jede Elternkomponente (am Handle geprueft), dann die Datei (Endpfad geprueft).
+    $real = [System.IO.Path]::GetFullPath($real)
     $sha = Open-Pin $real
     $version = Get-Version $real
     if (-not $version) { Die 'claude: Version nicht lesbar' }
@@ -579,5 +748,6 @@ try {
     Say "fertig. Dateien in: $DataDir"
 } finally {
     if ($script:PinHandle) { $script:PinHandle.Dispose() }
+    foreach ($d in $script:PinDirs) { $d.Dispose() }
     if (Test-Path $Work) { Remove-Item -Recurse -Force $Work -ErrorAction SilentlyContinue }
 }

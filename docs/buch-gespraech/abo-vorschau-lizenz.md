@@ -45,8 +45,10 @@ Drittanbieter-Harnesses wurden ab 2026 gesperrt bzw. abgerechnet.
 - **Keine Binärkopie mehr.** Frühere Entwürfe legten eine lokale Kopie der Datei
   in einen Cache; das ist **entfallen**. Gebunden und gestartet wird das
   **installierte Original** (Hash aus dem gehaltenen Handle; Linux: Start über
-  `/proc/self/fd/<fd>`, Windows: Handle nur mit Leseteilen, nur lokale feste
-  Laufwerke ohne Reparse-Komponenten; macOS gesperrt).
+  `/proc/self/fd/<fd>`, Windows: nur lokale feste Laufwerke; jede Elternkomponente
+  vom Laufwerk bis zum Zielordner wird nacheinander per Handle gehalten
+  (Umbenennen, Löschen, Ersetzen scheitert) und am Handle auf Reparse-Punkte
+  geprüft, die Datei mit Leseteilen und geprüftem Endpfad; macOS gesperrt).
 - Ein Aufruf entspricht einem einzelnen `claude -p`-Lauf auf Anfrage des Nutzers.
   Grenzen der App: 30 Anfragen je Stunde, 200 je Tag.
 - Relay iPhone → PC: Anfragen **desselben Nutzers** von dessen gekoppeltem iPhone

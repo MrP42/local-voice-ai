@@ -2750,6 +2750,32 @@ exit "$(cat "$D/exit" 2>/dev/null || echo 0)"
                 "cli_preview_rejected:budget:truncated",
             ),
             (
+                "max_tokens in einer frueheren von zwei Nachrichten, Ergebnis end_turn",
+                {
+                    let lines: Vec<&str> = GOOD_CLAUDE.lines().collect();
+                    let cut = lines[1].replace(
+                        r#""stop_reason":"end_turn""#,
+                        r#""stop_reason":"max_tokens""#,
+                    );
+                    format!("{}\n{cut}\n{}\n{}\n", lines[0], lines[1], lines[2])
+                },
+                "cli_preview_rejected:budget:truncated",
+            ),
+            (
+                "max_tokens an einem Nutzer-Ereignis, Ergebnis end_turn",
+                {
+                    let lines: Vec<&str> = GOOD_CLAUDE.lines().collect();
+                    format!(
+                        "{}\n{}\n{}\n{}\n",
+                        lines[0],
+                        r#"{"type":"user","message":{"stop_reason":"max_tokens","content":"Frage"}}"#,
+                        lines[1],
+                        lines[2]
+                    )
+                },
+                "cli_preview_rejected:budget:truncated",
+            ),
+            (
                 "aborted",
                 stream_with(&[(
                     r#""stop_reason":"end_turn","usage""#,
