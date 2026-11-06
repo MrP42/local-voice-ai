@@ -70,14 +70,48 @@ public struct BlobRef: Codable, Equatable, Sendable {
     }
 }
 
+/// Kurzbuch vom PC: Datei und Herkunft für die Anzeige.
+public struct KurzbuchRef: Codable, Equatable, Sendable {
+    /// Größte Kurzbuch-Datei, wie `MAX_TEXT_BYTES` am Desktop.
+    public static let maxBytes = 2 * 1024 * 1024
+
+    public var blob: String
+    public var size: Int
+    public var chunks: Int
+    public var type: String?
+    public var file: String?
+    public var model: String?
+    public var createdMs: Double?
+    public var source: String?
+
+    enum CodingKeys: String, CodingKey { case blob, size, chunks, type, file, model, createdMs = "created_ms", source }
+
+    public init(blob: String, size: Int, chunks: Int, type: String? = "md", file: String? = nil,
+                model: String? = nil, createdMs: Double? = nil, source: String? = nil) {
+        self.blob = blob; self.size = size; self.chunks = chunks; self.type = type; self.file = file
+        self.model = model; self.createdMs = createdMs; self.source = source
+    }
+
+    public var ref: BlobRef { BlobRef(blob: blob, size: size, chunks: chunks, type: type, file: file) }
+
+    /// Sprache aus `kurzbuch-<sprache>.md`, streng geprüft: Sie landet in Pfaden.
+    public var language: String? { LibraryText.kurzbuchLanguage(file) }
+
+    /// Verweise kommen vom Netz: Kennung, Sprache, Größe und Stückzahl müssen stimmen, bevor geladen wird.
+    public var isUsable: Bool {
+        blob.count == 64 && blob.utf8.allSatisfy { ($0 >= 0x30 && $0 <= 0x39) || ($0 >= 0x61 && $0 <= 0x66) }
+            && language != nil && size > 0 && size <= Self.maxBytes && chunks == LibrarySyncFormat.chunkCount(size: size)
+    }
+}
+
 public struct BookFiles: Codable, Equatable, Sendable {
     public var text: BlobRef?
     public var cover: BlobRef?
     public var audio: [BlobRef]
     /// Kurzbücher vom PC, je Sprache das neueste (`kurzbuch-<sprache>.md`).
-    public var kurzbuecher: [BlobRef]
+    public var kurzbuecher: [KurzbuchRef]
     enum CodingKeys: String, CodingKey { case text, cover, audio, kurzbuecher }
-    public init(text: BlobRef? = nil, cover: BlobRef? = nil, audio: [BlobRef] = [], kurzbuecher: [BlobRef] = []) {
+    public init(text: BlobRef? = nil, cover: BlobRef? = nil, audio: [BlobRef] = [], kurzbuecher: [KurzbuchRef] = []) {
         self.text = text; self.cover = cover; self.audio = audio; self.kurzbuecher = kurzbuecher
     }
     public init(from decoder: Decoder) throws {
@@ -85,7 +119,7 @@ public struct BookFiles: Codable, Equatable, Sendable {
         text = try c.decodeIfPresent(BlobRef.self, forKey: .text)
         cover = try c.decodeIfPresent(BlobRef.self, forKey: .cover)
         audio = try c.decodeIfPresent([BlobRef].self, forKey: .audio) ?? []
-        kurzbuecher = try c.decodeIfPresent([BlobRef].self, forKey: .kurzbuecher) ?? []
+        kurzbuecher = try c.decodeIfPresent([KurzbuchRef].self, forKey: .kurzbuecher) ?? []
     }
     /// Leere Listen fehlen wie am Desktop, sonst ändert sich der Hash aller Bücher.
     public func encode(to encoder: Encoder) throws {

@@ -311,6 +311,56 @@ struct DownloadedMark: View {
     }
 }
 
+/// Kurzbuch auf der Buchseite. Es fasst das ganze Buch zusammen, deshalb einmal je Buch ein Hinweis.
+struct KurzbuchRow: View {
+    let book: LibraryBook
+    let ref: KurzbuchRef
+    let showLanguage: Bool
+    @ObservedObject var library = PhoneLibrary.shared
+    @ObservedObject var sync = LibrarySync.shared
+    @ObservedObject var playback = LibraryPlayback.shared
+    @State private var warning = false
+
+    private var seenKey: String { "kurzbuch.gesehen." + book.id }
+    private var title: String { "Kurzbuch" + (showLanguage ? " · \(ref.language ?? "")" : "") }
+    private var origin: String {
+        var parts: [String] = []
+        if let ms = ref.createdMs { parts.append(Date(timeIntervalSince1970: ms / 1000).formatted(date: .numeric, time: .omitted)) }
+        if let source = ref.source, !source.isEmpty { parts.append(source) }
+        if let model = ref.model, !model.isEmpty { parts.append(model) }
+        return parts.joined(separator: " · ")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if library.kurzbuchReady(book, ref) {
+                Button {
+                    if UserDefaults.standard.bool(forKey: seenKey) { open() } else { warning = true }
+                } label: {
+                    Label(title, systemImage: "text.book.closed").frame(maxWidth: .infinity, minHeight: 44)
+                }.buttonStyle(.bordered)
+            } else {
+                HStack {
+                    Label(sync.running ? "\(title) wird geladen" : "\(title) noch nicht geladen", systemImage: "text.book.closed")
+                        .font(.subheadline).foregroundStyle(VoicePalette.secondaryText)
+                    Spacer()
+                    if sync.running { ProgressView() }
+                    else { Button("Erneut laden") { Task { await sync.run() } }.frame(minHeight: 44) }
+                }
+            }
+            if !origin.isEmpty { Text(origin).font(.caption).foregroundStyle(VoicePalette.secondaryText).fixedSize(horizontal: false, vertical: true) }
+        }
+        .confirmationDialog("Das Kurzbuch fasst das ganze Buch zusammen und kann das Ende verraten.", isPresented: $warning, titleVisibility: .visible) {
+            Button("Kurzbuch öffnen") { UserDefaults.standard.set(true, forKey: seenKey); open() }
+            Button("Abbrechen", role: .cancel) {}
+        }
+    }
+
+    private func open() {
+        if let entry = library.kurzbuchBook(book, ref) { playback.open(entry) }
+    }
+}
+
 /// Solange ein Hörbuch lädt, ersetzt das die Fortschrittszeile unter dem Cover.
 struct ShelfDownloadStatus: View {
     let book: LibraryBook
@@ -456,13 +506,8 @@ struct LibraryBookDetail: View {
                     }.voiceCard()
                 }
 
-                ForEach(library.meta(book).files.kurzbuecher, id: \.blob) { ref in
-                    if let entry = library.kurzbuchBook(book, ref) {
-                        Button { playback.open(entry) } label: {
-                            Label("Kurzbuch\(library.meta(book).files.kurzbuecher.count > 1 ? " · \(LibraryText.kurzbuchLanguage(ref.file) ?? "")" : "")", systemImage: "text.book.closed")
-                                .frame(maxWidth: .infinity, minHeight: 44)
-                        }.buttonStyle(.bordered)
-                    }
+                ForEach(library.kurzbuecher(book), id: \.blob) { ref in
+                    KurzbuchRow(book: book, ref: ref, showLanguage: library.kurzbuecher(book).count > 1)
                 }
 
                 if tracks.count > 1 {

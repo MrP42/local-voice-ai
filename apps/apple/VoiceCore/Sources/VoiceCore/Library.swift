@@ -375,8 +375,8 @@ public enum LibraryText {
     /// Sprache aus dem Dateinamen `kurzbuch-<sprache>.md`.
     public static func kurzbuchLanguage(_ file: String?) -> String? {
         guard let file, file.hasPrefix("kurzbuch-"), file.hasSuffix(".md") else { return nil }
-        let code = file.dropFirst("kurzbuch-".count).dropLast(".md".count)
-        return code.isEmpty ? nil : String(code)
+        let code = String(file.dropFirst("kurzbuch-".count).dropLast(".md".count))
+        return code.range(of: "^[a-z]{2,3}(-[a-z0-9]{2,8})?$", options: .regularExpression) != nil ? code : nil
     }
 
     /// Favoriten zuerst, sonst bleibt die Reihenfolge, wie `sortViews` am Desktop.

@@ -160,6 +160,17 @@ final class AudioDownloadTests: XCTestCase {
         XCTAssertNil(speed.remaining("b", doneBytes: 80, totalBytes: 100, now: start.addingTimeInterval(3650)))
     }
 
+    func testRestartWithMobileDataMeasuresFromNewStart() {
+        var speed = AudioDownload.SpeedTracker()
+        let start = Date()
+        speed.note("b", phase: .running, bytes: 0, now: start)
+        // „Jetzt mobil laden“: `start` setzt zurück, ein Fehler direkt danach hinterlässt keine Messung.
+        speed.reset("b")
+        XCTAssertNil(speed.remaining("b", doneBytes: 40, totalBytes: 100, now: start.addingTimeInterval(600)))
+        speed.note("b", phase: .running, bytes: 40, now: start.addingTimeInterval(600))
+        XCTAssertEqual(speed.remaining("b", doneBytes: 70, totalBytes: 100, now: start.addingTimeInterval(630)), 30)
+    }
+
     func testSpaceProblem() {
         let fmt: (Int64) -> String = { "\($0) B" }
         XCTAssertNil(AudioDownload.spaceProblem(remainingBytes: 100, freeBytes: nil, format: fmt))

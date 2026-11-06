@@ -253,13 +253,14 @@ final class LibrarySync: ObservableObject {
             if let ref = library.meta(book).files.text, !library.hasText(book) {
                 try await downloadBlob(ref, acc, to: library.textURL(book)) { _ in }
             }
-            // Kurzbücher sind klein: wie Texte gleich mitnehmen.
-            for ref in library.meta(book).files.kurzbuecher where !FileManager.default.fileExists(atPath: library.kurzbuchFile(book, ref).path) {
-                let target = library.kurzbuchFile(book, ref)
+            // Kurzbücher sind klein: wie Texte gleich mitnehmen. Ungültige Verweise lädt niemand.
+            library.pruneKurzbuecher(book)
+            for ref in library.kurzbuecher(book) where !library.kurzbuchReady(book, ref) {
+                guard let target = library.kurzbuchFile(book, ref) else { continue }
                 try? FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
-                do { try await downloadBlob(ref, acc, to: target) { _ in } }
+                do { try await downloadBlob(ref.ref, acc, to: target) { _ in } }
                 catch SyncError.http(401, let msg) { throw SyncError.http(401, msg) }
-                catch { /* Nächster Lauf versucht es erneut. */ }
+                catch { /* Die Buchseite zeigt es als noch nicht geladen, der nächste Lauf versucht es erneut. */ }
             }
             // Cover wie am Desktop: neues oder geändertes Cover aus dem Konto holen.
             if let ref = library.meta(book).files.cover, library.coverBlob(book) != ref.blob {

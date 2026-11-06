@@ -113,18 +113,52 @@ final class PhoneLibrary: ObservableObject {
 
     // MARK: Kurzbücher vom PC
 
-    func kurzbuchFile(_ book: LibraryBook, _ ref: BlobRef) -> URL {
-        dir(book).appendingPathComponent("kurzbuch", isDirectory: true).appendingPathComponent(ref.blob + ".md")
+    func kurzbuecher(_ book: LibraryBook) -> [KurzbuchRef] { meta(book).files.kurzbuecher.filter(\.isUsable) }
+
+    func kurzbuchFile(_ book: LibraryBook, _ ref: KurzbuchRef) -> URL? {
+        guard ref.isUsable else { return nil }
+        return dir(book).appendingPathComponent("kurzbuch", isDirectory: true).appendingPathComponent(ref.blob + ".md")
     }
 
+    /// Geladen und nicht leer.
+    func kurzbuchReady(_ book: LibraryBook, _ ref: KurzbuchRef) -> Bool {
+        kurzbuchFile(book, ref).flatMap(LibrarySync.fileSize) == ref.size
+    }
+
+    private func kurzbuchEntryId(_ bookId: String, _ language: String) -> String { "\(bookId)_kurzbuch_\(language)" }
+
     /// Kurzbuch als eigener Eintrag für den Player. Er steht nicht im Regal und hat seinen eigenen Lesestand.
-    func kurzbuchBook(_ book: LibraryBook, _ ref: BlobRef) -> LibraryBook? {
-        guard let language = LibraryText.kurzbuchLanguage(ref.file),
-              let markdown = try? String(contentsOf: kurzbuchFile(book, ref), encoding: .utf8) else { return nil }
-        let entry = LibraryBook(id: "\(book.id)_kurzbuch_\(language)", title: "\(book.title) · Kurzbuch", addedMs: book.addedMs)
+    func kurzbuchBook(_ book: LibraryBook, _ ref: KurzbuchRef) -> LibraryBook? {
+        guard let language = ref.language, kurzbuchReady(book, ref), let file = kurzbuchFile(book, ref),
+              let markdown = try? String(contentsOf: file, encoding: .utf8),
+              !markdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        let entry = LibraryBook(id: kurzbuchEntryId(book.id, language), title: "\(book.title) · Kurzbuch", addedMs: book.addedMs)
         try? FileManager.default.createDirectory(at: dir(entry), withIntermediateDirectories: true)
         try? LibraryText.kurzbuchText(markdown).write(to: textURL(entry), atomically: true, encoding: .utf8)
         return entry
+    }
+
+    /// Alte Fassungen, entfernte Sprachen und deren Klartextkopien samt Lesestand aufräumen.
+    func pruneKurzbuecher(_ book: LibraryBook) {
+        let refs = kurzbuecher(book)
+        let manager = FileManager.default
+        let folder = dir(book).appendingPathComponent("kurzbuch", isDirectory: true)
+        let keep = Set(refs.map { $0.blob + ".md" })
+        for name in (try? manager.contentsOfDirectory(atPath: folder.path)) ?? [] where !keep.contains(name) {
+            try? manager.removeItem(at: folder.appendingPathComponent(name))
+        }
+        removeKurzbuchEntries(bookId: book.id, keeping: Set(refs.compactMap { $0.language.map { kurzbuchEntryId(book.id, $0) } }))
+    }
+
+    private func removeKurzbuchEntries(bookId: String, keeping: Set<String> = []) {
+        let prefix = "\(bookId)_kurzbuch_"
+        var changed = false
+        for name in (try? FileManager.default.contentsOfDirectory(atPath: root.path)) ?? [] where name.hasPrefix(prefix) && !keeping.contains(name) {
+            try? FileManager.default.removeItem(at: root.appendingPathComponent(name))
+            progress[Self.storageKey(LibraryProgress.textKey(pageId: name))] = nil
+            changed = true
+        }
+        if changed { writeProgress() }
     }
 
     func audioParts(_ refs: [BlobRef]) -> [AudioDownload.Part] {
@@ -189,9 +223,7 @@ final class PhoneLibrary: ObservableObject {
 
     func removeRemote(id: String) {
         guard let book = books.first(where: { $0.id == id }) else { return }
-        for ref in meta(book).files.kurzbuecher {
-            if let language = LibraryText.kurzbuchLanguage(ref.file) { try? FileManager.default.removeItem(at: root.appendingPathComponent("\(id)_kurzbuch_\(language)")) }
-        }
+        removeKurzbuchEntries(bookId: id)
         try? FileManager.default.removeItem(at: dir(book))
         BookTalkHistoryStore(directory: BookTalkHistoryStore.standardDirectory()).clear(bookId: book.id)
         for key in [textKey(book), audioKey(book)] { progress[Self.storageKey(key)] = nil }
@@ -285,6 +317,7 @@ final class PhoneLibrary: ObservableObject {
     }
 
     func delete(_ book: LibraryBook) {
+        removeKurzbuchEntries(bookId: book.id)
         try? FileManager.default.removeItem(at: dir(book))
         BookTalkHistoryStore(directory: BookTalkHistoryStore.standardDirectory()).clear(bookId: book.id)
         for key in [textKey(book), audioKey(book)] { progress[Self.storageKey(key)] = nil }

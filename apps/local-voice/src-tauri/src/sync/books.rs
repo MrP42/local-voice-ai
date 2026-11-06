@@ -80,9 +80,45 @@ pub struct BookFiles {
     #[serde(default)]
     pub audio: Vec<BlobRef>,
     /// Kurzbücher, je Sprache das neueste (`kurzbuch-<sprache>.md`). Andere Geräte lesen
-    /// sie; erzeugt werden sie hier aus den KI-Dokumenten, geladen wird nichts zurück.
+    /// sie; erzeugt werden sie aus den KI-Dokumente eines PCs, geladen wird hier nichts.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub kurzbuecher: Vec<BlobRef>,
+    pub kurzbuecher: Vec<KurzbuchRef>,
+}
+
+/// Datei eines Kurzbuchs samt Herkunft für die Anzeige.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+pub struct KurzbuchRef {
+    #[serde(flatten)]
+    pub blob: BlobRef,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_ms: Option<f64>,
+    /// Quellenumfang, z. B. „Ganzes Buch“.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+}
+
+/// Sprachcode wie `de` oder `pt-br`; er steht im Dateinamen und in Pfaden der Clients.
+fn valid_language(code: &str) -> bool {
+    let mut parts = code.split('-');
+    let main = parts.next().unwrap_or("");
+    let region = parts.next();
+    (2..=3).contains(&main.len())
+        && main.bytes().all(|b| b.is_ascii_lowercase())
+        && region.is_none_or(|r| {
+            (2..=8).contains(&r.len())
+                && r.bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+        })
+        && parts.next().is_none()
+}
+
+fn kurzbuch_language(file: Option<&str>) -> Option<&str> {
+    file?
+        .strip_prefix("kurzbuch-")?
+        .strip_suffix(".md")
+        .filter(|l| valid_language(l))
 }
 
 impl BookFiles {
@@ -91,7 +127,7 @@ impl BookFiles {
             .iter()
             .chain(self.cover.iter())
             .chain(self.audio.iter())
-            .chain(self.kurzbuecher.iter())
+            .chain(self.kurzbuecher.iter().map(|k| &k.blob))
     }
 
     fn is_empty(&self) -> bool {
@@ -303,42 +339,65 @@ fn page_text(app: &AppHandle, page_id: &str) -> Option<String> {
         .and_then(|v| v.get("state")?.get("text")?.as_str().map(str::to_owned))
 }
 
+struct KurzbuchDoc {
+    language: String,
+    text: String,
+    model: String,
+    created_ms: f64,
+    source: String,
+}
+
 /// Neuestes Kurzbuch je Sprache einer Vorlesen-Seite, nach Sprache sortiert.
-fn kurzbuecher(app: &AppHandle, page_id: &str) -> Vec<(String, String)> {
+fn kurzbuecher(app: &AppHandle, page_id: &str) -> Vec<KurzbuchDoc> {
     let Some(dir) = crate::commands::pages::page_path(app, page_id)
         .ok()
         .filter(|d| d.is_dir())
     else {
         return Vec::new();
     };
-    let docs = crate::book_ai::store::list(&dir).unwrap_or_default();
-    newest_per_language(&docs)
+    let docs: Vec<_> = crate::book_ai::store::list(&dir)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|d| d.template_id == crate::book_ai::kurzbuch::TEMPLATE_ID)
+        .collect();
+    let keys = docs
+        .iter()
+        .map(|d| (d.language.as_deref(), d.modified_ms, d.id.as_str()));
+    newest_per_language(keys)
         .into_iter()
         .filter_map(|(language, id)| {
+            let doc = docs.iter().find(|d| d.id == id)?;
             let text = crate::book_ai::store::read_text(&dir, &id).ok()?;
-            Some((language, text))
+            (!text.trim().is_empty()).then(|| KurzbuchDoc {
+                language,
+                text,
+                model: doc.model.clone(),
+                created_ms: doc.created_ms,
+                source: doc.source_label.clone(),
+            })
         })
         .collect()
 }
 
-/// Sprache → Dokument; ohne Angabe gilt Deutsch wie bei älteren Kurzbüchern.
-fn newest_per_language(docs: &[crate::book_ai::store::KiDocument]) -> Vec<(String, String)> {
-    let mut newest: BTreeMap<String, &crate::book_ai::store::KiDocument> = BTreeMap::new();
-    for doc in docs
-        .iter()
-        .filter(|d| d.template_id == crate::book_ai::kurzbuch::TEMPLATE_ID)
-    {
-        let language = doc
-            .language
-            .clone()
-            .filter(|l| library::sync_plain_name(l))
-            .unwrap_or_else(|| "de".into());
-        let known = newest.get(&language).map_or(f64::MIN, |d| d.modified_ms);
-        if doc.modified_ms >= known {
-            newest.insert(language, doc);
+/// Sprache → Dokument. Ohne gültige Angabe gilt Deutsch wie bei älteren Kurzbüchern,
+/// bei gleichem Zeitstempel entscheidet die Kennung, damit jeder Lauf gleich ausgeht.
+fn newest_per_language<'a>(
+    docs: impl Iterator<Item = (Option<&'a str>, f64, &'a str)>,
+) -> Vec<(String, String)> {
+    let mut newest: BTreeMap<String, (f64, &str)> = BTreeMap::new();
+    for (language, modified, id) in docs {
+        let language = language.filter(|l| valid_language(l)).unwrap_or("de");
+        let better = newest
+            .get(language)
+            .is_none_or(|(ms, known)| modified > *ms || (modified == *ms && id > *known));
+        if better {
+            newest.insert(language.to_string(), (modified, id));
         }
     }
-    newest.into_iter().map(|(l, d)| (l, d.id.clone())).collect()
+    newest
+        .into_iter()
+        .map(|(l, (_, id))| (l, id.to_string()))
+        .collect()
 }
 
 fn build_book(
@@ -422,22 +481,38 @@ fn build_book(
             }
         }
     }
-    for (language, text) in book
+    for doc in book
         .text
         .as_ref()
         .map(|t| kurzbuecher(app, &t.page_id))
         .unwrap_or_default()
     {
-        let bytes = text.into_bytes();
+        let bytes = doc.text.into_bytes();
         if let Some(mut r) = BlobRef::new(key, &blobs::stamp_bytes(&bytes)) {
             r.kind = Some("md".into());
-            r.file = Some(format!("kurzbuch-{language}.md"));
+            r.file = Some(format!("kurzbuch-{}.md", doc.language));
             uploads.push(PendingUpload {
                 blob: r.clone(),
                 source: Source::Bytes(bytes),
                 stamp: None,
             });
-            files.kurzbuecher.push(r);
+            files.kurzbuecher.push(KurzbuchRef {
+                blob: r,
+                model: Some(doc.model),
+                created_ms: Some(doc.created_ms),
+                source: Some(doc.source),
+            });
+        }
+    }
+    // Ein PC ohne diese KI-Dokumente gibt empfangene Kurzbücher unverändert weiter.
+    for k in &side.pending.kurzbuecher {
+        let language = kurzbuch_language(k.blob.file.as_deref());
+        let own = files
+            .kurzbuecher
+            .iter()
+            .any(|f| kurzbuch_language(f.blob.file.as_deref()) == language);
+        if language.is_some() && !own {
+            files.kurzbuecher.push(k.clone());
         }
     }
     Ok(BookBuild {
@@ -897,6 +972,13 @@ pub fn apply_book(
             pending.audio.push(r.clone());
         }
     }
+    // Nur gültige Verweise weitergeben; sie stehen in Pfaden der anderen Geräte.
+    pending.kurzbuecher = remote_files
+        .kurzbuecher
+        .iter()
+        .filter(|k| kurzbuch_language(k.blob.file.as_deref()).is_some())
+        .cloned()
+        .collect();
     side.pending = pending;
     side.updated = remote_updated;
     let book = library::sync_read_book(&dir).ok_or("Buch nach dem Schreiben unlesbar")?;
@@ -1204,6 +1286,49 @@ fn clear_pending(dir: &Path, what: &WantedKind) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn neuestes_kurzbuch_je_sprache() {
+        let docs = [
+            (Some("de"), 1.0, "a"),
+            (Some("de"), 2.0, "b"),
+            (Some("en"), 5.0, "c"),
+            (None, 2.0, "d"),
+            (Some("../x"), 1.0, "e"),
+        ];
+        assert_eq!(
+            newest_per_language(docs.into_iter()),
+            vec![
+                ("de".to_string(), "d".to_string()),
+                ("en".to_string(), "c".to_string())
+            ],
+            "gleiche Zeit: die Kennung entscheidet; ungültige Sprache gilt als Deutsch"
+        );
+    }
+
+    #[test]
+    fn sprachcode_nur_streng() {
+        for good in ["de", "pt-br", "zh-hans"] {
+            assert!(valid_language(good), "{good}");
+        }
+        for bad in ["", "d", "DE", "de/x", "../de", "de-", "de-x", "de-br-x"] {
+            assert!(!valid_language(bad), "{bad}");
+        }
+        assert_eq!(kurzbuch_language(Some("kurzbuch-de.md")), Some("de"));
+        assert_eq!(kurzbuch_language(Some("kurzbuch-../x.md")), None);
+    }
+
+    #[test]
+    fn leere_kurzbuch_liste_fehlt_im_format() {
+        let json = serde_json::to_value(BookFiles::default()).unwrap();
+        assert!(json.get("kurzbuecher").is_none());
+        let k: KurzbuchRef = serde_json::from_value(serde_json::json!({
+            "blob": "a", "size": 3, "chunks": 1, "file": "kurzbuch-de.md", "model": "m"
+        }))
+        .unwrap();
+        assert_eq!(k.blob.size, 3);
+        assert_eq!(k.model.as_deref(), Some("m"));
+    }
+
     use super::*;
 
     #[test]
