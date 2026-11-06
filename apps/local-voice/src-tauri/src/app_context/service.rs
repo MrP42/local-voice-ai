@@ -741,10 +741,6 @@ fn retrieve_blocking(app: &AppHandle, req: &AppContextRequest) -> Result<Context
         h.k = i as u32 + 1;
     }
     hits.retrieve_ms = started.elapsed().as_millis() as u32;
-    if started.elapsed() > RETRIEVE_BUDGET {
-        OVER_BUDGET.fetch_add(1, Ordering::Relaxed);
-        hits.hits.clear();
-    }
     hits.question_hash = super::model::question_hash(&req.question);
     Ok(hits)
 }

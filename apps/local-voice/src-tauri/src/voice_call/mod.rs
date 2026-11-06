@@ -75,12 +75,48 @@ fn unmark_context(id: &str) {
         .retain(|x| x != id);
 }
 
+/// Abbrüche registrierter Anfragen (zusätzlich zum Notify): so lässt sich
+/// nach der Quellenprüfung sicher fragen, ob inzwischen abgebrochen wurde.
+static CANCELLED: Lazy<Mutex<std::collections::HashSet<String>>> = Lazy::new(Default::default);
+
+/// Wurde die Anfrage abgebrochen (vor oder nach ihrer Registrierung)?
+fn was_cancelled(id: &str) -> bool {
+    let late = CANCELLED
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(id);
+    take_early_cancel(id) || late
+}
+
+/// Bindet den Kontext und prüft danach, ob die Anfrage währenddessen
+/// abgebrochen oder widerrufen wurde (Codex M5 Must-fix 2). `Err`: abbrechen,
+/// nichts senden.
+async fn bind_then_check<F>(request_id: &str, bind: F) -> Result<Option<String>, ()>
+where
+    F: std::future::Future<Output = Option<String>>,
+{
+    let context = bind.await;
+    if was_cancelled(request_id) {
+        return Err(());
+    }
+    Ok(context)
+}
+
 /// Ein Abbruch, der vor der Registrierung kam, einlösen.
 fn take_early_cancel(id: &str) -> bool {
     EARLY_CANCELS
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .remove(id)
+}
+
+/// Abgeleitete Verlaufseinträge nie an einen entfernten Empfänger (Routen-
+/// wechsel zur Cloud: sie fallen weg, bevor irgendetwas gesendet wird).
+pub(crate) fn for_receiver(messages: Vec<VoiceCallMessage>, local: bool) -> Vec<VoiceCallMessage> {
+    messages
+        .into_iter()
+        .filter(|m| local || !m.derived)
+        .collect()
 }
 
 /// Braucht dieser Aufruf die gebundene lokale Route? Ja, sobald App-Kontext
@@ -399,11 +435,7 @@ pub async fn voice_call_chat(
     // App-Kontext nur an einen lokalen Empfänger, unmittelbar vor dem Start
     // geprüft (Codex M5/M6); sonst antwortet das Modell ohne Kontext.
     let local = receiver_is_local(&provider);
-    // Abgeleitete Verlaufseinträge nie an einen entfernten Empfänger.
-    let messages: Vec<VoiceCallMessage> = messages
-        .into_iter()
-        .filter(|m| local || !m.derived)
-        .collect();
+    let messages = for_receiver(messages, local);
     let guarded = needs_pinned(context.is_some(), &messages, local);
     // Erst Abbruch und Widerruf registrieren, dann prüfen: was dazwischen kommt,
     // trifft die Anfrage (der Notify merkt sich den Abbruch).
@@ -417,16 +449,25 @@ pub async fn voice_call_chat(
     }
     let unregister = |id: &str| {
         CANCELS.lock().unwrap_or_else(|e| e.into_inner()).remove(id);
+        CANCELLED
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(id);
         unmark_context(id);
     };
     // Das lokale Modell zuerst starten (das kann dauern), danach prüfen:
     // nichts veraltet zwischen Prüfung und Versand (Codex Must-fix 4).
-    if guarded && local {
-        if let Err(e) = crate::managers::llm::ensure_local(&model).await {
-            unregister(&request_id);
-            return Err(e);
+    let local_base = if guarded && local {
+        match crate::managers::llm::ensure_local(&model).await {
+            Ok(base) => Some(base),
+            Err(e) => {
+                unregister(&request_id);
+                return Err(e);
+            }
         }
-    }
+    } else {
+        None
+    };
     let question = messages
         .iter()
         .rev()
@@ -434,25 +475,32 @@ pub async fn voice_call_chat(
         .map(|m| m.content.clone())
         .unwrap_or_default();
     // Prüfung liest Quellen frisch (Datei/SQLite): außerhalb des async-Threads.
-    let context = match context {
-        Some(c) => {
-            let (app2, rid) = (app.clone(), request_id.clone());
-            tauri::async_runtime::spawn_blocking(move || {
-                crate::app_context::service::bind_for_speaker(&app2, &c, local, &rid, &question)
-            })
-            .await
-            .ok()
-            .flatten()
+    let bind = async {
+        match context {
+            Some(c) => {
+                let (app2, rid) = (app.clone(), request_id.clone());
+                tauri::async_runtime::spawn_blocking(move || {
+                    crate::app_context::service::bind_for_speaker(&app2, &c, local, &rid, &question)
+                })
+                .await
+                .ok()
+                .flatten()
+            }
+            None => None,
         }
-        None => None,
     };
-    // Abbruch oder Widerruf während der Prüfung (Codex Must-fix 2).
-    if take_early_cancel(&request_id) {
+    let Ok(context) = bind_then_check(&request_id, bind).await else {
         unregister(&request_id);
         return Ok(String::new());
+    };
+    let pinned = needs_pinned(context.is_some(), &messages, local);
+    // Gesendet wird an genau die vor der Prüfung gestartete Adresse.
+    let pinned_local: Option<String> = if pinned { local_base.clone() } else { None };
+    if pinned && pinned_local.is_none() {
+        unregister(&request_id);
+        return Err("Lokales Modell nicht bereit".into());
     }
-    let pinned_local = needs_pinned(context.is_some(), &messages, local);
-    if !pinned_local {
+    if !pinned {
         unmark_context(&request_id);
     }
     let messages = with_context_message(messages, context);
@@ -501,16 +549,23 @@ pub async fn voice_call_chat(
             &model,
             messages,
             &on_delta,
-            pinned_local,
+            pinned_local.as_deref(),
         );
+        // Abbruch zuerst prüfen: ein schon vorliegender Abbruch verhindert
+        // den Versand, statt mit ihm zu wetteifern.
         let result = tokio::select! {
-            r = call => Some(r),
+            biased;
             _ = cancel.notified() => None,
+            r = call => Some(r),
         };
         (result, usage::captured_calls().0)
     })
     .await;
     CANCELS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(&request_id);
+    CANCELLED
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .remove(&request_id);
@@ -561,6 +616,10 @@ pub fn voice_call_cancel(request_id: String) -> bool {
         .cloned();
     match registered {
         Some(n) => {
+            CANCELLED
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(request_id.clone());
             n.notify_one();
             true
         }
@@ -766,26 +825,53 @@ mod tests {
     }
 
     #[test]
-    fn abgeleiteter_verlauf_erzwingt_die_gebundene_route() {
-        let msgs = vec![
-            msg("assistant", "aus Auszug", true),
-            msg("user", "und?", false),
+    fn routenwechsel_mit_abgeleitetem_verlauf() {
+        let history = vec![
+            msg("system", "S", false),
+            msg("user", "Wer übernimmt?", false),
+            msg("assistant", "Frau Berger [aus Auszug]", true),
+            msg("user", "Und bis wann?", false),
         ];
-        // Kein neuer Treffer, aber abgeleiteter Verlauf an das lokale Modell:
-        // gebundene Route (kein Proxy, keine Umleitung) und Widerrufsschutz.
-        assert!(needs_pinned(false, &msgs, true));
-        // Routenwechsel zur Cloud: der Eintrag wird vorher entfernt.
-        let remote: Vec<_> = msgs.into_iter().filter(|m| !m.derived).collect();
+        // Lokal: alles geht mit, aber nur über die gebundene Route.
+        let local = for_receiver(history.clone(), true);
+        assert_eq!(local.len(), 4);
+        assert!(needs_pinned(false, &local, true));
+        // Route jetzt Cloud: der abgeleitete Eintrag fällt weg, nichts ist gebunden.
+        let remote = for_receiver(history, false);
+        assert_eq!(remote.len(), 3);
+        assert!(remote.iter().all(|m| !m.derived));
         assert!(!needs_pinned(false, &remote, false));
-        assert!(needs_pinned(true, &[], true));
     }
 
-    #[test]
-    fn abbruch_vor_der_registrierung_wird_nach_der_pruefung_eingeloest() {
-        let id = "early-1";
-        assert!(!voice_call_cancel(id.into()), "noch nicht registriert");
-        assert!(take_early_cancel(id));
-        assert!(!take_early_cancel(id), "nur einmal");
+    #[tokio::test]
+    async fn abbruch_waehrend_der_quellenpruefung_verhindert_den_versand() {
+        // Registriert (wie in voice_call_chat) und während der Prüfung abgebrochen.
+        let id = "bind-cancel-1";
+        CANCELS
+            .lock()
+            .unwrap()
+            .insert(id.into(), Arc::new(Notify::new()));
+        let r = bind_then_check(id, async {
+            voice_call_cancel(id.into());
+            Some("KONTEXT".to_string())
+        })
+        .await;
+        assert!(r.is_err(), "kein Versand nach Abbruch");
+        CANCELS.lock().unwrap().remove(id);
+
+        // Noch nicht registriert, Widerruf während der Prüfung.
+        let id = "bind-cancel-2";
+        mark_context(id);
+        let r = bind_then_check(id, async {
+            let _ = revoke_ids();
+            Some("KONTEXT".to_string())
+        })
+        .await;
+        assert!(r.is_err(), "Widerruf während der Prüfung");
+
+        // Ohne Abbruch: Kontext bleibt.
+        let r = bind_then_check("bind-ok", async { Some("K".to_string()) }).await;
+        assert_eq!(r, Ok(Some("K".to_string())));
     }
 
     #[test]

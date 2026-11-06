@@ -129,6 +129,9 @@ pub struct SynthesisRequest<'a> {
     /// einheitlich die Wiedergabe — eingebacken läge es dauerhaft im Cache
     /// und gälte doppelt (der Player skaliert bereits).
     pub speed: Option<f32>,
+    /// Abbruch mitten im Satz (Sprachgespräch, Widerruf): Piper beendet
+    /// dann seinen Prozess, Fish lässt die Anfrage fallen.
+    pub cancel: Option<&'a std::sync::Arc<std::sync::atomic::AtomicBool>>,
 }
 
 /// Die Naht selbst. Jede Engine beantwortet dieselben fünf Fragen:

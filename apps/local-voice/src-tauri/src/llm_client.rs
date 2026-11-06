@@ -995,11 +995,13 @@ pub async fn send_chat_completion_stream(
     messages: Vec<StreamMessage>,
     on_delta: &(dyn Fn(&str) + Send + Sync),
 ) -> Result<String, String> {
-    send_chat_completion_stream_routed(purpose, provider, api_key, model, messages, on_delta, false)
+    send_chat_completion_stream_routed(purpose, provider, api_key, model, messages, on_delta, None)
         .await
 }
 
-/// Wie `send_chat_completion_stream`; mit `pinned_local` nur an das
+/// Wie `send_chat_completion_stream`; mit `pinned_local` (der schon
+/// aufgelösten Adresse des eingebauten Modells) nur genau dorthin, ohne
+/// erneutes Auflösen oder Starten; sonst nur an das
 /// eingebaute lokale Modell: Loopback-Adresse, ohne Proxy, ohne Umleitung,
 /// ohne CLI. Sonst Fehler statt Versand (App-Kontext, Codex M5/M6).
 pub async fn send_chat_completion_stream_routed(
@@ -1009,7 +1011,7 @@ pub async fn send_chat_completion_stream_routed(
     model: &str,
     messages: Vec<StreamMessage>,
     on_delta: &(dyn Fn(&str) + Send + Sync),
-    pinned_local: bool,
+    pinned_local: Option<&str>,
 ) -> Result<String, String> {
     // Regelwerk vor dem Budget: ein gesperrter Anbieter bekommt gar nichts.
     crate::managers::compliance::check_call(provider)?;
@@ -1039,13 +1041,13 @@ async fn stream_inner(
     model: &str,
     messages: Vec<StreamMessage>,
     on_delta: &(dyn Fn(&str) + Send + Sync),
-    pinned_local: bool,
+    pinned_local: Option<&str>,
 ) -> Result<(String, TokenUsage), String> {
-    if pinned_local && !crate::managers::llm::is_local(provider) {
+    if pinned_local.is_some() && !crate::managers::llm::is_local(provider) {
         return Err("Kontext nur an das eingebaute lokale Modell".into());
     }
-    if let Some(cli) =
-        crate::managers::llm::cli::Cli::from_base_url(&provider.base_url).filter(|_| !pinned_local)
+    if let Some(cli) = crate::managers::llm::cli::Cli::from_base_url(&provider.base_url)
+        .filter(|_| pinned_local.is_none())
     {
         // Die CLI liefert am Stueck: Systemteile als Systemtext, der Rest als
         // Gespraech mit Rollen.
@@ -1067,10 +1069,15 @@ async fn stream_inner(
     }
     use futures_util::StreamExt;
 
-    let resolved = crate::managers::llm::resolve_base_url(provider, model).await?;
+    // Gebunden: genau die Adresse, für die geprüft wurde (kein Neustart
+    // zwischen Prüfung und Versand, Codex M5).
+    let resolved = match pinned_local {
+        Some(base) => base.to_string(),
+        None => crate::managers::llm::resolve_base_url(provider, model).await?,
+    };
     let url = format!("{}/chat/completions", resolved.trim_end_matches('/'));
     debug!("Sending streaming chat completion request to: {}", url);
-    let client = if pinned_local {
+    let client = if pinned_local.is_some() {
         if !is_loopback_url(&url) {
             return Err("Lokales Modell nicht auf Loopback".into());
         }
@@ -2097,11 +2104,60 @@ mod pinned_tests {
     }
 
     #[tokio::test]
+    async fn gebundene_route_sendet_an_die_gepruefte_adresse() {
+        // Antwort ohne Streaming (der Server ignoriert `stream`).
+        let body = r#"{"choices":[{"message":{"role":"assistant","content":"ok"}}]}"#;
+        let (target, target_hits) = serve(format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        ));
+        // Der Anbieter zeigt woanders hin (Platzhalter): gesendet wird trotzdem
+        // nur an die vor der Prüfung aufgelöste Adresse, ohne Neustart.
+        let p = provider(
+            crate::managers::llm::LOCAL_PROVIDER_ID,
+            "http://127.0.0.1:0/v1",
+        );
+        let base = format!("http://127.0.0.1:{target}/v1");
+        let msgs = vec![StreamMessage::new("user", "Hallo".to_string())];
+        let (text, _) = stream_inner(&p, String::new(), "m", msgs, &|_| {}, Some(&base))
+            .await
+            .unwrap();
+        assert_eq!(text, "ok");
+        assert_eq!(target_hits.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn gebundene_route_lehnt_entfernte_adresse_ab() {
+        let p = provider(
+            crate::managers::llm::LOCAL_PROVIDER_ID,
+            "http://127.0.0.1:0/v1",
+        );
+        let err = stream_inner(
+            &p,
+            String::new(),
+            "m",
+            Vec::new(),
+            &|_| {},
+            Some("https://api.example.com/v1"),
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("Loopback"), "{err}");
+    }
+
+    #[tokio::test]
     async fn gebundene_route_lehnt_fremde_anbieter_ab() {
         let p = provider("openai", "https://api.example.com/v1");
-        let err = stream_inner(&p, String::new(), "m", Vec::new(), &|_| {}, true)
-            .await
-            .unwrap_err();
+        let err = stream_inner(
+            &p,
+            String::new(),
+            "m",
+            Vec::new(),
+            &|_| {},
+            Some("http://127.0.0.1:1/v1"),
+        )
+        .await
+        .unwrap_err();
         assert!(err.contains("eingebaute"), "{err}");
     }
 }

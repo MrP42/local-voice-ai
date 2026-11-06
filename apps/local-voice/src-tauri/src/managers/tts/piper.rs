@@ -192,6 +192,18 @@ pub fn run_piper_blocking(
     speed: Option<f32>,
     timeout: Duration,
 ) -> Result<Vec<u8>, String> {
+    run_piper_cancellable(paths, text, speed, timeout, None)
+}
+
+/// Wie [`run_piper_blocking`]; ein gesetztes `cancel` beendet den Prozess
+/// sofort (Prüfung alle 25 ms), statt bis zum Ende oder Timeout zu warten.
+pub fn run_piper_cancellable(
+    paths: &PiperPaths,
+    text: &str,
+    speed: Option<f32>,
+    timeout: Duration,
+    cancel: Option<&std::sync::atomic::AtomicBool>,
+) -> Result<Vec<u8>, String> {
     let out = tempfile::Builder::new()
         .prefix("lva-piper-")
         .suffix(".wav")
@@ -256,6 +268,11 @@ pub fn run_piper_blocking(
         match child.try_wait() {
             Ok(Some(status)) => break status,
             Ok(None) => {
+                if cancel.is_some_and(|c| c.load(std::sync::atomic::Ordering::Acquire)) {
+                    let _ = child.kill();
+                    let _ = child.wait(); // kein Zombie
+                    return Err(super::providers::pipeline::CANCELLED_MESSAGE.to_string());
+                }
                 if std::time::Instant::now() >= deadline {
                     let _ = child.kill();
                     let _ = child.wait(); // kein Zombie
@@ -477,9 +494,12 @@ impl TtsEngine for PiperEngine {
         let paths = self.paths_for(req.text).map_err(str::to_string)?;
         let text = req.text.to_string();
         let speed = req.speed;
-        tokio::task::spawn_blocking(move || run_piper_blocking(&paths, &text, speed, PIPER_TIMEOUT))
-            .await
-            .map_err(|e| format!("Piper-Lauf abgebrochen: {e}"))?
+        let cancel = req.cancel.cloned();
+        tokio::task::spawn_blocking(move || {
+            run_piper_cancellable(&paths, &text, speed, PIPER_TIMEOUT, cancel.as_deref())
+        })
+        .await
+        .map_err(|e| format!("Piper-Lauf abgebrochen: {e}"))?
     }
 }
 
@@ -750,6 +770,7 @@ mod tests {
         Ok,
         Broken,
         Fail,
+        Hang,
     }
 
     fn write_fake_piper(dir: &Path, fake: Fake) -> PathBuf {
@@ -770,6 +791,7 @@ mod tests {
                 Fake::Fail => {
                     "@echo off\r\necho Modelldatei nicht lesbar 1>&2\r\nexit /b 3\r\n".to_string()
                 }
+                Fake::Hang => "@echo off\r\nping -n 60 127.0.0.1 > nul\r\n".to_string(),
             };
             std::fs::write(&script, body).unwrap();
             script
@@ -784,6 +806,11 @@ mod tests {
                 Fake::Fail => {
                     "#!/bin/sh\necho 'Modelldatei nicht lesbar' >&2\nexit 3\n".to_string()
                 }
+                // `exec`: die PID der Datei ist der wartende Prozess selbst.
+                Fake::Hang => format!(
+                    "#!/bin/sh\necho $$ > \"{}\"\nexec sleep 60\n",
+                    dir.join("pid").display()
+                ),
             };
             std::fs::write(&script, body).unwrap();
             std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -826,6 +853,33 @@ mod tests {
         let paths = fake_paths(dir.path(), Fake::Fail);
         let err = run_piper_blocking(&paths, "Hallo.", None, PIPER_TIMEOUT).unwrap_err();
         assert!(err.contains("Modelldatei nicht lesbar"), "war: {err}");
+    }
+
+    #[test]
+    fn abbruch_beendet_den_piper_prozess() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let dir = tempfile::tempdir().unwrap();
+        let paths = fake_paths(dir.path(), Fake::Hang);
+        let cancel = std::sync::Arc::new(AtomicBool::new(false));
+        let c2 = cancel.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(300));
+            c2.store(true, Ordering::Release);
+        });
+        let started = std::time::Instant::now();
+        let err = run_piper_cancellable(&paths, "Hallo.", None, PIPER_TIMEOUT, Some(&cancel))
+            .unwrap_err();
+        assert_eq!(err, super::super::providers::pipeline::CANCELLED_MESSAGE);
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "nicht erst nach dem Timeout"
+        );
+        #[cfg(target_os = "linux")]
+        {
+            let pid = std::fs::read_to_string(dir.path().join("pid")).unwrap();
+            let proc_dir = std::path::PathBuf::from(format!("/proc/{}", pid.trim()));
+            assert!(!proc_dir.exists(), "Piper-Prozess läuft nicht weiter");
+        }
     }
 
     #[test]
@@ -886,6 +940,7 @@ mod tests {
             voice: None,
             seed: 42,
             speed: None,
+            cancel: None,
         };
         let bytes = ready.synthesize(req).await.unwrap();
         assert!(protocol::looks_like_wav(&bytes));

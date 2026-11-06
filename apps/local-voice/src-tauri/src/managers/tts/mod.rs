@@ -592,6 +592,7 @@ impl TtsCore {
             // Synthese eingebacken läge es dauerhaft im Satz-Cache und gälte
             // doppelt, weil der Player bereits live skaliert.
             speed: None,
+            cancel,
         };
         let work = async {
             match engine {
@@ -7741,30 +7742,5 @@ Sie stieg ein und setzte sich ans Fenster, wo die Sonne hereinschien.";
             piper_like.engine.started(),
             vec![job("Das ist circa 5 Euro, und das ist nicht gut.", "A")]
         );
-    }
-}
-
-#[cfg(test)]
-mod cancel_wait_tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn abbruch_beendet_eine_haengende_synthese() {
-        let flag = Arc::new(AtomicBool::new(false));
-        let f2 = flag.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(30)).await;
-            f2.store(true, Ordering::Release);
-        });
-        let hang = std::future::pending::<Result<Vec<u8>, String>>();
-        let r = tokio::time::timeout(std::time::Duration::from_secs(2), async {
-            tokio::select! {
-                r = hang => r,
-                _ = wait_cancelled(&flag) => Err("abgebrochen".to_string()),
-            }
-        })
-        .await
-        .expect("Abbruch greift");
-        assert!(r.is_err());
     }
 }
