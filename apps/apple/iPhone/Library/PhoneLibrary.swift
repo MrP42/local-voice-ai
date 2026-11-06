@@ -183,6 +183,13 @@ final class PhoneLibrary: ObservableObject {
         reload()
     }
 
+    func setFavorite(_ book: LibraryBook, _ favorite: Bool) {
+        var copy = book; copy.favorite = favorite
+        try? write(copy)
+        touch(copy)
+        reload()
+    }
+
     func flush() {
         saveTask?.cancel(); saveTask = nil
         writeProgress()

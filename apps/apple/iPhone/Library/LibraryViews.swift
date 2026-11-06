@@ -58,7 +58,7 @@ struct LibraryCover: View {
             .overlay(alignment: .topLeading) {
                 if !compact {
                     Text(title).font(.system(.footnote, design: .serif).weight(.bold)).foregroundStyle(pick.1)
-                        .lineLimit(5).minimumScaleFactor(0.6).padding(8)
+                        .lineLimit(5).minimumScaleFactor(0.6).padding(8).padding(.top, 24)  // Platz für den Stern
                 }
             }
             .clipped()
@@ -67,7 +67,7 @@ struct LibraryCover: View {
 }
 
 enum ShelfFilter: String, CaseIterable, Identifiable {
-    case all = "Alle", inProgress = "In Arbeit", audio = "Hörbuch", finished = "Fertig"
+    case all = "Alle", favorites = "Favoriten", inProgress = "In Arbeit", audio = "Hörbuch", finished = "Fertig"
     var id: String { rawValue }
 }
 
@@ -146,16 +146,17 @@ struct LibraryShelf: View {
 
     private var visible: [LibraryBook] {
         let q = query.trimmingCharacters(in: .whitespaces)
-        return library.books.filter { b in
+        return LibraryText.favoritesFirst(library.books.filter { b in
             let matches = q.isEmpty || b.title.localizedCaseInsensitiveContains(q) || b.authors.contains { $0.localizedCaseInsensitiveContains(q) }
             let done = b.finished || max(textFraction(b), audioFraction(b)) >= 1
             switch filter {
             case .all: return matches
+            case .favorites: return matches && b.favorite
             case .inProgress: return matches && !done && max(textFraction(b), audioFraction(b)) > 0
             case .audio: return matches && b.audio != nil
             case .finished: return matches && done
             }
-        }
+        })
     }
 
     /// Zuletzt gehörtes oder gelesenes, noch nicht fertiges Buch.
@@ -210,6 +211,13 @@ struct LibraryShelf: View {
                 }
 
                 Text("ALLE BÜCHER · \(visible.count)").font(.caption.weight(.semibold)).tracking(0.6).foregroundStyle(VoicePalette.secondaryText)
+                if visible.contains(where: library.hasAudio) {
+                    HStack(alignment: .top, spacing: 4) {
+                        DownloadedMark()
+                        Text("Hörbuch heruntergeladen, offline verfügbar").font(.caption).foregroundStyle(VoicePalette.secondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }.accessibilityHidden(true)
+                }
                 if library.books.isEmpty {
                     ContentUnavailableView {
                         Label("Noch keine Bücher", systemImage: "books.vertical")
@@ -220,6 +228,7 @@ struct LibraryShelf: View {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: 12)], alignment: .leading, spacing: 16) {
                     ForEach(visible) { book in
                         NavigationLink { LibraryBookDetail(bookId: book.id) } label: { ShelfItem(book: book) }.buttonStyle(.plain)
+                            .overlay(alignment: .topLeading) { FavoriteStar(book: book) }
                     }
                 }
                 if library.importing { ProgressView("Importiere …") }
@@ -252,20 +261,57 @@ struct ShelfItem: View {
     let book: LibraryBook
     @ObservedObject var library = PhoneLibrary.shared
     var body: some View {
-        let audio = library.hasAudio(book), text = library.hasText(book)
+        let audio = library.hasAudio(book)
         let rec = audio || library.audioInAccount(book) ? library.record(library.audioKey(book)) : library.record(library.textKey(book))
         VStack(alignment: .leading, spacing: 5) {
             LibraryCover(title: book.title, image: library.coverThumbnail(book)).aspectRatio(2/3, contentMode: .fit)
             ProgressView(value: book.finished ? 1 : LibraryProgress.fraction(rec)).tint(VoicePalette.accent)
-            Text(audio || library.audioInAccount(book) ? (rec == nil ? "Hörbuch · neu" : "Hörbuch · \(LibraryFormat.percent(LibraryProgress.fraction(rec)))")
-                       : "Text · \(LibraryFormat.percent(LibraryProgress.fraction(rec)))")
-                .font(.caption).foregroundStyle(VoicePalette.secondaryText)
-            let inAccount = library.audioInAccount(book)
-            Text(inAccount ? (text ? "Hörbuch im Konto" : "Im Konto, nicht geladen") : (audio || text ? "Auf dem iPhone" : "Im Konto, nicht geladen"))
-                .font(.caption.weight(.semibold)).foregroundStyle(!inAccount && (audio || text) ? Color.green : VoicePalette.secondaryText)
+            // Fester Platz für das Symbol: Lange Angaben brechen um und rücken nicht darunter.
+            HStack(alignment: .top, spacing: 4) {
+                Text(audio || library.audioInAccount(book) ? (rec == nil ? "Hörbuch · neu" : "Hörbuch · \(LibraryFormat.percent(LibraryProgress.fraction(rec)))")
+                           : "Text · \(LibraryFormat.percent(LibraryProgress.fraction(rec)))")
+                    .font(.caption).foregroundStyle(VoicePalette.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                DownloadedMark(visible: audio)
+            }
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(book.title), \(book.authors.joined(separator: ", "))")
+        .accessibilityLabel("\(book.title), \(book.authors.joined(separator: ", "))\(audio ? ", Hörbuch heruntergeladen, offline verfügbar" : "")")
+    }
+}
+
+/// Grüner Kreis mit Pfeil nach unten: Das Hörbuch liegt auf dem iPhone. Der Platz bleibt auch ohne Symbol frei.
+struct DownloadedMark: View {
+    var visible = true
+    @ScaledMetric(relativeTo: .caption) private var size: CGFloat = 15
+
+    var body: some View {
+        Image(systemName: "arrow.down.circle.fill")
+            .resizable().scaledToFit().frame(width: size, height: size)
+            .foregroundStyle(VoicePalette.success)
+            .opacity(visible ? 1 : 0)
+            .accessibilityHidden(true)
+    }
+}
+
+/// Stern am Cover; wie am PC stehen Favoriten oben im Regal. Der Abgleich nimmt die Wahl mit.
+struct FavoriteStar: View {
+    let book: LibraryBook
+    @ObservedObject var library = PhoneLibrary.shared
+
+    var body: some View {
+        Button {
+            library.setFavorite(book, !book.favorite)
+            Task { await LibrarySync.shared.run() }
+        } label: {
+            Image(systemName: book.favorite ? "star.fill" : "star")
+                .font(.footnote.weight(.semibold)).foregroundStyle(book.favorite ? Color.yellow : Color.white)
+                .frame(width: 26, height: 26).background(.black.opacity(0.45), in: Circle())
+                .padding(4).frame(width: 44, height: 44, alignment: .topLeading).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(book.favorite ? "Favorit entfernen" : "Als Favorit merken")
     }
 }
 
@@ -302,7 +348,9 @@ struct LibraryBookDetail: View {
                         if !book.authors.isEmpty { Text(book.authors.joined(separator: ", ")).font(.body) }
                         if hasText { Text("Text: \(book.text?.sourceName ?? "vorhanden")").font(.footnote).foregroundStyle(VoicePalette.secondaryText) }
                         if hasAudio { Text("Hörbuch: \(LibraryFormat.clock(total)) · \(tracks.count) \(tracks.count == 1 ? "Teil" : "Teile")").font(.footnote).foregroundStyle(VoicePalette.secondaryText) }
-                        Label("Auf dem iPhone", systemImage: "checkmark").font(.footnote.weight(.semibold)).foregroundStyle(VoicePalette.success)
+                        if !inAccount, hasText || hasAudio {
+                            Label("Auf dem iPhone", systemImage: "checkmark").font(.footnote.weight(.semibold)).foregroundStyle(VoicePalette.success)
+                        }
                     }
                 }
                 // Ein Knopf für alles: Hören, Mitlesen und Lesen wählt man im Player.
