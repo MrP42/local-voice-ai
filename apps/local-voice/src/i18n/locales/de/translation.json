@@ -2845,6 +2845,10 @@
         "input": "Mikrofon",
         "feedback": "Hörbare Rückmeldung"
       },
+      "localUpdateAuto": {
+        "label": "Testversionen selbst installieren",
+        "description": "Liegt im Update-Ordner eine neuere, mit dem Entwicklungsschlüssel signierte Testversion, schließt sich die App, installiert sie und startet neu. Nie während Diktat, Aufnahme, Nachverarbeitung, Vorlesen oder einer laufenden Berechnung. Unsignierte Installer werden nur angeboten."
+      },
       "localUpdateDir": {
         "title": "Lokaler Update-Ordner",
         "description": "Ordner, in dem die App nach neueren Installern sucht, zum Beispiel für Abnahmestände, die nicht auf GitHub liegen. Ein gefundenes Update erscheint in der Fußleiste.",
@@ -3051,6 +3055,11 @@
     }
   },
   "footer": {
+    "testUpdate": {
+      "waits": "Testversion {{version}} liegt bereit und wird installiert, sobald {{reason}} beendet ist.",
+      "starts": "Testversion {{version}} wird installiert. Die App schließt sich gleich und startet neu.",
+      "later": "Später"
+    },
     "functionModel": {
       "title": "Modell für {{name}}: {{model}}. Klick wählt ein anderes.",
       "none": "kein Modell",

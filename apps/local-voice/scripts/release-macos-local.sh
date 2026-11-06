@@ -17,6 +17,11 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+# Entwicklungskanal (dev_update.rs) gehoert nie in ein Release.
+if [ -n "${LVA_DEV_UPDATE_PUBKEY:-}" ]; then
+  echo "LVA_DEV_UPDATE_PUBKEY ist gesetzt: Release-Bau mit Entwicklungskanal abgelehnt" >&2
+  exit 1
+fi
 REPO="MrP42/local-voice-ai"
 WHICH="${1:-all}"
 

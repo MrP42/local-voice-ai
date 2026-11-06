@@ -14,6 +14,7 @@ import { RecordingRetentionPeriodSelector } from "../RecordingRetentionPeriod";
 import { UpdateChecksToggle } from "../UpdateChecksToggle";
 import { ShowWhatsNewOnUpdate } from "../ShowWhatsNewOnUpdate";
 import { LocalUpdateDirectory } from "../LocalUpdateDirectory";
+import { LocalUpdateAutoInstall } from "../LocalUpdateAutoInstall";
 import { AppDataDirectory } from "../AppDataDirectory";
 import { LogDirectory } from "../debug";
 import { ExperimentalToggle } from "../ExperimentalToggle";
@@ -66,6 +67,7 @@ export const AppTab: React.FC = () => {
       <SettingsGroup title={t("settings.app.groups.updates")}>
         <UpdateChecksToggle descriptionMode="tooltip" grouped={true} />
         <LocalUpdateDirectory descriptionMode="tooltip" grouped={true} />
+        <LocalUpdateAutoInstall descriptionMode="tooltip" grouped={true} />
         <ShowWhatsNewOnUpdate descriptionMode="tooltip" grouped={true} />
       </SettingsGroup>
 

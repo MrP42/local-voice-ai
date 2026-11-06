@@ -35,6 +35,7 @@ mod library; // lva#152: Bibliothek für Bücher und Hörbücher
 mod library_export; // lva#236: Fassungen einzeln exportieren (EPUB, PDF, Word, M4B, MP3)
 mod llm_client;
 mod llm_keys;
+mod dev_update; // Entwicklungskanal: Testversionen selbst installieren
 mod local_update;
 mod managers;
 pub mod mcp; // M6-P6e
@@ -2086,6 +2087,9 @@ fn specta_builder() -> Builder<tauri::Wry> {
             shortcut::change_local_update_dir_setting,
             local_update::local_update_check,
             local_update::local_update_install,
+            shortcut::change_local_update_auto_install_setting,
+            dev_update::dev_update_available,
+            dev_update::dev_update_postpone,
             shortcut::change_append_trailing_space_setting,
             shortcut::change_lazy_stream_close_setting,
             shortcut::change_refine_enabled_setting,
@@ -3454,6 +3458,7 @@ pub fn run(cli_args: CliArgs) {
             app.manage(TranscriptionCoordinator::new(app_handle.clone()));
 
             initialize_core_logic(&app_handle);
+            dev_update::start(app_handle.clone());
 
             // Kontextmenü-Eintrag mit dem Setting synchronisieren (aktualisiert
             // auch den EXE-Pfad, wenn Builds wandern).

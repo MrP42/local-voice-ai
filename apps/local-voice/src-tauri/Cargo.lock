@@ -4019,6 +4019,7 @@ dependencies = [
  "libc",
  "log",
  "mail-builder",
+ "minisign-verify",
  "mp3lame-encoder",
  "native-tls",
  "natural",

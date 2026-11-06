@@ -153,21 +153,26 @@ fn candidate_dirs(app: &AppHandle) -> Vec<PathBuf> {
     dirs.into_iter().filter(|d| d.is_dir()).collect()
 }
 
+/// Der neueste Installer ueber alle Update-Ordner, der neuer ist als die
+/// laufende Version (auch fuer den Entwicklungskanal, `dev_update`).
+pub(crate) fn find_newest(app: &AppHandle) -> Option<LocalUpdate> {
+    let current = app.package_info().version.to_string();
+    let app_name = app.package_info().name.clone();
+    candidate_dirs(app)
+        .iter()
+        .filter_map(|dir| find_local_update(dir, &current, &app_name))
+        .max_by_key(|u| parse_version(&u.version))
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn local_update_check(app: AppHandle) -> Result<Option<LocalUpdate>, String> {
-    let current = app.package_info().version.to_string();
-    let app_name = app.package_info().name.clone();
-    let dirs = candidate_dirs(&app);
     log::info!(
-        "local update: checking {} folder(s) for a version above {current}",
-        dirs.len()
+        "local update: checking for a version above {}",
+        app.package_info().version
     );
     // Der neueste Fund ueber alle Ordner gewinnt.
-    let found = dirs
-        .iter()
-        .filter_map(|dir| find_local_update(dir, &current, &app_name))
-        .max_by_key(|u| parse_version(&u.version));
+    let found = find_newest(&app);
     match &found {
         Some(u) => log::info!("local update: {} at {}", u.version, u.path),
         None => log::info!("local update: none found"),
@@ -181,6 +186,12 @@ pub fn local_update_check(app: AppHandle) -> Result<Option<LocalUpdate>, String>
 #[tauri::command]
 #[specta::specta]
 pub fn local_update_install(app: AppHandle, path: String) -> Result<(), String> {
+    install(&app, &path)
+}
+
+/// Gemeinsamer Weg fuer den Klick und den Entwicklungskanal: Installer
+/// pruefen, Helfer scharf machen, App beenden.
+pub(crate) fn install(app: &AppHandle, path: &str) -> Result<(), String> {
     let candidate = PathBuf::from(&path);
     let file_name = candidate
         .file_name()
@@ -192,7 +203,7 @@ pub fn local_update_install(app: AppHandle, path: String) -> Result<(), String> 
     }
     // Nur Dateien direkt in einem der erlaubten Ordner werden gestartet.
     let canon_file = std::fs::canonicalize(&candidate).map_err(|e| format!("Datei: {e}"))?;
-    let allowed = candidate_dirs(&app)
+    let allowed = candidate_dirs(app)
         .iter()
         .filter_map(|d| std::fs::canonicalize(d).ok())
         .any(|d| canon_file.parent() == Some(d.as_path()));
@@ -200,6 +211,25 @@ pub fn local_update_install(app: AppHandle, path: String) -> Result<(), String> 
         return Err("Der Installer liegt in keinem erlaubten Update-Ordner".into());
     }
 
+    spawn_helper(app, &candidate)
+}
+
+/// Fuer den Entwicklungskanal: startet genau diese (schon gepruefte, private)
+/// Kopie im Staging-Ordner ueber denselben Helfer.
+pub(crate) fn install_staged(app: &AppHandle, staged: &Path) -> Result<(), String> {
+    if !staged.is_file() {
+        return Err(format!("{} fehlt", staged.display()));
+    }
+    spawn_helper(app, staged)
+}
+
+/// Helfer scharf machen und die App beenden: er wartet, bis dieser Prozess
+/// wirklich weg ist (kein Kill), startet den Installer passiv und dann die App.
+fn spawn_helper(app: &AppHandle, candidate: &Path) -> Result<(), String> {
+    let file_name = candidate
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
     #[cfg(target_os = "windows")]
     {
         // Alle Befehle mit vollem System32-Pfad: auf Rechnern mit Git im PATH
@@ -219,7 +249,7 @@ pub fn local_update_install(app: AppHandle, path: String) -> Result<(), String> 
         // Beide Pfade werden woertlich in ein cmd-Skript geschrieben. Ein
         // Ordnername aus der Einstellung mit Shell-Metazeichen koennte das
         // Skript aufbrechen — deshalb nur Pfade ohne solche Zeichen.
-        for path in [&candidate, &exe] {
+        for path in [&candidate.to_path_buf(), &exe] {
             if !cmd_safe_path(&path.to_string_lossy()) {
                 return Err(format!(
                     "Pfad enthaelt Zeichen, die im Update-Helfer nicht erlaubt sind: {}",
@@ -261,7 +291,7 @@ del \"%~f0\"
     }
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = app;
+        let _ = (app, candidate, file_name);
         Err("Lokale Installer-Updates gibt es bisher nur unter Windows".into())
     }
 }

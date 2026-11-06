@@ -1707,6 +1707,19 @@ pub fn change_local_update_dir_setting(app: AppHandle, dir: Option<String>) -> R
     Ok(())
 }
 
+/// `None` = Vorgabe des Baus (Entwicklungskanal an), sonst fest an/aus.
+#[tauri::command]
+#[specta::specta]
+pub fn change_local_update_auto_install_setting(
+    app: AppHandle,
+    enabled: Option<bool>,
+) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.local_update_auto_install = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn change_append_trailing_space_setting(app: AppHandle, enabled: bool) -> Result<(), String> {

@@ -151,6 +151,22 @@ from the GitHub releases above. For a self-hosted server with a `nacht` channel,
 fixed per build; switching at runtime and a UI-only hot update need Rust/TypeScript changes
 in the app that are not part of this step (the wai-sdk host has them).
 
+**Development channel: test builds install themselves (`src-tauri/src/dev_update.rs`).** Builds from
+`scripts/build-abnahme.sh` embed the public half of a separate *development* key
+(`~/.tauri/local-voice-dev.key`, created on first run; `LVA_DEV_UPDATE_PUBKEY` at compile time) and
+sign their installer with it. Such a build checks the local update folders every 20 s; a newer installer
+whose `.sig` verifies against the development key is copied into a private staging folder
+(`%LOCALAPPDATA%\de.wolffappliedai.localvoiceai\testupdate`), verified there, and installed through the
+existing helper (app exits, NSIS `/P`, app restarts) — never during dictation, recording,
+post-processing, the import queue, a heavy job or read-aloud, and only after a 15 s notice with
+"Später". The signed timestamp must be newer than the last accepted one (no downgrade/replay); a
+build that does not come up afterwards is blocked by hash (`status.json`, one attempt per installer).
+`letzte-gute-setup.exe` and `sicherung/` (settings/DBs) stay there for a manual return. Release builds
+never carry the development key (the release workflow and `release-macos-local.sh` refuse
+`LVA_DEV_UPDATE_PUBKEY`), so they do not know the channel; the production key never signs test builds.
+Settings ▸ General ▸ Updates has the switch (on by default in such builds; a stored "off" survives
+updates). Windows only for now; macOS test builds still need a manual replace.
+
 Requirements for the update path to work at all: the repository (or at least
 its releases) must be **public** — the updater fetches
 `releases/latest/download/latest.json` unauthenticated — and the release must

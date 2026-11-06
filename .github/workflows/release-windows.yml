@@ -98,6 +98,16 @@ jobs:
             exit 1
           fi
 
+      # Entwicklungskanal (dev_update.rs): ein Release darf den Entwicklungsschluessel
+      # nie eingebacken haben, sonst spielte es fremd signierte Testversionen ein.
+      - name: Refuse development update channel
+        shell: bash
+        run: |
+          if [ -n "${LVA_DEV_UPDATE_PUBKEY:-}" ]; then
+            echo "LVA_DEV_UPDATE_PUBKEY ist gesetzt: Release-Bau mit Entwicklungskanal abgelehnt" >&2
+            exit 1
+          fi
+
       - uses: pnpm/action-setup@v4
         with:
           version: 10

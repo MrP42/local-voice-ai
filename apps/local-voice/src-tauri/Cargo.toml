@@ -199,6 +199,9 @@ tauri-plugin-single-instance = "2.3.2"
 # (@tauri-apps/plugin-updater) has always been wired up in UpdateChecker.tsx;
 # without this Rust half every check() failed silently.
 tauri-plugin-updater = "2.10.0"
+# Entwicklungskanal (dev_update.rs): prueft die .sig lokaler Testversionen mit
+# demselben Schluessel wie der Updater. MIT, schon transitiv ueber das Plugin da.
+minisign-verify = "0.2.5"
 # Remembers the main window's size/position across restarts.
 tauri-plugin-window-state = "2.4.1"
 
