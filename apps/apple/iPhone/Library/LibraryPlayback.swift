@@ -387,7 +387,8 @@ final class LibraryPlayback: NSObject, ObservableObject {
         Task { await LibrarySync.shared.run() }
     }
 
-    private struct PendingSwitch { let bookId: String; let edition: String; let from: String? }
+    /// `id` unterscheidet Aufträge mit gleichem Buch und Ziel: ein älterer Wartender löscht nie einen neueren.
+    private struct PendingSwitch { let id = UUID(); let bookId: String; let edition: String; let from: String? }
     private var pendingSwitch: PendingSwitch?
 
     /// Fehlt das Hörbuch der Zielsprache: laden, bis dahin läuft die bisherige Sprache weiter. Nach dem Laden wird
@@ -398,7 +399,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
         pendingSwitch = pending
         Task { [weak self] in
             let loaded = await LibrarySync.shared.downloadAudio(view)
-            guard let self, let still = self.pendingSwitch, still.bookId == pending.bookId, still.edition == pending.edition else { return }
+            guard let self, self.pendingSwitch?.id == pending.id else { return }
             self.pendingSwitch = nil
             guard loaded, let now = self.book, now.id == pending.bookId, now.editionId == pending.from else { return }
             self.switchLanguage(to: pending.edition)
