@@ -1,6 +1,6 @@
 # KI-Aufträge vom iPhone: Kurzbuch und Übersetzen (Entwurf)
 
-Stand 06.11.2026. Entwurf zur Abnahme durch Codex. Grundlagen: #347 (Kurzbücher lesen),
+Stand 06.11.2026, zweite Fassung nach Codex. Grundlagen: #347 (Kurzbücher lesen),
 Relay aus `2026-11-05-buch-gespraech.md` §11.3 und §11.7, Sprachfassungen #344/#348.
 
 ## 1 · Ziel
@@ -12,67 +12,87 @@ offen bleiben. Gemma auf dem iPhone bleibt zurückgestellt und käme nur als bew
 ## 2 · Ablauf
 
 1. **Vorbereiten:** Buchseite → „Kurzbuch erstellen“ oder „Übersetzen“. Das iPhone fragt beim PC das
-   Angebot ab: Anbieter, Modell, Verarbeitung (lokal oder Cloud), geschätzte Token und Kosten.
-2. **Bestätigen:** Blatt zeigt Anbieter, wohin der Text geht, Kosten, Umfang (Lesegrenze) und Zielsprache.
+   Angebot ab (§5). Dafür muss der PC erreichbar sein.
+2. **Bestätigen:** Blatt zeigt Empfänger, Textumfang, Kosten, Lesegrenze und Zielsprache.
    Erst „Auftrag starten“ legt den Auftrag an.
 3. **Warten:** Buchseite zeigt den Stand. Ist der PC aus: „Wartet auf den PC“, abbrechbar.
 4. **Ergebnis:** Der PC legt es wie bisher im Buch ab, der Abgleich bringt es aufs iPhone.
 
-## 3 · Transport
+## 3 · Transport und Sicherheit
 
-Dieselbe Hub-Sammlung und dieselben Regeln wie das Relay (R1–R3: Relay-Schlüssel je iPhone,
-HMAC, Antwortbindung, Replay-Schutz), neue Objektarten. Keine Hub-Änderung.
+Hub-Sammlung des Relays, keine Hub-Änderung, eigene Objektarten mit eigenen Aufräumregeln. Die kurzen Fristen von
+`req_*`/`resp_*` erfassen Aufträge nicht.
+
+**Die Relay-Regeln R1–R13 (`2026-11-05-buch-gespraech.md` §11.7) gelten vollständig.** Abweichungen sind einzeln genannt,
+bisher nur: API-Nutzung erweitert R6 und braucht eine eigene Kostenfreigabe (§5). Zusätzlich:
+
+- Eigene Funktionsfreigaben je Gerät und Modell („Kurzbuch“, „Übersetzen“), getrennt vom Buch-Gespräch.
+- `nur_lokal` gilt auf beiden Seiten: Ist es am iPhone oder am PC gesetzt, gibt es kein Cloud-Angebot.
+- Ausführung isoliert, ohne Werkzeuge, ohne Inhalte in Protokollen.
+- **Alle** Objektarten sind per HMAC authentifiziert, auch Abbrüche. Zustände tragen eine monotone Sequenz; ältere werden verworfen.
+- Duplikatsperren und Abbruchmarken bleiben bis Ablauf plus Sicherheitsfrist bestehen.
+- Der PC prüft die Freigaben vor jedem Modellaufruf erneut. Widerruf stoppt den Auftrag.
 
 | Objekt | Schreibt | Inhalt |
 |---|---|---|
-| `jobquote_<request_id>` / `jobofferte_<request_id>` | iPhone / PC | Angebot wie in Abschnitt 2 |
-| `job_<job_id>` | iPhone | Art, Buch, Fassung, Lesegrenze, Zielsprache, gewähltes Angebot, `idempotency_key` |
-| `jobstate_<job_id>` | PC | Zustand, Schritt, Fortschritt, tatsächliches Modell, Verbrauch, Fehler |
+| `jobquote_<request_id>` | iPhone | Anfrage eines Angebots |
+| `joboffer_<request_id>` | PC | Angebot nach §5, mit Ablaufzeit |
+| `job_<job_id>` | iPhone | bindet das Angebot nach §4 |
+| `jobstate_<job_id>` | PC | Zustand, Sequenz, Schritt, Fortschritt, tatsächliches Modell, Verbrauch, Fehler |
 | `jobcancel_<job_id>` | iPhone | Abbruchwunsch |
 
-Der PC liest beim Start und bei jedem Abgleich offene `job_*`. So überlebt ein Auftrag einen
-ausgeschalteten PC, ohne dass das iPhone wach sein muss. Eine Frist (Vorschlag 7 Tage) verwirft alte Aufträge.
+Der PC liest offene `job_*` beim Start und bei jedem Abgleich. Der Buchtext reist nicht im Auftrag.
 
-Der Buchtext reist nicht im Auftrag: Der PC hat ihn. Fehlt er dort, meldet der Auftrag „Buch nicht auf diesem PC“.
+## 4 · Angebot, Auftrag, Zustände
 
-## 4 · Zustände
+**Bindung:** Der Auftrag authentifiziert iPhone und PC, Funktion, Quellfassung mit Inhaltshash, Lesegrenze, Parameter,
+Modell, Preisbasis, Budget und Ablauf. Jede Änderung braucht ein neues Angebot und eine neue Bestätigung. Ohne erreichbaren
+PC und gültiges Angebot startet nichts. Kein automatischer Wechsel auf ein anderes Modell oder einen anderen Anbieter.
 
-`wartend` → `angenommen` → `läuft` → `fertig` | `fehlgeschlagen` | `abgebrochen`.
+**Fristen:** Angebotsgültigkeit getrennt von der Annahmefrist: 7 Tage ab Bestätigung; danach `abgelaufen`.
 
-- **Keine Doppelerzeugung:** `idempotency_key` = Hash aus Art, Buch, Fassung, Lesegrenze, Zielsprache, Anbieter,
-  Modell. Der PC übernimmt einen Schlüssel nur einmal und setzt nach einem Neustart über den vorhandenen
-  Zwischenspeicher fort (`book_ai/engine`, Kurzbuch-Cache).
-- **Mehrere PCs:** Ein Auftrag nennt die `desktop_device_id` aus dem Angebot. Nur dieser PC nimmt ihn an.
-- **Abbruch:** Vor `läuft` sofort; während `läuft` nach dem laufenden Schritt. Bereits angefallene Kosten stehen im Zustand.
-- **Kostengrenze:** Weicht der Verbrauch um mehr als einen festen Anteil vom Angebot ab (Vorschlag 25 %), hält
-  der PC an und fragt nach.
+**Zustände:** `wartend` (auch bei ausgeschaltetem PC) → `angenommen` → `läuft` → `Ergebnisabgleich ausstehend` → `fertig`.
+Daneben `Bestätigung nötig`, `fehlgeschlagen`, `abgebrochen`, `abgelaufen`. `fertig` meldet der PC erst, wenn die Ablage am Hub bestätigt ist.
 
-## 5 · Transparenz und Datenfluss
+**Idempotenz:** `job_id` ist getrennt vom Ergebnis- und Cache-Schlüssel (Quellhash, Vorlage, Parameter, Pipeline-Version).
+Übernahme und Ergebnisablage sind dauerhaft und atomar. Nach unklarem Ausgang beim Anbieter gibt es keine automatische
+kostenpflichtige Wiederholung, sondern `Bestätigung nötig`.
 
-Vor dem Start sichtbar, im Ergebnis gespeichert:
+**Wiederanlauf:** Persistente Checkpoints je Schritt. App- oder PC-Neustart setzt dort fort.
 
-- Anbieter und Modell, lokal oder Cloud. Bei Cloud: „Der Buchtext geht an <Anbieter>“.
-- Abo oder API-Kosten mit Schätzung. Unbekannt heißt ausdrücklich „unbekannt“, nie 0.
-- Das Blatt lässt keinen Start zu, solange das Angebot fehlt oder abgelaufen ist.
+**Mehrere PCs:** Nur der im Angebot genannte PC nimmt an.
+
+**Abbruch:** Der Wunsch wird sofort gespeichert und vor jedem Schritt geprüft; ein laufender Aufruf wird gestoppt. Die App zeigt die angefallenen
+Kosten. Späte Ergebnisse werden nicht veröffentlicht.
+
+## 5 · Transparenz, Datenfluss, Kosten
+
+„Am PC“ heißt nicht „lokal“. Vor dem Start sichtbar und im Ergebnis gespeichert:
+
+- Tatsächlicher Empfänger, Modell, Textumfang, Region soweit bekannt. Speicherung und Trainingsnutzung werden als unbekannt genannt, wenn sie es sind.
+- Getrennt: Geld, Token, Abo-Kontingent. „Unbekannt“ ist kein Nullpreis.
+- Budget: 125 % der Geldschätzung sind eine ausdrücklich bestätigte Obergrenze. Der PC prüft sie vor jedem Schritt einschließlich der maximalen
+  Ausgabe; bei Überschreitung pausiert der Auftrag in `Bestätigung nötig`.
+- Kein Start, solange das Angebot fehlt oder abgelaufen ist.
 
 ## 6 · Lesegrenze
 
-Der Auftrag trägt `read_limit` (Zeichenstelle). Vorgaben: Stand im Buch oder ganzes Buch; „ganzes Buch“ zeigt den
-Spoiler-Hinweis.
+`read_limit` ist ein eindeutiger Unicode-Offset, gebunden an die unveränderliche Quellfassung (Inhaltshash).
 
-- Der PC schneidet **vor jedem KI-Schritt**, auch vor Zwischenfassungen aus dem Cache: Cache-Schlüssel enthält
-  die Grenze, sonst könnte ein späteres Kapitel über eine Zwischenfassung einfließen. Prüfen, ob `DigestCache` heute kapitelweise reicht.
-- Ein Kapitel, das die Grenze überschreitet, zählt bis zur Grenze.
-- Für das Übersetzen gilt die Grenze nicht als Spoilerschutz. Vorgabe ist das ganze Buch; Teilübersetzung ist eine eigene Wahl.
+- Die Quellen werden **vor jeder Verarbeitung** begrenzt, Zwischenfassungen entstehen erst danach. Fertige Zusammenfassungen nachträglich abzuschneiden entfernt Spoiler nicht.
+- Die Grenze gehört in den Cache-Schlüssel. Auch Kapitelüberschriften jenseits der Grenze fließen nicht ein.
+- „Ganzes Buch“ zeigt den Spoiler-Hinweis.
+- Übersetzungen sind in V1 immer vollständig, Teilübersetzung gibt es nicht.
 
 ## 7 · Ergebnis, Fassungen, Kennzeichnung
 
-**Kurzbuch:** Bestehende Fassungen werden nie still ersetzt. `KurzbuchRef` bekommt `version` und `read_limit`; #347 meldet heute je Sprache nur das neueste,
-das muss zu einer Liste je Sprache werden. Anzeige: Datum, Modell, Ort, Lesegrenze.
+Ergebnisse sind unveränderlich versioniert.
 
-**Übersetzen:** Ergebnis ist eine neue Sprachfassung desselben Buchs nach #344/#348 (`editions[]`, `files.editions`),
-kein neues Buch. Text je Fassung als Blob. Kennzeichnung: maschinell übersetzt, Modell, Datum, Ausgangsfassung.
-Hörbuch-Fassungen sind nicht Teil dieses Auftrags. Abhängigkeit: PR 3 aus #344 (iPhone-Oberfläche).
+**Kurzbuch:** Bestehende Fassungen werden nie still ersetzt. #347 meldet je Sprache das neueste; das wird eine Liste je Sprache mit `version` und
+`read_limit`. Anzeige: Datum, Modell, Ort, Lesegrenze.
+
+**Übersetzen:** Neue Sprachfassung desselben Buchs nach #344/#348 (`editions[]`, `files.editions`), atomar angelegt. Kennzeichnung: maschinell übersetzt, Modell, Datum,
+Ausgangsfassung. Hörbuch-Fassungen sind nicht Teil dieses Auftrags. Abhängigkeit: PR 3 aus #344.
 
 ## 8 · iPhone
 
@@ -91,10 +111,11 @@ Hörbuch-Fassungen sind nicht Teil dieses Auftrags. Abhängigkeit: PR 3 aus #344
 | B1 | PC: Übersetzen als Auftrag, Ergebnis als Fassung; nach #348 |
 | B2 | iPhone: Übersetzen, Zielsprache, Fassung wählen; nach PR 3 von #344 |
 
-## 10 · Offene Fragen an Codex
+## 10 · Abnahmetests
 
-1. Reichen Relay-Objekte für langlebige Aufträge, oder braucht es eine eigene Sammlung am Hub? Grund: Aufräumfristen der `req_*`-Objekte.
-2. Frist 7 Tage und Kostengrenze 25 % als Vorgabe?
-3. Darf ein Auftrag bei gesperrtem PC-Modell auf einen anderen Anbieter ausweichen? Vorschlag: nein, neu bestätigen.
-4. Lesegrenze im Cache-Schlüssel oder Zwischenfassungen je Kapitel mit Abschneiden am Ende?
-5. Teilübersetzung (bis Lesegrenze) überhaupt anbieten?
+Bereinigungsfristen, Replay, Widerruf während eines Laufs, doppelte Zustellung, Absturz zwischen Anbieterantwort und Speicherung, Budgetüberschreitung,
+Abbruchrennen, Spoilerfälle im Cache und in Kapitelüberschriften.
+
+## 11 · Entscheidungen von Codex (06.11.2026)
+
+Relay-Sammlung reicht; 7 Tage ab Bestätigung; 125 % als bestätigte Obergrenze; kein automatischer Wechsel; Lesegrenze im Cache-Schlüssel und vor der Verarbeitung; keine Teilübersetzung in V1.
