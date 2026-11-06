@@ -160,15 +160,30 @@ final class AudioDownloadTests: XCTestCase {
         XCTAssertNil(speed.remaining("b", doneBytes: 80, totalBytes: 100, now: start.addingTimeInterval(3650)))
     }
 
-    func testRestartWithMobileDataMeasuresFromNewStart() {
+    func testStartResetsMeasureAlsoWhenItFailsRightAway() {
         var speed = AudioDownload.SpeedTracker()
         let start = Date()
+        speed.note("book_1", phase: .running, bytes: 0, now: start)
+        // „Jetzt mobil laden“ mit zu wenig Speicher: Auftrag scheitert, die alte Messung darf nicht bleiben.
+        let failed = AudioDownload.prepareStart(job(), remainingBytes: 100, freeBytes: 1, format: { "\($0)" }, speed: &speed)
+        XCTAssertEqual(failed.phase, .failed)
+        XCTAssertNil(speed.remaining("book_1", doneBytes: 5, totalBytes: 10, now: start.addingTimeInterval(600)))
+        speed.note("book_1", phase: .running, bytes: 0, now: start)
+        let running = AudioDownload.prepareStart(job(), remainingBytes: 100, freeBytes: nil, format: { "\($0)" }, speed: &speed)
+        XCTAssertEqual(running.phase, job().phase)
+        XCTAssertNil(speed.remaining("book_1", doneBytes: 5, totalBytes: 10, now: start.addingTimeInterval(600)), "auch ein erfolgreicher Start misst neu")
+    }
+
+    func testNetworkChangeRestartsMeasureWithoutDownloadCallback() {
+        var speed = AudioDownload.SpeedTracker()
+        let start = Date()
+        speed.noteNetwork(expensive: false)
         speed.note("b", phase: .running, bytes: 0, now: start)
-        // „Jetzt mobil laden“: `start` setzt zurück, ein Fehler direkt danach hinterlässt keine Messung.
-        speed.reset("b")
-        XCTAssertNil(speed.remaining("b", doneBytes: 40, totalBytes: 100, now: start.addingTimeInterval(600)))
-        speed.note("b", phase: .running, bytes: 40, now: start.addingTimeInterval(600))
-        XCTAssertEqual(speed.remaining("b", doneBytes: 70, totalBytes: 100, now: start.addingTimeInterval(630)), 30)
+        speed.noteNetwork(expensive: false)  // gleiches Netz: Messung läuft weiter
+        XCTAssertNotNil(speed.remaining("b", doneBytes: 50, totalBytes: 100, now: start.addingTimeInterval(10)))
+        speed.noteNetwork(expensive: true)  // WLAN weg, kein Rückruf vom Download
+        speed.noteNetwork(expensive: false)
+        XCTAssertNil(speed.remaining("b", doneBytes: 50, totalBytes: 100, now: start.addingTimeInterval(3600)), "eine Stunde Warten zählt nicht")
     }
 
     func testSpaceProblem() {

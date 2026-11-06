@@ -76,7 +76,10 @@ final class LibrarySync: ObservableObject {
         status = account == nil ? "Nicht angemeldet" : "Angemeldet als \(account!.email)"
         monitor.pathUpdateHandler = { [weak self] path in
             let expensive = path.isExpensive || path.isConstrained
-            Task { @MainActor in self?.expensiveNetwork = expensive }
+            Task { @MainActor in
+                self?.expensiveNetwork = expensive
+                AudioDownloads.shared.networkChanged(expensive: expensive)
+            }
         }
         monitor.start(queue: DispatchQueue(label: "library.sync.path"))
     }

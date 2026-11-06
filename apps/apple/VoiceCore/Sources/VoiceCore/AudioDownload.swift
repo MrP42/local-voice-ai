@@ -98,6 +98,7 @@ public enum AudioDownload {
     /// sonst zählte die Wartezeit als langsames Laden.
     public struct SpeedTracker: Sendable {
         private var marks: [String: (at: Date, bytes: Int)] = [:]
+        private var expensiveNetwork: Bool?
         public init() {}
 
         public mutating func note(_ id: String, phase: Phase, bytes: Int, now: Date) {
@@ -106,10 +107,27 @@ public enum AudioDownload {
 
         public mutating func reset(_ id: String) { marks[id] = nil }
 
+        /// Netz gewechselt: Das Tempo von vorher sagt nichts mehr, und Warten auf WLAN zählt nicht.
+        public mutating func noteNetwork(expensive: Bool) {
+            if let known = expensiveNetwork, known != expensive { marks = [:] }
+            expensiveNetwork = expensive
+        }
+
         public func remaining(_ id: String, doneBytes: Int, totalBytes: Int, now: Date) -> TimeInterval? {
             guard let mark = marks[id] else { return nil }
             return AudioDownload.remainingSeconds(doneBytes: doneBytes, totalBytes: totalBytes, startBytes: mark.bytes, elapsed: now.timeIntervalSince(mark.at))
         }
+    }
+
+    /// Beginn eines Auftrags: Die Messung startet neu, zu wenig Speicher beendet ihn sofort.
+    public static func prepareStart(_ job: Job, remainingBytes: Int, freeBytes: Int64?, format: (Int64) -> String,
+                                    speed: inout SpeedTracker) -> Job {
+        speed.reset(job.bookId)
+        guard let problem = spaceProblem(remainingBytes: remainingBytes, freeBytes: freeBytes, format: format) else { return job }
+        var failed = job
+        failed.phase = .failed
+        failed.message = problem
+        return failed
     }
 
     /// Geschätzte Restzeit aus dem bisherigen Tempo; `nil`, solange die Messung zu kurz ist.

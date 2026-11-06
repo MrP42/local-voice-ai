@@ -90,11 +90,10 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
             previous = nil
         }
         if previous?.phase == .running, allowCellular == nil { assemble(book.id); return }
-        speed.reset(book.id)  // Neuer Start, auch bei „Jetzt mobil laden“ und bei den Fehlern gleich danach.
         var job = AudioDownload.Job(bookId: book.id, parts: parts, allowCellular: allowCellular ?? previous?.allowCellular ?? false)
         let remaining = job.totalBytes - AudioDownload.doneBytes(job, states: states(job))
-        if let problem = AudioDownload.spaceProblem(remainingBytes: remaining, freeBytes: library.freeBytes(), format: LibraryBytes.text) {
-            job.phase = .failed; job.message = problem
+        job = AudioDownload.prepareStart(job, remainingBytes: remaining, freeBytes: library.freeBytes(), format: LibraryBytes.text, speed: &speed)
+        if job.phase == .failed {
             jobs[book.id] = job; persist(); resolve(book.id, false)
             return
         }
@@ -312,6 +311,8 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
         try h.write(contentsOf: plain)
         return index * chunkPlainBytes + plain.count
     }
+
+    func networkChanged(expensive: Bool) { speed.noteNetwork(expensive: expensive) }
 
     /// Restzeit für das Regal; misst ab Beginn des laufenden Ladens.
     func remainingSeconds(_ id: String) -> TimeInterval? {
