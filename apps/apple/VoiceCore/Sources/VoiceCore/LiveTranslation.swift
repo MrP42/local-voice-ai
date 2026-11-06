@@ -100,9 +100,13 @@ public enum LiveTranslation {
         return s.split(whereSeparator: { $0.isWhitespace }).count >= 4 && s.caseInsensitiveCompare(t) == .orderedSame
     }
 
-    /// Sprachkürzel ohne Region („en-GB“ → „en“).
+    /// Sprachkennung normalisiert wie im Erzeugungsschlüssel (Spez §7.3): klein, Sprache und Schrift,
+    /// ohne Region („en-GB“ → „en“, „zh_Hans_CN“ → „zh-hans“, „sr-Latn“ → „sr-latn“).
     public static func base(_ lang: String) -> String {
-        String(lang.lowercased().split(whereSeparator: { $0 == "-" || $0 == "_" }).first ?? "")
+        let parts = lang.lowercased().split(whereSeparator: { $0 == "-" || $0 == "_" }).map(String.init)
+        guard let language = parts.first else { return "" }
+        if parts.count > 1, parts[1].count == 4, parts[1].allSatisfy({ $0.isLetter }) { return language + "-" + parts[1] }
+        return language
     }
 }
 
@@ -160,8 +164,11 @@ public actor LivePipeline {
     public let target: String
     private let translator: any LiveTranslator
     private var cache: LiveCache
-    private var inflight: [LiveKey: Task<[LiveKey: String], Error>] = [:]
+    private struct Flight { let id: Int; let task: Task<[LiveKey: String], Error> }
+    private var inflight: [LiveKey: Flight] = [:]
+    private var nextFlight = 0
     private var generation = 0
+    /// Übersetzte Zeichen und Aufrufe, Wiederholungen eingeschlossen.
     public private(set) var translatedChars = 0
     public private(set) var calls = 0
 
@@ -176,29 +183,36 @@ public actor LivePipeline {
     /// Schon übersetzt? Für die Anzeige (noch nicht übersetzte Einheiten erscheinen gedämpft im Original).
     public func ready(_ unit: LiveUnit) -> String? { cache.peek(key(unit)) }
 
-    /// Fenster anstoßen: fehlende Einheiten je Absatz als Stapel übersetzen. Kehrt sofort zurück.
+    /// Wiedergabegeneration (Spez §4.1): steigt bei Sprung und Wechsel; ältere Ergebnisse gelangen weder in den
+    /// Speicher noch zu Wartenden.
+    public var currentGeneration: Int { generation }
+
+    /// Fenster anstoßen. Die erste fehlende Einheit läuft vorrangig allein (Spez §4 Start), der Rest als
+    /// Absatzstapel. Kehrt sofort zurück.
     public func prefetch(_ units: [LiveUnit]) {
         let missing = units.filter { cache.peek(key($0)) == nil && inflight[key($0)] == nil }
-        for batch in LiveTranslation.batches(missing) { start(batch) }
+        guard let first = missing.first else { return }
+        start([first])
+        for batch in LiveTranslation.batches(Array(missing.dropFirst())) { start(batch) }
     }
 
-    /// Übersetzung einer Einheit; wartet auf einen laufenden Stapel oder startet einen eigenen (vorrangig).
+    /// Übersetzung einer Einheit; wartet auf einen laufenden Stapel oder startet einen eigenen.
+    /// Wirft `CancellationError`, wenn die Generation inzwischen gewechselt hat.
     public func text(_ unit: LiveUnit) async throws -> String {
+        let gen = generation
         let k = key(unit)
         if let hit = cache.get(k) { return hit }
-        let task = inflight[k] ?? start([unit])
+        let task = inflight[k]?.task ?? start([unit])
         let result = try await task.value
+        guard gen == generation else { throw CancellationError() }
         guard let value = result[k] else { throw LiveTranslationError.unusable }
         return value
     }
 
-    /// Wiedergabegeneration (Spez §4.1): steigt bei Sprung und Wechsel; ältere Ergebnisse gelangen nicht in den Speicher.
-    public var currentGeneration: Int { generation }
-
     /// Sprung oder Sprachwechsel: laufende Stapel verwerfen. Fertige Übersetzungen bleiben im Speicher.
     public func cancelPending() {
         generation += 1
-        for task in inflight.values { task.cancel() }
+        for flight in inflight.values { flight.task.cancel() }
         inflight.removeAll()
     }
 
@@ -207,31 +221,51 @@ public actor LivePipeline {
         let keys = batch.map(key)
         let texts = batch.map(\.text)
         let gen = generation
-        calls += 1
-        translatedChars += texts.reduce(0) { $0 + $1.utf16.count }
-        let task = Task { [translator, source, target] () throws -> [LiveKey: String] in
-            var out = try await translator.translate(texts, from: source, to: target)
-            guard out.count == texts.count else { throw LiveTranslationError.countMismatch }
-            // Einmal neu versuchen, was leer oder auffällig unverändert zurückkam (Spez §4).
-            let bad = out.indices.filter { LiveTranslation.worthRetry(source: texts[$0], translated: out[$0], from: source, to: target) }
-            if !bad.isEmpty {
-                let again = try await translator.translate(bad.map { texts[$0] }, from: source, to: target)
-                for (i, value) in zip(bad, again) { out[i] = value }
-            }
+        nextFlight += 1
+        let id = nextFlight
+        let task = Task { () throws -> [LiveKey: String] in
+            defer { self.release(keys, id: id) }
+            let out = try await self.translateWithRetry(texts)
             try Task.checkCancellation()
             var result: [LiveKey: String] = [:]
-            for (i, k) in keys.enumerated()
-            where LiveTranslation.usable(out[i]) { result[k] = out[i] }
-            await self.finish(result, keys: keys, generation: gen)
+            for (i, k) in keys.enumerated() where LiveTranslation.usable(out[i]) { result[k] = out[i] }
+            if gen == self.generation { for (k, v) in result { self.cache.put(k, v) } }
             return result
         }
-        for k in keys { inflight[k] = task }
+        for k in keys { inflight[k] = Flight(id: id, task: task) }
         return task
     }
 
-    private func finish(_ result: [LiveKey: String], keys: [LiveKey], generation gen: Int) {
-        guard gen == generation else { return }
-        for (k, v) in result { cache.put(k, v) }
-        for k in keys { inflight[k] = nil }
+    /// Ein Aufruf mit Zählung und Prüfung der Antwortanzahl.
+    private func call(_ texts: [String]) async throws -> [String] {
+        calls += 1
+        translatedChars += texts.reduce(0) { $0 + $1.utf16.count }
+        let out = try await translator.translate(texts, from: source, to: target)
+        guard out.count == texts.count else { throw LiveTranslationError.countMismatch }
+        return out
+    }
+
+    /// Spez §4: ein Fehler (auch falsche Anzahl) wird genau einmal wiederholt; danach leere oder auffällig
+    /// unveränderte Sätze genau einmal neu. Scheitert diese Nachfrage, bleibt die erste Antwort.
+    private func translateWithRetry(_ texts: [String]) async throws -> [String] {
+        var out: [String]
+        do { out = try await call(texts) }
+        catch is CancellationError { throw CancellationError() }
+        catch {
+            try Task.checkCancellation()
+            out = try await call(texts)
+        }
+        let bad = out.indices.filter { LiveTranslation.worthRetry(source: texts[$0], translated: out[$0], from: source, to: target) }
+        guard !bad.isEmpty else { return out }
+        try Task.checkCancellation()
+        if let again = try? await call(bad.map { texts[$0] }) {
+            for (i, value) in zip(bad, again) where LiveTranslation.usable(value) { out[i] = value }
+        }
+        return out
+    }
+
+    /// Auf jedem Abschlussweg aufräumen, aber nur die eigenen Einträge (neuere Aufträge bleiben).
+    private func release(_ keys: [LiveKey], id: Int) {
+        for k in keys where inflight[k]?.id == id { inflight[k] = nil }
     }
 }
