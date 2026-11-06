@@ -94,16 +94,34 @@ umgeschlüsselt, auch nicht beim Zusammenlegen, Abtrennen oder Wechsel der Haupt
 
 ## 5. Synchronisieren und Konflikte
 
-### 5.1 Merge des `book`-Objekts je Teil (nicht mehr „neueres Buch gewinnt“)
+### 5.1 Zustandsbasierter Merge (im Code: `library/editions.rs`, `merge_state`)
 
-| Teil | Regel |
-| --- | --- |
-| Metadaten des Buchs (Titel der Hauptfassung, Autoren, Favorit, Cover) | wie bisher: neueres Buch-`updated` |
-| `editions` | **je Kennung**: Vereinigung beider Seiten; gleiche Kennung → neueres `edition.updated` gewinnt (Gleichstand: kleinere Gerätekennung `edition.device`). Fehlt `editions` im Eingang (Altgerät), gelten die lokalen. |
-| `edition_tombstones` | Vereinigung; ein Grabstein entfernt die Fassung endgültig (Kennungen werden nie wiederverwendet). |
-| `primary_edition` | eigenes Tripel `primary = {edition, updated, device}`, höheres Tripel gewinnt; zeigt es auf eine begrabene Fassung, gilt die erste verbleibende nach `added_ms`. |
-| `alignments` | je Fassungspaar, darin je Gruppe (Abschnitt 6); neueres `updated` gewinnt. |
-| `reading` | Tripel (Abschnitt 5.2). |
+Der Fassungsteil eines Buchs ist ein Zustand aus Registern und Mengen. `merge_state(x, y)` ist eine
+reine Funktion; **kommutativ, assoziativ, idempotent** und absorbierend sind als Property-Test
+belegt (`merge_kommutativ_assoziativ_idempotent`, 5000 zufällige Tripel je Lauf, inkl. gleicher
+Zeitstempel, gleicher `added_ms`, verschiedener Inhalte bei gleicher Version). Jede Reihenfolge des
+Empfangs ergibt denselben Stand.
+
+| Teil | Typ | Ordnung / Regel |
+| --- | --- | --- |
+| `editions` | Map Kennung → Register | größtes (`updated`, `device`, Inhaltshash FNV-1a der kanonischen JSON); Hash entscheidet gleiche Version mit verschiedenem Inhalt |
+| `edition_tombstones` | Grow-only-Menge | je Kennung größtes `removed_ms`; eine begrabene Kennung ist in jedem Ergebnis entfernt |
+| `primary` | Register | größtes (`updated`, `device`, `edition`) |
+| `reading` | Register | größtes (`updated`, `device`, `edition`, Hash der Stelle) |
+| `alignments` | Map Fassungspaar (ungerichtet) → Register über die **ganze** Gruppenliste | größtes (`updated`, `device`, Hash der Gruppen); ungültige Listen (Lücke, Doppelzuordnung) werden verworfen |
+| Metadaten (Autoren, Favorit, Beschreibung) | wie bisher | neueres Buch-`updated` |
+
+**Wirksame Sicht** (nach dem Merge, verändert die Register nicht, damit die Assoziativität hält):
+- Hauptfassung = `primary`, falls die Fassung lebt; sonst die älteste lebende nach (`added_ms`, Kennung).
+- **Titel, Untertitel, ISBN, Werkschlüssel, Sprache und Schema-1-Spiegel** (`text`, `audio`,
+  `language`) kommen immer aus der wirksamen Hauptfassung (`apply_state`), nie aus dem
+  Buch-Zeitstempel. Das Buchcover ist das Cover der Hauptfassung; beim Wechsel tauschen
+  `cover.*` und `covers/<editionId>.*`.
+- Zuordnungen gelten nur zwischen lebenden Fassungen.
+- Ein Altgerät ohne `editions` liefert nur eine Änderung der Arbeitskopie der Hauptfassung; sie
+  wird als neue Version dieser Fassung eingespielt, alles andere bleibt lokal.
+- Ist der lokale Buchstand neuer und ungesichert, gewinnen die lokalen Metadaten, der Fassungsteil
+  wird trotzdem zusammengeführt und mit dem nächsten Push verteilt.
 
 ### 5.2 Auswahl `reading`
 
@@ -112,15 +130,15 @@ umgeschlüsselt, auch nicht beim Zusammenlegen, Abtrennen oder Wechsel der Haupt
             "position": {"key": "audio:book_2", "unit": "ms", "offset": 7385000}}
 ```
 
-- **Ordnung:** (updated, device, edition) lexikografisch; das größere Tripel gewinnt auf jedem Gerät
-  gleich, auch bei gleichem Zeitstempel.
-- **Konsistenz:** `reading.position` ist die Stelle, mit der gewechselt wurde. Gewinnt beim Empfang
-  das fremde `reading`, wird der Fortschrittsdatensatz `position.key` auf diese Stelle gehoben,
-  sofern sein eigenes `updated` älter ist als `reading.updated`; ist er neuer (dort seither weiter
-  gehört), bleibt er. Auswahl und Stelle passen danach immer zueinander.
-- **Offline / gleichzeitig:** Jedes Gerät arbeitet weiter; nach dem Abgleich gilt das größere
-  Tripel. Die verdrängte Fassung behält ihren Datensatz. Spielt das Gerät gerade, wechselt es nicht
-  stumm, sondern fragt (sf-11).
+- Wirksam nur, wenn die Fassung lebt. Zeigt die Auswahl auf eine gelöschte oder abgetrennte
+  Fassung, gilt die Hauptfassung; die Stelle entfällt.
+- `position.key` muss der Fortschrittsschlüssel **dieser** Fassung sein (`audio_key` oder
+  `text:<eigene Seite>:…`), sonst entfällt die Stelle (`effective_reading`).
+- Gewinnt beim Empfang ein fremdes `reading`, wird der Datensatz `position.key` auf die Stelle
+  gehoben, wenn sein `updated` **echt kleiner** als `reading.updated` ist. Gleicher Zeitstempel:
+  der lokale Datensatz bleibt (seine eigene Merge-Regel `mergeRecordText` gilt). Gehörte/gelesene
+  Bereiche und `finished` bleiben immer erhalten (`lift_progress`).
+- Spielt das Gerät gerade, wechselt es nicht stumm, sondern fragt (sf-11).
 
 ## 6. Positionsabgleich, Kapitelzuordnung
 
@@ -136,6 +154,11 @@ umgeschlüsselt, auch nicht beim Zusammenlegen, Abtrennen oder Wechsel der Haupt
   ]}]
 ```
 
+- Die Gruppenliste eines Fassungspaars ist **ein** Register (keine Gruppenkennungen): Teilen,
+  Verbinden, Grenzen verschieben und Bestätigen erzeugen eine neue, vollständig geprüfte Liste mit
+  neuem `updated`. Damit kann der Merge weder Lücken noch Doppelzuordnungen erzeugen. Grenze:
+  bearbeiten zwei Geräte offline verschiedene Gruppen desselben Paars, gilt die jüngere Liste
+  ganz; die andere Bearbeitung ist sichtbar als unbestätigte Gruppe neu zu machen.
 - Gruppen sind zusammenhängende Kapitelbereiche, lückenlos und in Reihenfolge; jedes Kapitel beider
   Fassungen gehört genau einer Gruppe (1:1, 1:n, n:1, n:m). Eine vollständige Zuordnung deckt
   18 ↔ 21 Kapitel ab.
@@ -155,20 +178,33 @@ umgeschlüsselt, auch nicht beim Zusammenlegen, Abtrennen oder Wechsel der Haupt
 - Kapitelquellen: Inhaltsverzeichnis/Überschriften (Text), Kapitelmarken/Teile (Hörbuch), Hörbuch
   mit Transkript über die Zeitachse.
 
-## 7. Zusammenlegen, Abtrennen, Löschen
+## 7. Zusammenlegen, Abtrennen, Löschen, Wiederherstellen
 
 - **Erkennen:** sicher nur bei gleichem Open-Library-Werkschlüssel oder gleichem Kerntitel + Autor
   in verschiedenen Sprachen. ISBN belegt keine übersetzungsübergreifende Gleichheit. Unsicher:
   gleicher Autor und je Sprache genau ein Kandidat. **Nie automatisch** zusammenlegen: sichere
   Paare per Hinweisleiste nach Klick, unsichere einzeln im Prüfen-Dialog (standardmäßig aus).
-- **Zusammenlegen:** Quellbuch → Fassung im Ziel (`origin_book`, Cover nach `covers/`), Dateien
-  umbenannt (Abschnitt 3), Quellordner in den Papierkorb. Undo-Toast + dauerhaft „Abtrennen“.
-- **Abtrennen:** Fassung → eigenes Buch (Kennung `origin_book`, falls frei, sonst neu), mit
-  Titel, Cover, Dateien, Seite und unverändertem `audio_key`/`page_id` (Fortschritt, Lesezeichen,
-  Notizen gehen ohne Umschlüsseln mit). Hauptfassung nur abtrennbar, wenn eine andere als
-  Ersatz gewählt wird.
-- **Getrennte Aktionen:** „Download entfernen“ (nur Dateien dieses Geräts), „Sprachfassung löschen“
-  (Grabstein, Papierkorb 30 Tage; nicht für Haupt-/aktive Fassung ohne Ersatz), „Buch löschen“.
+- **Zusammenlegen** (`join_in`): **alle** Fassungen des Quellbuchs (auch mehrfassige) werden mit
+  **neuen** Kennungen Teil des Ziels; `audio_key`, `page_id` und Lesezeichen bleiben, Hörbuchteile
+  heißen `<neueKennung>__<name>`, das Cover der Quell-Hauptfassung liegt unter `covers/`. Das
+  Quellbuch geht als Ganzes in den Papierkorb und bekommt im Sync den Buch-Grabstein. Eine Kennung
+  lebt so immer in genau einem Buch.
+- **Abtrennen** (`split_in`, zugleich „Zusammenlegen rückgängig“): Fassung → eigenes Buch (Kennung
+  `origin_book`, falls frei, sonst neu), mit Titel, Cover, Dateien und unverändertem
+  `audio_key`/`page_id`. Im alten Buch bekommt die Fassung einen Grabstein. Hauptfassung nur
+  abtrennbar, wenn eine andere als Ersatz gewählt wird.
+- **Löschen** (`remove_in`): Grabstein, Dateien 30 Tage unter `.papierkorb/<buch>~<fassung>/`.
+  Haupt- oder gewählte Fassung nur mit Ersatz.
+- **Wiederherstellen** (`restore_in`): neue, **deterministische** Kennung `<alt>_r` mit denselben
+  Referenzen. Zwei Geräte, die dieselbe Fassung wiederherstellen, erzeugen dieselbe Kennung;
+  gleichzeitiges Löschen (alte Kennung) und Wiederherstellen (neue Kennung) konvergiert zur
+  wiederhergestellten Fassung (Test `wiederherstellen_deterministisch`).
+- **Getrennte Aktionen:** „Download entfernen“ (nur Dateien dieses Geräts), „Sprachfassung löschen“,
+  „Buch löschen“.
+- **Grenze (dokumentiert):** Buchübergreifende Operationen auf zwei Geräten gleichzeitig offline
+  (A trennt Fassung E ab, B legt dasselbe Buch mit einem dritten zusammen) können zwei Bücher mit
+  denselben Referenzen (`audio_key`/`page_id`) ergeben. Es geht nichts verloren; die Bibliothek
+  erkennt gleiche Referenzen in zwei Büchern und bietet „Zusammenlegen“ an.
 
 ## 8. Sprachwechsel im Player
 
@@ -182,10 +218,12 @@ umgeschlüsselt, auch nicht beim Zusammenlegen, Abtrennen oder Wechsel der Haupt
 
 ## 9. Barrierefreiheit
 
-Ziele ≥ 44 px/pt, Menüs mit `menuitemradio`, Dialoge mit Fokusfalle, Download-Status als Text,
+Ziele ≥ 44 px/pt (einschließlich Navigation `div.n`), Menüs mit `menuitemradio`, Dialoge mit Fokusfalle, Download-Status als Text,
 Kontrast aller Texte ≥ 4,5:1. Beleg `belege.json` je Bild: **Messumfang** (Selektor, Anzahl),
 jedes Bedienziel mit Element, Beschriftung und Rechteck, jeder sichtbare Textknoten mit
-Vorder-/Hintergrund **nach Alpha-Verrechnung** über alle Ebenen bis zur Seitenfläche und Verhältnis.
+verrechneter Vorder- und Hintergrundfarbe (Alpha über alle Ebenen bis zur ersten deckenden Fläche,
+bei Verläufen die ungünstigste Stufe, Cover eingeschlossen) und Verhältnis. Kurzfassung in
+`kennzahlen.json`.
 
 ## 10. Umsetzung
 

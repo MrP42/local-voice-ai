@@ -6674,6 +6674,92 @@ async libraryFindDuplicate(title: string, authors: string[], isbn: string | null
 }
 },
 /**
+ * Bücher als Sprachfassungen in `target_id` übernehmen (Quellen → Papierkorb).
+ */
+async libraryJoinEditions(targetId: string, sourceIds: string[]) : Promise<Result<LibraryBook, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_join_editions", { targetId, sourceIds }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Sprachfassung als eigenes Buch abtrennen. Liefert [verbleibend, neu].
+ */
+async librarySplitEdition(id: string, editionId: string, newPrimary: string | null) : Promise<Result<LibraryBook[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_split_edition", { id, editionId, newPrimary }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Sprachfassung löschen (Grabstein, Dateien 30 Tage im Papierkorb).
+ */
+async libraryRemoveEdition(id: string, editionId: string, newPrimary: string | null) : Promise<Result<LibraryBook, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_remove_edition", { id, editionId, newPrimary }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Gelöschte Sprachfassung zurückholen (neue Kennung `<alt>_r`).
+ */
+async libraryRestoreEdition(id: string, editionId: string, device: string) : Promise<Result<LibraryBook, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_restore_edition", { id, editionId, device }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async librarySetPrimaryEdition(id: string, editionId: string, device: string) : Promise<Result<LibraryBook, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_set_primary_edition", { id, editionId, device }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Auswahl setzen (Sprachwechsel). Die Oberfläche schreibt vorher die
+ * Zielstelle in den Fortschritt der Zielfassung, mit demselben Zeitstempel.
+ */
+async librarySetReading(id: string, reading: ReadingState) : Promise<Result<LibraryBook, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_set_reading", { id, reading }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Kapitelzuordnung zweier Fassungen setzen (ganze Gruppenliste).
+ */
+async librarySetAlignment(id: string, alignment: Alignment) : Promise<Result<LibraryBook, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_set_alignment", { id, alignment }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Vermutliche Sprachfassungen in der Bibliothek (nie automatisch zusammenlegen).
+ */
+async libraryLanguagePairs() : Promise<Result<LanguagePair[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_language_pairs") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Ausgaben bei Open Library suchen: per ISBN oder per Titel und Autor.
  */
 async libraryMetadataSearch(title: string, author: string, isbn: string | null) : Promise<Result<MetadataCandidate[], string>> {
@@ -7729,6 +7815,14 @@ export type AgentClient = { id: string; label: string;
  */
 integration_id: string; created_at: number; last_used_at: number | null; revoked_at: number | null }
 export type AgentClientView = { client: AgentClient; tools: ToolView[] }
+/**
+ * Kapitelgruppe: zusammenhängende Kapitel (0-basiert) in `a` und `b`.
+ */
+export type AlignGroup = { a: number[]; b: number[]; confirmed: boolean }
+/**
+ * Kapitelzuordnung zweier Fassungen, lückenlos in Gruppen.
+ */
+export type Alignment = { a: string; b: string; updated: number; device?: string; groups: AlignGroup[] }
 export type AntwortSicht = { text: string; citations: number[]; unsupported: boolean }
 /**
  * Anfrage an den Abruf.
@@ -9499,6 +9593,46 @@ output_language: string | null }
  */
 export type DocumentEvent = { kind: "progress"; meeting_id: string; doc_type: string; phase: MinutesPhase; done: number; total: number } | { kind: "done"; meeting_id: string; doc_type: string; document_id: string } | { kind: "failed"; meeting_id: string; doc_type: string; code: string }
 /**
+ * Eine Sprachfassung: Text und/oder Hörbuch in einer Sprache.
+ */
+export type Edition = { 
+/**
+ * Stabil: `ed_<buch>` (migriert) oder `ed_<ms>_<zufall>`.
+ */
+id: string; 
+/**
+ * Sprachcode (`de`, `en`), leer = unbekannt.
+ */
+lang: string; title: string; subtitle?: string | null; isbn?: string | null; 
+/**
+ * Open-Library-Werk (`/works/OL…W`): belegt Werkgleichheit über Sprachen.
+ */
+work_key?: string | null; text?: TextVersion | null; audio?: AudioVersion | null; 
+/**
+ * Dauerhafte Fortschrittsreferenz des Hörbuchs; wird nie umgeschlüsselt.
+ */
+audio_key?: string; 
+/**
+ * `migration`, `import`, `merge` oder `split`.
+ */
+origin?: string; 
+/**
+ * Beim Zusammenlegen: Kennung des Quellbuchs (für „Abtrennen“).
+ */
+origin_book?: string | null; added_ms?: number; 
+/**
+ * Letzte Änderung dieser Fassung (Sync-Merge je Kennung).
+ */
+updated?: number; device?: string; 
+/**
+ * Nur zur Anzeige: absolute Pfade der Hörbuchteile (leer = fehlt).
+ */
+audio_paths: string[] }
+/**
+ * Gelöschte Sprachfassung: verhindert, dass der Sync sie zurückbringt.
+ */
+export type EditionTombstone = { id: string; removed_ms: number }
+/**
  * Eintrag des Projektordners. Ohne Leserecht fehlen `title` und `subtitle` (`available` = false).
  */
 export type EintragSicht = { id: string; kind: string; title: string | null; subtitle: string | null; originApp: string | null; dataClass: string | null; available: boolean; assignedAt: string | null; 
@@ -10063,6 +10197,18 @@ model_id: string | null; model_name: string | null; model_covers: boolean | null
  * Bessere Wahl, wenn das Modell die Sprache nicht abdeckt.
  */
 suggestion: ModelSuggestion | null }
+/**
+ * Vermutlich dieselbe Arbeit in zwei Sprachen.
+ */
+export type LanguagePair = { a: string; b: string; 
+/**
+ * Sicher: gleicher Werkschlüssel oder gleicher Kerntitel und Autor.
+ */
+sure: boolean; 
+/**
+ * `work_key`, `title_author` oder `author_only`.
+ */
+reason: string }
 export type LaufAntwort = { 
 /**
  * `fertig`, `freigabe` (wartet auf Entscheidung), `abgelehnt` oder `fehler`.
@@ -10116,6 +10262,27 @@ cover_source: string; text: TextVersion | null; audio: AudioVersion | null; adde
  * Buch (nicht zur Anzeige) und reist deshalb in der Sync-Sammlung `book` mit.
  */
 favorite?: boolean; 
+/**
+ * Schema der Datei: fehlt = 1, ab lva#344 = 2 (Sprachfassungen).
+ */
+schema: number; 
+/**
+ * Open-Library-Werk der Hauptfassung (`/works/OL…W`).
+ */
+work_key?: string | null; 
+/**
+ * Sprachfassungen (lva#344), gleichwertig. `text`, `audio` und
+ * `language` oben sind die Arbeitskopie der Hauptfassung.
+ */
+editions: Edition[]; 
+/**
+ * Hauptfassung als zeitgestempeltes Register.
+ */
+primary?: Stamp | null; edition_tombstones: EditionTombstone[]; 
+/**
+ * Zuletzt gewählte Sprachfassung samt Stelle (geräteübergreifend).
+ */
+reading?: ReadingState | null; alignments: Alignment[]; 
 /**
  * Nur zur Anzeige, wird beim Auflisten gesetzt: absoluter Pfad des Covers
  * samt Änderungszeit (`?v=`), damit ein neues Cover sofort erscheint.
@@ -11562,6 +11729,22 @@ key: string; title: string;
  */
 position: number; total: number; finished: boolean; playing: boolean }
 /**
+ * Stelle, mit der gewechselt wurde.
+ */
+export type ReadingPosition = { 
+/**
+ * Fortschrittsschlüssel der Zielfassung (`audio:…` oder `text:…`).
+ */
+key: string; 
+/**
+ * `ms` oder `chars`.
+ */
+unit: string; offset: number }
+/**
+ * Zuletzt gewählte Sprachfassung, geräteübergreifend, samt Stelle.
+ */
+export type ReadingState = { edition: string; updated: number; device?: string; position?: ReadingPosition | null }
+/**
  * Kurzsicht eines gespeicherten Recherche-Dokuments.
  */
 export type RechercheKurz = { id: string; question: string; createdAt: string; dataClass: string; projectId: string | null; sourceCount: number }
@@ -11917,6 +12100,11 @@ aktiv: boolean; laeuft: boolean;
  * Name der Pipe bzw. Pfad des Sockets.
  */
 endpunkt: string | null; fehler: string | null }
+/**
+ * Zeitgestempelte Wahl einer Fassung. Ordnung (updated, device, edition)
+ * lexikografisch: das größere Tripel gewinnt auf jedem Gerät gleich.
+ */
+export type Stamp = { edition: string; updated: number; device?: string }
 /**
  * Zustand eines Schrittversuchs (Spalte `workflow_run_steps.state`).
  */

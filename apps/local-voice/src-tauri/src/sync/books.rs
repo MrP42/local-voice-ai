@@ -79,6 +79,18 @@ pub struct BookFiles {
     pub cover: Option<BlobRef>,
     #[serde(default)]
     pub audio: Vec<BlobRef>,
+    /// Weitere Sprachfassungen (lva#344): Text und Hörbuch je Fassungskennung.
+    /// Altgeräte ignorieren das Feld.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub editions: BTreeMap<String, EditionFiles>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+pub struct EditionFiles {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<BlobRef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub audio: Vec<BlobRef>,
 }
 
 impl BookFiles {
@@ -87,10 +99,18 @@ impl BookFiles {
             .iter()
             .chain(self.cover.iter())
             .chain(self.audio.iter())
+            .chain(
+                self.editions
+                    .values()
+                    .flat_map(|e| e.text.iter().chain(e.audio.iter())),
+            )
     }
 
     fn is_empty(&self) -> bool {
-        self.text.is_none() && self.cover.is_none() && self.audio.is_empty()
+        self.text.is_none()
+            && self.cover.is_none()
+            && self.audio.is_empty()
+            && self.editions.values().all(|e| e.text.is_none() && e.audio.is_empty())
     }
 }
 
@@ -157,6 +177,19 @@ fn is_bookmark_key(k: &str) -> bool {
 
 /// Das Buch als Sync-Wert ohne `files`/`updated`: Anzeigefelder und
 /// gerätelokale Transkriptions-Aufträge fallen weg.
+/// Gerätelokale Aufträge aus einer Audiofassung entfernen.
+fn strip_jobs(audio: &mut Map<String, Value>) {
+    audio.remove("transcript_job");
+    if let Some(Value::Array(tracks)) = audio.get_mut("tracks") {
+        for t in tracks.iter_mut() {
+            if let Value::Object(t) = t {
+                t.remove("transcript_job");
+                t.remove("transcript_jobs");
+            }
+        }
+    }
+}
+
 pub fn book_core(book: &LibraryBook) -> Value {
     let mut v = serde_json::to_value(book).unwrap_or(Value::Null);
     if let Value::Object(m) = &mut v {
@@ -164,12 +197,14 @@ pub fn book_core(book: &LibraryBook) -> Value {
             m.remove(k);
         }
         if let Some(Value::Object(audio)) = m.get_mut("audio") {
-            audio.remove("transcript_job");
-            if let Some(Value::Array(tracks)) = audio.get_mut("tracks") {
-                for t in tracks.iter_mut() {
-                    if let Value::Object(t) = t {
-                        t.remove("transcript_job");
-                        t.remove("transcript_jobs");
+            strip_jobs(audio);
+        }
+        if let Some(Value::Array(eds)) = m.get_mut("editions") {
+            for e in eds.iter_mut() {
+                if let Value::Object(e) = e {
+                    e.remove("audio_paths");
+                    if let Some(Value::Object(audio)) = e.get_mut("audio") {
+                        strip_jobs(audio);
                     }
                 }
             }
@@ -379,6 +414,62 @@ fn build_book(
             }
         }
     }
+    // Weitere Sprachfassungen: Text der eigenen Seite, Hörbuchteile flach.
+    let primary = library::editions::primary_id(book).map(str::to_string);
+    for e in book.editions.iter().filter(|e| Some(&e.id) != primary.as_ref()) {
+        let mut ef = EditionFiles::default();
+        let pending = side.pending.editions.get(&e.id);
+        let text = e
+            .text
+            .as_ref()
+            .filter(|t| !t.page_id.is_empty())
+            .and_then(|t| page_text(app, &t.page_id))
+            .filter(|t| !t.is_empty());
+        match text {
+            Some(t) => {
+                let bytes = t.into_bytes();
+                if let Some(r) = BlobRef::new(key, &blobs::stamp_bytes(&bytes)) {
+                    uploads.push(PendingUpload {
+                        blob: r.clone(),
+                        source: Source::Bytes(bytes),
+                        stamp: None,
+                    });
+                    ef.text = Some(r);
+                }
+            }
+            None => ef.text = pending.and_then(|p| p.text.clone()).filter(|_| e.text.is_some()),
+        }
+        if let Some(audio) = &e.audio {
+            for track in library::tracks_of(audio) {
+                let path = dir.join("audio").join(&track.file);
+                if path.is_file() {
+                    match blobs::stamp(cache, &path, budget)? {
+                        Some(st) => {
+                            if let Some(mut r) = BlobRef::new(key, &st) {
+                                r.file = Some(track.file.clone());
+                                uploads.push(PendingUpload {
+                                    blob: r.clone(),
+                                    source: Source::File(path),
+                                    stamp: Some(st),
+                                });
+                                ef.audio.push(r);
+                            }
+                        }
+                        None => ready = false,
+                    }
+                } else if let Some(r) = pending.and_then(|p| {
+                    p.audio
+                        .iter()
+                        .find(|r| r.file.as_deref() == Some(track.file.as_str()))
+                }) {
+                    ef.audio.push(r.clone());
+                }
+            }
+        }
+        if ef.text.is_some() || !ef.audio.is_empty() {
+            files.editions.insert(e.id.clone(), ef);
+        }
+    }
     Ok(BookBuild {
         core_files: with_files(&book_core(book), &files),
         uploads,
@@ -397,14 +488,12 @@ fn prewarm(
     budget: &mut u64,
 ) {
     let mut paths: Vec<PathBuf> = library::sync_cover_file(dir).into_iter().collect();
-    if let Some(audio) = &book.audio {
-        paths.extend(
-            library::tracks_of(audio)
-                .iter()
-                .map(|t| dir.join("audio").join(&t.file))
-                .filter(|p| p.is_file()),
-        );
-    }
+    paths.extend(
+        library::editions::all_tracks(book)
+            .iter()
+            .map(|t| dir.join("audio").join(&t.file))
+            .filter(|p| p.is_file()),
+    );
     for p in paths {
         if let Err(e) = blobs::stamp(cache, &p, budget) {
             log::warn!("Sync: Prüfsumme von {} nicht lesbar: {e}", p.display());
@@ -738,13 +827,25 @@ pub fn apply_book(
             if incoming.title.trim().is_empty() {
                 return Err(invalid("Buch ohne Titel"));
             }
-            if let Some(audio) = &incoming.audio {
-                if library::tracks_of(audio)
-                    .iter()
-                    .any(|t| !library::sync_plain_name(&t.file))
-                {
-                    return Err(invalid("Ungültiger Dateiname im Hörbuch"));
-                }
+            if library::editions::all_tracks(&incoming)
+                .iter()
+                .any(|t| !library::sync_plain_name(&t.file))
+            {
+                return Err(invalid("Ungültiger Dateiname im Hörbuch"));
+            }
+            if incoming
+                .editions
+                .iter()
+                .any(|e| !library::editions::valid_edition_id(&e.id))
+                || remote_files
+                    .editions
+                    .keys()
+                    .any(|k| !library::editions::valid_edition_id(k))
+            {
+                return Err(invalid("Ungültige Kennung einer Sprachfassung"));
+            }
+            for e in incoming.editions.iter_mut() {
+                e.audio_paths = Vec::new();
             }
             incoming.cover_path = None;
             incoming.audio_path = None;
@@ -782,8 +883,26 @@ pub fn apply_book(
 
     let existing = library::sync_read_book(&dir);
     let mut side = read_sidecar(&dir);
-    if existing.is_some() && !local_clean && side.updated > remote_updated {
-        return Ok(Applied::default());
+    if let (Some(local), false, true) = (&existing, local_clean, side.updated > remote_updated) {
+        // Lokaler Stand ist neuer und ungesichert: Metadaten bleiben lokal,
+        // der Fassungsteil wird trotzdem zusammengeführt (§5.1) und mit dem
+        // nächsten Push verteilt.
+        if incoming.editions.is_empty() {
+            return Ok(Applied::default());
+        }
+        let mut merged = local.clone();
+        let mut theirs = incoming.clone();
+        let lift = library::editions::merge_incoming(Some(local), &mut theirs);
+        library::editions::apply_state(&mut merged, library::editions::state_of(&theirs));
+        if &merged == local && lift.is_none() {
+            return Ok(Applied::default());
+        }
+        library::sync_write_book(&dir, &merged)?;
+        lift_progress_locked(&root, lift)?;
+        return Ok(Applied {
+            changed: true,
+            ..Default::default()
+        });
     }
     // Gerätelokale Aufträge der vorhandenen Fassung behalten.
     if let (Some(old), Some(new)) = (
@@ -800,7 +919,9 @@ pub fn apply_book(
             }
         }
     }
+    let lift = library::editions::merge_incoming(existing.as_ref(), &mut incoming);
     library::sync_write_book(&dir, &incoming)?;
+    lift_progress_locked(&root, lift)?;
 
     // Was fehlt hier noch? Nur das kommt nach `pending`.
     let mut pending = BookFiles::default();
@@ -836,6 +957,38 @@ pub fn apply_book(
             pending.audio.push(r.clone());
         }
     }
+    for (eid, ef) in &remote_files.editions {
+        let Some(e) = incoming.editions.iter().find(|e| &e.id == eid) else {
+            continue;
+        };
+        let mut pe = EditionFiles::default();
+        let have = e
+            .text
+            .as_ref()
+            .and_then(|t| page_text(app, &t.page_id))
+            .is_some();
+        if !have {
+            pe.text = ef.text.clone();
+        }
+        for r in &ef.audio {
+            let Some(name) = r.file.as_deref().filter(|n| library::sync_plain_name(n)) else {
+                continue;
+            };
+            let path = dir.join("audio").join(name);
+            let mut b = u64::MAX;
+            let local = path
+                .is_file()
+                .then(|| blobs::stamp(cache, &path, &mut b).ok().flatten())
+                .flatten()
+                .and_then(|s| blobs::blob_id_of(key, &s));
+            if local.as_deref() != Some(r.blob.as_str()) {
+                pe.audio.push(r.clone());
+            }
+        }
+        if pe.text.is_some() || !pe.audio.is_empty() {
+            pending.editions.insert(eid.clone(), pe);
+        }
+    }
     side.pending = pending;
     side.updated = remote_updated;
     let book = library::sync_read_book(&dir).ok_or("Buch nach dem Schreiben unlesbar")?;
@@ -848,6 +1001,23 @@ pub fn apply_book(
         remote_blobs: remote_files.refs().map(|r| r.blob.clone()).collect(),
         ..Default::default()
     })
+}
+
+/// Gewonnene Auswahl (§5.2): Fortschritt der Zielfassung auf die Stelle heben.
+fn lift_progress_locked(
+    root: &Path,
+    lift: Option<(library::ReadingPosition, f64)>,
+) -> Result<(), String> {
+    let Some((pos, at)) = lift else {
+        return Ok(());
+    };
+    let mut map = library::sync_progress_load(root)?;
+    let before = map.clone();
+    library::editions::lift_progress(&mut map, &pos, at);
+    if map != before {
+        library::sync_progress_store(root, &map)?;
+    }
+    Ok(())
 }
 
 /// Zwei Lesezeichen-Listen vereinigen (nach `id`, lokale zuerst). `None`,
@@ -993,6 +1163,8 @@ pub enum WantedKind {
     Text,
     Cover,
     Audio(String),
+    /// Text einer weiteren Sprachfassung (Kennung).
+    EditionText(String),
 }
 
 /// Alles, was andere Geräte gemeldet haben und hier fehlt. Kleines zuerst:
@@ -1027,6 +1199,16 @@ pub fn wanted(app: &AppHandle) -> Result<Vec<Wanted>, String> {
                 push(a, WantedKind::Audio(f.to_string()));
             }
         }
+        for (eid, ef) in &side.pending.editions {
+            if let Some(t) = ef.text.as_ref().filter(|t| t.size <= MAX_TEXT_BYTES) {
+                push(t, WantedKind::EditionText(eid.clone()));
+            }
+            for a in &ef.audio {
+                if let Some(f) = a.file.as_deref().filter(|f| library::sync_plain_name(f)) {
+                    push(a, WantedKind::Audio(f.to_string()));
+                }
+            }
+        }
     }
     out.sort_by_key(|w| (matches!(w.what, WantedKind::Audio(_)), w.blob.size));
     Ok(out)
@@ -1044,6 +1226,7 @@ fn cover_ext(kind: Option<&str>) -> &'static str {
 pub fn download_target(w: &Wanted) -> PathBuf {
     match &w.what {
         WantedKind::Text => w.dir.join("sync-text.download"),
+        WantedKind::EditionText(e) => w.dir.join(format!("sync-text-{e}.download")),
         WantedKind::Cover => w.dir.join("cover.download"),
         WantedKind::Audio(f) => w.dir.join("audio").join(format!("{f}.download")),
     }
@@ -1093,6 +1276,39 @@ pub fn finish_download(
             clear_pending(&w.dir, &w.what)?;
             Ok(None)
         }
+        WantedKind::EditionText(eid) => {
+            let bytes = std::fs::read(&tmp).map_err(|e| format!("Buchtext: {e}"));
+            let _ = std::fs::remove_file(&tmp);
+            let text = String::from_utf8_lossy(&bytes?).into_owned();
+            let mut book = library::sync_read_book(&w.dir).ok_or("Buch unlesbar")?;
+            let Some(e) = book.editions.iter_mut().find(|e| &e.id == eid) else {
+                clear_pending(&w.dir, &w.what)?;
+                return Ok(None);
+            };
+            let page_id = e
+                .text
+                .as_ref()
+                .map(|t| t.page_id.clone())
+                .filter(|p| crate::commands::pages::page_path(app, p).is_ok())
+                .unwrap_or_else(crate::commands::pages::fresh_id);
+            if collect::read_page(app, &page_id)?.is_none() {
+                collect::apply_page(
+                    app,
+                    &page_id,
+                    &json!({ "title": e.title, "state": { "text": text, "tab": "original", "lang": e.lang } }),
+                    None,
+                    device_name,
+                )?;
+            }
+            if let Some(t) = e.text.as_mut() {
+                if t.page_id != page_id {
+                    t.page_id = page_id;
+                    library::sync_write_book(&w.dir, &book)?;
+                }
+            }
+            clear_pending(&w.dir, &w.what)?;
+            Ok(None)
+        }
         WantedKind::Cover => {
             // Erst das neue Cover ablegen, dann die alten entfernen: scheitert
             // das Umbenennen, bleibt das bisherige Cover.
@@ -1133,11 +1349,23 @@ fn clear_pending(dir: &Path, what: &WantedKind) -> Result<(), String> {
     match what {
         WantedKind::Text => side.pending.text = None,
         WantedKind::Cover => side.pending.cover = None,
-        WantedKind::Audio(f) => side
-            .pending
-            .audio
-            .retain(|r| r.file.as_deref() != Some(f.as_str())),
+        WantedKind::Audio(f) => {
+            side.pending
+                .audio
+                .retain(|r| r.file.as_deref() != Some(f.as_str()));
+            for ef in side.pending.editions.values_mut() {
+                ef.audio.retain(|r| r.file.as_deref() != Some(f.as_str()));
+            }
+        }
+        WantedKind::EditionText(e) => {
+            if let Some(ef) = side.pending.editions.get_mut(e) {
+                ef.text = None;
+            }
+        }
     }
+    side.pending
+        .editions
+        .retain(|_, ef| ef.text.is_some() || !ef.audio.is_empty());
     write_sidecar(dir, &side)
 }
 

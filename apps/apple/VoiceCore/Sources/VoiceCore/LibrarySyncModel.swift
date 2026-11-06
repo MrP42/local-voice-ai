@@ -74,12 +74,15 @@ public struct BookFiles: Codable, Equatable, Sendable {
     public var text: BlobRef?
     public var cover: BlobRef?
     public var audio: [BlobRef]
+    /// Dateien weiterer Sprachfassungen (lva#344), je Fassungskennung; unverändert weitergereicht.
+    public var editions: PassthroughJSON?
     public init(text: BlobRef? = nil, cover: BlobRef? = nil, audio: [BlobRef] = []) { self.text = text; self.cover = cover; self.audio = audio }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         text = try c.decodeIfPresent(BlobRef.self, forKey: .text)
         cover = try c.decodeIfPresent(BlobRef.self, forKey: .cover)
         audio = try c.decodeIfPresent([BlobRef].self, forKey: .audio) ?? []
+        editions = try c.decodeIfPresent(PassthroughJSON.self, forKey: .editions)
     }
     public var audioBytes: Int { audio.reduce(0) { $0 + $1.size } }
 }

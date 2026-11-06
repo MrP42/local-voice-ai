@@ -15,6 +15,36 @@ final class LibrarySyncModelTests: XCTestCase {
         XCTAssertEqual(back.book, book); XCTAssertEqual(back.files, files); XCTAssertEqual(back.updated, 42)
     }
 
+    /// lva#344: Sprachfassungen kennt nur der Desktop; das iPhone muss sie unverändert weiterreichen.
+    func testSyncedBookKeepsEditionFieldsFromDesktop() throws {
+        let json = """
+        {"id":"book_1","title":"Die Verwandlung","authors":["Franz Kafka"],"added_ms":1,"schema":2,
+         "work_key":"w1","primary":{"edition":"ed_book_1","updated":5,"device":"pc"},
+         "editions":[{"id":"ed_book_1","lang":"de","title":"Die Verwandlung","audio_key":"audio:book_1","origin":"import","added_ms":1,"updated":5,"device":"pc"},
+                     {"id":"ed_x","lang":"en","title":"The Metamorphosis","audio_key":"audio:book_1:ed_x","origin":"join","added_ms":2,"updated":6,"device":"pc",
+                      "audio":{"file":"ed_x__teil_001.mp3","duration_ms":1000}}],
+         "edition_tombstones":[{"id":"ed_y","removed_ms":7}],
+         "reading":{"edition":"ed_x","updated":8,"device":"pc","position":{"key":"audio:book_1:ed_x","unit":"ms","offset":1234.5}},
+         "alignments":[{"a":"ed_book_1","b":"ed_x","updated":9,"device":"pc","groups":[{"a":[0],"b":[0,1],"confirmed":true}]}],
+         "files":{"audio":[],"editions":{"ed_x":{"audio":[{"blob":"\(String(repeating: "c", count: 64))","size":5,"chunks":1,"file":"ed_x__teil_001.mp3"}]}}},
+         "updated":42}
+        """
+        let synced = try SyncedBook.decode(Data(json.utf8))
+        XCTAssertEqual(synced.book.schema, 2)
+        XCTAssertNotNil(synced.book.editions); XCTAssertNotNil(synced.files.editions)
+        let out = try JSONSerialization.jsonObject(with: synced.json()) as! [String: Any]
+        let inn = try JSONSerialization.jsonObject(with: Data(json.utf8)) as! [String: Any]
+        for key in ["schema", "work_key", "primary", "editions", "edition_tombstones", "reading", "alignments"] {
+            XCTAssertEqual(out[key] as? NSObject, inn[key] as? NSObject, key)
+        }
+        XCTAssertEqual((out["files"] as? [String: Any])?["editions"] as? NSObject,
+                       (inn["files"] as? [String: Any])?["editions"] as? NSObject)
+        // Ein Buch ohne Fassungen schreibt keine neuen Schlüssel.
+        let plain = try JSONSerialization.jsonObject(with: SyncedBook(book: LibraryBook(id: "b", title: "T", addedMs: 1),
+                                                                     files: BookFiles(), updated: 1).json()) as! [String: Any]
+        XCTAssertNil(plain["editions"]); XCTAssertNil(plain["schema"]); XCTAssertNil((plain["files"] as? [String: Any])?["editions"])
+    }
+
     func testObjectIdsFitHubRules() {
         let id = LibrarySyncFormat.progressObjectId("text:page_1:original")
         XCTAssertEqual(id.count, 42)
