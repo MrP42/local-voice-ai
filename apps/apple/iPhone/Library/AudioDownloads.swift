@@ -201,6 +201,7 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
 
     /// Fehlende Stücke einreihen (höchstens `AudioDownload.window` unterwegs).
     private func pump(_ id: String) {
+        if waitsForWifi(id) { speed.reset(id) }  // Warten zählt nicht als langsames Laden.
         guard let job = jobs[id], job.phase == .running else { return }
         guard library.books.contains(where: { $0.id == id }) else { discard(id); return }
         guard let acc = LibrarySync.shared.account else { fail(id, "Nicht angemeldet. Bitte unter „Konto & Sync“ anmelden."); return }
@@ -357,7 +358,7 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
         guard let job = jobs[id] else { done[id] = nil; return }
         let bytes = AudioDownload.doneBytes(job, states: states(job))
         done[id] = bytes
-        speed.note(id, phase: job.phase, bytes: bytes, now: Date())
+        if waitsForWifi(id) { speed.reset(id) } else { speed.note(id, phase: job.phase, bytes: bytes, now: Date()) }
     }
 
     /// Nach einem Neustart: laufende Aufträge wieder zuordnen, liegengebliebene Stücke anhängen.
