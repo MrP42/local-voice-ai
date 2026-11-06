@@ -137,6 +137,36 @@ final class DesktopVectorTests: XCTestCase {
         XCTAssertFalse(SyncLedger.clearsPendingFavorite(accepted: "h0", sent: "h1", local: "h1"), "Hub hat nicht angenommen")
     }
 
+    func testKurzbuecherFollowDesktopFormat() throws {
+        let empty = String(decoding: try JSONEncoder().encode(BookFiles()), as: UTF8.self)
+        XCTAssertFalse(empty.contains("kurzbuecher"), "ohne Kurzbuch bleibt der Hash aller Bücher gleich")
+        let blob = String(repeating: "a", count: 64)
+        let json = #"{"audio":[],"kurzbuecher":[{"blob":"\#(blob)","size":3,"chunks":1,"type":"md","file":"kurzbuch-de.md","model":"m","created_ms":5,"source":"Ganzes Buch"}]}"#
+        let files = try JSONDecoder().decode(BookFiles.self, from: Data(json.utf8))
+        XCTAssertEqual(files.kurzbuecher.first?.language, "de")
+        XCTAssertEqual(files.kurzbuecher.first?.model, "m")
+        XCTAssertEqual(files.kurzbuecher.first?.createdMs, 5)
+        XCTAssertEqual(try JSONDecoder().decode(BookFiles.self, from: JSONEncoder().encode(files)), files)
+        XCTAssertEqual(LibraryText.kurzbuchText("## Fazit\n\n**Wichtig** bleibt."), "## Fazit\n\nWichtig bleibt.")
+    }
+
+    func testKurzbuchRefsFromTheNetworkAreChecked() {
+        let blob = String(repeating: "a", count: 64)
+        func ref(blob b: String? = nil, size: Int = 3, chunks: Int = 1, file: String = "kurzbuch-de.md") -> KurzbuchRef {
+            KurzbuchRef(blob: b ?? blob, size: size, chunks: chunks, file: file)
+        }
+        XCTAssertTrue(ref().isUsable)
+        XCTAssertTrue(ref(file: "kurzbuch-pt-br.md").isUsable)
+        XCTAssertFalse(ref(blob: "../../sync").isUsable, "Pfad statt Kennung")
+        XCTAssertFalse(ref(blob: String(repeating: "A", count: 64)).isUsable)
+        XCTAssertFalse(ref(file: "kurzbuch-../x.md").isUsable, "Pfad im Sprachcode")
+        XCTAssertFalse(ref(file: "kurzbuch-DE.md").isUsable)
+        XCTAssertFalse(ref(file: "anderes.md").isUsable)
+        XCTAssertFalse(ref(size: 0).isUsable, "leeres Dokument")
+        XCTAssertFalse(ref(size: KurzbuchRef.maxBytes + 1, chunks: 1).isUsable, "zu groß")
+        XCTAssertFalse(ref(chunks: 5).isUsable, "Stückzahl passt nicht zur Größe")
+    }
+
     /// Modelltest: prüft nur `LibrarySyncMeta.updatingFiles`. Einen echten Upload-/Pull-Ablauf deckt er nicht ab,
     /// dafür fehlt ein Testziel für `LibrarySync`; der Ausbau ist eine eigene Aufgabe.
     func testFileUpdateKeepsStarSetDuringUpload() throws {

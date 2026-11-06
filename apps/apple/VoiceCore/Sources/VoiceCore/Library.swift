@@ -384,6 +384,18 @@ public enum LibraryText {
         sentences.lastIndex { $0.location <= location } ?? 0
     }
 
+    /// Kurzbuch für Lesen und Vorlesen: Überschriften bleiben, Hervorhebungen fallen weg.
+    public static func kurzbuchText(_ markdown: String) -> String {
+        markdown.replacingOccurrences(of: "**", with: "").replacingOccurrences(of: "__", with: "")
+    }
+
+    /// Sprache aus dem Dateinamen `kurzbuch-<sprache>.md`.
+    public static func kurzbuchLanguage(_ file: String?) -> String? {
+        guard let file, file.hasPrefix("kurzbuch-"), file.hasSuffix(".md") else { return nil }
+        let code = String(file.dropFirst("kurzbuch-".count).dropLast(".md".count))
+        return code.range(of: "^[a-z]{2,3}(-[a-z0-9]{2,8})?$", options: .regularExpression) != nil ? code : nil
+    }
+
     /// Favoriten zuerst, sonst bleibt die Reihenfolge, wie `sortViews` am Desktop.
     public static func favoritesFirst(_ books: [LibraryBook]) -> [LibraryBook] {
         books.filter(\.favorite) + books.filter { !$0.favorite }

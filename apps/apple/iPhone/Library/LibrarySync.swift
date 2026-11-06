@@ -183,6 +183,11 @@ final class LibrarySync: ObservableObject {
     }
 
     private func pull(_ acc: Account) async throws {
+        // Einmalig alles neu holen: Ältere App-Fassungen haben Kurzbücher beim Lesen verworfen.
+        if !UserDefaults.standard.bool(forKey: "sync.kurzbuecherGeholt") {
+            ledger.cursor = 0
+            UserDefaults.standard.set(true, forKey: "sync.kurzbuecherGeholt")
+        }
         var more = true, restarted = false
         while more {
             let (code, data) = try await Self.send(acc.url + "/api/v1/voice/sync/pull?since=\(ledger.cursor)&limit=100", method: "GET", token: acc.token)
@@ -228,6 +233,9 @@ final class LibrarySync: ObservableObject {
                     let book = SyncLedger.mergingPendingFavorite(favorite, into: synced.book, local: local)
                     let fields = try SyncLedger.fieldsHash(book, files: synced.files)
                     try library.storeRemote(book, meta: .init(files: synced.files, updated: localMeta.updated, pendingFavorite: favorite, pendingFields: fields))
+                } else if localMeta.files.kurzbuecher != synced.files.kurzbuecher {
+                    // Kurzbücher entstehen nur am PC: Sie gelten immer und gehen mit dem eigenen Stand zurück.
+                    library.updateFiles(local) { $0.kurzbuecher = synced.files.kurzbuecher }
                 }
             } else {
                 var book = synced.book
@@ -255,6 +263,15 @@ final class LibrarySync: ObservableObject {
         for book in library.books {
             if let ref = library.meta(book).files.text, !library.hasText(book) {
                 try await downloadBlob(ref, acc, to: library.textURL(book)) { _ in }
+            }
+            // Kurzbücher sind klein: wie Texte gleich mitnehmen. Ungültige Verweise lädt niemand.
+            library.pruneKurzbuecher(book)
+            for ref in library.kurzbuecher(book) where !library.kurzbuchReady(book, ref) {
+                guard let target = library.kurzbuchFile(book, ref) else { continue }
+                try? FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+                do { try await downloadBlob(ref.ref, acc, to: target) { _ in } }
+                catch SyncError.http(401, let msg) { throw SyncError.http(401, msg) }
+                catch { /* Die Buchseite zeigt es als noch nicht geladen, der nächste Lauf versucht es erneut. */ }
             }
             // Cover wie am Desktop: neues oder geändertes Cover aus dem Konto holen.
             if let ref = library.meta(book).files.cover, library.coverBlob(book) != ref.blob {

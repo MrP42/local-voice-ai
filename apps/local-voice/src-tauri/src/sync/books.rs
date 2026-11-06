@@ -83,6 +83,10 @@ pub struct BookFiles {
     /// Altgeräte ignorieren das Feld.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub editions: BTreeMap<String, EditionFiles>,
+    /// Kurzbücher, je Sprache das neueste (`kurzbuch-<sprache>.md`). Andere Geräte lesen
+    /// sie; erzeugt werden sie aus den KI-Dokumente eines PCs, geladen wird hier nichts.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub kurzbuecher: Vec<KurzbuchRef>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
@@ -91,6 +95,83 @@ pub struct EditionFiles {
     pub text: Option<BlobRef>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub audio: Vec<BlobRef>,
+}
+
+/// Datei eines Kurzbuchs samt Herkunft für die Anzeige.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+pub struct KurzbuchRef {
+    #[serde(flatten)]
+    pub blob: BlobRef,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_ms: Option<f64>,
+    /// Quellenumfang, z. B. „Ganzes Buch“.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+}
+
+/// Sprachcode wie `de` oder `pt-br`; er steht im Dateinamen und in Pfaden der Clients.
+fn valid_language(code: &str) -> bool {
+    let mut parts = code.split('-');
+    let main = parts.next().unwrap_or("");
+    let region = parts.next();
+    (2..=3).contains(&main.len())
+        && main.bytes().all(|b| b.is_ascii_lowercase())
+        && region.is_none_or(|r| {
+            (2..=8).contains(&r.len())
+                && r.bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+        })
+        && parts.next().is_none()
+}
+
+/// Je Sprache das zuletzt erstellte Kurzbuch, egal von welchem Gerät. Bei gleichem
+/// Datum entscheiden Blob-Kennung, Modell und Quelle: Alle Geräte wählen dasselbe,
+/// gleich in welcher Reihenfolge die Stände ankommen.
+fn merge_kurzbuecher(own: &[KurzbuchRef], received: &[KurzbuchRef]) -> Vec<KurzbuchRef> {
+    fn order(a: &KurzbuchRef, b: &KurzbuchRef) -> std::cmp::Ordering {
+        // Ohne Datum gilt als älter als jedes Datum.
+        let date = match (a.created_ms, b.created_ms) {
+            (Some(x), Some(y)) => x.total_cmp(&y),
+            (x, y) => x.is_some().cmp(&y.is_some()),
+        };
+        date.then_with(|| a.blob.blob.cmp(&b.blob.blob))
+            .then_with(|| a.blob.size.cmp(&b.blob.size))
+            .then_with(|| a.blob.chunks.cmp(&b.blob.chunks))
+            .then_with(|| a.blob.kind.cmp(&b.blob.kind))
+            .then_with(|| a.model.cmp(&b.model))
+            .then_with(|| a.source.cmp(&b.source))
+    }
+    let mut best: BTreeMap<String, KurzbuchRef> = BTreeMap::new();
+    for k in own.iter().chain(received) {
+        let Some(language) = kurzbuch_language(k.blob.file.as_deref()) else {
+            continue;
+        };
+        let better = best
+            .get(language)
+            .is_none_or(|known| order(k, known).is_gt());
+        if better {
+            best.insert(language.to_string(), k.clone());
+        }
+    }
+    best.into_values().collect()
+}
+
+fn received_kurzbuecher(files: &BookFiles) -> Vec<KurzbuchRef> {
+    files
+        .kurzbuecher
+        .iter()
+        .filter(|k| kurzbuch_language(k.blob.file.as_deref()).is_some())
+        .cloned()
+        .collect()
+}
+
+fn kurzbuch_language(file: Option<&str>) -> Option<&str> {
+    file?
+        .strip_prefix("kurzbuch-")?
+        .strip_suffix(".md")
+        .filter(|l| valid_language(l))
 }
 
 impl BookFiles {
@@ -104,6 +185,7 @@ impl BookFiles {
                     .values()
                     .flat_map(|e| e.text.iter().chain(e.audio.iter())),
             )
+            .chain(self.kurzbuecher.iter().map(|k| &k.blob))
     }
 
     fn is_empty(&self) -> bool {
@@ -336,6 +418,67 @@ fn page_text(app: &AppHandle, page_id: &str) -> Option<String> {
         .and_then(|v| v.get("state")?.get("text")?.as_str().map(str::to_owned))
 }
 
+struct KurzbuchDoc {
+    language: String,
+    text: String,
+    model: String,
+    created_ms: f64,
+    source: String,
+}
+
+/// Neuestes Kurzbuch je Sprache einer Vorlesen-Seite, nach Sprache sortiert.
+fn kurzbuecher(app: &AppHandle, page_id: &str) -> Vec<KurzbuchDoc> {
+    let Some(dir) = crate::commands::pages::page_path(app, page_id)
+        .ok()
+        .filter(|d| d.is_dir())
+    else {
+        return Vec::new();
+    };
+    let docs: Vec<_> = crate::book_ai::store::list(&dir)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|d| d.template_id == crate::book_ai::kurzbuch::TEMPLATE_ID)
+        .collect();
+    let keys = docs
+        .iter()
+        .map(|d| (d.language.as_deref(), d.modified_ms, d.id.as_str()));
+    newest_per_language(keys)
+        .into_iter()
+        .filter_map(|(language, id)| {
+            let doc = docs.iter().find(|d| d.id == id)?;
+            let text = crate::book_ai::store::read_text(&dir, &id).ok()?;
+            (!text.trim().is_empty()).then(|| KurzbuchDoc {
+                language,
+                text,
+                model: doc.model.clone(),
+                created_ms: doc.created_ms,
+                source: doc.source_label.clone(),
+            })
+        })
+        .collect()
+}
+
+/// Sprache → Dokument. Ohne gültige Angabe gilt Deutsch wie bei älteren Kurzbüchern,
+/// bei gleichem Zeitstempel entscheidet die Kennung, damit jeder Lauf gleich ausgeht.
+fn newest_per_language<'a>(
+    docs: impl Iterator<Item = (Option<&'a str>, f64, &'a str)>,
+) -> Vec<(String, String)> {
+    let mut newest: BTreeMap<String, (f64, &str)> = BTreeMap::new();
+    for (language, modified, id) in docs {
+        let language = language.filter(|l| valid_language(l)).unwrap_or("de");
+        let better = newest
+            .get(language)
+            .is_none_or(|(ms, known)| modified > *ms || (modified == *ms && id > *known));
+        if better {
+            newest.insert(language.to_string(), (modified, id));
+        }
+    }
+    newest
+        .into_iter()
+        .map(|(l, (_, id))| (l, id.to_string()))
+        .collect()
+}
+
 fn build_book(
     app: &AppHandle,
     key: &[u8; KEY_LEN],
@@ -481,6 +624,31 @@ fn build_book(
             files.editions.insert(e.id.clone(), ef);
         }
     }
+    for doc in book
+        .text
+        .as_ref()
+        .map(|t| kurzbuecher(app, &t.page_id))
+        .unwrap_or_default()
+    {
+        let bytes = doc.text.into_bytes();
+        if let Some(mut r) = BlobRef::new(key, &blobs::stamp_bytes(&bytes)) {
+            r.kind = Some("md".into());
+            r.file = Some(format!("kurzbuch-{}.md", doc.language));
+            uploads.push(PendingUpload {
+                blob: r.clone(),
+                source: Source::Bytes(bytes),
+                stamp: None,
+            });
+            files.kurzbuecher.push(KurzbuchRef {
+                blob: r,
+                model: Some(doc.model),
+                created_ms: Some(doc.created_ms),
+                source: Some(doc.source),
+            });
+        }
+    }
+    // Ein PC ohne diese KI-Dokumente gibt empfangene Kurzbücher unverändert weiter.
+    files.kurzbuecher = merge_kurzbuecher(&files.kurzbuecher, &side.pending.kurzbuecher);
     Ok(BookBuild {
         core_files: with_files(&book_core(book), &files),
         uploads,
@@ -907,8 +1075,13 @@ pub fn apply_book(
     if let (Some(local), false, true) = (&existing, local_clean, side.updated > remote_updated) {
         // Lokaler Stand ist neuer und ungesichert: Metadaten bleiben lokal,
         // der Fassungsteil wird trotzdem zusammengeführt (§5.1) und mit dem
-        // nächsten Push verteilt.
+        // nächsten Push verteilt. Empfangene Kurzbücher gelten trotzdem.
+        side.pending.kurzbuecher = merge_kurzbuecher(
+            &side.pending.kurzbuecher,
+            &received_kurzbuecher(&remote_files),
+        );
         if incoming.editions.is_empty() {
+            write_sidecar(&dir, &side)?;
             return Ok(Applied::default());
         }
         let mut merged = local.clone();
@@ -917,12 +1090,14 @@ pub fn apply_book(
         library::editions::apply_state(&mut merged, library::editions::state_of(&theirs));
         carry_jobs(Some(local), &mut merged);
         if &merged == local && lift.is_none() {
+            write_sidecar(&dir, &side)?;
             return Ok(Applied::default());
         }
         follow_primary_cover(&dir, local_primary.as_deref(), &merged)?;
         library::sync_write_book(&dir, &merged)?;
         lift_progress_locked(&root, lift)?;
         // Dateien neuer Fassungen trotzdem holen; `updated` bleibt lokal.
+        let kurzbuecher = std::mem::take(&mut side.pending.kurzbuecher);
         side.pending = pending_files(
             app,
             key,
@@ -932,6 +1107,7 @@ pub fn apply_book(
             &remote_files,
             sender_primary.as_deref(),
         );
+        side.pending.kurzbuecher = kurzbuecher;
         write_sidecar(&dir, &side)?;
         return Ok(Applied {
             changed: true,
@@ -946,7 +1122,7 @@ pub fn apply_book(
     follow_primary_cover(&dir, local_primary.as_deref(), &incoming)?;
     library::sync_write_book(&dir, &incoming)?;
     lift_progress_locked(&root, lift)?;
-    let pending = pending_files(
+    let mut pending = pending_files(
         app,
         key,
         &dir,
@@ -954,6 +1130,11 @@ pub fn apply_book(
         &incoming,
         &remote_files,
         sender_primary.as_deref(),
+    );
+    // Nur gültige Verweise weitergeben; sie stehen in Pfaden der anderen Geräte.
+    pending.kurzbuecher = merge_kurzbuecher(
+        &side.pending.kurzbuecher,
+        &received_kurzbuecher(&remote_files),
     );
     side.pending = pending;
     side.updated = remote_updated;
@@ -1485,6 +1666,108 @@ fn clear_pending(dir: &Path, what: &WantedKind) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn neuestes_kurzbuch_je_sprache() {
+        let docs = [
+            (Some("de"), 1.0, "a"),
+            (Some("de"), 2.0, "b"),
+            (Some("en"), 5.0, "c"),
+            (None, 2.0, "d"),
+            (Some("../x"), 1.0, "e"),
+        ];
+        assert_eq!(
+            newest_per_language(docs.into_iter()),
+            vec![
+                ("de".to_string(), "d".to_string()),
+                ("en".to_string(), "c".to_string())
+            ],
+            "gleiche Zeit: die Kennung entscheidet; ungültige Sprache gilt als Deutsch"
+        );
+    }
+
+    #[test]
+    fn kurzbuecher_zusammenfuehren_nach_datum() {
+        let k = |blob: &str, file: &str, created: f64| KurzbuchRef {
+            blob: BlobRef {
+                blob: blob.into(),
+                file: Some(file.into()),
+                ..Default::default()
+            },
+            created_ms: Some(created),
+            ..Default::default()
+        };
+        let own = [k("alt", "kurzbuch-de.md", 1.0)];
+        let received = [
+            k("neu", "kurzbuch-de.md", 2.0),
+            k("en", "kurzbuch-en.md", 1.0),
+            k("x", "../x", 9.0),
+        ];
+        let merged = merge_kurzbuecher(&own, &received);
+        assert_eq!(
+            merged
+                .iter()
+                .map(|m| m.blob.blob.as_str())
+                .collect::<Vec<_>>(),
+            ["neu", "en"],
+            "neuere Fassung gewinnt, andere Sprachen bleiben, ungültige fallen weg"
+        );
+        // Gleiches Datum: Beide Seiten wählen dieselbe Fassung.
+        let a = [k("a", "kurzbuch-de.md", 1.0)];
+        let b = [k("b", "kurzbuch-de.md", 1.0)];
+        assert_eq!(merge_kurzbuecher(&a, &b), merge_kurzbuecher(&b, &a));
+        // Unterscheidet sich nur ein Feld, wählen beide Reihenfolgen dieselbe Fassung.
+        let base = k("c", "kurzbuch-de.md", 1.0);
+        let variants: [fn(&mut KurzbuchRef); 7] = [
+            |r| r.created_ms = None,
+            |r| r.blob.blob = "d".into(),
+            |r| r.blob.size = 9,
+            |r| r.blob.chunks = 9,
+            |r| r.blob.kind = Some("md".into()),
+            |r| r.model = Some("m".into()),
+            |r| r.source = Some("Kapitel 1".into()),
+        ];
+        for change in variants {
+            let mut other = base.clone();
+            change(&mut other);
+            assert_ne!(base, other);
+            let one = merge_kurzbuecher(std::slice::from_ref(&base), std::slice::from_ref(&other));
+            let two = merge_kurzbuecher(std::slice::from_ref(&other), std::slice::from_ref(&base));
+            assert_eq!(one, two);
+        }
+        // Ohne Datum verliert gegen jedes Datum, auch gegen 0.
+        let mut none = k("z", "kurzbuch-de.md", 0.0);
+        none.created_ms = None;
+        let zero = k("a", "kurzbuch-de.md", 0.0);
+        assert_eq!(
+            merge_kurzbuecher(&[none], std::slice::from_ref(&zero)),
+            vec![zero]
+        );
+    }
+
+    #[test]
+    fn sprachcode_nur_streng() {
+        for good in ["de", "pt-br", "zh-hans"] {
+            assert!(valid_language(good), "{good}");
+        }
+        for bad in ["", "d", "DE", "de/x", "../de", "de-", "de-x", "de-br-x"] {
+            assert!(!valid_language(bad), "{bad}");
+        }
+        assert_eq!(kurzbuch_language(Some("kurzbuch-de.md")), Some("de"));
+        assert_eq!(kurzbuch_language(Some("kurzbuch-../x.md")), None);
+    }
+
+    #[test]
+    fn leere_kurzbuch_liste_fehlt_im_format() {
+        let json = serde_json::to_value(BookFiles::default()).unwrap();
+        assert!(json.get("kurzbuecher").is_none());
+        let k: KurzbuchRef = serde_json::from_value(serde_json::json!({
+            "blob": "a", "size": 3, "chunks": 1, "file": "kurzbuch-de.md", "model": "m"
+        }))
+        .unwrap();
+        assert_eq!(k.blob.size, 3);
+        assert_eq!(k.model.as_deref(), Some("m"));
+    }
+
     use super::*;
 
     #[test]

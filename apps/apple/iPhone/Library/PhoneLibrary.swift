@@ -111,6 +111,74 @@ final class PhoneLibrary: ObservableObject {
         return AudioDownload.isCurrent(parts, sizes: parts.map { LibrarySync.fileSize(audioDir(book).appendingPathComponent($0.file)) }, blobs: m.localAudio ?? [:])
     }
 
+    // MARK: Kurzbücher vom PC
+
+    func kurzbuecher(_ book: LibraryBook) -> [KurzbuchRef] { meta(book).files.kurzbuecher.filter(\.isUsable) }
+
+    func kurzbuchFile(_ book: LibraryBook, _ ref: KurzbuchRef) -> URL? {
+        guard ref.isUsable else { return nil }
+        return dir(book).appendingPathComponent("kurzbuch", isDirectory: true).appendingPathComponent(ref.blob + ".md")
+    }
+
+    /// Geladen und nicht leer.
+    func kurzbuchReady(_ book: LibraryBook, _ ref: KurzbuchRef) -> Bool {
+        kurzbuchFile(book, ref).flatMap(LibrarySync.fileSize) == ref.size
+    }
+
+    /// Mit Fassung im Namen: Ein neu erzeugtes Kurzbuch beginnt mit eigenem Lesestand.
+    private func kurzbuchEntryId(_ bookId: String, _ ref: KurzbuchRef, _ language: String) -> String {
+        "\(bookId)_kurzbuch_\(language)_\(ref.blob.prefix(12))"
+    }
+
+    /// Kurzbuch als eigener Eintrag für den Player. Er steht nicht im Regal und hat seinen eigenen Lesestand.
+    func kurzbuchBook(_ book: LibraryBook, _ ref: KurzbuchRef) -> LibraryBook? {
+        guard let language = ref.language, kurzbuchReady(book, ref), let file = kurzbuchFile(book, ref),
+              let markdown = try? String(contentsOf: file, encoding: .utf8),
+              !markdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        let entry = LibraryBook(id: kurzbuchEntryId(book.id, ref, language), title: "\(book.title) · Kurzbuch", addedMs: book.addedMs)
+        // Eine echte Buch-Kennung könnte zufällig gleich aussehen: nie in deren Ordner schreiben.
+        guard !isRealBookFolder(dir(entry)) else { return nil }
+        try? FileManager.default.createDirectory(at: dir(entry), withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: dir(entry).appendingPathComponent(Self.kurzbuchMarker).path, contents: Data())
+        try? LibraryText.kurzbuchText(markdown).write(to: textURL(entry), atomically: true, encoding: .utf8)
+        return entry
+    }
+
+    /// Alte Fassungen, entfernte Sprachen und deren Klartextkopien samt Lesestand aufräumen.
+    func pruneKurzbuecher(_ book: LibraryBook) {
+        let refs = kurzbuecher(book)
+        let manager = FileManager.default
+        let folder = dir(book).appendingPathComponent("kurzbuch", isDirectory: true)
+        let keep = Set(refs.map { $0.blob + ".md" })
+        for name in (try? manager.contentsOfDirectory(atPath: folder.path)) ?? [] where !keep.contains(name) {
+            try? manager.removeItem(at: folder.appendingPathComponent(name))
+        }
+        removeKurzbuchEntries(bookId: book.id, keeping: Set(refs.compactMap { ref in ref.language.map { kurzbuchEntryId(book.id, ref, $0) } }))
+    }
+
+    /// Kennzeichnet einen Ordner als Kurzbuch-Eintrag.
+    private static let kurzbuchMarker = "kurzbuch-eintrag"
+
+    private func isRealBookFolder(_ folder: URL) -> Bool {
+        FileManager.default.fileExists(atPath: folder.appendingPathComponent("buch.json").path)
+    }
+
+    private func removeKurzbuchEntries(bookId: String, keeping: Set<String> = []) {
+        let prefix = "\(bookId)_kurzbuch_"
+        var changed = false
+        for name in (try? FileManager.default.contentsOfDirectory(atPath: root.path)) ?? [] where name.hasPrefix(prefix) && !keeping.contains(name) {
+            let folder = root.appendingPathComponent(name)
+            // Nur eigene Einträge: Der Name allein beweist nichts, ein Buch könnte so heißen.
+            guard FileManager.default.fileExists(atPath: folder.appendingPathComponent(Self.kurzbuchMarker).path), !isRealBookFolder(folder) else { continue }
+            if LibraryPlayback.shared.book?.id == name { LibraryPlayback.shared.stop() }
+            try? FileManager.default.removeItem(at: root.appendingPathComponent(name))
+            progress[Self.storageKey(LibraryProgress.textKey(pageId: name))] = nil
+            BookTalkHistoryStore(directory: BookTalkHistoryStore.standardDirectory()).clear(bookId: name)
+            changed = true
+        }
+        if changed { writeProgress() }
+    }
+
     func audioParts(_ refs: [BlobRef]) -> [AudioDownload.Part] {
         refs.enumerated().map { i, ref in
             AudioDownload.Part(blob: ref.blob, size: ref.size, chunks: ref.chunks, file: LibrarySync.audioFileName(ref.file, index: i))
@@ -173,6 +241,7 @@ final class PhoneLibrary: ObservableObject {
 
     func removeRemote(id: String) {
         guard let book = books.first(where: { $0.id == id }) else { return }
+        removeKurzbuchEntries(bookId: id)
         try? FileManager.default.removeItem(at: dir(book))
         BookTalkHistoryStore(directory: BookTalkHistoryStore.standardDirectory()).clear(bookId: book.id)
         for key in [textKey(book), audioKey(book)] { progress[Self.storageKey(key)] = nil }
@@ -266,6 +335,7 @@ final class PhoneLibrary: ObservableObject {
     }
 
     func delete(_ book: LibraryBook) {
+        removeKurzbuchEntries(bookId: book.id)
         try? FileManager.default.removeItem(at: dir(book))
         BookTalkHistoryStore(directory: BookTalkHistoryStore.standardDirectory()).clear(bookId: book.id)
         for key in [textKey(book), audioKey(book)] { progress[Self.storageKey(key)] = nil }
