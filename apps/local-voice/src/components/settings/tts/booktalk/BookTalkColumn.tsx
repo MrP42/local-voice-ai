@@ -41,7 +41,9 @@ export interface BookTalkColumnProps {
   cloud: string | null;
   onRevoke(): void;
   /** Abo-Vorschau (lva#334): Zustand des Schalters, `null` ohne Abo-Modell. */
-  subscription?: "on" | "off" | "reconfirm" | null;
+  subscription?: "on" | "off" | "reconfirm" | "not_released" | null;
+  /** Grund, wenn `subscription` „not_released“ ist (`measurement_missing` …). */
+  subscriptionReason?: string | null;
   onSubscription?(): void;
   /** Frage stellen; die Hülle fragt vorher nach der Cloud-Freigabe. */
   onAsk(question: string, input: "text" | "voice"): void;
@@ -66,6 +68,7 @@ export function BookTalkColumn({
   cloud,
   onRevoke,
   subscription = null,
+  subscriptionReason = null,
   onSubscription,
   onAsk,
   onJump,
@@ -142,6 +145,7 @@ export function BookTalkColumn({
         cloud={cloud}
         onRevoke={onRevoke}
         subscription={subscription}
+        subscriptionReason={subscriptionReason}
         onSubscription={onSubscription}
       />
       {!enabled && (

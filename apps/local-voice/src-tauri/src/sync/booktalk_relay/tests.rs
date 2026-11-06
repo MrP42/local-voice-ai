@@ -1429,19 +1429,114 @@ fn previewing(ctx_codex: Option<u32>, version: &str) -> AppSettings {
     s
 }
 
+/// Belege (vollstaendige Faehigkeiten, passende Messung) zu allen bestaetigten Tupeln.
+fn evidence_for(s: &AppSettings) -> crate::managers::llm::evidence::Evidence {
+    use crate::managers::llm::preview::fixtures;
+    let pairs: Vec<_> = s
+        .book_talk_preview_bindings
+        .iter()
+        .map(|b| (b, "gemeldetes-modell"))
+        .collect();
+    fixtures::evidence(&pairs)
+}
+
 #[test]
 fn abo_modellliste_ist_ohne_vorschau_schalter_leer() {
     let mut s = previewing(Some(272_000), "1.0");
     s.book_talk_subscription_preview = false;
     let eligible = eligible_models(&s, BOTH);
     assert_eq!(eligible.len(), 2);
-    assert!(preview_models(&s, eligible, &identities("1.0")).is_empty());
+    assert!(preview_models(&s, eligible, &identities("1.0"), &evidence_for(&s)).is_empty());
+}
+
+#[test]
+fn abo_modellliste_bleibt_ohne_isolation_oder_messung_leer() {
+    use crate::managers::llm::evidence::Evidence;
+    use crate::managers::llm::preview::fixtures;
+    let s = previewing(Some(272_000), "1.0");
+    let ids = identities("1.0");
+    let list = |ev: &Evidence| {
+        preview_models(&s, eligible_models(&s, BOTH), &ids, ev)
+            .iter()
+            .map(|m| m.id.clone())
+            .collect::<Vec<_>>()
+    };
+    // Mit allen Belegen: beide.
+    assert_eq!(list(&evidence_for(&s)), ["sonnet", "gpt-6.1-sol"]);
+    // Ohne jede Datei: nichts (Grundsatz: nicht belegt sperrt).
+    assert!(list(&Evidence::default()).is_empty());
+    // Faehigkeiten ohne Messung: nichts.
+    let caps_only = Evidence::from_parts(
+        &s.book_talk_preview_bindings
+            .iter()
+            .map(|b| {
+                (
+                    b.provider.as_str(),
+                    b.cli_version.as_str(),
+                    fixtures::caps(),
+                )
+            })
+            .collect::<Vec<_>>(),
+        vec![],
+    );
+    assert!(list(&caps_only).is_empty());
+    // Messung ohne Faehigkeiten: nichts.
+    let measured_only = Evidence::from_parts(
+        &[],
+        s.book_talk_preview_bindings
+            .iter()
+            .map(|b| fixtures::measurement(b, "m"))
+            .collect(),
+    );
+    assert!(list(&measured_only).is_empty());
+    // Unvollstaendige Faehigkeiten fuer Claude: nur Codex.
+    let mut partial = fixtures::caps();
+    partial.memory_blocked = false;
+    let b = &s.book_talk_preview_bindings;
+    let mixed = Evidence::from_parts(
+        &[
+            (b[0].provider.as_str(), b[0].cli_version.as_str(), partial),
+            (
+                b[1].provider.as_str(),
+                b[1].cli_version.as_str(),
+                fixtures::caps(),
+            ),
+        ],
+        b.iter().map(|x| fixtures::measurement(x, "m")).collect(),
+    );
+    assert_eq!(list(&mixed), ["gpt-6.1-sol"]);
+}
+
+#[test]
+fn der_schalter_im_relay_ist_ohne_app_aus_und_die_belege_kommen_aus_dem_datenordner() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("booktalk_relay.json");
+    let st = LoopState::default();
+    let ctx = ctx_from(&st, &path);
+    assert!(!ctx.preview_switch.is_on(), "fail-closed ohne App");
+    assert_eq!(
+        ctx.evidence(),
+        crate::managers::llm::evidence::Evidence::default()
+    );
+    let flag = Arc::new(AtomicBool::new(true));
+    let f = flag.clone();
+    let live = Ctx::new(test_cfg(), [5u8; 32], path.clone(), st.shared.clone()).with_switch(
+        crate::managers::llm::preview::PreviewSwitch::new(move || f.load(Ordering::SeqCst)),
+    );
+    assert!(live.preview_switch.is_on());
+    flag.store(false, Ordering::SeqCst);
+    assert!(!live.preview_switch.is_on(), "live gelesen, nicht gemerkt");
 }
 
 #[test]
 fn abo_modellliste_meldet_nur_belegten_kontext_statt_pauschal_128000() {
     let s = previewing(Some(272_000), "1.0");
-    let list = preview_models(&s, eligible_models(&s, BOTH), &identities("1.0"));
+    let list = preview_models(
+        &s,
+        eligible_models(&s, BOTH),
+        &identities("1.0"),
+        &evidence_for(&s),
+    );
     let seen: Vec<(&str, u32)> = list
         .iter()
         .map(|m| (m.id.as_str(), m.context_tokens))
@@ -1449,7 +1544,12 @@ fn abo_modellliste_meldet_nur_belegten_kontext_statt_pauschal_128000() {
     assert_eq!(seen, [("sonnet", 200_000), ("gpt-6.1-sol", 272_000)]);
     // Codex ohne eingetragenen Kontext: nicht belegt, nicht angeboten (kein 128000).
     let s = previewing(None, "1.0");
-    let list = preview_models(&s, eligible_models(&s, BOTH), &identities("1.0"));
+    let list = preview_models(
+        &s,
+        eligible_models(&s, BOTH),
+        &identities("1.0"),
+        &evidence_for(&s),
+    );
     let ids: Vec<&str> = list.iter().map(|m| m.id.as_str()).collect();
     assert_eq!(ids, ["sonnet"]);
     assert!(list.iter().all(|m| m.context_tokens != 128_000));
@@ -1459,13 +1559,14 @@ fn abo_modellliste_meldet_nur_belegten_kontext_statt_pauschal_128000() {
 fn abo_modellliste_verlangt_ein_gueltiges_tupel() {
     let s = previewing(Some(272_000), "1.0");
     // Neue CLI-Version: Freigabe ungueltig, nichts wird angeboten.
-    assert!(preview_models(&s, eligible_models(&s, BOTH), &identities("1.1")).is_empty());
+    let ev = evidence_for(&s);
+    assert!(preview_models(&s, eligible_models(&s, BOTH), &identities("1.1"), &ev).is_empty());
     // CLI nicht lesbar: ebenso.
-    assert!(preview_models(&s, eligible_models(&s, BOTH), &Identities::default()).is_empty());
+    assert!(preview_models(&s, eligible_models(&s, BOTH), &Identities::default(), &ev).is_empty());
     // Nur Claude hat sich geaendert: Codex bleibt.
     let mut mixed = identities("1.0");
     mixed.claude.as_mut().unwrap().sha256 = "ef".repeat(32);
-    let list = preview_models(&s, eligible_models(&s, BOTH), &mixed);
+    let list = preview_models(&s, eligible_models(&s, BOTH), &mixed, &ev);
     assert_eq!(
         list.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
         ["gpt-6.1-sol"]
@@ -1474,7 +1575,7 @@ fn abo_modellliste_verlangt_ein_gueltiges_tupel() {
     let mut s2 = s.clone();
     s2.book_talk_preview_bindings
         .retain(|b| b.model_id != "sonnet");
-    let list = preview_models(&s2, eligible_models(&s2, BOTH), &identities("1.0"));
+    let list = preview_models(&s2, eligible_models(&s2, BOTH), &identities("1.0"), &ev);
     assert_eq!(
         list.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
         ["gpt-6.1-sol"]
@@ -1488,18 +1589,22 @@ fn relay_pruefauftrag_gilt_nur_mit_gueltigem_tupel_und_traegt_die_ausgabegrenze(
     let call = settings_for_model(&s, "claude:sonnet");
     let ident = identities("1.0");
     let current = binding_for(Cli::Claude, "sonnet", ident.claude.as_ref().unwrap());
-    let check = crate::book_ai::talk::preview_check(&call, Cli::Claude, Some(current.clone()), 800)
-        .expect("gueltig");
+    let ev = evidence_for(&s);
+    let pc = crate::book_ai::talk::preview_check;
+    let check = pc(&call, Cli::Claude, Some(current.clone()), 800, &ev).expect("gueltig");
     assert_eq!(check.context_tokens, 200_000);
-    assert_eq!(check.max_output_tokens, max_output(800));
-    assert!(crate::book_ai::talk::preview_check(&call, Cli::Claude, None, 800).is_none());
+    assert_eq!(check.max_output_tokens, max_output(800, 4_000));
+    assert!(pc(&call, Cli::Claude, None, 800, &ev).is_none());
     let mut changed = current;
     changed.cli_version = "2.0".into();
-    assert!(crate::book_ai::talk::preview_check(&call, Cli::Claude, Some(changed), 800).is_none());
+    assert!(pc(&call, Cli::Claude, Some(changed), 800, &ev).is_none());
     let mut off = call.clone();
     off.book_talk_subscription_preview = false;
     let again = binding_for(Cli::Claude, "sonnet", ident.claude.as_ref().unwrap());
-    assert!(crate::book_ai::talk::preview_check(&off, Cli::Claude, Some(again), 800).is_none());
+    assert!(pc(&off, Cli::Claude, Some(again.clone()), 800, &ev).is_none());
+    // Ohne Messung und Faehigkeiten dieses Geraets: kein Auftrag, kein Aufruf.
+    let none = crate::managers::llm::evidence::Evidence::default();
+    assert!(pc(&call, Cli::Claude, Some(again), 800, &none).is_none());
 }
 
 #[test]

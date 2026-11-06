@@ -8484,6 +8484,38 @@ export type AvailableAccelerators = { transcribe: string[]; ort: string[]; gpu_d
  */
 export type Avatar = { kind: "image"; file: string } | { kind: "icon"; name: string }
 export type BindingResponse = { success: boolean; binding: ShortcutBinding | null; error: string | null }
+/**
+ * Warum die Vorschau (noch) nicht freigegeben ist.
+ */
+export type Blocked = 
+/**
+ * Keine CLI zu finden oder nicht lesbar.
+ */
+"no_cli" | 
+/**
+ * Das tatsaechlich gestartete Programm ist nicht bestimmbar.
+ */
+"payload_unknown" | 
+/**
+ * Fuer dieses Modell wurde nie bestaetigt.
+ */
+"binding_missing" | 
+/**
+ * Version, Programm oder Modell weichen vom bestaetigten Tupel ab.
+ */
+"binding_changed" | 
+/**
+ * Fuer diese CLI-Version sind nicht alle Isolationsfaehigkeiten belegt.
+ */
+"isolation_unverified" | 
+/**
+ * Keine Messung fuer (CLI, Version, Programm, Modell) auf diesem Geraet.
+ */
+"measurement_missing" | 
+/**
+ * Der Kontext des Modells ist nicht belegt.
+ */
+"context_unknown"
 export type Book = { id: string; title: string; created_ms: number; 
 /**
  * Seiten in Reihenfolge der Teile.
@@ -8591,9 +8623,15 @@ enabled: boolean;
  */
 applies: boolean; 
 /**
- * `reconfirm`: der Schalter ist an, wirkt aber nicht, bis erneut bestätigt wird.
+ * `reconfirm`: der Schalter ist an, wirkt aber nicht, bis erneut bestätigt
+ * wird; `not_released`: Isolation oder Messung auf diesem Gerät fehlen.
  */
-state: PreviewState }
+state: PreviewState; 
+/**
+ * Warum die Vorschau (noch) nicht wirkt (`measurement_missing`,
+ * `isolation_unverified`, `binding_changed` …); sonst `None`.
+ */
+blocked: Blocked | null }
 /**
  * Anfrage (Form wie `BookTalkRequest` im Vertrag). Bereich und Grenze gelten
  * für genau diese Anfrage.
@@ -11032,8 +11070,8 @@ export type PhononVoiceErrorKind = "consent_required" | "no_key" | "key_store" |
 export type PlacedInfo = { rel: string; bytes: number }
 export type PostProcessProvider = { id: string; label: string; base_url: string; allow_base_url_edit?: boolean; models_endpoint?: string | null; supports_structured_output?: boolean }
 /**
- * Das Tupel, an das die Freigabe gebunden ist. Ändert sich eines der Felder,
- * ist die Freigabe ungültig und muss erneut bestätigt werden.
+ * Das Tupel, an das die Freigabe gebunden ist. Aendert sich eines der Felder,
+ * ist die Freigabe ungueltig und muss erneut bestaetigt werden.
  */
 export type PreviewBinding = { 
 /**
@@ -11045,8 +11083,8 @@ provider: string;
  */
 model_id: string; 
 /**
- * Konkrete Modell-ID statt Alias, soweit bekannt (Claude-Aliase aus der
- * Liste der App; Codex-Modelle sind schon konkret).
+ * Konkrete Modell-ID statt Alias, soweit bekannt (nur Anzeige; die
+ * Pruefung nutzt das in der Messung gemeldete Modell).
  */
 concrete_model?: string | null; 
 /**
@@ -11054,7 +11092,7 @@ concrete_model?: string | null;
  */
 cli_version: string; 
 /**
- * SHA-256 (hex) des Programms.
+ * SHA-256 (hex) des tatsaechlich gestarteten Programms ([`payload_path`]).
  */
 binary_sha256: string }
 /**
@@ -11062,7 +11100,7 @@ binary_sha256: string }
  */
 export type PreviewPhase = "started" | "first_audio" | "done" | "cancelled" | "error"
 /**
- * Wirkt die Vorschau für diesen Aufruf?
+ * Wirkt die Vorschau fuer diesen Aufruf?
  */
 export type PreviewState = 
 /**
@@ -11070,14 +11108,19 @@ export type PreviewState =
  */
 "off" | 
 /**
- * Schalter an, Tupel gültig.
+ * Schalter an, Tupel gueltig, Isolation und Messung belegt.
  */
 "active" | 
 /**
  * Schalter an, aber das Tupel fehlt oder weicht ab (oder die CLI ist nicht
- * zu prüfen): der Schalter wirkt nicht, die Oberfläche fragt erneut.
+ * zu pruefen): der Schalter wirkt nicht, die Oberflaeche fragt erneut.
  */
-"reconfirm"
+"reconfirm" | 
+/**
+ * Schalter an, Tupel gueltig, aber Isolation oder Messung auf diesem
+ * Geraet fehlen: „Noch nicht freigegeben“.
+ */
+"not_released"
 export type ProgressEntry = { key: string; 
 /**
  * `None` löscht den Eintrag.

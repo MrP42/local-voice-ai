@@ -64,7 +64,10 @@ export function BookTalkPanel({
   }, [frontier, bookId]);
 
   // Abo-Vorschau (lva#334): `null`, solange das Gesprächsmodell kein Abo-Modell ist.
-  const [subscription, setSubscription] = useState<"on" | "off" | "reconfirm" | null>(null);
+  const [subscription, setSubscription] = useState<
+    "on" | "off" | "reconfirm" | "not_released" | null
+  >(null);
+  const [subscriptionReason, setSubscriptionReason] = useState<string | null>(null);
   const [riskOpen, setRiskOpen] = useState(false);
   const [riskSaving, setRiskSaving] = useState(false);
   const [riskError, setRiskError] = useState<string | null>(null);
@@ -72,8 +75,15 @@ export function BookTalkPanel({
     try {
       const status = await commands.bookTalkPreviewStatus();
       if (status.status !== "ok" || !status.data.applies) return setSubscription(null);
-      const { enabled, state } = status.data;
-      setSubscription(!enabled ? "off" : state === "reconfirm" ? "reconfirm" : "on");
+      const { enabled, state, blocked } = status.data;
+      setSubscriptionReason(blocked ?? null);
+      setSubscription(
+        !enabled
+          ? "off"
+          : state === "reconfirm" || state === "not_released"
+            ? state
+            : "on",
+      );
     } catch {
       setSubscription(null);
     }
@@ -82,7 +92,7 @@ export function BookTalkPanel({
     void refreshSubscription();
   }, [refreshSubscription, settings?.llm_active_model_id, settings?.function_models]);
   const toggleSubscription = async () => {
-    if (subscription === "on") {
+    if (subscription === "on" || subscription === "not_released") {
       await commands.changeBookTalkSubscriptionPreviewSetting(false, false);
       return refreshSubscription();
     }
@@ -160,6 +170,7 @@ export function BookTalkPanel({
             : null
         }
         subscription={subscription}
+        subscriptionReason={subscriptionReason}
         onSubscription={() => void toggleSubscription()}
         onRevoke={() => {
           if (!found) return;

@@ -468,6 +468,13 @@ tokio::task_local! {
     pub static CLI_PREVIEW: crate::managers::llm::preview::PreviewCheck;
 }
 
+tokio::task_local! {
+    /// Der Vorschau-Schalter live (lva#334): vor, waehrend und nach dem
+    /// CLI-Aufruf geprueft; „aus“ beendet den Prozessbaum und verwirft das
+    /// Ergebnis. Nur zusammen mit [`CLI_PREVIEW`] gesetzt.
+    pub static CLI_PREVIEW_SWITCH: crate::managers::llm::preview::PreviewSwitch;
+}
+
 /// Eine Zeile des Gespraechs, wie die CLI sie bekommt (`rolle: text`).
 pub fn dialog_line(role: &str, content: &str) -> String {
     format!("{role}: {content}")
@@ -563,7 +570,9 @@ async fn send_cli(
         max_tokens: CLI_MAX_TOKENS.try_with(|n| *n).ok(),
         require_usage: CLI_REQUIRE_USAGE.try_with(|b| *b).unwrap_or(false),
         preview: CLI_PREVIEW.try_with(|p| p.clone()).ok(),
+        preview_switch: CLI_PREVIEW_SWITCH.try_with(|p| p.clone()).ok(),
     };
+    let preview_on = opts.preview.is_some();
     let first = {
         let (binary, model, system, user_content, opts) = (
             binary.clone(),
@@ -600,6 +609,12 @@ async fn send_cli(
             }
             // Ursache merken (fuer die Fehlermeldung des Protokolls).
             crate::managers::llm::cli_update::remember_error(&e);
+            // Vorschau: nie aktualisieren und wiederholen. Ein Update aendert
+            // Version und Programm und machte die Freigabe ungueltig (`rebind`
+            // verwirft sie ohnehin); die Antwort waere dann nie verwendbar.
+            if opts.preview.is_some() {
+                return Err(e);
+            }
             // Ist die CLI zu alt, aktualisiert die App sie und versucht es einmal neu.
             let retry = crate::managers::llm::cli_update::on_cli_error(cli, &e)
                 && tokio::task::spawn_blocking(
@@ -628,6 +643,11 @@ async fn send_cli(
             .inspect_err(|e| crate::managers::llm::cli_update::remember_error(e))?
         }
     };
+    // Vorschau: bis hierher kann der Schalter ausgeschaltet worden sein; dann
+    // geht der Text weder an die Oberflaeche noch an die Sprache.
+    if preview_on && !CLI_PREVIEW_SWITCH.try_with(|s| s.is_on()).unwrap_or(false) {
+        return Err(crate::managers::llm::preview::SWITCH_OFF.error());
+    }
     let _ = CLI_META.try_with(|m| {
         if let Ok(mut m) = m.lock() {
             *m = CliMeta {

@@ -1345,7 +1345,14 @@ fn book_talk_sets_the_output_limit_for_every_provider() {
         ("claude_cli", "cli://claude"),
     ];
     for (id, url) in cases {
-        let model = ProviderModel::new(provider(id, url), String::new(), "m".into(), 8_192, None);
+        let model = ProviderModel::new(
+            provider(id, url),
+            String::new(),
+            "m".into(),
+            8_192,
+            None,
+            None,
+        );
         let limits = model.limits();
         assert_eq!(limits.max_tokens, Some(DEFAULT_MAX_ANSWER_TOKENS), "{id}");
         assert_eq!(limits.num_ctx, Some(8_192));
@@ -1887,13 +1894,20 @@ fn consent_is_keyed_by_connection_and_model_and_sanitized() {
 // ---------------------------------------------- Abo-Vorschau (lva#334) ----
 
 use crate::managers::llm::cli::Cli;
-use crate::managers::llm::preview::{self, Identity};
+use crate::managers::llm::evidence::Evidence;
+use crate::managers::llm::preview::{self, fixtures, Identity, PreviewCheck, PreviewSwitch};
+
+/// Prüfauftrag mit gemessenen Werten (Fixture: Overhead 30000, Reserve 4000,
+/// Schwelle 80 %) für ein synthetisches Programm.
+fn proof_check(cli: Cli, context: u32) -> PreviewCheck {
+    let binding = preview::binding_for(cli, "m", &ident("ab"));
+    fixtures::check(binding, "m-aktuell", context)
+}
 
 /// Modell mit empirischem Zähler wie `ProviderModel` in der Vorschau.
 struct Empirical {
     inner: Fake,
-    cli: Cli,
-    context: u32,
+    check: PreviewCheck,
 }
 
 impl TalkModel for Empirical {
@@ -1908,12 +1922,12 @@ impl TalkModel for Empirical {
 
     fn token_count<'a>(&'a self, system: &'a str, user: &'a str) -> prompt::CountFuture<'a> {
         let bytes = system.len() + crate::llm_client::dialog_line("user", user).len();
-        let n = usize::try_from(preview::input_estimate(self.cli, bytes)).ok();
+        let n = usize::try_from(self.check.input_estimate(bytes)).ok();
         Box::pin(std::future::ready(n))
     }
 
     fn context_tokens(&self) -> prompt::CountFuture<'_> {
-        let n = usize::try_from(preview::limit_tokens(self.context)).ok();
+        let n = usize::try_from(self.check.limit()).ok();
         Box::pin(std::future::ready(n))
     }
 }
@@ -1921,8 +1935,7 @@ impl TalkModel for Empirical {
 fn empirical(answer: &str, cli: Cli, context: u32) -> Empirical {
     Empirical {
         inner: Fake::new(answer),
-        cli,
-        context,
+        check: proof_check(cli, context),
     }
 }
 
@@ -1940,7 +1953,7 @@ async fn go_preview(
         history: &[],
         entities: &[],
         budget: Budget {
-            answer_tokens: preview::max_output(DEFAULT_MAX_ANSWER_TOKENS) as usize,
+            answer_tokens: preview::max_output(DEFAULT_MAX_ANSWER_TOKENS, 4_000) as usize,
             context_tokens: context as usize,
             ..roomy()
         },
@@ -1995,7 +2008,7 @@ async fn the_empirical_budget_decides_before_any_call() {
     let out = go_preview(&ix, &req, Model::Ready(&claude), 200_000, true).await;
     assert_eq!(claude.inner.call_count(), 1);
     assert!(!out.answer().found_only);
-    // Codex mit nur 32000: 0,8 * 32000 = 25600 < 24000 Overhead + Ausgabe + Prompt.
+    // Codex mit nur 32000: 0,8 * 32000 = 25600 < 36000 (gemessener Overhead * 1,2) + Ausgabe + Prompt.
     let codex = empirical(PLAIN_A, Cli::Codex, 32_000);
     let out = go_preview(&ix, &req, Model::Ready(&codex), 32_000, true).await;
     assert_eq!(
@@ -2018,8 +2031,7 @@ async fn a_rejected_reply_gives_found_only_and_no_model_text() {
     ] {
         let model = Empirical {
             inner: Fake::failing(code),
-            cli: Cli::Claude,
-            context: 200_000,
+            check: proof_check(Cli::Claude, 200_000),
         };
         let out = go_preview(&ix, &req, Model::Ready(&model), 200_000, true).await;
         let a = out.answer();
@@ -2050,6 +2062,11 @@ fn preview_rejections_map_to_budget_or_llm_failed() {
     .error();
     assert_eq!(map_error_code(&budget), CODE_BUDGET);
     assert_eq!(map_error_code(&failed), CODE_LLM_FAILED);
+    assert_eq!(
+        map_error_code(&preview::SWITCH_OFF.error()),
+        CODE_CANCELLED,
+        "Schalter aus mitten im Lauf: abgebrochen, nichts angezeigt"
+    );
     assert_eq!(map_error_code("cli_failed: irgendwas"), CODE_LLM_FAILED);
 }
 
@@ -2132,36 +2149,123 @@ fn confirming_binds_every_enabled_subscription_model_once() {
 }
 
 #[test]
-fn the_preview_switch_only_acts_with_a_valid_tuple_and_a_proven_context() {
+fn the_preview_needs_switch_tuple_isolation_measurement_and_context() {
     let mut s = cli_settings(None);
     let current = preview::binding_for(Cli::Claude, "sonnet", &ident("ab"));
-    // Schalter aus: nichts, auch mit Tupel.
+    let full = fixtures::evidence(&[(&current, "claude-sonnet-5-5")]);
+    // Schalter aus: nichts, auch mit Tupel und Belegen.
     s.book_talk_preview_bindings = vec![current.clone()];
-    assert!(preview_check(&s, Cli::Claude, Some(current.clone()), 600).is_none());
+    assert!(preview_check(&s, Cli::Claude, Some(current.clone()), 600, &full).is_none());
     s.book_talk_subscription_preview = true;
-    let check = preview_check(&s, Cli::Claude, Some(current.clone()), 600).expect("wirkt");
+    let check = preview_check(&s, Cli::Claude, Some(current.clone()), 600, &full).expect("wirkt");
     assert_eq!(check.context_tokens, 200_000);
-    assert_eq!(check.max_output_tokens, preview::max_output(600));
+    // Antwort + gemessene Reserve (Fixture 4000), keine eingebaute Zahl.
+    assert_eq!(check.max_output_tokens, preview::max_output(600, 4_000));
     assert_eq!(check.binding, current);
+    assert_eq!(check.proof.measurement.max_overhead_tokens, 30_000);
+    // Ohne Faehigkeiten und Messung: gesperrt, mit Grund (kein Auftrag).
+    let v = preview_verdict(
+        &s,
+        Cli::Claude,
+        Some(current.clone()),
+        600,
+        &Evidence::default(),
+    );
+    assert_eq!(v.check, None);
+    assert_eq!(v.state, preview::PreviewState::NotReleased);
+    assert_eq!(v.blocked, Some(preview::Blocked::IsolationUnverified));
+    // Faehigkeiten da, Messung fehlt: „Messung auf diesem Geraet fehlt“.
+    let caps_only = Evidence::from_parts(
+        &[("claude_cli", current.cli_version.as_str(), fixtures::caps())],
+        vec![],
+    );
+    let v = preview_verdict(&s, Cli::Claude, Some(current.clone()), 600, &caps_only);
+    assert_eq!(v.blocked, Some(preview::Blocked::MeasurementMissing));
+    assert!(v.check.is_none());
     // Abweichendes Tupel (neue Version, anderes Programm): wirkt nicht mehr.
     let mut newer = current.clone();
     newer.cli_version = "1.1".into();
-    assert!(preview_check(&s, Cli::Claude, Some(newer), 600).is_none());
+    assert!(preview_check(&s, Cli::Claude, Some(newer), 600, &full).is_none());
     let swapped = preview::binding_for(Cli::Claude, "sonnet", &ident("ef"));
-    assert!(preview_check(&s, Cli::Claude, Some(swapped), 600).is_none());
+    assert!(preview_check(&s, Cli::Claude, Some(swapped), 600, &full).is_none());
     // Nicht prueffaehig (CLI weg): wirkt nicht.
-    assert!(preview_check(&s, Cli::Claude, None, 600).is_none());
-    // Codex ohne belegten Kontext: kein Auftrag (bleibt bei `budget`).
+    assert!(preview_check(&s, Cli::Claude, None, 600, &full).is_none());
+    // Codex ohne belegten Kontext: kein Auftrag, Grund `context_unknown`.
     s.llm_active_model_id = Some("codex:gpt".into());
     let codex = preview::binding_for(Cli::Codex, "gpt-6.1-sol", &ident("cd"));
     s.book_talk_preview_bindings.push(codex.clone());
-    assert!(preview_check(&s, Cli::Codex, Some(codex.clone()), 600).is_none());
+    let both = fixtures::evidence(&[(&current, "claude-sonnet-5-5"), (&codex, "gpt-6.1-sol")]);
+    assert!(preview_check(&s, Cli::Codex, Some(codex.clone()), 600, &both).is_none());
+    let v = preview_verdict(&s, Cli::Codex, Some(codex.clone()), 600, &both);
+    assert_eq!(v.blocked, Some(preview::Blocked::ContextUnknown));
     for m in s.llm_models.iter_mut().filter(|m| m.id == "codex:gpt") {
         m.context_limit = Some(272_000);
     }
     assert_eq!(
-        preview_check(&s, Cli::Codex, Some(codex), 600).map(|c| c.context_tokens),
+        preview_check(&s, Cli::Codex, Some(codex), 600, &both).map(|c| c.context_tokens),
         Some(272_000)
+    );
+}
+
+#[tokio::test]
+async fn a_preview_without_a_live_switch_or_with_it_off_never_calls_the_cli() {
+    let provider = crate::settings::PostProcessProvider {
+        id: "claude_cli".into(),
+        label: "claude_cli".into(),
+        base_url: "cli://claude".into(),
+        allow_base_url_edit: false,
+        models_endpoint: None,
+        supports_structured_output: false,
+    };
+    let check = proof_check(Cli::Claude, 200_000);
+    let off = ProviderModel::new(
+        provider.clone(),
+        String::new(),
+        "m".into(),
+        200_000,
+        Some(check.clone()),
+        Some(PreviewSwitch::new(|| false)),
+    );
+    let none = ProviderModel::new(
+        provider,
+        String::new(),
+        "m".into(),
+        200_000,
+        Some(check),
+        None,
+    );
+    for model in [&off, &none] {
+        let seen = Mutex::new(String::new());
+        let on_delta = |d: &str| seen.lock().unwrap().push_str(d);
+        let err = model
+            .complete("System", "Frage".into(), &on_delta)
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, CODE_CANCELLED);
+        assert!(
+            seen.lock().unwrap().is_empty(),
+            "nichts erreicht die Anzeige"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_cancelled_preview_run_gives_no_answer_and_no_text() {
+    let ix = index_of(&buch());
+    let req = plain_request(PLAIN_Q);
+    // Der Schalter geht aus: `complete` meldet `cancelled`, `run` bricht ab.
+    let model = Empirical {
+        inner: Fake::failing(CODE_CANCELLED),
+        check: proof_check(Cli::Claude, 200_000),
+    };
+    let out = go_preview(&ix, &req, Model::Ready(&model), 200_000, true).await;
+    let err = out.result.as_ref().expect_err("keine Antwort");
+    assert_eq!(err.code, CODE_CANCELLED);
+    assert!(
+        !out.events
+            .iter()
+            .any(|e| matches!(e, BookTalkEvent::Done { .. })),
+        "kein done-Ereignis"
     );
 }
 

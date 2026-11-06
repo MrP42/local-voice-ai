@@ -786,9 +786,18 @@
         "subscriptionState": {
           "on": "an",
           "off": "aus",
-          "reconfirm": "erneut bestätigen"
+          "reconfirm": "erneut bestätigen",
+          "not_released": "nicht freigegeben"
         },
-        "subscriptionHint": "Budget empirisch, nicht bewiesen. Anfragen gehen an Anthropic oder OpenAI über dein Abo."
+        "subscriptionHint": "Budget empirisch, nicht bewiesen. Anfragen gehen an Anthropic oder OpenAI über dein Abo.",
+        "notReleased": {
+          "default": "Noch nicht freigegeben: Messung oder Prüfung auf diesem Gerät fehlt",
+          "measurement_missing": "Noch nicht freigegeben: Messung auf diesem Gerät fehlt",
+          "isolation_unverified": "Noch nicht freigegeben: Isolation dieser CLI-Version ist nicht geprüft",
+          "payload_unknown": "Noch nicht freigegeben: Das gestartete Programm der CLI ist nicht bestimmbar",
+          "no_cli": "Noch nicht freigegeben: CLI nicht gefunden oder nicht lesbar",
+          "context_unknown": "Noch nicht freigegeben: Der Kontext des Modells ist nicht belegt"
+        }
       },
       "turn": {
         "spoken": "gesprochen",

@@ -58,7 +58,10 @@ use tauri_specta::Event;
 
 use crate::commands::pages::page_path;
 use crate::managers::llm::cli::Cli;
-use crate::managers::llm::preview::{self, PreviewBinding, PreviewCheck, PreviewState};
+use crate::managers::llm::evidence::Evidence;
+use crate::managers::llm::preview::{
+    self, Blocked, PreviewBinding, PreviewCheck, PreviewState, PreviewSwitch,
+};
 use crate::managers::meetings::chat::citations::strip_think;
 use crate::managers::meetings::chat::context::{budget_chars, context_budget_tokens};
 use crate::managers::meetings::chat::controller::{map_llm_error, CancelFlag};
@@ -631,9 +634,11 @@ struct ProviderModel {
     context_tokens: u32,
     /// Exakter Zähler: nur der eingebaute lokale Server hat einen.
     counter: tokio::sync::OnceCell<Option<count::LlamaCounter>>,
-    /// Abo-Vorschau (lva#334): empirisches Budget statt Zähler, gehärtete
+    /// Abo-Vorschau (lva#334): gemessenes Budget statt Zähler, gehärtete
     /// Isolation, Prüfung der Antwort vor jeder Ausgabe.
     preview: Option<PreviewCheck>,
+    /// Der Vorschau-Schalter live: vor, während und nach dem Aufruf geprüft.
+    switch: Option<PreviewSwitch>,
 }
 
 impl ProviderModel {
@@ -643,6 +648,7 @@ impl ProviderModel {
         model: String,
         context_tokens: u32,
         preview: Option<PreviewCheck>,
+        switch: Option<PreviewSwitch>,
     ) -> Self {
         Self {
             provider,
@@ -651,7 +657,13 @@ impl ProviderModel {
             context_tokens,
             counter: tokio::sync::OnceCell::new(),
             preview,
+            switch,
         }
+    }
+
+    /// Ist die Vorschau dieses Laufs (noch) eingeschaltet? Ohne Vorschau immer.
+    fn switch_on(&self) -> bool {
+        self.preview.is_none() || self.switch.as_ref().is_some_and(PreviewSwitch::is_on)
     }
 
     /// Zähler des lokalen Servers (startet ihn bei Bedarf wie der Aufruf selbst).
@@ -704,14 +716,26 @@ impl TalkModel for ProviderModel {
                 &limits,
             );
             // Der CLI-Pfad gibt den Text erst nach der Prüfung an `on_delta`.
-            let result = match &self.preview {
-                Some(check) => {
-                    crate::llm_client::CLI_PREVIEW
-                        .scope(check.clone(), call)
+            if !self.switch_on() {
+                return Err(TalkError::new(CODE_CANCELLED));
+            }
+            let result = match (&self.preview, &self.switch) {
+                (Some(check), Some(switch)) => {
+                    crate::llm_client::CLI_PREVIEW_SWITCH
+                        .scope(
+                            switch.clone(),
+                            crate::llm_client::CLI_PREVIEW.scope(check.clone(), call),
+                        )
                         .await
                 }
-                None => call.await,
+                // Vorschau ohne Schalter gibt es nicht: gesperrt.
+                (Some(_), None) => return Err(TalkError::new(CODE_CANCELLED)),
+                (None, _) => call.await,
             };
+            // Nach dem Aufruf, vor Anzeige und Speichern: ausgeschaltet heißt verwerfen.
+            if !self.switch_on() {
+                return Err(TalkError::new(CODE_CANCELLED));
+            }
             result.map_err(|e| {
                 let code = map_error_code(&e);
                 log::warn!("book_talk: LLM-Aufruf fehlgeschlagen ({code})");
@@ -722,10 +746,10 @@ impl TalkModel for ProviderModel {
 
     fn token_count<'a>(&'a self, system: &'a str, user: &'a str) -> prompt::CountFuture<'a> {
         Box::pin(async move {
-            if let Some(cli) = self.preview_cli() {
-                // Empirisch: Bytes (so, wie die CLI sie bekommt) plus Overhead.
+            if let Some(check) = &self.preview {
+                // Empirisch: Bytes (so, wie die CLI sie bekommt) plus gemessener Overhead.
                 let bytes = system.len() + crate::llm_client::dialog_line("user", user).len();
-                return usize::try_from(preview::input_estimate(cli, bytes)).ok();
+                return usize::try_from(check.input_estimate(bytes)).ok();
             }
             self.llama().await?.count(system, user).await
         })
@@ -734,19 +758,11 @@ impl TalkModel for ProviderModel {
     fn context_tokens(&self) -> prompt::CountFuture<'_> {
         Box::pin(async move {
             if let Some(check) = &self.preview {
-                // Planungsgrenze: min(Kontext, Kompaktierungsschwelle).
-                return usize::try_from(preview::limit_tokens(check.context_tokens)).ok();
+                // Planungsgrenze: gemessene Kompaktierungsschwelle des Kontexts.
+                return usize::try_from(check.limit()).ok();
             }
             self.llama().await?.context().await
         })
-    }
-}
-
-impl ProviderModel {
-    /// Die CLI, wenn dieses Modell in der aktiven Vorschau läuft.
-    fn preview_cli(&self) -> Option<Cli> {
-        self.preview.as_ref()?;
-        Cli::from_base_url(&self.provider.base_url)
     }
 }
 
@@ -767,6 +783,7 @@ pub fn map_error_code(err: &str) -> &'static str {
     // `llm_failed` (Nutzungsangabe, Modell).
     match preview::rejection_code(err) {
         Some("budget") => return CODE_BUDGET,
+        Some("cancelled") => return CODE_CANCELLED,
         Some(_) => return CODE_LLM_FAILED,
         None => {}
     }
@@ -1073,7 +1090,7 @@ pub async fn book_talk_ask(
     // der Kontext muss belegt sein (sonst bleibt es beim Grund `budget`).
     let preview_check = match &resolved {
         Ok((provider, model, _)) => match Cli::from_base_url(&provider.base_url) {
-            Some(cli) => preview_check_for(&settings, cli, model).await,
+            Some(cli) => preview_check_for(&app, &settings, cli, model).await,
             None => None,
         },
         Err(_) => None,
@@ -1086,6 +1103,11 @@ pub async fn book_talk_ask(
     let answer_tokens = preview_check
         .as_ref()
         .map_or(DEFAULT_MAX_ANSWER_TOKENS, |c| c.max_output_tokens);
+    // Der Schalter wird LIVE gelesen, nicht der Stand zu Beginn der Frage.
+    let switch = preview_check.as_ref().map(|_| {
+        let app = app.clone();
+        PreviewSwitch::new(move || crate::settings::book_talk_preview_switch_on(&app))
+    });
     let provider_model = resolved.as_ref().ok().map(|(provider, model, key)| {
         ProviderModel::new(
             provider.clone(),
@@ -1093,6 +1115,7 @@ pub async fn book_talk_ask(
             model.clone(),
             ctx_tokens,
             preview_check.clone(),
+            switch.clone(),
         )
     });
     let profile = resolved
@@ -1148,6 +1171,10 @@ pub async fn book_talk_ask(
         .await
         .map_err(|e| fail(e.code))?;
 
+    // Ausgeschaltet während der Frage: Ergebnis verwerfen, nichts speichern.
+    if switch.as_ref().is_some_and(|s| !s.is_on()) {
+        return Err(fail(CODE_CANCELLED));
+    }
     finish_turn(&dir, &req, &answer, &cancel).map_err(|e| fail(e.code))?;
     Ok(answer)
 }
@@ -1190,34 +1217,81 @@ pub fn change_book_talk_enabled_setting(app: AppHandle, enabled: bool) -> Result
 
 // ------------------------------------------------------ Abo-Vorschau (#334) --
 
+/// Ergebnis der Prüfung der Abo-Vorschau für ein Modell.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreviewVerdict {
+    pub state: PreviewState,
+    pub blocked: Option<Blocked>,
+    /// Gesetzt nur bei `Active`.
+    pub check: Option<PreviewCheck>,
+}
+
 /// Prüfauftrag der Abo-Vorschau für dieses Modell, falls sie wirkt: Schalter
-/// an, gebundenes Tupel gültig, Kontext belegt. Rein; `current` ist das
+/// an, gebundenes Tupel gültig, Isolation dieser CLI-Version vollständig
+/// belegt, Messung für (CLI, Version, Programm, Modell) vorhanden, Kontext
+/// belegt. Jede Lücke sperrt und nennt den Grund. Rein; `current` ist das
 /// aktuelle Tupel (`None`, wenn die CLI nicht zu prüfen ist).
+pub fn preview_verdict(
+    settings: &crate::settings::AppSettings,
+    cli: Cli,
+    current: Option<PreviewBinding>,
+    answer_tokens: u32,
+    evidence: &Evidence,
+) -> PreviewVerdict {
+    let gate = preview::gate(
+        settings.book_talk_subscription_preview,
+        &settings.book_talk_preview_bindings,
+        current.as_ref(),
+        evidence,
+    );
+    let blocked = |state, blocked| PreviewVerdict {
+        state,
+        blocked,
+        check: None,
+    };
+    let (PreviewState::Active, Some(proof), Some(binding)) = (gate.state, gate.proof, current)
+    else {
+        return blocked(gate.state, gate.blocked);
+    };
+    let configured = settings
+        .active_llm_model()
+        .and_then(|(_, model)| model.context_limit);
+    let Some(context_tokens) = preview::context_tokens(cli, configured) else {
+        return blocked(PreviewState::NotReleased, Some(Blocked::ContextUnknown));
+    };
+    PreviewVerdict {
+        state: PreviewState::Active,
+        blocked: None,
+        check: Some(PreviewCheck::new(
+            binding,
+            context_tokens,
+            answer_tokens,
+            proof,
+        )),
+    }
+}
+
+/// Wie [`preview_verdict`], nur der Prüfauftrag (`None`: gesperrt).
 pub fn preview_check(
     settings: &crate::settings::AppSettings,
     cli: Cli,
     current: Option<PreviewBinding>,
     answer_tokens: u32,
+    evidence: &Evidence,
 ) -> Option<PreviewCheck> {
-    let state = preview::gate(
-        settings.book_talk_subscription_preview,
-        &settings.book_talk_preview_bindings,
-        current.as_ref(),
-    );
-    if state != PreviewState::Active {
-        return None;
-    }
-    let configured = settings
-        .active_llm_model()
-        .and_then(|(_, model)| model.context_limit);
-    Some(PreviewCheck {
-        binding: current?,
-        context_tokens: preview::context_tokens(cli, configured)?,
-        max_output_tokens: preview::max_output(answer_tokens),
-    })
+    preview_verdict(settings, cli, current, answer_tokens, evidence).check
+}
+
+/// Belege dieses Geräts (Fähigkeitstabelle und Messdatei im App-Datenordner);
+/// ohne Ordner oder Dateien leer, also alles gesperrt.
+pub fn load_evidence(app: &AppHandle) -> Evidence {
+    crate::portable::app_data_dir(app)
+        .map(|dir| Evidence::load(&dir))
+        .unwrap_or_default()
 }
 
 async fn preview_check_for(
+    app: &AppHandle,
     settings: &crate::settings::AppSettings,
     cli: Cli,
     model: &str,
@@ -1230,7 +1304,13 @@ async fn preview_check_for(
         .await
         .ok()
         .and_then(Result::ok);
-    preview_check(settings, cli, current, DEFAULT_MAX_ANSWER_TOKENS)
+    preview_check(
+        settings,
+        cli,
+        current,
+        DEFAULT_MAX_ANSWER_TOKENS,
+        &load_evidence(app),
+    )
 }
 
 /// Tupel für alle eingeschalteten Abo-Modelle eingeschalteter Verbindungen
@@ -1325,8 +1405,12 @@ pub struct BookTalkPreviewStatus {
     pub enabled: bool,
     /// Das Gesprächsmodell ist ein Abo-Modell (CLI).
     pub applies: bool,
-    /// `reconfirm`: der Schalter ist an, wirkt aber nicht, bis erneut bestätigt wird.
+    /// `reconfirm`: der Schalter ist an, wirkt aber nicht, bis erneut bestätigt
+    /// wird; `not_released`: Isolation oder Messung auf diesem Gerät fehlen.
     pub state: PreviewState,
+    /// Warum die Vorschau (noch) nicht wirkt (`measurement_missing`,
+    /// `isolation_unverified`, `binding_changed` …); sonst `None`.
+    pub blocked: Option<Blocked>,
 }
 
 /// Zustand der Abo-Vorschau für das aktuelle Gesprächsmodell.
@@ -1348,22 +1432,37 @@ pub async fn book_talk_preview_status(app: AppHandle) -> Result<BookTalkPreviewS
             } else {
                 PreviewState::Off
             },
+            blocked: None,
         });
     };
-    let state = if enabled {
-        let stored = settings.book_talk_preview_bindings.clone();
-        let current = tokio::task::spawn_blocking(move || preview::current_binding(cli, &model))
-            .await
-            .ok()
-            .and_then(Result::ok);
-        preview::gate(true, &stored, current.as_ref())
-    } else {
-        PreviewState::Off
+    if !enabled {
+        return Ok(BookTalkPreviewStatus {
+            enabled,
+            applies: true,
+            state: PreviewState::Off,
+            blocked: None,
+        });
+    }
+    let evidence = load_evidence(&app);
+    let current = tokio::task::spawn_blocking(move || preview::current_binding(cli, &model))
+        .await
+        .map_err(|e| e.to_string())?;
+    let (current, error_blocked) = match current {
+        Ok(binding) => (Some(binding), None),
+        Err(e) => (None, Some(preview::blocked_of_error(&e))),
     };
+    let verdict = preview_verdict(
+        &settings,
+        cli,
+        current,
+        DEFAULT_MAX_ANSWER_TOKENS,
+        &evidence,
+    );
     Ok(BookTalkPreviewStatus {
         enabled,
         applies: true,
-        state,
+        state: verdict.state,
+        blocked: error_blocked.or(verdict.blocked),
     })
 }
 

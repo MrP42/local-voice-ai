@@ -840,14 +840,16 @@ impl Identities {
 }
 
 /// Die Modelle, die wirklich angeboten werden duerfen (lva#334): nur mit
-/// eingeschalteter Abo-Vorschau, gueltigem gebundenem Tupel (Anbieter, Modell,
-/// CLI-Version, SHA-256) und belegtem Kontext. `context_tokens` ist der
-/// belegte Wert (Claude 200000, Codex nur ein eingetragener), nie ein
-/// pauschaler Standard.
+/// eingeschalteter Abo-Vorschau und `Active` im Tor: gueltiges gebundenes
+/// Tupel (Anbieter, Modell, CLI-Version, SHA-256 des Programms), alle
+/// `IsolationCaps` der Version belegt, gueltige Messung, belegter Kontext.
+/// `context_tokens` ist der belegte Wert (Claude 200000, Codex nur ein
+/// eingetragener), nie ein pauschaler Standard.
 pub fn preview_models(
     settings: &AppSettings,
     eligible: Vec<ModelEntry>,
     identities: &Identities,
+    evidence: &crate::managers::llm::evidence::Evidence,
 ) -> Vec<ModelEntry> {
     use crate::managers::llm::preview;
     if !settings.book_talk_subscription_preview {
@@ -862,9 +864,13 @@ pub fn preview_models(
                 _ => return None,
             };
             let binding = preview::binding_for(cli, &m.id, identities.of(cli)?);
-            if preview::binding_state(&settings.book_talk_preview_bindings, &binding)
-                != preview::BindingState::Valid
-            {
+            let gate = preview::gate(
+                true,
+                &settings.book_talk_preview_bindings,
+                Some(&binding),
+                evidence,
+            );
+            if gate.state != preview::PreviewState::Active {
                 return None;
             }
             let configured = settings
@@ -880,7 +886,10 @@ pub fn preview_models(
 
 /// Wie [`eligible_models`], aber nur, was die Abo-Vorschau freigibt
 /// ([`preview_models`]). Liest die Programm-Identitaet der bereiten CLIs.
-async fn offered_models(settings: &AppSettings) -> Vec<ModelEntry> {
+async fn offered_models(
+    settings: &AppSettings,
+    evidence: &crate::managers::llm::evidence::Evidence,
+) -> Vec<ModelEntry> {
     let eligible = eligible_models(settings, ready_now().await);
     if eligible.is_empty() || !settings.book_talk_subscription_preview {
         return Vec::new();
@@ -897,7 +906,7 @@ async fn offered_models(settings: &AppSettings) -> Vec<ModelEntry> {
     })
     .await
     .unwrap_or_default();
-    preview_models(settings, eligible, &identities)
+    preview_models(settings, eligible, &identities, evidence)
 }
 
 /// Veroeffentlicht wird, was mindestens ein Geraet nutzen darf (R1). Ohne
@@ -1299,9 +1308,23 @@ struct Ctx {
     client: HubClient,
     store_path: PathBuf,
     shared: Arc<Mutex<Shared>>,
+    /// App-Datenordner mit Faehigkeitstabelle und Messdatei der Abo-Vorschau.
+    evidence_dir: PathBuf,
+    /// Der Vorschau-Schalter live. Ohne App (Tests) „aus“: fail-closed.
+    preview_switch: crate::managers::llm::preview::PreviewSwitch,
 }
 
 impl Ctx {
+    /// Mit dem Schalter der App (`tick`); sonst bleibt er „aus“.
+    fn with_switch(mut self, switch: crate::managers::llm::preview::PreviewSwitch) -> Self {
+        self.preview_switch = switch;
+        self
+    }
+
+    fn evidence(&self) -> crate::managers::llm::evidence::Evidence {
+        crate::managers::llm::evidence::Evidence::load(&self.evidence_dir)
+    }
+
     fn new(
         cfg: SyncConfig,
         key: [u8; crypto::KEY_LEN],
@@ -1313,8 +1336,13 @@ impl Ctx {
             client: HubClient::new(&cfg.url, &cfg.token),
             key,
             cfg,
+            evidence_dir: store_path
+                .parent()
+                .map(Path::to_path_buf)
+                .unwrap_or_default(),
             store_path,
             shared,
+            preview_switch: crate::managers::llm::preview::PreviewSwitch::new(|| false),
         }
     }
 }
@@ -1488,7 +1516,14 @@ async fn tick(app: &AppHandle, st: &mut LoopState) -> Duration {
     };
     // Laufende Anfragen und Revisionen leben ueber die Takte hinweg: jeder
     // Takt bekommt denselben geteilten Zustand.
-    let ctx = Arc::new(Ctx::new(cfg, key, store_path, st.shared.clone()));
+    let switch_app = app.clone();
+    let ctx = Arc::new(
+        Ctx::new(cfg, key, store_path, st.shared.clone()).with_switch(
+            crate::managers::llm::preview::PreviewSwitch::new(move || {
+                crate::settings::book_talk_preview_switch_on(&switch_app)
+            }),
+        ),
+    );
     let settings = crate::settings::get_settings(app);
     match run_tick(&ctx, st, &settings).await {
         Ok(delay) => delay,
@@ -1519,7 +1554,7 @@ async fn run_tick(
 
     let wanted = settings.book_talk_relay_enabled && active_grants;
     let eligible = if wanted {
-        offered_models(settings).await
+        offered_models(settings, &ctx.evidence()).await
     } else {
         Vec::new()
     };
@@ -1823,7 +1858,7 @@ async fn process(
 ) {
     use crate::llm_client::{
         send_chat_completion_stream, CliMeta, StreamMessage, CLI_CANCEL, CLI_MAX_TOKENS, CLI_META,
-        CLI_PREVIEW, CLI_REQUIRE_USAGE, CLI_TIMEOUT,
+        CLI_PREVIEW, CLI_PREVIEW_SWITCH, CLI_REQUIRE_USAGE, CLI_TIMEOUT,
     };
     let mut progress = Progress::new(&req.request_id, &req.device_id, key);
     // Das Abbruchsignal gehoert dieser Anfrage; verlassen wir `process` auf
@@ -1889,7 +1924,13 @@ async fn process(
             .await
             .ok()
             .and_then(Result::ok);
-            crate::book_ai::talk::preview_check(&call, cli, current, req.max_tokens)
+            crate::book_ai::talk::preview_check(
+                &call,
+                cli,
+                current,
+                req.max_tokens,
+                &ctx.evidence(),
+            )
         }
         None => None,
     };
@@ -1924,25 +1965,28 @@ async fn process(
     // Dasselbe Gesamtbudget und dieselbe Pruefung wie am Desktop: die Vorab-
     // Pruefung und die Nutzungsangabe erzwingt `cli::call_with_options`, der
     // Text kommt erst nach der Pruefung in den Puffer.
-    let llm = CLI_PREVIEW.scope(
-        preview_check,
-        CLI_REQUIRE_USAGE.scope(
-            true,
-            CLI_META.scope(
-                meta.clone(),
-                CLI_TIMEOUT.scope(
-                    CALL_TIMEOUT,
-                    CLI_CANCEL.scope(
-                        cancel.clone(),
-                        CLI_MAX_TOKENS.scope(
-                            req.max_tokens,
-                            send_chat_completion_stream(
-                                crate::managers::usage::Purpose::Chat,
-                                &provider,
-                                api_key,
-                                &model,
-                                messages,
-                                &on_delta,
+    let llm = CLI_PREVIEW_SWITCH.scope(
+        ctx.preview_switch.clone(),
+        CLI_PREVIEW.scope(
+            preview_check,
+            CLI_REQUIRE_USAGE.scope(
+                true,
+                CLI_META.scope(
+                    meta.clone(),
+                    CLI_TIMEOUT.scope(
+                        CALL_TIMEOUT,
+                        CLI_CANCEL.scope(
+                            cancel.clone(),
+                            CLI_MAX_TOKENS.scope(
+                                req.max_tokens,
+                                send_chat_completion_stream(
+                                    crate::managers::usage::Purpose::Chat,
+                                    &provider,
+                                    api_key,
+                                    &model,
+                                    messages,
+                                    &on_delta,
+                                ),
                             ),
                         ),
                     ),
@@ -1957,6 +2001,16 @@ async fn process(
         tokio::select! {
             r = &mut guarded => break r,
             _ = ticker.tick() => {
+                // Vorschau waehrend der Anfrage ausgeschaltet: Prozessbaum beenden
+                // (Signal, `cli::call_with_options` beobachtet den Schalter auch
+                // selbst), Ergebnis verwerfen, dem iPhone nur den Fehler melden.
+                if !ctx.preview_switch.is_on() {
+                    cancel.store(true, Ordering::SeqCst);
+                    log::info!("Buch-Relay: Vorschau ausgeschaltet, laufende Anfrage verworfen");
+                    finish(ctx, &mut progress, "", MODEL_UNKNOWN, Some(ERR_MODEL_UNAVAILABLE), None).await;
+                    end_busy(ctx, sender, &req.request_id);
+                    return;
+                }
                 // Widerruf waehrend der Anfrage (R10): nichts mehr schreiben, Ergebnis verwerfen.
                 if !still_authorized(&ctx.store_path, &req.device_id, &req.key_id) {
                     log::info!("Buch-Relay: Freigabe widerrufen, laufende Anfrage verworfen");
@@ -1977,6 +2031,21 @@ async fn process(
     if cancel.load(Ordering::SeqCst)
         || !still_authorized(&ctx.store_path, &req.device_id, &req.key_id)
     {
+        end_busy(ctx, sender, &req.request_id);
+        return;
+    }
+    // Vor der Ausgabe (Relay-Antwort): Schalter aus heisst verwerfen, kein Text.
+    if !ctx.preview_switch.is_on() {
+        log::info!("Buch-Relay: Vorschau ausgeschaltet, Ergebnis verworfen");
+        finish(
+            ctx,
+            &mut progress,
+            "",
+            MODEL_UNKNOWN,
+            Some(ERR_MODEL_UNAVAILABLE),
+            None,
+        )
+        .await;
         end_busy(ctx, sender, &req.request_id);
         return;
     }

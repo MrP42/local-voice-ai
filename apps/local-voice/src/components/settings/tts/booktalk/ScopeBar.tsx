@@ -35,6 +35,7 @@ export function ScopeBar({
   cloud,
   onRevoke,
   subscription = null,
+  subscriptionReason = null,
   onSubscription,
 }: {
   scope: BookTalkScope;
@@ -54,7 +55,9 @@ export function ScopeBar({
    * ist (dann entfällt der Menüpunkt); `reconfirm`: Schalter an, aber das
    * gebundene Tupel gilt nicht mehr.
    */
-  subscription?: "on" | "off" | "reconfirm" | null;
+  subscription?: "on" | "off" | "reconfirm" | "not_released" | null;
+  /** Grund, wenn `subscription` „not_released“ ist (`measurement_missing` …). */
+  subscriptionReason?: string | null;
   onSubscription?(): void;
 }) {
   const { t } = useTranslation();
@@ -294,6 +297,13 @@ export function ScopeBar({
                   {t(`tts.bookTalk.menu.subscriptionState.${subscription}`)}
                 </b>
               </span>
+              {subscription === "not_released" && (
+                <small data-testid="booktalk-subscription-not-released" role="status">
+                  {t(`tts.bookTalk.menu.notReleased.${subscriptionReason ?? "default"}`, {
+                    defaultValue: t("tts.bookTalk.menu.notReleased.default"),
+                  })}
+                </small>
+              )}
               <small data-testid="booktalk-subscription-hint">
                 {t("tts.bookTalk.menu.subscriptionHint")}
               </small>

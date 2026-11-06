@@ -2171,6 +2171,21 @@ pub fn load_or_create_app_settings(app: &AppHandle) -> AppSettings {
     settings
 }
 
+/// Der Schalter `book_talk_subscription_preview` LIVE aus dem Speicher, ohne
+/// die Einstellungen zu migrieren oder zu schreiben (billig genug fuer eine
+/// Abfrage waehrend eines laufenden CLI-Aufrufs). Fail-closed: nicht lesbar
+/// heisst „aus“.
+pub fn book_talk_preview_switch_on(app: &AppHandle) -> bool {
+    app.store(crate::portable::store_path(SETTINGS_STORE_PATH))
+        .ok()
+        .and_then(|store| store.get("settings"))
+        .and_then(|v| {
+            v.get("book_talk_subscription_preview")
+                .and_then(|b| b.as_bool())
+        })
+        .unwrap_or(false)
+}
+
 pub fn get_settings(app: &AppHandle) -> AppSettings {
     let store = app
         .store(crate::portable::store_path(SETTINGS_STORE_PATH))

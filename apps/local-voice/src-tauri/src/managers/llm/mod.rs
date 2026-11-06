@@ -11,6 +11,7 @@ pub mod cli;
 pub mod cli_update;
 pub mod context;
 pub mod estimate;
+pub mod evidence;
 pub mod external;
 pub mod preview;
 pub mod resources;

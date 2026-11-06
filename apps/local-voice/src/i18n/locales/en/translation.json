@@ -786,9 +786,18 @@
         "subscriptionState": {
           "on": "on",
           "off": "off",
-          "reconfirm": "confirm again"
+          "reconfirm": "confirm again",
+          "not_released": "not released"
         },
-        "subscriptionHint": "Budget is empirical, not proven. Requests go to Anthropic or OpenAI through your subscription."
+        "subscriptionHint": "Budget is empirical, not proven. Requests go to Anthropic or OpenAI through your subscription.",
+        "notReleased": {
+          "default": "Not released yet: measurement or check on this device is missing",
+          "measurement_missing": "Not released yet: measurement on this device is missing",
+          "isolation_unverified": "Not released yet: isolation of this CLI version has not been checked",
+          "payload_unknown": "Not released yet: the program the CLI actually starts cannot be determined",
+          "no_cli": "Not released yet: CLI not found or not readable",
+          "context_unknown": "Not released yet: the context size of the model is not established"
+        }
       },
       "turn": {
         "spoken": "spoken",
