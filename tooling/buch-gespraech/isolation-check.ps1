@@ -100,7 +100,10 @@ param(
     [int]$Runs = 10,
     [switch]$Measure,
     [switch]$MeasureOnly,
-    [switch]$DryIdentity
+    [switch]$DryIdentity,
+    # Nur Parser-Regression: prueft Parse-Out gegen tests/fixtures + tests/expected.tsv
+    # (dieselben Faelle wie isolation-check-test.sh fuer analyze-run.py). Startet keine CLI.
+    [switch]$SelfTest
 )
 $ErrorActionPreference = 'Stop'
 
@@ -498,22 +501,22 @@ function Test-Known($e) {
     $r = $Rules[[string]$e.type]
     if (-not $r) { return $false }
     $hasSub = $e.PSObject.Properties['subtype'] -and $e.subtype -is [string]
-    if ($r.PSObject.Properties['subtypes']) { return $hasSub -and (@($r.subtypes) -contains [string]$e.subtype) }
+    if ($r.PSObject.Properties['subtypes']) { return $hasSub -and (@($r.subtypes) -ccontains [string]$e.subtype) }
     return -not $hasSub
 }
 function Test-Contract($evs) {
-    if ($evs.Count -eq 0 -or (Get-Label $evs[0]) -ne 'system/init') { return 'event_order' }
-    if (@($evs | Where-Object { (Get-Label $_) -eq 'system/init' }).Count -ne 1) { return 'event_order' }
-    $res = @(); for ($i = 0; $i -lt $evs.Count; $i++) { if ([string]$evs[$i].type -eq 'result') { $res += $i } }
-    foreach ($i in $res) { if ($i -ne $evs.Count - 1) { return 'event_after_result' } }
-    if ($res.Count -ne 1) { return 'event_order' }
+    if ($evs.Count -ceq 0 -or (Get-Label $evs[0]) -cne 'system/init') { return 'event_order' }
+    if (@($evs | Where-Object { (Get-Label $_) -ceq 'system/init' }).Count -cne 1) { return 'event_order' }
+    $res = @(); for ($i = 0; $i -lt $evs.Count; $i++) { if ([string]$evs[$i].type -ceq 'result') { $res += $i } }
+    foreach ($i in $res) { if ($i -cne $evs.Count - 1) { return 'event_after_result' } }
+    if ($res.Count -cne 1) { return 'event_order' }
     foreach ($e in $evs) {
         $bl = Get-Blocks $e
-        if (($ToolBlocks -contains [string]$e.type) -or (@($bl | Where-Object { $ToolBlocks -contains $_ }).Count -gt 0)) { return 'tool_use' }
+        if (($ToolBlocks -ccontains [string]$e.type) -or (@($bl | Where-Object { $ToolBlocks -ccontains $_ }).Count -gt 0)) { return 'tool_use' }
         if (-not (Test-Known $e)) { return 'event_unknown' }
         if ((Test-ErrorFlag $e) -or (($e.PSObject.Properties['message']) -and (Test-ErrorFlag $e.message))) { return 'error_event' }
         $allowed = @($Rules[[string]$e.type].content_blocks)
-        if (@($bl | Where-Object { $allowed -notcontains $_ }).Count -gt 0) { return 'content_unknown' }
+        if (@($bl | Where-Object { $allowed -cnotcontains $_ }).Count -gt 0) { return 'content_unknown' }
     }
     return ''
 }
@@ -533,7 +536,7 @@ function Parse-Out([string]$path, [string]$marker) {
     $text = ''
     foreach ($e in $evs) {
         $t = [string]$e.type
-        if (($t -eq 'system' -and $e.subtype -eq 'compact_boundary') -or $e.PSObject.Properties['compact_metadata']) { $r.Compacted = $true }
+        if (($t -ceq 'system' -and $e.subtype -ceq 'compact_boundary') -or $e.PSObject.Properties['compact_metadata']) { $r.Compacted = $true }
         # Abschneiden an IRGENDEINEM Ereignis (Spiegel von cli.rs): stop_reason am Ereignis
         # oder an message, oder ein subtype mit "abort".
         # Beide Felder UNABHAENGIG (Ereignis und message), keine Prioritaet: erlaubt nur
@@ -542,16 +545,16 @@ function Parse-Out([string]$path, [string]$marker) {
         if ($e.PSObject.Properties['stop_reason']) { $stops += , $e.stop_reason }
         if ($e.PSObject.Properties['message'] -and $e.message -and $e.message.PSObject.Properties['stop_reason']) { $stops += , $e.message.stop_reason }
         foreach ($sv in $stops) {
-            if ($null -ne $sv -and -not (($sv -is [string]) -and (@('end_turn', 'stop_sequence') -contains $sv))) { $r.Cut = $true }
+            if ($null -cne $sv -and -not (($sv -is [string]) -and (@('end_turn', 'stop_sequence') -ccontains $sv))) { $r.Cut = $true }
         }
         if ($e.PSObject.Properties['subtype'] -and $e.subtype -is [string] -and $e.subtype.Contains('abort')) { $r.Cut = $true }
-        if ($t -eq 'system' -and $e.model -is [string]) { [void]$models.Add($e.model.Trim()) }
-        if ($t -eq 'assistant') {
+        if ($t -ceq 'system' -and $e.model -is [string]) { [void]$models.Add($e.model.Trim()) }
+        if ($t -ceq 'assistant') {
             if ($e.message -and $e.message.model -is [string]) { [void]$models.Add($e.message.model.Trim()) }
-            if (@((Get-Blocks $e) | Where-Object { $ToolBlocks -contains $_ }).Count -gt 0) { $r.ToolUse = $true }
+            if (@((Get-Blocks $e) | Where-Object { $ToolBlocks -ccontains $_ }).Count -gt 0) { $r.ToolUse = $true }
         }
-        if ($t -eq 'system' -and $e.subtype -eq 'init') { $r.Tools = @($e.tools); $r.Mcp = @($e.mcp_servers) }
-        if ($t -eq 'result') {
+        if ($t -ceq 'system' -and $e.subtype -ceq 'init') { $r.Tools = @($e.tools); $r.Mcp = @($e.mcp_servers) }
+        if ($t -ceq 'result') {
             $text = [string]$e.result
             $u = $e.usage
             # Nur echte, nicht negative ganze Zahlen (kein String, kein Bool, keine Kommazahl).
@@ -572,7 +575,7 @@ function Parse-Out([string]$path, [string]$marker) {
             }
             if ($e.modelUsage) { foreach ($p in $e.modelUsage.PSObject.Properties) { [void]$models.Add($p.Name.Trim()) } }
             $r.Stop = [string]$e.stop_reason
-            if ($e.is_error -ne $false -or $e.subtype -ne 'success') { $r.Error = [string]$e.subtype; if (-not $r.Error) { $r.Error = 'error' } }
+            if ($e.is_error -cne $false -or $e.subtype -cne 'success') { $r.Error = [string]$e.subtype; if (-not $r.Error) { $r.Error = 'error' } }
         }
     }
     $r.Models = @($models | Sort-Object)
@@ -581,26 +584,26 @@ function Parse-Out([string]$path, [string]$marker) {
     if ($marker) { $r.MarkerSeen = $text.Contains($marker) }
     foreach ($w in @($CanUser, $CanProject, $CanMemory)) { if ($text.Contains($w)) { $r.Canaries += $w } }
     # Erster Ungueltigkeitsgrund (leer = gueltiger Lauf); unbekannt oder fehlend ist nie gueltig.
-    $r.Reason = if ($r.Rc -ne 0) { 'exit_code' }
-        elseif ($r.Violation -ne '') { $r.Violation }
+    $r.Reason = if ($r.Rc -cne 0) { 'exit_code' }
+        elseif ($r.Violation -cne '') { $r.Violation }
         elseif ($r.Error) { 'error_event' }
         elseif ($r.Compacted) { 'compacted' }
-        elseif ($r.Cut -or (@('end_turn', 'stop_sequence') -notcontains $r.Stop)) { 'stop_reason' }
+        elseif ($r.Cut -or (@('end_turn', 'stop_sequence') -cnotcontains $r.Stop)) { 'stop_reason' }
         elseif (-not $r.UsageOk) { 'usage' }
-        elseif ($text.Length -eq 0) { 'no_text' }
+        elseif ($text.Length -ceq 0) { 'no_text' }
         else { '' }
-    $r.Ok = ($r.Reason -eq '')
+    $r.Ok = ($r.Reason -ceq '')
     return $r
 }
 
 function Note-Run($r) {
     foreach ($o in $r.Observed) { [void]$script:Observed.Add($o) }
-    if ($r.Violation -ne '') { $script:ContractOk = $false }
+    if ($r.Violation -cne '') { $script:ContractOk = $false }
 }
 
 function Read-Doc([string]$path) {
     if (Test-Path $path) {
-        try { $d = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json; if ($d.schema -eq 1) { return $d } } catch { }
+        try { $d = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json; if ($d.schema -ceq 1) { return $d } } catch { }
     }
     return [pscustomobject]@{ schema = 1; entries = @() }
 }
@@ -638,7 +641,7 @@ function Check-Cli([string]$bin, [string]$spec) {
     # Vorschau-Laeufe muessen voll gueltig sein; Kontrolllaeufe (sie duerfen Hooks und
     # Werkzeuge zeigen) brauchen Exit 0, keine kaputte Zeile und kein Fehlerereignis.
     foreach ($ctl in @($c, $t)) {
-        if ($ctl.Rc -ne 0 -or $ctl.Bad -or $ctl.Error) {
+        if ($ctl.Rc -cne 0 -or $ctl.Bad -or $ctl.Error) {
             return @{ Caps = $caps; Invalid = $true; Notes = 'Kontrolllauf ungueltig (Exit-Code <> 0, kaputte Zeile oder Fehlerereignis): nichts bewiesen' }
         }
     }
@@ -647,8 +650,8 @@ function Check-Cli([string]$bin, [string]$spec) {
     }
     $map = @(@('instructions_blocked', $CanUser), @('project_instructions_blocked', $CanProject), @('memory_blocked', $CanMemory))
     foreach ($m in $map) {
-        $inControl = $c.Canaries -contains $m[1]
-        $inIso = $i.Canaries -contains $m[1]
+        $inControl = $c.Canaries -ccontains $m[1]
+        $inIso = $i.Canaries -ccontains $m[1]
         if ($inControl -and -not $inIso) { $caps[$m[0]] = $true }
         elseif (-not $inControl) { $notes += "$($m[0]):Kontrolle_sah_Kanarienvogel_nicht" }
         else { $notes += "$($m[0]):Kanarienvogel_wirkt_trotz_Isolation" }
@@ -660,7 +663,7 @@ function Check-Cli([string]$bin, [string]$spec) {
     $controlEffect = $t.ToolUse -or $t.MarkerSeen
     # Die Sperre gilt nur, wenn der negative Lauf GUELTIG ist (oben) und weder Marker noch tool_use zeigt.
     $previewEffect = (-not $tp.Ok) -or $tp.ToolUse -or $tp.MarkerSeen
-    $initEmpty = ($null -ne $i.Tools) -and (@($i.Tools).Count -eq 0) -and (@($i.Mcp).Count -eq 0)
+    $initEmpty = ($null -cne $i.Tools) -and (@($i.Tools).Count -ceq 0) -and (@($i.Mcp).Count -ceq 0)
     if (-not $controlEffect) { $notes += 'tools_blocked:Kontrolle_las_den_Marker_nicht' }
     elseif ($previewEffect) { $notes += 'tools_blocked:Werkzeug_wirkt_trotz_Sperre' }
     elseif (-not $initEmpty) { $notes += 'tools_blocked:init_meldet_Werkzeuge_oder_MCP' }
@@ -676,7 +679,7 @@ function Write-Caps([string]$provider, [string]$version, $result) {
     elseif ($script:ContractOk -and $script:Observed.Count -gt 0) { $caps['event_contract'] = $true }
     else { $notes = ($notes + '; event_contract:Vertragsverletzung_oder_nichts_beobachtet').Trim('; ') }
     $doc = Read-Doc $path
-    $keep = @($doc.entries | Where-Object { -not ($_.cli -eq $provider -and $_.cli_version -eq $version) })
+    $keep = @($doc.entries | Where-Object { -not ($_.cli -ceq $provider -and $_.cli_version -ceq $version) })
     $entry = [ordered]@{ cli = $provider; cli_version = $version; kind = 'empirisch'; checked_at = $Now; caps = $caps
         observed_events = @($script:Observed | Sort-Object); notes = $notes }
     Save-Doc $path ([ordered]@{ schema = 1; entries = @($keep) + @($entry) })
@@ -693,22 +696,22 @@ function Measure-Cli([string]$bin, [string]$spec, [string]$provider, [string]$ve
         Run-Claude $bin $world 'preview' $spec $f $Question
         $r = Parse-Out $f ''
         Note-Run $r
-        if ($r.Rc -ne 0) { Die "Messreihe ungueltig: Lauf $n mit Exit-Code <> 0 (nichts geschrieben)" }
-        if ($r.Violation -ne '') { Die "Messreihe ungueltig: Lauf $n verletzt den Ereignisvertrag ($($r.Violation); nichts geschrieben)" }
+        if ($r.Rc -cne 0) { Die "Messreihe ungueltig: Lauf $n mit Exit-Code <> 0 (nichts geschrieben)" }
+        if ($r.Violation -cne '') { Die "Messreihe ungueltig: Lauf $n verletzt den Ereignisvertrag ($($r.Violation); nichts geschrieben)" }
         if ($r.Error) { Die "Messreihe ungueltig: Lauf $n mit Fehlerereignis (nichts geschrieben)" }
         if ($r.Cut) { Die "Messreihe ungueltig: Lauf $n abgeschnitten (stop_reason max_tokens/aborted an einem Ereignis; nichts geschrieben)" }
-        if (@('end_turn', 'stop_sequence') -notcontains $r.Stop) { Die "Messreihe ungueltig: Lauf $n ohne regulaeren stop_reason (nichts geschrieben)" }
+        if (@('end_turn', 'stop_sequence') -cnotcontains $r.Stop) { Die "Messreihe ungueltig: Lauf $n ohne regulaeren stop_reason (nichts geschrieben)" }
         if ($r.Compacted) { Die "Messreihe ungueltig: Lauf $n mit Kompaktierung (nichts geschrieben)" }
         if (-not $r.Ok) { Die "Messreihe ungueltig: Lauf $n ohne gueltige Antwort (nichts geschrieben)" }
-        if (@($r.Models).Count -ne 1) { Die "Messreihe ungueltig: Lauf $n meldet keine oder mehrere Modell-IDs (nichts geschrieben)" }
+        if (@($r.Models).Count -cne 1) { Die "Messreihe ungueltig: Lauf $n meldet keine oder mehrere Modell-IDs (nichts geschrieben)" }
         $ins += $r.Input; $outs += $r.Output; $models += $r.Models[0]
     }
     $distinct = @($models | Sort-Object -Unique)
-    if ($distinct.Count -ne 1 -or -not $distinct[0]) { Die 'Messreihe ungueltig: uneinheitliche oder keine Modell-IDs (nichts geschrieben)' }
+    if ($distinct.Count -cne 1 -or -not $distinct[0]) { Die 'Messreihe ungueltig: uneinheitliche oder keine Modell-IDs (nichts geschrieben)' }
     # Erst nach dem letzten gueltigen Lauf wird geschrieben.
     $path = Join-Path $DataDir 'book_talk_preview_measurements.json'
     $doc = Read-Doc $path
-    $keep = @($doc.entries | Where-Object { -not ($_.cli -eq $provider -and $_.cli_version -eq $version -and $_.binary_sha256 -eq $sha -and $_.model -eq $spec) })
+    $keep = @($doc.entries | Where-Object { -not ($_.cli -ceq $provider -and $_.cli_version -ceq $version -and $_.binary_sha256 -ceq $sha -and $_.model -ceq $spec) })
     $raw = @(); for ($k = 0; $k -lt $ins.Count; $k++) { $raw += [ordered]@{ input = $ins[$k]; output = $outs[$k] } }
     $entry = [ordered]@{ cli = $provider; cli_version = $version; binary_sha256 = $sha; model = $spec; reported_model = $distinct[0]
         runs = $Runs; max_overhead_tokens = [int64](($ins | Measure-Object -Maximum).Maximum)
@@ -745,6 +748,26 @@ function Handle([string]$spec) {
         if ($w.Notes) { Say "claude: nicht belegt: $($w.Notes)" }
         Say "claude: beobachtete Ereignistypen: $((@($script:Observed | Sort-Object)) -join ', ')"
     }
+}
+
+if ($SelfTest.IsPresent) {
+    $fx = Join-Path $PSScriptRoot 'tests'
+    $fail = 0; $n = 0
+    foreach ($line in (Get-Content -LiteralPath (Join-Path $fx 'expected.tsv') -Encoding UTF8)) {
+        if (-not $line.Trim() -or $line.StartsWith('#')) { continue }
+        $cols = $line.Split("`t")
+        $name = $cols[0]; $rc = $cols[1]; $want = if ($cols.Count -gt 2) { $cols[2] } else { '' }
+        $tmp = Join-Path $Work "$name.jsonl"
+        Copy-Item -LiteralPath (Join-Path $fx "fixtures\$name.jsonl") -Destination $tmp
+        [System.IO.File]::WriteAllText("$tmp.rc", $rc, $Utf8)
+        $r = Parse-Out $tmp ''
+        $n++
+        if ($r.Reason -cne $want) { $fail++; Write-Host "FEHLER: $name (rc=$rc): Grund '$($r.Reason)', erwartet '$want'" -ForegroundColor Red }
+    }
+    Remove-Item -Recurse -Force $Work -ErrorAction SilentlyContinue
+    if ($fail -gt 0) { Write-Host "isolation-check SelfTest: ROT ($fail von $n)"; exit 1 }
+    Write-Host "isolation-check SelfTest: $n Faelle gruen"
+    exit 0
 }
 
 try {
