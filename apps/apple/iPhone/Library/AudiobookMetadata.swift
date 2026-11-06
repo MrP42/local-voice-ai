@@ -220,7 +220,13 @@ extension PhoneLibrary {
         objectWillChange.send()
     }
 
-    private func infoURL(_ book: LibraryBook) -> URL { dir(book).appendingPathComponent("hoerbuch-info.json") }
+    /// Je Sprachfassung eigene Angaben (Kapitel, Sprecher): weitere Fassungen als `hoerbuch-info-<fassung>.json`.
+    private func infoURL(_ book: LibraryBook) -> URL {
+        if let id = book.editionId, PhoneLibrary.isSafeEditionId(id), id != flatEditionId(book) {
+            return dir(book).appendingPathComponent("hoerbuch-info-\(id).json")
+        }
+        return dir(book).appendingPathComponent("hoerbuch-info.json")
+    }
 
     /// Signatur der Audiodateien; ändert sie sich, wird neu gelesen.
     private func audioSignature(_ book: LibraryBook) -> String {
