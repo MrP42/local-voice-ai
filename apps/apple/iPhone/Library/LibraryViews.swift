@@ -755,15 +755,19 @@ struct MiniPlayerClearance: ViewModifier {
 struct SentenceParts: View {
     let text: String
     @ObservedObject var playback = LibraryPlayback.shared
-    @ScaledMetric(relativeTo: .caption) private var charWidth: CGFloat = 6.4
     @Environment(\.dynamicTypeSize) private var typeSize
     @State private var width: CGFloat = 0
 
-    /// Zwei Zeilen mit Reserve, weil Zeilen an Wortgrenzen früher enden; bei sehr großer Schrift mehr davon.
-    private var maxChars: Int { max(6, Int(width / charWidth * 2 * (typeSize.isAccessibilitySize ? 0.6 : 0.8))) }
+    /// Passt der Text wirklich in zwei Zeilen? Gemessen mit derselben Schrift, nicht geschätzt.
+    private func fits(_ candidate: String, font: UIFont) -> Bool {
+        let box = (candidate as NSString).boundingRect(with: CGSize(width: width, height: .greatestFiniteMagnitude),
+                                                       options: .usesLineFragmentOrigin, attributes: [.font: font], context: nil)
+        return box.height <= font.lineHeight * 2 + 1
+    }
 
     var body: some View {
-        let parts = LibraryText.sentenceParts(text, maxChars: maxChars)
+        let font = UIFont.preferredFont(forTextStyle: .caption1, compatibleWith: UITraitCollection(preferredContentSizeCategory: UIContentSizeCategory(typeSize)))
+        let parts = width > 0 ? LibraryText.sentenceParts(text) { fits($0, font: font) } : [text]
         let spoken = LibraryText.listenMilliseconds(chars: Double(text.utf16.count)) / 1000
         TimelineView(.periodic(from: .now, by: 0.25)) { _ in
             let index = LibraryText.sentencePartIndex(parts, elapsed: playback.sentenceSpokenSeconds, total: spoken)

@@ -399,37 +399,64 @@ public enum LibraryText {
     /// Vorlesedauer bei normalem Tempo: rund 6 Zeichen je Wort und 150 Wörter je Minute, wie am Desktop.
     public static func listenMilliseconds(chars: Double) -> Double { max(0, chars) / 6 / 150 * 60_000 }
 
-    /// Satz in etwa gleich lange Teile für eine kleine Anzeige. Geteilt wird an Leerzeichen, bevorzugt nach einem
-    /// Satzzeichen. Wörter über `maxChars` (auch Schriften ohne Leerzeichen) werden hart geteilt, es geht nichts verloren.
+    /// Satz in etwa gleich lange Teile für eine kleine Anzeige, nach Zeichenzahl.
     public static func sentenceParts(_ sentence: String, maxChars: Int) -> [String] {
         guard maxChars > 0 else { return [] }
-        let words = sentence.split(whereSeparator: \.isWhitespace).flatMap { word -> [String] in
-            guard word.count > maxChars else { return [String(word)] }
-            return stride(from: 0, to: word.count, by: maxChars).map { start in
-                let from = word.index(word.startIndex, offsetBy: start)
-                return String(word[from..<(word.index(from, offsetBy: maxChars, limitedBy: word.endIndex) ?? word.endIndex)])
+        return sentenceParts(sentence) { $0.count <= maxChars }
+    }
+
+    /// Satz in etwa gleich lange Teile; `fits` sagt, ob ein Text in die Anzeige passt. Geteilt wird an Leerzeichen und
+    /// nach Gedankenstrichen, bevorzugt nach einem Satzzeichen. Was allein nicht passt, wird hart geteilt.
+    /// Es geht kein Zeichen verloren.
+    public static func sentenceParts(_ sentence: String, fits: (String) -> Bool) -> [String] {
+        let tokens = partTokens(sentence, fits: fits)
+        guard !tokens.isEmpty else { return [] }
+        func pack(limit: Int?) -> [String] {
+            var parts: [String] = []
+            var current = ""
+            for token in tokens {
+                let next = current + (token.joined || current.isEmpty ? "" : " ") + token.text
+                let pause = current.last.map { ",;:—–".contains($0) } ?? false
+                let tooLong = limit.map { next.count > $0 } ?? false
+                let early = pause && limit.map { current.count * 5 >= $0 * 3 } ?? false
+                if !current.isEmpty, !fits(next) || tooLong || early {
+                    parts.append(current)
+                    current = token.text
+                } else {
+                    current = next
+                }
+            }
+            if !current.isEmpty { parts.append(current) }
+            return parts
+        }
+        // Erst sehen, wie viele Teile es braucht; dann gleichmäßig füllen statt den letzten kurz zu lassen.
+        let greedy = pack(limit: nil)
+        guard greedy.count > 1 else { return greedy }
+        let total = greedy.reduce(0) { $0 + $1.count }
+        let target = (total + greedy.count - 1) / greedy.count
+        return pack(limit: target + target / 5)
+    }
+
+    private static func partTokens(_ sentence: String, fits: (String) -> Bool) -> [(text: String, joined: Bool)] {
+        var tokens: [(text: String, joined: Bool)] = []
+        for word in sentence.split(whereSeparator: \.isWhitespace) {
+            var first = true
+            var rest = Substring(word)
+            while !rest.isEmpty {
+                // Nach einem Gedankenstrich im Wort darf getrennt werden: „eins—zwei“.
+                let end = rest.firstIndex { "—–".contains($0) }.map { rest.index(after: $0) } ?? rest.endIndex
+                var piece = rest[..<end]
+                rest = rest[end...]
+                while !piece.isEmpty {
+                    var cut = piece.endIndex
+                    while cut > piece.index(after: piece.startIndex), !fits(String(piece[..<cut])) { cut = piece.index(before: cut) }
+                    tokens.append((String(piece[..<cut]), !first))
+                    first = false
+                    piece = piece[cut...]
+                }
             }
         }
-        guard !words.isEmpty else { return [] }
-        let total = words.joined(separator: " ").count
-        guard total > maxChars else { return [words.joined(separator: " ")] }
-        let count = (total + maxChars - 1) / maxChars
-        let target = (total + count - 1) / count
-        let limit = min(maxChars, target + target / 5)  // gleichmäßig statt gierig, mit etwas Spielraum
-        var parts: [String] = []
-        var current = ""
-        for word in words {
-            let next = current.isEmpty ? word : current + " " + word
-            let pause = current.last.map { ",;:—–".contains($0) } ?? false
-            if !current.isEmpty, next.count > limit || (pause && current.count * 4 >= target * 3) {
-                parts.append(current)
-                current = word
-            } else {
-                current = next
-            }
-        }
-        if !current.isEmpty { parts.append(current) }
-        return parts
+        return tokens
     }
 
     /// Welcher Teil gerade dran ist, nach dem Anteil des Satzes, der schon gesprochen sein dürfte.

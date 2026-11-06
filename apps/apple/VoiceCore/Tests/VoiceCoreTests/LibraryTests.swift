@@ -153,6 +153,26 @@ final class LibraryTests: XCTestCase {
         XCTAssertTrue(LibraryText.sentenceParts(String(repeating: "字", count: 30), maxChars: 8).allSatisfy { $0.count <= 8 }, "Schrift ohne Leerzeichen")
     }
 
+    func testDashesInsideWordsAreBreakPoints() {
+        for dash in ["—", "–"] {
+            let word = "eins\(dash)zwei\(dash)drei"
+            let parts = LibraryText.sentenceParts("Heute \(word) morgen", maxChars: 10)
+            XCTAssertEqual(parts.joined().replacingOccurrences(of: " ", with: ""), "Heute" + word + "morgen", "kein Zeichen geht verloren")
+            XCTAssertTrue(parts.contains { $0.hasSuffix(dash) }, "getrennt wird nach dem Strich, nicht mitten im Wort: \(parts)")
+            XCTAssertTrue(parts.allSatisfy { !$0.contains("ein ") && $0.count <= 10 })
+        }
+        // Passt alles, bleibt das Wort samt Strich zusammen, ohne Leerzeichen.
+        XCTAssertEqual(LibraryText.sentenceParts("eins—zwei", maxChars: 50), ["eins—zwei"])
+    }
+
+    func testPartsFollowMeasuredFit() {
+        // Breite Zeichen zählen doppelt: Die Grenze kommt aus der Messung, nicht aus der Zeichenzahl.
+        let fits: (String) -> Bool = { text in text.reduce(0) { $0 + ($1 == "W" || $1 == "字" ? 2 : 1) } <= 10 }
+        for sentence in ["WWWWWWWWWWWW", String(repeating: "字", count: 12), "Wald Wiese WWW Weg"] {
+            XCTAssertTrue(LibraryText.sentenceParts(sentence, fits: fits).allSatisfy(fits), sentence)
+        }
+    }
+
     func testSentencePartFollowsSpokenTime() {
         let parts = ["aaaa", "bbbb", "cc"]
         XCTAssertEqual(LibraryText.sentencePartIndex(parts, elapsed: 0, total: 10), 0)
