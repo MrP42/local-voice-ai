@@ -29,8 +29,10 @@
 //! Datenschutz: kein Frage-, Antwort- oder Buchtext im Log; nur Codes,
 //! Längen, Zähler. Cloud-Anbieter nur mit Freigabe (`book_talk_cloud_consent`).
 
+pub mod adapter;
 pub mod cite;
 pub mod commands;
+pub mod eval;
 pub mod flow;
 pub mod index;
 pub mod intent;
@@ -1117,5 +1119,7 @@ pub fn book_talk_command(
         .map(|kind| BookTalkCommand { kind }))
 }
 
+#[cfg(test)]
+mod evaltest;
 #[cfg(test)]
 mod tests;
