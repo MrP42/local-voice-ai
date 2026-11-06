@@ -1030,7 +1030,8 @@ pub(crate) fn parse_claude_stream(stdout: &str) -> Result<CliReply, String> {
 
 /// Die usage-Felder der Vorschau, alle strikt: jedes vorhandene Feld
 /// (`input_tokens`, `output_tokens`, `cache_creation_input_tokens`,
-/// `cache_read_input_tokens`) muss eine ganze Zahl von 0 bis 2^53-1 sein (kein
+/// `cache_read_input_tokens`) muss eine ganze Zahl von 0 bis 2^53-1 sein, `input_tokens`
+/// und `output_tokens` muessen vorhanden sein (kein
 /// String, keine Kommazahl, nicht negativ, nicht `null`), sonst
 /// `usage_invalid`. Die Eingabesumme wird mit `checked_add` gebildet; ein
 /// Ueberlauf oder eine Summe ueber 2^53-1 ist ebenfalls `usage_invalid`. Fehlt
@@ -1053,6 +1054,13 @@ fn strict_usage(result: &serde_json::Value) -> Result<(u64, u64), String> {
                 .ok_or_else(invalid),
         }
     };
+    // `input_tokens` und `output_tokens` sind Pflicht (wie in Python und PS1): fehlt
+    // eines bei vorhandener `usage`, ist sie ungueltig (`usage_invalid`).
+    for required in ["input_tokens", "output_tokens"] {
+        if !usage.contains_key(required) {
+            return Err(invalid());
+        }
+    }
     let (input, created, read) = (
         field("input_tokens")?,
         field("cache_creation_input_tokens")?,
@@ -2968,6 +2976,34 @@ exit "$(cat "$D/exit" 2>/dev/null || echo 0)"
             std::thread::sleep(Duration::from_millis(50));
         }
         assert!(dead(), "das Kind lebt noch");
+    }
+
+    #[test]
+    fn the_shared_usage_matrix_gives_the_same_result_as_python_and_powershell() {
+        // Dieselbe Datei nutzen isolation-check-test.sh (Python) und der PS1-SelfTest.
+        // `ok`: gueltige usage mit Eingabe > 0 und Ausgabe > 0; `reject`: sonst.
+        let matrix =
+            include_str!("../../../../../../tooling/buch-gespraech/tests/usage-matrix.tsv");
+        let mut rows = 0;
+        for line in matrix
+            .lines()
+            .filter(|l| !l.trim().is_empty() && !l.starts_with('#'))
+        {
+            let (usage, want) = line.split_once('\t').unwrap();
+            let stream = format!(
+                "{}\n{}\n{}\n",
+                GOOD_CLAUDE.lines().next().unwrap(),
+                GOOD_CLAUDE.lines().nth(1).unwrap(),
+                format_args!(
+                    r#"{{"type":"result","subtype":"success","is_error":false,"result":"keine","stop_reason":"end_turn","usage":{usage},"modelUsage":{{"claude-sonnet-5-5":{{}}}}}}"#
+                )
+            );
+            let ok = parse_claude_stream(&stream)
+                .is_ok_and(|r| r.prompt_tokens > 0 && r.completion_tokens > 0);
+            assert_eq!(ok, want.trim() == "ok", "Usage-Matrix {usage}");
+            rows += 1;
+        }
+        assert!(rows >= 15, "Matrix zu klein: {rows}");
     }
 
     #[cfg(unix)]

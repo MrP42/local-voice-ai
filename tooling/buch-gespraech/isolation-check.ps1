@@ -253,6 +253,98 @@ public static class LvaWin {
 "@
 }
 
+# Kleiner JSON-Scanner: liefert die ROHE Schreibweise jeder Zahl an Pfaden mit hoechstens
+# zwei Ebenen ("feld" oder "objekt<SEP>feld"); Zahlen in Arrays und tiefer werden nicht
+# erfasst. Der Pfad folgt der Struktur, nicht dem Text: ein gleichnamiges Feld in einem
+# verschachtelten Objekt davor oder ein Feld in einer Zeichenkette zaehlt nicht.
+if (-not ('LvaJson' -as [type])) {
+    Add-Type -TypeDefinition @"
+using System;
+using System.Collections.Generic;
+using System.Text;
+
+public static class LvaJson {
+    public const char Sep = '\u0001';
+
+    public static Dictionary<string, string> Numbers(string s) {
+        Dictionary<string, string> d = new Dictionary<string, string>(StringComparer.Ordinal);
+        int i = 0;
+        Value(s, ref i, "", d);
+        return d;
+    }
+
+    static void Skip(string s, ref int i) {
+        while (i < s.Length && (s[i] == ' ' || s[i] == '\t' || s[i] == '\r' || s[i] == '\n')) i++;
+    }
+
+    static string Str(string s, ref int i) {
+        StringBuilder sb = new StringBuilder();
+        i++;
+        while (s[i] != '"') {
+            if (s[i] == '\\') {
+                i++;
+                char c = s[i];
+                if (c == 'u') { sb.Append((char)Convert.ToInt32(s.Substring(i + 1, 4), 16)); i += 4; }
+                else if (c == 'n') sb.Append('\n');
+                else if (c == 't') sb.Append('\t');
+                else if (c == 'r') sb.Append('\r');
+                else if (c == 'b') sb.Append('\b');
+                else if (c == 'f') sb.Append('\f');
+                else sb.Append(c);
+            } else sb.Append(s[i]);
+            i++;
+        }
+        i++;
+        return sb.ToString();
+    }
+
+    // path == null: innerhalb eines Arrays oder tiefer als zwei Ebenen, nichts erfassen.
+    static void Value(string s, ref int i, string path, Dictionary<string, string> d) {
+        Skip(s, ref i);
+        char c = s[i];
+        if (c == '{') {
+            i++;
+            Skip(s, ref i);
+            if (s[i] == '}') { i++; return; }
+            while (true) {
+                Skip(s, ref i);
+                string key = Str(s, ref i);
+                Skip(s, ref i);
+                i++;
+                string child = null;
+                if (path != null) {
+                    if (path.Length == 0) child = key;
+                    else if (path.IndexOf(Sep) < 0) child = path + Sep + key;
+                }
+                Value(s, ref i, child, d);
+                Skip(s, ref i);
+                if (s[i] == ',') { i++; continue; }
+                i++;
+                break;
+            }
+        } else if (c == '[') {
+            i++;
+            Skip(s, ref i);
+            if (s[i] == ']') { i++; return; }
+            while (true) {
+                Value(s, ref i, null, d);
+                Skip(s, ref i);
+                if (s[i] == ',') { i++; continue; }
+                i++;
+                break;
+            }
+        } else if (c == '"') {
+            Str(s, ref i);
+        } else {
+            int st = i;
+            while (i < s.Length && ",}] \t\r\n".IndexOf(s[i]) < 0) i++;
+            if (path != null && (s[st] == '-' || (s[st] >= '0' && s[st] <= '9'))) d[path] = s.Substring(st, i - st);
+        }
+    }
+}
+"@
+}
+
 $script:ReparseAttr = 0x400
 $script:DirAttr = 0x10
 
@@ -542,12 +634,11 @@ function Test-Count($v) {
 $script:CountFieldNames = @('estimated_tokens', 'estimated_tokens_delta', 'input_tokens', 'output_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens')
 function Test-NonIntegerLiteral([string]$token) { return ($token -ceq '-0') -or ($token -match '[.eE]') }
 function Set-NonIntegerFields($obj, [string]$line) {
+    $lits = [LvaJson]::Numbers($line)
     foreach ($name in $script:CountFieldNames) {
-        $m = [regex]::Match($line, '"' + $name + '"\s*:\s*(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)')
-        if (-not $m.Success -or -not (Test-NonIntegerLiteral $m.Groups[1].Value)) { continue }
-        foreach ($o in @($obj, $obj.usage)) {
-            if ($o -and ($o -isnot [string]) -and $o.PSObject.Properties[$name]) { $o.$name = [double]::NaN }
-        }
+        if ($lits.ContainsKey($name) -and (Test-NonIntegerLiteral $lits[$name]) -and $obj.PSObject.Properties[$name]) { $obj.$name = [double]::NaN }
+        $usageKey = 'usage' + [LvaJson]::Sep + $name
+        if ($lits.ContainsKey($usageKey) -and (Test-NonIntegerLiteral $lits[$usageKey]) -and $obj.usage -and ($obj.usage -isnot [string]) -and $obj.usage.PSObject.Properties[$name]) { $obj.usage.$name = [double]::NaN }
     }
 }
 # Eine rohe JSON-Zahl/ein Wert der Zahlenmatrix (tests/number-matrix.tsv).
@@ -641,7 +732,8 @@ function Parse-Out([string]$path, [string]$marker) {
                     foreach ($k in @('cache_creation_input_tokens', 'cache_read_input_tokens')) { if ($u.PSObject.Properties[$k]) { $inSum += [int64]$u.$k } }
                     $r.Input = $inSum
                     $r.Output = [int64]$u.output_tokens
-                    $r.UsageOk = ($r.Input -gt 0) -and ($r.Output -gt 0)
+                    # Summe exakt in [int64] (jedes Feld ist <= 2^53-1, die Summe laeuft nicht ueber) und <= 2^53-1.
+                    $r.UsageOk = ($r.Input -gt 0) -and ($r.Input -le $script:MaxSafeInt) -and ($r.Output -gt 0)
                 }
             }
             if ($e.modelUsage) { foreach ($p in $e.modelUsage.PSObject.Properties) { [void]$models.Add($p.Name.Trim()) } }
@@ -860,7 +952,7 @@ if ($SelfTest.IsPresent) {
         Note-Run (Parse-Out $t2 '')
     }
     $obs = @($script:Observed | Sort-Object -CaseSensitive)
-    $wantObs = @('assistant', 'rate_limit_event', 'result', 'system/commands_changed', 'system/init', 'system/post_turn_summary')
+    $wantObs = @('assistant', 'rate_limit_event', 'result/success', 'system/commands_changed', 'system/init', 'system/post_turn_summary')
     $n++
     $obsOk = ($obs.Count -ceq $wantObs.Count)
     for ($k = 0; $obsOk -and $k -lt $obs.Count; $k++) { if (-not (($obs[$k] -is [string]) -and ($obs[$k] -ceq $wantObs[$k]))) { $obsOk = $false } }
@@ -881,6 +973,26 @@ if ($SelfTest.IsPresent) {
         if ($mr -cne $mexp) { $fail++; Write-Host "FEHLER: Zahlenmatrix $mval : Grund '$mr', erwartet '$mexp'" -ForegroundColor Red }
         $n++
         if ((Test-CountJson $mval) -cne ($mwant -ceq 'ok')) { $fail++; Write-Host "FEHLER: Test-CountJson $mval" -ForegroundColor Red }
+    }
+    # Ereignis- und Usage-Matrix (tests/event-matrix.tsv, tests/usage-matrix.tsv): dieselben
+    # Dateien und Erwartungen wie Rust und Python.
+    foreach ($kind in @('event', 'usage')) {
+        foreach ($mline in (Get-Content -LiteralPath (Join-Path $fx "$kind-matrix.tsv") -Encoding UTF8)) {
+            if (-not $mline.Trim() -or $mline.StartsWith('#')) { continue }
+            $mc = $mline.Split("`t"); $mval = $mc[0]; $mwant = $mc[1]
+            $okl = Get-Content -LiteralPath (Join-Path $fx 'fixtures\ok.jsonl') -Encoding UTF8
+            if ($kind -ceq 'event') { $rows = @($okl[0], $mval, $okl[1], $okl[2]); $mexp = if ($mwant -ceq 'ok') { '' } else { 'event_unknown' } }
+            else {
+                $res = '{"type": "result", "subtype": "success", "is_error": false, "result": "keine", "stop_reason": "end_turn", "usage": ' + $mval + ', "modelUsage": {"claude-sonnet-5-5": {}}}'
+                $rows = @($okl[0], $okl[1], $res); $mexp = if ($mwant -ceq 'ok') { '' } else { 'usage' }
+            }
+            $t4 = Join-Path $Work "$kind-matrix.jsonl"
+            [System.IO.File]::WriteAllText($t4, ($rows -join "`n") + "`n", $Utf8)
+            [System.IO.File]::WriteAllText("$t4.rc", '0', $Utf8)
+            $mr = (Parse-Out $t4 '').Reason
+            $n++
+            if ($mr -cne $mexp) { $fail++; Write-Host "FEHLER: $kind-Matrix $mval : Grund '$mr', erwartet '$mexp'" -ForegroundColor Red }
+        }
     }
     Remove-Item -Recurse -Force $Work -ErrorAction SilentlyContinue
     if ($fail -gt 0) { Write-Host "isolation-check SelfTest: ROT ($fail von $n)"; exit 1 }

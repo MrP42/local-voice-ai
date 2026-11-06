@@ -42,6 +42,32 @@ PY
   if [ "$got" != "$exp" ]; then echo "FEHLER: Zahlenmatrix $value: Grund '$got', erwartet '$exp'" >&2; fail=1; fi
 done < "$DIR/tests/number-matrix.tsv"
 
+# ---- Ereignis- und Usage-Matrix (tests/event-matrix.tsv, tests/usage-matrix.tsv; dieselben Dateien nutzen Rust und PS1) ----
+run_matrix() { # $1 = Datei, $2 = event|usage
+  while IFS=$'\t' read -r value want; do
+    case "$value" in ''|'#'*) continue ;; esac
+    total=$((total + 1))
+    tmpm="$(mktemp)"
+    python3 - "$DIR/tests/fixtures/ok.jsonl" "$2" "$value" > "$tmpm" <<'PY'
+import sys
+ok = open(sys.argv[1], encoding="utf-8").read().splitlines()
+if sys.argv[2] == "event":
+    print("\n".join([ok[0], sys.argv[3], ok[1], ok[2]]))
+else:
+    res = ('{"type": "result", "subtype": "success", "is_error": false, "result": "keine", "stop_reason": "end_turn", '
+           '"usage": %s, "modelUsage": {"claude-sonnet-5-5": {}}}') % sys.argv[3]
+    print("\n".join([ok[0], ok[1], res]))
+PY
+    got="$(python3 -I "$DIR/analyze-run.py" "$tmpm" "$DIR/claude-events.json" "" 0 | python3 -c 'import json,sys;print(json.load(sys.stdin)["reason"])')"
+    rm -f "$tmpm"
+    if [ "$2" = event ]; then exp=event_unknown; else exp=usage; fi
+    [ "$want" = ok ] && exp=""
+    if [ "$got" != "$exp" ]; then echo "FEHLER: $2-Matrix $value: Grund '$got', erwartet '$exp'" >&2; fail=1; fi
+  done < "$1"
+}
+run_matrix "$DIR/tests/event-matrix.tsv" event
+run_matrix "$DIR/tests/usage-matrix.tsv" usage
+
 # ---- Pruefablauf mit Fake-CLI -------------------------------------------------
 # Das Skript wird nur eingelesen (keine Hauptlogik); run_claude wird ersetzt.
 export ISOLATION_CHECK_SOURCE_ONLY=1

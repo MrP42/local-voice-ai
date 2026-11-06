@@ -1,0 +1,10 @@
+# thinking_tokens-Ereignis (volle JSON-Zeile)	erwartet (ok oder reject = event_unknown)
+{"type": "system", "subtype": "thinking_tokens", "estimated_tokens": 5, "estimated_tokens_delta": 1}	ok
+{"type": "system", "subtype": "thinking_tokens", "other": {"estimated_tokens": 0}, "estimated_tokens": -0, "estimated_tokens_delta": 1}	reject
+{"type": "system", "subtype": "thinking_tokens", "estimated_tokens_delta": -0, "estimated_tokens": 5}	reject
+{"type": "system", "subtype": "thinking_tokens", "estimated_tokens": 5, "estimated_tokens_delta": 1, "tail": -0}	ok
+{"type": "system", "subtype": "thinking_tokens", "other": {"estimated_tokens": -0}, "estimated_tokens": 5, "estimated_tokens_delta": 1}	ok
+{"type": "system", "subtype": "thinking_tokens", "list": [{"estimated_tokens": -0}], "estimated_tokens": 5, "estimated_tokens_delta": 1}	ok
+{"type": "system", "subtype": "thinking_tokens", "note": "\"estimated_tokens\": -0", "estimated_tokens": 5, "estimated_tokens_delta": 1}	ok
+{"type": "system", "subtype": "thinking_tokens", "estimated_tokens": 5, "estimated_tokens_delta": 1.0}	reject
+{"type": "system", "subtype": "thinking_tokens", "estimated_tokens": 1E2, "estimated_tokens_delta": 1}	reject

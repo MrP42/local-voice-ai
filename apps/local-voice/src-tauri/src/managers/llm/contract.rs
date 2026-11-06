@@ -469,6 +469,32 @@ mod tests {
     }
 
     #[test]
+    fn the_shared_event_matrix_checks_the_field_at_its_position() {
+        // Dieselbe Datei nutzen isolation-check-test.sh (Python) und der PS1-SelfTest:
+        // ein gleichnamiges Feld in einem verschachtelten Objekt davor, in einer Liste oder in
+        // einer Zeichenkette zaehlt nicht; `-0` und Kommazahlen am Feld selbst sperren.
+        let matrix =
+            include_str!("../../../../../../tooling/buch-gespraech/tests/event-matrix.tsv");
+        let c = Contract::builtin();
+        let mut rows = 0;
+        for line in matrix
+            .lines()
+            .filter(|l| !l.trim().is_empty() && !l.starts_with('#'))
+        {
+            let (ev, want) = line.split_once('\t').unwrap();
+            let got = c.check(&evs(&[INIT, ev, ASSIST, RESULT]));
+            let expected = if want.trim() == "ok" {
+                Ok(())
+            } else {
+                Err("event_unknown")
+            };
+            assert_eq!(got, expected, "Ereignis-Matrix {ev}");
+            rows += 1;
+        }
+        assert!(rows >= 8, "Matrix zu klein: {rows}");
+    }
+
+    #[test]
     fn all_models_of_a_run_are_collected() {
         let other = r#"{"type":"assistant","message":{"model":"anders","content":[]}}"#;
         let set = models_of(&evs(&[INIT, other, RESULT]));

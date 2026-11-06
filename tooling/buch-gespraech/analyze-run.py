@@ -147,7 +147,8 @@ for e in events:
                 and all(k not in u or count(u[k]) for k in ("cache_creation_input_tokens", "cache_read_input_tokens")):
             inp = sum(u.get(k, 0) for k in ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"))
             out = u["output_tokens"]
-            usage_ok = inp > 0 and out > 0
+            # Summe der Eingabefelder ebenfalls <= 2^53-1 (wie contract/cli.rs, exakt: Python-int).
+            usage_ok = 0 < inp <= MAX_SAFE_INT and out > 0
         for k in (e.get("modelUsage") or {}):
             models.add(k.strip())
         stop = e.get("stop_reason", "") or ""
