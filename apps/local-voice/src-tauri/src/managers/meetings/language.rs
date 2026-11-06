@@ -212,7 +212,11 @@ pub fn sample_windows(samples: &[i16]) -> Vec<Vec<f32>> {
     if samples.is_empty() {
         return Vec::new();
     }
-    let to_f32 = |s: &[i16]| s.iter().map(|v| f32::from(*v) / 32768.0).collect::<Vec<f32>>();
+    let to_f32 = |s: &[i16]| {
+        s.iter()
+            .map(|v| f32::from(*v) / 32768.0)
+            .collect::<Vec<f32>>()
+    };
     if samples.len() <= window {
         return if rms(samples) >= SILENCE_RMS {
             vec![to_f32(samples)]
@@ -267,7 +271,10 @@ pub fn decide_probe(result: &ProbeResult) -> Option<(String, &'static str, f64)>
             None => counts.push((code, 1)),
         }
     }
-    if let Some((code, n)) = counts.into_iter().max_by(|a, b| a.1.cmp(&b.1).then(b.0.cmp(&a.0))) {
+    if let Some((code, n)) = counts
+        .into_iter()
+        .max_by(|a, b| a.1.cmp(&b.1).then(b.0.cmp(&a.0)))
+    {
         return Some((code, SOURCE_PROBE, n as f64 / total.max(1) as f64));
     }
     detect_text(&result.text).map(|d| (d.code, SOURCE_TEXT, d.confidence))
@@ -609,15 +616,20 @@ pub fn build_info(
         (Some(code), Some(current), Some(false)) => {
             let choice = choose_model(Some(code), current, false, catalog);
             let named = |id: &str, downloaded: bool| {
-                catalog.iter().find(|m| m.id == id).map(|m| ModelSuggestion {
-                    model_id: m.id.clone(),
-                    name: m.name.clone(),
-                    downloaded,
-                })
+                catalog
+                    .iter()
+                    .find(|m| m.id == id)
+                    .map(|m| ModelSuggestion {
+                        model_id: m.id.clone(),
+                        name: m.name.clone(),
+                        downloaded,
+                    })
             };
             match choice.reason {
                 ModelReason::Switched => named(&choice.id, true),
-                ModelReason::NoneInstalled => choice.suggestion.as_deref().and_then(|id| named(id, false)),
+                ModelReason::NoneInstalled => {
+                    choice.suggestion.as_deref().and_then(|id| named(id, false))
+                }
                 _ => None,
             }
         }

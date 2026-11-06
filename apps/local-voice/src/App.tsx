@@ -25,13 +25,15 @@ import {
   Tooltip as FluentTooltip,
 } from "@fluentui/react-components";
 import { Menu } from "lucide-react";
+import { KeepAlive } from "./components/shell/KeepAlive";
 import {
   HelpDockSlotContext,
   PageHeaderSlotContext,
+  TitleContextSlotContext,
 } from "./components/shell/PageHeaderSlot";
 import { APP_NAME, AppMark, useIsNarrow } from "./components/shell/frame";
 import { WindowControls } from "./components/shell/WindowControls";
-import { TitlebarTools } from "./components/shell/TitlebarTools";
+import { ShellProfil, useShellKuerzel } from "./components/shell/ShellProfil";
 import { ModelUpdateGate } from "./components/llm/ModelUpdateGate";
 import { IntroTour } from "./components/intro-tour/IntroTour";
 import {
@@ -39,10 +41,13 @@ import {
   useFirstRunModelSelection,
 } from "./components/intro-tour/firstRunSetup";
 import { useIntroTourStore } from "./stores/introTourStore";
+import { KopplungsDialog } from "./components/integrations/KopplungsDialog";
+import { FreigabeWaechter } from "./components/projekte/FreigabeWaechter";
 import { useSettings } from "./hooks/useSettings";
 import { usePersistentState } from "./hooks/usePersistentState";
 import { useSettingsStore } from "./stores/settingsStore";
 import { commands } from "@/bindings";
+import { installMainCallBridge } from "./components/voice-call/mainCall";
 import { getLanguageDirection, initializeRTL } from "@/lib/utils/rtl";
 import { pasteNoticeKeys } from "@/lib/utils/pasteNotice";
 import {
@@ -51,6 +56,9 @@ import {
 } from "@/fluent/releaseBackground";
 
 type OnboardingStep = "accessibility" | "model" | "done";
+
+/** Module, die beim Bereichswechsel erhalten bleiben (siehe `KeepAlive`). */
+const KEEP_ALIVE: readonly SidebarSection[] = ["tts", "library"];
 
 const renderSettingsContent = (section: SidebarSection) => {
   const ActiveComponent =
@@ -68,6 +76,15 @@ function App() {
   const [isReturningUser, setIsReturningUser] = useState(false);
   const [currentSection, setCurrentSection] =
     usePersistentState<SidebarSection>("section", "home", isSidebarSection);
+  // Einmal besuchte erhaltene Module (KeepAlive) bleiben eingehängt.
+  const [visited, setVisited] = useState<SidebarSection[]>([]);
+  useEffect(() => {
+    if (
+      KEEP_ALIVE.includes(currentSection) &&
+      !visited.includes(currentSection)
+    )
+      setVisited((v) => [...v, currentSection]);
+  }, [currentSection, visited]);
   const { settings, updateSetting } = useSettings();
   const direction = getLanguageDirection(i18n.language);
   const refreshAudioDevices = useSettingsStore(
@@ -103,16 +120,20 @@ function App() {
     });
     setOnboardingStep("model");
   }, [firstRunFailed, pickerRequested, isReturningUser]);
-  // Rahmen: Titelleisten-Platz für den Seitenkopf, Navigation ein-/ausklappen
-  // (bleibt über Neustarts), schmal als Overlay-Drawer.
-  const [headerSlot, setHeaderSlot] = useState<HTMLElement | null>(null);
+  // Rahmen: Navigation ein-/ausklappen (bleibt über Neustarts), schmal als
+  // Overlay-Drawer.
   const [helpDock, setHelpDock] = useState<HTMLElement | null>(null);
+  // Platz rechts in der Titelleiste für ⓘ, Suche und Aktionen des Moduls.
+  const [headerSlot, setHeaderSlot] = useState<HTMLElement | null>(null);
+  const [kontextSlot, setKontextSlot] = useState<HTMLElement | null>(null);
   const [navCollapsedValue, setNavCollapsedValue] = usePersistentState<string>(
     "sidebar.collapsed",
     "0",
   );
   const navCollapsed = navCollapsedValue === "1";
   const narrow = useIsNarrow();
+  // F1 (Seitenhilfe) und Strg+, (Einstellungen), auch bei geschlossener Navigation.
+  useShellKuerzel(setCurrentSection, onboardingStep === "done");
   const [navDrawerOpen, setNavDrawerOpen] = useState(false);
   const hamburgerRef = useRef<HTMLButtonElement>(null);
   const drawerWasOpen = useRef(false);
@@ -239,6 +260,9 @@ function App() {
     window.addEventListener("lv-navigate", handler);
     return () => window.removeEventListener("lv-navigate", handler);
   }, [setCurrentSection]);
+
+  // Hauptgespräch per Tastenkürzel: läuft im Hauptfenster, auch wenn es verborgen ist.
+  useEffect(() => installMainCallBridge(), []);
 
   // "Vorbereiten" im Hinweisfenster (M5-P5e): das Hauptfenster kommt nach vorn
   // (Backend), hier wechselt es zu den Aufnahmen. Den Brief oeffnet dort die
@@ -439,13 +463,23 @@ function App() {
   const toaster = (
     <Toaster
       theme="system"
+      // Deutlich über der Statusleiste (≈ 26 px), nicht dahinter:
+      // ≥ 44 px Luft dazwischen (Codex-Abnahme lva#200).
+      offset={{ bottom: 72, right: 16 }}
+      mobileOffset={{ bottom: 72 }}
       toastOptions={{
         unstyled: true,
         classNames: {
           toast:
-            "bg-background border border-mid-gray/20 rounded-lg shadow-lg px-4 py-3 flex items-center gap-3 text-sm",
+            "bg-background border border-mid-gray/20 rounded-lg shadow-lg px-4 py-3 flex items-center gap-3 text-sm max-w-[calc(100vw-32px)] break-words",
           title: "font-medium",
+          // Fehler gut lesbar: volle Textfarbe, roter Rand links, umbrechen statt abschneiden.
+          error:
+            "border-l-4 border-l-[var(--colorStatusDangerForeground1,#b10e1c)] text-[var(--colorNeutralForeground1,inherit)] items-start",
           description: "text-mid-gray",
+          // Aktion als erkennbarer Knopf, nicht als blasser Text.
+          actionButton:
+            "shrink-0 rounded-md bg-[var(--colorBrandBackground)] text-[var(--colorNeutralForegroundOnBrand)] font-medium px-3 py-1.5 min-h-[32px] hover:bg-[var(--colorBrandBackgroundHover)]",
         },
       }}
     />
@@ -490,9 +524,14 @@ function App() {
         <WhatsNewGate />
         <ModelUpdateGate />
         <IntroTour />
-        {/* Titelleiste 48px (Leitlinie §2): Hamburger, App-Symbol und Name,
-            daneben der Seitentitel mit den Aktionen der Seite (PageShell),
-            rechts die Fensterknöpfe. Das Hauptfenster ist rahmenlos, dies ist
+        <KopplungsDialog />
+        <FreigabeWaechter />
+        {/* Titelleiste 40px (ADR-0027 E3): Hamburger, App-Symbol und Name,
+            freie Ziehfläche, rechts ⓘ, Suche und Aktionen des Moduls
+            (PageShell), Fensterknöpfe. Eine Titelzeile im Modul gibt es
+            nicht (Patrick 02.11.): der Modulname steht in der Navigation.
+            Einstellungen und Hilfe im Profilmenü unten links. Das
+            Hauptfenster ist rahmenlos, dies ist
             die einzige Titelleiste: freie Flächen ziehen das Fenster, ein
             Doppelklick maximiert ("deep" = ganzer Teilbaum, Bedienelemente
             ausgenommen). */}
@@ -516,14 +555,13 @@ function App() {
             <AppMark />
             <span className="lv-titlebar__name">{APP_NAME}</span>
           </span>
-          <span className="lv-titlebar__sep" aria-hidden="true" />
-          <div ref={setHeaderSlot} className="lv-titlebar__slot" />
-          <span className="lv-titlebar__fallback">
-            {t(SECTIONS_CONFIG[currentSection].labelKey)}
+          <span className="lv-titlebar__frei">
+            <span ref={setKontextSlot} className="lv-titlebar__kontext" />
           </span>
-          <TitlebarTools
-            currentSection={currentSection}
-            onNavigate={setCurrentSection}
+          <div
+            ref={setHeaderSlot}
+            className="lv-titlebar__modul"
+            data-tauri-drag-region="false"
           />
           <WindowControls />
         </header>
@@ -535,6 +573,16 @@ function App() {
             narrow={narrow}
             drawerOpen={navDrawerOpen}
             onDrawerOpenChange={setNavDrawerOpen}
+            fuss={
+              <ShellProfil
+                currentSection={currentSection}
+                onNavigate={(section) => {
+                  setCurrentSection(section);
+                  setNavDrawerOpen(false);
+                }}
+                onAktion={() => setNavDrawerOpen(false)}
+              />
+            }
           />
           {/* Inhaltsschicht (heller, Radius 8 oben links), nur sie scrollt */}
           <div className="lv-content flex-1 flex flex-col overflow-hidden min-w-0">
@@ -576,9 +624,18 @@ function App() {
                 <AccessibilityPermissions />
                 {currentSection === "home" ? (
                   <WorkspaceHome onNavigate={setCurrentSection} />
-                ) : (
+                ) : KEEP_ALIVE.includes(currentSection) ? null : (
                   renderSettingsContent(currentSection)
                 )}
+                {/* Vorlesen und Bibliothek bleiben nach dem ersten Besuch
+                    erhalten: Hin- und Herwechseln ohne Neuladen (Patrick 03.11.). */}
+                {KEEP_ALIVE.filter(
+                  (s) => s === currentSection || visited.includes(s),
+                ).map((s) => (
+                  <KeepAlive key={s} name={s} active={currentSection === s}>
+                    {renderSettingsContent(s)}
+                  </KeepAlive>
+                ))}
               </div>
             </main>
           </div>
@@ -588,7 +645,7 @@ function App() {
         </div>
         {/* Statusleiste (Leitlinie §2, 24 px): Modelle links; Mikrofon, Speicher, Version rechts */}
         <footer className="lv-statusbar">
-          <Footer />
+          <Footer section={currentSection} />
         </footer>
       </div>
     );
@@ -596,10 +653,12 @@ function App() {
 
   return (
     <PageHeaderSlotContext.Provider value={headerSlot}>
-      <HelpDockSlotContext.Provider value={helpDock}>
-        {toaster}
-        {content}
-      </HelpDockSlotContext.Provider>
+      <TitleContextSlotContext.Provider value={kontextSlot}>
+        <HelpDockSlotContext.Provider value={helpDock}>
+          {toaster}
+          {content}
+        </HelpDockSlotContext.Provider>
+      </TitleContextSlotContext.Provider>
     </PageHeaderSlotContext.Provider>
   );
 }

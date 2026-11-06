@@ -123,9 +123,16 @@ pub enum DspNotice {
         channel: u8,
         state: HealthState,
     },
-    VadUnavailable { channel: u8 },
-    Overflow { channel: u8, skipped_ms: u64 },
-    DspPanic { channel: u8 },
+    VadUnavailable {
+        channel: u8,
+    },
+    Overflow {
+        channel: u8,
+        skipped_ms: u64,
+    },
+    DspPanic {
+        channel: u8,
+    },
     /// Panik in der Echo-Unterdrueckung; Kanal 0 laeuft ab da unbearbeitet.
     AecPanic,
 }
@@ -819,7 +826,9 @@ impl EchoStage {
         }
         let t = self.t_ref_ms(qpc);
         if let AlignEvent::Reset { drift_ms } = self.aligner.push_reference(t, samples) {
-            warn!("meetings: aec_realign - Systemton um {drift_ms} ms versetzt, AEC schwingt neu ein");
+            warn!(
+                "meetings: aec_realign - Systemton um {drift_ms} ms versetzt, AEC schwingt neu ein"
+            );
             self.summary.realigns += 1;
             self.canceller.reset();
         }
@@ -999,7 +1008,9 @@ fn deliver_mic(
     }
     stage.write_out();
     let samples = &stage.out;
-    apply(lane, 0, *lane_pos, cfg, stats, out, |l, o| l.push(0, samples, o));
+    apply(lane, 0, *lane_pos, cfg, stats, out, |l, o| {
+        l.push(0, samples, o)
+    });
     *lane_pos += samples.len() as u64;
     stage.out.clear();
 }
@@ -1243,7 +1254,14 @@ fn dsp_main(
                 if let Some(stage) = echo.as_mut() {
                     info!("meetings: system audio reference lost - echo cancellation off, microphone unprocessed");
                     guard_echo(stage, &cfg, |s| s.reference_lost());
-                    deliver_mic(stage, &mut lanes[0], &mut lane_pos[0], &cfg, &stats, &mut out);
+                    deliver_mic(
+                        stage,
+                        &mut lanes[0],
+                        &mut lane_pos[0],
+                        &cfg,
+                        &stats,
+                        &mut out,
+                    );
                 }
                 dispatch(out, &work_tx, &stats);
                 continue;
@@ -1275,7 +1293,14 @@ fn dsp_main(
             match (ch, echo.as_mut()) {
                 (0, Some(stage)) => {
                     guard_echo(stage, &cfg, |s| s.before_mic_gap());
-                    deliver_mic(stage, &mut lanes[0], &mut lane_pos[0], &cfg, &stats, &mut out);
+                    deliver_mic(
+                        stage,
+                        &mut lanes[0],
+                        &mut lane_pos[0],
+                        &cfg,
+                        &stats,
+                        &mut out,
+                    );
                     stage.write_silence(gap);
                 }
                 (1, Some(stage)) => guard_echo(stage, &cfg, |s| s.on_ref_gap(gap)),
@@ -1303,7 +1328,14 @@ fn dsp_main(
             Some((samples, qpc)) => match (ch, echo.as_mut()) {
                 (0, Some(stage)) => {
                     guard_echo(stage, &cfg, |s| s.on_mic(&samples, qpc));
-                    deliver_mic(stage, &mut lanes[0], &mut lane_pos[0], &cfg, &stats, &mut out);
+                    deliver_mic(
+                        stage,
+                        &mut lanes[0],
+                        &mut lane_pos[0],
+                        &cfg,
+                        &stats,
+                        &mut out,
+                    );
                 }
                 (1, Some(stage)) => {
                     let len = samples.len() as u64;
@@ -1319,7 +1351,14 @@ fn dsp_main(
                     lane_pos[1] += len;
                     // Neue Referenz kann wartende Mikrofon-Frames freigeben.
                     guard_echo(stage, &cfg, move |s| s.on_ref(samples, qpc));
-                    deliver_mic(stage, &mut lanes[0], &mut lane_pos[0], &cfg, &stats, &mut out);
+                    deliver_mic(
+                        stage,
+                        &mut lanes[0],
+                        &mut lane_pos[0],
+                        &cfg,
+                        &stats,
+                        &mut out,
+                    );
                 }
                 _ => {
                     apply(
@@ -1338,7 +1377,14 @@ fn dsp_main(
                 match (ch, echo.as_mut()) {
                     (0, Some(stage)) => {
                         guard_echo(stage, &cfg, |s| s.mic_boundary());
-                        deliver_mic(stage, &mut lanes[0], &mut lane_pos[0], &cfg, &stats, &mut out);
+                        deliver_mic(
+                            stage,
+                            &mut lanes[0],
+                            &mut lane_pos[0],
+                            &cfg,
+                            &stats,
+                            &mut out,
+                        );
                     }
                     (1, Some(stage)) => guard_echo(stage, &cfg, |s| s.ref_boundary()),
                     _ => {}
@@ -1361,7 +1407,14 @@ fn dsp_main(
     if let Some(stage) = echo.as_mut() {
         let mut out = Vec::new();
         guard_echo(stage, &cfg, |s| s.finish());
-        deliver_mic(stage, &mut lanes[0], &mut lane_pos[0], &cfg, &stats, &mut out);
+        deliver_mic(
+            stage,
+            &mut lanes[0],
+            &mut lane_pos[0],
+            &cfg,
+            &stats,
+            &mut out,
+        );
         dispatch(out, &work_tx, &stats);
         let summary = stage.finalize();
         info!(
@@ -1601,7 +1654,10 @@ impl EchoNet {
 
     fn span_ms(chunk: &Chunk) -> (i64, i64) {
         let start = chunk.offset_ms as i64;
-        (start, start + (chunk.samples.len() as u64 / SAMPLES_PER_MS) as i64)
+        (
+            start,
+            start + (chunk.samples.len() as u64 / SAMPLES_PER_MS) as i64,
+        )
     }
 
     /// Merkt sich ein gespeichertes Gegenseite-Segment. Systemzeit -> Mikrofon-
@@ -1629,7 +1685,11 @@ impl EchoNet {
         let (lo, hi) = (start - ECHO_NET_WINDOW_MS, end + ECHO_NET_WINDOW_MS);
         let mut far_words: Vec<&str> = Vec::new();
         let mut far_rms = f32::NEG_INFINITY;
-        for f in self.far.iter().filter(|f| f.end_ms >= lo && f.start_ms <= hi) {
+        for f in self
+            .far
+            .iter()
+            .filter(|f| f.end_ms >= lo && f.start_ms <= hi)
+        {
             far_words.extend(f.words.iter().map(String::as_str));
             far_rms = far_rms.max(f.rms_db);
         }
@@ -1637,7 +1697,11 @@ impl EchoNet {
             return false;
         }
         let ich_words = Self::words(segs);
-        echo::should_drop_duplicate(&ich_words, &far_words, far_rms - rms_dbfs_f32(&chunk.samples))
+        echo::should_drop_duplicate(
+            &ich_words,
+            &far_words,
+            far_rms - rms_dbfs_f32(&chunk.samples),
+        )
     }
 }
 
@@ -1677,7 +1741,10 @@ fn run_worker(
             } else if net.is_echo(&chunk, &appended) {
                 // Nur Zahlen ins Log, nie Inhalte.
                 stats.echo_dropped.fetch_add(1, Ordering::Relaxed);
-                debug!("meetings: echo safety net dropped a {} ms segment", chunk.samples.len() as u64 / SAMPLES_PER_MS);
+                debug!(
+                    "meetings: echo safety net dropped a {} ms segment",
+                    chunk.samples.len() as u64 / SAMPLES_PER_MS
+                );
                 continue;
             }
         }
@@ -2637,7 +2704,10 @@ mod tests {
         st.on_mic(&vec![0; 480], stamp(0));
         assert!(st.held.is_empty());
         assert_eq!(st.summary.ref_dropped_samples, 0);
-        assert!(st.summary.reference_seen, "gehaltene Referenz wurde benutzt");
+        assert!(
+            st.summary.reference_seen,
+            "gehaltene Referenz wurde benutzt"
+        );
     }
 
     #[test]
@@ -2671,7 +2741,10 @@ mod tests {
             let resume = stamp(16_000 + 5 * 16_000);
             st.on_mic(&vec![0; 4_800], resume);
             st.on_ref(vec![0; 4_800], resume);
-            assert_eq!(st.summary.resets, 1, "ein Reset je Pause (sys_first={sys_first})");
+            assert_eq!(
+                st.summary.resets, 1,
+                "ein Reset je Pause (sys_first={sys_first})"
+            );
             assert_eq!(st.summary.realigns, 0, "kein falsches Realign");
             assert_eq!(st.out.len(), 16_000 + 4_800);
             // Nach dem Fortsetzen liegt die Referenz wieder auf der Achse.
@@ -2709,7 +2782,11 @@ mod tests {
         let summary = st.finalize();
         assert!(summary.reference_lost && !summary.reference_seen);
         assert!(!summary.wav_kept);
-        assert_eq!(*sink.state.lock().unwrap(), "discarded", "nie Referenz: keine mic_aec.wav");
+        assert_eq!(
+            *sink.state.lock().unwrap(),
+            "discarded",
+            "nie Referenz: keine mic_aec.wav"
+        );
     }
 
     #[test]
@@ -2752,7 +2829,12 @@ mod tests {
     fn dsp_with_echo(
         sink: &MemSink,
         vad: Option<VadFactory>,
-    ) -> (DspHandle, Receiver<WorkItem>, Timelines, Arc<Mutex<Vec<DspNotice>>>) {
+    ) -> (
+        DspHandle,
+        Receiver<WorkItem>,
+        Timelines,
+        Arc<Mutex<Vec<DspNotice>>>,
+    ) {
         let (notice, log) = notices();
         let (setup, timelines) = echo_setup(Some(sink));
         let (tx, rx) = mpsc::channel();
@@ -2802,9 +2884,7 @@ mod tests {
         let erle = rms_dbfs(region(&mic, FAR_ONLY)) - rms_dbfs(region(&out, FAR_ONLY));
         let near = rms_dbfs(region(&out, NEAR_ONLY)) - rms_dbfs(region(&mic, NEAR_ONLY));
         let summary = stats.echo_summary().unwrap();
-        println!(
-            "dsp-aec: erle_far_only={erle:.1} dB near_delta={near:.1} dB | {summary:?}"
-        );
+        println!("dsp-aec: erle_far_only={erle:.1} dB near_delta={near:.1} dB | {summary:?}");
         assert!(erle >= 20.0, "ERLE {erle:.1} dB");
         assert!(near >= -3.0, "Nahsprache {near:.1} dB");
         let t = timelines.lock().unwrap()[0].clone();
@@ -2856,7 +2936,10 @@ mod tests {
         let window = (7.5, 9.8);
         let erle = rms_dbfs(region(&mic, window)) - rms_dbfs(region(&out, window));
         let summary = stats.echo_summary().unwrap();
-        println!("dsp-aec nach Pause: erle({window:?})={erle:.1} dB | resets={} realigns={}", summary.resets, summary.realigns);
+        println!(
+            "dsp-aec nach Pause: erle({window:?})={erle:.1} dB | resets={} realigns={}",
+            summary.resets, summary.realigns
+        );
         assert_eq!((summary.resets, summary.realigns), (1, 0));
         assert!(erle >= 15.0, "ERLE nach der Pause {erle:.1} dB");
     }
@@ -2880,8 +2963,16 @@ mod tests {
         send(1, 1_440, 0, 0);
         send(0, 999, 3_200, 1_001 + 3_200); // 200 ms Ueberlauf davor
         send(1, 5_000, 0, 1_440);
-        tx.send(DspMsg::Boundary { channel: 0, gap_before: 0 }).unwrap();
-        tx.send(DspMsg::Boundary { channel: 1, gap_before: 0 }).unwrap();
+        tx.send(DspMsg::Boundary {
+            channel: 0,
+            gap_before: 0,
+        })
+        .unwrap();
+        tx.send(DspMsg::Boundary {
+            channel: 1,
+            gap_before: 0,
+        })
+        .unwrap();
         send(0, 777, 0, 200_000);
         tx.send(DspMsg::ReferenceLost).unwrap();
         send(0, 555, 0, 200_777);
@@ -2893,10 +2984,10 @@ mod tests {
         let summary = stats.echo_summary().unwrap();
         assert!(summary.reference_lost && summary.wav_kept);
         assert_eq!(summary.wav_samples, Some(total as u64));
-        assert!(log
-            .lock()
-            .unwrap()
-            .contains(&DspNotice::Overflow { channel: 0, skipped_ms: 200 }));
+        assert!(log.lock().unwrap().contains(&DspNotice::Overflow {
+            channel: 0,
+            skipped_ms: 200
+        }));
         // Die Luecke steht als Stille in der Datei, an ihrer Stelle.
         let data = sink.data.lock().unwrap();
         assert!(data[1_001..1_001 + 3_200].iter().all(|&s| s == 0));
@@ -2918,7 +3009,9 @@ mod tests {
     fn with_echo_cancellation_off_the_microphone_reaches_the_lane_untouched() {
         let (h, rx, _) = dsp_only(None);
         let stats = h.stats();
-        let raw: Vec<i16> = (0..32_000).map(|i| ((i * 7) % 3_000) as i16 - 1_500).collect();
+        let raw: Vec<i16> = (0..32_000)
+            .map(|i| ((i * 7) % 3_000) as i16 - 1_500)
+            .collect();
         let mut mic = h.feed(0);
         let mut sys = h.feed(1);
         feed_blocks(&mut mic, &raw);
@@ -2937,7 +3030,9 @@ mod tests {
         let (h, rx, _, _) = dsp_with_echo(&sink, None);
         let stats = h.stats();
         h.control().reference_lost(); // wie recorder.rs bei Startfehler/Timeout
-        let raw: Vec<i16> = (0..24_000).map(|i| ((i * 13) % 4_000) as i16 - 2_000).collect();
+        let raw: Vec<i16> = (0..24_000)
+            .map(|i| ((i * 13) % 4_000) as i16 - 2_000)
+            .collect();
         let mut mic = h.feed(0);
         for (k, block) in raw.chunks(480).enumerate() {
             assert!(mic.push_blocking(block, stamp(k as u64 * 480)));
@@ -3015,7 +3110,7 @@ mod tests {
         let stats = DspStats::default();
         let stored = run_net(
             vec![
-                seg_item(1, tone_chunk(10_000, 3_000, 0.3)),  // Gegenseite, laut
+                seg_item(1, tone_chunk(10_000, 3_000, 0.3)), // Gegenseite, laut
                 seg_item(0, tone_chunk(10_100, 3_000, 0.01)), // Ich, 30 dB leiser
             ],
             &stats,
@@ -3047,7 +3142,10 @@ mod tests {
             ],
             &stats,
         );
-        assert_eq!((stats.echo_dropped.load(Ordering::Relaxed), stored.len()), (0, 2));
+        assert_eq!(
+            (stats.echo_dropped.load(Ordering::Relaxed), stored.len()),
+            (0, 2)
+        );
     }
 
     #[test]

@@ -12,7 +12,7 @@ import { relativeTime } from "./tts/WorkspaceSidebars";
 
 /**
  * Konto & Geräte: Anmelden am Hub, Stand des Abgleichs, Abmelden. Sitzt im
- * Reiter „Allgemein" — kein eigener Menüpunkt für eine Einstellung. Der
+ * Reiter „Konto & Geräte" (seit ADR-0024, vorher „Allgemein"). Der
  * Schlüssel entsteht aus dem Passwort auf diesem Gerät; der Server sieht
  * nur Chiffrate (Spec 2026-09-14, Abschnitt 3).
  */
@@ -171,11 +171,11 @@ export const SyncAccountCard: React.FC = () => {
             layout="horizontal"
           >
             <div className="flex items-center gap-2">
-              <Button variant="secondary" size="sm" onClick={() => void syncNow()} disabled={busy || status?.running}>
+              <Button variant="secondary" size="sm" className="max-sm:min-h-[44px] pointer-coarse:min-h-[44px]" onClick={() => void syncNow()} disabled={busy || status?.running}>
                 <RefreshCw width={14} height={14} className={status?.running ? "animate-spin" : ""} />
                 {t("sync.syncNow")}
               </Button>
-              <Button variant="secondary" size="sm" onClick={() => void logout()} disabled={busy}>
+              <Button variant="secondary" size="sm" className="max-sm:min-h-[44px] pointer-coarse:min-h-[44px]" onClick={() => void logout()} disabled={busy}>
                 <LogOut width={14} height={14} />
                 {t("sync.logout")}
               </Button>

@@ -172,7 +172,12 @@ mod sys {
             // SAFETY: gueltiges Handle, Puffer der angegebenen Laenge; Flags 0 =
             // FILE_NAME_NORMALIZED | VOLUME_NAME_DOS (dieselbe Form wie `fs::canonicalize`).
             let n = unsafe {
-                GetFinalPathNameByHandleW(handle as *mut c_void, buf.as_mut_ptr(), buf.len() as u32, 0)
+                GetFinalPathNameByHandleW(
+                    handle as *mut c_void,
+                    buf.as_mut_ptr(),
+                    buf.len() as u32,
+                    0,
+                )
             };
             if n == 0 {
                 return Err(io::Error::last_os_error());
@@ -187,7 +192,7 @@ mod sys {
 
     pub fn delete_created(file: &File, path: &Path) {
         let delete: u8 = 1; // FILE_DISPOSITION_INFO { DeleteFile: TRUE }
-        // SAFETY: gueltiges Handle mit DELETE-Recht, Zeiger auf eine lokale 1-Byte-Struktur.
+                            // SAFETY: gueltiges Handle mit DELETE-Recht, Zeiger auf eine lokale 1-Byte-Struktur.
         let ok = unsafe {
             SetFileInformationByHandle(
                 file.as_raw_handle() as *mut c_void,

@@ -8,6 +8,7 @@
 
 use tauri::AppHandle;
 
+use crate::managers::llm::cli::{self, Cli};
 use crate::managers::llm::updates::{self, ModelUpdate};
 use crate::settings::{self, AppSettings, LlmConnection, LlmModelConfig, PostProcessProvider};
 
@@ -47,6 +48,7 @@ pub fn llm_remove_connection(app: AppHandle, id: String) -> Result<(), String> {
             s.llm_active_model_id = None;
         }
     }
+    s.prune_function_models();
     settings::write_settings(&app, s);
     Ok(())
 }
@@ -58,7 +60,11 @@ pub fn llm_remove_connection(app: AppHandle, id: String) -> Result<(), String> {
 #[specta::specta]
 pub fn llm_upsert_model(app: AppHandle, mut model: LlmModelConfig) -> Result<(), String> {
     let mut s = settings::get_settings(&app);
-    if !s.llm_connections.iter().any(|c| c.id == model.connection_id) {
+    if !s
+        .llm_connections
+        .iter()
+        .any(|c| c.id == model.connection_id)
+    {
         return Err(format!("Unbekannte Verbindung: {}", model.connection_id));
     }
     if model.remote_id.trim().is_empty() {
@@ -86,6 +92,7 @@ pub fn llm_remove_model(app: AppHandle, id: String) -> Result<(), String> {
     if s.llm_active_model_id.as_deref() == Some(id.as_str()) {
         s.llm_active_model_id = None;
     }
+    s.prune_function_models();
     settings::write_settings(&app, s);
     Ok(())
 }
@@ -240,7 +247,6 @@ fn try_start_model_check() -> Option<RunningGuard> {
 #[tauri::command]
 #[specta::specta]
 pub async fn llm_check_new_models(app: AppHandle) -> Result<ModelCheck, String> {
-    use crate::managers::llm::cli::{self, Cli};
     // Laeuft schon eine Pruefung, antwortet dieser Aufruf nur mit dem Stand.
     let guard = try_start_model_check();
     let first = guard.is_some();
@@ -252,8 +258,12 @@ pub async fn llm_check_new_models(app: AppHandle) -> Result<ModelCheck, String> 
     if first {
         // Arbeitskopie, damit die zweite Runde sieht, was die erste vermerkt hat.
         let mut work = s0.clone();
-        let connections: Vec<LlmConnection> =
-            s0.llm_connections.iter().filter(|c| c.enabled).cloned().collect();
+        let connections: Vec<LlmConnection> = s0
+            .llm_connections
+            .iter()
+            .filter(|c| c.enabled)
+            .cloned()
+            .collect();
         for c in connections {
             if crate::commands::compliance::assess_connection(&work, &c).verdict
                 == crate::managers::compliance::Verdict::Blocked
@@ -376,6 +386,34 @@ pub fn llm_answer_model_updates(
 }
 
 /// Erlaubt oder verbietet, dass die App die Codex-CLI selbst aktualisiert.
+/// Ist die CLI einer Abo-Verbindung installiert und angemeldet?
+#[tauri::command]
+#[specta::specta]
+pub async fn llm_cli_status(kind: String) -> Result<cli::CliStatus, String> {
+    let cli = Cli::from_kind(&kind).ok_or_else(|| format!("Keine CLI-Vorlage: {kind}"))?;
+    tokio::task::spawn_blocking(move || cli::status(cli))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Oeffnet die Anmeldung der CLI (`claude auth login`, `codex login`) in einem
+/// eigenen Fenster. Zugangsdaten bleiben bei der CLI.
+#[tauri::command]
+#[specta::specta]
+pub fn llm_cli_login(kind: String) -> Result<(), String> {
+    let cli = Cli::from_kind(&kind).ok_or_else(|| format!("Keine CLI-Vorlage: {kind}"))?;
+    cli::open_login(cli)
+}
+
+/// Fehlt die CLI: oeffnet ein Fenster, das sie ueber den offiziellen Installer
+/// laedt und danach ihre Anmeldung startet.
+#[tauri::command]
+#[specta::specta]
+pub fn llm_cli_setup(kind: String) -> Result<(), String> {
+    let cli = Cli::from_kind(&kind).ok_or_else(|| format!("Keine CLI-Vorlage: {kind}"))?;
+    cli::open_setup(cli)
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn llm_set_cli_auto_update(app: AppHandle, enabled: bool) -> Result<(), String> {
@@ -424,6 +462,64 @@ pub fn llm_model_offers_fast(app: AppHandle, connection_id: String, remote_id: S
         .is_some_and(|cli| cli.offers_fast(&remote_id))
 }
 
+/// Modell einer Funktion setzen (Modelle je Funktion). `model_id = None` oder
+/// leer: die Funktion nutzt wieder das Standardmodell. Gesperrte oder nicht
+/// freigegebene Modelle sind nicht waehlbar, wie beim Standardmodell.
+#[tauri::command]
+#[specta::specta]
+pub fn llm_set_function_model(
+    app: AppHandle,
+    for_function: String,
+    model_id: Option<String>,
+    effort: Option<String>,
+) -> Result<(), String> {
+    let function = for_function;
+    if !settings::LLM_FUNCTIONS.contains(&function.as_str()) {
+        return Err(format!("Unbekannte Funktion: {function}"));
+    }
+    let effort = effort.filter(|e| !e.trim().is_empty());
+    if let Some(ref e) = effort {
+        if !crate::managers::llm::cli::valid_effort(e) {
+            return Err(format!("Unbekannte Effort-Stufe: {e}"));
+        }
+    }
+    let mut s = settings::get_settings(&app);
+    match model_id.filter(|m| !m.trim().is_empty()) {
+        None => {
+            s.function_models.remove(&function);
+        }
+        Some(id) => {
+            if !s.llm_model_selectable(&id) {
+                return Err(format!("Modell nicht waehlbar: {id}"));
+            }
+            if let Some(c) = s
+                .llm_models
+                .iter()
+                .find(|m| m.id == id)
+                .and_then(|m| s.llm_connections.iter().find(|c| c.id == m.connection_id))
+            {
+                let a = crate::commands::compliance::assess_connection(&s, c);
+                if a.verdict == crate::managers::compliance::Verdict::Blocked {
+                    return Err(format!(
+                        "{}: {}",
+                        crate::managers::compliance::CODE_COMPLIANCE_BLOCKED,
+                        a.reasons.join(", ")
+                    ));
+                }
+            }
+            s.function_models.insert(
+                function,
+                settings::FunctionModel {
+                    model_id: id,
+                    effort,
+                },
+            );
+        }
+    }
+    settings::write_settings(&app, s);
+    Ok(())
+}
+
 /// Standard-Effort fuer Abo-Modelle ohne eigenen Effort (`low` … `max`).
 #[tauri::command]
 #[specta::specta]
@@ -444,7 +540,11 @@ pub fn llm_set_default_effort(app: AppHandle, effort: String) -> Result<(), Stri
 /// frei benannte Verbindung abweisen.
 #[tauri::command]
 #[specta::specta]
-pub fn llm_set_api_key(app: AppHandle, connection_id: String, api_key: String) -> Result<(), String> {
+pub fn llm_set_api_key(
+    app: AppHandle,
+    connection_id: String,
+    api_key: String,
+) -> Result<(), String> {
     let mut s = settings::get_settings(&app);
     if !s.llm_connections.iter().any(|c| c.id == connection_id) {
         return Err(format!("Unbekannte Verbindung: {connection_id}"));
@@ -528,7 +628,10 @@ pub async fn llm_local_stop(app: AppHandle) -> Result<(), String> {
 #[specta::specta]
 pub async fn llm_local_backend(app: AppHandle) -> Result<String, String> {
     let manager = app.state::<Arc<LlmRuntimeManager>>().inner().clone();
-    manager.resolve_runtime().await.map(|(_, backend, _)| backend)
+    manager
+        .resolve_runtime()
+        .await
+        .map(|(_, backend, _)| backend)
 }
 
 /// Ein geladenes lokales Modell zum aktiven Modell machen -- in einem Zug:
@@ -716,7 +819,10 @@ pub async fn llm_local_fit(
     let gpu = memory.gpus.iter().find(|g| !g.shared);
     let (free_mb, on_gpu) = match gpu {
         Some(g) => (g.budget_mb.saturating_sub(g.used_mb), true),
-        None => (memory.ram_total_mb.saturating_sub(memory.ram_used_mb), false),
+        None => (
+            memory.ram_total_mb.saturating_sub(memory.ram_used_mb),
+            false,
+        ),
     };
     let est = estimate::estimate(size, shape, context);
     let verdict = estimate::verdict(est.total_mb, free_mb, on_gpu);

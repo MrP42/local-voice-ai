@@ -2,7 +2,7 @@ use log::{debug, warn};
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 use specta::Type;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use tauri::AppHandle;
 use tauri_plugin_store::StoreExt;
@@ -270,6 +270,38 @@ pub struct LlmModelSeen {
     #[serde(default)]
     pub replaced_by: Option<String>,
 }
+
+/// Modell einer Funktion (Modelle je Funktion, Vorschlag E1, 01.11.2026). Leere
+/// `model_id` = das Standardmodell (`llm_active_model_id`) gilt.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default, Type)]
+pub struct FunctionModel {
+    #[serde(default)]
+    pub model_id: String,
+    /// Effort nur fuer diese Funktion (`low` … `max`); `None` = der des Modells.
+    #[serde(default)]
+    pub effort: Option<String>,
+}
+
+/// Sprecher im Sprachgespraech (antwortet sofort, auch lokal).
+pub const FN_VOICE_SPEAKER: &str = "voice_speaker";
+/// Besprechungsprotokoll und Notizen (Protokoll, Projektprotokoll, Ausarbeitung).
+pub const FN_MEETING_PROTOCOL: &str = "meeting_protocol";
+/// KI-Nachbearbeitung des Diktats.
+pub const FN_DICTATION_REFINE: &str = "dictation_refine";
+/// Vorlesen: Uebersetzen und KI-Dokumente (Zusammenfassung, Begriffe).
+pub const FN_READ_ALOUD: &str = "read_aloud";
+/// Buch-Gespraech: Fragen an ein Buch per Sprache oder Text (lva#307).
+pub const FN_BOOK_TALK: &str = "book_talk";
+
+/// Funktionen mit eigener Modellwahl. Der Denker des Gespraechs hat seine Wahl
+/// schon in den Gespraechseinstellungen (`denkerModelId`).
+pub const LLM_FUNCTIONS: [&str; 5] = [
+    FN_VOICE_SPEAKER,
+    FN_MEETING_PROTOCOL,
+    FN_DICTATION_REFINE,
+    FN_READ_ALOUD,
+    FN_BOOK_TALK,
+];
 
 fn default_llm_auto_update() -> String {
     "ask".to_string()
@@ -592,6 +624,9 @@ pub struct AppSettings {
     pub llm_models: Vec<LlmModelConfig>,
     #[serde(default)]
     pub llm_active_model_id: Option<String>,
+    /// Modelle je Funktion; fehlt ein Eintrag oder ist er leer, gilt das Standardmodell.
+    #[serde(default)]
+    pub function_models: BTreeMap<String, FunctionModel>,
     /// Weitere Ordner mit Sprachmodellen (GGUF-Ordner wie der von LM Studio
     /// oder der Modellspeicher von Ollama). Die App laedt die Modelle von
     /// dort, statt sie ein zweites Mal herunterzuladen
@@ -786,6 +821,10 @@ pub struct AppSettings {
     /// Tonhöhe leicht — kleiner Bereich um 1.0 klingt natürlich).
     #[serde(default = "default_tts_speed")]
     pub tts_speed: f32,
+    /// Sprachfluss (0–1): Länge der Pausen an Komma, Satz- und Absatzende.
+    /// 0 zügig, 0,5 Hörbuch-Standard, 1 ruhig.
+    #[serde(default = "default_tts_flow")]
+    pub tts_flow: f32,
     /// Ausgabeformat für den Datei-Export ("wav" | "mp3" | "opus") — der
     /// Fish-Server encodiert direkt.
     #[serde(default = "default_tts_export_format")]
@@ -898,6 +937,41 @@ pub struct AppSettings {
     /// heruntergeladen ist; ohne den Schluessel gilt `true`.
     #[serde(default = "default_true")]
     pub meeting_semantic_search: bool,
+    /// Buch-Gespraech (lva#308): Schluessel `Verbindung::Modell` (je Modell,
+    /// lva#309), an die Buchauszuege gesendet werden duerfen. Lokale Modelle
+    /// brauchen keine Freigabe; ein anderes Modell ohne Eintrag ergibt den Code
+    /// `consent_required`.
+    #[serde(default)]
+    pub book_talk_cloud_consent: Vec<String>,
+    /// Buch-Gespraech (lva#308): Schalter „KI-Antworten (Vorschau)“, Standard
+    /// aus. Ein: auch Tupel ohne Eval-Eintrag (ungeprueft) antworten, mit
+    /// Vorschau-Kennzeichnung in der Oberflaeche; Tupel mit Status
+    /// „durchgefallen“ (`book_talk_eval_pass.json`) nie. Aus: nur Fundstellen.
+    #[serde(default)]
+    pub book_talk_enabled: bool,
+    /// Buch-Gespraech (lva#320, Spec 11.3): Das gekoppelte iPhone darf die
+    /// freigegebenen Abo-Modelle (Claude, Codex) ueber diesen PC nutzen. Standard
+    /// aus; nur dann veroeffentlicht der PC seine Modellliste im Hub.
+    #[serde(default)]
+    pub book_talk_relay_enabled: bool,
+    /// Buch-Gespraech (lva#334): Schalter „Abo-Vorschau“ fuer Claude Code und
+    /// Codex ueber das Abo. Standard aus; nur nach dem Risikohinweis
+    /// einschaltbar („Budget empirisch, nicht bewiesen; Anfragen gehen an
+    /// Anthropic/OpenAI ueber dein Abo“). Gilt fuer Desktop-Aufrufe und
+    /// Relay-Anfragen, aber nur mit gueltigem Tupel in
+    /// `book_talk_preview_bindings`.
+    #[serde(default)]
+    pub book_talk_subscription_preview: bool,
+    /// Buch-Gespraech (lva#334): beim Einschalten gebundene Tupel (Anbieter,
+    /// Modell, CLI-Version, SHA-256 des Programms) je Abo-Modell. Weicht eines
+    /// ab, ist die Freigabe fuer dieses Modell ungueltig (erneut bestaetigen).
+    #[serde(default)]
+    pub book_talk_preview_bindings: Vec<crate::managers::llm::preview::PreviewBinding>,
+    /// Stimmprofile 2a: Vorschläge „klingt wie …, zusammenführen?“ aus Stimmabdrücken
+    /// innerhalb einer Besprechung (CAM++). Wirkt erst, wenn das Modell per Knopf
+    /// geladen ist; ohne den Schluessel gilt `true`. Kein Abgleich ueber Besprechungen.
+    #[serde(default = "default_true")]
+    pub meeting_voice_suggestions: bool,
     /// D3 (#70): Bildanalyse fuer Folien. Gemma 4 E4B liest den Text erkannter Folien neu
     /// (Zahlen und Tabellen stimmen) und beschreibt sie; dafuer startet der lokale Server
     /// kurz mit Bild-Projektor. Standard AUS (der Projektor ist ein optionaler 990-MB-
@@ -922,11 +996,13 @@ pub struct AppSettings {
     #[serde(default = "default_meeting_diarization")]
     pub meeting_diarization: String,
     /// U7: wie viele Dateien der Import-Warteschlange gleichzeitig transkribiert
-    /// werden: 1 (Standard), 2 oder 3. Mehr als eine nur, solange Arbeitsspeicher
-    /// (und bei GPU-Modellen Grafikspeicher) fuer die weitere Engine reichen;
-    /// sonst wartet die naechste Datei. Ohne den Schluessel (aeltere
-    /// settings.json) gilt 1; Werte ausserhalb 1 bis 3 zaehlen als der naechste
-    /// gueltige.
+    /// werden: 0 = Automatisch (Standard, nach Kernen, Arbeits- und
+    /// Grafikspeicher, `queue::recommended_parallel`) oder fest 1 bis 4. Mehr
+    /// als eine nur, solange Arbeitsspeicher (und bei GPU-Modellen
+    /// Grafikspeicher) fuer die weitere Engine reichen; sonst wartet die
+    /// naechste Datei. Ohne den Schluessel gilt Automatisch; Werte ueber 4
+    /// zaehlen als 4. Schema 5 stellt den alten Standard 1 einmalig auf
+    /// Automatisch um.
     #[serde(default = "default_meeting_import_parallel")]
     pub meeting_import_parallel: u32,
     /// M5-P5c (F16): Ad-hoc-Erkennung laufender Besprechungen ueber die
@@ -970,6 +1046,26 @@ pub struct AppSettings {
     /// Treffer aus dem Transkript)? Nur wirksam mit `meeting_mcp_enabled`.
     #[serde(default = "default_true")]
     pub meeting_mcp_include_transcript: bool,
+    /// Stufe 2 des Sprachgesprächs: darf die Sprach-KI Transkripte von Besprechungen lesen
+    /// (`meeting_transcript`, Treffer aus dem Transkript)? Getrennt vom MCP-Server; Standard AUS
+    /// (ADR-0021).
+    #[serde(default)]
+    pub voice_call_read_transcripts: bool,
+    /// Wissensbereiche, die das Sprachgespräch nachschlagen darf (Schlüssel aus
+    /// `agent_bridge::voice::areas::Area`: `meetings`, `dictations`, `conversations`,
+    /// `calendar`, `tts`). Standard LEER: ohne Freigabe sieht das Modell nichts (ADR-0021).
+    /// Das Transkript ist der Unterschalter `voice_call_read_transcripts` und wirkt nur mit
+    /// `meetings`. Getrennt von den Rechten externer Agenten.
+    #[serde(default)]
+    pub voice_call_knowledge: Vec<String>,
+    /// Stufe 3 des Sprachgesprächs: aus Korrekturen lernen (ADR-0021). Standard AUS; ohne diesen
+    /// Schalter wird kein Paar gespeichert.
+    #[serde(default)]
+    pub speech_learning_enabled: bool,
+    /// Gelernte Paare mit genug Vorkommen gleich in `custom_words` übernehmen statt vorzuschlagen.
+    /// Standard AUS; wirkt nur bei `speech_learning_enabled`.
+    #[serde(default)]
+    pub speech_learning_auto_apply: bool,
     /// M5-P5f (E14): Anwendungs-(Client-)ID der EIGENEN Entra-App fuer die
     /// Microsoft-Anmeldung (oeffentlicher Client, Weiterleitungs-URI
     /// `http://localhost`). Es gibt keine eingebaute ID: ohne Eintrag ist die
@@ -1005,7 +1101,7 @@ fn default_meeting_diarization() -> String {
 }
 
 fn default_meeting_import_parallel() -> u32 {
-    1
+    crate::managers::meetings::queue::PARALLEL_AUTO
 }
 
 /// M3-P3b: ist die Sprechertrennung eingeschaltet (`meeting_diarization`)?
@@ -1054,6 +1150,10 @@ fn default_tts_normalize() -> bool {
 
 fn default_tts_speed() -> f32 {
     1.0
+}
+
+fn default_tts_flow() -> f32 {
+    0.5
 }
 
 fn default_tts_export_format() -> String {
@@ -1125,7 +1225,7 @@ fn default_model() -> String {
     "".to_string()
 }
 
-const CURRENT_SETTINGS_SCHEMA_VERSION: u32 = 4;
+const CURRENT_SETTINGS_SCHEMA_VERSION: u32 = 6;
 
 fn default_settings_schema_version() -> u32 {
     CURRENT_SETTINGS_SCHEMA_VERSION
@@ -1186,10 +1286,12 @@ fn default_overlay_style() -> OverlayStyle {
     return OverlayStyle::Live;
 }
 
-/// Off by default: live injection currently garbles the text (see
-/// docs/KNOWN-LIMITATIONS.md). Enable only when experimenting with it.
+/// On by default (Patrick 05.11.2026): dictated text is typed live into the
+/// focused field while speaking. The old "garbles the text" reason is gone
+/// since 6b9143e/d223fa8 (docs/KNOWN-LIMITATIONS.md, "Live-Injektion"); with it
+/// off, text only showed in the overlay preview and arrived at the very end.
 fn default_stream_injection() -> bool {
-    false
+    true
 }
 
 /// 2 rather than the library's 3: measurably quicker text while still
@@ -1414,6 +1516,16 @@ fn default_post_process_providers() -> Vec<PostProcessProvider> {
             allow_base_url_edit: false,
             models_endpoint: Some("/models".to_string()),
             supports_structured_output: true,
+        },
+        // Gemini ueber Googles OpenAI-kompatible Schnittstelle. Ein Schluessel
+        // aus Google AI Studio genuegt; die Gemini-CLI braucht Node.
+        PostProcessProvider {
+            id: "gemini".to_string(),
+            label: "Google Gemini".to_string(),
+            base_url: "https://generativelanguage.googleapis.com/v1beta/openai".to_string(),
+            allow_base_url_edit: false,
+            models_endpoint: Some("/models".to_string()),
+            supports_structured_output: false,
         },
         // Abo statt API-Schluessel: die offiziellen CLIs mit dem eigenen Login
         // (`managers::llm::cli`). Kein Schluessel, keine Kosten je Token.
@@ -1656,6 +1768,16 @@ const SPEAK_CLIPBOARD_DEFAULT: &str = "ctrl+shift+space";
 #[cfg(not(target_os = "macos"))]
 const SPEAK_CLIPBOARD_DEFAULT: &str = SPEAK_CLIPBOARD_LEGACY;
 
+/// Standard fuer „Hauptgespraech“ (Sprachgespraech per Tastenkuerzel, auch
+/// ausserhalb der App). Reines Strg+Alt geht nicht: unter Windows ist AltGr =
+/// Strg+Alt, jedes „@“ oder „€“ wuerde das Gespraech starten. G wie Gespraech;
+/// AltGr+G erzeugt im deutschen Layout kein Zeichen. Auf dem Mac ist ⌃⌥ die
+/// VoiceOver-Taste, darum ⌃⇧G.
+#[cfg(target_os = "macos")]
+pub(crate) const VOICE_CALL_DEFAULT: &str = "ctrl+shift+g";
+#[cfg(not(target_os = "macos"))]
+pub(crate) const VOICE_CALL_DEFAULT: &str = "ctrl+alt+g";
+
 pub fn get_default_settings() -> AppSettings {
     #[cfg(target_os = "windows")]
     let default_shortcut = "ctrl+space";
@@ -1718,6 +1840,18 @@ pub fn get_default_settings() -> AppSettings {
         },
     );
 
+    bindings.insert(
+        "voice_call".to_string(),
+        ShortcutBinding {
+            id: "voice_call".to_string(),
+            name: "Main conversation".to_string(),
+            description: "Starts or ends the spoken main conversation, also outside the app."
+                .to_string(),
+            default_binding: VOICE_CALL_DEFAULT.to_string(),
+            current_binding: VOICE_CALL_DEFAULT.to_string(),
+        },
+    );
+
     AppSettings {
         settings_schema_version: default_settings_schema_version(),
         bindings,
@@ -1763,6 +1897,7 @@ pub fn get_default_settings() -> AppSettings {
         llm_connections: Vec::new(),
         llm_models: Vec::new(),
         llm_active_model_id: None,
+        function_models: BTreeMap::new(),
         llm_model_dirs: Vec::new(),
         compliance_profile: Default::default(),
         llm_default_effort: default_llm_effort(),
@@ -1816,6 +1951,7 @@ pub fn get_default_settings() -> AppSettings {
         tts_enhance_strength: crate::managers::tts::enhance::Strength::default(),
         tts_reference_auto_transcribe: default_tts_reference_auto_transcribe(),
         tts_speed: default_tts_speed(),
+        tts_flow: default_tts_flow(),
         tts_export_format: default_tts_export_format(),
         tts_export_bitrate: default_tts_export_bitrate(),
         tts_context_menu: false,
@@ -1839,6 +1975,12 @@ pub fn get_default_settings() -> AppSettings {
         meeting_auto_enhance: true,
         meeting_default_template_id: None,
         meeting_semantic_search: true,
+        book_talk_cloud_consent: Vec::new(),
+        book_talk_enabled: false,
+        book_talk_relay_enabled: false,
+        book_talk_subscription_preview: false,
+        book_talk_preview_bindings: Vec::new(),
+        meeting_voice_suggestions: true,
         meeting_slide_vision: false,
         meeting_echo_cancellation: MeetingEchoCancellation::Auto,
         meeting_final_model: default_meeting_final_model(),
@@ -1853,6 +1995,10 @@ pub fn get_default_settings() -> AppSettings {
         meeting_reminder_all_events: false,
         meeting_mcp_enabled: false,
         meeting_mcp_include_transcript: true,
+        voice_call_read_transcripts: false,
+        voice_call_knowledge: Vec::new(),
+        speech_learning_enabled: false,
+        speech_learning_auto_apply: false,
         calendar_graph_client_id: None,
         calendar_graph_tenant: None,
         meeting_youtube_private: false,
@@ -1921,6 +2067,63 @@ impl AppSettings {
         self.post_process_models.insert(kind, remote);
     }
 
+    /// Eintraege von Modellen entfernen, die es nicht mehr gibt (Freigabe oder
+    /// Verbindung entfernt); ein spaeter neu freigegebenes Modell bringt so keine
+    /// alte Wahl zurueck.
+    pub fn prune_function_models(&mut self) {
+        let models = &self.llm_models;
+        self.function_models
+            .retain(|_, f| models.iter().any(|m| m.id == f.model_id));
+    }
+
+    /// Ein Nachfolgemodell uebernimmt die Wahl aller Funktionen des alten.
+    pub fn replace_function_model(&mut self, old_id: &str, new_id: &str) {
+        for f in self.function_models.values_mut() {
+            if f.model_id == old_id {
+                f.model_id = new_id.to_string();
+            }
+        }
+    }
+
+    /// Ist das Modell freigegeben und seine Verbindung eingeschaltet?
+    pub fn llm_model_selectable(&self, id: &str) -> bool {
+        self.llm_models.iter().any(|m| {
+            m.id == id
+                && m.enabled
+                && self
+                    .llm_connections
+                    .iter()
+                    .any(|c| c.id == m.connection_id && c.enabled)
+        })
+    }
+
+    /// Das gewaehlte Modell einer Funktion, falls es (noch) waehlbar ist; sonst
+    /// `None` und das Standardmodell gilt (Rueckfall statt Fehler).
+    pub fn function_model(&self, function: &str) -> Option<&FunctionModel> {
+        self.function_models
+            .get(function)
+            .filter(|f| !f.model_id.trim().is_empty() && self.llm_model_selectable(&f.model_id))
+    }
+
+    /// Die Einstellungen, wie eine Funktion sie sieht: ihr Modell (und ihr Effort)
+    /// als aktives Modell, in die aelteren Felder gespiegelt. Ohne eigene Wahl
+    /// unveraendert. Das Regelwerk prueft jeden Aufruf in `llm_client` weiter
+    /// gegen genau dieses Modell.
+    pub fn for_function(&self, function: &str) -> AppSettings {
+        let mut s = self.clone();
+        let Some(chosen) = self.function_model(function).cloned() else {
+            return s;
+        };
+        s.llm_active_model_id = Some(chosen.model_id.clone());
+        if let Some(effort) = chosen.effort.filter(|e| !e.trim().is_empty()) {
+            if let Some(m) = s.llm_models.iter_mut().find(|m| m.id == chosen.model_id) {
+                m.effort = Some(effort);
+            }
+        }
+        s.sync_legacy_from_llm();
+        s
+    }
+
     pub fn active_post_process_provider(&self) -> Option<&PostProcessProvider> {
         self.post_process_providers
             .iter()
@@ -1966,6 +2169,21 @@ pub fn load_or_create_app_settings(app: &AppHandle) -> AppSettings {
     let settings = get_settings(app);
     debug!("Loaded settings: {:?}", settings);
     settings
+}
+
+/// Der Schalter `book_talk_subscription_preview` LIVE aus dem Speicher, ohne
+/// die Einstellungen zu migrieren oder zu schreiben (billig genug fuer eine
+/// Abfrage waehrend eines laufenden CLI-Aufrufs). Fail-closed: nicht lesbar
+/// heisst „aus“.
+pub fn book_talk_preview_switch_on(app: &AppHandle) -> bool {
+    app.store(crate::portable::store_path(SETTINGS_STORE_PATH))
+        .ok()
+        .and_then(|store| store.get("settings"))
+        .and_then(|v| {
+            v.get("book_talk_subscription_preview")
+                .and_then(|b| b.as_bool())
+        })
+        .unwrap_or(false)
 }
 
 pub fn get_settings(app: &AppHandle) -> AppSettings {
@@ -2210,6 +2428,29 @@ fn apply_settings_migrations(
         } else {
             DictationAudio::Duck
         };
+        settings.settings_schema_version = CURRENT_SETTINGS_SCHEMA_VERSION;
+        updated = true;
+    }
+
+    // Schema 5: gleichzeitige Transkriptionen nach Hardware. Bis hier war 1
+    // der einzige Standard und wurde mitgespeichert; ein bewusstes "1" laesst
+    // sich davon nicht unterscheiden. Einmalig auf Automatisch; wer genau eine
+    // will, stellt es wieder ein. Andere feste Werte bleiben.
+    if stored_schema_version < 5 {
+        if settings.meeting_import_parallel == 1 {
+            settings.meeting_import_parallel = crate::managers::meetings::queue::PARALLEL_AUTO;
+        }
+        settings.settings_schema_version = CURRENT_SETTINGS_SCHEMA_VERSION;
+        updated = true;
+    }
+
+    // Schema 6: Live-Einfuegung beim Diktat ist jetzt Standard. Bis hier war
+    // "aus" der gespeicherte Standard und laesst sich von einem bewussten "aus"
+    // nicht unterscheiden; Folge war, dass der Text nur in der Vorschau ueber
+    // der Diktat-Animation stand und erst am Ende eingefuegt wurde (Patrick
+    // 05.11.2026). Einmalig an; wer es aus will, schaltet es wieder ab.
+    if stored_schema_version < 6 {
+        settings.stream_injection = true;
         settings.settings_schema_version = CURRENT_SETTINGS_SCHEMA_VERSION;
         updated = true;
     }
@@ -2460,11 +2701,14 @@ mod tests {
         assert_eq!(t(2.0), t(1.0));
     }
 
-    /// Live injection is off unless asked for, and asking for it is one
-    /// switch — the experimental flag is deliberately not part of it.
+    /// Live injection is on by default and is one switch — the experimental
+    /// flag is deliberately not part of it.
     #[test]
-    fn stream_injection_is_a_plain_opt_in() {
+    fn stream_injection_is_on_by_default_and_one_switch() {
         let mut settings = get_default_settings();
+        assert!(settings.stream_injection_active());
+
+        settings.stream_injection = false;
         assert!(!settings.stream_injection_active());
 
         settings.stream_injection = true;
@@ -2820,7 +3064,10 @@ mod tests {
         let (conn, model) = settings.active_llm_model().expect("aktives Modell");
         assert_eq!(conn.kind, "openai");
         assert_eq!(model.remote_id, "gpt-4.1-mini");
-        assert_eq!(settings.settings_schema_version, CURRENT_SETTINGS_SCHEMA_VERSION);
+        assert_eq!(
+            settings.settings_schema_version,
+            CURRENT_SETTINGS_SCHEMA_VERSION
+        );
     }
 
     /// Schema 3 schaltet das Offenhalten des Mikrofons einmalig ein, auch wenn
@@ -2838,7 +3085,10 @@ mod tests {
         });
         assert!(apply_settings_migrations(&mut settings, &raw));
         assert!(settings.lazy_stream_close);
-        assert_eq!(settings.settings_schema_version, CURRENT_SETTINGS_SCHEMA_VERSION);
+        assert_eq!(
+            settings.settings_schema_version,
+            CURRENT_SETTINGS_SCHEMA_VERSION
+        );
 
         settings.lazy_stream_close = false;
         let raw = serde_json::json!({
@@ -2847,7 +3097,10 @@ mod tests {
             "llm_connections": []
         });
         apply_settings_migrations(&mut settings, &raw);
-        assert!(!settings.lazy_stream_close, "Nutzerwahl bleibt nach der Migration");
+        assert!(
+            !settings.lazy_stream_close,
+            "Nutzerwahl bleibt nach der Migration"
+        );
     }
 
     #[test]
@@ -2874,7 +3127,10 @@ mod tests {
         assert!(apply_settings_migrations(&mut settings, &raw));
         assert_eq!(settings.dictation_audio, DictationAudio::Duck);
         assert_eq!(settings.dictation_audio_duck_percent, 10);
-        assert_eq!(settings.settings_schema_version, CURRENT_SETTINGS_SCHEMA_VERSION);
+        assert_eq!(
+            settings.settings_schema_version,
+            CURRENT_SETTINGS_SCHEMA_VERSION
+        );
     }
 
     #[test]
@@ -2944,16 +3200,22 @@ mod tests {
             budget_enforced: false,
             training_opt_out: false,
         });
-        settings
-            .llm_models
-            .push(llm_model("zweitkonto:gpt-4.1", "zweitkonto", "gpt-4.1", true));
+        settings.llm_models.push(llm_model(
+            "zweitkonto:gpt-4.1",
+            "zweitkonto",
+            "gpt-4.1",
+            true,
+        ));
         settings.llm_active_model_id = Some("zweitkonto:gpt-4.1".into());
 
         settings.sync_legacy_from_llm();
 
         assert_eq!(settings.post_process_provider_id, "openai");
         assert_eq!(
-            settings.post_process_models.get("openai").map(String::as_str),
+            settings
+                .post_process_models
+                .get("openai")
+                .map(String::as_str),
             Some("gpt-4.1")
         );
         assert_eq!(
@@ -2962,6 +3224,94 @@ mod tests {
                 .map(|p| p.base_url.as_str()),
             Some("https://proxy.example/v1")
         );
+    }
+
+    /// Modelle je Funktion: die Funktion sieht ihr Modell samt eigenem Effort,
+    /// alles andere das Standardmodell; ein verschwundenes faellt zurueck.
+    #[test]
+    fn for_function_uses_the_function_model_and_falls_back() {
+        let mut settings = get_default_settings();
+        settings.llm_connections.push(LlmConnection {
+            id: "claude_cli".into(),
+            kind: "claude_cli".into(),
+            label: "Claude".into(),
+            base_url: "cli://claude".into(),
+            enabled: true,
+            monthly_budget_usd: None,
+            budget_enforced: false,
+            training_opt_out: false,
+        });
+        settings.llm_models.extend([
+            llm_model("claude:opus", "claude_cli", "opus", true),
+            llm_model("claude:haiku", "claude_cli", "haiku", true),
+            llm_model("claude:alt", "claude_cli", "alt", false),
+        ]);
+        settings.llm_active_model_id = Some("claude:opus".into());
+        settings.sync_legacy_from_llm();
+        settings.function_models.insert(
+            FN_VOICE_SPEAKER.into(),
+            FunctionModel {
+                model_id: "claude:haiku".into(),
+                effort: Some("low".into()),
+            },
+        );
+        settings.function_models.insert(
+            FN_MEETING_PROTOCOL.into(),
+            FunctionModel {
+                model_id: "claude:alt".into(),
+                effort: None,
+            },
+        );
+        let model = |s: &AppSettings| s.post_process_models.get("claude_cli").cloned();
+
+        let speaker = settings.for_function(FN_VOICE_SPEAKER);
+        assert_eq!(speaker.llm_active_model_id.as_deref(), Some("claude:haiku"));
+        assert_eq!(model(&speaker).as_deref(), Some("haiku@low"));
+        // Abgeschaltetes Modell: Rueckfall auf das Standardmodell.
+        let protocol = settings.for_function(FN_MEETING_PROTOCOL);
+        assert_eq!(model(&protocol).as_deref(), Some("opus@medium"));
+        // Ohne Eintrag und im Original: unveraendert.
+        assert_eq!(
+            model(&settings.for_function(FN_DICTATION_REFINE)),
+            model(&settings)
+        );
+        assert_eq!(model(&settings).as_deref(), Some("opus@medium"));
+    }
+
+    /// Entfernte Modelle verlieren ihre Funktionswahl, Nachfolger erben sie.
+    #[test]
+    fn function_models_follow_removed_and_replaced_models() {
+        let mut settings = get_default_settings();
+        settings.llm_models.extend([
+            llm_model("c:a", "c", "a", true),
+            llm_model("c:b", "c", "b", true),
+        ]);
+        for (f, id) in [(FN_VOICE_SPEAKER, "c:a"), (FN_MEETING_PROTOCOL, "c:b")] {
+            settings.function_models.insert(
+                f.into(),
+                FunctionModel {
+                    model_id: id.into(),
+                    effort: None,
+                },
+            );
+        }
+        settings.replace_function_model("c:a", "c:a2");
+        assert_eq!(settings.function_models[FN_VOICE_SPEAKER].model_id, "c:a2");
+        settings.llm_models.retain(|m| m.id != "c:b");
+        settings.prune_function_models();
+        assert!(!settings.function_models.contains_key(FN_MEETING_PROTOCOL));
+        // c:a2 gibt es (noch) nicht als Freigabe: ebenfalls entfernt.
+        assert!(!settings.function_models.contains_key(FN_VOICE_SPEAKER));
+    }
+
+    /// Alte Einstellungsdateien ohne das Feld laden mit leerer Zuordnung.
+    #[test]
+    fn function_models_default_to_empty() {
+        let raw = serde_json::to_value(get_default_settings()).unwrap();
+        let mut obj = raw.as_object().unwrap().clone();
+        obj.remove("function_models");
+        let parsed: AppSettings = serde_json::from_value(serde_json::Value::Object(obj)).unwrap();
+        assert!(parsed.function_models.is_empty());
     }
 
     /// Abo-Modelle: Effort (sonst der Standard) und Fast reisen im Modellnamen
@@ -3353,7 +3703,10 @@ mod tests {
         assert!(!d.meeting_reminder_all_events);
         let old: AppSettings =
             serde_json::from_value(serde_json::json!({ "meeting_language": "de" })).unwrap();
-        assert_eq!(old.meeting_reminder_lead_s, 60, "nicht 0 (aus) wie beim u32-Typ");
+        assert_eq!(
+            old.meeting_reminder_lead_s, 60,
+            "nicht 0 (aus) wie beim u32-Typ"
+        );
         assert!(!old.meeting_reminder_all_events);
         let chosen: AppSettings = serde_json::from_value(serde_json::json!({
             "meeting_reminder_lead_s": 0,
@@ -3372,10 +3725,41 @@ mod tests {
         let d = get_default_settings();
         assert!(!d.meeting_mcp_enabled);
         assert!(d.meeting_mcp_include_transcript);
+        assert!(
+            !d.voice_call_read_transcripts,
+            "Sprachgespräch: Transkripte standardmäßig aus"
+        );
+        assert!(
+            d.voice_call_knowledge.is_empty(),
+            "Sprachgespräch: kein Wissensbereich standardmäßig frei"
+        );
         let old: AppSettings =
             serde_json::from_value(serde_json::json!({ "meeting_language": "de" })).unwrap();
-        assert!(!old.meeting_mcp_enabled, "ältere settings.json: Server bleibt aus");
-        assert!(old.meeting_mcp_include_transcript, "nicht false wie beim bool-Typ");
+        assert!(
+            !old.meeting_mcp_enabled,
+            "ältere settings.json: Server bleibt aus"
+        );
+        assert!(
+            old.meeting_mcp_include_transcript,
+            "nicht false wie beim bool-Typ"
+        );
+        assert!(
+            !old.voice_call_read_transcripts,
+            "ältere settings.json: aus"
+        );
+        assert!(
+            old.voice_call_knowledge.is_empty(),
+            "ältere settings.json: kein Bereich frei"
+        );
+        assert!(
+            !d.speech_learning_enabled,
+            "Lernen aus Korrekturen: standardmäßig aus"
+        );
+        assert!(
+            !d.speech_learning_auto_apply,
+            "automatisch übernehmen: standardmäßig aus"
+        );
+        assert!(!old.speech_learning_enabled && !old.speech_learning_auto_apply);
         let chosen: AppSettings = serde_json::from_value(serde_json::json!({
             "meeting_mcp_enabled": true,
             "meeting_mcp_include_transcript": false,
@@ -3398,7 +3782,10 @@ mod tests {
         assert_eq!(d.meeting_youtube_tool_path, None);
         let old: AppSettings =
             serde_json::from_value(serde_json::json!({ "meeting_language": "de" })).unwrap();
-        assert!(!old.meeting_youtube_private, "ältere settings.json: bleibt aus");
+        assert!(
+            !old.meeting_youtube_private,
+            "ältere settings.json: bleibt aus"
+        );
         assert_eq!(old.meeting_youtube_tool_path, None);
         let chosen: AppSettings = serde_json::from_value(serde_json::json!({
             "meeting_youtube_private": true,
@@ -3442,6 +3829,18 @@ mod tests {
         assert!(!off.meeting_semantic_search);
     }
 
+    #[test]
+    fn meeting_voice_suggestions_default_on_and_keep_a_choice() {
+        assert!(get_default_settings().meeting_voice_suggestions);
+        let old: AppSettings =
+            serde_json::from_value(serde_json::json!({ "meeting_language": "de" })).unwrap();
+        assert!(old.meeting_voice_suggestions);
+        let off: AppSettings =
+            serde_json::from_value(serde_json::json!({ "meeting_voice_suggestions": false }))
+                .unwrap();
+        assert!(!off.meeting_voice_suggestions);
+    }
+
     /// D3: die Bildanalyse fuer Folien ist Standard AUS (auch ohne den Schluessel in einer
     /// aelteren settings.json); ein explizites `true` bleibt.
     #[test]
@@ -3482,10 +3881,9 @@ mod tests {
         let old: AppSettings =
             serde_json::from_value(serde_json::json!({ "meeting_language": "de" })).unwrap();
         assert_eq!(old.meeting_self_name, None);
-        let set: AppSettings = serde_json::from_value(
-            serde_json::json!({ "meeting_self_name": "Patrick Wolff" }),
-        )
-        .unwrap();
+        let set: AppSettings =
+            serde_json::from_value(serde_json::json!({ "meeting_self_name": "Patrick Wolff" }))
+                .unwrap();
         assert_eq!(set.meeting_self_name.as_deref(), Some("Patrick Wolff"));
     }
 
@@ -3495,10 +3893,9 @@ mod tests {
         let old: AppSettings =
             serde_json::from_value(serde_json::json!({ "meeting_language": "de" })).unwrap();
         assert!(old.meeting_self_emails.is_empty());
-        let set: AppSettings = serde_json::from_value(
-            serde_json::json!({ "meeting_self_emails": ["ich@wolff.de"] }),
-        )
-        .unwrap();
+        let set: AppSettings =
+            serde_json::from_value(serde_json::json!({ "meeting_self_emails": ["ich@wolff.de"] }))
+                .unwrap();
         assert_eq!(set.meeting_self_emails, vec!["ich@wolff.de".to_string()]);
     }
 
@@ -3550,7 +3947,10 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(set.meeting_detect_mode, DetectMode::AllApps);
-        assert_eq!(set.meeting_detect_ignored_apps, vec!["obs64.exe".to_string()]);
+        assert_eq!(
+            set.meeting_detect_ignored_apps,
+            vec!["obs64.exe".to_string()]
+        );
     }
 
     // M2-P2d
@@ -3567,14 +3967,83 @@ mod tests {
 
     // U7
     #[test]
-    fn import_parallelism_defaults_to_one_and_old_files_load() {
-        assert_eq!(get_default_settings().meeting_import_parallel, 1);
+    fn import_parallelism_defaults_to_auto_and_old_files_load() {
+        assert_eq!(get_default_settings().meeting_import_parallel, 0);
         let old: AppSettings =
             serde_json::from_value(serde_json::json!({ "meeting_language": "de" })).unwrap();
-        assert_eq!(old.meeting_import_parallel, 1, "aeltere settings.json: ein Lauf");
+        assert_eq!(
+            old.meeting_import_parallel, 0,
+            "aeltere settings.json ohne Schluessel: Automatisch"
+        );
         let two: AppSettings =
             serde_json::from_value(serde_json::json!({ "meeting_import_parallel": 2 })).unwrap();
         assert_eq!(two.meeting_import_parallel, 2);
+    }
+
+    #[test]
+    fn schema_5_moves_the_old_default_one_to_auto_once() {
+        let mut settings = get_default_settings();
+        settings.meeting_import_parallel = 1;
+        settings.settings_schema_version = 4;
+        let raw = serde_json::json!({ "settings_schema_version": 4, "meeting_import_parallel": 1 });
+        assert!(apply_settings_migrations(&mut settings, &raw));
+        assert_eq!(
+            settings.meeting_import_parallel, 0,
+            "alter Standard 1 -> Automatisch"
+        );
+        assert_eq!(
+            settings.settings_schema_version,
+            CURRENT_SETTINGS_SCHEMA_VERSION
+        );
+
+        // Andere feste Werte bleiben.
+        let mut three = get_default_settings();
+        three.meeting_import_parallel = 3;
+        let raw = serde_json::json!({ "settings_schema_version": 4, "meeting_import_parallel": 3 });
+        apply_settings_migrations(&mut three, &raw);
+        assert_eq!(three.meeting_import_parallel, 3);
+
+        // Schon auf Schema 5: ein bewusstes "1" bleibt.
+        let mut chosen = get_default_settings();
+        chosen.meeting_import_parallel = 1;
+        let raw = serde_json::json!({
+            "settings_schema_version": CURRENT_SETTINGS_SCHEMA_VERSION,
+            "meeting_import_parallel": 1
+        });
+        apply_settings_migrations(&mut chosen, &raw);
+        assert_eq!(chosen.meeting_import_parallel, 1);
+    }
+
+    /// Schema 6 schaltet die Live-Einfuegung einmalig ein, auch wenn sie
+    /// gespeichert aus war (alter Standard). Danach bleibt die Nutzerwahl.
+    #[test]
+    fn schema_6_turns_stream_injection_on_once() {
+        let mut settings = get_default_settings();
+        settings.stream_injection = false;
+        settings.settings_schema_version = 5;
+        let raw = serde_json::json!({
+            "settings_schema_version": 5,
+            "stream_injection": false,
+            "llm_connections": []
+        });
+        assert!(apply_settings_migrations(&mut settings, &raw));
+        assert!(settings.stream_injection);
+        assert_eq!(
+            settings.settings_schema_version,
+            CURRENT_SETTINGS_SCHEMA_VERSION
+        );
+
+        settings.stream_injection = false;
+        let raw = serde_json::json!({
+            "settings_schema_version": 6,
+            "stream_injection": false,
+            "llm_connections": []
+        });
+        apply_settings_migrations(&mut settings, &raw);
+        assert!(
+            !settings.stream_injection,
+            "Nutzerwahl bleibt nach der Migration"
+        );
     }
 
     // M3-P3b

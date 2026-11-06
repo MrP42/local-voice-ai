@@ -1,0 +1,846 @@
+/* Buchansicht des Vorlesens (lva#148). Farben aus den App-Tokens, damit hell,
+   dunkel und Fluent-Brücke ohne eigene Paletten funktionieren. */
+.reader-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  justify-content: center;
+  padding: 8px 0 4px;
+}
+.reader-book {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 240px;
+  overflow: hidden;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--color-background) 92%, #fff8e6);
+  color: var(--color-text);
+  box-shadow:
+    0 8px 16px rgb(0 0 0 / 0.14),
+    0 0 2px rgb(0 0 0 / 0.12);
+}
+.dark .reader-book,
+[data-theme="dark"] .reader-book {
+  background: color-mix(in srgb, var(--color-background) 94%, #fff);
+}
+.reader-book--two::after {
+  content: "";
+  position: absolute;
+  top: 18px;
+  bottom: 18px;
+  left: 50%;
+  width: 1px;
+  background: color-mix(in srgb, var(--color-mid-gray) 40%, transparent);
+}
+.reader-run {
+  position: absolute;
+  top: 10px;
+  left: 42px;
+  right: 42px;
+  font-size: 11.5px;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.reader-flow {
+  position: absolute;
+  top: 42px;
+  bottom: 40px;
+  column-fill: auto;
+  font-family: "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+  font-size: var(--reader-fs, 18px);
+  line-height: 1.72;
+  hyphens: auto;
+  text-align: justify;
+  outline: none;
+}
+.reader-flow:focus-visible {
+  outline: 2px solid var(--color-text);
+  outline-offset: 4px;
+}
+/* Nur echtes Blättern gleitet (Klasse kommt beim Umblättern, geht danach). */
+.reader-flow--turning {
+  transition: transform 0.3s ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .reader-flow--turning {
+    transition: none;
+  }
+}
+.reader-flow h2,
+.reader-flow h3,
+.reader-flow h4 {
+  margin: 0 0 0.5em;
+  line-height: 1.25;
+  font-weight: 600;
+  text-align: left;
+  break-after: avoid;
+}
+/* Kapitel (# und ##) beginnen wie im gedruckten Buch auf einer neuen Seite.
+   Folgt eine Überschrift direkt auf eine andere („# Teil 1“, „## Kapitel 1“),
+   bleiben beide zusammen, sonst stünde der Teil allein auf einer Seite. */
+.reader-flow > :not(h2, h3) + h2,
+.reader-flow > :not(h2, h3) + h3 {
+  break-before: column;
+  margin-top: 1.2em;
+}
+.reader-h1 {
+  font-size: 1.5em;
+}
+.reader-h2 {
+  font-size: 1.25em;
+}
+.reader-h3 {
+  font-size: 1.08em;
+}
+.reader-flow hr {
+  border: 0;
+  text-align: center;
+  margin: 1em 0;
+}
+.reader-flow hr::after {
+  content: "⁂";
+  color: var(--color-text-muted);
+}
+.reader-block {
+  position: relative;
+  margin: 0 0 0.9em;
+  padding-left: var(--gutter, 96px);
+  padding-right: 8px;
+  orphans: 2;
+  widows: 2;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+.reader-book--nospeakers .reader-block {
+  padding-left: 8px;
+}
+/* Seitenzahl des Originals (PDF-Import): klein, gedämpft, nicht vorgelesen. */
+.reader-pagemark {
+  display: inline-block;
+  margin: 0;
+  padding: 0 0.3em;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--color-mid-gray) 16%, transparent);
+  color: var(--color-text-muted);
+  font:
+    500 0.62em/1.5 "Segoe UI",
+    system-ui,
+    sans-serif;
+  vertical-align: 0.25em;
+  text-indent: 0;
+}
+.reader-quote {
+  font-style: italic;
+  color: var(--color-text-muted);
+}
+.reader-item .reader-dot {
+  margin-right: 0.5em;
+}
+/* Sprecherstrich an den Zeilen statt am Block: jede Zeile malt ihr Stück
+   (box-decoration-break: clone), links in die Lücke vor dem Text gezogen.
+   Ein Strich am Block lief am Spaltenumbruch über den Text hinaus bis ans
+   Spaltenende bzw. zerfiel in Stummel ohne Text (Patrick 01.11.). Die
+   Polsterung oben/unten füllt die Zeilenhöhe, damit der Strich durchläuft. */
+.reader-block--bar {
+  --bar-gap: 9px;
+}
+.reader-block--bar > .reader-text {
+  margin-left: calc(-1 * var(--bar-gap));
+  padding: 0.28em 0 0.28em var(--bar-gap);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  background: linear-gradient(var(--speaker-c), var(--speaker-c)) 0 0 / 3px
+    100% no-repeat;
+}
+/* Sprecher ohne eingerichtete Stimme: Farbe bleibt, der Strich ist gestrichelt. */
+.reader-block--bar.reader-block--novoice > .reader-text {
+  background: repeating-linear-gradient(
+      to bottom,
+      var(--speaker-c) 0 5px,
+      transparent 5px 9px
+    )
+    0 0 / 3px 100% no-repeat;
+}
+/* Pause ohne Lesetext: nur Abstand, kein Strich, kein Name. */
+.reader-pause {
+  height: 0.5em;
+  margin: 0;
+}
+/* Der Name sitzt IN der ersten Zeile (links in den Rand gezogen), nicht
+   absolut am Absatz: so wandert er beim Seitenumbruch mit dem Text auf die
+   nächste Seite, statt allein unten stehen zu bleiben. */
+.reader-who {
+  position: relative;
+  display: inline-block;
+  vertical-align: top;
+  margin: 0.35em 16px 0 calc(-1 * var(--gutter, 96px));
+  width: calc(var(--gutter, 96px) - 16px);
+  text-indent: 0;
+  padding: 1px 2px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  /* Kleine Schrift braucht mehr Kontrast als der Strich (WCAG AA 4,5:1):
+     zur Textfarbe hin gemischt, also hell abgedunkelt und dunkel aufgehellt.
+     Der Strich behält die Stimmfarbe. */
+  color: color-mix(in srgb, var(--speaker-c) 50%, var(--color-text));
+  font:
+    600 12px/1.3 "Segoe UI",
+    system-ui,
+    sans-serif;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.reader-who:hover {
+  text-decoration: underline;
+}
+.reader-who:focus-visible {
+  outline: 2px solid var(--color-text);
+}
+.reader-cont .reader-who {
+  opacity: 0;
+}
+.reader-cont .reader-who:focus-visible {
+  opacity: 1;
+}
+.reader-cur {
+  background: color-mix(in srgb, var(--color-logo-primary) 38%, transparent);
+  border-radius: 3px;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-logo-primary) 38%, transparent);
+}
+/* Kindle-Vorbild: Satz dezent, das gerade gehörte Wort kräftiger. */
+.reader-cur.reader-word,
+.reader-word {
+  background: color-mix(in srgb, var(--color-logo-primary) 62%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-logo-primary) 62%, transparent);
+}
+/* Dieselben Farben über die Highlight-API (ReaderView: paintHighlights) —
+   ohne Spans, damit der Blocksatz beim Mitlesen nicht neu umbricht. */
+::highlight(reader-cur) {
+  background-color: color-mix(in srgb, var(--color-logo-primary) 38%, transparent);
+}
+::highlight(reader-word) {
+  background-color: color-mix(in srgb, var(--color-logo-primary) 62%, transparent);
+}
+.reader-mark {
+  text-decoration: underline wavy #d13438;
+  text-underline-offset: 3px;
+}
+.reader-mark--sel {
+  outline: 2px solid #d13438;
+  outline-offset: 1px;
+  border-radius: 2px;
+}
+.reader-foot {
+  position: absolute;
+  bottom: 10px;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: space-around;
+  font-size: 11.5px;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.reader-turn {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 2;
+  width: 34px;
+  height: 60px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--color-background) 70%, transparent);
+  color: var(--color-text-muted);
+  opacity: 0.75;
+  cursor: pointer;
+}
+.reader-turn:hover {
+  opacity: 1;
+}
+.reader-turn:disabled {
+  opacity: 0.25;
+  cursor: default;
+}
+.reader-turn--prev {
+  left: 2px;
+}
+.reader-turn--next {
+  right: 2px;
+}
+.reader-follow {
+  position: absolute;
+  bottom: 40px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 14px;
+  border: 1px solid var(--color-logo-primary);
+  border-radius: 999px;
+  background: var(--color-background);
+  color: var(--color-text);
+  cursor: pointer;
+  box-shadow: 0 8px 16px rgb(0 0 0 / 0.14);
+}
+/* Schmale Buchfläche (gemessen, nicht Fensterbreite): Sprecher über dem Absatz. */
+.reader-book--narrow {
+  --reader-narrow: 1;
+}
+@media all {
+  /* Schmale Spalte: Blocksatz reißt große Wortlücken, auch mit Trennung. */
+  .reader-book--narrow .reader-flow {
+    text-align: left;
+  }
+  .reader-book--narrow .reader-block {
+    padding-left: 0;
+  }
+  .reader-book--narrow .reader-who {
+    position: static;
+    display: block;
+    margin: 0;
+    break-after: avoid;
+    width: auto;
+    text-align: left;
+    padding: 0;
+  }
+  .reader-book--narrow .reader-cont .reader-who {
+    display: none;
+  }
+  .reader-book--narrow .reader-block--bar {
+    --bar-gap: 10px;
+    padding-left: 10px;
+  }
+  .reader-book--narrow .reader-turn {
+    display: none;
+  }
+  .reader-book--narrow .reader-run {
+    left: 16px;
+    right: 16px;
+  }
+}
+
+/* Spielerleiste unter der Buchseite */
+.reader-player {
+  display: grid;
+  gap: 4px;
+  padding: 6px 2px 2px;
+  border-top: 1px solid color-mix(in srgb, var(--color-mid-gray) 25%, transparent);
+}
+.reader-player__prog {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.reader-player__bar {
+  position: relative;
+  flex: 1;
+  min-width: 60px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+}
+.reader-player__bar:focus-visible {
+  outline: 2px solid var(--color-text);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.reader-player__track,
+.reader-player__fill {
+  position: absolute;
+  left: 0;
+  height: 4px;
+  border-radius: 2px;
+}
+.reader-player__track {
+  right: 0;
+  background: color-mix(in srgb, var(--color-mid-gray) 45%, transparent);
+}
+.reader-player__fill {
+  background: var(--color-logo-primary);
+}
+.reader-player__knob {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  transform: translateX(-7px);
+  background: var(--color-logo-primary);
+  border: 2px solid var(--color-background);
+}
+.reader-player__jump {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.reader-player__jump input {
+  width: 52px;
+  height: 26px;
+  padding: 0 6px;
+  text-align: right;
+  border: 1px solid color-mix(in srgb, var(--color-mid-gray) 50%, transparent);
+  border-radius: 4px;
+  background: var(--color-background);
+  color: var(--color-text);
+}
+/* Drei Spalten, die Wiedergabe genau in der Mitte (Patrick 01.11. 23:08):
+   links die Position, rechts die Werkzeuge; beide Seiten gleich breit. */
+.reader-player__ctrls {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+.reader-player__ctrls > .mediabar {
+  flex: none;
+  flex-wrap: nowrap;
+  justify-self: center;
+}
+.reader-player__where {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 0;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Werkzeuge rechtsbündig in der rechten Spalte. */
+.reader-player__tools {
+  justify-self: end;
+  max-width: 100%;
+  /* Darf schrumpfen: dann misst die Leiste den Überlauf der Werkzeuge
+     (ReaderPlayerBar, dockNeed) und legt sie hinter den Knopf. */
+  flex: 0 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.reader-player__extra {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 6px;
+}
+.reader-player__pill {
+  height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  white-space: nowrap;
+  border: 1px solid color-mix(in srgb, var(--color-mid-gray) 45%, transparent);
+  border-radius: 4px;
+  background: var(--color-background);
+  color: var(--color-text);
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Codex-Must-fix (lva#155): schmal bleibt die Kontrollfläche einzeilig,
+   Tempo und Timer wandern ins Überlaufmenü. */
+.reader-player {
+  container-type: inline-size;
+  /* container-type bildet einen Stapelkontext: die Menüs der Leiste müssen
+     über den Nachbarbereichen liegen, die das Fenster schmal darüber setzt. */
+  position: relative;
+  z-index: 20;
+}
+.reader-player__more {
+  display: none;
+  flex-shrink: 0;
+}
+.reader-player__pill--icon {
+  padding: 0 8px;
+}
+@container (max-width: 560px) {
+  .reader-player__ctrls {
+    display: flex;
+    flex-wrap: nowrap;
+    justify-content: space-between;
+  }
+  .reader-player__where,
+  .reader-player__extra {
+    display: none;
+  }
+  .reader-player__more {
+    display: block;
+  }
+  .reader-player__tools {
+    flex: 0 0 auto;
+  }
+  .reader-player__prog {
+    gap: 6px;
+  }
+  .reader-player__jump-label {
+    display: none;
+  }
+  .reader-player__jump input {
+    width: 40px;
+  }
+}
+
+.reader-player__link {
+  color: var(--color-text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+/* Der Weiterlesen-Hinweis wird nie gekürzt (Codex zu #160). */
+.reader-player__where--resume {
+  flex: 0 0 auto;
+  min-width: max-content;
+}
+.reader-player__link {
+  flex: none;
+}
+
+/* Überlaufmenü kompakt: Tempo und Timer als Kacheln, damit es auch über
+   einer niedrigen Leiste ganz sichtbar bleibt (Codex zu #160). */
+.reader-player__chips {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+  padding: 2px 8px 6px;
+}
+.reader-player__chip {
+  height: 30px;
+  border-radius: 4px;
+  font-size: 13px;
+  color: color-mix(in srgb, var(--color-text) 85%, transparent);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.reader-player__chip:hover,
+.reader-player__chip:focus-visible {
+  background: color-mix(in srgb, var(--color-mid-gray) 18%, transparent);
+  outline: none;
+}
+.reader-player__chip:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--color-text);
+}
+.reader-player__chip[aria-checked="true"] {
+  background: color-mix(in srgb, var(--color-logo-primary) 16%, transparent);
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+/* Kapitel über „Satz n von m“: Das Kapitel bricht um statt mit „…“ zu
+   enden (Patrick 02.11., lva#217), die Satzangabe bleibt einzeilig. */
+.reader-player__where--chapter {
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 0;
+  line-height: 1.3;
+  white-space: normal;
+  overflow: visible;
+}
+.reader-player__chapter {
+  max-width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--color-text);
+  font-weight: 600;
+}
+.reader-player__sentence {
+  flex: none;
+  white-space: nowrap;
+}
+/* Kapitel als Knopf: öffnet die Kapitelliste (Patrick 01.11.). */
+.reader-player__chapter-wrap {
+  max-width: calc(100% + 4px);
+  min-width: 0;
+  display: flex;
+  /* Text bündig mit der Seitenangabe darunter, Hover-Fläche mit Luft. */
+  margin-inline-start: -4px;
+}
+.reader-player__chapter--button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 1px 4px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.reader-player__chapter--button:hover {
+  background: color-mix(in srgb, var(--color-mid-gray) 18%, transparent);
+}
+.reader-player__chapter--button:focus-visible {
+  outline: 2px solid var(--color-logo-primary);
+  outline-offset: 1px;
+}
+.reader-player__chapter--button > svg {
+  flex: none;
+  color: var(--color-text-muted);
+}
+.reader-player__chapter-text {
+  min-width: 0;
+  text-align: start;
+  overflow-wrap: anywhere;
+}
+.reader-player__chapters {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 6px);
+  z-index: 40;
+  width: min(360px, 100%);
+  max-height: min(60vh, 420px);
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid color-mix(in srgb, var(--color-mid-gray) 40%, transparent);
+  border-radius: 8px;
+  background: var(--color-background);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.18);
+}
+.reader-player__chapters-item {
+  display: flex;
+  width: 100%;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: color-mix(in srgb, var(--color-text) 80%, transparent);
+  font-size: 13px;
+  text-align: start;
+  cursor: pointer;
+}
+.reader-player__chapters-item:hover {
+  background: color-mix(in srgb, var(--color-mid-gray) 15%, transparent);
+  color: var(--color-text);
+}
+.reader-player__chapters-item:focus-visible {
+  outline: 2px solid var(--color-logo-primary);
+  outline-offset: -2px;
+}
+.reader-player__chapters-item[aria-current="location"] {
+  background: color-mix(in srgb, var(--color-logo-primary) 15%, transparent);
+  color: var(--color-text);
+  font-weight: 600;
+}
+.reader-player__chapters-title {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.reader-player__chapters-page {
+  flex: none;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-muted);
+}
+.app-select__menu-header {
+  padding: 2px 2px 0;
+}
+
+/* Leseschriften (lva#148, Kindle-Vorbild): nur Systemschriften, keine
+   nachgeladenen Fonts. „book“ ist die Grundschrift aus .reader-flow. */
+.reader-book[data-font="sans"] .reader-flow,
+.reader-fontsample--sans {
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+.reader-book[data-font="wide"] .reader-flow,
+.reader-fontsample--wide {
+  font-family: Verdana, "DejaVu Sans", Tahoma, sans-serif;
+}
+.reader-fontsample--book {
+  font-family: "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+}
+
+/* Farbthemen der Leseansicht (Kindle: Weiß, Sepia, Grün, Schwarz). Sie
+   überschreiben nur die Farb-Tokens im Lesebereich, damit Werkzeugleiste,
+   Menüs und Seite gemeinsam umfärben. Kontraste (WCAG, Text/Grund):
+   Weiß 17,2 / 8,9 · Sepia 11,1 / 7,2 · Grün 11,4 / 7,4 · Schwarz 16,8 / 9,1
+   (Fließtext / gedämpfter Text) — alle über AAA 7:1. */
+.reader-frame[data-reader-theme="white"] {
+  --color-background: #ffffff;
+  --color-text: #1b1b1b;
+  --color-text-muted: #4a4a4a;
+}
+.reader-frame[data-reader-theme="sepia"] {
+  --color-background: #f4ecd8;
+  --color-text: #3b2f1e;
+  --color-text-muted: #5c4a33;
+}
+.reader-frame[data-reader-theme="green"] {
+  --color-background: #d5ead2;
+  --color-text: #1f2d1f;
+  --color-text-muted: #334a35;
+}
+.reader-frame[data-reader-theme="black"] {
+  --color-background: #000000;
+  --color-text: #e6e6e6;
+  --color-text-muted: #ababab;
+}
+.reader-frame[data-reader-theme]:not([data-reader-theme="auto"]) {
+  /* Fluent-Steuerelemente (Reiter) lesen eigene Tokens: mitfärben. */
+  --colorNeutralForeground1: var(--color-text);
+  --colorNeutralForeground1Hover: var(--color-text);
+  --colorNeutralForeground1Pressed: var(--color-text);
+  --colorNeutralForeground1Selected: var(--color-text);
+  --colorNeutralForeground2: var(--color-text-muted);
+  --colorNeutralForeground2Hover: var(--color-text);
+  --colorNeutralForeground2Pressed: var(--color-text);
+  --colorNeutralForeground2Selected: var(--color-text);
+  --colorNeutralForeground3: var(--color-text-muted);
+  background: var(--color-background);
+  color: var(--color-text);
+  color-scheme: light;
+}
+.reader-frame[data-reader-theme="black"] {
+  color-scheme: dark;
+}
+.reader-frame[data-reader-theme]:not([data-reader-theme="auto"]) .reader-book {
+  background: var(--color-background);
+}
+
+/* Vollbild (wie im Presenter): die Lesespalte füllt den Bildschirm, ohne
+   Fenster-Rahmen. Ohne Thema gilt der App-Hintergrund. */
+.reader-frame:fullscreen {
+  background: var(--color-background);
+  color: var(--color-text);
+  padding: 12px 24px 16px;
+}
+/* Lese-Vollbild im Fenster (Patrick 01.11. 23:16): die Lesespalte deckt das
+   App-Fenster in seiner jetzigen Größe ab, ohne es zu maximieren. */
+.reader-frame[data-fullscreen="1"]:not(:fullscreen) {
+  position: fixed;
+  /* Unter der Titelleiste (48 px, .lv-titlebar): Fensterknöpfe und
+     Ziehfläche bleiben, das Fenster lässt sich verschieben und schließen. */
+  inset: 48px 0 0 0;
+  z-index: 50;
+  background: var(--color-background);
+  color: var(--color-text);
+  padding: 12px 24px 16px;
+}
+
+/* Variante A (Codex 01.11.): rechte Spalte ausgeblendet, Stimme und
+   Werkzeuge in der Transportzeile. Die Zeile bricht nie um (keine dritte
+   Zeile); Platz macht zuerst die Positionsangabe, dann wandern die
+   Werkzeuge hinter einen Knopf (ReaderPlayerBar, DOCK_INLINE_MIN). */
+.reader-player--docked .reader-player__ctrls {
+  flex-wrap: nowrap;
+}
+/* Mit Stimme und Werkzeugen in der Zeile: die rechte Spalte ist mindestens so
+   breit wie ihr Inhalt; reicht die Hälfte nicht, rückt die Wiedergabe nach
+   links statt die Werkzeuge abzuschneiden. Erst wenn die Zeile überläuft,
+   wandern sie hinter den Knopf. */
+.reader-player--docked .reader-player__ctrls {
+  grid-template-columns: minmax(0, 1fr) auto minmax(max-content, 1fr);
+}
+.reader-player--docked .reader-dock {
+  flex: none;
+  overflow: visible;
+}
+/* Keine Mindestbreite: in der Rasterspalte (minmax(0, 1fr)) ragte die
+   Positionsangabe sonst über die Wiedergabeknöpfe (Patrick 02.11.); sie kürzt
+   stattdessen mit „…“. */
+.reader-player--docked .reader-player__where {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.reader-dock {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  max-height: 48px;
+}
+/* Stimme in der Leiste: nur der Dropdown-Knopf (Patrick 01.11.). */
+.reader-dock__voice {
+  flex: 0 0 auto;
+}
+/* Hinweise unter der Stimme stehen im Knopf-Fenster und rechts, in der
+   einzeiligen Leiste nicht (dort Tooltip). */
+.reader-dock [role="status"],
+.reader-dock [data-testid="piper-reader-hint"] {
+  display: none;
+}
+
+/* Mobil: Symbolschalter der Werkzeugleiste mindestens 44 × 44 px
+   (Codex, lva#185 Must-fix 1). */
+@media (max-width: 640px) {
+  [data-testid="reader-toolbar"] button {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}
+
+/* Bedienflächen der Leiste sichtbar mindestens 44 × 44 px (Codex zu
+   lva#213, zweite Runde: eine unsichtbare Trefferfläche zählt nicht). Die
+   Symbole bleiben gleich groß, nur die Fläche drumherum wächst. */
+.reader-player__ctrls button,
+.reader-player__ctrls .app-select__control {
+  min-height: 44px;
+  min-width: 44px;
+}
+/* Der Kapiteltitel links ist ein Textlink in der zweizeiligen
+   Positionsangabe, kein Knopf der Leiste. */
+.reader-player__ctrls .reader-player__where button {
+  min-height: 0;
+  min-width: 0;
+}
+
+/* Wird die Positionsangabe in der vollen Leiste schmaler als ein paar
+   Buchstaben, verschwindet sie ganz statt als Rest („D…“) über den Knöpfen
+   zu stehen; Kapitel bleiben über das Inhaltsverzeichnis erreichbar. */
+.reader-player--docked .reader-player__where {
+  container: lv-where / inline-size;
+}
+@container lv-where (max-width: 64px) {
+  .reader-player__where > * {
+    display: none;
+  }
+}
+
+/* Schmal (Touch) scrollt der ganze Bereich (App.css): die Spielerleiste
+   steht fest unten über der Statusleiste wie ein Mini-Player, alle Knöpfe
+   bleiben sichtbar (Codex 03.11.). Der Arbeitsbereich hält unten ihren Platz
+   frei (`--reader-player-h`, ReaderPlayerBar). */
+@media (max-width: 767px) {
+  .reader-player {
+    position: fixed;
+    inset-inline: 0;
+    bottom: var(--reader-player-bottom, 24px);
+    z-index: 30;
+    padding: 6px 12px 8px;
+    background: var(--color-background);
+    box-shadow: 0 -2px 8px rgb(0 0 0 / 0.12);
+  }
+  .tts-workspace {
+    padding-bottom: var(--reader-player-h, 0px);
+  }
+}

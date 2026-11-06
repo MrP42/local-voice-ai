@@ -20,7 +20,6 @@ import { ExperimentalToggle } from "../ExperimentalToggle";
 import { KeyboardImplementationSelector } from "../debug/KeyboardImplementationSelector";
 import { AccelerationSelector } from "../AccelerationSelector";
 import { LazyStreamClose } from "../LazyStreamClose";
-import { SyncAccountCard } from "../SyncAccountCard";
 import { useSettings } from "../../../hooks/useSettings";
 
 /**
@@ -35,9 +34,7 @@ export const AppTab: React.FC = () => {
 
   return (
     <div className="w-full space-y-6">
-      {/* Konto & Geraete zuerst: das ist die Einstellung, die andere Geraete betrifft. */}
-      <SyncAccountCard />
-
+      {/* Konto & Geräte (Geräteabgleich, Profile) liegt seit ADR-0024 im eigenen Reiter. */}
       {/* SDK-Standard „Erscheinungsbild“: Farbschema, Kontrast, Animationen,
           Design-Karten, Akzent. Sprache und Overlay direkt darunter. */}
       <AppearanceSettings />

@@ -1,10 +1,19 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { useTranslation } from "react-i18next";
+import { createPortal } from "react-dom";
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import {
   commands,
   type AutoTagOptions,
+  type Book,
   type PageInfo,
   type TtsStatus,
 } from "@/bindings";
@@ -17,10 +26,12 @@ import { ScriptWorkshopDialog } from "./books/ScriptWorkshopDialog";
 import { audioExportName } from "@/lib/utils/exportName";
 import { openModelsArea } from "@/components/settings/models/ModelsSettings";
 import { openVoiceManager } from "@/components/settings/models/voices";
+import { useFussleisteStore } from "@/stores/fussleisteStore";
 import { useSettings } from "../../../hooks/useSettings";
 import { ShortcutInput } from "../ShortcutInput";
 import {
   FilesSidebar,
+  ColumnStrip,
   PagesSidebar,
   TtsHelpDock,
 } from "./WorkspaceSidebars";
@@ -31,8 +42,8 @@ import { PageShell } from "../../ui/PageShell";
 import { SettingContainer } from "../../ui/SettingContainer";
 import { Input } from "../../ui/Input";
 import { Button } from "../../ui/Button";
-import { IconButton } from "../../ui/IconButton";
 import { Dialog } from "../../ui/Dialog";
+import { SpeechConfirmDialog } from "./SpeechConfirmDialog";
 import { ToggleSwitch } from "../../ui/ToggleSwitch";
 import { Slider } from "../../ui/Slider";
 import { Select } from "../../ui/Select";
@@ -44,6 +55,7 @@ import {
   type ChipEditorSuggestion,
 } from "./editor/TtsChipEditor";
 import { ScriptCheckPanel } from "./editor/ScriptCheckPanel";
+import { EditorMenu } from "./editor/EditorMenu";
 import {
   checkScript,
   isHintFinding,
@@ -59,6 +71,7 @@ import {
 import { useEngineCaps } from "./useEngineCaps";
 import { SpeakerSwapDialog } from "./speakers/SpeakerSwapDialog";
 import { ReplaceSpeakerDialog } from "./speakers/ReplaceSpeakerDialog";
+import type { SentenceClock } from "./reader/useSentenceClock";
 import { useContextMenu } from "../../ui/ContextMenu";
 import {
   applySwap,
@@ -67,12 +80,36 @@ import {
   type LangVoice,
 } from "@/lib/voices/speakerSwap";
 import { voiceColor } from "@/lib/voices/palette";
-import { TagPalette } from "./tags";
 import { resolveSuggestion } from "./tags/AutoTagBar";
 import { ReadAloudActions } from "./ReadAloudActions";
-import { TooltipTrigger } from "../../ui/TooltipTrigger";
+import {
+  documentTitle,
+  takeLibraryAutoplay,
+  takeLibraryKiDoc,
+  type LibraryKiDocRequest,
+} from "@/lib/library/books";
+import { ReaderDrop } from "@/components/library/ReaderDrop";
+import { ExportDialog } from "@/components/library/ExportDialog";
+import {
+  clearResumePoint,
+  loadResumePoint,
+  saveResumePoint,
+} from "../../../lib/reader/resumePoint";
+import {
+  addBookmark,
+  loadBookmarks,
+  removeBookmark,
+  type Bookmark,
+} from "../../../lib/reader/bookmarks";
+import {
+  bookInfo,
+  buildContents,
+  chapterAt,
+  type ContentsEntry,
+} from "../../../lib/reader/contents";
 import { usePersistentState } from "../../../hooks/usePersistentState";
 import { registerPageHelp } from "../../help/pageHelp";
+import { useSectionActive } from "../../shell/KeepAlive";
 import { useDebouncedValue } from "../../../hooks/useDebouncedValue";
 import {
   TTS_TARGET_LANGS,
@@ -80,11 +117,91 @@ import {
 } from "../../../lib/constants/languages";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { Glyph } from "../../ui/AudioPlayer";
-import { HelpCircle, Replace, Settings } from "lucide-react";
-import { useVoiceChoice } from "./useVoiceChoice";
+import {
+  MessageSquare,
+  Mic,
+  PanelRightClose,
+  Plug,
+  Replace,
+  Settings,
+  TriangleAlert,
+} from "lucide-react";
+import { VOICE_MANAGE, useVoiceChoice } from "./useVoiceChoice";
+import { detectLanguage, isKnownLanguage } from "@/lib/reader/language";
 import { SamplePlayButton } from "./providers/SamplePlayButton";
 import { VoiceTryButton } from "./providers/VoiceTryButton";
 import { sentenceAfterProgress, shownSentenceNumber } from "./sentenceCounter";
+import {
+  endReaderSession,
+  ensureReaderSessionListeners,
+  readerSession,
+  sessionRef,
+} from "./readerSession";
+import {
+  ReaderView,
+  type ReaderMark,
+  type ReaderPageInfo,
+  type ReaderViewApi,
+} from "./reader/ReaderView";
+import { ReaderPlayerBar } from "./reader/ReaderPlayerBar";
+import { ReaderBookmarks } from "./reader/ReaderBookmarks";
+import { ReaderContents } from "./reader/ReaderContents";
+import { bookStart, skipHeadingMark } from "../../../lib/reader/bookStart";
+import { useKiDocuments } from "./kidocs/useKiDocuments";
+import { KiDocumentsPanel } from "./kidocs/KiDocumentsPanel";
+import { KiDocumentHeader } from "./kidocs/KiDocumentHeader";
+import {
+  BOOK_SHEETS_QUERY,
+  BookSheets,
+  type BookSheet,
+} from "./kidocs/BookSheets";
+import { inForeignDialog, isTextEntry } from "./booktalk/keys";
+import { BookTalkPanel } from "./booktalk/BookTalkPanel";
+import type { BookSpot, BookTalkHost } from "./booktalk/useBookVoice";
+import {
+  bookFrontier,
+  raiseFrontier,
+  textProgressKey,
+} from "../../../lib/library/progress";
+import { KurzbuchPanel } from "./kidocs/KurzbuchPanel";
+import { KURZBUCH_TEMPLATE_ID, parseKurzbuch } from "@/lib/kurzbuch/kurzbuch";
+import { KiDocumentDialog, type KiSelection } from "./kidocs/KiDocumentDialog";
+import { kiErrorText, type KiFilter } from "./kidocs/kiDocs";
+import { useBookTerms, type TermMark } from "./terms/useBookTerms";
+import { TermsMenu } from "./terms/TermsMenu";
+import { TermDialog } from "./terms/TermDialog";
+import {
+  searchUrl,
+  spokenExplanation,
+  type SearchPreset,
+} from "./terms/termSearch";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { IsbnDialog } from "./reader/IsbnDialog";
+import { applyBookTitle, findIsbn } from "@/lib/reader/isbn";
+import type { IsbnBook, LibraryBook, TranslateJob } from "@/bindings";
+import {
+  READER_FONTS,
+  READER_THEMES,
+  ReaderToolbar,
+} from "./reader/ReaderToolbar";
+import type { ReaderFont, ReaderTheme } from "./reader/ReaderToolbar";
+import { InfoPopover } from "./reader/InfoPopover";
+import { useKeepAwake } from "./reader/useKeepAwake";
+import { parseReaderDoc } from "@/lib/reader/readerDoc";
+import { stripPageMarks, toSpokenScript } from "@/lib/reader/spokenScript";
+import {
+  addChunk,
+  emptyStream,
+  streamText,
+  warningText,
+  type TransformProgress,
+  type TranslateChunk,
+  type TranslateStreamState,
+} from "@/lib/reader/translationStream";
+import {
+  SentenceLocator,
+  type SourceRange,
+} from "@/lib/reader/sentenceLocator";
 
 /// Abspieltempo der Transportleiste. Bewusst grob gestuft: feiner regelt der
 /// Schieber in den Einstellungen, hier will man im Hoeren einmal schneller
@@ -93,6 +210,15 @@ import { sentenceAfterProgress, shownSentenceNumber } from "./sentenceCounter";
 /// Regler aus den Einstellungen entfallen ist: dieselbe Einstellung an zwei
 /// Orten war eine Dublette, aber der langsamste Wert soll bleiben.
 const SPEEDS = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
+/** Von der Bibliothek gesetzte Vorlesen-Seite (`openInReader`). */
+const storedActivePage = (): string | null => {
+  try {
+    return window.localStorage.getItem("lva.ui.tts.activePage");
+  } catch {
+    return null;
+  }
+};
+
 const speedLabel = (value: number) =>
   `${value.toFixed(2).replace(".", ",")}\u00d7`;
 
@@ -104,6 +230,9 @@ const EXPORT_BITRATES = [128, 192, 256, 320];
 /// ein. Die ersten Saetze sind langsamer (das Modell laedt noch), eine rohe
 /// Hochrechnung springt deshalb von Satz zu Satz wild.
 const ETA_SMOOTHING = 0.3;
+/** Buchteile (lva#150): so viele Sätze vor dem Ende beginnt der Anlauf des
+ *  nächsten Teils — so viele, wie der Vorpuffer vorausrechnet. */
+const PART_LEAD_SENTENCES = 3;
 
 /// Restdauer als "2:30", ab einer Stunde als "1:05:00". Auf 5 Sekunden
 /// gerundet: sekundengenau zappelt die Zahl bei jedem Satz, ohne mehr zu
@@ -122,10 +251,28 @@ const formatEta = (seconds: number) => {
 /** Fehlercode des Backends, wenn der Nutzer abgebrochen hat. */
 const TRANSFORM_CANCELLED = "transform_cancelled";
 
+/** Hintergrund-Übersetzung des Backends, nur wenn sie zu diesem Text und dieser Sprache gehört. */
+const fetchTranslateJob = async (
+  text: string,
+  lang: string,
+): Promise<TranslateJob | null> => {
+  try {
+    return (await commands.ttsTranslateJob(text, lang)) ?? null;
+  } catch {
+    return null;
+  }
+};
+
 /** Verlauf der Uebersetzung: je Seite UND Sprache (Englisch und Franzoesisch
  *  haben jeweils ihre eigenen Schritte). */
 const translationHistoryKey = (page: string | null | undefined, lang: string) =>
   `${page ?? "-"}:translation:${lang}`;
+
+// Die Sitzung überdauert das Aushängen der Seite (readerSession.ts).
+const SESSION_TAB = sessionRef("tab");
+const SESSION_DOC_ID = sessionRef("docId");
+const SESSION_RESUME_KEY = sessionRef("resumeKey");
+const SESSION_LAST_PAGE = sessionRef("lastPage");
 
 export const TtsSettings = () => {
   const { t, i18n } = useTranslation();
@@ -145,6 +292,8 @@ export const TtsSettings = () => {
    *  auch die Sprecher-Chips abgeglichen werden: bei Fish die aufgenommenen
    *  Stimmen, bei einem Anbieter mit Stimmwechsel (Phonon u. a.) seine Stimmen. */
   const speakers = useSpeakers();
+  /** Ansicht beim Öffnen eines Texts wählen (gesetzt weiter unten, wo die Wahl lebt). */
+  const openModeRef = useRef<((loaded: string) => void) | null>(null);
   /** Was die gewaehlte Engine kann (Sprecher im Skript, Stil-Tags): die Seite
    *  richtet sich nach den Faehigkeiten, nicht nach dem Namen der Engine. */
   const engineCaps = useEngineCaps();
@@ -192,6 +341,18 @@ export const TtsSettings = () => {
     "tts.activePage",
     "",
   );
+  // Vorlesen bleibt beim Bereichswechsel erhalten (KeepAlive, Patrick 03.11.).
+  // Öffnet die Bibliothek ein anderes Buch, steht es nur im Speicher: beim
+  // Sichtbarwerden übernehmen.
+  const sectionActive = useSectionActive();
+  const sectionActiveRef = useRef(sectionActive);
+  sectionActiveRef.current = sectionActive;
+  useEffect(() => {
+    if (!sectionActive) return;
+    const stored = storedActivePage();
+    if (stored && stored !== activePage) setActivePage(stored);
+    // Nur beim Sichtbarwerden.
+  }, [sectionActive]);
   // Beide Seitenspalten starten offen. Eingeklappt zeigten sie nur ein
   // 18-Pixel-Symbol, und wer sie nie aufklappte, hielt sie fuer Reiter ohne
   // Funktion — obwohl darin die Arbeitsblaetter und die erzeugten Aufnahmen
@@ -218,55 +379,140 @@ export const TtsSettings = () => {
   // Das Hilfe-Menü der Titelleiste schaltet dieselbe Hilfe.
   useEffect(
     () =>
-      registerPageHelp(() =>
-        setHelpOpenValue(helpOpenValue === "1" ? "0" : "1"),
-      ),
-    [helpOpenValue, setHelpOpenValue],
+      sectionActive
+        ? registerPageHelp(() =>
+            setHelpOpenValue(helpOpenValue === "1" ? "0" : "1"),
+          )
+        : undefined,
+    [helpOpenValue, setHelpOpenValue, sectionActive],
   );
   // Anordnung rechts vom Editor (gestapelt oder nebeneinander) und die
   // per Ziehgriff verstellbaren Breiten; alles bleibt ueber Neustarts.
-  const ws = useWorkspaceLayout(pagesCollapsed === "1", filesCollapsed === "1");
+  // Rechte Spalte ganz ausblenden (Variante A, Codex 01.11.).
+  const [rightHiddenStored, setRightHidden] = usePersistentState<"1" | "0">(
+    "tts.rightHidden",
+    "0",
+  );
+  const rightHidden = rightHiddenStored === "1";
+  const ws = useWorkspaceLayout(
+    pagesCollapsed === "1",
+    filesCollapsed === "1",
+    rightHidden,
+  );
   /** Erst nach dem Laden einer Seite darf gespeichert werden — sonst
    *  ueberschriebe der leere Anfangszustand den echten. */
   const pageLoaded = useRef(false);
+  /** Zählt fertig geladene Seiten (Buchteile: Weiterlesen nach dem Laden). */
+  const [pageLoadTick, setPageLoadTick] = useState(0);
   /** Zu welchem Reiter die laufende Sprechsitzung gehoert. Fortsetzen und
    *  Satzspruenge gelten nur fuer sie — ein anderer Reiter startet neu. */
-  const sessionTab = useRef<"original" | "translation" | "summary">("original");
+  const sessionTab = SESSION_TAB;
   /** Zielsprache der Uebersetzung — dieselbe Einstellung wie in der
    *  Audio-Uebersetzung, damit man sie nicht an zwei Stellen pflegt. */
   const targetLang = getSetting("tts_translate_lang") ?? "English";
   /** Dialog: die aktuelle Seed-Stimme unter einem Namen sichern. */
-  /** Zusammenfassung des Originals — dritter Reiter. */
+  /** Text des offenen KI-Dokuments — dritter Reiter (lva#183). */
   const [summary, setSummary] = useState<string>("");
-  const [summarizing, setSummarizing] = useState(false);
+  /** Offenes KI-Dokument der Seite; null zeigt die Liste. */
+  const [openDocId, setOpenDocId] = useState<string | null>(null);
+  const openDocIdRef = useRef(openDocId);
+  openDocIdRef.current = openDocId;
+  /** Zu welcher Seite und welchem Dokument `summary` gehört. Seite und
+   *  Dokument stehen zusammen, damit nie ein Text unter einer fremden Seite
+   *  gesichert wird. */
+  const [docLoaded, setDocLoaded] = useState<{
+    page: string;
+    id: string;
+  } | null>(null);
+  const docLoadedFor =
+    docLoaded && docLoaded.page === activePage ? docLoaded.id : null;
+  /** Zuletzt gesicherter Text des offenen Dokuments. */
+  const docSaved = useRef<string>("");
+  /** Noch nicht gesicherte Änderung (gebündelt, siehe saveOpenDoc). */
+  const pendingDocSave = useRef<{
+    page: string;
+    id: string;
+    value: string;
+  } | null>(null);
+  /** Zusammenfassung aus der Zeit vor den KI-Dokumenten, noch zu übernehmen –
+   *  mit ihrer Seite, damit sie nie bei einer anderen Seite landet. */
+  const [legacySummary, setLegacySummary] = useState<{
+    page: string;
+    text: string;
+  } | null>(null);
+  const [kiFilter, setKiFilter] = usePersistentState<KiFilter>(
+    "tts.kidocs.filter",
+    "all",
+  );
+  const [kiDialogOpen, setKiDialogOpen] = useState(false);
+  const [kiSelection, setKiSelection] = useState<KiSelection | null>(null);
+  /** Nach dem Laden dieses Dokuments sofort vorlesen. */
+  const docAutoplay = useRef<string | null>(null);
+  /** Dokument der laufenden Sprechsitzung (Abzeichen „Wird vorgelesen“). */
+  const sessionDocId = SESSION_DOC_ID;
+  const kiDocs = useKiDocuments(activePage || null);
   const [tidying, setTidying] = useState(false);
-  const [speedOpen, setSpeedOpen] = useState(false);
-  const [sumLength, setSumLength] = usePersistentState<string>(
-    "tts.summary.length",
-    "mittel",
-  );
-  const [sumDetail, setSumDetail] = usePersistentState<string>(
-    "tts.summary.detail",
-    "ausgewogen",
-  );
-  const [sumAudience, setSumAudience] = usePersistentState<string>(
-    "tts.summary.audience",
-    "allgemein",
-  );
+  const [speeching, setSpeeching] = useState(false);
+  const [speechConfirmOpen, setSpeechConfirmOpen] = useState(false);
   const [sourceUrl, setSourceUrl] = useState<string>("");
   const [loadingSource, setLoadingSource] = useState(false);
   const [urlDialogOpen, setUrlDialogOpen] = useState(false);
   const [workshopOpen, setWorkshopOpen] = useState(false);
+  /** lva#236: Exportieren (Buch der Seite oder die Seite allein). */
+  const [exportBook, setExportBook] = useState<LibraryBook | null>(null);
+  const openExport = async () => {
+    const page = activePage;
+    if (!page) return;
+    // Gebündeltes Sichern abwarten nicht nötig: jetzt sichern, damit der
+    // Export den Stand von eben sieht (Text, Übersetzungen).
+    if (pageLoaded.current)
+      await commands.pageStateSave(page, pageStateJson()).catch(() => null);
+    const list = await commands.libraryList().catch(() => null);
+    const books = list && list.status === "ok" ? list.data : [];
+    const book = books.find((b) => b.text?.page_id === page);
+    setExportBook(
+      book ?? {
+        id: "",
+        title: pages.find((p) => p.id === page)?.title ?? t("tts.title"),
+        subtitle: null,
+        authors: [],
+        language: null,
+        isbn: null,
+        publisher: null,
+        publish_date: null,
+        pages: null,
+        description: null,
+        metadata_source: null,
+        cover_source: "generated",
+        text: { page_id: page, origin: "document", source_name: null },
+        audio: null,
+        added_ms: 0,
+        finished: false,
+        cover_path: null,
+        audio_path: null,
+      },
+    );
+  };
   /** Welcher Reiter offen ist. Das Original bleibt immer erhalten. */
   const [tab, setTab] = useState<"original" | "translation" | "summary">(
     "original",
   );
+  /** Gehört die laufende Sprechsitzung zum angezeigten Text? Bei den
+   *  KI-Dokumenten zählt neben dem Reiter auch das Dokument (lva#183). */
+  const sessionHere = () =>
+    sessionTab.current === tab &&
+    (tab !== "summary" || sessionDocId.current === openDocIdRef.current);
   // Stimme je Seite UND Reiter, gespeichert mit der Seite (state.json): das
   // Original liest Thorsten, die Uebersetzung Lessac -- und jede Seite behaelt
   // ihre eigene Wahl. Wer die Seite wechselt, bekommt deren Stimme (Patrick
   // 28.10.2026). Werte wie im Dropdown: "@default", "<fish-id>", "piper:<id>",
   // "provider:<id>:<stimme>". Fehlt ein Eintrag, bleibt die aktuelle Stimme.
   const [tabVoices, setTabVoices] = useState<Record<string, string>>({});
+  /** Reiter, deren Stimme von Hand gewählt wurde: dort stellt die
+      Buchsprache nichts mehr um. */
+  const [voicesChosen, setVoicesChosen] = useState<Record<string, true>>({});
+  /** Sprache des Originaltexts, im Arbeitsstand der Seite gespeichert. */
+  const [pageLang, setPageLang] = useState<string | null>(null);
   /** "Sprecher auf allen Seiten ersetzen": offen, mit optionaler Vorbelegung. */
   const [replaceSpeaker, setReplaceSpeaker] = useState<{
     from?: string;
@@ -277,6 +523,18 @@ export const TtsSettings = () => {
   const [translatedLangs, setTranslatedLangs] = useState<string[]>([]);
   const addTranslatedLang = (lang: string) =>
     setTranslatedLangs((cur) => (cur.includes(lang) ? cur : [...cur, lang]));
+  // lva#236: eine Übersetzung aus der Bibliothek ist fertig. Ohne das
+  // überschriebe ein offenes Vorlesen die Sprachliste beim nächsten Speichern.
+  const activePageForEvents = useRef<string>("");
+  activePageForEvents.current = activePage ?? "";
+  useEffect(() => {
+    const on = (e: Event) => {
+      const d = (e as CustomEvent<{ page: string; lang: string }>).detail;
+      if (d && d.page === activePageForEvents.current) addTranslatedLang(d.lang);
+    };
+    window.addEventListener("lv-page-translated", on);
+    return () => window.removeEventListener("lv-page-translated", on);
+  }, []);
   /** Zu welchem Text/welcher Sprache `translation` gehoert, und was davon schon im Speicher liegt. */
   const translationFor = useRef("");
   const savedTranslation = useRef<string | null>(null);
@@ -286,19 +544,145 @@ export const TtsSettings = () => {
   const [startingSeconds, setStartingSeconds] = useState(0);
   const [lastError, setLastError] = useState<string | null>(null);
   /** Fortschritt von Übersetzung/Zusammenfassung (Backend: Block für Block). */
-  const [transformProgress, setTransformProgress] = useState<{
-    kind: "translation" | "summary";
-    done: number;
-    total: number;
-  } | null>(null);
+  const [transformProgress, setTransformProgress] =
+    useState<TransformProgress | null>(null);
   useEffect(() => {
-    const un = listen<{
-      kind: "translation" | "summary";
-      done: number;
-      total: number;
-    }>("tts-transform-progress", (e) => setTransformProgress(e.payload));
+    let last = 0;
+    const un = listen<TransformProgress>("tts-transform-progress", (e) => {
+      // KI-Textarbeit des Editor-Menüs zeigt ihren Fortschritt selbst.
+      if ((e.payload as { kind?: string }).kind === "assist") return;
+      setTransformProgress(e.payload);
+      if (!resyncJob.current || Date.now() - last < 1000) return;
+      last = Date.now();
+      void fetchTranslateJob(textRef.current, targetLangRef.current).then(
+        (job) => {
+          if (!resyncJob.current || !job?.partial) return;
+          savedTranslation.current = job.partial;
+          setTranslation(job.partial);
+        },
+      );
+    });
     return () => void un.then((off) => off());
   }, []);
+  /** Übersetzung streamt: bisher gemeldete Abschnitte und der Schlüssel (Text+Sprache),
+   *  zu dem sie gehören. Der Puffer lebt in einer Ref, damit Ereignisse ohne Render-Verzug eingehen. */
+  const streamRef = useRef<TranslateStreamState>(emptyStream());
+  const streamKey = useRef("");
+  const textRef = useRef("");
+  const targetLangRef = useRef("");
+  const translatingRef = useRef(false);
+  const translationRef = useRef("");
+  /** Übersetzung gestoppt (Fehler/Abbruch), Teilergebnis steht: „Fortsetzen“ bietet sich an. */
+  const [translatePartial, setTranslatePartial] = useState<{
+    kind: "error" | "cancelled";
+    message: string;
+  } | null>(null);
+  /** Hinweise zu Abschnitten, deren Marken nach dem zweiten Versuch nicht stimmen. */
+  const [translateWarnings, setTranslateWarnings] = useState<string[]>([]);
+  /** Übersetzung läuft im Hintergrund weiter, wir sind erst später dazugekommen:
+   *  der Text wird aus dem Job nachgeführt statt aus Abschnitten aufgebaut. */
+  const resyncJob = useRef(false);
+  /** Die Wiedergabe wartet auf neuen Text der noch laufenden Übersetzung. */
+  const [waitingForTranslation, setWaitingForTranslation] = useState(false);
+  /** Zählt Sprechstarts/Stopps; alte Warteschleifen erkennen daran, dass sie überholt sind. */
+  const speakToken = useRef(0);
+  const speakFromRef = useRef<
+    (charOffset: number, onlyOne: boolean) => Promise<void>
+  >(async () => {});
+  // Beim Schließen enden Warteschleifen der Wiedergabe-während-Übersetzung.
+  useEffect(
+    () => () => {
+      speakToken.current += 1;
+    },
+    [],
+  );
+  useEffect(() => {
+    const matches = () =>
+      streamKey.current !== "" &&
+      streamKey.current === translationKey(textRef.current, targetLangRef.current);
+    const unStart = listen("tts-translate-start", () => {
+      if (!matches()) return;
+      streamRef.current = emptyStream();
+      savedTranslation.current = "";
+      translationFor.current = streamKey.current;
+      setTranslation("");
+      setTab("translation");
+    });
+    const unChunk = listen<TranslateChunk>("tts-translate-chunk", (e) => {
+      if (!matches() || resyncJob.current) return;
+      streamRef.current = addChunk(streamRef.current, e.payload);
+      const next = streamText(streamRef.current);
+      // Nie als „gespeichert“ zurückschreiben: Teilergebnisse gehören nicht in den Zwischenspeicher.
+      savedTranslation.current = next;
+      translationFor.current = streamKey.current;
+      setTranslation(next);
+    });
+    return () => {
+      void unStart.then((off) => off());
+      void unChunk.then((off) => off());
+    };
+  }, []);
+  // Hintergrund-Übersetzung: Ende melden und beim Öffnen einen laufenden Job wieder aufnehmen.
+  useEffect(() => {
+    const un = listen<{
+      ok: boolean;
+      lang?: string;
+      error?: string | null;
+      warnings?: unknown[] | null;
+    }>("tts-translate-done", (e) => {
+      const { ok, error, warnings, lang } = e.payload;
+      const forText = textRef.current;
+      const forLang = targetLangRef.current;
+      const wasStreaming = translatingRef.current || resyncJob.current;
+      // Es gibt nur einen Auftrag: sein Ende löst die Sperre immer, auch wenn
+      // inzwischen eine andere Sprache gezeigt wird (sonst hinge „läuft“ fest).
+      resyncJob.current = false;
+      translatingRef.current = false;
+      setTranslating(false);
+      setTransformProgress(null);
+      if (lang && lang !== forLang) return;
+      setTranslateWarnings((warnings ?? []).map(warningText));
+      if (!wasStreaming) return;
+      if (ok) {
+        void commands.ttsCachedTranslation(forText, forLang).then(async (hit) => {
+          const final =
+            hit ?? (await commands.ttsCachedTranslation(stripPageMarks(forText), forLang));
+          if (!final || textRef.current !== forText) return;
+          translationFor.current = translationKey(forText, forLang);
+          savedTranslation.current = final;
+          addTranslatedLang(forLang);
+          setTranslation(final);
+        });
+      } else if (streamRef.current.contiguous > 0 || translationRef.current) {
+        // Nur wenn ein Teilergebnis steht, bietet sich „Fortsetzen“ an.
+        if (error && error !== TRANSFORM_CANCELLED) {
+          setTranslatePartial({ kind: "error", message: error });
+        } else {
+          setTranslatePartial({ kind: "cancelled", message: "" });
+        }
+      }
+    });
+    return () => void un.then((off) => off());
+  }, []);
+  useEffect(() => {
+    if (!text.trim()) return;
+    let abandoned = false;
+    void fetchTranslateJob(text, targetLang).then((job) => {
+      if (abandoned || !job?.running) return;
+      if (translatingRef.current) return;
+      resyncJob.current = true;
+      translatingRef.current = true;
+      streamKey.current = translationKey(text, targetLang);
+      translationFor.current = streamKey.current;
+      savedTranslation.current = job.partial ?? "";
+      setTranslating(true);
+      setTranslation(job.partial ?? "");
+      setTab("translation");
+    });
+    return () => {
+      abandoned = true;
+    };
+  }, [text, targetLang]);
   /** Piper mit Spracherkennung: die Stimme, die den Text des Reiters WIRKLICH liest. */
   const [piperReader, setPiperReader] = useState<string | null>(null);
   /** Sprecher tauschen: Stimmen mit Sprache, Fenster, Vorbelegung. */
@@ -310,13 +694,38 @@ export const TtsSettings = () => {
     limit: number;
     total: number;
   } | null>(null);
+  // Anfangswerte aus der Sitzung: nach der Rückkehr aus einem anderen
+  // App-Bereich steht sofort, was gerade gelesen wird.
   const [speakProgress, setSpeakProgress] = useState<{
     position: number;
     total: number;
-  } | null>(null);
-  const [currentSentence, setCurrentSentence] = useState<string | null>(null);
+  } | null>(() => (readerSession.active ? readerSession.progress : null));
+  /** Fortschritt ohne Render-Verzug — der Listener setzt ihn sofort. */
+  const speakProgressRef = useRef(speakProgress);
+  speakProgressRef.current = speakProgress;
+  const [currentSentence, setCurrentSentence] = useState<string | null>(
+    () => (readerSession.active ? readerSession.sentence : null),
+  );
   /** Nullbasierter Index des Satzes, der gerade zu hoeren ist (fuer den Zaehler "Satz n/m"). */
-  const [currentIndex, setCurrentIndex] = useState<number | null>(null);
+  const [currentIndex, setCurrentIndex] = useState<number | null>(
+    () => (readerSession.active ? readerSession.index : null),
+  );
+  /** Start und Dauer des hörbaren Satzes: Zeit und Umblättern laufen damit
+   *  sekundengenau mit, nicht nur Satz für Satz. */
+  const [sentenceStart, setSentenceStart] = useState<{
+    index: number | null;
+    at: number;
+    ms: number;
+  } | null>(() => (readerSession.active ? readerSession.sentenceStart : null));
+  // Die Seite ist die Quelle, solange sie offen ist; ausgehängt schreibt
+  // readerSession.ts die Ereignisse selbst mit.
+  useEffect(() => {
+    if (!readerSession.active) return;
+    readerSession.progress = speakProgress;
+    readerSession.sentence = currentSentence;
+    readerSession.index = currentIndex;
+    readerSession.sentenceStart = sentenceStart;
+  }, [speakProgress, currentSentence, currentIndex, sentenceStart]);
   const [saving, setSaving] = useState(false);
   const [exportProgress, setExportProgress] = useState<{
     position: number;
@@ -333,6 +742,7 @@ export const TtsSettings = () => {
   const startingTimer = useRef<number | null>(null);
 
   useEffect(() => {
+    ensureReaderSessionListeners();
     commands.ttsServerStatus().then((r) => {
       if (r.status === "ok") setStatus(r.data);
     });
@@ -407,6 +817,12 @@ export const TtsSettings = () => {
     const unProgress = listen<{ position: number; total: number }>(
       "tts-speak-progress",
       (e) => {
+        // Verdeckt (KeepAlive) und nicht unsere Wiedergabe (Aufnahmen liest):
+        // nichts mitschreiben, sonst stünde nach der Rückkehr Fremdes markiert.
+        if (!sectionActiveRef.current && !readerSession.active) return;
+        // Sofort, nicht erst beim Rendern: das Ende der Sitzung kann vor dem
+        // Render des letzten Fortschritts ankommen (Buchteile, lva#150).
+        speakProgressRef.current = e.payload;
         setSpeakProgress(e.payload);
         // Nach einem Sprung oder einem fertigen Satz gilt der alte Satz nicht mehr.
         setCurrentIndex((index) =>
@@ -421,8 +837,15 @@ export const TtsSettings = () => {
       context: string;
       index?: number;
       text: string;
+      duration_ms?: number;
     }>("tts-current-sentence", (e) => {
       if (e.payload.context !== "speak") return;
+      if (!sectionActiveRef.current && !readerSession.active) return;
+      setSentenceStart({
+        index: typeof e.payload.index === "number" ? e.payload.index : null,
+        at: performance.now(),
+        ms: e.payload.duration_ms ?? 0,
+      });
       setCurrentSentence(e.payload.text);
       setCurrentIndex(
         typeof e.payload.index === "number" ? e.payload.index : null,
@@ -453,8 +876,34 @@ export const TtsSettings = () => {
       setTranslation(null);
       return;
     }
-    void commands.ttsCachedTranslation(text, targetLang).then((hit) => {
+    setTranslatePartial(null);
+    const lookup = async () => {
+      // Erst mit Seitenmarken, dann ohne: Übersetzungen vor der Marken-Erhaltung
+      // liegen unter dem gestrippten Text im Zwischenspeicher.
+      const hit = await commands.ttsCachedTranslation(text, targetLang);
+      if (hit) return hit;
+      const stripped = stripPageMarks(text);
+      return stripped !== text
+        ? await commands.ttsCachedTranslation(stripped, targetLang)
+        : hit;
+    };
+    void lookup().then((hit) => {
       if (abandoned) return;
+      if (
+        translatingRef.current &&
+        streamKey.current === translationKey(text, targetLang)
+      ) {
+        // Zurück zur laufenden Übersetzung: zwischenzeitlich verpasste Abschnitte
+        // holt der Auftragsstand nach (statt einer Lücke im Puffer).
+        resyncJob.current = true;
+        void fetchTranslateJob(text, targetLang).then((job) => {
+          if (abandoned || !resyncJob.current || !job?.partial) return;
+          translationFor.current = streamKey.current;
+          savedTranslation.current = job.partial;
+          setTranslation(job.partial);
+        });
+        return;
+      }
       translationFor.current = translationKey(text, targetLang);
       savedTranslation.current = hit;
       // Geladen, nicht bearbeitet: "Rueckgaengig" darf das nicht leeren.
@@ -506,6 +955,7 @@ export const TtsSettings = () => {
   useEffect(() => {
     if (!activePage) return;
     pageLoaded.current = false;
+    setLangCheckedFor(null);
     void commands.pageStateLoad(activePage).then((result) => {
       if (result.status !== "ok") return;
       if (result.data) {
@@ -513,9 +963,12 @@ export const TtsSettings = () => {
           const state = JSON.parse(result.data) as {
             text?: string;
             summary?: string;
+            kiDoc?: string | null;
             sourceUrl?: string;
             tab?: string;
             voices?: Record<string, string>;
+            voicesChosen?: Record<string, true>;
+            lang?: string;
             translatedLangs?: string[];
             autoTag?: AutoTagOptions;
           };
@@ -523,21 +976,49 @@ export const TtsSettings = () => {
             Array.isArray(state.translatedLangs) ? state.translatedLangs : [],
           );
           setText(state.text ?? "");
+          openModeRef.current?.(state.tab === "summary" ? "" : (state.text ?? ""));
           setAutoTagOptions(state.autoTag ?? null);
-          setSummary(state.summary ?? "");
+          setSummary("");
+          setDocLoaded(null);
+          setLegacySummary(
+            state.summary?.trim()
+              ? { page: activePage, text: state.summary }
+              : null,
+          );
+          setOpenDocId(typeof state.kiDoc === "string" ? state.kiDoc : null);
           setSourceUrl(state.sourceUrl ?? "");
           setTabVoices(
             state.voices && typeof state.voices === "object"
               ? state.voices
               : {},
           );
+          setVoicesChosen(
+            state.voicesChosen && typeof state.voicesChosen === "object"
+              ? state.voicesChosen
+              : {},
+          );
+          setPageLang(typeof state.lang === "string" ? state.lang : null);
+          // Läuft auf dieser Seite noch eine Sitzung (zurück aus einem anderen
+          // App-Bereich), öffnet die Fassung, die gelesen wird.
+          const reading =
+            readerSession.active &&
+            readerSession.lastPage === activePage &&
+            readerSession.progress !== null &&
+            (readerSession.tab === "translation" ||
+              readerSession.tab === "summary")
+              ? readerSession.tab
+              : null;
+          if (reading === "summary" && readerSession.docId)
+            setOpenDocId(readerSession.docId);
           setTab(
-            state.tab === "translation" || state.tab === "summary"
-              ? state.tab
-              : "original",
+            reading ??
+              (state.tab === "translation" || state.tab === "summary"
+                ? state.tab
+                : "original"),
           );
         } catch {
           setText(result.data);
+          openModeRef.current?.(result.data);
         }
       } else {
         // Einmalige Uebernahme der Werte aus der Zeit vor den Seiten — und
@@ -550,15 +1031,28 @@ export const TtsSettings = () => {
           window.localStorage.removeItem(storageKey);
           return value;
         };
-        setText(legacy("tts.text"));
-        setSummary(legacy("tts.summary"));
+        const legacyText = legacy("tts.text");
+        setText(legacyText);
+        openModeRef.current?.(legacyText);
+        setSummary("");
+        setDocLoaded(null);
+        const legacySummaryText = legacy("tts.summary");
+        setLegacySummary(
+          legacySummaryText.trim()
+            ? { page: activePage, text: legacySummaryText }
+            : null,
+        );
+        setOpenDocId(null);
         setSourceUrl(legacy("tts.summary.url"));
         setTabVoices({});
+        setVoicesChosen({});
+        setPageLang(null);
         setTranslatedLangs([]);
         setTab("original");
       }
       setTranslation(null);
       pageLoaded.current = true;
+      setPageLoadTick((n) => n + 1);
     });
   }, [activePage]);
 
@@ -572,24 +1066,35 @@ export const TtsSettings = () => {
     };
   }, [reloadPages]);
 
+  /** Arbeitsstand der Seite, wie er in state.json steht. */
+  const pageStateJson = () =>
+    JSON.stringify({
+      text,
+      // Bis zur Übernahme als KI-Dokument bleibt der alte Text stehen.
+      summary: legacySummary?.page === activePage ? legacySummary.text : "",
+      kiDoc: openDocId,
+      sourceUrl,
+      tab,
+      voices: tabVoices,
+      voicesChosen,
+      lang: pageLang ?? undefined,
+      translatedLangs,
+      autoTag: autoTagOptions ?? undefined,
+    });
+
+  /** Ein Sichern des Seitenstands steht noch aus (siehe unten). */
+  const savePending = useRef(false);
   // Arbeitsstand sichern — gebuendelt, eine halbe Sekunde nach der letzten
   // Aenderung. Jeder Tastendruck einzeln waere ein Schreibzugriff zu viel.
   useEffect(() => {
     if (!activePage || !pageLoaded.current) return;
+    savePending.current = true;
     const handle = window.setTimeout(() => {
       void commands
-        .pageStateSave(
-          activePage,
-          JSON.stringify({
-            text,
-            summary,
-            sourceUrl,
-            tab,
-            voices: tabVoices,
-            translatedLangs,
-            autoTag: autoTagOptions ?? undefined,
-          }),
-        )
+        .pageStateSave(activePage, pageStateJson())
+        .finally(() => {
+          savePending.current = false;
+        })
         // Die Seitenliste zeigt Vorschau und Zeitpunkt — die stammen aus
         // genau dieser Datei und sollen nicht erst beim naechsten Start
         // stimmen. Und der Geraete-Sync soll die Aenderung zeitnah sehen.
@@ -602,10 +1107,13 @@ export const TtsSettings = () => {
   }, [
     activePage,
     text,
-    summary,
+    legacySummary,
+    openDocId,
     sourceUrl,
     tab,
     tabVoices,
+    voicesChosen,
+    pageLang,
     translatedLangs,
     autoTagOptions,
   ]);
@@ -635,6 +1143,14 @@ export const TtsSettings = () => {
 
   const phase = status?.phase ?? "stopped";
   const speaking = phase === "speaking";
+  const playbackSpeed = getSetting("tts_speed") ?? 1.0;
+  const sentenceClock = useMemo<SentenceClock | null>(
+    () =>
+      speaking && sentenceStart && sentenceStart.ms > 0
+        ? { ...sentenceStart, speed: playbackSpeed }
+        : null,
+    [speaking, sentenceStart, playbackSpeed],
+  );
   const starting = phase === "starting";
 
   const speak = async () => {
@@ -642,7 +1158,7 @@ export const TtsSettings = () => {
     // Pruefung galt nach einer Pause im Original "Fortsetzen moeglich" —
     // und Play auf dem Uebersetzungs-Reiter setzte die alte Sitzung fort,
     // las also das Original, obwohl die Uebersetzung offen war.
-    if (canResume && sessionTab.current === tab) {
+    if (canResume && sessionHere()) {
       await resumeSpeaking();
       return;
     }
@@ -664,14 +1180,82 @@ export const TtsSettings = () => {
     setCurrentIndex(null);
     setTruncated(null);
     sessionTab.current = tab;
-    // Die Engine kennt nur die englische Tag-Form; der Offset wandert mit.
-    const canon = canonicalizeTagsAt(spokenText, charOffset);
+    sessionDocId.current = tab === "summary" ? openDocIdRef.current : null;
+    // Die Engine bekommt den Text ohne Markdown (lva#148); der Offset wandert
+    // mit — ebenso beim Umschreiben der Tags in die englische Form.
+    const script = toSpokenScript(spokenText);
+    // Offset über eine Marke im ganzen Text abbilden statt über den
+    // abgeschnittenen Anfang: ein Schnitt in *kursiv* oder einer Überschrift
+    // verschöbe sonst die Stelle um ein Zeichen.
+    const MARK = "\uE000";
+    const scriptOffset =
+      script === spokenText
+        ? charOffset
+        : Math.max(
+            0,
+            toSpokenScript(
+              spokenText.slice(0, charOffset) + MARK + spokenText.slice(charOffset),
+            ).indexOf(MARK),
+          );
+    locatorRef.current?.reset(charOffset);
+    lastLocated.current = null;
+    readerSession.active = true;
+    readerSession.rangeStart = charOffset;
+    // „Nur diesen Satz“ verschiebt die gemerkte Stelle nicht.
+    sessionResumeKey.current = onlyOne ? null : resumeKeyRef.current;
+    const canon = canonicalizeTagsAt(script, scriptOffset);
+    // „Nur diesen Satz“ liest nie im nächsten Teil weiter.
+    if (onlyOne) partSession.current = null;
+    const session = onlyOne ? null : startPartSession();
+    const token = ++speakToken.current;
+    const followFrom =
+      !onlyOne && tab === "translation" && translatingRef.current
+        ? spokenText.length
+        : null;
     const result = await commands.ttsSpeakTextFrom(
       canon.text,
       canon.offset,
       onlyOne,
     );
-    if (result.status === "error") setLastError(result.error);
+    if (result.status === "error") {
+      endPartSession(session);
+      setLastError(result.error);
+    } else {
+      continueWithNextPart(session);
+      if (followFrom !== null) await followTranslation(followFrom, token);
+    }
+  };
+  speakFromRef.current = speakFrom;
+
+  /**
+   * Wiedergabe während die Übersetzung noch wächst: Hat die Sitzung das Ende des
+   * bis dahin vorhandenen Texts gelesen, wird ab genau dieser Stelle (Länge des
+   * Texts beim Start) mit dem neuen Text weitergelesen — über denselben Weg wie
+   * „Ab hier vorlesen“, also ohne Lücke und ohne Wiederholung. Ist noch nichts
+   * Neues da, wartet die Schleife und die Oberfläche zeigt „Warte auf Übersetzung“.
+   * Stopp, Pause, ein neuer Start oder ein Reiterwechsel beenden die Schleife (Token).
+   */
+  const followTranslation = async (readUntil: number, token: number) => {
+    const sleep = (ms: number) => new Promise((r) => window.setTimeout(r, ms));
+    const alive = () =>
+      speakToken.current === token && sessionTab.current === "translation";
+    const progress = speakProgressRef.current;
+    if (!progress || progress.total === 0 || progress.position < progress.total)
+      return;
+    try {
+      while (alive() && translationRef.current.length <= readUntil) {
+        if (!translatingRef.current) return;
+        setWaitingForTranslation(true);
+        await sleep(300);
+      }
+    } finally {
+      setWaitingForTranslation(false);
+    }
+    if (!alive()) return;
+    // Einen Render abwarten, damit speakFrom den neuen Text sieht.
+    await sleep(60);
+    if (!alive()) return;
+    await speakFromRef.current(readUntil, false);
   };
 
   // Vorab-Erzeugung: geaenderte Saetze in den Cache, ohne Wiedergabe.
@@ -704,7 +1288,9 @@ export const TtsSettings = () => {
   const startPrewarm = async () => {
     setLastError(null);
     setPrewarm({ done: 0, total: 0 });
-    const result = await commands.ttsPrewarm(canonicalizeTags(spokenText));
+    const result = await commands.ttsPrewarm(
+      canonicalizeTags(toSpokenScript(spokenText)),
+    );
     if (result.status === "error") {
       setPrewarm(null);
       setLastError(result.error);
@@ -712,13 +1298,42 @@ export const TtsSettings = () => {
   };
 
   const speakNow = async () => {
+    // Weiterlesen ab der gemerkten Stelle dieser Seite (lva#148).
+    const fallback = startNow();
+    const resumeOffset =
+      loadResumePoint(resumeKeyRef.current, spokenText) ??
+      (fallback > 0 ? fallback : null);
+    if (resumeOffset !== null) {
+      setFollow(true);
+      await speakFrom(resumeOffset, false);
+      return;
+    }
     setLastError(null);
+    setFollow(true);
     setSpeakProgress(null);
     setCurrentIndex(null);
     setTruncated(null);
     sessionTab.current = tab;
-    const result = await commands.ttsSpeakText(canonicalizeTags(spokenText));
-    if (result.status === "error") setLastError(result.error);
+    sessionDocId.current = tab === "summary" ? openDocIdRef.current : null;
+    locatorRef.current?.reset(0);
+    lastLocated.current = null;
+    readerSession.active = true;
+    readerSession.rangeStart = null;
+    sessionResumeKey.current = resumeKeyRef.current;
+    const session = startPartSession();
+    const token = ++speakToken.current;
+    const followFrom =
+      tab === "translation" && translatingRef.current ? spokenText.length : null;
+    const result = await commands.ttsSpeakText(
+      canonicalizeTags(toSpokenScript(spokenText)),
+    );
+    if (result.status === "error") {
+      endPartSession(session);
+      setLastError(result.error);
+    } else {
+      continueWithNextPart(session);
+      if (followFrom !== null) await followTranslation(followFrom, token);
+    }
   };
 
   /**
@@ -734,6 +1349,8 @@ export const TtsSettings = () => {
    */
   /** Pause: anhalten, Position behalten — Play setzt genau dort fort. */
   const pauseSpeaking = () => {
+    speakToken.current += 1;
+    setWaitingForTranslation(false);
     void commands.ttsCancel();
   };
 
@@ -743,15 +1360,33 @@ export const TtsSettings = () => {
    * decken sie sich, gehoert Stopp weg.
    */
   const stopSpeaking = () => {
+    speakToken.current += 1;
+    setWaitingForTranslation(false);
     void commands.ttsCancel();
+    partSession.current = null;
+    lastSessionPage.current = null;
+    endReaderSession();
+    autoplayPage.current = null;
     setSpeakProgress(null);
     setCurrentIndex(null);
+    // Stopp gilt der Sitzung, nicht der gerade offenen Seite. Eine
+    // Begriffserklärung (lva#185) hat keine gemerkte Stelle: die des Buchs
+    // bleibt stehen.
+    if (sessionTab.current === "term") return;
+    forgetResumePoint(sessionResumeKey.current ?? resumeKeyRef.current);
   };
 
   const resumeSpeaking = async () => {
     setLastError(null);
+    // Nach einer Pause setzt Play die Sitzung derselben Seite fort — dann
+    // gilt auch das Weiterlesen im nächsten Buchteil wieder.
+    const session = startPartSession(lastSessionPage.current);
+    speakToken.current += 1;
     const result = await commands.ttsSpeakResume();
-    if (result.status === "error") setLastError(result.error);
+    if (result.status === "error") {
+      endPartSession(session);
+      setLastError(result.error);
+    } else continueWithNextPart(session);
   };
 
   /**
@@ -837,7 +1472,7 @@ export const TtsSettings = () => {
     exportTick.current = { time: performance.now(), position: 0 };
     // Returns at once; the run reports itself through tts-export-progress.
     const result = await commands.ttsSpeakToFile(
-      canonicalizeTags(spokenText),
+      canonicalizeTags(toSpokenScript(spokenText)),
       target,
     );
     if (result.status === "error") {
@@ -861,7 +1496,7 @@ export const TtsSettings = () => {
   const seekSentence = (delta: number) => {
     // Springen bewegt die laufende Sitzung — auf einem anderen Reiter gibt
     // es nichts, worin man springen koennte.
-    if (sessionTab.current !== tab) return;
+    if (!sessionHere()) return;
     void commands.ttsSpeakSeek(delta);
   };
 
@@ -904,11 +1539,26 @@ export const TtsSettings = () => {
     options: voiceOptions,
     sampleOf,
     tryOf,
+    languageOf: voiceLanguageOf,
+    bestVoiceFor,
   } = useVoiceChoice(phase);
 
   // Die Stimme gehoert zum Reiter -- bei der Uebersetzung zur Sprache: Englisch
   // liest Lessac, Franzoesisch eine andere, ohne neu zu waehlen.
-  const voiceKey = tab === "translation" ? `translation:${targetLang}` : tab;
+  // KI-Dokumente (lva#217): die Stimme gehört zur Sprache des offenen
+  // Dokuments, damit ein deutsches und ein englisches Kurzbuch desselben
+  // Buchs je ihre passende Stimme behalten.
+  const docLang = useMemo(() => {
+    if (tab !== "summary" || !openDocId) return null;
+    const stored = kiDocs.docs.find((d) => d.id === openDocId)?.language;
+    return stored || detectLanguage(summary);
+  }, [tab, openDocId, kiDocs.docs, summary]);
+  const voiceKey =
+    tab === "translation"
+      ? `translation:${targetLang}`
+      : tab === "summary" && docLang
+        ? `summary:${docLang}`
+        : tab;
   // Seiten- oder Reiterwechsel (die Seite laedt `tabVoices` und `tab` aus ihrem
   // Zustand): die fuer diese Seite und diesen Reiter gemerkte Stimme wird aktiv.
   // Je (Seite, Reiter, Stimme) genau einmal: ein Neuaufbau von `applyVoiceValue`
@@ -956,6 +1606,13 @@ export const TtsSettings = () => {
       pendingApply.current = null;
       if (pending.page !== (activePage ?? null)) return;
       target = pending.key;
+    } else if (
+      tabVoices[target] !== undefined &&
+      tabVoices[target] !== voiceValue
+    ) {
+      // Ein Wechsel von außen (Einstellungen, Wiedergabeleiste der
+      // Aufnahmen): gilt als Handwahl, die Buchsprache stellt sie nicht um.
+      markVoiceChosen(target);
     }
     setTabVoices((current) =>
       current[target] === voiceValue
@@ -965,6 +1622,168 @@ export const TtsSettings = () => {
     // voiceKey absichtlich nicht: beim Reiterwechsel ist voiceValue noch die
     // Stimme des alten Reiters.
   }, [voiceValue]);
+
+  // Buchsprache (Patrick 01.11.): beim Import und bei jeder größeren
+  // Änderung aus dem Originaltext erkannt und im Arbeitsstand der Seite
+  // gespeichert; steht die Seite in der Bibliothek, auch im Buch.
+  // Text samt Seite und Ladezähler: nach einem Seitenwechsel gehört der
+  // entprellte Text noch kurz zur alten Seite und wird dann übergangen.
+  const langInput = useMemo(
+    () => ({ text, page: activePage, tick: pageLoadTick }),
+    [text, activePage, pageLoadTick],
+  );
+  const langSource = useDebouncedValue(langInput, 800);
+  /** Seite, für die die Erkennung gelaufen ist: erst dann stellt die
+      Buchsprache Stimmen um. */
+  const [langCheckedFor, setLangCheckedFor] = useState<string | null>(null);
+  useEffect(() => {
+    if (
+      !pageLoaded.current ||
+      langSource.page !== activePage ||
+      langSource.tick !== pageLoadTick
+    )
+      return;
+    const found = detectLanguage(langSource.text);
+    setLangCheckedFor(activePage ?? null);
+    if (!found || found === pageLang) return;
+    setPageLang(found);
+    const page = activePage;
+    if (!page) return;
+    void commands
+      .libraryList()
+      .then((r) => {
+        if (r.status !== "ok") return;
+        const book = r.data.find((b) => b.text?.page_id === page);
+        // Nur ergänzen: eine vorhandene Sprache (Open Library, von Hand)
+        // bleibt stehen.
+        if (!book || book.language) return;
+        void commands.librarySave({ ...book, language: found });
+      })
+      .catch(() => undefined);
+    // pageLang absichtlich nicht: nur ein neuer Text löst die Erkennung aus.
+  }, [langSource, activePage, pageLoadTick]);
+  /** Sprache dessen, was der offene Reiter vorliest. */
+  const contentLang = useMemo(() => {
+    if (tab === "translation") return targetLangCode(targetLang);
+    if (tab === "summary") return docLang ?? detectLanguage(summary);
+    return pageLang;
+  }, [tab, targetLang, docLang, pageLang]);
+  const markVoiceChosen = (key: string) =>
+    setVoicesChosen((current) =>
+      current[key] ? current : { ...current, [key]: true },
+    );
+  // Passt die Stimme des Reiters nicht zur Sprache und wurde sie nicht von
+  // Hand gewählt, nimmt der Reiter die naheliegende passende Stimme
+  // (englisches Buch -> englische Stimme; Übersetzung -> Zielsprache).
+  const autoVoiceFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!pageLoaded.current || !contentLang || voicesChosen[voiceKey]) return;
+    if (langCheckedFor !== (activePage ?? null)) return;
+    const current = tabVoices[voiceKey] ?? voiceValue;
+    if (!current || current === VOICE_MANAGE) return;
+    const lang = voiceLanguageOf(current);
+    // Nur zwischen Sprachen, die die Erkennung kennt: eine niederländische
+    // Stimme bleibt, auch wenn der Text für Englisch gehalten würde.
+    if (lang === null || lang === contentLang || !isKnownLanguage(lang)) return;
+    const better = bestVoiceFor(contentLang, current);
+    if (!better || better === current) return;
+    const marker = `${activePage ?? ""}|${voiceKey}|${contentLang}|${current}`;
+    if (autoVoiceFor.current === marker) return;
+    autoVoiceFor.current = marker;
+    setTabVoices((v) => ({ ...v, [voiceKey]: better }));
+  }, [
+    contentLang,
+    voiceKey,
+    tabVoices,
+    voiceValue,
+    voicesChosen,
+    voiceLanguageOf,
+    bestVoiceFor,
+    activePage,
+    pageLoadTick,
+    langCheckedFor,
+  ]);
+  // Sprachfilter der Stimmenauswahl: „Passend“ zeigt die Stimmen der
+  // Textsprache und die, die jede Sprache sprechen; die gewählte bleibt immer.
+  const [voiceLangFilter, setVoiceLangFilter] = usePersistentState<string>(
+    "tts.voices.langFilter",
+    "auto",
+    (v) => /^(auto|all|[a-z]{2,3})$/.test(v),
+  );
+  const voiceLangs = useMemo(() => {
+    const set = new Set<string>();
+    for (const o of voiceOptions) {
+      const l = voiceLanguageOf(o.value);
+      if (l) set.add(l);
+    }
+    return [...set].sort();
+  }, [voiceOptions, voiceLanguageOf]);
+  const langName = (code: string) => {
+    try {
+      return (
+        new Intl.DisplayNames([i18n.language || "de"], { type: "language" }).of(
+          code,
+        ) ?? code
+      );
+    } catch {
+      return code;
+    }
+  };
+  const filterLang =
+    voiceLangFilter === "auto"
+      ? contentLang
+      : voiceLangFilter === "all"
+        ? null
+        : voiceLangFilter;
+  const shownVoiceOptions = filterLang
+    ? voiceOptions.filter((o) => {
+        if (o.value === voiceValue || o.value === VOICE_MANAGE) return true;
+        const l = voiceLanguageOf(o.value);
+        return l === null || l === filterLang;
+      })
+    : voiceOptions;
+  const voiceFilterChips =
+    voiceLangs.length > 1 || contentLang ? (
+      <div
+        role="group"
+        aria-label={t("tts.voices.filter.label")}
+        className="flex flex-wrap gap-1 border-b border-mid-gray/30 px-1 pt-0.5 pb-1.5"
+        data-testid="voice-lang-filter"
+      >
+        {[
+          ...(contentLang ? ["auto"] : []),
+          "all",
+          // Die Textsprache steckt schon in „Passend“.
+          ...voiceLangs.filter((l) => l !== contentLang),
+        ].map((key) => {
+          const active =
+            key === voiceLangFilter ||
+            (key === "all" && voiceLangFilter === "auto" && !contentLang);
+          return (
+            <button
+              key={key}
+              type="button"
+              aria-pressed={active}
+              onClick={() => setVoiceLangFilter(key)}
+              className={`cursor-pointer rounded-full border px-2 py-0.5 text-xs ${
+                active
+                  ? "border-logo-primary bg-logo-primary/15 font-medium text-text"
+                  : "border-mid-gray/40 text-text/80 hover:bg-mid-gray/15"
+              }`}
+              data-testid={`voice-lang-filter-${key}`}
+            >
+              {key === "auto"
+                ? t("tts.voices.filter.auto", {
+                    language: langName(contentLang ?? ""),
+                  })
+                : key === "all"
+                  ? t("tts.voices.filter.all")
+                  : langName(key)}
+            </button>
+          );
+        })}
+      </div>
+    ) : undefined;
 
   /**
    * Welcher Text gerade im Feld steht — und damit auch, was das Abspielen
@@ -976,7 +1795,31 @@ export const TtsSettings = () => {
       ? text
       : tab === "translation"
         ? (translation ?? "")
-        : summary;
+        : openDocId && docLoadedFor === openDocId
+          ? summary
+          : "";
+  // Vorspann überspringen (Patrick 05.11.2026): ohne gemerkte Stelle beginnt
+  // Play beim ersten echten Inhalt, nicht bei Titelei, Inhalt oder Impressum.
+  const [readPreface, setReadPreface] = usePersistentState<"1" | "0">(
+    "tts.reader.readPreface",
+    "1",
+    (v) => v === "1" || v === "0",
+  );
+  // Nicht in KI-Dokumenten und nicht, während die Übersetzung noch einläuft.
+  const startApplies = !(
+    tab === "summary" ||
+    (tab === "translation" && translating)
+  );
+  /** Startpunkt jetzt berechnen (Play): auch in der Bearbeiten-Ansicht. */
+  const startNow = () =>
+    startApplies
+      ? bookStart(spokenText, { readPreface: readPreface === "1" }).offset
+      : 0;
+  textRef.current = text;
+  targetLangRef.current = targetLang;
+  translationRef.current = translation ?? "";
+  /** Übersetzung läuft und wird im Reiter gezeigt: der Text ist schreibgeschützt. */
+  const streaming = translating && tab === "translation";
   const setSpokenText = useCallback(
     (next: string) => {
       if (tab === "original") setText(next);
@@ -985,18 +1828,906 @@ export const TtsSettings = () => {
     },
     [tab],
   );
+  // Buchansicht (lva#148): Lesen ist die Standardansicht, Bearbeiten der
+  // Chip-Editor. Ohne Text gibt es nichts zu lesen — dann gilt Bearbeiten.
+  const [viewModeStored, setViewMode] = usePersistentState<"read" | "edit">(
+    "tts.view",
+    "read",
+    (v) => v === "read" || v === "edit",
+  );
+  // Wirksame Ansicht: beim Öffnen einer Seite (und nach dem Laden eines
+  // Dokuments) gilt die gemerkte Wahl, solange es Text gibt. Tippen schaltet
+  // NIE um — sonst verschwände der Editor beim ersten Buchstaben.
+  const [modeNow, setModeNow] = useState<"read" | "edit">("edit");
+  const viewMode: "read" | "edit" =
+    (modeNow === "read" || streaming) && spokenText.trim().length > 0
+      ? "read"
+      : "edit";
+  // Nur in der Leseansicht laufend berechnen: im Editor ändert jeder
+  // Tastendruck den Text, und der Startpunkt wird erst beim Abspielen gebraucht.
+  const textStart = useMemo(
+    () =>
+      viewMode === "read" && startApplies
+        ? bookStart(spokenText, { readPreface: readPreface === "1" })
+        : { offset: 0, hasPreface: false },
+    [viewMode, startApplies, spokenText, readPreface],
+  );
+  const textStartRef = useRef(0);
+  textStartRef.current = textStart.offset;
+  const chooseViewMode = (mode: "read" | "edit") => {
+    setViewMode(mode);
+    setModeNow(mode);
+  };
+  openModeRef.current = (loaded: string) =>
+    setModeNow(viewModeStored === "read" && loaded.trim() ? "read" : "edit");
+  const [twoPagesStored, setTwoPages] = usePersistentState<"1" | "0">(
+    "tts.reader.two",
+    "1",
+  );
+  const [fontStored, setFontSize] = usePersistentState<string>(
+    "tts.reader.font",
+    "18",
+    (v) => /^\d{2}$/.test(v),
+  );
+  const [speakersShown, setSpeakersShown] = usePersistentState<"1" | "0">(
+    "tts.reader.speakers",
+    "1",
+  );
+  // Rechtschreibprüfung im Editor (Editor-Menü), Standard an.
+  const [spellStored, setSpellStored] = usePersistentState<"1" | "0">(
+    "tts.editor.spell",
+    "1",
+  );
+  const [fontFamily, setFontFamily] = usePersistentState<ReaderFont>(
+    "tts.reader.family",
+    "book",
+    (v) => READER_FONTS.some((f) => f.value === v),
+  );
+  const [readerTheme, setReaderTheme] = usePersistentState<ReaderTheme>(
+    "tts.reader.theme",
+    "auto",
+    (v) => READER_THEMES.some((th) => th.value === v),
+  );
+  // Sonnen-Knopf: bewusst nicht gemerkt — wach halten gilt nur, solange man
+  // liest, und soll nach einem Neustart nicht still weiterlaufen.
+  const [keepAwake, setKeepAwake] = useState(false);
+  const awakeShift = useKeepAwake(keepAwake);
+  const toggleKeepAwake = (on: boolean) => {
+    setKeepAwake(on);
+    // Im Vollbild ist nur die Lesespalte sichtbar, Meldungen nicht: der
+    // Hinweis kommt beim nächsten Einschalten außerhalb des Vollbilds.
+    if (on && !document.fullscreenElement && !readerFill)
+      toast.info(t("tts.reader.keepAwakeHint"), { duration: 8000 });
+  };
+  const readerFrameRef = useRef<HTMLDivElement | null>(null);
+  // Lese-Vollbild (Patrick 01.11. 23:16): füllt das App-Fenster, so groß es
+  // gerade ist, ohne es zu maximieren. Echtes Bildschirm-Vollbild nur auf
+  // Wunsch mit F11.
+  const [readerFill, setReaderFill] = useState(false);
+  const [screenFull, setScreenFull] = useState(false);
+  const fullscreen = readerFill || screenFull;
+  useEffect(() => {
+    const onChange = () => {
+      const on =
+        document.fullscreenElement !== null &&
+        document.fullscreenElement === readerFrameRef.current;
+      setScreenFull(on);
+      // Echtes Vollbild beendet (F11, Escape des Systems): ganz zurück.
+      if (!on) setReaderFill(false);
+    };
+    document.addEventListener("fullscreenchange", onChange);
+    return () => document.removeEventListener("fullscreenchange", onChange);
+  }, []);
+  const toggleFullscreen = () => {
+    if (document.fullscreenElement) {
+      void document.exitFullscreen().catch(() => undefined);
+      setReaderFill(false);
+      return;
+    }
+    setReaderFill((on) => !on);
+  };
+  useEffect(() => {
+    if (viewMode !== "read" || !sectionActive) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "F11") {
+        e.preventDefault();
+        if (document.fullscreenElement) {
+          void document.exitFullscreen().catch(() => undefined);
+        } else {
+          setReaderFill(true);
+          void readerFrameRef.current
+            ?.requestFullscreen()
+            .catch(() => undefined);
+        }
+        return;
+      }
+      // Escape beendet das Lese-Vollbild im Fenster, wenn nichts anderes
+      // (Menü, Dialog) die Taste schon genommen hat.
+      if (e.key === "Escape" && readerFill && !document.fullscreenElement) {
+        if (e.defaultPrevented) return;
+        setReaderFill(false);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [viewMode, readerFill, sectionActive]);
+  useEffect(() => {
+    if (viewMode !== "read") setReaderFill(false);
+  }, [viewMode]);
+  const [follow, setFollow] = useState(true);
+  const [pageInfo, setPageInfo] = useState<ReaderPageInfo | null>(null);
+  const readerApiRef = useRef<ReaderViewApi | null>(null);
+  const [revealed, setRevealed] = useState<SourceRange | null>(null);
+  const readerBlocks = useMemo(
+    () => parseReaderDoc(spokenText, speakers),
+    [spokenText, speakers],
+  );
+  const locatorRef = useRef<SentenceLocator | null>(null);
+  const locator = useMemo(() => new SentenceLocator(readerBlocks), [readerBlocks]);
+  locatorRef.current = locator;
+  const [readRange, setReadRange] = useState<SourceRange | null>(null);
+  const readRangeRef = useRef<SourceRange | null>(null);
+  readRangeRef.current = readRange;
+  /** Zuletzt geortete Meldung; null nach Start einer neuen Sitzung. */
+  const lastLocated = useRef<{
+    sentence: string;
+    index: number | null;
+    locator: SentenceLocator;
+  } | null>(null);
+  useEffect(() => {
+    if (!currentSentence || !sessionHere()) {
+      if (!currentSentence) setReadRange(null);
+      return;
+    }
+    const last = lastLocated.current;
+    // Dieselbe Meldung (der Fortschritt setzt den Index nur zurück) nicht
+    // erneut suchen: die Vorwärtssuche träfe sonst ein späteres Vorkommen.
+    if (
+      last &&
+      last.locator === locator &&
+      last.sentence === currentSentence &&
+      (currentIndex === null || currentIndex === last.index)
+    ) {
+      return;
+    }
+    if (!last) {
+      // Erste Meldung der Sitzung in dieser Ansicht — frisch gestartet oder
+      // eben aus einem anderen App-Bereich zurück: ab der Stelle der Sitzung.
+      locator.reset(readerSession.rangeStart ?? 0);
+    } else if (last.locator !== locator) {
+      // Neuer Text oder Sprecher während der Wiedergabe: an der bisherigen
+      // Stelle weitersuchen, nicht am Anfang.
+      locator.reset(readRangeRef.current?.start ?? readerSession.rangeStart ?? 0);
+    } else if (
+      last &&
+      currentIndex !== null &&
+      last.index !== null &&
+      currentIndex < last.index
+    ) {
+      // Ein Sprung zurück: von vorn suchen, sonst träfe die Vorwärtssuche den
+      // nächsten gleichlautenden Satz.
+      locator.reset(0);
+    }
+    lastLocated.current = {
+      sentence: currentSentence,
+      index: currentIndex ?? last?.index ?? null,
+      locator,
+    };
+    const range = locator.locate(currentSentence);
+    if (range) readerSession.rangeStart = range.start;
+    setReadRange(range);
+  }, [currentSentence, currentIndex, locator, tab]);
+  useEffect(() => {
+    if (speakProgress === null && !speaking) setReadRange(null);
+  }, [speakProgress, speaking]);
+  // Weiterlesen (lva#148): die gelesene Stelle je Seite und Reiter merken.
+  const resumeKey = `${activePage ?? "-"}:${
+    tab === "translation"
+      ? `translation:${targetLang}`
+      : tab === "summary" && openDocId
+        ? `doc:${openDocId}`
+        : tab
+  }`;
+  const resumeKeyRef = useRef(resumeKey);
+  resumeKeyRef.current = resumeKey;
+  const sessionResumeKey = SESSION_RESUME_KEY;
+  const [resumeAt, setResumeAt] = useState<number | null>(null);
+  useEffect(() => {
+    setResumeAt(loadResumePoint(resumeKey, spokenText));
+  }, [resumeKey, spokenText]);
+  useEffect(() => {
+    if (!readRange || sessionResumeKey.current !== resumeKeyRef.current) return;
+    saveResumePoint(resumeKeyRef.current, spokenText, readRange.start);
+    setResumeAt(loadResumePoint(resumeKeyRef.current, spokenText));
+    // spokenText bewusst nicht: gespeichert wird beim Satzwechsel.
+  }, [readRange]);
+  const forgetResumePoint = (key: string = resumeKeyRef.current) => {
+    clearResumePoint(key);
+    if (key === resumeKeyRef.current) setResumeAt(null);
+  };
+  // Zu Ende gelesen: beim nächsten Play wieder von vorn.
+  useEffect(() => {
+    if (
+      speakProgress &&
+      speakProgress.total > 0 &&
+      speakProgress.position >= speakProgress.total &&
+      sessionResumeKey.current !== null
+    ) {
+      forgetResumePoint(sessionResumeKey.current);
+    }
+  }, [speakProgress]);
+  // Seite der gemerkten Stelle; pageInfo löst nach jedem Umbruch neu aus.
+  const resumePage = useMemo(() => {
+    if (resumeAt === null || pageInfo === null) return null;
+    const p = readerApiRef.current?.pageOfOffset(resumeAt);
+    return p === null || p === undefined ? null : p + 1;
+  }, [resumeAt, pageInfo]);
+  // Inhaltsverzeichnis: Überschriften der offenen Seite; aktuelles Kapitel
+  // nach der gelesenen Stelle, sonst nach der sichtbaren Seite.
+  const contents = useMemo(() => buildContents(readerBlocks), [readerBlocks]);
+  const book = useMemo(() => bookInfo(readerBlocks), [readerBlocks]);
+  const startProps = {
+    startAt: textStart.offset > 0 ? textStart.offset : undefined,
+    readPreface: textStart.hasPreface ? readPreface === "1" : undefined,
+    onReadPreface: (on: boolean) => setReadPreface(on ? "1" : "0"),
+  };
+  // Buchdaten per ISBN (lva#149): Vorschlag aus dem Impressum, Abfrage erst
+  // im Dialog auf Knopfdruck, Übernahme erst nach Bestätigung.
+  const [isbnOpen, setIsbnOpen] = useState(false);
+  const isbnGuess = useMemo(
+    () => (isbnOpen ? findIsbn(text) : ""),
+    [isbnOpen, text],
+  );
+  // Nach dem Commit messen: im Render stünde noch das DOM des alten Umbruchs.
+  const [chapterIndex, setChapterIndex] = useState(-1);
+  const [contentsPages, setContentsPages] = useState<(number | null)[]>([]);
+  useEffect(() => {
+    const api = readerApiRef.current;
+    setContentsPages(contents.map((e) => api?.pageOfOffset(e.start) ?? null));
+    if (contents.length === 0) {
+      setChapterIndex(-1);
+      return;
+    }
+    const reading =
+      readRange && sessionResumeKey.current === resumeKey ? readRange.start : null;
+    const shown =
+      pageInfo !== null ? (api?.offsetOfPage(pageInfo.page) ?? null) : null;
+    const at = reading ?? shown;
+    setChapterIndex(at === null ? -1 : chapterAt(contents, at));
+  }, [contents, readRange, pageInfo, resumeKey]);
+  const playerChapters = useMemo(
+    () =>
+      contents.map((e, i) => ({
+        title: e.title,
+        level: e.level,
+        page: contentsPages[i] ?? null,
+      })),
+    [contents, contentsPages],
+  );
+  const goToChapter = (entry: ContentsEntry) => {
+    setFollow(false);
+    readerApiRef.current?.revealOffset(entry.start);
+  };
+  // Lesezeichen je Seite und Reiter.
+  const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
+  useEffect(() => {
+    setBookmarks(loadBookmarks(resumeKey, spokenText));
+  }, [resumeKey, spokenText]);
+  const addBookmarkHere = () => {
+    // Beim Vorlesen die gelesene Stelle, sonst der Anfang der sichtbaren Seite.
+    const reading =
+      readRange && sessionResumeKey.current === resumeKey ? readRange.start : null;
+    const shown = pageInfo
+      ? readerApiRef.current?.offsetOfPage(pageInfo.currentPage ?? pageInfo.page)
+      : null;
+    const at = reading ?? shown ?? 0;
+    addBookmark(resumeKey, spokenText, at);
+    setBookmarks(loadBookmarks(resumeKey, spokenText));
+    toast.success(t("tts.reader.bookmarkSet"));
+  };
+  const goToBookmark = (b: Bookmark) => {
+    // Aufschlagen und als Weiterlesen-Stelle merken: Play liest ab dort.
+    setFollow(false);
+    readerApiRef.current?.revealOffset(b.offset);
+    // Ein Lesezeichen am Anfang heißt: Play beginnt vorn (am Anfang des Inhalts).
+    if (b.offset <= 0) {
+      forgetResumePoint(resumeKey);
+      return;
+    }
+    saveResumePoint(resumeKey, spokenText, b.offset);
+    setResumeAt(loadResumePoint(resumeKey, spokenText));
+  };
+  const dropBookmark = (b: Bookmark) => {
+    removeBookmark(resumeKey, b.id);
+    setBookmarks(loadBookmarks(resumeKey, spokenText));
+  };
+  // Gespräch mit dem Buch (lva#309): Reiter „Gespräch“ in der rechten Spalte, nur
+  // im Originaltext der Leseansicht.
+  const bookTalkAvailable =
+    viewMode === "read" && tab === "original" && !!activePage;
+  const [talkStored, setTalkStored] = usePersistentState<"1" | "0">(
+    "tts.talkOpen",
+    "0",
+    (v): v is "1" | "0" => v === "1" || v === "0",
+  );
+  // Schmales Fenster: das Gespräch liegt im Blatt „Gespräch“, nie zugleich in
+  // der Spalte (zwei Panels hätten zwei Mikrofone, zwei Tastenabfragen).
+  const sheetsMode = useSyncExternalStore(
+    (cb) => {
+      const mq = window.matchMedia(BOOK_SHEETS_QUERY);
+      mq.addEventListener("change", cb);
+      return () => mq.removeEventListener("change", cb);
+    },
+    () => window.matchMedia(BOOK_SHEETS_QUERY).matches,
+    () => false,
+  );
+  const [sheet, setSheet] = useState<BookSheet | null>(null);
+  const talkShown = bookTalkAvailable && !sheetsMode && talkStored === "1";
+  // Der Leser zeigt eine Ansicht: die Lesegrenze steigt nur, wenn der Nutzer
+  // sequentiell weiterblättert und die Ansicht an die Grenze anschließt (Plan
+  // §3.0); Sprünge heben sie nie (Fortschrittsspeicher, `liftedFrontier`).
+  useEffect(() => {
+    if (!bookTalkAvailable || !activePage || !pageInfo || !spokenText) return;
+    const api = readerApiRef.current;
+    if (!api) return;
+    // Die erste Seite beginnt am Textanfang (davor kann nur Auszeichnung stehen).
+    const start = pageInfo.page === 0 ? 0 : api.offsetOfPage(pageInfo.page);
+    const nextPage = pageInfo.page + pageInfo.perView;
+    const end =
+      nextPage >= pageInfo.pages ? spokenText.length : api.offsetOfPage(nextPage);
+    if (start === null || end === null) return;
+    raiseFrontier(
+      textProgressKey(activePage),
+      { start, end, sequential: pageInfo.turnedTo === pageInfo.page },
+      spokenText.length,
+    );
+  }, [bookTalkAvailable, activePage, pageInfo, spokenText]);
+  const frontierOfBook = useCallback(
+    () => (activePage ? bookFrontier(activePage) : undefined),
+    [activePage],
+  );
+  // Sprung aus einem Beleg: der Satz bleibt 3 Sekunden über die Live-Hervorhebung markiert.
+  const [flash, setFlash] = useState<SourceRange | null>(null);
+  const flashTimer = useRef<number | null>(null);
+  const talkHostImpl: BookTalkHost = {
+    isReading: () => speaking,
+    position: () => readRange?.start ?? resumeAt,
+    pauseReading: () => {
+      talkPausedFor.current = activePage;
+      pauseSpeaking();
+    },
+    // Nur dasselbe Buch und nur, solange die Seite besteht: das Ende des
+    // Gesprächs (Spalte zu, Buchwechsel) darf nichts Fremdes vorlesen.
+    resumeReading: () => {
+      if (!talkAlive.current || talkPausedFor.current !== activePage) return;
+      void speakNow();
+    },
+    readFrom: (offset) => {
+      setFollow(true);
+      void speakFrom(offset, false);
+    },
+    jumpTo: (spot: BookSpot) => {
+      setFollow(true);
+      readerApiRef.current?.revealOffset(spot.start);
+      setFlash({ start: spot.start, end: spot.end });
+      if (flashTimer.current !== null) window.clearTimeout(flashTimer.current);
+      flashTimer.current = window.setTimeout(() => {
+        flashTimer.current = null;
+        setFlash(null);
+      }, 3000);
+    },
+  };
+  const talkPausedFor = useRef<string | null>(null);
+  const talkAlive = useRef(true);
+  useEffect(() => {
+    talkAlive.current = true;
+    return () => {
+      talkAlive.current = false;
+    };
+  }, []);
+  const talkHostRef = useRef(talkHostImpl);
+  talkHostRef.current = talkHostImpl;
+  const talkHost = useMemo<BookTalkHost>(
+    () => ({
+      isReading: () => talkHostRef.current.isReading(),
+      position: () => talkHostRef.current.position(),
+      pauseReading: () => talkHostRef.current.pauseReading(),
+      resumeReading: () => talkHostRef.current.resumeReading(),
+      readFrom: (o) => talkHostRef.current.readFrom(o),
+      jumpTo: (spot) => talkHostRef.current.jumpTo(spot),
+    }),
+    [],
+  );
+  useEffect(
+    () => () => {
+      if (flashTimer.current !== null) window.clearTimeout(flashTimer.current);
+    },
+    [],
+  );
+  const chapterStarts = useMemo(() => contents.map((e) => e.start), [contents]);
+  const renderTalk = (onNavigate?: () => void) =>
+    activePage ? (
+      <BookTalkPanel
+        key={activePage}
+        bookId={activePage}
+        text={spokenText}
+        chapterStarts={chapterStarts}
+        frontier={frontierOfBook}
+        host={talkHost}
+        onNavigate={onNavigate}
+      />
+    ) : null;
+  // Fokus beim Reiterwechsel: nach dem Wechsel steht er auf dem neuen Reiter.
+  const talkTabFocus = useRef<"talk" | "controls" | null>(null);
+  const switchTalk = (to: "1" | "0") => {
+    talkTabFocus.current = to === "1" ? "talk" : "controls";
+    setTalkStored(to);
+  };
+  useEffect(() => {
+    const want = talkTabFocus.current;
+    if (!want) return;
+    const id = want === "talk" ? "tts-tab-talk" : "tts-tab-talk-open";
+    const el = document.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+    if (!el) return;
+    talkTabFocus.current = null;
+    el.focus();
+  }, [talkStored]);
+  // „G“ blendet das Gespräch ein und aus (nicht beim Tippen, nicht bei
+  // gehaltener Taste). Läuft ein Sprachgespräch, beendet das erste „G“ es
+  // (die Sprachsteuerung fängt die Taste vorher ab und markiert sie).
+  useEffect(() => {
+    if (!bookTalkAvailable) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() !== "g" || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.repeat || e.defaultPrevented) return;
+      if (isTextEntry(e.target) || inForeignDialog(e.target)) return;
+      e.preventDefault();
+      if (sheetsMode) {
+        setSheet(sheet === "chat" ? null : "chat");
+        return;
+      }
+      switchTalk(talkStored === "1" ? "0" : "1");
+      if (rightHiddenStored === "1") setRightHidden("0");
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [bookTalkAvailable, talkStored, rightHiddenStored, sheetsMode, sheet]);
+
+  // Beim Öffnen einer Seite die gemerkte Stelle aufschlagen.
+  const revealedResumeFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (viewMode !== "read" || !spokenText || pageInfo === null) return;
+    if (revealedResumeFor.current === resumeKey) return;
+    // Ohne gemerkte Stelle: beim ersten Inhalt aufschlagen (wie ein E-Reader).
+    // Beim Startpunkt das „# “ überspringen: der Umbruch zählt es zur Seite davor.
+    const start = textStartRef.current;
+    const at =
+      loadResumePoint(resumeKey, spokenText) ??
+      (start > 0 ? skipHeadingMark(spokenText, start) : null);
+    if (at === null) {
+      revealedResumeFor.current = resumeKey;
+      return;
+    }
+    // Erst als erledigt merken, wenn der Reader die Stelle wirklich zeigt:
+    // ein abgebrochener Frame oder ein noch fehlender Reader versucht es neu.
+    const id = window.requestAnimationFrame(() => {
+      const api = readerApiRef.current;
+      if (!api) return;
+      api.revealOffset(at);
+      revealedResumeFor.current = resumeKey;
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, [resumeKey, spokenText, viewMode, pageInfo]);
+  /** Geschätzte Lesedauer bei Tempo 1: ~14 Zeichen je Sekunde. */
+  const readEstimate = useMemo(
+    () => Math.max(1, toSpokenScript(spokenText).replace(/<[^<>\n]{1,60}>|\[[^\]\n]*\]/g, "").length / 14),
+    [spokenText],
+  );
   const historyRef = useRef<{
     syncPresent: (key: string, value: string) => void;
   } | null>(null);
   const activePageRef = useRef<string | null>(null);
   activePageRef.current = activePage ?? null;
+
+  // Buchteile (lva#150): Gehört die Seite zu einem Buch der Skript-Werkstatt,
+  // liest das Vorlesen am Ende im nächsten Teil weiter — ohne Abriss, weil
+  // die ersten Sätze des nächsten Teils schon vorberechnet sind, während der
+  // laufende Teil ausklingt.
+  const [books, setBooks] = useState<Book[]>([]);
+  useEffect(() => {
+    let live = true;
+    commands
+      .booksList()
+      .then((r) => {
+        if (live && r.status === "ok" && Array.isArray(r.data)) setBooks(r.data);
+      })
+      .catch(() => {
+        /* ohne Bücherliste liest das Vorlesen nur den einen Teil */
+      });
+    return () => {
+      live = false;
+    };
+  }, [pages]);
+  const nextPart = useMemo(() => {
+    if (!activePage) return null;
+    for (const b of books) {
+      const i = b.page_ids.indexOf(activePage);
+      if (i < 0) continue;
+      for (const id of b.page_ids.slice(i + 1)) {
+        const page = pages.find((p) => p.id === id);
+        if (page) return { id, title: page.title };
+      }
+    }
+    return null;
+  }, [books, activePage, pages]);
+  const nextPartRef = useRef(nextPart);
+  nextPartRef.current = nextPart;
+  const tabRef = useRef(tab);
+  tabRef.current = tab;
+  /** Seite, deren Sitzung gerade läuft, und ob ihr Anlauf schon angefragt ist.
+   *  Jede Sitzung hat ihr eigenes Objekt: eine später endende alte Sitzung
+   *  darf die neue nicht abräumen. */
+  type PartSession = { page: string; prefetched: boolean };
+  const partSession = useRef<PartSession | null>(null);
+  /** Seite der zuletzt gestarteten Sitzung — Play nach Pause setzt sie fort. */
+  const lastSessionPage = SESSION_LAST_PAGE;
+  /** Nach dem Seitenwechsel sofort weiterlesen (Seite, auf die gewechselt wurde). */
+  const autoplayPage = useRef<string | null>(null);
+  /** Der Autostart kam aus der Bibliothek („Weiterhören“), nicht vom
+   *  Weiterlesen im nächsten Buchteil. */
+  const libraryAutoplay = useRef(false);
+
+  const startPartSession = (
+    page: string | null = activePageRef.current,
+  ): PartSession | null => {
+    lastSessionPage.current = page;
+    const session = page ? { page, prefetched: false } : null;
+    partSession.current = session;
+    return session;
+  };
+  const endPartSession = (session: PartSession | null) => {
+    if (session && partSession.current === session) partSession.current = null;
+  };
+
+  // Die letzten Sätze laufen: den Anfang des nächsten Teils still vorberechnen.
+  // Nur im Original — Übersetzung und Zusammenfassung lesen nicht weiter.
+  useEffect(() => {
+    const session = partSession.current;
+    if (!session || session.prefetched || !nextPart || !speakProgress) return;
+    if (session.page !== activePageRef.current) return;
+    if (sessionTab.current !== "original" || tab !== "original") return;
+    const { position, total } = speakProgress;
+    if (total === 0 || position < Math.max(0, total - PART_LEAD_SENTENCES))
+      return;
+    session.prefetched = true;
+    commands
+      .pageStateLoad(nextPart.id)
+      .then((r) => {
+        // Inzwischen gestoppt oder neu gestartet: nichts mehr vorrechnen.
+        if (partSession.current !== session) return;
+        if (r.status !== "ok" || !r.data) return;
+        let nextText = r.data;
+        try {
+          nextText = (JSON.parse(r.data) as { text?: string }).text ?? "";
+        } catch {
+          // Ältere Seiten speichern den Text roh.
+        }
+        if (!nextText.trim()) return;
+        void commands.ttsPrefetchHead(
+          canonicalizeTags(toSpokenScript(nextText)),
+        );
+      })
+      .catch(() => {
+        /* ohne Anlauf liest der nächste Teil trotzdem, nur mit Pause */
+      });
+  }, [speakProgress, nextPart, tab]);
+
+  /**
+   * Nach dem Ende einer Sitzung: war sie vollständig (letzter Satz gehört),
+   * ist sie noch die aktuelle und gibt es einen nächsten Teil, dorthin
+   * wechseln und weiterlesen.
+   */
+  const continueWithNextPart = (session: PartSession | null) => {
+    if (!session || partSession.current !== session) return;
+    partSession.current = null;
+    const progress = speakProgressRef.current;
+    const next = nextPartRef.current;
+    if (!progress || progress.total === 0 || progress.position < progress.total)
+      return;
+    if (activePageRef.current !== session.page || !next) return;
+    if (sessionTab.current !== "original" || tabRef.current !== "original")
+      return;
+    autoplayPage.current = next.id;
+    setActivePage(next.id);
+    toast(t("tts.parts.next", { title: next.title }));
+  };
+  // Woanders hingewechselt, bevor der nächste Teil geladen war: kein
+  // Weiterlesen mehr, auch nicht, wenn die Seite später von Hand geöffnet wird.
+  useEffect(() => {
+    if (autoplayPage.current && autoplayPage.current !== activePage)
+      autoplayPage.current = null;
+  }, [activePage]);
+  // Bibliothek (lva#152): „Weiterhören“ öffnet die Seite und liest sofort.
+  useEffect(() => {
+    if (!sectionActive) return;
+    const page = takeLibraryAutoplay();
+    if (page && page === storedActivePage()) {
+      autoplayPage.current = page;
+      libraryAutoplay.current = true;
+    }
+    // Nur beim Öffnen (Sichtbarwerden) von Vorlesen.
+  }, [sectionActive]);
+  // Bibliothek (lva#205): Kurzbuch öffnen, vorlesen oder erstellen, sobald
+  // die Seite geladen ist (zum Erstellen auch die Vorlagen).
+  const libraryKiDoc = useRef<LibraryKiDocRequest | null>(null);
+  useEffect(() => {
+    if (!sectionActive) return;
+    const req = takeLibraryKiDoc();
+    if (req) libraryKiDoc.current = req;
+    // Nur beim Öffnen (Sichtbarwerden) von Vorlesen.
+  }, [sectionActive]);
+  useEffect(() => {
+    const req = libraryKiDoc.current;
+    if (!req) return;
+    if (req.page !== activePage) {
+      // Eine andere Seite ist geladen: den Auftrag verwerfen – außer die
+      // Bibliothek hat die Zielseite gerade erst gesetzt (KeepAlive).
+      if (pageLoaded.current && req.page !== storedActivePage())
+        libraryKiDoc.current = null;
+      return;
+    }
+    if (!pageLoaded.current) return;
+    if ("doc" in req) {
+      libraryKiDoc.current = null;
+      if (req.play) docAutoplay.current = req.doc;
+      openKiDocument(req.doc);
+      return;
+    }
+    const template = kiDocs.templates.find((x) => x.id === KURZBUCH_TEMPLATE_ID);
+    if (!template) return;
+    libraryKiDoc.current = null;
+    createKiDocument(
+      { kind: "book" },
+      t("tts.kiDocs.src.book"),
+      template,
+      req.lang ?? "",
+    );
+  }, [pageLoadTick, activePage, kiDocs.templates, sectionActive]);
+  // Der nächste Teil ist geladen: vorlesen. `pageLoadTick` zählt jedes
+  // fertige Laden mit — sonst liefe das bei gleichem Text nie an.
+  useEffect(() => {
+    if (!autoplayPage.current || autoplayPage.current !== activePage) return;
+    if (!pageLoaded.current) return;
+    // „Weiterhören“ aus der Bibliothek meint das Buch selbst: steht die Seite
+    // (erhalten, KeepAlive) auf Übersetzung oder KI-Dokument, erst zurück
+    // zum Original; der Effekt läuft mit dem neuen Reiter erneut.
+    if (libraryAutoplay.current && tab !== "original") {
+      setTab("original");
+      return;
+    }
+    autoplayPage.current = null;
+    libraryAutoplay.current = false;
+    // Liest Vorlesen diese Seite schon (im Hintergrund weiter), nicht neu
+    // starten.
+    if (speaking) return;
+    // Nur im Originaltext und nur, wenn es etwas zu lesen gibt: eine
+    // Übersetzung oder Zusammenfassung des nächsten Teils liest niemand
+    // ungefragt vor.
+    if (tab !== "original" || !spokenText.trim()) return;
+    void speakNow();
+    // speakNow liest den aktuellen Stand; neu laufen soll das nur, wenn der
+    // gewechselte Teil fertig geladen ist – oder Vorlesen wieder sichtbar
+    // wird (dieselbe, schon geladene Seite aus der Bibliothek).
+  }, [pageLoadTick, activePage, tab, spokenText, sectionActive]);
+
+  // KI-Dokumente (lva#183) ------------------------------------------------
+  const saveOpenDoc = useCallback(
+    async (page: string, id: string, value: string) => {
+      const r = await commands.bookAiDocumentUpdate(page, id, null, value);
+      if (r.status === "error") toast.error(kiErrorText(r.error, t));
+    },
+    [t],
+  );
+  /** Ausstehende Änderung sofort sichern – unter ihrer eigenen Seite. */
+  const flushDocSave = useCallback(async () => {
+    const pending = pendingDocSave.current;
+    if (!pending) return;
+    pendingDocSave.current = null;
+    if (pending.value === docSaved.current) return;
+    docSaved.current = pending.value;
+    await saveOpenDoc(pending.page, pending.id, pending.value);
+  }, [saveOpenDoc]);
+  // Änderungen von Hand gebündelt sichern.
+  useEffect(() => {
+    if (!docLoaded || docLoaded.page !== activePage) return;
+    if (summary === docSaved.current) return;
+    pendingDocSave.current = { ...docLoaded, value: summary };
+    const handle = window.setTimeout(() => void flushDocSave(), 600);
+    return () => window.clearTimeout(handle);
+  }, [docLoaded, activePage, summary, flushDocSave]);
+  // Seitenwechsel: Ausstehendes sichern, das Dokument der alten Seite schließen.
+  // Beim Verlassen von Vorlesen ebenso.
+  useEffect(() => {
+    void flushDocSave();
+    setDocLoaded(null);
+    setSummary("");
+    setOpenDocId(null);
+    docAutoplay.current = null;
+  }, [activePage, flushDocSave]);
+  useEffect(() => () => void flushDocSave(), [flushDocSave]);
+
+  // KeepAlive (Patrick 03.11.): Früher lud das Neu-Einhängen alles frisch.
+  // Verdeckt: KI-Dokument sofort sichern. Wieder sichtbar: Seitenliste still
+  // auffrischen und den Text übernehmen, falls die Bibliothek ihn inzwischen
+  // geändert hat (Zusammenführen, Bereinigen, Transkript) – ohne Leeren,
+  // ohne Aufblinken; eine eigene, noch nicht gesicherte Änderung hat Vorrang.
+  // `textRef` (oben) trägt den aktuellen Text.
+  const wasVisible = useRef(sectionActive);
+  useEffect(() => {
+    const was = wasVisible.current;
+    wasVisible.current = sectionActive;
+    if (!sectionActive) {
+      if (was) void flushDocSave();
+      return;
+    }
+    if (was) return;
+    void reloadPages();
+    const page = activePage;
+    if (!page || !pageLoaded.current || storedActivePage() !== page) return;
+    void commands.pageStateLoad(page).then((result) => {
+      if (result.status !== "ok" || !result.data) return;
+      if (savePending.current || storedActivePage() !== page) return;
+      try {
+        const state = JSON.parse(result.data) as { text?: unknown };
+        if (typeof state.text === "string" && state.text !== textRef.current)
+          setText(state.text);
+      } catch {
+        /* alter Klartext-Stand: unverändert lassen */
+      }
+    });
+    // Nur beim Wechsel der Sichtbarkeit.
+  }, [sectionActive]);
+
+  // Offenes Dokument laden – erst, wenn die Seite geladen ist. Fehlt es
+  // (gelöscht, anderes Gerät), zurück zur Liste.
+  useEffect(() => {
+    const page = activePage;
+    const id = openDocId;
+    if (!page || !id || !pageLoaded.current) return;
+    if (docLoaded && docLoaded.page === page && docLoaded.id === id) return;
+    let alive = true;
+    void commands.bookAiDocumentText(page, id).then((r) => {
+      if (!alive || activePageRef.current !== page) return;
+      if (openDocIdRef.current !== id) return;
+      if (r.status !== "ok") {
+        if (docAutoplay.current === id) docAutoplay.current = null;
+        setOpenDocId(null);
+        return;
+      }
+      docSaved.current = r.data;
+      // Laden ist kein Bearbeitungsschritt (Rückgängig ließe sonst ein leeres
+      // Dokument zurück).
+      historyRef.current?.syncPresent(`${page}:summary:${id}`, r.data);
+      setSummary(r.data);
+      setDocLoaded({ page, id });
+      // Ein geöffnetes Dokument (Kurzbuch & Co.) zeigt die gemerkte Ansicht,
+      // wie eine Seite beim Öffnen. Vorher blieb es im Bearbeiten-Modus, den
+      // der leere Text vor dem Laden erzwungen hatte (Patrick 02.11.2026).
+      openModeRef.current?.(r.data);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [activePage, openDocId, docLoaded, pageLoadTick]);
+
+  const openKiDocument = (id: string | null) => {
+    // Ausstehende Änderung des bisherigen Dokuments nicht verlieren.
+    void flushDocSave();
+    setDocLoaded(null);
+    setSummary("");
+    setOpenDocId(id);
+    if (id) setTab("summary");
+    if (!id) void kiDocs.reload();
+  };
+
+  // Alte Zusammenfassung einmalig als KI-Dokument übernehmen – nur für die
+  // Seite, zu der sie gehört, und erst, wenn diese fertig geladen ist.
+  const migrating = useRef<string | null>(null);
+  useEffect(() => {
+    const legacy = legacySummary;
+    if (!legacy || legacy.page !== activePage || !pageLoaded.current) return;
+    if (migrating.current === legacy.page) return;
+    migrating.current = legacy.page;
+    void commands
+      .bookAiDocumentImport(legacy.page, t("tts.kiDocs.legacyTitle"), legacy.text)
+      .then(async (r) => {
+        migrating.current = null;
+        if (r.status !== "ok") return;
+        if (activePageRef.current === legacy.page) {
+          // Die Sicherung der Seite schreibt danach `summary: ""`.
+          setLegacySummary((cur) => (cur === legacy ? null : cur));
+          void kiDocs.reload();
+          if (tabRef.current === "summary" && !openDocIdRef.current)
+            setOpenDocId(r.data.id);
+          return;
+        }
+        // Inzwischen auf einer anderen Seite: dort den alten Text direkt
+        // austragen. Ein zweiter Import bliebe ohnehin folgenlos (der Kern
+        // erkennt denselben Text wieder).
+        const loaded = await commands.pageStateLoad(legacy.page);
+        if (loaded.status !== "ok" || !loaded.data) return;
+        try {
+          const state = JSON.parse(loaded.data) as Record<string, unknown>;
+          if (state.summary !== legacy.text) return;
+          state.summary = "";
+          await commands.pageStateSave(legacy.page, JSON.stringify(state));
+        } catch {
+          /* roh gespeicherte Seite: hat keine Zusammenfassung */
+        }
+      });
+  }, [activePage, legacySummary, pageLoadTick]);
+
+  // „Hören“ auf einer Karte: Dokument öffnen und vorlesen, sobald es geladen ist.
+  useEffect(() => {
+    if (!docAutoplay.current || docAutoplay.current !== openDocId) return;
+    if (docLoadedFor !== openDocId || tab !== "summary") return;
+    docAutoplay.current = null;
+    if (spokenText.trim()) void speakNow();
+  }, [openDocId, docLoadedFor, tab, spokenText]);
+
+  const createKiDocument: React.ComponentProps<
+    typeof KiDocumentDialog
+  >["onCreate"] = (source, label, template, targetLang) => {
+    setKiDialogOpen(false);
+    openKiDocument(null);
+    setTab("summary");
+    const page = activePage;
+    if (!page) return;
+    // Der Kern liest den Buchtext aus state.json; die Sicherung dort läuft
+    // gebündelt. Vorher den aktuellen Stand schreiben, damit Bereichsgrenzen
+    // zum Text passen.
+    void commands
+      .pageStateSave(page, pageStateJson())
+      .then(() => kiDocs.create(source, label, template, targetLang))
+      .then((r) => {
+      if ("error" in r) {
+        if (r.error === "book_ai:cancelled")
+          toast.info(kiErrorText(r.error, t));
+        else toast.error(kiErrorText(r.error, t));
+        return;
+      }
+      toast.success(t("tts.kiDocs.created", { title: r.doc.title }));
+      // Nur öffnen, wenn man noch in der Liste derselben Seite steht.
+      if (
+        activePageRef.current === page &&
+        tabRef.current === "summary" &&
+        !openDocIdRef.current
+      )
+        setOpenDocId(r.doc.id);
+    });
+  };
+  const playingDocId =
+    speaking && sessionTab.current === "summary" ? sessionDocId.current : null;
+  const openDoc = openDocId
+    ? (kiDocs.docs.find((d) => d.id === openDocId) ?? null)
+    : null;
+  const activePageTitle = pages.find((p) => p.id === activePage)?.title ?? "";
+  const kurzbuch = useMemo(
+    () =>
+      tab === "summary" && openDoc?.template_id === KURZBUCH_TEMPLATE_ID
+        ? parseKurzbuch(spokenText)
+        : null,
+    [tab, openDoc?.template_id, spokenText],
+  );
   // Bearbeitungshistorie je Seite und Reiter (Uebersetzung: je Sprache): Rueckgaengig/Wiederherstellen
   // ueber Knoepfe und Strg+Z/Strg+Y -- auch fuer programmatische
   // Aenderungen (Auto-Tagging, Aufbereiten, Ersetzen, Skript-Pruefung).
   const history = useTextHistory(
     tab === "translation"
       ? translationHistoryKey(activePage, targetLang)
-      : `${activePage ?? "-"}:${tab}`,
+      : tab === "summary"
+        ? `${activePage ?? "-"}:summary:${openDocId ?? "-"}`
+        : `${activePage ?? "-"}:${tab}`,
     spokenText,
     setSpokenText,
   );
@@ -1108,12 +2839,164 @@ export const TtsSettings = () => {
     [spokenText, speakers, scriptEngine],
   );
 
+  /**
+   * Befunde in der Buchansicht: Sprecher-Marker sind dort unsichtbar (sie
+   * stehen am Rand). Markiert wird deshalb der Text, den der Marker spricht —
+   * der Block, der direkt hinter ihm beginnt.
+   */
+  const readerMarks = useMemo<ReaderMark[]>(() => {
+    if (!scriptCheckOn) return [];
+    const out: ReaderMark[] = [];
+    for (const f of scriptFindings) {
+      if (isHintFinding(f.kind)) continue;
+      const block = readerBlocks.find((b) => b.end > f.start && b.runs.length);
+      const runs = block?.runs.filter((r) => !r.tag) ?? [];
+      if (!runs.length) continue;
+      const start = f.kind === "unknown-speaker" ? runs[0].start : f.start;
+      const end = f.kind === "unknown-speaker" ? runs[runs.length - 1].end : f.end;
+      out.push({
+        start,
+        end,
+        selected:
+          revealed !== null &&
+          revealed.start <= f.end &&
+          revealed.end >= f.start,
+      });
+    }
+    return out;
+  }, [scriptCheckOn, scriptFindings, readerBlocks, revealed]);
+
+  // Begriffe (lva#185): nur im Originaltext und in der Leseansicht.
+  const [termsShown, setTermsShown] = usePersistentState<"1" | "0">(
+    "tts.terms.highlight",
+    "1",
+  );
+  const [termAutoRead, setTermAutoRead] = usePersistentState<"1" | "0">(
+    "tts.terms.autoRead",
+    "1",
+  );
+  const [termPreset, setTermPreset] = usePersistentState<SearchPreset>(
+    "tts.terms.search",
+    "wikipedia",
+    (v) => v === "wikipedia" || v === "duckduckgo" || v === "custom",
+  );
+  const [termCustomUrl, setTermCustomUrl] = usePersistentState<string>(
+    "tts.terms.searchUrl",
+    "",
+  );
+  const bookTerms = useBookTerms(
+    activePage || null,
+    text,
+    tab === "original" && viewMode === "read" && termsShown === "1",
+  );
+  /** Offenes Erklärfenster: Fundstelle und die Stelle, an der das Vorlesen
+   *  unterbrochen wurde (null, wenn nichts lief). */
+  const [termOpen, setTermOpen] = useState<{
+    mark: TermMark;
+    resumeAt: number | null;
+  } | null>(null);
+  /** Läuft gerade die Erklärsitzung? State statt nur der Ref, damit der
+   *  Dialog nicht zwischen Abbruch und Start der Erklärung flackert. */
+  const [termSession, setTermSession] = useState(false);
+  const termSpeaking = termSession && (speaking || starting);
+  /** Erklärsitzung beenden: nie von `speaking` abhängig (siehe pauseSpeaking). */
+  const stopExplanation = async () => {
+    if (sessionTab.current !== "term") return;
+    await commands.ttsCancel();
+    setTermSession(false);
+    setSpeakProgress(null);
+    setCurrentIndex(null);
+    setReadRange(null);
+  };
+  const speakExplanation = async (mark: TermMark) => {
+    const term = bookTerms.byId.get(mark.termId);
+    if (!term) return;
+    setLastError(null);
+    setSpeakProgress(null);
+    setCurrentIndex(null);
+    setCurrentSentence(null);
+    setReadRange(null);
+    // Eine eigene Sitzung: sie verschiebt weder die gemerkte Stelle noch
+    // die Hervorhebung im Buch und liest nie im nächsten Teil weiter.
+    sessionTab.current = "term";
+    sessionDocId.current = null;
+    sessionResumeKey.current = null;
+    lastLocated.current = null;
+    endReaderSession();
+    partSession.current = null;
+    setTermSession(true);
+    const script = spokenExplanation(term, {
+      fromBook: t("tts.terms.fromBook"),
+      general: t("tts.terms.generalSpoken"),
+      none: t("tts.terms.fromBookNone"),
+    });
+    const result = await commands.ttsSpeakText(
+      canonicalizeTags(toSpokenScript(script)),
+    );
+    if (result.status === "error") setLastError(result.error);
+  };
+  const openTerm = async (mark: TermMark) => {
+    if (!bookTerms.byId.has(mark.termId)) return;
+    // Auch während des Anlaufs (Modell lädt): sonst liefe das Buch unter
+    // dem Fenster los.
+    const busy = speaking || starting;
+    const reading = busy && sessionHere();
+    const resumeAt = reading
+      ? (readRangeRef.current?.start ??
+        loadResumePoint(resumeKeyRef.current, spokenText) ??
+        mark.start)
+      : null;
+    setTermOpen({ mark, resumeAt });
+    if (busy) {
+      partSession.current = null;
+      // Erst abbrechen, dann die Erklärung starten: sonst träfe der Abbruch
+      // womöglich die neue Sitzung.
+      await commands.ttsCancel();
+    }
+    if (termAutoRead === "1") await speakExplanation(mark);
+  };
+  const closeTerm = () => {
+    void stopExplanation();
+    setTermSession(false);
+    setTermOpen(null);
+  };
+  const continueAfterTerm = async () => {
+    if (!termOpen) return;
+    const at = termOpen.resumeAt ?? termOpen.mark.start;
+    setTermOpen(null);
+    setFollow(true);
+    if (sessionTab.current === "term") await commands.ttsCancel();
+    setTermSession(false);
+    await speakFrom(at, false);
+  };
+  // Seite gewechselt oder Begriff verschwunden (neuer Lauf, Ladefehler):
+  // Fenster schließen und die Erklärung anhalten, nie unsichtbar weiterlesen.
+  useEffect(() => {
+    if (termOpen && !bookTerms.byId.has(termOpen.mark.termId)) closeTerm();
+  }, [bookTerms.byId]);
+  useEffect(() => {
+    if (termOpen) closeTerm();
+  }, [activePage]);
+  const extractTerms = async () => {
+    const result = await bookTerms.extract();
+    if ("error" in result) {
+      toast.error(kiErrorText(result.error, t));
+      return;
+    }
+    if (result.failed > 0)
+      toast.warning(t("tts.terms.extractedPartly", { failed: result.failed }));
+    else toast.success(t("tts.terms.extracted"));
+  };
+
   const scriptActions = useMemo(
     () => ({
       reveal: (finding: ScriptFinding) => {
         const { target } = freshMatch(finding);
         const at = target ?? finding;
         editorApiRef.current?.revealRange?.(at.start, at.end);
+        setRevealed({ start: at.start, end: at.end });
+        setFollow(false);
+        readerApiRef.current?.revealOffset(at.end);
       },
       replace: (
         finding: ScriptFinding,
@@ -1158,22 +3041,55 @@ export const TtsSettings = () => {
   const translateText = async () => {
     if (!text.trim()) return;
     setLastError(null);
+    if (translatingRef.current) return;
+    setTranslatePartial(null);
+    setTranslateWarnings([]);
     setTranslating(true);
+    translatingRef.current = true;
     setTransformProgress(null);
-    const result = await commands.ttsTranslate(text, targetLang);
+    const forText = text;
+    const forLang = targetLang;
+    const key = translationKey(forText, forLang);
+    streamKey.current = key;
+    streamRef.current = emptyStream();
+    resyncJob.current = false;
+    // Die Seitenmarken bleiben im Text; das Backend maskiert sie selbst.
+    const result = await commands.ttsTranslate(forText, forLang);
     setTranslating(false);
+    translatingRef.current = false;
+    resyncJob.current = false;
     setTransformProgress(null);
+    // Inzwischen anderer Text oder andere Sprache gewählt: das Ergebnis liegt im
+    // Zwischenspeicher und erscheint beim Zurückschalten, nicht im falschen Feld.
+    const stale =
+      textRef.current !== forText || targetLangRef.current !== forLang;
+    if (stale) {
+      if (streamKey.current === key) streamKey.current = "";
+      if (result.status === "ok") addTranslatedLang(forLang);
+      else if (result.error !== TRANSFORM_CANCELLED) setLastError(result.error);
+      return;
+    }
     if (result.status === "error") {
-      if (result.error === TRANSFORM_CANCELLED) {
-        toast.info(t("tts.transform.cancelled"));
-      } else {
+      const partial = streamRef.current.contiguous > 0;
+      const cancelled = result.error === TRANSFORM_CANCELLED;
+      if (cancelled) toast.info(t("tts.transform.cancelled"));
+      if (partial) {
+        // Das Gestreamte bleibt stehen; „Fortsetzen“ ruft die Übersetzung erneut auf,
+        // fertige Abschnitte kommen aus dem Backend sofort zurück.
+        setTranslatePartial({
+          kind: cancelled ? "cancelled" : "error",
+          message: cancelled ? "" : result.error,
+        });
+        addTranslatedLang(forLang);
+      } else if (!cancelled) {
         setLastError(result.error);
       }
       return;
     }
-    translationFor.current = translationKey(text, targetLang);
+    if (streamKey.current === key) streamKey.current = "";
+    translationFor.current = key;
     savedTranslation.current = result.data;
-    addTranslatedLang(targetLang);
+    addTranslatedLang(forLang);
     setTranslation(result.data);
     setTab("translation");
     // Die Sprecher des Originals stehen noch drin: Stimmen der Zielsprache
@@ -1214,6 +3130,9 @@ export const TtsSettings = () => {
     if (translation === null) return;
     if (translationFor.current !== translationKey(text, targetLang)) return;
     if (translation === savedTranslation.current) return;
+    // Ein Teilergebnis (Fehler/Abbruch) darf nie als fertige Übersetzung
+    // abgelegt werden — auch nicht nach einer Korrektur daran.
+    if (translatePartial) return;
     const forText = text;
     const forLang = targetLang;
     const value = translation;
@@ -1223,7 +3142,7 @@ export const TtsSettings = () => {
       });
     }, 600);
     return () => window.clearTimeout(timer);
-  }, [translation, text, targetLang]);
+  }, [translation, text, targetLang, translatePartial]);
 
   const swapKey = `lva.ui.speakerSwap.${activePage ?? ""}.${targetLang}`;
   /** Fenster "Sprecher tauschen" mit Vorbelegung (gemerkt je Seite und Sprache). */
@@ -1372,25 +3291,76 @@ export const TtsSettings = () => {
     setDictating(true);
   };
 
-  /** Dokument als Originaltext laden (txt/md/pdf/docx). */
-  const loadDocument = async () => {
-    const picked = await open({
-      multiple: false,
-      filters: [
-        { name: "Dokumente", extensions: ["txt", "md", "pdf", "docx"] },
-      ],
-    });
+  const textNowRef = useRef(text);
+  textNowRef.current = text;
+
+  /** Dokument als Originaltext laden (txt/md/pdf/docx/epub). */
+  const loadDocument = async (dropped?: string) => {
+    // Abgelegt per Drag & Drop (lva#152) oder über den Dateidialog.
+    const picked =
+      dropped ??
+      (await open({
+        multiple: false,
+        filters: [
+          { name: "Dokumente", extensions: ["txt", "md", "pdf", "docx", "epub"] },
+        ],
+      }));
     if (typeof picked !== "string") return;
     setLastError(null);
     setLoadingSource(true);
+    const pageAtStart = activePage;
     const result = await commands.ttsExtractDocument(picked);
     setLoadingSource(false);
     if (result.status === "error") {
       setLastError(result.error);
       return;
     }
+    const title = documentTitle(result.data, picked);
+    // Buch hinzufügen (lva#152): steht auf der Seite schon Text, bekommt das
+    // Buch eine eigene neue Seite – nichts wird überschrieben.
+    // Erst nach dem Laden prüfen: wer währenddessen tippt, verliert nichts.
+    if (textNowRef.current.trim() || activePageRef.current !== pageAtStart) {
+      const created = await createPageWithText(title, result.data);
+      if (!created) setLastError(t("tts.add.pageFailed"));
+      return;
+    }
     setTab("original");
     setText(result.data);
+    // Auf einer leeren Seite heißt die Seite wie das Buch (lva#149), aber
+    // nur, wenn der Nutzer während des Ladens nicht die Seite gewechselt hat.
+    if (pageAtStart && activePageRef.current === pageAtStart && title) {
+      void commands
+        .pagesRename(pageAtStart, title)
+        .then(() => reloadPages());
+    }
+    openModeRef.current?.(result.data);
+  };
+
+  /** Bestätigte ISBN-Daten in die Titelei schreiben, Seite umbenennen. */
+  const applyIsbnBook = (found: IsbnBook) => {
+    const previousText = text;
+    const next = applyBookTitle(text, found);
+    if (next === previousText) return;
+    setText(next);
+    const page = activePage;
+    const oldTitle = pages.find((p) => p.id === page)?.title;
+    if (page) {
+      const title = found.title.replace(/\s+/g, " ").trim().slice(0, 120);
+      void commands.pagesRename(page, title).then(() => reloadPages());
+    }
+    toast(t("tts.isbn.applied", { title: found.title }), {
+      action: {
+        label: t("tts.autotag.undo"),
+        onClick: () => {
+          // Nur auf derselben Seite: sonst landete der alte Text per
+          // Autosave auf der jetzt offenen Seite.
+          if (activePageRef.current !== page) return;
+          setText(previousText);
+          if (page && oldTitle)
+            void commands.pagesRename(page, oldTitle).then(() => reloadPages());
+        },
+      },
+    });
   };
 
   /** Artikel hinter einer URL als Originaltext laden. */
@@ -1406,6 +3376,7 @@ export const TtsSettings = () => {
     }
     setTab("original");
     setText(result.data);
+    openModeRef.current?.(result.data);
   };
 
   /** Beliebige Datei in den Projektordner der Seite kopieren — Kontext, der
@@ -1430,11 +3401,11 @@ export const TtsSettings = () => {
    * alte Text bleibt hinter "Rueckgaengig" im Toast.
    */
   const tidyText = async () => {
-    if (!text.trim() || tidying) return;
+    if (!text.trim() || tidying || speeching) return;
     setLastError(null);
     setTidying(true);
     const previousText = text;
-    const result = await commands.ttsTidyText(text);
+    const result = await commands.ttsTidyText(stripPageMarks(text));
     setTidying(false);
     if (result.status === "error") {
       setLastError(result.error);
@@ -1451,46 +3422,393 @@ export const TtsSettings = () => {
   };
 
   /**
+   * Sprechfassung: die KI setzt Satzzeichen, teilt Schachtelsätze und schreibt
+   * Zahlen aus, damit eine Stimme ohne Betonungs-Steuerung (Phonon, Piper)
+   * richtig betont. Wie „Text aufbereiten“: ersetzt den Text, mit Rückgängig.
+   */
+  const speechText = async () => {
+    if (!text.trim() || speeching || tidying) return;
+    setLastError(null);
+    setSpeeching(true);
+    const previousText = text;
+    let result: Awaited<ReturnType<typeof commands.ttsSpeechText>>;
+    try {
+      result = await commands.ttsSpeechText(stripPageMarks(text));
+    } catch (e) {
+      setLastError(String(e));
+      return;
+    } finally {
+      setSpeeching(false);
+    }
+    if (result.status === "error") {
+      setLastError(result.error);
+      return;
+    }
+    // Während des Laufs weitergeschrieben: nichts überschreiben.
+    if (textRef.current !== previousText) {
+      setLastError(t("tts.speechStale"));
+      return;
+    }
+    setTab("original");
+    setText(result.data);
+    toast(t("tts.speechDone"), {
+      action: {
+        label: t("tts.tidyUndo"),
+        onClick: () => setText(previousText),
+      },
+    });
+  };
+
+  /**
    * Zusammenfassen — immer das ORIGINAL, nie die Uebersetzung. Das Ergebnis
    * liegt im dritten Reiter; das Original bleibt unangetastet, abspielen
    * kann man beides.
    */
-  const summarize = async () => {
+  const summarize = () => {
     if (!text.trim()) return;
-    setLastError(null);
-    setSummarizing(true);
-    setTransformProgress(null);
-    const result = await commands.ttsSummarizeText(text, {
-      length: sumLength,
-      detail: sumDetail,
-      audience: sumAudience,
-    });
-    setSummarizing(false);
-    setTransformProgress(null);
-    if (result.status === "error") {
-      if (result.error === TRANSFORM_CANCELLED) {
-        toast.info(t("tts.transform.cancelled"));
-      } else {
-        setLastError(result.error);
-      }
-      return;
-    }
-    setSummary(result.data);
-    setTab("summary");
+    // Markierung im Original als Quelle anbieten, wenn sie sich eindeutig
+    // im Text wiederfindet (Reader zeigt den Text ohne Auszeichnungen).
+    const picked = window.getSelection()?.toString().trim() ?? "";
+    const at =
+      tab === "original" && picked.length >= 20 ? text.indexOf(picked) : -1;
+    setKiSelection(
+      at >= 0 && text.indexOf(picked, at + 1) < 0
+        ? { start: at, end: at + picked.length }
+        : null,
+    );
+    setKiDialogOpen(true);
   };
 
   const showVramHint =
     starting && (startingSeconds >= 120 || status?.message === "vram");
 
+  // Stimme und Werkzeuge: rechts in der Spalte oder, ist sie ausgeblendet,
+  // in der Spielerleiste (Variante A, Codex 01.11.). Gerendert wird jeweils
+  // nur an einer Stelle.
+  // `compact`: in der Spielerleiste nur der Dropdown-Knopf (Symbol + Pfeil),
+  // der Name steht im Tooltip und in der offenen Liste (Patrick 01.11.).
+  const voiceLabel =
+    voiceOptions.find((option) => option.value === voiceValue)?.label ?? "";
+  // Kein Hover-Hinweis mehr an der Stimmenauswahl (Patrick 01.11.: die Blase
+  // verdeckte beim Scrollen die Liste); der Hinweis bleibt als Beschreibung
+  // des Felds für Screenreader.
+  const voicePickerOf = (compact = false) => (
+        <div
+          className="w-full"
+          role="group"
+          aria-label={t("tts.voices.title")}
+          aria-describedby="voice-mode-hint"
+          data-testid="voice-select"
+          onContextMenu={(event) =>
+            voiceMenu.open(event, [
+              {
+                id: "replace",
+                label: t("tts.replaceSpeaker.voiceMenu"),
+                icon: Replace,
+                testId: "voice-menu-replace",
+                disabled: speakers.length < 2,
+                onSelect: () => setReplaceSpeaker({}),
+              },
+              // Anbieter-Einstellungen: früher als Dauertext unter der
+              // Stimme, jetzt im Menü (Stimme sitzt in der Fußleiste).
+              ...(providerEngineId
+                ? [
+                    {
+                      id: "provider",
+                      label: t("tts.providers.dropdown.open"),
+                      icon: Plug,
+                      testId: "voice-provider-open",
+                      onSelect: () => openVoiceManager("providers"),
+                    },
+                  ]
+                : []),
+              {
+                id: "manage",
+                label: t("tts.voices.manage"),
+                icon: Settings,
+                testId: "voice-menu-manage",
+                onSelect: () => {
+                  window.localStorage.setItem(
+                    "lva.ui.settings.tab",
+                    "output",
+                  );
+                  window.dispatchEvent(
+                    new CustomEvent("lv-navigate", {
+                      detail: { section: "settings" },
+                    }),
+                  );
+                },
+              },
+            ])
+          }
+        >
+          {/* Kennwert statt leerem Text fuer die Standardstimme:
+            "" gilt der Select-Komponente als "nichts gewaehlt" und
+            zeigte den Platzhalter "Select…" statt des Namens.
+            Piper-Stimmen stehen in derselben Liste (Wert
+            "piper:<id>"): wer eine waehlt, schaltet damit die
+            Engine um — die Engine-Einstellung im Reiter Vorlesen
+            bleibt als zweiter Weg bestehen. */}
+          <Select
+            menuPortal
+            compactMenuWidth={compact ? 340 : undefined}
+            ariaLabel={compact ? `${t("tts.voices.title")}: ${voiceLabel}` : undefined}
+            value={voiceValue}
+            options={shownVoiceOptions}
+            menuScrollKey={
+              // „Passend“ hängt an der Textsprache, die anderen Filter nicht.
+              voiceLangFilter === "auto"
+                ? `tts-voice:auto:${contentLang ?? ""}`
+                : `tts-voice:${voiceLangFilter}`
+            }
+            menuHeader={voiceFilterChips}
+            formatOptionLabel={(option, context) => {
+              if (compact && context === "value")
+                return (
+                  <span
+                    className="flex items-center"
+                    title={`${t("tts.voices.title")}: ${option.label}`}
+                    data-testid="voice-compact"
+                  >
+                    <Mic width={16} height={16} aria-hidden="true" />
+                    {/* Sprache der Stimme als Kürzel am Knopf (Codex zu
+                        #199): englisches Buch, englische Stimme sichtbar. */}
+                    {voiceLanguageOf(option.value) && (
+                      <span
+                        aria-hidden="true"
+                        className="ms-1 text-[11px] font-semibold uppercase tabular-nums"
+                        data-testid="voice-compact-lang"
+                      >
+                        {voiceLanguageOf(option.value)}
+                      </span>
+                    )}
+                    <span className="sr-only">{option.label}</span>
+                  </span>
+                );
+              const sample =
+                context === "menu"
+                  ? sampleOf(option.value)
+                  : undefined;
+              const target =
+                context === "menu" && !sample
+                  ? tryOf(option.value)
+                  : undefined;
+              if (!sample && !target) return option.label;
+              return (
+                <span className="flex items-center gap-2">
+                  <span className="min-w-0 flex-1 break-words">
+                    {option.label}
+                  </span>
+                  {sample ? (
+                    <SamplePlayButton
+                      inline
+                      path={sample.path}
+                      name={sample.name}
+                      testId={`voice-sample-${option.value}`}
+                    />
+                  ) : (
+                    target && (
+                      <VoiceTryButton
+                        target={target}
+                        name={option.label}
+                        testId={`voice-sample-${option.value}`}
+                      />
+                    )
+                  )}
+                </span>
+              );
+            }}
+            onChange={(value) => {
+              if (!value) return;
+              if (value === "@manage") {
+                window.localStorage.setItem(
+                  "lva.ui.settings.tab",
+                  "output",
+                );
+                window.dispatchEvent(
+                  new CustomEvent("lv-navigate", {
+                    detail: { section: "settings" },
+                  }),
+                );
+                return;
+              }
+              applyVoiceValue(value);
+              markVoiceChosen(voiceKey);
+              setTabVoices((current) => ({
+                ...current,
+                [voiceKey]: value,
+              }));
+            }}
+            isClearable={false}
+          />
+          <p
+            id="voice-mode-hint"
+            className="sr-only"
+            data-testid="voice-mode-hint"
+          >
+            {scriptMode
+              ? t("tts.voices.scriptVoicesHint")
+              : t("tts.voices.singleVoiceHint")}
+          </p>
+        </div>
+  );
+  // Hinweise zur Stimme (fehlt die Einrichtung, Piper liest automatisch)
+  // bleiben in der rechten Spalte; die Wahl selbst steht in der Fußleiste.
+  const voiceHints = (
+    <div className="min-w-0 flex-1" data-testid="voice-hints">
+          {selectedVoiceNotSetUp && (
+            <div
+              role="status"
+              data-testid="voice-setup-hint"
+              className="mt-1 text-xs text-amber-700 dark:text-amber-400"
+            >
+              <p>
+                {noVoiceSetUp
+                  ? t("tts.voices.noEngineHint")
+                  : t("tts.voices.notSetUpHint")}
+              </p>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                data-testid="voice-setup-button"
+                onClick={() => openModelsArea("voices")}
+              >
+                {t("tts.voices.setUp")}
+              </Button>
+            </div>
+          )}
+          {piperReaderVoice && (
+            <p
+              className="mt-1 flex flex-wrap items-center gap-x-2 text-xs text-text/70"
+              data-testid="piper-reader-hint"
+            >
+              <span>
+                {t("tts.voices.autoLanguageReads", {
+                  name: piperVoiceLabel(piperReaderVoice),
+                })}
+              </span>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() =>
+                  void updateSetting("tts_piper_auto_language", false)
+                }
+                data-testid="piper-auto-language-off"
+              >
+                {t("tts.voices.autoLanguageOff")}
+              </Button>
+            </p>
+          )}
+    </div>
+  );
+  // Die Stimme gehört zu den Modellen des Moduls und steht deshalb immer an
+  // derselben Stelle: links unten in der Fußleiste (Patrick 02.11.).
+  const fussPlatz = useFussleisteStore((st) => st.modulPlatz);
+  const voiceInFooter = fussPlatz
+    ? createPortal(
+        <span className="lv-fuss-stimme" data-testid="fuss-stimme">
+          {voicePickerOf(true)}
+        </span>,
+        fussPlatz,
+      )
+    : null;
+  const readAloudActions = (compact: boolean) => (
+      <ReadAloudActions
+        compact={compact}
+        tab={tab}
+        hasText={text.trim().length > 0}
+        hasSpokenText={spokenText.trim().length > 0}
+        onLoadDocument={() => void loadDocument()}
+        onLoadUrl={() => setUrlDialogOpen(true)}
+        onAddProjectFile={() => void addFileToProject()}
+        dictating={dictating}
+        onToggleDictation={toggleDictation}
+        saving={saving}
+        onSave={saveSpokenAudio}
+        exportProgress={exportProgress}
+        exportEta={exportEta}
+        formatEta={formatEta}
+        onCancelExport={cancelExport}
+        prewarm={prewarm}
+        onPrewarm={() => void startPrewarm()}
+        onCancelPrewarm={() => void commands.ttsPrewarmCancel()}
+        sentenceCounter={sentenceCounter}
+        onOpenWorkshop={() => setWorkshopOpen(true)}
+        onExport={() => void openExport()}
+        tidying={tidying}
+        onTidy={() => void tidyText()}
+        speeching={speeching}
+        onSpeech={() => setSpeechConfirmOpen(true)}
+        errorCount={errorCount}
+        onCheckScript={runScriptCheck}
+        autoTagBlockedReason={
+          // Mit Tempo-Tags (Phonon) setzt die KI Pausen und Tempo: das wirkt.
+          pausesOnly && !engineCaps.paceTags
+            ? t("tts.autotag.noStyleTags", {
+                engine: engineCaps.providerLabel ?? "",
+              })
+            : undefined
+        }
+        autoTag={{
+          text,
+          suggestions: tagSuggestions,
+          sourceText: tagSuggestionsSourceText,
+          onSuggestionsChange: changeTagSuggestions,
+          onApplyText: applyAutoTagText,
+          options:
+            autoTagOptions ??
+            (getSetting("tts_autotag_last") as AutoTagOptions | null) ??
+            defaultAutoTagOptions(),
+          onOptionsChange: setAutoTagOptions,
+          uiLang,
+        }}
+        targetLang={targetLang}
+        onTargetLangChange={(value) =>
+          void updateSetting("tts_translate_lang", value)
+        }
+        translating={translating}
+        onTranslate={translateText}
+        summarizing={kiDocs.busy}
+        onSummarize={summarize}
+        transformProgress={transformProgress}
+        translatePartial={translatePartial}
+        translateWarnings={translateWarnings}
+        waitingForTranslation={waitingForTranslation}
+        onResumeTranslate={() => void translateText()}
+        onCancelTransform={(kind) =>
+          void commands.ttsTransformCancel(kind)
+        }
+        onSwapSpeakers={() => void openSpeakerSwap()}
+      />
+  );
+
   return (
     <PageShell
       title={t("tts.title")}
-      description={t("workspace.ttsHint")}
+      /* Ohne Untertitel (Patrick 01.11.): der Weg steht in der Hilfe. */
       fill
+      // Welches Buch ist offen? Mitte der Titelleiste (Patrick 03.11.).
+      context={
+        activePageTitle
+          ? {
+              label: t("tts.currentBook", { title: activePageTitle }),
+              text: activePageTitle,
+              detail:
+                tab === "summary"
+                  ? openDoc?.title
+                  : tab === "translation"
+                    ? t("tts.tabTranslation")
+                    : undefined,
+            }
+          : undefined
+      }
       actions={
-        <>
-          {/* Rueckgaengig / Wiederherstellen wie in Word: oben, nur Pfeile.
-              Die Reiterzeile ist in der schmalen Editorspalte schon voll. */}
+        // Rueckgaengig / Wiederherstellen nur im Modus „Bearbeiten“, wo es
+        // etwas rueckgaengig zu machen gibt (ADR-0027 E6). Die Hilfe kommt
+        // ueber Profilmenue ▸ Hilfe oder F1 (E4), kein eigener Knopf.
+        viewMode === "edit" ? (
           <HistoryButtons
             past={history.past}
             future={history.future}
@@ -1499,20 +3817,13 @@ export const TtsSettings = () => {
             onRedo={history.redo}
             onJump={history.jump}
           />
-          <span className="mx-1 h-5 w-px bg-mid-gray/30" aria-hidden="true" />
-          <IconButton
-            onClick={() => {
-              setHelpOpenValue(helpOpen ? "0" : "1");
-            }}
-            label={t("help.open")}
-            icon={<HelpCircle width={20} height={20} aria-hidden="true" />}
-          />
-        </>
+        ) : undefined
       }
     >
       {/* Volle Hoehe: Seiten links, Text in der Mitte, Bedienung rechts vom
         Text, Dateien/Hilfe ganz rechts. Nur die Spalten scrollen, der Kopf
         und der Rahmen stehen (Entscheidung Patrick 14.09. abends). */}
+      <ReaderDrop onDocument={loadDocument} />
       <div
         ref={ws.ref}
         className="tts-workspace tts-workspace--fill w-full flex gap-4 items-stretch"
@@ -1526,6 +3837,23 @@ export const TtsSettings = () => {
           onChanged={() => void reloadPages()}
           onReplaceSpeaker={() => setReplaceSpeaker({})}
           width={ws.pages.width}
+          contents={
+            viewMode === "read" ? (
+              <ReaderContents
+                entries={contents}
+                current={chapterIndex}
+                onGo={goToChapter}
+                pages={contentsPages}
+                book={book}
+                {...startProps}
+                onIsbn={
+                  tab === "original" && activePage
+                    ? () => setIsbnOpen(true)
+                    : undefined
+                }
+              />
+            ) : null
+          }
         />
         {pagesCollapsed !== "1" && (
           <ResizeHandle
@@ -1562,21 +3890,142 @@ export const TtsSettings = () => {
             {/* overflow-y-auto: reicht der Platz selbst dann nicht (kleines
               Fenster, Korrekturpanel offen), scrollt die Spalte, statt dass
               der Editor unter seine Mindesthoehe gedrueckt wird. */}
-            <div className="px-4 pb-3 flex-1 min-h-0 flex flex-col gap-2 overflow-y-auto">
+            <div
+              ref={readerFrameRef}
+              className="reader-frame px-4 pb-3 flex-1 min-h-0 flex flex-col gap-2 overflow-y-auto"
+              data-reader-theme={viewMode === "read" ? readerTheme : undefined}
+              data-fullscreen={fullscreen ? "1" : undefined}
+              style={
+                awakeShift
+                  ? readerFill
+                    ? { left: awakeShift, top: awakeShift }
+                    : { position: "relative", left: awakeShift, top: awakeShift }
+                  : undefined
+              }
+            >
               {/* Zwei Reiter, ein Feld. Das Original wird nie ueberschrieben —
               die Uebersetzung liegt daneben, nicht darin. Wer zurueckschaltet,
               findet seinen Text unveraendert vor. */}
-              <TabList
-                tabs={[
-                  { id: "original", label: t("tts.tabOriginal") },
-                  { id: "translation", label: t("tts.tabTranslation") },
-                  { id: "summary", label: t("tts.tabSummary") },
-                ]}
-                value={tab}
-                onChange={setTab}
-                ariaLabel={t("tts.tabsLabel")}
-                className="border-b border-mid-gray/20"
-              />
+              <div className="flex flex-wrap items-end gap-x-3 gap-y-1 border-b border-mid-gray/20">
+                <TabList
+                  tabs={[
+                    { id: "original", label: t("tts.tabOriginal") },
+                    { id: "translation", label: t("tts.tabTranslation") },
+                    { id: "summary", label: t("tts.tabSummary") },
+                  ]}
+                  value={tab}
+                  onChange={setTab}
+                  ariaLabel={t("tts.tabsLabel")}
+                  className="min-w-0 flex-auto"
+                />
+                {/* Eigene Breite (flex-auto statt flex-1): reicht der Platz
+                    nicht, bricht die Leiste um, statt über den Reitern zu liegen. */}
+                <div className="ml-auto max-w-full pb-1">
+                  <ReaderToolbar
+                    mode={viewMode}
+                    canRead={spokenText.trim().length > 0}
+                    onMode={chooseViewMode}
+                    twoPages={twoPagesStored === "1"}
+                    twoPagesTooNarrow={
+                      twoPagesStored === "1" &&
+                      viewMode === "read" &&
+                      pageInfo !== null &&
+                      pageInfo.perView === 1
+                    }
+                    onTwoPages={(two) => setTwoPages(two ? "1" : "0")}
+                    fontSize={fontStored}
+                    onFontSize={setFontSize}
+                    showSpeakers={speakersShown === "1"}
+                    onShowSpeakers={(show) => setSpeakersShown(show ? "1" : "0")}
+                    follow={follow}
+                    onFollow={setFollow}
+                    fontFamily={fontFamily}
+                    onFontFamily={setFontFamily}
+                    theme={readerTheme}
+                    onTheme={setReaderTheme}
+                    keepAwake={keepAwake}
+                    onKeepAwake={toggleKeepAwake}
+                    fullscreen={fullscreen}
+                    onFullscreen={toggleFullscreen}
+                    info={
+                      <InfoPopover
+                        label={t("tts.writingRules.title")}
+                        text={t("tts.writingRules.short")}
+                        testId="reader-info"
+                      >
+                        <p className="mb-1 font-semibold">
+                          {t("tts.writingRules.title")}
+                        </p>
+                <div className="space-y-1.5 text-sm text-text/80">
+                  <p>{t("tts.dialogHint")}</p>
+                  {pausesOnly ? (
+                    <p>
+                      {t(
+                        engineCaps.paceTags
+                          ? "tts.writingRules.pausesAndPace"
+                          : "tts.writingRules.pausesOnly",
+                        { engine: engineCaps.providerLabel ?? "" },
+                      )}
+                    </p>
+                  ) : (
+                    <p>{t("tts.writingRules.tagsIntro")}</p>
+                  )}
+                  <ul className="list-disc space-y-0.5 ps-4">
+                    {!pausesOnly && (
+                      <li>
+                        <code className="rounded bg-logo-primary/15 px-1 text-text/70">
+                          {t("tts.writingRules.example1")}
+                        </code>
+                      </li>
+                    )}
+                    <li>
+                      <code className="rounded bg-logo-primary/15 px-1 text-text/70">
+                        {t("tts.writingRules.example2")}
+                      </code>
+                    </li>
+                    {pausesOnly && engineCaps.paceTags && (
+                      <li>
+                        <code className="rounded bg-logo-primary/15 px-1 text-text/70">
+                          {t("tts.writingRules.examplePace")}
+                        </code>
+                      </li>
+                    )}
+                    {!pausesOnly && (
+                      <li>
+                        <code className="rounded bg-logo-primary/15 px-1 text-text/70">
+                          {t("tts.writingRules.example3")}
+                        </code>
+                      </li>
+                    )}
+                  </ul>
+                </div>
+                      </InfoPopover>
+                    }
+                    terms={
+                      tab === "original" ? (
+                        <TermsMenu
+                          highlight={termsShown === "1"}
+                          onHighlight={(on) => setTermsShown(on ? "1" : "0")}
+                          count={bookTerms.terms.filter((x) => !x.hidden).length}
+                          run={bookTerms.run}
+                          busy={kiDocs.run !== null}
+                          onExtract={() => void extractTerms()}
+                          onCancel={bookTerms.cancel}
+                        />
+                      ) : undefined
+                    }
+                    bookmarks={
+                      <ReaderBookmarks
+                        bookmarks={bookmarks}
+                        onAdd={addBookmarkHere}
+                        onGo={goToBookmark}
+                        onRemove={dropBookmark}
+                        pageOf={(o) => readerApiRef.current?.pageOfOffset(o) ?? null}
+                      />
+                    }
+                  />
+                </div>
+              </div>
 
               {tab === "translation" && translatedLangs.length > 0 && (
                 <div
@@ -1625,12 +4074,140 @@ export const TtsSettings = () => {
                     findings={scriptFindings}
                     speakers={speakers}
                     engine={scriptEngine}
+                    paceTags={engineCaps.paceTags}
                     uiLang={uiLang}
                     actions={scriptActions}
                     onClose={() => setPanelOpen(false)}
                   />
                 </div>
               )}
+              <BookSheets
+                open={sheet}
+                onOpenChange={setSheet}
+                renderChat={
+                  bookTalkAvailable && sheetsMode
+                    ? (close) => renderTalk(close)
+                    : undefined
+                }
+                renderContents={(close) =>
+                  viewMode === "read" && contents.length > 0 ? (
+                    <ReaderContents
+                      entries={contents}
+                      current={chapterIndex}
+                      onGo={(entry) => {
+                        close();
+                        goToChapter(entry);
+                      }}
+                      pages={contentsPages}
+                      book={book}
+                      {...startProps}
+                    />
+                  ) : null
+                }
+              />
+              {tab === "summary" && activePage && openDoc && (
+                <KiDocumentHeader
+                  pageId={activePage}
+                  doc={openDoc}
+                  playing={playingDocId === openDoc.id}
+                  run={kiDocs.run}
+                  onBack={() => openKiDocument(null)}
+                  onBeforeExport={flushDocSave}
+                />
+              )}
+              {tab === "summary" && activePage && !openDocId ? (
+                <KiDocumentsPanel
+                  pageId={activePage}
+                  state={kiDocs}
+                  filter={kiFilter}
+                  onFilter={setKiFilter}
+                  playingDocId={playingDocId}
+                  onOpen={(doc) => openKiDocument(doc.id)}
+                  onPlay={(doc) => {
+                    docAutoplay.current = doc.id;
+                    openKiDocument(doc.id);
+                  }}
+                  onNew={summarize}
+                  onDeleted={(id) => {
+                    if (sessionDocId.current === id) stopSpeaking();
+                  }}
+                />
+              ) : viewMode === "read" ? (
+                // Kurzbuch (lva#205): Überblick neben dem Lesetext. Ohne
+                // Kurzbuch sind alle Hüllen `contents` und ändern nichts.
+                <div className={kurzbuch ? "kurzbuch-host" : "contents"}>
+                <div className={kurzbuch ? "kurzbuch" : "contents"}>
+                {kurzbuch && activePage && openDoc && (
+                  <KurzbuchPanel
+                    kb={kurzbuch}
+                    pageId={activePage}
+                    docId={openDoc.id}
+                    language={openDoc.language ?? null}
+                    title={pages.find((p) => p.id === activePage)?.title ?? openDoc.title}
+                    current={playingDocId === openDoc.id ? readRange : null}
+                    playing={playingDocId === openDoc.id}
+                    canResume={resumeAt !== null}
+                    onPlayFrom={(offset) => {
+                      setFollow(true);
+                      void speakFrom(offset, false);
+                    }}
+                    onResume={() => void speakNow()}
+                    onStop={stopSpeaking}
+                  />
+                )}
+                <div className={kurzbuch ? "kurzbuch__reader" : "contents"}>
+                <ReaderView
+                  text={spokenText}
+                  speakers={speakers}
+                  lang={tab === "translation" ? targetLangCode(targetLang) : uiLang}
+                  current={flash ?? (sessionHere() ? readRange : null)}
+                  clock={flash === null && sessionHere() ? sentenceClock : null}
+                  marks={readerMarks}
+                  terms={tab === "original" ? bookTerms.marks : undefined}
+                  onTerm={(mark) => void openTerm(mark)}
+                  twoPages={twoPagesStored === "1"}
+                  fontSize={Number(fontStored)}
+                  fontFamily={fontFamily}
+                  showSpeakers={speakersShown === "1"}
+                  follow={follow}
+                  onFollowChange={setFollow}
+                  onActivate={(offset) => {
+                    setFollow(true);
+                    void speakFrom(offset, false);
+                  }}
+                  onSpeakerMenu={(name) => setReplaceSpeaker({ from: name })}
+                  onPageInfo={setPageInfo}
+                  apiRef={readerApiRef}
+                  title={pages.find((p) => p.id === activePage)?.title}
+                />
+                </div>
+                </div>
+                </div>
+              ) : (
+              <>
+              {/* Editor-Menü (Suchen/Ersetzen, Rechtschreibung, Format,
+                  Bereinigen, KI) über dem Textfeld. */}
+              <EditorMenu
+                value={
+                  tab === "original"
+                    ? text
+                    : tab === "translation"
+                      ? (translation ?? "")
+                      : summary
+                }
+                onChange={(v) => {
+                  if (tab === "original") setText(v);
+                  else if (tab === "translation") {
+                    if (!streaming) setTranslation(v);
+                  } else setSummary(v);
+                }}
+                readOnly={tab === "translation" && streaming}
+                apiRef={editorApiRef}
+                spellCheck={spellStored === "1"}
+                onSpellCheck={(on) => setSpellStored(on ? "1" : "0")}
+                onTidy={tab === "original" ? () => void tidyText() : undefined}
+                tidying={tidying}
+              />
               <div className="tts-editor__fill flex-1 min-h-[160px]">
                 {tab === "original" ? (
                   <TtsChipEditor
@@ -1638,6 +4215,9 @@ export const TtsSettings = () => {
                     onChange={setText}
                     providers={chipProviders}
                     insertApiRef={editorApiRef}
+                    pausesOnly={pausesOnly}
+                    engineLabel={engineCaps.providerLabel ?? undefined}
+                    spellCheck={spellStored === "1"}
                     placeholder={t("tts.inputPlaceholder")}
                     className="w-full"
                     suggestions={tagSuggestions}
@@ -1655,9 +4235,14 @@ export const TtsSettings = () => {
                 ) : tab === "translation" ? (
                   <TtsChipEditor
                     value={translation ?? ""}
-                    onChange={setTranslation}
+                    onChange={(v) => {
+                      if (!streaming) setTranslation(v);
+                    }}
                     providers={chipProviders}
                     insertApiRef={editorApiRef}
+                    pausesOnly={pausesOnly}
+                    engineLabel={engineCaps.providerLabel ?? undefined}
+                    spellCheck={spellStored === "1"}
                     placeholder={t("tts.translationPlaceholder")}
                     className="w-full"
                     lang={targetLangCode(targetLang)}
@@ -1677,6 +4262,9 @@ export const TtsSettings = () => {
                     onChange={setSummary}
                     providers={chipProviders}
                     insertApiRef={editorApiRef}
+                    pausesOnly={pausesOnly}
+                    engineLabel={engineCaps.providerLabel ?? undefined}
+                    spellCheck={spellStored === "1"}
                     placeholder={t("tts.summaryPlaceholder")}
                     className="w-full"
                     findings={editorFindings}
@@ -1691,27 +4279,95 @@ export const TtsSettings = () => {
                   />
                 )}
               </div>
-
-              {/* Ausdruck & Sprechstil direkt unter dem Text: die Palette fuegt
-                an der Cursorposition ein, deshalb gehoert sie zum Feld, nicht
-                in die Bedienspalte (Entscheidung Patrick 14.09. abends). */}
-              <details className="workspace-disclosure workspace-disclosure--scroll">
-                <summary>{t("workspace.voiceStyle")}</summary>
-                <div className="space-y-3 pt-2">
-                  <TagPalette
-                    uiLang={uiLang}
-                    pausesOnly={pausesOnly}
-                    engineLabel={engineCaps.providerLabel ?? undefined}
-                    onInsert={(tagText) =>
-                      editorApiRef.current?.insertAtCursor(tagText)
-                    }
-                    onDragInsert={(x, y, tagText) =>
-                      editorApiRef.current?.insertAtPoint?.(x, y, tagText) ??
-                      false
-                    }
-                  />
-                </div>
-              </details>
+              </>
+              )}
+              <ReaderPlayerBar
+                speaking={speaking}
+                canPlay={spokenText.trim().length > 0}
+                canSeek={canResume || speaking}
+                onPlayPause={speaking ? pauseSpeaking : () => void speak()}
+                onSeek={(delta) => {
+                  setFollow(true);
+                  seekSentence(delta);
+                }}
+                onStop={stopSpeaking}
+                speed={getSetting("tts_speed") ?? 1.0}
+                speeds={SPEEDS}
+                speedLabel={speedLabel}
+                onSpeed={(value) => void updateSetting("tts_speed", value)}
+                flow={getSetting("tts_flow") ?? 0.5}
+                onFlow={(value) => void updateSetting("tts_flow", value)}
+                progress={
+                  speakProgress && sessionHere()
+                    ? {
+                        position: currentIndex ?? speakProgress.position,
+                        total: speakProgress.total,
+                      }
+                    : null
+                }
+                estimateSeconds={readEstimate}
+                clock={sessionHere() ? sentenceClock : null}
+                page={viewMode === "read" ? pageInfo : null}
+                onJumpToPage={(n) => {
+                  setFollow(false);
+                  readerApiRef.current?.goToPage(n);
+                }}
+                onSeekFraction={(fraction) => {
+                  // Sprung an die Stelle im Text: ab dem Satz dort vorlesen.
+                  const offset = Math.round(fraction * spokenText.length);
+                  setFollow(true);
+                  void speakFrom(offset, false);
+                }}
+                onSleep={pauseSpeaking}
+                resumable={resumeAt !== null && !canResume && !speaking}
+                resumePage={resumePage}
+                chapter={contents[chapterIndex]?.title ?? null}
+                chapters={playerChapters}
+                chapterIndex={chapterIndex}
+                onChapter={(i) => {
+                  const entry = contents[i];
+                  if (entry) goToChapter(entry);
+                }}
+                dock={
+                  rightHidden
+                    ? (inPopover) => (
+                        <>
+                          {/* In der Zeile sind die Hinweise unter der Stimme
+                            verborgen: fehlt eine eingerichtete Stimme, steht
+                            der Weg dorthin als Warnknopf daneben. */}
+                          {selectedVoiceNotSetUp && (
+                            <button
+                              type="button"
+                              className="flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-md text-amber-700 hover:bg-mid-gray/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-logo-primary dark:text-amber-400"
+                              aria-label={t("tts.voices.setUp")}
+                              title={
+                                noVoiceSetUp
+                                  ? t("tts.voices.noEngineHint")
+                                  : t("tts.voices.notSetUpHint")
+                              }
+                              onClick={() => openModelsArea("voices")}
+                              data-testid="reader-dock-voice-setup"
+                            >
+                              <TriangleAlert
+                                width={16}
+                                height={16}
+                                aria-hidden="true"
+                              />
+                            </button>
+                          )}
+                          {readAloudActions(!inPopover)}
+                        </>
+                      )
+                    : undefined
+                }
+                onRestart={() => {
+                  forgetResumePoint(resumeKeyRef.current);
+                  // „Von vorn“ heißt: am Anfang des Inhalts (wie Play danach).
+                  const at = textStartRef.current;
+                  if (at > 0) readerApiRef.current?.revealOffset(skipHeadingMark(spokenText, at));
+                  else readerApiRef.current?.goToPage(0);
+                }}
+              />
             </div>
           </div>
           {/* Bedienung rechts vom Text: Transport, Tempo, Stimme, Speichern,
@@ -1721,6 +4377,8 @@ export const TtsSettings = () => {
             (Griff davor, Breite ws.right); nebeneinander loest sich der
             Rahmen auf (display: contents) und die beiden stehen wie frueher
             als Geschwister neben dem Editor, der Griff sitzt vor den Dateien. */}
+          {!rightHidden && (
+            <>
           {ws.stacked && (
             <ResizeHandle
               testId="resize-right"
@@ -1742,6 +4400,61 @@ export const TtsSettings = () => {
                 : undefined
             }
           >
+            {talkShown && (
+              <section
+                data-testid="tts-talk-column"
+                className={`flex min-h-0 flex-col overflow-hidden rounded-lg border border-mid-gray/20 ${
+                  ws.stacked ? "flex-1" : "shrink-0"
+                }`}
+                style={ws.stacked ? undefined : { width: ws.right.width }}
+                aria-label={t("tts.bookTalk.tab")}
+              >
+                <div
+                  role="tablist"
+                  aria-label={t("tts.bookTalk.region")}
+                  className="flex shrink-0 gap-1 border-b border-mid-gray/20 px-2 pt-1"
+                  onKeyDown={(e) => {
+                    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+                    e.preventDefault();
+                    switchTalk(e.key === "ArrowLeft" ? "0" : "1");
+                  }}
+                >
+                  <button
+                    type="button"
+                    role="tab"
+                    id="tts-tab-controls-id"
+                    aria-selected={false}
+                    tabIndex={-1}
+                    className="cursor-pointer rounded-t px-3 py-1.5 text-sm text-text/70 hover:text-text"
+                    onClick={() => switchTalk("0")}
+                    data-testid="tts-tab-controls"
+                  >
+                    {t("tts.controls")}
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    id="tts-tab-talk-id"
+                    aria-selected
+                    aria-controls="tts-talk-panel"
+                    tabIndex={0}
+                    className="cursor-default border-b-2 border-logo-primary px-3 py-1.5 text-sm font-semibold"
+                    data-testid="tts-tab-talk"
+                  >
+                    {t("tts.bookTalk.tab")}
+                  </button>
+                </div>
+                <div
+                  role="tabpanel"
+                  id="tts-talk-panel"
+                  aria-labelledby="tts-tab-talk-id"
+                  className="min-h-0 flex-1"
+                >
+                  {renderTalk()}
+                </div>
+              </section>
+            )}
+            {!talkShown && (
             <aside
               data-testid="tts-controls"
               className={`tts-controls shrink-0 min-h-0 overflow-y-auto space-y-3 pe-1 ${
@@ -1749,7 +4462,7 @@ export const TtsSettings = () => {
               }`}
               aria-label={t("tts.controls")}
             >
-              <div className="flex gap-2 items-center flex-wrap">
+              <div className="flex gap-1 items-start">
                 {/* Transport per design system: round glyph buttons, exactly one
                 primary. Reading aloud is playback, so it gets the same family
                 as every audio player in the app — not text buttons. */}
@@ -1758,96 +4471,9 @@ export const TtsSettings = () => {
                 Trenner die Aktionen, die die Wiedergabe nicht fortbewegen.
                 Statt ±15 s stehen hier Saetze: vorgelesener Text ist satzweise
                 aufgebaut, eine Sekundenmarke gibt es darin nicht. */}
-                <div className="mediabar mediabar--start">
-                  <button
-                    type="button"
-                    className="mbtn"
-                    onClick={() => seekSentence(-1)}
-                    disabled={!canResume && !speaking}
-                    aria-label={t("tts.previousSentence")}
-                  >
-                    <Glyph name="prev" />
-                  </button>
-                  <button
-                    type="button"
-                    className="mbtn mbtn--primary mbtn--lg"
-                    onClick={speaking ? pauseSpeaking : speak}
-                    disabled={!speaking && spokenText.trim().length === 0}
-                    aria-label={speaking ? t("tts.pause") : t("tts.speak")}
-                  >
-                    <Glyph name={speaking ? "pause" : "play"} />
-                  </button>
-                  <button
-                    type="button"
-                    className="mbtn"
-                    onClick={() => seekSentence(1)}
-                    disabled={!canResume && !speaking}
-                    aria-label={t("tts.nextSentence")}
-                  >
-                    <Glyph name="next" />
-                  </button>
-                  <span className="mediabar__sep" />
-                  <button
-                    type="button"
-                    className="mbtn"
-                    onClick={stopSpeaking}
-                    aria-label={t("tts.stop")}
-                  >
-                    <Glyph name="stop" />
-                  </button>
-                  <span className="mediabar__sep" />
-                  {/* Tempo als schlanker Wert hinter dem letzten Trenner: immer
-                    sichtbar, ein Klick oeffnet die Stufen. Tempo entsteht per
-                    Resampling und zieht die Tonhoehe mit -- Bereich bewusst eng. */}
-                  <div className="relative">
-                    <button
-                      type="button"
-                      className="mbtn mbtn--text"
-                      onClick={() => setSpeedOpen((o) => !o)}
-                      title={t("tts.settings.speedDescription")}
-                      aria-label={t("tts.settings.speed")}
-                      aria-haspopup="listbox"
-                      aria-expanded={speedOpen}
-                    >
-                      {speedLabel(getSetting("tts_speed") ?? 1.0)}
-                    </button>
-                    {speedOpen && (
-                      <>
-                        <div
-                          className="fixed inset-0 z-30"
-                          onClick={() => setSpeedOpen(false)}
-                        />
-                        <div
-                          role="listbox"
-                          aria-label={t("tts.settings.speed")}
-                          className="absolute left-0 top-full mt-1 w-24 rounded-lg border border-mid-gray/40 bg-background shadow-lg z-40 py-1"
-                        >
-                          {SPEEDS.map((value) => (
-                            <button
-                              key={value}
-                              type="button"
-                              role="option"
-                              aria-selected={
-                                (getSetting("tts_speed") ?? 1.0) === value
-                              }
-                              onClick={() => {
-                                void updateSetting("tts_speed", value);
-                                setSpeedOpen(false);
-                              }}
-                              className={`w-full px-3 py-1.5 text-sm text-start cursor-pointer tabular-nums hover:bg-mid-gray/15 ${
-                                (getSetting("tts_speed") ?? 1.0) === value
-                                  ? "text-text font-medium"
-                                  : "text-text/80"
-                              }`}
-                            >
-                              {speedLabel(value)}
-                            </button>
-                          ))}
-                        </div>
-                      </>
-                    )}
-                  </div>
-                </div>
+                {/* Transport, Tempo und Fortschritt stehen in der Spielerleiste
+                  unter dem Text (lva#148, Codex: Fortschritt und Transport
+                  zusammen, getrennt vom Bearbeiten). */}
                 {/* Die Stimme dort, wo man sie wechselt: beim Hoeren. Wechsel
                   wirkt sofort — eine laufende Wiedergabe stellt am aktuellen
                   Satz um. Leerer Wert = Standardstimme (Seed). Verwaltung
@@ -1858,314 +4484,40 @@ export const TtsSettings = () => {
                   Tooltip beim Ueberfahren/Fokussieren und Beschreibung fuer
                   Screenreader (aria-describedby) -- sonst wundert man sich,
                   warum die Marker nicht mehr umschalten. */}
-                <TooltipTrigger
-                  className="block w-full"
-                  tooltipId="voice-mode-tip"
-                  width={300}
-                  content={
-                    <div className="text-xs">
-                      {scriptMode
-                        ? t("tts.voices.scriptVoicesHint")
-                        : t("tts.voices.singleVoiceHint")}
-                    </div>
-                  }
-                >
-                  <div
-                    className="w-full"
-                    role="group"
-                    aria-label={t("tts.voices.title")}
-                    aria-describedby="voice-mode-hint"
-                    data-testid="voice-select"
-                    onContextMenu={(event) =>
-                      voiceMenu.open(event, [
-                        {
-                          id: "replace",
-                          label: t("tts.replaceSpeaker.voiceMenu"),
-                          icon: Replace,
-                          testId: "voice-menu-replace",
-                          disabled: speakers.length < 2,
-                          onSelect: () => setReplaceSpeaker({}),
-                        },
-                        {
-                          id: "manage",
-                          label: t("tts.voices.manage"),
-                          icon: Settings,
-                          testId: "voice-menu-manage",
-                          onSelect: () => {
-                            window.localStorage.setItem(
-                              "lva.ui.settings.tab",
-                              "output",
-                            );
-                            window.dispatchEvent(
-                              new CustomEvent("lv-navigate", {
-                                detail: { section: "settings" },
-                              }),
-                            );
-                          },
-                        },
-                      ])
-                    }
+                {voiceHints}
+                {bookTalkAvailable && !sheetsMode && (
+                  <button
+                    type="button"
+                    className="flex h-9 shrink-0 cursor-pointer items-center gap-1 rounded-md px-2 text-sm text-text/80 hover:bg-mid-gray/15 hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-logo-primary"
+                    onClick={() => switchTalk("1")}
+                    data-testid="tts-tab-talk-open"
                   >
-                    {/* Kennwert statt leerem Text fuer die Standardstimme:
-                      "" gilt der Select-Komponente als "nichts gewaehlt" und
-                      zeigte den Platzhalter "Select…" statt des Namens.
-                      Piper-Stimmen stehen in derselben Liste (Wert
-                      "piper:<id>"): wer eine waehlt, schaltet damit die
-                      Engine um — die Engine-Einstellung im Reiter Vorlesen
-                      bleibt als zweiter Weg bestehen. */}
-                    <Select
-                      menuPortal
-                      value={voiceValue}
-                      options={voiceOptions}
-                      formatOptionLabel={(option, context) => {
-                        const sample =
-                          context === "menu"
-                            ? sampleOf(option.value)
-                            : undefined;
-                        const target =
-                          context === "menu" && !sample
-                            ? tryOf(option.value)
-                            : undefined;
-                        if (!sample && !target) return option.label;
-                        return (
-                          <span className="flex items-center gap-2">
-                            <span className="min-w-0 flex-1 truncate">
-                              {option.label}
-                            </span>
-                            {sample ? (
-                              <SamplePlayButton
-                                inline
-                                path={sample.path}
-                                name={sample.name}
-                                testId={`voice-sample-${option.value}`}
-                              />
-                            ) : (
-                              target && (
-                                <VoiceTryButton
-                                  target={target}
-                                  name={option.label}
-                                  testId={`voice-sample-${option.value}`}
-                                />
-                              )
-                            )}
-                          </span>
-                        );
-                      }}
-                      onChange={(value) => {
-                        if (!value) return;
-                        if (value === "@manage") {
-                          window.localStorage.setItem(
-                            "lva.ui.settings.tab",
-                            "output",
-                          );
-                          window.dispatchEvent(
-                            new CustomEvent("lv-navigate", {
-                              detail: { section: "settings" },
-                            }),
-                          );
-                          return;
-                        }
-                        applyVoiceValue(value);
-                        setTabVoices((current) => ({
-                          ...current,
-                          [voiceKey]: value,
-                        }));
-                      }}
-                      isClearable={false}
-                    />
-                    {providerEngineId && (
-                      <div
-                        role="status"
-                        data-testid="voice-provider-hint"
-                        className="mt-1 text-xs text-text/70"
-                      >
-                        <p>
-                          {t("tts.providers.dropdown.hint", {
-                            name: providerLabel ?? providerEngineId,
-                          })}
-                        </p>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          data-testid="voice-provider-open"
-                          onClick={() =>
-                            openVoiceManager("providers")
-                          }
-                        >
-                          {t("tts.providers.dropdown.open")}
-                        </Button>
-                      </div>
-                    )}
-                    {selectedVoiceNotSetUp && (
-                      <div
-                        role="status"
-                        data-testid="voice-setup-hint"
-                        className="mt-1 text-xs text-amber-700 dark:text-amber-400"
-                      >
-                        <p>
-                          {noVoiceSetUp
-                            ? t("tts.voices.noEngineHint")
-                            : t("tts.voices.notSetUpHint")}
-                        </p>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          data-testid="voice-setup-button"
-                          onClick={() => openModelsArea("voices")}
-                        >
-                          {t("tts.voices.setUp")}
-                        </Button>
-                      </div>
-                    )}
-                    {piperReaderVoice && (
-                      <p
-                        className="mt-1 flex flex-wrap items-center gap-x-2 text-xs text-text/70"
-                        data-testid="piper-reader-hint"
-                      >
-                        <span>
-                          {t("tts.voices.autoLanguageReads", {
-                            name: piperVoiceLabel(piperReaderVoice),
-                          })}
-                        </span>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() =>
-                            void updateSetting("tts_piper_auto_language", false)
-                          }
-                          data-testid="piper-auto-language-off"
-                        >
-                          {t("tts.voices.autoLanguageOff")}
-                        </Button>
-                      </p>
-                    )}
-                    <p
-                      id="voice-mode-hint"
-                      className="sr-only"
-                      data-testid="voice-mode-hint"
-                    >
-                      {scriptMode
-                        ? t("tts.voices.scriptVoicesHint")
-                        : t("tts.voices.singleVoiceHint")}
-                    </p>
-                  </div>
-                </TooltipTrigger>
+                    <MessageSquare width={16} height={16} aria-hidden="true" />
+                    {t("tts.bookTalk.tab")}
+                  </button>
+                )}
+                {/* Ganze Spalte ausblenden (Variante A): Stimme und Werkzeuge
+                  ziehen dann in die Spielerleiste unter dem Text. */}
+                <button
+                  type="button"
+                  className="flex h-9 w-8 shrink-0 cursor-pointer items-center justify-center rounded-md text-text/70 hover:bg-mid-gray/15 hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-logo-primary"
+                  aria-label={t("tts.layout.hideColumn")}
+                  title={t("tts.layout.hideColumn")}
+                  onClick={() => setRightHidden("1")}
+                  data-testid="right-column-hide"
+                >
+                  <PanelRightClose width={16} height={16} aria-hidden="true" />
+                </button>
               </div>
-              <ReadAloudActions
-                tab={tab}
-                hasText={text.trim().length > 0}
-                hasSpokenText={spokenText.trim().length > 0}
-                onLoadDocument={() => void loadDocument()}
-                onLoadUrl={() => setUrlDialogOpen(true)}
-                onAddProjectFile={() => void addFileToProject()}
-                dictating={dictating}
-                onToggleDictation={toggleDictation}
-                saving={saving}
-                onSave={saveSpokenAudio}
-                exportProgress={exportProgress}
-                exportEta={exportEta}
-                formatEta={formatEta}
-                onCancelExport={cancelExport}
-                prewarm={prewarm}
-                onPrewarm={() => void startPrewarm()}
-                onCancelPrewarm={() => void commands.ttsPrewarmCancel()}
-                sentenceCounter={sentenceCounter}
-                onOpenWorkshop={() => setWorkshopOpen(true)}
-                tidying={tidying}
-                onTidy={() => void tidyText()}
-                errorCount={errorCount}
-                onCheckScript={runScriptCheck}
-                autoTagBlockedReason={
-                  pausesOnly
-                    ? t("tts.autotag.noStyleTags", {
-                        engine: engineCaps.providerLabel ?? "",
-                      })
-                    : undefined
-                }
-                autoTag={{
-                  text,
-                  suggestions: tagSuggestions,
-                  sourceText: tagSuggestionsSourceText,
-                  onSuggestionsChange: changeTagSuggestions,
-                  onApplyText: applyAutoTagText,
-                  options:
-                    autoTagOptions ??
-                    (getSetting("tts_autotag_last") as AutoTagOptions | null) ??
-                    defaultAutoTagOptions(),
-                  onOptionsChange: setAutoTagOptions,
-                  uiLang,
-                }}
-                targetLang={targetLang}
-                onTargetLangChange={(value) =>
-                  void updateSetting("tts_translate_lang", value)
-                }
-                translating={translating}
-                onTranslate={translateText}
-                summarizing={summarizing}
-                onSummarize={summarize}
-                transformProgress={transformProgress}
-                onCancelTransform={(kind) =>
-                  void commands.ttsTransformCancel(kind)
-                }
-                onSwapSpeakers={() => void openSpeakerSwap()}
-                sumLength={sumLength}
-                onSumLengthChange={setSumLength}
-                sumDetail={sumDetail}
-                onSumDetailChange={setSumDetail}
-                sumAudience={sumAudience}
-                onSumAudienceChange={setSumAudience}
-              />
-              {/* Sprecherwechsel und Tags sind Schreibregeln, keine
-              Einstellungen — der aufklappbare Block steht deshalb bei dem
-              Feld, in das man sie tippt. */}
-              <details className="text-xs text-text/60">
-                <summary className="cursor-pointer select-none rounded-lg py-1 text-sm font-medium text-text/60 transition-colors hover:text-text/80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-text">
-                  {t("tts.writingRules.title")}
-                </summary>
-                <div className="mt-1 space-y-1 ps-4">
-                  <p>{t("tts.dialogHint")}</p>
-                  {pausesOnly ? (
-                    <p>
-                      {t("tts.writingRules.pausesOnly", {
-                        engine: engineCaps.providerLabel ?? "",
-                      })}
-                    </p>
-                  ) : (
-                    <p>{t("tts.writingRules.tagsIntro")}</p>
-                  )}
-                  <ul className="list-disc space-y-0.5 ps-4">
-                    {!pausesOnly && (
-                      <li>
-                        <code className="rounded bg-logo-primary/15 px-1 text-text/70">
-                          {t("tts.writingRules.example1")}
-                        </code>
-                      </li>
-                    )}
-                    <li>
-                      <code className="rounded bg-logo-primary/15 px-1 text-text/70">
-                        {t("tts.writingRules.example2")}
-                      </code>
-                    </li>
-                    {!pausesOnly && (
-                      <li>
-                        <code className="rounded bg-logo-primary/15 px-1 text-text/70">
-                          {t("tts.writingRules.example3")}
-                        </code>
-                      </li>
-                    )}
-                  </ul>
-                </div>
-              </details>
-              {speaking && currentSentence && (
+              {readAloudActions(false)}
+              {speaking && currentSentence && viewMode === "edit" && (
                 <p className="text-sm italic text-text/70 border-s-2 border-logo-primary ps-2">
                   {currentSentence}
                 </p>
               )}
             </aside>
-            {!ws.stacked && filesCollapsed !== "1" && (
+            )}
+            {!talkShown && !ws.stacked && filesCollapsed !== "1" && (
               <ResizeHandle
                 testId="resize-right"
                 label={t("tts.layout.resizeFiles")}
@@ -2177,7 +4529,10 @@ export const TtsSettings = () => {
                 onChange={ws.right.set}
               />
             )}
-            {helpOpen && <TtsHelpDock onClose={() => setHelpOpenValue("0")} />}
+            {helpOpen && !rightHidden && (
+              <TtsHelpDock onClose={() => setHelpOpenValue("0")} />
+            )}
+            {!talkShown && (
             <FilesSidebar
               pageId={activePage}
               collapsed={filesCollapsed === "1"}
@@ -2196,7 +4551,24 @@ export const TtsSettings = () => {
                 setText(value);
               }}
             />
+            )}
           </div>
+            </>
+          )}
+
+          {/* Hilfe bleibt auch bei ausgeblendeter Spalte erreichbar. */}
+          {helpOpen && rightHidden && (
+            <TtsHelpDock onClose={() => setHelpOpenValue("0")} />
+          )}
+          {/* Ausgeblendete rechte Spalte: derselbe Streifen wie links. */}
+          {rightHidden && (
+            <ColumnStrip
+              side="right"
+              label={t("tts.layout.showColumn")}
+              onClick={() => setRightHidden("0")}
+              testId="right-column-show"
+            />
+          )}
 
           <Dialog
             open={checkDialog !== null}
@@ -2258,6 +4630,50 @@ export const TtsSettings = () => {
             initialFrom={replaceSpeaker?.from}
           />
           {voiceMenu.menu}
+          <KiDocumentDialog
+            pageId={activePage || null}
+            open={kiDialogOpen}
+            onOpenChange={setKiDialogOpen}
+            text={text}
+            templates={kiDocs.templates}
+            readingAt={
+              kiDialogOpen && activePage
+                ? loadResumePoint(`${activePage}:original`, text)
+                : null
+            }
+            selection={kiSelection}
+            onCreate={createKiDocument}
+          />
+          <TermDialog
+            term={termOpen ? (bookTerms.byId.get(termOpen.mark.termId) ?? null) : null}
+            page={termOpen?.mark.page ?? null}
+            open={termOpen !== null}
+            onOpenChange={(o) => !o && closeTerm()}
+            autoRead={termAutoRead === "1"}
+            onAutoRead={(on) => setTermAutoRead(on ? "1" : "0")}
+            speaking={termSpeaking}
+            onSpeak={() => termOpen && void speakExplanation(termOpen.mark)}
+            onStopSpeaking={() => void stopExplanation()}
+            onContinue={() => void continueAfterTerm()}
+            canContinue={termOpen?.resumeAt != null}
+            onMore={() => {
+              const term = termOpen && bookTerms.byId.get(termOpen.mark.termId);
+              if (!term) return;
+              openUrl(
+                searchUrl(termPreset, termCustomUrl, term.term, uiLang),
+              ).catch(() => toast.error(t("tts.terms.openFailed")));
+            }}
+            preset={termPreset}
+            onPreset={setTermPreset}
+            customUrl={termCustomUrl}
+            onCustomUrl={setTermCustomUrl}
+          />
+          <IsbnDialog
+            open={isbnOpen}
+            onOpenChange={setIsbnOpen}
+            initialIsbn={isbnGuess}
+            onApply={applyIsbnBook}
+          />
           <SpeakerSwapDialog
             open={swapOpen}
             onOpenChange={setSwapOpen}
@@ -2268,6 +4684,17 @@ export const TtsSettings = () => {
             initial={swapInitial}
             onApply={applySpeakerSwap}
           />
+          <ExportDialog
+            book={exportBook}
+            preselect={
+              tab === "translation"
+                ? [`translation:${targetLang}`]
+                : tab === "summary" && openDocId
+                  ? [`doc:${openDocId}`]
+                  : ["original"]
+            }
+            onClose={() => setExportBook(null)}
+          />
           <ScriptWorkshopDialog
             open={workshopOpen}
             onOpenChange={setWorkshopOpen}
@@ -2275,6 +4702,11 @@ export const TtsSettings = () => {
             activePageId={activePage}
             onCreatePage={createPageWithText}
             onPagesChanged={() => void reloadPages()}
+          />
+          <SpeechConfirmDialog
+            open={speechConfirmOpen}
+            onOpenChange={setSpeechConfirmOpen}
+            onStart={() => void speechText()}
           />
           <Dialog
             open={urlDialogOpen}
@@ -2318,6 +4750,7 @@ export const TtsSettings = () => {
           </Dialog>
         </div>
       </div>
+      {voiceInFooter}
     </PageShell>
   );
 };

@@ -333,9 +333,209 @@ pub fn soften_edges(samples: &mut [f32], channels: usize, sample_rate: u32) {
     }
 }
 
+/// Pegel, ab dem ein Abtastwert als Laut zählt (rund −44 dBFS).
+const EDGE_THRESHOLD: f32 = 0.006;
+
+/// Wie [`trim_edge_silence`] die Stille kürzt (Millisekunden).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct EdgeTrim {
+    /// Stille vor dem ersten Laut, die stehen bleibt (Anlaut nie abschneiden).
+    pub lead_ms: f32,
+    /// Längste Stille nach dem letzten Laut. Zusammen mit dem Vorlauf des
+    /// nächsten Satzes ergibt das die Satzpause.
+    pub tail_ms: f32,
+    /// Längste Stille IM Satz (Komma, Abschnittsgrenzen des Modells); längere
+    /// wird auf genau diesen Wert gekürzt. `None`: Innenpausen bleiben.
+    pub inner_ms: Option<f32>,
+}
+
+impl EdgeTrim {
+    /// Das Verhalten von vor dem Sprachfluss (#318): 30 ms vorn, 140 ms hinten,
+    /// Innenpausen unberührt.
+    pub const LEGACY: Self = Self {
+        lead_ms: 30.0,
+        tail_ms: 140.0,
+        inner_ms: None,
+    };
+}
+
+/// Lange Stille an den Satzrändern und in Satzmitte kürzen (#314, #318).
+///
+/// Phonon und andere Modelle hängen an jeden Satz eigene Stille vorn und
+/// hinten. Aneinandergereiht klang das stockend: zwischen zwei Sätzen
+/// eines Absatzes lag fast eine Sekunde. Mit `trim.inner_ms` wird auch jede
+/// Stille innerhalb des Satzes, die länger ist, auf diesen Wert gekürzt
+/// (erste und letzte Hälfte bleiben, die Mitte fällt weg). Ausdrückliche
+/// Pausen-Tags sind eigene Stücke und bleiben unangetastet. Danach muss
+/// [`soften_edges`] laufen, damit die neuen Ränder nicht knacken.
+pub fn trim_edge_silence(
+    samples: &mut Vec<f32>,
+    channels: usize,
+    sample_rate: u32,
+    trim: EdgeTrim,
+) {
+    let channels = channels.max(1);
+    let frames = samples.len() / channels;
+    if frames == 0 {
+        return;
+    }
+    // Gemessen gegen den Ruhepegel am jeweiligen Rand (Mittel der ersten
+    // bzw. letzten 10 ms): sonst zählte ein Gleichanteil ≥ Schwelle schon in
+    // der Stille als Laut, und nichts würde gekürzt.
+    let edge = ((sample_rate as usize) / 100).clamp(1, frames);
+    let baseline = |range: std::ops::Range<usize>| -> Vec<f32> {
+        let n = range.len() as f64;
+        (0..channels)
+            .map(|c| {
+                (range.clone())
+                    .map(|f| samples[f * channels + c] as f64)
+                    .sum::<f64>()
+                    / n
+            })
+            .map(|m| m as f32)
+            .collect()
+    };
+    let head = baseline(0..edge);
+    let foot = baseline(frames - edge..frames);
+    let loud = |f: usize, base: &[f32]| {
+        samples[f * channels..(f + 1) * channels]
+            .iter()
+            .zip(base)
+            .any(|(v, m)| (v - m).abs() >= EDGE_THRESHOLD)
+    };
+    let Some(first) = (0..frames).find(|&f| loud(f, &head)) else {
+        return;
+    };
+    let last = (0..frames).rev().find(|&f| loud(f, &foot)).unwrap_or(first);
+    let ms = |m: f32| (m.max(0.0) as f64 / 1000.0 * sample_rate as f64) as usize;
+    let start = first.saturating_sub(ms(trim.lead_ms));
+    let end = (last + 1 + ms(trim.tail_ms)).min(frames);
+    let inner_cap = trim.inner_ms.map(ms).filter(|&cap| cap > 0);
+    let inner_changes = inner_cap.is_some_and(|cap| {
+        silent_runs(first, last, |f| !loud(f, &head))
+            .iter()
+            .any(|run| run.len() > cap)
+    });
+    if start == 0 && end == frames && !inner_changes {
+        return;
+    }
+    let mut out: Vec<f32> = Vec::with_capacity((end - start) * channels);
+    let mut copied = start;
+    if let (true, Some(cap)) = (inner_changes, inner_cap) {
+        for run in silent_runs(first, last, |f| !loud(f, &head)) {
+            if run.len() <= cap {
+                continue;
+            }
+            // Erste Hälfte und letzte Hälfte bleiben, die Mitte fällt weg.
+            let keep_head = cap / 2;
+            let keep_foot = cap - keep_head;
+            out.extend_from_slice(&samples[copied * channels..(run.start + keep_head) * channels]);
+            copied = run.end - keep_foot;
+        }
+    }
+    out.extend_from_slice(&samples[copied * channels..end * channels]);
+    *samples = out;
+}
+
+/// Zusammenhängende stille Abschnitte zwischen `first` und `last` (beide laut,
+/// also liegt jeder Abschnitt echt im Inneren).
+fn silent_runs(
+    first: usize,
+    last: usize,
+    quiet: impl Fn(usize) -> bool,
+) -> Vec<std::ops::Range<usize>> {
+    let mut runs = Vec::new();
+    let mut run_start: Option<usize> = None;
+    for f in first..=last {
+        match (quiet(f), run_start) {
+            (true, None) => run_start = Some(f),
+            (false, Some(a)) => {
+                runs.push(a..f);
+                run_start = None;
+            }
+            _ => {}
+        }
+    }
+    runs
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lange_randstille_wird_gekuerzt_innere_pause_bleibt() {
+        let rate = 24_000u32;
+        let tone = |ms: usize| -> Vec<f32> {
+            (0..rate as usize * ms / 1000)
+                .map(|i| 0.3 * (i as f32 * 0.05).sin() + 0.2)
+                .collect()
+        };
+        let quiet = |ms: usize| vec![0.0f32; rate as usize * ms / 1000];
+        let mut s = [quiet(400), tone(300), quiet(300), tone(300), quiet(700)].concat();
+        trim_edge_silence(&mut s, 1, rate, EdgeTrim::LEGACY);
+        let ms = s.len() as f64 / rate as f64 * 1000.0;
+        assert!((ms - (30.0 + 900.0 + 140.0)).abs() < 3.0, "{ms} ms");
+        let mut leer = vec![0.0f32; 1000];
+        trim_edge_silence(&mut leer, 1, rate, EdgeTrim::LEGACY);
+        assert_eq!(leer.len(), 1000, "reine Stille bleibt (Pausen-Stück)");
+        // Gleichanteil über der Schwelle schon in der Stille.
+        let mut versatz: Vec<f32> = [quiet(400), tone(300), quiet(700)]
+            .concat()
+            .into_iter()
+            .map(|v| v + 0.05)
+            .collect();
+        trim_edge_silence(&mut versatz, 1, rate, EdgeTrim::LEGACY);
+        let ms = versatz.len() as f64 / rate as f64 * 1000.0;
+        assert!(
+            (ms - (30.0 + 300.0 + 140.0)).abs() < 3.0,
+            "Versatz: {ms} ms"
+        );
+    }
+
+    #[test]
+    fn innere_pause_wird_auf_komma_laenge_gekuerzt_kurze_bleibt() {
+        let rate = 24_000u32;
+        let tone = |ms: usize| -> Vec<f32> {
+            (0..rate as usize * ms / 1000)
+                .map(|i| 0.3 * (i as f32 * 0.05).sin() + 0.2)
+                .collect()
+        };
+        let quiet = |ms: usize| vec![0.0f32; rate as usize * ms / 1000];
+        let trim = EdgeTrim {
+            lead_ms: 30.0,
+            tail_ms: 230.0,
+            inner_ms: Some(200.0),
+        };
+        let ms_of = |s: &Vec<f32>| s.len() as f64 / rate as f64 * 1000.0;
+        // Lange Innenpause (600 ms) wird auf 200 ms gekürzt, Ränder wie üblich.
+        let mut s = [quiet(400), tone(300), quiet(600), tone(300), quiet(700)].concat();
+        trim_edge_silence(&mut s, 1, rate, trim);
+        let ms = ms_of(&s);
+        assert!(
+            (ms - (30.0 + 300.0 + 200.0 + 300.0 + 230.0)).abs() < 3.0,
+            "{ms} ms"
+        );
+        // Kürzere Innenpause (150 ms) bleibt, genau wie ohne `inner_ms`.
+        let mut kurz = [quiet(400), tone(300), quiet(150), tone(300), quiet(700)].concat();
+        trim_edge_silence(&mut kurz, 1, rate, trim);
+        let ms = ms_of(&kurz);
+        assert!(
+            (ms - (30.0 + 300.0 + 150.0 + 300.0 + 230.0)).abs() < 3.0,
+            "{ms} ms"
+        );
+        // Zwei Stereo-Kanäle bleiben deckungsgleich (nur ganze Frames fallen weg).
+        let mono = [quiet(100), tone(200), quiet(500), tone(200), quiet(100)].concat();
+        let mut stereo: Vec<f32> = mono.iter().flat_map(|v| [*v, *v]).collect();
+        trim_edge_silence(&mut stereo, 2, rate, trim);
+        assert_eq!(stereo.len() % 2, 0);
+        assert!(stereo.chunks(2).all(|f| f[0] == f[1]));
+        let ms = stereo.len() as f64 / 2.0 / rate as f64 * 1000.0;
+        assert!(
+            (ms - (30.0 + 200.0 + 200.0 + 200.0 + 100.0)).abs() < 3.0,
+            "{ms} ms"
+        );
+    }
 
     fn rms(samples: &[f32]) -> f64 {
         if samples.is_empty() {

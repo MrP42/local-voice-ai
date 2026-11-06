@@ -122,16 +122,17 @@ fn the_engine_parks_a_heavy_run_while_the_queue_is_busy_and_finishes_it_afterwar
         spec.heavy.unwrap()
     });
     engine.register_action(notes.clone());
-    let wf = armed_workflow(
-        &engine,
-        &def(vec![step("n", "meeting.notes", json!({}))]),
-    );
+    let wf = armed_workflow(&engine, &def(vec![step("n", "meeting.notes", json!({}))]));
     let run = engine.enqueue(&EnqueueRequest::manual(&wf)).unwrap();
 
     let report = engine.tick().unwrap();
     assert!(
         matches!(
-            report.outcomes.iter().find(|(id, _)| *id == run.run_id).map(|o| &o.1),
+            report
+                .outcomes
+                .iter()
+                .find(|(id, _)| *id == run.run_id)
+                .map(|o| &o.1),
             Some(RunOutcome::Parked { .. })
         ),
         "{report:?}"

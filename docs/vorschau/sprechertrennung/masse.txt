@@ -1,0 +1,4 @@
+Sprechertrennung 390 light: Knopf 188x44
+Sprechertrennung 390 dark: Knopf 188x44
+Sprechertrennung 1440 light: Knopf 188x44
+Sprechertrennung 1440 dark: Knopf 188x44

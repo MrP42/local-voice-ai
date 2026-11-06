@@ -2,8 +2,8 @@
 
 use crate::managers::tts::builder;
 use crate::managers::tts::hf_access::{self, HfAccessCheck, HfAccessStatus};
-use crate::managers::tts::phonon_models;
 use crate::managers::tts::models::{TtsDownloadInfo, TtsModelManager};
+use crate::managers::tts::phonon_models;
 use crate::managers::tts::registry::{ReferenceAnalysis, VoiceInfo, VoiceMeta};
 use crate::managers::tts::{portable, registry, voices, ReadingInfo, TtsManager, TtsStatus};
 use std::sync::Arc;
@@ -69,6 +69,20 @@ pub async fn tts_prewarm(app: AppHandle, text: String) -> Result<(), String> {
 #[specta::specta]
 pub fn tts_prewarm_cancel(app: AppHandle) -> Result<(), String> {
     app.state::<Arc<TtsManager>>().prewarm_cancel();
+    Ok(())
+}
+
+/// Anlauf fuer den naechsten Buchteil (lva#150): die ersten Saetze still
+/// vorberechnen. Kehrt sofort zurueck.
+#[tauri::command]
+#[specta::specta]
+pub fn tts_prefetch_head(app: AppHandle, text: String) -> Result<(), String> {
+    let tts = app.state::<Arc<TtsManager>>().inner().clone();
+    tauri::async_runtime::spawn(async move {
+        if let Err(e) = tts.prefetch_head(&text).await {
+            log::warn!("prefetch: {e}");
+        }
+    });
     Ok(())
 }
 
@@ -262,6 +276,20 @@ pub async fn tts_translate(
     tts.translate_text(&text, &target_lang).await
 }
 
+/// Stand des Uebersetzungsauftrags im Hintergrund (laufend oder zuletzt
+/// beendet): Fortschritt, Arbeiter, bisher fertiger Text, Fehler, Warnungen.
+/// Die Oberflaeche holt sich damit den Stand zurueck, wenn sie neu geladen hat.
+#[tauri::command]
+#[specta::specta]
+pub fn tts_translate_job(
+    app: AppHandle,
+    text: String,
+    target_lang: String,
+) -> Option<crate::translator::TranslateJob> {
+    app.state::<Arc<TtsManager>>()
+        .translate_job_for(&text, &target_lang)
+}
+
 /// Liegt fuer diesen Text in dieser Sprache schon eine Uebersetzung bereit?
 /// Damit die Oberflaeche beim Umschalten zwischen Sprachen sofort zeigen
 /// kann, was da ist, ohne eine Uebersetzung anzustossen.
@@ -276,7 +304,12 @@ pub fn tts_cached_translation(app: AppHandle, text: String, target_lang: String)
 /// ablegen; `tts_cached_translation` liefert danach SIE statt der maschinellen.
 #[tauri::command]
 #[specta::specta]
-pub fn tts_store_translation(app: AppHandle, text: String, target_lang: String, translation: String) {
+pub fn tts_store_translation(
+    app: AppHandle,
+    text: String,
+    target_lang: String,
+    translation: String,
+) {
     app.state::<Arc<TtsManager>>()
         .save_corrected_translation(&text, &target_lang, &translation);
 }
@@ -492,7 +525,8 @@ pub async fn tts_summarize_text(
     options: crate::summarizer::SummaryOptions,
 ) -> Result<String, String> {
     use tauri::Emitter;
-    let settings = crate::settings::get_settings(&app);
+    // Modell der Funktion „Vorlesen“ (Fusszeile), sonst das aktive.
+    let settings = crate::settings::get_settings(&app).for_function(crate::settings::FN_READ_ALOUD);
     let emitter = app.clone();
     let progress = move |done: usize, total: usize| {
         let _ = emitter.emit(
@@ -520,7 +554,8 @@ pub async fn tts_voice_changed(app: AppHandle) {
 pub fn tts_piper_voice_for_text(app: AppHandle, text: String) -> Option<String> {
     // Eine Stichprobe reicht fuer die Sprache; ganze Buecher gehen nicht ueber die Bruecke.
     let sample: String = text.chars().take(2000).collect();
-    app.state::<Arc<TtsManager>>().piper_replacement_for(&sample)
+    app.state::<Arc<TtsManager>>()
+        .piper_replacement_for(&sample)
 }
 
 /// Laufende Übersetzung (`translation`) oder Zusammenfassung (`summary`)
@@ -532,6 +567,7 @@ pub fn tts_transform_cancel(kind: String) {
     match kind.as_str() {
         "translation" => crate::translator::TRANSLATE_CANCEL.store(true, Ordering::SeqCst),
         "summary" => crate::summarizer::SUMMARY_CANCEL.store(true, Ordering::SeqCst),
+        "assist" => crate::summarizer::ASSIST_CANCEL.store(true, Ordering::SeqCst),
         _ => {}
     }
 }
@@ -542,14 +578,60 @@ pub fn tts_transform_cancel(kind: String) {
 #[tauri::command]
 #[specta::specta]
 pub async fn tts_tidy_text(app: AppHandle, text: String) -> Result<String, String> {
-    let settings = crate::settings::get_settings(&app);
+    let settings = crate::settings::get_settings(&app).for_function(crate::settings::FN_READ_ALOUD);
     crate::summarizer::tidy(&settings, &text).await
+}
+
+/// Textarbeit im Editor-Menue: `task` = `grammar` | `structure`, `lines` =
+/// nummerierte Zeilen `N|Text`. Antwort: nur die Aenderungen im selben
+/// Zeilenformat (siehe `lib/reader/textAssist.ts`). Fortschritt ueber
+/// `tts-transform-progress` mit `kind: "assist"`.
+#[tauri::command]
+#[specta::specta]
+pub async fn tts_text_assist(
+    app: AppHandle,
+    task: String,
+    lines: String,
+) -> Result<String, String> {
+    use tauri::Emitter;
+    let settings = crate::settings::get_settings(&app);
+    let emitter = app.clone();
+    let progress = move |done: usize, total: usize| {
+        let _ = emitter.emit(
+            "tts-transform-progress",
+            serde_json::json!({ "kind": "assist", "done": done, "total": total }),
+        );
+    };
+    crate::summarizer::assist(&settings, &task, &lines, &progress).await
+}
+
+/// Sprechfassung: den Text so umsetzen, dass eine Vorlesestimme ohne
+/// Betonungs-Steuerung (Phonon, Piper) ihn richtig betont — Satzzeichen,
+/// Satzteilung, Zahlen ausschreiben. Nichts kürzen; die Prüfung
+/// `summarizer::check_speech_version` lehnt Inhaltsänderungen ab.
+#[tauri::command]
+#[specta::specta]
+pub async fn tts_speech_text(app: AppHandle, text: String) -> Result<String, String> {
+    let settings = crate::settings::get_settings(&app).for_function(crate::settings::FN_READ_ALOUD);
+    let _ = app.emit("llm-activity", serde_json::json!({ "busy": true }));
+    let outcome = crate::summarizer::speech_version(&settings, &text).await;
+    let _ = app.emit(
+        "llm-activity",
+        serde_json::json!({ "busy": false, "error": outcome.as_ref().err().cloned() }),
+    );
+    outcome
 }
 
 #[tauri::command]
 #[specta::specta]
-pub fn tts_extract_document(path: String) -> Result<String, String> {
-    crate::media::extract_document_text(std::path::Path::new(&path))
+pub async fn tts_extract_document(path: String) -> Result<String, String> {
+    // Ein großes EPUB/PDF braucht Sekunden: nicht auf dem Hauptthread, sonst
+    // friert das Fenster während des Imports ein (lva#149).
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::media::extract_document_text(std::path::Path::new(&path))
+    })
+    .await
+    .map_err(|e| format!("Import abgebrochen: {e}"))?
 }
 
 #[tauri::command]
@@ -1237,4 +1319,12 @@ pub fn tts_rename_voice_id(
     voices::update_registry(&fish_dir);
     log::info!("Stimme '{old_id}' nach '{new_id}' umbenannt");
     Ok(new_id)
+}
+
+/// Bildschirm wach halten (Sonnen-Knopf im Vorlesen) oder freigeben.
+/// `true`, wenn das Betriebssystem die Anzeige jetzt wach hält.
+#[tauri::command]
+#[specta::specta]
+pub fn screen_keep_awake(on: bool) -> Result<bool, String> {
+    crate::keep_awake::set(on)
 }

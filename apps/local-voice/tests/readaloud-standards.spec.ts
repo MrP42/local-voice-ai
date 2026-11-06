@@ -209,7 +209,7 @@ test("editor tabs are real tabs with keyboard navigation and standard height", a
     exact: true,
   });
   const summary = page.getByRole("tab", {
-    name: "Zusammenfassung",
+    name: "KI-Dokumente",
     exact: true,
   });
 
@@ -238,7 +238,7 @@ test("help opens in the dock and leaves the files list in place", async ({
   await openReadAloud(page);
   const files = page.getByTestId("tts-files");
   await expect(files.getByRole("tab")).toHaveCount(0);
-  await page.getByRole("button", { name: "Hilfe zu dieser Seite" }).click();
+  await page.keyboard.press("F1");
   await expect(page.locator(".lv-helpdock").getByTestId("help-panel")).toBeVisible();
   await expect(files).toBeVisible();
 });

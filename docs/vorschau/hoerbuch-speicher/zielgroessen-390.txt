@@ -1,0 +1,47 @@
+Zielgrößen der Vorschau (390 px, hell), boundingBox in CSS-px
+Regel: Breite und Höhe >= 44
+
+s1	44x44	ja	Fertig
+s1	358x44	ja	Konto patrick@example.org
+s1	358x44	ja	Stand Synchronisiert
+s1	358x44	ja	Zuletzt 23:40
+s1	358x44	ja	Jetzt abgleichen
+s1	358x51	ja	Hörbücher nur im WLAN laden
+s1	358x44	ja	Hörbücher auf diesem iPhone 2,84 GB
+s1	358x44	ja	Frei auf dem iPhone 11,2 GB
+s1	358x44	ja	Speicher verwalten 5 geladen ›
+s1	358x44	ja	Abmelden
+s2	105x44	ja	‹ Konto & Sync
+s2	358x44	ja	Belegt durch Hörbücher 2,84 GB
+s2	358x44	ja	Frei auf dem iPhone 11,2 GB
+s2	358x44	ja	✓ Fertig gehörte entfernen (2)
+s2	358x80	ja	Der Zauber­berg Der Zauberberg 45 % gehört · zul
+s2	96x93	ja	Wischaktion Entfernen
+s2	262x93	ja	Effi Briest Effi Briest Fertig gehört · zuletzt 
+s2	358x81	ja	Eigene Aufnahme Vortrag Verwaltung digital Noch 
+s2	358x81	ja	Die Ver­wandlung Die Verwandlung Fertig gehört ·
+s2	358x81	ja	Kurz­geschichten Kurzgeschichten Download unvoll
+s3	105x44	ja	‹ Konto & Sync
+s3	358x44	ja	Belegt durch Hörbücher 2,84 GB
+s3	358x44	ja	Frei auf dem iPhone 11,2 GB
+s3	358x44	ja	✓ Fertig gehörte entfernen (2)
+s3	374x56	ja	2 entfernen · 1 GB frei
+s3	374x56	ja	Abbrechen
+s4	105x44	ja	‹ Konto & Sync
+s4	358x44	ja	Belegt durch Hörbücher 1,86 GB
+s4	358x44	ja	Frei auf dem iPhone 12,2 GB
+s4	358x80	ja	Der Zauber­berg Der Zauberberg 45 % gehört · zul
+s4	358x81	ja	Eigene Aufnahme Vortrag Verwaltung digital Noch 
+s4	358x81	ja	Kurz­geschichten Kurzgeschichten Download unvoll
+s4	270x44	ja	Jetzt abgleichen
+s4	270x44	ja	OK
+s5	105x44	ja	‹ Konto & Sync
+s5	358x44	ja	Belegt durch Hörbücher 0 Byte
+s5	358x44	ja	Frei auf dem iPhone 14,1 GB
+s6	105x44	ja	‹ Konto & Sync
+s6	358x80	ja	Der Zauber­berg Der Zauberberg 45 % gehört · zul
+s6	358x81	ja	Effi Briest Effi Briest Fertig gehört · zuletzt 
+s6	374x56	ja	684 MB freigeben
+s6	374x56	ja	Abbrechen
+
+Ergebnis: alle Ziele >= 44 px (42 Ziele)

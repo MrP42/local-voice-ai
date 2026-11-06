@@ -12,6 +12,7 @@ import {
   templateErrorText,
   validateSpecLocally,
 } from "../src/lib/meetingNotes";
+import { geheZu } from "./profilmenue";
 
 // M1-P1c: Notizblock (Aufnahmeseite + Detailansicht) und Vorlagenverwaltung
 // gegen die Tauri-Attrappe. Die Attrappe merkt sich jeden Aufruf in
@@ -529,8 +530,8 @@ test("Notizblock: Flush bei Blur schreibt sofort, ohne die Entprellzeit abzuwart
   await pad.getByTestId("note-starter").click();
   await page.keyboard.type("Kurz", { delay: 10 });
   expect(await calls(page, "meeting_notes_save")).toHaveLength(0);
-  // Klick auf die Seitenueberschrift nimmt den Fokus aus dem Editor.
-  await page.locator(".page-shell__head h1").click();
+  // Klick auf den App-Namen in der Titelleiste nimmt den Fokus aus dem Editor.
+  await page.locator(".lv-titlebar__app").click();
   await expect
     .poll(async () => (await calls(page, "meeting_notes_save")).length, {
       timeout: 450,
@@ -1218,10 +1219,7 @@ test.describe("Systemton Vorgabe", () => {
   }) => {
     await page.setViewportSize({ width: 1280, height: 1000 });
     await page.goto("/");
-    await page
-      .getByRole("navigation")
-      .getByRole("button", { name: "Einstellungen", exact: true })
-      .click();
+    await geheZu(page, "Einstellungen");
     await expect(
       page.getByText("Systemton standardmäßig aufnehmen"),
     ).toBeVisible();

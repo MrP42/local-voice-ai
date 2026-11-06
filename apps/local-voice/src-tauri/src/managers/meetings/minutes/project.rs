@@ -57,13 +57,13 @@ use log::info;
 use serde_json::{json, Map, Value};
 
 use super::{
-    ask_options, classify_llm_error, entry_text, no_retry, nullable_string, object_schema,
-    template_block, Limits, MinutesError, MinutesPhase, MinutesProgress, MinutesRunGuard,
-    ProgressFn, Reporter, base_rules, CODE_CANCELLED,
+    ask_options, base_rules, classify_llm_error, entry_text, no_retry, nullable_string,
+    object_schema, template_block, Limits, MinutesError, MinutesPhase, MinutesProgress,
+    MinutesRunGuard, ProgressFn, Reporter, CODE_CANCELLED,
 };
 use crate::managers::meetings::llm_call::{
-    ask_json, is_splittable_error, is_truncation_error, resolve_provider_coded, retry_chunk,
-    should_retry, SemanticRetry,
+    ask_json, is_splittable_error, is_truncation_error, ram_probe_for, resolve_provider_coded,
+    retry_chunk, should_retry, SemanticRetry,
 };
 use crate::managers::meetings::notes::blocks::{run_blocks, Step, Work};
 use crate::managers::meetings::notes::budget;
@@ -862,6 +862,8 @@ async fn run_project_minutes(
     guard: &MinutesRunGuard,
     on_progress: ProgressFn<'_>,
 ) -> Result<ProjectMinutes, MinutesError> {
+    // Modelle je Funktion: Protokoll und Notizen nutzen ihr eigenes Modell, falls gewaehlt.
+    let settings = &settings.for_function(crate::settings::FN_MEETING_PROTOCOL);
     let started = std::time::Instant::now();
     let project = store
         .folders_list()
@@ -1120,7 +1122,11 @@ pub async fn generate_project_minutes(
     request: &Request<'_>,
     on_progress: ProgressFn<'_>,
 ) -> Result<ProjectMinutes, String> {
-    generate_guarded(settings, store, request, Limits::default(), on_progress)
+    let limits = Limits {
+        free_mb: ram_probe_for(&settings.for_function(crate::settings::FN_MEETING_PROTOCOL)),
+        ..Limits::default()
+    };
+    generate_guarded(settings, store, request, limits, on_progress)
         .await
         .map_err(String::from)
 }

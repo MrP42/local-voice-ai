@@ -84,9 +84,12 @@ pub fn is_npm_managed(binary: &Path) -> bool {
             .any(|w| w[0] == "node_modules" && w[1] == "@openai")
     };
     in_package(&real)
-        || binary
-            .parent()
-            .is_some_and(|dir| dir.join("node_modules").join("@openai").join("codex").is_dir())
+        || binary.parent().is_some_and(|dir| {
+            dir.join("node_modules")
+                .join("@openai")
+                .join("codex")
+                .is_dir()
+        })
 }
 
 /// `npm-cli.js` zu einer Node-Installation: Windows `<ordner>/node_modules/npm/bin`,
@@ -148,7 +151,10 @@ pub fn ensure_codex_updated() -> bool {
         emit(
             "manual",
             None,
-            Some("Das automatische Aktualisieren ist in den Einstellungen ausgeschaltet.".to_string()),
+            Some(
+                "Das automatische Aktualisieren ist in den Einstellungen ausgeschaltet."
+                    .to_string(),
+            ),
         );
         return false;
     }
@@ -200,8 +206,8 @@ fn update_codex() -> Result<String, Outcome> {
             binary.display()
         )));
     }
-    let node = cli::find_node()
-        .ok_or_else(|| Manual("Node.js wurde nicht gefunden.".to_string()))?;
+    let node =
+        cli::find_node().ok_or_else(|| Manual("Node.js wurde nicht gefunden.".to_string()))?;
     let npm = npm_cli_js(&node)
         .ok_or_else(|| Manual("npm wurde neben Node.js nicht gefunden.".to_string()))?;
 
@@ -216,13 +222,20 @@ fn update_codex() -> Result<String, Outcome> {
     let output = cli::wait_with_timeout(child, NPM_TIMEOUT).map_err(Failed)?;
     if !output.status.success() {
         let err = String::from_utf8_lossy(&output.stderr);
-        let last = err.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("");
+        let last = err
+            .lines()
+            .rev()
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or("");
         return Err(Failed(format!("npm i -g {PACKAGE}: {last}")));
     }
     let (program, mut argv) = cli::launcher(&binary);
     argv.push("--version".into());
     let mut v = Command::new(program);
-    v.args(argv).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
+    v.args(argv)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
     hide_window(&mut v);
     let version = v
         .output()
@@ -260,7 +273,12 @@ pub fn recent_error_note() -> String {
         .ok()
         .and_then(|l| l.clone())
         .filter(|(at, _)| now() - at <= 120)
-        .map(|(_, e)| format!(" (Ursache: {})", e.split_once(": ").map_or(e.as_str(), |x| x.1)))
+        .map(|(_, e)| {
+            format!(
+                " (Ursache: {})",
+                e.split_once(": ").map_or(e.as_str(), |x| x.1)
+            )
+        })
         .unwrap_or_default()
 }
 
@@ -270,8 +288,15 @@ mod tests {
 
     #[test]
     fn only_the_model_not_accepted_error_means_too_old() {
-        assert!(is_cli_too_old("cli_model_not_in_plan: Dieses Modell nimmt der Server …"));
-        for e in ["cli_failed: x", "cli_limit_reached: x", "cli_not_logged_in: x", "cli_missing: x"] {
+        assert!(is_cli_too_old(
+            "cli_model_not_in_plan: Dieses Modell nimmt der Server …"
+        ));
+        for e in [
+            "cli_failed: x",
+            "cli_limit_reached: x",
+            "cli_not_logged_in: x",
+            "cli_missing: x",
+        ] {
             assert!(!is_cli_too_old(e), "{e}");
         }
     }
@@ -286,8 +311,12 @@ mod tests {
     #[test]
     fn only_npm_installations_are_updated_by_npm() {
         // macOS/Linux: der Link zeigt in das npm-Paket (hier ohne echte Datei: Pfad zaehlt).
-        assert!(is_npm_managed(Path::new("/usr/local/lib/node_modules/@openai/codex/bin/codex.js")));
-        assert!(!is_npm_managed(Path::new("/opt/homebrew/Caskroom/codex/codex")));
+        assert!(is_npm_managed(Path::new(
+            "/usr/local/lib/node_modules/@openai/codex/bin/codex.js"
+        )));
+        assert!(!is_npm_managed(Path::new(
+            "/opt/homebrew/Caskroom/codex/codex"
+        )));
         assert!(!is_npm_managed(Path::new(r"C:\Tools\codex\codex.exe")));
         // Windows: codex.cmd neben dem Paket im npm-Ordner.
         let dir = std::env::temp_dir().join(format!("lv-npm-managed-{}", std::process::id()));
@@ -309,7 +338,11 @@ mod tests {
         // macOS/Linux: <praefix>/bin/node, <praefix>/lib/node_modules/npm
         let unix = base.join("unix");
         std::fs::create_dir_all(unix.join("bin")).unwrap();
-        let ubin = unix.join("lib").join("node_modules").join("npm").join("bin");
+        let ubin = unix
+            .join("lib")
+            .join("node_modules")
+            .join("npm")
+            .join("bin");
         std::fs::create_dir_all(&ubin).unwrap();
         std::fs::write(ubin.join("npm-cli.js"), "").unwrap();
         assert!(npm_cli_js(&unix.join("bin").join("node")).is_some());

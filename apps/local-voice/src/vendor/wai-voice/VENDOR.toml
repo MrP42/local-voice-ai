@@ -1,0 +1,9 @@
+# Vendorte Kopie von @wai/voice (WAI-SDK). Nicht von Hand ändern: scripts/vendor-wai-voice.py
+paket = "@wai/voice"
+quelle = "https://github.com/MrP42/wai-sdk"
+pfad = "packages/voice/src"
+referenz = "6e6c8cf9"
+commit = "6e6c8cf917c45419e98dc85122d563c60997535d"
+commit_datum = "2026-10-31"
+uebernommen_am = "2026-10-31"
+ausgelassen = ["*.test.ts"]

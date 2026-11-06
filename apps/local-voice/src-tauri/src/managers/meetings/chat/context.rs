@@ -10,9 +10,7 @@ use std::collections::{HashMap, HashSet};
 
 use super::ChunkSource;
 use crate::managers::meetings::notes::model::{EnhancedNotes, NoteBlock, NoteBlockKind};
-use crate::managers::meetings::search::chunking::{
-    chunk_slides, clock, compound_parts, ChunkHead,
-};
+use crate::managers::meetings::search::chunking::{chunk_slides, clock, compound_parts, ChunkHead};
 use crate::managers::meetings::search::index::ChunkRow;
 use crate::managers::meetings::slides::store::MeetingSlide;
 use crate::managers::meetings::speakers::SpeakerDirectory;
@@ -354,8 +352,17 @@ pub fn slide_excerpts(meeting: &MeetingRef, slides: &[MeetingSlide]) -> Vec<Exce
             ex.ref_keys = draft.ref_keys.clone();
             ex.start_ms = draft.start_ms;
             ex.end_ms = draft.end_ms;
-            let raw: Vec<&str> = draft.text.lines().filter(|l| !l.trim().is_empty()).collect();
-            fill_slide(&mut ex, &raw, draft.start_ms, draft.ref_keys.first().cloned());
+            let raw: Vec<&str> = draft
+                .text
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+                .collect();
+            fill_slide(
+                &mut ex,
+                &raw,
+                draft.start_ms,
+                draft.ref_keys.first().cloned(),
+            );
             ex
         })
         .collect()

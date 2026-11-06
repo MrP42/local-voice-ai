@@ -17,6 +17,7 @@ import {
   YT_MEETING_ID,
   YT_TITLE,
 } from "./youtubeMock";
+import { geheZu } from "./profilmenue";
 
 // A2 (#66, AK2/AK3): YouTube als Quelle gegen die Tauri-Attrappe. Link einfuegen
 // (Dialog und Strg+V), Meldungen fuer ungueltige und Playlist-Links, der Player
@@ -521,10 +522,7 @@ test.describe("Einstellung privat", () => {
     await installYoutubeMock(page, { fakePlayer: false, existing: false });
     await page.setViewportSize({ width: 1280, height: 1000 });
     await page.goto("/");
-    await page
-      .getByRole("navigation")
-      .getByRole("button", { name: "Einstellungen", exact: true })
-      .click();
+    await geheZu(page, "Einstellungen");
     await expect(
       page.getByText("YouTube: selbst installiertes yt-dlp nutzen", {
         exact: false,

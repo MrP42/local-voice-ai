@@ -6,7 +6,7 @@ Put text in the middle, pick a voice, press Read. Everything runs on this machin
 
 - **Text**: type, paste or dictate it (microphone icon).
 - **Icon row** below the voice picker: equally sized icons without labels. A tooltip gives name and effect, on mouse hover after a short pause and on keyboard focus. Rarely used actions sit behind the menu (☰) at the right edge.
-- **Add (+)**: bring in a document (TXT, MD, PDF, DOCX), a web address or a file for the project.
+- **Add (+)**: bring in a document or e-book (TXT, MD, PDF, DOCX, EPUB; DRM-free), a web address or a file for the project.
 - **Translate** (language icon, on the Translation tab, target language next to it) and **Summarize** (document icon, on the Summary tab; length, detail and audience are behind the sliders icon next to it) put their result on a separate tab. The original stays untouched.
 - **Read** speaks sentence by sentence. The arrows jump to the previous or next sentence, Pause holds.
 - **Save as audio** (arrow down) writes the recording into the page's project folder. It shows up under Files on the right.
@@ -31,7 +31,7 @@ Each page is a worksheet with its own text and folder. The list shows the start 
 ## Voices
 
 - Select in the bar above the player. Piper voices show language and quality there, for example "Thorsten · German · HQ · Piper". Each tab remembers its voice.
-- **Providers such as Phonon** (Models → Read aloud → Providers) read with several speakers as long as the voice menu shows "Phonon · Script with speakers": `<Nele>` and `<Anton>` in the text switch between the provider's voices (right-click → "Insert speaker"). Text without a speaker is read in the default voice. A single voice ("Phonon · Nele") reads the whole text instead. These providers do not support emotion tags, only pauses.
+- **Providers such as Phonon** (Models → Read aloud → Providers) read with several speakers as long as the voice menu shows "Phonon · Script with speakers": `<Nele>` and `<Anton>` in the text switch between the provider's voices (right-click → "Insert speaker"). Text without a speaker is read in the default voice. A single voice ("Phonon · Nele") reads the whole text instead. These providers do not support emotion tags, only pauses. Phonon also understands pace per sentence: `[slower]` at the start of a sentence speaks a little slower (important, serious, suspenseful sentences), `[faster]` a little faster (asides, lists). Auto-tagging then only sets pauses and pace so the emphasis fits the text.
 <!--if:fish-->
 - Listen, clone, import and delete: **Settings → Output**, or via "Manage voices …" at the end of the voice list.
 <!--/if:fish-->
@@ -62,9 +62,9 @@ The engine is chosen under **Settings → Output**. Piper voices are downloaded 
 Piper runs on the CPU, starts instantly and needs only a small voice. Download it under **Models → Reading voices**. If the Piper program is incomplete, the voice shows as "not usable" there and "Install program" repairs it.
 <!--/if:nofish-->
 
-## Language model and server in the footer
+## Language model (profile menu) and server (footer)
 
-- **Language model** (footer, drop-up menu): the model for translating, summarizing and auto-tagging. Its light pulses yellow while it works; the menu offers “Warm up” (loads it for ten minutes) and “Unload” (frees the memory).
+- **Language model** (profile menu at the bottom left, Models): the model for translating, summarizing and auto-tagging. Its light pulses yellow while it works; the menu offers “Warm up” (loads it for ten minutes) and “Unload” (frees the memory).
 <!--if:fish-->
 - **Server** (footer, left of the shield): the Fish Speech server. Grey off, yellow starting, green running, orange error. A click asks first: start, restart or stop.
 <!--/if:fish-->

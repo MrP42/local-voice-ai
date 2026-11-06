@@ -5,6 +5,7 @@ import { TabList } from "../../ui/TabList";
 import { DictationTab } from "./DictationTab";
 import { OutputTab } from "./OutputTab";
 import { AppTab } from "./AppTab";
+import { AccountTab } from "./AccountTab";
 import { PostProcessingSettings } from "../post-processing/PostProcessingSettings";
 import { AboutSettings } from "../about/AboutSettings";
 import { DebugSettings } from "../debug/DebugSettings";
@@ -22,8 +23,8 @@ import {
  * everything that merely configures the app is one entry with tabs. The tabs
  * are sorted by topic, not by feature module: Eingabe (what goes in: dictation,
  * microphone, text enhancement), Ausgabe (what comes out: read aloud, sounds),
- * KI-Modelle & Anbieter (which language model, from whom, at what cost) and
- * the app itself.
+ * KI-Modelle & Anbieter (which language model, from whom, at what cost), the
+ * app itself and Konto & Geräte (profiles on this PC, device sync; ADR-0024).
  *
  * Adding a setting means putting it in the group it belongs to, here. It does
  * not mean a new tab, and never a new sidebar entry. The dictation test sits at
@@ -53,6 +54,12 @@ const TABS = [
     id: "app",
     labelKey: "settings.app.tabs.app",
     Component: AppTab,
+    enabled: () => true,
+  },
+  {
+    id: "account",
+    labelKey: "settings.app.tabs.account",
+    Component: AccountTab,
     enabled: () => true,
   },
   {

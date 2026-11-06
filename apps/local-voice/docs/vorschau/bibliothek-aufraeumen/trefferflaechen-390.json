@@ -1,0 +1,92 @@
+[
+  {
+    "ziel": "Auswahlleiste",
+    "text": "Alle auswählen",
+    "breite": 128,
+    "hoehe": 44
+  },
+  {
+    "ziel": "Auswahlleiste",
+    "text": "Zusammenführen",
+    "breite": 178,
+    "hoehe": 44
+  },
+  {
+    "ziel": "Auswahlleiste",
+    "text": "Entfernen …",
+    "breite": 141,
+    "hoehe": 44
+  },
+  {
+    "ziel": "Auswahlleiste",
+    "text": "Fertig",
+    "breite": 96,
+    "hoehe": 44
+  },
+  {
+    "ziel": "Schließen",
+    "text": "Abbrechen",
+    "breite": 44,
+    "hoehe": 44
+  },
+  {
+    "ziel": "Option",
+    "text": "In den Papierkorb (wiederherstellbar)",
+    "breite": 308,
+    "hoehe": 118
+  },
+  {
+    "ziel": "Option",
+    "text": "Endgültig löschen (nicht wiederherstellbar)",
+    "breite": 308,
+    "hoehe": 158
+  },
+  {
+    "ziel": "Option",
+    "text": "Ich habe verstanden: 1 Eintrag (48 KB) und 1 Text bzw. Transkript im Vorlesen werden endgültig gelöscht.",
+    "breite": 308,
+    "hoehe": 76
+  },
+  {
+    "ziel": "Dialogknopf",
+    "text": "Abbrechen",
+    "breite": 308,
+    "hoehe": 44
+  },
+  {
+    "ziel": "Dialogknopf",
+    "text": "Endgültig löschen",
+    "breite": 308,
+    "hoehe": 44
+  },
+  {
+    "ziel": "Papierkorb-Schließen",
+    "text": "Schließen",
+    "breite": 44,
+    "hoehe": 44
+  },
+  {
+    "ziel": "Papierkorb-Aktion",
+    "text": "Wiederherstellen",
+    "breite": 174,
+    "hoehe": 44
+  },
+  {
+    "ziel": "Papierkorb-Aktion",
+    "text": "Endgültig löschen …",
+    "breite": 164,
+    "hoehe": 44
+  },
+  {
+    "ziel": "Papierkorb-Dialogknopf",
+    "text": "Papierkorb leeren …",
+    "breite": 308,
+    "hoehe": 44
+  },
+  {
+    "ziel": "Papierkorb-Dialogknopf",
+    "text": "Schließen",
+    "breite": 308,
+    "hoehe": 44
+  }
+]

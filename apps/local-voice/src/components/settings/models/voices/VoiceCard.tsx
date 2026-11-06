@@ -17,6 +17,7 @@ import { Button } from "../../../ui/Button";
 import { RowChip } from "../ModelRow";
 import { SamplePlayButton } from "../../tts/providers/SamplePlayButton";
 import { VoiceTryButton } from "../../tts/providers/VoiceTryButton";
+import { RenameVoiceButton } from "../../tts/providers/RenameVoiceDialog";
 import type { DeviceGroup, VoiceItem } from "./model";
 import { useVoiceLabels } from "./labels";
 import type { VoiceCatalog } from "./useVoiceCatalog";
@@ -309,6 +310,12 @@ export const VoiceCard: React.FC<{
           </h3>
           <p className="truncate text-xs text-text/60">{meta}</p>
         </div>
+        {voice.rename && (
+          <RenameVoiceButton
+            target={voice.rename}
+            testId={`voice-rename-${voice.key}`}
+          />
+        )}
         <OpenProviderButton voice={voice} actions={actions} />
       </div>
       <div className="flex flex-wrap items-center gap-1.5">
@@ -366,6 +373,12 @@ export const VoiceListRow: React.FC<{
       </div>
       <div className="ms-auto flex items-center gap-1">
         <VoiceAction voice={voice} actions={actions} />
+        {voice.rename && (
+          <RenameVoiceButton
+            target={voice.rename}
+            testId={`voice-rename-${voice.key}`}
+          />
+        )}
         <OpenProviderButton voice={voice} actions={actions} />
       </div>
     </li>

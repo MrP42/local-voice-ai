@@ -1015,14 +1015,26 @@ fn an_attachment_travels_as_a_base64_mime_part_with_an_encoded_name() {
     .unwrap();
     let (_, message) = mock.finish();
     let message = message.expect("die Nachricht kam an");
-    assert!(message.contains("Content-Type: application/pdf"), "{message}");
-    assert!(message.contains("Content-Disposition: attachment"), "{message}");
-    assert!(message.contains("Content-Transfer-Encoding: base64"), "{message}");
+    assert!(
+        message.contains("Content-Type: application/pdf"),
+        "{message}"
+    );
+    assert!(
+        message.contains("Content-Disposition: attachment"),
+        "{message}"
+    );
+    assert!(
+        message.contains("Content-Transfer-Encoding: base64"),
+        "{message}"
+    );
     assert!(
         message.contains("JVBERi0xLjcgSW5oYWx0"),
         "base64 von %PDF-1.7 Inhalt: {message}"
     );
-    assert!(!message.contains("%PDF-1.7"), "der Inhalt steht nie im Klartext");
+    assert!(
+        !message.contains("%PDF-1.7"),
+        "der Inhalt steht nie im Klartext"
+    );
 }
 
 #[test]
@@ -1065,7 +1077,10 @@ fn the_same_seed_makes_the_same_message_id_and_another_seed_another() {
     let (_, a) = build_message_with(&cfg_a, &msg(), &[], date, 7).unwrap();
     let (_, b) = build_message_with(&cfg_b, &msg(), &[], date, 7).unwrap();
     let (_, c) = build_message_with(&cfg_a, &msg(), &[], date, 8).unwrap();
-    assert_eq!(a, b, "ein Wiederholungsversuch ist als dieselbe Nachricht erkennbar");
+    assert_eq!(
+        a, b,
+        "ein Wiederholungsversuch ist als dieselbe Nachricht erkennbar"
+    );
     assert_ne!(a, c);
     assert!(a.starts_with("lva-") && a.ends_with("@example.de"), "{a}");
 }

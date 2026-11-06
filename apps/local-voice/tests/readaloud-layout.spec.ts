@@ -403,7 +403,7 @@ test("first start: stacked, files column open, help closed", async ({
   await expect(page.getByTestId("tts-files")).toBeVisible();
   await expect(page.getByTestId("help-panel")).toHaveCount(0);
   const before = await box(page, "tts-files");
-  await page.getByRole("button", { name: "Hilfe zu dieser Seite" }).click();
+  await page.keyboard.press("F1");
   await expect(page.locator(".lv-helpdock .help-panel")).toBeVisible();
   const after = await box(page, "tts-files");
   // Die Dateiliste bleibt in der Inhaltsspalte (links vom Dock) und auf ihrer
@@ -470,7 +470,7 @@ test("help choice survives reload, page switch and module switch", async ({
 }) => {
   await openReadAloud(page, 1920, 1050, true);
   await expect(page.getByTestId("tts-files")).toContainText("notizen.txt");
-  await page.getByRole("button", { name: "Hilfe zu dieser Seite" }).click();
+  await page.keyboard.press("F1");
   const help = page.locator(".lv-helpdock .help-panel");
   await expect(help).toBeVisible();
 
@@ -487,7 +487,8 @@ test("help choice survives reload, page switch and module switch", async ({
     .getByRole("navigation")
     .getByRole("button", { name: "Verlauf", exact: true })
     .click();
-  await expect(page.getByTestId("tts-files")).toHaveCount(0);
+  // Vorlesen bleibt erhalten (KeepAlive), ist aber verdeckt.
+  await expect(page.getByTestId("tts-files")).toBeHidden();
   await goToReadAloud(page);
   await expect(help).toBeVisible();
 

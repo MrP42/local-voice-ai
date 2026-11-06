@@ -1,5 +1,6 @@
 import path from "node:path";
 import { test, expect, type Page } from "@playwright/test";
+import { geheZu } from "./profilmenue";
 
 // M3-P3c: Sprecher benennen, zusammenführen, umhängen (Detailansicht),
 // "Mehrere Personen am Mikrofon" (RecorderCard), die Einstellungszeile und
@@ -534,10 +535,7 @@ test.describe("Aufnahme und Einstellung", () => {
   }) => {
     await page.setViewportSize({ width: 1280, height: 1000 });
     await page.goto("/");
-    await page
-      .getByRole("navigation")
-      .getByRole("button", { name: "Einstellungen", exact: true })
-      .click();
+    await geheZu(page, "Einstellungen");
     await expect(page.getByText("Sprecher automatisch trennen")).toBeVisible();
     const toggle = page
       .getByText("Sprecher automatisch trennen")

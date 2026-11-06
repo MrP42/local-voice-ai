@@ -1,0 +1,113 @@
+[
+  {
+    "kind": "sentence",
+    "request_id": "golden",
+    "sentence": {
+      "citations": [
+        {
+          "chapter_index": 0,
+          "chapter_title": "Einleitung: Zwei Lehrmeister",
+          "end": 901,
+          "page": 3,
+          "q": 2,
+          "quote": "Dieses Buch erzählt, warum ich am Ende dem Meister folgte, ohne den Lehrer weniger zu achten.",
+          "start": 808
+        }
+      ],
+      "general": false,
+      "index": 0,
+      "speech": "Dazu steht etwas auf Seite 3: ‚Dieses Buch erzählt, warum ich am Ende dem Meister folgte, ohne den Lehrer weniger zu achten.‘",
+      "text": "Dazu steht etwas auf Seite 3: „Dieses Buch erzählt, warum ich am Ende dem Meister folgte, ohne den Lehrer weniger zu achten.“"
+    }
+  },
+  {
+    "kind": "sentence",
+    "request_id": "golden",
+    "sentence": {
+      "citations": [
+        {
+          "chapter_index": 0,
+          "chapter_title": "Einleitung: Zwei Lehrmeister",
+          "end": 332,
+          "page": 2,
+          "q": 1,
+          "quote": "Der eine war mein eigener Vater, den ich in diesem Buch den Lehrer nenne.",
+          "start": 259
+        }
+      ],
+      "general": false,
+      "index": 1,
+      "speech": "Außerdem auf Seite 2: ‚Der eine war mein eigener Vater, den ich in diesem Buch den Lehrer nenne.‘",
+      "text": "Außerdem auf Seite 2: „Der eine war mein eigener Vater, den ich in diesem Buch den Lehrer nenne.“"
+    }
+  },
+  {
+    "answer": {
+      "citations": [
+        {
+          "chapter_index": 0,
+          "chapter_title": "Einleitung: Zwei Lehrmeister",
+          "end": 901,
+          "page": 3,
+          "q": 2,
+          "quote": "Dieses Buch erzählt, warum ich am Ende dem Meister folgte, ohne den Lehrer weniger zu achten.",
+          "start": 808
+        },
+        {
+          "chapter_index": 0,
+          "chapter_title": "Einleitung: Zwei Lehrmeister",
+          "end": 332,
+          "page": 2,
+          "q": 1,
+          "quote": "Der eine war mein eigener Vater, den ich in diesem Buch den Lehrer nenne.",
+          "start": 259
+        }
+      ],
+      "dropped": 1,
+      "found_only": true,
+      "frontier": 940,
+      "intent": "question",
+      "scope": "until_position",
+      "sentences": [
+        {
+          "citations": [
+            {
+              "chapter_index": 0,
+              "chapter_title": "Einleitung: Zwei Lehrmeister",
+              "end": 901,
+              "page": 3,
+              "q": 2,
+              "quote": "Dieses Buch erzählt, warum ich am Ende dem Meister folgte, ohne den Lehrer weniger zu achten.",
+              "start": 808
+            }
+          ],
+          "general": false,
+          "index": 0,
+          "speech": "Dazu steht etwas auf Seite 3: ‚Dieses Buch erzählt, warum ich am Ende dem Meister folgte, ohne den Lehrer weniger zu achten.‘",
+          "text": "Dazu steht etwas auf Seite 3: „Dieses Buch erzählt, warum ich am Ende dem Meister folgte, ohne den Lehrer weniger zu achten.“"
+        },
+        {
+          "citations": [
+            {
+              "chapter_index": 0,
+              "chapter_title": "Einleitung: Zwei Lehrmeister",
+              "end": 332,
+              "page": 2,
+              "q": 1,
+              "quote": "Der eine war mein eigener Vater, den ich in diesem Buch den Lehrer nenne.",
+              "start": 259
+            }
+          ],
+          "general": false,
+          "index": 1,
+          "speech": "Außerdem auf Seite 2: ‚Der eine war mein eigener Vater, den ich in diesem Buch den Lehrer nenne.‘",
+          "text": "Außerdem auf Seite 2: „Der eine war mein eigener Vater, den ich in diesem Buch den Lehrer nenne.“"
+        }
+      ],
+      "speech": "Dazu steht etwas auf Seite 3: ‚Dieses Buch erzählt, warum ich am Ende dem Meister folgte, ohne den Lehrer weniger zu achten.‘ Außerdem auf Seite 2: ‚Der eine war mein eigener Vater, den ich in diesem Buch den Lehrer nenne.‘",
+      "text": "Dazu steht etwas auf Seite 3: „Dieses Buch erzählt, warum ich am Ende dem Meister folgte, ohne den Lehrer weniger zu achten.“ Außerdem auf Seite 2: „Der eine war mein eigener Vater, den ich in diesem Buch den Lehrer nenne.“"
+    },
+    "kind": "done",
+    "request_id": "golden"
+  }
+]

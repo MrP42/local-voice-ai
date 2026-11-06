@@ -27,6 +27,8 @@ interface DocumentsPanelProps {
   onOpenSlide?: (id: string) => void;
   /** Der Typ "Follow-up-Mail" erzeugt nichts selbst, er öffnet den vorhandenen Dialog. */
   onFollowup: () => void;
+  /** #242: bedienbare Tabelle "Sprecher & Redeanteile" im Protokoll. */
+  speakerTable?: React.ReactNode;
 }
 
 /**
@@ -41,6 +43,7 @@ export const DocumentsPanel: React.FC<DocumentsPanelProps> = ({
   slideRefs,
   onOpenSlide,
   onFollowup,
+  speakerTable,
 }) => {
   const { t } = useTranslation();
   const [types, setTypes] = useState<DocTypeInfo[]>([]);
@@ -200,6 +203,7 @@ export const DocumentsPanel: React.FC<DocumentsPanelProps> = ({
           slideRefs={slideRefs}
           docType={active && active.engine === "document" ? active : undefined}
           toolbarLead={bar}
+          speakerTable={speakerTable}
         />
       </ProvenanceArea>
     </div>

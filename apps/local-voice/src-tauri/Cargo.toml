@@ -1,6 +1,6 @@
 [package]
 name = "local-voice-ai"
-version = "0.22.0"
+version = "0.23.0"
 description = "Local Voice AI - lokale Sprach-KI (Diktat, Vorlesen, Stimmen, Übersetzung)"
 authors = ["Patrick Wolff"]
 edition = "2021"
@@ -98,6 +98,8 @@ rusqlite = { version = "0.37", features = ["bundled"] }
 tar = "0.4.44"
 flate2 = "1.0"
 sha2 = "0.10"
+# ADR-0021 S2: Vertrag des Sprachdienstes, vendort aus dem WAI SDK (scripts/vendor-wai-voice-dienst.py)
+wai-voice-dienst = { path = "vendor/wai-voice-dienst" }
 # Geraete-Sync (Ende-zu-Ende verschluesselt): Schluessel aus dem Passwort,
 # Objekte einzeln versiegelt. RustCrypto, MIT/Apache-2.0.
 chacha20poly1305 = "0.10"
@@ -105,12 +107,36 @@ argon2 = "0.5"
 hkdf = "0.12"
 zeroize = "1"
 base64 = "0.22"
+# Geraete-Kopplung per QR (local-voice-ai#289): X25519 (BSD-3-Clause),
+# HMAC (RustCrypto, MIT/Apache-2.0), QR-Code als SVG (MIT/Apache-2.0).
+x25519-dalek = { version = "2", features = ["static_secrets", "zeroize"] }
+hmac = "0.12"
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+# ADR-0024: gemeinsamer Kontospeicher der Suite (vendort aus wai-sdk, siehe vendor/wai-konto/VENDOR.toml)
+wai-konto = { path = "vendor/wai-konto" }
+# ADR-0026 PR-7 (Epic wai-sdk#1047): Suite-Projekte und Recherche, vendort aus wai-sdk
+# (scripts/vendor-wai-suite.py, siehe vendor/*/VENDOR.toml)
+wai-links = { path = "vendor/wai-links" }
+# Hörbuch-Sync: Abgleich Hörbuch ↔ Buchtext (eigenes Crate, ohne Abhängigkeiten).
+hoersync = { path = "../crates/hoersync" }
+wai-security = { path = "vendor/wai-security" }
+wai-storage = { path = "vendor/wai-storage" }
+wai-providers = { path = "vendor/wai-providers" }
+wai-projekte = { path = "vendor/wai-projekte" }
+wai-recherche = { path = "vendor/wai-recherche" }
+async-trait = "0.1"
+# TLS-Anbieter fuer wai-recherche (reqwest 0.13 ohne eingebauten Anbieter): ring statt aws-lc
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 rand = "0.8"
 url = "2"
 # Whisper-family models run through transcribe-cpp (GGUF/ggml, native backends);
 # transcribe-rs is now ONNX-only (Parakeet, Moonshine, SenseVoice, GigaAM,
 # Canary, Cohere). Per-platform backend features are added in the target tables.
 transcribe-rs = { version = "0.3.8", features = ["onnx"] }
+# Stimmprofile 2a: Stimmabdruck-Modell (CAM++) direkt ueber ONNX Runtime. Gleiche,
+# exakt gepinnte Version wie in transcribe-rs (MIT OR Apache-2.0), also keine neue
+# Bibliothek im Lockfile.
+ort = "=2.0.0-rc.12"
 transcribe-cpp = { version = "=0.2.4", default-features = false }
 # G5: Sprache eines Textes erkennen (Rueckfall und Gegenprobe, wenn das Modell keine
 # eigene Spracherkennung liefert). Reines Rust, MIT, ohne Modelldatei.
@@ -159,6 +185,9 @@ gpu-vulkan = ["transcribe-cpp/vulkan"]
 
 [target.'cfg(unix)'.dependencies]
 signal-hook = "0.3"
+# Prozessgruppe der Abo-Vorschau beenden (kill(-pgid, ...)); schon ueber
+# signal-hook im Baum (MIT OR Apache-2.0), hier nur direkt eingetragen.
+libc = "0.2"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-autostart = "2.5.1"
@@ -188,6 +217,10 @@ windows = { version = "0.61.3", features = [
   "Win32_System_Diagnostics_Debug",
   "Win32_System_LibraryLoader",
   "Win32_System_Threading",
+  # Abo-Vorschau: GetDriveTypeW (nur lokale feste Laufwerke fuer die CLI).
+  "Win32_Storage_FileSystem",
+  # Vorlesen: Bildschirm wach halten (SetThreadExecutionState).
+  "Win32_System_Power",
   "Win32_System_Variant",
   "Win32_Foundation",
   "Win32_Graphics_Dxgi",

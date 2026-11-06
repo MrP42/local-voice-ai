@@ -1,0 +1,9 @@
+# Vendorte Kopie von wai-recherche (WAI SDK). Nicht von Hand ändern: scripts/vendor-wai-suite.py
+paket = "wai-recherche"
+quelle = "https://github.com/MrP42/wai-sdk"
+pfad = "crates/wai-recherche"
+referenz = "origin/main"
+commit = "56533672647b78a01659452e3e19549c299dfb4c"
+commit_datum = "2026-11-02"
+uebernommen_am = "2026-11-02"
+ausgelassen = ["Tests und Fixtures im SDK-Arbeitsbaum"]

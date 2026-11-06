@@ -7,7 +7,13 @@
  * vorgemerkt, bis die Seite ihn gefunden und angescrollt hat -- die Inhalte
  * eines Reiters erscheinen erst nach dem Wechsel.
  */
-export type SettingsTabId = "input" | "output" | "models" | "app" | "about";
+export type SettingsTabId =
+  | "input"
+  | "output"
+  | "models"
+  | "app"
+  | "account"
+  | "about";
 
 export const OPEN_SETTINGS_TAB = "lv-open-settings-tab";
 

@@ -6,9 +6,7 @@ use std::time::Instant;
 use serde_json::{json, Value};
 
 use super::*;
-use crate::agent::test_support::{
-    body, closed_port, cut, endpoint, mock, ok, user_of, R,
-};
+use crate::agent::test_support::{body, closed_port, cut, endpoint, mock, ok, user_of, R};
 use crate::managers::meetings::llm_call::test_support::{spawn_llm_mock_with, MockReply};
 
 fn schema() -> Value {
@@ -96,7 +94,13 @@ async fn a_valid_answer_costs_one_request_and_reports_model_tokens_and_time() {
 async fn a_code_fence_or_think_residue_does_not_break_parsing_in_the_caller() {
     let m = mock(vec![ok("<think>ich überlege</think>{\"ok\":true}")]).await;
     let schema = schema();
-    assert!(m.runtime().ask(&req(&schema), &parse_ok).await.unwrap().value);
+    assert!(
+        m.runtime()
+            .ask(&req(&schema), &parse_ok)
+            .await
+            .unwrap()
+            .value
+    );
 }
 
 // -- Wiederholversuch und Rueckfall ----------------------------------------------------------
@@ -121,11 +125,7 @@ async fn invalid_json_gets_exactly_one_retry_with_a_hint_and_can_then_succeed() 
 async fn invalid_json_twice_is_schema_invalid_after_exactly_two_requests() {
     let m = mock(vec![ok("{kaputt"), ok("auch kaputt")]).await;
     let schema = schema();
-    let err = m
-        .runtime()
-        .ask(&req(&schema), &parse_ok)
-        .await
-        .unwrap_err();
+    let err = m.runtime().ask(&req(&schema), &parse_ok).await.unwrap_err();
     assert_eq!(m.count(), 2, "kein dritter Versuch");
     match err {
         AgentError::SchemaInvalid {
@@ -160,11 +160,7 @@ async fn a_truncated_answer_is_retried_once_with_the_shorten_hint() {
 async fn a_truncated_answer_twice_is_reported_as_truncated() {
     let m = mock(vec![cut(r#"{"ok":"#)]).await;
     let schema = schema();
-    let err = m
-        .runtime()
-        .ask(&req(&schema), &parse_ok)
-        .await
-        .unwrap_err();
+    let err = m.runtime().ask(&req(&schema), &parse_ok).await.unwrap_err();
     assert_eq!(m.count(), 2);
     assert!(matches!(
         err,
@@ -195,15 +191,8 @@ async fn empty_content_and_missing_choices_are_invalid_never_a_panic() {
     ] {
         let m = mock(vec![reply]).await;
         let schema = schema();
-        let err = m
-            .runtime()
-            .ask(&req(&schema), &parse_ok)
-            .await
-            .unwrap_err();
-        assert!(
-            matches!(err, AgentError::SchemaInvalid { .. }),
-            "{err:?}"
-        );
+        let err = m.runtime().ask(&req(&schema), &parse_ok).await.unwrap_err();
+        assert!(matches!(err, AgentError::SchemaInvalid { .. }), "{err:?}");
         assert_eq!(m.count(), 2);
     }
 }
@@ -263,11 +252,7 @@ async fn a_busy_server_is_busy_with_a_wait_not_a_failure() {
     for status in [503u16, 429] {
         let m = mock(vec![R::Status(status)]).await;
         let schema = schema();
-        let err = m
-            .runtime()
-            .ask(&req(&schema), &parse_ok)
-            .await
-            .unwrap_err();
+        let err = m.runtime().ask(&req(&schema), &parse_ok).await.unwrap_err();
         match err {
             AgentError::Busy { retry_after_ms, .. } => {
                 assert_eq!(retry_after_ms, SERVER_BUSY_RETRY_MS)
@@ -287,11 +272,7 @@ async fn context_overflow_is_reported_so_the_caller_can_split() {
     )])
     .await;
     let schema = schema();
-    let err = m
-        .runtime()
-        .ask(&req(&schema), &parse_ok)
-        .await
-        .unwrap_err();
+    let err = m.runtime().ask(&req(&schema), &parse_ok).await.unwrap_err();
     assert_eq!(err, AgentError::ContextExceeded);
     assert_eq!(m.count(), 1);
 }
@@ -300,20 +281,12 @@ async fn context_overflow_is_reported_so_the_caller_can_split() {
 async fn other_http_errors_are_classified_without_leaking_the_body() {
     let m = mock(vec![R::StatusBody(500, "Transkript: geheim".to_string())]).await;
     let schema = schema();
-    let err = m
-        .runtime()
-        .ask(&req(&schema), &parse_ok)
-        .await
-        .unwrap_err();
+    let err = m.runtime().ask(&req(&schema), &parse_ok).await.unwrap_err();
     assert!(matches!(err, AgentError::Unavailable(_)));
     assert!(!err.describe().contains("geheim"));
 
     let m = mock(vec![R::StatusBody(401, "nope".to_string())]).await;
-    let err = m
-        .runtime()
-        .ask(&req(&schema), &parse_ok)
-        .await
-        .unwrap_err();
+    let err = m.runtime().ask(&req(&schema), &parse_ok).await.unwrap_err();
     assert_eq!(err, AgentError::Rejected { status: 401 });
 }
 
@@ -411,9 +384,17 @@ fn tools() -> Vec<ToolSpec> {
         parameters: json!({ "type": "object", "properties": props, "required": required }),
     };
     vec![
-        tool("create_task", json!({ "title": { "type": "string" } }), &["title"]),
+        tool(
+            "create_task",
+            json!({ "title": { "type": "string" } }),
+            &["title"],
+        ),
         tool("send_mail", json!({ "to": { "type": "string" } }), &["to"]),
-        tool(NO_ACTION, json!({ "reason": { "type": "string" } }), &["reason"]),
+        tool(
+            NO_ACTION,
+            json!({ "reason": { "type": "string" } }),
+            &["reason"],
+        ),
     ]
 }
 
@@ -443,7 +424,11 @@ async fn choose_returns_the_tool_and_sends_a_one_of_schema_of_the_offered_tools_
         .iter()
         .map(|v| v["properties"]["tool"]["const"].as_str().unwrap())
         .collect();
-    assert_eq!(names, ["create_task", NO_ACTION], "send_mail wurde nicht angeboten");
+    assert_eq!(
+        names,
+        ["create_task", NO_ACTION],
+        "send_mail wurde nicht angeboten"
+    );
     assert_eq!(sent[0]["chat_template_kwargs"]["enable_thinking"], false);
 }
 
@@ -467,7 +452,10 @@ async fn choose_falls_back_to_no_action_after_two_unusable_answers() {
             Some(AgentError::SchemaInvalid { .. })
         ));
         assert_eq!(m.count(), 2, "genau ein Wiederholversuch");
-        assert_eq!(chosen.usage.prompt_tokens, 200, "der Verbrauch bleibt sichtbar");
+        assert_eq!(
+            chosen.usage.prompt_tokens, 200,
+            "der Verbrauch bleibt sichtbar"
+        );
     }
 }
 

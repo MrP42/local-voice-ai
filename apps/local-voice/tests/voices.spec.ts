@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { geheZu } from "./profilmenue";
 
 // Die Stimmenliste mit echten Eintraegen: eine Stimme mit vorhandener
 // Hoerprobe, eine ohne. Der Unterschied ist der Punkt — die eine ist sofort
@@ -222,10 +223,7 @@ async function openVoices(page: import("@playwright/test").Page) {
   await page.goto("/");
   // Stimmen wohnen unter Einstellungen -> Ausgabe (Abschnitt Vorlesen; die
   // Einstellungen sind seit der Themen-Gliederung nach Eingabe/Ausgabe sortiert).
-  await page
-    .getByRole("button", { name: "Einstellungen", exact: true })
-    .last()
-    .click();
+  await geheZu(page, "Einstellungen");
   await page.getByRole("tab", { name: "Ausgabe", exact: true }).click();
   await expect(page.getByTestId("voice-library")).toBeVisible();
 }
@@ -383,10 +381,10 @@ test("the end of the read-aloud page can actually be reached", async ({
     element.scrollTop = element.scrollHeight;
   });
 
-  // Die Stil-Klappe ist das letzte Element der Vorlesen-Seite. Sie muss
-  // danach vollstaendig sichtbar sein und darf nicht unter der Statusleiste
-  // liegen.
-  const last = page.getByText("Ausdruck & Sprechstil", { exact: true });
+  // Die Spielerleiste ist das letzte Element der Vorlesen-Seite (lva#148,
+  // ersetzt die Stil-Klappe). Sie muss danach vollstaendig sichtbar sein und
+  // darf nicht unter der Statusleiste liegen.
+  const last = page.getByTestId("reader-player");
   await expect(last).toBeInViewport();
   const box = (await last.boundingBox())!;
   const viewport = page.viewportSize()!;
@@ -504,8 +502,10 @@ test("each tab remembers its own voice with the page", async ({ page }) => {
   await page.getByRole("button", { name: "Vorlesen", exact: true }).click();
   // Uebersetzung bekommt die Piper-Stimme ...
   await page.getByRole("tab", { name: "Übersetzung", exact: true }).click();
-  await page.getByTestId("voice-select").click();
-  await page.getByText("Thorsten · Deutsch · MQ · Piper").click();
+  await page.getByTestId("voice-select").locator(".app-select__control").click();
+  // Die Liste filtert „passend“ zur Übersetzungssprache; Thorsten ist Deutsch.
+  await page.getByRole("button", { name: "Alle", exact: true }).click();
+  await page.getByRole("option", { name: "Thorsten · Deutsch · MQ · Piper" }).click();
   await expect
     .poll(() =>
       page.evaluate(
@@ -515,7 +515,7 @@ test("each tab remembers its own voice with the page", async ({ page }) => {
     .toBe("piper");
   // ... das Original bleibt bei der Standardstimme: Umschalten schaltet die Engine zurueck.
   await page.getByRole("tab", { name: "Original", exact: true }).click();
-  await page.getByTestId("voice-select").click();
+  await page.getByTestId("voice-select").locator(".app-select__control").click();
   await page.getByRole("option", { name: "Skript mit Sprechern" }).click();
   await expect
     .poll(() =>

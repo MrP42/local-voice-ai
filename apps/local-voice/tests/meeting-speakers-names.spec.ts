@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { test, expect, type Page } from "@playwright/test";
+import { geheZu } from "./profilmenue";
 
 // U8: Sprecher benennen in der neuen Oberfläche. Popover am Transkript mit
 // Autovervollständigung aus den Personen, Menüeintrag "Sprecher benennen …" mit
@@ -651,10 +652,9 @@ test.describe("Namensvorschläge", () => {
 });
 
 test.describe("Mein Name", () => {
-  const settingsNav = (page: Page) =>
-    page
-      .getByRole("navigation")
-      .getByRole("button", { name: "Einstellungen", exact: true });
+  const settingsNav = (page: Page) => ({
+    click: () => geheZu(page, "Einstellungen"),
+  });
 
   test("ohne Namen bleibt es bei „Ich“", async ({ page }) => {
     await openDetail(page);

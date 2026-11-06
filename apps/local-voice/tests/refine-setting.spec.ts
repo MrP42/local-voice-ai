@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { geheZu } from "./profilmenue";
 
 // Issue #5: die Ollama-Glaettung ist eine optionale Einstellung im Reiter
 // Diktat (Gruppe Ausgabe), Standard aus. Sie erscheint nur, wenn die
@@ -69,7 +70,7 @@ async function setup(page: Page, streamInjection: boolean, refine = false) {
 
 const openDictation = async (page: Page) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "Einstellungen", exact: true }).first().click();
+  await geheZu(page, "Einstellungen");
   await page.getByRole("tab", { name: "Eingabe", exact: true }).click();
   await expect(page.getByText("Einfügemethode").first()).toBeVisible();
 };

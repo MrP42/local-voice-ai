@@ -154,7 +154,11 @@ fn fallback_shape(file_size_bytes: u64) -> KvShape {
     }
 }
 
-pub fn estimate(file_size_bytes: u64, shape: Option<KvShape>, context_tokens: u32) -> MemoryEstimate {
+pub fn estimate(
+    file_size_bytes: u64,
+    shape: Option<KvShape>,
+    context_tokens: u32,
+) -> MemoryEstimate {
     let (kv_shape, from_metadata) = match shape {
         Some(s) => (s, true),
         None => (fallback_shape(file_size_bytes), false),
@@ -230,11 +234,20 @@ mod tests {
 
     fn qwen3_0_6b() -> GgufMetadata {
         let mut kv = HashMap::new();
-        kv.insert("general.architecture".to_string(), GgufValue::String("qwen3".into()));
+        kv.insert(
+            "general.architecture".to_string(),
+            GgufValue::String("qwen3".into()),
+        );
         kv.insert("qwen3.block_count".to_string(), GgufValue::U32(28));
         kv.insert("qwen3.attention.head_count".to_string(), GgufValue::U32(16));
-        kv.insert("qwen3.attention.head_count_kv".to_string(), GgufValue::U32(8));
-        kv.insert("qwen3.attention.key_length".to_string(), GgufValue::U32(128));
+        kv.insert(
+            "qwen3.attention.head_count_kv".to_string(),
+            GgufValue::U32(8),
+        );
+        kv.insert(
+            "qwen3.attention.key_length".to_string(),
+            GgufValue::U32(128),
+        );
         kv.insert("qwen3.embedding_length".to_string(), GgufValue::U32(1024));
         GgufMetadata { kv }
     }
@@ -245,25 +258,62 @@ mod tests {
     #[test]
     fn the_spike_measurement_is_covered_by_the_estimate() {
         let shape = KvShape::from_metadata(&qwen3_0_6b()).expect("Form aus Metadaten");
-        assert_eq!(shape, KvShape { layers: 28, kv_heads: 8, head_dim: 128 });
+        assert_eq!(
+            shape,
+            KvShape {
+                layers: 28,
+                kv_heads: 8,
+                head_dim: 128
+            }
+        );
         let e = estimate(396_705_472, Some(shape), 4096);
         assert!(e.from_metadata);
         assert_eq!(e.kv_mb, 448, "KV: 4096*28*8*128*4 Byte");
-        assert!(e.total_mb >= 867, "Prognose {} MiB unter der Messung", e.total_mb);
-        assert!(e.total_mb <= 1400, "Prognose {} MiB unplausibel hoch", e.total_mb);
+        assert!(
+            e.total_mb >= 867,
+            "Prognose {} MiB unter der Messung",
+            e.total_mb
+        );
+        assert!(
+            e.total_mb <= 1400,
+            "Prognose {} MiB unplausibel hoch",
+            e.total_mb
+        );
     }
 
     #[test]
     fn hybrid_models_count_only_attention_layers() {
         let mut kv = std::collections::HashMap::new();
-        kv.insert("general.architecture".to_string(), GgufValue::String("qwen35".into()));
+        kv.insert(
+            "general.architecture".to_string(),
+            GgufValue::String("qwen35".into()),
+        );
         kv.insert("qwen35.block_count".to_string(), GgufValue::U32(32));
-        kv.insert("qwen35.attention.head_count".to_string(), GgufValue::U32(16));
-        kv.insert("qwen35.attention.head_count_kv".to_string(), GgufValue::U32(4));
-        kv.insert("qwen35.attention.key_length".to_string(), GgufValue::U32(256));
-        kv.insert("qwen35.full_attention_interval".to_string(), GgufValue::U32(4));
+        kv.insert(
+            "qwen35.attention.head_count".to_string(),
+            GgufValue::U32(16),
+        );
+        kv.insert(
+            "qwen35.attention.head_count_kv".to_string(),
+            GgufValue::U32(4),
+        );
+        kv.insert(
+            "qwen35.attention.key_length".to_string(),
+            GgufValue::U32(256),
+        );
+        kv.insert(
+            "qwen35.full_attention_interval".to_string(),
+            GgufValue::U32(4),
+        );
         let shape = KvShape::from_metadata(&GgufMetadata { kv }).expect("Form");
-        assert_eq!(shape, KvShape { layers: 8, kv_heads: 4, head_dim: 256 });
+        assert_eq!(
+            shape,
+            KvShape {
+                layers: 8,
+                kv_heads: 4,
+                head_dim: 256
+            }
+        );
     }
 
     #[test]

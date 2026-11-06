@@ -35,8 +35,8 @@ use crate::managers::meetings::job::{self, JobGuard};
 use crate::managers::meetings::recorder::MeetingRecorderManager;
 use crate::managers::meetings::slides::ocr::{self, OcrBackend};
 use crate::managers::meetings::slides::run::{self, SlideOutcome, SlideRun};
-use crate::managers::meetings::slides::vision::{LocalVision, VisionBackend};
 use crate::managers::meetings::slides::store::MeetingSlide;
+use crate::managers::meetings::slides::vision::{LocalVision, VisionBackend};
 use crate::managers::meetings::slides::{SlideDetectConfig, SlideError, SlideOptions};
 use crate::managers::meetings::store::MeetingStore;
 
@@ -219,7 +219,7 @@ fn execute(
     };
     let _ = event.emit(app);
     drop(job); // meldet `JobEnded`
-    // D5: neue oder geaenderte Folientexte gehoeren in den Suchindex (Chat, Suche).
+               // D5: neue oder geaenderte Folientexte gehoeren in den Suchindex (Chat, Suche).
     reindex(app, meeting_id);
 }
 
@@ -261,14 +261,24 @@ pub async fn detect_meeting_slides(
     let meeting_dir = meeting_dir_of(&base, &meeting_id).map_err(str::to_string)?;
     let cfg = options.to_config();
     // D3: Bildanalyse nur, wenn gewuenscht UND moeglich (GPU, Projektor, Grafikspeicher).
-    let vision = llm_vision::vision_plan(crate::settings::get_settings(&app).meeting_slide_vision).await;
+    let vision =
+        llm_vision::vision_plan(crate::settings::get_settings(&app).meeting_slide_vision).await;
 
     let job = job::global()
         .try_start(&meeting_id, job::app_emit(&app))
         .map_err(|e| e.to_string())?;
     let app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        execute(&app, &store, job, &meeting_id, &video, &meeting_dir, &cfg, vision);
+        execute(
+            &app,
+            &store,
+            job,
+            &meeting_id,
+            &video,
+            &meeting_dir,
+            &cfg,
+            vision,
+        );
     });
     Ok(())
 }
@@ -349,7 +359,9 @@ fn projector_size_mb() -> u64 {
     crate::catalog::tts_entries(crate::catalog::Purpose::LlmProjector)
         .into_iter()
         .find(|e| e.id == llm_vision::VISION_PROJECTOR_ID)
-        .map_or(0, |e| e.files.iter().map(|f| f.size_bytes).sum::<u64>() / (1024 * 1024))
+        .map_or(0, |e| {
+            e.files.iter().map(|f| f.size_bytes).sum::<u64>() / (1024 * 1024)
+        })
 }
 
 /// Der Zustand, rein aus den Messwerten und dem Schalter.
@@ -519,19 +531,23 @@ mod tests {
     /// Bildanalyse (nicht) angeboten wird; die Projektor-Groesse kommt aus dem Katalog.
     #[test]
     fn the_vision_status_names_why_it_is_not_offered() {
-        let facts = |backend: Option<&str>, vram: Option<u64>, projector: bool| llm_vision::VisionFacts {
-            model_present: true,
-            projector_present: projector,
-            downloading: false,
-            backend: backend.map(str::to_string),
-            free_vram_mb: vram,
-        };
+        let facts =
+            |backend: Option<&str>, vram: Option<u64>, projector: bool| llm_vision::VisionFacts {
+                model_present: true,
+                projector_present: projector,
+                downloading: false,
+                backend: backend.map(str::to_string),
+                free_vram_mb: vram,
+            };
         let ready = vision_status_from(false, &facts(Some("cuda"), Some(20_000), true));
         assert_eq!(ready.availability, "ready");
         assert!(!ready.enabled, "angeboten ist nicht eingeschaltet");
         assert_eq!(ready.projector_size_mb, 944, "990 372 672 Byte");
         let cpu = vision_status_from(true, &facts(Some("cpu"), None, true));
-        assert_eq!((cpu.availability.as_str(), cpu.enabled), ("vision_no_gpu", true));
+        assert_eq!(
+            (cpu.availability.as_str(), cpu.enabled),
+            ("vision_no_gpu", true)
+        );
         let low = vision_status_from(false, &facts(Some("vulkan"), Some(2_000), true));
         assert_eq!(low.availability, "vision_low_vram");
         let none = vision_status_from(false, &facts(Some("cuda"), Some(20_000), false));

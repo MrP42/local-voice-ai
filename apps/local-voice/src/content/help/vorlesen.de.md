@@ -6,7 +6,7 @@ Text in die Mitte, Stimme wählen, Vorlesen drücken. Alles läuft auf diesem Re
 
 - **Text** tippen, einfügen oder diktieren (Mikrofon-Symbol).
 - **Symbolzeile** unter der Stimmenwahl: lauter gleich große Symbole ohne Beschriftung. Ein Tooltip nennt Namen und Wirkung, per Maus nach kurzem Verweilen, per Tastatur beim Fokus. Seltenes liegt hinter dem Menü (☰) am rechten Rand.
-- **Hinzufügen (+)**: ein Dokument (TXT, MD, PDF, DOCX), eine Web-Adresse oder eine Datei ins Projekt holen.
+- **Hinzufügen (+)**: ein Dokument oder E-Book (TXT, MD, PDF, DOCX, EPUB; DRM-frei), eine Web-Adresse oder eine Datei ins Projekt holen.
 - **Übersetzen** (Sprachsymbol, im Reiter Übersetzung, daneben die Zielsprache) und **Zusammenfassen** (Dokumentsymbol, im Reiter Zusammenfassung; Umfang, Detailgrad und Zielgruppe stehen hinter dem Reglersymbol daneben) legen das Ergebnis in einen eigenen Reiter. Das Original bleibt unverändert.
 - **Vorlesen** liest Satz für Satz. Die Pfeile springen zum vorigen oder nächsten Satz, Pause hält an.
 - **Als Audio speichern** (Pfeil nach unten) schreibt die Aufnahme in den Projektordner der Seite. Sie erscheint rechts unter Dateien.
@@ -31,7 +31,7 @@ Jede Seite ist ein Arbeitsblatt mit eigenem Text und eigenem Ordner. Die Liste z
 ## Stimmen
 
 - Ausgewählt wird in der Leiste über dem Player. Piper-Stimmen stehen dort mit Sprache und Qualität, etwa „Thorsten · Deutsch · HQ · Piper". Jeder Reiter merkt sich seine Stimme.
-- **Anbieter wie Phonon** (Modelle → Vorlesen → Anbieter) lesen mit mehreren Sprechern, solange im Stimmenmenü „Phonon · Skript mit Sprechern" steht: `<Nele>` und `<Anton>` im Text schalten zwischen den Stimmen des Anbieters (Rechtsklick → „Sprecher einfügen"). Text ohne Sprecher liest die Standardstimme. Eine einzelne Stimme („Phonon · Nele") liest dagegen den ganzen Text. Emotions-Tags setzen diese Anbieter nicht um, nur Pausen.
+- **Anbieter wie Phonon** (Modelle → Vorlesen → Anbieter) lesen mit mehreren Sprechern, solange im Stimmenmenü „Phonon · Skript mit Sprechern" steht: `<Nele>` und `<Anton>` im Text schalten zwischen den Stimmen des Anbieters (Rechtsklick → „Sprecher einfügen"). Text ohne Sprecher liest die Standardstimme. Eine einzelne Stimme („Phonon · Nele") liest dagegen den ganzen Text. Emotions-Tags setzen diese Anbieter nicht um, nur Pausen. Phonon versteht zusätzlich Tempo je Satz: `[slower]` am Satzanfang spricht etwas langsamer (wichtige, ernste, spannende Sätze), `[faster]` etwas schneller (Einschübe, Aufzählungen). Auto-Tagging setzt dann nur Pausen und Tempo, damit die Betonung zum Text passt.
 <!--if:fish-->
 - Anhören, klonen, importieren und löschen: **Einstellungen → Ausgabe**, oder direkt über „Stimmen verwalten …" am Ende der Stimmenliste.
 <!--/if:fish-->
@@ -62,9 +62,9 @@ Die Engine steht unter **Einstellungen → Ausgabe**. Piper-Stimmen lädt die Mo
 Piper läuft auf der CPU, startet sofort und braucht nur eine kleine Stimme. Laden: **Modelle → Vorlesestimmen**. Ist das Piper-Programm unvollständig, steht die Stimme dort als „nicht nutzbar“ und lässt sich mit „Programm installieren“ reparieren.
 <!--/if:nofish-->
 
-## Sprachmodell und Server in der Fußleiste
+## Sprachmodell (Profilmenü) und Server (Fußleiste)
 
-- **Sprachmodell** (Fußleiste, Aufklappmenü): das Modell für Übersetzen, Zusammenfassen und Auto-Tagging. Die Ampel pulsiert gelb, solange es arbeitet; im Menü „Vorwärmen“ (lädt es für zehn Minuten) und „Entladen“ (gibt den Speicher frei).
+- **Sprachmodell** (Profilmenü unten links, Modelle): das Modell für Übersetzen, Zusammenfassen und Auto-Tagging. Die Ampel pulsiert gelb, solange es arbeitet; im Menü „Vorwärmen“ (lädt es für zehn Minuten) und „Entladen“ (gibt den Speicher frei).
 <!--if:fish-->
 - **Server** (Fußleiste, links neben dem Schild): der Fish-Speech-Server. Grau aus, gelb startet, grün läuft, orange Fehler. Ein Klick fragt nach: starten, neu starten oder beenden.
 <!--/if:fish-->

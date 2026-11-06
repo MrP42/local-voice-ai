@@ -1,0 +1,25 @@
+{
+  "schema": "lva-buch-gespraech-befehle@1",
+  "note": "Sprachbefehle ohne LLM. Erkennung: ganze Äußerung normalisiert (klein, ohne Satzzeichen), Füllwörter (bitte, mal, doch, jetzt, mir, uns, hey) ignoriert. Keine Befehle: alles, was zusätzlich eine Frage enthält.",
+  "commands": [
+    { "text": "Spring dahin", "command": "jump" },
+    { "text": "Zeig mir die Stelle", "command": "jump" },
+    { "text": "Geh zu der Stelle", "command": "jump" },
+    { "text": "Lies mir die Stelle vor", "command": "read_citation" },
+    { "text": "Lies das bitte vor", "command": "read_citation" },
+    { "text": "Ja", "command": "confirm", "note": "nur nach Rückfrage „Soll ich dir die Stelle vorlesen?“ = read_citation, sonst Frage" },
+    { "text": "Weiterlesen", "command": "resume" },
+    { "text": "Lies weiter", "command": "resume" },
+    { "text": "Mach weiter wo ich war", "command": "resume" },
+    { "text": "Ganzes Buch", "command": "scope_book" },
+    { "text": "Auch spätere Kapitel", "command": "scope_book" },
+    { "text": "Nur bis hier", "command": "scope_position" },
+    { "text": "Stopp", "command": "stop" },
+    { "text": "Gespräch beenden", "command": "end" },
+    { "text": "Jump there", "command": "jump" },
+    { "text": "Read it to me", "command": "read_citation" },
+    { "text": "Keep reading", "command": "resume" },
+    { "text": "Lies mir vor, was der Meister über das Haus sagt", "command": null },
+    { "text": "Wo steht das?", "command": null }
+  ]
+}

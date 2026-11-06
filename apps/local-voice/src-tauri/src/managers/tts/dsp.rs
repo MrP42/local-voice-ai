@@ -93,9 +93,82 @@ pub fn resample_stretch(samples: &[f32], factor: f32) -> Vec<f32> {
     out
 }
 
+/// Tempo ändern, ohne die Tonhöhe zu verschieben. `speed` 1,5 spielt
+/// 1,5-mal so schnell, die Stimme klingt dabei gleich — anders als beim
+/// Resampling, das die Stimme hoch (schnell) oder tief (langsam) zieht.
+///
+/// Tonhöhensynchron (siehe [`super::stretch`]); bis #314 eine WSOLA mit
+/// festen Rahmen, die bei jedem Tempo ≠ 1 robotisch klang.
+///
+/// `samples` ist verschachtelt (`channels` je Frame). `speed` nahe 1, ein
+/// nicht endlicher Wert oder zu wenig Signal geben eine unveränderte Kopie.
+pub fn time_stretch(samples: &[f32], channels: u16, sample_rate: u32, speed: f32) -> Vec<f32> {
+    let ch = channels.max(1) as usize;
+    if !speed.is_finite() || (speed - 1.0).abs() < 0.01 || sample_rate == 0 {
+        return samples.to_vec();
+    }
+    // Unter 50 ms gibt es nichts, was sich hörbar strecken ließe.
+    if samples.len() / ch < (sample_rate as usize / 20) {
+        return samples.to_vec();
+    }
+    super::stretch::stretch_all(samples, channels, sample_rate, speed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sine(freq: f32, rate: u32, secs: f32) -> Vec<f32> {
+        (0..(rate as f32 * secs) as usize)
+            .map(|i| (2.0 * std::f32::consts::PI * freq * i as f32 / rate as f32).sin() * 0.5)
+            .collect()
+    }
+
+    /// Nulldurchgänge je Sekunde: das Doppelte der Frequenz.
+    fn crossings_per_sec(s: &[f32], rate: u32) -> f32 {
+        let n = s
+            .windows(2)
+            .filter(|w| (w[0] < 0.0) != (w[1] < 0.0))
+            .count();
+        n as f32 * rate as f32 / s.len() as f32
+    }
+
+    #[test]
+    fn tempo_aendert_die_laenge_aber_nicht_die_tonhoehe() {
+        let rate = 24_000;
+        let input = sine(220.0, rate, 2.0);
+        for speed in [0.5f32, 0.75, 1.25, 1.5, 2.0] {
+            let out = time_stretch(&input, 1, rate, speed);
+            let want = input.len() as f32 / speed;
+            let ratio = out.len() as f32 / want;
+            assert!((0.95..1.05).contains(&ratio), "Länge bei {speed}: {ratio}");
+            // Mitte prüfen (Ränder sind gefenstert).
+            let mid = &out[out.len() / 4..out.len() * 3 / 4];
+            let f = crossings_per_sec(mid, rate) / 2.0;
+            assert!((f - 220.0).abs() < 6.0, "Tonhöhe bei {speed}: {f} Hz");
+        }
+    }
+
+    #[test]
+    fn tempo_eins_und_kurzes_signal_bleiben_unveraendert() {
+        let input = sine(300.0, 16_000, 0.5);
+        assert_eq!(time_stretch(&input, 1, 16_000, 1.0), input);
+        let short = vec![0.1f32; 100];
+        assert_eq!(time_stretch(&short, 1, 16_000, 1.5), short);
+        assert_eq!(time_stretch(&input, 1, 16_000, f32::NAN), input);
+    }
+
+    #[test]
+    fn tempo_stereo_bleibt_verschachtelt() {
+        let rate = 16_000;
+        let mono = sine(250.0, rate, 1.0);
+        let stereo: Vec<f32> = mono.iter().flat_map(|&x| [x, -x]).collect();
+        let out = time_stretch(&stereo, 2, rate, 1.5);
+        assert_eq!(out.len() % 2, 0);
+        for f in out.chunks_exact(2).skip(400).take(2000) {
+            assert!((f[0] + f[1]).abs() < 1e-5, "Kanäle auseinander: {f:?}");
+        }
+    }
 
     /// Effektivwert eines Sinus nach dem Filter, bezogen auf den davor —
     /// misst die Dämpfung des Filters bei dieser Frequenz.

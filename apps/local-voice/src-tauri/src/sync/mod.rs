@@ -1,13 +1,20 @@
 //! Multi-Device: Konto, Ende-zu-Ende-verschlüsselter Abgleich von Seiten und
 //! Einstellungen über den Hub im wai-portal. Spec:
-//! `docs/superpowers/specs/2026-09-14-multi-device-sync-design.md`.
+//! `docs/superpowers/specs/2026-09-14-multi-device-sync-design.md`; die
+//! Bibliothek (Bücher, Fortschritt, Lesezeichen, Dateiablage):
+//! `docs/superpowers/specs/2026-11-02-bibliothek-sync.md`.
 
 pub mod account;
+pub mod blobs;
+pub mod books;
+pub mod booktalk_relay;
 pub mod client;
 pub mod collect;
 pub mod crypto;
 pub mod engine;
 pub mod ledger;
+pub mod pairing;
+pub mod pairing_proto;
 
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 pub use engine::{start, SyncEngine, SyncStatus};
@@ -36,7 +43,11 @@ pub async fn sync_login(
     check_hub_url(&url)?;
     let device_name = {
         let d = device_name.trim();
-        if d.is_empty() { account::default_device_name() } else { d.chars().take(60).collect() }
+        if d.is_empty() {
+            account::default_device_name()
+        } else {
+            d.chars().take(60).collect()
+        }
     };
 
     // Passwort nur in Puffern, die beim Freigeben ueberschrieben werden.
@@ -78,7 +89,8 @@ pub async fn sync_login(
 /// Erlaubt: https zu einem Host ohne Zugangsdaten in der URL, oder http nur
 /// zu localhost/127.0.0.1. `http://localhost@evil.example` faellt durch.
 fn check_hub_url(url: &str) -> Result<(), String> {
-    let parsed = url::Url::parse(url).map_err(|_| "Hub-Adresse ist keine gueltige URL.".to_string())?;
+    let parsed =
+        url::Url::parse(url).map_err(|_| "Hub-Adresse ist keine gueltige URL.".to_string())?;
     if !parsed.username().is_empty() || parsed.password().is_some() {
         return Err("Hub-Adresse darf keine Zugangsdaten enthalten.".into());
     }
@@ -94,7 +106,10 @@ fn check_hub_url(url: &str) -> Result<(), String> {
 /// Die Seiten bleiben auf diesem Gerät.
 #[tauri::command]
 #[specta::specta]
-pub async fn sync_logout(app: AppHandle, engine: State<'_, SyncEngine>) -> Result<SyncStatus, String> {
+pub async fn sync_logout(
+    app: AppHandle,
+    engine: State<'_, SyncEngine>,
+) -> Result<SyncStatus, String> {
     if let Some(cfg) = account::load(&app) {
         let client = client::HubClient::new(&cfg.url, &cfg.token);
         if let Err(e) = client.logout().await {
@@ -134,6 +149,7 @@ pub fn sync_status(engine: State<'_, SyncEngine>) -> SyncStatus {
 #[tauri::command]
 #[specta::specta]
 pub async fn sync_now(app: AppHandle, engine: State<'_, SyncEngine>) -> Result<SyncStatus, String> {
+    engine.retry_files_now();
     Ok(engine.run_once(&app).await)
 }
 

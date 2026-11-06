@@ -800,10 +800,7 @@ pub fn change_tts_engine_setting(app: AppHandle, value: String) -> Result<(), St
 /// Welche geladene Piper-Stimme vorliest. `None` heisst: keine gewaehlt.
 #[tauri::command]
 #[specta::specta]
-pub fn change_tts_piper_voice_setting(
-    app: AppHandle,
-    value: Option<String>,
-) -> Result<(), String> {
+pub fn change_tts_piper_voice_setting(app: AppHandle, value: Option<String>) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.tts_piper_voice = value.filter(|id| !id.trim().is_empty());
     settings::write_settings(&app, settings);
@@ -838,6 +835,25 @@ pub fn change_tts_speed_setting(app: AppHandle, value: f32) -> Result<(), String
     settings.tts_speed = value.clamp(0.5, 2.0);
     settings::write_settings(&app, settings);
     apply_playback_control(&app, |c| c.set_speed(value));
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_tts_flow_setting(app: AppHandle, value: f32) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.tts_flow = if value.is_finite() {
+        value.clamp(0.0, 1.0)
+    } else {
+        0.5
+    };
+    let flow = settings.tts_flow;
+    settings::write_settings(&app, settings);
+    // Wirkt ab dem nächsten aufbereiteten Satz, auch mitten im Vorlesen.
+    use tauri::Manager;
+    if let Some(tts) = app.try_state::<std::sync::Arc<crate::managers::tts::TtsManager>>() {
+        tts.set_flow(flow);
+    }
     Ok(())
 }
 

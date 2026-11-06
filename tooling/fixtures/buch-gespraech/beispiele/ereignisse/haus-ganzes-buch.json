@@ -1,0 +1,66 @@
+[
+  {
+    "kind": "sentence",
+    "request_id": "golden",
+    "sentence": {
+      "citations": [
+        {
+          "chapter_index": 2,
+          "chapter_title": "Kapitel 2: Vermögen und Verpflichtungen",
+          "end": 2144,
+          "page": 6,
+          "q": 1,
+          "quote": "Das große Haus nimmt deinem Vater Geld aus der Tasche.“",
+          "start": 2089
+        }
+      ],
+      "general": false,
+      "index": 0,
+      "speech": "Er hält das große Haus für eine Verpflichtung, weil es dem Vater jeden Monat Geld aus der Tasche nimmt. Das steht auf Seite 6: ‚Das große Haus nimmt deinem Vater Geld aus der Tasche.‘",
+      "text": "Er hält das große Haus für eine Verpflichtung, weil es dem Vater jeden Monat Geld aus der Tasche nimmt."
+    }
+  },
+  {
+    "answer": {
+      "citations": [
+        {
+          "chapter_index": 2,
+          "chapter_title": "Kapitel 2: Vermögen und Verpflichtungen",
+          "end": 2144,
+          "page": 6,
+          "q": 1,
+          "quote": "Das große Haus nimmt deinem Vater Geld aus der Tasche.“",
+          "start": 2089
+        }
+      ],
+      "dropped": 0,
+      "found_only": false,
+      "frontier": 0,
+      "intent": "question",
+      "scope": "book",
+      "sentences": [
+        {
+          "citations": [
+            {
+              "chapter_index": 2,
+              "chapter_title": "Kapitel 2: Vermögen und Verpflichtungen",
+              "end": 2144,
+              "page": 6,
+              "q": 1,
+              "quote": "Das große Haus nimmt deinem Vater Geld aus der Tasche.“",
+              "start": 2089
+            }
+          ],
+          "general": false,
+          "index": 0,
+          "speech": "Er hält das große Haus für eine Verpflichtung, weil es dem Vater jeden Monat Geld aus der Tasche nimmt. Das steht auf Seite 6: ‚Das große Haus nimmt deinem Vater Geld aus der Tasche.‘",
+          "text": "Er hält das große Haus für eine Verpflichtung, weil es dem Vater jeden Monat Geld aus der Tasche nimmt."
+        }
+      ],
+      "speech": "Er hält das große Haus für eine Verpflichtung, weil es dem Vater jeden Monat Geld aus der Tasche nimmt. Das steht auf Seite 6: ‚Das große Haus nimmt deinem Vater Geld aus der Tasche.‘",
+      "text": "Er hält das große Haus für eine Verpflichtung, weil es dem Vater jeden Monat Geld aus der Tasche nimmt."
+    },
+    "kind": "done",
+    "request_id": "golden"
+  }
+]

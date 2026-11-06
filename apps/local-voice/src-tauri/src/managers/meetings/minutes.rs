@@ -46,8 +46,8 @@ use super::basis::{self, DocBasis};
 use super::doc_types::{self, DocHead, DocProfile};
 use super::llm_call::{
     ask_json, build_head_with, duration_label, head_facts_block, is_splittable_error,
-    is_truncation_error, mm_ss, resolve_provider_coded, retry_chunk, should_retry, sorted_segments,
-    AskOptions, SemanticRetry,
+    is_truncation_error, mm_ss, ram_probe_for, resolve_provider_coded, retry_chunk, should_retry,
+    sorted_segments, AskOptions, SemanticRetry,
 };
 use super::notes::blocks::{run_blocks, Step, Work};
 use super::notes::budget;
@@ -1533,6 +1533,8 @@ async fn run_minutes(
     on_progress: ProgressFn<'_>,
     profile: &DocProfile,
 ) -> Result<MeetingDocument, MinutesError> {
+    // Modelle je Funktion: Protokoll und Notizen nutzen ihr eigenes Modell, falls gewaehlt.
+    let settings = &settings.for_function(crate::settings::FN_MEETING_PROTOCOL);
     let started = std::time::Instant::now();
     let meeting = store
         .get_meeting(meeting_id)
@@ -2004,7 +2006,10 @@ pub async fn generate_minutes_with_basis(
         meeting_id,
         template_id,
         doc_basis,
-        Limits::default(),
+        Limits {
+            free_mb: ram_probe_for(&settings.for_function(crate::settings::FN_MEETING_PROTOCOL)),
+            ..Limits::default()
+        },
         on_progress,
     )
     .await
@@ -2028,7 +2033,10 @@ pub async fn generate_document_with_settings(
         meeting_id,
         doc_type,
         doc_basis,
-        Limits::default(),
+        Limits {
+            free_mb: ram_probe_for(&settings.for_function(crate::settings::FN_MEETING_PROTOCOL)),
+            ..Limits::default()
+        },
         on_progress,
     )
     .await
@@ -2696,7 +2704,11 @@ mod tests {
             seg(1, "  Nur ein Satz  ", 65_000),
         ];
         let rendered = render_transcript_for_prompt(&segs);
-        assert_eq!(rendered.lines().count(), 2, "ein Segment = eine Zeile: {rendered:?}");
+        assert_eq!(
+            rendered.lines().count(),
+            2,
+            "ein Segment = eine Zeile: {rendered:?}"
+        );
         assert_eq!(
             rendered,
             "Ich [00:00]: Erste Zeile zweite Zeile dritte\nIch [01:05]: Nur ein Satz"
@@ -3388,7 +3400,10 @@ mod tests {
         )
         .await
         .expect_err("ohne Transkript gibt es kein Protokoll");
-        assert_ne!(err.code, "meeting_not_finished", "der Status ist kein Hindernis");
+        assert_ne!(
+            err.code, "meeting_not_finished",
+            "der Status ist kein Hindernis"
+        );
     }
 
     #[tokio::test]

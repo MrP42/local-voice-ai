@@ -5,6 +5,7 @@ import { modelLabel } from "@/lib/modelNames";
 import { useModelStore } from "@/stores/modelStore";
 import type { CallUsage } from "@/stores/voiceCallStore";
 import { SUBSCRIPTION_PROVIDERS } from "../settings/meetings/DocUsageLine";
+import { speakerModelId } from "./orchestration";
 
 export interface ActiveLlm {
   label: string | null;
@@ -12,12 +13,17 @@ export interface ActiveLlm {
   local: boolean;
 }
 
-/** Das aktive Sprachmodell aus den Einstellungen (wie die Fußleiste). */
+/** Der Sprecher des Gesprächs: Modell der Funktion „Sprachgespräch“, sonst das Standardmodell. */
 export function useActiveLlm(): ActiveLlm {
   const { getSetting } = useSettings();
   const connections = (getSetting("llm_connections") ?? []) as LlmConnection[];
   const models = (getSetting("llm_models") ?? []) as LlmModelConfig[];
-  const activeId = (getSetting("llm_active_model_id") ?? null) as string | null;
+  const activeId = speakerModelId({
+    function_models: getSetting("function_models"),
+    llm_active_model_id: getSetting("llm_active_model_id"),
+    llm_models: models,
+    llm_connections: connections,
+  });
   return useMemo(() => {
     const model = models.find((m) => m.id === activeId);
     const connection = model

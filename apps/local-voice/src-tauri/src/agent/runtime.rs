@@ -405,7 +405,10 @@ impl AgentRuntime {
                 completion_tokens: usage.completion_tokens,
             },
             started.elapsed().as_millis().min(u128::from(u32::MAX)) as u32,
-            result.as_ref().map(|_| ()).map_err(|e| e.code().to_string()),
+            result
+                .as_ref()
+                .map(|_| ())
+                .map_err(|e| e.code().to_string()),
         )
         .await;
         result
@@ -430,7 +433,9 @@ impl AgentRuntime {
         let client = reqwest::Client::builder()
             .timeout(timeout)
             .build()
-            .map_err(|_| AgentError::Unavailable("Der HTTP-Client ließ sich nicht erstellen.".into()))?;
+            .map_err(|_| {
+                AgentError::Unavailable("Der HTTP-Client ließ sich nicht erstellen.".into())
+            })?;
         let response = client
             .post(&url)
             .json(&body)
@@ -451,9 +456,9 @@ impl AgentRuntime {
                 {
                     AgentError::ContextExceeded
                 }
-                code if code >= 500 => {
-                    AgentError::Unavailable(format!("Der Modellserver meldet einen Fehler (HTTP {code})."))
-                }
+                code if code >= 500 => AgentError::Unavailable(format!(
+                    "Der Modellserver meldet einen Fehler (HTTP {code})."
+                )),
                 code => AgentError::Rejected { status: code },
             });
         }

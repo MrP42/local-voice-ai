@@ -1,0 +1,11 @@
+[package]
+name = "hoersync"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "Abgleich Hörbuch ↔ Buchtext: erkannte Wörter mit Zeit gegen den Text legen (Stützpunkte, Einschübe). Ohne Abhängigkeiten, auch für iOS."
+
+[dependencies]
+
+[workspace]

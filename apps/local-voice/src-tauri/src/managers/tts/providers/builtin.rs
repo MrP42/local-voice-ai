@@ -132,6 +132,7 @@ impl TtsProvider for FishProvider {
                     .map(String::from)
                     .to_vec(),
                 style_tags: engine::FISH_CAPS.style_tags,
+                pace_tags: false,
                 voice_switching: engine::FISH_CAPS.voice_switching,
             },
             license: LicenseInfo {
@@ -325,6 +326,7 @@ impl TtsProvider for PiperProvider {
                     .map(String::from)
                     .to_vec(),
                 style_tags: piper::PIPER_CAPS.style_tags,
+                pace_tags: false,
                 voice_switching: piper::PIPER_CAPS.voice_switching,
             },
             license: LicenseInfo {

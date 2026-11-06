@@ -328,7 +328,40 @@ async llmSetAutoUpdateModels(mode: string) : Promise<Result<null, string>> {
 },
 /**
  * Erlaubt oder verbietet, dass die App die Codex-CLI selbst aktualisiert.
+ * Ist die CLI einer Abo-Verbindung installiert und angemeldet?
  */
+async llmCliStatus(kind: string) : Promise<Result<CliStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_cli_status", { kind }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Oeffnet die Anmeldung der CLI (`claude auth login`, `codex login`) in einem
+ * eigenen Fenster. Zugangsdaten bleiben bei der CLI.
+ */
+async llmCliLogin(kind: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_cli_login", { kind }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Fehlt die CLI: oeffnet ein Fenster, das sie ueber den offiziellen Installer
+ * laedt und danach ihre Anmeldung startet.
+ */
+async llmCliSetup(kind: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_cli_setup", { kind }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async llmSetCliAutoUpdate(enabled: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("llm_set_cli_auto_update", { enabled }) };
@@ -350,6 +383,19 @@ async llmModelEfforts(connectionId: string, remoteId: string) : Promise<string[]
 async llmSetDefaultEffort(effort: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("llm_set_default_effort", { effort }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Modell einer Funktion setzen (Modelle je Funktion). `model_id = None` oder
+ * leer: die Funktion nutzt wieder das Standardmodell. Gesperrte oder nicht
+ * freigegebene Modelle sind nicht waehlbar, wie beim Standardmodell.
+ */
+async llmSetFunctionModel(forFunction: string, modelId: string | null, effort: string | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_set_function_model", { forFunction, modelId, effort }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -639,6 +685,77 @@ async syncLogin(email: string, password: string, deviceName: string, url: string
 }
 },
 /**
+ * Schalter „iPhone darf Abo-Modelle nutzen" (Einstellungen -> Modelle je
+ * Funktion). Veroeffentlicht oder loescht die Modellliste sofort. Ohne
+ * Freigabe je Geraet ([`booktalk_relay_authorize`]) bleibt sie leer.
+ */
+async changeBookTalkRelaySetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_book_talk_relay_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async booktalkRelayGrants() : Promise<Result<RelayGrantInfo[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("booktalk_relay_grants") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Die Abo-Modelle dieses PCs, die ein iPhone nutzen koennte (bereite CLIs).
+ */
+async booktalkRelayModels() : Promise<Result<RelayModelInfo[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("booktalk_relay_models") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Ein iPhone freigeben (R1): neuer Relay-Schluessel, die gewaehlten Modelle,
+ * 90 Tage. Gibt den Einrichtungscode (Text und QR) zurueck, den das iPhone
+ * einliest. Die Freigabe ist erst nach der ersten gueltigen Anfrage des iPhones
+ * aktiv; ohne sie verfaellt sie samt Schluessel nach 10 Minuten.
+ */
+async booktalkRelayAuthorize(deviceKey: string, name: string, modelIds: string[]) : Promise<Result<RelayPairing, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("booktalk_relay_authorize", { deviceKey, name, modelIds }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Einrichtungscode noch einmal zeigen: erzeugt einen **neuen** Schluessel
+ * (der alte ist sofort ungueltig), die Freigabe ist wieder `pending`, der
+ * Code gilt wieder 10 Minuten. Name, Modelle und Geraet bleiben.
+ */
+async booktalkRelayRenewCode(deviceKey: string) : Promise<Result<RelayPairing, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("booktalk_relay_renew_code", { deviceKey }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Freigabe entziehen (R10): Schluessel loeschen, Modellliste neu bewerten
+ * (leer = zurueckziehen); laufende Anfragen werden beim naechsten Takt verworfen.
+ */
+async booktalkRelayRevoke(deviceKey: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("booktalk_relay_revoke", { deviceKey }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Abmelden: Token im Hub widerrufen (best effort), Konto und Ledger löschen.
  * Die Seiten bleiben auf diesem Gerät.
  */
@@ -673,12 +790,328 @@ async syncTouch() : Promise<void> {
 async syncDefaultDeviceName() : Promise<string> {
     return await TAURI_INVOKE("sync_default_device_name");
 },
+async kontoStatus() : Promise<Result<KontoStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("konto_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `id` ist das Profil, das die Oberfläche bearbeitet; es muss noch das aktive sein.
+ */
+async kontoAendern(id: string, aenderung: KontoAenderung) : Promise<Result<KontoProfilDto, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("konto_aendern", { id, aenderung }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async kontoAktivieren(id: string) : Promise<Result<KontoStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("konto_aktivieren", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Legt ein Profil an und macht es in derselben Sperre zum aktiven Profil.
+ */
+async kontoAnlegen(anzeigename: string) : Promise<Result<KontoProfilDto, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("konto_anlegen", { anzeigename }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Bild als Base64 (PNG, höchstens 256 KB; die Prüfung macht `wai-konto`). `id` muss
+ * das aktive Profil sein.
+ */
+async kontoBildSetzen(id: string, bytes: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("konto_bild_setzen", { id, bytes }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `id` muss das aktive Profil sein.
+ */
+async kontoBildEntfernen(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("konto_bild_entfernen", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async kontoBildLesen(id: string) : Promise<Result<string | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("konto_bild_lesen", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async projekteListe() : Promise<Result<SuiteProjekt[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("projekte_liste") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async projektAnlegen(titel: string, dataClass: string, specialCategory: boolean) : Promise<Result<SuiteProjekt, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("projekt_anlegen", { titel, dataClass, specialCategory }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async projektWebFreigabe(id: string, an: boolean) : Promise<Result<SuiteProjekt, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("projekt_web_freigabe", { id, an }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async projektLoeschen(id: string) : Promise<Result<LoeschErgebnis, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("projekt_loeschen", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async projektEintraege(suiteId: string) : Promise<Result<EintragSicht[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("projekt_eintraege", { suiteId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async projektOrdnerVerknuepfen(ordnerId: string, suiteId: string) : Promise<Result<SyncBericht, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("projekt_ordner_verknuepfen", { ordnerId, suiteId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async projektOrdnerLoesen(ordnerId: string) : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("projekt_ordner_loesen", { ordnerId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async projektAbgleichen(suiteId: string) : Promise<Result<SyncBericht, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("projekt_abgleichen", { suiteId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async projektBuchZuordnen(suiteId: string, buchId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("projekt_buch_zuordnen", { suiteId, buchId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async projektBuchEntfernen(suiteId: string, buchId: string) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("projekt_buch_entfernen", { suiteId, buchId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async projektBesprechungZuordnen(suiteId: string, meetingId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("projekt_besprechung_zuordnen", { suiteId, meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async projektBesprechungEntfernen(suiteId: string, meetingId: string) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("projekt_besprechung_entfernen", { suiteId, meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Suite-Projekte, die fuer eine Besprechung in Frage kommen (Projekte ihrer Ordner).
+ */
+async projekteDerBesprechung(meetingId: string) : Promise<Result<SuiteProjekt[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("projekte_der_besprechung", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async rechercheStatus() : Promise<Result<RechercheStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("recherche_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Setzt oder entfernt die Adresse des Suchdienstes (nur Administration, streng geprueft).
+ */
+async rechercheAdresseSetzen(adresse: string | null) : Promise<Result<RechercheStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("recherche_adresse_setzen", { adresse }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Chat-Werkzeug "recherche" (Modus Schnell). Der Kontext einer Besprechung ist mindestens
+ * `PERSONAL`; die Klasse des Projekts hebt sie an. Ab `PERSONAL` haelt der Lauf an
+ * (`status` = "freigabe") und wartet auf die Entscheidung in `recherche_freigabe_entscheiden`.
+ */
+async rechercheStarten(frage: string, suiteProjekt: string | null, besprechung: string | null) : Promise<Result<LaufAntwort, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("recherche_starten", { frage, suiteProjekt, besprechung }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async rechercheFreigaben() : Promise<Result<FreigabeInfo[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("recherche_freigaben") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async rechercheFreigabeEntscheiden(id: string, auswahl: string[], aktion: FreigabeAktion) : Promise<Result<LaufAntwort, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("recherche_freigabe_entscheiden", { id, auswahl, aktion }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async rechercheListe(suiteProjekt: string | null) : Promise<Result<RechercheKurz[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("recherche_liste", { suiteProjekt }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async rechercheLesen(id: string) : Promise<Result<RechercheSicht, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("recherche_lesen", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async rechercheLoeschen(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("recherche_loeschen", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Geräteliste und Zähler vom Hub (für die Konto-Gruppe).
  */
 async syncHubStatus() : Promise<Result<HubStatus, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("sync_hub_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * „Handy verbinden“: Kopplung am Hub starten, Schlüsselpaar und q erzeugen, QR liefern.
+ * Eine laufende Kopplung wird ersetzt (der Hub verwirft sie beim neuen Start).
+ */
+async pairStart() : Promise<Result<PairView, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("pair_start") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Zustand abfragen und den Automaten einen Schritt weiterführen (Takt ≈ 1,5 s).
+ */
+async pairPoll() : Promise<Result<PairView, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("pair_poll") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * „Ja, verbinden“: Schlüssel K für das iPhone versiegeln und freigeben.
+ */
+async pairApprove() : Promise<Result<PairView, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("pair_approve") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * „Nein, abbrechen“ oder Dialog schließen. Nach der Freigabe wird am Hub geklärt,
+ * ob das iPhone schon abgeholt hat (dann Gerät zum Abmelden anbieten).
+ */
+async pairCancel() : Promise<Result<PairView, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("pair_cancel") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Liste „Verbundene Geräte“.
+ */
+async syncDevices() : Promise<Result<PairedDevice[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sync_devices") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Gerät abmelden; der Hub meldet alle über dieses Gerät gekoppelten Geräte mit ab.
+ */
+async syncRevokeDevice(id: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sync_revoke_device", { id }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -741,6 +1174,14 @@ async changeTtsScriptCheckSetting(value: boolean) : Promise<Result<null, string>
 async changeTtsSpeedSetting(value: number) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_tts_speed_setting", { value }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeTtsFlowSetting(value: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_tts_flow_setting", { value }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1978,6 +2419,35 @@ async meetingsImportFile(path: string, consentConfirmed: boolean, targetMeetingI
 }
 },
 /**
+ * lva#208: stellt einen Hörbuch-Teil in die Import-Warteschlange und kehrt sofort
+ * mit der ID der Hilfs-Besprechung zurück. Mit `start_ms`/`end_ms` wird nur
+ * dieser Abschnitt der Datei transkribiert (Segmentzeiten relativ zum Beginn des
+ * Abschnitts). Hörbuch-Aufträge laufen bis zu vier gleichzeitig. Fehler:
+ * `import_path_invalid`, `range_invalid` (Ende nicht hinter dem Anfang, nur eine
+ * Grenze), `queue_enqueue_failed: …`.
+ */
+async meetingsImportAudiobookPart(path: string, startMs: number | null, endMs: number | null) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_import_audiobook_part", { path, startMs, endMs }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * lva#208: Stand einer Besprechung (z. B. Hilfs-Auftrag eines Hörbuch-Teils)
+ * einzeln abgefragt. `Ok(None)` heißt wirklich "nicht gefunden"; ein
+ * Lesefehler ist ein `Err` und darf nie als "fehlt" gelten.
+ */
+async meetingsGetStatus(meetingId: string) : Promise<Result<string | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_get_status", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Der Stand der Warteschlange (Hydrierung der Oberflaeche; danach halten ihn
  * die `ImportQueueEvent` aktuell).
  */
@@ -2028,15 +2498,79 @@ async meetingsUpdateMetadata(meetingId: string, edit: MetadataEdit) : Promise<Re
 }
 },
 /**
- * Einstellung `meeting_import_parallel`: 1, 2 oder 3 gleichzeitige
- * Transkriptionen (Werte ausserhalb zaehlen als der naechste gueltige). Wirkt
+ * Einstellung `meeting_import_parallel`: 0 = Automatisch (nach Hardware)
+ * oder 1 bis 4 gleichzeitige Transkriptionen (Werte ueber 4 zaehlen als 4). Wirkt
  * ab der naechsten Datei; laufende Laeufe werden nie abgebrochen. Mehr als 1
  * nur, solange Arbeitsspeicher (und Grafikspeicher) fuer die weitere Engine
- * reichen, sonst wartet die Datei.
+ * reichen, sonst wartet die Datei. Hörbuch-Teile der Bibliothek (lva#208) laufen
+ * unabhängig davon bis zu vier gleichzeitig.
  */
 async changeMeetingImportParallelSetting(value: number) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_meeting_import_parallel_setting", { value }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Empfehlung fuer "Gleichzeitige Transkriptionen" auf diesem Rechner: so viele
+ * laufen bei "Automatisch", und wodurch die Zahl begrenzt ist (Kerne,
+ * Arbeits- oder Grafikspeicher, Obergrenze).
+ */
+async getMeetingImportParallelRecommendation() : Promise<ParallelRecommendation> {
+    return await TAURI_INVOKE("get_meeting_import_parallel_recommendation");
+},
+/**
+ * Teile einer Besprechung: zusammengefuehrte Teile, noch laufende Teile, die
+ * angehaengt werden, und (fuer einen solchen Teil) sein Ziel.
+ */
+async meetingsPartsInfo(meetingId: string) : Promise<Result<PartsInfo, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_parts_info", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Fuehrt fertige Besprechungen zu einer zusammen. `keep_order = false`: nach
+ * Aufnahmebeginn (bei Gleichstand nach Dateiname) geordnet, die erste bleibt
+ * erhalten und nimmt die anderen auf (Titel, Projekte, Notizen bleiben; die
+ * anderen gehen in den Papierkorb). Gibt die ID der Besprechung zurueck. Die
+ * Sprechertrennung ueber das Ganze laeuft danach im Hintergrund.
+ */
+async meetingsMerge(meetingIds: string[], keepOrder: boolean) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_merge", { meetingIds, keepOrder }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Haengt Audiodateien an eine Besprechung an. Jede Datei kommt als eigener
+ * Auftrag in die Import-Warteschlange (Fortschritt wie jeder Import); sobald
+ * alle Teile fertig sind, werden sie in dieser Reihenfolge hinten angefuegt.
+ * Das Ziel darf selbst noch in der Warteschlange stehen (Import mehrerer
+ * Dateien "als eine Besprechung"). Gibt die IDs der Teile zurueck.
+ */
+async meetingsAppendFiles(targetMeetingId: string, paths: string[], consentConfirmed: boolean) : Promise<Result<string[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_append_files", { targetMeetingId, paths, consentConfirmed }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Ein vorgemerkter Teil wird doch eine eigene Besprechung (z. B. weil er
+ * gescheitert ist und die anderen nicht warten sollen). Sind danach alle
+ * uebrigen Teile fertig, wird sofort zusammengefuehrt.
+ */
+async meetingsAppendDetach(meetingId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_append_detach", { meetingId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2162,6 +2696,22 @@ async meetingsGenerateDocument(meetingId: string, docType: string, basis: DocBas
 async meetingsExportDocumentAs(documentId: string, path: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("meetings_export_document_as", { documentId, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Handbearbeitung eines Protokolls oder Dokumenttyps (Markdown) speichern. Die
+ * Aenderung landet in der bestehenden Version; Export, Kopieren, Mail und Vorlesen
+ * lesen sie von dort. `expected_updated_at` ist der Stempel, den die Oberflaeche
+ * geladen hat; weicht er ab (neuer Lauf, zweites Fenster), scheitert der Aufruf mit
+ * `stale_document` und schreibt nichts. Fehlertexte sind Codes (siehe
+ * `MeetingStore::update_markdown_document`); der Text selbst gelangt nie ins Log.
+ */
+async meetingsUpdateDocumentText(documentId: string, body: string, expectedUpdatedAt: number) : Promise<Result<MeetingDocument, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_update_document_text", { documentId, body, expectedUpdatedAt }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3247,6 +3797,17 @@ async voiceCallChat(requestId: string, messages: VoiceCallMessage[]) : Promise<R
 }
 },
 /**
+ * Ein Durchgang eines Modells als roher Textstrom (Ereignisse `delta`, am Ende `usage`).
+ */
+async voiceCallTurn(requestId: string, messages: VoiceCallMessage[], modelId: string, stufe: string, forFunction: string | null) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("voice_call_turn", { requestId, messages, modelId, stufe, forFunction }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Bricht eine laufende Antwort ab (Unterbrechen durch den Sprecher).
  */
 async voiceCallCancel(requestId: string) : Promise<boolean> {
@@ -3262,6 +3823,14 @@ async voiceCallSynthesize(text: string) : Promise<Result<string, string>> {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * Status des Sprachgespraechs im Overlay, wie beim Diktat: Hoert zu, Hoert,
+ * Denkt nach, Spricht. `None` blendet es aus (nur, wenn es ein Gespraech zeigt).
+ * Das Hauptfenster ruft das auf, auch wenn es verborgen ist.
+ */
+async voiceCallOverlay(state: string | null) : Promise<void> {
+    await TAURI_INVOKE("voice_call_overlay", { state });
 },
 /**
  * Zusammenfassungen der Gespräche: Angeheftete zuerst, dann nach letzter
@@ -3303,6 +3872,17 @@ async conversationCreate(title: string | null) : Promise<Result<Conversation, st
 async conversationUpdate(id: string, title: string | null, pinned: boolean | null, archived: boolean | null) : Promise<Result<Conversation, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("conversation_update", { id, title, pinned, archived }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Heftet ein Gespräch an oder löst es.
+ */
+async conversationSetPinned(id: string, pinned: boolean) : Promise<Result<Conversation, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("conversation_set_pinned", { id, pinned }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3490,11 +4070,115 @@ async meetingSpeakerRename(meetingId: string, channel: number, speakerIndex: num
 }
 },
 /**
- * Fuehrt zwei Sprecher eines Kanals zusammen (`from` geht in `into` auf).
+ * Fuehrt zwei Sprecher eines Kanals zusammen (`from` geht in `into` auf;
+ * #266: `from` = 0 sind die Segmente ohne Sprecher). Gibt die Kennung der
+ * Zusammenfuehrung zurueck ("Trennen").
  */
-async meetingSpeakerMerge(meetingId: string, channel: number, from: number, into: number) : Promise<Result<null, string>> {
+async meetingSpeakerMerge(meetingId: string, channel: number, from: number, into: number) : Promise<Result<string, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("meeting_speaker_merge", { meetingId, channel, from, into }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * #266: die Zusammenfuehrungen der Besprechung, die sich trennen lassen.
+ */
+async meetingSpeakerMerges(meetingId: string) : Promise<Result<SpeakerMerge[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_speaker_merges", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * #266: eine Zusammenfuehrung zuruecknehmen ("Trennen").
+ */
+async meetingSpeakerUnmerge(meetingId: string, mergeId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_speaker_unmerge", { meetingId, mergeId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async meetingVoiceMatches(meetingId: string) : Promise<Result<VoiceMatches, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_voice_matches", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async meetingVoiceMatchDismiss(meetingId: string, channel: number, a: number, b: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_voice_match_dismiss", { meetingId, channel, a, b }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async meetingDiarizationModelStatus() : Promise<Result<DiarizationModelStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_diarization_model_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Laedt das Modell, nur auf Knopfdruck (oder `--provision`). Fortschritt
+ * ueber `model-download-progress`, Ende ueber `model-download-complete`.
+ * Wirkt ab der naechsten Sprechertrennung (Stopp, Import, Neu-Transkription).
+ */
+async meetingDiarizationModelDownload() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_diarization_model_download") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Bricht einen laufenden Download ab; die Teildatei bleibt fuer die
+ * Fortsetzung liegen. Ohne laufenden Download ohne Wirkung.
+ */
+async meetingDiarizationModelCancel() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_diarization_model_cancel") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async meetingVoiceprintStatus() : Promise<Result<VoiceprintStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_voiceprint_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Lädt das Modell (30 MB) -- nur auf Knopfdruck. Fortschritt über die
+ * üblichen Ereignisse `model-download-progress` und `model-download-complete`.
+ */
+async meetingVoiceprintDownload() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_voiceprint_download") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Einstellung `meeting_voice_suggestions`. Ausschalten vergisst die Abdrücke sofort.
+ */
+async changeMeetingVoiceSuggestionsSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_meeting_voice_suggestions_setting", { enabled }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -4033,6 +4717,249 @@ async agentBridgeStatus() : Promise<BridgeStatus> {
     return await TAURI_INVOKE("agent_bridge_status");
 },
 /**
+ * Die lesenden Werkzeuge, die das Sprachgespräch jetzt benutzen darf (nach den Bereichen).
+ */
+async voiceToolsList() : Promise<Result<VoiceToolInfo[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("voice_tools_list") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * „Transkripte im Sprachgespräch lesen“ (Standard aus; wirkt nur mit dem Bereich Besprechungen).
+ */
+async changeVoiceCallReadTranscriptsSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_voice_call_read_transcripts_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Wissensbereiche, die das Sprachgespräch nachschlagen darf (Standard: keiner). Gespeichert werden
+ * nur bekannte Bereiche, ohne Doppelte; „Transkripte“ hat den Unterschalter oben.
+ */
+async changeVoiceCallKnowledgeSetting(areas: string[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_voice_call_knowledge_setting", { areas }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Ruft ein lesendes Werkzeug (Bereich frei, Audit über das Tor). `args` ist ein JSON-Objekt als
+ * Text, `conversation_id` das laufende Gespräch (es bleibt den Gesprächswerkzeugen verborgen). Die
+ * Antwort ist der JSON-Text des Ergebnisses; eine zu lange Antwort wird nie still gekürzt, sondern
+ * abgelehnt.
+ */
+async voiceToolCall(name: string, args: string, conversationId: string | null) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("voice_tool_call", { name, args, conversationId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Meldet eine Korrektur: `erkannt` ist, was die Erkennung geliefert hat, `korrigiert`, was der
+ * Nutzer daraus gemacht hat. Ist Lernen aus (Standard), passiert nichts (`reason` = `off`).
+ */
+async speechLearningFeedback(bereich: string, erkannt: string, korrigiert: string) : Promise<Result<FeedbackOutcome, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("speech_learning_feedback", { bereich, erkannt, korrigiert }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Die gelernten Paare eines Bereichs, jüngste zuerst. Gleicht dabei ab, welche übernommenen
+ * Begriffe noch im Wortschatz stehen.
+ */
+async speechLearningList(bereich: string) : Promise<Result<LearnedPair[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("speech_learning_list", { bereich }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Setzt den Status eines Paares: `vorschlag`, `uebernommen` oder `abgelehnt`. Übernehmen trägt
+ * den Begriff in den eigenen Wortschatz ein, alles andere nimmt zurück, was von hier stammt.
+ */
+async speechLearningSetStatus(id: number, status: string) : Promise<Result<LearnedPair, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("speech_learning_set_status", { id, status }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Löscht ein Paar wirklich.
+ */
+async speechLearningDelete(id: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("speech_learning_delete", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Löscht alle Paare eines Bereichs wirklich; Rückgabe: wie viele es waren.
+ */
+async speechLearningClear(bereich: string) : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("speech_learning_clear", { bereich }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Der Vorlesetext für die Einrichtung: fester Grundtext plus der eigene Wortschatz.
+ */
+async speechLearningSetupText() : Promise<SetupText> {
+    return await TAURI_INVOKE("speech_learning_setup_text");
+},
+/**
+ * Lädt das Spracherkennungsmodell, damit das Vorlesen gleich erkannt wird (die Aufnahme geht
+ * danach wie im Gespräch an `voice_call_transcribe`).
+ */
+async speechLearningSetupPrepare() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("speech_learning_setup_prepare") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Vergleicht die Erkennung des Vorlesens mit dem Vorlesetext und legt die Verhörer als
+ * Vorschläge ab. Bleibt vom Schalter „Aus Korrekturen lernen“ unberührt: Der Nutzer hat die
+ * Einrichtung selbst gestartet. Übernommen wird nichts ohne seinen Klick.
+ */
+async speechLearningSetupEvaluate(bereich: string, reference: string, transcript: string) : Promise<Result<SetupOutcome, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("speech_learning_setup_evaluate", { bereich, reference, transcript }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * „Aus Korrekturen lernen“ (Standard aus).
+ */
+async changeSpeechLearningEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_speech_learning_enabled_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * „Vorschläge automatisch übernehmen“ (Standard aus; wirkt nur bei eingeschaltetem Lernen).
+ */
+async changeSpeechLearningAutoApplySetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_speech_learning_auto_apply_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async sprachdienstStatus() : Promise<Result<SprachdienstStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sprachdienst_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Schaltet den Dienst ein oder aus. Aus: Der Endpunkt verschwindet, laufende Verbindungen enden.
+ */
+async sprachdienstAktivSetzen(aktiv: boolean) : Promise<Result<SprachdienstStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sprachdienst_aktiv_setzen", { aktiv }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async sprachdienstZugaenge() : Promise<Result<SprachZugang[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sprachdienst_zugaenge") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Setzt `hoeren` oder `sprechen` für eine gekoppelte App. Ein Entzug wirkt sofort auch in
+ * laufenden Verbindungen.
+ */
+async sprachdienstRechtSetzen(zugang: string, recht: string, an: boolean) : Promise<Result<SprachZugang, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sprachdienst_recht_setzen", { zugang, recht, an }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Widerruft eine App: Rechte weg, laufende Verbindungen enden sofort, die Zeile bleibt als Spur.
+ */
+async sprachdienstWiderrufen(zugang: string) : Promise<Result<SprachZugang, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sprachdienst_widerrufen", { zugang }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Entfernt eine App ganz aus der Liste.
+ */
+async sprachdienstEntfernen(zugang: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sprachdienst_entfernen", { zugang }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Offene Kopplungsanfragen (mit Code), neueste zuletzt.
+ */
+async sprachdienstKopplungen() : Promise<Result<SprachKopplung[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sprachdienst_kopplungen") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Bestätigt oder lehnt eine Kopplungsanfrage ab. `false` in der Antwort: die Anfrage gab es
+ * nicht mehr (Frist abgelaufen oder die App hat aufgelegt).
+ */
+async sprachdienstKopplungEntscheiden(id: string, bestaetigen: boolean) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sprachdienst_kopplung_entscheiden", { id, bestaetigen }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Startet eine Aufnahme mit dem Bezug zu einem Termin: Titel = was der Nutzer
  * eingegeben hat, sonst der Termintitel; Vorlage = die der letzten Besprechung
  * derselben Serie (UID), sonst die Standardvorlage; danach Verknuepfung und
@@ -4482,6 +5409,14 @@ async ttsTranslate(text: string, targetLang: string) : Promise<Result<string, st
 }
 },
 /**
+ * Stand des Uebersetzungsauftrags im Hintergrund (laufend oder zuletzt
+ * beendet): Fortschritt, Arbeiter, bisher fertiger Text, Fehler, Warnungen.
+ * Die Oberflaeche holt sich damit den Stand zurueck, wenn sie neu geladen hat.
+ */
+async ttsTranslateJob(text: string, targetLang: string) : Promise<TranslateJob | null> {
+    return await TAURI_INVOKE("tts_translate_job", { text, targetLang });
+},
+/**
  * Liegt fuer diesen Text in dieser Sprache schon eine Uebersetzung bereit?
  * Damit die Oberflaeche beim Umschalten zwischen Sprachen sofort zeigen
  * kann, was da ist, ohne eine Uebersetzung anzustossen.
@@ -4546,6 +5481,335 @@ async llmWarm() : Promise<Result<string, string>> {
 async pagesList() : Promise<Result<PageInfo[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("pages_list") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Mitgelieferte und eigene Vorlagen.
+ */
+async bookAiTemplates() : Promise<Result<BookTemplate[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("book_ai_templates") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Eigene Vorlage anlegen oder ändern. Eine mitgelieferte Vorlage (oder eine
+ * ohne ID) wird als neue eigene Vorlage gespeichert, also kopiert.
+ */
+async bookAiTemplateSave(template: BookTemplate) : Promise<Result<BookTemplate, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("book_ai_template_save", { template }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async bookAiTemplateDelete(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("book_ai_template_delete", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async bookAiTemplateExport(id: string, path: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("book_ai_template_export", { id, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async bookAiTemplateImport(path: string) : Promise<Result<BookTemplate, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("book_ai_template_import", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Zusammenfassung nach Vorlage erzeugen und als KI-Dokument ablegen.
+ */
+async bookAiSummarize(pageId: string, source: SummarySource, sourceLabel: string, templateId: string, targetLang: string | null) : Promise<Result<KiDocument, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("book_ai_summarize", { pageId, source, sourceLabel, templateId, targetLang }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Laufende Zusammenfassung abbrechen; sie endet nach dem aktuellen Schritt.
+ */
+async bookAiCancel() : Promise<void> {
+    await TAURI_INVOKE("book_ai_cancel");
+},
+/**
+ * Prognose des Token-Bedarfs, bevor ein KI-Dokument erstellt wird.
+ */
+async bookAiEstimate(pageId: string, source: SummarySource, templateId: string) : Promise<Result<BookAiEstimate, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("book_ai_estimate", { pageId, source, templateId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async bookAiDocuments(pageId: string) : Promise<Result<KiDocument[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("book_ai_documents", { pageId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async bookAiDocumentText(pageId: string, id: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("book_ai_document_text", { pageId, id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async bookAiDocumentUpdate(pageId: string, id: string, title: string | null, text: string | null) : Promise<Result<KiDocument, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("book_ai_document_update", { pageId, id, title, text }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async bookAiDocumentDelete(pageId: string, id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("book_ai_document_delete", { pageId, id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Begriffe des Buchs erkennen (lva#184). Nur neue oder geänderte Kapitel;
+ * jedes Kapitel wird sofort gespeichert, ein Abbruch verliert nichts.
+ */
+async bookAiTermsExtract(pageId: string) : Promise<Result<TermsRun, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("book_ai_terms_extract", { pageId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async bookAiTerms(pageId: string) : Promise<Result<BookTerm[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("book_ai_terms", { pageId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Begriff anlegen, ändern oder ausblenden (`hidden`). Der Eintrag gilt
+ * danach als Nutzerkorrektur und wird von Läufen nicht mehr überschrieben.
+ */
+async bookAiTermSave(pageId: string, term: BookTerm) : Promise<Result<BookTerm, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("book_ai_term_save", { pageId, term }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Fundstellen für die Hervorhebung im aktuellen Seitentext.
+ */
+async bookAiTermHits(pageId: string) : Promise<Result<TermHit[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("book_ai_term_hits", { pageId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Text als KI-Dokument übernehmen, z. B. die bisherige Zusammenfassung einer
+ * Seite (aus der Zeit vor den Vorlagen, lva#183).
+ */
+async bookAiDocumentImport(pageId: string, title: string, text: string) : Promise<Result<KiDocument, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("book_ai_document_import", { pageId, title, text }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Ein KI-Dokument exportieren. Das Format ergibt sich aus der Endung (`md`, `txt`,
+ * `docx`, `pdf`); Word und PDF tragen den eingestellten Briefkopf. Der Titel
+ * steht als Überschrift über dem Text.
+ */
+async bookAiDocumentExport(pageId: string, id: string, path: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("book_ai_document_export", { pageId, id, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Frage an ein Buch. Geprüfte Sätze kommen vorab als `sentence`-Ereignis,
+ * das Ergebnis ist die endgültige Antwort (auch als `done`). Bereich und
+ * Grenze gelten für genau diese Anfrage. Bei Eval-Status „durchgefallen“
+ * für das aufgelöste Modell, ohne Modell, ohne Cloud-Freigabe, offline oder ohne
+ * Budgetnachweis kommt eine Antwort `found_only` mit Grund. `Err` nur bei
+ * ungültiger Anfrage, laufender Frage und Abbruch (`cancelled`, dann
+ * `failed`-Ereignis, nichts wird gespeichert). Bei ausgeschaltetem Schalter
+ * `book_talk_enabled` gilt der Fundstellen-Modus (`found_only`, `no_model`).
+ * Der Schalter ist die Vorschau (Spec §11.5): ungeprüfte Tupel antworten,
+ * bestandene ebenso, durchgefallene nie. Das `done`-Ereignis bleibt
+ * unverändert (Vertrag ohne Zusatzfeld); die Oberfläche kennzeichnet jede
+ * generierte Antwort weiter als „Vorschau“.
+ */
+async bookTalkAsk(req: BookTalkRequest) : Promise<Result<BookTalkAnswer, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("book_talk_ask", { req }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Bricht eine laufende Frage ab; es kommt nur noch `failed { cancelled }`,
+ * nichts wird gespeichert. Trifft der Abbruch vor der Anmeldung der Frage
+ * ein, wird er vorgemerkt und gilt für sie. `false`, wenn zu dieser Anfrage
+ * kein Lauf (mehr) existiert.
+ */
+async bookTalkCancel(requestId: string) : Promise<boolean> {
+    return await TAURI_INVOKE("book_talk_cancel", { requestId });
+},
+/**
+ * Verlauf des Gesprächs mit einem Buch (älteste zuerst, höchstens 200 Wechsel).
+ */
+async bookTalkHistory(bookId: string) : Promise<Result<StoredTurn[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("book_talk_history", { bookId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Verlauf löschen.
+ */
+async bookTalkClear(bookId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("book_talk_clear", { bookId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Sprachbefehl erkennen (ohne Modell). „Ja“ ist nur dann ein Befehl
+ * (`read_citation`), wenn die letzte Antwort die Stelle zum Vorlesen anbot.
+ */
+async bookTalkCommand(bookId: string, text: string) : Promise<Result<BookTalkCommand | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("book_talk_command", { bookId, text }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Einstellung `book_talk_enabled` (Schalter für das Gespräch mit dem Buch).
+ */
+async changeBookTalkEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_book_talk_enabled_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Schalter „Abo-Vorschau“ (`book_talk_subscription_preview`, Standard aus).
+ * Einschalten (und erneutes Bestätigen) geht nur nach dem Risikohinweis
+ * („Budget empirisch, nicht bewiesen; Anfragen gehen an Anthropic/OpenAI über
+ * dein Abo“): `acknowledged` kommt vom Dialog. Dabei werden Anbieter, Modell,
+ * CLI-Version und SHA-256 des Programms je Abo-Modell gebunden; weicht eines
+ * später ab, wirkt der Schalter nicht, bis erneut bestätigt wird. Ausschalten
+ * löscht die Bindung.
+ */
+async changeBookTalkSubscriptionPreviewSetting(enabled: boolean, acknowledged: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_book_talk_subscription_preview_setting", { enabled, acknowledged }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Zustand der Abo-Vorschau für das aktuelle Gesprächsmodell.
+ */
+async bookTalkPreviewStatus() : Promise<Result<BookTalkPreviewStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("book_talk_preview_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Einstellung `book_talk_cloud_consent` (Schlüssel `Verbindung::Modell` mit
+ * Freigabe). Doppelte und unbekannte Schlüssel fallen weg; Lesen und
+ * Schreiben laufen unter der gemeinsamen Einstellungssperre, damit kein
+ * veralteter Stand einen frischen Widerruf überschreibt.
+ */
+async changeBookTalkCloudConsentSetting(providers: string[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_book_talk_cloud_consent_setting", { providers }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Eine Textfassung exportieren. Das Format ergibt sich aus der Endung
+ * (`epub`, `pdf`, `docx`, `md`, `txt`). Rückgabe: der geschriebene Pfad.
+ */
+async libraryExportText(meta: LibraryExportMeta, markdown: string, path: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_export_text", { meta, markdown, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Ist ffmpeg erreichbar? Dann bietet der Exportdialog M4B und MP3 an.
+ */
+async libraryFfmpegAvailable() : Promise<boolean> {
+    return await TAURI_INVOKE("library_ffmpeg_available");
+},
+/**
+ * Hörbuch exportieren.
+ * 
+ * - `original`: ein Teil → Kopie nach `out_path` (Endung des Originals);
+ * mehrere Teile → `out_path` ist ein Ordner, darin „01 – Titel.ext“ …
+ * - `m4b` / `mp3`: alle Teile über ffmpeg in EINE Datei; M4B mit einer
+ * Kapitelmarke je Teil, wenn alle Teile eine Dauer haben.
+ * 
+ * Rückgabe: die geschriebenen Dateien.
+ */
+async libraryExportAudio(paths: string[], chapters: LibraryExportChapter[], outPath: string, format: string, title: string) : Promise<Result<string[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_export_audio", { paths, chapters, outPath, format, title }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -4940,6 +6204,30 @@ async ttsPrewarmCancel() : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Anlauf fuer den naechsten Buchteil (lva#150): die ersten Saetze still
+ * vorberechnen. Kehrt sofort zurueck.
+ */
+async ttsPrefetchHead(text: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_prefetch_head", { text }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Bildschirm wach halten (Sonnen-Knopf im Vorlesen) oder freigeben.
+ * `true`, wenn das Betriebssystem die Anzeige jetzt wach hält.
+ */
+async screenKeepAwake(on: boolean) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("screen_keep_awake", { on }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async ttsServerStatus() : Promise<Result<TtsStatus, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("tts_server_status") };
@@ -5176,6 +6464,34 @@ async ttsTidyText(text: string) : Promise<Result<string, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Textarbeit im Editor-Menue: `task` = `grammar` | `structure`, `lines` =
+ * nummerierte Zeilen `N|Text`. Antwort: nur die Aenderungen im selben
+ * Zeilenformat (siehe `lib/reader/textAssist.ts`). Fortschritt ueber
+ * `tts-transform-progress` mit `kind: "assist"`.
+ */
+async ttsTextAssist(task: string, lines: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_text_assist", { task, lines }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Sprechfassung: den Text so umsetzen, dass eine Vorlesestimme ohne
+ * Betonungs-Steuerung (Phonon, Piper) ihn richtig betont — Satzzeichen,
+ * Satzteilung, Zahlen ausschreiben. Nichts kürzen; die Prüfung
+ * `summarizer::check_speech_version` lehnt Inhaltsänderungen ab.
+ */
+async ttsSpeechText(text: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_speech_text", { text }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async ttsExtractDocument(path: string) : Promise<Result<string, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("tts_extract_document", { path }) };
@@ -5187,6 +6503,303 @@ async ttsExtractDocument(path: string) : Promise<Result<string, string>> {
 async ttsExtractUrl(url: string) : Promise<Result<string, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("tts_extract_url", { url }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Buchdaten zu einer ISBN abrufen. `Ok(None)`: Open Library kennt sie nicht.
+ */
+async isbnLookup(isbn: string) : Promise<Result<IsbnBook | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("isbn_lookup", { isbn }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async libraryList() : Promise<Result<LibraryBook[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_list") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Anlegen (leere Kennung) oder ändern. Gibt das gespeicherte Buch zurück.
+ */
+async librarySave(book: LibraryBook) : Promise<Result<LibraryBook, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_save", { book }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Buch aus der Bibliothek entfernen, samt Cover und importiertem Hörbuch.
+ * Die Vorlesen-Seite der Textfassung bleibt (sie löscht die Oberfläche auf
+ * Wunsch selbst), ebenso der Fortschritt bis zum nächsten Aufräumen.
+ */
+async libraryDelete(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_delete", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Bücher in den Papierkorb legen; die Oberfläche bietet „Rückgängig“ an und
+ * löscht danach mit [`library_purge`] endgültig.
+ */
+async libraryTrash(ids: string[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_trash", { ids }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async libraryRestore(ids: string[]) : Promise<Result<LibraryBook[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_restore", { ids }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Inhalt des Papierkorbs, zuletzt entfernte zuerst.
+ */
+async libraryTrashList() : Promise<Result<TrashEntry[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_trash_list") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Belegter Platz je Buch (Bytes), für die Rückfrage vor dem Löschen.
+ */
+async librarySizes(ids: string[]) : Promise<Result<number[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_sizes", { ids }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Endgültig löschen (`ids`), ohne Angabe nur, was länger als 30 Tage im
+ * Papierkorb liegt.
+ */
+async libraryPurge(ids: string[] | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_purge", { ids }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Gibt es das Werk schon? Dann soll die neue Fassung angehängt werden.
+ */
+async libraryFindDuplicate(title: string, authors: string[], isbn: string | null) : Promise<Result<LibraryBook | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_find_duplicate", { title, authors, isbn }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Ausgaben bei Open Library suchen: per ISBN oder per Titel und Autor.
+ */
+async libraryMetadataSearch(title: string, author: string, isbn: string | null) : Promise<Result<MetadataCandidate[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_metadata_search", { title, author, isbn }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Klappentext eines Werks (`/works/OL…W`).
+ */
+async libraryDescription(workKey: string) : Promise<Result<string | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_description", { workKey }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Cover aus Open Library laden (per Cover-Kennung oder ISBN) und ablegen.
+ */
+async libraryCoverFetch(id: string, coverId: number | null, isbn: string | null) : Promise<Result<LibraryBook, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_cover_fetch", { id, coverId, isbn }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Cover aus einer Bilddatei oder dem Coverbild einer EPUB übernehmen.
+ */
+async libraryCoverFromFile(id: string, path: string) : Promise<Result<LibraryBook, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_cover_from_file", { id, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Eigenes Cover entfernen: die Oberfläche zeichnet wieder das generierte.
+ */
+async libraryCoverClear(id: string) : Promise<Result<LibraryBook, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_cover_clear", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Cover-Vorschläge: lokal das in die Hördatei eingebettete Bild; mit
+ * `online` zusätzlich die Cover passender Ausgaben aus Open Library
+ * (hinaus gehen nur ISBN bzw. Titel und Autor).
+ */
+async libraryCoverCandidates(id: string, online: boolean) : Promise<Result<CoverCandidate[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_cover_candidates", { id, online }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Das in die Hördatei eingebettete Cover übernehmen.
+ */
+async libraryCoverFromAudio(id: string) : Promise<Result<LibraryBook, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_cover_from_audio", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Dialog „Cover ändern“ geschlossen: zwischengelegte Vorschau wegräumen.
+ */
+async libraryCoverPreviewClear(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_cover_preview_clear", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Hörbuch in die Bibliothek kopieren und als Audiofassung eintragen. Die
+ * Kopie macht das Buch unabhängig davon, ob die Quelldatei liegen bleibt.
+ */
+async libraryAudioImport(id: string, path: string) : Promise<Result<LibraryBook, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_audio_import", { id, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Mehrere Dateien als Teile **einer** Audiofassung importieren, in der
+ * gegebenen Reihenfolge (`teil_001.<ext>` …). `append` hängt hinter die
+ * vorhandenen Teile, sonst ersetzen die neuen alle alten.
+ */
+async libraryAudioImportTracks(id: string, paths: string[], append: boolean) : Promise<Result<LibraryBook, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_audio_import_tracks", { id, paths, append }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Bücher mit je einem Teil zu **einem** Hörbuch zusammenführen: die Teile der
+ * Quellen wandern in der gegebenen Reihenfolge hinter die des Ziels, samt
+ * Dauer und Transkriptions-Auftrag. Die Quellbücher verschwinden. Mit
+ * `replace` ersetzen sie das vorhandene Hörbuch des Ziels (dessen Dateien
+ * gehen erst nach erfolgreichem Schreiben weg, Fehler rollen alles zurück).
+ */
+async libraryMergeAudio(targetId: string, sourceIds: string[], replace: boolean) : Promise<Result<LibraryBook, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_merge_audio", { targetId, sourceIds, replace }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Gesamter gespeicherter Fortschritt (Schlüssel → JSON-Text).
+ */
+async libraryProgressLoad() : Promise<Result<Partial<{ [key in string]: string }>, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_progress_load") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Fortschritt sichern: Einträge einpflegen und die Datei atomar ersetzen.
+ */
+async libraryProgressPut(entries: ProgressEntry[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_progress_put", { entries }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Gespeicherter Abgleich des Buchs (leer, wenn der Text sich geändert hat).
+ */
+async audiosyncLoad(bookId: string) : Promise<Result<AudioSyncCache, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("audiosync_load", { bookId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Ein Fenster des Hörbuchs erkennen und gegen den Text legen.
+ * 
+ * `from_ms` und `len_ms` gelten global über alle Teile; ein Fenster endet
+ * am Ende seines Teils. `hint`: erwartete Zeichenstelle (aus dem letzten
+ * Fenster oder der Schätzung); ohne Hinweis wird das ganze Buch durchsucht.
+ */
+async audiosyncWindow(bookId: string, fromMs: number, lenMs: number, hintChars: number | null) : Promise<Result<AudioSyncWindow, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("audiosync_window", { bookId, fromMs, lenMs, hintChars }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Stelle von Hand setzen: bei `ms` im Hörbuch ist Zeichen `chars` zu hören.
+ */
+async audiosyncAnchor(bookId: string, chars: number, ms: number) : Promise<Result<AudioSyncCache, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("audiosync_anchor", { bookId, chars, ms }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -5758,6 +7371,19 @@ async ttsProviderSetVisibleVoices(id: string, voices: string[]) : Promise<Result
 }
 },
 /**
+ * Eigenen Anzeigenamen einer Stimme setzen; `name` leer oder `None`: ursprünglicher Name. Gilt für
+ * jeden Anbieter (auch Piper); Fish-Stimmen tragen ihren Namen in den eigenen Metadaten
+ * (`tts_set_voice_meta`). `original`: der Name, den die Oberfläche als ursprünglich zeigt.
+ */
+async ttsProviderSetVoiceName(id: string, voice: string, name: string | null, original: string | null) : Promise<Result<null, TtsError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_provider_set_voice_name", { id, voice, name, original }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Die Stimmen der freigegebenen Anbieter für das Vorlesen-Dropdown (nur die gewählten, siehe
  * [`voice_options`]). Anbieter ohne Freigabe, mit Sperre oder ohne Antwort fehlen.
  */
@@ -5954,6 +7580,7 @@ async isLaptop() : Promise<Result<boolean, string>> {
 
 
 export const events = __makeEvents__<{
+bookTalkEvent: BookTalkEvent,
 briefRequestEvent: BriefRequestEvent,
 calendarSyncEvent: CalendarSyncEvent,
 documentEvent: DocumentEvent,
@@ -5974,6 +7601,7 @@ streamTextEvent: StreamTextEvent,
 ttsProviderPreview: TtsProviderPreview,
 ttsProviderVoiceSample: TtsProviderVoiceSample
 }>({
+bookTalkEvent: "book-talk-event",
 briefRequestEvent: "brief-request-event",
 calendarSyncEvent: "calendar-sync-event",
 documentEvent: "document-event",
@@ -6044,6 +7672,7 @@ export type AgentClient = { id: string; label: string;
  */
 integration_id: string; created_at: number; last_used_at: number | null; revoked_at: number | null }
 export type AgentClientView = { client: AgentClient; tools: ToolView[] }
+export type AntwortSicht = { text: string; citations: number[]; unsupported: boolean }
 /**
  * The container-level `serde(default)` (backed by the `Default` impl below)
  * guarantees every field — including ones added in the future — falls back to
@@ -6091,6 +7720,10 @@ memory_guard_percent?: number; history_limit?: number; recording_retention_perio
  * auf `active_llm_model` umgestellt sind (siehe `sync_legacy_from_llm`).
  */
 llm_connections?: LlmConnection[]; llm_models?: LlmModelConfig[]; llm_active_model_id?: string | null; 
+/**
+ * Modelle je Funktion; fehlt ein Eintrag oder ist er leer, gilt das Standardmodell.
+ */
+function_models?: Partial<{ [key in string]: FunctionModel }>; 
 /**
  * Weitere Ordner mit Sprachmodellen (GGUF-Ordner wie der von LM Studio
  * oder der Modellspeicher von Ollama). Die App laedt die Modelle von
@@ -6276,6 +7909,11 @@ tts_reference_auto_transcribe?: boolean;
  */
 tts_speed?: number; 
 /**
+ * Sprachfluss (0–1): Länge der Pausen an Komma, Satz- und Absatzende.
+ * 0 zügig, 0,5 Hörbuch-Standard, 1 ruhig.
+ */
+tts_flow?: number; 
+/**
  * Ausgabeformat für den Datei-Export ("wav" | "mp3" | "opus") — der
  * Fish-Server encodiert direkt.
  */
@@ -6411,6 +8049,47 @@ meeting_default_template_id?: string | null;
  */
 meeting_semantic_search?: boolean; 
 /**
+ * Buch-Gespraech (lva#308): Schluessel `Verbindung::Modell` (je Modell,
+ * lva#309), an die Buchauszuege gesendet werden duerfen. Lokale Modelle
+ * brauchen keine Freigabe; ein anderes Modell ohne Eintrag ergibt den Code
+ * `consent_required`.
+ */
+book_talk_cloud_consent?: string[]; 
+/**
+ * Buch-Gespraech (lva#308): Schalter „KI-Antworten (Vorschau)“, Standard
+ * aus. Ein: auch Tupel ohne Eval-Eintrag (ungeprueft) antworten, mit
+ * Vorschau-Kennzeichnung in der Oberflaeche; Tupel mit Status
+ * „durchgefallen“ (`book_talk_eval_pass.json`) nie. Aus: nur Fundstellen.
+ */
+book_talk_enabled?: boolean; 
+/**
+ * Buch-Gespraech (lva#320, Spec 11.3): Das gekoppelte iPhone darf die
+ * freigegebenen Abo-Modelle (Claude, Codex) ueber diesen PC nutzen. Standard
+ * aus; nur dann veroeffentlicht der PC seine Modellliste im Hub.
+ */
+book_talk_relay_enabled?: boolean; 
+/**
+ * Buch-Gespraech (lva#334): Schalter „Abo-Vorschau“ fuer Claude Code und
+ * Codex ueber das Abo. Standard aus; nur nach dem Risikohinweis
+ * einschaltbar („Budget empirisch, nicht bewiesen; Anfragen gehen an
+ * Anthropic/OpenAI ueber dein Abo“). Gilt fuer Desktop-Aufrufe und
+ * Relay-Anfragen, aber nur mit gueltigem Tupel in
+ * `book_talk_preview_bindings`.
+ */
+book_talk_subscription_preview?: boolean; 
+/**
+ * Buch-Gespraech (lva#334): beim Einschalten gebundene Tupel (Anbieter,
+ * Modell, CLI-Version, SHA-256 des Programms) je Abo-Modell. Weicht eines
+ * ab, ist die Freigabe fuer dieses Modell ungueltig (erneut bestaetigen).
+ */
+book_talk_preview_bindings?: PreviewBinding[]; 
+/**
+ * Stimmprofile 2a: Vorschläge „klingt wie …, zusammenführen?“ aus Stimmabdrücken
+ * innerhalb einer Besprechung (CAM++). Wirkt erst, wenn das Modell per Knopf
+ * geladen ist; ohne den Schluessel gilt `true`. Kein Abgleich ueber Besprechungen.
+ */
+meeting_voice_suggestions?: boolean; 
+/**
  * D3 (#70): Bildanalyse fuer Folien. Gemma 4 E4B liest den Text erkannter Folien neu
  * (Zahlen und Tabellen stimmen) und beschreibt sie; dafuer startet der lokale Server
  * kurz mit Bild-Projektor. Standard AUS (der Projektor ist ein optionaler 990-MB-
@@ -6439,11 +8118,13 @@ meeting_final_model?: string;
 meeting_diarization?: string; 
 /**
  * U7: wie viele Dateien der Import-Warteschlange gleichzeitig transkribiert
- * werden: 1 (Standard), 2 oder 3. Mehr als eine nur, solange Arbeitsspeicher
- * (und bei GPU-Modellen Grafikspeicher) fuer die weitere Engine reichen;
- * sonst wartet die naechste Datei. Ohne den Schluessel (aeltere
- * settings.json) gilt 1; Werte ausserhalb 1 bis 3 zaehlen als der naechste
- * gueltige.
+ * werden: 0 = Automatisch (Standard, nach Kernen, Arbeits- und
+ * Grafikspeicher, `queue::recommended_parallel`) oder fest 1 bis 4. Mehr
+ * als eine nur, solange Arbeitsspeicher (und bei GPU-Modellen
+ * Grafikspeicher) fuer die weitere Engine reichen; sonst wartet die
+ * naechste Datei. Ohne den Schluessel gilt Automatisch; Werte ueber 4
+ * zaehlen als 4. Schema 5 stellt den alten Standard 1 einmalig auf
+ * Automatisch um.
  */
 meeting_import_parallel?: number; 
 /**
@@ -6496,6 +8177,30 @@ meeting_mcp_enabled?: boolean;
  * Treffer aus dem Transkript)? Nur wirksam mit `meeting_mcp_enabled`.
  */
 meeting_mcp_include_transcript?: boolean; 
+/**
+ * Stufe 2 des Sprachgesprächs: darf die Sprach-KI Transkripte von Besprechungen lesen
+ * (`meeting_transcript`, Treffer aus dem Transkript)? Getrennt vom MCP-Server; Standard AUS
+ * (ADR-0021).
+ */
+voice_call_read_transcripts?: boolean; 
+/**
+ * Wissensbereiche, die das Sprachgespräch nachschlagen darf (Schlüssel aus
+ * `agent_bridge::voice::areas::Area`: `meetings`, `dictations`, `conversations`,
+ * `calendar`, `tts`). Standard LEER: ohne Freigabe sieht das Modell nichts (ADR-0021).
+ * Das Transkript ist der Unterschalter `voice_call_read_transcripts` und wirkt nur mit
+ * `meetings`. Getrennt von den Rechten externer Agenten.
+ */
+voice_call_knowledge?: string[]; 
+/**
+ * Stufe 3 des Sprachgesprächs: aus Korrekturen lernen (ADR-0021). Standard AUS; ohne diesen
+ * Schalter wird kein Paar gespeichert.
+ */
+speech_learning_enabled?: boolean; 
+/**
+ * Gelernte Paare mit genug Vorkommen gleich in `custom_words` übernehmen statt vorzuschlagen.
+ * Standard AUS; wirkt nur bei `speech_learning_enabled`.
+ */
+speech_learning_auto_apply?: boolean; 
 /**
  * M5-P5f (E14): Anwendungs-(Client-)ID der EIGENEN Entra-App fuer die
  * Microsoft-Anmeldung (oeffentlicher Client, Weiterleitungs-URI
@@ -6613,6 +8318,80 @@ export type AudioSegment = { text: string;
  */
 voice: string | null; start_ms: number; end_ms: number }
 /**
+ * Inhalt von `sync-live.json`.
+ */
+export type AudioSyncCache = { 
+/**
+ * Fingerabdruck des Buchtexts; passt er nicht, ist der Cache verworfen.
+ */
+text_key: string; points: SyncPoint[]; inserts: AudioSyncInsert[]; covered: AudioSyncSpan[]; 
+/**
+ * Von Hand gesetzte Stellen („dieser Satz ist gerade zu hören“). Sie
+ * gehen den erkannten Punkten vor.
+ */
+anchors?: SyncPoint[] }
+/**
+ * Gehörter Text ohne Gegenstück im Buch (vor Zeichen `at`).
+ */
+export type AudioSyncInsert = { at: number; start_ms: number; end_ms: number; text: string }
+/**
+ * Abgedeckter Zeitraum des Hörbuchs (ms, global über alle Teile).
+ */
+export type AudioSyncSpan = { from_ms: number; to_ms: number }
+/**
+ * Ergebnis eines Fensters.
+ */
+export type AudioSyncWindow = { points: SyncPoint[]; inserts: AudioSyncInsert[]; 
+/**
+ * Anteil der gehörten Wörter mit Treffer (0..1).
+ */
+coverage: number; 
+/**
+ * Hinweis für das nächste Fenster (Buchwort-Index nach dem letzten Treffer).
+ */
+next_hint: number | null; from_ms: number; to_ms: number }
+/**
+ * Ein Teil (Datei) eines Hörbuchs.
+ */
+export type AudioTrack = { 
+/**
+ * Dateiname unter `<id>/audio/` (`teil_001.mp3`, …).
+ */
+file: string; 
+/**
+ * Anzeigename, beim Import der Dateiname ohne Endung.
+ */
+title: string; duration_ms: number | null; 
+/**
+ * Laufende Transkription dieses Teils (Import-Warteschlange).
+ */
+transcript_job: string | null; 
+/**
+ * Lange Einzeldatei in Abschnitten (lva#208): ein Auftrag je Zeitabschnitt.
+ * Nicht leer: ersetzt `transcript_job`. Leer: wie bisher ein Auftrag je Teil.
+ */
+transcript_jobs?: TranscriptPart[] }
+export type AudioVersion = { 
+/**
+ * Dateiname unter `<id>/audio/`. Bei mehreren Teilen der erste Teil.
+ */
+file: string; duration_ms: number | null; narrator: string | null; 
+/**
+ * Laufende Transkription (Import-Warteschlange), bis der Text übernommen
+ * ist. Gilt für Altbestand mit einer Datei; mehrteilige Hörbücher führen
+ * den Auftrag je Teil in [`AudioTrack::transcript_job`].
+ */
+transcript_job: string | null; 
+/**
+ * Teile eines mehrteiligen Hörbuchs in Hörreihenfolge. Leer bedeutet:
+ * ein Teil, nämlich `file` ([`tracks_of`]).
+ */
+tracks?: AudioTrack[]; 
+/**
+ * Zeitachse Text ↔ Audio aus dem Transkript (Absatzbeginn → Gesamt-ms).
+ */
+sync?: SyncPoint[] }
+/**
  * Ein Eintrag des Audit-Logs.
  */
 export type AuditEntry = { id: number; ts: number; caller: string; integration_id: string | null; capability: string | null; target: string | null; 
@@ -6705,6 +8484,52 @@ export type AvailableAccelerators = { transcribe: string[]; ort: string[]; gpu_d
  */
 export type Avatar = { kind: "image"; file: string } | { kind: "icon"; name: string }
 export type BindingResponse = { success: boolean; binding: ShortcutBinding | null; error: string | null }
+/**
+ * Warum die Vorschau (noch) nicht freigegeben ist.
+ */
+export type Blocked = 
+/**
+ * Keine CLI zu finden oder nicht lesbar.
+ */
+"no_cli" | 
+/**
+ * Das tatsaechlich gestartete Programm ist nicht bestimmbar.
+ */
+"payload_unknown" | 
+/**
+ * Fuer dieses Modell wurde nie bestaetigt.
+ */
+"binding_missing" | 
+/**
+ * Version, Programm oder Modell weichen vom bestaetigten Tupel ab.
+ */
+"binding_changed" | 
+/**
+ * Fuer diese CLI-Version sind nicht alle Isolationsfaehigkeiten belegt.
+ */
+"isolation_unverified" | 
+/**
+ * Keine Messung fuer (CLI, Version, Programm, Modell) auf diesem Geraet.
+ */
+"measurement_missing" | 
+/**
+ * Der Kontext des Modells ist nicht belegt.
+ */
+"context_unknown" | 
+/**
+ * Codex gibt es in der Vorschau nicht (Phase 2, eigenes Issue).
+ */
+"codex_preview_not_available" | 
+/**
+ * Das Claude-Programm ist keine native Binaerdatei (npm-, Node- oder
+ * Skript-Launcher): nicht bindbar.
+ */
+"claude_not_native" | 
+/**
+ * Dieses System kann das geprueft gehaltene Programm nicht ohne
+ * Austauschfenster starten (kein `/proc`, macOS, andere Unix): gesperrt.
+ */
+"platform_unsupported"
 export type Book = { id: string; title: string; created_ms: number; 
 /**
  * Seiten in Reihenfolge der Teile.
@@ -6714,12 +8539,206 @@ page_ids: string[]; characters: BookCharacter[];
  * Sprache der Geschichte (BCP-47-Kurzform), Vorgabe "de".
  */
 language?: string }
+/**
+ * Prognose vor dem Start (`book_ai_estimate`).
+ */
+export type BookAiEstimate = { figures: TokenFigures; 
+/**
+ * Läuft das aktive Modell lokal?
+ */
+local: boolean; 
+/**
+ * Wurde mit dem Tokenizer des Modells kalibriert (sonst Durchschnittswert)?
+ */
+measured: boolean; 
+/**
+ * Bereits zwischengespeicherte Arbeitsschritte, die nichts mehr kosten.
+ */
+cached_steps: number; 
+/**
+ * Modell, nach dessen Preis gerechnet wurde (ohne Anbieter).
+ */
+model: string }
 export type BookCharacter = { name: string; 
 /**
  * voice_id der Stimme, mit der die Figur spricht (`None` = Standard).
  */
 voice_id: string | null; description: string }
 export type BookPreview = { title: string; pages: number; voices: PackageVoice[]; rights_confirmed: boolean }
+/**
+ * Die Antwort in zwei Formen (D5; Form wie `BookTalkAnswer` im Vertrag).
+ */
+export type BookTalkAnswer = { intent: BookTalkIntent; sentences: BookTalkSentence[]; text: string; 
+/**
+ * Sprechfassung: Satz-Sprechfassungen, dann Rückfrage bzw. „bis Seite N“.
+ */
+speech: string; citations: BookTalkCitation[]; 
+/**
+ * Ohne belegte Modellantwort: nur Fundstellen oder ein Hinweis.
+ */
+found_only: boolean; 
+/**
+ * Grund für `found_only` (Codes des Vertrags oder `no_hits`); fehlt, wenn
+ * das Modell Sätze lieferte, aber keiner belegbar war.
+ */
+reason?: string | null; 
+/**
+ * Verworfene (unbelegte) Sätze der Modellantwort.
+ */
+dropped: number; scope: BookTalkScope; frontier: number; 
+/**
+ * Die Antwort stammt aus der Abo-Vorschau (lva#334: Claude Code oder
+ * Codex ueber das Abo, Budget nur empirisch, nicht bewiesen). Die
+ * Oberflaeche kennzeichnet sie als „Vorschau“.
+ */
+preview: boolean }
+/**
+ * Ein Beleg: Stelle im Buch mit wörtlichem Zitat (Form wie `Citation` im Vertrag).
+ */
+export type BookTalkCitation = { 
+/**
+ * Auszugsnummer `Q<k>` im Prompt.
+ */
+q: number; 
+/**
+ * Seite aus der letzten Seitenmarke vor `start`; fehlt, wenn keine kam.
+ */
+page?: number | null; chapter_index: number; chapter_title: string; 
+/**
+ * UTF-16-Offsets im Originaltext (Ende exklusiv).
+ */
+start: number; end: number; quote: string }
+/**
+ * Ein Sprachbefehl, Form wie `Command` im Vertrag: `{ "kind": "jump" }`.
+ */
+export type BookTalkCommand = { kind: BookTalkCommandKind }
+export type BookTalkCommandKind = "jump" | "read_citation" | 
+/**
+ * „Ja“: nach der Rückfrage „Soll ich dir die Stelle vorlesen?“ gleich
+ * `ReadCitation`, sonst eine Frage (siehe `resolve_confirm`).
+ */
+"confirm" | "resume" | "scope_book" | "scope_position" | "stop" | "end"
+/**
+ * Ereignis `book-talk-event` (Form wie `BookTalkEvent` im Vertrag).
+ */
+export type BookTalkEvent = { kind: "sentence"; request_id: string; sentence: BookTalkSentence } | { kind: "done"; request_id: string; answer: BookTalkAnswer } | { kind: "failed"; request_id: string; code: string }
+export type BookTalkInput = "voice" | "text"
+export type BookTalkIntent = "recap" | "locate" | "explain" | "question"
+/**
+ * Zustand der Abo-Vorschau für die Oberfläche.
+ */
+export type BookTalkPreviewStatus = { 
+/**
+ * Schalter `book_talk_subscription_preview`.
+ */
+enabled: boolean; 
+/**
+ * Das Gesprächsmodell ist ein Abo-Modell (CLI).
+ */
+applies: boolean; 
+/**
+ * `reconfirm`: der Schalter ist an, wirkt aber nicht, bis erneut bestätigt
+ * wird; `not_released`: Isolation oder Messung auf diesem Gerät fehlen.
+ */
+state: PreviewState; 
+/**
+ * Warum die Vorschau (noch) nicht wirkt (`measurement_missing`,
+ * `isolation_unverified`, `binding_changed` …); sonst `None`.
+ */
+blocked: Blocked | null }
+/**
+ * Anfrage (Form wie `BookTalkRequest` im Vertrag). Bereich und Grenze gelten
+ * für genau diese Anfrage.
+ */
+export type BookTalkRequest = { book_id: string; request_id: string; question: string; 
+/**
+ * Spoilergrenze: weitester gelesener oder gehörter Stand (UTF-16 im
+ * Originaltext). Fehlt sie, gilt Schutz mit 0 (`no_frontier`).
+ */
+frontier?: number | null; scope: BookTalkScope; input: BookTalkInput }
+/**
+ * Bereich der Suche (D4).
+ */
+export type BookTalkScope = 
+/**
+ * Nur der gelesene oder gehörte Teil (Standard).
+ */
+"until_position" | 
+/**
+ * Das ganze Buch.
+ */
+"book"
+/**
+ * Ein geprüfter Satz (Form wie `Sentence` im Vertrag).
+ */
+export type BookTalkSentence = { index: number; 
+/**
+ * Satz ohne `[Q<k>]`-Marker.
+ */
+text: string; 
+/**
+ * Sprechfassung, der erste belegte Satz mit gesprochenem Zitat.
+ */
+speech: string; citations: BookTalkCitation[]; 
+/**
+ * Allgemeinwissen, ohne Beleg.
+ */
+general: boolean }
+export type BookTemplate = { id: string; title: string; 
+/**
+ * Gruppe in der Auswahl: "ueberblick" | "lernen" | "analyse" | "anwenden".
+ */
+category: string; 
+/**
+ * Ein Satz für die Auswahl.
+ */
+description: string; 
+/**
+ * Zweck und Haltung des Ergebnisses.
+ */
+context: string; 
+/**
+ * Leer bei Fließtext ohne Gliederung.
+ */
+sections: BookTemplateSection[]; 
+/**
+ * Zielumfang des ganzen Ergebnisses in Wörtern.
+ */
+target_words: number; form: TemplateForm; 
+/**
+ * "allgemein" | "fachpublikum" | "management" | "einfache_sprache" | "lernende"
+ */
+audience: string; 
+/**
+ * Mitgeliefert und schreibgeschützt.
+ */
+builtin: boolean }
+export type BookTemplateSection = { title: string; instruction: string }
+export type BookTerm = { 
+/**
+ * Normalisierter Begriff (klein, Leerraum zusammengezogen).
+ */
+id: string; term: string; variants: string[]; kind: TermKind; 
+/**
+ * Was das Buch über den Begriff sagt. Leer, wenn es nichts erklärt.
+ */
+from_book: string; 
+/**
+ * Allgemeines Modellwissen, getrennt gekennzeichnet und nicht geprüft.
+ */
+general: string; 
+/**
+ * Kapitel, in dem der Begriff zuerst gefunden wurde.
+ */
+chapter: string; 
+/**
+ * Vom Nutzer geändert oder angelegt: Läufe überschreiben ihn nicht.
+ */
+user_edited: boolean; 
+/**
+ * Vom Nutzer ausgeblendet: wird nicht hervorgehoben und nicht neu angelegt.
+ */
+hidden: boolean }
 /**
  * Zustand der Bruecke fuer die Oberflaeche.
  */
@@ -6924,6 +8943,11 @@ export type Capability = "calendar.read" | "calendar.write" | "mail.send" | "fil
  */
 "workflow.run" | 
 /**
+ * Besprechungen auflisten, durchsuchen und das Transkript lesen (Sprachgespraech Stufe 2).
+ * Nur lesend; das Transkript folgt der Freigabe des lokalen MCP-Servers.
+ */
+"meeting.read" | 
+/**
  * In einen Kanal posten (Slack, Teams, Discord).
  */
 "chat.post" | 
@@ -7033,6 +9057,14 @@ export type Citation = { n: number; meeting_id: string; meeting_title: string; s
  * Hoechstens 200 Zeichen aus der belegten Stelle.
  */
 quote: string }
+/**
+ * Zustand einer CLI auf diesem Rechner, fuer die Verbindungsseite.
+ */
+export type CliStatus = { installed: boolean; 
+/**
+ * `None`: die CLI hat keine lesbare Antwort gegeben.
+ */
+logged_in: boolean | null }
 export type ClipboardHandling = "dont_modify" | "copy_to_clipboard"
 export type CloneRequest = { source: CloneSource; 
 /**
@@ -7176,6 +9208,26 @@ export type ConversationSummary = { id: string; title: string; updated_at: strin
  */
 last_text: string }
 /**
+ * Ein Cover-Vorschlag für die Auswahl „Cover ändern“.
+ */
+export type CoverCandidate = { 
+/**
+ * `audio` (in der Hördatei eingebettet) oder `openlibrary`.
+ */
+source: string; 
+/**
+ * Open-Library-Cover-Kennung.
+ */
+cover_id: number | null; isbn: string | null; 
+/**
+ * Vorschau: Web-Adresse (Open Library) oder lokaler Pfad.
+ */
+preview: string; 
+/**
+ * Kurz: Titel, Jahr, Verlag der Ausgabe.
+ */
+label: string }
+/**
  * Was der Chat gesehen hat (deterministisch; die UI formt daraus die graue
  * Abdeckungszeile).
  */
@@ -7225,6 +9277,11 @@ export type DetectMode =
  * Wo gerechnet wird.
  */
 export type Device = "cpu" | "cuda" | "metal" | "remote"
+export type DiarizationModelStatus = { 
+/**
+ * Katalogkennung (fuer die Fortschrittsereignisse `model-download-*`).
+ */
+model_id: string; model_ready: boolean; downloading: boolean; size_mb: number }
 /**
  * What happens to the system's audio output while a dictation runs, so
  * music or a video neither disturbs the speaker nor ends up in the recording.
@@ -7307,6 +9364,18 @@ output_language: string | null }
  * Ereignis eines Dokumentlaufs; `doc_type` ist der Schluessel des Katalogs.
  */
 export type DocumentEvent = { kind: "progress"; meeting_id: string; doc_type: string; phase: MinutesPhase; done: number; total: number } | { kind: "done"; meeting_id: string; doc_type: string; document_id: string } | { kind: "failed"; meeting_id: string; doc_type: string; code: string }
+/**
+ * Eintrag des Projektordners. Ohne Leserecht fehlen `title` und `subtitle` (`available` = false).
+ */
+export type EintragSicht = { id: string; kind: string; title: string | null; subtitle: string | null; originApp: string | null; dataClass: string | null; available: boolean; assignedAt: string | null; 
+/**
+ * `person` oder `automation`.
+ */
+assignedBy: string | null; 
+/**
+ * Verweis auf die Herkunft (`wai://lva/...`), nur bei lesbaren Eintraegen.
+ */
+link: string | null }
 export type EngineType = 
 /**
  * Any GGML/GGUF model loaded through transcribe-cpp (Whisper, Parakeet,
@@ -7401,6 +9470,22 @@ gedaempft: string;
  */
 linie: string }
 /**
+ * Was `feedback` gemacht hat. `reason`: `ok`, `nothing`, `rewrite` oder `off`.
+ */
+export type FeedbackOutcome = { reason: string; 
+/**
+ * Paare, die gespeichert oder hochgezählt wurden.
+ */
+learned: number; 
+/**
+ * Paare, die dadurch neu zum Vorschlag wurden.
+ */
+suggestions: number; 
+/**
+ * Paare, die dadurch (automatisch) übernommen wurden.
+ */
+adopted: number }
+/**
  * Wo in OneDrive geschrieben wird.
  */
 export type FilesMode = 
@@ -7446,7 +9531,11 @@ export type FlaggedSentence = { segment_index: number;
  * `numbers`, `names`, `sentences`, `empty`, `length`, `not_translated`.
  */
 reasons: string[] }
-export type Folder = { id: string; name: string; color: string | null; sort: number; meeting_count: number; created_at: number; updated_at: number }
+export type Folder = { id: string; name: string; color: string | null; sort: number; meeting_count: number; created_at: number; updated_at: number; 
+/**
+ * ADR-0026 PR-7: Suite-Projekt, auf das dieser Ordner zeigt (`None` = nicht verknuepft).
+ */
+projekt_id: string | null }
 /**
  * Zaehler der Projekte-Spalte neben den Ordnern: alle lebenden Besprechungen
  * und die ohne lebenden Ordner ("Ohne Projekt").
@@ -7468,6 +9557,38 @@ export type FollowupMode =
  * Als .eml-Datei speichern (`path`).
  */
 "eml"
+export type FreigabeAktion = 
+/**
+ * Die ausgewaehlten Anfragen senden.
+ */
+"senden" | 
+/**
+ * "Nur im Projekt suchen": nichts senden (ein Projektindex folgt mit PR-9).
+ */
+"nur_projekt" | "abbrechen"
+/**
+ * Angehaltene Recherche, die auf die Freigabe der Suchanfragen wartet.
+ */
+export type FreigabeInfo = { id: string; question: string; dataClass: string; 
+/**
+ * Frist des Halts in Sekunden (Rest ab jetzt).
+ */
+expiresInSecs: number; projectId: string | null; queries: FreigabeZeile[] }
+export type FreigabeZeile = { id: string; text: string; 
+/**
+ * Datenklasse (`PERSONAL` ...) der Anfrage, wenn sie eine Freigabe verlangt; die Oberflaeche
+ * bildet daraus den Hinweis in ihrer Sprache.
+ */
+hintClass: string | null }
+/**
+ * Modell einer Funktion (Modelle je Funktion, Vorschlag E1, 01.11.2026). Leere
+ * `model_id` = das Standardmodell (`llm_active_model_id`) gilt.
+ */
+export type FunctionModel = { model_id?: string; 
+/**
+ * Effort nur fuer diese Funktion (`low` … `max`); `None` = der des Modells.
+ */
+effort?: string | null }
 /**
  * Fusszeile.
  */
@@ -7624,6 +9745,18 @@ calendar_managed: boolean;
  */
 pending_approvals: number }
 /**
+ * Was Open Library zu einer ISBN weiß, so weit es die App braucht.
+ */
+export type IsbnBook = { 
+/**
+ * Normalisierte ISBN (nur Ziffern bzw. `X`).
+ */
+isbn: string; title: string; subtitle: string | null; authors: string[]; publishers: string[]; publish_date: string | null; pages: number | null; 
+/**
+ * Link auf die Open-Library-Seite (zum Nachsehen der Ausgabe).
+ */
+url: string | null }
+/**
  * Was ein Auftrag gerade tut. Die Oberflaeche benennt daran den Fortschritt.
  */
 export type JobPhase = 
@@ -7700,6 +9833,33 @@ supported: boolean; present: boolean;
  */
 problem: string | null }
 export type KeyboardImplementation = "tauri" | "handy_keys"
+export type KiDocument = { id: string; title: string; template_id: string; template_title: string; source: SummarySource; 
+/**
+ * Anzeige der Quelle, z. B. „Ganzes Buch“ oder „Kapitel 3“.
+ */
+source_label: string; created_ms: number; modified_ms: number; words: number; 
+/**
+ * Anbieter und Modell, mit dem das Dokument entstand.
+ */
+model: string; 
+/**
+ * Token: Prognose vor dem Start und tatsächlicher Verbrauch (fehlt bei
+ * älteren und übernommenen Dokumenten).
+ */
+usage?: KiUsage | null; 
+/**
+ * Sprache des Ergebnisses ("de", "en", …; lva#217). Fehlt bei älteren
+ * Dokumenten und Importen.
+ */
+language?: string | null }
+/**
+ * Verbrauch eines KI-Dokuments: was vorher geschätzt und was gebraucht wurde.
+ */
+export type KiUsage = { estimate: TokenFigures | null; actual: TokenFigures | null; 
+/**
+ * Lief auf diesem Rechner (keine Kosten bei einem Anbieter).
+ */
+local: boolean }
 /**
  * Art einer Integration. `Ics` und `Graph` sind die Kalenderquellen, die das
  * Register aus `calendar_sources` uebernimmt (gleiche ID).
@@ -7719,6 +9879,19 @@ export type Kind = "youtube" | "ics" | "graph" | "m365" | "smtp" | "folder" | "o
  * WAI Presenter (Etappe 4): Austauschordner fuer Besprechungspakete (`presenter.rs`).
  */
 "presenter"
+/**
+ * Teiländerung: fehlende oder `null`-Felder bleiben unverändert, ein leerer Text leert
+ * ein optionales Feld.
+ */
+export type KontoAenderung = { anzeigename: string | null; vorname: string | null; nachname: string | null; email: string | null; telefon: string | null; mobil: string | null; position: string | null; abteilung: string | null; organisation: string | null; standort: string | null; farbe: number | null }
+export type KontoAnmeldungDto = { issuer: string; subject: string; seitMs: number; idpFelder: string[] }
+export type KontoProfilDto = { id: string; anzeigename: string; vorname: string | null; nachname: string | null; email: string | null; telefon: string | null; mobil: string | null; position: string | null; abteilung: string | null; organisation: string | null; standort: string | null; farbe: number; hatBild: boolean; gesperrt: boolean; 
+/**
+ * Zeitpunkt der letzten Änderung des Profils (auch von Bild setzen/entfernen); das
+ * Frontend lädt das Bild nur nach, wenn sich dieser Wert ändert.
+ */
+geaendertMs: number; anmeldung: KontoAnmeldungDto | null }
+export type KontoStatus = { aktiv: KontoProfilDto; weitere: KontoProfilDto[]; sitzungsrevision: number }
 export type LLMPrompt = { id: string; name: string; prompt: string }
 /**
  * Was der Chip im Kopf der Besprechung braucht.
@@ -7748,6 +9921,31 @@ model_id: string | null; model_name: string | null; model_covers: boolean | null
  * Bessere Wahl, wenn das Modell die Sprache nicht abdeckt.
  */
 suggestion: ModelSuggestion | null }
+export type LaufAntwort = { 
+/**
+ * `fertig`, `freigabe` (wartet auf Entscheidung), `abgelehnt` oder `fehler`.
+ */
+status: string; rechercheId: string | null; 
+/**
+ * Deutscher Text (Rueckfall und Log-Zwecke).
+ */
+message: string | null; 
+/**
+ * Stabiler Code von `message` (z. B. `web_gesperrt`); die Oberflaeche uebersetzt ihn.
+ */
+code: string | null; 
+/**
+ * Bei `fehler` einer Freigabe: der Halt besteht weiter und kann abgebrochen werden.
+ */
+haltBleibt: boolean }
+/**
+ * Ein gelerntes Paar, wie es die Oberfläche sieht.
+ */
+export type LearnedPair = { id: number; bereich: string; gehoert: string; korrigiert: string; anzahl: number; zuletzt: string; 
+/**
+ * `beobachtet`, `vorschlag`, `uebernommen` oder `abgelehnt`.
+ */
+status: string }
 /**
  * Ein Briefkopf.
  */
@@ -7757,6 +9955,56 @@ export type Letterhead = { schema: string; id: string; name: string;
  * Laden eigener Profile immer auf `false` gesetzt, ein Wert aus der Datei zaehlt nie.
  */
 builtin?: boolean; firma: Firma; logo?: Logo | null; farben: Farben; fusszeile: Fusszeile }
+export type LibraryBook = { 
+/**
+ * Leer beim Anlegen; das Backend vergibt `book_<ms>`.
+ */
+id: string; title: string; subtitle: string | null; authors: string[]; language: string | null; isbn: string | null; publisher: string | null; publish_date: string | null; pages: number | null; description: string | null; 
+/**
+ * Woher die Metadaten stammen: `openlibrary`, `epub`, `manual`.
+ */
+metadata_source: string | null; 
+/**
+ * Woher das Cover stammt: `openlibrary`, `epub`, `audio`, `file` oder
+ * `generated`.
+ */
+cover_source: string; text: TextVersion | null; audio: AudioVersion | null; added_ms: number; finished: boolean; 
+/**
+ * Favorit: steht in der Bibliothek vor den übrigen Büchern. Gehört zum
+ * Buch (nicht zur Anzeige) und reist deshalb in der Sync-Sammlung `book` mit.
+ */
+favorite?: boolean; 
+/**
+ * Nur zur Anzeige, wird beim Auflisten gesetzt: absoluter Pfad des Covers
+ * samt Änderungszeit (`?v=`), damit ein neues Cover sofort erscheint.
+ */
+cover_path: string | null; 
+/**
+ * Nur zur Anzeige: absoluter Pfad des importierten Hörbuchs (erster Teil).
+ */
+audio_path: string | null; 
+/**
+ * Nur zur Anzeige: absolute Pfade aller Teile in Hörreihenfolge. Ein
+ * fehlender Teil steht als leerer Text an seiner Stelle; ist keiner da,
+ * ist die Liste leer.
+ */
+audio_paths?: string[] }
+/**
+ * Ein Teil des Hörbuchs als Kapitelmarke (M4B).
+ */
+export type LibraryExportChapter = { title: string; duration_ms: number | null }
+/**
+ * Angaben des Buchs für Kopf und Cover der Exportdatei.
+ */
+export type LibraryExportMeta = { title: string; authors: string[]; 
+/**
+ * Sprachcode der Fassung (`de`, `en`); fehlt: unbekannt.
+ */
+language: string | null; 
+/**
+ * Absoluter Pfad des Covers (mit oder ohne `?v=`), nur für EPUB.
+ */
+cover_path: string | null }
 /**
  * Zustimmung des Nutzers zu den Lizenzangaben eines Anbieters. Gilt nur,
  * solange `fingerprint` dem aktuellen Stand entspricht (siehe
@@ -7897,6 +10145,10 @@ notes: string | null }
  * Lief das Modell auf diesem Rechner oder bei einem entfernten Anbieter?
  */
 export type Locality = "local" | "remote"
+/**
+ * Was beim Loeschen eines Suite-Projekts mitging.
+ */
+export type LoeschErgebnis = { eintraegeEntfernt: number; ordnerGeloest: number; recherchenGeloescht: number; externeKopien: number }
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error"
 /**
  * Logo eines Profils: Datei im Profilordner (`logo-<ulid>.png|jpg`, aeltere
@@ -8001,7 +10253,13 @@ template_id: string | null;
  * earlier still carry seconds — the value is only ever compared for
  * equality, never interpreted, so both work.
  */
-updated_at: number }
+updated_at: number; 
+/**
+ * Von Hand bearbeitet (Protokoll-Editor, KI-Notizen): der Stempel liegt
+ * deutlich hinter dem Anlegen. Abgeleitet, keine eigene Spalte (siehe
+ * `is_hand_edited`); die Oberflaeche warnt damit vor dem Neu-Erzeugen.
+ */
+edited: boolean }
 /**
  * M2-P2c2: Echo-Unterdrückung der Ich-Spur einer Besprechung (der Systemton
  * dient als Referenz; Rauschunterdrückung und AGC bleiben immer aus).
@@ -8085,6 +10343,14 @@ export type MeetingNotes = { meeting_id: string; blocks: NoteBlock[]; revision: 
  */
 export type MeetingNotesEvent = { kind: "progress"; meeting_id: string; step: number; total: number } | { kind: "done"; meeting_id: string; document_id: string } | { kind: "failed"; meeting_id: string; code: string }
 /**
+ * Ein Teil einer Besprechung (Anzeige).
+ */
+export type MeetingPart = { part_index: number; title: string; source_path: string | null; 
+/**
+ * Beginn des Teils auf der Zeitachse der Besprechung.
+ */
+offset_ms: number; duration_ms: number }
+/**
  * Ereignis an das Fenster: `show` = es liegt ein neuer Hinweis vor (die
  * Oberflaeche holt ihn ueber `meeting_prompt_current`), `close` = zu.
  */
@@ -8167,7 +10433,8 @@ export type MeetingSpeaker = {
  */
 channel: number; 
 /**
- * Nummer im Kanal, ab 1.
+ * Nummer im Kanal, ab 1; 0 = der ganze Kanal ohne Sprechertrennung
+ * ("Aufnahme", "Ich", "Gegenseite"), benennbar wie jeder Sprecher.
  */
 speaker_index: number; 
 /**
@@ -8185,7 +10452,25 @@ human_id: string | null;
 /**
  * Redeanteil an der gesamten Sprechzeit, in Prozent (eine Nachkommastelle).
  */
-share_pct: number }
+share_pct: number; 
+/**
+ * Sprechzeit in Millisekunden (Summe der Segmentdauern).
+ */
+speech_ms: number; 
+/**
+ * Beginn des ersten Segments dieses Sprechers (`None`: keins, nur eine
+ * Zeile in `speakers`). Ordnet die Tabelle "Sprecher & Redeanteile".
+ */
+first_ms: number | null; 
+/**
+ * Frühere Namen (älteste zuerst): Texte, die vor dem Umbenennen entstanden
+ * sind, zeigen über sie den aktuellen Namen.
+ */
+former_names: string[]; 
+/**
+ * Standardbezeichnung ohne Namen ("Person 2", "Aufnahme").
+ */
+default_label: string }
 export type MemoryEstimate = { weights_mb: number; kv_mb: number; overhead_mb: number; total_mb: number; context_tokens: number; 
 /**
  * Woher die KV-Zahlen kommen: aus den Metadaten oder geraten.
@@ -8193,6 +10478,18 @@ export type MemoryEstimate = { weights_mb: number; kv_mb: number; overhead_mb: n
 from_metadata: boolean }
 export type MemoryFile = { kind: string; text: string }
 export type MemoryProposal = { verlauf: string; figuren: string; welt: string }
+/**
+ * Ein Treffer aus Open Library, als Vorschlag für den Dialog.
+ */
+export type MetadataCandidate = { title: string; subtitle: string | null; authors: string[]; first_publish_year: number | null; publisher: string | null; isbn: string | null; language: string | null; pages: number | null; 
+/**
+ * Open-Library-Cover-Kennung (`cover_i`).
+ */
+cover_id: number | null; 
+/**
+ * Werk-Schlüssel (`/works/OL…W`) für den Klappentext.
+ */
+work_key: string | null }
 /**
  * Was geaendert werden soll. `None` = unveraendert; eine leere Beschreibung
  * loescht sie; `participant_ids` und `folder_ids` ersetzen die Menge.
@@ -8569,6 +10866,112 @@ modified_ms?: number;
  */
 preview?: string }
 export type PaginatedHistory = { entries: HistoryEntry[]; has_more: boolean }
+export type PairStage = 
+/**
+ * QR anzeigen; mit `device_name` ist das iPhone erkannt und die Verbindung entsteht.
+ */
+"qr" | 
+/**
+ * Vergleichscode zeigen, Ja/Nein abfragen.
+ */
+"sas" | 
+/**
+ * Freigegeben, warte auf die Bestätigung des iPhones.
+ */
+"wait_confirm" | "connected" | 
+/**
+ * Freigegeben, aber keine gültige Bestätigung: Gerät abmelden anbieten.
+ */
+"unconfirmed" | "expired" | "aborted" | 
+/**
+ * Hub vorübergehend nicht erreichbar, bevor das iPhone gescannt hat.
+ */
+"network"
+export type PairView = { stage: PairStage; 
+/**
+ * SVG des QR-Codes, schwarz auf weiß (nur Stufe `qr`).
+ */
+qr_svg: string | null; 
+/**
+ * Restzeit bis zum Ablauf des Codes in Sekunden.
+ */
+remaining_s: number; 
+/**
+ * Vom iPhone angegebener Name (nicht geprüft, nur angezeigt).
+ */
+device_name: string | null; 
+/**
+ * Sechsstelliger Vergleichscode.
+ */
+sas: string | null; 
+/**
+ * Begründung für Abbruch, Netzfehler oder fehlende Bestätigung.
+ */
+reason: string | null; 
+/**
+ * Bei `unconfirmed`: das neu verbundene Gerät, das abgemeldet werden sollte.
+ */
+suspect: PairedDevice | null }
+/**
+ * Ein Gerät des Kontos (`GET /api/v1/voice/devices`).
+ */
+export type PairedDevice = { id: number; name: string; created_at?: string | null; last_used_at?: string | null; current?: boolean; via_pairing?: boolean; paired_by?: number | null; 
+/**
+ * Geräte, die beim Abmelden dieses Geräts mit abgemeldet werden.
+ */
+revokes_with?: number[] }
+/**
+ * Wodurch die Empfehlung begrenzt ist (fuer die Begruendung in der Oberflaeche).
+ */
+export type ParallelLimitedBy = 
+/**
+ * Die Obergrenze der App ([`MAX_PARALLEL`]).
+ */
+"maximum" | 
+/**
+ * Die Zahl der Prozessorkerne.
+ */
+"cpu" | 
+/**
+ * Der Arbeitsspeicher.
+ */
+"ram" | 
+/**
+ * Der Grafikspeicher.
+ */
+"vram"
+/**
+ * Empfehlung fuer diesen Rechner, wie die Einstellungen sie zeigen.
+ */
+export type ParallelRecommendation = { 
+/**
+ * So viele Transkriptionen laufen bei "Automatisch" gleichzeitig.
+ */
+recommended: number; 
+/**
+ * Hoechster einstellbarer Wert.
+ */
+max: number; limited_by: ParallelLimitedBy; 
+/**
+ * Laeufe, die jeder Faktor allein erlauben wuerde (ohne Obergrenze).
+ */
+by_cpu: number; by_ram: number | null; by_vram: number | null; 
+/**
+ * Bedarf je weiterem Lauf (das Modell wird je Lauf neu geladen).
+ */
+ram_per_run_mb: number; vram_per_run_mb: number | null; cpus: number; ram_total_mb: number; 
+/**
+ * `None`: keine GPU fuer die Transkription oder nicht messbar.
+ */
+vram_total_mb: number | null; 
+/**
+ * Groesse des Besprechungsmodells (MB), mit der gerechnet wurde.
+ */
+model_size_mb: number; 
+/**
+ * Das Besprechungsmodell rechnet auf der GPU.
+ */
+gpu_model: boolean }
 /**
  * Eine teilnehmende Person einer Besprechung.
  */
@@ -8581,11 +10984,31 @@ role: string;
  * `calendar`, `speaker` oder `manual`.
  */
 source: string; is_self: boolean; meeting_count: number }
+/**
+ * Alles, was die Oberflaeche ueber die Teile einer Besprechung braucht.
+ */
+export type PartsInfo = { 
+/**
+ * Die zusammengefuehrten Teile (leer = ein einziger Teil).
+ */
+parts: MeetingPart[]; 
+/**
+ * Teile, die noch laufen oder warten und danach angehaengt werden.
+ */
+pending: PendingPart[]; 
+/**
+ * Diese Besprechung ist selbst ein wartender Teil: Ziel (ID, Titel).
+ */
+append_to: [string, string] | null }
 export type PasteMethod = "ctrl_v" | "direct" | "none" | "shift_insert" | "ctrl_shift_v" | "external_script"
 /**
  * Eine offene Freigabe mit dem Namen der Integration.
  */
 export type PendingApproval = { approval: Approval; integration_label: string | null; integration_kind: Kind | null }
+/**
+ * Ein Teil, der noch verarbeitet wird und danach angehaengt wird.
+ */
+export type PendingPart = { meeting_id: string; title: string; status: string; position: number }
 export type PermissionAccess = "allowed" | "denied" | "unknown"
 /**
  * Eine Person mit allem fuer das Popover.
@@ -8661,9 +11084,62 @@ export type PhononVoiceErrorKind = "consent_required" | "no_key" | "key_store" |
 export type PlacedInfo = { rel: string; bytes: number }
 export type PostProcessProvider = { id: string; label: string; base_url: string; allow_base_url_edit?: boolean; models_endpoint?: string | null; supports_structured_output?: boolean }
 /**
+ * Das Tupel, an das die Freigabe gebunden ist. Aendert sich eines der Felder,
+ * ist die Freigabe ungueltig und muss erneut bestaetigt werden.
+ */
+export type PreviewBinding = { 
+/**
+ * `claude_cli` oder `codex_cli`.
+ */
+provider: string; 
+/**
+ * Modell, wie in der Konfiguration eingetragen (inkl. Effort-Endung).
+ */
+model_id: string; 
+/**
+ * Konkrete Modell-ID statt Alias, soweit bekannt (nur Anzeige; die
+ * Pruefung nutzt das in der Messung gemeldete Modell).
+ */
+concrete_model?: string | null; 
+/**
+ * Ausgabe von `<cli> --version` (erste Zeile).
+ */
+cli_version: string; 
+/**
+ * SHA-256 (hex) des tatsaechlich gestarteten Programms ([`payload_path`]).
+ */
+binary_sha256: string }
+/**
  * Phase im Ereignis [`TtsProviderPreview`].
  */
 export type PreviewPhase = "started" | "first_audio" | "done" | "cancelled" | "error"
+/**
+ * Wirkt die Vorschau fuer diesen Aufruf?
+ */
+export type PreviewState = 
+/**
+ * Schalter aus.
+ */
+"off" | 
+/**
+ * Schalter an, Tupel gueltig, Isolation und Messung belegt.
+ */
+"active" | 
+/**
+ * Schalter an, aber das Tupel fehlt oder weicht ab (oder die CLI ist nicht
+ * zu pruefen): der Schalter wirkt nicht, die Oberflaeche fragt erneut.
+ */
+"reconfirm" | 
+/**
+ * Schalter an, Tupel gueltig, aber Isolation oder Messung auf diesem
+ * Geraet fehlen: „Noch nicht freigegeben“.
+ */
+"not_released"
+export type ProgressEntry = { key: string; 
+/**
+ * `None` löscht den Eintrag.
+ */
+value: string | null }
 /**
  * Eine Aufnahme der Auswahl in der Liste der Oberflaeche.
  */
@@ -8814,7 +11290,13 @@ platforms: string[]; style_tags: boolean;
  * Skript (`<Name>`): die Satz-Pipeline wählt je Satz die Stimme seines Sprechers.
  * Fish: ja; Piper: nein (eine gewählte Stimme je Lauf).
  */
-voice_switching?: boolean }
+voice_switching?: boolean; 
+/**
+ * Setzt Tempo-Tags (`[slower]`, `[faster]`) je Satz um, auch ohne `style_tags`.
+ * Phonon: `--condition duration_delta` (siehe [`crate::managers::tts::protocol::take_pace`]).
+ * Ohne diese Fähigkeit fallen die Tags wie andere Stil-Tags weg.
+ */
+pace_tags?: boolean }
 /**
  * Statische Beschreibung eines Anbieters.
  */
@@ -8894,6 +11376,11 @@ voice_switching: boolean; voice: VoiceDescriptor }
  * Hörprobe einer Stimme; `wav_path` fehlt, solange sie noch entsteht.
  */
 export type ProviderVoiceSample = { voice_id: string; wav_path: string | null }
+export type QuelleSicht = { index: number; title: string; url: string; retrievedAt: string; excerpt: string; 
+/**
+ * Code: official, scholarly, press, forum, unknown (die Oberflaeche uebersetzt).
+ */
+sourceType: string }
 /**
  * Stand der Warteschlange. Reihenfolge = Reihenfolge der Abarbeitung; die
  * Position einer wartenden Datei ist ihr Platz in `waiting` (ab 1).
@@ -8933,6 +11420,43 @@ key: string; title: string;
  */
 position: number; total: number; finished: boolean; playing: boolean }
 /**
+ * Kurzsicht eines gespeicherten Recherche-Dokuments.
+ */
+export type RechercheKurz = { id: string; question: string; createdAt: string; dataClass: string; projectId: string | null; sourceCount: number }
+/**
+ * Recherche-Dokument fuer die Oberflaeche. Nur Modus Schnell; die uebrigen Felder des Schemas
+ * (Vertrauensstufe, Pruefsummen, Kennungen) bleiben im Speicher.
+ */
+export type RechercheSicht = { id: string; question: string; createdAt: string; dataClass: string; projectId: string | null; webApproved: boolean; 
+/**
+ * `budget` oder `cancelled`, wenn der Lauf vorzeitig endete.
+ */
+stoppedReason: string | null; model: string; answer: AntwortSicht[]; sources: QuelleSicht[]; contradictions: WiderspruchSicht[]; followUps: string[]; queries: string[]; 
+/**
+ * Text fuer das Vorlesen ueber die vorhandene Sprachausgabe.
+ */
+readAloud: string }
+/**
+ * Zustand der Recherche fuer die Oberflaeche.
+ */
+export type RechercheStatus = { available: boolean; 
+/**
+ * Verstaendlicher Grund, wenn nicht verfuegbar (deutscher Text, Rueckfall).
+ */
+reason: string | null; 
+/**
+ * Stabiler Code des Grundes (`nicht_eingerichtet`); die Oberflaeche uebersetzt ihn.
+ */
+reasonCode: string | null; 
+/**
+ * Eingestellte Suchadresse (Betreiberangabe, keine Zugangsdaten).
+ */
+searxngUrl: string | null; 
+/**
+ * Darf die anfragende Person die Suchadresse aendern (nur Administration).
+ */
+canConfigure: boolean }
+/**
  * Aufruf eines Recipes: ID (`builtin:<key>` oder eigene) und Werte der
  * Variablen nach Name. Werte fuer `folder` sind Ordner-IDs, fuer `meeting`
  * Besprechungs-IDs, fuer `date_*` `JJJJ-MM-TT`.
@@ -8970,6 +11494,30 @@ export type RecordingRetentionPeriod = "never" | "preserve_limit" | "days_3" | "
  * übernommen werden.
  */
 export type ReferenceAnalysis = { quiet: boolean; suggested_tags: string[] }
+/**
+ * Eine Freigabe, wie die Oberflaeche sie zeigt (ohne Schluessel).
+ */
+export type RelayGrantInfo = { device_key: string; name: string; key_id: string; model_ids: string[]; created_at_ms: number; 
+/**
+ * Ablauf der Freigabe (90 Tage).
+ */
+expires_at_ms: number; 
+/**
+ * `true`, solange das iPhone den Einrichtungscode noch nicht benutzt hat.
+ */
+pending: boolean; 
+/**
+ * Ablauf des Einrichtungscodes (10 Minuten ab Erzeugung).
+ */
+code_expires_at_ms: number }
+/**
+ * Ein Modell, das am PC fuer das Relay in Frage kommt.
+ */
+export type RelayModelInfo = { id: string; label: string; provider: string }
+/**
+ * Einrichtungscode zum Anzeigen: Text (Rueckfall), QR-Bild (SVG) und Fristen.
+ */
+export type RelayPairing = { code: string; qr_svg: string; code_expires_at_ms: number; grant_expires_at_ms: number }
 /**
  * Zustand eines Laufs (Spalte `workflow_runs.state`, CHECK in der Migration).
  */
@@ -9056,6 +11604,19 @@ export type ServiceId = "slack" | "teams" | "discord" | "notion" | "confluence" 
  */
 export type ServiceInfo = { id: ServiceId; label: string; auth: AuthKind; capabilities: string[]; fields: ServiceField[]; token_help_url: string }
 /**
+ * Ergebnis der Einrichtung durch Vorlesen. `reason`: `ok`, `nothing` oder `rewrite`
+ * (der Nutzer hat etwas ganz anderes gelesen oder die Aufnahme war unbrauchbar).
+ */
+export type SetupOutcome = { reason: string; 
+/**
+ * Anteil der Wörter, die richtig erkannt wurden (0 bis 100).
+ */
+matched_percent: number; pairs: LearnedPair[] }
+/**
+ * Der Vorlesetext, einmal als Sätze (zum Anzeigen) und einmal am Stück (zum Vergleichen).
+ */
+export type SetupText = { sentences: string[]; text: string }
+/**
  * Ein Pruefpunkt der Schild-Erklaerung. `id` wird in der Oberflaeche
  * uebersetzt, `detail` traegt Namen und Zahlen.
  */
@@ -9132,10 +11693,73 @@ segments: number }
  */
 export type SourceRef = { kind: string; ref: string; title: string | null; url: string | null }
 /**
+ * Für die Oberfläche: eine Zusammenführung, die sich trennen lässt.
+ */
+export type SpeakerMerge = { id: string; channel: number; 
+/**
+ * Der aufgegangene Sprecher.
+ */
+from: number; 
+/**
+ * Der Sprecher, in dem er aufging.
+ */
+into: number; 
+/**
+ * Bezeichnung von `from` beim Zusammenführen.
+ */
+from_label: string; 
+/**
+ * Standardbezeichnung von `from` ohne Namen ("Person 3", "Aufnahme"):
+ * unterscheidet zusammengeführte Sprecher mit gleichem Namen.
+ */
+from_default_label: string; 
+/**
+ * Wie viele Segmente zurückgehen.
+ */
+segment_count: number; 
+/**
+ * Zeitpunkt (Sekunden).
+ */
+at: number; 
+/**
+ * `false`: eine spätere Zusammenführung hat `into` selbst aufgenommen;
+ * erst die trennen.
+ */
+undoable: boolean }
+/**
  * Namen, Zusammenfuehrungen oder Zuordnungen haben sich geaendert: offene
  * Ansichten laden Segmente und Sprecher neu.
  */
 export type SpeakersChanged = { meeting_id: string }
+/**
+ * Eine Kopplungsanfrage, die auf die Bestätigung wartet.
+ */
+export type SprachKopplung = { id: string; 
+/**
+ * Kennung der App (`client` im Vertrag), neben dem frei gewählten Namen anzuzeigen.
+ */
+client: string; anzeige: string; 
+/**
+ * Sechsstelliger Code, den die anfragende App zeigt; nur ein Vergleich für den Nutzer.
+ */
+code: string; 
+/**
+ * Ablauf der Frist (ms seit 1970, UTC).
+ */
+bis_ms: number }
+/**
+ * Eine gekoppelte App, ohne Fingerabdruck.
+ */
+export type SprachZugang = { zugang: string; client: string; anzeige: string; hoeren: boolean; sprechen: boolean; erstellt_ms: number; zuletzt_ms: number | null; widerrufen_ms: number | null }
+export type SprachdienstStatus = { 
+/**
+ * Vom Nutzer eingeschaltet (Opt-in, Standard aus).
+ */
+aktiv: boolean; laeuft: boolean; 
+/**
+ * Name der Pipe bzw. Pfad des Sockets.
+ */
+endpunkt: string | null; fehler: string | null }
 /**
  * Zustand eines Schrittversuchs (Spalte `workflow_run_steps.state`).
  */
@@ -9184,6 +11808,18 @@ export type StoredSegment = { segment_index: number; text: string; start_ms: num
  * keine Migration.
  */
 words?: WordTime[] | null }
+/**
+ * Ein gespeicherter Wechsel (Form wie `StoredTurn` im Vertrag).
+ */
+export type StoredTurn = { question: string; answer: BookTalkAnswer; scope: BookTalkScope; 
+/**
+ * Spoilergrenze (UTF-16 im Originaltext) zum Zeitpunkt der Frage.
+ */
+frontier: number; input: BookTalkInput; 
+/**
+ * Zeitpunkt (RFC 3339, UTC).
+ */
+at: string }
 /**
  * Phase of the streaming overlay card, emitted to drive its UI state.
  */
@@ -9292,6 +11928,14 @@ auto: boolean;
  * Die Spur, die ohne Nachfrage genommen wird.
  */
 recommended: boolean }
+/**
+ * Suite-Projekt in der Sicht der Oberflaeche.
+ */
+export type SuiteProjekt = { id: string; title: string; goal: string | null; dataClass: string; specialCategory: boolean; archived: boolean; 
+/**
+ * Web ist fuer dieses Projekt freigegeben (Opt-in, protokolliert).
+ */
+webResearchEnabled: boolean; entryCount: number; revision: string }
 export type SummaryOptions = { 
 /**
  * "kurz" (~150 Wörter) | "mittel" (~400) | "lang" (~900)
@@ -9305,6 +11949,44 @@ detail: string;
  * "allgemein" | "fachpublikum" | "management" | "einfache_sprache"
  */
 audience: string }
+/**
+ * Was zusammengefasst wird.
+ */
+export type SummarySource = 
+/**
+ * Der ganze Seitentext.
+ */
+{ kind: "book" } | 
+/**
+ * Ein Ausschnitt, zum Beispiel ein Kapitel oder eine Markierung
+ * (UTF-16-Offsets, Ende exklusiv).
+ */
+{ kind: "range"; start: number; end: number }
+/**
+ * Ergebnis des Abgleichs eines Ordners mit seinem Suite-Projekt.
+ */
+export type SyncBericht = { 
+/**
+ * Neu zugeordnete Besprechungen.
+ */
+zugeordnet: number; 
+/**
+ * Bereits zugeordnete Besprechungen.
+ */
+bereits: number; 
+/**
+ * Nicht zugeordnet, weil ihre Datenklasse ueber der des Suite-Projekts liegt.
+ */
+uebersprungen: number; 
+/**
+ * Eintraege, die den Ordner verlassen haben oder deren Herkunft nicht mehr existiert.
+ */
+entfernt: number }
+/**
+ * Stützpunkt der Zeitachse: ab dieser Zeichenstelle des Textes ist das
+ * Hörbuch bei `ms` (Millisekunden ab Beginn des ersten Teils).
+ */
+export type SyncPoint = { chars: number; ms: number }
 export type SyncStatus = { connected: boolean; user_email: string | null; device_name: string | null; hub_url: string | null; running: boolean; last_success_ms: number | null; last_error: string | null; 
 /**
  * Objekte, die lokal geändert und noch nicht bestätigt sind.
@@ -9364,6 +12046,28 @@ fields: Partial<{ [key in string]: string }> | null;
  */
 catalog: boolean | null }
 /**
+ * Wie das Ergebnis aufgebaut ist. Fließtext eignet sich am besten zum
+ * Vorlesen; die anderen Formen werden vor dem Vorlesen von Formatzeichen
+ * befreit.
+ */
+export type TemplateForm = 
+/**
+ * Zusammenhängender Text ohne Überschriften und Listen.
+ */
+"prose" | 
+/**
+ * Überschriften je Abschnitt, darunter Text.
+ */
+"structured" | 
+/**
+ * Aufzählung.
+ */
+"list" | 
+/**
+ * Markdown-Tabelle.
+ */
+"table"
+/**
  * Vorlage samt Metadaten, wie sie an die UI geht. `builtin` = mitgeliefert
  * (ID `builtin:<key>`, schreibgeschuetzt). `updated_at` in Sekunden.
  */
@@ -9380,6 +12084,31 @@ export type TemplateSection = { id: string; title: string; instruction: string; 
  */
 export type TemplateSpec = { version: number; context: string; sections: TemplateSection[] }
 /**
+ * Fundstelle eines Begriffs im Seitentext (UTF-16-Offsets, Ende exklusiv).
+ */
+export type TermHit = { term_id: string; start: number; end: number; 
+/**
+ * Letzte Seitenmarke vor der Stelle.
+ */
+page: number | null }
+export type TermKind = "fachbegriff" | "person" | "ort" | "ereignis" | "konzept"
+/**
+ * Ergebnis eines Begriffslaufs.
+ */
+export type TermsRun = { 
+/**
+ * Kapitel, die in diesem Lauf bewertet wurden.
+ */
+chapters_done: number; 
+/**
+ * Kapitel, die schon aktuell waren.
+ */
+chapters_skipped: number; 
+/**
+ * Kapitel ohne lesbare Modellantwort; sie kommen im nächsten Lauf wieder.
+ */
+chapters_failed: number; terms: BookTerm[] }
+/**
  * Ergebnis von „Verbindung testen“: Code fuer die Oberflaeche, kein Freitext.
  */
 export type TestResult = { ok: boolean; 
@@ -9393,11 +12122,37 @@ code: string;
  * Klartext zum Fehler (geschwaerzt), soweit der Code allein nicht reicht.
  */
 detail: string | null }
+export type TextVersion = { 
+/**
+ * Vorlesen-Seite mit dem Text. Sie bleibt die Quelle, damit Leseposition,
+ * Lesezeichen und Seitenmarken erhalten bleiben.
+ */
+page_id: string; 
+/**
+ * `document` (EPUB, PDF, DOCX, TXT, MD) oder `transcript` (aus dem Hörbuch).
+ */
+origin: string; 
+/**
+ * Dateiname der Quelle, nur zur Anzeige.
+ */
+source_name: string | null }
 /**
  * UI appearance mode. `System` follows the OS `prefers-color-scheme`; `Light`
  * and `Dark` force one of the two palettes Handy already ships.
  */
 export type Theme = "system" | "light" | "dark"
+/**
+ * Token-Zahlen eines Laufs, geschätzt oder gemessen.
+ */
+export type TokenFigures = { input_tokens: number; output_tokens: number; 
+/**
+ * Modellaufrufe (ohne Cache-Treffer).
+ */
+calls: number; 
+/**
+ * Kosten in Mikro-Dollar; `None`, wenn für das Modell kein Preis hinterlegt ist.
+ */
+cost_micro: number | null }
 /**
  * Ergebnis der Erkennung fuer die Oberflaeche.
  */
@@ -9436,6 +12191,34 @@ off_reason: string | null;
 available: boolean }
 export type TranscribeAcceleratorSetting = "auto" | "cpu" | "gpu"
 /**
+ * Ein Zeitabschnitt eines Teils mit eigenem Transkriptions-Auftrag (lva#208).
+ * Der Auftrag liest nur `start_ms` bis `end_ms` der Datei; seine Segmentzeiten
+ * sind relativ zu `start_ms`. Die Abschnitte überlappen an den Rändern, damit
+ * kein Wort zerschnitten wird; beim Zusammenführen gehört jedes Segment dem
+ * Abschnitt, in dessen Bereich `from_ms`…`to_ms` seine Mitte liegt.
+ */
+export type TranscriptPart = { 
+/**
+ * Hilfs-Besprechung der Import-Warteschlange.
+ */
+job: string; 
+/**
+ * Beginn des dekodierten Bereichs in der Datei (ms); Versatz der Segmente.
+ */
+start_ms: number; 
+/**
+ * Ende des dekodierten Bereichs (ms); `None` = bis zum Dateiende.
+ */
+end_ms: number | null; 
+/**
+ * Ab hier gehören die Segmente diesem Abschnitt (ms in der Datei).
+ */
+from_ms: number; 
+/**
+ * Bis hier (ausschließlich); `None` beim letzten Abschnitt.
+ */
+to_ms: number | null }
+/**
  * Eine Fassung, wie die Oberflaeche sie liest.
  */
 export type TranscriptVariant = { id: string; meeting_id: string; 
@@ -9463,6 +12246,25 @@ source_language: string | null;
  * G5: bei einer Uebersetzung die Zahl der Saetze, die die Treuepruefung markiert hat.
  */
 flagged: number }
+/**
+ * Der laufende (oder zuletzt beendete) Übersetzungsauftrag. Er lebt im
+ * Backend: schließt die Oberfläche, läuft er weiter, und sie holt sich den
+ * Stand mit `tts_translate_job` wieder.
+ */
+export type TranslateJob = { lang: string; 
+/**
+ * Schlüssel des Originaltexts (wie der Dateiname im Ganztext-Cache).
+ */
+textKey: string; done: number; total: number; chapters: number; workers: WorkerProgress[]; 
+/**
+ * Bisher zusammenhängend fertiger Text (vom Anfang an lückenlos).
+ */
+partial: string; error: string | null; running: boolean; 
+/**
+ * Beanstandungen der Schlussprüfung (Kapitel/Abschnitt), die trotz
+ * zweitem Versuch blieben.
+ */
+warnings: string[] }
 export type TranslateOutcome = { transcript: string; translation: string }
 /**
  * Der Pruefbericht einer Uebersetzung (steht in der Fassung, `meta_json`).
@@ -9480,6 +12282,18 @@ flagged: FlaggedSentence[];
  * Bloecke, in denen mindestens die Haelfte der Zeilen fehlte.
  */
 failed_blocks: number; blocks: number }
+/**
+ * Ein Eintrag im Papierkorb.
+ */
+export type TrashEntry = { book: LibraryBook; 
+/**
+ * Entfernt am (Unix-ms).
+ */
+removed_ms: number; 
+/**
+ * Belegter Platz des Buchordners (Bytes).
+ */
+bytes: number }
 export type TtsDownloadInfo = { id: string; kind: TtsDownloadKind; name: string; description: string; 
 /**
  * Primary language of a voice ("de", "en", …); `None` for the runtime.
@@ -9607,7 +12421,12 @@ voice: string | null;
  * Stimmen, die im Vorlesen-Dropdown stehen (leer = alle). Siehe
  * [`TtsProvidersSettings::visible_voices`]; gesetzt über `tts_provider_set_visible_voices`.
  */
-visible_voices: string[] }
+visible_voices: string[]; 
+/**
+ * Eigene Anzeigenamen je Stimmen-Kennung ([`TtsProvidersSettings::voice_names`]); gesetzt über
+ * `tts_provider_set_voice_name`. Die Stimmenlisten der Befehle tragen sie schon in `label`.
+ */
+voice_names: Partial<{ [key in string]: string }> }
 /**
  * Ereignis `tts-provider-preview` (siehe Moduldoku).
  */
@@ -9656,7 +12475,20 @@ voices: Partial<{ [key in string]: string }>;
  * Die Liste „keine“ ist `["default"]` (die Standardstimme steht immer da). Die gerade gewählte
  * Stimme bleibt in jedem Fall sichtbar ([`visible_voice`]).
  */
-visible_voices: Partial<{ [key in string]: string[] }> }
+visible_voices: Partial<{ [key in string]: string[] }>; 
+/**
+ * Eigene Anzeigenamen je Anbieter und Stimme (nur `tts_provider_set_voice_name`), z. B.
+ * `phonon` → `Erzaehlerin` → `Erzählerin`. Die Kennung der Stimme bleibt unverändert (Synthese,
+ * Auswahl, Sichtbarkeit, Hörproben); nur die Beschriftung wechselt ([`apply_voice_names`]).
+ * Gilt für alle Anbieter mit Stimmenliste und für Piper (`piper` → Katalog-Kennung).
+ */
+voice_names: Partial<{ [key in string]: Partial<{ [key in string]: string }> }>; 
+/**
+ * Anbieter, deren Vorgabestimme die App schon einmal selbst gewählt hat (Phonon: Anton,
+ * sobald der Anbieter freigegeben und das deutsche Modell da ist; wie am iPhone). Danach gilt
+ * nur noch die eigene Wahl. Setzt allein die App (`apply_default_voice`), nie ein Befehl.
+ */
+default_voice_applied: string[] }
 export type TtsRuntimeStatus = { 
 /**
  * `windows-x64`, `macos-aarch64`, ... (wie im Katalog).
@@ -9766,6 +12598,19 @@ export type VoiceInfo = { id: string; meta: VoiceMeta; origin: VoiceOrigin;
  */
 avatar_path: string | null }
 /**
+ * Ein Vorschlag: Sprecher `a` und `b` derselben Spur klingen gleich.
+ */
+export type VoiceMatch = { channel: number; a: number; b: number; 
+/**
+ * Ähnlichkeit in Prozent (Kosinus × 100, gerundet).
+ */
+score: number }
+/**
+ * Antwort für die Sprechertabelle. `state`: `ready`, `off` (Einstellung),
+ * `model_missing`, `low_memory`, `no_audio`.
+ */
+export type VoiceMatches = { state: string; matches: VoiceMatch[] }
+/**
  * Metadaten einer Referenzstimme.
  */
 export type VoiceMeta = { version?: number; 
@@ -9848,6 +12693,26 @@ id: string; name: string; tags?: string[];
  */
 reference?: string | null }
 /**
+ * Ein Werkzeug, wie das Frontend es dem Sprachmodell anbietet.
+ */
+export type VoiceToolInfo = { name: string; title: string; description: string; 
+/**
+ * Schema der Argumente (JSON-Text; specta kennt kein freies JSON).
+ */
+parameters_json: string; 
+/**
+ * Fähigkeit des Katalogs, z. B. `meeting.read`.
+ */
+capability: string }
+/**
+ * Stand für die Einstellungszeile.
+ */
+export type VoiceprintStatus = { enabled: boolean; model_ready: boolean; downloading: boolean; 
+/**
+ * Größe des Modells in MB (gerundet).
+ */
+size_mb: number }
+/**
  * Warum die wartenden Dateien nicht beginnen.
  */
 export type WaitReason = 
@@ -9864,6 +12729,7 @@ export type WaitReason =
  * Eine Live-Aufnahme laeuft und hat Vorrang.
  */
 "recording"
+export type WiderspruchSicht = { statement: string; sourceIndices: number[] }
 export type WindowsMicrophonePermissionStatus = { supported: boolean; overall_access: PermissionAccess; device_access: PermissionAccess; app_access: PermissionAccess; desktop_app_access: PermissionAccess }
 /**
  * Ein Treffer der Suche (alles fremder Text, bereinigt).
@@ -9879,6 +12745,10 @@ source: string; page: number | null; document_id: string | null }
  * channel timeline (basis for M3's word-to-speaker assignment).
  */
 export type WordTime = { text: string; start_ms: number; end_ms: number }
+/**
+ * Fortschritt eines Arbeiters.
+ */
+export type WorkerProgress = { done: number; total: number }
 export type WorkflowActionSpec = { id: string; title: string; effect_text: string; fields: WorkflowFieldSpec[]; 
 /**
  * `pure`, `idempotent` oder `external`.

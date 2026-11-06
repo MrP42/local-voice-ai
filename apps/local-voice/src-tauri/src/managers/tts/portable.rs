@@ -212,7 +212,9 @@ pub fn export_voices(
 ) -> Result<BulkExportReport, String> {
     let base_name = base_name.trim();
     if base_name.is_empty() || base_name.contains(['/', '\\', ':', '*', '?', '"', '<', '>', '|']) {
-        return Err("Bezeichnung fehlt oder enthaelt Zeichen, die im Dateinamen nicht erlaubt sind".into());
+        return Err(
+            "Bezeichnung fehlt oder enthaelt Zeichen, die im Dateinamen nicht erlaubt sind".into(),
+        );
     }
     if ids.is_empty() {
         return Err("Keine Stimme ausgewaehlt".into());
@@ -224,7 +226,8 @@ pub fn export_voices(
     // bleibt bei einem Abbruch kein halber Zielordner zurueck.
     let work = std::env::temp_dir().join(format!("lv-voices-export-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&work);
-    std::fs::create_dir_all(&work).map_err(|e| format!("could not create {}: {e}", work.display()))?;
+    std::fs::create_dir_all(&work)
+        .map_err(|e| format!("could not create {}: {e}", work.display()))?;
 
     let mut exported = Vec::new();
     let mut failed = Vec::new();
@@ -263,7 +266,8 @@ pub fn export_voices(
             zip.write_all(&bytes)
                 .map_err(|e| format!("could not write {name}: {e}"))?;
         }
-        zip.finish().map_err(|e| format!("could not finish zip: {e}"))?;
+        zip.finish()
+            .map_err(|e| format!("could not finish zip: {e}"))?;
         zip_path
     } else {
         let dir = out_dir.join(base_name);
@@ -491,7 +495,12 @@ mod tests {
         assert!(dir.join("anna.lvvoice").is_file());
         assert!(dir.join("bert.lvvoice").is_file());
         // Jedes Einzelarchiv ist ein normales Stimmen-Archiv.
-        assert_eq!(inspect_archive(&dir.join("bert.lvvoice")).unwrap().display_name, "Bert");
+        assert_eq!(
+            inspect_archive(&dir.join("bert.lvvoice"))
+                .unwrap()
+                .display_name,
+            "Bert"
+        );
 
         let zip = export_voices(&fish, &ids, &out, "stimmen-2026-09-20", true).unwrap();
         let zip_path = out.join("stimmen-2026-09-20.zip");

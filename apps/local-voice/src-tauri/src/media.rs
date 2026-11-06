@@ -1,14 +1,15 @@
 //! Dokumente und Medien als Eingabe (statt nur Texteingabe/WAV).
 //!
-//! - Text aus Dokumenten: TXT/MD direkt, PDF über pdf-extract, DOCX über
-//!   zip + Tag-Stripping von word/document.xml.
+//! - Text aus Dokumenten: TXT/MD direkt, PDF über pdf-extract (seitenweise,
+//!   ohne Kopf-/Fußzeilen und Seitenzahlen, Zeilen zu Absätzen, lva#149), DOCX über zip + Tag-Stripping von word/document.xml,
+//!   EPUB über `crate::ebook` (Kapitel und Formatierung als Markdown).
 //! - Beliebige Audio-/Videoformate (mp3, m4a, mp4, mov, mkv, …) werden über
 //!   das lokale ffmpeg zu Mono-WAV dekodiert; ohne ffmpeg gibt es eine
 //!   sprechende Fehlermeldung statt eines stillen Scheiterns.
 
 use std::path::{Path, PathBuf};
 
-pub const DOCUMENT_EXTENSIONS: [&str; 4] = ["txt", "md", "pdf", "docx"];
+pub const DOCUMENT_EXTENSIONS: [&str; 5] = ["txt", "md", "pdf", "docx", "epub"];
 pub const MEDIA_EXTENSIONS: [&str; 13] = [
     "wav", "mp3", "m4a", "aac", "flac", "ogg", "opus", "wma", "mp4", "mov", "mkv", "webm", "avi",
 ];
@@ -20,23 +21,104 @@ fn extension_of(path: &Path) -> String {
         .to_lowercase()
 }
 
-/// XML-Textinhalt aus DOCX-Body-XML: Absätze werden Zeilenumbrüche, Tags
-/// fallen weg, die fünf XML-Entities werden aufgelöst.
-pub fn docx_xml_to_text(xml: &str) -> String {
-    let with_breaks = xml
-        .replace("</w:p>", "\n")
-        .replace("<w:tab/>", "\t")
-        .replace("<w:br/>", "\n");
-    let re = regex::Regex::new("<[^>]+>").expect("static regex");
-    let stripped = re.replace_all(&with_breaks, "");
-    stripped
-        .replace("&amp;", "&")
-        .replace("&lt;", "<")
+fn xml_unescape(s: &str) -> String {
+    s.replace("&lt;", "<")
         .replace("&gt;", ">")
         .replace("&quot;", "\"")
         .replace("&apos;", "'")
+        .replace("&amp;", "&")
+}
+
+/// Überschriftenebene aus der Absatzformatvorlage: „Heading1“, deutsches Word
+/// „berschrift1“ (Überschrift 1), „Title“/„Titel“ = Ebene 1.
+fn docx_heading_level(style: &str) -> Option<usize> {
+    let s = style.to_lowercase();
+    if s == "title" || s == "titel" {
+        return Some(1);
+    }
+    let digits = s
+        .strip_prefix("heading")
+        .or_else(|| s.strip_prefix("berschrift"))
+        .or_else(|| s.strip_prefix("überschrift"))?;
+    digits
         .trim()
-        .to_string()
+        .parse::<usize>()
+        .ok()
+        .filter(|n| (1..=6).contains(n))
+}
+
+/// Ein Lauf ist fett/kursiv, wenn das Element da ist und nicht `w:val="0"`/`"false"` trägt.
+fn docx_flag(props: &str, tag: &str) -> bool {
+    let re = regex::Regex::new(&format!(r#"<w:{tag}(?:\s+w:val="([^"]*)")?\s*/>"#))
+        .expect("static regex");
+    re.captures(props)
+        .is_some_and(|c| !matches!(c.get(1).map(|m| m.as_str()), Some("0" | "false" | "off")))
+}
+
+/// DOCX-Body-XML als Markdown (lva#152): Überschriften (`#`), Aufzählungen
+/// (`- `), fett und kursiv; Absätze durch Leerzeilen getrennt wie beim EPUB.
+pub fn docx_xml_to_markdown(xml: &str) -> String {
+    let para = regex::Regex::new(r"(?s)<w:p[ >].*?</w:p>|<w:p/>").expect("static regex");
+    let style = regex::Regex::new(r#"<w:pStyle\s+w:val="([^"]+)""#).expect("static regex");
+    let run = regex::Regex::new(r"(?s)<w:r[ >].*?</w:r>").expect("static regex");
+    let rpr = regex::Regex::new(r"(?s)<w:rPr>.*?</w:rPr>").expect("static regex");
+    let piece = regex::Regex::new(r"(?s)<w:t(?:\s[^>]*)?>(.*?)</w:t>|<w:tab/>|<w:br/>")
+        .expect("static regex");
+    let mut blocks: Vec<String> = Vec::new();
+    for p in para.find_iter(xml).map(|m| m.as_str()) {
+        let level = style.captures(p).and_then(|c| docx_heading_level(&c[1]));
+        let list = p.contains("<w:numPr>") || p.contains("<w:numPr ");
+        let mut line = String::new();
+        for r in run.find_iter(p).map(|m| m.as_str()) {
+            let props = rpr.find(r).map(|m| m.as_str()).unwrap_or("");
+            let mut text = String::new();
+            for c in piece.captures_iter(r) {
+                match c.get(1) {
+                    Some(t) => text.push_str(&xml_unescape(t.as_str())),
+                    None if c[0].starts_with("<w:tab") => text.push('\t'),
+                    None => text.push('\n'),
+                }
+            }
+            if text.trim().is_empty() || level.is_some() {
+                line.push_str(&text);
+                continue;
+            }
+            // Leerraum außerhalb der Marker, sonst liest Markdown sie nicht.
+            let (lead, rest) = text.split_at(text.len() - text.trim_start().len());
+            let (core, trail) = rest.split_at(rest.trim_end().len());
+            let (b, i) = (docx_flag(props, "b"), docx_flag(props, "i"));
+            let mark = match (b, i) {
+                (true, true) => "***",
+                (true, false) => "**",
+                (false, true) => "*",
+                _ => "",
+            };
+            line.push_str(lead);
+            line.push_str(mark);
+            line.push_str(core);
+            line.push_str(mark);
+            line.push_str(trail);
+        }
+        let line = line.trim().to_string();
+        if line.is_empty() {
+            continue;
+        }
+        blocks.push(match level {
+            Some(n) => format!("{} {}", "#".repeat(n), line.replace('\n', " ")),
+            None if list => format!("- {line}"),
+            None => line,
+        });
+    }
+    // Aufeinanderfolgende Listenpunkte bilden eine Liste ohne Leerzeilen.
+    let mut out = String::new();
+    for (i, b) in blocks.iter().enumerate() {
+        if i > 0 {
+            let both_list = b.starts_with("- ") && blocks[i - 1].starts_with("- ");
+            out.push_str(if both_list { "\n" } else { "\n\n" });
+        }
+        out.push_str(b);
+    }
+    out
 }
 
 fn extract_docx(path: &Path) -> Result<String, String> {
@@ -49,7 +131,7 @@ fn extract_docx(path: &Path) -> Result<String, String> {
         .map_err(|_| "not a DOCX file (word/document.xml missing)".to_string())?;
     let mut xml = String::new();
     std::io::Read::read_to_string(&mut doc, &mut xml).map_err(|e| e.to_string())?;
-    Ok(docx_xml_to_text(&xml))
+    Ok(docx_xml_to_markdown(&xml))
 }
 
 /// Text aus einem Dokument extrahieren. Der Rückgabetext ist unverändert —
@@ -62,9 +144,19 @@ pub fn extract_document_text(path: &Path) -> Result<String, String> {
             String::from_utf8_lossy(bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&bytes))
                 .to_string()
         }
-        "pdf" => pdf_extract::extract_text(path)
-            .map_err(|e| format!("PDF text extraction failed: {e}"))?,
+        // Seitenweise, damit Kopf-/Fußzeilen und Seitenzahlen erkannt werden (lva#149).
+        "pdf" => crate::ebook::pdf_pages_to_text(
+            &pdf_extract::extract_text_by_pages(path)
+                .map_err(|e| format!("PDF text extraction failed: {e}"))?,
+        ),
         "docx" => extract_docx(path)?,
+        "epub" => {
+            let file = std::fs::File::open(path)
+                .map_err(|e| format!("cannot open {}: {e}", path.display()))?;
+            let mut archive =
+                zip::ZipArchive::new(file).map_err(|e| format!("kein EPUB (zip): {e}"))?;
+            crate::ebook::epub_to_markdown(&mut archive)?
+        }
         other => {
             return Err(format!(
                 "Nicht unterstütztes Dokumentformat '.{other}' — unterstützt: {}",
@@ -290,10 +382,39 @@ pub fn decode_media_to_wav_cancellable(
     sample_rate: u32,
     cancel: &std::sync::atomic::AtomicBool,
 ) -> Result<(), String> {
+    decode_media_range_to_wav_cancellable(input, out_wav, sample_rate, None, cancel)
+}
+
+/// Eingabeoptionen fuer einen Zeitbereich (ms): schnelles Suchen VOR `-i`
+/// (bei der Neukodierung samplegenau), dann die Laenge. Leer ohne Bereich.
+pub fn range_input_args(range: Option<(u64, Option<u64>)>) -> Vec<String> {
+    let Some((start_ms, end_ms)) = range else {
+        return Vec::new();
+    };
+    let secs = |ms: u64| format!("{}.{:03}", ms / 1_000, ms % 1_000);
+    let mut args = vec!["-ss".to_string(), secs(start_ms)];
+    // Ohne Ende kein `-t`: ffmpeg liest bis zum Dateiende (eine falsch geschaetzte
+    // Dauer bei VBR darf nichts am Ende abschneiden).
+    if let Some(end_ms) = end_ms {
+        args.push("-t".to_string());
+        args.push(secs(end_ms.saturating_sub(start_ms)));
+    }
+    args
+}
+
+/// Wie [`decode_media_to_wav_cancellable`], aber nur der Bereich `range`
+/// (Anfang, Ende in ms) der Datei (lva#208, Abschnitte langer Hoerbuecher).
+pub fn decode_media_range_to_wav_cancellable(
+    input: &Path,
+    out_wav: &Path,
+    sample_rate: u32,
+    range: Option<(u64, Option<u64>)>,
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Result<(), String> {
     let mut cmd = std::process::Command::new("ffmpeg");
+    cmd.args(["-nostdin", "-y"]);
+    cmd.args(range_input_args(range));
     cmd.args([
-        "-nostdin",
-        "-y",
         "-i",
         &input.to_string_lossy(),
         "-vn",
@@ -360,6 +481,28 @@ pub fn ensure_wav_cancellable(
     Ok((tmp.to_path_buf(), Some(tmp)))
 }
 
+/// Wie [`ensure_wav_cancellable`], aber nur der Bereich `range` (ms) der Datei.
+/// Mit Bereich wird immer dekodiert, auch eine WAV-Datei (sie muss geschnitten
+/// werden); ohne Bereich verhaelt sich die Funktion wie [`ensure_wav_cancellable`].
+pub fn ensure_wav_range_cancellable(
+    input: &Path,
+    sample_rate: u32,
+    range: Option<(u64, Option<u64>)>,
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Result<(PathBuf, Option<tempfile::TempPath>), String> {
+    if range.is_none() {
+        return ensure_wav_cancellable(input, sample_rate, cancel);
+    }
+    let tmp = tempfile::Builder::new()
+        .prefix("lva-media-")
+        .suffix(".wav")
+        .tempfile()
+        .map_err(|e| e.to_string())?
+        .into_temp_path();
+    decode_media_range_to_wav_cancellable(input, &tmp, sample_rate, range, cancel)?;
+    Ok((tmp.to_path_buf(), Some(tmp)))
+}
+
 /// Eingabedatei als WAV bereitstellen: WAV geht direkt durch, alles andere
 /// wird in eine Tempdatei dekodiert. Rückgabe: (Pfad, Option<Tempdatei zum
 /// Aufräumen durch den Aufrufer über NamedTempFile-Drop>).
@@ -386,6 +529,24 @@ mod tests {
     use std::io::Write;
 
     #[test]
+    fn a_range_becomes_seek_and_length_before_the_input() {
+        assert!(range_input_args(None).is_empty());
+        assert_eq!(
+            range_input_args(Some((1_198_000, Some(2_402_500)))),
+            vec!["-ss", "1198.000", "-t", "1204.500"]
+        );
+        assert_eq!(
+            range_input_args(Some((90, Some(100)))),
+            vec!["-ss", "0.090", "-t", "0.010"]
+        );
+        assert_eq!(
+            range_input_args(Some((1_198_000, None))),
+            vec!["-ss", "1198.000"],
+            "letzter Abschnitt: keine Obergrenze"
+        );
+    }
+
+    #[test]
     fn plain_text_and_markdown_read_directly_with_bom_stripped() {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("notiz.txt");
@@ -398,10 +559,27 @@ mod tests {
 
     #[test]
     fn docx_body_xml_becomes_readable_paragraphs() {
-        let xml = r#"<w:document><w:body><w:p><w:r><w:t>Erster Absatz mit &amp; Zeichen.</w:t></w:r></w:p><w:p><w:r><w:t>Zweiter</w:t></w:r><w:r><w:t> Absatz.</w:t></w:r></w:p></w:body></w:document>"#;
+        let xml = r#"<w:document><w:body><w:p><w:r><w:t>Erster Absatz mit &amp; Zeichen.</w:t></w:r></w:p><w:p><w:r><w:t>Zweiter</w:t></w:r><w:r><w:t xml:space="preserve"> Absatz.</w:t></w:r></w:p></w:body></w:document>"#;
         assert_eq!(
-            docx_xml_to_text(xml),
-            "Erster Absatz mit & Zeichen.\nZweiter Absatz."
+            docx_xml_to_markdown(xml),
+            "Erster Absatz mit & Zeichen.\n\nZweiter Absatz."
+        );
+    }
+
+    #[test]
+    fn docx_keeps_headings_lists_and_emphasis() {
+        let xml = concat!(
+            r#"<w:body><w:p><w:pPr><w:pStyle w:val="Title"/></w:pPr><w:r><w:t>Das Buch</w:t></w:r></w:p>"#,
+            r#"<w:p><w:pPr><w:pStyle w:val="berschrift2"/></w:pPr><w:r><w:t>Kapitel 1</w:t></w:r></w:p>"#,
+            r#"<w:p><w:r><w:t xml:space="preserve">Ein </w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">fettes </w:t></w:r>"#,
+            r#"<w:r><w:rPr><w:i/></w:rPr><w:t>Wort</w:t></w:r><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>.</w:t></w:r></w:p>"#,
+            r#"<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/></w:numPr></w:pPr><w:r><w:t>Punkt A</w:t></w:r></w:p>"#,
+            r#"<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/></w:numPr></w:pPr><w:r><w:t>Punkt B</w:t></w:r></w:p>"#,
+            r#"<w:p/><w:p><w:pPr><w:pStyle w:val="Heading3"/></w:pPr><w:r><w:t>Ende</w:t></w:r></w:p></w:body>"#,
+        );
+        assert_eq!(
+            docx_xml_to_markdown(xml),
+            "# Das Buch\n\n## Kapitel 1\n\nEin **fettes** *Wort*.\n\n- Punkt A\n- Punkt B\n\n### Ende"
         );
     }
 

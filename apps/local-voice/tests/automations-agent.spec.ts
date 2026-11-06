@@ -10,6 +10,7 @@ import {
   wfCalls,
   type AutomationsMockOptions,
 } from "./automationsMock";
+import { geheZu } from "./profilmenue";
 
 // C5 (Goal Lokaler Agent, #68, AK8): KI-Schritte im Editor der Automationen. Agent-Schritt
 // anlegen und bearbeiten (Werkzeug-Whitelist als Mehrfachauswahl aus dem Katalog der Politik,
@@ -271,10 +272,7 @@ const setup = async (
   }
   await page.setViewportSize({ width: 1280, height: opts.height ?? 1100 });
   await page.goto("/");
-  await page
-    .getByRole("navigation")
-    .getByRole("button", { name: "Integrationen", exact: true })
-    .click();
+  await geheZu(page, "Integrationen");
   await page.getByRole("tab", { name: "Automationen" }).click();
   await expect(page.getByTestId("automations-panel")).toBeVisible();
   if (opts.width) {

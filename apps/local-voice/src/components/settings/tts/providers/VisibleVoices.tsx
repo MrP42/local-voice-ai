@@ -14,6 +14,8 @@ import {
   toggleVisibleVoice,
 } from "./providerModel";
 import { SamplePlayButton } from "./SamplePlayButton";
+import { RenameVoiceButton } from "./RenameVoiceDialog";
+import { useSettings } from "../../../../hooks/useSettings";
 import { useVoiceSamples } from "./useVoiceSamples";
 
 /** Fensterereignis: die Auswahl "im Vorlesen anzeigen" hat sich geaendert (Dropdowns laden neu). */
@@ -36,6 +38,9 @@ export const VisibleVoices: React.FC<{ entry: TtsProviderEntry }> = ({
   const [visible, setVisible] = useState<string[]>(entry.visible_voices ?? []);
   const [error, setError] = useState<string | null>(null);
   const samples = useVoiceSamples(id);
+  // Eigene Namen aus den Einstellungen: nach einer Umbenennung frisch (refreshSettings).
+  const { getSetting } = useSettings();
+  const names = getSetting("tts_providers")?.voice_names?.[id] ?? {};
   const visibleKey = (entry.visible_voices ?? []).join("\u0000");
 
   // Der Stand des Backends gilt, sobald die Liste neu geladen wurde.
@@ -206,6 +211,20 @@ export const VisibleVoices: React.FC<{ entry: TtsProviderEntry }> = ({
                   <p className="text-xs text-text/70">{rest.join(" – ")}</p>
                 )}
               </div>
+              <RenameVoiceButton
+                compact
+                target={{
+                  kind: "provider",
+                  providerId: id,
+                  voiceId: voice.id,
+                  name: name.trim() || voice.id,
+                  custom: voice.id in names,
+                  taken: named
+                    .filter((v) => v.id !== voice.id)
+                    .flatMap((v) => [v.id, v.label.split(" – ")[0]]),
+                }}
+                testId={`tts-provider-rename-${voice.id}`}
+              />
               {voice.id in samples && (
                 <SamplePlayButton
                   path={samples[voice.id]}

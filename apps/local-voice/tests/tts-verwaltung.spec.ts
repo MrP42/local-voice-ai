@@ -1,6 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
-import { readFileSync, mkdirSync } from "node:fs";
+import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { geheZu } from "./profilmenue";
 
 // Vorlesen unter Modelle (Variante B): Umschalter Stimmen/Anbieter, Filterspalte
 // mit Zaehlern, Karten- und Listenansicht ueber alle Anbieter, Hoerprobe und
@@ -89,7 +90,7 @@ async function setup(page: Page, cfg: Cfg = {}, theme = "light") {
         tts_engine: cfg.engine ?? "fish",
         tts_piper_voice: "de_DE-thorsten-medium",
         tts_fish_dir: "C:\\AI\\fish-speech",
-        tts_providers: { voices: {} },
+        tts_providers: { voices: {}, voice_names: {} },
       };
       const dl = (over: Record<string, unknown>) => ({
         kind: "voice",
@@ -266,10 +267,37 @@ async function setup(page: Page, cfg: Cfg = {}, theme = "light") {
                     { voice_id: "ben", wav_path: null },
                   ]
                 : [];
+            // Eigene Namen wie im Backend (`apply_voice_names`): Name vor " – " ersetzen.
+            const named = (pid: string, list: any[]) =>
+              list.map((v) => {
+                const own = settings.tts_providers.voice_names[pid]?.[v.id];
+                if (!own) return v;
+                const rest = String(v.label).split(" – ").slice(1).join(" – ");
+                return { ...v, label: rest ? `${own} – ${rest}` : own };
+              });
+            if (cmd === "tts_provider_set_voice_name") {
+              const pid = String(args?.id);
+              const names = (settings.tts_providers.voice_names[pid] ??= {});
+              const name = String(args?.name ?? "").trim();
+              if (name.includes("<") || name.includes(":"))
+                throw {
+                  kind: "bad_request",
+                  retryable: false,
+                  message: "Der Name darf keine Zeichen < > : enthalten.",
+                };
+              if (!name || name === args?.original) delete names[args?.voice];
+              else names[args?.voice] = name;
+              if (Object.keys(names).length === 0)
+                delete settings.tts_providers.voice_names[pid];
+              return null;
+            }
+            if (cmd === "tts_set_voice_meta") return null;
             if (cmd === "tts_provider_voices") {
               const e = find(args?.id);
               if (e.blocked) throw e.blocked;
-              return e.descriptor.id === "phonon" ? copy(phononVoices) : [];
+              return e.descriptor.id === "phonon"
+                ? copy(named("phonon", phononVoices))
+                : [];
             }
             if (cmd === "tts_provider_voice_options") {
               const out: unknown[] = [];
@@ -291,7 +319,7 @@ async function setup(page: Page, cfg: Cfg = {}, theme = "light") {
                     provider_id: e.descriptor.id,
                     provider_label: e.descriptor.label,
                     voice_switching: false,
-                    voice: v,
+                    voice: named(e.descriptor.id, [v])[0],
                   });
               }
               return out;
@@ -379,10 +407,7 @@ const calls = (page: Page, cmd: string) =>
 
 const openManager = async (page: Page) => {
   await page.goto("/");
-  await page
-    .getByRole("navigation")
-    .getByRole("button", { name: "Modelle", exact: true })
-    .click();
+  await geheZu(page, "Modelle");
   await expect(page.getByTestId("voice-manager")).toBeVisible();
   await expect(page.getByTestId("voice-gallery")).toBeVisible();
 };
@@ -534,9 +559,7 @@ test("Einstellungen › Ausgabe verweist auf die Anbieter unter Modelle", async 
     localStorage.setItem("lva.ui.settings.tab", "output"),
   );
   await page.goto("/");
-  await page
-    .getByRole("button", { name: "Einstellungen", exact: true })
-    .click();
+  await geheZu(page, "Einstellungen");
   await expect(page.getByTestId("tts-providers-open-models")).toBeVisible();
   await expect(page.getByTestId("tts-provider-fish")).toHaveCount(0);
   await page.getByTestId("tts-providers-open-models").click();
@@ -606,6 +629,168 @@ test("Schmal (390 px): keine waagerechte Rollleiste, Bedienziele mindestens 44 p
   expect(await noHorizontalScroll(page)).toBe(true);
 });
 
+test("Umbenennen: eigener Name einer Anbieter-Stimme, Kennung bleibt, zurück zum Original", async ({
+  page,
+}) => {
+  await setup(page, { phononReady: true });
+  await openManager(page);
+  const card = page.locator("[data-voice-card='phonon:nele']");
+  await expect(card.locator("h3")).toHaveText("Nele");
+  await page.getByTestId("voice-rename-phonon:nele").click();
+  const dialog = page.getByTestId("voice-rename-dialog");
+  await expect(dialog).toBeVisible();
+  await expect(page.getByTestId("voice-rename-id")).toContainText("nele");
+  // Ungültige Zeichen: Hinweis, Speichern gesperrt.
+  await page.getByTestId("voice-rename-input").fill("<Nele>");
+  await expect(page.getByTestId("voice-rename-error")).toBeVisible();
+  await expect(page.getByTestId("voice-rename-save")).toBeDisabled();
+  // Der Name einer anderen Stimme desselben Anbieters (auch mit Umlaut-Schreibweise): gesperrt.
+  await page.getByTestId("voice-rename-input").fill("anna");
+  await expect(page.getByTestId("voice-rename-error")).toContainText(
+    "andere Stimme",
+  );
+  await expect(page.getByTestId("voice-rename-save")).toBeDisabled();
+  await page.getByTestId("voice-rename-input").fill("Nelé  Groß");
+  await page.getByTestId("voice-rename-input").press("Enter");
+  await expect(dialog).toHaveCount(0);
+  const set = await calls(page, "tts_provider_set_voice_name");
+  expect(set[0][1]).toMatchObject({
+    id: "phonon",
+    voice: "nele",
+    name: "Nelé Groß",
+    original: "Nele",
+  });
+  // Katalog und Vorlesen-Auswahl zeigen den neuen Namen, die Kennung bleibt.
+  await expect(card.locator("h3")).toHaveText("Nelé Groß");
+  await expect(page.locator("[data-voice-card='phonon:nele']")).toHaveCount(1);
+  // Im Seitenblatt des Anbieters: Liste "Im Vorlesen anzeigen" mit Stift, zurück zum Original.
+  await page.getByTestId("voice-view-providers").click();
+  await page.getByTestId("tts-provider-open-phonon").click();
+  const row = page
+    .getByTestId("tts-provider-visible-list-phonon")
+    .locator("[data-voice-id='nele']");
+  await expect(row).toContainText("Nelé Groß");
+  await page.getByTestId("tts-provider-rename-nele").click();
+  await page.getByTestId("voice-rename-reset").click();
+  await expect(row).toContainText("Nele");
+  await expect(row).not.toContainText("Nelé");
+  const last = (await calls(page, "tts_provider_set_voice_name")).at(-1);
+  expect(last?.[1]).toMatchObject({ voice: "nele", name: null });
+});
+
+test("Umbenennen: Piper-Stimme bekommt einen eigenen Namen", async ({
+  page,
+}) => {
+  await setup(page);
+  await openManager(page);
+  const card = page.locator("[data-voice-card='piper:de_DE-thorsten-medium']");
+  await page.getByTestId("voice-rename-piper:de_DE-thorsten-medium").click();
+  await page.getByTestId("voice-rename-input").fill("Thorsten ruhig");
+  await page.getByTestId("voice-rename-save").click();
+  await expect(card.locator("h3")).toHaveText("Thorsten ruhig");
+  expect(
+    (await calls(page, "tts_provider_set_voice_name"))[0][1],
+  ).toMatchObject({ id: "piper", voice: "de_DE-thorsten-medium" });
+});
+
+test("Umbenennen: eigene Fish-Stimme ändert ihren Anzeigenamen", async ({
+  page,
+}) => {
+  await setup(page);
+  await openManager(page);
+  await page.getByTestId("voice-rename-fish:lea").click();
+  await page.getByTestId("voice-rename-input").fill("Léa");
+  await page.getByTestId("voice-rename-save").click();
+  await expect(page.getByTestId("voice-rename-dialog")).toHaveCount(0);
+  const meta = await calls(page, "tts_set_voice_meta");
+  expect(meta[0][1]).toMatchObject({
+    id: "lea",
+    meta: { display_name: "Léa" },
+  });
+});
+
+test("Bilder: Stimme umbenennen (nur mit SCREENS_DIR)", async ({ browser }) => {
+  const dir = process.env.SCREENS_DIR;
+  test.skip(!dir, "nur mit SCREENS_DIR");
+  test.setTimeout(240_000);
+  mkdirSync(dir as string, { recursive: true });
+  const masse: string[] = [];
+  for (const theme of ["light", "dark"] as const) {
+    const label = theme === "light" ? "hell" : "dunkel";
+    for (const width of [1440, 390]) {
+      const ctx = await browser.newContext();
+      const p = await ctx.newPage();
+      await setup(p, { phononReady: true }, theme);
+      await p.goto("/");
+      await geheZu(p, "Modelle");
+      await p.setViewportSize({ width, height: width === 1440 ? 1000 : 900 });
+      await expect(p.getByTestId("voice-gallery")).toBeVisible();
+      // Touchziel des Stifts auf der Karte messen (Beleg fuer >= 44 px unter 768 px).
+      const box = async (testId: string) => {
+        const b = await p.getByTestId(testId).boundingBox();
+        return b ? `${Math.round(b.width)}x${Math.round(b.height)}` : "fehlt";
+      };
+      masse.push(
+        `${label} ${width}px Karte  Stift voice-rename-phonon:nele: ${await box("voice-rename-phonon:nele")}`,
+      );
+      await p.getByTestId("voice-rename-phonon:nele").click();
+      // Doppelname: Fehlermeldung, Speichern gesperrt.
+      await p.getByTestId("voice-rename-input").fill("Anna");
+      await expect(p.getByTestId("voice-rename-save")).toBeDisabled();
+      await p.waitForTimeout(300);
+      await p.screenshot({
+        path: `${dir}/umbenennen-5-doppelname-${label}-${width}.png`,
+      });
+      await p.getByTestId("voice-rename-input").fill("Nelé");
+      await p.waitForTimeout(300);
+      await p.screenshot({
+        path: `${dir}/umbenennen-1-dialog-${label}-${width}.png`,
+      });
+      await p.getByTestId("voice-rename-save").click();
+      await expect(p.getByTestId("voice-rename-dialog")).toHaveCount(0);
+      await p.waitForTimeout(300);
+      await p.screenshot({
+        path: `${dir}/umbenennen-2-karte-${label}-${width}.png`,
+      });
+      await p.getByTestId("voice-view-providers").click();
+      await p.getByTestId("tts-provider-open-phonon").click();
+      const row = p
+        .getByTestId("tts-provider-visible-list-phonon")
+        .locator("[data-voice-id='nele']");
+      await row.scrollIntoViewIfNeeded();
+      await p.waitForTimeout(400);
+      masse.push(
+        `${label} ${width}px Liste  Stift tts-provider-rename-nele: ${await box("tts-provider-rename-nele")}`,
+      );
+      await p.screenshot({
+        path: `${dir}/umbenennen-3-liste-${label}-${width}.png`,
+      });
+      await p.getByTestId("tts-provider-rename-nele").click();
+      await p.getByTestId("voice-rename-input").fill("Anna");
+      await expect(p.getByTestId("voice-rename-save")).toBeDisabled();
+      await p.waitForTimeout(300);
+      await p.screenshot({
+        path: `${dir}/umbenennen-6-doppelname-liste-${label}-${width}.png`,
+      });
+      await p.getByTestId("voice-rename-input").fill("Nelé");
+      await p.waitForTimeout(300);
+      await p.screenshot({
+        path: `${dir}/umbenennen-4-zuruecksetzen-${label}-${width}.png`,
+      });
+      await ctx.close();
+    }
+  }
+  writeFileSync(
+    `${dir}/touchziele.txt`,
+    [
+      "Touchziele der Stifte (boundingBox, Breite x Hoehe in CSS-px).",
+      "Unter 768 px (Touch) gilt >= 44 px; ab 768 px (Maus) kompakter wie der Knopf Anbieter oeffnen daneben.",
+      ...masse,
+      "",
+    ].join("\n"),
+  );
+});
+
 test("Bilder der Verwaltung (nur mit SCREENS_DIR)", async ({ browser }) => {
   const dir = process.env.SCREENS_DIR;
   test.skip(!dir, "nur mit SCREENS_DIR");
@@ -618,10 +803,7 @@ test("Bilder der Verwaltung (nur mit SCREENS_DIR)", async ({ browser }) => {
       const p = await ctx.newPage();
       await setup(p, { phononReady: true }, theme);
       await p.goto("/");
-      await p
-        .getByRole("navigation")
-        .getByRole("button", { name: "Modelle", exact: true })
-        .click();
+      await geheZu(p, "Modelle");
       await p.setViewportSize({ width, height: width === 1440 ? 1000 : 900 });
       await expect(p.getByTestId("voice-gallery")).toBeVisible();
       const s = (n: string) =>

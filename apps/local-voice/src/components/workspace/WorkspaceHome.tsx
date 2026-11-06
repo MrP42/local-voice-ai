@@ -1,12 +1,4 @@
-import {
-  ArrowRight,
-  Mic,
-  History,
-  Users,
-  Volume2,
-  Cpu,
-  Settings,
-} from "lucide-react";
+import { ArrowRight, Mic, History, Users, Volume2, Cpu } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useSettings } from "@/hooks/useSettings";
 import { useOsType } from "@/hooks/useOsType";
@@ -112,8 +104,8 @@ export function WorkspaceHome({
         <div className="workspace-tools">
           {(
             [
+              // Einstellungen nur im Profilmenü (ADR-0027, Codex 01.11.).
               { id: "models", icon: Cpu },
-              { id: "settings", icon: Settings },
             ] as const
           ).map(({ id, icon: Icon }) => (
             <button

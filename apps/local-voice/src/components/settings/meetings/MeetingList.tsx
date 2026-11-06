@@ -7,6 +7,7 @@ import React, {
 } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
+import { MergeDialog } from "./parts/MergeDialog";
 import {
   commands,
   events,
@@ -26,6 +27,7 @@ import {
   ListChecks,
   Menu,
   MessageSquare,
+  Combine,
   Plus,
   X,
 } from "lucide-react";
@@ -150,6 +152,8 @@ interface MeetingListProps {
   onOpenProjectMinutes?: (id: string) => void;
   /** Die Ansicht des laufenden Laufs eines Projekts oeffnen. */
   onOpenProjectRun?: (folderId: string) => void;
+  /** ADR-0026 PR-7: das Suite-Projekt dieses Besprechungsordners oeffnen. */
+  onOpenSuiteProject?: (folderId: string) => void;
   /** Was die Arbeitsflaeche gerade als Projekt-Protokoll zeigt. */
   activeProjectMinutes?: OpenProjectMinutes | null;
 }
@@ -176,6 +180,7 @@ export const MeetingList: React.FC<MeetingListProps> = ({
   onNewMeeting,
   onStartProjectMinutes,
   onOpenProjectMinutes,
+  onOpenSuiteProject,
   onOpenProjectRun,
   activeProjectMinutes = null,
 }) => {
@@ -211,10 +216,22 @@ export const MeetingList: React.FC<MeetingListProps> = ({
   // M4-P4e: Auswahlmodus fuer "Auswahl fragen".
   const [selecting, setSelecting] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const toggleSelected = (id: string) =>
+  // Mehrere Audiodateien: Auswahl zu einer Besprechung zusammenfuehren.
+  const [mergeMeetings, setMergeMeetings] = useState<Meeting[] | null>(null);
+  // Die ausgewaehlten Besprechungen selbst: eine Auswahl bleibt auch, wenn
+  // Suche oder Filter sie aus der sichtbaren Liste nehmen.
+  const selectedMeetings = useRef(new Map<string, Meeting>());
+  const toggleSelected = (meeting: Meeting) => {
+    selectedMeetings.current.set(meeting.id, meeting);
     setSelectedIds((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+      prev.includes(meeting.id)
+        ? prev.filter((x) => x !== meeting.id)
+        : [...prev, meeting.id],
     );
+  };
+  // Nach dem Zusammenfuehren die frisch geladene Besprechung oeffnen (nicht
+  // das Objekt von vorher mit alter Dauer und alten Audiopfaden).
+  const selectAfterLoad = useRef<string | null>(null);
 
   // G3 (#70, U9): Auswahl fuer ein gemeinsames Protokoll (nur in einem Projekt).
   const [pmMode, setPmMode] = useState(false);
@@ -410,6 +427,15 @@ export const MeetingList: React.FC<MeetingListProps> = ({
   // Die Liste hat sich geaendert (Zuordnung, Loeschen, Import an anderer
   // Stelle): die Besprechung kann aus der gewaehlten Liste gefallen oder
   // hinzugekommen sein. Die Projekte laden sich selbst neu.
+  useEffect(() => {
+    const id = selectAfterLoad.current;
+    if (!id) return;
+    const fresh = items.find((item) => item.meeting.id === id)?.meeting;
+    if (!fresh) return;
+    selectAfterLoad.current = null;
+    onSelect(fresh);
+  }, [items, onSelect]);
+
   const loadPageRef = useRef(loadPage);
   loadPageRef.current = loadPage;
   useMeetingsChanged(() => void loadPageRef.current(0));
@@ -571,7 +597,7 @@ export const MeetingList: React.FC<MeetingListProps> = ({
     const toggle = () => {
       if (pmMode) {
         if (pickable) togglePm(meeting.id);
-      } else toggleSelected(meeting.id);
+      } else toggleSelected(meeting);
     };
     return (
       <div
@@ -803,23 +829,19 @@ export const MeetingList: React.FC<MeetingListProps> = ({
         align="end"
         widthClass="w-56"
         items={[
-          ...(onAsk
-            ? [
-                {
-                  id: "select",
-                  label: selecting
-                    ? t("meetings.chat.list.selectDone")
-                    : t("meetings.chat.list.select"),
-                  icon: CheckSquare,
-                  testId: "projects-select",
-                  onSelect: () => {
-                    setPmMode(false);
-                    setSelecting((on) => !on);
-                    setSelectedIds([]);
-                  },
-                },
-              ]
-            : []),
+          {
+            id: "select",
+            label: selecting
+              ? t("meetings.chat.list.selectDone")
+              : t("meetings.chat.list.select"),
+            icon: CheckSquare,
+            testId: "projects-select",
+            onSelect: () => {
+              setPmMode(false);
+              setSelecting((on) => !on);
+              setSelectedIds([]);
+            },
+          },
           ...(onStartProjectMinutes
             ? [
                 {
@@ -935,16 +957,50 @@ export const MeetingList: React.FC<MeetingListProps> = ({
           <span className="text-sm">
             {t("meetings.chat.list.selected", { count: selectedIds.length })}
           </span>
-          <Button
-            size="sm"
-            onClick={askSelection}
-            disabled={selectedIds.length === 0}
-          >
-            <MessageSquare width={14} height={14} />
-            {t("meetings.chat.list.askSelection")}
-          </Button>
+          <span className="flex flex-wrap items-center justify-end gap-1">
+            <Button
+              size="sm"
+              variant="secondary"
+              data-testid="selection-merge"
+              title={t("meetings.parts.merge.selectionHint")}
+              onClick={() =>
+                setMergeMeetings(
+                  selectedIds
+                    .map((id) => selectedMeetings.current.get(id))
+                    .filter((m): m is Meeting => m !== undefined),
+                )
+              }
+              disabled={selectedIds.length < 2}
+              className="max-sm:min-h-[44px]"
+            >
+              <Combine width={14} height={14} />
+              {t("meetings.parts.merge.selection")}
+            </Button>
+            {onAsk && (
+              <Button
+                size="sm"
+                onClick={askSelection}
+                disabled={selectedIds.length === 0}
+                className="max-sm:min-h-[44px]"
+              >
+                <MessageSquare width={14} height={14} />
+                {t("meetings.chat.list.askSelection")}
+              </Button>
+            )}
+          </span>
         </div>
       )}
+      <MergeDialog
+        meetings={mergeMeetings}
+        onClose={() => setMergeMeetings(null)}
+        onMerged={(id) => {
+          setMergeMeetings(null);
+          setSelecting(false);
+          setSelectedIds([]);
+          selectAfterLoad.current = id;
+          void loadPage(0);
+        }}
+      />
       {personFilter && (
         <div
           className="flex shrink-0 flex-wrap items-center gap-1.5"
@@ -1184,6 +1240,14 @@ export const MeetingList: React.FC<MeetingListProps> = ({
                         projects.select(projectMenuTarget.id);
                       }
                     },
+                  },
+                ]
+              : []),
+            ...(onOpenSuiteProject
+              ? [
+                  {
+                    label: t("projekte.menu.suiteProjekt"),
+                    onSelect: () => onOpenSuiteProject(projectMenuTarget.id),
                   },
                 ]
               : []),

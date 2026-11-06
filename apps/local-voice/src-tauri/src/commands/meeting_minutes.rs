@@ -132,22 +132,23 @@ async fn generate_and_notify_inner(
     // lieferte der Fortschritt scheinbar rueckwaerts.
     let bridge = Arc::clone(&handle);
     let last_phase = std::sync::Mutex::new(None::<(MinutesPhase, u32)>);
-    let result = minutes::generate_minutes(app, store, meeting_id, template_id, doc_basis, &move |p| {
-        let _ = MinutesEvent::Progress {
-            meeting_id: progress_id.clone(),
-            phase: p.phase,
-            done: p.done,
-            total: p.total,
-        }
-        .emit(&progress_app);
-        let mut last = last_phase.lock().unwrap_or_else(|e| e.into_inner());
-        if *last != Some((p.phase, p.total)) {
-            bridge.begin_phase_ex(JobPhase::Minutes, u64::from(p.total), false);
-            *last = Some((p.phase, p.total));
-        }
-        bridge.advance(u64::from(p.done));
-    })
-    .await;
+    let result =
+        minutes::generate_minutes(app, store, meeting_id, template_id, doc_basis, &move |p| {
+            let _ = MinutesEvent::Progress {
+                meeting_id: progress_id.clone(),
+                phase: p.phase,
+                done: p.done,
+                total: p.total,
+            }
+            .emit(&progress_app);
+            let mut last = last_phase.lock().unwrap_or_else(|e| e.into_inner());
+            if *last != Some((p.phase, p.total)) {
+                bridge.begin_phase_ex(JobPhase::Minutes, u64::from(p.total), false);
+                *last = Some((p.phase, p.total));
+            }
+            bridge.advance(u64::from(p.done));
+        })
+        .await;
     match &result {
         Ok(document) => {
             let _ = MinutesEvent::Done {

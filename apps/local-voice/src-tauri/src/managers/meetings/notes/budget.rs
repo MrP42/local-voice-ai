@@ -208,7 +208,8 @@ pub fn block_chars_from_measure(
         return transcript_chars.max(1);
     }
     let chars = room_tokens as u128 * transcript_chars as u128 / transcript_tokens as u128;
-    (chars.saturating_mul((100 - BLOCK_MARGIN_PERCENT) as u128) / 100).min(usize::MAX as u128) as usize
+    (chars.saturating_mul((100 - BLOCK_MARGIN_PERCENT) as u128) / 100).min(usize::MAX as u128)
+        as usize
 }
 
 /// Zeichenlimit fuer das Packen ganzer Zeilen, so dass die Bloecke
@@ -219,7 +220,11 @@ pub fn block_chars_from_measure(
 /// Gleichmaessige Bloecke halten auch die Antwort je Block klein: die Antwort
 /// waechst mit dem Blockinhalt, ein voller erster Block waere der, der am Ende
 /// der Reserve abgeschnitten wird.
-pub fn balanced_block_limit(total_chars: usize, max_block_chars: usize, longest_line: usize) -> usize {
+pub fn balanced_block_limit(
+    total_chars: usize,
+    max_block_chars: usize,
+    longest_line: usize,
+) -> usize {
     let max_block_chars = max_block_chars.max(1);
     let blocks = total_chars.div_ceil(max_block_chars).max(1);
     if blocks == 1 {
@@ -394,14 +399,21 @@ mod tests {
         assert_eq!(22_000usize.div_ceil(room), 3);
         // Mit 32 768 Kontext reicht ein Block.
         let big = TokenBudget::for_model(GEMMA, 32_768);
-        assert_eq!(22_000usize.div_ceil(big.block_room_tokens(PROMPT_OVERHEAD_TOKENS)), 1);
+        assert_eq!(
+            22_000usize.div_ceil(big.block_room_tokens(PROMPT_OVERHEAD_TOKENS)),
+            1
+        );
     }
 
     #[test]
     fn the_entry_cap_follows_the_transcript_and_stays_between_the_bounds() {
         assert_eq!(entry_cap(0), MIN_ENTRIES);
         assert_eq!(entry_cap(3_499), MIN_ENTRIES);
-        assert_eq!(entry_cap(35_000), 10, "ein 35 000-Zeichen-Block: 10 Eintraege");
+        assert_eq!(
+            entry_cap(35_000),
+            10,
+            "ein 35 000-Zeichen-Block: 10 Eintraege"
+        );
         // 60 Minuten (69 700 Zeichen): rund 20 Eintraege in den fertigen Notizen.
         assert_eq!(entry_cap(69_711), 19);
         assert_eq!(entry_cap(usize::MAX), MAX_ENTRIES);
@@ -490,7 +502,11 @@ mod tests {
     /// Greedy-Packen mit dem gleichmaessigen Limit ergibt genau `n` Bloecke.
     #[test]
     fn packing_with_the_balanced_limit_yields_the_planned_block_count() {
-        for (lines, len, max) in [(600usize, 116usize, 45_000usize), (919, 76, 30_000), (50, 900, 20_000)] {
+        for (lines, len, max) in [
+            (600usize, 116usize, 45_000usize),
+            (919, 76, 30_000),
+            (50, 900, 20_000),
+        ] {
             let total = lines * len;
             let planned = total.div_ceil(max);
             let limit = balanced_block_limit(total, max, len);
@@ -503,7 +519,11 @@ mod tests {
                 }
                 used += len;
             }
-            assert_eq!(blocks, planned.max(1), "{lines} Zeilen a {len}, Maximum {max}");
+            assert_eq!(
+                blocks,
+                planned.max(1),
+                "{lines} Zeilen a {len}, Maximum {max}"
+            );
         }
     }
 
@@ -535,7 +555,11 @@ mod tests {
         // Eine lange Zeile hinten.
         assert_eq!(split_point(&[10, 10, 10, 100]), Some(3));
         // Beide Haelften sind nie leer.
-        for lens in [vec![1usize, 1], vec![5, 1, 1, 1, 1, 1], vec![1, 1, 1, 1, 1, 50]] {
+        for lens in [
+            vec![1usize, 1],
+            vec![5, 1, 1, 1, 1, 1],
+            vec![1, 1, 1, 1, 1, 50],
+        ] {
             let at = split_point(&lens).unwrap();
             assert!(at >= 1 && at < lens.len(), "{lens:?} -> {at}");
         }

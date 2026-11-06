@@ -46,6 +46,7 @@ import { isEmptyEntry } from "./emptyEntry";
 import { RetranscribeDialog } from "./RetranscribeDialog";
 import { SpeakerPopover } from "./SpeakerPopover";
 import { SpeakerNamesDialog } from "./SpeakerNamesDialog";
+import { SpeakerSharesTable } from "./SpeakerSharesTable";
 import { SpeakerSuggestionHints } from "./SpeakerSuggestionHints";
 import { useNameSuggestions } from "./useNameSuggestions";
 import { useSettings } from "@/hooks/useSettings";
@@ -83,6 +84,10 @@ import { usePersistentState } from "@/hooks/usePersistentState";
 import { JobPanel } from "./JobProgress";
 import { QueuePanel } from "./QueueStatus";
 import { audioTranscriptPlayer } from "./transcriptPlayer";
+import { useMeetingParts } from "./parts/useMeetingParts";
+import { AppendNotice, PartsDialog, PartsTrigger } from "./parts/PartsChip";
+import { PartDivider, partStartsBySegment } from "./parts/PartDivider";
+import { canAppendAudio, useAppendAudio } from "./parts/useAppendAudio";
 import { SlideMarkRow } from "./slides/SlideMark";
 import { SlideViewer } from "./slides/SlideViewer";
 import { SlidesPanel } from "./slides/SlidesPanel";
@@ -104,6 +109,8 @@ import {
 } from "./language/DocBasisFields";
 import { storeOutputLanguage, useLanguageInfo } from "./language/languages";
 import { documentBasisText, useDocumentBasis } from "./language/documentBasis";
+import { useRegenerateGuard } from "./useRegenerateGuard";
+import { DiarizationModelButton } from "./DiarizationModelButton";
 
 const formatMmSs = (ms: number) => {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
@@ -198,6 +205,10 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
 }) => {
   const { t, i18n } = useTranslation();
   const meetingId = meeting.id;
+  // Mehrere Audiodateien (Teile): Teilliste, wartende Teile, Anhaengen.
+  const { info: partsInfo, reload: reloadParts } = useMeetingParts(meetingId);
+  const [partsOpen, setPartsOpen] = useState(false);
+  const appendAudio = useAppendAudio(meeting);
   const emptyEntry = isEmptyEntry(meeting);
   const meetingTitle = meeting.title;
   // Dialoge und Anfragen aus Menue und Kopf.
@@ -719,11 +730,16 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
     void loadParticipants();
   }, [meetingId, loadSpeakers, loadParticipants]);
 
+  // Erkannte Sprecher: ohne den ganzen Kanal (#242, Nummer 0), den die
+  // Sprechertrennung nicht erkannt hat und der nur in der Protokolltabelle
+  // benannt wird.
+  const hasDiarizedSpeakers = speakers.some((s) => s.speaker_index !== 0);
+
   // U8: Namensvorschläge aus dem Gesagten; nie automatisch übernommen.
   const nameHints = useNameSuggestions(
     meetingId,
     speakers,
-    !growing && !loading && speakers.length > 0,
+    !growing && !loading && hasDiarizedSpeakers,
   );
 
   // Aendert sich die Hoehe der Liste (Fortschrittsblock waechst, Fenster wird
@@ -811,8 +827,11 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
       }
     });
   };
-  const regenerateMinutes = (choice?: DocBasisChoice) => {
+  const regenerateGuard = useRegenerateGuard();
+  const regenerateMinutes = async (choice?: DocBasisChoice) => {
     setCenterTab("minutes");
+    // Von Hand bearbeitetes Protokoll: erst fragen (die Version bleibt erhalten).
+    if (!(await regenerateGuard.confirm(meetingId, "minutes"))) return;
     const basis = toDocBasis(choice ?? initialDocBasisChoice(i18n.language));
     void commands
       .meetingsGenerateMinutes(meetingId, null, basis)
@@ -838,7 +857,7 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
     setRegenOpen(false);
     storeOutputLanguage(regenChoice.outputLanguage);
     if (kind === "notes") regenerateNotes(regenChoice);
-    else regenerateMinutes(regenChoice);
+    else void regenerateMinutes(regenChoice);
   };
 
   /**
@@ -860,8 +879,16 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
             s.speaker_index === segment.speaker_index,
         );
   /** Kanalname ohne Sprechertrennung; "Ich" trägt, wenn gesetzt, "Mein Name". */
-  const channelLabel = (channel: number) =>
-    channel === 0 && selfName !== "" ? selfName : t(channelLabelKey(channel));
+  const channelLabel = (channel: number) => {
+    // #242: der ganze Kanal ("Aufnahme") kann einen Namen tragen.
+    const whole = speakers.find(
+      (s) => s.channel === channel && s.speaker_index === 0,
+    );
+    if (whole?.display_name) return whole.display_name;
+    return channel === 0 && selfName !== ""
+      ? selfName
+      : t(channelLabelKey(channel));
+  };
   const whoLabel = (segment: StoredSegment) =>
     speakerOf(segment)?.label ?? channelLabel(segment.channel);
 
@@ -1002,10 +1029,12 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
     <MeetingActions
       mode={mode}
       hasSegments={segments.length > 0}
-      hasSpeakers={speakers.length > 0}
+      hasSpeakers={hasDiarizedSpeakers}
       hasAudio={hasAudio}
       canDetectSlides={canDetectSlides(meeting)}
       onDetectSlides={() => void detectSlides()}
+      canAppendAudio={canAppendAudio(meeting) && partsInfo.append_to === null}
+      onAppendAudio={() => void appendAudio.pick()}
       busy={
         live ||
         meeting.status === "processing" ||
@@ -1026,7 +1055,7 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
       }}
       onTranslate={() => setTranslateOpen(true)}
       onRegenNotes={() => regenerateNotes()}
-      onRegenMinutes={() => regenerateMinutes()}
+      onRegenMinutes={() => void regenerateMinutes()}
       onTemplate={() => setTemplateOpen(true)}
       onManageTemplates={() => setManagerOpen(true)}
       onRegenWithTemplate={() => setRegenOpen(true)}
@@ -1050,6 +1079,11 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
     !meeting.system_audio_path &&
     !loading &&
     segments.length === 0;
+
+  const partStarts = partStartsBySegment(segments, partsInfo.parts);
+  // Ab 100 Minuten ist die Zeitmarke breiter (z. B. 221:30).
+  const longTimeline =
+    (segments[segments.length - 1]?.start_ms ?? 0) >= 6_000_000;
 
   /** Transkript (Reiter in der Mitte): Werkzeugzeilen fest, die Liste scrollt. */
   const activeVariant = variants.find((v) => v.active) ?? null;
@@ -1139,6 +1173,11 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
               {t(`meetings.speakers.notices.${code}`, {
                 defaultValue: code,
               })}
+              {code === "model_missing" && (
+                <span className="block mt-1">
+                  <DiarizationModelButton inline />
+                </span>
+              )}
             </li>
           ))}
         </ul>
@@ -1172,6 +1211,14 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
           >
             {segments.map((segment) => (
               <React.Fragment key={segment.segment_index}>
+                {partStarts.get(segment.segment_index) && (
+                  <PartDivider
+                    part={partStarts.get(segment.segment_index)!}
+                    onSeek={
+                      player.canSeek ? (ms) => player.seek(ms) : undefined
+                    }
+                  />
+                )}
                 {slideMarksBySegment.get(segment.segment_index)?.map((mark) => (
                   <SlideMarkRow
                     key={`${mark.slideId}-${mark.startMs}`}
@@ -1202,12 +1249,14 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
                         player.seek(segment.start_ms, segment.channel)
                       }
                       title={t("meetings.detail.playFrom")}
-                      className="text-xs text-text/60 w-10 shrink-0 pt-0.5 text-left tabular-nums hover:text-logo-primary hover:underline cursor-pointer"
+                      className={`text-xs text-text/60 ${longTimeline ? "w-12" : "w-10"} shrink-0 pt-0.5 text-left tabular-nums hover:text-logo-primary hover:underline cursor-pointer`}
                     >
                       {formatMmSs(segment.start_ms)}
                     </button>
                   ) : (
-                    <span className="text-xs text-text/60 w-10 shrink-0 pt-0.5">
+                    <span
+                      className={`text-xs text-text/60 ${longTimeline ? "w-12" : "w-10"} shrink-0 pt-0.5`}
+                    >
                       {formatMmSs(segment.start_ms)}
                     </span>
                   )}
@@ -1361,9 +1410,38 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
         }}
         tabsLabel={t("meetings.layout.contentTabs")}
         menu={actions(compact ? "menu-all" : "menu")}
+        partsSlot={
+          <PartsTrigger
+            info={partsInfo}
+            variant="chip"
+            onOpen={() => setPartsOpen(true)}
+          />
+        }
         autoEdit={autoRename}
         onAutoEditStarted={onAutoRenameStarted}
       />
+
+      <PartsTrigger
+        info={partsInfo}
+        variant="row"
+        onOpen={() => setPartsOpen(true)}
+      />
+      <PartsDialog
+        open={partsOpen}
+        onOpenChange={setPartsOpen}
+        meetingId={meetingId}
+        info={partsInfo}
+        onSeek={player.canSeek ? (ms) => player.seek(ms) : undefined}
+        onChanged={() => void reloadParts()}
+      />
+      {appendAudio.dialog}
+      {partsInfo.append_to && (
+        <AppendNotice
+          meetingId={meetingId}
+          target={partsInfo.append_to}
+          onChanged={() => void reloadParts()}
+        />
+      )}
 
       {emptyEntry && fill && (
         <EmptyStartCard
@@ -1444,6 +1522,16 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
             slideRefs={slideRefs}
             onOpenSlide={(id) => setSlideJump({ id })}
             onFollowup={() => setFollowupOpen(true)}
+            speakerTable={
+              <SpeakerSharesTable
+                meetingId={meetingId}
+                speakers={speakers}
+                segments={segments}
+                player={player}
+                onChanged={onSpeakersChanged}
+                onJump={jumpToSource}
+              />
+            }
           />
         </div>
       )}
@@ -1672,6 +1760,7 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
         onOpenChange={setManagerOpen}
         onChanged={() => void reloadTemplate().catch(() => {})}
       />
+      {regenerateGuard.dialog}
       <Dialog
         open={regenOpen}
         onOpenChange={setRegenOpen}

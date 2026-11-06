@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import i18n from "@/i18n";
 import { commands } from "@/bindings";
 import { sentenceAfterProgress } from "../tts/sentenceCounter";
+import { endReaderSession } from "../tts/readerSession";
 
 /**
  * Die Vorlese-Sitzung der Aufnahmen.
@@ -215,6 +216,8 @@ export const startReading = (
   from?: { position: number; total: number },
 ) => {
   ensureListeners();
+  // Die Wiedergabe gehört jetzt den Aufnahmen, nicht mehr der Vorlesen-Seite.
+  endReaderSession();
   if (session && session.key !== key) remember(session);
   saved.delete(key);
   const token = ++tokenCounter;
@@ -293,7 +296,7 @@ export const startExport = async (
   key: string,
   text: string,
   target: string,
-) => {
+): Promise<boolean> => {
   ensureListeners();
   setExport({ key, position: 0, total: 0, path: target });
   try {
@@ -303,12 +306,14 @@ export const startExport = async (
       toast.error(
         i18n.t("meetings.readAloud.saveError", { error: result.error }),
       );
-      return;
+      return false;
     }
     if (exporting?.key === key) setExport({ ...exporting, path: result.data });
+    return true;
   } catch (e) {
     setExport(null);
     toast.error(i18n.t("meetings.readAloud.saveError", { error: String(e) }));
+    return false;
   }
 };
 

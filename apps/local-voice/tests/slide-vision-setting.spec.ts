@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { calls, installTauriMock } from "./calendarMock";
+import { geheZu } from "./profilmenue";
 
 // D3 (Goal Issues-Abschluss #70, M7 = #69): die Einstellung "Bildanalyse für Folien" in
 // der Gruppe "Besprechungen" (Reiter Diktat). Gegen die Tauri-Attrappe: Standard aus,
@@ -55,10 +56,7 @@ const open = async (page: Page, status: Status) => {
   }, status);
   await page.setViewportSize({ width: 1280, height: 1000 });
   await page.goto("/");
-  await page
-    .getByRole("navigation")
-    .getByRole("button", { name: "Einstellungen", exact: true })
-    .click();
+  await geheZu(page, "Einstellungen");
   await expect(page.getByTestId("slide-vision-toggle")).toBeAttached();
 };
 

@@ -127,9 +127,12 @@ pub(crate) fn find_local_update(dir: &Path, current: &str, app_name: &str) -> Op
 /// keine Verkettungs-, Umleitungs- oder Variablenzeichen, keine Zeilenumbrueche.
 pub(crate) fn cmd_safe_path(path: &str) -> bool {
     !path.is_empty()
-        && !path
-            .chars()
-            .any(|c| matches!(c, '"' | '&' | '|' | '<' | '>' | '^' | '%' | '!' | '\n' | '\r' | '\0'))
+        && !path.chars().any(|c| {
+            matches!(
+                c,
+                '"' | '&' | '|' | '<' | '>' | '^' | '%' | '!' | '\n' | '\r' | '\0'
+            )
+        })
 }
 
 fn candidate_dirs(app: &AppHandle) -> Vec<PathBuf> {
@@ -283,30 +286,60 @@ mod tests {
             version_from_file_name("Local Voice AI_0.18.3_x64-setup.exe", app).as_deref(),
             Some("0.18.3")
         );
-        assert_eq!(version_from_file_name("Local Voice AI_0.18.3_aarch64.dmg", app), None);
+        assert_eq!(
+            version_from_file_name("Local Voice AI_0.18.3_aarch64.dmg", app),
+            None
+        );
         assert_eq!(version_from_file_name("setup.exe", app), None);
         assert_eq!(version_from_file_name("Other_App_x64-setup.exe", app), None);
         // Der Vorfall vom 15.09.: fremdes Programm, passendes Muster.
-        assert_eq!(version_from_file_name("Anarlog_1.4.10_x64-setup.exe", app), None);
+        assert_eq!(
+            version_from_file_name("Anarlog_1.4.10_x64-setup.exe", app),
+            None
+        );
     }
 
     #[test]
     fn notes_of_all_newer_installers_come_along_newest_first() {
         let dir = tempfile::tempdir().unwrap();
         for v in ["0.21.7", "0.21.8", "0.21.9"] {
-            std::fs::write(dir.path().join(format!("Local Voice AI_{v}_x64-setup.exe")), b"x").unwrap();
+            std::fs::write(
+                dir.path().join(format!("Local Voice AI_{v}_x64-setup.exe")),
+                b"x",
+            )
+            .unwrap();
         }
-        std::fs::write(dir.path().join("Local Voice AI_0.21.9_x64-setup.notes.md"), "- Neu: Fusszeile").unwrap();
-        std::fs::write(dir.path().join("Local Voice AI_0.21.8_x64-setup.notes.md"), "- Neu: Effort").unwrap();
-        std::fs::write(dir.path().join("Local Voice AI_0.21.7_x64-setup.notes.md"), "- alt").unwrap();
+        std::fs::write(
+            dir.path().join("Local Voice AI_0.21.9_x64-setup.notes.md"),
+            "- Neu: Fusszeile",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("Local Voice AI_0.21.8_x64-setup.notes.md"),
+            "- Neu: Effort",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("Local Voice AI_0.21.7_x64-setup.notes.md"),
+            "- alt",
+        )
+        .unwrap();
         let u = find_local_update(dir.path(), "0.21.7", "Local Voice AI").unwrap();
         assert_eq!(u.version, "0.21.9");
         let notes = u.notes.unwrap();
         assert!(notes.starts_with("### 0.21.9"), "{notes}");
-        assert!(notes.contains("### 0.21.8
+        assert!(
+            notes.contains(
+                "### 0.21.8
 
-- Neu: Effort"), "{notes}");
-        assert!(!notes.contains("alt"), "installierte Version gehoert nicht dazu");
+- Neu: Effort"
+            ),
+            "{notes}"
+        );
+        assert!(
+            !notes.contains("alt"),
+            "installierte Version gehoert nicht dazu"
+        );
     }
 
     #[test]
@@ -324,7 +357,10 @@ mod tests {
         }
         let app = "Local Voice AI";
         let found = find_local_update(dir.path(), "0.18.3", app).expect("neuer Installer");
-        assert_eq!(found.version, "0.18.10", "10 > 3 numerisch, nicht lexikalisch; Anarlog 1.4.10 zaehlt nicht");
+        assert_eq!(
+            found.version, "0.18.10",
+            "10 > 3 numerisch, nicht lexikalisch; Anarlog 1.4.10 zaehlt nicht"
+        );
         assert!(found.path.ends_with("Local Voice AI_0.18.10_x64-setup.exe"));
         assert!(find_local_update(dir.path(), "0.18.10", app).is_none());
         assert!(find_local_update(dir.path(), "1.0.0", app).is_none());
@@ -332,8 +368,12 @@ mod tests {
 
     #[test]
     fn helper_refuses_shell_metacharacters_in_paths() {
-        assert!(cmd_safe_path(r"C:\Users\wolff\local-voice-project\Local Voice AI_0.18.10_x64-setup.exe"));
-        assert!(cmd_safe_path(r"C:\Users\Jörg Müller\Local Voice AI\local-voice-ai.exe"));
+        assert!(cmd_safe_path(
+            r"C:\Users\wolff\local-voice-project\Local Voice AI_0.18.10_x64-setup.exe"
+        ));
+        assert!(cmd_safe_path(
+            r"C:\Users\Jörg Müller\Local Voice AI\local-voice-ai.exe"
+        ));
         for bad in [
             r#"C:\a" & calc & "\Local Voice AI_1.0.0_x64-setup.exe"#,
             r"C:\a&calc\x.exe",
@@ -348,6 +388,8 @@ mod tests {
 
     #[test]
     fn missing_folder_is_not_an_error() {
-        assert!(find_local_update(Path::new("Z:/gibt/es/nicht"), "0.1.0", "Local Voice AI").is_none());
+        assert!(
+            find_local_update(Path::new("Z:/gibt/es/nicht"), "0.1.0", "Local Voice AI").is_none()
+        );
     }
 }

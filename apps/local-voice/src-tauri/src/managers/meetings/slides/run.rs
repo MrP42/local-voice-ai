@@ -37,8 +37,8 @@ use log::{info, warn};
 
 use super::ffmpeg::{self, Flow, SampleHook, SampleTick};
 use super::ocr::{self, OcrBackend};
-use super::vision::{self, SlideAnalysis, VisionBackend};
 use super::store::{NewSlide, SlideRecord, ORIGIN_VIDEO};
+use super::vision::{self, SlideAnalysis, VisionBackend};
 use super::{
     clamp_last_end, group_by_hash, hamming, merge_occurrences, segment, SlideDetectConfig,
     SlideError, SlideGroup, SLIDES_DIR,
@@ -423,7 +423,10 @@ fn analyze_groups(
         let unavailable = analysis.unavailable.clone();
         out[gi] = Some(analysis);
         if let Some(why) = unavailable {
-            warn!("slides: Bildanalyse nicht verfuegbar, Rest ohne ({})", why.chars().take(120).collect::<String>());
+            warn!(
+                "slides: Bildanalyse nicht verfuegbar, Rest ohne ({})",
+                why.chars().take(120).collect::<String>()
+            );
             summary.vision_unavailable = Some(why);
             break;
         }
@@ -434,7 +437,12 @@ fn analyze_groups(
 
 /// Schreibt das Ergebnis der Bildanalyse: Gemmas Text ersetzt den OCR-Text (Engine und Art
 /// folgen dem neuen Text), die Beschreibung kommt dazu. `true`, wenn sich etwas geaendert hat.
-fn store_vision(ctx: &SlideRun<'_>, slide_id: &str, analysis: &SlideAnalysis, engine: &str) -> bool {
+fn store_vision(
+    ctx: &SlideRun<'_>,
+    slide_id: &str,
+    analysis: &SlideAnalysis,
+    engine: &str,
+) -> bool {
     let mut changed = false;
     if let Some(text) = &analysis.text {
         match ctx

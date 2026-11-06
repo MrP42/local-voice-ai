@@ -81,6 +81,9 @@ pub struct TtsProviderEntry {
     /// Stimmen, die im Vorlesen-Dropdown stehen (leer = alle). Siehe
     /// [`TtsProvidersSettings::visible_voices`]; gesetzt über `tts_provider_set_visible_voices`.
     pub visible_voices: Vec<String>,
+    /// Eigene Anzeigenamen je Stimmen-Kennung ([`TtsProvidersSettings::voice_names`]); gesetzt über
+    /// `tts_provider_set_voice_name`. Die Stimmenlisten der Befehle tragen sie schon in `label`.
+    pub voice_names: std::collections::BTreeMap<String, String>,
 }
 
 fn manager(app: &AppHandle) -> Arc<TtsManager> {
@@ -112,6 +115,11 @@ pub fn build_entries(
                     .settings
                     .visible_voices
                     .get(&descriptor.id)
+                    .cloned()
+                    .unwrap_or_default(),
+                voice_names: snapshot
+                    .settings
+                    .voice_names_of(&descriptor.id)
                     .cloned()
                     .unwrap_or_default(),
                 enabled: state.enabled,
@@ -230,6 +238,46 @@ pub fn set_visible_voices_in(
     Ok(())
 }
 
+/// Eigenen Anzeigenamen einer Stimme setzen oder (leer / `None` / gleich dem ursprünglichen Namen)
+/// zurücknehmen (rein, testbar). Die Kennung bleibt, nur die Beschriftung wechselt — im
+/// Vorlesen-Dropdown, in der Wiedergabeleiste, im Stimmenkatalog und als Sprecher-Marker `<Name>`
+/// (die Kennung und der ursprüngliche Name treffen weiter). `original`: der Name, den der Anbieter
+/// liefert (für Piper der Katalogname); gleicht der neue ihm, wird nichts gespeichert.
+pub fn set_voice_name_in(
+    providers: &mut TtsProvidersSettings,
+    registry: &ProviderRegistry,
+    id: &str,
+    voice: &str,
+    name: Option<&str>,
+    original: Option<&str>,
+) -> Result<(), TtsError> {
+    known(registry, id)?;
+    let voice = voice.trim();
+    if voice.is_empty() || voice.len() > 256 || voice.chars().any(char::is_control) {
+        return Err(TtsError::bad_request(
+            "Ungültige Stimmen-Kennung".to_string(),
+        ));
+    }
+    let clean = policy::clean_voice_name(name.unwrap_or("")).map_err(TtsError::bad_request)?;
+    let clean = clean.filter(|n| original.map_or(true, |o| o.trim() != n));
+    let names = providers.voice_names.entry(id.to_string()).or_default();
+    match clean {
+        Some(n) => {
+            if !names.contains_key(voice) && names.len() >= MAX_VISIBLE_VOICES {
+                return Err(TtsError::bad_request("Zu viele eigene Namen".to_string()));
+            }
+            names.insert(voice.to_string(), n);
+        }
+        None => {
+            names.remove(voice);
+        }
+    }
+    if names.is_empty() {
+        providers.voice_names.remove(id);
+    }
+    Ok(())
+}
+
 /// Eine Stimme eines Anbieters für das Vorlesen-Dropdown.
 #[derive(Debug, Clone, Serialize, Type)]
 pub struct ProviderVoiceOption {
@@ -266,15 +314,17 @@ pub async fn voice_options(
             return None;
         }
         let visible = snapshot.settings.visible_voices.get(&desc.id).cloned();
+        let names = snapshot.settings.voice_names_of(&desc.id).cloned();
         let selected = snapshot
             .voice_of(&desc.id)
             .or_else(|| snapshot.settings.voices.get(&desc.id).cloned());
         Some(async move {
             let listed = tokio::time::timeout(VOICES_LIMIT, provider.list_voices(None)).await;
-            let voices = match listed {
+            let mut voices = match listed {
                 Ok(Ok(voices)) => voices,
                 _ => Vec::new(),
             };
+            policy::apply_voice_names(&mut voices, names.as_ref());
             voices
                 .into_iter()
                 .filter(|v| policy::visible_voice(visible.as_ref(), selected.as_deref(), &v.id))
@@ -422,8 +472,12 @@ pub async fn tts_provider_voices(
         .registry
         .get(&id)
         .ok_or_else(|| TtsError::bad_request(format!("Unbekannter Anbieter '{id}'")))?;
+    let names = snapshot.settings.voice_names_of(&id).cloned();
     match tokio::time::timeout(VOICES_LIMIT, provider.list_voices(language.as_deref())).await {
-        Ok(result) => result,
+        Ok(result) => result.map(|mut voices| {
+            policy::apply_voice_names(&mut voices, names.as_ref());
+            voices
+        }),
         Err(_) => Err(TtsError::timeout(format!(
             "Die Stimmenliste kam nicht innerhalb von {} s",
             VOICES_LIMIT.as_secs()
@@ -480,11 +534,19 @@ pub fn tts_provider_inspect_model_folder(
 /// Opt-in eines Anbieters setzen oder zurücknehmen. NUR OBERFLÄCHE (siehe Moduldoku).
 #[tauri::command]
 #[specta::specta]
-pub fn tts_provider_set_enabled(app: AppHandle, id: String, enabled: bool) -> Result<(), TtsError> {
+pub async fn tts_provider_set_enabled(
+    app: AppHandle,
+    id: String,
+    enabled: bool,
+) -> Result<(), TtsError> {
     let registry = manager(&app).provider_snapshot().registry;
     mutate_settings(&app, |s| {
         set_enabled_in(&mut s.tts_providers, &registry, &id, enabled)
-    })
+    })?;
+    if enabled {
+        spawn_default_voice(&app);
+    }
+    Ok(())
 }
 
 /// Die Lizenz eines Anbieters bestätigen. `fingerprint` ist der Wert aus
@@ -493,7 +555,7 @@ pub fn tts_provider_set_enabled(app: AppHandle, id: String, enabled: bool) -> Re
 /// gilt nur für genau dieses Modell/diese Lizenzangabe. NUR OBERFLÄCHE.
 #[tauri::command]
 #[specta::specta]
-pub fn tts_provider_acknowledge_license(
+pub async fn tts_provider_acknowledge_license(
     app: AppHandle,
     id: String,
     fingerprint: String,
@@ -501,7 +563,7 @@ pub fn tts_provider_acknowledge_license(
     let snapshot = manager(&app).provider_snapshot();
     let subject = snapshot.subject(&id);
     let now = chrono::Utc::now().to_rfc3339();
-    mutate_settings(&app, |s| {
+    let ack = mutate_settings(&app, |s| {
         acknowledge_in(
             &mut s.tts_providers,
             &snapshot.registry,
@@ -510,7 +572,12 @@ pub fn tts_provider_acknowledge_license(
             &fingerprint,
             &now,
         )
-    })
+    })?;
+    // Erst mit der Zustimmung ist Phonon benutzbar: jetzt die Vorgabestimme (Anton) wählen. Im
+    // Hintergrund, damit der Klick nicht auf die Stimmenliste wartet; die Oberfläche liest die
+    // Einstellungen auf das Ereignis hin neu.
+    spawn_default_voice(&app);
+    Ok(ack)
 }
 
 /// Fernzugriff (Adresse außerhalb dieses Rechners) für einen Anbieter erlauben
@@ -545,6 +612,35 @@ pub fn tts_provider_set_visible_voices(
     settings::write_settings(&app, current);
     // Die Sprecher im Skript sind die sichtbaren Stimmen: Marker und Editor sollen
     // die neue Auswahl sofort kennen, nicht erst nach Ablauf der gehaltenen Liste.
+    manager(&app).invalidate_provider_roster();
+    Ok(())
+}
+
+/// Eigenen Anzeigenamen einer Stimme setzen; `name` leer oder `None`: ursprünglicher Name. Gilt für
+/// jeden Anbieter (auch Piper); Fish-Stimmen tragen ihren Namen in den eigenen Metadaten
+/// (`tts_set_voice_meta`). `original`: der Name, den die Oberfläche als ursprünglich zeigt.
+#[tauri::command]
+#[specta::specta]
+pub fn tts_provider_set_voice_name(
+    app: AppHandle,
+    id: String,
+    voice: String,
+    name: Option<String>,
+    original: Option<String>,
+) -> Result<(), TtsError> {
+    let registry = manager(&app).provider_snapshot().registry;
+    let _guard = SETTINGS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut current = settings::get_settings(&app);
+    set_voice_name_in(
+        &mut current.tts_providers,
+        &registry,
+        &id,
+        &voice,
+        name.as_deref(),
+        original.as_deref(),
+    )?;
+    settings::write_settings(&app, current);
+    // Sprecher-Marker und Editor kennen den neuen Namen sofort.
     manager(&app).invalidate_provider_roster();
     Ok(())
 }
@@ -605,6 +701,141 @@ pub(crate) async fn select_provider(
     mutate_settings(app, |s| select_in(s, &snapshot, id, voice))?;
     tts.voice_changed().await;
     Ok(())
+}
+
+// ---- Vorgabestimme (einmalig) -----------------------------------------------------------
+
+/// Anbieter, dessen Stimme die App einmalig als Vorgabe wählt, und die Stimme dazu: Phonon mit
+/// Anton (deutsches Modell), wie am iPhone.
+pub const DEFAULT_VOICE_PROVIDER: &str = crate::managers::tts::providers::phonon::PHONON_ID;
+pub const DEFAULT_VOICE_NAME: &str = "Anton";
+/// Ereignis an die Oberfläche: die App hat die Vorgabestimme gewählt (Einstellungen neu lesen).
+pub const DEFAULT_VOICE_EVENT: &str = "tts-default-voice-applied";
+
+/// Die Kennung der Vorgabestimme in der Stimmenliste des Anbieters: `Anton` im deutschen
+/// Hauptmodell, sonst `de:Anton` (deutsches Modell neben einem englischen Hauptmodell).
+pub fn default_voice_in(voices: &[VoiceDescriptor]) -> Option<String> {
+    let qualified = format!("de:{DEFAULT_VOICE_NAME}");
+    voices
+        .iter()
+        .find(|v| v.id == DEFAULT_VOICE_NAME)
+        .or_else(|| voices.iter().find(|v| v.id == qualified))
+        .map(|v| v.id.clone())
+}
+
+/// Hat der Nutzer schon irgendeine Stimme ausdrücklich gewählt, egal bei welchem Anbieter? Dann
+/// gilt sie, und die Vorgabe wird nur als erledigt gemerkt. Wahl heißt: eine andere Engine als die
+/// Werksvorgabe, eine Fish- oder Piper-Stimme oder eine gemerkte Anbieter-Stimme.
+pub fn has_own_voice_choice(settings: &AppSettings) -> bool {
+    let factory_engine = crate::settings::get_default_settings().tts_engine;
+    settings.tts_engine != factory_engine
+        || settings.tts_voice.is_some()
+        || settings.tts_piper_voice.is_some()
+        || !settings.tts_providers.voices.is_empty()
+}
+
+/// Die Vorgabestimme `voice` einmalig übernehmen (rein, unter der Sperre aufgerufen, also auf dem
+/// Stand im Moment des Schreibens: eine Wahl, die der Nutzer während der Stimmenabfrage getroffen
+/// hat, zählt mit). `Ok(true)`: gewählt. `Ok(false)`: schon einmal geschehen, oder der Nutzer hat
+/// schon selbst gewählt ([`has_own_voice_choice`]; die Wahl bleibt, die Vorgabe gilt als erledigt).
+/// Prüft die Guardrails wie jede Wahl ([`select_in`]): ohne Opt-in, Lizenz-Zustimmung und
+/// eingerichtetes Modell wird nichts gewählt und nichts gemerkt (Fehler).
+pub fn apply_default_voice_in(
+    settings: &mut AppSettings,
+    snapshot: &ProviderSnapshot,
+    voice: &str,
+) -> Result<bool, TtsError> {
+    let id = DEFAULT_VOICE_PROVIDER;
+    if settings
+        .tts_providers
+        .default_voice_applied
+        .iter()
+        .any(|p| p == id)
+    {
+        return Ok(false);
+    }
+    let own_choice = has_own_voice_choice(settings);
+    if !own_choice {
+        select_in(settings, snapshot, id, Some(voice.to_string()))?;
+    }
+    settings
+        .tts_providers
+        .default_voice_applied
+        .push(id.to_string());
+    Ok(!own_choice)
+}
+
+/// Modellstand, für den die Stimmenliste in dieser Sitzung schon gelesen wurde (siehe
+/// [`apply_default_voice`]).
+static DEFAULT_VOICE_TRIED: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// [`apply_default_voice`] im Hintergrund (Befehle kehren sofort zurück).
+pub(crate) fn spawn_default_voice(app: &AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move { apply_default_voice(&app).await });
+}
+
+/// Phonon mit Anton als Vorgabe fürs Vorlesen, sobald Phonon freigegeben (Opt-in, Lizenz) und das
+/// deutsche Modell eingerichtet ist — einmalig, danach gilt die eigene Wahl. Läuft beim Start und
+/// nach Opt-in bzw. Lizenz-Zustimmung; setzt selbst nie eine Freigabe. Still, wenn etwas fehlt.
+pub(crate) async fn apply_default_voice(app: &AppHandle) {
+    let id = DEFAULT_VOICE_PROVIDER;
+    let tts = manager(app);
+    let snapshot = tts.provider_snapshot();
+    if snapshot
+        .settings
+        .default_voice_applied
+        .iter()
+        .any(|p| p == id)
+    {
+        return;
+    }
+    if snapshot.checked(id).is_err() {
+        return;
+    }
+    let Some(provider) = snapshot.registry.get(id) else {
+        return;
+    };
+    // Je Modellstand höchstens EINE Stimmenliste pro Sitzung: fehlt Anton (nur englisches Modell),
+    // startet nicht jeder weitere Anlass erneut einen Phonon-Prozess.
+    let model = provider.use_subject().model;
+    {
+        let mut tried = DEFAULT_VOICE_TRIED
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if tried.as_deref() == Some(model.as_str()) {
+            return;
+        }
+        *tried = Some(model);
+    }
+    let voices = match tokio::time::timeout(VOICES_LIMIT, provider.list_voices(None)).await {
+        Ok(Ok(voices)) => voices,
+        _ => {
+            // Zeitüberschreitung oder Fehler: beim nächsten Anlass erneut versuchen.
+            *DEFAULT_VOICE_TRIED
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = None;
+            return;
+        }
+    };
+    let Some(voice) = default_voice_in(&voices) else {
+        return;
+    };
+    match mutate_settings(app, |s| apply_default_voice_in(s, &snapshot, &voice)) {
+        Ok(true) => {
+            log::info!("Vorlesen: Vorgabestimme {id}/{voice} gewählt");
+            tts.voice_changed().await;
+            let _ = tauri::Emitter::emit(app, DEFAULT_VOICE_EVENT, ());
+        }
+        Ok(false) => {}
+        Err(e) => {
+            // Freigabe inzwischen widerrufen o. Ä.: beim nächsten Anlass erneut versuchen.
+            *DEFAULT_VOICE_TRIED
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = None;
+            log::warn!("Vorgabestimme nicht gewählt: {}", e.message);
+        }
+    }
 }
 
 /// Probestimme: der Anbieter spricht `text`, das Audio wird abgespielt, sobald
@@ -935,6 +1166,134 @@ mod tests {
         (p, snap)
     }
 
+    fn stimme(id: &str) -> VoiceDescriptor {
+        VoiceDescriptor {
+            id: id.to_string(),
+            label: id.to_string(),
+            language: "de".to_string(),
+            gender: None,
+            license: None,
+        }
+    }
+
+    /// Anton im deutschen Hauptmodell (`Anton`) oder neben einem englischen (`de:Anton`);
+    /// ein englisches `en:Anton` oder eine fehlende Stimme ergeben keine Vorgabe.
+    #[test]
+    fn vorgabestimme_ist_anton_aus_dem_deutschen_modell() {
+        let list = |ids: &[&str]| ids.iter().map(|i| stimme(i)).collect::<Vec<_>>();
+        assert_eq!(
+            default_voice_in(&list(&["Nele", "Anton"])).as_deref(),
+            Some("Anton")
+        );
+        assert_eq!(
+            default_voice_in(&list(&["Zoey", "en:Anton", "de:Anton"])).as_deref(),
+            Some("de:Anton")
+        );
+        assert_eq!(default_voice_in(&list(&["Nele", "en:Anton"])), None);
+        assert_eq!(default_voice_in(&[]), None);
+    }
+
+    /// Einmalig: Phonon mit Anton wird gewählt und gemerkt; ein zweiter Lauf ändert nichts,
+    /// auch wenn der Nutzer inzwischen eine andere Stimme gewählt hat.
+    #[test]
+    fn vorgabestimme_wird_einmal_gewaehlt_danach_gilt_die_eigene_wahl() {
+        let (p, snap) = approved_phonon();
+        let mut s = crate::settings::get_default_settings();
+        s.tts_providers = p;
+        assert!(
+            !has_own_voice_choice(&s),
+            "Werksstand ist keine eigene Wahl"
+        );
+        assert!(apply_default_voice_in(&mut s, &snap, "Anton").unwrap());
+        assert_eq!(s.tts_engine, "provider:phonon");
+        assert_eq!(
+            s.tts_providers.voices.get("phonon").map(String::as_str),
+            Some("Anton")
+        );
+        assert_eq!(s.tts_providers.default_voice_applied, ["phonon"]);
+
+        select_in(&mut s, &snap, "fish", Some("patrick".into())).unwrap();
+        assert!(!apply_default_voice_in(&mut s, &snap, "Anton").unwrap());
+        assert_eq!(s.tts_engine, "fish", "die eigene Wahl bleibt");
+        assert_eq!(s.tts_providers.default_voice_applied, ["phonon"]);
+    }
+
+    /// Jede ausdrückliche Wahl bleibt, egal bei welchem Anbieter (Codex P1): Fish-Stimme,
+    /// Piper-Stimme, eine gemerkte Phonon-Stimme bei aktivem anderem Anbieter, eine aktive
+    /// Phonon-Stimme. Gemerkt wird trotzdem, die Vorgabe gilt als erledigt.
+    #[test]
+    fn vorgabestimme_ueberschreibt_keine_eigene_wahl_bei_keinem_anbieter() {
+        let (p, snap) = approved_phonon();
+        let base = {
+            let mut s = crate::settings::get_default_settings();
+            s.tts_providers = p;
+            s
+        };
+        let cases: [(&str, fn(&mut AppSettings)); 4] = [
+            ("Fish-Stimme", |s| s.tts_voice = Some("patrick".into())),
+            ("Piper-Stimme", |s| {
+                s.tts_engine = "piper".into();
+                s.tts_piper_voice = Some("de_DE-thorsten-high".into());
+            }),
+            ("gemerkte Phonon-Stimme", |s| {
+                s.tts_providers
+                    .voices
+                    .insert("phonon".into(), "Nele".into());
+            }),
+            ("aktive Phonon-Stimme", |s| {
+                s.tts_engine = "provider:phonon".into();
+                s.tts_providers
+                    .voices
+                    .insert("phonon".into(), "Nele".into());
+            }),
+        ];
+        for (name, choose) in cases {
+            let mut s = base.clone();
+            choose(&mut s);
+            let before = (
+                s.tts_engine.clone(),
+                s.tts_voice.clone(),
+                s.tts_piper_voice.clone(),
+                s.tts_providers.voices.clone(),
+            );
+            assert!(has_own_voice_choice(&s), "{name}");
+            assert!(
+                !apply_default_voice_in(&mut s, &snap, "Anton").unwrap(),
+                "{name}"
+            );
+            assert_eq!(
+                (
+                    s.tts_engine.clone(),
+                    s.tts_voice.clone(),
+                    s.tts_piper_voice.clone(),
+                    s.tts_providers.voices.clone(),
+                ),
+                before,
+                "{name}: die Wahl bleibt"
+            );
+            assert_eq!(s.tts_providers.default_voice_applied, ["phonon"], "{name}");
+        }
+    }
+
+    /// Ohne Freigabe (Opt-in oder Lizenz fehlt) wird nichts gewählt und nichts gemerkt: die
+    /// Vorgabe greift dann, sobald der Nutzer Phonon freigibt.
+    #[test]
+    fn vorgabestimme_respektiert_die_freigabe() {
+        let (_, snap) = approved_phonon();
+        let mut s = crate::settings::get_default_settings();
+        let before = s.clone();
+        let e = apply_default_voice_in(&mut s, &snap, "Anton").unwrap_err();
+        assert!(
+            matches!(
+                e.kind,
+                TtsErrorKind::LicenseBlocked | TtsErrorKind::PrivacyBlocked
+            ),
+            "{e:?}"
+        );
+        assert_eq!(s.tts_engine, before.tts_engine);
+        assert!(s.tts_providers.default_voice_applied.is_empty());
+    }
+
     /// Befund 8: die „zweite Prüfung beim Schreiben“ gilt dem Stand im Moment
     /// des Schreibens, nicht dem der Momentaufnahme. Hat der Nutzer das Opt-in
     /// zwischen Momentaufnahme und Schreiben zurückgenommen, lehnt `select_in` ab
@@ -1014,6 +1373,7 @@ mod tests {
             phonon: policy::InstalledPhonon {
                 exe_path: Some("C:/app/tts/phonon/windows-x64/ptts.exe".into()),
                 model: Some("C:/app/tts/phonon/models/phonon-test".into()),
+                ..Default::default()
             },
         };
         let mut p = TtsProvidersSettings::default();
@@ -1178,6 +1538,91 @@ mod tests {
             .unwrap_err();
         assert_eq!(e.kind, TtsErrorKind::BadRequest);
         assert!(s.visible_voices.is_empty());
+    }
+
+    #[test]
+    fn eigene_stimmennamen_werden_bereinigt_gespeichert_und_leer_setzt_zurueck() {
+        let snap = snapshot(TtsProvidersSettings::default(), "fish");
+        let mut s = TtsProvidersSettings::default();
+        let set = |s: &mut TtsProvidersSettings, id: &str, voice: &str, name: Option<&str>| {
+            set_voice_name_in(s, &snap.registry, id, voice, name, Some("Erzaehlerin"))
+        };
+        set(&mut s, "phonon", "Erzaehlerin", Some("  Erzählerin  ")).unwrap();
+        assert_eq!(s.voice_names["phonon"]["Erzaehlerin"], "Erzählerin");
+        // Piper und jeder andere Anbieter der Registry auch.
+        set(
+            &mut s,
+            "piper",
+            "de_DE-thorsten-medium",
+            Some("Thorsten  (ruhig)"),
+        )
+        .unwrap();
+        assert_eq!(
+            s.voice_names["piper"]["de_DE-thorsten-medium"],
+            "Thorsten (ruhig)"
+        );
+
+        for bad in [
+            "<Nele>",
+            "a:b",
+            "Nele – Alt",
+            "Nele · HQ",
+            &"x".repeat(61),
+            "bö\u{7}se",
+        ] {
+            let e = set(&mut s, "phonon", "Erzaehlerin", Some(bad)).unwrap_err();
+            assert_eq!(e.kind, TtsErrorKind::BadRequest, "{bad}");
+        }
+        assert_eq!(
+            s.voice_names["phonon"]["Erzaehlerin"], "Erzählerin",
+            "bleibt"
+        );
+
+        // Gleich dem ursprünglichen Namen oder leer: zurück zum Original, Eintrag weg.
+        set(&mut s, "phonon", "Erzaehlerin", Some("Erzaehlerin")).unwrap();
+        assert!(!s.voice_names.contains_key("phonon"));
+        set(&mut s, "piper", "de_DE-thorsten-medium", None).unwrap();
+        assert!(s.voice_names.is_empty());
+
+        let e = set(&mut s, "gibt-es-nicht", "a", Some("b")).unwrap_err();
+        assert_eq!(e.kind, TtsErrorKind::BadRequest);
+        let e = set(&mut s, "phonon", "  ", Some("b")).unwrap_err();
+        assert_eq!(e.kind, TtsErrorKind::BadRequest);
+        assert!(s.voice_names.is_empty());
+    }
+
+    #[test]
+    fn die_liste_nennt_die_eigenen_namen_je_anbieter() {
+        let mut p = TtsProvidersSettings::default();
+        p.voice_names.insert(
+            "phonon".into(),
+            [("Erzaehlerin".to_string(), "Erzählerin".to_string())].into(),
+        );
+        let snap = snapshot(p, "fish");
+        let entries = build_entries(&snap, healthy(&snap));
+        let by_id = |id: &str| entries.iter().find(|e| e.descriptor.id == id).unwrap();
+        assert_eq!(by_id("phonon").voice_names["Erzaehlerin"], "Erzählerin");
+        assert!(by_id("piper").voice_names.is_empty());
+    }
+
+    #[tokio::test]
+    async fn das_dropdown_zeigt_den_eigenen_namen_mit_derselben_kennung() {
+        let all = |_: &ProviderDescriptor| true;
+        let snap = mock_snapshot(|s| {
+            s.voice_names.insert(
+                "mock".into(),
+                [("mock-de".to_string(), "Prüfstimme".to_string())].into(),
+            );
+        });
+        let options = voice_options(&snap, all).await;
+        let de = options.iter().find(|o| o.voice.id == "mock-de").unwrap();
+        assert!(
+            de.voice.label.starts_with("Prüfstimme"),
+            "{}",
+            de.voice.label
+        );
+        let en = options.iter().find(|o| o.voice.id == "mock-en").unwrap();
+        assert!(!en.voice.label.starts_with("Prüfstimme"));
     }
 
     #[test]

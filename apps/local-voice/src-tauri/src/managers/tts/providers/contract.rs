@@ -160,6 +160,11 @@ pub struct ProviderCaps {
     /// Fish: ja; Piper: nein (eine gewählte Stimme je Lauf).
     #[serde(default)]
     pub voice_switching: bool,
+    /// Setzt Tempo-Tags (`[slower]`, `[faster]`) je Satz um, auch ohne `style_tags`.
+    /// Phonon: `--condition duration_delta` (siehe [`crate::managers::tts::protocol::take_pace`]).
+    /// Ohne diese Fähigkeit fallen die Tags wie andere Stil-Tags weg.
+    #[serde(default)]
+    pub pace_tags: bool,
 }
 
 /// Statische Beschreibung eines Anbieters.

@@ -2,16 +2,17 @@
 //! (pattern: `commands/history.rs`). No logic beyond argument shuffling and
 //! error mapping lives here.
 
+use crate::managers::meetings::relabel::Relabeler;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use tauri::{Manager, State};
 
+use crate::managers::meetings::basis::DocBasis;
 use crate::managers::meetings::import::{import_media_file, import_subtitle_file_into};
 use crate::managers::meetings::job;
-use crate::managers::meetings::queue::{self, ImportQueue};
-use crate::managers::meetings::basis::DocBasis;
 use crate::managers::meetings::minutes::latest_minutes_file;
+use crate::managers::meetings::queue::{self, ImportQueue};
 use crate::managers::meetings::recorder::MeetingRecorderManager;
 use crate::managers::meetings::retention::{delete_audio_files, remove_meeting_dir};
 use crate::managers::meetings::retranscribe::retranscribe_meeting;
@@ -45,7 +46,10 @@ pub(crate) fn store_err(error: impl std::fmt::Display) -> String {
 
 /// Der Store der Besprechungen oder `meetings_unavailable` (siehe `require_managed`).
 fn store_of(app: &tauri::AppHandle) -> Result<Arc<MeetingStore>, String> {
-    require_managed(app.try_state::<Arc<MeetingStore>>().map(|state| Arc::clone(&state)))
+    require_managed(
+        app.try_state::<Arc<MeetingStore>>()
+            .map(|state| Arc::clone(&state)),
+    )
 }
 
 /// Der Recorder oder `meetings_unavailable`.
@@ -58,7 +62,10 @@ fn recorder_of(app: &tauri::AppHandle) -> Result<Arc<MeetingRecorderManager>, St
 
 /// Die Import-Warteschlange oder `meetings_unavailable`.
 fn queue_of(app: &tauri::AppHandle) -> Result<Arc<ImportQueue>, String> {
-    require_managed(app.try_state::<Arc<ImportQueue>>().map(|state| Arc::clone(&state)))
+    require_managed(
+        app.try_state::<Arc<ImportQueue>>()
+            .map(|state| Arc::clone(&state)),
+    )
 }
 
 /// Starting touches audio hardware and can block for seconds (loopback
@@ -114,18 +121,14 @@ pub async fn meetings_create_empty(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn meetings_pause(
-    app: tauri::AppHandle,
-) -> Result<(), String> {
+pub async fn meetings_pause(app: tauri::AppHandle) -> Result<(), String> {
     let recorder = recorder_of(&app)?;
     recorder.pause()
 }
 
 #[tauri::command]
 #[specta::specta]
-pub async fn meetings_resume(
-    app: tauri::AppHandle,
-) -> Result<(), String> {
+pub async fn meetings_resume(app: tauri::AppHandle) -> Result<(), String> {
     let recorder = recorder_of(&app)?;
     recorder.resume()
 }
@@ -134,9 +137,7 @@ pub async fn meetings_resume(
 /// occupy the async runtime's worker.
 #[tauri::command]
 #[specta::specta]
-pub async fn meetings_stop(
-    app: tauri::AppHandle,
-) -> Result<String, String> {
+pub async fn meetings_stop(app: tauri::AppHandle) -> Result<String, String> {
     let recorder = recorder_of(&app)?;
     tauri::async_runtime::spawn_blocking(move || recorder.stop())
         .await
@@ -200,9 +201,7 @@ pub async fn meetings_rename(
     title: String,
 ) -> Result<(), String> {
     let store = store_of(&app)?;
-    store
-        .set_title(&meeting_id, &title)
-        .map_err(store_err)?;
+    store.set_title(&meeting_id, &title).map_err(store_err)?;
     indexer::submit(&app, IndexJob::Meeting(meeting_id)); // M4-P4b
     Ok(())
 }
@@ -231,17 +230,21 @@ pub async fn meetings_get_documents(
     meeting_id: String,
 ) -> Result<Vec<MeetingDocument>, String> {
     let store = store_of(&app)?;
-    store.get_documents(&meeting_id).map_err(store_err)
+    // #242: Texte von vor dem Benennen zeigen die aktuellen Sprechernamen.
+    let names = Relabeler::load(&store, &meeting_id);
+    Ok(store
+        .get_documents(&meeting_id)
+        .map_err(store_err)?
+        .into_iter()
+        .map(|d| names.document(d))
+        .collect())
 }
 
 /// Soft-deletes the meeting, then hard-deletes its audio files from disk
 /// (Spec A2 — a tombstoned meeting must never leave an orphaned WAV behind).
 #[tauri::command]
 #[specta::specta]
-pub async fn meetings_delete(
-    app: tauri::AppHandle,
-    meeting_id: String,
-) -> Result<(), String> {
+pub async fn meetings_delete(app: tauri::AppHandle, meeting_id: String) -> Result<(), String> {
     let store = store_of(&app)?;
     let queue = queue_of(&app)?;
     // P8a: eine laufende Verarbeitung (Import, Enddurchlauf, Notizen ...) endet,
@@ -250,10 +253,9 @@ pub async fn meetings_delete(
     // U7: aus der Warteschlange nehmen (ein laufender Import endet, ein wartender
     // wird nie mehr gestartet).
     queue.forget(&meeting_id);
-    let paths = store
-        .soft_delete_meeting(&meeting_id)
-        .map_err(store_err)?;
+    let paths = store.soft_delete_meeting(&meeting_id).map_err(store_err)?;
     indexer::submit(&app, IndexJob::Deleted(meeting_id.clone())); // M4-P4b
+    super::meeting_voiceprint::forget_meeting(&meeting_id); // Stimmprofile 2a
     delete_audio_files(&paths);
     // #15: der Ordner der Besprechung geht mit (Protokoll als Markdown, Reste ohne
     // DB-Eintrag). Die Besprechung ist hier schon geloescht: ein Fehler wird nur
@@ -383,6 +385,53 @@ pub async fn meetings_import_file(
         None => queue.enqueue(&title, &source, consent_at),
     }
     .map(|meeting| meeting.id)
+}
+
+/// lva#208: stellt einen Hörbuch-Teil in die Import-Warteschlange und kehrt sofort
+/// mit der ID der Hilfs-Besprechung zurück. Mit `start_ms`/`end_ms` wird nur
+/// dieser Abschnitt der Datei transkribiert (Segmentzeiten relativ zum Beginn des
+/// Abschnitts). Hörbuch-Aufträge laufen bis zu vier gleichzeitig. Fehler:
+/// `import_path_invalid`, `range_invalid` (Ende nicht hinter dem Anfang, nur eine
+/// Grenze), `queue_enqueue_failed: …`.
+#[tauri::command]
+#[specta::specta]
+pub async fn meetings_import_audiobook_part(
+    app: tauri::AppHandle,
+    path: String,
+    start_ms: Option<u64>,
+    end_ms: Option<u64>,
+) -> Result<String, String> {
+    let queue = queue_of(&app)?;
+    let path = PathBuf::from(path);
+    let range = queue::part_range(start_ms, end_ms)?;
+    let source = path
+        .to_str()
+        .ok_or_else(|| "import_path_invalid".to_string())?
+        .to_string();
+    let title = queue::part_title(&path, range);
+    queue
+        .enqueue_part(&title, &source, range)
+        .map(|meeting| meeting.id)
+}
+
+/// lva#208: Stand einer Besprechung (z. B. Hilfs-Auftrag eines Hörbuch-Teils)
+/// einzeln abgefragt. `Ok(None)` heißt wirklich "nicht gefunden"; ein
+/// Lesefehler ist ein `Err` und darf nie als "fehlt" gelten.
+#[tauri::command]
+#[specta::specta]
+pub async fn meetings_get_status(
+    app: tauri::AppHandle,
+    meeting_id: String,
+) -> Result<Option<String>, String> {
+    let store = store_of(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        store
+            .get_meeting(&meeting_id)
+            .map(|m| m.map(|m| m.status))
+            .map_err(|e| format!("meetings_get_status_failed: {e}"))
+    })
+    .await
+    .map_err(|e| format!("meetings_get_status panicked: {e}"))?
 }
 
 // M6-P6a: Export einer ganzen Besprechung.

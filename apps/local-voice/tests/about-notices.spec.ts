@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { geheZu } from "./profilmenue";
 
 // QG6 (Goal Granola-Besprechungen): die Info-Seite nennt die neuen Modelle und
 // Bibliotheken mit Lizenz, darunter den Hinweis zur NVIDIA Open Model License
@@ -91,9 +92,7 @@ test("Info nennt neue Modelle und Bibliotheken mit Lizenz und verlinkt die NVIDI
 }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("/");
-  await page
-    .getByRole("button", { name: "Einstellungen", exact: true })
-    .click();
+  await geheZu(page, "Einstellungen");
   await page.getByRole("tab", { name: "Über" }).click();
 
   await expect(page.getByText("Sortformer (NVIDIA)")).toBeVisible();

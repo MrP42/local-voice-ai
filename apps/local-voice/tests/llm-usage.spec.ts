@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { geheZu, oeffneModellwahl } from "./profilmenue";
 
 // Verbrauch und Budget: die Uebersicht zeigt, was das Backend gebucht hat,
 // die Fussleiste warnt ab 80 % des Monatsbudgets -- beides aus Zahlen, die
@@ -217,10 +218,7 @@ const setup =
 const openPolishTab = async (page: import("@playwright/test").Page) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto("/");
-  await page
-    .getByRole("button", { name: "Einstellungen", exact: true })
-    .last()
-    .click();
+  await geheZu(page, "Einstellungen");
   await page
     .getByRole("tab", { name: "KI-Modelle & Anbieter", exact: true })
     .click();
@@ -296,6 +294,7 @@ test.describe("footer budget light", () => {
     await setup({ spent: 8.5, limit: 10, enforced: false })({ page });
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto("/");
+    await oeffneModellwahl(page);
     const selector = page.locator("[data-llm-selector]");
     await expect(selector.locator("div.rounded-full")).toHaveClass(
       /bg-yellow-400/,
@@ -307,6 +306,7 @@ test.describe("footer budget light", () => {
     await setup({ spent: 10, limit: 10, enforced: true })({ page });
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto("/");
+    await oeffneModellwahl(page);
     const selector = page.locator("[data-llm-selector]");
     await expect(selector.locator("div.rounded-full")).toHaveClass(
       /bg-red-400/,
@@ -318,6 +318,7 @@ test.describe("footer budget light", () => {
     await setup(null)({ page });
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto("/");
+    await oeffneModellwahl(page);
     const selector = page.locator("[data-llm-selector]");
     await expect(selector.locator("div.rounded-full")).toHaveClass(
       /bg-green-400/,

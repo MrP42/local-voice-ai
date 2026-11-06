@@ -223,8 +223,11 @@ async function openReadAloud(page: Page, viewport: keyof typeof VIEWPORTS) {
     .getByRole("navigation")
     .getByRole("button", { name: "Vorlesen", exact: true })
     .click();
-  // Seite geladen: Text im Editor und die erste Datei in der Liste.
-  await expect(page.locator("textarea").first()).toHaveValue(TEXT);
+  // Seite geladen: Text in der Leseansicht (Standard seit lva#155) und die
+  // erste Datei in der Liste.
+  await expect(page.getByTestId("reader-flow")).toContainText(
+    "Ausgangslage beim Kunden",
+  );
   await expect(fileRow(page, FILES[0].name)).toBeVisible();
   // Schriften und Chips setzen sich; ohne Pause wandert das Layout noch.
   await page.waitForTimeout(400);
@@ -389,12 +392,14 @@ for (const viewport of ["1920", "1366"] as const) {
   });
 }
 
-test("palette alle 1920", async ({ page }) => {
+// Die Palette „Ausdruck & Sprechstil“ ist seit lva#155 im Kontextmenü; das
+// Bild zeigt stattdessen den Editor (Ansicht „Bearbeiten“).
+test("bearbeiten 1920", async ({ page }) => {
   await openReadAloud(page, "1920");
-  await page.getByText("Ausdruck & Sprechstil", { exact: true }).click();
-  await page.getByRole("tab", { name: "Alle" }).click();
+  await page.getByTestId("reader-mode-edit").click();
+  await expect(page.locator("textarea").first()).toHaveValue(TEXT);
   await page.waitForTimeout(300);
-  const file = save("palette-alle-1920", await measure(page));
+  const file = save("bearbeiten-1920", await measure(page));
   await page.screenshot({ path: file, animations: "disabled" });
 });
 

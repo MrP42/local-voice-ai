@@ -13,12 +13,12 @@ const DE: &[&str] = &[
 const EN: &[&str] = &[
     "the", "and", "is", "not", "a", "an", "of", "to", "in", "it", "that", "was", "for", "on",
     "are", "with", "as", "his", "her", "they", "at", "be", "this", "have", "from", "or", "one",
-    "had", "by", "but", "what", "were", "we", "when", "your", "can", "there", "you", "he",
-    "she", "will", "would", "about", "which", "their", "just", "into",
+    "had", "by", "but", "what", "were", "we", "when", "your", "can", "there", "you", "he", "she",
+    "will", "would", "about", "which", "their", "just", "into",
 ];
 const FR: &[&str] = &[
-    "le", "la", "les", "et", "est", "un", "une", "des", "du", "que", "qui", "dans", "pour",
-    "pas", "sur", "avec", "ce", "il", "elle", "nous", "vous", "sont", "mais", "plus", "au",
+    "le", "la", "les", "et", "est", "un", "une", "des", "du", "que", "qui", "dans", "pour", "pas",
+    "sur", "avec", "ce", "il", "elle", "nous", "vous", "sont", "mais", "plus", "au",
 ];
 const ES: &[&str] = &[
     "el", "la", "los", "las", "y", "es", "un", "una", "que", "de", "del", "en", "por", "para",
@@ -65,7 +65,13 @@ pub fn detect_language(text: &str) -> Option<&'static str> {
         .enumerate()
         .max_by_key(|(_, s)| **s)
         .map(|(i, s)| (i, *s))?;
-    let second = scores.iter().enumerate().filter(|(i, _)| *i != best).map(|(_, s)| *s).max().unwrap_or(0);
+    let second = scores
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| *i != best)
+        .map(|(_, s)| *s)
+        .max()
+        .unwrap_or(0);
     // Mindestens zwei Treffer und ein klarer Vorsprung — sonst raten wir nicht.
     if best_score < 4 || best_score < second + 2 {
         return None;
@@ -79,16 +85,34 @@ mod tests {
 
     #[test]
     fn deutsch_und_englisch_werden_je_satz_erkannt() {
-        assert_eq!(detect_language("Die drei Feen und die Wolke voller Wünsche."), Some("de"));
-        assert_eq!(detect_language("It was a quiet evening in Luminara."), Some("en"));
-        assert_eq!(detect_language("The sky was clear, the flowers had closed their blossoms."), Some("en"));
-        assert_eq!(detect_language("Es war ein ruhiger Abend, und die Blumen hatten sich geschlossen."), Some("de"));
+        assert_eq!(
+            detect_language("Die drei Feen und die Wolke voller Wünsche."),
+            Some("de")
+        );
+        assert_eq!(
+            detect_language("It was a quiet evening in Luminara."),
+            Some("en")
+        );
+        assert_eq!(
+            detect_language("The sky was clear, the flowers had closed their blossoms."),
+            Some("en")
+        );
+        assert_eq!(
+            detect_language("Es war ein ruhiger Abend, und die Blumen hatten sich geschlossen."),
+            Some("de")
+        );
     }
 
     #[test]
     fn andere_sprachen_und_unklares() {
-        assert_eq!(detect_language("Le ciel est clair et les fleurs sont fermées."), Some("fr"));
-        assert_eq!(detect_language("El cielo está claro y las flores son azules."), Some("es"));
+        assert_eq!(
+            detect_language("Le ciel est clair et les fleurs sont fermées."),
+            Some("fr")
+        );
+        assert_eq!(
+            detect_language("El cielo está claro y las flores son azules."),
+            Some("es")
+        );
         assert_eq!(detect_language("Luminara"), None);
         assert_eq!(detect_language("42 17 3"), None);
         assert_eq!(detect_language(""), None);

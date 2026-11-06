@@ -58,9 +58,9 @@ pub mod ocr;
 pub mod prompt;
 pub mod run;
 pub mod store;
-pub mod vision;
 #[cfg(test)]
 pub(crate) mod test_support;
+pub mod vision;
 
 use serde::{Deserialize, Serialize};
 use specta::Type;

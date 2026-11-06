@@ -320,17 +320,31 @@ mod tests {
     fn a_request_is_modern_only_with_the_new_version_and_capabilities() {
         assert_eq!(classify(&Value::Null), Ok(Era::Legacy));
         assert_eq!(classify(&json!({})), Ok(Era::Legacy));
-        assert_eq!(classify(&json!({"_meta": {}})), Ok(Era::Legacy), "kein Handshake noetig, wie bisher");
-        assert_eq!(classify(&json!({"_meta": {"progressToken": 1}})), Ok(Era::Legacy));
+        assert_eq!(
+            classify(&json!({"_meta": {}})),
+            Ok(Era::Legacy),
+            "kein Handshake noetig, wie bisher"
+        );
+        assert_eq!(
+            classify(&json!({"_meta": {"progressToken": 1}})),
+            Ok(Era::Legacy)
+        );
         for old in ["2025-06-18", "2025-11-25"] {
-            assert_eq!(classify(&with_meta(Some(json!(old)), None)), Ok(Era::Legacy), "{old}");
+            assert_eq!(
+                classify(&with_meta(Some(json!(old)), None)),
+                Ok(Era::Legacy),
+                "{old}"
+            );
         }
         assert_eq!(
             classify(&with_meta(Some(json!("2026-07-28")), Some(json!({})))),
             Ok(Era::Modern)
         );
         assert_eq!(
-            classify(&with_meta(Some(json!("2026-07-28")), Some(json!({"roots": {}})))),
+            classify(&with_meta(
+                Some(json!("2026-07-28")),
+                Some(json!({"roots": {}}))
+            )),
             Ok(Era::Modern)
         );
     }
@@ -354,7 +368,10 @@ mod tests {
             assert_eq!(e.code, UNSUPPORTED_PROTOCOL_VERSION, "{v}");
             let data = e.data.as_ref().unwrap();
             assert_eq!(data["requested"], v);
-            assert_eq!(data["supported"], json!(["2026-07-28", "2025-11-25", "2025-06-18"]));
+            assert_eq!(
+                data["supported"],
+                json!(["2026-07-28", "2025-11-25", "2025-06-18"])
+            );
             let line: Value = serde_json::from_str(&e.line(&json!(3))).unwrap();
             assert_eq!(line["error"]["code"], -32022);
             assert_eq!(line["error"]["data"]["supported"][0], "2026-07-28");

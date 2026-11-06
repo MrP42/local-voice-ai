@@ -818,9 +818,9 @@ fn a_recording_approval_cannot_be_allowed_without_the_consent_confirmation() {
     let confirmed = rows
         .iter()
         .filter(|r| {
-            r.detail_json
-                .as_deref()
-                .is_some_and(|d| d.contains("approval_decided") && d.contains("\"consent_confirmed\":true"))
+            r.detail_json.as_deref().is_some_and(|d| {
+                d.contains("approval_decided") && d.contains("\"consent_confirmed\":true")
+            })
         })
         .count();
     assert_eq!(confirmed, 3);

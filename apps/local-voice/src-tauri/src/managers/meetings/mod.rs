@@ -2,6 +2,8 @@ pub mod basis; // G5: Grundlage und Ausgabesprache von Protokoll und KI-Notizen
 pub mod chat; // M4-P4c
 pub mod chunker;
 pub mod diarize; // M3-P3a
+pub mod doc_export; // Etappe 2: Word/PDF mit Briefkopf
+pub mod doc_types; // Dokumenttypen neben dem Protokoll (Entwurf 2026-10-13)
 pub mod dsp;
 pub mod echo;
 pub mod empty; // G1 (#70): leerer Eintrag
@@ -15,21 +17,22 @@ pub mod job_harness; // P8a: Pruefhaken fuer den Headless-Lauf
 pub mod language; // G5: Sprache erkennen, Modell waehlen
 pub mod language_run; // G5: Anbindung an Import, Neu-Transkription, Enddurchlauf
 pub mod llm_call;
-pub mod merge; // A3: KI-Zusammenfuehrung von Fassungen
 pub mod mail; // M6-P6c
+pub mod merge; // A3: KI-Zusammenfuehrung von Fassungen
 pub mod metadata; // U7
 pub mod mic_capture;
-pub mod minutes;
-pub mod doc_types; // Dokumenttypen neben dem Protokoll (Entwurf 2026-10-13)
-pub mod doc_export; // Etappe 2: Word/PDF mit Briefkopf
-pub mod notes;
-pub mod pdf; // M6-P6b
-pub mod project_minutes_store; // G3 (#70): Projekt-Protokolle
-pub mod queue; // U7
-pub mod queue_store; // U7
 #[cfg(test)]
 mod migration_chain; // I1: Migrationskette A1, A3, U7
+pub mod minutes;
+pub mod notes;
+pub mod parts; // Mehrere Audiodateien (Teile) je Besprechung
+pub mod pdf; // M6-P6b
+pub mod project_minutes_store; // G3 (#70): Projekt-Protokolle
+pub mod projekt; // ADR-0026 PR-7: Besprechungsordner <-> Suite-Projekt
+pub mod queue; // U7
+pub mod queue_store; // U7
 pub mod recorder;
+pub mod relabel; // #242: Sprechernamen in gespeicherten Texten
 pub mod retention;
 pub mod retranscribe;
 pub mod search;
@@ -37,6 +40,7 @@ pub mod segmenter;
 pub mod signal_watch; // M2-P2e
 pub mod simulate;
 pub mod slides; // D1 (#70, M7): Folien aus Videos
+pub mod speaker_merges; // #266: Sprecher zusammenführen und trennen
 pub mod speaker_names; // U8
 pub mod speakers; // M3-P3b
 pub mod stats;
@@ -44,6 +48,7 @@ pub mod store;
 pub mod subtitle;
 pub mod translate; // G5: Uebersetzung als neue Fassung
 pub mod variants; // A3: Transkript-Fassungen
+pub mod voiceprint; // Stimmprofile 2a: Stimmabdruecke innerhalb einer Besprechung
 
 use std::path::{Path, PathBuf};
 

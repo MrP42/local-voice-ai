@@ -12,29 +12,32 @@ import { stat } from "@tauri-apps/plugin-fs";
 import {
   AlertCircle,
   AlertTriangle,
+  AudioLines,
   Cloud,
+  Globe,
   Paperclip,
-  PanelLeft,
-  Phone,
-  PhoneOff,
-  Settings,
+  PanelLeftOpen,
   SquarePen,
 } from "lucide-react";
 import { commands } from "@/bindings";
-import { useVoiceCallStore } from "@/stores/voiceCallStore";
+import { lineEditable, useVoiceCallStore } from "@/stores/voiceCallStore";
 import { mimeForName } from "@/stores/voiceHistory";
 import { PageShell } from "../ui/PageShell";
-import { Button } from "../ui/Button";
 import {
   Composer,
   type ComposerAttachment,
   type ComposerMenuItem,
 } from "./Composer";
 import { ConversationList } from "./ConversationList";
+import { ConversationOptions } from "./ConversationOptions";
+import { ConversationSearch, type SearchAction } from "./ConversationSearch";
 import { InfoLine } from "./InfoLine";
 import { LevelWave } from "./LevelWave";
+import { ModelPicker } from "./ModelPicker";
+import { PermissionChip } from "./PermissionChip";
 import { SettingsPanel } from "./SettingsPanel";
 import { Transcript } from "./Transcript";
+import { SprachRecherche } from "../projekte/SprachRecherche";
 
 /** Mehr Text als das gehört nicht in eine Nachricht an die KI. */
 const MAX_FILE_CHARS = 20_000;
@@ -86,17 +89,22 @@ export const VoiceCallPage: React.FC = () => {
   const switching = useVoiceCallStore((s) => s.switching);
   const muted = useVoiceCallStore((s) => s.muted);
   const textBusy = useVoiceCallStore((s) => s.textBusy);
+  const toolStatus = useVoiceCallStore((s) => s.toolStatus);
+  const notice = useVoiceCallStore((s) => s.notice);
   const settingsOpen = useVoiceCallStore((s) => s.settingsOpen);
   const conversations = useVoiceCallStore((s) => s.conversations);
   const conversationId = useVoiceCallStore((s) => s.conversationId);
+  const mainConversationId = useVoiceCallStore((s) => s.mainConversationId);
   const showArchived = useVoiceCallStore((s) => s.showArchived);
   const store = useVoiceCallStore;
   const narrow = useNarrow();
   const [wideOpen, setWideOpen] = useState(readHistoryOpen);
   const [overlayOpen, setOverlayOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   const historyOpen = narrow ? overlayOpen : wideOpen;
   const historyId = useId();
   const [draft, setDraft] = useState("");
+  const [rechercheOffen, setRechercheOffen] = useState(false);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [attachError, setAttachError] = useState<string | null>(null);
   const attachId = useRef(0);
@@ -106,6 +114,35 @@ export const VoiceCallPage: React.FC = () => {
     void store.getState().loadConversations();
     return () => void store.getState().leave();
   }, [store]);
+
+  const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
+  const keyNew = isMac ? "⌘N" : t("voiceCall.history.keyNew");
+  const keySearch = isMac ? "⌘K" : t("voiceCall.history.keySearch");
+
+  // Strg+N: neues Gespräch, Strg+K: Suche (ADR-0027 E5: Strg+K gehört der
+  // Suche des Moduls; Strg+Umschalt+K bleibt als früheres Kürzel erhalten).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(isMac ? e.metaKey : e.ctrlKey) || e.altKey) return;
+      const key = e.key.toLowerCase();
+      if (key === "n" && !e.shiftKey) {
+        // Nicht hinter einem offenen Dialog (Suche, Einstellungen) ein Gespräch beenden.
+        if (document.querySelector('[role="dialog"], [role="alertdialog"]'))
+          return;
+        e.preventDefault();
+        void store.getState().newConversation();
+      } else if (key === "k") {
+        // Nicht über einem offenen Dialog (Profilmenü, Über, Einstellungen).
+        if (document.querySelector('[role="dialog"], [role="alertdialog"]'))
+          return;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        setSearchOpen(true);
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [store, isMac]);
 
   const toggleHistory = () => {
     if (narrow) {
@@ -131,22 +168,23 @@ export const VoiceCallPage: React.FC = () => {
         updatedAt: Date.parse(c.updated_at) || 0,
         pinned: c.pinned,
         archived: c.archived,
+        main: c.id === mainConversationId,
         lastText: c.last_text,
       })),
-    [conversations],
+    [conversations, mainConversationId],
   );
   const historyLabels = useMemo(
     () => ({
       navLabel: t("voiceCall.history.navLabel"),
       newConversation: t("voiceCall.history.newConversation"),
       search: t("voiceCall.history.search"),
-      searchPlaceholder: t("voiceCall.history.searchPlaceholder"),
+      searchKey: keySearch,
+      collapse: t("voiceCall.history.toggle"),
       groupPinned: t("voiceCall.history.groupPinned"),
       groupToday: t("voiceCall.history.groupToday"),
       groupWeek: t("voiceCall.history.groupWeek"),
       groupOlder: t("voiceCall.history.groupOlder"),
       empty: t("voiceCall.history.empty"),
-      noResults: t("voiceCall.history.noResults"),
       menu: (title: string) => t("voiceCall.history.menu", { title }),
       rename: t("voiceCall.history.rename"),
       renameLabel: t("voiceCall.history.renameLabel"),
@@ -163,8 +201,9 @@ export const VoiceCallPage: React.FC = () => {
       confirmNo: t("voiceCall.history.confirmNo"),
       showArchived: t("voiceCall.history.showArchived"),
       archivedBadge: t("voiceCall.history.archivedBadge"),
+      mainBadge: t("voiceCall.history.mainBadge"),
     }),
-    [t],
+    [t, keySearch],
   );
   const historyList = (
     <ConversationList
@@ -178,6 +217,9 @@ export const VoiceCallPage: React.FC = () => {
         afterPick();
         void store.getState().newConversation();
       }}
+      controlsId={historyId}
+      onCollapse={toggleHistory}
+      onSearch={() => setSearchOpen(true)}
       onRename={(id, title) => void store.getState().rename(id, title)}
       onPin={(id) => void store.getState().togglePin(id)}
       onArchive={(id, archived) => void store.getState().archive(id, archived)}
@@ -193,6 +235,40 @@ export const VoiceCallPage: React.FC = () => {
 
   const inCall = state !== "idle";
   const busy = state === "thinking" || state === "speaking";
+  const toggleCall = () =>
+    void (inCall ? store.getState().stopCall() : store.getState().startCall());
+  const callLabel = inCall ? t("voiceCall.end") : t("voiceCall.begin");
+  const searchActions: SearchAction[] = [
+    {
+      id: "new",
+      label: t("voiceCall.newConversation"),
+      icon: <SquarePen className="w-4 h-4" aria-hidden="true" />,
+      shortcut: keyNew,
+      onSelect: () => {
+        afterPick();
+        void store.getState().newConversation();
+      },
+    },
+    {
+      id: "call",
+      label: callLabel,
+      icon: <AudioLines className="w-4 h-4" aria-hidden="true" />,
+      onSelect: toggleCall,
+    },
+  ];
+  const searchLabels = {
+    title: t("voiceCall.history.search"),
+    placeholder: t("voiceCall.history.searchPlaceholder"),
+    sectionActions: t("voiceCall.history.sectionActions"),
+    sectionRecent: t("voiceCall.history.sectionRecent"),
+    sectionResults: t("voiceCall.history.sectionResults"),
+    tabAll: t("voiceCall.history.tabAll"),
+    tabActions: t("voiceCall.history.tabActions"),
+    tabConversations: t("voiceCall.history.tabConversations"),
+    tabsLabel: t("voiceCall.history.tabsLabel"),
+    noResults: t("voiceCall.history.noResults"),
+    close: t("voiceCall.history.close"),
+  };
 
   const send = useCallback(
     (typed: string, files: Attachment[]) => {
@@ -295,6 +371,13 @@ export const VoiceCallPage: React.FC = () => {
         onSelect: () => void attachFile(),
       },
       {
+        id: "recherche",
+        label: t("projekte.sprache.menu"),
+        icon: <Globe className="w-4 h-4" aria-hidden="true" />,
+        hint: t("projekte.sprache.hinweis"),
+        onSelect: () => setRechercheOffen(true),
+      },
+      {
         id: "corporate",
         label: t("voiceCall.composer.fromCorporate"),
         icon: <Cloud className="w-4 h-4" aria-hidden="true" />,
@@ -322,79 +405,7 @@ export const VoiceCallPage: React.FC = () => {
   ];
 
   return (
-    <PageShell
-      title={t("voiceCall.title")}
-      fill
-      actions={
-        <>
-          <Button
-            variant="ghost"
-            size="sm"
-            type="button"
-            aria-pressed={historyOpen}
-            aria-controls={historyId}
-            aria-label={t("voiceCall.history.toggle")}
-            title={t("voiceCall.history.toggle")}
-            icon={<PanelLeft className="w-4 h-4" aria-hidden="true" />}
-            onClick={toggleHistory}
-          >
-            <span className="max-md:hidden">
-              {t("voiceCall.history.toggle")}
-            </span>
-          </Button>
-          {lines.length > 0 && !historyOpen && (
-            <Button
-              variant="ghost"
-              size="sm"
-              type="button"
-              icon={<SquarePen className="w-4 h-4" aria-hidden="true" />}
-              aria-label={t("voiceCall.newConversation")}
-              title={t("voiceCall.newConversation")}
-              onClick={() => void store.getState().newConversation()}
-            >
-              <span className="max-md:hidden">
-                {t("voiceCall.newConversation")}
-              </span>
-            </Button>
-          )}
-          <Button
-            variant="ghost"
-            size="sm"
-            type="button"
-            aria-pressed={settingsOpen}
-            aria-label={t("voiceCall.settings.title")}
-            title={t("voiceCall.settings.title")}
-            icon={<Settings className="w-4 h-4" aria-hidden="true" />}
-            onClick={() =>
-              settingsOpen
-                ? store.getState().closeSettings()
-                : store.getState().openSettings()
-            }
-          />
-          {inCall ? (
-            <Button
-              variant="danger"
-              size="sm"
-              type="button"
-              onClick={() => void store.getState().stopCall()}
-            >
-              <PhoneOff className="w-4 h-4 sm:mr-1" aria-hidden="true" />
-              <span className="max-sm:sr-only">{t("voiceCall.end")}</span>
-            </Button>
-          ) : (
-            <Button
-              variant="primary"
-              size="sm"
-              type="button"
-              onClick={() => void store.getState().startCall()}
-            >
-              <Phone className="w-4 h-4 sm:mr-1" aria-hidden="true" />
-              <span className="max-sm:sr-only">{t("voiceCall.begin")}</span>
-            </Button>
-          )}
-        </>
-      }
-    >
+    <PageShell title={t("voiceCall.title")} fill>
       <div className="relative flex h-full min-h-0 overflow-hidden">
         {historyOpen && !narrow && (
           <aside
@@ -425,7 +436,24 @@ export const VoiceCallPage: React.FC = () => {
           </>
         )}
         <div className="flex flex-col flex-1 min-w-0 min-h-0">
-          <InfoLine />
+          <InfoLine
+            leading={
+              !historyOpen ? (
+                <button
+                  type="button"
+                  aria-controls={historyId}
+                  aria-expanded="false"
+                  aria-label={t("voiceCall.history.toggle")}
+                  title={t("voiceCall.history.toggle")}
+                  onClick={toggleHistory}
+                  className="grid place-items-center w-8 h-8 max-sm:w-[44px] max-sm:h-[44px] shrink-0 rounded cursor-pointer text-text/85 hover:bg-mid-gray/15 hover:text-text"
+                >
+                  <PanelLeftOpen className="w-4 h-4" aria-hidden="true" />
+                </button>
+              ) : null
+            }
+            trailing={<ConversationOptions />}
+          />
           {alerts.map((a) => (
             <div
               key={`${a.kind}-${a.text}`}
@@ -456,6 +484,11 @@ export const VoiceCallPage: React.FC = () => {
             lines={lines}
             active={inCall}
             onSuggest={(text) => send(text, [])}
+            toolStatus={toolStatus}
+            notice={notice}
+            onOpenSettings={() => store.getState().openSettings("models")}
+            onEditLine={(id, text) => void store.getState().editLine(id, text)}
+            canEdit={(line) => lineEditable(line, state, textBusy)}
           />
           <Composer
             value={draft}
@@ -466,6 +499,13 @@ export const VoiceCallPage: React.FC = () => {
               setAttachments((all) => all.filter((a) => a.id !== id))
             }
             menuItems={menuItems}
+            leading={<PermissionChip />}
+            tools={<ModelPicker />}
+            callAction={{
+              active: inCall,
+              label: callLabel,
+              onClick: toggleCall,
+            }}
             muted={muted}
             onToggleMute={() => store.getState().setMuted(!muted)}
             sending={textBusy}
@@ -482,7 +522,11 @@ export const VoiceCallPage: React.FC = () => {
                 t("voiceCall.composer.removeAttachment", { name: label }),
             }}
           >
-            <span className="inline-flex items-center gap-2 px-2 text-xs text-text/70">
+            <span
+              className={`items-center gap-2 px-2 text-xs text-text/85 ${
+                inCall || textBusy ? "inline-flex" : "inline-flex max-sm:hidden"
+              }`}
+            >
               <LevelWave live={inCall && !muted} busy={busy || textBusy} />
               <span className="max-sm:hidden">
                 {textBusy
@@ -494,6 +538,22 @@ export const VoiceCallPage: React.FC = () => {
         </div>
         {settingsOpen && <SettingsPanel />}
       </div>
+      <SprachRecherche
+        open={rechercheOffen}
+        onOpenChange={setRechercheOffen}
+        frage={draft}
+      />
+      <ConversationSearch
+        open={searchOpen}
+        onOpenChange={setSearchOpen}
+        items={historyItems}
+        actions={searchActions}
+        onSelect={(id) => {
+          afterPick();
+          void store.getState().openConversation(id);
+        }}
+        labels={searchLabels}
+      />
     </PageShell>
   );
 };

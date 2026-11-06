@@ -1,0 +1,480 @@
+/* KI-Dokumente (lva#183, Variante B): Karten wie in der Bibliothek.
+   Keine Animationen bei Layoutwechseln (Patrick). */
+
+.kidocs__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+  align-content: start;
+  gap: 10px;
+  padding-bottom: 8px;
+}
+
+.kidocs__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 2px 12px;
+  border: 1px solid color-mix(in srgb, var(--color-mid-gray) 30%, transparent);
+  border-radius: 999px;
+  font-size: 0.8125rem;
+  color: color-mix(in srgb, var(--color-text) 75%, transparent);
+  cursor: pointer;
+}
+.kidocs__chip--on {
+  border-color: var(--color-logo-primary);
+  background: color-mix(in srgb, var(--color-logo-primary) 15%, transparent);
+  color: var(--color-text);
+}
+.kidocs__count {
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-muted);
+}
+.kidocs__search {
+  width: 14rem;
+  max-width: 100%;
+}
+
+.kidocs__card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--color-mid-gray) 25%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-mid-gray) 6%, transparent);
+}
+.kidocs__card--playing {
+  border-color: var(--color-logo-primary);
+}
+.kidocs__card--running {
+  border-style: dashed;
+}
+.kidocs__open {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: start;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.kidocs__open:focus-visible {
+  outline: 2px solid var(--color-text);
+  outline-offset: 2px;
+}
+.kidocs__meta {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+.kidocs__title {
+  font-weight: 600;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+.kidocs__status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.kidocs__badge {
+  flex-shrink: 0;
+  white-space: nowrap;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--color-logo-primary);
+  color: var(--color-on-accent, #fff);
+  font-weight: 600;
+}
+
+/* Hörfortschritt: voller Balken in Akzentfarbe. Erstellung: gestreift,
+   damit beide auf einen Blick unterscheidbar sind (Codex, Must-fix 2). */
+.kidocs__bar {
+  height: 4px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--color-mid-gray) 20%, transparent);
+}
+.kidocs__bar > div {
+  height: 100%;
+  background: var(--color-logo-primary);
+}
+.kidocs__bar--work > div {
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--color-status-blue),
+    var(--color-status-blue) 4px,
+    color-mix(in srgb, var(--color-status-blue) 50%, transparent) 4px,
+    color-mix(in srgb, var(--color-status-blue) 50%, transparent) 8px
+  );
+}
+.kidocs__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.kidocs__empty {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 32px 8px;
+  text-align: center;
+  color: var(--color-text-muted);
+}
+
+/* Kopfzeile eines offenen Dokuments */
+.kidoc-head {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.kidoc-head .kidocs__meta {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kidoc-head > button {
+  flex-shrink: 0;
+}
+.kidoc-head__title {
+  flex: 1 1 8rem;
+  min-width: 0;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Erstellen-Dialog */
+.kidoc-new__sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.kidoc-new__group {
+  margin: 10px 0 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.kidoc-new__tpl {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  min-height: 44px;
+  padding: 6px 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  text-align: start;
+  cursor: pointer;
+}
+.kidoc-new__tpl:hover {
+  background: color-mix(in srgb, var(--color-mid-gray) 10%, transparent);
+}
+.kidoc-new__tpl[aria-pressed="true"] {
+  border-color: var(--color-logo-primary);
+  background: color-mix(in srgb, var(--color-logo-primary) 12%, transparent);
+}
+.kidoc-new__tpl:focus-visible {
+  outline: 2px solid var(--color-text);
+  outline-offset: 1px;
+}
+.kidoc-new__desc {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+.kidoc-new__summary {
+  font-size: 0.8125rem;
+  color: var(--color-text-muted);
+}
+/* Sprache des Ergebnisses (lva#217): Beschriftung und Auswahl in einer
+   Zeile, der Hinweis darunter. */
+.kidoc-new__lang {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.75rem;
+}
+.kidoc-new__lang-select {
+  min-width: 12rem;
+}
+.kidoc-new__lang .kidoc-new__desc {
+  flex-basis: 100%;
+}
+
+/* Token-Prognose und -Verbrauch: dezent, Details im Tooltip. */
+.kidoc-tokens {
+  display: block;
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.kidoc-tokens--usage {
+  padding-inline-start: 0.25rem;
+}
+.kidoc-tokens__icon {
+  display: inline-block;
+  width: 0.8125rem;
+  height: 0.8125rem;
+  margin-inline-end: 0.375rem;
+  vertical-align: -0.125rem;
+}
+
+
+/* Inhalt, Notizen, Chat: Leiste nur im schmalen Fenster (siehe unten). */
+.book-sheets {
+  display: none;
+}
+
+/* Mobil (Codex, Must-fix 4): Bedienziele mindestens 44 × 44 px, eine Spalte,
+   Erstellen-Dialog im Vollbild. */
+@media (max-width: 640px) {
+  .kidocs__grid {
+    grid-template-columns: 1fr;
+  }
+  .kidocs__chip,
+  .kidocs button,
+  .kidoc-head button {
+    min-height: 44px;
+    min-width: 44px;
+  }
+  .kidoc-head .kidocs__meta {
+    display: none;
+  }
+  /* Titel in eigener Zeile: Rückweg, Abzeichen und Export bleiben oben. */
+  .kidoc-head {
+    flex-wrap: wrap;
+  }
+  .kidoc-head__title {
+    order: 5;
+    flex-basis: 100%;
+    white-space: normal;
+  }
+  .kidoc-head .kidocs__badge {
+    margin-left: auto;
+  }
+  /* Alle Bedienziele im Dialog und in der Kopfzeile mindestens 44 px. */
+  .kidoc-new button,
+  .kidoc-new input,
+  .kidoc-new .app-select__control,
+  .kidoc-sheet button {
+    min-height: 44px;
+    min-width: 44px;
+  }
+  .kidoc-new .lv-dialog__actions button {
+    flex: 1 1 100%;
+  }
+  .book-sheets {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+  }
+  .book-sheets__btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-height: 44px;
+    border: 1px solid color-mix(in srgb, var(--color-mid-gray) 30%, transparent);
+    border-radius: 8px;
+    font-size: 0.8125rem;
+    cursor: pointer;
+  }
+  /* Blatt von unten statt Fenster in der Mitte. Keine Animation. */
+  .lv-dialog.lv-dialog.kidoc-sheet {
+    position: fixed;
+    inset: auto 0 0 0 !important;
+    margin: 0 !important;
+    width: 100vw;
+    max-width: 100vw !important;
+    max-height: 75dvh;
+    border-radius: 12px 12px 0 0;
+  }
+  .kidoc-sheet .lv-dialog__body.lv-dialog__body {
+    max-height: calc(75dvh - 40px);
+  }
+  .kidocs__tools {
+    flex-wrap: wrap;
+    width: 100%;
+  }
+  .kidocs__searchbox {
+    flex: 1 1 10rem;
+  }
+  .kidocs__search {
+    width: 100%;
+  }
+  .lv-dialog.lv-dialog.kidoc-new {
+    width: 100vw;
+    max-width: 100vw !important;
+    height: 100dvh;
+    max-height: 100dvh;
+    border-radius: 0;
+  }
+  .kidoc-new .lv-dialog__body.lv-dialog__body {
+    max-height: calc(100dvh - 40px);
+    height: 100%;
+  }
+}
+
+/* Kurzbuch (lva#205): Überblick neben dem Lesetext; ist der Bereich schmal
+   (Seiten- und Werkzeugspalte offen, Mobil), steht er begrenzt darüber. */
+.kurzbuch-host {
+  container-type: inline-size;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.kurzbuch {
+  display: grid;
+  grid-template-columns: minmax(15rem, 19rem) minmax(0, 1fr);
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+}
+.kurzbuch > * {
+  min-width: 0;
+}
+.kurzbuch__reader {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+@container (max-width: 44rem) {
+  .kurzbuch {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .kurzbuch__panel {
+    max-height: min(22rem, 45vh);
+  }
+  .kurzbuch__panel .kidocs__meta,
+  .kurzbuch__title {
+    display: none;
+  }
+  .kurzbuch__panel .kurzbuch__toggle {
+    display: inline-flex;
+    align-self: flex-start;
+  }
+  .kurzbuch__panel:not(.kurzbuch__panel--open) .kurzbuch__more {
+    display: none;
+  }
+}
+.kurzbuch__toggle {
+  display: none;
+}
+.kurzbuch__more {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.kurzbuch__panel > * {
+  flex-shrink: 0;
+}
+.kurzbuch__panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--color-mid-gray) 25%, transparent);
+  border-radius: 8px;
+  overflow-y: auto;
+  min-height: 0;
+}
+.kurzbuch__title {
+  margin: 0;
+  font-size: 1.125rem;
+  font-weight: 600;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+.kurzbuch__facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.kurzbuch__chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--color-mid-gray) 30%, transparent);
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+.kurzbuch__main {
+  width: 100%;
+}
+.kurzbuch__about {
+  margin: 0;
+  font-size: 0.875rem;
+  line-height: 1.45;
+}
+.kurzbuch__label {
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+.kurzbuch__who {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 0.875rem;
+  list-style: disc;
+}
+.kurzbuch__toc {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  border-top: 1px solid
+    color-mix(in srgb, var(--color-mid-gray) 20%, transparent);
+}
+.kurzbuch__item {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+  padding: 6px 4px;
+  border-bottom: 1px solid
+    color-mix(in srgb, var(--color-mid-gray) 20%, transparent);
+  font-size: 0.875rem;
+  line-height: 1.3;
+}
+.kurzbuch__item--on {
+  background: color-mix(in srgb, var(--color-logo-primary) 10%, transparent);
+  box-shadow: inset 3px 0 0 var(--color-logo-primary);
+}
+.kurzbuch__num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.kurzbuch__item--on .kurzbuch__num {
+  color: var(--color-text);
+  font-weight: 600;
+}
+.kurzbuch__done {
+  color: var(--color-success, #107c10);
+}
+.kurzbuch__text {
+  overflow-wrap: anywhere;
+}
+.kurzbuch__text b {
+  font-weight: 600;
+}

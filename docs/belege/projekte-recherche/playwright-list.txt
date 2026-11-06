@@ -1,0 +1,30 @@
+
+Running 22 tests using 2 workers
+
+  ✓   1 [chromium] › tests/projekte-recherche.spec.ts:112:3 › Projektordner, Halt, Freigabe und Ergebnis (1440 px) (6.0s)
+  ✓   2 [chromium] › tests/projekte-recherche.spec.ts:112:3 › Projektordner, Halt, Freigabe und Ergebnis (390 px) (6.2s)
+  ✓   4 [chromium] › tests/projekte-recherche.spec.ts:206:1 › Ohne Web-Freigabe ist die Recherche gesperrt (5.2s)
+  ✓   3 [chromium] › tests/projekte-recherche.spec.ts:188:1 › Abbrechen sendet nichts und meldet es (5.5s)
+  ✓   6 [chromium] › tests/projekte-recherche.spec.ts:229:1 › Lesefehler beim Prüfen lässt den Dialog stehen und meldet einmal (5.9s)
+  ✓   5 [chromium] › tests/projekte-recherche.spec.ts:215:1 › Doppelklick auf Senden entscheidet nur einmal (7.4s)
+  ✓   8 [chromium] › tests/projekte-recherche.spec.ts:262:1 › Ein Fehler der Entscheidung gilt nur für diesen Halt (5.9s)
+  ✓   7 [chromium] › tests/projekte-recherche.spec.ts:246:1 › Während einer Entscheidung wird nicht gelesen (7.5s)
+  ✓   9 [chromium] › tests/projekte-recherche.spec.ts:286:1 › Fremde Recherchen erscheinen nicht im falschen Kontext (6.1s)
+  ✓  10 [chromium] › tests/projekte-recherche.spec.ts:304:3 › Chat-Spalte: Projekt wählen, Eingabe bleibt bis zum angenommenen Start (1440 px) (6.7s)
+  ✓  11 [chromium] › tests/projekte-recherche.spec.ts:304:3 › Chat-Spalte: Projekt wählen, Eingabe bleibt bis zum angenommenen Start (390 px) (6.2s)
+  ✓  12 [chromium] › tests/projekte-recherche.spec.ts:344:1 › Chat-Spalte: abgebrochener Halt zeigt kein Ergebnis (6.2s)
+  ✓  13 [chromium] › tests/projekte-recherche.spec.ts:362:1 › Barrierefreiheit der Projektseite (5.9s)
+  ✓  14 [chromium] › tests/projekte-recherche.spec.ts:388:1 › 390 px: Projektseite im Seitenfluss mit einer Scrollleiste, Reiterblock einklappbar (9.8s)
+  ✓  15 [chromium] › tests/projekte-recherche.spec.ts:455:1 › 390 px: Touchziele mindestens 44 px (Seite, Aufnahmezeile, Reiter, Dialog) (5.2s)
+  ✓  16 [chromium] › tests/projekte-recherche.spec.ts:527:3 › 390 px: Projektseite ohne serious/critical, Suchplatzhalter ≥ 4,5:1 (light) (7.0s)
+  ✓  17 [chromium] › tests/projekte-recherche.spec.ts:527:3 › 390 px: Projektseite ohne serious/critical, Suchplatzhalter ≥ 4,5:1 (dark) (6.8s)
+TTS-SPERRE Fall=PERSONAL+Remote-TTS breite=1440 knopfGesperrt=true hinweisSichtbar=true
+TTS-SPERRE Fall=PERSONAL+Remote-TTS breite=390 knopfGesperrt=true hinweisSichtbar=true
+  ✓  19 [chromium] › tests/projekte-recherche.spec.ts:637:3 › Vorlesen: bei PERSONAL und Remote-TTS gesperrt, mit Hinweis (390 px) (5.3s)
+  ✓  18 [chromium] › tests/projekte-recherche.spec.ts:637:3 › Vorlesen: bei PERSONAL und Remote-TTS gesperrt, mit Hinweis (1440 px) (5.6s)
+TTS-SPERRE Fall=PERSONAL+lokale-TTS knopfFrei=true hinweisSichtbar=false
+  ✓  20 [chromium] › tests/projekte-recherche.spec.ts:662:1 › Vorlesen: bei PERSONAL und lokaler TTS freigegeben (5.4s)
+  ✓  21 [chromium] › tests/projekte-recherche.spec.ts:680:3 › Sprachgespräch: Recherche über das Plus-Menü (1440 px) (6.0s)
+  ✓  22 [chromium] › tests/projekte-recherche.spec.ts:680:3 › Sprachgespräch: Recherche über das Plus-Menü (390 px) (4.7s)
+
+  22 passed (1.4m)

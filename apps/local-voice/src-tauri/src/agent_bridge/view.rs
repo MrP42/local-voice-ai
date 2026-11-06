@@ -120,7 +120,13 @@ pub fn create_client(
     now_ms: i64,
 ) -> Result<NewAgentClient, IntegrationError> {
     let (client, token) = clients::create(conn, label, integration_id, now_ms)?;
-    audit_user(conn, &client, None, json!({ "phase": "agent_client_created" }), now_ms);
+    audit_user(
+        conn,
+        &client,
+        None,
+        json!({ "phase": "agent_client_created" }),
+        now_ms,
+    );
     Ok(NewAgentClient { client, token })
 }
 
@@ -130,17 +136,31 @@ pub fn revoke_client(
     now_ms: i64,
 ) -> Result<AgentClient, IntegrationError> {
     let changed = clients::revoke(conn, id, now_ms)?;
-    let client = clients::get(conn, id)?.ok_or_else(|| IntegrationError::NotFound(id.to_string()))?;
+    let client =
+        clients::get(conn, id)?.ok_or_else(|| IntegrationError::NotFound(id.to_string()))?;
     if changed {
-        audit_user(conn, &client, None, json!({ "phase": "agent_client_revoked" }), now_ms);
+        audit_user(
+            conn,
+            &client,
+            None,
+            json!({ "phase": "agent_client_revoked" }),
+            now_ms,
+        );
     }
     Ok(client)
 }
 
 pub fn delete_client(conn: &Connection, id: &str, now_ms: i64) -> Result<(), IntegrationError> {
-    let client = clients::get(conn, id)?.ok_or_else(|| IntegrationError::NotFound(id.to_string()))?;
+    let client =
+        clients::get(conn, id)?.ok_or_else(|| IntegrationError::NotFound(id.to_string()))?;
     clients::delete(conn, id)?;
-    audit_user(conn, &client, None, json!({ "phase": "agent_client_deleted" }), now_ms);
+    audit_user(
+        conn,
+        &client,
+        None,
+        json!({ "phase": "agent_client_deleted" }),
+        now_ms,
+    );
     Ok(())
 }
 
@@ -153,8 +173,8 @@ pub fn set_tool_mode(
     now_ms: i64,
 ) -> Result<AgentClientView, IntegrationError> {
     clients::set_tool_mode(conn, client_id, tool, mode)?;
-    let client =
-        clients::get(conn, client_id)?.ok_or_else(|| IntegrationError::NotFound(client_id.to_string()))?;
+    let client = clients::get(conn, client_id)?
+        .ok_or_else(|| IntegrationError::NotFound(client_id.to_string()))?;
     let capability = super::catalog::find(tool).map(|e| e.capability.as_str());
     audit_user(
         conn,

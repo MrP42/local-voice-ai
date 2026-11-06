@@ -44,8 +44,8 @@ fn xml_escape(s: &str) -> String {
 pub fn show(app_id: &str, title: &str, body: &str) -> Result<(), String> {
     use windows::core::HSTRING;
     use windows::Data::Xml::Dom::XmlDocument;
-    use windows::UI::Notifications::{ToastNotification, ToastNotificationManager};
     use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
+    use windows::UI::Notifications::{ToastNotification, ToastNotificationManager};
 
     let fail = |what: &str, e: windows::core::Error| format!("{what}: {e}");
     // Der Arbeiter der Engine ist ein eigener Thread ohne COM; schon initialisiert ist harmlos.
@@ -74,8 +74,14 @@ mod tests {
     #[test]
     fn the_toast_text_is_escaped_and_the_body_is_optional() {
         let xml = toast_xml("Müller & Söhne <fertig>", "Zeile \"zwei\"\u{7}");
-        assert!(xml.contains("<text>Müller &amp; Söhne &lt;fertig&gt;</text>"), "{xml}");
-        assert!(xml.contains("<text>Zeile &quot;zwei&quot; </text>"), "{xml}");
+        assert!(
+            xml.contains("<text>Müller &amp; Söhne &lt;fertig&gt;</text>"),
+            "{xml}"
+        );
+        assert!(
+            xml.contains("<text>Zeile &quot;zwei&quot; </text>"),
+            "{xml}"
+        );
         let only_title = toast_xml("Fertig", "  ");
         assert_eq!(only_title.matches("<text>").count(), 1);
         assert!(only_title.starts_with("<toast>") && only_title.ends_with("</toast>"));

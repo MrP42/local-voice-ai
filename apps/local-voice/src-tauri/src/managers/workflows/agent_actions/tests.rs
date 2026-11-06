@@ -93,7 +93,12 @@ impl app_actions::AppServices for TestServices {
     fn audio_dir(&self, _: Option<&str>) -> Result<PathBuf, ServiceError> {
         nope()
     }
-    fn render_speech(&self, _: &str, _: &Path, _: &dyn Fn() -> bool) -> Result<PathBuf, ServiceError> {
+    fn render_speech(
+        &self,
+        _: &str,
+        _: &Path,
+        _: &dyn Fn() -> bool,
+    ) -> Result<PathBuf, ServiceError> {
         nope()
     }
     fn notify(&self, title: &str, body: &str) -> Result<(), ServiceError> {
@@ -122,7 +127,11 @@ fn target_of(m: &Mock) -> Target {
 }
 
 /// Eine Welt mit fertiger Besprechung vom Donnerstag, 1.10.2026, mittags (Ortszeit).
-fn world_with(target: Result<Target, ServiceError>, status: MeetingStatus, with_text: bool) -> World {
+fn world_with(
+    target: Result<Target, ServiceError>,
+    status: MeetingStatus,
+    with_text: bool,
+) -> World {
     let fx = Fx::new();
     let clock = FakeClock::new();
     let engine = engine(&fx, &clock);
@@ -269,7 +278,11 @@ fn agent_extract_runs_in_a_workflow_feeds_later_steps_and_writes_step_provenance
     let wf = armed_workflow(&w.engine, &extract_then_notify());
     let run = w.enqueue(&wf);
     let report = w.engine.tick().unwrap();
-    assert_eq!(report.outcomes, vec![(run.clone(), RunOutcome::Done)], "{report:?}");
+    assert_eq!(
+        report.outcomes,
+        vec![(run.clone(), RunOutcome::Done)],
+        "{report:?}"
+    );
     assert_eq!(w.engine.run_detail(&run).unwrap().run.state, RunState::Done);
     assert_eq!(m.count(), 1);
 
@@ -296,12 +309,18 @@ fn agent_extract_runs_in_a_workflow_feeds_later_steps_and_writes_step_provenance
     let entry = &own[0];
     assert_eq!(entry.operation, "agent_extract");
     assert_eq!(entry.model_id.as_deref(), Some("llm-test"));
-    assert_eq!(entry.locality, Some(crate::managers::provenance::Locality::Local));
+    assert_eq!(
+        entry.locality,
+        Some(crate::managers::provenance::Locality::Local)
+    );
     assert_eq!(entry.prompt_tokens, Some(100));
     assert_eq!(entry.completion_tokens, Some(20));
     assert!(entry.duration_ms.is_some());
     assert_eq!(entry.confidence, Some(1.0));
-    assert!(entry.sources.iter().any(|s| s.kind == "meeting" && s.reference == w.meeting_id));
+    assert!(entry
+        .sources
+        .iter()
+        .any(|s| s.kind == "meeting" && s.reference == w.meeting_id));
     assert!(entry
         .sources
         .iter()
@@ -327,7 +346,10 @@ fn garbage_from_the_model_is_a_successful_no_action_step() {
     assert_eq!(out["reason"], "schema_invalid");
     assert_eq!(out["counts"]["todos"], 0);
     // Der folgende Schritt laeuft und sieht null Eintraege: nichts wird erfunden.
-    assert_eq!(w.services.notified.lock().unwrap()[0].0, "0 To-dos, 0 Fristen");
+    assert_eq!(
+        w.services.notified.lock().unwrap()[0].0,
+        "0 To-dos, 0 Fristen"
+    );
 }
 
 #[test]
@@ -367,7 +389,16 @@ fn a_meeting_that_is_still_processing_defers_without_a_model_call() {
     let w = world_with(Ok(target_of(&m)), MeetingStatus::Processing, true);
     let direct = Direct::new(&w.meeting_id);
     let err = direct.run(&w, "run-1", &json!({})).unwrap_err();
-    assert!(matches!(err, StepError::Defer { retry_after_ms: 15_000, .. }), "{err:?}");
+    assert!(
+        matches!(
+            err,
+            StepError::Defer {
+                retry_after_ms: 15_000,
+                ..
+            }
+        ),
+        "{err:?}"
+    );
     assert_eq!(m.count(), 0);
 }
 
@@ -383,13 +414,17 @@ fn server_trouble_maps_to_transient_defer_or_permanent() {
         MeetingStatus::Ready,
         true,
     );
-    let err = Direct::new(&w.meeting_id).run(&w, "run-1", &json!({})).unwrap_err();
+    let err = Direct::new(&w.meeting_id)
+        .run(&w, "run-1", &json!({}))
+        .unwrap_err();
     assert!(matches!(err, StepError::Transient(_)), "{err:?}");
 
     // Server belegt: der Schritt wartet, er scheitert nicht.
     let busy = block(mock(vec![R::Status(503)]));
     let w = world(&busy);
-    let err = Direct::new(&w.meeting_id).run(&w, "run-1", &json!({})).unwrap_err();
+    let err = Direct::new(&w.meeting_id)
+        .run(&w, "run-1", &json!({}))
+        .unwrap_err();
     assert!(matches!(err, StepError::Defer { .. }), "{err:?}");
 
     // Lokales Modell nicht eingerichtet (kein Verwalter): dauerhaft.
@@ -400,21 +435,36 @@ fn server_trouble_maps_to_transient_defer_or_permanent() {
         MeetingStatus::Ready,
         true,
     );
-    let err = Direct::new(&w.meeting_id).run(&w, "run-1", &json!({})).unwrap_err();
+    let err = Direct::new(&w.meeting_id)
+        .run(&w, "run-1", &json!({}))
+        .unwrap_err();
     assert!(matches!(err, StepError::Permanent(_)), "{err:?}");
 
     // Anbieter nicht lokal (Auswahl der App): dauerhaft, mit dem Satz des Dienstes.
     let w = world_with(
-        Err(ServiceError::Permanent("Der lokale Agent läuft nur lokal.".into())),
+        Err(ServiceError::Permanent(
+            "Der lokale Agent läuft nur lokal.".into(),
+        )),
         MeetingStatus::Ready,
         true,
     );
-    let err = Direct::new(&w.meeting_id).run(&w, "run-1", &json!({})).unwrap_err();
-    assert_eq!(err, StepError::Permanent("Der lokale Agent läuft nur lokal.".into()));
+    let err = Direct::new(&w.meeting_id)
+        .run(&w, "run-1", &json!({}))
+        .unwrap_err();
+    assert_eq!(
+        err,
+        StepError::Permanent("Der lokale Agent läuft nur lokal.".into())
+    );
 
     // Ohne App (Trockenlauf-Kommandozeile): nicht eingebaut.
-    let w = world_with(Err(ServiceError::NotAvailable("x".into())), MeetingStatus::Ready, true);
-    let err = Direct::new(&w.meeting_id).run(&w, "run-1", &json!({})).unwrap_err();
+    let w = world_with(
+        Err(ServiceError::NotAvailable("x".into())),
+        MeetingStatus::Ready,
+        true,
+    );
+    let err = Direct::new(&w.meeting_id)
+        .run(&w, "run-1", &json!({}))
+        .unwrap_err();
     assert!(matches!(err, StepError::NotAvailable(_)), "{err:?}");
 }
 
@@ -422,7 +472,9 @@ fn server_trouble_maps_to_transient_defer_or_permanent() {
 fn an_empty_transcript_is_permanent_and_asks_the_model_nothing() {
     let m = block(mock(vec![ok(&extraction_reply())]));
     let w = world_with(Ok(target_of(&m)), MeetingStatus::Ready, false);
-    let err = Direct::new(&w.meeting_id).run(&w, "run-1", &json!({})).unwrap_err();
+    let err = Direct::new(&w.meeting_id)
+        .run(&w, "run-1", &json!({}))
+        .unwrap_err();
     assert!(matches!(err, StepError::Permanent(_)), "{err:?}");
     assert_eq!(m.count(), 0);
 }
@@ -436,7 +488,10 @@ fn a_run_without_a_meeting_says_which_step_is_missing() {
         context: json!({ "trigger": {}, "steps": {} }),
     };
     let err = direct.run(&w, "run-1", &json!({})).unwrap_err();
-    assert!(matches!(&err, StepError::Permanent(m) if m.contains("Besprechung")), "{err:?}");
+    assert!(
+        matches!(&err, StepError::Permanent(m) if m.contains("Besprechung")),
+        "{err:?}"
+    );
 }
 
 #[test]
@@ -449,7 +504,11 @@ fn a_second_attempt_of_the_same_step_writes_no_second_provenance_entry() {
     let second = direct.run(&w, "run-7", &json!({})).unwrap();
     assert_eq!(first.data["counts"], second.data["counts"]);
     assert_eq!(m.count(), 2, "ein Pure-Schritt laeuft erneut ...");
-    assert_eq!(w.provenance("run-7:extract").len(), 1, "... ohne zweite Provenienz");
+    assert_eq!(
+        w.provenance("run-7:extract").len(),
+        1,
+        "... ohne zweite Provenienz"
+    );
 }
 
 #[test]
@@ -474,11 +533,16 @@ fn a_cancelled_run_drops_the_request_and_writes_nothing() {
     let result = std::thread::scope(|scope| {
         scope.spawn(|| {
             std::thread::sleep(std::time::Duration::from_millis(400));
-            direct.cancel.store(true, std::sync::atomic::Ordering::Release);
+            direct
+                .cancel
+                .store(true, std::sync::atomic::Ordering::Release);
         });
         direct.run(&w, "run-9", &json!({}))
     });
-    assert!(started.elapsed() < std::time::Duration::from_secs(20), "Abbruch greift nicht");
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(20),
+        "Abbruch greift nicht"
+    );
     assert!(matches!(result, Err(StepError::Transient(_))), "{result:?}");
     assert!(w.provenance("run-9:extract").is_empty());
 }
@@ -497,10 +561,18 @@ fn kinds_restrict_the_request_and_invalid_kinds_are_refused_when_saving() {
         .unwrap();
     assert_eq!(props.keys().collect::<Vec<_>>(), ["decisions"]);
 
-    let bad = def(vec![step("x", "agent.extract", json!({ "kinds": ["fakten"] }))]);
+    let bad = def(vec![step(
+        "x",
+        "agent.extract",
+        json!({ "kinds": ["fakten"] }),
+    )]);
     let err = w.engine.save_workflow(None, &bad).unwrap_err().to_string();
     assert!(err.contains("fakten"), "{err}");
-    let good = def(vec![step("x", "agent.extract", json!({ "kinds": ["todos", "deadlines"] }))]);
+    let good = def(vec![step(
+        "x",
+        "agent.extract",
+        json!({ "kinds": ["todos", "deadlines"] }),
+    )]);
     assert!(w.engine.save_workflow(None, &good).is_ok());
 }
 
@@ -523,7 +595,9 @@ fn the_block_is_pure_heavy_needs_no_right_and_is_planned_without_a_model_call() 
     assert_eq!(action.effect(), EffectKind::Pure);
     assert_eq!(action.heavy(&json!({})).unwrap().label, "Sprachmodell");
     assert_eq!(action.needs(&json!({})), Ok(None));
-    assert!(action.describe(&json!({})).contains("To-dos, Fristen und Entscheidungen"));
+    assert!(action
+        .describe(&json!({}))
+        .contains("To-dos, Fristen und Entscheidungen"));
     let only = action.describe(&json!({ "kinds": ["deadlines", "todos"] }));
     assert!(only.ends_with("(nur To-dos, Fristen)"), "{only}");
 

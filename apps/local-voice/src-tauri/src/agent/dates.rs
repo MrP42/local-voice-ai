@@ -171,10 +171,11 @@ static YEAR_END: Lazy<Regex> = Lazy::new(|| {
     ))
 });
 static IN_UNITS: Lazy<Regex> = Lazy::new(|| {
-    re(r"\bin\s+(\d{1,4}|einer|einem|einen|eine|ein|zwei|zwo|drei|vier|fuenf|sechs|sieben|acht|neun|zehn|elf|zwoelf|vierzehn|fuenfzehn|zwanzig|dreissig)\s+(tag\w*|woche\w*|monat\w*|jahr\w*)\b")
+    re(
+        r"\bin\s+(\d{1,4}|einer|einem|einen|eine|ein|zwei|zwo|drei|vier|fuenf|sechs|sieben|acht|neun|zehn|elf|zwoelf|vierzehn|fuenfzehn|zwanzig|dreissig)\s+(tag\w*|woche\w*|monat\w*|jahr\w*)\b",
+    )
 });
-static CALENDAR_WEEK: Lazy<Regex> =
-    Lazy::new(|| re(r"\b(?:kw|kalenderwoche)\s*(\d{1,2})\b"));
+static CALENDAR_WEEK: Lazy<Regex> = Lazy::new(|| re(r"\b(?:kw|kalenderwoche)\s*(\d{1,2})\b"));
 static WEEKDAY_ANY: Lazy<Regex> = Lazy::new(|| re(&format!(r"\b{WD}\b")));
 static DAY_WORD: Lazy<Regex> =
     Lazy::new(|| re(r"\b(uebermorgen|vorgestern|gestern|morgen|heute)\b"));
@@ -357,18 +358,12 @@ fn week_weekday(norm: &str, reference: NaiveDate) -> Found {
     let monday = monday_of(reference);
     for c in WEEK_WD.captures_iter(norm) {
         if let (Some(day), Some(offset)) = (weekday_of(&c[1]), week_offset(&c[2])) {
-            dates.push(
-                monday
-                    + Duration::days(7 * offset + i64::from(day.num_days_from_monday())),
-            );
+            dates.push(monday + Duration::days(7 * offset + i64::from(day.num_days_from_monday())));
         }
     }
     for c in WEEK_WD_FIRST.captures_iter(norm) {
         if let (Some(offset), Some(day)) = (week_offset(&c[1]), weekday_of(&c[2])) {
-            dates.push(
-                monday
-                    + Duration::days(7 * offset + i64::from(day.num_days_from_monday())),
-            );
+            dates.push(monday + Duration::days(7 * offset + i64::from(day.num_days_from_monday())));
         }
     }
     collect(dates, "wochentag_in_woche")
@@ -378,10 +373,7 @@ fn week_edge(norm: &str, reference: NaiveDate) -> Found {
     let mut dates = Vec::new();
     let monday = monday_of(reference);
     for c in WEEK_EDGE.captures_iter(norm) {
-        let offset = c
-            .get(2)
-            .and_then(|q| week_offset(q.as_str()))
-            .unwrap_or(0);
+        let offset = c.get(2).and_then(|q| week_offset(q.as_str())).unwrap_or(0);
         let week = monday + Duration::days(7 * offset);
         if &c[1] == "ende" {
             let friday = week + Duration::days(4);
@@ -403,8 +395,7 @@ fn month_edge(norm: &str, reference: NaiveDate) -> Found {
     let mut dates = Vec::new();
     let mut push = |edge: &str, offset: i64| {
         let Some(base) = add_months(
-            NaiveDate::from_ymd_opt(reference.year(), reference.month(), 1)
-                .unwrap_or(reference),
+            NaiveDate::from_ymd_opt(reference.year(), reference.month(), 1).unwrap_or(reference),
             offset,
         ) else {
             return;
@@ -434,7 +425,9 @@ fn month_edge(norm: &str, reference: NaiveDate) -> Found {
 fn month_name_edge(norm: &str, reference: NaiveDate) -> Found {
     let mut dates = Vec::new();
     for c in MONTH_NAME_EDGE.captures_iter(norm) {
-        let Some(month) = month_of(&c[2]) else { continue };
+        let Some(month) = month_of(&c[2]) else {
+            continue;
+        };
         let year = if month < reference.month() {
             reference.year() + 1
         } else {
@@ -485,7 +478,9 @@ fn calendar_week(norm: &str, reference: NaiveDate) -> Found {
     let mut dates = Vec::new();
     let current = reference.iso_week();
     for c in CALENDAR_WEEK.captures_iter(norm) {
-        let Ok(week) = c[1].parse::<u32>() else { continue };
+        let Ok(week) = c[1].parse::<u32>() else {
+            continue;
+        };
         // Eine Woche vor der jetzigen meint das naechste Jahr.
         let year = if week < current.week() {
             current.year() + 1

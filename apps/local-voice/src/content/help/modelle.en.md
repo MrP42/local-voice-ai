@@ -6,7 +6,7 @@ Three families, all local: transcription models for dictation, language models f
 
 - **Parakeet** is fast and accurate, even without a GPU. The German-tuned primeLine variant is the first choice for German dictation.
 - **Whisper** models are slower but know more languages. Large models need a GPU.
-- The active model is shown in the footer and can be switched there. Search filters by name, the language filter by language.
+- Switch the active model in the profile menu at the bottom left under Models. Search filters by name, the language filter by language.
 - Accuracy and speed are indicative values from measurements, not guarantees.
 
 ## Language models

@@ -114,13 +114,20 @@ export function voiceCount(plan: SetupPlan, chosen: ReadonlySet<string>) {
     .reduce((n, l) => n + l.voices, 0);
 }
 
-/** Vorauswahl: alles, was schon da ist; sonst alle Sprachen, deren Freigabe möglich ist. */
+/**
+ * Vorauswahl: alles, was schon da ist, dazu jede frei nutzbare Sprache (nicht gesperrt, nicht
+ * nichtkommerziell, z. B. Englisch). So bietet die Einrichtung die englischen Stimmen auch an,
+ * wenn Deutsch schon installiert ist. Ist noch nichts da: alle Sprachen, deren Freigabe möglich ist.
+ */
 export function defaultChoice(
   plan: SetupPlan,
   gatedPossible: boolean,
 ): Set<string> {
   const installed = plan.languages.filter((l) => l.info.is_downloaded);
-  if (installed.length > 0) return new Set(installed.map((l) => l.id));
+  if (installed.length > 0) {
+    const free = plan.languages.filter((l) => !l.gated && !l.nonCommercial);
+    return new Set([...installed, ...free].map((l) => l.id));
+  }
   return new Set(
     plan.languages.filter((l) => gatedPossible || !l.gated).map((l) => l.id),
   );

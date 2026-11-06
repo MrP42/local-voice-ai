@@ -181,7 +181,13 @@ impl CtlEnv {
 /// Token aus Datei (Vorrang) oder Umgebung; Leerraum und BOM werden entfernt.
 pub fn read_token(file: Option<&Path>, env: Option<String>) -> Result<Option<String>, String> {
     let clean = |s: &str| {
-        let t = s.trim_start_matches('\u{feff}').lines().next().unwrap_or("").trim().to_string();
+        let t = s
+            .trim_start_matches('\u{feff}')
+            .lines()
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_string();
         (!t.is_empty()).then_some(t)
     };
     if let Some(path) = file {
@@ -245,9 +251,9 @@ pub fn exit_for_remote(error_code: &str) -> i32 {
 
 fn from_error(e: &ClientError) -> CtlResult {
     match e {
-        ClientError::NotRunning(m) | ClientError::UntrustedServer(m) | ClientError::Transport(m) => {
-            CtlResult::failure(EXIT_NOT_RUNNING, "not_running", m)
-        }
+        ClientError::NotRunning(m)
+        | ClientError::UntrustedServer(m)
+        | ClientError::Transport(m) => CtlResult::failure(EXIT_NOT_RUNNING, "not_running", m),
         ClientError::Protocol(m) => CtlResult::failure(EXIT_ERROR, "protocol", m),
         ClientError::Remote { code, message, .. } => {
             CtlResult::failure(exit_for_remote(code), code, message)
@@ -255,7 +261,8 @@ fn from_error(e: &ClientError) -> CtlResult {
     }
 }
 
-const NO_TOKEN: &str = "Kein Token: Umgebungsvariable LVA_AGENT_TOKEN setzen oder --token-file angeben.";
+const NO_TOKEN: &str =
+    "Kein Token: Umgebungsvariable LVA_AGENT_TOKEN setzen oder --token-file angeben.";
 
 /// Fuehrt einen Aufruf aus, mit Gesamtfrist.
 pub fn execute(args: &CtlArgs, env: &CtlEnv) -> CtlResult {
@@ -338,23 +345,25 @@ fn run_verb(args: &CtlArgs, env: &CtlEnv) -> CtlResult {
             let (tool, wf_args, approval) = workflow_call.expect("vorab gebildet");
             call_tool(&mut client, tool, wf_args, approval.as_deref())
         }
-        Verb::Approval { id } => match client.request("approval/status", json!({ "approval_id": id })) {
-            Ok(v) => {
-                let exit = match v["state"].as_str() {
-                    Some("approved") => EXIT_OK,
-                    Some("pending") => EXIT_PENDING,
-                    Some("denied") => EXIT_DENIED,
-                    _ => EXIT_ERROR,
-                };
-                let text = format!(
-                    "{}: {}",
-                    v["state"].as_str().unwrap_or("?"),
-                    v["hint"].as_str().unwrap_or("")
-                );
-                CtlResult::with_exit(exit, v, text)
+        Verb::Approval { id } => {
+            match client.request("approval/status", json!({ "approval_id": id })) {
+                Ok(v) => {
+                    let exit = match v["state"].as_str() {
+                        Some("approved") => EXIT_OK,
+                        Some("pending") => EXIT_PENDING,
+                        Some("denied") => EXIT_DENIED,
+                        _ => EXIT_ERROR,
+                    };
+                    let text = format!(
+                        "{}: {}",
+                        v["state"].as_str().unwrap_or("?"),
+                        v["hint"].as_str().unwrap_or("")
+                    );
+                    CtlResult::with_exit(exit, v, text)
+                }
+                Err(e) => from_error(&e),
             }
-            Err(e) => from_error(&e),
-        },
+        }
     }
 }
 

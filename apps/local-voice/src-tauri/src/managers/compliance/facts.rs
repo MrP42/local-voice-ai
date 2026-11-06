@@ -82,6 +82,23 @@ pub static FACTS: &[ProviderFacts] = &[
         ],
         checked: CHECKED,
     },
+    // Gemini API (AI Studio), geprueft 05.11.2026: fuer EWR, Schweiz und UK
+    // gelten die Datenregeln der bezahlten Dienste auch im Gratiskontingent,
+    // also kein Training. Der AVV gilt nur fuer bezahlte Dienste, ein Schluessel
+    // verraet das nicht: `dpa` bleibt unbekannt. Einen EU-Standort sichert die
+    // Quelle nicht zu.
+    ProviderFacts {
+        provider: "gemini",
+        host: Some("generativelanguage.googleapis.com"),
+        countries: &["US"],
+        eu_processing: Tri::Unknown,
+        dpf_certified: Tri::Unknown,
+        trains_on_data: Tri::No,
+        dpa: Tri::Unknown,
+        training_opt_out_possible: false,
+        sources: &["https://aistudio.google.com/docs/terms"],
+        checked: "2026-11-05",
+    },
     // OpenAI API, Standard: USA; kein Training mit API-Daten; DPA.
     ProviderFacts {
         provider: "openai",

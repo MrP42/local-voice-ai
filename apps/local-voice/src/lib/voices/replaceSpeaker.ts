@@ -70,6 +70,31 @@ export function replaceSpeakerInFields(
   };
 }
 
+/**
+ * Welche Sprecher in einem Seitenstand vorkommen, mit Anzahl: Marker in Text
+ * und Zusammenfassung plus gemerkte Reiter-Stimmen. Ein Durchlauf je Text —
+ * für die Auswahl „Ersetze“, die nur Vorhandenes anbieten soll.
+ */
+export function speakerUsage(
+  fields: SpeakerFields,
+  speakers: SpeakerRef[],
+  valueOf: (speaker: SpeakerRef) => string,
+  into: Map<string, number> = new Map(),
+): Map<string, number> {
+  const add = (id: string) => into.set(id, (into.get(id) ?? 0) + 1);
+  for (const text of [fields.text, fields.summary]) {
+    for (const candidate of scanMarkerCandidates(text)) {
+      const speaker = resolveSpeaker(candidate.name, speakers);
+      if (speaker) add(speaker.id);
+    }
+  }
+  const voiceValues = new Set(Object.values(fields.voices));
+  if (voiceValues.size > 0)
+    for (const speaker of speakers)
+      if (voiceValues.has(valueOf(speaker))) add(speaker.id);
+  return into;
+}
+
 /** Felder aus dem JSON-Seitenstand (`state.json`); fehlerhafte Staende gelten als leer. */
 export function fieldsOfState(json: string | null | undefined): {
   state: Record<string, unknown>;

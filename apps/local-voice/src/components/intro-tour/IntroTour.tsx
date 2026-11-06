@@ -34,7 +34,7 @@ export const TOUR_STEPS: Step[] = [
   { id: "dictate", kind: "dialog", icon: Mic },
   { id: "try", kind: "dialog", icon: Mic },
   { id: "pages", kind: "spot", target: "nav-primary", icon: LayoutGrid },
-  { id: "tools", kind: "spot", target: "nav-utilities", icon: Cog },
+  { id: "tools", kind: "spot", target: "nav-profile", icon: Cog },
   { id: "end", kind: "dialog", icon: Check },
 ];
 
@@ -170,7 +170,7 @@ const DictationAnimation: React.FC<{
 /** Sinnvolles Ziel nach dem Schließen, wenn der Auslöser nicht mehr da ist. */
 const FOCUS_FALLBACKS = [
   "[data-testid='workspace-start-tour']",
-  "[data-titlebar-help]",
+  "[data-tour='nav-profile'] button",
   "[data-tour='nav-home']",
 ];
 const focusFallback = () =>

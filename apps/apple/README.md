@@ -211,3 +211,19 @@ profile trust on the iPhone. The updated iPhone app subsequently installed and l
 See the device installation evidence rather than inferring success from a build.
 
 Model cards now download approved model files over HTTPS and verify size/SHA-256 before installation. Model downloads now use a persistent background URLSession; progress stays on the model row. After a user force-quit, the outstanding intent is restarted on reopening. Processing provenance is persisted with results, shared with Watch replies and shown beside playback controls; unknown historical metadata is never inferred. See `docs/apple-evidence/2026-09-06-transparency`.
+
+## Buch-Gespräch (Epic #307, G5/G6, Stand 2026-11-05)
+
+Fragen zum Buch im Player (Vorlesen und Hörbuch), Blatt unter `iPhone/BookTalk/`, Kern in `VoiceCore/BookTalk*.swift`.
+Plan: `docs/superpowers/specs/2026-11-05-buch-gespraech.md`, Vorschau: `docs/vorschau/buch-gespraech/`.
+
+- Schalter `book_talk_preview_enabled` „KI-Antworten (Vorschau)“ (Einstellungen › Buch-Gespräch, Standard aus, auch für Bestand; der alte Schalter `book_talk_enabled` zählt nicht mehr): aus = nur Fundstellen, der Knopf „Fragen“ bleibt sichtbar. Modellwahl: Apple, Gemma, Abo-Modelle über den PC (Relay, Spec §11; Einrichtungscode vom PC, Freigabe je Modell).
+- Lesegrenze = max(gelesen, gehört) in UTF-16 aus `LibraryProgress` (Feld `frontier`, steigt nur; Hörstand nur mit echter Zeitachse).
+- Hören: `SpeechAnalyzer`/`SpeechTranscriber` live über `AVAudioEngine`, nie Server-Erkennung; ohne Apple-Sprachdateien Whisper (nach Ende der Äußerung).
+- Sprechen: Phonon-Stimme Anton, `sentence.speech` je Ereignis; ohne Phonon die beste deutsche Systemstimme.
+- Verlauf: `Application Support/BookTalk/<bookId>.json` (höchstens 200 Wechsel, Dateischutz, nicht gesichert), mit dem Buch gelöscht; Menü „Verlauf leeren“.
+- Modelle: Apple Foundation Models (kein Token-Zähler im SDK dieses Stands, daher nur Fundstellen) und Gemma 4 E2B über llama.cpp mit exaktem Zähler (`llama_tokenize`).
+
+Offen und nicht geprüft (kein Xcode in der Entwicklungsumgebung): der gesamte App-Code unter `iPhone/`, die Laufzeit von Mikrofon, SpeechAnalyzer,
+Phonon und llama-Brücke. Das mitgelieferte `llama.xcframework` b5046 kennt die Architektur `gemma4` nicht: vor dem Gemma-Betrieb auf eine neuere Version heben
+(`scripts/setup_native_engines.py`, siehe TODO(Mac) in `iPhone/ModelLibrary.swift`). Der Eval-Nachweis nach Plan §3.9 ist noch nicht angebunden.

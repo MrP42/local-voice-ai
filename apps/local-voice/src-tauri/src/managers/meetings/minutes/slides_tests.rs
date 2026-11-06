@@ -32,7 +32,11 @@ fn fixture(n: u32) -> Fx {
     std::mem::forget(dir);
     let store = Arc::new(store);
     let meeting = store
-        .create_meeting("Quartalsvortrag", MeetingSource::Import, Some(1_755_600_000))
+        .create_meeting(
+            "Quartalsvortrag",
+            MeetingSource::Import,
+            Some(1_755_600_000),
+        )
         .unwrap()
         .id;
     let segments: Vec<StoredSegment> = (0..n)
@@ -113,7 +117,13 @@ fn contents(body: &str) -> (String, String) {
 }
 
 fn metadata_of(fx: &Fx, doc: &MeetingDocument) -> Value {
-    serde_json::from_str(&fx.store.document_generation_metadata(&doc.id).unwrap().unwrap()).unwrap()
+    serde_json::from_str(
+        &fx.store
+            .document_generation_metadata(&doc.id)
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap()
 }
 
 fn answer_with(tags: &[&str]) -> String {
@@ -162,7 +172,10 @@ async fn a_meeting_without_slides_sends_exactly_the_old_prompt() {
     // Das Transkript steht Zeile fuer Zeile wie vorher.
     let transcript = user.split("# Transcript\n").nth(1).unwrap();
     assert_eq!(transcript.lines().count(), 3);
-    assert!(transcript.starts_with("Mikrofon [00:00]: Zeile 00") || transcript.contains("[00:00]: Zeile 00"));
+    assert!(
+        transcript.starts_with("Mikrofon [00:00]: Zeile 00")
+            || transcript.contains("[00:00]: Zeile 00")
+    );
     // Die Metadaten tragen keinen Folienblock.
     assert!(metadata_of(&fx, &doc).get("slides").is_none());
 }
@@ -176,7 +189,12 @@ async fn slides_that_do_not_count_leave_the_prompt_as_before() {
     add_slide(&fx.store, &fx.meeting, 70_000, None);
     let no_text = add_slide(&fx.store, &fx.meeting, 80_000, Some("Danke"));
     fx.store
-        .slide_set_text(&no_text.id, Some("Danke"), Some("windows-ocr"), Some("ohne_text"))
+        .slide_set_text(
+            &no_text.id,
+            Some("Danke"),
+            Some("windows-ocr"),
+            Some("ohne_text"),
+        )
         .unwrap();
     let (doc, bodies) = run_with_answer(&fx, answer_with(&["", ""]), limits(1_000_000)).await;
     let doc = doc.unwrap();
@@ -216,17 +234,34 @@ async fn slide_text_is_woven_in_time_order_with_the_rules_and_the_tags_are_check
     assert_eq!(system, minutes_system_prompt_with(true));
     assert!(system.contains("never take numbers, dates or names from it"));
     // Folienzeilen vor dem ersten Segment, das nicht vor ihnen beginnt.
-    let at = |needle: &str| user.find(needle).unwrap_or_else(|| panic!("fehlt: {needle}\n{user}"));
+    let at = |needle: &str| {
+        user.find(needle)
+            .unwrap_or_else(|| panic!("fehlt: {needle}\n{user}"))
+    };
     let line_1 = at("[Folie 1 · 01:10] Umsatz 13,1 Mio. EUR {Bild: Balkendiagramm}");
     let line_2 = at("[Folie 2 · 02:10] Fahrplan Release");
-    assert!(at("Zeile 01") < line_1 && line_1 < at("Zeile 02"), "Folie 1 zwischen Zeile 01 und 02");
-    assert!(at("Zeile 02") < line_2 && line_2 < at("Zeile 03"), "Folie 2 zwischen Zeile 02 und 03");
+    assert!(
+        at("Zeile 01") < line_1 && line_1 < at("Zeile 02"),
+        "Folie 1 zwischen Zeile 01 und 02"
+    );
+    assert!(
+        at("Zeile 02") < line_2 && line_2 < at("Zeile 03"),
+        "Folie 2 zwischen Zeile 02 und 03"
+    );
     assert!(!user.contains("Folie 3"), "die Folie ohne Text fehlt");
 
     // Belege: gueltige bleiben (normalisiert), erfundene fallen weg.
-    assert!(doc.body.contains("Umsatz 13,1 Mio. EUR [F1]"), "{}", doc.body);
+    assert!(
+        doc.body.contains("Umsatz 13,1 Mio. EUR [F1]"),
+        "{}",
+        doc.body
+    );
     assert!(!doc.body.contains("[F7]") && !doc.body.contains("F7"));
-    assert!(doc.body.contains("Fahrplan Release [F2][F1]"), "{}", doc.body);
+    assert!(
+        doc.body.contains("Fahrplan Release [F2][F1]"),
+        "{}",
+        doc.body
+    );
 
     let meta = metadata_of(&fx, &doc);
     assert_eq!(
@@ -250,8 +285,16 @@ async fn slide_text_is_woven_in_time_order_with_the_rules_and_the_tags_are_check
     assert_eq!(
         slides,
         vec![
-            ("slide".into(), s1.id.clone(), Some("Folie 1 · 01:10".to_string())),
-            ("slide".into(), s2.id.clone(), Some("Folie 2 · 02:10".to_string())),
+            (
+                "slide".into(),
+                s1.id.clone(),
+                Some("Folie 1 · 01:10".to_string())
+            ),
+            (
+                "slide".into(),
+                s2.id.clone(),
+                Some("Folie 2 · 02:10".to_string())
+            ),
         ]
     );
     assert_eq!(
@@ -281,7 +324,10 @@ async fn too_many_slides_are_cut_by_the_ladder_and_the_counts_are_reported() {
         .filter(|l| l.starts_with("[Folie "))
         .map(|l| l.chars().count() + 1)
         .sum();
-    assert!(slide_chars > 0 && slide_chars <= 2_000, "{slide_chars} Zeichen Folientext");
+    assert!(
+        slide_chars > 0 && slide_chars <= 2_000,
+        "{slide_chars} Zeichen Folientext"
+    );
     let meta = metadata_of(&fx, &doc);
     let slides = &meta["slides"];
     assert_eq!(slides["total"], 30);
@@ -338,7 +384,11 @@ async fn in_blocks_every_block_gets_the_slides_of_its_time_range() {
         log.lock().unwrap().push(body.to_string());
         if body.contains("This is part ") {
             let (_, user) = contents(body);
-            let tag = if user.contains("Umsatz Sued") { "[F1]" } else { "" };
+            let tag = if user.contains("Umsatz Sued") {
+                "[F1]"
+            } else {
+                ""
+            };
             MockReply::Body(chat_body(
                 &json!({"entries": [{
                     "section": "besprochene_punkte",
@@ -372,12 +422,28 @@ async fn in_blocks_every_block_gets_the_slides_of_its_time_range() {
         .collect();
     assert_eq!(maps.len(), 3, "drei Bloecke");
     for (system, _) in &maps {
-        assert_eq!(system, &map_system_prompt_with(true), "die map-Regeln kennen die Folien");
+        assert_eq!(
+            system,
+            &map_system_prompt_with(true),
+            "die map-Regeln kennen die Folien"
+        );
     }
     let has = |i: usize, text: &str| maps[i].1.contains(text);
-    assert!(has(0, "[Folie 1 · 01:30] Umsatz Sued") && !has(0, "Zeitplan Ost") && !has(0, "Budget West"));
-    assert!(has(1, "[Folie 2 · 05:00] Zeitplan Ost") && !has(1, "Umsatz Sued") && !has(1, "Budget West"));
-    assert!(has(2, "[Folie 3 · 10:00] Budget West") && !has(2, "Umsatz Sued") && !has(2, "Zeitplan Ost"));
+    assert!(
+        has(0, "[Folie 1 · 01:30] Umsatz Sued")
+            && !has(0, "Zeitplan Ost")
+            && !has(0, "Budget West")
+    );
+    assert!(
+        has(1, "[Folie 2 · 05:00] Zeitplan Ost")
+            && !has(1, "Umsatz Sued")
+            && !has(1, "Budget West")
+    );
+    assert!(
+        has(2, "[Folie 3 · 10:00] Budget West")
+            && !has(2, "Umsatz Sued")
+            && !has(2, "Zeitplan Ost")
+    );
     // Das Zusammenfuehren traegt die Regeln und die Belege der Eintraege weiter.
     let reduce = bodies
         .iter()
@@ -386,7 +452,11 @@ async fn in_blocks_every_block_gets_the_slides_of_its_time_range() {
     let (reduce_system, reduce_user) = contents(reduce);
     assert_eq!(reduce_system, minutes_system_prompt_with(true));
     assert!(reduce_user.contains("[F1]"), "{reduce_user}");
-    assert!(doc.body.contains("Umsatz [F1]") && doc.body.contains("Zeitplan [F2]"), "{}", doc.body);
+    assert!(
+        doc.body.contains("Umsatz [F1]") && doc.body.contains("Zeitplan [F2]"),
+        "{}",
+        doc.body
+    );
 }
 
 fn spec_of_general() -> TemplateSpec {
@@ -412,17 +482,27 @@ fn assemble_checks_tags_only_against_the_slides_that_were_in_the_prompt() {
     });
     let valid: HashSet<u32> = [4, 5].into_iter().collect();
     let (sections, stats) = assemble_with_slides(raw(value.clone()), &spec, &valid);
-    let texts: Vec<&str> = sections[0].entries.iter().map(|e| e.text.as_str()).collect();
+    let texts: Vec<&str> = sections[0]
+        .entries
+        .iter()
+        .map(|e| e.text.as_str())
+        .collect();
     assert_eq!(texts, vec!["Mit Beleg [F4] und erfunden", "Nur erfunden"]);
     assert_eq!(sections.last().unwrap().entries.len(), 0);
-    let tasks = sections.iter().find(|s| s.kind == SectionKind::Tasks).unwrap();
+    let tasks = sections
+        .iter()
+        .find(|s| s.kind == SectionKind::Tasks)
+        .unwrap();
     assert_eq!(tasks.entries[0].text, "Folie pruefen [F4][F5]");
     assert_eq!(stats.dropped_slide_tags, 2);
     assert_eq!(stats.slides_used, vec![4, 5]);
 
     // Ohne Folien im Prompt bleibt der Text, wie das Modell ihn schrieb (wie vor D5).
     let (plain, plain_stats) = assemble(raw(value), &spec);
-    assert_eq!(plain[0].entries[0].text, "Mit Beleg [F4] und erfunden [F99]");
+    assert_eq!(
+        plain[0].entries[0].text,
+        "Mit Beleg [F4] und erfunden [F99]"
+    );
     assert_eq!(plain_stats.dropped_slide_tags, 0);
     assert!(plain_stats.slides_used.is_empty());
 }

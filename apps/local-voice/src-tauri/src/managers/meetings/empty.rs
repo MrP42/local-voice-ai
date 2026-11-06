@@ -130,7 +130,8 @@ pub(crate) fn fill_empty_tx(tx: &Transaction<'_>, id: &str, fill: &EmptyFill<'_>
 
     let title = match fill.title.map(str::trim).filter(|t| !t.is_empty()) {
         Some(new)
-            if !fill.only_if_default || default_title.as_deref() == Some(current_title.as_str()) =>
+            if !fill.only_if_default
+                || default_title.as_deref() == Some(current_title.as_str()) =>
         {
             clean_title(new)?
         }
@@ -289,7 +290,9 @@ mod tests {
     fn an_empty_entry_can_be_created_inside_a_project() {
         let s = store();
         let f = folder(&s, "Kunde A");
-        let m = s.create_empty_meeting("Neue Besprechung", Some(&f)).unwrap();
+        let m = s
+            .create_empty_meeting("Neue Besprechung", Some(&f))
+            .unwrap();
         assert_eq!(s.meeting_folder_ids(&m.id).unwrap(), vec![f.clone()]);
         let counts = s.folder_counts().unwrap();
         assert_eq!(counts.all, 1);
@@ -299,13 +302,22 @@ mod tests {
     #[test]
     fn creating_refuses_a_bad_title_or_an_unknown_project_and_leaves_nothing() {
         let s = store();
-        assert_eq!(code(s.create_empty_meeting("  ", None).unwrap_err()), "title_empty");
         assert_eq!(
-            code(s.create_empty_meeting(&"x".repeat(TITLE_MAX_CHARS + 1), None).unwrap_err()),
+            code(s.create_empty_meeting("  ", None).unwrap_err()),
+            "title_empty"
+        );
+        assert_eq!(
+            code(
+                s.create_empty_meeting(&"x".repeat(TITLE_MAX_CHARS + 1), None)
+                    .unwrap_err()
+            ),
             "title_too_long"
         );
         assert_eq!(
-            code(s.create_empty_meeting("T", Some("gibt-es-nicht")).unwrap_err()),
+            code(
+                s.create_empty_meeting("T", Some("gibt-es-nicht"))
+                    .unwrap_err()
+            ),
             "folder_not_found"
         );
         assert!(s.list_meetings(0, 10).unwrap().is_empty());
@@ -327,7 +339,9 @@ mod tests {
     fn notes_typed_into_an_empty_entry_survive_filling_it() {
         let s = store();
         let f = folder(&s, "Projekt");
-        let m = s.create_empty_meeting("Neue Besprechung", Some(&f)).unwrap();
+        let m = s
+            .create_empty_meeting("Neue Besprechung", Some(&f))
+            .unwrap();
         let mut fill = EmptyFill::new(MeetingSource::Live, MeetingStatus::Recording);
         fill.consent_confirmed_at = Some(42);
         fill.title = Some("Montag");
@@ -337,7 +351,11 @@ mod tests {
         assert_eq!(filled.status, "recording");
         assert_eq!(filled.consent_confirmed_at, Some(42));
         assert_eq!(filled.title, "Montag");
-        assert_eq!(s.meeting_folder_ids(&m.id).unwrap(), vec![f], "Projekt bleibt");
+        assert_eq!(
+            s.meeting_folder_ids(&m.id).unwrap(),
+            vec![f],
+            "Projekt bleibt"
+        );
         assert!(!s.is_empty_meeting(&m.id).unwrap());
     }
 
@@ -370,12 +388,25 @@ mod tests {
         let fill = || EmptyFill::new(MeetingSource::Import, MeetingStatus::Processing);
         s.fill_empty_meeting(&m.id, &fill()).unwrap();
         // Zweites Fuellen: das Ziel ist nicht mehr leer.
-        assert_eq!(code(s.fill_empty_meeting(&m.id, &fill()).unwrap_err()), TARGET_NOT_EMPTY);
+        assert_eq!(
+            code(s.fill_empty_meeting(&m.id, &fill()).unwrap_err()),
+            TARGET_NOT_EMPTY
+        );
         // Eine ganz normale Besprechung ist nie ein Ziel.
-        let live = s.create_meeting("Live", MeetingSource::Live, Some(1)).unwrap();
-        assert_eq!(code(s.fill_empty_meeting(&live.id, &fill()).unwrap_err()), TARGET_NOT_EMPTY);
-        let yt = s.create_meeting("Video", MeetingSource::Youtube, None).unwrap();
-        assert_eq!(code(s.fill_empty_meeting(&yt.id, &fill()).unwrap_err()), TARGET_NOT_EMPTY);
+        let live = s
+            .create_meeting("Live", MeetingSource::Live, Some(1))
+            .unwrap();
+        assert_eq!(
+            code(s.fill_empty_meeting(&live.id, &fill()).unwrap_err()),
+            TARGET_NOT_EMPTY
+        );
+        let yt = s
+            .create_meeting("Video", MeetingSource::Youtube, None)
+            .unwrap();
+        assert_eq!(
+            code(s.fill_empty_meeting(&yt.id, &fill()).unwrap_err()),
+            TARGET_NOT_EMPTY
+        );
         // Unbekannt und geloescht.
         assert_eq!(
             code(s.fill_empty_meeting("gibt-es-nicht", &fill()).unwrap_err()),
@@ -399,12 +430,16 @@ mod tests {
         let mut fill = EmptyFill::new(MeetingSource::Live, MeetingStatus::Recording);
         fill.consent_confirmed_at = Some(7);
         s.fill_empty_meeting(&m.id, &fill).unwrap();
-        s.set_audio_paths(&m.id, Some("C:/x/mic.wav"), None, None).unwrap();
+        s.set_audio_paths(&m.id, Some("C:/x/mic.wav"), None, None)
+            .unwrap();
         s.set_status(&m.id, MeetingStatus::Failed).unwrap();
 
         assert!(s.restore_empty_meeting(&m.id).unwrap());
         let back = s.get_meeting(&m.id).unwrap().unwrap();
-        assert_eq!((back.source.as_str(), back.status.as_str()), ("empty", "ready"));
+        assert_eq!(
+            (back.source.as_str(), back.status.as_str()),
+            ("empty", "ready")
+        );
         assert!(back.mic_audio_path.is_none() && back.consent_confirmed_at.is_none());
         assert!(s.is_empty_meeting(&m.id).unwrap());
     }
@@ -437,7 +472,9 @@ mod tests {
         assert!(!s.restore_empty_meeting(&m.id).unwrap());
         assert_eq!(s.get_meeting(&m.id).unwrap().unwrap().source, "live");
         // Und eine Import-Besprechung ist nie "wiederherzustellen".
-        let imp = s.create_meeting("Import", MeetingSource::Import, None).unwrap();
+        let imp = s
+            .create_meeting("Import", MeetingSource::Import, None)
+            .unwrap();
         assert!(!s.restore_empty_meeting(&imp.id).unwrap());
     }
 }

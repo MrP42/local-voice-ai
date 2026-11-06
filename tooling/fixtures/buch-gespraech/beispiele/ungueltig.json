@@ -1,0 +1,14 @@
+{
+  "request": [
+    { "book_id": "b1", "request_id": "r1", "question": "x", "frontier": -1, "scope": "until_position", "input": "voice" },
+    { "book_id": "b1", "request_id": "r1", "question": "x", "scope": "all", "input": "voice" }
+  ],
+  "event": [ { "kind": "delta", "request_id": "r1", "text": "x" } ],
+  "answer": [
+    { "intent": "locate", "sentences": [], "text": "", "speech": "", "citations": [], "found_only": true, "dropped": 0, "scope": "book" },
+    { "intent": "locate", "sentences": [], "text": "", "speech": "", "citations": [], "found_only": true, "dropped": 0, "scope": "book", "frontier": null }
+  ],
+  "stored-turn": [ { "question": "x", "scope": "book", "input": "text", "at": "2026-11-05T18:00:00Z" } ],
+  "command": [ "jump", { "kind": "fly" } ],
+  "root": [ { "irgendwas": 1 } ]
+}
