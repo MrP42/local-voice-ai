@@ -7,7 +7,8 @@
 //! - `progress`: ein Fortschritts-Datensatz (`progress.<schlüssel>` aus
 //!   `fortschritt.json`), Kennung `p_` + 40 Hex von SHA-256(schlüssel);
 //! - `bookmark`: Lesezeichen und Weiterlese-Stellen (`tts.bookmarks.*`,
-//!   `tts.resume.*`), Kennung `b_` + 40 Hex von SHA-256(schlüssel).
+//!   `tts.resume.*`) sowie die Stimmen je Buchsprache (`tts.voice.*`,
+//!   lva#352), Kennung `b_` + 40 Hex von SHA-256(schlüssel).
 //!
 //! `updated` eines Buchs führt der Desktop in `<buch>/sync.json`: ändert sich
 //! der Inhalt des Buchs, rückt der Zeitpunkt nach. Dort stehen auch die
@@ -31,7 +32,10 @@ pub const COLLECTION_BOOKMARK: &str = "bookmark";
 
 const SIDECAR: &str = "sync.json";
 const PROGRESS_PREFIX: &str = "progress.";
-const BOOKMARK_PREFIXES: [&str; 2] = ["tts.bookmarks.", "tts.resume."];
+const BOOKMARK_PREFIXES: [&str; 3] = ["tts.bookmarks.", "tts.resume.", VOICE_PREFIX];
+/// Stimme je Buchsprache (lva#352): `tts.voice.lang.<sprache>`,
+/// `tts.voice.book.<buch>.<sprache>`; Wert JSON mit `updated` (ms).
+const VOICE_PREFIX: &str = "tts.voice.";
 /// Ein Buchtext größer als das ist kein Buch, sondern ein Irrläufer.
 pub const MAX_TEXT_BYTES: u64 = 64 * 1024 * 1024;
 /// Gelöschte Bücher wandern hierhin statt ins Nichts (wie „Entfernen“).
@@ -1050,6 +1054,14 @@ pub fn merge_bookmarks(local: &str, remote: &str) -> Option<String> {
     serde_json::to_string(&mine).ok()
 }
 
+/// `updated` einer Stimmwahl (`tts.voice.*`); unlesbar zählt als 0.
+fn voice_updated(raw: &str) -> f64 {
+    serde_json::from_str::<Value>(raw)
+        .ok()
+        .and_then(|v| v.get("updated").and_then(Value::as_f64))
+        .unwrap_or(0.0)
+}
+
 /// Ein `progress`- oder `bookmark`-Objekt anwenden (`None` = Grabstein).
 pub fn apply_progress(
     app: &AppHandle,
@@ -1129,6 +1141,14 @@ pub fn apply_progress(
             let stored = match map.get(sub) {
                 // Ungesichert lokal geändert: Lesezeichen beider Seiten
                 // bleiben; eine Weiterlese-Stelle bleibt die lokale.
+                // Stimmen: der neuere Stand gewinnt.
+                Some(mine) if !local_clean && sub.starts_with(VOICE_PREFIX) => {
+                    if voice_updated(raw) > voice_updated(mine) {
+                        raw.to_string()
+                    } else {
+                        return Ok(Applied::default());
+                    }
+                }
                 Some(mine) if !local_clean => match merge_bookmarks(mine, raw) {
                     Some(m) => m,
                     None => return Ok(Applied::default()),
@@ -1634,10 +1654,17 @@ mod tests {
             r#"[{"id":"a","offset":3,"anchor":"x","created":1}]"#.into(),
         );
         map.insert("tts.resume.page_1".into(), "42".into());
+        map.insert(
+            "tts.voice.lang.de".into(),
+            r#"{"phonon":"de:Anton","updated":7}"#.into(),
+        );
         map.insert("anderes".into(), "1".into());
         map.insert("progress.kaputt".into(), "{".into());
         let objs = progress_objects(&map);
-        assert_eq!(objs.len(), 3);
+        assert_eq!(objs.len(), 4);
+        assert!(objs
+            .iter()
+            .any(|o| o.id == bookmark_object_id("tts.voice.lang.de")));
         let p = objs
             .iter()
             .find(|o| o.collection == COLLECTION_PROGRESS)
@@ -1651,5 +1678,12 @@ mod tests {
             .unwrap();
         assert_eq!(b.value["key"], json!("tts.bookmarks.page_1"));
         assert!(b.value["value"].as_str().unwrap().starts_with("[{"));
+    }
+
+    #[test]
+    fn stimmwahl_neuerer_stand_gewinnt() {
+        assert_eq!(voice_updated(r#"{"updated":12}"#), 12.0);
+        assert_eq!(voice_updated("kaputt"), 0.0);
+        assert!(is_bookmark_key("tts.voice.book.book_1.en"));
     }
 }

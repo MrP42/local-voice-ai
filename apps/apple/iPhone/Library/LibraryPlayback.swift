@@ -44,9 +44,18 @@ final class LibraryPlayback: NSObject, ObservableObject {
         ?? UserDefaults.standard.string(forKey: "library.voice") {
         didSet {
             if VoiceModel.shared.selectedVoiceID != (voiceIdentifier ?? "") { VoiceModel.shared.selectedVoiceID = voiceIdentifier ?? "" }
-            if voiceIdentifier != oldValue { voiceChanged() }
+            if voiceIdentifier != oldValue {
+                // Eigene Wahl gilt für die Sprache des Buchs (lva#352), nicht für alle Bücher.
+                if !applyingVoicePref { rememberVoice() }
+                voiceChanged()
+            }
         }
     }
+    /// Sprache des offenen Buchs (`de`, `en` …) für die Stimmenwahl; `nil`: unbekannt.
+    @Published private(set) var voiceLanguage: String?
+    /// Woher die Stimme kommt: nur dieses Buch oder alle Bücher der Sprache.
+    @Published private(set) var voiceScope: VoicePrefs.Source?
+    private var applyingVoicePref = false
     @Published var error: String?
     /// Vollbild-Player sichtbar (Hören mit Mitlesen oder Vorlesen).
     @Published var presented = false
@@ -385,6 +394,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
             phononFailed = false
             self.book = book; mode = .readAloud
             self.text = text
+            applyVoicePref(book)
             paragraphs = LibraryText.paragraphs(text)
             sentenceCache = [:]
             followCache = nil
@@ -409,6 +419,63 @@ final class LibraryPlayback: NSObject, ObservableObject {
     }
 
     private var phononVoice: String? { phononFailed ? nil : PhononEngine.voiceName(voiceIdentifier) }
+
+    // MARK: Stimme je Buchsprache (lva#352)
+
+    /// Gemerkte Stimme als Kennung dieses iPhones: eigene Kennung, sonst dieselbe Phonon-Stimme.
+    private func voiceId(_ pref: VoicePref) -> String? {
+        if let id = pref.ios {
+            if PhononEngine.voiceName(id) != nil || AVSpeechSynthesisVoice(identifier: id) != nil { return id }
+        }
+        guard let phonon = pref.phonon, let parts = PhononEngine.parts(phonon),
+              PhononEngine.languages.contains(parts.language) else { return nil }
+        return PhononEngine.identifier(language: parts.language, voice: parts.voice)
+    }
+
+    private func applyVoicePref(_ book: LibraryBook) {
+        let lang = VoicePrefs.language(book.language)
+        voiceLanguage = lang
+        let hit = VoicePrefs.resolve(owner: book.id, language: lang, read: { self.library.voicePrefRaw($0) }, toId: voiceId)
+        voiceScope = hit?.source ?? (lang == nil ? nil : .language)
+        guard let hit, hit.id != voiceIdentifier else { return }
+        applyingVoicePref = true
+        voiceIdentifier = hit.id
+        applyingVoicePref = false
+    }
+
+    private var voicePrefKey: String? {
+        guard let book, let lang = voiceLanguage else { return nil }
+        return voiceScope == .book ? VoicePrefs.bookKey(book.id, lang) : VoicePrefs.languageKey(lang)
+    }
+
+    private func rememberVoice() {
+        guard mode == .readAloud, let key = voicePrefKey, let id = voiceIdentifier else { return }
+        let pref = VoicePrefs.iosPref(id: id, phonon: PhononEngine.voiceName(id), old: VoicePrefs.decode(library.voicePrefRaw(key)),
+                                      now: PhoneLibrary.nowMs())
+        if let raw = VoicePrefs.encode(pref) { library.setVoicePrefRaw(key, raw) }
+    }
+
+    /// „Nur dieses Buch“: eigene Stimme fürs Buch ein- oder ausschalten.
+    func setBookOnlyVoice(_ on: Bool) {
+        guard let book, let lang = voiceLanguage, let key = VoicePrefs.bookKey(book.id, lang) else { return }
+        if on {
+            voiceScope = .book
+            rememberVoice()
+        } else {
+            // Leerer Eintrag statt Löschen: reist im Abgleich wie jede Wahl (neuerer Stand gewinnt).
+            if let raw = VoicePrefs.encode(VoicePref(updated: PhoneLibrary.nowMs())) { library.setVoicePrefRaw(key, raw) }
+            voiceScope = .language
+            applyVoicePref(book)
+        }
+    }
+
+    /// Systemstimmen in der Sprache des Buchs (sonst Deutsch), beste zuerst.
+    var systemVoices: [AVSpeechSynthesisVoice] {
+        let lang = voiceLanguage ?? "de"
+        let list = AVSpeechSynthesisVoice.speechVoices().filter { $0.language.hasPrefix(lang) }
+            .sorted { ($0.quality.rawValue, $0.name) > ($1.quality.rawValue, $1.name) }
+        return list.isEmpty ? Self.germanVoices : list
+    }
 
     private func stopPhonon() {
         readGeneration += 1

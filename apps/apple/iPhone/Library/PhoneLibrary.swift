@@ -266,6 +266,17 @@ final class PhoneLibrary: ObservableObject {
         return try? JSONDecoder().decode(ProgressRecord.self, from: Data(raw.utf8))
     }
 
+    // MARK: Stimme je Buchsprache (lva#352)
+
+    /// Roh-JSON eines `tts.voice.*`-Eintrags (liegt wie am Desktop in `fortschritt.json`).
+    func voicePrefRaw(_ key: String) -> String? { progress[key] }
+    var voicePrefKeys: [String] { progress.keys.filter { $0.hasPrefix(VoicePrefs.prefix) }.sorted() }
+    func setVoicePrefRaw(_ key: String, _ raw: String) {
+        guard key.hasPrefix(VoicePrefs.prefix), progress[key] != raw else { return }
+        progress[key] = raw
+        scheduleSave()
+    }
+
     func textKey(_ book: LibraryBook) -> String { LibraryProgress.textKey(pageId: book.text?.pageId ?? book.id) }
     func audioKey(_ book: LibraryBook) -> String { LibraryProgress.audioKey(bookId: book.id) }
 

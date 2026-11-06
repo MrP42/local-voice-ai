@@ -1006,6 +1006,20 @@ struct VoiceList: View {
     var body: some View {
         NavigationStack {
             List {
+                // Wofür die Wahl gilt (lva#352): alle Bücher der Sprache oder nur dieses Buch.
+                if let lang = playback.voiceLanguage {
+                    let name = Locale.current.localizedString(forLanguageCode: lang) ?? lang
+                    Section {
+                        Toggle("Nur für dieses Buch", isOn: Binding(
+                            get: { playback.voiceScope == .book },
+                            set: { playback.setBookOnlyVoice($0) }))
+                        .frame(minHeight: 44)
+                    } footer: {
+                        Text(playback.voiceScope == .book
+                             ? "Die Stimme gilt nur für dieses Buch (\(name))."
+                             : "Die Stimme gilt für alle Bücher auf \(name).")
+                    }
+                }
                 ForEach(PhononEngine.languages, id: \.self) { language in
                     if let names = phonon.voices[language] {
                         Section {
@@ -1025,7 +1039,7 @@ struct VoiceList: View {
                     }
                 }
                 Section {
-                    ForEach(LibraryPlayback.germanVoices, id: \.identifier) { v in
+                    ForEach(playback.systemVoices, id: \.identifier) { v in
                         Button {
                             playback.voiceIdentifier = v.identifier; dismiss()
                         } label: {
@@ -1040,7 +1054,7 @@ struct VoiceList: View {
                         }.buttonStyle(.plain)
                     }
                 } footer: {
-                    Text("Bessere Stimmen (Premium) lädst du kostenlos unter Einstellungen › Bedienungshilfen › Gesprochene Inhalte › Stimmen › Deutsch.")
+                    Text("Bessere Stimmen (Premium) lädst du kostenlos unter Einstellungen › Bedienungshilfen › Gesprochene Inhalte › Stimmen.")
                 }
             }
             .navigationTitle("Stimme").navigationBarTitleDisplayMode(.inline)
