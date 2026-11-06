@@ -29,6 +29,7 @@ import { Formats, jobLabel, ProgressBar } from "./LibraryPage";
 import type { TranscriptJob } from "./useLibrary";
 import { MetadataPicker } from "./MetadataPicker";
 import { KurzbuchCard } from "./KurzbuchCard";
+import { BookClassification } from "./BookClassification";
 import "./fassungen.css";
 import type { KiCreateTab } from "./KiCreateDialog";
 import {
@@ -75,6 +76,9 @@ interface Props {
   onCreate?(tab: KiCreateTab): void;
   /** lva#236: Fassungen exportieren. */
   onExport?(): void;
+  /** lva#354: alle Bücher (Kategorien, Themen) und Sprung in die Lesestatistik. */
+  allBooks?: LibraryBook[];
+  onOpenStats?(): void;
 }
 
 /**
@@ -95,6 +99,8 @@ export const BookDetail: React.FC<Props> = ({
   editTitle = false,
   onCreate,
   onExport,
+  allBooks,
+  onOpenStats,
 }) => {
   const { t } = useTranslation();
   const { book } = view;
@@ -414,6 +420,12 @@ export const BookDetail: React.FC<Props> = ({
           ) : (
             <p className="library-meta">{t("library.noDescription")}</p>
           )}
+          <BookClassification
+            book={book}
+            all={allBooks ?? [book]}
+            onSaved={onChanged}
+            onOpenStats={onOpenStats}
+          />
         </div>
       )}
 

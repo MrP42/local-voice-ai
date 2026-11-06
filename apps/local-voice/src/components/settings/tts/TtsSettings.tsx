@@ -190,6 +190,12 @@ import { useKeepAwake } from "./reader/useKeepAwake";
 import { parseReaderDoc } from "@/lib/reader/readerDoc";
 import { stripPageMarks, toSpokenScript } from "@/lib/reader/spokenScript";
 import {
+  addReadingProgress,
+  normalizeLang,
+  startReading,
+  stopReading,
+} from "@/lib/library/readingClock";
+import {
   addChunk,
   emptyStream,
   streamText,
@@ -2188,6 +2194,75 @@ export const TtsSettings = () => {
       spokenText.length,
     );
   }, [bookTalkAvailable, activePage, pageInfo, spokenText]);
+  // Lesestatistik (lva#354): Vorlesen zählt, solange gesprochen wird; Lesen,
+  // solange die Leseansicht offen ist (Aktivität prüft der Taktgeber). Nur
+  // Bücher der Bibliothek, nicht lose Vorlesen-Seiten.
+  const [statBookId, setStatBookId] = useState<string | null>(null);
+  useEffect(() => {
+    setStatBookId(null);
+    if (!activePage) return;
+    let stop = false;
+    void commands
+      .libraryList()
+      .then((r) => {
+        if (stop || r.status !== "ok") return;
+        setStatBookId(
+          r.data.find((b) => b.text?.page_id === activePage)?.id ?? null,
+        );
+      })
+      .catch(() => undefined);
+    return () => {
+      stop = true;
+    };
+  }, [activePage]);
+  const statLang = normalizeLang(contentLang);
+  const statFormat = speaking
+    ? "vorlesen"
+    : viewMode === "read"
+      ? "lesen"
+      : null;
+  useEffect(() => {
+    if (!statBookId) return;
+    if (statFormat)
+      startReading({ bookId: statBookId, format: statFormat, lang: statLang });
+    else stopReading({ bookId: statBookId });
+    return () => stopReading({ bookId: statBookId });
+  }, [statBookId, statFormat, statLang]);
+  // Vorgelesene Zeichen: Satz für Satz vorwärts, Sprünge zählen nicht.
+  const statSpokenAt = useRef<number | null>(null);
+  useEffect(() => {
+    if (!statBookId || !readRange || !speaking) {
+      statSpokenAt.current = null;
+      return;
+    }
+    const prev = statSpokenAt.current;
+    statSpokenAt.current = readRange.start;
+    const step = prev === null ? 0 : readRange.start - prev;
+    if (step > 0 && step <= 5_000)
+      addReadingProgress(
+        { bookId: statBookId, format: "vorlesen", lang: statLang },
+        { chars: step },
+      );
+  }, [readRange, speaking, statBookId, statLang]);
+  // Gelesene Zeichen: vorwärts geblätterte Seiten ohne Wiedergabe.
+  const statViewAt = useRef<number | null>(null);
+  useEffect(() => {
+    const api = readerApiRef.current;
+    if (!statBookId || !pageInfo || !api || speaking || viewMode !== "read") {
+      statViewAt.current = null;
+      return;
+    }
+    const start = pageInfo.page === 0 ? 0 : api.offsetOfPage(pageInfo.page);
+    if (start === null) return;
+    const prev = statViewAt.current;
+    statViewAt.current = start;
+    const step = prev === null ? 0 : start - prev;
+    if (pageInfo.turnedTo === pageInfo.page && step > 0 && step <= 20_000)
+      addReadingProgress(
+        { bookId: statBookId, format: "lesen", lang: statLang },
+        { chars: step },
+      );
+  }, [pageInfo, speaking, viewMode, statBookId, statLang]);
   const frontierOfBook = useCallback(
     () => (activePage ? bookFrontier(activePage) : undefined),
     [activePage],

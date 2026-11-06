@@ -687,6 +687,19 @@ mod commands {
             .ok_or_else(|| "reading_classify:unreadable".into())
     }
 
+    /// CSV der Oberfläche speichern (UTF-8 mit BOM, damit Excel Umlaute erkennt).
+    #[tauri::command]
+    #[specta::specta]
+    pub fn reading_log_export(path: String, csv: String) -> Result<(), String> {
+        let p = std::path::PathBuf::from(&path);
+        if !p.extension().is_some_and(|e| e.eq_ignore_ascii_case("csv")) {
+            return Err("Nur .csv".into());
+        }
+        let mut bytes = vec![0xEF, 0xBB, 0xBF];
+        bytes.extend_from_slice(csv.as_bytes());
+        std::fs::write(&p, bytes).map_err(|e| format!("CSV nicht geschrieben: {e}"))
+    }
+
     /// Auswertung aller Geräte.
     #[tauri::command]
     #[specta::specta]

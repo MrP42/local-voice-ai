@@ -6859,6 +6859,17 @@ async readingClassify(input: ClassifyInput) : Promise<Result<Classification, str
 }
 },
 /**
+ * CSV der Oberfläche speichern (UTF-8 mit BOM, damit Excel Umlaute erkennt).
+ */
+async readingLogExport(path: string, csv: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("reading_log_export", { path, csv }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Auswertung aller Geräte.
  */
 async readingLogRows() : Promise<Result<ReadingRow[], string>> {
