@@ -1,0 +1,9 @@
+{
+  "budget_profile": null,
+  "check_version": "book_talk_check@1",
+  "model_id": "gemma-4-E4B-it-Q4_K_M",
+  "prompt_version": "book_talk_prompt@1",
+  "provider": "local",
+  "report_hash": "5966b2bd3c3ff6c361d6f45f028e2be5dcbbe87b54145cc055302303c4e96a71",
+  "status": "failed"
+}
