@@ -1,6 +1,6 @@
 # Bücher live beim Vorlesen übersetzen (Entwurf)
 
-Stand 06.11.2026, **zweite Fassung** nach Codex R1 (bedingt JA, Must-fixes 1–7 eingearbeitet, F1–F5 entschieden).
+Stand 06.11.2026, **dritte Fassung** nach Codex R1 und R2 (R1 Must-fixes 1–7, R2 M1–M4 und Testauflage eingearbeitet, F1–F5 entschieden).
 Wunsch von Patrick (06.11.2026 23:52): ein englisches Buch auf dem iPhone direkt auf Deutsch vorlesen lassen,
 Satz für Satz übersetzt, möglichst ohne Wartezeit und ohne das ganze Buch vorher zu übersetzen; Sprachwechsel
 während des Vorlesens; bei Bedarf doch das ganze Buch (auch als Kurzbuch) in einer Zielsprache anlegen, möglichst
@@ -110,9 +110,25 @@ entfällt dort.
 - **Wiedergabegeneration:** Jeder Sprung, Sprachwechsel, Quellen- oder Stimmwechsel erhöht sie. Übersetzungs-
   und Audioergebnisse tragen die Generation, unter der sie bestellt wurden; ältere werden verworfen, nie
   abgespielt oder angezeigt.
-- **Echte Fassungen** haben eigene Offsets. Zwischen Quell- und Zielfassung wird eine **Satzzuordnung** in beide
-  Richtungen gespeichert (§7.2, §9). Der Quellhash allein ist keine Zuordnung. Ohne Satzzuordnung gelten die
-  Wechselstufen aus #344 (kapitelgenau/ungefähr) mit ausdrücklich ungenauer Übernahme.
+- **Echte Fassungen** haben eigene Offsets. Zwischen Quell- und Zielfassung gilt eine **Satzzuordnung** (§4.2).
+  Der Quellhash allein ist keine Zuordnung. Ohne gültige Satzzuordnung gelten die Wechselstufen aus #344
+  (kapitelgenau/ungefähr) mit ausdrücklich ungenauer Übernahme.
+
+### 4.2 Satzzuordnung und Abfrageregel
+
+- **Format:** `alignment = { v: 1, source_edition, source_hash, target_hash, pairs: [[q_i, z_i], …], eof: [Q, Z] }`.
+  Ein Paar je übersetzter Quelleinheit (Satz), `q_i` = Beginn der Einheit im Quelltext, `z_i` = Beginn ihrer
+  Übersetzung im Zieltext, beide **UTF-16**. `Q`/`Z` = Länge des Quell- bzw. Zieltexts (EOF-Marker).
+- **Gültigkeit:** `q` und `z` je streng monoton steigend; `0 ≤ q_i < Q`, `0 ≤ z_i < Z`; kein Wert mitten in einem
+  Surrogatpaar; `source_hash`/`target_hash` passen zu den vorliegenden Texten (§7.3 Hashvertrag). Ungültig →
+  Zuordnung wird nicht benutzt.
+- **Abfrage Quelle → Ziel** für Offset `o`: `o ≥ Q` → `Z` (Buchende). Sonst `i` = größtes mit `q_i ≤ o`
+  (binäre Suche); Ergebnis `z_i`. Liegt `o` im Satzinneren, springt die Position **auf den Beginn der Einheit**
+  zurück (passt zum Vertrag „Beginn des nächsten ungelesenen Satzes“; der Satz wird wiederholt). Vor `q_0` → `0`.
+- **Abfrage Ziel → Quelle** symmetrisch über `z_i`, `o ≥ Z` → `Q`.
+- **Zwischen zwei Ergebnissen** derselben Quelle (z. B. nicht-kanonisch → kanonisch, §7.3): Ziel A → Quelle →
+  Ziel B, jeweils mit Rücksprung auf den Einheitenbeginn.
+- **Kurzbücher** haben keine Satzzuordnung (keine 1:1-Einheiten); dort gilt die ungenaue Stufe.
 
 ## 5 · Sprachwechsel während der Wiedergabe
 
@@ -154,21 +170,32 @@ Im Sprachmenü und auf der Buchseite: „Ganzes Buch in Deutsch anlegen …“. 
 - `BGContinuedProcessingTask` ist **optional** nach einem Test auf einem echten iPhone (Sperrbildschirm, Ablauf,
   Prozessabbruch); eine Fertigstellung im Hintergrund wird nicht zugesichert.
 - **Abschnittsmanifest** `Library/<buch>/pending/<schlüssel>/manifest.json`: Erzeugungsschlüssel, Quellhash,
-  Pipeline-Version, Lease-Generation, Liste fertiger Abschnitte mit Hash. Abschnitt und Manifest werden je
-  atomar geschrieben (Datei schreiben → `fsync` → umbenennen). Passt Quellhash oder Pipeline nicht, wird das
-  Manifest verworfen.
+  Pipeline-Version, zuletzt gehaltene Lease-Generation, Liste fertiger Abschnitte mit Hash und Teil-Zuordnung.
+  Abschnitt und Manifest werden je atomar geschrieben (Datei schreiben → `fsync` → umbenennen). Passt
+  Quellhash oder Pipeline nicht, wird das Manifest verworfen. Eine **neue Lease-Generation** (§7.3, Wiederaufnahme)
+  verwirft **keine** Abschnitte: Abschnitte hängen am Schlüssel, nicht an der Generation; das Manifest übernimmt
+  nur die neue Generation.
 - **Ergebnis:** neue Fassung nach #348 (`editions[]`, `files.editions`) mit
   `translation: { engine: "apple-translation", os_version, pipeline_version, source_edition, source_hash, created }`
-  und **Satzzuordnung** `files.editions[id].alignment` (Blob, Liste `[quell_offset, ziel_offset]` je Satzbeginn,
-  aufsteigend; Abfrage in beide Richtungen per binärer Suche).
-- **Veröffentlichung** ist wiederholbar: Blob hochladen (inhaltsadressiert) → Fassungseintrag mit Lease-Generation
-  einreichen (§7.3) → erst danach `pending/` löschen. Ein Absturz dazwischen wiederholt denselben Schritt.
+  und **Satzzuordnung** `files.editions[id].alignment` (Blob, Format §4.2).
+- **Veröffentlichung** ist wiederholbar: Blobs hochladen (inhaltsadressiert, doppelt hochladen ist harmlos) →
+  `publish` (§7.3) → erst nach bestätigtem Erfolg `pending/` löschen. Ein Absturz oder verlorene Antwort an
+  jeder Stelle wiederholt den Schritt mit derselben `publish_id` und bekommt denselben Erfolg.
 - Kapitelüberschriften (`#`) und Seitenmarken `{{S. n}}` bleiben erhalten (maskiert wie am PC, #209).
 - Abhängigkeit: iPhone-PR 3 aus #344 und Lease-Protokoll (F5).
 
-### 7.3 Erzeugungsschlüssel und Hub-Lease
+### 7.3 Erzeugungsschlüssel, Hashvertrag und Hub-Lease
 
-**Schlüssel** (alle Wege; Swift, Rust und #350 identisch, gemeinsame Golden-Fixtures aus #350 A1):
+**Hashvertrag** (Swift, Rust, #350 identisch; Golden-Fixtures):
+
+- **Textnormalisierung** vor jedem Hash: UTF-8, Unicode **NFC**, Zeilenenden `\n`, kein BOM, keine Änderung an
+  Leerzeichen im Zeileninneren, genau ein abschließendes `\n` (fehlendes ergänzt, mehrere auf eins gekürzt).
+  Offsets (§4.2) beziehen sich auf den **normalisierten** Text.
+- `source_hash`, `target_hash`, `content_hash` = `sha256` hex (klein) über die normalisierten Bytes.
+- **EPUB-Rückgewinnung** (§9): der Fassungstext liegt zusätzlich unverändert als `lva-text.txt` im Container;
+  Hash und Zuordnung beziehen sich auf diese Datei, nie auf das aus XHTML neu gewonnene Lesebild.
+
+**Schlüssel:**
 
 ```
 key = sha256( canonical_json({
@@ -177,35 +204,65 @@ key = sha256( canonical_json({
   "target_lang": BCP-47 normalisiert (klein, nur Sprache + Schrift, z. B. "de", "zh-hans"),
   "engine": "apple-translation" | "<anbieter>:<modell>",
   "pipeline_version": Ganzzahl,
+  "regen": Ganzzahl ≥ 0,
   // nur kurzbuch: "template", "read_limit", "params"
 }) )
 ```
 
 `canonical_json` = RFC 8785 (JCS). Eine Apple-Modellversion ist nicht auslesbar und daher **nicht** Teil des
-Schlüssels. **Ersatzregel:** Ein neues `pipeline_version` (bewusste Änderung an Satzteilung, Maskierung,
-Format) erzeugt einen neuen Schlüssel; OS-Updates nicht. `os_version` steht nur als Information im Ergebnis.
-Wer eine frischere Übersetzung will, wählt „Neu erzeugen“ (neuer Schlüssel mit `"regen": n`).
+Schlüssels. **Ersatzregel:** Ein neues `pipeline_version` (bewusste Änderung an Satzteilung, Maskierung, Format)
+ergibt einen neuen Schlüssel; OS-Updates nicht. `os_version` steht nur als Information im Ergebnis.
 
-**Hub-Lease** (online, F4):
+**`regen`** ist immer enthalten, Standard `0`. „Neu erzeugen“ setzt `regen` = (größtes bekannte `regen` für
+dieselben übrigen Felder, lokal und im Abgleich) + 1. Ein Wiederholen desselben Laufs (Absturz, Wiederaufnahme)
+behält sein `regen`. Zwei Geräte, die offline gleichzeitig „neu erzeugen“, können dasselbe `regen` wählen; das
+ist derselbe Schlüssel und fällt unter die Kanonisch-Regel.
+
+**Hub-Lease** (online, F4). Über Gültigkeit und Ablauf entscheidet **ausschließlich die Hub-Uhr**; Clients
+rechnen nur mit den vom Hub gelieferten Werten und vergleichen nie eigene Uhren.
 
 | Schritt | Inhalt |
 |---|---|
-| Erwerb | `lease_acquire(key, owner = Geräte-ID, ttl = 30 Min)` am Hub, **atomar** (Bedingung: kein gültiger Lease). Antwort: `generation` (monoton steigend je Schlüssel), `expires` (Serverzeit) |
-| Verlängern | alle 10 Min `lease_renew(key, owner, generation)`; nur der aktuelle Besitzer, nur vor Ablauf |
-| Veröffentlichen | `publish(key, generation, ergebnis)` prüft am Hub: gültiger Lease, gleicher Besitzer, gleiche Generation. Ein abgelaufener oder überholter Besitzer wird abgewiesen |
-| Ablauf | serverseitig; danach kann ein anderes Gerät mit höherer Generation erwerben |
-| Anzeige | anderes Gerät liest den Lease: „Wird auf ‹Gerät› erstellt“, kein Start; nach Ablauf „Erneut starten“ |
+| `lease_acquire(key, owner)` | atomar, nur wenn kein gültiger Lease besteht. Antwort `{generation, expires}`; `generation` steigt je Schlüssel monoton (auch über Ablauf hinweg) |
+| `lease_renew(key, owner, generation)` | nur aktueller Besitzer und aktuelle Generation, nur vor Ablauf (Hub-Uhr). Antwort: **neues** `expires`. Takt: nach der Hälfte der vom Hub gelieferten Restlaufzeit |
+| `lease_status(key)` | `{owner, generation, expires_in}` oder leer; für Anzeige und Wiederaufnahme |
+| `publish(key, generation, owner, publish_id, eintrag)` | siehe unten |
 
-Der Hub braucht dafür eine bedingte Schreiboperation. Fehlt sie im heutigen Hub, ist das ein eigenes
-Vorab-Paket **H1** (Hub-Endpunkt + Tests); ohne H1 gibt es L3 nicht.
+**Wiederaufnahme** nach Ablauf, Netzverlust oder Prozessneustart: `lease_status` → gehört der Lease noch mir mit
+meiner Generation, weiter mit `renew`; sonst `lease_acquire` → bei Erfolg weiter mit der **neuen** Generation.
+Passende Abschnitte (§7.2) bleiben erhalten. Hält ein anderes Gerät den Lease: lokale Arbeit pausiert,
+Abschnitte bleiben liegen, Anzeige „Wird auf ‹Gerät› erstellt“.
 
-**Offline:** Erzeugung ist erlaubt, aber ohne Lease als „vorläufig“ markiert. Zugesichert ist nur **ein
-kanonisches Ergebnis nach Abgleich**, nicht „genau einmal“. Doppelte Ergebnisse bleiben verlustfrei erhalten.
+**`publish`** ist atomar und dauerhaft idempotent:
 
-**Kanonisch** bei gleichem Schlüssel, ohne Geräteuhren: das Ergebnis mit gültiger Lease-Generation vor
-vorläufigen; unter gleichrangigen das mit dem kleinsten Inhalts-Hash des Text-Blobs. Nicht-kanonische werden
-ausgeblendet, nicht gelöscht; Fortschritt und Referenzen auf sie werden über die Satzzuordnung auf das
-kanonische Ergebnis umgeleitet (Umleitungseintrag `superseded_by` im Fassungsregister).
+- In **einer** Hub-Transaktion: Lease-Prüfung (gültig nach Hub-Uhr, Besitzer, Generation = aktuelle) →
+  Fassungseintrag schreiben → Veröffentlichungsbeleg `{key, publish_id, generation, eintrag_hash, published_at}`
+  dauerhaft speichern → Lease beenden.
+- `publish_id` = `sha256(key ‖ generation ‖ eintrag_hash)`. Ein erneuter Aufruf mit vorhandenem Beleg liefert
+  **denselben Erfolg** zurück, auch nach Lease-Ablauf und auch wenn inzwischen ein anderer den Lease hält.
+- Ohne Beleg und ohne gültigen Lease: abgewiesen (`lease_lost`); der Client geht in die Wiederaufnahme.
+
+Fehlen bedingte Schreiboperation und Transaktion im heutigen Hub, ist das das Vorab-Paket **H1** (Hub-Endpunkte +
+Tests); ohne H1 gibt es L3 nicht.
+
+**Offline:** Erzeugung ist erlaubt, aber ohne Beleg als „vorläufig“ markiert. Zugesichert ist nur **ein
+kanonisches Ergebnis nach Abgleich**, nicht „genau einmal“. Vorläufige Ergebnisse werden beim nächsten Online-
+Abgleich über `lease_acquire` + `publish` nachgereicht, wenn noch kein belegtes Ergebnis existiert; sonst bleiben
+sie vorläufig.
+
+**Kanonischer Rang** je Schlüssel, ohne Geräteuhren, dauerhaft:
+
+1. **Belegt** (vom Hub bei `publish` validiert, Beleg gespeichert) vor vorläufig. Ein späterer Lease-Ablauf ändert
+   den Rang nicht.
+2. Unter belegten: **kleinste Lease-Generation** gewinnt (die erste erfolgreiche Veröffentlichung).
+3. Gleichrang (zwei vorläufige oder gleiche Generation): kleinster `target_hash` (Bytevergleich der Hex-Zeichen).
+
+Der Rang hängt nur an gespeicherten Daten, jedes Gerät berechnet denselben Gewinner. **`superseded_by`** im
+Fassungsregister zeigt immer **direkt** auf den aktuellen Gewinner (nie auf einen anderen Verlierer, daher
+zyklusfrei); ändert sich der Gewinner (z. B. ein vorläufiger wird später belegt und überholt), werden alle
+Verweise auf den neuen Gewinner umgeschrieben. Verlierer bleiben **samt ihren Satzzuordnungen** erhalten,
+ausgeblendet, nicht gelöscht. Fortschritt und Referenzen auf einen Verlierer werden nach §4.2 über die gemeinsame
+Quelle auf den Gewinner umgerechnet.
 
 ## 8 · Kurzbuch mit Zielsprache
 
@@ -228,7 +285,8 @@ kanonische Ergebnis umgeleitet (Umleitungseintrag `superseded_by` im Fassungsreg
 - **Austauschschema** im OPF (Präfix `lva: https://wolffappliedai.de/lva/epub#`), nur Daten, keine Geräte:
   `lva:schema` = 1, `lva:book-id`, `lva:edition-id`, `lva:source-edition`, `lva:source-hash`, `lva:generation-key`,
   `lva:translation` (JSON wie §7.2 **ohne** Gerätenamen/-kennungen), `lva:content-hash` (SHA-256 des Fassungstexts),
-  sowie `lva-alignment.json` im Container (Satzzuordnung aus §7.2). Gerätenamen und -kennungen werden nicht exportiert.
+  `lva:target-hash`, sowie `lva-text.txt` (normalisierter Fassungstext, §7.3) und `lva-alignment.json` (§4.2)
+  im Container. Gerätenamen und -kennungen werden nicht exportiert.
 - **PC:** `library_export/epub.rs` (#237) schreibt dasselbe Schema. Ein gemeinsames Golden-EPUB prüft beide Seiten.
 - Weitergabe per Mail, „An Kindle senden“ o. Ä. ist eine Datenweitergabe **außerhalb** des verschlüsselten
   Abgleichs; das Teilen-Blatt sagt das.
@@ -237,8 +295,11 @@ kanonische Ergebnis umgeleitet (Umleitungseintrag `superseded_by` im Fassungsreg
 
 Metadaten im EPUB sind **unvertrauenswürdig**.
 
-- **Inhaltsintegrität:** `lva:content-hash` muss zum tatsächlichen Text passen, sonst gelten alle `lva:`-Angaben
-  als nicht vorhanden.
+- **Inhaltsintegrität:** `lva:content-hash` muss zu `lva-text.txt` passen (Hashvertrag §7.3), sonst gelten alle
+  `lva:`-Angaben und die Zuordnung als nicht vorhanden.
+- **Zuordnung** aus `lva-alignment.json` wird erst aktiviert, wenn die Quellfassung (`lva:source-edition`) auf dem
+  Gerät existiert, ihr Hash `source_hash` entspricht, `target_hash` zu `lva-text.txt` passt und die Grenzen nach
+  §4.2 gültig sind. Sonst gilt die ungenaue Stufe (§4.1).
 - **Herkunftsnachweis:** Wiedererkennung ohne Rückfrage nur, wenn das Gerät die `lva:edition-id` mit **genau diesem**
   Inhalts-Hash selbst kennt (lokal oder im eigenen Abgleich). Dann: „Schon in der Bibliothek“, nichts angelegt.
 - Alles andere (fremde oder unbekannte IDs, passende `book-id` mit neuem Inhalt): **Rückfrage** „Als Fassung an
@@ -305,14 +366,23 @@ Verbindliche Tests:
 | Zwei Geräte online gleichzeitig | genau ein Lease; der zweite startet nicht |
 | Lease abgelaufen, alter Besitzer veröffentlicht | vom Hub abgewiesen |
 | Zwei Geräte offline | beide Ergebnisse erhalten, eines kanonisch nach §7.3, Fortschritt umgeleitet |
-| Schlüssel-Fixtures | Swift, Rust und #350 erzeugen dieselben Schlüssel |
+| Schlüssel-Fixtures | Swift, Rust und #350 erzeugen dieselben Schlüssel (inkl. `regen`, Sprachnormalisierung) |
+| Hash-Golden-Fixtures | NFC, CRLF, BOM, fehlendes/mehrfaches Schluss-`\n` ergeben auf allen Seiten denselben Hash |
+| `publish` erfolgreich, Antwort verloren | Wiederholung (auch nach Lease-Ablauf und mit fremdem Lease-Halter) liefert denselben Erfolg, genau ein Fassungseintrag |
+| Lease abgelaufen während der Erzeugung, dann Neustart | `lease_acquire` mit neuer Generation, vorhandene Abschnitte weiterverwendet, `publish` mit neuer Generation gelingt |
+| Geräteuhren um ±2 h verstellt | Lease-Gültigkeit, Rang und Gewinner unverändert |
+| Vorläufiges Ergebnis wird später belegt und gewinnt | `superseded_by` aller Verlierer zeigt direkt auf den neuen Gewinner, keine Kette, kein Zyklus, Verlierer samt Zuordnung erhalten |
+| Positionswechsel Quelle → Ziel → Quelle | Satzbeginn bleibt erhalten; Offset im Satzinneren springt auf den Satzbeginn |
+| Positionswechsel am Buchende (EOF) | `Q` ↔ `Z`, kein Index außerhalb |
+| Umleitung Verlierer → Gewinner | über die gemeinsame Quelle, Satzbeginn |
+| Import-Zuordnung mit falschem Quellhash oder nicht monotonen Grenzen | nicht aktiviert, ungenaue Stufe |
 | Export → Import auf eigenem Gerät | „Schon in der Bibliothek“ |
 | Import mit fremder/manipulierter `lva:`-ID oder falschem Inhalts-Hash | Rückfrage, neue interne IDs, nichts überschrieben |
 | Bösartiges EPUB (Pfadtraversierung, Entpackbombe, XXE, Skript) | abgewiesen bzw. entschärft |
 | Export-EPUB | EPUBCheck ohne Fehler; öffnet in Apple Books und Calibre; keine Geräte-IDs |
 | Rechtehinweis | vor Ganzbuch und Export bestätigt |
 
-## 12 · Entscheidungen von Codex (06.11.2026, R1)
+## 12 · Entscheidungen von Codex (06.11.2026, R1; R2 bedingt JA, M1–M4 eingearbeitet)
 
 - **F1** Satz als Einheit, kurze Sätze in V1 nicht verbinden; Stapel ohne Kontextannahme.
 - **F2** Vordergrund mit Fortsetzen verbindlich; Hintergrund optional nach Gerätetest.
