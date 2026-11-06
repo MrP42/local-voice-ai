@@ -697,15 +697,17 @@ mod commands {
         } else {
             goal_days & 0x7f
         };
-        if sync && !s.reading_stats_sync {
-            if let Ok(root) = crate::library::sync_root(&app) {
-                request_rescan(&root);
-            }
-        }
+        let switched_on = sync && !s.reading_stats_sync;
         s.reading_stats_sync = sync;
         s.reading_stats_ai = ai;
         s.reading_stats_paused = paused;
         crate::settings::write_settings(&app, s);
+        // Erst nach dem Speichern: ein Lauf dazwischen sähe sonst noch „aus“.
+        if switched_on {
+            if let Ok(root) = crate::library::sync_root(&app) {
+                request_rescan(&root);
+            }
+        }
         Ok(())
     }
 
@@ -992,6 +994,9 @@ mod tests {
         // Grabstein am Rand: neue Epoche ohne Überlauf.
         let mut c = part;
         add(&mut c, &[d("2026-11-02", "book_1", "lesen", 60.0, 0.0)], 5);
+        let b = &c.days["2026-11-02"]["book_1|lesen|de"];
+        assert_eq!(b.since, i64::MAX);
+        assert_eq!(b.sec, 60);
     }
 
     #[test]

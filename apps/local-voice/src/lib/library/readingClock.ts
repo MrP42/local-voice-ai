@@ -208,10 +208,24 @@ export function addReadingProgress(
   d.audio_ms = (d.audio_ms ?? 0) + audio;
 }
 
-/** Wartende Zuwächse an den Kern geben. Schlägt es fehl, bleiben sie. */
+let inflight: Promise<void> | null = null;
+
+/**
+ * Wartende Zuwächse an den Kern geben. Schlägt es fehl, bleiben sie. Läuft
+ * schon eine Meldung, wird erst auf sie gewartet (Löschen verlässt sich
+ * darauf, dass danach nichts mehr aussteht).
+ */
 export async function flushReadingLog(): Promise<void> {
   clock.lastFlush = now();
-  if (clock.flushing || clock.pending.size === 0) return;
+  while (inflight) await inflight;
+  if (clock.pending.size === 0) return;
+  inflight = sendPending().finally(() => {
+    inflight = null;
+  });
+  return inflight;
+}
+
+async function sendPending(): Promise<void> {
   const batch = [...clock.pending.values()]
     .map((d) => ({ ...d, sec: Math.round(d.sec) }))
     .filter((d) => d.sec > 0 || (d.chars ?? 0) > 0 || (d.audio_ms ?? 0) > 0);
