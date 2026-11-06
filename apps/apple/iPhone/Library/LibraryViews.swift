@@ -1015,9 +1015,10 @@ struct VoiceList: View {
                             set: { playback.setBookOnlyVoice($0) }))
                         .frame(minHeight: 44)
                     } footer: {
-                        Text(playback.voiceScope == .book
-                             ? "Die Stimme gilt nur für dieses Buch (\(name))."
-                             : "Die Stimme gilt für alle Bücher auf \(name).")
+                        Text(playback.voiceScope != .book ? "Standardstimme für Bücher auf \(name)."
+                             : playback.bookVoiceMissing
+                             ? "Die eigene Stimme dieses Buchs fehlt auf dem iPhone. Es liest die Standardstimme für \(name)."
+                             : "Eigene Stimme für dieses Buch (\(name)).")
                     }
                 }
                 ForEach(PhononEngine.languages, id: \.self) { language in
@@ -1025,7 +1026,7 @@ struct VoiceList: View {
                         Section {
                             ForEach(names, id: \.self) { name in
                                 let id = PhononEngine.identifier(language: language, voice: name)
-                                Button { playback.voiceIdentifier = id; dismiss() } label: {
+                                Button { playback.chooseVoice(id); dismiss() } label: {
                                     HStack {
                                         Text(name)
                                         Spacer()
@@ -1041,7 +1042,7 @@ struct VoiceList: View {
                 Section {
                     ForEach(playback.systemVoices, id: \.identifier) { v in
                         Button {
-                            playback.voiceIdentifier = v.identifier; dismiss()
+                            playback.chooseVoice(v.identifier); dismiss()
                         } label: {
                             HStack {
                                 VStack(alignment: .leading) {

@@ -7,6 +7,11 @@ final class VoicePrefsTests: XCTestCase {
         XCTAssertEqual(VoicePrefs.bookKey("book_17", "EN"), "tts.voice.book.book_17.en")
         XCTAssertNil(VoicePrefs.bookKey("a.b", "de"))
         XCTAssertNil(VoicePrefs.languageKey("deutsch"))
+        // Open Library liefert ISO 639-2: gleicher Schlüssel wie am PC.
+        XCTAssertEqual(VoicePrefs.languageKey("ger"), "tts.voice.lang.de")
+        XCTAssertEqual(VoicePrefs.languageKey("eng"), "tts.voice.lang.en")
+        XCTAssertEqual(VoicePrefs.owner("book_1_kurzbuch_de_abcdef012345"), "book_1")
+        XCTAssertEqual(VoicePrefs.owner("book_1"), "book_1")
     }
 
     func testBuchVorSprache() {
@@ -37,5 +42,21 @@ final class VoicePrefsTests: XCTestCase {
         XCTAssertNil(VoicePrefs.decode(#"{"updated":1}"#))
         XCTAssertTrue(VoicePrefs.newer(local: #"{"phonon":"de:A","updated":1}"#, remote: #"{"phonon":"de:B","updated":2}"#))
         XCTAssertFalse(VoicePrefs.newer(local: #"{"phonon":"de:A","updated":3}"#, remote: #"{"phonon":"de:B","updated":2}"#))
+    }
+
+    /// Codex A1: Buchausnahme am PC aus → nach dem Abgleich auch am iPhone aus, Sprachstandard bleibt.
+    func testAufhebungReistImAbgleich() {
+        var store = [
+            "tts.voice.lang.en": #"{"phonon":"en:Mark","updated":1}"#,
+            "tts.voice.book.b1.en": #"{"phonon":"en:Zoey","updated":2}"#,
+        ]
+        let remote = #"{"updated":3}"#
+        XCTAssertTrue(VoicePrefs.newer(local: store["tts.voice.book.b1.en"], remote: remote))
+        store["tts.voice.book.b1.en"] = remote
+        XCTAssertFalse(VoicePrefs.isSet(store["tts.voice.book.b1.en"]))
+        let hit = VoicePrefs.resolve(owner: "b1", language: "en", read: { store[$0] }, toId: { $0.phonon })
+        XCTAssertEqual(hit?.id, "en:Mark"); XCTAssertEqual(hit?.source, .language)
+        // Eine ältere Wahl überschreibt die Aufhebung nicht.
+        XCTAssertFalse(VoicePrefs.newer(local: remote, remote: #"{"phonon":"en:Zoey","updated":2}"#))
     }
 }

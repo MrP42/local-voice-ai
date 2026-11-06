@@ -48,7 +48,22 @@ public enum VoicePrefs {
         let head = (code ?? "").trimmingCharacters(in: .whitespaces).lowercased()
             .split(whereSeparator: { $0 == "-" || $0 == "_" }).first.map(String.init) ?? ""
         guard (2...3).contains(head.count), head.allSatisfy({ $0 >= "a" && $0 <= "z" }) else { return nil }
-        return head
+        return iso639_2[head] ?? head
+    }
+
+    /// ISO 639-2 (Open Library: `ger`, `eng` …) auf 639-1, wie `voicePrefs.ts`.
+    static let iso639_2: [String: String] = [
+        "ger": "de", "deu": "de", "eng": "en", "fre": "fr", "fra": "fr", "spa": "es",
+        "ita": "it", "dut": "nl", "nld": "nl", "por": "pt", "pol": "pl", "rus": "ru",
+        "swe": "sv", "dan": "da", "nor": "no", "fin": "fi", "cze": "cs", "ces": "cs",
+        "tur": "tr", "jpn": "ja", "chi": "zh", "zho": "zh", "kor": "ko", "ukr": "uk",
+    ]
+
+    /// Buch, dem ein Bibliothekseintrag gehört: Kurzbücher des iPhones heißen
+    /// `<buch>_kurzbuch_<sprache>_<…>`, am PC gilt die Kennung des Buchs.
+    public static func owner(_ entryId: String) -> String {
+        guard let r = entryId.range(of: "_kurzbuch_") else { return entryId }
+        return String(entryId[..<r.lowerBound])
     }
 
     public static func languageKey(_ lang: String) -> String? { language(lang).map { "\(prefix)lang.\($0)" } }
@@ -88,10 +103,20 @@ public enum VoicePrefs {
         return nil
     }
 
-    /// Neuerer Stand gewinnt (Abgleich); gleich alt: der vorhandene bleibt.
-    public static func newer(local: String?, remote: String) -> Bool {
-        guard let r = decode(remote) else { return false }
-        guard let l = decode(local) else { return true }
-        return r.updated > l.updated
+    /// `updated` eines Eintrags, auch einer Aufhebung (`{"updated":…}` ohne Stimme).
+    public static func updated(_ raw: String?) -> Double? {
+        guard let raw, let pref = try? JSONDecoder().decode(VoicePref.self, from: Data(raw.utf8)) else { return nil }
+        return pref.updated
     }
+
+    /// Neuerer Stand gewinnt (Abgleich); gleich alt: der vorhandene bleibt.
+    /// Eine Aufhebung zählt wie eine Wahl, sonst bliebe eine Buchausnahme stehen.
+    public static func newer(local: String?, remote: String) -> Bool {
+        guard let r = updated(remote) else { return false }
+        guard let l = updated(local) else { return true }
+        return r > l
+    }
+
+    /// Hat dieser Eintrag eine Stimme (keine Aufhebung)?
+    public static func isSet(_ raw: String?) -> Bool { decode(raw) != nil }
 }

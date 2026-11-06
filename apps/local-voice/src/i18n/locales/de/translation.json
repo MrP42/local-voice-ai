@@ -1185,7 +1185,7 @@
       "scriptVoices": "Skript mit Sprechern",
       "modelDefault": "Standardstimme",
       "filter": { "label": "Stimmen nach Sprache filtern", "auto": "Passend ({{language}})", "all": "Alle" },
-      "scope": { "lang": "Stimme für alle Bücher auf {{language}}", "book": "Stimme nur für dieses Buch ({{language}})", "bookOnly": "Nur dieses Buch" },
+      "scope": { "lang": "Standardstimme für Bücher auf {{language}}", "book": "Eigene Stimme für dieses Buch ({{language}})", "bookMissing": "Eigene Stimme dieses Buchs fehlt hier – es liest die Standardstimme für {{language}}", "bookOnly": "Nur für dieses Buch" },
       "scriptVoicesHint": "Die Sprecher im Skript lesen ihre Zeilen; Text ohne Sprecher liest die Standardstimme.",
       "singleVoiceHint": "Diese Stimme liest den ganzen Text – die Sprecher im Skript werden übergangen."
     },

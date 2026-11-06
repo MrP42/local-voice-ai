@@ -159,7 +159,6 @@ import { inForeignDialog, isTextEntry } from "./booktalk/keys";
 import { BookTalkPanel } from "./booktalk/BookTalkPanel";
 import type { BookSpot, BookTalkHost } from "./booktalk/useBookVoice";
 import {
-  CHANGED_EVENT as PROGRESS_CHANGED,
   HYDRATED_EVENT as PROGRESS_HYDRATED,
   bookFrontier,
   raiseFrontier,
@@ -1585,39 +1584,60 @@ export const TtsSettings = () => {
   }, [tab, targetLang, docLang, pageLang]);
   // Stimme je Buchsprache (lva#352): wem die Seite gehört (Buch der
   // Bibliothek, sonst die Seite selbst) und was dafür gemerkt ist.
-  const [pageBookId, setPageBookId] = useState<string | null>(null);
+  // Erst nach der Suche in der Bibliothek steht fest, ob die Seite einem Buch
+  // gehört; bis dahin wird weder gemerkt noch angewendet (sonst landete eine
+  // frühe Wahl unter der Seite statt unter dem Buch).
+  const [pageOwner, setPageOwner] = useState<{
+    page: string;
+    owner: string;
+  } | null>(null);
   useEffect(() => {
-    setPageBookId(null);
     const page = activePage;
     if (!page) return;
     let cancelled = false;
+    const done = (bookId: string | null | undefined) => {
+      if (!cancelled) setPageOwner({ page, owner: bookId || `page_${page}` });
+    };
     void commands
       .libraryList()
-      .then((r) => {
-        if (cancelled || r.status !== "ok") return;
-        const book = r.data.find((b) => b.text?.page_id === page);
-        if (book?.id) setPageBookId(book.id);
-      })
-      .catch(() => undefined);
+      .then((r) =>
+        done(
+          r.status === "ok"
+            ? r.data.find((b) => b.text?.page_id === page)?.id
+            : null,
+        ),
+      )
+      .catch(() => done(null));
     return () => {
       cancelled = true;
     };
   }, [activePage]);
-  const voiceOwner = pageBookId ?? (activePage ? `page_${activePage}` : null);
-  const prefLang = prefLanguage(contentLang);
+  const voiceOwner =
+    pageOwner && pageOwner.page === activePage ? pageOwner.owner : null;
+  const prefLang = voiceOwner ? prefLanguage(contentLang) : null;
   const [prefsTick, setPrefsTick] = useState(0);
   useEffect(() => {
     const bump = () => setPrefsTick((n) => n + 1);
-    const events = [VOICE_PREFS_EVENT, PROGRESS_HYDRATED, PROGRESS_CHANGED];
+    // Nicht `CHANGED_EVENT`: das feuert bei jedem gesicherten Lesestand.
+    const events = [VOICE_PREFS_EVENT, PROGRESS_HYDRATED];
     for (const e of events) window.addEventListener(e, bump);
     return () => {
       for (const e of events) window.removeEventListener(e, bump);
     };
   }, []);
-  const prefVoice = useMemo(
+  const resolvedPref = useMemo(
     () => resolveVoicePref(voiceOwner, prefLang, valueOfPref),
     // prefsTick: Änderung im Speicher (eigene Wahl, Abgleich, Start).
     [voiceOwner, prefLang, valueOfPref, prefsTick],
+  );
+  // Gleiches Ergebnis, gleiches Objekt: die Effekte unten laufen nur bei
+  // einer echten Änderung.
+  const prefVoiceId = resolvedPref
+    ? `${resolvedPref.source}|${resolvedPref.value}`
+    : "";
+  const prefVoice = useMemo(
+    () => resolvedPref,
+    [prefVoiceId],
   );
   /** Wahl dieses Reiters merken: für die Sprache oder, hat das Buch eine
       eigene Stimme, nur für das Buch. */
@@ -1883,30 +1903,48 @@ export const TtsSettings = () => {
 
   // Wofür die Wahl gilt (lva#352): für alle Bücher dieser Sprache oder nur
   // für dieses Buch. Ohne erkannte Sprache bleibt die Wahl wie bisher.
+  const bookVoiceMissing = bookOnly && prefVoice?.source !== "book";
   const voiceScopeRow = prefLang ? (
     <div
       className="flex items-center gap-2 border-b border-mid-gray/30 px-1 py-1.5 text-xs"
       data-testid="voice-scope"
     >
-      <span className="min-w-0 flex-1 text-text/70" data-testid="voice-scope-text">
-        {bookOnly
-          ? t("tts.voices.scope.book", { language: langName(prefLang) })
-          : t("tts.voices.scope.lang", { language: langName(prefLang) })}
-      </span>
       <button
         type="button"
         role="switch"
         aria-checked={bookOnly}
+        aria-describedby="voice-scope-text"
         onClick={() => setBookOnly(!bookOnly)}
-        className={`min-h-7 cursor-pointer rounded-full border px-2 py-0.5 ${
-          bookOnly
-            ? "border-logo-primary bg-logo-primary/15 font-medium text-text"
-            : "border-mid-gray/40 text-text/80 hover:bg-mid-gray/15"
-        }`}
+        className="flex min-h-8 shrink-0 cursor-pointer items-center gap-2 rounded px-1 text-text hover:bg-mid-gray/15"
         data-testid="voice-scope-book"
       >
-        {t("tts.voices.scope.bookOnly")}
+        <span
+          aria-hidden="true"
+          className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors ${
+            bookOnly
+              ? "border-logo-primary bg-logo-primary"
+              : "border-mid-gray/60 bg-mid-gray/25"
+          }`}
+        >
+          <span
+            className={`absolute h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${
+              bookOnly ? "translate-x-[18px]" : "translate-x-[2px]"
+            }`}
+          />
+        </span>
+        <span className="font-medium">{t("tts.voices.scope.bookOnly")}</span>
       </button>
+      <span
+        id="voice-scope-text"
+        className="min-w-0 flex-1 text-right text-text/70"
+        data-testid="voice-scope-text"
+      >
+        {bookVoiceMissing
+          ? t("tts.voices.scope.bookMissing", { language: langName(prefLang) })
+          : bookOnly
+            ? t("tts.voices.scope.book", { language: langName(prefLang) })
+            : t("tts.voices.scope.lang", { language: langName(prefLang) })}
+      </span>
     </div>
   ) : null;
 

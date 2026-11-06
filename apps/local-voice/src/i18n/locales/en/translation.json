@@ -1185,7 +1185,7 @@
       "scriptVoices": "Script with speakers",
       "modelDefault": "Default voice",
       "filter": { "label": "Filter voices by language", "auto": "Matching ({{language}})", "all": "All" },
-      "scope": { "lang": "Voice for all books in {{language}}", "book": "Voice for this book only ({{language}})", "bookOnly": "This book only" },
+      "scope": { "lang": "Default voice for books in {{language}}", "book": "Own voice for this book ({{language}})", "bookMissing": "This book's own voice is missing here – the default voice for {{language}} reads", "bookOnly": "Only for this book" },
       "scriptVoicesHint": "The speakers in the script read their lines; text without a speaker uses the default voice.",
       "singleVoiceHint": "This voice reads the whole text – the speakers in the script are skipped."
     },

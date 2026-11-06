@@ -14,6 +14,9 @@
  * die Windows, Mac und iPhone gleich verstehen. `desktop`/`ios` gelten nur
  * auf der eigenen Plattform; wer schreibt, verwirft die Kennung der anderen
  * Plattform, außer beide meinen dieselbe Phonon-Stimme.
+ *
+ * Konflikte entscheidet `updated` (Uhr des schreibenden Geräts). Geht eine
+ * Geräteuhr stark vor, gewinnt deren ältere Wahl – bewusst hingenommen.
  */
 import { getLocal, setLocal } from "../library/progress";
 
@@ -35,11 +38,39 @@ export interface VoicePref {
 }
 
 const LANG_RE = /^[a-z]{2,3}$/;
+/** ISO 639-2 (Open Library: `ger`, `eng` …) auf 639-1, wie `VoicePrefs.swift`. */
+const ISO639_2: Record<string, string> = {
+  ger: "de",
+  deu: "de",
+  eng: "en",
+  fre: "fr",
+  fra: "fr",
+  spa: "es",
+  ita: "it",
+  dut: "nl",
+  nld: "nl",
+  por: "pt",
+  pol: "pl",
+  rus: "ru",
+  swe: "sv",
+  dan: "da",
+  nor: "no",
+  fin: "fi",
+  cze: "cs",
+  ces: "cs",
+  tur: "tr",
+  jpn: "ja",
+  chi: "zh",
+  zho: "zh",
+  kor: "ko",
+  ukr: "uk",
+};
 
 /** Sprachcode für die Schlüssel: `de`, `en` … oder `null`. */
 export function prefLanguage(lang: string | null | undefined): string | null {
   const code = (lang ?? "").trim().toLowerCase().split(/[-_]/)[0] ?? "";
-  return LANG_RE.test(code) ? code : null;
+  if (!LANG_RE.test(code)) return null;
+  return ISO639_2[code] ?? code;
 }
 
 /** Buch- oder Seitenkennung als Schlüsselteil (keine Punkte, kein Leerraum). */

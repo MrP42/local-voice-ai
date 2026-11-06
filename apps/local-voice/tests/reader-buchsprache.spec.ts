@@ -469,7 +469,7 @@ test("Wahl im Buch ändert nur die Stimme dieser Sprache", async ({ page }) => {
   await select.locator(".app-select__control").click();
   const menu = page.locator(".app-select__menu");
   await expect(menu.getByTestId("voice-scope-text")).toHaveText(
-    "Stimme für alle Bücher auf Englisch",
+    "Standardstimme für Bücher auf Englisch",
   );
   await menu.getByRole("option", { name: /Zoey/ }).click();
   await expect
@@ -477,6 +477,32 @@ test("Wahl im Buch ändert nur die Stimme dieser Sprache", async ({ page }) => {
     .toMatchObject({ desktop: "provider:phonon:en:Zoey", phonon: "en:Zoey" });
   // Deutsch bleibt unberührt.
   expect((await pref(page, "tts.voice.lang.de")).desktop).toBe("provider:phonon:anton-id");
+});
+
+test("Buchstimme fehlt auf dem Gerät: Sprachstandard liest, Zeile erklärt es", async ({ page }) => {
+  await setup(page, {
+    engine: "provider:phonon",
+    state: JSON.stringify({ text: ENGLISH, tab: "original", voices: {} }),
+  });
+  await page.addInitScript(() => {
+    window.localStorage.setItem(
+      "lva.ui.tts.voice.lang.en",
+      JSON.stringify({ phonon: "en:Mark", updated: 1 }),
+    );
+    // Nur auf dem iPhone vorhanden.
+    window.localStorage.setItem(
+      "lva.ui.tts.voice.book.page_p1.en",
+      JSON.stringify({ ios: "com.apple.voice.Samantha", updated: 2 }),
+    );
+  });
+  const select = await gotoReadAloud(page);
+  await expect.poll(() => selectedVoices(page)).toContain("en:Mark");
+  await select.locator(".app-select__control").click();
+  const menu = page.locator(".app-select__menu");
+  await expect(menu.getByTestId("voice-scope-book")).toHaveAttribute("aria-checked", "true");
+  await expect(menu.getByTestId("voice-scope-text")).toHaveText(
+    "Eigene Stimme dieses Buchs fehlt hier – es liest die Standardstimme für Englisch",
+  );
 });
 
 test("„Nur dieses Buch“: eigene Stimme fürs Buch, Sprache bleibt", async ({ page }) => {
@@ -500,7 +526,7 @@ test("„Nur dieses Buch“: eigene Stimme fürs Buch, Sprache bleibt", async ({
   await expect(menu).toBeVisible();
   await expect(toggle).toHaveAttribute("aria-checked", "true");
   await expect(menu.getByTestId("voice-scope-text")).toHaveText(
-    "Stimme nur für dieses Buch (Englisch)",
+    "Eigene Stimme für dieses Buch (Englisch)",
   );
   await menu.getByRole("option", { name: /Zoey/ }).click();
   await expect

@@ -135,7 +135,9 @@ final class PhoneLibrary: ObservableObject {
         guard let language = ref.language, kurzbuchReady(book, ref), let file = kurzbuchFile(book, ref),
               let markdown = try? String(contentsOf: file, encoding: .utf8),
               !markdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
-        let entry = LibraryBook(id: kurzbuchEntryId(book.id, ref, language), title: "\(book.title) · Kurzbuch", addedMs: book.addedMs)
+        var entry = LibraryBook(id: kurzbuchEntryId(book.id, ref, language), title: "\(book.title) · Kurzbuch", addedMs: book.addedMs)
+        // Sprache des Kurzbuchs: wählt die Vorlesestimme (lva#352).
+        entry.language = language
         // Eine echte Buch-Kennung könnte zufällig gleich aussehen: nie in deren Ordner schreiben.
         guard !isRealBookFolder(dir(entry)) else { return nil }
         try? FileManager.default.createDirectory(at: dir(entry), withIntermediateDirectories: true)

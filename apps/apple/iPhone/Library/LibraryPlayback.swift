@@ -44,17 +44,15 @@ final class LibraryPlayback: NSObject, ObservableObject {
         ?? UserDefaults.standard.string(forKey: "library.voice") {
         didSet {
             if VoiceModel.shared.selectedVoiceID != (voiceIdentifier ?? "") { VoiceModel.shared.selectedVoiceID = voiceIdentifier ?? "" }
-            if voiceIdentifier != oldValue {
-                // Eigene Wahl gilt für die Sprache des Buchs (lva#352), nicht für alle Bücher.
-                if !applyingVoicePref { rememberVoice() }
-                voiceChanged()
-            }
+            if voiceIdentifier != oldValue, !applyingVoicePref { voiceChanged() }
         }
     }
     /// Sprache des offenen Buchs (`de`, `en` …) für die Stimmenwahl; `nil`: unbekannt.
     @Published private(set) var voiceLanguage: String?
     /// Woher die Stimme kommt: nur dieses Buch oder alle Bücher der Sprache.
     @Published private(set) var voiceScope: VoicePrefs.Source?
+    /// Das Buch hat eine eigene Stimme, die es auf diesem iPhone nicht gibt: es liest der Sprachstandard.
+    @Published private(set) var bookVoiceMissing = false
     private var applyingVoicePref = false
     @Published var error: String?
     /// Vollbild-Player sichtbar (Hören mit Mitlesen oder Vorlesen).
@@ -394,7 +392,6 @@ final class LibraryPlayback: NSObject, ObservableObject {
             phononFailed = false
             self.book = book; mode = .readAloud
             self.text = text
-            applyVoicePref(book)
             paragraphs = LibraryText.paragraphs(text)
             sentenceCache = [:]
             followCache = nil
@@ -412,6 +409,8 @@ final class LibraryPlayback: NSObject, ObservableObject {
             }
             totalMs = 0
             setupRemote()
+            // Stimme der Buchsprache erst jetzt: die Absätze des neuen Buchs stehen.
+            applyVoicePref(book)
             prepareVoice()
         }
         if let fromParagraph { move(to: Cursor(paragraph: fromParagraph, sentence: 0)); if busy || autoplay { speakCurrent() }; return }
@@ -435,17 +434,40 @@ final class LibraryPlayback: NSObject, ObservableObject {
     private func applyVoicePref(_ book: LibraryBook) {
         let lang = VoicePrefs.language(book.language)
         voiceLanguage = lang
-        let hit = VoicePrefs.resolve(owner: book.id, language: lang, read: { self.library.voicePrefRaw($0) }, toId: voiceId)
-        voiceScope = hit?.source ?? (lang == nil ? nil : .language)
-        guard let hit, hit.id != voiceIdentifier else { return }
+        let owner = VoicePrefs.owner(book.id)
+        let hit = VoicePrefs.resolve(owner: owner, language: lang, read: { self.library.voicePrefRaw($0) }, toId: voiceId)
+        let hasBook = lang.flatMap { VoicePrefs.bookKey(owner, $0) }.map { VoicePrefs.isSet(library.voicePrefRaw($0)) } ?? false
+        bookVoiceMissing = hasBook && hit?.source != .book
+        // Fehlt die Buchstimme, bleibt die Ausnahme bestehen (Schalter an), es liest aber der Sprachstandard.
+        voiceScope = hasBook ? .book : (lang == nil ? nil : .language)
+        // Nichts gemerkt: eine Stimme der Buchsprache statt der Stimme des vorigen Buchs.
+        guard let wanted = hit?.id ?? fallbackVoice(lang), wanted != voiceIdentifier else { return }
         applyingVoicePref = true
-        voiceIdentifier = hit.id
+        voiceIdentifier = wanted
         applyingVoicePref = false
+    }
+
+    /// Passt die aktuelle Stimme nicht zur Sprache: Phonon dieser Sprache, sonst die beste Systemstimme.
+    private func fallbackVoice(_ lang: String?) -> String? {
+        guard let lang else { return nil }
+        if let id = voiceIdentifier {
+            if let parts = PhononEngine.voiceName(id).flatMap(PhononEngine.parts), parts.language == lang { return nil }
+            if let v = AVSpeechSynthesisVoice(identifier: id), v.language.hasPrefix(lang) { return nil }
+        }
+        if let name = PhononEngine.shared.voices[lang]?.first { return PhononEngine.identifier(language: lang, voice: name) }
+        return AVSpeechSynthesisVoice.speechVoices().filter { $0.language.hasPrefix(lang) }
+            .max { $0.quality.rawValue < $1.quality.rawValue }?.identifier
+    }
+
+    /// Wahl in der Stimmenliste: gilt für die Sprache des Buchs (lva#352) bzw. nur das Buch.
+    func chooseVoice(_ id: String) {
+        voiceIdentifier = id
+        rememberVoice()
     }
 
     private var voicePrefKey: String? {
         guard let book, let lang = voiceLanguage else { return nil }
-        return voiceScope == .book ? VoicePrefs.bookKey(book.id, lang) : VoicePrefs.languageKey(lang)
+        return voiceScope == .book ? VoicePrefs.bookKey(VoicePrefs.owner(book.id), lang) : VoicePrefs.languageKey(lang)
     }
 
     private func rememberVoice() {
@@ -457,9 +479,10 @@ final class LibraryPlayback: NSObject, ObservableObject {
 
     /// „Nur dieses Buch“: eigene Stimme fürs Buch ein- oder ausschalten.
     func setBookOnlyVoice(_ on: Bool) {
-        guard let book, let lang = voiceLanguage, let key = VoicePrefs.bookKey(book.id, lang) else { return }
+        guard let book, let lang = voiceLanguage, let key = VoicePrefs.bookKey(VoicePrefs.owner(book.id), lang) else { return }
         if on {
             voiceScope = .book
+            bookVoiceMissing = false
             rememberVoice()
         } else {
             // Leerer Eintrag statt Löschen: reist im Abgleich wie jede Wahl (neuerer Stand gewinnt).
