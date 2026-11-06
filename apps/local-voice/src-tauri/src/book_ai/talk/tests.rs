@@ -2008,8 +2008,8 @@ async fn the_empirical_budget_decides_before_any_call() {
     let out = go_preview(&ix, &req, Model::Ready(&claude), 200_000, true).await;
     assert_eq!(claude.inner.call_count(), 1);
     assert!(!out.answer().found_only);
-    // Codex mit nur 32000: 0,8 * 32000 = 25600 < 36000 (gemessener Overhead * 1,2) + Ausgabe + Prompt.
-    let codex = empirical(PLAIN_A, Cli::Codex, 32_000);
+    // Nur 32000: 0,5 * 32000 = 16000 < 36000 (gemessener Overhead * 1,2) + Ausgabe + Prompt.
+    let codex = empirical(PLAIN_A, Cli::Claude, 32_000);
     let out = go_preview(&ix, &req, Model::Ready(&codex), 32_000, true).await;
     assert_eq!(
         codex.inner.call_count(),
@@ -2133,10 +2133,8 @@ fn confirming_binds_every_enabled_subscription_model_once() {
         .iter()
         .map(|b| (b.provider.as_str(), b.model_id.as_str()))
         .collect();
-    assert_eq!(
-        seen,
-        [("claude_cli", "sonnet"), ("codex_cli", "gpt-6.1-sol")]
-    );
+    // Phase 1: Codex bekommt in der Vorschau nie ein Tupel.
+    assert_eq!(seen, [("claude_cli", "sonnet")]);
     assert_eq!(
         bound[0].concrete_model.as_deref(),
         Some("claude-sonnet-5-5")
@@ -2145,7 +2143,7 @@ fn confirming_binds_every_enabled_subscription_model_once() {
     assert_eq!(bound[0].binary_sha256, "ab".repeat(32));
     // Ohne installierte CLI kein Tupel fuer deren Modelle.
     let only_codex = bindings_for(&s, |cli| (cli == Cli::Codex).then(|| ident("cd")));
-    assert_eq!(only_codex.len(), 1);
+    assert!(only_codex.is_empty());
 }
 
 #[test]
@@ -2190,20 +2188,30 @@ fn the_preview_needs_switch_tuple_isolation_measurement_and_context() {
     assert!(preview_check(&s, Cli::Claude, Some(swapped), 600, &full).is_none());
     // Nicht prueffaehig (CLI weg): wirkt nicht.
     assert!(preview_check(&s, Cli::Claude, None, 600, &full).is_none());
-    // Codex ohne belegten Kontext: kein Auftrag, Grund `context_unknown`.
+    // Codex: IMMER gesperrt (Phase 2), auch mit Schalter, Tupel, Belegen und Kontext.
     s.llm_active_model_id = Some("codex:gpt".into());
+    for m in s.llm_models.iter_mut().filter(|m| m.id == "codex:gpt") {
+        m.context_limit = Some(272_000);
+    }
     let codex = preview::binding_for(Cli::Codex, "gpt-6.1-sol", &ident("cd"));
     s.book_talk_preview_bindings.push(codex.clone());
     let both = fixtures::evidence(&[(&current, "claude-sonnet-5-5"), (&codex, "gpt-6.1-sol")]);
     assert!(preview_check(&s, Cli::Codex, Some(codex.clone()), 600, &both).is_none());
-    let v = preview_verdict(&s, Cli::Codex, Some(codex.clone()), 600, &both);
-    assert_eq!(v.blocked, Some(preview::Blocked::ContextUnknown));
-    for m in s.llm_models.iter_mut().filter(|m| m.id == "codex:gpt") {
-        m.context_limit = Some(272_000);
-    }
+    let v = preview_verdict(&s, Cli::Codex, Some(codex), 600, &both);
+    assert_eq!(v.state, preview::PreviewState::NotReleased);
+    assert_eq!(v.blocked, Some(preview::Blocked::CodexPreviewNotAvailable));
+    assert!(v.check.is_none());
+}
+
+#[test]
+fn the_status_command_reports_codex_as_blocked() {
+    let st = codex_status(true);
+    assert!(st.enabled && st.applies);
+    assert_eq!(st.state, preview::PreviewState::NotReleased);
+    assert_eq!(st.blocked, Some(preview::Blocked::CodexPreviewNotAvailable));
     assert_eq!(
-        preview_check(&s, Cli::Codex, Some(codex), 600, &both).map(|c| c.context_tokens),
-        Some(272_000)
+        serde_json::to_value(st.blocked).unwrap(),
+        serde_json::json!("codex_preview_not_available")
     );
 }
 

@@ -827,14 +827,14 @@ pub fn eligible_models(settings: &AppSettings, ready: Ready) -> Vec<ModelEntry> 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Identities {
     pub claude: Option<crate::managers::llm::preview::Identity>,
-    pub codex: Option<crate::managers::llm::preview::Identity>,
 }
 
 impl Identities {
     pub fn of(&self, cli: Cli) -> Option<&crate::managers::llm::preview::Identity> {
         match cli {
             Cli::Claude => self.claude.as_ref(),
-            Cli::Codex => self.codex.as_ref(),
+            // Phase 1: Codex gibt es in der Vorschau nicht.
+            Cli::Codex => None,
         }
     }
 }
@@ -860,7 +860,6 @@ pub fn preview_models(
         .filter_map(|mut m| {
             let cli = match m.provider.as_str() {
                 "claude_cli" => Cli::Claude,
-                "codex_cli" => Cli::Codex,
                 _ => return None,
             };
             let binding = preview::binding_for(cli, &m.id, identities.of(cli)?);
@@ -901,7 +900,6 @@ async fn offered_models(
         };
         Identities {
             claude: of(Cli::Claude),
-            codex: of(Cli::Codex),
         }
     })
     .await
@@ -1931,6 +1929,12 @@ async fn process(
                 req.max_tokens,
                 &ctx.evidence(),
             )
+            .map(|check| {
+                check.with_cache(
+                    ctx.evidence_dir
+                        .join(crate::managers::llm::preview::CACHE_DIR),
+                )
+            })
         }
         None => None,
     };

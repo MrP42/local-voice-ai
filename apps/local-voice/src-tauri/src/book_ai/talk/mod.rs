@@ -1311,6 +1311,14 @@ async fn preview_check_for(
         DEFAULT_MAX_ANSWER_TOKENS,
         &load_evidence(app),
     )
+    .and_then(|check| Some(check.with_cache(cli_cache_root(app)?)))
+}
+
+/// Cache-Wurzel der Programmkopien (`<App-Daten>/booktalk-cli`).
+pub fn cli_cache_root(app: &AppHandle) -> Option<std::path::PathBuf> {
+    crate::portable::app_data_dir(app)
+        .ok()
+        .map(|dir| dir.join(preview::CACHE_DIR))
 }
 
 /// Tupel für alle eingeschalteten Abo-Modelle eingeschalteter Verbindungen
@@ -1332,6 +1340,10 @@ pub fn bindings_for(
         let Some(cli) = Cli::from_base_url(&connection.base_url) else {
             continue;
         };
+        // Phase 1: nur Claude. Codex bekommt in der Vorschau nie ein Tupel.
+        if cli != Cli::Claude {
+            continue;
+        }
         let Some(identity) = identity_of(cli) else {
             continue;
         };
@@ -1350,6 +1362,9 @@ pub fn bindings_for(
 pub const ERR_RISK_NOT_ACKNOWLEDGED: &str = "risk_not_acknowledged";
 /// Fehlercode, wenn keine CLI zu binden ist.
 pub const ERR_NO_CLI: &str = "no_cli";
+/// Fehlercode, wenn die Claude-CLI keine native Binaerdatei ist (npm-, Node-
+/// oder Skript-Launcher).
+pub const ERR_CLAUDE_NOT_NATIVE: &str = "claude_not_native";
 
 /// Schalter „Abo-Vorschau“ (`book_talk_subscription_preview`, Standard aus).
 /// Einschalten (und erneutes Bestätigen) geht nur nach dem Risikohinweis
@@ -1370,16 +1385,34 @@ pub async fn change_book_talk_subscription_preview_setting(
             return Err(ERR_RISK_NOT_ACKNOWLEDGED.to_string());
         }
         let current = crate::settings::get_settings(&app);
-        let bound = tokio::task::spawn_blocking(move || {
-            bindings_for(&current, |cli| {
-                crate::managers::llm::cli::locate(cli)
-                    .and_then(|binary| preview::identity(&binary).ok())
-            })
+        let cache = cli_cache_root(&app).ok_or_else(|| ERR_NO_CLI.to_string())?;
+        // Bindung = Kopie der nativen Claude-Datei in den App-Cache (Identitaet
+        // ist die der Kopie); alte Kopien anderer Hashes werden entfernt.
+        let (bound, not_native) = tokio::task::spawn_blocking(move || {
+            let not_native = std::sync::atomic::AtomicBool::new(false);
+            let bound = bindings_for(&current, |cli| {
+                let binary = crate::managers::llm::cli::locate(cli)?;
+                match preview::bind_copy(&cache, &binary) {
+                    Ok(identity) => Some(identity),
+                    Err(e) => {
+                        if e.starts_with("claude_not_native") {
+                            not_native.store(true, std::sync::atomic::Ordering::SeqCst);
+                        }
+                        None
+                    }
+                }
+            });
+            (bound, not_native.load(std::sync::atomic::Ordering::SeqCst))
         })
         .await
         .map_err(|e| e.to_string())?;
         if bound.is_empty() {
-            return Err(ERR_NO_CLI.to_string());
+            return Err(if not_native {
+                ERR_CLAUDE_NOT_NATIVE
+            } else {
+                ERR_NO_CLI
+            }
+            .to_string());
         }
         bound
     } else {
@@ -1413,6 +1446,16 @@ pub struct BookTalkPreviewStatus {
     pub blocked: Option<Blocked>,
 }
 
+/// Status der Vorschau für ein Codex-Modell: immer gesperrt (Phase 2).
+pub fn codex_status(enabled: bool) -> BookTalkPreviewStatus {
+    BookTalkPreviewStatus {
+        enabled,
+        applies: true,
+        state: PreviewState::NotReleased,
+        blocked: Some(Blocked::CodexPreviewNotAvailable),
+    }
+}
+
 /// Zustand der Abo-Vorschau für das aktuelle Gesprächsmodell.
 #[tauri::command]
 #[specta::specta]
@@ -1435,6 +1478,10 @@ pub async fn book_talk_preview_status(app: AppHandle) -> Result<BookTalkPreviewS
             blocked: None,
         });
     };
+    // Codex gibt es in der Vorschau nicht: gesperrt, auch bei ausgeschaltetem Schalter, ohne die CLI zu suchen.
+    if cli != Cli::Claude {
+        return Ok(codex_status(enabled));
+    }
     if !enabled {
         return Ok(BookTalkPreviewStatus {
             enabled,

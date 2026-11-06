@@ -1412,7 +1412,6 @@ fn identities(version: &str) -> Identities {
     };
     Identities {
         claude: Some(id("ab")),
-        codex: Some(id("cd")),
     }
 }
 
@@ -1461,8 +1460,8 @@ fn abo_modellliste_bleibt_ohne_isolation_oder_messung_leer() {
             .map(|m| m.id.clone())
             .collect::<Vec<_>>()
     };
-    // Mit allen Belegen: beide.
-    assert_eq!(list(&evidence_for(&s)), ["sonnet", "gpt-6.1-sol"]);
+    // Mit allen Belegen: nur Claude (Codex gibt es in der Vorschau nicht).
+    assert_eq!(list(&evidence_for(&s)), ["sonnet"]);
     // Ohne jede Datei: nichts (Grundsatz: nicht belegt sperrt).
     assert!(list(&Evidence::default()).is_empty());
     // Faehigkeiten ohne Messung: nichts.
@@ -1489,22 +1488,40 @@ fn abo_modellliste_bleibt_ohne_isolation_oder_messung_leer() {
             .collect(),
     );
     assert!(list(&measured_only).is_empty());
-    // Unvollstaendige Faehigkeiten fuer Claude: nur Codex.
+    // Unvollstaendige Faehigkeiten fuer Claude: nichts.
     let mut partial = fixtures::caps();
     partial.memory_blocked = false;
     let b = &s.book_talk_preview_bindings;
-    let mixed = Evidence::from_parts(
-        &[
-            (b[0].provider.as_str(), b[0].cli_version.as_str(), partial),
-            (
-                b[1].provider.as_str(),
-                b[1].cli_version.as_str(),
-                fixtures::caps(),
-            ),
-        ],
+    let incomplete = Evidence::from_parts(
+        &[(b[0].provider.as_str(), b[0].cli_version.as_str(), partial)],
         b.iter().map(|x| fixtures::measurement(x, "m")).collect(),
     );
-    assert_eq!(list(&mixed), ["gpt-6.1-sol"]);
+    assert!(list(&incomplete).is_empty());
+}
+
+#[test]
+fn abo_modellliste_bietet_codex_nie_an() {
+    use crate::managers::llm::preview::{binding_for, fixtures};
+    let mut s = previewing(Some(272_000), "1.0");
+    // Selbst mit Schalter, bestaetigtem Tupel, Belegen, Kontext und Identitaet.
+    let codex = binding_for(
+        Cli::Codex,
+        "gpt-6.1-sol",
+        &crate::managers::llm::preview::Identity {
+            version: "1.0".into(),
+            sha256: "cd".repeat(32),
+        },
+    );
+    s.book_talk_preview_bindings.push(codex.clone());
+    let claude = s.book_talk_preview_bindings[0].clone();
+    let ev = fixtures::evidence(&[(&claude, "m"), (&codex, "gpt-6.1-sol")]);
+    let eligible = eligible_models(&s, BOTH);
+    assert!(eligible.iter().any(|m| m.provider == "codex_cli"));
+    let list = preview_models(&s, eligible, &identities("1.0"), &ev);
+    assert_eq!(
+        list.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+        ["sonnet"]
+    );
 }
 
 #[test]
@@ -1541,8 +1558,8 @@ fn abo_modellliste_meldet_nur_belegten_kontext_statt_pauschal_128000() {
         .iter()
         .map(|m| (m.id.as_str(), m.context_tokens))
         .collect();
-    assert_eq!(seen, [("sonnet", 200_000), ("gpt-6.1-sol", 272_000)]);
-    // Codex ohne eingetragenen Kontext: nicht belegt, nicht angeboten (kein 128000).
+    assert_eq!(seen, [("sonnet", 200_000)]);
+    // Ohne eingetragenen Kontext: Claude hat feste 200000, nie 128000.
     let s = previewing(None, "1.0");
     let list = preview_models(
         &s,
@@ -1563,23 +1580,15 @@ fn abo_modellliste_verlangt_ein_gueltiges_tupel() {
     assert!(preview_models(&s, eligible_models(&s, BOTH), &identities("1.1"), &ev).is_empty());
     // CLI nicht lesbar: ebenso.
     assert!(preview_models(&s, eligible_models(&s, BOTH), &Identities::default(), &ev).is_empty());
-    // Nur Claude hat sich geaendert: Codex bleibt.
-    let mut mixed = identities("1.0");
-    mixed.claude.as_mut().unwrap().sha256 = "ef".repeat(32);
-    let list = preview_models(&s, eligible_models(&s, BOTH), &mixed, &ev);
-    assert_eq!(
-        list.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
-        ["gpt-6.1-sol"]
-    );
+    // Anderes Programm (Hash): ebenso.
+    let mut swapped = identities("1.0");
+    swapped.claude.as_mut().unwrap().sha256 = "ef".repeat(32);
+    assert!(preview_models(&s, eligible_models(&s, BOTH), &swapped, &ev).is_empty());
     // Ein Modell ohne bestaetigtes Tupel (spaeter hinzugefuegt) fehlt.
     let mut s2 = s.clone();
     s2.book_talk_preview_bindings
         .retain(|b| b.model_id != "sonnet");
-    let list = preview_models(&s2, eligible_models(&s2, BOTH), &identities("1.0"), &ev);
-    assert_eq!(
-        list.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
-        ["gpt-6.1-sol"]
-    );
+    assert!(preview_models(&s2, eligible_models(&s2, BOTH), &identities("1.0"), &ev).is_empty());
 }
 
 #[test]

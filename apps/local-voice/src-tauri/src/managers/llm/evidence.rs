@@ -14,7 +14,7 @@
 //! ```json
 //! { "schema": 1,
 //!   "entries": [ {
-//!     "cli": "claude_cli",                     // oder "codex_cli"
+//!     "cli": "claude_cli",                     // Phase 1: nur Claude; Codex ist in der Vorschau gesperrt
 //!     "cli_version": "2.1.318 (Claude Code)",  // erste Zeile von `--version`, exakt
 //!     "kind": "empirisch",                     // nur gemessene Eintraege zaehlen
 //!     "checked_at": "2026-11-07T10:00:00Z",
@@ -44,7 +44,6 @@
 //!     "runs": 10,                              // N >= 10
 //!     "max_overhead_tokens": 31234,            // Maximum der Roh-Eingabetoken bei leerem Prompt
 //!     "reasoning_reserve_tokens": 3100,        // Maximum der Roh-Ausgabetoken (Denken) bei kurzer Antwort
-//!     "compaction_threshold_percent": 80,      // Anteil des Kontexts, ab dem nicht mehr geplant wird (1..=100)
 //!     "measured_at": "2026-11-07T10:00:00Z",
 //!     "kind": "empirisch",
 //!     "raw_usage": [ { "input": 31200, "output": 40 } ]   // optional, Rohwerte der Laeufe
@@ -134,7 +133,6 @@ pub struct Measurement {
     pub runs: u32,
     pub max_overhead_tokens: u64,
     pub reasoning_reserve_tokens: u32,
-    pub compaction_threshold_percent: u64,
     pub measured_at: String,
     #[serde(default)]
     pub kind: String,
@@ -147,7 +145,6 @@ impl Measurement {
             && self.runs >= MIN_RUNS
             && self.max_overhead_tokens > 0
             && self.reasoning_reserve_tokens > 0
-            && (1..=100).contains(&self.compaction_threshold_percent)
             && !self.measured_at.trim().is_empty()
             && !self.reported_model.trim().is_empty()
             && !self.model.trim().is_empty()
@@ -157,15 +154,12 @@ impl Measurement {
     }
 
     /// Der ungeuenstigere von zwei Eintraegen (hoeherer Overhead und
-    /// Reserve, niedrigere Schwelle und Laufzahl).
+    /// Reserve, niedrigere Laufzahl).
     fn worst(mut self, other: &Self) -> Self {
         self.max_overhead_tokens = self.max_overhead_tokens.max(other.max_overhead_tokens);
         self.reasoning_reserve_tokens = self
             .reasoning_reserve_tokens
             .max(other.reasoning_reserve_tokens);
-        self.compaction_threshold_percent = self
-            .compaction_threshold_percent
-            .min(other.compaction_threshold_percent);
         self.runs = self.runs.min(other.runs);
         self
     }
@@ -285,7 +279,6 @@ mod tests {
             "binary_sha256": SHA, "model": "sonnet@high",
             "reported_model": "claude-sonnet-5-5", "runs": 10,
             "max_overhead_tokens": 31234, "reasoning_reserve_tokens": 3100,
-            "compaction_threshold_percent": 80,
             "measured_at": "2026-11-07T10:00:00Z", "kind": "empirisch"
         });
         for (k, raw) in overrides {
@@ -298,7 +291,7 @@ mod tests {
     #[test]
     fn the_files_of_the_check_script_are_read() {
         let caps = r#"{"schema":1,"entries":[{"cli":"codex_cli","cli_version":"codex-cli 9.9.9","kind":"empirisch","checked_at":"2026-11-07T10:00:00Z","caps":{"instructions_blocked":true,"project_instructions_blocked":true,"hooks_blocked":true,"memory_blocked":true,"tools_blocked":true,"event_contract":true},"notes":""}]}"#;
-        let measured = r#"{"schema":1,"entries":[{"cli":"codex_cli","cli_version":"codex-cli 9.9.9","binary_sha256":"30f778cb43690b0a19f74a85c5cbe7d0b3901be2dd5c3f166d4bd9149528bc97","model":"gpt-6.1-sol","reported_model":"gpt-6.1-sol","runs":10,"max_overhead_tokens":20075,"reasoning_reserve_tokens":38,"compaction_threshold_percent":80,"measured_at":"2026-11-07T10:00:00Z","kind":"empirisch","raw_usage":[{"input":20001,"output":31}]}]}"#;
+        let measured = r#"{"schema":1,"entries":[{"cli":"codex_cli","cli_version":"codex-cli 9.9.9","binary_sha256":"30f778cb43690b0a19f74a85c5cbe7d0b3901be2dd5c3f166d4bd9149528bc97","model":"gpt-6.1-sol","reported_model":"gpt-6.1-sol","runs":10,"max_overhead_tokens":20075,"reasoning_reserve_tokens":38,"measured_at":"2026-11-07T10:00:00Z","kind":"empirisch","raw_usage":[{"input":20001,"output":31}]}]}"#;
         let e = Evidence::parse(caps, measured);
         assert!(e
             .caps_for("codex_cli", "codex-cli 9.9.9")
@@ -388,8 +381,6 @@ mod tests {
             ("runs", "9"),
             ("max_overhead_tokens", "0"),
             ("reasoning_reserve_tokens", "0"),
-            ("compaction_threshold_percent", "0"),
-            ("compaction_threshold_percent", "101"),
             ("kind", r#""geschaetzt""#),
             ("measured_at", r#""""#),
             ("reported_model", r#""""#),
@@ -409,7 +400,6 @@ mod tests {
         let one: serde_json::Value = serde_json::from_str(&measurement_json(&[])).unwrap();
         let mut worse = one["entries"][0].clone();
         worse["max_overhead_tokens"] = 40_000.into();
-        worse["compaction_threshold_percent"] = 70.into();
         let mut other_model = one["entries"][0].clone();
         other_model["reported_model"] = "claude-sonnet-5-6".into();
         let merged = serde_json::json!({"schema":1,"entries":[one["entries"][0], worse]});
@@ -417,10 +407,7 @@ mod tests {
         let m = e
             .measurement_for("claude_cli", "2.1.318 (Claude Code)", SHA, "sonnet@high")
             .unwrap();
-        assert_eq!(
-            (m.max_overhead_tokens, m.compaction_threshold_percent),
-            (40_000, 70)
-        );
+        assert_eq!(m.max_overhead_tokens, 40_000);
         let clash = serde_json::json!({"schema":1,"entries":[one["entries"][0], other_model]});
         let e = Evidence::parse("", &clash.to_string());
         assert!(e

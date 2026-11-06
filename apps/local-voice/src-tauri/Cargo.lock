@@ -4015,6 +4015,7 @@ dependencies = [
  "hoersync",
  "hound",
  "krilla",
+ "libc",
  "log",
  "mail-builder",
  "mp3lame-encoder",

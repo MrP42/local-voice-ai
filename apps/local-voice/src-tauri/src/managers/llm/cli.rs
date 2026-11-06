@@ -855,13 +855,23 @@ fn str_of<'a>(v: &'a serde_json::Value, key: &str) -> Option<&'a str> {
 }
 
 /// Vorschau, Claude: `claude -p --output-format stream-json --verbose`, ganz
-/// gepuffert. Gesperrt (Fehler) bei einer beschaedigten Zeile, fehlendem oder
-/// fehlerhaftem Ergebnis (`is_error`, `subtype` ausser `success`). Kompaktierung
-/// ist `system` mit `subtype: compact_boundary` (oder ein Ereignis mit
-/// `compact_metadata`); abgeschnitten ist ein `stop_reason` aus
-/// [`CUT_STOP_REASONS`] oder ein `subtype` mit `abort`. Ohne regulaeren
-/// `stop_reason` (`end_turn`) des Ergebnisses bleibt „abgeschnitten“ unbekannt.
+/// gepuffert und STRENG. Gesperrt (Fehler), wenn
+/// * eine Zeile beschaedigt ist oder das Ergebnis fehlt oder fehlerhaft ist
+///   (`is_error`, `subtype` ausser `success`);
+/// * kompaktiert wurde (`system/compact_boundary` oder `compact_metadata`);
+/// * der Strom den Ereignisvertrag verletzt ([`super::contract::Contract`]:
+///   unbekanntes Ereignis, `tool_use`, Fehlerereignis irgendwo, Ereignis nach
+///   dem `result`, falsche Reihenfolge);
+/// * die gemeldeten Modell-IDs (`init.model`, `assistant.message.model`,
+///   `modelUsage`-Schluessel) nicht ALLE identisch sind (kein „meiste Token“).
+///
+/// Abgeschnitten ist ein `stop_reason` aus [`CUT_STOP_REASONS`] oder ein
+/// `subtype` mit `abort`; ohne regulaeren `stop_reason` des Ergebnisses bleibt
+/// „abgeschnitten“ unbekannt (sperrt in `preview::verify`). Ablehnungen sind
+/// Fehlertexte `cli_preview_rejected:<code>:<grund>`.
 pub(crate) fn parse_claude_stream(stdout: &str) -> Result<CliReply, String> {
+    use super::contract::{models_of, Contract};
+    use super::preview::Rejection;
     let events = jsonl_events(stdout, "Claude")?;
     let mut compacted = false;
     let mut cut = false;
@@ -877,6 +887,9 @@ pub(crate) fn parse_claude_stream(stdout: &str) -> Result<CliReply, String> {
         if stop.is_some_and(|s| CUT_STOP_REASONS.contains(&s)) || subtype.contains("abort") {
             cut = true;
         }
+    }
+    if compacted {
+        return Err(Rejection::budget("compaction").error());
     }
     let result = events
         .iter()
@@ -900,60 +913,21 @@ pub(crate) fn parse_claude_stream(stdout: &str) -> Result<CliReply, String> {
             classified
         });
     }
+    if let Err(reason) = Contract::builtin().check(&events) {
+        return Err(Rejection::llm(reason).error());
+    }
+    let models = models_of(&events);
+    if models.len() > 1 {
+        return Err(Rejection::llm("model_mismatch").error());
+    }
     let mut reply = parse_claude(&result.to_string())?;
-    reply.compacted = if compacted { Tri::Yes } else { Tri::No };
+    reply.model = models.into_iter().next();
+    reply.compacted = Tri::No;
     reply.truncated = match str_of(result, "stop_reason") {
         _ if cut => Tri::Yes,
         Some(s) if DONE_STOP_REASONS.contains(&s) => Tri::No,
         _ => Tri::Unknown,
     };
-    Ok(reply)
-}
-
-/// Vorschau, Codex: `codex exec --json`, ganz gepuffert und streng. Eine
-/// beschaedigte Zeile, ein Ereignis `error` oder `turn.failed`, ein fehlendes
-/// `turn.completed` oder eine fehlende Antwort ergeben einen Fehler, auch wenn
-/// Text vorliegt. Kompaktierung: Ereignis `context_compacted` oder ein Eintrag
-/// `context_compaction`; abgeschnitten: Ereignis `response.incomplete` oder
-/// `incomplete_details`. Beides gilt nur mit dem belegten Ereignisvertrag der
-/// Version (`IsolationCaps::event_contract`) als „nein“.
-pub(crate) fn parse_codex_strict(stdout: &str) -> Result<CliReply, String> {
-    let events = jsonl_events(stdout, "Codex")?;
-    let mut compacted = false;
-    let mut cut = false;
-    let mut completed = false;
-    for ev in &events {
-        let kind = str_of(ev, "type").unwrap_or("");
-        let item_kind = ev.get("item").and_then(|i| str_of(i, "type")).unwrap_or("");
-        match kind {
-            "error" | "turn.failed" => {
-                let classified = classify_error(&ev.to_string());
-                return Err(if classified.starts_with("cli_failed") {
-                    format!("cli_failed: Codex meldete einen Fehler ({kind})")
-                } else {
-                    classified
-                });
-            }
-            "turn.completed" => completed = true,
-            "context_compacted" => compacted = true,
-            "response.incomplete" => cut = true,
-            _ => {}
-        }
-        if item_kind == "context_compaction" {
-            compacted = true;
-        }
-        let incomplete =
-            |v: &serde_json::Value| v.get("incomplete_details").is_some_and(|d| !d.is_null());
-        if incomplete(ev) || ev.get("response").is_some_and(incomplete) {
-            cut = true;
-        }
-    }
-    if !completed {
-        return Err("cli_bad_output: Codex-Ausgabe ohne turn.completed".to_string());
-    }
-    let mut reply = parse_codex(stdout)?;
-    reply.compacted = if compacted { Tri::Yes } else { Tri::No };
-    reply.truncated = if cut { Tri::Yes } else { Tri::No };
     Ok(reply)
 }
 
@@ -1148,14 +1122,15 @@ pub struct CallOptions {
     /// Eingabe- oder kein Ausgabetoken), ist der Aufruf ein Fehler
     /// (`cli_bad_output`) statt null Token. Sonst unveraendert.
     pub require_usage: bool,
-    /// Gesetzt: Aufruf der Abo-Vorschau im Buch-Gespraech (lva#334). Vorab
-    /// gilt das gemessene Budget und die Bindung ans Programm; die Isolation
-    /// ist gehaertet (frischer Arbeitsordner ausserhalb jedes Repos ohne
-    /// Anweisungsdateien in den Elternordnern; Claude: Hooks/CLAUDE.md/Memory
-    /// aus, Ereignisstrom; Codex: frisches `CODEX_HOME` nur mit `auth.json`,
-    /// bereinigte Umgebung, Ereignisstrom). Die Antwort wird nachtraeglich
-    /// fail-closed geprueft (`preview::verify`); Exit-Code <> 0, beschaedigte
-    /// Zeilen und Fehlerereignisse ergeben nie einen Erfolg.
+    /// Gesetzt: Aufruf der Abo-Vorschau im Buch-Gespraech (lva#334), nur
+    /// Claude (Codex ist gesperrt). Vorab gilt das Budget und die Bindung: der
+    /// Aufruf startet ausschliesslich die verifizierte Kopie im App-Cache, in
+    /// eigener Prozessgruppe (Unix); die Isolation ist gehaertet (frischer
+    /// Arbeitsordner ausserhalb jedes Repos ohne Anweisungsdateien in den
+    /// Elternordnern; Hooks/CLAUDE.md/Memory aus, Ereignisstrom). Die Antwort
+    /// wird nachtraeglich fail-closed geprueft (Ereignisvertrag,
+    /// `preview::verify`); Exit-Code <> 0, beschaedigte Zeilen und
+    /// Fehlerereignisse ergeben nie einen Erfolg.
     pub preview: Option<super::preview::PreviewCheck>,
     /// Vorschau-Schalter live: vor dem Start, waehrend des Laufs (Prozessbaum
     /// beenden) und vor der Rueckgabe geprueft; „aus“ verwirft das Ergebnis.
@@ -1246,47 +1221,6 @@ pub(crate) const CLAUDE_PREVIEW_ENV: &[(&str, &str)] = &[
     ("CLAUDE_CODE_DISABLE_AUTO_MEMORY", "1"),
 ];
 
-/// Zusaetzliche Codex-Argumente der Vorschau (vor dem abschliessenden `-`):
-/// nie nach Freigabe fragen und keine Projektdokumente (AGENTS.md) laden.
-/// Beides sind dokumentierte Schluessel der Codex-Konfiguration. Hooks,
-/// Memories und Skills liegen in `CODEX_HOME`; das ist in der Vorschau ein
-/// frisches Verzeichnis ([`codex_sandbox`]), dort gibt es sie nicht.
-pub(crate) const CODEX_PREVIEW_ARGS: &[&str] = &[
-    "-c",
-    "approval_policy=\"never\"",
-    "-c",
-    "project_doc_max_bytes=0",
-];
-
-/// Umgebungsvariablen, die Codex in der Vorschau aus der Umgebung der App
-/// behaelt (alles andere faellt weg, insbesondere API-Schluessel, Tokens und
-/// `CODEX_*`). Nur, was zum Starten, zur Anmeldung ueber `auth.json` und fuer
-/// das Netz (Proxy, Zertifikate) noetig ist.
-pub(crate) const CODEX_ENV_ALLOW: &[&str] = &[
-    "PATH",
-    "PATHEXT",
-    "SYSTEMROOT",
-    "WINDIR",
-    "COMSPEC",
-    "TEMP",
-    "TMP",
-    "TMPDIR",
-    "APPDATA",
-    "LOCALAPPDATA",
-    "PROGRAMDATA",
-    "LANG",
-    "LC_ALL",
-    "LC_CTYPE",
-    "TERM",
-    "HTTPS_PROXY",
-    "HTTP_PROXY",
-    "NO_PROXY",
-    "ALL_PROXY",
-    "SSL_CERT_FILE",
-    "SSL_CERT_DIR",
-    "NODE_EXTRA_CA_CERTS",
-];
-
 /// Anweisungsdateien und Repo-Marken, die in keinem Elternordner des
 /// Arbeitsordners liegen duerfen (Codex sucht AGENTS.md bis zur Repo-Wurzel,
 /// Claude CLAUDE.md in allen Elternordnern).
@@ -1313,156 +1247,6 @@ pub(crate) fn ancestors_clean(dir: &Path) -> Result<(), String> {
         }
     }
     Ok(())
-}
-
-/// Die Umgebung der Codex-Vorschau: nur [`CODEX_ENV_ALLOW`] aus der Umgebung
-/// der App, dazu `CODEX_HOME` (frisch) und `HOME`/`USERPROFILE` (leer, damit
-/// keine Nutzerdateien wie `~/.agents` gelesen werden).
-pub(crate) fn codex_preview_env(
-    get: impl Fn(&str) -> Option<std::ffi::OsString>,
-    codex_home: &Path,
-    user_home: &Path,
-) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
-    let mut env: Vec<(std::ffi::OsString, std::ffi::OsString)> = CODEX_ENV_ALLOW
-        .iter()
-        .filter_map(|k| get(k).map(|v| (std::ffi::OsString::from(*k), v)))
-        .collect();
-    env.push(("CODEX_HOME".into(), codex_home.as_os_str().to_owned()));
-    env.push(("HOME".into(), user_home.as_os_str().to_owned()));
-    env.push(("USERPROFILE".into(), user_home.as_os_str().to_owned()));
-    env
-}
-
-/// Fertige Isolation der Codex-Vorschau; die Verzeichnisse werden beim Drop
-/// geloescht.
-pub(crate) struct CodexSandbox {
-    codex_home: tempfile::TempDir,
-    _user_home: tempfile::TempDir,
-    pub env: Vec<(std::ffi::OsString, std::ffi::OsString)>,
-    /// Echte `auth.json` und ihr Hash zum Zeitpunkt des Kopierens.
-    original: PathBuf,
-    original_hash: String,
-}
-
-fn sha256_hex(bytes: &[u8]) -> String {
-    use sha2::{Digest, Sha256};
-    Sha256::digest(bytes)
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
-}
-
-/// Schreibt `bytes` atomar (tmp im selben Ordner, dann Umbenennen) nach
-/// `target`; die Dateirechte bleiben die des bisherigen Ziels.
-fn write_atomic_like(target: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    let dir = target
-        .parent()
-        .ok_or_else(|| std::io::Error::other("kein Ordner"))?;
-    let mut tmp = tempfile::Builder::new().prefix(".auth-").tempfile_in(dir)?;
-    tmp.write_all(bytes)?;
-    tmp.as_file().sync_all()?;
-    tmp.as_file()
-        .set_permissions(std::fs::metadata(target)?.permissions())?;
-    tmp.persist(target).map(|_| ()).map_err(|e| e.error)
-}
-
-impl CodexSandbox {
-    /// Codex rotiert Refresh-Tokens (einmal nutzbar) und schreibt sie in die
-    /// Kopie. Ohne Rueckschreiben waere die echte Anmeldung danach ungueltig.
-    /// Geschrieben wird nur, wenn die Kopie abweicht, gueltiges JSON ist und
-    /// sich das Original seit dem Kopieren nicht geaendert hat. Hinweise ohne
-    /// jeden Inhalt.
-    fn write_back_auth(&self) {
-        let Ok(copy) = std::fs::read(self.codex_home.path().join("auth.json")) else {
-            return;
-        };
-        if sha256_hex(&copy) == self.original_hash {
-            return;
-        }
-        if serde_json::from_slice::<serde_json::Value>(&copy).is_err() {
-            log::warn!(
-                "Codex-Vorschau: Anmeldekopie ist kein gueltiges JSON, nicht zurueckgeschrieben"
-            );
-            return;
-        }
-        let unchanged = std::fs::read(&self.original)
-            .map(|now| sha256_hex(&now) == self.original_hash)
-            .unwrap_or(false);
-        if !unchanged {
-            log::warn!(
-                "Codex-Vorschau: echte Anmeldung wurde inzwischen veraendert, Kopie nicht zurueckgeschrieben"
-            );
-            return;
-        }
-        if write_atomic_like(&self.original, &copy).is_err() {
-            log::warn!("Codex-Vorschau: Anmeldung konnte nicht zurueckgeschrieben werden");
-        }
-    }
-}
-
-impl Drop for CodexSandbox {
-    /// Laeuft vor dem Loeschen der Temp-Ordner -- auch bei Fehler und Abbruch.
-    fn drop(&mut self) {
-        self.write_back_auth();
-    }
-}
-
-/// Frisches `CODEX_HOME` mit NUR `auth.json` (kopiert aus dem echten
-/// `CODEX_HOME`), leeres Nutzerverzeichnis, bereinigte Umgebung. Fehlt die
-/// `auth.json` (Anmeldung z. B. im Schluesselbund), ist die Vorschau gesperrt.
-pub(crate) fn codex_sandbox(
-    real_codex_home: Option<&Path>,
-    base: Option<&Path>,
-    get: impl Fn(&str) -> Option<std::ffi::OsString>,
-) -> Result<CodexSandbox, String> {
-    let fresh = |prefix: &str| -> Result<tempfile::TempDir, String> {
-        let mut b = tempfile::Builder::new();
-        b.prefix(prefix);
-        match base {
-            Some(dir) => b.tempdir_in(dir),
-            None => b.tempdir(),
-        }
-        .map_err(|e| format!("cli_failed: {e}"))
-    };
-    let src = real_codex_home
-        .map(|h| h.join("auth.json"))
-        .filter(|p| p.is_file())
-        .ok_or_else(|| {
-            "cli_not_logged_in: auth.json von Codex nicht gefunden, Vorschau gesperrt".to_string()
-        })?;
-    let codex_home = fresh("local-voice-codex-home-")?;
-    let user_home = fresh("local-voice-codex-user-")?;
-    let bytes =
-        std::fs::read(&src).map_err(|e| format!("cli_failed: auth.json nicht lesbar ({e})"))?;
-    let copy = codex_home.path().join("auth.json");
-    std::fs::write(&copy, &bytes)
-        .map_err(|e| format!("cli_failed: auth.json nicht kopierbar ({e})"))?;
-    if let Ok(meta) = std::fs::metadata(&src) {
-        let _ = std::fs::set_permissions(&copy, meta.permissions());
-    }
-    let env = codex_preview_env(get, codex_home.path(), user_home.path());
-    Ok(CodexSandbox {
-        original_hash: sha256_hex(&bytes),
-        original: src,
-        codex_home,
-        _user_home: user_home,
-        env,
-    })
-}
-
-#[cfg(test)]
-thread_local! {
-    /// Nur Tests: das „echte“ `CODEX_HOME` je Test-Thread (kein Umgebungs-Rennen).
-    pub(crate) static TEST_CODEX_HOME: std::cell::RefCell<Option<PathBuf>> =
-        const { std::cell::RefCell::new(None) };
-}
-
-fn preview_codex_home() -> Option<PathBuf> {
-    #[cfg(test)]
-    if let Some(home) = TEST_CODEX_HOME.with(|h| h.borrow().clone()) {
-        return Some(home);
-    }
-    codex_home()
 }
 
 /// Setzt `--output-format stream-json` in die Claude-Argumente.
@@ -1531,19 +1315,24 @@ fn switch_is_off(opts: &CallOptions) -> bool {
     opts.preview_switch.as_ref().is_some_and(|s| !s.is_on())
 }
 
-/// Vorab-Pruefungen der Vorschau: Schalter, Bindung ans Programm, Budget.
+/// Vorab-Pruefungen der Vorschau: Codex (immer gesperrt), Schalter, Budget und
+/// Bindung ans Programm. Gibt die Kopie zurueck, die allein gestartet wird.
 fn preview_precheck(
+    cli: Cli,
     binary: &Path,
     check: &super::preview::PreviewCheck,
     input_bytes: usize,
     opts: &CallOptions,
-) -> Result<(), super::preview::Rejection> {
+) -> Result<super::preview::LaunchCopy, super::preview::Rejection> {
     use super::preview;
+    if cli != Cli::Claude {
+        return Err(preview::CODEX_BLOCKED);
+    }
     if switch_is_off(opts) {
         return Err(preview::SWITCH_OFF);
     }
-    preview::rebind(binary, &check.binding)?;
-    preview::precheck(check, input_bytes)
+    preview::precheck(check, input_bytes)?;
+    preview::LaunchCopy::prepare(binary, check)
 }
 
 fn call_inner(
@@ -1558,12 +1347,18 @@ fn call_inner(
     use super::preview;
     let requested = model.to_string();
     let input_bytes = system.map_or(0, str::len) + user.len();
+    let mut launch: Option<preview::LaunchCopy> = None;
     if let Some(check) = &opts.preview {
-        if let Err(r) = preview_precheck(binary, check, input_bytes, opts) {
-            audit_rejection(check, &requested, None, r.reason);
-            return Err(r.error());
+        match preview_precheck(cli, binary, check, input_bytes, opts) {
+            Ok(copy) => launch = Some(copy),
+            Err(r) => {
+                audit_rejection(check, &requested, None, r.reason);
+                return Err(r.error());
+            }
         }
     }
+    // Die Vorschau startet AUSSCHLIESSLICH die verifizierte Kopie.
+    let binary: &Path = launch.as_ref().map_or(binary, |l| l.path.as_path());
     // `modell@effort~fast`; auf die Kommandozeile kommt nur, was die Regeln erlaubt.
     let fast = split_fast(model).1;
     let (model, effort) = split_spec(model);
@@ -1579,14 +1374,8 @@ fn call_inner(
         .tempdir()
         .map_err(|e| format!("cli_failed: {e}"))?;
     // Vorschau: kein Repo und keine Anweisungsdatei ueber dem Arbeitsordner.
-    let mut sandbox: Option<CodexSandbox> = None;
     if opts.preview.is_some() {
         ancestors_clean(work.path())?;
-        if cli == Cli::Codex {
-            sandbox = Some(codex_sandbox(preview_codex_home().as_deref(), None, |k| {
-                std::env::var_os(k)
-            })?);
-        }
     }
     // Codex erhaelt den Systemtext vor der Aufgabe -- `exec` kennt keinen
     // eigenen Systemprompt.
@@ -1605,29 +1394,13 @@ fn call_inner(
         // Vor dem abschliessenden "-" (Prompt aus stdin).
         let at = argv.len() - 1;
         let isolation = codex_isolation_args(&program, &prefix)?;
-        // Vorschau: nur mit `--ignore-user-config` (Hooks, Plugins und
-        // Nutzeranweisungen der Konfiguration bleiben aus); der Rueckfall auf
-        // einzelne MCP-Server reicht dafuer nicht.
-        if opts.preview.is_some() && isolation != ["--ignore-user-config"] {
-            return Err(
-                "cli_failed: Isolation fuer die Vorschau nicht moeglich (--ignore-user-config fehlt)"
-                    .to_string(),
-            );
-        }
         argv.splice(at..at, isolation);
-        if opts.preview.is_some() {
-            let at = argv.len() - 1;
-            argv.splice(at..at, CODEX_PREVIEW_ARGS.iter().map(|a| a.to_string()));
-        }
         if let Some(n) = opts.max_tokens {
             let at = argv.len() - 1;
             argv.splice(at..at, max_tokens_args(n));
         }
     }
     let mut cmd = Command::new(program);
-    if let Some(sb) = &sandbox {
-        cmd.env_clear().envs(sb.env.iter().cloned());
-    }
     if cli == Cli::Claude {
         if let Some(n) = opts.max_tokens {
             cmd.env("CLAUDE_CODE_MAX_OUTPUT_TOKENS", n.to_string());
@@ -1645,6 +1418,13 @@ fn call_inner(
     {
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    // Vorschau, Unix: eigene Prozessgruppe, damit Widerruf, Abbruch und
+    // Zeitablauf den ganzen Baum treffen (`kill(-pgid, ...)`). Windows: Job-Objekt.
+    #[cfg(unix)]
+    if opts.preview.is_some() {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
     }
     let child = cmd.spawn().map_err(|e| format!("cli_missing: {e}"))?;
     let Some(check) = &opts.preview else {
@@ -1672,11 +1452,12 @@ fn call_inner(
 
     // ---- Vorschau: laufen lassen, beobachten, danach alles pruefen. ----
     let watch = Watch::start(opts);
-    let ran = run_cancellable(
+    let ran = run_cancellable_in(
         child,
         Some(stdin_text.into_bytes()),
         timeout,
         Some(watch.kill.as_ref()),
+        true,
     );
     let switched = watch.stop();
     let reject = |r: preview::Rejection, actual: Option<&str>| {
@@ -1692,7 +1473,7 @@ fn call_inner(
     if switched || switch_is_off(opts) {
         return Err(reject(preview::SWITCH_OFF, None));
     }
-    if let Err(r) = preview::rebind(binary, &check.binding) {
+    if let Some(Err(r)) = launch.as_ref().map(preview::LaunchCopy::verify) {
         return Err(reject(r, None));
     }
     // Exit-Code <> 0 ist nie ein Erfolg, auch wenn Text vorliegt.
@@ -1706,10 +1487,17 @@ fn call_inner(
         );
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let reply = match cli {
-        Cli::Claude => parse_claude_stream(&stdout),
-        Cli::Codex => parse_codex_strict(&stdout),
-    }?;
+    let reply = parse_claude_stream(&stdout).map_err(|e| {
+        // Ablehnungen des Parsers (Ereignisvertrag, Modellwechsel, Kompaktierung)
+        // gehoeren ins Audit wie die der Pruefung.
+        if let Some(reason) = e
+            .strip_prefix("cli_preview_rejected:")
+            .and_then(|r| r.split(':').nth(1))
+        {
+            audit_rejection(check, &requested, None, reason);
+        }
+        e
+    })?;
     let reply = verify_preview(check, &requested, reply, input_bytes)?;
     // Vor der Rueckgabe (Anzeige, Speichern, Relay) ein letztes Mal.
     if switch_is_off(opts) {
@@ -1795,11 +1583,60 @@ pub(crate) fn run_with_timeout(
 /// Wie [`run_with_timeout`]; wird `cancel` gesetzt, wird der Prozessbaum
 /// beendet und der Aufruf endet mit `cli_cancelled`.
 pub(crate) fn run_cancellable(
-    mut child: std::process::Child,
+    child: std::process::Child,
     input: Option<Vec<u8>>,
     timeout: Duration,
     cancel: Option<&std::sync::atomic::AtomicBool>,
 ) -> Result<std::process::Output, String> {
+    run_cancellable_in(child, input, timeout, cancel, false)
+}
+
+/// Beendet den Unix-Prozessbaum einer eigenen Prozessgruppe: `SIGTERM` an
+/// `-pgid`, nach kurzer Frist `SIGKILL`. Das Kind muss mit `process_group(0)`
+/// gestartet sein (dann ist seine PID die Gruppen-ID).
+#[cfg(unix)]
+fn kill_group(child: &mut std::process::Child) {
+    let Ok(pgid) = i32::try_from(child.id()) else {
+        return;
+    };
+    // SAFETY: `kill` mit negativer PID adressiert nur die eigene, von uns
+    // angelegte Prozessgruppe; kein Speicherzugriff.
+    unsafe {
+        libc::kill(-pgid, libc::SIGTERM);
+    }
+    let until = std::time::Instant::now() + GROUP_TERM_GRACE;
+    while std::time::Instant::now() < until {
+        if matches!(child.try_wait(), Ok(Some(_))) && !group_alive(pgid) {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    unsafe {
+        libc::kill(-pgid, libc::SIGKILL);
+    }
+}
+
+/// Frist zwischen `SIGTERM` und `SIGKILL`.
+#[cfg(unix)]
+const GROUP_TERM_GRACE: Duration = Duration::from_millis(500);
+
+#[cfg(unix)]
+fn group_alive(pgid: i32) -> bool {
+    // Signal 0 prueft nur, ob die Gruppe noch Mitglieder hat.
+    unsafe { libc::kill(-pgid, 0) == 0 }
+}
+
+/// Wie [`run_cancellable`]; mit `group` wurde das Kind in einer eigenen Unix-
+/// Prozessgruppe gestartet und wird samt Gruppe beendet.
+pub(crate) fn run_cancellable_in(
+    mut child: std::process::Child,
+    input: Option<Vec<u8>>,
+    timeout: Duration,
+    cancel: Option<&std::sync::atomic::AtomicBool>,
+    group: bool,
+) -> Result<std::process::Output, String> {
+    #[cfg(not(unix))]
+    let _ = group;
     use std::io::Read;
     use std::sync::atomic::Ordering;
     use std::sync::mpsc;
@@ -1823,6 +1660,10 @@ pub(crate) fn run_cancellable(
         }
         // Drop des Job-Objekts beendet den ganzen Baum.
         drop(job);
+        #[cfg(unix)]
+        if group {
+            kill_group(child);
+        }
         let _ = child.kill();
         let _ = child.wait();
     };
@@ -2542,15 +2383,6 @@ mod tests {
         "\n"
     );
 
-    const GOOD_CODEX: &str = concat!(
-        r#"{"type":"thread.started","thread_id":"t","model":"gpt-6.1-sol"}"#,
-        "\n",
-        r#"{"type":"item.completed","item":{"type":"agent_message","text":"Antwort"}}"#,
-        "\n",
-        r#"{"type":"turn.completed","usage":{"input_tokens":20000,"cached_input_tokens":15000,"output_tokens":300}}"#,
-        "\n"
-    );
-
     /// Alles, was ein Test zur Fake-CLI braucht.
     #[cfg(unix)]
     struct Fake {
@@ -2566,14 +2398,15 @@ mod tests {
         /// legt `finished` an und gibt `reply.txt` aus (Exit-Code aus `exit`).
         fn new(reply: &str, help: &str) -> Self {
             use std::os::unix::fs::PermissionsExt;
+            preview::TEST_ALLOW_SCRIPT.with(|f| f.set(true));
             let dir = tempfile::tempdir().unwrap();
             std::fs::write(dir.path().join("reply.txt"), reply).unwrap();
             std::fs::write(dir.path().join("help.txt"), help).unwrap();
             let bin = dir.path().join("fakecli");
-            std::fs::write(
-                &bin,
-                r#"#!/bin/sh
-D="$(dirname "$0")"
+            // Der Ordner steht fest im Skript: die Vorschau startet eine KOPIE
+            // an anderer Stelle, die ihre Dateien trotzdem hier findet.
+            let body = r#"#!/bin/sh
+D="@@DIR@@"
 case "$1" in --version) echo "9.9.9 (Fake)"; exit 0 ;; esac
 case "$1 $2" in
   "exec --help") cat "$D/help.txt"; exit 0 ;;
@@ -2581,26 +2414,21 @@ case "$1 $2" in
 esac
 {
   for a in "$@"; do printf 'ARG:%s\n' "$a"; done
+  printf 'SELF:%s\n' "$0"
   printf 'ENV_MDS:%s\n' "$CLAUDE_CODE_DISABLE_CLAUDE_MDS"
   printf 'ENV_MEM:%s\n' "$CLAUDE_CODE_DISABLE_AUTO_MEMORY"
   printf 'PWD:%s\n' "$(pwd)"
   printf 'FILES:%s\n' "$(ls -A | wc -l | tr -d ' ')"
-  printf 'CODEX_HOME:%s\n' "$CODEX_HOME"
-  printf 'HOME:%s\n' "$HOME"
-  [ -n "$CODEX_HOME" ] && printf 'HOME_FILES:%s\n' "$(ls -A "$CODEX_HOME" | tr '\n' ',')"
-  [ -n "$CODEX_HOME" ] && printf 'AUTH:%s\n' "$(cat "$CODEX_HOME/auth.json" 2>/dev/null)"
   env | cut -d= -f1 | sort | while read -r n; do printf 'VAR:%s\n' "$n"; done
 } > "$D/log.txt"
-[ -f "$D/rotate" ] && [ -n "$CODEX_HOME" ] && cp "$D/rotate" "$CODEX_HOME/auth.json"
-[ -f "$D/parallel_target" ] && cp "$D/parallel_new" "$(cat "$D/parallel_target")"
+[ -f "$D/spawn_child" ] && { sleep 60 & echo $! > "$D/child.pid"; }
 [ -f "$D/sleep" ] && sleep "$(cat "$D/sleep")"
 cat > /dev/null
 touch "$D/finished"
 cat "$D/reply.txt"
 exit "$(cat "$D/exit" 2>/dev/null || echo 0)"
-"#,
-            )
-            .unwrap();
+"#;
+            std::fs::write(&bin, body.replace("@@DIR@@", &dir.path().to_string_lossy())).unwrap();
             std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
             Self { dir, bin }
         }
@@ -2621,8 +2449,12 @@ exit "$(cat "$D/exit" 2>/dev/null || echo 0)"
             binding_for(cli, model, &preview::identity(&self.bin).unwrap())
         }
 
+        fn cache(&self) -> PathBuf {
+            self.dir.path().join("cache").join(preview::CACHE_DIR)
+        }
+
         fn check(&self, cli: Cli, model: &str, reported: &str, context: u32) -> PreviewCheck {
-            fixtures::check(self.binding(cli, model), reported, context)
+            fixtures::check(self.binding(cli, model), reported, context).with_cache(self.cache())
         }
 
         fn call(
@@ -2698,6 +2530,15 @@ exit "$(cat "$D/exit" 2>/dev/null || echo 0)"
             !log.contains("ARG:json"),
             "kein Ergebnisobjekt in der Vorschau"
         );
+        assert!(!log.contains("ARG:--bare"), "kein --bare (OAuth-Anmeldung)");
+        // Gestartet wurde die geschuetzte Kopie im App-Cache, nie das Original.
+        let me = log.lines().find_map(|l| l.strip_prefix("SELF:")).unwrap();
+        let bound = preview::sha256_file(&f.bin).unwrap();
+        assert_eq!(
+            Path::new(me),
+            preview::copy_path(&f.cache(), &bound).as_path()
+        );
+        assert_ne!(Path::new(me), f.bin.as_path());
         let pwd = log.lines().find_map(|l| l.strip_prefix("PWD:")).unwrap();
         assert!(!Path::new(pwd).starts_with(f.dir.path()), "frischer Ordner");
         assert!(!Path::new(pwd).exists(), "Arbeitsordner danach geloescht");
@@ -2787,11 +2628,114 @@ exit "$(cat "$D/exit" 2>/dev/null || echo 0)"
             ),
             (
                 "ohne Modell",
-                stream_with(&[(
-                    r#","modelUsage":{"claude-sonnet-5-5":{"outputTokens":200}}"#,
-                    "",
-                )]),
+                stream_with(&[
+                    (
+                        r#","modelUsage":{"claude-sonnet-5-5":{"outputTokens":200}}"#,
+                        "",
+                    ),
+                    (r#""model":"claude-sonnet-5-5","tools""#, r#""tools""#),
+                ]),
                 "cli_preview_rejected:llm_failed:model_missing",
+            ),
+            (
+                "Modellwechsel in der Nachricht",
+                stream_with(&[(
+                    r#""role":"assistant","stop_reason""#,
+                    r#""role":"assistant","model":"claude-haiku-4-5-20251001","stop_reason""#,
+                )]),
+                "cli_preview_rejected:llm_failed:model_mismatch",
+            ),
+            (
+                "Modellwechsel im Init",
+                stream_with(&[(
+                    r#""subtype":"init","model":"claude-sonnet-5-5""#,
+                    r#""subtype":"init","model":"claude-opus-5-5""#,
+                )]),
+                "cli_preview_rejected:llm_failed:model_mismatch",
+            ),
+            (
+                "zwei Modelle in modelUsage (kein meiste Token)",
+                stream_with(&[(
+                    r#""modelUsage":{"claude-sonnet-5-5":{"outputTokens":200}}"#,
+                    r#""modelUsage":{"claude-sonnet-5-5":{"outputTokens":200},"claude-haiku-4-5-20251001":{"outputTokens":1}}"#,
+                )]),
+                "cli_preview_rejected:llm_failed:model_mismatch",
+            ),
+            (
+                "unbekanntes Ereignis",
+                stream_with(&[(
+                    r#"{"type":"assistant","message""#,
+                    "{\"type\":\"rate_limit_event\"}\n{\"type\":\"assistant\",\"message\"",
+                )]),
+                "cli_preview_rejected:llm_failed:event_unknown",
+            ),
+            (
+                "unbekannter Untertyp",
+                stream_with(&[(
+                    r#"{"type":"assistant","message""#,
+                    "{\"type\":\"system\",\"subtype\":\"hook_started\"}\n{\"type\":\"assistant\",\"message\"",
+                )]),
+                "cli_preview_rejected:llm_failed:event_unknown",
+            ),
+            (
+                "Fehlerereignis vor dem Erfolg",
+                stream_with(&[(
+                    r#"{"type":"assistant","message""#,
+                    r#"{"type":"assistant","error":"rate_limit","message""#,
+                )]),
+                "cli_preview_rejected:llm_failed:error_event",
+            ),
+            (
+                "is_error am Ereignis vor dem Erfolg",
+                stream_with(&[(
+                    r#"{"type":"assistant","message""#,
+                    r#"{"type":"assistant","is_error":true,"message""#,
+                )]),
+                "cli_preview_rejected:llm_failed:error_event",
+            ),
+            (
+                "tool_use",
+                stream_with(&[(
+                    r#""content":[{"type":"text","text":"Antwort"}]"#,
+                    r#""content":[{"type":"tool_use","name":"Read","input":{}}]"#,
+                )]),
+                "cli_preview_rejected:llm_failed:tool_use",
+            ),
+            (
+                "tool_result",
+                format!(
+                    "{}\n{}",
+                    GOOD_CLAUDE.lines().take(2).collect::<Vec<_>>().join("\n"),
+                    r#"{"type":"user","message":{"content":[{"type":"tool_result","content":"x"}]}}"#
+                ) + "\n"
+                    + GOOD_CLAUDE.lines().nth(2).unwrap(),
+                "cli_preview_rejected:llm_failed:tool_use",
+            ),
+            (
+                "Ereignis nach dem Ergebnis",
+                format!(
+                    "{GOOD_CLAUDE}{}\n",
+                    r#"{"type":"assistant","message":{"content":[{"type":"text","text":"mehr"}]}}"#
+                ),
+                "cli_preview_rejected:llm_failed:event_after_result",
+            ),
+            (
+                "zweites Ergebnis",
+                format!("{GOOD_CLAUDE}{}", GOOD_CLAUDE.lines().nth(2).unwrap().to_string() + "\n"),
+                "cli_preview_rejected:llm_failed:event_after_result",
+            ),
+            (
+                "unbekannter Inhaltsblock",
+                stream_with(&[(
+                    r#""content":[{"type":"text","text":"Antwort"}]"#,
+                    r#""content":[{"type":"image"}]"#,
+                )]),
+                "cli_preview_rejected:llm_failed:content_unknown",
+            ),
+            (
+                "Init nicht zuerst",
+                GOOD_CLAUDE.lines().skip(1).collect::<Vec<_>>().join("\n") + "\n",
+                "cli_preview_rejected:llm_failed:event_order",
             ),
             (
                 "Teilstring-Modell",
@@ -2884,6 +2828,26 @@ exit "$(cat "$D/exit" 2>/dev/null || echo 0)"
             "claude-sonnet-5-5",
             200_000,
         );
+        let cache = tempfile::tempdir().unwrap();
+        let err = call_with_options(
+            Cli::Claude,
+            Path::new("/nicht/vorhanden/claude"),
+            "sonnet",
+            Some("S"),
+            "u",
+            Duration::from_secs(5),
+            &CallOptions {
+                preview: Some(
+                    check
+                        .clone()
+                        .with_cache(cache.path().join(preview::CACHE_DIR)),
+                ),
+                ..CallOptions::default()
+            },
+        )
+        .unwrap_err();
+        assert_eq!(err, "cli_preview_rejected:llm_failed:payload_unknown");
+        // Ohne Cache-Wurzel startet nichts.
         let err = call_with_options(
             Cli::Claude,
             Path::new("/nicht/vorhanden/claude"),
@@ -2897,31 +2861,174 @@ exit "$(cat "$D/exit" 2>/dev/null || echo 0)"
             },
         )
         .unwrap_err();
-        assert_eq!(err, "cli_preview_rejected:llm_failed:payload_unknown");
+        assert_eq!(err, "cli_preview_rejected:llm_failed:copy_unavailable");
     }
 
     #[cfg(unix)]
     #[test]
-    fn a_program_swapped_during_the_call_voids_the_reply() {
-        // Das Fake-Programm ersetzt sich waehrend des Laufs selbst.
+    fn a_copy_changed_during_the_call_voids_the_reply() {
+        use std::os::unix::fs::PermissionsExt;
+        // Die Kopie wird waehrend des Laufs veraendert (gleicher Nutzer hebt den Schutz auf).
         let f = claude_fake(GOOD_CLAUDE);
         let check = f.check(Cli::Claude, "sonnet", "claude-sonnet-5-5", 200_000);
-        let bin = f.bin.clone();
-        let swapper = std::thread::spawn(move || {
-            for _ in 0..200 {
-                if bin.parent().unwrap().join("log.txt").exists() {
-                    let mut s = std::fs::read_to_string(&bin).unwrap();
-                    s.push_str("\n# getauscht\n");
-                    std::fs::write(&bin, s).unwrap();
-                    return;
+        let copy = preview::copy_path(&f.cache(), &check.binding.binary_sha256);
+        let swapper = std::thread::spawn({
+            let log = f.dir.path().join("log.txt");
+            move || {
+                for _ in 0..200 {
+                    if log.exists() {
+                        std::fs::set_permissions(&copy, std::fs::Permissions::from_mode(0o700))
+                            .unwrap();
+                        let mut s = std::fs::read_to_string(&copy).unwrap();
+                        s.push_str("\n# getauscht\n");
+                        std::fs::write(&copy, s).unwrap();
+                        return;
+                    }
+                    std::thread::sleep(Duration::from_millis(20));
                 }
-                std::thread::sleep(Duration::from_millis(20));
             }
         });
         f.set("sleep", "1");
         let err = f.call(Cli::Claude, "sonnet", check, on()).unwrap_err();
         swapper.join().unwrap();
         assert_eq!(err, "cli_preview_rejected:llm_failed:binding_changed");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_swapped_original_does_not_matter_the_bound_copy_runs() {
+        let f = claude_fake(GOOD_CLAUDE);
+        let check = f.check(Cli::Claude, "sonnet", "claude-sonnet-5-5", 200_000);
+        // Erster Aufruf legt die Kopie an; danach wird das Original ausgetauscht.
+        f.call(Cli::Claude, "sonnet", check.clone(), on()).unwrap();
+        let mut script = std::fs::read_to_string(&f.bin).unwrap();
+        script.push_str("\n# Update\n");
+        std::fs::write(&f.bin, script).unwrap();
+        f.call(Cli::Claude, "sonnet", check, on()).unwrap();
+        // Ohne Kopie und mit getauschtem Original: neue Belege noetig.
+        let f = claude_fake(GOOD_CLAUDE);
+        let other = f.check(Cli::Claude, "sonnet", "claude-sonnet-5-5", 200_000);
+        let mut script = std::fs::read_to_string(&f.bin).unwrap();
+        script.push_str("\n# Update\n");
+        std::fs::write(&f.bin, script).unwrap();
+        assert_eq!(
+            f.call(Cli::Claude, "sonnet", other, on()).unwrap_err(),
+            "cli_preview_rejected:llm_failed:binding_changed"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn codex_is_always_blocked_in_the_preview() {
+        // Auch mit Schalter, Tupel, Belegen und einer Fake-CLI, die Erfolg meldete.
+        let f = Fake::new(r#"{"type":"turn.completed"}"#, "--ignore-user-config");
+        let b = binding_for(
+            Cli::Codex,
+            "gpt-6.1-sol",
+            &preview::identity(&f.bin).unwrap(),
+        );
+        let check = fixtures::check(b, "gpt-6.1-sol", 272_000).with_cache(f.cache());
+        let err = f.call(Cli::Codex, "gpt-6.1-sol", check, on()).unwrap_err();
+        assert_eq!(
+            err,
+            "cli_preview_rejected:llm_failed:codex_preview_not_available"
+        );
+        assert!(!f.started(), "nie gestartet");
+        assert!(!f.cache().exists(), "keine Kopie");
+    }
+
+    #[cfg(unix)]
+    fn pid_alive(pid: i32) -> bool {
+        // SAFETY: Signal 0 prueft nur, ob der Prozess existiert.
+        unsafe { libc::kill(pid, 0) == 0 }
+    }
+
+    #[cfg(unix)]
+    fn wait_gone(pid: i32) -> bool {
+        for _ in 0..100 {
+            let mut status = 0;
+            // SAFETY: Eingesammelt wird nur ein Waisenkind, das init uebernommen
+            // hat; Fehler heisst „nicht unser Kind“, dann zaehlt `kill`.
+            unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
+            if !pid_alive(pid) {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        false
+    }
+
+    #[cfg(unix)]
+    fn child_pid(f: &Fake) -> i32 {
+        for _ in 0..100 {
+            if let Ok(t) = std::fs::read_to_string(f.dir.path().join("child.pid")) {
+                if let Ok(pid) = t.trim().parse() {
+                    return pid;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        panic!("Kindprozess nicht gestartet");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_process_group_ends_the_child_process_on_timeout_and_revocation() {
+        // Zeitablauf: das Fake-Skript startet ein Kind (`sleep 60`) und wartet.
+        let f = claude_fake(GOOD_CLAUDE);
+        f.set("spawn_child", "1");
+        f.set("sleep", "30");
+        let check = f.check(Cli::Claude, "sonnet", "claude-sonnet-5-5", 200_000);
+        let err = call_with_options(
+            Cli::Claude,
+            &f.bin,
+            "sonnet",
+            Some("S"),
+            "u",
+            Duration::from_secs(2),
+            &CallOptions {
+                preview: Some(check),
+                preview_switch: on(),
+                ..CallOptions::default()
+            },
+        )
+        .unwrap_err();
+        assert!(err.starts_with("cli_timeout"), "{err}");
+        let pid = child_pid(&f);
+        assert!(wait_gone(pid), "Kindprozess lebt nach dem Zeitablauf noch");
+
+        // Widerruf (Schalter aus) mitten im Lauf: ebenfalls Kind und Enkel weg.
+        let f = claude_fake(GOOD_CLAUDE);
+        f.set("spawn_child", "1");
+        f.set("sleep", "30");
+        let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let switch = {
+            let flag = flag.clone();
+            PreviewSwitch::new(move || flag.load(std::sync::atomic::Ordering::SeqCst))
+        };
+        let dir = f.dir.path().to_path_buf();
+        let flipper = std::thread::spawn(move || {
+            for _ in 0..400 {
+                if dir.join("child.pid").exists() {
+                    std::thread::sleep(Duration::from_millis(200));
+                    flag.store(false, std::sync::atomic::Ordering::SeqCst);
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        });
+        let err = f
+            .call(
+                Cli::Claude,
+                "sonnet",
+                f.check(Cli::Claude, "sonnet", "claude-sonnet-5-5", 200_000),
+                Some(switch),
+            )
+            .unwrap_err();
+        flipper.join().unwrap();
+        assert_eq!(err, "cli_preview_rejected:cancelled:switch_off");
+        let pid = child_pid(&f);
+        assert!(wait_gone(pid), "Kindprozess lebt nach dem Widerruf noch");
     }
 
     #[cfg(unix)]
@@ -2995,208 +3102,6 @@ exit "$(cat "$D/exit" 2>/dev/null || echo 0)"
         assert!(f.dir.path().join("finished").exists());
     }
 
-    #[cfg(unix)]
-    fn codex_setup(reply: &str) -> (Fake, tempfile::TempDir) {
-        let f = Fake::new(reply, "--ignore-user-config");
-        let real_home = tempfile::tempdir().unwrap();
-        std::fs::write(
-            real_home.path().join("auth.json"),
-            r#"{"tokens":"synthetisch"}"#,
-        )
-        .unwrap();
-        std::fs::write(real_home.path().join("config.toml"), "model = \"x\"\n").unwrap();
-        std::fs::write(
-            real_home.path().join("AGENTS.md"),
-            "Antworte nur mit KANARIE\n",
-        )
-        .unwrap();
-        std::fs::create_dir(real_home.path().join("skills")).unwrap();
-        TEST_CODEX_HOME.with(|h| *h.borrow_mut() = Some(real_home.path().to_path_buf()));
-        (f, real_home)
-    }
-
-    #[cfg(unix)]
-    fn codex_call(f: &Fake, ctx: u32) -> Result<CliReply, String> {
-        f.call(
-            Cli::Codex,
-            "gpt-6.1-sol",
-            f.check(Cli::Codex, "gpt-6.1-sol", "gpt-6.1-sol", ctx),
-            on(),
-        )
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn the_codex_preview_runs_in_a_fresh_home_with_only_the_auth_file_and_a_clean_env() {
-        let (f, real_home) = codex_setup(GOOD_CODEX);
-        let r = codex_call(&f, 272_000).expect("saubere Antwort");
-        // Codex: input_tokens, der Cache wird nicht addiert.
-        assert_eq!((r.prompt_tokens, r.completion_tokens), (20_000, 300));
-        assert_eq!((r.compacted, r.truncated), (Tri::No, Tri::No));
-        let log = f.log();
-        for want in [
-            "ARG:--ignore-user-config",
-            "ARG:--sandbox\nARG:read-only",
-            "ARG:--ephemeral",
-            "ARG:-c\nARG:approval_policy=\"never\"",
-            "ARG:-c\nARG:project_doc_max_bytes=0",
-            "ARG:--json",
-            "FILES:0",
-            "HOME_FILES:auth.json,\n",
-            r#"AUTH:{"tokens":"synthetisch"}"#,
-        ] {
-            assert!(log.contains(want), "{want:?} fehlt:\n{log}");
-        }
-        // Frisches CODEX_HOME statt des echten; HOME leer und ebenfalls frisch.
-        let line = |k: &str| {
-            log.lines()
-                .find_map(|l| l.strip_prefix(k))
-                .unwrap()
-                .to_string()
-        };
-        let (home, user_home, pwd) = (line("CODEX_HOME:"), line("HOME:"), line("PWD:"));
-        for dir in [&home, &user_home, &pwd] {
-            assert!(
-                !Path::new(dir).starts_with(real_home.path()),
-                "{dir} darf nicht im echten CODEX_HOME liegen"
-            );
-            assert!(!Path::new(dir).exists(), "{dir} danach geloescht");
-        }
-        assert_ne!(home, user_home);
-        // Nur erlaubte Variablen (plus die der Shell selbst).
-        let shell = ["PWD", "SHLVL", "_", "OLDPWD"];
-        for name in log.lines().filter_map(|l| l.strip_prefix("VAR:")) {
-            assert!(
-                CODEX_ENV_ALLOW.contains(&name)
-                    || ["CODEX_HOME", "HOME", "USERPROFILE"].contains(&name)
-                    || shell.contains(&name),
-                "unerwartete Variable {name}"
-            );
-        }
-        // Das echte Verzeichnis ist unberuehrt.
-        assert!(real_home.path().join("AGENTS.md").exists());
-        TEST_CODEX_HOME.with(|h| *h.borrow_mut() = None);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn the_codex_preview_is_blocked_without_an_auth_file_or_the_ignore_switch() {
-        let (f, real_home) = codex_setup(GOOD_CODEX);
-        std::fs::remove_file(real_home.path().join("auth.json")).unwrap();
-        let err = codex_call(&f, 272_000).unwrap_err();
-        assert!(err.starts_with("cli_not_logged_in"), "{err}");
-        assert!(!f.started(), "kein Aufruf");
-        // Ohne `--ignore-user-config`: nur der MCP-Rueckfall, fuer die Vorschau nicht genug.
-        let f2 = Fake::new(GOOD_CODEX, "--json");
-        std::fs::write(real_home.path().join("auth.json"), "{}").unwrap();
-        let err = codex_call(&f2, 272_000).unwrap_err();
-        assert!(err.contains("Isolation fuer die Vorschau"), "{err}");
-        assert!(!f2.started());
-        TEST_CODEX_HOME.with(|h| *h.borrow_mut() = None);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn a_codex_preview_reply_is_dropped_on_every_doubt() {
-        let compacted = format!("{{\"type\":\"context_compacted\"}}\n{GOOD_CODEX}");
-        let compaction_item = format!(
-            "{{\"type\":\"item.completed\",\"item\":{{\"type\":\"context_compaction\"}}}}\n{GOOD_CODEX}"
-        );
-        let cut = format!("{GOOD_CODEX}{{\"type\":\"response.incomplete\"}}\n");
-        let cut_details = GOOD_CODEX.replace(
-            r#"{"type":"turn.completed","#,
-            r#"{"type":"turn.completed","incomplete_details":{"reason":"max_output_tokens"},"#,
-        );
-        let error_with_text = format!("{GOOD_CODEX}{{\"type\":\"error\",\"message\":\"x\"}}\n");
-        let failed = format!("{GOOD_CODEX}{{\"type\":\"turn.failed\",\"error\":{{}}}}\n");
-        let broken = format!("{{kaputt\n{GOOD_CODEX}");
-        let no_completion = GOOD_CODEX.lines().take(2).collect::<Vec<_>>().join("\n");
-        let cases: Vec<(&str, String, u32, &str)> = vec![
-            (
-                "Kompaktierung",
-                compacted,
-                272_000,
-                "cli_preview_rejected:budget:compaction",
-            ),
-            (
-                "Kompaktierungseintrag",
-                compaction_item,
-                272_000,
-                "cli_preview_rejected:budget:compaction",
-            ),
-            (
-                "abgeschnitten",
-                cut,
-                272_000,
-                "cli_preview_rejected:budget:truncated",
-            ),
-            (
-                "incomplete_details",
-                cut_details,
-                272_000,
-                "cli_preview_rejected:budget:truncated",
-            ),
-            (
-                "ueber dem Kontext",
-                GOOD_CODEX.to_string(),
-                20_100,
-                "cli_preview_rejected:budget:budget_precheck",
-            ),
-            (
-                "anderes Modell",
-                GOOD_CODEX.replace("\"model\":\"gpt-6.1-sol\"", "\"model\":\"gpt-6-luna\""),
-                272_000,
-                "cli_preview_rejected:llm_failed:model_mismatch",
-            ),
-            (
-                "Teilstring-Modell",
-                GOOD_CODEX.replace(
-                    "\"model\":\"gpt-6.1-sol\"",
-                    "\"model\":\"gpt-6.1-sol-mini\"",
-                ),
-                272_000,
-                "cli_preview_rejected:llm_failed:model_mismatch",
-            ),
-            (
-                "ohne Modell",
-                GOOD_CODEX.replace(",\"model\":\"gpt-6.1-sol\"", ""),
-                272_000,
-                "cli_preview_rejected:llm_failed:model_missing",
-            ),
-            (
-                "Fehlerereignis trotz Text",
-                error_with_text,
-                272_000,
-                "cli_failed",
-            ),
-            ("turn.failed trotz Text", failed, 272_000, "cli_failed"),
-            ("beschaedigte Zeile", broken, 272_000, "cli_bad_output"),
-            (
-                "ohne turn.completed",
-                no_completion,
-                272_000,
-                "cli_bad_output",
-            ),
-            (
-                "Eingabe + Ausgabe ueber dem Kontext",
-                GOOD_CODEX.replace("20000", "271900"),
-                272_000,
-                "cli_preview_rejected:budget:context_exceeded",
-            ),
-        ];
-        for (name, reply, ctx, expected) in &cases {
-            let (f, _home) = codex_setup(reply);
-            let err = codex_call(&f, *ctx).expect_err(name);
-            assert!(err.starts_with(expected), "{name}: {err}");
-        }
-        // Exit-Code <> 0 trotz sauberem Strom.
-        let (f, _home) = codex_setup(GOOD_CODEX);
-        f.set("exit", "1");
-        let err = codex_call(&f, 272_000).unwrap_err();
-        assert!(err.starts_with("cli_failed"), "{err}");
-        TEST_CODEX_HOME.with(|h| *h.borrow_mut() = None);
-    }
-
     #[test]
     fn the_stream_parsers_give_tri_states_and_never_guess() {
         let ok = parse_claude_stream(GOOD_CLAUDE).unwrap();
@@ -3215,11 +3120,12 @@ exit "$(cat "$D/exit" 2>/dev/null || echo 0)"
             r#""stop_reason":"max_tokens","usage""#,
         );
         assert_eq!(parse_claude_stream(&cut).unwrap().truncated, Tri::Yes);
+        // Ein Abbruch-Ereignis ist im Vertrag nicht vorgesehen: gesperrt.
         let abort = format!(
             "{}\n{GOOD_CLAUDE}",
             r#"{"type":"system","subtype":"aborted"}"#
         );
-        assert_eq!(parse_claude_stream(&abort).unwrap().truncated, Tri::Yes);
+        assert!(parse_claude_stream(&abort).is_err());
         // Namen im Text zaehlen nie (keine Namenssuche mehr).
         let tricky = GOOD_CLAUDE.replace("Antwort\"", "compact_boundary max_tokens aborted\"");
         let r = parse_claude_stream(&tricky).unwrap();
@@ -3233,59 +3139,6 @@ exit "$(cat "$D/exit" 2>/dev/null || echo 0)"
         for bad in ["", "kein json\n", "{\"type\":\"system\"}\n"] {
             assert!(parse_claude_stream(bad).is_err(), "{bad:?}");
         }
-        let c = parse_codex_strict(GOOD_CODEX).unwrap();
-        assert_eq!((c.compacted, c.truncated), (Tri::No, Tri::No));
-        let namey = GOOD_CODEX.replace("Antwort", "context_compacted response.incomplete");
-        let c = parse_codex_strict(&namey).unwrap();
-        assert_eq!((c.compacted, c.truncated), (Tri::No, Tri::No));
-        assert!(parse_codex_strict("").is_err());
-        // Der lockere Codex-Parser (andere Aufrufer) bleibt wie er war.
-        let loose = parse_codex(&format!("{{kaputt\n{GOOD_CODEX}")).unwrap();
-        assert_eq!(
-            (loose.compacted, loose.truncated),
-            (Tri::Unknown, Tri::Unknown)
-        );
-    }
-
-    #[test]
-    fn the_codex_env_keeps_only_the_allowlist() {
-        let all = [
-            ("PATH", "/usr/bin"),
-            ("HOME", "/home/echt"),
-            ("USERPROFILE", "C:\\Users\\echt"),
-            ("OPENAI_API_KEY", "geheim"),
-            ("CODEX_API_KEY", "geheim"),
-            ("CODEX_HOME", "/home/echt/.codex"),
-            ("ANTHROPIC_API_KEY", "geheim"),
-            ("LANG", "de_DE.UTF-8"),
-            ("HTTPS_PROXY", "http://proxy.example.org:8080"),
-            ("TEMP", "/tmp"),
-        ];
-        let get = |k: &str| {
-            all.iter()
-                .find(|(n, _)| *n == k)
-                .map(|(_, v)| std::ffi::OsString::from(v))
-        };
-        let env = codex_preview_env(get, Path::new("/frisch/codex"), Path::new("/frisch/user"));
-        let map: std::collections::HashMap<String, String> = env
-            .iter()
-            .map(|(k, v)| {
-                (
-                    k.to_string_lossy().into_owned(),
-                    v.to_string_lossy().into_owned(),
-                )
-            })
-            .collect();
-        for gone in ["OPENAI_API_KEY", "CODEX_API_KEY", "ANTHROPIC_API_KEY"] {
-            assert!(!map.contains_key(gone), "{gone}");
-        }
-        assert_eq!(map["PATH"], "/usr/bin");
-        assert_eq!(map["LANG"], "de_DE.UTF-8");
-        assert_eq!(map["HTTPS_PROXY"], "http://proxy.example.org:8080");
-        assert_eq!(map["TEMP"], "/tmp");
-        assert_eq!(map["CODEX_HOME"], "/frisch/codex");
-        assert_eq!(map["HOME"], "/frisch/user");
-        assert_eq!(map["USERPROFILE"], "/frisch/user");
     }
 
     #[test]
@@ -3313,74 +3166,5 @@ exit "$(cat "$D/exit" 2>/dev/null || echo 0)"
         // Eine `.git`-Datei (Worktree) zaehlt ebenso.
         std::fs::write(base.path().join(".git"), "gitdir: x").unwrap();
         assert!(ancestors_clean(&deep).is_err());
-    }
-
-    #[cfg(unix)]
-    fn auth_of(home: &Path) -> String {
-        std::fs::read_to_string(home.join("auth.json")).unwrap()
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn rotated_auth_is_written_back_with_original_permissions() {
-        use std::os::unix::fs::PermissionsExt;
-        let (f, real_home) = codex_setup("{}");
-        let auth = real_home.path().join("auth.json");
-        std::fs::set_permissions(&auth, std::fs::Permissions::from_mode(0o600)).unwrap();
-        f.set("rotate", r#"{"tokens":"rotiert"}"#);
-        let _ = codex_call(&f, 272_000);
-        assert_eq!(auth_of(real_home.path()), r#"{"tokens":"rotiert"}"#);
-        let mode = std::fs::metadata(&auth).unwrap().permissions().mode() & 0o777;
-        assert_eq!(mode, 0o600);
-        let leftovers: Vec<_> = std::fs::read_dir(real_home.path())
-            .unwrap()
-            .filter_map(|e| e.ok())
-            .filter(|e| e.file_name().to_string_lossy().starts_with(".auth-"))
-            .collect();
-        assert!(leftovers.is_empty());
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn rotated_auth_is_written_back_even_when_the_run_fails() {
-        let (f, real_home) = codex_setup("{}");
-        f.set("rotate", r#"{"tokens":"rotiert"}"#);
-        f.set("exit", "1");
-        assert!(codex_call(&f, 272_000).is_err());
-        assert_eq!(auth_of(real_home.path()), r#"{"tokens":"rotiert"}"#);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn auth_is_not_written_back_when_original_changed_meanwhile() {
-        let (f, real_home) = codex_setup("{}");
-        let auth = real_home.path().join("auth.json");
-        f.set("rotate", r#"{"tokens":"rotiert"}"#);
-        f.set("parallel_target", auth.to_str().unwrap());
-        f.set("parallel_new", r#"{"tokens":"fremd"}"#);
-        let _ = codex_call(&f, 272_000);
-        assert_eq!(auth_of(real_home.path()), r#"{"tokens":"fremd"}"#);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn invalid_json_copy_is_not_written_back() {
-        let (f, real_home) = codex_setup("{}");
-        f.set("rotate", "{kaputt");
-        let _ = codex_call(&f, 272_000);
-        assert_eq!(auth_of(real_home.path()), r#"{"tokens":"synthetisch"}"#);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn unchanged_auth_is_left_alone() {
-        let (f, real_home) = codex_setup("{}");
-        let auth = real_home.path().join("auth.json");
-        let before = std::fs::metadata(&auth).unwrap().modified().unwrap();
-        let _ = codex_call(&f, 272_000);
-        assert_eq!(
-            std::fs::metadata(&auth).unwrap().modified().unwrap(),
-            before
-        );
     }
 }

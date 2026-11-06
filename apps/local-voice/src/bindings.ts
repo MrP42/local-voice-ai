@@ -8515,7 +8515,16 @@ export type Blocked =
 /**
  * Der Kontext des Modells ist nicht belegt.
  */
-"context_unknown"
+"context_unknown" | 
+/**
+ * Codex gibt es in der Vorschau nicht (Phase 2, eigenes Issue).
+ */
+"codex_preview_not_available" | 
+/**
+ * Das Claude-Programm ist keine native Binaerdatei (npm-, Node- oder
+ * Skript-Launcher): nicht bindbar.
+ */
+"claude_not_native"
 export type Book = { id: string; title: string; created_ms: number; 
 /**
  * Seiten in Reihenfolge der Teile.

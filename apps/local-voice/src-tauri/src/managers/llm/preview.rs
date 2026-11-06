@@ -14,22 +14,30 @@
 //!   Isolationsfaehigkeiten dieser Version belegt UND eine passende Messung
 //!   ([`gate`], [`proof_for`]). Fehlt eines, ist die Vorschau nicht freigegeben.
 //! * Vorab ([`precheck`]): `UTF-8-Bytes(System + Prompt) + Overhead * 1,2 +
-//!   max. Ausgabe <= Kompaktierungsschwelle * Kontext`, mit den GEMESSENEN
-//!   Werten.
+//!   gesamte Ausgabereserve <= PREVIEW_MAX_CONTEXT_SHARE (0,5) * Kontext`; der
+//!   Overhead ist GEMESSEN, die Schwelle fest im Code (nicht vom Bediener).
+//! * Nur Claude (Phase 1): Codex ist in der Vorschau IMMER gesperrt
+//!   (`codex_preview_not_available`), Phase 2 folgt als eigenes Issue.
 //! * Nachtraeglich ([`verify`]): Nutzungsangabe vorhanden und plausibel,
 //!   gemeldetes Modell EXAKT das gemessene, Kompaktierung und Abschneiden
 //!   je Tri-State ([`Tri`]) „nein“ (und der Ereignisvertrag der Version
 //!   belegt), Eingabe + Ausgabe <= Kontext. Sonst wird der Text nie an
 //!   Oberflaeche oder Sprache gegeben (Aufrufer: `cli::call_with_options`).
-//! * Bindung: das Programm wird vor UND nach dem Aufruf neu gehasht
-//!   ([`rebind`]); eine Abweichung (Auto-Update, Austausch) verwirft die Antwort.
+//! * Bindung: bei der Bindung wird die aufgeloeste NATIVE Claude-Datei in einen
+//!   app-eigenen Cache kopiert (`<App-Daten>/booktalk-cli/<sha256>/claude`),
+//!   erneut gehasht und schreibgeschuetzt ([`bind_copy`]). Der Aufruf startet
+//!   AUSSCHLIESSLICH diese Kopie ([`LaunchCopy`]); vor dem Start und nach dem
+//!   Ende wird ihr Hash neu gebildet ([`rebind`]), aus einem offen gehaltenen
+//!   Handle (Windows: Teilen nur zum Lesen, also kein Schreiben/Umbenennen).
+//!   Restgrenze: derselbe Nutzer kann auf Unix per `chmod` die Rechte
+//!   aendern; das Handle verhindert dort keinen Austausch, der Hash NACH dem
+//!   Lauf verwirft die Antwort dann.
 //! * Schalter: [`PreviewSwitch`] wird vor, waehrend und nach dem Aufruf
 //!   geprueft; bei „aus“ wird der Prozessbaum beendet und das Ergebnis verworfen.
 //!
 //! Kein Frage-, Antwort- oder Buchtext im Log: [`audit_line`] kennt nur Tupel,
 //! Modellnamen, Methode und Status.
 
-use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -37,7 +45,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use specta::Type;
 
-use super::cli::{launcher, split_spec, Cli, CliReply, CLAUDE_MODELS};
+use super::cli::{split_spec, Cli, CliReply, CLAUDE_MODELS};
 use super::evidence::{Evidence, IsolationCaps, Measurement};
 
 /// Budgetmethode in Bericht und Audit.
@@ -49,6 +57,13 @@ pub const CLAUDE_CONTEXT_TOKENS: u32 = 200_000;
 /// Sicherheitszuschlag auf den GEMESSENEN Overhead, in Prozent (1,2-fach).
 /// Kein Messwert und keine Freigabebasis, nur der Aufschlag auf einen solchen.
 pub const OVERHEAD_FACTOR_PERCENT: u64 = 120;
+/// Hoechster Anteil des Kontexts, den ein Aufruf ausschoepfen darf (Eingabe mit
+/// gemessenem Overhead * 1,2 plus gesamte Ausgabereserve). Fest im Code,
+/// konservativ: einmaliger Aufruf in frischer Sitzung, weit unter der
+/// Schwelle, ab der Claude Code still kompaktiert. Kompaktierung wird
+/// zusaetzlich ueber `compact_boundary` erkannt und sperrt. Nicht
+/// einstellbar und nicht Teil der Messdatei.
+pub const PREVIEW_MAX_CONTEXT_SHARE: f64 = 0.5;
 /// Eine Nutzungsangabe mit weniger Eingabetoken als `Bytes / MIN_BYTES_PER_TOKEN`
 /// ist unplausibel (kein Tokenizer packt mehr als ein paar Bytes in ein Token).
 const MIN_BYTES_PER_TOKEN: usize = 16;
@@ -71,20 +86,19 @@ pub fn provider_of(cli: Cli) -> &'static str {
 }
 
 /// Belegter Kontext des Modells. Claude: 200000 (nie mehr, auch wenn die
-/// Konfiguration mehr nennt). Codex: nur ein in der Konfiguration eingetragener
-/// Wert; ohne ihn ist der Kontext nicht belegt (`None`, kein Aufruf).
+/// Konfiguration mehr nennt). Codex: gibt es in der Vorschau nicht (`None`).
 pub fn context_tokens(cli: Cli, configured: Option<u32>) -> Option<u32> {
     match cli {
         Cli::Claude => {
             Some(configured.map_or(CLAUDE_CONTEXT_TOKENS, |c| c.clamp(1, CLAUDE_CONTEXT_TOKENS)))
         }
-        Cli::Codex => configured.filter(|c| *c > 0),
+        Cli::Codex => None,
     }
 }
 
-/// Planungsgrenze: Kompaktierungsschwelle (Prozent des Kontexts, gemessen).
-pub fn limit_tokens(context: u32, threshold_percent: u64) -> u64 {
-    u64::from(context) * threshold_percent.min(100) / 100
+/// Planungsgrenze: [`PREVIEW_MAX_CONTEXT_SHARE`] des Kontexts.
+pub fn limit_tokens(context: u32) -> u64 {
+    (f64::from(context) * PREVIEW_MAX_CONTEXT_SHARE) as u64
 }
 
 /// Eingabe in Token-Einheiten: UTF-8-Bytes (eine Obergrenze der Token) plus
@@ -124,7 +138,7 @@ pub struct PreviewBinding {
 pub fn concrete_model(cli: Cli, model_id: &str) -> Option<String> {
     let base = split_spec(model_id).0;
     match cli {
-        Cli::Codex => Some(base.to_string()),
+        Cli::Codex => None,
         Cli::Claude => {
             let half = CLAUDE_MODELS.len() / 2;
             match CLAUDE_MODELS.iter().position(|m| *m == base) {
@@ -199,10 +213,18 @@ pub enum Blocked {
     MeasurementMissing,
     /// Der Kontext des Modells ist nicht belegt.
     ContextUnknown,
+    /// Codex gibt es in der Vorschau nicht (Phase 2, eigenes Issue).
+    CodexPreviewNotAvailable,
+    /// Das Claude-Programm ist keine native Binaerdatei (npm-, Node- oder
+    /// Skript-Launcher): nicht bindbar.
+    ClaudeNotNative,
 }
 
 /// Belege fuer ein Tupel; die erste Luecke gibt den Grund.
 pub fn proof_for(evidence: &Evidence, binding: &PreviewBinding) -> Result<Proof, Blocked> {
+    if binding.provider != provider_of(Cli::Claude) {
+        return Err(Blocked::CodexPreviewNotAvailable);
+    }
     let caps = evidence
         .caps_for(&binding.provider, &binding.cli_version)
         .filter(IsolationCaps::complete)
@@ -266,6 +288,12 @@ pub fn gate(
     let Some(current) = current else {
         return Gate::state(PreviewState::Reconfirm, Some(Blocked::NoCli));
     };
+    if current.provider != provider_of(Cli::Claude) {
+        return Gate::state(
+            PreviewState::NotReleased,
+            Some(Blocked::CodexPreviewNotAvailable),
+        );
+    }
     match binding_state(stored, current) {
         BindingState::Missing => {
             Gate::state(PreviewState::Reconfirm, Some(Blocked::BindingMissing))
@@ -288,6 +316,10 @@ pub fn gate(
 pub fn blocked_of_error(err: &str) -> Blocked {
     if err.starts_with("payload_unknown") {
         Blocked::PayloadUnknown
+    } else if err.starts_with("claude_not_native") {
+        Blocked::ClaudeNotNative
+    } else if err.starts_with("codex_preview_not_available") {
+        Blocked::CodexPreviewNotAvailable
     } else {
         Blocked::NoCli
     }
@@ -299,24 +331,38 @@ pub fn blocked_of_error(err: &str) -> Blocked {
 /// Der Hash selbst wird nie gemerkt, sondern bei jeder Pruefung neu gebildet.
 static VERSION_CACHE: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
 
-/// SHA-256 (hex) einer Datei, gelesen in Bloecken.
-pub fn sha256_file(path: &Path) -> std::io::Result<String> {
-    use std::io::Read;
-    let mut file = std::fs::File::open(path)?;
+/// Name des Cache-Ordners im App-Datenordner.
+pub const CACHE_DIR: &str = "booktalk-cli";
+
+fn exe_name() -> &'static str {
+    if cfg!(windows) {
+        "claude.exe"
+    } else {
+        "claude"
+    }
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// SHA-256 (hex) aus einem Leser, gelesen in Bloecken.
+fn hash_reader(r: &mut impl std::io::Read) -> std::io::Result<String> {
     let mut hasher = Sha256::new();
     let mut buf = vec![0u8; 1 << 20];
     loop {
-        let n = file.read(&mut buf)?;
+        let n = r.read(&mut buf)?;
         if n == 0 {
             break;
         }
         hasher.update(&buf[..n]);
     }
-    Ok(hasher
-        .finalize()
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect())
+    Ok(hex(&hasher.finalize()))
+}
+
+/// SHA-256 (hex) einer Datei, gelesen in Bloecken.
+pub fn sha256_file(path: &Path) -> std::io::Result<String> {
+    hash_reader(&mut std::fs::File::open(path)?)
 }
 
 /// Erste nichtleere Zeile einer `--version`-Ausgabe, auf 120 Zeichen gekuerzt.
@@ -328,88 +374,67 @@ pub fn parse_version(stdout: &str) -> Option<String> {
         .map(|l| l.chars().take(120).collect())
 }
 
-fn is_shim(binary: &Path) -> bool {
-    binary
+#[cfg(test)]
+thread_local! {
+    /// Nur Tests: Fake-CLIs sind Skripte; sie duerfen die Pruefung „nativ“ umgehen.
+    pub(crate) static TEST_ALLOW_SCRIPT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Nur eine NATIVE Claude-Binaerdatei ist bindbar: kein npm-/Node-/Skript-
+/// Launcher (Shebang, `.cmd`, `.bat`, `.js`, `cli.js`, ...). Erkannt an
+/// Endung und Dateikopf (ELF, PE, Mach-O). Sonst `claude_not_native`.
+pub fn check_native(path: &Path) -> Result<(), String> {
+    #[cfg(test)]
+    if TEST_ALLOW_SCRIPT.with(std::cell::Cell::get) {
+        return Ok(());
+    }
+    let not_native = |why: &str| Err(format!("claude_not_native: {why}"));
+    let ext = path
         .extension()
-        .is_some_and(|e| e.eq_ignore_ascii_case("cmd") || e.eq_ignore_ascii_case("bat"))
-}
-
-/// Wurzel des npm-Pakets `@openai/codex`, wenn `binary` nur dessen Startskript
-/// ist: ein `.cmd`-Skript neben `node_modules/@openai/codex` (Windows) oder ein
-/// Verweis (`bin/codex` -> `…/@openai/codex/bin/codex.js`, Linux/macOS).
-fn npm_package_root(binary: &Path, real: &Path) -> Option<PathBuf> {
-    if is_shim(binary) {
-        let pkg = binary
-            .parent()?
-            .join("node_modules")
-            .join("@openai")
-            .join("codex");
-        return pkg.is_dir().then_some(pkg);
+        .map(|e| e.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+    if ["cmd", "bat", "js", "mjs", "cjs", "ps1", "sh", "py", "ts"].contains(&ext.as_str()) {
+        return not_native("Skript-Endung");
     }
-    real.ancestors()
-        .find(|a| a.ends_with(Path::new("@openai").join("codex")))
-        .map(Path::to_path_buf)
-}
-
-/// Das native Programm eines npm-Pakets: `…/codex-<plattform>/vendor/<triple>/
-/// codex/codex[.exe]`, im Paket selbst, darunter oder als Nachbar unter
-/// `@openai/`. Genau ein Treffer, sonst ist es nicht bestimmbar.
-fn native_in_package(root: &Path) -> Result<PathBuf, String> {
-    let mut vendors: Vec<PathBuf> = vec![root.join("vendor")];
-    let scopes = [
-        Some(root.join("node_modules").join("@openai")),
-        root.parent().map(Path::to_path_buf),
-    ];
-    for scope in scopes.into_iter().flatten() {
-        let Ok(entries) = std::fs::read_dir(&scope) else {
-            continue;
-        };
-        vendors.extend(
-            entries
-                .flatten()
-                .filter(|e| e.file_name().to_string_lossy().starts_with("codex-"))
-                .map(|e| e.path().join("vendor")),
-        );
+    let mut head = [0u8; 4];
+    let read = std::fs::File::open(path)
+        .and_then(|mut f| std::io::Read::read(&mut f, &mut head))
+        .map_err(|e| format!("cli_missing: {e}"))?;
+    let head = &head[..read];
+    if head.starts_with(b"#!") {
+        return not_native("Skript (Shebang)");
     }
-    let mut found = BTreeSet::new();
-    for vendor in vendors {
-        let Ok(triples) = std::fs::read_dir(&vendor) else {
-            continue;
-        };
-        for triple in triples.flatten() {
-            for name in ["codex", "codex.exe"] {
-                let exe = triple.path().join("codex").join(name);
-                if exe.is_file() {
-                    if let Ok(real) = std::fs::canonicalize(&exe) {
-                        found.insert(real);
-                    }
-                }
-            }
-        }
-    }
-    match found.len() {
-        1 => Ok(found.into_iter().next().unwrap_or_default()),
-        0 => Err("payload_unknown: kein natives Programm im npm-Paket gefunden".to_string()),
-        _ => Err("payload_unknown: mehrere native Programme im npm-Paket".to_string()),
+    let native = head.starts_with(&[0x7f, b'E', b'L', b'F'])
+        || head.starts_with(b"MZ")
+        || [
+            [0xfe, 0xed, 0xfa, 0xce],
+            [0xfe, 0xed, 0xfa, 0xcf],
+            [0xce, 0xfa, 0xed, 0xfe],
+            [0xcf, 0xfa, 0xed, 0xfe],
+            [0xca, 0xfe, 0xba, 0xbe],
+        ]
+        .iter()
+        .any(|m| head.starts_with(m));
+    if native {
+        Ok(())
+    } else {
+        not_native("kein ELF-, PE- oder Mach-O-Kopf")
     }
 }
 
-/// Das Programm, das wirklich laeuft und gehasht wird: bei Claude die
-/// aufgeloeste Datei (Verweise aufgeloest), bei einem npm-Codex die NATIVE
-/// Binaerdatei statt des Startskripts. Nicht bestimmbar: `payload_unknown`.
+/// Das Programm, das wirklich laeuft und gehasht wird: die aufgeloeste Datei
+/// (Verweise aufgeloest). Nicht bestimmbar: `cli_missing`.
 pub fn payload_path(binary: &Path) -> Result<PathBuf, String> {
-    let real = std::fs::canonicalize(binary).map_err(|e| format!("cli_missing: {e}"))?;
-    match npm_package_root(binary, &real) {
-        None => Ok(real),
-        Some(root) => native_in_package(&root),
-    }
+    std::fs::canonicalize(binary).map_err(|e| format!("cli_missing: {e}"))
 }
 
 /// Version und Pruefsumme der CLI. Hasht bei JEDEM Aufruf neu (kein Cache ueber
-/// Pfad/Zeit/Groesse); nur die Version wird je Inhaltshash gemerkt. Blockiert
-/// (liest die Datei, startet ggf. die CLI): auf einem Blocking-Thread ausfuehren.
+/// Pfad/Zeit/Groesse); nur die Version wird je Inhaltshash gemerkt. Nur
+/// native Programme. Blockiert (liest die Datei, startet ggf. die CLI): auf
+/// einem Blocking-Thread ausfuehren.
 pub fn identity(binary: &Path) -> Result<Identity, String> {
     let payload = payload_path(binary)?;
+    check_native(&payload)?;
     let sha256 = sha256_file(&payload).map_err(|e| format!("cli_failed: {e}"))?;
     let cached = VERSION_CACHE.lock().ok().and_then(|c| {
         c.iter()
@@ -419,10 +444,8 @@ pub fn identity(binary: &Path) -> Result<Identity, String> {
     if let Some(version) = cached {
         return Ok(Identity { version, sha256 });
     }
-    let (program, mut argv) = launcher(binary);
-    argv.push("--version".into());
-    let mut cmd = std::process::Command::new(program);
-    cmd.args(&argv)
+    let mut cmd = std::process::Command::new(&payload);
+    cmd.arg("--version")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
@@ -445,32 +468,285 @@ pub fn identity(binary: &Path) -> Result<Identity, String> {
 }
 
 /// Aktuelles Tupel fuer ein Modell: sucht die CLI und liest ihre Identitaet.
-/// Blockiert.
+/// Nur Claude; fuer Codex gibt es in der Vorschau kein Tupel. Blockiert.
 pub fn current_binding(cli: Cli, model_id: &str) -> Result<PreviewBinding, String> {
+    if cli != Cli::Claude {
+        return Err("codex_preview_not_available: Codex gibt es in der Vorschau nicht".to_string());
+    }
     let binary = super::cli::locate(cli)
         .ok_or_else(|| "cli_missing: Die CLI des Anbieters ist nicht installiert".to_string())?;
     Ok(binding_for(cli, model_id, &identity(&binary)?))
 }
 
+// ------------------------------------------------------ Kopie im Cache --
+
+/// Pfad der Kopie zu einem Hash.
+pub fn copy_path(root: &Path, sha256: &str) -> PathBuf {
+    root.join(sha256).join(exe_name())
+}
+
+#[cfg(unix)]
+fn set_mode(path: &Path, mode: u32) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+}
+
+/// Datei schreibgeschuetzt (Unix: 0500, Eigentuemer; Windows: read-only).
+fn protect_file(path: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        set_mode(path, 0o500)
+    }
+    #[cfg(not(unix))]
+    {
+        let mut perms = std::fs::metadata(path)?.permissions();
+        perms.set_readonly(true);
+        std::fs::set_permissions(path, perms)
+    }
+}
+
+/// Ordner schreibgeschuetzt (Unix: 0500; Windows kennt das nicht).
+fn protect_dir(path: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        set_mode(path, 0o500)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        Ok(())
+    }
+}
+
+/// Loescht einen (geschuetzten) Cache-Ordner samt Inhalt.
+fn force_remove(dir: &Path) {
+    #[cfg(unix)]
+    let _ = set_mode(dir, 0o700);
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for e in entries.flatten() {
+            #[cfg(not(unix))]
+            if let Ok(meta) = e.metadata() {
+                let mut perms = meta.permissions();
+                #[allow(clippy::permissions_set_readonly_false)]
+                perms.set_readonly(false);
+                let _ = std::fs::set_permissions(e.path(), perms);
+            }
+            #[cfg(unix)]
+            let _ = e;
+        }
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+fn is_hash_dir(name: &str) -> bool {
+    name.len() == 64 && name.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+/// Alte Kopien anderer Hashes und liegengebliebene Zwischenordner loeschen.
+fn cleanup_others(root: &Path, keep: &str) {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for e in entries.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        let owned =
+            (is_hash_dir(&name) && !name.eq_ignore_ascii_case(keep)) || name.starts_with(".stage-");
+        if owned && e.file_type().is_ok_and(|t| t.is_dir()) {
+            force_remove(&e.path());
+        }
+    }
+}
+
+/// Kein Symlink in Wurzel, Hash-Ordner und Datei; der kanonische Pfad ist
+/// genau `<kanonische Wurzel>/<hash>/<name>`.
+fn assert_no_symlinks(root: &Path, sha256: &str) -> Result<(), String> {
+    let bad = |why: &str| {
+        Err(format!(
+            "payload_unknown: Kopie nicht vertrauenswuerdig ({why})"
+        ))
+    };
+    let file = copy_path(root, sha256);
+    let dir = root.join(sha256);
+    for part in [root, dir.as_path(), file.as_path()] {
+        match std::fs::symlink_metadata(part) {
+            Ok(m) if m.file_type().is_symlink() => return bad("Symlink"),
+            Ok(_) => {}
+            Err(e) => return Err(format!("payload_unknown: Kopie fehlt ({e})")),
+        }
+    }
+    let (Ok(real_root), Ok(real_file)) =
+        (std::fs::canonicalize(root), std::fs::canonicalize(&file))
+    else {
+        return bad("Pfad nicht aufloesbar");
+    };
+    if real_file != real_root.join(sha256).join(exe_name()) {
+        return bad("Pfad weicht ab");
+    }
+    Ok(())
+}
+
+/// Datei zum Lesen oeffnen; Windows: Teilen nur zum Lesen, solange das Handle
+/// lebt, sind Schreiben, Umbenennen und Loeschen gesperrt.
+fn open_pinned(path: &Path) -> std::io::Result<std::fs::File> {
+    let mut opts = std::fs::OpenOptions::new();
+    opts.read(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        opts.share_mode(1); // FILE_SHARE_READ
+    }
+    opts.open(path)
+}
+
+fn hash_handle(mut file: &std::fs::File) -> std::io::Result<String> {
+    use std::io::Seek;
+    file.seek(std::io::SeekFrom::Start(0))?;
+    hash_reader(&mut file)
+}
+
+/// Kopiert `source` in einen Zwischenordner, hasht die KOPIE neu und legt sie
+/// geschuetzt unter `<root>/<sha256>/claude` ab. Gibt den Hash der Kopie.
+/// Eine schon vorhandene, stimmige Kopie bleibt unberuehrt.
+fn make_copy(root: &Path, source: &Path) -> Result<String, String> {
+    let real = payload_path(source)?;
+    check_native(&real)?;
+    std::fs::create_dir_all(root).map_err(|e| format!("cli_failed: {e}"))?;
+    #[cfg(unix)]
+    set_mode(root, 0o700).map_err(|e| format!("cli_failed: {e}"))?;
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    let stage = root.join(format!(".stage-{}-{stamp}", std::process::id()));
+    std::fs::create_dir(&stage).map_err(|e| format!("cli_failed: {e}"))?;
+    let result = (|| -> Result<String, String> {
+        let staged = stage.join(exe_name());
+        let mut from = std::fs::File::open(&real).map_err(|e| format!("cli_missing: {e}"))?;
+        let mut to = std::fs::File::create(&staged).map_err(|e| format!("cli_failed: {e}"))?;
+        std::io::copy(&mut from, &mut to).map_err(|e| format!("cli_failed: {e}"))?;
+        to.sync_all().map_err(|e| format!("cli_failed: {e}"))?;
+        drop(to);
+        drop(from);
+        // Neu hashen: massgeblich ist der Inhalt der KOPIE.
+        let sha = sha256_file(&staged).map_err(|e| format!("cli_failed: {e}"))?;
+        protect_file(&staged).map_err(|e| format!("cli_failed: {e}"))?;
+        let target = root.join(&sha);
+        if let Ok(existing) = sha256_file(&copy_path(root, &sha)) {
+            if existing == sha {
+                return Ok(sha);
+            }
+        }
+        protect_dir(&stage).map_err(|e| format!("cli_failed: {e}"))?;
+        if target.exists() {
+            force_remove(&target);
+        }
+        std::fs::rename(&stage, &target).map_err(|e| format!("cli_failed: {e}"))?;
+        Ok(sha)
+    })();
+    if stage.exists() {
+        force_remove(&stage);
+    }
+    let sha = result?;
+    cleanup_others(root, &sha);
+    Ok(sha)
+}
+
+/// Bindung: kopiert die aufgeloeste native Claude-Datei in den Cache
+/// (`<root>/<sha256>/claude`), hasht die Kopie neu, schuetzt sie und raeumt
+/// Kopien anderer Hashes weg. Identitaet (Version, Hash) ist die der KOPIE.
+/// Blockiert.
+pub fn bind_copy(root: &Path, source: &Path) -> Result<Identity, String> {
+    let sha = make_copy(root, source)?;
+    assert_no_symlinks(root, &sha)?;
+    let identity = identity(&copy_path(root, &sha))?;
+    if !identity.sha256.eq_ignore_ascii_case(&sha) {
+        return Err("payload_unknown: Kopie weicht vom Hash ab".to_string());
+    }
+    Ok(identity)
+}
+
+/// Die Kopie, die ein Aufruf startet, mit offen gehaltenem Handle.
+#[derive(Debug)]
+pub struct LaunchCopy {
+    /// Das Programm, das gestartet wird (nie die Originaldatei).
+    pub path: PathBuf,
+    root: PathBuf,
+    sha256: String,
+    handle: std::fs::File,
+}
+
+impl LaunchCopy {
+    /// Bereitet den Start vor: Kopie zum gebundenen Hash (bei Bedarf aus
+    /// `source` neu erzeugt, aber nur zugelassen, wenn die KOPIE den Hash der
+    /// Bindung traegt), keine Symlinks, Hash aus dem offenen Handle, Version.
+    /// Jede Abweichung sperrt.
+    pub fn prepare(source: &Path, check: &PreviewCheck) -> Result<Self, Rejection> {
+        let fail = |reason| Rejection::llm(reason);
+        let Some(root) = check.cli_cache.clone() else {
+            return Err(fail("copy_unavailable"));
+        };
+        let expected = check.binding.binary_sha256.to_ascii_lowercase();
+        if !is_hash_dir(&expected) {
+            return Err(fail("binding_changed"));
+        }
+        let path = copy_path(&root, &expected);
+        if !path.exists() {
+            let made = make_copy(&root, source).map_err(|e| {
+                if e.starts_with("claude_not_native") {
+                    fail("claude_not_native")
+                } else {
+                    fail("payload_unknown")
+                }
+            })?;
+            if made != expected {
+                // Die Datei weicht von der Bindung ab (Update): neue Belege noetig.
+                return Err(fail("binding_changed"));
+            }
+        }
+        assert_no_symlinks(&root, &expected).map_err(|_| fail("payload_unknown"))?;
+        let handle = open_pinned(&path).map_err(|_| fail("payload_unknown"))?;
+        let now = hash_handle(&handle).map_err(|_| fail("payload_unknown"))?;
+        if now != expected {
+            return Err(fail("binding_changed"));
+        }
+        rebind(&path, &check.binding)?;
+        Ok(Self {
+            path,
+            root,
+            sha256: expected,
+            handle,
+        })
+    }
+
+    /// Nach dem Lauf: Hash der Kopie aus dem Handle UND frisch vom Pfad.
+    pub fn verify(&self) -> Result<(), Rejection> {
+        let same = hash_handle(&self.handle).is_ok_and(|h| h == self.sha256)
+            && sha256_file(&self.path).is_ok_and(|h| h == self.sha256)
+            && assert_no_symlinks(&self.root, &self.sha256).is_ok();
+        if same {
+            Ok(())
+        } else {
+            Err(Rejection::llm("binding_changed"))
+        }
+    }
+}
+
 /// Ist das Programm noch genau das gebundene? Vor dem Start UND nach dem Ende
 /// des Aufrufs; nach Auto-Update, Wiederholung oder Austausch weicht es ab und
-/// die Freigabe gilt nicht mehr.
+/// die Freigabe gilt nicht mehr. `binary` ist die KOPIE.
 pub fn rebind(binary: &Path, expected: &PreviewBinding) -> Result<(), Rejection> {
-    let Ok(now) = identity(binary) else {
-        return Err(Rejection {
-            code: LLM_FAILED,
-            reason: "payload_unknown",
-        });
+    let now = match identity(binary) {
+        Ok(now) => now,
+        Err(e) if e.starts_with("claude_not_native") => {
+            return Err(Rejection::llm("claude_not_native"))
+        }
+        Err(_) => return Err(Rejection::llm("payload_unknown")),
     };
     if now.version == expected.cli_version
         && now.sha256.eq_ignore_ascii_case(&expected.binary_sha256)
     {
         return Ok(());
     }
-    Err(Rejection {
-        code: LLM_FAILED,
-        reason: "binding_changed",
-    })
+    Err(Rejection::llm("binding_changed"))
 }
 
 // ------------------------------------------------------------ Schalter --
@@ -507,6 +783,9 @@ pub struct PreviewCheck {
     pub max_output_tokens: u32,
     /// Faehigkeiten und Messung dieser Version.
     pub proof: Proof,
+    /// Cache-Wurzel der Programmkopien (`<App-Daten>/booktalk-cli`). Fehlt sie,
+    /// startet nichts ([`LaunchCopy::prepare`]).
+    pub cli_cache: Option<PathBuf>,
 }
 
 impl PreviewCheck {
@@ -523,7 +802,14 @@ impl PreviewCheck {
             context_tokens,
             max_output_tokens,
             proof,
+            cli_cache: None,
         }
+    }
+
+    /// Mit der Cache-Wurzel der Programmkopien.
+    pub fn with_cache(mut self, root: PathBuf) -> Self {
+        self.cli_cache = Some(root);
+        self
     }
 
     /// Eingabe in Token-Einheiten (gemessener Overhead mit Zuschlag).
@@ -531,12 +817,9 @@ impl PreviewCheck {
         input_estimate(self.proof.measurement.max_overhead_tokens, text_bytes)
     }
 
-    /// Planungsgrenze: gemessene Kompaktierungsschwelle des Kontexts.
+    /// Planungsgrenze: [`PREVIEW_MAX_CONTEXT_SHARE`] des Kontexts.
     pub fn limit(&self) -> u64 {
-        limit_tokens(
-            self.context_tokens,
-            self.proof.measurement.compaction_threshold_percent,
-        )
+        limit_tokens(self.context_tokens)
     }
 
     /// Die Vorab-Pruefung: passt der Aufruf unter die Schwelle?
@@ -557,6 +840,22 @@ pub struct Rejection {
 pub const REJECTED_PREFIX: &str = "cli_preview_rejected";
 
 impl Rejection {
+    /// Ablehnung mit dem Code `llm_failed`.
+    pub fn llm(reason: &'static str) -> Self {
+        Self {
+            code: LLM_FAILED,
+            reason,
+        }
+    }
+
+    /// Ablehnung mit dem Code `budget`.
+    pub fn budget(reason: &'static str) -> Self {
+        Self {
+            code: BUDGET,
+            reason,
+        }
+    }
+
     pub fn error(&self) -> String {
         format!("{REJECTED_PREFIX}:{}:{}", self.code, self.reason)
     }
@@ -578,6 +877,12 @@ pub fn rejection_code(err: &str) -> Option<&'static str> {
 const BUDGET: &str = "budget";
 const LLM_FAILED: &str = "llm_failed";
 const CANCELLED: &str = "cancelled";
+
+/// Codex gibt es in der Vorschau nicht (Phase 2): immer gesperrt.
+pub const CODEX_BLOCKED: Rejection = Rejection {
+    code: LLM_FAILED,
+    reason: "codex_preview_not_available",
+};
 
 /// Der Schalter wurde waehrend der Frage ausgeschaltet: Ergebnis verwerfen.
 pub const SWITCH_OFF: Rejection = Rejection {
@@ -705,7 +1010,6 @@ pub(crate) mod fixtures {
             runs: 10,
             max_overhead_tokens: 30_000,
             reasoning_reserve_tokens: 4_000,
-            compaction_threshold_percent: 80,
             measured_at: "2026-11-07T10:00:00Z".into(),
             kind: "empirisch".into(),
         }
@@ -770,21 +1074,23 @@ mod tests {
     }
 
     #[test]
-    fn the_budget_uses_only_measured_values() {
-        // Messung: Overhead 30000 * 1,2 = 36000, Schwelle 80 % von 200000, Reserve 4000.
+    fn the_budget_uses_the_measured_overhead_and_a_fixed_half_of_the_context() {
+        // Overhead 30000 * 1,2 = 36000, Schwelle fest 50 % von 200000, Reserve 4000.
         let c = check(200_000);
+        assert_eq!(PREVIEW_MAX_CONTEXT_SHARE, 0.5);
         assert_eq!(c.input_estimate(1_000), 37_000);
-        assert_eq!(c.limit(), 160_000);
+        assert_eq!(c.limit(), 100_000);
         assert_eq!(c.max_output_tokens, 600 + 4_000);
-        let room = 160_000 - 36_000 - u64::from(c.max_output_tokens);
+        let room = 100_000 - 36_000 - u64::from(c.max_output_tokens);
         assert!(c.fits(room as usize));
         assert!(!c.fits(room as usize + 1));
-        // Eine andere Messung ergibt eine andere Grenze: nichts ist eingebaut.
+        // Ein anderer Overhead ergibt eine andere Grenze; die Schwelle bleibt.
         let mut other = check(200_000);
-        other.proof.measurement.compaction_threshold_percent = 50;
         other.proof.measurement.max_overhead_tokens = 10_000;
         assert_eq!(other.limit(), 100_000);
         assert_eq!(other.input_estimate(0), 12_000);
+        // Nie mehr als die Haelfte, auch nicht bei grossem Kontext.
+        assert_eq!(limit_tokens(1_000_000), 500_000);
         let mut small = check(32_000);
         assert!(!small.fits(0));
         small.proof.measurement.max_overhead_tokens = 1_000;
@@ -803,8 +1109,7 @@ mod tests {
         assert_eq!(context_tokens(Cli::Claude, Some(1_000_000)), Some(200_000));
         assert_eq!(context_tokens(Cli::Claude, Some(100_000)), Some(100_000));
         assert_eq!(context_tokens(Cli::Codex, None), None);
-        assert_eq!(context_tokens(Cli::Codex, Some(0)), None);
-        assert_eq!(context_tokens(Cli::Codex, Some(272_000)), Some(272_000));
+        assert_eq!(context_tokens(Cli::Codex, Some(272_000)), None);
     }
 
     #[test]
@@ -818,10 +1123,7 @@ mod tests {
             Some("claude-opus-5-5")
         );
         assert_eq!(concrete_model(Cli::Claude, "unbekannt"), None);
-        assert_eq!(
-            concrete_model(Cli::Codex, "gpt-6.1-sol~fast").as_deref(),
-            Some("gpt-6.1-sol")
-        );
+        assert_eq!(concrete_model(Cli::Codex, "gpt-6.1-sol~fast"), None);
     }
 
     #[test]
@@ -1105,71 +1407,6 @@ mod tests {
         assert!(payload_path(&dir.path().join("fehlt")).is_err());
     }
 
-    #[test]
-    fn an_npm_codex_is_hashed_by_its_native_binary_not_the_launcher() {
-        let dir = tempfile::tempdir().unwrap();
-        let npm = dir.path().join("npm");
-        let pkg = npm.join("node_modules").join("@openai").join("codex");
-        write(&npm.join("codex.cmd"), b"@echo off");
-        write(&pkg.join("bin").join("codex.js"), b"// launcher");
-        // Windows-Paket: Plattformpaket unter dem Paket selbst.
-        let native = pkg
-            .join("node_modules")
-            .join("@openai")
-            .join("codex-win32-x64")
-            .join("vendor")
-            .join("x86_64-pc-windows-msvc")
-            .join("codex")
-            .join("codex.exe");
-        assert!(
-            payload_path(&npm.join("codex.cmd")).is_err(),
-            "ohne natives Programm: gesperrt"
-        );
-        write(&native, b"NATIVE-PAYLOAD");
-        let got = payload_path(&npm.join("codex.cmd")).unwrap();
-        assert_eq!(got, std::fs::canonicalize(&native).unwrap());
-        assert_ne!(
-            sha256_file(&got).unwrap(),
-            sha256_file(&npm.join("codex.cmd")).unwrap()
-        );
-        // Ein zweites natives Programm: nicht eindeutig, gesperrt.
-        let second = pkg
-            .join("vendor")
-            .join("aarch64-apple-darwin")
-            .join("codex")
-            .join("codex");
-        write(&second, b"ANDERES");
-        let err = payload_path(&npm.join("codex.cmd")).unwrap_err();
-        assert!(err.starts_with("payload_unknown"), "{err}");
-        assert_eq!(blocked_of_error(&err), Blocked::PayloadUnknown);
-        assert_eq!(blocked_of_error("cli_missing: x"), Blocked::NoCli);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn a_linked_npm_codex_resolves_to_the_native_sibling_package() {
-        let dir = tempfile::tempdir().unwrap();
-        let scope = dir.path().join("lib").join("node_modules").join("@openai");
-        write(
-            &scope.join("codex").join("bin").join("codex.js"),
-            b"// launcher",
-        );
-        let native = scope
-            .join("codex-linux-x64")
-            .join("vendor")
-            .join("x86_64-unknown-linux-musl")
-            .join("codex")
-            .join("codex");
-        write(&native, b"NATIVE");
-        let bin = dir.path().join("bin").join("codex");
-        std::fs::create_dir_all(bin.parent().unwrap()).unwrap();
-        std::os::unix::fs::symlink(scope.join("codex").join("bin").join("codex.js"), &bin).unwrap();
-        assert_eq!(
-            payload_path(&bin).unwrap(),
-            std::fs::canonicalize(&native).unwrap()
-        );
-    }
-
     #[cfg(unix)]
     fn fake_version_cli(dir: &Path, version: &str, body: &str) -> PathBuf {
         use std::os::unix::fs::PermissionsExt;
@@ -1186,6 +1423,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn the_hash_is_recomputed_and_a_swapped_program_breaks_the_binding() {
+        TEST_ALLOW_SCRIPT.with(|f| f.set(true));
         let dir = tempfile::tempdir().unwrap();
         let bin = fake_version_cli(dir.path(), "7.7.7 (Claude Code)", "eins");
         let first = identity(&bin).unwrap();
@@ -1205,5 +1443,191 @@ mod tests {
         // Programm weg: nicht bestimmbar.
         std::fs::remove_file(&bin).unwrap();
         assert_eq!(rebind(&bin, &bound).unwrap_err().reason, "payload_unknown");
+    }
+
+    #[test]
+    fn only_native_claude_programs_are_bindable() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cases: Vec<(&str, &str, &[u8], bool)> = vec![
+            ("elf", "claude", b"\x7fELF\x02\x01\x01\x00rest", true),
+            ("pe", "claude.exe", b"MZ\x90\x00rest", true),
+            ("macho", "claude", b"\xcf\xfa\xed\xferest", true),
+            ("shebang", "claude", b"#!/usr/bin/env node\n", false),
+            ("cmd", "claude.cmd", b"@echo off", false),
+            ("js", "cli.js", b"\x7fELF", false),
+            ("zufall", "claude", b"irgendwas", false),
+        ];
+        cases.push(("leer", "claude", b"", false));
+        for (name, file, bytes, ok) in cases {
+            let path = dir.path().join(name).join(file);
+            write(&path, bytes);
+            let got = check_native(&path);
+            assert_eq!(got.is_ok(), ok, "{name}: {got:?}");
+            if let Err(e) = got {
+                assert!(e.starts_with("claude_not_native"), "{e}");
+                assert_eq!(blocked_of_error(&e), Blocked::ClaudeNotNative);
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    fn bound_copy(root: &Path, bin: &Path) -> (Identity, PreviewCheck) {
+        let id = bind_copy(root, bin).unwrap();
+        let binding = binding_for(Cli::Claude, "sonnet", &id);
+        let check = fixtures::check(binding, "claude-sonnet-5-5", 200_000).with_cache(root.into());
+        (id, check)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn binding_copies_the_program_protected_and_removes_old_copies() {
+        use std::os::unix::fs::PermissionsExt;
+        TEST_ALLOW_SCRIPT.with(|f| f.set(true));
+        let dir = tempfile::tempdir().unwrap();
+        let bin = fake_version_cli(dir.path(), "7.7.7 (Claude Code)", "eins");
+        let root = dir.path().join(CACHE_DIR);
+        let id = bind_copy(&root, &bin).unwrap();
+        assert_eq!(id.sha256, sha256_file(&bin).unwrap());
+        let copy = copy_path(&root, &id.sha256);
+        assert_eq!(sha256_file(&copy).unwrap(), id.sha256);
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&copy), 0o500, "Datei schreibgeschuetzt");
+        assert_eq!(
+            mode(copy.parent().unwrap()),
+            0o500,
+            "Ordner schreibgeschuetzt"
+        );
+        // Erneut binden: dieselbe Kopie, nichts Liegengebliebenes.
+        assert_eq!(bind_copy(&root, &bin).unwrap(), id);
+        // Ein Update: neue Kopie, die alte ist weg, keine Zwischenordner.
+        fake_version_cli(dir.path(), "7.7.8 (Claude Code)", "zwei");
+        let id2 = bind_copy(&root, &bin).unwrap();
+        assert_ne!(id.sha256, id2.sha256);
+        assert!(!copy.exists() && !root.join(&id.sha256).exists());
+        assert!(copy_path(&root, &id2.sha256).exists());
+        let names: Vec<_> = std::fs::read_dir(&root).unwrap().flatten().collect();
+        assert_eq!(names.len(), 1, "nur die neue Kopie");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_preview_starts_only_the_verified_copy() {
+        TEST_ALLOW_SCRIPT.with(|f| f.set(true));
+        let dir = tempfile::tempdir().unwrap();
+        let bin = fake_version_cli(dir.path(), "7.7.7 (Claude Code)", "eins");
+        let root = dir.path().join(CACHE_DIR);
+        let (id, check) = bound_copy(&root, &bin);
+        // Das Original wird getauscht: die Kopie bleibt die gebundene und wird gestartet.
+        fake_version_cli(dir.path(), "7.7.7 (Claude Code)", "getauscht");
+        let launch = LaunchCopy::prepare(&bin, &check).unwrap();
+        assert_eq!(launch.path, copy_path(&root, &id.sha256));
+        assert_ne!(launch.path, std::fs::canonicalize(&bin).unwrap());
+        assert_eq!(launch.verify(), Ok(()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_copy_that_differs_from_the_binding_blocks() {
+        use std::os::unix::fs::PermissionsExt;
+        TEST_ALLOW_SCRIPT.with(|f| f.set(true));
+        let dir = tempfile::tempdir().unwrap();
+        let bin = fake_version_cli(dir.path(), "7.7.7 (Claude Code)", "eins");
+        let root = dir.path().join(CACHE_DIR);
+        let (id, check) = bound_copy(&root, &bin);
+        let copy = copy_path(&root, &id.sha256);
+        let reason = |c: &PreviewCheck| LaunchCopy::prepare(&bin, c).unwrap_err().reason;
+        // Ohne Cache-Wurzel startet nichts.
+        let mut no_cache = check.clone();
+        no_cache.cli_cache = None;
+        assert_eq!(reason(&no_cache), "copy_unavailable");
+        // Aenderung der Kopie (gleicher Nutzer hebt den Schutz auf): Hash weicht ab.
+        std::fs::set_permissions(&copy, std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::fs::write(&copy, "#!/bin/sh\n# manipuliert\n").unwrap();
+        assert_eq!(reason(&check), "binding_changed");
+        // Kopie fehlt und das Original ist nicht mehr das gebundene: neue Belege noetig.
+        std::fs::set_permissions(
+            copy.parent().unwrap(),
+            std::fs::Permissions::from_mode(0o700),
+        )
+        .unwrap();
+        std::fs::remove_dir_all(copy.parent().unwrap()).unwrap();
+        fake_version_cli(dir.path(), "7.7.8 (Claude Code)", "update");
+        assert_eq!(reason(&check), "binding_changed");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_in_the_cache_path_blocks() {
+        TEST_ALLOW_SCRIPT.with(|f| f.set(true));
+        let dir = tempfile::tempdir().unwrap();
+        let bin = fake_version_cli(dir.path(), "7.7.7 (Claude Code)", "eins");
+        let root = dir.path().join(CACHE_DIR);
+        let (id, check) = bound_copy(&root, &bin);
+        // Hash-Ordner durch einen Verweis auf einen Ordner mit gleicher Datei ersetzen.
+        let elsewhere = dir.path().join("woanders");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        std::fs::copy(copy_path(&root, &id.sha256), elsewhere.join("claude")).unwrap();
+        let hash_dir = root.join(&id.sha256);
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&hash_dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        std::fs::remove_dir_all(&hash_dir).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, &hash_dir).unwrap();
+        let err = LaunchCopy::prepare(&bin, &check).unwrap_err();
+        assert_eq!(err.reason, "payload_unknown");
+        // Die Datei selbst als Verweis: ebenfalls gesperrt.
+        std::fs::remove_file(&hash_dir).unwrap();
+        std::fs::create_dir(&hash_dir).unwrap();
+        std::os::unix::fs::symlink(elsewhere.join("claude"), hash_dir.join("claude")).unwrap();
+        assert_eq!(
+            LaunchCopy::prepare(&bin, &check).unwrap_err().reason,
+            "payload_unknown"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_change_of_the_copy_after_the_start_is_detected() {
+        use std::os::unix::fs::PermissionsExt;
+        TEST_ALLOW_SCRIPT.with(|f| f.set(true));
+        let dir = tempfile::tempdir().unwrap();
+        let bin = fake_version_cli(dir.path(), "7.7.7 (Claude Code)", "eins");
+        let root = dir.path().join(CACHE_DIR);
+        let (_, check) = bound_copy(&root, &bin);
+        let launch = LaunchCopy::prepare(&bin, &check).unwrap();
+        std::fs::set_permissions(&launch.path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::fs::write(&launch.path, "anders").unwrap();
+        assert_eq!(launch.verify().unwrap_err().reason, "binding_changed");
+    }
+
+    #[test]
+    fn codex_is_blocked_at_every_preview_entry() {
+        let b = binding_for(Cli::Codex, "gpt-6.1-sol", &ident("codex-cli 9", "cd"));
+        let stored = vec![b.clone()];
+        // Tor: auch mit Schalter, Tupel, Faehigkeiten und Messung.
+        let ev = fixtures::evidence(&[(&b, "gpt-6.1-sol")]);
+        let g = gate(true, &stored, Some(&b), &ev);
+        assert_eq!(
+            (g.state, g.blocked),
+            (
+                PreviewState::NotReleased,
+                Some(Blocked::CodexPreviewNotAvailable)
+            )
+        );
+        assert!(g.proof.is_none());
+        assert_eq!(
+            proof_for(&ev, &b).unwrap_err(),
+            Blocked::CodexPreviewNotAvailable
+        );
+        // Tupel und Kontext gibt es fuer Codex nicht.
+        assert!(current_binding(Cli::Codex, "gpt-6.1-sol")
+            .unwrap_err()
+            .starts_with("codex_preview_not_available"));
+        assert_eq!(context_tokens(Cli::Codex, Some(272_000)), None);
+        assert_eq!(
+            blocked_of_error("codex_preview_not_available: x"),
+            Blocked::CodexPreviewNotAvailable
+        );
     }
 }

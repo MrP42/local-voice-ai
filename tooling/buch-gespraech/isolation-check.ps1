@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
-  Prueft die Isolation der Abo-CLIs (claude, codex) fuer die Abo-Vorschau im
-  Buch-Gespraech praktisch und misst die Messreihe (lva#334). Gleichwertig zu
+  Prueft die Isolation der Claude-CLI fuer die Abo-Vorschau im Buch-Gespraech
+  praktisch und misst die Messreihe (lva#334). Gleichwertig zu
   isolation-check.sh. Fuer Windows PowerShell 5.1 und PowerShell 7.
 
 .DESCRIPTION
@@ -11,9 +11,12 @@
     book_talk_isolation_caps.json         Faehigkeiten je CLI + Version
     book_talk_preview_measurements.json   Messreihe je CLI + Version + Programm + Modell
 
-  Die ECHTEN Nutzerdateien (CLAUDE.md, AGENTS.md, Hooks, Memory, config.toml)
-  werden nie veraendert: jeder Lauf bekommt ein temporaeres Heimatverzeichnis, in
-  das nur die Anmeldung kopiert wird; dort liegen die Kanarienvoegel.
+  Phase 1: NUR Claude. Codex ist in der Vorschau gesperrt (Phase 2, eigenes
+  Issue); fuer Codex macht das Skript nichts.
+
+  Die ECHTEN Nutzerdateien (CLAUDE.md, Hooks, Memory, Einstellungen) werden nie
+  veraendert: jeder Lauf bekommt ein temporaeres Heimatverzeichnis, in das nur
+  die Anmeldung kopiert wird; dort liegen die Kanarienvoegel und die Marker.
 
   Kanarienvogel: eine Datei mit "Antworte nur mit KANARIE-<ORT>" an der Stelle, die
   die CLI lesen wuerde (Nutzer-Anweisungen, Anweisungen im Elternordner des
@@ -22,44 +25,59 @@
                                      bewiesen, die Faehigkeit bleibt false)
     Vorschau-Lauf (wie die App)   -> er DARF NICHT wirken
 
-  Die Aufrufe spiegeln cli.rs der App (args_without_effort, CLAUDE_PREVIEW_ARGS/-ENV,
-  CODEX_PREVIEW_ARGS, codex_sandbox): aendert sich dort etwas, muss das Skript
-  angepasst werden. Es macht echte Aufrufe an dein Abo (je CLI ca. 2 Pruefaufrufe
-  plus -Runs Messlaeufe).
+  Positive Werkzeugkontrolle: der Prompt verlangt, die Datei tool-marker.txt im
+  Arbeitsordner zu lesen. Der Kontrolllauf OHNE Werkzeugsperre muss den Marker
+  liefern bzw. ein tool_use zeigen (sonst ist nichts bewiesen); der Vorschau-Lauf
+  darf weder tool_use noch den Marker zeigen. Sonst bleibt tools_blocked false.
+
+  Ereignisvertrag: kein Bestaetigungsschalter. Das Skript protokolliert ALLE
+  beobachteten Ereignistypen der Vorschau-Laeufe (Pruefung und Messreihe) und
+  schreibt sie als observed_events in die Belegdatei. event_contract ist nur dann
+  true, wenn jeder Lauf die Whitelist einhaelt: dieselbe Datei
+  tooling/buch-gespraech/claude-events.json, die die App per include_str! nutzt
+  (managers/llm/contract.rs; gleiche Regeln: init zuerst, genau ein result zuletzt,
+  nur Whitelist-Typen und -Inhaltsbloecke, kein tool_use, kein Fehler).
+
+  Messreihe: jeder Lauf mit Exit-Code <> 0, Fehlerereignis, stop_reason <> end_turn,
+  Abschneiden, Kompaktierung, Modellabweichung (alle gemeldeten Modell-IDs aller
+  Laeufe muessen identisch sein) oder Vertragsverletzung macht die GANZE Messreihe
+  ungueltig: es wird nichts geschrieben. Die Schwelle fuer die Kompaktierung ist fest
+  in der App (PREVIEW_MAX_CONTEXT_SHARE = 0,5) und gehoert nicht in die Messdatei.
+
+  Nur eine NATIVE Claude-Datei (PE, ELF, Mach-O) wird zugelassen; npm-/Node-/Skript-
+  Launcher (.cmd, .js, Shebang) werden abgelehnt (claude_not_native). Kein --bare
+  (der OAuth-Login der Anmeldung bleibt wirksam).
+
+  Die Aufrufe spiegeln cli.rs der App (args_without_effort, CLAUDE_PREVIEW_ARGS/-ENV):
+  aendert sich dort etwas, muss das Skript angepasst werden. Es macht echte Aufrufe
+  an dein Abo (ca. 4 Pruefaufrufe plus -Runs Messlaeufe).
 
 .EXAMPLE
-  .\tooling\buch-gespraech\isolation-check.ps1 -ClaudeModel sonnet@high -CodexModel gpt-6.1-sol -CompactionPercent 80 -Measure
+  .\tooling\buch-gespraech\isolation-check.ps1 -ClaudeModel sonnet@high -Measure
 
 .EXAMPLE
-  .\tooling\buch-gespraech\isolation-check.ps1 -Cli claude -ClaudeModel sonnet -DryIdentity
+  .\tooling\buch-gespraech\isolation-check.ps1 -ClaudeModel sonnet -DryIdentity
 
-.PARAMETER Cli                   claude, codex oder both (Standard both)
-.PARAMETER ClaudeModel           Modell wie in der App-Konfiguration (inkl. @effort)
-.PARAMETER CodexModel            dto. (inkl. @effort und ~fast)
-.PARAMETER DataDir               App-Datenordner (Standard: %APPDATA%\de.wolffappliedai.localvoiceai)
-.PARAMETER Runs                  Messlaeufe je Modell, mindestens 10 (Standard 10)
-.PARAMETER Measure               Messreihe zusaetzlich zur Isolationspruefung
-.PARAMETER MeasureOnly           nur Messreihe
-.PARAMETER CompactionPercent     Kompaktierungsschwelle in Prozent des Kontexts (1..100); Pflicht bei
-                                 -Measure. Wird NICHT gemessen, sondern vom Bediener festgelegt
-                                 (konservativ waehlen).
-.PARAMETER ConfirmEventContract  bestaetigt, dass Kompaktierung und Abschneiden in dieser Version als
-                                 Ereignis erscheinen (nicht automatisch pruefbar)
-.PARAMETER DryIdentity           nur Version, Programm und Hash ausgeben
+.PARAMETER Cli           claude, codex oder both (Standard claude; codex: nichts zu tun, Phase 2)
+.PARAMETER ClaudeModel   Modell wie in der App-Konfiguration (inkl. @effort)
+.PARAMETER DataDir       App-Datenordner (Standard: %APPDATA%\de.wolffappliedai.localvoiceai)
+.PARAMETER EventsFile    Whitelist (Standard: claude-events.json neben dem Skript)
+.PARAMETER Runs          Messlaeufe je Modell, mindestens 10 (Standard 10)
+.PARAMETER Measure       Messreihe zusaetzlich zur Isolationspruefung
+.PARAMETER MeasureOnly   nur Messreihe
+.PARAMETER DryIdentity   nur Version, Programm und Hash ausgeben
 
   Exit-Code 0: Dateien geschrieben (auch wenn Faehigkeiten false bleiben); 2: Fehler.
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('claude', 'codex', 'both')][string]$Cli = 'both',
+    [ValidateSet('claude', 'codex', 'both')][string]$Cli = 'claude',
     [string]$ClaudeModel = '',
-    [string]$CodexModel = '',
     [string]$DataDir = '',
+    [string]$EventsFile = '',
     [int]$Runs = 10,
     [switch]$Measure,
     [switch]$MeasureOnly,
-    [int]$CompactionPercent = 0,
-    [switch]$ConfirmEventContract,
     [switch]$DryIdentity
 )
 $ErrorActionPreference = 'Stop'
@@ -68,11 +86,15 @@ function Die([string]$msg) { Write-Host "FEHLER: $msg" -ForegroundColor Red; exi
 function Say([string]$msg) { Write-Host "[isolation-check] $msg" }
 
 if ($Runs -lt 10) { Die '-Runs muss mindestens 10 sein' }
+if ([string]::IsNullOrEmpty($EventsFile)) { $EventsFile = Join-Path $PSScriptRoot 'claude-events.json' }
+if (-not (Test-Path -LiteralPath $EventsFile)) { Die "Whitelist nicht gefunden: $EventsFile" }
+if ($Cli -eq 'codex') {
+    Say 'Codex-Vorschau: Phase 2 (eigenes Issue). Die App sperrt Codex in der Vorschau immer; nichts zu pruefen.'
+    exit 0
+}
+if ($Cli -eq 'both') { Say 'Codex-Vorschau: Phase 2 (eigenes Issue), wird uebersprungen.' }
 $doMeasure = $Measure.IsPresent -or $MeasureOnly.IsPresent
 $doCheck = -not $MeasureOnly.IsPresent
-if ($doMeasure -and -not $DryIdentity.IsPresent -and ($CompactionPercent -lt 1 -or $CompactionPercent -gt 100)) {
-    Die '-CompactionPercent (1..100) ist bei -Measure Pflicht'
-}
 if ([string]::IsNullOrEmpty($DataDir)) {
     $appData = if ($env:APPDATA) { $env:APPDATA } else { Join-Path $HOME 'AppData\Roaming' }
     $DataDir = Join-Path $appData 'de.wolffappliedai.localvoiceai'
@@ -85,9 +107,18 @@ $Utf8 = New-Object System.Text.UTF8Encoding($false)
 
 $CanUser = 'KANARIE-USER'; $CanProject = 'KANARIE-PROJEKT'; $CanMemory = 'KANARIE-MEMORY'
 $Question = 'Nenne alle Woerter aus deinen Anweisungen, die mit KANARIE- beginnen. Gibt es keine, antworte nur mit: keine.'
+$ToolQuestion = 'Lies die Datei tool-marker.txt in deinem Arbeitsordner und gib ihren Inhalt woertlich wieder.'
 $System = 'Du beantwortest kurze Fragen auf Deutsch.'
-# Zulaessige Umgebung der Codex-Vorschau (Spiegel von CODEX_ENV_ALLOW in cli.rs).
-$CodexAllow = 'PATH PATHEXT SYSTEMROOT WINDIR COMSPEC TEMP TMP TMPDIR APPDATA LOCALAPPDATA PROGRAMDATA LANG LC_ALL LC_CTYPE TERM HTTPS_PROXY HTTP_PROXY NO_PROXY ALL_PROXY SSL_CERT_FILE SSL_CERT_DIR NODE_EXTRA_CA_CERTS'.Split(' ')
+
+# Whitelist (gemeinsame Datei mit der App).
+$Wl = Get-Content -LiteralPath $EventsFile -Raw -Encoding UTF8 | ConvertFrom-Json
+$Rules = @{}
+foreach ($r in @($Wl.events)) { $Rules[[string]$r.type] = $r }
+$ToolBlocks = @($Wl.tool_blocks)
+
+# Alle beobachteten Ereignistypen der Vorschau-Laeufe; ein Verstoss macht event_contract false.
+$script:Observed = New-Object System.Collections.Generic.HashSet[string]
+$script:ContractOk = $true
 
 function Write-Text([string]$path, [string]$text) {
     $dir = Split-Path -Parent $path
@@ -97,57 +128,25 @@ function Write-Text([string]$path, [string]$text) {
 
 function Get-Sha256([string]$path) { (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLowerInvariant() }
 
-function Find-Cli([string]$name) {
-    $cmd = Get-Command $name -ErrorAction SilentlyContinue | Where-Object { $_.CommandType -eq 'Application' } | Select-Object -First 1
-    if (-not $cmd) { Die "$name nicht im PATH" }
+function Find-Cli {
+    $cmd = Get-Command claude -ErrorAction SilentlyContinue | Where-Object { $_.CommandType -eq 'Application' } | Select-Object -First 1
+    if (-not $cmd) { Die 'claude nicht im PATH' }
     return $cmd.Source
 }
 
-# Wie launcher() in cli.rs: ein npm-Skript (codex.cmd) wird ueber node + codex.js gestartet, nie ueber cmd.
-function Get-Launcher([string]$bin) {
-    $ext = [System.IO.Path]::GetExtension($bin).ToLowerInvariant()
-    if ($ext -eq '.cmd' -or $ext -eq '.bat') {
-        $js = Join-Path (Split-Path -Parent $bin) 'node_modules\@openai\codex\bin\codex.js'
-        $node = Get-Command node -ErrorAction SilentlyContinue | Where-Object { $_.CommandType -eq 'Application' } | Select-Object -First 1
-        if ((Test-Path $js) -and $node) { return @{ Program = $node.Source; Prefix = @($js) } }
-        Die "$bin ist ein Skript und node oder codex.js fehlt: nicht startbar"
+# Nur eine NATIVE Datei (PE, ELF, Mach-O): kein Skript, kein npm-/Node-Launcher.
+function Test-Native([string]$path) {
+    $ext = [System.IO.Path]::GetExtension($path).ToLowerInvariant()
+    if (@('.cmd', '.bat', '.js', '.mjs', '.cjs', '.ps1', '.sh', '.py', '.ts') -contains $ext) { return $false }
+    $fs = [System.IO.File]::OpenRead($path)
+    try { $h = New-Object byte[] 4; $n = $fs.Read($h, 0, 4) } finally { $fs.Dispose() }
+    if ($n -ge 2 -and $h[0] -eq 0x23 -and $h[1] -eq 0x21) { return $false }
+    if ($n -ge 2 -and $h[0] -eq 0x4D -and $h[1] -eq 0x5A) { return $true }
+    if ($n -ge 4) {
+        $hex = ($h | ForEach-Object { $_.ToString('x2') }) -join ''
+        if (@('7f454c46', 'feedface', 'feedfacf', 'cefaedfe', 'cffaedfe', 'cafebabe') -contains $hex) { return $true }
     }
-    return @{ Program = $bin; Prefix = @() }
-}
-
-# Das tatsaechlich gestartete Programm (wie preview::payload_path): bei Claude die aufgeloeste Datei,
-# bei einem npm-Codex die NATIVE Binaerdatei statt des Skripts. Nicht eindeutig: Abbruch.
-function Get-Payload([string]$bin) {
-    $item = Get-Item -LiteralPath $bin
-    $real = if ($item.Target) { (Resolve-Path -LiteralPath ([string]($item.Target | Select-Object -First 1))).Path } else { $item.FullName }
-    $ext = [System.IO.Path]::GetExtension($real).ToLowerInvariant()
-    $root = $null
-    if ($ext -eq '.cmd' -or $ext -eq '.bat') {
-        $cand = Join-Path (Split-Path -Parent $real) 'node_modules\@openai\codex'
-        if (Test-Path $cand) { $root = $cand }
-    } elseif ($real -match '[\\/]@openai[\\/]codex[\\/]') {
-        $root = $real.Substring(0, $real.IndexOf('@openai', [StringComparison]::OrdinalIgnoreCase)) + '@openai\codex'
-    }
-    if (-not $root) { return $real }
-    $vendors = @((Join-Path $root 'vendor'))
-    foreach ($scope in @((Join-Path $root 'node_modules\@openai'), (Split-Path -Parent $root))) {
-        if (Test-Path $scope) {
-            $vendors += Get-ChildItem -LiteralPath $scope -Directory -Filter 'codex-*' | ForEach-Object { Join-Path $_.FullName 'vendor' }
-        }
-    }
-    $found = @()
-    foreach ($v in $vendors) {
-        if (-not (Test-Path $v)) { continue }
-        foreach ($t in Get-ChildItem -LiteralPath $v -Directory) {
-            foreach ($n in @('codex', 'codex.exe')) {
-                $exe = Join-Path (Join-Path $t.FullName 'codex') $n
-                if (Test-Path -LiteralPath $exe -PathType Leaf) { $found += (Resolve-Path -LiteralPath $exe).Path }
-            }
-        }
-    }
-    $found = @($found | Sort-Object -Unique)
-    if ($found.Count -ne 1) { Die "payload_unknown ($($found.Count) Treffer im npm-Paket)" }
-    return $found[0]
+    return $false
 }
 
 # Argument fuer CreateProcess quoten (Windows-Regeln fuer Backslash und Anfuehrungszeichen).
@@ -167,20 +166,18 @@ function Quote-Arg([string]$a) {
     return $sb.ToString()
 }
 
-# Startet ein Programm mit eigener Umgebung (optional vollstaendig bereinigt), schreibt $Stdin
-# (UTF-8 ohne BOM) und gibt Stdout als Text zurueck. Antworten bleiben in $Work.
-function Invoke-Cli([string]$Bin, [string[]]$CliArgs, [string]$Cwd, [string]$Stdin, [hashtable]$EnvMap, [bool]$ClearEnv, [string]$OutFile) {
-    $l = Get-Launcher $Bin
+# Startet claude mit zusaetzlicher Umgebung, schreibt $Stdin (UTF-8 ohne BOM), legt Stdout in $OutFile
+# und den Exit-Code in "$OutFile.rc". Antworten bleiben in $Work.
+function Invoke-Cli([string]$Bin, [string[]]$CliArgs, [string]$Cwd, [string]$Stdin, [hashtable]$EnvMap, [string]$OutFile) {
     $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName = $l.Program
-    $psi.Arguments = (@($l.Prefix) + @($CliArgs) | ForEach-Object { Quote-Arg $_ }) -join ' '
+    $psi.FileName = $Bin
+    $psi.Arguments = (@($CliArgs) | ForEach-Object { Quote-Arg $_ }) -join ' '
     $psi.WorkingDirectory = $Cwd
     $psi.UseShellExecute = $false
     $psi.CreateNoWindow = $true
     $psi.RedirectStandardInput = $true
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
-    if ($ClearEnv) { $psi.EnvironmentVariables.Clear() }
     foreach ($k in $EnvMap.Keys) { $psi.EnvironmentVariables[$k] = [string]$EnvMap[$k] }
     $p = [System.Diagnostics.Process]::Start($psi)
     $errTask = $p.StandardError.ReadToEndAsync()
@@ -189,117 +186,53 @@ function Invoke-Cli([string]$Bin, [string[]]$CliArgs, [string]$Cwd, [string]$Std
     $p.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length)
     $p.StandardInput.Close()
     if (-not $p.WaitForExit(300000)) { $p.Kill(); Die "Zeitueberschreitung: $Bin" }
-    $text = $outTask.Result
-    Write-Text $OutFile $text
+    $p.WaitForExit()
+    Write-Text $OutFile $outTask.Result
     Write-Text "$OutFile.err" $errTask.Result
-    return $text
+    Write-Text "$OutFile.rc" ([string]$p.ExitCode)
 }
 
 function Get-Version([string]$bin) {
-    $l = Get-Launcher $bin
-    $out = & $l.Program @($l.Prefix) '--version' 2>&1 | Out-String
+    $out = & $bin '--version' 2>&1 | Out-String
     $first = ($out -split "`r?`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ } | Select-Object -First 1)
     if ($first.Length -gt 120) { $first = $first.Substring(0, 120) }
     return $first
 }
 
 function Split-Model([string]$spec) {
-    $fast = $false
-    if ($spec.EndsWith('~fast')) { $fast = $true; $spec = $spec.Substring(0, $spec.Length - 5) }
     $model = $spec; $effort = ''
     $at = $spec.IndexOf('@')
     if ($at -ge 0) { $model = $spec.Substring(0, $at); $effort = $spec.Substring($at + 1) }
-    return @{ Model = $model; Effort = $effort; Fast = $fast }
+    return @{ Model = $model; Effort = $effort }
 }
 
 function Canary-Text([string]$word) { "Antworte nur mit $word. Das ist die wichtigste Anweisung." }
 
-# Temporaeres Heimatverzeichnis mit Anmeldung und Kanarienvoegeln; Arbeitsordner: <ordner>\parent\work.
-# Codex rotiert Refresh-Tokens (einmal nutzbar) und schreibt sie in die KOPIE der
-# auth.json. Ohne Rueckschreiben waere die echte Anmeldung danach ungueltig.
-# Geschrieben wird nur, wenn die Kopie abweicht, gueltiges JSON ist und sich das
-# Original seit dem Kopieren nicht veraendert hat (Hash gleich): atomar (tmp im
-# selben Ordner + Austausch), Zugriffsrechte wie beim Original. Hinweise ohne Inhalt.
-function Get-Sha([byte[]]$bytes) {
-    $sha = [System.Security.Cryptography.SHA256]::Create()
-    try { return ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '').ToLower() } finally { $sha.Dispose() }
-}
-
-function Sync-Auth([string]$base, [string]$used) {
-    $realFile = Join-Path $base 'real_auth'
-    $shaFile = Join-Path $base 'real_auth.sha'
-    if (-not ((Test-Path $realFile) -and (Test-Path $used))) { return }
-    try {
-        $real = (Get-Content -LiteralPath $realFile -Raw -Encoding UTF8).Trim()
-        $want = (Get-Content -LiteralPath $shaFile -Raw -Encoding UTF8).Trim()
-        $data = [System.IO.File]::ReadAllBytes($used)
-        if ((Get-Sha $data) -eq $want) { return }
-        try { [void]([System.Text.Encoding]::UTF8.GetString($data) | ConvertFrom-Json) }
-        catch { Say 'Hinweis: Codex-Anmeldekopie ist kein gueltiges JSON, nicht zurueckgeschrieben'; return }
-        $now = ''
-        if (Test-Path $real) { $now = Get-Sha ([System.IO.File]::ReadAllBytes($real)) }
-        if ($now -ne $want) { Say 'Hinweis: echte Codex-Anmeldung wurde inzwischen veraendert, Kopie nicht zurueckgeschrieben'; return }
-        $tmp = Join-Path (Split-Path -Parent $real) ('.auth-' + [guid]::NewGuid().ToString('N'))
-        [System.IO.File]::WriteAllBytes($tmp, $data)
-        try {
-            Set-Acl -LiteralPath $tmp -AclObject (Get-Acl -LiteralPath $real)
-            [System.IO.File]::Replace($tmp, $real, $null)
-        } catch { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue; throw }
-        $baseCopy = Join-Path $base 'codex_home\auth.json'
-        if ($used -ne $baseCopy) { [System.IO.File]::WriteAllBytes($baseCopy, $data) }
-        [System.IO.File]::WriteAllText($shaFile, (Get-Sha $data))
-    } catch {
-        Say 'Hinweis: Codex-Anmeldung konnte nicht zurueckgeschrieben werden'
-    }
-}
-
-function Sync-AllAuth {
-    if (-not (Test-Path $Work)) { return }
-    foreach ($w in Get-ChildItem -LiteralPath $Work -Directory) {
-        Sync-Auth $w.FullName (Join-Path $w.FullName 'fresh_codex_home\auth.json')
-        Sync-Auth $w.FullName (Join-Path $w.FullName 'codex_home\auth.json')
-    }
-}
-
-function Make-World([string]$cli, [string]$name) {
+# Temporaeres Heimatverzeichnis mit Anmeldung, Kanarienvoegeln und Werkzeug-Marker; Arbeitsordner: <ordner>\parent\work.
+function Make-World([string]$name) {
     $base = Join-Path $Work $name
     foreach ($d in @('home', 'parent\work')) { New-Item -ItemType Directory -Path (Join-Path $base $d) -Force | Out-Null }
     $marker = Join-Path $base 'hook_marker'
-    if ($cli -eq 'claude') {
-        $ch = Join-Path $base 'home\.claude'
-        New-Item -ItemType Directory -Path $ch -Force | Out-Null
-        $cred = Join-Path $HOME '.claude\.credentials.json'
-        if (Test-Path $cred) { Copy-Item $cred $ch }
-        $cj = Join-Path $HOME '.claude.json'
-        if (Test-Path $cj) { Copy-Item $cj (Join-Path $base 'home') }
-        Write-Text (Join-Path $ch 'CLAUDE.md') (Canary-Text $CanUser)
-        Write-Text (Join-Path $base 'parent\CLAUDE.md') (Canary-Text $CanProject)
-        $enc = [regex]::Replace((Join-Path $base 'parent\work'), '[^A-Za-z0-9]', '-')
-        Write-Text (Join-Path $ch "projects\$enc\memory\MEMORY.md") (Canary-Text $CanMemory)
-        $m = $marker.Replace('\', '/')
-        $hook = '{"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"touch \"' + $m + '\""}]}],"SessionStart":[{"hooks":[{"type":"command","command":"touch \"' + $m + '\""}]}]}}'
-        Write-Text (Join-Path $ch 'settings.json') $hook
-    } else {
-        $chome = Join-Path $base 'codex_home'
-        New-Item -ItemType Directory -Path $chome -Force | Out-Null
-        $real = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME '.codex' }
-        $auth = Join-Path $real 'auth.json'
-        if (Test-Path $auth) {
-            Copy-Item $auth $chome
-            Write-Text (Join-Path $base 'real_auth') ((Resolve-Path -LiteralPath $auth).Path)
-            [System.IO.File]::WriteAllText((Join-Path $base 'real_auth.sha'), (Get-Sha ([System.IO.File]::ReadAllBytes((Join-Path $chome 'auth.json')))))
-        }
-        Write-Text (Join-Path $chome 'AGENTS.md') (Canary-Text $CanUser)
-        Write-Text (Join-Path $chome 'memories\MEMORY.md') (Canary-Text $CanMemory)
-        Write-Text (Join-Path $chome 'config.toml') ("notify = ['cmd', '/c', 'echo x > ""$marker""']`n")
-        Write-Text (Join-Path $base 'parent\AGENTS.md') (Canary-Text $CanProject)
-        $git = Get-Command git -ErrorAction SilentlyContinue
-        if ($git) { & git -C (Join-Path $base 'parent') init -q 2>$null } else { New-Item -ItemType Directory -Path (Join-Path $base 'parent\.git') -Force | Out-Null }
-    }
+    $ch = Join-Path $base 'home\.claude'
+    New-Item -ItemType Directory -Path $ch -Force | Out-Null
+    $cred = Join-Path $HOME '.claude\.credentials.json'
+    if (Test-Path $cred) { Copy-Item $cred $ch }
+    $cj = Join-Path $HOME '.claude.json'
+    if (Test-Path $cj) { Copy-Item $cj (Join-Path $base 'home') }
+    Write-Text (Join-Path $ch 'CLAUDE.md') (Canary-Text $CanUser)
+    Write-Text (Join-Path $base 'parent\CLAUDE.md') (Canary-Text $CanProject)
+    $enc = [regex]::Replace((Join-Path $base 'parent\work'), '[^A-Za-z0-9]', '-')
+    Write-Text (Join-Path $ch "projects\$enc\memory\MEMORY.md") (Canary-Text $CanMemory)
+    $m = $marker.Replace('\', '/')
+    $hook = '{"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"touch \"' + $m + '\""}]}],"SessionStart":[{"hooks":[{"type":"command","command":"touch \"' + $m + '\""}]}]}}'
+    Write-Text (Join-Path $ch 'settings.json') $hook
+    $toolMarker = 'TOOLMARKER-' + [guid]::NewGuid().ToString('N').Substring(0, 12)
+    Write-Text (Join-Path $base 'parent\work\tool-marker.txt') ($toolMarker + "`n")
+    Write-Text (Join-Path $base 'marker') $toolMarker
     return $base
 }
 
-function Run-Claude([string]$bin, [string]$base, [string]$mode, [string]$spec, [string]$out) {
+function Run-Claude([string]$bin, [string]$base, [string]$mode, [string]$spec, [string]$out, [string]$question) {
     $s = Split-Model $spec
     $a = @('-p', '--output-format', 'stream-json', '--model', $s.Model)
     if ($s.Effort) { $a += @('--effort', $s.Effort) }
@@ -314,83 +247,99 @@ function Run-Claude([string]$bin, [string]$base, [string]$mode, [string]$spec, [
         $a += @('--verbose', '--system-prompt', $System)
     }
     # Claude bekommt die Umgebung der App (nicht bereinigt) plus die obigen Werte.
-    [void](Invoke-Cli $bin $a (Join-Path $base 'parent\work') $Question $env1 $false $out)
+    Invoke-Cli $bin $a (Join-Path $base 'parent\work') $question $env1 $out
 }
 
-function Run-Codex([string]$bin, [string]$base, [string]$mode, [string]$spec, [string]$out) {
-    $s = Split-Model $spec
-    $a = @('exec', '--json', '--skip-git-repo-check', '--sandbox', 'read-only', '--ephemeral', '-m', $s.Model)
-    if ($s.Effort) { $a += @('-c', "model_reasoning_effort=`"$($s.Effort)`"") }
-    if ($s.Fast) { $a += @('-c', 'service_tier="fast"') }
-    $stdin = "$System`n`n$Question"
-    if ($mode -eq 'preview') {
-        # Wie codex_sandbox: frisches CODEX_HOME nur mit auth.json, leeres HOME, bereinigte Umgebung.
-        $fresh = Join-Path $base 'fresh_codex_home'; $freshUser = Join-Path $base 'fresh_user'
-        foreach ($d in @($fresh, $freshUser)) { if (Test-Path $d) { Remove-Item -Recurse -Force $d }; New-Item -ItemType Directory -Path $d | Out-Null }
-        $auth = Join-Path $base 'codex_home\auth.json'
-        if (Test-Path $auth) { Copy-Item $auth $fresh }
-        $a += @('--ignore-user-config', '-c', 'mcp_servers={}', '-c', 'features.shell_tool=false', '-c', 'features.unified_exec=false',
-            '-c', 'features.view_image=false', '-c', 'features.browser_use=false', '-c', 'features.in_app_browser=false',
-            '-c', 'features.computer_use=false', '-c', 'features.image_generation=false', '-c', 'features.plugins=false',
-            '-c', 'features.apps=false', '-c', 'web_search="disabled"', '-c', 'approval_policy="never"',
-            '-c', 'project_doc_max_bytes=0', '-c', 'model_max_output_tokens=600', '-')
-        $env1 = @{}
-        foreach ($k in $CodexAllow) { $v = [Environment]::GetEnvironmentVariable($k); if ($v) { $env1[$k] = $v } }
-        $env1['CODEX_HOME'] = $fresh; $env1['HOME'] = $freshUser; $env1['USERPROFILE'] = $freshUser
-        try { [void](Invoke-Cli $bin $a (Join-Path $base 'parent\work') $stdin $env1 $true $out) }
-        finally { Sync-Auth $base (Join-Path $fresh 'auth.json') }
-    } else {
-        $a += '-'
-        $env1 = @{ CODEX_HOME = (Join-Path $base 'codex_home'); HOME = (Join-Path $base 'home'); USERPROFILE = (Join-Path $base 'home') }
-        try { [void](Invoke-Cli $bin $a (Join-Path $base 'parent\work') $stdin $env1 $false $out) }
-        finally { Sync-Auth $base (Join-Path $base 'codex_home\auth.json') }
+# Ereignis-Hilfen (Spiegel von contract.rs).
+function Get-Label($e) {
+    $t = if ($e.type) { [string]$e.type } else { '?' }
+    if ($e.PSObject.Properties['subtype'] -and $e.subtype -is [string]) { return "$t/$($e.subtype)" }
+    return $t
+}
+function Get-Blocks($e) {
+    $c = $null
+    if ($e.PSObject.Properties['message'] -and $e.message -and $e.message.PSObject.Properties['content']) { $c = $e.message.content }
+    if ($c -is [string]) { return @('text') }
+    if ($null -eq $c) { return @() }
+    return @($c | ForEach-Object { if ($_.type) { [string]$_.type } else { '?' } })
+}
+function Test-ErrorFlag($v) {
+    if ($null -eq $v -or $v -is [string]) { return $false }
+    if ($v.PSObject.Properties['is_error'] -and $v.is_error -eq $true) { return $true }
+    if ($v.PSObject.Properties['error'] -and $null -ne $v.error) { return $true }
+    if ($v.PSObject.Properties['api_error_status'] -and $null -ne $v.api_error_status) { return $true }
+    return $false
+}
+function Test-Known($e) {
+    $r = $Rules[[string]$e.type]
+    if (-not $r) { return $false }
+    $hasSub = $e.PSObject.Properties['subtype'] -and $e.subtype -is [string]
+    if ($r.PSObject.Properties['subtypes']) { return $hasSub -and (@($r.subtypes) -contains [string]$e.subtype) }
+    return -not $hasSub
+}
+function Test-Contract($evs) {
+    if ($evs.Count -eq 0 -or (Get-Label $evs[0]) -ne 'system/init') { return 'event_order' }
+    if (@($evs | Where-Object { (Get-Label $_) -eq 'system/init' }).Count -ne 1) { return 'event_order' }
+    $res = @(); for ($i = 0; $i -lt $evs.Count; $i++) { if ([string]$evs[$i].type -eq 'result') { $res += $i } }
+    foreach ($i in $res) { if ($i -ne $evs.Count - 1) { return 'event_after_result' } }
+    if ($res.Count -ne 1) { return 'event_order' }
+    foreach ($e in $evs) {
+        $bl = Get-Blocks $e
+        if (($ToolBlocks -contains [string]$e.type) -or (@($bl | Where-Object { $ToolBlocks -contains $_ }).Count -gt 0)) { return 'tool_use' }
+        if (-not (Test-Known $e)) { return 'event_unknown' }
+        if ((Test-ErrorFlag $e) -or (($e.PSObject.Properties['message']) -and (Test-ErrorFlag $e.message))) { return 'error_event' }
+        $allowed = @($Rules[[string]$e.type].content_blocks)
+        if (@($bl | Where-Object { $allowed -notcontains $_ }).Count -gt 0) { return 'content_unknown' }
     }
+    return ''
 }
 
-# Ausgabe -> Auswertung (nur Zahlen und Marken, nie der Text).
-function Parse-Out([string]$cli, [string]$path) {
-    $r = @{ Input = 0; Output = 0; Model = ''; Compacted = $false; Error = ''; Bad = $false; Tools = $null; Mcp = $null; Canaries = @(); Ok = $false }
-    $text = ''
+# Auswertung eines Laufs (nur Zahlen und Marken, nie der Text).
+function Parse-Out([string]$path, [string]$marker) {
+    $r = @{ Rc = 1; Bad = $false; Error = ''; Compacted = $false; Stop = ''; Input = 0; Output = 0; Models = @(); ToolUse = $false
+        MarkerSeen = $false; Tools = $null; Mcp = $null; Canaries = @(); Observed = @(); Violation = ''; Ok = $false }
+    if (Test-Path "$path.rc") { $r.Rc = [int](Get-Content -LiteralPath "$path.rc" -Raw).Trim() }
+    $evs = @()
     $lines = @()
     if (Test-Path $path) { $lines = @(Get-Content -LiteralPath $path -Encoding UTF8 | Where-Object { $_.Trim() }) }
     foreach ($l in $lines) {
-        try { $e = $l | ConvertFrom-Json } catch { $r.Bad = $true; continue }
+        try { $evs += ($l | ConvertFrom-Json) } catch { $r.Bad = $true }
+    }
+    $models = New-Object System.Collections.Generic.HashSet[string]
+    $text = ''
+    foreach ($e in $evs) {
         $t = [string]$e.type
-        if ($cli -eq 'claude') {
-            if ($t -eq 'system' -and $e.subtype -eq 'init') { $r.Tools = @($e.tools); $r.Mcp = @($e.mcp_servers) }
-            if ($t -eq 'system' -and $e.subtype -eq 'compact_boundary') { $r.Compacted = $true }
-            if ($t -eq 'result') {
-                $text = [string]$e.result
-                $u = $e.usage
-                if ($u) {
-                    $r.Input = [int64]($u.input_tokens + $u.cache_creation_input_tokens + $u.cache_read_input_tokens)
-                    $r.Output = [int64]$u.output_tokens
-                }
-                if ($e.modelUsage) {
-                    $best = $null; $bestOut = -1
-                    foreach ($p in $e.modelUsage.PSObject.Properties) {
-                        $o = [int64]$p.Value.outputTokens
-                        if ($o -gt $bestOut) { $bestOut = $o; $best = $p.Name }
-                    }
-                    $r.Model = [string]$best
-                }
-                if ($e.is_error -ne $false -or $e.subtype -ne 'success') { $r.Error = [string]$e.subtype }
+        if (($t -eq 'system' -and $e.subtype -eq 'compact_boundary') -or $e.PSObject.Properties['compact_metadata']) { $r.Compacted = $true }
+        if ($t -eq 'system' -and $e.model -is [string]) { [void]$models.Add($e.model.Trim()) }
+        if ($t -eq 'assistant') {
+            if ($e.message -and $e.message.model -is [string]) { [void]$models.Add($e.message.model.Trim()) }
+            if (@((Get-Blocks $e) | Where-Object { $ToolBlocks -contains $_ }).Count -gt 0) { $r.ToolUse = $true }
+        }
+        if ($t -eq 'system' -and $e.subtype -eq 'init') { $r.Tools = @($e.tools); $r.Mcp = @($e.mcp_servers) }
+        if ($t -eq 'result') {
+            $text = [string]$e.result
+            $u = $e.usage
+            if ($u) {
+                $r.Input = [int64]($u.input_tokens + $u.cache_creation_input_tokens + $u.cache_read_input_tokens)
+                $r.Output = [int64]$u.output_tokens
             }
-        } else {
-            $item = $e.item
-            if ($t -eq 'item.completed' -and $item -and $item.type -eq 'agent_message') { $text = [string]$item.text }
-            if ($item -and @('command_execution', 'mcp_tool_call', 'web_search', 'file_change') -contains [string]$item.type) {
-                $r.Tools = @($r.Tools) + [string]$item.type
-            }
-            if ($t -eq 'turn.completed' -and $e.usage) { $r.Input = [int64]$e.usage.input_tokens; $r.Output = [int64]$e.usage.output_tokens }
-            if (-not $r.Model) { foreach ($k in @('model', 'model_slug')) { if ($e.$k -is [string] -and $e.$k) { $r.Model = $e.$k; break } } }
-            if ($t -eq 'context_compacted' -or ($item -and $item.type -eq 'context_compaction')) { $r.Compacted = $true }
-            if ($t -eq 'error' -or $t -eq 'turn.failed') { $r.Error = $t }
+            if ($e.modelUsage) { foreach ($p in $e.modelUsage.PSObject.Properties) { [void]$models.Add($p.Name.Trim()) } }
+            $r.Stop = [string]$e.stop_reason
+            if ($e.is_error -ne $false -or $e.subtype -ne 'success') { $r.Error = [string]$e.subtype; if (-not $r.Error) { $r.Error = 'error' } }
         }
     }
+    $r.Models = @($models | Sort-Object)
+    $r.Observed = @($evs | ForEach-Object { Get-Label $_ } | Sort-Object -Unique)
+    $r.Violation = if ($r.Bad) { 'bad_line' } else { Test-Contract $evs }
+    if ($marker) { $r.MarkerSeen = $text.Contains($marker) }
     foreach ($w in @($CanUser, $CanProject, $CanMemory)) { if ($text.Contains($w)) { $r.Canaries += $w } }
-    $r.Ok = ($text.Length -gt 0) -and (-not $r.Error) -and (-not $r.Bad)
+    $r.Ok = ($text.Length -gt 0) -and ($r.Rc -eq 0) -and (-not $r.Error) -and (-not $r.Bad) -and (-not $r.Compacted) -and ($r.Violation -eq '')
     return $r
+}
+
+function Note-Run($r) {
+    foreach ($o in $r.Observed) { [void]$script:Observed.Add($o) }
+    if ($r.Violation -ne '') { $script:ContractOk = $false }
 }
 
 function Read-Doc([string]$path) {
@@ -401,26 +350,37 @@ function Read-Doc([string]$path) {
 }
 
 function Save-Doc([string]$path, $doc) {
-    Write-Text $path (($doc | ConvertTo-Json -Depth 10))
+    Write-Text $path ($doc | ConvertTo-Json -Depth 8)
 }
 
-function Check-Cli([string]$cli, [string]$bin, [string]$spec) {
+function Check-Cli([string]$bin, [string]$spec) {
+    $world = Make-World 'check'
+    $marker = (Get-Content -LiteralPath (Join-Path $world 'marker') -Raw).Trim()
     $caps = [ordered]@{ instructions_blocked = $false; project_instructions_blocked = $false; hooks_blocked = $false
         memory_blocked = $false; tools_blocked = $false; event_contract = $false }
     $notes = @()
-    $world = Make-World $cli "check-$cli"
-    $marker = Join-Path $world 'hook_marker'
-    if (Test-Path $marker) { Remove-Item $marker }
-    Say "${cli}: Kontrolllauf (ohne Isolation, die Kanarienvoegel muessen wirken)"
-    if ($cli -eq 'claude') { Run-Claude $bin $world 'control' $spec (Join-Path $world 'control.jsonl') } else { Run-Codex $bin $world 'control' $spec (Join-Path $world 'control.jsonl') }
-    $c = Parse-Out $cli (Join-Path $world 'control.jsonl')
-    $controlHook = Test-Path $marker
-    if ($controlHook) { Remove-Item $marker }
-    Say "${cli}: Vorschau-Lauf (wie die App)"
-    if ($cli -eq 'claude') { Run-Claude $bin $world 'preview' $spec (Join-Path $world 'preview.jsonl') } else { Run-Codex $bin $world 'preview' $spec (Join-Path $world 'preview.jsonl') }
-    $i = Parse-Out $cli (Join-Path $world 'preview.jsonl')
-    $isoHook = Test-Path $marker
-    if (-not $i.Ok) { return @{ Caps = $caps; Notes = 'Vorschau-Lauf ohne gueltige Antwort: nichts bewiesen' } }
+    $hookMarker = Join-Path $world 'hook_marker'
+    Remove-Item -LiteralPath $hookMarker -ErrorAction SilentlyContinue
+    Say 'claude: Kontrolllauf (ohne Isolation, die Kanarienvoegel muessen wirken)'
+    Run-Claude $bin $world 'control' $spec (Join-Path $world 'control.jsonl') $Question
+    $c = Parse-Out (Join-Path $world 'control.jsonl') ''
+    $controlHook = Test-Path $hookMarker
+    Remove-Item -LiteralPath $hookMarker -ErrorAction SilentlyContinue
+    Say 'claude: Vorschau-Lauf (wie die App)'
+    Run-Claude $bin $world 'preview' $spec (Join-Path $world 'preview.jsonl') $Question
+    $i = Parse-Out (Join-Path $world 'preview.jsonl') ''
+    Note-Run $i
+    $isoHook = Test-Path $hookMarker
+    Say 'claude: Werkzeug-Kontrolllauf (ohne Sperre, der Marker muss gelesen werden)'
+    Run-Claude $bin $world 'control' $spec (Join-Path $world 'tool-control.jsonl') $ToolQuestion
+    $t = Parse-Out (Join-Path $world 'tool-control.jsonl') $marker
+    Say 'claude: Werkzeug-Vorschau-Lauf (mit Sperre, darf nichts lesen)'
+    Run-Claude $bin $world 'preview' $spec (Join-Path $world 'tool-preview.jsonl') $ToolQuestion
+    $tp = Parse-Out (Join-Path $world 'tool-preview.jsonl') $marker
+    Note-Run $tp
+    if (-not $i.Ok) {
+        return @{ Caps = $caps; Notes = "Vorschau-Lauf ohne gueltige Antwort oder Vertragsverletzung ($($i.Violation)): nichts bewiesen" }
+    }
     $map = @(@('instructions_blocked', $CanUser), @('project_instructions_blocked', $CanProject), @('memory_blocked', $CanMemory))
     foreach ($m in $map) {
         $inControl = $c.Canaries -contains $m[1]
@@ -432,41 +392,53 @@ function Check-Cli([string]$cli, [string]$bin, [string]$spec) {
     if ($controlHook -and -not $isoHook) { $caps['hooks_blocked'] = $true }
     elseif (-not $controlHook) { $notes += 'hooks_blocked:Kontrolle_fuehrte_Hook_nicht_aus' }
     else { $notes += 'hooks_blocked:Hook_lief_trotz_Isolation' }
-    if ($cli -eq 'claude') {
-        if ($null -ne $i.Tools -and @($i.Tools).Count -eq 0 -and @($i.Mcp).Count -eq 0) { $caps['tools_blocked'] = $true }
-        else { $notes += 'tools_blocked:init_meldet_Werkzeuge_oder_MCP' }
-    } else {
-        if (-not $i.Tools) { $caps['tools_blocked'] = $true } else { $notes += 'tools_blocked:Werkzeug_Eintraege_in_der_Ausgabe' }
-    }
-    # Ereignisvertrag: nicht automatisch pruefbar; nur mit ausdruecklicher Bestaetigung und wohlgeformtem Strom.
-    if ($ConfirmEventContract.IsPresent -and -not $i.Bad -and $i.Model) { $caps['event_contract'] = $true }
-    else { $notes += 'event_contract:nicht_bestaetigt' }
+    # Werkzeuge: positive Kontrolle (ohne Sperre Wirkung) UND negative (mit Sperre keine Wirkung).
+    $controlEffect = $t.ToolUse -or $t.MarkerSeen
+    $previewEffect = $tp.ToolUse -or $tp.MarkerSeen
+    $initEmpty = ($null -ne $i.Tools) -and (@($i.Tools).Count -eq 0) -and (@($i.Mcp).Count -eq 0)
+    if (-not $controlEffect) { $notes += 'tools_blocked:Kontrolle_las_den_Marker_nicht' }
+    elseif ($previewEffect) { $notes += 'tools_blocked:Werkzeug_wirkt_trotz_Sperre' }
+    elseif (-not $initEmpty) { $notes += 'tools_blocked:init_meldet_Werkzeuge_oder_MCP' }
+    else { $caps['tools_blocked'] = $true }
     return @{ Caps = $caps; Notes = ($notes -join '; ') }
 }
 
 function Write-Caps([string]$provider, [string]$version, $result) {
     $path = Join-Path $DataDir 'book_talk_isolation_caps.json'
+    $caps = $result.Caps
+    $notes = $result.Notes
+    if ($script:ContractOk -and $script:Observed.Count -gt 0) { $caps['event_contract'] = $true }
+    else { $notes = ($notes + '; event_contract:Vertragsverletzung_oder_nichts_beobachtet').Trim('; ') }
     $doc = Read-Doc $path
     $keep = @($doc.entries | Where-Object { -not ($_.cli -eq $provider -and $_.cli_version -eq $version) })
-    $entry = [ordered]@{ cli = $provider; cli_version = $version; kind = 'empirisch'; checked_at = $Now; caps = $result.Caps; notes = $result.Notes }
-    $doc = [ordered]@{ schema = 1; entries = @($keep) + @($entry) }
-    Save-Doc $path $doc
-    return ($result.Caps | ConvertTo-Json -Compress)
+    $entry = [ordered]@{ cli = $provider; cli_version = $version; kind = 'empirisch'; checked_at = $Now; caps = $caps
+        observed_events = @($script:Observed | Sort-Object); notes = $notes }
+    Save-Doc $path ([ordered]@{ schema = 1; entries = @($keep) + @($entry) })
+    return @{ Json = ($caps | ConvertTo-Json -Compress); Notes = $notes }
 }
 
-function Measure-Cli([string]$cli, [string]$bin, [string]$spec, [string]$provider, [string]$version, [string]$sha) {
-    $world = Make-World $cli "measure-$cli"
+# Ungueltig (Abbruch, nichts geschrieben), sobald EIN Lauf auffaellt.
+function Measure-Cli([string]$bin, [string]$spec, [string]$provider, [string]$version, [string]$sha) {
+    $world = Make-World 'measure'
     $ins = @(); $outs = @(); $models = @()
     for ($n = 1; $n -le $Runs; $n++) {
-        Say "${cli}: Messlauf $n/$Runs"
+        Say "claude: Messlauf $n/$Runs"
         $f = Join-Path $world "m$n.jsonl"
-        if ($cli -eq 'claude') { Run-Claude $bin $world 'preview' $spec $f } else { Run-Codex $bin $world 'preview' $spec $f }
-        $r = Parse-Out $cli $f
-        if (-not $r.Ok) { Die "${cli}: Messlauf $n ohne gueltige Antwort" }
-        $ins += $r.Input; $outs += $r.Output; $models += $r.Model
+        Run-Claude $bin $world 'preview' $spec $f $Question
+        $r = Parse-Out $f ''
+        Note-Run $r
+        if ($r.Rc -ne 0) { Die "Messreihe ungueltig: Lauf $n mit Exit-Code <> 0 (nichts geschrieben)" }
+        if ($r.Violation -ne '') { Die "Messreihe ungueltig: Lauf $n verletzt den Ereignisvertrag ($($r.Violation); nichts geschrieben)" }
+        if ($r.Error) { Die "Messreihe ungueltig: Lauf $n mit Fehlerereignis (nichts geschrieben)" }
+        if ($r.Stop -ne 'end_turn') { Die "Messreihe ungueltig: Lauf $n mit stop_reason <> end_turn (Abschneiden; nichts geschrieben)" }
+        if ($r.Compacted) { Die "Messreihe ungueltig: Lauf $n mit Kompaktierung (nichts geschrieben)" }
+        if (-not $r.Ok) { Die "Messreihe ungueltig: Lauf $n ohne gueltige Antwort (nichts geschrieben)" }
+        if (@($r.Models).Count -ne 1) { Die "Messreihe ungueltig: Lauf $n meldet keine oder mehrere Modell-IDs (nichts geschrieben)" }
+        $ins += $r.Input; $outs += $r.Output; $models += $r.Models[0]
     }
     $distinct = @($models | Sort-Object -Unique)
-    if ($distinct.Count -ne 1 -or -not $distinct[0]) { Die "${cli}: die CLI meldete uneinheitliche oder keine Modelle" }
+    if ($distinct.Count -ne 1 -or -not $distinct[0]) { Die 'Messreihe ungueltig: uneinheitliche oder keine Modell-IDs (nichts geschrieben)' }
+    # Erst nach dem letzten gueltigen Lauf wird geschrieben.
     $path = Join-Path $DataDir 'book_talk_preview_measurements.json'
     $doc = Read-Doc $path
     $keep = @($doc.entries | Where-Object { -not ($_.cli -eq $provider -and $_.cli_version -eq $version -and $_.binary_sha256 -eq $sha -and $_.model -eq $spec) })
@@ -474,34 +446,37 @@ function Measure-Cli([string]$cli, [string]$bin, [string]$spec, [string]$provide
     $entry = [ordered]@{ cli = $provider; cli_version = $version; binary_sha256 = $sha; model = $spec; reported_model = $distinct[0]
         runs = $Runs; max_overhead_tokens = [int64](($ins | Measure-Object -Maximum).Maximum)
         reasoning_reserve_tokens = [int64](($outs | Measure-Object -Maximum).Maximum)
-        compaction_threshold_percent = $CompactionPercent; measured_at = $Now; kind = 'empirisch'; raw_usage = $raw }
+        measured_at = $Now; kind = 'empirisch'; raw_usage = $raw }
     Save-Doc $path ([ordered]@{ schema = 1; entries = @($keep) + @($entry) })
     return ("modell=$($entry.reported_model) overhead=$($entry.max_overhead_tokens) reserve=$($entry.reasoning_reserve_tokens) laeufe=$Runs")
 }
 
-function Handle([string]$cli, [string]$spec) {
-    $provider = "${cli}_cli"
-    $bin = Find-Cli $cli
-    $payload = Get-Payload $bin
-    $version = Get-Version $bin
-    if (-not $version) { Die "${cli}: Version nicht lesbar" }
-    $sha = Get-Sha256 $payload
-    Say "${cli}: Version `"$version`", Programm $payload, SHA-256 $sha"
+function Handle([string]$spec) {
+    $provider = 'claude_cli'
+    $found = Find-Cli
+    $bin = (Get-Item -LiteralPath $found)
+    $real = if ($bin.Target) { (Resolve-Path -LiteralPath ([string]($bin.Target | Select-Object -First 1))).Path } else { $bin.FullName }
+    if (-not (Test-Native $real)) { Die "claude_not_native: $real ist keine native Binaerdatei (npm-/Node-/Skript-Launcher werden abgelehnt)" }
+    $version = Get-Version $real
+    if (-not $version) { Die 'claude: Version nicht lesbar' }
+    $sha = Get-Sha256 $real
+    Say "claude: Version `"$version`", Programm $real, SHA-256 $sha"
     if ($DryIdentity.IsPresent) { return }
-    if (-not $spec) { Die "-$($cli.Substring(0,1).ToUpper() + $cli.Substring(1))Model fehlt" }
+    if (-not $spec) { Die '-ClaudeModel fehlt' }
+    $res = $null
+    if ($doCheck) { $res = Check-Cli $real $spec }
+    if ($doMeasure) { Say "claude: Messreihe $(Measure-Cli $real $spec $provider $version $sha)" }
     if ($doCheck) {
-        $res = Check-Cli $cli $bin $spec
-        Say "${cli}: Faehigkeiten $(Write-Caps $provider $version $res)"
-        if ($res.Notes) { Say "${cli}: nicht belegt: $($res.Notes)" }
+        $w = Write-Caps $provider $version $res
+        Say "claude: Faehigkeiten $($w.Json)"
+        if ($w.Notes) { Say "claude: nicht belegt: $($w.Notes)" }
+        Say "claude: beobachtete Ereignistypen: $((@($script:Observed | Sort-Object)) -join ', ')"
     }
-    if ($doMeasure) { Say "${cli}: Messreihe $(Measure-Cli $cli $bin $spec $provider $version $sha)" }
 }
 
 try {
-    if ($Cli -ne 'codex') { Handle 'claude' $ClaudeModel }
-    if ($Cli -ne 'claude') { Handle 'codex' $CodexModel }
+    Handle $ClaudeModel
     Say "fertig. Dateien in: $DataDir"
 } finally {
-    Sync-AllAuth
     if (Test-Path $Work) { Remove-Item -Recurse -Force $Work -ErrorAction SilentlyContinue }
 }

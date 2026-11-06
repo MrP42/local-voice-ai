@@ -59,7 +59,15 @@ export function SubscriptionPreviewDialog({
         <p className="text-sm">{t("tts.bookTalk.subscription.cloud")}</p>
         {error && (
           <p role="alert" className="text-sm" data-testid="booktalk-subscription-error">
-            {t(`tts.bookTalk.subscription.error.${error === "no_cli" ? "noCli" : "other"}`)}
+            {t(
+              `tts.bookTalk.subscription.error.${
+                error === "no_cli"
+                  ? "noCli"
+                  : error === "claude_not_native"
+                    ? "notNative"
+                    : "other"
+              }`,
+            )}
           </p>
         )}
       </div>

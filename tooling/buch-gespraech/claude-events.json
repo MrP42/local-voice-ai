@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "comment": "Ereignisvertrag der Claude-Vorschau (claude -p --output-format stream-json --verbose). Gemeinsame Quelle: die App liest die Datei per include_str! (managers/llm/contract.rs), isolation-check.sh/.ps1 lesen sie zur Laufzeit. Was nicht hier steht, SPERRT. Erweitern nur nach einer Messung, die das Ereignis belegt.",
+  "events": [
+    { "type": "system", "subtypes": ["init"] },
+    { "type": "assistant", "content_blocks": ["text", "thinking"] },
+    { "type": "user", "content_blocks": ["text"] },
+    { "type": "result", "subtypes": ["success"] }
+  ],
+  "tool_blocks": ["tool_use", "server_tool_use", "mcp_tool_use", "tool_result"]
+}

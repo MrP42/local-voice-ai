@@ -782,21 +782,23 @@
         "previewHint": "Preview: the chosen model has not passed the test run yet. Answers can be wrong. Spoiler protection lowers the risk but does not rule it out.",
         "revoke": "Revoke cloud approval ({{model}})",
         "revokeHint": "Afterwards the book conversation asks again before the next request.",
-        "subscription": "Subscription preview (Claude Code, Codex)",
+        "subscription": "Subscription preview (Claude Code)",
         "subscriptionState": {
           "on": "on",
           "off": "off",
           "reconfirm": "confirm again",
           "not_released": "not released"
         },
-        "subscriptionHint": "Budget is empirical, not proven. Requests go to Anthropic or OpenAI through your subscription.",
+        "subscriptionHint": "Budget is empirical, not proven. Requests go to Anthropic through your subscription.",
         "notReleased": {
           "default": "Not released yet: measurement or check on this device is missing",
           "measurement_missing": "Not released yet: measurement on this device is missing",
           "isolation_unverified": "Not released yet: isolation of this CLI version has not been checked",
           "payload_unknown": "Not released yet: the program the CLI actually starts cannot be determined",
           "no_cli": "Not released yet: CLI not found or not readable",
-          "context_unknown": "Not released yet: the context size of the model is not established"
+          "context_unknown": "Not released yet: the context size of the model is not established",
+          "codex_preview_not_available": "Preview for Codex follows",
+          "claude_not_native": "Not released yet: Claude is not a native executable (npm, Node or script launcher)"
         }
       },
       "turn": {
@@ -819,11 +821,12 @@
         "title": "Turn on the subscription preview?",
         "reconfirm": "The CLI or the model has changed. Please confirm the preview again; until then the switch has no effect.",
         "risk": "Budget is empirical, not proven: for a subscription it cannot be proven in advance how many tokens a call needs. The app uses safety margins and discards every reply that hints at compaction, truncation or mismatches. Answers can still be wrong.",
-        "cloud": "Requests go to Anthropic or OpenAI through your subscription. The approval is bound to the CLI version installed now; after an update you must confirm it again.",
+        "cloud": "Requests go to Anthropic through your subscription. The approval applies to the Claude file installed now (a local copy in the app folder); after an update you must confirm again and create new evidence.",
         "confirm": "Understood, turn on",
         "cancel": "Cancel",
         "error": {
-          "noCli": "No installed subscription CLI found. Install Claude Code or Codex and sign in.",
+          "noCli": "No installed Claude CLI found. Install Claude Code and sign in. Codex follows later.",
+          "notNative": "The Claude CLI is not a native executable (npm, Node or script launcher) and cannot be used.",
           "other": "The preview could not be turned on."
         }
       },

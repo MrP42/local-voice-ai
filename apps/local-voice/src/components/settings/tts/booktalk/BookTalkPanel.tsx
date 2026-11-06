@@ -77,12 +77,15 @@ export function BookTalkPanel({
       if (status.status !== "ok" || !status.data.applies) return setSubscription(null);
       const { enabled, state, blocked } = status.data;
       setSubscriptionReason(blocked ?? null);
+      // Codex gibt es in der Vorschau (noch) nicht: immer „folgt“, auch bei aus.
       setSubscription(
-        !enabled
-          ? "off"
-          : state === "reconfirm" || state === "not_released"
-            ? state
-            : "on",
+        blocked === "codex_preview_not_available"
+          ? "not_released"
+          : !enabled
+            ? "off"
+            : state === "reconfirm" || state === "not_released"
+              ? state
+              : "on",
       );
     } catch {
       setSubscription(null);
