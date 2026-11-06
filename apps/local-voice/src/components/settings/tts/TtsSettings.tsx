@@ -1533,6 +1533,7 @@ export const TtsSettings = () => {
     voiceValue,
     scriptMode,
     applyVoiceValue,
+    fishKnown,
     selectedVoiceNotSetUp,
     noVoiceSetUp,
     piperVoiceLabel,
@@ -1575,7 +1576,12 @@ export const TtsSettings = () => {
       tabVoices[voiceKey] ??
       (tab === "translation" ? tabVoices.translation : undefined);
     if (!wanted) return;
-    const marker = `${activePage ?? ""}|${voiceKey}|${wanted}`;
+    // Erst mit bekanntem Fish-Stand; ändert er sich, darf die Wahl neu greifen
+    // (eine gemerkte Fish-Stimme kommt zurück, sobald Fish lauffähig ist).
+    const isFishValue =
+      !wanted.startsWith("piper:") && !wanted.startsWith("provider:");
+    if (isFishValue && !fishKnown) return;
+    const marker = `${activePage ?? ""}|${voiceKey}|${wanted}|${fishReady}`;
     // Schon aktiv (z. B. gerade im Dropdown gewaehlt): als erledigt merken, damit
     // ein spaeteres Zurueckschalten auf diese Wahl nicht an einer alten Marke haengt.
     if (wanted === voiceValue) {
@@ -1592,7 +1598,7 @@ export const TtsSettings = () => {
     applyVoiceValue(wanted);
     // voiceValue absichtlich nicht in den Abhaengigkeiten: der Effekt soll
     // beim Umschalten greifen, nicht bei jeder Einstellungsaenderung.
-  }, [tab, voiceKey, tabVoices, applyVoiceValue, activePage]);
+  }, [tab, voiceKey, tabVoices, applyVoiceValue, activePage, fishKnown, fishReady]);
   // Jede Wahl (Dropdown, Wiedergabeleiste, Einstellungen) gilt fuer die
   // aktuelle Seite und den aktuellen Reiter: so kommt man beim Zurueckschalten
   // zu ihr zurueck. Meldet `voiceValue` die Wahl des Effekts oben (sie kommt

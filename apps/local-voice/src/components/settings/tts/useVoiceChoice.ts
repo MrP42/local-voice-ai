@@ -98,6 +98,12 @@ export function useVoiceChoice(phase: string) {
       phase === "ready" ||
       phase === "speaking"
     : true;
+  /** Laufzeitstand gelesen oder Fish-Server läuft: erst dann ist `fishReady` belastbar. */
+  const fishKnown =
+    ttsRuntime !== null ||
+    phase === "starting" ||
+    phase === "ready" ||
+    phase === "speaking";
   const piperVoices = useMemo(
     () =>
       ttsDownloads
@@ -212,6 +218,8 @@ export function useVoiceChoice(phase: string) {
           // Fish ist hier nicht eingerichtet: eine gemerkte Fish-Stimme (Reiter,
           // Seite) darf die laufende Stimme nicht still auf „nicht eingerichtet“
           // umstellen (Patrick 06.11.2026: Phonon ist die Standardstimme).
+          // Das Wiederherstellen gemerkter Stimmen wartet dafür auf `fishKnown`
+          // (TtsSettings); eine Wahl von Hand gilt bei unbekanntem Stand.
           if (!fishReady) return;
           if ((getSetting("tts_engine") ?? "fish") !== "fish") {
             await updateSetting("tts_engine", "fish");
@@ -538,6 +546,7 @@ export function useVoiceChoice(phase: string) {
     voices,
     speakers,
     fishReady,
+    fishKnown,
     piperVoices,
     providerEngineId,
     providerLabel,

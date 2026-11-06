@@ -812,7 +812,16 @@ pub(crate) async fn apply_default_voice(app: &AppHandle) {
     let snapshot = tts.provider_snapshot();
     // Fish gewählt, aber hier nicht lauffähig: dann vertritt Phonon (siehe
     // [`replace_unusable_fish_in`]), auch wenn die Vorgabe schon einmal erledigt war.
+    // Lauffähig heißt wie in der Oberfläche: Dateien vollständig ODER ein laufender bzw.
+    // startender (auch fremd gestarteter) Fish-Server.
+    let fish_running = matches!(
+        tts.status().phase,
+        crate::managers::tts::state::TtsPhase::Starting
+            | crate::managers::tts::state::TtsPhase::Ready
+            | crate::managers::tts::state::TtsPhase::Speaking
+    );
     let fish_unusable = crate::settings::get_settings(app).tts_engine == policy::FISH_ID
+        && !fish_running
         && !tts.runtime_status().fish.ready;
     if !fish_unusable
         && snapshot
@@ -859,7 +868,12 @@ pub(crate) async fn apply_default_voice(app: &AppHandle) {
             // Der Stand im Moment des Schreibens zählt: wer inzwischen selbst gewählt hat,
             // steht nicht mehr auf Fish, und es bleibt bei seiner Wahl.
             let replaced = replace_unusable_fish_in(s, &snapshot, false, &voices, &voice)?;
-            if !s.tts_providers.default_voice_applied.iter().any(|p| p == id) {
+            if !s
+                .tts_providers
+                .default_voice_applied
+                .iter()
+                .any(|p| p == id)
+            {
                 s.tts_providers.default_voice_applied.push(id.to_string());
             }
             Ok(replaced)
@@ -1287,7 +1301,9 @@ mod tests {
         s.tts_providers = p.clone();
         s.tts_engine = "fish".into();
         s.tts_voice = Some("patrick".into());
-        s.tts_providers.voices.insert("phonon".into(), "Nele".into());
+        s.tts_providers
+            .voices
+            .insert("phonon".into(), "Nele".into());
 
         let mut ready = s.clone();
         assert!(!replace_unusable_fish_in(&mut ready, &snap, true, &list, "Anton").unwrap());

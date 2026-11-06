@@ -282,9 +282,8 @@ pub fn call(
     let target = resolve(name)?;
     let (tool, need, capability) = match &target {
         Target::Bridge(entry) => {
-            let area = area_of_catalog(entry).ok_or_else(|| {
-                "Dieses Werkzeug steht im Chat nicht zur Verfügung.".to_string()
-            })?;
+            let area = area_of_catalog(entry)
+                .ok_or_else(|| "Dieses Werkzeug steht im Chat nicht zur Verfügung.".to_string())?;
             (entry.name, Need::One(area), entry.capability)
         }
         Target::Knowledge(spec) => (spec.name, spec.need, knowledge_capability(spec.name)),
