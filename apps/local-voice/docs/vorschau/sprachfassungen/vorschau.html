@@ -146,6 +146,18 @@ h2{font-size:16px;font-weight:600;margin:18px 0 10px}h2 small{font-weight:400;co
 .danger{color:#C42B1C}.dark .danger{color:#FF99A4}
 .toast a,.itoast a{min-height:44px;min-width:44px;display:inline-flex;align-items:center}
 .ios .li[role]{cursor:pointer}
+.toast{box-sizing:border-box;max-width:min(520px,calc(100vw - 48px));flex-wrap:wrap;row-gap:4px}
+.toast>span:first-child{flex:1 1 240px;min-width:0}
+.toast .acts2{display:flex;gap:12px;flex-wrap:wrap}
+@media (max-width:640px){.toast{right:16px;left:16px;max-width:none}}
+.grp{display:grid;grid-template-columns:1fr 24px 1fr 120px 44px;gap:6px;align-items:center;padding:4px 0;border-bottom:1px solid var(--border)}
+.grp .c{border:1px solid var(--border);border-radius:6px;padding:4px 10px;min-height:44px;display:flex;flex-direction:column;justify-content:center;font-size:13px}
+.grp.open .c{border-style:dashed}
+.grp .st{font-size:12px}
+.grp .st button{min-height:44px;width:100%}
+.glist{max-height:46vh;overflow:auto;margin-top:10px;border-top:1px solid var(--border)}
+.btn[disabled]{opacity:1;color:var(--sec);background:var(--chip);cursor:not-allowed}
+@media (max-width:640px){.grp{grid-template-columns:1fr 1fr;}.grp .ar{display:none}.grp .st{grid-column:1/2}}
 </style></head>
 <body>
 <!-- 1 Bibliothek -->
@@ -233,7 +245,7 @@ h2{font-size:16px;font-weight:600;margin:18px 0 10px}h2 small{font-weight:400;co
 <!-- 6 Nach dem Wechsel: kapitelgenau -->
 <div class="scr" id="s6"><div class="app"><nav class="side"><div class="logo">Local Voice AI</div><div class="n">Start</div><div class="n">Verlauf</div><div class="n">Aufnahmen</div><div class="n">Vorlesen</div><div class="n on">Bibliothek</div><div class="n">Sprachgespräch</div></nav>
 <main class="main"><h2>Bibliothek</h2></main></div>
- <div class="toast" role="status"><span>Weiter auf English: Kapitel 7 von 24, etwa gleiche Stelle im Kapitel (2:05 von 21:40).</span><a href="#">Rückgängig</a></div>
+ <div class="toast" role="status"><span>Weiter auf English: Kapitel 7 von 24, etwa gleiche Stelle im Kapitel (2:05 von 21:40).</span><span class="acts2"><a href="#">Rückgängig</a></span></div>
  <div class="player"><div class="mini c1" style="filter:hue-rotate(30deg)"></div><div class="inf"><b>The Way to Serenity</b><span>Chapter 7 of 24 · The Stillness of Morning</span></div>
   <div class="ctr"><div class="keys"><span class="k">⏮</span><span class="k">↺</span><span class="k play">❚❚</span><span class="k">↻</span><span class="k">⏭</span></div><div class="line"><span>2:33:02</span><div class="bar"><i style="width:29%"></i></div><span>noch 6:17:58</span></div></div>
   <button class="langbtn" aria-label="Sprache: Englisch, Auswahl öffnen" aria-haspopup="menu">🌐 EN ▴</button><span class="k">1,0×</span><span class="k">☾</span></div>
@@ -242,23 +254,20 @@ h2{font-size:16px;font-weight:600;margin:18px 0 10px}h2 small{font-weight:400;co
 <!-- 7 Nach dem Wechsel: ungefähr -->
 <div class="scr" id="s7"><div class="app"><nav class="side"><div class="logo">Local Voice AI</div><div class="n">Start</div><div class="n">Verlauf</div><div class="n">Aufnahmen</div><div class="n">Vorlesen</div><div class="n on">Bibliothek</div><div class="n">Sprachgespräch</div></nav>
 <main class="main"><h2>Bibliothek</h2></main></div>
- <div class="toast" role="status" style="background:var(--warnbg);color:var(--text);border:1px solid var(--warn)"><span><b>Ungefähr:</b> Weiter auf English bei 34 % des Buchs. Die Kapitel (18 Deutsch, 21 English) sind noch nicht zugeordnet.</span><span style="display:flex;gap:12px;flex-shrink:0"><a href="#" style="color:var(--text)">Kapitel zuordnen</a><a href="#" style="color:var(--text)">Rückgängig</a></span></div>
- <div class="player"><div class="mini c5" style="filter:hue-rotate(-50deg)"></div><div class="inf"><b>The River Archive</b><span>Chapter 8 of 21 · ungefähr</span></div>
-  <div class="ctr"><div class="keys"><span class="k">⏮</span><span class="k">↺</span><span class="k play">❚❚</span><span class="k">↻</span><span class="k">⏭</span></div><div class="line"><span>3:01:12</span><div class="bar"><i style="width:34%"></i></div><span>noch 5:49:48</span></div></div>
+ <div class="toast" role="status" style="background:var(--warnbg);color:var(--text);border:1px solid var(--warn)"><span><b>Ungefähr:</b> Weiter auf English bei 87 % des Buchs. Die Zuordnung von Kapitel 16 (Deutsch) zu Kapitel 17 (English) ist noch nicht bestätigt.</span><span class="acts2"><a href="#" style="color:var(--text)">Kapitel zuordnen</a><a href="#" style="color:var(--text)">Rückgängig</a></span></div>
+ <div class="player"><div class="mini c5" style="filter:hue-rotate(-50deg)"></div><div class="inf"><b>The River Archive</b><span>Chapter 17 of 21 · ungefähr</span></div>
+  <div class="ctr"><div class="keys"><span class="k">⏮</span><span class="k">↺</span><span class="k play">❚❚</span><span class="k">↻</span><span class="k">⏭</span></div><div class="line"><span>7:42:20</span><div class="bar"><i style="width:87%"></i></div><span>noch 1:09:10</span></div></div>
   <button class="langbtn" aria-label="Sprache: Englisch, Auswahl öffnen" aria-haspopup="menu">🌐 EN ▴</button><span class="k">1,0×</span><span class="k">☾</span></div>
 </div>
 
 <!-- 8 Kapitel zuordnen -->
-<div class="scr" id="s8"><div class="overlay"><div class="dlg" role="dialog" aria-modal="true" aria-labelledby="d8" style="width:min(640px,calc(100vw - 32px))">
+<div class="scr" id="s8"><div class="overlay"><div class="dlg" role="dialog" aria-modal="true" aria-labelledby="d8" style="width:min(760px,calc(100vw - 32px))">
  <h3 id="d8">Kapitel zuordnen</h3>
- <p>Das Archiv am Fluss: Deutsch 18 Kapitel, English 21 Kapitel. Vorschlag nach Titel und Länge; bitte prüfen. Erst nach „Bestätigen“ springt der Sprachwechsel ins passende Kapitel.</p>
- <div class="cols"><div class="h">Deutsch</div><div></div><div class="h">English</div>
-  <div class="c">1 Ankunft</div><div class="ar">→</div><div class="c">1 Arrival</div>
-  <div class="c">2 Das Haus am Wasser</div><div class="ar">→</div><div class="c">2 The House by the Water</div>
-  <div class="c">3 Briefe</div><div class="ar">→</div><div class="c">3 Letters · 4 Replies</div>
-  <div class="c">4 Der Keller</div><div class="ar">→</div><div class="c q">5 The Cellar? (prüfen)</div>
- </div>
- <div class="acts"><button class="btn">Abbrechen</button><button class="btn">Alles 1:1</button><button class="btn p">Bestätigen</button></div>
+ <p>Das Archiv am Fluss: Deutsch 18 Kapitel, English 21 Kapitel. Vorschlag nach Kapiteltitel und Länge. Jede Gruppe gilt erst nach „Bestätigen“; bis dahin springt der Sprachwechsel dort nur „ungefähr“.</p>
+ <p style="margin-top:8px"><b id="cnt"></b></p>
+ <div class="glist" id="glist" role="list"></div>
+ <div class="acts"><button class="btn">Abbrechen</button><button class="btn" disabled aria-describedby="why8">Alle bestätigen</button><button class="btn p">Speichern</button></div>
+ <p id="why8" style="font-size:12px;text-align:right;margin-top:6px">„Alle bestätigen“ geht nur bei gleicher Kapitelzahl und ausschließlich 1:1-Gruppen.</p>
 </div></div></div>
 
 <!-- 9 iPhone: Sprache und Quelle -->
@@ -294,12 +303,20 @@ h2{font-size:16px;font-weight:600;margin:18px 0 10px}h2 small{font-weight:400;co
 <!-- 11 Konflikt nach Abgleich -->
 <div class="scr" id="s11"><div class="app"><nav class="side"><div class="logo">Local Voice AI</div><div class="n">Start</div><div class="n">Verlauf</div><div class="n">Aufnahmen</div><div class="n">Vorlesen</div><div class="n on">Bibliothek</div><div class="n">Sprachgespräch</div></nav>
 <main class="main"><h2>Bibliothek</h2></main></div>
- <div class="toast" role="alert" style="max-width:480px"><span>Auf dem iPhone zuletzt <b>English</b> gehört (Kapitel 9, vor 5 Min.). Hier läuft Deutsch, Kapitel 7.</span><span style="display:flex;gap:12px;flex-shrink:0"><a href="#">Dorthin wechseln</a><a href="#">Hier bleiben</a></span></div>
+ <div class="toast" role="alert"><span>Auf dem iPhone zuletzt <b>English</b> gehört (Kapitel 9, vor 5 Min.). Hier läuft Deutsch, Kapitel 7.</span><span class="acts2"><a href="#">Dorthin wechseln</a><a href="#">Hier bleiben</a></span></div>
  <div class="player"><div class="mini c1"></div><div class="inf"><b>Der Weg zur Gelassenheit</b><span>Kapitel 7 von 24 · Die Stille am Morgen</span></div>
   <div class="ctr"><div class="keys"><span class="k">⏮</span><span class="k">↺</span><span class="k play">❚❚</span><span class="k">↻</span><span class="k">⏭</span></div><div class="line"><span>2:44:10</span><div class="bar"><i style="width:29%"></i></div><span>noch 6:44:50</span></div></div>
   <button class="langbtn" aria-label="Sprache: Deutsch, Auswahl öffnen" aria-haspopup="menu">🌐 DE ▴</button><span class="k">1,0×</span><span class="k">☾</span></div>
 </div>
 <script>
+(function(){const de=['Ankunft','Das Haus am Wasser','Briefe','Der Keller','Die Schleuse','Hochwasser','Das Register','Nachtschicht','Die Karte','Zeugen','Der Fund','Abschriften','Im Archiv','Die Liste','Rückkehr','Der Prozess','Ebbe','Schluss'];
+const en=['Arrival','The House by the Water','Letters','Replies','The Cellar','The Lock','Flood','The Register','Night Shift','The Map','Witnesses','The Find','Copies','In the Archive','The List','Homecoming','The Trial','Low Tide','Coda','Afterword','Notes'];
+const g=[[[0],[0],1],[[1],[1],1],[[2],[2,3],1],[[3],[4],1],[[4],[5],1],[[5],[6],1],[[6],[7],1],[[7],[8],1],[[8],[9],1],[[9],[10],1],[[10],[11],1],[[11],[12],1],[[12],[13],1],[[13],[14],1],[[14],[15],1],[[15],[16],0],[[16],[17],1],[[17],[18,19,20],0]];
+const L=document.getElementById('glist');if(!L)return;let ok=0;
+const lab=(arr,names)=>arr.map(i=>(i+1)+' '+names[i]).join('<br>');
+g.forEach(([a,b,c],i)=>{if(c)ok++;const d=document.createElement('div');d.className='grp'+(c?'':' open');d.setAttribute('role','listitem');
+d.innerHTML='<div class="c">'+lab(a,de)+'</div><div class="ar" aria-hidden="true">'+(a.length===b.length?'→':(b.length>1?'⇉':'⇇'))+'</div><div class="c">'+lab(b,en)+'</div><div class="st">'+(c?'<span style="color:var(--ok)">✓ bestätigt</span>':'<button class="btn" aria-label="Gruppe '+(i+1)+' bestätigen">Bestätigen</button>')+'</div><button class="kbtn" aria-label="Gruppe '+(i+1)+' bearbeiten: teilen, verbinden, Grenze verschieben">⋯</button>';L.appendChild(d);});
+document.getElementById('cnt').textContent=ok+' von '+g.length+' Gruppen bestätigt · alle 18 und 21 Kapitel zugeordnet';})();
 const q=new URLSearchParams(location.search);document.getElementById('s'+(q.get('s')||'1')).classList.add('on');
 if(q.get('t')==='dunkel')document.documentElement.classList.add('dark');
 </script>

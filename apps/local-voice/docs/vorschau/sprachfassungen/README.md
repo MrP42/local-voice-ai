@@ -1,4 +1,4 @@
-# Vorschau Sprachfassungen (lva#344), Runde 2
+# Vorschau Sprachfassungen (lva#344), Runde 3
 
 Statische Konzeptvorschau, `vorschau.html?s=1..11&t=hell|dunkel`. Spezifikation:
 `docs/superpowers/specs/2026-11-06-sprachfassungen.md` (Modell Schema 2, Migration, Sync, Konflikte).
@@ -11,11 +11,14 @@ Statische Konzeptvorschau, `vorschau.html?s=1..11&t=hell|dunkel`. Spezifikation:
 | sf-04 | Buchseite: Sprachfassungen, „Zuletzt“, Menü am ⋮ (mobil als Blatt), getrennte Lösch-Aktionen |
 | sf-05 | Player: Sprachknopf mit Dropup, KI-Übersetzung gekennzeichnet |
 | sf-06 | Wechsel kapitelgenau (Zuordnung bestätigt), Toast mit Rückgängig |
-| sf-07 | Wechsel ungefähr (Kapitel nicht zugeordnet), Toast mit „Kapitel zuordnen“ |
-| sf-08 | Dialog „Kapitel zuordnen“ |
+| sf-07 | Wechsel ungefähr: Quellkapitel liegt in unbestätigter Gruppe (16 → 17, vgl. sf-08) |
+| sf-08 | Dialog „Kapitel zuordnen“: vollständige 18 ↔ 21-Zuordnung in Gruppen (1:1, 1:n), zwei Gruppen offen, „Alle bestätigen“ gesperrt |
 | sf-09 | iPhone: ein Blatt „Sprache und Quelle“ (gleicher Zustand wie „Quelle“ aus lva#326) |
 | sf-10 | iPhone-Regal mit Sprachkürzeln, Toast |
 | sf-11 | Konflikt nach Abgleich: „Auf dem iPhone zuletzt English gehört“ |
 
-`belege.json`: je Bild Bedienziele unter 44 px (leer = keine) und kleinster Kontrast kleiner Texte.
-Alle 40 Bilder: keine Ziele unter 44 px, kleinster Kontrast ≥ 4,5:1.
+`belege.json` je Bild: `umfang` (Selektor, Zahl geprüfter/verdeckter Bedienziele und Textknoten),
+`bedienziele` (Element, Beschriftung, Rechteck x/y/w/h), `texte` (Element, Text, Schriftgröße, Kontrast nach
+Alpha-Verrechnung aller Hintergrundebenen), `zuKlein`, `abgeschnittenHorizontal`, `kontrastUnter45`.
+Ergebnis über 40 Bilder: keine Ziele unter 44 px, keine horizontal abgeschnittenen Ziele, kleinster Kontrast 4,81:1.
+Covermotive sind ausgenommen; verdeckte Elemente (hinter Dialog/Blatt) werden gezählt, nicht bewertet.
