@@ -19,6 +19,9 @@ use std::sync::OnceLock;
 
 use serde_json::Value;
 
+/// Obergrenze fuer Zahlenfelder: 2^53-1 (JSON-sicher), gleich in `analyze-run.py` und der PS1.
+pub const MAX_SAFE_INT: u64 = 9_007_199_254_740_991;
+
 /// Die gemeinsame Whitelist-Datei.
 pub const EVENTS_JSON: &str =
     include_str!("../../../../../../tooling/buch-gespraech/claude-events.json");
@@ -131,7 +134,11 @@ impl Contract {
             .iter()
             .filter(|(l, _)| *l == label)
             .flat_map(|(_, fields)| fields)
-            .all(|f| ev.get(f).is_some_and(|v| v.as_u64().is_some()))
+            .all(|f| {
+                ev.get(f)
+                    .and_then(Value::as_u64)
+                    .is_some_and(|n| n <= MAX_SAFE_INT)
+            })
     }
 
     /// Prueft einen vollstaendigen Lauf. `Err` ist der feste Grund fuers Audit.
@@ -387,6 +394,11 @@ mod tests {
         ));
         assert_eq!(c.check(&ok), Ok(()));
         assert!(c.all_known(&ok));
+        // Genau die Obergrenze 2^53-1 ist noch gueltig.
+        let max = fixture(include_str!(
+            "../../../../../../tooling/buch-gespraech/tests/fixtures/thinking_tokens_max_ok.jsonl"
+        ));
+        assert_eq!(c.check(&max), Ok(()));
         for (name, text, want) in [
             (
                 "negativ",
@@ -406,6 +418,16 @@ mod tests {
             (
                 "Kommazahl",
                 include_str!("../../../../../../tooling/buch-gespraech/tests/fixtures/thinking_tokens_float.jsonl"),
+                "event_unknown",
+            ),
+            (
+                "ueber 2^53-1",
+                include_str!("../../../../../../tooling/buch-gespraech/tests/fixtures/thinking_tokens_over_max.jsonl"),
+                "event_unknown",
+            ),
+            (
+                "ueber Int64",
+                include_str!("../../../../../../tooling/buch-gespraech/tests/fixtures/thinking_tokens_huge.jsonl"),
                 "event_unknown",
             ),
             (

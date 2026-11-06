@@ -20,6 +20,7 @@ diese Regeln.
 import json, sys
 # Spiegel von CUT_STOP_REASONS/DONE_STOP_REASONS in cli.rs.
 CUT_STOP_REASONS = ("max_tokens", "aborted", "model_context_window_exceeded")  # Doku; gesperrt ist alles ausser DONE
+MAX_SAFE_INT = 9007199254740991
 DONE_STOP_REASONS = ("end_turn", "stop_sequence")
 path, events_path, marker = sys.argv[1:4]
 rc = 0
@@ -109,7 +110,8 @@ usage_ok = False
 
 def count(v):
     # Nur echte, nicht negative ganze Zahlen (kein bool, kein String, kein float).
-    return isinstance(v, int) and not isinstance(v, bool) and v >= 0
+    # Obergrenze 2^53-1 (JSON-sicher), gemeinsam mit contract.rs und der PS1.
+    return isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= MAX_SAFE_INT
 
 for e in events:
     t = e.get("type")

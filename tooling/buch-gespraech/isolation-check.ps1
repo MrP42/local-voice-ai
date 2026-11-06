@@ -153,7 +153,9 @@ $script:Observed = New-Object System.Collections.Generic.HashSet[string]([String
 function Get-DistinctOrdinal($values) {
     $set = New-Object System.Collections.Generic.HashSet[string]([StringComparer]::Ordinal)
     foreach ($v in @($values)) { if ($null -ne $v) { [void]$set.Add([string]$v) } }
-    return @($set | Sort-Object -CaseSensitive)
+    # Komma: ein Array mit EINEM Element darf beim Rueckgabewert nicht zum Skalar zerfallen
+    # (sonst liefert [0] das erste Zeichen des Strings).
+    return ,@($set | Sort-Object -CaseSensitive)
 }
 $script:ContractOk = $true
 
@@ -521,6 +523,16 @@ function Test-ErrorFlag($v) {
     if ($v.PSObject.Properties['api_error_status'] -and $null -ne $v.api_error_status) { return $true }
     return $false
 }
+# Gemeinsame Zahlenregel (Rust contract.rs, analyze-run.py): nicht negative Ganzzahl bis
+# 2^53-1 (JSON-sicher). Nur [int]/[long] gelten; [decimal], [double] und BigInteger
+# (ConvertFrom-Json liefert sie bei Kommazahlen und Werten ueber Int64) sind ungueltig:
+# im Bereich bis 2^53-1 sind das nur Schreibweisen wie 5.0, die Rust und Python ebenfalls
+# ablehnen.
+$script:MaxSafeInt = [int64]9007199254740991
+function Test-Count($v) {
+    if (($v -is [int]) -or ($v -is [long])) { return (([int64]$v -ge 0) -and ([int64]$v -le $script:MaxSafeInt)) }
+    return $false
+}
 function Test-Known($e) {
     $r = $Rules[[string]$e.type]
     if (-not $r) { return $false }
@@ -534,8 +546,7 @@ function Test-Known($e) {
     if ($null -ne $nf) {
         foreach ($f in @($nf)) {
             if ($null -eq $f -or -not $e.PSObject.Properties[[string]$f]) { return $false }
-            $v = $e.$f
-            if (-not ((($v -is [int]) -or ($v -is [long])) -and ($v -ge 0))) { return $false }
+            if (-not (Test-Count $e.$f)) { return $false }
         }
     }
     return $true
@@ -594,7 +605,7 @@ function Parse-Out([string]$path, [string]$marker) {
             $text = [string]$e.result
             $u = $e.usage
             # Nur echte, nicht negative ganze Zahlen (kein String, kein Bool, keine Kommazahl).
-            $isCount = { param($v) (($v -is [int]) -or ($v -is [long])) -and ($v -ge 0) }
+            $isCount = { param($v) Test-Count $v }
             if ($u -and ($u -isnot [string]) -and $u.PSObject.Properties['input_tokens'] -and $u.PSObject.Properties['output_tokens'] -and
                  (& $isCount $u.input_tokens) -and (& $isCount $u.output_tokens)) {
                 $extraOk = $true
@@ -614,8 +625,8 @@ function Parse-Out([string]$path, [string]$marker) {
             if ($e.is_error -cne $false -or $e.subtype -cne 'success') { $r.Error = [string]$e.subtype; if (-not $r.Error) { $r.Error = 'error' } }
         }
     }
-    $r.Models = @($models | Sort-Object)
-    $r.Observed = Get-DistinctOrdinal @($evs | ForEach-Object { Get-Label $_ })
+    $r.Models = @(Get-DistinctOrdinal @($models))
+    $r.Observed = @(Get-DistinctOrdinal @($evs | ForEach-Object { Get-Label $_ }))
     $r.Violation = if ($r.Bad) { 'bad_line' } else { Test-Contract $evs }
     if ($marker) { $r.MarkerSeen = $text.Contains($marker) }
     foreach ($w in @($CanUser, $CanProject, $CanMemory)) { if ($text.Contains($w)) { $r.Canaries += $w } }
@@ -740,16 +751,16 @@ function Measure-Cli([string]$bin, [string]$spec, [string]$provider, [string]$ve
         if ($r.Compacted) { Die "Messreihe ungueltig: Lauf $n mit Kompaktierung (nichts geschrieben)" }
         if (-not $r.Ok) { Die "Messreihe ungueltig: Lauf $n ohne gueltige Antwort (nichts geschrieben)" }
         if (@($r.Models).Count -cne 1) { Die "Messreihe ungueltig: Lauf $n meldet keine oder mehrere Modell-IDs (nichts geschrieben)" }
-        $ins += $r.Input; $outs += $r.Output; $models += $r.Models[0]
+        $ins += $r.Input; $outs += $r.Output; $models += @($r.Models)[0]
     }
-    $distinct = Get-DistinctOrdinal $models
+    $distinct = @(Get-DistinctOrdinal $models)
     if ($distinct.Count -cne 1 -or -not $distinct[0]) { Die 'Messreihe ungueltig: uneinheitliche oder keine Modell-IDs (nichts geschrieben)' }
     # Erst nach dem letzten gueltigen Lauf wird geschrieben.
     $path = Join-Path $DataDir 'book_talk_preview_measurements.json'
     $doc = Read-Doc $path
     $keep = @($doc.entries | Where-Object { -not ($_.cli -ceq $provider -and $_.cli_version -ceq $version -and $_.binary_sha256 -ceq $sha -and $_.model -ceq $spec) })
     $raw = @(); for ($k = 0; $k -lt $ins.Count; $k++) { $raw += [ordered]@{ input = $ins[$k]; output = $outs[$k] } }
-    $entry = [ordered]@{ cli = $provider; cli_version = $version; binary_sha256 = $sha; model = $spec; reported_model = $distinct[0]
+    $entry = [ordered]@{ cli = $provider; cli_version = $version; binary_sha256 = $sha; model = $spec; reported_model = [string]$distinct[0]
         runs = $Runs; max_overhead_tokens = [int64](($ins | Measure-Object -Maximum).Maximum)
         reasoning_reserve_tokens = [int64](($outs | Measure-Object -Maximum).Maximum)
         measured_at = $Now; kind = 'empirisch'; raw_usage = $raw }
@@ -803,6 +814,17 @@ if ($SelfTest.IsPresent) {
     # Modell-IDs, die sich nur in Gross-/Kleinschreibung unterscheiden, sind verschieden.
     $n++
     if ((Get-DistinctOrdinal @('claude-x', 'CLAUDE-X', 'claude-x')).Count -cne 2) { $fail++; Write-Host 'FEHLER: Get-DistinctOrdinal vergleicht nicht ordinal' -ForegroundColor Red }
+    # Einelementige Arrays duerfen nicht zu Skalaren zerfallen ([0] waere sonst ein Zeichen).
+    $tmp = Join-Path $Work 'ok-models.jsonl'
+    Copy-Item -LiteralPath (Join-Path $fx 'fixtures\ok.jsonl') -Destination $tmp
+    [System.IO.File]::WriteAllText("$tmp.rc", '0', $Utf8)
+    $pr = Parse-Out $tmp ''
+    $n++
+    if (-not ((@($pr.Models).Count -ceq 1) -and (@($pr.Models)[0] -ceq 'claude-sonnet-5-5'))) { $fail++; Write-Host 'FEHLER: Parse-Out liefert Models nicht als Array (erstes Element)' -ForegroundColor Red }
+    $n++
+    if (-not ((@(Get-DistinctOrdinal @('claude-x')).Count -ceq 1) -and (@(Get-DistinctOrdinal @('claude-x'))[0] -ceq 'claude-x'))) { $fail++; Write-Host 'FEHLER: Get-DistinctOrdinal zerfaellt bei einem Element' -ForegroundColor Red }
+    $n++
+    if (-not ((Test-Count 9007199254740991) -and -not (Test-Count 9007199254740992) -and -not (Test-Count -1) -and -not (Test-Count 5.0) -and -not (Test-Count ([decimal]5)) -and -not (Test-Count '5'))) { $fail++; Write-Host 'FEHLER: Test-Count Zahlenbereich' -ForegroundColor Red }
     Remove-Item -Recurse -Force $Work -ErrorAction SilentlyContinue
     if ($fail -gt 0) { Write-Host "isolation-check SelfTest: ROT ($fail von $n)"; exit 1 }
     Write-Host "isolation-check SelfTest: $n Faelle gruen"

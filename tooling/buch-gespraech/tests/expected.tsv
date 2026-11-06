@@ -36,3 +36,6 @@ thinking_tokens_after_result	0	event_after_result
 thinking_tokens_missing_field	0	event_unknown
 thinking_tokens_not_a_number	0	event_unknown
 thinking_tokens_float	0	event_unknown
+thinking_tokens_max_ok	0	
+thinking_tokens_over_max	0	event_unknown
+thinking_tokens_huge	0	event_unknown

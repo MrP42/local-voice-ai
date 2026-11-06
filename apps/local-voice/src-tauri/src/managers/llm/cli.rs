@@ -1364,9 +1364,17 @@ impl Watch {
     fn start(opts: &CallOptions) -> Self {
         use std::sync::atomic::{AtomicBool, Ordering};
         use std::sync::Arc;
-        let kill = Arc::new(AtomicBool::new(false));
+        // Mit dem AKTUELLEN Wert des Originalsignals starten (Relay-/Desktop-Abbruch,
+        // Vorschau-Schalter): ein schon gesetzter Abbruch gilt sofort und synchron,
+        // nicht erst nach dem ersten Takt des Beobachter-Threads.
+        let off = switch_is_off(opts);
+        let cancelled = opts
+            .cancel
+            .as_ref()
+            .is_some_and(|c| c.load(Ordering::SeqCst));
+        let kill = Arc::new(AtomicBool::new(off || cancelled));
         let done = Arc::new(AtomicBool::new(false));
-        let switched = Arc::new(AtomicBool::new(false));
+        let switched = Arc::new(AtomicBool::new(off));
         let handle = {
             let (kill, done, switched) = (kill.clone(), done.clone(), switched.clone());
             let cancel = opts.cancel.clone();
@@ -1744,6 +1752,39 @@ fn group_alive(pgid: i32) -> bool {
     unsafe { libc::kill(-pgid, 0) == 0 }
 }
 
+/// Ergebnis von [`wait_rx`].
+enum Waited<T> {
+    Got(T),
+    Cancelled,
+    Timeout,
+}
+
+/// Wartet auf einen Kanal in Schritten von 50 ms und prueft dazwischen den
+/// Abbruch und die Frist.
+fn wait_rx<T>(
+    rx: &std::sync::mpsc::Receiver<T>,
+    deadline: std::time::Instant,
+    cancel: Option<&std::sync::atomic::AtomicBool>,
+) -> Waited<T> {
+    use std::sync::atomic::Ordering;
+    use std::sync::mpsc::RecvTimeoutError;
+    loop {
+        if cancel.is_some_and(|c| c.load(Ordering::SeqCst)) {
+            return Waited::Cancelled;
+        }
+        let now = std::time::Instant::now();
+        if now >= deadline {
+            return Waited::Timeout;
+        }
+        let slice = (deadline - now).min(Duration::from_millis(50));
+        match rx.recv_timeout(slice) {
+            Ok(v) => return Waited::Got(v),
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => return Waited::Timeout,
+        }
+    }
+}
+
 /// Wie [`run_cancellable`]; mit `group` wurde das Kind in einer eigenen Unix-
 /// Prozessgruppe gestartet und wird samt Gruppe beendet.
 pub(crate) fn run_cancellable_in(
@@ -1841,22 +1882,46 @@ pub(crate) fn run_cancellable_in(
             }
         }
     };
-    let left = || deadline.saturating_duration_since(Instant::now());
-    let (Ok(stdout), Ok(stderr)) = (out_rx.recv_timeout(left()), err_rx.recv_timeout(left()))
-    else {
+    // Wartephasen in kurzen Intervallen MIT Abbruchpruefung: halten Kindprozesse die
+    // Pipes offen, laufen sonst Prozessbaum und Schreibthread bis zum Timeout weiter.
+    // Bei Abbruch wird der Prozessbaum bzw. die Gruppe beendet (die Pipes schliessen).
+    let cancelled = || Err("cli_cancelled: Der Aufruf wurde abgebrochen".to_string());
+    let stdout = match wait_rx(&out_rx, deadline, cancel) {
+        Waited::Got(v) => v,
+        Waited::Cancelled => {
+            kill_tree(&mut child, job);
+            return cancelled();
+        }
         // Das Kind ist fertig, aber jemand haelt die Pipe offen (Enkelprozess).
-        kill_tree(&mut child, job);
-        return timed_out();
+        Waited::Timeout => {
+            kill_tree(&mut child, job);
+            return timed_out();
+        }
+    };
+    let stderr = match wait_rx(&err_rx, deadline, cancel) {
+        Waited::Got(v) => v,
+        Waited::Cancelled => {
+            kill_tree(&mut child, job);
+            return cancelled();
+        }
+        Waited::Timeout => {
+            kill_tree(&mut child, job);
+            return timed_out();
+        }
     };
     if let Some(w) = writer {
-        match w.recv_timeout(left()) {
-            Ok(Ok(())) => {}
-            Ok(Err(e)) => {
+        match wait_rx(&w, deadline, cancel) {
+            Waited::Got(Ok(())) => {}
+            Waited::Got(Err(e)) => {
                 return Err(format!(
                     "cli_failed: Die Eingabe kam nicht vollstaendig bei der CLI an ({e})"
                 ))
             }
-            Err(_) => {
+            Waited::Cancelled => {
+                kill_tree(&mut child, job);
+                return cancelled();
+            }
+            Waited::Timeout => {
                 kill_tree(&mut child, job);
                 return timed_out();
             }
@@ -2608,7 +2673,7 @@ esac
 } > "$D/log.txt"
 [ -f "$D/spawn_child" ] && { sleep 60 & echo $! > "$D/child.pid"; }
 [ -f "$D/sleep" ] && sleep "$(cat "$D/sleep")"
-cat > /dev/null
+if [ -f "$D/capture_stdin" ]; then cat > "$D/stdin.txt"; else cat > /dev/null; fi
 touch "$D/finished"
 cat "$D/reply.txt"
 exit "$(cat "$D/exit" 2>/dev/null || echo 0)"
@@ -2772,6 +2837,96 @@ exit "$(cat "$D/exit" 2>/dev/null || echo 0)"
             "stdin blieb nicht leer: {} Bytes",
             got.len()
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_cancel_set_before_the_preview_call_sends_nothing_to_stdin() {
+        let f = claude_fake(GOOD_CLAUDE);
+        f.set("capture_stdin", "1");
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let err = call_with_options(
+            Cli::Claude,
+            &f.bin,
+            "sonnet",
+            Some("Systemtext"),
+            "user: VERTRAULICHE Frage",
+            Duration::from_secs(30),
+            &CallOptions {
+                max_tokens: Some(600),
+                preview: Some(f.check(Cli::Claude, "sonnet", "claude-sonnet-5-5", 200_000)),
+                preview_switch: on(),
+                cancel: Some(cancel),
+                ..CallOptions::default()
+            },
+        )
+        .unwrap_err();
+        assert!(err.contains("cancel"), "{err}");
+        std::thread::sleep(Duration::from_millis(300));
+        let got = std::fs::read(f.dir.path().join("stdin.txt")).unwrap_or_default();
+        assert!(
+            got.is_empty(),
+            "stdin blieb nicht leer: {} Bytes",
+            got.len()
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_cancel_after_the_main_process_ended_kills_the_pipe_holding_child_quickly() {
+        use std::os::unix::process::CommandExt;
+        let dir = tempfile::tempdir().unwrap();
+        let pidfile = dir.path().join("kind.pid");
+        // Das Hauptprogramm startet ein Kind, das stdout offen haelt, und endet sofort.
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", "sleep 60 & echo $! > \"$1\"; exit 0", "sh"])
+            .arg(&pidfile)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .process_group(0);
+        let child = cmd.spawn().unwrap();
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flipper = {
+            let cancel = cancel.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(500));
+                cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+            })
+        };
+        let started = std::time::Instant::now();
+        let err = run_cancellable_in(
+            child,
+            Some(b"x".to_vec()),
+            Duration::from_secs(30),
+            Some(&cancel),
+            true,
+        )
+        .unwrap_err();
+        flipper.join().unwrap();
+        assert!(err.starts_with("cli_cancelled"), "{err}");
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "Abbruch dauerte {:?}",
+            started.elapsed()
+        );
+        let pid: u32 = std::fs::read_to_string(&pidfile)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        let dead = || {
+            std::fs::read_to_string(format!("/proc/{pid}/stat"))
+                .map(|s| s.rsplit(") ").next().is_some_and(|r| r.starts_with('Z')))
+                .unwrap_or(true)
+        };
+        for _ in 0..40 {
+            if dead() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(dead(), "das Kind lebt noch");
     }
 
     #[cfg(unix)]
