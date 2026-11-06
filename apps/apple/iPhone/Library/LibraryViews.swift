@@ -81,7 +81,11 @@ struct LibraryTab: View {
         NavigationStack { LibraryShelf() }
             .onAppear { playback.warmUp() }
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                if playback.book != nil && !playback.presented { LibraryMiniPlayer().padding(.horizontal, 8).padding(.bottom, 6) }
+                VStack(spacing: 0) {
+                    if !playback.presented { LanguageNoticeBar() }
+                    if playback.book != nil && !playback.presented { LibraryMiniPlayer().padding(.horizontal, 8).padding(.bottom, 6) }
+                }
+                .animation(.easeInOut(duration: 0.2), value: playback.languageNotice?.id)
             }
             .fullScreenCover(isPresented: $playback.presented) { LibraryPlayerScreen() }
             #if DEBUG
@@ -147,8 +151,9 @@ struct LibraryShelf: View {
     @State private var showSync = false
     @ObservedObject var sync = LibrarySync.shared
 
-    private func textFraction(_ b: LibraryBook) -> Double { LibraryProgress.fraction(library.record(library.textKey(b))) }
-    private func audioFraction(_ b: LibraryBook) -> Double { LibraryProgress.fraction(library.record(library.audioKey(b))) }
+    // Fortschritt des Buchs = Fortschritt der zuletzt aktiven Sprachfassung (lva#344).
+    private func textFraction(_ b: LibraryBook) -> Double { LibraryProgress.fraction(library.record(library.textKey(library.activeView(b)))) }
+    private func audioFraction(_ b: LibraryBook) -> Double { LibraryProgress.fraction(library.record(library.audioKey(library.activeView(b)))) }
 
     private var visible: [LibraryBook] {
         let q = query.trimmingCharacters(in: .whitespaces)
@@ -194,7 +199,8 @@ struct LibraryShelf: View {
     /// Zuletzt gehörtes oder gelesenes, noch nicht fertiges Buch.
     private var resume: (LibraryBook, ProgressRecord, Bool)? {
         var best: (LibraryBook, ProgressRecord, Bool)?
-        for b in library.books where !b.finished {
+        for raw in library.books where !raw.finished {
+            let b = library.activeView(raw)
             for (key, isAudio) in [(library.audioKey(b), true), (library.textKey(b), false)] {
                 guard let r = library.record(key), r.offset > 0, r.finished != true else { continue }
                 if best == nil || r.updated > best!.1.updated { best = (b, r, isAudio) }
@@ -303,8 +309,10 @@ struct ShelfItem: View {
     @ObservedObject var downloads = AudioDownloads.shared
     @Environment(\.dynamicTypeSize) private var typeSize
     var body: some View {
-        let audio = library.hasAudio(book)
-        let rec = audio || library.audioInAccount(book) ? library.record(library.audioKey(book)) : library.record(library.textKey(book))
+        // Sprachfassungen (lva#344): Stand und Hörbuch der zuletzt aktiven Fassung, dazu die Sprachkürzel.
+        let active = library.activeView(book)
+        let audio = library.hasAudio(active)
+        let rec = audio || library.audioInAccount(active) ? library.record(library.audioKey(active)) : library.record(library.textKey(active))
         VStack(alignment: .leading, spacing: 5) {
             LibraryCover(title: book.title, image: library.coverThumbnail(book), titleTopInset: 24).aspectRatio(2/3, contentMode: .fit)
             if downloads.jobs[book.id] != nil {
@@ -313,18 +321,27 @@ struct ShelfItem: View {
             ProgressView(value: book.finished ? 1 : LibraryProgress.fraction(rec)).tint(VoicePalette.accent)
             // Fester Platz für das Symbol: Lange Angaben brechen um und rücken nicht darunter.
             metaLayout {
-                Text(audio || library.audioInAccount(book) ? (rec == nil ? "Hörbuch · neu" : "Hörbuch · \(LibraryFormat.percent(LibraryProgress.fraction(rec)))")
+                Text(audio || library.audioInAccount(active) ? (rec == nil ? "Hörbuch · neu" : "Hörbuch · \(LibraryFormat.percent(LibraryProgress.fraction(rec)))")
                            : "Text · \(LibraryFormat.percent(LibraryProgress.fraction(rec)))")
                     .font(.caption).foregroundStyle(VoicePalette.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: typeSize.isAccessibilitySize ? nil : .infinity, alignment: .leading)
                 if audio || !typeSize.isAccessibilitySize { DownloadedMark(visible: audio) }
             }
+            LanguageBadges(book: book)
             }
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(([book.title] + book.authors + (audio ? ["Hörbuch heruntergeladen, offline verfügbar"] : [])).joined(separator: ", "))
+        .accessibilityLabel(spokenLabel(audio: audio))
         .accessibilityValue(downloads.jobs[book.id] != nil ? ShelfDownloadStatus.line(book, downloads) : "")
+    }
+
+    private func spokenLabel(audio: Bool) -> String {
+        var parts: [String] = [book.title]
+        parts.append(contentsOf: book.authors)
+        if let languages = LanguageBadges.spoken(book) { parts.append(languages) }
+        if audio { parts.append("Hörbuch heruntergeladen, offline verfügbar") }
+        return parts.joined(separator: ", ")
     }
 
     /// In sehr großer Schrift untereinander, sonst bliebe dem Text kaum Breite.
@@ -496,7 +513,10 @@ struct LibraryBookDetail: View {
         else { ContentUnavailableView("Buch nicht mehr vorhanden", systemImage: "book.closed") }
     }
 
-    @ViewBuilder private func content(_ book: LibraryBook) -> some View {
+    /// `raw` ist das Buch im Regal (für alles, was es ändert), `book` die Sicht auf die zuletzt aktive Sprachfassung
+    /// (für alles, was angezeigt wird, lva#344).
+    @ViewBuilder private func content(_ raw: LibraryBook) -> some View {
+        let book = library.activeView(raw)
         let hasText = library.hasText(book), hasAudio = library.hasAudio(book), inAccount = library.audioInAccount(book)
         let audioRec = library.record(library.audioKey(book)), textRec = library.record(library.textKey(book))
         let tracks = book.audio?.allTracks ?? []
@@ -530,8 +550,8 @@ struct LibraryBookDetail: View {
                 .disabled(!hasText && downloads.isActive(book.id)).accessibilityIdentifier("openBook")
                 .accessibilityHint(hasText ? "Öffnet den Player. Hören, Lesen und Hören oder Lesen wählst du dort." : "Spielt das Hörbuch ab.")
 
-                if inAccount || downloads.jobs[book.id] != nil || (hasAudio && !library.meta(book).files.audio.isEmpty) {
-                    AudioDownloadCard(book: book, onRemove: { askRemoveAudio($0) })
+                if inAccount || downloads.jobs[book.id] != nil || (hasAudio && !library.accountAudio(book).isEmpty) {
+                    AudioDownloadCard(book: book, onRemove: { _ in askRemoveAudio(raw) })
                 }
 
                 if hasAudio || hasText {
@@ -580,9 +600,9 @@ struct LibraryBookDetail: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu("Mehr", systemImage: "ellipsis.circle") {
-                    Button(book.finished ? "Als nicht fertig markieren" : "Als fertig markieren", systemImage: "checkmark.circle") { library.setFinished(book, !book.finished) }
-                    if library.hasLocalAudio(book) {
-                        Button("Hörbuch vom iPhone entfernen", systemImage: "icloud.and.arrow.down") { askRemoveAudio(book) }
+                    Button(raw.finished ? "Als nicht fertig markieren" : "Als fertig markieren", systemImage: "checkmark.circle") { library.setFinished(raw, !raw.finished) }
+                    if library.hasLocalAudio(raw) {
+                        Button("Hörbuch vom iPhone entfernen", systemImage: "icloud.and.arrow.down") { askRemoveAudio(raw) }
                             .disabled(removingAudio)
                     }
                     if sync.isSynced(book) {
@@ -598,7 +618,7 @@ struct LibraryBookDetail: View {
                 removingAudio = true
                 Task {
                     // Prüft vorher beim Konto, ob alle Teile vollständig dort liegen.
-                    let result = await sync.removeDownloads(book)
+                    let result = await sync.removeDownloads(raw)
                     removingAudio = false
                     if !result.verdict.allowed { offloadBlocked = result.verdict }
                 }
@@ -615,8 +635,8 @@ struct LibraryBookDetail: View {
                             isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Löschen", role: .destructive) {
                 if playback.book?.id == book.id { playback.stop() }
-                if sync.isSynced(book) { Task { await sync.deleteEverywhere(book); dismiss() } }
-                else { library.delete(book); dismiss() }
+                if sync.isSynced(raw) { Task { await sync.deleteEverywhere(raw); dismiss() } }
+                else { library.delete(raw); dismiss() }
             }
         } message: {
             Text(sync.isSynced(book)
@@ -656,7 +676,7 @@ struct AudioDownloadCard: View {
 
     var body: some View {
         let job = downloads.jobs[book.id]
-        let total = job?.totalBytes ?? library.meta(book).files.audioBytes
+        let total = job?.totalBytes ?? library.accountAudio(book).reduce(0) { $0 + $1.size }
         let done = downloads.done[book.id] ?? 0
         let amount = "\(LibraryBytes.text(done)) von \(LibraryBytes.text(total))"
         VStack(alignment: .leading, spacing: 8) {

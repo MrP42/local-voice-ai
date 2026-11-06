@@ -242,8 +242,17 @@ final class LibrarySync: ObservableObject {
                 var book = synced.book
                 // Lokale Fassungen, die das Konto nicht kennt, nicht verlieren.
                 if book.text == nil, let t = local?.text { book.text = t }
+                // Sprachwechsel dieses iPhones, den der PC noch nicht kennt (lva#344), nicht überschreiben.
+                var keptReading = false
+                if let local {
+                    let kept = book.keepingNewerReading(from: local)
+                    keptReading = kept.reading != book.reading
+                    book = kept
+                }
                 try library.storeRemote(book, meta: .init(files: synced.files, updated: synced.updated))
-                if book.text == synced.book.text {
+                // Der Stand weicht vom Konto ab: neu senden, also weder den Hash angleichen noch den Stand lassen.
+                if keptReading { library.touch(book) }
+                if !keptReading, book.text == synced.book.text {
                     hash = LibrarySyncFormat.canonicalHash(try SyncedBook(book: book, files: synced.files, updated: synced.updated).json())
                 }
             }
@@ -272,6 +281,25 @@ final class LibrarySync: ObservableObject {
         for book in library.books {
             if let ref = library.meta(book).files.text, !library.hasText(book) {
                 try await downloadBlob(ref, acc, to: library.textURL(book)) { _ in }
+            }
+            // Texte weiterer Sprachfassungen (lva#344) sind ebenso klein: je Fassung unter `editions/<fassung>/`.
+            // Hörbuchteile weiterer Fassungen lädt `AudioDownloads` erst bei Bedarf.
+            let editions = BookEditions(book: book)
+            if !editions.synthesized, editions.hasLanguages {
+                let files = library.meta(book).files
+                for e in editions.editions where e.id != editions.primaryId && e.text != nil && PhoneLibrary.isSafeEditionId(e.id) {
+                    guard let ref = files.files(forEdition: e.id).text, ref.size > 0, ref.size <= 32 * 1024 * 1024,
+                          library.editionTextBlob(book, e.id) != ref.blob else { continue }
+                    let target = library.editionTextURL(book, e.id)
+                    try? FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true,
+                                                            attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication])
+                    do {
+                        try await downloadBlob(ref, acc, to: target) { _ in }
+                        library.noteEditionText(book, e.id, blob: ref.blob)
+                    }
+                    catch SyncError.http(401, let msg) { throw SyncError.http(401, msg) }
+                    catch { /* Die Sprachliste zeigt es als noch nicht geladen, der nächste Lauf versucht es erneut. */ }
+                }
             }
             // Kurzbücher sind klein: wie Texte gleich mitnehmen. Ungültige Verweise lädt niemand.
             library.pruneKurzbuecher(book)
@@ -543,7 +571,7 @@ final class LibrarySync: ObservableObject {
     /// er pausiert wird oder fehlschlägt; der Zustand steht dann auf der Buchseite.
     func downloadAudio(_ book: LibraryBook) async -> Bool {
         guard account != nil else { error = SyncError.notLoggedIn.localizedDescription; return false }
-        guard !library.meta(book).files.audio.isEmpty, !library.hasAudio(book) else { return library.hasAudio(book) }
+        guard !library.accountAudio(book).isEmpty, !library.hasAudio(book) else { return library.hasAudio(book) }
         let downloads = AudioDownloads.shared
         downloads.start(book)
         // Hält „Nur im WLAN“ das Laden an, nicht stundenlang warten: der Zustand steht auf der Buchseite.

@@ -109,6 +109,10 @@ public struct LibraryBook: Codable, Equatable, Identifiable, Sendable {
     public var editionTombstones: PassthroughJSON?
     public var reading: PassthroughJSON?
     public var alignments: PassthroughJSON?
+    /// Nur zur Laufzeit, nie gespeichert und nie im Abgleich (kein Eintrag in `CodingKeys`): Ist es gesetzt, ist
+    /// dieses Buch die Sicht auf eine Sprachfassung. `title`, `subtitle`, `language`, `text` und `audio` sind dann die
+    /// der Fassung, alles Übrige das Buch selbst (`PhoneLibrary.editionView`).
+    public var editionId: String? = nil
 
     public init(id: String, title: String, authors: [String] = [], coverSource: String = "generated",
                 text: LibraryTextVersion? = nil, audio: LibraryAudioVersion? = nil, addedMs: Double, finished: Bool = false) {

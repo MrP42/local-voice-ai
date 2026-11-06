@@ -78,10 +78,17 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
     /// Laden starten oder fortsetzen. Prüft vorher den freien Speicher.
     func start(_ book: LibraryBook, allowCellular: Bool? = nil) {
         guard LibrarySync.shared.account != nil else { return }
-        let refs = library.meta(book).files.audio
+        // Sprachfassungen (lva#344): Bei einer Sicht auf eine weitere Fassung sind es deren Teile (`files.editions`).
+        let refs = library.accountAudio(book)
         guard !refs.isEmpty, !library.hasAudio(book) else { return }
         var previous = jobs[book.id]
         let parts = library.audioParts(refs)
+        // Ein Auftrag je Buch: Läuft gerade das Hörbuch einer anderen Fassung (andere Dateinamen), nicht verwerfen.
+        if let running = previous, running.phase == .running, running.parts != parts,
+           Set(running.parts.map(\.file)).isDisjoint(with: parts.map(\.file)) {
+            LibraryPlayback.shared.error = "Von diesem Buch lädt gerade das Hörbuch einer anderen Sprache. Bitte warten, bis es fertig ist."
+            return
+        }
         // Konto hat die Dateien ersetzt: Weder alte Dateien noch angefangene Teile dürfen zählen.
         library.removeStaleAudio(book)
         if let stale = previous, stale.parts != parts {

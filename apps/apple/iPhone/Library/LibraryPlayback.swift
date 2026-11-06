@@ -227,6 +227,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
     /// `prefer`: Quelle für diesen Aufruf erzwingen (z. B. Hörbuch-Teil im Buchdetail) und merken.
     func open(_ book: LibraryBook, autoplay: Bool = false, prefer: PlayerSource? = nil) {
         let d = UserDefaults.standard
+        let book = resolvedView(book)
         // Läuft das Buch schon, bleibt die Quelle; nur den Buchstand auffrischen (z. B. Hörbuch inzwischen geladen).
         if self.book?.id == book.id, let current = source, prefer == nil || prefer == current {
             self.book = book
@@ -301,6 +302,122 @@ final class LibraryPlayback: NSObject, ObservableObject {
         surface = keep
         UserDefaults.standard.set(target.rawValue, forKey: Self.sourceKey(book.id))
         jump(toOffset: offset, autoplay: wasPlaying)
+        if let sleepUntil, sleepUntil > Date() { armSleep(until: sleepUntil) }
+    }
+
+    // MARK: Sprachfassungen (lva#344)
+
+    /// Hinweis nach einem Sprachwechsel mit „Rückgängig“ (zehn Sekunden sichtbar).
+    struct LanguageNotice: Identifiable {
+        let id = UUID()
+        let text: String
+        let undo: PhoneLibrary.SwitchUndo
+    }
+    @Published private(set) var languageNotice: LanguageNotice?
+    private var noticeTask: Task<Void, Never>?
+
+    /// Kennung der Sprachfassung, die gerade läuft (nur bei Büchern mit mehreren Sprachen).
+    var editionId: String? { book?.editionId }
+
+    /// Das Buch als Sicht auf die Fassung, die gespielt wird: laufendes Buch bleibt in seiner Fassung, sonst gilt die
+    /// zuletzt aktive, die auf diesem iPhone liegt. Kurzbücher und Bücher ohne Fassungen bleiben unverändert.
+    private func resolvedView(_ book: LibraryBook) -> LibraryBook {
+        guard let raw = library.rawBook(book.id) else { return book }
+        if self.book?.id == book.id { return library.view(raw, editionId: self.book?.editionId) }
+        let wanted = book.editionId.map { library.view(raw, editionId: $0) } ?? library.activeView(raw)
+        return library.isPlayable(wanted) ? wanted : library.playableView(raw)
+    }
+
+    /// Trägt die Wiedergabe in der Zielfassung: das gerade benutzte Medium, sonst das andere. `nil`: nichts davon liegt hier.
+    func medium(of view: LibraryBook) -> SwitchMedium? {
+        let audio = library.hasAudio(view) && audioFilesPresent(view)
+        let hasText = library.hasText(view)
+        switch mode {
+        case .audiobook: return audio ? .audio : (hasText ? .text : nil)
+        case .readAloud: return hasText ? .text : (audio ? .audio : nil)
+        case nil: return nil
+        }
+    }
+
+    /// Sprache wechseln: gleiche Stelle (kapitelgenau, sonst ungefähr), Hinweis mit „Rückgängig“. Fortschritt und Auswahl
+    /// gehen beim nächsten Abgleich zum PC.
+    func switchLanguage(to editionId: String) {
+        guard let current = book, let mode, let raw = library.rawBook(current.id) else { return }
+        let editions = BookEditions(book: raw)
+        guard let target = editions.edition(editionId), let fromId = current.editionId ?? editions.readingEdition?.id, fromId != editionId else { return }
+        let view = library.editionView(raw, edition: target)
+        guard let toMedium = medium(of: view) else {
+            error = "Von dieser Sprache liegt weder Text noch Hörbuch auf dem iPhone. Bitte zuerst laden."
+            return
+        }
+        let fromMedium: SwitchMedium = mode == .audiobook ? .audio : .text
+        let wasPlaying = busy
+        let offset: Double, length: Double
+        if fromMedium == .audio {
+            saveAudio()
+            offset = positionMs; length = totalMs
+        } else {
+            offset = paragraphs.indices.contains(paragraphIndex) ? Double(chars(of: Cursor(paragraph: paragraphIndex, sentence: sentenceIndex))) : 0
+            length = Double(text.utf16.count)
+        }
+        let fromChapters = fromMedium == .audio ? EditionSwitch.audioChapters(current.audio) : EditionSwitch.textChapters(text)
+        let toChapters = toMedium == .audio ? EditionSwitch.audioChapters(view.audio) : EditionSwitch.textChapters(library.text(view) ?? "")
+        let toKey = toMedium == .audio ? library.audioKey(view) : library.textKey(view)
+        let plan = EditionSwitch.plan(editions: editions, from: fromId, to: editionId, fromMedium: fromMedium, toMedium: toMedium,
+                                      fromChapters: fromChapters, toChapters: toChapters, toKey: toKey, offset: offset, length: length)
+        let sourceKey = fromMedium == .audio ? library.audioKey(current) : library.textKey(current)
+        let undo = PhoneLibrary.SwitchUndo(bookId: raw.id, fromEdition: fromId,
+                                           fromPosition: ReadingPositionRef(key: sourceKey, unit: fromMedium.unit, offset: offset),
+                                           targetKey: plan.position.key, targetRecord: library.record(plan.position.key), wasPlaying: wasPlaying)
+        guard let changed = library.writeSwitch(bookId: raw.id, plan: plan, length: toChapters.length) else {
+            error = "Der Sprachwechsel konnte nicht gespeichert werden."
+            return
+        }
+        reopen(library.view(changed, editionId: editionId), medium: toMedium, autoplay: wasPlaying)
+        guard book?.id == raw.id else { return }
+        showNotice(LanguageNotice(text: plan.notice(languageName: target.languageName), undo: undo))
+        Task { await LibrarySync.shared.run() }
+    }
+
+    /// „Rückgängig“ im Hinweis: Fassung und Stelle wie vor dem Wechsel.
+    func undoLanguageSwitch() {
+        guard let notice = languageNotice else { return }
+        hideNotice()
+        guard let changed = library.undoSwitch(notice.undo) else { error = "Das Rückgängigmachen ist nicht möglich."; return }
+        let medium: SwitchMedium = notice.undo.fromPosition?.unit == "ms" ? .audio : .text
+        reopen(library.view(changed, editionId: notice.undo.fromEdition), medium: medium, autoplay: notice.undo.wasPlaying)
+        Task { await LibrarySync.shared.run() }
+    }
+
+    func hideNotice() {
+        noticeTask?.cancel(); noticeTask = nil
+        languageNotice = nil
+    }
+
+    private func showNotice(_ notice: LanguageNotice) {
+        noticeTask?.cancel()
+        languageNotice = notice
+        UIAccessibility.post(notification: .announcement, argument: notice.text + " Rückgängig möglich.")
+        noticeTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 10_000_000_000)
+            guard !Task.isCancelled else { return }
+            self?.languageNotice = nil
+        }
+    }
+
+    /// Dieselbe Sicht neu öffnen, ohne den Player zu schließen: Ansicht, Schlaftimer und Quelle bleiben.
+    private func reopen(_ view: LibraryBook, medium: SwitchMedium, autoplay: Bool) {
+        let keep = surface
+        let sleepUntil = sleepEnds
+        stop()
+        switch medium {
+        case .audio: openAudiobook(view)
+        case .text: openReadAloud(view)
+        }
+        guard book?.id == view.id else { return }
+        surface = PlayerSurface.initial(stored: keep.rawValue, hasText: !paragraphs.isEmpty)
+        UserDefaults.standard.set((medium == .audio ? PlayerSource.audiobook : PlayerSource.voice).rawValue, forKey: Self.sourceKey(view.id))
+        if autoplay { play() }
         if let sleepUntil, sleepUntil > Date() { armSleep(until: sleepUntil) }
     }
 
