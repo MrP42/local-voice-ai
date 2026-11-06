@@ -24,6 +24,7 @@ mod commands;
 mod context_menu;
 mod conversations; // U3: Sprachgespräche dauerhaft speichern
 mod cover_art; // Eingebettete Cover aus Hörbuch-Dateien
+mod dev_update; // Entwicklungskanal: Testversionen selbst installieren
 mod ebook; // lva#149: EPUB-Import, PDF-Reflow
 mod helpers;
 mod hoersync_live; // Hörbuch-Sync Stufe 2: Live-Abgleich
@@ -35,7 +36,6 @@ mod library; // lva#152: Bibliothek für Bücher und Hörbücher
 mod library_export; // lva#236: Fassungen einzeln exportieren (EPUB, PDF, Word, M4B, MP3)
 mod llm_client;
 mod llm_keys;
-mod dev_update; // Entwicklungskanal: Testversionen selbst installieren
 mod local_update;
 mod managers;
 pub mod mcp; // M6-P6e

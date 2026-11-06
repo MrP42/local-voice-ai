@@ -20,10 +20,20 @@
 //! - Nie mitten in einer Arbeit (Diktat, Aufnahme, Nachverarbeitung,
 //!   Import-Warteschlange, schwerer Rechenauftrag, Vorlesen); vorher ein
 //!   Hinweis mit „Später“.
-//! - Dauerhafter Status: genau ein Versuch je Installer. Startet danach nicht
-//!   die neue Version, wird ihr Hash gesperrt. Der zuletzt erfolgreich
-//!   eingespielte Installer und eine Sicherung der Einstellungen/Datenbanken
-//!   bleiben im Staging-Ordner fuer die Rueckkehr von Hand.
+//! - Dauerhafter Status (`status.json`, defekt = Kanal haelt an): der Versuch
+//!   wird VOR der Uebergabe vermerkt; bis die neue Fassung `GESUND` lang lief,
+//!   wird nichts Neues eingespielt. Startet sie nicht oder zu oft ohne
+//!   Bestaetigung, wird ihr Hash gesperrt. Die zwei letzten gesunden
+//!   Installer und eine Sicherung der Einstellungen/Datenbanken bleiben im
+//!   Staging-Ordner fuer die Rueckkehr von Hand.
+//! - Eine prozessgebundene Sperre (`install.lock`) gilt fuer diesen Weg und
+//!   den manuellen Klick gemeinsam.
+//!
+//! Bewusste Grenzen (im PR dokumentiert): der Helfer bleibt das bestehende
+//! cmd-Skript mit festen, gefilterten Pfaden; zwischen der letzten
+//! Arbeitspruefung und dem Beenden liegt ein kurzes Fenster ohne harte
+//! Sperre neuer Arbeit; die Sicherung kopiert SQLite-Dateien im Leerlauf
+//! ohne Online-Backup-API.
 
 use base64::Engine;
 use minisign_verify::{PublicKey, Signature};
@@ -51,8 +61,10 @@ const AUFSCHUB: Duration = Duration::from_secs(15 * 60);
 const MAX_SIG_BYTES: u64 = 8 * 1024;
 /// Obergrenze der Datensicherung vor dem Einspielen.
 const MAX_SICHERUNG_BYTES: u64 = 512 * 1024 * 1024;
-/// Eine Sperre, die aelter ist, gilt als liegengeblieben.
-const SPERRE_MAX_ALTER: Duration = Duration::from_secs(10 * 60);
+/// So lange muss eine neu eingespielte Fassung laufen, bis sie als gesund gilt.
+const GESUND: Duration = Duration::from_secs(120);
+/// Starts der Zielversion ohne Bestaetigung, bevor der Versuch als gescheitert gilt.
+const MAX_STARTS_OHNE_BESTAETIGUNG: u32 = 3;
 
 /// Ereignis an die Oberflaeche (Hinweis unten rechts).
 pub const EVENT: &str = "lokales-testupdate";
@@ -112,19 +124,6 @@ fn b64_text(s: &str) -> Result<String, String> {
         .decode(s.trim())
         .map_err(|e| format!("Base64: {e}"))?;
     String::from_utf8(bytes).map_err(|_| "kein UTF-8".to_string())
-}
-
-/// Symlink oder (unter Windows) Reparse-Punkt wie eine Junction?
-fn ist_umleitung(path: &Path) -> bool {
-    let Ok(meta) = std::fs::symlink_metadata(path) else {
-        return true;
-    };
-    if meta.file_type().is_symlink() {
-        return true;
-    }
-    // Kein pauschaler Reparse-Punkt-Test: OneDrive-Platzhalter tragen das
-    // Attribut auch. Symlinks und Junctions meldet `is_symlink` unter Windows.
-    false
 }
 
 /// SHA-256 einer Datei (letzte Pruefung der Staging-Kopie vor dem Start).
@@ -259,13 +258,13 @@ pub(crate) fn kopieren_und_pruefen(
 /// Dauerhafter Zustand im Staging-Ordner (`status.json`).
 #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq)]
 pub(crate) struct Status {
-    /// Signierter Zeitstempel des zuletzt erfolgreich eingespielten Baus.
+    /// Signierter Zeitstempel des zuletzt bestaetigt gesund laufenden Baus.
     #[serde(default)]
     pub zuletzt_zeit: u64,
     /// Hashes, die nicht (wieder) eingespielt werden.
     #[serde(default)]
     pub gesperrt: Vec<String>,
-    /// Laufender Versuch: wird beim naechsten Start aufgeloest.
+    /// Laufender Versuch: bis zur Bestaetigung keine weitere Installation.
     #[serde(default)]
     pub laufend: Option<Versuch>,
 }
@@ -275,36 +274,56 @@ pub(crate) struct Versuch {
     pub version: String,
     pub zeit: u64,
     pub sha256: String,
+    /// Dateiname der geprueften Kopie im Staging-Ordner.
+    #[serde(default)]
+    pub datei: String,
+    /// Starts der Zielversion ohne Gesundheitsbestaetigung.
+    #[serde(default)]
+    pub starts: u32,
 }
 
-/// Ergebnis beim Start: was aus dem letzten Versuch wurde.
+/// Ergebnis beim Start: was aus dem laufenden Versuch wird.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Ausgang {
     Keiner,
-    Erfolg,
+    /// Zielversion laeuft; gilt erst nach `GESUND` Laufzeit als Erfolg.
+    Bewaehren,
     Fehlschlag,
 }
 
 impl Status {
-    /// Beim Start: lief die Zielversion an, ist der Versuch geglueckt;
-    /// sonst wird sein Hash gesperrt (genau ein Versuch je Installer).
-    pub(crate) fn aufloesen(&mut self, laufende_version: &str) -> Ausgang {
-        let Some(v) = self.laufend.take() else {
+    /// Beim Start: laeuft nicht die Zielversion oder startet sie zu oft ohne
+    /// Bestaetigung, wird der Hash gesperrt (genau ein Versuch je Installer).
+    pub(crate) fn beim_start(&mut self, laufende_version: &str) -> Ausgang {
+        let Some(v) = self.laufend.as_mut() else {
             return Ausgang::Keiner;
         };
-        if v.version == laufende_version {
-            self.zuletzt_zeit = self.zuletzt_zeit.max(v.zeit);
-            Ausgang::Erfolg
-        } else {
-            if !self.gesperrt.contains(&v.sha256) {
-                self.gesperrt.push(v.sha256);
-            }
-            Ausgang::Fehlschlag
+        if v.version == laufende_version && v.starts < MAX_STARTS_OHNE_BESTAETIGUNG {
+            v.starts += 1;
+            return Ausgang::Bewaehren;
         }
+        let v = self.laufend.take().expect("oben geprueft");
+        if !self.gesperrt.contains(&v.sha256) {
+            self.gesperrt.push(v.sha256);
+        }
+        Ausgang::Fehlschlag
+    }
+
+    /// Nach `GESUND` Laufzeit der Zielversion: Versuch gilt als gelungen.
+    pub(crate) fn bestaetigen(&mut self, laufende_version: &str) -> Option<Versuch> {
+        if self.laufend.as_ref()?.version != laufende_version {
+            return None;
+        }
+        let v = self.laufend.take()?;
+        self.zuletzt_zeit = self.zuletzt_zeit.max(v.zeit);
+        Some(v)
     }
 
     /// Darf ein geprueftes Artefakt eingespielt werden?
     pub(crate) fn zulassen(&self, g: &Geprueft) -> Result<(), String> {
+        if self.laufend.is_some() {
+            return Err("ein Versuch ist noch nicht bestaetigt".into());
+        }
         if self.gesperrt.contains(&g.sha256) {
             return Err("Installer ist gesperrt (frueherer Fehlschlag)".into());
         }
@@ -358,6 +377,7 @@ pub(crate) struct Gedaechtnis {
     zuletzt: Option<Stand>,
     abgelehnt: Option<Stand>,
     wartet_gemeldet: Option<Stand>,
+    status_defekt_gemeldet: bool,
 }
 
 impl Gedaechtnis {
@@ -373,40 +393,59 @@ impl Gedaechtnis {
     }
 }
 
-fn staging_dir(app: &AppHandle) -> Option<PathBuf> {
+/// Staging-Ordner fuer Pruefkopien, Status und Sicherung.
+pub(crate) fn staging_dir(app: &AppHandle) -> Option<PathBuf> {
     let dir = app.path().app_local_data_dir().ok()?.join("testupdate");
     std::fs::create_dir_all(&dir).ok()?;
     Some(dir)
 }
 
-fn status_lesen(dir: &Path) -> Status {
-    std::fs::read_to_string(dir.join("status.json"))
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default()
+/// Fehlt die Datei, ist das ein frischer Anfang. Ist sie unlesbar oder
+/// kaputt, gilt das NICHT als leer: der Kanal haelt an, statt Zeitgrenze und
+/// Sperrliste stillschweigend zu vergessen.
+pub(crate) fn status_lesen(dir: &Path) -> Result<Status, String> {
+    match std::fs::read_to_string(dir.join("status.json")) {
+        Ok(s) => serde_json::from_str(&s).map_err(|e| format!("status.json defekt: {e}")),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Status::default()),
+        Err(e) => Err(format!("status.json unlesbar: {e}")),
+    }
 }
 
-/// Atomar schreiben (temp + rename), damit ein Absturz keinen halben Status hinterlaesst.
-fn status_schreiben(dir: &Path, status: &Status) -> Result<(), String> {
+/// Atomar schreiben (temp + flush + rename), damit ein Absturz keinen halben Status hinterlaesst.
+pub(crate) fn status_schreiben(dir: &Path, status: &Status) -> Result<(), String> {
     let tmp = dir.join("status.json.tmp");
     let json = serde_json::to_string_pretty(status).map_err(|e| e.to_string())?;
-    std::fs::write(&tmp, json).map_err(|e| format!("Status: {e}"))?;
+    let mut f = std::fs::File::create(&tmp).map_err(|e| format!("Status: {e}"))?;
+    f.write_all(json.as_bytes())
+        .and_then(|()| f.sync_all())
+        .map_err(|e| format!("Status: {e}"))?;
+    drop(f);
     std::fs::rename(&tmp, dir.join("status.json")).map_err(|e| format!("Status: {e}"))
 }
 
-/// Gemeinsame Installationssperre (auch fuer eine zweite Instanz).
-struct Sperre(PathBuf);
+fn prozess_lebt(pid: u32) -> bool {
+    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
+    let mut sys = System::new();
+    let pid = Pid::from_u32(pid);
+    sys.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&[pid]),
+        true,
+        ProcessRefreshKind::nothing(),
+    );
+    sys.process(pid).is_some()
+}
+
+/// Gemeinsame, prozessgebundene Installationssperre fuer den automatischen
+/// und den manuellen Weg (auch ueber Instanzen hinweg). Sie gehoert der PID
+/// in der Datei; eine Sperre eines toten Prozesses ist frei.
+pub(crate) struct Sperre(PathBuf);
 
 impl Sperre {
-    fn nehmen(dir: &Path) -> Option<Self> {
+    pub(crate) fn nehmen(dir: &Path) -> Option<Self> {
         let path = dir.join("install.lock");
-        if let Ok(meta) = std::fs::metadata(&path) {
-            let alt = meta
-                .modified()
-                .ok()
-                .and_then(|m| m.elapsed().ok())
-                .is_some_and(|a| a > SPERRE_MAX_ALTER);
-            if !alt {
+        if let Ok(inhalt) = std::fs::read_to_string(&path) {
+            let besitzer = inhalt.trim().parse::<u32>().ok();
+            if besitzer.is_some_and(prozess_lebt) {
                 return None;
             }
             let _ = std::fs::remove_file(&path);
@@ -416,12 +455,13 @@ impl Sperre {
             .create_new(true)
             .open(&path)
             .ok()?;
-        let _ = writeln!(f, "{}", std::process::id());
+        writeln!(f, "{}", std::process::id()).ok()?;
         Some(Self(path))
     }
 
-    /// Erfolgreich uebergeben: die Sperre bleibt bis zum naechsten Start liegen.
-    fn behalten(self) {
+    /// Erfolgreich uebergeben: die Sperre bleibt liegen, bis dieser Prozess
+    /// endet (danach ist sie frei, weil ihre PID tot ist).
+    pub(crate) fn behalten(self) {
         std::mem::forget(self);
     }
 }
@@ -432,43 +472,66 @@ impl Drop for Sperre {
     }
 }
 
+/// Liegt irgendwo auf dem Weg ein Symlink oder eine Junction?
+fn kette_umgeleitet(path: &Path) -> bool {
+    path.ancestors()
+        .filter(|p| !p.as_os_str().is_empty())
+        .any(|p| std::fs::symlink_metadata(p).is_ok_and(|m| m.file_type().is_symlink()))
+}
+
 /// Sicherung der Einstellungen und Datenbanken (oberste Ebene des
-/// Datenordners) vor dem Einspielen; eine Generation, bis 512 MB.
+/// Datenordners, samt SQLite-WAL/SHM) vor dem Einspielen. Erst in einen neuen
+/// Ordner; die vorige Sicherung wird erst nach vollstaendigem Erfolg ersetzt.
+/// Ueberschreitet sie die Grenze, scheitert sie (und damit das Update).
 fn sichern(app: &AppHandle, staging: &Path) -> Result<(), String> {
-    let Ok(daten) = app.path().app_data_dir() else {
-        return Ok(());
-    };
-    let ziel = staging.join("sicherung");
-    let _ = std::fs::remove_dir_all(&ziel);
-    std::fs::create_dir_all(&ziel).map_err(|e| format!("Sicherung: {e}"))?;
+    let daten = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Datenordner: {e}"))?;
+    sichern_nach(&daten, staging)
+}
+
+pub(crate) fn sichern_nach(daten: &Path, staging: &Path) -> Result<(), String> {
+    let neu = staging.join("sicherung.neu");
+    let _ = std::fs::remove_dir_all(&neu);
+    std::fs::create_dir_all(&neu).map_err(|e| format!("Sicherung: {e}"))?;
     let mut summe = 0u64;
-    for entry in std::fs::read_dir(&daten)
-        .map_err(|e| format!("Sicherung: {e}"))?
-        .flatten()
-    {
-        let path = entry.path();
-        let ext = path
-            .extension()
-            .map(|e| e.to_string_lossy().to_ascii_lowercase())
-            .unwrap_or_default();
-        if !matches!(
-            ext.as_str(),
-            "json" | "db" | "sqlite" | "sqlite3" | "db-wal"
-        ) {
-            continue;
+    let ergebnis = (|| {
+        for entry in std::fs::read_dir(daten).map_err(|e| format!("Sicherung: {e}"))? {
+            let entry = entry.map_err(|e| format!("Sicherung: {e}"))?;
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
+            let passt = [".json", ".db", ".sqlite", ".sqlite3", "-wal", "-shm"]
+                .iter()
+                .any(|e| name.ends_with(e));
+            if !passt {
+                continue;
+            }
+            let meta = entry.metadata().map_err(|e| format!("Sicherung: {e}"))?;
+            if !meta.is_file() {
+                continue;
+            }
+            summe += meta.len();
+            if summe > MAX_SICHERUNG_BYTES {
+                return Err("Sicherung groesser als 512 MB".to_string());
+            }
+            std::fs::copy(&path, neu.join(entry.file_name()))
+                .map_err(|e| format!("Sicherung {}: {e}", path.display()))?;
         }
-        let Ok(meta) = entry.metadata() else { continue };
-        if !meta.is_file() {
-            continue;
-        }
-        summe += meta.len();
-        if summe > MAX_SICHERUNG_BYTES {
-            log::warn!("dev update: Sicherung bei 512 MB abgebrochen, Rest nicht gesichert");
-            break;
-        }
-        std::fs::copy(&path, ziel.join(entry.file_name()))
-            .map_err(|e| format!("Sicherung {}: {e}", path.display()))?;
+        Ok(())
+    })();
+    if let Err(e) = ergebnis {
+        let _ = std::fs::remove_dir_all(&neu);
+        return Err(e);
     }
+    let alt = staging.join("sicherung");
+    let weg = staging.join("sicherung.alt");
+    let _ = std::fs::remove_dir_all(&weg);
+    if alt.exists() {
+        std::fs::rename(&alt, &weg).map_err(|e| format!("Sicherung: {e}"))?;
+    }
+    std::fs::rename(&neu, &alt).map_err(|e| format!("Sicherung: {e}"))?;
+    let _ = std::fs::remove_dir_all(&weg);
     Ok(())
 }
 
@@ -481,6 +544,13 @@ fn beschaeftigt(app: &AppHandle) -> Option<&'static str> {
         .is_some_and(|m| m.is_recording())
     {
         return Some("Diktat");
+    }
+    if app
+        .try_state::<Arc<managers::transcription::TranscriptionManager>>()
+        .is_some_and(|m| m.is_streaming())
+        || crate::transcription_coordinator::diktat_in_verarbeitung()
+    {
+        return Some("Diktat-Nachverarbeitung");
     }
     if let Some(r) = app.try_state::<Arc<MeetingRecorderManager>>() {
         if r.is_recording() {
@@ -530,18 +600,31 @@ fn runde(app: &AppHandle, pubkey: &str, staging: &Path, g: &mut Gedaechtnis) -> 
     if !aktiv(true, settings.local_update_auto_install) || aufgeschoben() {
         return false;
     }
+    // Beschaedigter Status: anhalten, nicht neu anfangen.
+    let mut status = match status_lesen(staging) {
+        Ok(s) => s,
+        Err(e) => {
+            if !g.status_defekt_gemeldet {
+                log::warn!("dev update: {e}; Entwicklungskanal haelt an");
+                g.status_defekt_gemeldet = true;
+            }
+            return false;
+        }
+    };
+    if status.laufend.is_some() {
+        return false;
+    }
     let Some(update) = crate::local_update::find_newest(app) else {
         return false;
     };
     let installer = PathBuf::from(&update.path);
-    let ordner = installer
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_default();
-    if ist_umleitung(&installer) || ist_umleitung(&ordner) || ist_umleitung(&sig_path(&installer)) {
+    if kette_umgeleitet(&installer)
+        || kette_umgeleitet(&sig_path(&installer))
+        || kette_umgeleitet(staging)
+    {
         if g.abgelehnt.is_none() {
             log::warn!(
-                "dev update: {} ist Symlink/Junction, abgelehnt",
+                "dev update: Symlink/Junction auf dem Weg zu {} oder zum Staging, abgelehnt",
                 update.file_name
             );
         }
@@ -576,7 +659,6 @@ fn runde(app: &AppHandle, pubkey: &str, staging: &Path, g: &mut Gedaechtnis) -> 
     let Some(sperre) = Sperre::nehmen(staging) else {
         return false;
     };
-    let mut status = status_lesen(staging);
     // Signatur vor dem Kopieren lesen; danach gilt nur noch die private Kopie.
     let sig = match std::fs::metadata(sig_path(&installer)) {
         Ok(m) if m.len() <= MAX_SIG_BYTES => std::fs::read_to_string(sig_path(&installer)).ok(),
@@ -586,7 +668,9 @@ fn runde(app: &AppHandle, pubkey: &str, staging: &Path, g: &mut Gedaechtnis) -> 
         g.abgelehnt = Some(stand);
         return false;
     };
-    let kandidat = staging.join("kandidat-setup.exe");
+    // Eigener Name je Versuch, exklusiv angelegt (kein Ueberschreiben fremder Dateien).
+    let datei = format!("kandidat-{}-{}.exe", std::process::id(), jetzt());
+    let kandidat = staging.join(&datei);
     let geprueft = kopieren_und_pruefen(&installer, &sig, pubkey, &update.version, &kandidat)
         .and_then(|gp| status.zulassen(&gp).map(|()| gp));
     let geprueft = match geprueft {
@@ -608,45 +692,45 @@ fn runde(app: &AppHandle, pubkey: &str, staging: &Path, g: &mut Gedaechtnis) -> 
     let sekunden = VORLAUF.as_secs() as u32;
     melden(app, &update.version, "startet", None, sekunden);
     std::thread::sleep(VORLAUF);
-    // Unmittelbar vor dem Beenden erneut: Aufschub, neue Arbeit, Einstellung.
-    let settings = crate::settings::get_settings(app);
-    if aufgeschoben()
-        || !aktiv(true, settings.local_update_auto_install)
-        || beschaeftigt(app).is_some()
-    {
-        log::info!(
-            "dev update: {} abgebrochen (Aufschub/Arbeit)",
-            update.version
-        );
+    let abbrechen = |grund: &str, g: &mut Gedaechtnis, ruhen: bool| {
+        log::info!("dev update: {} abgebrochen ({grund})", update.version);
         let _ = std::fs::remove_file(&kandidat);
+        if ruhen {
+            g.abgelehnt = Some(stand.clone());
+        }
+    };
+    let settings = crate::settings::get_settings(app);
+    if aufgeschoben() || !aktiv(true, settings.local_update_auto_install) {
+        abbrechen("Aufschub/Einstellung", g, false);
         return false;
     }
     if let Err(e) = sichern(app, staging) {
-        log::warn!("dev update: Sicherung gescheitert, kein Update: {e}");
-        let _ = std::fs::remove_file(&kandidat);
         // Nicht alle 20 s erneut kopieren: dieser Stand ruht bis zur naechsten Testversion.
-        g.abgelehnt = Some(stand);
+        abbrechen(&format!("Sicherung: {e}"), g, true);
+        return false;
+    }
+    // Die Kopie lag waehrend des Hinweises im Staging-Ordner: genau die
+    // gepruefte Fassung verlangen.
+    if sha256_datei(&kandidat).ok().as_deref() != Some(geprueft.sha256.as_str()) {
+        abbrechen("Staging-Kopie veraendert", g, true);
+        return false;
+    }
+    // Letzte Pruefung so spaet wie moeglich: zwischen ihr und dem Beenden
+    // liegen nur noch Statusschreiben und Helferstart.
+    if let Some(grund) = beschaeftigt(app) {
+        abbrechen(grund, g, false);
         return false;
     }
     status.laufend = Some(Versuch {
         version: update.version.clone(),
         zeit: geprueft.signiert.zeit,
         sha256: geprueft.sha256.clone(),
+        datei: datei.clone(),
+        starts: 0,
     });
+    // Der Versuch ist VOR der Uebergabe dauerhaft vermerkt (begrenzt ihn auf einen).
     if let Err(e) = status_schreiben(staging, &status) {
-        log::warn!("dev update: {e}; kein Update");
-        let _ = std::fs::remove_file(&kandidat);
-        g.abgelehnt = Some(stand);
-        return false;
-    }
-    // Die Kopie lag waehrend des Hinweises im Staging-Ordner: unmittelbar vor
-    // dem Start noch einmal genau die gepruefte Fassung verlangen.
-    if sha256_datei(&kandidat).ok().as_deref() != Some(geprueft.sha256.as_str()) {
-        log::warn!("dev update: Staging-Kopie veraendert, kein Update");
-        status.laufend = None;
-        let _ = status_schreiben(staging, &status);
-        let _ = std::fs::remove_file(&kandidat);
-        g.abgelehnt = Some(stand);
+        abbrechen(&e, g, true);
         return false;
     }
     log::info!("dev update: installiere {} ohne Rueckfrage", update.version);
@@ -664,37 +748,83 @@ fn runde(app: &AppHandle, pubkey: &str, staging: &Path, g: &mut Gedaechtnis) -> 
             if !status.gesperrt.contains(&geprueft.sha256) {
                 status.gesperrt.push(geprueft.sha256);
             }
-            let _ = status_schreiben(staging, &status);
-            let _ = std::fs::remove_file(&kandidat);
-            g.abgelehnt = Some(stand);
+            if let Err(e) = status_schreiben(staging, &status) {
+                log::warn!("dev update: Sperre nicht gespeichert: {e}");
+            }
+            abbrechen("Helfer", g, true);
             false
         }
     }
 }
 
-/// Beim Start: Ausgang des letzten Versuchs festhalten, Sperre loesen.
-fn nach_start(app: &AppHandle, staging: &Path) {
-    let mut status = status_lesen(staging);
+/// Beim Start: laufenden Versuch weiterfuehren oder sperren. Rueckgabe: ob
+/// nach `GESUND` Laufzeit bestaetigt werden soll.
+fn nach_start(app: &AppHandle, staging: &Path) -> Result<bool, String> {
+    let mut status = status_lesen(staging)?;
     let version = app.package_info().version.to_string();
-    match status.aufloesen(&version) {
-        Ausgang::Keiner => {}
-        Ausgang::Erfolg => {
-            log::info!("dev update: {version} laeuft, Versuch erfolgreich");
-            // Fuer die Rueckkehr von Hand: der zuletzt gute Installer.
-            let _ = std::fs::rename(
-                staging.join("kandidat-setup.exe"),
-                staging.join("letzte-gute-setup.exe"),
+    let ausgang = status.beim_start(&version);
+    status_schreiben(staging, &status)?;
+    match ausgang {
+        Ausgang::Keiner => Ok(false),
+        Ausgang::Bewaehren => {
+            log::info!(
+                "dev update: {version} gestartet, Bestaetigung nach {} s",
+                GESUND.as_secs()
             );
+            Ok(true)
         }
         Ausgang::Fehlschlag => {
-            log::warn!("dev update: nach dem Versuch laeuft weiter {version}; Installer gesperrt");
-            let _ = std::fs::remove_file(staging.join("kandidat-setup.exe"));
+            log::warn!("dev update: Versuch fehlgeschlagen ({version} laeuft); Installer gesperrt");
+            aufraeumen_kandidaten(staging, None);
+            Ok(false)
         }
     }
-    if let Err(e) = status_schreiben(staging, &status) {
-        log::warn!("dev update: {e}");
+}
+
+/// Entfernt Kandidaten-Kopien ausser `behalten`.
+fn aufraeumen_kandidaten(staging: &Path, behalten: Option<&str>) {
+    let Ok(rd) = std::fs::read_dir(staging) else {
+        return;
+    };
+    for e in rd.flatten() {
+        let name = e.file_name().to_string_lossy().to_string();
+        if name.starts_with("kandidat-") && Some(name.as_str()) != behalten {
+            let _ = std::fs::remove_file(e.path());
+        }
     }
-    let _ = std::fs::remove_file(staging.join("install.lock"));
+}
+
+/// Nach `GESUND` Laufzeit: Versuch bestaetigen und Generationen drehen. Die
+/// bisher letzte gute Fassung wird erst JETZT zur vorherigen.
+fn bestaetigen(app: &AppHandle, staging: &Path) {
+    let Ok(mut status) = status_lesen(staging) else {
+        return;
+    };
+    let version = app.package_info().version.to_string();
+    let Some(v) = status.bestaetigen(&version) else {
+        return;
+    };
+    let letzte = staging.join("letzte-gute-setup.exe");
+    let vorherige = staging.join("vorherige-gute-setup.exe");
+    let kandidat = staging.join(&v.datei);
+    let gedreht = (|| {
+        if kandidat.is_file() {
+            if letzte.exists() {
+                let _ = std::fs::remove_file(&vorherige);
+                std::fs::rename(&letzte, &vorherige)?;
+            }
+            std::fs::rename(&kandidat, &letzte)?;
+        }
+        std::io::Result::Ok(())
+    })();
+    if let Err(e) = gedreht {
+        log::warn!("dev update: Generationen nicht gedreht: {e}");
+    }
+    match status_schreiben(staging, &status) {
+        Ok(()) => log::info!("dev update: {version} bestaetigt gesund"),
+        Err(e) => log::warn!("dev update: Bestaetigung nicht gespeichert: {e}"),
+    }
+    aufraeumen_kandidaten(staging, None);
 }
 
 /// Startet den Hintergrund-Thread. Nur Windows (nur dort gibt es den
@@ -710,7 +840,13 @@ pub fn start(app: AppHandle) {
         log::warn!("dev update: kein Staging-Ordner, Entwicklungskanal aus");
         return;
     };
-    nach_start(&app, &staging);
+    let bewaehren = match nach_start(&app, &staging) {
+        Ok(b) => b,
+        Err(e) => {
+            log::warn!("dev update: {e}; Entwicklungskanal haelt an");
+            return;
+        }
+    };
     log::info!(
         "dev update: Entwicklungskanal aktiv, Staging {}",
         staging.display()
@@ -718,6 +854,10 @@ pub fn start(app: AppHandle) {
     let spawned = std::thread::Builder::new()
         .name("dev-update".into())
         .spawn(move || {
+            if bewaehren {
+                std::thread::sleep(GESUND);
+                bestaetigen(&app, &staging);
+            }
             let mut g = Gedaechtnis::default();
             loop {
                 std::thread::sleep(INTERVALL);
@@ -862,25 +1002,41 @@ mod tests {
 
     #[test]
     fn genau_ein_versuch_je_installer() {
+        let versuch = |starts| Versuch {
+            version: "0.23.5".into(),
+            zeit: 150,
+            sha256: "h".into(),
+            datei: "kandidat-1-2.exe".into(),
+            starts,
+        };
         let mut s = Status {
             zuletzt_zeit: 100,
-            laufend: Some(Versuch {
-                version: "0.23.5".into(),
-                zeit: 150,
-                sha256: "h".into(),
-            }),
+            laufend: Some(versuch(0)),
             ..Default::default()
         };
-        // Neue Version laeuft: Erfolg, Zeitstempel ruecken nach.
+        // Solange der Versuch laeuft, wird nichts Neues zugelassen.
+        assert!(s.zulassen(&geprueft(200, "x")).is_err());
+        // Zielversion startet: bewaehren, noch kein Erfolg.
+        assert_eq!(s.beim_start("0.23.5"), Ausgang::Bewaehren);
+        assert_eq!(s.zuletzt_zeit, 100);
+        // Nach der Laufzeit bestaetigt: Zeitgrenze rueckt nach.
         let mut ok = s.clone();
-        assert_eq!(ok.aufloesen("0.23.5"), Ausgang::Erfolg);
+        assert!(ok.bestaetigen("0.23.5").is_some());
         assert_eq!(ok.zuletzt_zeit, 150);
         assert!(ok.laufend.is_none());
+        // Startet sie zu oft ohne Bestaetigung (Absturz), ist der Versuch gescheitert.
+        let mut crash = Status {
+            laufend: Some(versuch(MAX_STARTS_OHNE_BESTAETIGUNG)),
+            ..Default::default()
+        };
+        assert_eq!(crash.beim_start("0.23.5"), Ausgang::Fehlschlag);
+        assert_eq!(crash.gesperrt, vec!["h".to_string()]);
         // Alte Version laeuft weiter: Hash gesperrt, kein zweiter Versuch.
-        assert_eq!(s.aufloesen("0.23.4"), Ausgang::Fehlschlag);
+        assert_eq!(s.beim_start("0.23.4"), Ausgang::Fehlschlag);
         assert_eq!(s.gesperrt, vec!["h".to_string()]);
         assert_eq!(s.zuletzt_zeit, 100);
-        assert_eq!(s.aufloesen("0.23.4"), Ausgang::Keiner);
+        assert_eq!(s.beim_start("0.23.4"), Ausgang::Keiner);
+        assert!(s.bestaetigen("0.23.4").is_none());
     }
 
     #[test]
@@ -892,17 +1048,51 @@ mod tests {
             laufend: None,
         };
         status_schreiben(dir.path(), &s).unwrap();
-        assert_eq!(status_lesen(dir.path()), s);
-        assert_eq!(status_lesen(&dir.path().join("fehlt")), Status::default());
+        assert_eq!(status_lesen(dir.path()).unwrap(), s);
+        assert_eq!(
+            status_lesen(&dir.path().join("fehlt")).unwrap(),
+            Status::default()
+        );
     }
 
     #[test]
-    fn sperre_ist_exklusiv() {
+    fn defekter_status_haelt_an_statt_zu_vergessen() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("status.json"), "{kaputt").unwrap();
+        assert!(status_lesen(dir.path()).is_err());
+    }
+
+    #[test]
+    fn sicherung_ersetzt_die_alte_erst_nach_erfolg() {
+        let daten = tempfile::tempdir().unwrap();
+        let staging = tempfile::tempdir().unwrap();
+        std::fs::write(daten.path().join("settings_store.json"), "{}").unwrap();
+        std::fs::write(daten.path().join("history.db"), "db").unwrap();
+        std::fs::write(daten.path().join("history.db-wal"), "wal").unwrap();
+        std::fs::write(daten.path().join("bild.png"), "x").unwrap();
+        sichern_nach(daten.path(), staging.path()).unwrap();
+        let s = staging.path().join("sicherung");
+        assert!(s.join("settings_store.json").is_file());
+        assert!(s.join("history.db-wal").is_file());
+        assert!(!s.join("bild.png").exists());
+        // Scheitert die naechste Sicherung, bleibt die vorige vollstaendig.
+        let fehlt = daten.path().join("gibt-es-nicht");
+        assert!(sichern_nach(&fehlt, staging.path()).is_err());
+        assert!(s.join("history.db").is_file());
+        assert!(!staging.path().join("sicherung.neu").exists());
+    }
+
+    #[test]
+    fn sperre_ist_exklusiv_und_prozessgebunden() {
         let dir = tempfile::tempdir().unwrap();
         let a = Sperre::nehmen(dir.path()).expect("erste");
         assert!(Sperre::nehmen(dir.path()).is_none(), "zweite");
         drop(a);
         assert!(Sperre::nehmen(dir.path()).is_some(), "nach Freigabe");
+        // Sperre eines toten Prozesses ist frei.
+        let dir2 = tempfile::tempdir().unwrap();
+        std::fs::write(dir2.path().join("install.lock"), "4294967294").unwrap();
+        assert!(Sperre::nehmen(dir2.path()).is_some());
     }
 
     #[test]
@@ -934,13 +1124,15 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn symlink_zaehlt_als_umleitung() {
+    fn symlink_irgendwo_auf_dem_weg_zaehlt() {
         let dir = tempfile::tempdir().unwrap();
-        let p = quelle(dir.path(), b"test");
+        let echt = dir.path().join("echt");
+        std::fs::create_dir(&echt).unwrap();
+        let p = quelle(&echt, b"test");
         let l = dir.path().join("link");
-        std::os::unix::fs::symlink(&p, &l).unwrap();
-        assert!(ist_umleitung(&l));
-        assert!(!ist_umleitung(&p));
+        std::os::unix::fs::symlink(&echt, &l).unwrap();
+        assert!(kette_umgeleitet(&l.join("test")));
+        assert!(!kette_umgeleitet(&p));
     }
 
     #[test]

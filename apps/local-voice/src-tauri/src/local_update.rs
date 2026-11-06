@@ -210,8 +210,14 @@ pub(crate) fn install(app: &AppHandle, path: &str) -> Result<(), String> {
     if !allowed {
         return Err("Der Installer liegt in keinem erlaubten Update-Ordner".into());
     }
-
-    spawn_helper(app, &candidate)
+    // Dieselbe prozessgebundene Sperre wie der Entwicklungskanal: nie zwei
+    // Installationen zugleich (auch nicht aus einer zweiten Instanz).
+    let sperre = crate::dev_update::staging_dir(app)
+        .and_then(|d| crate::dev_update::Sperre::nehmen(&d))
+        .ok_or("Es laeuft bereits eine Installation")?;
+    spawn_helper(app, &candidate)?;
+    sperre.behalten();
+    Ok(())
 }
 
 /// Fuer den Entwicklungskanal: startet genau diese (schon gepruefte, private)

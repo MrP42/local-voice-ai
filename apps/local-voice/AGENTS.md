@@ -159,9 +159,12 @@ whose `.sig` verifies against the development key is copied into a private stagi
 (`%LOCALAPPDATA%\de.wolffappliedai.localvoiceai\testupdate`), verified there, and installed through the
 existing helper (app exits, NSIS `/P`, app restarts) — never during dictation, recording,
 post-processing, the import queue, a heavy job or read-aloud, and only after a 15 s notice with
-"Später". The signed timestamp must be newer than the last accepted one (no downgrade/replay); a
-build that does not come up afterwards is blocked by hash (`status.json`, one attempt per installer).
-`letzte-gute-setup.exe` and `sicherung/` (settings/DBs) stay there for a manual return. Release builds
+"Später". The signed timestamp must be newer than the last confirmed one (no downgrade/replay). The
+attempt is recorded in `status.json` before the hand-over; nothing new installs until the new build has
+run 120 s (then it is confirmed), and a build that does not come up (or restarts 3× unconfirmed) is
+blocked by hash. A damaged `status.json` stops the channel. `letzte-gute-setup.exe`,
+`vorherige-gute-setup.exe` and `sicherung/` (settings/DBs) stay there for a manual return; one
+process-bound `install.lock` covers this path and the manual click. Release builds
 never carry the development key (the release workflow and `release-macos-local.sh` refuse
 `LVA_DEV_UPDATE_PUBKEY`), so they do not know the channel; the production key never signs test builds.
 Settings ▸ General ▸ Updates has the switch (on by default in such builds; a stored "off" survives
