@@ -133,4 +133,12 @@ final class LibraryTests: XCTestCase {
         books[3].favorite = true
         XCTAssertEqual(LibraryText.favoritesFirst(books).map(\.id), ["b", "d", "a", "c"])
     }
+
+    func testResumeEstimates() {
+        XCTAssertEqual(LibraryText.approximatePages(chars: 0), 1)
+        XCTAssertEqual(LibraryText.approximatePages(chars: 1800), 1)
+        XCTAssertEqual(LibraryText.approximatePages(chars: 1801), 2)
+        XCTAssertEqual(LibraryText.listenMilliseconds(chars: 900), 60_000)
+        XCTAssertEqual(LibraryText.listenMilliseconds(chars: -5), 0)
+    }
 }

@@ -379,6 +379,14 @@ public enum LibraryText {
         return code.range(of: "^[a-z]{2,3}(-[a-z0-9]{2,8})?$", options: .regularExpression) != nil ? code : nil
     }
 
+    /// Grobe Buchseite: rund 1800 Zeichen. Bücher ohne Seitenzahlen bekommen so eine Orientierung.
+    public static let charsPerPage = 1800.0
+
+    public static func approximatePages(chars: Double) -> Int { max(1, Int((chars / charsPerPage).rounded(.up))) }
+
+    /// Vorlesedauer bei normalem Tempo: rund 6 Zeichen je Wort und 150 Wörter je Minute, wie am Desktop.
+    public static func listenMilliseconds(chars: Double) -> Double { max(0, chars) / 6 / 150 * 60_000 }
+
     /// Favoriten zuerst, sonst bleibt die Reihenfolge, wie `sortViews` am Desktop.
     public static func favoritesFirst(_ books: [LibraryBook]) -> [LibraryBook] {
         books.filter(\.favorite) + books.filter { !$0.favorite }

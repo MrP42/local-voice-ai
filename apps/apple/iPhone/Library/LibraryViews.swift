@@ -161,6 +161,25 @@ struct LibraryShelf: View {
         })
     }
 
+    /// Angaben der Karte „Weiterhören/Weiterlesen“: Stand, Rest und Umfang.
+    private func resumeFacts(_ book: LibraryBook, _ rec: ProgressRecord, isAudio: Bool) -> [String] {
+        let left = max(0, rec.length - rec.offset), percent = LibraryFormat.percent(LibraryProgress.fraction(rec))
+        guard isAudio else {
+            let pages = LibraryText.approximatePages(chars: rec.length), page = min(pages, LibraryText.approximatePages(chars: rec.offset))
+            var facts = ["Text · \(percent) · Seite \(page) von etwa \(pages)", "Vorlesen: noch \(LibraryFormat.remaining(LibraryText.listenMilliseconds(chars: left)))"]
+            if book.audio != nil { facts.append(library.hasAudio(book) ? "Hörbuch geladen" : "Hörbuch im Konto") }
+            return facts
+        }
+        var facts = ["Hörbuch · \(percent) · noch \(LibraryFormat.remaining(left))"]
+        var detail = ["Gesamt \(LibraryFormat.clock(rec.length))"]
+        if let chapters = library.cachedAudiobookInfo(book)?.chapters, chapters.count > 1 {
+            detail.insert("Kapitel \(AudiobookChapters.index(at: rec.offset, in: chapters) + 1) von \(chapters.count)", at: 0)
+        }
+        facts.append(detail.joined(separator: " · "))
+        if !library.hasAudio(book) { facts.append("Noch nicht auf dem iPhone geladen") }
+        return facts
+    }
+
     /// Zuletzt gehörtes oder gelesenes, noch nicht fertiges Buch.
     private var resume: (LibraryBook, ProgressRecord, Bool)? {
         var best: (LibraryBook, ProgressRecord, Bool)?
@@ -205,8 +224,9 @@ struct LibraryShelf: View {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(book.title).font(.headline)
                                 if !book.authors.isEmpty { Text(book.authors.joined(separator: ", ")).font(.subheadline).foregroundStyle(VoicePalette.secondaryText) }
-                                Text(isAudio ? "Hörbuch · noch \(LibraryFormat.remaining(max(0, rec.length - rec.offset)))" : "Text · \(LibraryFormat.percent(LibraryProgress.fraction(rec))) gelesen")
-                                    .font(.footnote).foregroundStyle(VoicePalette.secondaryText)
+                                ForEach(resumeFacts(book, rec, isAudio: isAudio), id: \.self) { fact in
+                                    Text(fact).font(.footnote).foregroundStyle(VoicePalette.secondaryText).fixedSize(horizontal: false, vertical: true)
+                                }
                                 ProgressView(value: LibraryProgress.fraction(rec)).tint(VoicePalette.accent)
                             }
                         }.voiceCard()
