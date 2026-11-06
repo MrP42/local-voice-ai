@@ -201,14 +201,28 @@ async fn send_logged(
         let _ = std::fs::write(dir.join(format!("lv-{kind}.body")), body);
         log::info!("Sync-Dump: {kind} nach {}", dir.display());
     }
-    if std::env::var_os("LV_SYNC_CURL").is_some() {
-        let resp = tauri::async_runtime::spawn_blocking(move || curl_send(&req))
-            .await
-            .map_err(|e| HubError::Other(e.to_string()))?
-            .map_err(|e| HubError::Other(format!("Hub nicht erreichbar: curl: {e}")))?;
-        return Ok(reqwest::Response::from(resp));
-    }
     let mut req = req;
+    if use_curl() {
+        // Unter Windows lehnt IONOS die POSTs aus reqwest/hyper am Hub ab
+        // (HTTP 500 vor PHP), dieselbe Anfrage über curl.exe geht durch
+        // (Diagnose 06.11.2026). Fehlt curl.exe, bleibt es bei reqwest.
+        let (r, back) = tauri::async_runtime::spawn_blocking(move || {
+            let r = curl_send(&req);
+            (r, req)
+        })
+        .await
+        .map_err(|e| HubError::Other(e.to_string()))?;
+        match r {
+            Ok(resp) => return Ok(reqwest::Response::from(resp)),
+            Err(CurlError::Missing) => {
+                log::warn!("Sync: curl.exe fehlt, sende über reqwest");
+                req = back;
+            }
+            Err(CurlError::Failed(e)) => {
+                return Err(HubError::Other(format!("Hub nicht erreichbar: curl: {e}")))
+            }
+        }
+    }
     if std::env::var_os("LV_SYNC_HOSTFIRST").is_some() {
         // Host als erste Kopfzeile wie bei curl (hyper hängt sie sonst ans Ende).
         if let Some(host) = req.url().host_str() {
@@ -232,22 +246,47 @@ async fn send_logged(
         .map_err(|e| HubError::Other(format!("Hub nicht erreichbar: {e}")))
 }
 
-/// Diagnose-Umweg: dieselbe Anfrage über curl.exe senden (Konfiguration über
-/// stdin, damit das Token nicht in der Prozessliste steht).
-fn curl_send(req: &reqwest::Request) -> Result<http::Response<Vec<u8>>, String> {
+/// POSTs zum Hub über curl senden? Unter Windows Standard (LV_SYNC_CURL=0
+/// schaltet ab), anderswo nur mit LV_SYNC_CURL=1.
+fn use_curl() -> bool {
+    match std::env::var("LV_SYNC_CURL").as_deref() {
+        Ok("0") => false,
+        Ok(_) => true,
+        Err(_) => cfg!(windows),
+    }
+}
+
+enum CurlError {
+    /// curl ist nicht installiert: auf reqwest zurückfallen.
+    Missing,
+    Failed(String),
+}
+
+/// Dieselbe Anfrage über curl(.exe) senden (Konfiguration über stdin,
+/// damit das Token nicht in der Prozessliste steht).
+fn curl_send(req: &reqwest::Request) -> Result<http::Response<Vec<u8>>, CurlError> {
+    curl_send_inner(req).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            CurlError::Missing
+        } else {
+            CurlError::Failed(e.to_string())
+        }
+    })
+}
+
+fn curl_send_inner(req: &reqwest::Request) -> std::io::Result<http::Response<Vec<u8>>> {
     use std::io::Write;
+    let other = |m: String| std::io::Error::other(m);
     fn q(s: &str) -> String {
         format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
     }
     let body = req.body().and_then(|b| b.as_bytes()).unwrap_or_default();
     // Als TempPath (Handle zu, Datei bleibt bis zum Drop), damit curl sie öffnen kann.
-    let mut body_file = tempfile::NamedTempFile::new().map_err(|e| e.to_string())?;
-    body_file.write_all(body).map_err(|e| e.to_string())?;
-    body_file.flush().map_err(|e| e.to_string())?;
+    let mut body_file = tempfile::NamedTempFile::new()?;
+    body_file.write_all(body)?;
+    body_file.flush()?;
     let body_file = body_file.into_temp_path();
-    let out_file = tempfile::NamedTempFile::new()
-        .map_err(|e| e.to_string())?
-        .into_temp_path();
+    let out_file = tempfile::NamedTempFile::new()?.into_temp_path();
     let mut cfg = String::new();
     cfg.push_str(&format!("url = {}\n", q(req.url().as_str())));
     cfg.push_str(&format!("request = {}\n", q(req.method().as_str())));
@@ -280,25 +319,24 @@ fn curl_send(req: &reqwest::Request) -> Result<http::Response<Vec<u8>>, String> 
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     }
-    let mut child = cmd.spawn().map_err(|e| e.to_string())?;
+    let mut child = cmd.spawn()?;
     child
         .stdin
         .take()
-        .ok_or("kein stdin")?
-        .write_all(cfg.as_bytes())
-        .map_err(|e| e.to_string())?;
-    let out = child.wait_with_output().map_err(|e| e.to_string())?;
+        .ok_or_else(|| other("kein stdin".into()))?
+        .write_all(cfg.as_bytes())?;
+    let out = child.wait_with_output()?;
     let code: u16 = String::from_utf8_lossy(&out.stdout)
         .trim()
         .parse()
         .map_err(|_| {
-            format!(
+            other(format!(
                 "kein Status ({})",
                 String::from_utf8_lossy(&out.stderr).trim()
-            )
+            ))
         })?;
     let bytes = std::fs::read(&out_file).unwrap_or_default();
-    log::info!(
+    log::debug!(
         "Sync über curl: {} {} → HTTP {code}",
         req.method(),
         req.url().path()
@@ -306,7 +344,7 @@ fn curl_send(req: &reqwest::Request) -> Result<http::Response<Vec<u8>>, String> 
     http::Response::builder()
         .status(code)
         .body(bytes)
-        .map_err(|e| e.to_string())
+        .map_err(|e| other(e.to_string()))
 }
 
 fn base(url: &str) -> String {
