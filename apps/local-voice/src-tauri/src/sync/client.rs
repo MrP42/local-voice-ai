@@ -216,11 +216,14 @@ fn base(url: &str) -> String {
 
 async fn error_from(res: reqwest::Response) -> HubError {
     let status = res.status();
-    let diag = if status.is_server_error() {
-        response_diag(&res)
-    } else {
-        String::new()
-    };
+    let kind = res
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(';').next())
+        .filter(|v| v.len() <= 64)
+        .unwrap_or("ohne Typ")
+        .to_string();
     let text = res.text().await.unwrap_or_default();
     let code = serde_json::from_str::<ApiError>(&text)
         .ok()
@@ -231,64 +234,12 @@ async fn error_from(res: reqwest::Response) -> HubError {
         (_, Some((code, msg))) if !msg.is_empty() => HubError::Other(format!("{code}: {msg}")),
         (_, Some((code, _))) => HubError::Other(code),
         (s, None) => {
-            // Kein JSON der App: Hosting oder PHP-Abbruch. Ein Auszug macht die Ursache im Log sichtbar.
-            let hint = body_hint(&text);
-            log::warn!("Hub: HTTP {s} ohne App-Fehler {diag}, Antwort: {hint:?}");
-            if hint.is_empty() {
-                HubError::Other(format!("HTTP {s}"))
-            } else {
-                HubError::Other(format!("HTTP {s} ({hint})"))
-            }
+            // Kein JSON der App (Hosting oder PHP-Abbruch). Ohne Antwortauszug
+            // und ohne Pfad ins Log, nur Status und Inhaltstyp.
+            log::warn!("Hub: HTTP {s} ohne App-Fehler ({kind})");
+            HubError::Other(format!("HTTP {s}"))
         }
     }
-}
-
-/// Pfad (Blob-Kennung gekürzt), HTTP-Version und die Kopfzeilen, die das
-/// Hosting verraten. Ohne Token und ohne Inhalte.
-fn response_diag(res: &reqwest::Response) -> String {
-    let path: String = res
-        .url()
-        .path()
-        .split('/')
-        .map(|seg| {
-            if seg.len() == 64 && seg.bytes().all(|b| b.is_ascii_hexdigit()) {
-                format!("{}…", &seg[..8])
-            } else {
-                seg.to_string()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("/");
-    let headers: Vec<String> = res
-        .headers()
-        .iter()
-        .filter(|(k, _)| {
-            let k = k.as_str();
-            matches!(k, "server" | "content-type" | "content-length" | "via") || k.starts_with("x-")
-        })
-        .map(|(k, v)| format!("{k}={}", v.to_str().unwrap_or("?")))
-        .collect();
-    format!("[{path} {:?} {}]", res.version(), headers.join(" "))
-}
-
-/// Kurzer, einzeiliger Auszug einer Fehlerantwort ohne HTML-Tags (höchstens 160 Zeichen).
-fn body_hint(text: &str) -> String {
-    let mut out = String::new();
-    let mut in_tag = false;
-    for c in text.chars() {
-        match c {
-            '<' => in_tag = true,
-            '>' => {
-                in_tag = false;
-                out.push(' ');
-            }
-            _ if in_tag => {}
-            c if c.is_whitespace() || c.is_control() => out.push(' '),
-            c => out.push(c),
-        }
-    }
-    let joined = out.split_whitespace().collect::<Vec<_>>().join(" ");
-    joined.chars().take(160).collect()
 }
 
 pub async fn login(
@@ -566,25 +517,5 @@ impl HubClient {
             return Err(error_from(res).await);
         }
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod body_hint_tests {
-    use super::body_hint;
-
-    #[test]
-    fn html_wird_zu_einer_zeile() {
-        let html = "<html><head><title>500 Internal Server Error</title></head>\n<body><h1>Internal\nServer Error</h1></body></html>";
-        assert_eq!(
-            body_hint(html),
-            "500 Internal Server Error Internal Server Error"
-        );
-    }
-
-    #[test]
-    fn leer_und_lang() {
-        assert_eq!(body_hint(""), "");
-        assert_eq!(body_hint(&"x".repeat(500)).chars().count(), 160);
     }
 }
