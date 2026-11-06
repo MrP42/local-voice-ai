@@ -86,6 +86,27 @@ final class DesktopVectorTests: XCTestCase {
         XCTAssertTrue(merged.finished)
     }
 
+    func testOnlyFavoriteChangeIsDetected() throws {
+        var book = LibraryBook(id: "b", title: "Titel", addedMs: 1)
+        let before = try SyncLedger.fieldsHash(book, files: BookFiles())
+        book.favorite = true
+        XCTAssertTrue(SyncLedger.onlyFavoriteChanged(pendingFields: before, localFields: try SyncLedger.fieldsHash(book, files: BookFiles())))
+        // Import nach dem Stern: lokale Angaben dürfen nicht durch das Konto ersetzt werden.
+        var imported = BookFiles()
+        imported.text = BlobRef(blob: String(repeating: "a", count: 64), size: 1, chunks: 1)
+        XCTAssertFalse(SyncLedger.onlyFavoriteChanged(pendingFields: before, localFields: try SyncLedger.fieldsHash(book, files: imported)))
+        book.title = "Neu"
+        XCTAssertFalse(SyncLedger.onlyFavoriteChanged(pendingFields: before, localFields: try SyncLedger.fieldsHash(book, files: BookFiles())))
+        // Stand war beim Stern nicht abgeglichen: Es gibt keinen Vergleichswert.
+        XCTAssertFalse(SyncLedger.onlyFavoriteChanged(pendingFields: nil, localFields: before))
+    }
+
+    func testPendingFavoriteStaysWhenStarChangedDuringPush() {
+        XCTAssertTrue(SyncLedger.clearsPendingFavorite(accepted: "h1", sent: "h1", local: "h1"))
+        XCTAssertFalse(SyncLedger.clearsPendingFavorite(accepted: "h1", sent: "h1", local: "h2"), "während des Sendens erneut getippt")
+        XCTAssertFalse(SyncLedger.clearsPendingFavorite(accepted: "h0", sent: "h1", local: "h1"), "Hub hat nicht angenommen")
+    }
+
     func testTombstoneKeepsUnsavedLocalChanges() {
         let synced = SyncLedger.Entry(revision: 3, hash: "h", deleted: false)
         XCTAssertFalse(SyncLedger.keepsAgainstTombstone(synced, localHash: "h"), "abgeglichener Stand darf weg")

@@ -311,7 +311,7 @@ struct FavoriteStar: View {
 
     var body: some View {
         Button {
-            library.setFavorite(book, !book.favorite)
+            LibrarySync.shared.setFavorite(book, !book.favorite)
             Task { await LibrarySync.shared.run() }
         } label: {
             Image(systemName: book.favorite ? "star.fill" : "star")

@@ -144,6 +144,8 @@ final class PhoneLibrary: ObservableObject {
         var localAudio: [String: String]? = nil
         /// Noch nicht gesendeter Stern. Beim Holen bleibt er, der Rest kommt aus dem Konto.
         var pendingFavorite: Bool? = nil
+        /// Angaben ohne Stern, als der Stern gesetzt wurde; nur bei abgeglichenem Stand.
+        var pendingFields: String? = nil
     }
 
     func meta(_ book: LibraryBook) -> SyncMeta {
@@ -226,16 +228,18 @@ final class PhoneLibrary: ObservableObject {
         reload()
     }
 
-    func setFavorite(_ book: LibraryBook, _ favorite: Bool) {
+    func setFavorite(_ book: LibraryBook, _ favorite: Bool, pendingFields: String?) {
         var copy = book; copy.favorite = favorite
         try? write(copy)
-        var m = meta(copy); m.updated = Self.nowMs(); m.pendingFavorite = favorite
+        var m = meta(copy)
+        if m.pendingFavorite == nil { m.pendingFields = pendingFields }  // Zweiter Tipp: Der erste Stand gilt.
+        m.updated = Self.nowMs(); m.pendingFavorite = favorite
         setMeta(copy, m)
     }
 
     func clearPendingFavorite(bookId: String) {
         guard let book = books.first(where: { $0.id == bookId }) else { return }
-        var m = meta(book); m.pendingFavorite = nil; setMeta(book, m)
+        var m = meta(book); m.pendingFavorite = nil; m.pendingFields = nil; setMeta(book, m)
     }
 
     func flush() {

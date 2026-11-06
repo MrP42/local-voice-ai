@@ -198,8 +198,7 @@ final class LibrarySync: ObservableObject {
         guard collections.contains(remote.collection) else { return }
         if remote.deleted {
             if remote.collection == LibrarySyncFormat.collectionBook, let local = library.books.first(where: { $0.id == remote.objectId }) {
-                let meta = library.meta(local)
-                let hash = LibrarySyncFormat.canonicalHash(try SyncedBook(book: local, files: meta.files, updated: meta.updated).json())
+                let hash = try localHash(local)
                 // Ungesicherte Änderung: Buch behalten, der nächste Lauf sendet es über den Grabstein hinweg neu.
                 if !SyncLedger.keepsAgainstTombstone(ledger[remote.collection, remote.objectId], localHash: hash) { library.removeRemote(id: remote.objectId) }
             }
@@ -221,9 +220,11 @@ final class LibrarySync: ObservableObject {
             let localMeta = local.map { library.meta($0) }
             if let local, let localMeta, localMeta.updated > synced.updated {
                 // Eigener Stand ist neuer und wird beim Senden übertragen. War es nur ein Stern, gilt sonst das Konto.
-                if let favorite = localMeta.pendingFavorite {
+                if let favorite = localMeta.pendingFavorite,
+                   SyncLedger.onlyFavoriteChanged(pendingFields: localMeta.pendingFields, localFields: try SyncLedger.fieldsHash(local, files: localMeta.files)) {
                     let book = SyncLedger.mergingPendingFavorite(favorite, into: synced.book, local: local)
-                    try library.storeRemote(book, meta: .init(files: synced.files, updated: localMeta.updated, pendingFavorite: favorite))
+                    let fields = try SyncLedger.fieldsHash(book, files: synced.files)
+                    try library.storeRemote(book, meta: .init(files: synced.files, updated: localMeta.updated, pendingFavorite: favorite, pendingFields: fields))
                 }
             } else {
                 var book = synced.book
@@ -297,9 +298,23 @@ final class LibrarySync: ObservableObject {
             objects.append((try sealObject(LibrarySyncFormat.collectionBook, book.id, value, base: entry?.revision ?? 0, acc), hash))
         }
         try await push(objects, acc)
-        for (object, hash) in objects where ledger[object.collection, object.objectId]?.hash == hash {
-            library.clearPendingFavorite(bookId: object.objectId)
+        for (object, hash) in objects {
+            guard let book = library.books.first(where: { $0.id == object.objectId }), let local = try? localHash(book),
+                  SyncLedger.clearsPendingFavorite(accepted: ledger[object.collection, object.objectId]?.hash, sent: hash, local: local) else { continue }
+            library.clearPendingFavorite(bookId: book.id)
         }
+    }
+
+    private func localHash(_ book: LibraryBook) throws -> String {
+        let meta = library.meta(book)
+        return LibrarySyncFormat.canonicalHash(try SyncedBook(book: book, files: meta.files, updated: meta.updated).json())
+    }
+
+    /// Stern setzen. War der Stand abgeglichen, darf ein neuerer Stand aus dem Konto später alles außer dem Stern ersetzen.
+    func setFavorite(_ book: LibraryBook, _ favorite: Bool) {
+        let meta = library.meta(book)
+        let clean = (try? localHash(book)) == ledger[LibrarySyncFormat.collectionBook, book.id]?.hash
+        library.setFavorite(book, favorite, pendingFields: clean ? try? SyncLedger.fieldsHash(book, files: meta.files) : nil)
     }
 
     private func pushProgress(_ acc: Account) async throws {
