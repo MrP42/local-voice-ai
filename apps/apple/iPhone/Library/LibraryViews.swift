@@ -288,6 +288,7 @@ struct ShelfItem: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(([book.title] + book.authors + (audio ? ["Hörbuch heruntergeladen, offline verfügbar"] : [])).joined(separator: ", "))
+        .accessibilityValue(downloads.jobs[book.id] != nil ? ShelfDownloadStatus.line(book, downloads) : "")
     }
 
     /// In sehr großer Schrift untereinander, sonst bliebe dem Text kaum Breite.
@@ -316,16 +317,15 @@ struct ShelfDownloadStatus: View {
     @ObservedObject var downloads = AudioDownloads.shared
 
     var body: some View {
-        let job = downloads.jobs[book.id]
-        let total = max(1, job?.totalBytes ?? 1), bytes = downloads.done[book.id] ?? 0
-        let fraction = min(1, Double(bytes) / Double(total))
-        ProgressView(value: fraction).tint(job?.phase == .failed ? VoicePalette.danger : VoicePalette.success)
-        Text(line(job, percent: LibraryFormat.percent(fraction)))
+        Text(Self.line(book, downloads))
             .font(.caption).foregroundStyle(VoicePalette.secondaryText)
             .fixedSize(horizontal: false, vertical: true)
     }
 
-    private func line(_ job: AudioDownload.Job?, percent: String) -> String {
+    static func line(_ book: LibraryBook, _ downloads: AudioDownloads) -> String {
+        let job = downloads.jobs[book.id]
+        let total = max(1, job?.totalBytes ?? 1), bytes = downloads.done[book.id] ?? 0
+        let percent = LibraryFormat.percent(min(1, Double(bytes) / Double(total)))
         switch job?.phase {
         case .failed: return "Laden fehlgeschlagen"
         case .paused: return "Angehalten · \(percent)"

@@ -94,6 +94,24 @@ public enum AudioDownload {
         }
     }
 
+    /// Merkt, seit wann und ab welchem Stand ein Auftrag läuft. Pause, Fehler und Abbruch beenden die Messung,
+    /// sonst zählte die Wartezeit als langsames Laden.
+    public struct SpeedTracker: Sendable {
+        private var marks: [String: (at: Date, bytes: Int)] = [:]
+        public init() {}
+
+        public mutating func note(_ id: String, phase: Phase, bytes: Int, now: Date) {
+            if phase != .running { marks[id] = nil } else if marks[id] == nil { marks[id] = (now, bytes) }
+        }
+
+        public mutating func reset(_ id: String) { marks[id] = nil }
+
+        public func remaining(_ id: String, doneBytes: Int, totalBytes: Int, now: Date) -> TimeInterval? {
+            guard let mark = marks[id] else { return nil }
+            return AudioDownload.remainingSeconds(doneBytes: doneBytes, totalBytes: totalBytes, startBytes: mark.bytes, elapsed: now.timeIntervalSince(mark.at))
+        }
+    }
+
     /// Geschätzte Restzeit aus dem bisherigen Tempo; `nil`, solange die Messung zu kurz ist.
     public static func remainingSeconds(doneBytes: Int, totalBytes: Int, startBytes: Int, elapsed: TimeInterval) -> TimeInterval? {
         let loaded = doneBytes - startBytes

@@ -143,6 +143,23 @@ final class AudioDownloadTests: XCTestCase {
         XCTAssertEqual(AudioDownload.remainingText(4800), "noch 1 Std 20 Min")
     }
 
+    func testSpeedMeasureRestartsAfterPauseFailureAndCancel() {
+        var speed = AudioDownload.SpeedTracker()
+        let start = Date()
+        speed.note("b", phase: .running, bytes: 0, now: start)
+        XCTAssertEqual(speed.remaining("b", doneBytes: 50, totalBytes: 100, now: start.addingTimeInterval(10)), 10)
+        // Eine Stunde Pause zählt nicht als langsames Laden.
+        speed.note("b", phase: .paused, bytes: 50, now: start.addingTimeInterval(20))
+        XCTAssertNil(speed.remaining("b", doneBytes: 50, totalBytes: 100, now: start.addingTimeInterval(3620)))
+        speed.note("b", phase: .running, bytes: 50, now: start.addingTimeInterval(3620))
+        XCTAssertEqual(speed.remaining("b", doneBytes: 75, totalBytes: 100, now: start.addingTimeInterval(3630)), 10)
+        speed.note("b", phase: .failed, bytes: 75, now: start.addingTimeInterval(3631))
+        XCTAssertNil(speed.remaining("b", doneBytes: 75, totalBytes: 100, now: start.addingTimeInterval(3640)))
+        speed.note("b", phase: .running, bytes: 75, now: start.addingTimeInterval(3640))
+        speed.reset("b")  // Abbruch
+        XCTAssertNil(speed.remaining("b", doneBytes: 80, totalBytes: 100, now: start.addingTimeInterval(3650)))
+    }
+
     func testSpaceProblem() {
         let fmt: (Int64) -> String = { "\($0) B" }
         XCTAssertNil(AudioDownload.spaceProblem(remainingBytes: 100, freeBytes: nil, format: fmt))

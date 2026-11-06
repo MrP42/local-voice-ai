@@ -27,7 +27,7 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
     /// Fehlversuche je Stück (`<buch>|<teil>|<stück>`); erst nach dreien schlägt das Laden fehl.
     /// Je laufendem Auftrag; endet mit ihm, damit ein späteres Laden wieder zurückfallen darf.
     private var legacyFallbacks: [String: AudioDownload.LegacyFallback] = [:]
-    private var speedStart: [String: (at: Date, bytes: Int)] = [:]
+    private var speed = AudioDownload.SpeedTracker()
     private var retries: [String: Int] = [:]
     private var assembling: Set<String> = []
     private var waiters: [String: [CheckedContinuation<Bool, Never>]] = [:]
@@ -121,6 +121,7 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
 
     func pause(_ id: String) {
         guard jobs[id]?.phase == .running else { return }
+        speed.reset(id)
         jobs[id]?.phase = .paused; jobs[id]?.message = nil
         persist(); resolve(id, false)
         cancelTasks(id)
@@ -139,6 +140,7 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
 
     /// Ladevorgang verwerfen (Hörbuch wird entfernt oder Buch gelöscht).
     func discard(_ id: String) {
+        speed.reset(id)
         legacyFallbacks[id] = nil
         guard jobs[id] != nil || inFlight[id] != nil else { return }
         jobs[id] = nil; done[id] = nil
@@ -311,12 +313,12 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
 
     /// Restzeit für das Regal; misst ab Beginn des laufenden Ladens.
     func remainingSeconds(_ id: String) -> TimeInterval? {
-        guard let job = jobs[id], job.phase == .running, let start = speedStart[id], let bytes = done[id] else { return nil }
-        return AudioDownload.remainingSeconds(doneBytes: bytes, totalBytes: job.totalBytes, startBytes: start.bytes, elapsed: Date().timeIntervalSince(start.at))
+        guard let job = jobs[id], job.phase == .running, let bytes = done[id] else { return nil }
+        return speed.remaining(id, doneBytes: bytes, totalBytes: job.totalBytes, now: Date())
     }
 
     private func finish(_ id: String) {
-        speedStart[id] = nil
+        speed.reset(id)
         legacyFallbacks[id] = nil
         jobs[id] = nil; done[id] = nil
         inFlight[id] = nil
@@ -327,6 +329,7 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
     }
 
     private func fail(_ id: String, _ message: String) {
+        speed.reset(id)
         legacyFallbacks[id] = nil
         guard jobs[id] != nil else { return }
         jobs[id]?.phase = .failed; jobs[id]?.message = message
@@ -353,8 +356,7 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
         guard let job = jobs[id] else { done[id] = nil; return }
         let bytes = AudioDownload.doneBytes(job, states: states(job))
         done[id] = bytes
-        if job.phase == .running, speedStart[id] == nil { speedStart[id] = (Date(), bytes) }
-        if job.phase != .running { speedStart[id] = nil }
+        speed.note(id, phase: job.phase, bytes: bytes, now: Date())
     }
 
     /// Nach einem Neustart: laufende Aufträge wieder zuordnen, liegengebliebene Stücke anhängen.

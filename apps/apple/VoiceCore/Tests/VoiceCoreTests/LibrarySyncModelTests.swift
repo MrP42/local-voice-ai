@@ -117,6 +117,19 @@ final class DesktopVectorTests: XCTestCase {
         XCTAssertEqual(LibraryText.kurzbuchLanguage("kurzbuch-de.md"), "de")
         XCTAssertNil(LibraryText.kurzbuchLanguage("anderes.md"))
         XCTAssertEqual(LibraryText.kurzbuchText("## Fazit\n\n**Wichtig** bleibt."), "## Fazit\n\nWichtig bleibt.")
+    func testFileUpdateKeepsStarSetDuringUpload() throws {
+        // Upload beginnt, währenddessen setzt der Stern Zeitstempel und Merker; danach kommt der Verweis dazu.
+        let duringUpload = LibrarySyncMeta(updated: 200, pendingFavorite: true, pendingFields: "f")
+        let ref = BlobRef(blob: "a", size: 1, chunks: 1)
+        let after = duringUpload.updatingFiles { $0.text = ref }
+        XCTAssertEqual(after.files.text, ref)
+        XCTAssertEqual(after.updated, 200)
+        XCTAssertEqual(after.pendingFavorite, true)
+        XCTAssertEqual(after.pendingFields, "f")
+        // Alte Dateien bleiben lesbar.
+        let old = try JSONDecoder().decode(LibrarySyncMeta.self, from: Data(#"{"files":{"audio":[]},"updated":5}"#.utf8))
+        XCTAssertEqual(old.updated, 5)
+        XCTAssertNil(old.pendingFavorite)
     }
 
     func testTombstoneKeepsUnsavedLocalChanges() {
