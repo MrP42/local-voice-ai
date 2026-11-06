@@ -388,6 +388,32 @@ extension BookFiles {
                             audio: (entry["audio"]?.arrayValue ?? []).compactMap { $0.decoded(BlobRef.self) })
     }
 
+    /// Dateiverweise nach dem Empfang von einem Altgerät (Schema < 2, ohne Fassungen); `self` ist der bisherige Stand.
+    /// Die flachen Felder des Senders gelten für seine Hauptfassung `senderFlat`. Alles Übrige bleibt: Verweise
+    /// weiterer Fassungen in `files.editions`, und flache Dateien einer anderen bisherigen Flat-Fassung `localFlat`
+    /// wandern dorthin. Fehlt dem Sender ein flaches Feld, bleibt der bisherige Verweis dieser Fassung stehen.
+    public func receivingLegacy(_ incoming: BookFiles, localFlat: String?, senderFlat: String?) -> BookFiles {
+        var out = incoming
+        var entries = editions?.objectValue ?? [:]
+        if let lf = localFlat, lf != senderFlat, text != nil || cover != nil || !audio.isEmpty {
+            var entry: [String: PassthroughJSON] = [:]
+            if let t = text, let j = try? PassthroughJSON(encoding: t) { entry["text"] = j }
+            if let c = cover, let j = try? PassthroughJSON(encoding: c) { entry["cover"] = j }
+            if !audio.isEmpty, let j = try? PassthroughJSON(encoding: audio) { entry["audio"] = j }
+            entries[lf] = .object(entry)
+        }
+        if let sf = senderFlat {
+            let known = EditionFiles(text: entries[sf]?["text"]?.decoded(BlobRef.self), cover: entries[sf]?["cover"]?.decoded(BlobRef.self),
+                                     audio: (entries[sf]?["audio"]?.arrayValue ?? []).compactMap { $0.decoded(BlobRef.self) })
+            if out.text == nil { out.text = known.text }
+            if out.cover == nil { out.cover = known.cover }
+            if out.audio.isEmpty { out.audio = known.audio }
+            entries[sf] = nil
+        }
+        out.editions = entries.isEmpty ? nil : .object(entries)
+        return out
+    }
+
     /// Dateien der Fassung `id`, wenn die flachen Felder zur Fassung `flat` gehören (Hauptfassung des Senders).
     public func files(forEdition id: String, flat: String?) -> EditionFiles {
         guard let flat, flat == id else { return files(forEdition: id) }

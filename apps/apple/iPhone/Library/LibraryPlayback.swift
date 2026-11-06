@@ -383,9 +383,12 @@ final class LibraryPlayback: NSObject, ObservableObject {
     func undoLanguageSwitch() {
         guard let notice = languageNotice else { return }
         hideNotice()
+        // Erst anhalten: `stop()` sichert die laufende Stelle (Zielfassung) und würde sonst die Wiederherstellung überschreiben.
+        let sleepUntil = sleepEnds
+        stop()
         guard let changed = library.undoSwitch(notice.undo) else { error = "Das Rückgängigmachen ist nicht möglich."; return }
         let medium: SwitchMedium = notice.undo.fromPosition?.unit == "ms" ? .audio : .text
-        reopen(library.view(changed, editionId: notice.undo.fromEdition), medium: medium, autoplay: notice.undo.wasPlaying)
+        reopen(library.view(changed, editionId: notice.undo.fromEdition), medium: medium, autoplay: notice.undo.wasPlaying, sleepUntil: sleepUntil)
         Task { await LibrarySync.shared.run() }
     }
 
@@ -406,9 +409,9 @@ final class LibraryPlayback: NSObject, ObservableObject {
     }
 
     /// Dieselbe Sicht neu öffnen, ohne den Player zu schließen: Ansicht, Schlaftimer und Quelle bleiben.
-    private func reopen(_ view: LibraryBook, medium: SwitchMedium, autoplay: Bool) {
+    private func reopen(_ view: LibraryBook, medium: SwitchMedium, autoplay: Bool, sleepUntil known: Date? = nil) {
         let keep = surface
-        let sleepUntil = sleepEnds
+        let sleepUntil = known ?? sleepEnds
         stop()
         switch medium {
         case .audio: openAudiobook(view)

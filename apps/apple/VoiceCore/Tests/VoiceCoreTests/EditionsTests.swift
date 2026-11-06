@@ -115,4 +115,43 @@ final class EditionsTests: XCTestCase {
         now.finished = nil; now.offset = 300
         XCTAssertEqual(LibraryProgress.undoingSwitch(current: now, before: before, now: 30)?.finished, true)
     }
+
+    // MARK: Empfang von einem Altgerät verliert keine Dateiverweise
+
+    func testLegacyReceiveKeepsAllEditionFileReferences() throws {
+        let local = try book(primary: "ed_b")  // lokal: EN Hauptfassung, DE weitere Fassung
+        var localFiles = BookFiles(text: blob("1"), audio: [blob("2", file: "ed_b_teil.mp3")])
+        localFiles.editions = .object(["ed_a": .object([
+            "text": try PassthroughJSON(encoding: blob("3")),
+            "audio": try PassthroughJSON(encoding: [blob("4", file: "ed_a__teil.mp3")]),
+        ])])
+        let legacy = try JSONDecoder().decode(LibraryBook.self, from: Data(
+            #"{"id":"book_1","title":"Die Verwandlung","authors":[],"added_ms":1}"#.utf8))
+        let incoming = BookFiles(text: blob("5"), audio: [blob("6", file: "neu.mp3")])
+        let flat = BookEditions.senderPrimary(local: local, incoming: legacy)
+        XCTAssertEqual(flat, "ed_b")
+
+        let merged = localFiles.receivingLegacy(incoming, localFlat: "ed_b", senderFlat: flat)
+        XCTAssertEqual(merged.text, incoming.text)
+        XCTAssertEqual(merged.audio, incoming.audio)
+        XCTAssertEqual(merged.files(forEdition: "ed_a", flat: flat).text, blob("3"))
+        XCTAssertEqual(merged.files(forEdition: "ed_a", flat: flat).audio, [blob("4", file: "ed_a__teil.mp3")])
+        XCTAssertEqual(merged.files(forEdition: "ed_b", flat: flat).audio, incoming.audio)
+
+        let kept = legacy.keepingEditions(from: local)
+        let json = try SyncedBook(book: kept, files: merged, updated: 9).json()
+        let raw = try JSONSerialization.jsonObject(with: json) as! [String: Any]
+        let editions = (raw["files"] as? [String: Any])?["editions"] as? [String: Any]
+        XCTAssertNotNil(editions?["ed_a"])
+        XCTAssertNil(editions?["ed_b"])
+        XCTAssertNotNil(raw["editions"])
+    }
+
+    func testLegacyReceiveMovesOldFlatFilesToTheirEdition() throws {
+        let local = BookFiles(text: blob("1"), audio: [blob("2", file: "a.mp3")])
+        let merged = local.receivingLegacy(BookFiles(text: blob("5")), localFlat: "ed_a", senderFlat: "ed_b")
+        XCTAssertEqual(merged.text, blob("5"))
+        XCTAssertEqual(merged.files(forEdition: "ed_a", flat: "ed_b").text, blob("1"))
+        XCTAssertEqual(merged.files(forEdition: "ed_a", flat: "ed_b").audio, [blob("2", file: "a.mp3")])
+    }
 }

@@ -244,16 +244,24 @@ final class LibrarySync: ObservableObject {
                 if book.text == nil, let t = local?.text { book.text = t }
                 // Sprachwechsel dieses iPhones, den der PC noch nicht kennt (lva#344), nicht überschreiben.
                 var keptReading = false
+                var keptLegacyEditions = false
                 if let local {
                     // Altgerät ohne Fassungen: die hiesigen bleiben (der Kern führt sie ebenso zusammen).
                     let withEditions = book.keepingEditions(from: local)
                     let keptEditions = withEditions.editions != book.editions
                     book = withEditions
                     let kept = book.keepingNewerReading(from: local)
+                    keptLegacyEditions = keptEditions
                     keptReading = keptEditions || kept.reading != book.reading
                     book = kept
                 }
-                try library.storeRemote(book, meta: .init(files: synced.files, updated: synced.updated))
+                // Altgerät: seine flachen Dateien gehören der hiesigen Hauptfassung, die Verweise der übrigen bleiben.
+                var files = synced.files
+                if let local, let localMeta, keptLegacyEditions {
+                    files = localMeta.files.receivingLegacy(synced.files, localFlat: library.flatEditionId(local, meta: localMeta),
+                                                            senderFlat: BookEditions.senderPrimary(local: local, incoming: synced.book))
+                }
+                try library.storeRemote(book, meta: .init(files: files, updated: synced.updated))
                 // Der Stand weicht vom Konto ab: neu senden, also weder den Hash angleichen noch den Stand lassen.
                 if keptReading { library.touch(book) }
                 if !keptReading, book.text == synced.book.text {
