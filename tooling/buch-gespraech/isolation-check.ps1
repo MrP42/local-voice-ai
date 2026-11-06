@@ -529,11 +529,14 @@ function Test-Known($e) {
         if (-not ($hasSub -and (@($r.subtypes) -ccontains [string]$e.subtype))) { return $false }
     } elseif ($hasSub) { return $false }
     # numeric_fields: fehlt ein Feld, ist es keine Zahl oder negativ, ist das Ereignis unbekannt.
+    # Ohne Eintrag ($null) nichts pruefen: @($null) haette genau ein Element und sperrte alles.
     $nf = $NumericFields[(Get-Label $e)]
-    foreach ($f in @($nf)) {
-        if (-not $e.PSObject.Properties[[string]$f]) { return $false }
-        $v = $e.$f
-        if (-not ((($v -is [int]) -or ($v -is [long])) -and ($v -ge 0))) { return $false }
+    if ($null -ne $nf) {
+        foreach ($f in @($nf)) {
+            if ($null -eq $f -or -not $e.PSObject.Properties[[string]$f]) { return $false }
+            $v = $e.$f
+            if (-not ((($v -is [int]) -or ($v -is [long])) -and ($v -ge 0))) { return $false }
+        }
     }
     return $true
 }
