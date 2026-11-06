@@ -154,4 +154,38 @@ final class EditionsTests: XCTestCase {
         XCTAssertEqual(merged.files(forEdition: "ed_a", flat: "ed_b").text, blob("1"))
         XCTAssertEqual(merged.files(forEdition: "ed_a", flat: "ed_b").audio, [blob("2", file: "a.mp3")])
     }
+
+    func testLegacyReceiveKeepsOwnFlatFieldsAsFallback() {
+        let local = BookFiles(text: blob("1"), audio: [blob("2", file: "a.mp3")])
+        let merged = local.receivingLegacy(BookFiles(text: blob("5")), localFlat: "ed_b", senderFlat: "ed_b")
+        XCTAssertEqual(merged.text, blob("5"))
+        XCTAssertEqual(merged.audio, [blob("2", file: "a.mp3")])
+    }
+
+    func testLegacyReceiveMergesMovedFlatFilesFieldwise() throws {
+        var local = BookFiles(text: blob("1"))
+        local.editions = .object(["ed_a": .object([
+            "text": try PassthroughJSON(encoding: blob("3")),
+            "cover": try PassthroughJSON(encoding: blob("7")),
+            "zukunft": .string("bleibt"),
+        ])])
+        let merged = local.receivingLegacy(BookFiles(), localFlat: "ed_a", senderFlat: "ed_b")
+        let entry = merged.editions?["ed_a"]
+        XCTAssertEqual(entry?["text"]?.decoded(BlobRef.self), blob("1"))      // umziehendes Feld gewinnt
+        XCTAssertEqual(entry?["cover"]?.decoded(BlobRef.self), blob("7"))     // fehlendes Feld: vorhandener Wert bleibt
+        XCTAssertEqual(entry?["zukunft"]?.stringValue, "bleibt")
+    }
+
+    func testLegacyReceiveDropsTombstonedEditionFiles() throws {
+        var local = BookFiles(text: blob("1"))
+        local.editions = .object([
+            "ed_a": .object(["text": try PassthroughJSON(encoding: blob("3"))]),
+            "ed_tot": .object(["text": try PassthroughJSON(encoding: blob("4"))]),
+        ])
+        let merged = local.receivingLegacy(BookFiles(text: blob("5")), localFlat: "ed_b", senderFlat: "ed_b", live: ["ed_a", "ed_b"])
+        XCTAssertNotNil(merged.editions?["ed_a"])
+        XCTAssertNil(merged.editions?["ed_tot"])
+        let movedToDead = local.receivingLegacy(BookFiles(text: blob("5")), localFlat: "ed_tot", senderFlat: "ed_b", live: ["ed_a", "ed_b"])
+        XCTAssertNil(movedToDead.editions?["ed_tot"])
+    }
 }

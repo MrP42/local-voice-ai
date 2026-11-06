@@ -259,11 +259,15 @@ final class LibrarySync: ObservableObject {
                 var files = synced.files
                 if let local, let localMeta, keptLegacyEditions {
                     files = localMeta.files.receivingLegacy(synced.files, localFlat: library.flatEditionId(local, meta: localMeta),
-                                                            senderFlat: BookEditions.senderPrimary(local: local, incoming: synced.book))
+                                                            senderFlat: BookEditions.senderPrimary(local: local, incoming: synced.book),
+                                                            live: Set(BookEditions(book: book).editions.map(\.id)))
                 }
                 try library.storeRemote(book, meta: .init(files: files, updated: synced.updated))
                 // Der Stand weicht vom Konto ab: neu senden, also weder den Hash angleichen noch den Stand lassen.
-                if keptReading { library.touch(book) }
+                // Gleicher Stand wie der zuletzt gesendete (Echo eines Altgeräts ohne Fassungsfelder): nicht erneut
+                // senden, sonst schaukelt sich der Abgleich auf. Der PC führt seine Fassungen selbst zusammen.
+                let echo = localMeta.map { $0.updated == synced.updated } ?? false
+                if keptReading, !echo { library.touch(book) }
                 if !keptReading, book.text == synced.book.text {
                     hash = LibrarySyncFormat.canonicalHash(try SyncedBook(book: book, files: synced.files, updated: synced.updated).json())
                 }
