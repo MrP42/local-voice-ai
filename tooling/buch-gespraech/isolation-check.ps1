@@ -137,12 +137,20 @@ $System = 'Du beantwortest kurze Fragen auf Deutsch.'
 
 # Whitelist (gemeinsame Datei mit der App).
 $Wl = Get-Content -LiteralPath $EventsFile -Raw -Encoding UTF8 | ConvertFrom-Json
-$Rules = @{}
+# Ordinal (case-sensitiv): @{} waere case-insensitiv und liesse z. B. ASSISTANT durch.
+$Rules = New-Object System.Collections.Hashtable([StringComparer]::Ordinal)
 foreach ($r in @($Wl.events)) { $Rules[[string]$r.type] = $r }
 $ToolBlocks = @($Wl.tool_blocks)
 
 # Alle beobachteten Ereignistypen der Vorschau-Laeufe; ein Verstoss macht event_contract false.
-$script:Observed = New-Object System.Collections.Generic.HashSet[string]
+$script:Observed = New-Object System.Collections.Generic.HashSet[string]([StringComparer]::Ordinal)
+
+# Eindeutige Werte mit ordinalem Vergleich (Sort-Object -Unique ist case-insensitiv).
+function Get-DistinctOrdinal($values) {
+    $set = New-Object System.Collections.Generic.HashSet[string]([StringComparer]::Ordinal)
+    foreach ($v in @($values)) { if ($null -ne $v) { [void]$set.Add([string]$v) } }
+    return @($set | Sort-Object -CaseSensitive)
+}
 $script:ContractOk = $true
 
 function Write-Text([string]$path, [string]$text) {
@@ -579,7 +587,7 @@ function Parse-Out([string]$path, [string]$marker) {
         }
     }
     $r.Models = @($models | Sort-Object)
-    $r.Observed = @($evs | ForEach-Object { Get-Label $_ } | Sort-Object -Unique)
+    $r.Observed = Get-DistinctOrdinal @($evs | ForEach-Object { Get-Label $_ })
     $r.Violation = if ($r.Bad) { 'bad_line' } else { Test-Contract $evs }
     if ($marker) { $r.MarkerSeen = $text.Contains($marker) }
     foreach ($w in @($CanUser, $CanProject, $CanMemory)) { if ($text.Contains($w)) { $r.Canaries += $w } }
@@ -706,7 +714,7 @@ function Measure-Cli([string]$bin, [string]$spec, [string]$provider, [string]$ve
         if (@($r.Models).Count -cne 1) { Die "Messreihe ungueltig: Lauf $n meldet keine oder mehrere Modell-IDs (nichts geschrieben)" }
         $ins += $r.Input; $outs += $r.Output; $models += $r.Models[0]
     }
-    $distinct = @($models | Sort-Object -Unique)
+    $distinct = Get-DistinctOrdinal $models
     if ($distinct.Count -cne 1 -or -not $distinct[0]) { Die 'Messreihe ungueltig: uneinheitliche oder keine Modell-IDs (nichts geschrieben)' }
     # Erst nach dem letzten gueltigen Lauf wird geschrieben.
     $path = Join-Path $DataDir 'book_talk_preview_measurements.json'
@@ -764,6 +772,9 @@ if ($SelfTest.IsPresent) {
         $n++
         if ($r.Reason -cne $want) { $fail++; Write-Host "FEHLER: $name (rc=$rc): Grund '$($r.Reason)', erwartet '$want'" -ForegroundColor Red }
     }
+    # Modell-IDs, die sich nur in Gross-/Kleinschreibung unterscheiden, sind verschieden.
+    $n++
+    if ((Get-DistinctOrdinal @('claude-x', 'CLAUDE-X', 'claude-x')).Count -cne 2) { $fail++; Write-Host 'FEHLER: Get-DistinctOrdinal vergleicht nicht ordinal' -ForegroundColor Red }
     Remove-Item -Recurse -Force $Work -ErrorAction SilentlyContinue
     if ($fail -gt 0) { Write-Host "isolation-check SelfTest: ROT ($fail von $n)"; exit 1 }
     Write-Host "isolation-check SelfTest: $n Faelle gruen"
