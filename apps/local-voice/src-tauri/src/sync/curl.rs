@@ -10,8 +10,10 @@
 //! - `-q` als erstes Argument (keine curlrc), `--globoff`;
 //! - Konfiguration (URL, Kopfzeilen inkl. Token) nur über stdin, nie als Argument;
 //! - Body (Chiffrat) in einer Datei mit Zufallsnamen in einem eigenen Verzeichnis,
-//!   unter Windows mit geschützter DACL (nur Besitzer und SYSTEM); die Antwort
-//!   kommt über stdout, nicht über eine Datei;
+//!   je Aufruf atomar neu angelegt (Windows: CreateDirectoryW mit geschützter
+//!   DACL nur für die Benutzer-SID, Besitzer = Benutzer; Unix: 0700), ein
+//!   vorhandenes Verzeichnis wird nie übernommen; die Antwort kommt über stdout
+//!   (höchstens 1 MiB), nicht über eine Datei;
 //! - Reste aus abgebrochenen Läufen räumt der nächste Aufruf weg;
 //! - Exit-Code und HTTP-Status werden streng geprüft; stderr verworfen;
 //! - Watchdog ab dem Start des Kindes (inklusive Konfigurationsübergabe);
@@ -37,10 +39,12 @@ fn fail(m: &str) -> CurlError {
 
 /// Trenner zwischen Antwort und HTTP-Status auf stdout.
 const MARK: &str = "\n@@LV-HTTP-STATUS@@";
-/// Name des eigenen Verzeichnisses im Benutzer-Temp.
-const DIR_NAME: &str = "local-voice-curl";
-/// Body-Dateien, die älter sind, stammen aus abgebrochenen Läufen.
+/// Präfix der Arbeitsverzeichnisse im Benutzer-Temp (eines je Aufruf).
+const DIR_PREFIX: &str = "lv-curl-";
+/// Arbeitsverzeichnisse, die älter sind, stammen aus abgebrochenen Läufen.
 const STALE: Duration = Duration::from_secs(3600);
+/// Höchstgröße der Antwort auf stdout (Push/Stück antworten mit wenigen KB).
+const MAX_OUT: usize = 1024 * 1024;
 
 /// POSTs zum Hub über curl? `LV_SYNC_CURL=0` schaltet ab, jeder andere Wert
 /// ein; ohne Angabe nur unter Windows.
@@ -76,40 +80,62 @@ pub fn system_curl() -> Result<PathBuf, CurlError> {
     }
 }
 
-/// Eigenes Verzeichnis für Body-Dateien; unter Windows mit geschützter DACL.
-fn private_dir(base: &Path) -> Result<PathBuf, CurlError> {
-    let dir = base.join(DIR_NAME);
-    match std::fs::create_dir(&dir) {
-        Ok(()) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
-        Err(_) => return Err(fail("Temp-Verzeichnis nicht anlegbar")),
-    }
-    let meta = std::fs::symlink_metadata(&dir).map_err(|_| fail("Temp-Verzeichnis unlesbar"))?;
-    if !meta.is_dir() {
-        return Err(fail("Temp-Verzeichnis ist kein Verzeichnis"));
-    }
-    restrict(&dir)?;
-    Ok(dir)
+/// Zufälliger Verzeichnisname (Prozess-Zufallsschlüssel, Zeit, Zähler).
+fn random_name() -> String {
+    use std::hash::{BuildHasher, Hasher};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static N: AtomicU64 = AtomicU64::new(0);
+    let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+    h.write_u64(N.fetch_add(1, Ordering::Relaxed));
+    h.write_u128(
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos()),
+    );
+    h.write_u32(std::process::id());
+    format!("{DIR_PREFIX}{:016x}", h.finish())
 }
 
+/// Arbeitsverzeichnis nur für diesen Aufruf: atomar neu angelegt, schon beim
+/// Anlegen nur für den aktuellen Benutzer zugänglich (Windows: DACL mit der
+/// Benutzer-SID aus dem Prozess-Token, Besitzer = Benutzer; Unix: 0700).
+/// Ein vorhandenes Verzeichnis wird nie übernommen. Wird beim Drop entfernt.
+struct WorkDir(PathBuf);
+
+impl Drop for WorkDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+fn work_dir(base: &Path) -> Result<WorkDir, CurlError> {
+    for _ in 0..8 {
+        let path = base.join(random_name());
+        if create_dir_private(&path)? {
+            return Ok(WorkDir(path));
+        }
+    }
+    Err(fail("Temp-Verzeichnis nicht anlegbar"))
+}
+
+/// Legt `path` neu an. `Ok(false)`, wenn es schon existiert (nie übernehmen).
 #[cfg(windows)]
-fn restrict(dir: &Path) -> Result<(), CurlError> {
+fn create_dir_private(path: &Path) -> Result<bool, CurlError> {
     use std::os::windows::ffi::OsStrExt;
     use windows::core::PCWSTR;
-    use windows::Win32::Foundation::{LocalFree, HLOCAL};
+    use windows::Win32::Foundation::{LocalFree, ERROR_ALREADY_EXISTS, HLOCAL};
     use windows::Win32::Security::Authorization::ConvertStringSecurityDescriptorToSecurityDescriptorW;
-    use windows::Win32::Security::{
-        SetFileSecurityW, DACL_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION,
-        PSECURITY_DESCRIPTOR,
-    };
-    // Geschützt (keine Vererbung von oben): Vollzugriff nur Besitzer und SYSTEM,
-    // vererbt auf Dateien im Verzeichnis.
-    let sddl: Vec<u16> = "D:P(A;OICI;FA;;;OW)(A;OICI;FA;;;SY)\0"
+    use windows::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
+    use windows::Win32::Storage::FileSystem::CreateDirectoryW;
+    let sid = user_sid()?;
+    // Besitzer = Benutzer; geschützte DACL (keine Vererbung von oben), Vollzugriff
+    // nur für diesen Benutzer, vererbt auf die Body-Datei.
+    let sddl: Vec<u16> = format!("O:{sid}D:P(A;OICI;FA;;;{sid})\0")
         .encode_utf16()
         .collect();
-    let path: Vec<u16> = dir.as_os_str().encode_wide().chain(Some(0)).collect();
+    let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
     let mut sd = PSECURITY_DESCRIPTOR::default();
-    // SAFETY: Zeichenketten sind nullterminiert; sd wird mit LocalFree freigegeben.
+    // SAFETY: nullterminierte Zeichenketten; sd wird mit LocalFree freigegeben.
     unsafe {
         ConvertStringSecurityDescriptorToSecurityDescriptorW(
             PCWSTR(sddl.as_ptr()),
@@ -118,50 +144,90 @@ fn restrict(dir: &Path) -> Result<(), CurlError> {
             None,
         )
         .map_err(|_| fail("DACL nicht erzeugbar"))?;
-        let ok = SetFileSecurityW(
-            PCWSTR(path.as_ptr()),
-            DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
-            sd,
-        );
+        let sa = SECURITY_ATTRIBUTES {
+            nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: sd.0,
+            bInheritHandle: false.into(),
+        };
+        let r = CreateDirectoryW(PCWSTR(wide.as_ptr()), Some(&sa));
         let _ = LocalFree(Some(HLOCAL(sd.0)));
-        if !ok.as_bool() {
-            return Err(fail("DACL nicht setzbar"));
+        match r {
+            Ok(()) => Ok(true),
+            Err(e) if e.code() == ERROR_ALREADY_EXISTS.to_hresult() => Ok(false),
+            Err(_) => Err(fail("Temp-Verzeichnis nicht anlegbar")),
         }
     }
-    Ok(())
 }
 
-#[cfg(unix)]
-fn restrict(dir: &Path) -> Result<(), CurlError> {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
-        .map_err(|_| fail("Rechte nicht setzbar"))
+/// SID des Prozess-Benutzers als Zeichenkette (S-1-5-21-…).
+#[cfg(windows)]
+fn user_sid() -> Result<String, CurlError> {
+    use windows::core::PWSTR;
+    use windows::Win32::Foundation::{CloseHandle, LocalFree, HANDLE, HLOCAL};
+    use windows::Win32::Security::Authorization::ConvertSidToStringSidW;
+    use windows::Win32::Security::{GetTokenInformation, TokenUser, TOKEN_QUERY, TOKEN_USER};
+    use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+    // SAFETY: Puffer ist ausreichend groß und 8-Byte-ausgerichtet; Handles und
+    // Zeichenketten werden freigegeben.
+    unsafe {
+        let mut tok = HANDLE::default();
+        OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut tok)
+            .map_err(|_| fail("Prozess-Token nicht lesbar"))?;
+        let mut len = 0u32;
+        let _ = GetTokenInformation(tok, TokenUser, None, 0, &mut len);
+        let mut buf = vec![0u64; (len as usize).div_ceil(8).max(1)];
+        let r = GetTokenInformation(tok, TokenUser, Some(buf.as_mut_ptr().cast()), len, &mut len);
+        let _ = CloseHandle(tok);
+        r.map_err(|_| fail("Benutzer-SID nicht lesbar"))?;
+        let user = &*(buf.as_ptr() as *const TOKEN_USER);
+        let mut s = PWSTR::null();
+        ConvertSidToStringSidW(user.User.Sid, &mut s).map_err(|_| fail("SID nicht lesbar"))?;
+        let sid = s.to_string();
+        let _ = LocalFree(Some(HLOCAL(s.0.cast())));
+        let sid = sid.map_err(|_| fail("SID nicht lesbar"))?;
+        if !sid.starts_with("S-") || !sid.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+            return Err(fail("SID ungültig"));
+        }
+        Ok(sid)
+    }
 }
 
-#[cfg(not(any(windows, unix)))]
-fn restrict(_dir: &Path) -> Result<(), CurlError> {
-    Ok(())
+#[cfg(not(windows))]
+fn create_dir_private(path: &Path) -> Result<bool, CurlError> {
+    let mut b = std::fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        b.mode(0o700);
+    }
+    match b.create(path) {
+        Ok(()) => Ok(true),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
+        Err(_) => Err(fail("Temp-Verzeichnis nicht anlegbar")),
+    }
 }
 
-/// Body-Dateien abgebrochener Läufe entfernen (älter als `STALE`).
-fn sweep(dir: &Path, older_than: Duration) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
+/// Arbeitsverzeichnisse abgebrochener Läufe entfernen (älter als `older_than`).
+/// `remove_dir_all` folgt keinen Verknüpfungen.
+fn sweep(base: &Path, older_than: Duration) {
+    let Ok(entries) = std::fs::read_dir(base) else {
         return;
     };
     let now = SystemTime::now();
     for e in entries.flatten() {
-        let name = e.file_name();
-        if !name.to_string_lossy().starts_with("body-") {
+        if !e.file_name().to_string_lossy().starts_with(DIR_PREFIX) {
             continue;
         }
-        let old = e
-            .metadata()
-            .and_then(|m| m.modified())
+        let Ok(meta) = std::fs::symlink_metadata(e.path()) else {
+            continue;
+        };
+        let old = meta
+            .modified()
             .ok()
             .and_then(|t| now.duration_since(t).ok())
             .is_some_and(|age| age >= older_than);
-        if old {
-            let _ = std::fs::remove_file(e.path());
+        if old && meta.is_dir() {
+            let _ = std::fs::remove_dir_all(e.path());
         }
     }
 }
@@ -254,16 +320,15 @@ pub fn send_with(
             .as_bytes()
             .ok_or_else(|| fail("Body ist kein Bytepuffer"))?,
     };
-    let dir = private_dir(temp_base)?;
-    sweep(&dir, STALE);
-    let mut file = tempfile::Builder::new()
-        .prefix("body-")
-        .tempfile_in(&dir)
-        .map_err(|_| fail("Temp-Datei nicht anlegbar"))?;
-    file.write_all(body)
-        .and_then(|_| file.flush())
+    sweep(temp_base, STALE);
+    let dir = work_dir(temp_base)?;
+    let body_path = dir.0.join("body");
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&body_path)
+        .and_then(|mut f| f.write_all(body).and_then(|_| f.flush()))
         .map_err(|_| fail("Temp-Datei nicht schreibbar"))?;
-    let body_path = file.into_temp_path();
     let cfg = config(req, &body_path, timeout)?;
 
     let mut cmd = Command::new(exe);
@@ -293,9 +358,16 @@ pub fn send_with(
     // Konfiguration und Ausgabe in eigenen Threads: der Watchdog unten gilt ab
     // dem Start, auch wenn das Kind stdin nicht liest oder stdout nicht leert.
     let writer = std::thread::spawn(move || stdin.write_all(cfg.as_bytes()).is_ok());
+    // Ausgabe begrenzt: mehr als MAX_OUT bricht ab (Kind wird beendet).
+    let too_big = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let flag = too_big.clone();
     let reader = std::thread::spawn(move || {
         let mut buf = Vec::new();
-        stdout.read_to_end(&mut buf).map(|_| buf)
+        let r = (&mut stdout).take(MAX_OUT as u64 + 1).read_to_end(&mut buf);
+        if buf.len() > MAX_OUT {
+            flag.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+        r.map(|_| buf)
     });
 
     let deadline = started + timeout + Duration::from_secs(15);
@@ -303,6 +375,12 @@ pub fn send_with(
         let child = reap.0.as_mut().ok_or_else(|| fail("curl weg"))?;
         match child.try_wait() {
             Ok(Some(s)) => break s,
+            Ok(_) if too_big.load(std::sync::atomic::Ordering::SeqCst) => {
+                drop(reap);
+                let _ = writer.join();
+                let _ = reader.join();
+                return Err(fail("curl-Antwort zu groß, abgebrochen"));
+            }
             Ok(None) if Instant::now() >= deadline => {
                 drop(reap); // beendet das Kind; Writer und Reader enden dadurch
                 let _ = writer.join();
@@ -319,6 +397,10 @@ pub fn send_with(
         .join()
         .map_err(|_| fail("curl-Ausgabe unlesbar"))?
         .map_err(|_| fail("curl-Ausgabe unlesbar"))?;
+    // Vor dem Exit-Code: das Kind stirbt nach dem Abbruch des Lesens oft an SIGPIPE.
+    if out.len() > MAX_OUT {
+        return Err(fail("curl-Antwort zu groß, abgebrochen"));
+    }
     if !wrote {
         return Err(fail("curl-Konfiguration nicht übergeben"));
     }
@@ -327,7 +409,7 @@ pub fn send_with(
         return Err(CurlError::Failed(format!("curl Exit {code}")));
     }
     let (bytes, code) = split_output(&out).ok_or_else(|| fail("curl ohne gültigen HTTP-Status"))?;
-    drop(body_path);
+    drop(dir);
     http::Response::builder()
         .status(code)
         .body(bytes)
@@ -403,17 +485,92 @@ mod tests {
         );
     }
 
+    fn lv_dirs(base: &Path) -> usize {
+        std::fs::read_dir(base).map_or(0, |d| {
+            d.flatten()
+                .filter(|e| e.file_name().to_string_lossy().starts_with(DIR_PREFIX))
+                .count()
+        })
+    }
+
     #[test]
     fn alte_reste_werden_geraeumt_frische_nicht() {
         let tmp = tempfile::tempdir().unwrap();
-        let dir = private_dir(tmp.path()).unwrap();
-        std::fs::write(dir.join("body-alt"), b"x").unwrap();
-        std::fs::write(dir.join("anderes"), b"x").unwrap();
-        sweep(&dir, Duration::from_secs(3600));
-        assert!(dir.join("body-alt").exists(), "frisch bleibt");
-        sweep(&dir, Duration::ZERO);
-        assert!(!dir.join("body-alt").exists(), "alt wird geräumt");
-        assert!(dir.join("anderes").exists(), "fremde Namen bleiben");
+        let alt = work_dir(tmp.path()).unwrap();
+        std::fs::write(alt.0.join("body"), b"x").unwrap();
+        let alt_pfad = alt.0.clone();
+        std::mem::forget(alt); // simuliert einen abgebrochenen Lauf
+        std::fs::create_dir(tmp.path().join("anderes")).unwrap();
+        std::fs::write(tmp.path().join("lv-curl-datei"), b"x").unwrap();
+        sweep(tmp.path(), Duration::from_secs(3600));
+        assert!(alt_pfad.exists(), "frisch bleibt");
+        sweep(tmp.path(), Duration::ZERO);
+        assert!(!alt_pfad.exists(), "alt wird geräumt");
+        assert!(tmp.path().join("anderes").exists(), "fremde Namen bleiben");
+        assert!(
+            tmp.path().join("lv-curl-datei").exists(),
+            "nur Verzeichnisse"
+        );
+    }
+
+    #[test]
+    fn vorhandenes_verzeichnis_wird_nie_uebernommen() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = tmp.path().join("lv-curl-vorher");
+        std::fs::create_dir(&p).unwrap();
+        std::fs::write(p.join("fremd"), b"x").unwrap();
+        assert_eq!(create_dir_private(&p), Ok(false));
+        assert!(p.join("fremd").exists(), "nicht angefasst");
+        // Auch eine Datei unter dem Namen gilt als vorhanden.
+        let f = tmp.path().join("lv-curl-datei");
+        std::fs::write(&f, b"x").unwrap();
+        assert_eq!(create_dir_private(&f), Ok(false));
+        // Neu anlegen klappt, zweites Anlegen desselben Pfads nicht.
+        let n = tmp.path().join("lv-curl-neu");
+        assert_eq!(create_dir_private(&n), Ok(true));
+        assert_eq!(create_dir_private(&n), Ok(false));
+    }
+
+    #[test]
+    fn arbeitsverzeichnis_je_aufruf_eindeutig_und_wird_geraeumt() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a = work_dir(tmp.path()).unwrap();
+        let b = work_dir(tmp.path()).unwrap();
+        assert_ne!(a.0, b.0);
+        assert!(a
+            .0
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with(DIR_PREFIX));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&a.0).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o700);
+        }
+        drop(a);
+        drop(b);
+        assert_eq!(lv_dirs(tmp.path()), 0);
+    }
+
+    /// Windows: DACL geschützt, nur die Benutzer-SID, Besitzer = Benutzer.
+    #[cfg(windows)]
+    #[test]
+    fn windows_dacl_nur_benutzer() {
+        let sid = user_sid().unwrap();
+        assert!(sid.starts_with("S-1-"));
+        let tmp = tempfile::tempdir().unwrap();
+        let d = work_dir(tmp.path()).unwrap();
+        let out = std::process::Command::new("icacls")
+            .arg(&d.0)
+            .output()
+            .unwrap();
+        let text = String::from_utf8_lossy(&out.stdout).to_string();
+        // Nur ein ACE-Eintrag (eine Zeile mit „:(“), keine Vererbung von oben.
+        let aces = text.lines().filter(|l| l.contains(":(")).count();
+        assert_eq!(aces, 1, "{text}");
+        assert!(!text.contains("(I)"), "keine geerbten Einträge: {text}");
     }
 
     /// Unix-Attrappen für curl: Argumente, Body-Bytegleichheit, Exit-Code,
@@ -443,7 +600,7 @@ printf '\n@@LV-HTTP-STATUS@@200'
 "#;
 
         fn rest(base: &Path) -> usize {
-            std::fs::read_dir(base.join(DIR_NAME)).map_or(0, |d| d.count())
+            lv_dirs(base)
         }
 
         #[test]
@@ -459,14 +616,9 @@ printf '\n@@LV-HTTP-STATUS@@200'
             assert!(!args.contains("GEHEIM"));
             assert_eq!(args.trim(), "-q --globoff -K -");
             let body_path = std::fs::read_to_string(tmp.path().join("bodypath")).unwrap();
-            assert!(body_path.contains(DIR_NAME));
+            assert!(body_path.contains(DIR_PREFIX));
             assert!(!Path::new(body_path.trim()).exists(), "Body-Datei gelöscht");
             assert_eq!(rest(tmp.path()), 0);
-            let mode = std::fs::metadata(tmp.path().join(DIR_NAME))
-                .unwrap()
-                .permissions()
-                .mode();
-            assert_eq!(mode & 0o777, 0o700);
         }
 
         #[test]
@@ -520,6 +672,36 @@ printf '\n@@LV-HTTP-STATUS@@200'
             let err = send_with(&exe, tmp.path(), &req(b"x"), Duration::from_secs(1)).unwrap_err();
             assert_eq!(err, CurlError::Failed("curl hängt, abgebrochen".into()));
             assert!(t.elapsed() < Duration::from_secs(30));
+            assert_eq!(rest(tmp.path()), 0);
+        }
+
+        #[test]
+        fn antwort_ueber_limit_bricht_ab() {
+            let tmp = tempfile::tempdir().unwrap();
+            // 2 MiB Ausgabe, danach ein gültiger Status: muss trotzdem scheitern.
+            let exe = script(
+                tmp.path(),
+                "cat >/dev/null; head -c 2097152 /dev/zero; printf '\\n@@LV-HTTP-STATUS@@200'",
+            );
+            let err = send_with(&exe, tmp.path(), &req(b"x"), Duration::from_secs(10)).unwrap_err();
+            assert_eq!(
+                err,
+                CurlError::Failed("curl-Antwort zu groß, abgebrochen".into())
+            );
+            assert_eq!(rest(tmp.path()), 0);
+        }
+
+        #[test]
+        fn antwort_ueber_limit_endlos_wird_beendet() {
+            let tmp = tempfile::tempdir().unwrap();
+            let exe = script(tmp.path(), "cat >/dev/null; exec cat /dev/zero");
+            let t = Instant::now();
+            let err = send_with(&exe, tmp.path(), &req(b"x"), Duration::from_secs(30)).unwrap_err();
+            assert_eq!(
+                err,
+                CurlError::Failed("curl-Antwort zu groß, abgebrochen".into())
+            );
+            assert!(t.elapsed() < Duration::from_secs(10), "vor dem Watchdog");
             assert_eq!(rest(tmp.path()), 0);
         }
 

@@ -220,6 +220,8 @@ windows = { version = "0.61.3", features = [
   "Win32_System_SystemInformation",
   # Sync: geschützte DACL für das curl-Temp-Verzeichnis (SDDL).
   "Win32_Security_Authorization",
+  # Sync: curl-Arbeitsverzeichnis atomar mit DACL anlegen (CreateDirectoryW).
+  "Win32_Storage_FileSystem",
   # Vorlesen: Bildschirm wach halten (SetThreadExecutionState).
   "Win32_System_Power",
   "Win32_System_Variant",
