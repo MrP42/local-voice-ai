@@ -139,6 +139,7 @@ struct LibraryShelf: View {
     @ObservedObject var playback = LibraryPlayback.shared
     @State private var query = ""
     @State private var filter = ShelfFilter.all
+    @Environment(\.dynamicTypeSize) private var typeSize
     @State private var importing = false
     @State private var showSync = false
     @ObservedObject var sync = LibrarySync.shared
@@ -161,22 +162,28 @@ struct LibraryShelf: View {
         })
     }
 
+    /// In sehr großer Schrift steht das Cover über dem Text.
+    private var resumeLayout: AnyLayout {
+        typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 10)) : AnyLayout(HStackLayout(alignment: .top, spacing: 14))
+    }
+
     /// Angaben der Karte „Weiterhören/Weiterlesen“: Stand, Rest und Umfang.
     private func resumeFacts(_ book: LibraryBook, _ rec: ProgressRecord, isAudio: Bool) -> [String] {
         let left = max(0, rec.length - rec.offset), percent = LibraryFormat.percent(LibraryProgress.fraction(rec))
+        let load = library.hasAudio(book) ? "geladen" : "im Konto"
         guard isAudio else {
-            let pages = LibraryText.approximatePages(chars: rec.length), page = min(pages, LibraryText.approximatePages(chars: rec.offset))
-            var facts = ["Text · \(percent) · Seite \(page) von etwa \(pages)", "Vorlesen: noch \(LibraryFormat.remaining(LibraryText.listenMilliseconds(chars: left)))"]
-            if book.audio != nil { facts.append(library.hasAudio(book) ? "Hörbuch geladen" : "Hörbuch im Konto") }
+            var facts = ["Text · \(percent)", "Vorlesen: noch ca. \(LibraryFormat.remaining(LibraryText.listenMilliseconds(chars: left))) bei Normaltempo"]
+            if book.audio != nil {
+                let heard = LibraryFormat.percent(LibraryProgress.fraction(library.record(library.audioKey(book))))
+                facts.append("Hörbuch · \(heard) · \(load)")
+            }
             return facts
         }
         var facts = ["Hörbuch · \(percent) · noch \(LibraryFormat.remaining(left))"]
-        var detail = ["Gesamt \(LibraryFormat.clock(rec.length))"]
         if let chapters = library.cachedAudiobookInfo(book)?.chapters, chapters.count > 1 {
-            detail.insert("Kapitel \(AudiobookChapters.index(at: rec.offset, in: chapters) + 1) von \(chapters.count)", at: 0)
+            facts.append("Kapitel \(AudiobookChapters.index(at: rec.offset, in: chapters) + 1) von \(chapters.count) · Gesamt \(LibraryFormat.remaining(rec.length))")
         }
-        facts.append(detail.joined(separator: " · "))
-        if !library.hasAudio(book) { facts.append("Noch nicht auf dem iPhone geladen") }
+        facts.append(load.prefix(1).uppercased() + load.dropFirst())
         return facts
     }
 
@@ -219,17 +226,20 @@ struct LibraryShelf: View {
                 if let (book, rec, isAudio) = resume, query.isEmpty, filter == .all {
                     Text(isAudio ? "WEITERHÖREN" : "WEITERLESEN").font(.caption.weight(.semibold)).tracking(0.6).foregroundStyle(VoicePalette.secondaryText)
                     NavigationLink { LibraryBookDetail(bookId: book.id) } label: {
-                        HStack(alignment: .top, spacing: 14) {
+                        resumeLayout {
                             LibraryCover(title: book.title, image: library.coverThumbnail(book)).frame(width: 64, height: 96)
                             VStack(alignment: .leading, spacing: 3) {
-                                Text(book.title).font(.headline)
-                                if !book.authors.isEmpty { Text(book.authors.joined(separator: ", ")).font(.subheadline).foregroundStyle(VoicePalette.secondaryText) }
+                                Text(book.title).font(.headline).fixedSize(horizontal: false, vertical: true)
+                                if !book.authors.isEmpty { Text(book.authors.joined(separator: ", ")).font(.subheadline).foregroundStyle(VoicePalette.secondaryText).fixedSize(horizontal: false, vertical: true) }
                                 ForEach(resumeFacts(book, rec, isAudio: isAudio), id: \.self) { fact in
                                     Text(fact).font(.footnote).foregroundStyle(VoicePalette.secondaryText).fixedSize(horizontal: false, vertical: true)
                                 }
-                                ProgressView(value: LibraryProgress.fraction(rec)).tint(VoicePalette.accent)
+                                ProgressView(value: LibraryProgress.fraction(rec)).tint(VoicePalette.accent).accessibilityHidden(true)
                             }
-                        }.voiceCard()
+                        }
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(([book.title] + book.authors + resumeFacts(book, rec, isAudio: isAudio)).joined(separator: ", "))
+                        .voiceCard()
                     }.buttonStyle(.plain)
                 }
 
@@ -735,15 +745,19 @@ struct MiniPlayerClearance: ViewModifier {
     }
 }
 
-/// Laufschrift für den Satz im Mini-Player. Passt er in die Zeile, steht er still; „Bewegung reduzieren“ zeigt ihn zweizeilig.
+/// Laufschrift für den Satz im Mini-Player: ein Durchlauf je Satz, nur während die Wiedergabe läuft und die App vorne ist.
+/// Passt er in die Zeile, steht er still; „Bewegung reduzieren“ zeigt ihn zweizeilig.
 struct MarqueeText: View {
     let text: String
+    let moving: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
     @State private var textWidth: CGFloat = 0
     @State private var boxWidth: CGFloat = 0
     @State private var offset: CGFloat = 0
 
     private var overflow: CGFloat { max(0, textWidth - boxWidth) }
+    private var runs: Bool { moving && scenePhase == .active }
 
     var body: some View {
         if reduceMotion {
@@ -755,9 +769,11 @@ struct MarqueeText: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { boxWidth = $0 }
                 .clipped()
-                .task(id: "\(text)|\(overflow)") {
-                    offset = 0
-                    guard overflow > 0 else { return }
+                .task(id: "\(text)|\(overflow)|\(runs)") {
+                    // Ohne Animation zurück: So bricht auch ein laufender Durchlauf bei Pause sofort ab.
+                    var reset = Transaction(); reset.disablesAnimations = true
+                    withTransaction(reset) { offset = 0 }
+                    guard runs, overflow > 0 else { return }
                     try? await Task.sleep(nanoseconds: 700_000_000)
                     guard !Task.isCancelled else { return }
                     withAnimation(.linear(duration: Double(overflow) / 40)) { offset = -overflow }
@@ -777,7 +793,7 @@ struct LibraryMiniPlayer: View {
                     VStack(alignment: .leading, spacing: 1) {
                         Text(playback.title).font(.subheadline.weight(.semibold)).lineLimit(1).foregroundStyle(.white)
                         if !playback.preparing, let sentence = playback.currentSentence {
-                            MarqueeText(text: sentence).accessibilityHidden(true)
+                            MarqueeText(text: sentence, moving: playback.playing).accessibilityHidden(true)
                         } else {
                             Text(subtitle).font(.caption).lineLimit(1).foregroundStyle(.white.opacity(0.75))
                         }
