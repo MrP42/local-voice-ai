@@ -260,7 +260,7 @@
   stroke: var(--rs-line);
 }
 .rs-axis {
-  font-size: 10px;
+  font-size: 12px;
   fill: var(--color-text-muted);
 }
 .rs-axis--today {
@@ -292,7 +292,7 @@
   opacity: 0.85;
 }
 .rs-goaltext {
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 600;
   fill: var(--rs-goal);
 }
@@ -806,5 +806,17 @@
   .rs-tchip button {
     width: 40px;
     height: 40px;
+  }
+}
+/* Touch (schmal oder grober Zeiger): jede Schaltfläche der Seite mindestens
+   44 × 44 px (Codex A4). Mit Maus bleibt die dichte Darstellung. */
+@media (max-width: 640px), (pointer: coarse) {
+  .rs button {
+    min-height: 44px;
+    min-width: 44px;
+  }
+  .rs button.rs-link {
+    display: inline-flex;
+    align-items: center;
   }
 }

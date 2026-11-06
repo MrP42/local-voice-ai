@@ -2227,11 +2227,10 @@ export const TtsSettings = () => {
       ? "lesen"
       : null;
   useEffect(() => {
-    if (!statBookId) return;
-    if (statFormat)
-      startReading({ bookId: statBookId, format: statFormat, lang: statLang });
-    else stopReading({ bookId: statBookId });
-    return () => stopReading({ bookId: statBookId });
+    if (!statBookId || !statFormat) return;
+    startReading({ bookId: statBookId, format: statFormat, lang: statLang });
+    // Nur die eigene Quelle beenden: eine laufende Hörbuchleiste bleibt.
+    return () => stopReading({ bookId: statBookId, format: statFormat });
   }, [statBookId, statFormat, statLang]);
   // Vorgelesene Zeichen: Satz für Satz vorwärts, Sprünge zählen nicht.
   const statSpokenAt = useRef<number | null>(null);
@@ -2262,7 +2261,9 @@ export const TtsSettings = () => {
     const prev = statViewAt.current;
     statViewAt.current = start;
     const step = prev === null ? 0 : start - prev;
-    if (pageInfo.turnedTo === pageInfo.page && step > 0 && step <= 20_000)
+    // Höchstens etwa drei Normseiten je Blättern: Sprünge über den
+    // Regler zählen nicht als gelesen.
+    if (pageInfo.turnedTo === pageInfo.page && step > 0 && step <= 6_000)
       addReadingProgress(
         { bookId: statBookId, format: "lesen", lang: statLang },
         { chars: step },

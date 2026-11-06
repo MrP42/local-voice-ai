@@ -7735,8 +7735,8 @@
       "books": "Bücher im Zeitraum",
       "audio_one": "davon {{count}} gehört",
       "audio_other": "davon {{count}} gehört",
-      "finished": "Beendet (insgesamt)",
-      "finishedHint": "Bücher dieses Zeitraums, die fertig sind"
+      "finished": "Beendet",
+      "finishedHint": "Bücher dieses Zeitraums, inzwischen beendet"
     },
     "history": "Verlauf",
     "historyDays": "Minuten je Tag",

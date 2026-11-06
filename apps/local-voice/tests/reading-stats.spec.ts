@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { join } from "node:path";
+import { writeFileSync } from "node:fs";
 import AxeBuilder from "@axe-core/playwright";
 import {
   addDays,
@@ -202,6 +203,62 @@ test.describe("Lesestatistik – Logik", () => {
     );
     expect(formatDuration(42 * 60)).toBe("42 Min.");
     expect(formatDuration(412 * 60)).toBe("6:52 h");
+  });
+});
+
+test.describe("Lesestatistik – Taktgeber", () => {
+  test("Lesen ruht bei Lücke und Leerlauf, Wiedergabe zählt gedrosselt weiter", async () => {
+    const clock = await import("../src/lib/library/readingClock");
+    let t = 1_000_000;
+    let shown = true;
+    clock.__setClockForTests(
+      () => t,
+      () => shown,
+    );
+    const lesen = { bookId: "a", format: "lesen" as const, lang: "de" };
+    clock.startReading(lesen);
+    t += 5_000;
+    clock.accrue();
+    t += 20_000; // Lücke > 15 s beim Lesen: zählt nicht
+    clock.accrue();
+    shown = false;
+    t += 5_000; // verborgen: Lesen zählt nicht
+    clock.accrue();
+    expect(clock.__pendingForTests().map((d) => d.sec)).toEqual([5]);
+    // Wechsel auf Hören: Lesen endet, gedrosselte 60-s-Takte zählen.
+    const hoeren = { bookId: "a", format: "hoeren" as const, lang: "de" };
+    clock.startReading(hoeren);
+    t += 60_000;
+    clock.accrue();
+    t += 600_000; // Schlaf: zählt nicht
+    clock.accrue();
+    const pending = clock.__pendingForTests();
+    expect(pending.find((d) => d.format === "hoeren")?.sec).toBe(60);
+    expect(pending.find((d) => d.format === "lesen")?.sec).toBe(5);
+    // Eine pausierte andere Quelle beendet die laufende nicht.
+    clock.stopReading({ bookId: "a", format: "vorlesen" });
+    expect(clock.currentReading()?.format).toBe("hoeren");
+  });
+
+  test("CSV maskiert Formeln in Buchtiteln", () => {
+    const rows: Row[] = [
+      {
+        day: "2026-11-02",
+        book_id: "a",
+        format: "lesen",
+        lang: "de",
+        sec: 60,
+        chars: 0,
+        audio_ms: 0,
+      },
+    ];
+    const csv = toCsv(
+      rows,
+      [book("a", { title: "=SUMME(A1)" })] as never,
+      periodOf("week", "2026-11-06"),
+      noLen,
+    );
+    expect(csv).toContain(`"'=SUMME(A1)"`);
   });
 });
 
@@ -536,6 +593,100 @@ test.describe("Lesestatistik – Infoseite", () => {
         ),
       )
       .toContain("hand");
+  });
+
+  for (const width of [1440, 390]) {
+    test(`Trefferflächen ≥ 44 px (${width})`, async ({ page }) => {
+      await page.setViewportSize({ width, height: width > 600 ? 1000 : 844 });
+      await mock(page, { rows: uiRows(today) });
+      await page.goto("/");
+      const ring = page.getByTestId("reading-stats-open");
+      await page
+        .locator(".library-bar")
+        .first()
+        .screenshot({ path: shot(`rs-app-ring-${width}.png`) });
+      const boxes: Record<string, { w: number; h: number }> = {};
+      const measure = async (
+        name: string,
+        loc: import("@playwright/test").Locator,
+      ) => {
+        await loc.scrollIntoViewIfNeeded();
+        const b = (await loc.boundingBox())!;
+        boxes[name] = { w: Math.round(b.width), h: Math.round(b.height) };
+      };
+      await measure("Ring", ring);
+      await ring.click();
+      await measure("Zurück", page.getByTestId("reading-stats-back"));
+      await measure("Ziel ändern", page.getByTestId("reading-goal-open"));
+      await measure("Woche", page.getByTestId("reading-period-week"));
+      await measure(
+        "Vorheriger",
+        page.getByRole("button", { name: "Vorheriger Zeitraum" }),
+      );
+      await measure(
+        "Nächster",
+        page.getByRole("button", { name: "Nächster Zeitraum" }),
+      );
+      await measure(
+        "Tabelle",
+        page.getByRole("button", { name: "Als Tabelle zeigen" }),
+      );
+      await measure("Themenchip", page.locator(".rs-topic").first());
+      await measure(
+        "Export",
+        page.getByRole("button", { name: /Exportieren/ }),
+      );
+      await measure("Pause", page.getByTestId("reading-stats-pause"));
+      await measure("Löschen", page.getByTestId("reading-stats-clear"));
+      await measure("Schalter Sync", page.locator(".rs-switch").first());
+      console.log(`Trefferflächen ${width}: ${JSON.stringify(boxes)}`);
+      writeFileSync(
+        shot(`rs-trefferflaechen-${width}.json`),
+        JSON.stringify(boxes, null, 2),
+      );
+      // Touch (390 px): 44 px (Codex A4). Maus (1440 px): 24 px (WCAG 2.5.8).
+      const min = width <= 640 ? 44 : 24;
+      for (const [name, b] of Object.entries(boxes)) {
+        expect.soft(b.h, `${name} Höhe`).toBeGreaterThanOrEqual(min);
+        expect.soft(b.w, `${name} Breite`).toBeGreaterThanOrEqual(min);
+      }
+    });
+  }
+
+  test("Wertetabelle mobil erreichbar, Leerzeitraum, Grabstein-Löschen", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await mock(page, { rows: uiRows(today) });
+    await openStats(page);
+    const toggle = page.getByRole("button", { name: "Als Tabelle zeigen" });
+    await toggle.focus();
+    await page.keyboard.press("Enter");
+    await expect(page.getByTestId("reading-history-table")).toBeVisible();
+    await page
+      .getByTestId("reading-history-table")
+      .screenshot({ path: shot("rs-app-tabelle-390.png") });
+    // Leerer Zeitraum: zwei Jahre zurück.
+    await page.getByTestId("reading-period-year").click();
+    const prev = page.getByRole("button", { name: "Vorheriger Zeitraum" });
+    await prev.click();
+    await prev.click();
+    await expect(page.getByTestId("reading-stats-period-empty")).toBeVisible();
+    await page.screenshot({ path: shot("rs-app-leerzeitraum-390.png") });
+    // Löschen geht an den Kern (der setzt Grabsteine, siehe
+    // grabstein_loescht_auf_allen_geraeten_und_neue_epoche_zaehlt), mit Zeitraum oder alles.
+    await page.getByTestId("reading-stats-clear").click();
+    await page.screenshot({ path: shot("rs-app-loeschen-390.png") });
+    await page.getByTestId("reading-stats-clear-confirm").click();
+    await expect
+      .poll(async () =>
+        page.evaluate(() =>
+          (window as unknown as { __calls: [string, unknown][] }).__calls.some(
+            ([c]) => c === "reading_log_clear",
+          ),
+        ),
+      )
+      .toBe(true);
   });
 
   for (const theme of ["light", "dark"]) {

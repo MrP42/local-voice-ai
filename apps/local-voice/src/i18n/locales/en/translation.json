@@ -7735,8 +7735,8 @@
       "books": "Books in period",
       "audio_one": "{{count}} of them listened",
       "audio_other": "{{count}} of them listened",
-      "finished": "Finished (overall)",
-      "finishedHint": "Books of this period that are finished"
+      "finished": "Finished",
+      "finishedHint": "Books from this period, finished since"
     },
     "history": "History",
     "historyDays": "Minutes per day",

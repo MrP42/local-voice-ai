@@ -28,6 +28,8 @@ const MAX_SEC_PER_DELTA: u64 = 3600;
 /// Mehr als ein Tag je Eimer ist unmöglich.
 const MAX_SEC_PER_BUCKET: u64 = 86_400;
 const MAX_CHARS_PER_DELTA: u64 = 2_000_000;
+/// Ein Tag Lesen bei sehr hohem Tempo bleibt weit darunter.
+const MAX_CHARS_PER_BUCKET: u64 = 50_000_000;
 
 // ---------------------------------------------------------------------------
 // Datenformate
@@ -181,7 +183,7 @@ pub fn add(log: &mut DeviceLog, deltas: &[ReadingDelta], now: i64) -> usize {
         });
         if tomb.is_some_and(|t| b.since <= t) {
             *b = Bucket {
-                since: now.max(tomb.unwrap_or(0) + 1),
+                since: now.max(tomb.unwrap_or(0).saturating_add(1)),
                 ..Default::default()
             };
         }
@@ -193,7 +195,19 @@ pub fn add(log: &mut DeviceLog, deltas: &[ReadingDelta], now: i64) -> usize {
     taken
 }
 
+/// Empfangene Eimer auf plausible Grenzen bringen (kaputtes oder fremdes
+/// Objekt darf keine Überläufe in der Auswertung erzeugen).
+fn clamp_bucket(b: &Bucket) -> Bucket {
+    Bucket {
+        since: b.since,
+        sec: b.sec.min(MAX_SEC_PER_BUCKET),
+        chars: b.chars.min(MAX_CHARS_PER_BUCKET),
+        audio_ms: b.audio_ms.min(MAX_SEC_PER_BUCKET * 1000),
+    }
+}
+
 fn merge_bucket(a: &mut Bucket, b: &Bucket) {
+    let b = &clamp_bucket(b);
     if b.since > a.since {
         *a = b.clone();
     } else if b.since == a.since {
@@ -274,9 +288,9 @@ pub fn aggregate(logs: &[DeviceLog]) -> Vec<ReadingRow> {
                     continue;
                 }
                 let e = sum.entry((day.clone(), k.clone())).or_default();
-                e.0 += b.sec;
-                e.1 += b.chars;
-                e.2 += b.audio_ms;
+                e.0 = e.0.saturating_add(b.sec);
+                e.1 = e.1.saturating_add(b.chars);
+                e.2 = e.2.saturating_add(b.audio_ms);
             }
         }
     }
@@ -378,7 +392,27 @@ pub fn parse_object(id: &str, value: &Value) -> Result<DeviceLog, String> {
     log.days.retain(|d, _| valid_day(d) && d.starts_with(month));
     log.cleared
         .retain(|d, _| valid_day(d) && d.starts_with(month));
+    for buckets in log.days.values_mut() {
+        for b in buckets.values_mut() {
+            *b = clamp_bucket(b);
+        }
+    }
     Ok(log)
+}
+
+const RESCAN_FILE: &str = "neu-einlesen";
+
+/// Nach dem Einschalten des Abgleichs: Objekte der Sammlung `readlog` beim
+/// nächsten Lauf neu vom Hub holen (solange aus, wurden sie nicht übernommen).
+pub fn request_rescan(root: &Path) {
+    let d = dir(root);
+    let _ = std::fs::create_dir_all(&d);
+    let _ = std::fs::write(d.join(RESCAN_FILE), b"1");
+}
+
+/// Liefert einmalig `true`, wenn ein Neueinlesen angefordert ist.
+pub fn take_rescan(root: &Path) -> bool {
+    std::fs::remove_file(dir(root).join(RESCAN_FILE)).is_ok()
 }
 
 // ---------------------------------------------------------------------------
@@ -663,6 +697,11 @@ mod commands {
         } else {
             goal_days & 0x7f
         };
+        if sync && !s.reading_stats_sync {
+            if let Ok(root) = crate::library::sync_root(&app) {
+                request_rescan(&root);
+            }
+        }
         s.reading_stats_sync = sync;
         s.reading_stats_ai = ai;
         s.reading_stats_paused = paused;
@@ -927,6 +966,32 @@ mod tests {
         v["days"]["2026-10-01"] = json!({ "book_9|lesen|de": { "sec": 1, "since": 1 } });
         let p = parse_object(&objs[1].0, &v).unwrap();
         assert!(!p.days.contains_key("2026-10-01"));
+    }
+
+    #[test]
+    fn fremde_riesenwerte_werden_begrenzt() {
+        let mut pc = dev("pc01");
+        add(&mut pc, &[d("2026-11-01", "book_1", "lesen", 60.0, 0.0)], 1);
+        let objs = month_objects(&pc);
+        let (id, v) = &objs[0];
+        let mut v = v.clone();
+        v["days"]["2026-11-01"]["book_1|lesen|de"] =
+            json!({ "sec": u64::MAX, "chars": u64::MAX, "audio_ms": u64::MAX, "since": 2 });
+        v["cleared"] = json!({ "2026-11-02": i64::MAX });
+        let part = parse_object(id, &v).unwrap();
+        let b = &part.days["2026-11-01"]["book_1|lesen|de"];
+        assert_eq!(b.sec, MAX_SEC_PER_BUCKET);
+        assert_eq!(b.chars, MAX_CHARS_PER_BUCKET);
+        let mut a = dev("pc02");
+        a.days = part.days.clone();
+        // Summe über Geräte läuft nicht über.
+        let rows = aggregate(&[part.clone(), a]);
+        assert!(rows
+            .iter()
+            .all(|r| r.sec <= 2.0 * MAX_SEC_PER_BUCKET as f64));
+        // Grabstein am Rand: neue Epoche ohne Überlauf.
+        let mut c = part;
+        add(&mut c, &[d("2026-11-02", "book_1", "lesen", 60.0, 0.0)], 5);
     }
 
     #[test]

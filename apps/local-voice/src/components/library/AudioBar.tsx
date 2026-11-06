@@ -165,6 +165,7 @@ export const AudioBar: React.FC<Props> = ({
     return () => stopReading({ bookId: book.id, format: "hoeren" });
   }, [playing, book.id, readLang]);
   const heardMs = useRef<number | null>(null);
+  const heardAt = useRef<number | null>(null);
   const wantPlay = useRef(true);
   const switching = useRef(false);
   /** Das Element überlebt das Abmelden des Refs beim Schließen. */
@@ -256,10 +257,14 @@ export const AudioBar: React.FC<Props> = ({
       if (!force && now - lastSave.current < SAVE_EVERY_MS) return;
       lastSave.current = now;
       const ms = Math.round(globalMs());
-      const allKnown = durRef.current.every((d) => d > 0); // Gehörte Spielzeit für die Seiten der Statistik; Sprünge zählen nicht.
+      const allKnown = durRef.current.every((d) => d > 0);
+      // Gehörte Spielzeit für die Seiten der Statistik. Sprünge zählen nicht:
+      // höchstens die verstrichene Zeit mal Wiedergabetempo (bis 3×) plus 1 s.
       const step = heardMs.current === null ? 0 : ms - heardMs.current;
+      const wall = heardAt.current === null ? 0 : now - heardAt.current;
       heardMs.current = ms;
-      if (step > 0 && step <= 60_000)
+      heardAt.current = now;
+      if (step > 0 && step <= Math.min(60_000, wall * 3 + 1_000))
         addReadingProgress(
           { bookId: book.id, format: "hoeren", lang: readLang },
           { audioMs: step },

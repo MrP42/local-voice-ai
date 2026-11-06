@@ -44,6 +44,7 @@ import {
   goalState,
   localDay,
   minutesPerDay,
+  parseDay,
   periodOf,
   previousPeriod,
   summarize,
@@ -327,14 +328,27 @@ const HistoryChart: React.FC<{
   }, [period, perDay, today, year, t]);
   const total = (v: Record<Format, number>) => v.lesen + v.hoeren + v.vorlesen;
   const max = Math.max(60, goal * 1.2, ...columns.map((c) => total(c.v)));
-  const W = 820;
-  const H = 260;
-  const pad = { l: 32, r: 8, t: 12, b: 22 };
+  // Breite in echten Pixeln (1 Einheit = 1 px), damit Beschriftungen
+  // unabhängig von der Fensterbreite 12 px groß bleiben (Codex 06.11.).
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [W, setW] = useState(820);
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => {
+      const w = Math.max(280, Math.round(el.clientWidth));
+      setW((prev) => (Math.abs(prev - w) > 1 ? w : prev));
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [asTable]);
+  const H = 240;
+  const pad = { l: 36, r: 10, t: 14, b: 26 };
   const iw = W - pad.l - pad.r;
   const ih = H - pad.t - pad.b;
   const y = (v: number) => pad.t + ih - (v / max) * ih;
   const bw = iw / Math.max(1, columns.length);
-  const every = columns.length > 40 ? 4 : columns.length > 20 ? 2 : 1;
+  const every = Math.max(1, Math.ceil((year ? 40 : 28) / bw));
   const grid = [0, 30, 60, 90, 120, 180].filter((v) => v <= max);
   return (
     <section className="rs-panel rs-history" aria-labelledby="rs-history">
@@ -387,123 +401,127 @@ const HistoryChart: React.FC<{
           </table>
         </div>
       ) : (
-        <svg
-          viewBox={`0 0 ${W} ${H}`}
-          className="rs-chart"
-          role="img"
-          aria-label={t("readingStats.chartLabel")}
-        >
-          {grid.map((v) => (
-            <g key={v}>
-              <line
-                x1={pad.l}
-                x2={W - pad.r}
-                y1={y(v)}
-                y2={y(v)}
-                className="rs-gridline"
-              />
-              <text
-                x={pad.l - 6}
-                y={y(v) + 4}
-                textAnchor="end"
-                className="rs-axis"
-              >
-                {v}
-              </text>
-            </g>
-          ))}
-          {columns.map((c, i) => {
-            const x = pad.l + i * bw + bw * 0.18;
-            const w = Math.max(1, bw * 0.64);
-            let acc = 0;
-            const sum = total(c.v);
-            return (
-              <g key={c.key}>
-                <title>
-                  {`${c.label}: ${Math.round(sum)} ${t("readingStats.minUnit")}`}
-                </title>
-                {FORMATS.map((f) => {
-                  if (!c.v[f]) return null;
-                  const top = y(acc + c.v[f]);
-                  const bot = y(acc);
-                  acc += c.v[f];
-                  return (
-                    <rect
-                      key={f}
-                      x={x}
-                      y={top}
-                      width={w}
-                      height={Math.max(0, bot - top - 1)}
-                      rx={2}
-                      className={`rs-f-${f}`}
-                    />
-                  );
-                })}
-                {goal > 0 && sum >= goal && (
-                  <circle
-                    cx={x + w / 2}
-                    cy={y(sum) - 6}
-                    r={2.5}
-                    className="rs-hit"
-                  />
-                )}
-                {(i % every === 0 || c.key === today) && (
-                  <text
-                    x={x + w / 2}
-                    y={H - 6}
-                    textAnchor="middle"
-                    className={
-                      c.key === today ? "rs-axis rs-axis--today" : "rs-axis"
-                    }
-                  >
-                    {c.label}
-                  </text>
-                )}
+        <div ref={wrapRef}>
+          <svg
+            viewBox={`0 0 ${W} ${H}`}
+            width={W}
+            height={H}
+            className="rs-chart"
+            role="img"
+            aria-label={t("readingStats.chartLabel")}
+          >
+            {grid.map((v) => (
+              <g key={v}>
+                <line
+                  x1={pad.l}
+                  x2={W - pad.r}
+                  y1={y(v)}
+                  y2={y(v)}
+                  className="rs-gridline"
+                />
+                <text
+                  x={pad.l - 6}
+                  y={y(v) + 4}
+                  textAnchor="end"
+                  className="rs-axis"
+                >
+                  {v}
+                </text>
               </g>
-            );
-          })}
-          {goal > 0 && (
-            <g>
-              <line
-                x1={pad.l}
-                x2={W - pad.r}
-                y1={y(goal)}
-                y2={y(goal)}
-                className="rs-goalline"
-              />
-              <rect
-                x={pad.l + 2}
-                y={y(goal) - 15}
-                width={70}
-                height={13}
-                rx={2}
-                className="rs-goalbg"
-              />
-              <text x={pad.l + 6} y={y(goal) - 5} className="rs-goaltext">
-                {t("readingStats.goalLine", { n: goal })}
-              </text>
-            </g>
-          )}
-          {avg > 0 && (
-            <g>
-              <line
-                x1={pad.l}
-                x2={W - pad.r}
-                y1={y(avg)}
-                y2={y(avg)}
-                className="rs-avgline"
-              />
-              <text
-                x={W - pad.r}
-                y={y(avg) + (avg > goal ? -4 : 12)}
-                textAnchor="end"
-                className="rs-axis"
-              >
-                {t("readingStats.avgLine", { n: Math.round(avg) })}
-              </text>
-            </g>
-          )}
-        </svg>
+            ))}
+            {columns.map((c, i) => {
+              const x = pad.l + i * bw + bw * 0.18;
+              const w = Math.max(1, bw * 0.64);
+              let acc = 0;
+              const sum = total(c.v);
+              return (
+                <g key={c.key}>
+                  <title>
+                    {`${c.label}: ${Math.round(sum)} ${t("readingStats.minUnit")}`}
+                  </title>
+                  {FORMATS.map((f) => {
+                    if (!c.v[f]) return null;
+                    const top = y(acc + c.v[f]);
+                    const bot = y(acc);
+                    acc += c.v[f];
+                    return (
+                      <rect
+                        key={f}
+                        x={x}
+                        y={top}
+                        width={w}
+                        height={Math.max(0, bot - top - 1)}
+                        rx={2}
+                        className={`rs-f-${f}`}
+                      />
+                    );
+                  })}
+                  {goal > 0 && sum >= goal && (
+                    <circle
+                      cx={x + w / 2}
+                      cy={y(sum) - 6}
+                      r={2.5}
+                      className="rs-hit"
+                    />
+                  )}
+                  {(i % every === 0 || c.key === today) && (
+                    <text
+                      x={x + w / 2}
+                      y={H - 6}
+                      textAnchor="middle"
+                      className={
+                        c.key === today ? "rs-axis rs-axis--today" : "rs-axis"
+                      }
+                    >
+                      {c.label}
+                    </text>
+                  )}
+                </g>
+              );
+            })}
+            {goal > 0 && (
+              <g>
+                <line
+                  x1={pad.l}
+                  x2={W - pad.r}
+                  y1={y(goal)}
+                  y2={y(goal)}
+                  className="rs-goalline"
+                />
+                <rect
+                  x={pad.l + 2}
+                  y={y(goal) - 18}
+                  width={92}
+                  height={16}
+                  rx={2}
+                  className="rs-goalbg"
+                />
+                <text x={pad.l + 6} y={y(goal) - 5} className="rs-goaltext">
+                  {t("readingStats.goalLine", { n: goal })}
+                </text>
+              </g>
+            )}
+            {avg > 0 && (
+              <g>
+                <line
+                  x1={pad.l}
+                  x2={W - pad.r}
+                  y1={y(avg)}
+                  y2={y(avg)}
+                  className="rs-avgline"
+                />
+                <text
+                  x={W - pad.r}
+                  y={y(avg) + (avg > goal ? -4 : 12)}
+                  textAnchor="end"
+                  className="rs-axis"
+                >
+                  {t("readingStats.avgLine", { n: Math.round(avg) })}
+                </text>
+              </g>
+            )}
+          </svg>
+        </div>
       )}
       <div className="rs-legend">
         {FORMATS.map((f) => (
@@ -573,7 +591,7 @@ const YearGrid: React.FC<{
 }> = ({ period, perDay, goal, today, hit, due }) => {
   const { t, i18n } = useTranslation();
   const days = daysOf(period);
-  const lead = (new Date(period.from).getDay() + 6) % 7;
+  const lead = (parseDay(period.from).getDay() + 6) % 7;
   const level = (m: number) =>
     m <= 0 ? 0 : m < 15 ? 1 : m < 30 ? 2 : m < 60 ? 3 : 4;
   const months = Array.from({ length: 12 }, (_, i) =>
@@ -720,14 +738,14 @@ export const ReadingStats: React.FC<{
     }
   };
   const periodLabel = (() => {
-    const from = new Date(period.from);
+    const from = parseDay(period.from);
     if (kind === "year") return period.from.slice(0, 4);
     if (kind === "month")
       return from.toLocaleDateString(undefined, {
         month: "long",
         year: "numeric",
       });
-    const to = new Date(period.to);
+    const to = parseDay(period.to);
     return `${from.toLocaleDateString(undefined, { day: "numeric", month: "numeric" })} – ${to.toLocaleDateString(undefined, { day: "numeric", month: "numeric", year: "numeric" })}`;
   })();
   const change =
@@ -1392,12 +1410,22 @@ export const ReadingStats: React.FC<{
                   : period.to < today
                     ? period.to
                     : today;
-                const res = await commands.readingLogClear(from, to);
-                setClearOpen(false);
-                if (res.status === "ok") {
-                  toast.success(t("readingStats.cleared", { count: res.data }));
-                  reload();
-                } else toast.error(res.error);
+                // Erst den Puffer melden: sonst landen Zuwächse der letzten
+                // Sekunden nach dem Grabstein wieder im gelöschten Zeitraum.
+                await flushReadingLog();
+                try {
+                  const res = await commands.readingLogClear(from, to);
+                  if (res.status === "ok") {
+                    toast.success(
+                      t("readingStats.cleared", { count: res.data }),
+                    );
+                    reload();
+                  } else toast.error(res.error);
+                } catch (e) {
+                  toast.error(String(e));
+                } finally {
+                  setClearOpen(false);
+                }
               }}
             >
               {t("readingStats.clearConfirm")}

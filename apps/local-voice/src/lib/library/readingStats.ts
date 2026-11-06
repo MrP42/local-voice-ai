@@ -374,7 +374,9 @@ export function toCsv(
   lengths: (book: LibraryBook) => BookLengths,
 ): string {
   const byId = new Map(books.map((b) => [b.id, b]));
-  const q = (s: string) => `"${s.replace(/"/g, '""')}"`;
+  // Formeln (=, +, -, @) aus Buchtiteln nicht ausführen lassen.
+  const q = (s: string) =>
+    `"${(/^[=+\-@\t\r]/.test(s) ? `'${s}` : s).replace(/"/g, '""')}"`;
   const lines = ["Tag;Buch;Format;Sprache;Minuten;Seiten"];
   for (const r of rows) {
     if (r.day < period.from || r.day > period.to) continue;

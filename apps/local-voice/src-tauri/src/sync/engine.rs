@@ -581,6 +581,15 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
                 .is_some_and(|rest| rest.contains('_'))
         });
     }
+    // Lesestatistik gerade eingeschaltet: was vorher ausgelassen wurde, neu holen.
+    if let Ok(root) = crate::library::sync_root(app) {
+        if crate::lesestatistik::take_rescan(&root) {
+            led.cursor = 0;
+            led.objects.retain(|k, _| {
+                !k.starts_with(&format!("{}/", crate::lesestatistik::COLLECTION_READLOG))
+            });
+        }
+    }
     let mut since = led.cursor;
     let mut key_mismatch = false;
     let mut reset_done = false;
@@ -805,6 +814,13 @@ fn settle(
     led: &mut Ledger,
     removed: &mut Vec<String>,
 ) -> Result<bool, String> {
+    // Lesestatistik ohne Zustimmung dieses Geräts: nicht übernehmen und nicht
+    // als gesehen verbuchen (Einschalten holt sie über `take_rescan`).
+    if remote.collection == crate::lesestatistik::COLLECTION_READLOG
+        && !crate::settings::get_settings(app).reading_stats_sync
+    {
+        return Ok(false);
+    }
     let synced = led
         .get(&remote.collection, &remote.object_id)
         .map(|e| e.hash.clone());

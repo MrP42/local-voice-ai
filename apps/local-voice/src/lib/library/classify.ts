@@ -52,8 +52,19 @@ export async function classifyBook(
     classifyInput(book, knownTopics(all)),
   );
   if (res.status === "error") throw new Error(res.error);
+  // Während der Anfrage von Hand geändert? Dann gilt die Hand, nicht die KI.
+  const list = await commands.libraryList();
+  const current =
+    list.status === "ok" ? list.data.find((b) => b.id === book.id) : book;
+  if (!current) return book;
+  const touched =
+    current.classified_by === "hand" ||
+    (current.category ?? null) !== (book.category ?? null) ||
+    (current.topics ?? []).join("\u0000") !==
+      (book.topics ?? []).join("\u0000");
+  if (touched) return current;
   const saved = await commands.librarySave({
-    ...book,
+    ...current,
     category: res.data.category,
     topics: res.data.topics,
     classified_by: "ki",

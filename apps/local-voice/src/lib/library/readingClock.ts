@@ -5,7 +5,8 @@
  *
  * - Wiedergabe zählt Wandzeit, solange sie läuft (auch bei verborgenem Fenster).
  * - Lesen zählt nur bei sichtbarem Fenster und Aktivität in den letzten 3 Min.
- * - Lücken über 15 s (Schlaf, Hänger) zählen nicht.
+ * - Lücken über 15 s beim Lesen bzw. 2 min bei Wiedergabe (gedrosselte Timer
+ *   im Hintergrund) zählen nicht (Schlaf, Hänger).
  * - Zuwächse gehen gebündelt (alle 10 s, beim Verbergen sofort) an den Kern.
  */
 import { commands, type ReadingDelta } from "@/bindings";
@@ -13,6 +14,8 @@ import { localDay, type Format } from "./readingStats";
 
 export const TICK_MS = 5_000;
 export const MAX_GAP_MS = 15_000;
+/** Wiedergabe: verborgene Fenster drosseln Timer (bis ~1/min), daher großzügiger. */
+export const MAX_GAP_PLAYBACK_MS = 120_000;
 export const IDLE_MS = 180_000;
 export const FLUSH_MS = 10_000;
 export const CHANGED_EVENT = "lv-reading-log-changed";
@@ -130,7 +133,8 @@ export function accrue(): void {
   const s = clock.current;
   const gap = t - clock.lastTick;
   clock.lastTick = t;
-  if (!s || gap <= 0 || gap > MAX_GAP_MS) return;
+  if (!s || gap <= 0) return;
+  if (gap > (s.format === "lesen" ? MAX_GAP_MS : MAX_GAP_PLAYBACK_MS)) return;
   if (s.format === "lesen" && (!visible() || t - clock.lastActivity > IDLE_MS))
     return;
   bucket(s, t).sec += gap / 1000;
