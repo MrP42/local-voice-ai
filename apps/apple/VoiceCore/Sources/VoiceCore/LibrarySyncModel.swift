@@ -219,6 +219,16 @@ public struct SyncLedger: Codable, Equatable, Sendable {
 
     /// Ein Grabstein löscht nur, was dem Abgleich bekannt ist. Weicht der lokale Stand vom zuletzt
     /// abgeglichenen ab oder war nie im Konto, gibt es ungesicherte Änderungen: Das Buch bleibt.
+    /// Stand aus dem Konto mit einem noch nicht gesendeten Stern: Alles Übrige kommt aus dem Konto,
+    /// damit ein Stern keine neueren Änderungen anderer Geräte überschreibt.
+    public static func mergingPendingFavorite(_ favorite: Bool, into remote: LibraryBook, local: LibraryBook) -> LibraryBook {
+        var book = remote
+        book.favorite = favorite
+        book.finished = local.finished
+        if book.text == nil { book.text = local.text }
+        return book
+    }
+
     public static func keepsAgainstTombstone(_ entry: Entry?, localHash: String) -> Bool {
         guard let entry, !entry.deleted else { return true }
         return entry.hash != localHash

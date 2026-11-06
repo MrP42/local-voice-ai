@@ -367,7 +367,7 @@ public enum LibraryText {
         sentences.lastIndex { $0.location <= location } ?? 0
     }
 
-    /// Favoriten zuerst, sonst bleibt die Reihenfolge, wie `sortBooks` am Desktop.
+    /// Favoriten zuerst, sonst bleibt die Reihenfolge, wie `sortViews` am Desktop.
     public static func favoritesFirst(_ books: [LibraryBook]) -> [LibraryBook] {
         books.filter(\.favorite) + books.filter { !$0.favorite }
     }

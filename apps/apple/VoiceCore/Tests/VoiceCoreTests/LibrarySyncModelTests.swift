@@ -74,6 +74,18 @@ final class DesktopVectorTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(LibraryBook.self, from: Data(#"{"id":"a","title":"b"}"#.utf8)).favorite, false)
     }
 
+    func testPendingFavoriteKeepsNewerRemoteChanges() {
+        var remote = LibraryBook(id: "b", title: "Neuer Titel", addedMs: 1)
+        remote.favorite = false
+        var local = LibraryBook(id: "b", title: "Alter Titel", addedMs: 1)
+        local.favorite = true
+        local.finished = true
+        let merged = SyncLedger.mergingPendingFavorite(true, into: remote, local: local)
+        XCTAssertEqual(merged.title, "Neuer Titel")
+        XCTAssertTrue(merged.favorite)
+        XCTAssertTrue(merged.finished)
+    }
+
     func testTombstoneKeepsUnsavedLocalChanges() {
         let synced = SyncLedger.Entry(revision: 3, hash: "h", deleted: false)
         XCTAssertFalse(SyncLedger.keepsAgainstTombstone(synced, localHash: "h"), "abgeglichener Stand darf weg")

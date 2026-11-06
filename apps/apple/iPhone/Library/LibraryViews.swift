@@ -30,6 +30,8 @@ struct LibraryCover: View {
     var compact = false
     /// Echtes Cover (aus der Hörbuchdatei, EPUB oder vom Desktop); sonst erzeugt.
     var image: UIImage? = nil
+    /// Abstand des Titels oben, wenn dort etwas aufliegt (Stern im Regal).
+    var titleTopInset: CGFloat = 0
     private static let colors: [(Color, Color)] = [
         (Color(red: 0.18, green: 0.29, blue: 0.24), Color(red: 0.95, green: 0.91, blue: 0.82)),
         (Color(red: 0.54, green: 0.23, blue: 0.18), Color(red: 0.98, green: 0.91, blue: 0.86)),
@@ -58,7 +60,7 @@ struct LibraryCover: View {
             .overlay(alignment: .topLeading) {
                 if !compact {
                     Text(title).font(.system(.footnote, design: .serif).weight(.bold)).foregroundStyle(pick.1)
-                        .lineLimit(5).minimumScaleFactor(0.6).padding(8).padding(.top, 24)  // Platz für den Stern
+                        .lineLimit(5).minimumScaleFactor(0.6).padding(8).padding(.top, titleTopInset)
                 }
             }
             .clipped()
@@ -172,6 +174,7 @@ struct LibraryShelf: View {
     }
 
     var body: some View {
+        let shown = visible  // einmal je Durchlauf, das Regal zeichnet beim Hören laufend neu
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 HStack(spacing: 10) {
@@ -210,8 +213,8 @@ struct LibraryShelf: View {
                     }.buttonStyle(.plain)
                 }
 
-                Text("ALLE BÜCHER · \(visible.count)").font(.caption.weight(.semibold)).tracking(0.6).foregroundStyle(VoicePalette.secondaryText)
-                if visible.contains(where: library.hasAudio) {
+                Text("ALLE BÜCHER · \(shown.count)").font(.caption.weight(.semibold)).tracking(0.6).foregroundStyle(VoicePalette.secondaryText)
+                if library.anyAudioDownloaded {
                     HStack(alignment: .top, spacing: 4) {
                         DownloadedMark()
                         Text("Hörbuch heruntergeladen, offline verfügbar").font(.caption).foregroundStyle(VoicePalette.secondaryText)
@@ -226,7 +229,7 @@ struct LibraryShelf: View {
                     } actions: { Button("Buch hinzufügen") { importing = true }.buttonStyle(.borderedProminent) }
                 }
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: 12)], alignment: .leading, spacing: 16) {
-                    ForEach(visible) { book in
+                    ForEach(shown) { book in
                         NavigationLink { LibraryBookDetail(bookId: book.id) } label: { ShelfItem(book: book) }.buttonStyle(.plain)
                             .overlay(alignment: .topLeading) { FavoriteStar(book: book) }
                     }
@@ -260,24 +263,30 @@ struct LibraryShelf: View {
 struct ShelfItem: View {
     let book: LibraryBook
     @ObservedObject var library = PhoneLibrary.shared
+    @Environment(\.dynamicTypeSize) private var typeSize
     var body: some View {
         let audio = library.hasAudio(book)
         let rec = audio || library.audioInAccount(book) ? library.record(library.audioKey(book)) : library.record(library.textKey(book))
         VStack(alignment: .leading, spacing: 5) {
-            LibraryCover(title: book.title, image: library.coverThumbnail(book)).aspectRatio(2/3, contentMode: .fit)
+            LibraryCover(title: book.title, image: library.coverThumbnail(book), titleTopInset: 24).aspectRatio(2/3, contentMode: .fit)
             ProgressView(value: book.finished ? 1 : LibraryProgress.fraction(rec)).tint(VoicePalette.accent)
             // Fester Platz für das Symbol: Lange Angaben brechen um und rücken nicht darunter.
-            HStack(alignment: .top, spacing: 4) {
+            metaLayout {
                 Text(audio || library.audioInAccount(book) ? (rec == nil ? "Hörbuch · neu" : "Hörbuch · \(LibraryFormat.percent(LibraryProgress.fraction(rec)))")
                            : "Text · \(LibraryFormat.percent(LibraryProgress.fraction(rec)))")
                     .font(.caption).foregroundStyle(VoicePalette.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                DownloadedMark(visible: audio)
+                    .frame(maxWidth: typeSize.isAccessibilitySize ? nil : .infinity, alignment: .leading)
+                if audio || !typeSize.isAccessibilitySize { DownloadedMark(visible: audio) }
             }
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(book.title), \(book.authors.joined(separator: ", "))\(audio ? ", Hörbuch heruntergeladen, offline verfügbar" : "")")
+        .accessibilityLabel(([book.title] + book.authors + (audio ? ["Hörbuch heruntergeladen, offline verfügbar"] : [])).joined(separator: ", "))
+    }
+
+    /// In sehr großer Schrift untereinander, sonst bliebe dem Text kaum Breite.
+    private var metaLayout: AnyLayout {
+        typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 2)) : AnyLayout(HStackLayout(alignment: .top, spacing: 4))
     }
 }
 
@@ -306,7 +315,7 @@ struct FavoriteStar: View {
             Task { await LibrarySync.shared.run() }
         } label: {
             Image(systemName: book.favorite ? "star.fill" : "star")
-                .font(.footnote.weight(.semibold)).foregroundStyle(book.favorite ? Color.yellow : Color.white)
+                .font(.system(size: 13, weight: .semibold)).foregroundStyle(book.favorite ? Color.yellow : Color.white)
                 .frame(width: 26, height: 26).background(.black.opacity(0.45), in: Circle())
                 .padding(4).frame(width: 44, height: 44, alignment: .topLeading).contentShape(Rectangle())
         }

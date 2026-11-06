@@ -219,8 +219,12 @@ final class LibrarySync: ObservableObject {
             let synced = try SyncedBook.decode(plain)
             let local = library.books.first { $0.id == synced.book.id }
             let localMeta = local.map { library.meta($0) }
-            if let localMeta, localMeta.updated > synced.updated {
-                // Eigener Stand ist neuer: bleibt, wird beim Senden übertragen.
+            if let local, let localMeta, localMeta.updated > synced.updated {
+                // Eigener Stand ist neuer und wird beim Senden übertragen. War es nur ein Stern, gilt sonst das Konto.
+                if let favorite = localMeta.pendingFavorite {
+                    let book = SyncLedger.mergingPendingFavorite(favorite, into: synced.book, local: local)
+                    try library.storeRemote(book, meta: .init(files: synced.files, updated: localMeta.updated, pendingFavorite: favorite))
+                }
             } else {
                 var book = synced.book
                 // Lokale Fassungen, die das Konto nicht kennt, nicht verlieren.
@@ -277,11 +281,15 @@ final class LibrarySync: ObservableObject {
                     status = "Lade „\(book.title)“ hoch …"
                     refs.append(try await uploadFile(url, acc, type: nil, file: t.file))
                 }
+                meta = library.meta(book)
                 meta.files.audio = refs
                 meta.localAudio = Dictionary(library.audioParts(refs).map { ($0.file, $0.blob) }, uniquingKeysWith: { $1 })
                 library.setMeta(book, meta)
             }
-            let value = try SyncedBook(book: book, files: meta.files, updated: meta.updated).json()
+            // Während der Uploads kann sich der Stand geändert haben (z. B. ein Stern).
+            let current = library.books.first { $0.id == book.id } ?? book
+            meta = library.meta(current)
+            let value = try SyncedBook(book: current, files: meta.files, updated: meta.updated).json()
             let hash = LibrarySyncFormat.canonicalHash(value)
             let entry = ledger[LibrarySyncFormat.collectionBook, book.id]
             if entry?.hash == hash || ledger.dead[SyncLedger.key(LibrarySyncFormat.collectionBook, book.id)] == hash { continue }
@@ -289,6 +297,9 @@ final class LibrarySync: ObservableObject {
             objects.append((try sealObject(LibrarySyncFormat.collectionBook, book.id, value, base: entry?.revision ?? 0, acc), hash))
         }
         try await push(objects, acc)
+        for (object, hash) in objects where ledger[object.collection, object.objectId]?.hash == hash {
+            library.clearPendingFavorite(bookId: object.objectId)
+        }
     }
 
     private func pushProgress(_ acc: Account) async throws {
