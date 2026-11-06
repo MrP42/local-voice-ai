@@ -88,6 +88,8 @@ vad-rs = { git = "https://github.com/cjpais/vad-rs", default-features = false }
 enigo = "0.6.1"
 rodio = { git = "https://github.com/cjpais/rodio.git" }
 reqwest = { version = "0.12", features = ["json", "stream"] }
+# Antwort aus dem curl-Umweg (Diagnose LV_SYNC_CURL) als reqwest::Response; schon transitiv im Baum.
+http = "1"
 futures-util = "0.3"
 rustfft = "6.4.0"
 strsim = "0.11.0"
@@ -217,6 +219,11 @@ windows = { version = "0.61.3", features = [
   "Win32_System_Diagnostics_Debug",
   "Win32_System_LibraryLoader",
   "Win32_System_Threading",
+  # Sync: System-curl über GetSystemDirectoryW finden (nicht über PATH).
+  "Win32_System_SystemInformation",
+  # Sync: geschützte DACL für das curl-Temp-Verzeichnis (SDDL).
+  "Win32_Security_Authorization",
+  # Sync: curl-Arbeitsverzeichnis atomar mit DACL anlegen (CreateDirectoryW).
   # Abo-Vorschau: GetDriveTypeW (nur lokale feste Laufwerke fuer die CLI).
   "Win32_Storage_FileSystem",
   # Vorlesen: Bildschirm wach halten (SetThreadExecutionState).

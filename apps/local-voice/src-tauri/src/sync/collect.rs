@@ -44,6 +44,10 @@ pub const SYNCED_SETTINGS: &[&str] = &[
 /// 5-MiB-Grenze des Hostings (wai-portal: MAX_PAYLOAD_BYTES 4 300 000).
 pub const MAX_PLAINTEXT: usize = 3 * 1024 * 1024;
 
+/// Größte base64-Payload je Objekt, die der Hub annimmt und zurückgibt
+/// (wai-portal `VoiceSyncController::MAX_PAYLOAD_BYTES`).
+pub const HUB_MAX_PAYLOAD: usize = 4_300_000;
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct LocalObject {
     pub collection: &'static str,
