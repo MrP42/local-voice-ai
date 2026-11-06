@@ -169,7 +169,8 @@ struct LibraryShelf: View {
 
     /// Angaben der Karte „Weiterhören/Weiterlesen“: Stand, Rest und Umfang.
     private func resumeFacts(_ book: LibraryBook, _ rec: ProgressRecord, isAudio: Bool) -> [String] {
-        let left = max(0, rec.length - rec.offset), percent = LibraryFormat.percent(LibraryProgress.fraction(rec))
+        // Stelle und Rest aus demselben Wert: Gehörte Bereiche können weiter reichen als die aktuelle Stelle.
+        let left = max(0, rec.length - rec.offset), percent = LibraryFormat.percent(rec.length > 0 ? min(1, rec.offset / rec.length) : 0)
         let load = library.hasAudio(book) ? "geladen" : "im Konto"
         guard isAudio else {
             var facts = ["Text · \(percent)", "Vorlesen: noch ca. \(LibraryFormat.remaining(LibraryText.listenMilliseconds(chars: left))) bei Normaltempo"]
@@ -224,6 +225,7 @@ struct LibraryShelf: View {
                 }
 
                 if let (book, rec, isAudio) = resume, query.isEmpty, filter == .all {
+                    let facts = resumeFacts(book, rec, isAudio: isAudio)
                     Text(isAudio ? "WEITERHÖREN" : "WEITERLESEN").font(.caption.weight(.semibold)).tracking(0.6).foregroundStyle(VoicePalette.secondaryText)
                     NavigationLink { LibraryBookDetail(bookId: book.id) } label: {
                         resumeLayout {
@@ -231,14 +233,14 @@ struct LibraryShelf: View {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(book.title).font(.headline).fixedSize(horizontal: false, vertical: true)
                                 if !book.authors.isEmpty { Text(book.authors.joined(separator: ", ")).font(.subheadline).foregroundStyle(VoicePalette.secondaryText).fixedSize(horizontal: false, vertical: true) }
-                                ForEach(resumeFacts(book, rec, isAudio: isAudio), id: \.self) { fact in
+                                ForEach(facts, id: \.self) { fact in
                                     Text(fact).font(.footnote).foregroundStyle(VoicePalette.secondaryText).fixedSize(horizontal: false, vertical: true)
                                 }
                                 ProgressView(value: LibraryProgress.fraction(rec)).tint(VoicePalette.accent).accessibilityHidden(true)
                             }
                         }
                         .accessibilityElement(children: .ignore)
-                        .accessibilityLabel(([book.title] + book.authors + resumeFacts(book, rec, isAudio: isAudio)).joined(separator: ", "))
+                        .accessibilityLabel(([book.title] + book.authors + facts).joined(separator: ", "))
                         .voiceCard()
                     }.buttonStyle(.plain)
                 }
@@ -766,17 +768,19 @@ struct MarqueeText: View {
             Text(text).font(.caption).lineLimit(1).fixedSize().foregroundStyle(.white.opacity(0.85))
                 .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { textWidth = $0 }
                 .offset(x: offset)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .id("\(text)|\(runs)")  // Neue Ansicht beendet einen laufenden Durchlauf wirklich.
+                // `minWidth: 0` hält den Rahmen schmal; sonst meldet er die Breite des Textes und sprengt den Mini-Player.
+                .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
                 .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { boxWidth = $0 }
                 .clipped()
                 .task(id: "\(text)|\(overflow)|\(runs)") {
-                    // Ohne Animation zurück: So bricht auch ein laufender Durchlauf bei Pause sofort ab.
-                    var reset = Transaction(); reset.disablesAnimations = true
-                    withTransaction(reset) { offset = 0 }
+                    offset = 0
                     guard runs, overflow > 0 else { return }
                     try? await Task.sleep(nanoseconds: 700_000_000)
                     guard !Task.isCancelled else { return }
-                    withAnimation(.linear(duration: Double(overflow) / 40)) { offset = -overflow }
+                    // So lange wie der Satz gesprochen wird, damit die Anzeige mithält.
+                    let spoken = LibraryText.listenMilliseconds(chars: Double(text.utf16.count)) / 1000
+                    withAnimation(.linear(duration: max(1.5, spoken - 0.7))) { offset = -overflow }
                 }
         }
     }
@@ -792,7 +796,7 @@ struct LibraryMiniPlayer: View {
                         .frame(width: 32, height: 44)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(playback.title).font(.subheadline.weight(.semibold)).lineLimit(1).foregroundStyle(.white)
-                        if !playback.preparing, let sentence = playback.currentSentence {
+                        if playback.playing, let sentence = playback.currentSentence {
                             MarqueeText(text: sentence, moving: playback.playing).accessibilityHidden(true)
                         } else {
                             Text(subtitle).font(.caption).lineLimit(1).foregroundStyle(.white.opacity(0.75))
