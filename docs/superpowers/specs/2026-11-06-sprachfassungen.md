@@ -128,6 +128,17 @@ Empfangs ergibt denselben Stand.
   `cover.*` gehört zur Hauptfassung, die übrigen liegen unter `covers/<fassung>.*`. Die flachen
   Dateiverweise `files.text/audio/cover` gehören zur Hauptfassung des **Senders**; weicht die
   Hauptfassung nach dem Merge ab, geht der Text an dessen Fassung, das Cover bleibt.
+- **Übergänge Schema 1 → 2 (Altbestand), vollständig:**
+  | Stelle | Regel | Beleg |
+  |---|---|---|
+  | Migration beim Lesen | Arbeitskopie → `ed_<buch>`, `audio:<buch>`, Register deterministisch | `migration_ist_deterministisch_und_wiederholbar` |
+  | Empfang vom Altgerät | Arbeitskopie = Änderung der **hiesigen** Hauptfassung; flache Dateiverweise gehören derselben Fassung (`sender_primary`) | `altgeraet_aendert_nur_arbeitskopie`, `altgeraet_dateien_gehoeren_zur_hiesigen_hauptfassung` |
+  | Empfang Schema 2 | flache Verweise = Sender-Hauptfassung, weitere je Kennung | `cover_je_fassung_zwischen_zwei_geraeten` |
+  | Ausstehendes (`sync.json`) | Mit Fassungen nur mit Kennung; flacher Altbestand → `ed_<buch>` (oder verworfen, wenn gelöscht), nie die gerade gültige Hauptfassung; laufende Alt-Downloads ebenso | `altbestand_pending_nach_upgrade_und_wechsel` |
+  | Abschluss eines Downloads | Ablage (Seite, `cover.*`/`covers/<ed>.*`) erst unter der Sync-Sperre nach der dann gültigen Hauptfassung | `…_ueberlebt_wechsel_der_hauptfassung` (Text, Cover) |
+  | Hörbuchteile | Ablage nach Dateiname, unabhängig von der Hauptfassung (`<ed>__` bei weiteren) | `zusammenlegen_benennt_um_und_trennt_wieder` |
+  | Auswahl, Zuordnung, Grabsteine | reisen in `buch.json`, Merge über Register | `gespeicherter_merge_konvergiert` |
+  | Fortschritt | Schlüssel unverändert (`audio:<buch>`, `text:<seite>:…`) | §4 |
 - Alle Fassungen gelöscht/abgetrennt (gleichzeitig): das Buch bleibt leer, nichts wird aus der
   Arbeitskopie neu migriert (Schema 2 mit Grabsteinen ist kein Altgerät).
 - Ein Altgerät ohne `editions` liefert nur eine Änderung der Arbeitskopie der Hauptfassung; sie

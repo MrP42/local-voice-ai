@@ -1469,6 +1469,26 @@ pub fn merge_incoming(
     lift
 }
 
+/// Zu welcher Fassung gehören die flachen Dateiverweise (`files.text/cover`)
+/// eines empfangenen Buchs? Dieselbe Regel wie in [`merge_incoming`]:
+/// - Schema 2: die Hauptfassung des Senders;
+/// - Schema 1 (Altgerät) und lokal mit Fassungen: die hiesige Hauptfassung,
+///   denn dort landet seine Arbeitskopie;
+/// - Schema 1 auf beiden Seiten: `ed_<buch>` (deterministische Migration).
+pub fn sender_primary(local: Option<&LibraryBook>, incoming: &LibraryBook) -> Option<String> {
+    let legacy = incoming.schema < SCHEMA && incoming.editions.is_empty();
+    if legacy {
+        if let Some(l) = local.filter(|l| !l.editions.is_empty()) {
+            let mut l = l.clone();
+            normalize(&mut l);
+            return primary_id(&l).map(str::to_string);
+        }
+    }
+    let mut b = incoming.clone();
+    normalize(&mut b);
+    primary_id(&b).map(str::to_string)
+}
+
 /// Gelöschte Fassung wiederherstellen (§7): neue, deterministische Kennung
 /// `<alt>_r`, gleiche Referenzen (Fortschritt, Seite, Dateien). Zwei Geräte,
 /// die dieselbe Fassung wiederherstellen, erzeugen dieselbe Kennung.

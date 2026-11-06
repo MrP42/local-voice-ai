@@ -519,6 +519,7 @@ fn build_book(
                 .pending
                 .text
                 .clone()
+                .filter(|_| book.editions.is_empty())
                 .or_else(|| {
                     // Mit Fassungen steht der ausstehende Text unter der Kennung.
                     library::editions::primary_id(book)
@@ -546,11 +547,16 @@ fn build_book(
         },
         None => {
             // Mit Fassungen steht das ausstehende Cover unter der Kennung.
-            files.cover = side.pending.cover.clone().or_else(|| {
-                library::editions::primary_id(book)
-                    .and_then(|p| side.pending.editions.get(p))
-                    .and_then(|ef| ef.cover.clone())
-            })
+            files.cover = side
+                .pending
+                .cover
+                .clone()
+                .filter(|_| book.editions.is_empty())
+                .or_else(|| {
+                    library::editions::primary_id(book)
+                        .and_then(|p| side.pending.editions.get(p))
+                        .and_then(|ef| ef.cover.clone())
+                })
         }
     }
 
@@ -1100,14 +1106,10 @@ pub fn apply_book(
     };
 
     let existing = library::sync_read_book(&dir);
-    let mut side = read_sidecar(&dir);
+    let mut side = read_sidecar_for(&dir, existing.as_ref());
     // Die flachen Dateiverweise (`files.text/audio/cover`) gehören zur
     // Hauptfassung des Senders, nicht zwingend zur Hauptfassung nach dem Merge.
-    let sender_primary = {
-        let mut b = incoming.clone();
-        library::editions::normalize(&mut b);
-        library::editions::primary_id(&b).map(str::to_string)
-    };
+    let sender_primary = library::editions::sender_primary(existing.as_ref(), &incoming);
     let local_primary = existing
         .as_ref()
         .and_then(|b| library::editions::primary_id(b).map(str::to_string));
@@ -1340,6 +1342,39 @@ fn pending_files(
         }
     }
     pending
+}
+
+/// Altbestand (lva#344): flache `pending.text/cover` stammen aus der Zeit vor
+/// den Fassungen bzw. von einem Schema-1-Stand. Sie gehören zur Arbeitskopie
+/// von damals, und die wird deterministisch zur Fassung `ed_<buch>`. Hat das
+/// Buch Fassungen, kommen sie dorthin (oder entfallen, wenn es sie nicht mehr
+/// gibt) – nie in die gerade gültige Hauptfassung. Liefert, ob sich etwas
+/// geändert hat.
+fn upgrade_pending(pending: &mut BookFiles, book: &LibraryBook) -> bool {
+    if book.editions.is_empty() || (pending.text.is_none() && pending.cover.is_none()) {
+        return false;
+    }
+    let mid = library::editions::migrated_id(&book.id);
+    let (text, cover) = (pending.text.take(), pending.cover.take());
+    if book.editions.iter().any(|e| e.id == mid) {
+        let ef = pending.editions.entry(mid).or_default();
+        if ef.text.is_none() {
+            ef.text = text;
+        }
+        if ef.cover.is_none() {
+            ef.cover = cover;
+        }
+    }
+    true
+}
+
+/// `sync.json` lesen, Altbestand nach [`upgrade_pending`] zugeordnet.
+fn read_sidecar_for(dir: &Path, book: Option<&LibraryBook>) -> Sidecar {
+    let mut side = read_sidecar(dir);
+    if let Some(b) = book {
+        upgrade_pending(&mut side.pending, b);
+    }
+    side
 }
 
 /// Ausstehende Cover eintragen. Mit Fassungen immer mit Kennung: welche Datei
@@ -1617,9 +1652,14 @@ fn wanted_in(root: &Path) -> Result<Vec<Wanted>, String> {
     let root = root.to_path_buf();
     let mut out = Vec::new();
     for (id, dir) in book_dirs(&root)? {
-        let side = read_sidecar(&dir);
+        let mut side = read_sidecar(&dir);
         if side.pending.is_empty() {
             continue;
+        }
+        if let Some(book) = library::sync_read_book(&dir) {
+            if upgrade_pending(&mut side.pending, &book) {
+                write_sidecar(&dir, &side)?;
+            }
         }
         let mut push = |blob: &BlobRef, what: WantedKind| {
             out.push(Wanted {
@@ -1692,6 +1732,29 @@ pub fn finish_download(
     if !w.dir.join("buch.json").is_file() {
         let _ = std::fs::remove_file(&tmp);
         return Err("Buch verschwunden".into());
+    }
+    // Ein laufender Altbestand-Download (ohne Kennung) auf einem Buch mit
+    // Fassungen gehört zu `ed_<buch>` (siehe upgrade_pending).
+    if matches!(w.what, WantedKind::Text | WantedKind::Cover) {
+        if let Some(book) = library::sync_read_book(&w.dir).filter(|b| !b.editions.is_empty()) {
+            let mid = library::editions::migrated_id(&book.id);
+            let (done, kind) = if w.what == WantedKind::Text {
+                let mut pages = AppPages { app, device_name };
+                (
+                    finish_edition_text(w, &mid, &tmp, &mut pages),
+                    WantedKind::EditionText(mid),
+                )
+            } else {
+                (
+                    finish_edition_cover(w, &mid, &tmp),
+                    WantedKind::EditionCover(mid),
+                )
+            };
+            if done.is_ok() {
+                clear_pending(&w.dir, &kind)?;
+            }
+            return done;
+        }
     }
     match &w.what {
         WantedKind::Text => {
@@ -2233,6 +2296,138 @@ mod tests {
         let after = library::sync_read_book(&dir).unwrap();
         assert_eq!(after.text.unwrap().page_id, "p_en");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Codex R8/2: Upgrade, dann Wechsel, dann Abschluss. Flacher Altbestand
+    /// (vor den Fassungen gespeichert) gehört zu ed_<buch>, nicht zur gerade
+    /// gültigen Hauptfassung.
+    #[test]
+    fn altbestand_pending_nach_upgrade_und_wechsel() {
+        let key = [3u8; KEY_LEN];
+        let root = cover_tmp();
+        let dir = root.join("book_1");
+        std::fs::create_dir_all(&dir).unwrap();
+        // Schema 1 auf der Platte, Altbestand im sync.json.
+        std::fs::write(
+            dir.join("buch.json"),
+            r#"{"id":"book_1","title":"Der Weg","authors":[],"language":"de","cover_source":"generated",
+               "text":{"page_id":"p_1","origin":"document"},"added_ms":1,"finished":false}"#,
+        )
+        .unwrap();
+        let tref = |b: &[u8], kind: Option<&str>| {
+            let mut r = BlobRef::new(&key, &blobs::stamp_bytes(b)).unwrap();
+            r.kind = kind.map(str::to_string);
+            r
+        };
+        let legacy = BookFiles {
+            text: Some(tref(b"Deutsch", None)),
+            cover: Some(tref(b"DE", Some("jpg"))),
+            ..Default::default()
+        };
+        write_sidecar(
+            &dir,
+            &Sidecar {
+                pending: legacy,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        // Upgrade (Lesen migriert), dann EN dazu und Hauptfassung wechseln.
+        let mut book = library::sync_read_book(&dir).unwrap();
+        assert_eq!(library::editions::primary_id(&book), Some("ed_book_1"));
+        book.editions.push(library::Edition {
+            id: "ed_en".into(),
+            lang: "en".into(),
+            title: "The Way".into(),
+            text: Some(library::TextVersion {
+                page_id: "p_en".into(),
+                origin: "document".into(),
+                source_name: None,
+            }),
+            added_ms: 2.0,
+            ..Default::default()
+        });
+        library::editions::set_primary(&mut book, "ed_en", "pc").unwrap();
+        library::sync_write_book(&dir, &book).unwrap();
+        std::fs::write(dir.join("cover.png"), b"EN").unwrap();
+        // Abschluss.
+        let wanted = wanted_in(&root).unwrap();
+        let kinds: Vec<_> = wanted.iter().map(|w| w.what.clone()).collect();
+        assert!(kinds.contains(&WantedKind::EditionText("ed_book_1".into())));
+        assert!(kinds.contains(&WantedKind::EditionCover("ed_book_1".into())));
+        assert!(!kinds.contains(&WantedKind::Text) && !kinds.contains(&WantedKind::Cover));
+        let mut pages = MemPages::default();
+        for w in &wanted {
+            match &w.what {
+                WantedKind::EditionText(eid) => {
+                    std::fs::write(download_target(w), b"Deutsch").unwrap();
+                    finish_edition_text(w, eid, &download_target(w), &mut pages).unwrap();
+                }
+                WantedKind::EditionCover(eid) => {
+                    std::fs::write(download_target(w), b"DE").unwrap();
+                    finish_edition_cover(w, eid, &download_target(w)).unwrap();
+                }
+                other => panic!("unerwartet: {other:?}"),
+            }
+        }
+        assert_eq!(pages.0["p_1"]["state"]["text"], "Deutsch");
+        assert!(!pages.0.contains_key("p_en"));
+        assert_eq!(
+            std::fs::read(dir.join("cover.png")).unwrap(),
+            b"EN",
+            "Hauptfassung unberührt"
+        );
+        assert_eq!(
+            std::fs::read(dir.join("covers/ed_book_1.jpg")).unwrap(),
+            b"DE"
+        );
+        assert!(read_sidecar(&dir).pending.is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Codex R8/1: Ein Altgerät (Schema 1) sendet seine Arbeitskopie; sie
+    /// gehört wie im Merge zur hiesigen Hauptfassung – auch ihre Dateien.
+    #[test]
+    fn altgeraet_dateien_gehoeren_zur_hiesigen_hauptfassung() {
+        let key = [4u8; KEY_LEN];
+        let dir = cover_tmp();
+        let mut local = two_editions("ed_en");
+        local.id = "book_1".into();
+        let incoming = LibraryBook {
+            id: "book_1".into(),
+            title: "Buch".into(),
+            text: Some(library::TextVersion {
+                page_id: "p_alt".into(),
+                origin: "document".into(),
+                source_name: None,
+            }),
+            ..Default::default()
+        };
+        let sender = library::editions::sender_primary(Some(&local), &incoming);
+        assert_eq!(sender.as_deref(), Some("ed_en"));
+        let mut merged = incoming.clone();
+        library::editions::merge_incoming(Some(&local), &mut merged);
+        assert_eq!(library::editions::primary_id(&merged), Some("ed_en"));
+        let files = BookFiles {
+            text: Some(BlobRef::new(&key, &blobs::stamp_bytes(b"alt")).unwrap()),
+            cover: Some(cref(&key, b"ALT", "jpg")),
+            ..Default::default()
+        };
+        let mut cache = BTreeMap::new();
+        let pending = pending_files(
+            &|_| false,
+            &key,
+            &dir,
+            &mut cache,
+            &merged,
+            &files,
+            sender.as_deref(),
+        );
+        assert!(pending.text.is_none() && pending.cover.is_none());
+        assert!(pending.editions["ed_en"].text.is_some());
+        assert!(pending.editions["ed_en"].cover.is_some());
+        assert!(!pending.editions.contains_key("ed_de"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Codex R5/3: scheitert das Schreiben nach dem Cover-Tausch im Empfang,
