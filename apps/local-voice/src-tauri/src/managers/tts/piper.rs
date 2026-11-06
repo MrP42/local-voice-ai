@@ -228,11 +228,13 @@ fn kill_tree(child: &mut std::process::Child, job: Option<crate::process_guard::
 
 /// Fehlertext, wenn Piper unter Windows nicht in ein Job-Objekt kommt:
 /// der Prozess wird dann gar nicht erst fortgesetzt.
+#[cfg(windows)]
 pub const ERR_NO_PROCESS_GUARD: &str = "Piper: Prozessschutz (Job-Objekt) nicht verfügbar";
 
 #[cfg(all(test, windows))]
 thread_local! {
-    /// Test-Schalter: simuliert eine gescheiterte Job-Zuordnung.
+    /// Test-Schalter: überspringt die Job-Zuordnung (wie ein gescheitertes
+    /// `attach`), ohne dass je ein Job-Objekt entsteht.
     static FORCE_NO_JOB: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
@@ -296,11 +298,21 @@ pub fn run_piper_cancellable(
     // Job-Objekt mit KILL_ON_JOB_CLOSE: endet die App mitten in einer
     // Synthese (Beenden, Absturz), stirbt Piper mit, statt als Waise zu
     // laufen. Kein Speicherdeckel, CPU-Deckel wie bei ffmpeg.
-    let mut job = crate::process_guard::ProcessGuard::attach(
-        &child,
-        None,
-        crate::process_guard::CPU_CAP_PERCENT,
-    );
+    // Test-Schalter (nur Windows-Tests): attach wird gar nicht erst
+    // versucht, der Prozess bleibt wirklich ohne Job-Zuordnung.
+    #[cfg(all(test, windows))]
+    let skip_attach = FORCE_NO_JOB.with(|f| f.get());
+    #[cfg(not(all(test, windows)))]
+    let skip_attach = false;
+    let mut job = if skip_attach {
+        None
+    } else {
+        crate::process_guard::ProcessGuard::attach(
+            &child,
+            None,
+            crate::process_guard::CPU_CAP_PERCENT,
+        )
+    };
     // Windows: Der Prozess wurde angehalten gestartet. Erst nach erfolgreicher
     // Job-Zuordnung wird er fortgesetzt — vorher kann er weder Kinder starten
     // noch sich beenden, also entgeht kein Kind dem Job. Ohne Job (oder wenn
@@ -308,10 +320,6 @@ pub fn run_piper_cancellable(
     // kein Lauf ohne Prozessbaum-Schutz.
     #[cfg(windows)]
     {
-        #[cfg(test)]
-        if FORCE_NO_JOB.with(|f| f.get()) {
-            job = None;
-        }
         let resumed = match job {
             Some(_) => crate::process_guard::resume_suspended(&child),
             None => Err("kein Job-Objekt".to_string()),
@@ -1093,7 +1101,8 @@ pub(crate) mod tests {
         );
     }
 
-    /// Codex-Auflage Runde 7 (nur Windows): Scheitert die Job-Zuordnung,
+    /// Codex-Auflage Runde 7/8 (nur Windows): Ohne Job-Zuordnung (attach wird
+    /// übersprungen, es entsteht nie ein Job-Objekt)
     /// läuft der angehalten gestartete Prozess nie an — kein Kind, kein
     /// Herzschlag, klare Fehlermeldung statt eines ungeschützten Laufs.
     #[cfg(windows)]
