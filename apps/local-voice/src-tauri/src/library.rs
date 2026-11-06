@@ -216,9 +216,13 @@ fn library_root(app: &AppHandle) -> Result<PathBuf, String> {
 
 /// Kennungen entstehen nur hier; alles andere ist ein manipulierter Aufruf.
 fn checked_id(id: &str) -> Result<&str, String> {
-    let valid = id
-        .strip_prefix("book_")
-        .is_some_and(|rest| !rest.is_empty() && rest.chars().all(|c| c.is_ascii_alphanumeric()));
+    let valid = id.strip_prefix("book_").is_some_and(|rest| {
+        // iPhone vergibt `book_<ms>_<6 hex>`: Unterstrich zulassen, sonst
+        // erreicht kein iPhone-Buch PC oder Mac. Bleibt ein sicherer Ordnername.
+        !rest.is_empty()
+            && rest.len() <= 64
+            && rest.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    });
     if valid {
         Ok(id)
     } else {
@@ -2186,6 +2190,11 @@ mod tests {
     #[test]
     fn rejects_foreign_ids() {
         assert!(checked_id("book_123").is_ok());
+        assert!(
+            checked_id("book_1793658524370_f1cf5d").is_ok(),
+            "iPhone-Kennung"
+        );
+        assert!(checked_id("book_1_a/b").is_err());
         assert!(checked_id("book_../x").is_err());
         assert!(checked_id("page_1").is_err());
         assert!(checked_id("book_").is_err());

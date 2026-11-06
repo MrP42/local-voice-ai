@@ -41,7 +41,15 @@ pub struct Ledger {
     /// Dateien, deren Hoch- oder Herunterladen scheiterte: Blob → Versuche.
     #[serde(default)]
     pub failed: BTreeMap<String, Failure>,
+    /// Stand der Neueinlese-Regel: liegt er unter `RESCAN_LEVEL`, holt der
+    /// nächste Lauf alles ab Cursor 0 erneut (einmalig, z. B. nachdem Objekte
+    /// wegen einer zu strengen Prüfung übersprungen wurden).
+    #[serde(default)]
+    pub rescan: u32,
 }
+
+/// 1: iPhone-Buchkennungen `book_<ms>_<hex>` wurden bis 0.23.5 übersprungen.
+pub const RESCAN_LEVEL: u32 = 1;
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct Failure {
