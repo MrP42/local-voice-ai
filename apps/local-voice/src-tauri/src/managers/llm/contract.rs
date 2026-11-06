@@ -441,6 +441,34 @@ mod tests {
     }
 
     #[test]
+    fn the_shared_number_matrix_gives_the_same_result_as_python_and_powershell() {
+        // Dieselbe Datei nutzen isolation-check-test.sh (Python) und der PS1-SelfTest.
+        // `-0` wird abgelehnt (serde_json liest es als Kommazahl -0.0), Python und PS1 richten sich daran aus.
+        let matrix =
+            include_str!("../../../../../../tooling/buch-gespraech/tests/number-matrix.tsv");
+        let c = Contract::builtin();
+        let mut rows = 0;
+        for line in matrix
+            .lines()
+            .filter(|l| !l.trim().is_empty() && !l.starts_with('#'))
+        {
+            let (value, want) = line.split_once('\t').unwrap();
+            let ev = format!(
+                r#"{{"type": "system", "subtype": "thinking_tokens", "estimated_tokens": {value}, "estimated_tokens_delta": 1}}"#
+            );
+            let got = c.check(&evs(&[INIT, &ev, ASSIST, RESULT]));
+            let expected = if want.trim() == "ok" {
+                Ok(())
+            } else {
+                Err("event_unknown")
+            };
+            assert_eq!(got, expected, "Zahlenmatrix {value}");
+            rows += 1;
+        }
+        assert!(rows >= 10, "Matrix zu klein: {rows}");
+    }
+
+    #[test]
     fn all_models_of_a_run_are_collected() {
         let other = r#"{"type":"assistant","message":{"model":"anders","content":[]}}"#;
         let set = models_of(&evs(&[INIT, other, RESULT]));

@@ -1014,7 +1014,10 @@ pub(crate) fn parse_claude_stream(stdout: &str) -> Result<CliReply, String> {
     if models.len() > 1 {
         return Err(Rejection::llm("model_mismatch").error());
     }
+    let (prompt_tokens, completion_tokens) = strict_usage(result)?;
     let mut reply = parse_claude(&result.to_string())?;
+    reply.prompt_tokens = prompt_tokens;
+    reply.completion_tokens = completion_tokens;
     reply.model = models.into_iter().next();
     reply.compacted = Tri::No;
     reply.truncated = match str_of(result, "stop_reason") {
@@ -1023,6 +1026,44 @@ pub(crate) fn parse_claude_stream(stdout: &str) -> Result<CliReply, String> {
         _ => Tri::Unknown,
     };
     Ok(reply)
+}
+
+/// Die usage-Felder der Vorschau, alle strikt: jedes vorhandene Feld
+/// (`input_tokens`, `output_tokens`, `cache_creation_input_tokens`,
+/// `cache_read_input_tokens`) muss eine ganze Zahl von 0 bis 2^53-1 sein (kein
+/// String, keine Kommazahl, nicht negativ, nicht `null`), sonst
+/// `usage_invalid`. Die Eingabesumme wird mit `checked_add` gebildet; ein
+/// Ueberlauf oder eine Summe ueber 2^53-1 ist ebenfalls `usage_invalid`. Fehlt
+/// `usage` ganz, bleibt es bei 0 (dann meldet `preview::verify` `usage_missing`).
+/// Liefert (Eingabetoken inkl. Cache, Ausgabetoken).
+fn strict_usage(result: &serde_json::Value) -> Result<(u64, u64), String> {
+    use super::contract::MAX_SAFE_INT;
+    use super::preview::Rejection;
+    let invalid = || Rejection::llm("usage_invalid").error();
+    let Some(usage) = result.get("usage") else {
+        return Ok((0, 0));
+    };
+    let usage = usage.as_object().ok_or_else(invalid)?;
+    let field = |key: &str| -> Result<u64, String> {
+        match usage.get(key) {
+            None => Ok(0),
+            Some(v) => v
+                .as_u64()
+                .filter(|n| *n <= MAX_SAFE_INT)
+                .ok_or_else(invalid),
+        }
+    };
+    let (input, created, read) = (
+        field("input_tokens")?,
+        field("cache_creation_input_tokens")?,
+        field("cache_read_input_tokens")?,
+    );
+    let prompt = input
+        .checked_add(created)
+        .and_then(|n| n.checked_add(read))
+        .filter(|n| *n <= MAX_SAFE_INT)
+        .ok_or_else(invalid)?;
+    Ok((prompt, field("output_tokens")?))
 }
 
 /// Schalter, ohne die der Aufruf nicht isoliert ist (Spec 11.7 R4). Fehlt einer
@@ -3020,6 +3061,65 @@ exit "$(cat "$D/exit" 2>/dev/null || echo 0)"
                     r#""stop_reason":"aborted","usage""#,
                 )]),
                 "cli_preview_rejected:budget:truncated",
+            ),
+            (
+                "Cache-Feld als String",
+                stream_with(&[(
+                    r#""cache_creation_input_tokens":20000"#,
+                    r#""cache_creation_input_tokens":"20000""#,
+                )]),
+                "cli_preview_rejected:llm_failed:usage_invalid",
+            ),
+            (
+                "Cache-Feld negativ",
+                stream_with(&[(
+                    r#""cache_read_input_tokens":10000"#,
+                    r#""cache_read_input_tokens":-1"#,
+                )]),
+                "cli_preview_rejected:llm_failed:usage_invalid",
+            ),
+            (
+                "Cache-Feld als Kommazahl",
+                stream_with(&[(
+                    r#""cache_read_input_tokens":10000"#,
+                    r#""cache_read_input_tokens":1.5"#,
+                )]),
+                "cli_preview_rejected:llm_failed:usage_invalid",
+            ),
+            (
+                "Cache-Feld null",
+                stream_with(&[(
+                    r#""cache_creation_input_tokens":20000"#,
+                    r#""cache_creation_input_tokens":null"#,
+                )]),
+                "cli_preview_rejected:llm_failed:usage_invalid",
+            ),
+            (
+                "Cache-Feld ueber 2^53-1",
+                stream_with(&[(
+                    r#""cache_read_input_tokens":10000"#,
+                    r#""cache_read_input_tokens":9007199254740992"#,
+                )]),
+                "cli_preview_rejected:llm_failed:usage_invalid",
+            ),
+            (
+                "Summe ueber 2^53-1 (Ueberlauf)",
+                stream_with(&[
+                    (r#""input_tokens":3000"#, r#""input_tokens":9007199254740991"#),
+                    (
+                        r#""cache_read_input_tokens":10000"#,
+                        r#""cache_read_input_tokens":9007199254740991"#,
+                    ),
+                ]),
+                "cli_preview_rejected:llm_failed:usage_invalid",
+            ),
+            (
+                "Summe ueber u64 (checked_add)",
+                stream_with(&[
+                    (r#""input_tokens":3000"#, r#""input_tokens":18446744073709551615"#),
+                    (r#""cache_read_input_tokens":10000"#, r#""cache_read_input_tokens":1"#),
+                ]),
+                "cli_preview_rejected:llm_failed:usage_invalid",
             ),
             (
                 "ohne stop_reason: unbekannt sperrt",

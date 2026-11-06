@@ -153,9 +153,10 @@ $script:Observed = New-Object System.Collections.Generic.HashSet[string]([String
 function Get-DistinctOrdinal($values) {
     $set = New-Object System.Collections.Generic.HashSet[string]([StringComparer]::Ordinal)
     foreach ($v in @($values)) { if ($null -ne $v) { [void]$set.Add([string]$v) } }
-    # Komma: ein Array mit EINEM Element darf beim Rueckgabewert nicht zum Skalar zerfallen
-    # (sonst liefert [0] das erste Zeichen des Strings).
-    return ,@($set | Sort-Object -CaseSensitive)
+    # Aufrufer wickeln das Ergebnis IMMER in @(...): ein Element wird zum Skalar entrollt
+    # und @() macht wieder ein Array daraus. KEIN `return ,@(...)`: zusammen mit @() ergaebe
+    # das ein verschachteltes Array (Elemente zu einem String verklebt).
+    return @($set | Sort-Object -CaseSensitive)
 }
 $script:ContractOk = $true
 
@@ -533,6 +534,29 @@ function Test-Count($v) {
     if (($v -is [int]) -or ($v -is [long])) { return (([int64]$v -ge 0) -and ([int64]$v -le $script:MaxSafeInt)) }
     return $false
 }
+# Zahlenfelder, deren ROHE Schreibweise ConvertFrom-Json verschleiert: "-0", Kommazahlen
+# und Exponenten (1.0, 1e3) werden je nach Version zu 0 bzw. Ganzzahlen. Rust (serde_json)
+# liest "-0", "1.0" und "1e3" als Kommazahl und lehnt sie ab; hier wird das Feld dann auf
+# NaN gesetzt, das Test-Count ablehnt. Begruendung "-0": am Rust-Verhalten ausgerichtet,
+# -0 ist keine gueltige Zaehlung (kein Ganzzahl-Literal) und wird ueberall abgelehnt.
+$script:CountFieldNames = @('estimated_tokens', 'estimated_tokens_delta', 'input_tokens', 'output_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens')
+function Test-NonIntegerLiteral([string]$token) { return ($token -ceq '-0') -or ($token -match '[.eE]') }
+function Set-NonIntegerFields($obj, [string]$line) {
+    foreach ($name in $script:CountFieldNames) {
+        $m = [regex]::Match($line, '"' + $name + '"\s*:\s*(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)')
+        if (-not $m.Success -or -not (Test-NonIntegerLiteral $m.Groups[1].Value)) { continue }
+        foreach ($o in @($obj, $obj.usage)) {
+            if ($o -and ($o -isnot [string]) -and $o.PSObject.Properties[$name]) { $o.$name = [double]::NaN }
+        }
+    }
+}
+# Eine rohe JSON-Zahl/ein Wert der Zahlenmatrix (tests/number-matrix.tsv).
+function Test-CountJson([string]$json) {
+    $t = $json.Trim()
+    if ($t -match '^-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?$' -and (Test-NonIntegerLiteral $t)) { return $false }
+    try { $v = $t | ConvertFrom-Json } catch { return $false }
+    return (Test-Count $v)
+}
 function Test-Known($e) {
     $r = $Rules[[string]$e.type]
     if (-not $r) { return $false }
@@ -577,7 +601,7 @@ function Parse-Out([string]$path, [string]$marker) {
     $lines = @()
     if (Test-Path $path) { $lines = @(Get-Content -LiteralPath $path -Encoding UTF8 | Where-Object { $_.Trim() }) }
     foreach ($l in $lines) {
-        try { $evs += ($l | ConvertFrom-Json) } catch { $r.Bad = $true }
+        try { $o = $l | ConvertFrom-Json; Set-NonIntegerFields $o $l; $evs += $o } catch { $r.Bad = $true }
     }
     $models = New-Object System.Collections.Generic.HashSet[string]
     $text = ''
@@ -820,11 +844,44 @@ if ($SelfTest.IsPresent) {
     [System.IO.File]::WriteAllText("$tmp.rc", '0', $Utf8)
     $pr = Parse-Out $tmp ''
     $n++
-    if (-not ((@($pr.Models).Count -ceq 1) -and (@($pr.Models)[0] -ceq 'claude-sonnet-5-5'))) { $fail++; Write-Host 'FEHLER: Parse-Out liefert Models nicht als Array (erstes Element)' -ForegroundColor Red }
+    if (-not ((@($pr.Models).Count -ceq 1) -and (@($pr.Models)[0] -is [string]) -and (@($pr.Models)[0] -ceq 'claude-sonnet-5-5'))) { $fail++; Write-Host 'FEHLER: Parse-Out liefert Models nicht als Array (erstes Element)' -ForegroundColor Red }
     $n++
-    if (-not ((@(Get-DistinctOrdinal @('claude-x')).Count -ceq 1) -and (@(Get-DistinctOrdinal @('claude-x'))[0] -ceq 'claude-x'))) { $fail++; Write-Host 'FEHLER: Get-DistinctOrdinal zerfaellt bei einem Element' -ForegroundColor Red }
+    $d1 = @(Get-DistinctOrdinal @('claude-x'))
+    if (-not (($d1.Count -ceq 1) -and ($d1[0] -is [string]) -and ($d1[0] -ceq 'claude-x'))) { $fail++; Write-Host 'FEHLER: Get-DistinctOrdinal zerfaellt bei einem Element' -ForegroundColor Red }
     $n++
     if (-not ((Test-Count 9007199254740991) -and -not (Test-Count 9007199254740992) -and -not (Test-Count -1) -and -not (Test-Count 5.0) -and -not (Test-Count ([decimal]5)) -and -not (Test-Count '5'))) { $fail++; Write-Host 'FEHLER: Test-Count Zahlenbereich' -ForegroundColor Red }
+    # observed_events: nur einzelne Typ-Strings, ohne Duplikate, ordinal (kein verklebtes Array).
+    $savedObs = $script:Observed; $savedOk = $script:ContractOk
+    $script:Observed = New-Object System.Collections.Generic.HashSet[string]([StringComparer]::Ordinal)
+    foreach ($fxn in @('ok', 'ok', 'ok_with_rate_limit_and_summary')) {
+        $t2 = Join-Path $Work "obs-$fxn.jsonl"
+        Copy-Item -LiteralPath (Join-Path $fx "fixtures\$fxn.jsonl") -Destination $t2
+        [System.IO.File]::WriteAllText("$t2.rc", '0', $Utf8)
+        Note-Run (Parse-Out $t2 '')
+    }
+    $obs = @($script:Observed | Sort-Object -CaseSensitive)
+    $wantObs = @('assistant', 'rate_limit_event', 'result', 'system/commands_changed', 'system/init', 'system/post_turn_summary')
+    $n++
+    $obsOk = ($obs.Count -ceq $wantObs.Count)
+    for ($k = 0; $obsOk -and $k -lt $obs.Count; $k++) { if (-not (($obs[$k] -is [string]) -and ($obs[$k] -ceq $wantObs[$k]))) { $obsOk = $false } }
+    if (-not $obsOk) { $fail++; Write-Host "FEHLER: observed_events sind keine einzelnen, eindeutigen Typen: $($obs -join '|')" -ForegroundColor Red }
+    $script:Observed = $savedObs; $script:ContractOk = $savedOk
+    # Gemeinsame Zahlenmatrix (tests/number-matrix.tsv): dasselbe Ergebnis wie Rust und Python.
+    foreach ($mline in (Get-Content -LiteralPath (Join-Path $fx 'number-matrix.tsv') -Encoding UTF8)) {
+        if (-not $mline.Trim() -or $mline.StartsWith('#')) { continue }
+        $mc = $mline.Split("`t"); $mval = $mc[0]; $mwant = $mc[1]
+        $okl = Get-Content -LiteralPath (Join-Path $fx 'fixtures\ok.jsonl') -Encoding UTF8
+        $evl = '{"type": "system", "subtype": "thinking_tokens", "estimated_tokens": ' + $mval + ', "estimated_tokens_delta": 1}'
+        $t3 = Join-Path $Work 'matrix.jsonl'
+        [System.IO.File]::WriteAllText($t3, (@($okl[0], $evl, $okl[1], $okl[2]) -join "`n") + "`n", $Utf8)
+        [System.IO.File]::WriteAllText("$t3.rc", '0', $Utf8)
+        $mr = (Parse-Out $t3 '').Reason
+        $mexp = if ($mwant -ceq 'ok') { '' } else { 'event_unknown' }
+        $n++
+        if ($mr -cne $mexp) { $fail++; Write-Host "FEHLER: Zahlenmatrix $mval : Grund '$mr', erwartet '$mexp'" -ForegroundColor Red }
+        $n++
+        if ((Test-CountJson $mval) -cne ($mwant -ceq 'ok')) { $fail++; Write-Host "FEHLER: Test-CountJson $mval" -ForegroundColor Red }
+    }
     Remove-Item -Recurse -Force $Work -ErrorAction SilentlyContinue
     if ($fail -gt 0) { Write-Host "isolation-check SelfTest: ROT ($fail von $n)"; exit 1 }
     Write-Host "isolation-check SelfTest: $n Faelle gruen"

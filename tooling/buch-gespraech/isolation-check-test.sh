@@ -25,6 +25,23 @@ while IFS=$'\t' read -r name rc want; do
   fi
 done < "$DIR/tests/expected.tsv"
 
+# ---- gemeinsame Zahlenmatrix (tests/number-matrix.tsv): dieselbe Datei nutzen Rust und PS1 ----
+while IFS=$'\t' read -r value want; do
+  case "$value" in ''|'#'*) continue ;; esac
+  total=$((total + 1))
+  tmpm="$(mktemp)"
+  python3 - "$DIR/tests/fixtures/ok.jsonl" "$value" > "$tmpm" <<'PY'
+import sys
+ok = open(sys.argv[1], encoding="utf-8").read().splitlines()
+ev = '{"type": "system", "subtype": "thinking_tokens", "estimated_tokens": %s, "estimated_tokens_delta": 1}' % sys.argv[2]
+print("\n".join([ok[0], ev, ok[1], ok[2]]))
+PY
+  got="$(python3 -I "$DIR/analyze-run.py" "$tmpm" "$DIR/claude-events.json" "" 0 | python3 -c 'import json,sys;print(json.load(sys.stdin)["reason"])')"
+  rm -f "$tmpm"
+  exp=event_unknown; [ "$want" = ok ] && exp=""
+  if [ "$got" != "$exp" ]; then echo "FEHLER: Zahlenmatrix $value: Grund '$got', erwartet '$exp'" >&2; fail=1; fi
+done < "$DIR/tests/number-matrix.tsv"
+
 # ---- Pruefablauf mit Fake-CLI -------------------------------------------------
 # Das Skript wird nur eingelesen (keine Hauptlogik); run_claude wird ersetzt.
 export ISOLATION_CHECK_SOURCE_ONLY=1

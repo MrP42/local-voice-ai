@@ -22,6 +22,14 @@ import json, sys
 CUT_STOP_REASONS = ("max_tokens", "aborted", "model_context_window_exceeded")  # Doku; gesperrt ist alles ausser DONE
 MAX_SAFE_INT = 9007199254740991
 DONE_STOP_REASONS = ("end_turn", "stop_sequence")
+
+
+def parse_int(text):
+    # "-0" ist kein gueltiges Zaehl-Literal (Rust/serde_json liest es als Kommazahl -0.0 und
+    # lehnt es ab): als float -0.0 liefern, damit count() es ablehnt. Python wuerde sonst 0 lesen.
+    return float("-0.0") if text == "-0" else int(text)
+
+
 path, events_path, marker = sys.argv[1:4]
 rc = 0
 if len(sys.argv) > 4:
@@ -45,7 +53,7 @@ except OSError:
     lines = []
 for l in lines:
     try:
-        events.append(json.loads(l))
+        events.append(json.loads(l, parse_int=parse_int))
     except ValueError:
         bad = True
 

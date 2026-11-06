@@ -52,8 +52,8 @@
 //!     Abweichung wird deshalb nichts mehr auf stdin geschrieben);
 //!   * Inhaltsaenderungen durch denselben Nutzer liegen ausserhalb der Garantie;
 //!     der Hash nach dem Lauf verwirft dann die Antwort.
-//!   Linux: Start ueber
-//!   `/proc/self/fd/<fd>`. macOS und andere Unix: gesperrt (`platform_unsupported`).
+//!
+//!   Linux: Start ueber `/proc/self/fd/<fd>`. macOS und andere Unix: gesperrt (`platform_unsupported`).
 //!   Vor dem Start und nach dem Ende wird der Hash neu gebildet ([`Pinned::verify`]).
 //!   Grenze (ausserhalb der Garantie): die FD-Bindung verhindert Pfadaustausch,
 //!   aber keine Inhaltsaenderung zwischen Hash und `exec` durch denselben
