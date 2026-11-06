@@ -78,17 +78,22 @@ final class LibraryPlayback: NSObject, ObservableObject {
     }
     /// Zielsprache der Live-Übersetzung (`nil`: Original). Nur lokal je Buch gemerkt (Codex F3).
     @Published private(set) var liveTarget: String?
-    /// Quellsprache des offenen Buchs (Angabe oder erkannt).
+    /// Quellsprache des offenen Buchs (Angabe am Buch, bestätigt oder erkannt).
     @Published private(set) var liveSource: String?
+    /// Erkannte Quellsprache ist bestätigt (oder am Buch angegeben). Erst dann ist Live wählbar (Spez §3).
+    @Published private(set) var liveSourceConfirmed = false
+    /// Quellsprache steht am Buch; dann gibt es nichts zu bestätigen.
+    @Published private(set) var liveSourceDeclared = false
+    /// Gewählter Wechsel, der am Ende des hörbaren Satzes greift (`.some(nil)`: zurück zum Original).
+    @Published private(set) var livePending: String??
     @Published private(set) var liveState: LiveState = .off
     /// Zählt bei jeder neuen Übersetzung hoch, damit die Anzeige nachzieht.
     @Published private(set) var liveRevision = 0
     private var livePipeline: LivePipeline?
-    /// Übersetzte Sätze für Anzeige und Sprechen: Absatz → Satz → Text (Spiegel des Pipeline-Speichers).
-    private var liveTexts: [Int: [Int: String]] = [:]
-    private var liveRequested: Set<Int> = []
-    /// Sprachwechsel während der Wiedergabe: greift am Ende des hörbaren Satzes (Spez §5).
-    private var liveSwitchPending = false
+    /// Übersetzte Sätze für Anzeige und Sprechen, begrenzt wie der Pipeline-Speicher und mit Epoche gegen
+    /// Ergebnisse aus der Zeit vor einem Sprung (Spez §4, §4.1).
+    private var liveMirror = LiveMirror()
+    private var liveRequested: Set<LiveMirror.Slot> = []
     /// Die Systemstimme spricht gerade einen einzelnen übersetzten Satz.
     private var liveUtterance = false
     private var liveSystemTask: Task<Void, Never>?
@@ -170,7 +175,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
     /// Gerade gelesener Satz, für das Mitlesen im Mini-Player.
     var currentSentence: String? {
         guard mode == .readAloud, let range = sentenceRange, paragraphs.indices.contains(paragraphIndex) else { return nil }
-        if liveTarget != nil, let t = liveTexts[paragraphIndex]?[sentenceIndex] { return t }
+        if liveTarget != nil, let t = liveMirror.text(paragraph: paragraphIndex, sentence: sentenceIndex) { return t }
         let text = paragraphs[paragraphIndex].text as NSString
         return NSMaxRange(range) <= text.length ? text.substring(with: range) : nil
     }
@@ -354,7 +359,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
         text = library.text(book) ?? ""
         paragraphs = LibraryText.paragraphs(text)
         // Für „Ab hier in … vorlesen“ aus dem Hörbuch (lva#358).
-        liveSource = text.isEmpty ? nil : LiveTranslationSupport.sourceLanguage(declared: book.language, text: text)
+        resolveLiveSource(book)
         sentenceCache = [:]
         followCache = text.isEmpty ? nil : FollowMap(sync: audio.sync, textLength: Double(text.utf16.count), totalMs: totalMs)
         loadInfo(book)
@@ -462,13 +467,13 @@ final class LibraryPlayback: NSObject, ObservableObject {
             }
             totalMs = 0
             setupRemote()
-            liveSource = LiveTranslationSupport.sourceLanguage(declared: book.language, text: text)
+            resolveLiveSource(book)
             // Stimme der Buchsprache erst jetzt: die Absätze des neuen Buchs stehen.
             applyVoicePref(book)
             prepareVoice()
             restoreLive(book)
         }
-        if let fromParagraph { move(to: Cursor(paragraph: fromParagraph, sentence: 0)); if busy || autoplay { speakCurrent() }; return }
+        if let fromParagraph { move(to: Cursor(paragraph: fromParagraph, sentence: 0)); liveJumped(); if busy || autoplay { speakCurrent() }; return }
         if autoplay { play() }
     }
 
@@ -567,17 +572,43 @@ final class LibraryPlayback: NSObject, ObservableObject {
     // MARK: Live-Übersetzung (lva#358)
 
     private static func liveKey(_ id: String) -> String { "lva.player.live.\(id)" }
+    private static func liveSourceKey(_ id: String) -> String { "lva.player.livesource.\(id)" }
 
     private func resetLive() {
-        livePipeline = nil; liveTarget = nil; liveState = .off; liveTexts = [:]; liveRequested = []
-        liveSwitchPending = false; liveUtterance = false
+        livePipeline = nil; liveTarget = nil; liveState = .off; liveMirror.reset(); liveRequested = []
+        livePending = nil; liveUtterance = false
+        liveSource = nil; liveSourceConfirmed = false; liveSourceDeclared = false
         liveSystemTask?.cancel(); liveSystemTask = nil
         liveRevision += 1
     }
 
+    /// Quellsprache: Angabe am Buch, sonst die bestätigte, sonst aus dem Text erkannt (unbestätigt).
+    private func resolveLiveSource(_ book: LibraryBook) {
+        if let declared = book.language, !declared.isEmpty {
+            liveSource = LiveTranslation.base(declared); liveSourceDeclared = true; liveSourceConfirmed = true
+        } else if let confirmed = UserDefaults.standard.string(forKey: Self.liveSourceKey(book.id)) {
+            liveSource = confirmed; liveSourceDeclared = false; liveSourceConfirmed = true
+        } else {
+            liveSource = text.isEmpty ? nil : LiveTranslationSupport.sourceLanguage(declared: nil, text: text)
+            liveSourceDeclared = false; liveSourceConfirmed = false
+        }
+    }
+
+    /// Erkannte Buchsprache bestätigen oder ändern (je Buch gemerkt). Eine laufende Live-Übersetzung aus der
+    /// alten Quellsprache endet dabei.
+    func confirmLiveSource(_ code: String) {
+        guard let book, !liveSourceDeclared else { return }
+        let base = LiveTranslation.base(code)
+        if base != liveSource, liveTarget != nil || livePending != nil { setLive(nil) }
+        UserDefaults.standard.set(base, forKey: Self.liveSourceKey(book.id))
+        liveSource = base
+        liveSourceConfirmed = true
+    }
+
     /// Gemerkte Live-Sprache des Buchs wieder aufnehmen, wenn das Paket weiter auf dem iPhone liegt.
     private func restoreLive(_ book: LibraryBook) {
-        guard let saved = UserDefaults.standard.string(forKey: Self.liveKey(book.id)), let source = liveSource else { return }
+        guard liveSourceConfirmed,
+              let saved = UserDefaults.standard.string(forKey: Self.liveKey(book.id)), let source = liveSource else { return }
         let id = book.id
         Task { [weak self] in
             guard await LiveTranslationSupport.state(from: source, to: saved) == .installed,
@@ -592,17 +623,40 @@ final class LibraryPlayback: NSObject, ObservableObject {
         return await LiveTranslationSupport.state(from: source, to: target)
     }
 
-    /// Live-Sprache wählen (`nil` oder Buchsprache: Original). Läuft die Wiedergabe, wechselt sie am Ende des
-    /// hörbaren Satzes; pausiert sofort am aktuellen Satz (Spez §5). Der Fortschritt bleibt in der Quellfassung.
+    /// Live-Sprache wählen (`nil` oder Buchsprache: Original). Läuft der Ton, greift der Wechsel komplett (Ziel,
+    /// Übersetzer, Stimme) am Ende des hörbaren Satzes; pausiert oder still sofort am aktuellen Satz (Spez §5).
+    /// Der Fortschritt bleibt in der Quellfassung.
     func setLive(_ target: String?) {
         guard let book, mode == .readAloud else { return }
         let wanted = target.map(LiveTranslation.base)
         let effective = (wanted == nil || wanted == liveSource.map(LiveTranslation.base)) ? nil : wanted
-        guard effective != liveTarget else { return }
+        if effective != nil, !liveSourceConfirmed { return }
         UserDefaults.standard.set(effective, forKey: Self.liveKey(book.id))
-        liveTexts = [:]; liveRequested = []; liveRevision += 1
-        liveTarget = effective
+        switch LiveSwitchTiming.decide(busy: busy, preparing: preparing) {
+        case .atSentenceEnd:
+            livePending = effective == liveTarget ? nil : .some(effective)
+        case .restart:
+            livePending = nil
+            guard effective != liveTarget else { return }
+            applyLive(effective)
+            speakCurrent()
+        case .immediate:
+            livePending = nil
+            guard effective != liveTarget else { return }
+            applyLive(effective)
+            discardPausedSpeech()
+            prepareVoice()
+        }
+        updateNowPlaying()
+    }
+
+    /// Ziel, Übersetzer, Spiegel und Stimme in einem Schritt umstellen. Den Neustart der Lesung macht der Aufrufer.
+    private func applyLive(_ effective: String?) {
+        guard let book else { return }
+        if let old = livePipeline { Task { await old.cancelPending() } }
+        liveMirror.reset(); liveRequested = []; liveRevision += 1
         if let effective, let source = liveSource, #available(iOS 26.0, *) {
+            liveTarget = effective
             livePipeline = LivePipeline(translator: AppleLiveTranslator(source: source, target: effective), book: book.id,
                                         sourceHash: LiveTranslationSupport.sourceHash(text), source: source, target: effective)
             liveState = .ready
@@ -611,14 +665,23 @@ final class LibraryPlayback: NSObject, ObservableObject {
             liveTarget = nil
             liveState = .off
         }
-        // Stimme der neuen Sprache still setzen; den Neustart steuert der Wechsel selbst.
         applyVoicePref(book)
-        let restart = preparing  // noch kein Ton (z. B. direkt nach dem Wechsel aus dem Hörbuch): sofort neu ansetzen
-        if busy, !preparing { liveSwitchPending = true }
-        else if !restart { discardPausedSpeech() }
+    }
+
+    /// Vorgemerkten Wechsel jetzt ausführen. `true`, wenn einer anstand.
+    @discardableResult
+    private func applyPendingLive() -> Bool {
+        guard let pending = livePending else { return false }
+        livePending = nil
+        if pending != liveTarget { applyLive(pending) }
+        return true
+    }
+
+    /// Ohne Ton (Pause, Ende): ein vorgemerkter Wechsel greift sofort am aktuellen Satz.
+    private func settlePendingLive() {
+        guard !busy, applyPendingLive() else { return }
+        discardPausedSpeech()
         prepareVoice()
-        if restart { speakCurrent() }
-        updateNowPlaying()
     }
 
     /// „Original weiterlesen“ nach einem Unterlauf.
@@ -633,38 +696,51 @@ final class LibraryPlayback: NSObject, ObservableObject {
         return LiveTranslation.units(paragraph: paragraph, text: paragraphs[paragraph].text, sentences: ranges)
     }
 
+    /// Sprung: Ergebnisse, die vor dem Sprung bestellt wurden, kommen nicht mehr in die Anzeige (Spez §4.1).
+    /// Fertige Übersetzungen bleiben. Kein `cancelPending` hier: es liefe nebenläufig zur ersten Bestellung an der
+    /// neuen Stelle und könnte genau diese abbrechen.
+    private func liveJumped() {
+        guard livePipeline != nil else { return }
+        liveMirror.advance()
+        liveRequested = []
+    }
+
     /// Vorlauf ab `c` anstoßen und fertige Sätze für Anzeige und Sprechen spiegeln.
     private func liveFill(from c: Cursor) {
         guard let pipe = livePipeline else { return }
         let window = LiveTranslation.window(paragraph: c.paragraph, unit: c.sentence, paragraphCount: paragraphs.count,
                                             rate: Double(rate)) { self.liveUnits($0) }
-        let fresh = window.filter { liveTexts[$0.paragraph]?[$0.sentences.lowerBound] == nil }
+        let fresh = window.filter { liveMirror.text(paragraph: $0.paragraph, sentence: $0.sentences.lowerBound) == nil }
         guard !fresh.isEmpty else { return }
+        let epoch = liveMirror.epoch
         Task { await pipe.prefetch(fresh) }
         for unit in fresh {
-            let key = unit.paragraph &* 1_000_003 &+ unit.sentences.lowerBound
-            guard liveRequested.insert(key).inserted else { continue }
+            let slot = LiveMirror.Slot(paragraph: unit.paragraph, sentence: unit.sentences.lowerBound)
+            guard liveRequested.insert(slot).inserted else { continue }
             Task { [weak self] in
                 let t = try? await pipe.text(unit)
-                guard let self else { return }
-                self.liveRequested.remove(key)
-                guard let t, pipe === self.livePipeline else { return }
-                self.storeLive(t, unit)
+                guard let self, pipe === self.livePipeline, epoch == self.liveMirror.epoch else { return }
+                self.liveRequested.remove(slot)
+                guard let t else { return }
+                self.storeLive(t, unit, epoch: epoch)
             }
         }
     }
 
-    private func storeLive(_ text: String, _ unit: LiveUnit) {
-        liveTexts[unit.paragraph, default: [:]][unit.sentences.lowerBound] = text
+    @discardableResult
+    private func storeLive(_ text: String, _ unit: LiveUnit, epoch: Int) -> Bool {
+        guard liveMirror.store(text, paragraph: unit.paragraph, sentence: unit.sentences.lowerBound, epoch: epoch) else { return false }
         liveRevision += 1
+        return true
     }
 
     /// Übersetzung eines Satzes für die Ausgabe. Nach 1,5 s Hinweis „Übersetzung lädt …“, nach 8 s Pause (Spez §4).
     /// `nil`: Generation gewechselt oder Unterlauf/Fehler (dann steht der Grund in `liveState`).
     private func liveText(_ c: Cursor, generation: Int) async -> String? {
         guard let pipe = livePipeline else { return nil }
+        let epoch = liveMirror.epoch
         liveFill(from: c)
-        if let hit = liveTexts[c.paragraph]?[c.sentence] { return hit }
+        if let hit = liveMirror.text(paragraph: c.paragraph, sentence: c.sentence) { return hit }
         guard let unit = liveUnits(c.paragraph).first(where: { $0.sentences.lowerBound == c.sentence }) else { return nil }
         let hint = Task { [weak self] in
             try? await Task.sleep(for: .seconds(1.5))
@@ -680,10 +756,10 @@ final class LibraryPlayback: NSObject, ObservableObject {
                 if once.finish(nil) { work.cancel() }
             }
         }
-        guard generation == readGeneration, pipe === livePipeline else { return nil }
+        guard generation == readGeneration, pipe === livePipeline, epoch == liveMirror.epoch else { return nil }
         switch outcome {
         case .success(let t)?:
-            storeLive(t, unit)
+            storeLive(t, unit, epoch: epoch)
             liveState = .ready
             return t
         case .failure(let error)?:
@@ -738,7 +814,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
         let to = next.paragraph == here.paragraph ? chars(of: next) : paragraphs[next.paragraph].start
         saveText(at: to, heard: from..<(next.paragraph == here.paragraph ? to : p.end))
         move(to: next)
-        liveSwitchPending = false
+        applyPendingLive()  // Sprachwechsel greift am Satzende komplett (Spez §5)
         speakCurrent()
     }
 
@@ -746,7 +822,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
     func liveParagraph(_ index: Int) -> LiveParagraph? {
         guard liveTarget != nil, paragraphs.indices.contains(index) else { return nil }
         return LiveParagraph.compose(original: paragraphs[index].text, sentences: sentences(inParagraph: index),
-                                     translated: liveTexts[index] ?? [:])
+                                     translated: liveMirror.paragraph(index))
     }
 
     private func stopPhonon() {
@@ -867,7 +943,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
         }
         if let next { move(to: next) }
         // Sprachwechsel: der hörbare Satz ist zu Ende, ab hier in der neuen Sprache (Spez §5).
-        if liveSwitchPending, next != nil { liveSwitchPending = false; speakCurrent() }
+        if livePending != nil, next != nil { applyPendingLive(); speakCurrent() }
     }
 
     /// Lesung ohne eigenes Zutun zu Ende: Stand bleibt am hörbaren Satz, Weiter setzt dort an.
@@ -877,6 +953,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
         phononPaused = false
         preparing = false
         playing = false
+        settlePendingLive()
         updateNowPlaying()
     }
 
@@ -886,6 +963,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
         preparing = false
         sentenceRange = nil
         phononTask = nil
+        settlePendingLive()
         library.flush()
         updateNowPlaying()
     }
@@ -901,8 +979,17 @@ final class LibraryPlayback: NSObject, ObservableObject {
     private func prepareVoice() {
         if livePipeline != nil {
             // Vorlauf schon vor dem Abspielen aufbauen (Spez §4); Phonon lädt nur das Modell, die Sätze kommen übersetzt.
-            liveFill(from: Cursor(paragraph: paragraphIndex, sentence: sentenceIndex))
-            if let voice = phononVoice { PhononEngine.shared.prepare(voice: voice) }
+            let start = Cursor(paragraph: paragraphIndex, sentence: sentenceIndex)
+            liveFill(from: start)
+            guard let voice = phononVoice else { return }
+            // Nur schon übersetzte, aufeinanderfolgende Sätze; nie das Original mit der Zielstimme.
+            var upcoming: [String] = []
+            var c: Cursor? = start
+            while let here = c, upcoming.count < 3, let t = liveMirror.text(paragraph: here.paragraph, sentence: here.sentence) {
+                upcoming.append(t)
+                c = cursor(after: here)
+            }
+            PhononEngine.shared.prepare(voice: voice, sentences: upcoming)
             return
         }
         guard let voice = phononVoice else { return }
@@ -956,6 +1043,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
         guard paragraphs.indices.contains(index) else { return }
         if mode == .audiobook, let map = followMap { seek(toMs: map.ms(atChars: Double(paragraphs[index].start))); return }
         move(to: Cursor(paragraph: index, sentence: 0))
+        liveJumped()
         saveText(at: paragraphs[index].start, jumped: true)
         if busy { speakCurrent() } else { discardPausedSpeech(); prepareVoice() }
     }
@@ -976,6 +1064,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
         let ranges = sentenceRanges(index)
         let here = Cursor(paragraph: index, sentence: LibraryText.sentenceIndex(ranges, at: local))
         move(to: here)
+        liveJumped()
         saveText(at: chars(of: here), jumped: true)
         if autoplay { speakCurrent() } else if busy { speakCurrent() } else { discardPausedSpeech(); prepareVoice() }
     }
@@ -996,6 +1085,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
             here = Cursor(paragraph: previous, sentence: sentenceRanges(previous).count - 1)
         }
         move(to: here)
+        liveJumped()
         saveText(at: chars(of: here), jumped: true)
         if busy { speakCurrent() } else { discardPausedSpeech(); prepareVoice() }
     }
@@ -1052,6 +1142,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
         case nil: break
         }
         playing = false
+        if mode == .readAloud { settlePendingLive() }
         library.flush()
         updateNowPlaying()
     }
@@ -1220,7 +1311,7 @@ extension LibraryPlayback: AVSpeechSynthesizerDelegate {
             move(to: here)
             saveText(at: chars(of: here))
             // Sprachwechsel, während die Systemstimme den Absatz am Stück liest: am Satzanfang umschalten.
-            if liveSwitchPending { liveSwitchPending = false; speakCurrent(); return }
+            if livePending != nil { applyPendingLive(); speakCurrent(); return }
         }
         wordRange = word
     }

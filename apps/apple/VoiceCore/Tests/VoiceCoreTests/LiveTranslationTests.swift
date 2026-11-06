@@ -387,3 +387,41 @@ final class LiveParagraphTests: XCTestCase {
         XCTAssertEqual(LiveLanguages.name("xx"), "XX")
     }
 }
+
+final class LiveMirrorTests: XCTestCase {
+    func testStaleEpochIsRejectedAfterJump() {
+        var m = LiveMirror()
+        let before = m.epoch
+        m.advance()  // Sprung, während eine Übersetzung unterwegs ist
+        XCTAssertFalse(m.store("alt", paragraph: 0, sentence: 0, epoch: before))
+        XCTAssertNil(m.text(paragraph: 0, sentence: 0))
+        XCTAssertTrue(m.store("neu", paragraph: 0, sentence: 1, epoch: m.epoch))
+        XCTAssertEqual(m.paragraph(0), [1: "neu"])
+        // Sprung behält Fertiges, Sprachwechsel verwirft alles.
+        m.advance()
+        XCTAssertEqual(m.text(paragraph: 0, sentence: 1), "neu")
+        m.reset()
+        XCTAssertNil(m.text(paragraph: 0, sentence: 1))
+        XCTAssertEqual(m.count, 0)
+    }
+
+    func testMirrorIsBounded() {
+        var m = LiveMirror(limit: 3)
+        for i in 0..<5 { m.store("s\(i)", paragraph: i / 2, sentence: i % 2, epoch: m.epoch) }
+        XCTAssertEqual(m.count, 3)
+        XCTAssertNil(m.text(paragraph: 0, sentence: 0))
+        XCTAssertNil(m.text(paragraph: 0, sentence: 1))
+        XCTAssertEqual(m.text(paragraph: 2, sentence: 0), "s4")
+        // Erneutes Speichern zählt nicht doppelt.
+        m.store("s4b", paragraph: 2, sentence: 0, epoch: m.epoch)
+        XCTAssertEqual(m.count, 3)
+        XCTAssertEqual(m.text(paragraph: 2, sentence: 0), "s4b")
+        XCTAssertEqual(LiveMirror().limit, LiveTranslation.cacheLimit)
+    }
+
+    func testSwitchTiming() {
+        XCTAssertEqual(LiveSwitchTiming.decide(busy: true, preparing: false), .atSentenceEnd)
+        XCTAssertEqual(LiveSwitchTiming.decide(busy: true, preparing: true), .restart)
+        XCTAssertEqual(LiveSwitchTiming.decide(busy: false, preparing: false), .immediate)
+    }
+}

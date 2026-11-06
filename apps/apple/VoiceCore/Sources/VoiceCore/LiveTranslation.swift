@@ -329,3 +329,58 @@ public enum LiveLanguages {
         String(LiveTranslation.base(code).split(separator: "-").first ?? "").uppercased()
     }
 }
+
+/// Spiegel der fertigen Übersetzungen für Anzeige und Sprechen auf dem Main Actor (Spez §4, §4.1):
+/// begrenzt wie der Pipeline-Speicher und mit Epoche, damit Ergebnisse aus der Zeit vor einem Sprung oder
+/// Sprachwechsel nicht mehr hineinkommen.
+public struct LiveMirror: Sendable {
+    public struct Slot: Hashable, Sendable { public let paragraph: Int; public let sentence: Int }
+    public let limit: Int
+    public private(set) var epoch = 0
+    private var texts: [Int: [Int: String]] = [:]
+    private var order: [Slot] = []
+
+    public init(limit: Int = LiveTranslation.cacheLimit) { self.limit = max(1, limit) }
+
+    public var count: Int { order.count }
+
+    /// Sprung: neue Epoche, fertige Übersetzungen bleiben (sie gehören zur selben Sprache).
+    public mutating func advance() { epoch += 1 }
+
+    /// Sprachwechsel oder neues Buch: alles verwerfen, neue Epoche.
+    public mutating func reset() { texts = [:]; order = []; epoch += 1 }
+
+    /// Nur Ergebnisse der laufenden Epoche; ältere werden verworfen. Ältester Eintrag fällt über der Grenze heraus.
+    @discardableResult
+    public mutating func store(_ text: String, paragraph: Int, sentence: Int, epoch e: Int) -> Bool {
+        guard e == epoch else { return false }
+        let slot = Slot(paragraph: paragraph, sentence: sentence)
+        if texts[paragraph]?[sentence] != nil, let i = order.firstIndex(of: slot) { order.remove(at: i) }
+        texts[paragraph, default: [:]][sentence] = text
+        order.append(slot)
+        while order.count > limit {
+            let old = order.removeFirst()
+            texts[old.paragraph]?[old.sentence] = nil
+            if texts[old.paragraph]?.isEmpty == true { texts[old.paragraph] = nil }
+        }
+        return true
+    }
+
+    public func text(paragraph: Int, sentence: Int) -> String? { texts[paragraph]?[sentence] }
+    public func paragraph(_ index: Int) -> [Int: String] { texts[index] ?? [:] }
+}
+
+/// Wann ein Sprachwechsel greift (Spez §5).
+public enum LiveSwitchTiming: Equatable, Sendable {
+    /// Pausiert oder still: sofort am aktuellen Satz.
+    case immediate
+    /// Ton läuft: komplett (Ziel, Pipeline, Stimme) am Ende des hörbaren Satzes.
+    case atSentenceEnd
+    /// Noch kein Ton (wird vorbereitet): sofort umstellen und am aktuellen Satz neu ansetzen.
+    case restart
+
+    public static func decide(busy: Bool, preparing: Bool) -> LiveSwitchTiming {
+        if preparing { return .restart }
+        return busy ? .atSentenceEnd : .immediate
+    }
+}

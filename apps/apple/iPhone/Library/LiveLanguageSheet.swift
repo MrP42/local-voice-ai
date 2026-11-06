@@ -74,13 +74,14 @@ struct LiveLanguageSheet: View {
                             detail: nil, selected: playback.liveTarget == nil)
                     }
                 }
+                sourceSection
                 Section {
                     ForEach(languages, id: \.code) { lang in
                         let state = states[lang.code] ?? .unknown
                         Button { choose(lang.code, state) } label: {
                             row(title: lang.name, detail: detail(lang.code, state), selected: playback.liveTarget == lang.code)
                         }
-                        .disabled(state == .unsupported || loading != nil)
+                        .disabled(state == .unsupported || loading != nil || !playback.liveSourceConfirmed)
                     }
                 } header: {
                     Text("Live übersetzen")
@@ -94,7 +95,7 @@ struct LiveLanguageSheet: View {
             .navigationTitle("Sprache")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Fertig") { dismiss() } } }
-            .task { await refresh() }
+            .task(id: playback.liveSource) { await refresh() }
             .translationTask(download) { session in
                 // Nur für fehlende Pakete: Systemblatt mit Zustimmung, dann laden (Spez §3).
                 guard let code = loading else { return }
@@ -110,6 +111,35 @@ struct LiveLanguageSheet: View {
                 }
                 loading = nil
                 download = nil
+            }
+        }
+    }
+
+    /// Buchsprache: erkannte Sprache erst bestätigen, dann ist Live wählbar (Spez §3). Angabe am Buch gilt ohne Frage.
+    @ViewBuilder private var sourceSection: some View {
+        if !playback.liveSourceDeclared, let source = playback.liveSource {
+            Section {
+                HStack {
+                    Text(playback.liveSourceConfirmed ? "Buchsprache: \(LiveLanguages.name(source))"
+                                                      : "Buchsprache erkannt: \(LiveLanguages.name(source)). Stimmt das?")
+                        .foregroundStyle(VoicePalette.text)
+                    Spacer(minLength: 8)
+                    Menu("Ändern") {
+                        ForEach(LiveLanguages.offered, id: \.code) { lang in
+                            Button(lang.name) { message = nil; playback.confirmLiveSource(lang.code) }
+                        }
+                    }
+                    .frame(minHeight: 44)
+                    .accessibilityHint("Andere Sprache als Buchsprache festlegen")
+                }
+                if !playback.liveSourceConfirmed {
+                    Button("Ja, stimmt") { playback.confirmLiveSource(source) }
+                        .frame(minHeight: 44)
+                }
+            } footer: {
+                if !playback.liveSourceConfirmed {
+                    Text("Aus dem Text erkannt. Bitte bestätigen, bevor live übersetzt wird.")
+                }
             }
         }
     }
