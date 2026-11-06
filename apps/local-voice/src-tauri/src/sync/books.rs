@@ -119,10 +119,15 @@ fn valid_language(code: &str) -> bool {
 /// gleich in welcher Reihenfolge die Stände ankommen.
 fn merge_kurzbuecher(own: &[KurzbuchRef], received: &[KurzbuchRef]) -> Vec<KurzbuchRef> {
     fn order(a: &KurzbuchRef, b: &KurzbuchRef) -> std::cmp::Ordering {
-        let date = |k: &KurzbuchRef| k.created_ms.unwrap_or(0.0);
-        date(a)
-            .total_cmp(&date(b))
-            .then_with(|| a.blob.blob.cmp(&b.blob.blob))
+        // Ohne Datum gilt als älter als jedes Datum.
+        let date = match (a.created_ms, b.created_ms) {
+            (Some(x), Some(y)) => x.total_cmp(&y),
+            (x, y) => x.is_some().cmp(&y.is_some()),
+        };
+        date.then_with(|| a.blob.blob.cmp(&b.blob.blob))
+            .then_with(|| a.blob.size.cmp(&b.blob.size))
+            .then_with(|| a.blob.chunks.cmp(&b.blob.chunks))
+            .then_with(|| a.blob.kind.cmp(&b.blob.kind))
             .then_with(|| a.model.cmp(&b.model))
             .then_with(|| a.source.cmp(&b.source))
     }
@@ -1366,20 +1371,32 @@ mod tests {
         let a = [k("a", "kurzbuch-de.md", 1.0)];
         let b = [k("b", "kurzbuch-de.md", 1.0)];
         assert_eq!(merge_kurzbuecher(&a, &b), merge_kurzbuecher(&b, &a));
-        // Gleiche Datei und gleiches Datum, nur andere Angaben: ebenso unabhängig von der Reihenfolge.
-        let mut x = k("c", "kurzbuch-de.md", 1.0);
-        let mut y = x.clone();
-        x.model = Some("a".into());
-        y.model = Some("b".into());
+        // Unterscheidet sich nur ein Feld, wählen beide Reihenfolgen dieselbe Fassung.
+        let base = k("c", "kurzbuch-de.md", 1.0);
+        let variants: [fn(&mut KurzbuchRef); 7] = [
+            |r| r.created_ms = None,
+            |r| r.blob.blob = "d".into(),
+            |r| r.blob.size = 9,
+            |r| r.blob.chunks = 9,
+            |r| r.blob.kind = Some("md".into()),
+            |r| r.model = Some("m".into()),
+            |r| r.source = Some("Kapitel 1".into()),
+        ];
+        for change in variants {
+            let mut other = base.clone();
+            change(&mut other);
+            assert_ne!(base, other);
+            let one = merge_kurzbuecher(std::slice::from_ref(&base), std::slice::from_ref(&other));
+            let two = merge_kurzbuecher(std::slice::from_ref(&other), std::slice::from_ref(&base));
+            assert_eq!(one, two);
+        }
+        // Ohne Datum verliert gegen jedes Datum, auch gegen 0.
+        let mut none = k("z", "kurzbuch-de.md", 0.0);
+        none.created_ms = None;
+        let zero = k("a", "kurzbuch-de.md", 0.0);
         assert_eq!(
-            merge_kurzbuecher(std::slice::from_ref(&x), std::slice::from_ref(&y)),
-            merge_kurzbuecher(std::slice::from_ref(&y), std::slice::from_ref(&x))
-        );
-        y.model = x.model.clone();
-        y.source = Some("Kapitel 1".into());
-        assert_eq!(
-            merge_kurzbuecher(std::slice::from_ref(&x), std::slice::from_ref(&y)),
-            merge_kurzbuecher(std::slice::from_ref(&y), std::slice::from_ref(&x))
+            merge_kurzbuecher(&[none], std::slice::from_ref(&zero)),
+            vec![zero]
         );
     }
 
