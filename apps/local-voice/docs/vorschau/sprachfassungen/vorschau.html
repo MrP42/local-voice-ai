@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="de"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sprachfassungen</title>
+<style>
+:root{--bg:#F8F9FB;--panel:#FFFFFF;--side:#F0F1F4;--text:#1F2937;--sec:#5B6472;--border:#D9DCE1;--accent:#0F6CBD;--accentbg:#EBF3FC;--chip:#EEF0F3;--warn:#8A5A00;--warnbg:#FFF4CE;--ok:#107C10;--menu:#FFFFFF;--shadow:0 8px 24px rgba(0,0,0,.14);--track:#D1D5DB;--brand:#FFDD00;--ink:#111418}
+.dark{--bg:#1B1B1F;--panel:#232328;--side:#202024;--text:#EDEDE7;--sec:#A8ABB3;--border:#3A3B41;--accent:#479EF5;--accentbg:#1D2B3B;--chip:#2E2F35;--warn:#F2C661;--warnbg:#3A3020;--ok:#54B054;--menu:#2C2C31;--shadow:0 8px 24px rgba(0,0,0,.5);--track:#4B4D55}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:"Segoe UI",Inter,system-ui,sans-serif;font-size:14px;-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit}
+.app{display:flex;min-height:100vh}
+.side{width:240px;background:var(--side);padding:12px 8px;flex-shrink:0}
+.side .logo{font-weight:600;padding:8px 10px 18px}
+.side div.n{padding:10px 12px;border-radius:6px;color:var(--text)}
+.side div.n.on{background:var(--chip);box-shadow:inset 3px 0 0 var(--accent);font-weight:600}
+.main{flex:1;padding:16px 32px 120px;min-width:0;position:relative}
+h2{font-size:16px;font-weight:600;margin:18px 0 10px}h2 small{font-weight:400;color:var(--sec);font-size:12px;margin-left:6px}
+.banner{display:flex;gap:12px;align-items:center;background:var(--accentbg);border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin:6px 0 4px}
+.banner .t{flex:1}.banner b{font-weight:600}
+.btn{min-height:36px;padding:0 14px;border-radius:6px;border:1px solid var(--border);background:var(--panel);cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+.btn.p{background:var(--accent);border-color:var(--accent);color:#fff}
+.dark .btn.p{color:#0b0b0c}
+.btn.g{border-color:transparent;background:transparent}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:20px}
+.card .cv{aspect-ratio:2/3;border-radius:6px;position:relative;overflow:hidden;color:#f6efe0;display:flex;flex-direction:column;justify-content:space-between;padding:14px;font-family:Georgia,serif;text-align:center}
+.card .cv .a{font-family:"Segoe UI",sans-serif;font-size:11px;letter-spacing:2px;text-transform:uppercase}
+.card .cv .tt{font-size:17px;font-weight:700;margin-bottom:34px}
+.c1{background:linear-gradient(160deg,#2f9b5b,#1d6e40)}.c2{background:linear-gradient(160deg,#4a2337,#2a1520)}.c3{background:linear-gradient(160deg,#3b44a8,#232a6b)}.c4{background:linear-gradient(160deg,#4a3d1d,#2b2410)}.c5{background:linear-gradient(160deg,#6b2f6d,#3c1a3d)}
+.card .meta{display:flex;justify-content:space-between;align-items:flex-start;margin-top:8px}
+.card .ti{font-weight:600;font-size:15px;line-height:1.25}.card .au{color:var(--sec);font-size:13px;margin-top:2px}
+.langs{display:inline-flex;gap:2px;margin-top:6px}
+.lg{font-size:11px;font-weight:600;letter-spacing:.5px;padding:2px 6px;border-radius:4px;background:var(--chip);color:var(--sec)}
+.lg.on{background:var(--accent);color:#fff}.dark .lg.on{color:#0b0b0c}
+.row{display:flex;align-items:center;gap:6px;font-size:13px;min-height:28px;color:var(--text)}
+.row .f{flex:1;color:var(--sec)}
+.bar{height:3px;background:var(--track);border-radius:2px;overflow:hidden}.bar i{display:block;height:100%;background:var(--accent)}
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;z-index:30}
+.dlg{background:var(--panel);border-radius:8px;box-shadow:var(--shadow);width:min(560px,calc(100vw - 32px));padding:22px 24px;border:1px solid var(--border)}
+.dlg h3{font-size:18px;font-weight:600;margin-bottom:6px}
+.dlg p{color:var(--sec);line-height:1.45}
+.dlg .acts{display:flex;justify-content:flex-end;gap:8px;margin-top:20px;flex-wrap:wrap}
+.pair{display:flex;gap:12px;align-items:flex-start;border:1px solid var(--border);border-radius:8px;padding:12px;margin-top:10px}
+.pair input{width:20px;height:20px;margin-top:2px;accent-color:var(--accent)}
+.pair .x{flex:1}.pair .x b{font-weight:600}
+.badge{display:inline-block;font-size:12px;padding:2px 8px;border-radius:10px;margin-top:6px}
+.badge.ok{background:rgba(16,124,16,.12);color:var(--ok)}.badge.w{background:var(--warnbg);color:var(--warn)}
+.why{color:var(--sec);font-size:12px;margin-top:4px}
+.opt{display:flex;gap:12px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-top:10px;min-height:56px}
+.opt.sel{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
+.opt .r{width:18px;height:18px;border-radius:50%;border:2px solid var(--sec);flex-shrink:0}
+.opt.sel .r{border:5px solid var(--accent)}
+.opt .d{color:var(--sec);font-size:12px;margin-top:2px}
+.detail{display:flex;gap:28px;max-width:1100px}
+.detail .cv{width:200px;flex-shrink:0}
+.tbl{width:100%;border-collapse:collapse;margin-top:6px}
+.tbl th{text-align:left;font-weight:600;color:var(--sec);font-size:12px;padding:8px 10px;border-bottom:1px solid var(--border)}
+.tbl td{padding:10px;border-bottom:1px solid var(--border);vertical-align:middle;height:52px}
+.tbl tr.cur td{background:var(--accentbg)}
+.muted{color:var(--sec)}
+.player{position:fixed;left:240px;right:0;bottom:0;background:var(--panel);border-top:1px solid var(--border);height:88px;display:flex;align-items:center;gap:16px;padding:0 24px;z-index:10}
+.player .mini{width:48px;height:64px;border-radius:4px}
+.player .inf{width:240px}.player .inf b{display:block;font-weight:600}.player .inf span{color:var(--sec);font-size:12px}
+.player .ctr{flex:1;display:flex;flex-direction:column;align-items:center;gap:6px}
+.player .keys{display:flex;gap:14px;align-items:center}
+.k{width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:15px}
+.k.play{width:44px;height:44px;background:var(--accent);color:#fff}
+.dark .k.play{color:#0b0b0c}
+.player .line{display:flex;gap:10px;align-items:center;width:min(640px,100%);font-size:12px;color:var(--sec)}
+.player .line .bar{flex:1}
+.langbtn{min-height:44px;padding:0 12px;border-radius:6px;border:1px solid var(--border);background:var(--panel);display:inline-flex;align-items:center;gap:8px;font-weight:600}
+.menu{position:fixed;background:var(--menu);border:1px solid var(--border);border-radius:8px;box-shadow:var(--shadow);width:340px;padding:6px;z-index:20}
+.menu .hd{font-size:12px;color:var(--sec);padding:8px 10px 4px;font-weight:600}
+.menu .it{display:flex;gap:10px;align-items:center;min-height:44px;padding:6px 10px;border-radius:6px}
+.menu .it.on{background:var(--accentbg)}
+.menu .it .ck{width:16px;color:var(--accent);font-weight:700}
+.menu .it .x{flex:1}.menu .it .d{color:var(--sec);font-size:12px}
+.menu .sep{height:1px;background:var(--border);margin:6px 4px}
+.toast{position:fixed;right:24px;bottom:104px;background:var(--text);color:var(--bg);border-radius:8px;padding:12px 16px;display:flex;gap:16px;align-items:center;box-shadow:var(--shadow);z-index:25;max-width:440px}
+.toast a{color:var(--bg);font-weight:600;text-decoration:underline}
+.note{font-size:12px;color:var(--sec);padding:6px 10px 8px}
+/* Smartphone (Desktop-App schmal) */
+@media (max-width:640px){
+ .side{display:none}.main{padding:12px 16px 120px}
+ .grid{grid-template-columns:repeat(2,1fr);gap:14px}
+ .banner{flex-wrap:wrap}.banner .acts{width:100%;display:flex;gap:8px}
+ .detail{flex-direction:column}.detail .cv{width:140px}
+ .player{left:0;height:auto;flex-wrap:wrap;padding:10px 16px;gap:10px}
+ .player .inf{width:auto;flex:1}.player .ctr{order:3;flex-basis:100%}
+ .menu{left:16px!important;right:16px;width:auto;bottom:150px!important;top:auto!important}
+ .toast{left:16px;right:16px;bottom:170px}
+ .tbl .hide{display:none}
+}
+/* iPhone */
+.ios{width:390px;height:844px;overflow:hidden;position:relative;background:var(--ibg);color:var(--itext);font-family:Inter,system-ui,sans-serif;font-size:17px;--ibg:#F8F9FB;--itext:#1F2937;--isec:rgba(31,41,55,.72);--ibar:#EEF0F3;--iseg:#E3E4E8;--isegsel:#fff;--isheet:#FFFFFF;--iacc:#111418}
+.dark .ios{--ibg:#0B0B0C;--itext:#EDEDE7;--isec:rgba(237,237,231,.72);--ibar:#1C1C1E;--iseg:#2C2C2E;--isegsel:#636366;--isheet:#1C1C1E;--iacc:#FFDD00}
+.ios .st{height:54px;display:flex;align-items:center;justify-content:space-between;padding:0 30px 0 38px;font-weight:600}
+.ios .isl{position:absolute;top:11px;left:50%;transform:translateX(-50%);width:124px;height:36px;border-radius:20px;background:#000}
+.ios .hdr{display:flex;align-items:center;height:52px;padding:0 4px}
+.ios .b{width:44px;height:44px;display:flex;align-items:center;justify-content:center;font-size:19px}
+.ios .hdr .t{flex:1;text-align:center;line-height:1.2}.ios .hdr .t div:first-child{font-size:15px;font-weight:600}.ios .hdr .t div:last-child{font-size:12px;color:var(--isec)}
+.ios .lp{height:32px;padding:0 10px;border-radius:16px;background:var(--iseg);font-size:13px;font-weight:700;display:flex;align-items:center;gap:4px;margin-right:4px}
+.ios .seg{margin:4px 16px 8px;background:var(--iseg);border-radius:9px;padding:2px;display:flex;height:34px}
+.ios .seg div{flex:1;display:flex;align-items:center;justify-content:center;font-size:13px;border-radius:7px}.ios .seg div.on{background:var(--isegsel);font-weight:600}
+.ios .cov{width:220px;height:220px;margin:26px auto 14px;border-radius:8px;background:linear-gradient(160deg,#21445a,#0f1b2b);position:relative;color:#f6efe0;font-family:Georgia,serif}
+.ios .cov b{position:absolute;left:14px;top:14px;font-size:24px}.ios .cov span{position:absolute;left:14px;bottom:12px;font-family:Inter,sans-serif;font-size:11px;letter-spacing:2px}
+.ios .bt{text-align:center;font-weight:700;font-size:20px}.ios .by{text-align:center;color:var(--isec);font-size:15px;margin-top:2px}
+.ios .pb{position:absolute;left:0;right:0;bottom:0;height:300px;background:var(--ibar);padding:16px 20px}
+.ios .chap{background:var(--iseg);border-radius:10px;padding:8px 14px;font-size:13px;color:var(--isec)}.ios .chap b{display:block;color:var(--itext);font-size:16px}
+.ios .sl{height:4px;background:rgba(128,128,128,.35);border-radius:2px;margin:18px 0 8px;position:relative}.ios .sl i{position:absolute;left:0;top:0;bottom:0;width:38%;background:var(--itext);border-radius:2px}
+.ios .tm{display:flex;justify-content:space-between;font-size:13px;color:var(--isec)}
+.ios .ks{display:flex;justify-content:space-around;align-items:center;margin-top:14px;font-size:13px;text-align:center}
+.ios .pp{width:64px;height:64px;border-radius:50%;background:#111418;color:#FFDD00;display:flex;align-items:center;justify-content:center;font-size:26px}
+.ios .dim{position:absolute;inset:0;background:rgba(0,0,0,.4)}
+.ios .sheet{position:absolute;left:0;right:0;bottom:0;background:var(--isheet);border-radius:14px 14px 0 0;padding:8px 0 34px}
+.ios .grab{width:36px;height:5px;border-radius:3px;background:rgba(128,128,128,.5);margin:0 auto 10px}
+.ios .sheet h4{font-size:17px;font-weight:600;text-align:center;margin-bottom:4px}
+.ios .sheet .sub{font-size:13px;color:var(--isec);text-align:center;margin-bottom:10px;padding:0 20px}
+.ios .sh{font-size:13px;color:var(--isec);text-transform:uppercase;letter-spacing:.4px;padding:14px 20px 6px}
+.ios .li{display:flex;align-items:center;gap:12px;min-height:56px;padding:0 20px;border-top:.5px solid rgba(128,128,128,.25)}
+.ios .li .x{flex:1}.ios .li .d{font-size:13px;color:var(--isec)}
+.ios .li .ck{color:var(--iacc);font-weight:700;width:18px}
+.ios .li .dl{font-size:13px;color:var(--isec)}
+.ios .shelf{padding:0 16px}
+.ios .shelf h1{font-size:30px;font-weight:700;margin:6px 0 12px}
+.ios .sc{display:flex;gap:12px;padding:10px 0;border-bottom:.5px solid rgba(128,128,128,.25);align-items:center}
+.ios .sc .m{width:56px;height:84px;border-radius:4px;flex-shrink:0}
+.ios .sc .x{flex:1}.ios .sc b{font-size:16px}.ios .sc .d{font-size:13px;color:var(--isec);margin-top:2px}
+.ios .ilg{display:inline-flex;gap:2px;margin-top:6px}.ios .ilg span{font-size:11px;font-weight:700;padding:2px 6px;border-radius:4px;background:var(--iseg);color:var(--isec)}.ios .ilg span.on{background:var(--iacc);color:var(--ibg)}
+.ios .itoast{position:absolute;left:16px;right:16px;bottom:316px;background:var(--itext);color:var(--ibg);border-radius:12px;padding:12px 14px;font-size:14px;display:flex;justify-content:space-between;gap:10px}
+.ios .itoast a{font-weight:700;color:var(--ibg)}
+.scr{display:none}.scr.on{display:block}
+</style></head>
+<body>
+<!-- 1 Bibliothek -->
+<div class="scr" id="s1"><div class="app"><nav class="side"><div class="logo">Local Voice AI</div><div class="n">Start</div><div class="n">Verlauf</div><div class="n">Aufnahmen</div><div class="n">Vorlesen</div><div class="n on">Bibliothek</div><div class="n">Sprachgespräch</div></nav>
+<main class="main">
+ <div class="banner" role="status"><div class="t"><b>2 Bücher sind wohl Sprachfassungen eines Werks.</b> „Garten im Wandel“ (Deutsch) und „The Changing Garden“ (Englisch).</div><div class="acts"><button class="btn g">Später</button><button class="btn">Prüfen …</button><button class="btn p">Zusammenlegen</button></div></div>
+ <h2>Alle Titel<small>6 Bücher</small></h2>
+ <div class="grid">
+  <div class="card"><div class="cv c1"><div class="a">Anna Beispiel</div><div class="tt">Der Weg zur Gelassenheit</div></div>
+   <div class="meta"><div><div class="ti">Der Weg zur Gelassenheit</div><div class="au">Anna Beispiel</div><div class="langs" aria-label="Sprachen: Deutsch (gewählt), Englisch"><span class="lg on">DE</span><span class="lg">EN</span></div></div><span>⋮</span></div>
+   <div class="row">🎧 <span>Hörbuch</span><span class="f">DE</span>34 %</div><div class="bar"><i style="width:34%"></i></div>
+   <div class="row">📖 <span>Text</span><span class="f">DE, EN</span>34 %</div></div>
+  <div class="card"><div class="cv c2"><div class="a">Ben Muster</div><div class="tt">Garten im Wandel</div></div>
+   <div class="meta"><div><div class="ti">Garten im Wandel</div><div class="au">Ben Muster</div><div class="langs"><span class="lg on">DE</span></div></div><span>⋮</span></div>
+   <div class="row">🎧 <span>Hörbuch</span><span class="f"></span>2 %</div></div>
+  <div class="card"><div class="cv c2" style="filter:hue-rotate(40deg)"><div class="a">Ben Muster</div><div class="tt">The Changing Garden</div></div>
+   <div class="meta"><div><div class="ti">The Changing Garden</div><div class="au">Ben Muster</div><div class="langs"><span class="lg on">EN</span></div></div><span>⋮</span></div>
+   <div class="row">📖 <span>Text</span><span class="f"></span>0 %</div></div>
+  <div class="card"><div class="cv c3"><div class="a">Clara Probe</div><div class="tt">Kleine Geschichte der Zahlen</div></div>
+   <div class="meta"><div><div class="ti">Kleine Geschichte der Zahlen</div><div class="au">Clara Probe</div></div><span>⋮</span></div>
+   <div class="row">📖 <span>Text</span><span class="f"></span>60 %</div></div>
+  <div class="card"><div class="cv c5"><div class="a">Felix Demo</div><div class="tt">Das Archiv am Fluss</div></div>
+   <div class="meta"><div><div class="ti">Das Archiv am Fluss</div><div class="au">Felix Demo</div></div><span>⋮</span></div>
+   <div class="row">📖 <span>Text</span><span class="f"></span>5 %</div></div>
+ </div>
+</main></div></div>
+
+<!-- 2 Prüfen-Dialog -->
+<div class="scr" id="s2"><div class="overlay"><div class="dlg" role="dialog" aria-labelledby="d2">
+ <h3 id="d2">Sprachfassungen zusammenlegen</h3>
+ <p>Zusammengelegte Bücher stehen einmal in der Bibliothek. Im Buch wählst du die Sprache; der Fortschritt geht mit. Abtrennen ist jederzeit möglich.</p>
+ <label class="pair"><input type="checkbox" checked><div class="x"><b>Garten im Wandel</b> (Deutsch, Hörbuch) + <b>The Changing Garden</b> (Englisch, Text)<div><span class="badge ok">Sicher</span></div><div class="why">Gleiches Werk bei Open Library, gleicher Autor, 24 und 24 Kapitel.</div></div></label>
+ <label class="pair"><input type="checkbox"><div class="x"><b>Das Archiv am Fluss</b> (Deutsch) + <b>The River Archive</b> (Englisch)<div><span class="badge w">Unsicher – bitte prüfen</span></div><div class="why">Gleicher Autor, ähnliche Länge (312 / 298 Seiten), aber kein Werkschlüssel und 18 statt 21 Kapitel.</div></div></label>
+ <p style="margin-top:12px;font-size:12px">Hauptfassung wird die Sprache, die du zuletzt gehört oder gelesen hast. Cover und Angaben kommen von der Hauptfassung.</p>
+ <div class="acts"><button class="btn">Abbrechen</button><button class="btn p">1 Paar zusammenlegen</button></div>
+</div></div></div>
+
+<!-- 3 Drop / Import -->
+<div class="scr" id="s3"><div class="overlay"><div class="dlg" role="dialog" aria-labelledby="d3">
+ <h3 id="d3">„The Way to Serenity“ hinzufügen</h3>
+ <p>Das Werk ist schon in der Bibliothek: <b>Der Weg zur Gelassenheit</b> (Deutsch, Hörbuch und Text). Die neue Datei ist <b>Englisch</b>.</p>
+ <div class="opt sel"><span class="r"></span><div><b>Als englische Fassung hinzufügen</b><div class="d">Ein Buch, Sprache im Player wählbar, Fortschritt gemeinsam.</div></div></div>
+ <div class="opt"><span class="r"></span><div><b>Als eigenes Buch</b><div class="d">Steht getrennt in der Bibliothek, eigener Fortschritt.</div></div></div>
+ <div class="acts"><button class="btn">Abbrechen</button><button class="btn p">Hinzufügen</button></div>
+</div></div></div>
+
+<!-- 4 Buchseite -->
+<div class="scr" id="s4"><div class="app"><nav class="side"><div class="logo">Local Voice AI</div><div class="n">Start</div><div class="n">Verlauf</div><div class="n">Aufnahmen</div><div class="n">Vorlesen</div><div class="n on">Bibliothek</div><div class="n">Sprachgespräch</div></nav>
+<main class="main"><div class="detail">
+ <div class="card cv-wrap"><div class="cv c1" style="aspect-ratio:2/3;border-radius:6px;padding:14px;color:#f6efe0;display:flex;flex-direction:column;justify-content:space-between;text-align:center;font-family:Georgia,serif"><div style="font:11px 'Segoe UI';letter-spacing:2px">ANNA BEISPIEL</div><div style="font-size:17px;font-weight:700">Der Weg zur Gelassenheit</div></div></div>
+ <div style="flex:1;min-width:0">
+  <div style="font-size:24px;font-weight:600">Der Weg zur Gelassenheit</div><div class="muted" style="margin-top:4px">Anna Beispiel · 24 Kapitel</div>
+  <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap"><button class="btn p">▶ Weiterhören · Deutsch</button><button class="btn">📖 Weiterlesen</button><button class="btn">Sprachfassung hinzufügen …</button></div>
+  <h2>Sprachen<small>Fortschritt gilt für alle Sprachen</small></h2>
+  <table class="tbl"><thead><tr><th>Sprache</th><th>Text</th><th>Hörbuch</th><th class="hide">Herkunft</th><th></th></tr></thead><tbody>
+   <tr class="cur"><td><b>Deutsch</b> <span class="lg on">gewählt</span></td><td>✓</td><td>✓ 9 h 29 min</td><td class="hide muted">Hauptfassung · EPUB + MP3</td><td>⋮</td></tr>
+   <tr><td><b>English</b></td><td>✓</td><td>✓ 8 h 51 min</td><td class="hide muted">The Way to Serenity · EPUB + M4B</td><td>⋮</td></tr>
+   <tr><td><b>Français</b></td><td>KI-Übersetzung</td><td class="muted">Vorlesen mit Stimme</td><td class="hide muted">aus Deutsch übersetzt</td><td>⋮</td></tr>
+  </tbody></table>
+  <div class="menu" style="position:absolute;right:auto;left:700px;top:340px;width:260px"><div class="it"><span class="x">Als Hauptfassung setzen</span></div><div class="it"><span class="x">Kapitel abgleichen …</span></div><div class="it"><span class="x">Exportieren …</span></div><div class="sep"></div><div class="it"><span class="x">Als eigenes Buch abtrennen</span></div><div class="it"><span class="x">Sprachfassung löschen …</span></div></div>
+ </div></div>
+</main></div></div>
+
+<!-- 5 Player mit Sprachwahl -->
+<div class="scr" id="s5"><div class="app"><nav class="side"><div class="logo">Local Voice AI</div><div class="n">Start</div><div class="n">Verlauf</div><div class="n">Aufnahmen</div><div class="n">Vorlesen</div><div class="n on">Bibliothek</div><div class="n">Sprachgespräch</div></nav>
+<main class="main"><h2>Bibliothek</h2><p class="muted">…</p></main></div>
+ <div class="menu" style="left:auto;right:150px;bottom:96px" role="menu" aria-label="Sprache">
+  <div class="hd">Sprache · Fortschritt wird übernommen</div>
+  <div class="it on" role="menuitemradio" aria-checked="true"><span class="ck">✓</span><div class="x"><b>Deutsch</b><div class="d">Hörbuch · gelesen von Anna Muster</div></div><span class="d">Kap. 7</span></div>
+  <div class="it" role="menuitemradio" aria-checked="false"><span class="ck"></span><div class="x"><b>English</b><div class="d">Hörbuch · read by Jane Doe</div></div><span class="d">Kap. 7</span></div>
+  <div class="sep"></div><div class="hd">KI-Übersetzung, vorgelesen</div>
+  <div class="it" role="menuitemradio" aria-checked="false"><span class="ck"></span><div class="x"><b>Français</b><div class="d">Stimme „Siwis“ · ab Kapitel 7 übersetzen</div></div></div>
+  <div class="note">Kapitel 7 hat in beiden Sprachen eine Entsprechung: gleiche Stelle im Kapitel.</div>
+ </div>
+ <div class="player"><div class="mini c1"></div><div class="inf"><b>Der Weg zur Gelassenheit</b><span>Kapitel 7 · Die Stille am Morgen</span></div>
+  <div class="ctr"><div class="keys"><span class="k">⏮</span><span class="k">↺</span><span class="k play">❚❚</span><span class="k">↻</span><span class="k">⏭</span></div><div class="line"><span>3:12:40</span><div class="bar"><i style="width:34%"></i></div><span>noch 6:16:20</span></div></div>
+  <button class="langbtn" aria-haspopup="menu" aria-expanded="true">🌐 DE ▴</button><span class="k">1,0×</span><span class="k">☾</span></div>
+</div>
+
+<!-- 6 Nach dem Wechsel -->
+<div class="scr" id="s6"><div class="app"><nav class="side"><div class="logo">Local Voice AI</div><div class="n">Start</div><div class="n">Verlauf</div><div class="n">Aufnahmen</div><div class="n">Vorlesen</div><div class="n on">Bibliothek</div><div class="n">Sprachgespräch</div></nav>
+<main class="main"><h2>Bibliothek</h2><p class="muted">…</p></main></div>
+ <div class="toast" role="status"><span>Weiter auf Englisch: Kapitel 7, gleiche Stelle im Kapitel (2:05 von 21:40).</span><a href="#">Rückgängig</a></div>
+ <div class="toast" role="status" style="bottom:170px;background:var(--warnbg);color:var(--warn);border:1px solid var(--border)"><span><b>Ungefähr:</b> Die englische Fassung hat 21 statt 18 Kapitel. Stelle nach Anteil am Buch (34 %).</span><a href="#" style="color:var(--warn)">Rückgängig</a></div>
+ <div class="player"><div class="mini c1" style="filter:hue-rotate(30deg)"></div><div class="inf"><b>The Way to Serenity</b><span>Chapter 7 · The Stillness of Morning</span></div>
+  <div class="ctr"><div class="keys"><span class="k">⏮</span><span class="k">↺</span><span class="k play">❚❚</span><span class="k">↻</span><span class="k">⏭</span></div><div class="line"><span>3:01:12</span><div class="bar"><i style="width:34%"></i></div><span>noch 5:49:48</span></div></div>
+  <button class="langbtn" aria-haspopup="menu">🌐 EN ▴</button><span class="k">1,0×</span><span class="k">☾</span></div>
+</div>
+
+<!-- 7 iPhone Player mit Sprachblatt -->
+<div class="scr" id="s7"><div class="ios">
+ <div class="st"><span>9:41</span><span>▮▮▮</span></div><div class="isl"></div>
+ <div class="hdr"><span class="b">⌄</span><div class="t"><div>Effi Briest</div><div>Kapitel 7 von 36</div></div><span class="lp">DE ▾</span><span class="b">Aa</span><span class="b">ⓘ</span></div>
+ <div class="seg"><div class="on">Hören</div><div>Lesen &amp; Hören</div><div>Lesen</div></div>
+ <div class="cov"><b>Effi Briest</b><span>THEODOR FONTANE</span></div>
+ <div class="bt">Effi Briest</div><div class="by">gelesen von Anna Muster</div>
+ <div class="pb"><div class="chap">Kapitel 7 von 36<b>Siebtes Kapitel</b></div><div class="sl"><i></i></div><div class="tm"><span>8:12</span><span>noch 13:28 im Kapitel</span></div>
+  <div class="ks"><span>⏮<br>Kapitel</span><span>↺<br>15 s</span><span class="pp">❚❚</span><span>↻<br>15 s</span><span>⏭<br>Kapitel</span></div></div>
+ <div class="dim"></div>
+ <div class="sheet" role="dialog" aria-label="Sprache"><div class="grab"></div><h4>Sprache</h4><div class="sub">Du hörst an derselben Stelle weiter: Kapitel 7, 8:12.</div>
+  <div class="sh">Fassungen</div>
+  <div class="li"><span class="ck">✓</span><div class="x">Deutsch<div class="d">Hörbuch · Anna Muster</div></div><span class="dl">auf dem iPhone</span></div>
+  <div class="li"><span class="ck"></span><div class="x">English<div class="d">Hörbuch · Jane Doe · 412 MB</div></div><span class="dl">⤓ Laden</span></div>
+  <div class="li"><span class="ck"></span><div class="x">English<div class="d">Text, vorgelesen mit Systemstimme</div></div><span class="dl"></span></div>
+  <div class="sh">KI-Übersetzung</div>
+  <div class="li"><span class="ck"></span><div class="x">Français<div class="d">auf dem PC übersetzt · Text</div></div></div>
+ </div>
+</div></div>
+
+<!-- 8 iPhone Regal + Toast -->
+<div class="scr" id="s8"><div class="ios">
+ <div class="st"><span>9:41</span><span>▮▮▮</span></div><div class="isl"></div>
+ <div class="shelf"><h1>Bibliothek</h1>
+  <div class="sc"><div class="m c1"></div><div class="x"><b>Der Weg zur Gelassenheit</b><div class="d">Anna Beispiel · 34 %</div><div class="ilg"><span class="on">DE</span><span>EN</span></div></div><span>⤓</span></div>
+  <div class="sc"><div class="m c2"></div><div class="x"><b>Garten im Wandel</b><div class="d">Ben Muster · 2 %</div><div class="ilg"><span class="on">DE</span></div></div><span>✓</span></div>
+  <div class="sc"><div class="m c3"></div><div class="x"><b>Kleine Geschichte der Zahlen</b><div class="d">Clara Probe · 60 %</div></div><span>⤓</span></div>
+  <div class="sc"><div class="m c5"></div><div class="x"><b>Das Archiv am Fluss</b><div class="d">Felix Demo · 5 %</div></div><span>⤓</span></div>
+ </div>
+ <div class="itoast" style="bottom:40px"><span>Weiter auf Englisch: Kapitel 7, gleiche Stelle.</span><a>Rückgängig</a></div>
+</div></div>
+<script>
+const q=new URLSearchParams(location.search);document.getElementById('s'+(q.get('s')||'1')).classList.add('on');
+if(q.get('t')==='dunkel')document.documentElement.classList.add('dark');
+</script>
+</body></html>
