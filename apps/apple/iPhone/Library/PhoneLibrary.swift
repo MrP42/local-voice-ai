@@ -70,10 +70,15 @@ final class PhoneLibrary: ObservableObject {
     /// Text des Buchs bzw. der Sicht: `text.txt` gehört der Hauptfassung, jede weitere Fassung hat ihren Text unter
     /// `editions/<fassung>/text.txt` (Sprachfassungen lva#344). Nur Sichten (`editionId`) lesen die Fassungen.
     func textURL(_ book: LibraryBook) -> URL {
-        if let id = book.editionId, Self.isSafeEditionId(id), id != BookEditions(book: book).primaryId {
+        if let id = book.editionId, Self.isSafeEditionId(id), id != flatEditionId(book) {
             return editionTextURL(book, id)
         }
         return dir(book).appendingPathComponent("text.txt")
+    }
+    /// Fassung, der die flachen Dateien (`text.txt`, `files.text/cover/audio`) gehören: die Hauptfassung des Senders
+    /// (`sync.json`), ohne Vermerk die des Buchs.
+    func flatEditionId(_ book: LibraryBook, meta known: SyncMeta? = nil) -> String? {
+        (known ?? meta(book)).flatEdition ?? BookEditions(book: book).primaryId
     }
     func editionTextURL(_ book: LibraryBook, _ editionId: String) -> URL {
         dir(book).appendingPathComponent("editions", isDirectory: true).appendingPathComponent(editionId, isDirectory: true)
@@ -133,8 +138,8 @@ final class PhoneLibrary: ObservableObject {
     /// des Senders, weitere Fassungen stehen in `files.editions[<fassung>].audio`.
     func accountAudio(_ book: LibraryBook, meta known: SyncMeta? = nil) -> [BlobRef] {
         let m = known ?? meta(book)
-        guard let id = book.editionId, id != BookEditions(book: book).primaryId else { return m.files.audio }
-        return m.files.files(forEdition: id).audio
+        guard let id = book.editionId else { return m.files.audio }
+        return m.files.files(forEdition: id, flat: flatEditionId(book, meta: m)).audio
     }
 
     // MARK: Kurzbücher vom PC
@@ -355,7 +360,7 @@ final class PhoneLibrary: ObservableObject {
     }
 
     /// Rückgängig: Auswahl zurück auf die Quellfassung samt Stelle. Was in der Zielfassung seit dem Wechsel
-    /// gehört wurde, bleibt; ohne Hörbereiche gilt der Stand vor dem Wechsel. Wiederhergestellte Datensätze
+    /// gehört wurde, bleibt (Vereinigung der Bereiche); Stelle und „fertig“ gelten wie vor dem Wechsel. Datensätze
     /// sind „jetzt“ geschrieben, sonst überstimmte der Wechselstand sie beim nächsten Abgleich.
     @discardableResult
     func undoSwitch(_ undo: SwitchUndo) -> LibraryBook? {
@@ -363,13 +368,8 @@ final class PhoneLibrary: ObservableObject {
         let now = Self.nowMs()
         guard let changed = raw.settingReading(edition: undo.fromEdition, position: undo.fromPosition, device: Self.deviceTag, now: now),
               (try? write(changed)) != nil else { return nil }
-        if var target = record(undo.targetKey), !(target.heard.isEmpty && target.read.isEmpty) {
-            target.finished = undo.targetRecord?.finished == true ? true : nil
-            target.updated = now
-            put(undo.targetKey, target)
-        } else if var before = undo.targetRecord {
-            before.updated = now
-            put(undo.targetKey, before)
+        if let restored = LibraryProgress.undoingSwitch(current: record(undo.targetKey), before: undo.targetRecord, now: now) {
+            put(undo.targetKey, restored)
         } else {
             removeProgress(undo.targetKey)
         }
@@ -408,12 +408,12 @@ final class PhoneLibrary: ObservableObject {
     /// Wechselt die Hauptfassung (am PC), wandern die Texte mit: `text.txt` gehört immer der Hauptfassung, die
     /// bisherige kommt unter `editions/<fassung>/`, die neue wird zu `text.txt`. Nicht mehr lebende Fassungen
     /// verlieren ihren Ordner.
-    private func adoptEditionFiles(from old: LibraryBook, to new: LibraryBook) {
+    private func adoptEditionFiles(from old: LibraryBook, to new: LibraryBook, oldFlat: String?, newFlat: String?) {
         guard old.editions != nil || new.editions != nil else { return }
-        let before = BookEditions(book: old), after = BookEditions(book: new)
+        let after = BookEditions(book: new)
         let fm = FileManager.default
         let folder = dir(new)
-        if let a = before.primaryId, let b = after.primaryId, a != b, Self.isSafeEditionId(a), Self.isSafeEditionId(b) {
+        if let a = oldFlat, let b = newFlat, a != b, Self.isSafeEditionId(a), Self.isSafeEditionId(b) {
             let flat = folder.appendingPathComponent("text.txt")
             let hold = folder.appendingPathComponent("text.wechsel")
             let oldHome = editionTextURL(new, a), newHome = editionTextURL(new, b)
@@ -441,9 +441,12 @@ final class PhoneLibrary: ObservableObject {
 
     /// Buch aus dem Abgleich übernehmen (ohne eigenen Stand zu erhöhen).
     func storeRemote(_ book: LibraryBook, meta: SyncMeta) throws {
-        if let old = rawBook(book.id) { adoptEditionFiles(from: old, to: book) }
+        let local = rawBook(book.id)
+        let flat = BookEditions.senderPrimary(local: local, incoming: book)
+        if let local { adoptEditionFiles(from: local, to: book, oldFlat: flatEditionId(local), newFlat: flat) }
         try write(book)
         var merged = meta
+        merged.flatEdition = flat
         merged.localAudio = self.meta(book).localAudio  // Lokale Angabe, kommt nicht aus dem Konto.
         setMeta(book, merged)
     }

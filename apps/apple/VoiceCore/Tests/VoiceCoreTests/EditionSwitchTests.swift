@@ -71,6 +71,6 @@ final class EditionSwitchTests: XCTestCase {
         let list = EditionSwitch.textChapters(text)
         XCTAssertEqual(list.titles, ["Eins", "Zwei"])
         XCTAssertEqual(list.starts.count, 2)
-        XCTAssertEqual(list.starts[0], 7, accuracy: 0.001)
+        XCTAssertEqual(list.starts[0], 9, accuracy: 0.001)  // hinter „# “: wie `textChapters` am PC (`at + line.indexOf(title)`)
     }
 }

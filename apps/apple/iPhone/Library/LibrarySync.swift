@@ -245,8 +245,12 @@ final class LibrarySync: ObservableObject {
                 // Sprachwechsel dieses iPhones, den der PC noch nicht kennt (lva#344), nicht überschreiben.
                 var keptReading = false
                 if let local {
+                    // Altgerät ohne Fassungen: die hiesigen bleiben (der Kern führt sie ebenso zusammen).
+                    let withEditions = book.keepingEditions(from: local)
+                    let keptEditions = withEditions.editions != book.editions
+                    book = withEditions
                     let kept = book.keepingNewerReading(from: local)
-                    keptReading = kept.reading != book.reading
+                    keptReading = keptEditions || kept.reading != book.reading
                     book = kept
                 }
                 try library.storeRemote(book, meta: .init(files: synced.files, updated: synced.updated))
@@ -287,7 +291,8 @@ final class LibrarySync: ObservableObject {
             let editions = BookEditions(book: book)
             if !editions.synthesized, editions.hasLanguages {
                 let files = library.meta(book).files
-                for e in editions.editions where e.id != editions.primaryId && e.text != nil && PhoneLibrary.isSafeEditionId(e.id) {
+                let flat = library.flatEditionId(book, meta: library.meta(book))
+                for e in editions.editions where e.id != flat && e.text != nil && PhoneLibrary.isSafeEditionId(e.id) {
                     guard let ref = files.files(forEdition: e.id).text, ref.size > 0, ref.size <= 32 * 1024 * 1024,
                           library.editionTextBlob(book, e.id) != ref.blob else { continue }
                     let target = library.editionTextURL(book, e.id)

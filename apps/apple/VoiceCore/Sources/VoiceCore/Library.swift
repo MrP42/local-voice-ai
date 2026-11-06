@@ -244,6 +244,29 @@ public enum LibraryProgress {
         return merged
     }
 
+    /// Zielfassung nach „Rückgängig“ (wie `undoSwitch` am Desktop): Stelle, Anker, Einheit und „fertig“ gehen auf den
+    /// Stand VOR dem Wechsel zurück; Bereiche sind die Vereinigung aus damals und seitdem Gehörtem. Gab es vorher
+    /// keinen Datensatz, bleibt nur, was seitdem gehört wurde (`nil`, wenn nichts).
+    public static func undoingSwitch(current: ProgressRecord?, before: ProgressRecord?, now: Double) -> ProgressRecord? {
+        var out: ProgressRecord
+        if let before {
+            out = before
+            if let current {
+                out.heard = mergeRanges(before.heard + current.heard)
+                out.read = mergeRanges(before.read + current.read)
+                out.length = max(before.length, current.length)
+                out.frontier = max(before.frontier ?? 0, current.frontier ?? 0, rangesEnd(out))
+            }
+            out.finished = before.finished == true ? true : nil
+        } else {
+            guard let current, !(current.heard.isEmpty && current.read.isEmpty) else { return nil }
+            out = current
+            out.finished = nil
+        }
+        out.updated = now
+        return out
+    }
+
     /// Größtes Ende aller gehörten und gelesenen Bereiche; 0 ohne Bereiche.
     static func rangesEnd(_ rec: ProgressRecord) -> Double {
         (rec.heard + rec.read).reduce(0) { $1.count == 2 && $1[1].isFinite ? max($0, $1[1]) : $0 }

@@ -338,6 +338,33 @@ extension LibraryBook {
     }
 }
 
+extension BookEditions {
+    /// Zu welcher Fassung gehören die flachen Dateien (`files.text/cover/audio`) des eingehenden Buchs? Wie
+    /// `editions::sender_primary` im Kern: Ein Altgerät (Schema < 2, ohne Fassungen) liefert die Arbeitskopie der
+    /// hiesigen Hauptfassung, sonst gilt die Hauptfassung des (normalisierten) eingehenden Buchs; Altbestand aus
+    /// Schema 1 gehört zu `ed_<buch>`.
+    public static func senderPrimary(local: LibraryBook?, incoming: LibraryBook) -> String? {
+        let legacy = (incoming.schema ?? 1) < 2 && incoming.editions == nil
+        if legacy, let local {
+            let mine = BookEditions(book: local)
+            if !mine.synthesized { return mine.primaryId }
+        }
+        return BookEditions(book: incoming).primaryId
+    }
+}
+
+extension LibraryBook {
+    /// Kommt das Buch von einem Altgerät (Schema < 2, ohne Fassungen), behält es die hiesigen Fassungen samt
+    /// Hauptfassung, Lesestand und Zuordnungen, damit der Abgleich sie nicht löscht.
+    public func keepingEditions(from local: LibraryBook) -> LibraryBook {
+        guard (schema ?? 1) < 2, editions == nil, local.editions != nil else { return self }
+        var out = self
+        out.schema = local.schema; out.workKey = local.workKey; out.editions = local.editions; out.primary = local.primary
+        out.editionTombstones = local.editionTombstones; out.reading = local.reading; out.alignments = local.alignments
+        return out
+    }
+}
+
 #if canImport(CryptoKit)
 // MARK: - Dateien je Fassung (`files.editions[<fassung>]`)
 
@@ -359,6 +386,12 @@ extension BookFiles {
         return EditionFiles(text: entry["text"]?.decoded(BlobRef.self),
                             cover: entry["cover"]?.decoded(BlobRef.self),
                             audio: (entry["audio"]?.arrayValue ?? []).compactMap { $0.decoded(BlobRef.self) })
+    }
+
+    /// Dateien der Fassung `id`, wenn die flachen Felder zur Fassung `flat` gehören (Hauptfassung des Senders).
+    public func files(forEdition id: String, flat: String?) -> EditionFiles {
+        guard let flat, flat == id else { return files(forEdition: id) }
+        return EditionFiles(text: text, cover: cover, audio: audio)
     }
 }
 #endif

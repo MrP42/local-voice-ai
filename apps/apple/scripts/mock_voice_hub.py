@@ -94,6 +94,10 @@ if __name__ == "__main__":
     if "--pair" in sys.argv:
         PAIRING[0] = mock_pairing.Desktop(f"http://127.0.0.1:{sys.argv[1]}")
         print(PAIRING[0].uri(), flush=True)
+        if "--seed-book" in sys.argv:  # synthetisches Buch mit Sprachfassungen, nur zusammen mit --pair
+            import mock_library_seed
+            fixture = sys.argv[sys.argv.index("--seed-book") + 1]
+            print("Buch abgelegt:", mock_library_seed.seed(fixture, PAIRING[0].k, PAIRING[0].user_id, OBJECTS, BLOBS, SEQ), flush=True)
     try: srv.serve_forever()
     finally:
         print(json.dumps({"objects": len(OBJECTS), "blobs": {k[:8]: {"complete": v["complete"], "chunks": len(v["chunks"])} for k, v in BLOBS.items()},
@@ -105,4 +109,6 @@ if __name__ == "__main__":
 # Kopplung: mit --pair startet der Nachbau auch die PC-Seite und gibt den Link aus; dann
 #   xcrun simctl launch <sim> de.localvoice.prototype --library-tab --pair-auto
 #   xcrun simctl openurl <sim> '<Link>'
+# Buch mit Sprachfassungen (lva#344, Fixture DE+EN, Schema 2, stille WAV-Teile):
+#   python3 apps/apple/scripts/mock_voice_hub.py 8765 --pair --seed-book apps/apple/scripts/fixtures/sprachfassungen-buch.json
 # Passwort des Test-Kontos: geheim. Der Nachbau prüft weder Token noch Kontingent.
