@@ -1,0 +1,27 @@
+# usage-Wert des result (roh)	erwartet (ok = gueltig mit input>0 und output>0, reject = ungueltig)
+{"input_tokens": 3000, "output_tokens": 5}	ok
+{"input_tokens": 3000, "cache_creation_input_tokens": 20000, "cache_read_input_tokens": 10000, "output_tokens": 5}	ok
+{"output_tokens": 5}	reject
+{"input_tokens": 3000}	reject
+{"input_tokens": 0, "output_tokens": 5}	reject
+{"input_tokens": 3000, "output_tokens": 0}	reject
+{"input_tokens": 9007199254740991, "output_tokens": 5}	ok
+{"input_tokens": 9007199254740990, "cache_creation_input_tokens": 1, "output_tokens": 5}	ok
+{"input_tokens": 9007199254740991, "cache_read_input_tokens": 1, "output_tokens": 5}	reject
+{"input_tokens": 9007199254740991, "cache_creation_input_tokens": 9007199254740991, "cache_read_input_tokens": 9007199254740991, "output_tokens": 5}	reject
+{"input_tokens": 3000, "output_tokens": 9007199254740992}	reject
+{"input_tokens": 3000, "cache_read_input_tokens": "5", "output_tokens": 5}	reject
+{"input_tokens": 3000, "cache_read_input_tokens": -0, "output_tokens": 5}	reject
+{"input_tokens": 3000, "other": {"cache_read_input_tokens": 0}, "cache_read_input_tokens": -0, "output_tokens": 5}	reject
+{"input_tokens": 3000, "output_tokens": 5, "cache_read_input_tokens": null}	reject
+{"input_tokens": 3000, "output_tokens": 5.0}	reject
+{"input_tokens": 3000, "output_tokens": 5, "other": {"cache_read_input_tokens": -0}}	ok
+5	reject
+null	reject
+{"input_tokens": 3000, "output_tokens": 5, "cache_read_input_tokens": -0}, "usage\u0001cache_read_input_tokens": 1	reject
+{"input_tokens": 3000, "output_tokens": 5}, "usage\u0001cache_read_input_tokens": -0	ok
+{"input_tokens": 3000, "output_tokens": 5}, "usage": {"input_tokens": 3000, "output_tokens": 5, "cache_read_input_tokens": -0}	reject
+{"input_tokens": 3000, "output_tokens": 5, "cache_read_input_tokens": -0}, "usage": {"input_tokens": 3000, "output_tokens": 5}	ok
+{"input_tokens": 3000, "output_tokens": 5, "cache_read_input_tokens": -0, "cache_read_input_tokens": 1}	ok
+{"input_tokens": 3000, "output_tokens": 5, "cache_read_input_tokens": 1, "cache_read_input_tokens": -0}	reject
+{"input_tokens": 3000, "output_tokens": 5}, "T:x": -0, "U:cache_read_input_tokens": -0	ok

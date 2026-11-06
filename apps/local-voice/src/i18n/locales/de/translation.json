@@ -781,7 +781,26 @@
         "off": "aus",
         "previewHint": "Vorschau: Das gewählte Modell hat den Prüflauf noch nicht bestanden. Antworten können falsch sein. Der Spoilerschutz verringert das Risiko, schließt es aber nicht aus.",
         "revoke": "Cloud-Freigabe widerrufen ({{model}})",
-        "revokeHint": "Danach fragt das Buch-Gespräch vor der nächsten Anfrage erneut."
+        "revokeHint": "Danach fragt das Buch-Gespräch vor der nächsten Anfrage erneut.",
+        "subscription": "Abo-Vorschau (Claude Code)",
+        "subscriptionState": {
+          "on": "an",
+          "off": "aus",
+          "reconfirm": "erneut bestätigen",
+          "not_released": "nicht freigegeben"
+        },
+        "subscriptionHint": "Budget empirisch, nicht bewiesen. Anfragen gehen an Anthropic über dein Abo.",
+        "notReleased": {
+          "default": "Noch nicht freigegeben: Messung oder Prüfung auf diesem Gerät fehlt",
+          "measurement_missing": "Noch nicht freigegeben: Messung auf diesem Gerät fehlt",
+          "isolation_unverified": "Noch nicht freigegeben: Isolation dieser CLI-Version ist nicht geprüft",
+          "payload_unknown": "Noch nicht freigegeben: Das gestartete Programm der CLI ist nicht bestimmbar",
+          "no_cli": "Noch nicht freigegeben: CLI nicht gefunden oder nicht lesbar",
+          "context_unknown": "Noch nicht freigegeben: Der Kontext des Modells ist nicht belegt",
+          "codex_preview_not_available": "Vorschau für Codex folgt",
+          "claude_not_native": "Noch nicht freigegeben: Claude ist keine native Programmdatei (npm-, Node- oder Skript-Start)",
+          "platform_unsupported": "Noch nicht freigegeben: Auf diesem System noch nicht verfügbar"
+        }
       },
       "turn": {
         "spoken": "gesprochen",
@@ -796,7 +815,22 @@
         "failed": "Die Antwort ist fehlgeschlagen.",
         "general": "Allgemeinwissen, nicht aus dem Buch",
         "preview": "Vorschau",
-        "previewHint": "Das Modell hat den Prüflauf noch nicht bestanden. Antworten können falsch sein."
+        "previewHint": "Das Modell hat den Prüflauf noch nicht bestanden. Antworten können falsch sein.",
+        "subscriptionHint": "Abo-Vorschau: Das Budget ist empirisch, nicht bewiesen. Antworten können falsch sein."
+      },
+      "subscription": {
+        "title": "Abo-Vorschau einschalten?",
+        "reconfirm": "Die CLI oder das Modell hat sich geändert. Bitte bestätige die Vorschau erneut; bis dahin wirkt der Schalter nicht.",
+        "risk": "Budget empirisch, nicht bewiesen: Bei einem Abo lässt sich vorab nicht beweisen, wie viele Token ein Aufruf braucht. Die App rechnet mit Sicherheitszuschlägen und verwirft jede Antwort, die auf Kompaktierung, Abschneiden oder Abweichungen hindeutet. Antworten können trotzdem falsch sein.",
+        "cloud": "Anfragen gehen an Anthropic über dein Abo. Die Freigabe gilt für die jetzt installierte Claude-Datei (das installierte Original, ohne Kopie); nach einem Update musst du sie erneut bestätigen und neue Belege erzeugen.",
+        "confirm": "Verstanden, einschalten",
+        "cancel": "Abbrechen",
+        "error": {
+          "noCli": "Keine installierte Claude-CLI gefunden. Installiere Claude Code und melde dich an. Codex folgt später.",
+          "notNative": "Die Claude-CLI ist keine native Programmdatei (npm-, Node- oder Skript-Start) und kann nicht eingebunden werden.",
+          "platformUnsupported": "Auf diesem System noch nicht verfügbar",
+          "other": "Die Vorschau konnte nicht eingeschaltet werden."
+        }
       },
       "found": {
         "title": "Fundstellen",

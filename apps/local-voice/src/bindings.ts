@@ -5738,6 +5738,34 @@ async changeBookTalkEnabledSetting(enabled: boolean) : Promise<Result<null, stri
 }
 },
 /**
+ * Schalter „Abo-Vorschau“ (`book_talk_subscription_preview`, Standard aus).
+ * Einschalten (und erneutes Bestätigen) geht nur nach dem Risikohinweis
+ * („Budget empirisch, nicht bewiesen; Anfragen gehen an Anthropic/OpenAI über
+ * dein Abo“): `acknowledged` kommt vom Dialog. Dabei werden Anbieter, Modell,
+ * CLI-Version und SHA-256 des Programms je Abo-Modell gebunden; weicht eines
+ * später ab, wirkt der Schalter nicht, bis erneut bestätigt wird. Ausschalten
+ * löscht die Bindung.
+ */
+async changeBookTalkSubscriptionPreviewSetting(enabled: boolean, acknowledged: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_book_talk_subscription_preview_setting", { enabled, acknowledged }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Zustand der Abo-Vorschau für das aktuelle Gesprächsmodell.
+ */
+async bookTalkPreviewStatus() : Promise<Result<BookTalkPreviewStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("book_talk_preview_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Einstellung `book_talk_cloud_consent` (Schlüssel `Verbindung::Modell` mit
  * Freigabe). Doppelte und unbekannte Schlüssel fallen weg; Lesen und
  * Schreiben laufen unter der gemeinsamen Einstellungssperre, damit kein
@@ -8130,6 +8158,21 @@ book_talk_enabled?: boolean;
  */
 book_talk_relay_enabled?: boolean; 
 /**
+ * Buch-Gespraech (lva#334): Schalter „Abo-Vorschau“ fuer Claude Code und
+ * Codex ueber das Abo. Standard aus; nur nach dem Risikohinweis
+ * einschaltbar („Budget empirisch, nicht bewiesen; Anfragen gehen an
+ * Anthropic/OpenAI ueber dein Abo“). Gilt fuer Desktop-Aufrufe und
+ * Relay-Anfragen, aber nur mit gueltigem Tupel in
+ * `book_talk_preview_bindings`.
+ */
+book_talk_subscription_preview?: boolean; 
+/**
+ * Buch-Gespraech (lva#334): beim Einschalten gebundene Tupel (Anbieter,
+ * Modell, CLI-Version, SHA-256 des Programms) je Abo-Modell. Weicht eines
+ * ab, ist die Freigabe fuer dieses Modell ungueltig (erneut bestaetigen).
+ */
+book_talk_preview_bindings?: PreviewBinding[]; 
+/**
  * Stimmprofile 2a: Vorschläge „klingt wie …, zusammenführen?“ aus Stimmabdrücken
  * innerhalb einer Besprechung (CAM++). Wirkt erst, wenn das Modell per Knopf
  * geladen ist; ohne den Schluessel gilt `true`. Kein Abgleich ueber Besprechungen.
@@ -8536,6 +8579,52 @@ export type AvailableAccelerators = { transcribe: string[]; ort: string[]; gpu_d
  */
 export type Avatar = { kind: "image"; file: string } | { kind: "icon"; name: string }
 export type BindingResponse = { success: boolean; binding: ShortcutBinding | null; error: string | null }
+/**
+ * Warum die Vorschau (noch) nicht freigegeben ist.
+ */
+export type Blocked = 
+/**
+ * Keine CLI zu finden oder nicht lesbar.
+ */
+"no_cli" | 
+/**
+ * Das tatsaechlich gestartete Programm ist nicht bestimmbar.
+ */
+"payload_unknown" | 
+/**
+ * Fuer dieses Modell wurde nie bestaetigt.
+ */
+"binding_missing" | 
+/**
+ * Version, Programm oder Modell weichen vom bestaetigten Tupel ab.
+ */
+"binding_changed" | 
+/**
+ * Fuer diese CLI-Version sind nicht alle Isolationsfaehigkeiten belegt.
+ */
+"isolation_unverified" | 
+/**
+ * Keine Messung fuer (CLI, Version, Programm, Modell) auf diesem Geraet.
+ */
+"measurement_missing" | 
+/**
+ * Der Kontext des Modells ist nicht belegt.
+ */
+"context_unknown" | 
+/**
+ * Codex gibt es in der Vorschau nicht (Phase 2, eigenes Issue).
+ */
+"codex_preview_not_available" | 
+/**
+ * Das Claude-Programm ist keine native Binaerdatei (npm-, Node- oder
+ * Skript-Launcher): nicht bindbar.
+ */
+"claude_not_native" | 
+/**
+ * Dieses System kann das geprueft gehaltene Programm nicht ohne
+ * Austauschfenster starten (kein `/proc`, macOS, andere Unix): gesperrt.
+ */
+"platform_unsupported"
 export type Book = { id: string; title: string; created_ms: number; 
 /**
  * Seiten in Reihenfolge der Teile.
@@ -8591,7 +8680,13 @@ reason?: string | null;
 /**
  * Verworfene (unbelegte) Sätze der Modellantwort.
  */
-dropped: number; scope: BookTalkScope; frontier: number }
+dropped: number; scope: BookTalkScope; frontier: number; 
+/**
+ * Die Antwort stammt aus der Abo-Vorschau (lva#334: Claude Code oder
+ * Codex ueber das Abo, Budget nur empirisch, nicht bewiesen). Die
+ * Oberflaeche kennzeichnet sie als „Vorschau“.
+ */
+preview: boolean }
 /**
  * Ein Beleg: Stelle im Buch mit wörtlichem Zitat (Form wie `Citation` im Vertrag).
  */
@@ -8624,6 +8719,28 @@ export type BookTalkCommandKind = "jump" | "read_citation" |
 export type BookTalkEvent = { kind: "sentence"; request_id: string; sentence: BookTalkSentence } | { kind: "done"; request_id: string; answer: BookTalkAnswer } | { kind: "failed"; request_id: string; code: string }
 export type BookTalkInput = "voice" | "text"
 export type BookTalkIntent = "recap" | "locate" | "explain" | "question"
+/**
+ * Zustand der Abo-Vorschau für die Oberfläche.
+ */
+export type BookTalkPreviewStatus = { 
+/**
+ * Schalter `book_talk_subscription_preview`.
+ */
+enabled: boolean; 
+/**
+ * Das Gesprächsmodell ist ein Abo-Modell (CLI).
+ */
+applies: boolean; 
+/**
+ * `reconfirm`: der Schalter ist an, wirkt aber nicht, bis erneut bestätigt
+ * wird; `not_released`: Isolation oder Messung auf diesem Gerät fehlen.
+ */
+state: PreviewState; 
+/**
+ * Warum die Vorschau (noch) nicht wirkt (`measurement_missing`,
+ * `isolation_unverified`, `binding_changed` …); sonst `None`.
+ */
+blocked: Blocked | null }
 /**
  * Anfrage (Form wie `BookTalkRequest` im Vertrag). Bereich und Grenze gelten
  * für genau diese Anfrage.
@@ -11109,9 +11226,57 @@ export type PhononVoiceErrorKind = "consent_required" | "no_key" | "key_store" |
 export type PlacedInfo = { rel: string; bytes: number }
 export type PostProcessProvider = { id: string; label: string; base_url: string; allow_base_url_edit?: boolean; models_endpoint?: string | null; supports_structured_output?: boolean }
 /**
+ * Das Tupel, an das die Freigabe gebunden ist. Aendert sich eines der Felder,
+ * ist die Freigabe ungueltig und muss erneut bestaetigt werden.
+ */
+export type PreviewBinding = { 
+/**
+ * `claude_cli` oder `codex_cli`.
+ */
+provider: string; 
+/**
+ * Modell, wie in der Konfiguration eingetragen (inkl. Effort-Endung).
+ */
+model_id: string; 
+/**
+ * Konkrete Modell-ID statt Alias, soweit bekannt (nur Anzeige; die
+ * Pruefung nutzt das in der Messung gemeldete Modell).
+ */
+concrete_model?: string | null; 
+/**
+ * Ausgabe von `<cli> --version` (erste Zeile).
+ */
+cli_version: string; 
+/**
+ * SHA-256 (hex) des tatsaechlich gestarteten Programms ([`payload_path`]).
+ */
+binary_sha256: string }
+/**
  * Phase im Ereignis [`TtsProviderPreview`].
  */
 export type PreviewPhase = "started" | "first_audio" | "done" | "cancelled" | "error"
+/**
+ * Wirkt die Vorschau fuer diesen Aufruf?
+ */
+export type PreviewState = 
+/**
+ * Schalter aus.
+ */
+"off" | 
+/**
+ * Schalter an, Tupel gueltig, Isolation und Messung belegt.
+ */
+"active" | 
+/**
+ * Schalter an, aber das Tupel fehlt oder weicht ab (oder die CLI ist nicht
+ * zu pruefen): der Schalter wirkt nicht, die Oberflaeche fragt erneut.
+ */
+"reconfirm" | 
+/**
+ * Schalter an, Tupel gueltig, aber Isolation oder Messung auf diesem
+ * Geraet fehlen: „Noch nicht freigegeben“.
+ */
+"not_released"
 export type ProgressEntry = { key: string; 
 /**
  * `None` löscht den Eintrag.

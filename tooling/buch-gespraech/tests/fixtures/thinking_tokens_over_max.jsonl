@@ -1,0 +1,4 @@
+{"type": "system", "subtype": "init", "model": "claude-sonnet-5-5", "tools": [], "mcp_servers": []}
+{"type": "system", "subtype": "thinking_tokens", "estimated_tokens": 9007199254740992, "estimated_tokens_delta": 1}
+{"type": "assistant", "message": {"model": "claude-sonnet-5-5", "content": [{"type": "text", "text": "keine"}]}}
+{"type": "result", "subtype": "success", "is_error": false, "result": "keine", "stop_reason": "end_turn", "usage": {"input_tokens": 3000, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0, "output_tokens": 5}, "modelUsage": {"claude-sonnet-5-5": {}}}

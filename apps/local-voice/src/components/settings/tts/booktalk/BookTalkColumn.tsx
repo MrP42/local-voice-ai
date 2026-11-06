@@ -40,6 +40,11 @@ export interface BookTalkColumnProps {
   /** Cloud-Modell mit Freigabe (Name) für den Menüpunkt „Freigabe widerrufen“; sonst `null`. */
   cloud: string | null;
   onRevoke(): void;
+  /** Abo-Vorschau (lva#334): Zustand des Schalters, `null` ohne Abo-Modell. */
+  subscription?: "on" | "off" | "reconfirm" | "not_released" | null;
+  /** Grund, wenn `subscription` „not_released“ ist (`measurement_missing` …). */
+  subscriptionReason?: string | null;
+  onSubscription?(): void;
   /** Frage stellen; die Hülle fragt vorher nach der Cloud-Freigabe. */
   onAsk(question: string, input: "text" | "voice"): void;
   onJump(c: BookTalkCitation): void;
@@ -62,6 +67,9 @@ export function BookTalkColumn({
   onEnabled,
   cloud,
   onRevoke,
+  subscription = null,
+  subscriptionReason = null,
+  onSubscription,
   onAsk,
   onJump,
   onReadFrom,
@@ -136,6 +144,9 @@ export function BookTalkColumn({
         onPreview={onEnabled}
         cloud={cloud}
         onRevoke={onRevoke}
+        subscription={subscription}
+        subscriptionReason={subscriptionReason}
+        onSubscription={onSubscription}
       />
       {!enabled && (
         <p className="bt__banner" role="note" data-testid="booktalk-disabled">
@@ -362,6 +373,12 @@ function TurnView({
           <p className="bt__preview" data-testid="booktalk-preview-tag">
             <span className="bt__tag">{t("tts.bookTalk.turn.preview")}</span>
             {` ${t("tts.bookTalk.turn.previewHint")}`}
+          </p>
+        )}
+        {turn.answer?.preview && (
+          <p className="bt__preview" data-testid="booktalk-subscription-tag">
+            <span className="bt__tag">{t("tts.bookTalk.turn.preview")}</span>
+            {` ${t("tts.bookTalk.turn.subscriptionHint")}`}
           </p>
         )}
         {turn.sentences.length === 0 && turn.status === "pending" && (

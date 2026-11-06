@@ -9,6 +9,12 @@ mod apple_intelligence;
 mod audio_feedback;
 pub mod audio_toolkit;
 mod book_ai; // lva#181: KI-Funktionen im Buch-Reader
+
+/// Eval-Tor des Buch-Gesprächs (lva#324); Kern des Examples `book_talk_eval`.
+pub mod book_talk_eval {
+    pub use crate::book_ai::talk::adapter::*;
+    pub use crate::book_ai::talk::eval::*;
+}
 mod books;
 mod catalog;
 pub mod cli;
@@ -2495,6 +2501,8 @@ fn specta_builder() -> Builder<tauri::Wry> {
             book_ai::talk::book_talk_clear,
             book_ai::talk::book_talk_command,
             book_ai::talk::change_book_talk_enabled_setting,
+            book_ai::talk::change_book_talk_subscription_preview_setting,
+            book_ai::talk::book_talk_preview_status,
             book_ai::talk::change_book_talk_cloud_consent_setting,
             // lva#325: globaler Sprachassistent (Abrufindex)
             app_context::service::app_context_warm,
