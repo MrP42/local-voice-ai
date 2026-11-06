@@ -48,6 +48,10 @@ export interface ActionMenuItem {
   trailing?: React.ReactNode;
   /** Trennlinie vor dem Eintrag (Gruppen in einem langen Menü). */
   dividerBefore?: boolean;
+  /** Zweite, kleinere Zeile unter dem Namen (Folge der Aktion). */
+  description?: string;
+  /** Zerstörende Aktion: Text in Warnfarbe. */
+  danger?: boolean;
 }
 
 interface ActionMenuProps {
@@ -340,7 +344,11 @@ export const ActionMenu: React.FC<ActionMenuProps> = ({
                       close(true);
                       item.onSelect();
                     }}
-                    className="lv-touch-row flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-start text-sm text-text/80 hover:bg-mid-gray/15 hover:text-text focus:bg-mid-gray/15 focus:text-text focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                    className={`lv-touch-row flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-start text-sm hover:bg-mid-gray/15 focus:bg-mid-gray/15 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50 ${
+                      item.danger
+                        ? "text-red-600 dark:text-red-400"
+                        : "text-text/80 hover:text-text focus:text-text"
+                    }`}
                   >
                     <Icon
                       width={16}
@@ -348,7 +356,14 @@ export const ActionMenu: React.FC<ActionMenuProps> = ({
                       aria-hidden="true"
                       className={item.iconClassName}
                     />
-                    <span className="flex-1">{item.label}</span>
+                    <span className="flex-1">
+                      {item.label}
+                      {item.description && (
+                        <span className="block text-xs text-text/70">
+                          {item.description}
+                        </span>
+                      )}
+                    </span>
                     {item.trailing}
                   </button>
                 </React.Fragment>

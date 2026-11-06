@@ -7685,6 +7685,167 @@
     "suchen": "Search"
   },
   "library": {
+    "sf": {
+      "add": "Add language edition …",
+      "badges": "Language editions: {{langs}}. Last active: {{current}}.",
+      "kind": {
+        "audio": "Audiobook",
+        "text": "Text"
+      },
+      "notice": {
+        "close": "Dismiss notice",
+        "undo": "Undo",
+        "align": "Match chapters …",
+        "at": ", {{at}} of {{length}}",
+        "chapter": "**{{lang}}**, chapter-exact: chapter {{chapter}} of {{total}}{{at}}.",
+        "approx": "**{{lang}}**, approximately at {{percent}}%.",
+        "openGroup": "Chapter {{a}} ({{langA}}) belongs to chapter {{b}} ({{langB}}); the match is still open.",
+        "noAlignment": "The chapters have not been matched yet.",
+        "loading": "{{lang}} is downloading. Playback continues in {{current}}.",
+        "failed": "Switching the language edition failed."
+      },
+      "switch": {
+        "button": "Language: {{lang}}, open selection",
+        "menu": "Choose language edition",
+        "audio": "Audiobook",
+        "text": "Text",
+        "noAudio": "No audiobook",
+        "noText": "No text",
+        "notLocal": "Not on this device",
+        "loading": "Downloading",
+        "narrator": "Narrator: {{name}}",
+        "alignedNote": "Chapters {{a}} ↔ {{b}} are matched: switching lands on the exact chapter.",
+        "openNote": "Chapters not matched: switching is approximate.",
+        "align": "Match chapters …"
+      },
+      "pairs": {
+        "barSure": "Same book in two languages?",
+        "barMaybe": "Maybe the same book in two languages?",
+        "barBooks": "“{{a}}” ({{langA}}) and “{{b}}” ({{langB}})",
+        "more": "and {{count}} more",
+        "later": "Later",
+        "reviewAll": "Review …",
+        "join": "Merge",
+        "title": "Review language editions",
+        "intro": "These books may be the same work in different languages. Nothing is merged without your confirmation.",
+        "confirm_one": "Merge {{count}} pair",
+        "confirm_other": "Merge {{count}} pairs",
+        "sure": "Sure",
+        "unsure": "Unsure",
+        "sameWork": "Same work ID",
+        "whyWork": "Same work ID: {{key}}",
+        "whyTitle": "Similar title, same author: {{author}}",
+        "whyAuthor": "Same author: {{author}}",
+        "foot": "Merged books can be separated again later.",
+        "joined_one": "{{count}} pair merged.",
+        "joined_other": "{{count}} pairs merged."
+      },
+      "offer": {
+        "title": "“{{title}}” added",
+        "same": "This is the same book as “{{title}}” ({{info}}). Add it as a {{lang}} language edition?",
+        "maybe": "Maybe the same book as “{{title}}” ({{info}}). Add it as a {{lang}} language edition?",
+        "legend": "How should the book be added?",
+        "edition": "Add as {{lang}} language edition",
+        "editionHint": "It appears as one card with several languages.",
+        "own": "Keep as its own book",
+        "ownHint": "It stays a separate entry in the library.",
+        "confirm": "Apply",
+        "done": "“{{title}}” is now the {{lang}} language edition."
+      },
+      "last": {
+        "line": "Last: {{lang}}, {{kind}}, {{percent}}% · {{where}}, {{when}}",
+        "here": "on this device",
+        "other": "on another device"
+      },
+      "section": {
+        "title": "Language editions",
+        "edition": "Edition",
+        "progress": "Progress",
+        "actions": "Actions",
+        "primary": "Primary edition",
+        "last": "Last",
+        "has": "Available",
+        "hasNot": "Not available",
+        "foot": "The primary edition determines title and cover. Deleted editions stay in the trash for 30 days.",
+        "alignedAll": "All chapters are matched.",
+        "alignedSome": "Chapters of {{a}} and {{b}} are partly matched."
+      },
+      "menu": {
+        "primary": "Make primary edition",
+        "align": "Match chapters …",
+        "export": "Export …",
+        "split": "Split off as its own book",
+        "remove": "Move to trash",
+        "removeHint": "Restorable for 30 days",
+        "for": "Actions for {{lang}}"
+      },
+      "split": {
+        "title": "Split off {{lang}} as its own book?",
+        "body": "“{{title}}” becomes its own book. Progress and files are kept.",
+        "confirm": "Split off",
+        "done": "“{{title}}” is now its own book."
+      },
+      "remove": {
+        "title": "Move {{lang}} to the trash?",
+        "body": "“{{title}}” disappears from the language editions. The files are kept for 30 days.",
+        "confirm": "Move to trash",
+        "done": "{{lang}} is in the trash.",
+        "doneHint": "Undo now or restore it later."
+      },
+      "replace": {
+        "legend": "Choose a new primary edition"
+      },
+      "graves": {
+        "title_one": "{{count}} deleted language edition",
+        "title_other": "{{count}} deleted language editions",
+        "row": "Deleted language edition {{n}}, removed {{date}}, restorable for {{days}} more days",
+        "restore": "Restore",
+        "done": "Language edition restored."
+      },
+      "align": {
+        "title": "Match chapters",
+        "intro": "“{{title}}”: {{langA}} has {{countA}} chapters, {{langB}} has {{countB}}. Confirm each group on its own.",
+        "mediumLabel": "Chapters from",
+        "medium": {
+          "text": "Text",
+          "audio": "Audiobook"
+        },
+        "loading": "Reading chapters …",
+        "noChapters": "This medium has no chapters.",
+        "count": "{{done}} of {{total}} groups confirmed ({{countA}} and {{countB}} chapters)",
+        "list": "Chapter groups",
+        "confirmed": "Confirmed",
+        "confirm": "Confirm",
+        "confirmGroup": "Confirm group {{n}}",
+        "confirmAll": "Confirm all",
+        "save": "Save",
+        "saved": "Chapter match saved.",
+        "edit": "Edit group {{n}}",
+        "editMenu": "Edit group {{n}}",
+        "split": "Split group",
+        "join": "Join with next group",
+        "move": {
+          "a": {
+            "next": "Move left boundary down",
+            "prev": "Move left boundary up"
+          },
+          "b": {
+            "next": "Move right boundary down",
+            "prev": "Move right boundary up"
+          }
+        },
+        "why": "“Confirm all” is only possible when every group is 1:1 and both editions have the same number of chapters. Otherwise confirm each group on its own."
+      },
+      "conflict": {
+        "text": "Last listened to **{{lang}}** on {{device}} ({{there}}). Here {{current}} is playing{{here}}.",
+        "iphone": "the iPhone",
+        "other": "another device",
+        "chapter": "chapter {{n}}",
+        "chapterHere": ", chapter {{n}}",
+        "go": "Switch there",
+        "stay": "Stay here"
+      }
+    },
     "fmt": {
       "text": "Text",
       "audiobook": "Audiobook",

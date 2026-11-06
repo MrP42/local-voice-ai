@@ -19,6 +19,8 @@ import {
 import type { AudioGroup } from "./audioGroups";
 import { audioProgressKey, removeProgress, textProgressKey } from "./progress";
 import { probeDuration } from "./probe";
+import { detectLanguage } from "../reader/language";
+import { langName } from "./editions";
 import {
   isSectioned,
   jobsOfTrack,
@@ -160,6 +162,11 @@ export async function addToLibrary(
   let book: LibraryBook = candidate
     ? { ...base, ...patchFrom(candidate, description) }
     : base;
+  // Sprache des neuen Textes (Sprachfassungen, lva#344): ohne Angabe aus dem Text erkennen.
+  if (file.kind === "text" && file.text && !current && !book.language) {
+    const code = detectLanguage(file.text);
+    if (code) book = { ...book, language: langName(code) || code };
+  }
 
   if (file.kind === "text" && file.text !== undefined) {
     const created = await commands.pagesCreate(book.title);

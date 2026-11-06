@@ -19,6 +19,7 @@ import {
 import { LISTEN_WPM, READ_WPM } from "@/lib/kurzbuch/kurzbuch";
 import { listenedFraction } from "../settings/tts/kidocs/kiDocs";
 import { kiLangLabel } from "../settings/tts/kidocs/targetLang";
+import { langShort } from "@/lib/library/editions";
 
 export type FormatKind = "text" | "audiobook" | "kurzbuch";
 
@@ -109,11 +110,22 @@ export function formatEntries(
 ): FormatEntry[] {
   const out: FormatEntry[] = [];
   const title = v.book.title;
-  if (v.book.text) {
+  // Mehrere Sprachfassungen: die Zeilen tragen das Kürzel der gezeigten Sprache.
+  const lang =
+    (v.book.editions?.length ?? 0) > 1 ? langShort(v.edition?.lang) : undefined;
+  if (v.shown.text) {
     const f = v.textFraction;
     const total = v.textChars ? readMs(v.textChars) : null;
     out.push(
-      entry(t, "text", f, timeOf(t, f, total), "library.fmt.readTitle", title),
+      entry(
+        t,
+        "text",
+        f,
+        timeOf(t, f, total),
+        "library.fmt.readTitle",
+        title,
+        lang,
+      ),
     );
   } else if (busyText) {
     out.push({
@@ -127,7 +139,7 @@ export function formatEntries(
       label: busyText,
     });
   }
-  if (v.book.audio_path) {
+  if (v.shown.audio_path) {
     const f = v.audioFraction;
     out.push(
       entry(
@@ -137,6 +149,7 @@ export function formatEntries(
         timeOf(t, f, v.audioTotalMs, v.audioLeftMs),
         "library.fmt.listenTitle",
         title,
+        lang,
       ),
     );
   }
@@ -144,7 +157,7 @@ export function formatEntries(
     const f = v.book.finished
       ? 1
       : listenedFraction(kurzbuch.page, kurzbuch.doc.id);
-    const lang =
+    const kiLang =
       kurzbuch.langs > 1 ? kiLangLabel(kurzbuch.doc.language) : undefined;
     out.push(
       entry(
@@ -154,7 +167,7 @@ export function formatEntries(
         timeOf(t, f, listenMs(kurzbuch.doc.words)),
         "library.fmt.kurzbuchTitle",
         title,
-        lang || undefined,
+        kiLang || undefined,
       ),
     );
   }
@@ -187,8 +200,8 @@ export function startFormat(
   kurzbuch: KurzbuchInfo | undefined,
   onListen: () => void,
 ): void {
-  if (kind === "text" && view.book.text)
-    openInReader(view.book.text.page_id, false);
+  if (kind === "text" && view.shown.text)
+    openInReader(view.shown.text.page_id, false);
   else if (kind === "audiobook") onListen();
   else if (kind === "kurzbuch" && kurzbuch)
     openKiDocInReader({

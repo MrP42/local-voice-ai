@@ -11,6 +11,7 @@ import {
   ImageIcon,
   Pencil,
   Play,
+  Plus,
   RefreshCw,
   Sparkles,
   Trash2,
@@ -29,6 +30,7 @@ import { Formats, jobLabel, ProgressBar } from "./LibraryPage";
 import type { TranscriptJob } from "./useLibrary";
 import { MetadataPicker } from "./MetadataPicker";
 import { KurzbuchCard } from "./KurzbuchCard";
+import { EditionsSection, LastActive } from "./EditionsSection";
 import "./fassungen.css";
 import type { KiCreateTab } from "./KiCreateDialog";
 import {
@@ -49,6 +51,7 @@ import {
 } from "@/lib/library/importFile";
 import { jobsOfTrack } from "@/lib/library/sections";
 import { audioProgressKey, removeProgress } from "@/lib/library/progress";
+import { editionsOf, langName, langShort } from "@/lib/library/editions";
 
 type Tab = "overview" | "versions" | "metadata";
 
@@ -75,6 +78,10 @@ interface Props {
   onCreate?(tab: KiCreateTab): void;
   /** lva#236: Fassungen exportieren. */
   onExport?(): void;
+  /** lva#344: „Sprachfassung hinzufügen …“ (öffnet „Hinzufügen“). */
+  onAddEdition?(): void;
+  /** lva#344: Kapitel zweier Sprachfassungen zuordnen. */
+  onAlign?(pair: { a: string; b: string }): void;
 }
 
 /**
@@ -95,9 +102,15 @@ export const BookDetail: React.FC<Props> = ({
   editTitle = false,
   onCreate,
   onExport,
+  onAddEdition,
+  onAlign,
 }) => {
   const { t } = useTranslation();
-  const { book } = view;
+  const { book, shown } = view;
+  const multi = editionsOf(book).length > 1;
+  const readingLang = view.edition
+    ? langName(view.edition.lang) || langShort(view.edition.lang)
+    : "";
   const [tab, setTab] = useState<Tab>("overview");
   const [draft, setDraft] = useState(book);
   const [dirty, setDirty] = useState(false);
@@ -293,6 +306,7 @@ export const BookDetail: React.FC<Props> = ({
               {t("library.by", { authors: book.authors.join(", ") })}
             </div>
           )}
+          <LastActive book={book} />
           <div style={{ margin: "10px 0" }}>
             <Formats view={view} job={job} />
           </div>
@@ -319,20 +333,21 @@ export const BookDetail: React.FC<Props> = ({
               {view.fraction > 0 && !isFinished(view)
                 ? t("library.continuePlay")
                 : t("library.play")}
+              {multi && readingLang ? ` · ${readingLang}` : ""}
             </Button>
           )}
-          {book.text && (
+          {shown.text && (
             <Button
               size="lg"
               variant={view.audioSource ? undefined : "primary"}
               icon={<BookOpen size={16} aria-hidden="true" />}
-              onClick={() => openInReader(book.text!.page_id, false)}
+              onClick={() => openInReader(shown.text!.page_id, false)}
               data-testid="library-detail-read"
             >
               {!view.audioSource && view.fraction > 0 && !isFinished(view) ? t("library.continueRead") : t("library.read")}
             </Button>
           )}
-          {book.text && book.audio_path && (
+          {shown.text && shown.audio_path && (
             <Button
               size="lg"
               icon={<Headphones size={16} aria-hidden="true" />}
@@ -342,7 +357,7 @@ export const BookDetail: React.FC<Props> = ({
               {t("library.listenFollow")}
             </Button>
           )}
-          {book.audio_path && view.resumeWith !== "audio" && (
+          {shown.audio_path && view.resumeWith !== "audio" && (
             <Button
               size="lg"
               icon={<Headphones size={16} aria-hidden="true" />}
@@ -363,6 +378,16 @@ export const BookDetail: React.FC<Props> = ({
           >
             {isFinished(view) ? t("library.markUnfinished") : t("library.markFinished")}
           </Button>
+          {onAddEdition && (
+            <Button
+              size="lg"
+              icon={<Plus size={16} aria-hidden="true" />}
+              onClick={onAddEdition}
+              data-testid="library-detail-add-edition"
+            >
+              {t("library.sf.add")}
+            </Button>
+          )}
           {(onCreate || onExport) && (
             <div className="library-actions__pair">
               {onCreate && (
@@ -389,6 +414,15 @@ export const BookDetail: React.FC<Props> = ({
           )}
         </div>
       </div>
+
+      {onAlign && (
+        <EditionsSection
+          book={book}
+          onChanged={onChanged}
+          onAlign={onAlign}
+          onExport={onExport}
+        />
+      )}
 
       <TabList<Tab>
         tabs={[

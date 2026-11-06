@@ -21,6 +21,8 @@ import { IconButton } from "../ui/IconButton";
 import { BookCover } from "./BookCover";
 import { FollowPane, textStartOf } from "./FollowPane";
 import { AudioBarLine } from "./AudioBarLine";
+import { LanguageSwitch } from "./LanguageSwitch";
+import { SwitchNoticeHost } from "./SwitchNoticeHost";
 import { assetUrl, formatDuration, tracksOf } from "@/lib/library/books";
 import {
   makeFollowMap,
@@ -41,6 +43,7 @@ import { probeDuration } from "@/lib/library/probe";
 import { mergeLayers, nearAnchor, spanAt } from "@/lib/library/liveSync";
 import { sentenceAt, sentencesOf, type Span } from "@/lib/library/sentences";
 import { useLiveSync } from "@/lib/library/useLiveSync";
+import { deviceId, primaryEdition } from "@/lib/library/editions";
 
 /** Wie oft die Stelle beim Hören gesichert wird. */
 const SAVE_EVERY_MS = 2000;
@@ -91,8 +94,31 @@ function locate(
 /** So lange darf die Suche nach der Startstelle höchstens dauern. */
 const SEARCH_TIMEOUT_MS = 30_000;
 
+/** Wo die Hörleiste steht, wenn der Nutzer die Sprache wechselt (lva#344). */
+export interface SwitchRequest {
+  /** Zielfassung. */
+  to: string;
+  /** Stelle in der laufenden Fassung (ms) und deren Gesamtdauer. */
+  ms: number;
+  total: number;
+  playing: boolean;
+}
+
 interface Props {
+  /** Das Buch aus Sicht der laufenden Fassung (`editionBook`). */
   book: LibraryBook;
+  /** Sprachfassungen (lva#344): laufende Fassung, ihr Fortschrittsschlüssel, das ganze Buch. */
+  edition?: { id: string; audioKey: string; full: LibraryBook };
+  /** Der Nutzer wählt eine andere Sprachfassung. */
+  onSwitch?(request: SwitchRequest): void;
+  /** „Kapitel zuordnen …“ aus dem Sprachmenü. */
+  onAlign?(): void;
+  /** Fassungen, deren Hörbuch gerade geladen wird. */
+  loadingEditions?: ReadonlySet<string>;
+  /** Nach einem Wechsel: Fokus auf den Sprachknopf. */
+  focusLanguage?: boolean;
+  /** Gleich losspielen (Vorgabe) oder pausiert starten. */
+  startPlaying?: boolean;
   onClose(): void;
   /** Dauern am Buch sichern (useLibrary.save). */
   onSave?(
@@ -114,6 +140,12 @@ interface Props {
  */
 export const AudioBar: React.FC<Props> = ({
   book,
+  edition,
+  onSwitch,
+  onAlign,
+  loadingEditions,
+  focusLanguage = false,
+  startPlaying = true,
   onClose,
   onSave,
   startFollow = false,
@@ -123,7 +155,7 @@ export const AudioBar: React.FC<Props> = ({
   const audio = useRef<HTMLAudioElement>(null);
   const root = useRef<HTMLDivElement>(null);
   const lastSave = useRef(0);
-  const key = audioProgressKey(book.id);
+  const key = edition?.audioKey ?? audioProgressKey(book.id);
   const textKey = book.text ? textProgressKey(book.text.page_id) : null;
 
   const tracks = useMemo(() => tracksOf(book.audio), [book.audio]);
@@ -146,7 +178,7 @@ export const AudioBar: React.FC<Props> = ({
   const currentRef = useRef(0);
   const [playing, setPlaying] = useState(false);
   const [at, setAt] = useState(0);
-  const wantPlay = useRef(true);
+  const wantPlay = useRef(startPlaying);
   const switching = useRef(false);
   /** Das Element überlebt das Abmelden des Refs beim Schließen. */
   const lastEl = useRef<HTMLAudioElement | null>(null);
@@ -351,11 +383,27 @@ export const AudioBar: React.FC<Props> = ({
       }
       if (found.size && onSave) {
         try {
-          await onSave(book.id, (fresh) =>
-            fresh.audio
+          const editionId = edition?.id;
+          await onSave(book.id, (fresh) => {
+            // Eine andere Fassung als die Hauptfassung trägt ihre Dauern selbst.
+            if (editionId && editionId !== primaryEdition(fresh)?.id)
+              return {
+                ...fresh,
+                editions: fresh.editions.map((e) =>
+                  e.id === editionId && e.audio
+                    ? {
+                        ...e,
+                        audio: withDurations(e.audio, found),
+                        updated: Date.now(),
+                        device: deviceId(),
+                      }
+                    : e,
+                ),
+              };
+            return fresh.audio
               ? { ...fresh, audio: withDurations(fresh.audio, found) }
-              : fresh,
-          );
+              : fresh;
+          });
         } catch {
           /* Dauern bleiben im Speicher; beim nächsten Mal erneut */
         }
@@ -367,7 +415,7 @@ export const AudioBar: React.FC<Props> = ({
       measuring.current = null;
     });
     return task;
-  }, [urls, tracks, onSave, book.id]);
+  }, [urls, tracks, onSave, book.id, edition?.id]);
 
   // Dauern im Hintergrund nachholen, sobald das Abspielen läuft.
   useEffect(() => {
@@ -706,6 +754,25 @@ export const AudioBar: React.FC<Props> = ({
               data-testid="library-audiobar-follow"
             />
           )}
+          {edition && onSwitch && (
+            <LanguageSwitch
+              book={edition.full}
+              currentId={edition.id}
+              medium="audio"
+              loading={loadingEditions}
+              focusOnMount={focusLanguage}
+              onAlign={onAlign}
+              onPick={(to) => {
+                persist(true);
+                onSwitch({
+                  to,
+                  ms: Math.round(globalMs()),
+                  total,
+                  playing,
+                });
+              }}
+            />
+          )}
           <IconButton
             icon={<X size={18} aria-hidden="true" />}
             label={t("library.audiobarClose")}
@@ -714,6 +781,7 @@ export const AudioBar: React.FC<Props> = ({
           />
         </div>
       </div>
+      <SwitchNoticeHost owner="library" />
     </div>
   );
 };
