@@ -152,13 +152,21 @@ fn http() -> Result<reqwest::Client, HubError> {
 
 /// Stücke der Dateiablage tragen bis zu 3,65 MiB; langsame Leitungen brauchen Zeit.
 fn http_with(timeout: Duration) -> Result<reqwest::Client, HubError> {
-    let mut b = reqwest::Client::builder()
-        .timeout(timeout)
-        .user_agent(concat!("local-voice-ai/", env!("CARGO_PKG_VERSION")));
-    // Diagnose-Schalter (Hub-500 nur bei Uploads der App, 06.11.2026):
-    // LV_SYNC_HTTP1=1 erzwingt HTTP/1.1.
+    let ua = std::env::var("LV_SYNC_UA")
+        .unwrap_or_else(|_| concat!("local-voice-ai/", env!("CARGO_PKG_VERSION")).to_string());
+    let mut b = reqwest::Client::builder().timeout(timeout).user_agent(ua);
+    // Diagnose-Schalter (Hub-500 nur bei POSTs der App, 06.11.2026):
+    // LV_SYNC_HTTP1=1 erzwingt HTTP/1.1, LV_SYNC_IPV4=1 nur IPv4,
+    // LV_SYNC_TITLECASE=1 Kopfzeilennamen wie curl (Content-Type statt content-type),
+    // LV_SYNC_UA=<text> ersetzt den User-Agent.
     if std::env::var_os("LV_SYNC_HTTP1").is_some() {
         b = b.http1_only();
+    }
+    if std::env::var_os("LV_SYNC_IPV4").is_some() {
+        b = b.local_address(Some(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)));
+    }
+    if std::env::var_os("LV_SYNC_TITLECASE").is_some() {
+        b = b.http1_title_case_headers();
     }
     b.build().map_err(|e| HubError::Other(e.to_string()))
 }
