@@ -42,11 +42,11 @@ private actor GatedTranslator: LiveTranslator {
     func waitForCalls(_ count: Int) async { while started < count { await Task.yield() } }
 
     /// Gibt den ältesten offenen Aufruf mit `size` Texten frei (oder den ältesten überhaupt).
-    func release(size: Int? = nil, _ result: Result<Void, Error> = .success(())) {
+    func release(size: Int? = nil, _ result: Result<Void, Error> = .success(()), echo: Bool = false) {
         guard let i = waiting.firstIndex(where: { size == nil || $0.texts.count == size }) else { return }
         let call = waiting.remove(at: i)
         switch result {
-        case .success: call.resume.resume(returning: call.texts.map { "DE:" + $0 })
+        case .success: call.resume.resume(returning: echo ? call.texts : call.texts.map { "DE:" + $0 })
         case .failure(let e): call.resume.resume(throwing: e)
         }
     }
@@ -315,6 +315,24 @@ final class LiveTranslationTests: XCTestCase {
         catch { XCTAssertTrue(error is CancellationError, "\(error)") }
         let gen = await pipe.currentGeneration
         XCTAssertEqual(gen, 2)
+    }
+
+    /// Catch-Guard gezielt: erste Antwort unverändert, Nachfrage blockiert, Generation wechselt,
+    /// dann endet die Nachfrage mit einem fremden Fehler. Der Wartende bekommt CancellationError, nicht Boom.
+    func testGenerationWinsOverLateFollowUpError() async throws {
+        let gate = GatedTranslator()
+        let pipe = LivePipeline(translator: gate, book: "b", sourceHash: "h", source: "en", target: "de")
+        let u = unit("This is a long sentence ok")
+        let waiter = Task { try await pipe.text(u) }
+        await gate.waitForCalls(1)
+        await gate.release(echo: true)          // erste Antwort: unverändert → Nachfrage
+        await gate.waitForCalls(2)              // Nachfrage hängt
+        await pipe.cancelPending()
+        await gate.release(.failure(Boom()))    // Nachfrage scheitert nach dem Wechsel
+        do { _ = try await waiter.value; XCTFail("erwartet Abbruch") }
+        catch { XCTAssertTrue(error is CancellationError, "\(error)") }
+        let cached = await pipe.ready(u)
+        XCTAssertNil(cached)
     }
 
     func testCancelDoesNotRemoveNewerRequests() async throws {
