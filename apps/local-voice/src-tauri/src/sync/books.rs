@@ -2715,7 +2715,10 @@ mod tests {
         assert!(is_bookmark_key("tts.voice.book.book_1.en"));
         // Lokal neuer (auch sauber): eine ältere Wahl oder Aufhebung bleibt draußen.
         let local = r#"{"phonon":"en:Zoey","updated":20}"#;
-        assert!(!voice_remote_wins(local, r#"{"phonon":"en:Mark","updated":10}"#));
+        assert!(!voice_remote_wins(
+            local,
+            r#"{"phonon":"en:Mark","updated":10}"#
+        ));
         assert!(!voice_remote_wins(local, r#"{"updated":15}"#));
         assert!(voice_remote_wins(local, r#"{"updated":30}"#));
     }

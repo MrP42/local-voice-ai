@@ -1052,7 +1052,7 @@ struct VoiceList: View {
                                 }
                                 Spacer()
                                 if v.identifier == playback.voiceIdentifier { Image(systemName: "checkmark") }
-                            }.frame(minHeight: 44)
+                            }.frame(minHeight: 44).contentShape(Rectangle())
                         }.buttonStyle(.plain)
                     }
                 } footer: {
