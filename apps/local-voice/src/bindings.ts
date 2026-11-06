@@ -6848,6 +6848,17 @@ async changeReadingStatsSetting(goalMinutes: number, goalDays: number, sync: boo
 }
 },
 /**
+ * Ein Buch einordnen lassen (Modell der Funktion „Vorlesen/Bibliothek“).
+ */
+async readingClassify(input: ClassifyInput) : Promise<Result<Classification, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("reading_classify", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Auswertung aller Geräte.
  */
 async readingLogRows() : Promise<Result<ReadingRow[], string>> {
@@ -10162,6 +10173,27 @@ export type Letterhead = { schema: string; id: string; name: string;
  * Laden eigener Profile immer auf `false` gesetzt, ein Wert aus der Datei zaehlt nie.
  */
 builtin?: boolean; firma: Firma; logo?: Logo | null; farben: Farben; fusszeile: Fusszeile }
+/**
+ * Eine wählbare Kategorie (`key` + Anzeigename) für die Anfrage.
+ */
+export type CategoryChoice = { key: string; label: string }
+/**
+ * Antwort der Einordnung. `category` ist ein Schlüssel aus der übergebenen
+ * Liste oder `None`.
+ */
+export type Classification = { category: string | null; topics: string[]; confidence: number }
+/**
+ * Was an das Modell geht: genau diese Felder (Codex A3), gekürzt.
+ */
+export type ClassifyInput = { title: string; authors: string[]; description: string | null; 
+/**
+ * Anfang des Buchtextes, höchstens 2 000 Zeichen.
+ */
+sample: string | null; categories: CategoryChoice[]; 
+/**
+ * Bereits verwendete Themen, damit gleiche Begriffe wiederkehren.
+ */
+known_topics: string[] }
 /**
  * Eine Meldung der Oberfläche: Zuwachs seit der letzten Meldung.
  */

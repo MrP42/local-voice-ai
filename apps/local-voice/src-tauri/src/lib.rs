@@ -2616,6 +2616,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             lesestatistik::reading_log_rows,
             lesestatistik::reading_log_clear,
             lesestatistik::change_reading_stats_setting,
+            lesestatistik::reading_classify,
             hoersync_live::audiosync_load,
             hoersync_live::audiosync_window,
             hoersync_live::audiosync_anchor,

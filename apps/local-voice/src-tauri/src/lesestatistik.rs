@@ -505,6 +505,121 @@ fn now_ms() -> i64 {
 }
 
 // ---------------------------------------------------------------------------
+// KI-Einordnung (nur Buchmetadaten, nie Lesedaten)
+// ---------------------------------------------------------------------------
+
+/// Antwort der Einordnung. `category` ist ein Schlüssel aus der übergebenen
+/// Liste oder `None`.
+#[derive(Serialize, Deserialize, Clone, Debug, specta::Type, PartialEq)]
+pub struct Classification {
+    pub category: Option<String>,
+    pub topics: Vec<String>,
+    pub confidence: f64,
+}
+
+/// Eine wählbare Kategorie (`key` + Anzeigename) für die Anfrage.
+#[derive(Serialize, Deserialize, Clone, Debug, specta::Type, PartialEq)]
+pub struct CategoryChoice {
+    pub key: String,
+    pub label: String,
+}
+
+/// Was an das Modell geht: genau diese Felder (Codex A3), gekürzt.
+#[derive(Serialize, Deserialize, Clone, Debug, specta::Type, PartialEq)]
+pub struct ClassifyInput {
+    pub title: String,
+    pub authors: Vec<String>,
+    pub description: Option<String>,
+    /// Anfang des Buchtextes, höchstens 2 000 Zeichen.
+    pub sample: Option<String>,
+    pub categories: Vec<CategoryChoice>,
+    /// Bereits verwendete Themen, damit gleiche Begriffe wiederkehren.
+    pub known_topics: Vec<String>,
+}
+
+fn cut(s: &str, max: usize) -> String {
+    s.chars().take(max).collect()
+}
+
+pub fn classify_prompt(input: &ClassifyInput) -> String {
+    let cats: Vec<String> = input
+        .categories
+        .iter()
+        .take(60)
+        .map(|c| format!("- {}: {}", cut(&c.key, 60), cut(&c.label, 80)))
+        .collect();
+    let known: Vec<String> = input
+        .known_topics
+        .iter()
+        .take(80)
+        .map(|t| cut(t, 40))
+        .collect();
+    format!(
+        "Ordne das Buch genau einer Kategorie zu und nenne 2 bis 4 kurze Themen \
+(Schlagworte auf Deutsch, je höchstens drei Wörter). Verwende bereits bekannte \
+Themen, wenn sie passen. Antworte NUR mit JSON: \
+{{\"category\": \"<schlüssel oder null>\", \"topics\": [\"…\"], \"confidence\": 0.0}}\n\n\
+Kategorien:\n{}\n\nBekannte Themen: {}\n\nTitel: {}\nAutor: {}\nKlappentext: {}\nTextanfang: {}",
+        cats.join("\n"),
+        if known.is_empty() {
+            "–".into()
+        } else {
+            known.join(", ")
+        },
+        cut(&input.title, 300),
+        cut(&input.authors.join(", "), 200),
+        input
+            .description
+            .as_deref()
+            .map(|d| cut(d, 1500))
+            .unwrap_or_else(|| "–".into()),
+        input
+            .sample
+            .as_deref()
+            .map(|d| cut(d, 2000))
+            .unwrap_or_else(|| "–".into()),
+    )
+}
+
+/// Antwort lesen: erstes JSON-Objekt im Text; unbekannte Kategorie → `None`,
+/// Themen bereinigt (höchstens 5, je 40 Zeichen), Sicherheit auf 0..1.
+pub fn parse_classification(answer: &str, allowed: &[CategoryChoice]) -> Option<Classification> {
+    let start = answer.find('{')?;
+    let end = answer.rfind('}')?;
+    let v: Value = serde_json::from_str(answer.get(start..=end)?).ok()?;
+    let category = v
+        .get("category")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .and_then(|c| allowed.iter().find(|a| a.key == c || a.label == c))
+        .map(|a| a.key.clone());
+    let mut seen = BTreeSet::new();
+    let topics: Vec<String> = v
+        .get("topics")
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .filter_map(Value::as_str)
+                .map(|t| cut(t.trim(), 40))
+                .filter(|t| !t.is_empty() && seen.insert(t.to_lowercase()))
+                .take(5)
+                .collect()
+        })
+        .unwrap_or_default();
+    let confidence = v
+        .get("confidence")
+        .and_then(Value::as_f64)
+        .filter(|c| c.is_finite())
+        .unwrap_or(0.5)
+        .clamp(0.0, 1.0);
+    (category.is_some() || !topics.is_empty()).then_some(Classification {
+        category,
+        topics,
+        confidence,
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Befehle
 // ---------------------------------------------------------------------------
 
@@ -553,6 +668,23 @@ mod commands {
         s.reading_stats_paused = paused;
         crate::settings::write_settings(&app, s);
         Ok(())
+    }
+
+    /// Ein Buch einordnen lassen (Modell der Funktion „Vorlesen/Bibliothek“).
+    #[tauri::command]
+    #[specta::specta]
+    pub async fn reading_classify(
+        app: AppHandle,
+        input: ClassifyInput,
+    ) -> Result<Classification, String> {
+        let all = crate::settings::get_settings(&app);
+        if !all.reading_stats_ai {
+            return Err("reading_classify:off".into());
+        }
+        let settings = all.for_function(crate::settings::FN_READ_ALOUD);
+        let answer = crate::summarizer::ask_llm(&settings, classify_prompt(&input)).await?;
+        parse_classification(&answer, &input.categories)
+            .ok_or_else(|| "reading_classify:unreadable".into())
     }
 
     /// Auswertung aller Geräte.
@@ -721,6 +853,41 @@ mod tests {
             200,
         );
         assert!(pc3.days["2026-11-06"]["book_2|lesen|de"].since > 200);
+    }
+
+    #[test]
+    fn einordnung_antwort_lesen() {
+        let cats = vec![
+            CategoryChoice {
+                key: "kommunikation".into(),
+                label: "Kommunikation & Rhetorik".into(),
+            },
+            CategoryChoice {
+                key: "fuehrung".into(),
+                label: "Führung & Management".into(),
+            },
+        ];
+        let a = "Hier: ```json\n{\"category\": \"kommunikation\", \"topics\": [\"Rhetorik\", \"rhetorik\", \" Stimme \"], \"confidence\": 1.7}\n```";
+        let c = parse_classification(a, &cats).unwrap();
+        assert_eq!(c.category.as_deref(), Some("kommunikation"));
+        assert_eq!(c.topics, vec!["Rhetorik", "Stimme"]);
+        assert_eq!(c.confidence, 1.0);
+        // Anzeigename statt Schlüssel wird erkannt, Unbekanntes verworfen.
+        let c = parse_classification(r#"{"category":"Führung & Management","topics":[]}"#, &cats)
+            .unwrap();
+        assert_eq!(c.category.as_deref(), Some("fuehrung"));
+        assert!(parse_classification(r#"{"category":"Kochen","topics":[]}"#, &cats).is_none());
+        assert!(parse_classification("kein json", &cats).is_none());
+        let p = classify_prompt(&ClassifyInput {
+            title: "T".into(),
+            authors: vec![],
+            description: None,
+            sample: Some("x".repeat(5000)),
+            categories: cats.clone(),
+            known_topics: vec![],
+        });
+        assert!(p.contains("- fuehrung: Führung & Management"));
+        assert!(p.len() < 4000);
     }
 
     #[test]
