@@ -1,0 +1,13 @@
+# JSON-Wert (roh)	erwartet (ok = gueltiges Zahlenfeld, reject = event_unknown)
+9007199254740991	ok
+0	ok
+9007199254740992	reject
+9223372036854775807	reject
+9223372036854775808	reject
+1.0	reject
+1e3	reject
+-0	reject
+-1	reject
+"5"	reject
+true	reject
+null	reject

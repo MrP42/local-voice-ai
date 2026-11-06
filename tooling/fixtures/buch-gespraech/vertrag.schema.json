@@ -208,6 +208,10 @@
         },
         "frontier": {
           "$ref": "#/$defs/Frontier"
+        },
+        "preview": {
+          "description": "Antwort der Abo-Vorschau (Claude Code/Codex, Budget empirisch, lva#334); fehlt sonst.",
+          "type": "boolean"
         }
       },
       "additionalProperties": false

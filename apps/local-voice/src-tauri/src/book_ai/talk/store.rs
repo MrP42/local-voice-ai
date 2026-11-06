@@ -117,6 +117,7 @@ pub(crate) mod tests {
                 dropped: 0,
                 scope,
                 frontier,
+                preview: false,
             },
             scope,
             frontier,

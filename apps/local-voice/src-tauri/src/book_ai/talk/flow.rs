@@ -196,6 +196,7 @@ impl<'a> Collector<'a> {
             dropped: self.dropped,
             scope: ctx.scope(),
             frontier: ctx.frontier(),
+            preview: false,
         }
     }
 }
@@ -241,6 +242,7 @@ impl Fallback {
             dropped: 0,
             scope: ctx.scope(),
             frontier: ctx.frontier(),
+            preview: false,
         };
         Fallback {
             events: vec![BookTalkEvent::Sentence {
@@ -341,6 +343,7 @@ impl Fallback {
             dropped,
             scope: ctx.scope(),
             frontier: ctx.frontier(),
+            preview: false,
         };
         Fallback { events, answer }
     }
