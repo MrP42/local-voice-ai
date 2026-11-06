@@ -85,6 +85,31 @@ public struct BookFiles: Codable, Equatable, Sendable {
 }
 
 /// Inhalt eines `book`-Objekts: das Buch ohne lokale Felder, Dateien, Zeitpunkt.
+/// `<buch>/sync.json`: Dateiverweise im Konto und lokaler Stand.
+public struct LibrarySyncMeta: Codable, Equatable, Sendable {
+    public var files: BookFiles
+    public var updated: Double
+    /// Dateiname → Blob der geladenen Hörbuchdatei.
+    public var localAudio: [String: String]?
+    /// Noch nicht gesendeter Stern. Beim Holen bleibt er, der Rest kommt aus dem Konto.
+    public var pendingFavorite: Bool?
+    /// Angaben ohne Stern, als der Stern gesetzt wurde; nur bei abgeglichenem Stand.
+    public var pendingFields: String?
+
+    public init(files: BookFiles = BookFiles(), updated: Double = 0, localAudio: [String: String]? = nil,
+                pendingFavorite: Bool? = nil, pendingFields: String? = nil) {
+        self.files = files; self.updated = updated; self.localAudio = localAudio
+        self.pendingFavorite = pendingFavorite; self.pendingFields = pendingFields
+    }
+
+    /// Ändert nur die Dateiverweise; Stand, Stern-Merker und geladene Fassungen bleiben.
+    public func updatingFiles(_ change: (inout BookFiles) -> Void) -> LibrarySyncMeta {
+        var copy = self
+        change(&copy.files)
+        return copy
+    }
+}
+
 public struct SyncedBook: Codable, Equatable, Sendable {
     public var book: LibraryBook
     public var files: BookFiles
@@ -216,6 +241,37 @@ public struct SyncLedger: Codable, Equatable, Sendable {
         dead = try c.decodeIfPresent([String: String].self, forKey: .dead) ?? [:]
     }
     public static func key(_ collection: String, _ objectId: String) -> String { collection + "/" + objectId }
+
+    /// Ein Grabstein löscht nur, was dem Abgleich bekannt ist. Weicht der lokale Stand vom zuletzt
+    /// abgeglichenen ab oder war nie im Konto, gibt es ungesicherte Änderungen: Das Buch bleibt.
+    /// Nur wenn sich außer dem Stern nichts geändert hat, darf der Stand aus dem Konto den Rest ersetzen.
+    /// `pendingFields` hielt den Stand beim Stern fest, und zwar nur, wenn er damals abgeglichen war.
+    public static func onlyFavoriteChanged(pendingFields: String?, localFields: String) -> Bool { pendingFields == localFields }
+
+    /// Merker erst löschen, wenn das Gesendete angekommen ist und lokal nichts Neueres dazukam.
+    public static func clearsPendingFavorite(accepted: String?, sent: String, local: String) -> Bool { accepted == sent && local == sent }
+
+    /// Stand aus dem Konto mit einem noch nicht gesendeten Stern: Alles Übrige kommt aus dem Konto,
+    /// damit ein Stern keine neueren Änderungen anderer Geräte überschreibt.
+    public static func mergingPendingFavorite(_ favorite: Bool, into remote: LibraryBook, local: LibraryBook) -> LibraryBook {
+        var book = remote
+        book.favorite = favorite
+        book.finished = local.finished
+        if book.text == nil { book.text = local.text }
+        return book
+    }
+
+    /// Kennung aller Angaben außer Stern und Zeitstempel.
+    public static func fieldsHash(_ book: LibraryBook, files: BookFiles) throws -> String {
+        var plain = book
+        plain.favorite = false
+        return LibrarySyncFormat.canonicalHash(try SyncedBook(book: plain, files: files, updated: 0).json())
+    }
+
+    public static func keepsAgainstTombstone(_ entry: Entry?, localHash: String) -> Bool {
+        guard let entry, !entry.deleted else { return true }
+        return entry.hash != localHash
+    }
     public subscript(collection: String, objectId: String) -> Entry? {
         get { entries[Self.key(collection, objectId)] }
         set { entries[Self.key(collection, objectId)] = newValue }

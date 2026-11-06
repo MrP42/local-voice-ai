@@ -86,6 +86,14 @@ public enum AudioDownload {
         return a.scheme?.lowercased() == b.scheme?.lowercased() && a.host?.lowercased() == b.host?.lowercased() && port(a) == port(b)
     }
 
+    /// Liegt jede Datei in der Fassung auf dem iPhone, die das Konto nennt? `blobs` merkt sich je Dateiname die
+    /// geladene Fassung; ältere Dateien ohne Eintrag gelten bei passender Größe als aktuell.
+    public static func isCurrent(_ parts: [Part], sizes: [Int?], blobs: [String: String]) -> Bool {
+        parts.count == sizes.count && zip(parts, sizes).allSatisfy { part, size in
+            size == part.size && (blobs[part.file] ?? part.blob) == part.blob
+        }
+    }
+
     /// Fehlende Stücke in Hörreihenfolge, ohne angekommene und laufende; höchstens `limit`.
     public static func missingChunks(_ job: Job, states: [PartState], staged: Set<ChunkKey>, inFlight: Set<ChunkKey>,
                                      chunkPlainBytes: Int, limit: Int = window) -> [ChunkKey] {

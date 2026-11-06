@@ -197,7 +197,11 @@ final class LibrarySync: ObservableObject {
         let collections = [LibrarySyncFormat.collectionBook, LibrarySyncFormat.collectionProgress]
         guard collections.contains(remote.collection) else { return }
         if remote.deleted {
-            if remote.collection == LibrarySyncFormat.collectionBook { library.removeRemote(id: remote.objectId) }
+            if remote.collection == LibrarySyncFormat.collectionBook, let local = library.books.first(where: { $0.id == remote.objectId }) {
+                let hash = try localHash(local)
+                // Ungesicherte Änderung: Buch behalten, der nächste Lauf sendet es über den Grabstein hinweg neu.
+                if !SyncLedger.keepsAgainstTombstone(ledger[remote.collection, remote.objectId], localHash: hash) { library.removeRemote(id: remote.objectId) }
+            }
             ledger[remote.collection, remote.objectId] = .init(revision: remote.revision, hash: "", deleted: true)
             return
         }
@@ -214,8 +218,14 @@ final class LibrarySync: ObservableObject {
             let synced = try SyncedBook.decode(plain)
             let local = library.books.first { $0.id == synced.book.id }
             let localMeta = local.map { library.meta($0) }
-            if let localMeta, localMeta.updated > synced.updated {
-                // Eigener Stand ist neuer: bleibt, wird beim Senden übertragen.
+            if let local, let localMeta, localMeta.updated > synced.updated {
+                // Eigener Stand ist neuer und wird beim Senden übertragen. War es nur ein Stern, gilt sonst das Konto.
+                if let favorite = localMeta.pendingFavorite,
+                   SyncLedger.onlyFavoriteChanged(pendingFields: localMeta.pendingFields, localFields: try SyncLedger.fieldsHash(local, files: localMeta.files)) {
+                    let book = SyncLedger.mergingPendingFavorite(favorite, into: synced.book, local: local)
+                    let fields = try SyncLedger.fieldsHash(book, files: synced.files)
+                    try library.storeRemote(book, meta: .init(files: synced.files, updated: localMeta.updated, pendingFavorite: favorite, pendingFields: fields))
+                }
             } else {
                 var book = synced.book
                 // Lokale Fassungen, die das Konto nicht kennt, nicht verlieren.
@@ -256,14 +266,15 @@ final class LibrarySync: ObservableObject {
             var meta = library.meta(book)
             // Eigene Dateien zuerst hochladen (Reihenfolge laut Spezifikation).
             if meta.files.text == nil, library.hasText(book) {
-                meta.files.text = try await uploadFile(library.textURL(book), acc, type: "txt", file: nil)
-                library.setMeta(book, meta)
+                let ref = try await uploadFile(library.textURL(book), acc, type: "txt", file: nil)
+                library.updateFiles(book) { $0.text = ref }
+                meta = library.meta(book)
             }
             // Eigenes Cover (aus Hörbuchdatei oder EPUB) für die anderen Geräte hochladen.
             if meta.files.cover == nil, let url = library.coverURL(book) {
                 let ref = try await uploadFile(url, acc, type: url.pathExtension.lowercased(), file: nil)
-                meta.files.cover = ref
-                library.setMeta(book, meta)
+                library.updateFiles(book) { $0.cover = ref }
+                meta = library.meta(book)
                 library.setCoverBlob(book, ref.blob)
             }
             if meta.files.audio.isEmpty, library.hasAudio(book), let tracks = book.audio?.allTracks {
@@ -272,10 +283,15 @@ final class LibrarySync: ObservableObject {
                     status = "Lade „\(book.title)“ hoch …"
                     refs.append(try await uploadFile(url, acc, type: nil, file: t.file))
                 }
+                meta = library.meta(book)
                 meta.files.audio = refs
+                meta.localAudio = Dictionary(library.audioParts(refs).map { ($0.file, $0.blob) }, uniquingKeysWith: { $1 })
                 library.setMeta(book, meta)
             }
-            let value = try SyncedBook(book: book, files: meta.files, updated: meta.updated).json()
+            // Während der Uploads kann sich der Stand geändert haben (z. B. ein Stern).
+            let current = library.books.first { $0.id == book.id } ?? book
+            meta = library.meta(current)
+            let value = try SyncedBook(book: current, files: meta.files, updated: meta.updated).json()
             let hash = LibrarySyncFormat.canonicalHash(value)
             let entry = ledger[LibrarySyncFormat.collectionBook, book.id]
             if entry?.hash == hash || ledger.dead[SyncLedger.key(LibrarySyncFormat.collectionBook, book.id)] == hash { continue }
@@ -283,6 +299,23 @@ final class LibrarySync: ObservableObject {
             objects.append((try sealObject(LibrarySyncFormat.collectionBook, book.id, value, base: entry?.revision ?? 0, acc), hash))
         }
         try await push(objects, acc)
+        for (object, hash) in objects {
+            guard let book = library.books.first(where: { $0.id == object.objectId }), let local = try? localHash(book),
+                  SyncLedger.clearsPendingFavorite(accepted: ledger[object.collection, object.objectId]?.hash, sent: hash, local: local) else { continue }
+            library.clearPendingFavorite(bookId: book.id)
+        }
+    }
+
+    private func localHash(_ book: LibraryBook) throws -> String {
+        let meta = library.meta(book)
+        return LibrarySyncFormat.canonicalHash(try SyncedBook(book: book, files: meta.files, updated: meta.updated).json())
+    }
+
+    /// Stern setzen. War der Stand abgeglichen, darf ein neuerer Stand aus dem Konto später alles außer dem Stern ersetzen.
+    func setFavorite(_ book: LibraryBook, _ favorite: Bool) {
+        let meta = library.meta(book)
+        let clean = (try? localHash(book)) == ledger[LibrarySyncFormat.collectionBook, book.id]?.hash
+        library.setFavorite(book, favorite, pendingFields: clean ? try? SyncLedger.fieldsHash(book, files: meta.files) : nil)
     }
 
     private func pushProgress(_ acc: Account) async throws {

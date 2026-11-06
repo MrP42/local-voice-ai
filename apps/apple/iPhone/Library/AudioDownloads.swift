@@ -79,11 +79,16 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
         guard LibrarySync.shared.account != nil else { return }
         let refs = library.meta(book).files.audio
         guard !refs.isEmpty, !library.hasAudio(book) else { return }
-        let previous = jobs[book.id]
-        if previous?.phase == .running, allowCellular == nil { assemble(book.id); return }
-        let parts = refs.enumerated().map { i, ref in
-            AudioDownload.Part(blob: ref.blob, size: ref.size, chunks: ref.chunks, file: LibrarySync.audioFileName(ref.file, index: i))
+        var previous = jobs[book.id]
+        let parts = library.audioParts(refs)
+        // Konto hat die Dateien ersetzt: Weder alte Dateien noch angefangene Teile dürfen zählen.
+        library.removeStaleAudio(book)
+        if let stale = previous, stale.parts != parts {
+            discard(book.id)
+            for part in stale.parts { try? FileManager.default.removeItem(at: audioDir(book.id).appendingPathComponent(part.file).appendingPathExtension("part")) }
+            previous = nil
         }
+        if previous?.phase == .running, allowCellular == nil { assemble(book.id); return }
         var job = AudioDownload.Job(bookId: book.id, parts: parts, allowCellular: allowCellular ?? previous?.allowCellular ?? false)
         let remaining = job.totalBytes - AudioDownload.doneBytes(job, states: states(job))
         if let problem = AudioDownload.spaceProblem(remainingBytes: remaining, freeBytes: library.freeBytes(), format: LibraryBytes.text) {
@@ -161,7 +166,10 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
             let target = dir.appendingPathComponent(part.file), partial = target.appendingPathExtension("part")
             guard LibrarySync.fileSize(target) != part.size, LibrarySync.fileSize(partial) == part.size else { continue }
             _ = try? FileManager.default.removeItem(at: target)
-            if (try? FileManager.default.moveItem(at: partial, to: target)) != nil { LibrarySync.shared.markConfirmed(part.blob) }
+            if (try? FileManager.default.moveItem(at: partial, to: target)) != nil {
+                LibrarySync.shared.markConfirmed(part.blob)
+                library.noteLocalAudio(bookId: job.bookId, file: part.file, blob: part.blob)
+            }
         }
     }
 
@@ -263,6 +271,7 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
                         _ = try? FileManager.default.removeItem(at: target)
                         try FileManager.default.moveItem(at: target.appendingPathExtension("part"), to: target)
                         LibrarySync.shared.markConfirmed(part.blob)
+                        library.noteLocalAudio(bookId: id, file: part.file, blob: part.blob)
                     }
                 } catch {
                     try? FileManager.default.removeItem(at: file)
