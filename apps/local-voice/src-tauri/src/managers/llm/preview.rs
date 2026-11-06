@@ -39,13 +39,20 @@
 //!   (1) direkt vor dem Start, (2) direkt nach dem Spawn (Abweichung beendet den
 //!   Prozessbaum), (3) nach dem Lauf in [`Pinned::verify`]. Abweichung:
 //!   `binding_changed`, Antwort verworfen.
-//!   Akzeptiertes Restfenster der persoenlichen Vorschau: ein Start per Handle
-//!   ist mit CreateProcessW nicht moeglich; der Start bleibt pfadbasiert, das
-//!   gepruefte Handle wird nicht atomar uebergeben. Zwischen der Pruefung (1) und
-//!   dem Start bleibt ein Fenster; Umbenennen davor, danach oder dazwischen wird
-//!   spaetestens in (2) und (3) erkannt, nicht verhindert. Inhaltsaenderungen
-//!   durch denselben Nutzer liegen ausserhalb der Garantie; der Hash nach dem
-//!   Lauf verwirft dann die Antwort. Linux: Start ueber
+//!   Die Erkennung ist KEINE Garantie, sondern ein Restrisiko, das fuer die
+//!   persoenliche Vorschau ausdruecklich akzeptiert ist:
+//!   * ein Start per Handle ist mit CreateProcessW nicht moeglich; der Start
+//!     bleibt pfadbasiert, das gepruefte Handle wird nicht atomar uebergeben;
+//!   * ein Austausch mit Rueckbenennung zwischen zwei Pruefungen bleibt unsichtbar;
+//!   * zwischen der Pruefung (1) und dem Start bleibt ein Fenster; nach dem Spawn
+//!     ist das Image bereits gemappt, eine spaetere Erkennung aendert daran nichts;
+//!   * Kindprozesse, die vor der Job-Zuordnung gestartet werden, koennen entkommen;
+//!   * das Beenden des Prozessbaums begrenzt die weitere Wirkung, macht eine
+//!     bereits erfolgte Datenuebertragung aber nicht rueckgaengig (nach einer
+//!     Abweichung wird deshalb nichts mehr auf stdin geschrieben);
+//!   * Inhaltsaenderungen durch denselben Nutzer liegen ausserhalb der Garantie;
+//!     der Hash nach dem Lauf verwirft dann die Antwort.
+//!   Linux: Start ueber
 //!   `/proc/self/fd/<fd>`. macOS und andere Unix: gesperrt (`platform_unsupported`).
 //!   Vor dem Start und nach dem Ende wird der Hash neu gebildet ([`Pinned::verify`]).
 //!   Grenze (ausserhalb der Garantie): die FD-Bindung verhindert Pfadaustausch,

@@ -143,6 +143,8 @@ $Wl = Get-Content -LiteralPath $EventsFile -Raw -Encoding UTF8 | ConvertFrom-Jso
 $Rules = New-Object System.Collections.Hashtable([StringComparer]::Ordinal)
 foreach ($r in @($Wl.events)) { $Rules[[string]$r.type] = $r }
 $ToolBlocks = @($Wl.tool_blocks)
+$NumericFields = New-Object System.Collections.Hashtable([StringComparer]::Ordinal)
+if ($Wl.PSObject.Properties['numeric_fields']) { foreach ($p in $Wl.numeric_fields.PSObject.Properties) { $NumericFields[[string]$p.Name] = @($p.Value) } }
 
 # Alle beobachteten Ereignistypen der Vorschau-Laeufe; ein Verstoss macht event_contract false.
 $script:Observed = New-Object System.Collections.Generic.HashSet[string]([StringComparer]::Ordinal)
@@ -523,8 +525,17 @@ function Test-Known($e) {
     $r = $Rules[[string]$e.type]
     if (-not $r) { return $false }
     $hasSub = $e.PSObject.Properties['subtype'] -and $e.subtype -is [string]
-    if ($r.PSObject.Properties['subtypes']) { return $hasSub -and (@($r.subtypes) -ccontains [string]$e.subtype) }
-    return -not $hasSub
+    if ($r.PSObject.Properties['subtypes']) {
+        if (-not ($hasSub -and (@($r.subtypes) -ccontains [string]$e.subtype))) { return $false }
+    } elseif ($hasSub) { return $false }
+    # numeric_fields: fehlt ein Feld, ist es keine Zahl oder negativ, ist das Ereignis unbekannt.
+    $nf = $NumericFields[(Get-Label $e)]
+    foreach ($f in @($nf)) {
+        if (-not $e.PSObject.Properties[[string]$f]) { return $false }
+        $v = $e.$f
+        if (-not ((($v -is [int]) -or ($v -is [long])) -and ($v -ge 0))) { return $false }
+    }
+    return $true
 }
 function Test-Contract($evs) {
     if ($evs.Count -ceq 0 -or (Get-Label $evs[0]) -cne 'system/init') { return 'event_order' }

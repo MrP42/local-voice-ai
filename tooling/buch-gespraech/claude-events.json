@@ -2,12 +2,15 @@
   "schema": 1,
   "comment": "Ereignisvertrag der Claude-Vorschau (claude -p --output-format stream-json --verbose). Gemeinsame Quelle: die App liest die Datei per include_str! (managers/llm/contract.rs), isolation-check.sh/.ps1 lesen sie zur Laufzeit. Was nicht hier steht, SPERRT. Erweitern nur nach einer Messung, die das Ereignis belegt.",
   "events": [
-    { "type": "system", "subtypes": ["init", "post_turn_summary", "commands_changed"] },
+    { "type": "system", "subtypes": ["init", "post_turn_summary", "commands_changed", "thinking_tokens"] },
     { "type": "assistant", "content_blocks": ["text", "thinking"] },
     { "type": "user", "content_blocks": ["text"] },
     { "type": "result", "subtypes": ["success"] },
     { "type": "rate_limit_event" }
   ],
+  "numeric_fields": {
+    "system/thinking_tokens": ["estimated_tokens", "estimated_tokens_delta"]
+  },
   "evidence": [
     {
       "cli": "claude-code",
@@ -16,6 +19,14 @@
       "measured": "2026-11-06",
       "adds": ["rate_limit_event", "system/post_turn_summary", "system/commands_changed"],
       "note": "Messlauf der Vorschau; rate_limit_event stand vor result. Nach dem result sperrt der Vertrag weiter (event_after_result), bis ein Beleg vorliegt. system/hook_* sind NICHT zugelassen und sperren. Zusaetzliche Felder an bekannten Ereignissen (z. B. result.terminal_reason, fast_mode_state, ttft_ms) sind kein Ereignisvertrag und werden toleriert."
+    },
+    {
+      "cli": "claude-code",
+      "version": "2.1.281",
+      "platform": "windows",
+      "measured": "2026-11-06",
+      "adds": ["system/thinking_tokens"],
+      "note": "Isolierter Vorschau-Lauf, sporadisch. Nur vor result zulaessig. Pflichtfelder estimated_tokens und estimated_tokens_delta muessen nicht-negative Ganzzahlen sein (numeric_fields); fehlt eines, ist es keine Zahl oder negativ, sperrt der Vertrag mit event_unknown."
     }
   ],
   "tool_blocks": ["tool_use", "server_tool_use", "mcp_tool_use", "tool_result"]

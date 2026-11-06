@@ -1802,9 +1802,18 @@ pub(crate) fn run_cancellable_in(
             buf
         })
     }
+    // Abbruch vor dem Schreiben: ist der Abbruch schon gesetzt (z. B. weil die
+    // Pruefung nach dem Spawn eine Abweichung fand), bekommt das Programm nichts
+    // auf stdin: Prozessbaum beenden, stdin schliessen, nichts schreiben.
+    let stdin = child.stdin.take();
+    if cancel.is_some_and(|c| c.load(Ordering::SeqCst)) {
+        drop(stdin);
+        kill_tree(&mut child, job);
+        return Err("cli_cancelled: Der Aufruf wurde abgebrochen".to_string());
+    }
     // Eigener Thread: liest die CLI stdin nicht, blockierte sonst das
     // Schreiben vor der Zeitueberwachung.
-    let writer = match (input, child.stdin.take()) {
+    let writer = match (input, stdin) {
         (Some(data), Some(mut stdin)) => Some(spawn_into(move || stdin.write_all(&data))),
         _ => None,
     };
@@ -2731,6 +2740,38 @@ exit "$(cat "$D/exit" 2>/dev/null || echo 0)"
         assert!(!log.contains("ARG:--settings\n"), "{log}");
         assert!(log.contains("ARG:--output-format\nARG:json"), "{log}");
         assert!(!log.contains("ENV_MDS:1"), "{log}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_cancel_before_the_write_sends_nothing_to_stdin() {
+        let dir = tempfile::tempdir().unwrap();
+        let sink = dir.path().join("empfangen.txt");
+        let child = Command::new("sh")
+            .args(["-c", "cat > \"$1\"", "sh"])
+            .arg(&sink)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let cancel = std::sync::atomic::AtomicBool::new(true);
+        let err = run_cancellable_in(
+            child,
+            Some(b"VERTRAULICHER PROMPT".to_vec()),
+            Duration::from_secs(10),
+            Some(&cancel),
+            true,
+        )
+        .unwrap_err();
+        assert!(err.starts_with("cli_cancelled"), "{err}");
+        std::thread::sleep(Duration::from_millis(300));
+        let got = std::fs::read(&sink).unwrap_or_default();
+        assert!(
+            got.is_empty(),
+            "stdin blieb nicht leer: {} Bytes",
+            got.len()
+        );
     }
 
     #[cfg(unix)]

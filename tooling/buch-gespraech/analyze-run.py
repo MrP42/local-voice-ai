@@ -35,6 +35,8 @@ rules = {}
 for r in wl.get("events", []):
     rules[r["type"]] = r
 tool_blocks = set(wl.get("tool_blocks", []))
+# Pflichtfelder je Ereignis (typ oder typ/untertyp): nicht negative Ganzzahlen.
+numeric_fields = wl.get("numeric_fields", {})
 bad, events = False, []
 try:
     lines = [l for l in open(path, encoding="utf-8", errors="replace").read().splitlines() if l.strip()]
@@ -69,8 +71,12 @@ def known(e):
         return False
     sub = e.get("subtype")
     if "subtypes" in r:
-        return isinstance(sub, str) and sub in r["subtypes"]
-    return sub is None
+        if not (isinstance(sub, str) and sub in r["subtypes"]):
+            return False
+    elif sub is not None:
+        return False
+    # numeric_fields: fehlt ein Feld, ist es keine Zahl oder negativ, ist das Ereignis unbekannt.
+    return all(count(e.get(f)) for f in numeric_fields.get(label(e), []))
 
 def contract(evs):
     if not evs or label(evs[0]) != "system/init":

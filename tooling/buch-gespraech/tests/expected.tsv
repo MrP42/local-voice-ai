@@ -30,3 +30,9 @@ event_type_uppercase	0	event_unknown
 ok_with_rate_limit_and_summary	0	
 hook_event	0	event_unknown
 rate_limit_after_result	0	event_after_result
+ok_with_thinking_tokens	0	
+thinking_tokens_negative	0	event_unknown
+thinking_tokens_after_result	0	event_after_result
+thinking_tokens_missing_field	0	event_unknown
+thinking_tokens_not_a_number	0	event_unknown
+thinking_tokens_float	0	event_unknown

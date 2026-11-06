@@ -36,6 +36,8 @@ struct Rule {
 pub struct Contract {
     rules: Vec<Rule>,
     tool_blocks: Vec<String>,
+    /// Pflichtfelder je Ereignis (`typ` oder `typ/untertyp`): nicht negative Ganzzahlen.
+    numeric_fields: Vec<(String, Vec<String>)>,
 }
 
 fn strings(v: Option<&Value>) -> Vec<String> {
@@ -67,9 +69,17 @@ impl Contract {
                 })
             })
             .collect();
+        let numeric_fields = v
+            .get("numeric_fields")
+            .and_then(Value::as_object)
+            .into_iter()
+            .flatten()
+            .map(|(label, fields)| (label.clone(), strings(Some(fields))))
+            .collect();
         Self {
             rules,
             tool_blocks: strings(v.get("tool_blocks")),
+            numeric_fields,
         }
     }
 
@@ -108,7 +118,20 @@ impl Contract {
     /// Ist jedes Ereignis in der Whitelist? Vorbedingung des Skripts fuer
     /// `event_contract` (die App prueft zusaetzlich mit [`Self::check`]).
     pub fn all_known(&self, events: &[Value]) -> bool {
-        events.iter().all(|e| self.rule(e).is_some())
+        events
+            .iter()
+            .all(|e| self.rule(e).is_some() && self.fields_ok(e))
+    }
+
+    /// `numeric_fields`: jedes Pflichtfeld des Ereignisses ist eine nicht negative
+    /// Ganzzahl (kein String, keine Kommazahl, kein Bool, nicht negativ).
+    fn fields_ok(&self, ev: &Value) -> bool {
+        let label = Self::label(ev);
+        self.numeric_fields
+            .iter()
+            .filter(|(l, _)| *l == label)
+            .flat_map(|(_, fields)| fields)
+            .all(|f| ev.get(f).is_some_and(|v| v.as_u64().is_some()))
     }
 
     /// Prueft einen vollstaendigen Lauf. `Err` ist der feste Grund fuers Audit.
@@ -138,7 +161,7 @@ impl Contract {
             if let Some(reason) = self.tool_use(ev) {
                 return Err(reason);
             }
-            let Some(rule) = self.rule(ev) else {
+            let Some(rule) = self.rule(ev).filter(|_| self.fields_ok(ev)) else {
                 return Err("event_unknown");
             };
             if is_error(ev) {
@@ -354,6 +377,45 @@ mod tests {
             c.check(&evs(&[INIT, sub, ASSIST, RESULT])),
             Err("event_unknown")
         );
+    }
+
+    #[test]
+    fn thinking_tokens_need_non_negative_integer_fields_and_stay_before_the_result() {
+        let c = Contract::builtin();
+        let ok = fixture(include_str!(
+            "../../../../../../tooling/buch-gespraech/tests/fixtures/ok_with_thinking_tokens.jsonl"
+        ));
+        assert_eq!(c.check(&ok), Ok(()));
+        assert!(c.all_known(&ok));
+        for (name, text, want) in [
+            (
+                "negativ",
+                include_str!("../../../../../../tooling/buch-gespraech/tests/fixtures/thinking_tokens_negative.jsonl"),
+                "event_unknown",
+            ),
+            (
+                "fehlt",
+                include_str!("../../../../../../tooling/buch-gespraech/tests/fixtures/thinking_tokens_missing_field.jsonl"),
+                "event_unknown",
+            ),
+            (
+                "String",
+                include_str!("../../../../../../tooling/buch-gespraech/tests/fixtures/thinking_tokens_not_a_number.jsonl"),
+                "event_unknown",
+            ),
+            (
+                "Kommazahl",
+                include_str!("../../../../../../tooling/buch-gespraech/tests/fixtures/thinking_tokens_float.jsonl"),
+                "event_unknown",
+            ),
+            (
+                "nach dem Ergebnis",
+                include_str!("../../../../../../tooling/buch-gespraech/tests/fixtures/thinking_tokens_after_result.jsonl"),
+                "event_after_result",
+            ),
+        ] {
+            assert_eq!(c.check(&fixture(text)), Err(want), "{name}");
+        }
     }
 
     #[test]

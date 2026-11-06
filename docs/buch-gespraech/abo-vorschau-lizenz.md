@@ -57,12 +57,21 @@ Drittanbieter-Harnesses wurden ab 2026 gesperrt bzw. abgerechnet.
   dem Spawn (Abweichung beendet den Prozessbaum) und (3) nach dem Lauf; Abweichung
   heißt `binding_changed`, die Antwort wird verworfen. `isolation-check.ps1` prüft
   dasselbe vor und nach jedem Lauf.
-- **Akzeptiertes Restfenster (persönliche Vorschau):** Ein Start per Handle ist mit
-  `CreateProcessW` nicht möglich. Der Start bleibt pfadbasiert, das geprüfte Handle
-  wird nicht atomar übergeben; zwischen Prüfung (1) und Start bleibt ein Fenster,
-  Umbenennen wird spätestens in (2) und (3) erkannt, nicht verhindert.
-  Inhaltsänderungen durch denselben Nutzer liegen außerhalb der Garantie; der Hash
-  nach dem Lauf verwirft dann die Antwort.
+- **Die Erkennung ist keine Garantie; Restrisiko für die persönliche Vorschau
+  ausdrücklich akzeptiert:**
+  - Ein Start per Handle ist mit `CreateProcessW` nicht möglich. Der Start bleibt
+    pfadbasiert, das geprüfte Handle wird nicht atomar übergeben; zwischen
+    Prüfung (1) und Start bleibt ein Fenster.
+  - Ein Austausch mit Rückbenennung zwischen zwei Prüfungen bleibt unsichtbar.
+  - Nach dem Spawn ist das Image bereits gemappt; eine spätere Erkennung ändert
+    daran nichts.
+  - Kindprozesse, die vor der Job-Zuordnung gestartet werden, können entkommen.
+  - Das Beenden des Prozessbaums begrenzt die weitere Wirkung, macht eine bereits
+    erfolgte Datenübertragung aber nicht rückgängig. Deshalb wird nach einer
+    erkannten Abweichung nichts mehr auf stdin geschrieben (Prüfung nach dem
+    Spawn, vor dem Schreibthread).
+  - Inhaltsänderungen durch denselben Nutzer liegen außerhalb der Garantie; der
+    Hash nach dem Lauf verwirft dann die Antwort.
 - Ein Aufruf entspricht einem einzelnen `claude -p`-Lauf auf Anfrage des Nutzers.
   Grenzen der App: 30 Anfragen je Stunde, 200 je Tag.
 - Relay iPhone → PC: Anfragen **desselben Nutzers** von dessen gekoppeltem iPhone
