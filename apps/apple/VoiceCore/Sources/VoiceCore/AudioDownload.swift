@@ -94,6 +94,21 @@ public enum AudioDownload {
         }
     }
 
+    /// Geschätzte Restzeit aus dem bisherigen Tempo; `nil`, solange die Messung zu kurz ist.
+    public static func remainingSeconds(doneBytes: Int, totalBytes: Int, startBytes: Int, elapsed: TimeInterval) -> TimeInterval? {
+        let loaded = doneBytes - startBytes
+        guard elapsed >= 3, loaded > 0, totalBytes > doneBytes else { return nil }
+        return Double(totalBytes - doneBytes) / (Double(loaded) / elapsed)
+    }
+
+    public static func remainingText(_ seconds: TimeInterval) -> String {
+        let minutes = Int((seconds / 60).rounded(.up))
+        if minutes <= 1 { return "noch unter 1 Min" }
+        if minutes < 60 { return "noch \(minutes) Min" }
+        let rest = minutes % 60
+        return rest == 0 ? "noch \(minutes / 60) Std" : "noch \(minutes / 60) Std \(rest) Min"
+    }
+
     /// Fehlende Stücke in Hörreihenfolge, ohne angekommene und laufende; höchstens `limit`.
     public static func missingChunks(_ job: Job, states: [PartState], staged: Set<ChunkKey>, inFlight: Set<ChunkKey>,
                                      chunkPlainBytes: Int, limit: Int = window) -> [ChunkKey] {

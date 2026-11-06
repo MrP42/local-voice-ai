@@ -133,6 +133,16 @@ final class AudioDownloadTests: XCTestCase {
         XCTAssertTrue(AudioDownload.isCurrent(parts, sizes: [10, 20], blobs: [:]), "ältere Dateien ohne Eintrag zählen über die Größe")
     }
 
+    func testRemainingTime() {
+        XCTAssertNil(AudioDownload.remainingSeconds(doneBytes: 50, totalBytes: 100, startBytes: 0, elapsed: 1), "zu kurz gemessen")
+        XCTAssertNil(AudioDownload.remainingSeconds(doneBytes: 10, totalBytes: 100, startBytes: 10, elapsed: 30), "noch nichts geladen")
+        XCTAssertEqual(AudioDownload.remainingSeconds(doneBytes: 60, totalBytes: 100, startBytes: 20, elapsed: 40), 40)
+        XCTAssertEqual(AudioDownload.remainingText(20), "noch unter 1 Min")
+        XCTAssertEqual(AudioDownload.remainingText(170), "noch 3 Min")
+        XCTAssertEqual(AudioDownload.remainingText(3600), "noch 1 Std")
+        XCTAssertEqual(AudioDownload.remainingText(4800), "noch 1 Std 20 Min")
+    }
+
     func testSpaceProblem() {
         let fmt: (Int64) -> String = { "\($0) B" }
         XCTAssertNil(AudioDownload.spaceProblem(remainingBytes: 100, freeBytes: nil, format: fmt))
