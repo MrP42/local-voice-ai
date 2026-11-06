@@ -138,4 +138,15 @@ final class LibraryTests: XCTestCase {
         XCTAssertEqual(LibraryText.listenMilliseconds(chars: 900), 60_000)
         XCTAssertEqual(LibraryText.listenMilliseconds(chars: -5), 0)
     }
+
+    func testSentencePartsKeepEveryWord() {
+        let sentence = "Dr. Meier ging wie immer zuerst zum Hafen, dann in die Stadt, wo ihn niemand erwartete und auch sonst keiner nach ihm fragte."
+        let parts = LibraryText.sentenceParts(sentence, maxChars: 50)
+        XCTAssertGreaterThan(parts.count, 1)
+        XCTAssertEqual(parts.joined(separator: " "), sentence)
+        XCTAssertTrue(parts.allSatisfy { $0.count <= 50 })
+        XCTAssertEqual(LibraryText.sentenceParts("Kurz  und\ngut.", maxChars: 50), ["Kurz und gut."])
+        XCTAssertEqual(LibraryText.sentenceParts("", maxChars: 50), [])
+        XCTAssertEqual(LibraryText.sentenceParts("Donaudampfschifffahrtsgesellschaft ja", maxChars: 10), ["Donaudampfschifffahrtsgesellschaft", "ja"])
+    }
 }

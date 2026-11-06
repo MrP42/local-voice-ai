@@ -382,6 +382,31 @@ public enum LibraryText {
     /// Vorlesedauer bei normalem Tempo: rund 6 Zeichen je Wort und 150 Wörter je Minute, wie am Desktop.
     public static func listenMilliseconds(chars: Double) -> Double { max(0, chars) / 6 / 150 * 60_000 }
 
+    /// Satz in etwa gleich lange Teile für eine kleine Anzeige. Geteilt wird an Leerzeichen, bevorzugt nach
+    /// einem Satzzeichen; es geht kein Wort verloren. Nur ein einzelnes überlanges Wort darf `maxChars` überschreiten.
+    public static func sentenceParts(_ sentence: String, maxChars: Int) -> [String] {
+        let words = sentence.split(whereSeparator: \.isWhitespace).map(String.init)
+        guard !words.isEmpty, maxChars > 0 else { return [] }
+        let total = words.joined(separator: " ").count
+        guard total > maxChars else { return [words.joined(separator: " ")] }
+        let target = max(1, (total + (total + maxChars - 1) / maxChars - 1) / ((total + maxChars - 1) / maxChars))
+        var parts: [String] = []
+        var current = ""
+        for word in words {
+            let next = current.isEmpty ? word : current + " " + word
+            let pause = current.last.map { ",;:—".contains($0) } ?? false
+            // Passt nicht mehr, oder Zielgröße fast erreicht und gerade ein Satzzeichen: hier teilen.
+            if !current.isEmpty, next.count > maxChars || (pause && current.count * 4 >= target * 3) {
+                parts.append(current)
+                current = word
+            } else {
+                current = next
+            }
+        }
+        if !current.isEmpty { parts.append(current) }
+        return parts
+    }
+
     /// Favoriten zuerst, sonst bleibt die Reihenfolge, wie `sortViews` am Desktop.
     public static func favoritesFirst(_ books: [LibraryBook]) -> [LibraryBook] {
         books.filter(\.favorite) + books.filter { !$0.favorite }

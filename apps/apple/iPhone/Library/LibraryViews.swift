@@ -89,6 +89,9 @@ struct LibraryTab: View {
                 // Diagnose-Startargumente für Simulator-Bilder, kein Produktpfad.
                 let args = ProcessInfo.processInfo.arguments
                 if let i = args.firstIndex(of: "--pair-url"), i + 1 < args.count, let url = URL(string: args[i + 1]) { PairingFlow.shared.open(url) }
+                if args.contains("--library-mini"), let book = library.books.first {
+                    playback.open(book, autoplay: true); playback.presented = false
+                }
                 if args.contains("--phonon-probe") {
                     // Geräteprobe ohne Bedienung: Ergebnis landet in Documents/phonon-probe.txt.
                     let out = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("phonon-probe.txt")
@@ -747,42 +750,42 @@ struct MiniPlayerClearance: ViewModifier {
     }
 }
 
-/// Laufschrift für den Satz im Mini-Player: ein Durchlauf je Satz, nur während die Wiedergabe läuft und die App vorne ist.
-/// Passt er in die Zeile, steht er still; „Bewegung reduzieren“ zeigt ihn zweizeilig.
-struct MarqueeText: View {
+/// Der gelesene Satz im Mini-Player: Teile, die in zwei Zeilen passen, nacheinander im Takt des Vorlesens. Nichts wird
+/// abgeschnitten, nichts bewegt sich, und der Platz ist immer zwei Zeilen hoch, damit der Titel still steht.
+struct SentenceParts: View {
     let text: String
-    let moving: Bool
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let running: Bool
+    let rate: Float
+    @ScaledMetric(relativeTo: .caption) private var charWidth: CGFloat = 6.4
     @Environment(\.scenePhase) private var scenePhase
-    @State private var textWidth: CGFloat = 0
-    @State private var boxWidth: CGFloat = 0
-    @State private var offset: CGFloat = 0
+    @State private var width: CGFloat = 0
+    @State private var index = 0
 
-    private var overflow: CGFloat { max(0, textWidth - boxWidth) }
-    private var runs: Bool { moving && scenePhase == .active }
+    /// Zwei Zeilen mit etwas Reserve, weil Zeilen an Wortgrenzen früher enden.
+    private var maxChars: Int { max(16, Int(width / charWidth * 2 * 0.8)) }
+    private var parts: [String] { LibraryText.sentenceParts(text, maxChars: maxChars) }
 
     var body: some View {
-        if reduceMotion {
-            Text(text).font(.caption).lineLimit(2).foregroundStyle(.white.opacity(0.85))
-        } else {
-            Text(text).font(.caption).lineLimit(1).fixedSize().foregroundStyle(.white.opacity(0.85))
-                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { textWidth = $0 }
-                .offset(x: offset)
-                .id("\(text)|\(runs)")  // Neue Ansicht beendet einen laufenden Durchlauf wirklich.
-                // `minWidth: 0` hält den Rahmen schmal; sonst meldet er die Breite des Textes und sprengt den Mini-Player.
-                .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { boxWidth = $0 }
-                .clipped()
-                .task(id: "\(text)|\(overflow)|\(runs)") {
-                    offset = 0
-                    guard runs, overflow > 0 else { return }
-                    try? await Task.sleep(nanoseconds: 700_000_000)
-                    guard !Task.isCancelled else { return }
-                    // So lange wie der Satz gesprochen wird, damit die Anzeige mithält.
-                    let spoken = LibraryText.listenMilliseconds(chars: Double(text.utf16.count)) / 1000
-                    withAnimation(.linear(duration: max(1.5, spoken - 0.7))) { offset = -overflow }
-                }
-        }
+        let parts = self.parts
+        MiniPlayerLine(text: parts.indices.contains(index) ? parts[index] : text)
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+            .onChange(of: text) { index = 0 }
+            .task(id: "\(text)|\(index)|\(maxChars)|\(running && scenePhase == .active)") {
+                guard running, scenePhase == .active, index + 1 < parts.count else { return }
+                let share = Double(parts[index].count) / Double(max(1, parts.reduce(0) { $0 + $1.count }))
+                let spoken = LibraryText.listenMilliseconds(chars: Double(text.utf16.count)) / 1000 / Double(max(0.5, rate))
+                try? await Task.sleep(nanoseconds: UInt64(max(1, spoken * share) * 1_000_000_000))
+                if !Task.isCancelled { index += 1 }
+            }
+    }
+}
+
+/// Immer zwei Zeilen hoch, auch bei kurzem Text.
+struct MiniPlayerLine: View {
+    let text: String
+    var body: some View {
+        Text(text).font(.caption).lineLimit(2, reservesSpace: true).foregroundStyle(.white.opacity(0.85))
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -796,10 +799,10 @@ struct LibraryMiniPlayer: View {
                         .frame(width: 32, height: 44)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(playback.title).font(.subheadline.weight(.semibold)).lineLimit(1).foregroundStyle(.white)
-                        if playback.playing, let sentence = playback.currentSentence {
-                            MarqueeText(text: sentence, moving: playback.playing).accessibilityHidden(true)
+                        if !playback.preparing, let sentence = playback.currentSentence {
+                            SentenceParts(text: sentence, running: playback.playing, rate: playback.rate).accessibilityHidden(true)
                         } else {
-                            Text(subtitle).font(.caption).lineLimit(1).foregroundStyle(.white.opacity(0.75))
+                            MiniPlayerLine(text: subtitle)
                         }
                     }
                     Spacer(minLength: 0)
