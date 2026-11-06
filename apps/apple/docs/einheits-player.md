@@ -50,6 +50,29 @@ Hörbuch (Sprecher) oder Vorlesestimme. Der Wechsel übergibt die Textstelle: vo
 ### Kopfzeile
 Schließen · Titel/Untertitel (Kapitel oder Stimme, Zustand) · **Aa** (Darstellung) · **Fragen** (Buch-Gespräch, Symbolknopf) · ⓘ (nur Hörbuch).
 
+### Bedienleiste je Ansicht (Abweichung vom ersten Entwurf, Codex 06.11.)
+Der erste Entwurf sah in allen Ansichten außer „Lesen“ die volle Leiste vor. Umgesetzt ist beim Mitlesen (Hörbuch) eine **schmale Leiste** ohne Kapitelzeile und Buchfortschritt, damit der Text Platz hat. Das Kapitel steht in der Kopfzeile, das Inhaltsverzeichnis bleibt über „Inhalt“ erreichbar. Codex hat das angenommen.
+
+### Kontrast (gemessen nach WCAG 2.x, Farben aus `ReaderAppearance`/`VoicePalette`)
+
+| Thema | Wort (Tinte auf Gelb 90 %) | Satz (Text auf Gelb 38 %, Schwarz 28 %) | gedämpfter Text | Wort- gegen Satzfläche |
+|---|---|---|---|---|
+| Hell (App) | 14,0 : 1 | 12,5 : 1 | 5,8 : 1 | 1,12 |
+| Dunkel (App) | 11,1 : 1 | 5,8 : 1 | 8,8 : 1 | 4,10 |
+| Weiß | 14,0 : 1 | 15,1 : 1 | 8,9 : 1 | 1,16 |
+| Sepia | 13,8 : 1 | 10,3 : 1 | 7,2 : 1 | 1,06 |
+| Grün | 13,7 : 1 | 10,9 : 1 | 7,6 : 1 | 1,02 |
+| Schwarz | 11,0 : 1 | 8,6 : 1 | 9,1 : 1 | 6,40 |
+
+Alle Textkontraste liegen über 4,5 : 1. In den hellen Themen unterscheiden sich Wort- und Satzfläche kaum in der Helligkeit, nur in der Sättigung. Deshalb ist das Wort zusätzlich **unterstrichen** (Unterscheidung nicht nur über Farbe, kein Einfluss auf den Umbruch).
+
+### Barrierefreiheit (Codex-Auflagen 06.11.)
+- VoiceOver-Namen: Schließen („Player schließen“), Aa („Schrift und Darstellung“), Fragen („Fragen zum Buch“), ⓘ („Angaben zum Buch“), Segment („Ansicht“, Wert = aktive Ansicht), Abspielen/Pause samt Zustand „Wird vorbereitet“, Quelle (Wert = laufende Quelle), Regler „Position im Kapitel“ mit Wert, Transport mit vollen Namen („15 Sekunden zurück“, „Absatz vor“) bei kurzer sichtbarer Beschriftung.
+- Touchziele: alle Knöpfe mindestens 44 × 44 pt (Kopfzeile 4 × 44 pt plus Titel passen auch auf 375 pt). Transport 4 × 56 pt + 64 pt. Beschriftungen einzeilig, schrumpfen bei großer Schrift bis 70 %, statt zu kollidieren.
+- Dynamic Type: Lesetext folgt der Systemgröße (`relativeTo`). Das Segment ist bei xxxLarge gedeckelt, damit „Lesen & Hören“ nicht abgeschnitten wird.
+- Text: weiche Kanten oben (18 pt) und unten (28 pt), Innenabstand oben 20 pt und unten 56 pt, also ist jede Zeile vollständig erreichbar. Die laufende Stelle steht mittig.
+- **Am Gerät offen** (Patrick bzw. Mac-Thread): VoiceOver-Durchgang samt Bedienung des Reglers, größte Schriftstufe, iPhone SE/mini (375 pt), Safe Areas im Querformat.
+
 ## Dateien
 
 | Datei | Inhalt |

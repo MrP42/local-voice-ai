@@ -102,9 +102,9 @@ struct AudiobookControls: View {
 
             HStack {
                 ChapterStepButton(forward: false) { playback.previousChapter() }
-                Spacer(); ControlButton(title: "15 s zurück", systemImage: "gobackward.15") { playback.skip(seconds: -15) }
+                Spacer(); ControlButton(title: "15 Sekunden zurück", systemImage: "gobackward.15", caption: "15 s") { playback.skip(seconds: -15) }
                 Spacer(); PlayButton()
-                Spacer(); ControlButton(title: "15 s vor", systemImage: "goforward.15") { playback.skip(seconds: 15) }
+                Spacer(); ControlButton(title: "15 Sekunden vor", systemImage: "goforward.15", caption: "15 s") { playback.skip(seconds: 15) }
                 Spacer(); ChapterStepButton(forward: true) { playback.nextChapter() }
                     .disabled(index + 1 >= chapters.count).opacity(index + 1 >= chapters.count ? 0.4 : 1)
             }

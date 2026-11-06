@@ -583,7 +583,16 @@ struct FollowText<Row: View>: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 4) {
                     ForEach(paragraphs.indices, id: \.self) { i in row(i, paragraphs[i]).id(i) }
-                }.padding(.horizontal, 12).padding(.vertical, 12)
+                }.padding(.horizontal, 12).padding(.top, 20).padding(.bottom, 56)
+            }
+            // Weiche Kanten oben und unten: keine halb abgeschnittene Zeile an der Kopfzeile oder am Hinweis.
+            // Die Innenabstände machen jede Zeile vollständig erreichbar.
+            .mask {
+                VStack(spacing: 0) {
+                    LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom).frame(height: 18)
+                    Color.black
+                    LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom).frame(height: 28)
+                }
             }
             .simultaneousGesture(DragGesture().onChanged { _ in guard follow else { return }; pausedUntil = Date().addingTimeInterval(5); showReturn = true })
             .overlay(alignment: .bottomTrailing) {
@@ -606,10 +615,15 @@ struct FollowText<Row: View>: View {
 }
 
 struct ControlButton: View {
-    let title: String; let systemImage: String; let action: () -> Void
+    /// `title` ist der VoiceOver-Name; `caption` die kurze sichtbare Beschriftung (Standard: `title`).
+    let title: String; let systemImage: String; var caption: String? = nil; let action: () -> Void
     var body: some View {
         Button(action: action) {
-            VStack(spacing: 2) { Image(systemName: systemImage).font(.title2); Text(title).font(.caption2) }.frame(minWidth: 56, minHeight: 44)
+            VStack(spacing: 2) {
+                Image(systemName: systemImage).font(.title2)
+                // Große Schrift: Beschriftung schrumpft statt mit dem Nachbarn zu kollidieren.
+                Text(caption ?? title).font(.caption2).lineLimit(1).minimumScaleFactor(0.7)
+            }.frame(minWidth: 56, minHeight: 44).contentShape(Rectangle())
         }.buttonStyle(.plain).accessibilityLabel(title)
     }
 }

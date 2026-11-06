@@ -25,12 +25,12 @@ body{width:390px;height:844px;overflow:hidden;background:var(--bg);color:var(--t
 .cover b{position:absolute;left:16px;top:16px;font-family:Georgia,serif;color:#f6efe0;font-size:28px}
 .cover span{position:absolute;left:16px;bottom:14px;color:#f6efe0;font-size:12px;letter-spacing:2px;text-transform:uppercase}
 .bt{font-size:20px;font-weight:700;text-align:center}.by{font-size:15px;color:var(--sec);text-align:center;margin-top:3px}
-.txt{position:absolute;top:150px;bottom:calc(var(--barh) + 24px);left:0;right:0;overflow:hidden;padding:8px 12px 0;font-family:Georgia,'DejaVu Serif',serif;font-size:18px;line-height:1.6}
+.txt{position:absolute;top:150px;bottom:calc(var(--barh) + 24px);left:0;right:0;overflow:hidden;padding:8px 12px 0;-webkit-mask-image:linear-gradient(to bottom,transparent 0,#000 18px,#000 calc(100% - 28px),transparent 100%);mask-image:linear-gradient(to bottom,transparent 0,#000 18px,#000 calc(100% - 28px),transparent 100%);font-family:Georgia,'DejaVu Serif',serif;font-size:18px;line-height:1.6}
 .txt p{padding:10px;border-radius:10px;margin-bottom:4px}
 .txt .mut{color:var(--sec)}
 .txt h3{padding:10px;font-size:21px}
 .s{background:var(--sent);border-radius:3px}
-.w{background:rgba(255,221,0,.9);color:#111418;border-radius:3px}
+.w{background:rgba(255,221,0,.9);color:#111418;border-radius:3px;text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:3px}
 .txt p.pos{background:rgba(255,221,0,.13)}
 .hint{position:absolute;left:0;right:0;bottom:var(--barh);text-align:center;font-size:12px;color:var(--sec);padding:4px;background:var(--bg)}
 .bar{position:absolute;left:0;right:0;bottom:0;background:var(--bar);padding:10px 20px 30px;display:flex;flex-direction:column;gap:8px}
@@ -80,8 +80,8 @@ const audioBar = (compact = false) => `<div class="bar">${compact ? '' : `<div c
 <div class="slider"><div class="tr"></div><div class="fi"></div><div class="kn"></div></div>
 <div class="row"><span>4:12</span><span>noch 6:51 im Kapitel</span></div>
 ${compact ? '' : '<div class="row"><span>Buch 1 % · noch 9 Std. 46 Min. · etwa Seite 3 von 349</span></div>'}
-<div class="ctr"><div class="cb"><i>⏮</i>Kapitel</div><div class="cb"><i>↺</i>15 s zurück</div><div class="play">❚❚</div><div class="cb"><i>↻</i>15 s vor</div><div class="cb"><i>⏭</i>Kapitel</div></div>
-<div class="ctr"><div class="cb"><span class="rate">1,0×</span>Tempo</div><div class="cb"><i>▤</i>Inhalt</div><div class="cb"><i>🎧</i>Quelle</div><div class="cb"><i>☾</i>Schlaftimer</div></div></div>`;
+<div class="ctr"><div class="cb"><i>⏮</i>Kapitel</div><div class="cb"><i>↺</i>15 s</div><div class="play">❚❚</div><div class="cb"><i>↻</i>15 s</div><div class="cb"><i>⏭</i>Kapitel</div></div>
+<div class="ctr"><div class="cb"><span class="rate">1,0×</span>Tempo</div><div class="cb"><i>▤</i>Inhalt</div><div class="cb"><i>⇄</i>Quelle</div><div class="cb"><i>☾</i>Schlaftimer</div></div></div>`;
 const text = (mode) => {
   const follow = mode === 'mitlesen';
   const mid = follow ? `<span class="s">${S1}<span class="w">${W}</span>${S2}</span>${S3}` : S1 + W + S2 + S3;
@@ -101,8 +101,8 @@ if (screen === 'detail') {
 } else if (screen === 'stimme') {
   html += `<div class="hdr"><div class="b">⌄</div><div class="t"><div>Effi Briest</div><div>Vorlesestimme Anna (Premium)</div></div><div class="b aa">Aa</div><div class="b">💬</div></div>` + seg('Lesen &amp; Hören') + text('mitlesen') + `<div class="hint">Absatz antippen liest ab dort vor</div>
   <div class="bar"><div class="row"><span>Text: 1 % gelesen</span><span>Stimme: Anna (Premium)</span></div>
-  <div class="ctr"><div class="cb"><i>⏮</i>Absatz zurück</div><div class="cb"><i>◀◀</i>Satz zurück</div><div class="play">❚❚</div><div class="cb"><i>▶▶</i>Satz vor</div><div class="cb"><i>⏭</i>Absatz vor</div></div>
-  <div class="ctr"><div class="cb"><span class="rate">1,0×</span>Tempo</div><div class="cb"><i>☺</i>Stimme</div><div class="cb"><i>〰</i>Quelle</div><div class="cb"><i>☾</i>Schlaftimer</div></div></div>`;
+  <div class="ctr"><div class="cb"><i>⏮</i>Absatz</div><div class="cb"><i>◀◀</i>Satz</div><div class="play">❚❚</div><div class="cb"><i>▶▶</i>Satz</div><div class="cb"><i>⏭</i>Absatz</div></div>
+  <div class="ctr"><div class="cb"><span class="rate">1,0×</span>Tempo</div><div class="cb"><i>☺</i>Stimme</div><div class="cb"><i>⇄</i>Quelle</div><div class="cb"><i>☾</i>Schlaftimer</div></div></div>`;
   document.body.style.setProperty('--barh', '234px');
 } else if (screen === 'lesen') {
   html += header('Kapitel 1 von 36 · pausiert') + seg('Lesen') + text('lesen') + `<div class="hint">Absatz antippen setzt die Stelle, ▶ hört ab dort weiter</div>

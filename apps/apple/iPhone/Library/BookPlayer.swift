@@ -80,6 +80,10 @@ struct SurfaceSwitch: View {
             ForEach(PlayerSurface.allCases, id: \.self) { Text($0.title).tag($0) }
         }
         .pickerStyle(.segmented)
+        // Ab sehr großer Schrift würde „Lesen & Hören“ im Segment abgeschnitten.
+        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+        .accessibilityLabel("Ansicht")
+        .accessibilityValue(playback.surface.title)
         .accessibilityIdentifier("playerSurface")
         .accessibilityHint("Wechselt zwischen Cover, Mitlesen beim Hören und reinem Lesen. Die Stelle im Buch bleibt.")
     }
@@ -125,6 +129,8 @@ struct ReadAlongText: View {
            let b = AttributedString.Index(range.upperBound, within: s) {
             s[a..<b].backgroundColor = look.wordBackground
             s[a..<b].foregroundColor = look.wordText
+            // Nicht nur Farbe: In hellen Themen liegen Wort- und Satzfläche in der Helligkeit nah beieinander.
+            s[a..<b].underlineStyle = .single
         }
         return s
     }
@@ -190,11 +196,11 @@ struct VoiceControls: View {
                 Text("Stimme: \(playback.voiceName)").lineLimit(1)
             }.font(.caption).foregroundStyle(VoicePalette.secondaryText)
             HStack {
-                ControlButton(title: "Absatz zurück", systemImage: "backward.end.fill") { playback.step(paragraphs: -1) }
-                Spacer(); ControlButton(title: "Satz zurück", systemImage: "backward.fill") { playback.step(sentences: -1) }
+                ControlButton(title: "Absatz zurück", systemImage: "backward.end.fill", caption: "Absatz") { playback.step(paragraphs: -1) }
+                Spacer(); ControlButton(title: "Satz zurück", systemImage: "backward.fill", caption: "Satz") { playback.step(sentences: -1) }
                 Spacer(); PlayButton()
-                Spacer(); ControlButton(title: "Satz vor", systemImage: "forward.fill") { playback.step(sentences: 1) }
-                Spacer(); ControlButton(title: "Absatz vor", systemImage: "forward.end.fill") { playback.step(paragraphs: 1) }
+                Spacer(); ControlButton(title: "Satz vor", systemImage: "forward.fill", caption: "Satz") { playback.step(sentences: 1) }
+                Spacer(); ControlButton(title: "Absatz vor", systemImage: "forward.end.fill", caption: "Absatz") { playback.step(paragraphs: 1) }
             }
             HStack {
                 RateMenu()
@@ -230,10 +236,11 @@ struct SourceMenu: View {
                 if playback.source == .voice { Label("Vorlesestimme", systemImage: "checkmark") } else { Text("Vorlesestimme") }
             }
         } label: {
+            // Gleiches Symbol und gleiche Beschriftung in beiden Quellen; die laufende nennt das Menü (Haken) und VoiceOver.
             VStack(spacing: 2) {
-                Image(systemName: playback.source == .audiobook ? "headphones" : "waveform").font(.title2)
-                Text("Quelle").font(.caption2)
-            }.frame(minWidth: 56, minHeight: 44)
+                Image(systemName: "arrow.left.arrow.right").font(.title2)
+                Text("Quelle").font(.caption2).lineLimit(1).minimumScaleFactor(0.7)
+            }.frame(minWidth: 56, minHeight: 44).contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Quelle")
