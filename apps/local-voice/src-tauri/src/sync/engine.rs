@@ -556,10 +556,18 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
     }
 
     // ---- Pull -----------------------------------------------------------
-    if led.rescan < ledger::RESCAN_LEVEL {
-        // Einmal alles neu einlesen: früher übersprungene Objekte kommen so an.
+    // Einmal alles neu einlesen: früher übersprungene Objekte kommen so an.
+    // Bekannte Stände werden dabei nicht erneut angewendet (keine Konfliktkopien).
+    let rescanning = led.rescan < ledger::RESCAN_LEVEL;
+    if rescanning {
         led.cursor = 0;
         led.rescan = ledger::RESCAN_LEVEL;
+        // iPhone-Bücher (`book_<ms>_<hex>`) wurden bisher übersprungen, aber als
+        // gesehen verbucht: diese Einträge vergessen, damit sie jetzt ankommen.
+        led.objects.retain(|k, _| {
+            !k.strip_prefix("book/book_")
+                .is_some_and(|rest| rest.contains('_'))
+        });
     }
     let mut since = led.cursor;
     let mut key_mismatch = false;
@@ -590,6 +598,13 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
             // Das Relay hat seinen eigenen Takt und Cursor (booktalk_relay.rs).
             if remote.collection == super::booktalk_relay::COLLECTION {
                 continue;
+            }
+            if rescanning
+                && led
+                    .get(&remote.collection, &remote.object_id)
+                    .is_some_and(|e| e.revision >= remote.revision)
+            {
+                continue; // beim Neueinlesen schon bekannt
             }
             if remote.device_id == cfg.device_id
                 && led
