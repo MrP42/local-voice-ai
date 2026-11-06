@@ -206,8 +206,14 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
   // Neue Testversion im Update-Ordner (Wächter im Backend, alle 30 s): sofort
   // das Update-Fenster zeigen. Ein Klick auf „Installieren“ schließt die App,
   // installiert und startet neu, wie beim Online-Update.
+  // Läuft schon eine Installation, ersetzt ein neuer Fund sie nicht.
+  const installingRef = useRef(false);
+  useEffect(() => {
+    installingRef.current = isInstalling;
+  }, [isInstalling]);
   useEffect(() => {
     const unlisten = listen<LocalUpdate>(LOCAL_UPDATE_EVENT, (event) => {
+      if (installingRef.current) return;
       setLocalUpdateFound(event.payload);
       setDialogOpen(true);
     });

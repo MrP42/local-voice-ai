@@ -194,11 +194,13 @@ fn fingerprint(update: &LocalUpdate) -> Option<(String, u64, Option<std::time::S
 }
 
 /// Was der Waechter mit einem Fund tut: melden, sobald er stabil ist, und
-/// jede Version nur einmal je Programmlauf.
+/// jede Version nur einmal je Programmlauf. Als gemeldet gilt eine Version
+/// erst, wenn das Ereignis wirklich hinausging (`announced`); eine schon
+/// gemeldete Version kommt auch nach einem Wechsel A -> B -> A nicht wieder.
 #[derive(Default)]
 pub(crate) struct Watch {
     last: Option<(String, u64, Option<std::time::SystemTime>)>,
-    announced: Option<String>,
+    announced: std::collections::HashSet<String>,
 }
 
 impl Watch {
@@ -209,12 +211,30 @@ impl Watch {
     ) -> bool {
         let stable = fp.is_some() && fp == self.last;
         self.last = fp;
-        if !stable || self.announced.as_deref() == Some(version) {
-            return false;
-        }
-        self.announced = Some(version.to_string());
-        true
+        stable && !self.announced.contains(version)
     }
+
+    pub(crate) fn announced(&mut self, version: &str) {
+        self.announced.insert(version.to_string());
+    }
+}
+
+/// Laeuft gerade etwas, das ein Neustart zerstoeren wuerde (Diktat,
+/// Besprechungsaufnahme oder deren Abschluss, Vorlesen)? Dann wartet das
+/// Angebot bis zum naechsten Blick.
+fn busy(app: &AppHandle) -> bool {
+    use std::sync::Arc;
+    use tauri::Manager;
+    let dictation = app
+        .try_state::<Arc<crate::managers::audio::AudioRecordingManager>>()
+        .is_some_and(|m| m.is_recording());
+    let meeting = app
+        .try_state::<Arc<crate::managers::meetings::recorder::MeetingRecorderManager>>()
+        .is_some_and(|m| m.is_recording() || m.final_jobs_active());
+    let speaking = app
+        .try_state::<crate::managers::tts::TtsManager>()
+        .is_some_and(|m| m.status().phase == crate::managers::tts::state::TtsPhase::Speaking);
+    dictation || meeting || speaking
 }
 
 /// Testversionen sofort anbieten: ein Hintergrund-Thread schaut alle 30 s in
@@ -222,6 +242,13 @@ impl Watch {
 /// sie als Ereignis an die Oberflaeche, die das Update-Fenster oeffnet. Ein
 /// Klick auf „Installieren“ beendet die App, installiert und startet neu —
 /// wie beim Online-Update. Ohne Update-Ordner passiert nichts.
+///
+/// Grenzen (bewusst, Entwickler-PC): Der Waechter laeuft in jedem Build, wird
+/// aber nur aktiv, wenn ein Update-Ordner existiert. Der Installationsweg ist
+/// derselbe wie beim manuellen „Lokales Update“ und prueft keine Signatur;
+/// installiert wird nur nach Klick und nur aus den Update-Ordnern. Die
+/// Stabilitaetspruefung (Groesse + Zeit) ist eine Heuristik; das Build-Skript
+/// veroeffentlicht deshalb atomar per Umbenennen.
 pub fn start_watch(app: AppHandle) {
     use tauri::Emitter;
     let spawned = std::thread::Builder::new()
@@ -233,9 +260,15 @@ pub fn start_watch(app: AppHandle) {
                 let Some(update) = find_newest(&app) else {
                     continue;
                 };
-                if watch.should_announce(&update.version, fingerprint(&update)) {
-                    log::info!("local update: {} bereit, biete an", update.version);
-                    let _ = app.emit(LOCAL_UPDATE_EVENT, &update);
+                if !watch.should_announce(&update.version, fingerprint(&update)) || busy(&app) {
+                    continue;
+                }
+                match app.emit(LOCAL_UPDATE_EVENT, &update) {
+                    Ok(()) => {
+                        log::info!("local update: {} bereit, angeboten", update.version);
+                        watch.announced(&update.version);
+                    }
+                    Err(e) => log::warn!("local update: Angebot nicht gesendet: {e}"),
                 }
             }
         });
@@ -345,15 +378,23 @@ mod tests {
         let mut w = Watch::default();
         assert!(
             !w.should_announce("0.23.5", fp(10)),
-            "erster Blick: noch nicht stabil"
+            "erster Blick: nicht stabil"
         );
         assert!(!w.should_announce("0.23.5", fp(20)), "waechst noch");
         assert!(w.should_announce("0.23.5", fp(20)), "stabil: melden");
+        assert!(
+            w.should_announce("0.23.5", fp(20)),
+            "Senden scheiterte: erneut"
+        );
+        w.announced("0.23.5");
         assert!(!w.should_announce("0.23.5", fp(20)), "nur einmal");
         assert!(!w.should_announce("0.23.6", fp(30)));
+        assert!(w.should_announce("0.23.6", fp(30)), "neue Version: melden");
+        w.announced("0.23.6");
+        assert!(!w.should_announce("0.23.5", fp(20)));
         assert!(
-            w.should_announce("0.23.6", fp(30)),
-            "neue Version: wieder melden"
+            !w.should_announce("0.23.5", fp(20)),
+            "A -> B -> A: nicht wieder"
         );
         assert!(!w.should_announce("0.23.7", None), "ohne Datei nie");
     }
