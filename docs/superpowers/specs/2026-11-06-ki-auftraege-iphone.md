@@ -80,7 +80,7 @@ kostenpflichtige Wiederholung, sondern `Bestätigung nötig`.
 
 **Wiederanlauf:** Vor jedem Anbieteraufruf wird dauerhaft ein Checkpoint `aufruf_begonnen` geschrieben, danach `aufruf_beendet` samt Ergebnis und Verbrauch.
 App- oder PC-Neustart setzt am letzten beendeten Schritt fort. Findet der Neustart `aufruf_begonnen` ohne Abschluss, ist der Ausgang unklar: Der Auftrag geht in
-`Bestätigung nötig` und wiederholt den Aufruf nie ohne neue Bestätigung; der mögliche Verbrauch zählt als angefallen.
+`Bestätigung nötig` und wiederholt den Aufruf nie ohne neue Bestätigung. Die Reserve aus §5 bleibt angerechnet; eine Wiederholung reserviert zusätzlich neu.
 
 **Mehrere PCs:** Nur der im Angebot genannte PC nimmt an.
 
@@ -94,7 +94,10 @@ Kosten. Späte Ergebnisse werden nicht veröffentlicht.
 - Tatsächlicher Empfänger, Modell, Textumfang, Region soweit bekannt. Speicherung und Trainingsnutzung werden als unbekannt genannt, wenn sie es sind.
 - Getrennt: Geld, Token, Abo-Kontingent. „Unbekannt“ ist kein Nullpreis.
 - Ist die Geldschätzung bei einem kostenpflichtigen Pfad unbekannt, verlangt das Blatt ein numerisches Budget; ohne Budget ist der Start gesperrt.
-- Der Verbrauch wird dauerhaft über alle Schritte und Neustarts aufsummiert.
+- Ist die Preisbasis unbekannt, reicht ein Budget nicht: Ohne belastbare Kostenobergrenze für den nächsten Aufruf bleibt der kostenpflichtige Start gesperrt. Das gilt auch für jeden weiteren Aufruf eines laufenden Auftrags.
+- Vor jedem Aufruf werden die maximal möglichen Kosten dauerhaft reserviert und gegen das Budget geprüft. Nach dem Aufruf ersetzt der tatsächliche Verbrauch die Reserve.
+- Ist der Ausgang unklar, bleibt die Reserve angerechnet, auch nach Neustart und nach erneuter Bestätigung.
+- Verbrauch und Reserven werden dauerhaft über alle Schritte und Neustarts aufsummiert.
 - Budget: 125 % der Geldschätzung sind eine ausdrücklich bestätigte Obergrenze. Der PC prüft sie vor jedem Schritt einschließlich der maximalen
   Ausgabe; bei Überschreitung pausiert der Auftrag in `Bestätigung nötig`.
 - Kein Start, solange das Angebot fehlt oder abgelaufen ist.
@@ -150,6 +153,12 @@ Ausgangsfassung. Hörbuch-Fassungen sind nicht Teil dieses Auftrags. Abhängigke
 | Absturz zwischen Anbieterantwort und Speicherung | Neustart findet `aufruf_begonnen`, Zustand `Bestätigung nötig`, kein automatischer Aufruf, Verbrauch gezählt |
 | Budget überschritten, auch nur durch maximale Ausgabe des nächsten Schritts | Pause in `Bestätigung nötig` vor dem Aufruf |
 | Kostenpflichtiger Pfad ohne Schätzung und ohne Budget | Start gesperrt |
+| Unbekannte Preisbasis mit numerischem Budget | Kostenpflichtiger Start gesperrt, kein Modellaufruf |
+| Preisbasis wird im laufenden Auftrag unbekannt | Vor dem nächsten Aufruf `Bestätigung nötig`, kein Aufruf |
+| Reserve übersteigt das Restbudget | Pause vor dem Aufruf, keine Reserve gebucht |
+| Normaler Aufruf | Reserve vorher dauerhaft gebucht, danach durch den tatsächlichen Verbrauch ersetzt |
+| Unklarer Ausgang, dann Neustart | Reserve bleibt angerechnet und überlebt den Neustart |
+| Wiederholung nach unklarem Ausgang und neuer Bestätigung | Alte Reserve bleibt, neue kommt dazu; passt die Summe nicht ins Budget, kein Aufruf |
 | Abbruch gleichzeitig mit `fertig` | Genau ein Endzustand; bei Abbruch zuerst keine Veröffentlichung |
 | Angebot abgelaufen, Parameter geändert, anderes Modell | Abgelehnt, neue Bestätigung nötig |
 | PC aus | `wartend`, abbrechbar, nach 7 Tagen `abgelaufen`, nach PC-Start ohne Doppelung fortgesetzt |
