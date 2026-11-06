@@ -136,7 +136,10 @@ final class PhoneLibrary: ObservableObject {
               let markdown = try? String(contentsOf: file, encoding: .utf8),
               !markdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         let entry = LibraryBook(id: kurzbuchEntryId(book.id, ref, language), title: "\(book.title) · Kurzbuch", addedMs: book.addedMs)
+        // Eine echte Buch-Kennung könnte zufällig gleich aussehen: nie in deren Ordner schreiben.
+        guard !isRealBookFolder(dir(entry)) else { return nil }
         try? FileManager.default.createDirectory(at: dir(entry), withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: dir(entry).appendingPathComponent(Self.kurzbuchMarker).path, contents: Data())
         try? LibraryText.kurzbuchText(markdown).write(to: textURL(entry), atomically: true, encoding: .utf8)
         return entry
     }
@@ -153,10 +156,20 @@ final class PhoneLibrary: ObservableObject {
         removeKurzbuchEntries(bookId: book.id, keeping: Set(refs.compactMap { ref in ref.language.map { kurzbuchEntryId(book.id, ref, $0) } }))
     }
 
+    /// Kennzeichnet einen Ordner als Kurzbuch-Eintrag.
+    private static let kurzbuchMarker = "kurzbuch-eintrag"
+
+    private func isRealBookFolder(_ folder: URL) -> Bool {
+        FileManager.default.fileExists(atPath: folder.appendingPathComponent("buch.json").path)
+    }
+
     private func removeKurzbuchEntries(bookId: String, keeping: Set<String> = []) {
         let prefix = "\(bookId)_kurzbuch_"
         var changed = false
         for name in (try? FileManager.default.contentsOfDirectory(atPath: root.path)) ?? [] where name.hasPrefix(prefix) && !keeping.contains(name) {
+            let folder = root.appendingPathComponent(name)
+            // Nur eigene Einträge: Der Name allein beweist nichts, ein Buch könnte so heißen.
+            guard FileManager.default.fileExists(atPath: folder.appendingPathComponent(Self.kurzbuchMarker).path), !isRealBookFolder(folder) else { continue }
             if LibraryPlayback.shared.book?.id == name { LibraryPlayback.shared.stop() }
             try? FileManager.default.removeItem(at: root.appendingPathComponent(name))
             progress[Self.storageKey(LibraryProgress.textKey(pageId: name))] = nil

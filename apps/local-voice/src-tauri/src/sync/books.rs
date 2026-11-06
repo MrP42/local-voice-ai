@@ -114,6 +114,35 @@ fn valid_language(code: &str) -> bool {
         && parts.next().is_none()
 }
 
+/// Je Sprache das zuletzt erstellte Kurzbuch, egal von welchem Gerät. Bei gleichem
+/// Datum entscheidet die Blob-Kennung, damit alle Geräte dasselbe wählen.
+fn merge_kurzbuecher(own: &[KurzbuchRef], received: &[KurzbuchRef]) -> Vec<KurzbuchRef> {
+    let mut best: BTreeMap<String, KurzbuchRef> = BTreeMap::new();
+    for k in own.iter().chain(received) {
+        let Some(language) = kurzbuch_language(k.blob.file.as_deref()) else {
+            continue;
+        };
+        let rank = |r: &KurzbuchRef| (r.created_ms.unwrap_or(0.0), r.blob.blob.clone());
+        let better = best.get(language).is_none_or(|known| {
+            let (a, b) = (rank(k), rank(known));
+            a.0 > b.0 || (a.0 == b.0 && a.1 > b.1)
+        });
+        if better {
+            best.insert(language.to_string(), k.clone());
+        }
+    }
+    best.into_values().collect()
+}
+
+fn received_kurzbuecher(files: &BookFiles) -> Vec<KurzbuchRef> {
+    files
+        .kurzbuecher
+        .iter()
+        .filter(|k| kurzbuch_language(k.blob.file.as_deref()).is_some())
+        .cloned()
+        .collect()
+}
+
 fn kurzbuch_language(file: Option<&str>) -> Option<&str> {
     file?
         .strip_prefix("kurzbuch-")?
@@ -505,16 +534,7 @@ fn build_book(
         }
     }
     // Ein PC ohne diese KI-Dokumente gibt empfangene Kurzbücher unverändert weiter.
-    for k in &side.pending.kurzbuecher {
-        let language = kurzbuch_language(k.blob.file.as_deref());
-        let own = files
-            .kurzbuecher
-            .iter()
-            .any(|f| kurzbuch_language(f.blob.file.as_deref()) == language);
-        if language.is_some() && !own {
-            files.kurzbuecher.push(k.clone());
-        }
-    }
+    files.kurzbuecher = merge_kurzbuecher(&files.kurzbuecher, &side.pending.kurzbuecher);
     Ok(BookBuild {
         core_files: with_files(&book_core(book), &files),
         uploads,
@@ -919,6 +939,9 @@ pub fn apply_book(
     let existing = library::sync_read_book(&dir);
     let mut side = read_sidecar(&dir);
     if existing.is_some() && !local_clean && side.updated > remote_updated {
+        // Die Angaben bleiben lokal, empfangene Kurzbücher gelten trotzdem.
+        side.pending.kurzbuecher = received_kurzbuecher(&remote_files);
+        write_sidecar(&dir, &side)?;
         return Ok(Applied::default());
     }
     // Gerätelokale Aufträge der vorhandenen Fassung behalten.
@@ -973,12 +996,7 @@ pub fn apply_book(
         }
     }
     // Nur gültige Verweise weitergeben; sie stehen in Pfaden der anderen Geräte.
-    pending.kurzbuecher = remote_files
-        .kurzbuecher
-        .iter()
-        .filter(|k| kurzbuch_language(k.blob.file.as_deref()).is_some())
-        .cloned()
-        .collect();
+    pending.kurzbuecher = received_kurzbuecher(&remote_files);
     side.pending = pending;
     side.updated = remote_updated;
     let book = library::sync_read_book(&dir).ok_or("Buch nach dem Schreiben unlesbar")?;
@@ -1303,6 +1321,38 @@ mod tests {
             ],
             "gleiche Zeit: die Kennung entscheidet; ungültige Sprache gilt als Deutsch"
         );
+    }
+
+    #[test]
+    fn kurzbuecher_zusammenfuehren_nach_datum() {
+        let k = |blob: &str, file: &str, created: f64| KurzbuchRef {
+            blob: BlobRef {
+                blob: blob.into(),
+                file: Some(file.into()),
+                ..Default::default()
+            },
+            created_ms: Some(created),
+            ..Default::default()
+        };
+        let own = [k("alt", "kurzbuch-de.md", 1.0)];
+        let received = [
+            k("neu", "kurzbuch-de.md", 2.0),
+            k("en", "kurzbuch-en.md", 1.0),
+            k("x", "../x", 9.0),
+        ];
+        let merged = merge_kurzbuecher(&own, &received);
+        assert_eq!(
+            merged
+                .iter()
+                .map(|m| m.blob.blob.as_str())
+                .collect::<Vec<_>>(),
+            ["neu", "en"],
+            "neuere Fassung gewinnt, andere Sprachen bleiben, ungültige fallen weg"
+        );
+        // Gleiches Datum: Beide Seiten wählen dieselbe Fassung.
+        let a = [k("a", "kurzbuch-de.md", 1.0)];
+        let b = [k("b", "kurzbuch-de.md", 1.0)];
+        assert_eq!(merge_kurzbuecher(&a, &b), merge_kurzbuecher(&b, &a));
     }
 
     #[test]
