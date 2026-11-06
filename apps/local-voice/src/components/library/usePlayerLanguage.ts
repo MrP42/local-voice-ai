@@ -37,6 +37,8 @@ export interface Listening {
   edition: string | null;
   /** Nach einem Wechsel so weiterspielen, wie es vorher lief. */
   startPlaying: boolean;
+  /** Leiste ist abgebaut und wird nach einem Rückgängig neu gestartet. */
+  pending?: boolean;
   /** Nach einem Wechsel den Fokus auf den Sprachknopf setzen. */
   focusLanguage: boolean;
 }
@@ -170,16 +172,22 @@ export function usePlayerLanguage({
   const waiters = useRef(new Map<string, () => void>());
   const onDispose = useCallback((editionId: string | undefined) => {
     if (!editionId) return;
+    // Prüfstelle der Tests: eine Leiste, die ihr Sichern nicht bestätigt.
+    if ((window as { __lvaHoldDispose?: boolean }).__lvaHoldDispose) return;
     waiters.current.get(editionId)?.();
     waiters.current.delete(editionId);
   }, []);
+  /** `true`, sobald die Leiste abgebaut ist und gesichert hat; `false` nach Fristablauf. */
   const barGone = useCallback(
     (editionId: string) =>
-      new Promise<void>((resolve) => {
-        const timer = window.setTimeout(resolve, 2000);
+      new Promise<boolean>((resolve) => {
+        const timer = window.setTimeout(() => {
+          waiters.current.delete(editionId);
+          resolve(false);
+        }, 2000);
         waiters.current.set(editionId, () => {
           window.clearTimeout(timer);
-          resolve();
+          resolve(true);
         });
       }),
     [],
@@ -239,7 +247,6 @@ export function usePlayerLanguage({
           { offset: req.ms, unit: "ms" },
           { wasPlaying: req.playing, total: undefined },
         );
-        const afterRecord = loadProgress(plan.position.key);
         patch(playing.id, {
           book: updated,
           edition: target.id,
@@ -269,33 +276,38 @@ export function usePlayerLanguage({
               label: t("library.sf.notice.undo"),
               run: async () => {
                 const same = currentId.current === playing.id;
-                try {
-                  if (same) {
-                    const gone = barGone(target.id);
-                    patch(playing.id, {
-                      edition: undo.fromEdition,
-                      startPlaying: undo.wasPlaying,
-                      focusLanguage: true,
-                    });
-                    // Die Leiste der Zielfassung sichert beim Abbau ihre Stelle;
-                    // erst danach den Stand der Zielfassung zurücksetzen.
-                    await gone;
-                    await flushProgress();
-                  }
-                  await undoSwitch(undo);
-                  await reload();
-                } catch (e) {
-                  // Kein halber Zustand: zurück zur Zielfassung mit ihrer Stelle.
-                  if (afterRecord) {
-                    removeProgress(plan.position.key);
-                    saveProgress(plan.position.key, afterRecord);
-                  }
+                const stay = () => {
                   if (same)
                     patch(playing.id, {
                       edition: target.id,
+                      pending: false,
                       startPlaying: false,
                       focusLanguage: true,
                     });
+                };
+                try {
+                  if (same) {
+                    // Zielleiste abbauen, Quellleiste noch nicht starten.
+                    const gone = barGone(target.id);
+                    patch(playing.id, { pending: true });
+                    if (!(await gone)) {
+                      stay();
+                      toast.error(t("library.sf.notice.undoBlocked"));
+                      return;
+                    }
+                    await flushProgress();
+                  }
+                  await undoSwitch(undo);
+                  if (same)
+                    patch(playing.id, {
+                      edition: undo.fromEdition,
+                      pending: false,
+                      startPlaying: undo.wasPlaying,
+                      focusLanguage: true,
+                    });
+                  await reload();
+                } catch (e) {
+                  stay();
                   await reload();
                   toast.error(e instanceof Error ? e.message : String(e));
                 }

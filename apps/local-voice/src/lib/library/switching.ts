@@ -285,15 +285,54 @@ function restoreTarget(undo: SwitchUndo): void {
   if (undo.resumeKey) setLocal(undo.resumeKey, undo.resumeBefore);
 }
 
-/** Rückgängig: Zielfassung wie vorher, Auswahl zurück auf die Quellfassung samt Stelle. */
+const replaceProgress = (key: string, rec: ProgressRecord | null): void => {
+  removeProgress(key);
+  if (rec) saveProgress(key, rec);
+};
+
+const hasRanges = (rec: ProgressRecord | null): rec is ProgressRecord =>
+  !!rec && (rec.heard.length > 0 || rec.read.length > 0);
+
+/**
+ * Rückgängig: Auswahl zurück auf die Quellfassung samt Stelle. Was in der
+ * Zielfassung seit dem Wechsel gehört wurde, bleibt (Stand direkt vor
+ * Rückgängig); ohne Hörbereiche gilt der Stand vor dem Wechsel. Die Quellstelle
+ * steht vor dem Setzen der Auswahl im Fortschritt. Scheitert das Setzen,
+ * ist alles wie unmittelbar vor dem Aufruf.
+ */
 export async function undoSwitch(undo: SwitchUndo): Promise<LibraryBook> {
-  restoreTarget(undo);
-  const result = await commands.librarySetReading(undo.bookId, {
-    edition: undo.fromEdition,
-    updated: Date.now(),
-    device: deviceId(),
-    position: undo.fromPosition,
-  });
-  if (result.status !== "ok") throw new Error(result.error);
-  return result.data;
+  const target = loadProgress(undo.targetKey);
+  const resume = undo.resumeKey ? getLocal(undo.resumeKey) : null;
+  const src = undo.fromPosition;
+  const source = src ? loadProgress(src.key) : null;
+  if (hasRanges(target)) {
+    const kept: ProgressRecord = { ...target };
+    if (undo.targetRecord?.finished) kept.finished = true;
+    else delete kept.finished;
+    replaceProgress(undo.targetKey, kept);
+  } else restoreTarget(undo);
+  if (src && source)
+    replaceProgress(src.key, {
+      ...source,
+      offset: src.offset,
+      updated: Date.now(),
+    });
+  const rollback = () => {
+    replaceProgress(undo.targetKey, target);
+    if (undo.resumeKey) setLocal(undo.resumeKey, resume);
+    if (src) replaceProgress(src.key, source);
+  };
+  try {
+    const result = await commands.librarySetReading(undo.bookId, {
+      edition: undo.fromEdition,
+      updated: Date.now(),
+      device: deviceId(),
+      position: undo.fromPosition,
+    });
+    if (result.status !== "ok") throw new Error(result.error);
+    return result.data;
+  } catch (e) {
+    rollback();
+    throw e;
+  }
 }

@@ -1373,7 +1373,7 @@ export const LibraryPage: React.FC = () => {
             )}
           </>
         )}
-        {listening && playing && playingEdition && (
+        {listening && !listening.pending && playing && playingEdition && (
           <AudioBar
             key={`${listening.book.id}:${playingEdition.id}:${listening.follow}:${tracksOf(
               editionBook(playing, playingEdition).audio,

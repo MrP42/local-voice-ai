@@ -279,6 +279,10 @@ const setup = async (
                 pending: 0,
               };
             if (cmd === "library_set_reading") {
+              (w.__snapshots ??= []).push(
+                window.localStorage.getItem("lva.ui.progress.audio:book_a"),
+              );
+              if (w.__failReading) throw "Speichern fehlgeschlagen";
               const b = list.find((x) => x.id === args?.id)!;
               const next = { ...b, reading: args?.reading };
               w.__books = list.map((x) => (x.id === next.id ? next : x));
@@ -442,8 +446,12 @@ test("Wechsel mit Hinweis: kapitelgenau, Rückgängig stellt Fassung und Stelle 
   expect(back.reading.position.offset).toBeLessThan(40000);
   await expect.poll(() => seconds(page)).toBeGreaterThanOrEqual(25);
   expect(await seconds(page)).toBeLessThan(40);
-  // Der Fortschritt des Englischen ist wie vorher: keine Stelle.
-  expect(await progress(page, "audio:book_a:ed_book_a_en")).toBeNull();
+  // Quellstelle (A): beim Setzen der Auswahl steht sie schon exakt im Fortschritt,
+  // die Quellleiste startet erst danach.
+  const snaps = await page.evaluate(
+    () => (window as unknown as { __snapshots: string[] }).__snapshots,
+  );
+  expect(JSON.parse(snaps.at(-1)!).offset).toBe(back.reading.position.offset);
 });
 
 test("Ohne Zuordnung: ungefähr, mit Knopf „Kapitel zuordnen“", async ({
@@ -516,10 +524,14 @@ test("Ein laufender Abgleich überlebt den Wechsel: Wiedergabe läuft weiter", a
   await page.goto("/");
   await play(page, "Der Prozess");
   const toggle = page.getByTestId("library-audiobar-toggle");
-  if ((await toggle.getAttribute("aria-label")) === "Abspielen")
-    await toggle.click();
   await expect
-    .poll(() => page.evaluate(() => !document.querySelector("audio")!.paused))
+    .poll(async () => {
+      const paused = await page.evaluate(
+        () => document.querySelector("audio")?.paused ?? true,
+      );
+      if (paused) await toggle.click();
+      return !paused;
+    })
     .toBe(true);
   await page.evaluate(() => {
     document.querySelector("audio")!.setAttribute("data-marker", "same");
@@ -824,6 +836,9 @@ const foreignReading = (page: Page, updated: number, offset: number) =>
     { updated, offset },
   );
 
+const covers0 = (r: { heard: number[][] } | null) =>
+  !!r?.heard.some(([a, b]) => a <= 0 && b >= 10000);
+
 test("Zielfassung „fertig“: der Wechsel startet an der Zielstelle, Rückgängig stellt den Stand her", async ({
   page,
 }) => {
@@ -860,7 +875,7 @@ test("Zielfassung „fertig“: der Wechsel startet an der Zielstelle, Rückgän
       async () => (await progress(page, "audio:book_a:ed_book_a_en"))?.finished,
     )
     .toBe(true);
-  expect((await progress(page, "audio:book_a:ed_book_a_en")).offset).toBe(0);
+  expect(covers0(await progress(page, "audio:book_a:ed_book_a_en"))).toBe(true);
 });
 
 test("Konflikt: „Dorthin wechseln“ ohne lokales Hörbuch lässt die Wiedergabe unverändert", async ({
@@ -946,4 +961,88 @@ test("Aufräumen: Ersetzen und Endgültig löschen räumen den Fortschritt der F
     await mod.purgeBooks([b as never]);
   }, book);
   expect(await progress(page, "audio:book_a:ed_book_a_en")).toBeNull();
+});
+
+/** Zielfassung ist gewechselt und hat eine eigene Hörstelle samt Bereich. */
+const switchAndListen = async (
+  page: Page,
+  beforePick?: () => Promise<void>,
+) => {
+  await page.goto("/");
+  await play(page, "Der Prozess");
+  await beforePick?.();
+  await pick(page, "ed_book_a_en");
+  await expect(page.getByTestId("sf-notice")).toContainText("kapitelgenau");
+  // Hören seit dem Wechsel: Bereich 15–16 s in der Zielfassung.
+  await page.evaluate(() => {
+    const k = "lva.ui.progress.audio:book_a:ed_book_a_en";
+    const r = JSON.parse(window.localStorage.getItem(k)!);
+    window.localStorage.setItem(
+      k,
+      JSON.stringify({ ...r, heard: [[15000, 16000]], offset: 16000 }),
+    );
+  });
+};
+
+const heardEn = async (page: Page) =>
+  (await progress(page, "audio:book_a:ed_book_a_en"))?.heard as
+    number[][] | undefined;
+
+const covers = (heard: number[][] | undefined) =>
+  !!heard?.some(([a, b]) => a <= 15000 && b >= 16000);
+
+test("Rückgängig behält, was in der Zielfassung gehört wurde", async ({
+  page,
+}) => {
+  await setup(page, [bookA()], { pageText: PAGES });
+  await switchAndListen(page);
+  await page.getByTestId("sf-notice-undo").click();
+  await expect(page.getByTestId("sf-switch-button")).toHaveAccessibleName(
+    /Deutsch/,
+  );
+  expect(covers(await heardEn(page))).toBe(true);
+});
+
+test("Rückgängig scheitert: Zielstand unverändert, Leiste auf der Zielfassung, Fehlerhinweis", async ({
+  page,
+}) => {
+  await setup(page, [bookA()], { pageText: PAGES });
+  await switchAndListen(page);
+  await page.evaluate(() => {
+    (window as unknown as { __failReading: boolean }).__failReading = true;
+  });
+  await page.getByTestId("sf-notice-undo").click();
+  await expect(page.getByText("Speichern fehlgeschlagen")).toBeVisible();
+  await expect(page.getByTestId("sf-switch-button")).toHaveAccessibleName(
+    /English/,
+  );
+  await expect(page.getByTestId("library-audiobar")).toBeVisible();
+  expect(covers(await heardEn(page))).toBe(true);
+  expect(
+    (await progress(page, "audio:book_a:ed_book_a_en")).offset,
+  ).toBeGreaterThanOrEqual(15000);
+});
+
+test("Rückgängig ohne bestätigtes Sichern der Leiste: abgebrochen, nichts geändert", async ({
+  page,
+}) => {
+  await page.clock.install({ time: new Date("2026-11-06T10:00:00") });
+  await setup(page, [bookA()], { pageText: PAGES });
+  await switchAndListen(page, () =>
+    page.clock.pauseAt(new Date("2026-11-06T11:00:00")),
+  );
+  await page.evaluate(() => {
+    (window as unknown as { __lvaHoldDispose: boolean }).__lvaHoldDispose =
+      true;
+  });
+  const before = (await calls(page, "library_set_reading")).length;
+  await page.getByTestId("sf-notice-undo").click();
+  await page.clock.runFor(2500);
+  await expect(page.getByText(/nicht gesichert/)).toBeVisible();
+  await expect(page.getByTestId("sf-switch-button")).toHaveAccessibleName(
+    /English/,
+  );
+  await expect(page.getByTestId("library-audiobar")).toBeVisible();
+  expect((await calls(page, "library_set_reading")).length).toBe(before);
+  expect(covers(await heardEn(page))).toBe(true);
 });

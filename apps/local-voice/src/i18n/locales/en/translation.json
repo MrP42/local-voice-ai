@@ -7703,7 +7703,8 @@
         "openGroup": "Chapter {{a}} ({{langA}}) belongs to chapter {{b}} ({{langB}}); the match is still open.",
         "noAlignment": "The chapters have not been matched yet.",
         "loading": "{{lang}} is downloading. Playback continues in {{current}}.",
-        "failed": "Switching the language edition failed."
+        "failed": "Switching the language edition failed.",
+        "undoBlocked": "Undo is not possible: the player did not confirm saving its position. Nothing was changed."
       },
       "switch": {
         "button": "Language: {{lang}}, open selection",

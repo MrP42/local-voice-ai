@@ -7703,7 +7703,8 @@
         "openGroup": "Kapitel {{a}} ({{langA}}) gehört zu Kapitel {{b}} ({{langB}}), die Zuordnung ist offen.",
         "noAlignment": "Die Kapitel sind noch nicht zugeordnet.",
         "loading": "{{lang}} wird geladen. Es läuft weiter auf {{current}}.",
-        "failed": "Der Wechsel der Sprachfassung ist fehlgeschlagen."
+        "failed": "Der Wechsel der Sprachfassung ist fehlgeschlagen.",
+        "undoBlocked": "Rückgängig ist nicht möglich: Die Hörleiste hat ihre Stelle nicht gesichert. Nichts wurde geändert."
       },
       "switch": {
         "button": "Sprache: {{lang}}, Auswahl öffnen",
