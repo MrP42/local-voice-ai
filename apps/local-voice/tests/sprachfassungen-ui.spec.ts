@@ -265,7 +265,10 @@ const setup = async (
               );
               return null;
             }
-            if (cmd === "library_list") return list;
+            if (cmd === "library_list") {
+              if (w.__failList) throw "Bibliothek nicht lesbar";
+              return list;
+            }
             if (cmd === "library_language_pairs") return w.__pairs;
             if (cmd === "sync_now")
               return {
@@ -1045,4 +1048,84 @@ test("R체ckg채ngig ohne best채tigtes Sichern der Leiste: abgebrochen, nichts ge�
   await expect(page.getByTestId("library-audiobar")).toBeVisible();
   expect((await calls(page, "library_set_reading")).length).toBe(before);
   expect(covers(await heardEn(page))).toBe(true);
+});
+
+test("Neuladen scheitert nach erfolgreichem R체ckg채ngig: Leiste bleibt auf der Quellfassung", async ({
+  page,
+}) => {
+  await setup(page, [bookA()], { pageText: PAGES });
+  await page.goto("/");
+  await play(page, "Der Prozess");
+  await pick(page, "ed_book_a_en");
+  await expect(page.getByTestId("sf-notice")).toContainText("kapitelgenau");
+  await page.evaluate(() => {
+    (window as unknown as { __failList: boolean }).__failList = true;
+  });
+  await page.getByTestId("sf-notice-undo").click();
+  await expect(page.getByTestId("sf-switch-button")).toHaveAccessibleName(
+    /Deutsch/,
+  );
+  await expect(page.getByTestId("library-audiobar")).toBeVisible();
+  const last = (await calls(page, "library_set_reading")).at(-1) as {
+    reading: { edition: string; position: { offset: number } };
+  };
+  expect(last.reading.edition).toBe("ed_book_a_de");
+  await expect
+    .poll(() => seconds(page))
+    .toBeGreaterThanOrEqual(last.reading.position.offset / 1000 - 1);
+});
+
+test("R체ckg채ngig: wirft ein Schreibschritt, stellt der Rollback den Stand davor wieder her", async ({
+  page,
+}) => {
+  await setup(page, [bookA()], { pageText: PAGES });
+  await page.goto("/");
+  const keys = ["audio:book_a", "audio:book_a:ed_book_a_en"];
+  const result = await page.evaluate(async (keys) => {
+    const put = (k: string, offset: number) =>
+      window.localStorage.setItem(
+        `lva.ui.progress.${k}`,
+        JSON.stringify({
+          offset,
+          length: 9000,
+          heard: [],
+          read: [],
+          unit: "ms",
+          updated: 5,
+        }),
+      );
+    put(keys[0], 3000);
+    put(keys[1], 7000);
+    const before = keys.map((k) =>
+      window.localStorage.getItem(`lva.ui.progress.${k}`),
+    );
+    const mod = await import("/src/lib/library/switching.ts");
+    let failed = false;
+    try {
+      await mod.undoSwitch({
+        bookId: "book_a",
+        fromEdition: "ed_book_a_de",
+        fromPosition: { key: keys[0], unit: "ms", offset: 1000 },
+        targetKey: keys[1],
+        // Kaputter Stand: das Schreiben des Zielstands wirft nach dem Entfernen.
+        targetRecord: { offset: 1, length: 2, heard: 5 as never, read: [] },
+        resumeKey: null,
+        resumeBefore: null,
+        wasPlaying: false,
+      } as never);
+    } catch {
+      failed = true;
+    }
+    const after = keys.map((k) =>
+      window.localStorage.getItem(`lva.ui.progress.${k}`),
+    );
+    return { failed, before, after };
+  }, keys);
+  expect(result.failed).toBe(true);
+  const pick = (raw: string | null) => {
+    const r = JSON.parse(raw!);
+    return [r.offset, r.length, r.heard, r.read];
+  };
+  expect(result.after.map(pick)).toEqual(result.before.map(pick));
+  expect(await calls(page, "library_set_reading")).toHaveLength(0);
 });

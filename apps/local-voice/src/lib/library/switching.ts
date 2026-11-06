@@ -305,24 +305,24 @@ export async function undoSwitch(undo: SwitchUndo): Promise<LibraryBook> {
   const resume = undo.resumeKey ? getLocal(undo.resumeKey) : null;
   const src = undo.fromPosition;
   const source = src ? loadProgress(src.key) : null;
-  if (hasRanges(target)) {
-    const kept: ProgressRecord = { ...target };
-    if (undo.targetRecord?.finished) kept.finished = true;
-    else delete kept.finished;
-    replaceProgress(undo.targetKey, kept);
-  } else restoreTarget(undo);
-  if (src && source)
-    replaceProgress(src.key, {
-      ...source,
-      offset: src.offset,
-      updated: Date.now(),
-    });
   const rollback = () => {
     replaceProgress(undo.targetKey, target);
     if (undo.resumeKey) setLocal(undo.resumeKey, resume);
     if (src) replaceProgress(src.key, source);
   };
   try {
+    if (hasRanges(target)) {
+      const kept: ProgressRecord = { ...target };
+      if (undo.targetRecord?.finished) kept.finished = true;
+      else delete kept.finished;
+      replaceProgress(undo.targetKey, kept);
+    } else restoreTarget(undo);
+    if (src && source)
+      replaceProgress(src.key, {
+        ...source,
+        offset: src.offset,
+        updated: Date.now(),
+      });
     const result = await commands.librarySetReading(undo.bookId, {
       edition: undo.fromEdition,
       updated: Date.now(),

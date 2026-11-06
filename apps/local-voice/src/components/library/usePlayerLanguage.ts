@@ -297,18 +297,23 @@ export function usePlayerLanguage({
                     }
                     await flushProgress();
                   }
-                  await undoSwitch(undo);
+                  const restored = await undoSwitch(undo);
                   if (same)
                     patch(playing.id, {
+                      book: restored,
                       edition: undo.fromEdition,
                       pending: false,
                       startPlaying: undo.wasPlaying,
                       focusLanguage: true,
                     });
-                  await reload();
                 } catch (e) {
                   stay();
+                  toast.error(e instanceof Error ? e.message : String(e));
+                }
+                // Ein Fehler beim Neuladen ändert nichts am erfolgreichen Rückgängig.
+                try {
                   await reload();
+                } catch (e) {
                   toast.error(e instanceof Error ? e.message : String(e));
                 }
               },
