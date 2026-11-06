@@ -205,3 +205,29 @@ test("Parallele Spekulationen laufen nacheinander, Verworfenes liefert nichts", 
   assert.equal(maxRunning, 1, "nie zwei Abrufe gleichzeitig");
   assert.equal(ctx!.turnId, "b");
 });
+
+test("Verworfen während take wartet: kein Kontext", async () => {
+  let release: (() => void) | null = null;
+  const call = async <T>(cmd: string): Promise<T> => {
+    if (cmd === "app_context_retrieve") {
+      await new Promise<void>((r) => (release = r));
+      return {
+        hits: [hit(1)],
+        searched: ["meeting"],
+        retrieve_ms: 1,
+        epoch: 1,
+      } as T;
+    }
+    if (cmd === "app_context_message") return "K" as T;
+    throw new Error(cmd);
+  };
+  const g = new GlobalContext(call);
+  void g.prepare({ turnId: "t", transcript: "x" });
+  // Abruf läuft schon, dann take, dann verwerfen (Codex-Reproduktion).
+  await new Promise((r) => setTimeout(r, 0));
+  const pending = g.take("t", "x");
+  g.discard("t");
+  await new Promise((r) => setTimeout(r, 0));
+  release!();
+  assert.equal(await pending, null);
+});

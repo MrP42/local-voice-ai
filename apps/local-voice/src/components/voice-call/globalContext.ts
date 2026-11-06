@@ -319,10 +319,13 @@ export class GlobalContext {
     turnId: string,
     transcript: string,
   ): Promise<PreparedContext | null> {
+    const key = `${turnId}\u001f${transcript}`;
     const p = this.pending.get(turnId);
-    if (!p || this.keys.get(turnId) !== `${turnId}\u001f${transcript}`)
-      return null;
+    if (!p || this.keys.get(turnId) !== key) return null;
     const ctx = await p;
+    // Während des Wartens verworfen oder ersetzt (Codex M5 Must-fix 6)?
+    if (this.pending.get(turnId) !== p || this.keys.get(turnId) !== key)
+      return null;
     if (!ctx || ctx.hits.epoch < this.epoch) return null;
     return ctx;
   }

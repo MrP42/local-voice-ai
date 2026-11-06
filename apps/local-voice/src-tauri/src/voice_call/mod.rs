@@ -52,8 +52,46 @@ static EARLY_CANCELS: Lazy<Mutex<std::collections::HashSet<String>>> = Lazy::new
 static SYNTH_CANCELS: Lazy<Mutex<HashMap<String, Vec<Arc<AtomicBool>>>>> =
     Lazy::new(Default::default);
 /// Laufende Antworten mit App-Kontext: ein Widerruf bricht sie sofort ab.
-static CONTEXT_REQUESTS: Lazy<Mutex<std::collections::HashSet<String>>> =
+/// Bleiben bis zum Abbruch bzw. bis sie verdrängt werden eingetragen (die
+/// Wiedergabe läuft über das Textende hinaus); höchstens `CONTEXT_KEEP`.
+static CONTEXT_REQUESTS: Lazy<Mutex<std::collections::VecDeque<String>>> =
     Lazy::new(Default::default);
+const CONTEXT_KEEP: usize = 64;
+
+fn mark_context(id: &str) {
+    let mut q = CONTEXT_REQUESTS.lock().unwrap_or_else(|e| e.into_inner());
+    if !q.iter().any(|x| x == id) {
+        q.push_back(id.to_string());
+        while q.len() > CONTEXT_KEEP {
+            q.pop_front();
+        }
+    }
+}
+
+fn unmark_context(id: &str) {
+    CONTEXT_REQUESTS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .retain(|x| x != id);
+}
+
+/// Ein Abbruch, der vor der Registrierung kam, einlösen.
+fn take_early_cancel(id: &str) -> bool {
+    EARLY_CANCELS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(id)
+}
+
+/// Braucht dieser Aufruf die gebundene lokale Route? Ja, sobald App-Kontext
+/// oder ein daraus abgeleiteter Verlaufseintrag mitgeht (Codex M5/M6).
+pub(crate) fn needs_pinned(
+    bound_context: bool,
+    messages: &[VoiceCallMessage],
+    local: bool,
+) -> bool {
+    bound_context || (local && messages.iter().any(|m| m.derived))
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 pub struct VoiceCallReady {
@@ -267,14 +305,24 @@ fn with_context_message(
     messages
 }
 
-/// Freigaben entzogen: alle laufenden Antworten mit App-Kontext abbrechen und
-/// der Oberfläche melden, damit sie auch die Sprachausgabe stoppt (Auflagen 9/10).
-pub fn revoke_context_requests(app: &AppHandle) {
+/// Alle Anfragen mit Kontext abbrechen: Modell und Sprachsynthese, auch wenn
+/// der Text schon fertig ist und nur noch gesprochen wird. Liefert ihre IDs.
+fn revoke_ids() -> Vec<String> {
     let ids: Vec<String> = CONTEXT_REQUESTS
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .drain()
+        .drain(..)
         .collect();
+    for id in &ids {
+        voice_call_cancel(id.clone());
+    }
+    ids
+}
+
+/// Freigaben entzogen: alle laufenden Antworten mit App-Kontext abbrechen und
+/// der Oberfläche melden, damit sie auch die Sprachausgabe stoppt (Auflagen 9/10).
+pub fn revoke_context_requests(app: &AppHandle) {
+    let ids = revoke_ids();
     // Auch Antworten, deren Text fertig ist, aber noch gesprochen wird:
     // die Oberfläche stoppt bei `*` jede Wiedergabe mit Kontext (Auflage 10).
     let _ = app.emit(
@@ -282,7 +330,6 @@ pub fn revoke_context_requests(app: &AppHandle) {
         serde_json::json!({"kind": "revoked", "request_id": "*"}),
     );
     for id in ids {
-        voice_call_cancel(id.clone());
         let _ = app.emit(
             EVENT,
             serde_json::json!({"kind": "revoked", "request_id": id}),
@@ -350,14 +397,35 @@ pub async fn voice_call_chat(
     let (provider, model, api_key) =
         crate::managers::meetings::llm_call::resolve_provider(&settings)?;
     // App-Kontext nur an einen lokalen Empfänger, unmittelbar vor dem Start
-    // geprüft (Codex M5/M6); sonst antwortet das Modell ohne Kontext. Erst
-    // registrieren, dann binden: ein Widerruf dazwischen trifft die Anfrage.
+    // geprüft (Codex M5/M6); sonst antwortet das Modell ohne Kontext.
     let local = receiver_is_local(&provider);
-    if context.is_some() {
-        CONTEXT_REQUESTS
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(request_id.clone());
+    // Abgeleitete Verlaufseinträge nie an einen entfernten Empfänger.
+    let messages: Vec<VoiceCallMessage> = messages
+        .into_iter()
+        .filter(|m| local || !m.derived)
+        .collect();
+    let guarded = needs_pinned(context.is_some(), &messages, local);
+    // Erst Abbruch und Widerruf registrieren, dann prüfen: was dazwischen kommt,
+    // trifft die Anfrage (der Notify merkt sich den Abbruch).
+    let cancel = Arc::new(Notify::new());
+    CANCELS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(request_id.clone(), cancel.clone());
+    if guarded {
+        mark_context(&request_id);
+    }
+    let unregister = |id: &str| {
+        CANCELS.lock().unwrap_or_else(|e| e.into_inner()).remove(id);
+        unmark_context(id);
+    };
+    // Das lokale Modell zuerst starten (das kann dauern), danach prüfen:
+    // nichts veraltet zwischen Prüfung und Versand (Codex Must-fix 4).
+    if guarded && local {
+        if let Err(e) = crate::managers::llm::ensure_local(&model).await {
+            unregister(&request_id);
+            return Err(e);
+        }
     }
     let question = messages
         .iter()
@@ -378,28 +446,20 @@ pub async fn voice_call_chat(
         }
         None => None,
     };
-    let pinned_local = context.is_some();
-    if context.is_none() {
-        CONTEXT_REQUESTS
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(&request_id);
+    // Abbruch oder Widerruf während der Prüfung (Codex Must-fix 2).
+    if take_early_cancel(&request_id) {
+        unregister(&request_id);
+        return Ok(String::new());
     }
-    // Abgeleitete Verlaufseinträge nie an einen entfernten Empfänger.
-    let messages: Vec<VoiceCallMessage> = messages
-        .into_iter()
-        .filter(|m| local || !m.derived)
-        .collect();
+    let pinned_local = needs_pinned(context.is_some(), &messages, local);
+    if !pinned_local {
+        unmark_context(&request_id);
+    }
     let messages = with_context_message(messages, context);
     let messages: Vec<StreamMessage> = messages
         .into_iter()
         .map(|m| StreamMessage::new(&m.role, m.content))
         .collect();
-    let cancel = Arc::new(Notify::new());
-    CANCELS
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .insert(request_id.clone(), cancel.clone());
 
     let splitter = Arc::new(Mutex::new(SentenceSplitter::new()));
     let index = Arc::new(Mutex::new(0u32));
@@ -454,10 +514,6 @@ pub async fn voice_call_chat(
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .remove(&request_id);
-    CONTEXT_REQUESTS
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .remove(&request_id);
 
     match result {
         // Abgebrochen: das Restliche wird verworfen, die Sprachausgabe ist schon gestoppt.
@@ -497,6 +553,7 @@ pub async fn voice_call_chat(
 #[specta::specta]
 pub fn voice_call_cancel(request_id: String) -> bool {
     cancel_synth(&request_id);
+    unmark_context(&request_id);
     let registered = CANCELS
         .lock()
         .unwrap_or_else(|e| e.into_inner())
@@ -698,5 +755,59 @@ mod tests {
         let got: Vec<&str> = out.iter().map(|m| m.content.as_str()).collect();
         assert_eq!(got, ["S", "a", "b", "K\n\nc"]);
         assert_eq!(with_context_message(msgs, None).len(), 4);
+    }
+
+    fn msg(role: &str, content: &str, derived: bool) -> VoiceCallMessage {
+        VoiceCallMessage {
+            role: role.into(),
+            content: content.into(),
+            derived,
+        }
+    }
+
+    #[test]
+    fn abgeleiteter_verlauf_erzwingt_die_gebundene_route() {
+        let msgs = vec![
+            msg("assistant", "aus Auszug", true),
+            msg("user", "und?", false),
+        ];
+        // Kein neuer Treffer, aber abgeleiteter Verlauf an das lokale Modell:
+        // gebundene Route (kein Proxy, keine Umleitung) und Widerrufsschutz.
+        assert!(needs_pinned(false, &msgs, true));
+        // Routenwechsel zur Cloud: der Eintrag wird vorher entfernt.
+        let remote: Vec<_> = msgs.into_iter().filter(|m| !m.derived).collect();
+        assert!(!needs_pinned(false, &remote, false));
+        assert!(needs_pinned(true, &[], true));
+    }
+
+    #[test]
+    fn abbruch_vor_der_registrierung_wird_nach_der_pruefung_eingeloest() {
+        let id = "early-1";
+        assert!(!voice_call_cancel(id.into()), "noch nicht registriert");
+        assert!(take_early_cancel(id));
+        assert!(!take_early_cancel(id), "nur einmal");
+    }
+
+    #[test]
+    fn widerruf_stoppt_auch_die_laufende_synthese() {
+        let id = "ctx-revoke-1";
+        mark_context(id);
+        let flag = Arc::new(AtomicBool::new(false));
+        SYNTH_CANCELS
+            .lock()
+            .unwrap()
+            .entry(id.into())
+            .or_default()
+            .push(flag.clone());
+        // Das Modell ist fertig (kein CANCELS-Eintrag), die Wiedergabe läuft:
+        // der Eintrag bleibt bis zum Widerruf bestehen.
+        let ids = revoke_ids();
+        assert!(ids.iter().any(|x| x == id));
+        assert!(
+            flag.load(std::sync::atomic::Ordering::SeqCst),
+            "Synthese abgebrochen"
+        );
+        assert!(!revoke_ids().iter().any(|x| x == id));
+        let _ = take_early_cancel(id);
     }
 }

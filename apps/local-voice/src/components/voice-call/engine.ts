@@ -847,10 +847,12 @@ export class VoiceCallEngine {
           onPiece(e.text ?? "");
         });
         const context = speakerContext(gctx);
-        run.withContext = !!context;
+        const messages = this.messagesFor(text, systemPrompt);
+        // Auch eine Antwort auf abgeleiteten Verlauf gilt als abgeleitet.
+        run.withContext = !!context || messages.some((m) => m.derived);
         full = await invoke<string>("voice_call_chat", {
           requestId: id,
-          messages: this.messagesFor(text, systemPrompt),
+          messages,
           context,
         });
         if (stale()) return;
@@ -1004,7 +1006,10 @@ export class VoiceCallEngine {
         turnCtx = fresh;
         context = speakerContext(fresh);
       }
-      turn.withContext = !!context;
+      const messages = this.messagesFor(text, systemPrompt);
+      // Auch eine Antwort auf abgeleiteten Verlauf gilt als abgeleitet
+      // (Widerruf, Route; Codex M5 Must-fix 1).
+      turn.withContext = !!context || messages.some((m) => m.derived);
       this.sentenceHandlers.set(turn.id, (e) => {
         if (e.kind === "revoked") {
           // Freigabe entzogen: Antwort und Sprachausgabe sofort beenden.
@@ -1020,7 +1025,7 @@ export class VoiceCallEngine {
       });
       await invoke<string>("voice_call_chat", {
         requestId: turn.id,
-        messages: this.messagesFor(text, systemPrompt),
+        messages,
         context,
       });
       // Das letzte Häppchen kann nach dem Rückgabewert eintreffen: auf `done` warten.

@@ -646,9 +646,20 @@ pub async fn app_context_retrieve(
     app: AppHandle,
     req: AppContextRequest,
 ) -> Result<ContextHits, String> {
-    tauri::async_runtime::spawn_blocking(move || retrieve_blocking(&app, &req))
-        .await
-        .map_err(|e| e.to_string())?
+    // Zeitbudget für den ganzen Abruf (Sperren, Audit-DB, Suche): danach
+    // antwortet das Gespräch ohne Kontext; der Hintergrundteil hält die
+    // Abrufsperre, bis er fertig ist (Codex M5 Must-fix 5).
+    let task = tauri::async_runtime::spawn_blocking(move || retrieve_blocking(&app, &req));
+    match tokio::time::timeout(RETRIEVE_BUDGET, task).await {
+        Ok(joined) => joined.map_err(|e| e.to_string())?,
+        Err(_) => {
+            OVER_BUDGET.fetch_add(1, Ordering::Relaxed);
+            Ok(ContextHits {
+                epoch: INDEX.try_read().map(|i| i.epoch()).unwrap_or(0),
+                ..Default::default()
+            })
+        }
+    }
 }
 
 fn retrieve_blocking(app: &AppHandle, req: &AppContextRequest) -> Result<ContextHits, String> {

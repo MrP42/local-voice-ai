@@ -2061,6 +2061,42 @@ mod pinned_tests {
     }
 
     #[tokio::test]
+    async fn gebundene_route_ignoriert_den_umgebungsproxy() {
+        let (proxy, proxy_hits) =
+            serve("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n".into());
+        let (target, target_hits) = serve("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}".into());
+        let p = provider("local", &format!("http://127.0.0.1:{target}/v1"));
+        // Proxy aus der Umgebung nur für den Bau des Clients setzen.
+        let keys = ["HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"];
+        let saved: Vec<_> = keys.iter().map(|k| (k, std::env::var(k).ok())).collect();
+        let no_proxy = std::env::var("NO_PROXY").ok();
+        for k in keys {
+            std::env::set_var(k, format!("http://127.0.0.1:{proxy}"));
+        }
+        std::env::remove_var("NO_PROXY");
+        let client = create_pinned_local_client(&p, "");
+        for (k, v) in saved {
+            match v {
+                Some(v) => std::env::set_var(k, v),
+                None => std::env::remove_var(k),
+            }
+        }
+        if let Some(v) = no_proxy {
+            std::env::set_var("NO_PROXY", v);
+        }
+        let resp = client
+            .unwrap()
+            .post(format!("http://127.0.0.1:{target}/v1/chat/completions"))
+            .body("{}")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status().as_u16(), 200);
+        assert_eq!(proxy_hits.load(Ordering::SeqCst), 0, "kein Proxy");
+        assert_eq!(target_hits.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
     async fn gebundene_route_lehnt_fremde_anbieter_ab() {
         let p = provider("openai", "https://api.example.com/v1");
         let err = stream_inner(&p, String::new(), "m", Vec::new(), &|_| {}, true)
