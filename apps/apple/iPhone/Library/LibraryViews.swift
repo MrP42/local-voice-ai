@@ -1007,12 +1007,27 @@ struct VoiceList: View {
     var body: some View {
         NavigationStack {
             List {
+                // Wofür die Wahl gilt (lva#352): alle Bücher der Sprache oder nur dieses Buch.
+                if let lang = playback.voiceLanguage {
+                    let name = Locale.current.localizedString(forLanguageCode: lang) ?? lang
+                    Section {
+                        Toggle("Nur für dieses Buch", isOn: Binding(
+                            get: { playback.voiceScope == .book },
+                            set: { playback.setBookOnlyVoice($0) }))
+                        .frame(minHeight: 44)
+                    } footer: {
+                        Text(playback.voiceScope != .book ? "Standardstimme für Bücher auf \(name)."
+                             : playback.bookVoiceMissing
+                             ? "Die eigene Stimme dieses Buchs fehlt auf dem iPhone. Es liest die Standardstimme für \(name)."
+                             : "Eigene Stimme für dieses Buch (\(name)).")
+                    }
+                }
                 ForEach(PhononEngine.languages, id: \.self) { language in
                     if let names = phonon.voices[language] {
                         Section {
                             ForEach(names, id: \.self) { name in
                                 let id = PhononEngine.identifier(language: language, voice: name)
-                                Button { playback.voiceIdentifier = id; dismiss() } label: {
+                                Button { playback.chooseVoice(id); dismiss() } label: {
                                     HStack {
                                         Text(name)
                                         Spacer()
@@ -1026,9 +1041,9 @@ struct VoiceList: View {
                     }
                 }
                 Section {
-                    ForEach(LibraryPlayback.germanVoices, id: \.identifier) { v in
+                    ForEach(playback.systemVoices, id: \.identifier) { v in
                         Button {
-                            playback.voiceIdentifier = v.identifier; dismiss()
+                            playback.chooseVoice(v.identifier); dismiss()
                         } label: {
                             HStack {
                                 VStack(alignment: .leading) {
@@ -1037,11 +1052,11 @@ struct VoiceList: View {
                                 }
                                 Spacer()
                                 if v.identifier == playback.voiceIdentifier { Image(systemName: "checkmark") }
-                            }.frame(minHeight: 44)
+                            }.frame(minHeight: 44).contentShape(Rectangle())
                         }.buttonStyle(.plain)
                     }
                 } footer: {
-                    Text("Bessere Stimmen (Premium) lädst du kostenlos unter Einstellungen › Bedienungshilfen › Gesprochene Inhalte › Stimmen › Deutsch.")
+                    Text("Bessere Stimmen (Premium) lädst du kostenlos unter Einstellungen › Bedienungshilfen › Gesprochene Inhalte › Stimmen.")
                 }
             }
             .navigationTitle("Stimme").navigationBarTitleDisplayMode(.inline)

@@ -159,10 +159,21 @@ import { inForeignDialog, isTextEntry } from "./booktalk/keys";
 import { BookTalkPanel } from "./booktalk/BookTalkPanel";
 import type { BookSpot, BookTalkHost } from "./booktalk/useBookVoice";
 import {
+  HYDRATED_EVENT as PROGRESS_HYDRATED,
   bookFrontier,
   raiseFrontier,
   textProgressKey,
 } from "../../../lib/library/progress";
+import {
+  VOICE_PREFS_EVENT,
+  bookVoiceKey,
+  clearPref,
+  hasBookPref,
+  langVoiceKey,
+  prefLanguage,
+  resolveVoicePref,
+  writeDesktopPref,
+} from "../../../lib/reader/voicePrefs";
 import { KurzbuchPanel } from "./kidocs/KurzbuchPanel";
 import { KURZBUCH_TEMPLATE_ID, parseKurzbuch } from "@/lib/kurzbuch/kurzbuch";
 import { KiDocumentDialog, type KiSelection } from "./kidocs/KiDocumentDialog";
@@ -524,6 +535,9 @@ export const TtsSettings = () => {
   const [voicesChosen, setVoicesChosen] = useState<Record<string, true>>({});
   /** Sprache des Originaltexts, im Arbeitsstand der Seite gespeichert. */
   const [pageLang, setPageLang] = useState<string | null>(null);
+  /** Seite, für die die Erkennung gelaufen ist: erst dann stellt die
+      Buchsprache Stimmen um. */
+  const [langCheckedFor, setLangCheckedFor] = useState<string | null>(null);
   /** "Sprecher auf allen Seiten ersetzen": offen, mit optionaler Vorbelegung. */
   const [replaceSpeaker, setReplaceSpeaker] = useState<{
     from?: string;
@@ -1553,6 +1567,8 @@ export const TtsSettings = () => {
     tryOf,
     languageOf: voiceLanguageOf,
     bestVoiceFor,
+    phononOf,
+    valueOfPref,
   } = useVoiceChoice(phase);
 
   // Die Stimme gehoert zum Reiter -- bei der Uebersetzung zur Sprache: Englisch
@@ -1571,8 +1587,95 @@ export const TtsSettings = () => {
       : tab === "summary" && docLang
         ? `summary:${docLang}`
         : tab;
+  /** Sprache dessen, was der offene Reiter vorliest. */
+  const contentLang = useMemo(() => {
+    if (tab === "translation") return targetLangCode(targetLang);
+    if (tab === "summary") return docLang ?? detectLanguage(summary);
+    return pageLang;
+  }, [tab, targetLang, docLang, pageLang]);
+  // Stimme je Buchsprache (lva#352): wem die Seite gehört (Buch der
+  // Bibliothek, sonst die Seite selbst) und was dafür gemerkt ist.
+  // Erst nach der Suche in der Bibliothek steht fest, ob die Seite einem Buch
+  // gehört; bis dahin wird weder gemerkt noch angewendet (sonst landete eine
+  // frühe Wahl unter der Seite statt unter dem Buch).
+  const [pageOwner, setPageOwner] = useState<{
+    page: string;
+    owner: string;
+  } | null>(null);
+  useEffect(() => {
+    const page = activePage;
+    if (!page) return;
+    let cancelled = false;
+    const done = (bookId: string | null | undefined) => {
+      if (!cancelled) setPageOwner({ page, owner: bookId || `page_${page}` });
+    };
+    void commands
+      .libraryList()
+      .then((r) =>
+        done(
+          r.status === "ok"
+            ? r.data.find((b) => b.text?.page_id === page)?.id
+            : null,
+        ),
+      )
+      .catch(() => done(null));
+    return () => {
+      cancelled = true;
+    };
+  }, [activePage]);
+  const voiceOwner =
+    pageOwner && pageOwner.page === activePage ? pageOwner.owner : null;
+  const prefLang = voiceOwner ? prefLanguage(contentLang) : null;
+  const [prefsTick, setPrefsTick] = useState(0);
+  useEffect(() => {
+    const bump = () => setPrefsTick((n) => n + 1);
+    // Nicht `CHANGED_EVENT`: das feuert bei jedem gesicherten Lesestand.
+    const events = [VOICE_PREFS_EVENT, PROGRESS_HYDRATED];
+    for (const e of events) window.addEventListener(e, bump);
+    return () => {
+      for (const e of events) window.removeEventListener(e, bump);
+    };
+  }, []);
+  const resolvedPref = useMemo(
+    () => resolveVoicePref(voiceOwner, prefLang, valueOfPref),
+    // prefsTick: Änderung im Speicher (eigene Wahl, Abgleich, Start).
+    [voiceOwner, prefLang, valueOfPref, prefsTick],
+  );
+  // Gleiches Ergebnis, gleiches Objekt: die Effekte unten laufen nur bei
+  // einer echten Änderung.
+  const prefVoiceId = resolvedPref
+    ? `${resolvedPref.source}|${resolvedPref.value}`
+    : "";
+  const prefVoice = useMemo(
+    () => resolvedPref,
+    [prefVoiceId],
+  );
+  /** Wahl dieses Reiters merken: für die Sprache oder, hat das Buch eine
+      eigene Stimme, nur für das Buch. */
+  const rememberVoice = (value: string) => {
+    if (!prefLang || !value || value === VOICE_MANAGE) return;
+    const key =
+      voiceOwner && hasBookPref(voiceOwner, prefLang)
+        ? bookVoiceKey(voiceOwner, prefLang)
+        : langVoiceKey(prefLang);
+    writeDesktopPref(key, value, phononOf(value));
+  };
+  /** „Nur für dieses Buch“ ein- oder ausschalten. */
+  const setBookOnly = (on: boolean) => {
+    if (!voiceOwner || !prefLang) return;
+    const key = bookVoiceKey(voiceOwner, prefLang);
+    if (!on) {
+      clearPref(key);
+      return;
+    }
+    if (voiceValue && voiceValue !== VOICE_MANAGE)
+      writeDesktopPref(key, voiceValue, phononOf(voiceValue));
+  };
+  const bookOnly = prefsTick >= 0 && hasBookPref(voiceOwner, prefLang);
   // Seiten- oder Reiterwechsel (die Seite laedt `tabVoices` und `tab` aus ihrem
   // Zustand): die fuer diese Seite und diesen Reiter gemerkte Stimme wird aktiv.
+  // Vorrang hat die Stimme des Buchs bzw. der Sprache (lva#352); erst mit
+  // erkannter Sprache, sonst schaltete eine noch alte Sprache kurz um.
   // Je (Seite, Reiter, Stimme) genau einmal: ein Neuaufbau von `applyVoiceValue`
   // (Einstellungen neu geladen) wiederholt eine fehlgeschlagene Wahl nicht.
   const appliedFor = useRef<string | null>(null);
@@ -1582,8 +1685,11 @@ export const TtsSettings = () => {
     page: string | null;
     key: string;
   } | null>(null);
+  const langReady =
+    tab !== "original" || langCheckedFor === (activePage ?? null);
   useEffect(() => {
     const wanted =
+      (langReady ? prefVoice?.value : undefined) ??
       tabVoices[voiceKey] ??
       (tab === "translation" ? tabVoices.translation : undefined);
     if (!wanted) return;
@@ -1609,7 +1715,17 @@ export const TtsSettings = () => {
     applyVoiceValue(wanted);
     // voiceValue absichtlich nicht in den Abhaengigkeiten: der Effekt soll
     // beim Umschalten greifen, nicht bei jeder Einstellungsaenderung.
-  }, [tab, voiceKey, tabVoices, applyVoiceValue, activePage, fishKnown, fishReady]);
+  }, [
+    tab,
+    voiceKey,
+    tabVoices,
+    applyVoiceValue,
+    activePage,
+    fishKnown,
+    fishReady,
+    prefVoice,
+    langReady,
+  ]);
   // Jede Wahl (Dropdown, Wiedergabeleiste, Einstellungen) gilt fuer die
   // aktuelle Seite und den aktuellen Reiter: so kommt man beim Zurueckschalten
   // zu ihr zurueck. Meldet `voiceValue` die Wahl des Effekts oben (sie kommt
@@ -1650,9 +1766,6 @@ export const TtsSettings = () => {
     [text, activePage, pageLoadTick],
   );
   const langSource = useDebouncedValue(langInput, 800);
-  /** Seite, für die die Erkennung gelaufen ist: erst dann stellt die
-      Buchsprache Stimmen um. */
-  const [langCheckedFor, setLangCheckedFor] = useState<string | null>(null);
   useEffect(() => {
     if (
       !pageLoaded.current ||
@@ -1679,12 +1792,6 @@ export const TtsSettings = () => {
       .catch(() => undefined);
     // pageLang absichtlich nicht: nur ein neuer Text löst die Erkennung aus.
   }, [langSource, activePage, pageLoadTick]);
-  /** Sprache dessen, was der offene Reiter vorliest. */
-  const contentLang = useMemo(() => {
-    if (tab === "translation") return targetLangCode(targetLang);
-    if (tab === "summary") return docLang ?? detectLanguage(summary);
-    return pageLang;
-  }, [tab, targetLang, docLang, pageLang]);
   const markVoiceChosen = (key: string) =>
     setVoicesChosen((current) =>
       current[key] ? current : { ...current, [key]: true },
@@ -1695,6 +1802,8 @@ export const TtsSettings = () => {
   const autoVoiceFor = useRef<string | null>(null);
   useEffect(() => {
     if (!pageLoaded.current || !contentLang || voicesChosen[voiceKey]) return;
+    // Gemerkte Stimme der Sprache oder des Buchs geht vor (lva#352).
+    if (prefVoice) return;
     if (langCheckedFor !== (activePage ?? null)) return;
     const current = tabVoices[voiceKey] ?? voiceValue;
     if (!current || current === VOICE_MANAGE) return;
@@ -1719,6 +1828,7 @@ export const TtsSettings = () => {
     activePage,
     pageLoadTick,
     langCheckedFor,
+    prefVoice,
   ]);
   // Sprachfilter der Stimmenauswahl: „Passend“ zeigt die Stimmen der
   // Textsprache und die, die jede Sprache sprechen; die gewählte bleibt immer.
@@ -1801,6 +1911,53 @@ export const TtsSettings = () => {
         })}
       </div>
     ) : undefined;
+
+  // Wofür die Wahl gilt (lva#352): für alle Bücher dieser Sprache oder nur
+  // für dieses Buch. Ohne erkannte Sprache bleibt die Wahl wie bisher.
+  const bookVoiceMissing = bookOnly && prefVoice?.source !== "book";
+  const voiceScopeRow = prefLang ? (
+    <div
+      className="flex items-center gap-2 border-b border-mid-gray/30 px-1 py-1.5 text-xs"
+      data-testid="voice-scope"
+    >
+      <button
+        type="button"
+        role="switch"
+        aria-checked={bookOnly}
+        aria-describedby="voice-scope-text"
+        onClick={() => setBookOnly(!bookOnly)}
+        className="flex min-h-8 shrink-0 cursor-pointer items-center gap-2 rounded px-1 text-text hover:bg-mid-gray/15"
+        data-testid="voice-scope-book"
+      >
+        <span
+          aria-hidden="true"
+          className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors ${
+            bookOnly
+              ? "border-logo-primary bg-logo-primary"
+              : "border-mid-gray/60 bg-mid-gray/25"
+          }`}
+        >
+          <span
+            className={`absolute h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${
+              bookOnly ? "translate-x-[18px]" : "translate-x-[2px]"
+            }`}
+          />
+        </span>
+        <span className="font-medium">{t("tts.voices.scope.bookOnly")}</span>
+      </button>
+      <span
+        id="voice-scope-text"
+        className="min-w-0 flex-1 text-right text-text/70"
+        data-testid="voice-scope-text"
+      >
+        {bookVoiceMissing
+          ? t("tts.voices.scope.bookMissing", { language: langName(prefLang) })
+          : bookOnly
+            ? t("tts.voices.scope.book", { language: langName(prefLang) })
+            : t("tts.voices.scope.lang", { language: langName(prefLang) })}
+      </span>
+    </div>
+  ) : null;
 
   /**
    * Welcher Text gerade im Feld steht — und damit auch, was das Abspielen
@@ -3648,7 +3805,14 @@ export const TtsSettings = () => {
                 ? `tts-voice:auto:${contentLang ?? ""}`
                 : `tts-voice:${voiceLangFilter}`
             }
-            menuHeader={voiceFilterChips}
+            menuHeader={
+              voiceFilterChips || voiceScopeRow ? (
+                <>
+                  {voiceFilterChips}
+                  {voiceScopeRow}
+                </>
+              ) : undefined
+            }
             formatOptionLabel={(option, context) => {
               if (compact && context === "value")
                 return (
@@ -3722,6 +3886,7 @@ export const TtsSettings = () => {
                 return;
               }
               applyVoiceValue(value);
+              rememberVoice(value);
               markVoiceChosen(voiceKey);
               setTabVoices((current) => ({
                 ...current,

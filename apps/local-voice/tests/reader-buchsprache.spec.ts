@@ -418,3 +418,126 @@ test("Stimmenauswahl öffnet wieder an der zuletzt gescrollten Stelle", async ({
     .poll(() => page.locator(".app-select__menu-list").evaluate((el) => el.scrollTop))
     .toBe(top);
 });
+
+// lva#352 (Patrick 06.11.2026): Stimme je Buchsprache statt einer Stimme für
+// alle Bücher; optional eine eigene Stimme nur für ein Buch.
+const pref = (page: Page, key: string) =>
+  page.evaluate(
+    (k) => JSON.parse(window.localStorage.getItem(`lva.ui.${k}`) ?? "null"),
+    key,
+  );
+const selectedVoices = async (page: Page) =>
+  ((await calls(page, "tts_provider_select")) as [string, { voice: string | null }][]).map(
+    ([, a]) => a.voice,
+  );
+
+test("gemerkte Stimme der Buchsprache gilt, auch gegen eine alte Seitenwahl", async ({ page }) => {
+  await setup(page, {
+    engine: "provider:phonon",
+    chosen: "nele-id",
+    state: JSON.stringify({
+      text: ENGLISH,
+      tab: "original",
+      voices: { original: "provider:phonon:nele-id" },
+      voicesChosen: { original: true },
+    }),
+  });
+  await page.addInitScript(() => {
+    // Vom iPhone gekommen: nur die plattformneutrale Phonon-Form.
+    window.localStorage.setItem(
+      "lva.ui.tts.voice.lang.en",
+      JSON.stringify({ phonon: "en:Mark", updated: 1 }),
+    );
+  });
+  await gotoReadAloud(page);
+  await expect.poll(() => selectedVoices(page)).toContain("en:Mark");
+});
+
+test("Wahl im Buch ändert nur die Stimme dieser Sprache", async ({ page }) => {
+  await setup(page, {
+    engine: "provider:phonon",
+    state: JSON.stringify({ text: ENGLISH, tab: "original", voices: {} }),
+  });
+  await page.addInitScript(() => {
+    window.localStorage.setItem(
+      "lva.ui.tts.voice.lang.de",
+      JSON.stringify({ desktop: "provider:phonon:anton-id", phonon: "de:anton-id", updated: 1 }),
+    );
+  });
+  const select = await gotoReadAloud(page);
+  await expect.poll(async () => (await saved(page))?.lang).toBe("en");
+  await select.locator(".app-select__control").click();
+  const menu = page.locator(".app-select__menu");
+  await expect(menu.getByTestId("voice-scope-text")).toHaveText(
+    "Standardstimme für Bücher auf Englisch",
+  );
+  await menu.getByRole("option", { name: /Zoey/ }).click();
+  await expect
+    .poll(() => pref(page, "tts.voice.lang.en"))
+    .toMatchObject({ desktop: "provider:phonon:en:Zoey", phonon: "en:Zoey" });
+  // Deutsch bleibt unberührt.
+  expect((await pref(page, "tts.voice.lang.de")).desktop).toBe("provider:phonon:anton-id");
+});
+
+test("Buchstimme fehlt auf dem Gerät: Sprachstandard liest, Zeile erklärt es", async ({ page }) => {
+  await setup(page, {
+    engine: "provider:phonon",
+    state: JSON.stringify({ text: ENGLISH, tab: "original", voices: {} }),
+  });
+  await page.addInitScript(() => {
+    window.localStorage.setItem(
+      "lva.ui.tts.voice.lang.en",
+      JSON.stringify({ phonon: "en:Mark", updated: 1 }),
+    );
+    // Nur auf dem iPhone vorhanden.
+    window.localStorage.setItem(
+      "lva.ui.tts.voice.book.page_p1.en",
+      JSON.stringify({ ios: "com.apple.voice.Samantha", updated: 2 }),
+    );
+  });
+  const select = await gotoReadAloud(page);
+  await expect.poll(() => selectedVoices(page)).toContain("en:Mark");
+  await select.locator(".app-select__control").click();
+  const menu = page.locator(".app-select__menu");
+  await expect(menu.getByTestId("voice-scope-book")).toHaveAttribute("aria-checked", "true");
+  await expect(menu.getByTestId("voice-scope-text")).toHaveText(
+    "Eigene Stimme dieses Buchs fehlt hier – es liest die Standardstimme für Englisch",
+  );
+});
+
+test("„Nur dieses Buch“: eigene Stimme fürs Buch, Sprache bleibt", async ({ page }) => {
+  await setup(page, {
+    engine: "provider:phonon",
+    state: JSON.stringify({ text: ENGLISH, tab: "original", voices: {} }),
+  });
+  await page.addInitScript(() => {
+    window.localStorage.setItem(
+      "lva.ui.tts.voice.lang.en",
+      JSON.stringify({ phonon: "en:Mark", updated: 1 }),
+    );
+  });
+  const select = await gotoReadAloud(page);
+  await expect.poll(() => selectedVoices(page)).toContain("en:Mark");
+  await select.locator(".app-select__control").click();
+  const menu = page.locator(".app-select__menu");
+  const toggle = menu.getByTestId("voice-scope-book");
+  await expect(toggle).toHaveAttribute("aria-checked", "false");
+  await toggle.click();
+  await expect(menu).toBeVisible();
+  await expect(toggle).toHaveAttribute("aria-checked", "true");
+  await expect(menu.getByTestId("voice-scope-text")).toHaveText(
+    "Eigene Stimme für dieses Buch (Englisch)",
+  );
+  await menu.getByRole("option", { name: /Zoey/ }).click();
+  await expect
+    .poll(() => pref(page, "tts.voice.book.page_p1.en"))
+    .toMatchObject({ desktop: "provider:phonon:en:Zoey" });
+  expect(await pref(page, "tts.voice.lang.en")).toMatchObject({ phonon: "en:Mark" });
+  // Ausschalten: wieder die Stimme der Sprache.
+  await select.locator(".app-select__control").click();
+  await page.locator(".app-select__menu").getByTestId("voice-scope-book").click();
+  await expect
+    .poll(async () => (await pref(page, "tts.voice.book.page_p1.en"))?.desktop)
+    .toBeUndefined();
+  await expect.poll(async () => (await selectedVoices(page)).at(-1)).toBe("en:Mark");
+});
