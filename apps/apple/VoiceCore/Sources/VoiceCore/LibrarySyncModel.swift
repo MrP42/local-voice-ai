@@ -190,6 +190,14 @@ public struct SyncedProgress: Codable, Equatable, Sendable {
     public init(key: String, record: ProgressRecord) { self.key = key; self.record = record }
 }
 
+/// Eintrag der Sammlung `bookmark` (Desktop: `{key, value}`); das iPhone nutzt
+/// sie für die Stimmen je Buchsprache (`tts.voice.*`, lva#352).
+public struct SyncedVoicePref: Codable, Equatable, Sendable {
+    public var key: String
+    public var value: String
+    public init(key: String, value: String) { self.key = key; self.value = value }
+}
+
 public enum LibrarySyncFormat {
     public static let collectionBook = "book"
     public static let collectionProgress = "progress"

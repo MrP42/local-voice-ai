@@ -167,6 +167,7 @@ final class LibrarySync: ObservableObject {
             try await pull(acc)
             try await pushBooks(acc)
             try await pushProgress(acc)
+            try await pushVoicePrefs(acc)
             saveLedger()
             library.flush()
             library.reload()
@@ -202,7 +203,7 @@ final class LibrarySync: ObservableObject {
     }
 
     private func apply(_ remote: HubRemoteObject, _ acc: Account) throws {
-        let collections = [LibrarySyncFormat.collectionBook, LibrarySyncFormat.collectionProgress]
+        let collections = [LibrarySyncFormat.collectionBook, LibrarySyncFormat.collectionProgress, LibrarySyncFormat.collectionBookmark]
         guard collections.contains(remote.collection) else { return }
         if remote.deleted {
             if remote.collection == LibrarySyncFormat.collectionBook, let local = library.books.first(where: { $0.id == remote.objectId }) {
@@ -252,6 +253,14 @@ final class LibrarySync: ObservableObject {
             // Unverändert gegenüber dem Konto: lokale Schreibweise merken, sonst neu senden lassen.
             if let merged = library.record(p.key), merged == p.record {
                 hash = LibrarySyncFormat.canonicalHash(try JSONEncoder().encode(SyncedProgress(key: p.key, record: merged)))
+            }
+        case LibrarySyncFormat.collectionBookmark:
+            // Nur die Stimmen je Buchsprache (lva#352); Lesezeichen kennt das iPhone noch nicht.
+            let entry = try JSONDecoder().decode(SyncedVoicePref.self, from: plain)
+            guard entry.key.hasPrefix(VoicePrefs.prefix),
+                  LibrarySyncFormat.bookmarkObjectId(entry.key) == remote.objectId else { break }
+            if VoicePrefs.newer(local: library.voicePrefRaw(entry.key), remote: entry.value) {
+                library.setVoicePrefRaw(entry.key, entry.value)
             }
         default: break
         }
@@ -349,6 +358,22 @@ final class LibrarySync: ObservableObject {
             if entry?.hash == hash || ledger.dead[SyncLedger.key(LibrarySyncFormat.collectionProgress, id)] == hash { continue }
             if value.count > LibrarySyncFormat.maxPlaintext { markDead(LibrarySyncFormat.collectionProgress, id, hash, "Ein Fortschritt ist zu groß für den Abgleich."); continue }
             objects.append((try sealObject(LibrarySyncFormat.collectionProgress, id, value, base: entry?.revision ?? 0, acc), hash))
+        }
+        try await push(objects, acc)
+    }
+
+    /// Stimmen je Buchsprache (lva#352) wie Lesezeichen am Desktop: `{key, value}`.
+    private func pushVoicePrefs(_ acc: Account) async throws {
+        var objects: [(HubPushObject, String)] = []
+        for key in library.voicePrefKeys {
+            guard let raw = library.voicePrefRaw(key) else { continue }
+            let id = LibrarySyncFormat.bookmarkObjectId(key)
+            let value = try JSONEncoder().encode(SyncedVoicePref(key: key, value: raw))
+            let hash = LibrarySyncFormat.canonicalHash(value)
+            let entry = ledger[LibrarySyncFormat.collectionBookmark, id]
+            if entry?.hash == hash || ledger.dead[SyncLedger.key(LibrarySyncFormat.collectionBookmark, id)] == hash { continue }
+            if value.count > LibrarySyncFormat.maxPlaintext { continue }
+            objects.append((try sealObject(LibrarySyncFormat.collectionBookmark, id, value, base: entry?.revision ?? 0, acc), hash))
         }
         try await push(objects, acc)
     }
