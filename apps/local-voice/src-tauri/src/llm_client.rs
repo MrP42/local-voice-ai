@@ -460,6 +460,26 @@ tokio::task_local! {
     pub static CLI_REQUIRE_USAGE: bool;
 }
 
+tokio::task_local! {
+    /// Abo-Vorschau des Buch-Gespraechs (lva#334): empirisches Budget,
+    /// gehaertete Isolation und fail-closed-Pruefung der CLI-Antwort. Nur
+    /// gesetzt, wenn Schalter und gebundenes Tupel gelten
+    /// (`managers::llm::preview`); andere Aufrufer bleiben unveraendert.
+    pub static CLI_PREVIEW: crate::managers::llm::preview::PreviewCheck;
+}
+
+tokio::task_local! {
+    /// Der Vorschau-Schalter live (lva#334): vor, waehrend und nach dem
+    /// CLI-Aufruf geprueft; „aus“ beendet den Prozessbaum und verwirft das
+    /// Ergebnis. Nur zusammen mit [`CLI_PREVIEW`] gesetzt.
+    pub static CLI_PREVIEW_SWITCH: crate::managers::llm::preview::PreviewSwitch;
+}
+
+/// Eine Zeile des Gespraechs, wie die CLI sie bekommt (`rolle: text`).
+pub fn dialog_line(role: &str, content: &str) -> String {
+    format!("{role}: {content}")
+}
+
 /// Zusaetze eines Streaming-Aufrufs fuer Aufrufer, die Ausgabegrenze und
 /// Vollstaendigkeit erzwingen muessen (Buch-Gespraech). `Default` ist das
 /// bisherige Verhalten: nichts gesetzt, nichts verlangt.
@@ -514,7 +534,7 @@ fn call_cli(
     use crate::managers::llm::cli;
     match limit {
         Some(t) => cli::call_with_options(cli, binary, model, system, user, t, opts),
-        None if opts.cancel.is_some() || opts.max_tokens.is_some() => {
+        None if opts.cancel.is_some() || opts.max_tokens.is_some() || opts.preview.is_some() => {
             cli::call_with_options(cli, binary, model, system, user, cli::CALL_TIMEOUT, opts)
         }
         None => cli::call(cli, binary, model, system, user),
@@ -549,7 +569,10 @@ async fn send_cli(
         cancel: CLI_CANCEL.try_with(|c| c.clone()).ok(),
         max_tokens: CLI_MAX_TOKENS.try_with(|n| *n).ok(),
         require_usage: CLI_REQUIRE_USAGE.try_with(|b| *b).unwrap_or(false),
+        preview: CLI_PREVIEW.try_with(|p| p.clone()).ok(),
+        preview_switch: CLI_PREVIEW_SWITCH.try_with(|p| p.clone()).ok(),
     };
+    let preview_on = opts.preview.is_some();
     let first = {
         let (binary, model, system, user_content, opts) = (
             binary.clone(),
@@ -586,6 +609,12 @@ async fn send_cli(
             }
             // Ursache merken (fuer die Fehlermeldung des Protokolls).
             crate::managers::llm::cli_update::remember_error(&e);
+            // Vorschau: nie aktualisieren und wiederholen. Ein Update aendert
+            // Version und Programm und machte die Freigabe ungueltig (`rebind`
+            // verwirft sie ohnehin); die Antwort waere dann nie verwendbar.
+            if opts.preview.is_some() {
+                return Err(e);
+            }
             // Ist die CLI zu alt, aktualisiert die App sie und versucht es einmal neu.
             let retry = crate::managers::llm::cli_update::on_cli_error(cli, &e)
                 && tokio::task::spawn_blocking(
@@ -614,6 +643,11 @@ async fn send_cli(
             .inspect_err(|e| crate::managers::llm::cli_update::remember_error(e))?
         }
     };
+    // Vorschau: bis hierher kann der Schalter ausgeschaltet worden sein; dann
+    // geht der Text weder an die Oberflaeche noch an die Sprache.
+    if preview_on && !CLI_PREVIEW_SWITCH.try_with(|s| s.is_on()).unwrap_or(false) {
+        return Err(crate::managers::llm::preview::SWITCH_OFF.error());
+    }
     let _ = CLI_META.try_with(|m| {
         if let Ok(mut m) = m.lock() {
             *m = CliMeta {
@@ -1078,7 +1112,7 @@ async fn stream_inner(
         let dialog: Vec<String> = messages
             .iter()
             .filter(|m| m.role != "system")
-            .map(|m| format!("{}: {}", m.role, m.content))
+            .map(|m| dialog_line(&m.role, &m.content))
             .collect();
         let system = (!system.is_empty()).then(|| system.join("\n\n"));
         let call = send_cli(cli, model, dialog.join("\n\n"), system, None);

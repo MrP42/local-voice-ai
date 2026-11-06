@@ -34,6 +34,9 @@ export function ScopeBar({
   onPreview,
   cloud,
   onRevoke,
+  subscription = null,
+  subscriptionReason = null,
+  onSubscription,
 }: {
   scope: BookTalkScope;
   /** Konkrete Lesegrenze für Knopf, Ansage und Rückfrage (Seite, Kapitel oder Anfang). */
@@ -47,6 +50,15 @@ export function ScopeBar({
   /** Cloud-Modell mit Freigabe (Name), sonst `null`: dann entfällt der Menüpunkt. */
   cloud: string | null;
   onRevoke(): void;
+  /**
+   * Abo-Vorschau (lva#334): `null`, solange das Gesprächsmodell kein Abo-Modell
+   * ist (dann entfällt der Menüpunkt); `reconfirm`: Schalter an, aber das
+   * gebundene Tupel gilt nicht mehr.
+   */
+  subscription?: "on" | "off" | "reconfirm" | "not_released" | null;
+  /** Grund, wenn `subscription` „not_released“ ist (`measurement_missing` …). */
+  subscriptionReason?: string | null;
+  onSubscription?(): void;
 }) {
   const { t } = useTranslation();
   const [menu, setMenu] = useState<"scope" | "more" | null>(null);
@@ -266,6 +278,37 @@ export function ScopeBar({
               {t("tts.bookTalk.menu.previewHint")}
             </small>
           </button>
+          {subscription && (
+            <button
+              type="button"
+              role="menuitemcheckbox"
+              aria-checked={subscription === "on"}
+              className="bt__menuitem"
+              onClick={() => {
+                closeMenu(true);
+                onSubscription?.();
+              }}
+              data-testid="booktalk-subscription"
+            >
+              <span className="inline-flex items-center gap-2">
+                <TriangleAlert width={14} height={14} aria-hidden="true" />
+                {t("tts.bookTalk.menu.subscription")}
+                <b className="bt__tag" data-testid="booktalk-subscription-state">
+                  {t(`tts.bookTalk.menu.subscriptionState.${subscription}`)}
+                </b>
+              </span>
+              {subscription === "not_released" && (
+                <small data-testid="booktalk-subscription-not-released" role="status">
+                  {t(`tts.bookTalk.menu.notReleased.${subscriptionReason ?? "default"}`, {
+                    defaultValue: t("tts.bookTalk.menu.notReleased.default"),
+                  })}
+                </small>
+              )}
+              <small data-testid="booktalk-subscription-hint">
+                {t("tts.bookTalk.menu.subscriptionHint")}
+              </small>
+            </button>
+          )}
           {cloud && (
             <button
               type="button"

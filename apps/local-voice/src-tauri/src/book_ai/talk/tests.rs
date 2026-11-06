@@ -148,6 +148,7 @@ fn stored(question: &str, scope: BookTalkScope, frontier: u32) -> StoredTurn {
         dropped: 0,
         scope,
         frontier,
+        preview: false,
     };
     StoredTurn {
         question: question.into(),
@@ -207,6 +208,7 @@ async fn go(
         budget,
         profile,
         timeout,
+        preview: false,
     };
     let result = run(ix, &params, model, cancel, &emit).await;
     Outcome {
@@ -1343,7 +1345,14 @@ fn book_talk_sets_the_output_limit_for_every_provider() {
         ("claude_cli", "cli://claude"),
     ];
     for (id, url) in cases {
-        let model = ProviderModel::new(provider(id, url), String::new(), "m".into(), 8_192);
+        let model = ProviderModel::new(
+            provider(id, url),
+            String::new(),
+            "m".into(),
+            8_192,
+            None,
+            None,
+        );
         let limits = model.limits();
         assert_eq!(limits.max_tokens, Some(DEFAULT_MAX_ANSWER_TOKENS), "{id}");
         assert_eq!(limits.num_ctx, Some(8_192));
@@ -1551,6 +1560,7 @@ fn the_cross_field_rules_are_checked_at_runtime() {
             dropped: 0,
             scope: BookTalkScope::Book,
             frontier: 0,
+            preview: false,
         }
     };
     let fake_quote = sentence(
@@ -1695,6 +1705,7 @@ fn the_answer_serialises_without_null_fields() {
         dropped: 0,
         scope: BookTalkScope::Book,
         frontier: 0,
+        preview: false,
     };
     let v = serde_json::to_value(&a).unwrap();
     assert!(v.get("reason").is_none());
@@ -1878,4 +1889,403 @@ fn consent_is_keyed_by_connection_and_model_and_sanitized() {
     assert!(has_consent(&s));
     s.llm_active_model_id = Some("m2".into());
     assert!(!has_consent(&s));
+}
+
+// ---------------------------------------------- Abo-Vorschau (lva#334) ----
+
+use crate::managers::llm::cli::Cli;
+use crate::managers::llm::evidence::Evidence;
+use crate::managers::llm::preview::{self, fixtures, Identity, PreviewCheck, PreviewSwitch};
+
+/// Prüfauftrag mit gemessenen Werten (Fixture: Overhead 30000, Reserve 4000,
+/// Schwelle 80 %) für ein synthetisches Programm.
+fn proof_check(cli: Cli, context: u32) -> PreviewCheck {
+    let binding = preview::binding_for(cli, "m", &ident("ab"));
+    fixtures::check(binding, "m-aktuell", context)
+}
+
+/// Modell mit empirischem Zähler wie `ProviderModel` in der Vorschau.
+struct Empirical {
+    inner: Fake,
+    check: PreviewCheck,
+}
+
+impl TalkModel for Empirical {
+    fn complete<'a>(
+        &'a self,
+        system: &'a str,
+        user: String,
+        on_delta: &'a (dyn Fn(&str) + Send + Sync),
+    ) -> ModelFuture<'a> {
+        self.inner.complete(system, user, on_delta)
+    }
+
+    fn token_count<'a>(&'a self, system: &'a str, user: &'a str) -> prompt::CountFuture<'a> {
+        let bytes = system.len() + crate::llm_client::dialog_line("user", user).len();
+        let n = usize::try_from(self.check.input_estimate(bytes)).ok();
+        Box::pin(std::future::ready(n))
+    }
+
+    fn context_tokens(&self) -> prompt::CountFuture<'_> {
+        let n = usize::try_from(self.check.limit()).ok();
+        Box::pin(std::future::ready(n))
+    }
+}
+
+fn empirical(answer: &str, cli: Cli, context: u32) -> Empirical {
+    Empirical {
+        inner: Fake::new(answer),
+        check: proof_check(cli, context),
+    }
+}
+
+async fn go_preview(
+    ix: &BookIndex,
+    req: &BookTalkRequest,
+    model: Model<'_>,
+    context: u32,
+    preview_on: bool,
+) -> Outcome {
+    let events = Mutex::new(Vec::new());
+    let emit = |e: BookTalkEvent| events.lock().unwrap().push(e);
+    let params = AskParams {
+        request: req,
+        history: &[],
+        entities: &[],
+        budget: Budget {
+            answer_tokens: preview::max_output(DEFAULT_MAX_ANSWER_TOKENS, 4_000) as usize,
+            context_tokens: context as usize,
+            ..roomy()
+        },
+        profile: None,
+        timeout: Duration::from_secs(5),
+        preview: preview_on,
+    };
+    let result = run(ix, &params, model, &CancelFlag::default(), &emit).await;
+    Outcome {
+        events: events.into_inner().unwrap(),
+        result,
+    }
+}
+
+#[tokio::test]
+async fn every_answer_of_the_preview_path_is_marked_and_others_are_not() {
+    let ix = index_of(&buch());
+    let req = plain_request(PLAIN_Q);
+    let model = empirical(PLAIN_A, Cli::Claude, 200_000);
+    let out = go_preview(&ix, &req, Model::Ready(&model), 200_000, true).await;
+    assert!(!out.answer().found_only, "{}", out.answer().text);
+    assert!(out.answer().preview);
+    let done = out.events.iter().find_map(|e| match e {
+        BookTalkEvent::Done { answer, .. } => Some(answer.preview),
+        _ => None,
+    });
+    assert_eq!(done, Some(true), "auch das done-Ereignis traegt es");
+    assert_eq!(
+        serde_json::to_value(out.answer()).unwrap()["preview"],
+        serde_json::json!(true)
+    );
+
+    // Auch eine Antwort ohne Modellaufruf (Fundstellen) gehoert zum Pfad.
+    let missing = go_preview(&ix, &req, Model::Missing(CODE_NO_MODEL), 200_000, true).await;
+    assert!(missing.answer().found_only && missing.answer().preview);
+
+    // Ausserhalb der Vorschau: kein Feld, wie bisher (Vertrag unveraendert).
+    let off = go_preview(&ix, &req, Model::Ready(&model), 200_000, false).await;
+    assert!(!off.answer().preview);
+    assert!(serde_json::to_value(off.answer())
+        .unwrap()
+        .get("preview")
+        .is_none());
+}
+
+#[tokio::test]
+async fn the_empirical_budget_decides_before_any_call() {
+    let ix = index_of(&buch());
+    let req = plain_request(PLAIN_Q);
+    // Claude, 200000: passt.
+    let claude = empirical(PLAIN_A, Cli::Claude, 200_000);
+    let out = go_preview(&ix, &req, Model::Ready(&claude), 200_000, true).await;
+    assert_eq!(claude.inner.call_count(), 1);
+    assert!(!out.answer().found_only);
+    // Nur 32000: 0,5 * 32000 = 16000 < 36000 (gemessener Overhead * 1,2) + Ausgabe + Prompt.
+    let codex = empirical(PLAIN_A, Cli::Claude, 32_000);
+    let out = go_preview(&ix, &req, Model::Ready(&codex), 32_000, true).await;
+    assert_eq!(
+        codex.inner.call_count(),
+        0,
+        "kein Aufruf ohne Budgetnachweis"
+    );
+    assert!(out.answer().found_only);
+    assert_eq!(out.answer().reason.as_deref(), Some(CODE_BUDGET));
+    assert!(out.answer().preview);
+}
+
+#[tokio::test]
+async fn a_rejected_reply_gives_found_only_and_no_model_text() {
+    let ix = index_of(&buch());
+    let req = plain_request(PLAIN_Q);
+    for (code, expected) in [
+        (CODE_BUDGET, CODE_BUDGET),
+        (CODE_LLM_FAILED, CODE_LLM_FAILED),
+    ] {
+        let model = Empirical {
+            inner: Fake::failing(code),
+            check: proof_check(Cli::Claude, 200_000),
+        };
+        let out = go_preview(&ix, &req, Model::Ready(&model), 200_000, true).await;
+        let a = out.answer();
+        assert!(a.found_only && a.preview);
+        assert_eq!(a.reason.as_deref(), Some(expected));
+        assert!(
+            !out.events.iter().any(|e| matches!(
+                e,
+                BookTalkEvent::Sentence { sentence, .. } if sentence.text.contains("Verpflichtung")
+            )),
+            "der Modelltext kommt nie an die Oberflaeche"
+        );
+    }
+}
+
+#[test]
+fn preview_rejections_map_to_budget_or_llm_failed() {
+    use crate::managers::llm::preview::Rejection;
+    let budget = Rejection {
+        code: "budget",
+        reason: "compaction",
+    }
+    .error();
+    let failed = Rejection {
+        code: "llm_failed",
+        reason: "model_mismatch",
+    }
+    .error();
+    assert_eq!(map_error_code(&budget), CODE_BUDGET);
+    assert_eq!(map_error_code(&failed), CODE_LLM_FAILED);
+    assert_eq!(
+        map_error_code(&preview::SWITCH_OFF.error()),
+        CODE_CANCELLED,
+        "Schalter aus mitten im Lauf: abgebrochen, nichts angezeigt"
+    );
+    assert_eq!(map_error_code("cli_failed: irgendwas"), CODE_LLM_FAILED);
+}
+
+fn cli_settings(sonnet_ctx: Option<u32>) -> crate::settings::AppSettings {
+    use crate::settings::{LlmConnection, LlmModelConfig};
+    let mut s = crate::settings::AppSettings::default();
+    let conn = |id: &str, url: &str, enabled: bool| LlmConnection {
+        id: id.into(),
+        kind: id.into(),
+        label: id.into(),
+        base_url: url.into(),
+        enabled,
+        monthly_budget_usd: None,
+        budget_enforced: false,
+        training_opt_out: false,
+    };
+    let model = |id: &str, c: &str, remote: &str, ctx: Option<u32>| LlmModelConfig {
+        id: id.into(),
+        connection_id: c.into(),
+        remote_id: remote.into(),
+        label: remote.into(),
+        enabled: true,
+        context_limit: ctx,
+        max_input_tokens: None,
+        max_output_tokens: None,
+        price_input_per_mtok: None,
+        price_output_per_mtok: None,
+        tags: Vec::new(),
+        effort: None,
+        fast: false,
+    };
+    s.llm_connections = vec![
+        conn("claude_cli", "cli://claude", true),
+        conn("codex_cli", "cli://codex", true),
+        conn("off", "cli://claude", false),
+        conn("openai", "https://api.openai.com/v1", true),
+    ];
+    s.llm_models = vec![
+        model("claude:sonnet", "claude_cli", "sonnet", sonnet_ctx),
+        model("claude:dup", "claude_cli", "sonnet", None),
+        model("codex:gpt", "codex_cli", "gpt-6.1-sol", None),
+        model("off:x", "off", "opus", None),
+        model("openai:x", "openai", "gpt-5", None),
+    ];
+    s.llm_active_model_id = Some("claude:sonnet".into());
+    s
+}
+
+fn ident(tag: &str) -> Identity {
+    Identity {
+        version: "1.0".into(),
+        sha256: tag.repeat(32),
+    }
+}
+
+#[test]
+fn confirming_binds_every_enabled_subscription_model_once() {
+    let s = cli_settings(None);
+    let bound = bindings_for(&s, |cli| match cli {
+        Cli::Claude => Some(ident("ab")),
+        Cli::Codex => Some(ident("cd")),
+    });
+    let seen: Vec<(&str, &str)> = bound
+        .iter()
+        .map(|b| (b.provider.as_str(), b.model_id.as_str()))
+        .collect();
+    // Phase 1: Codex bekommt in der Vorschau nie ein Tupel.
+    assert_eq!(seen, [("claude_cli", "sonnet")]);
+    assert_eq!(
+        bound[0].concrete_model.as_deref(),
+        Some("claude-sonnet-5-5")
+    );
+    assert_eq!(bound[0].cli_version, "1.0");
+    assert_eq!(bound[0].binary_sha256, "ab".repeat(32));
+    // Ohne installierte CLI kein Tupel fuer deren Modelle.
+    let only_codex = bindings_for(&s, |cli| (cli == Cli::Codex).then(|| ident("cd")));
+    assert!(only_codex.is_empty());
+}
+
+#[test]
+fn the_preview_needs_switch_tuple_isolation_measurement_and_context() {
+    let mut s = cli_settings(None);
+    let current = preview::binding_for(Cli::Claude, "sonnet", &ident("ab"));
+    let full = fixtures::evidence(&[(&current, "claude-sonnet-5-5")]);
+    // Schalter aus: nichts, auch mit Tupel und Belegen.
+    s.book_talk_preview_bindings = vec![current.clone()];
+    assert!(preview_check(&s, Cli::Claude, Some(current.clone()), 600, &full).is_none());
+    s.book_talk_subscription_preview = true;
+    let check = preview_check(&s, Cli::Claude, Some(current.clone()), 600, &full).expect("wirkt");
+    assert_eq!(check.context_tokens, 200_000);
+    // Antwort + gemessene Reserve (Fixture 4000), keine eingebaute Zahl.
+    assert_eq!(check.max_output_tokens, preview::max_output(600, 4_000));
+    assert_eq!(check.binding, current);
+    assert_eq!(check.proof.measurement.max_overhead_tokens, 30_000);
+    // Ohne Faehigkeiten und Messung: gesperrt, mit Grund (kein Auftrag).
+    let v = preview_verdict(
+        &s,
+        Cli::Claude,
+        Some(current.clone()),
+        600,
+        &Evidence::default(),
+    );
+    assert_eq!(v.check, None);
+    assert_eq!(v.state, preview::PreviewState::NotReleased);
+    assert_eq!(v.blocked, Some(preview::Blocked::IsolationUnverified));
+    // Faehigkeiten da, Messung fehlt: „Messung auf diesem Geraet fehlt“.
+    let caps_only = Evidence::from_parts(
+        &[("claude_cli", current.cli_version.as_str(), fixtures::caps())],
+        vec![],
+    );
+    let v = preview_verdict(&s, Cli::Claude, Some(current.clone()), 600, &caps_only);
+    assert_eq!(v.blocked, Some(preview::Blocked::MeasurementMissing));
+    assert!(v.check.is_none());
+    // Abweichendes Tupel (neue Version, anderes Programm): wirkt nicht mehr.
+    let mut newer = current.clone();
+    newer.cli_version = "1.1".into();
+    assert!(preview_check(&s, Cli::Claude, Some(newer), 600, &full).is_none());
+    let swapped = preview::binding_for(Cli::Claude, "sonnet", &ident("ef"));
+    assert!(preview_check(&s, Cli::Claude, Some(swapped), 600, &full).is_none());
+    // Nicht prueffaehig (CLI weg): wirkt nicht.
+    assert!(preview_check(&s, Cli::Claude, None, 600, &full).is_none());
+    // Codex: IMMER gesperrt (Phase 2), auch mit Schalter, Tupel, Belegen und Kontext.
+    s.llm_active_model_id = Some("codex:gpt".into());
+    for m in s.llm_models.iter_mut().filter(|m| m.id == "codex:gpt") {
+        m.context_limit = Some(272_000);
+    }
+    let codex = preview::binding_for(Cli::Codex, "gpt-6.1-sol", &ident("cd"));
+    s.book_talk_preview_bindings.push(codex.clone());
+    let both = fixtures::evidence(&[(&current, "claude-sonnet-5-5"), (&codex, "gpt-6.1-sol")]);
+    assert!(preview_check(&s, Cli::Codex, Some(codex.clone()), 600, &both).is_none());
+    let v = preview_verdict(&s, Cli::Codex, Some(codex), 600, &both);
+    assert_eq!(v.state, preview::PreviewState::NotReleased);
+    assert_eq!(v.blocked, Some(preview::Blocked::CodexPreviewNotAvailable));
+    assert!(v.check.is_none());
+}
+
+#[test]
+fn the_status_command_reports_codex_as_blocked() {
+    let st = codex_status(true);
+    assert!(st.enabled && st.applies);
+    assert_eq!(st.state, preview::PreviewState::NotReleased);
+    assert_eq!(st.blocked, Some(preview::Blocked::CodexPreviewNotAvailable));
+    assert_eq!(
+        serde_json::to_value(st.blocked).unwrap(),
+        serde_json::json!("codex_preview_not_available")
+    );
+}
+
+#[tokio::test]
+async fn a_preview_without_a_live_switch_or_with_it_off_never_calls_the_cli() {
+    let provider = crate::settings::PostProcessProvider {
+        id: "claude_cli".into(),
+        label: "claude_cli".into(),
+        base_url: "cli://claude".into(),
+        allow_base_url_edit: false,
+        models_endpoint: None,
+        supports_structured_output: false,
+    };
+    let check = proof_check(Cli::Claude, 200_000);
+    let off = ProviderModel::new(
+        provider.clone(),
+        String::new(),
+        "m".into(),
+        200_000,
+        Some(check.clone()),
+        Some(PreviewSwitch::new(|| false)),
+    );
+    let none = ProviderModel::new(
+        provider,
+        String::new(),
+        "m".into(),
+        200_000,
+        Some(check),
+        None,
+    );
+    for model in [&off, &none] {
+        let seen = Mutex::new(String::new());
+        let on_delta = |d: &str| seen.lock().unwrap().push_str(d);
+        let err = model
+            .complete("System", "Frage".into(), &on_delta)
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, CODE_CANCELLED);
+        assert!(
+            seen.lock().unwrap().is_empty(),
+            "nichts erreicht die Anzeige"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_cancelled_preview_run_gives_no_answer_and_no_text() {
+    let ix = index_of(&buch());
+    let req = plain_request(PLAIN_Q);
+    // Der Schalter geht aus: `complete` meldet `cancelled`, `run` bricht ab.
+    let model = Empirical {
+        inner: Fake::failing(CODE_CANCELLED),
+        check: proof_check(Cli::Claude, 200_000),
+    };
+    let out = go_preview(&ix, &req, Model::Ready(&model), 200_000, true).await;
+    let err = out.result.as_ref().expect_err("keine Antwort");
+    assert_eq!(err.code, CODE_CANCELLED);
+    assert!(
+        !out.events
+            .iter()
+            .any(|e| matches!(e, BookTalkEvent::Done { .. })),
+        "kein done-Ereignis"
+    );
+}
+
+#[test]
+fn the_new_settings_default_to_off_and_survive_old_files() {
+    let s = crate::settings::AppSettings::default();
+    assert!(!s.book_talk_subscription_preview);
+    assert!(s.book_talk_preview_bindings.is_empty());
+    let mut json = serde_json::to_value(&s).unwrap();
+    let obj = json.as_object_mut().unwrap();
+    obj.remove("book_talk_subscription_preview");
+    obj.remove("book_talk_preview_bindings");
+    let old: crate::settings::AppSettings = serde_json::from_value(json).unwrap();
+    assert!(!old.book_talk_subscription_preview);
 }

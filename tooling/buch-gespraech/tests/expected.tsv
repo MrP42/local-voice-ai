@@ -1,0 +1,41 @@
+# Fixture	Exit-Code	erwarteter Grund (leer = Lauf gueltig)
+ok	0	
+ok	1	exit_code
+no_usage	0	usage
+usage_string_tokens	0	usage
+usage_missing_output	0	usage
+usage_negative	0	usage
+usage_zero	0	usage
+stop_max_tokens	0	stop_reason
+stop_missing	0	stop_reason
+error_result	0	event_unknown
+error_result_flag	0	error_event
+error_flag_event	0	error_event
+unknown_event	0	event_unknown
+tool_use	0	tool_use
+compacted	0	event_unknown
+no_result	0	event_order
+bad_line	0	bad_line
+stop_message_max_tokens	0	stop_reason
+stop_message_aborted	0	stop_reason
+stop_message_cut_first_of_two	0	stop_reason
+stop_user_event_max_tokens	0	stop_reason
+stop_message_end_turn_ok	0	
+stop_sequence_ok	0	
+stop_result_unknown	0	stop_reason
+stop_outer_end_turn_inner_max_tokens	0	stop_reason
+stop_inner_uppercase	0	stop_reason
+stop_outer_uppercase	0	stop_reason
+event_type_uppercase	0	event_unknown
+ok_with_rate_limit_and_summary	0	
+hook_event	0	event_unknown
+rate_limit_after_result	0	event_after_result
+ok_with_thinking_tokens	0	
+thinking_tokens_negative	0	event_unknown
+thinking_tokens_after_result	0	event_after_result
+thinking_tokens_missing_field	0	event_unknown
+thinking_tokens_not_a_number	0	event_unknown
+thinking_tokens_float	0	event_unknown
+thinking_tokens_max_ok	0	
+thinking_tokens_over_max	0	event_unknown
+thinking_tokens_huge	0	event_unknown

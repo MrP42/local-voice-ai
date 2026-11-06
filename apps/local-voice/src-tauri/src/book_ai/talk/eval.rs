@@ -418,6 +418,7 @@ fn stored_turn(question: &str, scope: BookTalkScope, frontier: u32) -> StoredTur
         dropped: 0,
         scope,
         frontier,
+        preview: false,
     };
     StoredTurn {
         question: question.to_string(),
@@ -549,6 +550,7 @@ async fn eval_one(
         ),
         profile: cfg.profile,
         timeout: cfg.timeout,
+        preview: false,
     };
     let emit = |_e: super::BookTalkEvent| {};
     let before = model.calls.load(Ordering::SeqCst);
@@ -1051,6 +1053,7 @@ mod tests {
             dropped: 0,
             scope: BookTalkScope::UntilPosition,
             frontier: 100,
+            preview: false,
         }
     }
 

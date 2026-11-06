@@ -1,0 +1,2 @@
+{"type": "system", "subtype": "init", "model": "claude-sonnet-5-5", "tools": [], "mcp_servers": []}
+{"type": "assistant", "message": {"model": "claude-sonnet-5-5", "content": [{"type": "text", "text": "keine"}]}}
