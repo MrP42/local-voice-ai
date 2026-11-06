@@ -2845,10 +2845,6 @@
         "input": "Microphone",
         "feedback": "Audible feedback"
       },
-      "localUpdateAuto": {
-        "label": "Install test builds automatically",
-        "description": "When the update folder holds a newer test build signed with the development key, the app closes, installs it and restarts. Never during dictation, recording, post-processing, read-aloud or a running computation. Unsigned installers are only offered."
-      },
       "localUpdateDir": {
         "title": "Local update folder",
         "description": "Folder the app scans for newer installers, e.g. acceptance builds that are not on GitHub. A found update shows up in the footer.",
@@ -3055,11 +3051,6 @@
     }
   },
   "footer": {
-    "testUpdate": {
-      "waits": "Test build {{version}} is ready and will be installed once {{reason}} has finished.",
-      "starts": "Installing test build {{version}}. The app will close and restart shortly.",
-      "later": "Later"
-    },
     "functionModel": {
       "title": "Model for {{name}}: {{model}}. Click to choose another.",
       "none": "no model",

@@ -75,20 +75,6 @@ pub struct TranscriptionCoordinator {
     tx: Sender<Command>,
 }
 
-/// Laeuft gerade die Nachverarbeitung eines Diktats (zwischen Stopp und
-/// Einfuegen)? Liest der Entwicklungskanal (`dev_update`), damit ein
-/// Testupdate nie ein Diktat-Ergebnis verwirft.
-static DIKTAT_VERARBEITUNG: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
-
-pub fn diktat_in_verarbeitung() -> bool {
-    DIKTAT_VERARBEITUNG.load(std::sync::atomic::Ordering::Acquire)
-}
-
-fn verarbeitung_setzen(an: bool) {
-    DIKTAT_VERARBEITUNG.store(an, std::sync::atomic::Ordering::Release);
-}
-
 pub fn is_transcribe_binding(id: &str) -> bool {
     id == "transcribe" || id == "transcribe_with_post_process"
 }
@@ -211,12 +197,10 @@ impl TranscriptionCoordinator {
                                 && (recording_was_active || matches!(stage, Stage::Recording(_)))
                             {
                                 stage = Stage::Idle;
-                                verarbeitung_setzen(false);
                             }
                         }
                         Command::ProcessingFinished => {
                             stage = Stage::Idle;
-                            verarbeitung_setzen(false);
                         }
                     }
                 }
@@ -293,9 +277,6 @@ fn stop(app: &AppHandle, stage: &mut Stage, binding_id: &str, hotkey_string: &st
         warn!("No action in ACTION_MAP for '{binding_id}'");
         return;
     };
-    // Vor dem Uebergang setzen: zwischen Stopp und Verarbeitung darf kein
-    // Testupdate die App beenden.
-    verarbeitung_setzen(true);
     action.stop(app, binding_id, hotkey_string);
     *stage = Stage::Processing;
 }

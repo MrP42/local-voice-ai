@@ -1566,29 +1566,6 @@ async localUpdateInstall(path: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-/**
- * `None` = Vorgabe des Baus (Entwicklungskanal an), sonst fest an/aus.
- */
-async changeLocalUpdateAutoInstallSetting(enabled: boolean | null) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("change_local_update_auto_install_setting", { enabled }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Hat dieser Bau den Entwicklungskanal (Abnahme-Bau)?
- */
-async devUpdateAvailable() : Promise<boolean> {
-    return await TAURI_INVOKE("dev_update_available");
-},
-/**
- * „Später“ im Hinweis: das Einspielen ruht eine Weile.
- */
-async devUpdatePostpone() : Promise<void> {
-    await TAURI_INVOKE("dev_update_postpone");
-},
 async changeAppendTrailingSpaceSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_append_trailing_space_setting", { enabled }) };
@@ -7902,13 +7879,7 @@ bindings?: Partial<{ [key in string]: ShortcutBinding }>; push_to_talk?: boolean
  * Ordner, in dem die App nach neueren Installern sucht (lokale
  * Abnahmestaende ohne GitHub-Signatur). `None` = aus.
  */
-local_update_dir?: string | null; 
-/**
- * Testversionen aus den lokalen Update-Ordnern selbst installieren
- * (Entwicklungskanal, `dev_update`). Wirkt nur in Abnahme-Bauten mit
- * Entwicklungsschluessel; `None` = an, ein gespeichertes `false` bleibt aus.
- */
-local_update_auto_install?: boolean | null; show_whats_new_on_update?: boolean; 
+local_update_dir?: string | null; show_whats_new_on_update?: boolean; 
 /**
  * The app version whose What's New the user has already seen. Fresh installs
  * default to the current version (nothing is "new" to them). Existing users

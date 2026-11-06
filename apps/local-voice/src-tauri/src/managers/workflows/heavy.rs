@@ -128,13 +128,6 @@ impl Default for LocalHeavyGate {
 
 impl HeavyGate for LocalHeavyGate {
     fn try_enter(&self, need: &HeavyNeed) -> Result<HeavyPermit, HeavyWait> {
-        if crate::dev_update::arbeit_gesperrt() {
-            return Err(HeavyWait {
-                reason: HeavyWaitReason::Other,
-                message: "Wartet: ein Update wird installiert.".to_string(),
-                retry_after_ms: 5_000,
-            });
-        }
         if self
             .busy
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)

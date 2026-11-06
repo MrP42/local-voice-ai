@@ -705,9 +705,6 @@ impl MeetingRecorderManager {
         capture_system: bool,
         target_meeting_id: Option<&str>,
     ) -> Result<Meeting, String> {
-        if crate::dev_update::arbeit_gesperrt() {
-            return Err("Ein Update wird gerade installiert".into());
-        }
         consent_gate(consent_confirmed)?;
         // `Mutex<()>` traegt keine Daten: eine Vergiftung hiesse sonst, dass nie
         // wieder eine Aufnahme startet.

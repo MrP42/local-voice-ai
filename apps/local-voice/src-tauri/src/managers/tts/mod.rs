@@ -4898,9 +4898,6 @@ impl TtsManager {
     /// Wiedergabe des geöffneten Dokuments ab der gespeicherten Position.
     /// Kehrt sofort zurück; Fortschritt kommt als `tts-reading-progress`.
     pub fn reading_play(self: &Arc<Self>) -> Result<(), String> {
-        if crate::dev_update::arbeit_gesperrt() {
-            return Err("Ein Update wird gerade installiert".into());
-        }
         let (key, title, sentences, paragraphs) = {
             let guard = self.reading.lock().unwrap();
             let session = guard.as_ref().ok_or("kein Dokument geöffnet")?;

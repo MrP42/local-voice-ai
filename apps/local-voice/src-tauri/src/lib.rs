@@ -24,7 +24,6 @@ mod commands;
 mod context_menu;
 mod conversations; // U3: Sprachgespräche dauerhaft speichern
 mod cover_art; // Eingebettete Cover aus Hörbuch-Dateien
-mod dev_update; // Entwicklungskanal: Testversionen selbst installieren
 mod ebook; // lva#149: EPUB-Import, PDF-Reflow
 mod helpers;
 mod hoersync_live; // Hörbuch-Sync Stufe 2: Live-Abgleich
@@ -2087,9 +2086,6 @@ fn specta_builder() -> Builder<tauri::Wry> {
             shortcut::change_local_update_dir_setting,
             local_update::local_update_check,
             local_update::local_update_install,
-            shortcut::change_local_update_auto_install_setting,
-            dev_update::dev_update_available,
-            dev_update::dev_update_postpone,
             shortcut::change_append_trailing_space_setting,
             shortcut::change_lazy_stream_close_setting,
             shortcut::change_refine_enabled_setting,
@@ -3458,7 +3454,8 @@ pub fn run(cli_args: CliArgs) {
             app.manage(TranscriptionCoordinator::new(app_handle.clone()));
 
             initialize_core_logic(&app_handle);
-            dev_update::start(app_handle.clone());
+            // Testversionen aus dem Update-Ordner sofort anbieten (Ein-Klick-Update).
+            local_update::start_watch(app_handle.clone());
 
             // Kontextmenü-Eintrag mit dem Setting synchronisieren (aktualisiert
             // auch den EXE-Pfad, wenn Builds wandern).

@@ -4,7 +4,6 @@ import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { toast } from "sonner";
 import { ProgressBar } from "../shared";
 import { Button } from "../ui/Button";
 import { Dialog } from "../ui/Dialog";
@@ -15,16 +14,8 @@ import { commands, type LocalUpdate } from "../../bindings";
 /** Wunsch aus dem Profilmenü ▸ Hilfe: jetzt nach Updates suchen. */
 export const UPDATE_CHECK_EVENT = "lv-update-check";
 
-/** Entwicklungskanal (dev_update.rs): Testversion wartet oder wird eingespielt. */
-const TESTUPDATE_EVENT = "lokales-testupdate";
-const TESTUPDATE_TOAST = "lokales-testupdate";
-
-interface TestupdateHinweis {
-  version: string;
-  phase: "wartet" | "startet";
-  grund: string | null;
-  sekunden: number;
-}
+/** Backend-Wächter (local_update.rs): eine neue Testversion liegt bereit. */
+const LOCAL_UPDATE_EVENT = "lokales-update-bereit";
 
 interface UpdateCheckerProps {
   className?: string;
@@ -212,34 +203,18 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
     checkForUpdates();
   };
 
-  // Entwicklungskanal: die App spielt eine signierte Testversion selbst ein.
-  // Der Hinweis gibt Zeit für „Später“ (15 min Aufschub im Backend).
+  // Neue Testversion im Update-Ordner (Wächter im Backend, alle 30 s): sofort
+  // das Update-Fenster zeigen. Ein Klick auf „Installieren“ schließt die App,
+  // installiert und startet neu, wie beim Online-Update.
   useEffect(() => {
-    const unlisten = listen<TestupdateHinweis>(TESTUPDATE_EVENT, (event) => {
-      const h = event.payload;
-      if (h.phase === "wartet") {
-        toast.info(
-          t("footer.testUpdate.waits", {
-            version: h.version,
-            reason: h.grund ?? "",
-          }),
-          { id: TESTUPDATE_TOAST },
-        );
-        return;
-      }
-      toast.info(t("footer.testUpdate.starts", { version: h.version }), {
-        id: TESTUPDATE_TOAST,
-        duration: h.sekunden * 1000,
-        action: {
-          label: t("footer.testUpdate.later"),
-          onClick: () => void commands.devUpdatePostpone(),
-        },
-      });
+    const unlisten = listen<LocalUpdate>(LOCAL_UPDATE_EVENT, (event) => {
+      setLocalUpdateFound(event.payload);
+      setDialogOpen(true);
     });
     return () => {
       void unlisten.then((fn) => fn());
     };
-  }, [t]);
+  }, []);
 
   // „Nach Updates suchen“ im Profilmenü wirkt wie ein Klick auf die Version.
   const versionClickRef = useRef<() => Promise<void>>(async () => {});

@@ -154,8 +154,8 @@ fn candidate_dirs(app: &AppHandle) -> Vec<PathBuf> {
 }
 
 /// Der neueste Installer ueber alle Update-Ordner, der neuer ist als die
-/// laufende Version (auch fuer den Entwicklungskanal, `dev_update`).
-pub(crate) fn find_newest(app: &AppHandle) -> Option<LocalUpdate> {
+/// laufende Version.
+fn find_newest(app: &AppHandle) -> Option<LocalUpdate> {
     let current = app.package_info().version.to_string();
     let app_name = app.package_info().name.clone();
     candidate_dirs(app)
@@ -180,18 +180,76 @@ pub fn local_update_check(app: AppHandle) -> Result<Option<LocalUpdate>, String>
     Ok(found)
 }
 
+/// Ereignis an die Oberflaeche: eine neue Testversion liegt bereit.
+pub const LOCAL_UPDATE_EVENT: &str = "lokales-update-bereit";
+
+/// Abstand zwischen zwei Blicken in die Update-Ordner.
+const WATCH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Groesse und Aenderungszeit: erst wenn beides ueber zwei Blicke gleich
+/// bleibt, ist der Installer fertig kopiert.
+fn fingerprint(update: &LocalUpdate) -> Option<(String, u64, Option<std::time::SystemTime>)> {
+    let meta = std::fs::metadata(&update.path).ok()?;
+    Some((update.path.clone(), meta.len(), meta.modified().ok()))
+}
+
+/// Was der Waechter mit einem Fund tut: melden, sobald er stabil ist, und
+/// jede Version nur einmal je Programmlauf.
+#[derive(Default)]
+pub(crate) struct Watch {
+    last: Option<(String, u64, Option<std::time::SystemTime>)>,
+    announced: Option<String>,
+}
+
+impl Watch {
+    pub(crate) fn should_announce(
+        &mut self,
+        version: &str,
+        fp: Option<(String, u64, Option<std::time::SystemTime>)>,
+    ) -> bool {
+        let stable = fp.is_some() && fp == self.last;
+        self.last = fp;
+        if !stable || self.announced.as_deref() == Some(version) {
+            return false;
+        }
+        self.announced = Some(version.to_string());
+        true
+    }
+}
+
+/// Testversionen sofort anbieten: ein Hintergrund-Thread schaut alle 30 s in
+/// die Update-Ordner. Liegt dort eine neuere, fertig kopierte Version, geht
+/// sie als Ereignis an die Oberflaeche, die das Update-Fenster oeffnet. Ein
+/// Klick auf „Installieren“ beendet die App, installiert und startet neu —
+/// wie beim Online-Update. Ohne Update-Ordner passiert nichts.
+pub fn start_watch(app: AppHandle) {
+    use tauri::Emitter;
+    let spawned = std::thread::Builder::new()
+        .name("local-update-watch".into())
+        .spawn(move || {
+            let mut watch = Watch::default();
+            loop {
+                std::thread::sleep(WATCH_INTERVAL);
+                let Some(update) = find_newest(&app) else {
+                    continue;
+                };
+                if watch.should_announce(&update.version, fingerprint(&update)) {
+                    log::info!("local update: {} bereit, biete an", update.version);
+                    let _ = app.emit(LOCAL_UPDATE_EVENT, &update);
+                }
+            }
+        });
+    if let Err(e) = spawned {
+        log::warn!("local update: Waechter nicht gestartet: {e}");
+    }
+}
+
 /// Startet den Installer aus dem eingestellten Ordner und beendet die App,
 /// damit der Installer die Dateien ersetzen kann. Nur Dateien, die direkt im
 /// eingestellten Ordner liegen und wie ein Installer heissen, werden gestartet.
 #[tauri::command]
 #[specta::specta]
 pub fn local_update_install(app: AppHandle, path: String) -> Result<(), String> {
-    install(&app, &path)
-}
-
-/// Gemeinsamer Weg fuer den Klick und den Entwicklungskanal: Installer
-/// pruefen, Helfer scharf machen, App beenden.
-pub(crate) fn install(app: &AppHandle, path: &str) -> Result<(), String> {
     let candidate = PathBuf::from(&path);
     let file_name = candidate
         .file_name()
@@ -203,40 +261,14 @@ pub(crate) fn install(app: &AppHandle, path: &str) -> Result<(), String> {
     }
     // Nur Dateien direkt in einem der erlaubten Ordner werden gestartet.
     let canon_file = std::fs::canonicalize(&candidate).map_err(|e| format!("Datei: {e}"))?;
-    let allowed = candidate_dirs(app)
+    let allowed = candidate_dirs(&app)
         .iter()
         .filter_map(|d| std::fs::canonicalize(d).ok())
         .any(|d| canon_file.parent() == Some(d.as_path()));
     if !allowed {
         return Err("Der Installer liegt in keinem erlaubten Update-Ordner".into());
     }
-    // Dieselbe prozessgebundene Sperre wie der Entwicklungskanal: nie zwei
-    // Installationen zugleich (auch nicht aus einer zweiten Instanz).
-    let sperre = crate::dev_update::staging_dir(app)
-        .and_then(|d| crate::dev_update::Sperre::nehmen(&d))
-        .ok_or("Es laeuft bereits eine Installation")?;
-    let helfer_pid = spawn_helper(app, &candidate)?;
-    sperre.uebergeben(helfer_pid);
-    Ok(())
-}
 
-/// Fuer den Entwicklungskanal: startet genau diese (schon gepruefte, private)
-/// Kopie im Staging-Ordner ueber denselben Helfer.
-/// Rueckgabe: PID des Helfers (haelt die Installationssperre bis zum Ende).
-pub(crate) fn install_staged(app: &AppHandle, staged: &Path) -> Result<u32, String> {
-    if !staged.is_file() {
-        return Err(format!("{} fehlt", staged.display()));
-    }
-    spawn_helper(app, staged)
-}
-
-/// Helfer scharf machen und die App beenden: er wartet, bis dieser Prozess
-/// wirklich weg ist (kein Kill), startet den Installer passiv und dann die App.
-fn spawn_helper(app: &AppHandle, candidate: &Path) -> Result<u32, String> {
-    let file_name = candidate
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_default();
     #[cfg(target_os = "windows")]
     {
         // Alle Befehle mit vollem System32-Pfad: auf Rechnern mit Git im PATH
@@ -256,7 +288,7 @@ fn spawn_helper(app: &AppHandle, candidate: &Path) -> Result<u32, String> {
         // Beide Pfade werden woertlich in ein cmd-Skript geschrieben. Ein
         // Ordnername aus der Einstellung mit Shell-Metazeichen koennte das
         // Skript aufbrechen — deshalb nur Pfade ohne solche Zeichen.
-        for path in [&candidate.to_path_buf(), &exe] {
+        for path in [&candidate, &exe] {
             if !cmd_safe_path(&path.to_string_lossy()) {
                 return Err(format!(
                     "Pfad enthaelt Zeichen, die im Update-Helfer nicht erlaubt sind: {}",
@@ -283,7 +315,7 @@ del \"%~f0\"
         let cmd = std::env::var_os("SystemRoot")
             .map(|r| PathBuf::from(r).join("System32").join("cmd.exe"))
             .unwrap_or_else(|| PathBuf::from("cmd.exe"));
-        let child = std::process::Command::new(cmd)
+        std::process::Command::new(cmd)
             .args(["/C", &helper.to_string_lossy()])
             .creation_flags(CREATE_NO_WINDOW)
             .spawn()
@@ -294,11 +326,11 @@ del \"%~f0\"
             std::thread::sleep(std::time::Duration::from_millis(300));
             app.exit(0);
         });
-        Ok(child.id())
+        Ok(())
     }
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = (app, candidate, file_name);
+        let _ = app;
         Err("Lokale Installer-Updates gibt es bisher nur unter Windows".into())
     }
 }
@@ -306,6 +338,25 @@ del \"%~f0\"
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn watch_announces_each_stable_version_once() {
+        let fp = |len| Some(("a.exe".to_string(), len, None));
+        let mut w = Watch::default();
+        assert!(
+            !w.should_announce("0.23.5", fp(10)),
+            "erster Blick: noch nicht stabil"
+        );
+        assert!(!w.should_announce("0.23.5", fp(20)), "waechst noch");
+        assert!(w.should_announce("0.23.5", fp(20)), "stabil: melden");
+        assert!(!w.should_announce("0.23.5", fp(20)), "nur einmal");
+        assert!(!w.should_announce("0.23.6", fp(30)));
+        assert!(
+            w.should_announce("0.23.6", fp(30)),
+            "neue Version: wieder melden"
+        );
+        assert!(!w.should_announce("0.23.7", None), "ohne Datei nie");
+    }
 
     #[test]
     fn parses_plain_and_v_prefixed_versions() {
