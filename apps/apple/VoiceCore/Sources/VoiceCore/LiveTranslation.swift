@@ -277,3 +277,55 @@ public actor LivePipeline {
         for k in keys where inflight[k]?.id == id { inflight[k] = nil }
     }
 }
+
+/// Anzeige eines Absatzes im Live-Modus (Spez §6): übersetzte Sätze in der Zielsprache, noch nicht übersetzte
+/// im Original. Bereiche in UTF-16 des zusammengesetzten Texts, je Quellsatz einer.
+public struct LiveParagraph: Equatable, Sendable {
+    public let text: String
+    /// Bereich jedes Quellsatzes im angezeigten Text (gleiche Reihenfolge wie die Satzbereiche der Quelle).
+    public let ranges: [NSRange]
+    /// Sätze, die noch im Original stehen (gedämpft anzeigen).
+    public let pending: Set<Int>
+
+    /// Setzt den Absatz aus Originalsätzen und vorhandenen Übersetzungen (`translated[satz]`) zusammen.
+    /// Zwischen Sätzen steht ein Leerzeichen; Text vor dem ersten Satz (Einzug, Anführung) bleibt erhalten.
+    public static func compose(original: String, sentences: [NSRange], translated: [Int: String]) -> LiveParagraph {
+        let all = original as NSString
+        var text = sentences.first.map { all.substring(to: $0.location) } ?? original
+        var ranges: [NSRange] = []
+        var pending: Set<Int> = []
+        for (i, range) in sentences.enumerated() {
+            if i > 0 { text += " " }
+            let piece: String
+            if let t = translated[i]?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty { piece = t }
+            else { piece = all.substring(with: range); pending.insert(i) }
+            ranges.append(NSRange(location: text.utf16.count, length: piece.utf16.count))
+            text += piece
+        }
+        return LiveParagraph(text: text, ranges: ranges, pending: pending)
+    }
+
+    /// Bereich des Quellsatzes Nr. `index` im angezeigten Text.
+    public func range(forSentence index: Int) -> NSRange? { ranges.indices.contains(index) ? ranges[index] : nil }
+}
+
+/// Sprachen, die der Sprach-Chip anbietet (Spez §5). Ob Apple sie übersetzen kann, prüft das iPhone zur Laufzeit.
+public enum LiveLanguages {
+    public static let offered: [(code: String, name: String)] = [
+        ("de", "Deutsch"), ("en", "Englisch"), ("fr", "Französisch"), ("es", "Spanisch"), ("it", "Italienisch"),
+        ("pt", "Portugiesisch"), ("nl", "Niederländisch"), ("pl", "Polnisch"), ("tr", "Türkisch"), ("uk", "Ukrainisch"),
+        ("ru", "Russisch"), ("zh-hans", "Chinesisch (vereinfacht)"), ("zh-hant", "Chinesisch (traditionell)"),
+        ("ja", "Japanisch"), ("ko", "Koreanisch"), ("ar", "Arabisch"), ("hi", "Hindi"), ("id", "Indonesisch"),
+        ("th", "Thailändisch"), ("vi", "Vietnamesisch"),
+    ]
+
+    public static func name(_ code: String) -> String {
+        let c = LiveTranslation.base(code)
+        return offered.first { $0.code == c }?.name ?? c.uppercased()
+    }
+
+    /// Kurzform für den Chip („EN → DE“, „ZH-HANS“ → „ZH“).
+    public static func short(_ code: String) -> String {
+        String(LiveTranslation.base(code).split(separator: "-").first ?? "").uppercased()
+    }
+}

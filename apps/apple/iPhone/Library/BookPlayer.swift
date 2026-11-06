@@ -55,7 +55,9 @@ struct BookPlayerScreen: View {
             let chapters = playback.chapters
             let base = chapters.count > 1 ? "Kapitel \(playback.chapterIndex + 1) von \(chapters.count)" : "Hörbuch"
             return state.map { "\(base) · \($0)" } ?? base
-        case .voice: return "Vorlesestimme \(playback.voiceName)" + (state.map { " · \($0)" } ?? "")
+        case .voice:
+            let live = playback.liveTarget.map { " · live \(LiveLanguages.short(playback.liveSource ?? "")) → \(LiveLanguages.short($0))" } ?? ""
+            return "Vorlesestimme \(playback.voiceName)" + live + (state.map { " · \($0)" } ?? "")
         case nil: return ""
         }
     }
@@ -117,6 +119,8 @@ struct ReadAlongText: View {
     let follow: Bool
     @ObservedObject var playback = LibraryPlayback.shared
     @ObservedObject var look = ReaderAppearance.shared
+    /// Live-Übersetzung: Original eines Absatzes auf langes Drücken (Spez §6).
+    @State private var original: OriginalParagraph?
 
     var body: some View {
         let mark = playback.readingMark
@@ -125,7 +129,8 @@ struct ReadAlongText: View {
         VStack(spacing: 0) {
             FollowText(paragraphs: playback.paragraphs, current: current, follow: follow) { i, p in
                 let here = i == current ? mark : nil
-                Text(styled(p, mark: here))
+                let live = playback.liveParagraph(i)
+                Text(live.map { styledLive($0, paragraph: i, mark: here) } ?? styled(p, mark: here))
                     .font(look.font(heading: p.heading))
                     .foregroundStyle(follow && i != current ? look.muted : look.text)
                     .lineSpacing(look.lineSpacing).fixedSize(horizontal: false, vertical: true)
@@ -133,10 +138,19 @@ struct ReadAlongText: View {
                     .background(paragraphTint(i: i, current: current, mark: mark), in: RoundedRectangle(cornerRadius: 10))
                     .contentShape(Rectangle())
                     .onTapGesture { playback.jump(toParagraph: i) }
+                    .onLongPressGesture { if live != nil { original = OriginalParagraph(id: i, text: p.text) } }
+                    .accessibilityAction(named: "Original anzeigen") { if live != nil { original = OriginalParagraph(id: i, text: p.text) } }
                     .accessibilityAddTraits(i == current ? [.isButton, .isSelected] : .isButton)
                     .accessibilityHint(follow ? "Springt zu diesem Absatz" : "Setzt die Stelle auf diesen Absatz")
             }
             .frame(minHeight: 200)  // Textfläche selbst, ohne Hinweiszeile
+            .sheet(item: $original) { item in
+                NavigationStack {
+                    ScrollView { Text(item.text).font(look.font(heading: false)).padding() }
+                        .navigationTitle("Original").navigationBarTitleDisplayMode(.inline)
+                }
+                .presentationDetents([.medium, .large])
+            }
             // Hinweis einzeilig und begrenzt: bei AX5 nahm er sonst drei Zeilen vom Lesefenster.
             Text(hint(mark)).font(.caption).foregroundStyle(look.muted)
                 .lineLimit(1).minimumScaleFactor(0.7).dynamicTypeSize(...BookPlayerScreen.controlsCap)
@@ -158,6 +172,22 @@ struct ReadAlongText: View {
             s[a..<b].foregroundColor = look.wordText
             // Nicht nur Farbe: In hellen Themen liegen Wort- und Satzfläche in der Helligkeit nah beieinander.
             s[a..<b].underlineStyle = .single
+        }
+        return s
+    }
+
+    /// Live-Absatz: übersetzte Sätze normal, noch ausstehende im Original gedämpft; Markierung je Satz (ohne Wort).
+    private func styledLive(_ live: LiveParagraph, paragraph: Int, mark: ReadingMark?) -> AttributedString {
+        var s = AttributedString(live.text)
+        func span(_ r: NSRange) -> Range<AttributedString.Index>? {
+            guard let range = Range(r, in: live.text), let a = AttributedString.Index(range.lowerBound, within: s),
+                  let b = AttributedString.Index(range.upperBound, within: s) else { return nil }
+            return a..<b
+        }
+        for i in live.pending { if let r = live.range(forSentence: i), let x = span(r) { s[x].foregroundColor = look.muted } }
+        if follow, let r = mark?.sentence, let i = playback.sentences(inParagraph: paragraph).firstIndex(of: r),
+           let d = live.range(forSentence: i), let x = span(d) {
+            s[x].backgroundColor = look.sentenceBackground
         }
         return s
     }
@@ -217,6 +247,7 @@ struct VoiceControls: View {
 
     var body: some View {
         VStack(spacing: 8) {
+            LiveStatusLine()
             HStack {
                 let rec = playback.book.map { PhoneLibrary.shared.record(PhoneLibrary.shared.textKey($0)) } ?? nil
                 Text("Text: \(LibraryFormat.percent(LibraryProgress.fraction(rec))) gelesen")
@@ -233,6 +264,7 @@ struct VoiceControls: View {
             HStack {
                 RateMenu()
                 Spacer(); ControlButton(title: "Stimme", systemImage: "person.wave.2") { voices = true }
+                Spacer(); LiveLanguageButton()
                 if SourceMenu.offered { Spacer(); SourceMenu() }
                 Spacer(); SleepMenu()
             }
@@ -278,3 +310,6 @@ struct SourceMenu: View {
         .accessibilityHint("Hörbuch oder Vorlesestimme, die Stelle im Buch bleibt")
     }
 }
+
+/// Original eines live übersetzten Absatzes für das Blatt „Original“.
+struct OriginalParagraph: Identifiable { let id: Int; let text: String }

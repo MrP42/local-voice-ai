@@ -112,6 +112,7 @@ struct AudiobookControls: View {
                 RateMenu()
                 Spacer(); ControlButton(title: "Inhalt", systemImage: "list.bullet.rectangle") { chaptersShown = true }
                 if SourceMenu.offered { Spacer(); SourceMenu() }
+                if SourceMenu.offered { Spacer(); LiveLanguageButton() }
                 Spacer(); SleepMenu()
             }
         }
