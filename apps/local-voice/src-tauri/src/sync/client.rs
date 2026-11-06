@@ -156,12 +156,7 @@ fn http_with(timeout: Duration) -> Result<reqwest::Client, HubError> {
         .timeout(timeout)
         .user_agent(concat!("local-voice-ai/", env!("CARGO_PKG_VERSION")));
     // Diagnose-Schalter (Hub-500 nur bei Uploads der App, 06.11.2026):
-    // LV_SYNC_TLS=native|rustls wählt den TLS-Anbieter, LV_SYNC_HTTP1=1 erzwingt HTTP/1.1.
-    match std::env::var("LV_SYNC_TLS").as_deref() {
-        Ok("native") => b = b.use_native_tls(),
-        Ok("rustls") => b = b.use_rustls_tls(),
-        _ => {}
-    }
+    // LV_SYNC_HTTP1=1 erzwingt HTTP/1.1.
     if std::env::var_os("LV_SYNC_HTTP1").is_some() {
         b = b.http1_only();
     }
