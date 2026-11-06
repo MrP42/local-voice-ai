@@ -532,7 +532,14 @@ fn build_book(
             }
             None => ready = false,
         },
-        None => files.cover = side.pending.cover.clone(),
+        None => {
+            // Mit Fassungen steht das ausstehende Cover unter der Kennung.
+            files.cover = side.pending.cover.clone().or_else(|| {
+                library::editions::primary_id(book)
+                    .and_then(|p| side.pending.editions.get(p))
+                    .and_then(|ef| ef.cover.clone())
+            })
+        }
     }
 
     if let Some(audio) = &book.audio {
@@ -1119,7 +1126,7 @@ pub fn apply_book(
         // Dateien neuer Fassungen trotzdem holen; `updated` bleibt lokal.
         let kurzbuecher = std::mem::take(&mut side.pending.kurzbuecher);
         side.pending = pending_files(
-            app,
+            &|id| page_text(app, id).is_some(),
             key,
             &dir,
             cache,
@@ -1143,7 +1150,7 @@ pub fn apply_book(
     write_with_covers(&dir, &incoming, moved)?;
     lift_progress_locked(&root, lift)?;
     let mut pending = pending_files(
-        app,
+        &|id| page_text(app, id).is_some(),
         key,
         &dir,
         cache,
@@ -1239,7 +1246,7 @@ fn write_with_covers(
 
 /// Was fehlt hier noch? Nur das kommt nach `pending`.
 fn pending_files(
-    app: &AppHandle,
+    page_exists: &dyn Fn(&str) -> bool,
     key: &[u8; KEY_LEN],
     dir: &Path,
     cache: &mut BTreeMap<String, FileStamp>,
@@ -1265,8 +1272,7 @@ fn pending_files(
             .and_then(|s| blobs::blob_id_of(key, &s));
         local.as_deref() != Some(r.blob.as_str())
     }
-    let has_page =
-        |t: Option<&library::TextVersion>| t.and_then(|t| page_text(app, &t.page_id)).is_some();
+    let has_page = |t: Option<&library::TextVersion>| t.is_some_and(|t| page_exists(&t.page_id));
     let mut pending = BookFiles::default();
     let primary_now = library::editions::primary_id(book);
     let same_primary =
@@ -1286,11 +1292,7 @@ fn pending_files(
             }
         }
     }
-    let (cover, edition_covers) = cover_wants(key, dir, cache, book, remote_files, sender_primary);
-    pending.cover = cover;
-    for (eid, r) in edition_covers {
-        pending.editions.entry(eid).or_default().cover = Some(r);
-    }
+    let wants = cover_wants(key, dir, cache, book, remote_files, sender_primary);
     for r in &remote_files.audio {
         if stale(key, dir, cache, r) {
             pending.audio.push(r.clone());
@@ -1309,11 +1311,33 @@ fn pending_files(
                 pe.audio.push(r.clone());
             }
         }
-        if pe.text.is_some() || !pe.audio.is_empty() {
+        if pe.text.is_some() || pe.cover.is_some() || !pe.audio.is_empty() {
             pending.editions.insert(eid.clone(), pe);
         }
     }
+    add_cover_wants(&mut pending, book, wants);
     pending
+}
+
+/// Ausstehende Cover eintragen. Mit Fassungen immer mit Kennung: welche Datei
+/// (`cover.*` oder `covers/<ed>.*`) es wird, entscheidet erst der Abschluss
+/// des Downloads nach der dann gültigen Hauptfassung.
+fn add_cover_wants(
+    pending: &mut BookFiles,
+    book: &LibraryBook,
+    (primary, others): (Option<BlobRef>, BTreeMap<String, BlobRef>),
+) {
+    match library::editions::primary_id(book) {
+        Some(pid) if !book.editions.is_empty() => {
+            if let Some(r) = primary {
+                pending.editions.entry(pid.to_string()).or_default().cover = Some(r);
+            }
+        }
+        _ => pending.cover = primary,
+    }
+    for (eid, r) in others {
+        pending.editions.entry(eid).or_default().cover = Some(r);
+    }
 }
 
 /// Welche Cover fehlen hier? Das flache `files.cover` gehört zur Hauptfassung
@@ -1563,6 +1587,11 @@ pub enum WantedKind {
 pub fn wanted(app: &AppHandle) -> Result<Vec<Wanted>, String> {
     let _guard = library::sync_lock();
     let root = library::sync_root(app)?;
+    wanted_in(&root)
+}
+
+fn wanted_in(root: &Path) -> Result<Vec<Wanted>, String> {
+    let root = root.to_path_buf();
     let mut out = Vec::new();
     for (id, dir) in book_dirs(&root)? {
         let side = read_sidecar(&dir);
@@ -1730,15 +1759,7 @@ pub fn finish_download(
             clear_pending(&w.dir, &w.what)?;
             Ok(Some(target))
         }
-        WantedKind::EditionCover(eid) => {
-            let book = library::sync_read_book(&w.dir).ok_or("Buch unlesbar")?;
-            let ext = cover_ext(w.blob.kind.as_deref());
-            let target = place_edition_cover(&w.dir, &book, eid, &tmp, ext).inspect_err(|_| {
-                let _ = std::fs::remove_file(&tmp);
-            })?;
-            clear_pending(&w.dir, &w.what)?;
-            Ok(target)
-        }
+        WantedKind::EditionCover(eid) => finish_edition_cover(w, eid, &tmp),
         WantedKind::Audio(f) => {
             let target = w.dir.join("audio").join(f);
             // Eine abweichende Datei gleichen Namens geht in den Papierkorb.
@@ -1755,6 +1776,18 @@ pub fn finish_download(
             Ok(Some(target))
         }
     }
+}
+
+/// Abschluss eines Fassungs-Covers (Sperre hält der Aufrufer): erst jetzt
+/// entscheidet die gültige Hauptfassung über den Ablageort.
+fn finish_edition_cover(w: &Wanted, eid: &str, tmp: &Path) -> Result<Option<PathBuf>, String> {
+    let book = library::sync_read_book(&w.dir).ok_or("Buch unlesbar")?;
+    let ext = cover_ext(w.blob.kind.as_deref());
+    let target = place_edition_cover(&w.dir, &book, eid, tmp, ext).inspect_err(|_| {
+        let _ = std::fs::remove_file(tmp);
+    })?;
+    clear_pending(&w.dir, &w.what)?;
+    Ok(target)
 }
 
 fn clear_pending(dir: &Path, what: &WantedKind) -> Result<(), String> {
@@ -1974,6 +2007,77 @@ mod tests {
         let (p2, o2) = cover_wants(&key, &dir, &mut cache, &book, &files, Some("ed_de"));
         assert!(p2.is_none() && o2.is_empty());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Codex R6: über pending_files, wanted und den Abschluss des Downloads.
+    /// Ein Eintrag nur mit Cover geht nicht verloren, und wechselt die
+    /// Hauptfassung während des Downloads, landet jedes Cover bei seiner Fassung.
+    #[test]
+    fn cover_download_ueberlebt_wechsel_der_hauptfassung() {
+        let key = [9u8; KEY_LEN];
+        let root = cover_tmp();
+        let dir = root.join("book_1");
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut book = two_editions("ed_de");
+        book.id = "book_1".into();
+        library::sync_write_book(&dir, &book).unwrap();
+        let mut files = BookFiles {
+            cover: Some(cref(&key, b"DE", "jpg")),
+            ..Default::default()
+        };
+        files.editions.insert(
+            "ed_en".into(),
+            EditionFiles {
+                cover: Some(cref(&key, b"EN", "png")),
+                ..Default::default()
+            },
+        );
+        let mut cache = BTreeMap::new();
+        let pending = pending_files(
+            &|_| false,
+            &key,
+            &dir,
+            &mut cache,
+            &book,
+            &files,
+            Some("ed_de"),
+        );
+        assert!(pending.cover.is_none(), "mit Fassungen immer mit Kennung");
+        assert!(pending.editions["ed_de"].cover.is_some());
+        assert!(
+            pending.editions["ed_en"].cover.is_some(),
+            "reiner Cover-Eintrag bleibt"
+        );
+        write_sidecar(
+            &dir,
+            &Sidecar {
+                pending,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let wanted = wanted_in(&root).unwrap();
+        assert_eq!(wanted.len(), 2);
+        // Während des Downloads wird EN Hauptfassung.
+        book.primary = Some(library::Stamp {
+            edition: "ed_en".into(),
+            updated: 2.0,
+            device: "pc".into(),
+        });
+        library::sync_write_book(&dir, &book).unwrap();
+        for w in &wanted {
+            let WantedKind::EditionCover(eid) = &w.what else {
+                panic!("nur Cover erwartet");
+            };
+            let bytes: &[u8] = if eid == "ed_de" { b"DE" } else { b"EN" };
+            std::fs::write(download_target(w), bytes).unwrap();
+            finish_edition_cover(w, eid, &download_target(w)).unwrap();
+        }
+        let cover = library::sync_cover_file(&dir).unwrap();
+        assert_eq!(std::fs::read(cover).unwrap(), b"EN");
+        assert_eq!(std::fs::read(dir.join("covers/ed_de.jpg")).unwrap(), b"DE");
+        assert!(read_sidecar(&dir).pending.is_empty());
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// Codex R5/3: scheitert das Schreiben nach dem Cover-Tausch im Empfang,
