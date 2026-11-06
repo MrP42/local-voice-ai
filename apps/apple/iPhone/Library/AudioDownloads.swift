@@ -90,6 +90,7 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
             previous = nil
         }
         if previous?.phase == .running, allowCellular == nil { assemble(book.id); return }
+        speed.reset(book.id)  // Neuer Start, auch bei „Jetzt mobil laden“ und bei den Fehlern gleich danach.
         var job = AudioDownload.Job(bookId: book.id, parts: parts, allowCellular: allowCellular ?? previous?.allowCellular ?? false)
         let remaining = job.totalBytes - AudioDownload.doneBytes(job, states: states(job))
         if let problem = AudioDownload.spaceProblem(remainingBytes: remaining, freeBytes: library.freeBytes(), format: LibraryBytes.text) {
