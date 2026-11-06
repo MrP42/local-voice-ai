@@ -281,6 +281,55 @@ impl Drop for ProcessGuard {
     }
 }
 
+/// Prozessstart-Flag `CREATE_SUSPENDED`: der Hauptthread läuft erst nach
+/// [`resume_suspended`]. So lässt sich ein Prozess einem Job-Objekt
+/// zuordnen, bevor er Kinder starten oder sich beenden kann.
+#[cfg(windows)]
+pub const CREATE_SUSPENDED: u32 = 0x0000_0004;
+
+/// Setzt die Threads eines mit [`CREATE_SUSPENDED`] gestarteten Prozesses
+/// fort (bei diesem Start genau der Hauptthread). `std::process::Child`
+/// gibt das Thread-Handle nicht heraus, darum über eine Thread-Momentaufnahme.
+/// Fehler, wenn kein Thread fortgesetzt werden konnte.
+#[cfg(windows)]
+pub fn resume_suspended(child: &std::process::Child) -> Result<(), String> {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32,
+    };
+    use windows::Win32::System::Threading::{OpenThread, ResumeThread, THREAD_SUSPEND_RESUME};
+
+    let pid = child.id();
+    // SAFETY: Momentaufnahme und Thread-Handles werden hier geöffnet und
+    // genau einmal geschlossen; THREADENTRY32 ist mit dwSize initialisiert.
+    unsafe {
+        let snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0)
+            .map_err(|e| format!("Thread-Momentaufnahme: {e}"))?;
+        let mut entry = THREADENTRY32 {
+            dwSize: std::mem::size_of::<THREADENTRY32>() as u32,
+            ..Default::default()
+        };
+        let mut resumed = 0usize;
+        let mut ok = Thread32First(snap, &mut entry).is_ok();
+        while ok {
+            if entry.th32OwnerProcessID == pid {
+                if let Ok(thread) = OpenThread(THREAD_SUSPEND_RESUME, false, entry.th32ThreadID) {
+                    if ResumeThread(thread) != u32::MAX {
+                        resumed += 1;
+                    }
+                    let _ = CloseHandle(thread);
+                }
+            }
+            ok = Thread32Next(snap, &mut entry).is_ok();
+        }
+        let _ = CloseHandle(snap);
+        if resumed == 0 {
+            return Err(format!("kein Thread von Prozess {pid} fortgesetzt"));
+        }
+    }
+    Ok(())
+}
+
 /// Wächter: stoppt die eigenen Server, sobald der freie RAM unter die
 /// Notgrenze faellt. `stop_all` wird einmal je Notfall gerufen; danach erst
 /// wieder, wenn der Speicher sich erholt hat.

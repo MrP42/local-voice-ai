@@ -226,6 +226,16 @@ fn kill_tree(child: &mut std::process::Child, job: Option<crate::process_guard::
     let _ = child.wait();
 }
 
+/// Fehlertext, wenn Piper unter Windows nicht in ein Job-Objekt kommt:
+/// der Prozess wird dann gar nicht erst fortgesetzt.
+pub const ERR_NO_PROCESS_GUARD: &str = "Piper: Prozessschutz (Job-Objekt) nicht verfügbar";
+
+#[cfg(all(test, windows))]
+thread_local! {
+    /// Test-Schalter: simuliert eine gescheiterte Job-Zuordnung.
+    static FORCE_NO_JOB: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 /// Höchstwartezeit auf die I/O-Threads, nachdem der Prozessbaum beendet
 /// ist. Hält ein unerreichbarer Prozess eine Pipe trotzdem offen, endet der
 /// Lauf nach dieser Frist; der Thread endet dann mit dem Schließen der Pipe.
@@ -270,7 +280,9 @@ pub fn run_piper_cancellable(
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW (Muster: media.rs)
+        // CREATE_NO_WINDOW (Muster: media.rs) und angehalten starten: erst
+        // nach der Job-Zuordnung läuft der Prozess an (siehe unten).
+        cmd.creation_flags(0x0800_0000 | crate::process_guard::CREATE_SUSPENDED);
     }
     // Eigene Prozessgruppe: Abbruch und Timeout beenden auch Kindprozesse.
     #[cfg(unix)]
@@ -289,6 +301,27 @@ pub fn run_piper_cancellable(
         None,
         crate::process_guard::CPU_CAP_PERCENT,
     );
+    // Windows: Der Prozess wurde angehalten gestartet. Erst nach erfolgreicher
+    // Job-Zuordnung wird er fortgesetzt — vorher kann er weder Kinder starten
+    // noch sich beenden, also entgeht kein Kind dem Job. Ohne Job (oder wenn
+    // das Fortsetzen scheitert) wird er beendet, bevor er je gelaufen ist:
+    // kein Lauf ohne Prozessbaum-Schutz.
+    #[cfg(windows)]
+    {
+        #[cfg(test)]
+        if FORCE_NO_JOB.with(|f| f.get()) {
+            job = None;
+        }
+        let resumed = match job {
+            Some(_) => crate::process_guard::resume_suspended(&child),
+            None => Err("kein Job-Objekt".to_string()),
+        };
+        if let Err(e) = resumed {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!("{ERR_NO_PROCESS_GUARD} ({e})"));
+        }
+    }
 
     // stderr nebenläufig leeren, BEVOR geschrieben wird: ein gesprächiges
     // Piper bleibt so nicht am vollen Puffer hängen.
@@ -892,12 +925,12 @@ pub(crate) mod tests {
                      :loop\r\necho x>> \"{hb}\"\r\nping -n 2 127.0.0.1 > nul\r\ngoto loop\r\n",
                     hb = dir.join("hb").display()
                 ),
-                // Startet nach 1 s (Job-Objekt ist dann sicher zugeordnet)
-                // ein Herzschlag-Kind mit geerbten Pipes und endet, sobald
-                // der erste Herzschlag geschrieben ist.
+                // Startet SOFORT ein Herzschlag-Kind mit geerbten Pipes und
+                // endet, sobald der erste Herzschlag geschrieben ist. Ohne
+                // Verzögerung: der angehaltene Start muss das Kind in den Job
+                // bringen, nicht eine Wartezeit (Codex Runde 7).
                 Fake::Orphan => format!(
                     "@echo off\r\nif \"%~1\"==\"hb\" goto loop\r\n\
-                     ping -n 2 127.0.0.1 > nul\r\n\
                      start /b \"\" cmd /c \"%~f0\" hb\r\n\
                      :warte\r\nif exist \"{hb}\" exit /b 0\r\n\
                      ping -n 2 127.0.0.1 > nul\r\ngoto warte\r\n\
@@ -1058,6 +1091,24 @@ pub(crate) mod tests {
             before,
             "Kindprozess läuft nach dem Elternende weiter"
         );
+    }
+
+    /// Codex-Auflage Runde 7 (nur Windows): Scheitert die Job-Zuordnung,
+    /// läuft der angehalten gestartete Prozess nie an — kein Kind, kein
+    /// Herzschlag, klare Fehlermeldung statt eines ungeschützten Laufs.
+    #[cfg(windows)]
+    #[test]
+    fn ohne_job_objekt_laeuft_piper_nie_an() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = fake_paths(dir.path(), Fake::Orphan);
+        let hb = dir.path().join("hb");
+        super::FORCE_NO_JOB.with(|f| f.set(true));
+        let res = run_piper_blocking(&paths, "Hallo.", None, PIPER_TIMEOUT);
+        super::FORCE_NO_JOB.with(|f| f.set(false));
+        let err = res.unwrap_err();
+        assert!(err.starts_with(super::ERR_NO_PROCESS_GUARD), "war: {err}");
+        std::thread::sleep(Duration::from_millis(2500));
+        assert!(!hb.exists(), "Prozess ist trotz fehlendem Job angelaufen");
     }
 
     #[test]
