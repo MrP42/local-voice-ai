@@ -514,7 +514,19 @@ fn build_book(
                 files.text = Some(r);
             }
         }
-        None => files.text = side.pending.text.clone().filter(|_| book.text.is_some()),
+        None => {
+            files.text = side
+                .pending
+                .text
+                .clone()
+                .or_else(|| {
+                    // Mit Fassungen steht der ausstehende Text unter der Kennung.
+                    library::editions::primary_id(book)
+                        .and_then(|p| side.pending.editions.get(p))
+                        .and_then(|ef| ef.text.clone())
+                })
+                .filter(|_| book.text.is_some())
+        }
     }
 
     match library::sync_cover_file(dir) {
@@ -1316,6 +1328,17 @@ fn pending_files(
         }
     }
     add_cover_wants(&mut pending, book, wants);
+    // Mit Fassungen steht auch der Text der Hauptfassung unter ihrer
+    // Kennung: welche Seite er füllt, entscheidet erst der Abschluss.
+    if let (Some(t), Some(pid)) = (
+        pending.text.take_if(|_| !book.editions.is_empty()),
+        library::editions::primary_id(book),
+    ) {
+        let ef = pending.editions.entry(pid.to_string()).or_default();
+        if ef.text.is_none() {
+            ef.text = Some(t);
+        }
+    }
     pending
 }
 
@@ -1701,46 +1724,8 @@ pub fn finish_download(
             Ok(None)
         }
         WantedKind::EditionText(eid) => {
-            let bytes = std::fs::read(&tmp).map_err(|e| format!("Buchtext: {e}"));
-            let _ = std::fs::remove_file(&tmp);
-            let text = String::from_utf8_lossy(&bytes?).into_owned();
-            let mut book = library::sync_read_book(&w.dir).ok_or("Buch unlesbar")?;
-            let Some(e) = book.editions.iter_mut().find(|e| &e.id == eid) else {
-                clear_pending(&w.dir, &w.what)?;
-                return Ok(None);
-            };
-            let page_id = e
-                .text
-                .as_ref()
-                .map(|t| t.page_id.clone())
-                .filter(|p| crate::commands::pages::page_path(app, p).is_ok())
-                .unwrap_or_else(crate::commands::pages::fresh_id);
-            if collect::read_page(app, &page_id)?.is_none() {
-                collect::apply_page(
-                    app,
-                    &page_id,
-                    &json!({ "title": e.title, "state": { "text": text, "tab": "original", "lang": e.lang } }),
-                    None,
-                    device_name,
-                )?;
-            }
-            let mut changed = false;
-            if let Some(t) = e.text.as_mut() {
-                if t.page_id != page_id {
-                    t.page_id = page_id;
-                    changed = true;
-                }
-            }
-            if changed {
-                // Ist sie (inzwischen) die Hauptfassung, die Arbeitskopie mitführen.
-                let text = e.text.clone();
-                if library::editions::primary_id(&book) == Some(eid.as_str()) {
-                    book.text = text;
-                }
-                library::sync_write_book(&w.dir, &book)?;
-            }
-            clear_pending(&w.dir, &w.what)?;
-            Ok(None)
+            let mut pages = AppPages { app, device_name };
+            finish_edition_text(w, eid, &tmp, &mut pages)
         }
         WantedKind::Cover => {
             // Erst das neue Cover ablegen, dann die alten entfernen: scheitert
@@ -1776,6 +1761,77 @@ pub fn finish_download(
             Ok(Some(target))
         }
     }
+}
+
+/// Seitenablage für geladene Texte; im Test ersetzbar.
+trait PageStore {
+    fn valid(&self, page_id: &str) -> bool;
+    fn exists(&self, page_id: &str) -> Result<bool, String>;
+    fn create(&mut self, page_id: &str, page: &Value) -> Result<(), String>;
+}
+
+struct AppPages<'a> {
+    app: &'a AppHandle,
+    device_name: &'a str,
+}
+
+impl PageStore for AppPages<'_> {
+    fn valid(&self, page_id: &str) -> bool {
+        crate::commands::pages::page_path(self.app, page_id).is_ok()
+    }
+    fn exists(&self, page_id: &str) -> Result<bool, String> {
+        Ok(collect::read_page(self.app, page_id)?.is_some())
+    }
+    fn create(&mut self, page_id: &str, page: &Value) -> Result<(), String> {
+        collect::apply_page(self.app, page_id, page, None, self.device_name).map(|_| ())
+    }
+}
+
+/// Abschluss eines Fassungstexts (Sperre hält der Aufrufer). Der Text gehört
+/// zur Fassung `eid`, gleich welche gerade Hauptfassung ist; ist sie es,
+/// führt die Arbeitskopie dieselbe Seite.
+fn finish_edition_text(
+    w: &Wanted,
+    eid: &str,
+    tmp: &Path,
+    pages: &mut dyn PageStore,
+) -> Result<Option<PathBuf>, String> {
+    let bytes = std::fs::read(tmp).map_err(|e| format!("Buchtext: {e}"));
+    let _ = std::fs::remove_file(tmp);
+    let text = String::from_utf8_lossy(&bytes?).into_owned();
+    let mut book = library::sync_read_book(&w.dir).ok_or("Buch unlesbar")?;
+    let is_primary = library::editions::primary_id(&book) == Some(eid);
+    let Some(e) = book.editions.iter_mut().find(|e| e.id == eid) else {
+        clear_pending(&w.dir, &w.what)?;
+        return Ok(None);
+    };
+    let page_id = e
+        .text
+        .as_ref()
+        .map(|t| t.page_id.clone())
+        .filter(|p| pages.valid(p))
+        .unwrap_or_else(crate::commands::pages::fresh_id);
+    if !pages.exists(&page_id)? {
+        pages.create(
+            &page_id,
+            &json!({ "title": e.title, "state": { "text": text, "tab": "original", "lang": e.lang } }),
+        )?;
+    }
+    let mut changed = false;
+    if let Some(t) = e.text.as_mut() {
+        if t.page_id != page_id {
+            t.page_id = page_id;
+            changed = true;
+        }
+    }
+    if changed {
+        if is_primary {
+            book.text = e.text.clone();
+        }
+        library::sync_write_book(&w.dir, &book)?;
+    }
+    clear_pending(&w.dir, &w.what)?;
+    Ok(None)
 }
 
 /// Abschluss eines Fassungs-Covers (Sperre hält der Aufrufer): erst jetzt
@@ -2077,6 +2133,105 @@ mod tests {
         assert_eq!(std::fs::read(cover).unwrap(), b"EN");
         assert_eq!(std::fs::read(dir.join("covers/ed_de.jpg")).unwrap(), b"DE");
         assert!(read_sidecar(&dir).pending.is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[derive(Default)]
+    struct MemPages(BTreeMap<String, Value>);
+    impl PageStore for MemPages {
+        fn valid(&self, page_id: &str) -> bool {
+            !page_id.is_empty()
+        }
+        fn exists(&self, page_id: &str) -> Result<bool, String> {
+            Ok(self.0.contains_key(page_id))
+        }
+        fn create(&mut self, page_id: &str, page: &Value) -> Result<(), String> {
+            self.0.insert(page_id.into(), page.clone());
+            Ok(())
+        }
+    }
+
+    /// Codex R7: Text wie Cover – DE (flach, Sender-Hauptfassung) und EN
+    /// stehen mit Kennung aus; wechselt die Hauptfassung während des
+    /// Downloads, landet jeder Text auf der Seite seiner Fassung.
+    #[test]
+    fn text_download_ueberlebt_wechsel_der_hauptfassung() {
+        let key = [5u8; KEY_LEN];
+        let root = cover_tmp();
+        let dir = root.join("book_1");
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut book = two_editions("ed_de");
+        book.id = "book_1".into();
+        for e in book.editions.iter_mut() {
+            e.text = Some(library::TextVersion {
+                page_id: format!("p_{}", e.lang),
+                origin: "document".into(),
+                source_name: None,
+            });
+        }
+        book.text = book.editions[0].text.clone();
+        library::sync_write_book(&dir, &book).unwrap();
+        let tref = |b: &[u8]| BlobRef::new(&key, &blobs::stamp_bytes(b)).unwrap();
+        let mut files = BookFiles {
+            text: Some(tref(b"Deutsch")),
+            ..Default::default()
+        };
+        files.editions.insert(
+            "ed_en".into(),
+            EditionFiles {
+                text: Some(tref(b"English")),
+                ..Default::default()
+            },
+        );
+        let mut cache = BTreeMap::new();
+        let pending = pending_files(
+            &|_| false,
+            &key,
+            &dir,
+            &mut cache,
+            &book,
+            &files,
+            Some("ed_de"),
+        );
+        assert!(pending.text.is_none(), "mit Fassungen immer mit Kennung");
+        assert!(pending.editions["ed_de"].text.is_some());
+        assert!(pending.editions["ed_en"].text.is_some());
+        write_sidecar(
+            &dir,
+            &Sidecar {
+                pending,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let wanted = wanted_in(&root).unwrap();
+        assert_eq!(wanted.len(), 2);
+        book.primary = Some(library::Stamp {
+            edition: "ed_en".into(),
+            updated: 2.0,
+            device: "pc".into(),
+        });
+        book.text = book.editions[1].text.clone();
+        library::sync_write_book(&dir, &book).unwrap();
+        let mut pages = MemPages::default();
+        for w in &wanted {
+            let WantedKind::EditionText(eid) = &w.what else {
+                panic!("nur Texte erwartet");
+            };
+            let bytes: &[u8] = if eid == "ed_de" {
+                b"Deutsch"
+            } else {
+                b"English"
+            };
+            std::fs::write(download_target(w), bytes).unwrap();
+            finish_edition_text(w, eid, &download_target(w), &mut pages).unwrap();
+        }
+        let text = |p: &str| pages.0[p]["state"]["text"].as_str().unwrap().to_string();
+        assert_eq!(text("p_de"), "Deutsch");
+        assert_eq!(text("p_en"), "English");
+        assert!(read_sidecar(&dir).pending.is_empty());
+        let after = library::sync_read_book(&dir).unwrap();
+        assert_eq!(after.text.unwrap().page_id, "p_en");
         let _ = std::fs::remove_dir_all(&root);
     }
 
