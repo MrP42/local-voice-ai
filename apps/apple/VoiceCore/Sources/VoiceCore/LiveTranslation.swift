@@ -203,7 +203,13 @@ public actor LivePipeline {
         let k = key(unit)
         if let hit = cache.get(k) { return hit }
         let task = inflight[k]?.task ?? start([unit])
-        let result = try await task.value
+        let result: [LiveKey: String]
+        do { result = try await task.value }
+        catch {
+            // Auch im Fehlerpfad: ein Wechsel der Generation hat Vorrang vor jedem späten Fehler.
+            guard gen == generation else { throw CancellationError() }
+            throw error
+        }
         guard gen == generation else { throw CancellationError() }
         guard let value = result[k] else { throw LiveTranslationError.unusable }
         return value
@@ -245,22 +251,24 @@ public actor LivePipeline {
         return out
     }
 
-    /// Spez §4: ein Fehler (auch falsche Anzahl) wird genau einmal wiederholt; danach leere oder auffällig
-    /// unveränderte Sätze genau einmal neu. Scheitert diese Nachfrage, bleibt die erste Antwort.
+    /// Spez §4 mit gemeinsamem Budget von höchstens zwei Aufrufen:
+    /// - wirft der erste Aufruf (auch falsche Anzahl), ist der zweite die einzige Wiederholung; dessen Antwort gilt
+    ///   ohne weitere Nachfrage (leere Sätze bleiben unbrauchbar);
+    /// - sonst fragt der zweite Aufruf leere oder auffällig unveränderte Sätze nach. Fehler dieser Nachfrage werden
+    ///   weitergereicht (Wiedergabe pausiert); eine unveränderte Antwort gilt nur, wenn die Nachfrage gelang.
     private func translateWithRetry(_ texts: [String]) async throws -> [String] {
         var out: [String]
         do { out = try await call(texts) }
         catch is CancellationError { throw CancellationError() }
         catch {
             try Task.checkCancellation()
-            out = try await call(texts)
+            return try await call(texts)
         }
         let bad = out.indices.filter { LiveTranslation.worthRetry(source: texts[$0], translated: out[$0], from: source, to: target) }
         guard !bad.isEmpty else { return out }
         try Task.checkCancellation()
-        if let again = try? await call(bad.map { texts[$0] }) {
-            for (i, value) in zip(bad, again) where LiveTranslation.usable(value) { out[i] = value }
-        }
+        let again = try await call(bad.map { texts[$0] })
+        for (i, value) in zip(bad, again) { out[i] = value }
         return out
     }
 
