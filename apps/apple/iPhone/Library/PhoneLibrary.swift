@@ -11,6 +11,8 @@ final class PhoneLibrary: ObservableObject {
     static let shared = PhoneLibrary()
 
     @Published private(set) var books: [LibraryBook] = []
+    /// Für die Legende im Regal; wird beim Neuladen bestimmt, nicht bei jedem Zeichnen.
+    @Published private(set) var anyAudioDownloaded = false
     @Published private(set) var progress: [String: String] = [:]
     @Published private(set) var importing = false
     @Published var error: String?
@@ -52,6 +54,7 @@ final class PhoneLibrary: ObservableObject {
             list.append(book)
         }
         books = list.sorted { $0.addedMs > $1.addedMs }
+        anyAudioDownloaded = books.contains(where: hasAudio)
         if let data = try? Data(contentsOf: progressURL), let map = try? JSONDecoder().decode([String: String].self, from: data) {
             progress = map
         } else if FileManager.default.fileExists(atPath: progressURL.path) {
@@ -96,19 +99,55 @@ final class PhoneLibrary: ObservableObject {
         try? root.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]).volumeAvailableCapacityForImportantUsage
     }
 
+    /// Hörbuch vollständig auf dem iPhone, und zwar in der Fassung, die das Konto nennt.
     func hasAudio(_ book: LibraryBook) -> Bool {
         guard let tracks = book.audio?.allTracks, !tracks.isEmpty else { return false }
-        return audioURLs(book).count == tracks.count
+        let m = meta(book)
+        guard !m.files.audio.isEmpty else {  // nur lokal, noch nicht im Konto
+            let folder = dir(book).appendingPathComponent("audio")
+            return tracks.allSatisfy { FileManager.default.fileExists(atPath: folder.appendingPathComponent($0.file).path) }
+        }
+        let parts = audioParts(m.files.audio)
+        return AudioDownload.isCurrent(parts, sizes: parts.map { LibrarySync.fileSize(audioDir(book).appendingPathComponent($0.file)) }, blobs: m.localAudio ?? [:])
+    }
+
+    func audioParts(_ refs: [BlobRef]) -> [AudioDownload.Part] {
+        refs.enumerated().map { i, ref in
+            AudioDownload.Part(blob: ref.blob, size: ref.size, chunks: ref.chunks, file: LibrarySync.audioFileName(ref.file, index: i))
+        }
+    }
+
+    /// Geladene Fassung einer Hörbuchdatei merken.
+    func noteLocalAudio(bookId: String, file: String, blob: String) {
+        guard let book = books.first(where: { $0.id == bookId }) else { return }
+        var m = meta(book)
+        m.localAudio = (m.localAudio ?? [:]).merging([file: blob]) { $1 }
+        setMeta(book, m)
+    }
+
+    /// Dateien entfernen, die das Konto inzwischen ersetzt hat, damit sie neu geladen werden.
+    func removeStaleAudio(_ book: LibraryBook) {
+        let m = meta(book)
+        for part in audioParts(m.files.audio) {
+            let file = audioDir(book).appendingPathComponent(part.file)
+            guard let size = LibrarySync.fileSize(file) else { continue }
+            if !AudioDownload.isCurrent([part], sizes: [size], blobs: m.localAudio ?? [:]) { try? FileManager.default.removeItem(at: file) }
+        }
     }
 
     // MARK: Sync-Metadaten je Buch (`<id>/sync.json`): Dateiverweise im Konto, Stand.
 
-    struct SyncMeta: Codable { var files = BookFiles(); var updated: Double = 0 }
+    typealias SyncMeta = LibrarySyncMeta
 
     func meta(_ book: LibraryBook) -> SyncMeta {
         guard let data = try? Data(contentsOf: dir(book).appendingPathComponent("sync.json")),
               let m = try? JSONDecoder().decode(SyncMeta.self, from: data) else { return SyncMeta(updated: book.addedMs) }
         return m
+    }
+
+    /// Dateiverweis nach einem Upload eintragen. Liest frisch, denn während des Uploads kann ein Stern dazugekommen sein.
+    func updateFiles(_ book: LibraryBook, _ change: (inout BookFiles) -> Void) {
+        setMeta(book, meta(book).updatingFiles(change))
     }
 
     func setMeta(_ book: LibraryBook, _ meta: SyncMeta) {
@@ -127,7 +166,9 @@ final class PhoneLibrary: ObservableObject {
     /// Buch aus dem Abgleich übernehmen (ohne eigenen Stand zu erhöhen).
     func storeRemote(_ book: LibraryBook, meta: SyncMeta) throws {
         try write(book)
-        setMeta(book, meta)
+        var merged = meta
+        merged.localAudio = self.meta(book).localAudio  // Lokale Angabe, kommt nicht aus dem Konto.
+        setMeta(book, merged)
     }
 
     func removeRemote(id: String) {
@@ -181,6 +222,20 @@ final class PhoneLibrary: ObservableObject {
             }
         }
         reload()
+    }
+
+    func setFavorite(_ book: LibraryBook, _ favorite: Bool, pendingFields: String?) {
+        var copy = book; copy.favorite = favorite
+        try? write(copy)
+        var m = meta(copy)
+        if m.pendingFavorite == nil { m.pendingFields = pendingFields }  // Zweiter Tipp: Der erste Stand gilt.
+        m.updated = Self.nowMs(); m.pendingFavorite = favorite
+        setMeta(copy, m)
+    }
+
+    func clearPendingFavorite(bookId: String) {
+        guard let book = books.first(where: { $0.id == bookId }) else { return }
+        var m = meta(book); m.pendingFavorite = nil; m.pendingFields = nil; setMeta(book, m)
     }
 
     func flush() {

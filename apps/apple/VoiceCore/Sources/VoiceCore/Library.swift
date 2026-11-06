@@ -384,6 +384,11 @@ public enum LibraryText {
         sentences.lastIndex { $0.location <= location } ?? 0
     }
 
+    /// Favoriten zuerst, sonst bleibt die Reihenfolge, wie `sortViews` am Desktop.
+    public static func favoritesFirst(_ books: [LibraryBook]) -> [LibraryBook] {
+        books.filter(\.favorite) + books.filter { !$0.favorite }
+    }
+
     /// Index des Absatzes, in dem `chars` liegt (der letzte davor, falls dazwischen).
     public static func paragraphIndex(_ paragraphs: [TextParagraph], at chars: Double) -> Int {
         var lo = 0, hi = paragraphs.count - 1, found = 0

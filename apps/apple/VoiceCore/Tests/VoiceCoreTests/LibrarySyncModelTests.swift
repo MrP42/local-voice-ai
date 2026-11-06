@@ -104,6 +104,64 @@ final class DesktopVectorTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(LibraryBook.self, from: Data(#"{"id":"a","title":"b"}"#.utf8)).favorite, false)
     }
 
+    func testPendingFavoriteKeepsNewerRemoteChanges() {
+        var remote = LibraryBook(id: "b", title: "Neuer Titel", addedMs: 1)
+        remote.favorite = false
+        var local = LibraryBook(id: "b", title: "Alter Titel", addedMs: 1)
+        local.favorite = true
+        local.finished = true
+        let merged = SyncLedger.mergingPendingFavorite(true, into: remote, local: local)
+        XCTAssertEqual(merged.title, "Neuer Titel")
+        XCTAssertTrue(merged.favorite)
+        XCTAssertTrue(merged.finished)
+    }
+
+    func testOnlyFavoriteChangeIsDetected() throws {
+        var book = LibraryBook(id: "b", title: "Titel", addedMs: 1)
+        let before = try SyncLedger.fieldsHash(book, files: BookFiles())
+        book.favorite = true
+        XCTAssertTrue(SyncLedger.onlyFavoriteChanged(pendingFields: before, localFields: try SyncLedger.fieldsHash(book, files: BookFiles())))
+        // Import nach dem Stern: lokale Angaben dürfen nicht durch das Konto ersetzt werden.
+        var imported = BookFiles()
+        imported.text = BlobRef(blob: String(repeating: "a", count: 64), size: 1, chunks: 1)
+        XCTAssertFalse(SyncLedger.onlyFavoriteChanged(pendingFields: before, localFields: try SyncLedger.fieldsHash(book, files: imported)))
+        book.title = "Neu"
+        XCTAssertFalse(SyncLedger.onlyFavoriteChanged(pendingFields: before, localFields: try SyncLedger.fieldsHash(book, files: BookFiles())))
+        // Stand war beim Stern nicht abgeglichen: Es gibt keinen Vergleichswert.
+        XCTAssertFalse(SyncLedger.onlyFavoriteChanged(pendingFields: nil, localFields: before))
+    }
+
+    func testPendingFavoriteStaysWhenStarChangedDuringPush() {
+        XCTAssertTrue(SyncLedger.clearsPendingFavorite(accepted: "h1", sent: "h1", local: "h1"))
+        XCTAssertFalse(SyncLedger.clearsPendingFavorite(accepted: "h1", sent: "h1", local: "h2"), "während des Sendens erneut getippt")
+        XCTAssertFalse(SyncLedger.clearsPendingFavorite(accepted: "h0", sent: "h1", local: "h1"), "Hub hat nicht angenommen")
+    }
+
+    /// Modelltest: prüft nur `LibrarySyncMeta.updatingFiles`. Einen echten Upload-/Pull-Ablauf deckt er nicht ab,
+    /// dafür fehlt ein Testziel für `LibrarySync`; der Ausbau ist eine eigene Aufgabe.
+    func testFileUpdateKeepsStarSetDuringUpload() throws {
+        // Upload beginnt, währenddessen setzt der Stern Zeitstempel und Merker; danach kommt der Verweis dazu.
+        let duringUpload = LibrarySyncMeta(updated: 200, pendingFavorite: true, pendingFields: "f")
+        let ref = BlobRef(blob: "a", size: 1, chunks: 1)
+        let after = duringUpload.updatingFiles { $0.text = ref }
+        XCTAssertEqual(after.files.text, ref)
+        XCTAssertEqual(after.updated, 200)
+        XCTAssertEqual(after.pendingFavorite, true)
+        XCTAssertEqual(after.pendingFields, "f")
+        // Alte Dateien bleiben lesbar.
+        let old = try JSONDecoder().decode(LibrarySyncMeta.self, from: Data(#"{"files":{"audio":[]},"updated":5}"#.utf8))
+        XCTAssertEqual(old.updated, 5)
+        XCTAssertNil(old.pendingFavorite)
+    }
+
+    func testTombstoneKeepsUnsavedLocalChanges() {
+        let synced = SyncLedger.Entry(revision: 3, hash: "h", deleted: false)
+        XCTAssertFalse(SyncLedger.keepsAgainstTombstone(synced, localHash: "h"), "abgeglichener Stand darf weg")
+        XCTAssertTrue(SyncLedger.keepsAgainstTombstone(synced, localHash: "favorit-geaendert"), "neuer als der Abgleich")
+        XCTAssertTrue(SyncLedger.keepsAgainstTombstone(nil, localHash: "h"), "war nie im Konto")
+        XCTAssertTrue(SyncLedger.keepsAgainstTombstone(.init(revision: 4, hash: "", deleted: true), localHash: "h"), "nach Grabstein neu entstanden")
+    }
+
     func testChunkCountMatchesDesktopAndFitsHosting() {
         XCTAssertEqual(LibrarySyncFormat.chunkCount(size: 0), 1)
         XCTAssertEqual(LibrarySyncFormat.chunkCount(size: LibrarySyncFormat.oneChunkMaxBytes), 1)

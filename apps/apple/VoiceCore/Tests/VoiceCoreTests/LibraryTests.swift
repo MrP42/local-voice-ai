@@ -126,4 +126,11 @@ final class LibraryTests: XCTestCase {
         XCTAssertEqual(p[0].textStart, 2)
         XCTAssertEqual(p[1].textStart, p[1].start)
     }
+
+    func testFavoritesComeFirstAndKeepOrder() {
+        var books = ["a", "b", "c", "d"].map { LibraryBook(id: $0, title: $0, addedMs: 1) }
+        books[1].favorite = true
+        books[3].favorite = true
+        XCTAssertEqual(LibraryText.favoritesFirst(books).map(\.id), ["b", "d", "a", "c"])
+    }
 }
