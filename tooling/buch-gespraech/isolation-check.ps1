@@ -536,11 +536,15 @@ function Parse-Out([string]$path, [string]$marker) {
         if (($t -eq 'system' -and $e.subtype -eq 'compact_boundary') -or $e.PSObject.Properties['compact_metadata']) { $r.Compacted = $true }
         # Abschneiden an IRGENDEINEM Ereignis (Spiegel von cli.rs): stop_reason am Ereignis
         # oder an message, oder ein subtype mit "abort".
-        $evStop = $null
-        if ($e.PSObject.Properties['stop_reason'] -and $e.stop_reason -is [string]) { $evStop = $e.stop_reason }
-        elseif ($e.PSObject.Properties['message'] -and $e.message -and $e.message.PSObject.Properties['stop_reason'] -and $e.message.stop_reason -is [string]) { $evStop = $e.message.stop_reason }
-        if (($evStop -and (@('max_tokens', 'aborted', 'model_context_window_exceeded') -contains $evStop)) -or
-            ($e.PSObject.Properties['subtype'] -and $e.subtype -is [string] -and $e.subtype.Contains('abort'))) { $r.Cut = $true }
+        # Beide Felder UNABHAENGIG (Ereignis und message), keine Prioritaet: erlaubt nur
+        # fehlend/null, end_turn, stop_sequence; alles andere sperrt.
+        $stops = @()
+        if ($e.PSObject.Properties['stop_reason']) { $stops += , $e.stop_reason }
+        if ($e.PSObject.Properties['message'] -and $e.message -and $e.message.PSObject.Properties['stop_reason']) { $stops += , $e.message.stop_reason }
+        foreach ($sv in $stops) {
+            if ($null -ne $sv -and -not (($sv -is [string]) -and (@('end_turn', 'stop_sequence') -contains $sv))) { $r.Cut = $true }
+        }
+        if ($e.PSObject.Properties['subtype'] -and $e.subtype -is [string] -and $e.subtype.Contains('abort')) { $r.Cut = $true }
         if ($t -eq 'system' -and $e.model -is [string]) { [void]$models.Add($e.model.Trim()) }
         if ($t -eq 'assistant') {
             if ($e.message -and $e.message.model -is [string]) { [void]$models.Add($e.message.model.Trim()) }

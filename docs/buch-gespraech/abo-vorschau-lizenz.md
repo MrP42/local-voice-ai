@@ -49,6 +49,12 @@ Drittanbieter-Harnesses wurden ab 2026 gesperrt bzw. abgerechnet.
   vom Laufwerk bis zum Zielordner wird nacheinander per Handle gehalten
   (Umbenennen, Löschen, Ersetzen scheitert) und am Handle auf Reparse-Punkte
   geprüft, die Datei mit Leseteilen und geprüftem Endpfad; macOS gesperrt).
+- **Akzeptiertes Restfenster (persönliche Vorschau):** Auf Windows bleibt der Start
+  pfadbasiert; das geprüfte Handle wird nicht atomar an den neuen Prozess
+  übergeben (die Handles werden über `CreateProcess` hinaus gehalten, sodass
+  Umbenennen, Löschen und Ersetzen scheitern). Inhaltsänderungen durch denselben
+  Nutzer liegen außerhalb der Garantie; der Hash nach dem Lauf verwirft dann die
+  Antwort.
 - Ein Aufruf entspricht einem einzelnen `claude -p`-Lauf auf Anfrage des Nutzers.
   Grenzen der App: 30 Anfragen je Stunde, 200 je Tag.
 - Relay iPhone → PC: Anfragen **desselben Nutzers** von dessen gekoppeltem iPhone

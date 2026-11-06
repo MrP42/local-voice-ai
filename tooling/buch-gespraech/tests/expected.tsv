@@ -23,3 +23,4 @@ stop_user_event_max_tokens	0	stop_reason
 stop_message_end_turn_ok	0	
 stop_sequence_ok	0	
 stop_result_unknown	0	stop_reason
+stop_outer_end_turn_inner_max_tokens	0	stop_reason

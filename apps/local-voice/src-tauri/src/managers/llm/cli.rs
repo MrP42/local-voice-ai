@@ -908,8 +908,9 @@ pub(crate) fn parse_codex(stdout: &str) -> Result<CliReply, String> {
     }
 }
 
-/// `stop_reason`-Werte, mit denen eine Antwort abgeschnitten oder abgebrochen
-/// wurde. Explizite Liste statt Namenssuche.
+/// Bekannte `stop_reason`-Werte einer abgeschnittenen oder abgebrochenen Antwort
+/// (Doku; gesperrt wird jeder Wert ausserhalb von [`DONE_STOP_REASONS`]).
+#[allow(dead_code)]
 const CUT_STOP_REASONS: &[&str] = &["max_tokens", "aborted", "model_context_window_exceeded"];
 
 /// `stop_reason`-Werte einer regulaer beendeten Antwort.
@@ -949,7 +950,7 @@ fn str_of<'a>(v: &'a serde_json::Value, key: &str) -> Option<&'a str> {
 /// * die gemeldeten Modell-IDs (`init.model`, `assistant.message.model`,
 ///   `modelUsage`-Schluessel) nicht ALLE identisch sind (kein „meiste Token“).
 ///
-/// Abgeschnitten ist ein `stop_reason` aus [`CUT_STOP_REASONS`] oder ein
+/// Abgeschnitten ist jedes `stop_reason` (am Ereignis UND an `message`, unabhaengig) ausser fehlend/null/[`DONE_STOP_REASONS`] oder ein
 /// `subtype` mit `abort`; ohne regulaeren `stop_reason` des Ergebnisses bleibt
 /// „abgeschnitten“ unbekannt (sperrt in `preview::verify`). Ablehnungen sind
 /// Fehlertexte `cli_preview_rejected:<code>:<grund>`.
@@ -966,9 +967,18 @@ pub(crate) fn parse_claude_stream(stdout: &str) -> Result<CliReply, String> {
         {
             compacted = true;
         }
-        let stop = str_of(ev, "stop_reason")
-            .or_else(|| ev.get("message").and_then(|m| str_of(m, "stop_reason")));
-        if stop.is_some_and(|s| CUT_STOP_REASONS.contains(&s)) || subtype.contains("abort") {
+        // Beide Felder UNABHAENGIG pruefen (Ereignis und message), keine Prioritaet.
+        // Erlaubt sind nur fehlend/null (Zwischenstand), end_turn und stop_sequence;
+        // jeder andere Wert (max_tokens, aborted, unbekannt, kein String) sperrt.
+        let stops = [
+            ev.get("stop_reason"),
+            ev.get("message").and_then(|m| m.get("stop_reason")),
+        ];
+        let bad_stop = stops
+            .iter()
+            .flatten()
+            .any(|v| !v.is_null() && !v.as_str().is_some_and(|s| DONE_STOP_REASONS.contains(&s)));
+        if bad_stop || subtype.contains("abort") {
             cut = true;
         }
     }
@@ -2773,6 +2783,22 @@ exit "$(cat "$D/exit" 2>/dev/null || echo 0)"
                         lines[2]
                     )
                 },
+                "cli_preview_rejected:budget:truncated",
+            ),
+            (
+                "aussen end_turn, in der Nachricht max_tokens (keine Prioritaet)",
+                stream_with(&[(
+                    r#"{"type":"assistant","message":{"role":"assistant","stop_reason":"end_turn""#,
+                    r#"{"type":"assistant","stop_reason":"end_turn","message":{"role":"assistant","stop_reason":"max_tokens""#,
+                )]),
+                "cli_preview_rejected:budget:truncated",
+            ),
+            (
+                "unbekannter stop_reason in der Nachricht",
+                stream_with(&[(
+                    r#""role":"assistant","stop_reason":"end_turn""#,
+                    r#""role":"assistant","stop_reason":"refusal""#,
+                )]),
                 "cli_preview_rejected:budget:truncated",
             ),
             (

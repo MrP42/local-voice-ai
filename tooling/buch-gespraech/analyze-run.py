@@ -8,8 +8,8 @@ gueltig ist: Exit-Code 0, Ereignisvertrag, kein Fehler, keine Kompaktierung,
 Abschneiden (siehe unten) ausgeschlossen, vollstaendige und gueltige usage,
 Text vorhanden.
 Abschneiden wie in der App (cli.rs, parse_claude_stream): ein stop_reason aus
-CUT_STOP_REASONS an IRGENDEINEM Ereignis (Ergebnis, message.stop_reason jeder
-Nachricht, jedes andere Ereignis) oder ein subtype mit "abort" sperrt, auch wenn
+stop_reason ausser fehlend/end_turn/stop_sequence an IRGENDEINEM Ereignis, am
+Ereignis UND an message unabhaengig (ohne Prioritaet) oder ein subtype mit "abort" sperrt, auch wenn
 das Ergebnis end_turn meldet. Das Ergebnis selbst muss einen regulaeren
 stop_reason aus DONE_STOP_REASONS haben; fehlt er oder ist er unbekannt, ist der
 Lauf ungueltig (unbekannt ist nie Erfolg).
@@ -19,7 +19,7 @@ diese Regeln.
 """
 import json, sys
 # Spiegel von CUT_STOP_REASONS/DONE_STOP_REASONS in cli.rs.
-CUT_STOP_REASONS = ("max_tokens", "aborted", "model_context_window_exceeded")
+CUT_STOP_REASONS = ("max_tokens", "aborted", "model_context_window_exceeded")  # Doku; gesperrt ist alles ausser DONE
 DONE_STOP_REASONS = ("end_turn", "stop_sequence")
 path, events_path, marker = sys.argv[1:4]
 rc = 0
@@ -109,11 +109,13 @@ for e in events:
     t = e.get("type")
     if t == "system" and e.get("subtype") == "compact_boundary" or "compact_metadata" in e:
         compacted = True
-    ev_stop = e.get("stop_reason")
-    if not isinstance(ev_stop, str):
-        ev_stop = (e.get("message") or {}).get("stop_reason") if isinstance(e.get("message"), dict) else None
-    if (isinstance(ev_stop, str) and ev_stop in CUT_STOP_REASONS) or \
-            (isinstance(e.get("subtype"), str) and "abort" in e["subtype"]):
+    # Beide Felder UNABHAENGIG (Ereignis und message), keine Prioritaet: erlaubt nur
+    # fehlend/None, end_turn, stop_sequence; alles andere (auch unbekannt) sperrt.
+    msg = e.get("message") if isinstance(e.get("message"), dict) else {}
+    for v in (e.get("stop_reason"), msg.get("stop_reason")):
+        if v is not None and not (isinstance(v, str) and v in DONE_STOP_REASONS):
+            cut = True
+    if isinstance(e.get("subtype"), str) and "abort" in e["subtype"]:
         cut = True
     if t == "system" and isinstance(e.get("model"), str):
         models.add(e["model"].strip())

@@ -31,7 +31,13 @@
 //!   Loeschen/Ersetzen scheitert) und am Handle auf Reparse-Punkte geprueft, die
 //!   Datei mit FILE_FLAG_OPEN_REPARSE_POINT und FILE_SHARE_READ, `GetFinalPathNameByHandleW`
 //!   gleich dem erwarteten Pfad; Start mit genau diesem Pfad. Geht eines davon
-//!   nicht, ist Windows gesperrt. Linux: Start ueber
+//!   nicht, ist Windows gesperrt.
+//!   Akzeptiertes Restfenster der persoenlichen Vorschau: der Start bleibt
+//!   pfadbasiert, das gepruefte Handle wird nicht atomar an den neuen Prozess
+//!   uebergeben (die Handles bleiben ueber CreateProcess hinaus gehalten, sodass
+//!   Austausch und Umbenennen gesperrt sind). Inhaltsaenderungen durch denselben
+//!   Nutzer liegen ausserhalb der Garantie; der Hash nach dem Lauf verwirft dann
+//!   die Antwort. Linux: Start ueber
 //!   `/proc/self/fd/<fd>`. macOS und andere Unix: gesperrt (`platform_unsupported`).
 //!   Vor dem Start und nach dem Ende wird der Hash neu gebildet ([`Pinned::verify`]).
 //!   Grenze (ausserhalb der Garantie): die FD-Bindung verhindert Pfadaustausch,
@@ -464,7 +470,9 @@ pub fn platform_supported() -> bool {
 fn assert_local_fixed(path: &Path) -> Result<(), String> {
     use std::path::{Component, Prefix};
     use windows::core::PCWSTR;
-    use windows::Win32::Storage::FileSystem::{GetDriveTypeW, DRIVE_FIXED};
+    use windows::Win32::Storage::FileSystem::GetDriveTypeW;
+    // Wert aus WinBase.h; im windows-Crate unter Win32_System_WindowsProgramming.
+    const DRIVE_FIXED: u32 = 3;
     let bad = |why: &str| Err(format!("payload_unknown: {why}"));
     let Some(Component::Prefix(prefix)) = path.components().next() else {
         return bad("kein Laufwerkspfad");
