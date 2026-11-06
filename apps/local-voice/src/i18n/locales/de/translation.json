@@ -7493,6 +7493,7 @@
     },
     "sources": {
       "label": "Quellen",
+      "entry": "[Q{{k}}] {{kind}}: {{title}}",
       "open": "Quelle öffnen",
       "page": "Seite {{page}}",
       "kind": {

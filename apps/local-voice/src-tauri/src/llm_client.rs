@@ -197,6 +197,35 @@ fn create_client(provider: &PostProcessProvider, api_key: &str) -> Result<reqwes
         .map_err(|e| format!("Failed to build HTTP client: {}", e))
 }
 
+/// Client für das eingebaute lokale Modell mit App-Kontext: kein Proxy (auch
+/// keiner aus der Umgebung) und keine Umleitung, damit nichts den Rechner
+/// verlässt (Codex M5 Must-fix 1).
+fn create_pinned_local_client(
+    provider: &PostProcessProvider,
+    api_key: &str,
+) -> Result<reqwest::Client, String> {
+    let headers = build_headers(provider, api_key)?;
+    reqwest::Client::builder()
+        .default_headers(headers)
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|e| format!("Failed to build HTTP client: {}", e))
+}
+
+/// Zeigt die Adresse auf diesen Rechner (127.0.0.0/8, ::1, localhost)?
+pub(crate) fn is_loopback_url(url: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(url.trim()) else {
+        return false;
+    };
+    match url.host() {
+        Some(url::Host::Domain(d)) => d.eq_ignore_ascii_case("localhost"),
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
+    }
+}
+
 /// Send a chat completion request to an OpenAI-compatible API
 /// Returns Ok(Some(content)) on success, Ok(None) if response has no content,
 /// or Err on actual errors (HTTP, parsing, etc.)
@@ -966,14 +995,31 @@ pub async fn send_chat_completion_stream(
     messages: Vec<StreamMessage>,
     on_delta: &(dyn Fn(&str) + Send + Sync),
 ) -> Result<String, String> {
+    send_chat_completion_stream_routed(purpose, provider, api_key, model, messages, on_delta, false)
+        .await
+}
+
+/// Wie `send_chat_completion_stream`; mit `pinned_local` nur an das
+/// eingebaute lokale Modell: Loopback-Adresse, ohne Proxy, ohne Umleitung,
+/// ohne CLI. Sonst Fehler statt Versand (App-Kontext, Codex M5/M6).
+pub async fn send_chat_completion_stream_routed(
+    purpose: Purpose,
+    provider: &PostProcessProvider,
+    api_key: String,
+    model: &str,
+    messages: Vec<StreamMessage>,
+    on_delta: &(dyn Fn(&str) + Send + Sync),
+    pinned_local: bool,
+) -> Result<String, String> {
     // Regelwerk vor dem Budget: ein gesperrter Anbieter bekommt gar nichts.
     crate::managers::compliance::check_call(provider)?;
     usage::check_budget(provider, model)?;
     let started = std::time::Instant::now();
-    let (result, tokens) = match stream_inner(provider, api_key, model, messages, on_delta).await {
-        Ok((content, tokens)) => (Ok(content), tokens),
-        Err(e) => (Err(e), TokenUsage::default()),
-    };
+    let (result, tokens) =
+        match stream_inner(provider, api_key, model, messages, on_delta, pinned_local).await {
+            Ok((content, tokens)) => (Ok(content), tokens),
+            Err(e) => (Err(e), TokenUsage::default()),
+        };
     let elapsed = started.elapsed().as_millis().min(u32::MAX as u128) as u32;
     usage::record_call(
         purpose,
@@ -993,8 +1039,14 @@ async fn stream_inner(
     model: &str,
     messages: Vec<StreamMessage>,
     on_delta: &(dyn Fn(&str) + Send + Sync),
+    pinned_local: bool,
 ) -> Result<(String, TokenUsage), String> {
-    if let Some(cli) = crate::managers::llm::cli::Cli::from_base_url(&provider.base_url) {
+    if pinned_local && !crate::managers::llm::is_local(provider) {
+        return Err("Kontext nur an das eingebaute lokale Modell".into());
+    }
+    if let Some(cli) =
+        crate::managers::llm::cli::Cli::from_base_url(&provider.base_url).filter(|_| !pinned_local)
+    {
         // Die CLI liefert am Stueck: Systemteile als Systemtext, der Rest als
         // Gespraech mit Rollen.
         let system: Vec<&str> = messages
@@ -1018,7 +1070,14 @@ async fn stream_inner(
     let resolved = crate::managers::llm::resolve_base_url(provider, model).await?;
     let url = format!("{}/chat/completions", resolved.trim_end_matches('/'));
     debug!("Sending streaming chat completion request to: {}", url);
-    let client = create_client(provider, &api_key)?;
+    let client = if pinned_local {
+        if !is_loopback_url(&url) {
+            return Err("Lokales Modell nicht auf Loopback".into());
+        }
+        create_pinned_local_client(provider, &api_key)?
+    } else {
+        create_client(provider, &api_key)?
+    };
     let local = crate::managers::llm::is_local(provider);
     let fallback_body = stream_request_body(model, &messages, false, local);
 
@@ -1930,5 +1989,83 @@ mod image_tests {
             .await
             .unwrap_err();
         assert!(err.starts_with("request_failed"), "{err}");
+    }
+}
+
+#[cfg(test)]
+mod pinned_tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::Arc;
+
+    fn provider(id: &str, base: &str) -> PostProcessProvider {
+        PostProcessProvider {
+            id: id.into(),
+            label: id.into(),
+            base_url: base.into(),
+            allow_base_url_edit: false,
+            models_endpoint: None,
+            supports_structured_output: false,
+        }
+    }
+
+    /// Ein Server, der jede Anfrage zählt und mit `answer` beantwortet.
+    fn serve(answer: String) -> (u16, Arc<AtomicU32>) {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        let hits = Arc::new(AtomicU32::new(0));
+        let h = hits.clone();
+        std::thread::spawn(move || {
+            for mut s in l.incoming().flatten() {
+                h.fetch_add(1, Ordering::SeqCst);
+                let mut buf = [0u8; 4096];
+                let _ = s.read(&mut buf);
+                let _ = s.write_all(answer.as_bytes());
+            }
+        });
+        (port, hits)
+    }
+
+    #[test]
+    fn loopback_erkennen() {
+        assert!(is_loopback_url("http://127.0.0.1:8080/v1/chat/completions"));
+        assert!(is_loopback_url("http://localhost:1/x"));
+        assert!(is_loopback_url("http://[::1]:1/x"));
+        assert!(!is_loopback_url("http://localhost.example.com/x"));
+        assert!(!is_loopback_url("https://api.example.com/v1"));
+        assert!(!is_loopback_url("kein url"));
+    }
+
+    #[tokio::test]
+    async fn gebundene_route_folgt_keiner_umleitung() {
+        let (target, target_hits) = serve("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}".into());
+        let (port, _) = serve(format!(
+            "HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:{target}/x\r\nContent-Length: 0\r\n\r\n"
+        ));
+        let p = provider("local", &format!("http://127.0.0.1:{port}/v1"));
+        let resp = create_pinned_local_client(&p, "")
+            .unwrap()
+            .post(format!("http://127.0.0.1:{port}/v1/chat/completions"))
+            .body("{}")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status().as_u16(), 302);
+        assert_eq!(
+            target_hits.load(Ordering::SeqCst),
+            0,
+            "Umleitung nicht gefolgt"
+        );
+    }
+
+    #[tokio::test]
+    async fn gebundene_route_lehnt_fremde_anbieter_ab() {
+        let p = provider("openai", "https://api.example.com/v1");
+        let err = stream_inner(&p, String::new(), "m", Vec::new(), &|_| {}, true)
+            .await
+            .unwrap_err();
+        assert!(err.contains("eingebaute"), "{err}");
     }
 }

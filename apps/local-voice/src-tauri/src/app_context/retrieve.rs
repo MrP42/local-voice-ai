@@ -429,5 +429,6 @@ pub fn retrieve(idx: &AppIndex, q: &Query) -> ContextHits {
         searched,
         retrieve_ms: 0,
         epoch: idx.epoch(),
+        question_hash: String::new(),
     }
 }

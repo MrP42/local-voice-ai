@@ -48,6 +48,9 @@ pub const EVENT: &str = "voice-call";
 static CANCELS: Lazy<Mutex<HashMap<String, Arc<Notify>>>> = Lazy::new(Default::default);
 /// Abbrüche, die vor dem Start ihrer Anfrage eintrafen (IPC-Reihenfolge ist nicht garantiert).
 static EARLY_CANCELS: Lazy<Mutex<std::collections::HashSet<String>>> = Lazy::new(Default::default);
+/// Laufende Sprachsynthesen je Anfrage (Abbruchflags).
+static SYNTH_CANCELS: Lazy<Mutex<HashMap<String, Vec<Arc<AtomicBool>>>>> =
+    Lazy::new(Default::default);
 /// Laufende Antworten mit App-Kontext: ein Widerruf bricht sie sofort ab.
 static CONTEXT_REQUESTS: Lazy<Mutex<std::collections::HashSet<String>>> =
     Lazy::new(Default::default);
@@ -69,6 +72,10 @@ pub struct VoiceCallMessage {
     /// `system` | `user` | `assistant`
     pub role: String,
     pub content: String,
+    /// Aus App-Kontext entstanden (Frage oder Antwort eines Schritts mit
+    /// Auszügen): geht nur an einen lokalen Empfänger (Codex M6).
+    #[serde(default)]
+    pub derived: bool,
 }
 
 fn pcm16_b64_to_f32(b64: &str) -> Result<Vec<f32>, String> {
@@ -231,44 +238,32 @@ fn warm_target(provider: &crate::settings::PostProcessProvider, model: &str) -> 
     })
 }
 
-/// Empfänger des App-Kontexts ist lokal: eingebautes Modell oder ein
-/// Endpunkt auf diesem Rechner (Loopback). Ein Ollama auf einem fremden Host
-/// zählt nicht, auch wenn er wie Ollama aussieht.
-fn receiver_is_local(provider: &crate::settings::PostProcessProvider, _model: &str) -> bool {
-    crate::managers::llm::is_local(provider) || is_loopback(&provider.base_url)
+/// Empfänger des App-Kontexts ist lokal: nur das eingebaute Modell. Ein
+/// Endpunkt auf localhost (Ollama, Proxy, Relay) zählt nicht, weil er weiter
+/// ins Netz leiten kann (Codex M5 Must-fix 1). Der Versand selbst läuft über
+/// `send_chat_completion_stream_routed(.., pinned_local)` ohne Proxy/Umleitung.
+fn receiver_is_local(provider: &crate::settings::PostProcessProvider) -> bool {
+    crate::managers::llm::is_local(provider)
 }
 
-fn is_loopback(base_url: &str) -> bool {
-    let Ok(url) = url::Url::parse(base_url.trim()) else {
-        return false;
-    };
-    match url.host() {
-        Some(url::Host::Domain(d)) => d.eq_ignore_ascii_case("localhost"),
-        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
-        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
-        None => false,
-    }
-}
-
-/// Kontextnachricht direkt vor die letzte Nutzernachricht (Prompt-Cache, L3).
+/// Kontext in die letzte Nutzernachricht einbetten (vor die Frage): keine
+/// Systemnachricht mitten im Verlauf, die manche Chat-Vorlagen lokaler
+/// Modelle ablehnen; der vordere Teil bleibt für den Prompt-Cache gleich (L3).
 fn with_context_message(
     mut messages: Vec<VoiceCallMessage>,
     context: Option<String>,
 ) -> Vec<VoiceCallMessage> {
-    let Some(content) = context else {
+    let Some(context) = context else {
         return messages;
     };
-    let at = messages
-        .iter()
-        .rposition(|m| m.role == "user")
-        .unwrap_or(messages.len());
-    messages.insert(
-        at,
-        VoiceCallMessage {
-            role: "system".into(),
-            content,
-        },
-    );
+    match messages.iter_mut().rev().find(|m| m.role == "user") {
+        Some(last) => last.content = format!("{context}\n\n{}", last.content),
+        None => messages.push(VoiceCallMessage {
+            role: "user".into(),
+            content: context,
+            derived: true,
+        }),
+    }
     messages
 }
 
@@ -280,6 +275,12 @@ pub fn revoke_context_requests(app: &AppHandle) {
         .unwrap_or_else(|e| e.into_inner())
         .drain()
         .collect();
+    // Auch Antworten, deren Text fertig ist, aber noch gesprochen wird:
+    // die Oberfläche stoppt bei `*` jede Wiedergabe mit Kontext (Auflage 10).
+    let _ = app.emit(
+        EVENT,
+        serde_json::json!({"kind": "revoked", "request_id": "*"}),
+    );
     for id in ids {
         voice_call_cancel(id.clone());
         let _ = app.emit(
@@ -349,15 +350,46 @@ pub async fn voice_call_chat(
     let (provider, model, api_key) =
         crate::managers::meetings::llm_call::resolve_provider(&settings)?;
     // App-Kontext nur an einen lokalen Empfänger, unmittelbar vor dem Start
-    // geprüft (Codex M5/M6); sonst antwortet das Modell ohne Kontext.
-    let context = context.and_then(|c| {
-        crate::app_context::service::bind_for_speaker(
-            &app,
-            &c,
-            receiver_is_local(&provider, &model),
-        )
-    });
-    let with_context = context.is_some();
+    // geprüft (Codex M5/M6); sonst antwortet das Modell ohne Kontext. Erst
+    // registrieren, dann binden: ein Widerruf dazwischen trifft die Anfrage.
+    let local = receiver_is_local(&provider);
+    if context.is_some() {
+        CONTEXT_REQUESTS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(request_id.clone());
+    }
+    let question = messages
+        .iter()
+        .rev()
+        .find(|m| m.role == "user")
+        .map(|m| m.content.clone())
+        .unwrap_or_default();
+    // Prüfung liest Quellen frisch (Datei/SQLite): außerhalb des async-Threads.
+    let context = match context {
+        Some(c) => {
+            let (app2, rid) = (app.clone(), request_id.clone());
+            tauri::async_runtime::spawn_blocking(move || {
+                crate::app_context::service::bind_for_speaker(&app2, &c, local, &rid, &question)
+            })
+            .await
+            .ok()
+            .flatten()
+        }
+        None => None,
+    };
+    let pinned_local = context.is_some();
+    if context.is_none() {
+        CONTEXT_REQUESTS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&request_id);
+    }
+    // Abgeleitete Verlaufseinträge nie an einen entfernten Empfänger.
+    let messages: Vec<VoiceCallMessage> = messages
+        .into_iter()
+        .filter(|m| local || !m.derived)
+        .collect();
     let messages = with_context_message(messages, context);
     let messages: Vec<StreamMessage> = messages
         .into_iter()
@@ -368,12 +400,6 @@ pub async fn voice_call_chat(
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .insert(request_id.clone(), cancel.clone());
-    if with_context {
-        CONTEXT_REQUESTS
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(request_id.clone());
-    }
 
     let splitter = Arc::new(Mutex::new(SentenceSplitter::new()));
     let index = Arc::new(Mutex::new(0u32));
@@ -408,13 +434,14 @@ pub async fn voice_call_chat(
     // zeigt Token und Kosten. Gelesen wird innerhalb des Bereichs, auch nach
     // dem Abbruch (dann ist nur der Verbrauch bis dahin gebucht, falls überhaupt).
     let (result, captured) = usage::with_capture(async {
-        let call = llm_client::send_chat_completion_stream(
+        let call = llm_client::send_chat_completion_stream_routed(
             Purpose::Chat,
             &provider,
             api_key,
             &model,
             messages,
             &on_delta,
+            pinned_local,
         );
         let result = tokio::select! {
             r = call => Some(r),
@@ -469,6 +496,7 @@ pub async fn voice_call_chat(
 #[tauri::command]
 #[specta::specta]
 pub fn voice_call_cancel(request_id: String) -> bool {
+    cancel_synth(&request_id);
     let registered = CANCELS
         .lock()
         .unwrap_or_else(|e| e.into_inner())
@@ -493,11 +521,50 @@ pub fn voice_call_cancel(request_id: String) -> bool {
 /// Ein Häppchen mit der eingestellten Stimme zu WAV (Base64).
 #[tauri::command]
 #[specta::specta]
-pub async fn voice_call_synthesize(app: AppHandle, text: String) -> Result<String, String> {
+pub async fn voice_call_synthesize(
+    app: AppHandle,
+    text: String,
+    request_id: Option<String>,
+) -> Result<String, String> {
     let tts = app.state::<Arc<TtsManager>>().inner().clone();
     let cancel = Arc::new(AtomicBool::new(false));
-    let wav = tts.synthesize_wav(&text, Some(&cancel)).await?;
-    Ok(B64.encode(wav))
+    // An die Anfrage gebunden: `voice_call_cancel` und ein Widerruf brechen
+    // auch die Synthese ab (Codex M5 Must-fix 3).
+    if let Some(id) = &request_id {
+        SYNTH_CANCELS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .entry(id.clone())
+            .or_default()
+            .push(cancel.clone());
+    }
+    let wav = tts.synthesize_wav(&text, Some(&cancel)).await;
+    if let Some(id) = &request_id {
+        let mut map = SYNTH_CANCELS.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(list) = map.get_mut(id) {
+            list.retain(|c| !Arc::ptr_eq(c, &cancel));
+            if list.is_empty() {
+                map.remove(id);
+            }
+        }
+    }
+    if cancel.load(std::sync::atomic::Ordering::SeqCst) {
+        return Err("abgebrochen".into());
+    }
+    Ok(B64.encode(wav?))
+}
+
+/// Laufende Synthesen einer Anfrage abbrechen.
+fn cancel_synth(request_id: &str) {
+    if let Some(list) = SYNTH_CANCELS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(request_id)
+    {
+        for c in list {
+            c.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -590,30 +657,28 @@ mod tests {
     }
 
     #[test]
-    fn context_nur_an_lokalen_empfaenger() {
-        assert!(receiver_is_local(
-            &provider("ollama", "http://localhost:11434/v1"),
-            "m"
-        ));
-        assert!(receiver_is_local(
-            &provider("x", "http://127.0.0.1:8080/v1"),
-            "m"
-        ));
-        assert!(receiver_is_local(&provider("x", "http://[::1]:8080"), "m"));
-        // Wie Ollama, aber auf einem fremden Host: nicht lokal.
-        assert!(!receiver_is_local(
-            &provider("ollama", "http://gpu.example.com:11434"),
-            "m"
-        ));
-        assert!(!receiver_is_local(
-            &provider("openai", "https://api.example.com/v1"),
-            "m"
-        ));
-        assert!(!receiver_is_local(
-            &provider("x", "http://localhost.example.com"),
-            "m"
-        ));
-        assert!(!receiver_is_local(&provider("x", "kein url"), "m"));
+    fn context_nur_an_das_eingebaute_modell() {
+        assert!(receiver_is_local(&provider(
+            crate::managers::llm::LOCAL_PROVIDER_ID,
+            "http://127.0.0.1:1/v1"
+        )));
+        // Auch localhost zählt nicht: dahinter kann ein Proxy oder Relay stehen.
+        assert!(!receiver_is_local(&provider(
+            "ollama",
+            "http://localhost:11434/v1"
+        )));
+        assert!(!receiver_is_local(&provider(
+            "x",
+            "http://127.0.0.1:8080/v1"
+        )));
+        assert!(!receiver_is_local(&provider(
+            "ollama",
+            "http://gpu.example.com:11434"
+        )));
+        assert!(!receiver_is_local(&provider(
+            "openai",
+            "https://api.example.com/v1"
+        )));
     }
 
     #[test]
@@ -621,6 +686,7 @@ mod tests {
         let m = |r: &str, c: &str| VoiceCallMessage {
             role: r.into(),
             content: c.into(),
+            derived: false,
         };
         let msgs = vec![
             m("system", "S"),
@@ -630,7 +696,7 @@ mod tests {
         ];
         let out = with_context_message(msgs.clone(), Some("K".into()));
         let got: Vec<&str> = out.iter().map(|m| m.content.as_str()).collect();
-        assert_eq!(got, ["S", "a", "b", "K", "c"]);
+        assert_eq!(got, ["S", "a", "b", "K\n\nc"]);
         assert_eq!(with_context_message(msgs, None).len(), 4);
     }
 }

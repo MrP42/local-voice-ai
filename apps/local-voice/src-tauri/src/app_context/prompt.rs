@@ -120,3 +120,21 @@ pub fn cited(answer: &str, hits: &[ContextHit]) -> Vec<u32> {
     out.dedup();
     out
 }
+
+/// Enthält der Text eine Belegmarke `[Qk]`?
+pub fn has_marker(text: &str) -> bool {
+    let b = text.as_bytes();
+    let mut i = 0;
+    while let Some(p) = text[i..].find("[Q") {
+        let mut j = i + p + 2;
+        let start = j;
+        while j < b.len() && b[j].is_ascii_digit() {
+            j += 1;
+        }
+        if j > start && j < b.len() && b[j] == b']' {
+            return true;
+        }
+        i = i + p + 2;
+    }
+    false
+}

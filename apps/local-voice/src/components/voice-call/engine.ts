@@ -122,6 +122,8 @@ interface ChatMessage {
   turnId?: string;
   /** Im Buch-Gespräch „allgemein“ entstanden: geht nicht an die Buch-Seite. */
   general?: boolean;
+  /** Antwort aus App-Kontext: nur an lokale Empfänger, fällt bei Widerruf weg. */
+  ctx?: boolean;
 }
 
 interface Utterance {
@@ -147,6 +149,8 @@ interface Turn {
   finishStream?: () => void;
   /** Orchestrator dieses Schritts (nur wenn Denker oder Werkzeuge aktiv sind). */
   side?: ChatSide;
+  /** Der Schritt antwortet mit App-Kontext (Widerruf beendet ihn). */
+  withContext?: boolean;
   spoken: string[];
   lastSpeechWall: number;
   startFrame: number;
@@ -199,6 +203,7 @@ export class VoiceCallEngine {
     finish: () => void;
     partial: string;
     side?: ChatSide;
+    withContext?: boolean;
   } | null = null;
   /** Zählt Neustarts des Gesprächs: späte Antworten alter Anfragen werden verworfen. */
   private generation = 0;
@@ -435,9 +440,25 @@ export class VoiceCallEngine {
   private async ensureListener(): Promise<void> {
     // Das Versprechen wird gemerkt: gleichzeitige Aufrufer teilen sich einen Hörer.
     this.listening ??= listen<VoiceCallEvent>("voice-call", (e) => {
+      if (e.payload.kind === "revoked" && e.payload.request_id === "*") {
+        this.onContextRevoked();
+        return;
+      }
       this.sentenceHandlers.get(e.payload.request_id)?.(e.payload);
     });
     await this.listening;
+  }
+
+  /**
+   * Freigabe entzogen oder Schalter aus: laufende Antworten mit Kontext samt
+   * Sprachausgabe beenden und kontextabgeleitete Antworten aus dem Verlauf
+   * nehmen (Codex Auflagen 9/10).
+   */
+  private onContextRevoked(): void {
+    if (this.turn?.withContext) this.cancelTurn(false);
+    if (this.textRun?.withContext) this.cancelText(false);
+    this.history = this.history.filter((m) => !m.ctx);
+    this.globalContext.clear();
   }
 
   /** Wissensbereiche geändert: der nächste Schritt lädt Werkzeuge und Hinweis neu. */
@@ -738,24 +759,41 @@ export class VoiceCallEngine {
 
   /** Verlauf plus neue Äußerung, ohne Systemanweisung (die hält der Orchestrator). */
   private historyFor(text: string): ChatMessage[] {
-    return [...this.plainHistory(), { role: "user", content: text }];
+    // Seiten (Denker, Werkzeuge, Buch) können entfernt laufen: ohne
+    // kontextabgeleitete Antworten (Codex M6).
+    return [...this.plainHistory(false), { role: "user", content: text }];
   }
 
   /** Der Verlauf ohne die Kennungen: sie gehen nicht an das Modell. */
-  private plainHistory(): ChatMessage[] {
+  private plainHistory(withDerived: boolean): ChatMessage[] {
     // Die Buch-Seite sieht nichts, was „allgemein“ entstand (Plan §3.7).
     const book = !!this.bookSide;
     return this.history
-      .filter((m) => !(book && m.general))
+      .filter((m) => !(book && m.general) && (withDerived || !m.ctx))
       .slice(-this.historyLimit)
       .map(({ role, content }) => ({ role, content }));
   }
 
-  private messagesFor(text: string, systemPrompt: string): ChatMessage[] {
+  /**
+   * Nachrichten für `voice_call_chat`. Abgeleitete Antworten tragen
+   * `derived`: das Backend gibt sie nur an einen lokalen Empfänger weiter.
+   */
+  private messagesFor(
+    text: string,
+    systemPrompt: string,
+  ): (ChatMessage & { derived: boolean })[] {
+    const book = !!this.bookSide;
     return [
-      { role: "system", content: systemPrompt },
-      ...this.plainHistory(),
-      { role: "user", content: text },
+      { role: "system", content: systemPrompt, derived: false },
+      ...this.history
+        .filter((m) => !(book && m.general))
+        .slice(-this.historyLimit)
+        .map(({ role, content, ctx }) => ({
+          role,
+          content,
+          derived: !!ctx,
+        })),
+      { role: "user", content: text, derived: false },
     ];
   }
 
@@ -808,10 +846,12 @@ export class VoiceCallEngine {
           if (e.kind !== "sentence") return;
           onPiece(e.text ?? "");
         });
+        const context = speakerContext(gctx);
+        run.withContext = !!context;
         full = await invoke<string>("voice_call_chat", {
           requestId: id,
           messages: this.messagesFor(text, systemPrompt),
-          context: speakerContext(gctx),
+          context,
         });
         if (stale()) return;
         await Promise.race([
@@ -824,7 +864,12 @@ export class VoiceCallEngine {
       if (answer) {
         const tag = this.historyTag;
         this.history.push({ role: "user", content: shown, turnId: id, ...tag });
-        this.history.push({ role: "assistant", content: answer, ...tag });
+        this.history.push({
+          role: "assistant",
+          content: speakable(answer),
+          ...tag,
+          ...(run.withContext ? { ctx: true } : {}),
+        });
         this.cb.onAssistant(answer, true, false);
         void this.reportCitations(id, answer, gctx);
       }
@@ -873,6 +918,7 @@ export class VoiceCallEngine {
           if (!spoken.trim()) return;
           wav = await invoke<string>("voice_call_synthesize", {
             text: spoken,
+            requestId: turn.id,
           });
         } catch (err) {
           if (!dead()) this.cb.onError(String(err));
@@ -958,6 +1004,7 @@ export class VoiceCallEngine {
         turnCtx = fresh;
         context = speakerContext(fresh);
       }
+      turn.withContext = !!context;
       this.sentenceHandlers.set(turn.id, (e) => {
         if (e.kind === "revoked") {
           // Freigabe entzogen: Antwort und Sprachausgabe sofort beenden.
@@ -999,7 +1046,12 @@ export class VoiceCallEngine {
       turnId: turn.id,
       ...tag,
     });
-    this.history.push({ role: "assistant", content: assistantText, ...tag });
+    this.history.push({
+      role: "assistant",
+      content: speakable(assistantText),
+      ...tag,
+      ...(turn.withContext ? { ctx: true } : {}),
+    });
     turn.historyPushed = true;
     this.cb.onAssistant(assistantText, true, false);
     void this.reportCitations(turn.id, assistantText, turnCtx);
@@ -1046,8 +1098,9 @@ export class VoiceCallEngine {
       });
       this.history.push({
         role: "assistant",
-        content: `${said} …`,
+        content: `${speakable(said)} …`,
         ...tag,
+        ...(turn.withContext ? { ctx: true } : {}),
       });
       this.cb.onAssistant(said, true, true);
     }

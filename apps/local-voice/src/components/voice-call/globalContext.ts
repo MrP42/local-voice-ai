@@ -51,6 +51,7 @@ export interface ContextHits {
   searched: SourceKind[];
   retrieve_ms: number;
   epoch: number;
+  question_hash?: string;
 }
 
 export interface ChatMessage {
@@ -229,9 +230,9 @@ export function speakable(sentence: string): string {
  */
 export function speakerContext(
   ctx: PreparedContext | null,
-): { hits: ContextHits; german: boolean } | null {
+): { hits: ContextHits; german: boolean; turn_id: string } | null {
   if (!ctx || ctx.hits.hits.length === 0) return null;
-  return { hits: ctx.hits, german: ctx.german };
+  return { hits: ctx.hits, german: ctx.german, turn_id: ctx.turnId };
 }
 
 /** Verwaltet den Kontext laufender Schritte. */
@@ -240,6 +241,8 @@ export class GlobalContext {
   private readonly now: () => number;
   private pending = new Map<string, Promise<PreparedContext | null>>();
   private keys = new Map<string, string>();
+  /** Der laufende Abruf: ein neuer wartet auf ihn (nie zwei parallel). */
+  private inflight: Promise<unknown> = Promise.resolve();
   /** Zuletzt gesehener Indexstand: ein neuerer Stand macht ältere Ergebnisse ungültig. */
   private epoch = -1;
 
@@ -260,9 +263,16 @@ export class GlobalContext {
     // Höchstens eine Spekulation gleichzeitig (Codex Auflage 12).
     for (const id of [...this.pending.keys()])
       if (id !== input.turnId) this.discard(id);
-    const started = this.now();
-    const p = (async (): Promise<PreparedContext | null> => {
+    const previous = this.inflight;
+    let p!: Promise<PreparedContext | null>;
+    // Verworfen, während der Abruf lief (resume, Abbruch, neuer Schritt)?
+    const stale = () => this.pending.get(input.turnId) !== p;
+    p = (async (): Promise<PreparedContext | null> => {
       try {
+        // Höchstens ein Abruf zur Zeit (Codex M5 Must-fix 5).
+        await previous.catch(() => undefined);
+        if (stale()) return null;
+        const started = this.now();
         const hits = await this.call<ContextHits>("app_context_retrieve", {
           req: {
             question: input.transcript,
@@ -273,12 +283,14 @@ export class GlobalContext {
         });
         const retrieved = this.now();
         if (hits.epoch > this.epoch) this.epoch = hits.epoch;
+        if (stale()) return null;
         const message = hits.hits.length
           ? await this.call<string | null>("app_context_message", {
               hits,
               german: input.german ?? true,
             })
           : null;
+        if (stale()) return null;
         return {
           turnId: input.turnId,
           transcript: input.transcript,
@@ -292,6 +304,7 @@ export class GlobalContext {
         return null;
       }
     })();
+    this.inflight = p;
     this.pending.set(input.turnId, p);
     this.keys.set(input.turnId, key);
     return p;
@@ -299,7 +312,8 @@ export class GlobalContext {
 
   /**
    * Das gültige Ergebnis für einen Schritt: nur, wenn Transkript und
-   * Indexstand noch stimmen; sonst `null` (dann neu holen).
+   * (zuletzt gesehener) Indexstand noch stimmen; sonst `null`. Verbindlich
+   * prüft erst das Backend unmittelbar vor dem Modellstart (`admissible`).
    */
   async take(
     turnId: string,

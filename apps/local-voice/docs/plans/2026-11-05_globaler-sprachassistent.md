@@ -228,6 +228,17 @@ auf. Umgesetzt (lva#328):
   ganze Äußerung. Er gilt erst hörbar (nicht spekulativ), steht nicht im Verlauf;
   „allgemein“ entstandene Beiträge gehen nicht an die Buch-Seite.
 - **Sprung aus Belegen:** Quellenliste klickbar (Seite im Vorlesen bzw. Bereich).
+- **Nachprüfung Codex (7 Must-fixes) umgesetzt:** Kontext nur an das
+  eingebaute Modell (kein localhost-Endpunkt), Versand über eine gebundene
+  Route ohne Proxy, Umleitung und CLI (`send_chat_completion_stream_routed`);
+  Widerruf meldet `revoked:*`, die Oberfläche stoppt jede Wiedergabe mit
+  Kontext, Synthesen sind an die Anfrage gebunden und abbrechbar; Quellen
+  werden vor dem Versand frisch gelesen (`fetch_one`, Hash, `restricted`);
+  ein Abruf zur Zeit (Backend `try_lock`, Oberfläche wartet), 50-ms-Budget mit
+  Zählern; Kontext an Turn-ID und Fragen-Fingerabdruck gebunden (`bound_to`);
+  kontextabgeleitete Antworten nur an lokale Empfänger (`derived`), bei
+  Widerruf aus dem Verlauf; Kontext in der letzten Nutzernachricht statt
+  Systemnachricht im Verlauf; Transkript-Schalter aus entzieht Besprechungen.
 - LLM-Spekulation mit Kontext erst als Folge-PR nach Codex-Auflagen 3–16, falls
   die Messung (P4) sie braucht.
 

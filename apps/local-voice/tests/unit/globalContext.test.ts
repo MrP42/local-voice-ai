@@ -156,7 +156,11 @@ test("An den Sprecher gehen nur Treffer, keine fertige Nachricht", async () => {
     await import("../../src/components/voice-call/globalContext.ts");
   const g = new GlobalContext(fake([1]));
   const ctx = await g.prepare({ turnId: "t", transcript: "x", german: false });
-  assert.deepEqual(speakerContext(ctx), { hits: ctx!.hits, german: false });
+  assert.deepEqual(speakerContext(ctx), {
+    hits: ctx!.hits,
+    german: false,
+    turn_id: "t",
+  });
   assert.equal(speakerContext(null), null);
 });
 
@@ -166,4 +170,38 @@ test("Höchstens eine Spekulation gleichzeitig", async () => {
   await g.prepare({ turnId: "b", transcript: "y" });
   assert.equal(await g.take("a", "x"), null, "ältere Spekulation verworfen");
   assert.ok(await g.take("b", "y"));
+});
+
+test("Parallele Spekulationen laufen nacheinander, Verworfenes liefert nichts", async () => {
+  let running = 0;
+  let maxRunning = 0;
+  let release: (() => void) | null = null;
+  const call = async <T>(cmd: string): Promise<T> => {
+    if (cmd === "app_context_retrieve") {
+      running++;
+      maxRunning = Math.max(maxRunning, running);
+      await new Promise<void>((r) => (release = r));
+      running--;
+      return {
+        hits: [hit(1)],
+        searched: ["meeting"],
+        retrieve_ms: 1,
+        epoch: 1,
+      } as T;
+    }
+    if (cmd === "app_context_message") return "K" as T;
+    throw new Error(cmd);
+  };
+  const g = new GlobalContext(call);
+  const a = g.prepare({ turnId: "a", transcript: "x" });
+  const b = g.prepare({ turnId: "b", transcript: "y" });
+  await new Promise((r) => setTimeout(r, 0));
+  release!();
+  assert.equal(await a, null, "a wurde während des Abrufs verworfen");
+  await new Promise((r) => setTimeout(r, 0));
+  release!();
+  const ctx = await b;
+  assert.ok(ctx);
+  assert.equal(maxRunning, 1, "nie zwei Abrufe gleichzeitig");
+  assert.equal(ctx!.turnId, "b");
 });

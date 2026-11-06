@@ -269,11 +269,13 @@ export const Transcript: React.FC<{
                               title={t("voiceCall.sources.open")}
                               className="text-left underline-offset-2 hover:underline disabled:no-underline disabled:cursor-default"
                             >
-                              [Q{src.k}]{" "}
-                              {t(`voiceCall.sources.kind.${src.kind}`, {
-                                defaultValue: src.kind,
+                              {t("voiceCall.sources.entry", {
+                                k: src.k,
+                                kind: t(`voiceCall.sources.kind.${src.kind}`, {
+                                  defaultValue: src.kind,
+                                }),
+                                title: src.title,
                               })}
-                              : {src.title}
                               {src.page !== null
                                 ? `, ${t("voiceCall.sources.page", { page: src.page })}`
                                 : ""}

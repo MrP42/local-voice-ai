@@ -212,7 +212,10 @@ mod tests {
             "die Bereiche des Abrufindex sind eigene Freigaben"
         );
         let every = Areas::from_settings(
-            &Area::ALL.iter().map(|a| a.key().to_string()).collect::<Vec<_>>(),
+            &Area::ALL
+                .iter()
+                .map(|a| a.key().to_string())
+                .collect::<Vec<_>>(),
             true,
         );
         assert_eq!(every.granted().len(), Area::ALL.len());

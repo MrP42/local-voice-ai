@@ -22,7 +22,7 @@
 //! voice_orchestrator`, Argumente nur Bereiche und Trefferzahl).
 
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
@@ -59,6 +59,17 @@ const RESTRICTED: &str = "restricted";
 static INDEX: Lazy<RwLock<AppIndex>> = Lazy::new(Default::default);
 /// Nur ein Abgleich zur Zeit.
 static SYNCING: AtomicBool = AtomicBool::new(false);
+/// Während eines Laufs angefordert: danach erneut abgleichen (neue Freigaben).
+static SYNC_AGAIN: AtomicBool = AtomicBool::new(false);
+/// Höchstens ein Abruf gleichzeitig (Codex M5 Must-fix 5).
+static RETRIEVING: Mutex<()> = Mutex::new(());
+static BUSY_DROPPED: AtomicU32 = AtomicU32::new(0);
+static OVER_BUDGET: AtomicU32 = AtomicU32::new(0);
+/// Zeitbudget eines Abrufs: darüber kein Kontext (Plan L1, Codex M5).
+const RETRIEVE_BUDGET: Duration = Duration::from_millis(50);
+/// Zuletzt gesehener Transkript-Schalter: Ausschalten entzieht die Besprechungen
+/// sofort (die Segmente stecken in den Besprechungsdokumenten).
+static TRANSCRIPTS: AtomicBool = AtomicBool::new(false);
 static LAST_SYNC: Lazy<Mutex<Option<Instant>>> = Lazy::new(Default::default);
 
 /// Zustand für die Oberfläche (Infozeile, Einstellungen).
@@ -71,6 +82,10 @@ pub struct AppContextStatus {
     pub epoch: u32,
     /// Dauer des letzten Abgleichs (ms); 0, wenn keiner lief.
     pub sync_ms: u32,
+    /// Abrufe verworfen, weil schon einer lief (höchstens einer gleichzeitig).
+    pub busy_dropped: u32,
+    /// Abrufe verworfen, weil sie das Zeitbudget überschritten.
+    pub over_budget: u32,
 }
 
 /// Anfrage an den Abruf.
@@ -212,12 +227,16 @@ fn collect_ki_docs(app: &AppHandle, books: &[(String, String)]) -> Vec<ContextDo
     out
 }
 
-fn collect_pages(app: &AppHandle, books: &[(String, String)]) -> Vec<ContextDoc> {
+fn collect_pages(
+    app: &AppHandle,
+    books: &[(String, String)],
+    only: Option<&str>,
+) -> Vec<ContextDoc> {
     let book_pages: HashSet<&String> = books.iter().map(|(p, _)| p).collect();
     crate::commands::pages::pages_snapshot(app)
         .unwrap_or_default()
         .into_iter()
-        .filter(|p| !book_pages.contains(&p.id))
+        .filter(|p| !book_pages.contains(&p.id) && only.is_none_or(|o| o == p.id))
         .filter_map(|p| {
             let raw = crate::commands::pages::page_state_load(app.clone(), p.id.clone()).ok()?;
             let text = serde_json::from_str::<serde_json::Value>(&raw)
@@ -247,24 +266,28 @@ fn collect_dictations(app: &AppHandle) -> Vec<ContextDoc> {
         .dictations_between(None, None, MAX_DICTATIONS)
         .unwrap_or_default()
         .into_iter()
-        .map(|e| ContextDoc {
-            kind: SourceKind::Dictation,
-            id: e.id.to_string(),
-            title: if e.title.trim().is_empty() {
-                "Diktat".to_string()
-            } else {
-                e.title.clone()
-            },
-            at_ms: e.timestamp * 1000,
-            text: e
-                .post_processed_text
-                .filter(|t| !t.trim().is_empty())
-                .unwrap_or(e.transcription_text),
-            book_id: None,
-            book_upto: None,
-            restricted: false,
-        })
+        .map(dictation_doc)
         .collect()
+}
+
+fn dictation_doc(e: crate::managers::history::HistoryEntry) -> ContextDoc {
+    ContextDoc {
+        kind: SourceKind::Dictation,
+        id: e.id.to_string(),
+        title: if e.title.trim().is_empty() {
+            "Diktat".to_string()
+        } else {
+            e.title.clone()
+        },
+        at_ms: e.timestamp * 1000,
+        text: e
+            .post_processed_text
+            .filter(|t| !t.trim().is_empty())
+            .unwrap_or(e.transcription_text),
+        book_id: None,
+        book_upto: None,
+        restricted: false,
+    }
 }
 
 fn collect_conversations(app: &AppHandle) -> Vec<ContextDoc> {
@@ -275,32 +298,37 @@ fn collect_conversations(app: &AppHandle) -> Vec<ContextDoc> {
     list.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
     list.into_iter()
         .take(MAX_CONVERSATIONS)
-        .filter_map(|c| {
-            let detail = store.get(&c.id).ok()?;
-            let conv = detail.conversation;
-            if conv.archived {
-                return None;
-            }
-            let restricted = conv.scope.data_class == RESTRICTED || conv.scope.special_category;
-            let text = detail
-                .entries
-                .iter()
-                .filter(|e| !e.text.trim().is_empty())
-                .map(|e| format!("{}: {}", e.role, e.text))
-                .collect::<Vec<_>>()
-                .join("\n");
-            Some(ContextDoc {
-                kind: SourceKind::Conversation,
-                id: conv.id,
-                title: conv.title,
-                at_ms: ts_ms(&conv.updated_at),
-                text,
-                book_id: None,
-                book_upto: None,
-                restricted,
-            })
-        })
+        .filter_map(|c| conversation_doc(&store, &c.id))
         .collect()
+}
+
+fn conversation_doc(store: &ConversationStore, id: &str) -> Option<ContextDoc> {
+    let detail = store.get(id).ok()?;
+    let conv = detail.conversation;
+    if conv.archived {
+        return None;
+    }
+    let restricted = conv.scope.data_class == RESTRICTED || conv.scope.special_category;
+    let text = detail
+        .entries
+        .iter()
+        .filter(|e| !e.text.trim().is_empty())
+        // Antworten mit Belegen stammen aus anderen Bereichen: nicht
+        // über „Gespräche“ zurückholen (Widerruf je Bereich bleibt dicht).
+        .filter(|e| !super::prompt::has_marker(&e.text))
+        .map(|e| format!("{}: {}", e.role, e.text))
+        .collect::<Vec<_>>()
+        .join("\n");
+    Some(ContextDoc {
+        kind: SourceKind::Conversation,
+        id: conv.id,
+        title: conv.title,
+        at_ms: ts_ms(&conv.updated_at),
+        text,
+        book_id: None,
+        book_upto: None,
+        restricted,
+    })
 }
 
 fn collect_meetings(app: &AppHandle, transcripts: bool) -> Vec<ContextDoc> {
@@ -312,50 +340,93 @@ fn collect_meetings(app: &AppHandle, transcripts: bool) -> Vec<ContextDoc> {
         .unwrap_or_default()
         .into_iter()
         .filter(|m| m.deleted_at.is_none())
-        .filter_map(|m| {
-            let mut text = String::new();
-            if let Some(doc) = store
-                .get_documents(&m.id)
-                .unwrap_or_default()
-                .into_iter()
-                .filter(|d| d.kind == "enhanced_notes")
-                .next_back()
-            {
-                if let Ok(md) =
-                    crate::managers::meetings::notes::enhance::markdown_for(&store, &doc.id)
-                {
-                    text.push_str(&md);
-                }
-            }
-            if transcripts {
-                let segs = store.get_segments(&m.id).unwrap_or_default();
-                if !segs.is_empty() {
-                    text.push_str("\n\n");
-                    for s in segs {
-                        text.push_str(s.text.trim());
-                        text.push('\n');
-                    }
-                }
-            }
-            (!text.trim().is_empty()).then(|| ContextDoc {
-                kind: SourceKind::Meeting,
-                id: m.id,
-                title: m.title,
-                at_ms: m.started_at.unwrap_or(m.created_at),
-                text,
-                book_id: None,
-                book_upto: None,
-                restricted: false,
-            })
-        })
+        .filter_map(|m| meeting_doc(&store, m, transcripts))
         .collect()
+}
+
+fn meeting_doc(
+    store: &MeetingStore,
+    m: crate::managers::meetings::store::Meeting,
+    transcripts: bool,
+) -> Option<ContextDoc> {
+    let mut text = String::new();
+    if let Some(doc) = store
+        .get_documents(&m.id)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|d| d.kind == "enhanced_notes")
+        .next_back()
+    {
+        if let Ok(md) = crate::managers::meetings::notes::enhance::markdown_for(&store, &doc.id) {
+            text.push_str(&md);
+        }
+    }
+    if transcripts {
+        let segs = store.get_segments(&m.id).unwrap_or_default();
+        if !segs.is_empty() {
+            text.push_str("\n\n");
+            for s in segs {
+                text.push_str(s.text.trim());
+                text.push('\n');
+            }
+        }
+    }
+    (!text.trim().is_empty()).then(|| ContextDoc {
+        kind: SourceKind::Meeting,
+        id: m.id,
+        title: m.title,
+        at_ms: m.started_at.unwrap_or(m.created_at),
+        text,
+        book_id: None,
+        book_upto: None,
+        restricted: false,
+    })
+}
+
+/// Eine Quelle frisch lesen (für die Prüfung unmittelbar vor dem Versand).
+/// `None`: gelöscht, archiviert oder nicht mehr lesbar.
+fn fetch_one(
+    app: &AppHandle,
+    kind: SourceKind,
+    id: &str,
+    settings: &AppSettings,
+) -> Option<ContextDoc> {
+    let books = || library_texts(app);
+    match kind {
+        SourceKind::Book => {
+            let b: Vec<_> = books().into_iter().filter(|(p, _)| p == id).collect();
+            collect_books(app, &b).pop()
+        }
+        SourceKind::KiDoc => {
+            let page = id.split('/').next()?;
+            let b: Vec<_> = books().into_iter().filter(|(p, _)| p == page).collect();
+            collect_ki_docs(app, &b).into_iter().find(|d| d.id == id)
+        }
+        SourceKind::TtsPage => collect_pages(app, &books(), Some(id)).pop(),
+        SourceKind::BookNote => None,
+        SourceKind::Dictation => {
+            let history = state::<HistoryManager>(app)?;
+            let n: i64 = id.parse().ok()?;
+            let e = tauri::async_runtime::block_on(history.get_entry_by_id(n)).ok()??;
+            Some(dictation_doc(e))
+        }
+        SourceKind::Conversation => conversation_doc(&*state::<ConversationStore>(app)?, id),
+        SourceKind::Meeting => {
+            let store = state::<MeetingStore>(app)?;
+            let m = store.get_meeting(id).ok()??;
+            if m.deleted_at.is_some() {
+                return None;
+            }
+            meeting_doc(&store, m, read_transcripts(settings))
+        }
+    }
 }
 
 fn collect(app: &AppHandle, kind: SourceKind, settings: &AppSettings) -> Vec<ContextDoc> {
     match kind {
         SourceKind::Book => collect_books(app, &library_texts(app)),
         SourceKind::KiDoc => collect_ki_docs(app, &library_texts(app)),
-        SourceKind::TtsPage => collect_pages(app, &library_texts(app)),
+        SourceKind::TtsPage => collect_pages(app, &library_texts(app), None),
         // Buchnotizen haben noch keinen Speicher im Kern (Buch-KI B5 offen).
         SourceKind::BookNote => Vec::new(),
         SourceKind::Dictation => collect_dictations(app),
@@ -381,6 +452,13 @@ fn index_read() -> std::sync::RwLockReadGuard<'static, AppIndex> {
 pub fn apply_grants(settings: &AppSettings) {
     let allowed = allowed_kinds(settings);
     let mut idx = index_write();
+    let transcripts = read_transcripts(settings);
+    if TRANSCRIPTS.swap(transcripts, Ordering::SeqCst)
+        && !transcripts
+        && idx.has_kind(SourceKind::Meeting)
+    {
+        idx.revoke(Some(SourceKind::Meeting));
+    }
     if allowed.is_empty() {
         if !idx.is_empty() || idx.doc_count() > 0 {
             idx.revoke(None);
@@ -397,6 +475,7 @@ pub fn apply_grants(settings: &AppSettings) {
 /// Gleicht alle freigegebenen Quellen ab (blockierend). Liefert die Dauer.
 pub fn sync(app: &AppHandle) -> Option<Duration> {
     if SYNCING.swap(true, Ordering::SeqCst) {
+        SYNC_AGAIN.store(true, Ordering::SeqCst);
         return None;
     }
     struct Done;
@@ -407,6 +486,18 @@ pub fn sync(app: &AppHandle) -> Option<Duration> {
     }
     let _done = Done;
     let started = Instant::now();
+    loop {
+        SYNC_AGAIN.store(false, Ordering::SeqCst);
+        sync_once(app);
+        if !SYNC_AGAIN.load(Ordering::SeqCst) {
+            break;
+        }
+    }
+    *LAST_SYNC.lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
+    Some(started.elapsed())
+}
+
+fn sync_once(app: &AppHandle) {
     let settings = crate::settings::get_settings(app);
     apply_grants(&settings);
     for kind in allowed_kinds(&settings) {
@@ -414,14 +505,15 @@ pub fn sync(app: &AppHandle) -> Option<Duration> {
         let docs = collect(app, kind, &settings);
         // Freigabe könnte sich während des Lesens geändert haben.
         let now = crate::settings::get_settings(app);
-        if !allowed_kinds(&now).contains(&kind) {
+        if !allowed_kinds(&now).contains(&kind)
+            || (kind == SourceKind::Meeting
+                && read_transcripts(&now) != read_transcripts(&settings))
+        {
             continue;
         }
         index_write().sync_kind(kind, &docs);
     }
     apply_grants(&crate::settings::get_settings(app));
-    *LAST_SYNC.lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
-    Some(started.elapsed())
 }
 
 fn sync_in_background(app: &AppHandle) {
@@ -495,6 +587,8 @@ fn status(settings: &AppSettings, sync_ms: u32) -> AppContextStatus {
         chunks: idx.len() as u32,
         epoch: idx.epoch(),
         sync_ms,
+        busy_dropped: BUSY_DROPPED.load(Ordering::Relaxed),
+        over_budget: OVER_BUDGET.load(Ordering::Relaxed),
     }
 }
 
@@ -558,6 +652,13 @@ pub async fn app_context_retrieve(
 }
 
 fn retrieve_blocking(app: &AppHandle, req: &AppContextRequest) -> Result<ContextHits, String> {
+    let Ok(_one) = RETRIEVING.try_lock() else {
+        BUSY_DROPPED.fetch_add(1, Ordering::Relaxed);
+        return Ok(ContextHits {
+            epoch: index_read().epoch(),
+            ..Default::default()
+        });
+    };
     let started = Instant::now();
     let settings = crate::settings::get_settings(app);
     apply_grants(&settings);
@@ -629,6 +730,11 @@ fn retrieve_blocking(app: &AppHandle, req: &AppContextRequest) -> Result<Context
         h.k = i as u32 + 1;
     }
     hits.retrieve_ms = started.elapsed().as_millis() as u32;
+    if started.elapsed() > RETRIEVE_BUDGET {
+        OVER_BUDGET.fetch_add(1, Ordering::Relaxed);
+        hits.hits.clear();
+    }
+    hits.question_hash = super::model::question_hash(&req.question);
     Ok(hits)
 }
 
@@ -675,20 +781,51 @@ pub fn bind_for_speaker(
     app: &AppHandle,
     ctx: &super::model::SpeakerContext,
     local: bool,
+    request_id: &str,
+    question: &str,
 ) -> Option<String> {
+    if !bound_to(ctx, request_id, question) {
+        return None;
+    }
     let settings = crate::settings::get_settings(app);
+    apply_grants(&settings);
     let allowed = allowed_kinds(&settings);
-    let idx = index_read();
-    if !admissible(
-        &idx,
-        &allowed,
-        settings.voice_global_context_enabled,
-        local,
-        &ctx.hits,
-    ) {
+    {
+        let idx = index_read();
+        if !admissible(
+            &idx,
+            &allowed,
+            settings.voice_global_context_enabled,
+            local,
+            &ctx.hits,
+        ) {
+            return None;
+        }
+    }
+    // Quellen frisch lesen: gelöscht, umklassifiziert oder geändert seit dem
+    // letzten Abgleich heißt kein Kontext (Codex M5 Must-fix 4).
+    let fresh = ctx.hits.hits.iter().all(|h| {
+        fetch_one(app, h.kind, &h.jump.id, &settings).is_some_and(|d| {
+            !d.restricted && format!("{:016x}", super::index::doc_hash(&d)) == h.version
+        })
+    });
+    if !fresh {
+        sync_in_background(app);
         return None;
     }
     super::prompt::context_message(&ctx.hits.hits, ctx.german)
+}
+
+/// Gehört der Kontext zu dieser Anfrage und genau dieser Frage? Rein, testbar.
+pub(crate) fn bound_to(
+    ctx: &super::model::SpeakerContext,
+    request_id: &str,
+    question: &str,
+) -> bool {
+    !ctx.turn_id.is_empty()
+        && ctx.turn_id == request_id
+        && !ctx.hits.question_hash.is_empty()
+        && ctx.hits.question_hash == super::model::question_hash(question)
 }
 
 /// Prüft die Belege einer Antwort gegen den aktuellen Stand: Marken, die es
@@ -713,4 +850,69 @@ pub fn app_context_verify(answer: String, hits: ContextHits) -> Vec<u32> {
             })
         })
         .collect()
+}
+
+#[cfg(test)]
+mod grant_tests {
+    use super::*;
+    use crate::app_context::model::ContextDoc;
+
+    fn meeting() -> ContextDoc {
+        ContextDoc {
+            kind: SourceKind::Meeting,
+            id: "m1".into(),
+            title: "Runde".into(),
+            at_ms: 0,
+            text: "Frau Berger: Die Ausschreibung läuft bis März.".into(),
+            book_id: None,
+            book_upto: None,
+            restricted: false,
+        }
+    }
+
+    #[test]
+    fn transkripte_aus_entzieht_besprechungen_sofort() {
+        let mut s = crate::settings::get_default_settings();
+        s.voice_global_context_enabled = true;
+        s.voice_call_knowledge = vec!["meetings".into(), "transcripts".into()];
+        s.voice_call_read_transcripts = true;
+        apply_grants(&s);
+        index_write().upsert(&meeting());
+        let before = index_read().epoch();
+        assert!(index_read().has_kind(SourceKind::Meeting));
+        s.voice_call_read_transcripts = false;
+        apply_grants(&s);
+        assert!(!index_read().has_kind(SourceKind::Meeting));
+        assert!(index_read().epoch() > before, "Widerruf erhöht den Stand");
+    }
+
+    #[test]
+    fn kontext_nur_zur_selben_anfrage_und_frage() {
+        use crate::app_context::model::{question_hash, ContextHits, SpeakerContext};
+        let ctx = SpeakerContext {
+            hits: ContextHits {
+                question_hash: question_hash("Wer übernimmt?"),
+                ..Default::default()
+            },
+            german: true,
+            turn_id: "t1".into(),
+        };
+        assert!(bound_to(&ctx, "t1", "Wer übernimmt?"));
+        assert!(!bound_to(&ctx, "t2", "Wer übernimmt?"), "anderer Schritt");
+        assert!(
+            !bound_to(&ctx, "t1", "Wer übernimmt bis wann?"),
+            "anderes Transkript"
+        );
+        let unbound = SpeakerContext {
+            turn_id: String::new(),
+            ..ctx.clone()
+        };
+        assert!(!bound_to(&unbound, "", "Wer übernimmt?"));
+    }
+
+    #[test]
+    fn belegmarken_erkennen() {
+        assert!(super::super::prompt::has_marker("Bis März [Q2]."));
+        assert!(!super::super::prompt::has_marker("Kein [Qx] und [Q] Beleg"));
+    }
 }

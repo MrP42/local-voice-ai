@@ -144,6 +144,15 @@ pub struct ContextHits {
     /// Umklassifizierung erhöht ihn; ein Ergebnis mit älterem Stand ist
     /// ungültig und wird verworfen (Codex Must-fix 2).
     pub epoch: u32,
+    /// Fingerabdruck der Frage, zu der abgerufen wurde: das Backend gibt den
+    /// Kontext nur zu genau dieser Frage weiter (Codex M5 Must-fix 6).
+    #[serde(default)]
+    pub question_hash: String,
+}
+
+/// Fingerabdruck einer Frage (ohne Inhalt im Klartext).
+pub fn question_hash(question: &str) -> String {
+    format!("{:016x}", crate::book_ai::talk::lex::fnv1a(question.trim()))
 }
 
 /// Kontext für einen Sprecheraufruf (`voice_call_chat`). Das Backend baut die
@@ -153,4 +162,6 @@ pub struct ContextHits {
 pub struct SpeakerContext {
     pub hits: ContextHits,
     pub german: bool,
+    /// Schritt, für den abgerufen wurde; muss die Anfrage-ID sein.
+    pub turn_id: String,
 }

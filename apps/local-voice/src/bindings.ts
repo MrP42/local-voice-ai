@@ -3816,9 +3816,9 @@ async voiceCallCancel(requestId: string) : Promise<boolean> {
 /**
  * Ein Häppchen mit der eingestellten Stimme zu WAV (Base64).
  */
-async voiceCallSynthesize(text: string) : Promise<Result<string, string>> {
+async voiceCallSynthesize(text: string, requestId: string | null) : Promise<Result<string, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("voice_call_synthesize", { text }) };
+    return { status: "ok", data: await TAURI_INVOKE("voice_call_synthesize", { text, requestId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -7725,7 +7725,15 @@ export type AppContextStatus = { enabled: boolean; areas: SourceKind[]; document
 /**
  * Dauer des letzten Abgleichs (ms); 0, wenn keiner lief.
  */
-sync_ms: number }
+sync_ms: number; 
+/**
+ * Abrufe verworfen, weil schon einer lief (höchstens einer gleichzeitig).
+ */
+busy_dropped: number; 
+/**
+ * Abrufe verworfen, weil sie das Zeitbudget überschritten.
+ */
+over_budget: number }
 /**
  * The container-level `serde(default)` (backed by the `Default` impl below)
  * guarantees every field — including ones added in the future — falls back to
@@ -9137,7 +9145,12 @@ retrieve_ms: number;
  * Umklassifizierung erhöht ihn; ein Ergebnis mit älterem Stand ist
  * ungültig und wird verworfen (Codex Must-fix 2).
  */
-epoch: number }
+epoch: number; 
+/**
+ * Fingerabdruck der Frage, zu der abgerufen wurde: das Backend gibt den
+ * Kontext nur zu genau dieser Frage weiter (Codex M5 Must-fix 6).
+ */
+question_hash?: string }
 /**
  * Verknüpfte Quelle (Vertrag `ContextSource`).
  */
@@ -11666,7 +11679,11 @@ export type SourceRef = { kind: string; ref: string; title: string | null; url: 
  * Kontextnachricht selbst und nur, wenn der Empfänger lokal ist und Stand,
  * Freigaben und Quellen noch stimmen (Codex M5/M6, Auflagen 4–6, 11).
  */
-export type SpeakerContext = { hits: ContextHits; german: boolean }
+export type SpeakerContext = { hits: ContextHits; german: boolean; 
+/**
+ * Schritt, für den abgerufen wurde; muss die Anfrage-ID sein.
+ */
+turn_id: string }
 /**
  * Für die Oberfläche: eine Zusammenführung, die sich trennen lässt.
  */
@@ -12524,7 +12541,12 @@ export type VoiceCallMessage = {
 /**
  * `system` | `user` | `assistant`
  */
-role: string; content: string }
+role: string; content: string; 
+/**
+ * Aus App-Kontext entstanden (Frage oder Antwort eines Schritts mit
+ * Auszügen): geht nur an einen lokalen Empfänger (Codex M6).
+ */
+derived?: boolean }
 export type VoiceCallReady = { 
 /**
  * Anzeigename des Sprachmodells (`Anbieter · Modell`), leer wenn keins eingerichtet ist.

@@ -69,7 +69,7 @@ pub fn term_freq(text: &str) -> (HashMap<String, u32>, u32) {
     (tf, len)
 }
 
-fn doc_hash(doc: &ContextDoc) -> u64 {
+pub(crate) fn doc_hash(doc: &ContextDoc) -> u64 {
     fnv1a(&format!(
         "{}\u{1f}{}\u{1f}{:?}\u{1f}{:?}\u{1f}{}",
         doc.title, doc.at_ms, doc.book_id, doc.book_upto, doc.text
