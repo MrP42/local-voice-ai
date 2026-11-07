@@ -97,7 +97,11 @@ test.beforeEach(async ({ page }) => {
             if (cmd === "meetings_is_recording") return false;
             if (cmd === "tts_server_status")
               return { phase: "stopped", message: null };
-            if (cmd === "library_list") return BOOKS;
+            if (cmd === "library_list")
+              return (
+                (window as unknown as { __lvBooks?: unknown }).__lvBooks ??
+                BOOKS
+              );
             if (cmd === "pages_list")
               return [
                 {
@@ -219,6 +223,90 @@ test("Ordnerleiste: Alle, Buch-Ordner mit Fassungen, Texte ohne Buch", async ({
   for (const key of ["all", "book:b1", "texts"]) {
     const box = await folders.locator(`[data-folder="${key}"]`).boundingBox();
     expect(box!.height).toBeGreaterThanOrEqual(44);
+  }
+});
+
+test("Ein gewählter leerer Ordner bleibt gewählt", async ({ page }) => {
+  // Der lose Text p2 gehört hier als dritte Fassung ebenfalls zum Buch:
+  // „Ohne Buch“ ist leer.
+  await page.addInitScript(
+    (books) => {
+      (window as unknown as { __lvBooks?: unknown }).__lvBooks = books;
+    },
+    [
+      {
+        ...BOOKS[0],
+        editions: [...BOOKS[0].editions, edition("e3", "fr", "p2")],
+      },
+    ],
+  );
+  await openReadAloud(page);
+  const folders = page.getByTestId("reader-folders");
+  const texts = folders.locator('[data-folder="texts"]');
+  await expect(texts).toContainText("0");
+  await texts.click();
+  await expect(texts).toHaveAttribute("aria-current", "true");
+  await page.waitForTimeout(500);
+  await expect(texts).toHaveAttribute("aria-current", "true");
+  await expect(rows(page)).toHaveCount(0);
+  // Die Ansichten der offenen Seite bleiben im Kopf erreichbar.
+  await expect(
+    page.getByRole("tab", { name: "Original", exact: true }),
+  ).toBeVisible();
+});
+
+test("Bedienziele und gedämpfter Text bei 390 und 768 px", async ({ page }) => {
+  // WCAG-Kontrast aus berechneten Farben (Alpha gegen die Fläche gemischt).
+  const measure = () =>
+    page.evaluate(() => {
+      const rgba = (c: string) => {
+        const m = c.match(/[\d.]+/g)!.map(Number);
+        return [m[0], m[1], m[2], m[3] ?? 1];
+      };
+      const bgOf = (el: Element | null): number[] => {
+        while (el) {
+          const c = rgba(getComputedStyle(el).backgroundColor);
+          if (c[3] > 0.99) return c;
+          el = el.parentElement;
+        }
+        return [255, 255, 255, 1];
+      };
+      const lum = (c: number[]) => {
+        const f = (v: number) => {
+          v /= 255;
+          return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+        };
+        return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]);
+      };
+      const ratio = (el: Element) => {
+        const fg = rgba(getComputedStyle(el).color);
+        const bg = bgOf(el);
+        const mix = fg
+          .slice(0, 3)
+          .map((v, i) => v * fg[3] + bg[i] * (1 - fg[3]));
+        const [a, b] = [lum(mix), lum(bg)].sort((x, y) => y - x);
+        return (a + 0.05) / (b + 0.05);
+      };
+      const scope = document.querySelector('[data-testid="tts-pages"]')!;
+      const small = [
+        ...scope.querySelectorAll("button, [role=tab], .app-select__control"),
+      ]
+        .filter((el) => {
+          const r = el.getBoundingClientRect();
+          return r.width > 0 && r.height > 0 && (r.width < 24 || r.height < 24);
+        })
+        .map((el) => el.getAttribute("aria-label") ?? el.textContent);
+      const muted = [...scope.querySelectorAll(".text-text\\/60")]
+        .filter((el) => el.getBoundingClientRect().height > 0)
+        .map(ratio);
+      return { small, minMuted: Math.min(...muted, 99) };
+    });
+  for (const width of [768, 390]) {
+    await openReadAloud(page, 768);
+    if (width < 768) await page.setViewportSize({ width, height: 844 });
+    const result = await measure();
+    expect(result.small).toEqual([]);
+    expect(result.minMuted).toBeGreaterThanOrEqual(4.5);
   }
 });
 

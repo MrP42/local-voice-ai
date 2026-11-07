@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { commands, type LibraryBook, type PageInfo } from "@/bindings";
 import { usePersistentState } from "../../../hooks/usePersistentState";
@@ -33,8 +33,13 @@ export function useReaderFolders(
     FOLDER_ALL,
   );
 
+  // Nur die jüngste Anfrage zählt: überlappende Antworten können in
+  // umgekehrter Reihenfolge eintreffen und sonst neue Bücher überschreiben.
+  const request = useRef(0);
   const reloadBooks = useCallback(async () => {
+    const mine = ++request.current;
     const result = await commands.libraryList().catch(() => null);
+    if (mine !== request.current) return;
     if (result?.status === "ok" && Array.isArray(result.data))
       setBooks(result.data);
     setBooksLoaded(true);
@@ -62,13 +67,13 @@ export function useReaderFolders(
   );
   const langOf = useMemo(() => pageLanguages(books), [books]);
 
+  // Der offenen Seite folgen, wenn sie wechselt (Bibliothek, Suche, Löschen),
+  // nicht wenn jemand einen Ordner wählt: ein gewählter leerer Ordner bleibt.
+  const followed = useRef<string | null>(null);
   useEffect(() => {
-    if (!booksLoaded) return;
-    if (!activePage || !allIds.includes(activePage)) {
-      // Keine gültige offene Seite: eine leere Auswahl auf „Alle“ zurück.
-      if (visibleIds.length === 0 && allIds.length > 0) setStored(FOLDER_ALL);
-      return;
-    }
+    if (!booksLoaded || followed.current === activePage) return;
+    if (!activePage || !allIds.includes(activePage)) return;
+    followed.current = activePage;
     if (visibleIds.includes(activePage)) return;
     const owner = folderOf(folders, activePage);
     setStored(owner ? bookFolderKey(owner) : FOLDER_TEXTS);
