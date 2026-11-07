@@ -655,3 +655,22 @@ final class LiveSourceCorrectionTests: XCTestCase {
         XCTAssertEqual(sw.sentenceEnded(), .apply(LiveConfig(source: "it", target: "de"), restart: true))
     }
 }
+
+final class LiveLanguageCodeTests: XCTestCase {
+    /// Buchangabe, Live-Quelle und Stimmenwahl normalisieren gleich (Region, Schreibweise, ISO 639-2).
+    func testDeclaredAndVoiceLanguageAgree() {
+        let cases: [(String, String)] = [("en-US", "en"), ("EN", "en"), ("eng", "en"), ("deu", "de"), ("ger", "de"),
+                                         (" fr_FR ", "fr"), ("zh_Hans_CN", "zh-hans")]
+        for (raw, want) in cases {
+            XCTAssertEqual(LiveTranslation.declared(raw), want, raw)
+            XCTAssertEqual(VoicePrefs.language(LiveTranslation.declared(raw)), want.split(separator: "-").first.map(String.init), raw)
+            XCTAssertEqual(VoicePrefs.language(raw), want.split(separator: "-").first.map(String.init), raw)
+        }
+        for raw in [nil, "", "  ", "und", "zxx", "mul", "mis", "x", "12", "english"] as [String?] {
+            XCTAssertNil(LiveTranslation.declared(raw), raw ?? "nil")
+        }
+        // Gleiche Sprache in verschiedenen Schreibweisen: kein Live-Paar (Original).
+        var sw = LiveSwitch(source: LiveTranslation.declared("eng"))
+        XCTAssertEqual(sw.select("en-GB", busy: false, preparing: false), .none)
+    }
+}

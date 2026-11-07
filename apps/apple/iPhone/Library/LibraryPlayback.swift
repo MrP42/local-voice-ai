@@ -508,7 +508,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
         // bestätigte Buchsprache, damit ein englischer Text nicht mit einer deutschen Stimme beginnt.
         // Die Erkennung muss dafür nicht bestätigt sein (bewusst: eine falsche Stimme ist sofort hörbar und in der
         // Stimmenwahl korrigierbar; für die Übersetzung gilt dagegen die Bestätigung, Spez §3).
-        let lang = VoicePrefs.language(liveTarget ?? Self.declaredLanguage(book) ?? liveSource)
+        let lang = VoicePrefs.language(liveTarget ?? LiveTranslation.declared(book.language) ?? liveSource)
         voiceLanguage = lang
         let owner = VoicePrefs.owner(book.id)
         let hit = VoicePrefs.resolve(owner: owner, language: lang, read: { self.library.voicePrefRaw($0) }, toId: voiceId)
@@ -517,7 +517,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
         // Fehlt die Buchstimme, bleibt die Ausnahme bestehen (Schalter an), es liest aber der Sprachstandard.
         voiceScope = hasBook ? .book : (lang == nil ? nil : .language)
         // Nichts gemerkt: eine Stimme der Buchsprache statt der Stimme des vorigen Buchs.
-        defer { voiceLanguageMissing = lang.map { l in !(voiceIdentifier.map { voiceMatches($0, l) } ?? false) } ?? false }
+        voiceLanguageMissing = lang.map { !hasVoice(for: $0) } ?? false
         guard let wanted = hit?.id ?? fallbackVoice(lang), wanted != voiceIdentifier else { return }
         if live { voiceIdentifier = wanted; return }
         applyingVoicePref = true
@@ -525,13 +525,11 @@ final class LibraryPlayback: NSObject, ObservableObject {
         applyingVoicePref = false
     }
 
-    /// Sprachangabe am Buch; leere oder unbestimmte Angaben (`und`, `mul`, `zxx`, `mis`) zählen als fehlend.
-    static func declaredLanguage(_ book: LibraryBook) -> String? {
-        guard let raw = book.language?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else { return nil }
-        guard let primary = LiveTranslation.base(raw).split(separator: "-").first.map(String.init),
-              (2...3).contains(primary.count), primary.allSatisfy(\.isLetter),
-              !["und", "mul", "zxx", "mis"].contains(primary) else { return nil }
-        return raw
+    /// Auf diesem iPhone gibt es überhaupt eine Stimme der Sprache (Phonon-Katalog oder System), unabhängig von der
+    /// gerade gewählten.
+    private func hasVoice(for lang: String) -> Bool {
+        if PhononEngine.shared.voices[lang]?.isEmpty == false { return true }
+        return AVSpeechSynthesisVoice.speechVoices().contains { $0.language.hasPrefix(lang) }
     }
 
     /// Stimme spricht die Sprache und ist auf dem iPhone vorhanden.
@@ -610,8 +608,8 @@ final class LibraryPlayback: NSObject, ObservableObject {
 
     /// Quellsprache: Angabe am Buch, sonst die bestätigte, sonst aus dem Text erkannt (unbestätigt).
     private func resolveLiveSource(_ book: LibraryBook) {
-        if let declared = Self.declaredLanguage(book) {
-            liveSource = LiveTranslation.base(declared); liveSourceDeclared = true; liveSourceConfirmed = true
+        if let declared = LiveTranslation.declared(book.language) {
+            liveSource = declared; liveSourceDeclared = true; liveSourceConfirmed = true
         } else if let confirmed = UserDefaults.standard.string(forKey: Self.liveSourceKey(book.id)) {
             liveSource = confirmed; liveSourceDeclared = false; liveSourceConfirmed = true
         } else {

@@ -101,12 +101,25 @@ public enum LiveTranslation {
     }
 
     /// Sprachkennung normalisiert wie im Erzeugungsschlüssel (Spez §7.3): klein, Sprache und Schrift,
-    /// ohne Region („en-GB“ → „en“, „zh_Hans_CN“ → „zh-hans“, „sr-Latn“ → „sr-latn“).
+    /// ohne Region („en-GB“ → „en“, „zh_Hans_CN“ → „zh-hans“, „sr-Latn“ → „sr-latn“). ISO 639-2 wie bei der
+    /// Stimmenwahl auf 639-1 („deu“ → „de“, „eng“ → „en“).
     public static func base(_ lang: String) -> String {
-        let parts = lang.lowercased().split(whereSeparator: { $0 == "-" || $0 == "_" }).map(String.init)
-        guard let language = parts.first else { return "" }
+        let parts = lang.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            .split(whereSeparator: { $0 == "-" || $0 == "_" }).map(String.init)
+        guard let first = parts.first else { return "" }
+        let language = VoicePrefs.iso639_2[first] ?? first
         if parts.count > 1, parts[1].count == 4, parts[1].allSatisfy({ $0.isLetter }) { return language + "-" + parts[1] }
         return language
+    }
+
+    /// Sprachangabe am Buch, normalisiert (`base`). Leer, kein 2–3-Buchstaben-Code oder unbestimmt
+    /// (`und`, `mul`, `zxx`, `mis`): `nil`, dann gilt die Erkennung.
+    public static func declared(_ raw: String?) -> String? {
+        guard let raw else { return nil }
+        let code = base(raw)
+        guard let primary = code.split(separator: "-").first.map(String.init), (2...3).contains(primary.count),
+              primary.allSatisfy({ $0 >= "a" && $0 <= "z" }), !["und", "mul", "zxx", "mis"].contains(primary) else { return nil }
+        return code
     }
 }
 
