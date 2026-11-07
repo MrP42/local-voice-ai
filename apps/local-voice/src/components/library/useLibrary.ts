@@ -52,6 +52,8 @@ export interface TranscriptJob {
   /** Davon gerade in Arbeit (gleichzeitig) und fehlgeschlagen oder verschwunden. */
   running: number;
   failed: number;
+  /** Aufträge ohne fertiges Transkript (für den anteiligen Fortschritt). */
+  open: string[];
 }
 
 const READY = new Set(["ready", "done"]);
@@ -62,13 +64,13 @@ const READY = new Set(["ready", "done"]);
  * Audio), wartende gar nicht. Ohne Aufträge `null`.
  */
 export function transcriptFraction(
-  job: Pick<TranscriptJob, "done" | "total">,
-  ids: readonly string[],
+  job: Pick<TranscriptJob, "done" | "total" | "open">,
   live: ProgressMap,
 ): number | null {
   if (!(job.total > 0)) return null;
   let partial = 0;
-  for (const id of ids) {
+  // Nur offene Aufträge: fertige zählen schon in `done`.
+  for (const id of job.open) {
     const p = live[id];
     if (!p || p.phase === "prepare") continue;
     if (p.phase !== "transcription") partial += 1;
@@ -94,6 +96,8 @@ export function useLibrary() {
   const [tick, setTick] = useState(0);
   /** Jobs in Übernahme oder übernommen: nie zweimal verarbeiten. */
   const finishing = useRef(new Set<string>());
+  /** Übernahmen, die gerade laufen (dürfen beim Wiederholen nicht freigegeben werden). */
+  const inFlight = useRef(new Set<string>());
 
   /** Laufnummer: ein veraltetes Ergebnis überschreibt kein neueres. */
   const loadSeq = useRef(0);
@@ -215,6 +219,7 @@ export function useLibrary() {
       const guard = `${bookId}:${jobs.join(",")}`;
       if (finishing.current.has(guard)) return;
       finishing.current.add(guard);
+      inFlight.current.add(guard);
       let done = false;
       let created: string | null = null;
       let restore: { pageId: string; json: string } | null = null;
@@ -393,6 +398,7 @@ export function useLibrary() {
       } finally {
         // Erfolgreich übernommene Jobs bleiben gesperrt; fehlgeschlagene
         // dürfen erst nach einer Pause erneut versucht werden.
+        inFlight.current.delete(guard);
         if (!done)
           window.setTimeout(() => finishing.current.delete(guard), 60_000);
       }
@@ -432,6 +438,7 @@ export function useLibrary() {
           total: ids.length,
           running: statuses.filter((s) => s === "processing" || s === "transcribing").length,
           failed: statuses.filter((s) => RESTART_STATUSES.has(s)).length,
+          open: ids.filter((_, i) => !READY.has(statuses[i])),
         };
         if (status === "ready") void finishTranscript(book.id, durations);
       }
@@ -462,7 +469,8 @@ export function useLibrary() {
       failures.current.delete(bookId);
       restarted.current.delete(bookId);
       for (const guard of [...finishing.current])
-        if (guard.startsWith(`${bookId}:`)) finishing.current.delete(guard);
+        if (guard.startsWith(`${bookId}:`) && !inFlight.current.has(guard))
+          finishing.current.delete(guard);
       setGaveUp((prev) => {
         if (!prev.has(bookId)) return prev;
         const next = new Set(prev);
@@ -480,14 +488,10 @@ export function useLibrary() {
   const withProgress = useMemo(() => {
     const out: Record<string, TranscriptJob> = {};
     for (const [id, job] of Object.entries(jobs)) {
-      const book = books?.find((b) => b.id === id);
-      out[id] = {
-        ...job,
-        progress: book ? transcriptFraction(job, pendingJobs(book), live) : null,
-      };
+      out[id] = { ...job, progress: transcriptFraction(job, live) };
     }
     return out;
-  }, [jobs, books, live]);
+  }, [jobs, live]);
 
   return {
     books,

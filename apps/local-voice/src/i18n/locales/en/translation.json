@@ -7979,7 +7979,8 @@
       "transcriptProgress": "Transcription progress of {{title}}",
       "creating": "Creating summary book · section {{done}} of {{total}} · {{percent}} %",
       "createProgress": "Summary book progress for {{title}}",
-      "cancel": "Cancel"
+      "cancel": "Cancel",
+      "cancelling": "Cancelling …"
     },
     "title": "Library",
     "description": "Books and audiobooks – one entry per work, as text, audio or both.",

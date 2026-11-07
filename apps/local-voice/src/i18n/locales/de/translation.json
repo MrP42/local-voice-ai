@@ -7979,7 +7979,8 @@
       "transcriptProgress": "Fortschritt der Transkription von {{title}}",
       "creating": "Kurzbuch wird erstellt · Abschnitt {{done}} von {{total}} · {{percent}} %",
       "createProgress": "Fortschritt des Kurzbuchs zu {{title}}",
-      "cancel": "Abbrechen"
+      "cancel": "Abbrechen",
+      "cancelling": "wird abgebrochen …"
     },
     "title": "Bibliothek",
     "description": "Bücher und Hörbücher – ein Eintrag je Werk, als Text, Audio oder beides.",

@@ -87,6 +87,8 @@ export function KurzbuchCard({
   );
   const [lang, setLang] = useState(() => defaultKiLang(i18n.language));
   const [adding, setAdding] = useState(false);
+  /** Abbrechen gedrückt: der Lauf endet nach dem aktuellen Schritt. */
+  const [stopping, setStopping] = useState<string | null>(null);
   /** Ein Kurzbuch aus der Bibliothek ist fertig: Liste neu laden. */
   const [rev, setRev] = useState(0);
   useEffect(() => {
@@ -182,10 +184,16 @@ export function KurzbuchCard({
         <Button
           variant="ghost"
           icon={<X size={16} aria-hidden="true" />}
-          onClick={() => cancelBookJob(running.id)}
+          onClick={() => {
+            setStopping(running.id);
+            cancelBookJob(running.id);
+          }}
+          disabled={stopping === running.id}
           data-testid="kurzbuch-cancel"
         >
-          {t("library.kurzbuch.cancel")}
+          {stopping === running.id
+            ? t("library.kurzbuch.cancelling")
+            : t("library.kurzbuch.cancel")}
         </Button>
       ) : (
         <Button
