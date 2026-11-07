@@ -1463,6 +1463,14 @@
   flex-wrap: wrap;
   gap: 8px;
 }
+/* Laufende Transkription oder Kurzbucherstellung: Stand und Balken. */
+.library-kurzbuch__run {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+  max-width: 36rem;
+}
 
 /* Cover ändern (Produktseite): das Cover selbst ist der Knopf. */
 .library-hero__cover {

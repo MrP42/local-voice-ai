@@ -7860,7 +7860,7 @@
     },
     "ki": {
       "title": "Mit KI erstellen",
-      "short": "Mit KI erstellen",
+      "short": "Erstellen",
       "menuFor": "KI und Export: {{title}}",
       "menuHint": "Übersetzen, Kurzbuch oder KI-Dokument erstellen, Fassungen exportieren",
       "menuTranslate": "Übersetzen …",
@@ -7971,7 +7971,15 @@
       "languages": "Vorhandene Sprachen",
       "showLang": "Kurzbuch auf {{lang}} zeigen",
       "another": "Weitere Sprache",
-      "createLang": "Erstellen"
+      "createLang": "Erstellen",
+      "failed": "Die Transkription ist fehlgeschlagen. „Erneut versuchen“ startet sie noch einmal.",
+      "failedPartly": "Die Transkription ist unterbrochen. Fertige Abschnitte bleiben erhalten; „Fortsetzen“ transkribiert nur die fehlenden.",
+      "retryTranscript": "Erneut versuchen",
+      "resumeTranscript": "Fortsetzen",
+      "transcriptProgress": "Fortschritt der Transkription von {{title}}",
+      "creating": "Kurzbuch wird erstellt · Abschnitt {{done}} von {{total}} · {{percent}} %",
+      "createProgress": "Fortschritt des Kurzbuchs zu {{title}}",
+      "cancel": "Abbrechen"
     },
     "title": "Bibliothek",
     "description": "Bücher und Hörbücher – ein Eintrag je Werk, als Text, Audio oder beides.",
@@ -8058,6 +8066,7 @@
     },
     "job": {
       "parts": "Transkription {{done}} von {{total}}",
+      "percent": "{{percent}} %",
       "partsParallel": "Transkription {{done}} von {{total}} · {{running}} parallel",
       "partsFailed": "Transkription {{done}} von {{total}} · {{failed}} fehlgeschlagen",
       "queued": "Transkription wartet",

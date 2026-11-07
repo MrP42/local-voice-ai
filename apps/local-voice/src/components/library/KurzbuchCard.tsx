@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { BookOpen, Languages, Play } from "lucide-react";
+import { BookOpen, Languages, Play, RotateCcw, X } from "lucide-react";
 import { commands, type KiDocument, type LibraryBook } from "@/bindings";
 import { Button } from "../ui/Button";
 import { Select } from "../ui/Select";
-import { ProgressBar } from "./LibraryPage";
+import { jobLabel, ProgressBar } from "./LibraryPage";
+import type { TranscriptJob } from "./useLibrary";
 import {
   KURZBUCH_TEMPLATE_ID,
   LISTEN_WPM,
@@ -14,8 +15,13 @@ import {
   type Kurzbuch,
 } from "@/lib/kurzbuch/kurzbuch";
 import { openKiDocInReader } from "@/lib/library/books";
-import { startBookJob, useBookJobs } from "@/lib/library/bookJobs";
-import { ensureBookJobToasts } from "./KiCreateDialog";
+import {
+  cancelBookJob,
+  jobFraction,
+  startBookJob,
+  useBookJobs,
+} from "@/lib/library/bookJobs";
+import { ensureBookJobToasts, jobStatus } from "./KiCreateDialog";
 import { listenedFraction } from "../settings/tts/kidocs/kiDocs";
 import {
   KI_LANGS,
@@ -60,11 +66,17 @@ export function KurzbuchCard({
   transcribing,
   busy,
   onTranscribe,
+  job,
+  onRetry,
 }: {
   book: LibraryBook;
   transcribing: boolean;
   busy: boolean;
   onTranscribe: () => void;
+  /** Stand der Hörbuch-Transkription (Abschnitte, Anteil, Fehler). */
+  job?: TranscriptJob;
+  /** Gescheiterte oder unvollständige Transkription erneut anstoßen. */
+  onRetry?: () => void;
 }) {
   const { t, i18n } = useTranslation();
   const page = book.text?.page_id ?? null;
@@ -132,6 +144,7 @@ export function KurzbuchCard({
   );
 
   if (!page && !book.audio_path) return null;
+  const failed = job?.status === "failed" || job?.status === "missing";
   const fraction = found && page ? listenedFraction(page, found.doc.id) : 0;
   // Ältere Kurzbücher (vor lva#217) haben keine Sprachangabe.
   const langOf = (d: KiDocument) =>
@@ -165,17 +178,26 @@ export function KurzbuchCard({
         onChange={(v) => v !== null && setLang(v === SAME_AS_BOOK ? "" : v)}
         ariaLabel={t("library.kurzbuch.language")}
       />
-      <Button
-        onClick={create}
-        disabled={busy || !!running}
-        data-testid="kurzbuch-create"
-      >
-        {running
-          ? t("library.ki.running")
-          : found
+      {running ? (
+        <Button
+          variant="ghost"
+          icon={<X size={16} aria-hidden="true" />}
+          onClick={() => cancelBookJob(running.id)}
+          data-testid="kurzbuch-cancel"
+        >
+          {t("library.kurzbuch.cancel")}
+        </Button>
+      ) : (
+        <Button
+          onClick={create}
+          disabled={busy}
+          data-testid="kurzbuch-create"
+        >
+          {found
             ? t("library.kurzbuch.createLang")
             : t("library.kurzbuch.create")}
-      </Button>
+        </Button>
+      )}
     </div>
   );
 
@@ -200,10 +222,44 @@ export function KurzbuchCard({
                 : "")
             : page
               ? t("library.kurzbuch.none")
-              : transcribing
-                ? t("library.kurzbuch.transcribing")
-                : t("library.kurzbuch.needsText")}
+              : failed
+                ? t(job && job.done > 0 ? "library.kurzbuch.failedPartly" : "library.kurzbuch.failed")
+                : transcribing
+                  ? t("library.kurzbuch.transcribing")
+                  : t("library.kurzbuch.needsText")}
         </span>
+        {!page && job && !failed && (
+          <div className="library-kurzbuch__run" data-testid="kurzbuch-transcript-progress">
+            <span className="library-meta" aria-live="polite">
+              {jobLabel(t, job)}
+            </span>
+            {job.progress !== null && (
+              <ProgressBar
+                fraction={job.progress}
+                label={t("library.kurzbuch.transcriptProgress", { title: book.title })}
+              />
+            )}
+          </div>
+        )}
+        {page && running && (
+          <div className="library-kurzbuch__run" data-testid="kurzbuch-create-progress">
+            <span className="library-meta" aria-live="polite">
+              {running.status === "running" && running.total > 0
+                ? t("library.kurzbuch.creating", {
+                    done: running.done,
+                    total: running.total,
+                    percent: Math.round(jobFraction(running) * 100),
+                  })
+                : jobStatus(t, running)}
+            </span>
+            {running.status === "running" && (
+              <ProgressBar
+                fraction={jobFraction(running)}
+                label={t("library.kurzbuch.createProgress", { title: book.title })}
+              />
+            )}
+          </div>
+        )}
         {found && fraction > 0 && (
           <ProgressBar
             fraction={fraction}
@@ -274,6 +330,18 @@ export function KurzbuchCard({
           </>
         ) : page ? (
           langPicker
+        ) : onRetry ? (
+          <Button
+            variant={failed ? "primary" : "secondary"}
+            icon={<RotateCcw size={16} aria-hidden="true" />}
+            onClick={onRetry}
+            disabled={busy}
+            data-testid="kurzbuch-transcript-retry"
+          >
+            {job && job.done > 0
+              ? t("library.kurzbuch.resumeTranscript")
+              : t("library.kurzbuch.retryTranscript")}
+          </Button>
         ) : (
           !transcribing && (
             <Button onClick={onTranscribe} disabled={busy}>

@@ -13,7 +13,7 @@ import {
   Cog,
   History,
   Cpu,
-  Phone,
+  BotMessageSquare,
   Plug,
   Users,
   Volume2,
@@ -72,7 +72,7 @@ export const SECTIONS_CONFIG = {
   voice: {
     labelKey: "sidebar.voiceCall",
     hintKey: "sidebar.voiceCallHint",
-    icon: Phone,
+    icon: BotMessageSquare,
     component: VoiceCallPage,
   },
   models: {

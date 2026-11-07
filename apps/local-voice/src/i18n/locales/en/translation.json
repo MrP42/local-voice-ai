@@ -7860,7 +7860,7 @@
     },
     "ki": {
       "title": "Create with AI",
-      "short": "Create with AI",
+      "short": "Create",
       "menuFor": "AI and export: {{title}}",
       "menuHint": "Translate, create a short book or AI document, export versions",
       "menuTranslate": "Translate …",
@@ -7971,7 +7971,15 @@
       "languages": "Available languages",
       "showLang": "Show book in brief in {{lang}}",
       "another": "Another language",
-      "createLang": "Create"
+      "createLang": "Create",
+      "failed": "Transcription failed. “Try again” starts it once more.",
+      "failedPartly": "Transcription was interrupted. Finished sections are kept; “Resume” only transcribes the missing ones.",
+      "retryTranscript": "Try again",
+      "resumeTranscript": "Resume",
+      "transcriptProgress": "Transcription progress of {{title}}",
+      "creating": "Creating summary book · section {{done}} of {{total}} · {{percent}} %",
+      "createProgress": "Summary book progress for {{title}}",
+      "cancel": "Cancel"
     },
     "title": "Library",
     "description": "Books and audiobooks – one entry per work, as text, audio or both.",
@@ -8058,6 +8066,7 @@
     },
     "job": {
       "parts": "Transcription {{done}} of {{total}}",
+      "percent": "{{percent}} %",
       "partsParallel": "Transcription {{done}} of {{total}} · {{running}} in parallel",
       "partsFailed": "Transcription {{done}} of {{total}} · {{failed}} failed",
       "queued": "Transcription queued",

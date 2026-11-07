@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { commands, type LibraryBook } from "@/bindings";
 import { CHANGED_EVENT, HYDRATED_EVENT } from "@/lib/library/progress";
 import {
@@ -14,7 +14,9 @@ import { listen } from "@tauri-apps/api/event";
 import i18n from "@/i18n";
 import { probeDuration } from "@/lib/library/probe";
 import { editionsOf } from "@/lib/library/editions";
-import { transcribeTracks } from "@/lib/library/importFile";
+import { resumeTranscription, transcribeTracks } from "@/lib/library/importFile";
+import { useMeetingProgress } from "@/hooks/useMeetingJobs";
+import type { ProgressMap } from "@/lib/meetingJobs";
 import {
   aggregateStatus,
   isSectioned,
@@ -53,6 +55,27 @@ export interface TranscriptJob {
 }
 
 const READY = new Set(["ready", "done"]);
+
+/**
+ * Anteil der fertigen Transkription eines Buchs (0…1): fertige Aufträge zählen
+ * ganz, laufende mit ihrem Stand aus `MeetingEvent::Progress` (Millisekunden
+ * Audio), wartende gar nicht. Ohne Aufträge `null`.
+ */
+export function transcriptFraction(
+  job: Pick<TranscriptJob, "done" | "total">,
+  ids: readonly string[],
+  live: ProgressMap,
+): number | null {
+  if (!(job.total > 0)) return null;
+  let partial = 0;
+  for (const id of ids) {
+    const p = live[id];
+    if (!p || p.phase === "prepare") continue;
+    if (p.phase !== "transcription") partial += 1;
+    else if (p.total > 0) partial += Math.min(1, p.done / p.total);
+  }
+  return Math.min(1, (job.done + partial) / job.total);
+}
 
 export { aggregateStatus };
 
@@ -428,5 +451,51 @@ export function useLibrary() {
     };
   }, [pendingIds, books, finishTranscript, gaveUp]);
 
-  return { books, pageAudio, jobs, reload, save, tick };
+  /**
+   * Gescheiterte Transkription erneut anstoßen: Fehlversuche vergessen,
+   * fehlgeschlagene oder verschwundene Aufträge neu starten. Waren alle
+   * Aufträge fertig und nur die Übernahme scheiterte, versucht die nächste
+   * Abfrage sie erneut.
+   */
+  const retryTranscript = useCallback(
+    async (bookId: string) => {
+      failures.current.delete(bookId);
+      restarted.current.delete(bookId);
+      for (const guard of [...finishing.current])
+        if (guard.startsWith(`${bookId}:`)) finishing.current.delete(guard);
+      setGaveUp((prev) => {
+        if (!prev.has(bookId)) return prev;
+        const next = new Set(prev);
+        next.delete(bookId);
+        return next;
+      });
+      await resumeTranscription(bookId, (m) => toast.error(m));
+      await reload();
+    },
+    [reload],
+  );
+
+  // Fortschritt je Buch aus dem Stand der einzelnen Aufträge.
+  const live = useMeetingProgress();
+  const withProgress = useMemo(() => {
+    const out: Record<string, TranscriptJob> = {};
+    for (const [id, job] of Object.entries(jobs)) {
+      const book = books?.find((b) => b.id === id);
+      out[id] = {
+        ...job,
+        progress: book ? transcriptFraction(job, pendingJobs(book), live) : null,
+      };
+    }
+    return out;
+  }, [jobs, books, live]);
+
+  return {
+    books,
+    pageAudio,
+    jobs: withProgress,
+    reload,
+    save,
+    tick,
+    retryTranscript,
+  };
 }
