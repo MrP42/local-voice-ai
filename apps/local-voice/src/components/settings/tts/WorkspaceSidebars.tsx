@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type CSSProperties, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { open } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
@@ -131,8 +131,14 @@ export const PagesSidebar: React.FC<{
   onReplaceSpeaker?: () => void;
   /** Breite in Pixeln (Ziehgriff); ohne Angabe gilt die Standardbreite. */
   width?: number;
-  /** Inhaltsverzeichnis der offenen Seite (Leseansicht). */
-  contents?: ReactNode;
+  /** Ordnerleiste über der Liste (lva#365): Alle, Buch-Ordner, Texte. */
+  folders?: ReactNode;
+  /** Nur diese Seiten zeigen (Auswahl der Ordnerleiste); ohne Angabe alle. */
+  visibleIds?: string[];
+  /** Sprache je Seite, wenn sie Fassung eines Buchs ist („de“, „en“ …). */
+  langOf?: Map<string, string>;
+  /** Inhalte der offenen Seite (Original, Übersetzung, KI-Dokumente) unter ihrer Zeile (lva#365 E2). */
+  activeSections?: ReactNode;
 }> = ({
   pages,
   activeId,
@@ -142,9 +148,15 @@ export const PagesSidebar: React.FC<{
   onChanged,
   onReplaceSpeaker,
   width,
-  contents,
+  folders,
+  visibleIds,
+  langOf,
+  activeSections,
 }) => {
   const { t, i18n } = useTranslation();
+  const shown = visibleIds
+    ? pages.filter((p) => visibleIds.includes(p.id))
+    : pages;
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<PageInfo | null>(null);
@@ -168,12 +180,17 @@ export const PagesSidebar: React.FC<{
     setEditingId(null);
   };
 
+  // Verschoben wird innerhalb der sichtbaren Liste: die Seite tauscht den Platz
+  // mit ihrer sichtbaren Nachbarin, die übrigen Seiten bleiben, wo sie sind.
   const move = async (id: string, delta: number) => {
+    const visible = shown.map((p) => p.id);
+    const at = visible.indexOf(id);
+    const other = visible[at + delta];
+    if (at < 0 || other === undefined) return;
     const ids = pages.map((p) => p.id);
-    const from = ids.indexOf(id);
-    const to = from + delta;
-    if (from < 0 || to < 0 || to >= ids.length) return;
-    ids.splice(to, 0, ids.splice(from, 1)[0]);
+    const a = ids.indexOf(id);
+    const b = ids.indexOf(other);
+    [ids[a], ids[b]] = [ids[b], ids[a]];
     await commands.pagesReorder(ids);
     onChanged();
   };
@@ -229,9 +246,11 @@ export const PagesSidebar: React.FC<{
         </div>
       </div>
 
-      {pages.map((page, index) => (
+      {folders}
+
+      {shown.map((page, index) => (
+        <Fragment key={page.id}>
         <div
-          key={page.id}
           className={`group relative flex items-center gap-1 rounded-md px-2 py-1.5 cursor-pointer transition-colors ${
             page.id === activeId
               ? "bg-logo-primary/15 text-text"
@@ -265,7 +284,7 @@ export const PagesSidebar: React.FC<{
                 id: "down",
                 label: t("tts.pages.moveDown"),
                 icon: ChevronDown,
-                disabled: index === pages.length - 1,
+                disabled: index === shown.length - 1,
                 onSelect: () => void move(page.id, 1),
               },
               {
@@ -316,7 +335,14 @@ export const PagesSidebar: React.FC<{
           ) : (
             <>
               <span className="flex-1 min-w-0">
-                <span className="block truncate text-sm">{page.title}</span>
+                <span className="flex items-center gap-1.5">
+                  <span className="min-w-0 truncate text-sm">{page.title}</span>
+                  {langOf?.get(page.id) && (
+                    <span className="shrink-0 rounded bg-mid-gray/15 px-1 text-[11px] uppercase text-text/70">
+                      {langOf.get(page.id)}
+                    </span>
+                  )}
+                </span>
                 {/* Verlauf statt blosser Titel: was drinsteht und wann es
                     zuletzt angefasst wurde, ohne die Seite zu oeffnen. */}
                 <span className="block truncate text-xs text-text/60">
@@ -351,7 +377,7 @@ export const PagesSidebar: React.FC<{
                     e.stopPropagation();
                     void move(page.id, 1);
                   }}
-                  disabled={index === pages.length - 1}
+                  disabled={index === shown.length - 1}
                   title={t("tts.pages.moveDown")}
                   aria-label={t("tts.pages.moveDown")}
                   className={ROW_ACTION}
@@ -400,9 +426,13 @@ export const PagesSidebar: React.FC<{
             </>
           )}
         </div>
+        {page.id === activeId && activeSections && (
+          <div className="ms-3 border-s border-mid-gray/20 ps-1" data-testid="page-sections">
+            {activeSections}
+          </div>
+        )}
+        </Fragment>
       ))}
-
-      {contents}
 
       {rowMenu.menu}
       <PageExportDialog
@@ -481,6 +511,8 @@ export const FilesSidebar: React.FC<{
   stacked?: boolean;
   /** Umschalter Gestapelt/Nebeneinander im Kopf; ohne ihn kein Knopf. */
   onLayoutToggle?: () => void;
+  /** Inhaltsverzeichnis der offenen Seite (Leseansicht, lva#365: rechts statt links). */
+  contents?: ReactNode;
 }> = ({
   pageId,
   collapsed,
@@ -489,6 +521,7 @@ export const FilesSidebar: React.FC<{
   width,
   stacked = false,
   onLayoutToggle,
+  contents,
 }) => {
   const { t, i18n } = useTranslation();
   const [files, setFiles] = useState<PageFile[]>([]);
@@ -645,6 +678,12 @@ export const FilesSidebar: React.FC<{
           />
         </div>
       </div>
+
+      {contents && (
+        <div className="border-b border-mid-gray/20 pb-2 mb-1" data-testid="reader-contents-right">
+          {contents}
+        </div>
+      )}
 
       {(
         <>

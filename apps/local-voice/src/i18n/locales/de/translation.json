@@ -1262,6 +1262,14 @@
     "exportEta": "noch etwa {{time}}",
     "exportEtaComputing": "Restzeit wird berechnet",
     "exportSaved": "Gespeichert: {{path}}",
+    "folders": {
+      "label": "Ordner",
+      "all": "Alle",
+      "books": "Bücher",
+      "noBooks": "Noch keine Bücher",
+      "texts": "Texte",
+      "withoutBook": "Ohne Buch"
+    },
     "pages": {
       "title": "Seiten",
       "create": "Neue Seite",

@@ -785,6 +785,35 @@ html[data-fluent] .lva-logo__accent {
 .tts-workspace__files {
   width: var(--tts-w, 240px);
 }
+/* Ordnerleiste im Vorlesen (lva#365): voll in der Spalte, im Umbruch-Layout
+   eine Auswahl, damit das Regal über dem Text niedrig bleibt. */
+.reader-folders__compact {
+  display: none;
+}
+.reader-folders__compact .app-select__control {
+  min-height: 44px;
+}
+/* Breit: die Ansichten stehen in der Liste, der Kopf bleibt frei. Umbruch-
+   Layout: wieder im Kopf, die Liste bleibt ein niedriges Regal. */
+@media (min-width: 1101px) {
+  .reader-tabs--header.reader-tabs--header {
+    display: none !important;
+  }
+}
+@media (max-width: 1100px) {
+  .reader-folders__compact {
+    display: flex;
+  }
+  .reader-folders__full,
+  [data-testid="page-sections"] {
+    display: none !important;
+  }
+}
+/* Ansichten der offenen Seite als senkrechte Reiter: Touchziel 44 px. */
+.lv-tablist--list .fui-Tab {
+  min-height: 44px;
+  justify-content: flex-start;
+}
 /* Gestapelt: Bedienung oben (natuerliche Hoehe, hoechstens die Haelfte der
    Spalte, sonst eigener Scroll), Dateien/Hilfe fuellen den Rest und scrollen
    selbst. */
