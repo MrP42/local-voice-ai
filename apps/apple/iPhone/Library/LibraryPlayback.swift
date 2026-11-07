@@ -58,6 +58,8 @@ final class LibraryPlayback: NSObject, ObservableObject {
     @Published private(set) var voiceScope: VoicePrefs.Source?
     /// Das Buch hat eine eigene Stimme, die es auf diesem iPhone nicht gibt: es liest der Sprachstandard.
     @Published private(set) var bookVoiceMissing = false
+    /// Für die Lesesprache gibt es keine Stimme auf dem iPhone: es liest weiter die bisherige (Hinweis in der Auswahl).
+    @Published private(set) var voiceLanguageMissing = false
     private var applyingVoicePref = false
     private var catalogWatch: AnyCancellable?
     @Published var error: String?
@@ -504,7 +506,9 @@ final class LibraryPlayback: NSObject, ObservableObject {
     private func applyVoicePref(_ book: LibraryBook, live: Bool = false) {
         // Live-Übersetzung: Stimme der Zielsprache (Spez §5, #355). Ohne Angabe am Buch die erkannte bzw.
         // bestätigte Buchsprache, damit ein englischer Text nicht mit einer deutschen Stimme beginnt.
-        let lang = VoicePrefs.language(liveTarget ?? book.language ?? liveSource)
+        // Die Erkennung muss dafür nicht bestätigt sein (bewusst: eine falsche Stimme ist sofort hörbar und in der
+        // Stimmenwahl korrigierbar; für die Übersetzung gilt dagegen die Bestätigung, Spez §3).
+        let lang = VoicePrefs.language(liveTarget ?? Self.declaredLanguage(book) ?? liveSource)
         voiceLanguage = lang
         let owner = VoicePrefs.owner(book.id)
         let hit = VoicePrefs.resolve(owner: owner, language: lang, read: { self.library.voicePrefRaw($0) }, toId: voiceId)
@@ -513,6 +517,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
         // Fehlt die Buchstimme, bleibt die Ausnahme bestehen (Schalter an), es liest aber der Sprachstandard.
         voiceScope = hasBook ? .book : (lang == nil ? nil : .language)
         // Nichts gemerkt: eine Stimme der Buchsprache statt der Stimme des vorigen Buchs.
+        defer { voiceLanguageMissing = lang.map { l in !(voiceIdentifier.map { voiceMatches($0, l) } ?? false) } ?? false }
         guard let wanted = hit?.id ?? fallbackVoice(lang), wanted != voiceIdentifier else { return }
         if live { voiceIdentifier = wanted; return }
         applyingVoicePref = true
@@ -520,15 +525,28 @@ final class LibraryPlayback: NSObject, ObservableObject {
         applyingVoicePref = false
     }
 
+    /// Sprachangabe am Buch; leere oder unbestimmte Angaben (`und`, `mul`, `zxx`, `mis`) zählen als fehlend.
+    static func declaredLanguage(_ book: LibraryBook) -> String? {
+        guard let raw = book.language?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else { return nil }
+        guard let primary = LiveTranslation.base(raw).split(separator: "-").first.map(String.init),
+              (2...3).contains(primary.count), primary.allSatisfy(\.isLetter),
+              !["und", "mul", "zxx", "mis"].contains(primary) else { return nil }
+        return raw
+    }
+
+    /// Stimme spricht die Sprache und ist auf dem iPhone vorhanden.
+    private func voiceMatches(_ id: String, _ lang: String) -> Bool {
+        if let phonon = PhononEngine.voiceName(id) {
+            return phonon.hasPrefix(lang + ":") && VoicePrefs.phononIdentifier(phonon, catalog: PhononEngine.shared.voices) != nil
+        }
+        return AVSpeechSynthesisVoice(identifier: id)?.language.hasPrefix(lang) ?? false
+    }
+
     /// Passt die aktuelle Stimme nicht zur Sprache: Phonon dieser Sprache, sonst die beste Systemstimme.
     private func fallbackVoice(_ lang: String?) -> String? {
         guard let lang else { return nil }
-        if let id = voiceIdentifier {
-            // Phonon nur, wenn der Katalog die Stimme kennt; sonst bliebe eine ungültige Kennung aktiv.
-            if let phonon = PhononEngine.voiceName(id) {
-                if phonon.hasPrefix(lang + ":"), VoicePrefs.phononIdentifier(phonon, catalog: PhononEngine.shared.voices) != nil { return nil }
-            } else if let v = AVSpeechSynthesisVoice(identifier: id), v.language.hasPrefix(lang) { return nil }
-        }
+        // Phonon nur, wenn der Katalog die Stimme kennt; sonst bliebe eine ungültige Kennung aktiv.
+        if let id = voiceIdentifier, voiceMatches(id, lang) { return nil }
         if let name = PhononEngine.shared.voices[lang]?.first { return PhononEngine.identifier(language: lang, voice: name) }
         return AVSpeechSynthesisVoice.speechVoices().filter { $0.language.hasPrefix(lang) }
             .max { $0.quality.rawValue < $1.quality.rawValue }?.identifier
@@ -592,7 +610,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
 
     /// Quellsprache: Angabe am Buch, sonst die bestätigte, sonst aus dem Text erkannt (unbestätigt).
     private func resolveLiveSource(_ book: LibraryBook) {
-        if let declared = book.language, !declared.isEmpty {
+        if let declared = Self.declaredLanguage(book) {
             liveSource = LiveTranslation.base(declared); liveSourceDeclared = true; liveSourceConfirmed = true
         } else if let confirmed = UserDefaults.standard.string(forKey: Self.liveSourceKey(book.id)) {
             liveSource = confirmed; liveSourceDeclared = false; liveSourceConfirmed = true
@@ -614,7 +632,10 @@ final class LibraryPlayback: NSObject, ObservableObject {
         // Neue Quelle baut den Übersetzer neu auf, auch bei gleicher Zielsprache (am Satzende, wenn Ton läuft).
         let effect = liveSwitch.changeSource(base, busy: busy, preparing: preparing)
         perform(effect)
-        // Ohne Live-Wechsel liest das Original weiter: Stimme der korrigierten Buchsprache (wie eine eigene Wahl).
+        // Ohne Live-Wechsel liest das Original weiter: Stimme der korrigierten Buchsprache, wie eine eigene Stimmenwahl
+        // (`voiceChanged`: läuft der Ton, setzt die Lesung am hörbaren Satz neu an, pausiert wird nur vorbereitet;
+        // der Stand ändert sich nicht). `.none` heißt zugleich: nichts vorgemerkt (LiveSwitch.changeSource).
+        // Nur ohne gültige Angabe am Buch erreichbar (Guard oben); eine Buchangabe ist nicht korrigierbar.
         if effect == .none, liveTarget == nil, mode == .readAloud { applyVoicePref(book, live: true) }
         UserDefaults.standard.set(liveSwitch.wantedTarget, forKey: Self.liveKey(book.id))
         updateNowPlaying()

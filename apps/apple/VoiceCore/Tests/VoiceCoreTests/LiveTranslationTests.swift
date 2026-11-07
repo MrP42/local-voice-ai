@@ -640,3 +640,18 @@ final class LiveBoundaryTests: XCTestCase {
         XCTAssertNil(p.heard)
     }
 }
+
+final class LiveSourceCorrectionTests: XCTestCase {
+    /// Quellkorrektur ohne Live-Ziel: keine Wirkung und nichts vorgemerkt, egal ob Ton läuft (der Player stellt dann
+    /// nur die Stimme um). Mit vorgemerktem Ziel dagegen nie `.none`.
+    func testCorrectionWithoutTargetLeavesNothingPending() {
+        var sw = LiveSwitch(source: "en")
+        XCTAssertEqual(sw.changeSource("fr", busy: true, preparing: false), .none)
+        XCTAssertNil(sw.pending)
+        XCTAssertEqual(sw.changeSource("es", busy: false, preparing: false), .none)
+        XCTAssertNil(sw.active)
+        XCTAssertEqual(sw.select("de", busy: true, preparing: false), .scheduled)
+        XCTAssertEqual(sw.changeSource("it", busy: true, preparing: false), .scheduled)
+        XCTAssertEqual(sw.sentenceEnded(), .apply(LiveConfig(source: "it", target: "de"), restart: true))
+    }
+}

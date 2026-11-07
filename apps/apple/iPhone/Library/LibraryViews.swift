@@ -1016,7 +1016,8 @@ struct VoiceList: View {
                             set: { playback.setBookOnlyVoice($0) }))
                         .frame(minHeight: 44)
                     } footer: {
-                        Text(playback.voiceScope != .book ? "Standardstimme für Bücher auf \(name)."
+                        Text(playback.voiceLanguageMissing ? "Für \(name) gibt es auf dem iPhone keine Stimme. Es liest die bisherige Stimme."
+                             : playback.voiceScope != .book ? "Standardstimme für Bücher auf \(name)."
                              : playback.bookVoiceMissing
                              ? "Die eigene Stimme dieses Buchs fehlt auf dem iPhone. Es liest die Standardstimme für \(name)."
                              : "Eigene Stimme für dieses Buch (\(name)).")
