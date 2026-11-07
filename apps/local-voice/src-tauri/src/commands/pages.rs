@@ -13,9 +13,10 @@
 //! Migration an, wenn die Oberfläche ein Feld dazuerfindet.
 
 use serde::{Deserialize, Serialize};
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, MutexGuard};
 use tauri::AppHandle;
 
@@ -30,6 +31,10 @@ static PAGES_LOCK: Mutex<()> = Mutex::new(());
 thread_local! {
     /// Wie oft dieser Thread die Seitensperre gerade hält.
     static PAGES_LOCK_DEPTH: Cell<u32> = const { Cell::new(0) };
+    /// Der echte Mutex-Wächter dieses Threads. Er wird erst freigegeben, wenn
+    /// der letzte `PagesGuard` des Threads fällt – gleich in welcher
+    /// Reihenfolge die Wächter fallen.
+    static PAGES_LOCK_HELD: RefCell<Option<MutexGuard<'static, ()>>> = const { RefCell::new(None) };
 }
 
 /// Wächter der Seitensperre. Die Sperre ist je Thread wiedereintrittsfähig:
@@ -37,28 +42,63 @@ thread_local! {
 /// Buch-Ordner-Migration), und viele Aufrufer halten sie dabei schon. Wie ein
 /// `MutexGuard` ist der Wächter nicht `Send` – er bleibt auf seinem Thread.
 pub(crate) struct PagesGuard {
-    _inner: Option<MutexGuard<'static, ()>>,
     _not_send: PhantomData<*const ()>,
 }
 
 impl Drop for PagesGuard {
     fn drop(&mut self) {
-        PAGES_LOCK_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+        let rest = PAGES_LOCK_DEPTH.with(|d| {
+            let rest = d.get().saturating_sub(1);
+            d.set(rest);
+            rest
+        });
+        if rest == 0 {
+            let held = PAGES_LOCK_HELD.with(|h| h.borrow_mut().take());
+            drop(held);
+        }
     }
 }
 
 pub(crate) fn lock() -> PagesGuard {
-    let held = PAGES_LOCK_DEPTH.with(|d| d.get()) > 0;
-    let inner = if held {
-        None
-    } else {
-        Some(PAGES_LOCK.lock().unwrap_or_else(|e| e.into_inner()))
-    };
+    if PAGES_LOCK_DEPTH.with(|d| d.get()) == 0 {
+        let guard = PAGES_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        PAGES_LOCK_HELD.with(|h| *h.borrow_mut() = Some(guard));
+    }
     PAGES_LOCK_DEPTH.with(|d| d.set(d.get() + 1));
     PagesGuard {
-        _inner: inner,
         _not_send: PhantomData,
     }
+}
+
+/// Läuft gerade ein Umbau der Ablage (Migration, Rückfall, Zurückspielen einer
+/// Sicherung)? Der hält die Seitensperre über die ganze Sicherung samt
+/// Prüfsummen; Leser auf dem Hauptthread sollen dann sofort eine Meldung
+/// bekommen, statt die Oberfläche einzufrieren.
+static UMBAU: AtomicBool = AtomicBool::new(false);
+
+/// Hält den Umbau-Merker, solange er lebt.
+pub(crate) struct UmbauGuard(());
+
+impl Drop for UmbauGuard {
+    fn drop(&mut self) {
+        UMBAU.store(false, Ordering::SeqCst);
+    }
+}
+
+pub(crate) fn umbau_beginnen() -> UmbauGuard {
+    UMBAU.store(true, Ordering::SeqCst);
+    UmbauGuard(())
+}
+
+/// Für Leser: die Seitensperre, außer während eines Umbaus (dann sofort eine
+/// Meldung). Wer die Sperre auf diesem Thread schon hält (der Umbau selbst,
+/// Schreiber unten), sperrt wie gewohnt. Schreibende Befehle warten dagegen
+/// auf das Ende des Umbaus: eine Eingabe darf nicht verloren gehen.
+pub(crate) fn lock_lesend() -> Result<PagesGuard, String> {
+    if UMBAU.load(Ordering::SeqCst) && PAGES_LOCK_DEPTH.with(|d| d.get()) == 0 {
+        return Err("Die Bibliothek wird gerade neu geordnet. Bitte einen Moment warten.".into());
+    }
+    Ok(lock())
 }
 
 /// Schreiben ueber eine Temp-Datei plus Umbenennen: ein Absturz mittendrin
@@ -200,7 +240,7 @@ fn resolve(
     known: Option<Option<&str>>,
 ) -> Result<(PathBuf, Option<String>, Aufloesung), String> {
     checked_id(id)?;
-    let _guard = lock();
+    let _guard = lock_lesend()?;
     let data = data_root(app)?;
     let buch = match known {
         Some(buch) => buch.map(str::to_owned),
@@ -234,7 +274,9 @@ pub(crate) fn page_lookup(app: &AppHandle, id: &str) -> Result<Option<PathBuf>, 
     page_lookup_in(app, id, None)
 }
 
-fn page_lookup_in(
+/// Wie [`page_lookup`]; `known` ist das Feld `buch` aus einem Index, den der
+/// Aufrufer schon unter der Seitensperre geladen hat (spart das Neulesen).
+pub(crate) fn page_lookup_in(
     app: &AppHandle,
     id: &str,
     known: Option<Option<&str>>,
@@ -319,7 +361,7 @@ pub(crate) fn fresh_id() -> String {
 /// Nur lesend (Sprachgespräch, Wissen „Vorlesen-Seiten“): wie `pages_list`, legt aber nie eine
 /// Seite an. Titel, Änderungszeit und Textanfang; zuletzt geänderte zuerst.
 pub(crate) fn pages_snapshot(app: &AppHandle) -> Result<Vec<PageInfo>, String> {
-    let _guard = lock();
+    let _guard = lock_lesend()?;
     let mut index = load_index(app)?;
     for page in &mut index.pages {
         enrich(app, page);
@@ -336,7 +378,7 @@ pub(crate) fn pages_snapshot(app: &AppHandle) -> Result<Vec<PageInfo>, String> {
 #[tauri::command]
 #[specta::specta]
 pub fn pages_list(app: AppHandle) -> Result<Vec<PageInfo>, String> {
-    let _guard = lock();
+    let _guard = lock_lesend()?;
     let mut index = load_index(&app)?;
     if index.pages.is_empty() {
         let page = PageInfo {
@@ -611,6 +653,44 @@ mod tests {
         drop(aussen);
         rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
         anderer.join().unwrap();
+    }
+
+    /// Fällt der äußere Wächter vor dem inneren, bleibt die Sperre gehalten,
+    /// bis auch der innere fällt.
+    #[test]
+    fn seitensperre_haelt_bis_zum_letzten_waechter() {
+        let aussen = lock();
+        let innen = lock();
+        drop(aussen);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let anderer = std::thread::spawn(move || {
+            let _g = lock();
+            tx.send(()).unwrap();
+        });
+        assert!(rx
+            .recv_timeout(std::time::Duration::from_millis(100))
+            .is_err());
+        drop(innen);
+        rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+        anderer.join().unwrap();
+    }
+
+    #[test]
+    fn leser_bekommen_waehrend_des_umbaus_sofort_eine_meldung() {
+        let umbau = umbau_beginnen();
+        let fremd = std::thread::spawn(|| lock_lesend().is_err())
+            .join()
+            .unwrap();
+        assert!(fremd);
+        {
+            let _halter = lock();
+            assert!(
+                lock_lesend().is_ok(),
+                "der Umbau-Thread selbst liest weiter"
+            );
+        }
+        drop(umbau);
+        assert!(std::thread::spawn(|| lock_lesend().is_ok()).join().unwrap());
     }
 
     #[test]

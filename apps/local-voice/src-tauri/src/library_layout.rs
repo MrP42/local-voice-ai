@@ -1142,11 +1142,148 @@ fn einheit(rel: &str) -> Result<String, String> {
     }
 }
 
-/// Sicherung zurückspielen (4.2): erst vollständig gegen das Manifest prüfen, dann jedes
-/// vorhandene Ziel (Seitenordner oder Datei) in den Papierkorb
-/// `sicherungen/.papierkorb/<ms>/` legen, dann den Stand des Manifests anlegen.
-/// Nichts wird überschrieben.
-pub fn sicherung_zurueckspielen(data: &Path, name: &str) -> Result<Wiederherstellung, String> {
+/// Seite, die eine Einheit der Sicherung trägt, samt Buch (Buch-Ordner) oder `None`
+/// (`projects/<seite>`). Index und `buch.json` tragen keine Seite.
+fn seite_der_einheit(einheit: &str) -> Option<(String, Option<String>)> {
+    let teile: Vec<&str> = einheit.split('/').collect();
+    match teile.as_slice() {
+        [PROJEKTE, seite] if gueltige_seite(seite) => Some((seite.to_string(), None)),
+        [BIBLIOTHEK, buch, FASSUNGEN, seite] => Some((seite.to_string(), Some(buch.to_string()))),
+        _ => None,
+    }
+}
+
+/// Einheiten, die eine Datei sind (Index, `buch.json`): sie werden ersetzt, ohne je zu
+/// fehlen (Kopie in den Papierkorb, dann Umbenennen über das Ziel).
+fn datei_einheit(einheit: &str) -> bool {
+    einheit.ends_with(".json")
+}
+
+/// Neuen Ordner `<basis>/<praefix><ms>` anlegen, nie einen vorhandenen wiederverwenden.
+fn neuer_ordner(basis: &Path, praefix: &str) -> Result<PathBuf, String> {
+    fs::create_dir_all(basis).map_err(|e| format!("{} nicht anlegbar: {e}", basis.display()))?;
+    let mut ms = jetzt_ms();
+    loop {
+        let dir = basis.join(format!("{praefix}{ms}"));
+        match fs::create_dir(&dir) {
+            Ok(()) => return Ok(dir),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => ms += 1,
+            Err(e) => return Err(format!("{} nicht anlegbar: {e}", dir.display())),
+        }
+    }
+}
+
+/// Seitenindex nach dem Zurückspielen: der aktuelle Index bleibt die Grundlage (Seiten, die
+/// nach der Sicherung entstanden sind, bleiben drin, sonst hielte der Sync sie für gelöscht).
+/// Nur die Einträge der Seiten aus der Sicherung kommen aus der Sicherung; ihr Feld `buch`
+/// folgt dem Ort, an dem die Seite danach liegt. Ohne aktuellen Index gilt der gesicherte.
+fn index_zusammenfuehren(
+    aktuell: Option<serde_json::Value>,
+    gesichert: Option<serde_json::Value>,
+    seiten: &BTreeMap<String, Option<String>>,
+) -> Option<serde_json::Value> {
+    let eintraege = |v: &Option<serde_json::Value>| -> Vec<serde_json::Value> {
+        v.as_ref()
+            .and_then(|v| v.get("pages"))
+            .and_then(|p| p.as_array())
+            .cloned()
+            .unwrap_or_default()
+    };
+    let id_von = |e: &serde_json::Value| e.get("id").and_then(|i| i.as_str()).map(str::to_owned);
+    let gesichert_liste = eintraege(&gesichert);
+    let mut basis = match aktuell.or(gesichert) {
+        Some(v) => v,
+        None if seiten.is_empty() => return None,
+        None => serde_json::json!({ "pages": [] }),
+    };
+    if !basis.is_object() {
+        basis = serde_json::json!({ "pages": [] });
+    }
+    if !basis.get("pages").is_some_and(|p| p.is_array()) {
+        basis["pages"] = serde_json::Value::Array(Vec::new());
+    }
+    let liste = basis["pages"].as_array_mut().expect("pages ist ein Array");
+    for (seite, buch) in seiten {
+        let aus_sicherung = gesichert_liste
+            .iter()
+            .find(|e| id_von(e).as_deref() == Some(seite.as_str()))
+            .cloned();
+        let pos = liste
+            .iter()
+            .position(|e| id_von(e).as_deref() == Some(seite.as_str()));
+        let mut eintrag = match (aus_sicherung, pos) {
+            (Some(e), _) => e,
+            (None, Some(p)) => liste[p].clone(),
+            (None, None) => serde_json::json!({ "id": seite, "title": seite }),
+        };
+        if let Some(obj) = eintrag.as_object_mut() {
+            match buch {
+                Some(b) => {
+                    obj.insert("buch".into(), serde_json::Value::String(b.clone()));
+                }
+                None => {
+                    obj.remove("buch");
+                }
+            }
+        }
+        match pos {
+            Some(p) => liste[p] = eintrag,
+            None => liste.push(eintrag),
+        }
+    }
+    Some(basis)
+}
+
+/// Ein Schritt des Tauschs beim Zurückspielen, für die Rücknahme bei einem Fehler.
+enum Tausch {
+    /// Ordner aus dem Datenordner in den Papierkorb gelegt.
+    Weg { ort: PathBuf, korb: PathBuf },
+    /// Ordner aus dem Zwischenordner an seinen Ort gelegt.
+    Hin { stufe: PathBuf, ort: PathBuf },
+    /// Datei ersetzt; die alte Fassung liegt als Kopie im Papierkorb (`None`: es gab keine).
+    Ersetzt { ort: PathBuf, alt: Option<PathBuf> },
+}
+
+fn tausch_zuruecknehmen(log: &[Tausch]) -> Vec<String> {
+    let mut fehler = Vec::new();
+    for t in log.iter().rev() {
+        let r = match t {
+            Tausch::Hin { stufe, ort } => fs::rename(ort, stufe).map_err(|e| e.to_string()),
+            Tausch::Weg { ort, korb } => fs::rename(korb, ort).map_err(|e| e.to_string()),
+            Tausch::Ersetzt {
+                ort,
+                alt: Some(alt),
+            } => fs::read(alt)
+                .map_err(|e| e.to_string())
+                .and_then(|b| schreibe_atomar(ort, &b)),
+            Tausch::Ersetzt { ort, alt: None } => fs::remove_file(ort).map_err(|e| e.to_string()),
+        };
+        if let Err(e) = r {
+            fehler.push(e);
+        }
+    }
+    fehler
+}
+
+/// Sicherung zurückspielen (4.2), so dass nie ein halber Stand entsteht:
+///
+/// 1. Die Sicherung vollständig gegen das Manifest prüfen; den Platz prüfen.
+/// 2. Alles in einen Zwischenordner `sicherungen/.zurueck-<ms>/` kopieren und dort erneut
+///    prüfen. Der Seitenindex wird zusammengeführt statt ersetzt (siehe
+///    [`index_zusammenfuehren`]).
+/// 3. Tauschen: vorhandene Ziele und weitere Orte derselben Seiten (sonst läge die Seite
+///    danach doppelt vor) in den Papierkorb `sicherungen/.papierkorb/<ms>/`, dann die
+///    Einheiten aus dem Zwischenordner an ihren Ort. Index und `buch.json` werden über das
+///    Ziel umbenannt, nachdem ihre alte Fassung in den Papierkorb kopiert ist; sie fehlen
+///    also nie, auch nicht bei einem Absturz.
+/// 4. Scheitert ein Schritt, wird der Tausch zurückgenommen.
+///
+/// Nichts wird überschrieben oder endgültig gelöscht.
+pub fn sicherung_zurueckspielen(
+    data: &Path,
+    name: &str,
+    platz_frei: Option<u64>,
+) -> Result<Wiederherstellung, String> {
     let gueltiger_name = name.starts_with(SICHERUNG_PRAEFIX)
         && !name.contains(['/', '\\', ':'])
         && !name.contains("..");
@@ -1166,28 +1303,112 @@ pub fn sicherung_zurueckspielen(data: &Path, name: &str) -> Result<Wiederherstel
     {
         einheiten.insert(einheit(rel)?);
     }
-
-    let weichen: Vec<&String> = einheiten
+    let seiten: BTreeMap<String, Option<String>> = einheiten
         .iter()
-        .filter(|e| vorhanden(&absolut(data, e)))
+        .filter_map(|e| seite_der_einheit(e))
         .collect();
-    let mut papierkorb = None;
-    if !weichen.is_empty() {
-        let basis = data.join(SICHERUNGEN).join(PAPIERKORB);
-        fs::create_dir_all(&basis).map_err(|e| format!("Papierkorb nicht anlegbar: {e}"))?;
-        let mut ms = jetzt_ms();
-        let korb = loop {
-            let korb = basis.join(ms.to_string());
-            match fs::create_dir(&korb) {
-                Ok(()) => break korb,
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => ms += 1,
-                Err(e) => return Err(format!("Papierkorb nicht anlegbar: {e}")),
+    let bytes: u64 = manifest.dateien.iter().map(|d| d.groesse).sum();
+    if let Some(frei) = platz_frei {
+        let noetig = platz_bedarf(bytes);
+        if frei < noetig {
+            return Err(format!(
+                "Zu wenig freier Speicher zum Zurückspielen: nötig {} MB, frei {} MB. \
+                 Es wurde nichts geändert.",
+                noetig.div_ceil(1 << 20),
+                frei / (1 << 20)
+            ));
+        }
+    }
+    // Vor jeder Änderung: ein unlesbarer aktueller Index bricht ab.
+    let aktuell = index_laden(data)?;
+    let index_rel = format!("{PROJEKTE}/{INDEX}");
+    let gesichert = if einheiten.contains(&index_rel) {
+        Some(
+            serde_json::from_slice::<serde_json::Value>(
+                &fs::read(absolut(&dir, &index_rel)).map_err(|e| e.to_string())?,
+            )
+            .map_err(|e| format!("Seitenindex der Sicherung unlesbar: {e}"))?,
+        )
+    } else {
+        None
+    };
+    let index_neu = index_zusammenfuehren(aktuell, gesichert, &seiten);
+
+    // 2. Zwischenordner
+    let stufe = neuer_ordner(&data.join(SICHERUNGEN), ".zurueck-")?;
+    let vorbereitet = (|| -> Result<(), String> {
+        for rel in &manifest.ordner {
+            fs::create_dir_all(absolut(&stufe, rel)).map_err(|e| format!("{rel}: {e}"))?;
+        }
+        for datei in &manifest.dateien {
+            if datei.pfad == index_rel {
+                continue;
+            }
+            let (groesse, sha256) = kopieren_mit_pruefsumme(
+                &absolut(&dir, &datei.pfad),
+                &absolut(&stufe, &datei.pfad),
+            )?;
+            if groesse != datei.groesse || sha256 != datei.sha256 {
+                return Err(format!(
+                    "{} wurde beim Zurückspielen nicht unverändert kopiert",
+                    datei.pfad
+                ));
+            }
+        }
+        if let Some(index) = &index_neu {
+            let bytes = serde_json::to_vec_pretty(index).map_err(|e| e.to_string())?;
+            schreibe_atomar(&absolut(&stufe, &index_rel), &bytes)?;
+        }
+        Ok(())
+    })();
+    if let Err(e) = vorbereitet {
+        let _ = fs::remove_dir_all(&stufe);
+        return Err(format!("Zurückspielen nicht begonnen: {e}"));
+    }
+
+    // 3. Was weichen muss: vorhandene Ordner-Einheiten und weitere Orte derselben Seiten.
+    let karte = Fundortkarte::aufbauen(data);
+    let mut weichen: BTreeSet<String> = einheiten
+        .iter()
+        .filter(|e| !datei_einheit(e) && vorhanden(&absolut(data, e)))
+        .cloned()
+        .collect();
+    for seite in seiten.keys() {
+        let mut orte = karte.orte(seite);
+        orte.push(rel_von(seite));
+        for ort in orte {
+            if vorhanden(&absolut(data, &ort)) {
+                weichen.insert(ort);
+            }
+        }
+    }
+    let dateien_ersetzen: Vec<&String> = einheiten
+        .iter()
+        .filter(|e| datei_einheit(e) && vorhanden(&absolut(&stufe, e)))
+        .collect();
+    let braucht_korb = !weichen.is_empty()
+        || dateien_ersetzen
+            .iter()
+            .any(|e| vorhanden(&absolut(data, e)));
+    let korb = if braucht_korb {
+        let korb = match neuer_ordner(&data.join(SICHERUNGEN).join(PAPIERKORB), "") {
+            Ok(k) => k,
+            Err(e) => {
+                let _ = fs::remove_dir_all(&stufe);
+                return Err(e);
             }
         };
         let _ = fs::write(korb.join(PAPIERKORB_STEMPEL), jetzt_ms().to_string());
-        for rel in weichen {
-            let von = absolut(data, rel);
-            let nach = absolut(&korb, rel);
+        Some(korb)
+    } else {
+        None
+    };
+
+    let mut log: Vec<Tausch> = Vec::new();
+    let getauscht = (|| -> Result<(), String> {
+        let korb_von = |rel: &str| -> Result<PathBuf, String> {
+            let korb = korb.as_ref().ok_or("Papierkorb fehlt")?;
+            let nach = absolut(korb, rel);
             if vorhanden(&nach) {
                 return Err(format!(
                     "Im Papierkorb liegt schon {rel}; nichts überschrieben."
@@ -1196,28 +1417,76 @@ pub fn sicherung_zurueckspielen(data: &Path, name: &str) -> Result<Wiederherstel
             if let Some(eltern) = nach.parent() {
                 fs::create_dir_all(eltern).map_err(|e| format!("Papierkorb: {e}"))?;
             }
-            fs::rename(&von, &nach)
+            Ok(nach)
+        };
+        for rel in &weichen {
+            let ort = absolut(data, rel);
+            let nach = korb_von(rel)?;
+            fs::rename(&ort, &nach)
                 .map_err(|e| format!("{rel} ließ sich nicht in den Papierkorb legen: {e}"))?;
+            log.push(Tausch::Weg { ort, korb: nach });
         }
-        papierkorb = Some(relativ(data, &korb));
-    }
-
-    for rel in &manifest.ordner {
-        fs::create_dir_all(absolut(data, rel)).map_err(|e| format!("{rel}: {e}"))?;
-    }
-    for datei in &manifest.dateien {
-        let (groesse, sha256) =
-            kopieren_mit_pruefsumme(&absolut(&dir, &datei.pfad), &absolut(data, &datei.pfad))?;
-        if groesse != datei.groesse || sha256 != datei.sha256 {
+        for rel in einheiten.iter().filter(|e| !datei_einheit(e)) {
+            let von = absolut(&stufe, rel);
+            if !von.is_dir() {
+                continue;
+            }
+            let ort = absolut(data, rel);
+            if vorhanden(&ort) {
+                return Err(format!("{rel} ist noch belegt; nichts überschrieben."));
+            }
+            if let Some(eltern) = ort.parent() {
+                fs::create_dir_all(eltern).map_err(|e| format!("{rel}: {e}"))?;
+            }
+            fs::rename(&von, &ort).map_err(|e| format!("{rel} ließ sich nicht anlegen: {e}"))?;
+            log.push(Tausch::Hin { stufe: von, ort });
+        }
+        // Dateien zuletzt; der Index als allerletzte, damit er erst auf vollständige
+        // Seiten zeigt.
+        let mut dateien: Vec<&&String> = dateien_ersetzen.iter().collect();
+        dateien.sort_by_key(|e| **e == &index_rel);
+        for rel in dateien {
+            let ort = absolut(data, rel);
+            let alt = if vorhanden(&ort) {
+                let nach = korb_von(rel)?;
+                kopieren_mit_pruefsumme(&ort, &nach)?;
+                Some(nach)
+            } else {
+                None
+            };
+            if let Some(eltern) = ort.parent() {
+                fs::create_dir_all(eltern).map_err(|e| format!("{rel}: {e}"))?;
+            }
+            fs::rename(absolut(&stufe, rel), &ort)
+                .map_err(|e| format!("{rel} ließ sich nicht ersetzen: {e}"))?;
+            ordner_sync(ort.parent().unwrap_or(data));
+            log.push(Tausch::Ersetzt { ort, alt });
+        }
+        Ok(())
+    })();
+    if let Err(e) = getauscht {
+        let offen = tausch_zuruecknehmen(&log);
+        if offen.is_empty() {
+            let _ = fs::remove_dir_all(&stufe);
+            if let Some(korb) = &korb {
+                let _ = fs::remove_dir_all(korb);
+            }
             return Err(format!(
-                "{} wurde beim Zurückspielen nicht unverändert kopiert",
-                datei.pfad
+                "Zurückspielen abgebrochen ({e}); der vorige Stand ist wiederhergestellt."
             ));
         }
+        return Err(format!(
+            "Zurückspielen abgebrochen ({e}). Nicht alles ließ sich zurücknehmen ({}); \
+             Zwischenstand unter {} und Papierkorb {} bleiben erhalten.",
+            offen.join("; "),
+            relativ(data, &stufe),
+            korb.as_ref().map(|k| relativ(data, k)).unwrap_or_default()
+        ));
     }
+    let _ = fs::remove_dir_all(&stufe);
     Ok(Wiederherstellung {
         dateien: manifest.dateien.len(),
-        papierkorb,
+        papierkorb: korb.as_ref().map(|k| relativ(data, k)),
     })
 }
 
@@ -1300,6 +1569,31 @@ pub fn planen(data: &Path) -> Result<Plan, String> {
 // Migration, Wiederanlauf, Rückfall
 // ---------------------------------------------------------------------------
 
+/// Steht die Seite im Index? `None`, wenn der Index fehlt oder keine Seitenliste hat
+/// (dann lässt sich „gelöscht“ nicht feststellen).
+fn index_hat_seite(index: Option<&serde_json::Value>, seite: &str) -> Option<bool> {
+    let seiten = index?.get("pages")?.as_array()?;
+    Some(
+        seiten
+            .iter()
+            .any(|e| e.get("id").and_then(|i| i.as_str()) == Some(seite)),
+    )
+}
+
+/// Wurde die Seite eines Schritts inzwischen gelöscht (Nutzer oder Geräte-Sync, während
+/// die Migration angehalten war)? Nicht mehr im lesbaren Index und weder unter `von` noch
+/// unter `nach`. Solche Schritte werden mit Hinweis übersprungen; sonst hielte das Journal
+/// für immer an.
+fn schritt_geloescht(data: &Path, index: Option<&serde_json::Value>, schritt: &Schritt) -> bool {
+    index_hat_seite(index, &schritt.seite) == Some(false)
+        && !vorhanden(&absolut(data, &schritt.von))
+        && !vorhanden(&absolut(data, &schritt.nach))
+}
+
+fn hinweis_geloescht(seite: &str) -> String {
+    format!("Seite {seite} wurde inzwischen gelöscht; übersprungen.")
+}
+
 /// Doppelungsprüfung (Vorrang vor allen Zeilen der Tabelle) und Befund je Schritt,
 /// bevor irgendetwas geändert wird.
 fn vorpruefen(data: &Path, journal: &Journal, karte: &Fundortkarte) -> Vec<Problem> {
@@ -1309,6 +1603,9 @@ fn vorpruefen(data: &Path, journal: &Journal, karte: &Fundortkarte) -> Vec<Probl
     };
     let mut probleme = Vec::new();
     for schritt in &journal.schritte {
+        if schritt_geloescht(data, index.as_ref(), schritt) {
+            continue;
+        }
         let im_index = index
             .as_ref()
             .and_then(|i| index_buch_in(i, &schritt.seite));
@@ -1429,12 +1726,22 @@ fn ausfuehren(data: &Path, mut journal: Journal) -> Result<Bericht, String> {
     if !probleme.is_empty() {
         return Ok(Bericht::angehalten(journal.phase, 0, probleme));
     }
+    let index = index_laden(data)?;
     let mut erledigt = 0;
+    let mut hinweise = Vec::new();
     for i in 0..journal.schritte.len() {
+        if schritt_geloescht(data, index.as_ref(), &journal.schritte[i]) {
+            hinweise.push(hinweis_geloescht(&journal.schritte[i].seite));
+            continue;
+        }
         match schritt_vorwaerts(data, &mut journal, i, &karte) {
             Ok(true) => erledigt += 1,
             Ok(false) => {}
-            Err(problem) => return Ok(Bericht::angehalten(journal.phase, erledigt, vec![problem])),
+            Err(problem) => {
+                let mut b = Bericht::angehalten(journal.phase, erledigt, vec![problem]);
+                b.hinweise = hinweise;
+                return Ok(b);
+            }
         }
     }
     journal.phase = Phase::Fertig;
@@ -1443,6 +1750,7 @@ fn ausfuehren(data: &Path, mut journal: Journal) -> Result<Bericht, String> {
     Ok(Bericht {
         phase: Some(Phase::Fertig),
         erledigt,
+        hinweise,
         ..Default::default()
     })
 }
@@ -1541,12 +1849,22 @@ fn rueckwaerts(data: &Path, mut journal: Journal) -> Result<Bericht, String> {
     if !probleme.is_empty() {
         return Ok(Bericht::angehalten(journal.phase, 0, probleme));
     }
+    let index = index_laden(data)?;
     let mut erledigt = 0;
+    let mut hinweise = Vec::new();
     for i in (0..journal.schritte.len()).rev() {
+        if schritt_geloescht(data, index.as_ref(), &journal.schritte[i]) {
+            hinweise.push(hinweis_geloescht(&journal.schritte[i].seite));
+            continue;
+        }
         match schritt_rueckwaerts(data, &mut journal, i, &karte) {
             Ok(true) => erledigt += 1,
             Ok(false) => {}
-            Err(problem) => return Ok(Bericht::angehalten(journal.phase, erledigt, vec![problem])),
+            Err(problem) => {
+                let mut b = Bericht::angehalten(journal.phase, erledigt, vec![problem]);
+                b.hinweise = hinweise;
+                return Ok(b);
+            }
         }
     }
     journal.phase = Phase::Zurueckgenommen;
@@ -1555,6 +1873,7 @@ fn rueckwaerts(data: &Path, mut journal: Journal) -> Result<Bericht, String> {
     Ok(Bericht {
         phase: Some(Phase::Zurueckgenommen),
         erledigt,
+        hinweise,
         ..Default::default()
     })
 }
@@ -1745,6 +2064,84 @@ pub fn kaskade_seiten(data: &Path, buch: &str) -> Vec<String> {
         .into_iter()
         .filter(|s| gueltige_seite(s))
         .collect()
+}
+
+/// Bevor die Bibliothek einen Buch-Ordner löscht, zusammenführt oder in den Papierkorb legt:
+/// seine Fassungen (Seiten unter `<buch_dir>/fassungen/`) nach `projects/<seite>` zurücklegen
+/// und im Index das Feld `buch` dieser Seiten leeren. Wie vor Layout 2 bleibt die
+/// Vorlesen-Seite also erhalten; die Kaskade in den Papierkorb (4.3) folgt in P2b zusammen
+/// mit ihrer Behandlung im Geräte-Sync.
+///
+/// `buch_dir` darf auch ein Eintrag im Papierkorb der Bibliothek sein. Nichts wird
+/// überschrieben: liegt unter `projects/<seite>` schon etwas, bricht es ab, bevor etwas
+/// bewegt ist; scheitert ein Umbenennen, kommen die schon bewegten Seiten zurück. Solange
+/// ein Journal offen ist, wird nichts bewegt. Liefert die Zahl der verschobenen Seiten.
+/// Der Aufrufer hält Bibliotheks- und Seitensperre.
+pub fn fassungen_auslagern(data: &Path, buch_dir: &Path) -> Result<usize, String> {
+    let fassungen = buch_dir.join(FASSUNGEN);
+    let seiten: Vec<String> = unterordner(&fassungen)
+        .into_iter()
+        .filter(|s| gueltige_seite(s))
+        .collect();
+    if seiten.is_empty() {
+        return Ok(0);
+    }
+    if aktives_journal(data).is_some() {
+        return Err(
+            "Die Neuordnung der Bibliothek ist nicht abgeschlossen. Bitte sie erst \
+                    abschließen oder zurücknehmen, dann erneut versuchen."
+                .into(),
+        );
+    }
+    // Den Index vorher lesen: ist er unlesbar, wird nichts bewegt.
+    let index = index_laden(data)?;
+    let belegt: Vec<String> = seiten
+        .iter()
+        .map(|s| rel_von(s))
+        .filter(|rel| vorhanden(&absolut(data, rel)))
+        .collect();
+    if !belegt.is_empty() {
+        return Err(format!(
+            "Seiten des Buchs liegen schon unter {}; nichts verschoben.",
+            belegt.join(", ")
+        ));
+    }
+    fs::create_dir_all(data.join(PROJEKTE))
+        .map_err(|e| format!("Ordner {PROJEKTE} nicht anlegbar: {e}"))?;
+    let mut bewegt: Vec<(PathBuf, PathBuf)> = Vec::new();
+    for seite in &seiten {
+        let von = fassungen.join(seite);
+        let nach = absolut(data, &rel_von(seite));
+        if let Err(e) = fs::rename(&von, &nach) {
+            for (v, n) in bewegt.iter().rev() {
+                let _ = fs::rename(n, v);
+            }
+            return Err(format!(
+                "Seite {seite} ließ sich nicht aus dem Buch-Ordner lösen: {e}"
+            ));
+        }
+        bewegt.push((von, nach));
+    }
+    let _ = fs::remove_dir(&fassungen);
+    if let Some(mut index) = index {
+        let mut geaendert = false;
+        if let Some(eintraege) = index.get_mut("pages").and_then(|p| p.as_array_mut()) {
+            for eintrag in eintraege.iter_mut() {
+                let betroffen = eintrag
+                    .get("id")
+                    .and_then(|i| i.as_str())
+                    .is_some_and(|id| seiten.iter().any(|s| s == id));
+                if let (true, Some(obj)) = (betroffen, eintrag.as_object_mut()) {
+                    geaendert |= obj.remove("buch").is_some();
+                }
+            }
+        }
+        if geaendert {
+            let bytes = serde_json::to_vec_pretty(&index).map_err(|e| e.to_string())?;
+            schreibe_atomar(&index_pfad(data), &bytes)?;
+        }
+    }
+    Ok(seiten.len())
 }
 
 const VERBOTENE_ZEICHEN: [char; 9] = ['/', '\\', ':', '*', '?', '"', '<', '>', '|'];
@@ -2136,27 +2533,191 @@ mod tests {
         let data = standardlage("zurueck");
         migrieren(&data, &optionen()).unwrap();
         let name = sicherungen_auflisten(&data)[0].name.clone();
+        // Nach der Sicherung entsteht eine neue Seite: sie bleibt im Index.
+        seite_anlegen(&data.join(PROJEKTE).join("page_neu"), "neu");
+        let mut index: serde_json::Value = serde_json::from_slice(&index_roh(&data)).unwrap();
+        index["pages"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({ "id": "page_neu", "title": "Neu" }));
+        fs::write(
+            data.join(PROJEKTE).join(INDEX),
+            serde_json::to_vec(&index).unwrap(),
+        )
+        .unwrap();
         let index_nach_migration = index_roh(&data);
-        let w = sicherung_zurueckspielen(&data, &name).unwrap();
+        let w = sicherung_zurueckspielen(&data, &name, None).unwrap();
         assert!(w.dateien >= 5);
-        // Seiten wieder unter projects/, Index aus der Sicherung (ohne `buch`).
+        // Seiten wieder unter projects/, im Index ohne `buch`.
         assert_eq!(
             fs::read_to_string(data.join("projects/page_1/state.json")).unwrap(),
             "{\"text\":\"eins\"}"
         );
         assert_eq!(index_buch(&data, "page_1").unwrap(), None);
-        // Der ersetzte Index liegt im Papierkorb, nicht überschrieben.
+        assert_eq!(index_buch(&data, "page_2").unwrap(), None);
+        // Die Seite liegt genau einmal vor; die Fassung im Buch-Ordner liegt im Papierkorb.
+        assert_eq!(pfad(&data, "page_1").unwrap(), data.join("projects/page_1"));
         let korb = absolut(&data, w.papierkorb.as_deref().unwrap());
+        assert!(korb
+            .join("library/book_1/fassungen/page_1/state.json")
+            .is_file());
+        // Der alte Index liegt als Kopie im Papierkorb, nicht überschrieben.
         assert_eq!(
             fs::read(korb.join("projects/index.json")).unwrap(),
             index_nach_migration
         );
         assert!(korb.join("library/book_1/buch.json").is_file());
-        // Die Seite liegt jetzt doppelt vor: page_path hält an.
-        let fehler = pfad(&data, "page_1").unwrap_err();
-        assert!(fehler.starts_with("Seite doppelt vorhanden"), "{fehler}");
-        assert!(fehler.contains("projects/page_1"));
-        assert!(fehler.contains("library/book_1/fassungen/page_1"));
+        // Die neue Seite und die lose Seite bleiben im Index.
+        let roh = String::from_utf8(index_roh(&data)).unwrap();
+        assert!(roh.contains("page_neu"), "{roh}");
+        assert!(roh.contains("page_9"), "{roh}");
+        // Kein Zwischenordner bleibt liegen.
+        assert!(!unterordner(&data.join(SICHERUNGEN))
+            .iter()
+            .any(|n| n.starts_with(".zurueck-")));
+    }
+
+    #[test]
+    fn zurueckspielen_nimmt_den_tausch_bei_einem_fehler_zurueck() {
+        let data = standardlage("zurueck-fehler");
+        migrieren(&data, &optionen()).unwrap();
+        let name = sicherungen_auflisten(&data)[0].name.clone();
+        // Ein Ordner statt buch.json: das Ersetzen der Datei scheitert nach dem Tausch der
+        // Seitenordner.
+        let buch_json = data.join("library/book_1/buch.json");
+        let buch_roh = fs::read(&buch_json).unwrap();
+        fs::remove_file(&buch_json).unwrap();
+        fs::create_dir_all(&buch_json).unwrap();
+        let index_vorher = index_roh(&data);
+        let fehler = sicherung_zurueckspielen(&data, &name, None).unwrap_err();
+        assert!(fehler.contains("vorige Stand"), "{fehler}");
+        assert_eq!(index_roh(&data), index_vorher);
+        assert!(data
+            .join("library/book_1/fassungen/page_1/state.json")
+            .is_file());
+        assert!(!data.join("projects/page_1").exists());
+        assert!(!data
+            .join(SICHERUNGEN)
+            .join(PAPIERKORB)
+            .read_dir()
+            .map(|mut d| d.next().is_some())
+            .unwrap_or(false));
+        assert!(!unterordner(&data.join(SICHERUNGEN))
+            .iter()
+            .any(|n| n.starts_with(".zurueck-")));
+        fs::remove_dir(&buch_json).unwrap();
+        fs::write(&buch_json, buch_roh).unwrap();
+    }
+
+    #[test]
+    fn zurueckspielen_prueft_den_platz_vorher() {
+        let data = standardlage("zurueck-platz");
+        migrieren(&data, &optionen()).unwrap();
+        let name = sicherungen_auflisten(&data)[0].name.clone();
+        let index_vorher = index_roh(&data);
+        let fehler = sicherung_zurueckspielen(&data, &name, Some(10)).unwrap_err();
+        assert!(fehler.contains("Zu wenig freier Speicher"), "{fehler}");
+        assert_eq!(index_roh(&data), index_vorher);
+        assert!(data.join("library/book_1/fassungen/page_1").is_dir());
+    }
+
+    #[test]
+    fn index_zusammenfuehren_behaelt_neue_seiten_und_setzt_buch_nach_ort() {
+        let aktuell = serde_json::json!({ "pages": [
+            { "id": "page_1", "title": "Jetzt", "buch": "book_1" },
+            { "id": "page_3", "title": "Neu" },
+        ]});
+        let gesichert = serde_json::json!({ "pages": [
+            { "id": "page_1", "title": "Damals" },
+            { "id": "page_2", "title": "Zwei" },
+        ]});
+        let mut seiten = BTreeMap::new();
+        seiten.insert("page_1".to_string(), None);
+        seiten.insert("page_2".to_string(), Some("book_1".to_string()));
+        let neu = index_zusammenfuehren(Some(aktuell), Some(gesichert), &seiten).unwrap();
+        let p = neu["pages"].as_array().unwrap();
+        assert_eq!(p.len(), 3);
+        assert_eq!(p[0]["title"], "Damals");
+        assert!(p[0].get("buch").is_none());
+        assert_eq!(p[1]["id"], "page_3");
+        assert_eq!(p[2]["id"], "page_2");
+        assert_eq!(p[2]["buch"], "book_1");
+        assert!(index_zusammenfuehren(None, None, &BTreeMap::new()).is_none());
+    }
+
+    #[test]
+    fn geloeschte_seite_haelt_das_journal_nicht_an() {
+        let data = standardlage("geloescht");
+        verschieben(&data, "page_1", "book_1");
+        index_schreiben(&data, &[("page_1", Some("book_1")), ("page_9", None)]);
+        // page_2 ist gelöscht: nicht im Index, kein Ordner.
+        fs::remove_dir_all(data.join("projects/page_2")).unwrap();
+        journal_mit(
+            &data,
+            Phase::Gesichert,
+            vec![
+                schritt("page_1", "book_1", SchrittStatus::Eingetragen),
+                schritt("page_2", "book_1", SchrittStatus::Offen),
+            ],
+        );
+        let b = wiederanlauf(&data, &optionen()).unwrap();
+        assert!(!b.angehalten, "{:?}", b.probleme);
+        assert_eq!(b.phase, Some(Phase::Fertig));
+        assert!(
+            b.hinweise.iter().any(|h| h.contains("page_2")),
+            "{:?}",
+            b.hinweise
+        );
+        assert!(aktives_journal(&data).is_none());
+        // Steht die Seite noch im Index, fehlt sie aber, bleibt es ein Problem.
+        let data = standardlage("geloescht-nicht");
+        fs::remove_dir_all(data.join("projects/page_2")).unwrap();
+        journal_mit(
+            &data,
+            Phase::Gesichert,
+            vec![schritt("page_2", "book_1", SchrittStatus::Offen)],
+        );
+        let b = wiederanlauf(&data, &optionen()).unwrap();
+        assert!(b.angehalten);
+        assert_eq!(b.probleme[0].art, ProblemArt::Fehlt);
+    }
+
+    #[test]
+    fn fassungen_auslagern_rettet_seiten_vor_dem_loeschen_des_buchs() {
+        let data = standardlage("auslagern");
+        migrieren(&data, &optionen()).unwrap();
+        let buch_dir = data.join("library/book_1");
+        assert_eq!(fassungen_auslagern(&data, &buch_dir).unwrap(), 2);
+        assert!(data.join("projects/page_1/state.json").is_file());
+        assert!(data.join("projects/page_2/ki/dokumente/d1.json").is_file());
+        assert!(!buch_dir.join(FASSUNGEN).exists());
+        assert_eq!(index_buch(&data, "page_1").unwrap(), None);
+        assert_eq!(pfad(&data, "page_2").unwrap(), data.join("projects/page_2"));
+        // Ein zweiter Aufruf hat nichts mehr zu tun.
+        assert_eq!(fassungen_auslagern(&data, &buch_dir).unwrap(), 0);
+    }
+
+    #[test]
+    fn fassungen_auslagern_ueberschreibt_nichts_und_wartet_auf_das_journal() {
+        let data = standardlage("auslagern-belegt");
+        migrieren(&data, &optionen()).unwrap();
+        let buch_dir = data.join("library/book_1");
+        fs::create_dir_all(data.join("projects/page_2")).unwrap();
+        let index_vorher = index_roh(&data);
+        let fehler = fassungen_auslagern(&data, &buch_dir).unwrap_err();
+        assert!(fehler.contains("projects/page_2"), "{fehler}");
+        assert!(buch_dir.join("fassungen/page_1").is_dir(), "nichts bewegt");
+        assert!(!data.join("projects/page_1").exists());
+        assert_eq!(index_roh(&data), index_vorher);
+
+        let data = standardlage("auslagern-journal");
+        migrieren(&data, &optionen()).unwrap();
+        let mut j = journal_laden(&data).unwrap().unwrap();
+        j.phase = Phase::Rueckfall;
+        journal_schreiben(&data, &j).unwrap();
+        let fehler = fassungen_auslagern(&data, &data.join("library/book_1")).unwrap_err();
+        assert!(fehler.contains("nicht abgeschlossen"), "{fehler}");
+        assert!(data.join("library/book_1/fassungen/page_1").is_dir());
     }
 
     #[test]
@@ -2172,10 +2733,10 @@ mod tests {
         )
         .unwrap();
         let index_vorher = index_roh(&data);
-        assert!(sicherung_zurueckspielen(&data, &name).is_err());
+        assert!(sicherung_zurueckspielen(&data, &name, None).is_err());
         assert_eq!(index_roh(&data), index_vorher);
         assert!(!data.join(SICHERUNGEN).join(PAPIERKORB).exists());
-        assert!(sicherung_zurueckspielen(&data, "../projects").is_err());
+        assert!(sicherung_zurueckspielen(&data, "../projects", None).is_err());
     }
 
     // ----- Wiederanlauf: je Zeile der Tabelle ------------------------------

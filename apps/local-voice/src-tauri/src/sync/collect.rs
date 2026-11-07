@@ -79,16 +79,27 @@ pub fn hash(value: &Value) -> String {
 /// Alle lokalen Objekte: eine je Seite, eines für die Einstellungen.
 /// Unter der Seiten-Sperre: eine halb geschriebene Seite darf nicht als
 /// Stand gelten.
-pub fn collect(app: &AppHandle) -> Result<Vec<LocalObject>, String> {
+///
+/// Zweiter Wert: Seiten, die im Index stehen, deren Ordner aber gerade nicht
+/// eindeutig zu finden ist (fehlt oder liegt doppelt, lva#365). Sie werden in
+/// diesem Lauf weder hochgeladen (ein leerer Stand überschriebe den Text auf
+/// den anderen Geräten) noch als gelöscht gemeldet, und sie halten den Sync
+/// der übrigen Seiten nicht an.
+pub fn collect(app: &AppHandle) -> Result<(Vec<LocalObject>, Vec<String>), String> {
     let _guard = pages::lock();
     let mut out = Vec::new();
+    let mut held = Vec::new();
     let index = pages::load_index(app)?;
     for page in &index.pages {
-        // Fehlt die Seite (z. B. Buch im Papierkorb), bleibt der Stand leer wie
-        // bisher; liegt sie doppelt vor, hält der Sync an (Fehler mit Pfaden).
-        let state_raw = pages::page_lookup(app, &page.id)?
-            .and_then(|dir| std::fs::read_to_string(dir.join("state.json")).ok());
-        let state = state_raw
+        let dir = match pages::page_lookup_in(app, &page.id, Some(page.buch.as_deref())) {
+            Ok(Some(dir)) => dir,
+            Ok(None) | Err(_) => {
+                held.push(page.id.clone());
+                continue;
+            }
+        };
+        let state = std::fs::read_to_string(dir.join("state.json"))
+            .ok()
             .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
             .unwrap_or(Value::Null);
         out.push(LocalObject {
@@ -97,6 +108,12 @@ pub fn collect(app: &AppHandle) -> Result<Vec<LocalObject>, String> {
             value: json!({ "title": page.title, "state": state }),
         });
     }
+    if !held.is_empty() {
+        log::warn!(
+            "Sync: {} Seite(n) ohne eindeutigen Ordner, in diesem Lauf zurückgehalten",
+            held.len()
+        );
+    }
     out.push(LocalObject {
         collection: COLLECTION_SETTINGS,
         id: SETTINGS_OBJECT_ID.to_string(),
@@ -104,7 +121,7 @@ pub fn collect(app: &AppHandle) -> Result<Vec<LocalObject>, String> {
             &serde_json::to_value(crate::settings::get_settings(app)).unwrap_or(Value::Null),
         ),
     });
-    Ok(out)
+    Ok((out, held))
 }
 
 pub fn settings_subset(all: &Value) -> Value {

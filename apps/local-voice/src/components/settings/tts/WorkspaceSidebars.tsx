@@ -9,6 +9,7 @@ import {
   type PageInfo,
 } from "@/bindings";
 import { convertFileSrc } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { Button } from "../../ui/Button";
 import { IconButton } from "../../ui/IconButton";
 import { Input } from "../../ui/Input";
@@ -630,10 +631,20 @@ export const FilesSidebar: React.FC<{
 
   useEffect(() => {
     if (!pageId) return;
-    void commands.pageDir(pageId).then((result) => {
-      setDir(result.status === "ok" ? result.data : null);
-    });
+    let alive = true;
+    const load = () =>
+      void commands.pageDir(pageId).then((result) => {
+        if (alive) setDir(result.status === "ok" ? result.data : null);
+      });
+    load();
     setPlaying(null);
+    // Nach dem Umzug in Buch-Ordner (lva#365) liegt die Seite woanders: den
+    // gemerkten Pfad neu holen, sonst zeigt die Wiedergabe ins Leere.
+    const unlisten = listen("library-layout-changed", load);
+    return () => {
+      alive = false;
+      void unlisten.then((fn) => fn()).catch(() => {});
+    };
   }, [pageId]);
 
   const refresh = useCallback(async () => {

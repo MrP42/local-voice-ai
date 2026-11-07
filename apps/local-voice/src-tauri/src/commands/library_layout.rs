@@ -13,7 +13,7 @@
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, State};
 
 use crate::commands::pages;
 use crate::library_layout::{self, Bericht, Fundortkarte, Optionen, Problem};
@@ -247,10 +247,16 @@ fn gesperrt<T>(
     lauf: impl FnOnce(&Path) -> Result<T, String>,
 ) -> Result<T, String> {
     let data = pages::data_root(app)?;
+    // Erst den Merker, dann die Sperren: Leser warten nicht auf den Umbau,
+    // sondern melden ihn (sonst „Keine Rückmeldung“ auf dem Hauptthread).
+    let _umbau = pages::umbau_beginnen();
     let _library = crate::library::sync_lock();
     let _pages = pages::lock();
     let ergebnis = lauf(&data);
     fundortkarte_neu(&data);
+    // Seitenordner können umgezogen sein: die Oberfläche holt gemerkte Pfade
+    // neu, statt unter dem alten Ort einen zweiten Ordner anzulegen.
+    let _ = app.emit("library-layout-changed", ());
     ergebnis
 }
 
@@ -349,7 +355,7 @@ pub async fn library_backup_restore(
     hintergrund(&engine)?;
     tauri::async_runtime::spawn_blocking(move || {
         gesperrt(&app, |data| {
-            library_layout::sicherung_zurueckspielen(data, &name)
+            library_layout::sicherung_zurueckspielen(data, &name, freier_platz(data))
         })
     })
     .await

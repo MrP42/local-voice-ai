@@ -1083,7 +1083,24 @@ pub fn library_delete(app: AppHandle, id: String) -> Result<(), String> {
     let root = library_root(&app)?;
     let dir = book_dir(&root, &id)?;
     if dir.exists() {
+        seiten_retten(&root, &dir)?;
         std::fs::remove_dir_all(&dir).map_err(|e| format!("could not delete book: {e}"))?;
+    }
+    Ok(())
+}
+
+/// Bevor ein Buch-Ordner gelöscht, zusammengeführt oder in den Papierkorb gelegt
+/// wird: seine Fassungen (Vorlesen-Seiten unter `fassungen/`, lva#365) nach
+/// `projects/` zurücklegen, damit keine Bibliotheksaktion eine Seite mitnimmt.
+/// Der Aufrufer hält die Bibliothekssperre; die Seitensperre kommt danach
+/// (Reihenfolge wie im Geräte-Sync).
+fn seiten_retten(root: &Path, dir: &Path) -> Result<(), String> {
+    let Some(data) = root.parent() else {
+        return Ok(());
+    };
+    let _pages = crate::commands::pages::lock();
+    if crate::library_layout::fassungen_auslagern(data, dir)? > 0 {
+        crate::commands::library_layout::fundortkarte_neu(data);
     }
     Ok(())
 }
@@ -1187,6 +1204,18 @@ fn trash_locked(root: &Path, ids: &[String]) -> Result<(), String> {
             continue;
         }
         let to = trash_dir(root, id)?;
+        // Seiten bleiben, wie vor den Buch-Ordnern, in der Seitenliste: die
+        // Kaskade in den Papierkorb kommt mit ihrer Sync-Behandlung (lva#365 P2b).
+        let gerettet = seiten_retten(root, &dir).and_then(|()| {
+            if to.exists() {
+                seiten_retten(root, &to)?;
+            }
+            Ok(())
+        });
+        if let Err(e) = gerettet {
+            undo(&moved);
+            return Err(e);
+        }
         if to.exists() {
             let _ = std::fs::remove_dir_all(&to);
         }
@@ -2076,7 +2105,9 @@ fn merge_audio_in(
     }
     let mut leftovers = Vec::new();
     for (dir, book) in &sources {
-        if let Err(e) = std::fs::remove_dir_all(dir) {
+        let entfernt = seiten_retten(root, dir)
+            .and_then(|()| std::fs::remove_dir_all(dir).map_err(|e| e.to_string()));
+        if let Err(e) = entfernt {
             leftovers.push(format!("\u{201e}{}\u{201c}: {e}", book.title));
         }
     }

@@ -72,6 +72,16 @@ pub fn ki_dir(page_dir: &Path) -> PathBuf {
     page_dir.join("ki")
 }
 
+/// Einen Unterordner der Seite anlegen, nie die Seite selbst. Ist die Seite
+/// inzwischen umgezogen (Buch-Ordner, lva#365), entstünde sonst unter dem
+/// alten Pfad ein zweiter Seitenordner, und die Seite läge doppelt vor.
+pub fn unterordner_anlegen(page_dir: &Path, dir: &Path) -> Result<(), String> {
+    if !page_dir.is_dir() {
+        return Err("Die Seite wurde inzwischen verschoben. Bitte erneut versuchen.".into());
+    }
+    std::fs::create_dir_all(dir).map_err(|e| format!("could not create {}: {e}", dir.display()))
+}
+
 pub fn cache_dir(page_dir: &Path) -> PathBuf {
     ki_dir(page_dir).join("cache")
 }
@@ -102,8 +112,7 @@ fn load_index(page_dir: &Path) -> Result<Index, String> {
 
 fn save_index(page_dir: &Path, index: &Index) -> Result<(), String> {
     let dir = docs_dir(page_dir);
-    std::fs::create_dir_all(&dir)
-        .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
+    unterordner_anlegen(page_dir, &dir)?;
     let raw = serde_json::to_string_pretty(index).map_err(|e| e.to_string())?;
     write_atomic(&dir.join("index.json"), raw.as_bytes())
 }
@@ -131,8 +140,7 @@ pub fn create(page_dir: &Path, mut doc: KiDocument, text: &str) -> Result<KiDocu
     doc.title = fit_title(&doc.title);
     doc.words = super::source::word_count(text);
     let dir = docs_dir(page_dir);
-    std::fs::create_dir_all(&dir)
-        .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
+    unterordner_anlegen(page_dir, &dir)?;
     write_atomic(&dir.join(format!("{}.md", doc.id)), text.as_bytes())?;
     let _guard = lock();
     let mut index = load_index(page_dir)?;

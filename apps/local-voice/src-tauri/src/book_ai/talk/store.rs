@@ -50,7 +50,8 @@ pub fn load(page_dir: &Path) -> Result<Vec<StoredTurn>, String> {
 
 fn save(page_dir: &Path, turns: &[StoredTurn]) -> Result<(), String> {
     let dir = ki_dir(page_dir);
-    std::fs::create_dir_all(&dir).map_err(|_| "book_talk:history_unwritable".to_string())?;
+    crate::book_ai::store::unterordner_anlegen(page_dir, &dir)
+        .map_err(|_| "book_talk:history_unwritable".to_string())?;
     let raw =
         serde_json::to_string(turns).map_err(|_| "book_talk:history_unwritable".to_string())?;
     write_atomic(&path(page_dir), raw.as_bytes())
