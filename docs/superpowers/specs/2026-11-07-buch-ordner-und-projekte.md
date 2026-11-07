@@ -1,6 +1,6 @@
 # Buch-Ordner im Vorlesen und appweite Projekte
 
-Stand: 07.11.2026, Runde 4 nach Codex-Befund Runde 3 · Epic lva#365 ·
+Stand: 07.11.2026, Runde 5 nach Codex-Befund Runde 4 · Epic lva#365 ·
 Vorschau: `apps/local-voice/docs/vorschau/projektordner/`
 
 ## Anlass
@@ -113,7 +113,7 @@ Feste Reihenfolge:
 Auflösung jedes Abbruchpunkts beim nächsten Start (vor dem ersten Lesen der Bibliothek):
 
 Vor jeder Zeile der Tabelle gilt die **Doppelungsprüfung**: Für die Seite werden alle verschiedenen
-Kandidaten auf Existenz geprüft (Index-Ort, `von`, `nach`, `projects/<seite>`). Existieren zwei oder
+Kandidaten auf Existenz geprüft (Index-Ort, Orte der Fundortkarte, `von`, `nach`, `projects/<seite>`). Existieren zwei oder
 mehr, gilt „Seite doppelt vorhanden“: anhalten, nichts verschieben, nichts im Index ändern, Meldung mit
 allen Pfaden. Das deckt auch eine Kopie ab, die durch Wiederherstellen aus der Sicherung entstanden ist.
 Erst wenn genau ein Kandidat existiert, wird die passende Zeile angewandt.
@@ -127,10 +127,21 @@ Erst wenn genau ein Kandidat existiert, wird die passende Zeile angewandt.
 | Schritt `verschoben` | — | Index-Eintrag setzen, `eingetragen` |
 | weder `von` noch `nach` | — | anhalten, Seite aus der Sicherung anbieten |
 
-**Auflösung von `page_path` während Migration und Rückfall.** Solange ein Journal ohne Phase `fertig`
+**Fundortkarte.** Beim Start (vor dem ersten Lesen, auch ohne Journal) baut der Kern einmal eine Karte
+Seiten-ID → Fundorte aus zwei Quellen, unabhängig vom Index:
+- **Bestandsaufnahme:** ein Durchlauf über `library/*/fassungen/*` (Ordnername = Seiten-ID, nur gültige
+  IDs nach `checked_id`) und über `projects/*`;
+- **Buch-Metadaten:** jede `page_id` in `text` und `editions[].text` aller `buch.json` ergibt den
+  erwarteten Ort `library/<buch>/fassungen/<seite>`.
+Jede Verschiebung durch Migration, Rückfall, Import oder Löschen aktualisiert die Karte unter der
+Seitensperre. Die Karte ist ein Cache; Existenz wird bei jedem Aufruf auf der Platte geprüft.
+
+**Auflösung von `page_path`** (immer, mit und ohne Journal). Solange ein Journal ohne Phase `fertig`
 (bzw. ohne abgeschlossenen Rückfall) existiert, lädt `page_path` es einmal je Aufruf unter der
 Seitensperre, prüft **alle** verschiedenen Kandidaten auf Existenz und gibt erst danach zurück:
 1. den Ort laut Index-Eintrag (`buch` gesetzt → `library/<buch>/fassungen/<seite>`, sonst `projects/<seite>`);
+1a. alle Orte der Fundortkarte für diese Seiten-ID (Bestandsaufnahme und Buch-Metadaten), auch wenn
+   der Index-Eintrag `buch` leer ist;
 2. hat die Seite einen Journalschritt: dessen `nach` und dessen `von` (beide Richtungen, also auch im
    Rückfall, wo `nach` die Quelle und `von` das Ziel ist);
 3. `projects/<seite>`.
@@ -138,7 +149,9 @@ Existiert genau einer, wird er zurückgegeben. Existieren zwei oder mehr, liefer
 „Seite doppelt vorhanden“ mit allen Pfaden, statt einen zu wählen; die Reihenfolge oben dient nur der
 Meldung. Existiert keiner, „Seite nicht gefunden“. Damit ist das Fenster zwischen `rename` und
 Index-Schreiben (Index zeigt noch auf den alten Ort, Seite liegt schon am neuen) abgedeckt.
-Ohne Journal entfällt Schritt 2.
+Ohne Journal entfällt Schritt 2; Schritt 1a bleibt. Gleiche Pfade zählen einmal, verschiedene Pfade
+sind verschiedene Kandidaten. Damit wird auch ein aus der Sicherung zurückgesetzter Index mit leerem
+`buch` erkannt, wenn die Seite zusätzlich im Buch-Ordner liegt.
 
 Kein automatischer Gesamt-Rückfall: Bei einem Problem hält die Migration an (Zustand bleibt lesbar, siehe Tabelle). Rückfall auf Wunsch: dieselben Schritte rückwärts (`nach` → `von`, Index-Feld leeren),
 ebenfalls im Journal. Wiederholung und Rückfall überschreiben nie ein vorhandenes Ziel.
@@ -277,6 +290,10 @@ Jedes UI-Paket mit HTML-Vorschau (390/768/1440/2560, hell/dunkel) und Maß-Beleg
   mit Journalschritt `offen`, `verschoben` und ohne Journal: `page_path` meldet „Seite doppelt
   vorhanden“, der Wiederanlauf hält an, kein Ordner wird verschoben oder überschrieben, der Index bleibt
   unverändert.
+- Zurückgesicherter Index: `projects/index.json` aus der Sicherung (Feld `buch` leer), kein Journal,
+  Seite unter `projects/<seite>` und unter `library/<buch>/fassungen/<seite>`: `page_path` meldet
+  „Seite doppelt vorhanden“ mit beiden Pfaden, nichts wird verschoben, der Index bleibt unverändert.
+  Gegenprobe: dieselbe Lage, Seite nur im Buch-Ordner → wird über die Fundortkarte gefunden.
 - Migration an einer Kopie von Patricks Bestand: jedes Buch vollständig unter `library/<buch>/`;
   Fortschritt, Lesezeichen, Stimmen je Sprache, Hauptfassung, Ausrichtungen unverändert.
 - Abbruch an jedem Punkt der Tabelle 4.3 (Test je Zeile): App startet, alle Seiten auffindbar, zweiter
