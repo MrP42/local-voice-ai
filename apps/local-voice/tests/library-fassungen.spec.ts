@@ -779,6 +779,9 @@ test("Kurzbuch auf der Produktseite: Fortschritt mit Abschnitten und Abbrechen",
     run.getByRole("progressbar", { name: "Fortschritt des Kurzbuchs zu Effi Briest" }),
   ).toHaveAttribute("aria-valuenow", "25");
   await expect(card.getByTestId("kurzbuch-cancel")).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect((await card.getByTestId("kurzbuch-cancel").boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  await page.setViewportSize({ width: 1440, height: 900 });
   if (process.env.LV_SHOT_DIR)
     await page.screenshot({ path: shot("kurzbuch-fortschritt-1440.png") });
   await page.evaluate(() =>

@@ -1778,6 +1778,7 @@
     overflow-wrap: anywhere;
   }
   .library-kurzbuch__actions button,
+  .library-kurzbuch__lang button,
   .library-detail .library-bar button,
   .library-hero .library-actions button,
   .library-title-editor__hint,

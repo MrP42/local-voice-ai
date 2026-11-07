@@ -2710,10 +2710,17 @@ test("Transkription komplett fehlgeschlagen: „Erneut versuchen“ startet sie 
   await page.getByRole("button", { name: "„Der Prozess“: Details öffnen" }).click();
   const card = page.getByRole("region", { name: "Kurzbuch" });
   await expect(card).toContainText("Die Transkription ist fehlgeschlagen.");
-  await card.getByRole("button", { name: "Erneut versuchen" }).click();
+  const retry = card.getByRole("button", { name: "Erneut versuchen" });
+  await page.setViewportSize({ width: 390, height: 844 });
+  const box = (await retry.boundingBox())!;
+  expect(box.height).toBeGreaterThanOrEqual(44);
+  await retry.dblclick();
+  // Doppelklick startet nur einmal neu.
   await expect
     .poll(async () => (await calls(page, "meetings_import_audiobook_part")).length)
     .toBe(2);
+  await page.waitForTimeout(500);
+  expect(await calls(page, "meetings_import_audiobook_part")).toHaveLength(2);
 });
 
 test("Fortschritt: laufender Abschnitt zählt anteilig, Karte und Produktseite zeigen Prozent und Balken", async ({

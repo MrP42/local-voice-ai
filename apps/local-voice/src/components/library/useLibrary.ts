@@ -98,6 +98,8 @@ export function useLibrary() {
   const finishing = useRef(new Set<string>());
   /** Übernahmen, die gerade laufen (dürfen beim Wiederholen nicht freigegeben werden). */
   const inFlight = useRef(new Set<string>());
+  /** Freigabe-Timer gescheiterter Übernahmen; „Erneut versuchen“ entwertet sie. */
+  const releaseTimers = useRef(new Map<string, number>());
 
   /** Laufnummer: ein veraltetes Ergebnis überschreibt kein neueres. */
   const loadSeq = useRef(0);
@@ -399,8 +401,17 @@ export function useLibrary() {
         // Erfolgreich übernommene Jobs bleiben gesperrt; fehlgeschlagene
         // dürfen erst nach einer Pause erneut versucht werden.
         inFlight.current.delete(guard);
-        if (!done)
-          window.setTimeout(() => finishing.current.delete(guard), 60_000);
+        if (!done) {
+          const old = releaseTimers.current.get(guard);
+          if (old !== undefined) window.clearTimeout(old);
+          const timer = window.setTimeout(() => {
+            if (releaseTimers.current.get(guard) !== timer) return;
+            releaseTimers.current.delete(guard);
+            // Ein inzwischen neu gestarteter Versuch behält seine Sperre.
+            if (!inFlight.current.has(guard)) finishing.current.delete(guard);
+          }, 60_000);
+          releaseTimers.current.set(guard, timer);
+        }
       }
     },
     [reload, giveUp],
@@ -468,6 +479,11 @@ export function useLibrary() {
     async (bookId: string) => {
       failures.current.delete(bookId);
       restarted.current.delete(bookId);
+      for (const [guard, timer] of [...releaseTimers.current])
+        if (guard.startsWith(`${bookId}:`)) {
+          window.clearTimeout(timer);
+          releaseTimers.current.delete(guard);
+        }
       for (const guard of [...finishing.current])
         if (guard.startsWith(`${bookId}:`) && !inFlight.current.has(guard))
           finishing.current.delete(guard);
