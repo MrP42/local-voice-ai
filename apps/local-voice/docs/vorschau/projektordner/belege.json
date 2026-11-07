@@ -1,0 +1,1012 @@
+{
+ "01-buchordner-2560-hell": {
+  "scrollX": 0,
+  "unter44": [],
+  "kopf": [
+   {
+    "sel": ".ziel",
+    "label": "Ausgabeziel wählen",
+    "w": 250,
+    "h": 44
+   }
+  ],
+  "schalter": [],
+  "zurueck": [],
+  "pane": "rgb(255, 255, 255)",
+  "muted": "rgb(97, 97, 97)",
+  "kontrastGedaempft": 6.19
+ },
+ "01-buchordner-1440-hell": {
+  "scrollX": 0,
+  "unter44": [],
+  "kopf": [
+   {
+    "sel": ".ziel",
+    "label": "Ausgabeziel wählen",
+    "w": 250,
+    "h": 44
+   }
+  ],
+  "schalter": [],
+  "zurueck": [],
+  "pane": "rgb(255, 255, 255)",
+  "muted": "rgb(97, 97, 97)",
+  "kontrastGedaempft": 6.19
+ },
+ "01-buchordner-768-hell": {
+  "scrollX": 0,
+  "unter44": [],
+  "kopf": [
+   {
+    "sel": ".ziel",
+    "label": "Ausgabeziel wählen",
+    "w": 250,
+    "h": 44
+   }
+  ],
+  "schalter": [],
+  "zurueck": [],
+  "pane": "rgb(255, 255, 255)",
+  "muted": "rgb(97, 97, 97)",
+  "kontrastGedaempft": 6.19
+ },
+ "02-alle-1440-hell": {
+  "scrollX": 0,
+  "unter44": [],
+  "kopf": [
+   {
+    "sel": ".ziel",
+    "label": "Ausgabeziel wählen",
+    "w": 250,
+    "h": 44
+   }
+  ],
+  "schalter": [],
+  "zurueck": [],
+  "pane": "rgb(255, 255, 255)",
+  "muted": "rgb(97, 97, 97)",
+  "kontrastGedaempft": 6.19
+ },
+ "02-alle-768-hell": {
+  "scrollX": 0,
+  "unter44": [],
+  "kopf": [
+   {
+    "sel": ".ziel",
+    "label": "Ausgabeziel wählen",
+    "w": 250,
+    "h": 44
+   }
+  ],
+  "schalter": [],
+  "zurueck": [],
+  "pane": "rgb(255, 255, 255)",
+  "muted": "rgb(97, 97, 97)",
+  "kontrastGedaempft": 6.19
+ },
+ "03-projekt-2560-hell": {
+  "scrollX": 0,
+  "unter44": [],
+  "kopf": [
+   {
+    "sel": ".ziel",
+    "label": "Ausgabeziel wählen",
+    "w": 250,
+    "h": 44
+   }
+  ],
+  "schalter": [
+   {
+    "sel": ".swcell",
+    "label": "Als Kontext",
+    "w": 96,
+    "h": 44
+   },
+   {
+    "sel": ".swcell",
+    "label": "Als Kontext",
+    "w": 70,
+    "h": 44
+   },
+   {
+    "sel": ".swcell",
+    "label": "Als Kontext",
+    "w": 96,
+    "h": 44
+   }
+  ],
+  "zurueck": [],
+  "pane": "rgb(255, 255, 255)",
+  "muted": "rgb(97, 97, 97)",
+  "kontrastGedaempft": 6.19
+ },
+ "03-projekt-1440-hell": {
+  "scrollX": 0,
+  "unter44": [],
+  "kopf": [
+   {
+    "sel": ".ziel",
+    "label": "Ausgabeziel wählen",
+    "w": 250,
+    "h": 44
+   }
+  ],
+  "schalter": [
+   {
+    "sel": ".swcell",
+    "label": "Als Kontext",
+    "w": 148,
+    "h": 44
+   },
+   {
+    "sel": ".swcell",
+    "label": "Als Kontext",
+    "w": 70,
+    "h": 44
+   },
+   {
+    "sel": ".swcell",
+    "label": "Als Kontext",
+    "w": 148,
+    "h": 44
+   }
+  ],
+  "zurueck": [],
+  "pane": "rgb(255, 255, 255)",
+  "muted": "rgb(97, 97, 97)",
+  "kontrastGedaempft": 6.19
+ },
+ "03-projekt-768-hell": {
+  "scrollX": 0,
+  "unter44": [],
+  "kopf": [
+   {
+    "sel": ".ziel",
+    "label": "Ausgabeziel wählen",
+    "w": 250,
+    "h": 44
+   }
+  ],
+  "schalter": [
+   {
+    "sel": ".swcell",
+    "label": "Als Kontext",
+    "w": 148,
+    "h": 44
+   },
+   {
+    "sel": ".swcell",
+    "label": "Als Kontext",
+    "w": 70,
+    "h": 44
+   },
+   {
+    "sel": ".swcell",
+    "label": "Als Kontext",
+    "w": 148,
+    "h": 44
+   }
+  ],
+  "zurueck": [],
+  "pane": "rgb(255, 255, 255)",
+  "muted": "rgb(97, 97, 97)",
+  "kontrastGedaempft": 6.19
+ },
+ "04-ablage-1440-hell": {
+  "scrollX": 0,
+  "unter44": [],
+  "kopf": [
+   {
+    "sel": ".ziel",
+    "label": "Ausgabeziel wählen",
+    "w": 250,
+    "h": 44
+   }
+  ],
+  "schalter": [],
+  "zurueck": [],
+  "pane": "rgb(255, 255, 255)",
+  "muted": "rgb(97, 97, 97)",
+  "kontrastGedaempft": 6.19
+ },
+ "05-migration-1440-hell": {
+  "scrollX": 0,
+  "unter44": [],
+  "kopf": [
+   {
+    "sel": ".ziel",
+    "label": "Ausgabeziel wählen",
+    "w": 250,
+    "h": 44
+   }
+  ],
+  "schalter": [],
+  "zurueck": [],
+  "pane": "rgb(255, 255, 255)",
+  "muted": "rgb(97, 97, 97)",
+  "kontrastGedaempft": 6.19
+ },
+ "06-leer-1440-hell": {
+  "scrollX": 0,
+  "unter44": [],
+  "kopf": [
+   {
+    "sel": ".ziel",
+    "label": "Ausgabeziel wählen",
+    "w": 250,
+    "h": 44
+   }
+  ],
+  "schalter": [],
+  "zurueck": [],
+  "pane": "rgb(255, 255, 255)",
+  "muted": "rgb(97, 97, 97)",
+  "kontrastGedaempft": 6.19
+ },
+ "06-projektleer-1440-hell": {
+  "scrollX": 0,
+  "unter44": [],
+  "kopf": [
+   {
+    "sel": ".ziel",
+    "label": "Ausgabeziel wählen",
+    "w": 250,
+    "h": 44
+   }
+  ],
+  "schalter": [],
+  "zurueck": [],
+  "pane": "rgb(255, 255, 255)",
+  "muted": "rgb(97, 97, 97)",
+  "kontrastGedaempft": 6.19
+ },
+ "06-fehlt-1440-hell": {
+  "scrollX": 0,
+  "unter44": [],
+  "kopf": [
+   {
+    "sel": ".ziel",
+    "label": "Ausgabeziel wählen",
+    "w": 250,
+    "h": 44
+   }
+  ],
+  "schalter": [],
+  "zurueck": [],
+  "pane": "rgb(255, 255, 255)",
+  "muted": "rgb(97, 97, 97)",
+  "kontrastGedaempft": 6.19
+ },
+ "06-ohneziel-1440-hell": {
+  "scrollX": 0,
+  "unter44": [],
+  "kopf": [
+   {
+    "sel": ".ziel",
+    "label": "Ausgabeziel wählen",
+    "w": 191,
+    "h": 44
+   }
+  ],
+  "schalter": [],
+  "zurueck": [],
+  "pane": "rgb(255, 255, 255)",
+  "muted": "rgb(97, 97, 97)",
+  "kontrastGedaempft": 6.19
+ },
+ "06-migfehler-1440-hell": {
+  "scrollX": 0,
+  "unter44": [],
+  "kopf": [
+   {
+    "sel": ".ziel",
+    "label": "Ausgabeziel wählen",
+    "w": 250,
+    "h": 44
+   }
+  ],
+  "schalter": [],
+  "zurueck": [],
+  "pane": "rgb(255, 255, 255)",
+  "muted": "rgb(97, 97, 97)",
+  "kontrastGedaempft": 6.19
+ },
+ "01-buchordner-ordner-390-hell": {
+  "scrollX": 0,
+  "unter44": [],
+  "kopf": [
+   {
+    "sel": ".ziel",
+    "label": "Ausgabeziel wählen",
+    "w": 161,
+    "h": 44
+   }
+  ],
+  "schalter": [],
+  "zurueck": [],
+  "pane": "rgb(255, 255, 255)",
+  "muted": "rgb(97, 97, 97)",
+  "kontrastGedaempft": 6.19
+ },
+ "01-buchordner-liste-390-hell": {
+  "scrollX": 0,
+  "unter44": [],
+  "kopf": [
+   {
+    "sel": ".ziel",
+    "label": "Ausgabeziel wählen",
+    "w": 161,
+    "h": 44
+   }
+  ],
+  "schalter": [],
+  "zurueck": [
+   {
+    "sel": ".back .ib,.back-r",
+    "label": "Zurück zu den Ordnern",
+    "w": 44,
+    "h": 44
+   }
+  ],
+  "pane": "rgb(255, 255, 255)",
+  "muted": "rgb(97, 97, 97)",
+  "kontrastGedaempft": 6.19
+ },
+ "01-buchordner-reader-390-hell": {
+  "scrollX": 0,
+  "unter44": [],
+  "kopf": [
+   {
+    "sel": ".ziel",
+    "label": "Ausgabeziel wählen",
+    "w": 161,
+    "h": 44
+   }
+  ],
+  "schalter": [],
+  "zurueck": [
+   {
+    "sel": ".back .ib,.back-r",
+    "label": "Zurück zur Liste",
+    "w": 44,
+    "h": 44
+   }
+  ],
+  "pane": "rgb(255, 255, 255)",
+  "muted": "rgb(97, 97, 97)",
+  "kontrastGedaempft": 6.19
+ },
+ "02-alle-reader-390-hell": {
+  "scrollX": 0,
+  "unter44": [],
+  "kopf": [
+   {
+    "sel": ".ziel",
+    "label": "Ausgabeziel wählen",
+    "w": 161,
+    "h": 44
+   }
+  ],
+  "schalter": [],
+  "zurueck": [
+   {
+    "sel": ".back .ib,.back-r",
+    "label": "Zurück zur Liste",
+    "w": 44,
+    "h": 44
+   }
+  ],
+  "pane": "rgb(255, 255, 255)",
+  "muted": "rgb(97, 97, 97)",
+  "kontrastGedaempft": 6.19
+ },
+ "03-projekt-390-hell": {
+  "scrollX": 0,
+  "unter44": [],
+  "kopf": [
+   {
+    "sel": ".ziel",
+    "label": "Ausgabeziel wählen",
+    "w": 161,
+    "h": 44
+   }
+  ],
+  "schalter": [
+   {
+    "sel": ".swcell",
+    "label": "Als Kontext",
+    "w": 131,
+    "h": 44
+   },
+   {
+    "sel": ".swcell",
+    "label": "Als Kontext",
+    "w": 70,
+    "h": 44
+   },
+   {
+    "sel": ".swcell",
+    "label": "Als Kontext",
+    "w": 131,
+    "h": 44
+   }
+  ],
+  "zurueck": [],
+  "pane": "rgb(255, 255, 255)",
+  "muted": "rgb(97, 97, 97)",
+  "kontrastGedaempft": 6.19
+ },
+ "05-migration-390-hell": {
+  "scrollX": 0,
+  "unter44": [],
+  "kopf": [
+   {
+    "sel": ".ziel",
+    "label": "Ausgabeziel wählen",
+    "w": 161,
+    "h": 44
+   }
+  ],
+  "schalter": [],
+  "zurueck": [],
+  "pane": "rgb(255, 255, 255)",
+  "muted": "rgb(97, 97, 97)",
+  "kontrastGedaempft": 6.19
+ },
+ "06-leer-390-hell": {
+  "scrollX": 0,
+  "unter44": [],
+  "kopf": [
+   {
+    "sel": ".ziel",
+    "label": "Ausgabeziel wählen",
+    "w": 161,
+    "h": 44
+   }
+  ],
+  "schalter": [],
+  "zurueck": [],
+  "pane": "rgb(255, 255, 255)",
+  "muted": "rgb(97, 97, 97)",
+  "kontrastGedaempft": 6.19
+ },
+ "06-ohneziel-390-hell": {
+  "scrollX": 0,
+  "unter44": [],
+  "kopf": [
+   {
+    "sel": ".ziel",
+    "label": "Ausgabeziel wählen",
+    "w": 101,
+    "h": 44
+   }
+  ],
+  "schalter": [],
+  "zurueck": [],
+  "pane": "rgb(255, 255, 255)",
+  "muted": "rgb(97, 97, 97)",
+  "kontrastGedaempft": 6.19
+ },
+ "06-migfehler-390-hell": {
+  "scrollX": 0,
+  "unter44": [],
+  "kopf": [
+   {
+    "sel": ".ziel",
+    "label": "Ausgabeziel wählen",
+    "w": 161,
+    "h": 44
+   }
+  ],
+  "schalter": [],
+  "zurueck": [],
+  "pane": "rgb(255, 255, 255)",
+  "muted": "rgb(97, 97, 97)",
+  "kontrastGedaempft": 6.19
+ },
+ "01-buchordner-2560-dunkel": {
+  "scrollX": 0,
+  "unter44": [],
+  "kopf": [
+   {
+    "sel": ".ziel",
+    "label": "Ausgabeziel wählen",
+    "w": 250,
+    "h": 44
+   }
+  ],
+  "schalter": [],
+  "zurueck": [],
+  "pane": "rgb(41, 41, 41)",
+  "muted": "rgb(199, 199, 199)",
+  "kontrastGedaempft": 8.61
+ },
+ "01-buchordner-1440-dunkel": {
+  "scrollX": 0,
+  "unter44": [],
+  "kopf": [
+   {
+    "sel": ".ziel",
+    "label": "Ausgabeziel wählen",
+    "w": 250,
+    "h": 44
+   }
+  ],
+  "schalter": [],
+  "zurueck": [],
+  "pane": "rgb(41, 41, 41)",
+  "muted": "rgb(199, 199, 199)",
+  "kontrastGedaempft": 8.61
+ },
+ "01-buchordner-768-dunkel": {
+  "scrollX": 0,
+  "unter44": [],
+  "kopf": [
+   {
+    "sel": ".ziel",
+    "label": "Ausgabeziel wählen",
+    "w": 250,
+    "h": 44
+   }
+  ],
+  "schalter": [],
+  "zurueck": [],
+  "pane": "rgb(41, 41, 41)",
+  "muted": "rgb(199, 199, 199)",
+  "kontrastGedaempft": 8.61
+ },
+ "02-alle-1440-dunkel": {
+  "scrollX": 0,
+  "unter44": [],
+  "kopf": [
+   {
+    "sel": ".ziel",
+    "label": "Ausgabeziel wählen",
+    "w": 250,
+    "h": 44
+   }
+  ],
+  "schalter": [],
+  "zurueck": [],
+  "pane": "rgb(41, 41, 41)",
+  "muted": "rgb(199, 199, 199)",
+  "kontrastGedaempft": 8.61
+ },
+ "02-alle-768-dunkel": {
+  "scrollX": 0,
+  "unter44": [],
+  "kopf": [
+   {
+    "sel": ".ziel",
+    "label": "Ausgabeziel wählen",
+    "w": 250,
+    "h": 44
+   }
+  ],
+  "schalter": [],
+  "zurueck": [],
+  "pane": "rgb(41, 41, 41)",
+  "muted": "rgb(199, 199, 199)",
+  "kontrastGedaempft": 8.61
+ },
+ "03-projekt-2560-dunkel": {
+  "scrollX": 0,
+  "unter44": [],
+  "kopf": [
+   {
+    "sel": ".ziel",
+    "label": "Ausgabeziel wählen",
+    "w": 250,
+    "h": 44
+   }
+  ],
+  "schalter": [
+   {
+    "sel": ".swcell",
+    "label": "Als Kontext",
+    "w": 96,
+    "h": 44
+   },
+   {
+    "sel": ".swcell",
+    "label": "Als Kontext",
+    "w": 70,
+    "h": 44
+   },
+   {
+    "sel": ".swcell",
+    "label": "Als Kontext",
+    "w": 96,
+    "h": 44
+   }
+  ],
+  "zurueck": [],
+  "pane": "rgb(41, 41, 41)",
+  "muted": "rgb(199, 199, 199)",
+  "kontrastGedaempft": 8.61
+ },
+ "03-projekt-1440-dunkel": {
+  "scrollX": 0,
+  "unter44": [],
+  "kopf": [
+   {
+    "sel": ".ziel",
+    "label": "Ausgabeziel wählen",
+    "w": 250,
+    "h": 44
+   }
+  ],
+  "schalter": [
+   {
+    "sel": ".swcell",
+    "label": "Als Kontext",
+    "w": 148,
+    "h": 44
+   },
+   {
+    "sel": ".swcell",
+    "label": "Als Kontext",
+    "w": 70,
+    "h": 44
+   },
+   {
+    "sel": ".swcell",
+    "label": "Als Kontext",
+    "w": 148,
+    "h": 44
+   }
+  ],
+  "zurueck": [],
+  "pane": "rgb(41, 41, 41)",
+  "muted": "rgb(199, 199, 199)",
+  "kontrastGedaempft": 8.61
+ },
+ "03-projekt-768-dunkel": {
+  "scrollX": 0,
+  "unter44": [],
+  "kopf": [
+   {
+    "sel": ".ziel",
+    "label": "Ausgabeziel wählen",
+    "w": 250,
+    "h": 44
+   }
+  ],
+  "schalter": [
+   {
+    "sel": ".swcell",
+    "label": "Als Kontext",
+    "w": 148,
+    "h": 44
+   },
+   {
+    "sel": ".swcell",
+    "label": "Als Kontext",
+    "w": 70,
+    "h": 44
+   },
+   {
+    "sel": ".swcell",
+    "label": "Als Kontext",
+    "w": 148,
+    "h": 44
+   }
+  ],
+  "zurueck": [],
+  "pane": "rgb(41, 41, 41)",
+  "muted": "rgb(199, 199, 199)",
+  "kontrastGedaempft": 8.61
+ },
+ "04-ablage-1440-dunkel": {
+  "scrollX": 0,
+  "unter44": [],
+  "kopf": [
+   {
+    "sel": ".ziel",
+    "label": "Ausgabeziel wählen",
+    "w": 250,
+    "h": 44
+   }
+  ],
+  "schalter": [],
+  "zurueck": [],
+  "pane": "rgb(41, 41, 41)",
+  "muted": "rgb(199, 199, 199)",
+  "kontrastGedaempft": 8.61
+ },
+ "05-migration-1440-dunkel": {
+  "scrollX": 0,
+  "unter44": [],
+  "kopf": [
+   {
+    "sel": ".ziel",
+    "label": "Ausgabeziel wählen",
+    "w": 250,
+    "h": 44
+   }
+  ],
+  "schalter": [],
+  "zurueck": [],
+  "pane": "rgb(41, 41, 41)",
+  "muted": "rgb(199, 199, 199)",
+  "kontrastGedaempft": 8.61
+ },
+ "06-leer-1440-dunkel": {
+  "scrollX": 0,
+  "unter44": [],
+  "kopf": [
+   {
+    "sel": ".ziel",
+    "label": "Ausgabeziel wählen",
+    "w": 250,
+    "h": 44
+   }
+  ],
+  "schalter": [],
+  "zurueck": [],
+  "pane": "rgb(41, 41, 41)",
+  "muted": "rgb(199, 199, 199)",
+  "kontrastGedaempft": 8.61
+ },
+ "06-projektleer-1440-dunkel": {
+  "scrollX": 0,
+  "unter44": [],
+  "kopf": [
+   {
+    "sel": ".ziel",
+    "label": "Ausgabeziel wählen",
+    "w": 250,
+    "h": 44
+   }
+  ],
+  "schalter": [],
+  "zurueck": [],
+  "pane": "rgb(41, 41, 41)",
+  "muted": "rgb(199, 199, 199)",
+  "kontrastGedaempft": 8.61
+ },
+ "06-fehlt-1440-dunkel": {
+  "scrollX": 0,
+  "unter44": [],
+  "kopf": [
+   {
+    "sel": ".ziel",
+    "label": "Ausgabeziel wählen",
+    "w": 250,
+    "h": 44
+   }
+  ],
+  "schalter": [],
+  "zurueck": [],
+  "pane": "rgb(41, 41, 41)",
+  "muted": "rgb(199, 199, 199)",
+  "kontrastGedaempft": 8.61
+ },
+ "06-ohneziel-1440-dunkel": {
+  "scrollX": 0,
+  "unter44": [],
+  "kopf": [
+   {
+    "sel": ".ziel",
+    "label": "Ausgabeziel wählen",
+    "w": 191,
+    "h": 44
+   }
+  ],
+  "schalter": [],
+  "zurueck": [],
+  "pane": "rgb(41, 41, 41)",
+  "muted": "rgb(199, 199, 199)",
+  "kontrastGedaempft": 8.61
+ },
+ "06-migfehler-1440-dunkel": {
+  "scrollX": 0,
+  "unter44": [],
+  "kopf": [
+   {
+    "sel": ".ziel",
+    "label": "Ausgabeziel wählen",
+    "w": 250,
+    "h": 44
+   }
+  ],
+  "schalter": [],
+  "zurueck": [],
+  "pane": "rgb(41, 41, 41)",
+  "muted": "rgb(199, 199, 199)",
+  "kontrastGedaempft": 8.61
+ },
+ "01-buchordner-ordner-390-dunkel": {
+  "scrollX": 0,
+  "unter44": [],
+  "kopf": [
+   {
+    "sel": ".ziel",
+    "label": "Ausgabeziel wählen",
+    "w": 161,
+    "h": 44
+   }
+  ],
+  "schalter": [],
+  "zurueck": [],
+  "pane": "rgb(41, 41, 41)",
+  "muted": "rgb(199, 199, 199)",
+  "kontrastGedaempft": 8.61
+ },
+ "01-buchordner-liste-390-dunkel": {
+  "scrollX": 0,
+  "unter44": [],
+  "kopf": [
+   {
+    "sel": ".ziel",
+    "label": "Ausgabeziel wählen",
+    "w": 161,
+    "h": 44
+   }
+  ],
+  "schalter": [],
+  "zurueck": [
+   {
+    "sel": ".back .ib,.back-r",
+    "label": "Zurück zu den Ordnern",
+    "w": 44,
+    "h": 44
+   }
+  ],
+  "pane": "rgb(41, 41, 41)",
+  "muted": "rgb(199, 199, 199)",
+  "kontrastGedaempft": 8.61
+ },
+ "01-buchordner-reader-390-dunkel": {
+  "scrollX": 0,
+  "unter44": [],
+  "kopf": [
+   {
+    "sel": ".ziel",
+    "label": "Ausgabeziel wählen",
+    "w": 161,
+    "h": 44
+   }
+  ],
+  "schalter": [],
+  "zurueck": [
+   {
+    "sel": ".back .ib,.back-r",
+    "label": "Zurück zur Liste",
+    "w": 44,
+    "h": 44
+   }
+  ],
+  "pane": "rgb(41, 41, 41)",
+  "muted": "rgb(199, 199, 199)",
+  "kontrastGedaempft": 8.61
+ },
+ "02-alle-reader-390-dunkel": {
+  "scrollX": 0,
+  "unter44": [],
+  "kopf": [
+   {
+    "sel": ".ziel",
+    "label": "Ausgabeziel wählen",
+    "w": 161,
+    "h": 44
+   }
+  ],
+  "schalter": [],
+  "zurueck": [
+   {
+    "sel": ".back .ib,.back-r",
+    "label": "Zurück zur Liste",
+    "w": 44,
+    "h": 44
+   }
+  ],
+  "pane": "rgb(41, 41, 41)",
+  "muted": "rgb(199, 199, 199)",
+  "kontrastGedaempft": 8.61
+ },
+ "03-projekt-390-dunkel": {
+  "scrollX": 0,
+  "unter44": [],
+  "kopf": [
+   {
+    "sel": ".ziel",
+    "label": "Ausgabeziel wählen",
+    "w": 161,
+    "h": 44
+   }
+  ],
+  "schalter": [
+   {
+    "sel": ".swcell",
+    "label": "Als Kontext",
+    "w": 131,
+    "h": 44
+   },
+   {
+    "sel": ".swcell",
+    "label": "Als Kontext",
+    "w": 70,
+    "h": 44
+   },
+   {
+    "sel": ".swcell",
+    "label": "Als Kontext",
+    "w": 131,
+    "h": 44
+   }
+  ],
+  "zurueck": [],
+  "pane": "rgb(41, 41, 41)",
+  "muted": "rgb(199, 199, 199)",
+  "kontrastGedaempft": 8.61
+ },
+ "05-migration-390-dunkel": {
+  "scrollX": 0,
+  "unter44": [],
+  "kopf": [
+   {
+    "sel": ".ziel",
+    "label": "Ausgabeziel wählen",
+    "w": 161,
+    "h": 44
+   }
+  ],
+  "schalter": [],
+  "zurueck": [],
+  "pane": "rgb(41, 41, 41)",
+  "muted": "rgb(199, 199, 199)",
+  "kontrastGedaempft": 8.61
+ },
+ "06-leer-390-dunkel": {
+  "scrollX": 0,
+  "unter44": [],
+  "kopf": [
+   {
+    "sel": ".ziel",
+    "label": "Ausgabeziel wählen",
+    "w": 161,
+    "h": 44
+   }
+  ],
+  "schalter": [],
+  "zurueck": [],
+  "pane": "rgb(41, 41, 41)",
+  "muted": "rgb(199, 199, 199)",
+  "kontrastGedaempft": 8.61
+ },
+ "06-ohneziel-390-dunkel": {
+  "scrollX": 0,
+  "unter44": [],
+  "kopf": [
+   {
+    "sel": ".ziel",
+    "label": "Ausgabeziel wählen",
+    "w": 101,
+    "h": 44
+   }
+  ],
+  "schalter": [],
+  "zurueck": [],
+  "pane": "rgb(41, 41, 41)",
+  "muted": "rgb(199, 199, 199)",
+  "kontrastGedaempft": 8.61
+ },
+ "06-migfehler-390-dunkel": {
+  "scrollX": 0,
+  "unter44": [],
+  "kopf": [
+   {
+    "sel": ".ziel",
+    "label": "Ausgabeziel wählen",
+    "w": 161,
+    "h": 44
+   }
+  ],
+  "schalter": [],
+  "zurueck": [],
+  "pane": "rgb(41, 41, 41)",
+  "muted": "rgb(199, 199, 199)",
+  "kontrastGedaempft": 8.61
+ }
+}

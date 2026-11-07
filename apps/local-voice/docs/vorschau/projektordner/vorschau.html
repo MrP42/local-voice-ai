@@ -20,7 +20,7 @@ svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.6;stroke
 .app{display:grid;grid-template-rows:44px 1fr 32px;height:100%}
 .top{display:flex;align-items:center;gap:12px;padding:0 12px;border-bottom:1px solid var(--line);background:var(--pane)}
 .top b{font-weight:600}
-.top .ziel{margin-left:auto;display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);border:1px solid var(--line);border-radius:6px;padding:4px 10px;min-height:32px}
+.top .ziel{margin-left:auto;display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);border:1px solid var(--line);border-radius:6px;padding:4px 10px;min-height:44px;background:none;font:inherit;cursor:pointer}
 .top .ziel strong{color:var(--text);font-weight:600}
 .main{display:grid;grid-template-columns:56px 1fr;min-height:0}
 .nav{display:flex;flex-direction:column;gap:4px;padding:8px;border-right:1px solid var(--line);background:var(--pane)}
@@ -31,7 +31,7 @@ svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.6;stroke
 .col{background:var(--pane);border:1px solid var(--line);border-radius:8px;min-height:0;overflow:auto;display:flex;flex-direction:column}
 .colhead{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line);font-weight:600;min-height:48px}
 .colhead .sp{margin-left:auto;display:flex;gap:2px}
-.ib{display:grid;place-items:center;width:44px;height:44px;border-radius:6px;color:var(--muted);border:0;background:none}
+.ib{flex:none;display:grid;place-items:center;width:44px;height:44px;border-radius:6px;color:var(--muted);border:0;background:none}
 .grp{padding:12px 12px 4px;font-size:12px;font-weight:600;color:var(--muted);display:flex;align-items:center;gap:6px}
 .row{display:flex;align-items:center;gap:10px;padding:0 12px;min-height:44px;color:var(--text);border-radius:6px;margin:0 6px}
 .row.on{background:var(--sel)}
@@ -49,7 +49,7 @@ svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.6;stroke
 .cover{width:64px;height:88px;border-radius:3px;background:linear-gradient(160deg,#7b3fa0,#3b1a52);flex:none;display:grid;place-items:center;color:#ffd84d;font-weight:800;font-size:11px;text-align:center;line-height:1.1}
 .folderhead h2{font-size:15px;margin:0 0 2px;line-height:1.3}
 .folderhead p{margin:0;color:var(--muted);font-size:12px}
-.btn{display:inline-flex;align-items:center;gap:6px;min-height:36px;padding:0 12px;border-radius:6px;border:1px solid var(--line);background:var(--pane);color:var(--text);font:inherit;font-weight:600}
+.btn{display:inline-flex;align-items:center;gap:6px;min-height:44px;padding:0 12px;border-radius:6px;border:1px solid var(--line);background:var(--pane);color:var(--text);font:inherit;font-weight:600}
 .btn.pri{background:var(--accent);border-color:var(--accent);color:#fff}
 .btn svg{width:16px;height:16px}
 .it{display:flex;align-items:center;gap:10px;padding:6px 12px;min-height:52px;margin:0 6px;border-radius:6px}
@@ -69,7 +69,7 @@ svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.6;stroke
 .tabs{display:flex;gap:4px;padding:0 8px;border-bottom:1px solid var(--line)}
 .tabs span{padding:12px 10px;min-height:44px;color:var(--muted)}
 .tabs span.on{color:var(--text);font-weight:600;box-shadow:inset 0 -2px 0 var(--accent)}
-.toc .row{min-height:40px;font-size:13px}
+.toc .row{min-height:44px;font-size:13px}
 .note{font-size:12px;color:var(--muted);padding:8px 12px}
 /* Projektseite */
 .proj{grid-template-columns:232px minmax(0,1fr) 340px}
@@ -83,7 +83,7 @@ svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.6;stroke
 .sw{width:40px;height:20px;border-radius:10px;background:var(--line);position:relative;display:inline-block;vertical-align:middle}
 .sw::after{content:"";position:absolute;top:3px;left:3px;width:14px;height:14px;border-radius:50%;background:var(--muted)}
 .sw.on{background:var(--accent)}.sw.on::after{left:23px;background:#fff}
-.swcell{display:flex;align-items:center;gap:8px;min-height:44px}
+.swcell{display:flex;align-items:center;gap:8px;min-height:44px;border:0;background:none;color:inherit;font:inherit;padding:0 4px;min-width:44px;cursor:pointer}
 .ctx{padding:12px 16px}
 .meter{height:8px;border-radius:4px;background:var(--line);overflow:hidden;margin:8px 0 4px}
 .meter i{display:block;height:100%;background:var(--accent)}
@@ -103,14 +103,15 @@ svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.6;stroke
 .dlg .acts{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}
 .back{display:none;align-items:center;gap:4px;padding:2px 6px;border-bottom:1px solid var(--line);font-weight:600}
 .back-r{display:none}
+.work.zust{grid-template-columns:232px minmax(0,1fr)}
 .hidden{display:none!important}
 /* Breiten */
 @media (max-width:1439px){.work{grid-template-columns:200px 280px minmax(380px,1fr)}.work .rc{display:none}.proj{grid-template-columns:200px minmax(0,1fr) 300px}}
 @media (min-width:2200px){.work{grid-template-columns:260px 360px minmax(380px,1fr) 400px}}
-@media (max-width:999px){.work{grid-template-columns:56px 260px minmax(0,1fr)}.work .fl .lbl{display:none}.proj{grid-template-columns:56px minmax(0,1fr)}.proj .rc2{display:none}}
+@media (max-width:999px){.work{grid-template-columns:64px 260px minmax(0,1fr)}.work .fl .lbl{display:none}.work .fl .row{padding:0;justify-content:center;margin:0 6px}.work .fl .colhead .sp{display:none}.proj{grid-template-columns:64px minmax(0,1fr)}.proj .rc2{display:none}}
 @media (max-width:620px){
   .main{grid-template-columns:1fr}.nav{display:none}
-  .work,.proj{grid-template-columns:1fr;padding:8px}
+  .work,.proj,.work.zust{grid-template-columns:1fr;padding:8px}
   .work .fl .lbl{display:inline}
   body:not([data-ebene="ordner"]) .fl{display:none}
   body:not([data-ebene="liste"]) .ls{display:none}
@@ -128,11 +129,11 @@ svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.6;stroke
   <div class="top">
     <svg viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
     <b>Local Voice AI</b>
-    <div class="ziel" title="Neue Ausgaben werden in diesem Projekt gespeichert">
+    <button class="ziel" id="ziel" title="Neue Ausgaben werden in diesem Projekt gespeichert" aria-label="Ausgabeziel wählen">
       <svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
       <span class="lang">Speichert in:</span> <strong>Finanzwissen</strong>
       <svg viewBox="0 0 24 24" style="width:14px;height:14px"><path d="m6 9 6 6 6-6"/></svg>
-    </div>
+    </button>
   </div>
   <div class="main">
     <nav class="nav" aria-label="Bereiche">
@@ -183,8 +184,8 @@ svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.6;stroke
           <div class="grp">Hörbuch</div>
           <div class="it"><span class="ico"><svg viewBox="0 0 24 24"><path d="M3 14v-2a9 9 0 0 1 18 0v2"/><rect x="3" y="14" width="4" height="6" rx="1"/><rect x="17" y="14" width="4" height="6" rx="1"/></svg></span><div class="tx"><b>Hörbuch Deutsch</b><span>35 Teile · 8 h 42 min</span></div><span class="chip ok">Transkript</span></div>
           <div class="grp">KI-Dokumente</div>
-          <div class="it on"><span class="ico"><svg viewBox="0 0 24 24"><path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8z"/><path d="M19 15l.8 1.7 1.7.8-1.7.8L19 20l-.8-1.7-1.7-.8 1.7-.8z"/></svg></span><div class="tx"><b>Kurzbuch – Buch</b><span>Deutsch · 11 Kernaussagen · 13 Min.</span></div></div>
-          <div class="it"><span class="ico"><svg viewBox="0 0 24 24"><path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8z"/></svg></span><div class="tx"><b>Begriffe</b><span>Deutsch · 42 Einträge</span></div></div>
+          <div class="it on"><span class="ico"><svg viewBox="0 0 24 24"><path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8z"/><path d="M19 15l.8 1.7 1.7.8-1.7.8L19 20l-.8-1.7-1.7-.8 1.7-.8z"/></svg></span><div class="tx"><b>Kurzbuch – Buch</b><span>Fassung Deutsch (Haupt) · 11 Kernaussagen</span></div></div>
+          <div class="it"><span class="ico"><svg viewBox="0 0 24 24"><path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8z"/></svg></span><div class="tx"><b>Begriffe</b><span>Fassung English · 42 Einträge</span></div></div>
           <div class="grp">Notizen und Anhänge</div>
           <div class="it"><span class="ico"><svg viewBox="0 0 24 24"><path d="M5 4h14v16H5zM9 8h6M9 12h6M9 16h4"/></svg></span><div class="tx"><b>Meine Notizen</b><span>3 Notizen</span></div></div>
           <div class="it"><span class="ico"><svg viewBox="0 0 24 24"><path d="m21 11-8.5 8.5a5 5 0 0 1-7-7L14 4a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-3-3L15 7"/></svg></span><div class="tx"><b>Cashflow-Tabelle.xlsx</b><span>Anhang · 24 KB</span></div></div>
@@ -206,16 +207,16 @@ svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.6;stroke
 
       <div class="col rd" aria-label="Reader">
         <div class="crumb"><button class="ib back-r" aria-label="Zurück zur Liste"><svg viewBox="0 0 24 24"><path d="M19 12H5M11 6l-6 6 6 6"/></svg></button><span>Rich Dad Poor Dad</span><span>›</span><b>Kurzbuch – Buch</b><span style="margin-left:auto" class="chip">Deutsch</span></div>
-        <div class="reader">
+        <div class="reader" id="reader">
           <h1>Zwei Väter: Gegensätzliche Geldansichten bringen Kiyosaki dazu, selbstständig zu entscheiden.</h1>
           Was prägt eigentlich Ihre Vorstellungen von Geld? Für Kiyosaki beginnt diese Frage zu Hause. Er wächst mit zwei Vätern auf, die hart arbeiten und beträchtlich verdienen, aber ganz unterschiedlich über Geld denken.
         </div>
-        <div class="player"><span>1:38</span><span class="play"><svg viewBox="0 0 24 24"><path d="M7 5v14l11-7z" fill="currentColor"/></svg></span><span style="color:var(--muted)">Kernaussage 1 · Satz 15 von 184</span></div>
+        <div class="player"><span>1:38</span><span class="play"><svg viewBox="0 0 24 24"><path d="M7 5v14l11-7z" fill="currentColor"/></svg></span><span style="color:var(--muted)" id="pos">Kernaussage 1 · Satz 15 von 184</span></div>
       </div>
 
       <div class="col rc" aria-label="Kapitel, Notizen, Chat">
         <div class="tabs"><span class="on">Inhalt</span><span>Notizen</span><span>Chat</span></div>
-        <div class="toc">
+        <div class="toc" id="toc">
           <div class="row"><span class="nm">Worum es geht</span><span class="ct">1</span></div>
           <div class="row"><span class="nm">Für wen</span><span class="ct">2</span></div>
           <div class="row on"><span class="nm">Zwei Väter</span><span class="ct">3</span></div>
@@ -247,16 +248,16 @@ svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.6;stroke
           <thead><tr><th>Eintrag</th><th class="hide-s">Art</th><th>Als Kontext</th></tr></thead>
           <tbody>
             <tr class="gh"><td colspan="3">Bücher</td></tr>
-            <tr><td><b>Rich Dad Poor Dad</b><br><span class="chip">als Kurzbuch</span></td><td class="hide-s">Buch-Ordner</td><td><div class="swcell"><span class="sw on" role="switch" aria-checked="true"></span>~9 000 Token</div></td></tr>
-            <tr><td><b>Der Einfache Weg zum Reichtum</b><br><span class="chip warn">kein Text</span></td><td class="hide-s">Buch-Ordner</td><td><div class="swcell"><span class="sw"></span>—</div></td></tr>
+            <tr><td><b>Rich Dad Poor Dad</b><br><span class="chip">als Kurzbuch</span></td><td class="hide-s">Buch-Ordner</td><td><button class="swcell" role="switch" aria-checked="true" aria-label="Als Kontext"><span class="sw on"></span>~9 000 Token</button></td></tr>
+            <tr><td><b>Der Einfache Weg zum Reichtum</b><br><span class="chip warn">kein Text</span></td><td class="hide-s">Buch-Ordner</td><td><button class="swcell" role="switch" aria-checked="false" aria-label="Als Kontext"><span class="sw"></span>—</button></td></tr>
             <tr class="gh"><td colspan="3">Aufnahmen</td></tr>
-            <tr><td><b>Beratung Altersvorsorge 05.11.</b><br><span class="chip">als Protokoll</span></td><td class="hide-s">Aufnahme</td><td><div class="swcell"><span class="sw on"></span>~2 400 Token</div></td></tr>
+            <tr><td><b>Beratung Altersvorsorge 05.11.</b><br><span class="chip">als Protokoll</span></td><td class="hide-s">Aufnahme</td><td><button class="swcell" role="switch" aria-checked="true" aria-label="Als Kontext"><span class="sw on"></span>~2 400 Token</button></td></tr>
             <tr class="gh"><td colspan="3">Dateien im Projektordner</td></tr>
-            <tr><td><b>Depotauszug-2026.pdf</b></td><td class="hide-s">Kopie · 180 KB</td><td><div class="swcell"><span class="sw on"></span>~3 100 Token</div></td></tr>
-            <tr><td><b>Haushaltsplan.xlsx</b></td><td class="hide-s">Kopie · 24 KB</td><td><div class="swcell"><span class="sw"></span>—</div></td></tr>
+            <tr><td><b>Depotauszug-2026.pdf</b></td><td class="hide-s">Kopie · 180 KB</td><td><button class="swcell" role="switch" aria-checked="true" aria-label="Als Kontext"><span class="sw on"></span>~3 100 Token</button></td></tr>
+            <tr><td><b>Haushaltsplan.xlsx</b></td><td class="hide-s">Kopie · 24 KB</td><td><button class="swcell" role="switch" aria-checked="false" aria-label="Als Kontext"><span class="sw"></span>—</button></td></tr>
             <tr class="gh"><td colspan="3">Ausgaben</td></tr>
-            <tr><td><b>Vergleich Kiyosaki und Collins</b><br><span class="chip">KI-Dokument · heute</span></td><td class="hide-s">Ergebnis</td><td><div class="swcell"><span class="sw"></span>—</div></td></tr>
-            <tr><td><b>Recherche ETF-Kosten</b><br><span class="chip">Bericht · 12 Quellen</span></td><td class="hide-s">Recherche</td><td><div class="swcell"><span class="sw on"></span>~1 800 Token</div></td></tr>
+            <tr><td><b>Vergleich Kiyosaki und Collins</b><br><span class="chip">KI-Dokument · heute</span></td><td class="hide-s">Ergebnis</td><td><button class="swcell" role="switch" aria-checked="false" aria-label="Als Kontext"><span class="sw"></span>—</button></td></tr>
+            <tr><td><b>Recherche ETF-Kosten</b><br><span class="chip">Bericht · 12 Quellen</span></td><td class="hide-s">Recherche</td><td><button class="swcell" role="switch" aria-checked="true" aria-label="Als Kontext"><span class="sw on"></span>~1 800 Token</button></td></tr>
           </tbody>
         </table>
       </div>
@@ -265,7 +266,7 @@ svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.6;stroke
         <div class="ctx">
           <b>Kontext: 16 300 von 128 000 Token</b>
           <div class="meter"><i style="width:13%"></i></div>
-          <span style="font-size:12px;color:var(--muted)">5 Einträge als Kontext · GPT-6.1-Terra</span>
+          <span style="font-size:12px;color:var(--muted)">4 Einträge als Kontext · GPT-6.1-Terra</span>
         </div>
         <div class="chat">
           <div class="bub me">Was raten beide Bücher zum Notgroschen, und passt das zu meinem Haushaltsplan?</div>
@@ -275,6 +276,19 @@ svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.6;stroke
       </div>
     </section>
 
+
+    <!-- V6: Zustände -->
+    <section class="work proj zust hidden" id="v-zustand">
+      <div class="col fl" aria-label="Ordner">
+        <div class="colhead"><span class="lbl">Vorlesen</span></div>
+        <div class="row"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg><span class="nm lbl">Alle</span></div>
+        <div class="grp lbl">Bücher</div>
+        <div class="row sub" id="z-buchrow"><span class="mini"></span><span class="nm lbl">Rich Dad Poor Dad</span></div>
+        <div class="grp lbl">Projekte</div>
+        <div class="row sub"><span class="nm lbl" style="color:var(--muted)">Noch keine Projekte</span></div>
+      </div>
+      <div class="col" id="z-body"></div>
+    </section>
     <!-- V4: Ablage im Buchdetail -->
     <section class="work proj hidden" id="v-ablage" style="grid-template-columns:minmax(0,1fr)">
       <div class="col" aria-label="Dateien im Buch-Ordner">
@@ -321,13 +335,32 @@ const hide = (id) => document.getElementById(id).classList.add("hidden");
 if (s === "alle") {
   hide("ls-buch"); show("ls-alle");
   document.querySelector('[data-k="alle"]').classList.add("on");
-  document.querySelector(".crumb").innerHTML = '<span>Texte</span><span>›</span><b>KI-Verordnung Art. 4 Kompetenz</b>';
+  document.querySelector(".crumb").innerHTML = '<button class="ib back-r" aria-label="Zurück zur Liste"><svg viewBox="0 0 24 24"><path d="M19 12H5M11 6l-6 6 6 6"/></svg></button><span>Texte</span><span>›</span><b>KI-Verordnung Art. 4 Kompetenz</b>';
+  document.getElementById("reader").innerHTML = '<h1>Artikel 4 – KI-Kompetenz</h1>Die Anbieter und Betreiber von KI-Systemen ergreifen Maßnahmen, um nach besten Kräften sicherzustellen, dass ihr Personal und andere Personen, die in ihrem Auftrag mit dem Betrieb und der Nutzung von KI-Systemen befasst sind, über ein ausreichendes Maß an KI-Kompetenz verfügen.';
+  document.getElementById("pos").textContent = "Absatz 1 von 3";
+  document.querySelector(".player span").textContent = "0:12";
+  document.getElementById("toc").innerHTML = '<div class="row on"><span class="nm">Artikel 4 – KI-Kompetenz</span><span class="ct">1</span></div><div class="row"><span class="nm">Erwägungsgrund 20</span><span class="ct">2</span></div>';
 } else if (s === "buch") {
   document.querySelector('[data-k="buch"]').classList.add("on");
 }
 if (s === "projekt") { hide("v-vorlesen"); show("v-projekt");
   document.getElementById("nav-vorlesen").classList.remove("on"); document.getElementById("nav-projekte").classList.add("on"); }
 if (s === "ablage") { hide("v-vorlesen"); show("v-ablage"); if (q.get("dlg") === "0") hide("dlg"); }
+
+const Z = {
+  leer: ['Noch keine Bücher', 'Ziehe ein EPUB, PDF, DOCX oder Hörbuch hierher oder füge es hinzu. Lose Texte findest du unter „Texte“.', '<span class="btn pri">Buch hinzufügen</span><span class="btn">Text einfügen</span>'],
+  projektleer: ['Finanzwissen ist noch leer', 'Ziehe Bücher, Aufnahmen, Texte oder Dateien hierher. App-Inhalte werden verknüpft, Dateien in den Projektordner kopiert.', '<span class="btn pri">Hinzufügen</span>'],
+  fehlt: ['Datei fehlt', 'Die Fassung „English“ von „Rich Dad Poor Dad“ ist nicht mehr an ihrem Ort. Nichts wurde gelöscht; Fortschritt und KI-Dokumente bleiben erhalten.', '<span class="btn pri">Suchen …</span><span class="btn">Aus Sicherung holen</span><span class="btn">Aus Buch entfernen</span>'],
+  ohneziel: ['Kurzbuch erstellen', 'Speichert in: <b>kein Projekt</b>. Das Kurzbuch gehört zur Fassung Deutsch dieses Buchs. Wähle ein Projekt, wenn es dort zusätzlich erscheinen soll.', '<span class="btn">Projekt wählen</span><span class="btn pri">Erstellen</span>'],
+  migfehler: ['Neu ordnen angehalten', 'Für die Seite „The Burning Room“ gibt es den alten und den neuen Ordner. Es wurde nichts überschrieben. Alle Bücher bleiben lesbar.', '<span class="btn pri">Beide Ordner zeigen</span><span class="btn">Sicherung zurückspielen</span><span class="btn">Später</span>'],
+};
+if (Z[s]) { hide("v-vorlesen"); show("v-zustand");
+  const [h, p, a] = Z[s];
+  document.getElementById("z-body").innerHTML = `<div style="max-width:560px;margin:48px auto;padding:0 16px"><h2 style="margin:0 0 8px;font-size:20px">${h}</h2><p style="color:var(--muted);margin:0 0 16px">${p}</p><div style="display:flex;gap:8px;flex-wrap:wrap">${a}</div></div>`;
+  if (s === "leer") document.getElementById("z-buchrow").outerHTML = '<div class="row sub"><span class="nm lbl" style="color:var(--muted)">Noch keine Bücher</span></div>';
+  if (s === "ohneziel") document.getElementById("ziel").innerHTML = '<span class="lang">Speichert in:</span> <strong>kein Projekt</strong>';
+  if (s === "fehlt") document.getElementById("z-buchrow").insertAdjacentHTML("beforeend", '<span class="chip warn lbl">Datei fehlt</span>');
+}
 </script>
 </body>
 </html>
