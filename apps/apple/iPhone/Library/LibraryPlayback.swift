@@ -502,8 +502,9 @@ final class LibraryPlayback: NSObject, ObservableObject {
     /// `live`: wie eine eigene Wahl umschalten (laufende Lesung nimmt die neue Stimme);
     /// beim Öffnen nicht, dort bereitet `openReadAloud` die Stimme selbst vor.
     private func applyVoicePref(_ book: LibraryBook, live: Bool = false) {
-        // Live-Übersetzung: Stimme der Zielsprache (Spez §5, #355).
-        let lang = VoicePrefs.language(liveTarget ?? book.language)
+        // Live-Übersetzung: Stimme der Zielsprache (Spez §5, #355). Ohne Angabe am Buch die erkannte bzw.
+        // bestätigte Buchsprache, damit ein englischer Text nicht mit einer deutschen Stimme beginnt.
+        let lang = VoicePrefs.language(liveTarget ?? book.language ?? liveSource)
         voiceLanguage = lang
         let owner = VoicePrefs.owner(book.id)
         let hit = VoicePrefs.resolve(owner: owner, language: lang, read: { self.library.voicePrefRaw($0) }, toId: voiceId)
@@ -611,7 +612,10 @@ final class LibraryPlayback: NSObject, ObservableObject {
         liveSource = base
         liveSourceConfirmed = true
         // Neue Quelle baut den Übersetzer neu auf, auch bei gleicher Zielsprache (am Satzende, wenn Ton läuft).
-        perform(liveSwitch.changeSource(base, busy: busy, preparing: preparing))
+        let effect = liveSwitch.changeSource(base, busy: busy, preparing: preparing)
+        perform(effect)
+        // Ohne Live-Wechsel liest das Original weiter: Stimme der korrigierten Buchsprache (wie eine eigene Wahl).
+        if effect == .none, liveTarget == nil, mode == .readAloud { applyVoicePref(book, live: true) }
         UserDefaults.standard.set(liveSwitch.wantedTarget, forKey: Self.liveKey(book.id))
         updateNowPlaying()
     }
