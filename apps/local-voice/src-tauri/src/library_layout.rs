@@ -1480,23 +1480,87 @@ fn plan_ohne_umweg(data: &Path, plan: &Tauschplan) -> Result<(), String> {
         format!("{SICHERUNGEN}/{}", plan.sicherung),
     ];
     wege.extend(plan.korb.clone());
+    if let Some(korb) = &plan.korb {
+        wege.push(format!("{korb}/{NEU_IM_KORB}"));
+    }
     for rel in einheiten {
         wege.push(rel.to_string());
         wege.push(format!("{}/{rel}", plan.stufe));
+        wege.push(format!("{SICHERUNGEN}/{}/{rel}", plan.sicherung));
         if let Some(korb) = &plan.korb {
             wege.push(format!("{korb}/{rel}"));
+            wege.push(format!("{korb}/{NEU_IM_KORB}/{rel}"));
         }
     }
     wege.iter().try_for_each(|w| ohne_umweg(data, w))
 }
 
 /// Umbenennen und beide Elternordner dauerhaft machen.
-fn umbenennen(von: &Path, nach: &Path) -> Result<(), String> {
+/// Umbenennen und beide Elternketten bis zur Datenwurzel dauerhaft machen (auch eben mit
+/// `create_dir_all` angelegte Ordner).
+fn umbenennen(data: &Path, von: &Path, nach: &Path) -> Result<(), String> {
     fs::rename(von, nach).map_err(|e| e.to_string())?;
-    for dir in [von.parent(), nach.parent()].into_iter().flatten() {
-        ordner_sync(dir)?;
+    kette_sichern(data, nach)?;
+    kette_sichern(data, von)
+}
+
+/// Eine Datei (falls `pfad` eine ist) und jeden Ordner von ihrem Elternordner bis
+/// einschließlich `wurzel` dauerhaft machen. So ist auch eine neu angelegte Ordnerkette
+/// im bestehenden Vorfahren verankert.
+fn kette_sichern(wurzel: &Path, pfad: &Path) -> Result<(), String> {
+    if fs::symlink_metadata(pfad).is_ok_and(|m| m.is_file()) {
+        datei_sync(pfad)?;
+    }
+    let mut dir = pfad.parent();
+    while let Some(d) = dir {
+        ordner_sync(d)?;
+        if d == wurzel || !d.starts_with(wurzel) {
+            break;
+        }
+        dir = d.parent();
     }
     Ok(())
+}
+
+/// Alle Ordner unter `dir` (ohne Verknüpfungen zu folgen) und die Kette bis `wurzel`
+/// dauerhaft machen; die Dateien darin sind beim Kopieren schon mit fsync gesichert.
+fn baum_sichern(wurzel: &Path, dir: &Path) -> Result<(), String> {
+    fn ordner(dir: &Path) -> Result<(), String> {
+        let eintraege =
+            fs::read_dir(dir).map_err(|e| format!("{} nicht lesbar: {e}", dir.display()))?;
+        for eintrag in eintraege {
+            let pfad = eintrag
+                .map_err(|e| format!("{} nicht lesbar: {e}", dir.display()))?
+                .path();
+            let meta = fs::symlink_metadata(&pfad).map_err(|e| e.to_string())?;
+            if meta.is_dir() && !ist_umweg(&meta) {
+                ordner(&pfad)?;
+            }
+        }
+        ordner_sync(dir).map(|_| ())
+    }
+    ordner(dir)?;
+    kette_sichern(wurzel, dir)
+}
+
+/// Dateiinhalt dauerhaft machen (unter Windows braucht `FlushFileBuffers` Schreibzugriff).
+fn datei_sync(pfad: &Path) -> Result<(), String> {
+    let mut optionen = fs::OpenOptions::new();
+    #[cfg(windows)]
+    optionen.write(true);
+    #[cfg(not(windows))]
+    optionen.read(true);
+    match optionen.open(pfad).and_then(|f| f.sync_all()) {
+        Ok(()) => Ok(()),
+        Err(e) if sync_nicht_unterstuetzt(&e) => {
+            log::warn!("Buch-Ordner: Datei-Sync vom Dateisystem nicht unterstützt ({e})");
+            Ok(())
+        }
+        Err(e) => Err(format!(
+            "{} ließ sich nicht dauerhaft sichern: {e}",
+            pfad.display()
+        )),
+    }
 }
 
 /// Prüfsumme einer Datei, `None` wenn es sie nicht gibt. Jeder andere Fehler (auch ein
@@ -1603,7 +1667,8 @@ fn tauschplan_laden(data: &Path) -> Result<Option<Tauschplan>, String> {
 
 fn tauschplan_schreiben(data: &Path, plan: &Tauschplan) -> Result<(), String> {
     let bytes = serde_json::to_vec_pretty(plan).map_err(|e| e.to_string())?;
-    schreibe_atomar(&tauschplan_pfad(data), &bytes)
+    schreibe_atomar(&tauschplan_pfad(data), &bytes)?;
+    kette_sichern(data, &tauschplan_pfad(data))
 }
 
 #[cfg(test)]
@@ -1650,9 +1715,10 @@ const NEU_IM_KORB: &str = ".neu";
 
 /// Die neue Fassung am Ort gestreamt in den Papierkorb kopieren (idempotent: eine schon
 /// liegende Kopie zählt nur, wenn sie hashgleich ist).
-fn neue_fassung_aufheben(ort: &Path, ziel: &Path, neu: &str) -> Result<(), String> {
+fn neue_fassung_aufheben(data: &Path, ort: &Path, ziel: &Path, neu: &str) -> Result<(), String> {
     match pruefsumme_opt(ziel)? {
-        Some(sha) if sha == neu => return Ok(()),
+        // Schon da (früherer Versuch): erst nach erneutem Sync von Datei und Kette gilt sie.
+        Some(sha) if sha == neu => return kette_sichern(data, ziel),
         Some(_) => return Err("im Papierkorb liegt schon eine andere neue Fassung".into()),
         None => {}
     }
@@ -1661,7 +1727,7 @@ fn neue_fassung_aufheben(ort: &Path, ziel: &Path, neu: &str) -> Result<(), Strin
         let _ = fs::remove_file(ziel);
         return Err("die neue Fassung hat sich beim Aufheben geändert".into());
     }
-    ordner_sync(ziel.parent().unwrap_or(ziel)).map(|_| ())
+    kette_sichern(data, ziel)
 }
 
 /// Eine Datei ohne alte Fassung darf die Rücknahme nur entfernen, wenn ihre neue Fassung
@@ -1674,6 +1740,9 @@ fn neue_fassung_nachweisen(
     datei: &PlanDatei,
 ) -> Result<(), String> {
     let dir = data.join(SICHERUNGEN).join(&plan.sicherung);
+    let in_sicherung = |rel: &str| format!("{SICHERUNGEN}/{}/{rel}", plan.sicherung);
+    ohne_umweg(data, &in_sicherung(MANIFEST))?;
+    ohne_umweg(data, &in_sicherung(&datei.pfad))?;
     let sha = if datei.pfad == format!("{PROJEKTE}/{INDEX}") {
         let manifest = sicherung_pruefen(&dir)?;
         let (_, seiten, gesichert) = sicherung_inhalt(&dir, &manifest)?;
@@ -1694,7 +1763,7 @@ fn neue_fassung_nachweisen(
 /// Die alte Fassung einer Datei aus dem Papierkorb einsetzen: gestreamt in eine
 /// Temp-Datei neben dem Ziel kopieren, die Prüfsumme vergleichen, mit fsync sichern und
 /// erst dann über das Ziel umbenennen.
-fn alte_fassung_einsetzen(kopie: &Path, ort: &Path, alt: &str) -> Result<(), String> {
+fn alte_fassung_einsetzen(data: &Path, kopie: &Path, ort: &Path, alt: &str) -> Result<(), String> {
     let name = ort
         .file_name()
         .ok_or("Pfad ohne Namen")?
@@ -1708,7 +1777,7 @@ fn alte_fassung_einsetzen(kopie: &Path, ort: &Path, alt: &str) -> Result<(), Str
         .ok_or("kein freier Name für die Temp-Datei")?;
     let (_, sha) = kopieren_mit_pruefsumme(kopie, &tmp)?;
     let eingesetzt = if sha == alt {
-        umbenennen(&tmp, ort)
+        umbenennen(data, &tmp, ort)
     } else {
         Err("Kopie im Papierkorb stimmt nicht".to_string())
     };
@@ -1757,17 +1826,18 @@ fn tausch_zuruecknehmen(data: &Path, plan: &Tauschplan) -> Result<Vec<String>, S
         let r = match (&datei.alt_sha256, &korb) {
             // Die verdrängte neue Fassung bleibt im Papierkorb, bevor die alte zurückkommt.
             (Some(alt), Some(korb)) => neue_fassung_aufheben(
+                data,
                 &ort,
                 &absolut(&korb.join(NEU_IM_KORB), &datei.pfad),
                 &datei.neu_sha256,
             )
-            .and_then(|()| alte_fassung_einsetzen(&absolut(korb, &datei.pfad), &ort, alt)),
+            .and_then(|()| alte_fassung_einsetzen(data, &absolut(korb, &datei.pfad), &ort, alt)),
             (Some(_), None) => Err("Papierkorb fehlt".to_string()),
             // Ohne alte Fassung wird nur entfernt, was nachweislich aus der Sicherung
             // stammt; sonst angehalten.
             (None, _) => neue_fassung_nachweisen(data, plan, datei).and_then(|()| {
                 fs::remove_file(&ort).map_err(|e| e.to_string())?;
-                ordner_sync(ort.parent().unwrap_or(data)).map(|_| ())
+                kette_sichern(data, &ort)
             }),
         };
         if let Err(e) = r {
@@ -1799,7 +1869,7 @@ fn tausch_zuruecknehmen(data: &Path, plan: &Tauschplan) -> Result<Vec<String>, S
             .parent()
             .map_or(Ok(()), fs::create_dir_all)
             .map_err(|e| e.to_string())
-            .and_then(|()| umbenennen(&ort, &gestuft));
+            .and_then(|()| umbenennen(data, &ort, &gestuft));
         if let Err(e) = r {
             fehler.push(format!("{rel}: {e}"));
         }
@@ -1836,7 +1906,7 @@ fn tausch_zuruecknehmen(data: &Path, plan: &Tauschplan) -> Result<Vec<String>, S
                 .parent()
                 .map_or(Ok(()), fs::create_dir_all)
                 .map_err(|e| e.to_string())
-                .and_then(|()| umbenennen(&gewichen, &ort));
+                .and_then(|()| umbenennen(data, &gewichen, &ort));
             if let Err(e) = r {
                 fehler.push(format!("{rel}: {e}"));
             }
@@ -1941,6 +2011,9 @@ fn tausch_aufraeumen(data: &Path, plan: &Tauschplan) -> Result<(), String> {
         for ordner in &plan.hin {
             for datei in &ordner.abdruck {
                 let rel = format!("{}/{}", ordner.pfad, datei.pfad);
+                // Die ganze Kette in der Sicherung ohne Verknüpfung, sonst könnte die
+                // Kopie im Zwischenordner sich selbst bestätigen.
+                ohne_umweg(data, &format!("{SICHERUNGEN}/{}/{rel}", plan.sicherung))?;
                 let in_sicherung = pruefsumme(&absolut(&sicherung, &rel)).ok();
                 if in_sicherung == Some((datei.groesse, datei.sha256.clone())) {
                     in_stufe.insert(rel, Some(datei.sha256.clone()));
@@ -2020,7 +2093,7 @@ fn tausch_ausfuehren(data: &Path, plan: &Tauschplan) -> Result<(), String> {
             ));
         }
         let nach = korb_ziel(rel)?;
-        umbenennen(&ort, &nach)
+        umbenennen(data, &ort, &nach)
             .map_err(|e| format!("{rel} ließ sich nicht in den Papierkorb legen: {e}"))?;
     }
     for ordner in &plan.hin {
@@ -2038,7 +2111,7 @@ fn tausch_ausfuehren(data: &Path, plan: &Tauschplan) -> Result<(), String> {
         if let Some(eltern) = ort.parent() {
             fs::create_dir_all(eltern).map_err(|e| format!("{rel}: {e}"))?;
         }
-        umbenennen(&absolut(&stufe, rel), &ort)
+        umbenennen(data, &absolut(&stufe, rel), &ort)
             .map_err(|e| format!("{rel} ließ sich nicht anlegen: {e}"))?;
     }
     for datei in &plan.dateien {
@@ -2048,7 +2121,7 @@ fn tausch_ausfuehren(data: &Path, plan: &Tauschplan) -> Result<(), String> {
             Some(alt) => {
                 let kopie = korb_ziel(&datei.pfad)?;
                 let (_, sha) = kopieren_mit_pruefsumme(&ort, &kopie)?;
-                ordner_sync(kopie.parent().unwrap_or(data))?;
+                kette_sichern(data, &kopie)?;
                 if sha != *alt {
                     return Err(format!(
                         "{} hat sich seit der Planung geändert; nichts ersetzt.",
@@ -2067,7 +2140,7 @@ fn tausch_ausfuehren(data: &Path, plan: &Tauschplan) -> Result<(), String> {
         if let Some(eltern) = ort.parent() {
             fs::create_dir_all(eltern).map_err(|e| format!("{}: {e}", datei.pfad))?;
         }
-        umbenennen(&absolut(&stufe, &datei.pfad), &ort)
+        umbenennen(data, &absolut(&stufe, &datei.pfad), &ort)
             .map_err(|e| format!("{} ließ sich nicht ersetzen: {e}", datei.pfad))?;
     }
     absturz_probe()?;
@@ -2175,6 +2248,7 @@ pub fn sicherung_zurueckspielen(
             if datei.pfad == index_rel {
                 continue;
             }
+            ohne_umweg(data, &format!("{SICHERUNGEN}/{name}/{}", datei.pfad))?;
             let (groesse, sha256) = kopieren_mit_pruefsumme(
                 &absolut(&dir, &datei.pfad),
                 &absolut(&stufe, &datei.pfad),
@@ -2190,7 +2264,7 @@ pub fn sicherung_zurueckspielen(
             let bytes = serde_json::to_vec_pretty(index).map_err(|e| e.to_string())?;
             schreibe_atomar(&absolut(&stufe, &index_rel), &bytes)?;
         }
-        Ok(())
+        baum_sichern(data, &stufe)
     })();
     if let Err(e) = vorbereitet {
         let _ = fs::remove_dir_all(&stufe);
@@ -3869,6 +3943,86 @@ mod tests {
                 fremd_abdruck
             );
         }
+    }
+
+    /// Zeigt ein Weg in der Sicherung per Verknüpfung in den Zwischenordner, bestätigte
+    /// sich die Kopie selbst: das Aufräumen hält an und löscht nichts.
+    #[cfg(unix)]
+    #[test]
+    fn sicherung_mit_verknuepfung_bestaetigt_keine_kopie() {
+        let data = datenordner("sicherung-link");
+        let stufe = data.join("sicherungen/.zurueck-1");
+        seite_anlegen(&stufe.join("projects/page_7"), "kopie");
+        let a = abdruck(&stufe.join("projects/page_7")).unwrap();
+        let sicherung = data.join("sicherungen/buch-ordner-5");
+        fs::create_dir_all(&sicherung).unwrap();
+        let manifest = Manifest {
+            version: MANIFEST_VERSION,
+            erstellt_ms: 5,
+            ordner: vec![],
+            dateien: a
+                .iter()
+                .map(|d| ManifestDatei {
+                    pfad: format!("projects/page_7/{}", d.pfad),
+                    ..d.clone()
+                })
+                .collect(),
+        };
+        fs::write(
+            sicherung.join(MANIFEST),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(stufe.join("projects"), sicherung.join("projects")).unwrap();
+        let plan = Tauschplan {
+            version: TAUSCHPLAN_VERSION,
+            stand: TauschStand::Zurueckgenommen,
+            sicherung: "buch-ordner-5".into(),
+            stufe: "sicherungen/.zurueck-1".into(),
+            korb: None,
+            weichen: vec![],
+            hin: vec![ordner("projects/page_7", a.clone())],
+            dateien: vec![],
+        };
+        fs::write(tauschplan_pfad(&data), serde_json::to_vec(&plan).unwrap()).unwrap();
+        let e = zurueckspielen_wiederanlauf(&data).unwrap_err();
+        assert!(e.contains("Verknüpfung"), "{e}");
+        assert_eq!(abdruck(&stufe.join("projects/page_7")).unwrap(), a);
+        assert!(tauschplan_pfad(&data).exists());
+    }
+
+    /// `Papierkorb/.neu` hinter einer Verknüpfung: keine Kopie nach draußen, nichts ersetzt.
+    #[cfg(unix)]
+    #[test]
+    fn neu_im_papierkorb_hinter_einer_verknuepfung_wird_abgewiesen() {
+        let data = standardlage("neu-link");
+        migrieren(&data, &optionen()).unwrap();
+        let sicherung = sicherungen_auflisten(&data)[0].name.clone();
+        let index_vorher = index_roh(&data);
+        let korb = data.join("sicherungen/.papierkorb/1");
+        fs::create_dir_all(korb.join("projects")).unwrap();
+        fs::write(korb.join("projects/index.json"), b"{}").unwrap();
+        let fremd = datenordner("neu-link-fremd");
+        std::os::unix::fs::symlink(&fremd, korb.join(NEU_IM_KORB)).unwrap();
+        let plan = Tauschplan {
+            version: TAUSCHPLAN_VERSION,
+            stand: TauschStand::Laeuft,
+            sicherung,
+            stufe: "sicherungen/.zurueck-1".into(),
+            korb: Some("sicherungen/.papierkorb/1".into()),
+            weichen: vec![],
+            hin: vec![],
+            dateien: vec![PlanDatei {
+                pfad: "projects/index.json".into(),
+                neu_sha256: hex(&Sha256::digest(&index_vorher)),
+                alt_sha256: Some(hex(&Sha256::digest(b"{}"))),
+            }],
+        };
+        fs::write(tauschplan_pfad(&data), serde_json::to_vec(&plan).unwrap()).unwrap();
+        let e = zurueckspielen_wiederanlauf(&data).unwrap_err();
+        assert!(e.contains("Verknüpfung"), "{e}");
+        assert_eq!(index_roh(&data), index_vorher);
+        assert!(!fremd.join("projects/index.json").exists());
     }
 
     /// Ein weichender Ordner, der sich seit der Planung geändert hat, geht nicht in den
