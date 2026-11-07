@@ -115,6 +115,17 @@ pub(crate) fn start_hook(app: &AppHandle) {
     {
         let _library = crate::library::sync_lock();
         let _pages = pages::lock();
+        // Zuerst ein unterbrochenes Zurückspielen einer Sicherung zurücknehmen;
+        // gelingt das nicht, wird nichts weiter umgebaut.
+        match library_layout::zurueckspielen_wiederanlauf(&data) {
+            Ok(true) => log::warn!("Buch-Ordner: unterbrochenes Zurückspielen zurückgenommen"),
+            Ok(false) => {}
+            Err(e) => {
+                log::warn!("Buch-Ordner: {e}");
+                fundortkarte_neu(&data);
+                return;
+            }
+        }
         match library_layout::wiederanlauf(&data, &optionen()) {
             Ok(b) if b.angehalten => log::warn!(
                 "Buch-Ordner: Wiederanlauf angehalten ({} Problem(e), {} Schritt(e) erledigt)",

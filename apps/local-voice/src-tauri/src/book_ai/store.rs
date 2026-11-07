@@ -72,14 +72,28 @@ pub fn ki_dir(page_dir: &Path) -> PathBuf {
     page_dir.join("ki")
 }
 
-/// Einen Unterordner der Seite anlegen, nie die Seite selbst. Ist die Seite
-/// inzwischen umgezogen (Buch-Ordner, lva#365), entstünde sonst unter dem
-/// alten Pfad ein zweiter Seitenordner, und die Seite läge doppelt vor.
-pub fn unterordner_anlegen(page_dir: &Path, dir: &Path) -> Result<(), String> {
+/// Schreiben in einen Seitenordner unter der Seitensperre: erst prüfen, dass
+/// der Ordner (noch) da ist, dann schreiben, ohne dass ihn dazwischen jemand
+/// verschiebt (Buch löschen, Migration in Buch-Ordner, lva#365). Sonst
+/// entstünde unter dem alten Pfad ein zweiter Seitenordner, und die Seite
+/// läge doppelt vor. Sperrreihenfolge: Seitensperre vor jeder book_ai-Sperre.
+pub fn im_seitenordner<T>(
+    page_dir: &Path,
+    schreiben: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    let _seiten = crate::commands::pages::lock();
     if !page_dir.is_dir() {
         return Err("Die Seite wurde inzwischen verschoben. Bitte erneut versuchen.".into());
     }
-    std::fs::create_dir_all(dir).map_err(|e| format!("could not create {}: {e}", dir.display()))
+    schreiben()
+}
+
+/// Einen Unterordner der Seite anlegen, nie die Seite selbst (siehe
+/// [`im_seitenordner`], das der Aufrufer schon hält).
+pub fn unterordner_anlegen(page_dir: &Path, dir: &Path) -> Result<(), String> {
+    im_seitenordner(page_dir, || {
+        std::fs::create_dir_all(dir).map_err(|e| format!("could not create {}: {e}", dir.display()))
+    })
 }
 
 pub fn cache_dir(page_dir: &Path) -> PathBuf {
@@ -139,14 +153,16 @@ pub fn create(page_dir: &Path, mut doc: KiDocument, text: &str) -> Result<KiDocu
     doc.id = ulid::Ulid::new().to_string();
     doc.title = fit_title(&doc.title);
     doc.words = super::source::word_count(text);
-    let dir = docs_dir(page_dir);
-    unterordner_anlegen(page_dir, &dir)?;
-    write_atomic(&dir.join(format!("{}.md", doc.id)), text.as_bytes())?;
-    let _guard = lock();
-    let mut index = load_index(page_dir)?;
-    index.documents.push(doc.clone());
-    save_index(page_dir, &index)?;
-    Ok(doc)
+    im_seitenordner(page_dir, || {
+        let dir = docs_dir(page_dir);
+        unterordner_anlegen(page_dir, &dir)?;
+        write_atomic(&dir.join(format!("{}.md", doc.id)), text.as_bytes())?;
+        let _guard = lock();
+        let mut index = load_index(page_dir)?;
+        index.documents.push(doc.clone());
+        save_index(page_dir, &index)?;
+        Ok(doc)
+    })
 }
 
 /// Übernommenes Dokument mit genau diesem Text, falls es schon existiert
@@ -183,43 +199,47 @@ pub fn update(
         }
         None => None,
     };
-    let _guard = lock();
-    let mut index = load_index(page_dir)?;
-    // Erst prüfen, dann schreiben: ein unbekanntes Dokument hinterlässt keine
-    // verwaiste Datei (z. B. nach dem Löschen auf einem anderen Gerät).
-    let doc = index
-        .documents
-        .iter_mut()
-        .find(|d| d.id == id)
-        .ok_or("book_ai:document_missing")?;
-    if let Some(title) = title {
-        doc.title = title;
-    }
-    if let Some(text) = text {
-        write_atomic(
-            &docs_dir(page_dir).join(format!("{id}.md")),
-            text.as_bytes(),
-        )?;
-        doc.words = super::source::word_count(&text);
-    }
-    doc.modified_ms = now_ms;
-    let out = doc.clone();
-    save_index(page_dir, &index)?;
-    Ok(out)
+    im_seitenordner(page_dir, || {
+        let _guard = lock();
+        let mut index = load_index(page_dir)?;
+        // Erst prüfen, dann schreiben: ein unbekanntes Dokument hinterlässt keine
+        // verwaiste Datei (z. B. nach dem Löschen auf einem anderen Gerät).
+        let doc = index
+            .documents
+            .iter_mut()
+            .find(|d| d.id == id)
+            .ok_or("book_ai:document_missing")?;
+        if let Some(title) = title {
+            doc.title = title;
+        }
+        if let Some(text) = text {
+            write_atomic(
+                &docs_dir(page_dir).join(format!("{id}.md")),
+                text.as_bytes(),
+            )?;
+            doc.words = super::source::word_count(&text);
+        }
+        doc.modified_ms = now_ms;
+        let out = doc.clone();
+        save_index(page_dir, &index)?;
+        Ok(out)
+    })
 }
 
 pub fn delete(page_dir: &Path, id: &str) -> Result<(), String> {
     let id = checked_id(id)?;
-    let _guard = lock();
-    let mut index = load_index(page_dir)?;
-    let before = index.documents.len();
-    index.documents.retain(|d| d.id != id);
-    if index.documents.len() == before {
-        return Err("book_ai:document_missing".into());
-    }
-    save_index(page_dir, &index)?;
-    let _ = std::fs::remove_file(docs_dir(page_dir).join(format!("{id}.md")));
-    Ok(())
+    im_seitenordner(page_dir, || {
+        let _guard = lock();
+        let mut index = load_index(page_dir)?;
+        let before = index.documents.len();
+        index.documents.retain(|d| d.id != id);
+        if index.documents.len() == before {
+            return Err("book_ai:document_missing".into());
+        }
+        save_index(page_dir, &index)?;
+        let _ = std::fs::remove_file(docs_dir(page_dir).join(format!("{id}.md")));
+        Ok(())
+    })
 }
 
 #[cfg(test)]

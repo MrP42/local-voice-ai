@@ -85,6 +85,7 @@ impl Drop for UmbauGuard {
     }
 }
 
+/// Den Merker setzen, bevor der Umbau die Sperren nimmt.
 pub(crate) fn umbau_beginnen() -> UmbauGuard {
     UMBAU.store(true, Ordering::SeqCst);
     UmbauGuard(())
@@ -95,10 +96,31 @@ pub(crate) fn umbau_beginnen() -> UmbauGuard {
 /// Schreiber unten), sperrt wie gewohnt. Schreibende Befehle warten dagegen
 /// auf das Ende des Umbaus: eine Eingabe darf nicht verloren gehen.
 pub(crate) fn lock_lesend() -> Result<PagesGuard, String> {
-    if UMBAU.load(Ordering::SeqCst) && PAGES_LOCK_DEPTH.with(|d| d.get()) == 0 {
-        return Err("Die Bibliothek wird gerade neu geordnet. Bitte einen Moment warten.".into());
+    if PAGES_LOCK_DEPTH.with(|d| d.get()) > 0 {
+        return Ok(lock());
     }
-    Ok(lock())
+    // Nicht blockierend sperren: beginnt der Umbau zwischen Prüfen und
+    // Sperren, wartet der Leser nicht die ganze Sicherung ab, sondern meldet.
+    loop {
+        if UMBAU.load(Ordering::SeqCst) {
+            return Err(
+                "Die Bibliothek wird gerade neu geordnet. Bitte einen Moment warten.".into(),
+            );
+        }
+        let guard = match PAGES_LOCK.try_lock() {
+            Ok(guard) => guard,
+            Err(std::sync::TryLockError::Poisoned(e)) => e.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) => {
+                std::thread::sleep(std::time::Duration::from_millis(2));
+                continue;
+            }
+        };
+        PAGES_LOCK_HELD.with(|h| *h.borrow_mut() = Some(guard));
+        PAGES_LOCK_DEPTH.with(|d| d.set(1));
+        return Ok(PagesGuard {
+            _not_send: PhantomData,
+        });
+    }
 }
 
 /// Schreiben ueber eine Temp-Datei plus Umbenennen: ein Absturz mittendrin
@@ -691,6 +713,18 @@ mod tests {
         }
         drop(umbau);
         assert!(std::thread::spawn(|| lock_lesend().is_ok()).join().unwrap());
+        // Beginnt der Umbau, während ein Leser auf die Sperre wartet, meldet
+        // der Leser, statt den ganzen Umbau abzuwarten (ein Test, weil der
+        // Merker global ist).
+        let halter = lock();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let leser = std::thread::spawn(move || tx.send(lock_lesend().is_err()).unwrap());
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        let umbau = umbau_beginnen();
+        assert!(rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap());
+        leser.join().unwrap();
+        drop(umbau);
+        drop(halter);
     }
 
     #[test]

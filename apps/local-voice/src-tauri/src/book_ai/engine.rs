@@ -71,12 +71,16 @@ impl DigestCache {
             return;
         }
         let Some(dir) = &self.dir else { return };
-        if std::fs::create_dir_all(dir).is_err() {
+        // Der Cache liegt unter `<seite>/ki/cache`: nur schreiben, solange die
+        // Seite dort liegt (sonst entstünde ein zweiter Seitenordner, lva#365).
+        let Some(seite) = dir.parent().and_then(|ki| ki.parent()) else {
             return;
-        }
+        };
         // Ein Cache-Fehler ist kein Fehler der Zusammenfassung.
-        let _ =
-            crate::commands::pages::write_atomic(&dir.join(format!("{key}.md")), text.as_bytes());
+        let _ = super::store::im_seitenordner(seite, || {
+            std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+            crate::commands::pages::write_atomic(&dir.join(format!("{key}.md")), text.as_bytes())
+        });
     }
 }
 

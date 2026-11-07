@@ -49,12 +49,14 @@ pub fn load(page_dir: &Path) -> Result<Vec<StoredTurn>, String> {
 }
 
 fn save(page_dir: &Path, turns: &[StoredTurn]) -> Result<(), String> {
-    let dir = ki_dir(page_dir);
-    crate::book_ai::store::unterordner_anlegen(page_dir, &dir)
-        .map_err(|_| "book_talk:history_unwritable".to_string())?;
     let raw =
         serde_json::to_string(turns).map_err(|_| "book_talk:history_unwritable".to_string())?;
-    write_atomic(&path(page_dir), raw.as_bytes())
+    crate::book_ai::store::im_seitenordner(page_dir, || {
+        let dir = ki_dir(page_dir);
+        crate::book_ai::store::unterordner_anlegen(page_dir, &dir)?;
+        write_atomic(&path(page_dir), raw.as_bytes())
+    })
+    .map_err(|_| "book_talk:history_unwritable".to_string())
 }
 
 /// Wechsel anhängen; die ältesten über `MAX_TURNS` fallen weg.
