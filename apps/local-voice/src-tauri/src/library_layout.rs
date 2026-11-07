@@ -196,6 +196,10 @@ pub fn schreibe_atomar(pfad: &Path, bytes: &[u8]) -> Result<(), String> {
 /// behält seine Rückfallkopien (der Papierkorb des Zurückspielens wird nie geleert).
 /// Jeder andere Fehler, auch ein verweigerter Zugriff, ist ein Fehler.
 fn ordner_sync(dir: &Path) -> Result<bool, String> {
+    #[cfg(test)]
+    if OHNE_SYNC.with(|o| o.get()) {
+        return Ok(false);
+    }
     let ergebnis = ordner_sync_roh(dir);
     match ergebnis {
         Ok(()) => Ok(true),
@@ -1495,7 +1499,6 @@ fn plan_ohne_umweg(data: &Path, plan: &Tauschplan) -> Result<(), String> {
     wege.iter().try_for_each(|w| ohne_umweg(data, w))
 }
 
-/// Umbenennen und beide Elternordner dauerhaft machen.
 /// Umbenennen und beide Elternketten bis zur Datenwurzel dauerhaft machen (auch eben mit
 /// `create_dir_all` angelegte Ordner).
 fn umbenennen(data: &Path, von: &Path, nach: &Path) -> Result<(), String> {
@@ -1504,16 +1507,32 @@ fn umbenennen(data: &Path, von: &Path, nach: &Path) -> Result<(), String> {
     kette_sichern(data, von)
 }
 
+/// Für Tausch und Rücknahme ist „vom Dateisystem nicht unterstützt“ (`Ok(false)`) kein
+/// Erfolg: nicht dauerhaft gesichert heißt, nichts überschreiben, löschen oder abschließen.
+fn dauerhaft(r: Result<bool, String>, pfad: &Path) -> Result<(), String> {
+    match r? {
+        true => Ok(()),
+        false => Err(format!(
+            "{} lässt sich auf diesem Dateisystem nicht dauerhaft sichern; nichts \
+             überschrieben oder gelöscht.",
+            pfad.display()
+        )),
+    }
+}
+
 /// Eine Datei (falls `pfad` eine ist) und jeden Ordner von ihrem Elternordner bis
 /// einschließlich `wurzel` dauerhaft machen. So ist auch eine neu angelegte Ordnerkette
-/// im bestehenden Vorfahren verankert.
+/// im bestehenden Vorfahren verankert. Streng: auch `Ok(false)` ist ein Fehler.
 fn kette_sichern(wurzel: &Path, pfad: &Path) -> Result<(), String> {
     if fs::symlink_metadata(pfad).is_ok_and(|m| m.is_file()) {
-        datei_sync(pfad)?;
+        dauerhaft(datei_sync(pfad), pfad)?;
     }
     let mut dir = pfad.parent();
     while let Some(d) = dir {
-        ordner_sync(d)?;
+        // Ein fehlender Ordner hat keine Einträge zu sichern; sein Vorfahr schon.
+        if vorhanden(d) {
+            dauerhaft(ordner_sync(d), d)?;
+        }
         if d == wurzel || !d.starts_with(wurzel) {
             break;
         }
@@ -1537,24 +1556,24 @@ fn baum_sichern(wurzel: &Path, dir: &Path) -> Result<(), String> {
                 ordner(&pfad)?;
             }
         }
-        ordner_sync(dir).map(|_| ())
+        dauerhaft(ordner_sync(dir), dir)
     }
     ordner(dir)?;
     kette_sichern(wurzel, dir)
 }
 
 /// Dateiinhalt dauerhaft machen (unter Windows braucht `FlushFileBuffers` Schreibzugriff).
-fn datei_sync(pfad: &Path) -> Result<(), String> {
+fn datei_sync(pfad: &Path) -> Result<bool, String> {
     let mut optionen = fs::OpenOptions::new();
     #[cfg(windows)]
     optionen.write(true);
     #[cfg(not(windows))]
     optionen.read(true);
     match optionen.open(pfad).and_then(|f| f.sync_all()) {
-        Ok(()) => Ok(()),
+        Ok(()) => Ok(true),
         Err(e) if sync_nicht_unterstuetzt(&e) => {
             log::warn!("Buch-Ordner: Datei-Sync vom Dateisystem nicht unterstützt ({e})");
-            Ok(())
+            Ok(false)
         }
         Err(e) => Err(format!(
             "{} ließ sich nicht dauerhaft sichern: {e}",
@@ -1668,6 +1687,10 @@ fn tauschplan_laden(data: &Path) -> Result<Option<Tauschplan>, String> {
 fn tauschplan_schreiben(data: &Path, plan: &Tauschplan) -> Result<(), String> {
     let bytes = serde_json::to_vec_pretty(plan).map_err(|e| e.to_string())?;
     schreibe_atomar(&tauschplan_pfad(data), &bytes)?;
+    #[cfg(test)]
+    if PLAN_SYNC_FEHLER.with(|f| f.replace(false)) {
+        return Err("Sync des Plans gescheitert (Test)".into());
+    }
     kette_sichern(data, &tauschplan_pfad(data))
 }
 
@@ -1680,6 +1703,10 @@ thread_local! {
     static SCHRITTE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// Nur für Tests: dieser Schritt scheitert gewöhnlich (ohne Absturz).
     static FEHLER_BEI: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+    /// Nur für Tests: das Dateisystem kann Ordner nicht synchronisieren.
+    static OHNE_SYNC: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Nur für Tests: der Sync nach dem nächsten Schreiben des Plans scheitert (einmal).
+    static PLAN_SYNC_FEHLER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 #[cfg(test)]
 const ABSTURZ: &str = "Absturz (Test)";
@@ -1915,7 +1942,38 @@ fn tausch_zuruecknehmen(data: &Path, plan: &Tauschplan) -> Result<Vec<String>, S
     if fehler.is_empty() {
         fehler = zurueckgenommen_pruefen(data, plan);
     }
+    if fehler.is_empty() {
+        fehler = zuruecknahme_sichern(data, plan);
+    }
     Ok(fehler)
+}
+
+/// Vor dem Stand `zurueckgenommen` alles, was die Rücknahme berührt, erneut dauerhaft
+/// machen, auch Schritte, die ein früherer Versuch schon sichtbar ausgeführt hatte, deren
+/// Sync aber gescheitert sein kann: Dateien und Ketten am Ort, im Zwischenordner und im
+/// Papierkorb (samt `.neu`).
+fn zuruecknahme_sichern(data: &Path, plan: &Tauschplan) -> Vec<String> {
+    let stufe = absolut(data, &plan.stufe);
+    let korb = plan.korb.as_ref().map(|k| absolut(data, k));
+    let mut wege: Vec<PathBuf> = Vec::new();
+    for datei in &plan.dateien {
+        wege.push(absolut(data, &datei.pfad));
+        wege.push(absolut(&stufe, &datei.pfad));
+        if let Some(korb) = &korb {
+            wege.push(absolut(korb, &datei.pfad));
+            wege.push(absolut(&korb.join(NEU_IM_KORB), &datei.pfad));
+        }
+    }
+    for ordner in plan.hin.iter().chain(&plan.weichen) {
+        wege.push(absolut(data, &ordner.pfad));
+        wege.push(absolut(&stufe, &ordner.pfad));
+        if let Some(korb) = &korb {
+            wege.push(absolut(korb, &ordner.pfad));
+        }
+    }
+    wege.iter()
+        .filter_map(|w| kette_sichern(data, w).err())
+        .collect()
 }
 
 /// Nach der Rücknahme vom Datenträger nachlesen, ob genau der vorige Stand vorliegt:
@@ -2368,8 +2426,22 @@ pub fn sicherung_zurueckspielen(
     if let Err(e) = plan
         .pruefen()
         .and_then(|()| plan.gegen_sicherung_pruefen(data))
-        .and_then(|()| tauschplan_schreiben(data, &plan))
     {
+        let _ = fs::remove_dir_all(&stufe);
+        if let Some(korb) = &korb {
+            let _ = fs::remove_dir_all(korb);
+        }
+        return Err(format!("Zurückspielen nicht begonnen: {e}"));
+    }
+    if let Err(e) = tauschplan_schreiben(data, &plan) {
+        // Der Plan kann schon sichtbar sein (Umbenennen gelungen, Sync gescheitert): dann
+        // gilt er als veröffentlicht, und nur die Rücknahme nach Plan darf aufräumen.
+        if vorhanden(&tauschplan_pfad(data)) {
+            return match zuruecknehmen_und_aufraeumen(data, plan) {
+                Ok(()) => Err(format!("Zurückspielen nicht begonnen: {e}")),
+                Err(f) => Err(format!("Zurückspielen nicht begonnen ({e}). {f}")),
+            };
+        }
         let _ = fs::remove_dir_all(&stufe);
         if let Some(korb) = &korb {
             let _ = fs::remove_dir_all(korb);
@@ -3568,6 +3640,43 @@ mod tests {
             keine_zwischenstaende(&data);
         }
         assert!(geprueft >= 5, "{geprueft} Fehlerstellen");
+    }
+
+    /// Ein Dateisystem ohne Ordner-Sync: das Zurückspielen beginnt gar nicht erst.
+    #[test]
+    fn ohne_sync_beginnt_das_zurueckspielen_nicht() {
+        let data = standardlage("ohne-sync");
+        migrieren(&data, &optionen()).unwrap();
+        let name = sicherungen_auflisten(&data)[0].name.clone();
+        let vorher = stand(&data);
+        OHNE_SYNC.with(|o| o.set(true));
+        let r = sicherung_zurueckspielen(&data, &name, None);
+        OHNE_SYNC.with(|o| o.set(false));
+        let e = r.unwrap_err();
+        assert!(
+            e.contains("nicht begonnen") && e.contains("dauerhaft"),
+            "{e}"
+        );
+        assert_eq!(stand(&data), vorher);
+        keine_zwischenstaende(&data);
+    }
+
+    /// Der Plan ist sichtbar, sein Sync scheitert: kein Aufräumen am Plan vorbei, sondern
+    /// Rücknahme nach Plan (hier sofort erfolgreich).
+    #[test]
+    fn plan_sichtbar_aber_nicht_gesichert_wird_nach_plan_zurueckgenommen() {
+        let data = standardlage("plan-sync");
+        migrieren(&data, &optionen()).unwrap();
+        let name = sicherungen_auflisten(&data)[0].name.clone();
+        let vorher = stand(&data);
+        PLAN_SYNC_FEHLER.with(|f| f.set(true));
+        let r = sicherung_zurueckspielen(&data, &name, None);
+        PLAN_SYNC_FEHLER.with(|f| f.set(false));
+        let e = r.unwrap_err();
+        assert!(e.contains("Sync des Plans"), "{e}");
+        assert_eq!(stand(&data), vorher);
+        keine_zwischenstaende(&data);
+        assert!(sicherung_pruefen(&data.join(SICHERUNGEN).join(&name)).is_ok());
     }
 
     /// Alle Dateien außerhalb von `sicherungen/` samt Inhalt.
