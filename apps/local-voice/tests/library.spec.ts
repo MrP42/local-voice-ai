@@ -216,6 +216,8 @@ test.beforeEach(async ({ page }) => {
                 duration_ms: (w.__jobDuration as Record<string, number>)[id] ?? null,
               })),
             ];
+          if (cmd === "meetings_progress_list")
+            return (w as { __progress?: unknown[] }).__progress ?? [];
           if (cmd === "meetings_get_status") {
             const id = String(args?.meetingId);
             if (id === "m1") return "processing";
@@ -2501,7 +2503,11 @@ test("Lange Einzeldatei: bis zu vier Abschnitte, ein Hörbuch-Auftrag je Bereich
     })
     .toEqual([null, 4]);
   // Das neue Buch öffnet sich; vier Abschnitte laufen gleichzeitig.
-  await expect(page.getByText("Transkription 0 von 4 · 4 parallel")).toBeVisible();
+  await expect(page.getByText("Transkription 0 von 4 · 4 parallel").first()).toBeVisible();
+  // Die Kurzbuch-Karte zeigt denselben Stand (Patrick 07.11.).
+  await expect(page.getByTestId("kurzbuch-transcript-progress")).toContainText(
+    "Transkription 0 von 4 · 4 parallel",
+  );
 });
 
 test("Kurze Einzeldatei (30 min): ein Auftrag für die ganze Datei, kein Bereich", async ({
@@ -2649,6 +2655,182 @@ test("Fortsetzen: nur der fehlgeschlagene Abschnitt wird neu gestartet", async (
     .poll(async () => (await calls(page, "meetings_delete")).map((a) => a.meetingId))
     .toEqual(["m52"]);
 });
+
+// Patrick 07.11.: gescheiterte Transkription auf der Übersicht wiederholen,
+// Fortschritt der Transkription sichtbar.
+test("Transkription unterbrochen: Kurzbuch-Karte bietet „Fortsetzen“, nur Fehlendes startet neu", async ({
+  page,
+}) => {
+  const parts = [
+    sectionPart("m51", 0, 62_000, 0, 60_000),
+    sectionPart("m52", 58_000, 122_000, 60_000, 120_000),
+    sectionPart("m53", 118_000, 182_000, 120_000, 180_000),
+    sectionPart("m54", 178_000, 300_000, 180_000, null),
+  ];
+  await addBooks(page, [sectioned("book_f", "Das Schloss", parts, 240_000)]);
+  await page.addInitScript(() => {
+    const w = window as unknown as Record<string, any>;
+    w.__jobs.push("m51", "m52", "m53", "m54");
+    w.__jobStatus["m51"] = "ready";
+    w.__jobStatus["m52"] = "failed";
+    w.__jobStatus["m53"] = "cancelled";
+    w.__jobStatus["m54"] = "ready";
+  });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await page.getByRole("button", { name: "„Das Schloss“: Details öffnen" }).click();
+  const card = page.getByRole("region", { name: "Kurzbuch" });
+  await expect(card).toContainText("Die Transkription ist unterbrochen.");
+  await expect(card).not.toContainText("wird transkribiert");
+  await card.getByRole("button", { name: "Fortsetzen" }).click();
+  await expect
+    .poll(async () => (await calls(page, "meetings_import_audiobook_part")).length)
+    .toBe(2);
+  await expect
+    .poll(async () => (await calls(page, "meetings_delete")).map((a) => a.meetingId).sort())
+    .toEqual(["m52", "m53"]);
+});
+
+test("Transkription komplett fehlgeschlagen: „Erneut versuchen“ startet sie neu", async ({
+  page,
+}) => {
+  const parts = [
+    sectionPart("m61", 0, 62_000, 0, 60_000),
+    sectionPart("m62", 58_000, 122_000, 60_000, null),
+  ];
+  await addBooks(page, [sectioned("book_g", "Der Prozess", parts, 120_000)]);
+  await page.addInitScript(() => {
+    const w = window as unknown as Record<string, any>;
+    w.__jobs.push("m61", "m62");
+    w.__jobStatus["m61"] = "failed";
+    w.__jobStatus["m62"] = "failed";
+  });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await page.getByRole("button", { name: "„Der Prozess“: Details öffnen" }).click();
+  const card = page.getByRole("region", { name: "Kurzbuch" });
+  await expect(card).toContainText("Die Transkription ist fehlgeschlagen.");
+  const retry = card.getByRole("button", { name: "Erneut versuchen" });
+  await page.setViewportSize({ width: 390, height: 844 });
+  const box = (await retry.boundingBox())!;
+  expect(box.height).toBeGreaterThanOrEqual(44);
+  await retry.dblclick();
+  // Doppelklick startet nur einmal neu.
+  await expect
+    .poll(async () => (await calls(page, "meetings_import_audiobook_part")).length)
+    .toBe(2);
+  await page.waitForTimeout(500);
+  expect(await calls(page, "meetings_import_audiobook_part")).toHaveLength(2);
+});
+
+test("Fortschritt: laufender Abschnitt zählt anteilig, Karte und Produktseite zeigen Prozent und Balken", async ({
+  page,
+}) => {
+  const parts = [
+    sectionPart("m71", 0, 62_000, 0, 60_000),
+    sectionPart("m72", 58_000, 122_000, 60_000, 120_000),
+    sectionPart("m73", 118_000, 182_000, 120_000, 180_000),
+    sectionPart("m74", 178_000, 300_000, 180_000, null),
+  ];
+  await addBooks(page, [sectioned("book_p", "Amerika", parts, 240_000)]);
+  await page.addInitScript(() => {
+    const w = window as unknown as Record<string, any>;
+    w.__jobs.push("m71", "m72", "m73", "m74");
+    w.__jobStatus["m71"] = "ready";
+    w.__jobStatus["m72"] = "processing";
+    w.__jobStatus["m73"] = "queued";
+    w.__jobStatus["m74"] = "queued";
+    w.__progress = [
+      {
+        meeting_id: "m72",
+        phase: "transcription",
+        done: 30_000,
+        total: 60_000,
+        elapsed_ms: 10_000,
+        eta_ms: 10_000,
+        state: "running",
+        pausable: false,
+      },
+    ];
+  });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  const libCard = page.getByTestId("library-card").filter({ hasText: "Amerika" });
+  await expect(libCard).toContainText("38 %");
+  await page.getByRole("button", { name: "„Amerika“: Details öffnen" }).click();
+  const card = page.getByRole("region", { name: "Kurzbuch" });
+  const run = card.getByTestId("kurzbuch-transcript-progress");
+  await expect(run).toContainText("Transkription 1 von 4 · 38 %");
+  await expect(
+    run.getByRole("progressbar", { name: "Fortschritt der Transkription von Amerika" }),
+  ).toHaveAttribute("aria-valuenow", "38");
+  await page.evaluate(() =>
+    (window as unknown as { __emit: (e: string, p: unknown) => void }).__emit(
+      "meeting-event",
+      {
+        kind: "progress",
+        meeting_id: "m72",
+        phase: "transcription",
+        done: 60_000,
+        total: 60_000,
+        elapsed_ms: 20_000,
+        eta_ms: 0,
+        state: "running",
+        pausable: false,
+      },
+    ),
+  );
+  await expect(run).toContainText("50 %");
+  if (process.env.LV_SHOT_DIR)
+    await page.screenshot({ path: shot("transkription-fortschritt-1440.png") });
+});
+
+for (const width of [1440, 390])
+  for (const theme of ["light", "dark"] as const)
+    test(`Vorschau Transkription ${width} ${theme}: unterbrochen und laufend`, async ({ page }) => {
+      test.skip(!process.env.LV_SHOT_DIR, "nur mit LV_SHOT_DIR");
+      const four = (p: string) => [
+        sectionPart(`${p}1`, 0, 62_000, 0, 60_000),
+        sectionPart(`${p}2`, 58_000, 122_000, 60_000, 120_000),
+        sectionPart(`${p}3`, 118_000, 182_000, 120_000, 180_000),
+        sectionPart(`${p}4`, 178_000, 300_000, 180_000, null),
+      ];
+      await addBooks(page, [
+        sectioned("book_f", "Der einfache Weg zum Reichtum", four("mf"), 240_000),
+        sectioned("book_p", "Rich Dad Poor Dad", four("mp"), 240_000),
+      ]);
+      await page.addInitScript((dark) => {
+        const w = window as unknown as Record<string, any>;
+        if (dark) w.__settings.theme = "dark";
+        w.__jobs.push("mf1", "mf2", "mf3", "mf4", "mp1", "mp2", "mp3", "mp4");
+        Object.assign(w.__jobStatus, {
+          mf1: "ready", mf2: "failed", mf3: "failed", mf4: "ready",
+          mp1: "ready", mp2: "processing", mp3: "processing", mp4: "queued",
+        });
+        const run = (id: string, done: number) => ({
+          meeting_id: id, phase: "transcription", done, total: 60_000,
+          elapsed_ms: 10_000, eta_ms: 20_000, state: "running", pausable: false,
+        });
+        w.__progress = [run("mp2", 40_000), run("mp3", 12_000)];
+      }, theme === "dark");
+      await page.setViewportSize({ width, height: width < 500 ? 844 : 900 });
+      await page.goto("/");
+      const tag = `${width}-${theme === "dark" ? "dunkel" : "hell"}`;
+      await expect(page.getByTestId("library-card").first()).toBeVisible();
+      await page.waitForTimeout(300);
+      await page.screenshot({ path: shot(`transkription-01-bibliothek-${tag}.png`) });
+      await page.getByRole("button", { name: "„Der einfache Weg zum Reichtum“: Details öffnen" }).click();
+      await expect(page.getByRole("region", { name: "Kurzbuch" })).toContainText("unterbrochen");
+      await page.getByRole("region", { name: "Kurzbuch" }).scrollIntoViewIfNeeded();
+      await page.waitForTimeout(300);
+      await page.screenshot({ path: shot(`transkription-02-unterbrochen-${tag}.png`) });
+      await page.getByTestId("library-detail").getByRole("button", { name: "Bibliothek" }).first().click();
+      await page.getByRole("button", { name: "„Rich Dad Poor Dad“: Details öffnen" }).click();
+      await expect(page.getByTestId("kurzbuch-transcript-progress")).toContainText("%");
+      await page.getByRole("region", { name: "Kurzbuch" }).scrollIntoViewIfNeeded();
+      await page.waitForTimeout(300);
+      await page.screenshot({ path: shot(`transkription-03-laeuft-${tag}.png`) });
+    });
 
 // ---------------------------------------------------------------------------
 // Aufräumen (Patrick 02.11.): Entfernen, Zusammenführen von Hand, Titel

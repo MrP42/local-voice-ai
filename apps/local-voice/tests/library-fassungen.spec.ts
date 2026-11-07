@@ -753,6 +753,71 @@ test("Kurzbuch aus der Bibliothek: Kern-Aufruf mit Vorlage und Sprache, ohne Vor
   expect(await calls(page, "book_ai_summarize")).toHaveLength(1);
 });
 
+// Patrick 07.11.: Kurzbuch zeigt beim Erstellen Abschnitt, Prozent und Balken.
+test("Kurzbuch auf der Produktseite: Fortschritt mit Abschnitten und Abbrechen", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await page.getByRole("button", { name: "„Effi Briest“: Details öffnen" }).click();
+  // Knopf passt: kurzer Text, Langform als Name und Tooltip.
+  const ki = page.getByTestId("library-detail-ki");
+  await expect(ki).toHaveText("Erstellen");
+  await expect(ki).toHaveAccessibleName("Mit KI erstellen");
+  expect(await ki.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+  const card = page.getByRole("region", { name: "Kurzbuch" });
+  await card.getByTestId("kurzbuch-create").click();
+  await page.evaluate(() =>
+    (window as unknown as { __emit: (e: string, p: unknown) => void }).__emit(
+      "book-ai-progress",
+      { page_id: "page_1", kind: "summary", done: 3, total: 12 },
+    ),
+  );
+  const run = card.getByTestId("kurzbuch-create-progress");
+  await expect(run).toContainText("Abschnitt 3 von 12 · 25 %");
+  await expect(
+    run.getByRole("progressbar", { name: "Fortschritt des Kurzbuchs zu Effi Briest" }),
+  ).toHaveAttribute("aria-valuenow", "25");
+  await expect(card.getByTestId("kurzbuch-cancel")).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect((await card.getByTestId("kurzbuch-cancel").boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  if (process.env.LV_SHOT_DIR)
+    await page.screenshot({ path: shot("kurzbuch-fortschritt-1440.png") });
+  await page.evaluate(() =>
+    (window as unknown as { __finishSummary: () => void }).__finishSummary(),
+  );
+  await expect(run).toHaveCount(0);
+});
+
+for (const width of [1440, 390])
+  for (const theme of ["light", "dark"] as const)
+    test(`Vorschau Kurzbuch-Fortschritt ${width} ${theme}`, async ({ page }) => {
+      test.skip(!process.env.LV_SHOT_DIR, "nur mit LV_SHOT_DIR");
+      if (theme === "dark")
+        await page.addInitScript(() => {
+          (window as unknown as { __settings: { theme: string } }).__settings.theme = "dark";
+        });
+      await page.setViewportSize({ width, height: width < 500 ? 844 : 900 });
+      await page.goto("/");
+      await page.getByRole("button", { name: "„Effi Briest“: Details öffnen" }).click();
+      const tag = `${width}-${theme === "dark" ? "dunkel" : "hell"}`;
+      await page.waitForTimeout(300);
+      await page.screenshot({ path: shot(`kurzbuch-01-erstellen-knopf-${tag}.png`) });
+      const card = page.getByRole("region", { name: "Kurzbuch" });
+      await card.getByTestId("kurzbuch-create").click();
+      await page.evaluate(() =>
+        (window as unknown as { __emit: (e: string, p: unknown) => void }).__emit(
+          "book-ai-progress",
+          { page_id: "page_1", kind: "summary", done: 5, total: 12 },
+        ),
+      );
+      await expect(card.getByTestId("kurzbuch-create-progress")).toContainText("42 %");
+      await card.scrollIntoViewIfNeeded();
+      await page.waitForTimeout(300);
+      await page.screenshot({ path: shot(`kurzbuch-02-fortschritt-${tag}.png`) });
+    });
+
 test("Hörbuch ohne Text: KI-Dialog verweist auf die Transkription", async ({
   page,
 }) => {

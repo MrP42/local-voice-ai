@@ -170,6 +170,17 @@ export function jobLabel(
   t: (key: string, options?: Record<string, unknown>) => string,
   job: TranscriptJob | undefined,
 ): string {
+  const base = jobBase(t, job);
+  const running = job && !["failed", "missing", "ready"].includes(job.status);
+  return running && job.progress !== null
+    ? `${base} · ${t("library.job.percent", { percent: Math.round(job.progress * 100) })}`
+    : base;
+}
+
+function jobBase(
+  t: (key: string, options?: Record<string, unknown>) => string,
+  job: TranscriptJob | undefined,
+): string {
   if (job && job.total > 1 && job.failed > 0 && job.failed < job.total)
     return t("library.job.partsFailed", {
       done: job.done,
@@ -235,7 +246,8 @@ export const ProgressBar: React.FC<{ fraction: number; label: string }> = ({
  */
 export const LibraryPage: React.FC = () => {
   const { t } = useTranslation();
-  const { books, pageAudio, jobs, reload, save, tick } = useLibrary();
+  const { books, pageAudio, jobs, reload, save, tick, retryTranscript } =
+    useLibrary();
   const {
     drop,
     working,
@@ -982,6 +994,7 @@ export const LibraryPage: React.FC = () => {
               onExport={() => setExportFor(open.book)}
               onAddEdition={() => setAdding(true)}
               onAlign={(pair) => setAligning({ bookId: open.book.id, pair })}
+              onRetryTranscript={() => retryTranscript(open.book.id)}
             />
           </div>
         ) : (
@@ -1202,6 +1215,13 @@ export const LibraryPage: React.FC = () => {
                                   <div className="library-meta">
                                     {jobLabel(t, job)}
                                   </div>
+                                  {job.progress !== null &&
+                                    job.status !== "failed" &&
+                                    job.status !== "missing" && (
+                                      <div className="library-job__bar" aria-hidden="true">
+                                        <span style={{ width: `${Math.round(job.progress * 100)}%` }} />
+                                      </div>
+                                    )}
                                 </div>
                               </div>
                             );

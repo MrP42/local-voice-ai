@@ -82,6 +82,8 @@ interface Props {
   onAddEdition?(): void;
   /** lva#344: Kapitel zweier Sprachfassungen zuordnen. */
   onAlign?(pair: { a: string; b: string }): void;
+  /** Gescheiterte Transkription erneut anstoßen (useLibrary.retryTranscript). */
+  onRetryTranscript?(): Promise<void>;
 }
 
 /**
@@ -104,6 +106,7 @@ export const BookDetail: React.FC<Props> = ({
   onExport,
   onAddEdition,
   onAlign,
+  onRetryTranscript,
 }) => {
   const { t } = useTranslation();
   const { book, shown } = view;
@@ -183,16 +186,25 @@ export const BookDetail: React.FC<Props> = ({
       await onChanged();
     });
 
-  /** Nur fehlende oder fehlgeschlagene Teile und Abschnitte neu starten. */
+  /**
+   * Nur fehlende oder fehlgeschlagene Teile und Abschnitte neu starten; ist
+   * nur die Übernahme gescheitert, wird sie erneut versucht.
+   */
   const resume = () =>
     run("transcribe", async () => {
-      await resumeTranscription(book.id, (m) => toast.error(m));
+      if (onRetryTranscript) await onRetryTranscript();
+      else await resumeTranscription(book.id, (m) => toast.error(m));
       await onChanged();
     });
 
   const missingParts =
     !book.text && tracksOf(book.audio).some((x) => !jobsOfTrack(x).length);
-  const canResume = job !== undefined && (missingParts || job.failed > 0);
+  const canResume =
+    job !== undefined &&
+    (missingParts ||
+      job.failed > 0 ||
+      job.status === "failed" ||
+      job.status === "missing");
 
   const saveDraft = () =>
     run("save", async () => {
@@ -395,6 +407,8 @@ export const BookDetail: React.FC<Props> = ({
                   size="lg"
                   icon={<Sparkles size={16} aria-hidden="true" />}
                   onClick={() => onCreate("translation")}
+                  title={t("library.ki.title")}
+                  aria-label={t("library.ki.title")}
                   data-testid="library-detail-ki"
                 >
                   {t("library.ki.short")}
@@ -442,6 +456,8 @@ export const BookDetail: React.FC<Props> = ({
             transcribing={view.transcription === "running" || job !== undefined}
             busy={busy !== null}
             onTranscribe={() => void transcribe()}
+            job={job}
+            onRetry={canResume ? () => void resume() : undefined}
           />
           {book.description ? (
             <p className="library-blurb">{book.description}</p>
