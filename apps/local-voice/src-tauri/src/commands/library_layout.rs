@@ -198,6 +198,8 @@ pub struct LibraryBackup {
     pub erstellt_ms: f64,
     pub dateien: u32,
     pub bytes: f64,
+    /// Älter als die Aufbewahrung (30 Tage): die Oberfläche fragt, ob sie gehen darf.
+    pub abgelaufen: bool,
 }
 
 /// Ergebnis von „Sicherung zurückspielen“.
@@ -340,15 +342,38 @@ pub async fn library_layout_rollback(
 #[specta::specta]
 pub fn library_backup_list(app: AppHandle) -> Result<Vec<LibraryBackup>, String> {
     let data = pages::data_root(&app)?;
+    let jetzt = library_layout::jetzt_ms();
     Ok(library_layout::sicherungen_auflisten(&data)
         .into_iter()
         .map(|s| LibraryBackup {
+            abgelaufen: jetzt.saturating_sub(s.erstellt_ms) > library_layout::AUFBEWAHRUNG_MS,
             name: s.name,
             erstellt_ms: s.erstellt_ms as f64,
             dateien: s.dateien as u32,
             bytes: s.bytes as f64,
         })
         .collect())
+}
+
+/// Eine Sicherung auf ausdrücklichen Wunsch löschen (nach der Aufbewahrung von 30
+/// Tagen fragt die Oberfläche). Abgelehnt, solange etwas sie noch braucht.
+#[tauri::command]
+#[specta::specta]
+pub async fn library_backup_delete(
+    app: AppHandle,
+    engine: State<'_, SyncEngine>,
+    name: String,
+) -> Result<(), String> {
+    hintergrund(&engine)?;
+    let _run = engine.account_guard().await;
+    tauri::async_runtime::spawn_blocking(move || {
+        let data = pages::data_root(&app)?;
+        let _library = crate::library::sync_lock();
+        let _pages = pages::lock();
+        library_layout::sicherung_loeschen(&data, &name)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Sicherung zurückspielen: erst gegen das Manifest prüfen, dann jedes

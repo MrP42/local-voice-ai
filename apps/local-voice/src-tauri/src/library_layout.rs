@@ -131,7 +131,7 @@ fn sicherer_rel(rel: &str) -> Result<(), String> {
     }
 }
 
-fn jetzt_ms() -> u64 {
+pub fn jetzt_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
@@ -1178,6 +1178,405 @@ pub fn sicherungen_auflisten(data: &Path) -> Vec<SicherungInfo> {
         .collect();
     liste.sort_by_key(|s| std::cmp::Reverse(s.erstellt_ms));
     liste
+}
+
+/// Aufbewahrung einer Sicherung, bevor die Oberfläche nach dem Löschen fragt (4.2).
+pub const AUFBEWAHRUNG_MS: u64 = 30 * 24 * 60 * 60 * 1000;
+
+/// Eine Sicherung auf ausdrücklichen Wunsch löschen. Abgelehnt, solange ein Zurückspielen
+/// unterbrochen ist oder eine offene Neuordnung (Journal ohne Abschluss) auf genau diese
+/// Sicherung zählt; ebenso, wenn ihr Weg über eine Verknüpfung führt.
+pub fn sicherung_loeschen(data: &Path, name: &str) -> Result<(), String> {
+    if !ziffern_nach(name, SICHERUNG_PRAEFIX) {
+        return Err(format!("Ungültiger Name einer Sicherung: {name}"));
+    }
+    let rel = format!("{SICHERUNGEN}/{name}");
+    let dir = absolut(data, &rel);
+    if !dir.is_dir() {
+        return Err(format!("Sicherung nicht gefunden: {name}"));
+    }
+    if vorhanden(&tauschplan_pfad(data)) {
+        return Err(
+            "Ein Zurückspielen ist noch nicht abgeschlossen; bitte die App neu starten.".into(),
+        );
+    }
+    let gebraucht =
+        journal_laden(data)?.is_some_and(|j| !j.phase.abgeschlossen() && j.sicherung == rel);
+    if gebraucht {
+        return Err("Die laufende Neuordnung braucht diese Sicherung; sie bleibt erhalten.".into());
+    }
+    ohne_umweg(data, &rel)?;
+    let wurzel = ordner_kennung(data)?;
+    let eltern = ordner_kennung(&data.join(SICHERUNGEN))?;
+    let selbst = ordner_kennung(&dir)?;
+    let manifest = fs::read(dir.join(MANIFEST))
+        .map_err(|e| format!("Manifest der Sicherung nicht lesbar: {e}; nichts gelöscht."))?;
+    // Datenwurzel und `sicherungen` müssen dieselben Ordner bleiben, die eben gemessen
+    // wurden; sonst könnte ein Pfad über eine neu entstandene Verknüpfung woandershin führen.
+    let gleich = |ort: &Path, erwartet: Kennung| -> Result<(), String> {
+        let wurzel_jetzt = ordner_kennung(data)?;
+        let eltern_jetzt = ordner_kennung(&data.join(SICHERUNGEN))?;
+        let ort_jetzt = ordner_kennung(ort)?;
+        if wurzel_jetzt == wurzel && eltern_jetzt == eltern && ort_jetzt == erwartet {
+            Ok(())
+        } else {
+            Err(format!(
+                "{} ist nicht mehr der eben geprüfte Ordner; nichts gelöscht.",
+                ort.display()
+            ))
+        }
+    };
+    // Erst in einen privaten Ordner mit nicht erratbarem Namen umbenennen (das Umbenennen
+    // nimmt eine Verknüpfung selbst mit, nie ihr Ziel), dann am neuen Ort prüfen, eine
+    // Löschmarke schreiben und erst danach löschen.
+    let privat = privater_loeschort(data);
+    gleich(&dir, selbst)?;
+    #[cfg(test)]
+    VOR_UMBENENNEN.with(|h| h.take().map(|f| f(data)));
+    fs::rename(&dir, &privat).map_err(|e| format!("Sicherung nicht löschbar: {e}"))?;
+    let geprueft = gleich(&privat, selbst).and_then(|()| {
+        loeschbar(&privat)?;
+        let jetzt = fs::read(privat.join(MANIFEST))
+            .map_err(|e| format!("Manifest der Sicherung nicht lesbar: {e}; nichts gelöscht."))?;
+        if jetzt != manifest {
+            return Err("Die Sicherung hat sich beim Löschen verändert; nichts gelöscht.".into());
+        }
+        let name_privat = privat.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        fs::write(
+            privat.join(LOESCHMARKE),
+            loeschmarke(name_privat, &manifest),
+        )
+        .map_err(|e| format!("Löschmarke nicht schreibbar: {e}; nichts gelöscht."))?;
+        gleich(&privat, selbst)
+    });
+    if let Err(e) = geprueft {
+        // Zurück an den alten Namen, aber nur, wenn am privaten Namen noch genau die
+        // gemessene Sicherung liegt. Sonst (etwa ein anderes Objekt, das ein Sync-Client
+        // eingesetzt hat) wird nichts verändert und der Ort gemeldet.
+        if ordner_kennung(&privat).ok() != Some(selbst) {
+            log::error!("Buch-Ordner: abgebrochenes Löschen, privater Ort nicht mehr eindeutig");
+            return Err(format!(
+                "{e} Am privaten Ort {} liegt nicht mehr die geprüfte Sicherung; dort wurde \
+                 nichts verändert. Bitte den Ordner prüfen.",
+                privat.display()
+            ));
+        }
+        // Zurückbenennen, unmittelbar nach der Prüfung; die Marke erst danach im
+        // zurückbenannten Ordner entfernen, und nur, wenn dort die Sicherung liegt.
+        if let Err(zurueck) = fs::rename(&privat, &dir) {
+            log::error!(
+                "Buch-Ordner: Sicherung nach abgebrochenem Löschen nicht zurückbenannt ({zurueck})"
+            );
+            return Err(format!(
+                "{e} Die Sicherung ließ sich nicht an ihren Platz zurückbringen ({zurueck}); \
+                 sie liegt unter {}.",
+                privat.display()
+            ));
+        }
+        if ordner_kennung(&dir).ok() != Some(selbst) {
+            log::error!("Buch-Ordner: zurückbenannter Ordner ist nicht die geprüfte Sicherung");
+            return Err(format!(
+                "{e} Unter {} liegt nach dem Zurückbenennen nicht die geprüfte Sicherung; \
+                 dort wurde nichts weiter verändert. Bitte den Ordner prüfen.",
+                dir.display()
+            ));
+        }
+        if let Err(marke) = fs::remove_file(dir.join(LOESCHMARKE)) {
+            if marke.kind() != std::io::ErrorKind::NotFound {
+                log::error!("Buch-Ordner: Löschmarke nicht entfernt ({marke})");
+                return Err(format!(
+                    "{e} Die Löschmarke in {} ließ sich nicht entfernen ({marke}).",
+                    dir.display()
+                ));
+            }
+        }
+        return Err(e);
+    }
+    fs::remove_dir_all(&privat).map_err(|e| format!("Sicherung nicht löschbar: {e}"))?;
+    reste_loeschen(data, wurzel, eltern);
+    let _ = ordner_sync(&data.join(SICHERUNGEN))?;
+    Ok(())
+}
+
+/// Präfix des privaten Ordners, in den eine Sicherung vor dem Löschen umbenannt wird.
+const LOESCHEN_PRAEFIX: &str = ".loeschen-";
+/// Löschmarke im privaten Ordner: nur ein Rest mit passender Marke wird später entfernt.
+const LOESCHMARKE: &str = ".loeschen";
+
+#[cfg(test)]
+thread_local! {
+    /// Test: Eingriff unmittelbar vor dem Umbenennen (Fall „Elternordner ausgetauscht“).
+    static VOR_UMBENENNEN: std::cell::Cell<Option<fn(&Path)>> = const { std::cell::Cell::new(None) };
+}
+
+/// Freier Name `sicherungen/.loeschen-<32 Hex>` mit zufälligem Teil (nicht angelegt: das
+/// Umbenennen legt ihn an). Der Zufall stammt aus der zufällig geseedeten `RandomState`.
+fn privater_loeschort(data: &Path) -> PathBuf {
+    use std::hash::{BuildHasher, Hasher};
+    let zufall = |runde: u64| {
+        let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+        h.write_u64(jetzt_ms());
+        h.write_u64(runde);
+        h.write_u32(std::process::id());
+        h.finish()
+    };
+    let mut runde = 0;
+    loop {
+        let ort = data.join(SICHERUNGEN).join(format!(
+            "{LOESCHEN_PRAEFIX}{:016x}{:016x}",
+            zufall(runde),
+            zufall(runde + 1)
+        ));
+        if !vorhanden(&ort) {
+            return ort;
+        }
+        runde += 2;
+    }
+}
+
+/// Inhalt der Löschmarke: bindet den privaten Namen an das Manifest der Sicherung.
+fn loeschmarke(name: &str, manifest: &[u8]) -> String {
+    let mut h = Sha256::new();
+    h.update(name.as_bytes());
+    h.update([0]);
+    h.update(manifest);
+    format!("{:x}", h.finalize())
+}
+
+/// Dateisystem-Kennung eines Ordners (Unix: Gerät und Inode; Windows: 64-Bit-Seriennummer
+/// des Volumes und 128-Bit-FileId aus FILE_ID_INFO, gelesen am Eintrag selbst, ohne einer
+/// Verknüpfung zu folgen).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Kennung(u64, u128);
+
+/// Kennung eines gewöhnlichen Ordners; eine Verknüpfung oder ein Nicht-Ordner ist ein Fehler.
+fn ordner_kennung(pfad: &Path) -> Result<Kennung, String> {
+    let meta =
+        fs::symlink_metadata(pfad).map_err(|e| format!("{} nicht lesbar: {e}", pfad.display()))?;
+    if ist_umweg(&meta) || !meta.is_dir() {
+        return Err(format!(
+            "{} ist kein gewöhnlicher Ordner; nichts gelöscht.",
+            pfad.display()
+        ));
+    }
+    kennung_roh(pfad, &meta).map_err(|e| {
+        if cfg!(windows) {
+            format!(
+                "Löschen von Sicherungen wird auf diesem Laufwerk nicht unterstützt \
+                 (Netzlaufwerk oder Dateisystem ohne verlässliche Datei-Kennung, etwa \
+                 FAT/exFAT). Bitte die Sicherung lokal löschen. ({e})"
+            )
+        } else {
+            format!("{} nicht lesbar: {e}", pfad.display())
+        }
+    })
+}
+
+#[cfg(unix)]
+fn kennung_roh(_pfad: &Path, meta: &fs::Metadata) -> std::io::Result<Kennung> {
+    use std::os::unix::fs::MetadataExt;
+    Ok(Kennung(meta.dev(), u128::from(meta.ino())))
+}
+
+/// Unter Windows nur auf NTFS und ReFS: dort sind FileIds über ein Umbenennen stabil und
+/// eindeutig. Auf FAT/exFAT oder Netzlaufwerken ohne verlässliche FileId wird das Löschen
+/// einer Sicherung verweigert (dokumentierter Abbruch, nichts verändert).
+#[cfg(windows)]
+fn kennung_roh(pfad: &Path, _meta: &fs::Metadata) -> std::io::Result<Kennung> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use std::os::windows::io::AsRawHandle;
+    const FILE_READ_ATTRIBUTES: u32 = 0x80;
+    const FILE_SHARE_ALL: u32 = 0x1 | 0x2 | 0x4;
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    const FILE_ID_INFO_KLASSE: i32 = 18;
+    #[repr(C)]
+    struct FileIdInfo {
+        volume: u64,
+        id: [u8; 16],
+    }
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetFileInformationByHandleEx(
+            datei: *mut std::ffi::c_void,
+            klasse: i32,
+            info: *mut std::ffi::c_void,
+            groesse: u32,
+        ) -> i32;
+        fn GetVolumeInformationByHandleW(
+            datei: *mut std::ffi::c_void,
+            name: *mut u16,
+            name_laenge: u32,
+            seriennummer: *mut u32,
+            max_laenge: *mut u32,
+            merkmale: *mut u32,
+            dateisystem: *mut u16,
+            dateisystem_laenge: u32,
+        ) -> i32;
+    }
+    if netzlaufwerk(pfad) {
+        return Err(std::io::Error::other("Netzlaufwerk"));
+    }
+    let datei = fs::OpenOptions::new()
+        .access_mode(FILE_READ_ATTRIBUTES)
+        .share_mode(FILE_SHARE_ALL)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(pfad)?;
+    let handle = datei.as_raw_handle();
+    let mut fs_name = [0u16; 32];
+    // SAFETY: gültiges Handle; nur der Puffer für den Dateisystemnamen wird beschrieben.
+    let ok = unsafe {
+        GetVolumeInformationByHandleW(
+            handle,
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            fs_name.as_mut_ptr(),
+            fs_name.len() as u32,
+        )
+    };
+    if ok == 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let ende = fs_name
+        .iter()
+        .position(|&c| c == 0)
+        .unwrap_or(fs_name.len());
+    let fs_name = String::from_utf16_lossy(&fs_name[..ende]);
+    if !matches!(fs_name.as_str(), "NTFS" | "ReFS") {
+        return Err(std::io::Error::other(format!(
+            "Dateisystem {fs_name} ohne verlässliche Datei-Kennung; Löschen nicht möglich"
+        )));
+    }
+    let mut info = FileIdInfo {
+        volume: 0,
+        id: [0; 16],
+    };
+    // SAFETY: gültiges Handle, Puffer in der Größe von FILE_ID_INFO.
+    let ok = unsafe {
+        GetFileInformationByHandleEx(
+            handle,
+            FILE_ID_INFO_KLASSE,
+            (&mut info as *mut FileIdInfo).cast(),
+            std::mem::size_of::<FileIdInfo>() as u32,
+        )
+    };
+    if ok == 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let id = u128::from_le_bytes(info.id);
+    if id == 0 || info.volume == 0 {
+        return Err(std::io::Error::other(
+            "keine verlässliche Datei-Kennung; Löschen nicht möglich",
+        ));
+    }
+    Ok(Kennung(info.volume, id))
+}
+
+/// UNC-Pfad oder verbundenes Netzlaufwerk (`GetDriveTypeW` = DRIVE_REMOTE).
+#[cfg(windows)]
+fn netzlaufwerk(pfad: &Path) -> bool {
+    use std::os::windows::ffi::OsStrExt;
+    use std::path::Prefix;
+    const DRIVE_REMOTE: u32 = 4;
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetDriveTypeW(wurzel: *const u16) -> u32;
+    }
+    match pfad.components().next() {
+        Some(Component::Prefix(p)) => match p.kind() {
+            Prefix::UNC(..) | Prefix::VerbatimUNC(..) => true,
+            Prefix::Disk(b) | Prefix::VerbatimDisk(b) => {
+                let wurzel: Vec<u16> = std::ffi::OsStr::new(&format!("{}:\\", b as char))
+                    .encode_wide()
+                    .chain([0])
+                    .collect();
+                // SAFETY: nullterminierte Zeichenkette, nur gelesen.
+                unsafe { GetDriveTypeW(wurzel.as_ptr()) == DRIVE_REMOTE }
+            }
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+fn kennung_roh(_pfad: &Path, _meta: &fs::Metadata) -> std::io::Result<Kennung> {
+    Err(std::io::ErrorKind::Unsupported.into())
+}
+
+/// Ein gewöhnlicher Ordner, in dem auf keiner Ebene eine Verknüpfung (Symlink, Junction,
+/// anderer Namensersatz-Reparse-Punkt) oder ein Sondereintrag liegt.
+fn loeschbar(dir: &Path) -> Result<(), String> {
+    let meta =
+        fs::symlink_metadata(dir).map_err(|e| format!("{} nicht lesbar: {e}", dir.display()))?;
+    if ist_umweg(&meta) || !meta.is_dir() {
+        return Err(format!(
+            "{} ist kein gewöhnlicher Ordner; nichts gelöscht.",
+            dir.display()
+        ));
+    }
+    let eintraege =
+        fs::read_dir(dir).map_err(|e| format!("{} nicht lesbar: {e}", dir.display()))?;
+    for eintrag in eintraege {
+        let pfad = eintrag
+            .map_err(|e| format!("{} nicht lesbar: {e}", dir.display()))?
+            .path();
+        let meta = fs::symlink_metadata(&pfad)
+            .map_err(|e| format!("{} nicht lesbar: {e}", pfad.display()))?;
+        if ist_umweg(&meta) {
+            return Err(format!(
+                "{} ist eine Verknüpfung; nichts gelöscht.",
+                pfad.display()
+            ));
+        }
+        if meta.is_dir() {
+            loeschbar(&pfad)?;
+        } else if !meta.is_file() {
+            return Err(format!(
+                "{} ist keine gewöhnliche Datei; nichts gelöscht.",
+                pfad.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Reste eines abgebrochenen Löschens (Absturz zwischen Umbenennen und Löschen) entfernen,
+/// aber nur mit passender Löschmarke, ohne Verknüpfung darin und solange Datenwurzel und
+/// `sicherungen` die eben gemessenen Ordner sind. Alles andere bleibt liegen.
+fn reste_loeschen(data: &Path, wurzel: Kennung, eltern: Kennung) {
+    for name in unterordner(&data.join(SICHERUNGEN)) {
+        let hex = name.strip_prefix(LOESCHEN_PRAEFIX).unwrap_or("");
+        if hex.len() != 32 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+            continue;
+        }
+        let ort = data.join(SICHERUNGEN).join(&name);
+        // Kennung vor der Inhaltsprüfung erfassen, unmittelbar vor dem Löschen vergleichen.
+        let Ok(rest) = ordner_kennung(&ort) else {
+            continue;
+        };
+        let marke_passt = match (
+            fs::read(ort.join(LOESCHMARKE)),
+            fs::read(ort.join(MANIFEST)),
+        ) {
+            (Ok(marke), Ok(manifest)) => marke == loeschmarke(&name, &manifest).as_bytes(),
+            _ => false,
+        };
+        if !marke_passt || loeschbar(&ort).is_err() {
+            continue;
+        }
+        let am_platz = ordner_kennung(data).is_ok_and(|k| k == wurzel)
+            && ordner_kennung(&data.join(SICHERUNGEN)).is_ok_and(|k| k == eltern)
+            && ordner_kennung(&ort).is_ok_and(|k| k == rest);
+        if am_platz {
+            if let Err(e) = fs::remove_dir_all(&ort) {
+                log::warn!("Buch-Ordner: Rest eines Löschens nicht entfernt ({e})");
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -4169,6 +4568,192 @@ mod tests {
         );
         assert!(korb.join("projects/page_9").is_dir());
         assert!(!data.join("projects/page_9").exists());
+    }
+
+    #[test]
+    fn sicherung_loeschen_nur_wenn_nichts_sie_braucht() {
+        let data = standardlage("loeschen");
+        migrieren(&data, &optionen()).unwrap();
+        let name = sicherungen_auflisten(&data)[0].name.clone();
+        assert!(sicherung_loeschen(&data, "../projects").is_err());
+        assert!(sicherung_loeschen(&data, "buch-ordner-x").is_err());
+        // Offene Neuordnung, die genau diese Sicherung nennt: bleibt.
+        let mut j = journal_laden(&data).unwrap().unwrap();
+        let roh = fs::read(journal_pfad(&data)).unwrap();
+        j.phase = Phase::Gesichert;
+        journal_schreiben(&data, &j).unwrap();
+        assert!(sicherung_loeschen(&data, &name).is_err());
+        fs::write(journal_pfad(&data), &roh).unwrap();
+        // Unterbrochenes Zurückspielen: bleibt.
+        fs::write(tauschplan_pfad(&data), b"{}").unwrap();
+        assert!(sicherung_loeschen(&data, &name).is_err());
+        fs::remove_file(tauschplan_pfad(&data)).unwrap();
+        sicherung_loeschen(&data, &name).unwrap();
+        assert!(sicherungen_auflisten(&data).is_empty());
+        assert!(data.join("library/book_1/fassungen/page_1").is_dir());
+        assert!(unterordner(&data.join(SICHERUNGEN))
+            .iter()
+            .all(|n| !n.starts_with(LOESCHEN_PRAEFIX)));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sicherung_loeschen_folgt_keiner_verknuepfung() {
+        let data = standardlage("loeschen-umweg");
+        migrieren(&data, &optionen()).unwrap();
+        let name = sicherungen_auflisten(&data)[0].name.clone();
+        let fremd = data.parent().unwrap().join("loeschen-umweg-fremd");
+        let _ = fs::remove_dir_all(&fremd);
+        fs::create_dir_all(&fremd).unwrap();
+        fs::write(fremd.join("wichtig.txt"), b"bleibt").unwrap();
+        // Verknüpfung tief in der Sicherung: abgelehnt, Sicherung und Ziel bleiben.
+        let sicherung = data.join(SICHERUNGEN).join(&name);
+        std::os::unix::fs::symlink(&fremd, sicherung.join("umweg")).unwrap();
+        let fehler = sicherung_loeschen(&data, &name).unwrap_err();
+        assert!(fehler.contains("Verknüpfung"), "{fehler}");
+        assert!(sicherung.join(MANIFEST).is_file());
+        assert!(fremd.join("wichtig.txt").is_file());
+        fs::remove_file(sicherung.join("umweg")).unwrap();
+        // Die Sicherung selbst als Verknüpfung auf einen fremden Ordner: abgelehnt.
+        let echt = data.join("echt");
+        fs::rename(&sicherung, &echt).unwrap();
+        std::os::unix::fs::symlink(&fremd, &sicherung).unwrap();
+        assert!(sicherung_loeschen(&data, &name).is_err());
+        assert!(fremd.join("wichtig.txt").is_file());
+        // Rest eines abgebrochenen Löschens mit Verknüpfung bleibt liegen, ohne Folgen.
+        fs::remove_file(&sicherung).unwrap();
+        fs::rename(&echt, &sicherung).unwrap();
+        let rest = data
+            .join(SICHERUNGEN)
+            .join(format!("{LOESCHEN_PRAEFIX}{}", "a".repeat(32)));
+        std::os::unix::fs::symlink(&fremd, &rest).unwrap();
+        sicherung_loeschen(&data, &name).unwrap();
+        assert!(fremd.join("wichtig.txt").is_file());
+        assert!(sicherungen_auflisten(&data).is_empty());
+    }
+
+    /// Fall C: `sicherungen` wird zwischen Prüfung und Umbenennen gegen eine Verknüpfung
+    /// auf einen fremden Ordner getauscht, der eine gleichnamige Sicherung mit gleichem
+    /// Manifest enthält. Nichts wird gelöscht. Weil am privaten Ort nicht die gemessene
+    /// Sicherung liegt, wird dort auch nichts zurückbenannt oder verändert; die Meldung
+    /// nennt den Ort.
+    fn fall_c(kennung: &str, tauschen: fn(&Path)) {
+        let data = standardlage(kennung);
+        migrieren(&data, &optionen()).unwrap();
+        let name = sicherungen_auflisten(&data)[0].name.clone();
+        let fremd = fall_c_fremd(&data);
+        let _ = fs::remove_dir_all(&fremd);
+        fs::create_dir_all(fremd.join(&name)).unwrap();
+        fs::copy(
+            data.join(SICHERUNGEN).join(&name).join(MANIFEST),
+            fremd.join(&name).join(MANIFEST),
+        )
+        .unwrap();
+        fs::write(fremd.join(&name).join("wichtig.txt"), b"bleibt").unwrap();
+        VOR_UMBENENNEN.with(|h| h.set(Some(tauschen)));
+        let fehler = sicherung_loeschen(&data, &name).unwrap_err();
+        VOR_UMBENENNEN.with(|h| h.set(None));
+        assert!(fehler.contains("nichts gelöscht"), "{fehler}");
+        assert!(fehler.contains("nichts verändert"), "{fehler}");
+        let eintraege = unterordner(&fremd);
+        assert_eq!(eintraege.len(), 1, "{eintraege:?}");
+        let ort = fremd.join(&eintraege[0]);
+        assert!(ort.join("wichtig.txt").is_file());
+        assert!(ort.join(MANIFEST).is_file());
+        assert!(!ort.join(LOESCHMARKE).exists());
+        assert!(data
+            .join("sicherungen-echt")
+            .join(&name)
+            .join(MANIFEST)
+            .is_file());
+    }
+
+    fn fall_c_fremd(data: &Path) -> PathBuf {
+        data.parent().unwrap().join(format!(
+            "{}-fremd",
+            data.file_name().unwrap().to_str().unwrap()
+        ))
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sicherung_loeschen_bemerkt_ausgetauschten_elternordner() {
+        fn tauschen(data: &Path) {
+            fs::rename(data.join(SICHERUNGEN), data.join("sicherungen-echt")).unwrap();
+            std::os::unix::fs::symlink(fall_c_fremd(data), data.join(SICHERUNGEN)).unwrap();
+        }
+        fall_c("loeschen-fall-c", tauschen);
+    }
+
+    /// Dasselbe mit einer echten Junction (`mklink /J`).
+    #[cfg(windows)]
+    #[test]
+    fn sicherung_loeschen_bemerkt_ausgetauschte_junction() {
+        fn tauschen(data: &Path) {
+            fs::rename(data.join(SICHERUNGEN), data.join("sicherungen-echt")).unwrap();
+            let status = std::process::Command::new("cmd")
+                .arg("/C")
+                .arg("mklink")
+                .arg("/J")
+                .arg(data.join(SICHERUNGEN))
+                .arg(fall_c_fremd(data))
+                .status()
+                .unwrap();
+            assert!(status.success());
+        }
+        fall_c("loeschen-fall-c-junction", tauschen);
+    }
+
+    /// Ein Rest wird nur mit passender Löschmarke entfernt; ohne Marke, mit falscher
+    /// Marke oder mit Marke zu einem anderen Manifest bleibt er liegen.
+    #[test]
+    fn rest_nur_mit_passender_loeschmarke_entfernt() {
+        let data = standardlage("loeschen-rest");
+        migrieren(&data, &optionen()).unwrap();
+        let name = sicherungen_auflisten(&data)[0].name.clone();
+        let rest = |n: char, marke: Option<&str>| {
+            let rname = format!("{LOESCHEN_PRAEFIX}{}", n.to_string().repeat(32));
+            let ort = data.join(SICHERUNGEN).join(&rname);
+            fs::create_dir_all(&ort).unwrap();
+            fs::write(ort.join(MANIFEST), b"{\"x\":1}").unwrap();
+            fs::write(ort.join("inhalt.txt"), b"x").unwrap();
+            if let Some(m) = marke {
+                fs::write(ort.join(LOESCHMARKE), m).unwrap();
+            }
+            (rname, ort)
+        };
+        let (_, ohne) = rest('a', None);
+        let (_, falsch) = rest('b', Some("0000"));
+        let (_, fremd_name) = rest('c', Some(&loeschmarke("anderer", b"{\"x\":1}")));
+        let passend_name = format!("{LOESCHEN_PRAEFIX}{}", "d".repeat(32));
+        let (_, passend) = rest('d', Some(&loeschmarke(&passend_name, b"{\"x\":1}")));
+        // Regulärer Sicherungsname mit stehengebliebener, zu ihm passender Marke: nie Rest.
+        let regulaer_name = format!("{SICHERUNG_PRAEFIX}1");
+        let regulaer = data.join(SICHERUNGEN).join(&regulaer_name);
+        fs::create_dir_all(&regulaer).unwrap();
+        fs::write(regulaer.join(MANIFEST), b"{\"x\":1}").unwrap();
+        fs::write(
+            regulaer.join(LOESCHMARKE),
+            loeschmarke(&regulaer_name, b"{\"x\":1}"),
+        )
+        .unwrap();
+        // Privates Präfix, aber keine 32 Hex: nie Rest, auch mit passender Marke.
+        let kurz_name = format!("{LOESCHEN_PRAEFIX}123");
+        let kurz = data.join(SICHERUNGEN).join(&kurz_name);
+        fs::create_dir_all(&kurz).unwrap();
+        fs::write(kurz.join(MANIFEST), b"{\"x\":1}").unwrap();
+        fs::write(
+            kurz.join(LOESCHMARKE),
+            loeschmarke(&kurz_name, b"{\"x\":1}"),
+        )
+        .unwrap();
+        sicherung_loeschen(&data, &name).unwrap();
+        assert!(ohne.join("inhalt.txt").is_file());
+        assert!(regulaer.join(MANIFEST).is_file());
+        assert!(kurz.join(MANIFEST).is_file());
+        assert!(falsch.join("inhalt.txt").is_file());
+        assert!(fremd_name.join("inhalt.txt").is_file());
+        assert!(!passend.exists());
     }
 
     #[test]
