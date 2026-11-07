@@ -3454,6 +3454,8 @@ pub fn run(cli_args: CliArgs) {
             app.manage(TranscriptionCoordinator::new(app_handle.clone()));
 
             initialize_core_logic(&app_handle);
+            // Testversionen aus dem Update-Ordner sofort anbieten (Ein-Klick-Update).
+            local_update::start_watch(app_handle.clone());
 
             // Kontextmenü-Eintrag mit dem Setting synchronisieren (aktualisiert
             // auch den EXE-Pfad, wenn Builds wandern).

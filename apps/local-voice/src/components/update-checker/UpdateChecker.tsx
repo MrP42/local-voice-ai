@@ -14,6 +14,9 @@ import { commands, type LocalUpdate } from "../../bindings";
 /** Wunsch aus dem Profilmenü ▸ Hilfe: jetzt nach Updates suchen. */
 export const UPDATE_CHECK_EVENT = "lv-update-check";
 
+/** Backend-Wächter (local_update.rs): eine neue Testversion liegt bereit. */
+const LOCAL_UPDATE_EVENT = "lokales-update-bereit";
+
 interface UpdateCheckerProps {
   className?: string;
   /** Laufende Version; ein Klick darauf sucht nach Updates. */
@@ -56,7 +59,14 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
   // Update checking state
   const [isChecking, setIsChecking] = useState(false);
   const [updateAvailable, setUpdateAvailable] = useState(false);
-  const [isInstalling, setIsInstalling] = useState(false);
+  const [isInstalling, setIsInstallingState] = useState(false);
+  // Läuft schon eine Installation, ersetzt ein neuer Fund sie nicht. Das Ref
+  // wird synchron mit dem Zustand gesetzt, damit kein Ereignis dazwischenkommt.
+  const installingRef = useRef(false);
+  const setIsInstalling = (value: boolean) => {
+    installingRef.current = value;
+    setIsInstallingState(value);
+  };
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [showUpToDate, setShowUpToDate] = useState(false);
   const [showPortableUpdateDialog, setShowPortableUpdateDialog] =
@@ -199,6 +209,20 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
     isManualCheckRef.current = true;
     checkForUpdates();
   };
+
+  // Neue Testversion im Update-Ordner (Wächter im Backend, alle 30 s): sofort
+  // das Update-Fenster zeigen. Ein Klick auf „Installieren“ schließt die App,
+  // installiert und startet neu, wie beim Online-Update.
+  useEffect(() => {
+    const unlisten = listen<LocalUpdate>(LOCAL_UPDATE_EVENT, (event) => {
+      if (installingRef.current) return;
+      setLocalUpdateFound(event.payload);
+      setDialogOpen(true);
+    });
+    return () => {
+      void unlisten.then((fn) => fn());
+    };
+  }, []);
 
   // „Nach Updates suchen“ im Profilmenü wirkt wie ein Klick auf die Version.
   const versionClickRef = useRef<() => Promise<void>>(async () => {});

@@ -153,26 +153,148 @@ fn candidate_dirs(app: &AppHandle) -> Vec<PathBuf> {
     dirs.into_iter().filter(|d| d.is_dir()).collect()
 }
 
+/// Der neueste Installer ueber alle Update-Ordner, der neuer ist als die
+/// laufende Version.
+fn find_newest(app: &AppHandle) -> Option<LocalUpdate> {
+    let current = app.package_info().version.to_string();
+    let app_name = app.package_info().name.clone();
+    candidate_dirs(app)
+        .iter()
+        .filter_map(|dir| find_local_update(dir, &current, &app_name))
+        .max_by_key(|u| parse_version(&u.version))
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn local_update_check(app: AppHandle) -> Result<Option<LocalUpdate>, String> {
-    let current = app.package_info().version.to_string();
-    let app_name = app.package_info().name.clone();
-    let dirs = candidate_dirs(&app);
     log::info!(
-        "local update: checking {} folder(s) for a version above {current}",
-        dirs.len()
+        "local update: checking for a version above {}",
+        app.package_info().version
     );
     // Der neueste Fund ueber alle Ordner gewinnt.
-    let found = dirs
-        .iter()
-        .filter_map(|dir| find_local_update(dir, &current, &app_name))
-        .max_by_key(|u| parse_version(&u.version));
+    let found = find_newest(&app);
     match &found {
         Some(u) => log::info!("local update: {} at {}", u.version, u.path),
         None => log::info!("local update: none found"),
     }
     Ok(found)
+}
+
+/// Ereignis an die Oberflaeche: eine neue Testversion liegt bereit.
+pub const LOCAL_UPDATE_EVENT: &str = "lokales-update-bereit";
+
+/// Abstand zwischen zwei Blicken in die Update-Ordner.
+const WATCH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Groesse und Aenderungszeit: erst wenn beides ueber zwei Blicke gleich
+/// bleibt, ist der Installer fertig kopiert.
+fn fingerprint(update: &LocalUpdate) -> Option<(String, u64, Option<std::time::SystemTime>)> {
+    let meta = std::fs::metadata(&update.path).ok()?;
+    Some((update.path.clone(), meta.len(), meta.modified().ok()))
+}
+
+/// Was der Waechter mit einem Fund tut: melden, sobald er stabil ist, und
+/// jede Version nur einmal je Programmlauf. Als gemeldet gilt eine Version
+/// erst, wenn das Ereignis wirklich hinausging (`announced`); eine schon
+/// gemeldete Version kommt auch nach einem Wechsel A -> B -> A nicht wieder.
+#[derive(Default)]
+pub(crate) struct Watch {
+    last: Option<(String, u64, Option<std::time::SystemTime>)>,
+    announced: std::collections::HashSet<String>,
+}
+
+impl Watch {
+    pub(crate) fn should_announce(
+        &mut self,
+        version: &str,
+        fp: Option<(String, u64, Option<std::time::SystemTime>)>,
+    ) -> bool {
+        let stable = fp.is_some() && fp == self.last;
+        self.last = fp;
+        stable && !self.announced.contains(version)
+    }
+
+    pub(crate) fn announced(&mut self, version: &str) {
+        self.announced.insert(version.to_string());
+    }
+}
+
+type DictationState = std::sync::Arc<crate::managers::audio::AudioRecordingManager>;
+type MeetingState = std::sync::Arc<crate::managers::meetings::recorder::MeetingRecorderManager>;
+type TtsState = std::sync::Arc<crate::managers::tts::TtsManager>;
+
+/// Belegt beim Start des Waechters, dass die Sperr-Zustaende unter genau
+/// diesen Typen registriert sind; sonst fiele der Schutz still aus.
+fn log_busy_sources(app: &AppHandle) {
+    use tauri::Manager;
+    let (d, m, t) = (
+        app.try_state::<DictationState>().is_some(),
+        app.try_state::<MeetingState>().is_some(),
+        app.try_state::<TtsState>().is_some(),
+    );
+    if d && m && t {
+        log::info!("local update: Sperren aktiv (Diktat, Besprechung, Vorlesen)");
+    } else {
+        log::warn!("local update: Sperre fehlt: Diktat {d}, Besprechung {m}, Vorlesen {t}");
+    }
+}
+
+/// Laeuft gerade etwas, das ein Neustart zerstoeren wuerde (Diktat,
+/// Besprechungsaufnahme oder deren Abschluss, Vorlesen)? Dann wartet das
+/// Angebot bis zum naechsten Blick.
+fn busy(app: &AppHandle) -> bool {
+    use tauri::Manager;
+    let dictation = app
+        .try_state::<DictationState>()
+        .is_some_and(|m| m.is_recording());
+    let meeting = app
+        .try_state::<MeetingState>()
+        .is_some_and(|m| m.is_recording() || m.final_jobs_active());
+    let speaking = app
+        .try_state::<TtsState>()
+        .is_some_and(|m| m.status().phase == crate::managers::tts::state::TtsPhase::Speaking);
+    dictation || meeting || speaking
+}
+
+/// Testversionen sofort anbieten: ein Hintergrund-Thread schaut alle 30 s in
+/// die Update-Ordner. Liegt dort eine neuere, fertig kopierte Version, geht
+/// sie als Ereignis an die Oberflaeche, die das Update-Fenster oeffnet. Ein
+/// Klick auf „Installieren“ beendet die App, installiert und startet neu —
+/// wie beim Online-Update. Ohne Update-Ordner passiert nichts.
+///
+/// Grenzen (bewusst, Entwickler-PC): Der Waechter laeuft in jedem Build, wird
+/// aber nur aktiv, wenn ein Update-Ordner existiert. Der Installationsweg ist
+/// derselbe wie beim manuellen „Lokales Update“ und prueft keine Signatur;
+/// installiert wird nur nach Klick und nur aus den Update-Ordnern. Die
+/// Stabilitaetspruefung (Groesse + Zeit) ist eine Heuristik; das Build-Skript
+/// veroeffentlicht deshalb atomar per Umbenennen.
+pub fn start_watch(app: AppHandle) {
+    use tauri::Emitter;
+    let spawned = std::thread::Builder::new()
+        .name("local-update-watch".into())
+        .spawn(move || {
+            let mut watch = Watch::default();
+            log_busy_sources(&app);
+            loop {
+                std::thread::sleep(WATCH_INTERVAL);
+                let Some(update) = find_newest(&app) else {
+                    continue;
+                };
+                if !watch.should_announce(&update.version, fingerprint(&update)) || busy(&app) {
+                    continue;
+                }
+                match app.emit(LOCAL_UPDATE_EVENT, &update) {
+                    Ok(()) => {
+                        log::info!("local update: {} bereit, angeboten", update.version);
+                        watch.announced(&update.version);
+                    }
+                    Err(e) => log::warn!("local update: Angebot nicht gesendet: {e}"),
+                }
+            }
+        });
+    if let Err(e) = spawned {
+        log::warn!("local update: Waechter nicht gestartet: {e}");
+    }
 }
 
 /// Startet den Installer aus dem eingestellten Ordner und beendet die App,
@@ -269,6 +391,33 @@ del \"%~f0\"
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn watch_announces_each_stable_version_once() {
+        let fp = |len| Some(("a.exe".to_string(), len, None));
+        let mut w = Watch::default();
+        assert!(
+            !w.should_announce("0.23.5", fp(10)),
+            "erster Blick: nicht stabil"
+        );
+        assert!(!w.should_announce("0.23.5", fp(20)), "waechst noch");
+        assert!(w.should_announce("0.23.5", fp(20)), "stabil: melden");
+        assert!(
+            w.should_announce("0.23.5", fp(20)),
+            "Senden scheiterte: erneut"
+        );
+        w.announced("0.23.5");
+        assert!(!w.should_announce("0.23.5", fp(20)), "nur einmal");
+        assert!(!w.should_announce("0.23.6", fp(30)));
+        assert!(w.should_announce("0.23.6", fp(30)), "neue Version: melden");
+        w.announced("0.23.6");
+        assert!(!w.should_announce("0.23.5", fp(20)));
+        assert!(
+            !w.should_announce("0.23.5", fp(20)),
+            "A -> B -> A: nicht wieder"
+        );
+        assert!(!w.should_announce("0.23.7", None), "ohne Datei nie");
+    }
 
     #[test]
     fn parses_plain_and_v_prefixed_versions() {
