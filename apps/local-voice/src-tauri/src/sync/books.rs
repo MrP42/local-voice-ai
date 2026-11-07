@@ -1914,7 +1914,10 @@ impl Host for AppHost<'_> {
         kurzbuecher(self.app, page_id)
     }
     fn valid(&self, page_id: &str) -> bool {
-        crate::commands::pages::page_path(self.app, page_id).is_ok()
+        // Nur die Form der Kennung: eine Seite, die hier noch nicht existiert,
+        // entsteht gleich unter genau dieser Kennung (lva#365: `page_path`
+        // meldet seither „Seite nicht gefunden“).
+        crate::commands::pages::valid_id(page_id)
     }
     fn exists(&self, page_id: &str) -> Result<bool, String> {
         Ok(collect::read_page(self.app, page_id)?.is_some())

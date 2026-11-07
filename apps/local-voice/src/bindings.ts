@@ -6912,6 +6912,66 @@ async libraryProgressPut(entries: ProgressEntry[]) : Promise<Result<null, string
 }
 },
 /**
+ * Layout, Journalphase, offene Probleme, Anzahl der zu verschiebenden Seiten
+ * und nötiger Platz.
+ */
+async libraryLayoutStatus() : Promise<Result<LibraryLayoutStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_layout_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Bücher in Buch-Ordner umziehen (Sicherung → Journal → Schritte). Startet
+ * nur, wenn kein Hintergrundauftrag läuft; hält Sync-Lauf-, Bibliotheks- und
+ * Seitensperre über den ganzen Lauf.
+ */
+async libraryLayoutMigrate() : Promise<Result<LibraryLayoutReport, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_layout_migrate") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Rückfall auf Wunsch: dieselben Schritte rückwärts, ebenfalls im Journal.
+ */
+async libraryLayoutRollback() : Promise<Result<LibraryLayoutReport, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_layout_rollback") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Vorhandene Sicherungen der Buch-Ordner-Migration, neueste zuerst.
+ */
+async libraryBackupList() : Promise<Result<LibraryBackup[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_backup_list") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Sicherung zurückspielen: erst gegen das Manifest prüfen, dann jedes
+ * vorhandene Ziel in den Papierkorb (`sicherungen/.papierkorb/`), dann den
+ * Stand des Manifests anlegen. Nichts wird überschrieben.
+ */
+async libraryBackupRestore(name: string) : Promise<Result<LibraryBackupRestore, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_backup_restore", { name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Gespeicherter Abgleich des Buchs (leer, wenn der Text sich geändert hat).
  */
 async audiosyncLoad(bookId: string) : Promise<Result<AudioSyncCache, string>> {
@@ -10243,6 +10303,22 @@ export type Letterhead = { schema: string; id: string; name: string;
  * Laden eigener Profile immer auf `false` gesetzt, ein Wert aus der Datei zaehlt nie.
  */
 builtin?: boolean; firma: Firma; logo?: Logo | null; farben: Farben; fusszeile: Fusszeile }
+/**
+ * Eine Sicherung unter `sicherungen/`.
+ */
+export type LibraryBackup = { name: string; 
+/**
+ * Erstellt am (Unix-ms).
+ */
+erstellt_ms: number; dateien: number; bytes: number }
+/**
+ * Ergebnis von „Sicherung zurückspielen“.
+ */
+export type LibraryBackupRestore = { dateien: number; 
+/**
+ * Papierkorb mit den Zielen, die weichen mussten (relativ zum Datenordner).
+ */
+papierkorb: string | null }
 export type LibraryBook = { 
 /**
  * Leer beim Anlegen; das Backend vergibt `book_<ms>`.
@@ -10314,6 +10390,63 @@ language: string | null;
  * Absoluter Pfad des Covers (mit oder ohne `?v=`), nur für EPUB.
  */
 cover_path: string | null }
+/**
+ * Ein Befund, der die Buch-Ordner-Ablage anhält.
+ */
+export type LibraryLayoutProblem = { 
+/**
+ * Seiten-ID (leer bei einem allgemeinen Fehler).
+ */
+seite: string; 
+/**
+ * `doppelt`, `fehlt`, `unerwartet` oder `fehler`.
+ */
+art: string; meldung: string; 
+/**
+ * Betroffene Pfade relativ zum Datenordner.
+ */
+pfade: string[] }
+/**
+ * Ergebnis von Migration oder Rückfall.
+ */
+export type LibraryLayoutReport = { phase: string | null; 
+/**
+ * Schritte, die in diesem Lauf etwas geändert haben.
+ */
+erledigt: number; 
+/**
+ * Angehalten: an dieser Stelle wurde nichts weiter verschoben.
+ */
+angehalten: boolean; probleme: LibraryLayoutProblem[]; hinweise: string[] }
+/**
+ * Zustand der Buch-Ordner-Ablage.
+ */
+export type LibraryLayoutStatus = { 
+/**
+ * 1 = Seiten unter `projects/`, 2 = Fassungen im Buch-Ordner.
+ */
+layout: number; 
+/**
+ * Phase des Journals: `geplant`, `gesichert`, `fertig`, `rueckfall`,
+ * `zurueckgenommen`; `None`, wenn es keines gibt.
+ */
+phase: string | null; probleme: LibraryLayoutProblem[]; 
+/**
+ * Übersprungene Seiten mit Grund.
+ */
+hinweise: string[]; 
+/**
+ * Seiten, die noch zu verschieben sind.
+ */
+zu_verschieben: number; 
+/**
+ * Nötiger Platz für die Sicherung (Bytes).
+ */
+platz_benoetigt: number; 
+/**
+ * Freier Platz auf dem Datenträger (Bytes), falls bekannt.
+ */
+platz_frei: number | null }
 /**
  * Zustimmung des Nutzers zu den Lizenzangaben eines Anbieters. Gilt nur,
  * solange `fingerprint` dem aktuellen Stand entspricht (siehe
@@ -11173,7 +11306,13 @@ modified_ms?: number;
  * `state.json` gelesen — das Schema gehört der Oberfläche, fehlt das
  * Feld, bleibt die Vorschau leer.
  */
-preview?: string }
+preview?: string; 
+/**
+ * Buch, in dessen Ordner die Seite liegt (`library/<buch>/fassungen/<id>`,
+ * lva#365). Leer: die Seite liegt unter `projects/<id>`. Fehlt in älteren
+ * Indizes; dann findet `page_path` die Seite über die Fundortkarte.
+ */
+buch?: string | null }
 export type PaginatedHistory = { entries: HistoryEntry[]; has_more: boolean }
 export type PairStage = 
 /**

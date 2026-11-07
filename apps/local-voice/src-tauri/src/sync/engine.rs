@@ -263,7 +263,7 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
     let mut removed: Vec<String> = Vec::new();
 
     // ---- Sammeln ---------------------------------------------------------
-    let mut locals = collect::collect(app).map_err(HubError::Other)?;
+    let (mut locals, held_pages) = collect::collect(app).map_err(HubError::Other)?;
     // Bibliothek: Prüfsummen großer Dateien gehören nicht auf den Executor.
     let lib = {
         let app2 = app.clone();
@@ -376,9 +376,15 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
             })
         })
         .count() as u32;
+    // Zurückgehaltene Bücher und Seiten gelten nicht als gelöscht.
     let present: HashSet<String> = blocked
         .iter()
         .map(|id| ledger::key(books::COLLECTION_BOOK, id))
+        .chain(
+            held_pages
+                .iter()
+                .map(|id| ledger::key(collect::COLLECTION_PAGE, id)),
+        )
         .collect();
     locals.extend(
         lib.objects

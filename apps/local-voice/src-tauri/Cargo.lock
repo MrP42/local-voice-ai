@@ -4070,6 +4070,7 @@ dependencies = [
  "transcribe-rs",
  "ttf-parser",
  "ulid",
+ "unicode-normalization",
  "url",
  "vad-rs",
  "wai-konto",

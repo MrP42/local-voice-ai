@@ -20,7 +20,8 @@ use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 
 use super::pages::{
-    checked_name, fresh_id, load_index, lock, page_path, store_index, write_atomic, PageInfo,
+    checked_name, fresh_id, load_index, lock, page_path, page_path_or_new, store_index,
+    write_atomic, PageInfo,
 };
 use crate::managers::tts::{portable, protocol, registry, voices, TtsManager};
 
@@ -326,7 +327,7 @@ pub fn pages_import(app: AppHandle, path: String, import_voices: bool) -> Result
             title,
             ..Default::default()
         };
-        let dir = page_path(&app, &page.id)?;
+        let dir = page_path_or_new(&app, &page.id)?;
         std::fs::create_dir_all(&dir).map_err(|e| format!("could not create page dir: {e}"))?;
         write_atomic(&dir.join(STATE), &state)?;
         index.pages.push(page.clone());

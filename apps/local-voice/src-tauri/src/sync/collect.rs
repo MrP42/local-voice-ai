@@ -79,14 +79,27 @@ pub fn hash(value: &Value) -> String {
 /// Alle lokalen Objekte: eine je Seite, eines für die Einstellungen.
 /// Unter der Seiten-Sperre: eine halb geschriebene Seite darf nicht als
 /// Stand gelten.
-pub fn collect(app: &AppHandle) -> Result<Vec<LocalObject>, String> {
+///
+/// Zweiter Wert: Seiten, die im Index stehen, deren Ordner aber gerade nicht
+/// eindeutig zu finden ist (fehlt oder liegt doppelt, lva#365). Sie werden in
+/// diesem Lauf weder hochgeladen (ein leerer Stand überschriebe den Text auf
+/// den anderen Geräten) noch als gelöscht gemeldet, und sie halten den Sync
+/// der übrigen Seiten nicht an.
+pub fn collect(app: &AppHandle) -> Result<(Vec<LocalObject>, Vec<String>), String> {
     let _guard = pages::lock();
     let mut out = Vec::new();
+    let mut held = Vec::new();
     let index = pages::load_index(app)?;
     for page in &index.pages {
-        let state_raw =
-            std::fs::read_to_string(pages::page_path(app, &page.id)?.join("state.json")).ok();
-        let state = state_raw
+        let dir = match pages::page_lookup_in(app, &page.id, Some(page.buch.as_deref())) {
+            Ok(Some(dir)) => dir,
+            Ok(None) | Err(_) => {
+                held.push(page.id.clone());
+                continue;
+            }
+        };
+        let state = std::fs::read_to_string(dir.join("state.json"))
+            .ok()
             .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
             .unwrap_or(Value::Null);
         out.push(LocalObject {
@@ -95,6 +108,12 @@ pub fn collect(app: &AppHandle) -> Result<Vec<LocalObject>, String> {
             value: json!({ "title": page.title, "state": state }),
         });
     }
+    if !held.is_empty() {
+        log::warn!(
+            "Sync: {} Seite(n) ohne eindeutigen Ordner, in diesem Lauf zurückgehalten",
+            held.len()
+        );
+    }
     out.push(LocalObject {
         collection: COLLECTION_SETTINGS,
         id: SETTINGS_OBJECT_ID.to_string(),
@@ -102,7 +121,7 @@ pub fn collect(app: &AppHandle) -> Result<Vec<LocalObject>, String> {
             &serde_json::to_value(crate::settings::get_settings(app)).unwrap_or(Value::Null),
         ),
     });
-    Ok(out)
+    Ok((out, held))
 }
 
 pub fn settings_subset(all: &Value) -> Value {
@@ -125,8 +144,8 @@ pub fn read_page(app: &AppHandle, id: &str) -> Result<Option<Value>, String> {
     let Some(page) = index.pages.iter().find(|p| p.id == id) else {
         return Ok(None);
     };
-    let state = std::fs::read_to_string(pages::page_path(app, id)?.join("state.json"))
-        .ok()
+    let state = pages::page_lookup(app, id)?
+        .and_then(|dir| std::fs::read_to_string(dir.join("state.json")).ok())
         .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
         .unwrap_or(Value::Null);
     Ok(Some(json!({ "title": page.title, "state": state })))
@@ -161,7 +180,7 @@ pub fn apply_page(
         .unwrap_or("Seite")
         .to_string();
     let state = value.get("state").cloned().unwrap_or(Value::Null);
-    let dir = pages::page_path(app, id)?;
+    let dir = pages::page_path_or_new(app, id)?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("Seitenordner: {e}"))?;
     if !state.is_null() {
         let raw = serde_json::to_string(&state).map_err(|e| e.to_string())?;
@@ -184,14 +203,16 @@ pub fn apply_page(
 /// schieben — Dateien bleiben, der Nutzer räumt selbst auf.
 pub fn tombstone_page(app: &AppHandle, id: &str) -> Result<(), String> {
     let _guard = pages::lock();
+    // Erst auflösen (der Index-Eintrag nennt das Buch), dann austragen. Liegt
+    // die Seite doppelt vor, ändert sich nichts.
+    let found = pages::page_lookup(app, id)?;
     let mut index = pages::load_index(app)?;
     let before = index.pages.len();
     index.pages.retain(|p| p.id != id);
     if index.pages.len() != before {
         pages::store_index(app, &index)?;
     }
-    let dir = pages::page_path(app, id)?;
-    if dir.is_dir() {
+    if let Some(dir) = found.filter(|d| d.is_dir()) {
         let trash = pages::projects_root(app)?.join("_geloescht");
         std::fs::create_dir_all(&trash).map_err(|e| format!("Papierkorb: {e}"))?;
         let mut target = trash.join(id);
@@ -218,7 +239,7 @@ pub fn conflict_copy(app: &AppHandle, local: &Value, device_name: &str) -> Resul
         title: format!("{title} (Konflikt von {device_name})"),
         ..Default::default()
     };
-    let dir = pages::page_path(app, &page.id)?;
+    let dir = pages::page_path_or_new(app, &page.id)?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("Seitenordner: {e}"))?;
     if let Some(state) = local.get("state").filter(|s| !s.is_null()) {
         let raw = serde_json::to_string(state).map_err(|e| e.to_string())?;
