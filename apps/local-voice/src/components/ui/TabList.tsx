@@ -24,6 +24,7 @@ export function TabList<T extends string>({
   className = "",
   idPrefix,
   controls,
+  vertical = false,
 }: {
   tabs: TabListItem<T>[];
   value: T;
@@ -36,6 +37,8 @@ export function TabList<T extends string>({
   idPrefix?: string;
   /** id des Reiterinhalts (aria-controls). */
   controls?: string;
+  /** Senkrecht untereinander (z. B. in einer Seitenliste); Pfeil hoch/runter. */
+  vertical?: boolean;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -44,11 +47,17 @@ export function TabList<T extends string>({
     index: number,
   ) => {
     const keys = ["ArrowRight", "ArrowLeft", "Home", "End"];
+    if (vertical) keys.push("ArrowDown", "ArrowUp");
     if (!keys.includes(event.key)) return;
     event.preventDefault();
     const rtl =
       event.currentTarget.closest("[dir]")?.getAttribute("dir") === "rtl";
-    const step = (event.key === "ArrowRight" ? 1 : -1) * (rtl ? -1 : 1);
+    const step =
+      event.key === "ArrowDown"
+        ? 1
+        : event.key === "ArrowUp"
+          ? -1
+          : (event.key === "ArrowRight" ? 1 : -1) * (rtl ? -1 : 1);
     const next =
       event.key === "Home"
         ? 0
@@ -73,6 +82,7 @@ export function TabList<T extends string>({
       // Ohne verdeckte Zweitbeschriftung (Fluent reserviert sonst die Breite
       // der fetten Schrift mit einem zweiten Text im Reiter).
       reserveSelectedTabSpace={false}
+      vertical={vertical}
       className={`lv-tablist ${className}`}
     >
       {tabs.map((tab, index) => (

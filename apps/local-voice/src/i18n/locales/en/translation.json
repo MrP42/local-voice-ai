@@ -1262,6 +1262,14 @@
     "exportEta": "about {{time}} left",
     "exportEtaComputing": "estimating time left",
     "exportSaved": "Saved: {{path}}",
+    "folders": {
+      "label": "Folders",
+      "all": "All",
+      "books": "Books",
+      "noBooks": "No books yet",
+      "texts": "Texts",
+      "withoutBook": "Without book"
+    },
     "pages": {
       "title": "Pages",
       "create": "New page",

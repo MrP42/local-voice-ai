@@ -35,6 +35,8 @@ import {
   PagesSidebar,
   TtsHelpDock,
 } from "./WorkspaceSidebars";
+import { ReaderFolders } from "./ReaderFolders";
+import { useReaderFolders } from "./useReaderFolders";
 import { ResizeHandle } from "../../ui/ResizeHandle";
 import { useWorkspaceLayout } from "./useWorkspaceLayout";
 import { SettingsGroup } from "../../ui/SettingsGroup";
@@ -952,6 +954,17 @@ export const TtsSettings = () => {
   useEffect(() => {
     void reloadPages();
   }, [reloadPages]);
+
+  const readerTabs = useMemo(
+    () => [
+      { id: "original" as const, label: t("tts.tabOriginal") },
+      { id: "translation" as const, label: t("tts.tabTranslation") },
+      { id: "summary" as const, label: t("tts.tabSummary") },
+    ],
+    [t],
+  );
+  // lva#365 P1: Ordnerleiste (Alle, Buch-Ordner, Texte) über der Seitenliste.
+  const readerFolders = useReaderFolders(pages, activePage, sectionActive);
 
   /** Neue Seite mit Text anlegen und aktiv machen (Skript-Werkstatt). */
   const createPageWithText = useCallback(
@@ -3963,6 +3976,26 @@ export const TtsSettings = () => {
       />
   );
 
+  // lva#365: Inhaltsverzeichnis rechts; ist die rechte Spalte eingeklappt
+  // oder vom Buch-Gespräch belegt, steht es wie bisher links unter der Liste.
+  const tocElement =
+    viewMode === "read" ? (
+      <ReaderContents
+        entries={contents}
+        current={chapterIndex}
+        onGo={goToChapter}
+        pages={contentsPages}
+        book={book}
+        {...startProps}
+        onIsbn={
+          tab === "original" && activePage
+            ? () => setIsbnOpen(true)
+            : undefined
+        }
+      />
+    ) : null;
+  const tocRightVisible = !talkShown && filesCollapsed !== "1";
+
   return (
     <PageShell
       title={t("tts.title")}
@@ -4016,22 +4049,27 @@ export const TtsSettings = () => {
           onChanged={() => void reloadPages()}
           onReplaceSpeaker={() => setReplaceSpeaker({})}
           width={ws.pages.width}
-          contents={
-            viewMode === "read" ? (
-              <ReaderContents
-                entries={contents}
-                current={chapterIndex}
-                onGo={goToChapter}
-                pages={contentsPages}
-                book={book}
-                {...startProps}
-                onIsbn={
-                  tab === "original" && activePage
-                    ? () => setIsbnOpen(true)
-                    : undefined
-                }
-              />
-            ) : null
+          activeSections={
+            <TabList
+              tabs={readerTabs}
+              value={tab}
+              onChange={setTab}
+              ariaLabel={t("tts.tabsLabel")}
+              vertical
+              className="lv-tablist--list"
+            />
+          }
+          contents={tocRightVisible ? null : tocElement}
+          visibleIds={readerFolders.visibleIds}
+          langOf={readerFolders.langOf}
+          folders={
+            <ReaderFolders
+              folders={readerFolders.folders}
+              books={readerFolders.books}
+              total={readerFolders.total}
+              selection={readerFolders.selection}
+              onSelect={(key) => readerFolders.select(key, setActivePage)}
+            />
           }
         />
         {pagesCollapsed !== "1" && (
@@ -4086,16 +4124,19 @@ export const TtsSettings = () => {
               die Uebersetzung liegt daneben, nicht darin. Wer zurueckschaltet,
               findet seinen Text unveraendert vor. */}
               <div className="flex flex-wrap items-end gap-x-3 gap-y-1 border-b border-mid-gray/20">
+                {/* lva#365 E2: Bei offener Seitenliste stehen die Ansichten der
+                    Seite in der Liste unter ihrer Zeile; nur eingeklappt hier. */}
                 <TabList
-                  tabs={[
-                    { id: "original", label: t("tts.tabOriginal") },
-                    { id: "translation", label: t("tts.tabTranslation") },
-                    { id: "summary", label: t("tts.tabSummary") },
-                  ]}
+                  tabs={readerTabs}
                   value={tab}
                   onChange={setTab}
                   ariaLabel={t("tts.tabsLabel")}
-                  className="min-w-0 flex-auto"
+                  className={`min-w-0 flex-auto ${
+                    pagesCollapsed !== "1" &&
+                    readerFolders.visibleIds.includes(activePage)
+                      ? "reader-tabs--header"
+                      : ""
+                  }`}
                 />
                 {/* Eigene Breite (flex-auto statt flex-1): reicht der Platz
                     nicht, bricht die Leiste um, statt über den Reitern zu liegen. */}
@@ -4735,6 +4776,7 @@ export const TtsSettings = () => {
               width={ws.right.width}
               stacked={ws.stacked}
               onLayoutToggle={ws.toggleLayout}
+              contents={tocElement}
               /* Der Text einer erzeugten Aufnahme zurueck in den Editor: die eine
              falsche Zeile aendern und erneut erzeugen. Die unveraenderten
              Saetze kommen dann aus dem Satz-Cache, nur die geaenderten gehen
