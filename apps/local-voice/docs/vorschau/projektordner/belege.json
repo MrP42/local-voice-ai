@@ -14,7 +14,7 @@
   "zurueck": [],
   "pane": "rgb(255, 255, 255)",
   "muted": "rgb(97, 97, 97)",
-  "kontrastGedaempft": 6.19
+  "kontrastGedaempftNurMutedText": 6.19
  },
  "01-buchordner-1440-hell": {
   "scrollX": 0,
@@ -31,7 +31,7 @@
   "zurueck": [],
   "pane": "rgb(255, 255, 255)",
   "muted": "rgb(97, 97, 97)",
-  "kontrastGedaempft": 6.19
+  "kontrastGedaempftNurMutedText": 6.19
  },
  "01-buchordner-768-hell": {
   "scrollX": 0,
@@ -48,7 +48,7 @@
   "zurueck": [],
   "pane": "rgb(255, 255, 255)",
   "muted": "rgb(97, 97, 97)",
-  "kontrastGedaempft": 6.19
+  "kontrastGedaempftNurMutedText": 6.19
  },
  "02-alle-1440-hell": {
   "scrollX": 0,
@@ -65,7 +65,7 @@
   "zurueck": [],
   "pane": "rgb(255, 255, 255)",
   "muted": "rgb(97, 97, 97)",
-  "kontrastGedaempft": 6.19
+  "kontrastGedaempftNurMutedText": 6.19
  },
  "02-alle-768-hell": {
   "scrollX": 0,
@@ -82,7 +82,7 @@
   "zurueck": [],
   "pane": "rgb(255, 255, 255)",
   "muted": "rgb(97, 97, 97)",
-  "kontrastGedaempft": 6.19
+  "kontrastGedaempftNurMutedText": 6.19
  },
  "03-projekt-2560-hell": {
   "scrollX": 0,
@@ -118,7 +118,7 @@
   "zurueck": [],
   "pane": "rgb(255, 255, 255)",
   "muted": "rgb(97, 97, 97)",
-  "kontrastGedaempft": 6.19
+  "kontrastGedaempftNurMutedText": 6.19
  },
  "03-projekt-1440-hell": {
   "scrollX": 0,
@@ -154,7 +154,7 @@
   "zurueck": [],
   "pane": "rgb(255, 255, 255)",
   "muted": "rgb(97, 97, 97)",
-  "kontrastGedaempft": 6.19
+  "kontrastGedaempftNurMutedText": 6.19
  },
  "03-projekt-768-hell": {
   "scrollX": 0,
@@ -190,7 +190,7 @@
   "zurueck": [],
   "pane": "rgb(255, 255, 255)",
   "muted": "rgb(97, 97, 97)",
-  "kontrastGedaempft": 6.19
+  "kontrastGedaempftNurMutedText": 6.19
  },
  "04-ablage-1440-hell": {
   "scrollX": 0,
@@ -207,7 +207,7 @@
   "zurueck": [],
   "pane": "rgb(255, 255, 255)",
   "muted": "rgb(97, 97, 97)",
-  "kontrastGedaempft": 6.19
+  "kontrastGedaempftNurMutedText": 6.19
  },
  "05-migration-1440-hell": {
   "scrollX": 0,
@@ -224,7 +224,7 @@
   "zurueck": [],
   "pane": "rgb(255, 255, 255)",
   "muted": "rgb(97, 97, 97)",
-  "kontrastGedaempft": 6.19
+  "kontrastGedaempftNurMutedText": 6.19
  },
  "06-leer-1440-hell": {
   "scrollX": 0,
@@ -241,7 +241,7 @@
   "zurueck": [],
   "pane": "rgb(255, 255, 255)",
   "muted": "rgb(97, 97, 97)",
-  "kontrastGedaempft": 6.19
+  "kontrastGedaempftNurMutedText": 6.19
  },
  "06-projektleer-1440-hell": {
   "scrollX": 0,
@@ -258,7 +258,7 @@
   "zurueck": [],
   "pane": "rgb(255, 255, 255)",
   "muted": "rgb(97, 97, 97)",
-  "kontrastGedaempft": 6.19
+  "kontrastGedaempftNurMutedText": 6.19
  },
  "06-fehlt-1440-hell": {
   "scrollX": 0,
@@ -275,7 +275,7 @@
   "zurueck": [],
   "pane": "rgb(255, 255, 255)",
   "muted": "rgb(97, 97, 97)",
-  "kontrastGedaempft": 6.19
+  "kontrastGedaempftNurMutedText": 6.19
  },
  "06-ohneziel-1440-hell": {
   "scrollX": 0,
@@ -292,7 +292,7 @@
   "zurueck": [],
   "pane": "rgb(255, 255, 255)",
   "muted": "rgb(97, 97, 97)",
-  "kontrastGedaempft": 6.19
+  "kontrastGedaempftNurMutedText": 6.19
  },
  "06-migfehler-1440-hell": {
   "scrollX": 0,
@@ -309,7 +309,7 @@
   "zurueck": [],
   "pane": "rgb(255, 255, 255)",
   "muted": "rgb(97, 97, 97)",
-  "kontrastGedaempft": 6.19
+  "kontrastGedaempftNurMutedText": 6.19
  },
  "01-buchordner-ordner-390-hell": {
   "scrollX": 0,
@@ -326,7 +326,7 @@
   "zurueck": [],
   "pane": "rgb(255, 255, 255)",
   "muted": "rgb(97, 97, 97)",
-  "kontrastGedaempft": 6.19
+  "kontrastGedaempftNurMutedText": 6.19
  },
  "01-buchordner-liste-390-hell": {
   "scrollX": 0,
@@ -350,7 +350,7 @@
   ],
   "pane": "rgb(255, 255, 255)",
   "muted": "rgb(97, 97, 97)",
-  "kontrastGedaempft": 6.19
+  "kontrastGedaempftNurMutedText": 6.19
  },
  "01-buchordner-reader-390-hell": {
   "scrollX": 0,
@@ -374,7 +374,7 @@
   ],
   "pane": "rgb(255, 255, 255)",
   "muted": "rgb(97, 97, 97)",
-  "kontrastGedaempft": 6.19
+  "kontrastGedaempftNurMutedText": 6.19
  },
  "02-alle-reader-390-hell": {
   "scrollX": 0,
@@ -398,7 +398,7 @@
   ],
   "pane": "rgb(255, 255, 255)",
   "muted": "rgb(97, 97, 97)",
-  "kontrastGedaempft": 6.19
+  "kontrastGedaempftNurMutedText": 6.19
  },
  "03-projekt-390-hell": {
   "scrollX": 0,
@@ -434,7 +434,7 @@
   "zurueck": [],
   "pane": "rgb(255, 255, 255)",
   "muted": "rgb(97, 97, 97)",
-  "kontrastGedaempft": 6.19
+  "kontrastGedaempftNurMutedText": 6.19
  },
  "05-migration-390-hell": {
   "scrollX": 0,
@@ -451,7 +451,7 @@
   "zurueck": [],
   "pane": "rgb(255, 255, 255)",
   "muted": "rgb(97, 97, 97)",
-  "kontrastGedaempft": 6.19
+  "kontrastGedaempftNurMutedText": 6.19
  },
  "06-leer-390-hell": {
   "scrollX": 0,
@@ -468,7 +468,7 @@
   "zurueck": [],
   "pane": "rgb(255, 255, 255)",
   "muted": "rgb(97, 97, 97)",
-  "kontrastGedaempft": 6.19
+  "kontrastGedaempftNurMutedText": 6.19
  },
  "06-ohneziel-390-hell": {
   "scrollX": 0,
@@ -485,7 +485,7 @@
   "zurueck": [],
   "pane": "rgb(255, 255, 255)",
   "muted": "rgb(97, 97, 97)",
-  "kontrastGedaempft": 6.19
+  "kontrastGedaempftNurMutedText": 6.19
  },
  "06-migfehler-390-hell": {
   "scrollX": 0,
@@ -502,7 +502,7 @@
   "zurueck": [],
   "pane": "rgb(255, 255, 255)",
   "muted": "rgb(97, 97, 97)",
-  "kontrastGedaempft": 6.19
+  "kontrastGedaempftNurMutedText": 6.19
  },
  "01-buchordner-2560-dunkel": {
   "scrollX": 0,
@@ -519,7 +519,7 @@
   "zurueck": [],
   "pane": "rgb(41, 41, 41)",
   "muted": "rgb(199, 199, 199)",
-  "kontrastGedaempft": 8.61
+  "kontrastGedaempftNurMutedText": 8.61
  },
  "01-buchordner-1440-dunkel": {
   "scrollX": 0,
@@ -536,7 +536,7 @@
   "zurueck": [],
   "pane": "rgb(41, 41, 41)",
   "muted": "rgb(199, 199, 199)",
-  "kontrastGedaempft": 8.61
+  "kontrastGedaempftNurMutedText": 8.61
  },
  "01-buchordner-768-dunkel": {
   "scrollX": 0,
@@ -553,7 +553,7 @@
   "zurueck": [],
   "pane": "rgb(41, 41, 41)",
   "muted": "rgb(199, 199, 199)",
-  "kontrastGedaempft": 8.61
+  "kontrastGedaempftNurMutedText": 8.61
  },
  "02-alle-1440-dunkel": {
   "scrollX": 0,
@@ -570,7 +570,7 @@
   "zurueck": [],
   "pane": "rgb(41, 41, 41)",
   "muted": "rgb(199, 199, 199)",
-  "kontrastGedaempft": 8.61
+  "kontrastGedaempftNurMutedText": 8.61
  },
  "02-alle-768-dunkel": {
   "scrollX": 0,
@@ -587,7 +587,7 @@
   "zurueck": [],
   "pane": "rgb(41, 41, 41)",
   "muted": "rgb(199, 199, 199)",
-  "kontrastGedaempft": 8.61
+  "kontrastGedaempftNurMutedText": 8.61
  },
  "03-projekt-2560-dunkel": {
   "scrollX": 0,
@@ -623,7 +623,7 @@
   "zurueck": [],
   "pane": "rgb(41, 41, 41)",
   "muted": "rgb(199, 199, 199)",
-  "kontrastGedaempft": 8.61
+  "kontrastGedaempftNurMutedText": 8.61
  },
  "03-projekt-1440-dunkel": {
   "scrollX": 0,
@@ -659,7 +659,7 @@
   "zurueck": [],
   "pane": "rgb(41, 41, 41)",
   "muted": "rgb(199, 199, 199)",
-  "kontrastGedaempft": 8.61
+  "kontrastGedaempftNurMutedText": 8.61
  },
  "03-projekt-768-dunkel": {
   "scrollX": 0,
@@ -695,7 +695,7 @@
   "zurueck": [],
   "pane": "rgb(41, 41, 41)",
   "muted": "rgb(199, 199, 199)",
-  "kontrastGedaempft": 8.61
+  "kontrastGedaempftNurMutedText": 8.61
  },
  "04-ablage-1440-dunkel": {
   "scrollX": 0,
@@ -712,7 +712,7 @@
   "zurueck": [],
   "pane": "rgb(41, 41, 41)",
   "muted": "rgb(199, 199, 199)",
-  "kontrastGedaempft": 8.61
+  "kontrastGedaempftNurMutedText": 8.61
  },
  "05-migration-1440-dunkel": {
   "scrollX": 0,
@@ -729,7 +729,7 @@
   "zurueck": [],
   "pane": "rgb(41, 41, 41)",
   "muted": "rgb(199, 199, 199)",
-  "kontrastGedaempft": 8.61
+  "kontrastGedaempftNurMutedText": 8.61
  },
  "06-leer-1440-dunkel": {
   "scrollX": 0,
@@ -746,7 +746,7 @@
   "zurueck": [],
   "pane": "rgb(41, 41, 41)",
   "muted": "rgb(199, 199, 199)",
-  "kontrastGedaempft": 8.61
+  "kontrastGedaempftNurMutedText": 8.61
  },
  "06-projektleer-1440-dunkel": {
   "scrollX": 0,
@@ -763,7 +763,7 @@
   "zurueck": [],
   "pane": "rgb(41, 41, 41)",
   "muted": "rgb(199, 199, 199)",
-  "kontrastGedaempft": 8.61
+  "kontrastGedaempftNurMutedText": 8.61
  },
  "06-fehlt-1440-dunkel": {
   "scrollX": 0,
@@ -780,7 +780,7 @@
   "zurueck": [],
   "pane": "rgb(41, 41, 41)",
   "muted": "rgb(199, 199, 199)",
-  "kontrastGedaempft": 8.61
+  "kontrastGedaempftNurMutedText": 8.61
  },
  "06-ohneziel-1440-dunkel": {
   "scrollX": 0,
@@ -797,7 +797,7 @@
   "zurueck": [],
   "pane": "rgb(41, 41, 41)",
   "muted": "rgb(199, 199, 199)",
-  "kontrastGedaempft": 8.61
+  "kontrastGedaempftNurMutedText": 8.61
  },
  "06-migfehler-1440-dunkel": {
   "scrollX": 0,
@@ -814,7 +814,7 @@
   "zurueck": [],
   "pane": "rgb(41, 41, 41)",
   "muted": "rgb(199, 199, 199)",
-  "kontrastGedaempft": 8.61
+  "kontrastGedaempftNurMutedText": 8.61
  },
  "01-buchordner-ordner-390-dunkel": {
   "scrollX": 0,
@@ -831,7 +831,7 @@
   "zurueck": [],
   "pane": "rgb(41, 41, 41)",
   "muted": "rgb(199, 199, 199)",
-  "kontrastGedaempft": 8.61
+  "kontrastGedaempftNurMutedText": 8.61
  },
  "01-buchordner-liste-390-dunkel": {
   "scrollX": 0,
@@ -855,7 +855,7 @@
   ],
   "pane": "rgb(41, 41, 41)",
   "muted": "rgb(199, 199, 199)",
-  "kontrastGedaempft": 8.61
+  "kontrastGedaempftNurMutedText": 8.61
  },
  "01-buchordner-reader-390-dunkel": {
   "scrollX": 0,
@@ -879,7 +879,7 @@
   ],
   "pane": "rgb(41, 41, 41)",
   "muted": "rgb(199, 199, 199)",
-  "kontrastGedaempft": 8.61
+  "kontrastGedaempftNurMutedText": 8.61
  },
  "02-alle-reader-390-dunkel": {
   "scrollX": 0,
@@ -903,7 +903,7 @@
   ],
   "pane": "rgb(41, 41, 41)",
   "muted": "rgb(199, 199, 199)",
-  "kontrastGedaempft": 8.61
+  "kontrastGedaempftNurMutedText": 8.61
  },
  "03-projekt-390-dunkel": {
   "scrollX": 0,
@@ -939,7 +939,7 @@
   "zurueck": [],
   "pane": "rgb(41, 41, 41)",
   "muted": "rgb(199, 199, 199)",
-  "kontrastGedaempft": 8.61
+  "kontrastGedaempftNurMutedText": 8.61
  },
  "05-migration-390-dunkel": {
   "scrollX": 0,
@@ -956,7 +956,7 @@
   "zurueck": [],
   "pane": "rgb(41, 41, 41)",
   "muted": "rgb(199, 199, 199)",
-  "kontrastGedaempft": 8.61
+  "kontrastGedaempftNurMutedText": 8.61
  },
  "06-leer-390-dunkel": {
   "scrollX": 0,
@@ -973,7 +973,7 @@
   "zurueck": [],
   "pane": "rgb(41, 41, 41)",
   "muted": "rgb(199, 199, 199)",
-  "kontrastGedaempft": 8.61
+  "kontrastGedaempftNurMutedText": 8.61
  },
  "06-ohneziel-390-dunkel": {
   "scrollX": 0,
@@ -990,7 +990,7 @@
   "zurueck": [],
   "pane": "rgb(41, 41, 41)",
   "muted": "rgb(199, 199, 199)",
-  "kontrastGedaempft": 8.61
+  "kontrastGedaempftNurMutedText": 8.61
  },
  "06-migfehler-390-dunkel": {
   "scrollX": 0,
@@ -1007,6 +1007,6 @@
   "zurueck": [],
   "pane": "rgb(41, 41, 41)",
   "muted": "rgb(199, 199, 199)",
-  "kontrastGedaempft": 8.61
+  "kontrastGedaempftNurMutedText": 8.61
  }
 }

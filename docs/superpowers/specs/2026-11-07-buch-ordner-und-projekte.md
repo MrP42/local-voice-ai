@@ -1,6 +1,6 @@
 # Buch-Ordner im Vorlesen und appweite Projekte
 
-Stand: 07.11.2026, Runde 2 nach Codex-Befund (BEDINGT JA zu Runde 1) · Epic lva#365 ·
+Stand: 07.11.2026, Runde 3 nach Codex-Befund Runde 2 · Epic lva#365 ·
 Vorschau: `apps/local-voice/docs/vorschau/projektordner/`
 
 ## Anlass
@@ -121,10 +121,19 @@ Auflösung jedes Abbruchpunkts beim nächsten Start (vor dem ersten Lesen der Bi
 | `von` und `nach` existieren beide | — | anhalten, nichts überschreiben, Meldung mit beiden Pfaden |
 | weder `von` noch `nach` | — | anhalten, Seite aus der Sicherung anbieten |
 
-Bis `layout: 2` gesetzt ist, sucht `page_path` zuerst unter dem Index-Eintrag, dann unter `projects/`:
-Jede Seite ist zu jedem Zeitpunkt auffindbar.
+**Auflösung von `page_path` während Migration und Rückfall.** Solange ein Journal ohne Phase `fertig`
+(bzw. ohne abgeschlossenen Rückfall) existiert, lädt `page_path` es einmal je Aufruf unter der
+Seitensperre und prüft der Reihe nach:
+1. den Ort laut Index-Eintrag (`buch` gesetzt → `library/<buch>/fassungen/<seite>`, sonst `projects/<seite>`);
+2. hat die Seite einen Journalschritt: dessen `nach` und dessen `von` (beide Richtungen, also auch im
+   Rückfall, wo `nach` die Quelle und `von` das Ziel ist);
+3. `projects/<seite>`.
+Der erste vorhandene Ordner gewinnt. Damit ist das Fenster zwischen `rename` und Index-Schreiben
+(Index zeigt noch auf den alten Ort, Seite liegt schon am neuen) abgedeckt. Existieren zwei dieser
+Orte zugleich, liefert `page_path` einen Fehler „Seite doppelt vorhanden“, statt einen zu wählen.
+Ohne Journal entfällt Schritt 2.
 
-Rückfall auf Wunsch oder bei Fehler: dieselben Schritte rückwärts (`nach` → `von`, Index-Feld leeren),
+Kein automatischer Gesamt-Rückfall: Bei einem Problem hält die Migration an (Zustand bleibt lesbar, siehe Tabelle). Rückfall auf Wunsch: dieselben Schritte rückwärts (`nach` → `von`, Index-Feld leeren),
 ebenfalls im Journal. Wiederholung und Rückfall überschreiben nie ein vorhandenes Ziel.
 
 Sperren: Die Migration hält die Seitensperre (`pages::lock`), die Bibliothekssperre und die Laufsperre
@@ -254,6 +263,9 @@ Jedes UI-Paket mit HTML-Vorschau (390/768/1440/2560, hell/dunkel) und Maß-Beleg
 
 ## 9 Abnahmekriterien
 
+- Zwischenfenster: Test mit Abbruch nach `rename` und vor dem Index-Schreiben, in beide Richtungen
+  (Migration und Rückfall). `page_path`, Reader und Sync finden die Seite am neuen Ort; der nächste
+  Start setzt den Index nach und schließt ab.
 - Migration an einer Kopie von Patricks Bestand: jedes Buch vollständig unter `library/<buch>/`;
   Fortschritt, Lesezeichen, Stimmen je Sprache, Hauptfassung, Ausrichtungen unverändert.
 - Abbruch an jedem Punkt der Tabelle 4.3 (Test je Zeile): App startet, alle Seiten auffindbar, zweiter

@@ -1,4 +1,4 @@
-# Vorschau: Buch-Ordner im Vorlesen und appweite Projekte (Runde 2)
+# Vorschau: Buch-Ordner im Vorlesen und appweite Projekte (Runde 3)
 
 Spec: `docs/superpowers/specs/2026-11-07-buch-ordner-und-projekte.md`.
 Statische HTML-Vorschau, keine App. Aufruf: `vorschau.html?s=<ansicht>&t=hell|dunkel&ebene=ordner|liste|reader`.
@@ -25,7 +25,7 @@ Je Bild per Playwright `getBoundingClientRect` gemessen:
 - `scrollX`: waagrechter Überlauf, überall 0.
 - `unter44`: sichtbare Bedienelemente (Knöpfe, Zeilen, Reiter, Schalter, Ausgabeziel) unter 44 × 44 px. Die Liste ist überall leer.
 - `kopf`: Ausgabeziel in der Kopfzeile, `schalter`: Kontext-Schalter, `zurueck`: Zurück-Knöpfe mobil, jeweils mit Breite und Höhe.
-- `kontrastGedaempft`: Kontrast des gedämpften Texts zur Fläche, mindestens 6,19 : 1 (WCAG AA verlangt 4,5 : 1).
+- `kontrastGedaempftNurMutedText`: nur der gedämpfte Text (`--muted`) gegen die Spaltenfläche, mindestens 6,19 : 1. Andere Elemente (Akzentknöpfe, Chips, Schalter) sind damit nicht gemessen; ihr Kontrast wird mit der Umsetzung je Paket belegt.
 
 Korrekturen aus Codex Runde 1:
 
@@ -35,3 +35,5 @@ Korrekturen aus Codex Runde 1:
 - Der Kontext-Schalter ist eine 44 px hohe Schaltfläche.
 - Kapitelzeilen sind jetzt 44 px hoch.
 - Die eingeklappte Leiste bei 768 px ist 64 px breit.
+
+Runde 3: Der Migrationsdialog verspricht kein automatisches Zurückstellen mehr. Der Text lautet jetzt „Bei Problemen wird angehalten …“, passend zu `06-migfehler`. Die Kontrastangabe gilt ausdrücklich nur für den gedämpften Text.

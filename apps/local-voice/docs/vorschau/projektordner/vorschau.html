@@ -314,7 +314,7 @@ svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.6;stroke
           <ul>
             <li>Vorher wird eine Sicherung angelegt (1,2 GB frei nötig).</li>
             <li>Fortschritt, Lesezeichen und Stimmen bleiben erhalten.</li>
-            <li>Bei einem Fehler wird alles zurückgestellt.</li>
+            <li>Bei Problemen wird angehalten. Vorhandene Dateien werden nie überschrieben; Wiederherstellung aus der Sicherung ist möglich.</li>
           </ul>
           <p class="note" style="padding:0 0 12px">Ziel: C:\Users\…\de.wolffappliedai.localvoiceai\library</p>
           <div class="acts"><span class="btn">Später</span><span class="btn pri">Jetzt ordnen</span></div>
@@ -352,7 +352,7 @@ const Z = {
   projektleer: ['Finanzwissen ist noch leer', 'Ziehe Bücher, Aufnahmen, Texte oder Dateien hierher. App-Inhalte werden verknüpft, Dateien in den Projektordner kopiert.', '<span class="btn pri">Hinzufügen</span>'],
   fehlt: ['Datei fehlt', 'Die Fassung „English“ von „Rich Dad Poor Dad“ ist nicht mehr an ihrem Ort. Nichts wurde gelöscht; Fortschritt und KI-Dokumente bleiben erhalten.', '<span class="btn pri">Suchen …</span><span class="btn">Aus Sicherung holen</span><span class="btn">Aus Buch entfernen</span>'],
   ohneziel: ['Kurzbuch erstellen', 'Speichert in: <b>kein Projekt</b>. Das Kurzbuch gehört zur Fassung Deutsch dieses Buchs. Wähle ein Projekt, wenn es dort zusätzlich erscheinen soll.', '<span class="btn">Projekt wählen</span><span class="btn pri">Erstellen</span>'],
-  migfehler: ['Neu ordnen angehalten', 'Für die Seite „The Burning Room“ gibt es den alten und den neuen Ordner. Es wurde nichts überschrieben. Alle Bücher bleiben lesbar.', '<span class="btn pri">Beide Ordner zeigen</span><span class="btn">Sicherung zurückspielen</span><span class="btn">Später</span>'],
+  migfehler: ['Neu ordnen angehalten', 'Für die Seite „The Burning Room“ gibt es den alten und den neuen Ordner. Es wurde nichts überschrieben, nichts zurückgestellt. Alle anderen Bücher bleiben lesbar; Wiederherstellung aus der Sicherung ist möglich.', '<span class="btn pri">Beide Ordner zeigen</span><span class="btn">Sicherung zurückspielen</span><span class="btn">Später</span>'],
 };
 if (Z[s]) { hide("v-vorlesen"); show("v-zustand");
   const [h, p, a] = Z[s];
