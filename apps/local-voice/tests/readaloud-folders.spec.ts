@@ -122,12 +122,21 @@ test.beforeEach(async ({ page }) => {
               const w = window as unknown as {
                 __lvBooks?: unknown;
                 __lvLibSlow?: number;
+                __lvLibCalls?: number;
+                __lvLibFail?: boolean;
               };
               const books = w.__lvBooks ?? BOOKS;
+              w.__lvLibCalls = (w.__lvLibCalls ?? 0) + 1;
+              if (w.__lvLibFail) throw new Error("Bibliothek nicht erreichbar");
               // Langsame Bibliothek: Antwort erst nach __lvLibSlow ms.
               if (w.__lvLibSlow)
                 await new Promise((r) => setTimeout(r, w.__lvLibSlow));
               return books;
+            }
+            if (cmd === "pages_delete") {
+              const w = window as unknown as { __lvDeleted?: string[] };
+              w.__lvDeleted = [...(w.__lvDeleted ?? []), String(args?.id)];
+              return null;
             }
             if (cmd === "pages_create") {
               // Neue Seite p4 (Fassung eines zweiten Buchs, siehe Test).
@@ -139,7 +148,10 @@ test.beforeEach(async ({ page }) => {
                 modified_ms: now,
               };
             }
-            if (cmd === "pages_list")
+            if (cmd === "pages_list") {
+              const gone =
+                (window as unknown as { __lvDeleted?: string[] }).__lvDeleted ??
+                [];
               return [
                 ...((window as unknown as { __lvP4?: boolean }).__lvP4
                   ? [
@@ -169,7 +181,8 @@ test.beforeEach(async ({ page }) => {
                   preview: "It was a dark night.",
                   modified_ms: now - 60_000,
                 },
-              ];
+              ].filter((p) => !gone.includes(p.id));
+            }
             if (cmd === "page_files")
               return [
                 {
@@ -439,6 +452,84 @@ test("Eigene Ordnerwahl während einer laufenden Bücheranfrage bleibt", async (
   await expect(texts).toHaveAttribute("aria-current", "true");
   await page.waitForTimeout(2500);
   await expect(texts).toHaveAttribute("aria-current", "true");
+});
+
+test("Gescheiterte Bücheranfrage: Auswahl bleibt, folgt nach Erfolg", async ({
+  page,
+}) => {
+  await openReadAloud(page);
+  const folders = page.getByTestId("reader-folders");
+  await folders.locator('[data-folder="book:b1"]').click();
+  await expect(rows(page)).toHaveText(["Der Sturm", "The Tempest"]);
+  await page.evaluate(
+    (books) => {
+      const w = window as unknown as {
+        __lvBooks?: unknown;
+        __lvLibFail?: boolean;
+      };
+      w.__lvBooks = books;
+      w.__lvLibFail = true;
+    },
+    [BOOKS[0], SECOND_BOOK],
+  );
+  await page
+    .getByTestId("tts-pages")
+    .getByRole("button", { name: "Neue Seite" })
+    .click();
+  await expect
+    .poll(() =>
+      page.evaluate(() => localStorage.getItem("lva.ui.tts.activePage")),
+    )
+    .toBe("p4");
+  await page.waitForTimeout(800);
+  // Mit veralteten Büchern wäre p4 „Ohne Buch“: die Auswahl bleibt stehen.
+  await expect(folders.locator('[data-folder="book:b1"]')).toHaveAttribute(
+    "aria-current",
+    "true",
+  );
+  // Die nächste Anfrage gelingt: jetzt folgt die Auswahl in Buch B.
+  await page.evaluate(() => {
+    const w = window as unknown as {
+      __lvLibFail?: boolean;
+      __lvEmit?: (event: string) => void;
+    };
+    w.__lvLibFail = false;
+    w.__lvEmit?.("sync-changed");
+  });
+  await expect(folders.locator('[data-folder="book:b2"]')).toHaveAttribute(
+    "aria-current",
+    "true",
+  );
+  await expect(rows(page)).toHaveText(["Neues Buch"]);
+});
+
+test("Keine Anfrageschleife: libraryList-Aufrufe bleiben über Renders konstant", async ({
+  page,
+}) => {
+  await openReadAloud(page);
+  const folders = page.getByTestId("reader-folders");
+  await folders.locator('[data-folder="book:b1"]').click();
+  await page.waitForTimeout(500);
+  const count = () =>
+    page.evaluate(
+      () => (window as unknown as { __lvLibCalls?: number }).__lvLibCalls ?? 0,
+    );
+  const before = await count();
+  // Viele Renders ohne neue Seitenmenge: Reiter und Ordner wechseln. (Ein
+  // Seitenwechsel lädt anderswo im Vorlesen die Bibliothek ohnehin neu und
+  // würde hier mitgezählt.)
+  const sections = page.getByTestId("page-sections");
+  for (let i = 0; i < 3; i++) {
+    await sections
+      .getByRole("tab", { name: "Übersetzung", exact: true })
+      .click();
+    await sections.getByRole("tab", { name: "Original", exact: true }).click();
+    await folders.locator('[data-folder="all"]').click();
+    await folders.locator('[data-folder="book:b1"]').click();
+  }
+  await folders.locator('[data-folder="all"]').click();
+  await page.waitForTimeout(1000);
+  expect(await count()).toBe(before);
 });
 
 test("Ordnerauswahl bleibt über ein Neuladen erhalten", async ({ page }) => {

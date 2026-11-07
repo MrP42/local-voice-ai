@@ -23,15 +23,20 @@ export function useReaderFolders(
   active: boolean,
 ) {
   const [books, setBooks] = useState<LibraryBook[]>([]);
-  // Für welche Seitenmenge die gelieferten Bücher gelten. Weicht sie von
-  // `pages` ab, läuft (oder fehlt) die Anfrage dazu: das ist im selben Render
-  // bekannt, nicht erst nach einem Effekt. Solange folgt die Auswahl der
+  // Für welche Seitenmenge (Schlüssel aus den Seiten-IDs) die gelieferten
+  // Bücher gelten. Weicht sie ab, läuft (oder fehlt) die Anfrage dazu: das ist
+  // im selben Render bekannt, nicht erst nach einem Effekt. Der Schlüssel statt
+  // der Array-Referenz: `pages` wird bei jedem Seitenwechsel neu geladen, die
+  // Menge bleibt dabei gleich und braucht keine neue Bücheranfrage. Solange folgt die Auswahl der
   // offenen Seite nicht, sonst bestimmen veraltete Bücher den Ordner (eine
   // neue Buchseite landete unter „Ohne Buch“).
-  const [loadedFor, setLoadedFor] = useState<PageInfo[] | null>(null);
+  const pagesKey = useMemo(() => pages.map((p) => p.id).join("\n"), [pages]);
+  const [loadedFor, setLoadedFor] = useState<string | null>(null);
   // Eine Anfrage nach einem Sync-Ereignis (Seitenmenge unverändert).
   const [syncPending, setSyncPending] = useState(false);
-  const pending = !active || loadedFor !== pages || syncPending;
+  // Die jüngste Anfrage ist gescheitert: keine Seitenfolge mit alten Daten.
+  const [failed, setFailed] = useState(false);
+  const pending = !active || loadedFor !== pagesKey || syncPending;
   const [stored, setStored] = usePersistentState<string>(
     "tts.folder",
     FOLDER_ALL,
@@ -40,15 +45,18 @@ export function useReaderFolders(
   // Nur die jüngste Anfrage zählt: überlappende Antworten können in
   // umgekehrter Reihenfolge eintreffen und sonst neue Bücher überschreiben.
   const request = useRef(0);
-  const pagesRef = useRef(pages);
-  pagesRef.current = pages;
-  const reloadBooks = useCallback(async (forPages: PageInfo[]) => {
+  const keyRef = useRef(pagesKey);
+  keyRef.current = pagesKey;
+  const reloadBooks = useCallback(async (forKey: string) => {
     const mine = ++request.current;
     const result = await commands.libraryList().catch(() => null);
     if (mine !== request.current) return;
-    if (result?.status === "ok" && Array.isArray(result.data))
-      setBooks(result.data);
-    setLoadedFor(forPages);
+    const ok = result?.status === "ok" && Array.isArray(result.data);
+    if (ok) setBooks(result.data);
+    // Gescheitert: die Bücher können veraltet sein. Nicht dauerhaft
+    // „pending“, aber die Seitenfolge setzt aus, bis eine Anfrage gelingt.
+    setFailed(!ok);
+    setLoadedFor(forKey);
     setSyncPending(false);
   }, []);
   // Beim Abbau gilt keine ausstehende Antwort mehr.
@@ -61,15 +69,21 @@ export function useReaderFolders(
 
   // Beim Sichtbarwerden und bei jeder neuen Seitenmenge neu laden: Bücher
   // entstehen und verschwinden in der Bibliothek, während Vorlesen im
-  // Hintergrund erhalten bleibt.
+  // Hintergrund erhalten bleibt. Verborgen gelten die Bücher als ungeladen,
+  // damit beim Zurückkehren bis zur Antwort keine Seitenfolge läuft.
   useEffect(() => {
-    if (active) void reloadBooks(pages);
-  }, [active, pages, reloadBooks]);
+    if (!active) {
+      request.current += 1;
+      setLoadedFor(null);
+      return;
+    }
+    void reloadBooks(pagesKey);
+  }, [active, pagesKey, reloadBooks]);
 
   useEffect(() => {
     const unlisten = listen("sync-changed", () => {
       setSyncPending(true);
-      void reloadBooks(pagesRef.current);
+      void reloadBooks(keyRef.current);
     });
     return () => {
       void unlisten.then((fn) => fn()).catch(() => {});
@@ -94,7 +108,10 @@ export function useReaderFolders(
     visible: false,
   });
   useEffect(() => {
-    if (pending || !activePage || !allIds.includes(activePage)) return;
+    // Bei gescheiterter Anfrage bleibt `seen` unverändert: gelingt die
+    // nächste, folgt die Auswahl dann mit gültigen Büchern.
+    if (pending || failed || !activePage || !allIds.includes(activePage))
+      return;
     const visible = visibleIds.includes(activePage);
     const last = seen.current;
     seen.current = { page: activePage, selection, visible };
@@ -103,7 +120,16 @@ export function useReaderFolders(
     if (!pageChanged && !movedOut) return;
     const target = followFolder(folders, visibleIds, allIds, activePage);
     if (target) setStored(target);
-  }, [pending, activePage, selection, visibleIds, allIds, folders, setStored]);
+  }, [
+    pending,
+    failed,
+    activePage,
+    selection,
+    visibleIds,
+    allIds,
+    folders,
+    setStored,
+  ]);
 
   /** Ordner wählen; liegt die offene Seite nicht darin, öffnet die erste. */
   const select = useCallback(
