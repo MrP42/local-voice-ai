@@ -23,10 +23,15 @@ export function useReaderFolders(
   active: boolean,
 ) {
   const [books, setBooks] = useState<LibraryBook[]>([]);
-  // Solange eine Bücheranfrage läuft, folgt die Auswahl der offenen Seite
-  // nicht: sonst bestimmen veraltete Bücher den Ordner (eine neue Buchseite
-  // landete unter „Ohne Buch“). Anfangs gilt die erste Anfrage als laufend.
-  const [pending, setPending] = useState(true);
+  // Für welche Seitenmenge die gelieferten Bücher gelten. Weicht sie von
+  // `pages` ab, läuft (oder fehlt) die Anfrage dazu: das ist im selben Render
+  // bekannt, nicht erst nach einem Effekt. Solange folgt die Auswahl der
+  // offenen Seite nicht, sonst bestimmen veraltete Bücher den Ordner (eine
+  // neue Buchseite landete unter „Ohne Buch“).
+  const [loadedFor, setLoadedFor] = useState<PageInfo[] | null>(null);
+  // Eine Anfrage nach einem Sync-Ereignis (Seitenmenge unverändert).
+  const [syncPending, setSyncPending] = useState(false);
+  const pending = !active || loadedFor !== pages || syncPending;
   const [stored, setStored] = usePersistentState<string>(
     "tts.folder",
     FOLDER_ALL,
@@ -35,14 +40,16 @@ export function useReaderFolders(
   // Nur die jüngste Anfrage zählt: überlappende Antworten können in
   // umgekehrter Reihenfolge eintreffen und sonst neue Bücher überschreiben.
   const request = useRef(0);
-  const reloadBooks = useCallback(async () => {
+  const pagesRef = useRef(pages);
+  pagesRef.current = pages;
+  const reloadBooks = useCallback(async (forPages: PageInfo[]) => {
     const mine = ++request.current;
-    setPending(true);
     const result = await commands.libraryList().catch(() => null);
     if (mine !== request.current) return;
     if (result?.status === "ok" && Array.isArray(result.data))
       setBooks(result.data);
-    setPending(false);
+    setLoadedFor(forPages);
+    setSyncPending(false);
   }, []);
   // Beim Abbau gilt keine ausstehende Antwort mehr.
   useEffect(
@@ -52,14 +59,18 @@ export function useReaderFolders(
     [],
   );
 
-  // Beim Sichtbarwerden neu laden: Bücher entstehen und verschwinden in der
-  // Bibliothek, während Vorlesen im Hintergrund erhalten bleibt.
+  // Beim Sichtbarwerden und bei jeder neuen Seitenmenge neu laden: Bücher
+  // entstehen und verschwinden in der Bibliothek, während Vorlesen im
+  // Hintergrund erhalten bleibt.
   useEffect(() => {
-    if (active) void reloadBooks();
+    if (active) void reloadBooks(pages);
   }, [active, pages, reloadBooks]);
 
   useEffect(() => {
-    const unlisten = listen("sync-changed", () => void reloadBooks());
+    const unlisten = listen("sync-changed", () => {
+      setSyncPending(true);
+      void reloadBooks(pagesRef.current);
+    });
     return () => {
       void unlisten.then((fn) => fn()).catch(() => {});
     };
@@ -99,7 +110,15 @@ export function useReaderFolders(
     (key: string, open: (id: string) => void) => {
       setStored(key);
       const ids = pagesInFolder(folders, key, allIds);
-      if (ids.length > 0 && !ids.includes(activePage)) open(ids[0]);
+      const opens = ids.length > 0 && !ids.includes(activePage);
+      if (opens) open(ids[0]);
+      // Eine bewusste Wahl gilt als gesehen, auch während Bücher laden:
+      // sonst überschriebe die spätere Seitenfolge sie.
+      seen.current = {
+        page: opens ? ids[0] : activePage,
+        selection: key,
+        visible: opens || ids.includes(activePage),
+      };
     },
     [folders, allIds, activePage, setStored],
   );

@@ -92,7 +92,28 @@ test.beforeEach(async ({ page }) => {
             if (cmd === "plugin:os|locale") return "de-DE";
             if (cmd === "plugin:app|version") return "0.16.0";
             if (cmd.includes("permission")) return true;
-            if (cmd === "plugin:event|listen") return ++callback;
+            if (cmd === "plugin:event|listen") {
+              // Ereignisse für Tests auslösbar machen: __lvEmit("sync-changed").
+              const w = window as unknown as {
+                __lvEmit?: (event: string) => void;
+                __lvHandlers?: Map<string, number[]>;
+              };
+              w.__lvHandlers ??= new Map();
+              const name = String(args?.event);
+              w.__lvHandlers.set(name, [
+                ...(w.__lvHandlers.get(name) ?? []),
+                Number(args?.handler),
+              ]);
+              w.__lvEmit ??= (event: string) => {
+                for (const id of w.__lvHandlers?.get(event) ?? [])
+                  (callbacks.get(id) as ((e: unknown) => void) | undefined)?.({
+                    event,
+                    id: 0,
+                    payload: null,
+                  });
+              };
+              return ++callback;
+            }
             if (cmd === "get_selected_model") return "";
             if (cmd === "meetings_is_recording") return false;
             if (cmd === "tts_server_status")
@@ -108,8 +129,28 @@ test.beforeEach(async ({ page }) => {
                 await new Promise((r) => setTimeout(r, w.__lvLibSlow));
               return books;
             }
+            if (cmd === "pages_create") {
+              // Neue Seite p4 (Fassung eines zweiten Buchs, siehe Test).
+              (window as unknown as { __lvP4?: boolean }).__lvP4 = true;
+              return {
+                id: "p4",
+                title: "Neues Buch",
+                preview: "",
+                modified_ms: now,
+              };
+            }
             if (cmd === "pages_list")
               return [
+                ...((window as unknown as { __lvP4?: boolean }).__lvP4
+                  ? [
+                      {
+                        id: "p4",
+                        title: "Neues Buch",
+                        preview: "",
+                        modified_ms: now,
+                      },
+                    ]
+                  : []),
                 {
                   id: "p1",
                   title: "Der Sturm",
@@ -312,6 +353,92 @@ test("Seitenwechsel bei verzögerter Bibliotheksantwort", async ({ page }) => {
   expect(["p1", "p3"]).toContain(
     await page.evaluate(() => localStorage.getItem("lva.ui.tts.activePage")),
   );
+});
+
+const SECOND_BOOK = {
+  ...BOOKS[0],
+  id: "b2",
+  title: "Neues Buch",
+  text: { page_id: "p4", origin: "document", source_name: null },
+  editions: [{ ...edition("e4", "de", "p4"), title: "Neues Buch" }],
+};
+
+test("Neue Seite eines anderen Buchs: Auswahl folgt erst mit den neuen Büchern", async ({
+  page,
+}) => {
+  // Buch A ist gewählt. Eine neue Seite entsteht und öffnet; erst die
+  // (langsame) Bücherantwort zeigt, dass sie zu Buch B gehört. Mit den alten
+  // Büchern wäre sie „Ohne Buch“ zugeordnet worden.
+  await openReadAloud(page);
+  const folders = page.getByTestId("reader-folders");
+  await folders.locator('[data-folder="book:b1"]').click();
+  await expect(rows(page)).toHaveText(["Der Sturm", "The Tempest"]);
+  await page.evaluate(
+    (books) => {
+      const w = window as unknown as {
+        __lvBooks?: unknown;
+        __lvLibSlow?: number;
+      };
+      w.__lvBooks = books;
+      w.__lvLibSlow = 1500;
+    },
+    [BOOKS[0], SECOND_BOOK],
+  );
+  await page
+    .getByTestId("tts-pages")
+    .getByRole("button", { name: "Neue Seite" })
+    .click();
+  await expect(folders.locator('[data-folder="book:b2"]')).toHaveAttribute(
+    "aria-current",
+    "true",
+    { timeout: 5000 },
+  );
+  await expect(rows(page)).toHaveText(["Neues Buch"]);
+  await expect(folders.locator('[data-folder="texts"]')).not.toHaveAttribute(
+    "aria-current",
+    "true",
+  );
+});
+
+test("Eigene Ordnerwahl während einer laufenden Bücheranfrage bleibt", async ({
+  page,
+}) => {
+  // p2 ist Fassung eines zweiten Buchs: „Ohne Buch“ ist leer. Während eine
+  // Sync-Anfrage läuft, wechselt die offene Seite im Buch und danach wählt
+  // jemand bewusst den leeren Ordner. Die Antwort darf das nicht überschreiben.
+  await page.addInitScript(
+    (books) => {
+      (window as unknown as { __lvBooks?: unknown }).__lvBooks = books;
+    },
+    [
+      BOOKS[0],
+      {
+        ...SECOND_BOOK,
+        text: { page_id: "p2", origin: "document", source_name: null },
+        editions: [{ ...edition("e5", "de", "p2"), title: "Zweite Seite" }],
+      },
+    ],
+  );
+  await openReadAloud(page);
+  const folders = page.getByTestId("reader-folders");
+  await folders.locator('[data-folder="book:b1"]').click();
+  await expect(rows(page)).toHaveText(["Der Sturm", "The Tempest"]);
+  await rows(page).filter({ hasText: "Der Sturm" }).click();
+  await page.evaluate(() => {
+    const w = window as unknown as {
+      __lvLibSlow?: number;
+      __lvEmit?: (event: string) => void;
+    };
+    w.__lvLibSlow = 1500;
+    w.__lvEmit?.("sync-changed");
+  });
+  await rows(page).filter({ hasText: "The Tempest" }).click();
+  const texts = folders.locator('[data-folder="texts"]');
+  await expect(texts).toContainText("0");
+  await texts.click();
+  await expect(texts).toHaveAttribute("aria-current", "true");
+  await page.waitForTimeout(2500);
+  await expect(texts).toHaveAttribute("aria-current", "true");
 });
 
 test("Ordnerauswahl bleibt über ein Neuladen erhalten", async ({ page }) => {
