@@ -187,8 +187,10 @@ pub fn schreibe_atomar(pfad: &Path, bytes: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
-/// Ordnereintrag dauerhaft machen. Unter Windows lässt sich ein Ordner so nicht öffnen;
-/// dort genügt das fsync der Datei.
+/// Ordnereinträge (Umbenennen, Anlegen, Löschen) dauerhaft machen. Unter Unix per fsync
+/// auf den Ordner, unter Windows per `FlushFileBuffers` auf ein Ordner-Handle (nur mit
+/// `FILE_FLAG_BACKUP_SEMANTICS` zu öffnen). Beides nach bestem Vermögen; wer sich darauf
+/// verlassen muss, liest den Stand danach nach.
 fn ordner_sync(dir: &Path) {
     #[cfg(unix)]
     {
@@ -196,7 +198,19 @@ fn ordner_sync(dir: &Path) {
             let _ = f.sync_all();
         }
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+        if let Ok(f) = fs::OpenOptions::new()
+            .write(true)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+            .open(dir)
+        {
+            let _ = f.sync_all();
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         let _ = dir;
     }
@@ -1239,19 +1253,26 @@ fn index_zusammenfuehren(
 /// der Tausch ist ([`TauschStand`]). Findet der Start einen Plan vor, wurde das
 /// Zurückspielen unterbrochen: [`zurueckspielen_wiederanlauf`] nimmt es zurück oder räumt
 /// nur noch auf, noch bevor Bibliothek und Sync lesen.
+///
+/// Jeder Ordner ist an seinen [`Abdruck`] gebunden: verschoben oder gelöscht wird nur, was
+/// genau so aussieht wie geplant. Ein veränderter oder untergeschobener Plan kann so nie
+/// fremde Daten in den Zwischenordner (und damit ins Aufräumen) ziehen.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct Tauschplan {
     pub version: u32,
     #[serde(default)]
     pub stand: TauschStand,
+    /// Die Sicherung (`buch-ordner-<ms>`), aus der zurückgespielt wird. Alles, was
+    /// eingesetzt wird, muss laut ihrem Manifest daraus stammen.
+    pub sicherung: String,
     /// Zwischenordner `sicherungen/.zurueck-<ms>`.
     pub stufe: String,
     /// Papierkorb `sicherungen/.papierkorb/<ms>`, falls etwas weichen muss.
     pub korb: Option<String>,
     /// Seitenordner, die vom Datenordner in den Papierkorb gehen.
-    pub weichen: Vec<String>,
+    pub weichen: Vec<PlanOrdner>,
     /// Seitenordner, die aus dem Zwischenordner an ihren Ort gehen.
-    pub hin: Vec<String>,
+    pub hin: Vec<PlanOrdner>,
     /// Dateien (Index zuletzt), die über ihr Ziel umbenannt werden.
     pub dateien: Vec<PlanDatei>,
 }
@@ -1280,8 +1301,19 @@ pub struct PlanDatei {
     pub alt_sha256: Option<String>,
 }
 
+/// Ein Seitenordner des Plans mit seinem Abdruck zur Planungszeit.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct PlanOrdner {
+    pub pfad: String,
+    pub abdruck: Abdruck,
+}
+
+/// Abdruck eines Ordners: alle Dateien darunter (relativ, sortiert) mit Größe und
+/// SHA-256. Leere Unterordner zählen nicht.
+pub type Abdruck = Vec<ManifestDatei>;
+
 const TAUSCHPLAN: &str = ".zurueckspielen.json";
-const TAUSCHPLAN_VERSION: u32 = 2;
+const TAUSCHPLAN_VERSION: u32 = 3;
 const STUFE_PRAEFIX: &str = ".zurueck-";
 
 fn tauschplan_pfad(data: &Path) -> PathBuf {
@@ -1312,14 +1344,135 @@ fn sha_gueltig(sha: &str) -> bool {
     sha.len() == 64 && sha.chars().all(|c| c.is_ascii_hexdigit())
 }
 
+fn abdruck_gueltig(abdruck: &Abdruck) -> bool {
+    abdruck
+        .iter()
+        .all(|d| sicherer_rel(&d.pfad).is_ok() && sha_gueltig(&d.sha256))
+        && abdruck.windows(2).all(|w| w[0].pfad < w[1].pfad)
+}
+
+/// Ist dieser Eintrag eine Verknüpfung? Unter Windows zählen dazu auch Junctions und
+/// andere Namensersatz-Reparse-Punkte (so deutet die Standardbibliothek `is_symlink`).
+fn ist_umweg(meta: &fs::Metadata) -> bool {
+    meta.file_type().is_symlink()
+}
+
+/// Abdruck eines Ordners bilden (gestreamt). Eine Verknüpfung darin, ein Eintrag, der
+/// weder Datei noch Ordner ist, und jeder Lesefehler sind Fehler: dann wird nichts
+/// verschoben oder gelöscht.
+fn abdruck(dir: &Path) -> Result<Abdruck, String> {
+    fn sammeln(wurzel: &Path, dir: &Path, aus: &mut Abdruck) -> Result<(), String> {
+        let eintraege =
+            fs::read_dir(dir).map_err(|e| format!("{} nicht lesbar: {e}", dir.display()))?;
+        for eintrag in eintraege {
+            let pfad = eintrag
+                .map_err(|e| format!("{} nicht lesbar: {e}", dir.display()))?
+                .path();
+            let meta = fs::symlink_metadata(&pfad)
+                .map_err(|e| format!("{} nicht lesbar: {e}", pfad.display()))?;
+            if ist_umweg(&meta) {
+                return Err(format!("{} ist eine Verknüpfung", pfad.display()));
+            }
+            if meta.is_dir() {
+                sammeln(wurzel, &pfad, aus)?;
+            } else if meta.is_file() {
+                let (groesse, sha256) = pruefsumme(&pfad)
+                    .map_err(|e| format!("{} nicht lesbar: {e}", pfad.display()))?;
+                aus.push(ManifestDatei {
+                    pfad: relativ(wurzel, &pfad),
+                    groesse,
+                    sha256,
+                });
+            } else {
+                return Err(format!("{} ist keine gewöhnliche Datei", pfad.display()));
+            }
+        }
+        Ok(())
+    }
+    let meta =
+        fs::symlink_metadata(dir).map_err(|e| format!("{} nicht lesbar: {e}", dir.display()))?;
+    if ist_umweg(&meta) || !meta.is_dir() {
+        return Err(format!("{} ist kein gewöhnlicher Ordner", dir.display()));
+    }
+    let mut aus = Vec::new();
+    sammeln(dir, dir, &mut aus)?;
+    aus.sort_by(|a, b| a.pfad.cmp(&b.pfad));
+    Ok(aus)
+}
+
+/// Kein Glied von `rel` unter `wurzel` ist eine Verknüpfung (Junction, Symlink). Fehlt
+/// ein Glied, ist der Rest unbedenklich.
+fn ohne_umweg(wurzel: &Path, rel: &str) -> Result<(), String> {
+    let mut pfad = wurzel.to_path_buf();
+    for teil in rel.split('/').filter(|t| !t.is_empty()) {
+        pfad.push(teil);
+        match fs::symlink_metadata(&pfad) {
+            Ok(meta) if ist_umweg(&meta) => {
+                return Err(format!(
+                    "{} ist eine Verknüpfung; nichts angefasst.",
+                    pfad.display()
+                ))
+            }
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => return Err(format!("{} nicht lesbar: {e}", pfad.display())),
+        }
+    }
+    Ok(())
+}
+
+/// Alle Wege des Plans frei von Verknüpfungen: Zwischenordner, Papierkorb und jede
+/// Einheit an ihrem Ort, im Zwischenordner und im Papierkorb.
+fn plan_ohne_umweg(data: &Path, plan: &Tauschplan) -> Result<(), String> {
+    let einheiten = plan
+        .weichen
+        .iter()
+        .chain(&plan.hin)
+        .map(|o| o.pfad.as_str())
+        .chain(plan.dateien.iter().map(|d| d.pfad.as_str()));
+    let mut wege = vec![plan.stufe.clone()];
+    wege.extend(plan.korb.clone());
+    for rel in einheiten {
+        wege.push(rel.to_string());
+        wege.push(format!("{}/{rel}", plan.stufe));
+        if let Some(korb) = &plan.korb {
+            wege.push(format!("{korb}/{rel}"));
+        }
+    }
+    wege.iter().try_for_each(|w| ohne_umweg(data, w))
+}
+
+/// Umbenennen und beide Elternordner dauerhaft machen.
+fn umbenennen(von: &Path, nach: &Path) -> std::io::Result<()> {
+    fs::rename(von, nach)?;
+    for dir in [von.parent(), nach.parent()].into_iter().flatten() {
+        ordner_sync(dir);
+    }
+    Ok(())
+}
+
+/// Prüfsumme einer Datei, `None` wenn es sie nicht gibt. Jeder andere Fehler (auch ein
+/// Ordner an ihrer Stelle) ist ein Fehler und wird nie als „fehlt“ gedeutet.
+fn pruefsumme_opt(pfad: &Path) -> Result<Option<String>, String> {
+    match fs::symlink_metadata(pfad) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e.to_string()),
+        Ok(meta) if !meta.is_file() => Err("keine gewöhnliche Datei".to_string()),
+        Ok(_) => pruefsumme(pfad).map(|(_, sha)| Some(sha)),
+    }
+}
+
 impl Tauschplan {
     /// Ein Plan von der Platte ist nicht vertrauenswürdig: Zwischenordner und Papierkorb
     /// haben genau die Form, die nur das Zurückspielen anlegt (nie eine Sicherung), jede
-    /// Rolle passt zu ihrer Einheit, und Prüfsummen sind wohlgeformt.
+    /// Rolle passt zu ihrer Einheit, und Prüfsummen und Abdrücke sind wohlgeformt.
     fn pruefen(&self) -> Result<(), String> {
         let fehler = |was: &str| Err(format!("Tauschplan abgewiesen: {was}"));
         if self.version != TAUSCHPLAN_VERSION {
             return fehler("unbekannte Version");
+        }
+        if !ziffern_nach(&self.sicherung, SICHERUNG_PRAEFIX) {
+            return fehler("Sicherung");
         }
         let stufe_ok = match self.stufe.split('/').collect::<Vec<_>>().as_slice() {
             [SICHERUNGEN, name] => ziffern_nach(name, STUFE_PRAEFIX),
@@ -1337,10 +1490,11 @@ impl Tauschplan {
                 return fehler("Papierkorb");
             }
         }
-        if !self.weichen.iter().all(|r| ordner_einheit(r)) {
+        let ordner_ok = |o: &PlanOrdner| ordner_einheit(&o.pfad) && abdruck_gueltig(&o.abdruck);
+        if !self.weichen.iter().all(ordner_ok) {
             return fehler("weichende Ordner");
         }
-        if !self.hin.iter().all(|r| ordner_einheit(r)) {
+        if !self.hin.iter().all(ordner_ok) {
             return fehler("eingesetzte Ordner");
         }
         let dateien_ok = self.dateien.iter().all(|d| {
@@ -1358,6 +1512,32 @@ impl Tauschplan {
         }
         Ok(())
     }
+
+    /// Alles, was eingesetzt wird, stammt laut Manifest unverändert aus der Sicherung.
+    /// Dann verliert das Zurücknehmen und Aufräumen eingesetzter Ordner nie etwas, das
+    /// nicht in der Sicherung noch einmal liegt.
+    fn gegen_sicherung_pruefen(&self, data: &Path) -> Result<(), String> {
+        let roh = fs::read(data.join(SICHERUNGEN).join(&self.sicherung).join(MANIFEST))
+            .map_err(|e| format!("Tauschplan abgewiesen: Manifest der Sicherung: {e}"))?;
+        let manifest: Manifest = serde_json::from_slice(&roh)
+            .map_err(|e| format!("Tauschplan abgewiesen: Manifest der Sicherung: {e}"))?;
+        let bekannt: BTreeMap<&str, (u64, &str)> = manifest
+            .dateien
+            .iter()
+            .map(|d| (d.pfad.as_str(), (d.groesse, d.sha256.as_str())))
+            .collect();
+        for ordner in &self.hin {
+            for datei in &ordner.abdruck {
+                let pfad = format!("{}/{}", ordner.pfad, datei.pfad);
+                if bekannt.get(pfad.as_str()) != Some(&(datei.groesse, datei.sha256.as_str())) {
+                    return Err(format!(
+                        "Tauschplan abgewiesen: {pfad} stammt nicht aus der Sicherung"
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 fn tauschplan_laden(data: &Path) -> Result<Option<Tauschplan>, String> {
@@ -1369,6 +1549,7 @@ fn tauschplan_laden(data: &Path) -> Result<Option<Tauschplan>, String> {
     let plan: Tauschplan =
         serde_json::from_slice(&roh).map_err(|e| format!("Tauschplan unlesbar: {e}"))?;
     plan.pruefen()?;
+    plan.gegen_sicherung_pruefen(data)?;
     Ok(Some(plan))
 }
 
@@ -1416,12 +1597,41 @@ fn ist_absturz(_e: &str) -> bool {
     false
 }
 
+/// Die alte Fassung einer Datei aus dem Papierkorb einsetzen: gestreamt in eine
+/// Temp-Datei neben dem Ziel kopieren, die Prüfsumme vergleichen, mit fsync sichern und
+/// erst dann über das Ziel umbenennen.
+fn alte_fassung_einsetzen(kopie: &Path, ort: &Path, alt: &str) -> Result<(), String> {
+    let name = ort
+        .file_name()
+        .ok_or("Pfad ohne Namen")?
+        .to_string_lossy()
+        .into_owned();
+    let tmp = ort.with_file_name(format!(".{name}.zurueck"));
+    if fs::symlink_metadata(&tmp).is_ok_and(|m| m.is_file()) {
+        fs::remove_file(&tmp).map_err(|e| e.to_string())?;
+    }
+    let eingesetzt = kopieren_mit_pruefsumme(kopie, &tmp).and_then(|(_, sha)| {
+        if sha != alt {
+            return Err("Kopie im Papierkorb stimmt nicht".to_string());
+        }
+        umbenennen(&tmp, ort).map_err(|e| e.to_string())
+    });
+    if eingesetzt.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    eingesetzt
+}
+
 /// Den Tausch anhand des Plattenstands zurücknehmen (idempotent, solange Zwischenordner
 /// und Papierkorb unangetastet sind, und das sind sie bis zum Stand `zurueckgenommen`).
 /// Ersetzte Dateien bekommen ihre alte Fassung nur zurück, wenn am Ort genau die neue
-/// liegt; eingesetzte Ordner gehen in den Zwischenordner, gewichene aus dem Papierkorb
-/// an ihren Ort, nie über etwas Vorhandenes. `Err` nur beim simulierten Absturz.
+/// liegt; eingesetzte Ordner gehen nur in den Zwischenordner, wenn sie genau ihrem
+/// Abdruck entsprechen, gewichene nur dann aus dem Papierkorb an ihren Ort, nie über
+/// etwas Vorhandenes. Was nicht passt oder sich nicht prüfen lässt, bleibt liegen und
+/// steht in der Fehlerliste. `Err` beim simulierten Absturz oder bei einer Verknüpfung
+/// auf einem der Wege.
 fn tausch_zuruecknehmen(data: &Path, plan: &Tauschplan) -> Result<Vec<String>, String> {
+    plan_ohne_umweg(data, plan)?;
     let stufe = absolut(data, &plan.stufe);
     let korb = plan.korb.as_ref().map(|k| absolut(data, k));
     let mut fehler = Vec::new();
@@ -1431,7 +1641,13 @@ fn tausch_zuruecknehmen(data: &Path, plan: &Tauschplan) -> Result<Vec<String>, S
         if vorhanden(&absolut(&stufe, &datei.pfad)) {
             continue; // nicht ersetzt
         }
-        let am_ort = pruefsumme(&ort).ok().map(|(_, sha)| sha);
+        let am_ort = match pruefsumme_opt(&ort) {
+            Ok(sha) => sha,
+            Err(e) => {
+                fehler.push(format!("{} nicht prüfbar: {e}", datei.pfad));
+                continue;
+            }
+        };
         if am_ort.as_deref() != Some(datei.neu_sha256.as_str()) {
             // Schon zurückgenommen (oder seither geändert): nichts anfassen.
             if am_ort.is_some() && am_ort != datei.alt_sha256 {
@@ -1444,37 +1660,50 @@ fn tausch_zuruecknehmen(data: &Path, plan: &Tauschplan) -> Result<Vec<String>, S
         }
         let r = match (&datei.alt_sha256, &korb) {
             (Some(alt), Some(korb)) => {
-                let kopie = absolut(korb, &datei.pfad);
-                match fs::read(&kopie) {
-                    Ok(b) if hex(&Sha256::digest(&b)) == *alt => schreibe_atomar(&ort, &b),
-                    Ok(_) => Err("Kopie im Papierkorb stimmt nicht".to_string()),
-                    Err(e) => Err(e.to_string()),
-                }
+                alte_fassung_einsetzen(&absolut(korb, &datei.pfad), &ort, alt)
             }
             (Some(_), None) => Err("Papierkorb fehlt".to_string()),
-            (None, _) => fs::remove_file(&ort).map_err(|e| e.to_string()),
+            (None, _) => fs::remove_file(&ort)
+                .map(|()| ordner_sync(ort.parent().unwrap_or(data)))
+                .map_err(|e| e.to_string()),
         };
         if let Err(e) = r {
             fehler.push(format!("{}: {e}", datei.pfad));
         }
     }
-    for rel in plan.hin.iter().rev() {
+    for ordner in plan.hin.iter().rev() {
         absturz_probe()?;
+        let rel = &ordner.pfad;
         let gestuft = absolut(&stufe, rel);
         let ort = absolut(data, rel);
-        if !vorhanden(&gestuft) && vorhanden(&ort) {
-            let r = gestuft
-                .parent()
-                .map_or(Ok(()), fs::create_dir_all)
-                .and_then(|()| fs::rename(&ort, &gestuft));
-            if let Err(e) = r {
-                fehler.push(format!("{rel}: {e}"));
+        if vorhanden(&gestuft) || !vorhanden(&ort) {
+            continue;
+        }
+        match abdruck(&ort) {
+            Ok(a) if a == ordner.abdruck => {}
+            Ok(_) => {
+                fehler.push(format!(
+                    "{rel} entspricht nicht dem Plan; unverändert gelassen"
+                ));
+                continue;
             }
+            Err(e) => {
+                fehler.push(format!("{rel} nicht prüfbar: {e}"));
+                continue;
+            }
+        }
+        let r = gestuft
+            .parent()
+            .map_or(Ok(()), fs::create_dir_all)
+            .and_then(|()| umbenennen(&ort, &gestuft));
+        if let Err(e) = r {
+            fehler.push(format!("{rel}: {e}"));
         }
     }
     if let Some(korb) = &korb {
-        for rel in plan.weichen.iter().rev() {
+        for ordner in plan.weichen.iter().rev() {
             absturz_probe()?;
+            let rel = &ordner.pfad;
             let gewichen = absolut(korb, rel);
             let ort = absolut(data, rel);
             if !vorhanden(&gewichen) {
@@ -1486,34 +1715,145 @@ fn tausch_zuruecknehmen(data: &Path, plan: &Tauschplan) -> Result<Vec<String>, S
                 ));
                 continue;
             }
+            match abdruck(&gewichen) {
+                Ok(a) if a == ordner.abdruck => {}
+                Ok(_) => {
+                    fehler.push(format!(
+                        "{rel} im Papierkorb entspricht nicht dem Plan; er bleibt dort"
+                    ));
+                    continue;
+                }
+                Err(e) => {
+                    fehler.push(format!("{rel} im Papierkorb nicht prüfbar: {e}"));
+                    continue;
+                }
+            }
             let r = ort
                 .parent()
                 .map_or(Ok(()), fs::create_dir_all)
-                .and_then(|()| fs::rename(&gewichen, &ort));
+                .and_then(|()| umbenennen(&gewichen, &ort));
             if let Err(e) = r {
                 fehler.push(format!("{rel}: {e}"));
             }
         }
     }
+    if fehler.is_empty() {
+        fehler = zurueckgenommen_pruefen(data, plan);
+    }
     Ok(fehler)
 }
 
+/// Nach der Rücknahme vom Datenträger nachlesen, ob genau der vorige Stand vorliegt:
+/// gewichene Ordner mit ihrem Abdruck am Ort, eingesetzte fort, Dateien in alter Fassung.
+fn zurueckgenommen_pruefen(data: &Path, plan: &Tauschplan) -> Vec<String> {
+    let mut fehler = Vec::new();
+    let gewichen: BTreeSet<&str> = plan.weichen.iter().map(|o| o.pfad.as_str()).collect();
+    for ordner in &plan.weichen {
+        if abdruck(&absolut(data, &ordner.pfad)).ok().as_ref() != Some(&ordner.abdruck) {
+            fehler.push(format!("{} ist nicht wieder hergestellt", ordner.pfad));
+        }
+    }
+    for ordner in &plan.hin {
+        if !gewichen.contains(ordner.pfad.as_str()) && vorhanden(&absolut(data, &ordner.pfad)) {
+            fehler.push(format!("{} liegt noch am Ort", ordner.pfad));
+        }
+    }
+    for datei in &plan.dateien {
+        match pruefsumme_opt(&absolut(data, &datei.pfad)) {
+            Ok(sha) if sha == datei.alt_sha256 => {}
+            Ok(_) => fehler.push(format!("{} ist nicht die alte Fassung", datei.pfad)),
+            Err(e) => fehler.push(format!("{} nicht prüfbar: {e}", datei.pfad)),
+        }
+    }
+    fehler
+}
+
+/// Nach dem Tausch vom Datenträger nachlesen, ob genau der neue Stand vorliegt.
+fn getauscht_pruefen(data: &Path, plan: &Tauschplan) -> Result<(), String> {
+    let eingesetzt: BTreeSet<&str> = plan.hin.iter().map(|o| o.pfad.as_str()).collect();
+    for ordner in &plan.hin {
+        if abdruck(&absolut(data, &ordner.pfad))? != ordner.abdruck {
+            return Err(format!("{} ist nicht vollständig eingesetzt", ordner.pfad));
+        }
+    }
+    for ordner in &plan.weichen {
+        if !eingesetzt.contains(ordner.pfad.as_str()) && vorhanden(&absolut(data, &ordner.pfad)) {
+            return Err(format!("{} liegt noch am Ort", ordner.pfad));
+        }
+    }
+    for datei in &plan.dateien {
+        if pruefsumme_opt(&absolut(data, &datei.pfad))?.as_deref()
+            != Some(datei.neu_sha256.as_str())
+        {
+            return Err(format!("{} ist nicht die neue Fassung", datei.pfad));
+        }
+    }
+    Ok(())
+}
+
+/// Einen Ordner nur entfernen, wenn er ausschließlich erwartete Dateien enthält (Pfad →
+/// SHA-256; `None` = jeder Inhalt). Sonst bleibt er liegen, und das Aufräumen endet mit
+/// einem Fehler.
+fn entfernen_wenn_erwartet(
+    dir: &Path,
+    erwartet: &BTreeMap<String, Option<String>>,
+    was: &str,
+) -> Result<(), String> {
+    if !vorhanden(dir) {
+        return Ok(());
+    }
+    for datei in abdruck(dir).map_err(|e| format!("{was}: {e}"))? {
+        let passt = match erwartet.get(&datei.pfad) {
+            Some(None) => true,
+            Some(Some(sha)) => *sha == datei.sha256,
+            None => false,
+        };
+        if !passt {
+            return Err(format!(
+                "{was} enthält Unerwartetes ({}); er bleibt erhalten.",
+                datei.pfad
+            ));
+        }
+    }
+    fs::remove_dir_all(dir).map_err(|e| format!("{was}: {e}"))?;
+    ordner_sync(dir.parent().unwrap_or(dir));
+    Ok(())
+}
+
 /// Aufräumen nach dem festgehaltenen Stand und zuletzt den Plan entfernen. `fertig`:
-/// nur der Zwischenordner geht; `zurueckgenommen`: auch der Papierkorb (er hält dann nur
-/// noch Kopien). Ein Abbruch hier wiederholt beim nächsten Start nur das Aufräumen.
+/// nur der Zwischenordner geht, und er darf keine Datei mehr enthalten;
+/// `zurueckgenommen`: der Zwischenordner (nur eingesetzte Ordner mit ihrem Abdruck und
+/// neue Dateifassungen) und der Papierkorb (nur Kopien alter Dateifassungen). Ein
+/// Abbruch hier wiederholt beim nächsten Start nur das Aufräumen.
 fn tausch_aufraeumen(data: &Path, plan: &Tauschplan) -> Result<(), String> {
     absturz_probe()?;
-    let stufe = absolut(data, &plan.stufe);
-    if vorhanden(&stufe) {
-        fs::remove_dir_all(&stufe).map_err(|e| format!("Zwischenordner: {e}"))?;
+    plan_ohne_umweg(data, plan)?;
+    let zurueck = plan.stand == TauschStand::Zurueckgenommen;
+    let mut in_stufe = BTreeMap::new();
+    if zurueck {
+        for ordner in &plan.hin {
+            for datei in &ordner.abdruck {
+                in_stufe.insert(
+                    format!("{}/{}", ordner.pfad, datei.pfad),
+                    Some(datei.sha256.clone()),
+                );
+            }
+        }
+        for datei in &plan.dateien {
+            in_stufe.insert(datei.pfad.clone(), Some(datei.neu_sha256.clone()));
+        }
     }
-    if plan.stand == TauschStand::Zurueckgenommen {
+    entfernen_wenn_erwartet(&absolut(data, &plan.stufe), &in_stufe, "Zwischenordner")?;
+    if zurueck {
         absturz_probe()?;
         if let Some(korb) = &plan.korb {
-            let korb = absolut(data, korb);
-            if vorhanden(&korb) {
-                fs::remove_dir_all(&korb).map_err(|e| format!("Papierkorb: {e}"))?;
-            }
+            let mut im_korb: BTreeMap<String, Option<String>> = plan
+                .dateien
+                .iter()
+                .filter_map(|d| Some((d.pfad.clone(), Some(d.alt_sha256.clone()?))))
+                .collect();
+            im_korb.insert(PAPIERKORB_STEMPEL.to_string(), None);
+            entfernen_wenn_erwartet(&absolut(data, korb), &im_korb, "Papierkorb")?;
         }
     }
     absturz_probe()?;
@@ -1552,9 +1892,12 @@ pub fn zurueckspielen_wiederanlauf(data: &Path) -> Result<bool, String> {
     Ok(true)
 }
 
-/// Den Tausch nach Plan ausführen. Jeder Schritt prüft sein Ziel; überschrieben wird nur
-/// eine Datei-Einheit, deren alte Fassung schon geprüft als Kopie im Papierkorb liegt.
+/// Den Tausch nach Plan ausführen. Jeder Schritt prüft sein Ziel; ein weichender Ordner
+/// geht nur, wenn er noch seinem Abdruck entspricht, und überschrieben wird nur eine
+/// Datei-Einheit, deren alte Fassung schon geprüft als Kopie im Papierkorb liegt. Am Ende
+/// wird der neue Stand vom Datenträger nachgelesen.
 fn tausch_ausfuehren(data: &Path, plan: &Tauschplan) -> Result<(), String> {
+    plan_ohne_umweg(data, plan)?;
     let stufe = absolut(data, &plan.stufe);
     let korb = plan.korb.as_ref().map(|k| absolut(data, k));
     let korb_ziel = |rel: &str| -> Result<PathBuf, String> {
@@ -1570,14 +1913,22 @@ fn tausch_ausfuehren(data: &Path, plan: &Tauschplan) -> Result<(), String> {
         }
         Ok(nach)
     };
-    for rel in &plan.weichen {
+    for ordner in &plan.weichen {
         absturz_probe()?;
+        let rel = &ordner.pfad;
+        let ort = absolut(data, rel);
+        if abdruck(&ort)? != ordner.abdruck {
+            return Err(format!(
+                "{rel} hat sich seit der Planung geändert; nichts verschoben."
+            ));
+        }
         let nach = korb_ziel(rel)?;
-        fs::rename(absolut(data, rel), &nach)
+        umbenennen(&ort, &nach)
             .map_err(|e| format!("{rel} ließ sich nicht in den Papierkorb legen: {e}"))?;
     }
-    for rel in &plan.hin {
+    for ordner in &plan.hin {
         absturz_probe()?;
+        let rel = &ordner.pfad;
         let ort = absolut(data, rel);
         if vorhanden(&ort) {
             return Err(format!("{rel} ist noch belegt; nichts überschrieben."));
@@ -1585,7 +1936,7 @@ fn tausch_ausfuehren(data: &Path, plan: &Tauschplan) -> Result<(), String> {
         if let Some(eltern) = ort.parent() {
             fs::create_dir_all(eltern).map_err(|e| format!("{rel}: {e}"))?;
         }
-        fs::rename(absolut(&stufe, rel), &ort)
+        umbenennen(&absolut(&stufe, rel), &ort)
             .map_err(|e| format!("{rel} ließ sich nicht anlegen: {e}"))?;
     }
     for datei in &plan.dateien {
@@ -1593,7 +1944,9 @@ fn tausch_ausfuehren(data: &Path, plan: &Tauschplan) -> Result<(), String> {
         let ort = absolut(data, &datei.pfad);
         match &datei.alt_sha256 {
             Some(alt) => {
-                let (_, sha) = kopieren_mit_pruefsumme(&ort, &korb_ziel(&datei.pfad)?)?;
+                let kopie = korb_ziel(&datei.pfad)?;
+                let (_, sha) = kopieren_mit_pruefsumme(&ort, &kopie)?;
+                ordner_sync(kopie.parent().unwrap_or(data));
                 if sha != *alt {
                     return Err(format!(
                         "{} hat sich seit der Planung geändert; nichts ersetzt.",
@@ -1612,11 +1965,11 @@ fn tausch_ausfuehren(data: &Path, plan: &Tauschplan) -> Result<(), String> {
         if let Some(eltern) = ort.parent() {
             fs::create_dir_all(eltern).map_err(|e| format!("{}: {e}", datei.pfad))?;
         }
-        fs::rename(absolut(&stufe, &datei.pfad), &ort)
+        umbenennen(&absolut(&stufe, &datei.pfad), &ort)
             .map_err(|e| format!("{} ließ sich nicht ersetzen: {e}", datei.pfad))?;
-        ordner_sync(ort.parent().unwrap_or(data));
     }
-    absturz_probe()
+    absturz_probe()?;
+    getauscht_pruefen(data, plan)
 }
 
 /// Sicherung zurückspielen (4.2), so dass nie ein halber Stand entsteht:
@@ -1727,7 +2080,7 @@ pub fn sicherung_zurueckspielen(
     // 3. Plan: was weicht (vorhandene Ordner-Einheiten und weitere Orte derselben
     // Seiten), was eingesetzt wird, welche Dateien ersetzt werden (Index zuletzt).
     let karte = Fundortkarte::aufbauen(data);
-    let mut weichen: BTreeSet<String> = einheiten
+    let mut weichen_orte: BTreeSet<String> = einheiten
         .iter()
         .filter(|e| !datei_einheit(e) && vorhanden(&absolut(data, e)))
         .cloned()
@@ -1737,15 +2090,38 @@ pub fn sicherung_zurueckspielen(
         orte.push(rel_von(seite));
         for ort in orte {
             if vorhanden(&absolut(data, &ort)) {
-                weichen.insert(ort);
+                weichen_orte.insert(ort);
             }
         }
     }
-    let hin: Vec<String> = einheiten
-        .iter()
-        .filter(|e| !datei_einheit(e) && absolut(&stufe, e).is_dir())
-        .cloned()
-        .collect();
+    let abdruecke = |wurzel: &Path, orte: Vec<&String>| -> Result<Vec<PlanOrdner>, String> {
+        orte.into_iter()
+            .map(|rel| {
+                ohne_umweg(data, rel)?;
+                Ok(PlanOrdner {
+                    pfad: rel.clone(),
+                    abdruck: abdruck(&absolut(wurzel, rel))?,
+                })
+            })
+            .collect()
+    };
+    let geplant = abdruecke(data, weichen_orte.iter().collect()).and_then(|weichen| {
+        let hin = abdruecke(
+            &stufe,
+            einheiten
+                .iter()
+                .filter(|e| !datei_einheit(e) && absolut(&stufe, e).is_dir())
+                .collect(),
+        )?;
+        Ok((weichen, hin))
+    });
+    let (weichen, hin) = match geplant {
+        Ok(geplant) => geplant,
+        Err(e) => {
+            let _ = fs::remove_dir_all(&stufe);
+            return Err(format!("Zurückspielen nicht begonnen: {e}"));
+        }
+    };
     let mut dateien: Vec<PlanDatei> = Vec::new();
     for e in einheiten
         .iter()
@@ -1787,15 +2163,17 @@ pub fn sicherung_zurueckspielen(
     let mut plan = Tauschplan {
         version: TAUSCHPLAN_VERSION,
         stand: TauschStand::Laeuft,
+        sicherung: name.to_string(),
         stufe: relativ(data, &stufe),
         korb: korb.as_ref().map(|k| relativ(data, k)),
-        weichen: weichen.into_iter().collect(),
+        weichen,
         hin,
         dateien,
     };
     // Erst der Plan auf der Platte, dann die erste Änderung.
     if let Err(e) = plan
         .pruefen()
+        .and_then(|()| plan.gegen_sicherung_pruefen(data))
         .and_then(|()| tauschplan_schreiben(data, &plan))
     {
         let _ = fs::remove_dir_all(&stufe);
@@ -3067,6 +3445,13 @@ mod tests {
         assert!(nach_fertig >= 1, "auch nach dem Abschluss abgebrochen");
     }
 
+    fn ordner(pfad: &str, abdruck: Abdruck) -> PlanOrdner {
+        PlanOrdner {
+            pfad: pfad.into(),
+            abdruck,
+        }
+    }
+
     #[test]
     fn manipulierter_tauschplan_wird_abgewiesen() {
         let data = standardlage("plan-boese");
@@ -3077,9 +3462,10 @@ mod tests {
         let gut = Tauschplan {
             version: TAUSCHPLAN_VERSION,
             stand: TauschStand::Laeuft,
+            sicherung: sicherung.clone(),
             stufe: "sicherungen/.zurueck-1".into(),
             korb: Some("sicherungen/.papierkorb/1".into()),
-            weichen: vec!["projects/page_9".into()],
+            weichen: vec![ordner("projects/page_9", vec![])],
             hin: vec![],
             dateien: vec![],
         };
@@ -3102,11 +3488,41 @@ mod tests {
                 ..gut.clone()
             },
             Tauschplan {
-                weichen: vec!["projects/index.json".into()],
+                weichen: vec![ordner("projects/index.json", vec![])],
                 ..gut.clone()
             },
             Tauschplan {
-                hin: vec!["einstellungen.json".into()],
+                hin: vec![ordner("einstellungen.json", vec![])],
+                ..gut.clone()
+            },
+            Tauschplan {
+                sicherung: "../buch-ordner-1".into(),
+                ..gut.clone()
+            },
+            Tauschplan {
+                sicherung: "buch-ordner-1".into(),
+                ..gut.clone()
+            },
+            Tauschplan {
+                weichen: vec![ordner(
+                    "projects/page_9",
+                    vec![ManifestDatei {
+                        pfad: "../x".into(),
+                        groesse: 1,
+                        sha256: sha('a'),
+                    }],
+                )],
+                ..gut.clone()
+            },
+            Tauschplan {
+                weichen: vec![ordner(
+                    "projects/page_9",
+                    vec![ManifestDatei {
+                        pfad: "x".into(),
+                        groesse: 1,
+                        sha256: "kurz".into(),
+                    }],
+                )],
                 ..gut.clone()
             },
             Tauschplan {
@@ -3151,6 +3567,162 @@ mod tests {
         assert_eq!(index_roh(&data), index_vorher);
         assert!(data.join("library/book_1/fassungen/page_1").is_dir());
         assert!(sicherung_pruefen(&data.join(SICHERUNGEN).join(&sicherung)).is_ok());
+    }
+
+    /// Ein Plan, der einen fremden Seitenordner als „eingesetzt“ führt, darf ihn weder in
+    /// den Zwischenordner ziehen noch wegräumen: weder mit falschem noch mit echtem
+    /// Abdruck (der stammt dann nicht aus der Sicherung).
+    #[test]
+    fn untergeschobener_hin_ordner_bleibt_unangetastet() {
+        let data = standardlage("plan-hin");
+        migrieren(&data, &optionen()).unwrap();
+        let sicherung = sicherungen_auflisten(&data)[0].name.clone();
+        let seite = "library/book_1/fassungen/page_1";
+        let vorher = stand(&data);
+        let echt = abdruck(&data.join(seite)).unwrap();
+        assert!(!echt.is_empty());
+        for (abdruck, stand_) in [
+            (vec![], TauschStand::Laeuft),
+            (echt.clone(), TauschStand::Laeuft),
+            (echt.clone(), TauschStand::Zurueckgenommen),
+        ] {
+            let plan = Tauschplan {
+                version: TAUSCHPLAN_VERSION,
+                stand: stand_,
+                sicherung: sicherung.clone(),
+                stufe: "sicherungen/.zurueck-1".into(),
+                korb: None,
+                weichen: vec![],
+                hin: vec![ordner(seite, abdruck)],
+                dateien: vec![],
+            };
+            fs::write(tauschplan_pfad(&data), serde_json::to_vec(&plan).unwrap()).unwrap();
+            assert!(zurueckspielen_wiederanlauf(&data).is_err(), "{plan:?}");
+            assert_eq!(stand(&data), vorher);
+            assert!(!data.join("sicherungen/.zurueck-1").exists());
+        }
+    }
+
+    /// Ein Abbruch nach dem Ersetzen des Index; beim Start ist der Index unlesbar (hier:
+    /// ein Ordner an seiner Stelle). Das darf nie als „fehlt“ gelten: kein Abschluss, kein
+    /// Aufräumen, die alte Fassung bleibt im Papierkorb.
+    #[test]
+    fn lesefehler_am_ort_verhindert_abschluss_und_aufraeumen() {
+        let index = format!("{PROJEKTE}/{INDEX}");
+        let mut gefunden = None;
+        for n in 0..80 {
+            let data = standardlage(&format!("lesefehler-{n}"));
+            migrieren(&data, &optionen()).unwrap();
+            let name = sicherungen_auflisten(&data)[0].name.clone();
+            absturz_bei(Some(n));
+            let r = sicherung_zurueckspielen(&data, &name, None);
+            absturz_bei(None);
+            if r.is_ok() {
+                break;
+            }
+            let plan = tauschplan_laden(&data).unwrap().unwrap();
+            let ersetzt = plan.stand == TauschStand::Laeuft
+                && plan
+                    .dateien
+                    .iter()
+                    .any(|d| d.pfad == index && d.alt_sha256.is_some())
+                && !absolut(&data, &plan.stufe).join(&index).exists()
+                && data.join(&index).is_file();
+            if ersetzt {
+                gefunden = Some((data, plan));
+                break;
+            }
+        }
+        let (data, plan) = gefunden.expect("Abbruch nach dem Ersetzen des Index");
+        let kopie = absolut(&absolut(&data, plan.korb.as_ref().unwrap()), &index);
+        assert!(kopie.is_file());
+        let neu = fs::read(data.join(&index)).unwrap();
+        fs::remove_file(data.join(&index)).unwrap();
+        fs::create_dir(data.join(&index)).unwrap();
+        let e = zurueckspielen_wiederanlauf(&data).unwrap_err();
+        assert!(e.contains("nicht prüfbar"), "{e}");
+        assert!(tauschplan_pfad(&data).exists(), "Plan bleibt");
+        assert!(kopie.is_file(), "alte Fassung bleibt im Papierkorb");
+        assert!(
+            absolut(&data, &plan.stufe).is_dir(),
+            "Zwischenordner bleibt"
+        );
+        // Ist der Ort wieder lesbar, gelingt der Wiederanlauf.
+        fs::remove_dir(data.join(&index)).unwrap();
+        fs::write(data.join(&index), neu).unwrap();
+        assert!(zurueckspielen_wiederanlauf(&data).unwrap());
+        keine_zwischenstaende(&data);
+    }
+
+    /// Ein Papierkorb hinter einer Verknüpfung wird weder zurückgeholt noch geleert.
+    #[cfg(unix)]
+    #[test]
+    fn papierkorb_hinter_einer_verknuepfung_wird_abgewiesen() {
+        let data = standardlage("plan-link");
+        migrieren(&data, &optionen()).unwrap();
+        let sicherung = sicherungen_auflisten(&data)[0].name.clone();
+        let fremd = datenordner("plan-link-fremd");
+        seite_anlegen(&fremd.join("1/projects/page_8"), "fremd");
+        let fremd_abdruck = abdruck(&fremd.join("1/projects/page_8")).unwrap();
+        fs::create_dir_all(data.join(SICHERUNGEN)).unwrap();
+        std::os::unix::fs::symlink(&fremd, data.join(SICHERUNGEN).join(PAPIERKORB)).unwrap();
+        for stand_ in [TauschStand::Laeuft, TauschStand::Zurueckgenommen] {
+            let plan = Tauschplan {
+                version: TAUSCHPLAN_VERSION,
+                stand: stand_,
+                sicherung: sicherung.clone(),
+                stufe: "sicherungen/.zurueck-1".into(),
+                korb: Some("sicherungen/.papierkorb/1".into()),
+                weichen: vec![ordner("projects/page_8", fremd_abdruck.clone())],
+                hin: vec![],
+                dateien: vec![],
+            };
+            fs::write(tauschplan_pfad(&data), serde_json::to_vec(&plan).unwrap()).unwrap();
+            let e = zurueckspielen_wiederanlauf(&data).unwrap_err();
+            assert!(e.contains("Verknüpfung"), "{e}");
+            assert!(!data.join("projects/page_8").exists());
+            assert_eq!(
+                abdruck(&fremd.join("1/projects/page_8")).unwrap(),
+                fremd_abdruck
+            );
+        }
+    }
+
+    /// Ein weichender Ordner, der sich seit der Planung geändert hat, geht nicht in den
+    /// Papierkorb; aus dem Papierkorb kommt nur zurück, was seinem Abdruck entspricht.
+    #[test]
+    fn abdruck_bindet_weichende_ordner() {
+        let data = standardlage("abdruck-weichen");
+        seite_anlegen(&data.join("projects/page_9"), "vorher");
+        let a = abdruck(&data.join("projects/page_9")).unwrap();
+        seite_anlegen(&data.join("projects/page_9"), "nachher");
+        assert_ne!(abdruck(&data.join("projects/page_9")).unwrap(), a);
+        let korb = data.join("sicherungen/.papierkorb/1");
+        fs::create_dir_all(&korb).unwrap();
+        let plan = Tauschplan {
+            version: TAUSCHPLAN_VERSION,
+            stand: TauschStand::Laeuft,
+            sicherung: "buch-ordner-1".into(),
+            stufe: "sicherungen/.zurueck-1".into(),
+            korb: Some("sicherungen/.papierkorb/1".into()),
+            weichen: vec![ordner("projects/page_9", a.clone())],
+            hin: vec![],
+            dateien: vec![],
+        };
+        let e = tausch_ausfuehren(&data, &plan).unwrap_err();
+        assert!(e.contains("seit der Planung"), "{e}");
+        assert!(data.join("projects/page_9").is_dir());
+        // Im Papierkorb liegt etwas anderes als geplant: es bleibt dort.
+        fs::rename(data.join("projects/page_9"), korb.join("projects_page_9")).unwrap();
+        fs::create_dir_all(korb.join("projects")).unwrap();
+        fs::rename(korb.join("projects_page_9"), korb.join("projects/page_9")).unwrap();
+        let fehler = tausch_zuruecknehmen(&data, &plan).unwrap();
+        assert!(
+            fehler.iter().any(|f| f.contains("Papierkorb")),
+            "{fehler:?}"
+        );
+        assert!(korb.join("projects/page_9").is_dir());
+        assert!(!data.join("projects/page_9").exists());
     }
 
     #[test]
