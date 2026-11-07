@@ -183,36 +183,72 @@ pub fn schreibe_atomar(pfad: &Path, bytes: &[u8]) -> Result<(), String> {
         let _ = fs::remove_file(&tmp);
         return Err(format!("{} nicht ersetzbar: {e}", pfad.display()));
     }
-    ordner_sync(dir);
+    ordner_sync(dir)?;
     Ok(())
 }
 
 /// Ordnereinträge (Umbenennen, Anlegen, Löschen) dauerhaft machen. Unter Unix per fsync
 /// auf den Ordner, unter Windows per `FlushFileBuffers` auf ein Ordner-Handle (nur mit
-/// `FILE_FLAG_BACKUP_SEMANTICS` zu öffnen). Beides nach bestem Vermögen; wer sich darauf
-/// verlassen muss, liest den Stand danach nach.
-fn ordner_sync(dir: &Path) {
+/// `FILE_FLAG_BACKUP_SEMANTICS` zu öffnen).
+///
+/// `Ok(true)`: gesichert. `Ok(false)`: das Dateisystem kennt das nicht (manche Netz- und
+/// Cloud-Laufwerke); das wird ohne Inhalt geloggt, und wer sich darauf stützen würde,
+/// behält seine Rückfallkopien (der Papierkorb des Zurückspielens wird nie geleert).
+/// Jeder andere Fehler, auch ein verweigerter Zugriff, ist ein Fehler.
+fn ordner_sync(dir: &Path) -> Result<bool, String> {
+    let ergebnis = ordner_sync_roh(dir);
+    match ergebnis {
+        Ok(()) => Ok(true),
+        Err(e) if sync_nicht_unterstuetzt(&e) => {
+            log::warn!("Buch-Ordner: Ordner-Sync vom Dateisystem nicht unterstützt ({e})");
+            Ok(false)
+        }
+        Err(e) => Err(format!(
+            "{} ließ sich nicht dauerhaft sichern: {e}",
+            dir.display()
+        )),
+    }
+}
+
+#[cfg(unix)]
+fn ordner_sync_roh(dir: &Path) -> std::io::Result<()> {
+    fs::File::open(dir)?.sync_all()
+}
+
+#[cfg(windows)]
+fn ordner_sync_roh(dir: &Path) -> std::io::Result<()> {
+    use std::os::windows::fs::OpenOptionsExt;
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    fs::OpenOptions::new()
+        .write(true)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(dir)?
+        .sync_all()
+}
+
+#[cfg(not(any(unix, windows)))]
+fn ordner_sync_roh(_dir: &Path) -> std::io::Result<()> {
+    Err(std::io::ErrorKind::Unsupported.into())
+}
+
+/// Fehler, die nur sagen „dieses Dateisystem kann Ordner nicht synchronisieren“.
+fn sync_nicht_unterstuetzt(e: &std::io::Error) -> bool {
+    if e.kind() == std::io::ErrorKind::Unsupported {
+        return true;
+    }
     #[cfg(unix)]
     {
-        if let Ok(f) = fs::File::open(dir) {
-            let _ = f.sync_all();
-        }
+        // EINVAL, ENOTSUP/EOPNOTSUPP (Linux 95, macOS 45 und 102)
+        matches!(e.raw_os_error(), Some(22 | 95 | 45 | 102))
     }
     #[cfg(windows)]
     {
-        use std::os::windows::fs::OpenOptionsExt;
-        const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
-        if let Ok(f) = fs::OpenOptions::new()
-            .write(true)
-            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
-            .open(dir)
-        {
-            let _ = f.sync_all();
-        }
+        // ERROR_INVALID_FUNCTION, ERROR_NOT_SUPPORTED, ERROR_INVALID_PARAMETER
+        matches!(e.raw_os_error(), Some(1 | 50 | 87))
     }
     #[cfg(not(any(unix, windows)))]
     {
-        let _ = dir;
+        false
     }
 }
 
@@ -955,24 +991,32 @@ fn kopieren_mit_pruefsumme(von: &Path, nach: &Path) -> Result<(u64, String), Str
         .create_new(true)
         .open(nach)
         .map_err(|e| format!("{} nicht anlegbar: {e}", nach.display()))?;
-    let mut hasher = Sha256::new();
-    let mut puffer = vec![0u8; 64 * 1024];
-    let mut groesse = 0u64;
-    loop {
-        let n = quelle
-            .read(&mut puffer)
-            .map_err(|e| format!("{} nicht lesbar: {e}", von.display()))?;
-        if n == 0 {
-            break;
+    // Ab hier gehört die Zieldatei diesem Aufruf: scheitert etwas, wird nur sie entfernt.
+    let kopiert = (|| -> Result<(u64, String), String> {
+        let mut hasher = Sha256::new();
+        let mut puffer = vec![0u8; 64 * 1024];
+        let mut groesse = 0u64;
+        loop {
+            let n = quelle
+                .read(&mut puffer)
+                .map_err(|e| format!("{} nicht lesbar: {e}", von.display()))?;
+            if n == 0 {
+                break;
+            }
+            hasher.update(&puffer[..n]);
+            ziel.write_all(&puffer[..n])
+                .map_err(|e| format!("{} nicht schreibbar: {e}", nach.display()))?;
+            groesse += n as u64;
         }
-        hasher.update(&puffer[..n]);
-        ziel.write_all(&puffer[..n])
+        ziel.sync_all()
             .map_err(|e| format!("{} nicht schreibbar: {e}", nach.display()))?;
-        groesse += n as u64;
+        Ok((groesse, hex(&hasher.finalize())))
+    })();
+    if kopiert.is_err() {
+        drop(ziel);
+        let _ = fs::remove_file(nach);
     }
-    ziel.sync_all()
-        .map_err(|e| format!("{} nicht schreibbar: {e}", nach.display()))?;
-    Ok((groesse, hex(&hasher.finalize())))
+    kopiert
 }
 
 fn pruefsumme(pfad: &Path) -> Result<(u64, String), String> {
@@ -1287,7 +1331,8 @@ pub enum TauschStand {
     Laeuft,
     /// Der Tausch ist vollständig: nur noch den Zwischenordner entfernen.
     Fertig,
-    /// Die Rücknahme ist vollständig: Zwischenordner und Papierkorb entfernen.
+    /// Die Rücknahme ist vollständig: nur noch den Zwischenordner entfernen (der
+    /// Papierkorb bleibt als Rückfall).
     Zurueckgenommen,
 }
 
@@ -1430,7 +1475,10 @@ fn plan_ohne_umweg(data: &Path, plan: &Tauschplan) -> Result<(), String> {
         .chain(&plan.hin)
         .map(|o| o.pfad.as_str())
         .chain(plan.dateien.iter().map(|d| d.pfad.as_str()));
-    let mut wege = vec![plan.stufe.clone()];
+    let mut wege = vec![
+        plan.stufe.clone(),
+        format!("{SICHERUNGEN}/{}", plan.sicherung),
+    ];
     wege.extend(plan.korb.clone());
     for rel in einheiten {
         wege.push(rel.to_string());
@@ -1443,10 +1491,10 @@ fn plan_ohne_umweg(data: &Path, plan: &Tauschplan) -> Result<(), String> {
 }
 
 /// Umbenennen und beide Elternordner dauerhaft machen.
-fn umbenennen(von: &Path, nach: &Path) -> std::io::Result<()> {
-    fs::rename(von, nach)?;
+fn umbenennen(von: &Path, nach: &Path) -> Result<(), String> {
+    fs::rename(von, nach).map_err(|e| e.to_string())?;
     for dir in [von.parent(), nach.parent()].into_iter().flatten() {
-        ordner_sync(dir);
+        ordner_sync(dir)?;
     }
     Ok(())
 }
@@ -1597,6 +1645,52 @@ fn ist_absturz(_e: &str) -> bool {
     false
 }
 
+/// Unterordner des Papierkorbs für neue Fassungen, die eine Rücknahme verdrängt.
+const NEU_IM_KORB: &str = ".neu";
+
+/// Die neue Fassung am Ort gestreamt in den Papierkorb kopieren (idempotent: eine schon
+/// liegende Kopie zählt nur, wenn sie hashgleich ist).
+fn neue_fassung_aufheben(ort: &Path, ziel: &Path, neu: &str) -> Result<(), String> {
+    match pruefsumme_opt(ziel)? {
+        Some(sha) if sha == neu => return Ok(()),
+        Some(_) => return Err("im Papierkorb liegt schon eine andere neue Fassung".into()),
+        None => {}
+    }
+    let (_, sha) = kopieren_mit_pruefsumme(ort, ziel)?;
+    if sha != neu {
+        let _ = fs::remove_file(ziel);
+        return Err("die neue Fassung hat sich beim Aufheben geändert".into());
+    }
+    ordner_sync(ziel.parent().unwrap_or(ziel)).map(|_| ())
+}
+
+/// Eine Datei ohne alte Fassung darf die Rücknahme nur entfernen, wenn ihre neue Fassung
+/// aus der Sicherung nachweisbar ist: `buch.json` hashgleich in der Sicherung, der Index
+/// genau so, wie das Zurückspielen ihn ohne vorherigen Index aus der geprüften Sicherung
+/// bildet.
+fn neue_fassung_nachweisen(
+    data: &Path,
+    plan: &Tauschplan,
+    datei: &PlanDatei,
+) -> Result<(), String> {
+    let dir = data.join(SICHERUNGEN).join(&plan.sicherung);
+    let sha = if datei.pfad == format!("{PROJEKTE}/{INDEX}") {
+        let manifest = sicherung_pruefen(&dir)?;
+        let (_, seiten, gesichert) = sicherung_inhalt(&dir, &manifest)?;
+        let index = index_zusammenfuehren(None, gesichert, &seiten)
+            .ok_or("die Sicherung ergibt keinen Index")?;
+        let bytes = serde_json::to_vec_pretty(&index).map_err(|e| e.to_string())?;
+        hex(&Sha256::digest(&bytes))
+    } else {
+        pruefsumme(&absolut(&dir, &datei.pfad))?.1
+    };
+    if sha == datei.neu_sha256 {
+        Ok(())
+    } else {
+        Err("ohne alte Fassung und nicht aus der Sicherung nachweisbar; angehalten".into())
+    }
+}
+
 /// Die alte Fassung einer Datei aus dem Papierkorb einsetzen: gestreamt in eine
 /// Temp-Datei neben dem Ziel kopieren, die Prüfsumme vergleichen, mit fsync sichern und
 /// erst dann über das Ziel umbenennen.
@@ -1606,16 +1700,18 @@ fn alte_fassung_einsetzen(kopie: &Path, ort: &Path, alt: &str) -> Result<(), Str
         .ok_or("Pfad ohne Namen")?
         .to_string_lossy()
         .into_owned();
-    let tmp = ort.with_file_name(format!(".{name}.zurueck"));
-    if fs::symlink_metadata(&tmp).is_ok_and(|m| m.is_file()) {
-        fs::remove_file(&tmp).map_err(|e| e.to_string())?;
-    }
-    let eingesetzt = kopieren_mit_pruefsumme(kopie, &tmp).and_then(|(_, sha)| {
-        if sha != alt {
-            return Err("Kopie im Papierkorb stimmt nicht".to_string());
-        }
-        umbenennen(&tmp, ort).map_err(|e| e.to_string())
-    });
+    // Eine eigene, eindeutige Temp-Datei (`create_new`); eine vorhandene gleichen Namens
+    // wird nie angefasst. Entfernt wird nur, was dieser Aufruf selbst angelegt hat.
+    let tmp = (0..)
+        .map(|n| ort.with_file_name(format!(".{name}.zurueck-{}-{n}", std::process::id())))
+        .find(|p| !vorhanden(p))
+        .ok_or("kein freier Name für die Temp-Datei")?;
+    let (_, sha) = kopieren_mit_pruefsumme(kopie, &tmp)?;
+    let eingesetzt = if sha == alt {
+        umbenennen(&tmp, ort)
+    } else {
+        Err("Kopie im Papierkorb stimmt nicht".to_string())
+    };
     if eingesetzt.is_err() {
         let _ = fs::remove_file(&tmp);
     }
@@ -1659,13 +1755,20 @@ fn tausch_zuruecknehmen(data: &Path, plan: &Tauschplan) -> Result<Vec<String>, S
             continue;
         }
         let r = match (&datei.alt_sha256, &korb) {
-            (Some(alt), Some(korb)) => {
-                alte_fassung_einsetzen(&absolut(korb, &datei.pfad), &ort, alt)
-            }
+            // Die verdrängte neue Fassung bleibt im Papierkorb, bevor die alte zurückkommt.
+            (Some(alt), Some(korb)) => neue_fassung_aufheben(
+                &ort,
+                &absolut(&korb.join(NEU_IM_KORB), &datei.pfad),
+                &datei.neu_sha256,
+            )
+            .and_then(|()| alte_fassung_einsetzen(&absolut(korb, &datei.pfad), &ort, alt)),
             (Some(_), None) => Err("Papierkorb fehlt".to_string()),
-            (None, _) => fs::remove_file(&ort)
-                .map(|()| ordner_sync(ort.parent().unwrap_or(data)))
-                .map_err(|e| e.to_string()),
+            // Ohne alte Fassung wird nur entfernt, was nachweislich aus der Sicherung
+            // stammt; sonst angehalten.
+            (None, _) => neue_fassung_nachweisen(data, plan, datei).and_then(|()| {
+                fs::remove_file(&ort).map_err(|e| e.to_string())?;
+                ordner_sync(ort.parent().unwrap_or(data)).map(|_| ())
+            }),
         };
         if let Err(e) = r {
             fehler.push(format!("{}: {e}", datei.pfad));
@@ -1695,6 +1798,7 @@ fn tausch_zuruecknehmen(data: &Path, plan: &Tauschplan) -> Result<Vec<String>, S
         let r = gestuft
             .parent()
             .map_or(Ok(()), fs::create_dir_all)
+            .map_err(|e| e.to_string())
             .and_then(|()| umbenennen(&ort, &gestuft));
         if let Err(e) = r {
             fehler.push(format!("{rel}: {e}"));
@@ -1731,6 +1835,7 @@ fn tausch_zuruecknehmen(data: &Path, plan: &Tauschplan) -> Result<Vec<String>, S
             let r = ort
                 .parent()
                 .map_or(Ok(()), fs::create_dir_all)
+                .map_err(|e| e.to_string())
                 .and_then(|()| umbenennen(&gewichen, &ort));
             if let Err(e) = r {
                 fehler.push(format!("{rel}: {e}"));
@@ -1816,27 +1921,30 @@ fn entfernen_wenn_erwartet(
         }
     }
     fs::remove_dir_all(dir).map_err(|e| format!("{was}: {e}"))?;
-    ordner_sync(dir.parent().unwrap_or(dir));
+    ordner_sync(dir.parent().unwrap_or(dir))?;
     Ok(())
 }
 
-/// Aufräumen nach dem festgehaltenen Stand und zuletzt den Plan entfernen. `fertig`:
-/// nur der Zwischenordner geht, und er darf keine Datei mehr enthalten;
-/// `zurueckgenommen`: der Zwischenordner (nur eingesetzte Ordner mit ihrem Abdruck und
-/// neue Dateifassungen) und der Papierkorb (nur Kopien alter Dateifassungen). Ein
-/// Abbruch hier wiederholt beim nächsten Start nur das Aufräumen.
+/// Aufräumen nach dem festgehaltenen Stand und zuletzt den Plan entfernen. Entfernt wird
+/// nur der Zwischenordner: bei `fertig` darf er keine Datei mehr enthalten, bei
+/// `zurueckgenommen` nur eingesetzte Ordner, deren jede Datei hashgleich in der Sicherung
+/// liegt (nachgelesen, nicht nur laut Manifest), und nie live gewesene neue
+/// Dateifassungen. Der Papierkorb wird nie geleert: er hält die Rückfallkopien (alte und
+/// verdrängte neue Fassungen). Ein Abbruch hier wiederholt beim nächsten Start nur das
+/// Aufräumen.
 fn tausch_aufraeumen(data: &Path, plan: &Tauschplan) -> Result<(), String> {
     absturz_probe()?;
     plan_ohne_umweg(data, plan)?;
-    let zurueck = plan.stand == TauschStand::Zurueckgenommen;
     let mut in_stufe = BTreeMap::new();
-    if zurueck {
+    if plan.stand == TauschStand::Zurueckgenommen {
+        let sicherung = data.join(SICHERUNGEN).join(&plan.sicherung);
         for ordner in &plan.hin {
             for datei in &ordner.abdruck {
-                in_stufe.insert(
-                    format!("{}/{}", ordner.pfad, datei.pfad),
-                    Some(datei.sha256.clone()),
-                );
+                let rel = format!("{}/{}", ordner.pfad, datei.pfad);
+                let in_sicherung = pruefsumme(&absolut(&sicherung, &rel)).ok();
+                if in_sicherung == Some((datei.groesse, datei.sha256.clone())) {
+                    in_stufe.insert(rel, Some(datei.sha256.clone()));
+                }
             }
         }
         for datei in &plan.dateien {
@@ -1844,21 +1952,9 @@ fn tausch_aufraeumen(data: &Path, plan: &Tauschplan) -> Result<(), String> {
         }
     }
     entfernen_wenn_erwartet(&absolut(data, &plan.stufe), &in_stufe, "Zwischenordner")?;
-    if zurueck {
-        absturz_probe()?;
-        if let Some(korb) = &plan.korb {
-            let mut im_korb: BTreeMap<String, Option<String>> = plan
-                .dateien
-                .iter()
-                .filter_map(|d| Some((d.pfad.clone(), Some(d.alt_sha256.clone()?))))
-                .collect();
-            im_korb.insert(PAPIERKORB_STEMPEL.to_string(), None);
-            entfernen_wenn_erwartet(&absolut(data, korb), &im_korb, "Papierkorb")?;
-        }
-    }
     absturz_probe()?;
     fs::remove_file(tauschplan_pfad(data)).map_err(|e| format!("Tauschplan: {e}"))?;
-    ordner_sync(&data.join(SICHERUNGEN));
+    ordner_sync(&data.join(SICHERUNGEN))?;
     Ok(())
 }
 
@@ -1868,8 +1964,9 @@ fn zuruecknehmen_und_aufraeumen(data: &Path, mut plan: Tauschplan) -> Result<(),
         let fehler = tausch_zuruecknehmen(data, &plan)?;
         if !fehler.is_empty() {
             return Err(format!(
-                "Nicht alles ließ sich zurücknehmen ({}); Zwischenordner, Papierkorb und \
-                 Tauschplan bleiben erhalten, der nächste Start versucht es erneut.",
+                "Nicht alles ließ sich zurücknehmen ({}); angehalten. Zwischenordner, \
+                 Papierkorb und Tauschplan bleiben erhalten, der nächste Start versucht es \
+                 erneut.",
                 fehler.join("; ")
             ));
         }
@@ -1933,6 +2030,11 @@ fn tausch_ausfuehren(data: &Path, plan: &Tauschplan) -> Result<(), String> {
         if vorhanden(&ort) {
             return Err(format!("{rel} ist noch belegt; nichts überschrieben."));
         }
+        if abdruck(&absolut(&stufe, rel))? != ordner.abdruck {
+            return Err(format!(
+                "{rel} im Zwischenordner entspricht nicht dem Plan; nichts eingesetzt."
+            ));
+        }
         if let Some(eltern) = ort.parent() {
             fs::create_dir_all(eltern).map_err(|e| format!("{rel}: {e}"))?;
         }
@@ -1946,7 +2048,7 @@ fn tausch_ausfuehren(data: &Path, plan: &Tauschplan) -> Result<(), String> {
             Some(alt) => {
                 let kopie = korb_ziel(&datei.pfad)?;
                 let (_, sha) = kopieren_mit_pruefsumme(&ort, &kopie)?;
-                ordner_sync(kopie.parent().unwrap_or(data));
+                ordner_sync(kopie.parent().unwrap_or(data))?;
                 if sha != *alt {
                     return Err(format!(
                         "{} hat sich seit der Planung geändert; nichts ersetzt.",
@@ -1970,6 +2072,45 @@ fn tausch_ausfuehren(data: &Path, plan: &Tauschplan) -> Result<(), String> {
     }
     absturz_probe()?;
     getauscht_pruefen(data, plan)
+}
+
+/// Einheiten, Seiten (mit Buch nach Ort) und gesicherter Index einer geprüften Sicherung.
+#[allow(clippy::type_complexity)]
+fn sicherung_inhalt(
+    dir: &Path,
+    manifest: &Manifest,
+) -> Result<
+    (
+        BTreeSet<String>,
+        BTreeMap<String, Option<String>>,
+        Option<serde_json::Value>,
+    ),
+    String,
+> {
+    let mut einheiten = BTreeSet::new();
+    for rel in manifest
+        .ordner
+        .iter()
+        .chain(manifest.dateien.iter().map(|d| &d.pfad))
+    {
+        einheiten.insert(einheit(rel)?);
+    }
+    let seiten = einheiten
+        .iter()
+        .filter_map(|e| seite_der_einheit(e))
+        .collect();
+    let index_rel = format!("{PROJEKTE}/{INDEX}");
+    let gesichert = if einheiten.contains(&index_rel) {
+        Some(
+            serde_json::from_slice::<serde_json::Value>(
+                &fs::read(absolut(dir, &index_rel)).map_err(|e| e.to_string())?,
+            )
+            .map_err(|e| format!("Seitenindex der Sicherung unlesbar: {e}"))?,
+        )
+    } else {
+        None
+    };
+    Ok((einheiten, seiten, gesichert))
 }
 
 /// Sicherung zurückspielen (4.2), so dass nie ein halber Stand entsteht:
@@ -2006,18 +2147,7 @@ pub fn sicherung_zurueckspielen(
     // Ein unterbrochenes Zurückspielen zuerst zurücknehmen.
     zurueckspielen_wiederanlauf(data)?;
     let manifest = sicherung_pruefen(&dir)?;
-    let mut einheiten = BTreeSet::new();
-    for rel in manifest
-        .ordner
-        .iter()
-        .chain(manifest.dateien.iter().map(|d| &d.pfad))
-    {
-        einheiten.insert(einheit(rel)?);
-    }
-    let seiten: BTreeMap<String, Option<String>> = einheiten
-        .iter()
-        .filter_map(|e| seite_der_einheit(e))
-        .collect();
+    let (einheiten, seiten, gesichert) = sicherung_inhalt(&dir, &manifest)?;
     let bytes: u64 = manifest.dateien.iter().map(|d| d.groesse).sum();
     if let Some(frei) = platz_frei {
         let noetig = platz_bedarf(bytes);
@@ -2033,16 +2163,6 @@ pub fn sicherung_zurueckspielen(
     // Vor jeder Änderung: ein unlesbarer aktueller Index bricht ab.
     let aktuell = index_laden(data)?;
     let index_rel = format!("{PROJEKTE}/{INDEX}");
-    let gesichert = if einheiten.contains(&index_rel) {
-        Some(
-            serde_json::from_slice::<serde_json::Value>(
-                &fs::read(absolut(&dir, &index_rel)).map_err(|e| e.to_string())?,
-            )
-            .map_err(|e| format!("Seitenindex der Sicherung unlesbar: {e}"))?,
-        )
-    } else {
-        None
-    };
     let index_neu = index_zusammenfuehren(aktuell, gesichert, &seiten);
 
     // 2. Zwischenordner
@@ -3343,7 +3463,35 @@ mod tests {
             assert!(!unterordner(&data.join(SICHERUNGEN))
                 .iter()
                 .any(|d| d.starts_with(STUFE_PRAEFIX)));
-            assert!(unterordner(&data.join(SICHERUNGEN).join(PAPIERKORB)).is_empty());
+            // Der Papierkorb bleibt als Rückfall erhalten; er hält nur Kopien.
+            for korb in unterordner(&data.join(SICHERUNGEN).join(PAPIERKORB)) {
+                let korb = data.join(SICHERUNGEN).join(PAPIERKORB).join(korb);
+                assert!(korb.join(PAPIERKORB_STEMPEL).is_file(), "Schritt {n}");
+            }
+        }
+        assert!(geprueft >= 5, "{geprueft} Fehlerstellen");
+    }
+
+    /// Ohne vorherigen Index (frische Installation) ist der eingesetzte Index aus der
+    /// Sicherung nachweisbar: die Rücknahme entfernt ihn und hält nicht an.
+    #[test]
+    fn zuruecknahme_ohne_vorherigen_index_haelt_nicht_an() {
+        let mut geprueft = 0;
+        for n in 0..80 {
+            let data = standardlage(&format!("ohne-index-{n}"));
+            migrieren(&data, &optionen()).unwrap();
+            fs::remove_file(data.join(PROJEKTE).join(INDEX)).unwrap();
+            let name = sicherungen_auflisten(&data)[0].name.clone();
+            let vorher = stand(&data);
+            FEHLER_BEI.with(|f| f.set(Some(n)));
+            SCHRITTE.with(|z| z.set(0));
+            let r = sicherung_zurueckspielen(&data, &name, None);
+            FEHLER_BEI.with(|f| f.set(None));
+            let Err(fehler) = r else { break };
+            geprueft += 1;
+            assert!(fehler.contains("vorige Stand"), "Schritt {n}: {fehler}");
+            assert_eq!(stand(&data), vorher, "Schritt {n}");
+            keine_zwischenstaende(&data);
         }
         assert!(geprueft >= 5, "{geprueft} Fehlerstellen");
     }
@@ -3565,6 +3713,21 @@ mod tests {
         fs::write(tauschplan_pfad(&data), serde_json::to_vec(&plan).unwrap()).unwrap();
         let _ = zurueckspielen_wiederanlauf(&data);
         assert_eq!(index_roh(&data), index_vorher);
+        // Der aktuelle Index als „neue Fassung ohne alte“, Stufendatei fehlt: er ist nicht
+        // aus der Sicherung nachweisbar, also wird angehalten statt gelöscht.
+        let plan = Tauschplan {
+            weichen: vec![],
+            dateien: vec![PlanDatei {
+                pfad: "projects/index.json".into(),
+                neu_sha256: hex(&Sha256::digest(&index_vorher)),
+                alt_sha256: None,
+            }],
+            ..gut.clone()
+        };
+        fs::write(tauschplan_pfad(&data), serde_json::to_vec(&plan).unwrap()).unwrap();
+        let e = zurueckspielen_wiederanlauf(&data).unwrap_err();
+        assert!(e.contains("nicht aus der Sicherung nachweisbar"), "{e}");
+        assert_eq!(index_roh(&data), index_vorher);
         assert!(data.join("library/book_1/fassungen/page_1").is_dir());
         assert!(sicherung_pruefen(&data.join(SICHERUNGEN).join(&sicherung)).is_ok());
     }
@@ -3649,9 +3812,29 @@ mod tests {
         );
         // Ist der Ort wieder lesbar, gelingt der Wiederanlauf.
         fs::remove_dir(data.join(&index)).unwrap();
-        fs::write(data.join(&index), neu).unwrap();
+        fs::write(data.join(&index), &neu).unwrap();
+        // Fremde Dateien mit Temp-Namen bleiben unangetastet.
+        let koeder = [
+            data.join("projects/.index.json.zurueck"),
+            data.join(format!(
+                "projects/.index.json.zurueck-{}-0",
+                std::process::id()
+            )),
+        ];
+        for k in &koeder {
+            fs::write(k, b"fremd").unwrap();
+        }
         assert!(zurueckspielen_wiederanlauf(&data).unwrap());
         keine_zwischenstaende(&data);
+        for k in &koeder {
+            assert_eq!(fs::read(k).unwrap(), b"fremd");
+        }
+        // Die verdrängte neue Fassung liegt im Papierkorb.
+        let korb = absolut(&data, plan.korb.as_ref().unwrap());
+        assert_eq!(
+            fs::read(absolut(&korb.join(NEU_IM_KORB), &index)).unwrap(),
+            neu
+        );
     }
 
     /// Ein Papierkorb hinter einer Verknüpfung wird weder zurückgeholt noch geleert.
