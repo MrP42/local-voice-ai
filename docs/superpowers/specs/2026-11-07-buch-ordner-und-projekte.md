@@ -1,6 +1,6 @@
 # Buch-Ordner im Vorlesen und appweite Projekte
 
-Stand: 07.11.2026, Runde 3 nach Codex-Befund Runde 2 · Epic lva#365 ·
+Stand: 07.11.2026, Runde 4 nach Codex-Befund Runde 3 · Epic lva#365 ·
 Vorschau: `apps/local-voice/docs/vorschau/projektordner/`
 
 ## Anlass
@@ -112,25 +112,32 @@ Feste Reihenfolge:
 
 Auflösung jedes Abbruchpunkts beim nächsten Start (vor dem ersten Lesen der Bibliothek):
 
-| Zustand im Journal | Befund auf Platte | Auflösung |
+Vor jeder Zeile der Tabelle gilt die **Doppelungsprüfung**: Für die Seite werden alle verschiedenen
+Kandidaten auf Existenz geprüft (Index-Ort, `von`, `nach`, `projects/<seite>`). Existieren zwei oder
+mehr, gilt „Seite doppelt vorhanden“: anhalten, nichts verschieben, nichts im Index ändern, Meldung mit
+allen Pfaden. Das deckt auch eine Kopie ab, die durch Wiederherstellen aus der Sicherung entstanden ist.
+Erst wenn genau ein Kandidat existiert, wird die passende Zeile angewandt.
+
+| Zustand im Journal | Befund auf Platte (genau ein Kandidat) | Auflösung |
 |---|---|---|
+| beliebig | zwei oder mehr Kandidaten vorhanden | „Seite doppelt vorhanden“: anhalten (hat Vorrang vor allen Zeilen) |
 | `geplant` | — | Sicherung neu beginnen |
 | Schritt `offen` | Seite unter `von` | normal fortsetzen |
 | Schritt `offen` | Seite unter `nach`, nicht unter `von` | als `verschoben` werten |
 | Schritt `verschoben` | — | Index-Eintrag setzen, `eingetragen` |
-| `von` und `nach` existieren beide | — | anhalten, nichts überschreiben, Meldung mit beiden Pfaden |
 | weder `von` noch `nach` | — | anhalten, Seite aus der Sicherung anbieten |
 
 **Auflösung von `page_path` während Migration und Rückfall.** Solange ein Journal ohne Phase `fertig`
 (bzw. ohne abgeschlossenen Rückfall) existiert, lädt `page_path` es einmal je Aufruf unter der
-Seitensperre und prüft der Reihe nach:
+Seitensperre, prüft **alle** verschiedenen Kandidaten auf Existenz und gibt erst danach zurück:
 1. den Ort laut Index-Eintrag (`buch` gesetzt → `library/<buch>/fassungen/<seite>`, sonst `projects/<seite>`);
 2. hat die Seite einen Journalschritt: dessen `nach` und dessen `von` (beide Richtungen, also auch im
    Rückfall, wo `nach` die Quelle und `von` das Ziel ist);
 3. `projects/<seite>`.
-Der erste vorhandene Ordner gewinnt. Damit ist das Fenster zwischen `rename` und Index-Schreiben
-(Index zeigt noch auf den alten Ort, Seite liegt schon am neuen) abgedeckt. Existieren zwei dieser
-Orte zugleich, liefert `page_path` einen Fehler „Seite doppelt vorhanden“, statt einen zu wählen.
+Existiert genau einer, wird er zurückgegeben. Existieren zwei oder mehr, liefert `page_path` den Fehler
+„Seite doppelt vorhanden“ mit allen Pfaden, statt einen zu wählen; die Reihenfolge oben dient nur der
+Meldung. Existiert keiner, „Seite nicht gefunden“. Damit ist das Fenster zwischen `rename` und
+Index-Schreiben (Index zeigt noch auf den alten Ort, Seite liegt schon am neuen) abgedeckt.
 Ohne Journal entfällt Schritt 2.
 
 Kein automatischer Gesamt-Rückfall: Bei einem Problem hält die Migration an (Zustand bleibt lesbar, siehe Tabelle). Rückfall auf Wunsch: dieselben Schritte rückwärts (`nach` → `von`, Index-Feld leeren),
@@ -266,6 +273,10 @@ Jedes UI-Paket mit HTML-Vorschau (390/768/1440/2560, hell/dunkel) und Maß-Beleg
 - Zwischenfenster: Test mit Abbruch nach `rename` und vor dem Index-Schreiben, in beide Richtungen
   (Migration und Rückfall). `page_path`, Reader und Sync finden die Seite am neuen Ort; der nächste
   Start setzt den Index nach und schließt ab.
+- Doppelung: Seite nach Wiederherstellen aus der Sicherung an altem und neuem Ort vorhanden, je einmal
+  mit Journalschritt `offen`, `verschoben` und ohne Journal: `page_path` meldet „Seite doppelt
+  vorhanden“, der Wiederanlauf hält an, kein Ordner wird verschoben oder überschrieben, der Index bleibt
+  unverändert.
 - Migration an einer Kopie von Patricks Bestand: jedes Buch vollständig unter `library/<buch>/`;
   Fortschritt, Lesezeichen, Stimmen je Sprache, Hauptfassung, Ausrichtungen unverändert.
 - Abbruch an jedem Punkt der Tabelle 4.3 (Test je Zeile): App startet, alle Seiten auffindbar, zweiter
