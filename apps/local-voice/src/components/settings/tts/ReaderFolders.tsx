@@ -1,8 +1,9 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
-import { FileText, List } from "lucide-react";
+import { FileText, List, Plus } from "lucide-react";
 import type { LibraryBook } from "@/bindings";
 import { BookCover } from "../../library/BookCover";
+import { Button } from "../../ui/Button";
 import { Select } from "../../ui/Select";
 import {
   FOLDER_ALL,
@@ -22,7 +23,9 @@ export const ReaderFolders: React.FC<{
   total: number;
   selection: string;
   onSelect: (key: string) => void;
-}> = ({ folders, books, total, selection, onSelect }) => {
+  /** „Buch hinzufügen“ im Leerzustand (Dokument-Import des Vorlesens). */
+  onAddBook?: () => void;
+}> = ({ folders, books, total, selection, onSelect, onAddBook }) => {
   const { t } = useTranslation();
   const byId = new Map(books.map((b) => [b.id, b]));
 
@@ -104,9 +107,25 @@ export const ReaderFolders: React.FC<{
           {t("tts.folders.books")}
         </p>
         {folders.books.length === 0 ? (
-          <p className="px-2 py-1 text-xs text-text/60">
-            {t("tts.folders.noBooks")}
-          </p>
+          <div className="space-y-2 px-2 py-1" data-testid="reader-folders-empty">
+            <p className="text-sm font-semibold text-text">
+              {t("tts.folders.noBooks")}
+            </p>
+            <p className="text-xs text-text/70">
+              {t("tts.folders.noBooksHint")}
+            </p>
+            {onAddBook && (
+              <Button
+                variant="primary"
+                className="reader-folders__btn"
+                icon={<Plus width={16} height={16} aria-hidden="true" />}
+                onClick={onAddBook}
+                data-testid="reader-add-book"
+              >
+                {t("tts.folders.addBook")}
+              </Button>
+            )}
+          </div>
         ) : (
           folders.books.map((f) => {
             const book = byId.get(f.bookId);

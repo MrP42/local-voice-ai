@@ -750,7 +750,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
     <div className="reader-stage" data-testid="reader-stage">
       <div
         ref={bookRef}
-        className={`reader-book${geo.perView === 2 ? " reader-book--two" : ""}${showSpeakers ? "" : " reader-book--nospeakers"}${geo.narrow ? " reader-book--narrow" : ""}`}
+        className={`reader-book${geo.perView === 2 ? " reader-book--two" : ""}${twoPages ? "" : " reader-book--single"}${showSpeakers ? "" : " reader-book--nospeakers"}${geo.narrow ? " reader-book--narrow" : ""}`}
         style={
           {
             "--reader-fs": `${fontSize}px`,

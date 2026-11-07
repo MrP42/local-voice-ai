@@ -809,6 +809,62 @@ html[data-fluent] .lva-logo__accent {
     display: none !important;
   }
 }
+/* Buch-Ordner (lva#365 P1b): Bedienziele 44 px, auch bei Fluent-Buttons. */
+.reader-folders__btn.lv-btn {
+  min-height: 44px;
+}
+/* Zurück-Knöpfe der schmalen Ebenen: nur ≤ 620 px sichtbar, mindestens 44 x 44. */
+.tts-mback {
+  display: none;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 44px;
+  min-height: 44px;
+  max-width: 100%;
+  padding: 0 0.75rem 0 0.5rem;
+  border-radius: 6px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--color-text);
+  cursor: pointer;
+}
+.tts-mback:hover {
+  background: color-mix(in srgb, var(--color-mid-gray) 15%, transparent);
+}
+.tts-mback:focus-visible {
+  outline: 2px solid var(--color-logo-primary);
+  outline-offset: 2px;
+}
+/* Drei Ebenen Ordner → Liste → Reader: je Ebene nur ein Bereich. Der Zustand
+   steht als data-mlevel an der Seitenliste. */
+@media (max-width: 620px) {
+  /* Doppelte Klasse: schlägt das Regal (max-height 210 px) des Umbruch-
+     Layouts, das weiter unten steht. Liste und Ordner füllen die Ebene. */
+  .tts-workspace .tts-workspace__pages.tts-workspace__pages {
+    max-height: none;
+  }
+  .tts-workspace__pages[data-mlevel="reader"] {
+    display: none;
+  }
+  .tts-workspace__pages:not([data-mlevel="reader"]) ~ .min-w-0 {
+    display: none;
+  }
+  .tts-workspace__pages[data-mlevel="folders"] .tts-pages__list {
+    display: none;
+  }
+  .tts-workspace__pages[data-mlevel="folders"] .reader-folders__full {
+    display: block !important;
+  }
+  .tts-workspace__pages[data-mlevel="folders"] .reader-folders__compact,
+  .tts-workspace__pages[data-mlevel="list"] .reader-folders__compact,
+  .tts-workspace__pages[data-mlevel="list"] .reader-folders__full {
+    display: none !important;
+  }
+  .tts-workspace__pages[data-mlevel="list"] .tts-mback--list,
+  .tts-mback--reader {
+    display: flex;
+  }
+}
 /* Ansichten der offenen Seite als senkrechte Reiter: Touchziel 44 px. */
 .lv-tablist--list .fui-Tab {
   min-height: 44px;
@@ -1240,4 +1296,31 @@ body,
     var(--color-logo-primary) 38%,
     transparent
   );
+}
+
+/* Umbruch-Layout mit Regal (621–1100 px, lva#365 P1b): der Buch-Kopf wird
+   eine Zeile ohne Cover, damit die Fassungen im niedrigen Regal sichtbar
+   bleiben. */
+@media (min-width: 621px) and (max-width: 1100px) {
+  .book-folder-head__cover {
+    display: none;
+  }
+  .book-folder-head__body {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    column-gap: 0.75rem;
+    align-items: center;
+  }
+  .book-folder-head__body > :not(.book-folder-head__continue) {
+    grid-column: 1;
+  }
+  /* Im Buch-Ordner trägt das Regal Kopf und Gruppen: etwas höher. */
+  .tts-workspace .tts-workspace__pages:has(.book-folder-head) {
+    max-height: 340px;
+  }
+  .book-folder-head__continue.book-folder-head__continue {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    margin-top: 0;
+  }
 }

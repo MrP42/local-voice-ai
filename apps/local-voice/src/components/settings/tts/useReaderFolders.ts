@@ -4,6 +4,7 @@ import { commands, type LibraryBook, type PageInfo } from "@/bindings";
 import { usePersistentState } from "../../../hooks/usePersistentState";
 import {
   FOLDER_ALL,
+  bookFolderKey,
   followFolder,
   groupPages,
   pageLanguages,
@@ -98,6 +99,11 @@ export function useReaderFolders(
     [folders, selection, allIds],
   );
   const langOf = useMemo(() => pageLanguages(books), [books]);
+  // Buch des gewählten Buch-Ordners (lva#365 P1b), sonst `null`.
+  const book = useMemo(
+    () => books.find((b) => bookFolderKey(b.id) === selection) ?? null,
+    [books, selection],
+  );
 
   // Der offenen Seite folgen, wenn sie wechselt (Bibliothek, Suche, Löschen)
   // oder wenn neue Bücherdaten sie aus dem unveränderten Ordner nehmen;
@@ -153,6 +159,7 @@ export function useReaderFolders(
     books,
     folders,
     selection,
+    book,
     select,
     visibleIds,
     langOf,

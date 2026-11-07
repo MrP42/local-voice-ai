@@ -34,6 +34,25 @@
   width: 1px;
   background: color-mix(in srgb, var(--color-mid-gray) 40%, transparent);
 }
+/* Sehr breite Fenster (≥ 1800 px): der Lesetext bekommt eine Zeilenlänge von
+   etwa 80 Zeichen, mittig in der Lesespalte (.reader-stage zentriert). Die
+   Schrift der Buchfläche gleicht der des Textes, damit `ch` stimmt; die
+   Seitenränder (42 px je Seite) kommen dazu. Gilt für die Einzelseite; ein
+   aufgeschlagenes Buch (Standard) füllt die Spalte, jede Seite hat dort von
+   selbst nur etwa diese Zeilenlänge. */
+@media (min-width: 1800px) {
+  .reader-book--single {
+    font-family: "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+    font-size: var(--reader-fs, 18px);
+    max-width: calc(80ch + 84px);
+  }
+  .reader-book--single[data-font="sans"] {
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
+  .reader-book--single[data-font="wide"] {
+    font-family: Verdana, "DejaVu Sans", Tahoma, sans-serif;
+  }
+}
 .reader-run {
   position: absolute;
   top: 10px;
