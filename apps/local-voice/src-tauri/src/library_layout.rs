@@ -1261,16 +1261,8 @@ pub fn sicherung_loeschen(data: &Path, name: &str) -> Result<(), String> {
                 privat.display()
             ));
         }
-        if let Err(marke) = fs::remove_file(privat.join(LOESCHMARKE)) {
-            if marke.kind() != std::io::ErrorKind::NotFound {
-                log::error!("Buch-Ordner: Löschmarke nicht entfernt ({marke})");
-                return Err(format!(
-                    "{e} Die Löschmarke ließ sich nicht entfernen ({marke}); die Sicherung \
-                     liegt unter {}.",
-                    privat.display()
-                ));
-            }
-        }
+        // Zurückbenennen, unmittelbar nach der Prüfung; die Marke erst danach im
+        // zurückbenannten Ordner entfernen, und nur, wenn dort die Sicherung liegt.
         if let Err(zurueck) = fs::rename(&privat, &dir) {
             log::error!(
                 "Buch-Ordner: Sicherung nach abgebrochenem Löschen nicht zurückbenannt ({zurueck})"
@@ -1280,6 +1272,23 @@ pub fn sicherung_loeschen(data: &Path, name: &str) -> Result<(), String> {
                  sie liegt unter {}.",
                 privat.display()
             ));
+        }
+        if ordner_kennung(&dir).ok() != Some(selbst) {
+            log::error!("Buch-Ordner: zurückbenannter Ordner ist nicht die geprüfte Sicherung");
+            return Err(format!(
+                "{e} Unter {} liegt nach dem Zurückbenennen nicht die geprüfte Sicherung; \
+                 dort wurde nichts weiter verändert. Bitte den Ordner prüfen.",
+                dir.display()
+            ));
+        }
+        if let Err(marke) = fs::remove_file(dir.join(LOESCHMARKE)) {
+            if marke.kind() != std::io::ErrorKind::NotFound {
+                log::error!("Buch-Ordner: Löschmarke nicht entfernt ({marke})");
+                return Err(format!(
+                    "{e} Die Löschmarke in {} ließ sich nicht entfernen ({marke}).",
+                    dir.display()
+                ));
+            }
         }
         return Err(e);
     }
@@ -1350,7 +1359,17 @@ fn ordner_kennung(pfad: &Path) -> Result<Kennung, String> {
             pfad.display()
         ));
     }
-    kennung_roh(pfad, &meta).map_err(|e| format!("{} nicht lesbar: {e}", pfad.display()))
+    kennung_roh(pfad, &meta).map_err(|e| {
+        if cfg!(windows) {
+            format!(
+                "Löschen von Sicherungen wird auf diesem Laufwerk nicht unterstützt \
+                 (Netzlaufwerk oder Dateisystem ohne verlässliche Datei-Kennung, etwa \
+                 FAT/exFAT). Bitte die Sicherung lokal löschen. ({e})"
+            )
+        } else {
+            format!("{} nicht lesbar: {e}", pfad.display())
+        }
+    })
 }
 
 #[cfg(unix)]
@@ -1394,6 +1413,9 @@ fn kennung_roh(pfad: &Path, _meta: &fs::Metadata) -> std::io::Result<Kennung> {
             dateisystem: *mut u16,
             dateisystem_laenge: u32,
         ) -> i32;
+    }
+    if netzlaufwerk(pfad) {
+        return Err(std::io::Error::other("Netzlaufwerk"));
     }
     let datei = fs::OpenOptions::new()
         .access_mode(FILE_READ_ATTRIBUTES)
@@ -1451,6 +1473,33 @@ fn kennung_roh(pfad: &Path, _meta: &fs::Metadata) -> std::io::Result<Kennung> {
         ));
     }
     Ok(Kennung(info.volume, id))
+}
+
+/// UNC-Pfad oder verbundenes Netzlaufwerk (`GetDriveTypeW` = DRIVE_REMOTE).
+#[cfg(windows)]
+fn netzlaufwerk(pfad: &Path) -> bool {
+    use std::os::windows::ffi::OsStrExt;
+    use std::path::Prefix;
+    const DRIVE_REMOTE: u32 = 4;
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetDriveTypeW(wurzel: *const u16) -> u32;
+    }
+    match pfad.components().next() {
+        Some(Component::Prefix(p)) => match p.kind() {
+            Prefix::UNC(..) | Prefix::VerbatimUNC(..) => true,
+            Prefix::Disk(b) | Prefix::VerbatimDisk(b) => {
+                let wurzel: Vec<u16> = std::ffi::OsStr::new(&format!("{}:\\", b as char))
+                    .encode_wide()
+                    .chain([0])
+                    .collect();
+                // SAFETY: nullterminierte Zeichenkette, nur gelesen.
+                unsafe { GetDriveTypeW(wurzel.as_ptr()) == DRIVE_REMOTE }
+            }
+            _ => false,
+        },
+        _ => false,
+    }
 }
 
 #[cfg(not(any(unix, windows)))]
