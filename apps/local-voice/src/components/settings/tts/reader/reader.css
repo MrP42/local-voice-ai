@@ -44,7 +44,9 @@
   .reader-book--single {
     font-family: "Iowan Old Style", "Palatino Linotype", Georgia, serif;
     font-size: var(--reader-fs, 18px);
-    max-width: calc(80ch + 84px);
+    /* 66ch (Breite der Ziffer 0) ergibt in Fließtext ca. 80 Zeichen je
+       Zeile; 80ch wären ca. 98 Zeichen (gemessen, lva#365 P1b). */
+    max-width: calc(66ch + 84px);
   }
   .reader-book--single[data-font="sans"] {
     font-family: "Segoe UI", system-ui, -apple-system, sans-serif;

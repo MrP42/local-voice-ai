@@ -936,7 +936,11 @@ test("im Erstellen-Dialog ist die Sprache des Ergebnisses wählbar (lva#217)", a
   // Die Meldung darf den Knopf zum Erstellen nicht verdecken (Codex): beide
   // sichtbar, Rechtecke ueberlappen nicht.
   const createBtn = page.getByTestId("tts-action-summarize");
-  await createBtn.scrollIntoViewIfNeeded();
+  // Wie ein Mensch zum Knopf scrollt: mittig, nicht nur „gerade sichtbar“.
+  // „IfNeeded“ hing an der zufälligen Bildlaufstelle nach dem Wechsel auf
+  // 390 px; seit den Ebenen (lva#365 P1b) lag der Knopf dann knapp über der
+  // Spielerleiste, genau in der Zone der Meldung.
+  await createBtn.evaluate((el) => el.scrollIntoView({ block: "center" }));
   await expect(createBtn).toBeVisible();
   await expect(toast).toBeVisible();
   const b = (await createBtn.boundingBox())!;

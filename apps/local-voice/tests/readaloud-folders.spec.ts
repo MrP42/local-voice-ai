@@ -317,6 +317,22 @@ async function openReadAloud(page: Page, width = 1920) {
 const rows = (page: Page) =>
   page.getByTestId("tts-pages").locator("span.min-w-0.truncate.text-sm");
 
+/** Beleg für Codex (nur mit LV_P1B_SHOTS): Bild je Thema, optional Messwerte. */
+async function belegP1b(page: Page, name: string, data?: unknown) {
+  const dir = process.env.LV_P1B_SHOTS;
+  if (!dir) return;
+  const theme = process.env.LV_THEME === "dark" ? "dunkel" : "hell";
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: `${dir}/${name}-${theme}.png` });
+  if (data !== undefined) {
+    const fs = await import("node:fs");
+    fs.writeFileSync(
+      `${dir}/${name}-${theme}.json`,
+      JSON.stringify(data, null, 2) + "\n",
+    );
+  }
+}
+
 test("Ordnerleiste: Alle, Buch-Ordner mit Fassungen, Texte ohne Buch", async ({
   page,
 }) => {
@@ -915,6 +931,7 @@ test("Quelle fehlt: Fassung bleibt sichtbar als „Datei fehlt“, nichts wird g
   await expect(missing).toHaveCount(1);
   await expect(missing).toContainText("Datei fehlt");
   await expect(missing).toContainText("Nichts wurde gelöscht.");
+  await belegP1b(page, "p1b-datei-fehlt-1440");
   // Keine Löschaktion; die Reparatur folgt mit P2.
   await expect(missing.getByRole("button")).toHaveCount(0);
   await expect(rows(page)).toHaveText(["Der Sturm", "The Tempest"]);
@@ -940,6 +957,7 @@ test("Leerzustand ohne Bücher: Hinweis und „Buch hinzufügen“", async ({
   await expect(empty).toContainText("Ziehe ein EPUB, PDF, DOCX oder Hörbuch");
   const add = empty.getByRole("button", { name: "Buch hinzufügen" });
   expect((await add.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  await belegP1b(page, "p1b-leer-1440");
   await add.click();
   // Der vorhandene Dokument-Import (Dateidialog) öffnet.
   await expect
@@ -1083,7 +1101,7 @@ test("Über 620 px bleibt es bei Leiste und Auswahl, ohne Zurück-Knöpfe", asyn
   await expect(pagesCol(page)).toBeVisible();
 });
 
-test("Lesespalte: Einzelseite bei 2560 px höchstens etwa 80 Zeichen, mittig", async ({
+test("Lesespalte: Einzelseite bei 2560 px etwa 80 Zeichen je Zeile, mittig", async ({
   page,
 }) => {
   await page.addInitScript(() => {
@@ -1108,9 +1126,20 @@ test("Lesespalte: Einzelseite bei 2560 px höchstens etwa 80 Zeichen, mittig", a
     book.appendChild(probe);
     const ch80 = probe.getBoundingClientRect().width;
     probe.remove();
+    // Zeichen je Zeile: Textbreite / mittlere Zeichenbreite des Lesetexts.
+    const sample =
+      "Es war eine dunkle Nacht, und der Sturm trieb die Wolken vor sich her.";
+    const probe2 = document.createElement("span");
+    probe2.style.cssText = `position:absolute;visibility:hidden;white-space:nowrap;font:${getComputedStyle(flow).font}`;
+    probe2.textContent = sample;
+    book.appendChild(probe2);
+    const charW = probe2.getBoundingClientRect().width / sample.length;
+    probe2.remove();
     const b = book.getBoundingClientRect();
     const s = stage.getBoundingClientRect();
     return {
+      viewport: window.innerWidth,
+      charsPerLine: Math.round(flow.getBoundingClientRect().width / charW),
       text: flow.getBoundingClientRect().width,
       ch80,
       book: b.width,
@@ -1120,12 +1149,16 @@ test("Lesespalte: Einzelseite bei 2560 px höchstens etwa 80 Zeichen, mittig", a
       right: s.right - b.right,
     };
   });
-  expect(m.text / m.ch80).toBeGreaterThan(0.9);
-  expect(m.text / m.ch80).toBeLessThan(1.1);
+  // Ca. 80 Zeichen Fließtext je Zeile (gemessen an der mittleren
+  // Zeichenbreite des Lesetexts), nicht nur 80 Ziffernbreiten.
+  expect(m.charsPerLine).toBeGreaterThanOrEqual(72);
+  expect(m.charsPerLine).toBeLessThanOrEqual(88);
   // Nur der Lesetext ist begrenzt, nicht die Spalte.
   expect(m.stage).toBeGreaterThan(m.book + 200);
   expect(m.editor).toBeGreaterThan(m.book + 200);
   expect(Math.abs(m.left - m.right)).toBeLessThanOrEqual(2);
+  await page.getByTestId("reader-flow").scrollIntoViewIfNeeded();
+  await belegP1b(page, "p1b-lesespalte-2560", m);
 });
 
 // Belege für die Codex-Abnahme (kein Verhaltenstest), nur mit LV_P1_SHOTS:
