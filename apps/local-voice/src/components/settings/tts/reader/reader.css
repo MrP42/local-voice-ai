@@ -861,7 +861,11 @@
     background: var(--color-background);
     box-shadow: 0 -2px 8px rgb(0 0 0 / 0.12);
   }
+  /* Dazu die Meldungszone (--lv-toast-zone): auch der letzte Knopf kann
+     über Leiste und Meldung hinaus gescrollt werden. */
   .tts-workspace {
-    padding-bottom: var(--reader-player-h, 0px);
+    padding-bottom: calc(
+      var(--reader-player-h, 0px) + var(--lv-toast-zone, 0px)
+    );
   }
 }

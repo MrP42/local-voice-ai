@@ -936,17 +936,25 @@ test("im Erstellen-Dialog ist die Sprache des Ergebnisses wählbar (lva#217)", a
   // Die Meldung darf den Knopf zum Erstellen nicht verdecken (Codex): beide
   // sichtbar, Rechtecke ueberlappen nicht.
   const createBtn = page.getByTestId("tts-action-summarize");
-  // Wie ein Mensch zum Knopf scrollt: mittig, nicht nur „gerade sichtbar“.
-  // „IfNeeded“ hing an der zufälligen Bildlaufstelle nach dem Wechsel auf
-  // 390 px; seit den Ebenen (lva#365 P1b) lag der Knopf dann knapp über der
-  // Spielerleiste, genau in der Zone der Meldung.
-  await createBtn.evaluate((el) => el.scrollIntoView({ block: "center" }));
+  await createBtn.scrollIntoViewIfNeeded();
   await expect(createBtn).toBeVisible();
   await expect(toast).toBeVisible();
   const b = (await createBtn.boundingBox())!;
   const m = (await toast.boundingBox())!;
   expect(b.y + b.height <= m.y || m.y + m.height <= b.y || b.x + b.width <= m.x || m.x + m.width <= b.x).toBe(true);
   expect(b.y + b.height).toBeLessThanOrEqual(844);
+  // Unverdeckt anklickbar: an der Knopfmitte liegt der Knopf selbst oben,
+  // weder Meldung noch Spielerleiste (Codex).
+  expect(
+    await createBtn.evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      const top = document.elementFromPoint(
+        r.x + r.width / 2,
+        r.y + r.height / 2,
+      );
+      return !!top && (top === el || el.contains(top));
+    }),
+  ).toBe(true);
   await page.screenshot({
     path: "docs/vorschau/kurzbuch-sprache/08-fertigmeldung-390.png",
   });
