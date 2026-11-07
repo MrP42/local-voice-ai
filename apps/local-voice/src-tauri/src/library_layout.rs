@@ -4727,8 +4727,30 @@ mod tests {
         let (_, fremd_name) = rest('c', Some(&loeschmarke("anderer", b"{\"x\":1}")));
         let passend_name = format!("{LOESCHEN_PRAEFIX}{}", "d".repeat(32));
         let (_, passend) = rest('d', Some(&loeschmarke(&passend_name, b"{\"x\":1}")));
+        // Regulärer Sicherungsname mit stehengebliebener, zu ihm passender Marke: nie Rest.
+        let regulaer_name = format!("{SICHERUNG_PRAEFIX}1");
+        let regulaer = data.join(SICHERUNGEN).join(&regulaer_name);
+        fs::create_dir_all(&regulaer).unwrap();
+        fs::write(regulaer.join(MANIFEST), b"{\"x\":1}").unwrap();
+        fs::write(
+            regulaer.join(LOESCHMARKE),
+            loeschmarke(&regulaer_name, b"{\"x\":1}"),
+        )
+        .unwrap();
+        // Privates Präfix, aber keine 32 Hex: nie Rest, auch mit passender Marke.
+        let kurz_name = format!("{LOESCHEN_PRAEFIX}123");
+        let kurz = data.join(SICHERUNGEN).join(&kurz_name);
+        fs::create_dir_all(&kurz).unwrap();
+        fs::write(kurz.join(MANIFEST), b"{\"x\":1}").unwrap();
+        fs::write(
+            kurz.join(LOESCHMARKE),
+            loeschmarke(&kurz_name, b"{\"x\":1}"),
+        )
+        .unwrap();
         sicherung_loeschen(&data, &name).unwrap();
         assert!(ohne.join("inhalt.txt").is_file());
+        assert!(regulaer.join(MANIFEST).is_file());
+        assert!(kurz.join(MANIFEST).is_file());
         assert!(falsch.join("inhalt.txt").is_file());
         assert!(fremd_name.join("inhalt.txt").is_file());
         assert!(!passend.exists());
