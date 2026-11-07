@@ -25,6 +25,9 @@ export function useReaderFolders(
   active: boolean,
 ) {
   const [books, setBooks] = useState<LibraryBook[]>([]);
+  // Erst nach dem ersten Laden der Bücher folgt die Auswahl der offenen
+  // Seite; sonst springt sie beim Start über „Alle“ in den falschen Ordner.
+  const [booksLoaded, setBooksLoaded] = useState(false);
   const [stored, setStored] = usePersistentState<string>(
     "tts.folder",
     FOLDER_ALL,
@@ -34,6 +37,7 @@ export function useReaderFolders(
     const result = await commands.libraryList().catch(() => null);
     if (result?.status === "ok" && Array.isArray(result.data))
       setBooks(result.data);
+    setBooksLoaded(true);
   }, []);
 
   // Beim Sichtbarwerden neu laden: Bücher entstehen und verschwinden in der
@@ -59,12 +63,16 @@ export function useReaderFolders(
   const langOf = useMemo(() => pageLanguages(books), [books]);
 
   useEffect(() => {
-    if (!activePage || visibleIds.length === 0) return;
+    if (!booksLoaded) return;
+    if (!activePage || !allIds.includes(activePage)) {
+      // Keine gültige offene Seite: eine leere Auswahl auf „Alle“ zurück.
+      if (visibleIds.length === 0 && allIds.length > 0) setStored(FOLDER_ALL);
+      return;
+    }
     if (visibleIds.includes(activePage)) return;
-    if (!allIds.includes(activePage)) return;
     const owner = folderOf(folders, activePage);
     setStored(owner ? bookFolderKey(owner) : FOLDER_TEXTS);
-  }, [activePage, visibleIds, allIds, folders, setStored]);
+  }, [booksLoaded, activePage, visibleIds, allIds, folders, setStored]);
 
   /** Ordner wählen; liegt die offene Seite nicht darin, öffnet die erste. */
   const select = useCallback(

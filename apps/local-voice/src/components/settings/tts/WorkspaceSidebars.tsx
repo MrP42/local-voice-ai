@@ -139,6 +139,8 @@ export const PagesSidebar: React.FC<{
   langOf?: Map<string, string>;
   /** Inhalte der offenen Seite (Original, Übersetzung, KI-Dokumente) unter ihrer Zeile (lva#365 E2). */
   activeSections?: ReactNode;
+  /** Inhaltsverzeichnis, nur wenn die rechte Spalte nicht sichtbar ist (lva#365). */
+  contents?: ReactNode;
 }> = ({
   pages,
   activeId,
@@ -152,6 +154,7 @@ export const PagesSidebar: React.FC<{
   visibleIds,
   langOf,
   activeSections,
+  contents,
 }) => {
   const { t, i18n } = useTranslation();
   const shown = visibleIds
@@ -200,8 +203,13 @@ export const PagesSidebar: React.FC<{
     await commands.pagesDelete(page.id);
     onChanged();
     if (page.id === activeId) {
-      const rest = pages.filter((p) => p.id !== page.id);
-      if (rest.length > 0) onSelect(rest[0].id);
+      // Nachfolger aus der sichtbaren Liste (Nachbar), damit der Ordner bleibt.
+      const at = shown.findIndex((p) => p.id === page.id);
+      const visibleRest = shown.filter((p) => p.id !== page.id);
+      const next =
+        visibleRest[Math.min(Math.max(at, 0), visibleRest.length - 1)] ??
+        pages.find((p) => p.id !== page.id);
+      if (next) onSelect(next.id);
     }
   };
 
@@ -433,6 +441,8 @@ export const PagesSidebar: React.FC<{
         )}
         </Fragment>
       ))}
+
+      {contents}
 
       {rowMenu.menu}
       <PageExportDialog

@@ -3976,6 +3976,26 @@ export const TtsSettings = () => {
       />
   );
 
+  // lva#365: Inhaltsverzeichnis rechts; ist die rechte Spalte eingeklappt
+  // oder vom Buch-Gespräch belegt, steht es wie bisher links unter der Liste.
+  const tocElement =
+    viewMode === "read" ? (
+      <ReaderContents
+        entries={contents}
+        current={chapterIndex}
+        onGo={goToChapter}
+        pages={contentsPages}
+        book={book}
+        {...startProps}
+        onIsbn={
+          tab === "original" && activePage
+            ? () => setIsbnOpen(true)
+            : undefined
+        }
+      />
+    ) : null;
+  const tocRightVisible = !talkShown && filesCollapsed !== "1";
+
   return (
     <PageShell
       title={t("tts.title")}
@@ -4039,6 +4059,7 @@ export const TtsSettings = () => {
               className="lv-tablist--list"
             />
           }
+          contents={tocRightVisible ? null : tocElement}
           visibleIds={readerFolders.visibleIds}
           langOf={readerFolders.langOf}
           folders={
@@ -4111,7 +4132,10 @@ export const TtsSettings = () => {
                   onChange={setTab}
                   ariaLabel={t("tts.tabsLabel")}
                   className={`min-w-0 flex-auto ${
-                    pagesCollapsed === "1" ? "" : "reader-tabs--header"
+                    pagesCollapsed !== "1" &&
+                    readerFolders.visibleIds.includes(activePage)
+                      ? "reader-tabs--header"
+                      : ""
                   }`}
                 />
                 {/* Eigene Breite (flex-auto statt flex-1): reicht der Platz
@@ -4752,23 +4776,7 @@ export const TtsSettings = () => {
               width={ws.right.width}
               stacked={ws.stacked}
               onLayoutToggle={ws.toggleLayout}
-              contents={
-                viewMode === "read" ? (
-              <ReaderContents
-                entries={contents}
-                current={chapterIndex}
-                onGo={goToChapter}
-                pages={contentsPages}
-                book={book}
-                {...startProps}
-                onIsbn={
-                  tab === "original" && activePage
-                    ? () => setIsbnOpen(true)
-                    : undefined
-                }
-              />
-                ) : null
-              }
+              contents={tocElement}
               /* Der Text einer erzeugten Aufnahme zurueck in den Editor: die eine
              falsche Zeile aendern und erneut erzeugen. Die unveraenderten
              Saetze kommen dann aus dem Satz-Cache, nur die geaenderten gehen
