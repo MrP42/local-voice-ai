@@ -19,7 +19,9 @@ import { useHelpDockSlot } from "../../shell/PageHeaderSlot";
 import { splitFileNameTail } from "@/lib/utils/exportName";
 import { HelpPanel } from "../../help/HelpPanel";
 import { PageExportDialog, PageImportDialog } from "./pages/PagePackageDialogs";
+import { GROUP_HEAD } from "./BookFolder";
 import {
+  ArrowLeft,
   ChevronDown,
   ChevronUp,
   Columns2,
@@ -141,6 +143,21 @@ export const PagesSidebar: React.FC<{
   activeSections?: ReactNode;
   /** Inhaltsverzeichnis, nur wenn die rechte Spalte nicht sichtbar ist (lva#365). */
   contents?: ReactNode;
+  /**
+   * Buch-Ordner gewählt (lva#365 P1b): Kopf über den Fassungszeilen, nicht
+   * auffindbare Fassungen darunter, danach die Gruppen Hörbuch und KI-Dokumente.
+   */
+  bookFolder?: { head: ReactNode; missing: ReactNode; after: ReactNode };
+  /** Beschriftung „Sprache · Hauptfassung“ je Seite (nur im Buch-Ordner). */
+  editionNote?: Map<string, string>;
+  /** Text für einen gewählten Ordner ohne Seiten; leer = kein Leerzustand. */
+  emptyLabel?: string;
+  /** Schmal (≤ 620 px): Ebene Ordner, Liste oder Reader. */
+  mobileLevel?: "folders" | "list" | "reader";
+  /** Schmal: Zurück von der Liste zu den Ordnern. */
+  onBack?: () => void;
+  /** Eine Seite wurde bewusst geöffnet (Zeile, Weiterlesen, Hörbuch, KI-Dokument). */
+  onOpened?: () => void;
 }> = ({
   pages,
   activeId,
@@ -155,6 +172,12 @@ export const PagesSidebar: React.FC<{
   langOf,
   activeSections,
   contents,
+  bookFolder,
+  editionNote,
+  emptyLabel,
+  mobileLevel = "reader",
+  onBack,
+  onOpened,
 }) => {
   const { t, i18n } = useTranslation();
   const shown = visibleIds
@@ -227,6 +250,7 @@ export const PagesSidebar: React.FC<{
   return (
     <div
       data-testid="tts-pages"
+      data-mlevel={mobileLevel}
       className="tts-workspace__pages shrink-0 space-y-1 min-h-0 overflow-y-auto"
       style={width ? ({ "--tts-w": `${width}px` } as CSSProperties) : undefined}
     >
@@ -254,17 +278,42 @@ export const PagesSidebar: React.FC<{
         </div>
       </div>
 
+      {onBack && (
+        <button
+          type="button"
+          className="tts-mback tts-mback--list"
+          onClick={onBack}
+          title={t("tts.folders.backToFolders")}
+          data-testid="mback-list"
+        >
+          <ArrowLeft width={18} height={18} aria-hidden="true" />
+          {/* Name = „Zurück“ + sichtbares „Ordner“ (WCAG 2.5.3). */}
+          <span className="sr-only">{t("tts.folders.back")} </span>
+          <span>{t("tts.folders.label")}</span>
+        </button>
+      )}
+
       {folders}
+
+      {bookFolder?.head}
+      {bookFolder && (
+        <p className={`${GROUP_HEAD} tts-pages__list`}>
+          {t("tts.folders.groupEditions")}
+        </p>
+      )}
 
       {shown.map((page, index) => (
         <Fragment key={page.id}>
         <div
-          className={`group relative flex items-center gap-1 rounded-md px-2 py-1.5 cursor-pointer transition-colors ${
+          className={`tts-pages__list group relative flex items-center gap-1 rounded-md px-2 py-1.5 cursor-pointer transition-colors ${
             page.id === activeId
               ? "bg-logo-primary/15 text-text"
               : "text-text/70 hover:bg-mid-gray/15 hover:text-text"
           }`}
-          onClick={() => onSelect(page.id)}
+          onClick={() => {
+            onSelect(page.id);
+            onOpened?.();
+          }}
           onDoubleClick={() => {
             setEditingId(page.id);
             setEditTitle(page.title);
@@ -351,6 +400,11 @@ export const PagesSidebar: React.FC<{
                     </span>
                   )}
                 </span>
+                {editionNote?.get(page.id) && (
+                  <span className="block text-xs text-text/60">
+                    {editionNote.get(page.id)}
+                  </span>
+                )}
                 {/* Verlauf statt blosser Titel: was drinsteht und wann es
                     zuletzt angefasst wurde, ohne die Seite zu oeffnen. */}
                 <span className="block truncate text-xs text-text/60">
@@ -442,7 +496,29 @@ export const PagesSidebar: React.FC<{
         </Fragment>
       ))}
 
-      {contents}
+      {bookFolder?.missing}
+      {bookFolder?.after}
+
+      {!bookFolder && shown.length === 0 && emptyLabel && (
+        <div
+          className="tts-pages__list px-2 py-3 space-y-2"
+          data-testid="pages-empty"
+        >
+          <p className="text-sm text-text/80">{emptyLabel}</p>
+          <Button
+            variant="secondary"
+            className="reader-folders__btn"
+            icon={<Plus width={16} height={16} aria-hidden="true" />}
+            onClick={() => {
+              void create().then(() => onOpened?.());
+            }}
+          >
+            {t("tts.folders.newPage")}
+          </Button>
+        </div>
+      )}
+
+      {contents && <div className="tts-pages__list">{contents}</div>}
 
       {rowMenu.menu}
       <PageExportDialog

@@ -37,6 +37,19 @@ import {
 } from "./WorkspaceSidebars";
 import { ReaderFolders } from "./ReaderFolders";
 import { useReaderFolders } from "./useReaderFolders";
+import {
+  BookFolderGroups,
+  BookFolderHead,
+  MissingEdition,
+  editionNotes,
+  useBookKiDocs,
+} from "./BookFolder";
+import { editionsOf, readingEdition } from "@/lib/library/editions";
+import {
+  FOLDER_TEXTS,
+  bookFolderKey,
+  type BookFolder as FolderEntry,
+} from "@/lib/reader/folders";
 import { ResizeHandle } from "../../ui/ResizeHandle";
 import { useWorkspaceLayout } from "./useWorkspaceLayout";
 import { SettingsGroup } from "../../ui/SettingsGroup";
@@ -121,6 +134,7 @@ import {
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { Glyph } from "../../ui/AudioPlayer";
 import {
+  ArrowLeft,
   MessageSquare,
   PanelRightClose,
   Plug,
@@ -965,6 +979,50 @@ export const TtsSettings = () => {
   );
   // lva#365 P1: Ordnerleiste (Alle, Buch-Ordner, Texte) über der Seitenliste.
   const readerFolders = useReaderFolders(pages, activePage, sectionActive);
+  // Schmal (≤ 620 px): drei Ebenen Ordner → Liste → Reader (lva#365 P1b). Wer
+  // Vorlesen wieder öffnet, landet im Reader, wo er aufgehört hat.
+  const narrow = useSyncExternalStore(
+    (cb) => {
+      const mq = window.matchMedia("(max-width: 620px)");
+      mq.addEventListener("change", cb);
+      return () => mq.removeEventListener("change", cb);
+    },
+    () => window.matchMedia("(max-width: 620px)").matches,
+    () => false,
+  );
+  const [mobileLevel, setMobileLevel] = useState<"folders" | "list" | "reader">(
+    "reader",
+  );
+  useEffect(() => {
+    if (sectionActive) setMobileLevel("reader");
+  }, [sectionActive]);
+  // Ebenenwechsel (≤ 620 px) blendet den fokussierten Bereich aus: den Fokus
+  // auf den Anfang der neuen Ebene setzen, nicht auf <body> fallen lassen.
+  const levelShown = useRef(mobileLevel);
+  useEffect(() => {
+    if (levelShown.current === mobileLevel) return;
+    levelShown.current = mobileLevel;
+    if (!narrow) return;
+    const target =
+      mobileLevel === "reader"
+        ? '[data-testid="mback-reader"]'
+        : mobileLevel === "list"
+          ? '[data-testid="mback-list"]'
+          : '[data-testid="reader-folder"][aria-current="true"], [data-testid="reader-folder"]';
+    requestAnimationFrame(() =>
+      document.querySelector<HTMLElement>(target)?.focus(),
+    );
+  }, [mobileLevel, narrow]);
+  const folderEntry: FolderEntry | null =
+    readerFolders.folders.books.find(
+      (b) => bookFolderKey(b.bookId) === readerFolders.selection,
+    ) ?? null;
+  const folderPageIds = folderEntry?.pageIds ?? [];
+  const pageIdSet = useMemo(() => new Set(pages.map((p) => p.id)), [pages]);
+  const bookKiDocs = useBookKiDocs(
+    folderPageIds,
+    kiDocs.docs.map((d) => d.id).join("\n"),
+  );
 
   /** Neue Seite mit Text anlegen und aktiv machen (Skript-Werkstatt). */
   const createPageWithText = useCallback(
@@ -3476,6 +3534,31 @@ export const TtsSettings = () => {
   const textNowRef = useRef(text);
   textNowRef.current = text;
 
+  /** Buch-Ordner (lva#365 P1b): Seite öffnen, schmal weiter in den Reader. */
+  const openFolderPage = (id: string) => {
+    setActivePage(id);
+    setMobileLevel("reader");
+  };
+  /** Weiterlesen: zuletzt gelesene Fassung des Buchs, sonst die Hauptfassung. */
+  const continueBook = () => {
+    const book = readerFolders.book;
+    if (!book) return;
+    const wanted = readingEdition(book)?.text?.page_id;
+    const target =
+      wanted && pageIdSet.has(wanted) ? wanted : folderPageIds[0];
+    if (target) openFolderPage(target);
+  };
+  /** KI-Dokument aus dem Buch-Ordner: Seite öffnen, Reiter „summary“, Dokument wählen. */
+  const openBookKiDoc = (page: string, doc: string) => {
+    setMobileLevel("reader");
+    if (page === activePageRef.current && pageLoaded.current) {
+      openKiDocument(doc);
+      return;
+    }
+    libraryKiDoc.current = { page, doc, play: false };
+    setActivePage(page);
+  };
+
   /** Dokument als Originaltext laden (txt/md/pdf/docx/epub). */
   const loadDocument = async (dropped?: string) => {
     // Abgelegt per Drag & Drop (lva#152) oder über den Dateidialog.
@@ -4043,11 +4126,60 @@ export const TtsSettings = () => {
         <PagesSidebar
           pages={pages}
           activeId={activePage}
-          collapsed={pagesCollapsed === "1"}
+          collapsed={pagesCollapsed === "1" && !narrow}
           onToggle={() => setPagesCollapsed(pagesCollapsed === "1" ? "0" : "1")}
           onSelect={setActivePage}
           onChanged={() => void reloadPages()}
           onReplaceSpeaker={() => setReplaceSpeaker({})}
+          onOpened={() => setMobileLevel("reader")}
+          mobileLevel={mobileLevel}
+          onBack={() => setMobileLevel("folders")}
+          editionNote={
+            readerFolders.book
+              ? editionNotes(
+                  readerFolders.book,
+                  t("tts.folders.mainEdition"),
+                  t("tts.folders.unknownLang"),
+                )
+              : undefined
+          }
+          emptyLabel={
+            readerFolders.selection === FOLDER_TEXTS &&
+            readerFolders.visibleIds.length === 0
+              ? t("tts.folders.noLoose")
+              : undefined
+          }
+          bookFolder={
+            readerFolders.book && folderEntry
+              ? {
+                  head: (
+                    <BookFolderHead
+                      book={readerFolders.book}
+                      onContinue={continueBook}
+                    />
+                  ),
+                  missing: editionsOf(readerFolders.book)
+                    .filter(
+                      (e) => e.text?.page_id && !pageIdSet.has(e.text.page_id),
+                    )
+                    .map((e) => <MissingEdition key={e.id} edition={e} />),
+                  after: (
+                    <BookFolderGroups
+                      book={readerFolders.book}
+                      pageIds={pageIdSet}
+                      kiDocs={bookKiDocs}
+                      activeDoc={
+                        tab === "summary" && openDocId && activePage
+                          ? { page: activePage, id: openDocId }
+                          : null
+                      }
+                      onOpenPage={openFolderPage}
+                      onOpenDoc={openBookKiDoc}
+                    />
+                  ),
+                }
+              : undefined
+          }
           width={ws.pages.width}
           activeSections={
             <TabList
@@ -4068,7 +4200,11 @@ export const TtsSettings = () => {
               books={readerFolders.books}
               total={readerFolders.total}
               selection={readerFolders.selection}
-              onSelect={(key) => readerFolders.select(key, setActivePage)}
+              onSelect={(key) => {
+                readerFolders.select(key, setActivePage);
+                setMobileLevel("list");
+              }}
+              onAddBook={() => void loadDocument()}
             />
           }
         />
@@ -4085,6 +4221,20 @@ export const TtsSettings = () => {
           />
         )}
         <div className="flex-1 min-w-0 min-h-0 flex gap-4">
+          <button
+            type="button"
+            className="tts-mback tts-mback--reader"
+            onClick={() => setMobileLevel("list")}
+            title={t("tts.folders.backToList")}
+            data-testid="mback-reader"
+          >
+            <ArrowLeft width={18} height={18} aria-hidden="true" />
+            {/* Name = „Zurück“ + sichtbarer Titel (WCAG 2.5.3). */}
+            <span className="sr-only">{t("tts.folders.back")} </span>
+            <span className="min-w-0 truncate">
+              {pages.find((p) => p.id === activePage)?.title ?? ""}
+            </span>
+          </button>
           <div className="tts-editor flex-1 min-w-0 min-h-0 flex flex-col rounded-lg border border-mid-gray/20 bg-background overflow-hidden">
             {truncated && (
               <p className="px-4 pb-2 text-sm text-orange-400">

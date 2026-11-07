@@ -16,6 +16,27 @@ const edition = (id: string, lang: string, page: string) => ({
   audio: null,
   audio_key: "",
 });
+// Hörbuch der deutschen Fassung: zwei Teile, zusammen 1 h 30 min.
+const AUDIO = {
+  file: "teil_001.mp3",
+  duration_ms: 3_600_000,
+  narrator: null,
+  transcript_job: null,
+  tracks: [
+    {
+      file: "teil_001.mp3",
+      title: "Teil 1",
+      duration_ms: 3_600_000,
+      transcript_job: null,
+    },
+    {
+      file: "teil_002.mp3",
+      title: "Teil 2",
+      duration_ms: 1_800_000,
+      transcript_job: null,
+    },
+  ],
+};
 const BOOKS = [
   {
     id: "b1",
@@ -24,8 +45,11 @@ const BOOKS = [
     authors: ["W. S."],
     language: "de",
     text: { page_id: "p1", origin: "document", source_name: null },
-    audio: null,
-    editions: [edition("e1", "de", "p1"), edition("e2", "en", "p3")],
+    audio: AUDIO,
+    editions: [
+      { ...edition("e1", "de", "p1"), audio: AUDIO },
+      edition("e2", "en", "p3"),
+    ],
     cover_path: null,
   },
 ];
@@ -132,6 +156,47 @@ test.beforeEach(async ({ page }) => {
               if (w.__lvLibSlow)
                 await new Promise((r) => setTimeout(r, w.__lvLibSlow));
               return books;
+            }
+            if (cmd === "plugin:dialog|open") {
+              // Dateidialog des Dokument-Imports: gezählt, ohne Auswahl beendet.
+              const w = window as unknown as { __lvDialog?: number };
+              w.__lvDialog = (w.__lvDialog ?? 0) + 1;
+              return null;
+            }
+            if (cmd === "page_state_load") {
+              const w = window as unknown as { __lvText?: string };
+              return w.__lvText
+                ? JSON.stringify({ text: w.__lvText, tab: "original" })
+                : null;
+            }
+            if (cmd === "book_ai_documents") {
+              const doc = (id: string, title: string, language: string) => ({
+                id,
+                title,
+                template_id: "kurzbuch",
+                template_title: "Kurzbuch",
+                source: { kind: "book" },
+                source_label: "Ganzes Buch",
+                created_ms: now,
+                modified_ms: now,
+                words: 120,
+                model: "test",
+                usage: null,
+                language,
+              });
+              const lists: Record<string, unknown[]> = {
+                p1: [doc("d1", "Kurzbuch – Sturm", "de")],
+                p3: [doc("d2", "Begriffe", "en")],
+              };
+              return lists[String(args?.pageId)] ?? [];
+            }
+            if (cmd === "book_ai_document_text") {
+              const w = window as unknown as { __lvDocOpened?: string[] };
+              w.__lvDocOpened = [
+                ...(w.__lvDocOpened ?? []),
+                `${args?.pageId}:${args?.id}`,
+              ];
+              return "# Kurzbuch\n\nEin kurzer Text.";
             }
             if (cmd === "pages_delete") {
               const w = window as unknown as { __lvDeleted?: string[] };
@@ -251,6 +316,22 @@ async function openReadAloud(page: Page, width = 1920) {
 
 const rows = (page: Page) =>
   page.getByTestId("tts-pages").locator("span.min-w-0.truncate.text-sm");
+
+/** Beleg für Codex (nur mit LV_P1B_SHOTS): Bild je Thema, optional Messwerte. */
+async function belegP1b(page: Page, name: string, data?: unknown) {
+  const dir = process.env.LV_P1B_SHOTS;
+  if (!dir) return;
+  const theme = process.env.LV_THEME === "dark" ? "dunkel" : "hell";
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: `${dir}/${name}-${theme}.png` });
+  if (data !== undefined) {
+    const fs = await import("node:fs");
+    fs.writeFileSync(
+      `${dir}/${name}-${theme}.json`,
+      JSON.stringify(data, null, 2) + "\n",
+    );
+  }
+}
 
 test("Ordnerleiste: Alle, Buch-Ordner mit Fassungen, Texte ohne Buch", async ({
   page,
@@ -652,6 +733,434 @@ test("Umbruch-Layout: Ordner als Auswahl, Ansichten wieder im Kopf", async ({
   expect(overflow).toBeLessThanOrEqual(0);
 });
 
+const bookHead = (page: Page) => page.getByTestId("book-folder-head");
+const pagesCol = (page: Page) => page.getByTestId("tts-pages");
+const openBook = async (page: Page) => {
+  await page
+    .getByTestId("reader-folders")
+    .locator('[data-folder="book:b1"]')
+    .click();
+  await expect(bookHead(page)).toBeVisible();
+};
+const activePage = (page: Page) =>
+  page.evaluate(() => localStorage.getItem("lva.ui.tts.activePage"));
+
+test("Buch-Ordner: Kopf, Gruppen und Beschriftungen", async ({ page }) => {
+  await openReadAloud(page);
+  await openBook(page);
+  const head = bookHead(page);
+  await expect(head).toContainText("Der Sturm");
+  await expect(head).toContainText("W. S.");
+  await expect(head).toContainText("2 Fassungen");
+  await expect(head.getByRole("button", { name: "Weiterlesen" })).toBeVisible();
+
+  const col = pagesCol(page);
+  // Kleine Überschriften in der Folge Fassungen, Hörbuch, KI-Dokumente.
+  await expect(col.locator("p.tts-pages__list, section > p")).toHaveText([
+    "Fassungen",
+    "Hörbuch",
+    "KI-Dokumente",
+  ]);
+
+  // Fassungen: die bestehenden Seitenzeilen, mit Sprache und Hauptfassung.
+  await expect(rows(page)).toHaveText(["Der Sturm", "The Tempest"]);
+  await expect(
+    col.getByText("Deutsch · Hauptfassung", { exact: true }),
+  ).toBeVisible();
+  await expect(col.getByText("English", { exact: true })).toBeVisible();
+
+  // Hörbuch: zwei Teile, 3600 s + 1800 s.
+  const audio = page.getByTestId("book-audio");
+  await expect(audio).toHaveCount(1);
+  await expect(audio).toContainText("Hörbuch Deutsch");
+  await expect(audio).toContainText("2 Teile · 1 h 30 min");
+
+  // KI-Dokumente je Fassungsseite, mit Fassung.
+  const docs = page.getByTestId("book-ai-doc");
+  await expect(docs).toHaveCount(2);
+  await expect(docs.nth(0)).toContainText("Kurzbuch – Sturm");
+  await expect(docs.nth(0)).toContainText("Fassung Deutsch (Haupt)");
+  await expect(docs.nth(1)).toContainText("Begriffe");
+  await expect(docs.nth(1)).toContainText("Fassung English");
+
+  // Bedienziele in den neuen Zeilen mindestens 44 px hoch.
+  for (const el of [
+    head.getByRole("button", { name: "Weiterlesen" }),
+    audio,
+    docs.nth(0),
+    docs.nth(1),
+  ])
+    expect((await el.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+
+  // „Alle“ und „Ohne Buch“ bleiben flache Listen.
+  const folders = page.getByTestId("reader-folders");
+  await folders.locator('[data-folder="all"]').click();
+  await expect(bookHead(page)).toHaveCount(0);
+  await expect(page.getByTestId("book-ai-doc")).toHaveCount(0);
+  await expect(rows(page)).toHaveCount(3);
+  await folders.locator('[data-folder="texts"]').click();
+  await expect(bookHead(page)).toHaveCount(0);
+  await expect(rows(page)).toHaveText(["Zweite Seite"]);
+});
+
+test("Buch-Ordner: Weiterlesen öffnet Lesefassung, sonst Hauptfassung", async ({
+  page,
+}) => {
+  await openReadAloud(page);
+  await openBook(page);
+  await bookHead(page).getByRole("button", { name: "Weiterlesen" }).click();
+  await expect.poll(() => activePage(page)).toBe("p1");
+
+  await page.evaluate(
+    (books) => {
+      (window as unknown as { __lvBooks?: unknown }).__lvBooks = books;
+      (window as unknown as { __lvEmit?: (e: string) => void }).__lvEmit?.(
+        "sync-changed",
+      );
+    },
+    [
+      {
+        ...BOOKS[0],
+        reading: { edition: "e2", updated: 1, position: null },
+      },
+    ],
+  );
+  await expect
+    .poll(async () => {
+      await bookHead(page).getByRole("button", { name: "Weiterlesen" }).click();
+      return activePage(page);
+    })
+    .toBe("p3");
+});
+
+test("Buch-Ordner: Hörbuch öffnet die Textseite seiner Fassung", async ({
+  page,
+}) => {
+  await openReadAloud(page);
+  await openBook(page);
+  await rows(page).filter({ hasText: "The Tempest" }).click();
+  await expect.poll(() => activePage(page)).toBe("p3");
+  await page.getByTestId("book-audio").click();
+  await expect.poll(() => activePage(page)).toBe("p1");
+
+  // Ohne Textseite der Fassung ist die Zeile nicht klickbar.
+  await page.evaluate(
+    (books) => {
+      (window as unknown as { __lvBooks?: unknown }).__lvBooks = books;
+      (window as unknown as { __lvEmit?: (e: string) => void }).__lvEmit?.(
+        "sync-changed",
+      );
+    },
+    [
+      {
+        ...BOOKS[0],
+        editions: [
+          { ...BOOKS[0].editions[0], text: null },
+          BOOKS[0].editions[1],
+          { ...edition("e9", "fr", "p1"), audio: AUDIO },
+        ],
+      },
+    ],
+  );
+  await expect(page.getByTestId("book-audio").first()).toBeVisible();
+  await expect(page.getByTestId("book-audio").first()).toContainText(
+    "Hörbuch Deutsch",
+  );
+  await expect(page.getByTestId("book-audio").first()).not.toHaveJSProperty(
+    "tagName",
+    "BUTTON",
+  );
+});
+
+test("Klick auf ein KI-Dokument öffnet Seite, Reiter und Dokument", async ({
+  page,
+}) => {
+  await openReadAloud(page);
+  await openBook(page);
+  const docs = page.getByTestId("book-ai-doc");
+  const sections = page.getByTestId("page-sections");
+  // Dokument einer anderen Fassung: Seite p3 öffnen, Reiter „KI-Dokumente“.
+  await docs.nth(1).click();
+  await expect.poll(() => activePage(page)).toBe("p3");
+  await expect(
+    sections.getByRole("tab", { name: "KI-Dokumente", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => (window as unknown as { __lvDocOpened?: string[] }).__lvDocOpened,
+      ),
+    )
+    .toContain("p3:d2");
+  await expect(docs.nth(1)).toHaveAttribute("aria-current", "true");
+  await expect(docs.nth(0)).not.toHaveAttribute("aria-current", "true");
+
+  // Dokument der Fassung, die schon offen ist? Hier wieder die andere Seite.
+  await docs.nth(0).click();
+  await expect.poll(() => activePage(page)).toBe("p1");
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => (window as unknown as { __lvDocOpened?: string[] }).__lvDocOpened,
+      ),
+    )
+    .toContain("p1:d1");
+  await expect(docs.nth(0)).toHaveAttribute("aria-current", "true");
+  await expect(
+    sections.getByRole("tab", { name: "KI-Dokumente", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+});
+
+test("Quelle fehlt: Fassung bleibt sichtbar als „Datei fehlt“, nichts wird gelöscht", async ({
+  page,
+}) => {
+  await page.addInitScript(
+    (books) => {
+      (window as unknown as { __lvBooks?: unknown }).__lvBooks = books;
+    },
+    [
+      {
+        ...BOOKS[0],
+        editions: [...BOOKS[0].editions, edition("e3", "fr", "p9")],
+      },
+    ],
+  );
+  await openReadAloud(page);
+  await openBook(page);
+  const missing = page.getByTestId("edition-missing");
+  await expect(missing).toHaveCount(1);
+  await expect(missing).toContainText("Datei fehlt");
+  await expect(missing).toContainText("Nichts wurde gelöscht.");
+  await belegP1b(page, "p1b-datei-fehlt-1440");
+  // Keine Löschaktion; die Reparatur folgt mit P2.
+  await expect(missing.getByRole("button")).toHaveCount(0);
+  await expect(rows(page)).toHaveText(["Der Sturm", "The Tempest"]);
+  await expect(page.getByTestId("book-folder-head")).toContainText(
+    "3 Fassungen",
+  );
+  expect(
+    await page.evaluate(
+      () => (window as unknown as { __lvDeleted?: string[] }).__lvDeleted,
+    ),
+  ).toBeUndefined();
+});
+
+test("Leerzustand ohne Bücher: Hinweis und „Buch hinzufügen“", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    (window as unknown as { __lvBooks?: unknown }).__lvBooks = [];
+  });
+  await openReadAloud(page);
+  const empty = page.getByTestId("reader-folders-empty");
+  await expect(empty).toContainText("Noch keine Bücher");
+  await expect(empty).toContainText("Ziehe ein EPUB, PDF, DOCX oder Hörbuch");
+  const add = empty.getByRole("button", { name: "Buch hinzufügen" });
+  expect((await add.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  await belegP1b(page, "p1b-leer-1440");
+  await add.click();
+  // Der vorhandene Dokument-Import (Dateidialog) öffnet.
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => (window as unknown as { __lvDialog?: number }).__lvDialog ?? 0,
+      ),
+    )
+    .toBe(1);
+});
+
+test("Leerzustand eines Ordners: „Keine losen Texte“ und „Neue Seite“", async ({
+  page,
+}) => {
+  await page.addInitScript(
+    (books) => {
+      (window as unknown as { __lvBooks?: unknown }).__lvBooks = books;
+    },
+    [
+      {
+        ...BOOKS[0],
+        editions: [...BOOKS[0].editions, edition("e3", "fr", "p2")],
+      },
+    ],
+  );
+  await openReadAloud(page);
+  const folders = page.getByTestId("reader-folders");
+  await folders.locator('[data-folder="texts"]').click();
+  const empty = page.getByTestId("pages-empty");
+  await expect(empty).toContainText("Keine losen Texte");
+  const create = empty.getByRole("button", { name: "Neue Seite" });
+  expect((await create.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  await create.click();
+  await expect
+    .poll(() =>
+      page.evaluate(() => (window as unknown as { __lvP4?: boolean }).__lvP4),
+    )
+    .toBe(true);
+  // Ordner mit Einträgen zeigen den Leerzustand nicht.
+  await folders.locator('[data-folder="all"]').click();
+  await expect(empty).toHaveCount(0);
+});
+
+test("Mobil 390 px: drei Ebenen Ordner, Liste, Reader mit Zurück-Knöpfen", async ({
+  page,
+}) => {
+  await openReadAloud(page, 768);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const noOverflow = async () => {
+    const over = await page.evaluate(() =>
+      Math.max(
+        document.documentElement.scrollWidth - window.innerWidth,
+        ...[
+          ...document.querySelectorAll(".workspace-main, .tts-workspace"),
+        ].map((el) => el.scrollWidth - el.clientWidth),
+      ),
+    );
+    expect(over).toBeLessThanOrEqual(0);
+  };
+  const big = async (id: string) => {
+    const box = await page.getByTestId(id).boundingBox();
+    expect(box!.width).toBeGreaterThanOrEqual(44);
+    expect(box!.height).toBeGreaterThanOrEqual(44);
+  };
+  const folderNav = page.getByTestId("reader-folders");
+
+  // Ebene 3: Reader (Einstieg wie bisher), Liste und Ordner verborgen.
+  await expect(page.locator(".tts-editor")).toBeVisible();
+  await expect(pagesCol(page)).toBeHidden();
+  await big("mback-reader");
+  await noOverflow();
+
+  // Zurück: Ebene 2, die Liste.
+  await page.getByTestId("mback-reader").click();
+  await expect(pagesCol(page)).toBeVisible();
+  await expect(page.locator(".tts-editor")).toBeHidden();
+  await expect(folderNav).toBeHidden();
+  await expect(rows(page)).toHaveCount(3);
+  await big("mback-list");
+  await noOverflow();
+  // Je Ebene nur ein Bereich: Dateien und Bedienung der rechten Spalte nicht.
+  await expect(page.getByTestId("tts-files")).toBeHidden();
+  // Fokus wandert auf den Anfang der neuen Ebene, Name enthält den Text.
+  await expect(page.getByTestId("mback-list")).toBeFocused();
+  await expect(page.getByTestId("mback-list")).toHaveAccessibleName(
+    /Zurück.*Ordner/,
+  );
+
+  // Zurück: Ebene 1, die Ordner.
+  await page.getByTestId("mback-list").click();
+  await expect(folderNav).toBeVisible();
+  await expect(rows(page).first()).toBeHidden();
+  await expect(page.locator(".tts-editor")).toBeHidden();
+  await noOverflow();
+  for (const key of ["all", "book:b1", "texts"]) {
+    const box = await folderNav.locator(`[data-folder="${key}"]`).boundingBox();
+    expect(box!.height).toBeGreaterThanOrEqual(44);
+  }
+
+  // Ordner wählen führt zur Liste (gruppiert), Seite wählen zum Reader.
+  await folderNav.locator('[data-folder="book:b1"]').click();
+  await expect(bookHead(page)).toBeVisible();
+  await expect(folderNav).toBeHidden();
+  await expect(page.getByTestId("book-ai-doc")).toHaveCount(2);
+  for (const el of [
+    page.getByTestId("book-continue"),
+    page.getByTestId("book-audio"),
+    page.getByTestId("book-ai-doc").first(),
+  ])
+    expect((await el.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  await noOverflow();
+  await rows(page).filter({ hasText: "The Tempest" }).click();
+  await expect(page.locator(".tts-editor")).toBeVisible();
+  await expect(pagesCol(page)).toBeHidden();
+  await expect.poll(() => activePage(page)).toBe("p3");
+  await expect(page.getByTestId("mback-reader")).toContainText("The Tempest");
+  await noOverflow();
+
+  // Ein KI-Dokument öffnet ebenfalls den Reader.
+  await page.getByTestId("mback-reader").click();
+  await page.getByTestId("book-ai-doc").first().click();
+  await expect(page.locator(".tts-editor")).toBeVisible();
+  await expect.poll(() => activePage(page)).toBe("p1");
+});
+
+test("Über 620 px bleibt es bei Leiste und Auswahl, ohne Zurück-Knöpfe", async ({
+  page,
+}) => {
+  await openReadAloud(page, 1920);
+  await expect(page.getByTestId("mback-reader")).toBeHidden();
+  await expect(page.getByTestId("mback-list")).toBeHidden();
+  await expect(page.getByTestId("reader-folders")).toBeVisible();
+  await page.setViewportSize({ width: 900, height: 900 });
+  await expect(page.getByTestId("reader-folders-compact")).toBeVisible();
+  await expect(page.getByTestId("mback-reader")).toBeHidden();
+  await expect(page.locator(".tts-editor")).toBeVisible();
+  await expect(pagesCol(page)).toBeVisible();
+  await page.setViewportSize({ width: 640, height: 900 });
+  await expect(page.getByTestId("mback-reader")).toBeHidden();
+  await expect(page.locator(".tts-editor")).toBeVisible();
+  await expect(pagesCol(page)).toBeVisible();
+});
+
+test("Lesespalte: Einzelseite bei 2560 px etwa 80 Zeichen je Zeile, mittig", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("lva.ui.tts.reader.two", "0");
+    (window as unknown as { __lvText?: string }).__lvText =
+      "Es war eine dunkle Nacht, und der Sturm trieb die Wolken vor sich her.\n\n".repeat(
+        120,
+      );
+  });
+  await openReadAloud(page, 2560);
+  const book = page.getByTestId("reader-book");
+  await expect(book).toBeVisible();
+  await expect(page.getByTestId("reader-flow")).toBeVisible();
+  const m = await page.evaluate(() => {
+    const book = document.querySelector('[data-testid="reader-book"]')!;
+    const flow = document.querySelector('[data-testid="reader-flow"]')!;
+    const stage = document.querySelector('[data-testid="reader-stage"]')!;
+    const editor = document.querySelector(".tts-editor")!;
+    // 80ch in der Schrift des Lesetextes, gemessen an einer Sonde.
+    const probe = document.createElement("div");
+    probe.style.cssText = `position:absolute;visibility:hidden;width:80ch;font:${getComputedStyle(flow).font}`;
+    book.appendChild(probe);
+    const ch80 = probe.getBoundingClientRect().width;
+    probe.remove();
+    // Zeichen je Zeile: Textbreite / mittlere Zeichenbreite des Lesetexts.
+    const sample =
+      "Es war eine dunkle Nacht, und der Sturm trieb die Wolken vor sich her.";
+    const probe2 = document.createElement("span");
+    probe2.style.cssText = `position:absolute;visibility:hidden;white-space:nowrap;font:${getComputedStyle(flow).font}`;
+    probe2.textContent = sample;
+    book.appendChild(probe2);
+    const charW = probe2.getBoundingClientRect().width / sample.length;
+    probe2.remove();
+    const b = book.getBoundingClientRect();
+    const s = stage.getBoundingClientRect();
+    return {
+      viewport: window.innerWidth,
+      charsPerLine: Math.round(flow.getBoundingClientRect().width / charW),
+      text: flow.getBoundingClientRect().width,
+      ch80,
+      book: b.width,
+      stage: s.width,
+      editor: editor.getBoundingClientRect().width,
+      left: b.left - s.left,
+      right: s.right - b.right,
+    };
+  });
+  // Ca. 80 Zeichen Fließtext je Zeile (gemessen an der mittleren
+  // Zeichenbreite des Lesetexts), nicht nur 80 Ziffernbreiten.
+  expect(m.charsPerLine).toBeGreaterThanOrEqual(72);
+  expect(m.charsPerLine).toBeLessThanOrEqual(88);
+  // Nur der Lesetext ist begrenzt, nicht die Spalte.
+  expect(m.stage).toBeGreaterThan(m.book + 200);
+  expect(m.editor).toBeGreaterThan(m.book + 200);
+  expect(Math.abs(m.left - m.right)).toBeLessThanOrEqual(2);
+  await page.getByTestId("reader-flow").scrollIntoViewIfNeeded();
+  await belegP1b(page, "p1b-lesespalte-2560", m);
+});
+
 // Belege für die Codex-Abnahme (kein Verhaltenstest), nur mit LV_P1_SHOTS:
 //   LV_P1_SHOTS=docs/vorschau/projektordner-p1 LV_THEME=dark pnpm exec playwright test readaloud-folders
 test("Belege P1", async ({ page }) => {
@@ -673,4 +1182,41 @@ test("Belege P1", async ({ page }) => {
       path: `${dir}/p1-buchordner-${width}-${theme}.png`,
     });
   }
+});
+
+// Belege P1b (lva#365): Buch-Ordner gruppiert, 390 px in drei Ebenen.
+//   LV_P1B_SHOTS=docs/vorschau/projektordner-p1b LV_THEME=dark pnpm exec playwright test readaloud-folders -g "Belege P1b"
+test("Belege P1b", async ({ page }) => {
+  const dir = process.env.LV_P1B_SHOTS;
+  test.skip(!dir, "nur für Vorschaubilder");
+  const theme = process.env.LV_THEME === "dark" ? "dunkel" : "hell";
+  for (const width of [2560, 1440]) {
+    await openReadAloud(page, width);
+    await page
+      .getByTestId("reader-folders")
+      .locator('[data-folder="book:b1"]')
+      .click();
+    await page.waitForTimeout(400);
+    await page.screenshot({
+      path: `${dir}/p1b-buchordner-${width}-${theme}.png`,
+    });
+  }
+  await openReadAloud(page, 768);
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: `${dir}/p1b-buchordner-768-${theme}.png` });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(300);
+  await page.screenshot({
+    path: `${dir}/p1b-buchordner-390-reader-${theme}.png`,
+  });
+  await page.getByTestId("mback-reader").click();
+  await page.waitForTimeout(300);
+  await page.screenshot({
+    path: `${dir}/p1b-buchordner-390-liste-${theme}.png`,
+  });
+  await page.getByTestId("mback-list").click();
+  await page.waitForTimeout(300);
+  await page.screenshot({
+    path: `${dir}/p1b-buchordner-390-ordner-${theme}.png`,
+  });
 });
