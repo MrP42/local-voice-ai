@@ -108,3 +108,20 @@ export const pageLanguages = (books: FolderBook[]): Map<string, string> => {
   }
   return out;
 };
+
+/**
+ * Ordner, in den die Auswahl der offenen Seite folgen muss, oder `null`.
+ * Nur auf der Grundlage abgeschlossener Bücherdaten aufrufen: mit veralteten
+ * Büchern landet eine neue Buchseite sonst unter „Ohne Buch“.
+ */
+export function followFolder(
+  folders: PageFolders,
+  visibleIds: string[],
+  allIds: string[],
+  activePage: string,
+): string | null {
+  if (!activePage || !allIds.includes(activePage)) return null;
+  if (visibleIds.includes(activePage)) return null;
+  const owner = folderOf(folders, activePage);
+  return owner ? bookFolderKey(owner) : FOLDER_TEXTS;
+}

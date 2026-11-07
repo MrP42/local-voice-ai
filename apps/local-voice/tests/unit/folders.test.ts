@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   bookPageIds,
   folderOf,
+  followFolder,
   groupPages,
 } from "../../src/lib/reader/folders.ts";
 
@@ -104,4 +105,25 @@ test("Auswahl: Buch, Texte, Alle und Rückfall bei gelöschtem Buch", () => {
   assert.equal(resolveFolder(f, bookFolderKey("weg")), FOLDER_ALL);
   assert.equal(resolveFolder(f, bookFolderKey("b1")), "book:b1");
   assert.equal(pageLanguages(books).get("p2"), "en");
+});
+
+test("followFolder: offene Seite außerhalb der Auswahl folgt ihrem Ordner", () => {
+  const books = [
+    {
+      id: "b1",
+      title: "Buch",
+      text: { page_id: "p1" },
+      editions: [{ lang: "de", text: { page_id: "p1" } }],
+    },
+  ];
+  const all = pages.map((p) => p.id);
+  const folders = groupPages(pages, books);
+  assert.equal(followFolder(folders, ["p2"], all, "p1"), "book:b1");
+  assert.equal(followFolder(folders, ["p1"], all, "p2"), "texts");
+  assert.equal(followFolder(folders, ["p1"], all, "p1"), null);
+  assert.equal(followFolder(folders, [], all, ""), null);
+  assert.equal(followFolder(folders, [], all, "gibt-es-nicht"), null);
+  // Mit veralteten Büchern (noch keine) gilt p1 als lose: genau deshalb
+  // darf der Hook erst nach der jüngsten Antwort folgen.
+  assert.equal(followFolder(groupPages(pages, []), [], all, "p1"), "texts");
 });

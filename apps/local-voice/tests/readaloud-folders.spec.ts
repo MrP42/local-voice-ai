@@ -97,11 +97,17 @@ test.beforeEach(async ({ page }) => {
             if (cmd === "meetings_is_recording") return false;
             if (cmd === "tts_server_status")
               return { phase: "stopped", message: null };
-            if (cmd === "library_list")
-              return (
-                (window as unknown as { __lvBooks?: unknown }).__lvBooks ??
-                BOOKS
-              );
+            if (cmd === "library_list") {
+              const w = window as unknown as {
+                __lvBooks?: unknown;
+                __lvLibSlow?: number;
+              };
+              const books = w.__lvBooks ?? BOOKS;
+              // Langsame Bibliothek: Antwort erst nach __lvLibSlow ms.
+              if (w.__lvLibSlow)
+                await new Promise((r) => setTimeout(r, w.__lvLibSlow));
+              return books;
+            }
             if (cmd === "pages_list")
               return [
                 {
@@ -253,6 +259,75 @@ test("Ein gewählter leerer Ordner bleibt gewählt", async ({ page }) => {
   await expect(
     page.getByRole("tab", { name: "Original", exact: true }),
   ).toBeVisible();
+});
+
+test("Seitenwechsel bei verzögerter Bibliotheksantwort", async ({ page }) => {
+  // Die Bibliothek kennt zunächst keine Bücher: alle drei Seiten sind lose
+  // Texte. Gelöscht wird die offene Seite p2; während die nächste, langsame
+  // Bücherantwort aussteht, öffnet der Nachbar. Erst die Antwort zeigt,
+  // dass der Nachbar eine Fassung von „Der Sturm“ ist: die Auswahl folgt dorthin,
+  // und die offene Seite bleibt in der Liste sichtbar.
+  await page.addInitScript(() => {
+    (window as unknown as { __lvBooks?: unknown }).__lvBooks = [];
+    localStorage.setItem("lva.ui.tts.folder", "texts");
+    localStorage.setItem("lva.ui.tts.activePage", "p2");
+  });
+  await openReadAloud(page);
+  const folders = page.getByTestId("reader-folders");
+  await expect(folders.locator('[data-folder="texts"]')).toHaveAttribute(
+    "aria-current",
+    "true",
+  );
+  await expect(rows(page)).toHaveCount(3);
+  await page.evaluate((books) => {
+    const w = window as unknown as {
+      __lvBooks?: unknown;
+      __lvLibSlow?: number;
+    };
+    w.__lvBooks = books;
+    w.__lvLibSlow = 1500;
+  }, BOOKS);
+  const row = page
+    .getByTestId("tts-pages")
+    .locator("[data-page-id='p2'], :scope *")
+    .filter({ hasText: "Zweite Seite" })
+    .first();
+  await row.hover();
+  await page
+    .getByTestId("tts-pages")
+    .getByRole("button", { name: "Seite löschen" })
+    .first()
+    .click();
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "Seite löschen" })
+    .click();
+  await expect(folders.locator('[data-folder="book:b1"]')).toHaveAttribute(
+    "aria-current",
+    "true",
+    { timeout: 5000 },
+  );
+  await expect(rows(page)).toHaveText(["Der Sturm", "The Tempest"]);
+  // Der sichtbare Nachbar (p1 oder p3) ist offen; beide sind Fassungen.
+  expect(["p1", "p3"]).toContain(
+    await page.evaluate(() => localStorage.getItem("lva.ui.tts.activePage")),
+  );
+});
+
+test("Ordnerauswahl bleibt über ein Neuladen erhalten", async ({ page }) => {
+  await openReadAloud(page);
+  const folders = page.getByTestId("reader-folders");
+  await folders.locator('[data-folder="book:b1"]').click();
+  await expect(rows(page)).toHaveText(["Der Sturm", "The Tempest"]);
+  await page.reload();
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "Vorlesen", exact: true })
+    .click();
+  await expect(
+    page.getByTestId("reader-folders").locator('[data-folder="book:b1"]'),
+  ).toHaveAttribute("aria-current", "true");
+  await expect(rows(page)).toHaveText(["Der Sturm", "The Tempest"]);
 });
 
 test("Bedienziele und gedämpfter Text bei 390 und 768 px", async ({ page }) => {

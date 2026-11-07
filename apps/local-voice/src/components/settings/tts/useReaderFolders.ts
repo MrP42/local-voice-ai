@@ -4,9 +4,7 @@ import { commands, type LibraryBook, type PageInfo } from "@/bindings";
 import { usePersistentState } from "../../../hooks/usePersistentState";
 import {
   FOLDER_ALL,
-  FOLDER_TEXTS,
-  bookFolderKey,
-  folderOf,
+  followFolder,
   groupPages,
   pageLanguages,
   pagesInFolder,
@@ -25,9 +23,10 @@ export function useReaderFolders(
   active: boolean,
 ) {
   const [books, setBooks] = useState<LibraryBook[]>([]);
-  // Erst nach dem ersten Laden der Bücher folgt die Auswahl der offenen
-  // Seite; sonst springt sie beim Start über „Alle“ in den falschen Ordner.
-  const [booksLoaded, setBooksLoaded] = useState(false);
+  // Solange eine Bücheranfrage läuft, folgt die Auswahl der offenen Seite
+  // nicht: sonst bestimmen veraltete Bücher den Ordner (eine neue Buchseite
+  // landete unter „Ohne Buch“). Anfangs gilt die erste Anfrage als laufend.
+  const [pending, setPending] = useState(true);
   const [stored, setStored] = usePersistentState<string>(
     "tts.folder",
     FOLDER_ALL,
@@ -38,12 +37,20 @@ export function useReaderFolders(
   const request = useRef(0);
   const reloadBooks = useCallback(async () => {
     const mine = ++request.current;
+    setPending(true);
     const result = await commands.libraryList().catch(() => null);
     if (mine !== request.current) return;
     if (result?.status === "ok" && Array.isArray(result.data))
       setBooks(result.data);
-    setBooksLoaded(true);
+    setPending(false);
   }, []);
+  // Beim Abbau gilt keine ausstehende Antwort mehr.
+  useEffect(
+    () => () => {
+      request.current += 1;
+    },
+    [],
+  );
 
   // Beim Sichtbarwerden neu laden: Bücher entstehen und verschwinden in der
   // Bibliothek, während Vorlesen im Hintergrund erhalten bleibt.
@@ -67,17 +74,25 @@ export function useReaderFolders(
   );
   const langOf = useMemo(() => pageLanguages(books), [books]);
 
-  // Der offenen Seite folgen, wenn sie wechselt (Bibliothek, Suche, Löschen),
-  // nicht wenn jemand einen Ordner wählt: ein gewählter leerer Ordner bleibt.
-  const followed = useRef<string | null>(null);
+  // Der offenen Seite folgen, wenn sie wechselt (Bibliothek, Suche, Löschen)
+  // oder wenn neue Bücherdaten sie aus dem unveränderten Ordner nehmen;
+  // nicht, wenn jemand einen Ordner wählt: ein gewählter leerer Ordner bleibt.
+  const seen = useRef<{ page: string; selection: string; visible: boolean }>({
+    page: "",
+    selection: "",
+    visible: false,
+  });
   useEffect(() => {
-    if (!booksLoaded || followed.current === activePage) return;
-    if (!activePage || !allIds.includes(activePage)) return;
-    followed.current = activePage;
-    if (visibleIds.includes(activePage)) return;
-    const owner = folderOf(folders, activePage);
-    setStored(owner ? bookFolderKey(owner) : FOLDER_TEXTS);
-  }, [booksLoaded, activePage, visibleIds, allIds, folders, setStored]);
+    if (pending || !activePage || !allIds.includes(activePage)) return;
+    const visible = visibleIds.includes(activePage);
+    const last = seen.current;
+    seen.current = { page: activePage, selection, visible };
+    const pageChanged = last.page !== activePage;
+    const movedOut = last.selection === selection && last.visible && !visible;
+    if (!pageChanged && !movedOut) return;
+    const target = followFolder(folders, visibleIds, allIds, activePage);
+    if (target) setStored(target);
+  }, [pending, activePage, selection, visibleIds, allIds, folders, setStored]);
 
   /** Ordner wählen; liegt die offene Seite nicht darin, öffnet die erste. */
   const select = useCallback(
