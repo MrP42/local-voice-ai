@@ -176,6 +176,7 @@ final class PhoneLibrary: ObservableObject {
         try? FileManager.default.createDirectory(at: dir(entry), withIntermediateDirectories: true)
         FileManager.default.createFile(atPath: dir(entry).appendingPathComponent(Self.kurzbuchMarker).path, contents: Data())
         try? LibraryText.kurzbuchText(markdown).write(to: textURL(entry), atomically: true, encoding: .utf8)
+        copyCover(from: book, to: entry)
         return entry
     }
 

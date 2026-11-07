@@ -1,4 +1,5 @@
 import Foundation
+import os
 import AVFoundation
 import UIKit
 
@@ -210,6 +211,36 @@ extension PhoneLibrary {
 
     func setCoverBlob(_ book: LibraryBook, _ blob: String) {
         try? Data(blob.utf8).write(to: dir(book).appendingPathComponent("cover.blob"), options: .atomic)
+    }
+
+    /// Der Eintrag zeigt das Cover des Buchs. Kopiert wird nur, wenn es sich geändert hat, und erst nach gelungener
+    /// Kopie fällt das alte weg: Ein gerade fehlendes Buch-Cover nimmt dem Eintrag seins nicht.
+    func copyCover(from book: LibraryBook, to entry: LibraryBook) {
+        guard let cover = coverURL(book) else { return }
+        let manager = FileManager.default
+        let target = dir(entry).appendingPathComponent(cover.lastPathComponent)
+        func stamp(_ url: URL) -> [AnyHashable]? {
+            guard let a = try? manager.attributesOfItem(atPath: url.path), let size = a[.size] as? NSNumber, let date = a[.modificationDate] as? Date else { return nil }
+            return [size, date]
+        }
+        if let current = stamp(target), current == stamp(cover) { return }
+        let temporary = dir(entry).appendingPathComponent("cover.neu")
+        try? manager.removeItem(at: temporary)
+        do {
+            try manager.copyItem(at: cover, to: temporary)
+            // Atomar: Scheitert das Ersetzen, bleibt das bisherige Cover.
+            if manager.fileExists(atPath: target.path) { _ = try manager.replaceItemAt(target, withItemAt: temporary) }
+            else { try manager.moveItem(at: temporary, to: target) }
+        } catch {
+            try? manager.removeItem(at: temporary)
+            Logger(subsystem: "de.localvoice", category: "library").error("Kurzbuch-Cover nicht kopiert: \(error.localizedDescription, privacy: .public)")
+            return
+        }
+        for name in ["cover.jpg", "cover.png", "cover.webp"] where name != target.lastPathComponent {
+            try? manager.removeItem(at: dir(entry).appendingPathComponent(name))
+        }
+        PhoneLibraryCoverCache.forget(entry.id)
+        objectWillChange.send()
     }
 
     func storeCover(_ data: Data, for book: LibraryBook) {
