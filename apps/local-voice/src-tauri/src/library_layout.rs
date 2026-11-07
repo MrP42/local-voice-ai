@@ -1235,78 +1235,126 @@ fn index_zusammenfuehren(
 }
 
 /// Plan des Tauschs beim Zurückspielen. Er liegt dauerhaft unter
-/// `sicherungen/.zurueckspielen.json`, bevor sich etwas ändert, und verschwindet erst,
-/// wenn der Tausch vollständig ist (das ist der Abschluss). Findet der Start einen Plan
-/// vor, wurde das Zurückspielen unterbrochen: [`zurueckspielen_wiederanlauf`] nimmt es
-/// anhand des Plans und des Plattenstands zurück, noch bevor Bibliothek und Sync lesen.
+/// `sicherungen/.zurueckspielen.json`, bevor sich etwas ändert, und hält fest, wie weit
+/// der Tausch ist ([`TauschStand`]). Findet der Start einen Plan vor, wurde das
+/// Zurückspielen unterbrochen: [`zurueckspielen_wiederanlauf`] nimmt es zurück oder räumt
+/// nur noch auf, noch bevor Bibliothek und Sync lesen.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct Tauschplan {
     pub version: u32,
-    /// Zwischenordner (relativ zum Datenordner).
+    #[serde(default)]
+    pub stand: TauschStand,
+    /// Zwischenordner `sicherungen/.zurueck-<ms>`.
     pub stufe: String,
-    /// Papierkorb (relativ), falls etwas weichen muss.
+    /// Papierkorb `sicherungen/.papierkorb/<ms>`, falls etwas weichen muss.
     pub korb: Option<String>,
-    /// Ordner, die vom Datenordner in den Papierkorb gehen (in dieser Reihenfolge).
+    /// Seitenordner, die vom Datenordner in den Papierkorb gehen.
     pub weichen: Vec<String>,
-    /// Ordner-Einheiten, die aus dem Zwischenordner an ihren Ort gehen.
+    /// Seitenordner, die aus dem Zwischenordner an ihren Ort gehen.
     pub hin: Vec<String>,
     /// Dateien (Index zuletzt), die über ihr Ziel umbenannt werden.
     pub dateien: Vec<PlanDatei>,
 }
 
+/// Wie weit der Tausch ist. Jeder Wechsel steht auf der Platte, bevor aufgeräumt wird:
+/// fehlende Zwischenstände dürfen nie als ausgeführte Schritte gedeutet werden.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TauschStand {
+    /// Der Tausch kann teilweise geschehen sein: zurücknehmen.
+    #[default]
+    Laeuft,
+    /// Der Tausch ist vollständig: nur noch den Zwischenordner entfernen.
+    Fertig,
+    /// Die Rücknahme ist vollständig: Zwischenordner und Papierkorb entfernen.
+    Zurueckgenommen,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct PlanDatei {
     pub pfad: String,
-    /// Gab es die Datei vorher? Dann liegt ihre alte Fassung als Kopie im Papierkorb.
-    pub alt: bool,
+    /// SHA-256 der neuen Fassung (im Zwischenordner).
+    pub neu_sha256: String,
+    /// SHA-256 der bisherigen Fassung, falls es sie gab; ihre Kopie liegt dann im
+    /// Papierkorb.
+    pub alt_sha256: Option<String>,
 }
 
 const TAUSCHPLAN: &str = ".zurueckspielen.json";
-const TAUSCHPLAN_VERSION: u32 = 1;
+const TAUSCHPLAN_VERSION: u32 = 2;
 const STUFE_PRAEFIX: &str = ".zurueck-";
 
 fn tauschplan_pfad(data: &Path) -> PathBuf {
     data.join(SICHERUNGEN).join(TAUSCHPLAN)
 }
 
+/// `<praefix><ziffern>` (Ordnernamen, die nur das Zurückspielen anlegt).
+fn ziffern_nach(name: &str, praefix: &str) -> bool {
+    name.strip_prefix(praefix)
+        .is_some_and(|z| !z.is_empty() && z.chars().all(|c| c.is_ascii_digit()))
+}
+
+/// Seitenordner als Einheit: `projects/<seite>` oder `library/<buch>/fassungen/<seite>`.
+fn ordner_einheit(rel: &str) -> bool {
+    sicherer_rel(rel).is_ok()
+        && einheit(rel).is_ok_and(|e| e == rel)
+        && seite_der_einheit(rel).is_some()
+}
+
+/// Datei als Einheit: `projects/index.json` oder `library/<buch>/buch.json`.
+fn datei_einheit_genau(rel: &str) -> bool {
+    sicherer_rel(rel).is_ok()
+        && einheit(rel).is_ok_and(|e| e == rel)
+        && seite_der_einheit(rel).is_none()
+}
+
+fn sha_gueltig(sha: &str) -> bool {
+    sha.len() == 64 && sha.chars().all(|c| c.is_ascii_hexdigit())
+}
+
 impl Tauschplan {
-    /// Ein Plan von der Platte ist nicht vertrauenswürdig: jeder Pfad muss eine Einheit
-    /// der Ablage sein, Zwischenordner und Papierkorb müssen unter `sicherungen/` liegen.
+    /// Ein Plan von der Platte ist nicht vertrauenswürdig: Zwischenordner und Papierkorb
+    /// haben genau die Form, die nur das Zurückspielen anlegt (nie eine Sicherung), jede
+    /// Rolle passt zu ihrer Einheit, und Prüfsummen sind wohlgeformt.
     fn pruefen(&self) -> Result<(), String> {
+        let fehler = |was: &str| Err(format!("Tauschplan abgewiesen: {was}"));
         if self.version != TAUSCHPLAN_VERSION {
-            return Err(format!(
-                "Unbekannte Version des Tauschplans ({})",
-                self.version
-            ));
+            return fehler("unbekannte Version");
         }
-        let unter = |rel: &str, praefix: &str| -> Result<(), String> {
-            sicherer_rel(rel)?;
-            let teile: Vec<&str> = rel.split('/').collect();
-            match teile.as_slice() {
-                [SICHERUNGEN, name] if name.starts_with(praefix) => Ok(()),
-                [SICHERUNGEN, PAPIERKORB, name] if praefix.is_empty() && !name.is_empty() => Ok(()),
-                _ => Err(format!("Unzulässiger Ordner im Tauschplan: {rel}")),
-            }
+        let stufe_ok = match self.stufe.split('/').collect::<Vec<_>>().as_slice() {
+            [SICHERUNGEN, name] => ziffern_nach(name, STUFE_PRAEFIX),
+            _ => false,
         };
-        unter(&self.stufe, STUFE_PRAEFIX)?;
+        if !stufe_ok || sicherer_rel(&self.stufe).is_err() {
+            return fehler("Zwischenordner");
+        }
         if let Some(korb) = &self.korb {
-            unter(korb, "")?;
-        }
-        let einheit_genau = |rel: &str| -> Result<(), String> {
-            sicherer_rel(rel)?;
-            if einheit(rel)? == rel {
-                Ok(())
-            } else {
-                Err(format!("Unzulässiger Pfad im Tauschplan: {rel}"))
+            let korb_ok = match korb.split('/').collect::<Vec<_>>().as_slice() {
+                [SICHERUNGEN, PAPIERKORB, name] => ziffern_nach(name, ""),
+                _ => false,
+            };
+            if !korb_ok || sicherer_rel(korb).is_err() {
+                return fehler("Papierkorb");
             }
-        };
-        for rel in self
-            .weichen
-            .iter()
-            .chain(self.hin.iter())
-            .chain(self.dateien.iter().map(|d| &d.pfad))
-        {
-            einheit_genau(rel)?;
+        }
+        if !self.weichen.iter().all(|r| ordner_einheit(r)) {
+            return fehler("weichende Ordner");
+        }
+        if !self.hin.iter().all(|r| ordner_einheit(r)) {
+            return fehler("eingesetzte Ordner");
+        }
+        let dateien_ok = self.dateien.iter().all(|d| {
+            datei_einheit_genau(&d.pfad)
+                && sha_gueltig(&d.neu_sha256)
+                && d.alt_sha256.as_deref().is_none_or(sha_gueltig)
+        });
+        if !dateien_ok {
+            return fehler("Dateien");
+        }
+        let braucht_korb =
+            !self.weichen.is_empty() || self.dateien.iter().any(|d| d.alt_sha256.is_some());
+        if braucht_korb && self.korb.is_none() {
+            return fehler("Papierkorb fehlt");
         }
         Ok(())
     }
@@ -1324,36 +1372,94 @@ fn tauschplan_laden(data: &Path) -> Result<Option<Tauschplan>, String> {
     Ok(Some(plan))
 }
 
-/// Den Tausch anhand des Plattenstands zurücknehmen (idempotent): ersetzte Dateien
-/// erhalten ihre alte Fassung, eingesetzte Ordner gehen in den Zwischenordner zurück,
-/// gewichene Ordner aus dem Papierkorb an ihren Ort. Ob ein Schritt geschehen ist, zeigt
-/// die Platte: was nicht mehr im Zwischenordner liegt, wurde eingesetzt.
-fn tausch_zuruecknehmen(data: &Path, plan: &Tauschplan) -> Vec<String> {
+fn tauschplan_schreiben(data: &Path, plan: &Tauschplan) -> Result<(), String> {
+    let bytes = serde_json::to_vec_pretty(plan).map_err(|e| e.to_string())?;
+    schreibe_atomar(&tauschplan_pfad(data), &bytes)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Nur für Tests: beim Schritt mit dieser Nummer „stürzt der Prozess ab“ (der Lauf
+    /// endet ohne weitere Rücknahme, der Plan bleibt liegen). Gezählt wird je Lauf über
+    /// Tausch, Rücknahme und Aufräumen.
+    static ABSTURZ_NACH: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+    static SCHRITTE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Nur für Tests: dieser Schritt scheitert gewöhnlich (ohne Absturz).
+    static FEHLER_BEI: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+}
+#[cfg(test)]
+const ABSTURZ: &str = "Absturz (Test)";
+
+fn absturz_probe() -> Result<(), String> {
+    #[cfg(test)]
+    {
+        let n = SCHRITTE.with(|s| {
+            let n = s.get();
+            s.set(n + 1);
+            n
+        });
+        if ABSTURZ_NACH.with(|a| a.get()) == Some(n) {
+            return Err(ABSTURZ.to_string());
+        }
+        if FEHLER_BEI.with(|f| f.get()) == Some(n) {
+            return Err("Fehler (Test)".to_string());
+        }
+    }
+    Ok(())
+}
+
+fn ist_absturz(_e: &str) -> bool {
+    #[cfg(test)]
+    if _e == ABSTURZ {
+        return true;
+    }
+    false
+}
+
+/// Den Tausch anhand des Plattenstands zurücknehmen (idempotent, solange Zwischenordner
+/// und Papierkorb unangetastet sind, und das sind sie bis zum Stand `zurueckgenommen`).
+/// Ersetzte Dateien bekommen ihre alte Fassung nur zurück, wenn am Ort genau die neue
+/// liegt; eingesetzte Ordner gehen in den Zwischenordner, gewichene aus dem Papierkorb
+/// an ihren Ort, nie über etwas Vorhandenes. `Err` nur beim simulierten Absturz.
+fn tausch_zuruecknehmen(data: &Path, plan: &Tauschplan) -> Result<Vec<String>, String> {
     let stufe = absolut(data, &plan.stufe);
     let korb = plan.korb.as_ref().map(|k| absolut(data, k));
     let mut fehler = Vec::new();
     for datei in plan.dateien.iter().rev() {
+        absturz_probe()?;
         let ort = absolut(data, &datei.pfad);
         if vorhanden(&absolut(&stufe, &datei.pfad)) {
             continue; // nicht ersetzt
         }
-        let r = if datei.alt {
-            match &korb {
-                Some(korb) => fs::read(absolut(korb, &datei.pfad))
-                    .map_err(|e| e.to_string())
-                    .and_then(|b| schreibe_atomar(&ort, &b)),
-                None => Err("Papierkorb fehlt".to_string()),
+        let am_ort = pruefsumme(&ort).ok().map(|(_, sha)| sha);
+        if am_ort.as_deref() != Some(datei.neu_sha256.as_str()) {
+            // Schon zurückgenommen (oder seither geändert): nichts anfassen.
+            if am_ort.is_some() && am_ort != datei.alt_sha256 {
+                fehler.push(format!(
+                    "{} wurde seither geändert; unverändert gelassen",
+                    datei.pfad
+                ));
             }
-        } else if vorhanden(&ort) {
-            fs::remove_file(&ort).map_err(|e| e.to_string())
-        } else {
-            Ok(())
+            continue;
+        }
+        let r = match (&datei.alt_sha256, &korb) {
+            (Some(alt), Some(korb)) => {
+                let kopie = absolut(korb, &datei.pfad);
+                match fs::read(&kopie) {
+                    Ok(b) if hex(&Sha256::digest(&b)) == *alt => schreibe_atomar(&ort, &b),
+                    Ok(_) => Err("Kopie im Papierkorb stimmt nicht".to_string()),
+                    Err(e) => Err(e.to_string()),
+                }
+            }
+            (Some(_), None) => Err("Papierkorb fehlt".to_string()),
+            (None, _) => fs::remove_file(&ort).map_err(|e| e.to_string()),
         };
         if let Err(e) = r {
             fehler.push(format!("{}: {e}", datei.pfad));
         }
     }
     for rel in plan.hin.iter().rev() {
+        absturz_probe()?;
         let gestuft = absolut(&stufe, rel);
         let ort = absolut(data, rel);
         if !vorhanden(&gestuft) && vorhanden(&ort) {
@@ -1368,72 +1474,86 @@ fn tausch_zuruecknehmen(data: &Path, plan: &Tauschplan) -> Vec<String> {
     }
     if let Some(korb) = &korb {
         for rel in plan.weichen.iter().rev() {
+            absturz_probe()?;
             let gewichen = absolut(korb, rel);
             let ort = absolut(data, rel);
-            if vorhanden(&gewichen) && !vorhanden(&ort) {
-                let r = ort
-                    .parent()
-                    .map_or(Ok(()), fs::create_dir_all)
-                    .and_then(|()| fs::rename(&gewichen, &ort));
-                if let Err(e) = r {
-                    fehler.push(format!("{rel}: {e}"));
-                }
+            if !vorhanden(&gewichen) {
+                continue;
+            }
+            if vorhanden(&ort) {
+                fehler.push(format!(
+                    "{rel} ist belegt; die alte Fassung bleibt im Papierkorb"
+                ));
+                continue;
+            }
+            let r = ort
+                .parent()
+                .map_or(Ok(()), fs::create_dir_all)
+                .and_then(|()| fs::rename(&gewichen, &ort));
+            if let Err(e) = r {
+                fehler.push(format!("{rel}: {e}"));
             }
         }
     }
-    fehler
+    Ok(fehler)
 }
 
-/// Nach erfolgreicher Rücknahme aufräumen: Zwischenordner, Papierkorb (er hält dann nur
-/// noch Kopien) und zuletzt den Plan.
+/// Aufräumen nach dem festgehaltenen Stand und zuletzt den Plan entfernen. `fertig`:
+/// nur der Zwischenordner geht; `zurueckgenommen`: auch der Papierkorb (er hält dann nur
+/// noch Kopien). Ein Abbruch hier wiederholt beim nächsten Start nur das Aufräumen.
 fn tausch_aufraeumen(data: &Path, plan: &Tauschplan) -> Result<(), String> {
-    let _ = fs::remove_dir_all(absolut(data, &plan.stufe));
-    if let Some(korb) = &plan.korb {
-        let _ = fs::remove_dir_all(absolut(data, korb));
+    absturz_probe()?;
+    let stufe = absolut(data, &plan.stufe);
+    if vorhanden(&stufe) {
+        fs::remove_dir_all(&stufe).map_err(|e| format!("Zwischenordner: {e}"))?;
     }
+    if plan.stand == TauschStand::Zurueckgenommen {
+        absturz_probe()?;
+        if let Some(korb) = &plan.korb {
+            let korb = absolut(data, korb);
+            if vorhanden(&korb) {
+                fs::remove_dir_all(&korb).map_err(|e| format!("Papierkorb: {e}"))?;
+            }
+        }
+    }
+    absturz_probe()?;
     fs::remove_file(tauschplan_pfad(data)).map_err(|e| format!("Tauschplan: {e}"))?;
     ordner_sync(&data.join(SICHERUNGEN));
     Ok(())
 }
 
+/// Zurücknehmen, den Stand `zurueckgenommen` festhalten, aufräumen.
+fn zuruecknehmen_und_aufraeumen(data: &Path, mut plan: Tauschplan) -> Result<(), String> {
+    if plan.stand == TauschStand::Laeuft {
+        let fehler = tausch_zuruecknehmen(data, &plan)?;
+        if !fehler.is_empty() {
+            return Err(format!(
+                "Nicht alles ließ sich zurücknehmen ({}); Zwischenordner, Papierkorb und \
+                 Tauschplan bleiben erhalten, der nächste Start versucht es erneut.",
+                fehler.join("; ")
+            ));
+        }
+        absturz_probe()?;
+        plan.stand = TauschStand::Zurueckgenommen;
+        tauschplan_schreiben(data, &plan)?;
+    }
+    tausch_aufraeumen(data, &plan)
+}
+
 /// Beim Start, vor Bibliothek, Sync und dem Wiederanlauf der Migration: ein
-/// unterbrochenes Zurückspielen zurücknehmen. `Ok(true)`: es gab eines, der vorige Stand
-/// ist wiederhergestellt. Ein Fehler lässt Plan, Zwischenordner und Papierkorb liegen
-/// (der nächste Start versucht es erneut); dann soll nichts weiter umgebaut werden.
+/// unterbrochenes Zurückspielen abschließen. Stand `laeuft`: zurücknehmen; `fertig` oder
+/// `zurueckgenommen`: nur aufräumen. `Ok(true)`: es gab eines. Ein Fehler lässt alles
+/// liegen (der nächste Start versucht es erneut); dann soll nichts weiter umgebaut werden.
 pub fn zurueckspielen_wiederanlauf(data: &Path) -> Result<bool, String> {
     let Some(plan) = tauschplan_laden(data)? else {
         return Ok(false);
     };
-    let fehler = tausch_zuruecknehmen(data, &plan);
-    if !fehler.is_empty() {
-        return Err(format!(
-            "Unterbrochenes Zurückspielen ließ sich nicht vollständig zurücknehmen: {}",
-            fehler.join("; ")
-        ));
-    }
-    tausch_aufraeumen(data, &plan)?;
+    zuruecknehmen_und_aufraeumen(data, plan)?;
     Ok(true)
 }
 
-#[cfg(test)]
-thread_local! {
-    /// Nur für Tests: nach so vielen Tauschschritten „stürzt der Prozess ab“ (der Tausch
-    /// endet ohne Rücknahme, der Plan bleibt liegen).
-    static ABSTURZ_NACH: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
-}
-#[cfg(test)]
-const ABSTURZ: &str = "Absturz (Test)";
-
-fn absturz_probe(_schritt: usize) -> Result<(), String> {
-    #[cfg(test)]
-    if ABSTURZ_NACH.with(|a| a.get()) == Some(_schritt) {
-        return Err(ABSTURZ.to_string());
-    }
-    Ok(())
-}
-
 /// Den Tausch nach Plan ausführen. Jeder Schritt prüft sein Ziel; überschrieben wird nur
-/// eine Datei-Einheit, deren alte Fassung schon als Kopie im Papierkorb liegt.
+/// eine Datei-Einheit, deren alte Fassung schon geprüft als Kopie im Papierkorb liegt.
 fn tausch_ausfuehren(data: &Path, plan: &Tauschplan) -> Result<(), String> {
     let stufe = absolut(data, &plan.stufe);
     let korb = plan.korb.as_ref().map(|k| absolut(data, k));
@@ -1450,17 +1570,14 @@ fn tausch_ausfuehren(data: &Path, plan: &Tauschplan) -> Result<(), String> {
         }
         Ok(nach)
     };
-    let mut schritt = 0usize;
     for rel in &plan.weichen {
-        absturz_probe(schritt)?;
-        schritt += 1;
+        absturz_probe()?;
         let nach = korb_ziel(rel)?;
         fs::rename(absolut(data, rel), &nach)
             .map_err(|e| format!("{rel} ließ sich nicht in den Papierkorb legen: {e}"))?;
     }
     for rel in &plan.hin {
-        absturz_probe(schritt)?;
-        schritt += 1;
+        absturz_probe()?;
         let ort = absolut(data, rel);
         if vorhanden(&ort) {
             return Err(format!("{rel} ist noch belegt; nichts überschrieben."));
@@ -1472,16 +1589,25 @@ fn tausch_ausfuehren(data: &Path, plan: &Tauschplan) -> Result<(), String> {
             .map_err(|e| format!("{rel} ließ sich nicht anlegen: {e}"))?;
     }
     for datei in &plan.dateien {
-        absturz_probe(schritt)?;
-        schritt += 1;
+        absturz_probe()?;
         let ort = absolut(data, &datei.pfad);
-        if datei.alt {
-            kopieren_mit_pruefsumme(&ort, &korb_ziel(&datei.pfad)?)?;
-        } else if vorhanden(&ort) {
-            return Err(format!(
-                "{} ist inzwischen belegt; nichts überschrieben.",
-                datei.pfad
-            ));
+        match &datei.alt_sha256 {
+            Some(alt) => {
+                let (_, sha) = kopieren_mit_pruefsumme(&ort, &korb_ziel(&datei.pfad)?)?;
+                if sha != *alt {
+                    return Err(format!(
+                        "{} hat sich seit der Planung geändert; nichts ersetzt.",
+                        datei.pfad
+                    ));
+                }
+            }
+            None if vorhanden(&ort) => {
+                return Err(format!(
+                    "{} ist inzwischen belegt; nichts überschrieben.",
+                    datei.pfad
+                ));
+            }
+            None => {}
         }
         if let Some(eltern) = ort.parent() {
             fs::create_dir_all(eltern).map_err(|e| format!("{}: {e}", datei.pfad))?;
@@ -1490,7 +1616,7 @@ fn tausch_ausfuehren(data: &Path, plan: &Tauschplan) -> Result<(), String> {
             .map_err(|e| format!("{} ließ sich nicht ersetzen: {e}", datei.pfad))?;
         ordner_sync(ort.parent().unwrap_or(data));
     }
-    absturz_probe(schritt)
+    absturz_probe()
 }
 
 /// Sicherung zurückspielen (4.2), so dass nie ein halber Stand entsteht:
@@ -1620,16 +1746,31 @@ pub fn sicherung_zurueckspielen(
         .filter(|e| !datei_einheit(e) && absolut(&stufe, e).is_dir())
         .cloned()
         .collect();
-    let mut dateien: Vec<PlanDatei> = einheiten
+    let mut dateien: Vec<PlanDatei> = Vec::new();
+    for e in einheiten
         .iter()
         .filter(|e| datei_einheit(e) && absolut(&stufe, e).is_file())
-        .map(|e| PlanDatei {
-            pfad: e.clone(),
-            alt: vorhanden(&absolut(data, e)),
-        })
-        .collect();
+    {
+        let neu = pruefsumme(&absolut(&stufe, e)).map(|(_, sha)| sha);
+        let alt = if vorhanden(&absolut(data, e)) {
+            pruefsumme(&absolut(data, e)).map(|(_, sha)| Some(sha))
+        } else {
+            Ok(None)
+        };
+        match (neu, alt) {
+            (Ok(neu_sha256), Ok(alt_sha256)) => dateien.push(PlanDatei {
+                pfad: e.clone(),
+                neu_sha256,
+                alt_sha256,
+            }),
+            (Err(f), _) | (_, Err(f)) => {
+                let _ = fs::remove_dir_all(&stufe);
+                return Err(format!("Zurückspielen nicht begonnen: {e}: {f}"));
+            }
+        }
+    }
     dateien.sort_by_key(|d| d.pfad == index_rel);
-    let korb = if !weichen.is_empty() || dateien.iter().any(|d| d.alt) {
+    let korb = if !weichen.is_empty() || dateien.iter().any(|d| d.alt_sha256.is_some()) {
         match neuer_ordner(&data.join(SICHERUNGEN).join(PAPIERKORB), "") {
             Ok(korb) => {
                 let _ = fs::write(korb.join(PAPIERKORB_STEMPEL), jetzt_ms().to_string());
@@ -1643,8 +1784,9 @@ pub fn sicherung_zurueckspielen(
     } else {
         None
     };
-    let plan = Tauschplan {
+    let mut plan = Tauschplan {
         version: TAUSCHPLAN_VERSION,
+        stand: TauschStand::Laeuft,
         stufe: relativ(data, &stufe),
         korb: korb.as_ref().map(|k| relativ(data, k)),
         weichen: weichen.into_iter().collect(),
@@ -1652,10 +1794,10 @@ pub fn sicherung_zurueckspielen(
         dateien,
     };
     // Erst der Plan auf der Platte, dann die erste Änderung.
-    let geschrieben = serde_json::to_vec_pretty(&plan)
-        .map_err(|e| e.to_string())
-        .and_then(|b| schreibe_atomar(&tauschplan_pfad(data), &b));
-    if let Err(e) = geschrieben {
+    if let Err(e) = plan
+        .pruefen()
+        .and_then(|()| tauschplan_schreiben(data, &plan))
+    {
         let _ = fs::remove_dir_all(&stufe);
         if let Some(korb) = &korb {
             let _ = fs::remove_dir_all(korb);
@@ -1665,29 +1807,30 @@ pub fn sicherung_zurueckspielen(
 
     // 4. Tauschen; scheitert ein Schritt, wird nach Plan zurückgenommen.
     if let Err(e) = tausch_ausfuehren(data, &plan) {
-        #[cfg(test)]
-        if e == ABSTURZ {
+        if ist_absturz(&e) {
             return Err(e);
         }
-        let offen = tausch_zuruecknehmen(data, &plan);
-        if offen.is_empty() && tausch_aufraeumen(data, &plan).is_ok() {
-            return Err(format!(
+        return match zuruecknehmen_und_aufraeumen(data, plan) {
+            Ok(()) => Err(format!(
                 "Zurückspielen abgebrochen ({e}); der vorige Stand ist wiederhergestellt."
-            ));
-        }
-        return Err(format!(
-            "Zurückspielen abgebrochen ({e}). Nicht alles ließ sich zurücknehmen ({}); \
-             der nächste Start versucht es erneut.",
-            offen.join("; ")
-        ));
+            )),
+            Err(f) if ist_absturz(&f) => Err(f),
+            Err(f) => Err(format!("Zurückspielen abgebrochen ({e}). {f}")),
+        };
     }
-    // Abschluss: der Plan verschwindet, danach wird aufgeräumt.
-    fs::remove_file(tauschplan_pfad(data)).map_err(|e| format!("Tauschplan: {e}"))?;
-    ordner_sync(&data.join(SICHERUNGEN));
-    let _ = fs::remove_dir_all(&stufe);
+    // Abschluss: erst `fertig` auf der Platte, dann nur noch aufräumen.
+    plan.stand = TauschStand::Fertig;
+    tauschplan_schreiben(data, &plan)?;
+    let korb = plan.korb.clone();
+    if let Err(e) = tausch_aufraeumen(data, &plan) {
+        if ist_absturz(&e) {
+            return Err(e);
+        }
+        log::warn!("Buch-Ordner: Aufräumen nach dem Zurückspielen unvollständig: {e}");
+    }
     Ok(Wiederherstellung {
         dateien: manifest.dateien.len(),
-        papierkorb: plan.korb,
+        papierkorb: korb,
     })
 }
 
@@ -2804,34 +2947,27 @@ mod tests {
 
     #[test]
     fn zurueckspielen_nimmt_den_tausch_bei_einem_fehler_zurueck() {
-        let data = standardlage("zurueck-fehler");
-        migrieren(&data, &optionen()).unwrap();
-        let name = sicherungen_auflisten(&data)[0].name.clone();
-        // Ein Ordner statt buch.json: das Ersetzen der Datei scheitert nach dem Tausch der
-        // Seitenordner.
-        let buch_json = data.join("library/book_1/buch.json");
-        let buch_roh = fs::read(&buch_json).unwrap();
-        fs::remove_file(&buch_json).unwrap();
-        fs::create_dir_all(&buch_json).unwrap();
-        let index_vorher = index_roh(&data);
-        let fehler = sicherung_zurueckspielen(&data, &name, None).unwrap_err();
-        assert!(fehler.contains("vorige Stand"), "{fehler}");
-        assert_eq!(index_roh(&data), index_vorher);
-        assert!(data
-            .join("library/book_1/fassungen/page_1/state.json")
-            .is_file());
-        assert!(!data.join("projects/page_1").exists());
-        assert!(!data
-            .join(SICHERUNGEN)
-            .join(PAPIERKORB)
-            .read_dir()
-            .map(|mut d| d.next().is_some())
-            .unwrap_or(false));
-        assert!(!unterordner(&data.join(SICHERUNGEN))
-            .iter()
-            .any(|n| n.starts_with(".zurueck-")));
-        fs::remove_dir(&buch_json).unwrap();
-        fs::write(&buch_json, buch_roh).unwrap();
+        let mut geprueft = 0;
+        for n in 0..80 {
+            let data = standardlage(&format!("zurueck-fehler-{n}"));
+            migrieren(&data, &optionen()).unwrap();
+            let name = sicherungen_auflisten(&data)[0].name.clone();
+            let vorher = stand(&data);
+            FEHLER_BEI.with(|f| f.set(Some(n)));
+            SCHRITTE.with(|z| z.set(0));
+            let r = sicherung_zurueckspielen(&data, &name, None);
+            FEHLER_BEI.with(|f| f.set(None));
+            let Err(fehler) = r else { break };
+            geprueft += 1;
+            assert!(fehler.contains("vorige Stand"), "Schritt {n}: {fehler}");
+            assert_eq!(stand(&data), vorher, "Schritt {n}");
+            assert!(!tauschplan_pfad(&data).exists());
+            assert!(!unterordner(&data.join(SICHERUNGEN))
+                .iter()
+                .any(|d| d.starts_with(STUFE_PRAEFIX)));
+            assert!(unterordner(&data.join(SICHERUNGEN).join(PAPIERKORB)).is_empty());
+        }
+        assert!(geprueft >= 5, "{geprueft} Fehlerstellen");
     }
 
     /// Alle Dateien außerhalb von `sicherungen/` samt Inhalt.
@@ -2839,7 +2975,8 @@ mod tests {
         fn sammeln(data: &Path, dir: &Path, aus: &mut BTreeMap<String, Vec<u8>>) {
             for e in fs::read_dir(dir).unwrap().flatten() {
                 let p = e.path();
-                if p == data.join(SICHERUNGEN) {
+                // Das Journal nennt die Sicherung mit Zeitstempel: es zählt nicht mit.
+                if p == data.join(SICHERUNGEN) || p == journal_pfad(data) {
                     continue;
                 }
                 if p.is_dir() {
@@ -2854,63 +2991,166 @@ mod tests {
         aus
     }
 
+    fn absturz_bei(schritt: Option<usize>) {
+        ABSTURZ_NACH.with(|a| a.set(schritt));
+        SCHRITTE.with(|s| s.set(0));
+    }
+
+    fn keine_zwischenstaende(data: &Path) {
+        assert!(!tauschplan_pfad(data).exists(), "Plan entfernt");
+        assert!(!unterordner(&data.join(SICHERUNGEN))
+            .iter()
+            .any(|n| n.starts_with(STUFE_PRAEFIX)));
+    }
+
+    /// Abbruch an jeder Stelle des Tauschs, dann beim Start an jeder Stelle der
+    /// Rücknahme bzw. des Aufräumens, bis ein Start durchläuft: am Ende liegt genau der
+    /// vorige Stand vor (Abbruch vor `fertig`) oder genau der zurückgespielte (danach).
     #[test]
-    fn abgebrochenes_zurueckspielen_wird_beim_start_zurueckgenommen() {
-        let mut abgestuerzt = 0;
-        for nach in 0..40 {
-            let data = standardlage(&format!("absturz-{nach}"));
+    fn zurueckspielen_ist_an_jeder_stelle_absturzfest() {
+        let referenz = standardlage("absturz-ref");
+        migrieren(&referenz, &optionen()).unwrap();
+        let name = sicherungen_auflisten(&referenz)[0].name.clone();
+        sicherung_zurueckspielen(&referenz, &name, None).unwrap();
+        let zurueckgespielt = stand(&referenz);
+        keine_zwischenstaende(&referenz);
+
+        let mut abbrueche = 0;
+        let mut nach_fertig = 0;
+        for n in 0..80 {
+            let data = standardlage(&format!("absturz-{n}"));
             migrieren(&data, &optionen()).unwrap();
             let name = sicherungen_auflisten(&data)[0].name.clone();
             let vorher = stand(&data);
-            ABSTURZ_NACH.with(|a| a.set(Some(nach)));
+            absturz_bei(Some(n));
             let r = sicherung_zurueckspielen(&data, &name, None);
-            ABSTURZ_NACH.with(|a| a.set(None));
+            absturz_bei(None);
             match r {
-                Err(e) if e == ABSTURZ => {
-                    abgestuerzt += 1;
-                    assert!(tauschplan_pfad(&data).is_file(), "Plan bleibt liegen");
-                    // Ein neuer Versuch und jede Bibliotheksaktion warten auf den Start.
-                    assert!(zurueckspielen_wiederanlauf(&data).unwrap());
-                    assert_eq!(stand(&data), vorher, "Schritt {nach}");
-                    assert!(!tauschplan_pfad(&data).exists());
-                    assert!(!unterordner(&data.join(SICHERUNGEN))
-                        .iter()
-                        .any(|n| n.starts_with(STUFE_PRAEFIX)));
-                    // Ein zweiter Start ändert nichts mehr.
-                    assert!(!zurueckspielen_wiederanlauf(&data).unwrap());
-                }
                 Ok(_) => {
-                    assert!(!tauschplan_pfad(&data).exists());
+                    assert_eq!(stand(&data), zurueckgespielt);
+                    keine_zwischenstaende(&data);
                     break;
                 }
-                Err(e) => panic!("Schritt {nach}: {e}"),
+                Err(e) if e == ABSTURZ => {}
+                Err(e) => panic!("Schritt {n}: {e}"),
             }
+            abbrueche += 1;
+            let plan = tauschplan_laden(&data).unwrap().expect("Plan liegt");
+            let erwartet = if plan.stand == TauschStand::Fertig {
+                nach_fertig += 1;
+                &zurueckgespielt
+            } else {
+                &vorher
+            };
+            let mut fertig = false;
+            for k in 0..80 {
+                absturz_bei(Some(k));
+                let w = zurueckspielen_wiederanlauf(&data);
+                absturz_bei(None);
+                match w {
+                    Ok(true) => {
+                        fertig = true;
+                        break;
+                    }
+                    Err(e) if e == ABSTURZ => {}
+                    other => panic!("Schritt {n}/{k}: {other:?}"),
+                }
+            }
+            assert!(fertig, "Schritt {n}: Wiederanlauf endet");
+            assert_eq!(&stand(&data), erwartet, "Schritt {n}");
+            keine_zwischenstaende(&data);
+            assert!(!zurueckspielen_wiederanlauf(&data).unwrap());
+            // Die Sicherung selbst ist unversehrt.
+            assert!(sicherung_pruefen(&data.join(SICHERUNGEN).join(&name)).is_ok());
         }
-        assert!(abgestuerzt >= 5, "{abgestuerzt} Abbruchstellen geprüft");
+        assert!(abbrueche >= 8, "{abbrueche} Abbruchstellen");
+        assert!(nach_fertig >= 1, "auch nach dem Abschluss abgebrochen");
     }
 
     #[test]
     fn manipulierter_tauschplan_wird_abgewiesen() {
         let data = standardlage("plan-boese");
-        let plan = Tauschplan {
+        migrieren(&data, &optionen()).unwrap();
+        let sicherung = sicherungen_auflisten(&data)[0].name.clone();
+        let index_vorher = index_roh(&data);
+        let sha = |c: char| c.to_string().repeat(64);
+        let gut = Tauschplan {
             version: TAUSCHPLAN_VERSION,
+            stand: TauschStand::Laeuft,
             stufe: "sicherungen/.zurueck-1".into(),
-            korb: Some("../aussen".into()),
-            weichen: vec!["projects/page_1".into()],
+            korb: Some("sicherungen/.papierkorb/1".into()),
+            weichen: vec!["projects/page_9".into()],
             hin: vec![],
             dateien: vec![],
         };
+        assert!(gut.pruefen().is_ok());
+        let boese = [
+            Tauschplan {
+                korb: Some(format!("sicherungen/{sicherung}")),
+                ..gut.clone()
+            },
+            Tauschplan {
+                korb: Some("sicherungen/.papierkorb/../buch-ordner-1".into()),
+                ..gut.clone()
+            },
+            Tauschplan {
+                stufe: format!("sicherungen/{sicherung}"),
+                ..gut.clone()
+            },
+            Tauschplan {
+                stufe: "sicherungen/.papierkorb/1".into(),
+                ..gut.clone()
+            },
+            Tauschplan {
+                weichen: vec!["projects/index.json".into()],
+                ..gut.clone()
+            },
+            Tauschplan {
+                hin: vec!["einstellungen.json".into()],
+                ..gut.clone()
+            },
+            Tauschplan {
+                dateien: vec![PlanDatei {
+                    pfad: "projects/page_9".into(),
+                    neu_sha256: sha('a'),
+                    alt_sha256: None,
+                }],
+                ..gut.clone()
+            },
+            Tauschplan {
+                dateien: vec![PlanDatei {
+                    pfad: "projects/index.json".into(),
+                    neu_sha256: "kurz".into(),
+                    alt_sha256: None,
+                }],
+                ..gut.clone()
+            },
+            Tauschplan {
+                korb: None,
+                ..gut.clone()
+            },
+        ];
         fs::create_dir_all(data.join(SICHERUNGEN)).unwrap();
-        fs::write(tauschplan_pfad(&data), serde_json::to_vec(&plan).unwrap()).unwrap();
-        assert!(zurueckspielen_wiederanlauf(&data).is_err());
-        assert!(data.join("projects/page_1").is_dir());
+        for plan in &boese {
+            fs::write(tauschplan_pfad(&data), serde_json::to_vec(plan).unwrap()).unwrap();
+            assert!(zurueckspielen_wiederanlauf(&data).is_err(), "{plan:?}");
+        }
+        // Formal gültig, aber der Index am Ort ist nicht die neue Fassung des Plans: er
+        // bleibt unangetastet, obwohl die Stufendatei fehlt.
         let plan = Tauschplan {
-            korb: Some("sicherungen/.papierkorb/1".into()),
-            weichen: vec!["einstellungen.json".into()],
-            ..plan
+            weichen: vec![],
+            dateien: vec![PlanDatei {
+                pfad: "projects/index.json".into(),
+                neu_sha256: sha('b'),
+                alt_sha256: None,
+            }],
+            ..gut.clone()
         };
         fs::write(tauschplan_pfad(&data), serde_json::to_vec(&plan).unwrap()).unwrap();
-        assert!(zurueckspielen_wiederanlauf(&data).is_err());
+        let _ = zurueckspielen_wiederanlauf(&data);
+        assert_eq!(index_roh(&data), index_vorher);
+        assert!(data.join("library/book_1/fassungen/page_1").is_dir());
+        assert!(sicherung_pruefen(&data.join(SICHERUNGEN).join(&sicherung)).is_ok());
     }
 
     #[test]

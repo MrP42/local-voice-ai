@@ -19,7 +19,13 @@ pub const MAX_TURNS: usize = 200;
 /// Verlaufsänderungen laufen nacheinander (Lesen, Ändern, Schreiben).
 static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// Fachsperre: nie unter der Seitensperre nehmen (Reihenfolge siehe
+/// `commands::pages::lock`).
 fn lock() -> std::sync::MutexGuard<'static, ()> {
+    debug_assert!(
+        !crate::commands::pages::gehalten(),
+        "Gesprächsverlauf-Sperre nicht unter der Seitensperre"
+    );
     LOCK.lock().unwrap_or_else(|e| e.into_inner())
 }
 

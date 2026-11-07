@@ -59,6 +59,23 @@ impl Drop for PagesGuard {
     }
 }
 
+/// Hält dieser Thread die Seitensperre? Für Zusicherungen der Sperrreihenfolge.
+pub(crate) fn gehalten() -> bool {
+    PAGES_LOCK_DEPTH.with(|d| d.get()) > 0
+}
+
+/// Seitensperre nehmen (je Thread wiedereintrittsfähig).
+///
+/// Sperrreihenfolge der App (außen → innen); wer sie verlässt, riskiert eine
+/// Verklemmung:
+/// 1. Sync-Laufsperre (`run_lock`)
+/// 2. Bibliothekssperre (`library::sync_lock`) und Buchsperren
+/// 3. Fachsperren von book_ai: Begriffe (`TERMS_LOCK`), Gesprächsverlauf
+///    (`talk::store::LOCK`). Sie werden nie unter der Seitensperre genommen.
+/// 4. Seitensperre (diese)
+/// 5. Dokumentindex von book_ai (`store::INDEX_LOCK`), nur unter der Seitensperre.
+///
+/// Die Stufen 3 und 5 sichern `debug_assert`s an ihren Sperrfunktionen ab.
 pub(crate) fn lock() -> PagesGuard {
     if PAGES_LOCK_DEPTH.with(|d| d.get()) == 0 {
         let guard = PAGES_LOCK.lock().unwrap_or_else(|e| e.into_inner());

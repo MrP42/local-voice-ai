@@ -451,7 +451,13 @@ pub fn book_ai_document_delete(app: AppHandle, page_id: String, id: String) -> R
 /// `begriffe.json` wird vom Lauf und von Nutzerkorrekturen geschrieben.
 static TERMS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// Fachsperre: nie unter der Seitensperre nehmen (Reihenfolge siehe
+/// `commands::pages::lock`).
 fn terms_lock() -> std::sync::MutexGuard<'static, ()> {
+    debug_assert!(
+        !crate::commands::pages::gehalten(),
+        "TERMS_LOCK nicht unter der Seitensperre"
+    );
     TERMS_LOCK.lock().unwrap_or_else(|e| e.into_inner())
 }
 

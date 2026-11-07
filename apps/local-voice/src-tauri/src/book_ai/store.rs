@@ -21,7 +21,13 @@ use crate::commands::pages::write_atomic;
 /// Oberfläche dürfen sich nicht gegenseitig überschreiben.
 static INDEX_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// Innerste Sperre: nur unter der Seitensperre (Reihenfolge siehe
+/// `commands::pages::lock`).
 fn lock() -> std::sync::MutexGuard<'static, ()> {
+    debug_assert!(
+        crate::commands::pages::gehalten(),
+        "INDEX_LOCK nur unter der Seitensperre"
+    );
     INDEX_LOCK.lock().unwrap_or_else(|e| e.into_inner())
 }
 
@@ -245,6 +251,31 @@ pub fn delete(page_dir: &Path, id: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Schreiben unter der Seitensperre ist verschachtelt wiedereintrittsfähig
+    /// (create → im_seitenordner → unterordner_anlegen → im_seitenordner), und
+    /// eine verschobene Seite entsteht nicht am alten Ort neu.
+    #[test]
+    fn schreiben_unter_seitensperre_ist_verschachtelt_und_legt_keine_seite_an() {
+        let dir = tempfile::tempdir().unwrap();
+        let page = dir.path().join("page_1");
+        std::fs::create_dir_all(&page).unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let p = page.clone();
+        std::thread::spawn(move || {
+            let r = create(&p, doc(), "Text");
+            tx.send(r.is_ok()).unwrap();
+        });
+        assert!(rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("keine Verklemmung"));
+        assert!(!crate::commands::pages::gehalten(), "Sperre freigegeben");
+        let weg = dir.path().join("page_2");
+        assert!(create(&weg, doc(), "Text").is_err());
+        assert!(!weg.exists(), "kein Geist-Ordner");
+        assert!(crate::book_ai::terms::save(&weg, &Default::default()).is_err());
+        assert!(!weg.exists());
+    }
 
     fn doc() -> KiDocument {
         KiDocument {
