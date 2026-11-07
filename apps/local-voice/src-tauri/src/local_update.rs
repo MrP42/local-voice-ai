@@ -221,7 +221,7 @@ impl Watch {
 
 type DictationState = std::sync::Arc<crate::managers::audio::AudioRecordingManager>;
 type MeetingState = std::sync::Arc<crate::managers::meetings::recorder::MeetingRecorderManager>;
-type TtsState = crate::managers::tts::TtsManager;
+type TtsState = std::sync::Arc<crate::managers::tts::TtsManager>;
 
 /// Belegt beim Start des Waechters, dass die Sperr-Zustaende unter genau
 /// diesen Typen registriert sind; sonst fiele der Schutz still aus.
