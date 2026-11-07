@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import {
@@ -41,6 +41,8 @@ const isNoSync = (error: string) =>
 
 /** Phasen, in denen eine Neuordnung offen ist (Spec 4.3). */
 const OPEN_PHASES = new Set(["geplant", "gesichert", "rueckfall"]);
+/** Touch-Ziel ≥ 44 px auf schmalen und groben Zeigegeräten. */
+const TOUCH = "max-sm:min-h-[44px] pointer-coarse:min-h-[44px]";
 
 export const LibraryLayoutSettings: React.FC<{ grouped?: boolean }> = ({
   grouped = true,
@@ -94,8 +96,10 @@ export const LibraryLayoutSettings: React.FC<{ grouped?: boolean }> = ({
           },
     );
 
+  const running = useRef(false);
   const run = async () => {
-    if (!pending) return;
+    if (!pending || running.current) return;
+    running.current = true;
     const job = pending;
     setBusy(true);
     setNotice(null);
@@ -147,6 +151,7 @@ export const LibraryLayoutSettings: React.FC<{ grouped?: boolean }> = ({
           });
       }
     } finally {
+      running.current = false;
       setBusy(false);
       setPending(null);
       void load();
@@ -154,6 +159,8 @@ export const LibraryLayoutSettings: React.FC<{ grouped?: boolean }> = ({
   };
 
   const openPhase = status?.phase != null && OPEN_PHASES.has(status.phase);
+  // Ein angehaltener Rückfall wird per Rückfall fortgesetzt, nie per Neuordnung.
+  const rollbackOpen = status?.phase === "rueckfall";
   const shownProblems =
     problems.length > 0 ? problems : (status?.probleme ?? []);
   const stopped = shownProblems.length > 0;
@@ -229,7 +236,7 @@ export const LibraryLayoutSettings: React.FC<{ grouped?: boolean }> = ({
               <Button
                 variant="secondary"
                 size="sm"
-                className="mt-2"
+                className={`mt-2 ${TOUCH}`}
                 onClick={() => void commands.openAppDataDir()}
               >
                 {t("settings.app.libraryLayout.openDataDir")}
@@ -239,18 +246,24 @@ export const LibraryLayoutSettings: React.FC<{ grouped?: boolean }> = ({
           <div className="flex flex-wrap gap-2">
             {status && (status.zu_verschieben > 0 || openPhase) && (
               <Button
-                onClick={() => setPending({ kind: "migrate" })}
+                className={TOUCH}
+                onClick={() =>
+                  setPending({ kind: rollbackOpen ? "rollback" : "migrate" })
+                }
                 disabled={busy}
                 data-testid="library-layout-open"
               >
-                {openPhase
-                  ? t("settings.app.libraryLayout.continue")
-                  : t("settings.app.libraryLayout.open")}
+                {rollbackOpen
+                  ? t("settings.app.libraryLayout.continueRollback")
+                  : openPhase
+                    ? t("settings.app.libraryLayout.continue")
+                    : t("settings.app.libraryLayout.open")}
               </Button>
             )}
-            {status && status.layout >= 2 && (
+            {status && !rollbackOpen && (status.layout >= 2 || openPhase) && (
               <Button
                 variant="secondary"
+                className={TOUCH}
                 onClick={() => setPending({ kind: "rollback" })}
                 disabled={busy}
                 data-testid="library-layout-rollback"
@@ -309,6 +322,7 @@ export const LibraryLayoutSettings: React.FC<{ grouped?: boolean }> = ({
                 <Button
                   variant="secondary"
                   size="sm"
+                  className={TOUCH}
                   disabled={busy}
                   onClick={() => setPending({ kind: "restore", backup: b })}
                 >
@@ -318,6 +332,7 @@ export const LibraryLayoutSettings: React.FC<{ grouped?: boolean }> = ({
                   <Button
                     variant="danger-ghost"
                     size="sm"
+                    className={TOUCH}
                     disabled={busy}
                     onClick={() => setPending({ kind: "delete", backup: b })}
                   >

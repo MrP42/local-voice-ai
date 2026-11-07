@@ -2887,6 +2887,7 @@
         "nothing": "Es gibt nichts zu ordnen.",
         "open": "Bibliothek neu ordnen …",
         "continue": "Neu ordnen fortsetzen",
+        "continueRollback": "Zurücknehmen fortsetzen",
         "rollback": "Alte Ordnung wiederherstellen …",
         "stoppedTitle": "Neu ordnen angehalten",
         "stoppedText": "Es wurde nichts überschrieben und nichts zurückgestellt. Alle anderen Bücher bleiben lesbar; Wiederherstellung aus der Sicherung ist möglich.",

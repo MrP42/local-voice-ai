@@ -1206,9 +1206,95 @@ pub fn sicherung_loeschen(data: &Path, name: &str) -> Result<(), String> {
         return Err("Die laufende Neuordnung braucht diese Sicherung; sie bleibt erhalten.".into());
     }
     ohne_umweg(data, &rel)?;
-    fs::remove_dir_all(&dir).map_err(|e| format!("Sicherung nicht löschbar: {e}"))?;
+    let manifest = fs::read(dir.join(MANIFEST)).ok();
+    // Erst in einen privaten Ordner umbenennen (das Umbenennen nimmt eine Verknüpfung
+    // selbst mit, nie ihr Ziel), dann den umbenannten Ordner prüfen und erst danach
+    // löschen. So kann zwischen Prüfung und Löschen niemand den Weg umbiegen.
+    let privat = privater_loeschort(data);
+    fs::rename(&dir, &privat).map_err(|e| format!("Sicherung nicht löschbar: {e}"))?;
+    let geprueft = loeschbar(&privat).and_then(|()| {
+        if fs::read(privat.join(MANIFEST)).ok() == manifest {
+            Ok(())
+        } else {
+            Err("Die Sicherung hat sich beim Löschen verändert; nichts gelöscht.".into())
+        }
+    });
+    if let Err(e) = geprueft {
+        let _ = fs::rename(&privat, &dir);
+        return Err(e);
+    }
+    fs::remove_dir_all(&privat).map_err(|e| format!("Sicherung nicht löschbar: {e}"))?;
+    reste_loeschen(data);
     let _ = ordner_sync(&data.join(SICHERUNGEN))?;
     Ok(())
+}
+
+/// Präfix des privaten Ordners, in den eine Sicherung vor dem Löschen umbenannt wird.
+const LOESCHEN_PRAEFIX: &str = ".loeschen-";
+
+/// Freier Name `sicherungen/.loeschen-<ms>` (nicht angelegt: das Umbenennen legt ihn an).
+fn privater_loeschort(data: &Path) -> PathBuf {
+    let mut ms = jetzt_ms();
+    loop {
+        let ort = data
+            .join(SICHERUNGEN)
+            .join(format!("{LOESCHEN_PRAEFIX}{ms}"));
+        if !vorhanden(&ort) {
+            return ort;
+        }
+        ms += 1;
+    }
+}
+
+/// Ein gewöhnlicher Ordner, in dem auf keiner Ebene eine Verknüpfung (Symlink, Junction,
+/// anderer Namensersatz-Reparse-Punkt) oder ein Sondereintrag liegt.
+fn loeschbar(dir: &Path) -> Result<(), String> {
+    let meta =
+        fs::symlink_metadata(dir).map_err(|e| format!("{} nicht lesbar: {e}", dir.display()))?;
+    if ist_umweg(&meta) || !meta.is_dir() {
+        return Err(format!(
+            "{} ist kein gewöhnlicher Ordner; nichts gelöscht.",
+            dir.display()
+        ));
+    }
+    let eintraege =
+        fs::read_dir(dir).map_err(|e| format!("{} nicht lesbar: {e}", dir.display()))?;
+    for eintrag in eintraege {
+        let pfad = eintrag
+            .map_err(|e| format!("{} nicht lesbar: {e}", dir.display()))?
+            .path();
+        let meta = fs::symlink_metadata(&pfad)
+            .map_err(|e| format!("{} nicht lesbar: {e}", pfad.display()))?;
+        if ist_umweg(&meta) {
+            return Err(format!(
+                "{} ist eine Verknüpfung; nichts gelöscht.",
+                pfad.display()
+            ));
+        }
+        if meta.is_dir() {
+            loeschbar(&pfad)?;
+        } else if !meta.is_file() {
+            return Err(format!(
+                "{} ist keine gewöhnliche Datei; nichts gelöscht.",
+                pfad.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Reste eines abgebrochenen Löschens (Absturz zwischen Umbenennen und Löschen) mit
+/// derselben Prüfung entfernen; was die Prüfung nicht besteht, bleibt liegen.
+fn reste_loeschen(data: &Path) {
+    for name in unterordner(&data.join(SICHERUNGEN)) {
+        if !ziffern_nach(&name, LOESCHEN_PRAEFIX) {
+            continue;
+        }
+        let ort = data.join(SICHERUNGEN).join(&name);
+        if loeschbar(&ort).is_ok() {
+            let _ = fs::remove_dir_all(&ort);
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -4223,6 +4309,43 @@ mod tests {
         sicherung_loeschen(&data, &name).unwrap();
         assert!(sicherungen_auflisten(&data).is_empty());
         assert!(data.join("library/book_1/fassungen/page_1").is_dir());
+        assert!(unterordner(&data.join(SICHERUNGEN))
+            .iter()
+            .all(|n| !n.starts_with(LOESCHEN_PRAEFIX)));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sicherung_loeschen_folgt_keiner_verknuepfung() {
+        let data = standardlage("loeschen-umweg");
+        migrieren(&data, &optionen()).unwrap();
+        let name = sicherungen_auflisten(&data)[0].name.clone();
+        let fremd = data.parent().unwrap().join("loeschen-umweg-fremd");
+        let _ = fs::remove_dir_all(&fremd);
+        fs::create_dir_all(&fremd).unwrap();
+        fs::write(fremd.join("wichtig.txt"), b"bleibt").unwrap();
+        // Verknüpfung tief in der Sicherung: abgelehnt, Sicherung und Ziel bleiben.
+        let sicherung = data.join(SICHERUNGEN).join(&name);
+        std::os::unix::fs::symlink(&fremd, sicherung.join("umweg")).unwrap();
+        let fehler = sicherung_loeschen(&data, &name).unwrap_err();
+        assert!(fehler.contains("Verknüpfung"), "{fehler}");
+        assert!(sicherung.join(MANIFEST).is_file());
+        assert!(fremd.join("wichtig.txt").is_file());
+        fs::remove_file(sicherung.join("umweg")).unwrap();
+        // Die Sicherung selbst als Verknüpfung auf einen fremden Ordner: abgelehnt.
+        let echt = data.join("echt");
+        fs::rename(&sicherung, &echt).unwrap();
+        std::os::unix::fs::symlink(&fremd, &sicherung).unwrap();
+        assert!(sicherung_loeschen(&data, &name).is_err());
+        assert!(fremd.join("wichtig.txt").is_file());
+        // Rest eines abgebrochenen Löschens mit Verknüpfung bleibt liegen, ohne Folgen.
+        fs::remove_file(&sicherung).unwrap();
+        fs::rename(&echt, &sicherung).unwrap();
+        let rest = data.join(SICHERUNGEN).join(format!("{LOESCHEN_PRAEFIX}1"));
+        std::os::unix::fs::symlink(&fremd, &rest).unwrap();
+        sicherung_loeschen(&data, &name).unwrap();
+        assert!(fremd.join("wichtig.txt").is_file());
+        assert!(sicherungen_auflisten(&data).is_empty());
     }
 
     #[test]

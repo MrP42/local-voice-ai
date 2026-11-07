@@ -2887,6 +2887,7 @@
         "nothing": "There is nothing to reorganise.",
         "open": "Reorganise library …",
         "continue": "Continue reorganising",
+        "continueRollback": "Continue rollback",
         "rollback": "Restore previous layout …",
         "stoppedTitle": "Reorganising stopped",
         "stoppedText": "Nothing was overwritten and nothing was reverted. All other books stay readable; restoring from the backup is possible.",

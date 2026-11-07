@@ -174,6 +174,21 @@ test.beforeEach(async ({ page }) => {
               hinweise: [],
             };
           }
+          if (cmd === "library_layout_rollback") {
+            lv.__lvLayout = {
+              ...lv.__lvLayout,
+              layout: 1,
+              phase: "zurueckgenommen",
+              probleme: [],
+            };
+            return {
+              phase: "zurueckgenommen",
+              erledigt: 2,
+              angehalten: false,
+              probleme: [],
+              hinweise: [],
+            };
+          }
           if (cmd === "library_backup_restore") {
             if (lv.__lvRestoreError) throw lv.__lvRestoreError;
             return { dateien: 7, papierkorb: "sicherungen/.papierkorb/1" };
@@ -280,6 +295,57 @@ test("a stopped run lists the duplicated folders", async ({ page }) => {
   await expect(page.getByTestId("library-layout-open")).toHaveText(
     "Neu ordnen fortsetzen",
   );
+});
+
+test("a stopped rollback continues as rollback, not as reorganising", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    (window as unknown as { __lvLayout: unknown }).__lvLayout = {
+      layout: 1,
+      phase: "rueckfall",
+      probleme: [],
+      hinweise: [],
+      zu_verschieben: 0,
+      platz_benoetigt: 0,
+      platz_frei: null,
+    };
+  });
+  await openApp(page);
+  // Nur eine Aktion, die den Rückfall weiterführt; kein zweites „Zurücknehmen“.
+  await expect(page.getByTestId("library-layout-rollback")).toHaveCount(0);
+  await expect(page.getByTestId("library-layout-open")).toHaveText(
+    "Zurücknehmen fortsetzen",
+  );
+  await page.getByTestId("library-layout-open").click();
+  // Doppelklick auf „Ausführen“ startet den Lauf nur einmal.
+  await page.getByTestId("library-layout-apply").dblclick();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  const c = await calls(page);
+  expect(c.filter((x) => x === "library_layout_rollback")).toHaveLength(1);
+  expect(c).not.toContain("library_layout_migrate");
+});
+
+test("an open run can be rolled back before the layout switched", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    (window as unknown as { __lvLayout: unknown }).__lvLayout = {
+      layout: 1,
+      phase: "gesichert",
+      probleme: [],
+      hinweise: [],
+      zu_verschieben: 1,
+      platz_benoetigt: 1000,
+      platz_frei: null,
+    };
+  });
+  await openApp(page);
+  await page.getByTestId("library-layout-rollback").click();
+  await page.getByTestId("library-layout-apply").click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  expect(await calls(page)).toContain("library_layout_rollback");
+  expect(await calls(page)).not.toContain("library_layout_migrate");
 });
 
 const withBackup = (page: Page, abgelaufen: boolean) =>
