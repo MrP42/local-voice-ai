@@ -176,7 +176,16 @@ final class PhoneLibrary: ObservableObject {
         try? FileManager.default.createDirectory(at: dir(entry), withIntermediateDirectories: true)
         FileManager.default.createFile(atPath: dir(entry).appendingPathComponent(Self.kurzbuchMarker).path, contents: Data())
         try? LibraryText.kurzbuchText(markdown).write(to: textURL(entry), atomically: true, encoding: .utf8)
+        copyCover(from: book, to: entry)
         return entry
+    }
+
+    /// Der Eintrag zeigt das Cover des Buchs, auch wenn es inzwischen ein neues gibt.
+    private func copyCover(from book: LibraryBook, to entry: LibraryBook) {
+        let manager = FileManager.default
+        for name in ["cover.jpg", "cover.png", "cover.webp"] { try? manager.removeItem(at: dir(entry).appendingPathComponent(name)) }
+        if let cover = coverURL(book) { try? manager.copyItem(at: cover, to: dir(entry).appendingPathComponent(cover.lastPathComponent)) }
+        PhoneLibraryCoverCache.forget(entry.id)
     }
 
     /// Alte Fassungen, entfernte Sprachen und deren Klartextkopien samt Lesestand aufräumen.
