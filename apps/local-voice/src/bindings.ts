@@ -6972,6 +6972,18 @@ async libraryBackupRestore(name: string) : Promise<Result<LibraryBackupRestore, 
 }
 },
 /**
+ * Eine Sicherung auf ausdrücklichen Wunsch löschen (nach der Aufbewahrung von 30
+ * Tagen fragt die Oberfläche). Abgelehnt, solange etwas sie noch braucht.
+ */
+async libraryBackupDelete(name: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_backup_delete", { name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Gespeicherter Abgleich des Buchs (leer, wenn der Text sich geändert hat).
  */
 async audiosyncLoad(bookId: string) : Promise<Result<AudioSyncCache, string>> {
@@ -10310,7 +10322,11 @@ export type LibraryBackup = { name: string;
 /**
  * Erstellt am (Unix-ms).
  */
-erstellt_ms: number; dateien: number; bytes: number }
+erstellt_ms: number; dateien: number; bytes: number; 
+/**
+ * Älter als die Aufbewahrung (30 Tage): die Oberfläche fragt, ob sie gehen darf.
+ */
+abgelaufen: boolean }
 /**
  * Ergebnis von „Sicherung zurückspielen“.
  */

@@ -2630,6 +2630,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::library_layout::library_layout_rollback,
             commands::library_layout::library_backup_list,
             commands::library_layout::library_backup_restore,
+            commands::library_layout::library_backup_delete,
             hoersync_live::audiosync_load,
             hoersync_live::audiosync_window,
             hoersync_live::audiosync_anchor,

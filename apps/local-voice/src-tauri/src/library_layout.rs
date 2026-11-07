@@ -131,7 +131,7 @@ fn sicherer_rel(rel: &str) -> Result<(), String> {
     }
 }
 
-fn jetzt_ms() -> u64 {
+pub fn jetzt_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
@@ -1178,6 +1178,37 @@ pub fn sicherungen_auflisten(data: &Path) -> Vec<SicherungInfo> {
         .collect();
     liste.sort_by_key(|s| std::cmp::Reverse(s.erstellt_ms));
     liste
+}
+
+/// Aufbewahrung einer Sicherung, bevor die Oberfläche nach dem Löschen fragt (4.2).
+pub const AUFBEWAHRUNG_MS: u64 = 30 * 24 * 60 * 60 * 1000;
+
+/// Eine Sicherung auf ausdrücklichen Wunsch löschen. Abgelehnt, solange ein Zurückspielen
+/// unterbrochen ist oder eine offene Neuordnung (Journal ohne Abschluss) auf genau diese
+/// Sicherung zählt; ebenso, wenn ihr Weg über eine Verknüpfung führt.
+pub fn sicherung_loeschen(data: &Path, name: &str) -> Result<(), String> {
+    if !ziffern_nach(name, SICHERUNG_PRAEFIX) {
+        return Err(format!("Ungültiger Name einer Sicherung: {name}"));
+    }
+    let rel = format!("{SICHERUNGEN}/{name}");
+    let dir = absolut(data, &rel);
+    if !dir.is_dir() {
+        return Err(format!("Sicherung nicht gefunden: {name}"));
+    }
+    if vorhanden(&tauschplan_pfad(data)) {
+        return Err(
+            "Ein Zurückspielen ist noch nicht abgeschlossen; bitte die App neu starten.".into(),
+        );
+    }
+    let gebraucht =
+        journal_laden(data)?.is_some_and(|j| !j.phase.abgeschlossen() && j.sicherung == rel);
+    if gebraucht {
+        return Err("Die laufende Neuordnung braucht diese Sicherung; sie bleibt erhalten.".into());
+    }
+    ohne_umweg(data, &rel)?;
+    fs::remove_dir_all(&dir).map_err(|e| format!("Sicherung nicht löschbar: {e}"))?;
+    let _ = ordner_sync(&data.join(SICHERUNGEN))?;
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -4169,6 +4200,29 @@ mod tests {
         );
         assert!(korb.join("projects/page_9").is_dir());
         assert!(!data.join("projects/page_9").exists());
+    }
+
+    #[test]
+    fn sicherung_loeschen_nur_wenn_nichts_sie_braucht() {
+        let data = standardlage("loeschen");
+        migrieren(&data, &optionen()).unwrap();
+        let name = sicherungen_auflisten(&data)[0].name.clone();
+        assert!(sicherung_loeschen(&data, "../projects").is_err());
+        assert!(sicherung_loeschen(&data, "buch-ordner-x").is_err());
+        // Offene Neuordnung, die genau diese Sicherung nennt: bleibt.
+        let mut j = journal_laden(&data).unwrap().unwrap();
+        let roh = fs::read(journal_pfad(&data)).unwrap();
+        j.phase = Phase::Gesichert;
+        journal_schreiben(&data, &j).unwrap();
+        assert!(sicherung_loeschen(&data, &name).is_err());
+        fs::write(journal_pfad(&data), &roh).unwrap();
+        // Unterbrochenes Zurückspielen: bleibt.
+        fs::write(tauschplan_pfad(&data), b"{}").unwrap();
+        assert!(sicherung_loeschen(&data, &name).is_err());
+        fs::remove_file(tauschplan_pfad(&data)).unwrap();
+        sicherung_loeschen(&data, &name).unwrap();
+        assert!(sicherungen_auflisten(&data).is_empty());
+        assert!(data.join("library/book_1/fassungen/page_1").is_dir());
     }
 
     #[test]
