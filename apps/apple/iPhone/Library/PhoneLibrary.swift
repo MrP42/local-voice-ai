@@ -180,14 +180,6 @@ final class PhoneLibrary: ObservableObject {
         return entry
     }
 
-    /// Der Eintrag zeigt das Cover des Buchs, auch wenn es inzwischen ein neues gibt.
-    private func copyCover(from book: LibraryBook, to entry: LibraryBook) {
-        let manager = FileManager.default
-        for name in ["cover.jpg", "cover.png", "cover.webp"] { try? manager.removeItem(at: dir(entry).appendingPathComponent(name)) }
-        if let cover = coverURL(book) { try? manager.copyItem(at: cover, to: dir(entry).appendingPathComponent(cover.lastPathComponent)) }
-        PhoneLibraryCoverCache.forget(entry.id)
-    }
-
     /// Alte Fassungen, entfernte Sprachen und deren Klartextkopien samt Lesestand aufräumen.
     func pruneKurzbuecher(_ book: LibraryBook) {
         let refs = kurzbuecher(book)
