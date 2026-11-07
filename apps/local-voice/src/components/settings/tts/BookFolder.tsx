@@ -59,6 +59,14 @@ export function useBookKiDocs(
 ): Map<string, KiDocument[]> {
   const key = pageIds.join("\n");
   const [docs, setDocs] = useState<Map<string, KiDocument[]>>(new Map());
+  // Ein KI-Dokument einer anderen Fassung (Hintergrundlauf, Bibliothek) meldet
+  // sich über `lv-kidocs-changed`: dann die Gruppe neu laden.
+  const [changed, setChanged] = useState(0);
+  useEffect(() => {
+    const on = () => setChanged((n) => n + 1);
+    window.addEventListener("lv-kidocs-changed", on);
+    return () => window.removeEventListener("lv-kidocs-changed", on);
+  }, []);
   useEffect(() => {
     let alive = true;
     const ids = key ? key.split("\n") : [];
@@ -75,7 +83,7 @@ export function useBookKiDocs(
     return () => {
       alive = false;
     };
-  }, [key, refresh]);
+  }, [key, refresh, changed]);
   return docs;
 }
 

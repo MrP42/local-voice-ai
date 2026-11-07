@@ -996,13 +996,33 @@ export const TtsSettings = () => {
   useEffect(() => {
     if (sectionActive) setMobileLevel("reader");
   }, [sectionActive]);
+  // Ebenenwechsel (≤ 620 px) blendet den fokussierten Bereich aus: den Fokus
+  // auf den Anfang der neuen Ebene setzen, nicht auf <body> fallen lassen.
+  const levelShown = useRef(mobileLevel);
+  useEffect(() => {
+    if (levelShown.current === mobileLevel) return;
+    levelShown.current = mobileLevel;
+    if (!narrow) return;
+    const target =
+      mobileLevel === "reader"
+        ? '[data-testid="mback-reader"]'
+        : mobileLevel === "list"
+          ? '[data-testid="mback-list"]'
+          : '[data-testid="reader-folder"][aria-current="true"], [data-testid="reader-folder"]';
+    requestAnimationFrame(() =>
+      document.querySelector<HTMLElement>(target)?.focus(),
+    );
+  }, [mobileLevel, narrow]);
   const folderEntry: FolderEntry | null =
     readerFolders.folders.books.find(
       (b) => bookFolderKey(b.bookId) === readerFolders.selection,
     ) ?? null;
   const folderPageIds = folderEntry?.pageIds ?? [];
   const pageIdSet = useMemo(() => new Set(pages.map((p) => p.id)), [pages]);
-  const bookKiDocs = useBookKiDocs(folderPageIds, kiDocs.docs);
+  const bookKiDocs = useBookKiDocs(
+    folderPageIds,
+    kiDocs.docs.map((d) => d.id).join("\n"),
+  );
 
   /** Neue Seite mit Text anlegen und aktiv machen (Skript-Werkstatt). */
   const createPageWithText = useCallback(
@@ -4205,10 +4225,12 @@ export const TtsSettings = () => {
             type="button"
             className="tts-mback tts-mback--reader"
             onClick={() => setMobileLevel("list")}
-            aria-label={t("tts.folders.backToList")}
+            title={t("tts.folders.backToList")}
             data-testid="mback-reader"
           >
             <ArrowLeft width={18} height={18} aria-hidden="true" />
+            {/* Name = „Zurück“ + sichtbarer Titel (WCAG 2.5.3). */}
+            <span className="sr-only">{t("tts.folders.back")} </span>
             <span className="min-w-0 truncate">
               {pages.find((p) => p.id === activePage)?.title ?? ""}
             </span>

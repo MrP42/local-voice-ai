@@ -1269,6 +1269,7 @@
       "noBooks": "No books yet",
       "texts": "Texts",
       "withoutBook": "Without book",
+      "back": "Back",
       "noBooksHint": "Drop an EPUB, PDF, DOCX or audiobook here, or add one. Loose texts are under “Texts”.",
       "addBook": "Add book",
       "noLoose": "No loose texts",

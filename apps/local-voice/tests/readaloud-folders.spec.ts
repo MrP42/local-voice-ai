@@ -1020,6 +1020,13 @@ test("Mobil 390 px: drei Ebenen Ordner, Liste, Reader mit Zurück-Knöpfen", asy
   await expect(rows(page)).toHaveCount(3);
   await big("mback-list");
   await noOverflow();
+  // Je Ebene nur ein Bereich: Dateien und Bedienung der rechten Spalte nicht.
+  await expect(page.getByTestId("tts-files")).toBeHidden();
+  // Fokus wandert auf den Anfang der neuen Ebene, Name enthält den Text.
+  await expect(page.getByTestId("mback-list")).toBeFocused();
+  await expect(page.getByTestId("mback-list")).toHaveAccessibleName(
+    /Zurück.*Ordner/,
+  );
 
   // Zurück: Ebene 1, die Ordner.
   await page.getByTestId("mback-list").click();

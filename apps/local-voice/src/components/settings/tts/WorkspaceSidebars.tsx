@@ -283,10 +283,12 @@ export const PagesSidebar: React.FC<{
           type="button"
           className="tts-mback tts-mback--list"
           onClick={onBack}
-          aria-label={t("tts.folders.backToFolders")}
+          title={t("tts.folders.backToFolders")}
           data-testid="mback-list"
         >
           <ArrowLeft width={18} height={18} aria-hidden="true" />
+          {/* Name = „Zurück“ + sichtbares „Ordner“ (WCAG 2.5.3). */}
+          <span className="sr-only">{t("tts.folders.back")} </span>
           <span>{t("tts.folders.label")}</span>
         </button>
       )}
