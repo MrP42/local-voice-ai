@@ -13,9 +13,13 @@
 //! Migration an, wenn die Oberfläche ein Feld dazuerfindet.
 
 use serde::{Deserialize, Serialize};
+use std::cell::Cell;
+use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 use tauri::AppHandle;
+
+use crate::library_layout::{self, Aufloesung};
 
 /// Eine Sperre fuer alle Lese-Aendern-Schreib-Zyklen an Index und
 /// Seitenstand: die Oberflaeche (Befehle unten) und der Geraete-Sync
@@ -23,8 +27,38 @@ use tauri::AppHandle;
 /// was der andere gerade gelesen hat (Review-Befund 14.09.).
 static PAGES_LOCK: Mutex<()> = Mutex::new(());
 
-pub(crate) fn lock() -> MutexGuard<'static, ()> {
-    PAGES_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+thread_local! {
+    /// Wie oft dieser Thread die Seitensperre gerade hält.
+    static PAGES_LOCK_DEPTH: Cell<u32> = const { Cell::new(0) };
+}
+
+/// Wächter der Seitensperre. Die Sperre ist je Thread wiedereintrittsfähig:
+/// `page_path` löst seit lva#365 unter der Seitensperre auf (Journal der
+/// Buch-Ordner-Migration), und viele Aufrufer halten sie dabei schon. Wie ein
+/// `MutexGuard` ist der Wächter nicht `Send` – er bleibt auf seinem Thread.
+pub(crate) struct PagesGuard {
+    _inner: Option<MutexGuard<'static, ()>>,
+    _not_send: PhantomData<*const ()>,
+}
+
+impl Drop for PagesGuard {
+    fn drop(&mut self) {
+        PAGES_LOCK_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+    }
+}
+
+pub(crate) fn lock() -> PagesGuard {
+    let held = PAGES_LOCK_DEPTH.with(|d| d.get()) > 0;
+    let inner = if held {
+        None
+    } else {
+        Some(PAGES_LOCK.lock().unwrap_or_else(|e| e.into_inner()))
+    };
+    PAGES_LOCK_DEPTH.with(|d| d.set(d.get() + 1));
+    PagesGuard {
+        _inner: inner,
+        _not_send: PhantomData,
+    }
 }
 
 /// Schreiben ueber eine Temp-Datei plus Umbenennen: ein Absturz mittendrin
@@ -53,6 +87,11 @@ pub struct PageInfo {
     /// Feld, bleibt die Vorschau leer.
     #[serde(default)]
     pub preview: String,
+    /// Buch, in dessen Ordner die Seite liegt (`library/<buch>/fassungen/<id>`,
+    /// lva#365). Leer: die Seite liegt unter `projects/<id>`. Fehlt in älteren
+    /// Indizes; dann findet `page_path` die Seite über die Fundortkarte.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub buch: Option<String>,
 }
 
 /// Wie viele Zeichen der Vorschau die Seitenliste höchstens zeigt.
@@ -75,7 +114,7 @@ fn preview_from_state(raw: &str) -> String {
 
 /// Zeitstempel und Vorschau einer Seite aus ihrem `state.json` nachtragen.
 fn enrich(app: &AppHandle, page: &mut PageInfo) {
-    let Ok(dir) = page_path(app, &page.id) else {
+    let Ok(Some(dir)) = page_lookup_in(app, &page.id, Some(page.buch.as_deref())) else {
         return;
     };
     let state = dir.join("state.json");
@@ -102,13 +141,17 @@ pub struct PageFile {
     pub modified_ms: f64,
 }
 
-pub(crate) fn projects_root(app: &AppHandle) -> Result<PathBuf, String> {
+/// Datenordner der App (Wurzel von `projects/`, `library/`, `sicherungen/`).
+pub(crate) fn data_root(app: &AppHandle) -> Result<PathBuf, String> {
     use tauri::Manager;
-    let base = crate::portable::data_dir()
+    crate::portable::data_dir()
         .cloned()
         .or_else(|| app.path().app_local_data_dir().ok())
-        .ok_or("Kein Datenverzeichnis verfügbar")?;
-    let root = base.join("projects");
+        .ok_or_else(|| "Kein Datenverzeichnis verfügbar".to_string())
+}
+
+pub(crate) fn projects_root(app: &AppHandle) -> Result<PathBuf, String> {
+    let root = data_root(app)?.join("projects");
     std::fs::create_dir_all(&root).map_err(|e| format!("could not create projects dir: {e}"))?;
     Ok(root)
 }
@@ -116,10 +159,7 @@ pub(crate) fn projects_root(app: &AppHandle) -> Result<PathBuf, String> {
 /// Seiten-Kennungen entstehen nur in `pages_create` — alles andere ist ein
 /// manipulierter Aufruf und wird abgewiesen, bevor ein Pfad daraus wird.
 fn checked_id(id: &str) -> Result<&str, String> {
-    let valid = id
-        .strip_prefix("page_")
-        .is_some_and(|rest| !rest.is_empty() && rest.chars().all(|c| c.is_ascii_alphanumeric()));
-    if valid {
+    if library_layout::gueltige_seite(id) {
         Ok(id)
     } else {
         Err(format!("Ungültige Seiten-Kennung: {id}"))
@@ -142,8 +182,91 @@ pub(crate) fn checked_name(name: &str) -> Result<&str, String> {
     }
 }
 
+/// Ist `id` eine Seiten-Kennung, wie `pages_create` sie vergibt? Nur die
+/// Form, nicht ob die Seite existiert (dafür `page_lookup`).
+pub(crate) fn valid_id(id: &str) -> bool {
+    checked_id(id).is_ok()
+}
+
+/// Auflösung nach Spec lva#365 4.3, unter der Seitensperre: Index-Ort,
+/// Fundortkarte, Journal (`von`/`nach`), `projects/<id>`. Alle Kandidaten
+/// werden auf Existenz geprüft, bevor entschieden wird.
+///
+/// `known`: das Feld `buch` des Index-Eintrags, wenn der Aufrufer den Index
+/// schon unter der Sperre geladen hat; sonst (`None`) wird er hier gelesen.
+fn resolve(
+    app: &AppHandle,
+    id: &str,
+    known: Option<Option<&str>>,
+) -> Result<(PathBuf, Option<String>, Aufloesung), String> {
+    checked_id(id)?;
+    let _guard = lock();
+    let data = data_root(app)?;
+    let buch = match known {
+        Some(buch) => buch.map(str::to_owned),
+        None => load_index(app)?
+            .pages
+            .into_iter()
+            .find(|p| p.id == id)
+            .and_then(|p| p.buch),
+    };
+    let karte = crate::commands::library_layout::fundortkarte(&data);
+    let found = library_layout::aufloesen(&data, id, buch.as_deref(), &karte)?;
+    Ok((data, buch, found))
+}
+
+/// Ordner einer vorhandenen Seite. Liegt sie an zwei oder mehr Orten:
+/// „Seite doppelt vorhanden“ mit allen Pfaden; nirgends: „Seite nicht
+/// gefunden“. Es wird nie ein Ort geraten.
 pub(crate) fn page_path(app: &AppHandle, id: &str) -> Result<PathBuf, String> {
-    Ok(projects_root(app)?.join(checked_id(id)?))
+    match resolve(app, id, None)? {
+        (_, _, Aufloesung::Gefunden(dir)) => Ok(dir),
+        (data, _, Aufloesung::Doppelt(dirs)) => {
+            Err(library_layout::meldung_doppelt(&data, id, &dirs))
+        }
+        (_, _, Aufloesung::Fehlt) => Err(library_layout::meldung_fehlt(id)),
+    }
+}
+
+/// Wie `page_path`, aber „nicht gefunden“ ist kein Fehler (`None`): für
+/// Leser, die eine fehlende Seite wie eine leere behandeln.
+pub(crate) fn page_lookup(app: &AppHandle, id: &str) -> Result<Option<PathBuf>, String> {
+    page_lookup_in(app, id, None)
+}
+
+fn page_lookup_in(
+    app: &AppHandle,
+    id: &str,
+    known: Option<Option<&str>>,
+) -> Result<Option<PathBuf>, String> {
+    match resolve(app, id, known)? {
+        (_, _, Aufloesung::Gefunden(dir)) => Ok(Some(dir)),
+        (data, _, Aufloesung::Doppelt(dirs)) => {
+            Err(library_layout::meldung_doppelt(&data, id, &dirs))
+        }
+        (_, _, Aufloesung::Fehlt) => Ok(None),
+    }
+}
+
+/// Ordner zum Schreiben: die vorhandene Seite oder, wenn es sie noch nicht
+/// gibt, ihr Ort laut Index (Buch-Ordner, sonst `projects/<id>`). Der Ordner
+/// wird nicht angelegt. Ein Buch-Ordner, den es nicht (mehr) gibt (z. B. im
+/// Papierkorb), entsteht hier nicht als leerer Geist neu.
+pub(crate) fn page_path_or_new(app: &AppHandle, id: &str) -> Result<PathBuf, String> {
+    match resolve(app, id, None)? {
+        (_, _, Aufloesung::Gefunden(dir)) => Ok(dir),
+        (data, _, Aufloesung::Doppelt(dirs)) => {
+            Err(library_layout::meldung_doppelt(&data, id, &dirs))
+        }
+        (data, Some(buch), Aufloesung::Fehlt) if library_layout::gueltiges_buch(&buch) => {
+            let book_dir = data.join(library_layout::BIBLIOTHEK).join(&buch);
+            if !book_dir.join(library_layout::BUCH_JSON).is_file() {
+                return Err(format!("Das Buch der Seite {id} ist nicht vorhanden"));
+            }
+            Ok(book_dir.join(library_layout::FASSUNGEN).join(id))
+        }
+        (_, _, Aufloesung::Fehlt) => Ok(projects_root(app)?.join(id)),
+    }
 }
 
 pub(crate) fn load_index(app: &AppHandle) -> Result<PagesIndex, String> {
@@ -162,19 +285,16 @@ pub(crate) fn load_index(app: &AppHandle) -> Result<PagesIndex, String> {
         Ok(index) => Ok(index),
         Err(e) => {
             log::warn!("pages index unreadable ({e}) — rebuilding from folders");
-            let mut pages = Vec::new();
-            if let Ok(entries) = std::fs::read_dir(projects_root(app)?) {
-                for entry in entries.flatten() {
-                    let name = entry.file_name().to_string_lossy().into_owned();
-                    if entry.path().is_dir() && checked_id(&name).is_ok() {
-                        pages.push(PageInfo {
-                            id: name.clone(),
-                            title: name,
-                            ..Default::default()
-                        });
-                    }
-                }
-            }
+            // Auch Seiten im Buch-Ordner (lva#365) gehören dazu, mit ihrem Buch.
+            let pages = library_layout::seiten_bestand(&data_root(app)?)
+                .into_iter()
+                .map(|(id, buch)| PageInfo {
+                    title: id.clone(),
+                    id,
+                    buch,
+                    ..Default::default()
+                })
+                .collect();
             Ok(PagesIndex { pages })
         }
     }
@@ -224,7 +344,7 @@ pub fn pages_list(app: AppHandle) -> Result<Vec<PageInfo>, String> {
             title: "Erste Seite".to_string(),
             ..Default::default()
         };
-        std::fs::create_dir_all(page_path(&app, &page.id)?)
+        std::fs::create_dir_all(page_path_or_new(&app, &page.id)?)
             .map_err(|e| format!("could not create page dir: {e}"))?;
         index.pages.push(page);
         store_index(&app, &index)?;
@@ -249,7 +369,7 @@ pub fn pages_create(app: AppHandle, title: String) -> Result<PageInfo, String> {
         },
         ..Default::default()
     };
-    std::fs::create_dir_all(page_path(&app, &page.id)?)
+    std::fs::create_dir_all(page_path_or_new(&app, &page.id)?)
         .map_err(|e| format!("could not create page dir: {e}"))?;
     let mut index = load_index(&app)?;
     index.pages.push(page.clone());
@@ -282,8 +402,8 @@ pub fn pages_rename(app: AppHandle, id: String, title: String) -> Result<(), Str
 #[specta::specta]
 pub fn pages_delete(app: AppHandle, id: String) -> Result<(), String> {
     let _guard = lock();
-    let dir = page_path(&app, &id)?;
-    if dir.exists() {
+    // Liegt die Seite doppelt vor, wird nichts gelöscht (Fehler mit allen Pfaden).
+    if let Some(dir) = page_lookup(&app, &id)? {
         std::fs::remove_dir_all(&dir).map_err(|e| format!("could not delete page: {e}"))?;
     }
     let mut index = load_index(&app)?;
@@ -312,15 +432,17 @@ pub fn pages_reorder(app: AppHandle, ids: Vec<String>) -> Result<(), String> {
 #[tauri::command]
 #[specta::specta]
 pub fn page_state_load(app: AppHandle, id: String) -> Result<String, String> {
-    let path = page_path(&app, &id)?.join("state.json");
-    Ok(std::fs::read_to_string(path).unwrap_or_default())
+    let Some(dir) = page_lookup(&app, &id)? else {
+        return Ok(String::new());
+    };
+    Ok(std::fs::read_to_string(dir.join("state.json")).unwrap_or_default())
 }
 
 #[tauri::command]
 #[specta::specta]
 pub fn page_state_save(app: AppHandle, id: String, state: String) -> Result<(), String> {
     let _guard = lock();
-    let dir = page_path(&app, &id)?;
+    let dir = page_path_or_new(&app, &id)?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("could not create page dir: {e}"))?;
     write_atomic(&dir.join("state.json"), state.as_bytes())
 }
@@ -328,7 +450,7 @@ pub fn page_state_save(app: AppHandle, id: String, state: String) -> Result<(), 
 #[tauri::command]
 #[specta::specta]
 pub fn page_dir(app: AppHandle, id: String) -> Result<String, String> {
-    let dir = page_path(&app, &id)?;
+    let dir = page_path_or_new(&app, &id)?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("could not create page dir: {e}"))?;
     Ok(dir.to_string_lossy().into_owned())
 }
@@ -346,7 +468,9 @@ pub fn page_audio_note(
     id: String,
     name: String,
 ) -> Result<Option<crate::managers::tts::notes::AudioNote>, String> {
-    let dir = page_path(&app, &id)?;
+    let Some(dir) = page_lookup(&app, &id)? else {
+        return Ok(None);
+    };
     // Nur Dateien im Ordner dieses Arbeitsblatts, kein Weg nach draussen.
     let file = dir.join(&name);
     if file.parent() != Some(dir.as_path()) {
@@ -358,7 +482,9 @@ pub fn page_audio_note(
 #[tauri::command]
 #[specta::specta]
 pub fn page_files(app: AppHandle, id: String) -> Result<Vec<PageFile>, String> {
-    let dir = page_path(&app, &id)?;
+    let Some(dir) = page_lookup(&app, &id)? else {
+        return Ok(Vec::new());
+    };
     let Ok(entries) = std::fs::read_dir(&dir) else {
         return Ok(Vec::new());
     };
@@ -465,6 +591,26 @@ mod tests {
         assert!(checked_id("..").is_err());
         assert!(checked_id("page_").is_err());
         assert!(checked_id("").is_err());
+    }
+
+    /// `page_path` nimmt die Seitensperre, viele Aufrufer halten sie schon:
+    /// derselbe Thread darf erneut sperren, ein anderer wartet.
+    #[test]
+    fn seitensperre_ist_je_thread_wiedereintrittsfaehig() {
+        let aussen = lock();
+        let innen = lock();
+        drop(innen);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let anderer = std::thread::spawn(move || {
+            let _g = lock();
+            tx.send(()).unwrap();
+        });
+        assert!(rx
+            .recv_timeout(std::time::Duration::from_millis(100))
+            .is_err());
+        drop(aussen);
+        rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+        anderer.join().unwrap();
     }
 
     #[test]

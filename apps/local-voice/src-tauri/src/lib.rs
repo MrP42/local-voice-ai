@@ -33,6 +33,7 @@ mod keep_awake; // Vorlesen: Bildschirm wach halten (Sonnen-Knopf)
 mod konto; // ADR-0024 Paket 1: Suite-Profil (lokal)
 mod library; // lva#152: Bibliothek für Bücher und Hörbücher
 mod library_export; // lva#236: Fassungen einzeln exportieren (EPUB, PDF, Word, M4B, MP3)
+mod library_layout; // lva#365 P2a: Buch-Ordner-Ablage (Kern ohne Tauri)
 mod llm_client;
 mod llm_keys;
 mod local_update;
@@ -228,6 +229,11 @@ fn should_force_show_permissions_window(app: &AppHandle) -> bool {
 }
 
 fn initialize_core_logic(app_handle: &AppHandle) {
+    // lva#365 P2a: ein offenes Journal der Buch-Ordner-Ablage auflösen, bevor
+    // irgendetwas die Bibliothek oder die Seiten liest (Sync, Abrufindex,
+    // Oberfläche). Hält bei Doppelung oder Fehlen an und verschiebt nichts.
+    commands::library_layout::start_hook(app_handle);
+
     // Note: Enigo (keyboard/mouse simulation) is NOT initialized here.
     // The frontend is responsible for calling the `initialize_enigo` command
     // after onboarding completes. This avoids triggering permission dialogs
@@ -2619,6 +2625,11 @@ fn specta_builder() -> Builder<tauri::Wry> {
             library::library_merge_audio,
             library::library_progress_load,
             library::library_progress_put,
+            commands::library_layout::library_layout_status,
+            commands::library_layout::library_layout_migrate,
+            commands::library_layout::library_layout_rollback,
+            commands::library_layout::library_backup_list,
+            commands::library_layout::library_backup_restore,
             hoersync_live::audiosync_load,
             hoersync_live::audiosync_window,
             hoersync_live::audiosync_anchor,

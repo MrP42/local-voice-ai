@@ -811,6 +811,11 @@ pub fn map_error_code(err: &str) -> &'static str {
 
 static RUNNING: AtomicBool = AtomicBool::new(false);
 
+/// Läuft gerade eine Frage an das Buch? (Die Buch-Ordner-Migration startet dann nicht.)
+pub(crate) fn is_running() -> bool {
+    RUNNING.load(Ordering::Acquire)
+}
+
 /// Wie lange eine neue Frage auf eine bereits abgebrochene Vorgängerin wartet
 /// (der Lauf der Vorgängerin endet gleich, der Wächter wird frei).
 pub const BUSY_RETRY: Duration = Duration::from_millis(300);

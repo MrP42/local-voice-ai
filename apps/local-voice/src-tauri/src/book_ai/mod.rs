@@ -36,6 +36,11 @@ static CANCEL: AtomicBool = AtomicBool::new(false);
 /// Es läuft höchstens ein Lauf zur Zeit (das Modell rechnet ohnehin seriell).
 static RUNNING: AtomicBool = AtomicBool::new(false);
 
+/// Läuft gerade ein KI-Lauf? (Die Buch-Ordner-Migration startet dann nicht.)
+pub(crate) fn is_running() -> bool {
+    RUNNING.load(Ordering::SeqCst)
+}
+
 /// Fortschritt eines Laufs (Ereignis `book-ai-progress`).
 #[derive(Debug, Clone, Serialize, Type)]
 pub struct BookAiProgress {
