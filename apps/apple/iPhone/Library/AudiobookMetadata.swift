@@ -212,12 +212,24 @@ extension PhoneLibrary {
         try? Data(blob.utf8).write(to: dir(book).appendingPathComponent("cover.blob"), options: .atomic)
     }
 
-    /// Der Eintrag zeigt das Cover des Buchs, auch wenn es inzwischen ein neues gibt.
+    /// Der Eintrag zeigt das Cover des Buchs. Kopiert wird nur, wenn es sich geändert hat, und erst nach gelungener
+    /// Kopie fällt das alte weg: Ein gerade fehlendes Buch-Cover nimmt dem Eintrag seins nicht.
     func copyCover(from book: LibraryBook, to entry: LibraryBook) {
+        guard let cover = coverURL(book) else { return }
         let manager = FileManager.default
+        let target = dir(entry).appendingPathComponent(cover.lastPathComponent)
+        func stamp(_ url: URL) -> [AnyHashable]? {
+            guard let a = try? manager.attributesOfItem(atPath: url.path), let size = a[.size] as? NSNumber, let date = a[.modificationDate] as? Date else { return nil }
+            return [size, date]
+        }
+        if let current = stamp(target), current == stamp(cover) { return }
+        let temporary = dir(entry).appendingPathComponent("cover.neu")
+        try? manager.removeItem(at: temporary)
+        guard (try? manager.copyItem(at: cover, to: temporary)) != nil else { return }
         for name in ["cover.jpg", "cover.png", "cover.webp"] { try? manager.removeItem(at: dir(entry).appendingPathComponent(name)) }
-        if let cover = coverURL(book) { try? manager.copyItem(at: cover, to: dir(entry).appendingPathComponent(cover.lastPathComponent)) }
+        guard (try? manager.moveItem(at: temporary, to: target)) != nil else { return }
         PhoneLibraryCoverCache.forget(entry.id)
+        objectWillChange.send()
     }
 
     func storeCover(_ data: Data, for book: LibraryBook) {
