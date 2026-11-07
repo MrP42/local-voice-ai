@@ -1,4 +1,5 @@
 import Foundation
+import os
 import AVFoundation
 import UIKit
 
@@ -225,9 +226,19 @@ extension PhoneLibrary {
         if let current = stamp(target), current == stamp(cover) { return }
         let temporary = dir(entry).appendingPathComponent("cover.neu")
         try? manager.removeItem(at: temporary)
-        guard (try? manager.copyItem(at: cover, to: temporary)) != nil else { return }
-        for name in ["cover.jpg", "cover.png", "cover.webp"] { try? manager.removeItem(at: dir(entry).appendingPathComponent(name)) }
-        guard (try? manager.moveItem(at: temporary, to: target)) != nil else { return }
+        do {
+            try manager.copyItem(at: cover, to: temporary)
+            // Atomar: Scheitert das Ersetzen, bleibt das bisherige Cover.
+            if manager.fileExists(atPath: target.path) { _ = try manager.replaceItemAt(target, withItemAt: temporary) }
+            else { try manager.moveItem(at: temporary, to: target) }
+        } catch {
+            try? manager.removeItem(at: temporary)
+            Logger(subsystem: "de.localvoice", category: "library").error("Kurzbuch-Cover nicht kopiert: \(error.localizedDescription, privacy: .public)")
+            return
+        }
+        for name in ["cover.jpg", "cover.png", "cover.webp"] where name != target.lastPathComponent {
+            try? manager.removeItem(at: dir(entry).appendingPathComponent(name))
+        }
         PhoneLibraryCoverCache.forget(entry.id)
         objectWillChange.send()
     }
