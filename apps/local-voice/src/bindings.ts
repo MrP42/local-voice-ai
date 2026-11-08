@@ -859,6 +859,164 @@ async kontoBildLesen(id: string) : Promise<Result<string | null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Gesamtstand für die Seite „Ablage“ (führt zuvor Wiederanlauf und Papierkorb-Aufräumen aus).
+ */
+async ablageStand() : Promise<Result<AblageSicht, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_stand") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async ablageOrdnerAnlegen(eltern: string | null, name: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_ordner_anlegen", { eltern, name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async ablageOrdnerUmbenennen(id: string, name: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_ordner_umbenennen", { id, name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async ablageOrdnerVerschieben(id: string, eltern: string | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_ordner_verschieben", { id, eltern }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Datenklasse, „Nur dieses Gerät“ und „KI-Entwürfe“ eines Ordners.
+ */
+async ablageOrdnerEinstellungen(id: string, einstellungen: AblageEinstellungen) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_ordner_einstellungen", { id, einstellungen }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * KI-Freigabe eines Ordners (gerätelokal); `null` = erbt wieder.
+ */
+async ablageKiSetzen(id: string, stufe: KiStufe | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_ki_setzen", { id, stufe }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * „Freigaben neu festlegen“: nur bei unklarer (defekter) Freigabe; alle Ordner auf „aus“.
+ */
+async ablageFreigabenNeuFestlegen() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_freigaben_neu_festlegen") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Legt eine Datei oder einen Ordner (mit Struktur) in einem Ordner der Ablage ab. Bei Namenskollision
+ * ohne `wahl` wird nichts geschrieben (Zeile `kollision`).
+ */
+async ablageImportieren(ordner: string, pfad: string, wahl: AblageKollisionswahl | null) : Promise<Result<AblageImportZeile[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_importieren", { ordner, pfad, wahl }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async ablageInPapierkorb(art: AblageArt, id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_in_papierkorb", { art, id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async ablageWiederherstellen(art: AblageArt, id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_wiederherstellen", { art, id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async ablageEndgueltigLoeschen(art: AblageArt, id: string) : Promise<Result<AblageLoeschBericht, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_endgueltig_loeschen", { art, id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async ablagePapierkorbLeeren() : Promise<Result<AblageLoeschBericht, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_papierkorb_leeren") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async ablageFassungen(datei: string) : Promise<Result<AblageFassung[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_fassungen", { datei }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async ablageDateiUmbenennen(id: string, name: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_datei_umbenennen", { id, name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async ablageDateiVerschieben(id: string, ordner: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_datei_verschieben", { id, ordner }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * „Bestand neu aufbauen“: nur bei fehlendem oder defektem Ablagejournal. Liefert die Zahl der Funde.
+ */
+async ablageBestandNeuAufbauen() : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_bestand_neu_aufbauen") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Nimmt gefundene Originale einer Datei in einem Ordner auf.
+ */
+async ablageGefundeneAufnehmen(datei: string, ordner: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_gefundene_aufnehmen", { datei, ordner }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async projekteListe() : Promise<Result<SuiteProjekt[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("projekte_liste") };
@@ -8074,6 +8232,95 @@ ttsProviderVoiceSample: "tts-provider-voice-sample"
 
 /** user-defined types **/
 
+export type AblageArt = "datei" | "ordner"
+export type AblageDatei = { id: string; name: string; ordner: string; typ: string; groesse: number; geaendert: number; fassungen: number; konflikt: boolean; klasse: string; ki: AblageKi; nur_geraet: boolean; 
+/**
+ * Stand der jüngsten Textfassung (`ok`, `kein_text`, `fehler`); `null` = noch keine (D2).
+ */
+text: string | null }
+export type AblageEinstellungen = { datenklasse: string | null; nur_geraet: boolean | null; zielordner_ki: boolean | null }
+export type AblageFassung = { fas: string; nummer: number; vorgaenger: string | null; groesse: number; typ: string; zeit: number; aktuell: boolean; kopf: boolean; abgeloest: boolean }
+export type AblageGefunden = { dat: string; typ: string; groesse: number }
+export type AblageImportStand = "abgelegt" | "neue_fassung" | 
+/**
+ * Name vorhanden: nichts geschrieben, die Bedienung wählt.
+ */
+"kollision" | "uebersprungen" | "fehler"
+export type AblageImportZeile = { quelle: string; stand: AblageImportStand; 
+/**
+ * Zielordner dieser Datei (bei Ordnerimport der Unterordner): für die Wiederholung mit Wahl.
+ */
+ordner: string | null; dat: string | null; fas: string | null; name: string | null; code: string | null }
+export type AblageKi = { 
+/**
+ * `an`, `aus`, `gesperrt` oder `unklar`.
+ */
+zustand: string; 
+/**
+ * Ordner, von dem der Zustand stammt, wenn geerbt.
+ */
+von: string | null; 
+/**
+ * Name dieses Ordners (für „geerbt von …“).
+ */
+von_name: string | null; 
+/**
+ * Kein Eintrag in der Kette (Vorgabe aus).
+ */
+vorgabe: boolean }
+export type AblageKollisionswahl = "neue_fassung" | "beide_behalten"
+export type AblageKorb = { art: AblageArt; id: string; name: string; typ: string; geloescht: number; tage_rest: number; ursprung: string }
+/**
+ * Warum die Ablage nicht geladen werden kann.
+ */
+export type AblageLage = 
+/**
+ * Fehlt, obwohl Dateien vorhanden sind.
+ */
+"fehlt" | 
+/**
+ * Kaputt oder mit ungültigen Kennungen.
+ */
+"defekt" | 
+/**
+ * Von einer neueren App-Version: nicht lesbar und nie neu aufbaubar.
+ */
+"neuer" | 
+/**
+ * Vorübergehend nicht lesbar (Rechte, Sperre, Datenträger): später erneut.
+ */
+"nicht_lesbar"
+export type AblageLoeschBericht = { dateien: number; ordner: number }
+export type AblageOrdner = { id: string; name: string; 
+/**
+ * Wirksamer Elternordner; `null` = oberste Ebene.
+ */
+eltern: string | null; 
+/**
+ * Zyklus oder begrabener Elternordner: vorläufig unter „Wiederhergestellt“.
+ */
+wiederhergestellt: boolean; 
+/**
+ * Gespeicherte Datenklasse (`erbt`, `public`, …).
+ */
+datenklasse: string; 
+/**
+ * Wirksame Klasse (`public` … `personal`, `unbekannt`).
+ */
+klasse: string; nur_geraet: boolean; nur_geraet_wirksam: boolean; zielordner_ki: boolean; ki: AblageKi; dateien: number }
+export type AblageSicht = { 
+/**
+ * `null` = lesbar; sonst blockiert alles bis zur Bedienung „Bestand neu aufbauen“ (falls möglich).
+ */
+lage: AblageLage | null; 
+/**
+ * Freigabe unklar: die ganze Ablage ist für die KI gesperrt.
+ */
+freigabe_unklar: KiUnklar | null; ordner: AblageOrdner[]; dateien: AblageDatei[]; papierkorb: AblageKorb[]; gefunden: AblageGefunden[]; 
+/**
+ * Summe der Größen aller Fassungen (lokal belegt).
+ */
+belegt: number }
 export type AccountState = "not_configured" | "no_capabilities" | "needs_sign_in" | "needs_consent" | "ready"
 /**
  * Eine Aufgabe (Zeile in `action_items`). `assignee_label` ist Freitext, die
@@ -10489,6 +10736,23 @@ usage?: KiUsage | null;
  * Dokumenten und Importen.
  */
 language?: string | null }
+export type KiStufe = "an" | "aus" | "gesperrt"
+/**
+ * Warum die Freigabe unklar ist.
+ */
+export type KiUnklar = 
+/**
+ * Kaputt, ungültig oder gelöscht, obwohl es eine `.vorher` gibt.
+ */
+"defekt" | 
+/**
+ * Gerade nicht lesbar (Rechte, Sperre, Datenträger): später erneut.
+ */
+"unlesbar" | 
+/**
+ * Von einer neueren App-Version.
+ */
+"neuer"
 /**
  * Verbrauch eines KI-Dokuments: was vorher geschätzt und was gebraucht wurde.
  */

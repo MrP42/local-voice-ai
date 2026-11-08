@@ -1,0 +1,900 @@
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
+import { open as dateiDialog } from "@tauri-apps/plugin-dialog";
+import {
+  ArrowLeft,
+  FolderOpen,
+  FolderPlus,
+  FolderUp,
+  Pencil,
+  Settings2,
+  Trash2,
+  Upload,
+} from "lucide-react";
+import type {
+  AblageArt,
+  AblageDatei,
+  AblageFassung,
+  AblageImportZeile,
+  AblageKollisionswahl,
+  AblageKorb,
+  AblageOrdner,
+  AblageSicht,
+} from "@/bindings";
+import { PageShell } from "../ui/PageShell";
+import { Button } from "../ui/Button";
+import { IconButton } from "../ui/IconButton";
+import { Dialog } from "../ui/Dialog";
+import { useFileDrop } from "../library/useFileDrop";
+import { api } from "./api";
+import {
+  BestaetigungDialog,
+  NameDialog,
+  OrdnerEinstellungen,
+  type EinstellungenAenderung,
+} from "./Dialoge";
+import {
+  DateiTabelle,
+  Details,
+  Hochladeliste,
+  KORB,
+  KorbTabelle,
+  Meldung,
+  OrdnerBaum,
+  type UploadZeile,
+} from "./Teile";
+import {
+  dateiname,
+  fehlerTeile,
+  formatBytes,
+  nachNameFiltern,
+  pfadZu,
+  unterordner,
+} from "./logik";
+import "./ablage.css";
+
+const SCHMAL = "(max-width: 1023px)";
+
+function useSchmal(): boolean {
+  const [schmal, setSchmal] = useState(
+    () => typeof window !== "undefined" && window.matchMedia(SCHMAL).matches,
+  );
+  useEffect(() => {
+    const q = window.matchMedia(SCHMAL);
+    const f = () => setSchmal(q.matches);
+    f();
+    q.addEventListener("change", f);
+    return () => q.removeEventListener("change", f);
+  }, []);
+  return schmal;
+}
+
+type Dlg =
+  | { art: "ordner-neu" }
+  | { art: "ordner-umbenennen"; id: string }
+  | { art: "datei-umbenennen"; id: string }
+  | { art: "einstellungen"; id: string }
+  | { art: "endgueltig"; eintrag: AblageKorb }
+  | { art: "leeren" }
+  | { art: "freigaben" };
+
+let schluessel = 0;
+const neuerSchluessel = () => `u${++schluessel}`;
+
+/**
+ * Seite „Ablage“ (lva#407, D1): Ordnerbaum, Dateiliste, Details, Papierkorb. Nur lokal; Suche
+ * (D2), Abgleich (D4) und KI-Zugriff (D3) folgen. Namen und Inhalte gehen nie ins Log.
+ */
+export const AblagePage: React.FC = () => {
+  const { t, i18n } = useTranslation();
+  const schmal = useSchmal();
+  const [sicht, setSicht] = useState<AblageSicht | null>(null);
+  const [ladefehler, setLadefehler] = useState<string | null>(null);
+  const [ansicht, setAnsicht] = useState<string | null>(null);
+  const [dateiId, setDateiId] = useState<string | null>(null);
+  const [fassungen, setFassungen] = useState<AblageFassung[]>([]);
+  const [uploads, setUploads] = useState<UploadZeile[]>([]);
+  const [uploadOffen, setUploadOffen] = useState(false);
+  const [suche, setSuche] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [dlg, setDlg] = useState<Dlg | null>(null);
+  const zaehler = useRef(0);
+
+  const fehlerText = useCallback(
+    (code: string | null, text?: string) => {
+      if (!code) return text ?? "";
+      const suffix = code.replace(/^ablage\./, "");
+      return t(`ablage.fehler.${suffix}`, {
+        defaultValue: text ?? t("ablage.fehler.allgemein"),
+      });
+    },
+    [t],
+  );
+  const melden = useCallback(
+    (e: unknown) => {
+      const { code, text } = fehlerTeile(
+        e instanceof Error ? e.message : String(e),
+      );
+      toast.error(fehlerText(code, text));
+    },
+    [fehlerText],
+  );
+
+  const neuLaden = useCallback(async () => {
+    try {
+      setSicht(await api.stand());
+      setLadefehler(null);
+    } catch (e) {
+      const { code, text } = fehlerTeile(
+        e instanceof Error ? e.message : String(e),
+      );
+      setLadefehler(fehlerText(code, text));
+    }
+  }, [fehlerText]);
+
+  useEffect(() => {
+    void neuLaden();
+  }, [neuLaden]);
+
+  // Gültige Auswahl: Ordner (oder Papierkorb) und Datei.
+  useEffect(() => {
+    if (!sicht) return;
+    const hatOrdner =
+      ansicht === KORB || sicht.ordner.some((o) => o.id === ansicht);
+    if (!hatOrdner) {
+      const erster =
+        sicht.ordner.find((o) => !o.eltern && !o.wiederhergestellt) ??
+        sicht.ordner[0];
+      setAnsicht(erster?.id ?? null);
+    }
+    if (dateiId && !sicht.dateien.some((d) => d.id === dateiId))
+      setDateiId(null);
+  }, [sicht, ansicht, dateiId]);
+
+  useEffect(() => {
+    if (!dateiId) {
+      setFassungen([]);
+      return;
+    }
+    let aktuell = true;
+    api
+      .fassungen(dateiId)
+      .then((f) => aktuell && setFassungen(f))
+      .catch(() => aktuell && setFassungen([]));
+    return () => {
+      aktuell = false;
+    };
+  }, [dateiId, sicht]);
+
+  /** Aktion mit Fehlermeldung; lädt danach den Stand neu. Liefert, ob sie gelang. */
+  const tue = useCallback(
+    async (f: () => Promise<unknown>, erfolg?: string): Promise<boolean> => {
+      setBusy(true);
+      try {
+        await f();
+        if (erfolg) toast.success(erfolg);
+        return true;
+      } catch (e) {
+        melden(e);
+        return false;
+      } finally {
+        await neuLaden();
+        setBusy(false);
+      }
+    },
+    [melden, neuLaden],
+  );
+
+  const ordnerListe = sicht?.ordner ?? [];
+  const aktuellerOrdner = ordnerListe.find((o) => o.id === ansicht) ?? null;
+  const imKorb = ansicht === KORB;
+  const pfad = pfadZu(ordnerListe, aktuellerOrdner?.id ?? null);
+  const datei = sicht?.dateien.find((d) => d.id === dateiId) ?? null;
+  const unter = useMemo(
+    () =>
+      nachNameFiltern(
+        aktuellerOrdner ? unterordner(ordnerListe, aktuellerOrdner.id) : [],
+        suche,
+      ),
+    [ordnerListe, aktuellerOrdner, suche],
+  );
+  const dateienHier = useMemo(
+    () =>
+      nachNameFiltern(
+        (sicht?.dateien ?? []).filter((d) => d.ordner === ansicht),
+        suche,
+      ),
+    [sicht, ansicht, suche],
+  );
+  const pfadText = (id: string) =>
+    pfadZu(ordnerListe, id)
+      .map((o) => o.name)
+      .join(" › ");
+
+  // --- Hochladen -----------------------------------------------------------------------
+  const zeilenAus = (z: AblageImportZeile[]): UploadZeile[] =>
+    z.map((x) => ({
+      key: neuerSchluessel(),
+      name: dateiname(x.quelle),
+      quelle: x.quelle,
+      ordner: x.ordner,
+      stand: x.stand,
+      code: x.code,
+    }));
+
+  const hochladen = useCallback(
+    async (pfade: string[]) => {
+      if (!aktuellerOrdner || pfade.length === 0) return;
+      const ziel = aktuellerOrdner.id;
+      setUploadOffen(true);
+      setDateiId(null);
+      for (const pfadEintrag of pfade) {
+        const key = neuerSchluessel();
+        setUploads((u) => [
+          ...u,
+          {
+            key,
+            name: dateiname(pfadEintrag),
+            quelle: pfadEintrag,
+            ordner: ziel,
+            stand: "laeuft",
+            code: null,
+          },
+        ]);
+        try {
+          const zeilen = zeilenAus(
+            await api.importieren(ziel, pfadEintrag, null),
+          );
+          setUploads((u) => u.flatMap((x) => (x.key === key ? zeilen : [x])));
+        } catch (e) {
+          const { code } = fehlerTeile(
+            e instanceof Error ? e.message : String(e),
+          );
+          setUploads((u) =>
+            u.map((x) => (x.key === key ? { ...x, stand: "fehler", code } : x)),
+          );
+        }
+        await neuLaden();
+      }
+    },
+    [aktuellerOrdner, neuLaden],
+  );
+
+  const kollisionWaehlen = useCallback(
+    async (z: UploadZeile, wahl: AblageKollisionswahl | null) => {
+      if (!wahl || !z.ordner) {
+        setUploads((u) =>
+          u.map((x) =>
+            x.key === z.key ? { ...x, stand: "uebersprungen", code: null } : x,
+          ),
+        );
+        return;
+      }
+      setUploads((u) =>
+        u.map((x) => (x.key === z.key ? { ...x, stand: "laeuft" } : x)),
+      );
+      try {
+        const zeilen = zeilenAus(
+          await api.importieren(z.ordner, z.quelle, wahl),
+        );
+        setUploads((u) => u.flatMap((x) => (x.key === z.key ? zeilen : [x])));
+      } catch (e) {
+        const { code } = fehlerTeile(
+          e instanceof Error ? e.message : String(e),
+        );
+        setUploads((u) =>
+          u.map((x) => (x.key === z.key ? { ...x, stand: "fehler", code } : x)),
+        );
+      }
+      await neuLaden();
+    },
+    [neuLaden],
+  );
+
+  const waehlen = async (ordnerWahl: boolean) => {
+    try {
+      const antwort = await dateiDialog({
+        multiple: true,
+        directory: ordnerWahl,
+        title: t(
+          ordnerWahl
+            ? "ablage.hochladen.ordnerWaehlen"
+            : "ablage.hochladen.dateienWaehlen",
+        ),
+      });
+      if (!antwort) return;
+      await hochladen(Array.isArray(antwort) ? antwort : [antwort]);
+    } catch (e) {
+      melden(e);
+    }
+  };
+
+  const { over } = useFileDrop("[data-ablage-drop]", (pfade) => {
+    if (!imKorb && !dlg) void hochladen(pfade);
+  });
+
+  // --- Aktionen ------------------------------------------------------------------------
+  const inKorb = (art: AblageArt, id: string) =>
+    tue(() => api.inPapierkorb(art, id), t("ablage.toast.imPapierkorb"));
+  const wiederherstellen = (e: AblageKorb) =>
+    tue(
+      () => api.wiederherstellen(e.art, e.id),
+      t("ablage.toast.wiederhergestellt"),
+    );
+
+  const einstellungenSpeichern = async (a: EinstellungenAenderung) => {
+    if (dlg?.art !== "einstellungen") return;
+    const id = dlg.id;
+    const e = a.einstellungen;
+    const geaendert =
+      e.datenklasse != null || e.nur_geraet != null || e.zielordner_ki != null;
+    const gut = await tue(async () => {
+      if (a.ki !== undefined) await api.kiSetzen(id, a.ki);
+      if (geaendert) await api.ordnerEinstellungen(id, e);
+    }, t("ablage.toast.gespeichert"));
+    if (gut) setDlg(null);
+  };
+
+  const gefundenAufnehmen = (dat: string) => {
+    if (!aktuellerOrdner) return;
+    void tue(
+      () => api.gefundeneAufnehmen(dat, aktuellerOrdner.id),
+      t("ablage.toast.aufgenommen"),
+    );
+  };
+
+  const neuAufbauen = () =>
+    void tue(async () => {
+      const n = await api.bestandNeuAufbauen();
+      toast.success(t("ablage.lage.aufgebaut", { count: n }));
+    });
+
+  // --- Ansicht -------------------------------------------------------------------------
+  const korbAnzahl = sicht?.papierkorb.length ?? 0;
+  const wahl = (id: string) => {
+    setAnsicht(id);
+    setDateiId(null);
+    setSuche("");
+  };
+
+  const detailInhalt = (id: string) => {
+    if (uploadOffen) {
+      return (
+        <Hochladeliste
+          zeilen={uploads}
+          ordnerName={aktuellerOrdner?.name ?? ""}
+          ueberschriftId={id}
+          onWahl={kollisionWaehlen}
+          onSchliessen={() => {
+            setUploadOffen(false);
+            setUploads([]);
+          }}
+          fehlerText={(code) => fehlerText(code)}
+        />
+      );
+    }
+    if (!datei) return null;
+    return (
+      <Details
+        datei={datei}
+        pfad={pfadText(datei.ordner)}
+        fassungen={fassungen}
+        busy={busy}
+        ueberschriftId={id}
+        onSchliessen={() => setDateiId(null)}
+        onUmbenennen={() => setDlg({ art: "datei-umbenennen", id: datei.id })}
+        onPapierkorb={() => void inKorb("datei", datei.id)}
+        onKi={() => setDlg({ art: "einstellungen", id: datei.ordner })}
+      />
+    );
+  };
+  const seiteOffen = uploadOffen || !!datei;
+
+  if (!sicht) {
+    return (
+      <PageShell
+        title={t("ablage.titel")}
+        description={t("ablage.beschreibung")}
+        fill
+      >
+        <div className="ablage-leer" role={ladefehler ? "alert" : "status"}>
+          {ladefehler ?? t("ablage.laedt")}
+        </div>
+      </PageShell>
+    );
+  }
+
+  if (sicht.lage) {
+    const kannAufbauen = sicht.lage === "fehlt" || sicht.lage === "defekt";
+    return (
+      <PageShell
+        title={t("ablage.titel")}
+        description={t("ablage.beschreibung")}
+        fill
+      >
+        <div className="ablage-leer" role="alert" data-testid="ablage-lage">
+          <div>
+            <div className="ablage-leer__gross">{t("ablage.lage.titel")}</div>
+            <p>{t(`ablage.lage.${sicht.lage}`)}</p>
+            {kannAufbauen && (
+              <Button
+                variant="primary"
+                onClick={neuAufbauen}
+                disabled={busy}
+                data-testid="ablage-neu-aufbauen"
+              >
+                {t("ablage.lage.neuAufbauen")}
+              </Button>
+            )}
+          </div>
+        </div>
+      </PageShell>
+    );
+  }
+
+  const kopf = (
+    <div className="ablage-head">
+      <div className="ablage-crumb">
+        {(pfad.length > 1 || imKorb) && (
+          <IconButton
+            icon={<ArrowLeft size={20} aria-hidden="true" />}
+            label={t("ablage.zurueck")}
+            size="md"
+            onClick={() =>
+              wahl(
+                pfad.length > 1
+                  ? pfad[pfad.length - 2].id
+                  : (ordnerListe.find((o) => !o.eltern)?.id ?? ""),
+              )
+            }
+            data-testid="ablage-zurueck"
+          />
+        )}
+        {pfad.length > 1 && (
+          <>
+            <span className="ablage-nur-breit">
+              {pfad[pfad.length - 2].name}
+            </span>
+            <span
+              className="ablage-crumb__sep ablage-nur-breit"
+              aria-hidden="true"
+            >
+              ›
+            </span>
+          </>
+        )}
+        <h2 data-testid="ablage-ordnername">
+          {imKorb
+            ? t("ablage.papierkorb.titel")
+            : (aktuellerOrdner?.name ?? "")}
+        </h2>
+      </div>
+      <div className="ablage-head__tools">
+        {imKorb ? (
+          <Button
+            variant="danger-ghost"
+            disabled={busy || korbAnzahl === 0}
+            onClick={() => setDlg({ art: "leeren" })}
+            data-testid="ablage-leeren"
+          >
+            {t("ablage.papierkorb.leeren")}
+          </Button>
+        ) : (
+          aktuellerOrdner && (
+            <>
+              <Button
+                variant="primary"
+                icon={<Upload size={20} aria-hidden="true" />}
+                onClick={() => void waehlen(false)}
+                aria-haspopup="dialog"
+                aria-label={t("ablage.hochladen.dateien")}
+                disabled={busy}
+                data-testid="ablage-hochladen"
+              >
+                <span className="ablage-nur-breit">
+                  {t("ablage.hochladen.knopf")}
+                </span>
+              </Button>
+              <IconButton
+                icon={<FolderUp size={20} aria-hidden="true" />}
+                label={t("ablage.hochladen.ordner")}
+                size="md"
+                onClick={() => void waehlen(true)}
+                disabled={busy}
+                data-testid="ablage-ordner-hochladen"
+              />
+              <IconButton
+                icon={<FolderPlus size={20} aria-hidden="true" />}
+                label={t("ablage.ordner.neu")}
+                size="md"
+                className="ablage-nur-schmal"
+                onClick={() => setDlg({ art: "ordner-neu" })}
+              />
+              <IconButton
+                icon={<Pencil size={20} aria-hidden="true" />}
+                label={t("ablage.ordner.umbenennen")}
+                size="md"
+                onClick={() =>
+                  setDlg({ art: "ordner-umbenennen", id: aktuellerOrdner.id })
+                }
+                data-testid="ablage-ordner-umbenennen"
+              />
+              <IconButton
+                icon={<Trash2 size={20} aria-hidden="true" />}
+                label={t("ablage.ordner.papierkorb")}
+                size="md"
+                disabled={busy}
+                onClick={() => void inKorb("ordner", aktuellerOrdner.id)}
+                data-testid="ablage-ordner-papierkorb"
+              />
+              <IconButton
+                icon={<Settings2 size={20} aria-hidden="true" />}
+                label={t("ablage.einstellungen.knopf")}
+                size="md"
+                aria-haspopup="dialog"
+                onClick={() =>
+                  setDlg({ art: "einstellungen", id: aktuellerOrdner.id })
+                }
+                data-testid="ablage-ordner-einstellungen"
+              />
+            </>
+          )
+        )}
+        <IconButton
+          icon={<Trash2 size={20} aria-hidden="true" />}
+          label={t("ablage.papierkorb.oeffnen")}
+          size="md"
+          className="ablage-nur-schmal"
+          onClick={() => wahl(KORB)}
+        />
+      </div>
+    </div>
+  );
+
+  const meldungen = (
+    <>
+      {sicht.freigabe_unklar && (
+        <Meldung warn testid="ablage-freigabe-unklar">
+          <p>{t("ablage.ki.unklarMeldung")}</p>
+          {sicht.freigabe_unklar === "defekt" ? (
+            <Button
+              onClick={() => setDlg({ art: "freigaben" })}
+              data-testid="ablage-freigaben-neu"
+            >
+              {t("ablage.ki.neuFestlegen")}
+            </Button>
+          ) : (
+            <p>{t(`ablage.ki.unklar.${sicht.freigabe_unklar}`)}</p>
+          )}
+        </Meldung>
+      )}
+      {sicht.gefunden.length > 0 && !imKorb && (
+        <Meldung warn testid="ablage-gefunden">
+          <p>{t("ablage.gefunden.titel", { count: sicht.gefunden.length })}</p>
+          {sicht.gefunden.map((g) => (
+            <div
+              key={g.dat}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                flexWrap: "wrap",
+              }}
+            >
+              <span>
+                {g.typ ? g.typ.toUpperCase() : t("ablage.gefunden.ohneTyp")} ·{" "}
+                {formatBytes(g.groesse, i18n.language)}
+              </span>
+              <Button
+                disabled={busy || !aktuellerOrdner}
+                onClick={() => gefundenAufnehmen(g.dat)}
+                data-testid="ablage-gefunden-aufnehmen"
+              >
+                {t("ablage.gefunden.aufnehmen")}
+              </Button>
+            </div>
+          ))}
+        </Meldung>
+      )}
+    </>
+  );
+
+  const hauptInhalt = imKorb ? (
+    sicht.papierkorb.length === 0 ? (
+      <div className="ablage-leer" role="status">
+        <div>{t("ablage.papierkorb.leer")}</div>
+      </div>
+    ) : (
+      <>
+        <div className="ablage-hinweis">{t("ablage.papierkorb.hinweis")}</div>
+        <KorbTabelle
+          eintraege={sicht.papierkorb}
+          busy={busy}
+          onWiederherstellen={(e) => void wiederherstellen(e)}
+          onLoeschen={(e) => setDlg({ art: "endgueltig", eintrag: e })}
+        />
+      </>
+    )
+  ) : unter.length === 0 && dateienHier.length === 0 ? (
+    <div className="ablage-leer" data-testid="ablage-leer">
+      <div>
+        <FolderOpen
+          size={48}
+          aria-hidden="true"
+          style={{ color: "var(--color-logo-primary)" }}
+        />
+        <div className="ablage-leer__gross">
+          {suche ? t("ablage.leer.keineTreffer") : t("ablage.leer.titel")}
+        </div>
+        {!suche && (
+          <>
+            {t("ablage.leer.formate")}
+            <br />
+            {t("ablage.leer.lokal")}
+            <div style={{ marginTop: 16 }}>
+              <Button
+                variant="primary"
+                icon={<Upload size={20} aria-hidden="true" />}
+                onClick={() => void waehlen(false)}
+                aria-haspopup="dialog"
+                disabled={busy || !aktuellerOrdner}
+              >
+                {t("ablage.hochladen.auswaehlen")}
+              </Button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  ) : (
+    <DateiTabelle
+      titel={aktuellerOrdner?.name ?? ""}
+      unter={unter}
+      dateien={dateienHier}
+      gewaehlt={dateiId}
+      onOrdner={wahl}
+      onDatei={(id) => {
+        setUploadOffen(false);
+        setDateiId(id);
+      }}
+    />
+  );
+
+  const dlgOrdner = (id: string): AblageOrdner | null =>
+    ordnerListe.find((o) => o.id === id) ?? null;
+  const dlgDatei = (id: string): AblageDatei | null =>
+    sicht.dateien.find((d) => d.id === id) ?? null;
+
+  return (
+    <PageShell
+      title={t("ablage.titel")}
+      description={t("ablage.beschreibung")}
+      search={{
+        value: suche,
+        onChange: setSuche,
+        placeholder: t("ablage.suche"),
+      }}
+      fill
+    >
+      <div
+        className={`ablage${seiteOffen && !schmal ? "" : " ablage--zwei"}`}
+        data-testid="ablage-seite"
+      >
+        <OrdnerBaum
+          ordner={ordnerListe}
+          gewaehlt={ansicht}
+          korbAnzahl={korbAnzahl}
+          onWahl={wahl}
+          onNeu={() => setDlg({ art: "ordner-neu" })}
+        />
+        <section
+          className="ablage-col"
+          aria-label={
+            imKorb ? t("ablage.papierkorb.titel") : t("ablage.liste.label")
+          }
+          data-ablage-drop
+        >
+          {kopf}
+          {meldungen}
+          {hauptInhalt}
+          {over && !imKorb && aktuellerOrdner && (
+            <div
+              className="ablage-drop"
+              aria-hidden="true"
+              data-testid="ablage-drop"
+            >
+              <div>
+                <Upload size={40} aria-hidden="true" />
+                <br />
+                {t("ablage.drop.titel", { name: aktuellerOrdner.name })}
+                <br />
+                <span className="ablage-mut" style={{ fontWeight: 400 }}>
+                  {t("ablage.drop.hinweis")}
+                </span>
+              </div>
+            </div>
+          )}
+          <div className="ablage-fuss">
+            <span>
+              {t("ablage.fuss.belegt", {
+                size: formatBytes(sicht.belegt, i18n.language),
+              })}
+            </span>
+            <span className="ablage-nur-breit">{t("ablage.fuss.lokal")}</span>
+          </div>
+        </section>
+        {seiteOffen && !schmal && (
+          <section
+            className="ablage-col ablage-seite"
+            aria-labelledby="ablage-seite-titel"
+            data-testid="ablage-seite-details"
+          >
+            {detailInhalt("ablage-seite-titel")}
+          </section>
+        )}
+      </div>
+
+      {schmal && seiteOffen && (
+        <Dialog
+          open
+          onOpenChange={(o) => {
+            if (o) return;
+            if (uploadOffen) {
+              setUploadOffen(false);
+              setUploads([]);
+            } else setDateiId(null);
+          }}
+          title={
+            uploadOffen
+              ? t("ablage.hochladen.titel", { count: uploads.length })
+              : (datei?.name ?? "")
+          }
+          closeLabel={t("ablage.details.schliessen")}
+          className="ablage-sheet"
+          contentFades={false}
+        >
+          <div className="ablage" style={{ display: "block", height: "auto" }}>
+            {detailInhalt("ablage-blatt-titel")}
+          </div>
+        </Dialog>
+      )}
+
+      <NameDialog
+        open={dlg?.art === "ordner-neu"}
+        titel={t("ablage.ordner.neu")}
+        beschriftung={t("ablage.ordner.name")}
+        start=""
+        aktion={t("ablage.ordner.anlegen")}
+        busy={busy}
+        onClose={() => setDlg(null)}
+        onOk={async (name) => {
+          let neu: string | null = null;
+          const gut = await tue(async () => {
+            neu = await api.ordnerAnlegen(
+              imKorb ? null : (aktuellerOrdner?.id ?? null),
+              name,
+            );
+          });
+          if (gut) {
+            setDlg(null);
+            if (neu) wahl(neu);
+          }
+        }}
+      />
+      <NameDialog
+        open={dlg?.art === "ordner-umbenennen"}
+        titel={t("ablage.ordner.umbenennen")}
+        beschriftung={t("ablage.ordner.name")}
+        start={
+          dlg?.art === "ordner-umbenennen"
+            ? (dlgOrdner(dlg.id)?.name ?? "")
+            : ""
+        }
+        aktion={t("ablage.speichern")}
+        busy={busy}
+        onClose={() => setDlg(null)}
+        onOk={async (name) => {
+          if (dlg?.art !== "ordner-umbenennen") return;
+          const id = dlg.id;
+          if (await tue(() => api.ordnerUmbenennen(id, name))) setDlg(null);
+        }}
+      />
+      <NameDialog
+        open={dlg?.art === "datei-umbenennen"}
+        titel={t("ablage.details.umbenennen")}
+        beschriftung={t("ablage.liste.name")}
+        start={
+          dlg?.art === "datei-umbenennen" ? (dlgDatei(dlg.id)?.name ?? "") : ""
+        }
+        aktion={t("ablage.speichern")}
+        busy={busy}
+        onClose={() => setDlg(null)}
+        onOk={async (name) => {
+          if (dlg?.art !== "datei-umbenennen") return;
+          const id = dlg.id;
+          if (await tue(() => api.dateiUmbenennen(id, name))) setDlg(null);
+        }}
+      />
+      <OrdnerEinstellungen
+        open={dlg?.art === "einstellungen"}
+        ordner={dlg?.art === "einstellungen" ? dlgOrdner(dlg.id) : null}
+        alle={ordnerListe}
+        busy={busy}
+        onSpeichern={(a) => void einstellungenSpeichern(a)}
+        onClose={() => setDlg(null)}
+      />
+      <BestaetigungDialog
+        open={dlg?.art === "endgueltig"}
+        titel={t("ablage.papierkorb.endgueltigTitel", {
+          name: dlg?.art === "endgueltig" ? dlg.eintrag.name : "",
+        })}
+        text={t("ablage.papierkorb.endgueltigText")}
+        aktion={t("ablage.papierkorb.endgueltig")}
+        gefahr
+        busy={busy}
+        onClose={() => setDlg(null)}
+        onOk={async () => {
+          if (dlg?.art !== "endgueltig") return;
+          const e = dlg.eintrag;
+          if (
+            await tue(
+              () => api.endgueltigLoeschen(e.art, e.id),
+              t("ablage.toast.geloescht"),
+            )
+          )
+            setDlg(null);
+        }}
+      />
+      <BestaetigungDialog
+        open={dlg?.art === "leeren"}
+        titel={t("ablage.papierkorb.leerenTitel", { count: korbAnzahl })}
+        text={t("ablage.papierkorb.endgueltigText")}
+        aktion={t("ablage.papierkorb.leerenAktion")}
+        gefahr
+        busy={busy}
+        onClose={() => setDlg(null)}
+        onOk={async () => {
+          if (
+            await tue(() => api.papierkorbLeeren(), t("ablage.toast.geleert"))
+          )
+            setDlg(null);
+        }}
+      />
+      <BestaetigungDialog
+        open={dlg?.art === "freigaben"}
+        titel={t("ablage.ki.neuFestlegenTitel")}
+        text={
+          <>
+            <p>{t("ablage.ki.neuFestlegenText")}</p>
+            <ul style={{ margin: "8px 0 0 18px", listStyle: "disc" }}>
+              {ordnerListe.map((o) => (
+                <li key={o.id}>
+                  {pfadText(o.id)} — {t("ablage.ki.stufe.aus")}
+                </li>
+              ))}
+            </ul>
+          </>
+        }
+        aktion={t("ablage.ki.neuFestlegenAktion")}
+        busy={busy}
+        onClose={() => setDlg(null)}
+        onOk={async () => {
+          if (
+            await tue(
+              () => api.freigabenNeuFestlegen(),
+              t("ablage.toast.gespeichert"),
+            )
+          )
+            setDlg(null);
+        }}
+      />
+    </PageShell>
+  );
+};

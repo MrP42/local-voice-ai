@@ -11,6 +11,7 @@
   },
   "sidebar": {
     "library": "Library",
+    "ablage": "Files",
     "general": "General",
     "models": "Models",
     "integrations": "Integrations",
@@ -8760,6 +8761,246 @@
     },
     "vorlesen": {
       "nurLokal": "Personal content is read aloud with local speech output only."
+    }
+  },
+  "ablage": {
+    "titel": "Files",
+    "beschreibung": "Organise and keep documents locally.",
+    "suche": "Filter files by name",
+    "laedt": "Loading files …",
+    "schliessen": "Close",
+    "abbrechen": "Cancel",
+    "speichern": "Save",
+    "zurueck": "Back",
+    "baum": {
+      "label": "Folders",
+      "meine": "My folders",
+      "wiederhergestellt": "Restored",
+      "weitere": "More folders"
+    },
+    "ordner": {
+      "neu": "New folder",
+      "name": "Folder name",
+      "anlegen": "Create",
+      "umbenennen": "Rename",
+      "papierkorb": "Move folder to trash"
+    },
+    "liste": {
+      "label": "Files",
+      "caption": "Files in {{name}}",
+      "name": "Name",
+      "geaendert": "Modified",
+      "groesse": "Size",
+      "klasse": "Class",
+      "stand": "Status",
+      "dateien_one": "{{count}} file",
+      "dateien_other": "{{count}} files"
+    },
+    "stand": {
+      "konflikt": "Conflict"
+    },
+    "leer": {
+      "titel": "No files yet",
+      "formate": "PDF, Word, Excel, text, images and more. You can drag in folders too.",
+      "lokal": "Everything stays on this device.",
+      "keineTreffer": "No file matches this search."
+    },
+    "drop": {
+      "titel": "Drop files into “{{name}}”",
+      "hinweis": "Release to add them."
+    },
+    "fuss": {
+      "belegt": "{{size}} used",
+      "lokal": "Only on this device"
+    },
+    "hochladen": {
+      "titel_one": "Adding {{count}} file",
+      "titel_other": "Adding {{count}} files",
+      "schliessen": "Done",
+      "knopf": "Upload",
+      "dateien": "Files",
+      "ordner": "Folders",
+      "auswaehlen": "Choose",
+      "dateienWaehlen": "Choose files",
+      "ordnerWaehlen": "Choose folder",
+      "kollisionHinweis": "A file with this name already exists. What should happen?",
+      "kollisionGruppe": "Choice for {{name}}",
+      "neueFassung": "As new version",
+      "beideBehalten": "Keep both",
+      "ueberspringen": "Skip",
+      "erben": "New files inherit the settings of “{{name}}”.",
+      "stand": {
+        "laeuft": "Adding …",
+        "abgelegt": "Added",
+        "neue_fassung": "New version added",
+        "kollision": "Name already exists",
+        "uebersprungen": "Skipped",
+        "fehler": "Failed"
+      }
+    },
+    "papierkorb": {
+      "titel": "Trash",
+      "caption": "Deleted files and folders",
+      "geloescht": "Deleted",
+      "ursprung": "Origin",
+      "ohneUrsprung": "Unknown",
+      "aktion": "Action",
+      "tageRest_one": "{{count}} day left",
+      "tageRest_other": "{{count}} days left",
+      "wiederherstellen": "Restore",
+      "wiederherstellenName": "Restore {{name}}",
+      "endgueltigName": "Delete {{name}} permanently",
+      "endgueltig": "Delete permanently",
+      "endgueltigTitel": "Delete “{{name}}” permanently?",
+      "endgueltigText": "This cannot be undone. All versions are removed.",
+      "leeren": "Empty trash",
+      "leerenTitel_one": "Delete {{count}} item permanently?",
+      "leerenTitel_other": "Delete {{count}} items permanently?",
+      "leerenAktion": "Delete all",
+      "leer": "The trash is empty.",
+      "hinweis": "Items are deleted permanently after 30 days.",
+      "oeffnen": "Open trash"
+    },
+    "details": {
+      "schliessen": "Close details",
+      "vorschau": "Preview",
+      "vorschauHinweis": "Preview will follow in a later version.",
+      "textfassung": "Text version",
+      "text": {
+        "ok": "Text ready",
+        "ausstehend": "Text pending"
+      },
+      "textNoch": "No text yet",
+      "fassungen": "Versions",
+      "fassungAktuell": "{{nummer}} (current)",
+      "abgeloest": "superseded",
+      "angaben": "Details",
+      "ordner": "Folder",
+      "ablage": "Storage",
+      "nurDiesesGeraet": "Only on this device",
+      "umbenennen": "Rename file",
+      "papierkorb": "Move to trash"
+    },
+    "ki": {
+      "titel": "AI access",
+      "stufe": {
+        "an": "On",
+        "aus": "Off",
+        "gesperrt": "Locked"
+      },
+      "erklaerung": "“On” shares the files with the AI, “Off” holds them back, “Locked” always wins, even over “On” in subfolders.",
+      "erben": "Inherit from parent folder",
+      "chipAn": "AI on",
+      "chipUnklar": "AI unclear",
+      "fuerKiFreigegeben": "Shared with the AI",
+      "fuerDieKi": "For the AI",
+      "nurAuszuege": "The AI only sees excerpts, never the originals.",
+      "aendern": "Change",
+      "zustand": {
+        "an": "On",
+        "aus": "Off",
+        "gesperrt": "Locked",
+        "unklar": "Unclear"
+      },
+      "geerbtVon": "inherited from {{name}}",
+      "unklarKurz": "Sharing unclear",
+      "unklarHinweis": "This device's sharing settings are ambiguous. Until resolved, all files stay locked for the AI.",
+      "unklarMeldung": "Sharing is unclear. Please reset it first.",
+      "unklar": {
+        "neuer": "The sharing settings come from a newer version of the app.",
+        "unlesbar": "The sharing settings cannot be read."
+      },
+      "neuFestlegen": "Reset sharing",
+      "neuFestlegenTitel": "Reset sharing?",
+      "neuFestlegenText": "All folders start without sharing again. You can then set sharing one folder at a time.",
+      "neuFestlegenAktion": "Reset"
+    },
+    "klasse": {
+      "titel": "Data class",
+      "erbt": "Inherits from parent folder",
+      "standard": "Default",
+      "lang": {
+        "erbt": "Inherit",
+        "public": "Public",
+        "internal": "Internal",
+        "confidential": "Confidential",
+        "personal": "Personal data"
+      },
+      "kurz": {
+        "erbt": "Inherits",
+        "public": "Public",
+        "internal": "Internal",
+        "confidential": "Confidential",
+        "personal": "Personal",
+        "unbekannt": "Unknown"
+      }
+    },
+    "nurGeraet": {
+      "titel": "Only on this device",
+      "hinweis": "Files in this folder never leave the device.",
+      "geerbt": "Inherited from a parent folder."
+    },
+    "entwuerfe": {
+      "titel": "AI drafts",
+      "hinweis": "AI drafts are saved in this folder."
+    },
+    "einstellungen": {
+      "titel": "Settings for “{{name}}”",
+      "knopf": "Folder settings",
+      "nurFrage": "Keep only on this device?",
+      "nurFolge": "Files in this folder and all subfolders will not be synced with other devices.",
+      "nurBestaetigen": "Only on this device",
+      "syncFrage": "Sync with other devices again?",
+      "syncFolge": "Copies already stored in the cloud cannot be retrieved afterwards.",
+      "syncBestaetigen": "Allow sync"
+    },
+    "lage": {
+      "titel": "The files cannot be opened",
+      "fehlt": "The file index is missing, but files exist.",
+      "defekt": "The file index is damaged.",
+      "neuer": "The files come from a newer version of the app.",
+      "nicht_lesbar": "The file index cannot be read.",
+      "neuAufbauen": "Rebuild index",
+      "aufgebaut_one": "{{count}} file recovered",
+      "aufgebaut_other": "{{count}} files recovered"
+    },
+    "gefunden": {
+      "titel_one": "{{count}} file found that is not in the index.",
+      "titel_other": "{{count}} files found that are not in the index.",
+      "aufnehmen": "Add",
+      "ohneTyp": "no type"
+    },
+    "toast": {
+      "imPapierkorb": "Moved to trash",
+      "wiederhergestellt": "Restored",
+      "gespeichert": "Saved",
+      "aufgenommen": "Added",
+      "geloescht": "Deleted permanently",
+      "geleert": "Trash emptied"
+    },
+    "fehler": {
+      "allgemein": "That did not work.",
+      "name_vorhanden": "This name is already taken.",
+      "name_ungueltig": "This name is not allowed.",
+      "journal_defekt": "The file index is damaged.",
+      "verknuepfung": "Links are not followed.",
+      "zyklus": "A folder cannot be placed inside itself.",
+      "nur_geraet_geerbt": "This folder inherits “only this device” from a parent folder.",
+      "freigabe_unklar": "Sharing is unclear.",
+      "konflikt": "The file has an open conflict.",
+      "ordner_im_papierkorb": "The folder is in the trash.",
+      "nicht_gefunden": "Not found.",
+      "nicht_im_papierkorb": "Not in the trash.",
+      "schon_im_papierkorb": "Already in the trash.",
+      "quelle_nicht_lesbar": "The source cannot be read.",
+      "quelle_ungueltig": "The source is not a regular file.",
+      "pruefsumme": "The checksum does not match.",
+      "speicher": "Saving failed.",
+      "ungueltig": "Invalid input.",
+      "zu_tief": "Folders are nested too deeply.",
+      "zu_viele": "Too many entries.",
+      "keine_datei": "No file.",
+      "nicht_neu_aufbaubar": "The index cannot be rebuilt."
     }
   }
 }

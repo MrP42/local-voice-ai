@@ -19,6 +19,7 @@ import {
   Volume2,
   House,
   Library,
+  FolderArchive,
   UserRound,
   X,
 } from "lucide-react";
@@ -34,6 +35,7 @@ import { IntegrationsPage } from "./integrations/IntegrationsPage";
 import { VoiceCallPage } from "./voice-call/VoiceCallPage";
 import { KontoProfilSeite } from "./konto/KontoProfilSeite";
 import { LibraryPage } from "./library/LibraryPage";
+import { AblagePage } from "./ablage/AblagePage";
 
 export type SidebarSection = keyof typeof SECTIONS_CONFIG;
 
@@ -98,6 +100,12 @@ export const SECTIONS_CONFIG = {
     icon: Library,
     component: LibraryPage,
   },
+  // Dokumentenablage (Spec 2026-11-08, Stufe D1).
+  ablage: {
+    labelKey: "sidebar.ablage",
+    icon: FolderArchive,
+    component: AblagePage,
+  },
   settings: {
     labelKey: "sidebar.settings",
     icon: Cog,
@@ -128,7 +136,7 @@ interface SidebarProps {
   fuss?: React.ReactNode;
 }
 
-const PRIMARY = ["home", "history", "meetings", "tts", "library", "voice"] as const;
+const PRIMARY = ["home", "history", "meetings", "tts", "library", "ablage", "voice"] as const;
 // Modelle, Integrationen und Einstellungen stehen seit ADR-0027 im Profilmenü
 // (Profilkreis unten links), nicht mehr als Einträge der Navigation.
 
