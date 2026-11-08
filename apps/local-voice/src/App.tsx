@@ -594,7 +594,7 @@ function App() {
           <div className="lv-content flex-1 flex flex-col overflow-hidden min-w-0">
             <main
               id="workspace-content"
-              className={`flex-1 workspace-main ${currentSection === "tts" || currentSection === "meetings" || shownSection === "home" ? "workspace-main--fill" : ""} ${currentSection === "meetings" || shownSection === "home" ? "workspace-main--fixed" : ""}`}
+              className={`flex-1 workspace-main ${currentSection === "tts" || currentSection === "meetings" || shownSection === "home" || currentSection === "projekte" ? "workspace-main--fill" : ""} ${currentSection === "meetings" || shownSection === "home" || currentSection === "projekte" ? "workspace-main--fixed" : ""}`}
               aria-label={t(SECTIONS_CONFIG[currentSection].labelKey)}
             >
               {/* Fluid: the content uses whatever width the window offers, up
@@ -605,11 +605,14 @@ function App() {
                 className={`flex flex-col w-full mx-auto p-3 sm:p-4 gap-4 min-w-0 ${
                   currentSection === "tts" ||
                   currentSection === "meetings" ||
-                  shownSection === "home"
+                  shownSection === "home" ||
+                  currentSection === "projekte"
                     ? "workspace-content--fill"
                     : ""
                 } ${
-                  currentSection === "meetings" || shownSection === "home"
+                  currentSection === "meetings" ||
+                  shownSection === "home" ||
+                  currentSection === "projekte"
                     ? "workspace-content--fixed"
                     : ""
                 } ${
@@ -622,7 +625,8 @@ function App() {
                   // Sprachgespräch: Verlauf zentriert, Einstellungen als Spalte rechts.
                   currentSection === "tts" ||
                   currentSection === "meetings" ||
-                  shownSection === "home"
+                  shownSection === "home" ||
+                  currentSection === "projekte"
                     ? ""
                     : "max-w-5xl"
                 }`}

@@ -30,6 +30,7 @@ import {
   type ComposerMenuItem,
 } from "./Composer";
 import { ConversationList } from "./ConversationList";
+import { ProjekteGruppe } from "../projekte/ProjekteGruppe";
 import { ConversationOptions } from "./ConversationOptions";
 import { ConversationSearch, type SearchAction } from "./ConversationSearch";
 import { InfoLine } from "./InfoLine";
@@ -482,9 +483,10 @@ export const VoiceCallPage: React.FC = () => {
         {historyOpen && !narrow && (
           <aside
             id={historyId}
-            className="w-[260px] shrink-0 min-h-0 border-e border-mid-gray/20"
+            className="w-[260px] shrink-0 min-h-0 flex flex-col border-e border-mid-gray/20"
           >
-            {historyList}
+            <div className="min-h-0 flex-1">{historyList}</div>
+            <ProjekteGruppe />
           </aside>
         )}
         {historyOpen && narrow && (
@@ -501,9 +503,10 @@ export const VoiceCallPage: React.FC = () => {
               onKeyDown={(e) => {
                 if (e.key === "Escape") setOverlayOpen(false);
               }}
-              className="absolute inset-y-0 start-0 z-30 w-[min(300px,85%)] border-e border-mid-gray/20 shadow-2xl"
+              className="absolute inset-y-0 start-0 z-30 flex w-[min(300px,85%)] flex-col border-e border-mid-gray/20 bg-background shadow-2xl"
             >
-              {historyList}
+              <div className="min-h-0 flex-1">{historyList}</div>
+              <ProjekteGruppe onGewaehlt={() => setOverlayOpen(false)} />
             </aside>
           </>
         )}

@@ -1186,6 +1186,36 @@ mod tests {
     }
 
     #[test]
+    fn ohne_kennung_abgelehnt_taucht_als_gefunden_auf_und_wird_wieder_aufgenommen() {
+        let a = tmp();
+        let (id, name) = hinzufuegen(&a, P, &quelle(&a, "a.txt", "alt")).unwrap();
+        eingetragen(&a, P, &id, "e1").unwrap();
+        KENNUNG_FEHLT.with(|k| k.set(true));
+        let r = entfernen_beginnen(&a, P, &id);
+        // Auch ein Wiederanlauf ohne Kennung bietet sie (einmal) als gefunden an.
+        let w = wiederanlauf(&a, P);
+        KENNUNG_FEHLT.with(|k| k.set(false));
+        r.unwrap();
+        assert_eq!(w.unwrap().gefunden, 0, "schon beim Entfernen angeboten");
+        let l = liste(&a, P).unwrap();
+        assert!(l[&id].nicht_sicher && !l[&id].lebt());
+        let (gid, g) = l
+            .iter()
+            .find(|(_, x)| x.status == Status::Gefunden)
+            .expect("als gefunden angeboten");
+        assert_eq!(g.name, name);
+        // Kennung wieder verfügbar: bewusst erneut aufnehmen, dann regulär entfernbar.
+        assert_eq!(gefundene_aufnehmen(&a, P, gid).unwrap(), name);
+        let d = &liste(&a, P).unwrap()[gid];
+        assert!(d.lebt() && d.sha256.is_some());
+        eingetragen(&a, P, gid, "e2").unwrap();
+        assert_eq!(entfernen_beginnen(&a, P, gid).unwrap(), Some("e2".into()));
+        let d = &liste(&a, P).unwrap()[gid];
+        assert!(!d.nicht_sicher && d.papierkorb.is_some());
+        fs::remove_dir_all(&a).ok();
+    }
+
+    #[test]
     fn neueres_journal_mit_unbekanntem_feld_wird_nie_neu_aufgebaut() {
         let a = tmp();
         hinzufuegen(&a, P, &quelle(&a, "a.txt", "a")).unwrap();
