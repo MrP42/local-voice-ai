@@ -859,6 +859,42 @@ async kontoBildLesen(id: string) : Promise<Result<string | null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Stuft eine Aeusserung lokal ein (ADR-0028 E4.1). `None`, wenn die Einstufung abgeschaltet ist
+ * (`assistent_einstufung_aktiv`). Der Text wird nicht protokolliert.
+ */
+async assistentEinstufen(text: string, sprache: string) : Promise<Result<EinstufungDto | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("assistent_einstufen", { text, sprache }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Nimmt die Messpunkte eines Beitrags entgegen (E9). Nur Debug-Zeile ohne Text: das Beitragsmodell
+ * (`conversations`, `ext["local-voice-ai"]`) hat noch keine Felder dafuer, und die Beitraege werden
+ * von der Oberflaeche gespeichert; die Ablage am Beitrag folgt mit der Chat-Startseite.
+ */
+async assistentMessungMelden(messung: MessungDto) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("assistent_messung_melden", { messung }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * „Einstufung vor dem Modellaufruf“ ein- oder ausschalten (Standard an).
+ */
+async changeAssistentEinstufungAktivSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_assistent_einstufung_aktiv_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async projekteListe() : Promise<Result<SuiteProjekt[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("projekte_liste") };
@@ -8663,6 +8699,11 @@ meeting_mcp_enabled?: boolean;
  */
 meeting_mcp_include_transcript?: boolean; 
 /**
+ * ADR-0028 A2 (E4): lokale Einstufung S0-S3 vor dem Modellaufruf im Sprachgespraech
+ * (Vorlagenantwort bei S0, Ansage ab S1). Standard AN; aus = alter Ablauf ohne Einstufung.
+ */
+assistent_einstufung_aktiv?: boolean; 
+/**
  * Stufe 2 des Sprachgesprächs: darf die Sprach-KI Transkripte von Besprechungen lesen
  * (`meeting_transcript`, Treffer aus dem Transkript)? Getrennt vom MCP-Server; Standard AUS
  * (ADR-0021).
@@ -9968,6 +10009,22 @@ audio_paths: string[] }
  * Gelöschte Sprachfassung: verhindert, dass der Sync sie zurückbringt.
  */
 export type EditionTombstone = { id: string; removed_ms: number }
+/**
+ * Ergebnis der Einstufung (Vertragstyp `Einstufung` des Kerns).
+ */
+export type EinstufungDto = { stufe: StufeDto; 
+/**
+ * Kennung der Absicht (Slug der Regeltabelle), z. B. `uhrzeit` oder `mail-lesen`.
+ */
+absicht: string; 
+/**
+ * Ansage ab S1 (Vorlage der Tabelle).
+ */
+ansage: string | null; 
+/**
+ * Vorlagenantwort bei S0.
+ */
+antwort: string | null }
 /**
  * Eintrag des Projektordners. Ohne Leserecht fehlen `title` und `subtitle` (`available` = false).
  */
@@ -11314,6 +11371,11 @@ export type MemoryEstimate = { weights_mb: number; kv_mb: number; overhead_mb: n
 from_metadata: boolean }
 export type MemoryFile = { kind: string; text: string }
 export type MemoryProposal = { verlauf: string; figuren: string; welt: string }
+/**
+ * Messpunkte eines Beitrags (ADR-0028 E9), alle Zeiten in ms relativ zum Start (Sprachende bzw.
+ * Senden). Keine Inhalte.
+ */
+export type MessungDto = { beitrag_id: string; erste_ansage_ms: number | null; erster_inhalt_ms: number | null; fertig_ms: number | null; warm: boolean; weg: WegDto; stufe: StufeDto }
 /**
  * Ein Treffer aus Open Library, als Vorschlag für den Dialog.
  */
@@ -12753,6 +12815,10 @@ export type Strength =
  */
 "strong"
 /**
+ * Stufe der Einstufung, wie sie die Oberflaeche sieht.
+ */
+export type StufeDto = "S0" | "S1" | "S2" | "S3"
+/**
  * Art des erzeugten Inhalts (Spalte `provenance.subject_kind`). Die Liste ist
  * fest und steht zusaetzlich als CHECK in der Migration.
  */
@@ -13612,6 +13678,10 @@ export type WaitReason =
  * Eine Live-Aufnahme laeuft und hat Vorrang.
  */
 "recording"
+/**
+ * Weg der Antwort (Messpunkt E9).
+ */
+export type WegDto = "lokal" | "relay"
 export type WiderspruchSicht = { statement: string; sourceIndices: number[] }
 export type WindowsMicrophonePermissionStatus = { supported: boolean; overall_access: PermissionAccess; device_access: PermissionAccess; app_access: PermissionAccess; desktop_app_access: PermissionAccess }
 /**

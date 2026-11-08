@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Projekte und Recherche der Suite (ADR-0026) aus dem WAI-SDK in Local Voice AI übernehmen (Vendoring).
+"""Projekte, Recherche (ADR-0026) und Assistent-Kern (ADR-0028) der Suite aus dem WAI-SDK in Local Voice AI übernehmen (Vendoring).
 
 Quelle:   https://github.com/MrP42/wai-sdk, Pfade crates/<name> der Crates unten
 Ziel:     apps/local-voice/src-tauri/vendor/<name>/
 
-Übernommen werden `wai-projekte` und `wai-recherche` samt ihren wai-*-Pfadabhängigkeiten
+Übernommen werden `wai-projekte`, `wai-recherche` und `wai-assistent` samt ihren wai-*-Pfadabhängigkeiten
 (`wai-security`, `wai-storage`, `wai-links`, `wai-providers`). Muster wie `vendor-wai-voice-dienst.py`:
 Kopie von `src/` des festen Commits per `git archive` und eine eigenständige `Cargo.toml` ohne
 Workspace-Vererbung. Workspace-Abhängigkeiten werden auf konkrete Versionen aufgelöst; wo Local Voice AI
@@ -17,6 +17,7 @@ Zwei bewusste Abweichungen der erzeugten `Cargo.toml` vom SDK:
 - `[lib] test = false`: die Tests der Crates laufen im SDK.
 
     python3 scripts/vendor-wai-suite.py [<wai-sdk-pfad>] [--commit <rev>]   übernehmen (Standard: origin/main)
+    python3 scripts/vendor-wai-suite.py [<wai-sdk-pfad>] --nur <crate> [--commit <rev>]   nur ein Crate übernehmen
     python3 scripts/vendor-wai-suite.py [<wai-sdk-pfad>] --check            Ordner gegen den gepinnten Commit prüfen
 
 Der SDK-Pfad kommt aus dem Argument oder der Umgebungsvariablen WAI_SDK. Gelesen wird nur per `git`, der
@@ -39,8 +40,17 @@ from pathlib import Path
 
 WURZEL = Path(__file__).resolve().parent.parent
 VENDOR = WURZEL / "src-tauri" / "vendor"
-CRATES = ("wai-links", "wai-security", "wai-storage", "wai-providers", "wai-projekte", "wai-recherche")
-UEBERNOMMEN = ("src/",)
+CRATES = (
+    "wai-links", "wai-security", "wai-storage", "wai-providers", "wai-projekte", "wai-recherche", "wai-assistent",
+)
+UEBERNOMMEN = ("src/", "regeln/")
+# wai-assistent (ADR-0028 A2) bindet `regeln/standard.json` per include_str! ein und die Vertragsfixture aus
+# dem SDK-Verzeichnis contracts/, das ausserhalb des Crates liegt. Beim Vendoren wird die Fixture daher als
+# regeln/vertragsfixture.json mitkopiert und der Pfad in regeltabelle.rs umgeschrieben.
+FIXTURE_QUELLE = "contracts/fixtures/assistent-einstufung/valid/regeltabelle-de-en.json"
+FIXTURE_ALT = 'include_str!("../../../contracts/fixtures/assistent-einstufung/valid/regeltabelle-de-en.json")'
+FIXTURE_NEU = 'include_str!("../regeln/vertragsfixture.json")'
+
 VENDOR_DATEI = "VENDOR.toml"
 STANDARD_REV = "origin/main"
 REPO = "https://github.com/MrP42/wai-sdk"
@@ -145,6 +155,12 @@ def dateien_aus_commit(sdk: Path, commit: str, crate: str) -> dict[str, bytes]:
             dateien[rel] = daten.read()
     if not any(r.startswith("src/") for r in dateien):
         raise SystemExit(f"{quelle}/src ist im Commit {commit} leer")
+    if crate == "wai-assistent":
+        quelltext = dateien["src/regeltabelle.rs"].decode("utf-8")
+        if FIXTURE_ALT not in quelltext:
+            raise SystemExit("wai-assistent: Fixture-Einbindung in regeltabelle.rs nicht gefunden, Skript anpassen")
+        dateien["src/regeltabelle.rs"] = quelltext.replace(FIXTURE_ALT, FIXTURE_NEU).encode("utf-8")
+        dateien["regeln/vertragsfixture.json"] = git(sdk, "show", f"{commit}:{FIXTURE_QUELLE}")
     dateien["Cargo.toml"] = cargo_toml(sdk, commit, crate)
     # rustfmt von Local Voice AI steht auf edition 2021; die Crates sind edition 2024 (let-chains).
     dateien["rustfmt.toml"] = b'edition = "2024"\n'
@@ -171,10 +187,10 @@ def sdk_pfad(argument: str | None) -> Path:
     return pfad
 
 
-def uebernehmen(sdk: Path, rev: str) -> int:
+def uebernehmen(sdk: Path, rev: str, nur: list[str] | None = None) -> int:
     commit = git(sdk, "rev-parse", "--verify", f"{rev}^{{commit}}").decode().strip()
     datum = git(sdk, "show", "-s", "--format=%cs", commit).decode().strip()
-    for crate in CRATES:
+    for crate in nur or CRATES:
         ziel = VENDOR / crate
         dateien = dateien_aus_commit(sdk, commit, crate)
         if ziel.exists():
@@ -231,10 +247,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("sdk", nargs="?", help="Pfad zum wai-sdk-Checkout (sonst WAI_SDK)")
     parser.add_argument("--commit", default=STANDARD_REV, help=f"Commit oder Zweig (Standard: {STANDARD_REV})")
+    parser.add_argument("--nur", action="append", choices=CRATES, help="nur dieses Crate übernehmen (mehrfach möglich)")
     parser.add_argument("--check", action="store_true", help="nur prüfen, Exit 1 bei Abweichung")
     a = parser.parse_args()
     sdk = sdk_pfad(a.sdk)
-    return pruefen(sdk) if a.check else uebernehmen(sdk, a.commit)
+    return pruefen(sdk) if a.check else uebernehmen(sdk, a.commit, a.nur)
 
 
 if __name__ == "__main__":

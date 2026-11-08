@@ -324,6 +324,9 @@ const settingUpdaters: {
     commands.changeVoiceCallReadTranscriptsSetting(value as boolean),
   voice_call_knowledge: (value) =>
     commands.changeVoiceCallKnowledgeSetting(value as string[]),
+  // ADR-0028 A2: Einstufung vor dem Modellaufruf
+  assistent_einstufung_aktiv: (value) =>
+    commands.changeAssistentEinstufungAktivSetting(value as boolean),
   // lva#325: globaler Sprachassistent
   voice_global_context_enabled: (value) =>
     commands.changeVoiceGlobalContextEnabledSetting(value as boolean),
