@@ -513,7 +513,19 @@ export const installProjekteKontextMock = async (page: Page) => {
       ],
       entries: {
         "p-fin": fin,
-        "p-ki": synth(23, "k"),
+        "p-ki": [
+          ...synth(22, "k"),
+          // Buch mit nur einer Form, aber zwei Fassungen: das Menue braucht keine zweite Form.
+          def(
+            "ai",
+            "book",
+            "Alles Idioten!?",
+            "wai://lva/buch/ai",
+            ["volltext"],
+            { volltext: 5000 },
+            { subtitle: "Deutsch · Hauptfassung", an: false },
+          ),
+        ],
         "p-post": synth(17, "q"),
         "p-leer": [] as any[],
       } as Record<string, any[]>,
@@ -525,6 +537,15 @@ export const installProjekteKontextMock = async (page: Page) => {
         { id: "g1", name: "Kontoauszug-Okt.txt", size: 2048 },
       ] as any[],
       failSchalten: false,
+      // Verzoegerung in ms je Befehl: "befehl" oder "befehl:suiteId". Die Antwort wird sofort
+      // berechnet (Stand zum Aufruf) und erst nach der Frist geliefert, wie bei einem langsamen Backend.
+      delay: {} as Record<string, number>,
+      // Befehl -> Fehlermeldung: der Befehl scheitert.
+      fail: {} as Record<string, string>,
+      // projekt_datei_entfernen meldet "nicht sicher entfernt" (false).
+      entfernenUnsicher: false,
+      // Zahl synthetischer Aufnahmen in meetings_list (0: Standard der Live-Attrappe).
+      aufnahmen: 0,
       seq: 0,
     };
     const K = w.__kontext;
@@ -603,11 +624,27 @@ export const installProjekteKontextMock = async (page: Page) => {
       return null;
     };
 
-    w.__TAURI_INTERNALS__.invoke = async (
-      cmd: string,
-      args: Record<string, any> = {},
-    ) => {
+    const kern = async (cmd: string, args: Record<string, any> = {}) => {
+      if (K.fail[cmd]) throw new Error(K.fail[cmd]);
       switch (cmd) {
+        case "meetings_list":
+          if (K.aufnahmen > 0)
+            return Array.from(
+              {
+                length: Math.max(
+                  0,
+                  Math.min(args.limit, K.aufnahmen - args.offset),
+                ),
+              },
+              (_, i) => ({
+                id: `m${args.offset + i}`,
+                title: `Aufnahme ${args.offset + i + 1}`,
+                date: "2026-10-01T10:00:00Z",
+                createdAt: "2026-10-01T10:00:00Z",
+                updatedAt: "2026-10-01T10:00:00Z",
+              }),
+            );
+          break;
         case "projekte_liste":
           return K.projekte.map(projektSicht);
         case "projekt_eintraege":
@@ -615,6 +652,7 @@ export const installProjekteKontextMock = async (page: Page) => {
             sicht(args.suiteId, e),
           );
         case "projekt_kontext_uebersicht":
+          w.__calls?.push({ cmd, args });
           return uebersicht(args.suiteId);
         case "projekt_kontext_schalten": {
           w.__calls?.push({ cmd, args });
@@ -661,9 +699,11 @@ export const installProjekteKontextMock = async (page: Page) => {
         }
         case "projekt_datei_entfernen": {
           w.__calls?.push({ cmd, args });
-          return entfernen(
-            args.suiteId,
-            `wai://lva/projektdatei/${args.suiteId}/${args.dateiId}`,
+          return (
+            entfernen(
+              args.suiteId,
+              `wai://lva/projektdatei/${args.suiteId}/${args.dateiId}`,
+            ) && !K.entfernenUnsicher
           );
         }
         case "projekt_buch_entfernen":
@@ -759,7 +799,14 @@ export const installProjekteKontextMock = async (page: Page) => {
               editions: [{ id: "ed_ew", lang: "de", title: "x" }],
             },
             { id: "bb", title: "The Burning Room", editions: [] },
-            { id: "ai", title: "Alles Idioten!?", editions: [] },
+            {
+              id: "ai",
+              title: "Alles Idioten!?",
+              editions: [
+                { id: "ed_ai", lang: "de", title: "Alles Idioten!?" },
+                { id: "ed_ai_en", lang: "en", title: "Alles Idioten!?" },
+              ],
+            },
           ];
         case "pages_list":
           return [
@@ -781,6 +828,24 @@ export const installProjekteKontextMock = async (page: Page) => {
           };
       }
       return inner(cmd, args);
+    };
+    w.__TAURI_INTERNALS__.invoke = async (
+      cmd: string,
+      args: Record<string, any> = {},
+    ) => {
+      let ergebnis: any;
+      let fehler: any;
+      let gescheitert = false;
+      try {
+        ergebnis = await kern(cmd, args);
+      } catch (e) {
+        gescheitert = true;
+        fehler = e;
+      }
+      const frist = K.delay[`${cmd}:${args.suiteId}`] ?? K.delay[cmd];
+      if (frist) await new Promise((r) => setTimeout(r, frist));
+      if (gescheitert) throw fehler;
+      return ergebnis;
     };
   });
 };

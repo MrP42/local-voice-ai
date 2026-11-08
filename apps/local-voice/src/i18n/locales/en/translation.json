@@ -8566,6 +8566,7 @@
     "form": "Form",
     "fassung": "Edition",
     "formUndFassung": "Form and edition",
+    "fassungWaehlen": "Choose edition: {{name}}",
     "formWaehlen": "Choose form: {{form}}",
     "vorgabe": "default",
     "formen": {
@@ -8678,6 +8679,10 @@
       "nHinzufuegen_other": "Add {{count}}",
       "dateienText": "Files are copied into the project folder and checked after copying. The original stays unchanged. A file with the same name is not overwritten; the copy gets “(2)”.",
       "dateienWaehlen": "Choose files …",
+      "kopiertLaeuft": "Copying files …",
+      "ladefehler": "The list could not be loaded.",
+      "erneut": "Try again",
+      "weitereLaden": "Load more",
       "formatHinweis": "For now only .txt and .md can be read as context. Other formats are added and shown with a note.",
       "kopiert_one": "{{count}} file copied.",
       "kopiert_other": "{{count}} files copied.",

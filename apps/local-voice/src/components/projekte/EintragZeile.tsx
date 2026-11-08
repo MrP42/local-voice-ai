@@ -23,11 +23,9 @@ interface Props {
   fassungen: Fassung[];
   /** Schalten läuft gerade: der Schalter wartet, damit keine zwei Aufrufe überholen. */
   beschaeftigt: boolean;
-  onSchalten: (
-    on: boolean,
-    form: KontextForm | null,
-    fassung: string | null,
-  ) => void;
+  onSchalten: (on: boolean) => void;
+  /** Form- oder Fassungswechsel: ob der Eintrag an ist, entscheidet die Seite aus dem Backend-Stand. */
+  onForm: (form: KontextForm | null, fassung: string | null) => void;
   onEntfernen: () => void;
 }
 
@@ -45,6 +43,7 @@ export const EintragZeile: React.FC<Props> = ({
   fassungen,
   beschaeftigt,
   onSchalten,
+  onForm,
   onEntfernen,
 }) => {
   const { t } = useTranslation();
@@ -93,8 +92,10 @@ export const EintragZeile: React.FC<Props> = ({
   };
 
   const formZeilen = (z: KontextZeile): MenueZeile[] => {
-    const zeilen: MenueZeile[] = [{ kopf: t("projektBereich.form") }];
-    z.forms.forEach((f, i) =>
+    const zeilen: MenueZeile[] = [];
+    if (z.forms.length > 1) zeilen.push({ kopf: t("projektBereich.form") });
+    const formen = z.forms.length > 1 ? z.forms : [];
+    formen.forEach((f, i) =>
       zeilen.push({
         id: `form:${f}`,
         label: formName(f),
@@ -125,10 +126,9 @@ export const EintragZeile: React.FC<Props> = ({
     return zeilen;
   };
 
-  const wahl = (z: KontextZeile, id: string) => {
-    if (id.startsWith("form:"))
-      onSchalten(z.on, id.slice(5) as KontextForm, null);
-    else if (id.startsWith("ed:")) onSchalten(z.on, null, id.slice(3));
+  const wahl = (id: string) => {
+    if (id.startsWith("form:")) onForm(id.slice(5) as KontextForm, null);
+    else if (id.startsWith("ed:")) onForm(null, id.slice(3));
   };
 
   const alternative: KontextForm | null =
@@ -171,30 +171,36 @@ export const EintragZeile: React.FC<Props> = ({
           className="pb-schalter"
           onClick={() => {
             if (gesperrt || beschaeftigt || !zeile) return;
-            onSchalten(!zeile.on, null, null);
+            onSchalten(!zeile.on);
           }}
         >
           <span className="pb-sw" aria-hidden="true" />
         </button>
-        {zeile && zeile.forms.length > 1 && !gesperrt && (
-          <Menue
-            label={t("projektBereich.formWaehlen", {
-              form: formName(zeile.form),
-            })}
-            menueLabel={t("projektBereich.formUndFassung")}
-            className="pb-form"
-            testId="form-wahl"
-            align="start"
-            zeilen={formZeilen(zeile)}
-            onWahl={(id) => wahl(zeile, id)}
-            knopf={
-              <>
-                {formName(zeile.form)}
-                <ChevronDown width={14} height={14} aria-hidden="true" />
-              </>
-            }
-          />
-        )}
+        {zeile &&
+          (zeile.forms.length > 1 || fassungen.length > 1) &&
+          !gesperrt && (
+            <Menue
+              label={
+                zeile.forms.length > 1
+                  ? t("projektBereich.formWaehlen", {
+                      form: formName(zeile.form),
+                    })
+                  : t("projektBereich.fassungWaehlen", { name })
+              }
+              menueLabel={t("projektBereich.formUndFassung")}
+              className="pb-form"
+              testId="form-wahl"
+              align="start"
+              zeilen={formZeilen(zeile)}
+              onWahl={(id) => wahl(id)}
+              knopf={
+                <>
+                  {formName(zeile.form)}
+                  <ChevronDown width={14} height={14} aria-hidden="true" />
+                </>
+              }
+            />
+          )}
         {token()}
       </span>
       <Menue
@@ -225,7 +231,7 @@ export const EintragZeile: React.FC<Props> = ({
             <button
               type="button"
               className="pb-btn pb-btn--link"
-              onClick={() => onSchalten(zeile.on, alternative, null)}
+              onClick={() => onForm(alternative, null)}
             >
               {t(`projektBereich.waehlen.${alternative}`)}
             </button>

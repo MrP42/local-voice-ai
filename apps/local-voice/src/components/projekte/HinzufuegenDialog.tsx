@@ -1,7 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { open as dateienWaehlen } from "@tauri-apps/plugin-dialog";
-import { toast } from "sonner";
 import { commands, type EintragSicht, type SuiteProjekt } from "@/bindings";
 import { auspacken, fehlerText } from "@/lib/projekte";
 import { buchIdVon, besprechungIdVon, seiteIdVon } from "@/lib/projekteKontext";
@@ -22,7 +20,25 @@ interface Props {
   onClose: () => void;
   /** Etwas wurde zugeordnet oder kopiert: Seite und Leisten neu laden. */
   onGeaendert: () => void;
+  /** Eine Dateikopie läuft (Seite hält die Sperre, auch bei geschlossenem Dialog). */
+  kopiert: boolean;
+  /** Dateiauswahl und Kopieren; liefert eine Fehlermeldung oder null. */
+  onDateien: () => Promise<string | null>;
 }
+
+const SEITE = 500;
+const alsKandidaten = <T extends { id: string; title: string }>(
+  art: Art,
+  r: { status: string; data?: unknown },
+): Kandidat[] => {
+  if (r.status !== "ok" || !Array.isArray(r.data)) throw new Error("liste");
+  return (r.data as T[]).map((x) => ({
+    key: `${art}:${x.id}`,
+    art,
+    id: x.id,
+    titel: x.title,
+  }));
+};
 
 const ARTEN: Art[] = ["buch", "text", "aufnahme"];
 const GRUPPE_KEY: Record<Art, string> = {
@@ -42,6 +58,8 @@ export const HinzufuegenDialog: React.FC<Props> = ({
   eintraege,
   onClose,
   onGeaendert,
+  kopiert,
+  onDateien,
 }) => {
   const { t } = useTranslation();
   const [tab, setTab] = useState<"app" | "dateien">("app");
@@ -55,46 +73,68 @@ export const HinzufuegenDialog: React.FC<Props> = ({
     [eintraege],
   );
 
+  const [laden, setLaden] = useState<"laedt" | "fehler" | "fertig">("laedt");
+  const [weitere, setWeitere] = useState(false);
+  const [ladeMehr, setLadeMehr] = useState(false);
+  const [versuch, setVersuch] = useState(0);
+  const aufnahmen = React.useRef(0);
+
   useEffect(() => {
     if (!open) return;
     setTab("app");
     setGewaehlt(new Set());
     setFehler(null);
+    setLaden("laedt");
+    setWeitere(false);
+    aufnahmen.current = 0;
     let aktuell = true;
     void (async () => {
-      const [b, p, m] = await Promise.all([
-        commands.libraryList().catch(() => null),
-        commands.pagesList().catch(() => null),
-        commands.meetingsList(0, 500).catch(() => null),
-      ]);
-      if (!aktuell) return;
-      const liste = (r: typeof b | typeof p | typeof m) =>
-        r && r.status === "ok" && Array.isArray(r.data) ? r.data : [];
-      setKandidaten([
-        ...liste(b).map((x) => ({
-          key: `buch:${x.id}`,
-          art: "buch" as const,
-          id: x.id,
-          titel: (x as { title: string }).title,
-        })),
-        ...liste(p).map((x) => ({
-          key: `text:${x.id}`,
-          art: "text" as const,
-          id: x.id,
-          titel: (x as { title: string }).title,
-        })),
-        ...liste(m).map((x) => ({
-          key: `aufnahme:${x.id}`,
-          art: "aufnahme" as const,
-          id: x.id,
-          titel: (x as { title: string }).title,
-        })),
-      ]);
+      try {
+        const [b, p, m] = await Promise.all([
+          commands.libraryList(),
+          commands.pagesList(),
+          commands.meetingsList(0, SEITE),
+        ]);
+        const liste = [
+          ...alsKandidaten<{ id: string; title: string }>("buch", b),
+          ...alsKandidaten<{ id: string; title: string }>("text", p),
+          ...alsKandidaten<{ id: string; title: string }>("aufnahme", m),
+        ];
+        if (!aktuell) return;
+        const n =
+          m.status === "ok" && Array.isArray(m.data) ? m.data.length : 0;
+        aufnahmen.current = n;
+        setWeitere(n >= SEITE);
+        setKandidaten(liste);
+        setLaden("fertig");
+      } catch {
+        if (aktuell) setLaden("fehler");
+      }
     })();
     return () => {
       aktuell = false;
     };
-  }, [open]);
+  }, [open, versuch]);
+
+  const mehrLaden = async () => {
+    if (ladeMehr) return;
+    setLadeMehr(true);
+    setFehler(null);
+    try {
+      const r = await commands.meetingsList(aufnahmen.current, SEITE);
+      const neu = alsKandidaten<{ id: string; title: string }>("aufnahme", r);
+      aufnahmen.current += neu.length;
+      setWeitere(neu.length >= SEITE);
+      setKandidaten((alt) => {
+        const da = new Set(alt.map((k) => k.key));
+        return [...alt, ...neu.filter((k) => !da.has(k.key))];
+      });
+    } catch {
+      setFehler(t("projektBereich.dialog.ladefehler"));
+    } finally {
+      setLadeMehr(false);
+    }
+  };
 
   const frei = useMemo(() => {
     const belegt = new Set<string>();
@@ -141,27 +181,11 @@ export const HinzufuegenDialog: React.FC<Props> = ({
     }
   }, [projekt, laeuft, frei, gewaehlt, onGeaendert, onClose, t]);
 
-  const dateien = useCallback(async () => {
-    if (!projekt) return;
+  const dateien = async () => {
     setFehler(null);
-    try {
-      const wahl = await dateienWaehlen({ multiple: true, directory: false });
-      const paths = Array.isArray(wahl) ? wahl : wahl ? [wahl] : [];
-      if (paths.length === 0) return;
-      const r = auspacken(
-        await commands.projektDateienHinzufuegen(projekt.id, paths),
-      );
-      toast.success(
-        t("projektBereich.dialog.kopiert", {
-          count: r?.length ?? paths.length,
-        }),
-      );
-      onGeaendert();
-      onClose();
-    } catch (e) {
-      setFehler(fehlerText(e, t));
-    }
-  }, [projekt, onGeaendert, onClose, t]);
+    const f = await onDateien();
+    if (f) setFehler(f);
+  };
 
   const anzahl = [...gewaehlt].filter((k) =>
     frei.some((f) => f.key === k),
@@ -247,7 +271,22 @@ export const HinzufuegenDialog: React.FC<Props> = ({
                 {t("projektBereich.dialog.appHinweis")}
               </p>
               <div className="pb-dlg-liste">
-                {frei.length === 0 && (
+                {laden === "fehler" && (
+                  <div role="alert" data-testid="dialog-ladefehler">
+                    <p style={{ color: "var(--color-status-red)" }}>
+                      {t("projektBereich.dialog.ladefehler")}
+                    </p>
+                    <button
+                      type="button"
+                      className="pb-btn"
+                      data-testid="dialog-erneut"
+                      onClick={() => setVersuch((v) => v + 1)}
+                    >
+                      {t("projektBereich.dialog.erneut")}
+                    </button>
+                  </div>
+                )}
+                {laden === "fertig" && frei.length === 0 && (
                   <p className="pb-note" data-testid="dialog-nichts">
                     {t("projektBereich.dialog.nichtsFrei")}
                   </p>
@@ -282,6 +321,17 @@ export const HinzufuegenDialog: React.FC<Props> = ({
                     </div>
                   );
                 })}
+                {laden === "fertig" && weitere && (
+                  <button
+                    type="button"
+                    className="pb-btn"
+                    data-testid="dialog-mehr"
+                    disabled={ladeMehr}
+                    onClick={() => void mehrLaden()}
+                  >
+                    {t("projektBereich.dialog.weitereLaden")}
+                  </button>
+                )}
               </div>
             </>
           ) : (
@@ -294,10 +344,21 @@ export const HinzufuegenDialog: React.FC<Props> = ({
                   type="button"
                   className="pb-btn"
                   data-testid="dateien-waehlen"
+                  disabled={kopiert}
                   onClick={() => void dateien()}
                 >
                   {t("projektBereich.dialog.dateienWaehlen")}
                 </button>
+                {kopiert && (
+                  <p
+                    className="pb-note"
+                    role="status"
+                    data-testid="kopier-hinweis"
+                    style={{ margin: "8px 0 0" }}
+                  >
+                    {t("projektBereich.dialog.kopiertLaeuft")}
+                  </p>
+                )}
               </div>
               <p className="pb-note" style={{ margin: "8px 0 0" }}>
                 {t("projektBereich.dialog.formatHinweis")}

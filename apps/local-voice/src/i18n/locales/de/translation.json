@@ -8566,6 +8566,7 @@
     "form": "Form",
     "fassung": "Fassung",
     "formUndFassung": "Form und Fassung",
+    "fassungWaehlen": "Fassung wählen: {{name}}",
     "formWaehlen": "Form wählen: {{form}}",
     "vorgabe": "Vorgabe",
     "formen": {
@@ -8678,6 +8679,10 @@
       "nHinzufuegen_other": "{{count}} hinzufügen",
       "dateienText": "Dateien werden in den Projektordner kopiert und nach dem Kopieren geprüft. Das Original bleibt unverändert. Eine Datei mit gleichem Namen wird nicht überschrieben, die Kopie bekommt „(2)“.",
       "dateienWaehlen": "Dateien wählen …",
+      "kopiertLaeuft": "Dateien werden kopiert …",
+      "ladefehler": "Die Liste konnte nicht geladen werden.",
+      "erneut": "Erneut versuchen",
+      "weitereLaden": "Weitere laden",
       "formatHinweis": "Als Kontext lesbar sind vorerst .txt und .md. Andere Formate werden aufgenommen und mit Hinweis angezeigt.",
       "kopiert_one": "{{count}} Datei kopiert.",
       "kopiert_other": "{{count}} Dateien kopiert.",

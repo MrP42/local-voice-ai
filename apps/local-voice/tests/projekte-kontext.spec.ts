@@ -662,6 +662,243 @@ test.describe("Projekte mit Als Kontext", () => {
     );
   });
 
+  const kontextSetzen = (page: Page, f: string) =>
+    page.evaluate(`(() => { const K = window.__kontext; ${f} })()`);
+  const uebersichtAufrufe = async (page: Page) =>
+    (await aufrufe(page, "projekt_kontext_uebersicht")).length;
+
+  test("Projektwechsel: späte Antwort von Projekt A landet nicht unter B", async ({
+    page,
+  }) => {
+    await setup(page, {
+      vorher: (p) =>
+        p.addInitScript(() => {
+          const K = (window as any).__kontext;
+          K.lage = "defekt";
+          for (const c of [
+            "projekt_kontext_uebersicht",
+            "projekt_dateien_gefunden",
+            "projekt_dateien_lage",
+          ])
+            K.delay[`${c}:p-fin`] = 1200;
+        }),
+    });
+    // A (Finanzwissen) antwortet langsam; vorher wird zu B gewechselt.
+    await waehleProjekt(page, "KI-Strategie LRA");
+    await expect(page.getByTestId("projekt-kopf-zahl")).toHaveText(
+      "23 Einträge",
+    );
+    const summe = page.getByTestId("kontext-summe-text");
+    await expect(summe).not.toHaveText(/^15\s000 von/);
+    const text = await summe.textContent();
+    await page.waitForTimeout(2000);
+    await expect(summe).toHaveText(text ?? "");
+    await expect(page.getByTestId("banner-gefunden")).toHaveCount(0);
+    await expect(page.getByTestId("banner-lage")).toHaveCount(0);
+    // und A zeigt seine eigenen Banner, wenn man zurückgeht
+    await waehleProjekt(page, "Finanzwissen");
+    await expect(page.getByTestId("banner-gefunden")).toBeVisible();
+    await expect(page.getByTestId("banner-lage")).toBeVisible();
+  });
+
+  test("Laden während des Schaltens: der Schaltstand bleibt", async ({
+    page,
+  }) => {
+    await setup(page);
+    await kontextSetzen(
+      page,
+      `K.delay["projekt_kontext_uebersicht:p-fin"] = 1200; K.delay["projekt_kontext_schalten"] = 100;`,
+    );
+    const davor = await uebersichtAufrufe(page);
+    // Aufnehmen löst eine neue (langsame) Ladung aus, deren Stand noch "Bank aus" ist.
+    await page
+      .getByTestId("banner-gefunden")
+      .getByRole("button", { name: "Aufnehmen" })
+      .click();
+    await expect.poll(() => uebersichtAufrufe(page)).toBeGreaterThan(davor);
+    const bank = schalter(page, "Telefonat Bank");
+    await bank.click();
+    await expect(bank).toHaveAttribute("aria-checked", "true");
+    await page.waitForTimeout(1800);
+    await expect(bank).toHaveAttribute("aria-checked", "true");
+    await expect(page.getByTestId("kontext-summe-text")).toHaveText(
+      /^16\s100 von 128\s000 Token$/,
+    );
+  });
+
+  test("Aus + Formwechsel: der Eintrag bleibt aus, der Aufruf trägt on=false", async ({
+    page,
+  }) => {
+    await setup(page);
+    await kontextSetzen(page, `K.delay["projekt_kontext_schalten"] = 600;`);
+    const rd = schalter(page, "Rich Dad Poor Dad");
+    await expect(rd).toHaveAttribute("aria-checked", "true");
+    await rd.click();
+    // Die Anzeige sagt noch "an": der Wechsel darf den Eintrag trotzdem nicht einschalten.
+    await page
+      .getByRole("button", { name: "Form wählen: Kurzbuch" })
+      .first()
+      .click();
+    await page
+      .getByRole("menu", { name: "Form und Fassung" })
+      .getByRole("menuitemradio", { name: /Volltext/ })
+      .click();
+    await expect
+      .poll(
+        async () => (await aufrufe(page, "projekt_kontext_schalten")).length,
+      )
+      .toBe(2);
+    const calls = await aufrufe(page, "projekt_kontext_schalten");
+    expect(calls[0].args).toMatchObject({
+      eintragId: "rd",
+      on: false,
+      form: null,
+    });
+    expect(calls[1].args).toMatchObject({
+      eintragId: "rd",
+      on: false,
+      form: "volltext",
+    });
+    await page.waitForTimeout(1000);
+    await expect(rd).toHaveAttribute("aria-checked", "false");
+    await expect(
+      page.getByRole("button", { name: "Form wählen: Volltext" }),
+    ).toBeVisible();
+  });
+
+  test("Zwei Eintraege gleichzeitig schalten: beide Aenderungen gelten", async ({
+    page,
+  }) => {
+    await setup(page);
+    await kontextSetzen(page, `K.delay["projekt_kontext_schalten"] = 500;`);
+    const bank = schalter(page, "Telefonat Bank");
+    const beratung = schalter(page, "Beratung Altersvorsorge");
+    await expect(beratung).toHaveAttribute("aria-checked", "true");
+    await bank.click();
+    await beratung.click();
+    await expect(bank).toHaveAttribute("aria-checked", "true");
+    await expect(beratung).toHaveAttribute("aria-checked", "false");
+    await page.waitForTimeout(1200);
+    await expect(bank).toHaveAttribute("aria-checked", "true");
+    await expect(beratung).toHaveAttribute("aria-checked", "false");
+    const calls = await aufrufe(page, "projekt_kontext_schalten");
+    expect(calls).toHaveLength(2);
+    // 15 000 + 1 100 - 2 400
+    await expect(page.getByTestId("kontext-summe-text")).toHaveText(
+      /^13\s700 von 128\s000 Token$/,
+    );
+  });
+
+  test("Fassung ohne zweite Form: das Menü erscheint trotzdem", async ({
+    page,
+  }) => {
+    await setup(page);
+    await waehleProjekt(page, "KI-Strategie LRA");
+    await page
+      .getByRole("button", { name: "Fassung wählen: Alles Idioten!?" })
+      .click();
+    const menue = page.getByRole("menu", { name: "Form und Fassung" });
+    await expect(menue.getByRole("menuitemradio")).toHaveCount(2);
+    await menue.getByRole("menuitemradio", { name: "English" }).click();
+    const calls = await aufrufe(page, "projekt_kontext_schalten");
+    expect(calls).toHaveLength(1);
+    expect(calls[0].args).toMatchObject({
+      eintragId: "ai",
+      on: false,
+      form: null,
+      edition: "ed_ai_en",
+    });
+  });
+
+  test("Dateien kopieren: während der Kopie nur ein Aufruf, auch bei neu geöffnetem Dialog", async ({
+    page,
+  }) => {
+    await setup(page);
+    await kontextSetzen(
+      page,
+      `window.__pick = ["/home/test/Plan.md"]; K.delay["projekt_dateien_hinzufuegen"] = 1000;`,
+    );
+    const knopf = page.getByTestId("dateien-waehlen");
+    await page.getByTestId("hinzufuegen").click();
+    await page.getByRole("tab", { name: "Dateien kopieren" }).click();
+    await knopf.click();
+    await expect(knopf).toBeDisabled();
+    await expect(page.getByTestId("kopier-hinweis")).toHaveText(
+      "Dateien werden kopiert …",
+    );
+    await knopf.click({ force: true });
+    // Dialog schließen und wieder öffnen: die Sperre gilt weiter
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await page.getByTestId("hinzufuegen").click();
+    await page.getByRole("tab", { name: "Dateien kopieren" }).click();
+    await expect(knopf).toBeDisabled();
+    await knopf.click({ force: true });
+    await expect(page.getByTestId("projekt-eintrag")).toHaveCount(10, {
+      timeout: 5000,
+    });
+    expect(await aufrufe(page, "projekt_dateien_hinzufuegen")).toHaveLength(1);
+    // danach geht es wieder
+    await page.getByTestId("hinzufuegen").click();
+    await page.getByRole("tab", { name: "Dateien kopieren" }).click();
+    await expect(knopf).toBeEnabled();
+  });
+
+  test("Entfernen meldet false: nur die Warnung, keine Erfolgsmeldung", async ({
+    page,
+  }) => {
+    await setup(page);
+    await kontextSetzen(page, `K.entfernenUnsicher = true;`);
+    await page
+      .getByRole("button", {
+        name: "Weitere Aktionen für Depotauszug-2026.pdf",
+      })
+      .click();
+    await page
+      .getByRole("menuitem", { name: "Aus Projekt entfernen …" })
+      .click();
+    await page.getByTestId("entfernen-bestaetigen").click();
+    const toasts = page.locator("[data-sonner-toast]");
+    await expect(
+      toasts.filter({ hasText: "nicht sicher entfernt" }),
+    ).toHaveCount(1);
+    await page.waitForTimeout(600);
+    await expect(
+      toasts.filter({ hasText: "Aus dem Projekt genommen." }),
+    ).toHaveCount(0);
+  });
+
+  test("Dialog: Ladefehler statt leerer Liste, dann Erneut versuchen", async ({
+    page,
+  }) => {
+    await setup(page);
+    await kontextSetzen(page, `K.fail.pages_list = "Seiten nicht lesbar";`);
+    await page.getByTestId("hinzufuegen").click();
+    const dlg = page.getByRole("dialog");
+    await expect(dlg.getByTestId("dialog-ladefehler")).toContainText(
+      "Die Liste konnte nicht geladen werden.",
+    );
+    await expect(dlg.getByTestId("dialog-nichts")).toHaveCount(0);
+    await kontextSetzen(page, `delete K.fail.pages_list;`);
+    await dlg.getByTestId("dialog-erneut").click();
+    await expect(dlg.getByTestId("dialog-ladefehler")).toHaveCount(0);
+    await expect(
+      dlg.getByRole("checkbox", { name: /The Burning Room/ }),
+    ).toBeVisible();
+  });
+
+  test("Dialog: mehr als 500 Aufnahmen, Weitere laden", async ({ page }) => {
+    await setup(page);
+    await kontextSetzen(page, `K.aufnahmen = 620;`);
+    await page.getByTestId("hinzufuegen").click();
+    const dlg = page.getByRole("dialog");
+    const aufnahmen = dlg.getByRole("checkbox", { name: /Aufnahme \d+/ });
+    await expect(aufnahmen).toHaveCount(500);
+    await dlg.getByTestId("dialog-mehr").click();
+    await expect(aufnahmen).toHaveCount(620);
+    await expect(dlg.getByTestId("dialog-mehr")).toHaveCount(0);
+  });
+
   for (const [breite, dark, name] of [
     [1440, false, "01-projekt-1440-hell.png"],
     [1440, true, "01-projekt-1440-dunkel.png"],
@@ -687,5 +924,204 @@ test.describe("Projekte mit Als Kontext", () => {
         animations: "disabled",
       });
     });
+  }
+
+  interface Szene {
+    name: string;
+    schmal?: boolean;
+    /** Szene wählt ihr Projekt selbst (kein vorgewähltes "Finanzwissen" bei 390 px). */
+    eigeneWahl?: boolean;
+    ziel?: string;
+    vorher?: (p: Page) => Promise<void>;
+    los?: (p: Page) => Promise<void>;
+  }
+  const flag = (f: () => void) => (p: Page) => p.addInitScript(f);
+  const SZENEN: Szene[] = [
+    {
+      name: "02-banner-zugross",
+      schmal: true,
+      los: async (p) => {
+        await p
+          .getByRole("button", { name: "Form wählen: Kurzbuch" })
+          .first()
+          .click();
+        await p.getByRole("menuitemradio", { name: /Volltext/ }).click();
+        await expect(p.getByTestId("banner-zugross")).toBeVisible();
+      },
+    },
+    {
+      name: "03-banner-reset",
+      schmal: true,
+      vorher: flag(() => {
+        (window as any).__kontext.reset = true;
+      }),
+      los: async (p) => {
+        await expect(p.getByTestId("banner-reset")).toBeVisible();
+      },
+    },
+    {
+      name: "04-banner-gefunden",
+      schmal: true,
+      los: async (p) => {
+        await expect(p.getByTestId("banner-gefunden")).toBeVisible();
+      },
+    },
+    ...(["fehlt", "defekt", "neuer", "nicht_lesbar"] as const).map(
+      (lage, i): Szene => ({
+        name: `0${5 + i}-lage-${lage.replace("_", "-")}`,
+        schmal: lage === "defekt",
+        vorher: (p) =>
+          p.addInitScript((l) => {
+            (window as any).__kontext.lage = l;
+          }, lage),
+        los: async (p) => {
+          await expect(p.getByTestId("banner-lage")).toBeVisible();
+        },
+      }),
+    ),
+    {
+      name: "09-dialog-hinzufuegen-app",
+      schmal: true,
+      los: async (p) => {
+        await p.getByTestId("hinzufuegen").click();
+        await expect(
+          p.getByRole("checkbox", { name: /The Burning Room/ }),
+        ).toBeVisible();
+        await p.getByRole("checkbox", { name: /The Burning Room/ }).check();
+      },
+    },
+    {
+      name: "10-dialog-hinzufuegen-dateien-kopiert",
+      schmal: true,
+      los: async (p) => {
+        await p.evaluate(() => {
+          const w = window as any;
+          w.__pick = ["/home/test/Plan.md"];
+          w.__kontext.delay.projekt_dateien_hinzufuegen = 60000;
+        });
+        await p.getByTestId("hinzufuegen").click();
+        await p.getByRole("tab", { name: "Dateien kopieren" }).click();
+        await p.getByTestId("dateien-waehlen").click();
+        await expect(p.getByTestId("kopier-hinweis")).toBeVisible();
+      },
+    },
+    {
+      name: "11-dialog-entfernen-datei",
+      schmal: true,
+      los: async (p) => {
+        await p
+          .getByRole("button", {
+            name: "Weitere Aktionen für Depotauszug-2026.pdf",
+          })
+          .click();
+        await p
+          .getByRole("menuitem", { name: "Aus Projekt entfernen …" })
+          .click();
+        await expect(p.getByRole("dialog")).toBeVisible();
+      },
+    },
+    {
+      name: "12-dialog-entfernen-appinhalt",
+      los: async (p) => {
+        await p
+          .getByRole("button", {
+            name: "Weitere Aktionen für Rich Dad Poor Dad",
+          })
+          .click();
+        await p
+          .getByRole("menuitem", { name: "Aus Projekt entfernen …" })
+          .click();
+        await expect(p.getByRole("dialog")).toBeVisible();
+      },
+    },
+    {
+      name: "13-dialog-bestand-neu-aufbauen",
+      vorher: flag(() => {
+        (window as any).__kontext.lage = "defekt";
+      }),
+      los: async (p) => {
+        await p.getByTestId("lage-knopf").click();
+        await expect(p.getByRole("dialog")).toBeVisible();
+      },
+    },
+    {
+      name: "14-dialog-projekt-anlegen",
+      los: async (p) => {
+        await p.getByTestId("projekt-neu").click();
+        await p
+          .getByRole("textbox", { name: /Name/ })
+          .fill("Wohnungssuche 2027");
+      },
+    },
+    {
+      name: "15-dialog-ladefehler",
+      vorher: flag(() => {
+        (window as any).__kontext.fail.pages_list = "Seiten nicht lesbar";
+      }),
+      los: async (p) => {
+        await p.getByTestId("hinzufuegen").click();
+        await expect(p.getByTestId("dialog-ladefehler")).toBeVisible();
+      },
+    },
+    {
+      name: "16-leerzustand",
+      schmal: true,
+      eigeneWahl: true,
+      los: async (p) => {
+        await waehleProjekt(p, "Neue Ideen");
+        await expect(p.getByTestId("projekt-leer")).toBeVisible();
+      },
+    },
+    {
+      name: "17-vorlesen-gruppe",
+      ziel: "Vorlesen",
+      eigeneWahl: true,
+      los: async (p) => {
+        await expect(
+          p.locator('[data-testid="projekte-gruppe"]:visible'),
+        ).toBeVisible();
+      },
+    },
+    {
+      name: "18-gespraech-gruppe",
+      eigeneWahl: true,
+      los: async (p) => {
+        await geheZu(p, "Chat");
+        await expect(
+          p.locator('[data-testid="projekte-gruppe"]:visible'),
+        ).toBeVisible();
+      },
+    },
+  ];
+  for (const sz of SZENEN) {
+    for (const [breite, dark, ende] of [
+      [1440, false, "1440-hell"],
+      [1440, true, "1440-dunkel"],
+      ...(sz.schmal ? ([[390, false, "390-hell"]] as const) : []),
+    ] as const) {
+      test(`Bild ${sz.name}-${ende} (LVA_SCREENSHOTS=1)`, async ({ page }) => {
+        test.skip(!process.env.LVA_SCREENSHOTS, "Bilder nur auf Wunsch");
+        fs.mkdirSync(SHOT_DIR, { recursive: true });
+        await setup(page, {
+          width: breite,
+          height: breite === 390 ? 844 : 900,
+          dark,
+          vorher: sz.vorher,
+          ziel: sz.ziel,
+        });
+        if (breite === 390 && !sz.eigeneWahl)
+          await waehleProjekt(page, "Finanzwissen");
+        await sz.los?.(page);
+        await page.addStyleTag({
+          content:
+            "*,*::before,*::after{transition:none!important;animation:none!important}",
+        });
+        await page.waitForTimeout(500);
+        await page.screenshot({
+          path: path.join(SHOT_DIR, `${sz.name}-${ende}.png`),
+          animations: "disabled",
+        });
+      });
+    }
   }
 });
