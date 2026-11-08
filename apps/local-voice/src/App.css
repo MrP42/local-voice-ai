@@ -1239,11 +1239,9 @@ body,
   }
 }
 
-/* Protokoll bearbeiten: Platz für „Abschnitt bearbeiten“ neben jeder
-   Abschnittsüberschrift und Markierung der Stelle unter dem Stift. */
-.minutes-preview [data-testid="minutes-doc"] :is(h2, h3) {
-  padding-inline-end: 11rem;
-}
+/* Protokoll bearbeiten: Markierung der Stelle unter dem Stift. Der
+   Abschnitts-Stift ist nur ein Symbol (Patrick 08.11.) und steht im
+   Innenabstand des Dokuments; Überschriften brauchen keinen Extraplatz. */
 .minutes-preview [data-edit-hover] {
   border-radius: 4px;
   background: color-mix(in srgb, var(--color-logo-primary) 10%, transparent);
@@ -1266,14 +1264,12 @@ body,
     width: 44px;
     height: 44px;
   }
-  /* Die Beschriftung bleibt auch schmal sichtbar (Codex-Abnahme). */
   .minutes-preview .minutes-section-pen {
-    min-width: 44px;
+    width: 44px;
     height: 44px;
-    padding-inline: 0.625rem;
   }
   .minutes-preview [data-testid="minutes-doc"] :is(h2, h3) {
-    padding-inline-end: 10.5rem;
+    padding-inline-end: 1rem;
   }
   /* Schmal ist die Arbeitsfläche nur wenige Zeilen hoch: der Editor
      öffnet dann als Vollbild-Blatt (Speichern und Abbrechen oben). */

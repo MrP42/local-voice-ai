@@ -433,7 +433,7 @@ test.describe("Protokoll bearbeiten", () => {
     );
   });
 
-  test("Abschnitt bearbeiten steht beschriftet an jeder Abschnittsueberschrift", async ({
+  test("Abschnitts-Stift steht als Symbol an jeder Abschnittsueberschrift", async ({
     page,
   }) => {
     await withMinutes(page);
@@ -454,7 +454,9 @@ test.describe("Protokoll bearbeiten", () => {
     const target = page.getByRole("button", {
       name: "Abschnitt „Besprochene Punkte“ bearbeiten",
     });
-    await expect(target).toHaveText("Abschnitt bearbeiten");
+    // Nur der Stift, kein Text (Patrick 08.11.2026); Name im Tooltip.
+    await expect(target).toHaveText("");
+    await expect(target).toHaveAttribute("title", /Besprochene Punkte/);
     // Der Knopf steht auf der Hoehe seiner Ueberschrift.
     const heading = await page
       .getByTestId("minutes-doc")
@@ -637,7 +639,7 @@ test.describe("Protokoll bearbeiten: Vorschau", () => {
         await expect(
           page.getByTestId("minutes-section-edit").first(),
         ).toBeVisible();
-        // Beschriftung auch schmal sichtbar, auf Hoehe von "Zusammenfassung".
+        // Stift auch schmal sichtbar, auf Hoehe von "Zusammenfassung".
         const summaryPen = page.getByRole("button", {
           name: "Abschnitt „Zusammenfassung“ bearbeiten",
         });
@@ -659,9 +661,7 @@ test.describe("Protokoll bearbeiten: Vorschau", () => {
                 bar.getBoundingClientRect().bottom -
                 16;
             });
-        await expect(
-          summaryPen.getByText("Abschnitt bearbeiten"),
-        ).toBeVisible();
+        await expect(summaryPen).toBeVisible();
         const sh = (await page
           .getByTestId("minutes-doc")
           .getByRole("heading", { name: "Zusammenfassung" })
