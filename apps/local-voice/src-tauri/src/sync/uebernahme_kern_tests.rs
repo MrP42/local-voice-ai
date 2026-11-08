@@ -439,3 +439,111 @@ fn geaenderter_fortschritt_haelt_vor_jedem_entfernen() {
     assert!(d.join("projects/page_1/state.json").is_file());
     assert_eq!(fortschritt(d)["progress.audio:book_1"], "neuer");
 }
+
+fn anmelde_journal() -> Journal {
+    Journal {
+        art: Art::Anmeldung,
+        hub: "https://hub.example.org/".into(),
+        user_id: 7,
+        email: "b@example.org".into(),
+        wahl: Some(Wahl::Zusammenfuehren),
+        phase: Phase::Umgesetzt,
+        sicherung: None,
+        plan: Plan::default(),
+    }
+}
+
+#[test]
+fn anmeldung_gilt_nur_mit_konto_und_ledger_als_gebunden() {
+    let j = anmelde_journal();
+    let kennung = konto_kennung(7, "https://hub.example.org");
+    let hub = "https://HUB.example.org";
+    assert!(anmeldung_gebunden(&j, Some((7, hub)), Some(&kennung)));
+    // Konto da, Ledger fehlt oder gehört woandershin: nicht abgeschlossen.
+    assert!(!anmeldung_gebunden(&j, Some((7, hub)), None));
+    assert!(!anmeldung_gebunden(
+        &j,
+        Some((7, hub)),
+        Some(&konto_kennung(8, hub))
+    ));
+    // Ledger passt, Konto fehlt oder ist ein anderes.
+    assert!(!anmeldung_gebunden(&j, None, Some(&kennung)));
+    assert!(!anmeldung_gebunden(&j, Some((8, hub)), Some(&kennung)));
+    assert!(!anmeldung_gebunden(
+        &j,
+        Some((7, "https://anderer.example.org")),
+        Some(&kennung)
+    ));
+    // Wartende Anmeldung eines anderen Kontos passt nicht zum Journal.
+    assert!(wartend_passt(&j, 7, "https://hub.example.org"));
+    assert!(!wartend_passt(&j, 9, "https://hub.example.org"));
+}
+
+#[test]
+fn fassungsseite_eines_nur_lokalen_buchs_sperrt_fortschritt_und_lesezeichen() {
+    let nur = NurLokal {
+        schluessel: BTreeSet::new(),
+        einheiten: ["book_1".to_string()].into(),
+    };
+    let seite_buch: BTreeMap<String, String> =
+        [("page_2".to_string(), "book_1".to_string())].into();
+    let fortschritt = json!({"key": "text:page_2:original", "value": "c"});
+    let lesezeichen = json!({"key": "tts.resume.page_2:original", "value": "d"});
+    // Ohne Buchzuordnung wäre beides frei (Seitenkennung statt Buch).
+    assert!(!nur.betrifft("progress", "p_x", &fortschritt));
+    assert!(nur.betrifft_mit_buch("progress", "p_x", &fortschritt, &seite_buch));
+    assert!(nur.betrifft_mit_buch("bookmark", "b_x", &lesezeichen, &seite_buch));
+    assert!(nur.betrifft_mit_buch("page", "page_2", &json!({}), &seite_buch));
+    assert!(nur.einheit_gesperrt("page_2", &seite_buch));
+    // Eine lose Seite bleibt frei.
+    let los = json!({"key": "text:page_1:original", "value": "c"});
+    assert!(!nur.betrifft_mit_buch("progress", "p_y", &los, &seite_buch));
+    assert!(!nur.einheit_gesperrt("page_1", &seite_buch));
+}
+
+#[test]
+fn beschaedigte_widerrufsliste_blockiert_und_bleibt_unveraendert() {
+    let t = tempfile::tempdir().unwrap();
+    let p = t.path().join("sync-widerruf.json");
+    let schreiben = |p: &Path, b: &[u8]| fs::write(p, b).map_err(|e| e.to_string());
+    let w1 = Widerruf {
+        url: "https://hub.example.org".into(),
+        token: "t1".into(),
+    };
+    let w2 = Widerruf {
+        url: "https://hub.example.org".into(),
+        token: "t2".into(),
+    };
+    assert_eq!(widerrufe_laden(&p).unwrap(), vec![]);
+    widerrufe_vormerken(&p, &[w1.clone()], schreiben).unwrap();
+    widerrufe_vormerken(&p, &[w2.clone(), w1.clone()], schreiben).unwrap();
+    assert_eq!(widerrufe_laden(&p).unwrap(), vec![w1.clone(), w2.clone()]);
+    // Früheres Einzelformat wird gelesen.
+    fs::write(&p, serde_json::to_vec(&w1).unwrap()).unwrap();
+    assert_eq!(widerrufe_laden(&p).unwrap(), vec![w1.clone()]);
+    // Beschädigt: Fehler, nichts wird überschrieben.
+    fs::write(&p, b"{kaputt").unwrap();
+    assert!(widerrufe_laden(&p).is_err());
+    assert!(widerrufe_vormerken(&p, &[w2], schreiben).is_err());
+    assert_eq!(fs::read(&p).unwrap(), b"{kaputt");
+}
+
+#[test]
+fn gescheiterte_anmeldung_loescht_tokenquelle_erst_nach_vormerkung() {
+    let t = tempfile::tempdir().unwrap();
+    let d = t.path();
+    let wartend = d.join("sync-anmeldung.json");
+    fs::write(&wartend, b"{\"token\":\"t\"}").unwrap();
+    let mut j = anmelde_journal();
+    j.phase = Phase::Entscheidung;
+    journal_speichern(d, &j).unwrap();
+    // Vormerken scheitert (Datei und Netz): Wartedatei und Journal bleiben.
+    let r = anmeldung_verwerfen(|| Err("kein Platz".into()), &wartend, d);
+    assert!(r.is_err());
+    assert!(wartend.is_file());
+    assert!(journal_vorhanden(d));
+    // Vorgemerkt: erst jetzt verschwinden beide.
+    anmeldung_verwerfen(|| Ok(()), &wartend, d).unwrap();
+    assert!(!wartend.exists());
+    assert!(!journal_vorhanden(d));
+}

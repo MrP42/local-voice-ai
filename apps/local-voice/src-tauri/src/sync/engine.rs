@@ -317,8 +317,8 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
         .and_then(|d| super::uebernahme_kern::nur_lokal_laden(&d))
         .map_err(HubError::Other)?;
     // Fassungsseiten gehören zu ihrem Buch: ist das Buch nur lokal, sind es auch sie.
-    let seite_buch: HashMap<String, String> = if nur_lokal.einheiten.is_empty() {
-        HashMap::new()
+    let seite_buch: std::collections::BTreeMap<String, String> = if nur_lokal.einheiten.is_empty() {
+        Default::default()
     } else {
         crate::commands::pages::load_index(app)
             .map_err(HubError::Other)?
@@ -328,10 +328,7 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
             .collect()
     };
     let buch_gesperrt = |collection: &str, id: &str| {
-        collection == "page"
-            && seite_buch
-                .get(id)
-                .is_some_and(|b| nur_lokal.einheiten.contains(b))
+        collection == "page" && nur_lokal.einheit_gesperrt(id, &seite_buch)
     };
     let mut kollisionen: std::collections::BTreeSet<String> = Default::default();
     if app.state::<SyncEngine>().take_retry_files()
@@ -382,8 +379,9 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
     if !nur_lokal.ist_leer() {
         let mut raus = |objs: &mut Vec<LocalObject>| {
             objs.retain(|o| {
-                let bleibt = nur_lokal.betrifft(o.collection, &o.id, &o.value)
-                    || buch_gesperrt(o.collection, &o.id);
+                // Auch Fortschritte/Lesezeichen von Fassungsseiten eines nur lokalen Buchs.
+                let bleibt =
+                    nur_lokal.betrifft_mit_buch(o.collection, &o.id, &o.value, &seite_buch);
                 if bleibt {
                     nur_lokal_vorhanden.push(ledger::key(o.collection, &o.id));
                 }
@@ -854,7 +852,7 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
                                 &remote.object_id,
                                 &v,
                             )
-                            .is_some_and(|u| nur_lokal.einheiten.contains(&u))
+                            .is_some_and(|u| nur_lokal.einheit_gesperrt(&u, &seite_buch))
                         })));
             if abhaengig_gesperrt {
                 continue;

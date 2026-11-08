@@ -264,6 +264,31 @@ impl NurLokal {
             || einheit_von(sammlung, id, wert).is_some_and(|e| self.einheiten.contains(&e))
     }
 
+    /// Ist die Einheit `u` nur lokal, direkt oder über ihr Buch (Fassungsseite → Buch)?
+    pub fn einheit_gesperrt(&self, u: &str, seite_buch: &BTreeMap<String, String>) -> bool {
+        self.einheiten.contains(u)
+            || seite_buch
+                .get(u)
+                .is_some_and(|b| self.einheiten.contains(b))
+    }
+
+    /// Wie [`Self::betrifft`], dazu abhängige Objekte (Fortschritt, Lesezeichen,
+    /// Buchdateien) und Fassungsseiten eines nur lokalen Buchs (Push und Pull).
+    pub fn betrifft_mit_buch(
+        &self,
+        sammlung: &str,
+        id: &str,
+        wert: &Value,
+        seite_buch: &BTreeMap<String, String>,
+    ) -> bool {
+        if self.ist_leer() {
+            return false;
+        }
+        self.betrifft(sammlung, id, wert)
+            || einheit_von(sammlung, id, wert)
+                .is_some_and(|u| self.einheit_gesperrt(&u, seite_buch))
+    }
+
     /// Ein Objekt vom Hub mit einem markierten Schlüssel wird weder angewendet noch verbucht.
     pub fn sperrt_eingang(&self, sammlung: &str, id: &str) -> bool {
         self.schluessel.contains(&schluessel(sammlung, id))
@@ -901,6 +926,81 @@ pub fn journal_speichern(data: &Path, j: &Journal) -> Result<(), String> {
 
 pub fn journal_loeschen(data: &Path) -> Result<(), String> {
     entferne_datei(&data.join(JOURNAL))
+}
+
+// ---------------------------------------------------------------------------
+// Anmeldung abschließen und verwerfen, Widerrufe (U10/U11)
+// ---------------------------------------------------------------------------
+
+/// Gehört eine wartende Anmeldung zum Journal (gleiches Konto am gleichen Hub)?
+pub fn wartend_passt(j: &Journal, user_id: i64, hub: &str) -> bool {
+    j.user_id == user_id && hub_gleich(&j.hub, hub)
+}
+
+/// Ist die Anmeldung des Journals vollständig gebunden: gespeichertes Konto UND Ledger
+/// gehören zu ihm? Erst dann darf das Journal ohne wartende Anmeldung fallen.
+pub fn anmeldung_gebunden(
+    j: &Journal,
+    konto: Option<(i64, &str)>,
+    ledger_konto: Option<&str>,
+) -> bool {
+    konto.is_some_and(|(u, h)| wartend_passt(j, u, h))
+        && ledger_konto == Some(konto_kennung(j.user_id, &j.hub).as_str())
+}
+
+/// Ausstehender Token-Widerruf am Hub.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct Widerruf {
+    pub url: String,
+    pub token: String,
+}
+
+/// Widerrufsliste lesen. Fehlt sie, ist sie leer; ist sie beschädigt oder nicht lesbar,
+/// ist das ein Fehler (nie als leer behandeln: sonst würden Aufträge überschrieben).
+/// Liest auch das frühere Einzelformat.
+pub fn widerrufe_laden(pfad: &Path) -> Result<Vec<Widerruf>, String> {
+    let roh = match fs::read(pfad) {
+        Ok(r) => r,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(format!("{} ist nicht lesbar: {e}", pfad.display())),
+    };
+    serde_json::from_slice::<Vec<Widerruf>>(&roh)
+        .or_else(|_| serde_json::from_slice::<Widerruf>(&roh).map(|w| vec![w]))
+        .map_err(|e| format!("{} ist beschädigt: {e}", pfad.display()))
+}
+
+/// Widerrufe dauerhaft vormerken (bestehende bleiben). `schreiben` schreibt die Datei
+/// (privat, atomar). Eine beschädigte Liste bricht ab, ohne etwas zu überschreiben.
+pub fn widerrufe_vormerken(
+    pfad: &Path,
+    neu: &[Widerruf],
+    schreiben: impl FnOnce(&Path, &[u8]) -> Result<(), String>,
+) -> Result<(), String> {
+    let mut liste = widerrufe_laden(pfad)?;
+    let vorher = liste.len();
+    for w in neu {
+        if !liste.contains(w) {
+            liste.push(w.clone());
+        }
+    }
+    if liste.len() == vorher && pfad.is_file() {
+        return Ok(());
+    }
+    let roh = serde_json::to_vec(&liste).map_err(|e| e.to_string())?;
+    schreiben(pfad, &roh)
+}
+
+/// Gescheiterte Anmeldung verwerfen (U10): ERST die Tokens dauerhaft sichern
+/// (`vormerken`), dann wartende Anmeldung und Journal löschen. Scheitert das Vormerken,
+/// bleibt beides liegen: die Tokenquelle geht nie vor der Vormerkung verloren.
+pub fn anmeldung_verwerfen(
+    vormerken: impl FnOnce() -> Result<(), String>,
+    wartend: &Path,
+    data: &Path,
+) -> Result<(), String> {
+    vormerken()?;
+    entferne_datei(wartend)?;
+    journal_loeschen(data)
 }
 
 /// Ordner einer Einheit im Datenordner (lose Seite oder Buch). Seiten im Buch-Ordner

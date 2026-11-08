@@ -68,26 +68,14 @@ fn wartend_loeschen(app: &AppHandle) {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
-struct Widerruf {
-    url: String,
-    token: String,
-}
+use kern::Widerruf;
 
 /// Lese-Ändern-Schreiben der Widerrufsliste (nie über ein `await` gehalten).
 static WIDERRUF_SPERRE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-/// Ausstehende Widerrufe; liest auch das frühere Einzelformat.
-fn widerrufe_laden(app: &AppHandle) -> Vec<Widerruf> {
-    let Some(raw) = konto_datei(app, WIDERRUF)
-        .ok()
-        .and_then(|p| std::fs::read(p).ok())
-    else {
-        return Vec::new();
-    };
-    serde_json::from_slice::<Vec<Widerruf>>(&raw)
-        .or_else(|_| serde_json::from_slice::<Widerruf>(&raw).map(|w| vec![w]))
-        .unwrap_or_default()
+/// Ausstehende Widerrufe. Beschädigt oder unlesbar: Fehler (nie leer, U10).
+fn widerrufe_laden(app: &AppHandle) -> Result<Vec<Widerruf>, String> {
+    kern::widerrufe_laden(&konto_datei(app, WIDERRUF)?)
 }
 
 fn widerrufe_speichern(app: &AppHandle, liste: &[Widerruf]) -> Result<(), String> {
@@ -102,37 +90,74 @@ fn widerrufe_speichern(app: &AppHandle, liste: &[Widerruf]) -> Result<(), String
     account::write_private(&p, &raw)
 }
 
-/// Widerruf dauerhaft vormerken, BEVOR die letzte Kopie des Tokens verschwindet (U10).
-/// Mehrere Aufträge bleiben erhalten; ein Schreibfehler bricht den Aufrufer ab.
-fn widerruf_vormerken(app: &AppHandle, url: &str, token: &str) -> Result<(), String> {
+/// Widerrufe dauerhaft vormerken, BEVOR die letzte Kopie eines Tokens verschwindet (U10).
+/// Bestehende Aufträge bleiben; eine beschädigte Liste und Schreibfehler brechen ab.
+fn widerrufe_vormerken(app: &AppHandle, neu: &[Widerruf]) -> Result<(), String> {
     let _sperre = WIDERRUF_SPERRE.lock().unwrap_or_else(|e| e.into_inner());
-    let mut liste = widerrufe_laden(app);
-    let w = Widerruf {
-        url: url.to_string(),
-        token: token.to_string(),
-    };
-    if !liste.contains(&w) {
-        liste.push(w);
-    }
-    widerrufe_speichern(app, &liste)
+    kern::widerrufe_vormerken(&konto_datei(app, WIDERRUF)?, neu, account::write_private)
 }
 
-/// Token widerrufen: erst vormerken, dann ausführen (scheitert es, beim nächsten Start).
-async fn widerrufen(app: &AppHandle, url: &str, token: &str) {
-    if let Err(e) = widerruf_vormerken(app, url, token) {
+fn widerruf_vormerken(app: &AppHandle, url: &str, token: &str) -> Result<(), String> {
+    widerrufe_vormerken(
+        app,
+        &[Widerruf {
+            url: url.to_string(),
+            token: token.to_string(),
+        }],
+    )
+}
+
+/// Tokens widerrufen: erst vormerken, dann ausführen (scheitert das Netz, beim nächsten
+/// Start). Lässt sich nicht vormerken, wird sofort widerrufen; scheitert auch das, ist es
+/// ein Fehler: der Aufrufer darf die Tokenquelle dann nicht löschen.
+async fn widerrufen_alle(app: &AppHandle, ws: &[Widerruf]) -> Result<(), String> {
+    if let Err(e) = widerrufe_vormerken(app, ws) {
         log::warn!("Sync: Widerruf nicht vorgemerkt: {e}");
-        // Ohne Vormerkung wenigstens jetzt versuchen.
-        let _ = HubClient::new(url, token).logout().await;
-        return;
+        for w in ws {
+            if let Err(n) = HubClient::new(&w.url, &w.token).logout().await {
+                log::warn!("Sync: Widerruf gescheitert: {n}");
+                return Err(format!(
+                    "Widerruf nicht vorgemerkt ({e}) und nicht erreichbar"
+                ));
+            }
+        }
+        return Ok(());
     }
     widerruf_nachholen(app).await;
+    Ok(())
+}
+
+async fn widerrufen(app: &AppHandle, url: &str, token: &str) -> Result<(), String> {
+    widerrufen_alle(
+        app,
+        &[Widerruf {
+            url: url.to_string(),
+            token: token.to_string(),
+        }],
+    )
+    .await
+}
+
+/// Ein nur im Speicher gehaltenes Token widerrufen (es gibt keine Datei, die bliebe).
+async fn widerrufen_fluechtig(app: &AppHandle, url: &str, token: &str) {
+    if let Err(e) = widerrufen(app, url, token).await {
+        log::warn!("Sync: {e}");
+    }
 }
 
 /// Ausstehende Widerrufe ausführen (Start, Anmeldung, nach Abbrechen/Abmelden).
+/// Eine beschädigte Liste bleibt unangetastet (Hinweis „Widerruf offen“ bleibt sichtbar).
 pub async fn widerruf_nachholen(app: &AppHandle) {
     let offen = {
         let _sperre = WIDERRUF_SPERRE.lock().unwrap_or_else(|e| e.into_inner());
         widerrufe_laden(app)
+    };
+    let offen = match offen {
+        Ok(o) => o,
+        Err(e) => {
+            log::warn!("Sync: Widerrufsliste: {e}");
+            return;
+        }
     };
     let mut erledigt = Vec::new();
     for w in offen {
@@ -144,10 +169,13 @@ pub async fn widerruf_nachholen(app: &AppHandle) {
         return;
     }
     let _sperre = WIDERRUF_SPERRE.lock().unwrap_or_else(|e| e.into_inner());
-    let rest: Vec<Widerruf> = widerrufe_laden(app)
-        .into_iter()
-        .filter(|w| !erledigt.contains(w))
-        .collect();
+    let rest: Vec<Widerruf> = match widerrufe_laden(app) {
+        Ok(l) => l.into_iter().filter(|w| !erledigt.contains(w)).collect(),
+        Err(e) => {
+            log::warn!("Sync: Widerrufsliste: {e}");
+            return;
+        }
+    };
     if let Err(e) = widerrufe_speichern(app, &rest) {
         log::warn!("Sync: Widerrufsliste nicht gespeichert: {e}");
     }
@@ -679,16 +707,27 @@ fn abschliessen(app: &AppHandle, j: &Journal) -> Result<(), String> {
     match j.art {
         Art::Anmeldung => {
             match wartend_laden(app) {
-                Some(w) => {
+                Some(w) if kern::wartend_passt(j, w.cfg.user_id, &w.cfg.url) => {
                     account::save(app, &w.cfg)?;
                     ledger::save(app, &neues_ledger(&w.cfg))?;
                     wartend_loeschen(app);
                 }
-                // Absturz nach dem Löschen der wartenden Anmeldung: schon abgeschlossen.
-                None if account::load(app).is_some_and(|c| {
-                    c.user_id == j.user_id && kern::hub_gleich(&c.url, &j.hub)
-                }) => {}
-                None => return Err("Wartende Anmeldung fehlt".into()),
+                Some(_) => {
+                    return Err("Die wartende Anmeldung gehört zu einem anderen Konto.".into())
+                }
+                // Absturz nach dem Löschen der wartenden Anmeldung: nur abgeschlossen, wenn
+                // Konto UND Ledger zum Journal gehören.
+                None => {
+                    let cfg = account::load(app);
+                    let led = ledger::load(app);
+                    if !kern::anmeldung_gebunden(
+                        j,
+                        cfg.as_ref().map(|c| (c.user_id, c.url.as_str())),
+                        led.konto.as_deref(),
+                    ) {
+                        return Err("Anmeldung unvollständig: Konto oder Ledger fehlt.".into());
+                    }
+                }
             }
         }
         Art::Abmeldung | Art::Wiederherstellen => {}
@@ -807,9 +846,24 @@ pub async fn anmelden(
                 j.is_some_and(|j| j.art == Art::Anmeldung && j.phase == Phase::Entscheidung)
             });
             if offen {
-                wartend_loeschen(app);
-                let _ = kern::journal_loeschen(&d);
-                widerrufen(app, &url, &token).await;
+                // Erst alle Tokens (neu und wartend) dauerhaft vormerken bzw. widerrufen,
+                // dann die Tokenquellen löschen. Scheitert beides, bleibt alles liegen.
+                let mut ws = vec![Widerruf { url, token }];
+                if let Some(w) = wartend_laden(app) {
+                    let alt = Widerruf {
+                        url: w.cfg.url,
+                        token: w.cfg.token,
+                    };
+                    if !ws.contains(&alt) {
+                        ws.push(alt);
+                    }
+                }
+                let gesichert = widerrufen_alle(app, &ws).await;
+                if let Err(e) = konto_datei(app, WARTEND)
+                    .and_then(|wp| kern::anmeldung_verwerfen(|| gesichert, &wp, &d))
+                {
+                    log::warn!("Sync: Anmeldung nicht verworfen: {e}");
+                }
             }
         }
     }
@@ -823,7 +877,7 @@ async fn anmelden_unter_sperre(
 ) -> Result<AnmeldeErgebnis, String> {
     let d = data(app)?;
     if account::load(app).is_some() {
-        widerrufen(app, &cfg.url, &cfg.token).await;
+        widerrufen_fluechtig(app, &cfg.url, &cfg.token).await;
         return Err("Dieses Gerät ist schon angemeldet. Bitte zuerst abmelden.".into());
     }
     if kern::journal_vorhanden(&d) {
@@ -831,7 +885,7 @@ async fn anmelden_unter_sperre(
             j.is_some_and(|j| j.art == Art::Anmeldung && j.phase == Phase::Entscheidung)
         });
         if !offen_anmeldung {
-            widerrufen(app, &cfg.url, &cfg.token).await;
+            widerrufen_fluechtig(app, &cfg.url, &cfg.token).await;
             return Err(
                 "Ein vorheriger Übergang ist noch nicht abgeschlossen. Bitte die App neu starten."
                     .into(),
@@ -839,8 +893,9 @@ async fn anmelden_unter_sperre(
         }
     }
     // Eine ältere wartende Anmeldung ersetzen: deren Token widerrufen.
+    // Scheitert das, bleibt die alte Datei (Tokenquelle) stehen und die Anmeldung bricht ab.
     if let Some(alt) = wartend_laden(app) {
-        widerrufen(app, &alt.cfg.url, &alt.cfg.token).await;
+        widerrufen(app, &alt.cfg.url, &alt.cfg.token).await?;
     }
     let mut w = Wartend {
         cfg: cfg.clone(),
