@@ -256,6 +256,7 @@
 }
 .sf-reader .sf-switch__button:hover,
 .sf-reader .sf-switch__button[aria-expanded="true"] {
+  background: color-mix(in srgb, var(--color-mid-gray) 15%, transparent);
   color: var(--color-text);
 }
 @media (pointer: coarse) {
