@@ -7887,7 +7887,9 @@
         "here": "on this device",
         "other": "on another device"
       },
+      "notLocal": "The {{lang}} audiobook is not on this device yet. Sync has been started.",
       "section": {
+        "listen": "Play {{lang}} audiobook ({{duration}})",
         "title": "Language editions",
         "edition": "Edition",
         "progress": "Progress",
@@ -7901,6 +7903,8 @@
         "alignedSome": "Chapters of {{a}} and {{b}} are partly matched."
       },
       "menu": {
+        "read": "Read text",
+        "listen": "Play audiobook",
         "primary": "Make primary edition",
         "align": "Match chapters …",
         "export": "Export …",
@@ -8187,6 +8191,7 @@
       "none": "No text"
     },
     "audioShort": {
+      "other": "Audiobook ({{lang}})",
       "ok": "Audio",
       "busy": "…",
       "none": "No audio",
@@ -8377,6 +8382,7 @@
     "continueRead": "Continue reading",
     "readTitle": "Read “{{title}}”",
     "audioSource": {
+      "other": "Audio: audiobook of the {{lang}} edition",
       "audiobook": "Audio: imported audiobook",
       "narrated": "Audio: narrated by speech synthesis",
       "none": "No audio – read or have it read aloud live"

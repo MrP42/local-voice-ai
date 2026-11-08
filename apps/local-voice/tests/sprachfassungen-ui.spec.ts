@@ -1129,3 +1129,132 @@ test("Rückgängig: wirft ein Schreibschritt, stellt der Rollback den Stand davo
   expect(result.after.map(pick)).toEqual(result.before.map(pick));
   expect(await calls(page, "library_set_reading")).toHaveLength(0);
 });
+
+// Hauptfassung ohne Hörbuch, englische Fassung mit Hörbuch: Die Buchseite
+// zeigt es im Kopf an und macht es abspielbar (Kopf, Fassungszeile, Menü).
+const textOnlyDe = (enLocal = true) => {
+  const b = twoLanguages(
+    "book_a",
+    ["Der Prozess", "The Trial"],
+    DE3,
+    EN3,
+    { audio: null, audio_path: null, audio_paths: [] },
+    enLocal,
+  );
+  const eds = b.editions as Rec[];
+  return {
+    ...b,
+    editions: [{ ...eds[0], audio: null, audio_paths: [] }, eds[1]],
+  };
+};
+
+const openBook = (page: Page) =>
+  page.getByRole("button", { name: "„Der Prozess“: Details öffnen" }).click();
+
+test("Hörbuch nur in der englischen Fassung: Kopf zeigt es und spielt es ab", async ({
+  page,
+}) => {
+  await setup(page, [textOnlyDe()], { pageText: PAGES });
+  await page.goto("/");
+  await openBook(page);
+  await expect(page.getByTestId("library-fmt-audio")).toHaveText(
+    /Hörbuch \(English\)/,
+  );
+  await expect(page.getByTestId("library-detail-play")).toHaveCount(0);
+  const listen = page.getByTestId("library-detail-listen-edition");
+  await expect(listen).toHaveText(/Hörbuch hören · English/);
+  await listen.click();
+  await expect(page.getByTestId("library-audiobar")).toBeVisible();
+  await expect(page.getByTestId("sf-switch-button")).toHaveAccessibleName(
+    /English/,
+  );
+});
+
+test("Fassungszeile und Menü: Hörbuch der Fassung abspielen", async ({
+  page,
+}) => {
+  await setup(page, [textOnlyDe()], { pageText: PAGES });
+  await page.goto("/");
+  await openBook(page);
+  await expect(page.getByTestId("sf-edition-play-ed_book_a_de")).toHaveCount(0);
+  const cell = page.getByTestId("sf-edition-play-ed_book_a_en");
+  await expect(cell).toHaveAccessibleName(/Hörbuch English abspielen/);
+  await cell.click();
+  await expect(page.getByTestId("library-audiobar")).toBeVisible();
+  await page.reload();
+  await openBook(page);
+  await expect(page.getByTestId("library-audiobar")).toHaveCount(0);
+
+  await page.getByTestId("sf-edition-menu-ed_book_a_de").click();
+  await expect(
+    page.getByTestId("sf-edition-listen-ed_book_a_de"),
+  ).toBeDisabled();
+  await page.keyboard.press("Escape");
+  await page.getByTestId("sf-edition-menu-ed_book_a_en").click();
+  await page.getByTestId("sf-edition-listen-ed_book_a_en").click();
+  await expect(page.getByTestId("library-audiobar")).toBeVisible();
+  await expect(page.getByTestId("sf-switch-button")).toHaveAccessibleName(
+    /English/,
+  );
+});
+
+test("Englisches Hörbuch noch nicht auf dem Gerät: Abgleich statt leerer Hörleiste", async ({
+  page,
+}) => {
+  await setup(page, [textOnlyDe(false)], { pageText: PAGES });
+  await page.goto("/");
+  await openBook(page);
+  await page.getByTestId("library-detail-listen-edition").click();
+  await expect(page.getByText(/noch nicht geladen/)).toBeVisible();
+  await expect(page.getByTestId("library-audiobar")).toHaveCount(0);
+  expect((await calls(page, "sync_now")).length).toBeGreaterThan(0);
+});
+
+for (const width of [1440, 390])
+  for (const theme of ["light", "dark"] as const)
+    test(`Vorschau Hörbuch einer anderen Fassung ${width} ${theme}`, async ({
+      page,
+    }) => {
+      test.skip(!process.env.LV_SHOT_DIR, "nur mit LV_SHOT_DIR");
+      await setup(page, [textOnlyDe()], { pageText: PAGES });
+      if (theme === "dark")
+        await page.addInitScript(() => {
+          const w = window as unknown as {
+            __TAURI_INTERNALS__: {
+              invoke: (c: string, a?: unknown) => Promise<unknown>;
+            };
+          };
+          const inner = w.__TAURI_INTERNALS__.invoke;
+          w.__TAURI_INTERNALS__.invoke = async (c, a) => {
+            const r = await inner(c, a);
+            return c === "get_app_settings" || c === "get_default_settings"
+              ? { ...(r as object), theme: "dark" }
+              : r;
+          };
+        });
+      await page.setViewportSize({ width, height: width < 500 ? 844 : 900 });
+      await page.goto("/");
+      await openBook(page);
+      const tag = `${width}-${theme === "dark" ? "dunkel" : "hell"}`;
+      const dir = process.env.LV_SHOT_DIR!;
+      await page.waitForTimeout(300);
+      await page.screenshot({
+        path: `${dir}/fassung-hoerbuch-01-kopf-${tag}.png`,
+      });
+      await page.getByTestId("sf-editions").scrollIntoViewIfNeeded();
+      await page.screenshot({
+        path: `${dir}/fassung-hoerbuch-02-zeile-${tag}.png`,
+      });
+      await page.getByTestId("sf-edition-menu-ed_book_a_en").click();
+      await page.waitForTimeout(200);
+      await page.screenshot({
+        path: `${dir}/fassung-hoerbuch-03-menue-${tag}.png`,
+      });
+      await page.keyboard.press("Escape");
+      await page.getByTestId("library-detail-listen-edition").click();
+      await expect(page.getByTestId("library-audiobar")).toBeVisible();
+      await page.waitForTimeout(500);
+      await page.screenshot({
+        path: `${dir}/fassung-hoerbuch-04-hoerleiste-${tag}.png`,
+      });
+    });

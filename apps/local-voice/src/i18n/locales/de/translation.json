@@ -7887,7 +7887,9 @@
         "here": "an diesem Gerät",
         "other": "auf einem anderen Gerät"
       },
+      "notLocal": "Das Hörbuch ({{lang}}) ist auf diesem Gerät noch nicht geladen. Der Abgleich ist angestoßen.",
       "section": {
+        "listen": "Hörbuch {{lang}} abspielen ({{duration}})",
         "title": "Sprachfassungen",
         "edition": "Fassung",
         "progress": "Fortschritt",
@@ -7901,6 +7903,8 @@
         "alignedSome": "Kapitel von {{a}} und {{b}} sind teilweise zugeordnet."
       },
       "menu": {
+        "read": "Text lesen",
+        "listen": "Hörbuch abspielen",
         "primary": "Als Hauptfassung festlegen",
         "align": "Kapitel zuordnen …",
         "export": "Exportieren …",
@@ -8187,6 +8191,7 @@
       "none": "Kein Text"
     },
     "audioShort": {
+      "other": "Hörbuch ({{lang}})",
       "ok": "Audio",
       "busy": "…",
       "none": "Kein Audio",
@@ -8377,6 +8382,7 @@
     "continueRead": "Weiterlesen",
     "readTitle": "„{{title}}“ lesen",
     "audioSource": {
+      "other": "Audio: Hörbuch der Sprachfassung {{lang}}",
       "audiobook": "Audio: importiertes Hörbuch",
       "narrated": "Audio: per Sprachausgabe vertont",
       "none": "Kein Audio – nur Lesen oder live vorlesen lassen"

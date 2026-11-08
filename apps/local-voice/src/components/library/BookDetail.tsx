@@ -51,8 +51,19 @@ import {
   transcribeTracks,
 } from "@/lib/library/importFile";
 import { jobsOfTrack } from "@/lib/library/sections";
-import { audioProgressKey, removeProgress } from "@/lib/library/progress";
-import { editionsOf, langName, langShort } from "@/lib/library/editions";
+import {
+  audioProgressKey,
+  loadProgress,
+  progressFraction,
+  removeProgress,
+} from "@/lib/library/progress";
+import {
+  audioKeyOf,
+  editionsOf,
+  langName,
+  langShort,
+  otherAudioEdition,
+} from "@/lib/library/editions";
 
 type Tab = "overview" | "versions" | "files" | "metadata";
 
@@ -64,6 +75,8 @@ interface Props {
   onListen(): void;
   /** Hören und gleichzeitig den Text mitlesen. */
   onListenFollow(): void;
+  /** Hörbuch einer bestimmten Sprachfassung abspielen. */
+  onListenEdition?(editionId: string): void;
   onToggleFinished(): void;
   /** Ändert den frisch gelesenen Stand des Buchs (siehe useLibrary.save). */
   onSave(
@@ -98,6 +111,7 @@ export const BookDetail: React.FC<Props> = ({
   onPlay,
   onListen,
   onListenFollow,
+  onListenEdition,
   onToggleFinished,
   onSave,
   onRemove,
@@ -115,6 +129,19 @@ export const BookDetail: React.FC<Props> = ({
   const readingLang = view.edition
     ? langName(view.edition.lang) || langShort(view.edition.lang)
     : "";
+  // Die aktive Fassung hat kein Hörbuch, eine andere schon: im Kopf anbieten.
+  const audioEdition =
+    multi && !view.audioSource && onListenEdition
+      ? otherAudioEdition(book, view.edition)
+      : null;
+  const audioLang = audioEdition
+    ? langName(audioEdition.lang) || langShort(audioEdition.lang)
+    : "";
+  const audioRec = audioEdition
+    ? loadProgress(audioKeyOf(book, audioEdition))
+    : null;
+  const audioStarted =
+    !!audioRec && audioRec.offset > 0 && progressFraction(audioRec) < 0.995;
   const [tab, setTab] = useState<Tab>("overview");
   const [draft, setDraft] = useState(book);
   const [dirty, setDirty] = useState(false);
@@ -321,7 +348,7 @@ export const BookDetail: React.FC<Props> = ({
           )}
           <LastActive book={book} />
           <div style={{ margin: "10px 0" }}>
-            <Formats view={view} job={job} />
+            <Formats view={view} job={job} otherAudio={audioLang || undefined} />
           </div>
           <dl className="library-kv">
             {meta
@@ -384,6 +411,17 @@ export const BookDetail: React.FC<Props> = ({
             label={t("library.progressLabel", { title: book.title })}
           />
           <div className="library-meta">{progressText}</div>
+          {audioEdition && onListenEdition && (
+            <Button
+              size="lg"
+              icon={<Headphones size={16} aria-hidden="true" />}
+              onClick={() => onListenEdition(audioEdition.id)}
+              data-testid="library-detail-listen-edition"
+            >
+              {audioStarted ? t("library.continuePlay") : t("library.listenOriginal")}
+              {` · ${audioLang}`}
+            </Button>
+          )}
           <Button
             size="lg"
             icon={<Check size={16} aria-hidden="true" />}
@@ -436,6 +474,7 @@ export const BookDetail: React.FC<Props> = ({
           onChanged={onChanged}
           onAlign={onAlign}
           onExport={onExport}
+          onListen={onListenEdition}
         />
       )}
 

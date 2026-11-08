@@ -74,6 +74,10 @@ import { flushProgress, setFinished } from "@/lib/library/progress";
 import {
   audioKeyOf,
   editionBook,
+  editionById,
+  hasAudio,
+  langName,
+  langShort,
   readingEdition,
   textKeyOf,
 } from "@/lib/library/editions";
@@ -198,11 +202,14 @@ function jobBase(
   });
 }
 
-export const Formats: React.FC<{ view: BookView; job?: TranscriptJob }> = ({
-  view,
-  job,
-}) => {
+export const Formats: React.FC<{
+  view: BookView;
+  job?: TranscriptJob;
+  /** Sprache einer anderen Fassung mit Hörbuch, wenn die aktive keines hat. */
+  otherAudio?: string;
+}> = ({ view, job, otherAudio }) => {
   const { t } = useTranslation();
+  const other = !view.audioSource && !!otherAudio;
   return (
     <span className="library-fmt">
       <span data-state={view.text} title={t(`library.text.${view.text}`)}>
@@ -212,11 +219,18 @@ export const Formats: React.FC<{ view: BookView; job?: TranscriptJob }> = ({
           : t(`library.textShort.${view.text}`)}
       </span>
       <span
-        data-state={view.audio}
-        title={t(`library.audioSource.${view.audioSource ?? "none"}`)}
+        data-state={other ? "ok" : view.audio}
+        title={
+          other
+            ? t("library.audioSource.other", { lang: otherAudio })
+            : t(`library.audioSource.${view.audioSource ?? "none"}`)
+        }
+        data-testid="library-fmt-audio"
       >
         <Headphones size={12} aria-hidden="true" />
-        {t(`library.audioShort.${view.audioSource ?? "none"}`)}
+        {other
+          ? t("library.audioShort.other", { lang: otherAudio })
+          : t(`library.audioShort.${view.audioSource ?? "none"}`)}
       </span>
     </span>
   );
@@ -326,6 +340,30 @@ export const LibraryPage: React.FC = () => {
       startPlaying: true,
       focusLanguage: false,
     });
+
+  /**
+   * Hörbuch einer bestimmten Sprachfassung (Buchseite: Kopf, Fassungszeile).
+   * Fehlt es auf diesem Gerät, wird der Abgleich angestoßen statt einer
+   * leeren Hörleiste.
+   */
+  const listenEdition = (book: LibraryBook, editionId: string) => {
+    const e = editionById(book, editionId);
+    if (!e?.audio) return;
+    if (!hasAudio(book, e)) {
+      void commands.syncNow().catch(() => {});
+      toast(
+        t("library.sf.notLocal", { lang: langName(e.lang) || langShort(e.lang) }),
+      );
+      return;
+    }
+    setListening({
+      book,
+      follow: false,
+      edition: e.id,
+      startPlaying: true,
+      focusLanguage: false,
+    });
+  };
 
   // Mehrfachauswahl: Zusammenführen, Titel bereinigen, Entfernen.
   const [selecting, setSelecting] = useState(false);
@@ -985,6 +1023,7 @@ export const LibraryPage: React.FC = () => {
               onPlay={() => play(open)}
               onListen={() => listen(open.book)}
               onListenFollow={() => listen(open.book, true)}
+              onListenEdition={(id) => listenEdition(open.book, id)}
               onToggleFinished={() => void toggleFinished(open)}
               onSave={save}
               onRemove={() => setRemoving([open.book])}
