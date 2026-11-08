@@ -850,7 +850,7 @@ fn cursor_arg(args: &Value) -> Res<usize> {
 }
 
 /// Das ganze Transkript als Zeilen `[mm:ss] Sprecher: Text`.
-fn transcript_text(store: &MeetingStore, id: &str) -> Res<String> {
+pub(crate) fn transcript_text(store: &MeetingStore, id: &str) -> Res<String> {
     let mut segments = store.get_segments(id).map_err(|e| store_error(&e))?;
     segments.sort_by_key(|s| (s.start_ms, s.segment_index));
     let directory = SpeakerDirectory::load(store, id);

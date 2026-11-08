@@ -931,6 +931,107 @@ async projektBuchZuordnen(suiteId: string, buchId: string) : Promise<Result<null
     else return { status: "error", error: e  as any };
 }
 },
+async projektSeiteZuordnen(suiteId: string, seiteId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("projekt_seite_zuordnen", { suiteId, seiteId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async projektSeiteEntfernen(suiteId: string, seiteId: string) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("projekt_seite_entfernen", { suiteId, seiteId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Kopiert die gewählten Dateien in den Projektordner (Prüfung per Größe und SHA-256) und trägt
+ * sie danach ein. Liefert die Datei-IDs.
+ */
+async projektDateienHinzufuegen(suiteId: string, paths: string[]) : Promise<Result<string[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("projekt_dateien_hinzufuegen", { suiteId, paths }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Legt die Kopie in den Papierkorb des Projekts und nimmt sie aus dem Projekt. `false`: konnte nicht
+ * sicher entfernt werden; die Datei liegt weiter im Projektordner und wird zum Aufnehmen angeboten.
+ */
+async projektDateiEntfernen(suiteId: string, dateiId: string) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("projekt_datei_entfernen", { suiteId, dateiId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async projektDateienGefunden(suiteId: string) : Promise<Result<GefundeneDatei[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("projekt_dateien_gefunden", { suiteId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Zustand des Dateijournals: `null` = lesbar, sonst `fehlt`/`defekt`/`neuer`/`nicht_lesbar`.
+ */
+async projektDateienLage(suiteId: string) : Promise<Result<JournalLage | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("projekt_dateien_lage", { suiteId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * „Bestand neu aufbauen“: nur bei fehlendem oder defektem Dateijournal.
+ */
+async projektDateienNeuAufbauen(suiteId: string) : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("projekt_dateien_neu_aufbauen", { suiteId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async projektDateiGefundenAufnehmen(suiteId: string, dateiId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("projekt_datei_gefunden_aufnehmen", { suiteId, dateiId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Übersicht „Als Kontext“ (ohne Inhalte): Schalter, Form, Token je Eintrag, Summe, Stand.
+ */
+async projektKontextUebersicht(suiteId: string) : Promise<Result<KontextUebersicht, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("projekt_kontext_uebersicht", { suiteId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Schaltet „Als Kontext“ eines Eintrags. `form` ändert die Form, `edition` die Fassung eines
+ * Buchs (leer = Hauptfassung); fehlt eines, bleibt es, wie es ist.
+ */
+async projektKontextSchalten(suiteId: string, eintragId: string, on: boolean, form: KontextForm | null, edition: string | null) : Promise<Result<KontextUebersicht, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("projekt_kontext_schalten", { suiteId, eintragId, on, form, edition }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async projektBuchEntfernen(suiteId: string, buchId: string) : Promise<Result<boolean, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("projekt_buch_entfernen", { suiteId, buchId }) };
@@ -10096,6 +10197,10 @@ effort?: string | null }
  * Fusszeile.
  */
 export type Fusszeile = { zeilen?: string[]; seitenzahl?: boolean }
+/**
+ * Datei im Projektordner ohne Journaleintrag (Absturz), zum bewussten Aufnehmen angeboten.
+ */
+export type GefundeneDatei = { id: string; name: string; size: number }
 export type GenerateOptions = { book_id: string | null; template_id: string; prompt: string; part_title: string; length_words: number; audience: string; tone: string; language: string; with_tags: boolean; allowed_tags: string[]; 
 /**
  * Figuren, die vorkommen sollen (Namen aus dem Buch).
@@ -10324,6 +10429,27 @@ export type JobRunState = "running" |
  */
 "stopping"
 /**
+ * Warum ein Journal nicht geladen werden kann.
+ */
+export type JournalLage = 
+/**
+ * Fehlt, obwohl Dateien vorhanden sind.
+ */
+"fehlt" | 
+/**
+ * Kaputt oder mit ungültigen Namen.
+ */
+"defekt" | 
+/**
+ * Von einer neueren App-Version: nicht lesbar und nie neu aufbaubar (die Version wird vor der
+ * übrigen Form geprüft).
+ */
+"neuer" | 
+/**
+ * Vorübergehend nicht lesbar (Rechte, Sperre, Datenträger): später erneut.
+ */
+"nicht_lesbar"
+/**
  * Sprungziel eines Treffers in der App.
  */
 export type Jump = { kind: SourceKind; id: string; 
@@ -10390,6 +10516,54 @@ export type Kind = "youtube" | "ics" | "graph" | "m365" | "smtp" | "folder" | "o
  * WAI Presenter (Etappe 4): Austauschordner fuer Besprechungspakete (`presenter.rs`).
  */
 "presenter"
+/**
+ * Form, in der ein Eintrag als Kontext dient.
+ */
+export type KontextForm = 
+/**
+ * Buch: Kurzbuch der gewählten Fassung (Vorgabe).
+ */
+"kurzbuch" | 
+/**
+ * Buch: Volltext der gewählten Fassung (nur auf ausdrückliche Wahl).
+ */
+"volltext" | 
+/**
+ * Aufnahme: Protokoll (Vorgabe).
+ */
+"protokoll" | 
+/**
+ * Aufnahme: Transkript (nur auf ausdrückliche Wahl).
+ */
+"transkript" | 
+/**
+ * Text, Datei, Recherche: der Text selbst.
+ */
+"text"
+/**
+ * Übersicht für die Oberfläche: Zeilen, Summe, Anzahl, Stand.
+ */
+export type KontextUebersicht = { rows: KontextZeile[]; tokens: number; count: number; stand: string; 
+/**
+ * Die Auswahl war nicht lesbar; alles gilt als aus, bis neu geschaltet wird.
+ */
+reset: boolean }
+/**
+ * Zeile der Übersicht für die Oberfläche (ohne Inhalte).
+ */
+export type KontextZeile = { id: string; on: boolean; form: KontextForm; 
+/**
+ * Wählbare Formen (erste = Vorgabe).
+ */
+forms: KontextForm[]; edition: string | null; 
+/**
+ * Geschätzte Token des Kontexttexts in der gewählten Form; fehlt, wenn es keinen gibt.
+ */
+tokens: number | null; 
+/**
+ * Hinweis-Code, wenn der Eintrag keinen Text beiträgt.
+ */
+hint: string | null; hintText: string | null }
 /**
  * Teiländerung: fehlende oder `null`-Felder bleiben unverändert, ein leerer Text leert
  * ein optionales Feld.

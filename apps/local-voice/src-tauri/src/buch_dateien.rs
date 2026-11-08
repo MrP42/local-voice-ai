@@ -218,7 +218,7 @@ fn stand_sichern(buch_dir: &Path, stand: &mut Stand) -> Result<(), String> {
 // Dateien
 // ---------------------------------------------------------------------------
 
-fn sha256_datei(pfad: &Path) -> Result<String, String> {
+pub(crate) fn sha256_datei(pfad: &Path) -> Result<String, String> {
     let mut datei = fs::File::open(pfad).map_err(|e| format!("Datei nicht lesbar: {e}"))?;
     let mut h = Sha256::new();
     let mut puffer = vec![0u8; 1024 * 1024];
@@ -246,7 +246,7 @@ fn stat(meta: &fs::Metadata) -> (u64, i64) {
 
 /// Prüfsumme einer Datei, die sich währenddessen nicht verändert hat (Größe und
 /// Änderungszeit vor und nach dem Lesen gleich), mit den Angaben danach.
-fn sha256_stabil(pfad: &Path) -> Result<(String, fs::Metadata), String> {
+pub(crate) fn sha256_stabil(pfad: &Path) -> Result<(String, fs::Metadata), String> {
     for _ in 0..3 {
         let vor = fs::metadata(pfad).map_err(|e| format!("Datei nicht lesbar: {e}"))?;
         let sha = sha256_datei(pfad)?;
@@ -307,7 +307,7 @@ fn kollision_auf_platte(buch_dir: &Path, rel: &str) -> Result<bool, String> {
 
 /// `von` nach `nach` verschieben (gleicher Datenträger), ohne je etwas zu ersetzen: liegt
 /// am Ziel schon etwas, kommt `AlreadyExists` und nichts ist geschehen.
-fn verschieben_ohne_ersetzen(von: &Path, nach: &Path) -> std::io::Result<()> {
+pub(crate) fn verschieben_ohne_ersetzen(von: &Path, nach: &Path) -> std::io::Result<()> {
     #[cfg(windows)]
     {
         use std::os::windows::ffi::OsStrExt;
@@ -403,7 +403,7 @@ fn umbenennen_roh(_a: &std::ffi::CStr, _b: &std::ffi::CStr) -> std::io::Result<i
 
 /// `von` unter einem freien Namen (nach 4.4) in `dir` ablegen, nie ersetzen; taucht der
 /// gewählte Name gleichzeitig auf, wird der nächste versucht. Liefert den Namen.
-fn ablegen_frei(von: &Path, dir: &Path, wunsch: &str) -> Result<String, String> {
+pub(crate) fn ablegen_frei(von: &Path, dir: &Path, wunsch: &str) -> Result<String, String> {
     for _ in 0..50 {
         let name = freier_name(dir, wunsch)?;
         match verschieben_ohne_ersetzen(von, &dir.join(&name)) {
@@ -417,7 +417,7 @@ fn ablegen_frei(von: &Path, dir: &Path, wunsch: &str) -> Result<String, String> 
 
 /// Kein Glied von `rel` unter `wurzel` ist eine Verknüpfung; ein fehlendes Glied beendet
 /// die Prüfung.
-fn ohne_verknuepfung(wurzel: &Path, rel: &str) -> Result<(), String> {
+pub(crate) fn ohne_verknuepfung(wurzel: &Path, rel: &str) -> Result<(), String> {
     let mut pfad = wurzel.to_path_buf();
     for teil in rel.split('/') {
         pfad.push(teil);

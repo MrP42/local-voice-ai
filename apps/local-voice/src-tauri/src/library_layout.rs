@@ -1441,6 +1441,37 @@ fn ordner_kennung(pfad: &Path) -> Result<Kennung, String> {
     })
 }
 
+/// Abdruck einer gewöhnlichen Datei: Dateisystem-Kennung (dieselbe `kennung_roh` wie beim Löschen
+/// von Sicherungen: Unix dev/ino, Windows NTFS/ReFS über FILE_ID_INFO), Größe und Änderungszeit.
+/// Gleicher Abdruck vor und nach einem Schritt heißt: Kennung, Größe und Zeit gleich; Änderungen,
+/// die keines davon berühren, oder ein Tausch im Fenster von einem Systemaufruf bleiben unerkannt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct DateiAbdruck {
+    kennung: Kennung,
+    groesse: u64,
+    mtime: Option<std::time::SystemTime>,
+}
+
+/// Abdruck einer gewöhnlichen Datei, ohne einer Verknüpfung zu folgen. Ohne verlässliche Kennung
+/// (Netzlaufwerk, FAT/exFAT) ein Fehler.
+pub(crate) fn datei_abdruck(pfad: &Path) -> Result<DateiAbdruck, String> {
+    let meta = fs::symlink_metadata(pfad).map_err(|e| format!("Datei nicht lesbar: {e}"))?;
+    if ist_umweg(&meta) || !meta.is_file() {
+        return Err("Keine gewöhnliche Datei.".into());
+    }
+    let kennung = kennung_roh(pfad, &meta).map_err(|f| match f {
+        KennungFehler::Laufwerk(grund) => {
+            format!("Keine verlässliche Datei-Kennung auf diesem Laufwerk ({grund}).")
+        }
+        KennungFehler::Io(e) => format!("Datei nicht lesbar: {e}"),
+    })?;
+    Ok(DateiAbdruck {
+        kennung,
+        groesse: meta.len(),
+        mtime: meta.modified().ok(),
+    })
+}
+
 #[cfg(unix)]
 fn kennung_roh(_pfad: &Path, meta: &fs::Metadata) -> Result<Kennung, KennungFehler> {
     use std::os::unix::fs::MetadataExt;

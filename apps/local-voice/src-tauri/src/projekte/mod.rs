@@ -25,14 +25,19 @@
 
 pub mod audit;
 pub mod befehle;
+pub mod dateien;
 pub mod dienst;
 pub mod herkunft;
+pub mod kontext;
 pub mod quellen;
 pub mod recherche;
+pub mod texte;
 pub mod zustand;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_p4;
 
 use std::fmt;
 use wai_security::{
