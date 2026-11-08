@@ -166,6 +166,30 @@ export const hasAudio = (book: LibraryBook, e: Edition): boolean =>
   !!e.audio && audioPathsOf(book, e).some(Boolean);
 
 /**
+ * Hörbuch einer anderen Sprachfassung, wenn die aktive keines hat: Die
+ * Buchseite bietet es dann im Kopf an, statt nur „Kein Audio“ zu zeigen.
+ * Vorrang: auf diesem Gerät vorhanden, dann zuletzt gehört, dann Hauptfassung.
+ */
+export function otherAudioEdition(
+  book: LibraryBook,
+  current: Edition | null,
+): Edition | null {
+  if (current?.audio) return null;
+  const primaryId = primaryEdition(book)?.id;
+  const heard = (e: Edition) => loadProgress(audioKeyOf(book, e))?.updated ?? 0;
+  return (
+    editionsOf(book)
+      .filter((e) => e.id !== current?.id && !!e.audio)
+      .sort(
+        (a, b) =>
+          Number(hasAudio(book, b)) - Number(hasAudio(book, a)) ||
+          heard(b) - heard(a) ||
+          Number(b.id === primaryId) - Number(a.id === primaryId),
+      )[0] ?? null
+  );
+}
+
+/**
  * Das Buch aus Sicht einer Fassung: Titel, Sprache, Text und Hörbuch der
  * Fassung statt der Arbeitskopie. Die Kennung bleibt die des Buchs.
  */

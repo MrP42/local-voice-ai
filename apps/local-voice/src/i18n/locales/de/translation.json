@@ -10,6 +10,7 @@
     "cancel": "Abbrechen"
   },
   "sidebar": {
+    "projekte": "Projekte",
     "library": "Bibliothek",
     "general": "Allgemein",
     "models": "Modelle",
@@ -7596,6 +7597,16 @@
       "title": "Worüber möchtest du sprechen?",
       "hint": "Gespräch beginnen und einfach lossprechen. Du kannst jederzeit unterbrechen oder schreiben."
     },
+    "greeting": {
+      "morning": ["Guten Morgen, {{name}}. Womit fangen wir an?", "Guten Morgen, {{name}}. Was steht heute an?"],
+      "day": ["Hallo {{name}}, wie kann ich helfen?", "Hallo {{name}}, was gibt es Neues?"],
+      "evening": ["Guten Abend, {{name}}. Was steht an?", "Guten Abend, {{name}}. Womit kann ich helfen?"],
+      "night": ["Noch wach, {{name}}? Was kann ich tun?", "Hallo {{name}}, woran arbeitest du gerade?"],
+      "morningAnon": ["Guten Morgen. Womit fangen wir an?", "Guten Morgen. Was steht heute an?"],
+      "dayAnon": ["Wie kann ich helfen?", "Was gibt es Neues?"],
+      "eveningAnon": ["Guten Abend. Was steht an?", "Guten Abend. Womit kann ich helfen?"],
+      "nightAnon": ["Noch wach? Was kann ich tun?", "Woran arbeitest du gerade?"]
+    },
     "suggestions": {
       "s1": "Was steht in meinen letzten Protokollen?",
       "s2": "Fasse das gestrige Meeting zusammen",
@@ -7610,6 +7621,7 @@
       "send": "Nachricht senden",
       "removeAttachment": "Anhang „{{name}}“ entfernen",
       "attachFiles": "Dateien anhängen …",
+      "permissions": "Souveränität und Wissen …",
       "fromCorporate": "Aus Corporate LLM",
       "corporateHint": "Corporate LLM verbinden – Skills, Plugins und Konnektoren kommen von dort",
       "documents": "Dokumente",
@@ -7986,7 +7998,15 @@
         "here": "an diesem Gerät",
         "other": "auf einem anderen Gerät"
       },
+      "notLocal": "Das Hörbuch ({{lang}}) ist auf diesem Gerät noch nicht geladen. Der Abgleich ist angestoßen.",
+      "notOnDevice": "Noch nicht auf diesem Gerät",
+      "syncFailed": "Das Hörbuch ({{lang}}) konnte nicht geladen werden: Der Abgleich ist fehlgeschlagen ({{error}}).",
+      "syncOff": "Das Hörbuch ({{lang}}) liegt nicht auf diesem Gerät, und der Abgleich ist nicht eingerichtet.",
+      "listenEdition": "Hörbuch hören · {{lang}}",
+      "continueEdition": "Weiterhören · {{lang}}",
       "section": {
+        "listen": "Hörbuch {{lang}} abspielen ({{duration}})",
+        "listenNoDuration": "Hörbuch {{lang}} abspielen",
         "title": "Sprachfassungen",
         "edition": "Fassung",
         "progress": "Fortschritt",
@@ -8000,6 +8020,8 @@
         "alignedSome": "Kapitel von {{a}} und {{b}} sind teilweise zugeordnet."
       },
       "menu": {
+        "read": "Text lesen",
+        "listen": "Hörbuch abspielen",
         "primary": "Als Hauptfassung festlegen",
         "align": "Kapitel zuordnen …",
         "export": "Exportieren …",
@@ -8286,6 +8308,7 @@
       "none": "Kein Text"
     },
     "audioShort": {
+      "other": "Hörbuch ({{lang}})",
       "ok": "Audio",
       "busy": "…",
       "none": "Kein Audio",
@@ -8476,6 +8499,8 @@
     "continueRead": "Weiterlesen",
     "readTitle": "„{{title}}“ lesen",
     "audioSource": {
+      "other": "Audio: Hörbuch der Sprachfassung {{lang}}",
+      "otherRemote": "Audio: Hörbuch der Sprachfassung {{lang}}, noch nicht auf diesem Gerät",
       "audiobook": "Audio: importiertes Hörbuch",
       "narrated": "Audio: per Sprachausgabe vertont",
       "none": "Kein Audio – nur Lesen oder live vorlesen lassen"
@@ -8617,6 +8642,175 @@
     "transcribeMissing": "Fehlende Teile transkribieren",
     "importedParts": "Importiertes Hörbuch in {{count}} Teilen",
     "appendAudio": "Weitere Teile anhängen"
+  },
+  "projektBereich": {
+    "nichtSicherEntfernt": "Die Datei konnte nicht sicher entfernt werden. Sie liegt weiter im Projektordner und wird dir zum Aufnehmen angeboten.",
+    "titel": "Projekte",
+    "beschreibung": "Bücher, Texte, Aufnahmen und Dateien eines Projekts bündeln und je Eintrag festlegen, was als Kontext für die KI dient.",
+    "liste": "Projekte",
+    "gruppeLeiste": "Projekte",
+    "neuesProjekt": "Neues Projekt",
+    "projektName": "Name des Projekts",
+    "klasse": "Datenklasse",
+    "anlegen": "Anlegen",
+    "abbrechen": "Abbrechen",
+    "zurueck": "Zurück zu den Projekten",
+    "ohneName": "Eintrag ohne Leserecht",
+    "eintraege_one": "{{count}} Eintrag",
+    "eintraege_other": "{{count}} Einträge",
+    "kopien_one": "{{count}} Kopie",
+    "kopien_other": "{{count}} Kopien",
+    "hinzufuegen": "Hinzufügen",
+    "entfernt": "Aus dem Projekt genommen.",
+    "geloescht": "Recherche gelöscht.",
+    "gruppen": {
+      "buecher": "Bücher",
+      "texte": "Texte",
+      "aufnahmen": "Aufnahmen",
+      "dateien": "Dateien im Projektordner",
+      "recherchen": "Recherchen"
+    },
+    "kopf": {
+      "eintrag": "Eintrag",
+      "art": "Art",
+      "kontext": "Als Kontext"
+    },
+    "art": {
+      "buch": "Buch",
+      "text": "Text",
+      "aufnahme": "Aufnahme",
+      "datei": "Datei",
+      "recherche": "Recherche"
+    },
+    "zugeordnetPerson": "von dir zugeordnet",
+    "zugeordnetAutomatik": "automatisch zugeordnet",
+    "schalter": "{{name}} als Kontext",
+    "schalterGesperrt": "{{name}} als Kontext, nicht verfügbar",
+    "form": "Form",
+    "fassung": "Fassung",
+    "formUndFassung": "Form und Fassung",
+    "fassungWaehlen": "Fassung wählen: {{name}}",
+    "formWaehlen": "Form wählen: {{form}}",
+    "vorgabe": "Vorgabe",
+    "formen": {
+      "kurzbuch": "Kurzbuch",
+      "volltext": "Volltext",
+      "protokoll": "Protokoll",
+      "transkript": "Transkript",
+      "text": "Text"
+    },
+    "waehlen": {
+      "volltext": "Volltext wählen",
+      "transkript": "Transkript wählen"
+    },
+    "token": "~{{n}} Token",
+    "tokenAus": "aus · ~{{n}}",
+    "keinText": "kein Text",
+    "hinweis": {
+      "kein_kurzbuch": "Kein Kurzbuch – erstellen oder Volltext wählen.",
+      "kein_protokoll": "Kein Protokoll – erstellen oder Transkript wählen.",
+      "kein_text": "Noch kein Text vorhanden.",
+      "format": "Format nicht als Kontext lesbar",
+      "fehlt": "Quelle fehlt.",
+      "nicht_lesbar": "Kein Leserecht.",
+      "form": "Form passt nicht zum Eintrag."
+    },
+    "nichtImKontextPunkt": "Nicht im Kontext.",
+    "weitereAktionen": "Weitere Aktionen für {{name}}",
+    "weitereAktionenMenue": "Weitere Aktionen",
+    "entfernenMenue": "Aus Projekt entfernen …",
+    "rechercheLoeschenMenue": "Recherche löschen …",
+    "entfernen": {
+      "titel": "„{{name}}“ aus dem Projekt nehmen?",
+      "titelRecherche": "Recherche „{{name}}“ löschen?",
+      "nehmen": "Aus Projekt nehmen",
+      "loeschen": "Löschen",
+      "text": {
+        "dateien": "Die Kopie im Projektordner kommt in den Papierkorb des Projekts. Dein Original bleibt unberührt.",
+        "buecher": "Das Buch bleibt in der Bibliothek, mit Fassungen, Hörbuch und KI-Dokumenten. Nur die Verknüpfung zu „{{projekt}}“ entfällt.",
+        "texte": "Der Text bleibt im Vorlesen. Nur die Verknüpfung zu „{{projekt}}“ entfällt.",
+        "aufnahmen": "Die Aufnahme bleibt in den Aufnahmen, mit Transkript und Protokoll. Nur die Verknüpfung zu „{{projekt}}“ entfällt.",
+        "recherchen": "Die Recherche wird gelöscht. Das lässt sich nicht rückgängig machen."
+      }
+    },
+    "rechts": "Kontext im Projekt",
+    "summe": "{{summe}} von {{fenster}} Token",
+    "summeKurz": "{{summe}} Token",
+    "meter": "{{prozent}} % des Modellfensters belegt",
+    "zaehl_one": "{{count}} Eintrag als Kontext",
+    "zaehl_other": "{{count}} Einträge als Kontext",
+    "zaehlKeine": "Keine Einträge als Kontext",
+    "eintraegeKurz_one": "{{count}} Eintrag",
+    "eintraegeKurz_other": "{{count}} Einträge",
+    "fenster": "Modellfenster",
+    "fensterModell": "Modellfenster {{modell}}",
+    "details": "Details",
+    "nichtImKontext": "Nicht im Kontext",
+    "fehlt": {
+      "ohneKurzbuch_one": "{{count}} Buch ohne Kurzbuch",
+      "ohneKurzbuch_other": "{{count}} Bücher ohne Kurzbuch",
+      "ohneProtokoll_one": "{{count}} Aufnahme ohne Protokoll",
+      "ohneProtokoll_other": "{{count}} Aufnahmen ohne Protokoll",
+      "formatNichtLesbar_one": "{{count}} Datei, deren Format nicht lesbar ist",
+      "formatNichtLesbar_other": "{{count}} Dateien, deren Format nicht lesbar ist",
+      "ohneText_one": "{{count}} Eintrag ohne lesbaren Text",
+      "ohneText_other": "{{count}} Einträge ohne lesbaren Text",
+      "ausgeschaltet_one": "{{count}} Eintrag ausgeschaltet",
+      "ausgeschaltet_other": "{{count}} Einträge ausgeschaltet"
+    },
+    "geltung": {
+      "titel": "So gilt die Auswahl",
+      "text": "Nur eingeschaltete Einträge gehen an die KI, in der gewählten Form. Fehlt die Form, wird nichts ersetzt. Die Auswahl gilt auf diesem Gerät; auf anderen Geräten sind neue Einträge zunächst aus."
+    },
+    "ki": {
+      "titel": "KI im Projekt",
+      "text": "Chat und Sprachgespräch nutzen diese Auswahl, sobald sie für Projekte freigegeben sind.",
+      "gesperrt": "Gesperrt: KI-Aufrufe im Projekt folgen mit dem nächsten Schritt."
+    },
+    "banner": {
+      "reset": "Die Kontextauswahl dieses Geräts war nicht lesbar. Zur Sicherheit sind alle Einträge ausgeschaltet. Schalte ein, was die KI nutzen soll.",
+      "zuGross": "Der Kontext ist größer als das Modellfenster ({{summe}} von {{fenster}} Token). Schalte Einträge aus oder wähle eine kürzere Form. Es wird nichts still gekürzt. KI-Aufrufe im Projekt sind gesperrt, bis der Kontext ins Modellfenster passt.",
+      "gefunden": "Im Projektordner liegt eine Datei, die nicht zum Projekt gehört:",
+      "nichtAufgenommen": ". Sie wurde nicht aufgenommen.",
+      "aufnehmen": "Aufnehmen"
+    },
+    "leer": {
+      "titel": "{{name}} ist noch leer",
+      "text": "Füge Bücher, Texte, Aufnahmen oder Dateien hinzu. App-Inhalte werden verknüpft, Dateien in den Projektordner kopiert."
+    },
+        "lage": {
+      "fehlt": "Die Dateiliste dieses Projekts fehlt oder ist beschädigt. Dateien im Projektordner werden deshalb nicht angefasst.",
+      "defekt": "Die Dateiliste dieses Projekts fehlt oder ist beschädigt. Dateien im Projektordner werden deshalb nicht angefasst.",
+      "neuer": "Die Dateiliste stammt von einer neueren App-Version. Aktualisiere die App; bis dahin bleiben die Dateien unberührt.",
+      "nicht_lesbar": "Der Projektordner ist gerade nicht lesbar. Prüfe Zugriffsrechte oder Synchronisierung und lade die Seite neu.",
+      "neuAufbauen": "Bestand neu aufbauen",
+      "erneut": "Erneut prüfen",
+      "dialogTitel": "Bestand neu aufbauen?",
+      "dialogText": "Die beschädigte Liste wird beiseitegelegt, nicht gelöscht. Dateien im Projektordner werden dir danach zum Aufnehmen angeboten; Verknüpfungen zu bisherigen Dateien entfallen."
+    },
+    "keins": {
+      "titel": "Noch kein Projekt",
+      "text": "Lege ein Projekt an, um Bücher, Texte, Aufnahmen und Dateien zu bündeln."
+    },
+    "dialog": {
+      "titel": "Zu „{{name}}“ hinzufügen",
+      "ausDerApp": "Aus der App",
+      "dateienKopieren": "Dateien kopieren",
+      "appHinweis": "Bücher, Texte und Aufnahmen werden verknüpft, nicht kopiert. Neu hinzugefügte Einträge sind als Kontext eingeschaltet; du kannst das je Eintrag ändern.",
+      "nichtsFrei": "Alles, was die App kennt, gehört schon zu diesem Projekt.",
+      "nHinzufuegen_one": "{{count}} hinzufügen",
+      "nHinzufuegen_other": "{{count}} hinzufügen",
+      "dateienText": "Dateien werden in den Projektordner kopiert und nach dem Kopieren geprüft. Das Original bleibt unverändert. Eine Datei mit gleichem Namen wird nicht überschrieben, die Kopie bekommt „(2)“.",
+      "dateienWaehlen": "Dateien wählen …",
+      "kopiertLaeuft": "Dateien werden kopiert …",
+      "ladefehler": "Die Liste konnte nicht geladen werden.",
+      "erneut": "Erneut versuchen",
+      "weitereLaden": "Weitere laden",
+      "formatHinweis": "Als Kontext lesbar sind vorerst .txt und .md. Andere Formate werden aufgenommen und mit Hinweis angezeigt.",
+      "kopiert_one": "{{count}} Datei kopiert.",
+      "kopiert_other": "{{count}} Dateien kopiert.",
+      "schliessen": "Schließen"
+    }
   },
   "projekte": {
     "menu": {

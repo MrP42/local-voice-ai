@@ -1239,10 +1239,12 @@ body,
   }
 }
 
-/* Protokoll bearbeiten: Platz für „Abschnitt bearbeiten“ neben jeder
-   Abschnittsüberschrift und Markierung der Stelle unter dem Stift. */
+/* Protokoll bearbeiten: Markierung der Stelle unter dem Stift. Der
+   Abschnitts-Stift ist nur ein Symbol (Patrick 08.11.) und steht im
+   Innenabstand des Dokuments (44 × 44 px, Codex 08.11.); die Überschriften
+   halten nur 1 rem Abstand zum Stift. */
 .minutes-preview [data-testid="minutes-doc"] :is(h2, h3) {
-  padding-inline-end: 11rem;
+  padding-inline-end: 1rem;
 }
 .minutes-preview [data-edit-hover] {
   border-radius: 4px;
@@ -1265,15 +1267,6 @@ body,
   .minutes-preview .minutes-block-pen {
     width: 44px;
     height: 44px;
-  }
-  /* Die Beschriftung bleibt auch schmal sichtbar (Codex-Abnahme). */
-  .minutes-preview .minutes-section-pen {
-    min-width: 44px;
-    height: 44px;
-    padding-inline: 0.625rem;
-  }
-  .minutes-preview [data-testid="minutes-doc"] :is(h2, h3) {
-    padding-inline-end: 10.5rem;
   }
   /* Schmal ist die Arbeitsfläche nur wenige Zeilen hoch: der Editor
      öffnet dann als Vollbild-Blatt (Speichern und Abbrechen oben). */
@@ -1322,5 +1315,19 @@ body,
     grid-column: 2;
     grid-row: 1 / span 2;
     margin-top: 0;
+  }
+}
+
+/* lva#394 (Codex): Bei Touch-Eingabe hat jedes Bedienelement im Chat eine
+   Trefferfläche von 44 × 44 px, unabhängig von der Fensterbreite. */
+@media (any-pointer: coarse) {
+  .lv-chat button,
+  .lv-chat [role="button"],
+  .lv-chat [role="menuitem"],
+  .lv-chat [role="menuitemradio"],
+  .lv-chat [role="menuitemcheckbox"],
+  .fui-MenuPopover [role^="menuitem"] {
+    min-width: 44px;
+    min-height: 44px;
   }
 }
