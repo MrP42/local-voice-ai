@@ -1,6 +1,6 @@
 # Dokumentenablage mit Sync und lokalem Abrufindex (Epic #395)
 
-Stand 08.11.2026, Fassung 5 (Codex-Runden 1 bis 4 eingearbeitet). Entscheidungen: wai-sdk ADR-0029 (Abschnitte
+Stand 08.11.2026, Fassung 5, von Codex abgenommen (Runde 5; D1-Vorschau Runde 4). Entscheidungen: wai-sdk ADR-0029 (Abschnitte
 E1–E11 werden hier nur umgesetzt, nicht wiederholt). Baut auf Bibliothek-Sync (`2026-11-02-bibliothek-sync.md`),
 Projekten (`2026-11-07-buch-ordner-und-projekte.md`, P4-Plan), globalem Sprachassistenten (lva#325) und dem
 Assistenten (`2026-11-08-assistent-chat-und-sprache.md`, ADR-0028) auf.
