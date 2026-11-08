@@ -403,9 +403,9 @@ export const BookNotesGroup: React.FC<{ bookId: string }> = ({ bookId }) => {
       cancelLabel: t("common.cancel"),
     }).catch(() => false);
     if (!ok) return;
-    const r = await commands.libraryBookFileRemove(bookId, f.rel).catch(
-      (e) => ({ status: "error" as const, error: String(e) }),
-    );
+    const r = await commands
+      .libraryBookFileRemove(bookId, f.rel)
+      .catch((e) => ({ status: "error" as const, error: String(e) }));
     if (r.status === "error") fail(r.error);
     reload();
   };
@@ -439,7 +439,9 @@ export const BookNotesGroup: React.FC<{ bookId: string }> = ({ bookId }) => {
         </p>
       )}
       {files.map((f) => {
-        const Icon = f.pending ? CloudDownload : (ROLE_ICON[f.role] ?? FileText);
+        const Icon = f.pending
+          ? CloudDownload
+          : (ROLE_ICON[f.role] ?? FileText);
         const body = (
           <>
             <Icon
