@@ -1655,10 +1655,19 @@ pub fn pfad(buch_dir: &Path, rel: &str) -> Result<PathBuf, String> {
 pub fn entfernen(buch_dir: &Path, buch: &str, rel: &str) -> Result<(), String> {
     sicherer_pfad(rel)?;
     ohne_verknuepfung(buch_dir, rel)?;
+    let mut stand = stand_laden(buch_dir)?;
     if buch_dir.join(rel).is_file() {
+        // Erst die Löschung festhalten, dann die Datei in den Papierkorb: so wird sie
+        // beim nächsten Sammeln zum Grabstein und nicht als „fehlt lokal“ zurückgehalten.
+        // Scheitert das Wegräumen, liegt die Datei noch da und das Sammeln hebt die
+        // Markierung wieder auf.
+        if let Some(e) = stand.dateien.get_mut(rel).filter(|e| !e.deleted) {
+            e.entfernt = true;
+            e.wiederholen = false;
+            stand_sichern(buch_dir, &mut stand)?;
+        }
         return in_papierkorb(buch_dir, buch, rel);
     }
-    let mut stand = stand_laden(buch_dir)?;
     match stand.dateien.get_mut(rel) {
         Some(e) if !e.deleted && !e.entfernt => {
             e.entfernt = true;
@@ -2450,8 +2459,7 @@ mod tests {
     }
 
     /// Review P3a/3: ein nicht lesbarer oder verknüpfter Rollenordner wird nie zu
-    /// Grabsteinen; ein gelöschter schon.
-    #[cfg(unix)]
+    /// Grabsteinen; ein gelöschter schon. Die Verknüpfung nur unter Unix, der Rest überall.
     #[test]
     fn verdeckter_ordner_loescht_nichts() {
         let dir = buch("verdeckt");
@@ -2461,12 +2469,15 @@ mod tests {
         let id = nach_pfad(&s, "anhaenge/a.pdf").id.clone();
         let anderswo = dir.parent().unwrap().join("anderswo");
         fs::rename(dir.join("anhaenge"), &anderswo).unwrap();
-        std::os::unix::fs::symlink(&anderswo, dir.join("anhaenge")).unwrap();
-        let s2 = alles(&dir, 2000.0);
-        assert!(s2.lokal.iter().all(|l| l.id != id));
-        assert!(s2.vorhanden.contains(&id));
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&anderswo, dir.join("anhaenge")).unwrap();
+            let s2 = alles(&dir, 2000.0);
+            assert!(s2.lokal.iter().all(|l| l.id != id));
+            assert!(s2.vorhanden.contains(&id));
+            fs::remove_file(dir.join("anhaenge")).unwrap();
+        }
         // Ganzer Ordner fehlt (verschoben, Platzhalter, Laufwerk weg): auch kein Grabstein.
-        fs::remove_file(dir.join("anhaenge")).unwrap();
         let s3 = alles(&dir, 2500.0);
         assert!(s3.lokal.iter().all(|l| l.id != id));
         assert!(s3.vorhanden.contains(&id));
@@ -2482,6 +2493,23 @@ mod tests {
         let s3 = alles(&dir, 3500.0);
         assert_eq!(nach_pfad(&s3, "anhaenge/a.pdf").wert["deleted"], true);
         assert_eq!(nach_pfad(&s3, "notizen/n.md").wert["deleted"], false);
+    }
+
+    /// Review P3a/3a: eine vorhandene, abgeglichene Datei in der App löschen ergibt beim
+    /// nächsten Sammeln den Grabstein (nicht „fehlt lokal“).
+    #[test]
+    fn app_loeschen_einer_vorhandenen_datei_ergibt_grabstein() {
+        let dir = buch("app-loeschen");
+        schreiben(&dir, "notizen/n.md", b"notiz");
+        let s = alles(&dir, 1000.0);
+        let id = nach_pfad(&s, "notizen/n.md").id.clone();
+        entfernen(&dir, "book_1", "notizen/n.md").unwrap();
+        assert!(!dir.join("notizen/n.md").exists());
+        let s = alles(&dir, 2000.0);
+        let g = nach_pfad(&s, "notizen/n.md");
+        assert_eq!(g.wert["deleted"], true);
+        assert!(!s.vorhanden.contains(&id));
+        assert!(auflisten(&dir, "book_1").unwrap().is_empty());
     }
 
     /// Review P3a/4: gleicher Inhalt auf beiden Seiten ist kein Konflikt und kein Download.
