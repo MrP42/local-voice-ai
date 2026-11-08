@@ -838,9 +838,8 @@ test.describe("Projekte mit Als Kontext", () => {
       timeout: 5000,
     });
     expect(await aufrufe(page, "projekt_dateien_hinzufuegen")).toHaveLength(1);
-    // danach geht es wieder
-    await page.getByTestId("hinzufuegen").click();
-    await page.getByRole("tab", { name: "Dateien kopieren" }).click();
+    // Der neu geöffnete Dialog bleibt offen; danach ist die Sperre frei.
+    await expect(page.getByRole("dialog")).toHaveCount(1);
     await expect(knopf).toBeEnabled();
   });
 
@@ -1130,6 +1129,66 @@ test.describe("Projekte mit Als Kontext", () => {
       await page.getByTestId("dateien-waehlen").click();
       await expect(page.getByTestId("kopier-hinweis")).toBeVisible();
       await pruefen("Hinzufügen Dateien");
+    });
+  }
+
+  // Späte Abschlüsse nach Schließen und Wiederöffnen: der neue Dialog bleibt offen und fehlerfrei.
+  for (const fehler of [false, true]) {
+    test(`Zuordnen ${fehler ? "scheitert" : "gelingt"} nach dem Wiederöffnen: neuer Dialog bleibt offen und fehlerfrei`, async ({
+      page,
+    }) => {
+      await setup(page);
+      await kontextSetzen(
+        page,
+        `K.delay["projekt_buch_zuordnen"] = 1200;${fehler ? ` K.fail.projekt_buch_zuordnen = "Zuordnen nicht möglich";` : ""}`,
+      );
+      await page.getByTestId("hinzufuegen").click();
+      const dlg = page.getByRole("dialog");
+      await dlg.getByRole("checkbox", { name: /The Burning Room/ }).check();
+      await dlg.getByTestId("hinzufuegen-bestaetigen").click();
+      await page.keyboard.press("Escape");
+      await expect(page.getByRole("dialog")).toHaveCount(0);
+      await page.getByTestId("hinzufuegen").click();
+      await expect(
+        page
+          .getByRole("dialog")
+          .getByRole("checkbox", { name: /The Burning Room/ }),
+      ).toBeVisible();
+      await page.waitForTimeout(1900);
+      await expect(page.getByRole("dialog")).toHaveCount(1);
+      await expect(page.getByRole("dialog").getByRole("alert")).toHaveCount(0);
+      await expect(
+        page.getByRole("dialog").getByTestId("hinzufuegen-bestaetigen"),
+      ).toBeDisabled();
+      if (!fehler)
+        expect(await aufrufe(page, "projekt_buch_zuordnen")).toHaveLength(1);
+    });
+
+    test(`Kopie ${fehler ? "scheitert" : "gelingt"} nach dem Wiederöffnen: neuer Dialog bleibt offen und fehlerfrei`, async ({
+      page,
+    }) => {
+      await setup(page);
+      await kontextSetzen(
+        page,
+        `window.__pick = ["/home/test/Plan.md"]; K.delay["projekt_dateien_hinzufuegen"] = 1200;${fehler ? ` K.fail.projekt_dateien_hinzufuegen = "Kopieren nicht möglich";` : ""}`,
+      );
+      await page.getByTestId("hinzufuegen").click();
+      await page.getByRole("tab", { name: "Dateien kopieren" }).click();
+      await page.getByTestId("dateien-waehlen").click();
+      await expect(page.getByTestId("kopier-hinweis")).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(page.getByRole("dialog")).toHaveCount(0);
+      await page.getByTestId("hinzufuegen").click();
+      await expect(page.getByRole("dialog")).toHaveCount(1);
+      await page.waitForTimeout(1900);
+      await expect(page.getByRole("dialog")).toHaveCount(1);
+      await expect(page.getByRole("dialog").getByRole("alert")).toHaveCount(0);
+      if (!fehler) {
+        expect(await aufrufe(page, "projekt_dateien_hinzufuegen")).toHaveLength(
+          1,
+        );
+        await expect(page.getByTestId("projekt-eintrag")).toHaveCount(10);
+      }
     });
   }
 

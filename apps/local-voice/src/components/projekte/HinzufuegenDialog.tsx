@@ -89,6 +89,7 @@ export const HinzufuegenDialog: React.FC<Props> = ({
     setLaden("laedt");
     setWeitere(false);
     setLadeMehr(false);
+    setLaeuft(false);
     setKandidaten([]);
     aufnahmen.current = 0;
     const og = ++oeffnung.current;
@@ -168,6 +169,10 @@ export const HinzufuegenDialog: React.FC<Props> = ({
 
   const hinzufuegen = useCallback(async () => {
     if (!projekt || laeuft) return;
+    // Dialogzustand (schließen, Fehler, busy) nur, solange es dieselbe Öffnung ist; die fachliche
+    // Aktualisierung (Seite neu laden) läuft in jedem Fall weiter.
+    const og = oeffnung.current;
+    const gleich = () => og === oeffnung.current;
     setLaeuft(true);
     setFehler(null);
     try {
@@ -182,19 +187,20 @@ export const HinzufuegenDialog: React.FC<Props> = ({
           );
       }
       onGeaendert();
-      onClose();
+      if (gleich()) onClose();
     } catch (e) {
-      setFehler(fehlerText(e, t));
+      if (gleich()) setFehler(fehlerText(e, t));
       onGeaendert();
     } finally {
-      setLaeuft(false);
+      if (gleich()) setLaeuft(false);
     }
   }, [projekt, laeuft, frei, gewaehlt, onGeaendert, onClose, t]);
 
   const dateien = async () => {
     setFehler(null);
+    const og = oeffnung.current;
     const f = await onDateien();
-    if (f) setFehler(f);
+    if (f && og === oeffnung.current) setFehler(f);
   };
 
   const anzahl = [...gewaehlt].filter((k) =>

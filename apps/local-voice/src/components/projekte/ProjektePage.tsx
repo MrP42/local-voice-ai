@@ -84,6 +84,16 @@ export const ProjektePage: React.FC = () => {
     new Set(),
   );
   const [hinzu, setHinzu] = useState(false);
+  /** Öffnungszähler des Hinzufügen-Dialogs: ein später Abschluss schließt nur die Öffnung, die ihn startete. */
+  const hinzuGen = useRef(0);
+  const hinzuOeffnen = () => {
+    hinzuGen.current += 1;
+    setHinzu(true);
+  };
+  const hinzuSchliessen = () => {
+    hinzuGen.current += 1;
+    setHinzu(false);
+  };
   const [details, setDetails] = useState(false);
   const [entfernen, setEntfernen] = useState<EintragSicht | null>(null);
   const [neu, setNeu] = useState(false);
@@ -372,6 +382,7 @@ export const ProjektePage: React.FC = () => {
   const dateienKopieren = async (): Promise<string | null> => {
     const s = suiteId;
     if (!s || !kopierStart(s)) return null;
+    const og = hinzuGen.current;
     try {
       const wahl = await dateienWaehlen({ multiple: true, directory: false });
       const paths = Array.isArray(wahl) ? wahl : wahl ? [wahl] : [];
@@ -383,7 +394,7 @@ export const ProjektePage: React.FC = () => {
         }),
       );
       geaendert();
-      if (istAktuell(s)) setHinzu(false);
+      if (istAktuell(s) && hinzuGen.current === og) setHinzu(false);
       return null;
     } catch (x) {
       return fehlerText(x, t);
@@ -604,7 +615,7 @@ export const ProjektePage: React.FC = () => {
                 type="button"
                 className="pb-btn"
                 data-testid="hinzufuegen"
-                onClick={() => setHinzu(true)}
+                onClick={hinzuOeffnen}
               >
                 <Plus width={16} height={16} aria-hidden="true" />
                 {t("projektBereich.hinzufuegen")}
@@ -619,7 +630,7 @@ export const ProjektePage: React.FC = () => {
               <button
                 type="button"
                 className="pb-btn pb-btn--pri"
-                onClick={() => setHinzu(true)}
+                onClick={hinzuOeffnen}
               >
                 {t("projektBereich.hinzufuegen")}
               </button>
@@ -717,7 +728,7 @@ export const ProjektePage: React.FC = () => {
         open={hinzu}
         projekt={projekt ?? null}
         eintraege={eintraege}
-        onClose={() => setHinzu(false)}
+        onClose={hinzuSchliessen}
         onGeaendert={geaendert}
         kopiert={kopiert}
         onDateien={dateienKopieren}
