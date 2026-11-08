@@ -395,6 +395,49 @@ test("Führung: Rahmen sitzt beim Schrittwechsel sofort auf dem Ziel", async ({
   }
 });
 
+// Codex lva#411 c: unmittelbar nach dem Klick (ohne Warten) liegt der Rahmen am
+// neuen Ziel oder ist weg, wenn der Schritt keins hat.
+test("Führung: Rahmen wechselt im selben Bild wie der Text", async ({ page }) => {
+  await setup(page);
+  await page.goto("/");
+  const guide = await openGuide(page);
+  const next = guide.getByRole("button", { name: "Weiter" });
+  const targets: Record<string, string | null> = {
+    talk: "[data-testid='call-button']",
+    plus: "[data-guide='plus']",
+    model: "[data-testid='model-picker']",
+    knowledge: "[data-testid='permission-chip']",
+    pages: "[data-tour='nav-primary']",
+    story: null,
+  };
+  for (let i = 0; i < 6; i++) {
+    await next.click();
+    const r = await page.evaluate((map) => {
+      const step = document
+        .querySelector("[data-testid='chat-guide']")
+        ?.getAttribute("data-step") as string;
+      const ring = document.querySelector(".lv-guide__ring");
+      const sel = map[step];
+      const t = sel ? document.querySelector(sel)?.getBoundingClientRect() : null;
+      const b = ring?.getBoundingClientRect() ?? null;
+      return {
+        step,
+        hasTarget: !!sel,
+        ring: !!b,
+        ok:
+          !!b &&
+          !!t &&
+          Math.abs(b.x + 4 - t.x) < 2 &&
+          Math.abs(b.y + 4 - t.y) < 2 &&
+          Math.abs(b.width - 8 - t.width) < 2,
+      };
+    }, targets);
+    if (r.hasTarget) expect(r.ok, r.step).toBe(true);
+    else expect(r.ring, r.step).toBe(false);
+  }
+  await expect(guide).toHaveAttribute("data-step", "story");
+});
+
 test("Führung auf Englisch bis zur Geschichte", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await setup(page, { language: "en", speakers: ["Anton", "Emma"] });

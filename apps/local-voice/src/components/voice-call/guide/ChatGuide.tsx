@@ -1,4 +1,11 @@
-import React, { useCallback, useEffect, useId, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import {
@@ -78,10 +85,11 @@ export const ChatGuide: React.FC<ChatGuideProps> = ({
 
   // Markierung folgt dem Schritt. Ziele können spät erscheinen oder sich durch
   // Layout, Scrollen oder Fenstergröße verschieben: regelmäßig nachmessen und nur
-  // bei Änderung neu zeichnen.
-  useEffect(() => {
+  // bei Änderung neu zeichnen. Layout-Effekt: Rahmen und Text wechseln im selben
+  // Bild; die erste Messung setzt immer (auch `null`, wenn der Schritt kein Ziel hat).
+  useLayoutEffect(() => {
     if (!open) return;
-    let prev = "";
+    let prev: string | null = null;
     const update = () => {
       const r = rectOf(step.target);
       const key = r ? `${r.x}|${r.y}|${r.w}|${r.h}` : "";
