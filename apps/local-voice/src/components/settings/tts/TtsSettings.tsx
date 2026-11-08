@@ -158,7 +158,7 @@ import {
   sessionRef,
   type SentenceStart,
 } from "./readerSession";
-import { cleanSpans, retimeClock } from "@/lib/speechTiming";
+import { cleanPieces, cleanSpans, retimeClock } from "@/lib/speechTiming";
 import {
   ReaderView,
   type ReaderMark,
@@ -876,6 +876,7 @@ export const TtsSettings = () => {
       text: string;
       duration_ms?: number;
       speech_ms?: unknown;
+      pieces_ms?: unknown;
     }>("tts-current-sentence", (e) => {
       if (e.payload.context !== "speak") return;
       if (!sectionActiveRef.current && !readerSession.active) return;
@@ -884,6 +885,7 @@ export const TtsSettings = () => {
         at: performance.now(),
         ms: e.payload.duration_ms ?? 0,
         speech: cleanSpans(e.payload.speech_ms, e.payload.duration_ms),
+        pieces: cleanPieces(e.payload.pieces_ms, e.payload.duration_ms),
       });
       setCurrentSentence(e.payload.text);
       setCurrentIndex(

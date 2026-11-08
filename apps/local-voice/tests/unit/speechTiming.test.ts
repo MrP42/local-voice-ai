@@ -3,6 +3,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   anchorClock,
+  cleanPieces,
   cleanSpans,
   clauses,
   clockElapsed,
@@ -164,4 +165,23 @@ test("Abschnitte außerhalb der Satzdauer oder negativ gelten nicht", () => {
   assert.deepEqual(cleanSpans([[-10, 100]], 1000), []);
   assert.deepEqual(cleanSpans([[0, 1200]], 1000), []);
   assert.deepEqual(cleanSpans([[0, 900]], 1000), [[0, 900]]);
+});
+
+test("Uhr hält am Ende des Stücks, bis das nächste gemeldet ist", () => {
+  const c = clock({ pieces: [0, 4000, 4500] });
+  // Stück 1 (4 s) ist durch, das nächste öffnet langsam: die Uhr steht.
+  assert.equal(clockElapsed(c, 1000 + 4000), 4000);
+  assert.equal(clockElapsed(c, 1000 + 9000), 4000);
+  // Pausenstück gemeldet: läuft bis zum nächsten Stückbeginn.
+  const pause = anchorClock(c, 1000 + 9000, 4000);
+  assert.equal(clockElapsed(pause, 1000 + 12_000), 4500);
+  const last = anchorClock(pause, 1000 + 12_000, 4500);
+  assert.equal(clockElapsed(last, 1000 + 13_000), 5500);
+  assert.equal(clockElapsed(last, 1000 + 99_000), 10_000);
+});
+
+test("Stückanfänge: Unsinn gilt nicht", () => {
+  assert.deepEqual(cleanPieces([0, 500, 400]), []);
+  assert.deepEqual(cleanPieces([0, 2000], 1000), []);
+  assert.deepEqual(cleanPieces([0, 500], 1000), [0, 500]);
 });

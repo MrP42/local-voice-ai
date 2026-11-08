@@ -131,13 +131,47 @@ export interface SentenceClock {
   speed: number;
   /** Stimmhafte Abschnitte, sofern der Kern sie meldet. */
   speech?: readonly SpeechSpan[];
+  /** Beginn jedes Stücks im Satz, aufsteigend (erstes 0). */
+  pieces?: readonly number[];
+}
+
+/**
+ * Bis wohin die Uhr laufen darf: bis zum Beginn des nächsten Stücks. Das
+ * Stück danach öffnet den Ausgabestrom neu und ist erst gespielt, wenn der
+ * Kern es meldet (`tts-sentence-piece`) -- so lange steht die Uhr.
+ */
+function clockLimit(clock: SentenceClock): number {
+  const base = clock.base ?? 0;
+  for (const start of clock.pieces ?? [])
+    if (start > base) return Math.min(start, clock.ms);
+  return clock.ms;
 }
 
 /** Gespielte Satzzeit bei Tempo 1 (0..ms). */
 export function clockElapsed(clock: SentenceClock, now: number): number {
   const elapsed =
     (clock.base ?? 0) + (now - clock.at) * Math.max(0.25, clock.speed);
-  return Math.max(0, Math.min(clock.ms, elapsed));
+  return Math.max(0, Math.min(clockLimit(clock), elapsed));
+}
+
+/** Gültige, aufsteigende Stückanfänge in `0..durationMs`, sonst keine. */
+export function cleanPieces(
+  pieces: unknown,
+  durationMs: number = Infinity,
+): number[] {
+  if (!Array.isArray(pieces)) return [];
+  let last = -1;
+  for (const p of pieces)
+    if (
+      typeof p !== "number" ||
+      !Number.isFinite(p) ||
+      p < last ||
+      p < 0 ||
+      p > durationMs
+    )
+      return [];
+    else last = p;
+  return pieces as number[];
 }
 
 /** Anteil (0..1) des Satzes, der schon zu hören war. */

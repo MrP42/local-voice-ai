@@ -2242,6 +2242,7 @@ fn emit_sentence_piece(
                 "index": idx as u32,
                 "duration_ms": timing.duration_ms,
                 "speech_ms": timing.speech_ms,
+                "pieces_ms": timing.pieces_ms,
                 "text": text(),
             }),
         )

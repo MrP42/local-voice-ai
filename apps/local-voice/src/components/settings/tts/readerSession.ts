@@ -1,6 +1,11 @@
 import { listen } from "@tauri-apps/api/event";
 import { sentenceAfterProgress } from "./sentenceCounter";
-import { anchorClock, cleanSpans, type SpeechSpan } from "@/lib/speechTiming";
+import {
+  anchorClock,
+  cleanPieces,
+  cleanSpans,
+  type SpeechSpan,
+} from "@/lib/speechTiming";
 
 /** Beginn, Dauer und Sprechzeit des hörbaren Satzes (Wort- und Zeitlauf). */
 export interface SentenceStart {
@@ -12,6 +17,8 @@ export interface SentenceStart {
   ms: number;
   /** Stimmhafte Abschnitte (ms bei Tempo 1); leer bei älterem Kern. */
   speech?: SpeechSpan[];
+  /** Beginn jedes Stücks (ms bei Tempo 1); die Uhr hält an der Grenze. */
+  pieces?: number[];
 }
 
 /** Nächstes Stück desselben Satzes: die Uhr setzt am echten Start nach. */
@@ -133,6 +140,7 @@ export const ensureReaderSessionListeners = () => {
     text: string;
     duration_ms?: number;
     speech_ms?: unknown;
+    pieces_ms?: unknown;
   }>("tts-current-sentence", (e) => {
     if (e.payload.context !== "speak" || !readerSession.active) return;
     const index = typeof e.payload.index === "number" ? e.payload.index : null;
@@ -141,6 +149,7 @@ export const ensureReaderSessionListeners = () => {
       at: performance.now(),
       ms: e.payload.duration_ms ?? 0,
       speech: cleanSpans(e.payload.speech_ms, e.payload.duration_ms),
+      pieces: cleanPieces(e.payload.pieces_ms, e.payload.duration_ms),
     };
     readerSession.sentence = e.payload.text;
     readerSession.index = index;

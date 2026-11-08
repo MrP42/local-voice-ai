@@ -1387,10 +1387,11 @@ test("Stückbeginn setzt die Wortuhr nach, Öffnen zählt nicht als gespielt", a
   await page.clock.install();
   await page.addInitScript(() => window.localStorage.setItem("lva.ui.tts.view", "read"));
   await open(page, LONG_SENTENCE, 800);
+  const book = page.getByTestId("reader-book");
   await emit(page, "tts-state-changed", { phase: "speaking", message: null });
   await emit(page, "tts-speak-progress", { position: 1, total: 2 });
-  // Zwei Sprechstücke à 20 s mit 1 s Pause dazwischen; keine Kommas, also
-  // gilt die Sprechzeit als Ganzes.
+  // Drei Stücke: 20 s Sprache, 1 s Pause (eigenes Stück), 20 s Sprache;
+  // keine Kommas, also gilt die Sprechzeit als Ganzes.
   await emit(page, "tts-current-sentence", {
     context: "speak",
     index: 1,
@@ -1400,23 +1401,32 @@ test("Stückbeginn setzt die Wortuhr nach, Öffnen zählt nicht als gespielt", a
       [0, 20_000],
       [21_000, 41_000],
     ],
+    pieces_ms: [0, 20_000, 21_000],
   });
-  // Erstes Stück zu Ende, Pause gehört, das nächste Stück öffnet 5 s lang.
-  await page.clock.runFor(26_000);
-  const stalled = Number((await page.locator(".reader-word").textContent())?.slice(4));
-  // Ohne Nachsetzen stünde die Uhr schon bei 26 s, also 5 s weiter.
+  await page.clock.runFor(20_000);
+  await emit(page, "tts-sentence-piece", { context: "speak", index: 1, offset_ms: 20_000 });
+  await page.clock.runFor(1_000);
+  const word = await page.locator(".reader-word").textContent();
+  const pageNo = await book.getAttribute("data-page");
+  // Das dritte Stück öffnet 5 s lang: Wort und Seite stehen still.
+  for (let s = 0; s < 5; s++) {
+    await page.clock.runFor(1_000);
+    await expect(page.locator(".reader-word")).toHaveText(word ?? "");
+    expect(await book.getAttribute("data-page")).toBe(pageNo);
+  }
+  // Erst die Meldung des Kerns lässt die Uhr weiterlaufen.
   await emit(page, "tts-sentence-piece", { context: "speak", index: 1, offset_ms: 21_000 });
   await page.clock.runFor(10_000);
-  const half = Number((await page.locator(".reader-word").textContent())?.slice(4));
+  const at = Number((await page.locator(".reader-word").textContent())?.slice(4));
   // 30 von 40 s Sprechzeit gehört: drei Viertel des Satzes.
-  expect(half).toBeGreaterThan(95);
-  expect(half).toBeLessThan(120);
-  expect(half).toBeGreaterThan(stalled);
-  // Pause (Stopp): keine Uhr mehr, die Markierung läuft nicht weiter.
+  expect(at).toBeGreaterThan(95);
+  expect(at).toBeLessThan(120);
+  expect(at).toBeGreaterThan(Number(word?.slice(4)));
+  // Stopp: keine Uhr mehr, die Markierung läuft nicht weiter.
   await emit(page, "tts-state-changed", { phase: "stopped", message: null });
   await page.clock.runFor(5_000);
-  const words = await page.locator(".reader-word").allTextContents();
-  for (const w of words) expect(Number(w.slice(4)) || 0).toBeLessThanOrEqual(half);
+  for (const w of await page.locator(".reader-word").allTextContents())
+    expect(Number(w.slice(4)) || 0).toBeLessThanOrEqual(at);
 });
 
 // Ein Stück eines anderen Satzes (überholter Lauf) verstellt die Uhr nicht.
