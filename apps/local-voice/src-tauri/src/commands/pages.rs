@@ -412,9 +412,11 @@ pub(crate) fn pages_snapshot(app: &AppHandle) -> Result<Vec<PageInfo>, String> {
     Ok(index.pages)
 }
 
-/// Alle Seiten in Anzeige-Reihenfolge. Gibt es keine, entsteht die erste —
+/// Alle Seiten in Anzeige-Reihenfolge. Gibt es gar keine, entsteht die erste —
 /// eine leere Liste hieße für die Oberfläche „nichts, worin man arbeiten
-/// kann", und diesen Zustand soll es nie geben.
+/// kann". Sind alle Seiten nur mit ihrem Buch im Papierkorb (Löschkaskade),
+/// entsteht keine: sonst käme bei jedem Wechsel zwischen Papierkorb und
+/// Wiederherstellen eine weitere „Erste Seite“ hinzu. Die Liste ist dann leer.
 #[tauri::command]
 #[specta::specta]
 pub fn pages_list(app: AppHandle) -> Result<Vec<PageInfo>, String> {
@@ -422,7 +424,7 @@ pub fn pages_list(app: AppHandle) -> Result<Vec<PageInfo>, String> {
     let mut index = load_index(&app)?;
     let mut sichtbar = index.pages.clone();
     ohne_papierkorb(&app, &mut sichtbar);
-    if sichtbar.is_empty() {
+    if index.pages.is_empty() {
         let page = PageInfo {
             id: fresh_id(),
             title: "Erste Seite".to_string(),

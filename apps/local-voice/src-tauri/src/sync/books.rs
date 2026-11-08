@@ -1152,13 +1152,18 @@ fn apply_book_on(
     if !dir.exists() {
         let korb = root.join(TRASH).join(id);
         if korb.join("buch.json").is_file() {
-            std::fs::rename(&korb, &dir)
-                .map_err(|e| format!("Buch aus dem Papierkorb zurückholen: {e}"))?;
-            let _ = std::fs::remove_file(dir.join(".entfernt"));
+            // Umbenennen und Fundortkarte gemeinsam unter Bibliotheks- (oben genommen)
+            // und Seitensperre: kein Leser sieht die Fassungen
+            // zurück, aber die Karte noch alt. Die Karte wird auch nach einem Fehler neu.
+            let _pages = crate::commands::pages::lock();
+            let zurueck = std::fs::rename(&korb, &dir);
+            if zurueck.is_ok() {
+                let _ = std::fs::remove_file(dir.join(".entfernt"));
+            }
             if let Some(data) = root.parent() {
-                let _pages = crate::commands::pages::lock();
                 crate::commands::library_layout::fundortkarte_neu(data);
             }
+            zurueck.map_err(|e| format!("Buch aus dem Papierkorb zurückholen: {e}"))?;
         }
     }
 

@@ -3673,59 +3673,206 @@ fn fassungen_von(buch_dir: &Path) -> Vec<String> {
         .collect()
 }
 
-/// Einträge dieser Seiten aus dem Seitenindex nehmen (atomar). Ohne Index nichts zu tun.
-/// Liefert die Zahl der ausgetragenen Einträge. Der Aufrufer hält die Seitensperre.
-fn seiten_austragen(data: &Path, seiten: &[String]) -> Result<usize, String> {
+/// Löschabsichten liegen neben dem Buch im Papierkorb: `.papierkorb/.loeschabsicht-<buch>.json`
+/// (die Papierkorbliste übergeht sie, weil sie keine Buch-Kennung tragen).
+const LOESCHABSICHT: &str = ".loeschabsicht-";
+
+/// Persistente Absicht, ein Buch endgültig zu löschen: welche Seiten (Fassungen) danach
+/// aus dem Index gehen. Sie wird vor dem ersten Löschschritt geschrieben und erst nach
+/// dem Austragen entfernt; ein Absturz dazwischen wird beim nächsten Versuch oder beim
+/// Start abgeschlossen.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+struct Loeschabsicht {
+    buch: String,
+    seiten: Vec<String>,
+}
+
+/// Absicht zum Buch-Ordner `buch_dir` (im selben Elternordner).
+fn absicht_pfad(buch_dir: &Path, buch: &str) -> PathBuf {
+    buch_dir
+        .parent()
+        .unwrap_or(buch_dir)
+        .join(format!("{LOESCHABSICHT}{buch}.json"))
+}
+
+fn absicht_laden(pfad: &Path, buch: &str) -> Result<Option<Loeschabsicht>, String> {
+    let roh = match fs::read(pfad) {
+        Ok(roh) => roh,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("Löschabsicht nicht lesbar: {e}")),
+    };
+    let absicht: Loeschabsicht =
+        serde_json::from_slice(&roh).map_err(|e| format!("Löschabsicht unlesbar: {e}"))?;
+    if absicht.buch != buch || !absicht.seiten.iter().all(|s| gueltige_seite(s)) {
+        return Err(format!(
+            "Löschabsicht für {buch} ist ungültig; nichts geändert."
+        ));
+    }
+    Ok(Some(absicht))
+}
+
+/// Einträge dieser Seiten aus dem Seitenindex nehmen (atomar), aber nur, wenn die Seite
+/// dem gelöschten Buch gehört (Indexfeld `buch` leer oder gleich `buch`) und laut
+/// Fundortkarte nirgends sonst existiert (anderes Buch, `projects/`). Ohne Index nichts
+/// zu tun. Liefert die Zahl der ausgetragenen Einträge. Der Aufrufer hält die Seitensperre.
+fn seiten_austragen(data: &Path, buch: &str, seiten: &[String]) -> Result<usize, String> {
     if seiten.is_empty() {
         return Ok(0);
     }
     let Some(mut index) = index_laden(data)? else {
         return Ok(0);
     };
+    let karte = Fundortkarte::aufbauen(data);
+    let anderswo = |seite: &str| {
+        vorhanden(&absolut(data, &rel_von(seite)))
+            || karte
+                .orte(seite)
+                .iter()
+                .any(|o| vorhanden(&absolut(data, o)))
+    };
+    let weg: BTreeSet<&str> = seiten
+        .iter()
+        .map(String::as_str)
+        .filter(|s| !anderswo(s))
+        .collect();
     let Some(eintraege) = index.get_mut("pages").and_then(|p| p.as_array_mut()) else {
         return Ok(0);
     };
     let vorher = eintraege.len();
     eintraege.retain(|e| {
-        !e.get("id")
-            .and_then(|i| i.as_str())
-            .is_some_and(|id| seiten.iter().any(|s| s == id))
+        let Some(id) = e.get("id").and_then(|i| i.as_str()) else {
+            return true;
+        };
+        let eigenes = match e.get("buch").and_then(|b| b.as_str()) {
+            None => true,
+            Some(b) => b == buch,
+        };
+        !(eigenes && weg.contains(id))
     });
-    let weg = vorher - eintraege.len();
-    if weg > 0 {
+    let ausgetragen = vorher - eintraege.len();
+    if ausgetragen > 0 {
         let bytes = serde_json::to_vec_pretty(&index).map_err(|e| e.to_string())?;
         schreibe_atomar(&index_pfad(data), &bytes)?;
     }
-    Ok(weg)
+    Ok(ausgetragen)
 }
 
-/// Ein Buch endgültig löschen (aus dem Papierkorb oder direkt), samt seinen Fassungen:
-/// erst den Ordner entfernen, dann genau die Seiten aus dem Index nehmen, deren Ordner
-/// danach wirklich fehlt. Scheitert das Entfernen mittendrin, bleiben die übrigen Seiten
-/// im Index (und damit vom Sync zurückgehalten statt als gelöscht gemeldet). Ein
-/// fehlender Ordner ist kein Fehler. Der Aufrufer hält Bibliotheks- und Seitensperre.
-/// Liefert die Zahl der ausgetragenen Seiten.
-pub fn buch_endgueltig_loeschen(data: &Path, buch_dir: &Path) -> Result<usize, String> {
-    let meta = match fs::symlink_metadata(buch_dir) {
-        Ok(m) => m,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+/// Ordnerinhalt entfernen, `buch.json` zuletzt: Scheitert es mittendrin, bleibt das Buch
+/// (Papierkorbliste, Seitenliste, Sync-Rückholung) als solches erkennbar.
+fn buch_ordner_entfernen(buch_dir: &Path) -> Result<(), String> {
+    let eintraege = match fs::read_dir(buch_dir) {
+        Ok(e) => e,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(e) => return Err(format!("{} nicht lesbar: {e}", buch_dir.display())),
     };
-    if ist_umweg(&meta) || !meta.is_dir() {
-        return Err(format!(
-            "{} ist kein gewöhnlicher Ordner; nichts gelöscht.",
-            buch_dir.display()
-        ));
+    for eintrag in eintraege {
+        let eintrag = eintrag.map_err(|e| e.to_string())?;
+        if eintrag.file_name() == BUCH_JSON {
+            continue;
+        }
+        let pfad = eintrag.path();
+        let art = eintrag.file_type().map_err(|e| e.to_string())?;
+        let r = if art.is_dir() {
+            fs::remove_dir_all(&pfad)
+        } else {
+            // Dateien und Verknüpfungen (die Verknüpfung, nie ihr Ziel).
+            fs::remove_file(&pfad).or_else(|e| fs::remove_dir(&pfad).map_err(|_| e))
+        };
+        r.map_err(|e| format!("{} nicht löschbar: {e}", pfad.display()))?;
     }
-    let seiten = fassungen_von(buch_dir);
-    let geloescht = fs::remove_dir_all(buch_dir);
-    let weg: Vec<String> = seiten
-        .into_iter()
-        .filter(|s| !vorhanden(&buch_dir.join(FASSUNGEN).join(s)))
-        .collect();
-    let ausgetragen = seiten_austragen(data, &weg)?;
-    geloescht.map_err(|e| format!("Buch nicht vollständig gelöscht: {e}"))?;
+    match fs::remove_file(buch_dir.join(BUCH_JSON)) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(format!("buch.json nicht löschbar: {e}")),
+    }
+    fs::remove_dir(buch_dir).map_err(|e| format!("{} nicht löschbar: {e}", buch_dir.display()))
+}
+
+/// Ein Buch endgültig löschen (aus dem Papierkorb), samt seinen Fassungen:
+/// 1. Löschabsicht mit den Seiten-Kennungen dauerhaft schreiben,
+/// 2. den Ordner entfernen (`buch.json` zuletzt),
+/// 3. die Seiten aus dem Index nehmen, die dem Buch gehören und nirgends sonst liegen,
+/// 4. die Absicht entfernen.
+///
+/// Scheitert ein Schritt, bleibt die Absicht; der nächste Aufruf (oder
+/// [`loeschabsichten_abschliessen`] beim Start) setzt fort. Der Aufrufer hält
+/// Bibliotheks- und Seitensperre. Liefert die Zahl der ausgetragenen Seiten.
+pub fn buch_endgueltig_loeschen(data: &Path, buch_dir: &Path) -> Result<usize, String> {
+    let buch = buch_dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .filter(|b| gueltiges_buch(b))
+        .ok_or_else(|| {
+            format!(
+                "{} ist kein Buch-Ordner; nichts gelöscht.",
+                buch_dir.display()
+            )
+        })?
+        .to_string();
+    let absicht_datei = absicht_pfad(buch_dir, &buch);
+    let mut absicht = absicht_laden(&absicht_datei, &buch)?;
+    match fs::symlink_metadata(buch_dir) {
+        Ok(meta) => {
+            if ist_umweg(&meta) || !meta.is_dir() {
+                return Err(format!(
+                    "{} ist kein gewöhnlicher Ordner; nichts gelöscht.",
+                    buch_dir.display()
+                ));
+            }
+            let mut seiten: BTreeSet<String> = fassungen_von(buch_dir).into_iter().collect();
+            if let Some(alt) = &absicht {
+                seiten.extend(alt.seiten.iter().cloned());
+            }
+            let neu = Loeschabsicht {
+                buch: buch.clone(),
+                seiten: seiten.into_iter().collect(),
+            };
+            if absicht.as_ref() != Some(&neu) {
+                let bytes = serde_json::to_vec_pretty(&neu).map_err(|e| e.to_string())?;
+                schreibe_atomar(&absicht_datei, &bytes)?;
+                kette_sichern(data, &absicht_datei)?;
+            }
+            absicht = Some(neu);
+            buch_ordner_entfernen(buch_dir)
+                .map_err(|e| format!("Buch nicht vollständig gelöscht: {e}"))?;
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(format!("{} nicht lesbar: {e}", buch_dir.display())),
+    }
+    let Some(absicht) = absicht else {
+        return Ok(0);
+    };
+    let ausgetragen = seiten_austragen(data, &buch, &absicht.seiten)?;
+    match fs::remove_file(&absicht_datei) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(format!("Löschabsicht nicht entfernbar: {e}")),
+    }
     Ok(ausgetragen)
+}
+
+/// Beim Start: unterbrochene endgültige Löschungen abschließen. Liefert je Absicht das
+/// Buch oder den Fehler; eine gescheiterte Absicht bleibt für den nächsten Start stehen.
+pub fn loeschabsichten_abschliessen(data: &Path) -> Vec<Result<String, String>> {
+    let korb = data.join(BIBLIOTHEK).join(BIBLIOTHEK_PAPIERKORB);
+    let Ok(eintraege) = fs::read_dir(&korb) else {
+        return Vec::new();
+    };
+    let mut namen: Vec<String> = eintraege
+        .flatten()
+        .filter_map(|e| e.file_name().to_str().map(str::to_owned))
+        .filter_map(|n| {
+            n.strip_prefix(LOESCHABSICHT)?
+                .strip_suffix(".json")
+                .map(str::to_owned)
+        })
+        .filter(|b| gueltiges_buch(b))
+        .collect();
+    namen.sort();
+    namen
+        .into_iter()
+        .map(|buch| buch_endgueltig_loeschen(data, &korb.join(&buch)).map(|_| buch))
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -3752,26 +3899,34 @@ pub fn seiten_einlagern(data: &Path, buch: &str) -> Result<Vec<String>, String> 
     }
     let karte = Fundortkarte::aufbauen(data);
     let mut bewegt = Vec::new();
+    let mut fehler: Option<String> = None;
     for seite in buch_seiten(data, buch) {
         let von_rel = rel_von(&seite);
         let nach_rel = rel_nach(buch, &seite);
-        let nach = absolut(data, &nach_rel);
-        if vorhanden(&nach) {
-            // Schon im Buch-Ordner: nur das Indexfeld nachziehen.
-            if index_buch(data, &seite)?.as_deref() != Some(buch) {
-                index_buch_setzen(data, &seite, Some(buch))?;
-            }
-            continue;
-        }
         let von = absolut(data, &von_rel);
+        let nach = absolut(data, &nach_rel);
+        // Erst alle Prüfungen, dann bewegen, dann den Index: ein anderes Buch nennt die
+        // Seite ebenfalls, ein Weg führt über eine Verknüpfung oder die Seite liegt an
+        // einem dritten Ort → übergehen, Index unverändert.
         let fremd = karte
             .orte(&seite)
             .iter()
             .any(|o| o != &von_rel && o != &nach_rel);
-        if fremd || !von.is_dir() || ohne_umweg(data, &von_rel).is_err() {
+        if fremd || ohne_umweg(data, &von_rel).is_err() || ohne_umweg(data, &nach_rel).is_err() {
             continue;
         }
-        if ohne_umweg(data, &nach_rel).is_err() {
+        if vorhanden(&nach) {
+            // Schon im Buch-Ordner. Liegt sie zugleich noch unter projects/, ist sie
+            // doppelt: nichts entscheiden. Sonst nur das Indexfeld nachziehen.
+            if !vorhanden(&von)
+                && nach.is_dir()
+                && index_buch(data, &seite)?.as_deref() != Some(buch)
+            {
+                index_buch_setzen(data, &seite, Some(buch))?;
+            }
+            continue;
+        }
+        if !von.is_dir() {
             continue;
         }
         let eltern = nach
@@ -3779,14 +3934,26 @@ pub fn seiten_einlagern(data: &Path, buch: &str) -> Result<Vec<String>, String> 
             .expect("fassungen/<seite> hat einen Elternordner");
         fs::create_dir_all(eltern)
             .map_err(|e| format!("{} nicht anlegbar: {e}", eltern.display()))?;
-        umbenennen(data, &von, &nach)
+        // Scheitert schon das Umbenennen, ist nichts bewegt.
+        fs::rename(&von, &nach)
             .map_err(|e| format!("Seite {seite} nicht in den Buch-Ordner verschoben: {e}"))?;
-        if let Err(e) = index_buch_setzen(data, &seite, Some(buch)) {
-            // Index nicht schreibbar: Seite zurück, damit Index und Platte zusammenpassen.
-            let _ = fs::rename(&nach, &von);
-            return Err(e);
+        // Ab hier gilt die Seite als verschoben: kein Zurückrollen, der Index folgt der
+        // Platte. Scheitert das Sichern oder der Index, findet die Fundortkarte die Seite
+        // trotzdem (das Buch nennt sie), und der Fehler wird gemeldet.
+        bewegt.push(seite.clone());
+        if let Err(e) = kette_sichern(data, &nach).and_then(|_| kette_sichern(data, &von)) {
+            fehler.get_or_insert(format!(
+                "Seite {seite} verschoben, nicht dauerhaft gesichert: {e}"
+            ));
         }
-        bewegt.push(seite);
+        if let Err(e) = index_buch_setzen(data, &seite, Some(buch)) {
+            fehler.get_or_insert(format!(
+                "Seite {seite} verschoben, Index nicht nachgezogen: {e}"
+            ));
+        }
+    }
+    if let Some(e) = fehler {
+        return Err(e);
     }
     Ok(bewegt)
 }
@@ -5246,6 +5413,99 @@ mod tests {
         );
     }
 
+    #[test]
+    fn endgueltig_loeschen_traegt_nur_eigene_seiten_aus() {
+        let data = standardlage("kaskade-eigen");
+        migrieren(&data, &optionen()).unwrap();
+        let korb = data.join(BIBLIOTHEK).join(BIBLIOTHEK_PAPIERKORB);
+        fs::create_dir_all(&korb).unwrap();
+        fs::rename(data.join("library/book_1"), korb.join("book_1")).unwrap();
+        // page_1 liegt zusätzlich unter projects/ (anderswo vorhanden), page_2 gehört
+        // laut Index einem anderen Buch: beide bleiben im Index.
+        seite_anlegen(&data.join(PROJEKTE).join("page_1"), "kopie");
+        index_schreiben(
+            &data,
+            &[
+                ("page_1", Some("book_1")),
+                ("page_2", Some("book_2")),
+                ("page_9", None),
+            ],
+        );
+        assert_eq!(
+            buch_endgueltig_loeschen(&data, &korb.join("book_1")).unwrap(),
+            0
+        );
+        assert!(!korb.join("book_1").exists());
+        let index = index_laden(&data).unwrap().unwrap();
+        let ids: Vec<&str> = index["pages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|p| p["id"].as_str())
+            .collect();
+        assert_eq!(ids, vec!["page_1", "page_2", "page_9"]);
+        assert!(!absicht_pfad(&korb.join("book_1"), "book_1").exists());
+        // Kein Buch-Ordner: abgelehnt, nichts gelöscht.
+        assert!(buch_endgueltig_loeschen(&data, &data.join(PROJEKTE)).is_err());
+        assert!(data.join("projects/page_9").is_dir());
+    }
+
+    #[test]
+    fn endgueltig_loeschen_setzt_nach_absturz_fort() {
+        let data = standardlage("kaskade-absturz");
+        migrieren(&data, &optionen()).unwrap();
+        let korb = data.join(BIBLIOTHEK).join(BIBLIOTHEK_PAPIERKORB);
+        fs::create_dir_all(&korb).unwrap();
+        fs::rename(data.join("library/book_1"), korb.join("book_1")).unwrap();
+        // Absturz nach dem Schreiben der Absicht und einem Teil des Löschens: die
+        // Fassungen sind weg, buch.json (zuletzt gelöscht) liegt noch da.
+        let absicht = Loeschabsicht {
+            buch: "book_1".into(),
+            seiten: vec!["page_1".into(), "page_2".into()],
+        };
+        schreibe_atomar(
+            &absicht_pfad(&korb.join("book_1"), "book_1"),
+            &serde_json::to_vec(&absicht).unwrap(),
+        )
+        .unwrap();
+        fs::remove_dir_all(korb.join("book_1/fassungen")).unwrap();
+        // Das Buch ist weiter als „im Papierkorb“ erkennbar.
+        assert!(buch_im_papierkorb(&data, "book_1"));
+        assert_eq!(
+            loeschabsichten_abschliessen(&data),
+            vec![Ok("book_1".to_string())]
+        );
+        assert!(!korb.join("book_1").exists());
+        assert!(!absicht_pfad(&korb.join("book_1"), "book_1").exists());
+        assert_eq!(index_buch(&data, "page_1").unwrap(), None);
+        assert!(!index_laden(&data).unwrap().unwrap()["pages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["id"] == "page_1" || p["id"] == "page_2"));
+        // Ordner schon ganz weg, Absicht noch da (Absturz vor dem Austragen): der
+        // Wiederholungsversuch trägt trotzdem aus.
+        index_schreiben(&data, &[("page_3", Some("book_1")), ("page_9", None)]);
+        let absicht = Loeschabsicht {
+            buch: "book_1".into(),
+            seiten: vec!["page_3".into()],
+        };
+        schreibe_atomar(
+            &absicht_pfad(&korb.join("book_1"), "book_1"),
+            &serde_json::to_vec(&absicht).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            buch_endgueltig_loeschen(&data, &korb.join("book_1")).unwrap(),
+            1
+        );
+        // Eine unlesbare Absicht wird nicht ausgeführt und bleibt stehen.
+        fs::write(korb.join(".loeschabsicht-book_5.json"), b"{").unwrap();
+        assert!(loeschabsichten_abschliessen(&data)[0].is_err());
+        assert!(korb.join(".loeschabsicht-book_5.json").is_file());
+        assert!(data.join("projects/page_9").is_dir());
+    }
+
     #[cfg(unix)]
     #[test]
     fn endgueltig_loeschen_folgt_keiner_verknuepfung() {
@@ -5327,10 +5587,17 @@ mod tests {
         assert!(data.join("projects/page_7").is_dir());
         assert!(seiten_einlagern(&data, "book_5").unwrap().is_empty());
         assert!(data.join("projects/page_8").is_dir());
+        // Doppelt (projects/ und Buch-Ordner): der Index bleibt, wie er ist.
+        assert_eq!(index_buch(&data, "page_8").unwrap(), None);
+        // Erst ohne die Kopie unter projects/ zieht der Index dem Buch-Ordner nach.
+        fs::remove_dir_all(data.join("projects/page_8")).unwrap();
+        assert!(seiten_einlagern(&data, "book_5").unwrap().is_empty());
         assert_eq!(
             index_buch(&data, "page_8").unwrap().as_deref(),
             Some("book_5")
         );
+        // Geteilte Seite: auch das Indexfeld bleibt unberührt.
+        assert_eq!(index_buch(&data, "page_7").unwrap(), None);
         // Offene Neuordnung: nichts bewegen.
         buch_anlegen(&data, "book_6", "page_4", &["page_4"]);
         seite_anlegen(&data.join(PROJEKTE).join("page_4"), "wartet");

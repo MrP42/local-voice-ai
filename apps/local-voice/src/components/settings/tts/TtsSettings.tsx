@@ -960,8 +960,9 @@ export const TtsSettings = () => {
     const result = await commands.pagesList();
     if (result.status !== "ok") return;
     setPages(result.data);
-    if (!result.data.some((p) => p.id === activePage) && result.data.length) {
-      setActivePage(result.data[0].id);
+    if (!result.data.some((p) => p.id === activePage)) {
+      // Leer, wenn alle Seiten mit ihrem Buch im Papierkorb liegen (lva#365).
+      setActivePage(result.data[0]?.id ?? "");
     }
   }, [activePage, setActivePage]);
 

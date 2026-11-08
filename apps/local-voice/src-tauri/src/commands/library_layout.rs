@@ -139,6 +139,13 @@ pub(crate) fn start_hook(app: &AppHandle) {
             Ok(_) => {}
             Err(e) => log::warn!("Buch-Ordner: Wiederanlauf nicht möglich: {e}"),
         }
+        // Unterbrochenes endgültiges Löschen eines Buchs (Löschkaskade) abschließen.
+        for r in library_layout::loeschabsichten_abschliessen(&data) {
+            match r {
+                Ok(_) => log::info!("Buch-Ordner: unterbrochenes Löschen abgeschlossen"),
+                Err(e) => log::warn!("Buch-Ordner: unterbrochenes Löschen offen ({e})"),
+            }
+        }
         fundortkarte_neu(&data);
     }
 }

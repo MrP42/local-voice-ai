@@ -1215,25 +1215,14 @@ fn trash_in(root: &Path, ids: &[String]) -> Result<(), String> {
 /// als „mit dem Buch entfernt“, Wiederherstellen bringt sie zurück, endgültiges Löschen
 /// trägt sie aus. Ohne Kaskade (Zusammenlegen: die Seiten werden Fassungen des Ziels)
 /// kommen sie vorher nach `projects/` zurück.
-fn kaskade_vorbereiten(root: &Path, dir: &Path, to: &Path, kaskade: bool) -> Result<(), String> {
+fn kaskade_vorbereiten(root: &Path, dir: &Path, kaskade: bool) -> Result<(), String> {
     let Some(data) = root.parent() else {
         return Ok(());
     };
     if !kaskade {
-        seiten_retten(root, dir)?;
-        if to.exists() {
-            seiten_retten(root, to)?;
-        }
-        return Ok(());
+        return seiten_retten(root, dir);
     }
-    crate::library_layout::buch_ordner_bewegbar(data)?;
-    if to.exists() {
-        // Ein älterer Papierkorb-Eintrag desselben Buchs wird ersetzt: endgültig, samt
-        // seiner Fassungen (die Seiten verlassen dabei auch den Index).
-        let _pages = crate::commands::pages::lock();
-        crate::library_layout::buch_endgueltig_loeschen(data, to)?;
-    }
-    Ok(())
+    crate::library_layout::buch_ordner_bewegbar(data)
 }
 
 /// Nach jeder Bewegung von Buch-Ordnern samt Fassungen: Fundortkarte neu.
@@ -1262,13 +1251,20 @@ fn trash_locked(root: &Path, ids: &[String], kaskade: bool) -> Result<(), String
             continue;
         }
         let to = trash_dir(root, id)?;
-        if let Err(e) = kaskade_vorbereiten(root, &dir, &to, kaskade) {
+        // Ein älterer Papierkorb-Eintrag desselben Buchs wird nie ersetzt: er bliebe
+        // sonst auch für „Rückgängig“ verloren. Erst wiederherstellen oder löschen.
+        if to.exists() {
+            undo(&moved);
+            karte_neu(root);
+            return Err(format!(
+                "Im Papierkorb liegt schon ein älterer Eintrag von „{id}“. Bitte ihn erst \
+                 wiederherstellen oder endgültig löschen; nichts entfernt."
+            ));
+        }
+        if let Err(e) = kaskade_vorbereiten(root, &dir, kaskade) {
             undo(&moved);
             karte_neu(root);
             return Err(e);
-        }
-        if to.exists() {
-            let _ = std::fs::remove_dir_all(&to);
         }
         if let Err(e) = std::fs::rename(&dir, &to) {
             undo(&moved);
@@ -1291,8 +1287,12 @@ fn restore_in(root: &Path, ids: &[String]) -> Result<Vec<LibraryBook>, String> {
     let _pages = crate::commands::pages::lock();
     let mut restored = Vec::new();
     let mut blocked = Vec::new();
+    let mut failed = None;
     for id in ids {
-        let from = trash_dir(root, id)?;
+        let Ok(from) = trash_dir(root, id) else {
+            failed = Some(format!("Ungültige Kennung: {id}"));
+            break;
+        };
         if !from.is_dir() {
             continue;
         }
@@ -1301,14 +1301,21 @@ fn restore_in(root: &Path, ids: &[String]) -> Result<Vec<LibraryBook>, String> {
             blocked.push(id.clone());
             continue;
         }
-        std::fs::rename(&from, &to).map_err(|e| format!("Zurückholen fehlgeschlagen: {e}"))?;
+        if let Err(e) = std::fs::rename(&from, &to) {
+            failed = Some(format!("Zurückholen fehlgeschlagen: {e}"));
+            break;
+        }
         let _ = std::fs::remove_file(to.join(TRASH_STAMP));
         if let Some(book) = read_book(&to) {
             restored.push(book);
         }
     }
-    // Die Fassungen kamen mit dem Buch zurück (Löschkaskade).
+    // Die Fassungen kamen mit dem Buch zurück (Löschkaskade); auch nach einem Fehler
+    // sind schon zurückgeholte Bücher wieder da.
     karte_neu(root);
+    if let Some(e) = failed {
+        return Err(e);
+    }
     if !blocked.is_empty() {
         return Err(format!("Schon wieder vorhanden: {}", blocked.join(", ")));
     }
@@ -1345,7 +1352,11 @@ fn purge_in(root: &Path, ids: Option<&[String]>) -> Result<(), String> {
                 return Ok(());
             };
             let now = now_ms();
-            for entry in entries.flatten() {
+            // Nur Buch-Einträge; Löschabsichten u. ä. gehören nicht dazu.
+            for entry in entries
+                .flatten()
+                .filter(|e| checked_id(&e.file_name().to_string_lossy()).is_ok())
+            {
                 // Ohne Stempel zählt die Änderungszeit des Ordners (das
                 // Verschieben setzt sie), nie „uralt“.
                 let stamp = removed_ms(&entry.path()).unwrap_or(now);
@@ -3060,6 +3071,12 @@ mod tests {
         assert!(!root.join(".papierkorb/book_2").exists());
 
         trash_in(&root, &["book_1".into()]).unwrap();
+        // Gleiche Kennung schon im Papierkorb: abgelehnt, der ältere Eintrag bleibt.
+        audio_book(&root, "book_1", "A2", legacy("hoerbuch.mp3", None, None));
+        assert!(trash_in(&root, &["book_1".into()]).is_err());
+        assert!(root.join("book_1").is_dir());
+        assert!(root.join(".papierkorb/book_1/audio/hoerbuch.mp3").is_file());
+        std::fs::remove_dir_all(root.join("book_1")).unwrap();
         purge_in(&root, Some(&["book_1".into()])).unwrap();
         assert!(!root.join(".papierkorb/book_1").exists());
         assert!(trash_in(&root, &["../x".into()]).is_err());
