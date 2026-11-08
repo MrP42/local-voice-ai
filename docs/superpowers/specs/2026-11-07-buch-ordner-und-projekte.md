@@ -235,13 +235,47 @@ Zurückschreiben unbekannte Felder verlieren könnte. Sie kommen in die neue Sam
   "blob": { BlobRef }, "updated": 1731000000000, "device": "dev_pc", "deleted": false }
 ```
 
-- ID: `bf_` + 40 Hex von SHA-256(`buch-id` + `role` + normalisierter relativer Pfad). Stabil über Geräte.
+- ID: `bf_` + 40 Hex von SHA-256(`buch-id` + `role` + normalisierter relativer Pfad), UTF-8, ohne
+  Trenner verkettet. Stabil über Geräte. Prüfwert: `book_1` + `anhang` + `anhaenge/Cashflow-Tabelle.xlsx`
+  → `bf_ce4f353fbfa464d98f752e46a581809c114b23c2`.
+- Umsetzung Desktop (P3a): Kern `src-tauri/src/buch_dateien.rs` (Stand je Buch in
+  `sync-dateien.json`, Papierkorb `library/.papierkorb/dateien/<buch>/…`, Datensätze ohne Buch
+  warten in `library/.sync-dateien-wartend/`), Sync `src-tauri/src/sync/book_files.rs`. Die
+  Löschbremse der Sammlung folgt der von `book`: fehlen alle Bücher, gehen auch keine
+  Datei-Grabsteine hinaus. Hub: wai-portal#19.
 - `path` ist relativ zum Buch-Ordner, nach 4.4 bereinigt, nie absolut, nie mit `..`.
 - Konflikt: neuester `updated` gewinnt; gleiche Zeit → größere Geräte-ID. Die unterlegene Fassung wird
   als `Name (Konflikt Gerät).ext` behalten, nicht verworfen.
-- Löschen: Grabstein `deleted: true` 30 Tage, Datei geht auf dem Empfänger in den Papierkorb.
+- Löschen: nur ausdrücklich in der App. Grabstein `deleted: true` 30 Tage, Datei geht auf dem Empfänger in den Papierkorb.
 - Datensätze mit `v` > bekannter Version werden gelesen, aber nie geschrieben (nur lesend anzeigen).
 - Alte Geräte kennen `book_file` nicht und lassen sie unberührt; sie zeigen die Inhalte nur nicht.
+- Schutz vor stillen Löschungen: Ein Rollenordner oder Teilbaum, der fehlt (verschoben, Platzhalter,
+  Laufwerk weg), nicht lesbar ist oder über eine Verknüpfung führt, gilt als verdeckt; ebenso ein Name,
+  der nicht abgeglichen wird (z. B. andere Unicode-Form). Was dort im Stand steht, bleibt „vorhanden“
+  und wird nie zum Grabstein. Jede lokal fehlende Datei (im Explorer gelöscht, Ordner fehlt oder neu
+  angelegt) bleibt im Stand als „fehlt lokal“ geschützt; die Liste zeigt „Fehlt auf diesem Gerät – vom
+  Hub wiederherstellen oder in der App löschen“. Grabsteine entstehen nur durch Löschen in der App.
+  Ein unlesbarer `sync-dateien.json` wird als `sync-dateien.json.defekt-<ms>` beiseitegelegt und neu
+  begonnen.
+- Namenskollisionen: Pfade, die sich nur in Groß-/Kleinschreibung oder Unicode-Form unterscheiden
+  (auch in einem Ordner), werden nie abgeglichen: lokal bleiben beide stehen (Hinweis, kein Grabstein,
+  keine neue ID); ein empfangener Datensatz, der hier mit einer anderen Datei zusammenfiele, wird
+  aufbewahrt (Parkplatz), in der Liste als „zurückgehalten“ gezeigt und bei jedem Sammeln erneut
+  versucht.
+- Ablegen ersetzt nie: Downloads, Anhänge, Konfliktkopien und Papierkorb verschieben ohne Ersetzen
+  (Windows `MoveFileExW` ohne `REPLACE_EXISTING`, sonst harte Verknüpfung bzw. `RENAME_NOREPLACE`/
+  `RENAME_EXCL`). Anhänge werden erst vollständig in eine eigene Zwischendatei kopiert.
+- Prüfsummen-Budget: je Lauf bekommt eine Datei über dem Rest eine Ausnahme, reihum über Bücher und
+  Dateien (Zeiger `library/.sync-dateien-reihe.json`); eine ständig geänderte oder scheiternde Datei
+  hält die nächste nicht auf.
+- Gleicher Inhalt (gleiche Blob-Kennung) auf beiden Seiten ist kein Konflikt und kein Download; ein
+  geladener Inhalt, der am Ziel schon liegt, ersetzt nichts.
+- Ein Datensatz neuerer Version überdeckt den eigenen: das Gerät sendet für diese ID nichts mehr.
+- Löschen oder Zusammenführen eines Buchs legt `notizen/`, `anhaenge/` und `transkript/` zuerst in den
+  Papierkorb der Bibliothek.
+- Offen (Folge): Rückfrage vor dem Öffnen ausführbarer Dateien und Verknüpfungen (`.exe`, `.lnk` …).
+- Oberfläche (P3b): Gruppe „Notizen und Anhänge“ im Buch-Ordner (öffnen, neue Notiz, Anhang
+  hinzufügen, entfernen in den Papierkorb; noch nicht geladene Dateien gedämpft).
 
 ### 6.3 Projekte (P6)
 

@@ -159,9 +159,12 @@ test.beforeEach(async ({ page }) => {
             }
             if (cmd === "plugin:dialog|open") {
               // Dateidialog des Dokument-Imports: gezählt, ohne Auswahl beendet.
-              const w = window as unknown as { __lvDialog?: number };
+              const w = window as unknown as {
+                __lvDialog?: number;
+                __lvPick?: string[];
+              };
               w.__lvDialog = (w.__lvDialog ?? 0) + 1;
-              return null;
+              return w.__lvPick ?? null;
             }
             if (cmd === "page_state_load") {
               const w = window as unknown as { __lvText?: string };
@@ -189,6 +192,45 @@ test.beforeEach(async ({ page }) => {
                 p3: [doc("d2", "Begriffe", "en")],
               };
               return lists[String(args?.pageId)] ?? [];
+            }
+            if (cmd === "library_book_folder_files") {
+              const w = window as unknown as {
+                __lvFolderFiles?: unknown[];
+                __lvFolderCalls?: number;
+                __lvFolderFail?: boolean;
+              };
+              w.__lvFolderCalls = (w.__lvFolderCalls ?? 0) + 1;
+              if (w.__lvFolderFail) throw "Buch-Ordner nicht lesbar";
+              return w.__lvFolderFiles ?? [];
+            }
+            if (
+              cmd === "library_book_note_create" ||
+              cmd === "library_book_attachments_add" ||
+              cmd === "library_book_file_open" ||
+              cmd === "library_book_file_remove" ||
+              cmd === "library_book_file_restore"
+            ) {
+              const w = window as unknown as {
+                __lvFolderOps?: unknown[];
+                __lvFolderFiles?: { rel: string }[];
+                __lvOpenDelay?: number;
+              };
+              w.__lvFolderOps = [...(w.__lvFolderOps ?? []), [cmd, args]];
+              if (cmd === "library_book_file_open" && w.__lvOpenDelay)
+                await new Promise((r) => setTimeout(r, w.__lvOpenDelay));
+              if (cmd === "library_book_note_create")
+                return `notizen/${String(args?.title)}.md`;
+              if (cmd === "library_book_attachments_add")
+                return ["anhaenge/Tabelle.xlsx"];
+              if (cmd === "library_book_file_remove")
+                w.__lvFolderFiles = (w.__lvFolderFiles ?? []).filter(
+                  (f) => f.rel !== args?.rel,
+                );
+              return null;
+            }
+            if (cmd === "plugin:dialog|ask") {
+              const w = window as unknown as { __lvAsk?: boolean };
+              return w.__lvAsk ?? false;
             }
             if (cmd === "book_ai_document_text") {
               const w = window as unknown as { __lvDocOpened?: string[] };
@@ -756,11 +798,9 @@ test("Buch-Ordner: Kopf, Gruppen und Beschriftungen", async ({ page }) => {
 
   const col = pagesCol(page);
   // Kleine Überschriften in der Folge Fassungen, Hörbuch, KI-Dokumente.
-  await expect(col.locator("p.tts-pages__list, section > p")).toHaveText([
-    "Fassungen",
-    "Hörbuch",
-    "KI-Dokumente",
-  ]);
+  await expect(
+    col.locator("p.tts-pages__list, section > p:first-child"),
+  ).toHaveText(["Fassungen", "Hörbuch", "KI-Dokumente", "Notizen und Anhänge"]);
 
   // Fassungen: die bestehenden Seitenzeilen, mit Sprache und Hauptfassung.
   await expect(rows(page)).toHaveText(["Der Sturm", "The Tempest"]);
@@ -1219,4 +1259,315 @@ test("Belege P1b", async ({ page }) => {
   await page.screenshot({
     path: `${dir}/p1b-buchordner-390-ordner-${theme}.png`,
   });
+});
+
+const FOLDER_FILES = [
+  {
+    rel: "notizen/Gedanken.md",
+    role: "notiz",
+    name: "Gedanken.md",
+    bytes: 2048,
+    modified_ms: 0,
+    edition: "",
+    pending: false,
+    conflict: false,
+    missing: false,
+    held: false,
+  },
+  {
+    rel: "anhaenge/Cashflow (Konflikt Gerät bbbbbb).xlsx",
+    role: "anhang",
+    name: "Cashflow (Konflikt Gerät bbbbbb).xlsx",
+    bytes: 3 * 1024 * 1024,
+    modified_ms: 0,
+    edition: "",
+    pending: false,
+    conflict: true,
+    missing: false,
+    held: false,
+  },
+  {
+    rel: "transkript/page_1.md",
+    role: "transkript",
+    name: "page_1.md",
+    bytes: 900_000,
+    modified_ms: 0,
+    edition: "page_1",
+    pending: true,
+    conflict: false,
+    missing: false,
+    held: false,
+  },
+];
+
+const notes = (page: Page) => page.getByTestId("book-notes");
+const folderOps = (page: Page) =>
+  page.evaluate(
+    () =>
+      (window as unknown as { __lvFolderOps?: unknown[] }).__lvFolderOps ?? [],
+  );
+
+test("Notizen und Anhänge: Liste, öffnen, Konflikt, noch nicht geladen (lva#365 P3b)", async ({
+  page,
+}) => {
+  await page.addInitScript((files) => {
+    Object.assign(window, { __lvFolderFiles: files });
+  }, FOLDER_FILES);
+  await openReadAloud(page);
+  await openBook(page);
+  const group = notes(page);
+  await expect(group.getByText("Notizen und Anhänge")).toBeVisible();
+  const rowsIn = group.getByTestId("book-file");
+  await expect(rowsIn).toHaveCount(3);
+  await expect(rowsIn.nth(0)).toContainText("Gedanken.md");
+  await expect(rowsIn.nth(0)).toContainText("Notiz · 2 KB");
+  await expect(rowsIn.nth(1)).toContainText("Konfliktkopie");
+  await expect(rowsIn.nth(1)).toContainText("Anhang · 3 MB");
+  await expect(rowsIn.nth(2)).toContainText(
+    "Transkript page_1 · Noch nicht auf diesem Gerät",
+  );
+  // Noch nicht geladen: weder öffnen noch entfernen.
+  await expect(rowsIn.nth(2).getByRole("button")).toHaveCount(0);
+  await rowsIn
+    .nth(0)
+    .getByRole("button", { name: /^Gedanken/ })
+    .click();
+  await expect
+    .poll(() => folderOps(page))
+    .toEqual([
+      ["library_book_file_open", { id: "b1", rel: "notizen/Gedanken.md" }],
+    ]);
+  await belegP1b(page, "p3b-notizen");
+});
+
+test("Notizen und Anhänge: Doppelklick öffnet einmal, Ladefehler eigener Zustand", async ({
+  page,
+}) => {
+  await page.addInitScript((files) => {
+    Object.assign(window, {
+      __lvFolderFiles: files,
+      __lvOpenDelay: 400,
+      __lvFolderFail: true,
+    });
+  }, FOLDER_FILES);
+  await openReadAloud(page);
+  await openBook(page);
+  const group = notes(page);
+  // Laden gescheitert: Hinweis statt „Noch keine Notizen“, Neuladen hilft.
+  await expect(group.getByTestId("book-notes-error")).toContainText(
+    "konnten nicht geladen werden",
+  );
+  await expect(group.getByText("Noch keine Notizen")).toHaveCount(0);
+  await page.evaluate(() => Object.assign(window, { __lvFolderFail: false }));
+  await group.getByRole("button", { name: "Erneut laden" }).click();
+  await expect(group.getByTestId("book-notes-error")).toHaveCount(0);
+  const rowsIn = group.getByTestId("book-file");
+  await expect(rowsIn).toHaveCount(3);
+  // Doppelklick, solange das Öffnen läuft: nur ein Aufruf.
+  await rowsIn
+    .nth(0)
+    .getByRole("button", { name: /^Gedanken/ })
+    .dblclick();
+  await page.waitForTimeout(600);
+  expect(
+    (await folderOps(page)).filter(
+      (o) => (o as unknown[])[0] === "library_book_file_open",
+    ),
+  ).toHaveLength(1);
+});
+
+test("Notizen und Anhänge: fehlt lokal (wiederherstellen, löschen) und Zurückgehaltenes (nur Hinweis)", async ({
+  page,
+}) => {
+  const base = {
+    modified_ms: 0,
+    edition: "",
+    pending: false,
+    conflict: false,
+    bytes: 10,
+  };
+  await page.addInitScript(
+    (files) => {
+      Object.assign(window, { __lvFolderFiles: files, __lvAsk: true });
+    },
+    [
+      {
+        ...base,
+        rel: "notizen/A.md",
+        role: "notiz",
+        name: "A.md",
+        missing: false,
+        held: false,
+      },
+      {
+        ...base,
+        rel: "notizen/a.md",
+        role: "notiz",
+        name: "a.md",
+        missing: false,
+        held: true,
+      },
+      {
+        ...base,
+        rel: "anhaenge/Tabelle.xlsx",
+        role: "anhang",
+        name: "Tabelle.xlsx",
+        missing: true,
+        held: false,
+      },
+    ],
+  );
+  await openReadAloud(page);
+  await openBook(page);
+  const rowsIn = notes(page).getByTestId("book-file");
+  await expect(rowsIn).toHaveCount(3);
+  await expect(rowsIn.nth(1)).toContainText("zurückgehalten");
+  await expect(rowsIn.nth(1).getByRole("button")).toHaveCount(0);
+  await expect(rowsIn.nth(2)).toContainText(
+    "Fehlt auf diesem Gerät – vom Hub wiederherstellen oder in der App löschen",
+  );
+  // Fehlt lokal: nicht öffnen, aber vom Hub wiederherstellen oder in der App löschen.
+  await expect(rowsIn.nth(2).getByRole("button")).toHaveCount(2);
+  await rowsIn.nth(2).getByTestId("book-file-restore").click();
+  await rowsIn.nth(2).getByTestId("book-file-remove").click();
+  await expect
+    .poll(() => folderOps(page))
+    .toEqual([
+      ["library_book_file_restore", { id: "b1", rel: "anhaenge/Tabelle.xlsx" }],
+      ["library_book_file_remove", { id: "b1", rel: "anhaenge/Tabelle.xlsx" }],
+    ]);
+});
+
+test("Notizen und Anhänge: neue Notiz, Anhang, Entfernen nach Rückfrage", async ({
+  page,
+}) => {
+  await page.addInitScript(
+    (files) => {
+      Object.assign(window, {
+        __lvFolderFiles: files,
+        __lvPick: ["C:/Daten/Tabelle.xlsx"],
+      });
+    },
+    FOLDER_FILES.slice(0, 1),
+  );
+  await openReadAloud(page);
+  await openBook(page);
+  const group = notes(page);
+  // Neue Notiz: Titel eingeben, anlegen, danach öffnen.
+  await group.getByTestId("book-note-new").click();
+  const title = group.getByTestId("book-note-title");
+  await expect(title).toBeFocused();
+  await title.fill("Fragen zum Kapitel");
+  await title.press("Enter");
+  await expect
+    .poll(() => folderOps(page))
+    .toEqual([
+      ["library_book_note_create", { id: "b1", title: "Fragen zum Kapitel" }],
+      [
+        "library_book_file_open",
+        { id: "b1", rel: "notizen/Fragen zum Kapitel.md" },
+      ],
+    ]);
+  await expect(group.getByTestId("book-note-new")).toBeVisible();
+  // Escape bricht ab, ohne anzulegen.
+  await group.getByTestId("book-note-new").click();
+  await group.getByTestId("book-note-title").press("Escape");
+  await expect(group.getByTestId("book-note-title")).toHaveCount(0);
+
+  // Anhang: Dateidialog, dann Kopie in den Buch-Ordner.
+  await group.getByTestId("book-attach").click();
+  await expect.poll(async () => (await folderOps(page)).length).toBe(3);
+  expect((await folderOps(page))[2]).toEqual([
+    "library_book_attachments_add",
+    { id: "b1", paths: ["C:/Daten/Tabelle.xlsx"] },
+  ]);
+
+  // Entfernen: ohne Zustimmung nichts, mit Zustimmung in den Papierkorb.
+  const remove = group.getByTestId("book-file-remove");
+  await remove.first().click();
+  await page.waitForTimeout(200);
+  expect(await folderOps(page)).toHaveLength(3);
+  await page.evaluate(() => Object.assign(window, { __lvAsk: true }));
+  await remove.first().click();
+  await expect.poll(async () => (await folderOps(page)).length).toBe(4);
+  expect((await folderOps(page))[3]).toEqual([
+    "library_book_file_remove",
+    { id: "b1", rel: "notizen/Gedanken.md" },
+  ]);
+  await expect(group.getByTestId("book-file")).toHaveCount(0);
+  await expect(group).toContainText("Noch keine Notizen oder Anhänge.");
+});
+
+test("Notizen und Anhänge: Bedienziele ≥ 44 px bei 390 px, Neuladen nach Abgleich", async ({
+  page,
+}) => {
+  await page.addInitScript((files) => {
+    Object.assign(window, { __lvFolderFiles: files });
+  }, FOLDER_FILES);
+  await openReadAloud(page, 768);
+  await page.setViewportSize({ width: 390, height: 844 });
+  // Vom Reader über die Liste zu den Ordnern, dann in den Buch-Ordner.
+  await page.getByTestId("mback-reader").click();
+  await page.getByTestId("mback-list").click();
+  await page
+    .getByTestId("reader-folders")
+    .locator('[data-folder="book:b1"]')
+    .click();
+  const group = notes(page);
+  await group.scrollIntoViewIfNeeded();
+  for (const el of [
+    group.getByTestId("book-file").nth(0).getByRole("button").first(),
+    group.getByTestId("book-file-remove").first(),
+    group.getByTestId("book-note-new"),
+    group.getByTestId("book-attach"),
+  ]) {
+    const box = (await el.boundingBox())!;
+    expect(box.height).toBeGreaterThanOrEqual(44);
+    expect(box.width).toBeGreaterThanOrEqual(44);
+  }
+  await belegP1b(page, "p3b-notizen-390");
+  // Ein Abgleich lädt die Liste neu.
+  const before = await page.evaluate(
+    () =>
+      (window as unknown as { __lvFolderCalls?: number }).__lvFolderCalls ?? 0,
+  );
+  await page.evaluate(() => {
+    Object.assign(window, { __lvFolderFiles: [] });
+    (window as unknown as { __lvEmit: (e: string) => void }).__lvEmit(
+      "sync-changed",
+    );
+  });
+  await expect(group.getByTestId("book-file")).toHaveCount(0);
+  expect(
+    await page.evaluate(
+      () =>
+        (window as unknown as { __lvFolderCalls?: number }).__lvFolderCalls ??
+        0,
+    ),
+  ).toBeGreaterThan(before);
+});
+
+test("Beleg P3b: Notizen und Anhänge bei 768, 1440 und 2560 px", async ({
+  page,
+}) => {
+  test.skip(!process.env.LV_P1B_SHOTS, "nur für Belege");
+  await page.addInitScript((files) => {
+    Object.assign(window, { __lvFolderFiles: files });
+  }, FOLDER_FILES);
+  for (const width of [768, 1440, 2560]) {
+    await openReadAloud(page, width);
+    if (await page.getByTestId("reader-folders").isVisible())
+      await openBook(page);
+    else {
+      // Umbruch-Layout: Ordner als Auswahl.
+      await page
+        .getByTestId("reader-folders-compact")
+        .locator(".app-select__control")
+        .click();
+      await page.getByRole("option", { name: "Der Sturm (2)" }).click();
+    }
+    await expect(notes(page)).toBeVisible();
+    await notes(page).scrollIntoViewIfNeeded();
+    await belegP1b(page, `p3b-notizen-${width}`);
+  }
 });

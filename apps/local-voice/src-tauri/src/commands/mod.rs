@@ -1,6 +1,7 @@
 pub mod agent_bridge; // A7
 pub mod audio;
 pub mod big_stack; // Hotfix 0.21.1: lange Auftraege auf eigenem Thread mit grossem Stack
+pub mod book_folder; // lva#365 P3b: Notizen und Anhänge im Buch-Ordner
 pub mod calendar; // M5-P5b
 pub mod compliance; // Regelwerk + Schild
 pub mod history;

@@ -16,6 +16,7 @@ pub mod book_talk_eval {
     pub use crate::book_ai::talk::eval::*;
 }
 mod books;
+mod buch_dateien; // lva#365 P3: Notizen, Anhänge, Transkript im Buch-Ordner (Kern)
 mod catalog;
 pub mod cli;
 mod clipboard;
@@ -2636,6 +2637,12 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::library_layout::library_backup_delete,
             commands::library_layout::library_book_files,
             commands::library_layout::library_book_reveal,
+            commands::book_folder::library_book_folder_files,
+            commands::book_folder::library_book_note_create,
+            commands::book_folder::library_book_attachments_add,
+            commands::book_folder::library_book_file_open,
+            commands::book_folder::library_book_file_remove,
+            commands::book_folder::library_book_file_restore,
             hoersync_live::audiosync_load,
             hoersync_live::audiosync_window,
             hoersync_live::audiosync_anchor,

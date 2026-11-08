@@ -57,7 +57,7 @@ pub struct BlobRef {
 }
 
 impl BlobRef {
-    fn new(key: &[u8; KEY_LEN], stamp: &FileStamp) -> Option<Self> {
+    pub(crate) fn new(key: &[u8; KEY_LEN], stamp: &FileStamp) -> Option<Self> {
         Some(Self {
             blob: blobs::blob_id_of(key, stamp)?,
             size: stamp.size,
@@ -67,7 +67,7 @@ impl BlobRef {
         })
     }
 
-    fn valid(&self) -> bool {
+    pub(crate) fn valid(&self) -> bool {
         blobs::valid_blob_id(&self.blob)
             && (self.chunks == blobs::chunk_count(self.size)
                 || (self.chunks == 1 && self.size <= blobs::LEGACY_ONE_CHUNK_MAX))
@@ -767,7 +767,7 @@ fn stamp_updated(dir: &Path, side: &mut Sidecar, core_files: &Value) -> Result<f
 }
 
 /// Bücher mit gültiger Kennung, auch wenn `buch.json` gerade unlesbar ist.
-fn book_dirs(root: &Path) -> Result<Vec<(String, PathBuf)>, String> {
+pub(crate) fn book_dirs(root: &Path) -> Result<Vec<(String, PathBuf)>, String> {
     let entries = std::fs::read_dir(root).map_err(|e| format!("Bibliothek nicht lesbar: {e}"))?;
     Ok(entries
         .flatten()

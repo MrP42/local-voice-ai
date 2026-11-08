@@ -1,14 +1,29 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import {
   AlertTriangle,
   BookOpen,
+  CloudDownload,
+  FilePlus,
   FileText,
   Headphones,
+  NotebookPen,
+  Paperclip,
   Sparkles,
+  Trash2,
 } from "lucide-react";
+import { listen } from "@tauri-apps/api/event";
+import { ask, open as openDialog } from "@tauri-apps/plugin-dialog";
+import { toast } from "sonner";
 import {
   commands,
+  type BookFolderFile,
   type Edition,
   type KiDocument,
   type LibraryBook,
@@ -18,6 +33,7 @@ import { Button } from "../../ui/Button";
 import { formatDuration } from "@/lib/library/books";
 import { editionsOf, langName, primaryEdition } from "@/lib/library/editions";
 import { tracksOf } from "@/lib/library/names";
+import { formatBytes } from "@/lib/library/remove";
 
 /**
  * Buch-Ordner im Vorlesen (lva#365 P1b): Kopf mit Cover und „Weiterlesen“,
@@ -288,7 +304,337 @@ export const BookFolderGroups: React.FC<{
           })}
         </section>
       )}
+      <BookNotesGroup bookId={book.id} />
     </>
+  );
+};
+
+/**
+ * Dateien der Gruppe „Notizen und Anhänge“; lädt nach einem Abgleich neu. `failed`:
+ * der letzte Ladeversuch scheiterte (eigener Zustand, nicht „keine Dateien“).
+ */
+function useBookFolderFiles(bookId: string) {
+  const [files, setFiles] = useState<BookFolderFile[]>([]);
+  const [failed, setFailed] = useState(false);
+  const [tick, setTick] = useState(0);
+  const reload = useCallback(() => setTick((n) => n + 1), []);
+  useEffect(() => {
+    const unlisten = listen("sync-changed", reload);
+    return () => {
+      void unlisten.then((fn) => fn()).catch(() => {});
+    };
+  }, [reload]);
+  useEffect(() => {
+    let alive = true;
+    void commands
+      .libraryBookFolderFiles(bookId)
+      .then((r) => {
+        if (!alive) return;
+        const ok = r.status === "ok" && Array.isArray(r.data);
+        setFailed(!ok);
+        setFiles(ok ? r.data : []);
+      })
+      .catch(() => {
+        if (!alive) return;
+        setFailed(true);
+        setFiles([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [bookId, tick]);
+  return { files, failed, reload };
+}
+
+const ROLE_ICON: Record<string, typeof FileText> = {
+  notiz: NotebookPen,
+  anhang: Paperclip,
+  transkript: FileText,
+};
+
+/**
+ * Notizen, Anhänge und Transkripte im Buch-Ordner (lva#365 P3b). Eine Zeile öffnet
+ * die Datei im Standardprogramm; „Entfernen“ legt sie in den Papierkorb der
+ * Bibliothek. Noch nicht geladene Dateien anderer Geräte stehen gedämpft da.
+ */
+export const BookNotesGroup: React.FC<{ bookId: string }> = ({ bookId }) => {
+  const { t, i18n } = useTranslation();
+  const { files, failed, reload } = useBookFolderFiles(bookId);
+  // Je Datei höchstens ein Öffnen gleichzeitig (Doppelklick öffnet nicht zweimal).
+  const opening = useRef(new Set<string>());
+  const [naming, setNaming] = useState(false);
+  const [title, setTitle] = useState("");
+  const [busy, setBusy] = useState(false);
+  const fail = (e: unknown) =>
+    toast.error(t("tts.folders.fileError", { error: String(e) }));
+
+  const openFile = async (rel: string) => {
+    if (opening.current.has(rel)) return;
+    opening.current.add(rel);
+    try {
+      const r = await commands.libraryBookFileOpen(bookId, rel).catch((e) => ({
+        status: "error" as const,
+        error: String(e),
+      }));
+      if (r.status === "error") fail(r.error);
+    } finally {
+      opening.current.delete(rel);
+    }
+  };
+
+  const createNote = async () => {
+    const name = title.trim();
+    if (!name || busy) return;
+    setBusy(true);
+    try {
+      const r = await commands.libraryBookNoteCreate(bookId, name);
+      if (r.status === "error") return fail(r.error);
+      setNaming(false);
+      setTitle("");
+      reload();
+      await openFile(r.data);
+    } catch (e) {
+      fail(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const addAttachments = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const picked = await openDialog({ multiple: true, directory: false });
+      const paths = Array.isArray(picked) ? picked : picked ? [picked] : [];
+      if (paths.length === 0) return;
+      const r = await commands.libraryBookAttachmentsAdd(bookId, paths);
+      if (r.status === "error") return fail(r.error);
+      reload();
+    } catch (e) {
+      fail(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async (f: BookFolderFile) => {
+    const ok = await ask(t("tts.folders.removeAsk", { name: f.name }), {
+      title: t("tts.folders.removeTitle"),
+      kind: "warning",
+      okLabel: t("tts.folders.remove"),
+      cancelLabel: t("common.cancel"),
+    }).catch(() => false);
+    if (!ok) return;
+    const r = await commands
+      .libraryBookFileRemove(bookId, f.rel)
+      .catch((e) => ({ status: "error" as const, error: String(e) }));
+    if (r.status === "error") fail(r.error);
+    reload();
+  };
+
+  const restore = async (f: BookFolderFile) => {
+    const r = await commands
+      .libraryBookFileRestore(bookId, f.rel)
+      .catch((e) => ({ status: "error" as const, error: String(e) }));
+    if (r.status === "error") fail(r.error);
+    reload();
+  };
+
+  const meta = (f: BookFolderFile): string => {
+    const kind =
+      f.role === "transkript"
+        ? f.edition
+          ? t("tts.folders.roleTranscriptOf", { edition: f.edition })
+          : t("tts.folders.roleTranscript")
+        : f.role === "notiz"
+          ? t("tts.folders.roleNote")
+          : t("tts.folders.roleAttachment");
+    const parts = [kind];
+    if (f.held) parts.push(t("tts.folders.held"));
+    else if (f.missing) parts.push(t("tts.folders.missingLocal"));
+    else if (f.pending) parts.push(t("tts.folders.pending"));
+    else if (f.bytes > 0)
+      parts.push(formatBytes(f.bytes, i18n.language || "de"));
+    return parts.join(" · ");
+  };
+
+  return (
+    <section
+      aria-label={t("tts.folders.groupFiles")}
+      className="tts-pages__list"
+      data-testid="book-notes"
+    >
+      <p className={GROUP_HEAD}>{t("tts.folders.groupFiles")}</p>
+      {failed ? (
+        <div
+          role="alert"
+          className="flex flex-wrap items-center gap-2 px-2 py-1 text-xs text-text/80"
+          data-testid="book-notes-error"
+        >
+          <AlertTriangle
+            width={14}
+            height={14}
+            className="shrink-0 text-orange-500"
+            aria-hidden="true"
+          />
+          <span className="min-w-0 flex-1">{t("tts.folders.loadError")}</span>
+          <Button
+            variant="secondary"
+            className="reader-folders__btn min-h-[44px]"
+            onClick={reload}
+          >
+            {t("tts.folders.reload")}
+          </Button>
+        </div>
+      ) : (
+        files.length === 0 && (
+          <p className="px-2 py-1 text-xs text-text/60">
+            {t("tts.folders.noFiles")}
+          </p>
+        )
+      )}
+      {files.map((f) => {
+        // Nur vorhandene Dateien lassen sich öffnen; entfernen geht auch, wenn ihr Ordner
+        // fehlt (ausdrückliche Löschung), nicht aber bei Zurückgehaltenem oder Erwartetem.
+        const openable = !f.pending && !f.held && !f.missing;
+        const removable = !f.pending && !f.held;
+        const Icon = f.pending
+          ? CloudDownload
+          : f.held || f.missing
+            ? AlertTriangle
+            : (ROLE_ICON[f.role] ?? FileText);
+        const body = (
+          <>
+            <Icon
+              width={16}
+              height={16}
+              className="shrink-0 text-text/60"
+              aria-hidden="true"
+            />
+            <span className="min-w-0 flex-1">
+              <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                <span className="break-words text-sm">{f.name}</span>
+                {f.conflict && (
+                  <span className="inline-flex items-center gap-1 rounded border border-orange-500/70 bg-orange-500/10 px-1.5 text-xs font-semibold text-text">
+                    <AlertTriangle
+                      width={12}
+                      height={12}
+                      className="text-orange-500"
+                      aria-hidden="true"
+                    />
+                    {t("tts.folders.conflict")}
+                  </span>
+                )}
+              </span>
+              <span className="block text-xs text-text/60">{meta(f)}</span>
+            </span>
+          </>
+        );
+        return (
+          <div
+            key={f.rel}
+            className="flex items-center gap-1"
+            data-testid="book-file"
+            data-rel={f.rel}
+          >
+            {!openable ? (
+              <div className={`${ITEM} min-w-0 flex-1 text-text/70`}>
+                {body}
+              </div>
+            ) : (
+              <button
+                type="button"
+                className={`${ITEM_BUTTON} min-w-0 flex-1`}
+                onClick={() => void openFile(f.rel)}
+                title={t("tts.folders.openFile")}
+              >
+                {body}
+              </button>
+            )}
+            {f.missing && (
+              <button
+                type="button"
+                className="flex min-h-[44px] min-w-[44px] shrink-0 cursor-pointer items-center justify-center rounded-md text-text/60 hover:bg-mid-gray/15 hover:text-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-logo-primary"
+                aria-label={t("tts.folders.restoreFile", { name: f.name })}
+                title={t("tts.folders.restore")}
+                data-testid="book-file-restore"
+                onClick={() => void restore(f)}
+              >
+                <CloudDownload width={16} height={16} aria-hidden="true" />
+              </button>
+            )}
+            {removable && (
+              <button
+                type="button"
+                className="flex min-h-[44px] min-w-[44px] shrink-0 cursor-pointer items-center justify-center rounded-md text-text/60 hover:bg-mid-gray/15 hover:text-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-logo-primary"
+                aria-label={t("tts.folders.removeFile", { name: f.name })}
+                title={t("tts.folders.remove")}
+                data-testid="book-file-remove"
+                onClick={() => void remove(f)}
+              >
+                <Trash2 width={16} height={16} aria-hidden="true" />
+              </button>
+            )}
+          </div>
+        );
+      })}
+      {naming ? (
+        <form
+          className="flex flex-wrap items-center gap-2 px-2 py-1"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void createNote();
+          }}
+        >
+          <input
+            autoFocus
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                setNaming(false);
+                setTitle("");
+              }
+            }}
+            aria-label={t("tts.folders.noteTitle")}
+            placeholder={t("tts.folders.noteTitle")}
+            maxLength={120}
+            className="min-h-[44px] min-w-0 flex-1 rounded-md border border-mid-gray/40 bg-background px-2 text-sm text-text"
+            data-testid="book-note-title"
+          />
+          <Button
+            type="submit"
+            variant="primary"
+            className="reader-folders__btn min-h-[44px]"
+            disabled={!title.trim() || busy}
+          >
+            {t("tts.folders.noteCreate")}
+          </Button>
+        </form>
+      ) : (
+        <div className="flex flex-wrap gap-2 px-2 py-1">
+          <Button
+            variant="secondary"
+            className="reader-folders__btn min-h-[44px]"
+            icon={<FilePlus width={16} height={16} aria-hidden="true" />}
+            onClick={() => setNaming(true)}
+            data-testid="book-note-new"
+          >
+            {t("tts.folders.newNote")}
+          </Button>
+          <Button
+            variant="secondary"
+            className="reader-folders__btn min-h-[44px]"
+            icon={<Paperclip width={16} height={16} aria-hidden="true" />}
+            onClick={() => void addAttachments()}
+            disabled={busy}
+            data-testid="book-attach"
+          >
+            {t("tts.folders.addAttachment")}
+          </Button>
+        </div>
+      )}
+    </section>
   );
 };
 
