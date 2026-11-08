@@ -1441,9 +1441,10 @@ fn ordner_kennung(pfad: &Path) -> Result<Kennung, String> {
     })
 }
 
-/// Abdruck einer gewöhnlichen Datei: Dateisystem-Kennung, Größe und Änderungszeit. Gleicher
-/// Abdruck vor und nach einem Schritt heißt: dieselbe, unveränderte Datei (bis auf ein Fenster
-/// von einem Systemaufruf).
+/// Abdruck einer gewöhnlichen Datei: Dateisystem-Kennung (dieselbe `kennung_roh` wie beim Löschen
+/// von Sicherungen: Unix dev/ino, Windows NTFS/ReFS über FILE_ID_INFO), Größe und Änderungszeit.
+/// Gleicher Abdruck vor und nach einem Schritt heißt: Kennung, Größe und Zeit gleich; Änderungen,
+/// die keines davon berühren, oder ein Tausch im Fenster von einem Systemaufruf bleiben unerkannt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct DateiAbdruck {
     kennung: Kennung,

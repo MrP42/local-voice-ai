@@ -884,8 +884,19 @@ impl ProjektDienst {
             let h = self.herkunft().await?;
             self.abgleich_ohne_sperre(&h).await?;
         }
-        self.protokoll("datei_entfernt", suite_id, "ok", "papierkorb");
-        Ok(true)
+        // `false`: nicht sicher entfernt (abgelehnt, Datei liegt weiter im Projektordner und wird
+        // als gefunden angeboten).
+        let sicher = !dateien::liste(&ablage, suite_id)
+            .map_err(quelle)?
+            .get(datei_id)
+            .is_some_and(|d| d.nicht_sicher);
+        self.protokoll(
+            "datei_entfernt",
+            suite_id,
+            "ok",
+            if sicher { "papierkorb" } else { "abgelehnt" },
+        );
+        Ok(sicher)
     }
 
     /// Dateien im Projektordner, die der Wiederanlauf ohne Journaleintrag fand.

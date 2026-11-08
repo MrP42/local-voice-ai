@@ -85,6 +85,11 @@ pub struct Datei {
     pub entfernen_sha: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entfernen_groesse: Option<u64>,
+    /// Entfernen abgelehnt: die Datei konnte nicht sicher in den Papierkorb gelegt werden (andere
+    /// Datei, verändert, keine verlässliche Kennung). Sie liegt weiter im Projektordner und wird als
+    /// `gefunden` angeboten.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub nicht_sicher: bool,
     pub ms: i64,
 }
 
@@ -299,6 +304,7 @@ pub fn neu_aufbauen(ablage: &Path, projekt: &str) -> Result<u32, String> {
                 papierkorb: None,
                 entfernen_sha: None,
                 entfernen_groesse: None,
+                nicht_sicher: false,
                 ms: jetzt_ms(),
             },
         );
@@ -454,6 +460,7 @@ pub fn hinzufuegen(
             papierkorb: None,
             entfernen_sha: None,
             entfernen_groesse: None,
+            nicht_sicher: false,
             ms: jetzt_ms(),
         },
     );
@@ -557,33 +564,53 @@ fn pruefname(id: &str) -> String {
 /// ihr Ziel im Papierkorb; andere Identität → zurück nach `dateien/` (unter ihrem Namen oder,
 /// falls belegt, einem freien), wo der Wiederanlauf sie als `gefunden` anbietet. Liefert, ob die
 /// vermerkte Datei abgelegt wurde.
-fn pruefen_und_ablegen(dir: &Path, d: &Datei, id: &str, ziel: &str) -> Result<bool, String> {
+fn pruefen_und_ablegen(
+    dir: &Path,
+    d: &Datei,
+    id: &str,
+    ziel: &str,
+) -> Result<Option<String>, String> {
     let korb = dir.join(PAPIERKORB);
     let privat = korb.join(pruefname(id));
     // Abdruck (Kennung, Größe, Zeit) vor dem Hashen merken und unmittelbar vor dem Verschieben neu
     // messen: abweichend oder nicht messbar → nicht ablegen, sondern zurücklegen.
-    let vor = crate::library_layout::datei_abdruck(&privat);
+    let vor = abdruck(&privat);
     let gleich = vor.is_ok() && gleiche_datei(&privat, &d.entfernen_sha, d.entfernen_groesse);
     #[cfg(test)]
     nach_pruefung(&privat);
-    let unveraendert = gleich
+    let gleich_geblieben = gleich
         && vor
             .as_ref()
-            .is_ok_and(|v| crate::library_layout::datei_abdruck(&privat).as_ref() == Ok(v));
-    if unveraendert {
+            .is_ok_and(|v| abdruck(&privat).as_ref() == Ok(v));
+    if gleich_geblieben {
         verschieben_ohne_ersetzen(&privat, &korb.join(ziel))
             .map_err(|e| format!("Datei nicht in den Papierkorb verschiebbar: {e}"))?;
-        return Ok(true);
+        return Ok(None);
     }
-    // Nicht die vermerkte oder eine veränderte Datei: zurück, nie ersetzen.
+    // Nicht die vermerkte, eine veränderte oder eine nicht sicher kennbare Datei: zurück, nie
+    // ersetzen. Das ist eine abgeschlossene Ablehnung; der Aufrufer bietet sie als `gefunden` an.
     let ordner = dir.join(DATEIEN);
-    if verschieben_ohne_ersetzen(&privat, &ordner.join(&d.name)).is_err() {
-        let frei = crate::library_layout::freier_name(&ordner, &d.name)?;
-        verschieben_ohne_ersetzen(&privat, &ordner.join(frei))
-            .map_err(|e| format!("Datei nicht zurücklegbar: {e}"))?;
+    if verschieben_ohne_ersetzen(&privat, &ordner.join(&d.name)).is_ok() {
+        return Ok(Some(d.name.clone()));
     }
-    // Ohne messbare Kennung (Laufwerk ohne verlässliche Datei-Kennung) bleibt das Entfernen offen.
-    vor.map(|_| false)
+    let frei = crate::library_layout::freier_name(&ordner, &d.name)?;
+    verschieben_ohne_ersetzen(&privat, &ordner.join(&frei))
+        .map_err(|e| format!("Datei nicht zurücklegbar: {e}"))?;
+    Ok(Some(frei))
+}
+
+/// Abdruck (Kennung, Größe, Zeit) einer Datei; im Test lässt sich eine fehlende Kennung erzwingen.
+fn abdruck(p: &Path) -> Result<crate::library_layout::DateiAbdruck, String> {
+    #[cfg(test)]
+    if KENNUNG_FEHLT.with(|k| k.get()) {
+        return Err("Keine verlässliche Datei-Kennung (Test).".into());
+    }
+    crate::library_layout::datei_abdruck(p)
+}
+
+#[cfg(test)]
+thread_local! {
+    static KENNUNG_FEHLT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 #[cfg(test)]
@@ -635,23 +662,56 @@ fn entfernen_fortsetzen(ablage: &Path, projekt: &str, id: &str) -> Result<Option
         journal_sichern(&dir, &j)?;
     }
     let z = ziel.clone().ok_or("Kein Ziel im Papierkorb.")?;
-    let abgelegt = if erledigt {
-        true
+    // (abgelegt, zurückgelegt unter Name)
+    let (abgelegt, zurueck) = if erledigt {
+        (true, None)
     } else if fs::symlink_metadata(&privat).is_ok() {
         // Abbruch nach dem Verschieben unter den Prüfnamen.
-        pruefen_und_ablegen(&dir, &d, id, &z)?
+        let r = pruefen_und_ablegen(&dir, &d, id, &z)?;
+        (r.is_none(), r)
     } else if fs::symlink_metadata(&quelle).is_ok_and(|m| m.is_file()) {
         // Erst unter den privaten Namen, dort prüfen: was nach einer Prüfung unter dem Quellnamen
         // auftaucht, wird so nie abgelegt, sondern zurückgelegt.
         verschieben_ohne_ersetzen(&quelle, &privat)
             .map_err(|e| format!("Datei nicht in den Papierkorb verschiebbar: {e}"))?;
-        pruefen_und_ablegen(&dir, &d, id, &z)?
+        let r = pruefen_und_ablegen(&dir, &d, id, &z)?;
+        (r.is_none(), r)
     } else {
-        false
+        (false, None)
     };
+    // Zurückgelegt: gleich als `gefunden` anbieten (nie still aufnehmen).
+    if let Some(name) = &zurueck {
+        let schluessel = crate::library_layout::vergleichsschluessel(name);
+        let bekannt = j.dateien.iter().any(|(k, x)| {
+            k != id
+                && x.status != Status::Papierkorb
+                && crate::library_layout::vergleichsschluessel(&x.name) == schluessel
+        });
+        let groesse = fs::symlink_metadata(dir.join(DATEIEN).join(name))
+            .map(|m| m.len())
+            .unwrap_or_default();
+        if !bekannt {
+            j.dateien.insert(
+                neue_id(),
+                Datei {
+                    name: name.clone(),
+                    status: Status::Gefunden,
+                    sha256: None,
+                    groesse,
+                    eintrag: None,
+                    papierkorb: None,
+                    entfernen_sha: None,
+                    entfernen_groesse: None,
+                    nicht_sicher: false,
+                    ms: jetzt_ms(),
+                },
+            );
+        }
+    }
     let x = j.dateien.get_mut(id).ok_or("Datei nicht gefunden.")?;
     // Wurde die vermerkte Datei nicht gefunden, ist was jetzt unter dem Namen liegt eine andere
     // Datei; sie bleibt unberührt und wird als `gefunden` angeboten.
+    x.nicht_sicher = zurueck.is_some();
     x.papierkorb = if abgelegt { ziel } else { None };
     x.status = Status::Papierkorb;
     x.ms = jetzt_ms();
@@ -681,9 +741,11 @@ pub fn wiederanlauf(ablage: &Path, projekt: &str) -> Result<Wiederanlauf, String
         .filter(|(_, d)| d.status == Status::Entfernen)
         .map(|(id, _)| id)
         .collect();
+    // Ein einzelnes Entfernen, das gerade nicht weiterkommt, hält die Fundsuche nicht auf.
     for id in offen {
-        entfernen_fortsetzen(ablage, projekt, &id)?;
-        w.entfernt += 1;
+        if entfernen_fortsetzen(ablage, projekt, &id).is_ok() {
+            w.entfernt += 1;
+        }
     }
     let _g = sperren();
     let dir = projekt_dir(ablage, projekt)?;
@@ -728,6 +790,7 @@ pub fn wiederanlauf(ablage: &Path, projekt: &str) -> Result<Wiederanlauf, String
                     papierkorb: None,
                     entfernen_sha: None,
                     entfernen_groesse: None,
+                    nicht_sicher: false,
                     ms: jetzt_ms(),
                 },
             );
@@ -1090,6 +1153,35 @@ mod tests {
             .unwrap()
             .values()
             .any(|x| x.name == name && x.status == Status::Gefunden));
+        fs::remove_dir_all(&a).ok();
+    }
+
+    #[test]
+    fn ohne_kennung_wird_abgelehnt_abgeschlossen_und_angeboten() {
+        let a = tmp();
+        let (id, name) = hinzufuegen(&a, P, &quelle(&a, "a.txt", "alt")).unwrap();
+        KENNUNG_FEHLT.with(|k| k.set(true));
+        let r = entfernen_beginnen(&a, P, &id);
+        KENNUNG_FEHLT.with(|k| k.set(false));
+        r.unwrap();
+        let l = liste(&a, P).unwrap();
+        let d = &l[&id];
+        assert_eq!(d.status, Status::Papierkorb, "Journal abgeschlossen");
+        assert!(d.nicht_sicher);
+        assert!(d.papierkorb.is_none());
+        let dir = a.join(P);
+        assert_eq!(
+            fs::read_to_string(dir.join(DATEIEN).join(&name)).unwrap(),
+            "alt"
+        );
+        assert!(
+            l.values()
+                .any(|x| x.name == name && x.status == Status::Gefunden),
+            "sofort als gefunden angeboten"
+        );
+        // Wiederanlauf: nichts offen, nichts doppelt.
+        let w = wiederanlauf(&a, P).unwrap();
+        assert_eq!((w.entfernt, w.gefunden), (0, 0));
         fs::remove_dir_all(&a).ok();
     }
 

@@ -182,7 +182,8 @@ pub async fn projekt_dateien_hinzufuegen(
         .await?)
 }
 
-/// Legt die Kopie in den Papierkorb des Projekts und nimmt sie aus dem Projekt.
+/// Legt die Kopie in den Papierkorb des Projekts und nimmt sie aus dem Projekt. `false`: konnte nicht
+/// sicher entfernt werden; die Datei liegt weiter im Projektordner und wird zum Aufnehmen angeboten.
 #[tauri::command]
 #[specta::specta]
 pub async fn projekt_datei_entfernen(

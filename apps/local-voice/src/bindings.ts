@@ -960,7 +960,8 @@ async projektDateienHinzufuegen(suiteId: string, paths: string[]) : Promise<Resu
 }
 },
 /**
- * Legt die Kopie in den Papierkorb des Projekts und nimmt sie aus dem Projekt.
+ * Legt die Kopie in den Papierkorb des Projekts und nimmt sie aus dem Projekt. `false`: konnte nicht
+ * sicher entfernt werden; die Datei liegt weiter im Projektordner und wird zum Aufnehmen angeboten.
  */
 async projektDateiEntfernen(suiteId: string, dateiId: string) : Promise<Result<boolean, string>> {
     try {
