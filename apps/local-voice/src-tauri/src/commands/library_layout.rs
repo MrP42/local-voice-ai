@@ -447,13 +447,8 @@ pub fn library_book_files(app: AppHandle, id: String) -> Result<Vec<LibraryBookF
 pub fn library_book_reveal(app: AppHandle, id: String) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;
     let data = pages::data_root(&app)?;
-    if !library_layout::gueltiges_buch(&id) {
-        return Err(format!("Ungültige Buch-Kennung: {id}"));
-    }
-    let dir = data.join(library_layout::BIBLIOTHEK).join(&id);
-    if !dir.join(library_layout::BUCH_JSON).is_file() {
-        return Err("Das Buch ist nicht in der Bibliothek.".into());
-    }
+    // Dieselbe Prüfung wie die Dateiliste: keine Verknüpfung in der Kette.
+    let dir = library_layout::buch_ordner(&data, &id)?;
     app.opener()
         .open_path(dir.to_string_lossy().to_string(), None::<String>)
         .map_err(|e| format!("Buch-Ordner nicht zu öffnen: {e}"))

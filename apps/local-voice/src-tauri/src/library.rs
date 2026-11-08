@@ -1288,6 +1288,7 @@ fn restore_in(root: &Path, ids: &[String]) -> Result<Vec<LibraryBook>, String> {
     let mut restored = Vec::new();
     let mut blocked = Vec::new();
     let mut failed = None;
+    let mut gone = Vec::new();
     for id in ids {
         let Ok(from) = trash_dir(root, id) else {
             failed = Some(format!("Ungültige Kennung: {id}"));
@@ -1299,6 +1300,18 @@ fn restore_in(root: &Path, ids: &[String]) -> Result<Vec<LibraryBook>, String> {
         let to = book_dir(root, id)?;
         if to.exists() {
             blocked.push(id.clone());
+            continue;
+        }
+        // Unterbrochene endgültige Löschung: erst abschließen, nie ein halb
+        // gelöschtes Buch zurückholen.
+        if crate::library_layout::loeschung_offen(&from) {
+            if let Some(data) = root.parent() {
+                if let Err(e) = crate::library_layout::buch_endgueltig_loeschen(data, &from) {
+                    failed = Some(format!("Löschen von {id} nicht abschließbar: {e}"));
+                    break;
+                }
+            }
+            gone.push(id.clone());
             continue;
         }
         if let Err(e) = std::fs::rename(&from, &to) {
@@ -1318,6 +1331,13 @@ fn restore_in(root: &Path, ids: &[String]) -> Result<Vec<LibraryBook>, String> {
     }
     if !blocked.is_empty() {
         return Err(format!("Schon wieder vorhanden: {}", blocked.join(", ")));
+    }
+    if !gone.is_empty() {
+        return Err(format!(
+            "Endgültiges Löschen war unterbrochen und ist jetzt abgeschlossen; nicht \
+             wiederherstellbar: {}",
+            gone.join(", ")
+        ));
     }
     Ok(restored)
 }
@@ -1341,10 +1361,8 @@ fn purge_in(root: &Path, ids: Option<&[String]>) -> Result<(), String> {
     match ids {
         Some(ids) => {
             for id in ids {
-                let dir = trash_dir(root, id)?;
-                if dir.exists() {
-                    endgueltig(&dir)?;
-                }
+                // Auch ohne Ordner: eine unterbrochene Löschung (Absicht) abschließen.
+                endgueltig(&trash_dir(root, id)?)?;
             }
         }
         None => {
@@ -3080,6 +3098,26 @@ mod tests {
         purge_in(&root, Some(&["book_1".into()])).unwrap();
         assert!(!root.join(".papierkorb/book_1").exists());
         assert!(trash_in(&root, &["../x".into()]).is_err());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn unterbrochenes_loeschen_wird_abgeschlossen_statt_wiederhergestellt() {
+        let root = scratch("trash-absicht");
+        audio_book(&root, "book_1", "A", legacy("hoerbuch.mp3", None, None));
+        trash_in(&root, &["book_1".into()]).unwrap();
+        let absicht = root.join(".papierkorb/.loeschabsicht-book_1.json");
+        let roh = r#"{"buch":"book_1","seiten":[]}"#;
+        std::fs::write(&absicht, roh).unwrap();
+        // Wiederherstellen holt kein halb gelöschtes Buch zurück, sondern schließt ab.
+        assert!(restore_in(&root, &["book_1".into()]).is_err());
+        assert!(!root.join("book_1").exists());
+        assert!(!root.join(".papierkorb/book_1").exists());
+        assert!(!absicht.exists());
+        // Ein wiederholter Purge ohne Ordner schließt eine liegengebliebene Absicht ab.
+        std::fs::write(&absicht, roh).unwrap();
+        purge_in(&root, Some(&["book_1".into()])).unwrap();
+        assert!(!absicht.exists());
         let _ = std::fs::remove_dir_all(&root);
     }
 

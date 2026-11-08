@@ -1151,7 +1151,16 @@ fn apply_book_on(
     // des Buchs sind damit wieder auffindbar. Danach wird wie gewohnt angeglichen.
     if !dir.exists() {
         let korb = root.join(TRASH).join(id);
-        if korb.join("buch.json").is_file() {
+        if crate::library_layout::loeschung_offen(&korb) {
+            // Endgültige Löschung war unterbrochen: erst abschließen, nichts
+            // Halbgelöschtes zurückholen. Danach entsteht das Buch neu vom Server.
+            let _pages = crate::commands::pages::lock();
+            if let Some(data) = root.parent() {
+                let r = crate::library_layout::buch_endgueltig_loeschen(data, &korb);
+                crate::commands::library_layout::fundortkarte_neu(data);
+                r.map_err(|e| format!("Unterbrochenes Löschen nicht abschließbar: {e}"))?;
+            }
+        } else if korb.join("buch.json").is_file() {
             // Umbenennen und Fundortkarte gemeinsam unter Bibliotheks- (oben genommen)
             // und Seitensperre: kein Leser sieht die Fassungen
             // zurück, aber die Karte noch alt. Die Karte wird auch nach einem Fehler neu.

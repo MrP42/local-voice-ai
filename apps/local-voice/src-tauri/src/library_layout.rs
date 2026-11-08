@@ -274,8 +274,12 @@ pub fn buch_seiten(data: &Path, buch: &str) -> Vec<String> {
     if !gueltiges_buch(buch) {
         return Vec::new();
     }
-    let pfad = data.join(BIBLIOTHEK).join(buch).join(BUCH_JSON);
-    let Ok(roh) = fs::read_to_string(&pfad) else {
+    seiten_laut_buch_json(&data.join(BIBLIOTHEK).join(buch).join(BUCH_JSON))
+}
+
+/// Seiten laut einer `buch.json` (auch im Papierkorb); unlesbar → keine.
+fn seiten_laut_buch_json(pfad: &Path) -> Vec<String> {
+    let Ok(roh) = fs::read_to_string(pfad) else {
         return Vec::new();
     };
     let Ok(wert) = serde_json::from_str::<serde_json::Value>(&roh) else {
@@ -3715,7 +3719,12 @@ fn absicht_laden(pfad: &Path, buch: &str) -> Result<Option<Loeschabsicht>, Strin
 /// dem gelöschten Buch gehört (Indexfeld `buch` leer oder gleich `buch`) und laut
 /// Fundortkarte nirgends sonst existiert (anderes Buch, `projects/`). Ohne Index nichts
 /// zu tun. Liefert die Zahl der ausgetragenen Einträge. Der Aufrufer hält die Seitensperre.
-fn seiten_austragen(data: &Path, buch: &str, seiten: &[String]) -> Result<usize, String> {
+fn seiten_austragen(
+    data: &Path,
+    korb: &Path,
+    buch: &str,
+    seiten: &[String],
+) -> Result<usize, String> {
     if seiten.is_empty() {
         return Ok(0);
     }
@@ -3723,12 +3732,26 @@ fn seiten_austragen(data: &Path, buch: &str, seiten: &[String]) -> Result<usize,
         return Ok(0);
     };
     let karte = Fundortkarte::aufbauen(data);
+    // Die Fundortkarte kennt nur die Bibliothek; andere Bücher im Papierkorb zählen
+    // ebenfalls (ihre Fassungsordner und was ihr `buch.json` nennt).
+    let andere_im_korb: Vec<(PathBuf, Vec<String>)> = unterordner(korb)
+        .into_iter()
+        .filter(|b| gueltiges_buch(b) && b != buch)
+        .map(|b| {
+            let dir = korb.join(&b);
+            let genannt = seiten_laut_buch_json(&dir.join(BUCH_JSON));
+            (dir, genannt)
+        })
+        .collect();
     let anderswo = |seite: &str| {
         vorhanden(&absolut(data, &rel_von(seite)))
             || karte
                 .orte(seite)
                 .iter()
                 .any(|o| vorhanden(&absolut(data, o)))
+            || andere_im_korb.iter().any(|(dir, genannt)| {
+                vorhanden(&dir.join(FASSUNGEN).join(seite)) || genannt.iter().any(|g| g == seite)
+            })
     };
     let weg: BTreeSet<&str> = seiten
         .iter()
@@ -3788,6 +3811,48 @@ fn buch_ordner_entfernen(buch_dir: &Path) -> Result<(), String> {
     fs::remove_dir(buch_dir).map_err(|e| format!("{} nicht löschbar: {e}", buch_dir.display()))
 }
 
+/// Ort einer endgültigen Löschung prüfen: `<bibliothek>/.papierkorb/<buch>` unter dem
+/// Datenordner, und kein Glied der Kette (Bibliothek, Papierkorb, Buch, Absicht) ist eine
+/// Verknüpfung (Junction, Symlink). Liefert die Buch-Kennung.
+fn loeschort_pruefen(data: &Path, buch_dir: &Path) -> Result<String, String> {
+    let kein = || {
+        format!(
+            "{} ist kein Buch-Ordner im Papierkorb; nichts gelöscht.",
+            buch_dir.display()
+        )
+    };
+    let buch = buch_dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .filter(|b| gueltiges_buch(b))
+        .ok_or_else(kein)?
+        .to_string();
+    let im_korb = buch_dir
+        .parent()
+        .and_then(|k| k.file_name())
+        .is_some_and(|n| n == BIBLIOTHEK_PAPIERKORB);
+    if !im_korb || !buch_dir.starts_with(data) || buch_dir == data {
+        return Err(kein());
+    }
+    let rel = relativ(data, buch_dir);
+    if rel.split('/').any(|t| t == ".." || t == ".") {
+        return Err(kein());
+    }
+    ohne_umweg(data, &rel)?;
+    ohne_umweg(data, &relativ(data, &absicht_pfad(buch_dir, &buch)))?;
+    Ok(buch)
+}
+
+/// Steht für diesen Papierkorb-Eintrag eine endgültige Löschung aus (unterbrochen)?
+/// Dann darf er weder wiederhergestellt noch vom Sync zurückgeholt werden; erst die
+/// Löschung abschließen ([`buch_endgueltig_loeschen`]).
+pub fn loeschung_offen(buch_dir: &Path) -> bool {
+    buch_dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|b| vorhanden(&absicht_pfad(buch_dir, b)))
+}
+
 /// Ein Buch endgültig löschen (aus dem Papierkorb), samt seinen Fassungen:
 /// 1. Löschabsicht mit den Seiten-Kennungen dauerhaft schreiben,
 /// 2. den Ordner entfernen (`buch.json` zuletzt),
@@ -3798,17 +3863,7 @@ fn buch_ordner_entfernen(buch_dir: &Path) -> Result<(), String> {
 /// [`loeschabsichten_abschliessen`] beim Start) setzt fort. Der Aufrufer hält
 /// Bibliotheks- und Seitensperre. Liefert die Zahl der ausgetragenen Seiten.
 pub fn buch_endgueltig_loeschen(data: &Path, buch_dir: &Path) -> Result<usize, String> {
-    let buch = buch_dir
-        .file_name()
-        .and_then(|n| n.to_str())
-        .filter(|b| gueltiges_buch(b))
-        .ok_or_else(|| {
-            format!(
-                "{} ist kein Buch-Ordner; nichts gelöscht.",
-                buch_dir.display()
-            )
-        })?
-        .to_string();
+    let buch = loeschort_pruefen(data, buch_dir)?;
     let absicht_datei = absicht_pfad(buch_dir, &buch);
     let mut absicht = absicht_laden(&absicht_datei, &buch)?;
     match fs::symlink_metadata(buch_dir) {
@@ -3830,8 +3885,10 @@ pub fn buch_endgueltig_loeschen(data: &Path, buch_dir: &Path) -> Result<usize, S
             if absicht.as_ref() != Some(&neu) {
                 let bytes = serde_json::to_vec_pretty(&neu).map_err(|e| e.to_string())?;
                 schreibe_atomar(&absicht_datei, &bytes)?;
-                kette_sichern(data, &absicht_datei)?;
             }
+            // Vor jedem ersten oder fortgesetzten Löschen: die Absicht ist dauerhaft
+            // (auch wenn sie schon da war und das Sichern beim letzten Mal scheiterte).
+            kette_sichern(data, &absicht_datei)?;
             absicht = Some(neu);
             buch_ordner_entfernen(buch_dir)
                 .map_err(|e| format!("Buch nicht vollständig gelöscht: {e}"))?;
@@ -3842,7 +3899,8 @@ pub fn buch_endgueltig_loeschen(data: &Path, buch_dir: &Path) -> Result<usize, S
     let Some(absicht) = absicht else {
         return Ok(0);
     };
-    let ausgetragen = seiten_austragen(data, &buch, &absicht.seiten)?;
+    let korb = buch_dir.parent().unwrap_or(buch_dir);
+    let ausgetragen = seiten_austragen(data, korb, &buch, &absicht.seiten)?;
     match fs::remove_file(&absicht_datei) {
         Ok(()) => {}
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
@@ -3982,50 +4040,68 @@ pub struct BuchEintrag {
 const DATEIEN_TIEFE: u32 = 3;
 /// Mehr Einträge in einem Ordner werden zusammengefasst (etwa 35 Hörbuch-Teile).
 const DATEIEN_JE_ORDNER: usize = 12;
+/// Größenrechnung: höchstens so viele Ebenen unter dem Buch-Ordner …
+const DATEIEN_SUMME_TIEFE: u32 = 16;
+/// … und höchstens so viele besuchte Einträge; darüber eine Meldung statt Hängen.
+const DATEIEN_HOECHSTENS: u64 = 50_000;
 
 /// Inhalt eines Buch-Ordners für die Anzeige: Ordner zuerst, dann Dateien, je nach Name.
 /// Versteckte Einträge (Punkt am Anfang) und Verknüpfungen werden nicht gezeigt und nicht
 /// betreten. Ein Weg über eine Verknüpfung oder ein fehlendes Buch ist ein Fehler.
 pub fn buch_dateien(data: &Path, buch: &str) -> Result<Vec<BuchEintrag>, String> {
-    if !gueltiges_buch(buch) {
-        return Err(format!("Ungültige Buch-Kennung: {buch}"));
-    }
-    let rel = format!("{BIBLIOTHEK}/{buch}");
-    ohne_umweg(data, &rel)?;
-    let dir = absolut(data, &rel);
-    if !dir.join(BUCH_JSON).is_file() {
-        return Err("Das Buch ist nicht in der Bibliothek.".into());
-    }
-    fn sichtbar(dir: &Path) -> Vec<(String, fs::Metadata)> {
-        let Ok(eintraege) = fs::read_dir(dir) else {
-            return Vec::new();
-        };
-        let mut liste: Vec<(String, fs::Metadata)> = eintraege
-            .flatten()
-            .filter_map(|e| {
-                let name = e.file_name().to_str()?.to_owned();
-                let meta = fs::symlink_metadata(e.path()).ok()?;
-                (!name.starts_with('.') && !ist_umweg(&meta) && (meta.is_dir() || meta.is_file()))
-                    .then_some((name, meta))
-            })
-            .collect();
+    let dir = buch_ordner(data, buch)?;
+    fn sichtbar(dir: &Path) -> Result<Vec<(String, fs::Metadata)>, String> {
+        let eintraege =
+            fs::read_dir(dir).map_err(|e| format!("{} nicht lesbar: {e}", dir.display()))?;
+        let mut liste = Vec::new();
+        for e in eintraege {
+            let e = e.map_err(|e| format!("{} nicht lesbar: {e}", dir.display()))?;
+            let Some(name) = e.file_name().to_str().map(str::to_owned) else {
+                continue;
+            };
+            let meta = fs::symlink_metadata(e.path())
+                .map_err(|err| format!("{} nicht lesbar: {err}", e.path().display()))?;
+            if !name.starts_with('.') && !ist_umweg(&meta) && (meta.is_dir() || meta.is_file()) {
+                liste.push((name, meta));
+            }
+        }
         liste.sort_by(|a, b| b.1.is_dir().cmp(&a.1.is_dir()).then_with(|| a.0.cmp(&b.0)));
-        liste
+        Ok(liste)
     }
-    fn summe(dir: &Path) -> (u64, u64) {
-        sichtbar(dir)
-            .into_iter()
-            .fold((0, 0), |(bytes, dateien), (name, meta)| {
-                if meta.is_dir() {
-                    let (b, d) = summe(&dir.join(name));
-                    (bytes + b, dateien + d)
-                } else {
-                    (bytes + meta.len(), dateien + 1)
-                }
-            })
+    /// Größe und Dateizahl; begrenzt in Tiefe und Zahl der besuchten Einträge.
+    fn summe(dir: &Path, tiefe: u32, rest: &mut u64) -> Result<(u64, u64), String> {
+        if tiefe > DATEIEN_SUMME_TIEFE {
+            return Err(format!(
+                "Der Buch-Ordner ist zu tief verschachtelt für die Anzeige (über {DATEIEN_SUMME_TIEFE} Ebenen)."
+            ));
+        }
+        let mut bytes = 0;
+        let mut dateien = 0;
+        for (name, meta) in sichtbar(dir)? {
+            *rest = rest.checked_sub(1).ok_or_else(|| {
+                format!(
+                    "Der Buch-Ordner hat zu viele Einträge für die Anzeige (über {DATEIEN_HOECHSTENS})."
+                )
+            })?;
+            if meta.is_dir() {
+                let (b, d) = summe(&dir.join(name), tiefe + 1, rest)?;
+                bytes += b;
+                dateien += d;
+            } else {
+                bytes += meta.len();
+                dateien += 1;
+            }
+        }
+        Ok((bytes, dateien))
     }
-    fn sammeln(dir: &Path, praefix: &str, tiefe: u32, aus: &mut Vec<BuchEintrag>) {
-        for (name, meta) in sichtbar(dir) {
+    fn sammeln(
+        dir: &Path,
+        praefix: &str,
+        tiefe: u32,
+        rest: &mut u64,
+        aus: &mut Vec<BuchEintrag>,
+    ) -> Result<(), String> {
+        for (name, meta) in sichtbar(dir)? {
             let rel = format!("{praefix}{name}");
             if meta.is_file() {
                 aus.push(BuchEintrag {
@@ -4039,9 +4115,9 @@ pub fn buch_dateien(data: &Path, buch: &str) -> Result<Vec<BuchEintrag>, String>
                 continue;
             }
             let pfad = dir.join(&name);
-            let (bytes, dateien) = summe(&pfad);
+            let (bytes, dateien) = summe(&pfad, tiefe + 1, rest)?;
             let zusammengefasst =
-                tiefe + 1 >= DATEIEN_TIEFE || sichtbar(&pfad).len() > DATEIEN_JE_ORDNER;
+                tiefe + 1 >= DATEIEN_TIEFE || sichtbar(&pfad)?.len() > DATEIEN_JE_ORDNER;
             aus.push(BuchEintrag {
                 rel: rel.clone(),
                 tiefe,
@@ -4051,13 +4127,30 @@ pub fn buch_dateien(data: &Path, buch: &str) -> Result<Vec<BuchEintrag>, String>
                 zusammengefasst,
             });
             if !zusammengefasst {
-                sammeln(&pfad, &format!("{rel}/"), tiefe + 1, aus);
+                sammeln(&pfad, &format!("{rel}/"), tiefe + 1, rest, aus)?;
             }
         }
+        Ok(())
     }
     let mut aus = Vec::new();
-    sammeln(&dir, "", 0, &mut aus);
+    let mut rest = DATEIEN_HOECHSTENS;
+    sammeln(&dir, "", 0, &mut rest, &mut aus)?;
     Ok(aus)
+}
+
+/// Buch-Ordner `library/<buch>` für Anzeige und „Im Explorer zeigen“: gültige Kennung,
+/// kein Glied der Kette eine Verknüpfung, `buch.json` vorhanden.
+pub fn buch_ordner(data: &Path, buch: &str) -> Result<PathBuf, String> {
+    if !gueltiges_buch(buch) {
+        return Err(format!("Ungültige Buch-Kennung: {buch}"));
+    }
+    let rel = format!("{BIBLIOTHEK}/{buch}");
+    ohne_umweg(data, &rel)?;
+    let dir = absolut(data, &rel);
+    if !dir.join(BUCH_JSON).is_file() {
+        return Err("Das Buch ist nicht in der Bibliothek.".into());
+    }
+    Ok(dir)
 }
 
 const VERBOTENE_ZEICHEN: [char; 9] = ['/', '\\', ':', '*', '?', '"', '<', '>', '|'];
@@ -5448,6 +5541,66 @@ mod tests {
         // Kein Buch-Ordner: abgelehnt, nichts gelöscht.
         assert!(buch_endgueltig_loeschen(&data, &data.join(PROJEKTE)).is_err());
         assert!(data.join("projects/page_9").is_dir());
+    }
+
+    #[test]
+    fn endgueltig_loeschen_beachtet_andere_buecher_im_papierkorb() {
+        let data = standardlage("kaskade-korb");
+        migrieren(&data, &optionen()).unwrap();
+        let korb = data.join(BIBLIOTHEK).join(BIBLIOTHEK_PAPIERKORB);
+        fs::create_dir_all(&korb).unwrap();
+        fs::rename(data.join("library/book_1"), korb.join("book_1")).unwrap();
+        // book_2 liegt ebenfalls im Papierkorb, hat page_2 als Fassung und nennt page_1.
+        buch_anlegen(&data, "book_2", "page_1", &["page_1"]);
+        fs::rename(data.join("library/book_2"), korb.join("book_2")).unwrap();
+        seite_anlegen(&korb.join("book_2/fassungen/page_2"), "anderes");
+        index_schreiben(
+            &data,
+            &[("page_1", Some("book_1")), ("page_2", Some("book_1"))],
+        );
+        assert!(!loeschung_offen(&korb.join("book_1")));
+        assert_eq!(
+            buch_endgueltig_loeschen(&data, &korb.join("book_1")).unwrap(),
+            0
+        );
+        assert!(korb.join("book_2/fassungen/page_2").is_dir());
+        assert_eq!(
+            index_laden(&data).unwrap().unwrap()["pages"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        // Nur Einträge im Papierkorb sind löschbar.
+        assert!(buch_endgueltig_loeschen(&data, &data.join("library/book_9")).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn endgueltig_loeschen_prueft_die_ganze_kette() {
+        let data = standardlage("kaskade-kette");
+        let fremd = data.parent().unwrap().join("kaskade-kette-fremd");
+        let _ = fs::remove_dir_all(&fremd);
+        fs::create_dir_all(fremd.join("book_1/fassungen/page_1")).unwrap();
+        fs::write(fremd.join("book_1/buch.json"), b"{}").unwrap();
+        // Der Papierkorb selbst ist eine Verknüpfung: nichts gelöscht, nichts gelesen.
+        std::os::unix::fs::symlink(&fremd, data.join(BIBLIOTHEK).join(BIBLIOTHEK_PAPIERKORB))
+            .unwrap();
+        let korb = data.join(BIBLIOTHEK).join(BIBLIOTHEK_PAPIERKORB);
+        assert!(buch_endgueltig_loeschen(&data, &korb.join("book_1")).is_err());
+        assert!(fremd.join("book_1/fassungen/page_1").is_dir());
+        // Ebenso bleibt eine Absicht dort ungelesen.
+        fs::write(fremd.join(".loeschabsicht-book_1.json"), b"{").unwrap();
+        assert!(loeschabsichten_abschliessen(&data)
+            .iter()
+            .all(|r| r.is_err()));
+        assert!(fremd.join("book_1/buch.json").is_file());
+        // Dateiliste und „Im Explorer zeigen“: dieselbe Kettenprüfung.
+        let buecher = data.join("library-umweg");
+        fs::rename(data.join(BIBLIOTHEK), &buecher).unwrap();
+        std::os::unix::fs::symlink(&buecher, data.join(BIBLIOTHEK)).unwrap();
+        assert!(buch_ordner(&data, "book_1").is_err());
+        assert!(buch_dateien(&data, "book_1").is_err());
     }
 
     #[test]
