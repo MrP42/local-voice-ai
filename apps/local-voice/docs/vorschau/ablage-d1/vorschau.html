@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ablage D1</title>
+<style>
+:root{
+  --bg:#f5f5f5;--pane:#fff;--pane2:#fafafa;--line:#e0e0e0;--text:#242424;--muted:#616161;
+  --accent:#0f6cbd;--accent-soft:#ebf3fc;--sel:#e6eef8;--ok:#0e700e;--warn:#a33f06;--warn-soft:#fdf3ec;--chip:#f0f0f0;--off:#8a8a8a;--drop:#cfe4fa;
+}
+:root[data-theme="dark"]{
+  --bg:#1f1f1f;--pane:#292929;--pane2:#2e2e2e;--line:#3d3d3d;--text:#fff;--muted:#c7c7c7;
+  --accent:#479ef5;--accent-soft:#1a2c40;--sel:#243447;--ok:#54b054;--warn:#f1a35c;--warn-soft:#3a2a1c;--chip:#383838;--off:#8f8f8f;--drop:#1d3550;
+}
+*{box-sizing:border-box}
+html,body,#app{margin:0;height:100%;overflow:hidden}
+body{font:14px/1.45 "Segoe UI",system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text)}
+button{font:inherit;color:inherit}
+svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.app{display:grid;grid-template-rows:44px 1fr 32px;height:100%}
+.top{display:flex;align-items:center;gap:12px;padding:0 12px;border-bottom:1px solid var(--line);background:var(--pane);min-width:0}
+.top h1{font-size:15px;font-weight:600;margin:0;white-space:nowrap}
+.top .be{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.main{display:grid;grid-template-columns:56px 1fr;min-height:0}
+.nav{display:flex;flex-direction:column;gap:4px;padding:8px;border-right:1px solid var(--line);background:var(--pane)}
+.nav a{display:grid;place-items:center;width:40px;height:44px;border-radius:6px;color:var(--muted)}
+.nav a.on{background:var(--sel);color:var(--accent);box-shadow:inset 3px 0 0 var(--accent)}
+.status{display:flex;align-items:center;gap:16px;padding:0 12px;font-size:12px;color:var(--muted);border-top:1px solid var(--line);background:var(--pane);white-space:nowrap;overflow:hidden}
+.bar{display:inline-block;width:120px;height:6px;border-radius:3px;background:var(--chip);vertical-align:middle;overflow:hidden}
+.bar i{display:block;height:100%;width:14%;background:var(--accent)}
+.work{display:grid;grid-template-columns:240px minmax(0,1fr) 340px;gap:12px;padding:12px;min-height:0}
+.work.zwei{grid-template-columns:240px minmax(0,1fr)}
+.col>*{flex:none}
+.col{background:var(--pane);border:1px solid var(--line);border-radius:8px;min-height:0;overflow:auto;display:flex;flex-direction:column;position:relative}
+.colhead{display:flex;align-items:center;gap:8px;padding:2px 4px 2px 12px;border-bottom:1px solid var(--line);font-weight:600;min-height:48px;flex-wrap:wrap}
+.colhead .sp{margin-left:auto;display:flex;gap:2px;align-items:center}
+.ib{flex:none;display:grid;place-items:center;width:44px;height:44px;border-radius:6px;color:var(--muted);border:0;background:none;cursor:pointer}
+.btn{display:inline-flex;align-items:center;gap:6px;min-height:44px;padding:0 14px;border-radius:6px;border:1px solid var(--line);background:var(--pane);cursor:pointer;white-space:nowrap}
+.btn.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+:root[data-theme="dark"] .btn.pri{color:#0b1a2a}
+.grp{padding:12px 12px 4px;font-size:12px;font-weight:600;color:var(--muted)}
+.row{display:flex;align-items:center;gap:10px;padding:0 12px;min-height:44px;border-radius:6px;margin:0 6px}
+.row.on{background:var(--sel)}
+.row.on .nm{font-weight:600}
+.row .nm{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .ct{font-size:12px;color:var(--muted)}
+.row.sub{padding-left:30px}.row.sub2{padding-left:48px}
+.crumb{display:flex;align-items:center;gap:4px;min-width:0;font-weight:600}
+.crumb span{white-space:nowrap}
+.crumb .sep{color:var(--muted);font-weight:400}
+.search{display:flex;align-items:center;gap:8px;height:36px;border:1px solid var(--line);border-radius:6px;padding:0 10px;background:var(--pane2);color:var(--muted);min-width:0;flex:1;max-width:420px}
+.search.on{border-color:var(--accent);color:var(--text)}
+table{width:100%;border-collapse:collapse}
+th{font-size:12px;font-weight:600;color:var(--muted);text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:0 10px;height:48px;border-bottom:1px solid var(--line);white-space:nowrap}
+tr.on td{background:var(--sel)}
+td.nm{max-width:0;width:100%;overflow:hidden;text-overflow:ellipsis}
+td .f{display:flex;align-items:center;gap:10px;min-width:0}
+td .f span{overflow:hidden;text-overflow:ellipsis}
+.ic{width:34px;height:28px;border-radius:4px;display:grid;place-items:center;font-size:10px;font-weight:700;color:#fff;flex:none}
+.pdf{background:#c4314b}.doc{background:#185abd}.ppt{background:#c43e1c}.xls{background:#107c41}.md{background:#5c5c5c}.dir{background:none;color:var(--accent)}.eml{background:#0f6cbd}.img{background:#8764b8}
+.mut{color:var(--muted);font-size:12px}
+.chip{display:inline-flex;align-items:center;gap:4px;height:24px;padding:0 8px;border-radius:12px;background:var(--chip);font-size:12px;color:var(--muted);white-space:nowrap}
+.chip.ki{background:var(--accent-soft);color:var(--accent)}
+.chip.warn{background:var(--warn-soft);color:var(--warn)}
+.chip.ok{color:var(--ok)}
+.sync svg{width:16px;height:16px}
+.sec{padding:12px 16px;border-bottom:1px solid var(--line)}
+.sec h3{margin:0 0 8px;font-size:13px}
+.prev{margin:12px 16px;border:1px solid var(--line);border-radius:6px;background:var(--pane2);padding:16px;font-size:12px;line-height:1.55;color:var(--muted);height:220px;overflow:hidden}
+.prev b{color:var(--text)}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-size:13px}
+.kv span:nth-child(odd){color:var(--muted)}
+.sw{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:44px}
+.tg{width:40px;height:20px;border-radius:10px;border:1px solid var(--muted);position:relative;flex:none}
+.tg::after{content:"";position:absolute;width:12px;height:12px;border-radius:50%;background:var(--muted);top:3px;left:3px}
+.tg.on{background:var(--accent);border-color:var(--accent)}
+.tg.on::after{left:23px;background:#fff}
+.sel{display:flex;align-items:center;justify-content:space-between;min-height:44px;border:1px solid var(--line);border-radius:6px;padding:0 10px;background:var(--pane2)}
+.note{margin:12px 16px;padding:10px 12px;border-radius:6px;background:var(--accent-soft);color:var(--text);font-size:12px}
+.note.w{background:var(--warn-soft)}
+.drop{position:absolute;inset:56px 8px 8px;border:2px dashed var(--accent);border-radius:8px;background:color-mix(in srgb,var(--drop) 85%,transparent);display:grid;place-items:center;text-align:center;font-weight:600;color:var(--accent)}
+.up{padding:8px 16px}
+.up .l{display:flex;justify-content:space-between;font-size:13px;margin:8px 0 4px;gap:8px}
+.up .l span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pb{height:4px;border-radius:2px;background:var(--chip);overflow:hidden}.pb i{display:block;height:100%;background:var(--accent)}
+.hit{padding:12px 16px;border-bottom:1px solid var(--line)}
+.hit .t{display:flex;align-items:center;gap:8px;font-weight:600;min-height:28px}
+.hit p{margin:4px 0 0;color:var(--muted);font-size:13px}
+.hit mark{background:var(--accent-soft);color:var(--text);border-radius:2px;padding:0 1px}
+.col>.empty{flex:1 1 auto}
+.empty{flex:1;display:grid;place-items:center;text-align:center;color:var(--muted);padding:24px}
+.empty .big{font-size:18px;color:var(--text);font-weight:600;margin:12px 0 4px}
+.sheet{display:none}
+.tabs{display:flex;gap:4px;padding:0 12px;border-bottom:1px solid var(--line)}
+.tabs a{min-height:44px;display:flex;align-items:center;padding:0 10px;color:var(--muted);border-bottom:2px solid transparent}
+.tabs a.on{color:var(--text);border-color:var(--accent);font-weight:600}
+.dlg{position:fixed;inset:0;background:rgba(0,0,0,.35);display:grid;place-items:center;padding:16px;z-index:5}
+.dlg .box{background:var(--pane);border-radius:8px;max-width:480px;width:100%;box-shadow:0 8px 32px rgba(0,0,0,.3)}
+.dlg h2{font-size:16px;margin:0;padding:16px 16px 4px}
+.dlg .ft{display:flex;justify-content:flex-end;gap:8px;padding:12px 16px}
+/* Breiten */
+@media (max-width:1279px){.work{grid-template-columns:200px minmax(0,1fr) 300px}}
+@media (max-width:1023px){.work,.work.zwei{grid-template-columns:minmax(0,1fr)}.tree,.side{display:none}.sheet{display:block}.c-size{display:none}}
+@media (max-width:620px){
+  .main{grid-template-columns:1fr}.nav{display:none}.work{padding:0;gap:0}.col{border-radius:0;border-left:0;border-right:0}
+  .c-date,.c-class{display:none}.top .be{display:none}.hide-s{display:none}.search{max-width:none}
+  .status .bar{width:64px}
+}
+@media (min-width:2000px){.work{grid-template-columns:300px minmax(0,1fr) 440px}.prev{height:420px}}
+.sheet .col{position:fixed;left:0;right:0;bottom:0;max-height:62%;border-radius:12px 12px 0 0;box-shadow:0 -8px 24px rgba(0,0,0,.25);z-index:4}
+.grip{width:36px;height:4px;border-radius:2px;background:var(--line);margin:8px auto}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+const P=new URLSearchParams(location.search);const S=P.get('s')||'liste';
+document.documentElement.dataset.theme=P.get('t')==='dunkel'?'dark':'light';
+const I={
+ home:'<svg viewBox="0 0 24 24"><path d="M4 11l8-7 8 7v9H4z"/></svg>',
+ lib:'<svg viewBox="0 0 24 24"><path d="M5 4h4v16H5zM10 4h4v16h-4zM15 5l3.5-1 3 15-3.5 1z"/></svg>',
+ abl:'<svg viewBox="0 0 24 24"><path d="M3 7h6l2 2h10v10H3z"/><path d="M14 15a2.5 2.5 0 0 1 .5-5 3 3 0 0 1 5.5 1.5 2 2 0 0 1 0 3.5z"/></svg>',
+ mic:'<svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
+ proj:'<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/></svg>',
+ set:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2"/></svg>',
+ dir:'<svg viewBox="0 0 24 24"><path d="M3 6h6l2 2h10v11H3z"/></svg>',
+ up:'<svg viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5M4 20h16"/></svg>',
+ plus:'<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
+ srch:'<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4-4"/></svg>',
+ list:'<svg viewBox="0 0 24 24"><path d="M8 6h12M8 12h12M8 18h12M4 6h0M4 12h0M4 18h0"/></svg>',
+ more:'<svg viewBox="0 0 24 24"><circle cx="6" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="18" cy="12" r="1"/></svg>',
+ cloud:'<svg viewBox="0 0 24 24"><path d="M7 18a4 4 0 0 1-.5-8 6 6 0 0 1 11.5 2 3 3 0 0 1 0 6z"/></svg>',
+ ok:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8 12l3 3 5-6"/></svg>',
+ arr:'<svg viewBox="0 0 24 24"><path d="M12 5v14M6 13l6 6 6-6"/></svg>',
+ warn:'<svg viewBox="0 0 24 24"><path d="M12 3l10 18H2z"/><path d="M12 10v4M12 17v0"/></svg>',
+ dev:'<svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="12" rx="1"/><path d="M8 21h8"/></svg>',
+ ki:'<svg viewBox="0 0 24 24"><path d="M12 3l2 5 5 2-5 2-2 5-2-5-5-2 5-2z"/></svg>',
+ shield:'<svg viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 5-4 8-8 9-4-1-8-4-8-9V6z"/></svg>',
+ trash:'<svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg>',
+ x:'<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+ back:'<svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg>',
+ link:'<svg viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 6 0l3-3a4 4 0 0 0-6-6l-1 1M14 10a4 4 0 0 0-6 0l-3 3a4 4 0 0 0 6 6l1-1"/></svg>'
+};
+const F=[
+ ['dir','Angebote','','—','3 Dateien','internal','ok',''],
+ ['pdf','Rahmenvertrag Wartung 2026.pdf','PDF','Gestern 16:42','812 KB','confidential','ok','ki'],
+ ['doc','Leistungsbeschreibung v3.docx','DOCX','Mo. 09:10','214 KB','confidential','arr','ki'],
+ ['xls','Kostenaufstellung.xlsx','XLSX','02.11.','48 KB','confidential','ok','ki'],
+ ['ppt','Lenkungskreis November.pptx','PPTX','31.10.','4,1 MB','internal','cloud',''],
+ ['eml','AW Laufzeitverlängerung.eml','EML','28.10.','36 KB','confidential','ok','ki'],
+ ['md','Gesprächsnotiz example.org.md','MD','27.10.','3 KB','internal','dev',''],
+ ['img','Whiteboard Workshop.jpg','JPG','20.10.','2,3 MB','internal','ok','kt']
+];
+const syncI={ok:['ok','Synchronisiert'],arr:['arr','Wird hochgeladen'],cloud:['cloud','Nur in der Cloud'],dev:['dev','Nur dieses Gerät'],warn:['warn','Konflikt']};
+function nav(){return `<nav class="nav" aria-label="Bereiche"><a href="#" title="Start">${I.home}</a><a href="#" title="Aufnahmen">${I.mic}</a><a href="#" title="Bibliothek">${I.lib}</a><a class="on" href="#" title="Ablage" aria-current="page">${I.abl}</a><a href="#" title="Projekte">${I.proj}</a><a href="#" title="Einstellungen" style="margin-top:auto">${I.set}</a></nav>`}
+function tree(sel){return `<section class="col tree" aria-label="Ordner"><div class="colhead">Ablage<div class="sp"><button class="ib" title="Neuer Ordner">${I.plus}</button></div></div>
+<div class="grp">Meine Ablage</div>
+<div class="row"><span>${I.dir}</span><span class="nm">Allgemein</span><span class="ct">42</span></div>
+<div class="row ${sel==='v'?'on':''}"><span>${I.dir}</span><span class="nm">Verträge</span><span title="Für KI freigegeben" style="color:var(--accent)">${I.ki}</span></div>
+<div class="row sub ${sel==='w'?'on':''}"><span>${I.dir}</span><span class="nm">Wartung IT</span><span class="ct">8</span></div>
+<div class="row sub"><span>${I.dir}</span><span class="nm">Miete</span><span class="ct">5</span></div>
+<div class="row"><span>${I.dir}</span><span class="nm">Steuer 2026</span><span title="Nur dieses Gerät" class="ct">${I.dev}</span></div>
+<div class="row"><span>${I.dir}</span><span class="nm">KI-Entwürfe</span><span class="ct">3</span></div>
+<div class="grp">Verknüpfte Ordner (nur lesen)</div>
+<div class="row"><span>${I.link}</span><span class="nm">OneDrive – Dokumente</span><span class="ct">1 204</span></div>
+<div class="grp">Weitere</div>
+<div class="row ${sel==='p'?'on':''}"><span>${I.trash}</span><span class="nm">Papierkorb</span><span class="ct">4</span></div>
+</section>`}
+function head(extra){return `<div class="colhead"><div class="crumb"><button class="ib hide-s" title="Zurück">${I.back}</button><span class="hide-s">Verträge</span><span class="sep hide-s">›</span><span>Wartung IT</span></div>
+<div class="sp">${extra||''}<button class="btn pri" title="Dateien hochladen">${I.up}<span class="hide-s">Hochladen</span></button><button class="ib" title="Ansicht">${I.list}</button><button class="ib" title="Weitere">${I.more}</button></div></div>`}
+function rows(selIdx,conf){return `<table><thead><tr><th>Name</th><th class="c-date">Geändert</th><th class="c-size">Größe</th><th class="c-class">KI / Klasse</th><th title="Sync">Sync</th></tr></thead><tbody>`+
+ F.map((f,i)=>{let s=f[6];if(conf&&i===2)s='warn';const si=syncI[s];
+ const ki=f[7]==='ki'?'<span class="chip ki">'+I.ki.replace('<svg','<svg style="width:14px;height:14px"')+'KI</span> ':f[7]==='kt'?'<span class="chip">kein Text</span> ':'';
+ const cl=f[5]==='confidential'?'<span class="chip">vertraulich</span>':'<span class="chip">intern</span>';
+ return `<tr class="${i===selIdx?'on':''}"><td class="nm"><div class="f"><span class="ic ${f[0]}">${f[0]==='dir'?I.dir:f[2]}</span><span>${f[1]}</span></div></td><td class="c-date mut">${f[3]}</td><td class="c-size mut">${f[4]}</td><td class="c-class">${ki}${cl}</td><td class="sync" title="${si[1]}" style="color:${s==='warn'?'var(--warn)':s==='ok'?'var(--ok)':'var(--muted)'}">${I[si[0]]}<span class="hide-s mut" style="margin-left:4px">${s==='warn'?'Konflikt':''}</span></td></tr>`}).join('')+'</tbody></table>'}
+function details(){return `<div class="colhead">Rahmenvertrag Wartung 2026.pdf<div class="sp"><button class="ib" title="Schließen">${I.x}</button></div></div>
+<div class="prev"><b>Rahmenvertrag über Wartung und Pflege</b><br><br>§ 1 Vertragsgegenstand – Der Auftragnehmer erbringt für die Musterbehörde (example.org) Wartungsleistungen …<br><br>§ 4 Laufzeit – Der Vertrag beginnt am 01.01.2026 und läuft 36 Monate. Er verlängert sich um jeweils 12 Monate, wenn er nicht 6 Monate vor Ablauf gekündigt wird …</div>
+<div class="sec"><h3>Für die KI</h3><div class="sw"><span>Im Assistenten nutzbar<br><span class="mut">erbt von „Verträge“ · nur Auszüge mit Beleg</span></span><span class="tg on" role="switch" aria-checked="true"></span></div>
+<div class="sw"><span>Datenklasse</span><span class="chip">vertraulich · nur lokale Modelle</span></div>
+<div class="sw"><span>Textfassung</span><span class="chip ok">bereit · 18 Seiten</span></div></div>
+<div class="sec"><h3>Fassungen</h3><div class="kv"><span>3 (aktuell)</span><span>Gestern 16:42 · PC</span><span>2</span><span>05.11. · iPhone</span><span>1</span><span>30.10. · PC</span></div></div>
+<div class="sec"><h3>Details</h3><div class="kv"><span>Größe</span><span>812 KB</span><span>Projekte</span><span>Ausschreibung Wartung</span><span>Sync</span><span>auf 3 Geräten</span></div></div>
+<div class="sec" style="display:flex;gap:8px;flex-wrap:wrap;border:0"><button class="btn">${I.proj}Zu Projekt</button><button class="btn">${I.trash}Papierkorb</button></div>`}
+function shell(work,top){return `<div class="app"><header class="top"><h1>Ablage</h1><span class="be">Dokumente auf allen Geräten, Ende-zu-Ende verschlüsselt</span>${top||''}</header><div class="main">${nav()}${work}</div>
+<footer class="status"><span>${I.ok.replace('<svg','<svg style="width:14px;height:14px;vertical-align:-3px;color:var(--ok)"')} Synchronisiert vor 1 Min.</span><span>4,2 GB von 30 GB <span class="bar"><i></i></span></span><span class="hide-s">Index: 1 263 Dateien, aktuell</span></footer></div>`}
+const srch=(v)=>`<div class="search ${v?'on':''}" role="search">${I.srch}<span>${v||'In der Ablage suchen'}</span></div>`;
+let html='';
+if(S==='liste'){
+ html=shell(`<div class="work">${tree('w')}<section class="col" aria-label="Dateien">${head(srch())}${rows(1)}</section><section class="col side" aria-label="Details">${details()}</section><div class="sheet"><section class="col"><div class="grip"></div>${details()}</section></div></div>`);
+}else if(S==='liste-ohne'){
+ html=shell(`<div class="work zwei">${tree('w')}<section class="col">${head(srch())}${rows(-1)}</section></div>`);
+}else if(S==='hochladen'){
+ html=shell(`<div class="work">${tree('w')}<section class="col">${head(srch())}${rows(-1)}<div class="drop"><div>${I.up.replace('<svg','<svg style="width:40px;height:40px"')}<br>Loslassen, um in „Wartung IT“ abzulegen<br><span class="mut" style="font-weight:400">Ordner behalten ihre Struktur · nichts wird überschrieben</span></div></div></section>
+<section class="col side"><div class="colhead">Hochladen (3)</div><div class="up">
+<div class="l"><span>Angebot Firma Muster.pdf</span><span class="mut">geprüft · abgelegt</span></div><div class="pb"><i style="width:100%;background:var(--ok)"></i></div>
+<div class="l"><span>Leistungsbeschreibung v3.docx</span><span class="mut">Name vorhanden → neue Fassung 4?</span></div><div class="pb"><i style="width:100%"></i></div>
+<div style="display:flex;gap:8px;margin:8px 0;flex-wrap:wrap"><button class="btn pri">Als neue Fassung</button><button class="btn">Beide behalten</button></div>
+<div class="l"><span>Protokoll Lenkungskreis.pdf</span><span class="mut">Textfassung wird erstellt …</span></div><div class="pb"><i style="width:55%"></i></div>
+</div><div class="note">Neue Dateien erben die KI-Freigabe des Ordners. In „Wartung IT“ ist sie an (geerbt von „Verträge“).</div></section></div>`);
+}else if(S==='ordner'){
+ html=shell(`<div class="work zwei">${tree('v')}<section class="col">${head(srch())}${rows(-1)}</section></div>`)+`<div class="dlg" role="dialog" aria-modal="true" aria-labelledby="dh"><div class="box"><h2 id="dh">Ordner „Verträge“</h2>
+<div class="sec"><div class="sw"><span>Für die KI freigeben<br><span class="mut">Assistent und Projekte bekommen nur passende Auszüge mit Beleg</span></span><span class="tg on" role="switch" aria-checked="true"></span></div>
+<div class="mut" style="margin:4px 0 8px">Unterordner erben die Freigabe. Ein Unterordner mit „aus“ gewinnt immer. Gilt nur auf diesem Gerät.</div>
+<div class="grp" style="padding:8px 0 4px">Datenklasse</div><div class="sel"><span>Vertraulich – nur lokale Modelle</span>${I.arr}</div>
+<div class="sw"><span>Nur auf diesem Gerät<br><span class="mut">nicht in die Cloud, nicht auf andere Geräte</span></span><span class="tg" role="switch" aria-checked="false"></span></div>
+<div class="sw"><span>KI darf hier Entwürfe ablegen<br><span class="mut">nur neue Dateien, nie überschreiben oder löschen</span></span><span class="tg" role="switch" aria-checked="false"></span></div></div>
+<div class="ft"><button class="btn">Abbrechen</button><button class="btn pri">Speichern</button></div></div></div>`;
+}else if(S==='suche'){
+ const hits=[['pdf','Rahmenvertrag Wartung 2026.pdf','Verträge › Wartung IT · Seite 7','… läuft <mark>36 Monate</mark>. Er verlängert sich um jeweils 12 Monate, wenn er nicht <mark>6 Monate vor Ablauf gekündigt</mark> wird …'],
+ ['eml','AW Laufzeitverlängerung.eml','Verträge › Wartung IT','… wir schlagen vor, die <mark>Laufzeit</mark> auf 48 Monate zu verlängern, sofern die <mark>Kündigungsfrist</mark> bei 6 Monaten bleibt …'],
+ ['doc','Leistungsbeschreibung v3.docx','Verträge › Wartung IT · Abschnitt 2.3','… Reaktionszeit 4 Stunden während der gesamten <mark>Vertragslaufzeit</mark> …'],
+ ['pdf','Mietvertrag Lager.pdf','Verträge › Miete · Seite 2','… <mark>Kündigung</mark> mit einer Frist von <mark>6 Monaten</mark> zum Quartalsende …']];
+ html=shell(`<div class="work zwei">${tree('w')}<section class="col"><div class="colhead">${srch('Laufzeit Kündigungsfrist')}<div class="sp"><button class="ib" title="Suche schließen">${I.x}</button></div></div>
+<div class="tabs" role="tablist"><a class="on" role="tab" aria-selected="true">Ganze Ablage</a><a role="tab">Dieser Ordner</a><a role="tab" class="hide-s">Verknüpfte Ordner</a></div>
+<div class="mut" style="padding:8px 16px">4 Treffer in 0,04 s · lokal gesucht, nichts verlässt das Gerät</div>
+${hits.map(h=>`<div class="hit"><div class="t"><span class="ic ${h[0]}">${h[0].toUpperCase()}</span>${h[1]}</div><div class="mut">${h[2]}</div><p>${h[3]}</p></div>`).join('')}
+<div class="note">Frage lieber direkt? „Wie lange läuft der Wartungsvertrag?“ im Assistenten nutzt dieselben Auszüge und nennt die Quelle.</div></section></div>`);
+}else if(S==='konflikt'){
+ html=shell(`<div class="work">${tree('w')}<section class="col">${head(srch())}${rows(2,true)}</section><section class="col side"><div class="colhead">Leistungsbeschreibung v3.docx</div>
+<div class="note w">${I.warn.replace('<svg','<svg style="width:16px;height:16px;vertical-align:-3px"')} Auf zwei Geräten gleichzeitig geändert. Beide Fassungen sind erhalten.</div>
+<div class="sec"><div class="kv"><span>Fassung 4</span><span>PC · heute 09:12 · 216 KB</span><span>Fassung 4b</span><span>iPhone · heute 09:14 · 215 KB</span></div></div>
+<div class="sec" style="display:flex;flex-direction:column;gap:8px"><button class="btn pri">PC-Fassung als aktuell</button><button class="btn">iPhone-Fassung als aktuell</button><button class="btn">Beide als eigene Dateien behalten</button></div>
+<div class="mut" style="padding:0 16px 16px">Die andere Fassung bleibt in „Fassungen“ und lässt sich wiederherstellen. Bis zur Wahl nutzt die KI die zuletzt geprüfte Fassung 3.</div></section></div>`);
+}else if(S==='papierkorb'){
+ html=shell(`<div class="work zwei">${tree('p')}<section class="col"><div class="colhead">Papierkorb<div class="sp"><button class="btn">Papierkorb leeren …</button></div></div>
+<div class="note">Gelöschte Dateien bleiben 30 Tage und auf allen Geräten wiederherstellbar. Die KI nutzt sie nicht mehr.</div>
+<table><thead><tr><th>Name</th><th class="c-date">Gelöscht</th><th class="c-class">Ursprung</th><th></th></tr></thead><tbody>
+${[['pdf','Angebot alt.pdf','heute','Verträge › Wartung IT'],['doc','Entwurf Kündigung.docx','05.11.','Verträge › Miete'],['md','KI-Entwurf Zusammenfassung.md','01.11.','KI-Entwürfe'],['xls','Kosten 2025.xlsx','20.10.','Allgemein']].map(r=>`<tr><td class="nm"><div class="f"><span class="ic ${r[0]}">${r[0].toUpperCase()}</span><span>${r[1]}</span></div></td><td class="c-date mut">${r[2]}</td><td class="c-class mut">${r[3]}</td><td><button class="btn">Wiederherstellen</button></td></tr>`).join('')}
+</tbody></table></section></div>`);
+}else if(S==='leer'){
+ html=shell(`<div class="work zwei">${tree('w')}<section class="col">${head()}<div class="empty"><div>${I.abl.replace('<svg','<svg style="width:48px;height:48px;color:var(--accent)"')}<div class="big">Dateien hierher ziehen</div>PDF, Word, PowerPoint, Excel, Text, Mail und Bilder.<br>Alles bleibt verschlüsselt und auf deinen Geräten durchsuchbar.<div style="margin-top:16px"><button class="btn pri">${I.up}Dateien auswählen</button></div></div></div></section></div>`);
+}
+document.getElementById('app').innerHTML=html;
+</script>
+</body>
+</html>
