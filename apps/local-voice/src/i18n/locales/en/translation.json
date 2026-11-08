@@ -8521,6 +8521,7 @@
     "appendAudio": "Add further parts"
   },
   "projektBereich": {
+    "nichtSicherEntfernt": "The file could not be removed safely. It stays in the project folder and is offered to you for adding.",
     "titel": "Projects",
     "beschreibung": "Bundle books, texts, recordings and files of a project and decide per entry what serves as context for the AI.",
     "liste": "Projects",

@@ -192,14 +192,15 @@ export const ProjektePage: React.FC = () => {
     setEntfernen(null);
     const g = gruppeVon(e);
     try {
-      if (g === "dateien")
-        auspacken(
+      if (g === "dateien") {
+        const sicher = auspacken(
           await commands.projektDateiEntfernen(
             suiteId,
             dateiIdVon(e.link) ?? "",
           ),
         );
-      else if (g === "buecher")
+        if (!sicher) toast.warning(t("projektBereich.nichtSicherEntfernt"));
+      } else if (g === "buecher")
         auspacken(
           await commands.projektBuchEntfernen(suiteId, buchIdVon(e.link) ?? ""),
         );

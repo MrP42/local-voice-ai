@@ -8521,6 +8521,7 @@
     "appendAudio": "Weitere Teile anhängen"
   },
   "projektBereich": {
+    "nichtSicherEntfernt": "Die Datei konnte nicht sicher entfernt werden. Sie liegt weiter im Projektordner und wird dir zum Aufnehmen angeboten.",
     "titel": "Projekte",
     "beschreibung": "Bücher, Texte, Aufnahmen und Dateien eines Projekts bündeln und je Eintrag festlegen, was als Kontext für die KI dient.",
     "liste": "Projekte",
