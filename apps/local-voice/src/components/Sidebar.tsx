@@ -19,6 +19,7 @@ import {
   Volume2,
   House,
   Library,
+  Folder,
   UserRound,
   X,
 } from "lucide-react";
@@ -34,6 +35,7 @@ import { IntegrationsPage } from "./integrations/IntegrationsPage";
 import { VoiceCallPage } from "./voice-call/VoiceCallPage";
 import { KontoProfilSeite } from "./konto/KontoProfilSeite";
 import { LibraryPage } from "./library/LibraryPage";
+import { ProjektePage } from "./projekte/ProjektePage";
 
 export type SidebarSection = keyof typeof SECTIONS_CONFIG;
 
@@ -98,6 +100,12 @@ export const SECTIONS_CONFIG = {
     icon: Library,
     component: LibraryPage,
   },
+  // lva#365 P4b: Projekte bündeln Bücher, Texte, Aufnahmen und Dateien; je Eintrag „Als Kontext“.
+  projekte: {
+    labelKey: "sidebar.projekte",
+    icon: Folder,
+    component: ProjektePage,
+  },
   settings: {
     labelKey: "sidebar.settings",
     icon: Cog,
@@ -128,7 +136,15 @@ interface SidebarProps {
   fuss?: React.ReactNode;
 }
 
-const PRIMARY = ["home", "history", "meetings", "tts", "library", "voice"] as const;
+const PRIMARY = [
+  "home",
+  "history",
+  "meetings",
+  "tts",
+  "library",
+  "voice",
+  "projekte",
+] as const;
 // Modelle, Integrationen und Einstellungen stehen seit ADR-0027 im Profilmenü
 // (Profilkreis unten links), nicht mehr als Einträge der Navigation.
 
