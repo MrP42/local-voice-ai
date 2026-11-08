@@ -510,7 +510,9 @@ fn dateien_finden(buch_dir: &Path, hinweise: &mut Vec<String>) -> Fund {
             Ok(m) if m.is_dir() && !m.file_type().is_symlink() => {
                 gehen(&dir, rolle.ordner(), 1, &mut aus, hinweise);
             }
-            // Fehlt der Ordner oder ist er nicht lesbar, löscht das nichts.
+            // Ein fehlender Ordner ist bestätigtes Fehlen (lebende Einträge hält das Sammeln
+            // ohnehin zurück); ein nicht lesbarer verdeckt, was darin liegen könnte.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             _ => aus.verdeckt.push(rolle.ordner().to_string()),
         }
     }
@@ -794,6 +796,16 @@ pub fn sammeln(
         .filter(|(rel, _)| !gefunden.contains_key(*rel))
         .map(|(rel, _)| rel.clone())
         .collect();
+    // In der App gelöscht, aber ob die Datei noch da ist, lässt sich gerade nicht sehen
+    // (Ordner nicht lesbar, Verknüpfung, andere Schreibweise): Markierung halten, der
+    // Grabstein kommt erst bei bestätigtem Fehlen.
+    zurueck.extend(
+        stand
+            .dateien
+            .iter()
+            .filter(|(rel, e)| e.entfernt && !gefunden.contains_key(*rel) && fund.verdeckt(rel))
+            .map(|(rel, _)| rel.clone()),
+    );
     zurueck.extend(fund.gehalten.keys().cloned());
     // Ein Eintrag im Stand, dessen Ort auf der Platte anders geschrieben ist (Groß-/
     // Kleinschreibung, Unicode-Form, auch eines Ordners): weder Grabstein noch neue Datei.
@@ -883,7 +895,7 @@ pub fn sammeln(
 
     let mut weg: Vec<String> = Vec::new();
     for (rel, e) in stand.dateien.iter_mut() {
-        if gefunden.contains_key(rel) {
+        if gefunden.contains_key(rel) || (e.entfernt && zurueck.contains(rel)) {
             continue;
         }
         if e.entfernt {
@@ -2510,6 +2522,35 @@ mod tests {
         assert_eq!(g.wert["deleted"], true);
         assert!(!s.vorhanden.contains(&id));
         assert!(auflisten(&dir, "book_1").unwrap().is_empty());
+    }
+
+    /// Review P3a/3a: in der App gelöscht (Markierung gesetzt), die Datei liegt aber noch
+    /// da und ihr Ordner ist gerade verdeckt (hier: andere Unicode-Form). Kein Grabstein,
+    /// bis das Fehlen bestätigt ist.
+    #[test]
+    fn entfernt_und_verdeckt_haelt_den_grabstein_zurueck() {
+        let dir = buch("entfernt-verdeckt");
+        schreiben(&dir, "anhaenge/\u{e4}/n.md", b"notiz");
+        let s = alles(&dir, 1000.0);
+        let id = nach_pfad(&s, "anhaenge/\u{e4}/n.md").id.clone();
+        // Absturz zwischen Markieren und Wegräumen: markiert, Datei noch da.
+        let mut stand = stand_laden(&dir).unwrap();
+        stand
+            .dateien
+            .get_mut("anhaenge/\u{e4}/n.md")
+            .unwrap()
+            .entfernt = true;
+        stand_sichern(&dir, &mut stand).unwrap();
+        fs::rename(dir.join("anhaenge/\u{e4}"), dir.join("anhaenge/a\u{308}")).unwrap();
+        let s = alles(&dir, 2000.0);
+        assert!(s.lokal.iter().all(|l| l.id != id), "kein Grabstein");
+        assert!(s.vorhanden.contains(&id));
+        assert!(stand_laden(&dir).unwrap().dateien["anhaenge/\u{e4}/n.md"].entfernt);
+        // Sichtbar und wirklich weg: jetzt der Grabstein.
+        fs::rename(dir.join("anhaenge/a\u{308}"), dir.join("anhaenge/\u{e4}")).unwrap();
+        fs::remove_file(dir.join("anhaenge/\u{e4}/n.md")).unwrap();
+        let s = alles(&dir, 3000.0);
+        assert_eq!(nach_pfad(&s, "anhaenge/\u{e4}/n.md").wert["deleted"], true);
     }
 
     /// Review P3a/4: gleicher Inhalt auf beiden Seiten ist kein Konflikt und kein Download.
