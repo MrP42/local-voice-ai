@@ -10400,7 +10400,12 @@ ordner: string; dateien: number;
 /**
  * `false`: kopiert und geprüft, aber auch das Ziel sichert nicht dauerhaft.
  */
-dauerhaft: boolean }
+dauerhaft: boolean; 
+/**
+ * `false`: Ziel liegt nachweislich außerhalb des Datenordners, aber nicht jedes Glied
+ * seines Pfads war prüfbar (etwa die Wurzel einer Netzfreigabe).
+ */
+ziel_vollstaendig_geprueft: boolean }
 /**
  * Ergebnis von „Sicherung zurückspielen“.
  */

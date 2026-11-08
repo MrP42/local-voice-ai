@@ -472,6 +472,9 @@ pub struct LibraryBackupExport {
     pub dateien: u32,
     /// `false`: kopiert und geprüft, aber auch das Ziel sichert nicht dauerhaft.
     pub dauerhaft: bool,
+    /// `false`: Ziel liegt nachweislich außerhalb des Datenordners, aber nicht jedes Glied
+    /// seines Pfads war prüfbar (etwa die Wurzel einer Netzfreigabe).
+    pub ziel_vollstaendig_geprueft: bool,
 }
 
 /// Sicherung in einen neuen Ordner unter `ziel` kopieren und prüfen (lva#371). Nur
@@ -494,6 +497,7 @@ pub async fn library_backup_export(
         ordner: e.ordner.to_string_lossy().into_owned(),
         dateien: u32::try_from(e.dateien).unwrap_or(u32::MAX),
         dauerhaft: e.dauerhaft,
+        ziel_vollstaendig_geprueft: e.ziel_vollstaendig_geprueft,
     })
 }
 

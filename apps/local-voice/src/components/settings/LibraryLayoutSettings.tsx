@@ -230,9 +230,17 @@ export const LibraryLayoutSettings: React.FC<{ grouped?: boolean }> = ({
             count: r.data.dateien,
             path: r.data.ordner,
           }),
-          warn: r.data.dauerhaft
-            ? undefined
-            : t("settings.app.libraryLayout.exportedNotDurable"),
+          warn:
+            [
+              r.data.dauerhaft
+                ? ""
+                : t("settings.app.libraryLayout.exportedNotDurable"),
+              r.data.ziel_vollstaendig_geprueft
+                ? ""
+                : t("settings.app.libraryLayout.exportedPartlyChecked"),
+            ]
+              .filter(Boolean)
+              .join(" ") || undefined,
         });
       }
     } finally {

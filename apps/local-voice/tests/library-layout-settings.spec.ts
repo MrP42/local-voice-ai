@@ -153,6 +153,7 @@ test.beforeEach(async ({ page }) => {
             __lvRestoreError?: string;
             __lvSync?: string;
             __lvExportDurable?: boolean;
+            __lvExportChecked?: boolean;
             __lvExportArgs?: Record<string, unknown>;
             __lvDialogCalls?: number;
             __lvDialogCancel?: boolean;
@@ -221,6 +222,7 @@ test.beforeEach(async ({ page }) => {
               ordner: "D:\\Sicherungen\\buch-ordner-1",
               dateien: 7,
               dauerhaft: lv.__lvExportDurable ?? true,
+              ziel_vollstaendig_geprueft: lv.__lvExportChecked ?? true,
             };
           }
           if (cmd === "library_backup_restore") {
@@ -579,6 +581,10 @@ for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 900 });
     await withBackup(page, false);
     await drive(page, "nicht_unterstuetzt", false);
+    // Bei 390 px: nicht jeder Vorfahr des Ziels war prüfbar (lva#375).
+    await page.addInitScript((checked) => {
+      Object.assign(window, { __lvExportChecked: checked });
+    }, width !== 390);
     await openApp(page);
     await page
       .getByTestId("library-backup")
@@ -610,6 +616,9 @@ for (const width of [1440, 390]) {
     await expect(
       page.getByText("Auch dieser Ordner kann Änderungen nicht sicher"),
     ).toBeVisible();
+    await expect(
+      page.getByText("Nicht jeder übergeordnete Ordner des Ziels"),
+    ).toHaveCount(width === 390 ? 1 : 0);
     const args = await page.evaluate(
       () =>
         (window as unknown as { __lvExportArgs?: Record<string, unknown> })

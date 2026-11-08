@@ -1348,6 +1348,8 @@ const LOESCHMARKE: &str = ".loeschen";
 thread_local! {
     /// Test: Eingriff unmittelbar vor dem Umbenennen (Fall „Elternordner ausgetauscht“).
     static VOR_UMBENENNEN: std::cell::Cell<Option<fn(&Path)>> = const { std::cell::Cell::new(None) };
+    /// Test: Eingriff, bevor ein abgebrochener Export entfernt wird (Ordner ausgetauscht).
+    static VOR_EXPORT_ENTFERNEN: std::cell::Cell<Option<fn(&Path)>> = const { std::cell::Cell::new(None) };
 }
 
 /// Freier Name `sicherungen/.loeschen-<32 Hex>` mit zufälligem Teil (nicht angelegt: das
@@ -4495,6 +4497,9 @@ pub struct Export {
     /// Konnte das Ziel die Kopie dauerhaft sichern (Ordner-Sync)? `false`: kopiert und
     /// geprüft, aber das Ziel-Laufwerk sichert ebenfalls nicht.
     pub dauerhaft: bool,
+    /// `false`: das Ziel liegt nachweislich nicht im Datenordner, aber nicht jedes Glied
+    /// seines Pfads war prüfbar (etwa die Wurzel einer Netzfreigabe).
+    pub ziel_vollstaendig_geprueft: bool,
 }
 
 /// Ordner einer Sicherung unter `sicherungen/` (Name geprüft, kein Umweg).
@@ -4534,66 +4539,138 @@ fn baum_sync(dir: &Path) -> Result<bool, String> {
 const IM_DATENORDNER: &str = "Der Zielordner liegt im Datenordner der App. Bitte einen \
                               Ordner außerhalb wählen, etwa auf einem lokalen Laufwerk.";
 
-/// Name der Markendatei, mit der [`ziel_ausserhalb`] den Datenordner wiedererkennt.
+/// Name der Markendateien des Exports: Zielprüfung und Besitznachweis des neuen Ordners.
 const EXPORT_MARKE: &str = ".export-marke-";
 
-/// Liegt `ziel_echt` (aufgelöst) außerhalb des Datenordners? Drei Proben, jede muss
-/// bestehen, und ist eine nicht durchführbar, wird abgebrochen:
+/// Kennung eines Eintrags; `None`, wo das Laufwerk keine verlässliche Kennung hat.
+fn kennung_oder_keine(p: &Path) -> Result<Option<Kennung>, std::io::Error> {
+    let meta = fs::symlink_metadata(p)?;
+    match kennung_roh(p, &meta) {
+        Ok(k) => Ok(Some(k)),
+        Err(KennungFehler::Laufwerk(_)) => Ok(None),
+        Err(KennungFehler::Io(e)) => Err(e),
+    }
+}
+
+/// Liegt `ziel_echt` (aufgelöst) außerhalb des Datenordners? Der Datenordner wird nur
+/// gelesen, damit auch ein Rettungsexport aus einem schreibgeschützten Datenordner geht.
 /// 1. Pfadvergleich der aufgelösten Pfade.
-/// 2. Ordneridentität (Unix: Gerät und Inode; Windows: FILE_ID_INFO) für das Ziel und
-///    jeden Vorfahren gegen den Datenordner, so wie bei lokalen und UNC-Zugängen zum
-///    selben Ordner. Wo das Dateisystem keine verlässliche Kennung hat, entfällt nur diese
-///    Probe.
-/// 3. Eine frische Markendatei im Datenordner darf unter keinem Vorfahren des Ziels
-///    sichtbar sein (greift auch ohne Kennung, etwa auf Netzlaufwerken).
-fn ziel_ausserhalb(data: &Path, ziel_echt: &Path) -> Result<(), String> {
+/// 2. Ordneridentität (Unix: Gerät und Inode; Windows: FILE_ID_INFO) des Ziels und seiner
+///    Vorfahren gegen den Datenordner, so wie bei lokalen und UNC-Zugängen zum selben
+///    Ordner. Das Ziel selbst muss prüfbar sein; ein nicht prüfbarer Vorfahr (etwa die
+///    Wurzel einer Netzfreigabe) wird übersprungen und gemeldet.
+/// 3. Eine frische Marke im Ziel darf vom Datenordner aus unter keinem Teilpfad sichtbar
+///    sein (greift auch ohne Kennung, etwa auf Netzlaufwerken).
+///
+/// `Ok(true)`: alle Proben vollständig; `Ok(false)`: bestanden, aber nicht jedes Glied
+/// war prüfbar.
+fn ziel_ausserhalb(data: &Path, ziel_echt: &Path) -> Result<bool, String> {
     let data_echt = fs::canonicalize(data).map_err(|e| {
         format!("Datenordner nicht auflösbar ({e}); Zielprüfung unmöglich, nichts exportiert.")
     })?;
     if ziel_echt.starts_with(&data_echt) {
         return Err(IM_DATENORDNER.into());
     }
-    let nicht_pruefbar = |p: &Path, e: &dyn std::fmt::Display| {
-        format!(
-            "{} nicht prüfbar ({e}); Zielprüfung unmöglich, nichts exportiert.",
-            p.display()
-        )
+    let mut vollstaendig = true;
+    let mut luecke = |was: &str, e: &std::io::Error| {
+        log::warn!(
+            "Buch-Ordner: Exportziel, {was} nicht prüfbar ({:?})",
+            e.kind()
+        );
+        vollstaendig = false;
     };
-    let kennung_von = |p: &Path| -> Result<Option<Kennung>, String> {
-        let meta = fs::symlink_metadata(p).map_err(|e| nicht_pruefbar(p, &e))?;
-        match kennung_roh(p, &meta) {
-            Ok(k) => Ok(Some(k)),
-            Err(KennungFehler::Laufwerk(_)) => Ok(None),
-            Err(KennungFehler::Io(e)) => Err(nicht_pruefbar(p, &e)),
+    let data_kennung = match kennung_oder_keine(&data_echt) {
+        Ok(k) => k,
+        Err(e) => {
+            luecke("Datenordner", &e);
+            None
         }
     };
-    let data_kennung = kennung_von(&data_echt)?;
+    if let Some(dk) = data_kennung {
+        match kennung_oder_keine(ziel_echt) {
+            Ok(Some(k)) if k == dk => return Err(IM_DATENORDNER.into()),
+            Ok(_) => {}
+            Err(e) => {
+                return Err(format!(
+                    "{} nicht prüfbar ({e}); Zielprüfung unmöglich, nichts exportiert.",
+                    ziel_echt.display()
+                ))
+            }
+        }
+        for vorfahr in ziel_echt.ancestors().skip(1) {
+            match kennung_oder_keine(vorfahr) {
+                Ok(Some(k)) if k == dk => return Err(IM_DATENORDNER.into()),
+                Ok(_) => {}
+                Err(e) => luecke("übergeordneter Ordner", &e),
+            }
+        }
+    }
     let marke = format!("{EXPORT_MARKE}{}-{}", std::process::id(), jetzt_ms());
-    let marke_pfad = data_echt.join(&marke);
+    let marke_pfad = ziel_echt.join(&marke);
     fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(&marke_pfad)
-        .map_err(|e| nicht_pruefbar(&data_echt, &e))?;
-    let ergebnis = (|| -> Result<(), String> {
-        for vorfahr in ziel_echt.ancestors() {
-            match fs::symlink_metadata(vorfahr.join(&marke)) {
-                Ok(_) => return Err(IM_DATENORDNER.into()),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => return Err(nicht_pruefbar(vorfahr, &e)),
+        .map_err(|e| format!("Zielordner nicht beschreibbar ({e}); nichts exportiert."))?;
+    // Ist das Ziel `V/rest` und `V` derselbe Ordner wie der Datenordner, liegt die Marke
+    // auch unter `<Datenordner>/rest`.
+    let mut ergebnis = Ok(());
+    for vorfahr in ziel_echt.ancestors() {
+        let Ok(rest) = ziel_echt.strip_prefix(vorfahr) else {
+            continue;
+        };
+        match fs::symlink_metadata(data_echt.join(rest).join(&marke)) {
+            Ok(_) => {
+                ergebnis = Err(IM_DATENORDNER.to_string());
+                break;
             }
-            if let Some(dk) = data_kennung {
-                if kennung_von(vorfahr)? == Some(dk) {
-                    return Err(IM_DATENORDNER.into());
-                }
-            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotADirectory => {}
+            Err(e) => luecke("Teilpfad im Datenordner", &e),
         }
-        Ok(())
-    })();
+    }
     if let Err(e) = fs::remove_file(&marke_pfad) {
         log::warn!("Buch-Ordner: Markendatei der Zielprüfung nicht entfernbar ({e})");
     }
-    ergebnis
+    ergebnis.map(|()| vollstaendig)
+}
+
+/// Einen abgebrochenen Export entfernen, aber nur den eigenen: erst in einen privaten
+/// Namen umbenennen (nimmt eine Verknüpfung selbst mit, nie ihr Ziel), dann prüfen, dass
+/// es ein gewöhnlicher Ordner mit derselben Kennung und dem eigenen Besitznachweis ist.
+fn export_entfernen(
+    ziel_echt: &Path,
+    neu: &Path,
+    besitz: &str,
+    kennung: Option<Kennung>,
+) -> Result<(), (PathBuf, String)> {
+    let privat = ziel_echt.join(format!(
+        ".export-abbruch-{}-{}",
+        std::process::id(),
+        jetzt_ms()
+    ));
+    #[cfg(test)]
+    VOR_EXPORT_ENTFERNEN.with(|h| h.take().map(|f| f(neu)));
+    fs::rename(neu, &privat).map_err(|e| (neu.to_path_buf(), e.to_string()))?;
+    let pruefen = || -> Result<(), String> {
+        let meta = fs::symlink_metadata(&privat).map_err(|e| e.to_string())?;
+        if ist_umweg(&meta) || !meta.is_dir() {
+            return Err("kein gewöhnlicher Ordner mehr".into());
+        }
+        if let Some(k) = kennung {
+            if kennung_oder_keine(&privat).map_err(|e| e.to_string())? != Some(k) {
+                return Err("nicht mehr der eben angelegte Ordner".into());
+            }
+        }
+        let nachweis = fs::symlink_metadata(privat.join(besitz)).map_err(|e| e.to_string())?;
+        if !nachweis.is_file() || ist_umweg(&nachweis) {
+            return Err("Besitznachweis fehlt".into());
+        }
+        Ok(())
+    };
+    pruefen()
+        .and_then(|()| fs::remove_dir_all(&privat).map_err(|e| e.to_string()))
+        .map_err(|e| (privat.clone(), e))
 }
 
 /// Eine Sicherung in einen NEUEN Ordner `<ziel>/<name>` kopieren (Ausweg, wenn das
@@ -4611,7 +4688,7 @@ pub fn sicherung_exportieren(data: &Path, name: &str, ziel: &Path) -> Result<Exp
     if !ziel_echt.is_dir() {
         return Err("Das Ziel ist kein Ordner; nichts exportiert.".into());
     }
-    ziel_ausserhalb(data, &ziel_echt)?;
+    let geprueft = ziel_ausserhalb(data, &ziel_echt)?;
     let manifest = sicherung_pruefen(&dir)?;
     let neu = ziel_echt.join(name);
     fs::create_dir(&neu).map_err(|e| {
@@ -4624,7 +4701,16 @@ pub fn sicherung_exportieren(data: &Path, name: &str, ziel: &Path) -> Result<Exp
             format!("Ordner im Ziel nicht anlegbar ({e}); nichts exportiert.")
         }
     })?;
+    // Besitznachweis: nur ein Ordner mit dieser Datei und dieser Kennung wird bei einem
+    // Abbruch entfernt.
+    let besitz = format!("{EXPORT_MARKE}eigen-{}-{}", std::process::id(), jetzt_ms());
+    let kennung = kennung_oder_keine(&neu).ok().flatten();
     let kopiert = (|| -> Result<(), String> {
+        fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(neu.join(&besitz))
+            .map_err(|e| format!("Ordner im Ziel nicht beschreibbar ({e})"))?;
         for rel in &manifest.ordner {
             fs::create_dir_all(absolut(&neu, rel)).map_err(|e| format!("{rel}: {e}"))?;
         }
@@ -4642,14 +4728,17 @@ pub fn sicherung_exportieren(data: &Path, name: &str, ziel: &Path) -> Result<Exp
         sicherung_pruefen(&neu).map(|_| ())
     })();
     if let Err(e) = kopiert {
-        return Err(match fs::remove_dir_all(&neu) {
+        return Err(match export_entfernen(&ziel_echt, &neu, &besitz, kennung) {
             Ok(()) => format!("Export abgebrochen ({e}); der neue Ordner wurde entfernt."),
-            Err(r) => format!(
+            Err((rest, r)) => format!(
                 "Export abgebrochen ({e}). Der unvollständige Ordner {} ließ sich nicht \
-                 entfernen ({r}); bitte von Hand löschen.",
-                neu.display()
+                 sicher entfernen ({r}); bitte von Hand löschen.",
+                rest.display()
             ),
         });
+    }
+    if let Err(e) = fs::remove_file(neu.join(&besitz)) {
+        log::warn!("Buch-Ordner: Besitznachweis im Export nicht entfernbar ({e})");
     }
     let dauerhaft = baum_sync(&neu)
         .and_then(|b| Ok(b && ordner_sync(&ziel_echt)?))
@@ -4661,6 +4750,7 @@ pub fn sicherung_exportieren(data: &Path, name: &str, ziel: &Path) -> Result<Exp
         ordner: neu,
         dateien: manifest.dateien.len(),
         dauerhaft,
+        ziel_vollstaendig_geprueft: geprueft,
     })
 }
 
@@ -5110,8 +5200,8 @@ mod tests {
         let e = ziel_ausserhalb(&data, &alias).unwrap_err();
         assert!(e.contains("Datenordner"), "{e}");
         let draussen = fs::canonicalize(data.parent().unwrap()).unwrap();
-        assert!(ziel_ausserhalb(&data, &draussen).is_ok());
-        assert!(fs::read_dir(&data)
+        assert_eq!(ziel_ausserhalb(&data, &draussen), Ok(true));
+        assert!(fs::read_dir(&draussen)
             .unwrap()
             .flatten()
             .all(|e| !e.file_name().to_string_lossy().starts_with(EXPORT_MARKE)));
@@ -5179,6 +5269,103 @@ mod tests {
         .unwrap();
         assert!(sicherung_exportieren(&data, &name, &ziel2).is_err());
         assert!(!ziel2.join(&name).exists());
+        let _ = fs::remove_dir_all(&ziel);
+    }
+
+    fn marken_in(dir: &Path) -> Vec<String> {
+        fs::read_dir(dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with(EXPORT_MARKE) || n.starts_with(".export-abbruch-"))
+            .collect()
+    }
+
+    fn exportziel(data: &Path, endung: &str) -> PathBuf {
+        let ziel = data.parent().unwrap().join(format!(
+            "{}-{endung}",
+            data.file_name().unwrap().to_string_lossy()
+        ));
+        let _ = fs::remove_dir_all(&ziel);
+        fs::create_dir_all(&ziel).unwrap();
+        fs::canonicalize(&ziel).unwrap()
+    }
+
+    /// lva#375: Prüfung und Besitznachweis lassen keine Marken zurück; der Datenordner
+    /// wird beim Export nicht beschrieben.
+    #[test]
+    fn export_hinterlaesst_keine_marken() {
+        let data = standardlage("export-marken");
+        migrieren(&data, &optionen()).unwrap();
+        let name = sicherungen_auflisten(&data)[0].name.clone();
+        let ziel = exportziel(&data, "marken");
+        let vorher = marken_in(&data);
+        let e = sicherung_exportieren(&data, &name, &ziel).unwrap();
+        assert!(e.ziel_vollstaendig_geprueft);
+        assert!(marken_in(&ziel).is_empty());
+        assert!(marken_in(&e.ordner).is_empty());
+        assert_eq!(marken_in(&data), vorher);
+        let _ = fs::remove_dir_all(&ziel);
+    }
+
+    /// lva#375: Ein abgebrochener Export entfernt nur den eigenen neuen Ordner.
+    #[test]
+    fn abgebrochener_export_entfernt_nur_den_eigenen_ordner() {
+        let data = standardlage("export-abbruch");
+        migrieren(&data, &optionen()).unwrap();
+        let name = sicherungen_auflisten(&data)[0].name.clone();
+        let ziel = exportziel(&data, "abbruch");
+        OHNE_DATEI_SYNC.with(|o| o.set(true));
+        let e = sicherung_exportieren(&data, &name, &ziel);
+        OHNE_DATEI_SYNC.with(|o| o.set(false));
+        let e = e.unwrap_err();
+        assert!(e.contains("wurde entfernt"), "{e}");
+        assert!(!ziel.join(&name).exists());
+        assert!(marken_in(&ziel).is_empty(), "{:?}", marken_in(&ziel));
+
+        // Zwischen Abbruch und Aufräumen gegen eine Verknüpfung auf fremde Daten getauscht:
+        // nichts Fremdes wird gelöscht.
+        #[cfg(unix)]
+        {
+            fn tauschen(neu: &Path) {
+                let fremd = neu.with_file_name("fremd");
+                fs::create_dir_all(&fremd).unwrap();
+                fs::write(fremd.join("wichtig.txt"), b"bleibt").unwrap();
+                fs::remove_dir_all(neu).unwrap();
+                std::os::unix::fs::symlink(&fremd, neu).unwrap();
+            }
+            VOR_EXPORT_ENTFERNEN.with(|h| h.set(Some(tauschen)));
+            OHNE_DATEI_SYNC.with(|o| o.set(true));
+            let e = sicherung_exportieren(&data, &name, &ziel);
+            OHNE_DATEI_SYNC.with(|o| o.set(false));
+            VOR_EXPORT_ENTFERNEN.with(|h| h.set(None));
+            let e = e.unwrap_err();
+            assert!(e.contains("nicht sicher entfernen"), "{e}");
+            assert_eq!(fs::read(ziel.join("fremd/wichtig.txt")).unwrap(), b"bleibt");
+
+            // Gegen einen gewöhnlichen fremden Ordner getauscht: Kennung und
+            // Besitznachweis fehlen, nichts gelöscht.
+            fn ersetzen(neu: &Path) {
+                fs::remove_dir_all(neu).unwrap();
+                fs::create_dir_all(neu).unwrap();
+                fs::write(neu.join("wichtig.txt"), b"bleibt").unwrap();
+            }
+            let ziel2 = exportziel(&data, "abbruch2");
+            VOR_EXPORT_ENTFERNEN.with(|h| h.set(Some(ersetzen)));
+            OHNE_DATEI_SYNC.with(|o| o.set(true));
+            let e = sicherung_exportieren(&data, &name, &ziel2);
+            OHNE_DATEI_SYNC.with(|o| o.set(false));
+            VOR_EXPORT_ENTFERNEN.with(|h| h.set(None));
+            let e = e.unwrap_err();
+            assert!(e.contains("nicht sicher entfernen"), "{e}");
+            let rest: Vec<_> = fs::read_dir(&ziel2).unwrap().flatten().collect();
+            assert_eq!(rest.len(), 1);
+            assert_eq!(
+                fs::read(rest[0].path().join("wichtig.txt")).unwrap(),
+                b"bleibt"
+            );
+            let _ = fs::remove_dir_all(&ziel2);
+        }
         let _ = fs::remove_dir_all(&ziel);
     }
 
