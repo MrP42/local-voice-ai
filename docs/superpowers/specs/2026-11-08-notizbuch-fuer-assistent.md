@@ -1,6 +1,6 @@
 # Notizbuch für den Assistenten – Lesen, Anlegen, Besprechungsnotizen zusammenführen
 
-- Stand: 08.11.2026, Fassung 2 (Codex-Must-fixes 1–9 und Kann-Punkte eingearbeitet, siehe §10)
+- Stand: 08.11.2026, Fassung 3 (Codex-Must-fixes 1–9 und Kann-Punkte eingearbeitet, Recheck M3/M6, siehe §10)
 - Auftrag: Patrick, 08.11.2026 (Thread „Notizbuch für die KI zugänglich machen“)
 - Epic: lva#396 (unter lva#384) · Bezug: ADR-0028 (Assistent, Tor, Kontextvertrag E6, Freigabe E10), ADR-0019 (Werkzeuge,
   Wirkungsklassen), ADR-0011 (Eingang), ADR-0018 (Deep-Links), lva#325 (globaler Abrufindex), lva#365 P4 (Projekt-
@@ -146,6 +146,9 @@ ist.“ Optional (Codex E3): Local Voice startet das Notizbuch minimiert über d
   Schreibfreigabe sind eine eigene Aktion `abschnitt_anlegen` mit **ausdrücklicher Freigabe per Karte** (nie per
   Sprachfrist, nie gebündelt mit dem Inhalt). Das Notizbuch wählt Patrick auf der Karte aus den lesefreigegebenen
   Notizbüchern; sonst gibt es nur „Im Notizbuch freigeben“ (Deep-Link in die Notizbuch-Einstellung).
+  Die Anfrage trägt dann `bestaetigung: {karte_id, zeit}`. Durchgesetzt wird die Bestätigung im Tor (nur das Tor
+  erzeugt Anfragen); der Host prüft zusätzlich, dass die Angabe vorhanden und höchstens 10 Minuten alt ist, und
+  zeigt den neuen Abschnitt beim nächsten Öffnen einmal mit „Vom Assistenten angelegt – Schreibrecht entziehen?“.
 - Wirkungsklasse (ADR-0019-Nachtrag aus ADR-0028): **lokal, umkehrbar** (Papierkorb, Versionen). Ausführung nur, wenn
   die strukturierte Freigabe der Runde (E10) die Aktion enthält – und die enthält sie nur, wenn die **Nutzereingabe**
   das Anlegen verlangt. Anweisungen in Mails, Transkripten oder Notizen lösen nie ein Schreiben aus.
