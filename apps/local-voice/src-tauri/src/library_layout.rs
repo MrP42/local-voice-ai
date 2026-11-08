@@ -3728,6 +3728,69 @@ pub fn buch_endgueltig_loeschen(data: &Path, buch_dir: &Path) -> Result<usize, S
     Ok(ausgetragen)
 }
 
+// ---------------------------------------------------------------------------
+// Neue Seiten direkt in den Buch-Ordner (P2b-2)
+// ---------------------------------------------------------------------------
+
+/// Nach dem Speichern eines Buchs: seine Seiten (Text, Transkript, Sprachfassungen laut
+/// `buch.json`), die noch unter `projects/<seite>` liegen, in `library/<buch>/fassungen/`
+/// holen und im Index das Feld `buch` setzen. So landen Import, Transkript, Zusammenführen
+/// und Übersetzung direkt im Buch-Ordner, wie es die Migration für den Bestand tut.
+///
+/// Nur im neuen Layout (Kennzeichen ≥ 2) und ohne offene Neuordnung; sonst bleibt alles,
+/// wie es ist (die Seite wird weiter unter `projects/` gefunden). Übergangen wird eine
+/// Seite, die ein anderes Buch ebenfalls nennt, deren Ziel schon belegt ist oder deren
+/// Weg über eine Verknüpfung führt. Nichts wird überschrieben. Liefert die verschobenen
+/// Seiten. Der Aufrufer hält Bibliotheks- und Seitensperre.
+pub fn seiten_einlagern(data: &Path, buch: &str) -> Result<Vec<String>, String> {
+    if !gueltiges_buch(buch) || layout(data) < 2 || buch_ordner_bewegbar(data).is_err() {
+        return Ok(Vec::new());
+    }
+    let buch_rel = format!("{BIBLIOTHEK}/{buch}");
+    if !absolut(data, &buch_rel).join(BUCH_JSON).is_file() {
+        return Ok(Vec::new());
+    }
+    let karte = Fundortkarte::aufbauen(data);
+    let mut bewegt = Vec::new();
+    for seite in buch_seiten(data, buch) {
+        let von_rel = rel_von(&seite);
+        let nach_rel = rel_nach(buch, &seite);
+        let nach = absolut(data, &nach_rel);
+        if vorhanden(&nach) {
+            // Schon im Buch-Ordner: nur das Indexfeld nachziehen.
+            if index_buch(data, &seite)?.as_deref() != Some(buch) {
+                index_buch_setzen(data, &seite, Some(buch))?;
+            }
+            continue;
+        }
+        let von = absolut(data, &von_rel);
+        let fremd = karte
+            .orte(&seite)
+            .iter()
+            .any(|o| o != &von_rel && o != &nach_rel);
+        if fremd || !von.is_dir() || ohne_umweg(data, &von_rel).is_err() {
+            continue;
+        }
+        if ohne_umweg(data, &nach_rel).is_err() {
+            continue;
+        }
+        let eltern = nach
+            .parent()
+            .expect("fassungen/<seite> hat einen Elternordner");
+        fs::create_dir_all(eltern)
+            .map_err(|e| format!("{} nicht anlegbar: {e}", eltern.display()))?;
+        umbenennen(data, &von, &nach)
+            .map_err(|e| format!("Seite {seite} nicht in den Buch-Ordner verschoben: {e}"))?;
+        if let Err(e) = index_buch_setzen(data, &seite, Some(buch)) {
+            // Index nicht schreibbar: Seite zurück, damit Index und Platte zusammenpassen.
+            let _ = fs::rename(&nach, &von);
+            return Err(e);
+        }
+        bewegt.push(seite);
+    }
+    Ok(bewegt)
+}
+
 const VERBOTENE_ZEICHEN: [char; 9] = ['/', '\\', ':', '*', '?', '"', '<', '>', '|'];
 const RESERVIERTE_NAMEN: [&str; 22] = [
     "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
@@ -5099,6 +5162,79 @@ mod tests {
             .unwrap()
             .iter()
             .any(|p| p["id"] == "page_1"));
+    }
+
+    #[test]
+    fn neue_seiten_kommen_direkt_in_den_buch_ordner() {
+        let data = standardlage("einlagern");
+        // Altes Layout: nichts bewegen.
+        assert!(seiten_einlagern(&data, "book_1").unwrap().is_empty());
+        assert!(data.join("projects/page_1").is_dir());
+        migrieren(&data, &optionen()).unwrap();
+        assert_eq!(layout(&data), 2);
+        // Neues Buch mit neuer Textseite (wie der Import nach library_save).
+        buch_anlegen(&data, "book_2", "page_5", &["page_5", "page_6"]);
+        seite_anlegen(&data.join(PROJEKTE).join("page_5"), "neu");
+        seite_anlegen(&data.join(PROJEKTE).join("page_6"), "fassung");
+        index_schreiben(
+            &data,
+            &[
+                ("page_1", Some("book_1")),
+                ("page_2", Some("book_1")),
+                ("page_9", None),
+                ("page_5", None),
+                ("page_6", None),
+            ],
+        );
+        assert_eq!(
+            seiten_einlagern(&data, "book_2").unwrap(),
+            vec!["page_5", "page_6"]
+        );
+        assert!(data
+            .join("library/book_2/fassungen/page_5/state.json")
+            .is_file());
+        assert!(!data.join("projects/page_5").exists());
+        assert_eq!(
+            index_buch(&data, "page_5").unwrap().as_deref(),
+            Some("book_2")
+        );
+        // Zweiter Aufruf: nichts mehr zu tun.
+        assert!(seiten_einlagern(&data, "book_2").unwrap().is_empty());
+        // Lose Seite bleibt; ungültiges Buch: nichts.
+        assert!(data.join("projects/page_9").is_dir());
+        assert!(seiten_einlagern(&data, "../book_2").unwrap().is_empty());
+    }
+
+    #[test]
+    fn einlagern_uebergeht_geteilte_belegte_und_offene_faelle() {
+        let data = standardlage("einlagern-grenzen");
+        migrieren(&data, &optionen()).unwrap();
+        // page_7 wird von zwei Büchern genannt: bleibt in projects/.
+        buch_anlegen(&data, "book_3", "page_7", &["page_7"]);
+        buch_anlegen(&data, "book_4", "page_7", &["page_7"]);
+        seite_anlegen(&data.join(PROJEKTE).join("page_7"), "geteilt");
+        // page_8: Ziel im Buch-Ordner ist schon belegt; nichts überschrieben.
+        buch_anlegen(&data, "book_5", "page_8", &["page_8"]);
+        seite_anlegen(&data.join(PROJEKTE).join("page_8"), "alt");
+        seite_anlegen(&data.join("library/book_5/fassungen/page_8"), "belegt");
+        index_schreiben(
+            &data,
+            &[("page_7", None), ("page_8", None), ("page_9", None)],
+        );
+        assert!(seiten_einlagern(&data, "book_3").unwrap().is_empty());
+        assert!(data.join("projects/page_7").is_dir());
+        assert!(seiten_einlagern(&data, "book_5").unwrap().is_empty());
+        assert!(data.join("projects/page_8").is_dir());
+        assert_eq!(
+            index_buch(&data, "page_8").unwrap().as_deref(),
+            Some("book_5")
+        );
+        // Offene Neuordnung: nichts bewegen.
+        buch_anlegen(&data, "book_6", "page_4", &["page_4"]);
+        seite_anlegen(&data.join(PROJEKTE).join("page_4"), "wartet");
+        journal_mit(&data, Phase::Gesichert, vec![]);
+        assert!(seiten_einlagern(&data, "book_6").unwrap().is_empty());
+        assert!(data.join("projects/page_4").is_dir());
     }
 
     #[test]

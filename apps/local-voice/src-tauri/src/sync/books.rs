@@ -1863,6 +1863,10 @@ fn finish_download_on(host: &mut dyn Host, w: &Wanted) -> Result<Option<PathBuf>
                 }
             }
             clear_pending(&w.dir, &w.what)?;
+            // Neue Textseite direkt in den Buch-Ordner (lva#365 P2b-2).
+            if let Some(root) = w.dir.parent() {
+                library::seiten_einlagern(root, &book.id);
+            }
             Ok(None)
         }
         WantedKind::EditionText(eid) => finish_edition_text(w, eid, &tmp, host),
@@ -1988,6 +1992,10 @@ fn finish_edition_text(
         library::sync_write_book(&w.dir, &book)?;
     }
     clear_pending(&w.dir, &w.what)?;
+    // Neue Fassungsseite direkt in den Buch-Ordner (lva#365 P2b-2).
+    if let Some(root) = w.dir.parent() {
+        library::seiten_einlagern(root, &book.id);
+    }
     Ok(None)
 }
 

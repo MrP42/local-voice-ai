@@ -1070,7 +1070,28 @@ pub fn library_save(app: AppHandle, book: LibraryBook) -> Result<LibraryBook, St
     }
     validate_book(&book)?;
     write_book(&dir, &book)?;
+    seiten_einlagern(&root, &book.id);
     read_book(&dir).ok_or_else(|| "Buch nach dem Speichern unlesbar.".into())
+}
+
+/// Neue Seiten des Buchs (Import, Transkript, Zusammenführen, Übersetzung) direkt in
+/// seinen Buch-Ordner holen (lva#365 P2b-2). Best effort: scheitert es, bleibt die Seite
+/// unter `projects/` und wird dort gefunden. Der Aufrufer hält die Bibliothekssperre.
+pub(crate) fn seiten_einlagern(root: &Path, id: &str) {
+    let Some(data) = root.parent() else {
+        return;
+    };
+    let _pages = crate::commands::pages::lock();
+    match crate::library_layout::seiten_einlagern(data, id) {
+        Ok(bewegt) if !bewegt.is_empty() => {
+            crate::commands::library_layout::fundortkarte_neu(data);
+        }
+        Ok(_) => {}
+        Err(e) => {
+            crate::commands::library_layout::fundortkarte_neu(data);
+            log::warn!("Buch-Ordner: neue Seiten nicht eingelagert ({e})");
+        }
+    }
 }
 
 /// Buch aus der Bibliothek entfernen, samt Cover und importiertem Hörbuch.
@@ -1303,8 +1324,7 @@ fn purge_in(root: &Path, ids: Option<&[String]>) -> Result<(), String> {
     // meldet sie danach als gelöscht.
     let endgueltig = |dir: &Path| -> Result<(), String> {
         let Some(data) = root.parent() else {
-            return std::fs::remove_dir_all(dir)
-                .map_err(|e| format!("could not delete book: {e}"));
+            return std::fs::remove_dir_all(dir).map_err(|e| format!("could not delete book: {e}"));
         };
         let _pages = crate::commands::pages::lock();
         crate::library_layout::buch_endgueltig_loeschen(data, dir)
