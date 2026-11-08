@@ -1,6 +1,6 @@
 # Dokumentenablage mit Sync und lokalem Abrufindex (Epic #395)
 
-Stand 08.11.2026, Fassung 4 (Codex-Runden 1 bis 3 eingearbeitet). Entscheidungen: wai-sdk ADR-0029 (Abschnitte
+Stand 08.11.2026, Fassung 5 (Codex-Runden 1 bis 4 eingearbeitet). Entscheidungen: wai-sdk ADR-0029 (Abschnitte
 E1–E11 werden hier nur umgesetzt, nicht wiederholt). Baut auf Bibliothek-Sync (`2026-11-02-bibliothek-sync.md`),
 Projekten (`2026-11-07-buch-ordner-und-projekte.md`, P4-Plan), globalem Sprachassistenten (lva#325) und dem
 Assistenten (`2026-11-08-assistent-chat-und-sprache.md`, ADR-0028) auf.
@@ -60,7 +60,8 @@ IDs in `entfernt`; `entfernt`, `wahlen` und `texte` vereinigt (nie verkleinert).
 genannt. Abgelöst ist F, wenn eine aktive Wahl F in `gegen` hat und nicht gewählt hat und keine aktive Wahl mit
 höherem `(zaehler, geraet)` F gewählt hat. Köpfe = ohne Nachfolger und nicht abgelöst; mehr als ein Kopf = Konflikt.
 Gegenwahl ergibt nach der Vorrangregel genau einen Kopf (Hinweis „gleichzeitig anders gewählt“); eine erneute Wahl
-nennt beide Ereignisse in `ersetzt`. Die Rechnung ist unabhängig von der Reihenfolge des Zusammenführens.
+nennt beide Ereignisse in `ersetzt`; ihr `gegen` ist die Vereinigung der offenen Köpfe und
+der `gegen` aller ersetzten Wahlen (verdrängte Fassungen bleiben verdrängt). Die Rechnung ist unabhängig von der Reihenfolge des Zusammenführens.
 `zaehler` = größter am Gerät bekannter Wert + 1 (Lamport). `blob_refs` ist sichtbares Steuerfeld (AAD-gebunden) für
 die Referenzprüfung am Hub (§6).
 
@@ -75,8 +76,9 @@ die Referenzprüfung am Hub (§6).
  "papierkorb": {"wert": null, "zaehler": 0, "geraet": "g_…"}}
 ```
 
-Kein `ki`-Feld: Freigaben sind gerätelokal (§5.1). Zyklen nach dem Zusammenführen: das Register `eltern` mit dem
-niedrigeren Paar wird verworfen. Elternordner begraben: Ordner erscheint unter „Wiederhergestellt“. Unbekannter
+Kein `ki`-Feld: Freigaben sind gerätelokal (§5.1). Zyklen: Register bleiben unverändert; die wirksame Elternzuordnung
+wird je Stand abgeleitet (Ordner absteigend nach `(zaehler, geraet)` von `eltern`, Kante nur ohne Zyklus übernommen,
+sonst vorläufig „Wiederhergestellt“). Elternordner begraben: ebenso abgeleitet unter „Wiederhergestellt“. Unbekannter
 Klassenwert: wie `gesperrt` bis zur Neuwahl. Unterordner und Dateien dürfen nur gleich oder höher einstufen; eine
 niedrigere gespeicherte Klasse wird auf die geerbte angehoben (nie umgekehrt).
 
@@ -213,7 +215,8 @@ geprüfte Momentkopie. Lokale OCR (Windows.Media.Ocr / Apple Vision) für Bild-P
   lebende Fassung ohne Blob (reservieren → löschen 409 → pushen; Reservierung abgelaufen → Push 422 → neu hochladen);
   `nur_geraet` erscheint nie im Hub (Mitschnitt), Wechsel entfernt Cloud-Kopien; Wahl B, dann B → C: ein Kopf;
   Offline A → D: neuer Konflikt; Gegenwahl → genau ein Kopf (Vorrang) → erneut wählen → genau ein Kopf →
-  Weiterbearbeitung konfliktfrei, in allen Zusammenführ-Reihenfolgen; Aufbewahrung hält die gemeinsame Vorgängerin
+  Weiterbearbeitung konfliktfrei, in allen Zusammenführ-Reihenfolgen; W1 wählt A, W2 (höher) wählt B, W3 wählt B und
+  ersetzt beide → genau ein Kopf B; Ordner A→B (1), B→A (2), B→C (3) in beiden Merge-Abfolgen → A unter B unter C; Aufbewahrung hält die gemeinsame Vorgängerin
   offener Köpfe auch mit 12 neueren Fassungen und Alter 120 Tage; Rückweg lokal → sync mit Abbruch nach jedem
   Journalschritt; Projektverweis zeigt danach auf die neue ID.
 - D4b: Textfassung kommt mit passender `textrev`; fehlende Textfassung → Wartezustand.
