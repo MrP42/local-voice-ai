@@ -379,7 +379,7 @@ if (s === "reset") {
   $("box-fehlt").remove();
 }
 if (s === "zugross") {
-  $("banners").innerHTML = '<div class="banner warn"><svg viewBox="0 0 24 24"><path d="M12 3 2 20h20z"/><path d="M12 10v4M12 17v.01"/></svg><span class="tx">Der Kontext ist größer als das Modellfenster (188 000 von 128 000 Token). Schalte Einträge aus oder wähle eine kürzere Form. Es wird nichts still gekürzt.</span></div>';
+  $("banners").innerHTML = '<div class="banner warn"><svg viewBox="0 0 24 24"><path d="M12 3 2 20h20z"/><path d="M12 10v4M12 17v.01"/></svg><span class="tx">Der Kontext ist größer als das Modellfenster (188 000 von 128 000 Token). Schalte Einträge aus oder wähle eine kürzere Form. Es wird nichts still gekürzt. KI-Aufrufe im Projekt sind gesperrt, bis der Kontext ins Modellfenster passt.</span></div>';
   const rd = document.querySelector('[data-id="rd"]');
   rd.querySelector(".formb").firstChild.textContent = "Volltext";
   rd.querySelector(".tok").textContent = "~182 000 Token";
@@ -390,7 +390,10 @@ if (s === "zugross") {
 if (s === "leer") {
   $("banners").innerHTML = "";
   $("liste").innerHTML = '<div style="max-width:560px;margin:48px auto;padding:0 16px"><h2 style="margin:0 0 8px;font-size:20px">Finanzwissen ist noch leer</h2><p style="color:var(--muted);margin:0 0 16px">Füge Bücher, Texte, Aufnahmen oder Dateien hinzu. App-Inhalte werden verknüpft, Dateien in den Projektordner kopiert.</p><button class="btn pri">Hinzufügen</button></div>';
-  document.querySelector(".phead .chip").textContent = "0 Einträge";
+  // Beide Zähler aus derselben Quelle: Zahl der Einträge des Projekts.
+  const anzahl = 0;
+  document.querySelector(".phead .chip").textContent = anzahl + " Einträge";
+  document.querySelectorAll('.row[title="Finanzwissen"] .ct').forEach(c => c.textContent = String(anzahl));
   for (const [a, b] of [["sum","0 von 128 000 Token"],["sum-s","0 Token"],["cnt","Keine Einträge als Kontext"],["cnt-s","0 Einträge"]]) $(a).textContent = b;
   $("meter").firstElementChild.style.width = "0"; $("meter-s").firstElementChild.style.width = "0";
   $("box-fehlt").remove();
