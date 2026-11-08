@@ -412,7 +412,8 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
             }
             Err(HubError::Unauthorized) => return Err(HubError::Unauthorized),
             Err(e) => {
-                log::warn!("Sync: Datei {} nicht hochgeladen: {e}", o.id);
+                // Der Fehlertext kann einen Pfad enthalten: nur in die Statusanzeige.
+                log::warn!("Sync: Datei {} nicht hochgeladen", o.id);
                 warning = Some(format!("Datei nicht hochgeladen: {e}"));
                 blocked_files.insert(o.id.clone());
                 let text = e.to_string();
@@ -831,7 +832,9 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
         if led.backing_off(&w.blob.blob, now_ms()) {
             continue;
         }
-        if w.blob.size > download_budget {
+        // Wie bei den Büchern: mindestens eine Datei je Lauf, auch über dem Budget, sonst
+        // käme eine große Datei nie an.
+        if w.blob.size > download_budget && download_budget < DOWNLOAD_BUDGET {
             break;
         }
         let target = book_files::download_target(&w);
@@ -1075,7 +1078,6 @@ fn apply_remote(
                 &remote.object_id,
                 value.as_ref(),
                 synced_hash,
-                &cfg.device_id,
                 &cfg.device_name,
             )
         }

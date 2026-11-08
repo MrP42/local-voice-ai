@@ -81,12 +81,12 @@ fn unpark_ready(root: &Path, device_name: &str) {
         if !dir.join("buch.json").is_file() {
             continue;
         }
-        match kern::anwenden(&dir, buch, &id, &value, false, device_name) {
+        match kern::anwenden(&dir, buch, &id, &value, false, None, device_name) {
             Ok(_) | Err(kern::AnwendFehler::Ungueltig(_)) => {
                 let _ = kern::ausparken(root, &id);
             }
-            Err(kern::AnwendFehler::Wiederholen(e)) => {
-                log::warn!("Sync: geparkte Datei {id} noch nicht ablegbar: {e}");
+            Err(kern::AnwendFehler::Wiederholen(_)) => {
+                log::warn!("Sync: geparkte Datei {id} noch nicht ablegbar");
             }
         }
     }
@@ -139,21 +139,20 @@ pub fn collect(
     Ok(out)
 }
 
-/// Hash des lokalen Datensatzes `id` in `dir` wie beim Sammeln, `None` ohne Datensatz.
-fn local_hash_in(
+/// Der lokale Datensatz `id` aus dem gespeicherten Stand (wie beim letzten Sammeln, ohne
+/// die Platte erneut zu lesen): sein Hash und sein Blob-Verweis.
+fn local_in(
     key: &[u8; KEY_LEN],
     dir: &Path,
     buch: &str,
     id: &str,
-    device_id: &str,
-) -> Result<Option<String>, String> {
-    let found = kern::sammeln(dir, buch, device_id, now_ms(), &mut u64::MAX)?;
-    Ok(found
-        .lokal
-        .into_iter()
-        .find(|l| l.id == id)
+) -> Result<Option<(String, Option<Value>)>, String> {
+    Ok(kern::lokal_aus_stand(dir, buch, id)?
         .and_then(|l| with_blob(key, l))
-        .map(|(o, _)| collect::hash(&o.value)))
+        .map(|(o, _)| {
+            let blob = o.value.get("blob").filter(|b| !b.is_null()).cloned();
+            (collect::hash(&o.value), blob)
+        }))
 }
 
 /// Ein `book_file`-Objekt anwenden. `value` ist `None` bei einer Löschung durch den Hub.
@@ -163,7 +162,6 @@ pub fn apply(
     id: &str,
     value: Option<&Value>,
     synced_hash: Option<&str>,
-    device_id: &str,
     device_name: &str,
 ) -> Result<Applied, ApplyError> {
     if !kern::gueltige_id(id) {
@@ -175,7 +173,11 @@ pub fn apply(
         kern::ausparken(&root, id)?;
         let mut changed = false;
         for (buch, dir) in books::book_dirs(&root)? {
-            changed |= kern::vergessen(&dir, &buch, id)?;
+            // Ein unlesbarer Buch-Stand hält die anderen Bücher nicht auf.
+            match kern::vergessen(&dir, &buch, id) {
+                Ok(c) => changed |= c,
+                Err(_) => log::warn!("Sync: Datei-Stand von Buch {buch} nicht lesbar"),
+            }
         }
         return Ok(Applied {
             changed,
@@ -205,13 +207,17 @@ pub fn apply(
         kern::parken(&root, id, value)?;
         return Ok(Applied::default());
     }
-    let local = local_hash_in(key, &dir, buch, id, device_id)?;
-    let open = local.is_some() && local.as_deref() != synced_hash;
-    let changed =
-        kern::anwenden(&dir, buch, id, value, open, device_name).map_err(|e| match e {
+    let local = local_in(key, &dir, buch, id)?;
+    let open = local
+        .as_ref()
+        .is_some_and(|(h, _)| Some(h.as_str()) != synced_hash);
+    let local_blob = local.as_ref().and_then(|(_, b)| b.as_ref());
+    let changed = kern::anwenden(&dir, buch, id, value, open, local_blob, device_name).map_err(
+        |e| match e {
             kern::AnwendFehler::Ungueltig(s) => ApplyError::Invalid(s),
             kern::AnwendFehler::Wiederholen(s) => ApplyError::Retry(s),
-        })?;
+        },
+    )?;
     Ok(Applied {
         changed,
         remote_blobs: blob.into_iter().collect(),

@@ -1105,6 +1105,8 @@ pub fn library_delete(app: AppHandle, id: String) -> Result<(), String> {
     let dir = book_dir(&root, &id)?;
     if dir.exists() {
         seiten_retten(&root, &dir)?;
+        // Notizen, Anhänge und Transkripte (lva#365 P3) nie endgültig löschen.
+        crate::buch_dateien::ordner_retten(&dir, &id)?;
         std::fs::remove_dir_all(&dir).map_err(|e| format!("could not delete book: {e}"))?;
     }
     Ok(())
@@ -2212,6 +2214,7 @@ fn merge_audio_in(
     let mut leftovers = Vec::new();
     for (dir, book) in &sources {
         let entfernt = seiten_retten(root, dir)
+            .and_then(|()| crate::buch_dateien::ordner_retten(dir, &book.id))
             .and_then(|()| std::fs::remove_dir_all(dir).map_err(|e| e.to_string()));
         if let Err(e) = entfernt {
             leftovers.push(format!("\u{201e}{}\u{201c}: {e}", book.title));

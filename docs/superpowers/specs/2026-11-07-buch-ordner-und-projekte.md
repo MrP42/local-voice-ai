@@ -249,6 +249,19 @@ Zurückschreiben unbekannte Felder verlieren könnte. Sie kommen in die neue Sam
 - Löschen: Grabstein `deleted: true` 30 Tage, Datei geht auf dem Empfänger in den Papierkorb.
 - Datensätze mit `v` > bekannter Version werden gelesen, aber nie geschrieben (nur lesend anzeigen).
 - Alte Geräte kennen `book_file` nicht und lassen sie unberührt; sie zeigen die Inhalte nur nicht.
+- Schutz vor stillen Löschungen: Ein Rollenordner oder Teilbaum, der nicht lesbar ist oder über eine
+  Verknüpfung führt, gilt als verdeckt; was dort im Stand steht, bleibt „vorhanden“ und wird nie
+  zum Grabstein. Erst ein wirklich fehlender Ordner löscht. Ein unlesbarer `sync-dateien.json` wird
+  als `sync-dateien.json.defekt-<ms>` beiseitegelegt und neu begonnen.
+- Gleicher Inhalt (gleiche Blob-Kennung) auf beiden Seiten ist kein Konflikt und kein Download; ein
+  geladener Inhalt, der am Ziel schon liegt, ersetzt nichts.
+- Ein Datensatz neuerer Version überdeckt den eigenen: das Gerät sendet für diese ID nichts mehr.
+- Löschen oder Zusammenführen eines Buchs legt `notizen/`, `anhaenge/` und `transkript/` zuerst in den
+  Papierkorb der Bibliothek.
+- Offen (Folge): Pfade, die sich nur in Groß-/Kleinschreibung oder Unicode-Form unterscheiden
+  (HFS+, NTFS), werden noch nicht zusammengelegt; der Inhalt bleibt als Konfliktkopie erhalten.
+- Oberfläche (P3b): Gruppe „Notizen und Anhänge“ im Buch-Ordner (öffnen, neue Notiz, Anhang
+  hinzufügen, entfernen in den Papierkorb; noch nicht geladene Dateien gedämpft).
 
 ### 6.3 Projekte (P6)
 
