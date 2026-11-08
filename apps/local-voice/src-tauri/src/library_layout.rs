@@ -3563,20 +3563,7 @@ pub fn kaskade_seiten(data: &Path, buch: &str) -> Vec<String> {
 /// ein Journal offen ist, wird nichts bewegt. Liefert die Zahl der verschobenen Seiten.
 /// Der Aufrufer hält Bibliotheks- und Seitensperre.
 pub fn fassungen_auslagern(data: &Path, buch_dir: &Path) -> Result<usize, String> {
-    // Zuerst das Journal: solange eine Neuordnung offen ist (auch wenn dieses Buch
-    // noch keine Fassung im Buch-Ordner hat), darf kein Buch-Ordner verschwinden,
-    // sonst scheitert ihr nächster Schritt am fehlenden `buch.json`. Ein
-    // unlesbares Journal hält ebenfalls an.
-    let offen = journal_laden(data)
-        .map_err(|e| format!("Neuordnung der Bibliothek nicht prüfbar ({e}); nichts geändert."))?
-        .is_some_and(|j| !j.phase.abgeschlossen());
-    if offen {
-        return Err(
-            "Die Neuordnung der Bibliothek ist nicht abgeschlossen. Bitte sie erst \
-                    abschließen oder zurücknehmen, dann erneut versuchen."
-                .into(),
-        );
-    }
+    buch_ordner_bewegbar(data)?;
     let fassungen = buch_dir.join(FASSUNGEN);
     let seiten: Vec<String> = unterordner(&fassungen)
         .into_iter()
@@ -3634,6 +3621,111 @@ pub fn fassungen_auslagern(data: &Path, buch_dir: &Path) -> Result<usize, String
         }
     }
     Ok(seiten.len())
+}
+
+/// Darf ein Buch-Ordner gerade verschwinden (Papierkorb, Löschen, Zusammenlegen)? Solange
+/// eine Neuordnung offen ist (auch wenn dieses Buch noch keine Fassung im Buch-Ordner hat),
+/// nein: sonst scheitert ihr nächster Schritt am fehlenden `buch.json`. Ein unlesbares
+/// Journal hält ebenfalls an.
+pub fn buch_ordner_bewegbar(data: &Path) -> Result<(), String> {
+    let offen = journal_laden(data)
+        .map_err(|e| format!("Neuordnung der Bibliothek nicht prüfbar ({e}); nichts geändert."))?
+        .is_some_and(|j| !j.phase.abgeschlossen());
+    if offen {
+        return Err(
+            "Die Neuordnung der Bibliothek ist nicht abgeschlossen. Bitte sie erst \
+                    abschließen oder zurücknehmen, dann erneut versuchen."
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Löschkaskade (P2b-2): Papierkorb und endgültiges Löschen samt Fassungen
+// ---------------------------------------------------------------------------
+
+/// Name des Papierkorbs der Bibliothek (`library/.papierkorb/<buch>`).
+pub const BIBLIOTHEK_PAPIERKORB: &str = ".papierkorb";
+
+/// Liegt dieses Buch im Papierkorb der Bibliothek (und nicht zugleich in der Bibliothek)?
+/// Seiten eines solchen Buchs sind „mit dem Buch entfernt“: die Seitenliste blendet sie
+/// aus, der Sync hält sie zurück (weder hoch- noch als gelöscht gemeldet), bis das Buch
+/// zurückkommt oder endgültig gelöscht wird.
+pub fn buch_im_papierkorb(data: &Path, buch: &str) -> bool {
+    if !gueltiges_buch(buch) {
+        return false;
+    }
+    let bibliothek = data.join(BIBLIOTHEK);
+    !vorhanden(&bibliothek.join(buch))
+        && bibliothek
+            .join(BIBLIOTHEK_PAPIERKORB)
+            .join(buch)
+            .join(BUCH_JSON)
+            .is_file()
+}
+
+/// Seiten-Kennungen unter `<buch_dir>/fassungen/` (nur gültige, nur Ordner).
+fn fassungen_von(buch_dir: &Path) -> Vec<String> {
+    unterordner(&buch_dir.join(FASSUNGEN))
+        .into_iter()
+        .filter(|s| gueltige_seite(s))
+        .collect()
+}
+
+/// Einträge dieser Seiten aus dem Seitenindex nehmen (atomar). Ohne Index nichts zu tun.
+/// Liefert die Zahl der ausgetragenen Einträge. Der Aufrufer hält die Seitensperre.
+fn seiten_austragen(data: &Path, seiten: &[String]) -> Result<usize, String> {
+    if seiten.is_empty() {
+        return Ok(0);
+    }
+    let Some(mut index) = index_laden(data)? else {
+        return Ok(0);
+    };
+    let Some(eintraege) = index.get_mut("pages").and_then(|p| p.as_array_mut()) else {
+        return Ok(0);
+    };
+    let vorher = eintraege.len();
+    eintraege.retain(|e| {
+        !e.get("id")
+            .and_then(|i| i.as_str())
+            .is_some_and(|id| seiten.iter().any(|s| s == id))
+    });
+    let weg = vorher - eintraege.len();
+    if weg > 0 {
+        let bytes = serde_json::to_vec_pretty(&index).map_err(|e| e.to_string())?;
+        schreibe_atomar(&index_pfad(data), &bytes)?;
+    }
+    Ok(weg)
+}
+
+/// Ein Buch endgültig löschen (aus dem Papierkorb oder direkt), samt seinen Fassungen:
+/// erst den Ordner entfernen, dann genau die Seiten aus dem Index nehmen, deren Ordner
+/// danach wirklich fehlt. Scheitert das Entfernen mittendrin, bleiben die übrigen Seiten
+/// im Index (und damit vom Sync zurückgehalten statt als gelöscht gemeldet). Ein
+/// fehlender Ordner ist kein Fehler. Der Aufrufer hält Bibliotheks- und Seitensperre.
+/// Liefert die Zahl der ausgetragenen Seiten.
+pub fn buch_endgueltig_loeschen(data: &Path, buch_dir: &Path) -> Result<usize, String> {
+    let meta = match fs::symlink_metadata(buch_dir) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(e) => return Err(format!("{} nicht lesbar: {e}", buch_dir.display())),
+    };
+    if ist_umweg(&meta) || !meta.is_dir() {
+        return Err(format!(
+            "{} ist kein gewöhnlicher Ordner; nichts gelöscht.",
+            buch_dir.display()
+        ));
+    }
+    let seiten = fassungen_von(buch_dir);
+    let geloescht = fs::remove_dir_all(buch_dir);
+    let weg: Vec<String> = seiten
+        .into_iter()
+        .filter(|s| !vorhanden(&buch_dir.join(FASSUNGEN).join(s)))
+        .collect();
+    let ausgetragen = seiten_austragen(data, &weg)?;
+    geloescht.map_err(|e| format!("Buch nicht vollständig gelöscht: {e}"))?;
+    Ok(ausgetragen)
 }
 
 const VERBOTENE_ZEICHEN: [char; 9] = ['/', '\\', ':', '*', '?', '"', '<', '>', '|'];
@@ -4939,6 +5031,82 @@ mod tests {
         let b = wiederanlauf(&data, &optionen()).unwrap();
         assert!(b.angehalten);
         assert_eq!(b.probleme[0].art, ProblemArt::Fehlt);
+    }
+
+    #[test]
+    fn papierkorb_kaskade_blendet_seiten_aus_und_loescht_sie_endgueltig() {
+        let data = standardlage("kaskade");
+        migrieren(&data, &optionen()).unwrap();
+        assert!(!buch_im_papierkorb(&data, "book_1"));
+        // In den Papierkorb (wie library::trash_locked mit Kaskade): Ordner samt Fassungen.
+        let korb = data.join(BIBLIOTHEK).join(BIBLIOTHEK_PAPIERKORB);
+        fs::create_dir_all(&korb).unwrap();
+        fs::rename(data.join("library/book_1"), korb.join("book_1")).unwrap();
+        assert!(buch_im_papierkorb(&data, "book_1"));
+        assert!(!buch_im_papierkorb(&data, "../book_1"));
+        assert_eq!(
+            fassungen_von(&korb.join("book_1")),
+            vec!["page_1", "page_2"]
+        );
+        // Die Seiten bleiben im Index, sind aber nicht auffindbar (Sync hält sie zurück).
+        let karte = Fundortkarte::default();
+        assert_eq!(
+            aufloesen(&data, "page_1", Some("book_1"), &karte).unwrap(),
+            Aufloesung::Fehlt
+        );
+        assert_eq!(
+            index_buch(&data, "page_1").unwrap().as_deref(),
+            Some("book_1")
+        );
+        // Endgültig: Ordner weg, genau diese Seiten aus dem Index, lose Seite bleibt.
+        assert_eq!(
+            buch_endgueltig_loeschen(&data, &korb.join("book_1")).unwrap(),
+            2
+        );
+        assert!(!korb.join("book_1").exists());
+        let index: serde_json::Value =
+            serde_json::from_slice(&fs::read(index_pfad(&data)).unwrap()).unwrap();
+        let ids: Vec<&str> = index["pages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|p| p["id"].as_str())
+            .collect();
+        assert_eq!(ids, vec!["page_9"]);
+        assert!(data.join("projects/page_9").is_dir());
+        // Fehlender Ordner: nichts zu tun.
+        assert_eq!(
+            buch_endgueltig_loeschen(&data, &korb.join("book_1")).unwrap(),
+            0
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn endgueltig_loeschen_folgt_keiner_verknuepfung() {
+        let data = standardlage("kaskade-umweg");
+        let fremd = data.parent().unwrap().join("kaskade-umweg-fremd");
+        let _ = fs::remove_dir_all(&fremd);
+        fs::create_dir_all(fremd.join("fassungen/page_1")).unwrap();
+        let korb = data.join(BIBLIOTHEK).join(BIBLIOTHEK_PAPIERKORB);
+        fs::create_dir_all(&korb).unwrap();
+        std::os::unix::fs::symlink(&fremd, korb.join("book_7")).unwrap();
+        assert!(buch_endgueltig_loeschen(&data, &korb.join("book_7")).is_err());
+        assert!(fremd.join("fassungen/page_1").is_dir());
+        assert_eq!(index_buch(&data, "page_1").unwrap(), None);
+        assert!(index_laden(&data).unwrap().unwrap()["pages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["id"] == "page_1"));
+    }
+
+    #[test]
+    fn papierkorb_wartet_auf_offene_neuordnung() {
+        let data = standardlage("kaskade-journal");
+        buch_ordner_bewegbar(&data).unwrap();
+        journal_mit(&data, Phase::Gesichert, vec![]);
+        assert!(buch_ordner_bewegbar(&data).is_err());
     }
 
     #[test]

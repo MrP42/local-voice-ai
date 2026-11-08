@@ -1186,11 +1186,48 @@ fn trash_in(root: &Path, ids: &[String]) -> Result<(), String> {
         .map(|l| l.lock().unwrap_or_else(|e| e.into_inner()))
         .collect();
     let _guard = lock();
-    trash_locked(root, ids)
+    trash_locked(root, ids, true)
 }
 
-/// Wie [`trash_in`], die Sperren hält der Aufrufer (Zusammenlegen).
-fn trash_locked(root: &Path, ids: &[String]) -> Result<(), String> {
+/// Löschkaskade (lva#365 P2b-2): mit `kaskade` gehen die Fassungen des Buchs (Seiten
+/// unter `fassungen/`) mit dem Buch in den Papierkorb; Seitenliste und Sync behandeln sie
+/// als „mit dem Buch entfernt“, Wiederherstellen bringt sie zurück, endgültiges Löschen
+/// trägt sie aus. Ohne Kaskade (Zusammenlegen: die Seiten werden Fassungen des Ziels)
+/// kommen sie vorher nach `projects/` zurück.
+fn kaskade_vorbereiten(root: &Path, dir: &Path, to: &Path, kaskade: bool) -> Result<(), String> {
+    let Some(data) = root.parent() else {
+        return Ok(());
+    };
+    if !kaskade {
+        seiten_retten(root, dir)?;
+        if to.exists() {
+            seiten_retten(root, to)?;
+        }
+        return Ok(());
+    }
+    crate::library_layout::buch_ordner_bewegbar(data)?;
+    if to.exists() {
+        // Ein älterer Papierkorb-Eintrag desselben Buchs wird ersetzt: endgültig, samt
+        // seiner Fassungen (die Seiten verlassen dabei auch den Index).
+        let _pages = crate::commands::pages::lock();
+        crate::library_layout::buch_endgueltig_loeschen(data, to)?;
+    }
+    Ok(())
+}
+
+/// Nach jeder Bewegung von Buch-Ordnern samt Fassungen: Fundortkarte neu.
+fn karte_neu(root: &Path) {
+    let _pages = crate::commands::pages::lock();
+    if let Some(data) = root.parent() {
+        crate::commands::library_layout::fundortkarte_neu(data);
+    }
+}
+
+/// Wie [`trash_in`], die Sperren hält der Aufrufer (Zusammenlegen: ohne Kaskade).
+fn trash_locked(root: &Path, ids: &[String], kaskade: bool) -> Result<(), String> {
+    // Mit Kaskade wandern Seiten: Leser sollen keinen halben Stand sehen
+    // (Sperrreihenfolge: Bibliothek vor Seiten).
+    let _pages = kaskade.then(crate::commands::pages::lock);
     std::fs::create_dir_all(root.join(TRASH)).map_err(|e| e.to_string())?;
     let mut moved: Vec<(PathBuf, PathBuf)> = Vec::new();
     let undo = |moved: &[(PathBuf, PathBuf)]| {
@@ -1204,16 +1241,9 @@ fn trash_locked(root: &Path, ids: &[String]) -> Result<(), String> {
             continue;
         }
         let to = trash_dir(root, id)?;
-        // Seiten bleiben, wie vor den Buch-Ordnern, in der Seitenliste: die
-        // Kaskade in den Papierkorb kommt mit ihrer Sync-Behandlung (lva#365 P2b).
-        let gerettet = seiten_retten(root, &dir).and_then(|()| {
-            if to.exists() {
-                seiten_retten(root, &to)?;
-            }
-            Ok(())
-        });
-        if let Err(e) = gerettet {
+        if let Err(e) = kaskade_vorbereiten(root, &dir, &to, kaskade) {
             undo(&moved);
+            karte_neu(root);
             return Err(e);
         }
         if to.exists() {
@@ -1221,10 +1251,14 @@ fn trash_locked(root: &Path, ids: &[String]) -> Result<(), String> {
         }
         if let Err(e) = std::fs::rename(&dir, &to) {
             undo(&moved);
+            karte_neu(root);
             return Err(format!("Entfernen fehlgeschlagen: {e}"));
         }
         let _ = std::fs::write(to.join(TRASH_STAMP), format!("{}", now_ms() as i64));
         moved.push((dir, to));
+    }
+    if kaskade {
+        karte_neu(root);
     }
     Ok(())
 }
@@ -1233,6 +1267,7 @@ fn trash_locked(root: &Path, ids: &[String]) -> Result<(), String> {
 /// wieder belegt ist, bleibt im Papierkorb (Fehlermeldung nennt es).
 fn restore_in(root: &Path, ids: &[String]) -> Result<Vec<LibraryBook>, String> {
     let _guard = lock();
+    let _pages = crate::commands::pages::lock();
     let mut restored = Vec::new();
     let mut blocked = Vec::new();
     for id in ids {
@@ -1251,6 +1286,8 @@ fn restore_in(root: &Path, ids: &[String]) -> Result<Vec<LibraryBook>, String> {
             restored.push(book);
         }
     }
+    // Die Fassungen kamen mit dem Buch zurück (Löschkaskade).
+    karte_neu(root);
     if !blocked.is_empty() {
         return Err(format!("Schon wieder vorhanden: {}", blocked.join(", ")));
     }
@@ -1262,13 +1299,24 @@ fn restore_in(root: &Path, ids: &[String]) -> Result<Vec<LibraryBook>, String> {
 fn purge_in(root: &Path, ids: Option<&[String]>) -> Result<(), String> {
     let _guard = lock();
     let trash = root.join(TRASH);
+    // Löschkaskade: die Fassungen gehen mit, ihre Seiten verlassen den Index; der Sync
+    // meldet sie danach als gelöscht.
+    let endgueltig = |dir: &Path| -> Result<(), String> {
+        let Some(data) = root.parent() else {
+            return std::fs::remove_dir_all(dir)
+                .map_err(|e| format!("could not delete book: {e}"));
+        };
+        let _pages = crate::commands::pages::lock();
+        crate::library_layout::buch_endgueltig_loeschen(data, dir)
+            .map(|_| ())
+            .map_err(|e| format!("could not delete book: {e}"))
+    };
     match ids {
         Some(ids) => {
             for id in ids {
                 let dir = trash_dir(root, id)?;
                 if dir.exists() {
-                    std::fs::remove_dir_all(&dir)
-                        .map_err(|e| format!("could not delete book: {e}"))?;
+                    endgueltig(&dir)?;
                 }
             }
         }
@@ -1282,7 +1330,9 @@ fn purge_in(root: &Path, ids: Option<&[String]>) -> Result<(), String> {
                 // Verschieben setzt sie), nie „uralt“.
                 let stamp = removed_ms(&entry.path()).unwrap_or(now);
                 if now - stamp > TRASH_KEEP_MS {
-                    let _ = std::fs::remove_dir_all(entry.path());
+                    if let Err(e) = endgueltig(&entry.path()) {
+                        log::warn!("Papierkorb: alter Eintrag nicht gelöscht ({e})");
+                    }
                 }
             }
         }

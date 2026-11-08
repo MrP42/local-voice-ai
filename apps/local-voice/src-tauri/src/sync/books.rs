@@ -1145,6 +1145,23 @@ fn apply_book_on(
         return Ok(Applied::default());
     };
 
+    // Löschkaskade (lva#365 P2b-2): Liegt das Buch hier im Papierkorb und kommt vom
+    // Server wieder (anderes Gerät hat es wiederhergestellt), kehrt der Papierkorb-Ordner
+    // samt Fassungen zurück, statt daneben einen leeren Ordner anzulegen; die Seiten
+    // des Buchs sind damit wieder auffindbar. Danach wird wie gewohnt angeglichen.
+    if !dir.exists() {
+        let korb = root.join(TRASH).join(id);
+        if korb.join("buch.json").is_file() {
+            std::fs::rename(&korb, &dir)
+                .map_err(|e| format!("Buch aus dem Papierkorb zurückholen: {e}"))?;
+            let _ = std::fs::remove_file(dir.join(".entfernt"));
+            if let Some(data) = root.parent() {
+                let _pages = crate::commands::pages::lock();
+                crate::commands::library_layout::fundortkarte_neu(data);
+            }
+        }
+    }
+
     let existing = library::sync_read_book(&dir);
     let mut side = read_sidecar_for(&dir, existing.as_ref());
     // Die flachen Dateiverweise (`files.text/audio/cover`) gehören zur
