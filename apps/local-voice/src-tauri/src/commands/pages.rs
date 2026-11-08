@@ -402,6 +402,7 @@ pub(crate) fn fresh_id() -> String {
 pub(crate) fn pages_snapshot(app: &AppHandle) -> Result<Vec<PageInfo>, String> {
     let _guard = lock_lesend()?;
     let mut index = load_index(app)?;
+    ohne_papierkorb(app, &mut index.pages);
     for page in &mut index.pages {
         enrich(app, page);
     }
@@ -411,14 +412,18 @@ pub(crate) fn pages_snapshot(app: &AppHandle) -> Result<Vec<PageInfo>, String> {
     Ok(index.pages)
 }
 
-/// Alle Seiten in Anzeige-Reihenfolge. Gibt es keine, entsteht die erste —
+/// Alle Seiten in Anzeige-Reihenfolge. Gibt es gar keine, entsteht die erste —
 /// eine leere Liste hieße für die Oberfläche „nichts, worin man arbeiten
-/// kann", und diesen Zustand soll es nie geben.
+/// kann". Sind alle Seiten nur mit ihrem Buch im Papierkorb (Löschkaskade),
+/// entsteht keine: sonst käme bei jedem Wechsel zwischen Papierkorb und
+/// Wiederherstellen eine weitere „Erste Seite“ hinzu. Die Liste ist dann leer.
 #[tauri::command]
 #[specta::specta]
 pub fn pages_list(app: AppHandle) -> Result<Vec<PageInfo>, String> {
     let _guard = lock_lesend()?;
     let mut index = load_index(&app)?;
+    let mut sichtbar = index.pages.clone();
+    ohne_papierkorb(&app, &mut sichtbar);
     if index.pages.is_empty() {
         let page = PageInfo {
             id: fresh_id(),
@@ -427,13 +432,28 @@ pub fn pages_list(app: AppHandle) -> Result<Vec<PageInfo>, String> {
         };
         std::fs::create_dir_all(page_path_or_new(&app, &page.id)?)
             .map_err(|e| format!("could not create page dir: {e}"))?;
-        index.pages.push(page);
+        index.pages.push(page.clone());
         store_index(&app, &index)?;
+        sichtbar.push(page);
     }
-    for page in &mut index.pages {
+    for page in &mut sichtbar {
         enrich(&app, page);
     }
-    Ok(index.pages)
+    Ok(sichtbar)
+}
+
+/// Seiten, deren Buch im Papierkorb der Bibliothek liegt, sind mit dem Buch entfernt
+/// (Löschkaskade, lva#365 P2b-2): sie bleiben im Index (Wiederherstellen bringt sie
+/// zurück), erscheinen aber nicht in der Seitenliste.
+fn ohne_papierkorb(app: &AppHandle, pages: &mut Vec<PageInfo>) {
+    let Ok(data) = data_root(app) else {
+        return;
+    };
+    pages.retain(|p| {
+        !p.buch
+            .as_deref()
+            .is_some_and(|b| library_layout::buch_im_papierkorb(&data, b))
+    });
 }
 
 #[tauri::command]

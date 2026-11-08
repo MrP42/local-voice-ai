@@ -5474,9 +5474,11 @@ async llmWarm() : Promise<Result<string, string>> {
 }
 },
 /**
- * Alle Seiten in Anzeige-Reihenfolge. Gibt es keine, entsteht die erste —
+ * Alle Seiten in Anzeige-Reihenfolge. Gibt es gar keine, entsteht die erste —
  * eine leere Liste hieße für die Oberfläche „nichts, worin man arbeiten
- * kann", und diesen Zustand soll es nie geben.
+ * kann". Sind alle Seiten nur mit ihrem Buch im Papierkorb (Löschkaskade),
+ * entsteht keine: sonst käme bei jedem Wechsel zwischen Papierkorb und
+ * Wiederherstellen eine weitere „Erste Seite“ hinzu. Die Liste ist dann leer.
  */
 async pagesList() : Promise<Result<PageInfo[], string>> {
     try {
@@ -6978,6 +6980,29 @@ async libraryBackupRestore(name: string) : Promise<Result<LibraryBackupRestore, 
 async libraryBackupDelete(name: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("library_backup_delete", { name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Dateien im Buch-Ordner für das Buchdetail (P2b-2). Nur lesend und ohne Sperre:
+ * ein Lauf daneben verändert höchstens, was gerade angezeigt wird.
+ */
+async libraryBookFiles(id: string) : Promise<Result<LibraryBookFile[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_book_files", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Buch-Ordner im Explorer (Finder) zeigen.
+ */
+async libraryBookReveal(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_book_reveal", { id }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -10390,6 +10415,18 @@ audio_path: string | null;
  * ist die Liste leer.
  */
 audio_paths?: string[] }
+/**
+ * Ein Eintrag der Ansicht „Dateien im Buch-Ordner“.
+ */
+export type LibraryBookFile = { 
+/**
+ * Pfad relativ zum Buch-Ordner, mit `/`.
+ */
+rel: string; tiefe: number; ordner: boolean; bytes: number; dateien: number; 
+/**
+ * Inhalt nicht einzeln gezeigt (zu tief oder zu viele Dateien).
+ */
+zusammengefasst: boolean }
 /**
  * Ein Teil des Hörbuchs als Kapitelmarke (M4B).
  */

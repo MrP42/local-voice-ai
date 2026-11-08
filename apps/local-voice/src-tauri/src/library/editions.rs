@@ -584,7 +584,7 @@ pub fn join_in(root: &Path, target_id: &str, sources: &[String]) -> Result<Libra
             normalize(&mut target);
             write_book(&tdir, &target)?;
             // Unter denselben Sperren: niemand ändert die Quellen dazwischen.
-            super::trash_locked(root, sources)
+            super::trash_locked(root, sources, false)
         })();
         if let Err(e) = result {
             // Ganz zurück: Ziel wie vorher, Dateien an ihren alten Ort.

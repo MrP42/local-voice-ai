@@ -11,7 +11,9 @@ import {
  * Entfernen (Codex-Abnahme lva#221): zwei klar getrennte Wege.
  * - **Papierkorb:** Der Kern verschiebt den Buchordner (Eintrag, Cover,
  *   Hörbuch-Kopie) nach `library/.papierkorb`. Wiederherstellbar über den
- *   Papierkorb der Bibliothek, 30 Tage lang. Der Text bleibt im Vorlesen.
+ *   Papierkorb der Bibliothek, 30 Tage lang. Seit den Buch-Ordnern (lva#365
+ *   P2b-2) gehen Text und Sprachfassungen im Buch-Ordner mit und kommen beim
+ *   Wiederherstellen zurück; endgültiges Löschen trägt sie aus dem Vorlesen aus.
  * - **Endgültig:** sofort und ohne Rückweg, samt Text bzw. Transkript im
  *   Vorlesen, laufenden Aufträgen und Lesestellen.
  * Die Originaldateien auf dem Rechner berührt keiner der Wege.

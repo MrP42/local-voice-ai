@@ -8171,9 +8171,22 @@
     "back": "Bibliothek",
     "by": "von {{authors}}",
     "tabs": "Buchansicht",
+    "bookFiles": {
+      "title": "Dateien im Buch-Ordner",
+      "reveal": "Im Explorer zeigen",
+      "empty": "Der Buch-Ordner ist leer.",
+      "failed": "Dateien nicht lesbar: {{error}}",
+      "metadata": "Metadaten, Fassungen",
+      "primaryEdition": "{{lang}} · Hauptfassung",
+      "edition": "{{lang}}",
+      "looseEdition": "keiner Fassung zugeordnet",
+      "summary_one": "{{count}} Datei, {{size}}",
+      "summary_other": "{{count}} Dateien, {{size}}"
+    },
     "tab": {
       "overview": "Übersicht",
       "versions": "Fassungen",
+      "files": "Dateien",
       "metadata": "Metadaten"
     },
     "noDescription": "Noch kein Klappentext. Unter „Metadaten“ lässt er sich aus Open Library übernehmen oder selbst schreiben.",
@@ -8394,8 +8407,8 @@
       "scope": "Wohin damit?",
       "trash": "In den Papierkorb (wiederherstellbar)",
       "delete": "Endgültig löschen (nicht wiederherstellbar)",
-      "trashHint_one": "Der Eintrag mit Cover und, falls vorhanden, Hörbuch-Kopie ({{size}}) kommt in den Papierkorb und lässt sich 30 Tage lang wiederherstellen. Text oder Transkript bleibt im Vorlesen.",
-      "trashHint_other": "Die Einträge mit Cover und, falls vorhanden, Hörbuch-Kopie ({{size}}) kommen in den Papierkorb und lassen sich 30 Tage lang wiederherstellen. Texte und Transkripte bleiben im Vorlesen.",
+      "trashHint_one": "Der Eintrag mit Cover und, falls vorhanden, Hörbuch-Kopie ({{size}}) kommt in den Papierkorb und lässt sich 30 Tage lang wiederherstellen. Text, Transkript und Sprachfassungen im Buch-Ordner gehen mit und kommen beim Wiederherstellen zurück.",
+      "trashHint_other": "Die Einträge mit Cover und, falls vorhanden, Hörbuch-Kopie ({{size}}) kommen in den Papierkorb und lassen sich 30 Tage lang wiederherstellen. Texte, Transkripte und Sprachfassungen in den Buch-Ordnern gehen mit und kommen beim Wiederherstellen zurück.",
       "deleteHint_one": "Sofort und endgültig gelöscht werden: der Eintrag mit Cover und, falls vorhanden, Hörbuch-Kopie ({{size}}), der zugehörige Text oder das Transkript im Vorlesen ({{texts}}), laufende Transkriptionen und Lesestellen.",
       "deleteHint_other": "Sofort und endgültig gelöscht werden: die Einträge mit Cover und, falls vorhanden, Hörbuch-Kopien ({{size}}), die zugehörigen Texte und Transkripte im Vorlesen ({{texts}}), laufende Transkriptionen und Lesestellen.",
       "sure_one": "Ich habe verstanden: 1 Eintrag ({{size}}) und {{texts}} Text bzw. Transkript im Vorlesen werden endgültig gelöscht.",
