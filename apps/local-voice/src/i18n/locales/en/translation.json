@@ -7498,6 +7498,16 @@
       "title": "What would you like to talk about?",
       "hint": "Start the conversation and just talk. You can interrupt or type at any time."
     },
+    "greeting": {
+      "morning": ["Good morning, {{name}}. Where should we start?", "Good morning, {{name}}. What's on today?"],
+      "day": ["Hi {{name}}, how can I help?", "Hi {{name}}, what's new?"],
+      "evening": ["Good evening, {{name}}. What's up?", "Good evening, {{name}}. How can I help?"],
+      "night": ["Still up, {{name}}? What can I do?", "Hi {{name}}, what are you working on?"],
+      "morningAnon": ["Good morning. Where should we start?", "Good morning. What's on today?"],
+      "dayAnon": ["How can I help?", "What's new?"],
+      "eveningAnon": ["Good evening. What's up?", "Good evening. How can I help?"],
+      "nightAnon": ["Still up? What can I do?", "What are you working on?"]
+    },
     "suggestions": {
       "s1": "What is in my latest minutes?",
       "s2": "Summarize yesterday's meeting",
@@ -7512,6 +7522,7 @@
       "send": "Send message",
       "removeAttachment": "Remove attachment “{{name}}”",
       "attachFiles": "Attach files …",
+      "permissions": "Sovereignty and knowledge …",
       "fromCorporate": "From Corporate LLM",
       "corporateHint": "Connect Corporate LLM – skills, plugins and connectors come from there",
       "documents": "Documents",
@@ -7888,7 +7899,15 @@
         "here": "on this device",
         "other": "on another device"
       },
+      "notLocal": "The {{lang}} audiobook is not on this device yet. Sync has been started.",
+      "notOnDevice": "Not on this device yet",
+      "syncFailed": "The {{lang}} audiobook could not be loaded: sync failed ({{error}}).",
+      "syncOff": "The {{lang}} audiobook is not on this device and sync is not set up.",
+      "listenEdition": "Play audiobook · {{lang}}",
+      "continueEdition": "Continue listening · {{lang}}",
       "section": {
+        "listen": "Play {{lang}} audiobook ({{duration}})",
+        "listenNoDuration": "Play {{lang}} audiobook",
         "title": "Language editions",
         "edition": "Edition",
         "progress": "Progress",
@@ -7902,6 +7921,8 @@
         "alignedSome": "Chapters of {{a}} and {{b}} are partly matched."
       },
       "menu": {
+        "read": "Read text",
+        "listen": "Play audiobook",
         "primary": "Make primary edition",
         "align": "Match chapters …",
         "export": "Export …",
@@ -8188,6 +8209,7 @@
       "none": "No text"
     },
     "audioShort": {
+      "other": "Audiobook ({{lang}})",
       "ok": "Audio",
       "busy": "…",
       "none": "No audio",
@@ -8378,6 +8400,8 @@
     "continueRead": "Continue reading",
     "readTitle": "Read “{{title}}”",
     "audioSource": {
+      "other": "Audio: audiobook of the {{lang}} edition",
+      "otherRemote": "Audio: audiobook of the {{lang}} edition, not on this device yet",
       "audiobook": "Audio: imported audiobook",
       "narrated": "Audio: narrated by speech synthesis",
       "none": "No audio – read or have it read aloud live"

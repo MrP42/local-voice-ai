@@ -7498,6 +7498,16 @@
       "title": "Worüber möchtest du sprechen?",
       "hint": "Gespräch beginnen und einfach lossprechen. Du kannst jederzeit unterbrechen oder schreiben."
     },
+    "greeting": {
+      "morning": ["Guten Morgen, {{name}}. Womit fangen wir an?", "Guten Morgen, {{name}}. Was steht heute an?"],
+      "day": ["Hallo {{name}}, wie kann ich helfen?", "Hallo {{name}}, was gibt es Neues?"],
+      "evening": ["Guten Abend, {{name}}. Was steht an?", "Guten Abend, {{name}}. Womit kann ich helfen?"],
+      "night": ["Noch wach, {{name}}? Was kann ich tun?", "Hallo {{name}}, woran arbeitest du gerade?"],
+      "morningAnon": ["Guten Morgen. Womit fangen wir an?", "Guten Morgen. Was steht heute an?"],
+      "dayAnon": ["Wie kann ich helfen?", "Was gibt es Neues?"],
+      "eveningAnon": ["Guten Abend. Was steht an?", "Guten Abend. Womit kann ich helfen?"],
+      "nightAnon": ["Noch wach? Was kann ich tun?", "Woran arbeitest du gerade?"]
+    },
     "suggestions": {
       "s1": "Was steht in meinen letzten Protokollen?",
       "s2": "Fasse das gestrige Meeting zusammen",
@@ -7512,6 +7522,7 @@
       "send": "Nachricht senden",
       "removeAttachment": "Anhang „{{name}}“ entfernen",
       "attachFiles": "Dateien anhängen …",
+      "permissions": "Souveränität und Wissen …",
       "fromCorporate": "Aus Corporate LLM",
       "corporateHint": "Corporate LLM verbinden – Skills, Plugins und Konnektoren kommen von dort",
       "documents": "Dokumente",
@@ -7888,7 +7899,15 @@
         "here": "an diesem Gerät",
         "other": "auf einem anderen Gerät"
       },
+      "notLocal": "Das Hörbuch ({{lang}}) ist auf diesem Gerät noch nicht geladen. Der Abgleich ist angestoßen.",
+      "notOnDevice": "Noch nicht auf diesem Gerät",
+      "syncFailed": "Das Hörbuch ({{lang}}) konnte nicht geladen werden: Der Abgleich ist fehlgeschlagen ({{error}}).",
+      "syncOff": "Das Hörbuch ({{lang}}) liegt nicht auf diesem Gerät, und der Abgleich ist nicht eingerichtet.",
+      "listenEdition": "Hörbuch hören · {{lang}}",
+      "continueEdition": "Weiterhören · {{lang}}",
       "section": {
+        "listen": "Hörbuch {{lang}} abspielen ({{duration}})",
+        "listenNoDuration": "Hörbuch {{lang}} abspielen",
         "title": "Sprachfassungen",
         "edition": "Fassung",
         "progress": "Fortschritt",
@@ -7902,6 +7921,8 @@
         "alignedSome": "Kapitel von {{a}} und {{b}} sind teilweise zugeordnet."
       },
       "menu": {
+        "read": "Text lesen",
+        "listen": "Hörbuch abspielen",
         "primary": "Als Hauptfassung festlegen",
         "align": "Kapitel zuordnen …",
         "export": "Exportieren …",
@@ -8188,6 +8209,7 @@
       "none": "Kein Text"
     },
     "audioShort": {
+      "other": "Hörbuch ({{lang}})",
       "ok": "Audio",
       "busy": "…",
       "none": "Kein Audio",
@@ -8378,6 +8400,8 @@
     "continueRead": "Weiterlesen",
     "readTitle": "„{{title}}“ lesen",
     "audioSource": {
+      "other": "Audio: Hörbuch der Sprachfassung {{lang}}",
+      "otherRemote": "Audio: Hörbuch der Sprachfassung {{lang}}, noch nicht auf diesem Gerät",
       "audiobook": "Audio: importiertes Hörbuch",
       "narrated": "Audio: per Sprachausgabe vertont",
       "none": "Kein Audio – nur Lesen oder live vorlesen lassen"

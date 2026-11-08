@@ -234,6 +234,38 @@
   position: relative;
   display: inline-flex;
 }
+/* In der Reader-Werkzeugleiste so groß und so gestaltet wie die Nachbar-
+   gruppen Lesen/Bearbeiten und Seite/Buch (32 px, Rand 30 %, Radius 6 px;
+   Patrick 08.11.). Mit grobem Zeiger (Touch) bleibt das 44-px-Ziel. */
+.sf-reader .sf-switch__button {
+  min-width: 0;
+  min-height: 32px;
+  height: 32px;
+  gap: 4px;
+  padding: 0 8px;
+  border-color: color-mix(in srgb, var(--color-mid-gray) 30%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--color-mid-gray) 10%, transparent);
+  color: color-mix(in srgb, var(--color-text) 70%, transparent);
+  font-size: 12px;
+  line-height: 16px;
+}
+.sf-reader .sf-switch__button svg {
+  width: 14px;
+  height: 14px;
+}
+.sf-reader .sf-switch__button:hover,
+.sf-reader .sf-switch__button[aria-expanded="true"] {
+  background: color-mix(in srgb, var(--color-mid-gray) 15%, transparent);
+  color: var(--color-text);
+}
+@media (pointer: coarse) {
+  .sf-reader .sf-switch__button {
+    min-width: 44px;
+    min-height: 44px;
+    height: auto;
+  }
+}
 .sf-reader .sf-notice {
   top: calc(100% + 8px);
   right: 0;
@@ -365,6 +397,41 @@
 }
 .sf-row__menu {
   text-align: right;
+}
+/* Hörbuch der Fassung abspielen (Zelle „Hörbuch“): Fluent-„subtle“-Knopf. */
+.sf-listen {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  margin: -6px -8px;
+  padding: 4px 8px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.sf-listen svg {
+  color: var(--color-logo-primary);
+}
+.sf-listen:hover {
+  background: var(--sf-soft);
+}
+.sf-listen:active {
+  background: color-mix(in srgb, var(--color-logo-primary) 14%, transparent);
+}
+.sf-listen:focus-visible {
+  outline: 2px solid var(--color-logo-primary);
+  outline-offset: 1px;
+}
+@media (pointer: coarse), (max-width: 640px) {
+  .sf-listen {
+    min-height: 44px;
+    margin: 0;
+  }
 }
 .sf-section__foot {
   margin: 8px 0 0;

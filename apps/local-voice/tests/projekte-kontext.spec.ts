@@ -455,7 +455,7 @@ test.describe("Projekte mit Als Kontext", () => {
         .filter({ hasText: "Finanzwissen" }),
     ).toContainText("9");
 
-    await geheZu(page, "Chat");
+    await geheZu(page, "Start");
     const gruppe2 = page.locator('[data-testid="projekte-gruppe"]:visible');
     await expect(gruppe2).toBeVisible();
     await expect(
@@ -1355,7 +1355,7 @@ test.describe("Projekte mit Als Kontext", () => {
       name: "18-gespraech-gruppe",
       eigeneWahl: true,
       los: async (p) => {
-        await geheZu(p, "Chat");
+        await geheZu(p, "Start");
         await expect(
           p.locator('[data-testid="projekte-gruppe"]:visible'),
         ).toBeVisible();

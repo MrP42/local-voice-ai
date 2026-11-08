@@ -16,6 +16,7 @@ import {
   Cloud,
   Globe,
   Paperclip,
+  Shield,
   PanelLeftOpen,
   SquarePen,
 } from "lucide-react";
@@ -39,6 +40,8 @@ import { PermissionChip } from "./PermissionChip";
 import { SettingsPanel } from "./SettingsPanel";
 import { Transcript } from "./Transcript";
 import { SprachRecherche } from "../projekte/SprachRecherche";
+import { useKonto } from "../konto/useKonto";
+import { greetingKey, greetingName } from "./greeting";
 
 /** Mehr Text als das gehört nicht in eine Nachricht an die KI. */
 const MAX_FILE_CHARS = 20_000;
@@ -109,6 +112,21 @@ export const VoiceCallPage: React.FC = () => {
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [attachError, setAttachError] = useState<string | null>(null);
   const attachId = useRef(0);
+  const { aktiv: profil } = useKonto();
+  // Je Aufruf der Seite eine andere Variante, innerhalb des Aufrufs stabil.
+  const [greetingSeed] = useState(() => Date.now());
+  const greeting = useMemo(() => {
+    const name = greetingName(profil);
+    const { key, index } = greetingKey(
+      new Date().getHours(),
+      name,
+      greetingSeed,
+    );
+    const variants = t(key, { name, returnObjects: true });
+    return Array.isArray(variants)
+      ? String(variants[index] ?? variants[0])
+      : String(variants);
+  }, [profil, greetingSeed, t]);
 
   useEffect(() => {
     store.getState().setActive(true);
@@ -379,6 +397,14 @@ export const VoiceCallPage: React.FC = () => {
         onSelect: () => setRechercheOffen(true),
       },
       {
+        // lva#394: früher Chip links neben ＋ (Vorbild ChatGPT: ＋ ganz links).
+        id: "permissions",
+        label: t("voiceCall.composer.permissions"),
+        icon: <Shield className="w-4 h-4" aria-hidden="true" />,
+        separatorBefore: true,
+        onSelect: () => store.getState().openSettings("knowledge"),
+      },
+      {
         id: "corporate",
         label: t("voiceCall.composer.fromCorporate"),
         icon: <Cloud className="w-4 h-4" aria-hidden="true" />,
@@ -387,7 +413,7 @@ export const VoiceCallPage: React.FC = () => {
         separatorBefore: true,
       },
     ],
-    [t, attachFile],
+    [t, attachFile, store],
   );
 
   const warnings = ready?.warnings ?? [];
@@ -405,9 +431,55 @@ export const VoiceCallPage: React.FC = () => {
       : []),
   ];
 
+  const composer = (
+    <Composer
+      value={draft}
+      onChange={setDraft}
+      onSend={onSend}
+      attachments={attachments}
+      onRemoveAttachment={(id) =>
+        setAttachments((all) => all.filter((a) => a.id !== id))
+      }
+      menuItems={menuItems}
+      callAction={{
+        active: inCall,
+        label: callLabel,
+        onClick: toggleCall,
+      }}
+      muted={muted}
+      onToggleMute={() => store.getState().setMuted(!muted)}
+      sending={textBusy}
+      disabled={switching}
+      onStop={() => store.getState().stopText()}
+      labels={{
+        message: t("voiceCall.composer.message"),
+        placeholder: t("voiceCall.composer.placeholder"),
+        add: t("voiceCall.composer.add"),
+        mute: t("voiceCall.composer.mute"),
+        send: t("voiceCall.composer.send"),
+        stop: t("voiceCall.composer.stop"),
+        removeAttachment: (label) =>
+          t("voiceCall.composer.removeAttachment", { name: label }),
+      }}
+    >
+      <span
+        className={`items-center gap-2 px-2 text-xs text-text/85 ${
+          inCall || textBusy ? "inline-flex" : "hidden"
+        }`}
+      >
+        <LevelWave live={inCall && !muted} busy={busy || textBusy} />
+        <span className="max-sm:hidden">
+          {textBusy
+            ? t("voiceCall.state.thinking")
+            : t(`voiceCall.state.${state}`)}
+        </span>
+      </span>
+    </Composer>
+  );
+
   return (
     <PageShell title={t("voiceCall.title")} fill>
-      <div className="relative flex h-full min-h-0 overflow-hidden">
+      <div className="lv-chat relative flex h-full min-h-0 overflow-hidden">
         {historyOpen && !narrow && (
           <aside
             id={historyId}
@@ -441,22 +513,38 @@ export const VoiceCallPage: React.FC = () => {
         <div className="flex flex-col flex-1 min-w-0 min-h-0">
           <InfoLine
             leading={
-              !historyOpen ? (
-                <button
-                  type="button"
-                  aria-controls={historyId}
-                  aria-expanded="false"
-                  aria-label={t("voiceCall.history.toggle")}
-                  title={t("voiceCall.history.toggle")}
-                  onClick={toggleHistory}
-                  className="grid place-items-center w-8 h-8 max-sm:w-[44px] max-sm:h-[44px] shrink-0 rounded cursor-pointer text-text/85 hover:bg-mid-gray/15 hover:text-text"
-                >
-                  <PanelLeftOpen className="w-4 h-4" aria-hidden="true" />
-                </button>
-              ) : null
+              <>
+                {!historyOpen && (
+                  <button
+                    type="button"
+                    aria-controls={historyId}
+                    aria-expanded="false"
+                    aria-label={t("voiceCall.history.toggle")}
+                    title={t("voiceCall.history.toggle")}
+                    onClick={toggleHistory}
+                    className="grid place-items-center w-8 h-8 max-sm:w-[44px] max-sm:h-[44px] shrink-0 rounded cursor-pointer text-text/85 hover:bg-mid-gray/15 hover:text-text"
+                  >
+                    <PanelLeftOpen className="w-4 h-4" aria-hidden="true" />
+                  </button>
+                )}
+                {/* Codex lva#394 F3: Modellwahl oben links im Chatkopf wie ChatGPT. */}
+                <ModelPicker />
+              </>
             }
-            trailing={<ConversationOptions />}
+            trailing={
+              <>
+                {/* Codex lva#394 F2: Datenbereich bleibt ohne Öffnen sichtbar
+                    (schmal in einer eigenen Zeile darunter, siehe unten). */}
+                {!narrow && <PermissionChip />}
+                <ConversationOptions />
+              </>
+            }
           />
+          {narrow && (
+            <div className="flex items-center px-2 border-b border-mid-gray/20 min-w-0">
+              <PermissionChip />
+            </div>
+          )}
           {alerts.map((a) => (
             <div
               key={`${a.kind}-${a.text}`}
@@ -486,58 +574,17 @@ export const VoiceCallPage: React.FC = () => {
           <Transcript
             lines={lines}
             active={inCall}
-            onSuggest={(text) => send(text, [])}
+            greeting={switching ? undefined : greeting}
             toolStatus={toolStatus}
             notice={notice}
             onOpenSettings={() => store.getState().openSettings("models")}
             onEditLine={(id, text) => void store.getState().editLine(id, text)}
             canEdit={(line) => lineEditable(line, state, textBusy)}
           />
-          <Composer
-            value={draft}
-            onChange={setDraft}
-            onSend={onSend}
-            attachments={attachments}
-            onRemoveAttachment={(id) =>
-              setAttachments((all) => all.filter((a) => a.id !== id))
-            }
-            menuItems={menuItems}
-            leading={<PermissionChip />}
-            tools={<ModelPicker />}
-            callAction={{
-              active: inCall,
-              label: callLabel,
-              onClick: toggleCall,
-            }}
-            muted={muted}
-            onToggleMute={() => store.getState().setMuted(!muted)}
-            sending={textBusy}
-            disabled={switching}
-            onStop={() => store.getState().stopText()}
-            labels={{
-              message: t("voiceCall.composer.message"),
-              placeholder: t("voiceCall.composer.placeholder"),
-              add: t("voiceCall.composer.add"),
-              mute: t("voiceCall.composer.mute"),
-              send: t("voiceCall.composer.send"),
-              stop: t("voiceCall.composer.stop"),
-              removeAttachment: (label) =>
-                t("voiceCall.composer.removeAttachment", { name: label }),
-            }}
-          >
-            <span
-              className={`items-center gap-2 px-2 text-xs text-text/85 ${
-                inCall || textBusy ? "inline-flex" : "inline-flex max-sm:hidden"
-              }`}
-            >
-              <LevelWave live={inCall && !muted} busy={busy || textBusy} />
-              <span className="max-sm:hidden">
-                {textBusy
-                  ? t("voiceCall.state.thinking")
-                  : t(`voiceCall.state.${state}`)}
-              </span>
-            </span>
-          </Composer>
+          {/* Feste Baumposition: kein Neueinhängen der Eingabe beim ersten Senden. */}
+          <div className={lines.length === 0 ? "flex-1 min-h-0" : "contents"}>
+            {composer}
+          </div>
         </div>
         {settingsOpen && <SettingsPanel />}
       </div>

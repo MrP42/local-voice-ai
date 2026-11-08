@@ -1,3 +1,4 @@
+import { oeffneProfilmenue } from "./profilmenue";
 import { test, expect } from "@playwright/test";
 import {
   NEMOTRON,
@@ -122,8 +123,15 @@ test("Erstinstallation lädt Nemotron 3.5 und startet die Einführungstour", asy
   // Esc schließt die Tour; Fokus landet auf einem sinnvollen Ziel.
   await page.keyboard.press("Escape");
   await expect(tour).toHaveCount(0);
-  const again = page.getByTestId("workspace-start-tour");
-  await expect(again).toBeFocused();
+  // lva#394: Startseite ist der Chat, der Fokus landet im Eingabefeld.
+  await expect(page.getByTestId("chat-input")).toBeFocused();
+  const again = {
+    click: async () => {
+      await oeffneProfilmenue(page);
+      await page.getByRole("button", { name: /^Hilfe/ }).click();
+      await page.getByTestId("titlebar-start-tour").click();
+    },
+  };
 
   // Erneut starten löst keinen weiteren Download aus.
   const downloads = (await commands(page)).filter(
@@ -194,9 +202,7 @@ test("Installer ohne Diktatmodell zeigt die Modellauswahl", async ({
 test("Bestehende Installation startet ohne Tour", async ({ page }) => {
   await setup(page, { onboardingCompleted: true });
   await page.goto("/");
-  await expect(
-    page.getByRole("heading", { name: "Was möchtest du tun?" }),
-  ).toBeVisible();
+  await expect(page.getByTestId("chat-greeting")).toBeVisible();
   await expect(page.getByTestId("intro-tour")).toHaveCount(0);
 });
 

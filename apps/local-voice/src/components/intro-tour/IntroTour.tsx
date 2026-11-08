@@ -169,7 +169,8 @@ const DictationAnimation: React.FC<{
 
 /** Sinnvolles Ziel nach dem Schließen, wenn der Auslöser nicht mehr da ist. */
 const FOCUS_FALLBACKS = [
-  "[data-testid='workspace-start-tour']",
+  // lva#394: Der Chat ist die Startseite, das Eingabefeld ist das natürliche Ziel.
+  "[data-testid='chat-input']",
   "[data-tour='nav-profile'] button",
   "[data-tour='nav-home']",
 ];
