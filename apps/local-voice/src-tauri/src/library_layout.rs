@@ -3737,51 +3737,104 @@ fn seiten_austragen(
     let Some(mut index) = index_laden(data)? else {
         return Ok(0);
     };
-    let karte = Fundortkarte::aufbauen(data);
-    // Die Fundortkarte kennt nur die Bibliothek; andere Bücher im Papierkorb zählen
-    // ebenfalls (ihre Fassungsordner und was ihr `buch.json` nennt).
-    let andere_im_korb: Vec<(PathBuf, Vec<String>)> = unterordner(korb)
-        .into_iter()
-        .filter(|b| gueltiges_buch(b) && b != buch)
-        .map(|b| {
-            let dir = korb.join(&b);
-            let genannt = seiten_laut_buch_json(&dir.join(BUCH_JSON));
-            (dir, genannt)
-        })
-        .collect();
-    let anderswo = |seite: &str| {
-        vorhanden(&absolut(data, &rel_von(seite)))
-            || karte
-                .orte(seite)
-                .iter()
-                .any(|o| vorhanden(&absolut(data, o)))
-            || andere_im_korb.iter().any(|(dir, genannt)| {
-                vorhanden(&dir.join(FASSUNGEN).join(seite)) || genannt.iter().any(|g| g == seite)
-            })
+    // Strenger Nachweis: Ausgetragen wird nur, was nachweislich (NotFound) nirgends
+    // sonst liegt; jeder andere Fehler beim Nachsehen heißt „nicht austragen“ (Fehler,
+    // die Absicht bleibt, der nächste Versuch prüft erneut). Die lockere Fundortkarte
+    // (übergeht Lesefehler) dient hier deshalb nicht.
+    let unerreichbar = |p: &Path, e: std::io::Error| {
+        format!(
+            "{} nicht prüfbar ({e}); Seiten nicht ausgetragen, die Löschung wird später \
+             abgeschlossen.",
+            p.display()
+        )
     };
-    let weg: BTreeSet<&str> = seiten
-        .iter()
-        .map(String::as_str)
-        .filter(|s| !anderswo(s))
-        .collect();
+    let da = |p: &Path| -> Result<bool, String> {
+        match fs::symlink_metadata(p) {
+            Ok(_) => Ok(true),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(e) => Err(unerreichbar(p, e)),
+        }
+    };
+    let ordner_namen = |dir: &Path| -> Result<Vec<String>, String> {
+        let eintraege = match fs::read_dir(dir) {
+            Ok(e) => e,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) => return Err(unerreichbar(dir, e)),
+        };
+        let mut namen = Vec::new();
+        for e in eintraege {
+            let e = e.map_err(|err| unerreichbar(dir, err))?;
+            if let Some(n) = e.file_name().to_str().filter(|n| gueltiges_buch(n)) {
+                namen.push(n.to_owned());
+            }
+        }
+        Ok(namen)
+    };
+    let genannt = |datei: &Path| -> Result<Vec<String>, String> {
+        let roh = match fs::read(datei) {
+            Ok(r) => r,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) => return Err(unerreichbar(datei, e)),
+        };
+        serde_json::from_slice::<serde_json::Value>(&roh).map_err(|e| {
+            format!(
+                "{} unlesbar ({e}); Seiten nicht ausgetragen.",
+                datei.display()
+            )
+        })?;
+        Ok(seiten_laut_buch_json(datei))
+    };
+    let bibliothek = data.join(BIBLIOTHEK);
+    // Alle anderen Bücher: Bibliothek und Papierkorb, je Ordner und genannte Seiten.
+    let mut andere: Vec<(PathBuf, Vec<String>)> = Vec::new();
+    for wurzel in [bibliothek.as_path(), korb] {
+        for b in ordner_namen(wurzel)? {
+            if wurzel == korb && b == buch {
+                continue;
+            }
+            let dir = wurzel.join(&b);
+            let seiten = genannt(&dir.join(BUCH_JSON))?;
+            andere.push((dir, seiten));
+        }
+    }
+    let mut weg: BTreeSet<&str> = BTreeSet::new();
+    for seite in seiten {
+        let mut anderswo = da(&absolut(data, &rel_von(seite)))?;
+        for (dir, genannt) in &andere {
+            if anderswo {
+                break;
+            }
+            anderswo = genannt.iter().any(|g| g == seite) || da(&dir.join(FASSUNGEN).join(seite))?;
+        }
+        if !anderswo {
+            weg.insert(seite.as_str());
+        }
+    }
+    // Eigen: kein Buch, dieses Buch, oder ein Buch, das es nachweislich weder in der
+    // Bibliothek noch im Papierkorb mehr gibt (verwaist, etwa nach dessen früherem
+    // Löschen, als die Seite noch in einem anderen Buch lag).
+    let mut eigen: BTreeMap<String, bool> = BTreeMap::new();
     let Some(eintraege) = index.get_mut("pages").and_then(|p| p.as_array_mut()) else {
         return Ok(0);
     };
+    for e in eintraege.iter() {
+        if let Some(b) = e.get("buch").and_then(|b| b.as_str()) {
+            if !eigen.contains_key(b) {
+                let ja = b == buch
+                    || !gueltiges_buch(b)
+                    || (!da(&bibliothek.join(b))? && !da(&korb.join(b))?);
+                eigen.insert(b.to_owned(), ja);
+            }
+        }
+    }
     let vorher = eintraege.len();
     eintraege.retain(|e| {
         let Some(id) = e.get("id").and_then(|i| i.as_str()) else {
             return true;
         };
-        // Eigen: kein Buch, dieses Buch, oder ein Buch, das es weder in der Bibliothek
-        // noch im Papierkorb mehr gibt (verwaist, etwa nach dessen früherem Löschen,
-        // als die Seite noch in einem anderen Buch lag).
         let eigenes = match e.get("buch").and_then(|b| b.as_str()) {
             None => true,
-            Some(b) => {
-                b == buch
-                    || !gueltiges_buch(b)
-                    || (!vorhanden(&data.join(BIBLIOTHEK).join(b)) && !vorhanden(&korb.join(b)))
-            }
+            Some(b) => eigen.get(b).copied().unwrap_or(false),
         };
         !(eigenes && weg.contains(id))
     });
@@ -5627,6 +5680,38 @@ mod tests {
             .as_array()
             .unwrap()
             .is_empty());
+    }
+
+    #[test]
+    fn endgueltig_loeschen_traegt_bei_unklarem_fremdort_nichts_aus() {
+        let data = standardlage("kaskade-unklar");
+        migrieren(&data, &optionen()).unwrap();
+        let korb = data.join(BIBLIOTHEK).join(BIBLIOTHEK_PAPIERKORB);
+        fs::create_dir_all(&korb).unwrap();
+        fs::rename(data.join("library/book_1"), korb.join("book_1")).unwrap();
+        // Ein anderes Buch ist nicht prüfbar (buch.json nicht als Datei lesbar): kein
+        // Nachweis, dass page_1 nirgends sonst liegt → nichts austragen, Absicht bleibt.
+        fs::create_dir_all(korb.join("book_3/buch.json")).unwrap();
+        assert!(buch_endgueltig_loeschen(&data, &korb.join("book_1")).is_err());
+        assert!(!korb.join("book_1").exists());
+        assert!(loeschung_offen(&korb.join("book_1")).unwrap());
+        assert_eq!(
+            index_buch(&data, "page_1").unwrap().as_deref(),
+            Some("book_1")
+        );
+        // Ebenso ein unlesbares buch.json eines Buchs in der Bibliothek.
+        fs::remove_dir_all(korb.join("book_3")).unwrap();
+        buch_anlegen(&data, "book_4", "page_8", &["page_8"]);
+        fs::write(data.join("library/book_4/buch.json"), b"{kaputt").unwrap();
+        assert!(buch_endgueltig_loeschen(&data, &korb.join("book_1")).is_err());
+        assert!(loeschung_offen(&korb.join("book_1")).unwrap());
+        // Geklärt: der Abschluss trägt aus.
+        fs::remove_dir_all(data.join("library/book_4")).unwrap();
+        assert_eq!(
+            buch_endgueltig_loeschen(&data, &korb.join("book_1")).unwrap(),
+            2
+        );
+        assert!(!loeschung_offen(&korb.join("book_1")).unwrap());
     }
 
     #[cfg(unix)]
