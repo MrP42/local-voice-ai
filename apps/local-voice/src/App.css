@@ -1317,3 +1317,17 @@ body,
     margin-top: 0;
   }
 }
+
+/* lva#394 (Codex): Bei Touch-Eingabe hat jedes Bedienelement im Chat eine
+   Trefferfläche von 44 × 44 px, unabhängig von der Fensterbreite. */
+@media (any-pointer: coarse) {
+  .lv-chat button,
+  .lv-chat [role="button"],
+  .lv-chat [role="menuitem"],
+  .lv-chat [role="menuitemradio"],
+  .lv-chat [role="menuitemcheckbox"],
+  .fui-MenuPopover [role^="menuitem"] {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}

@@ -264,7 +264,8 @@ for (const theme of ["light", "dark"] as const) {
 }
 
 // Statusleiste < 480 px: kompakte Einträge, nichts abgeschnitten, kein
-// verdeckter Querscroll, höchstens zwei Zeilen; genau ein Primärbutton auf Start.
+// verdeckter Querscroll, höchstens zwei Zeilen. Start ist der Chat (lva#394):
+// Eingabefeld sichtbar, keine Primärschaltfläche aus der früheren Kachelseite.
 for (const width of [390, 360]) {
   test(`Statusleiste schmal ohne Abschnitt (${width})`, async ({ page }) => {
     await setup(page, "light");
@@ -272,7 +273,7 @@ for (const width of [390, 360]) {
     await page.goto("/");
     const bar = page.locator(".lv-statusbar");
     await expect(bar).toBeVisible();
-    await expect(page.locator(".lv-btn--primary:visible")).toHaveCount(1);
+    await expect(page.getByTestId("chat-input")).toBeVisible();
     const m = await bar.evaluate((el) => {
       const r = el.getBoundingClientRect();
       const btns = [...el.querySelectorAll("button")].map((b) => {

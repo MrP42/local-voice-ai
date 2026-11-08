@@ -3,11 +3,13 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import {
   ArrowUpFromLine,
+  BookOpen,
   Check,
   Crown,
   Download,
   ListTree,
   MoreVertical,
+  Play,
   RotateCcw,
   Trash2,
 } from "lucide-react";
@@ -35,7 +37,11 @@ import {
   splitEdition,
 } from "@/lib/library/editionOps";
 import { loadProgress, progressFraction } from "@/lib/library/progress";
-import { formatDuration, totalDuration } from "@/lib/library/books";
+import {
+  formatDuration,
+  openInReader,
+  totalDuration,
+} from "@/lib/library/books";
 import { UNDO_MS } from "@/lib/library/remove";
 import "./sprachfassungen.css";
 
@@ -87,6 +93,8 @@ interface Props {
   onChanged(): Promise<void>;
   onAlign(pair: { a: string; b: string }): void;
   onExport?(): void;
+  /** Hörbuch dieser Fassung abspielen (Zelle „Hörbuch“ und Menü). */
+  onListen?(editionId: string): void;
 }
 
 /**
@@ -99,6 +107,7 @@ export const EditionsSection: React.FC<Props> = ({
   onChanged,
   onAlign,
   onExport,
+  onListen,
 }) => {
   const { t } = useTranslation();
   const list = editionsOf(book);
@@ -189,11 +198,32 @@ export const EditionsSection: React.FC<Props> = ({
       list.find((x) => x.id !== e.id);
     const last = list.length < 2;
     return [
+      ...(onListen
+        ? [
+            {
+              id: "listen",
+              label: t("library.sf.menu.listen"),
+              icon: Play,
+              disabled: !e.audio,
+              testId: `sf-edition-listen-${e.id}`,
+              onSelect: () => onListen(e.id),
+            } satisfies ActionMenuItem,
+          ]
+        : []),
+      {
+        id: "read",
+        label: t("library.sf.menu.read"),
+        icon: BookOpen,
+        disabled: !e.text,
+        testId: `sf-edition-read-${e.id}`,
+        onSelect: () => e.text && openInReader(e.text.page_id, false),
+      },
       {
         id: "primary",
         label: t("library.sf.menu.primary"),
         icon: Crown,
         disabled: isPrimary,
+        dividerBefore: true,
         testId: `sf-edition-primary-${e.id}`,
         onSelect: () =>
           void run(async () => {
@@ -302,6 +332,12 @@ export const EditionsSection: React.FC<Props> = ({
             {list.map((e) => {
               const dur = e.audio ? totalDuration(e.audio) : null;
               const label = langName(e.lang) || langShort(e.lang);
+              const listenLabel = dur
+                ? t("library.sf.section.listen", {
+                    lang: label,
+                    duration: formatDuration(dur),
+                  })
+                : t("library.sf.section.listenNoDuration", { lang: label });
               return (
                 <tr
                   key={e.id}
@@ -332,7 +368,19 @@ export const EditionsSection: React.FC<Props> = ({
                     )}
                   </td>
                   <td>
-                    {e.audio ? (
+                    {e.audio && onListen ? (
+                      <button
+                        type="button"
+                        className="sf-listen"
+                        onClick={() => onListen(e.id)}
+                        aria-label={listenLabel}
+                        title={listenLabel}
+                        data-testid={`sf-edition-play-${e.id}`}
+                      >
+                        <Play size={14} aria-hidden="true" />
+                        {dur ? formatDuration(dur) : t("library.sf.kind.audio")}
+                      </button>
+                    ) : e.audio ? (
                       <span role="img" aria-label={t("library.sf.section.has")}>
                         <Check size={14} aria-hidden="true" />{" "}
                         {dur ? formatDuration(dur) : ""}

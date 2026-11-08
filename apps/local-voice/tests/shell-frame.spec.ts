@@ -85,6 +85,12 @@ test("Fussleiste: 24 px, Modelle des Moduls links, Version ganz rechts", async (
   await setup(page, "light");
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
+  // lva#394: Start ist der Chat (Antwortmodell im Chatkopf); die Fußleiste mit
+  // Sprach- und KI-Modell zeigt eine Seite ohne eigene Modellwahl, z. B. Verlauf.
+  await page
+    .getByRole("navigation", { name: "Hauptnavigation" })
+    .getByRole("button", { name: "Verlauf", exact: true })
+    .click();
   const bar = page.locator(".lv-statusbar");
   expect((await bar.boundingBox())!.height).toBe(24);
   expect(await bar.evaluate((el) => getComputedStyle(el).fontSize)).toBe("12px");
@@ -93,7 +99,7 @@ test("Fussleiste: 24 px, Modelle des Moduls links, Version ganz rechts", async (
 
   // Patrick 02.11. (löst ADR-0027 E7 ab): die Modelle des geöffneten Moduls
   // stehen links unten. Patrick 05.11. (#281): die Version immer ganz rechts.
-  await expect(bar.getByTestId("fuss-modelle")).toHaveAttribute("data-modul", "home");
+  await expect(bar.getByTestId("fuss-modelle")).toHaveAttribute("data-modul", "history");
   await expect(bar.locator("[data-llm-selector]")).toHaveCount(1);
   await expect(bar.locator("[data-model-status]")).toHaveCount(1);
   const version = bar.getByTestId("footer-version");
@@ -159,6 +165,12 @@ test("Fußleiste ▸ Modelle: Rollen-Tooltips und Modellwahl", async ({ page }) 
   await setup(page, "light");
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
+  // lva#394: Start ist der Chat (Antwortmodell im Chatkopf); die Fußleiste mit
+  // Sprach- und KI-Modell zeigt eine Seite ohne eigene Modellwahl, z. B. Verlauf.
+  await page
+    .getByRole("navigation", { name: "Hauptnavigation" })
+    .getByRole("button", { name: "Verlauf", exact: true })
+    .click();
   await oeffneModellwahl(page);
   const modelle = page.getByTestId("fuss-modelle");
   await modelle.locator("[data-model-status]").hover();
@@ -303,7 +315,7 @@ test("Keine Titelzeile im Modul: Inhalt beginnt direkt unter der Titelleiste", a
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
   const nav = page.getByRole("navigation", { name: "Hauptnavigation" });
-  for (const label of ["Verlauf", "Aufnahmen", "Vorlesen", "Bibliothek", "Chat"]) {
+  for (const label of ["Verlauf", "Aufnahmen", "Vorlesen", "Bibliothek"]) {
     await nav.getByRole("button", { name: label, exact: true }).click();
     const titel = page.getByRole("heading", { level: 1, name: label, exact: true });
     await expect(titel).toHaveCount(1);
