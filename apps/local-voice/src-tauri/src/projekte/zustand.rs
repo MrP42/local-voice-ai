@@ -7,7 +7,7 @@
 
 use super::audit::RegisterAudit;
 use super::dienst::ProjektDienst;
-use super::quellen::{Inhalt, ProdQuellen};
+use super::quellen::{Inhalt, ProdQuellen, SeiteKurz};
 use super::recherche::{ModellQuelle, RechercheDienst, RechercheStore, RueckrufModell, SearxngWeb};
 use super::{lokaler_principal, Res};
 use crate::managers::meetings::store::MeetingStore;
@@ -56,17 +56,32 @@ impl ProjekteZustand {
             .join("projekte");
         std::fs::create_dir_all(&ordner).map_err(|e| e.to_string())?;
         let app = self.app.clone();
-        let quellen = Arc::new(ProdQuellen::neu(store.clone(), move || {
-            crate::library::library_list(app.clone()).map(|buecher| {
-                buecher
-                    .into_iter()
-                    .map(|b| Inhalt {
-                        id: b.id,
-                        titel: b.title,
-                    })
-                    .collect()
+        let app_seiten = self.app.clone();
+        let app_texte = self.app.clone();
+        let store_texte = store.clone();
+        let quellen = Arc::new(
+            ProdQuellen::neu(store.clone(), move || {
+                crate::library::library_list(app.clone()).map(|buecher| {
+                    buecher
+                        .into_iter()
+                        .map(|b| Inhalt {
+                            id: b.id,
+                            titel: b.title,
+                        })
+                        .collect()
+                })
             })
-        }));
+            .mit_seiten(move || {
+                crate::commands::pages::seiten_bestand(&app_seiten).map(|alle| {
+                    alle.into_iter()
+                        .map(|(id, titel, lesbar, _lose)| SeiteKurz { id, titel, lesbar })
+                        .collect()
+                })
+            })
+            .mit_texten(move |link, wahl| {
+                super::texte::lesen(&app_texte, &store_texte, link, wahl)
+            }),
+        );
         let audit = Arc::new(RegisterAudit(store));
         let rstore = RechercheStore::open(ordner.join("recherche.db"))
             .await
@@ -79,7 +94,8 @@ impl ProjekteZustand {
         )
         .await
         .map_err(|e| e.message)?
-        .with_audit(audit.clone());
+        .with_audit(audit.clone())
+        .with_ablage(ordner.clone());
         let projekte = Arc::new(projekte);
         let recherche = RechercheDienst::open(
             rstore,
@@ -119,6 +135,12 @@ pub fn pflege_starten(app: &AppHandle) {
 }
 
 async fn pflege(d: &Dienste) {
+    if let Err(e) = d.projekte.dateien_wiederanlauf().await {
+        log::warn!(
+            "projekte: Wiederanlauf der Projektdateien fehlgeschlagen ({})",
+            e.code
+        );
+    }
     if let Err(e) = d.projekte.abgleichen().await {
         log::warn!("projekte: Abgleich fehlgeschlagen ({})", e.code);
     }
@@ -128,6 +150,12 @@ async fn pflege(d: &Dienste) {
     if let Err(e) = d.projekte.verwaiste_recherchen_raeumen().await {
         log::warn!(
             "projekte: Aufraeumen verwaister Dokumente fehlgeschlagen ({})",
+            e.code
+        );
+    }
+    if let Err(e) = d.projekte.verwaiste_projektordner_raeumen().await {
+        log::warn!(
+            "projekte: Aufraeumen verwaister Projektordner fehlgeschlagen ({})",
             e.code
         );
     }

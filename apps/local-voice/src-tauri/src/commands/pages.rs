@@ -442,6 +442,26 @@ pub fn pages_list(app: AppHandle) -> Result<Vec<PageInfo>, String> {
     Ok(sichtbar)
 }
 
+/// Bestand aller Seiten für die Projekte (lva#365 P4): `(id, titel, lesbar, lose)`. Seiten,
+/// deren Buch im Papierkorb liegt, bestehen weiter, sind aber nicht lesbar; `lose` = ohne Buch
+/// („Texte“).
+pub(crate) fn seiten_bestand(app: &AppHandle) -> Result<Vec<(String, String, bool, bool)>, String> {
+    let _guard = lock_lesend()?;
+    let index = load_index(app)?;
+    let data = data_root(app)?;
+    Ok(index
+        .pages
+        .into_iter()
+        .map(|p| {
+            let im_korb = p
+                .buch
+                .as_deref()
+                .is_some_and(|b| library_layout::buch_im_papierkorb(&data, b));
+            (p.id, p.title, !im_korb, p.buch.is_none())
+        })
+        .collect())
+}
+
 /// Seiten, deren Buch im Papierkorb der Bibliothek liegt, sind mit dem Buch entfernt
 /// (Löschkaskade, lva#365 P2b-2): sie bleiben im Index (Wiederherstellen bringt sie
 /// zurück), erscheinen aber nicht in der Seitenliste.

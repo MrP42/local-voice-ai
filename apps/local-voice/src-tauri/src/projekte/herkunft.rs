@@ -17,11 +17,19 @@ pub const LINK_APP: &str = "lva";
 const BESPRECHUNG: &str = "wai://lva/besprechung/";
 const BUCH: &str = "wai://lva/buch/";
 const RECHERCHE: &str = "wai://lva/recherche/";
+/// Lose Vorlesen-Seite („Texte“, lva#365 P4).
+const SEITE: &str = "wai://lva/seite/";
+/// Eigene Datei eines Projekts: `wai://lva/projektdatei/<projekt>/<datei>` (lva#365 P4).
+const PROJEKTDATEI: &str = "wai://lva/projektdatei/";
 
 /// Datenklasse einer Besprechung: personenbezogen (Sprache, Namen). Vertrag: Besprechungen `confidential`.
 pub const KLASSE_BESPRECHUNG: Klasse = Klasse::Personal;
 /// Datenklasse eines Buchs der Bibliothek: intern.
 pub const KLASSE_BUCH: Klasse = Klasse::Internal;
+/// Datenklasse einer Vorlesen-Seite: intern.
+pub const KLASSE_SEITE: Klasse = Klasse::Internal;
+/// Datenklasse einer Projektdatei: intern (die Datenklasse des Projekts begrenzt weiter).
+pub const KLASSE_DATEI: Klasse = Klasse::Internal;
 
 /// Id nur aus Buchstaben, Ziffern, `-`, `_`, `.`: so verlangt es `wai-links` fuer einen Verweis.
 pub fn id_gueltig(id: &str) -> bool {
@@ -46,12 +54,28 @@ pub fn recherche_link(id: &str) -> String {
     format!("{RECHERCHE}{id}")
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+pub fn seite_link(id: &str) -> String {
+    format!("{SEITE}{id}")
+}
+
+pub fn projektdatei_link(projekt: &str, datei: &str) -> String {
+    format!("{PROJEKTDATEI}{projekt}/{datei}")
+}
+
+pub fn seite_id(ref_: &str) -> Option<&str> {
+    ref_.strip_prefix(SEITE).filter(|id| id_gueltig(id))
+}
+
+/// `(projekt, datei)` eines Projektdatei-Verweises, beide geprüft.
+pub fn projektdatei_id(ref_: &str) -> Option<(&str, &str)> {
+    let (p, d) = ref_.strip_prefix(PROJEKTDATEI)?.split_once('/')?;
+    (suite_id_gueltig(p) && id_gueltig(d)).then_some((p, d))
+}
+
 pub fn besprechung_id(ref_: &str) -> Option<&str> {
     ref_.strip_prefix(BESPRECHUNG)
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 pub fn buch_id(ref_: &str) -> Option<&str> {
     ref_.strip_prefix(BUCH)
 }
@@ -86,6 +110,9 @@ pub struct HerkunftsEintrag {
 pub struct LvaHerkunft {
     mandant: String,
     eintraege: HashMap<String, HerkunftsEintrag>,
+    /// Zusätzlich beurteilte Präfixe (Seiten, Projektdateien): nur wenn ihr Bestand vollständig
+    /// gelesen wurde. Sonst bleiben sie `Unbekannt` und werden nie als verwaist entfernt.
+    beurteilt: Vec<String>,
 }
 
 impl LvaHerkunft {
@@ -93,7 +120,18 @@ impl LvaHerkunft {
         Self {
             mandant: mandant.to_string(),
             eintraege: HashMap::new(),
+            beurteilt: Vec::new(),
         }
+    }
+
+    /// Seiten wurden vollständig gelesen: ihr Präfix wird beurteilt.
+    pub fn seiten_beurteilen(&mut self) {
+        self.beurteilt.push(SEITE.to_string());
+    }
+
+    /// Die Projektdateien dieses Projekts wurden vollständig gelesen.
+    pub fn projektdateien_beurteilen(&mut self, projekt: &str) {
+        self.beurteilt.push(format!("{PROJEKTDATEI}{projekt}/"));
     }
 
     pub fn hinzufuegen(&mut self, ref_: String, lesbar: bool, klasse: Klasse) {
@@ -104,6 +142,7 @@ impl LvaHerkunft {
     pub fn erweitern(&mut self, andere: LvaHerkunft) {
         if andere.mandant == self.mandant {
             self.eintraege.extend(andere.eintraege);
+            self.beurteilt.extend(andere.beurteilt);
         }
     }
 
@@ -126,11 +165,13 @@ impl Herkunftsrecht for LvaHerkunft {
 }
 
 impl Herkunftsbestand for LvaHerkunft {
-    /// Beurteilt nur die drei Verweisarten, die diese App kennt. Alles andere bleibt `Unbekannt`.
+    /// Beurteilt nur die Verweisarten, die diese App kennt und vollständig gelesen hat. Alles
+    /// andere bleibt `Unbekannt`.
     fn existiert(&self, mandant: &str, ref_: &str) -> Vorhanden {
         let bekannt = [BESPRECHUNG, BUCH, RECHERCHE]
             .iter()
-            .any(|p| ref_.starts_with(p));
+            .any(|p| ref_.starts_with(p))
+            || self.beurteilt.iter().any(|p| ref_.starts_with(p.as_str()));
         if mandant != self.mandant || !bekannt {
             return Vorhanden::Unbekannt;
         }
@@ -159,6 +200,43 @@ mod tests {
         assert!(!id_gueltig("../x"));
         assert!(!id_gueltig("a/b"));
         assert!(!id_gueltig(""));
+        assert_eq!(seite_id(&seite_link("p_1")), Some("p_1"));
+        assert_eq!(seite_id("wai://lva/seite/../x"), None);
+        let p = "prj_01HZZZZZZZZZZZZZZZZZZZZZZZ";
+        assert_eq!(
+            projektdatei_id(&projektdatei_link(p, "pd_1")),
+            Some((p, "pd_1"))
+        );
+        assert_eq!(projektdatei_id("wai://lva/projektdatei/../pd_1"), None);
+        assert_eq!(
+            projektdatei_id(&format!("wai://lva/projektdatei/{p}/a/b")),
+            None
+        );
+    }
+
+    #[test]
+    fn seiten_und_projektdateien_nur_beurteilt_wenn_gelesen() {
+        let p = "prj_01HZZZZZZZZZZZZZZZZZZZZZZZ";
+        let mut h = LvaHerkunft::neu("solo");
+        assert_eq!(h.existiert("solo", &seite_link("s1")), Vorhanden::Unbekannt);
+        assert_eq!(
+            h.existiert("solo", &projektdatei_link(p, "d1")),
+            Vorhanden::Unbekannt
+        );
+        h.seiten_beurteilen();
+        h.projektdateien_beurteilen(p);
+        h.hinzufuegen(seite_link("s1"), true, KLASSE_SEITE);
+        assert_eq!(h.existiert("solo", &seite_link("s1")), Vorhanden::Ja);
+        assert_eq!(h.existiert("solo", &seite_link("s2")), Vorhanden::Nein);
+        assert_eq!(
+            h.existiert("solo", &projektdatei_link(p, "d1")),
+            Vorhanden::Nein
+        );
+        let anderes = "prj_01HYYYYYYYYYYYYYYYYYYYYYYY";
+        assert_eq!(
+            h.existiert("solo", &projektdatei_link(anderes, "d1")),
+            Vorhanden::Unbekannt
+        );
     }
 
     #[test]

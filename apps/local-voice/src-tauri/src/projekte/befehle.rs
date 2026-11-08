@@ -3,7 +3,10 @@
 //! Mandant und Person kommen aus der lokalen Sitzung (`lokaler_principal`), nie aus den Argumenten.
 //! Fehlertexte enthalten weder Frage noch Anfragen noch Quellen.
 
-use super::dienst::{klasse_aus_text, EintragSicht, LoeschErgebnis, SuiteProjekt, SyncBericht};
+use super::dienst::{
+    klasse_aus_text, EintragSicht, GefundeneDatei, LoeschErgebnis, SuiteProjekt, SyncBericht,
+};
+use super::kontext::{KontextForm, KontextUebersicht};
 use super::recherche::{
     FreigabeAktion, FreigabeInfo, LaufAntwort, RechercheKurz, RechercheSicht, RechercheStatus,
 };
@@ -130,6 +133,128 @@ pub async fn projekt_buch_entfernen(
         .await?
         .projekte
         .buch_entfernen(&suite_id, &buch_id)
+        .await?)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn projekt_seite_zuordnen(
+    z: State<'_, ProjekteZustand>,
+    suite_id: String,
+    seite_id: String,
+) -> Antwort<()> {
+    Ok(z.dienste()
+        .await?
+        .projekte
+        .seite_zuordnen(&suite_id, &seite_id)
+        .await?)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn projekt_seite_entfernen(
+    z: State<'_, ProjekteZustand>,
+    suite_id: String,
+    seite_id: String,
+) -> Antwort<bool> {
+    Ok(z.dienste()
+        .await?
+        .projekte
+        .seite_entfernen(&suite_id, &seite_id)
+        .await?)
+}
+
+/// Kopiert die gewählten Dateien in den Projektordner (Prüfung per Größe und SHA-256) und trägt
+/// sie danach ein. Liefert die Datei-IDs.
+#[tauri::command]
+#[specta::specta]
+pub async fn projekt_dateien_hinzufuegen(
+    z: State<'_, ProjekteZustand>,
+    suite_id: String,
+    paths: Vec<String>,
+) -> Antwort<Vec<String>> {
+    let quellen: Vec<std::path::PathBuf> = paths.into_iter().map(Into::into).collect();
+    Ok(z.dienste()
+        .await?
+        .projekte
+        .dateien_hinzufuegen(&suite_id, &quellen)
+        .await?)
+}
+
+/// Legt die Kopie in den Papierkorb des Projekts und nimmt sie aus dem Projekt.
+#[tauri::command]
+#[specta::specta]
+pub async fn projekt_datei_entfernen(
+    z: State<'_, ProjekteZustand>,
+    suite_id: String,
+    datei_id: String,
+) -> Antwort<bool> {
+    Ok(z.dienste()
+        .await?
+        .projekte
+        .datei_entfernen(&suite_id, &datei_id)
+        .await?)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn projekt_dateien_gefunden(
+    z: State<'_, ProjekteZustand>,
+    suite_id: String,
+) -> Antwort<Vec<GefundeneDatei>> {
+    Ok(z.dienste()
+        .await?
+        .projekte
+        .gefundene_dateien(&suite_id)
+        .await?)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn projekt_datei_gefunden_aufnehmen(
+    z: State<'_, ProjekteZustand>,
+    suite_id: String,
+    datei_id: String,
+) -> Antwort<()> {
+    Ok(z.dienste()
+        .await?
+        .projekte
+        .gefundene_datei_aufnehmen(&suite_id, &datei_id)
+        .await?)
+}
+
+/// Übersicht „Als Kontext“ (ohne Inhalte): Schalter, Form, Token je Eintrag, Summe, Stand.
+#[tauri::command]
+#[specta::specta]
+pub async fn projekt_kontext_uebersicht(
+    z: State<'_, ProjekteZustand>,
+    suite_id: String,
+) -> Antwort<KontextUebersicht> {
+    Ok(z.dienste()
+        .await?
+        .projekte
+        .kontext(&suite_id)
+        .await?
+        .uebersicht)
+}
+
+/// Schaltet „Als Kontext“ eines Eintrags. `form` ändert die Form, `edition` die Fassung eines
+/// Buchs (leer = Hauptfassung); fehlt eines, bleibt es, wie es ist.
+#[tauri::command]
+#[specta::specta]
+pub async fn projekt_kontext_schalten(
+    z: State<'_, ProjekteZustand>,
+    suite_id: String,
+    eintrag_id: String,
+    on: bool,
+    form: Option<KontextForm>,
+    edition: Option<String>,
+) -> Antwort<KontextUebersicht> {
+    let fassung = edition.map(|e| (!e.is_empty()).then_some(e));
+    Ok(z.dienste()
+        .await?
+        .projekte
+        .kontext_schalten(&suite_id, &eintrag_id, on, form, fassung)
         .await?)
 }
 
