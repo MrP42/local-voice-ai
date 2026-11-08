@@ -1415,6 +1415,7 @@ test("Notizen und Anhänge: Bedienziele ≥ 44 px bei 390 px, Neuladen nach Abgl
     expect(box.height).toBeGreaterThanOrEqual(44);
     expect(box.width).toBeGreaterThanOrEqual(44);
   }
+  await belegP1b(page, "p3b-notizen-390");
   // Ein Abgleich lädt die Liste neu.
   const before = await page.evaluate(
     () =>
@@ -1434,7 +1435,6 @@ test("Notizen und Anhänge: Bedienziele ≥ 44 px bei 390 px, Neuladen nach Abgl
         0,
     ),
   ).toBeGreaterThan(before);
-  await belegP1b(page, "p3b-notizen-390");
 });
 
 test("Beleg P3b: Notizen und Anhänge bei 768, 1440 und 2560 px", async ({
@@ -1446,7 +1446,17 @@ test("Beleg P3b: Notizen und Anhänge bei 768, 1440 und 2560 px", async ({
   }, FOLDER_FILES);
   for (const width of [768, 1440, 2560]) {
     await openReadAloud(page, width);
-    await openBook(page);
+    if (await page.getByTestId("reader-folders").isVisible())
+      await openBook(page);
+    else {
+      // Umbruch-Layout: Ordner als Auswahl.
+      await page
+        .getByTestId("reader-folders-compact")
+        .locator(".app-select__control")
+        .click();
+      await page.getByRole("option", { name: "Der Sturm (2)" }).click();
+    }
+    await expect(notes(page)).toBeVisible();
     await notes(page).scrollIntoViewIfNeeded();
     await belegP1b(page, `p3b-notizen-${width}`);
   }
