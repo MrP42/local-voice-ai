@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Mic, Pencil } from "lucide-react";
+import { Pencil } from "lucide-react";
 import type { VoiceLine, VoiceSource } from "@/stores/voiceCallStore";
 import { sourceTarget } from "./globalContext";
 import { openInReader } from "@/lib/library/books";
@@ -17,8 +17,6 @@ function openSource(src: VoiceSource): void {
     new CustomEvent("lv-navigate", { detail: { section: target.section } }),
   );
 }
-
-const SUGGESTIONS = ["s1", "s2", "s3", "s4"] as const;
 
 /** Bearbeiten der eigenen erkannten Zeile: Enter speichert, Esc bricht ab (Umschalt+Enter = neue Zeile). */
 const LineEditor: React.FC<{
@@ -76,7 +74,13 @@ const LineEditor: React.FC<{
 export const Transcript: React.FC<{
   lines: VoiceLine[];
   active: boolean;
-  onSuggest: (text: string) => void;
+  /**
+   * Leeres Gespräch (lva#394, Vorbild ChatGPT): Begrüßung und Eingabezeile mittig,
+   * keine Vorschläge. Ohne Angabe bleibt die Fläche leer.
+   */
+  greeting?: string;
+  /** Eingabezeile, die im leeren Gespräch unter der Begrüßung steht. */
+  emptyComposer?: React.ReactNode;
   /** Werkzeug, das der Orchestrator gerade aufruft (Name). */
   toolStatus?: string | null;
   /** Hinweis des Orchestrators (Code). */
@@ -90,7 +94,8 @@ export const Transcript: React.FC<{
 }> = ({
   lines,
   active,
-  onSuggest,
+  greeting,
+  emptyComposer,
   toolStatus = null,
   notice = null,
   onOpenSettings,
@@ -170,28 +175,14 @@ export const Transcript: React.FC<{
 
   if (lines.length === 0) {
     return (
-      <div className="flex-1 min-h-0 flex flex-col items-center justify-center gap-3 text-center p-6 text-text/70">
-        <span className="grid place-items-center w-14 h-14 rounded-full bg-logo-primary/15 text-logo-primary">
-          <Mic className="w-6 h-6" aria-hidden="true" />
-        </span>
-        <h2 className="m-0 text-xl font-semibold text-text">
-          {t("voiceCall.empty.title")}
+      <div className="flex-1 min-h-0 flex flex-col items-center justify-center gap-6 px-4 pb-[10vh] text-center">
+        <h2
+          className="m-0 text-[28px] max-sm:text-[22px] font-semibold text-text tracking-tight"
+          data-testid="chat-greeting"
+        >
+          {active ? t("voiceCall.speakNow") : greeting}
         </h2>
-        <p className="m-0">
-          {active ? t("voiceCall.speakNow") : t("voiceCall.empty.hint")}
-        </p>
-        <div className="flex flex-wrap justify-center gap-2 max-w-[640px]">
-          {SUGGESTIONS.map((k) => (
-            <button
-              key={k}
-              type="button"
-              onClick={() => onSuggest(t(`voiceCall.suggestions.${k}`))}
-              className="rounded-2xl border border-mid-gray/30 bg-background px-3 py-1 text-sm cursor-pointer text-text hover:border-logo-primary"
-            >
-              {t(`voiceCall.suggestions.${k}`)}
-            </button>
-          ))}
-        </div>
+        {emptyComposer && <div className="w-full">{emptyComposer}</div>}
         {noticeBox}
         {liveRegion}
       </div>

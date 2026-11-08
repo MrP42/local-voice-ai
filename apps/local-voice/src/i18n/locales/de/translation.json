@@ -7497,6 +7497,16 @@
       "title": "Worüber möchtest du sprechen?",
       "hint": "Gespräch beginnen und einfach lossprechen. Du kannst jederzeit unterbrechen oder schreiben."
     },
+    "greeting": {
+      "morning": ["Guten Morgen, {{name}}. Womit fangen wir an?", "Guten Morgen, {{name}}. Was steht heute an?"],
+      "day": ["Hallo {{name}}, wie kann ich helfen?", "Hallo {{name}}, was gibt es Neues?"],
+      "evening": ["Guten Abend, {{name}}. Was steht an?", "Guten Abend, {{name}}. Womit kann ich helfen?"],
+      "night": ["Noch wach, {{name}}? Was kann ich tun?", "Hallo {{name}}, woran arbeitest du gerade?"],
+      "morningAnon": ["Guten Morgen. Womit fangen wir an?", "Guten Morgen. Was steht heute an?"],
+      "dayAnon": ["Wie kann ich helfen?", "Was gibt es Neues?"],
+      "eveningAnon": ["Guten Abend. Was steht an?", "Guten Abend. Womit kann ich helfen?"],
+      "nightAnon": ["Noch wach? Was kann ich tun?", "Woran arbeitest du gerade?"]
+    },
     "suggestions": {
       "s1": "Was steht in meinen letzten Protokollen?",
       "s2": "Fasse das gestrige Meeting zusammen",
@@ -7511,6 +7521,7 @@
       "send": "Nachricht senden",
       "removeAttachment": "Anhang „{{name}}“ entfernen",
       "attachFiles": "Dateien anhängen …",
+      "permissions": "Souveränität und Wissen …",
       "fromCorporate": "Aus Corporate LLM",
       "corporateHint": "Corporate LLM verbinden – Skills, Plugins und Konnektoren kommen von dort",
       "documents": "Dokumente",

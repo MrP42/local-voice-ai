@@ -58,7 +58,13 @@ interface SectionConfig {
 // General, Advanced, the dictation test and the about page were four separate
 // rows before — four rows of navigation for one activity.
 export const SECTIONS_CONFIG = {
-  home: { labelKey: "workspace.home", icon: House, component: () => null },
+  // lva#394: Das Haus öffnet den Chat (Vorbild ChatGPT); die frühere Kachelseite entfällt.
+  home: {
+    labelKey: "workspace.home",
+    hintKey: "sidebar.voiceCallHint",
+    icon: House,
+    component: VoiceCallPage,
+  },
   history: {
     labelKey: "sidebar.history",
     icon: History,
@@ -69,6 +75,7 @@ export const SECTIONS_CONFIG = {
     icon: Users,
     component: MeetingsSettings,
   },
+  // Altes Sprungziel (Fußleiste, Assistent, gemerkte Auswahl): App.tsx leitet auf „home“ um.
   voice: {
     labelKey: "sidebar.voiceCall",
     hintKey: "sidebar.voiceCallHint",
@@ -128,7 +135,7 @@ interface SidebarProps {
   fuss?: React.ReactNode;
 }
 
-const PRIMARY = ["home", "history", "meetings", "tts", "library", "voice"] as const;
+const PRIMARY = ["home", "history", "meetings", "tts", "library"] as const;
 // Modelle, Integrationen und Einstellungen stehen seit ADR-0027 im Profilmenü
 // (Profilkreis unten links), nicht mehr als Einträge der Navigation.
 

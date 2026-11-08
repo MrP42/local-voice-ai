@@ -114,14 +114,18 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test("home exposes working destinations and remembers navigation", async ({
+test("home is the chat (lva#394) and navigation is remembered", async ({
   page,
 }) => {
   await page.goto("/");
+  // Startseite = Chat: Begrüßung und Eingabefeld mittig, keine Vorschläge, kein „Chat“-Eintrag.
+  await expect(page.getByTestId("chat-greeting")).toBeVisible();
+  await expect(page.getByTestId("chat-input")).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "Was möchtest du tun?" }),
-  ).toBeVisible();
-  await expect(page.getByText("⌃ Space", { exact: true })).toBeVisible();
+    page
+      .getByRole("navigation", { name: "Hauptnavigation" })
+      .getByRole("button", { name: "Chat", exact: true }),
+  ).toHaveCount(0);
   const nav = page.getByRole("navigation", { name: "Hauptnavigation" });
   await nav.getByRole("button", { name: "Verlauf", exact: true }).click();
   await expect(
@@ -132,9 +136,12 @@ test("home exposes working destinations and remembers navigation", async ({
     nav.getByRole("button", { name: "Verlauf", exact: true }),
   ).toHaveAttribute("aria-current", "page");
   await nav.getByRole("button", { name: "Start", exact: true }).click();
-  await page.getByRole("button", { name: /Besprechung oder Aufnahme/ }).click();
+  await expect(page.getByTestId("chat-input")).toBeVisible();
+  // Altes Sprungziel „voice“ (gemerkte Auswahl) landet auf Start.
+  await page.evaluate(() => localStorage.setItem("lva.ui.section", "voice"));
+  await page.reload();
   await expect(
-    nav.getByRole("button", { name: "Aufnahmen", exact: true }),
+    nav.getByRole("button", { name: "Start", exact: true }),
   ).toHaveAttribute("aria-current", "page");
 });
 
@@ -171,9 +178,7 @@ test("narrow navigation keeps labels and secondary destinations reachable", asyn
 test("WAI home in light and dark at desktop size", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("/");
-  await expect(
-    page.getByRole("heading", { name: "Was möchtest du tun?" }),
-  ).toBeVisible();
+  await expect(page.getByTestId("chat-greeting")).toBeVisible();
   await page.screenshot({ path: "test-results/workspace-light.png" });
   // Farbschema über das Erscheinungsbild (localStorage + storage-Ereignis,
   // wie ein Wechsel aus einem anderen Fenster).
@@ -224,9 +229,7 @@ test("Windows shell keeps the same task navigation", async ({ page }) => {
     );
   });
   await page.goto("/");
-  await expect(
-    page.getByRole("heading", { name: "Was möchtest du tun?" }),
-  ).toBeVisible();
+  await expect(page.getByTestId("chat-greeting")).toBeVisible();
   await expect(page.locator("html")).toHaveAttribute(
     "data-platform",
     "windows",
