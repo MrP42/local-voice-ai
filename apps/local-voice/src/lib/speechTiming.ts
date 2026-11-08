@@ -133,6 +133,12 @@ export interface SentenceClock {
   speech?: readonly SpeechSpan[];
   /** Beginn jedes Stücks im Satz, aufsteigend (erstes 0). */
   pieces?: readonly number[];
+  /**
+   * Beginn des zuletzt vom Kern als spielend gemeldeten Stücks (0 = erstes).
+   * Rückt NUR mit `tts-sentence-piece` vor ({@link startPiece}), nie mit der
+   * Zeitbasis: ein Tempowechsel während des Haltens gibt nichts frei.
+   */
+  piece?: number;
 }
 
 /**
@@ -141,9 +147,9 @@ export interface SentenceClock {
  * Kern es meldet (`tts-sentence-piece`) -- so lange steht die Uhr.
  */
 function clockLimit(clock: SentenceClock): number {
-  const base = clock.base ?? 0;
+  const released = clock.piece ?? 0;
   for (const start of clock.pieces ?? [])
-    if (start > base) return Math.min(start, clock.ms);
+    if (start > released) return Math.min(start, clock.ms);
   return clock.ms;
 }
 
@@ -179,13 +185,20 @@ export function clockFraction(clock: SentenceClock, now: number): number {
   return clock.ms > 0 ? clockElapsed(clock, now) / clock.ms : 0;
 }
 
-/** Die Uhr ab `now` bei `base` weiterlaufen lassen. */
+/** Die Uhr ab `now` bei `base` weiterlaufen lassen (gibt kein Stück frei). */
 export function anchorClock<T extends { at: number; base?: number }>(
   clock: T,
   now: number,
   base: number,
 ): T {
   return { ...clock, at: now, base: Math.max(0, base) };
+}
+
+/** Der Kern meldet: das Stück ab `offset` spielt jetzt. Gibt es frei. */
+export function startPiece<
+  T extends { at: number; base?: number; piece?: number },
+>(clock: T, now: number, offset: number): T {
+  return { ...anchorClock(clock, now, offset), piece: Math.max(0, offset) };
 }
 
 /**

@@ -1,7 +1,7 @@
 import { listen } from "@tauri-apps/api/event";
 import { sentenceAfterProgress } from "./sentenceCounter";
 import {
-  anchorClock,
+  startPiece,
   cleanPieces,
   cleanSpans,
   type SpeechSpan,
@@ -19,6 +19,8 @@ export interface SentenceStart {
   speech?: SpeechSpan[];
   /** Beginn jedes Stücks (ms bei Tempo 1); die Uhr hält an der Grenze. */
   pieces?: number[];
+  /** Beginn des zuletzt gemeldeten Stücks; nur `tts-sentence-piece` rückt es vor. */
+  piece?: number;
 }
 
 /** Nächstes Stück desselben Satzes: die Uhr setzt am echten Start nach. */
@@ -35,7 +37,7 @@ export function sentencePieceStarted(
     return start;
   const offset = payload.offset_ms;
   if (typeof offset !== "number" || !Number.isFinite(offset)) return start;
-  return anchorClock(start, now, Math.min(offset, start.ms));
+  return startPiece(start, now, Math.min(offset, start.ms));
 }
 
 /**

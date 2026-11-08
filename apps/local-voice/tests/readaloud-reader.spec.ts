@@ -1408,8 +1408,16 @@ test("Stückbeginn setzt die Wortuhr nach, Öffnen zählt nicht als gespielt", a
   await page.clock.runFor(1_000);
   const word = await page.locator(".reader-word").textContent();
   const pageNo = await book.getAttribute("data-page");
-  // Das dritte Stück öffnet 5 s lang: Wort und Seite stehen still.
+  // Das dritte Stück öffnet 5 s lang: Wort und Seite stehen still -- auch
+  // wenn mittendrin das Tempo wechselt (Codex-Recheck #408).
   for (let s = 0; s < 5; s++) {
+    if (s === 2) {
+      await page.getByTestId("reader-more").click();
+      await page
+        .getByRole("menu", { name: "Weitere Optionen: Tempo und Timer" })
+        .getByRole("menuitemradio", { name: "1,50×" })
+        .click();
+    }
     await page.clock.runFor(1_000);
     await expect(page.locator(".reader-word")).toHaveText(word ?? "");
     expect(await book.getAttribute("data-page")).toBe(pageNo);
@@ -1418,9 +1426,9 @@ test("Stückbeginn setzt die Wortuhr nach, Öffnen zählt nicht als gespielt", a
   await emit(page, "tts-sentence-piece", { context: "speak", index: 1, offset_ms: 21_000 });
   await page.clock.runFor(10_000);
   const at = Number((await page.locator(".reader-word").textContent())?.slice(4));
-  // 30 von 40 s Sprechzeit gehört: drei Viertel des Satzes.
-  expect(at).toBeGreaterThan(95);
-  expect(at).toBeLessThan(120);
+  // Mit 1,5× sind in 10 s 15 s Satzzeit gespielt: 35 von 40 s Sprechzeit.
+  expect(at).toBeGreaterThan(110);
+  expect(at).toBeLessThan(135);
   expect(at).toBeGreaterThan(Number(word?.slice(4)));
   // Stopp: keine Uhr mehr, die Markierung läuft nicht weiter.
   await emit(page, "tts-state-changed", { phase: "stopped", message: null });

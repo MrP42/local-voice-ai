@@ -2,7 +2,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  anchorClock,
   cleanPieces,
   cleanSpans,
   clauses,
@@ -10,6 +9,7 @@ import {
   clockFraction,
   retimeClock,
   spokenOffset,
+  startPiece,
   type SentenceClock,
 } from "../../src/lib/speechTiming.ts";
 
@@ -136,7 +136,7 @@ test("Uhr: Stückbeginn setzt nach, das Öffnen dazwischen zählt nicht", () => 
   const c = clock();
   const before = clockElapsed(c, 1000 + 4300);
   assert.equal(before, 4300, "ohne Nachsetzen läuft die Uhr dem Audio voraus");
-  const piece = anchorClock(c, 1000 + 4300, 4000);
+  const piece = startPiece(c, 1000 + 4300, 4000);
   assert.equal(clockElapsed(piece, 1000 + 4300), 4000);
   assert.equal(clockElapsed(piece, 1000 + 5300), 5000);
 });
@@ -173,9 +173,9 @@ test("Uhr hält am Ende des Stücks, bis das nächste gemeldet ist", () => {
   assert.equal(clockElapsed(c, 1000 + 4000), 4000);
   assert.equal(clockElapsed(c, 1000 + 9000), 4000);
   // Pausenstück gemeldet: läuft bis zum nächsten Stückbeginn.
-  const pause = anchorClock(c, 1000 + 9000, 4000);
+  const pause = startPiece(c, 1000 + 9000, 4000);
   assert.equal(clockElapsed(pause, 1000 + 12_000), 4500);
-  const last = anchorClock(pause, 1000 + 12_000, 4500);
+  const last = startPiece(pause, 1000 + 12_000, 4500);
   assert.equal(clockElapsed(last, 1000 + 13_000), 5500);
   assert.equal(clockElapsed(last, 1000 + 99_000), 10_000);
 });
@@ -184,4 +184,17 @@ test("Stückanfänge: Unsinn gilt nicht", () => {
   assert.deepEqual(cleanPieces([0, 500, 400]), []);
   assert.deepEqual(cleanPieces([0, 2000], 1000), []);
   assert.deepEqual(cleanPieces([0, 500], 1000), [0, 500]);
+});
+
+test("Tempowechsel während des Haltens gibt das nächste Stück nicht frei", () => {
+  const c = clock({ pieces: [0, 4000, 4500] });
+  // Uhr hält bei 4000 (nächstes Stück öffnet noch).
+  const held = 1000 + 6000;
+  assert.equal(clockElapsed(c, held), 4000);
+  const faster = { ...retimeClock(c, held, 1), speed: 2 };
+  assert.equal(clockElapsed(faster, held), 4000);
+  assert.equal(clockElapsed(faster, held + 3000), 4000, "steht weiter");
+  // Erst die Stückmeldung gibt frei.
+  const go = startPiece(faster, held + 3000, 4000);
+  assert.equal(clockElapsed(go, held + 3100), 4200);
 });
