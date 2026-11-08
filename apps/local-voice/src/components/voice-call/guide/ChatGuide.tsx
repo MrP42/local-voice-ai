@@ -7,7 +7,7 @@ import {
   Switch,
 } from "@fluentui/react-components";
 import { commands } from "@/bindings";
-import { GUIDE_SEEN_KEY, GUIDE_STEPS, storyPrompt } from "./steps";
+import { GUIDE_STEPS, storyPrompt } from "./steps";
 import { loadSpeakers } from "./useSpeakers";
 import "./chatGuide.css";
 
@@ -26,22 +26,6 @@ function useReducedMotion(): boolean {
     return () => q.removeEventListener?.("change", on);
   }, []);
   return reduced;
-}
-
-export function guideSeen(): boolean {
-  try {
-    return localStorage.getItem(GUIDE_SEEN_KEY) === "1";
-  } catch {
-    return true;
-  }
-}
-
-function markSeen() {
-  try {
-    localStorage.setItem(GUIDE_SEEN_KEY, "1");
-  } catch {
-    /* ohne Speicher erscheint die Führung beim nächsten Start erneut */
-  }
 }
 
 interface Rect {
@@ -92,21 +76,51 @@ export const ChatGuide: React.FC<ChatGuideProps> = ({
   const last = index === GUIDE_STEPS.length - 1;
   const caption = t(`chatGuide.step.${step.id}`);
 
-  // Markierung folgt dem Schritt (und Fenstergröße).
+  // Markierung folgt dem Schritt. Ziele können spät erscheinen oder sich durch
+  // Layout, Scrollen oder Fenstergröße verschieben: regelmäßig nachmessen und nur
+  // bei Änderung neu zeichnen.
   useEffect(() => {
     if (!open) return;
-    const update = () => setRect(rectOf(step.target));
+    let prev = "";
+    const update = () => {
+      const r = rectOf(step.target);
+      const key = r ? `${r.x}|${r.y}|${r.w}|${r.h}` : "";
+      if (key === prev) return;
+      prev = key;
+      setRect(r);
+    };
     update();
+    const timer = window.setInterval(update, 200);
     window.addEventListener("resize", update);
-    return () => window.removeEventListener("resize", update);
+    window.addEventListener("scroll", update, true);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("resize", update);
+      window.removeEventListener("scroll", update, true);
+    };
   }, [open, step.target]);
 
-  // Sprechen: jeder Schritt bricht den vorigen ab.
+  // Sprechen: ein neuer Text ersetzt die laufende Sitzung im Kern. Aufrufe laufen
+  // nacheinander (Kette), abgebrochen wird nur, was die Führung selbst gestartet hat.
+  const spoke = useRef(false);
+  const chain = useRef<Promise<unknown>>(Promise.resolve());
+  const enqueue = (job: () => Promise<unknown>) => {
+    chain.current = chain.current.then(job).catch(() => undefined);
+  };
+  const stopOwnSpeech = useCallback(() => {
+    if (!spoke.current) return;
+    spoke.current = false;
+    enqueue(() => commands.ttsCancel());
+  }, []);
   useEffect(() => {
-    if (!open || !voice) return;
-    void commands.ttsSpeakText(caption).catch(() => undefined);
-    return () => void commands.ttsCancel().catch(() => undefined);
-  }, [open, voice, caption]);
+    if (!open) return;
+    if (!voice) {
+      stopOwnSpeech();
+      return;
+    }
+    spoke.current = true;
+    enqueue(() => commands.ttsSpeakText(caption));
+  }, [open, voice, caption, stopOwnSpeech]);
 
   useEffect(() => {
     if (open) {
@@ -115,27 +129,60 @@ export const ChatGuide: React.FC<ChatGuideProps> = ({
     }
   }, [open]);
 
-  const finish = useCallback(() => {
-    markSeen();
-    void commands.ttsCancel().catch(() => undefined);
-    onClose();
-  }, [onClose]);
+  // Gültigkeit dieses Aufrufs: Esc, Überspringen und Aushängen verwerfen eine
+  // noch ausstehende Geschichte (Codex lva#411 a).
+  const alive = useRef(false);
+  useEffect(() => {
+    alive.current = open;
+  }, [open]);
 
+  const finish = useCallback(() => {
+    alive.current = false;
+    stopOwnSpeech();
+    onClose();
+    // Fokus zurück in die Eingabezeile (Codex lva#411 b).
+    window.requestAnimationFrame(() =>
+      document
+        .querySelector<HTMLElement>("[data-testid='chat-input']")
+        ?.focus(),
+    );
+  }, [onClose, stopOwnSpeech]);
+
+  // Beim Aushängen (z. B. erste Nachricht im Chat) die eigene Ansage beenden.
+  useEffect(
+    () => () => {
+      alive.current = false;
+      stopOwnSpeech();
+    },
+    [stopOwnSpeech],
+  );
+
+  // Esc beendet die Führung – aber nicht, wenn gerade ein Menü, Popover oder
+  // Dialog offen ist (die schließen zuerst) oder jemand die Taste schon behandelt hat.
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      if (
+        document.querySelector(
+          '[role="menu"], [role="listbox"], [role="dialog"], [role="alertdialog"]',
+        )
+      )
+        return;
       e.preventDefault();
-      e.stopPropagation();
       finish();
     };
-    document.addEventListener("keydown", onKey, true);
-    return () => document.removeEventListener("keydown", onKey, true);
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
   }, [open, finish]);
 
+  const busy = useRef(false);
   const tellStory = async () => {
+    if (busy.current) return;
+    busy.current = true;
     const theme = topic.trim() || t("chatGuide.story.defaultTopic");
     const speakers = await loadSpeakers();
+    if (!alive.current) return;
     finish();
     onStory(
       storyPrompt({ topic: theme, speakers, language: i18n.language }),
@@ -227,7 +274,7 @@ export const ChatGuide: React.FC<ChatGuideProps> = ({
           label={t("chatGuide.voice")}
         />
         <span className="lv-guide__spacer" />
-        <FluentButton appearance="subtle" onClick={finish}>
+        <FluentButton appearance="subtle" onClick={() => finish()}>
           {t("chatGuide.skip")}
         </FluentButton>
         {index > 0 && (

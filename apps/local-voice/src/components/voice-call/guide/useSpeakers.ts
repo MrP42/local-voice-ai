@@ -11,8 +11,15 @@ let cache: Promise<string[]> | null = null;
 export function loadSpeakers(): Promise<string[]> {
   cache ??= commands
     .ttsProviderSpeakers()
-    .then((r) => (r.status === "ok" ? r.data.map((s) => s.name) : []))
-    .catch(() => []);
+    .then((r) => {
+      if (r.status !== "ok" || !Array.isArray(r.data)) throw new Error("tts");
+      return r.data.map((s) => s.name);
+    })
+    .catch(() => {
+      // Kern noch nicht bereit: nicht dauerhaft leer merken, später neu fragen.
+      cache = null;
+      return [] as string[];
+    });
   return cache;
 }
 

@@ -1,8 +1,9 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Pencil, Play, Square } from "lucide-react";
 import { commands } from "@/bindings";
-import { splitStory } from "./guide/steps";
+import { splitStory, type StorySegment } from "./guide/steps";
+import { listen } from "@tauri-apps/api/event";
 import { useSpeakers } from "./guide/useSpeakers";
 import type { VoiceLine, VoiceSource } from "@/stores/voiceCallStore";
 import { sourceTarget } from "./globalContext";
@@ -105,11 +106,42 @@ export const Transcript: React.FC<{
 }) => {
   const { t, i18n } = useTranslation();
   const speakers = useSpeakers();
-  const storyOf = (text: string) =>
-    speakers.length ? splitStory(text, speakers) : [];
+  // Zerlegung je Text einmal (Transcript rendert bei jedem gestreamten Token neu).
+  const storyCache = useMemo(
+    () => new Map<string, StorySegment[]>(),
+    [speakers],
+  );
+  const storyOf = (text: string): StorySegment[] => {
+    if (!speakers.length) return [];
+    let segs = storyCache.get(text);
+    if (!segs) {
+      segs = splitStory(text, speakers);
+      storyCache.set(text, segs);
+    }
+    return segs;
+  };
   const isStory = (text: string) =>
     storyOf(text).filter((x) => x.speaker).length > 1;
   const [reading, setReading] = useState<number | null>(null);
+  const readingRef = useRef<number | null>(null);
+  readingRef.current = reading;
+  const heardSpeaking = useRef(false);
+  // Ende der Wiedergabe (natürlich oder fremd beendet) setzt den Knopf zurück.
+  useEffect(() => {
+    const un = listen<{ phase: string }>("tts-state-changed", (e) => {
+      if (readingRef.current === null) return;
+      if (e.payload.phase === "speaking") heardSpeaking.current = true;
+      else if (heardSpeaking.current && e.payload.phase !== "starting") {
+        heardSpeaking.current = false;
+        setReading(null);
+      }
+    });
+    return () => {
+      void un.then((off) => off());
+      if (readingRef.current !== null)
+        void commands.ttsCancel().catch(() => undefined);
+    };
+  }, []);
   // lva#394 C3: Geschichte mit Markern über die Vorlese-Pipeline (schaltet die Stimmen selbst).
   const toggleRead = async (id: number, text: string) => {
     if (reading === id) {
@@ -117,9 +149,11 @@ export const Transcript: React.FC<{
       await commands.ttsCancel().catch(() => undefined);
       return;
     }
+    heardSpeaking.current = false;
     setReading(id);
     const r = await commands.ttsSpeakText(text).catch(() => null);
-    if (!r || r.status === "error") setReading(null);
+    if (!r || r.status === "error")
+      setReading((cur) => (cur === id ? null : cur));
   };
   const endRef = useRef<HTMLDivElement>(null);
   const [editing, setEditing] = useState<number | null>(null);

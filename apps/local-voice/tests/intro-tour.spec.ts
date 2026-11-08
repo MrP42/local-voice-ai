@@ -298,3 +298,135 @@ test("Führung: letzter Schritt schickt die Geschichte in den Chat", async ({
     page.getByText("Erzähl mir eine Geschichte: Eine Bäckerin und ein Drache"),
   ).toBeVisible();
 });
+
+// Codex lva#411: Nachweise zu Abbruch, Fokus, Rahmen, Englisch und Neustart.
+const openGuide = async (
+  page: import("@playwright/test").Page,
+  l = { start: "Tour starten", go: /^(Weiter|Loslegen)$/, finish: "Loslegen" },
+) => {
+  const tour = page.getByTestId("intro-tour");
+  await finishDownload(page);
+  await tour.getByRole("button", { name: l.start }).click();
+  for (let i = 0; i < 6; i++) {
+    const go = tour.getByRole("button", { name: l.go });
+    if (!(await go.count())) break;
+    const name = await go.innerText();
+    await go.click();
+    if (name === l.finish) break;
+  }
+  await expect(tour).toHaveCount(0);
+  const guide = page.getByTestId("chat-guide");
+  await expect(guide).toBeVisible();
+  return guide;
+};
+
+test("Führung: Esc während Sprache und wartender Sprecherliste schickt nichts", async ({
+  page,
+}) => {
+  await setup(page, { holdSpeakers: true, speakers: ["Anton", "Emma"] });
+  await page.goto("/");
+  const guide = await openGuide(page);
+  for (let i = 0; i < 6; i++)
+    await guide.getByRole("button", { name: "Weiter" }).click();
+  await expect(guide).toHaveAttribute("data-step", "story");
+  await guide.getByRole("button", { name: "Geschichte erzählen" }).click();
+  // Sprecherliste hängt noch; Ansage läuft (Sprache an).
+  await expect
+    .poll(async () =>
+      (await commands(page)).some((c) => c.cmd === "tts_provider_speakers"),
+    )
+    .toBe(true);
+  await page.keyboard.press("Escape");
+  await expect(guide).toHaveCount(0);
+  await expect(page.getByTestId("chat-input")).toBeFocused();
+  await page.evaluate(() =>
+    (window as unknown as { __releaseSpeakers: () => void }).__releaseSpeakers(),
+  );
+  await page.waitForTimeout(500);
+  await expect(page.getByText(/Erzähl mir eine Geschichte/)).toHaveCount(0);
+  expect((await commands(page)).some((c) => c.cmd === "tts_cancel")).toBe(true);
+  await expect(page.getByTestId("chat-greeting")).toBeVisible();
+});
+
+test("Führung: Überspringen setzt den Fokus in die Eingabe", async ({
+  page,
+}) => {
+  await setup(page);
+  await page.goto("/");
+  const guide = await openGuide(page);
+  await guide.getByRole("button", { name: "Überspringen" }).click();
+  await expect(guide).toHaveCount(0);
+  await expect(page.getByTestId("chat-input")).toBeFocused();
+});
+
+test("Führung: Rahmen sitzt beim Schrittwechsel sofort auf dem Ziel", async ({
+  page,
+}) => {
+  await setup(page);
+  await page.goto("/");
+  const guide = await openGuide(page);
+  const ring = page.locator(".lv-guide__ring");
+  const next = guide.getByRole("button", { name: "Weiter" });
+  const steps: [string, string][] = [
+    ["talk", "[data-testid='call-button']"],
+    ["plus", "[data-guide='plus']"],
+    ["model", "[data-testid='model-picker']"],
+    ["knowledge", "[data-testid='permission-chip']"],
+  ];
+  for (const [id, sel] of steps) {
+    await next.click();
+    await expect(guide).toHaveAttribute("data-step", id);
+    const target = (await page.locator(sel).first().boundingBox())!;
+    // Ohne Übergang: die erste Messung nach dem Wechsel stimmt schon.
+    await expect
+      .poll(
+        async () => {
+          const box = await ring.boundingBox();
+          return (
+            !!box &&
+            Math.abs(box.x + 4 - target.x) < 2 &&
+            Math.abs(box.y + 4 - target.y) < 2 &&
+            Math.abs(box.width - 8 - target.width) < 2
+          );
+        },
+        { timeout: 500 },
+      )
+      .toBe(true);
+  }
+});
+
+test("Führung auf Englisch bis zur Geschichte", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await setup(page, { language: "en", speakers: ["Anton", "Emma"] });
+  await page.goto("/");
+  const guide = await openGuide(page, {
+    start: "Start tour",
+    go: /^(Next|Get started)$/,
+    finish: "Get started",
+  });
+  await expect(guide.getByRole("status")).toHaveText("1 of 7");
+  await guide.getByRole("switch", { name: "With voice" }).click();
+  for (let i = 0; i < 6; i++)
+    await guide.getByRole("button", { name: "Next" }).click();
+  await expect(guide).toContainText("several voices");
+  await guide.getByRole("button", { name: "Tell the story" }).click();
+  await expect(guide).toHaveCount(0);
+  await expect(
+    page.getByText("Tell me a story: A little dragon who can't sleep"),
+  ).toBeVisible();
+  const prompt = (await commands(page))
+    .map((c) => JSON.stringify(c.args ?? ""))
+    .find((a) => a.includes("speaker marker"));
+  expect(prompt).toContain("<Anton>");
+});
+
+test("Führung erscheint nach Neustart der App nicht von selbst", async ({
+  page,
+}) => {
+  await setup(page, { onboardingCompleted: true });
+  await page.goto("/");
+  await expect(page.getByTestId("chat-input")).toBeVisible();
+  await page.waitForTimeout(800);
+  await expect(page.getByTestId("chat-guide")).toHaveCount(0);
+  await expect(page.getByTestId("chat-greeting")).toBeVisible();
+});

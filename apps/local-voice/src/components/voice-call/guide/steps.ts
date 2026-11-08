@@ -24,8 +24,6 @@ export const GUIDE_STEPS: readonly GuideStep[] = [
   { id: "story" },
 ];
 
-export const GUIDE_SEEN_KEY = "lva.chatGuide.seen";
-
 /** Sprecher, die das Mitmach-Beispiel höchstens verwendet. */
 export const STORY_MAX_SPEAKERS = 4;
 

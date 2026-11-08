@@ -118,6 +118,13 @@ export const VoiceCallPage: React.FC = () => {
   const guidePending = useIntroTourStore((s) => s.chatGuidePending);
   const tourOpen = useIntroTourStore((s) => s.open);
   const guideOpen = guidePending && !tourOpen;
+  // Wer schon schreibt oder ein Gespräch geöffnet hat, braucht die Führung nicht
+  // mehr; sonst tauchte sie beim nächsten leeren Gespräch wieder auf.
+  const hasLines = lines.length > 0;
+  useEffect(() => {
+    if (!hasLines || !guidePending) return;
+    useIntroTourStore.getState().setChatGuidePending(false);
+  }, [hasLines, guidePending]);
   // Je Aufruf der Seite eine andere Variante, innerhalb des Aufrufs stabil.
   const [greetingSeed] = useState(() => Date.now());
   const greeting = useMemo(() => {
@@ -594,7 +601,10 @@ export const VoiceCallPage: React.FC = () => {
                   useIntroTourStore.getState().setChatGuidePending(false)
                 }
                 onStory={(prompt, display) =>
-                  void store.getState().sendText(prompt, display, [])
+                  void store
+                    .getState()
+                    .sendText(prompt, display, [])
+                    .catch((e: unknown) => console.warn("story send failed", e))
                 }
               />
             </div>
