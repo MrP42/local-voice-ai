@@ -1253,13 +1253,27 @@ pub fn sicherung_loeschen(data: &Path, name: &str) -> Result<(), String> {
         // Zurück an den alten Namen, aber nur, wenn am privaten Namen noch genau die
         // gemessene Sicherung liegt. Sonst (etwa ein anderes Objekt, das ein Sync-Client
         // eingesetzt hat) wird nichts verändert und der Ort gemeldet.
-        if ordner_kennung(&privat).ok() != Some(selbst) {
-            log::error!("Buch-Ordner: abgebrochenes Löschen, privater Ort nicht mehr eindeutig");
-            return Err(format!(
-                "{e} Am privaten Ort {} liegt nicht mehr die geprüfte Sicherung; dort wurde \
-                 nichts verändert. Bitte den Ordner prüfen.",
-                privat.display()
-            ));
+        match ordner_kennung(&privat) {
+            Ok(k) if k == selbst => {}
+            Ok(_) => {
+                log::error!(
+                    "Buch-Ordner: abgebrochenes Löschen, privater Ort hat eine andere Kennung"
+                );
+                return Err(format!(
+                    "{e} Am privaten Ort {} liegt nicht mehr die geprüfte Sicherung; dort wurde \
+                     nichts verändert. Bitte den Ordner prüfen.",
+                    privat.display()
+                ));
+            }
+            Err(f) => {
+                log::error!(
+                    "Buch-Ordner: abgebrochenes Löschen, Kennung am privaten Ort nicht lesbar"
+                );
+                return Err(format!(
+                    "{e} Die Kennung am privaten Ort ließ sich nicht prüfen ({f}); dort wurde \
+                     nichts verändert."
+                ));
+            }
         }
         // Zurückbenennen, unmittelbar nach der Prüfung; die Marke erst danach im
         // zurückbenannten Ordner entfernen, und nur, wenn dort die Sicherung liegt.
@@ -1273,13 +1287,23 @@ pub fn sicherung_loeschen(data: &Path, name: &str) -> Result<(), String> {
                 privat.display()
             ));
         }
-        if ordner_kennung(&dir).ok() != Some(selbst) {
-            log::error!("Buch-Ordner: zurückbenannter Ordner ist nicht die geprüfte Sicherung");
-            return Err(format!(
-                "{e} Unter {} liegt nach dem Zurückbenennen nicht die geprüfte Sicherung; \
-                 dort wurde nichts weiter verändert. Bitte den Ordner prüfen.",
-                dir.display()
-            ));
+        match ordner_kennung(&dir) {
+            Ok(k) if k == selbst => {}
+            Ok(_) => {
+                log::error!("Buch-Ordner: zurückbenannter Ordner hat eine andere Kennung");
+                return Err(format!(
+                    "{e} Unter {} liegt nach dem Zurückbenennen nicht die geprüfte Sicherung; \
+                     dort wurde nichts weiter verändert. Bitte den Ordner prüfen.",
+                    dir.display()
+                ));
+            }
+            Err(f) => {
+                log::error!("Buch-Ordner: Kennung nach dem Zurückbenennen nicht lesbar");
+                return Err(format!(
+                    "{e} Nach dem Zurückbenennen ließ sich die Kennung nicht prüfen ({f}); \
+                     dort wurde nichts weiter verändert."
+                ));
+            }
         }
         if let Err(marke) = fs::remove_file(dir.join(LOESCHMARKE)) {
             if marke.kind() != std::io::ErrorKind::NotFound {
@@ -1349,8 +1373,37 @@ fn loeschmarke(name: &str, manifest: &[u8]) -> String {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Kennung(u64, u128);
 
+/// Warum keine Kennung ermittelt wurde: das Laufwerk taugt nicht (Netzlaufwerk, Dateisystem
+/// ohne verlässliche Datei-Kennung) oder ein gewöhnlicher Ein-/Ausgabefehler.
+#[derive(Debug)]
+enum KennungFehler {
+    #[cfg_attr(not(windows), allow(dead_code))]
+    Laufwerk(String),
+    Io(std::io::Error),
+}
+
+impl From<std::io::Error> for KennungFehler {
+    fn from(e: std::io::Error) -> Self {
+        KennungFehler::Io(e)
+    }
+}
+
+fn laufwerk_meldung(grund: &str) -> String {
+    format!(
+        "Löschen von Sicherungen wird auf diesem Laufwerk nicht unterstützt (Netzlaufwerk \
+         oder Dateisystem ohne verlässliche Datei-Kennung, etwa FAT/exFAT). Bitte die \
+         Sicherung lokal löschen. (Ursache: {grund})"
+    )
+}
+
 /// Kennung eines gewöhnlichen Ordners; eine Verknüpfung oder ein Nicht-Ordner ist ein Fehler.
+/// Unter Windows wird das Laufwerk zuerst geprüft, damit auch ein Lesefehler auf einem
+/// Netzlaufwerk den verständlichen Hinweis bekommt.
 fn ordner_kennung(pfad: &Path) -> Result<Kennung, String> {
+    #[cfg(windows)]
+    if let Some(grund) = netzlaufwerk(pfad) {
+        return Err(laufwerk_meldung(&grund));
+    }
     let meta =
         fs::symlink_metadata(pfad).map_err(|e| format!("{} nicht lesbar: {e}", pfad.display()))?;
     if ist_umweg(&meta) || !meta.is_dir() {
@@ -1359,21 +1412,14 @@ fn ordner_kennung(pfad: &Path) -> Result<Kennung, String> {
             pfad.display()
         ));
     }
-    kennung_roh(pfad, &meta).map_err(|e| {
-        if cfg!(windows) {
-            format!(
-                "Löschen von Sicherungen wird auf diesem Laufwerk nicht unterstützt \
-                 (Netzlaufwerk oder Dateisystem ohne verlässliche Datei-Kennung, etwa \
-                 FAT/exFAT). Bitte die Sicherung lokal löschen. ({e})"
-            )
-        } else {
-            format!("{} nicht lesbar: {e}", pfad.display())
-        }
+    kennung_roh(pfad, &meta).map_err(|f| match f {
+        KennungFehler::Laufwerk(grund) => laufwerk_meldung(&grund),
+        KennungFehler::Io(e) => format!("{} nicht lesbar: {e}", pfad.display()),
     })
 }
 
 #[cfg(unix)]
-fn kennung_roh(_pfad: &Path, meta: &fs::Metadata) -> std::io::Result<Kennung> {
+fn kennung_roh(_pfad: &Path, meta: &fs::Metadata) -> Result<Kennung, KennungFehler> {
     use std::os::unix::fs::MetadataExt;
     Ok(Kennung(meta.dev(), u128::from(meta.ino())))
 }
@@ -1382,7 +1428,7 @@ fn kennung_roh(_pfad: &Path, meta: &fs::Metadata) -> std::io::Result<Kennung> {
 /// eindeutig. Auf FAT/exFAT oder Netzlaufwerken ohne verlässliche FileId wird das Löschen
 /// einer Sicherung verweigert (dokumentierter Abbruch, nichts verändert).
 #[cfg(windows)]
-fn kennung_roh(pfad: &Path, _meta: &fs::Metadata) -> std::io::Result<Kennung> {
+fn kennung_roh(pfad: &Path, _meta: &fs::Metadata) -> Result<Kennung, KennungFehler> {
     use std::os::windows::fs::OpenOptionsExt;
     use std::os::windows::io::AsRawHandle;
     const FILE_READ_ATTRIBUTES: u32 = 0x80;
@@ -1414,15 +1460,32 @@ fn kennung_roh(pfad: &Path, _meta: &fs::Metadata) -> std::io::Result<Kennung> {
             dateisystem_laenge: u32,
         ) -> i32;
     }
-    if netzlaufwerk(pfad) {
-        return Err(std::io::Error::other("Netzlaufwerk"));
-    }
+    const FILE_REMOTE_PROTOCOL_INFO_KLASSE: i32 = 13;
+    let laufwerk =
+        |was: &str| KennungFehler::Laufwerk(format!("{was}: {}", std::io::Error::last_os_error()));
     let datei = fs::OpenOptions::new()
         .access_mode(FILE_READ_ATTRIBUTES)
         .share_mode(FILE_SHARE_ALL)
         .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
         .open(pfad)?;
     let handle = datei.as_raw_handle();
+    // Am Handle selbst: liefert FileRemoteProtocolInfo etwas, liegt der Ordner auf einem
+    // Netz-Dateisystem, gleich über welche Pfadform (subst, verbundenes Laufwerk, UNC).
+    let mut fernprotokoll = [0u32; 29];
+    // SAFETY: gültiges Handle, Puffer in der Größe von FILE_REMOTE_PROTOCOL_INFO (116 Bytes).
+    let fern = unsafe {
+        GetFileInformationByHandleEx(
+            handle,
+            FILE_REMOTE_PROTOCOL_INFO_KLASSE,
+            fernprotokoll.as_mut_ptr().cast(),
+            std::mem::size_of_val(&fernprotokoll) as u32,
+        )
+    };
+    if fern != 0 {
+        return Err(KennungFehler::Laufwerk(
+            "Netz-Dateisystem (FileRemoteProtocolInfo)".into(),
+        ));
+    }
     let mut fs_name = [0u16; 32];
     // SAFETY: gültiges Handle; nur der Puffer für den Dateisystemnamen wird beschrieben.
     let ok = unsafe {
@@ -1438,7 +1501,7 @@ fn kennung_roh(pfad: &Path, _meta: &fs::Metadata) -> std::io::Result<Kennung> {
         )
     };
     if ok == 0 {
-        return Err(std::io::Error::last_os_error());
+        return Err(laufwerk("Dateisystem nicht bestimmbar"));
     }
     let ende = fs_name
         .iter()
@@ -1446,8 +1509,8 @@ fn kennung_roh(pfad: &Path, _meta: &fs::Metadata) -> std::io::Result<Kennung> {
         .unwrap_or(fs_name.len());
     let fs_name = String::from_utf16_lossy(&fs_name[..ende]);
     if !matches!(fs_name.as_str(), "NTFS" | "ReFS") {
-        return Err(std::io::Error::other(format!(
-            "Dateisystem {fs_name} ohne verlässliche Datei-Kennung; Löschen nicht möglich"
+        return Err(KennungFehler::Laufwerk(format!(
+            "Dateisystem {fs_name} ohne verlässliche Datei-Kennung"
         )));
     }
     let mut info = FileIdInfo {
@@ -1464,20 +1527,23 @@ fn kennung_roh(pfad: &Path, _meta: &fs::Metadata) -> std::io::Result<Kennung> {
         )
     };
     if ok == 0 {
-        return Err(std::io::Error::last_os_error());
+        return Err(laufwerk("FILE_ID_INFO nicht lesbar"));
     }
     let id = u128::from_le_bytes(info.id);
     if id == 0 || info.volume == 0 {
-        return Err(std::io::Error::other(
-            "keine verlässliche Datei-Kennung; Löschen nicht möglich",
+        return Err(KennungFehler::Laufwerk(
+            "Datei-Kennung oder Volume-Nummer ist 0".into(),
         ));
     }
     Ok(Kennung(info.volume, id))
 }
 
-/// UNC-Pfad oder verbundenes Netzlaufwerk (`GetDriveTypeW` = DRIVE_REMOTE).
+/// Grund, warum dieser Pfad als Netzlaufwerk (oder unklare Pfadform) gilt. Der Pfad wird
+/// erst aufgelöst (`canonicalize` löst `subst`, verbundene Laufwerke und relative Pfade auf;
+/// scheitert das, gilt der absolute Pfad). UNC-Pfade und Laufwerke mit DRIVE_REMOTE sind
+/// Netzlaufwerke; jede andere Pfadform als Laufwerksbuchstabe wird nicht unterstützt.
 #[cfg(windows)]
-fn netzlaufwerk(pfad: &Path) -> bool {
+fn netzlaufwerk(pfad: &Path) -> Option<String> {
     use std::os::windows::ffi::OsStrExt;
     use std::path::Prefix;
     const DRIVE_REMOTE: u32 = 4;
@@ -1485,26 +1551,41 @@ fn netzlaufwerk(pfad: &Path) -> bool {
     extern "system" {
         fn GetDriveTypeW(wurzel: *const u16) -> u32;
     }
-    match pfad.components().next() {
+    // Ein UNC-Pfad wird ohne Zugriff erkannt (kein Warten auf einen fernen Server).
+    if let Some(Component::Prefix(p)) = pfad.components().next() {
+        if matches!(p.kind(), Prefix::UNC(..) | Prefix::VerbatimUNC(..)) {
+            return Some("UNC-Pfad (Netzfreigabe)".into());
+        }
+    }
+    let voll = fs::canonicalize(pfad)
+        .or_else(|_| std::path::absolute(pfad))
+        .unwrap_or_else(|_| pfad.to_path_buf());
+    match voll.components().next() {
         Some(Component::Prefix(p)) => match p.kind() {
-            Prefix::UNC(..) | Prefix::VerbatimUNC(..) => true,
+            Prefix::UNC(..) | Prefix::VerbatimUNC(..) => Some("UNC-Pfad (Netzfreigabe)".into()),
             Prefix::Disk(b) | Prefix::VerbatimDisk(b) => {
                 let wurzel: Vec<u16> = std::ffi::OsStr::new(&format!("{}:\\", b as char))
                     .encode_wide()
                     .chain([0])
                     .collect();
                 // SAFETY: nullterminierte Zeichenkette, nur gelesen.
-                unsafe { GetDriveTypeW(wurzel.as_ptr()) == DRIVE_REMOTE }
+                let typ = unsafe { GetDriveTypeW(wurzel.as_ptr()) };
+                (typ == DRIVE_REMOTE).then(|| {
+                    format!(
+                        "Laufwerk {}: ist ein Netzlaufwerk (DRIVE_REMOTE)",
+                        b as char
+                    )
+                })
             }
-            _ => false,
+            andere => Some(format!("Pfadform {andere:?} wird nicht unterstützt")),
         },
-        _ => false,
+        _ => Some("Pfad ohne Laufwerk wird nicht unterstützt".into()),
     }
 }
 
 #[cfg(not(any(unix, windows)))]
-fn kennung_roh(_pfad: &Path, _meta: &fs::Metadata) -> std::io::Result<Kennung> {
-    Err(std::io::ErrorKind::Unsupported.into())
+fn kennung_roh(_pfad: &Path, _meta: &fs::Metadata) -> Result<Kennung, KennungFehler> {
+    Err(std::io::Error::from(std::io::ErrorKind::Unsupported).into())
 }
 
 /// Ein gewöhnlicher Ordner, in dem auf keiner Ebene eine Verknüpfung (Symlink, Junction,
@@ -4702,6 +4783,27 @@ mod tests {
             assert!(status.success());
         }
         fall_c("loeschen-fall-c-junction", tauschen);
+    }
+
+    /// Pfadformen unter Windows: lokale Ordner (auch relativ) sind kein Netzlaufwerk;
+    /// UNC und unklare Präfixe werden mit Ursache abgelehnt.
+    #[cfg(windows)]
+    #[test]
+    fn netzlaufwerk_erkennt_pfadformen() {
+        let data = standardlage("netz-pfadformen");
+        assert_eq!(netzlaufwerk(&data), None);
+        assert_eq!(netzlaufwerk(Path::new(".")), None);
+        let unc = netzlaufwerk(Path::new(r"\\server.example\freigabe\daten")).unwrap();
+        assert!(unc.contains("UNC"), "{unc}");
+        let geraet = netzlaufwerk(Path::new(r"\\.\PhysicalDrive0")).unwrap();
+        assert!(geraet.contains("Pfadform"), "{geraet}");
+        let meldung = ordner_kennung(Path::new(r"\\server.example\freigabe")).unwrap_err();
+        assert!(
+            meldung.contains("Bitte die Sicherung lokal löschen"),
+            "{meldung}"
+        );
+        assert!(meldung.contains("Ursache: UNC"), "{meldung}");
+        ordner_kennung(&data).unwrap();
     }
 
     /// Ein Rest wird nur mit passender Löschmarke entfernt; ohne Marke, mit falscher
