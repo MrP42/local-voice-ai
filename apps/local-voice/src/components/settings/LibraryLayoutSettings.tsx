@@ -46,6 +46,9 @@ type Notice =
  */
 const isNoSync = (error: string) =>
   error.includes("lässt sich auf diesem Dateisystem nicht dauerhaft sichern");
+/** Kern-Text `ANDERER_ZUGANG` (library_layout.rs): übersetzbar anzeigen. */
+const isOtherAccess = (error: string) =>
+  error.includes("liegt auf einem anderen Zugang als der Datenordner");
 
 /** Phasen, in denen eine Neuordnung offen ist (Spec 4.3). */
 const OPEN_PHASES = new Set(["geplant", "gesichert", "rueckfall"]);
@@ -221,7 +224,9 @@ export const LibraryLayoutSettings: React.FC<{ grouped?: boolean }> = ({
       if (r.status === "error") {
         setNotice({
           kind: "error",
-          text: t("settings.app.libraryLayout.failed", { error: r.error }),
+          text: isOtherAccess(r.error)
+            ? t("settings.app.libraryLayout.exportOtherAccess")
+            : t("settings.app.libraryLayout.failed", { error: r.error }),
         });
       } else {
         setNotice({

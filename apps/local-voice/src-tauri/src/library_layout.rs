@@ -1352,6 +1352,8 @@ thread_local! {
     static VOR_EXPORT_ENTFERNEN: std::cell::Cell<Option<fn(&Path)>> = const { std::cell::Cell::new(None) };
     /// Test: Kennungen beim Export (0 echt, 1 Laufwerk ohne Kennung, 2 Lesefehler).
     static KENNUNG_TEST: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
+    /// Test: kein lokales Volume bestimmbar (anderer Zugang, etwa eine Freigabe).
+    static VOLUME_TEST: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// Freier Name `sicherungen/.loeschen-<32 Hex>` mit zufälligem Teil (nicht angelegt: das
@@ -4544,6 +4546,102 @@ const IM_DATENORDNER: &str = "Der Zielordner liegt im Datenordner der App. Bitte
 /// Name der Markendateien des Exports: Zielprüfung und Besitznachweis des neuen Ordners.
 const EXPORT_MARKE: &str = ".export-marke-";
 
+/// Ziel und Datenordner liegen auf verschiedenen Zugängen; die Markenprobe beweist dann
+/// nichts (eine Freigabe kann `.export-marke-*` ausblenden). Die Oberfläche erkennt den Text.
+pub const ANDERER_ZUGANG: &str = "Das Ziel liegt auf einem anderen Zugang als der \
+     Datenordner und lässt sich nicht sicher von ihm unterscheiden; nichts exportiert. Bitte \
+     auf ein lokales Laufwerk exportieren.";
+
+/// Lokales Volume eines Pfads (Unix: Gerät; Windows: Volume-Seriennummer), `None` für
+/// Netzlaufwerke, UNC-Pfade oder wenn es sich nicht bestimmen lässt. Nur auf demselben
+/// lokalen Volume sehen Datenordner und Ziel dieselben Einträge.
+fn lokales_volume(p: &Path) -> Option<u64> {
+    #[cfg(test)]
+    if VOLUME_TEST.with(|v| v.get()) {
+        return None;
+    }
+    lokales_volume_roh(p)
+}
+
+#[cfg(unix)]
+fn lokales_volume_roh(p: &Path) -> Option<u64> {
+    use std::os::unix::fs::MetadataExt;
+    fs::symlink_metadata(p).ok().map(|m| m.dev())
+}
+
+#[cfg(windows)]
+fn lokales_volume_roh(p: &Path) -> Option<u64> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use std::os::windows::io::AsRawHandle;
+    const FILE_READ_ATTRIBUTES: u32 = 0x80;
+    const FILE_SHARE_ALL: u32 = 0x1 | 0x2 | 0x4;
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    const FILE_REMOTE_PROTOCOL_INFO_KLASSE: i32 = 13;
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetFileInformationByHandleEx(
+            datei: *mut std::ffi::c_void,
+            klasse: i32,
+            info: *mut std::ffi::c_void,
+            groesse: u32,
+        ) -> i32;
+        fn GetVolumeInformationByHandleW(
+            datei: *mut std::ffi::c_void,
+            name: *mut u16,
+            name_laenge: u32,
+            seriennummer: *mut u32,
+            max_laenge: *mut u32,
+            merkmale: *mut u32,
+            dateisystem: *mut u16,
+            dateisystem_laenge: u32,
+        ) -> i32;
+    }
+    if netzlaufwerk(p).is_some() {
+        return None;
+    }
+    let datei = fs::OpenOptions::new()
+        .access_mode(FILE_READ_ATTRIBUTES)
+        .share_mode(FILE_SHARE_ALL)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(p)
+        .ok()?;
+    let handle = datei.as_raw_handle();
+    let mut fernprotokoll = [0u32; 29];
+    // SAFETY: gültiges Handle, Puffer in der Größe von FILE_REMOTE_PROTOCOL_INFO (116 Bytes).
+    let fern = unsafe {
+        GetFileInformationByHandleEx(
+            handle,
+            FILE_REMOTE_PROTOCOL_INFO_KLASSE,
+            fernprotokoll.as_mut_ptr().cast(),
+            std::mem::size_of_val(&fernprotokoll) as u32,
+        )
+    };
+    if fern != 0 {
+        return None;
+    }
+    let mut serie = 0u32;
+    // SAFETY: gültiges Handle; nur die Seriennummer wird beschrieben.
+    let ok = unsafe {
+        GetVolumeInformationByHandleW(
+            handle,
+            std::ptr::null_mut(),
+            0,
+            &mut serie,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    (ok != 0 && serie != 0).then_some(u64::from(serie))
+}
+
+#[cfg(not(any(unix, windows)))]
+fn lokales_volume_roh(_p: &Path) -> Option<u64> {
+    None
+}
+
 /// Kennung eines Eintrags; `None`, wo das Laufwerk keine verlässliche Kennung hat.
 fn kennung_oder_keine(p: &Path) -> Result<Option<Kennung>, std::io::Error> {
     #[cfg(test)]
@@ -4589,6 +4687,7 @@ fn ziel_ausserhalb(data: &Path, ziel_echt: &Path) -> Result<bool, String> {
         );
         None
     });
+    let data_volume = lokales_volume(&data_echt);
     let marke = format!("{EXPORT_MARKE}{}-{}", std::process::id(), jetzt_ms());
     let marke_pfad = ziel_echt.join(&marke);
     fs::OpenOptions::new()
@@ -4597,7 +4696,10 @@ fn ziel_ausserhalb(data: &Path, ziel_echt: &Path) -> Result<bool, String> {
         .open(&marke_pfad)
         .map_err(|e| format!("Zielordner nicht beschreibbar ({e}); nichts exportiert."))?;
     let ergebnis = (|| -> Result<bool, String> {
+        // Erst alle Glieder auf einen Treffer prüfen (Kennung gleich oder Marke sichtbar),
+        // dann erst ein nicht ausgeschlossenes Glied melden.
         let mut vollstaendig = true;
+        let mut ungeklaert = false;
         for vorfahr in ziel_echt.ancestors() {
             let rest = ziel_echt
                 .strip_prefix(vorfahr)
@@ -4607,22 +4709,24 @@ fn ziel_ausserhalb(data: &Path, ziel_echt: &Path) -> Result<bool, String> {
                 (Some(_), Ok(Some(_))) => true,
                 _ => false,
             };
+            // Eine sichtbare Marke heißt immer „im Datenordner“. Ihr Fehlen beweist nur bei
+            // gleicher Sicht etwas: Datenordner und Vorfahr auf demselben lokalen Volume.
+            let gleiche_sicht = data_volume.is_some() && lokales_volume(vorfahr) == data_volume;
             let per_marke = match fs::symlink_metadata(data_echt.join(rest).join(&marke)) {
                 Ok(_) => return Err(IM_DATENORDNER.into()),
-                Err(e) => matches!(
-                    e.kind(),
-                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
-                ),
+                Err(e) => {
+                    gleiche_sicht
+                        && matches!(
+                            e.kind(),
+                            std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                        )
+                }
             };
-            if !per_kennung && !per_marke {
-                return Err(format!(
-                    "{} lässt sich nicht vom Datenordner unterscheiden; Zielprüfung \
-                     unmöglich, nichts exportiert. Bitte einen Ordner auf einem lokalen \
-                     Laufwerk wählen.",
-                    vorfahr.display()
-                ));
-            }
+            ungeklaert |= !per_kennung && !per_marke;
             vollstaendig &= per_kennung;
+        }
+        if ungeklaert {
+            return Err(ANDERER_ZUGANG.into());
         }
         Ok(vollstaendig)
     })();
@@ -5353,13 +5457,38 @@ mod tests {
                 KENNUNG_TEST.with(|k| k.set(1));
                 let r = ziel_ausserhalb(&data, &ziel);
                 KENNUNG_TEST.with(|k| k.set(0));
-                assert!(r
-                    .unwrap_err()
-                    .contains("nicht vom Datenordner unterscheiden"));
+                assert_eq!(r.unwrap_err(), ANDERER_ZUGANG);
                 let _ = fs::remove_dir_all(&ziel);
             }
             fs::set_permissions(&gesperrt, fs::Permissions::from_mode(0o755)).unwrap();
         }
+    }
+
+    /// lva#375: Ohne Kennung zählt die Markenprobe nur auf demselben lokalen Volume. Auf
+    /// einem anderen Zugang (etwa einer Freigabe, die Marken ausblendet) wird abgebrochen;
+    /// eine sichtbare Marke heißt weiter „im Datenordner“, mit Kennung genügt diese.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn markenprobe_nur_auf_demselben_lokalen_volume() {
+        let data = datenordner("export-zugang");
+        fs::create_dir_all(data.join(PROJEKTE)).unwrap();
+        let echt = fs::canonicalize(data.join(PROJEKTE)).unwrap();
+        let alias = Path::new("/proc/self/root").join(echt.strip_prefix("/").unwrap());
+        let draussen = fs::canonicalize(data.parent().unwrap()).unwrap();
+        VOLUME_TEST.with(|v| v.set(true));
+        KENNUNG_TEST.with(|k| k.set(1));
+        let aussen = ziel_ausserhalb(&data, &draussen);
+        let im = ziel_ausserhalb(&data, &alias);
+        KENNUNG_TEST.with(|k| k.set(0));
+        let mit_kennung = ziel_ausserhalb(&data, &draussen);
+        VOLUME_TEST.with(|v| v.set(false));
+        assert_eq!(aussen.unwrap_err(), ANDERER_ZUGANG);
+        assert!(im.unwrap_err().contains("liegt im Datenordner"));
+        assert_eq!(mit_kennung, Ok(true));
+        assert!(fs::read_dir(&draussen)
+            .unwrap()
+            .flatten()
+            .all(|e| !e.file_name().to_string_lossy().starts_with(EXPORT_MARKE)));
     }
 
     /// lva#375: Ein Kennungsfehler beim Anlegen oder vor dem Löschen heißt „nicht löschen“.

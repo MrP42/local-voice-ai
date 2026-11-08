@@ -154,6 +154,7 @@ test.beforeEach(async ({ page }) => {
             __lvSync?: string;
             __lvExportDurable?: boolean;
             __lvExportChecked?: boolean;
+            __lvExportError?: string;
             __lvExportArgs?: Record<string, unknown>;
             __lvDialogCalls?: number;
             __lvDialogCancel?: boolean;
@@ -218,6 +219,7 @@ test.beforeEach(async ({ page }) => {
             return { dateien: 7, papierkorb: "sicherungen/.papierkorb/2" };
           if (cmd === "library_backup_export") {
             lv.__lvExportArgs = args;
+            if (lv.__lvExportError) throw lv.__lvExportError;
             return {
               ordner: "D:\\Sicherungen\\buch-ordner-1",
               dateien: 7,
@@ -630,3 +632,29 @@ for (const width of [1440, 390]) {
     });
   });
 }
+
+test("a target on another access path is explained, not exported (lva#375)", async ({
+  page,
+}) => {
+  await withBackup(page, false);
+  await drive(page, "nicht_unterstuetzt", false);
+  await page.addInitScript(() => {
+    Object.assign(window, {
+      __lvExportError:
+        "Das Ziel liegt auf einem anderen Zugang als der Datenordner und lässt sich nicht sicher von ihm unterscheiden; nichts exportiert. Bitte auf ein lokales Laufwerk exportieren.",
+    });
+  });
+  await openApp(page);
+  await page
+    .getByTestId("library-backup")
+    .getByRole("button", { name: "Zurückspielen …" })
+    .click();
+  await page.getByTestId("library-restore-export").click();
+  await expect(
+    page.getByText(
+      "Das Ziel liegt auf einem anderen Zugang als der Datenordner und lässt sich nicht sicher von ihm unterscheiden. Nichts wurde exportiert.",
+      { exact: false },
+    ),
+  ).toBeVisible();
+  await expect(page.getByTestId("library-layout-success")).toHaveCount(0);
+});

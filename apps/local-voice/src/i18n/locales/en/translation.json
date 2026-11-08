@@ -2942,6 +2942,7 @@
         "exported_other": "The backup was copied to {{path}} with {{count}} files and verified.",
         "exportedNotDurable": "Note: this folder cannot commit changes safely either. For a reliable copy please choose a local drive.",
         "exportedPartlyChecked": "Not every folder on the way to the target has a reliable identity (for example on a network drive); there, a check marker confirmed that the target is outside the data folder.",
+        "exportOtherAccess": "The target is on a different access path than the data folder and cannot be safely told apart from it. Nothing was exported. Please export to a local drive.",
         "bestEffortLabel": "Restore anyway, without crash protection",
         "bestEffortWarning": "If the computer stops midway, a partial state may remain. The backup and everything moved aside (recycle folder under “sicherungen”) are kept.",
         "bestEffortApply": "Restore anyway",
