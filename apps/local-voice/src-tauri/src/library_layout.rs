@@ -5491,6 +5491,32 @@ mod tests {
             .all(|e| !e.file_name().to_string_lossy().starts_with(EXPORT_MARKE)));
     }
 
+    /// lva#375: Unter Windows liefert ein lokales Temp-Verzeichnis ein Volume mit
+    /// Seriennummer, derselbe Ort über `\\localhost\c$` (UNC) keins.
+    #[cfg(windows)]
+    #[test]
+    fn lokales_volume_unter_windows() {
+        let data = datenordner("volume-windows");
+        let echt = fs::canonicalize(&data).unwrap();
+        let serie = lokales_volume(&echt);
+        assert!(serie.is_some_and(|s| s != 0), "{serie:?}");
+        assert_eq!(lokales_volume(&data), serie);
+        // Derselbe Ordner als UNC-Pfad über die Verwaltungsfreigabe.
+        let ohne_praefix = data.to_string_lossy().replace(r"\\?\", "");
+        if let Some((laufwerk, rest)) = ohne_praefix.split_once(':') {
+            let unc = format!(
+                r"\\localhost\{}$\{}",
+                laufwerk.to_lowercase(),
+                rest.trim_start_matches('\\')
+            );
+            assert_eq!(lokales_volume(Path::new(&unc)), None, "{unc}");
+        }
+        assert_eq!(
+            lokales_volume(Path::new(r"\\server.example\freigabe\daten")),
+            None
+        );
+    }
+
     /// lva#375: Ein Kennungsfehler beim Anlegen oder vor dem Löschen heißt „nicht löschen“.
     #[test]
     fn export_mit_kennungsfehler_wird_nicht_geloescht() {
