@@ -1,6 +1,6 @@
 # Spezifikation: Assistent – Chat und Sprache geräteübergreifend (Epic #384)
 
-- Stand: 08.11.2026, Fassung 3 nach Codex-Runde 2 (M1–M8 eingearbeitet; Runde 1: Must-fixes 1–12, Reihenfolge A2 → A1 → A3)
+- Stand: 08.11.2026, Fassung 4: Codex-Runde 3 bedingte Abnahme (Baubeginn JA), vier Rest-Must-fixes eingearbeitet
 - Auftrag: Patrick 08.11.2026, Thread „Chat und Voice-Agent plattformübergreifend vereinen“
 - Architektur: wai-sdk ADR-0028 (E1–E11). Diese Spezifikation beschreibt, was Patrick sieht und was in Local Voice AI
   (Windows, macOS, iOS) gebaut wird.
@@ -103,13 +103,15 @@ zur Codex-Abnahme.
 
 ### 5.3 Fortsetzen über Geräte (A1)
 
-- Objekte nach ADR-0028 E3, Inhalte E2E-verschlüsselt und HMAC-authentifiziert; im Klartext nur die Steuerfelder aus
-  E3.0 (`sammlung`, `objekt_id`, `unterhaltung_ref`, `art`, `geraet_id`, `key_epoch`, `revision`, bei Grabsteinen
+- Objekte nach ADR-0028 E3, Inhalte E2E-verschlüsselt (AEAD); die Steuerfelder sind als zusätzliche Daten (AAD)
+  kryptografisch gebunden und im Klartext wiederholt, abweichende Objekte werden verworfen; im Klartext nur die
+  Steuerfelder aus E3.0 (`sammlung`, `objekt_id`, `unterhaltung_ref`, `art`, `geraet_id`, `key_epoch`, `revision`, bei Grabsteinen
   `ziel`). Gerätewiderruf mit Schlüsselepoche; Grabstein je `unterhaltung_ref` löscht alle zugehörigen Objekte am Hub
   und weist spätere Uploads (auch offline erzeugte) ab.
 - `beitrag_id`/`eltern_id` maßgeblich; idempotente Zustellung; Lücken anzeigen; Zweigwahl nur durch Patrick.
-- Sitzungs-Lease nur per Vergleichsschreiben am Hub (`base_revision`); die Hub-Revision ist der Fencing-Wert, genau ein
-  Inhaber (30 s, Verlängerung alle 10 s).
+- Sitzungs-Lease nur per Vergleichsschreiben am Hub (`base_revision`, genau ein Gewinner). Fencing-Wert ist die
+  `generation` im gebundenen Lease-Inhalt; sie steigt nur bei Übernahme, nicht bei Verlängerung (30 s, alle 10 s).
+  Die Hub-Revision hat keine Fencing-Bedeutung.
 - `modell_lokal` und `geraet_lokal` getrennt einstellbar.
 - Sync für den Assistenten ist ein eigener Schalter (Standard aus); bestehende Gespräche werden erst danach hochgeladen.
 - Migration nach ADR-0028 E11 (stabile IDs, `unbekannt` statt erfundener Werte, Sicherung, Rückweg, Migrationsmarke).
@@ -122,8 +124,10 @@ zur Codex-Abnahme.
   Microsoft 365“ getrennt vom bestehenden Konto. Positivliste Lesemodus `User.Read`, `offline_access`, `Mail.Read`,
   `Calendars.Read`; Entwurfsmodus zusätzlich `Mail.ReadWrite`. Geprüft wird das `scope`-Feld der Token-Antwort bei
   jeder Anmeldung und Erneuerung; jeder Scope außerhalb der Positivliste → Token verworfen, Zugang gesperrt.
-- Adapter mit fester Aufrufliste (lesen, `createReply`); **nur neue Entwürfe**, kein `PATCH` bestehender Entwürfe;
-  Auftragsmarke als erweiterte Eigenschaft; kein Zugriff auf das bestehende Konto oder `sendMail`.
+- Adapter mit fester Aufrufliste (lesen, ein Erzeugungsaufruf); **nur neue Entwürfe**, vollständiger Inhalt und
+  Auftragsmarke in **einem** Aufruf, kein `PATCH`; kein Zugriff auf das bestehende Konto oder `sendMail`.
+- Ohne Nachweis gegen Microsoft Graph, dass Inhalt und Marke in einem Aufruf entstehen, bleibt die Entwurfsfunktion
+  gesperrt; Lesen, Zusammenfassen und Empfehlen laufen trotzdem.
 - Konditionen und Aufwand nur aus freigegebenen Projektinhalten (A4/P4c).
 - Handbuch `docs/INTEGRATIONEN-M365.md` bekommt einen Abschnitt für die zweite Registrierung.
 
@@ -135,8 +139,10 @@ zur Codex-Abnahme.
   befüllt; keine Assistent-/M365-/Hub-Tokens; Verweigerung von Geheimnisorten; kein MCP der LVA; Berechtigungsmodus
   ohne Bypass; Abfragen der CLI als `frage`; Abbruch über process_guard.
 - Cloud-Übergabe: Issue nur nach Bestätigung von Zielrepo und Volltext; Token nur `issues:write` für ein Repo; keine
-  automatischen Inhalte. Das Issue autorisiert nichts: der Koordinator führt erst aus, wenn Patrick im Projekt selbst
-  mit Hash/Auftrags-ID bestätigt (später: signierter Freigabe-Datensatz). Jede Änderung braucht neue Freigabe.
+  automatischen Inhalte. Titel, Text und Zielrepo werden eingefroren (`inhalt_hash`). Das Issue autorisiert nichts: der
+  Koordinator führt erst aus, wenn Patrick im Projekt selbst Auftrags-ID **und** `inhalt_hash` bestätigt, und nur, wenn
+  der neu berechnete Hash des Issues gleich ist (später: signierter Freigabe-Datensatz). Jede Änderung braucht neue
+  Freigabe.
 
 ### 5.6 Kontext und Bereich (A4)
 
@@ -157,10 +163,10 @@ zur Codex-Abnahme.
 |---|---|
 | A0 | Fixtures für Beitrag, Ereignis, Hinweis, Einstufung grün in Rust, TS und Swift |
 | A2 | 200 DE + 200 EN: 0 Fakteninhalt in S0; Latenz nach E9 (warm, lokal); Richtigkeit gegen Goldantworten S1 = 0 falsch, S2 ≤ 1 %; 0 ausgegebene Sätze ohne Beleg; Herleitungen = deterministische Rechnung; adversarielle Fälle 0 ausgeführte unautorisierte Aufrufe/Abflüsse |
-| A1 | Rundlauf PC→iPhone→PC mit 50 Beiträgen ohne Verlust/Dopplung; Zweig-, Lücken-, Fencing-Test; gleichzeitige Übernahme → genau ein Inhaber; Grabstein schlägt Offline-Wiederauftauchen; widerrufenes Gerät kann nicht schreiben/lesen (neue Epoche); Migration wiederholbar; kein Klartext im Hub; nichts hochgeladen vor Sync-Freigabe |
+| A1 | Rundlauf PC→iPhone→PC mit 50 Beiträgen ohne Verlust/Dopplung; Zweig-, Lücken-Test; Antwort über ≥ 3 Verlängerungen bleibt im Zweig; Übernahme während laufender Antwort → alte Antwort wird Zweig; gleichzeitige Übernahme → genau ein Inhaber; vertauschte Steuerfelder (ID, Unterhaltung, Art, Gerät, Epoche, Grabsteinziel) werden verworfen; Grabstein schlägt Offline-Wiederauftauchen; widerrufenes Gerät kann nicht schreiben/lesen (neue Epoche); Migration wiederholbar; kein Klartext im Hub; nichts hochgeladen vor Sync-Freigabe |
 | A3 | Abnahmetests aus #350 §10 für die neue Art; Hinweis angewendet/Neubewertung; Wiederholung eines Schritts erzeugt keinen zweiten Entwurf/Prozess; ungeklärte Kosten bleiben reserviert; Absturz zwischen Nebenwirkung und Journal ohne Doppelung; Abbruch stoppt neue Starts sofort; Budget pausiert vor Überschreitung |
 | A4 | Projektinhalte nur bei Freigabe; Widerruf wirkt vor dem nächsten Schritt; Bereichswechsel ohne stille Übernahme |
-| A5 | 30 synthetische Anfragen: 0 Sendevorgänge, 0 nicht erlaubte Graph-Aufrufe (Mitschnitt), Token-Antwort mit Scope außerhalb der Positivliste abgewiesen, 0 Änderungen bestehender Entwürfe, jede Zahl mit Quelle oder `[bitte prüfen]`, Injection-Mails ohne Wirkung |
+| A5 | 30 synthetische Anfragen: 0 Sendevorgänge, 0 nicht erlaubte Graph-Aufrufe (Mitschnitt), Token-Antwort mit Scope außerhalb der Positivliste abgewiesen, 0 Änderungen bestehender Entwürfe, Inhalt+Marke in einem Erzeugungsaufruf (Mitschnitt), jede Zahl mit Quelle oder `[bitte prüfen]`, Injection-Mails ohne Wirkung |
 | A6 | Kein Start ohne Ja oder ohne Sandbox; Ja nur einmal für Aufgabe+Repo+Profil; Kindprozess ohne fremde Tokens, Schreiben außerhalb Worktree und Netz außerhalb Profil scheitern; kein Bypass-Parameter; Abbruch beendet Prozessbaum; Issue nur nach Bestätigung; keine Ausführung ohne Projektbestätigung |
 
 ## 7. Zuordnung zu bestehenden Arbeiten
@@ -173,6 +179,8 @@ zur Codex-Abnahme.
 | lva#365 P4c | Voraussetzung für A4 und A5 |
 | ADR-0021 S5/S6 | Orchestrator schlägt Werkzeuge vor; S6 liefert Skills für A4 |
 
-## 8. Reihenfolge
+## 8. Reihenfolge und Freischaltung
 
-A0 (Verträge) → A2 → A1 → A3 → A4 → A5/A6 → A7.
+A0 (Verträge) → A2 → A1 → A3 → A4 → A5/A6 → A7. Freischaltung je Stufe nach ADR-0028 Abschnitt „Freischaltung je
+Ausbaustufe“: A5-Entwürfe und A6-Cloud-Ausführung bleiben gesperrt bis zu ihren Nachweisen; lokale Claude-Code-Sitzung
+nur mit Sandbox-Nachweis.
