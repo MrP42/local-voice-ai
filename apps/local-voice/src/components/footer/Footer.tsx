@@ -107,7 +107,7 @@ const Footer: React.FC<{ section?: string }> = ({ section }) => {
           </span>
         </div>
 
-        {/* Rechts (ADR-0027 E7, Codex 01.11.): Schild, Mikrofon und Telefon.
+        {/* Rechts (ADR-0027 E7, Codex 01.11.): Mikrofon, Telefon und Schild.
             Speicher/GPU und Fish-Server nur als bewusst
             eingeschaltete Diagnose (Profilmenü ▸ Hilfe), einklappbar. Die
             Version steht immer ganz rechts (Patrick 05.11., #281). */}
@@ -138,9 +138,6 @@ const Footer: React.FC<{ section?: string }> = ({ section }) => {
               )}
             </span>
           )}
-          {/* Das Schild steht wieder immer sichtbar (Patrick 06.11.2026):
-              grün/gelb/rot für Souveränität und Regelwerk, Klick erklärt. */}
-          <ComplianceShield />
           <MicSelector />
           {/* Telefon direkt hinter dem Mikrofon: grau ohne, grün mit laufendem
               Gespräch; startet das Hauptgespräch wie das Tastenkürzel. Der Pfeil
@@ -149,6 +146,10 @@ const Footer: React.FC<{ section?: string }> = ({ section }) => {
             <CallButton />
             {(callPage || callRunning) && <CallMenu />}
           </span>
+          {/* Das Schild steht immer sichtbar ganz rechts, direkt vor der
+              Version (Patrick 08.11.2026): grün/gelb/rot für Souveränität
+              und Regelwerk, Klick erklärt. */}
+          <ComplianceShield />
           {/* Update: sucht beim Start und auf Wunsch (Profilmenü ▸ Hilfe);
               ein gefundenes meldet sich als Fenster mit den Release-Notes. */}
           <UpdateChecker version={version} />
