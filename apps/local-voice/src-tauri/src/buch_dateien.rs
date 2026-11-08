@@ -160,6 +160,10 @@ struct Eintrag {
     /// Felder neuerer Geräte im Datensatz, unverändert weitergegeben.
     #[serde(default, skip_serializing_if = "Map::is_empty")]
     extra: Map<String, Value>,
+    /// In der App ausdrücklich entfernt, während ihr Ordner fehlt: wird beim nächsten
+    /// Sammeln zum Grabstein, auch wenn der Ort verdeckt ist.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    entfernt: bool,
 }
 
 #[derive(Serialize, Deserialize, Default, PartialEq, Debug)]
@@ -434,6 +438,8 @@ struct Fund {
     verdeckt: Vec<String>,
     /// Dateien, die da sind, aber nicht abgeglichen werden (Namenskollision).
     gehalten: BTreeMap<String, fs::Metadata>,
+    /// Rollen, deren Ordner fehlt (der Buch-Ordner selbst ist erreichbar).
+    fehlende_rollen: Vec<Rolle>,
 }
 
 impl Fund {
@@ -500,8 +506,13 @@ fn dateien_finden(buch_dir: &Path, hinweise: &mut Vec<String>) -> Fund {
             Ok(m) if m.is_dir() && !m.file_type().is_symlink() => {
                 gehen(&dir, rolle.ordner(), 1, &mut aus, hinweise);
             }
-            // Ein fehlender Ordner (verschoben, Platzhalter, Laufwerk weg) löscht nichts;
-            // Löschen geht nur Datei für Datei.
+            // Ein von außen entfernter Ordner (verschoben, Platzhalter, Laufwerk weg)
+            // löscht nichts: die Liste zeigt „Ordner fehlt“, gelöscht wird nur in der App.
+            // Ein leerer Ordner dagegen ist da: was fehlt, wird zum Grabstein.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                aus.fehlende_rollen.push(rolle);
+                aus.verdeckt.push(rolle.ordner().to_string());
+            }
             _ => aus.verdeckt.push(rolle.ordner().to_string()),
         }
     }
@@ -686,35 +697,68 @@ pub fn lokal_aus_stand(buch_dir: &Path, buch: &str, id: &str) -> Result<Option<L
         .find_map(|(rel, e)| lokal_von(buch_dir, buch, rel, e)))
 }
 
-/// Bytes, die ein Lauf für Prüfsummen neu lesen darf. Die erste Datei eines Laufs darf
-/// immer, auch wenn sie größer ist: sonst käme eine große Datei nie an die Reihe.
-#[derive(Debug)]
+/// Bytes, die ein Lauf für Prüfsummen neu lesen darf. Eine Datei über dem Rest bekommt
+/// je Lauf einmal eine Ausnahme, und zwar die erste hinter dem Zeiger des letzten Laufs
+/// (`<buch>/<pfad>`, Reihenfolge der Zeichenketten). So kommt jede große Datei reihum dran,
+/// auch wenn eine davor sich ständig ändert oder dauerhaft scheitert.
+#[derive(Debug, Default)]
 pub struct Budget {
     rest: u64,
-    gelesen: bool,
+    /// Zeiger des letzten Laufs: Ausnahmen nur dahinter.
+    ab: Option<String>,
+    /// Die Ausnahme dieses Laufs (der nächste Zeiger).
+    ausnahme: Option<String>,
 }
+
+/// Datei mit dem Zeiger (in der Bibliothek, neben dem Parkplatz).
+pub const REIHE: &str = ".sync-dateien-reihe.json";
 
 impl Budget {
     pub fn neu(rest: u64) -> Self {
         Budget {
             rest,
-            gelesen: false,
+            ..Budget::default()
         }
+    }
+
+    /// Budget mit dem gespeicherten Zeiger der Bibliothek (fehlt er, beginnt die Reihe vorn).
+    pub fn laden(bibliothek: &Path, rest: u64) -> Self {
+        let ab = fs::read(bibliothek.join(REIHE))
+            .ok()
+            .and_then(|roh| serde_json::from_slice::<Option<String>>(&roh).ok())
+            .flatten();
+        Budget {
+            rest,
+            ab,
+            ausnahme: None,
+        }
+    }
+
+    /// Den Zeiger für den nächsten Lauf sichern: die Ausnahme dieses Laufs; gab es keine,
+    /// beginnt die Reihe wieder vorn.
+    pub fn sichern(&self, bibliothek: &Path) -> Result<(), String> {
+        if self.ab == self.ausnahme {
+            return Ok(());
+        }
+        let bytes = serde_json::to_vec(&self.ausnahme).map_err(|e| e.to_string())?;
+        schreibe_atomar(&bibliothek.join(REIHE), &bytes)
     }
 
     pub fn rest(&self) -> u64 {
         self.rest
     }
 
-    fn nehmen(&mut self, n: u64) -> bool {
+    fn nehmen(&mut self, wo: &str, n: u64) -> bool {
         if n <= self.rest {
             self.rest -= n;
-        } else if self.gelesen {
-            return false;
-        } else {
-            self.rest = 0;
+            return true;
         }
-        self.gelesen = true;
+        let dahinter = self.ab.as_deref().is_none_or(|ab| wo > ab);
+        if self.ausnahme.is_some() || !dahinter {
+            return false;
+        }
+        self.ausnahme = Some(wo.to_string());
+        self.rest = 0;
         true
     }
 }
@@ -741,15 +785,15 @@ pub fn sammeln(
     let mut zurueck: BTreeSet<String> = stand
         .dateien
         .iter()
-        .filter(|(rel, e)| !e.deleted && !e.erwartet && !gefunden.contains_key(*rel))
-        .filter(|(rel, _)| fund.verdeckt(rel))
+        .filter(|(_, e)| !e.deleted && !e.erwartet && !e.entfernt)
+        .filter(|(rel, _)| !gefunden.contains_key(*rel) && fund.verdeckt(rel))
         .map(|(rel, _)| rel.clone())
         .collect();
     zurueck.extend(fund.gehalten.keys().cloned());
     // Ein Eintrag im Stand, dessen Ort auf der Platte anders geschrieben ist (Groß-/
     // Kleinschreibung, Unicode-Form, auch eines Ordners): weder Grabstein noch neue Datei.
     for (rel, e) in &stand.dateien {
-        if e.deleted || gefunden.contains_key(rel) {
+        if e.deleted || e.entfernt || gefunden.contains_key(rel) {
             continue;
         }
         let andere: Vec<&String> = gefunden.keys().filter(|g| kollidieren(g, rel)).collect();
@@ -787,7 +831,7 @@ pub fn sammeln(
         let (sha, groesse, mtime_ms) = match bekannt {
             Some(s) => (s, groesse, mtime_ms),
             None => {
-                if !budget.nehmen(groesse) {
+                if !budget.nehmen(&format!("{buch}/{rel}"), groesse) {
                     zurueck.insert(rel.clone());
                     continue;
                 }
@@ -808,6 +852,7 @@ pub fn sammeln(
             Some(e) if !e.deleted && e.sha256 == sha => Eintrag {
                 groesse,
                 mtime_ms,
+                entfernt: false,
                 ..e
             },
             alt => {
@@ -1374,6 +1419,12 @@ pub struct Datei {
     pub erwartet: bool,
     /// Konfliktkopie (`… (Konflikt …)`).
     pub konflikt: bool,
+    /// Bekannt, aber ihr Ordner fehlt (von außen entfernt): wiederherstellen oder in der
+    /// App löschen.
+    pub ordner_fehlt: bool,
+    /// Von einem anderen Gerät gemeldet, hier zurückgehalten: der Name fiele mit einer
+    /// anderen Datei zusammen (Groß-/Kleinschreibung, Unicode-Form).
+    pub zurueckgehalten: bool,
 }
 
 fn ist_konflikt(name: &str) -> bool {
@@ -1381,9 +1432,10 @@ fn ist_konflikt(name: &str) -> bool {
     stamm.ends_with(')') && stamm.contains(" (Konflikt ")
 }
 
-/// Notizen, Anhänge und Transkripte eines Buchs: was auf der Platte liegt und was noch
-/// kommt. Geordnet nach Rolle (Notiz, Anhang, Transkript), dann Pfad.
-pub fn auflisten(buch_dir: &Path) -> Result<Vec<Datei>, String> {
+/// Notizen, Anhänge und Transkripte eines Buchs: was auf der Platte liegt, was noch kommt,
+/// was zurückgehalten wird (Parkplatz) und was fehlt, weil sein Ordner fehlt. Geordnet
+/// nach Rolle (Notiz, Anhang, Transkript), dann Pfad.
+pub fn auflisten(buch_dir: &Path, buch: &str) -> Result<Vec<Datei>, String> {
     let stand = stand_laden(buch_dir)?;
     let mut hinweise = Vec::new();
     let fund = dateien_finden(buch_dir, &mut hinweise);
@@ -1391,54 +1443,90 @@ pub fn auflisten(buch_dir: &Path) -> Result<Vec<Datei>, String> {
     gefunden.extend(fund.gehalten);
     let mut aus: Vec<Datei> = Vec::new();
     let name_von = |rel: &str| rel.rsplit('/').next().unwrap_or(rel).to_string();
+    let fassung_von = |rolle: Rolle, rel: &str, fassung: &str| {
+        if fassung.is_empty() {
+            fassung_aus_pfad(rolle, rel)
+        } else {
+            fassung.to_string()
+        }
+    };
+    let neu = |rel: &str, rolle: Rolle, groesse: u64, geaendert_ms: i64, fassung: String| {
+        let name = name_von(rel);
+        Datei {
+            rel: rel.to_string(),
+            rolle,
+            konflikt: ist_konflikt(&name),
+            name,
+            groesse,
+            geaendert_ms,
+            fassung,
+            erwartet: false,
+            ordner_fehlt: false,
+            zurueckgehalten: false,
+        }
+    };
     for (rel, meta) in &gefunden {
         let Some(rolle) = Rolle::aus_pfad(rel) else {
             continue;
         };
         let (groesse, geaendert_ms) = stat(meta);
         let e = stand.dateien.get(rel);
-        let name = name_von(rel);
+        let fassung = fassung_von(rolle, rel, e.map_or("", |e| e.edition.as_str()));
         aus.push(Datei {
-            rel: rel.clone(),
-            rolle,
-            konflikt: ist_konflikt(&name),
-            name,
-            groesse,
-            geaendert_ms,
-            fassung: e
-                .map(|e| e.edition.clone())
-                .filter(|f| !f.is_empty())
-                .unwrap_or_else(|| fassung_aus_pfad(rolle, rel)),
             erwartet: e.is_some_and(|e| e.erwartet),
+            ..neu(rel, rolle, groesse, geaendert_ms, fassung)
         });
     }
     for (rel, e) in &stand.dateien {
-        if !e.erwartet || gefunden.contains_key(rel) {
+        if e.deleted || e.entfernt || gefunden.contains_key(rel) {
             continue;
         }
         let Some(rolle) = Rolle::aus_pfad(rel) else {
             continue;
         };
-        let name = name_von(rel);
+        let fehlt = fund.fehlende_rollen.contains(&rolle);
+        if !e.erwartet && !fehlt {
+            continue;
+        }
+        let groesse = if e.erwartet {
+            e.blob
+                .as_ref()
+                .and_then(|b| b.get("size"))
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+        } else {
+            e.groesse
+        };
+        let fassung = fassung_von(rolle, rel, &e.edition);
         aus.push(Datei {
-            rel: rel.clone(),
-            rolle,
-            konflikt: ist_konflikt(&name),
-            name,
-            groesse: e
+            erwartet: e.erwartet,
+            ordner_fehlt: !e.erwartet,
+            ..neu(rel, rolle, groesse, e.updated as i64, fassung)
+        });
+    }
+    if let Some(bibliothek) = buch_dir.parent() {
+        for (id, wert) in geparkt(bibliothek) {
+            let Ok(r) = pruefen(&id, &wert) else {
+                continue;
+            };
+            if r.book != buch || r.deleted || aus.iter().any(|d| d.rel == r.rel) {
+                continue;
+            }
+            let Some(rolle) = Rolle::aus_pfad(&r.rel) else {
+                continue;
+            };
+            let groesse = r
                 .blob
                 .as_ref()
                 .and_then(|b| b.get("size"))
                 .and_then(Value::as_u64)
-                .unwrap_or(0),
-            geaendert_ms: e.updated as i64,
-            fassung: if e.edition.is_empty() {
-                fassung_aus_pfad(rolle, rel)
-            } else {
-                e.edition.clone()
-            },
-            erwartet: true,
-        });
+                .unwrap_or(0);
+            let fassung = fassung_von(rolle, &r.rel, &r.edition);
+            aus.push(Datei {
+                zurueckgehalten: true,
+                ..neu(&r.rel, rolle, groesse, r.updated as i64, fassung)
+            });
+        }
     }
     let rang = |r: Rolle| match r {
         Rolle::Notiz => 0,
@@ -1554,9 +1642,26 @@ pub fn pfad(buch_dir: &Path, rel: &str) -> Result<PathBuf, String> {
 
 /// Eine Datei aus dem Buch-Ordner in den Papierkorb der Bibliothek legen. Der nächste
 /// Abgleich macht daraus einen Grabstein.
+/// Fehlt der Ordner der Rolle (von außen entfernt), ist das Entfernen in der App die
+/// ausdrückliche Löschung: der Eintrag wird beim nächsten Sammeln zum Grabstein.
 pub fn entfernen(buch_dir: &Path, buch: &str, rel: &str) -> Result<(), String> {
-    pfad(buch_dir, rel)?;
-    in_papierkorb(buch_dir, buch, rel)
+    let rolle = sicherer_pfad(rel)?;
+    ohne_verknuepfung(buch_dir, rel)?;
+    if buch_dir.join(rel).is_file() {
+        return in_papierkorb(buch_dir, buch, rel);
+    }
+    let ordner_fehlt = matches!(
+        fs::symlink_metadata(buch_dir.join(rolle.ordner())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound
+    );
+    let mut stand = stand_laden(buch_dir)?;
+    match stand.dateien.get_mut(rel) {
+        Some(e) if ordner_fehlt && !e.deleted && !e.erwartet => {
+            e.entfernt = true;
+            stand_sichern(buch_dir, &mut stand)
+        }
+        _ => Err("Die Datei ist (noch) nicht da.".into()),
+    }
 }
 
 #[cfg(test)]
@@ -1977,7 +2082,7 @@ mod tests {
         // Ein erwarteter Inhalt erscheint schon vor dem Laden.
         let (id, wert) = fremder("transkript/page_9.md", 1.0, Some(blob(9)));
         anwenden(&dir, "book_1", &id, &wert, false, None, "Mein PC").unwrap();
-        let liste = auflisten(&dir).unwrap();
+        let liste = auflisten(&dir, "book_1").unwrap();
         let rels: Vec<&str> = liste.iter().map(|d| d.rel.as_str()).collect();
         assert_eq!(
             rels,
@@ -2068,7 +2173,7 @@ mod tests {
             .hinweise
             .iter()
             .any(|h| h.contains("Groß-/Kleinschreibung")));
-        assert_eq!(auflisten(&dir).unwrap().len(), 2);
+        assert_eq!(auflisten(&dir, "book_1").unwrap().len(), 2);
         // Umbenannt (nur Groß/Klein): der alte Eintrag bleibt, kein Grabstein.
         fs::remove_file(dir.join("notizen/a.md")).unwrap();
         let s = alles(&dir, 3000.0);
@@ -2130,6 +2235,99 @@ mod tests {
             Ok(true)
         );
         assert_eq!(fs::read(dir.join("notizen/a.md")).unwrap(), b"eins");
+    }
+
+    /// Review P3a/8: die Ausnahme vom Budget geht reihum. Eine große Datei, die sich
+    /// ständig ändert, hält die nächste nicht auf.
+    #[test]
+    fn budget_ausnahme_geht_reihum() {
+        let dir = buch("budget-reihe");
+        let bibliothek = dir.parent().unwrap().to_path_buf();
+        schreiben(&dir, "anhaenge/a.bin", &[1u8; 64]);
+        schreiben(&dir, "anhaenge/b.bin", &[2u8; 64]);
+        let lauf = |jetzt: f64| {
+            let mut b = Budget::laden(&bibliothek, 10);
+            let s = sammeln(&dir, "book_1", ICH, jetzt, &mut b).unwrap();
+            b.sichern(&bibliothek).unwrap();
+            s
+        };
+        let gesendet = |s: &Sammlung| -> Vec<String> {
+            s.lokal
+                .iter()
+                .map(|l| l.wert["path"].as_str().unwrap().to_string())
+                .collect()
+        };
+        assert_eq!(gesendet(&lauf(1.0)), vec!["anhaenge/a.bin"]);
+        // a ändert sich ständig (anderer Inhalt, andere Größe): trotzdem kommt b dran.
+        schreiben(&dir, "anhaenge/a.bin", &[3u8; 65]);
+        let s = lauf(2.0);
+        assert!(gesendet(&s).contains(&"anhaenge/b.bin".to_string()));
+        let id_a = datei_id("book_1", Rolle::Anhang, "anhaenge/a.bin");
+        assert!(s.vorhanden.contains(&id_a), "a wartet, kein Grabstein");
+        // Nichts mehr hinter dem Zeiger: die Reihe beginnt vorn, a kommt wieder dran.
+        lauf(3.0);
+        let s = lauf(4.0);
+        let a = nach_pfad(&s, "anhaenge/a.bin");
+        assert_eq!(a.quelle.as_ref().unwrap().groesse, 65);
+    }
+
+    /// Review P3a/3a: ein von außen entfernter Rollenordner löscht nichts; die Liste zeigt
+    /// „Ordner fehlt“. Entfernen in der App ist die ausdrückliche Löschung.
+    #[test]
+    fn fehlender_ordner_nur_in_der_app_loeschbar() {
+        let dir = buch("ordner-fehlt");
+        schreiben(&dir, "notizen/a.md", b"a");
+        schreiben(&dir, "notizen/b.md", b"b");
+        let s = alles(&dir, 1000.0);
+        let id_a = nach_pfad(&s, "notizen/a.md").id.clone();
+        let id_b = nach_pfad(&s, "notizen/b.md").id.clone();
+        fs::remove_dir_all(dir.join("notizen")).unwrap();
+        let s = alles(&dir, 2000.0);
+        assert!(s.lokal.iter().all(|l| l.id != id_a && l.id != id_b));
+        assert!(s.vorhanden.contains(&id_a) && s.vorhanden.contains(&id_b));
+        let liste = auflisten(&dir, "book_1").unwrap();
+        assert_eq!(liste.len(), 2);
+        assert!(liste.iter().all(|d| d.ordner_fehlt && !d.erwartet));
+        // In der App entfernt: Grabstein, die andere bleibt zurückgehalten.
+        entfernen(&dir, "book_1", "notizen/a.md").unwrap();
+        let s = alles(&dir, 3000.0);
+        assert_eq!(nach_pfad(&s, "notizen/a.md").wert["deleted"], true);
+        assert!(s.vorhanden.contains(&id_b));
+        assert_eq!(auflisten(&dir, "book_1").unwrap().len(), 1);
+        // Ordner wiederhergestellt: b ist wieder normal da.
+        schreiben(&dir, "notizen/b.md", b"b");
+        let s = alles(&dir, 4000.0);
+        assert_eq!(nach_pfad(&s, "notizen/b.md").wert["deleted"], false);
+        assert!(entfernen(&dir, "book_1", "notizen/a.md").is_err());
+    }
+
+    /// Review P3a/3b: zwei Datensätze A.md und a.md, auf der Platte eine Datei (auf jedem
+    /// System): kein Grabstein, kein Verlust, einer zurückgehalten und in der Liste.
+    #[test]
+    fn zwei_schreibweisen_eine_datei() {
+        let dir = buch("zwei-schreibweisen");
+        let bibliothek = dir.parent().unwrap().to_path_buf();
+        let (id_gross, gross) = fremder("notizen/A.md", 5000.0, Some(blob(1)));
+        anwenden(&dir, "book_1", &id_gross, &gross, false, None, "Mein PC").unwrap();
+        laden(&dir, b"gross");
+        let (id_klein, klein) = fremder("notizen/a.md", 6000.0, Some(blob(2)));
+        // So hält es `sync/book_files.rs`: zurückgehalten heißt geparkt.
+        assert!(matches!(
+            anwenden(&dir, "book_1", &id_klein, &klein, false, None, "Mein PC"),
+            Err(AnwendFehler::Halten(_))
+        ));
+        parken(&bibliothek, &id_klein, &klein).unwrap();
+        let s = alles(&dir, 7000.0);
+        assert_eq!(nach_pfad(&s, "notizen/A.md").wert["deleted"], false);
+        assert!(s.lokal.iter().all(|l| l.id != id_klein));
+        assert_eq!(fs::read(dir.join("notizen/A.md")).unwrap(), b"gross");
+        let liste = auflisten(&dir, "book_1").unwrap();
+        let rels: Vec<(&str, bool)> = liste
+            .iter()
+            .map(|d| (d.rel.as_str(), d.zurueckgehalten))
+            .collect();
+        assert_eq!(rels, vec![("notizen/A.md", false), ("notizen/a.md", true)]);
+        assert_eq!(geparkt(&bibliothek).len(), 1);
     }
 
     /// Review P3a/1: ein Datensatz neuerer Version überdeckt den eigenen; kein Ping-Pong.

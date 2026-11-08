@@ -1296,6 +1296,8 @@
       "noFiles": "No notes or attachments yet.",
       "loadError": "Notes and attachments could not be loaded.",
       "reload": "Reload",
+      "folderMissing": "Folder missing – restore it or delete in the app",
+      "held": "Name clashes with another file – held back",
       "newNote": "New note",
       "noteTitle": "Note title",
       "noteCreate": "Create",

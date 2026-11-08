@@ -1270,6 +1270,8 @@ const FOLDER_FILES = [
     edition: "",
     pending: false,
     conflict: false,
+    folder_missing: false,
+    held: false,
   },
   {
     rel: "anhaenge/Cashflow (Konflikt Gerät bbbbbb).xlsx",
@@ -1280,6 +1282,8 @@ const FOLDER_FILES = [
     edition: "",
     pending: false,
     conflict: true,
+    folder_missing: false,
+    held: false,
   },
   {
     rel: "transkript/page_1.md",
@@ -1290,6 +1294,8 @@ const FOLDER_FILES = [
     edition: "page_1",
     pending: true,
     conflict: false,
+    folder_missing: false,
+    held: false,
   },
 ];
 
@@ -1367,6 +1373,66 @@ test("Notizen und Anhänge: Doppelklick öffnet einmal, Ladefehler eigener Zusta
       (o) => (o as unknown[])[0] === "library_book_file_open",
     ),
   ).toHaveLength(1);
+});
+
+test("Notizen und Anhänge: Ordner fehlt (nur entfernen) und Zurückgehaltenes (nur Hinweis)", async ({
+  page,
+}) => {
+  const base = {
+    modified_ms: 0,
+    edition: "",
+    pending: false,
+    conflict: false,
+    bytes: 10,
+  };
+  await page.addInitScript(
+    (files) => {
+      Object.assign(window, { __lvFolderFiles: files, __lvAsk: true });
+    },
+    [
+      {
+        ...base,
+        rel: "notizen/A.md",
+        role: "notiz",
+        name: "A.md",
+        folder_missing: false,
+        held: false,
+      },
+      {
+        ...base,
+        rel: "notizen/a.md",
+        role: "notiz",
+        name: "a.md",
+        folder_missing: false,
+        held: true,
+      },
+      {
+        ...base,
+        rel: "anhaenge/Tabelle.xlsx",
+        role: "anhang",
+        name: "Tabelle.xlsx",
+        folder_missing: true,
+        held: false,
+      },
+    ],
+  );
+  await openReadAloud(page);
+  await openBook(page);
+  const rowsIn = notes(page).getByTestId("book-file");
+  await expect(rowsIn).toHaveCount(3);
+  await expect(rowsIn.nth(1)).toContainText("zurückgehalten");
+  await expect(rowsIn.nth(1).getByRole("button")).toHaveCount(0);
+  await expect(rowsIn.nth(2)).toContainText(
+    "Ordner fehlt – wiederherstellen oder in der App löschen",
+  );
+  // Ordner fehlt: nicht öffnen, aber in der App löschen (nach Rückfrage).
+  await expect(rowsIn.nth(2).getByRole("button")).toHaveCount(1);
+  await rowsIn.nth(2).getByTestId("book-file-remove").click();
+  await expect
+    .poll(() => folderOps(page))
+    .toEqual([
+      ["library_book_file_remove", { id: "b1", rel: "anhaenge/Tabelle.xlsx" }],
+    ]);
 });
 
 test("Notizen und Anhänge: neue Notiz, Anhang, Entfernen nach Rückfrage", async ({

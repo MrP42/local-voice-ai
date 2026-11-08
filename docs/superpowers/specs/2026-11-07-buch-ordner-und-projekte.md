@@ -252,16 +252,21 @@ Zurückschreiben unbekannte Felder verlieren könnte. Sie kommen in die neue Sam
 - Schutz vor stillen Löschungen: Ein Rollenordner oder Teilbaum, der fehlt (verschoben, Platzhalter,
   Laufwerk weg), nicht lesbar ist oder über eine Verknüpfung führt, gilt als verdeckt; ebenso ein Name,
   der nicht abgeglichen wird (z. B. andere Unicode-Form). Was dort im Stand steht, bleibt „vorhanden“
-  und wird nie zum Grabstein. Gelöscht wird nur Datei für Datei. Ein unlesbarer `sync-dateien.json`
+  und wird nie zum Grabstein. Fehlt ein Rollenordner, zeigt die Liste seine Dateien mit „Ordner fehlt –
+  wiederherstellen oder in der App löschen“; Entfernen in der App ist die ausdrückliche Löschung
+  (Grabstein). Ein vorhandener, leerer Ordner löscht wie gewohnt Datei für Datei. Ein unlesbarer `sync-dateien.json`
   wird als `sync-dateien.json.defekt-<ms>` beiseitegelegt und neu begonnen.
 - Namenskollisionen: Pfade, die sich nur in Groß-/Kleinschreibung oder Unicode-Form unterscheiden
   (auch in einem Ordner), werden nie abgeglichen: lokal bleiben beide stehen (Hinweis, kein Grabstein,
   keine neue ID); ein empfangener Datensatz, der hier mit einer anderen Datei zusammenfiele, wird
-  aufbewahrt (Parkplatz) und bei jedem Sammeln erneut versucht.
+  aufbewahrt (Parkplatz), in der Liste als „zurückgehalten“ gezeigt und bei jedem Sammeln erneut
+  versucht.
 - Ablegen ersetzt nie: Downloads, Anhänge, Konfliktkopien und Papierkorb verschieben ohne Ersetzen
   (Windows `MoveFileExW` ohne `REPLACE_EXISTING`, sonst harte Verknüpfung bzw. `RENAME_NOREPLACE`/
   `RENAME_EXCL`). Anhänge werden erst vollständig in eine eigene Zwischendatei kopiert.
-- Prüfsummen-Budget: die erste Datei eines Laufs wird immer gelesen, auch über dem Budget.
+- Prüfsummen-Budget: je Lauf bekommt eine Datei über dem Rest eine Ausnahme, reihum über Bücher und
+  Dateien (Zeiger `library/.sync-dateien-reihe.json`); eine ständig geänderte oder scheiternde Datei
+  hält die nächste nicht auf.
 - Gleicher Inhalt (gleiche Blob-Kennung) auf beiden Seiten ist kein Konflikt und kein Download; ein
   geladener Inhalt, der am Ziel schon liegt, ersetzt nichts.
 - Ein Datensatz neuerer Version überdeckt den eigenen: das Gerät sendet für diese ID nichts mehr.

@@ -109,8 +109,11 @@ pub fn collect(
     out.present
         .extend(kern::geparkt(&root).into_iter().map(|(id, _)| id));
     let now = now_ms();
-    let mut hash_budget = kern::Budget::neu(*budget);
-    for (buch, dir) in books::book_dirs(&root)? {
+    // Die Ausnahme vom Budget geht reihum (Zeiger in der Bibliothek), in fester Reihenfolge.
+    let mut hash_budget = kern::Budget::laden(&root, *budget);
+    let mut dirs = books::book_dirs(&root)?;
+    dirs.sort();
+    for (buch, dir) in dirs {
         let found = match kern::sammeln(&dir, &buch, device_id, now, &mut hash_budget) {
             Ok(f) => f,
             Err(e) => {
@@ -140,6 +143,9 @@ pub fn collect(
         }
     }
     *budget = hash_budget.rest();
+    if hash_budget.sichern(&root).is_err() {
+        log::warn!("Sync: Reihenfolge der Prüfsummen nicht gesichert");
+    }
     Ok(out)
 }
 

@@ -8966,7 +8966,17 @@ pending: boolean;
 /**
  * Konfliktkopie aus dem Abgleich.
  */
-conflict: boolean }
+conflict: boolean; 
+/**
+ * Bekannt, aber ihr Ordner fehlt (von außen entfernt): wiederherstellen oder in der
+ * App löschen.
+ */
+folder_missing: boolean; 
+/**
+ * Von einem anderen Gerät gemeldet, zurückgehalten: der Name fiele mit einer anderen
+ * Datei zusammen (Groß-/Kleinschreibung, Unicode-Form).
+ */
+held: boolean }
 export type BookPreview = { title: string; pages: number; voices: PackageVoice[]; rights_confirmed: boolean }
 /**
  * Die Antwort in zwei Formen (D5; Form wie `BookTalkAnswer` im Vertrag).

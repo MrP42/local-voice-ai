@@ -442,7 +442,9 @@ export const BookNotesGroup: React.FC<{ bookId: string }> = ({ bookId }) => {
           ? t("tts.folders.roleNote")
           : t("tts.folders.roleAttachment");
     const parts = [kind];
-    if (f.pending) parts.push(t("tts.folders.pending"));
+    if (f.held) parts.push(t("tts.folders.held"));
+    else if (f.folder_missing) parts.push(t("tts.folders.folderMissing"));
+    else if (f.pending) parts.push(t("tts.folders.pending"));
     else if (f.bytes > 0)
       parts.push(formatBytes(f.bytes, i18n.language || "de"));
     return parts.join(" · ");
@@ -484,9 +486,15 @@ export const BookNotesGroup: React.FC<{ bookId: string }> = ({ bookId }) => {
         )
       )}
       {files.map((f) => {
+        // Nur vorhandene Dateien lassen sich öffnen; entfernen geht auch, wenn ihr Ordner
+        // fehlt (ausdrückliche Löschung), nicht aber bei Zurückgehaltenem oder Erwartetem.
+        const openable = !f.pending && !f.held && !f.folder_missing;
+        const removable = !f.pending && !f.held;
         const Icon = f.pending
           ? CloudDownload
-          : (ROLE_ICON[f.role] ?? FileText);
+          : f.held || f.folder_missing
+            ? AlertTriangle
+            : (ROLE_ICON[f.role] ?? FileText);
         const body = (
           <>
             <Icon
@@ -521,7 +529,7 @@ export const BookNotesGroup: React.FC<{ bookId: string }> = ({ bookId }) => {
             data-testid="book-file"
             data-rel={f.rel}
           >
-            {f.pending ? (
+            {!openable ? (
               <div className={`${ITEM} min-w-0 flex-1 text-text/70`}>
                 {body}
               </div>
@@ -535,7 +543,7 @@ export const BookNotesGroup: React.FC<{ bookId: string }> = ({ bookId }) => {
                 {body}
               </button>
             )}
-            {!f.pending && (
+            {removable && (
               <button
                 type="button"
                 className="flex min-h-[44px] min-w-[44px] shrink-0 cursor-pointer items-center justify-center rounded-md text-text/60 hover:bg-mid-gray/15 hover:text-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-logo-primary"

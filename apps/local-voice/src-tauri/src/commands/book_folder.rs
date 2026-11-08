@@ -28,6 +28,12 @@ pub struct BookFolderFile {
     pub pending: bool,
     /// Konfliktkopie aus dem Abgleich.
     pub conflict: bool,
+    /// Bekannt, aber ihr Ordner fehlt (von außen entfernt): wiederherstellen oder in der
+    /// App löschen.
+    pub folder_missing: bool,
+    /// Von einem anderen Gerät gemeldet, zurückgehalten: der Name fiele mit einer anderen
+    /// Datei zusammen (Groß-/Kleinschreibung, Unicode-Form).
+    pub held: bool,
 }
 
 fn buch_dir(app: &AppHandle, id: &str) -> Result<PathBuf, String> {
@@ -44,7 +50,7 @@ pub fn library_book_folder_files(
 ) -> Result<Vec<BookFolderFile>, String> {
     let dir = buch_dir(&app, &id)?;
     let _guard = library::sync_lock();
-    Ok(kern::auflisten(&dir)?
+    Ok(kern::auflisten(&dir, &id)?
         .into_iter()
         .map(|d| BookFolderFile {
             rel: d.rel,
@@ -55,6 +61,8 @@ pub fn library_book_folder_files(
             edition: d.fassung,
             pending: d.erwartet,
             conflict: d.konflikt,
+            folder_missing: d.ordner_fehlt,
+            held: d.zurueckgehalten,
         })
         .collect())
 }

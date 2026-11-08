@@ -1296,6 +1296,8 @@
       "noFiles": "Noch keine Notizen oder Anhänge.",
       "loadError": "Notizen und Anhänge konnten nicht geladen werden.",
       "reload": "Erneut laden",
+      "folderMissing": "Ordner fehlt – wiederherstellen oder in der App löschen",
+      "held": "Name kollidiert mit einer anderen Datei – zurückgehalten",
       "newNote": "Neue Notiz",
       "noteTitle": "Titel der Notiz",
       "noteCreate": "Anlegen",
