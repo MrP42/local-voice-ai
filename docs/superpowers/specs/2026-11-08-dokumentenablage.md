@@ -1,6 +1,6 @@
 # Dokumentenablage mit Sync und lokalem Abrufindex (Epic #395)
 
-Stand 08.11.2026, Fassung 2 (Codex-Runde 1: M1–M8 eingearbeitet). Entscheidungen: wai-sdk ADR-0029 (Abschnitte
+Stand 08.11.2026, Fassung 3 (Codex-Runden 1 und 2 eingearbeitet). Entscheidungen: wai-sdk ADR-0029 (Abschnitte
 E1–E11 werden hier nur umgesetzt, nicht wiederholt). Baut auf Bibliothek-Sync (`2026-11-02-bibliothek-sync.md`),
 Projekten (`2026-11-07-buch-ordner-und-projekte.md`, P4-Plan), globalem Sprachassistenten (lva#325) und dem
 Assistenten (`2026-11-08-assistent-chat-und-sprache.md`, ADR-0028) auf.
@@ -47,15 +47,20 @@ Jede Ablage wie P4a `dateien.rs`: `.teil-<id>` (create_new) → Größe + SHA-25
      "texte": [{"textrev": "<hex>", "blob": "<64 hex>", "size": 40211, "extraktor": "pdf-extract",
                 "extraktor_version": "0.12.0", "marken_version": 1, "stand": "ok|kein_text|fehler"}]}
   ],
+  "abgeloest": ["fas_…"],
   "wahl": {"fas": "fas_…", "zaehler": 4, "geraet": "g_…"},
   "entfernt": ["fas_…"],
+  "blob_refs": ["<64 hex>"],
   "papierkorb": {"wert": null, "zaehler": 0, "geraet": "g_…"}
 }
 ```
 
 Zusammenführen (ADR-0029 E4): Register nach höherem `(zaehler, geraet)`; `fassungen` vereinigt nach `fas`, ohne die
-IDs in `entfernt`; `entfernt` und `texte` vereinigt; Köpfe = Fassungen ohne Nachfolger; mehr als ein Kopf = Konflikt;
-`wahl` gilt nur, wenn sie auf einen Kopf zeigt. `zaehler` = größter am Gerät bekannter Wert + 1 (Lamport).
+IDs in `entfernt`; `entfernt`, `abgeloest` und `texte` vereinigt (nie verkleinert); Köpfe = Fassungen ohne Nachfolger
+und nicht in `abgeloest`; mehr als ein Kopf = Konflikt; kein Kopf (gleichzeitige Gegenwahl) = Konflikt mit allen
+zuletzt gewählten Fassungen. Eine Wahl trägt die nicht gewählten Köpfe in `abgeloest` ein; `wahl` dient nur der
+Anzeige. `zaehler` = größter am Gerät bekannter Wert + 1 (Lamport). `blob_refs` ist sichtbares Steuerfeld (AAD-gebunden)
+für die Referenzprüfung am Hub (§6).
 
 ### 2.2 Datensatz `ablage_ordner` (synchronisiert)
 
@@ -81,7 +86,8 @@ Siehe Vorschau `ablage-d1` (32 Bilder, Maßbelege). Kern:
   Konflikt, „Text wird am PC erstellt“).
 - Details: Vorschau, „Für die KI“ (Zustand an/aus/gesperrt, geerbt von), Klasse, Textfassung, Fassungen, Projekte.
 - Drag & Drop, Ordner hochladen mit Struktur, Namenskollision → „neue Fassung“ oder „beide behalten“.
-- Konflikt: beide Fassungen sichtbar, Wahl; KI nutzt bis dahin die gemeinsame Vorgängerfassung.
+- Konflikt: beide Fassungen sichtbar, Wahl; KI nutzt bis dahin die jüngste gemeinsame Vorgängerfassung, ohne
+  gemeinsame Fassung die Datei gar nicht.
 - Leer: ein Satz, keine Vorschlagsblasen. Kontingent im Fuß. 390/768/1440/2560 px, hell/dunkel, Ziele ≥ 44 px.
 - Bestätigungsdialoge: sync → nur dieses Gerät („Kopien auf anderen Geräten und in der Cloud werden entfernt“),
   nur dieses Gerät → sync, Cloud-Ausnahme für `confidential`, endgültig löschen.
@@ -122,7 +128,11 @@ XLSX/ODS `blatt=<name>&zeilen=<a>-<b>` (Zeilen als `Spalte: Wert`-Text); EML `te
 ### 5.1 Freigaben und Berechtigungsstand
 
 - `freigabe.json` gerätelokal (Temp + Umbenennen, Sperre, Epoche/Generation wie P4a `kontext.json`): je Ordner
-  `an|aus|gesperrt`, fehlend = aus, defekt = alles aus. Cloud-Ausnahmen je (Ordner, Anbieter) nur für `confidential`.
+  `an|aus|gesperrt`, fehlend = aus. Cloud-Ausnahmen je (Ordner, Anbieter) nur für `confidential`.
+- Vor jedem Schreiben wird die letzte gültige Fassung als `freigabe.json.vorher` abgelegt. **Defekt/unlesbar/neuer** =
+  „Freigabe unklar“: die ganze Ablage ist auf **beiden** Wegen gesperrt (auch Projektmitgliedschaften, die an sind).
+  Wiederherstellung automatisch aus gültiger `.vorher` (mit allen `gesperrt`), sonst nur über „Freigaben neu
+  festlegen“ (alle Ordner `aus`, Bestätigung). Defekte Datei wird beiseitegelegt.
 - Globaler Weg (Assistent, lva#325 fragt den D2-Index ab): nur Unterbäume mit `an`.
 - Projektweg: Mitgliedschaftsschalter (P4a); `gesperrt` schließt auf beiden Wegen aus.
 - Berechtigungsstand nach ADR-0029 E6; vor jeder Modellübergabe neu berechnet.
@@ -159,11 +169,17 @@ Abdeckung, Budgetstopp sichtbar) · „Lege die Zusammenfassung als Notiz ab“ 
 
 ## 6 Sync (D4a, D4b, D5)
 
-- Hub: Sammlungen `ablage_ordner`, `ablage_datei`; Blobs wie Bibliothek; neu `nutzung_seq`, `touch`, bedingtes
-  Löschen `if_nutzung_seq`, Abweisung von Schreibvorgängen auf begrabene IDs (wai-portal-PR).
-- Reihenfolge je Fassung: Original-Blob (oder `touch`), Text-Blob(s) (D4b), dann Objekt.
+- Hub: Sammlungen `ablage_ordner`, `ablage_datei`; Blobs wie Bibliothek; neu (wai-portal-PR):
+  `POST /api/v1/voice/blobs/{id}/reserve` (24 h je Gerät), Push von `ablage_datei` prüft und setzt `blob_refs` in einer
+  Transaktion (fehlender Blob → 422), Löschen nur ohne Referenz und ohne gültige Reservierung (sonst 409), Grabsteine
+  geben Referenzen frei, Schreibvorgänge auf begrabene IDs → abgewiesen.
+- Reihenfolge je Fassung: reservieren → Original-Blob hochladen (oder vorhandenen nutzen) → Text-Blob(s) (D4b) →
+  Objekt-Push (gibt Reservierungen frei). 422 beim Push → neu hochladen und erneut pushen.
 - `nur_geraet`-Unterbäume nie übertragen. Wechsel sync → lokal: lokale Kopie prüfen → Grabstein `lokalisiert` →
-  andere Geräte entfernen Kopien, Texte, Index → bedingte Blob-Löschung.
+  andere Geräte entfernen Kopien, Texte, Index → Blob-Löschung (nur ohne Referenz).
+- Rückweg lokal → sync: neue IDs für den ganzen Unterbaum, Journal `ablage/uebergang-<ULID>.json` (`begonnen` mit
+  Zuordnung alt → neu → `hochgeladen` → Verweise, Freigaben, `kontext.json`, Index umgeschrieben → `fertig`),
+  Wiederanlauf am letzten Schritt; alte IDs bleiben lokal als Weiterleitung für Deep-Links.
 - Endgültig löschen: Grabstein; jedes Gerät entfernt Original, Texte, Index, Caches, Miniaturen; Blob-Löschung nur,
   wenn im vollständig gezogenen Bestand keine lebende Fassung den Blob nutzt, und nur bedingt.
 - Aufbewahrung: Fassung bleibt, wenn Kopf, gewählt, unter den 10 jüngsten oder jünger als 90 Tage; sonst `entfernt`.
@@ -191,10 +207,15 @@ geprüfte Momentkopie. Lokale OCR (Windows.Media.Ocr / Apple Vision) für Bild-P
   Extraktorwechsel → neue `textrev`; Suchtreffer mit korrektem Anker; Neuaufbau idempotent.
 - D4a: Zwei-Geräte-Konflikt → zwei Köpfe, `aktuell` nicht per Zeit; Wahl-Rennen (Lamport) deterministisch; Ordner-
   Verschieberennen ohne Zyklus; Grabstein → Offline-Gerät belebt nichts; Löschen ∥ Upload desselben Blobs → keine
-  lebende Fassung ohne Blob; `nur_geraet` erscheint nie im Hub (Mitschnitt), Wechsel entfernt Cloud-Kopien.
+  lebende Fassung ohne Blob (reservieren → löschen 409 → pushen; Reservierung abgelaufen → Push 422 → neu hochladen);
+  `nur_geraet` erscheint nie im Hub (Mitschnitt), Wechsel entfernt Cloud-Kopien; Wahl B, dann B → C: ein Kopf;
+  Offline A → D: neuer Konflikt; gleichzeitige Gegenwahl: offen; Rückweg lokal → sync mit Abbruch nach jedem
+  Journalschritt; Projektverweis zeigt danach auf die neue ID.
 - D4b: Textfassung kommt mit passender `textrev`; fehlende Textfassung → Wartezustand.
 - D3: Kontrolltext in `aus`/`gesperrt` → 0 Treffer (gesperrt auch bei Projektmitgliedschaft an); Widerruf mitten im
   Gespräch → 0 widerrufene Auszüge im nächsten Gesamtprompt (Verlauf, Zusammenfassung); Papierkorb → 0 Treffer;
+  defekte `freigabe.json` → 0 Auszüge auf beiden Wegen, Wiederherstellung aus `.vorher` erhält `gesperrt`;
+  Konflikt ohne gemeinsame Fassung → Datei nicht genutzt, in der Abdeckung gemeldet;
   `personal` an Cloud → 0 Übermittlungen; `confidential` ohne Ausnahme → abgewiesen; Injektion → 0 Aufrufe;
   Entwurf aus `personal`-Quelle in `internal`-Ordner → Klasse `personal`.
 - D5: Swift-Testvektor gegen Rust (Blob-Kennung, AAD, `textrev`); Index-Treffer gleich Desktop für Musterfragen.
