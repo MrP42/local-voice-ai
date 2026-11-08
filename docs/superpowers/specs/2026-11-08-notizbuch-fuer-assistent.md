@@ -121,7 +121,12 @@ mit Code); Local Voice zeigt es an der Auftragskarte.
 
 Prüfung im Notizbuch-Host (maßgeblich): Der **tatsächliche** Ziel-Abschnitt (bei `bloecke_anhaengen` der aktuelle
 Abschnitt der Seite zum Übernahmezeitpunkt, nicht eine Angabe des Absenders) existiert, ist aktiv und für
-**Schreiben** freigegeben (§4.2); die Schreibfreigabe liest der Host aus seiner eigenen Ablage, die Local Voice nur über
+**Schreiben** freigegeben (§4.2). **Sonderregel `abschnitt_anlegen`:** Hier gibt es den Zielabschnitt vorher nicht.
+Geprüft werden stattdessen: das Ziel-Notizbuch existiert und ist aktiv, die Anfrage trägt die Bestätigungskennung der
+Karte (§4.2), der Name ist „Assistent“ bzw. „Assistent (n)“, und es gibt in diesem Notizbuch noch keinen Abschnitt mit
+gleicher Anfrage-ID. Der Host legt den Abschnitt **und** seine Schreibfreigabe in **einer** Transaktion an (atomar:
+beides oder nichts); erst danach schreibt er `uebernommen`. Ein später eintreffendes `seite_anlegen` in diesen Abschnitt
+durchläuft wieder die allgemeine Prüfung. Die Schreibfreigabe liest der Host aus seiner eigenen Ablage, die Local Voice nur über
 eine bestätigte Eingangsaktion ändern kann; Text nur Klartext (kein HTML, kein Markdown-Link mit `javascript:`, Steuer- und Bidi-Zeichen entfernt);
 höchstens 200 Blöcke, 64 000 Zeichen; Seitenlinks nur auf existierende Seiten. Vor `bloecke_anhaengen` legt der Host
 eine Version der Seite an (bestehende Versionierung), damit jede Änderung rückgängig zu machen ist.
@@ -168,8 +173,9 @@ gilt hier nie (Auflösung des Widerspruchs zu E4). Endgültig löschen und Papie
 Damit Notizbuch-Notizen auf der Zeitachse einer Aufnahme liegen, bekommt jeder Block im Notizbuch zwei Attribute
 (neu in `domain/sicherung.ts` eingetragen):
 
-- `bid`: stabile Block-ID (ULID), vergeben beim Anlegen, bleibt beim Bearbeiten, Verschieben und Kopieren in die
-  Zwischenablage nicht erhalten (Einfügen erzeugt eine neue). Alle Belege und Zuordnungen verweisen auf
+- `bid`: stabile Block-ID (ULID), vergeben beim Anlegen. Sie bleibt beim Bearbeiten und beim Verschieben (auch auf
+  eine andere Seite) erhalten. Kopieren und Einfügen sowie Duplizieren erzeugen eine neue ID; trägt eine Seite nach
+  einer Editor-Transaktion zwei Blöcke mit gleicher `bid`, behält der erste sie und der zweite bekommt eine neue. Alle Belege und Zuordnungen verweisen auf
   `(seite_id, bid)`, nie auf eine Position (M6).
 - `zeit`: ISO-Zeit der **ersten** Eingabe in den Block, `zeit_geaendert`: der letzten inhaltlichen Änderung.
 
@@ -314,10 +320,10 @@ E1–E3 ja. E4, E5, E6 ja mit Bedingungen. Eingearbeitet:
 |---|---|
 | M1 Freigabe: keine Projektgrenze überschreiten, keine verräterischen Rückfragen/Zählungen | §3.2, §5.2 |
 | M2 Widerruf über Gliederungszustand, Prüfung bei Ausgabe, keine Dauerberechtigung durch Links | §3.2 |
-| M3 `abschnitt_anlegen` mit ausdrücklicher Freigabe, tatsächlicher Zielabschnitt, Erfolg erst nach Sicherung | §4.1, §4.2 |
+| M3 `abschnitt_anlegen` mit ausdrücklicher Freigabe, atomar mit Schreibfreigabe (Sonderregel), tatsächlicher Zielabschnitt, Erfolg erst nach Sicherung | §4.1, §4.2 |
 | M4 Frist ab vollständiger Ansage, keine Auto-Übergabe ohne Sprachkanal, kein Pauschalverzicht, §4.3 nur Karte | §4.2, §4.3 |
 | M5 Projekt/Herkunft kein Beweis, getrennter Prüfsatz mit Sonderpfaden, sonst nur Vorschläge | §5.2, §5.6 |
-| M6 stabile Block-ID, Unsicherheitsintervalle, eine Regel für die Zeitachse | §5.1 |
+| M6 stabile Block-ID (bleibt bei Bearbeiten/Verschieben, neu bei Kopieren), Unsicherheitsintervalle, eine Regel für die Zeitachse | §5.1 |
 | M7 vollständiges Nachladen oder „unvollständig“; Duplikate nur bei gleichen Zahlen/Verneinungen/Stand | §5.4 |
 | M8 definierte Widerspruchsfälle, Originale über Belege erreichbar | §5.4 |
 | M9 N4a lesend getrennt von N4b Rückweg | §5.5, §8 |
