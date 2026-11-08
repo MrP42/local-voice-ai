@@ -2029,6 +2029,8 @@ fn specta_builder() -> Builder<tauri::Wry> {
             projekte::befehle::projekt_dateien_hinzufuegen,
             projekte::befehle::projekt_datei_entfernen,
             projekte::befehle::projekt_dateien_gefunden,
+            projekte::befehle::projekt_dateien_lage,
+            projekte::befehle::projekt_dateien_neu_aufbauen,
             projekte::befehle::projekt_datei_gefunden_aufnehmen,
             projekte::befehle::projekt_kontext_uebersicht,
             projekte::befehle::projekt_kontext_schalten,

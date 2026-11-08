@@ -577,13 +577,20 @@ pub fn als_text(k: &Kontext) -> String {
     for (i, t) in k.texte.iter().enumerate() {
         let titel: String = maskieren(&t.titel)
             .chars()
-            .map(|c| if c.is_control() { ' ' } else { c })
+            .map(|c| if titel_trenner(c) { ' ' } else { c })
             .collect();
         s.push_str(&format!("<<<inhalt {} | {}>>>\n", i + 1, titel));
         s.push_str(&maskieren(&t.text));
         s.push_str(&format!("\n<<<ende inhalt {}>>>\n\n", i + 1));
     }
     s
+}
+
+/// Zeichen, die im Titel eine neue Zeile beginnen oder Steuerzeichen sind (C0/C1, NEL, U+2028,
+/// U+2029): im Titel durch Leerzeichen ersetzt. Im Inhalt bleiben Zeilenumbrüche und Steuerzeichen
+/// stehen; dort verhindert die Maskierung der spitzen Klammern eine nachgebildete Grenze.
+fn titel_trenner(c: char) -> bool {
+    c.is_control() || matches!(c, '\u{2028}' | '\u{2029}')
 }
 
 /// Spitze Klammern in Titel und Inhalt werden ersetzt: keine eigene Grenze ist nachbildbar.
@@ -867,6 +874,13 @@ mod tests {
         assert_eq!(t.matches("<<<").count(), 2);
         assert_eq!(t.matches(">>>").count(), 2);
         assert_eq!(t.lines().filter(|l| l.starts_with("<<<")).count(), 2);
+        let mut b = m("b", Sorte::Sonst);
+        b.titel = "Titel\u{2028}Zeile\u{2029}Absatz\u{85}NEL\u{1b}[2J".into();
+        let s = Schalter::mit(P, &[(&b, true, None)]);
+        let t = als_text(&bauen(P, &[b], &s, &mut text("x")));
+        let kopf = t.lines().find(|l| l.starts_with("<<<inhalt")).unwrap();
+        assert!(kopf.contains("Titel Zeile Absatz NEL [2J"), "{kopf}");
+        assert!(!t.contains(['\u{2028}', '\u{2029}', '\u{85}', '\u{1b}']));
     }
 
     #[test]

@@ -106,7 +106,7 @@ async fn text_zuordnen_ist_kontext_und_ausschalten_nimmt_ihn_heraus() {
     seite(&e, "s2", GEHEIM);
     e.projekte.seite_zuordnen(&p, "s1").await.unwrap();
     e.projekte.seite_zuordnen(&p, "s2").await.unwrap();
-    let k = e.projekte.kontext(&p).await.unwrap();
+    let k = e.projekte.kontext_fuer_test(&p).await.unwrap();
     assert_eq!(k.uebersicht.count, 2, "bewusst zugeordnet: an");
     let s2 = e
         .projekte
@@ -122,12 +122,12 @@ async fn text_zuordnen_ist_kontext_und_ausschalten_nimmt_ihn_heraus() {
         .await
         .unwrap();
     assert_ne!(u.stand, k.uebersicht.stand);
-    let k2 = e.projekte.kontext(&p).await.unwrap();
+    let k2 = e.projekte.kontext_fuer_test(&p).await.unwrap();
     assert!(!kontext::als_text(&k2).contains(GEHEIM));
     assert_eq!(k2.uebersicht.count, 1);
     // Erneutes Zuordnen schaltet ein bewusstes „aus“ nicht wieder ein.
     e.projekte.seite_zuordnen(&p, "s2").await.unwrap();
-    assert!(!kontext::als_text(&e.projekte.kontext(&p).await.unwrap()).contains(GEHEIM));
+    assert!(!kontext::als_text(&e.projekte.kontext_fuer_test(&p).await.unwrap()).contains(GEHEIM));
     // Falsche Form wird abgewiesen.
     assert!(e
         .projekte
@@ -168,7 +168,7 @@ async fn datei_hinzufuegen_kontext_und_entfernen_in_den_papierkorb() {
     assert_eq!(ids.len(), 2);
     let liste = e.projekte.eintraege(&p).await.unwrap();
     assert_eq!(liste.len(), 2);
-    let k = e.projekte.kontext(&p).await.unwrap();
+    let k = e.projekte.kontext_fuer_test(&p).await.unwrap();
     assert_eq!(k.uebersicht.count, 1);
     assert!(kontext::als_text(&k).contains(GEHEIM));
     let pdf = k
@@ -182,7 +182,7 @@ async fn datei_hinzufuegen_kontext_und_entfernen_in_den_papierkorb() {
     assert_eq!(liste.len(), 1);
     let korb = e.ablage.join(&p).join(dateien::PAPIERKORB);
     assert_eq!(std::fs::read_dir(korb).unwrap().count(), 1);
-    assert!(!kontext::als_text(&e.projekte.kontext(&p).await.unwrap()).contains(GEHEIM));
+    assert!(!kontext::als_text(&e.projekte.kontext_fuer_test(&p).await.unwrap()).contains(GEHEIM));
 }
 
 #[tokio::test]
@@ -253,7 +253,7 @@ async fn fremde_projektdatei_liefert_keinen_text() {
         .await
         .unwrap();
     assert_eq!(ids.len(), 1);
-    let k = e.projekte.kontext(&p).await.unwrap();
+    let k = e.projekte.kontext_fuer_test(&p).await.unwrap();
     assert!(k.texte.is_empty());
 }
 
@@ -271,4 +271,37 @@ async fn projekt_ki_pfade_liefern_ohne_p4c_freigabe_nichts() {
     let f = e.projekte.kontext_fuer_ki(&p).await;
     assert!(f.is_err());
     assert!(!format!("{:?}", f.err()).contains(GEHEIM));
+}
+
+/// Allowlist: den Kontext mit Inhalten baut nur `kontext_bauen` (privat in `dienst.rs`), und das
+/// rufen nur die erlaubten Zugänge auf.
+#[test]
+fn kontext_mit_inhalten_nur_ueber_erlaubte_zugaenge() {
+    const ERLAUBT: [&str; 4] = [
+        "kontext_bauen",
+        "kontext_uebersicht",
+        "kontext_fuer_ki",
+        "kontext_fuer_test",
+    ];
+    let quelle = include_str!("dienst.rs");
+    let mut treffer = 0;
+    for (pos, _) in quelle.match_indices("kontext_bauen(") {
+        let davor = &quelle[..pos];
+        let start = davor.rfind("fn ").expect("umschließende Funktion") + 3;
+        let name: String = quelle[start..]
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .collect();
+        assert!(ERLAUBT.contains(&name.as_str()), "kontext_bauen aus {name}");
+        treffer += 1;
+    }
+    assert_eq!(treffer, 4, "Definition und drei erlaubte Aufrufe");
+    assert!(
+        quelle.contains("    async fn kontext_bauen("),
+        "kontext_bauen bleibt privat"
+    );
+    // Der volle Kontext ist sonst nirgends öffentlich.
+    assert!(!quelle.contains("pub async fn kontext("));
+    assert!(!quelle.contains("pub(super) async fn kontext("));
+    assert!(!quelle.contains("pub(crate) async fn kontext("));
 }

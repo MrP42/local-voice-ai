@@ -12,10 +12,16 @@
 //! Datei im Ordner ohne Journaleintrag (Absturz zwischen 3 und 4) wird als `gefunden` vermerkt und
 //! angeboten, nie still aufgenommen; liegengebliebene Zwischendateien gehen in den Papierkorb.
 //!
-//! Entfernen ([`entfernen_beginnen`]): erst `entfernen` vermerken, dann die Datei ohne Ersetzen
-//! nach `projekte/<projekt>/papierkorb/` legen, dann `papierkorb`. Danach nimmt der Dienst die
+//! Entfernen ([`entfernen_beginnen`]): erst `entfernen` mit Ziel im Papierkorb, Größe und SHA-256
+//! vermerken, dann die Datei ohne Ersetzen unter einen privaten Prüfnamen im Papierkorb legen, dort
+//! prüfen und nur bei gleicher Identität ans Ziel legen (sonst zurück nach `dateien/`, wo sie als
+//! `gefunden` angeboten wird), dann `papierkorb`. Danach nimmt der Dienst die
 //! Mitgliedschaft weg (bzw. der Abgleich, weil die Herkunft dann nicht mehr besteht). Ein Abbruch
 //! dazwischen wird beim Wiederanlauf fortgesetzt. Nichts wird überschrieben oder endgültig gelöscht.
+//!
+//! Lesbar heißt: Journal gelesen, oder es fehlt und `dateien/`/`papierkorb/` fehlen oder sind
+//! nachweislich leer. Jeder andere Fall ist unklar und blockiert, bis die Bedienung „Bestand neu
+//! aufbauen“ ([`neu_aufbauen`]) ein fehlendes oder defektes Journal ersetzt.
 //!
 //! Projekt- und Datei-IDs werden geprüft; jeder Pfad unter dem Projektordner wird gegen
 //! Verknüpfungen geprüft. Keine Namen oder Inhalte im Log oder Fehlertext.
@@ -131,45 +137,158 @@ pub fn name_ok(name: &str) -> bool {
     !name.starts_with('.') && crate::library_layout::bereinigter_name(name).is_ok_and(|b| b == name)
 }
 
-/// Liegt in `dateien/` oder `papierkorb/` etwas?
-fn bestand_vorhanden(dir: &Path) -> bool {
-    [DATEIEN, PAPIERKORB].iter().any(|u| {
-        fs::read_dir(dir.join(u))
-            .map(|mut e| e.next().is_some())
-            .unwrap_or(false)
-    })
+/// Liegt in `dateien/` oder `papierkorb/` etwas? Leer ist nur, was fehlt (`NotFound`) oder
+/// nachweislich leer gelesen wurde; jeder andere Lesefehler ist ein Fehler (= unklar).
+fn bestand_vorhanden(dir: &Path) -> Result<bool, String> {
+    for u in [DATEIEN, PAPIERKORB] {
+        match fs::read_dir(dir.join(u)) {
+            Ok(mut e) => match e.next() {
+                None => {}
+                Some(Ok(_)) => return Ok(true),
+                Some(Err(_)) => return Err("Projektordner nicht lesbar; nichts angefasst.".into()),
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err("Projektordner nicht lesbar; nichts angefasst.".into()),
+        }
+    }
+    Ok(false)
+}
+
+/// Warum ein Journal nicht geladen werden kann.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum JournalLage {
+    /// Fehlt, obwohl Dateien vorhanden sind.
+    Fehlt,
+    /// Kaputt oder mit ungültigen Namen.
+    Defekt,
+    /// Von einer neueren App-Version: nie neu aufbauen.
+    Neuer,
+    /// Vorübergehend nicht lesbar (Rechte, Sperre, Datenträger): später erneut.
+    NichtLesbar,
+}
+
+impl JournalLage {
+    fn text(self) -> &'static str {
+        match self {
+            Self::Fehlt => {
+                "Das Dateijournal fehlt, obwohl Dateien vorhanden sind; nichts angefasst."
+            }
+            Self::Defekt => "Das Dateijournal ist nicht lesbar; nichts angefasst.",
+            Self::Neuer => "Das Dateijournal stammt von einer neueren App-Version.",
+            Self::NichtLesbar => {
+                "Dateijournal oder Projektordner gerade nicht lesbar; nichts angefasst."
+            }
+        }
+    }
 }
 
 fn journal_laden(dir: &Path) -> Result<Journal, String> {
+    journal_lage(dir).map_err(|l| l.text().to_string())
+}
+
+fn journal_lage(dir: &Path) -> Result<Journal, JournalLage> {
     let j = match fs::read(dir.join(JOURNAL)) {
         Ok(roh) => match serde_json::from_slice::<Journal>(&roh) {
             Ok(j) if j.v <= VERSION => j,
-            Ok(_) => return Err("Das Dateijournal stammt von einer neueren App-Version.".into()),
-            Err(_) => return Err("Das Dateijournal ist nicht lesbar; nichts angefasst.".into()),
+            Ok(_) => return Err(JournalLage::Neuer),
+            Err(_) => return Err(JournalLage::Defekt),
         },
         // Ohne Journal, aber mit Dateien: unklar, nicht leer (das Journal wird vor der ersten
         // Ablage geschrieben; fehlt es jetzt, ist es verloren gegangen).
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            if bestand_vorhanden(dir) {
-                return Err(
-                    "Das Dateijournal fehlt, obwohl Dateien vorhanden sind; nichts angefasst."
-                        .into(),
-                );
+            match bestand_vorhanden(dir) {
+                Ok(true) => return Err(JournalLage::Fehlt),
+                Ok(false) => {}
+                Err(_) => return Err(JournalLage::NichtLesbar),
             }
             Journal {
                 v: VERSION,
                 dateien: BTreeMap::new(),
             }
         }
-        Err(e) => return Err(format!("Dateijournal nicht lesbar: {e}")),
+        Err(_) => return Err(JournalLage::NichtLesbar),
     };
     let gueltig = j.dateien.iter().all(|(id, d)| {
         id_gueltig(id) && name_ok(&d.name) && d.papierkorb.as_deref().is_none_or(name_ok)
     });
     if !gueltig {
-        return Err("Das Dateijournal enthält ungültige Namen; nichts angefasst.".into());
+        return Err(JournalLage::Defekt);
     }
     Ok(j)
+}
+
+/// Zustand des Dateijournals eines Projekts: `None` = lesbar.
+pub fn lage(ablage: &Path, projekt: &str) -> Result<Option<JournalLage>, String> {
+    let _g = sperren();
+    let dir = projekt_dir(ablage, projekt)?;
+    Ok(journal_lage(&dir).err())
+}
+
+/// Ausdrücklicher Neuaufbau eines fehlenden oder defekten Journals (Bedienung „Bestand neu
+/// aufbauen“). Ein defektes Journal wird als `dateien.json.defekt-<ms>` beiseitegelegt, nie
+/// gelöscht. Jede Datei in `dateien/` wird als `gefunden` vermerkt und angeboten, nicht still
+/// aufgenommen; der Papierkorb bleibt unberührt. Ein Journal einer neueren Version oder ein nur
+/// vorübergehend nicht lesbares wird nicht angefasst. Liefert die Zahl der gefundenen Dateien.
+pub fn neu_aufbauen(ablage: &Path, projekt: &str) -> Result<u32, String> {
+    let _g = sperren();
+    let dir = projekt_dir(ablage, projekt)?;
+    match journal_lage(&dir) {
+        Ok(_) => return Err("Das Dateijournal ist lesbar; nichts neu aufzubauen.".into()),
+        Err(JournalLage::Neuer) | Err(JournalLage::NichtLesbar) => {
+            return Err("Das Dateijournal wird so nicht neu aufgebaut; nichts angefasst.".into())
+        }
+        Err(JournalLage::Defekt) => {
+            let beiseite = crate::library_layout::freier_name(
+                &dir,
+                &format!("{JOURNAL}.defekt-{}", jetzt_ms()),
+            )?;
+            verschieben_ohne_ersetzen(&dir.join(JOURNAL), &dir.join(beiseite))
+                .map_err(|e| format!("Dateijournal nicht beiseitelegbar: {e}"))?;
+        }
+        Err(JournalLage::Fehlt) => {}
+    }
+    let mut j = Journal {
+        v: VERSION,
+        dateien: BTreeMap::new(),
+    };
+    let mut n = 0;
+    let lesen = fs::read_dir(dir.join(DATEIEN));
+    let eintraege = match lesen {
+        Ok(e) => e,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            journal_sichern(&dir, &j)?;
+            return Ok(0);
+        }
+        Err(_) => return Err("Projektordner nicht lesbar; nichts angefasst.".into()),
+    };
+    for e in eintraege {
+        let e = e.map_err(|_| "Projektordner nicht lesbar; nichts angefasst.".to_string())?;
+        let name = e.file_name().to_string_lossy().into_owned();
+        let Ok(meta) = fs::symlink_metadata(e.path()) else {
+            continue;
+        };
+        if !meta.is_file() || !name_ok(&name) {
+            continue;
+        }
+        j.dateien.insert(
+            neue_id(),
+            Datei {
+                name,
+                status: Status::Gefunden,
+                sha256: None,
+                groesse: meta.len(),
+                eintrag: None,
+                papierkorb: None,
+                entfernen_sha: None,
+                entfernen_groesse: None,
+                ms: jetzt_ms(),
+            },
+        );
+        n += 1;
+    }
+    journal_sichern(&dir, &j)?;
+    Ok(n)
 }
 
 fn journal_sichern(dir: &Path, j: &Journal) -> Result<(), String> {
@@ -207,16 +326,27 @@ pub struct Bestand {
     pub gelesen: Vec<String>,
     /// Projekte mit nicht lesbarem Journal: ihre Verweise bleiben unbeurteilt.
     pub unklar: Vec<String>,
+    /// Der Projektordner der App selbst war nicht vollständig lesbar: nicht gelistete Projekte
+    /// sind dann nicht „leer“, sondern unbeurteilt.
+    pub unvollstaendig: bool,
 }
 
 /// Liest die Journale aller Projektordner unter `ablage`.
 pub fn bestand(ablage: &Path) -> Bestand {
     let _g = sperren();
     let mut b = Bestand::default();
-    let Ok(eintraege) = fs::read_dir(ablage) else {
-        return b;
+    let eintraege = match fs::read_dir(ablage) {
+        Ok(e) => e,
+        Err(e) => {
+            b.unvollstaendig = e.kind() != std::io::ErrorKind::NotFound;
+            return b;
+        }
     };
-    for e in eintraege.flatten() {
+    for e in eintraege {
+        let Ok(e) = e else {
+            b.unvollstaendig = true;
+            continue;
+        };
         let projekt = e.file_name().to_string_lossy().into_owned();
         if !suite_id_gueltig(&projekt) {
             continue;
@@ -401,6 +531,33 @@ fn gleiche_datei(pfad: &Path, sha: &Option<String>, groesse: Option<u64>) -> boo
     }
 }
 
+/// Privater Name im Papierkorb, unter dem eine Datei vor dem Ablegen geprüft wird.
+fn pruefname(id: &str) -> String {
+    format!(".pruefen-{id}")
+}
+
+/// Liegt die Datei unter dem privaten Prüfnamen, wird sie dort geprüft: gleiche Identität → an
+/// ihr Ziel im Papierkorb; andere Identität → zurück nach `dateien/` (unter ihrem Namen oder,
+/// falls belegt, einem freien), wo der Wiederanlauf sie als `gefunden` anbietet. Liefert, ob die
+/// vermerkte Datei abgelegt wurde.
+fn pruefen_und_ablegen(dir: &Path, d: &Datei, id: &str, ziel: &str) -> Result<bool, String> {
+    let korb = dir.join(PAPIERKORB);
+    let privat = korb.join(pruefname(id));
+    if gleiche_datei(&privat, &d.entfernen_sha, d.entfernen_groesse) {
+        verschieben_ohne_ersetzen(&privat, &korb.join(ziel))
+            .map_err(|e| format!("Datei nicht in den Papierkorb verschiebbar: {e}"))?;
+        return Ok(true);
+    }
+    // Nicht die vermerkte Datei: zurück, nie ersetzen.
+    let ordner = dir.join(DATEIEN);
+    if verschieben_ohne_ersetzen(&privat, &ordner.join(&d.name)).is_err() {
+        let frei = crate::library_layout::freier_name(&ordner, &d.name)?;
+        verschieben_ohne_ersetzen(&privat, &ordner.join(frei))
+            .map_err(|e| format!("Datei nicht zurücklegbar: {e}"))?;
+    }
+    Ok(false)
+}
+
 fn entfernen_fortsetzen(ablage: &Path, projekt: &str, id: &str) -> Result<Option<String>, String> {
     let _g = sperren();
     let dir = projekt_dir(ablage, projekt)?;
@@ -415,35 +572,40 @@ fn entfernen_fortsetzen(ablage: &Path, projekt: &str, id: &str) -> Result<Option
     ohne_verknuepfung(&dir, &format!("{DATEIEN}/{}", d.name))?;
     ohne_verknuepfung(&dir, PAPIERKORB)?;
     let korb = dir.join(PAPIERKORB);
+    fs::create_dir_all(&korb).map_err(|e| format!("Papierkorb nicht anlegbar: {e}"))?;
+    let privat = korb.join(pruefname(id));
     let (sha, groesse) = (&d.entfernen_sha, d.entfernen_groesse);
-    // Liegt am vermerkten Ziel schon genau diese Datei, ist das Verschieben geschehen.
-    let erledigt = d
-        .papierkorb
+    let mut ziel = d.papierkorb.clone();
+    // Ziel fehlt oder ist von etwas anderem belegt: erst ein neues freies Ziel vermerken.
+    let erledigt = ziel
         .as_ref()
         .is_some_and(|z| gleiche_datei(&korb.join(z), sha, groesse));
-    let mut ziel = d.papierkorb.clone();
-    if !erledigt {
-        if gleiche_datei(&quelle, sha, groesse) {
-            // Ziel fehlt oder ist inzwischen von etwas anderem belegt: erst ein neues freies Ziel
-            // vermerken, dann verschieben.
-            if ziel.as_ref().is_none_or(|z| korb.join(z).exists()) {
-                ziel = korb_ziel(&dir, &d.name)?;
-                if let Some(x) = j.dateien.get_mut(id) {
-                    x.papierkorb = ziel.clone();
-                }
-                journal_sichern(&dir, &j)?;
-            }
-            let z = ziel.clone().ok_or("Kein Ziel im Papierkorb.")?;
-            verschieben_ohne_ersetzen(&quelle, &korb.join(z))
-                .map_err(|e| format!("Datei nicht in den Papierkorb verschiebbar: {e}"))?;
-        } else {
-            // Die vermerkte Datei ist nicht mehr da; was jetzt unter dem Namen liegt, ist eine
-            // andere Datei und bleibt unberührt (der Wiederanlauf bietet sie als gefunden an).
-            ziel = None;
+    if !erledigt && ziel.as_ref().is_none_or(|z| korb.join(z).exists()) {
+        ziel = korb_ziel(&dir, &d.name)?;
+        if let Some(x) = j.dateien.get_mut(id) {
+            x.papierkorb = ziel.clone();
         }
+        journal_sichern(&dir, &j)?;
     }
+    let z = ziel.clone().ok_or("Kein Ziel im Papierkorb.")?;
+    let abgelegt = if erledigt {
+        true
+    } else if fs::symlink_metadata(&privat).is_ok() {
+        // Abbruch nach dem Verschieben unter den Prüfnamen.
+        pruefen_und_ablegen(&dir, &d, id, &z)?
+    } else if fs::symlink_metadata(&quelle).is_ok_and(|m| m.is_file()) {
+        // Erst unter den privaten Namen, dort prüfen: was nach einer Prüfung unter dem Quellnamen
+        // auftaucht, wird so nie abgelegt, sondern zurückgelegt.
+        verschieben_ohne_ersetzen(&quelle, &privat)
+            .map_err(|e| format!("Datei nicht in den Papierkorb verschiebbar: {e}"))?;
+        pruefen_und_ablegen(&dir, &d, id, &z)?
+    } else {
+        false
+    };
     let x = j.dateien.get_mut(id).ok_or("Datei nicht gefunden.")?;
-    x.papierkorb = ziel;
+    // Wurde die vermerkte Datei nicht gefunden, ist was jetzt unter dem Namen liegt eine andere
+    // Datei; sie bleibt unberührt und wird als `gefunden` angeboten.
+    x.papierkorb = if abgelegt { ziel } else { None };
     x.status = Status::Papierkorb;
     x.ms = jetzt_ms();
     let eintrag = x.eintrag.clone();
@@ -815,6 +977,105 @@ mod tests {
         let korb = a.join(P).join(PAPIERKORB);
         assert_eq!(fs::read_to_string(korb.join(&z)).unwrap(), "fremd");
         assert_eq!(fs::read_to_string(korb.join(&z2)).unwrap(), "alt");
+        fs::remove_dir_all(&a).ok();
+    }
+
+    #[test]
+    fn nach_der_pruefung_untergeschobene_datei_wird_nicht_abgelegt() {
+        let a = tmp();
+        let (id, name) = hinzufuegen(&a, P, &quelle(&a, "a.txt", "alt")).unwrap();
+        vermerken(&a, &id);
+        let dir = a.join(P);
+        // Zwischen Prüfung und Verschieben gelangt extern eine andere Datei unter den Namen; sie
+        // landet unter dem Prüfnamen (Absturz dort).
+        fs::remove_file(dir.join(DATEIEN).join(&name)).unwrap();
+        fs::write(dir.join(PAPIERKORB).join(pruefname(&id)), "fremd").unwrap();
+        wiederanlauf(&a, P).unwrap();
+        let d = &liste(&a, P).unwrap()[&id];
+        assert_eq!(d.status, Status::Papierkorb);
+        assert!(
+            d.papierkorb.is_none(),
+            "nichts als die vermerkte Datei abgelegt"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.join(DATEIEN).join(&name)).unwrap(),
+            "fremd",
+            "zurückgelegt, nicht in den Papierkorb"
+        );
+        assert!(!dir.join(PAPIERKORB).join(pruefname(&id)).exists());
+        fs::remove_dir_all(&a).ok();
+    }
+
+    #[test]
+    fn absturz_unter_dem_pruefnamen_wird_fortgesetzt() {
+        let a = tmp();
+        let (id, name) = hinzufuegen(&a, P, &quelle(&a, "a.txt", "alt")).unwrap();
+        vermerken(&a, &id);
+        let dir = a.join(P);
+        fs::rename(
+            dir.join(DATEIEN).join(&name),
+            dir.join(PAPIERKORB).join(pruefname(&id)),
+        )
+        .unwrap();
+        // Unterdessen eine neue Datei gleichen Namens: bleibt, wo sie ist.
+        fs::write(dir.join(DATEIEN).join(&name), "neu").unwrap();
+        wiederanlauf(&a, P).unwrap();
+        let d = &liste(&a, P).unwrap()[&id];
+        let z = d.papierkorb.clone().unwrap();
+        assert_eq!(
+            fs::read_to_string(dir.join(PAPIERKORB).join(z)).unwrap(),
+            "alt"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.join(DATEIEN).join(&name)).unwrap(),
+            "neu"
+        );
+        fs::remove_dir_all(&a).ok();
+    }
+
+    #[test]
+    fn nicht_lesbarer_ordner_ist_nicht_leer() {
+        let a = tmp();
+        let dir = a.join(P);
+        fs::create_dir_all(&dir).unwrap();
+        // `dateien` ist kein Ordner: Lesefehler, kein NotFound.
+        fs::write(dir.join(DATEIEN), "x").unwrap();
+        assert_eq!(bestand(&a).unklar, vec![P.to_string()]);
+        assert_eq!(lage(&a, P).unwrap(), Some(JournalLage::NichtLesbar));
+        assert!(neu_aufbauen(&a, P).is_err(), "nur bei fehlt/defekt");
+        fs::remove_dir_all(&a).ok();
+    }
+
+    #[test]
+    fn bestand_neu_aufbauen_legt_defektes_beiseite_und_bietet_an() {
+        let a = tmp();
+        hinzufuegen(&a, P, &quelle(&a, "a.txt", "a")).unwrap();
+        let dir = a.join(P);
+        assert!(neu_aufbauen(&a, P).is_err(), "lesbares Journal bleibt");
+        fs::write(dir.join(JOURNAL), b"{kaputt").unwrap();
+        assert_eq!(lage(&a, P).unwrap(), Some(JournalLage::Defekt));
+        assert_eq!(neu_aufbauen(&a, P).unwrap(), 1);
+        assert_eq!(lage(&a, P).unwrap(), None);
+        let l = liste(&a, P).unwrap();
+        assert!(l
+            .values()
+            .all(|d| d.status == Status::Gefunden && !d.lebt()));
+        let beiseite: Vec<_> = fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with(&format!("{JOURNAL}.defekt-")))
+            .collect();
+        assert_eq!(beiseite.len(), 1);
+        assert_eq!(fs::read(dir.join(&beiseite[0])).unwrap(), b"{kaputt");
+        // Fehlendes Journal ebenso.
+        fs::remove_file(dir.join(JOURNAL)).unwrap();
+        assert_eq!(lage(&a, P).unwrap(), Some(JournalLage::Fehlt));
+        assert_eq!(neu_aufbauen(&a, P).unwrap(), 1);
+        // Neuere Version: nie neu aufbauen.
+        fs::write(dir.join(JOURNAL), br#"{"v":99,"dateien":{}}"#).unwrap();
+        assert_eq!(lage(&a, P).unwrap(), Some(JournalLage::Neuer));
+        assert!(neu_aufbauen(&a, P).is_err());
         fs::remove_dir_all(&a).ok();
     }
 

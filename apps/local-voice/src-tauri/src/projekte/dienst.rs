@@ -905,6 +905,27 @@ impl ProjektDienst {
             .collect())
     }
 
+    /// Zustand des Dateijournals eines Projekts für die Oberfläche: `None` = lesbar. Bei `fehlt`
+    /// oder `defekt` bietet die Projektseite „Bestand neu aufbauen“ an.
+    pub async fn dateien_lage(&self, suite_id: &str) -> Res<Option<dateien::JournalLage>> {
+        Self::projekt_pruefen(suite_id)?;
+        self.verz.projekt_lesen(&self.principal, suite_id).await?;
+        let ablage = self.ablage()?;
+        dateien::lage(ablage, suite_id).map_err(quelle)
+    }
+
+    /// Ausdrücklicher Neuaufbau des Dateijournals (nur bei `fehlt`/`defekt`). Dateien werden als
+    /// gefunden angeboten, nicht still aufgenommen. Liefert ihre Zahl.
+    pub async fn dateien_neu_aufbauen(&self, suite_id: &str) -> Res<u32> {
+        let _g = self.sperre.lock().await;
+        Self::projekt_pruefen(suite_id)?;
+        self.verz.projekt_lesen(&self.principal, suite_id).await?;
+        let ablage = self.ablage()?.to_path_buf();
+        let n = dateien::neu_aufbauen(&ablage, suite_id).map_err(quelle)?;
+        self.protokoll("dateien_neu_aufgebaut", suite_id, "ok", &format!("n{n}"));
+        Ok(n)
+    }
+
     /// Bewusst aufnehmen, was der Wiederanlauf im Projektordner gefunden hat.
     pub async fn gefundene_datei_aufnehmen(&self, suite_id: &str, datei_id: &str) -> Res<()> {
         let _g = self.sperre.lock().await;
@@ -990,7 +1011,7 @@ impl ProjektDienst {
 
     /// Übersicht „Als Kontext“ für die Oberfläche: Schalter, Form, Token, Stand, ohne Inhalte.
     pub async fn kontext_uebersicht(&self, suite_id: &str) -> Res<kontext::KontextUebersicht> {
-        Ok(self.kontext(suite_id).await?.uebersicht)
+        Ok(self.kontext_bauen(suite_id).await?.uebersicht)
     }
 
     /// Einziger Zugang der KI-Wege zum Projektkontext (`projekt_kontext`, Spec §5.2). Bis P4c
@@ -1004,12 +1025,19 @@ impl ProjektDienst {
                 "Die KI im Projekt ist noch nicht freigegeben.",
             ));
         }
-        self.kontext(suite_id).await
+        self.kontext_bauen(suite_id).await
     }
 
-    /// Der KI-Kontext eines Projekts (Spec §5.2) mit Inhalten. Nur innerhalb des Moduls: Oberfläche
-    /// nutzt `kontext_uebersicht`, KI-Wege `kontext_fuer_ki`.
-    pub(super) async fn kontext(&self, suite_id: &str) -> Res<Kontext> {
+    /// Nur für Tests: der Kontext mit Inhalten, ohne die P4c-Sperre.
+    #[cfg(test)]
+    pub(super) async fn kontext_fuer_test(&self, suite_id: &str) -> Res<Kontext> {
+        self.kontext_bauen(suite_id).await
+    }
+
+    /// Der KI-Kontext eines Projekts (Spec §5.2) mit Inhalten. Privat: aufgerufen nur aus
+    /// `kontext_fuer_ki` (KI-Wege, gesperrt bis P4c), `kontext_uebersicht` (nur die Übersicht ohne
+    /// Inhalte) und dem Testzugang; ein Allowlist-Test in `tests_p4` prüft das.
+    async fn kontext_bauen(&self, suite_id: &str) -> Res<Kontext> {
         Self::projekt_pruefen(suite_id)?;
         let ablage = self.ablage()?.to_path_buf();
         let liste = self.eintraege(suite_id).await?;

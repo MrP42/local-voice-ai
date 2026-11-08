@@ -978,6 +978,28 @@ async projektDateienGefunden(suiteId: string) : Promise<Result<GefundeneDatei[],
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Zustand des Dateijournals: `null` = lesbar, sonst `fehlt`/`defekt`/`neuer`/`nicht_lesbar`.
+ */
+async projektDateienLage(suiteId: string) : Promise<Result<JournalLage | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("projekt_dateien_lage", { suiteId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * „Bestand neu aufbauen“: nur bei fehlendem oder defektem Dateijournal.
+ */
+async projektDateienNeuAufbauen(suiteId: string) : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("projekt_dateien_neu_aufbauen", { suiteId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async projektDateiGefundenAufnehmen(suiteId: string, dateiId: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("projekt_datei_gefunden_aufnehmen", { suiteId, dateiId }) };
@@ -10405,6 +10427,26 @@ export type JobRunState = "running" |
  * Stopp ist verlangt, der laufende Block wird noch fertig.
  */
 "stopping"
+/**
+ * Warum ein Journal nicht geladen werden kann.
+ */
+export type JournalLage = 
+/**
+ * Fehlt, obwohl Dateien vorhanden sind.
+ */
+"fehlt" | 
+/**
+ * Kaputt oder mit ungültigen Namen.
+ */
+"defekt" | 
+/**
+ * Von einer neueren App-Version: nie neu aufbauen.
+ */
+"neuer" | 
+/**
+ * Vorübergehend nicht lesbar (Rechte, Sperre, Datenträger): später erneut.
+ */
+"nicht_lesbar"
 /**
  * Sprungziel eines Treffers in der App.
  */

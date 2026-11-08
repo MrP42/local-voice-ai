@@ -3,6 +3,7 @@
 //! Mandant und Person kommen aus der lokalen Sitzung (`lokaler_principal`), nie aus den Argumenten.
 //! Fehlertexte enthalten weder Frage noch Anfragen noch Quellen.
 
+use super::dateien::JournalLage;
 use super::dienst::{
     klasse_aus_text, EintragSicht, GefundeneDatei, LoeschErgebnis, SuiteProjekt, SyncBericht,
 };
@@ -206,6 +207,30 @@ pub async fn projekt_dateien_gefunden(
         .await?
         .projekte
         .gefundene_dateien(&suite_id)
+        .await?)
+}
+
+/// Zustand des Dateijournals: `null` = lesbar, sonst `fehlt`/`defekt`/`neuer`/`nicht_lesbar`.
+#[tauri::command]
+#[specta::specta]
+pub async fn projekt_dateien_lage(
+    z: State<'_, ProjekteZustand>,
+    suite_id: String,
+) -> Antwort<Option<JournalLage>> {
+    Ok(z.dienste().await?.projekte.dateien_lage(&suite_id).await?)
+}
+
+/// „Bestand neu aufbauen“: nur bei fehlendem oder defektem Dateijournal.
+#[tauri::command]
+#[specta::specta]
+pub async fn projekt_dateien_neu_aufbauen(
+    z: State<'_, ProjekteZustand>,
+    suite_id: String,
+) -> Antwort<u32> {
+    Ok(z.dienste()
+        .await?
+        .projekte
+        .dateien_neu_aufbauen(&suite_id)
         .await?)
 }
 
