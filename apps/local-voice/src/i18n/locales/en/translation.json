@@ -8171,9 +8171,22 @@
     "back": "Library",
     "by": "by {{authors}}",
     "tabs": "Book view",
+    "bookFiles": {
+      "title": "Files in the book folder",
+      "reveal": "Show in Explorer",
+      "empty": "The book folder is empty.",
+      "failed": "Files could not be read: {{error}}",
+      "metadata": "Metadata, editions",
+      "primaryEdition": "{{lang}} · main edition",
+      "edition": "{{lang}}",
+      "looseEdition": "not assigned to an edition",
+      "summary_one": "{{count}} file, {{size}}",
+      "summary_other": "{{count}} files, {{size}}"
+    },
     "tab": {
       "overview": "Overview",
       "versions": "Versions",
+      "files": "Files",
       "metadata": "Metadata"
     },
     "noDescription": "No blurb yet. Fetch one from Open Library under “Metadata” or write your own.",

@@ -31,6 +31,7 @@ import type { TranscriptJob } from "./useLibrary";
 import { MetadataPicker } from "./MetadataPicker";
 import { KurzbuchCard } from "./KurzbuchCard";
 import { EditionsSection, LastActive } from "./EditionsSection";
+import { BookFiles } from "./BookFiles";
 import "./fassungen.css";
 import type { KiCreateTab } from "./KiCreateDialog";
 import {
@@ -53,7 +54,7 @@ import { jobsOfTrack } from "@/lib/library/sections";
 import { audioProgressKey, removeProgress } from "@/lib/library/progress";
 import { editionsOf, langName, langShort } from "@/lib/library/editions";
 
-type Tab = "overview" | "versions" | "metadata";
+type Tab = "overview" | "versions" | "files" | "metadata";
 
 interface Props {
   view: BookView;
@@ -442,6 +443,7 @@ export const BookDetail: React.FC<Props> = ({
         tabs={[
           { id: "overview", label: t("library.tab.overview") },
           { id: "versions", label: t("library.tab.versions") },
+          { id: "files", label: t("library.tab.files") },
           { id: "metadata", label: t("library.tab.metadata") },
         ]}
         value={tab}
@@ -466,6 +468,8 @@ export const BookDetail: React.FC<Props> = ({
           )}
         </div>
       )}
+
+      {tab === "files" && <BookFiles book={book} />}
 
       {tab === "versions" && (
         <div className="library-versions">

@@ -2631,6 +2631,8 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::library_layout::library_backup_list,
             commands::library_layout::library_backup_restore,
             commands::library_layout::library_backup_delete,
+            commands::library_layout::library_book_files,
+            commands::library_layout::library_book_reveal,
             hoersync_live::audiosync_load,
             hoersync_live::audiosync_window,
             hoersync_live::audiosync_anchor,

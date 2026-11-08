@@ -401,3 +401,53 @@ pub async fn library_backup_restore(
         papierkorb: w.papierkorb,
     })
 }
+
+/// Ein Eintrag der Ansicht „Dateien im Buch-Ordner“.
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct LibraryBookFile {
+    /// Pfad relativ zum Buch-Ordner, mit `/`.
+    pub rel: String,
+    pub tiefe: u32,
+    pub ordner: bool,
+    pub bytes: f64,
+    pub dateien: u32,
+    /// Inhalt nicht einzeln gezeigt (zu tief oder zu viele Dateien).
+    pub zusammengefasst: bool,
+}
+
+/// Dateien im Buch-Ordner für das Buchdetail (P2b-2). Nur lesend und ohne Sperre:
+/// ein Lauf daneben verändert höchstens, was gerade angezeigt wird.
+#[tauri::command]
+#[specta::specta]
+pub fn library_book_files(app: AppHandle, id: String) -> Result<Vec<LibraryBookFile>, String> {
+    let data = pages::data_root(&app)?;
+    Ok(library_layout::buch_dateien(&data, &id)?
+        .into_iter()
+        .map(|e| LibraryBookFile {
+            rel: e.rel,
+            tiefe: e.tiefe,
+            ordner: e.ordner,
+            bytes: e.bytes as f64,
+            dateien: u32::try_from(e.dateien).unwrap_or(u32::MAX),
+            zusammengefasst: e.zusammengefasst,
+        })
+        .collect())
+}
+
+/// Buch-Ordner im Explorer (Finder) zeigen.
+#[tauri::command]
+#[specta::specta]
+pub fn library_book_reveal(app: AppHandle, id: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let data = pages::data_root(&app)?;
+    if !library_layout::gueltiges_buch(&id) {
+        return Err(format!("Ungültige Buch-Kennung: {id}"));
+    }
+    let dir = data.join(library_layout::BIBLIOTHEK).join(&id);
+    if !dir.join(library_layout::BUCH_JSON).is_file() {
+        return Err("Das Buch ist nicht in der Bibliothek.".into());
+    }
+    app.opener()
+        .open_path(dir.to_string_lossy().to_string(), None::<String>)
+        .map_err(|e| format!("Buch-Ordner nicht zu öffnen: {e}"))
+}

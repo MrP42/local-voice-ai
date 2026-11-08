@@ -3791,6 +3791,108 @@ pub fn seiten_einlagern(data: &Path, buch: &str) -> Result<Vec<String>, String> 
     Ok(bewegt)
 }
 
+// ---------------------------------------------------------------------------
+// Dateien im Buch-Ordner (Buchdetail, P2b-2)
+// ---------------------------------------------------------------------------
+
+/// Ein Eintrag der Ansicht „Dateien im Buch-Ordner“.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuchEintrag {
+    /// Pfad relativ zum Buch-Ordner, mit `/`.
+    pub rel: String,
+    /// Ebene unter dem Buch-Ordner (0 = direkt darin).
+    pub tiefe: u32,
+    pub ordner: bool,
+    /// Größe in Bytes (bei Ordnern: alles darunter).
+    pub bytes: u64,
+    /// Zahl der Dateien darunter (bei Dateien 1).
+    pub dateien: u64,
+    /// Ordner, dessen Inhalt nicht einzeln gezeigt wird (zu tief oder zu viele Dateien).
+    pub zusammengefasst: bool,
+}
+
+/// Bis zu dieser Ebene werden Ordner aufgeklappt (Buch-Ordner = 0).
+const DATEIEN_TIEFE: u32 = 3;
+/// Mehr Einträge in einem Ordner werden zusammengefasst (etwa 35 Hörbuch-Teile).
+const DATEIEN_JE_ORDNER: usize = 12;
+
+/// Inhalt eines Buch-Ordners für die Anzeige: Ordner zuerst, dann Dateien, je nach Name.
+/// Versteckte Einträge (Punkt am Anfang) und Verknüpfungen werden nicht gezeigt und nicht
+/// betreten. Ein Weg über eine Verknüpfung oder ein fehlendes Buch ist ein Fehler.
+pub fn buch_dateien(data: &Path, buch: &str) -> Result<Vec<BuchEintrag>, String> {
+    if !gueltiges_buch(buch) {
+        return Err(format!("Ungültige Buch-Kennung: {buch}"));
+    }
+    let rel = format!("{BIBLIOTHEK}/{buch}");
+    ohne_umweg(data, &rel)?;
+    let dir = absolut(data, &rel);
+    if !dir.join(BUCH_JSON).is_file() {
+        return Err("Das Buch ist nicht in der Bibliothek.".into());
+    }
+    fn sichtbar(dir: &Path) -> Vec<(String, fs::Metadata)> {
+        let Ok(eintraege) = fs::read_dir(dir) else {
+            return Vec::new();
+        };
+        let mut liste: Vec<(String, fs::Metadata)> = eintraege
+            .flatten()
+            .filter_map(|e| {
+                let name = e.file_name().to_str()?.to_owned();
+                let meta = fs::symlink_metadata(e.path()).ok()?;
+                (!name.starts_with('.') && !ist_umweg(&meta) && (meta.is_dir() || meta.is_file()))
+                    .then_some((name, meta))
+            })
+            .collect();
+        liste.sort_by(|a, b| b.1.is_dir().cmp(&a.1.is_dir()).then_with(|| a.0.cmp(&b.0)));
+        liste
+    }
+    fn summe(dir: &Path) -> (u64, u64) {
+        sichtbar(dir)
+            .into_iter()
+            .fold((0, 0), |(bytes, dateien), (name, meta)| {
+                if meta.is_dir() {
+                    let (b, d) = summe(&dir.join(name));
+                    (bytes + b, dateien + d)
+                } else {
+                    (bytes + meta.len(), dateien + 1)
+                }
+            })
+    }
+    fn sammeln(dir: &Path, praefix: &str, tiefe: u32, aus: &mut Vec<BuchEintrag>) {
+        for (name, meta) in sichtbar(dir) {
+            let rel = format!("{praefix}{name}");
+            if meta.is_file() {
+                aus.push(BuchEintrag {
+                    rel,
+                    tiefe,
+                    ordner: false,
+                    bytes: meta.len(),
+                    dateien: 1,
+                    zusammengefasst: false,
+                });
+                continue;
+            }
+            let pfad = dir.join(&name);
+            let (bytes, dateien) = summe(&pfad);
+            let zusammengefasst =
+                tiefe + 1 >= DATEIEN_TIEFE || sichtbar(&pfad).len() > DATEIEN_JE_ORDNER;
+            aus.push(BuchEintrag {
+                rel: rel.clone(),
+                tiefe,
+                ordner: true,
+                bytes,
+                dateien,
+                zusammengefasst,
+            });
+            if !zusammengefasst {
+                sammeln(&pfad, &format!("{rel}/"), tiefe + 1, aus);
+            }
+        }
+    }
+    let mut aus = Vec::new();
+    sammeln(&dir, "", 0, &mut aus);
+    Ok(aus)
+}
+
 const VERBOTENE_ZEICHEN: [char; 9] = ['/', '\\', ':', '*', '?', '"', '<', '>', '|'];
 const RESERVIERTE_NAMEN: [&str; 22] = [
     "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
@@ -5235,6 +5337,56 @@ mod tests {
         journal_mit(&data, Phase::Gesichert, vec![]);
         assert!(seiten_einlagern(&data, "book_6").unwrap().is_empty());
         assert!(data.join("projects/page_4").is_dir());
+    }
+
+    #[test]
+    fn dateien_im_buch_ordner_als_baum() {
+        let data = standardlage("dateien");
+        migrieren(&data, &optionen()).unwrap();
+        let buch = data.join("library/book_1");
+        fs::create_dir_all(buch.join("audio")).unwrap();
+        for i in 0..20 {
+            fs::write(buch.join(format!("audio/teil-{i:02}.mp3")), b"abc").unwrap();
+        }
+        fs::write(buch.join("cover.jpg"), b"12345").unwrap();
+        fs::write(buch.join(".entfernt"), b"0").unwrap();
+        let liste = buch_dateien(&data, "book_1").unwrap();
+        let rels: Vec<&str> = liste.iter().map(|e| e.rel.as_str()).collect();
+        // Ordner zuerst, dann Dateien; versteckte Einträge fehlen.
+        assert_eq!(rels[0], "audio");
+        assert!(rels.contains(&"fassungen"));
+        assert!(rels.contains(&"fassungen/page_1"));
+        assert!(rels.contains(&"fassungen/page_1/state.json"));
+        assert!(rels.contains(&"buch.json"));
+        assert!(!rels.iter().any(|r| r.starts_with('.') || r.contains("/.")));
+        let audio = &liste[0];
+        assert!(audio.ordner && audio.zusammengefasst);
+        assert_eq!((audio.dateien, audio.bytes), (20, 60));
+        assert!(!rels.iter().any(|r| r.starts_with("audio/")));
+        // Ebene 3 (fassungen/page_1/ki) ist zusammengefasst.
+        let ki = liste
+            .iter()
+            .find(|e| e.rel == "fassungen/page_1/ki")
+            .unwrap();
+        assert!(ki.zusammengefasst && ki.tiefe == 2 && ki.dateien == 1);
+        assert!(buch_dateien(&data, "../book_1").is_err());
+        assert!(buch_dateien(&data, "book_404").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dateien_im_buch_ordner_folgt_keiner_verknuepfung() {
+        let data = standardlage("dateien-umweg");
+        let fremd = data.parent().unwrap().join("dateien-umweg-fremd");
+        let _ = fs::remove_dir_all(&fremd);
+        fs::create_dir_all(&fremd).unwrap();
+        fs::write(fremd.join("geheim.txt"), b"x").unwrap();
+        std::os::unix::fs::symlink(&fremd, data.join("library/book_1/umweg")).unwrap();
+        let liste = buch_dateien(&data, "book_1").unwrap();
+        assert!(!liste.iter().any(|e| e.rel.starts_with("umweg")));
+        fs::rename(data.join("library/book_1"), data.join("library-echt")).unwrap();
+        std::os::unix::fs::symlink(data.join("library-echt"), data.join("library/book_1")).unwrap();
+        assert!(buch_dateien(&data, "book_1").is_err());
     }
 
     #[test]

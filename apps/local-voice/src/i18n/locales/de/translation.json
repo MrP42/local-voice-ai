@@ -8171,9 +8171,22 @@
     "back": "Bibliothek",
     "by": "von {{authors}}",
     "tabs": "Buchansicht",
+    "bookFiles": {
+      "title": "Dateien im Buch-Ordner",
+      "reveal": "Im Explorer zeigen",
+      "empty": "Der Buch-Ordner ist leer.",
+      "failed": "Dateien nicht lesbar: {{error}}",
+      "metadata": "Metadaten, Fassungen",
+      "primaryEdition": "{{lang}} · Hauptfassung",
+      "edition": "{{lang}}",
+      "looseEdition": "keiner Fassung zugeordnet",
+      "summary_one": "{{count}} Datei, {{size}}",
+      "summary_other": "{{count}} Dateien, {{size}}"
+    },
     "tab": {
       "overview": "Übersicht",
       "versions": "Fassungen",
+      "files": "Dateien",
       "metadata": "Metadaten"
     },
     "noDescription": "Noch kein Klappentext. Unter „Metadaten“ lässt er sich aus Open Library übernehmen oder selbst schreiben.",
