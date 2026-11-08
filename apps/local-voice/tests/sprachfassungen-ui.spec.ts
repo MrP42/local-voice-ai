@@ -324,6 +324,14 @@ const setup = async (
                 anchors: [],
               };
             if (cmd === "audiosync_window") throw "Kein Erkennungsmodell";
+            if (cmd === "page_files") return [];
+            if (cmd === "pages_list")
+              return Object.keys(w.__pageText).map((id) => ({
+                id,
+                title: id,
+                order: 0,
+                updated_at: 0,
+              }));
             if (cmd === "library_progress_load") return {};
             if (cmd === "library_progress_put") return null;
             if (cmd === "tts_server_status")
@@ -1128,4 +1136,32 @@ test("Rückgängig: wirft ein Schreibschritt, stellt der Rollback den Stand davo
   };
   expect(result.after.map(pick)).toEqual(result.before.map(pick));
   expect(await calls(page, "library_set_reading")).toHaveLength(0);
+});
+
+test("Reader-Werkzeugleiste: Sprachknopf so hoch wie die Nachbargruppen", async ({
+  page,
+}) => {
+  await setup(page, [bookA()], { pageText: PAGES });
+  await page.addInitScript(() =>
+    window.localStorage.setItem("lva.ui.tts.view", "read"),
+  );
+  await page.goto("/");
+  await page
+    .getByRole("button", { name: "„Der Prozess“: Details öffnen" })
+    .click();
+  await page.getByTestId("library-detail-read").click();
+  const button = page
+    .getByTestId("sf-reader-language")
+    .getByTestId("sf-switch-button");
+  await expect(button).toBeVisible();
+  const lang = (await button.boundingBox())!;
+  const mode = (await page
+    .getByTestId("reader-mode-read")
+    .locator("..")
+    .boundingBox())!;
+  // Gleiche Höhe und gleiche Mittellinie wie Lesen/Bearbeiten (Patrick 08.11.).
+  expect(Math.abs(lang.height - mode.height)).toBeLessThanOrEqual(1);
+  expect(
+    Math.abs(lang.y + lang.height / 2 - (mode.y + mode.height / 2)),
+  ).toBeLessThanOrEqual(1);
 });
