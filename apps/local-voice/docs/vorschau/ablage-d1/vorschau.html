@@ -38,7 +38,7 @@ svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.6;stroke
 .ib{flex:none;display:grid;place-items:center;width:44px;height:44px;border-radius:6px;color:var(--muted);border:0;background:none;cursor:pointer}
 .btn{display:inline-flex;align-items:center;gap:6px;min-height:44px;padding:0 14px;border-radius:6px;border:1px solid var(--line);background:var(--pane);cursor:pointer;white-space:nowrap}
 .btn.pri{background:var(--accent);border-color:var(--accent);color:#fff}
-:root[data-theme="dark"] .btn.pri{color:#0b1a2a}
+:root[data-theme="dark"] .btn.pri,:root[data-theme="dark"] .seg button.on{color:#0b1a2a}
 .grp{padding:12px 12px 4px;font-size:12px;font-weight:600;color:var(--muted)}
 .row{display:flex;align-items:center;gap:10px;padding:0 12px;min-height:44px;border-radius:6px;margin:0 6px}
 .row.on{background:var(--sel)}
@@ -78,6 +78,7 @@ td .f span{overflow:hidden;text-overflow:ellipsis}
 .tg.on{background:var(--accent);border-color:var(--accent)}
 .tg.on::after{left:23px;background:#fff}
 .sel{display:flex;align-items:center;justify-content:space-between;min-height:44px;border:1px solid var(--line);border-radius:6px;padding:0 10px;background:var(--pane2)}
+.seg{display:flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}.seg button{flex:1;min-height:44px;border:0;background:var(--pane2);cursor:pointer}.seg button.on{background:var(--accent);color:#fff;font-weight:600}
 .note{margin:12px 16px;padding:10px 12px;border-radius:6px;background:var(--accent-soft);color:var(--text);font-size:12px}
 .note.w{background:var(--warn-soft)}
 .drop{position:absolute;inset:56px 8px 8px;border:2px dashed var(--accent);border-radius:8px;background:color-mix(in srgb,var(--drop) 85%,transparent);display:grid;place-items:center;text-align:center;font-weight:600;color:var(--accent)}
@@ -201,9 +202,9 @@ if(S==='liste'){
 </div><div class="note">Neue Dateien erben die KI-Freigabe des Ordners. In „Wartung IT“ ist sie an (geerbt von „Verträge“).</div></section></div>`);
 }else if(S==='ordner'){
  html=shell(`<div class="work zwei">${tree('v')}<section class="col">${head(srch())}${rows(-1)}</section></div>`)+`<div class="dlg" role="dialog" aria-modal="true" aria-labelledby="dh"><div class="box"><h2 id="dh">Ordner „Verträge“</h2>
-<div class="sec"><div class="sw"><span>Für die KI freigeben<br><span class="mut">Assistent und Projekte bekommen nur passende Auszüge mit Beleg</span></span><span class="tg on" role="switch" aria-checked="true"></span></div>
-<div class="mut" style="margin:4px 0 8px">Unterordner erben die Freigabe. Ein Unterordner mit „aus“ gewinnt immer. Gilt nur auf diesem Gerät.</div>
-<div class="grp" style="padding:8px 0 4px">Datenklasse</div><div class="sel"><span>Vertraulich – nur lokale Modelle</span>${I.arr}</div>
+<div class="sec"><div class="grp" style="padding:0 0 4px">Für die KI</div><div class="seg" role="radiogroup"><button role="radio" aria-checked="true" class="on">An</button><button role="radio" aria-checked="false">Aus</button><button role="radio" aria-checked="false">Gesperrt</button></div>
+<div class="mut" style="margin:6px 0 8px">An: Assistent nutzt passende Auszüge mit Beleg. Aus: nur über Projekte. Gesperrt: nie, auch nicht in Projekten. Unterordner erben; „Gesperrt“ gewinnt immer. Gilt nur auf diesem Gerät.</div>
+<div class="grp" style="padding:8px 0 4px">Datenklasse</div><div class="sel"><span>Vertraulich – nur lokale Modelle, Cloud nur mit Ausnahme</span>${I.arr}</div>
 <div class="sw"><span>Nur auf diesem Gerät<br><span class="mut">nicht in die Cloud, nicht auf andere Geräte</span></span><span class="tg" role="switch" aria-checked="false"></span></div>
 <div class="sw"><span>KI darf hier Entwürfe ablegen<br><span class="mut">nur neue Dateien, nie überschreiben oder löschen</span></span><span class="tg" role="switch" aria-checked="false"></span></div></div>
 <div class="ft"><button class="btn">Abbrechen</button><button class="btn pri">Speichern</button></div></div></div>`;

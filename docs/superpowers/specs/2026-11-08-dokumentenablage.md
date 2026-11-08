@@ -1,6 +1,7 @@
-# Dokumentenablage mit Sync und lokalem Abrufindex (Epic „Ablage“)
+# Dokumentenablage mit Sync und lokalem Abrufindex (Epic #395)
 
-Stand 08.11.2026. Entscheidungen: wai-sdk ADR-0029. Baut auf Bibliothek-Sync (`2026-11-02-bibliothek-sync.md`),
+Stand 08.11.2026, Fassung 2 (Codex-Runde 1: M1–M8 eingearbeitet). Entscheidungen: wai-sdk ADR-0029 (Abschnitte
+E1–E11 werden hier nur umgesetzt, nicht wiederholt). Baut auf Bibliothek-Sync (`2026-11-02-bibliothek-sync.md`),
 Projekten (`2026-11-07-buch-ordner-und-projekte.md`, P4-Plan), globalem Sprachassistenten (lva#325) und dem
 Assistenten (`2026-11-08-assistent-chat-und-sprache.md`, ADR-0028) auf.
 
@@ -8,133 +9,206 @@ Assistenten (`2026-11-08-assistent-chat-und-sprache.md`, ADR-0028) auf.
 
 Eine Seite **„Ablage“** in Local Voice (Desktop und iPhone) für allgemeine Dokumente, bedienbar wie OneDrive:
 Ordner, Hochladen per Drag & Drop, Vorschau, Fassungen, Papierkorb, Suche. Alle Geräte sehen dieselbe Ablage über
-den eigenen Hub (Ende-zu-Ende verschlüsselt). Die KI greift gezielt auf **Auszüge** zu, nur in freigegebenen Ordnern
-und nur über den Kontextvertrag (ADR-0028 E6).
+den eigenen Hub (Ende-zu-Ende verschlüsselt). Die KI greift gezielt auf **Auszüge** zu, nur über den Kontextvertrag
+(ADR-0028 E6) und nur, soweit Freigabe, Datenklasse und Berechtigungsstand es erlauben.
 
-Abgrenzung: Bücher bleiben in der Bibliothek, Aufnahmen in Aufnahmen, Notizbuch bleibt eigenes Modul. Projekte
-verweisen auf Ablage-Einträge, sie kopieren sie nicht.
+Abgrenzung: Bücher bleiben in der Bibliothek, Aufnahmen in Aufnahmen, das Notizbuch bleibt eigenes Modul. Projekte
+verweisen auf Ablage-Einträge, sie kopieren sie nicht. Vorschau: `apps/local-voice/docs/vorschau/ablage-d1/`.
 
 ## 2 Datenordner (Desktop)
 
 ```
 <Datenordner>/ablage/
   ablage.json            Journal + Baum (Version, Epoche)
-  dateien/<datei-id>/<fassung>.<ext>    Originale, unveränderlich
-  text/<datei-id>/<fassung>.txt         Textfassung (UTF-8, Marken siehe §4)
+  dateien/<dat>/<fas>.<ext>             Originale, unveränderlich
+  text/<dat>/<textrev>.json             Textfassung (Markenformat v1, §4.2)
   papierkorb/            30 Tage, Wiederherstellen
-  index.db               abgeleitet (wai-retrieval), löschbar, nie exportiert
+  index.db               abgeleitet (wai-retrieval), löschbar, nie exportiert, nie synchronisiert
+  freigabe.json          gerätelokal: KI-Freigaben, Cloud-Ausnahmen (§5.1)
   verknuepft.json        gerätelokal: verknüpfte Ordner (§8)
 ```
 
-IDs: `ord_<ULID>`, `dat_<ULID>`. Namen nach P4 §4.4 (Windows-reservierte Namen, Groß/Klein, `..`, Verknüpfungen).
-Ablauf jeder Ablage wie P4a `dateien.rs`: `.teil-<id>` (create_new) → Größe + SHA-256 → ohne Ersetzen umbenennen →
-Journal `abgelegt` → Baum. Wiederanlauf, „Bestand neu aufbauen“, Lesefehler ≠ leer.
+IDs: `ord_<ULID>`, `dat_<ULID>`, `fas_<ULID>`. Namen nach P4 §4.4 (Windows-reservierte Namen, Groß/Klein, `..`).
+Jede Ablage wie P4a `dateien.rs`: `.teil-<id>` (create_new) → Größe + SHA-256 → ohne Ersetzen umbenennen → Journal
+`abgelegt` → Baum. Wiederanlauf, „Bestand neu aufbauen“, Lesefehler ≠ leer. Öffnen ohne Folgen von Verknüpfungen
+(ADR-0029 E9), Ziel immer unter `ablage/`.
 
-### 2.1 Datensatz `ablage_datei`
+### 2.1 Datensatz `ablage_datei` (synchronisiert)
 
 ```json
 {
-  "id": "dat_…", "ordner": "ord_…", "name": "Angebot 2026.pdf", "typ": "pdf",
+  "id": "dat_…", "ordner": {"wert": "ord_…", "zaehler": 7, "geraet": "g_…"},
+  "name": {"wert": "Angebot 2026.pdf", "zaehler": 3, "geraet": "g_…"},
+  "klasse_min": {"wert": "confidential", "zaehler": 1, "geraet": "g_…"},
+  "nur_geraet_min": false,
   "fassungen": [
-    {"n": 1, "blob": "<64 hex>", "size": 812345, "sha256": "<hex>", "geraet": "<id>", "zeit": 1762600000000,
-     "text": {"blob": "<64 hex>", "size": 40211, "stand": "ok|kein_text|fehler", "extraktor": "pdf-extract@0.12"}}
+    {"fas": "fas_…", "vorgaenger": null, "blob": "<64 hex>", "size": 812345, "original_sha256": "<hex>",
+     "typ": "pdf", "geraet": "g_…", "zeit": 1762600000000,
+     "texte": [{"textrev": "<hex>", "blob": "<64 hex>", "size": 40211, "extraktor": "pdf-extract",
+                "extraktor_version": "0.12.0", "marken_version": 1, "stand": "ok|kein_text|fehler"}]}
   ],
-  "aktuell": 1, "konflikt": [], "geloescht": null, "updated": 1762600000000
+  "wahl": {"fas": "fas_…", "zaehler": 4, "geraet": "g_…"},
+  "entfernt": ["fas_…"],
+  "papierkorb": {"wert": null, "zaehler": 0, "geraet": "g_…"}
 }
 ```
 
-### 2.2 Datensatz `ablage_ordner`
+Zusammenführen (ADR-0029 E4): Register nach höherem `(zaehler, geraet)`; `fassungen` vereinigt nach `fas`, ohne die
+IDs in `entfernt`; `entfernt` und `texte` vereinigt; Köpfe = Fassungen ohne Nachfolger; mehr als ein Kopf = Konflikt;
+`wahl` gilt nur, wenn sie auf einen Kopf zeigt. `zaehler` = größter am Gerät bekannter Wert + 1 (Lamport).
+
+### 2.2 Datensatz `ablage_ordner` (synchronisiert)
 
 ```json
-{"id": "ord_…", "eltern": "ord_…|null", "name": "Verträge", "datenklasse": "internal|public|confidential|personal|erbt",
- "nur_geraet": false, "ki": "erbt|an|aus", "zielordner_ki": false, "geloescht": null, "updated": 1762600000000}
+{"id": "ord_…", "eltern": {"wert": "ord_…|null", "zaehler": 2, "geraet": "g_…"},
+ "name": {"wert": "Verträge", "zaehler": 1, "geraet": "g_…"},
+ "datenklasse": {"wert": "erbt|public|internal|confidential|personal", "zaehler": 1, "geraet": "g_…"},
+ "nur_geraet": {"wert": false, "zaehler": 1, "geraet": "g_…"},
+ "zielordner_ki": {"wert": false, "zaehler": 1, "geraet": "g_…"},
+ "papierkorb": {"wert": null, "zaehler": 0, "geraet": "g_…"}}
 ```
 
-`ki` ist **gerätelokal** in `ablage/freigabe.json` (wie `kontext.json` in P4a), nicht im Sync, bis P6 eine
-geräteübergreifende Widerrufsgarantie liefert. Fehlender Stand = aus. Ein Unterordner mit `aus` gewinnt.
+Kein `ki`-Feld: Freigaben sind gerätelokal (§5.1). Zyklen nach dem Zusammenführen: das Register `eltern` mit dem
+niedrigeren Paar wird verworfen. Elternordner begraben: Ordner erscheint unter „Wiederhergestellt“. Unbekannter
+Klassenwert: wie `gesperrt` bis zur Neuwahl. Unterordner und Dateien dürfen nur gleich oder höher einstufen; eine
+niedrigere gespeicherte Klasse wird auf die geerbte angehoben (nie umgekehrt).
 
-## 3 Oberfläche (D1, HTML-Vorschau an Codex vor dem Bau)
+## 3 Oberfläche (D1)
 
-- Leiste: neuer Eintrag „Ablage“ unter Bibliothek (Symbol Ordner-Wolke).
-- Kopf über `Seitenkopf`: Pfad als Brotkrumen, Suche, „Hochladen“, „Neuer Ordner“, Ansicht Liste/Kacheln.
-- Liste: Name, Geändert, Größe, Sync-Zustand (Wolke/Häkchen/Pfeil/Konflikt), KI-Freigabe (Schild), Datenklasse.
-- Rechte Spalte (≥ 1024 px) bzw. Blatt (≤ 768 px): Vorschau (PDF über vorhandenen Viewer, Text/MD, Bild),
-  Fassungen, „Zu Projekt hinzufügen“, „Für KI freigeben“, Details.
-- Drag & Drop aus dem Explorer in Ordner und auf die Liste; Ordner hochladen erhält die Struktur.
-- Leerer Zustand: ein Satz und „Dateien hierher ziehen“. Keine Vorschlagsblasen.
-- Kontingent im Fuß: „4,2 GB von 30 GB“.
-- 390/768/1440/2560 px, hell/dunkel, Ziele ≥ 44 px, Tastatur (Entf = Papierkorb mit Rückgängig, F2 Umbenennen).
+Siehe Vorschau `ablage-d1` (32 Bilder, Maßbelege). Kern:
+- Leiste „Ablage“; Kopf über `Seitenkopf`; Ordnerbaum mit eigenen Ordnern, verknüpften Ordnern (nur lesen), Papierkorb.
+- Liste: Name, Geändert, Größe, KI-Freigabe/Klasse, Sync-Zustand (synchronisiert, lädt hoch, nur Cloud, nur Gerät,
+  Konflikt, „Text wird am PC erstellt“).
+- Details: Vorschau, „Für die KI“ (Zustand an/aus/gesperrt, geerbt von), Klasse, Textfassung, Fassungen, Projekte.
+- Drag & Drop, Ordner hochladen mit Struktur, Namenskollision → „neue Fassung“ oder „beide behalten“.
+- Konflikt: beide Fassungen sichtbar, Wahl; KI nutzt bis dahin die gemeinsame Vorgängerfassung.
+- Leer: ein Satz, keine Vorschlagsblasen. Kontingent im Fuß. 390/768/1440/2560 px, hell/dunkel, Ziele ≥ 44 px.
+- Bestätigungsdialoge: sync → nur dieses Gerät („Kopien auf anderen Geräten und in der Cloud werden entfernt“),
+  nur dieses Gerät → sync, Cloud-Ausnahme für `confidential`, endgültig löschen.
 
 ## 4 Textfassung und Index (D2)
 
-- Extraktoren: PDF `pdf-extract` (vorhanden), DOCX/PPTX/ODT/ODP per `zip` + `quick-xml`, XLSX/ODS `calamine`
-  (MIT/Apache, neu), TXT/MD/CSV/HTML (Tags entfernt), EML (Kopf + Text, Anhänge als eigene Dateien angeboten).
-- Marken in der Textfassung: Zeilen `\f<seite>` für Seitenwechsel, Absätze mit `\n\n`; Offsets UTF-16 wie im Reader.
-- Extraktion im Hintergrund (Warteschlange, ein Kern, abbrechbar), Fehler sichtbar am Eintrag, nie Inhalt im Log.
-- `index.db` über vendortes `wai-retrieval`: ein Eintrag je (Datei, aktuelle Fassung, Stück ≈ 220 Zeichen mit
-  Überlappung), Felder für Ordnerpfad (als IDs), Datenklasse, Freigabe-Epoche. Filter in SQL vor dem Ranking.
-- Suche in der Ablage (ohne KI): Treffer mit Auszug und Sprung an die Stelle.
-- Neuaufbau, wenn Extraktor- oder Embedder-Kennung wechselt; Fortschritt sichtbar.
+### 4.1 Extraktion (ADR-0029 E9)
+
+- Extraktoren: PDF `pdf-extract`, DOCX/PPTX/ODT/ODP per `zip` + `quick-xml` (DOCTYPE abgewiesen, keine Entitäten),
+  XLSX/ODS `calamine` (MIT/Apache, neu), TXT/MD/CSV, HTML (ohne Skripte/Nachladen), EML (Kopf + Textteile; Anhänge
+  werden als eigene Dateien angeboten, nie still aufgenommen).
+- Eigener Unterprozess `lva-extrakt` über `process_guard` (Windows Job-Objekt mit Speichergrenze, Unix Prozessgruppe +
+  `RLIMIT_AS`): 60 s, 1 GiB, ZIP ≤ 10 000 Einträge, ≤ 200 MiB entpackt, Verhältnis ≤ 100:1, kein Netz.
+- Eingabe ist ausschließlich die abgelegte Fassung; Prozess prüft `original_sha256` vor dem Lesen und gibt ihn mit aus.
+- Warteschlange im Hintergrund (ein Kern, abbrechbar). Fehler sichtbar am Eintrag; nie Inhalt im Log.
+
+### 4.2 Markenformat v1
+
+```json
+{"marken_version": 1, "textrev": "<hex>", "original_sha256": "<hex>", "extraktor": "…", "extraktor_version": "…",
+ "abschnitte": [{"anker": "seite=7", "pfad": ["§ 4 Laufzeit"], "text": "…"}]}
+```
+
+Anker je Format: PDF `seite=<n>`; DOCX/ODT `absatz=<n>` + `pfad` (Überschriften); PPTX/ODP `folie=<n>`;
+XLSX/ODS `blatt=<name>&zeilen=<a>-<b>` (Zeilen als `Spalte: Wert`-Text); EML `teil=kopf|text|<n>`; TXT/MD/CSV
+`zeile=<n>`. Neue Extraktorversion = neue `textrev`; alte bleibt bis zum Neuaufbau, Belege darauf zeigen
+„Text wurde neu erstellt“.
+
+### 4.3 Index
+
+- `index.db` über vendortes `wai-retrieval`: Stücke je (`dat`, `fas`, `textrev`, Abschnitt), Startwert 220 Zeichen
+  mit Überlappung (Eval entscheidet). Felder für Ordnerkette (IDs), Klasse, `nur_geraet`, Papierkorb, Stand.
+- Filter in SQL vor dem Ranking: Papierkorb raus, Freigabe nach §5.1, Klasse nach §5.2.
+- Suche in der Ablage (ohne KI): Treffer mit Auszug und Sprung zum Anker. Neuaufbau bei Extraktor-/Embedder-Wechsel.
 
 ## 5 KI-Zugriff (D3, nach #365 P4c)
 
-- **Projekt:** „Zu Projekt hinzufügen“ legt Verweis `wai://lva/ablage/<dat|ord>` an. `projekt_kontext` kennt die Form
-  `auszuege` (Vorgabe für Ablage-Mitglieder): je Frage Top-k (Standard 8) Auszüge aus den eingeschalteten Mitgliedern,
-  mit `[Q<k>]`, Titelmaske und Deep-Link. `volltext` nur ausdrücklich und nur im Token-Budget (sichtbarer Stopp).
-- **Global:** Bereich „Ablage“ in der Freigabe des Assistenten (lva#325), Standard aus, Ordnerbaum mit Schaltern.
-- `stand` = Hash über Freigabe-Epoche/Generation, Fassungen, Datenklassen und die gelieferten Auszüge; vor Versand neu
-  geprüft, verspätete Ergebnisse mit altem Stand verworfen.
-- Datenklasse gegen `datenklasse_max` des Modells; `personal`/`confidential` nur lokal, außer ausdrückliche Freigabe.
-- Auszüge sind unvertrauenswürdig (`als_text` grenzt ab, Herkunftsmarke `dokument:<dat>@<n>`).
-- KI-Entwurf: Werkzeug `ablage_entwurf_anlegen(ordner, name, inhalt_md)` nur in Ordnern mit `zielordner_ki` oder
-  „KI-Entwürfe“; kein Werkzeug zum Überschreiben, Verschieben oder Löschen.
-- Beispiele, die gehen müssen: „Was steht im Angebot von Firma X zur Laufzeit?“ (Beleg mit Seite), „Fasse den Ordner
-  Verträge zusammen“ (Auszüge, Budgetstopp sichtbar), „Lege eine Zusammenfassung als Notiz ab“ (Entwurf).
+### 5.1 Freigaben und Berechtigungsstand
 
-## 6 Sync (D4 Desktop, D5 iPhone)
+- `freigabe.json` gerätelokal (Temp + Umbenennen, Sperre, Epoche/Generation wie P4a `kontext.json`): je Ordner
+  `an|aus|gesperrt`, fehlend = aus, defekt = alles aus. Cloud-Ausnahmen je (Ordner, Anbieter) nur für `confidential`.
+- Globaler Weg (Assistent, lva#325 fragt den D2-Index ab): nur Unterbäume mit `an`.
+- Projektweg: Mitgliedschaftsschalter (P4a); `gesperrt` schließt auf beiden Wegen aus.
+- Berechtigungsstand nach ADR-0029 E6; vor jeder Modellübergabe neu berechnet.
 
-- Hub: Sammlungen `ablage_ordner`, `ablage_datei` (wai-portal-PR analog #19). Blobs wie Bibliothek (3-MiB-Stücke,
-  Blob-Kennung über Kontoschlüssel, AAD mit Index). Reihenfolge: Original-Blob, Text-Blob, dann Objekt.
-- Ordner mit `nur_geraet` und verknüpfte Ordner werden nie übertragen.
-- Empfang: Ordner feldweise nach `updated`; Dateien: Fassungen vereinigt (nach `blob`), `aktuell` vom neueren
-  `updated`; zwei neue Fassungen mit gleichem Vorgänger → `konflikt` (beide sichtbar, Nutzer wählt).
-- Grabstein nur durch „Endgültig löschen“ in der App. Danach Blob-Löschung am Hub, wenn kein anderer Verweis.
-- iPhone: Textfassung sofort, Original bei Bedarf (Einstellung „nur im WLAN“), lexikalischer Index in VoiceCore
-  über die Textfassungen; Assistent-Bereich „Ablage“ wie Desktop.
-- Kontingent: Anzeige aus `GET /api/v1/voice/blobs`; Hochladen stoppt sichtbar bei Überschreitung.
+### 5.2 Datenklasse
 
-## 7 Semantische Suche (D6)
+`public`/`internal`: lokal und freigegebene Cloud-Modelle. `confidential`: lokal, Cloud nur mit Ausnahme + passender
+`datenklasse_max`. `personal`: nur lokal. Unbekannt: kein Abruf.
 
-`multilingual-e5-small` (MIT) als ONNX über das vorhandene `ort`, Download bei Bedarf mit Hash-Prüfung, Hybrid
-per RRF in `wai-retrieval`. Eval-Tor auf synthetischem Korpus (`tools/korpus` bzw. eigener Generator, nur
-`example.*`-Daten): Recall@5 ≥ 0,9; sonst bleibt lexikalisch Standard.
+### 5.3 Form `auszuege`
 
-## 8 Verknüpfte Ordner (D7)
+Je Frage Top-k (Start 8) aus eingeschalteten Mitgliedern bzw. freigegebenen Unterbäumen, mit `[Q<k>]`, maskiertem
+Titel, Anker und Deep-Link `wai://lva/ablage/<dat>?fas=<fas>&textrev=<rev>#<anker>`. Dazu eine **Abdeckungsmeldung**:
+Anzahl Dateien im Bereich, durchsucht, ohne Text, im Konflikt; „kein Beleg“, wenn nichts trägt. `volltext` nur
+ausdrücklich und im Budget, sonst sichtbarer Stopp.
 
-Gerätelokal, nur lesen, nie hochladen. Auswahl über Ordnerdialog, Ausschlüsse (`~$*`, `.tmp`, Systemordner),
-Verknüpfungen außerhalb werden nicht verfolgt, Änderungen per Dateibeobachter mit Entprellung. Datenklasse
-Standard `confidential`. Dazu lokale OCR (Windows.Media.Ocr / Apple Vision) für Bild-PDFs.
+### 5.4 Widerruf im Gesamtprompt
+
+Jeder Auszug trägt `dokument:<dat>@<fas>#<textrev>`. Vor jeder Modellübergabe prüft das Tor alle Auszüge in Verlauf,
+Zusammenfassungen und Auftragszwischenständen; nicht mehr berechtigte werden durch „[Auszug entzogen]“ ersetzt,
+abgeleitete Zusammenfassungen verworfen; geht das nicht, neue Runde ohne alten Verlauf; Anbietersitzung zurücksetzen.
+
+### 5.5 KI-Entwürfe
+
+Einziges schreibendes Werkzeug `ablage_entwurf_anlegen(ordner, name, inhalt_md, quellen)`: neue Datei in
+„KI-Entwürfe“ oder Zielordner mit `zielordner_ki`; Klasse = Maximum aus Zielordner und allen Quellen; `nur_geraet`, wenn
+eine Quelle `nur_geraet` ist (dann Ordner „KI-Entwürfe (nur dieses Gerät)“). Kein Werkzeug zum Überschreiben,
+Verschieben oder Löschen.
+
+### 5.6 Beispiele
+
+„Was steht im Wartungsvertrag zur Laufzeit?“ (Beleg Seite 7) · „Fasse den Ordner Verträge zusammen“ (Auszüge,
+Abdeckung, Budgetstopp sichtbar) · „Lege die Zusammenfassung als Notiz ab“ (Entwurf, Klasse vertraulich).
+
+## 6 Sync (D4a, D4b, D5)
+
+- Hub: Sammlungen `ablage_ordner`, `ablage_datei`; Blobs wie Bibliothek; neu `nutzung_seq`, `touch`, bedingtes
+  Löschen `if_nutzung_seq`, Abweisung von Schreibvorgängen auf begrabene IDs (wai-portal-PR).
+- Reihenfolge je Fassung: Original-Blob (oder `touch`), Text-Blob(s) (D4b), dann Objekt.
+- `nur_geraet`-Unterbäume nie übertragen. Wechsel sync → lokal: lokale Kopie prüfen → Grabstein `lokalisiert` →
+  andere Geräte entfernen Kopien, Texte, Index → bedingte Blob-Löschung.
+- Endgültig löschen: Grabstein; jedes Gerät entfernt Original, Texte, Index, Caches, Miniaturen; Blob-Löschung nur,
+  wenn im vollständig gezogenen Bestand keine lebende Fassung den Blob nutzt, und nur bedingt.
+- Aufbewahrung: Fassung bleibt, wenn Kopf, gewählt, unter den 10 jüngsten oder jünger als 90 Tage; sonst `entfernt`.
+- iPhone (D5): Textfassung sofort, Original bei Bedarf („nur im WLAN“); eigene Importe zeigen „Text wird am PC
+  erstellt“ und sind bis dahin nicht im Abruf; lexikalischer Index in VoiceCore; Assistent-Bereich wie Desktop.
+- Kontingent aus `GET /api/v1/voice/blobs`; Hochladen stoppt sichtbar bei Überschreitung.
+
+## 7 Semantische Suche (D6, nach D2 parallel)
+
+`multilingual-e5-small` (MIT) als ONNX über das vorhandene `ort`, Download bei Bedarf mit Hash-Prüfung, Hybrid per RRF.
+Eval-Tor auf synthetischem Korpus (nur `example.*`): Recall@5 ≥ 0,9, Belegkorrektheit ≥ 0,95, unbeantwortbare Fragen
+≥ 0,9 als „kein Beleg“; sonst bleibt lexikalisch Standard.
+
+## 8 Verknüpfte Ordner und OCR (D7)
+
+Gerätelokal, nur lesen, nie hochladen. Auswahl über Ordnerdialog, Ausschlüsse (`~$*`, `.tmp`, Systemordner), keine
+Verknüpfungen nach außen, Dateibeobachter mit Entprellung. Klasse Vorgabe `confidential`. Extraktion über eine
+geprüfte Momentkopie. Lokale OCR (Windows.Media.Ocr / Apple Vision) für Bild-PDFs und Bilder.
 
 ## 9 Tests (je Stufe)
 
-- D1: Abbruch nach Zwischendatei/Hash → kein Eintrag; `CON.txt`, `..\x`, Groß/Klein-Kollision; Papierkorb +
-  Wiederherstellen; Journal defekt → Lage „unklar“ und „Bestand neu aufbauen“.
-- D2: Extraktor-Fixtures (PDF, DOCX, PPTX, XLSX, MD, EML); Suchtreffer mit korrekter Seite; Neuaufbau idempotent.
-- D3: Kontrolltext in nicht freigegebenem Ordner → 0 Treffer; Freigabe aus mitten im Gespräch → nächster Stand ohne;
-  Injektion im Dokument → 0 ausgeführte Aufrufe; `personal` an Cloud-Modell → abgewiesen.
-- D4: Zwei-Geräte-Konflikt → zwei Fassungen; Grabstein → Index leer auf beiden Geräten; Blob am Hub gelöscht;
-  `nur_geraet` erscheint nie im Hub (Mitschnitt).
-- D5: Swift-Testvektor gegen Rust für Blob-Kennung/AAD; Index-Treffer gleich Desktop für Musterfragen.
+- D1: Abbruch nach Zwischendatei/Hash → kein Eintrag; `CON.txt`, `..\x`, Groß/Klein-Kollision; Verknüpfung/Junction
+  als Ziel oder Quelle → abgewiesen; Papierkorb + Wiederherstellen; Journal defekt → „Bestand neu aufbauen“.
+- D2: Fixtures je Format mit Ankern; ZIP-Bombe, XXE, übergroßes XLSX, Endlos-PDF → Abbruch an der Grenze, App stabil;
+  Extraktorwechsel → neue `textrev`; Suchtreffer mit korrektem Anker; Neuaufbau idempotent.
+- D4a: Zwei-Geräte-Konflikt → zwei Köpfe, `aktuell` nicht per Zeit; Wahl-Rennen (Lamport) deterministisch; Ordner-
+  Verschieberennen ohne Zyklus; Grabstein → Offline-Gerät belebt nichts; Löschen ∥ Upload desselben Blobs → keine
+  lebende Fassung ohne Blob; `nur_geraet` erscheint nie im Hub (Mitschnitt), Wechsel entfernt Cloud-Kopien.
+- D4b: Textfassung kommt mit passender `textrev`; fehlende Textfassung → Wartezustand.
+- D3: Kontrolltext in `aus`/`gesperrt` → 0 Treffer (gesperrt auch bei Projektmitgliedschaft an); Widerruf mitten im
+  Gespräch → 0 widerrufene Auszüge im nächsten Gesamtprompt (Verlauf, Zusammenfassung); Papierkorb → 0 Treffer;
+  `personal` an Cloud → 0 Übermittlungen; `confidential` ohne Ausnahme → abgewiesen; Injektion → 0 Aufrufe;
+  Entwurf aus `personal`-Quelle in `internal`-Ordner → Klasse `personal`.
+- D5: Swift-Testvektor gegen Rust (Blob-Kennung, AAD, `textrev`); Index-Treffer gleich Desktop für Musterfragen.
 
 ## 10 Datenschutz
 
-E2E (Hub ohne Schlüssel), keine Namen/Inhalte in Log/Audit, Datenklasse je Ordner, lokale Modelle als Standard für
-`personal`/`confidential`, Papierkorb- und Fassungsfristen, endgültiges Löschen mit Nachweis (IDs), Hinweis beim
-Einrichten: dienstliche personenbezogene Daten erst nach DSFA. Grenze: lokaler Index liegt im App-Datenordner,
-Schutz über Geräteverschlüsselung.
+E2E (Hub ohne Schlüssel), keine Namen/Inhalte in Log/Audit, Datenklasse je Ordner, `personal` nie Cloud, Papierkorb-
+und Fassungsfristen, endgültiges Löschen mit Nachweis (IDs) auf allen Geräten, Hinweis beim Einrichten: dienstliche
+personenbezogene Daten erst nach DSFA. Grenze: lokaler Index im App-Datenordner, Schutz über Geräteverschlüsselung.
 
 ## 11 Abstimmung
 
-- Assistent (ADR-0028, lva#384): Ablage ist eine Quelle hinter `projekt_kontext`; Kontextleiste ＋ → „Aus Ablage“.
+- Assistent (ADR-0028, lva#384): Ablage ist eine Quelle hinter `projekt_kontext`; Kontextleiste ＋ → „Aus Ablage“;
+  Tor prüft Herkunftsmarken im Gesamtprompt.
 - Projekte (lva#365): Verweisart `ablage`, Form `auszuege`; P4c ist Voraussetzung für D3.
+- lva#325: Bereich „Ablage“ fragt den D2-Index ab, kein zweiter RAM-Index.
 - Notizbuch-KI: Notizen bleiben im Notizbuch; „Als Datei ablegen“ ist ein späterer Export, keine Doppelablage.
