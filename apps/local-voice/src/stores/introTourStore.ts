@@ -22,6 +22,9 @@ interface IntroTourState {
   setPendingModel: (id: string | null) => void;
   setFailedModel: (id: string | null) => void;
   requestPicker: (requested: boolean) => void;
+  /** lva#394 C2: Nach „Loslegen“ übernimmt die Führung im Chat. */
+  chatGuidePending: boolean;
+  setChatGuidePending: (pending: boolean) => void;
 }
 
 const SEEN_KEY = "lva.introTour.seen";
@@ -58,4 +61,6 @@ export const useIntroTourStore = create<IntroTourState>()((set) => ({
   setPendingModel: (pendingModelId) => set({ pendingModelId }),
   setFailedModel: (failedModelId) => set({ failedModelId }),
   requestPicker: (pickerRequested) => set({ pickerRequested }),
+  chatGuidePending: false,
+  setChatGuidePending: (chatGuidePending) => set({ chatGuidePending }),
 }));

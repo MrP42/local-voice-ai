@@ -7361,6 +7361,31 @@
       "wai": "Wolff Applied AI: Navy im hellen, Signalgelb im dunklen Modus."
     }
   },
+  "chatGuide": {
+    "title": "Einführung im Chat",
+    "count": "{{n}} von {{total}}",
+    "voice": "Mit Sprache",
+    "skip": "Überspringen",
+    "back": "Zurück",
+    "next": "Weiter",
+    "step": {
+      "welcome": "Hallo! Ich bin dein Assistent in Local Voice. Ich zeige dir in einer Minute, was hier geht. Du kannst jederzeit überspringen.",
+      "talk": "Mit diesem Knopf sprichst du mit mir wie am Telefon. Du kannst mich jederzeit unterbrechen. Oder du schreibst einfach in die Zeile.",
+      "plus": "Mit dem Plus holst du dir Kontext dazu: eine Datei, eine Recherche im Web und mehr.",
+      "model": "Hier oben wählst du das Modell: lokal auf deinem Rechner oder in der Cloud, schnell oder gründlich.",
+      "knowledge": "Hier siehst du jederzeit, welche Daten ich nutzen darf. Besprechungen, Bücher und Notizen gibst du einzeln frei.",
+      "pages": "Links findest du alles Weitere: Verlauf, Aufnahmen deiner Besprechungen, Vorlesen und deine Bibliothek. Frag mich auch einfach danach.",
+      "story": "Zum Schluss probieren wir etwas aus: Ich erfinde eine kurze Geschichte und lese sie mit mehreren Stimmen vor. Worum soll es gehen?"
+    },
+    "story": {
+      "topic": "Thema der Geschichte",
+      "defaultTopic": "Ein kleiner Drache, der nicht schlafen kann",
+      "go": "Geschichte erzählen",
+      "display": "Erzähl mir eine Geschichte: {{topic}}",
+      "readVoices": "Mit Stimmen vorlesen",
+      "stop": "Vorlesen beenden"
+    }
+  },
   "voiceCall": {
     "tool": {
       "generic": "Nutze das Werkzeug „{{name}}“ …",
