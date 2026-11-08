@@ -2920,4 +2920,118 @@ mod tests {
         assert!(!voice_remote_wins(local, r#"{"updated":15}"#));
         assert!(voice_remote_wins(local, r#"{"updated":30}"#));
     }
+
+    /// Seiten auf der Platte, aufgelöst wie `page_path` (Index, Fundortkarte, Journal).
+    struct DiskPages(PathBuf);
+    impl DiskPages {
+        fn data(&self) -> PathBuf {
+            self.0.parent().unwrap().to_path_buf()
+        }
+        fn ort(&self, page_id: &str) -> Option<PathBuf> {
+            let data = self.data();
+            let index_buch = crate::library_layout::index_buch(&data, page_id).ok()?;
+            let karte = crate::library_layout::Fundortkarte::aufbauen(&data);
+            match crate::library_layout::aufloesen(&data, page_id, index_buch.as_deref(), &karte) {
+                Ok(crate::library_layout::Aufloesung::Gefunden(p)) => Some(p),
+                _ => None,
+            }
+        }
+    }
+    impl Host for DiskPages {
+        fn root(&self) -> Result<PathBuf, String> {
+            Ok(self.0.clone())
+        }
+        fn text(&self, page_id: &str) -> Option<String> {
+            let raw = std::fs::read(self.ort(page_id)?.join("state.json")).ok()?;
+            let v: Value = serde_json::from_slice(&raw).ok()?;
+            v["text"].as_str().map(str::to_owned)
+        }
+        fn valid(&self, page_id: &str) -> bool {
+            crate::library_layout::gueltige_seite(page_id)
+        }
+        fn exists(&self, page_id: &str) -> Result<bool, String> {
+            Ok(self.ort(page_id).is_some())
+        }
+        fn create(&mut self, page_id: &str, _page: &Value) -> Result<(), String> {
+            Err(format!("unerwartet angelegt: {page_id}"))
+        }
+    }
+
+    /// lva#365 Spez. 6.1: Der Buch-Datensatz für den Sync ist vor und nach der
+    /// Migration in Buch-Ordner gleich (bis auf `updated`). Die Texte kommen nach
+    /// der Migration über den neuen Seitenort, die Fassungsordner erscheinen nicht
+    /// als Buchdateien.
+    #[test]
+    fn buch_datensatz_ueberlebt_migration_in_buch_ordner() {
+        let key = [6u8; KEY_LEN];
+        let data = cover_tmp();
+        let root = data.join("library");
+        let dir = root.join("book_1");
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut book = two_editions("ed_de");
+        book.id = "book_1".into();
+        for (e, page) in book.editions.iter_mut().zip(["page_1", "page_2"]) {
+            e.text = Some(library::TextVersion {
+                page_id: page.into(),
+                origin: "document".into(),
+                source_name: None,
+            });
+        }
+        library::sync_write_book(&dir, &book).unwrap();
+        std::fs::write(dir.join("cover.png"), b"DE").unwrap();
+        let projects = data.join("projects");
+        for (page, text) in [
+            ("page_1", "Deutsch"),
+            ("page_2", "English"),
+            ("page_9", "lose"),
+        ] {
+            std::fs::create_dir_all(projects.join(page)).unwrap();
+            std::fs::write(
+                projects.join(page).join("state.json"),
+                json!({ "text": text }).to_string(),
+            )
+            .unwrap();
+        }
+        std::fs::write(
+            projects.join("index.json"),
+            json!({ "pages": [
+                { "id": "page_1", "title": "Deutsch" },
+                { "id": "page_2", "title": "English" },
+                { "id": "page_9", "title": "lose" },
+            ] })
+            .to_string(),
+        )
+        .unwrap();
+
+        let host = DiskPages(root.clone());
+        let datensatz = |host: &DiskPages| {
+            let book = library::sync_read_book(&dir).unwrap();
+            let side = read_sidecar(&dir);
+            let mut cache = BTreeMap::new();
+            let built =
+                build_book(host, &key, &dir, &book, &side, &mut cache, &mut u64::MAX).unwrap();
+            let mut core = built.core_files;
+            core.as_object_mut().unwrap().remove("updated");
+            core
+        };
+        let vorher = datensatz(&host);
+        assert_eq!(host.text("page_2").as_deref(), Some("English"));
+
+        fn frei(_: &Path) -> Option<u64> {
+            None
+        }
+        let optionen = crate::library_layout::Optionen {
+            platz_frei: &frei,
+            nach_sicherung: None,
+        };
+        let bericht = crate::library_layout::migrieren(&data, &optionen).unwrap();
+        assert!(!bericht.angehalten, "{:?}", bericht.probleme);
+        assert!(dir.join("fassungen/page_1/state.json").is_file());
+        assert!(!projects.join("page_2").exists());
+        assert_eq!(host.text("page_2").as_deref(), Some("English"));
+
+        let nachher = datensatz(&host);
+        assert_eq!(vorher, nachher);
+        let _ = std::fs::remove_dir_all(&data);
+    }
 }
