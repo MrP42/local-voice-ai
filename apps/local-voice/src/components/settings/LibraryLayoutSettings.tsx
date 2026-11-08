@@ -1,11 +1,14 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   commands,
   type LibraryBackup,
   type LibraryLayoutProblem,
   type LibraryLayoutStatus,
+  type LibrarySyncCheck,
 } from "@/bindings";
 import { SettingContainer } from "../ui/SettingContainer";
 import { Button } from "../ui/Button";
@@ -19,8 +22,11 @@ import { formatBytes } from "@/lib/library/remove";
  * Zeigt, ob die Bücher schon in ihren Buch-Ordnern liegen, bietet das Neu-ordnen
  * (Dialog nach Vorschau 05-migration) und die Rückkehr zur alten Ordnung an,
  * meldet einen angehaltenen Lauf (06-migfehler) und listet die Sicherungen mit
- * Zurückspielen und – nach 30 Tagen – Löschen. Lehnt das Laufwerk ein sicheres
- * Zurückspielen ab (kein Ordner-Sync), erklärt es das verständlich (lva#371).
+ * Zurückspielen und – nach 30 Tagen – Löschen. Vor dem Zurückspielen wird das
+ * Laufwerk geprüft (tatsächliches Sync-Ergebnis, lva#371): Kann es nicht sicher
+ * schreiben, erklärt der Dialog das und bietet Auswege an – Sicherung in einen
+ * neuen Ordner exportieren, Datenordner verschieben oder ausdrücklich ohne Schutz
+ * bei Absturz zurückspielen.
  */
 
 type Pending =
@@ -30,19 +36,27 @@ type Pending =
   | { kind: "delete"; backup: LibraryBackup };
 
 type Notice =
-  | { kind: "success"; text: string }
+  | { kind: "success"; text: string; warn?: string }
   | { kind: "error"; text: string }
-  | { kind: "noSync" };
+  | { kind: "noSync"; backup?: LibraryBackup };
 
-/** Fehlertexte des Kerns, wenn das Laufwerk nicht dauerhaft sichern kann. */
+/**
+ * Fehlertext des Kerns, wenn das Dateisystem Sync nicht kennt (nicht: ein
+ * anderer Fehler beim Sichern, der bleibt eine gewöhnliche Fehlermeldung).
+ */
 const isNoSync = (error: string) =>
-  error.includes("nicht dauerhaft sichern") ||
-  error.includes("ließ sich nicht dauerhaft sichern");
+  error.includes("lässt sich auf diesem Dateisystem nicht dauerhaft sichern");
+/** Kern-Text `ANDERER_ZUGANG` (library_layout.rs): übersetzbar anzeigen. */
+const isOtherAccess = (error: string) =>
+  error.includes("liegt auf einem anderen Zugang als der Datenordner");
 
 /** Phasen, in denen eine Neuordnung offen ist (Spec 4.3). */
 const OPEN_PHASES = new Set(["geplant", "gesichert", "rueckfall"]);
 /** Touch-Ziel ≥ 44 px auf schmalen und groben Zeigegeräten. */
 const TOUCH = "max-sm:min-h-[44px] pointer-coarse:min-h-[44px]";
+/** Anleitung „Datenordner auf ein lokales Laufwerk umziehen“ (lva#371). */
+const MOVE_GUIDE_URL =
+  "https://github.com/MrP42/local-voice-ai/blob/main/docs/DATENORDNER.md";
 
 export const LibraryLayoutSettings: React.FC<{ grouped?: boolean }> = ({
   grouped = true,
@@ -56,6 +70,37 @@ export const LibraryLayoutSettings: React.FC<{ grouped?: boolean }> = ({
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [problems, setProblems] = useState<LibraryLayoutProblem[]>([]);
+  // Prüfung des Laufwerks für den offenen Zurückspielen-Dialog (lva#371).
+  const [syncCheck, setSyncCheck] = useState<LibrarySyncCheck | null>(null);
+  const [bestEffort, setBestEffort] = useState(false);
+  const restoreName = pending?.kind === "restore" ? pending.backup.name : null;
+
+  useEffect(() => {
+    setSyncCheck(null);
+    setBestEffort(false);
+    if (!restoreName) return;
+    let current = true;
+    void commands.libraryBackupSyncCheck().then((r) => {
+      if (!current) return;
+      setSyncCheck(
+        r.status === "ok" ? r.data : { ergebnis: "fehler", meldung: r.error },
+      );
+    });
+    return () => {
+      current = false;
+    };
+  }, [restoreName]);
+
+  // Ohne Ordner-Sync ist Best-Effort wählbar; ohne Datei-Sync nie (lva#371).
+  const noFileSync = syncCheck?.ergebnis === "datei_nicht_unterstuetzt";
+  const noDirSync = syncCheck?.ergebnis === "nicht_unterstuetzt";
+  const noSyncDrive = noDirSync || noFileSync;
+  const restoreBlocked =
+    pending?.kind === "restore" &&
+    (syncCheck == null ||
+      syncCheck.ergebnis === "fehler" ||
+      noFileSync ||
+      (noDirSync && !bestEffort));
 
   const load = useCallback(async () => {
     const [s, b] = await Promise.all([
@@ -86,10 +131,10 @@ export const LibraryLayoutSettings: React.FC<{ grouped?: boolean }> = ({
     });
   const size = (bytes: number) => formatBytes(bytes, locale);
 
-  const fail = (error: string) =>
+  const fail = (error: string, backup?: LibraryBackup) =>
     setNotice(
       isNoSync(error)
-        ? { kind: "noSync" }
+        ? { kind: "noSync", backup }
         : {
             kind: "error",
             text: t("settings.app.libraryLayout.failed", { error }),
@@ -126,9 +171,11 @@ export const LibraryLayoutSettings: React.FC<{ grouped?: boolean }> = ({
           }
         }
       } else if (job.kind === "restore") {
-        const r = await commands.libraryBackupRestore(job.backup.name);
+        const r = bestEffort
+          ? await commands.libraryBackupRestoreBestEffort(job.backup.name)
+          : await commands.libraryBackupRestore(job.backup.name);
         if (r.status === "error") {
-          fail(r.error);
+          fail(r.error, job.backup);
         } else {
           const restored = t("settings.app.libraryLayout.restored", {
             count: r.data.dateien,
@@ -155,6 +202,57 @@ export const LibraryLayoutSettings: React.FC<{ grouped?: boolean }> = ({
       setBusy(false);
       setPending(null);
       void load();
+    }
+  };
+
+  // Ausweg (lva#371): die Sicherung in einen neuen Ordner kopieren und prüfen.
+  const exportBackup = async (backup: LibraryBackup) => {
+    if (running.current) return;
+    // Vor dem Ordnerdialog sperren: kein zweiter Dialog, kein paralleler Lauf.
+    running.current = true;
+    setBusy(true);
+    let finished = false;
+    try {
+      const target = await openDialog({
+        directory: true,
+        multiple: false,
+        title: t("settings.app.libraryLayout.exportTitle"),
+      });
+      if (typeof target !== "string") return;
+      const r = await commands.libraryBackupExport(backup.name, target);
+      finished = true;
+      if (r.status === "error") {
+        setNotice({
+          kind: "error",
+          text: isOtherAccess(r.error)
+            ? t("settings.app.libraryLayout.exportOtherAccess")
+            : t("settings.app.libraryLayout.failed", { error: r.error }),
+        });
+      } else {
+        setNotice({
+          kind: "success",
+          text: t("settings.app.libraryLayout.exported", {
+            count: r.data.dateien,
+            path: r.data.ordner,
+          }),
+          warn:
+            [
+              r.data.dauerhaft
+                ? ""
+                : t("settings.app.libraryLayout.exportedNotDurable"),
+              r.data.ziel_vollstaendig_geprueft
+                ? ""
+                : t("settings.app.libraryLayout.exportedPartlyChecked"),
+            ]
+              .filter(Boolean)
+              .join(" ") || undefined,
+        });
+      }
+    } finally {
+      running.current = false;
+      setBusy(false);
+      // Abgebrochene Ordnerwahl: der Dialog bleibt offen.
+      if (finished) setPending(null);
     }
   };
 
@@ -218,8 +316,11 @@ export const LibraryLayoutSettings: React.FC<{ grouped?: boolean }> = ({
             </Alert>
           )}
           {notice?.kind === "success" && (
-            <Alert variant="success" contained>
-              {notice.text}
+            <Alert variant={notice.warn ? "warning" : "success"} contained>
+              <p data-testid="library-layout-success">{notice.text}</p>
+              {notice.warn && (
+                <p className="mt-1 font-semibold">{notice.warn}</p>
+              )}
             </Alert>
           )}
           {notice?.kind === "error" && (
@@ -233,14 +334,39 @@ export const LibraryLayoutSettings: React.FC<{ grouped?: boolean }> = ({
                 {t("settings.app.libraryLayout.noSyncTitle")}
               </p>
               <p>{t("settings.app.libraryLayout.noSyncText")}</p>
-              <Button
-                variant="secondary"
-                size="sm"
-                className={`mt-2 ${TOUCH}`}
-                onClick={() => void commands.openAppDataDir()}
-              >
-                {t("settings.app.libraryLayout.openDataDir")}
-              </Button>
+              <p>{t("settings.app.libraryLayout.noSyncWays")}</p>
+              <p>{t("settings.app.libraryLayout.moveDataDir")}</p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {notice.backup && (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className={TOUCH}
+                    disabled={busy}
+                    onClick={() =>
+                      notice.backup && void exportBackup(notice.backup)
+                    }
+                  >
+                    {t("settings.app.libraryLayout.exportBackup")}
+                  </Button>
+                )}
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className={TOUCH}
+                  onClick={() => void commands.openAppDataDir()}
+                >
+                  {t("settings.app.libraryLayout.openDataDir")}
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className={TOUCH}
+                  onClick={() => void openUrl(MOVE_GUIDE_URL)}
+                >
+                  {t("settings.app.libraryLayout.moveGuide")}
+                </Button>
+              </div>
             </Alert>
           )}
           <div className="flex flex-wrap gap-2">
@@ -355,9 +481,10 @@ export const LibraryLayoutSettings: React.FC<{ grouped?: boolean }> = ({
         closeLabel={t("settings.app.libraryLayout.close")}
         className="max-w-lg"
         footer={
-          <div className="flex justify-end gap-2">
+          <div className="flex flex-wrap justify-end gap-2">
             <Button
               variant="secondary"
+              className={TOUCH}
               disabled={busy}
               onClick={() => setPending(null)}
             >
@@ -365,13 +492,20 @@ export const LibraryLayoutSettings: React.FC<{ grouped?: boolean }> = ({
             </Button>
             <Button
               variant={pending?.kind === "delete" ? "danger" : "primary"}
-              disabled={busy || (pending?.kind === "migrate" && noSpace)}
+              className={TOUCH}
+              disabled={
+                busy ||
+                (pending?.kind === "migrate" && noSpace) ||
+                restoreBlocked
+              }
               onClick={() => void run()}
               data-testid="library-layout-apply"
             >
               {busy
                 ? t("settings.app.libraryLayout.running")
-                : applyLabel(pending, t)}
+                : pending?.kind === "restore" && noDirSync && bestEffort
+                  ? t("settings.app.libraryLayout.bestEffortApply")
+                  : applyLabel(pending, t)}
             </Button>
           </div>
         }
@@ -407,7 +541,88 @@ export const LibraryLayoutSettings: React.FC<{ grouped?: boolean }> = ({
             <p>{t("settings.app.libraryLayout.rollbackText")}</p>
           )}
           {pending?.kind === "restore" && (
-            <p>{t("settings.app.libraryLayout.restoreText")}</p>
+            <>
+              <p>{t("settings.app.libraryLayout.restoreText")}</p>
+              {syncCheck == null && (
+                <p data-testid="library-restore-checking">
+                  {t("settings.app.libraryLayout.checking")}
+                </p>
+              )}
+              {syncCheck?.ergebnis === "fehler" && (
+                <Alert variant="error" contained>
+                  {t("settings.app.libraryLayout.checkFailed", {
+                    error: syncCheck.meldung ?? "",
+                  })}
+                </Alert>
+              )}
+              {noSyncDrive && (
+                <Alert variant="warning" contained>
+                  <p
+                    className="font-semibold"
+                    data-testid="library-restore-nosync"
+                  >
+                    {t(
+                      noFileSync
+                        ? "settings.app.libraryLayout.noFileSyncTitle"
+                        : "settings.app.libraryLayout.noSyncTitle",
+                    )}
+                  </p>
+                  <p>{t("settings.app.libraryLayout.noSyncWays")}</p>
+                  <p>{t("settings.app.libraryLayout.moveDataDir")}</p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      className={TOUCH}
+                      disabled={busy}
+                      onClick={() => void exportBackup(pending.backup)}
+                      data-testid="library-restore-export"
+                    >
+                      {t("settings.app.libraryLayout.exportBackup")}
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      className={TOUCH}
+                      onClick={() => void commands.openAppDataDir()}
+                    >
+                      {t("settings.app.libraryLayout.openDataDir")}
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      className={TOUCH}
+                      onClick={() => void openUrl(MOVE_GUIDE_URL)}
+                      data-testid="library-restore-guide"
+                    >
+                      {t("settings.app.libraryLayout.moveGuide")}
+                    </Button>
+                  </div>
+                  {noDirSync && (
+                    <label
+                      className={`mt-3 flex items-start gap-2 ${TOUCH}`}
+                      data-testid="library-restore-besteffort"
+                    >
+                      <input
+                        type="checkbox"
+                        className="mt-1"
+                        checked={bestEffort}
+                        disabled={busy}
+                        onChange={(e) => setBestEffort(e.target.checked)}
+                      />
+                      <span>
+                        <span className="font-semibold">
+                          {t("settings.app.libraryLayout.bestEffortLabel")}
+                        </span>
+                        <span className="block">
+                          {t("settings.app.libraryLayout.bestEffortWarning")}
+                        </span>
+                      </span>
+                    </label>
+                  )}
+                </Alert>
+              )}
+            </>
           )}
           {pending?.kind === "delete" && (
             <p>{t("settings.app.libraryLayout.deleteText")}</p>

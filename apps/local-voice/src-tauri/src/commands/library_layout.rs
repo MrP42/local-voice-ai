@@ -409,6 +409,98 @@ pub async fn library_backup_restore(
     })
 }
 
+/// Was das Laufwerk des Datenordners beim Sichern tatsächlich kann (lva#371).
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct LibrarySyncCheck {
+    /// `ok`, `nicht_unterstuetzt` (Ordner-Sync), `datei_nicht_unterstuetzt` oder `fehler`.
+    pub ergebnis: String,
+    /// Bei `fehler`: die Ursache.
+    pub meldung: Option<String>,
+}
+
+/// Vor dem Zurückspielen: kann das Laufwerk sicher schreiben? Entscheidet nach dem
+/// tatsächlichen Sync-Ergebnis (Prüfordner unter `sicherungen/`), nicht nach der Art
+/// des Laufwerks.
+#[tauri::command]
+#[specta::specta]
+pub async fn library_backup_sync_check(app: AppHandle) -> Result<LibrarySyncCheck, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let data = pages::data_root(&app)?;
+        let f = library_layout::sync_pruefen(&data);
+        Ok(LibrarySyncCheck {
+            ergebnis: f.name().to_string(),
+            meldung: match f {
+                library_layout::SyncFaehigkeit::Fehler(m) => Some(m),
+                _ => None,
+            },
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Sicherung zurückspielen im ausdrücklich gewählten Best-Effort-Modus (lva#371):
+/// ein Laufwerk ohne Ordner-Sync hält den Lauf nicht an. Rückfallkopien bleiben.
+#[tauri::command]
+#[specta::specta]
+pub async fn library_backup_restore_best_effort(
+    app: AppHandle,
+    engine: State<'_, SyncEngine>,
+    name: String,
+) -> Result<LibraryBackupRestore, String> {
+    hintergrund(&engine)?;
+    let _run = engine.account_guard().await;
+    hintergrund(&engine)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        gesperrt(&app, |data| {
+            library_layout::sicherung_zurueckspielen_nachsichtig(data, &name, freier_platz(data))
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map(|w| LibraryBackupRestore {
+        dateien: w.dateien as u32,
+        papierkorb: w.papierkorb,
+    })
+}
+
+/// Ergebnis von „Sicherung exportieren“.
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct LibraryBackupExport {
+    /// Neuer Ordner mit der Sicherung (absolut).
+    pub ordner: String,
+    pub dateien: u32,
+    /// `false`: kopiert und geprüft, aber auch das Ziel sichert nicht dauerhaft.
+    pub dauerhaft: bool,
+    /// `false`: das Ziel liegt nachweislich nicht im Datenordner, aber mindestens ein Glied
+    /// seines Pfads war nur über die Prüfmarke auszuschließen (keine Kennung).
+    pub ziel_vollstaendig_geprueft: bool,
+}
+
+/// Sicherung in einen neuen Ordner unter `ziel` kopieren und prüfen (lva#371). Nur
+/// lesend im Datenordner; die Bibliothekssperre hält ein gleichzeitiges Löschen fern.
+#[tauri::command]
+#[specta::specta]
+pub async fn library_backup_export(
+    app: AppHandle,
+    name: String,
+    ziel: String,
+) -> Result<LibraryBackupExport, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let data = pages::data_root(&app)?;
+        let _library = crate::library::sync_lock();
+        library_layout::sicherung_exportieren(&data, &name, Path::new(&ziel))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map(|e| LibraryBackupExport {
+        ordner: e.ordner.to_string_lossy().into_owned(),
+        dateien: u32::try_from(e.dateien).unwrap_or(u32::MAX),
+        dauerhaft: e.dauerhaft,
+        ziel_vollstaendig_geprueft: e.ziel_vollstaendig_geprueft,
+    })
+}
+
 /// Ein Eintrag der Ansicht „Dateien im Buch-Ordner“.
 #[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct LibraryBookFile {
