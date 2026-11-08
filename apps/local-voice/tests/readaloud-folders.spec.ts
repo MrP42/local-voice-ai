@@ -197,8 +197,10 @@ test.beforeEach(async ({ page }) => {
               const w = window as unknown as {
                 __lvFolderFiles?: unknown[];
                 __lvFolderCalls?: number;
+                __lvFolderFail?: boolean;
               };
               w.__lvFolderCalls = (w.__lvFolderCalls ?? 0) + 1;
+              if (w.__lvFolderFail) throw "Buch-Ordner nicht lesbar";
               return w.__lvFolderFiles ?? [];
             }
             if (
@@ -210,8 +212,11 @@ test.beforeEach(async ({ page }) => {
               const w = window as unknown as {
                 __lvFolderOps?: unknown[];
                 __lvFolderFiles?: { rel: string }[];
+                __lvOpenDelay?: number;
               };
               w.__lvFolderOps = [...(w.__lvFolderOps ?? []), [cmd, args]];
+              if (cmd === "library_book_file_open" && w.__lvOpenDelay)
+                await new Promise((r) => setTimeout(r, w.__lvOpenDelay));
               if (cmd === "library_book_note_create")
                 return `notizen/${String(args?.title)}.md`;
               if (cmd === "library_book_attachments_add")
@@ -1326,6 +1331,42 @@ test("Notizen und Anhänge: Liste, öffnen, Konflikt, noch nicht geladen (lva#36
       ["library_book_file_open", { id: "b1", rel: "notizen/Gedanken.md" }],
     ]);
   await belegP1b(page, "p3b-notizen");
+});
+
+test("Notizen und Anhänge: Doppelklick öffnet einmal, Ladefehler eigener Zustand", async ({
+  page,
+}) => {
+  await page.addInitScript((files) => {
+    Object.assign(window, {
+      __lvFolderFiles: files,
+      __lvOpenDelay: 400,
+      __lvFolderFail: true,
+    });
+  }, FOLDER_FILES);
+  await openReadAloud(page);
+  await openBook(page);
+  const group = notes(page);
+  // Laden gescheitert: Hinweis statt „Noch keine Notizen“, Neuladen hilft.
+  await expect(group.getByTestId("book-notes-error")).toContainText(
+    "konnten nicht geladen werden",
+  );
+  await expect(group.getByText("Noch keine Notizen")).toHaveCount(0);
+  await page.evaluate(() => Object.assign(window, { __lvFolderFail: false }));
+  await group.getByRole("button", { name: "Erneut laden" }).click();
+  await expect(group.getByTestId("book-notes-error")).toHaveCount(0);
+  const rowsIn = group.getByTestId("book-file");
+  await expect(rowsIn).toHaveCount(3);
+  // Doppelklick, solange das Öffnen läuft: nur ein Aufruf.
+  await rowsIn
+    .nth(0)
+    .getByRole("button", { name: /^Gedanken/ })
+    .dblclick();
+  await page.waitForTimeout(600);
+  expect(
+    (await folderOps(page)).filter(
+      (o) => (o as unknown[])[0] === "library_book_file_open",
+    ),
+  ).toHaveLength(1);
 });
 
 test("Notizen und Anhänge: neue Notiz, Anhang, Entfernen nach Rückfrage", async ({

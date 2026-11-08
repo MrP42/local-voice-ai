@@ -1294,6 +1294,8 @@
       "unknownLang": "Sprache unbekannt",
       "groupFiles": "Notizen und Anhänge",
       "noFiles": "Noch keine Notizen oder Anhänge.",
+      "loadError": "Notizen und Anhänge konnten nicht geladen werden.",
+      "reload": "Erneut laden",
       "newNote": "Neue Notiz",
       "noteTitle": "Titel der Notiz",
       "noteCreate": "Anlegen",

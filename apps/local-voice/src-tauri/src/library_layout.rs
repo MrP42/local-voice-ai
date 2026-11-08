@@ -4353,7 +4353,7 @@ pub fn bereinigter_name(name: &str) -> Result<String, String> {
 }
 
 /// Vergleichsschlüssel: Unicode-NFC, ohne Beachtung der Groß-/Kleinschreibung.
-fn vergleichsschluessel(name: &str) -> String {
+pub(crate) fn vergleichsschluessel(name: &str) -> String {
     name.nfc()
         .collect::<String>()
         .to_lowercase()

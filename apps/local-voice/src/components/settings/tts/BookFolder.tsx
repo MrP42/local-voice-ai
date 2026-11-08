@@ -1,4 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import {
   AlertTriangle,
@@ -303,9 +309,13 @@ export const BookFolderGroups: React.FC<{
   );
 };
 
-/** Dateien der Gruppe „Notizen und Anhänge“; lädt nach einem Abgleich neu. */
+/**
+ * Dateien der Gruppe „Notizen und Anhänge“; lädt nach einem Abgleich neu. `failed`:
+ * der letzte Ladeversuch scheiterte (eigener Zustand, nicht „keine Dateien“).
+ */
 function useBookFolderFiles(bookId: string) {
   const [files, setFiles] = useState<BookFolderFile[]>([]);
+  const [failed, setFailed] = useState(false);
   const [tick, setTick] = useState(0);
   const reload = useCallback(() => setTick((n) => n + 1), []);
   useEffect(() => {
@@ -320,16 +330,20 @@ function useBookFolderFiles(bookId: string) {
       .libraryBookFolderFiles(bookId)
       .then((r) => {
         if (!alive) return;
-        setFiles(r.status === "ok" && Array.isArray(r.data) ? r.data : []);
+        const ok = r.status === "ok" && Array.isArray(r.data);
+        setFailed(!ok);
+        setFiles(ok ? r.data : []);
       })
       .catch(() => {
-        if (alive) setFiles([]);
+        if (!alive) return;
+        setFailed(true);
+        setFiles([]);
       });
     return () => {
       alive = false;
     };
   }, [bookId, tick]);
-  return { files, reload };
+  return { files, failed, reload };
 }
 
 const ROLE_ICON: Record<string, typeof FileText> = {
@@ -345,7 +359,9 @@ const ROLE_ICON: Record<string, typeof FileText> = {
  */
 export const BookNotesGroup: React.FC<{ bookId: string }> = ({ bookId }) => {
   const { t, i18n } = useTranslation();
-  const { files, reload } = useBookFolderFiles(bookId);
+  const { files, failed, reload } = useBookFolderFiles(bookId);
+  // Je Datei höchstens ein Öffnen gleichzeitig (Doppelklick öffnet nicht zweimal).
+  const opening = useRef(new Set<string>());
   const [naming, setNaming] = useState(false);
   const [title, setTitle] = useState("");
   const [busy, setBusy] = useState(false);
@@ -353,11 +369,17 @@ export const BookNotesGroup: React.FC<{ bookId: string }> = ({ bookId }) => {
     toast.error(t("tts.folders.fileError", { error: String(e) }));
 
   const openFile = async (rel: string) => {
-    const r = await commands.libraryBookFileOpen(bookId, rel).catch((e) => ({
-      status: "error" as const,
-      error: String(e),
-    }));
-    if (r.status === "error") fail(r.error);
+    if (opening.current.has(rel)) return;
+    opening.current.add(rel);
+    try {
+      const r = await commands.libraryBookFileOpen(bookId, rel).catch((e) => ({
+        status: "error" as const,
+        error: String(e),
+      }));
+      if (r.status === "error") fail(r.error);
+    } finally {
+      opening.current.delete(rel);
+    }
   };
 
   const createNote = async () => {
@@ -433,10 +455,33 @@ export const BookNotesGroup: React.FC<{ bookId: string }> = ({ bookId }) => {
       data-testid="book-notes"
     >
       <p className={GROUP_HEAD}>{t("tts.folders.groupFiles")}</p>
-      {files.length === 0 && (
-        <p className="px-2 py-1 text-xs text-text/60">
-          {t("tts.folders.noFiles")}
-        </p>
+      {failed ? (
+        <div
+          role="alert"
+          className="flex flex-wrap items-center gap-2 px-2 py-1 text-xs text-text/80"
+          data-testid="book-notes-error"
+        >
+          <AlertTriangle
+            width={14}
+            height={14}
+            className="shrink-0 text-orange-500"
+            aria-hidden="true"
+          />
+          <span className="min-w-0 flex-1">{t("tts.folders.loadError")}</span>
+          <Button
+            variant="secondary"
+            className="reader-folders__btn min-h-[44px]"
+            onClick={reload}
+          >
+            {t("tts.folders.reload")}
+          </Button>
+        </div>
+      ) : (
+        files.length === 0 && (
+          <p className="px-2 py-1 text-xs text-text/60">
+            {t("tts.folders.noFiles")}
+          </p>
+        )
       )}
       {files.map((f) => {
         const Icon = f.pending
@@ -514,7 +559,6 @@ export const BookNotesGroup: React.FC<{ bookId: string }> = ({ bookId }) => {
           }}
         >
           <input
-            // eslint-disable-next-line jsx-a11y/no-autofocus
             autoFocus
             value={title}
             onChange={(e) => setTitle(e.target.value)}

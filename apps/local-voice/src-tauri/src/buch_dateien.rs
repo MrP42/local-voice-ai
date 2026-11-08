@@ -16,7 +16,7 @@
 //!   Papierkorb (`library/.papierkorb/dateien/<buch>/…`), nie ins Nichts.
 //! - Datensätze mit `v` > [`VERSION`] werden aufbewahrt, aber nie geschrieben.
 
-use crate::library_layout::{bereinigter_name, freier_name, schreibe_atomar};
+use crate::library_layout::{bereinigter_name, freier_name, schreibe_atomar, vergleichsschluessel};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
@@ -234,6 +234,177 @@ fn stat(meta: &fs::Metadata) -> (u64, i64) {
     (meta.len(), mtime)
 }
 
+/// Prüfsumme einer Datei, die sich währenddessen nicht verändert hat (Größe und
+/// Änderungszeit vor und nach dem Lesen gleich), mit den Angaben danach.
+fn sha256_stabil(pfad: &Path) -> Result<(String, fs::Metadata), String> {
+    for _ in 0..3 {
+        let vor = fs::metadata(pfad).map_err(|e| format!("Datei nicht lesbar: {e}"))?;
+        let sha = sha256_datei(pfad)?;
+        let nach = fs::metadata(pfad).map_err(|e| format!("Datei nicht lesbar: {e}"))?;
+        if stat(&vor) == stat(&nach) {
+            return Ok((sha, nach));
+        }
+    }
+    Err("Die Datei ändert sich gerade; der nächste Lauf versucht es erneut.".into())
+}
+
+/// Vergleichsschlüssel eines relativen Pfads: jedes Glied nach NFC und ohne Groß- und
+/// Kleinschreibung. Gleicher Schlüssel heißt: auf manchen Systemen derselbe Ort.
+fn schluessel(rel: &str) -> String {
+    rel.split('/')
+        .map(vergleichsschluessel)
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+/// Bezeichnen `a` und `b` verschieden geschrieben denselben Ort (oder liegen in Ordnern,
+/// die sich nur so unterscheiden)? Entscheidend ist das erste ungleiche Glied.
+fn kollidieren(a: &str, b: &str) -> bool {
+    a.split('/')
+        .zip(b.split('/'))
+        .find(|(x, y)| x != y)
+        .is_some_and(|(x, y)| vergleichsschluessel(x) == vergleichsschluessel(y))
+}
+
+/// Liegt unter dem Buch-Ordner schon ein Glied von `rel`, das nur anders geschrieben ist
+/// (Groß-/Kleinschreibung, Unicode-Form)?
+fn kollision_auf_platte(buch_dir: &Path, rel: &str) -> Result<bool, String> {
+    let mut dir = buch_dir.to_path_buf();
+    for glied in rel.split('/') {
+        let eintraege = match fs::read_dir(&dir) {
+            Ok(e) => e,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(e) => return Err(format!("Ordner nicht lesbar: {e}")),
+        };
+        let gesucht = vergleichsschluessel(glied);
+        let mut genau = false;
+        for eintrag in eintraege {
+            let eintrag = eintrag.map_err(|e| format!("Ordner nicht lesbar: {e}"))?;
+            let name = eintrag.file_name().to_string_lossy().into_owned();
+            if name == glied {
+                genau = true;
+            } else if vergleichsschluessel(&name) == gesucht {
+                return Ok(true);
+            }
+        }
+        if !genau {
+            return Ok(false);
+        }
+        dir.push(glied);
+    }
+    Ok(false)
+}
+
+/// `von` nach `nach` verschieben (gleicher Datenträger), ohne je etwas zu ersetzen: liegt
+/// am Ziel schon etwas, kommt `AlreadyExists` und nichts ist geschehen.
+fn verschieben_ohne_ersetzen(von: &Path, nach: &Path) -> std::io::Result<()> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn MoveFileExW(von: *const u16, nach: *const u16, flags: u32) -> i32;
+        }
+        // Lange Pfade: über die aufgelöste Form (`\\?\…`) gehen.
+        let quelle = fs::canonicalize(von)?;
+        let ziel = match (nach.parent(), nach.file_name()) {
+            (Some(dir), Some(name)) => fs::canonicalize(dir)?.join(name),
+            _ => return Err(std::io::ErrorKind::InvalidInput.into()),
+        };
+        let breit = |p: &Path| -> Vec<u16> { p.as_os_str().encode_wide().chain([0]).collect() };
+        let (a, b) = (breit(&quelle), breit(&ziel));
+        // SAFETY: nullterminierte Zeichenketten, nur gelesen. Flags 0: nie ersetzen, nur
+        // auf demselben Datenträger.
+        if unsafe { MoveFileExW(a.as_ptr(), b.as_ptr(), 0) } != 0 {
+            return Ok(());
+        }
+        Err(std::io::Error::last_os_error())
+    }
+    #[cfg(unix)]
+    {
+        // Eine harte Verknüpfung ersetzt nie; danach den alten Namen entfernen.
+        match fs::hard_link(von, nach) {
+            Ok(()) => {
+                // Bleibt der alte Name stehen, liegt der Inhalt doppelt: kein Verlust.
+                let _ = fs::remove_file(von);
+                return Ok(());
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => return Err(e),
+            // Ordner oder Datenträger ohne harte Verknüpfungen: Umbenennen ohne Ersetzen.
+            Err(_) => {}
+        }
+        umbenennen_ohne_ersetzen(von, nach)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (von, nach);
+        Err(std::io::ErrorKind::Unsupported.into())
+    }
+}
+
+#[cfg(unix)]
+fn umbenennen_ohne_ersetzen(von: &Path, nach: &Path) -> std::io::Result<()> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+    let c = |p: &Path| {
+        CString::new(p.as_os_str().as_bytes())
+            .map_err(|_| std::io::Error::from(std::io::ErrorKind::InvalidInput))
+    };
+    let (a, b) = (c(von)?, c(nach)?);
+    if umbenennen_roh(&a, &b)? == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+fn umbenennen_roh(a: &std::ffi::CStr, b: &std::ffi::CStr) -> std::io::Result<i32> {
+    // SAFETY: nullterminierte Zeichenketten, nur gelesen.
+    Ok(unsafe { libc::renamex_np(a.as_ptr(), b.as_ptr(), libc::RENAME_EXCL) })
+}
+
+#[cfg(any(all(target_os = "linux", target_env = "gnu"), target_os = "android"))]
+fn umbenennen_roh(a: &std::ffi::CStr, b: &std::ffi::CStr) -> std::io::Result<i32> {
+    // SAFETY: nullterminierte Zeichenketten, nur gelesen.
+    Ok(unsafe {
+        libc::renameat2(
+            libc::AT_FDCWD,
+            a.as_ptr(),
+            libc::AT_FDCWD,
+            b.as_ptr(),
+            libc::RENAME_NOREPLACE as _,
+        )
+    })
+}
+
+#[cfg(all(
+    unix,
+    not(any(
+        target_os = "macos",
+        target_os = "ios",
+        all(target_os = "linux", target_env = "gnu"),
+        target_os = "android"
+    ))
+))]
+fn umbenennen_roh(_a: &std::ffi::CStr, _b: &std::ffi::CStr) -> std::io::Result<i32> {
+    Err(std::io::ErrorKind::Unsupported.into())
+}
+
+/// `von` unter einem freien Namen (nach 4.4) in `dir` ablegen, nie ersetzen; taucht der
+/// gewählte Name gleichzeitig auf, wird der nächste versucht. Liefert den Namen.
+fn ablegen_frei(von: &Path, dir: &Path, wunsch: &str) -> Result<String, String> {
+    for _ in 0..50 {
+        let name = freier_name(dir, wunsch)?;
+        match verschieben_ohne_ersetzen(von, &dir.join(&name)) {
+            Ok(()) => return Ok(name),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(format!("Datei nicht ablegbar: {e}")),
+        }
+    }
+    Err("Kein freier Name gefunden".into())
+}
+
 /// Kein Glied von `rel` unter `wurzel` ist eine Verknüpfung; ein fehlendes Glied beendet
 /// die Prüfung.
 fn ohne_verknuepfung(wurzel: &Path, rel: &str) -> Result<(), String> {
@@ -253,20 +424,25 @@ fn ohne_verknuepfung(wurzel: &Path, rel: &str) -> Result<(), String> {
 }
 
 /// Was [`dateien_finden`] sah: die Dateien und die Teilbäume, die es nicht lesen konnte
-/// oder durfte (Verknüpfung, Lesefehler, zu tief). Was darunter im Stand steht, gilt
-/// weiter als vorhanden und wird nie zum Grabstein.
+/// oder durfte (Verknüpfung, Lesefehler, zu tief, fehlender Ordner einer Rolle, Name nicht
+/// abgleichbar, Namenskollision). Was darunter im Stand steht, gilt weiter als vorhanden
+/// und wird nie zum Grabstein. Verglichen wird nach [`schluessel`]: ein anders
+/// geschriebener Eintrag desselben Orts ist ebenso verdeckt.
 #[derive(Default)]
 struct Fund {
     dateien: BTreeMap<String, fs::Metadata>,
     verdeckt: Vec<String>,
+    /// Dateien, die da sind, aber nicht abgeglichen werden (Namenskollision).
+    gehalten: BTreeMap<String, fs::Metadata>,
 }
 
 impl Fund {
     fn verdeckt(&self, rel: &str) -> bool {
+        let k = schluessel(rel);
         self.verdeckt.iter().any(|v| {
-            rel == v
-                || rel
-                    .strip_prefix(v.as_str())
+            let v = schluessel(v);
+            k == v
+                || k.strip_prefix(v.as_str())
                     .is_some_and(|r| r.starts_with('/'))
         })
     }
@@ -300,7 +476,10 @@ fn dateien_finden(buch_dir: &Path, hinweise: &mut Vec<String>) -> Fund {
                 continue;
             }
             if bereinigter_name(&name).ok().as_deref() != Some(name.as_str()) {
+                // Auch eine andere Unicode-Form eines bekannten Namens: der Eintrag im
+                // Stand bleibt stehen.
                 hinweise.push(format!("{kind}: Name wird nicht abgeglichen"));
+                aus.verdeckt.push(kind);
                 continue;
             }
             if meta.is_dir() {
@@ -321,9 +500,42 @@ fn dateien_finden(buch_dir: &Path, hinweise: &mut Vec<String>) -> Fund {
             Ok(m) if m.is_dir() && !m.file_type().is_symlink() => {
                 gehen(&dir, rolle.ordner(), 1, &mut aus, hinweise);
             }
-            // Fehlt der Ordner, ist sein Inhalt gelöscht; alles andere verdeckt ihn.
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            // Ein fehlender Ordner (verschoben, Platzhalter, Laufwerk weg) löscht nichts;
+            // Löschen geht nur Datei für Datei.
             _ => aus.verdeckt.push(rolle.ordner().to_string()),
+        }
+    }
+    // Namen, die sich nur in Groß-/Kleinschreibung oder Unicode-Form unterscheiden (auch
+    // ihre Ordner), wären auf anderen Systemen derselbe Ort: keiner von ihnen wird
+    // abgeglichen, nichts davon wird zum Grabstein.
+    let mut klassen: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for rel in aus.dateien.keys() {
+        let glieder: Vec<&str> = rel.split('/').collect();
+        for i in 2..=glieder.len() {
+            let teil = glieder[..i].join("/");
+            klassen.entry(schluessel(&teil)).or_default().insert(teil);
+        }
+    }
+    for gleich in klassen.into_values().filter(|g| g.len() > 1) {
+        for teil in gleich {
+            hinweise.push(format!(
+                "{teil}: Name unterscheidet sich nur in Groß-/Kleinschreibung oder \
+                 Unicode-Form von einem anderen und wird nicht abgeglichen"
+            ));
+            aus.verdeckt.push(teil);
+        }
+    }
+    if !aus.verdeckt.is_empty() {
+        let verdeckt: Vec<String> = aus
+            .dateien
+            .keys()
+            .filter(|rel| aus.verdeckt(rel))
+            .cloned()
+            .collect();
+        for rel in verdeckt {
+            if let Some(meta) = aus.dateien.remove(&rel) {
+                aus.gehalten.insert(rel, meta);
+            }
         }
     }
     aus
@@ -366,9 +578,29 @@ fn in_papierkorb(buch_dir: &Path, buch: &str, rel: &str) -> Result<(), String> {
         .join(buch)
         .join(ordner);
     fs::create_dir_all(&ziel_dir).map_err(|e| format!("Papierkorb: {e}"))?;
-    let frei = freier_name(&ziel_dir, name)?;
-    fs::rename(buch_dir.join(rel), ziel_dir.join(frei))
-        .map_err(|e| format!("Datei nicht in den Papierkorb gelegt: {e}"))
+    ablegen_frei(&buch_dir.join(rel), &ziel_dir, name)
+        .map(|_| ())
+        .map_err(|e| format!("Nicht in den Papierkorb gelegt: {e}"))
+}
+
+/// Die Datei `quelle` als Konfliktkopie neben `rel` ablegen (Name nach [`konflikt_rel`]),
+/// nie ersetzen. Liefert den relativen Pfad der Kopie.
+fn konflikt_ablegen(
+    buch_dir: &Path,
+    quelle: &Path,
+    rel: &str,
+    wer: &str,
+    stand: &Stand,
+) -> Result<String, String> {
+    for _ in 0..50 {
+        let kopie = konflikt_rel(buch_dir, rel, wer, stand)?;
+        match verschieben_ohne_ersetzen(quelle, &buch_dir.join(&kopie)) {
+            Ok(()) => return Ok(kopie),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(format!("Konfliktkopie nicht anlegbar: {e}")),
+        }
+    }
+    Err("Kein freier Name für eine Konfliktkopie".into())
 }
 
 // ---------------------------------------------------------------------------
@@ -454,6 +686,39 @@ pub fn lokal_aus_stand(buch_dir: &Path, buch: &str, id: &str) -> Result<Option<L
         .find_map(|(rel, e)| lokal_von(buch_dir, buch, rel, e)))
 }
 
+/// Bytes, die ein Lauf für Prüfsummen neu lesen darf. Die erste Datei eines Laufs darf
+/// immer, auch wenn sie größer ist: sonst käme eine große Datei nie an die Reihe.
+#[derive(Debug)]
+pub struct Budget {
+    rest: u64,
+    gelesen: bool,
+}
+
+impl Budget {
+    pub fn neu(rest: u64) -> Self {
+        Budget {
+            rest,
+            gelesen: false,
+        }
+    }
+
+    pub fn rest(&self) -> u64 {
+        self.rest
+    }
+
+    fn nehmen(&mut self, n: u64) -> bool {
+        if n <= self.rest {
+            self.rest -= n;
+        } else if self.gelesen {
+            return false;
+        } else {
+            self.rest = 0;
+        }
+        self.gelesen = true;
+        true
+    }
+}
+
 /// Den Stand eines Buchs fortschreiben und seine Datensätze liefern. Neue und geänderte
 /// Dateien bekommen `updated` (Änderungszeit, mindestens eins mehr als zuvor) und dieses
 /// Gerät; verschwundene werden Grabsteine, Grabsteine über 30 Tage verfallen. `budget`
@@ -464,24 +729,51 @@ pub fn sammeln(
     buch: &str,
     geraet: &str,
     jetzt_ms: f64,
-    budget: &mut u64,
+    budget: &mut Budget,
 ) -> Result<Sammlung, String> {
     let mut stand = stand_laden(buch_dir)?;
     let vorher = serde_json::to_value(&stand).map_err(|e| e.to_string())?;
     let mut aus = Sammlung::default();
     let fund = dateien_finden(buch_dir, &mut aus.hinweise);
     let gefunden = &fund.dateien;
+    // Grabsteine und erwartete Dateien hängen nicht an der Platte; nur lebende Einträge
+    // unter verdeckten Teilbäumen werden zurückgehalten.
     let mut zurueck: BTreeSet<String> = stand
         .dateien
-        .keys()
-        .filter(|rel| !gefunden.contains_key(*rel) && fund.verdeckt(rel))
-        .cloned()
+        .iter()
+        .filter(|(rel, e)| !e.deleted && !e.erwartet && !gefunden.contains_key(*rel))
+        .filter(|(rel, _)| fund.verdeckt(rel))
+        .map(|(rel, _)| rel.clone())
         .collect();
+    zurueck.extend(fund.gehalten.keys().cloned());
+    // Ein Eintrag im Stand, dessen Ort auf der Platte anders geschrieben ist (Groß-/
+    // Kleinschreibung, Unicode-Form, auch eines Ordners): weder Grabstein noch neue Datei.
+    for (rel, e) in &stand.dateien {
+        if e.deleted || gefunden.contains_key(rel) {
+            continue;
+        }
+        let andere: Vec<&String> = gefunden.keys().filter(|g| kollidieren(g, rel)).collect();
+        if andere.is_empty() {
+            continue;
+        }
+        zurueck.insert(rel.clone());
+        for g in andere {
+            if zurueck.insert(g.clone()) {
+                aus.hinweise.push(format!(
+                    "{g}: anders geschrieben als eine bekannte Datei (Groß-/Kleinschreibung \
+                     oder Unicode-Form); wird nicht abgeglichen"
+                ));
+            }
+        }
+    }
 
     for (rel, meta) in gefunden {
         let Some(rolle) = Rolle::aus_pfad(rel) else {
             continue;
         };
+        if zurueck.contains(rel) {
+            continue;
+        }
         let alt = stand.dateien.get(rel).cloned();
         if alt.as_ref().is_some_and(|e| e.erwartet) {
             continue; // die neue Fassung kommt noch; die alte bleibt bis dahin liegen
@@ -492,18 +784,20 @@ pub fn sammeln(
             .filter(|e| !e.deleted && e.groesse == groesse && e.mtime_ms == mtime_ms)
             .filter(|e| !e.sha256.is_empty())
             .map(|e| e.sha256.clone());
-        let sha = match bekannt {
-            Some(s) => s,
+        let (sha, groesse, mtime_ms) = match bekannt {
+            Some(s) => (s, groesse, mtime_ms),
             None => {
-                if groesse > *budget {
+                if !budget.nehmen(groesse) {
                     zurueck.insert(rel.clone());
                     continue;
                 }
-                *budget -= groesse;
-                match sha256_datei(&buch_dir.join(rel)) {
-                    Ok(s) => s,
+                match sha256_stabil(&buch_dir.join(rel)) {
+                    Ok((s, m)) => {
+                        let (g, t) = stat(&m);
+                        (s, g, t)
+                    }
                     Err(e) => {
-                        aus.hinweise.push(e);
+                        aus.hinweise.push(format!("{rel}: {e}"));
                         zurueck.insert(rel.clone());
                         continue;
                     }
@@ -589,12 +883,15 @@ pub fn sammeln(
 // Anwenden
 // ---------------------------------------------------------------------------
 
-/// Fehler beim Anwenden: unbrauchbarer Datensatz (überspringen) oder Ablage gerade nicht
-/// beschreibbar (nächster Lauf).
+/// Fehler beim Anwenden: unbrauchbarer Datensatz (überspringen), Ablage gerade nicht
+/// beschreibbar (nächster Lauf) oder Datensatz zurückhalten, weil sein Name hier mit einer
+/// anderen Datei zusammenfiele (aufbewahren, bis die Kollision weg ist; nichts geht
+/// verloren).
 #[derive(Debug, PartialEq)]
 pub enum AnwendFehler {
     Ungueltig(String),
     Wiederholen(String),
+    Halten(String),
 }
 
 impl From<String> for AnwendFehler {
@@ -733,6 +1030,21 @@ pub fn anwenden(
         ));
     }
     ohne_verknuepfung(buch_dir, &r.rel)?;
+    // Gleicher Ort, andere Schreibweise (Groß-/Kleinschreibung, Unicode-Form, auch eines
+    // Ordners): auf vielen Systemen dieselbe Datei. Nicht anwenden, sondern aufbewahren.
+    if !r.deleted {
+        let im_stand = stand
+            .dateien
+            .iter()
+            .any(|(rel, e)| !e.deleted && kollidieren(rel, &r.rel));
+        if im_stand || kollision_auf_platte(buch_dir, &r.rel)? {
+            return Err(AnwendFehler::Halten(
+                "Name fällt mit einer vorhandenen Datei zusammen (Groß-/Kleinschreibung oder \
+                 Unicode-Form)"
+                    .into(),
+            ));
+        }
+    }
     let fremd_weg = stand.fremd.remove(id).is_some();
     let alt = stand.dateien.get(&r.rel).cloned();
     if let Some(e) = &alt {
@@ -792,9 +1104,7 @@ pub fn anwenden(
         // Fremd gewinnt: die lokale Fassung beiseitelegen, sie wird zur eigenen Datei.
         let pfad = buch_dir.join(&r.rel);
         if !e.deleted && !e.erwartet && pfad.is_file() {
-            let kopie = konflikt_rel(buch_dir, &r.rel, geraet_name, &stand)?;
-            fs::rename(&pfad, buch_dir.join(&kopie))
-                .map_err(|err| format!("Konfliktkopie nicht anlegbar: {err}"))?;
+            konflikt_ablegen(buch_dir, &pfad, &r.rel, geraet_name, &stand)?;
             ersetzt_sha.clear();
         }
     }
@@ -924,56 +1234,57 @@ pub fn ablegen(
     ohne_verknuepfung(buch_dir, rel)?;
     let ziel = buch_dir.join(rel);
     let sha = sha256_datei(geladen)?;
-    if ziel.is_file() {
-        let vorhanden = sha256_datei(&ziel)?;
-        if vorhanden == sha {
-            // Liegt schon da: nichts ersetzen, keine Kopie.
-            let _ = fs::remove_file(geladen);
-            let meta = fs::metadata(&ziel).map_err(|err| format!("Datei: {err}"))?;
-            let (groesse, mtime_ms) = stat(&meta);
-            stand.dateien.insert(
-                rel.to_string(),
-                Eintrag {
-                    sha256: sha.clone(),
-                    groesse,
-                    mtime_ms,
-                    blob_sha: sha,
-                    erwartet: false,
-                    ersetzt_sha: String::new(),
-                    ..e
-                },
-            );
-            stand_sichern(buch_dir, &mut stand)?;
-            return Ok(Some(ziel));
+    let mut fertig = |meta: &fs::Metadata| -> Result<Option<PathBuf>, String> {
+        let (groesse, mtime_ms) = stat(meta);
+        stand.dateien.insert(
+            rel.to_string(),
+            Eintrag {
+                sha256: sha.clone(),
+                groesse,
+                mtime_ms,
+                blob_sha: sha.clone(),
+                erwartet: false,
+                ersetzt_sha: String::new(),
+                ..e.clone()
+            },
+        );
+        stand_sichern(buch_dir, &mut stand)?;
+        Ok(Some(ziel.clone()))
+    };
+    // Taucht am Ziel zwischen Prüfen und Ablegen etwas auf, wird es nie ersetzt: dann
+    // beginnt die Prüfung von vorn.
+    for _ in 0..5 {
+        match fs::symlink_metadata(&ziel) {
+            Ok(m) if m.is_file() => {
+                let (vorhanden, meta) = sha256_stabil(&ziel)?;
+                if vorhanden == sha {
+                    // Liegt schon da: nichts ersetzen, keine Kopie.
+                    let _ = fs::remove_file(geladen);
+                    return fertig(&meta);
+                }
+                if !e.ersetzt_sha.is_empty() && vorhanden == e.ersetzt_sha {
+                    in_papierkorb(buch_dir, buch, rel)?;
+                } else {
+                    let stand_jetzt = stand_laden(buch_dir)?;
+                    konflikt_ablegen(buch_dir, &ziel, rel, geraet_name, &stand_jetzt)?;
+                }
+            }
+            Ok(_) => return Err("Am Ziel liegt keine Datei; nichts angefasst.".into()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => return Err(format!("Ziel nicht lesbar: {err}")),
         }
-        if !e.ersetzt_sha.is_empty() && vorhanden == e.ersetzt_sha {
-            in_papierkorb(buch_dir, buch, rel)?;
-        } else {
-            let kopie = konflikt_rel(buch_dir, rel, geraet_name, &stand)?;
-            fs::rename(&ziel, buch_dir.join(kopie))
-                .map_err(|err| format!("Konfliktkopie nicht anlegbar: {err}"))?;
+        if let Some(dir) = ziel.parent() {
+            fs::create_dir_all(dir).map_err(|err| format!("Ordner nicht anlegbar: {err}"))?;
+        }
+        // Größe und Änderungszeit bleiben beim Verschieben erhalten.
+        let meta = fs::metadata(geladen).map_err(|err| format!("Datei: {err}"))?;
+        match verschieben_ohne_ersetzen(geladen, &ziel) {
+            Ok(()) => return fertig(&meta),
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(err) => return Err(format!("Datei nicht ablegbar: {err}")),
         }
     }
-    if let Some(dir) = ziel.parent() {
-        fs::create_dir_all(dir).map_err(|err| format!("Ordner nicht anlegbar: {err}"))?;
-    }
-    fs::rename(geladen, &ziel).map_err(|err| format!("Datei nicht ablegbar: {err}"))?;
-    let meta = fs::metadata(&ziel).map_err(|err| format!("Datei: {err}"))?;
-    let (groesse, mtime_ms) = stat(&meta);
-    stand.dateien.insert(
-        rel.to_string(),
-        Eintrag {
-            sha256: sha.clone(),
-            groesse,
-            mtime_ms,
-            blob_sha: sha,
-            erwartet: false,
-            ersetzt_sha: String::new(),
-            ..e
-        },
-    );
-    stand_sichern(buch_dir, &mut stand)?;
-    Ok(Some(ziel))
+    Err("Am Ziel ändert sich gerade etwas; der nächste Lauf versucht es erneut.".into())
 }
 
 /// Bevor ein Buch-Ordner gelöscht oder in ein anderes Buch zusammengeführt wird: die
@@ -996,8 +1307,7 @@ pub fn ordner_retten(buch_dir: &Path, buch: &str) -> Result<(), String> {
         }
         let ziel_dir = wurzel.join(PAPIERKORB).join(PAPIERKORB_DATEIEN).join(buch);
         fs::create_dir_all(&ziel_dir).map_err(|e| format!("Papierkorb: {e}"))?;
-        let frei = freier_name(&ziel_dir, rolle.ordner())?;
-        fs::rename(&dir, ziel_dir.join(frei))
+        ablegen_frei(&dir, &ziel_dir, rolle.ordner())
             .map_err(|e| format!("Notizen und Anhänge nicht in den Papierkorb gelegt: {e}"))?;
     }
     Ok(())
@@ -1076,7 +1386,9 @@ fn ist_konflikt(name: &str) -> bool {
 pub fn auflisten(buch_dir: &Path) -> Result<Vec<Datei>, String> {
     let stand = stand_laden(buch_dir)?;
     let mut hinweise = Vec::new();
-    let gefunden = dateien_finden(buch_dir, &mut hinweise).dateien;
+    let fund = dateien_finden(buch_dir, &mut hinweise);
+    let mut gefunden = fund.dateien;
+    gefunden.extend(fund.gehalten);
     let mut aus: Vec<Datei> = Vec::new();
     let name_von = |rel: &str| rel.rsplit('/').next().unwrap_or(rel).to_string();
     for (rel, meta) in &gefunden {
@@ -1172,32 +1484,60 @@ pub fn anhaenge_hinzufuegen(buch_dir: &Path, quellen: &[PathBuf]) -> Result<Vec<
         }
     }
     ohne_verknuepfung(buch_dir, Rolle::Anhang.ordner())?;
+    ohne_verknuepfung(buch_dir, ZWISCHENABLAGE)?;
     let dir = buch_dir.join(Rolle::Anhang.ordner());
     fs::create_dir_all(&dir).map_err(|e| format!("Anhänge-Ordner nicht anlegbar: {e}"))?;
+    let zwischen = buch_dir.join(ZWISCHENABLAGE);
+    fs::create_dir_all(&zwischen).map_err(|e| format!("Zwischenablage nicht anlegbar: {e}"))?;
     let mut aus = Vec::new();
     for q in quellen {
         let wunsch = q
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .ok_or_else(|| format!("{} hat keinen Dateinamen.", q.display()))?;
-        let name = freier_name(&dir, &wunsch)?;
-        let ziel = dir.join(&name);
+        // Erst vollständig in eine eigene Zwischendatei kopieren, dann ohne Ersetzen unter
+        // einem freien Namen ablegen. Aufgeräumt wird nur diese eigene Zwischendatei.
+        let (tmp, mut nach) = eigene_zwischendatei(&zwischen)?;
         let kopiert = (|| -> std::io::Result<()> {
             let mut von = fs::File::open(q)?;
-            let mut nach = fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&ziel)?;
             std::io::copy(&mut von, &mut nach)?;
             nach.sync_all()
         })();
+        drop(nach);
         if let Err(e) = kopiert {
-            let _ = fs::remove_file(&ziel);
+            let _ = fs::remove_file(&tmp);
             return Err(format!("{} nicht kopiert: {e}", q.display()));
         }
-        aus.push(format!("{}/{name}", Rolle::Anhang.ordner()));
+        match ablegen_frei(&tmp, &dir, &wunsch) {
+            Ok(name) => aus.push(format!("{}/{name}", Rolle::Anhang.ordner())),
+            Err(e) => {
+                let _ = fs::remove_file(&tmp);
+                return Err(e);
+            }
+        }
     }
     Ok(aus)
+}
+
+/// Eine neue, nur diesem Aufruf gehörende Datei in `dir` (`create_new`).
+fn eigene_zwischendatei(dir: &Path) -> Result<(PathBuf, fs::File), String> {
+    let basis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or_default();
+    for n in 0..100u32 {
+        let pfad = dir.join(format!("anhang-{}-{basis}-{n}.part", std::process::id()));
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&pfad)
+        {
+            Ok(f) => return Ok((pfad, f)),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(format!("Zwischendatei nicht anlegbar: {e}")),
+        }
+    }
+    Err("Keine freie Zwischendatei".into())
 }
 
 /// Pfad einer Datei im Buch-Ordner zum Öffnen: sicherer Pfad, keine Verknüpfung,
@@ -1242,7 +1582,7 @@ mod tests {
     }
 
     fn alles(dir: &Path, jetzt: f64) -> Sammlung {
-        sammeln(dir, "book_1", ICH, jetzt, &mut u64::MAX.clone()).unwrap()
+        sammeln(dir, "book_1", ICH, jetzt, &mut Budget::neu(u64::MAX)).unwrap()
     }
 
     fn nach_pfad<'a>(s: &'a Sammlung, rel: &str) -> &'a Lokal {
@@ -1362,13 +1702,21 @@ mod tests {
     fn budget_haelt_zurueck_ohne_grabstein() {
         let dir = buch("budget");
         schreiben(&dir, "anhaenge/gross.bin", &[7u8; 64]);
-        let mut budget = 10;
+        schreiben(&dir, "anhaenge/zweite.bin", &[8u8; 64]);
+        // Die erste Datei eines Laufs darf immer, auch über dem Budget; die zweite wartet.
+        let mut budget = Budget::neu(10);
         let s = sammeln(&dir, "book_1", ICH, 1.0, &mut budget).unwrap();
-        assert!(s.lokal.is_empty());
+        assert_eq!(budget.rest(), 0);
+        assert_eq!(s.lokal.len(), 1);
+        nach_pfad(&s, "anhaenge/gross.bin");
         assert_eq!(
             s.vorhanden,
-            vec![datei_id("book_1", Rolle::Anhang, "anhaenge/gross.bin")]
+            vec![datei_id("book_1", Rolle::Anhang, "anhaenge/zweite.bin")]
         );
+        // Nächster Lauf: die erste ist bekannt (kein Lesen), die zweite kommt dran.
+        let s = sammeln(&dir, "book_1", ICH, 2.0, &mut Budget::neu(10)).unwrap();
+        assert_eq!(s.lokal.len(), 2);
+        assert!(s.vorhanden.is_empty());
     }
 
     #[test]
@@ -1596,12 +1944,24 @@ mod tests {
     #[test]
     fn notiz_und_anhaenge_landen_im_buch_ordner_und_in_der_liste() {
         let dir = buch("oberflaeche");
-        let quelle = dir.parent().unwrap().join("Tabelle?.xlsx");
+        // Ein Name, der bereinigt werden muss: „?“ ist unter Windows gar nicht anlegbar,
+        // dort steht ein führendes Leerzeichen (erlaubt, wird aber entfernt).
+        #[cfg(unix)]
+        let roh = "Tabelle?.xlsx";
+        #[cfg(not(unix))]
+        let roh = " Tabelle_.xlsx";
+        let quelle = dir.parent().unwrap().join(roh);
         fs::write(&quelle, b"tabelle").unwrap();
         let a = anhaenge_hinzufuegen(&dir, std::slice::from_ref(&quelle)).unwrap();
         let b = anhaenge_hinzufuegen(&dir, std::slice::from_ref(&quelle)).unwrap();
         assert_eq!(a, vec!["anhaenge/Tabelle_.xlsx".to_string()]);
         assert_eq!(b, vec!["anhaenge/Tabelle_ (2).xlsx".to_string()]);
+        // Kopiert wird über eine eigene Zwischendatei; danach liegt dort nichts mehr.
+        assert_eq!(
+            fs::read_dir(dir.join(ZWISCHENABLAGE)).unwrap().count(),
+            0,
+            "keine Zwischendatei übrig"
+        );
         assert!(anhaenge_hinzufuegen(&dir, std::slice::from_ref(&dir)).is_err());
         let n = notiz_anlegen(&dir, "Gedanken: Kapitel 1").unwrap();
         assert_eq!(n, "notizen/Gedanken_ Kapitel 1.md");
@@ -1648,6 +2008,130 @@ mod tests {
         assert!(ist_konflikt("a (Konflikt Mein PC).md") && !ist_konflikt("Konflikt.md"));
     }
 
+    /// Review P3a/2: Ablegen ersetzt nie, was am Ziel liegt.
+    #[test]
+    fn verschieben_ersetzt_nie() {
+        let dir = buch("ohne-ersetzen");
+        schreiben(&dir, "anhaenge/a.txt", b"neu");
+        schreiben(&dir, "anhaenge/b.txt", b"fremd");
+        let fehler =
+            verschieben_ohne_ersetzen(&dir.join("anhaenge/a.txt"), &dir.join("anhaenge/b.txt"))
+                .unwrap_err();
+        assert_eq!(fehler.kind(), std::io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read(dir.join("anhaenge/a.txt")).unwrap(), b"neu");
+        assert_eq!(fs::read(dir.join("anhaenge/b.txt")).unwrap(), b"fremd");
+        // Frei: verschoben, die Quelle ist weg.
+        verschieben_ohne_ersetzen(&dir.join("anhaenge/a.txt"), &dir.join("anhaenge/c.txt"))
+            .unwrap();
+        assert!(!dir.join("anhaenge/a.txt").exists());
+        assert_eq!(fs::read(dir.join("anhaenge/c.txt")).unwrap(), b"neu");
+        // Ein Ordner geht ebenso (Papierkorb ganzer Rollen-Ordner).
+        fs::create_dir_all(dir.join("x/inhalt")).unwrap();
+        verschieben_ohne_ersetzen(&dir.join("x/inhalt"), &dir.join("x/anders")).unwrap();
+        assert!(dir.join("x/anders").is_dir());
+        fs::create_dir_all(dir.join("x/inhalt")).unwrap();
+        assert!(verschieben_ohne_ersetzen(&dir.join("x/inhalt"), &dir.join("x/anders")).is_err());
+    }
+
+    /// Review P3a/2: ein Download, dessen Ziel inzwischen belegt ist, ersetzt es nicht;
+    /// der Vorgänger wird zur Konfliktkopie.
+    #[test]
+    fn ablegen_ersetzt_keine_neue_datei_am_ziel() {
+        let dir = buch("ablegen-belegt");
+        let (id, wert) = fremder("notizen/n.md", 10.0, Some(blob(1)));
+        anwenden(&dir, "book_1", &id, &wert, false, None, "Mein PC").unwrap();
+        schreiben(&dir, "notizen/n.md", b"lokal neu");
+        laden(&dir, b"fremd");
+        assert_eq!(fs::read(dir.join("notizen/n.md")).unwrap(), b"fremd");
+        assert_eq!(
+            fs::read(dir.join("notizen/n (Konflikt Mein PC).md")).unwrap(),
+            b"lokal neu"
+        );
+    }
+
+    /// Review P3a/3: Groß-/Kleinschreibung trennt zwei Dateien nicht überall. Keine von
+    /// beiden wird abgeglichen, nichts wird Grabstein; die Liste zeigt beide.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn gross_klein_kollision_haelt_zurueck() {
+        let dir = buch("kollision");
+        schreiben(&dir, "notizen/a.md", b"klein");
+        let s = alles(&dir, 1000.0);
+        let id_klein = nach_pfad(&s, "notizen/a.md").id.clone();
+        // Zweite Schreibweise dazu: beide halten, keine neue ID, kein Grabstein.
+        schreiben(&dir, "notizen/A.md", b"gross");
+        let s = alles(&dir, 2000.0);
+        assert!(s.lokal.iter().all(|l| l.wert["path"] != "notizen/A.md"));
+        assert!(s.lokal.iter().all(|l| l.id != id_klein));
+        assert!(s.vorhanden.contains(&id_klein));
+        assert!(s
+            .hinweise
+            .iter()
+            .any(|h| h.contains("Groß-/Kleinschreibung")));
+        assert_eq!(auflisten(&dir).unwrap().len(), 2);
+        // Umbenannt (nur Groß/Klein): der alte Eintrag bleibt, kein Grabstein.
+        fs::remove_file(dir.join("notizen/a.md")).unwrap();
+        let s = alles(&dir, 3000.0);
+        assert!(s.lokal.iter().all(|l| l.id != id_klein));
+        assert!(s.vorhanden.contains(&id_klein));
+        assert!(s.lokal.iter().all(|l| l.wert["path"] != "notizen/A.md"));
+        // Auch Ordner: anhaenge/Ordner und anhaenge/ordner.
+        schreiben(&dir, "anhaenge/Ordner/x.txt", b"x");
+        schreiben(&dir, "anhaenge/ordner/y.txt", b"y");
+        let s = alles(&dir, 4000.0);
+        assert!(s
+            .lokal
+            .iter()
+            .all(|l| !l.wert["path"].as_str().unwrap().starts_with("anhaenge/")));
+    }
+
+    /// Review P3a/4: eine Datei in anderer Unicode-Form (NFD) verdeckt den bekannten
+    /// NFC-Eintrag, statt ihn zu löschen.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn andere_unicode_form_loescht_nicht() {
+        let dir = buch("nfd");
+        schreiben(&dir, "notizen/\u{e4}.md", b"a");
+        let s = alles(&dir, 1000.0);
+        let id = nach_pfad(&s, "notizen/\u{e4}.md").id.clone();
+        fs::rename(
+            dir.join("notizen/\u{e4}.md"),
+            dir.join("notizen/a\u{308}.md"),
+        )
+        .unwrap();
+        let s = alles(&dir, 2000.0);
+        assert!(s.lokal.iter().all(|l| l.id != id), "kein Grabstein");
+        assert!(s.vorhanden.contains(&id));
+    }
+
+    /// Review P3a/3: ein empfangener Name, der hier mit einer anderen Datei zusammenfiele,
+    /// wird zurückgehalten (nicht angewendet, nicht verworfen).
+    #[test]
+    fn empfangene_kollision_wird_zurueckgehalten() {
+        let dir = buch("kollision-empfang");
+        schreiben(&dir, "notizen/a.md", b"eins");
+        alles(&dir, 1000.0);
+        let (id, wert) = fremder("notizen/A.md", 5000.0, Some(blob(1)));
+        assert!(matches!(
+            anwenden(&dir, "book_1", &id, &wert, false, None, "Mein PC"),
+            Err(AnwendFehler::Halten(_))
+        ));
+        let (id, wert) = fremder("notizen/Unterordner/x.md", 5000.0, Some(blob(2)));
+        schreiben(&dir, "notizen/unterordner/y.md", b"zwei");
+        assert!(matches!(
+            anwenden(&dir, "book_1", &id, &wert, false, None, "Mein PC"),
+            Err(AnwendFehler::Halten(_))
+        ));
+        assert!(erwartet(&dir).unwrap().is_empty());
+        // Ein Grabstein unter anderer Schreibweise berührt nichts und wird nicht gehalten.
+        let (id, wert) = fremder("notizen/A.md", 6000.0, None);
+        assert_eq!(
+            anwenden(&dir, "book_1", &id, &wert, false, None, "Mein PC"),
+            Ok(true)
+        );
+        assert_eq!(fs::read(dir.join("notizen/a.md")).unwrap(), b"eins");
+    }
+
     /// Review P3a/1: ein Datensatz neuerer Version überdeckt den eigenen; kein Ping-Pong.
     #[test]
     fn neuere_version_wird_nicht_mit_alter_ueberschrieben() {
@@ -1683,8 +2167,13 @@ mod tests {
         let s2 = alles(&dir, 2000.0);
         assert!(s2.lokal.iter().all(|l| l.id != id));
         assert!(s2.vorhanden.contains(&id));
-        // Wirklich gelöscht: der Grabstein kommt.
+        // Ganzer Ordner fehlt (verschoben, Platzhalter, Laufwerk weg): auch kein Grabstein.
         fs::remove_file(dir.join("anhaenge")).unwrap();
+        let s3 = alles(&dir, 2500.0);
+        assert!(s3.lokal.iter().all(|l| l.id != id));
+        assert!(s3.vorhanden.contains(&id));
+        // Wirklich gelöscht (Ordner da, Datei weg): der Grabstein kommt.
+        fs::create_dir(dir.join("anhaenge")).unwrap();
         let s3 = alles(&dir, 3000.0);
         assert_eq!(nach_pfad(&s3, "anhaenge/a.pdf").wert["deleted"], true);
         assert_eq!(nach_pfad(&s3, "notizen/n.md").wert["deleted"], false);

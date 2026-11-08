@@ -1294,6 +1294,8 @@
       "unknownLang": "Language unknown",
       "groupFiles": "Notes and attachments",
       "noFiles": "No notes or attachments yet.",
+      "loadError": "Notes and attachments could not be loaded.",
+      "reload": "Reload",
       "newNote": "New note",
       "noteTitle": "Note title",
       "noteCreate": "Create",

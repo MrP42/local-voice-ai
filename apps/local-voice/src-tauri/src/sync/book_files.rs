@@ -88,6 +88,8 @@ fn unpark_ready(root: &Path, device_name: &str) {
             Err(kern::AnwendFehler::Wiederholen(_)) => {
                 log::warn!("Sync: geparkte Datei {id} noch nicht ablegbar");
             }
+            // Name fällt noch mit einer anderen Datei zusammen: weiter aufbewahren.
+            Err(kern::AnwendFehler::Halten(_)) => {}
         }
     }
 }
@@ -107,8 +109,9 @@ pub fn collect(
     out.present
         .extend(kern::geparkt(&root).into_iter().map(|(id, _)| id));
     let now = now_ms();
+    let mut hash_budget = kern::Budget::neu(*budget);
     for (buch, dir) in books::book_dirs(&root)? {
-        let found = match kern::sammeln(&dir, &buch, device_id, now, budget) {
+        let found = match kern::sammeln(&dir, &buch, device_id, now, &mut hash_budget) {
             Ok(f) => f,
             Err(e) => {
                 log::warn!("Sync: Dateien von Buch {buch} übersprungen: {e}");
@@ -136,6 +139,7 @@ pub fn collect(
             out.objects.push(obj);
         }
     }
+    *budget = hash_budget.rest();
     Ok(out)
 }
 
@@ -172,12 +176,20 @@ pub fn apply(
     let Some(value) = value else {
         kern::ausparken(&root, id)?;
         let mut changed = false;
+        let mut fehler = None;
         for (buch, dir) in books::book_dirs(&root)? {
-            // Ein unlesbarer Buch-Stand hält die anderen Bücher nicht auf.
+            // Ein Fehler in einem Buch hält die anderen nicht auf; danach wird die Löschung
+            // nicht verbucht und im nächsten Lauf wiederholt (vergessen ist wiederholbar).
             match kern::vergessen(&dir, &buch, id) {
                 Ok(c) => changed |= c,
-                Err(_) => log::warn!("Sync: Datei-Stand von Buch {buch} nicht lesbar"),
+                Err(e) => {
+                    log::warn!("Sync: Löschung einer Datei in Buch {buch} nicht angewendet");
+                    fehler = fehler.or(Some(e));
+                }
             }
+        }
+        if let Some(e) = fehler {
+            return Err(ApplyError::Retry(e));
         }
         return Ok(Applied {
             changed,
@@ -212,12 +224,19 @@ pub fn apply(
         .as_ref()
         .is_some_and(|(h, _)| Some(h.as_str()) != synced_hash);
     let local_blob = local.as_ref().and_then(|(_, b)| b.as_ref());
-    let changed = kern::anwenden(&dir, buch, id, value, open, local_blob, device_name).map_err(
-        |e| match e {
-            kern::AnwendFehler::Ungueltig(s) => ApplyError::Invalid(s),
-            kern::AnwendFehler::Wiederholen(s) => ApplyError::Retry(s),
-        },
-    )?;
+    let changed = match kern::anwenden(&dir, buch, id, value, open, local_blob, device_name) {
+        Ok(c) => c,
+        Err(kern::AnwendFehler::Ungueltig(s)) => return Err(ApplyError::Invalid(s)),
+        Err(kern::AnwendFehler::Wiederholen(s)) => return Err(ApplyError::Retry(s)),
+        // Der Name fiele hier mit einer anderen Datei zusammen: aufbewahren und bei jedem
+        // Sammeln erneut versuchen (wie ein Datensatz, dessen Buch noch fehlt).
+        Err(kern::AnwendFehler::Halten(_)) => {
+            kern::parken(&root, id, value)?;
+            return Ok(Applied::default());
+        }
+    };
+    // Eine ältere, aufbewahrte Fassung darf die angewendete nie mehr überschreiben.
+    kern::ausparken(&root, id)?;
     Ok(Applied {
         changed,
         remote_blobs: blob.into_iter().collect(),

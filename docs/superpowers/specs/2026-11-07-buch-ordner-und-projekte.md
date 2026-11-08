@@ -249,17 +249,25 @@ Zurückschreiben unbekannte Felder verlieren könnte. Sie kommen in die neue Sam
 - Löschen: Grabstein `deleted: true` 30 Tage, Datei geht auf dem Empfänger in den Papierkorb.
 - Datensätze mit `v` > bekannter Version werden gelesen, aber nie geschrieben (nur lesend anzeigen).
 - Alte Geräte kennen `book_file` nicht und lassen sie unberührt; sie zeigen die Inhalte nur nicht.
-- Schutz vor stillen Löschungen: Ein Rollenordner oder Teilbaum, der nicht lesbar ist oder über eine
-  Verknüpfung führt, gilt als verdeckt; was dort im Stand steht, bleibt „vorhanden“ und wird nie
-  zum Grabstein. Erst ein wirklich fehlender Ordner löscht. Ein unlesbarer `sync-dateien.json` wird
-  als `sync-dateien.json.defekt-<ms>` beiseitegelegt und neu begonnen.
+- Schutz vor stillen Löschungen: Ein Rollenordner oder Teilbaum, der fehlt (verschoben, Platzhalter,
+  Laufwerk weg), nicht lesbar ist oder über eine Verknüpfung führt, gilt als verdeckt; ebenso ein Name,
+  der nicht abgeglichen wird (z. B. andere Unicode-Form). Was dort im Stand steht, bleibt „vorhanden“
+  und wird nie zum Grabstein. Gelöscht wird nur Datei für Datei. Ein unlesbarer `sync-dateien.json`
+  wird als `sync-dateien.json.defekt-<ms>` beiseitegelegt und neu begonnen.
+- Namenskollisionen: Pfade, die sich nur in Groß-/Kleinschreibung oder Unicode-Form unterscheiden
+  (auch in einem Ordner), werden nie abgeglichen: lokal bleiben beide stehen (Hinweis, kein Grabstein,
+  keine neue ID); ein empfangener Datensatz, der hier mit einer anderen Datei zusammenfiele, wird
+  aufbewahrt (Parkplatz) und bei jedem Sammeln erneut versucht.
+- Ablegen ersetzt nie: Downloads, Anhänge, Konfliktkopien und Papierkorb verschieben ohne Ersetzen
+  (Windows `MoveFileExW` ohne `REPLACE_EXISTING`, sonst harte Verknüpfung bzw. `RENAME_NOREPLACE`/
+  `RENAME_EXCL`). Anhänge werden erst vollständig in eine eigene Zwischendatei kopiert.
+- Prüfsummen-Budget: die erste Datei eines Laufs wird immer gelesen, auch über dem Budget.
 - Gleicher Inhalt (gleiche Blob-Kennung) auf beiden Seiten ist kein Konflikt und kein Download; ein
   geladener Inhalt, der am Ziel schon liegt, ersetzt nichts.
 - Ein Datensatz neuerer Version überdeckt den eigenen: das Gerät sendet für diese ID nichts mehr.
 - Löschen oder Zusammenführen eines Buchs legt `notizen/`, `anhaenge/` und `transkript/` zuerst in den
   Papierkorb der Bibliothek.
-- Offen (Folge): Pfade, die sich nur in Groß-/Kleinschreibung oder Unicode-Form unterscheiden
-  (HFS+, NTFS), werden noch nicht zusammengelegt; der Inhalt bleibt als Konfliktkopie erhalten.
+- Offen (Folge): Rückfrage vor dem Öffnen ausführbarer Dateien und Verknüpfungen (`.exe`, `.lnk` …).
 - Oberfläche (P3b): Gruppe „Notizen und Anhänge“ im Buch-Ordner (öffnen, neue Notiz, Anhang
   hinzufügen, entfernen in den Papierkorb; noch nicht geladene Dateien gedämpft).
 
