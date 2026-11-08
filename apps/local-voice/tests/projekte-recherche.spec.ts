@@ -683,7 +683,7 @@ for (const [breite, hoehe] of [
     await setup(page, breite, hoehe);
     const nav = page
       .getByRole("navigation", { name: "Hauptnavigation" })
-      .getByRole("button", { name: "Chat", exact: true });
+      .getByRole("button", { name: "Start", exact: true });
     if (!(await nav.isVisible()))
       await page.getByRole("button", { name: /Menü/ }).first().click();
     await nav.click();
