@@ -1,4 +1,4 @@
-# Erzeugt von scripts/vendor-wai-suite.py aus https://github.com/MrP42/wai-sdk (crates/wai-assistent, Commit 565ac40633ff). Nicht von Hand ändern.
+# Erzeugt von scripts/vendor-wai-suite.py aus https://github.com/MrP42/wai-sdk (crates/wai-assistent, Commit 1378714f195c). Nicht von Hand ändern.
 [package]
 name = "wai-assistent"
 version = "0.1.0"

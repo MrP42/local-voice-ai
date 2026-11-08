@@ -3,7 +3,7 @@
 //! Der Kern `wai-assistent` kennt keine Systemuhr; Uhrzeit und Datum der S0-Antworten kommen
 //! ausschliesslich ueber dieses [`Uhr`]-Objekt, in Tests ueber `FesteUhr`.
 
-use chrono::{Datelike, NaiveDateTime, Timelike, Weekday};
+use chrono::{DateTime, Datelike, NaiveDateTime, TimeZone, Timelike, Weekday};
 use wai_assistent::{Uhr, Wochentag, Zeitpunkt};
 
 /// Lokale Zeit des Geraets (`chrono::Local`).
@@ -11,8 +11,13 @@ pub struct SystemUhr;
 
 impl Uhr for SystemUhr {
     fn jetzt(&self) -> Zeitpunkt {
-        zeitpunkt_aus(chrono::Local::now().naive_local())
+        zeitpunkt_lokal(chrono::Local::now())
     }
+}
+
+/// Die Wandzeit einer Zeit mit Zone (Sommerzeit ist im Versatz der Zone enthalten).
+pub fn zeitpunkt_lokal<Tz: TimeZone>(zeit: DateTime<Tz>) -> Zeitpunkt {
+    zeitpunkt_aus(zeit.naive_local())
 }
 
 /// Uebersetzt eine lokale Zeit in den Zeitpunkt des Kerns (getrennt, damit Tests keine Uhr brauchen).

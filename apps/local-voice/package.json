@@ -14,6 +14,7 @@
     "format:check": "prettier --check . && cd src-tauri && cargo fmt -- --check",
     "format:frontend": "prettier --write .",
     "format:backend": "cd src-tauri && cargo fmt",
+    "test:assistent": "node --test scripts/assistent-plan.test.mjs scripts/assistent-engine.test.mjs",
     "test:playwright": "playwright test",
     "test:playwright:ui": "playwright test --ui",
     "check:translations": "pnpm exec tsx scripts/check-translations.ts",

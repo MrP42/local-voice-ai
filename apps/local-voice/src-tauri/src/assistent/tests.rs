@@ -5,7 +5,7 @@ use wai_assistent::{
     Beleg, FesteUhr, Grund, QuellenMap, Satz, SatzArt, Sprache, Wochentag, Zeitpunkt,
 };
 
-use super::uhr::{zeitpunkt_aus, SystemUhr};
+use super::uhr::{zeitpunkt_aus, zeitpunkt_lokal, SystemUhr};
 use super::*;
 
 fn feste_uhr() -> FesteUhr {
@@ -20,7 +20,7 @@ fn feste_uhr() -> FesteUhr {
 }
 
 fn einstufen_text(text: &str, sprache: Sprache) -> Option<EinstufungDto> {
-    einstufen_mit(true, text, sprache, tabelle(), &feste_uhr())
+    einstufen_mit(true, text, sprache, tabelle(), &feste_uhr()).expect("keine Panne")
 }
 
 #[test]
@@ -79,7 +79,7 @@ fn schalter_aus_stuft_nicht_ein() {
         tabelle(),
         &feste_uhr(),
     );
-    assert_eq!(e, None);
+    assert_eq!(e, Ok(None));
 }
 
 #[test]
@@ -93,11 +93,16 @@ fn leerer_oder_zu_langer_text_wird_nicht_eingestuft() {
 
 #[test]
 fn sprachcode_zu_sprache() {
-    assert_eq!(sprache_aus("en"), Sprache::En);
-    assert_eq!(sprache_aus("en-US"), Sprache::En);
-    assert_eq!(sprache_aus("de"), Sprache::De);
-    assert_eq!(sprache_aus("fr"), Sprache::De);
-    assert_eq!(sprache_aus(""), Sprache::De);
+    for code in ["en", "en-US", "en-GB", "EN_gb", " en "] {
+        assert_eq!(sprache_aus(code), Sprache::En, "{code:?}");
+    }
+    for code in ["de", "de-DE", "de-AT", "de-CH", "de_ch"] {
+        assert_eq!(sprache_aus(code), Sprache::De, "{code:?}");
+    }
+    // Unbekannt (auch „englisch aussehende“ Codes): Deutsch.
+    for code in ["fr", "fr-FR", "english", "ent", "en-AU", "", "xx"] {
+        assert_eq!(sprache_aus(code), Sprache::De, "{code:?}");
+    }
 }
 
 #[test]
@@ -118,6 +123,33 @@ fn zeitpunkt_aus_chrono_mit_wochentag() {
             .unwrap(),
     );
     assert_eq!(z, feste_uhr().0);
+}
+
+#[test]
+fn sommerzeit_ist_im_versatz_der_zone_enthalten() {
+    use chrono::{FixedOffset, TimeZone, Utc};
+    // 12:05 UTC: in Deutschland im Sommer (MESZ, +2) 14:05, im Winter (MEZ, +1) 13:05.
+    let sommer = FixedOffset::east_opt(2 * 3600).unwrap();
+    let winter = FixedOffset::east_opt(3600).unwrap();
+    let juli = Utc.with_ymd_and_hms(2026, 7, 1, 12, 5, 0).unwrap();
+    let januar = Utc.with_ymd_and_hms(2026, 1, 15, 12, 5, 0).unwrap();
+    assert_eq!(zeitpunkt_lokal(juli.with_timezone(&sommer)).stunde, 14);
+    assert_eq!(zeitpunkt_lokal(januar.with_timezone(&winter)).stunde, 13);
+    let z = zeitpunkt_lokal(juli.with_timezone(&sommer));
+    let e = einstufen_mit(
+        true,
+        "Wie spät ist es?",
+        Sprache::De,
+        tabelle(),
+        &FesteUhr(z),
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(e.antwort.as_deref(), Some("Es ist 14:05 Uhr."));
+    // Tagesgrenze der Zone: 23:30 UTC ist im Sommer schon der naechste Tag.
+    let spaet = Utc.with_ymd_and_hms(2026, 7, 1, 23, 30, 0).unwrap();
+    let z = zeitpunkt_lokal(spaet.with_timezone(&sommer));
+    assert_eq!((z.tag, z.stunde, z.minute), (2, 1, 30));
 }
 
 #[test]

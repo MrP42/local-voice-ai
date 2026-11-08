@@ -124,7 +124,7 @@ pub async fn voice_tool_call(
         ));
     }
     let source = AppKnowledge::new(&app, store.clone());
-    tauri::async_runtime::spawn_blocking(move || {
+    let ergebnis = tauri::async_runtime::spawn_blocking(move || {
         let conn = store.get_connection().map_err(|e| e.to_string())?;
         let session = Session {
             registry: bridge.server().bridge().registry(),
@@ -134,7 +134,12 @@ pub async fn voice_tool_call(
         voice::call(&conn, &session, opts, &name, &args, now_ms())
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+    // Belegregel im Orchestrator: nur was Rust selbst geliefert hat, gilt dort als Beleg.
+    if let Ok(text) = &ergebnis {
+        crate::assistent::tor::werkzeugergebnis_merken(text);
+    }
+    ergebnis
 }
 
 // ---------------------------------------------------------------------------

@@ -1046,8 +1046,9 @@ pub struct AppSettings {
     /// Treffer aus dem Transkript)? Nur wirksam mit `meeting_mcp_enabled`.
     #[serde(default = "default_true")]
     pub meeting_mcp_include_transcript: bool,
-    /// ADR-0028 A2 (E4): lokale Einstufung S0-S3 vor dem Modellaufruf im Sprachgespraech
-    /// (Vorlagenantwort bei S0, Ansage ab S1). Standard AN; aus = alter Ablauf ohne Einstufung.
+    /// ADR-0028 A2 (E4): Ansagen und S0-Vorlagen der Oberflaeche (lokale Einstufung S0-S3).
+    /// Standard AN. Steuert NUR die Oberflaeche; das Tor vor dem Modellaufruf (Rust,
+    /// `assistent::tor`) bleibt immer aktiv.
     #[serde(default = "default_true")]
     pub assistent_einstufung_aktiv: bool,
     /// Stufe 2 des Sprachgesprächs: darf die Sprach-KI Transkripte von Besprechungen lesen

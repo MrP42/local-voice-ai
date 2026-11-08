@@ -24,6 +24,18 @@ pub enum Sprache {
     En,
 }
 
+impl Sprache {
+    /// Volle Sprachcodes (de, de-DE, de-AT, de-CH, en, en-US, en-GB), Gross-/Kleinschreibung egal.
+    /// Alles andere ist `None`; es wird kein Praefix geraten.
+    pub fn aus_code(code: &str) -> Option<Self> {
+        match code.to_ascii_lowercase().as_str() {
+            "de" | "de-de" | "de-at" | "de-ch" => Some(Self::De),
+            "en" | "en-us" | "en-gb" => Some(Self::En),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Wochentag {
     Montag,
@@ -101,7 +113,19 @@ pub fn eskalieren(alt: Stufe, neu: Stufe) -> Stufe {
     alt.max(neu)
 }
 
-/// Kleinschreibung, Satzzeichen (auch im Satz) werden zu Leerraum, Apostrophe vereinheitlicht,
+/// Umlaute und Eszett auf ASCII falten (ae, oe, ue, ss); erwartet bereits kleingeschriebene Zeichen.
+fn umlaut_faltung(c: char) -> impl Iterator<Item = char> {
+    let (a, b) = match c {
+        'ä' => ('a', Some('e')),
+        'ö' => ('o', Some('e')),
+        'ü' => ('u', Some('e')),
+        'ß' => ('s', Some('s')),
+        c => (c, None),
+    };
+    std::iter::once(a).chain(b)
+}
+
+/// Kleinschreibung, Umlautfaltung (ä→ae, ö→oe, ü→ue, ß→ss), Satzzeichen (auch im Satz) werden zu Leerraum, Apostrophe vereinheitlicht,
 /// Bindestrich und Apostroph nur innerhalb von Woertern, doppelte Leerzeichen entfernt.
 pub fn normalisieren(text: &str) -> String {
     tokens(text).join(" ")
@@ -111,6 +135,7 @@ fn tokens(text: &str) -> Vec<String> {
     let bereinigt: String = text
         .chars()
         .flat_map(char::to_lowercase)
+        .flat_map(umlaut_faltung)
         .map(|c| match c {
             '\u{2019}' | '\u{2018}' | '\u{00B4}' | '`' | '\u{02BC}' => '\'',
             c if c.is_alphanumeric() || c == '\'' || c == '-' => c,
@@ -506,6 +531,78 @@ mod tests {
         assert_eq!(eskalieren(Stufe::S2, Stufe::S1), Stufe::S2);
         assert_eq!(eskalieren(Stufe::S1, Stufe::S3), Stufe::S3);
         assert_eq!(eskalieren(Stufe::S0, Stufe::S0), Stufe::S0);
+    }
+
+    #[test]
+    fn umlaute_und_umschrift_sind_gleich() {
+        for t in [
+            "wie spät ist es",
+            "wie spaet ist es",
+            "Wie spät ist es?",
+            "WIE SPÄT IST ES",
+            "Wie SPAET ist es",
+        ] {
+            let e = std(t, Sprache::De);
+            assert_eq!(e.stufe, Stufe::S0, "{t}");
+            assert_eq!(e.absicht, "uhrzeit", "{t}");
+        }
+        assert_eq!(
+            normalisieren("Äpfel ÖL Übung Straße STRASSE"),
+            "aepfel oel uebung strasse strasse"
+        );
+    }
+
+    fn muster_tabelle(muster: &str) -> Regeltabelle {
+        use crate::regeltabelle::{Absicht, MusterJeSprache, VorlageJeSprache};
+        let mut t = Regeltabelle::standard();
+        t.absichten.push(Absicht {
+            absicht: "testabsicht".into(),
+            stufe: Stufe::S1,
+            muster: MusterJeSprache {
+                de: vec![muster.into()],
+                en: vec!["zzz qqq".into()],
+            },
+            ansage_vorlage: VorlageJeSprache {
+                de: "Moment.".into(),
+                en: "Moment.".into(),
+            },
+        });
+        t
+    }
+
+    #[test]
+    fn s1_absicht_mit_umlaut_in_beiden_schreibweisen() {
+        for muster in ["größe prüfen", "groesse pruefen"] {
+            let t = muster_tabelle(muster);
+            for text in [
+                "Größe prüfen",
+                "groesse pruefen",
+                "GRÖSSE PRÜFEN",
+                "Bitte GROESSE prüfen!",
+            ] {
+                let e = einstufen(text, Sprache::De, &t, &uhr(9, 0));
+                assert_eq!(
+                    (e.stufe, e.absicht.as_str()),
+                    (Stufe::S1, "testabsicht"),
+                    "{muster} / {text}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn sprachcodes() {
+        for c in ["de", "de-DE", "DE-at", "de-CH", "De-de"] {
+            assert_eq!(Sprache::aus_code(c), Some(Sprache::De), "{c}");
+        }
+        for c in ["en", "en-US", "EN-gb", "en-gb"] {
+            assert_eq!(Sprache::aus_code(c), Some(Sprache::En), "{c}");
+        }
+        for c in [
+            "", "d", "deu", "de-", "de-FR", "fr", "en-AU", "de_DE", "english", " de",
+        ] {
+            assert_eq!(Sprache::aus_code(c), None, "{c}");
+        }
     }
 
     #[test]

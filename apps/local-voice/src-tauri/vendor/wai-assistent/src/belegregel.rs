@@ -96,11 +96,17 @@ pub enum Herleitung {
         eingaben_beleg: EingabenBeleg,
     },
     /// Minuten seit Mitternacht; `ergebnis` sind die freien Zeitraeume mit mindestens `mindestdauer`.
+    /// Jedes belegte Intervall muss samt Start- und Endzeit in einem `eingaben_beleg`-Auszug stehen.
+    /// Das Fenster steht ebenfalls in einem Auszug oder ist mit `fenster_von_nutzer` als Eingabe des
+    /// Nutzers (Patrick) markiert.
     FreieZeit {
         belegt: Vec<(u32, u32)>,
         fenster: (u32, u32),
+        #[serde(default)]
+        fenster_von_nutzer: bool,
         mindestdauer: u32,
         ergebnis: Vec<(u32, u32)>,
+        eingaben_beleg: EingabenBeleg,
     },
     Frist {
         start_tag: Datum,
@@ -144,6 +150,7 @@ pub enum Grund {
     DatumFehltInQuelle,
     NameFehltInQuelle,
     PolaritaetGekippt,
+    InhaltswortFehlt,
     VerneinungUnzulaessig,
     UngueltigeEingabe,
     EingabenOhneBeleg,
@@ -586,7 +593,95 @@ fn pruefe_quelle(text: &str, auszug: &str) -> Result<(), Grund> {
     if hat_verneinung(text) != hat_verneinung(auszug) {
         return Err(Grund::PolaritaetGekippt);
     }
-    inhalt_gedeckt(text, auszug)
+    inhalt_gedeckt(text, auszug)?;
+    inhaltswoerter_gedeckt(text, auszug)
+}
+
+/// Weitere Funktionswoerter (Hilfsverben, Gradpartikeln, Pronomen, Praepositionen), die als
+/// Inhaltswort nichts behaupten. Verneinungen (`NEGATIONEN`) zaehlen ebenfalls nicht als Inhaltswort,
+/// sie sind ueber die Polaritaet geprueft.
+const FUNKTIONSWOERTER_PLUS: &[&str] = &[
+    "wurden", "werden", "worden", "waren", "wäre", "wären", "sei", "seid", "seien", "bin", "bist",
+    "hatte", "hatten", "hast", "habt", "wirst", "werdet", "kannst", "können", "konnte", "konnten",
+    "muss", "müssen", "musste", "darf", "dürfen", "wollen", "sollen", "sollte", "auch", "noch",
+    "nur", "schon", "sehr", "uns", "mir", "mich", "dir", "dich", "ihm", "ihn", "euch", "sich",
+    "seinen", "seiner", "seinem", "seines", "ihrer", "ihrem", "ihres", "unseren", "unserer",
+    "diesen", "diesem", "jener", "denn", "doch", "mal", "etwa", "über", "unter", "durch", "gegen",
+    "seit", "während", "zwischen", "been", "being", "shall", "may", "might", "must", "very",
+    "just", "only", "too", "than", "into", "about", "over", "under", "their", "them", "him",
+    "keine", "keinen", "keiner",
+];
+
+fn ist_funktionswort(klein: &str) -> bool {
+    FUNKTIONSWOERTER.contains(&klein)
+        || FUNKTIONSWOERTER_PLUS.contains(&klein)
+        || NEGATIONEN.contains(&klein)
+}
+
+/// Endungen, laengste zuerst (DE -e, -en, -er, -es, -em, -n, -s, -t, -et, -st; EN -s, -es, -ed, -ing).
+const FLEXION: [&str; 12] = [
+    "ing", "en", "er", "es", "em", "et", "st", "ed", "e", "n", "s", "t",
+];
+
+/// Einfacher Stamm: hoechstens eine gaengige Flexionsendung abgeschnitten, Rest mindestens 3 Zeichen.
+fn flexion_ab(wort: &str) -> String {
+    FLEXION
+        .iter()
+        .find_map(|e| wort.strip_suffix(e).filter(|r| r.chars().count() >= 3))
+        .unwrap_or(wort)
+        .to_owned()
+}
+
+/// Vergleichsformen eines Wortes: Wort selbst und Stamm (so trifft "Angebot" auf "Angebote");
+/// bei Partizipien (ge-...-t/-en) zusaetzlich ohne ge-Praefix.
+fn stammformen(wort: &str) -> Vec<String> {
+    let mut formen = vec![wort.to_owned(), flexion_ab(wort)];
+    if let Some(ohne) = wort.strip_prefix("ge")
+        && ohne.chars().count() >= 3
+        && (wort.ends_with('t') || wort.ends_with("en"))
+    {
+        formen.push(ohne.to_owned());
+        formen.push(flexion_ab(ohne));
+    }
+    formen
+}
+
+/// Inhaltswoerter: Woerter ohne Ziffern, mindestens 3 Buchstaben, kein Funktionswort.
+fn inhaltswoerter(text: &str) -> Vec<String> {
+    text.to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| {
+            w.chars().filter(|c| c.is_alphabetic()).count() >= 3
+                && !w.chars().any(|c| c.is_ascii_digit())
+                && !ist_funktionswort(w)
+        })
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Jedes Inhaltswort des Satzes muss (ueber den einfachen Stamm, mit Wortgrenze) im Beleg stehen.
+fn inhaltswoerter_gedeckt(text: &str, beleg: &str) -> Result<(), Grund> {
+    let vorrat: Vec<String> = inhaltswoerter_alle(beleg)
+        .iter()
+        .flat_map(|w| stammformen(w))
+        .collect();
+    let fehlt = inhaltswoerter(text)
+        .iter()
+        .any(|w| !stammformen(w).iter().any(|f| vorrat.contains(f)));
+    if fehlt {
+        Err(Grund::InhaltswortFehlt)
+    } else {
+        Ok(())
+    }
+}
+
+/// Alle Woerter des Belegs (auch Funktionswoerter), damit z. B. "wurde" im Auszug zaehlt.
+fn inhaltswoerter_alle(text: &str) -> Vec<String> {
+    text.to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(str::to_owned)
+        .collect()
 }
 
 // ---------------------------------------------------------------- Zahlen und Daten
@@ -896,7 +991,155 @@ fn operanden_belegt(auszuege: &[String], operanden: &[i128]) -> Result<(), Grund
     }
 }
 
+/// Start und Ende eines Intervalls stehen zusammen in einem Auszug.
+fn intervall_belegt(auszuege: &[Vec<u32>], (von, bis): (u32, u32)) -> bool {
+    auszuege
+        .iter()
+        .any(|zeiten| zeiten.contains(&von) && zeiten.contains(&bis))
+}
+
+fn freie_zeit_belegt(
+    auszuege: &[String],
+    belegt: &[(u32, u32)],
+    fenster: (u32, u32),
+    fenster_von_nutzer: bool,
+) -> Result<(), Grund> {
+    let zeiten: Vec<Vec<u32>> = auszuege.iter().map(|a| zeiten_im_text(a)).collect();
+    let alle_belegt = belegt.iter().all(|i| intervall_belegt(&zeiten, *i));
+    if alle_belegt && (fenster_von_nutzer || intervall_belegt(&zeiten, fenster)) {
+        Ok(())
+    } else {
+        Err(Grund::OperandNichtBelegt)
+    }
+}
+
+/// Rahmenwoerter je Herleitungsart: Satzrahmen, den das Modell frei formulieren darf. Alle anderen
+/// Inhaltswoerter eines Herleitungssatzes muessen in einem `eingaben_beleg`-Auszug stehen.
+const RAHMEN_SUMME: &[&str] = &[
+    "summe",
+    "insgesamt",
+    "zusammen",
+    "beträgt",
+    "ergibt",
+    "macht",
+    "total",
+    "sum",
+    "amount",
+    "comes",
+    "euro",
+    "eur",
+    "stunden",
+    "hours",
+    "tage",
+    "days",
+];
+/// Produkt: Rahmen der Summe plus Multiplikationswoerter.
+const RAHMEN_PRODUKT_PLUS: &[&str] = &["mal", "je", "pro", "per", "times", "satz", "rate"];
+const RAHMEN_FREIE_ZEIT: &[&str] = &[
+    "frei",
+    "freie",
+    "zeit",
+    "termin",
+    "termine",
+    "zwischen",
+    "uhr",
+    "bist",
+    "hast",
+    "available",
+    "free",
+    "between",
+    "slot",
+    "slots",
+];
+const RAHMEN_FRIST: &[&str] = &[
+    "frist", "endet", "läuft", "ab", "bis", "tage", "tagen", "deadline", "ends", "days", "due",
+];
+/// Wochentage und Monatsnamen (DE und EN) sind in jedem Herleitungssatz als Rahmen erlaubt.
+const RAHMEN_KALENDER: &[&str] = &[
+    "montag",
+    "dienstag",
+    "mittwoch",
+    "donnerstag",
+    "freitag",
+    "samstag",
+    "sonntag",
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+    "sunday",
+    "januar",
+    "februar",
+    "märz",
+    "april",
+    "mai",
+    "juni",
+    "juli",
+    "august",
+    "september",
+    "oktober",
+    "november",
+    "dezember",
+    "january",
+    "february",
+    "march",
+    "june",
+    "july",
+    "october",
+    "december",
+];
+
+fn rahmen_von(h: &Herleitung) -> (Vec<&'static [&'static str]>, &EingabenBeleg) {
+    match h {
+        Herleitung::Summe { eingaben_beleg, .. } => (vec![RAHMEN_SUMME], eingaben_beleg),
+        Herleitung::Produkt { eingaben_beleg, .. } => {
+            (vec![RAHMEN_SUMME, RAHMEN_PRODUKT_PLUS], eingaben_beleg)
+        }
+        Herleitung::FreieZeit { eingaben_beleg, .. } => (vec![RAHMEN_FREIE_ZEIT], eingaben_beleg),
+        Herleitung::Frist { eingaben_beleg, .. } => (vec![RAHMEN_FRIST], eingaben_beleg),
+    }
+}
+
+/// Inhaltswoerter eines Herleitungssatzes: Rahmenwort der Art oder Wort eines Eingabe-Auszugs.
+fn herleitung_woerter(text: &str, h: &Herleitung) -> Result<(), Grund> {
+    let (rahmen, eingaben) = rahmen_von(h);
+    let mut vorrat: Vec<String> = rahmen
+        .iter()
+        .chain([&RAHMEN_KALENDER])
+        .flat_map(|liste| liste.iter())
+        .flat_map(|w| stammformen(w))
+        .collect();
+    for (_, auszug) in eingaben {
+        vorrat.extend(
+            inhaltswoerter_alle(auszug)
+                .iter()
+                .flat_map(|w| stammformen(w)),
+        );
+    }
+    let fehlt = inhaltswoerter(text)
+        .iter()
+        .any(|w| !stammformen(w).iter().any(|f| vorrat.contains(f)));
+    if fehlt {
+        Err(Grund::InhaltswortFehlt)
+    } else {
+        Ok(())
+    }
+}
+
 fn pruefe_herleitung(text: &str, h: &Herleitung, ctx: &Ctx) -> Result<(), Grund> {
+    pruefe_herleitung_rechnung(text, h, ctx)?;
+    let vorlage = [Sprache::De, Sprache::En]
+        .iter()
+        .any(|s| leerraum(text) == keine_freie_zeit(*s));
+    if vorlage {
+        return Ok(());
+    }
+    herleitung_woerter(text, h)
+}
+
+fn pruefe_herleitung_rechnung(text: &str, h: &Herleitung, ctx: &Ctx) -> Result<(), Grund> {
     match h {
         Herleitung::Summe {
             werte,
@@ -929,9 +1172,13 @@ fn pruefe_herleitung(text: &str, h: &Herleitung, ctx: &Ctx) -> Result<(), Grund>
         Herleitung::FreieZeit {
             belegt,
             fenster,
+            fenster_von_nutzer,
             mindestdauer,
             ergebnis,
+            eingaben_beleg,
         } => {
+            let auszuege = eingaben_pruefen(ctx, eingaben_beleg)?;
+            freie_zeit_belegt(&auszuege, belegt, *fenster, *fenster_von_nutzer)?;
             let frei =
                 freie_zeit(belegt, *fenster, *mindestdauer).ok_or(Grund::UngueltigeEingabe)?;
             let mut gegeben = ergebnis.clone();
@@ -1141,6 +1388,7 @@ fn gruende_text(gruende: &[Satz], aus: &mut String) {
             Some(Beleg::Herleitung(
                 Herleitung::Summe { eingaben_beleg, .. }
                 | Herleitung::Produkt { eingaben_beleg, .. }
+                | Herleitung::FreieZeit { eingaben_beleg, .. }
                 | Herleitung::Frist { eingaben_beleg, .. },
             )) => {
                 for (_, a) in eingaben_beleg {
@@ -1195,6 +1443,7 @@ mod tests {
             Some(Beleg::Herleitung(
                 Herleitung::Summe { eingaben_beleg, .. }
                 | Herleitung::Produkt { eingaben_beleg, .. }
+                | Herleitung::FreieZeit { eingaben_beleg, .. }
                 | Herleitung::Frist { eingaben_beleg, .. },
             )) => eingaben_beleg.iter().for_each(|(id, a)| merke(q, id, a)),
             _ => {}
@@ -1330,7 +1579,7 @@ mod tests {
     fn quelle_passt() {
         let s = quelle(
             "Der Vertrag mit Müller GmbH läuft bis 12.03.2026 und kostet 1.234,50 Euro.",
-            "Vertrag Müller GmbH, Laufzeit bis 2026-03-12, Gesamtpreis 1234.50 Euro",
+            "Vertrag mit Müller GmbH läuft bis 2026-03-12 und kostet 1234.50 Euro",
         );
         assert_eq!(grund_von(s), None);
     }
@@ -1351,7 +1600,7 @@ mod tests {
     fn name_fehlt_in_quelle() {
         let s = quelle("Die Mail kam von Schmidt.", "Mail von Meier zum Vertrag");
         assert_eq!(grund_von(s), Some(Grund::NameFehltInQuelle));
-        let ok = quelle("Die Mail kam von Meiers Büro.", "Mail von Meiers Büro");
+        let ok = quelle("Die Mail kam von Meiers Büro.", "Mail kam von Meiers Büro");
         assert_eq!(grund_von(ok), None);
     }
 
@@ -1363,7 +1612,7 @@ mod tests {
         assert_eq!(grund_von(s), Some(Grund::PolaritaetGekippt));
         let s = quelle("The client didn't agree.", "The client agreed.");
         assert_eq!(grund_von(s), Some(Grund::PolaritaetGekippt));
-        let ok = quelle("Es gibt keine Verzögerung.", "Keine Verzögerung gemeldet.");
+        let ok = quelle("Es gibt keine Verzögerung.", "Es gibt keine Verzögerung.");
         assert_eq!(grund_von(ok), None);
     }
 
@@ -1470,7 +1719,7 @@ mod tests {
         assert_eq!(grund_von(s), Some(Grund::NameFehltInQuelle));
         let s = quelle("Die Mail kam von Eva.", "Mail zur Evaluation");
         assert_eq!(grund_von(s), Some(Grund::NameFehltInQuelle));
-        let ok = quelle("Die Mail kam von Max.", "Mail von Max");
+        let ok = quelle("Die Mail kam von Max.", "Mail kam von Max");
         assert_eq!(grund_von(ok), None);
     }
 
@@ -1616,6 +1865,17 @@ mod tests {
         );
     }
 
+    /// Auszug, der alle Zeiten von `belegt` und `fenster` nennt.
+    fn zeit_auszug(belegt: &[(u32, u32)], fenster: (u32, u32)) -> String {
+        let hm = |m: u32| format!("{:02}:{:02}", m / 60, m % 60);
+        let mut teile: Vec<String> = belegt
+            .iter()
+            .map(|(s, e)| format!("Termin {} bis {}", hm(*s), hm(*e)))
+            .collect();
+        teile.push(format!("Zeitraum {} bis {}", hm(fenster.0), hm(fenster.1)));
+        teile.join(", ")
+    }
+
     fn zeit(
         belegt: Vec<(u32, u32)>,
         fenster: (u32, u32),
@@ -1623,13 +1883,28 @@ mod tests {
         ergebnis: Vec<(u32, u32)>,
         text: &str,
     ) -> Satz {
+        let eingaben = eing(&zeit_auszug(&belegt, fenster));
+        zeit_mit(belegt, fenster, false, mind, ergebnis, text, eingaben)
+    }
+
+    fn zeit_mit(
+        belegt: Vec<(u32, u32)>,
+        fenster: (u32, u32),
+        fenster_von_nutzer: bool,
+        mind: u32,
+        ergebnis: Vec<(u32, u32)>,
+        text: &str,
+        eingaben_beleg: EingabenBeleg,
+    ) -> Satz {
         herleitung(
             text,
             Herleitung::FreieZeit {
                 belegt,
                 fenster,
+                fenster_von_nutzer,
                 mindestdauer: mind,
                 ergebnis,
+                eingaben_beleg,
             },
         )
     }
@@ -1714,6 +1989,113 @@ mod tests {
             "Frei von 08:00 bis 09:00, nicht aber später.",
         );
         assert_eq!(grund_von(s), Some(Grund::VerneinungUnzulaessig));
+    }
+
+    #[test]
+    fn freie_zeit_braucht_eingaben_mit_herkunft() {
+        let text = "Frei von 08:00 bis 09:00.";
+        let s = zeit_mit(
+            vec![(540, 600)],
+            (480, 600),
+            false,
+            30,
+            vec![(480, 540)],
+            text,
+            vec![],
+        );
+        assert_eq!(grund_von(s), Some(Grund::EingabenOhneBeleg));
+        let s = zeit_mit(
+            vec![(540, 600)],
+            (480, 600),
+            false,
+            30,
+            vec![(480, 540)],
+            text,
+            eing("Termin 09:00 bis 10:00, Zeitraum 08:00 bis 10:00"),
+        );
+        let q = QuellenMap::new().mit("e1", "Ganz anderer Text");
+        assert_eq!(grund_mit(s, &q), Some(Grund::AuszugNichtInQuelle));
+    }
+
+    #[test]
+    fn freie_zeit_falsche_eingaben_verworfen() {
+        let text = "Frei von 08:00 bis 09:00.";
+        let ergebnis = || vec![(480, 540)];
+        // Belegtes Intervall steht nicht im Auszug.
+        let s = zeit_mit(
+            vec![(540, 600)],
+            (480, 600),
+            false,
+            30,
+            ergebnis(),
+            text,
+            eing("Termin 13:00 bis 14:00, Zeitraum 08:00 bis 10:00"),
+        );
+        assert_eq!(grund_von(s), Some(Grund::OperandNichtBelegt));
+        // Nur der Start steht im Auszug.
+        let s = zeit_mit(
+            vec![(540, 600)],
+            (480, 720),
+            false,
+            30,
+            vec![(480, 540), (600, 720)],
+            "Frei von 08:00 bis 09:00 und von 10:00 bis 12:00.",
+            eing("Termin ab 09:00, Zeitraum 08:00 bis 12:00"),
+        );
+        assert_eq!(grund_von(s), Some(Grund::OperandNichtBelegt));
+        // Start und Ende in verschiedenen Auszuegen zaehlen nicht.
+        let s = zeit_mit(
+            vec![(540, 600)],
+            (480, 600),
+            false,
+            30,
+            ergebnis(),
+            text,
+            vec![
+                ("e1".into(), "Beginn 09:00".into()),
+                ("e2".into(), "Ende 10:00, Zeitraum 08:00 bis 10:00".into()),
+            ],
+        );
+        let q = QuellenMap::new()
+            .mit("e1", "Beginn 09:00")
+            .mit("e2", "Ende 10:00, Zeitraum 08:00 bis 10:00");
+        assert_eq!(grund_mit(s, &q), Some(Grund::OperandNichtBelegt));
+        // Fenster fehlt im Auszug und ist nicht vom Nutzer.
+        let s = zeit_mit(
+            vec![(540, 600)],
+            (480, 600),
+            false,
+            30,
+            ergebnis(),
+            text,
+            eing("Termin 09:00 bis 10:00"),
+        );
+        assert_eq!(grund_von(s), Some(Grund::OperandNichtBelegt));
+        // Mit Nutzerfenster ist derselbe Auszug in Ordnung.
+        let s = zeit_mit(
+            vec![(540, 600)],
+            (480, 600),
+            true,
+            30,
+            ergebnis(),
+            text,
+            eing("Termin 09:00 bis 10:00"),
+        );
+        assert_eq!(grund_von(s), None);
+    }
+
+    #[test]
+    fn freie_zeit_uhr_schreibweise_im_auszug() {
+        let s = zeit_mit(
+            vec![(540, 600)],
+            (480, 600),
+            false,
+            30,
+            vec![(480, 540)],
+            "Frei von 08:00 bis 09:00.",
+            eing("Besprechung 9 Uhr bis 10 Uhr, Zeitraum 8 Uhr bis 10 Uhr"),
+        );
+        assert_eq!(grund_von(s), None);
     }
 
     fn frist(text: &str, ergebnis: Datum) -> Satz {
@@ -1892,6 +2274,159 @@ mod tests {
         assert_eq!(
             grund_von(empfehlung("Ich würde Schmidt zusagen.", vec![grund()])),
             Some(Grund::NameFehltInQuelle)
+        );
+    }
+
+    // ---- Inhaltswoerter
+
+    fn q(text: &str, auszug: &str) -> Option<Grund> {
+        grund_von(quelle(text, auszug))
+    }
+
+    #[test]
+    fn inhaltswort_zusage_gegen_absage() {
+        assert_eq!(
+            q("Der Kunde hat zugesagt.", "Der Kunde hat abgelehnt."),
+            Some(Grund::InhaltswortFehlt)
+        );
+        assert_eq!(
+            q("Der Kunde hat zugesagt.", "Der Kunde hat zugesagt."),
+            None
+        );
+    }
+
+    #[test]
+    fn inhaltswort_bezahlt_gegen_offen() {
+        assert_eq!(
+            q("Die Rechnung ist bezahlt.", "Die Rechnung ist offen."),
+            Some(Grund::InhaltswortFehlt)
+        );
+        assert_eq!(
+            q("Die Rechnung ist offen.", "Die Rechnung ist bezahlt."),
+            Some(Grund::InhaltswortFehlt)
+        );
+    }
+
+    #[test]
+    fn inhaltswort_englisch() {
+        assert_eq!(
+            q("The invoice was approved.", "The invoice was rejected."),
+            Some(Grund::InhaltswortFehlt)
+        );
+        assert_eq!(
+            q("The invoice was approved.", "The invoice was approved."),
+            None
+        );
+        assert_eq!(q("Invoices approved.", "The invoice was approving."), None);
+    }
+
+    #[test]
+    fn inhaltswort_flexion_wird_angenommen() {
+        assert_eq!(
+            q("Die Rechnungen wurden bezahlt.", "Rechnung bezahlt"),
+            None
+        );
+        assert_eq!(
+            q("Rechnung bezahlt.", "Die Rechnungen wurden bezahlt"),
+            None
+        );
+        assert_eq!(q("Er hat das Angebot gesagt.", "sagen Angebote"), None);
+    }
+
+    #[test]
+    fn inhaltswort_wortgrenze_statt_teilstring() {
+        assert_eq!(
+            q("The plan works.", "The plants work."),
+            Some(Grund::InhaltswortFehlt)
+        );
+    }
+
+    #[test]
+    fn inhaltswort_funktionswoerter_und_kurze_woerter_zaehlen_nicht() {
+        assert_eq!(q("Es ist ein Plan da.", "Plan"), None);
+        assert_eq!(q("Wir haben es im Plan.", "Plan"), None);
+    }
+
+    #[test]
+    fn inhaltswort_gilt_fuer_begruendungen_nicht_aber_fuer_empfehlungssatz_regel() {
+        let falsch = quelle("Der Kunde hat zugesagt.", "Der Kunde hat abgelehnt.");
+        assert_eq!(
+            grund_von(empfehlung("Ich würde zusagen.", vec![falsch])),
+            Some(Grund::BegruendungVerworfen)
+        );
+        // Kennzeichnungswoerter und freie Wortwahl im Empfehlungssatz bleiben erlaubt.
+        let grund = quelle("Der Termin ist frei.", "Termin frei");
+        assert_eq!(
+            grund_von(empfehlung(
+                "Ich empfehle, den Termin zu nehmen.",
+                vec![grund]
+            )),
+            None
+        );
+    }
+
+    #[test]
+    fn herleitung_name_ausserhalb_der_auszuege_verworfen() {
+        let s = summe("Die Rechnung von Meier beträgt 1234,50 Euro.", 123_450);
+        assert_eq!(grund_von(s), Some(Grund::InhaltswortFehlt));
+        let s = summe("Die Posten ergeben zusammen 1234,50 Euro.", 123_450);
+        assert_eq!(grund_von(s), Some(Grund::InhaltswortFehlt));
+        let s = zeit(
+            vec![(540, 600)],
+            (480, 600),
+            30,
+            vec![(480, 540)],
+            "Bei Schmidt bist du frei von 08:00 bis 09:00.",
+        );
+        assert_eq!(grund_von(s), Some(Grund::InhaltswortFehlt));
+        let s = frist(
+            "Die Kündigung läuft bis 06.03.2026, also 14 Tage.",
+            Datum {
+                jahr: 2026,
+                monat: 3,
+                tag: 6,
+            },
+        );
+        assert_eq!(grund_von(s), Some(Grund::InhaltswortFehlt));
+    }
+
+    #[test]
+    fn herleitung_rahmen_und_auszugswoerter_je_art() {
+        let s = summe("Die Summe beträgt 1234,50 Euro.", 123_450);
+        assert_eq!(grund_von(s), None);
+        let s = summe("Die Posten zusammen: 1234,50 Euro.", 123_450);
+        assert_eq!(grund_von(s), None);
+        let s = frist(
+            "Die Frist endet am 06.03.2026, 14 Tage ab Beginn.",
+            Datum {
+                jahr: 2026,
+                monat: 3,
+                tag: 6,
+            },
+        );
+        assert_eq!(grund_von(s), None);
+        let s = zeit(
+            vec![(540, 600)],
+            (480, 600),
+            30,
+            vec![(480, 540)],
+            "Am Montag bist du frei von 08:00 bis 09:00 Uhr.",
+        );
+        assert_eq!(grund_von(s), None);
+    }
+
+    #[test]
+    fn stamm_regeln() {
+        assert_eq!(flexion_ab("rechnungen"), "rechnung");
+        assert_eq!(flexion_ab("bezahlt"), "bezahl");
+        assert_eq!(flexion_ab("approved"), "approv");
+        assert_eq!(flexion_ab("approving"), "approv");
+        assert_eq!(flexion_ab("planet"), "plan");
+        assert_eq!(flexion_ab("sie"), "sie");
+        assert!(stammformen("gesagt").contains(&"sag".to_owned()));
+        assert_eq!(
+            stammformen("geld"),
+            vec!["geld".to_owned(), "geld".to_owned()]
         );
     }
 

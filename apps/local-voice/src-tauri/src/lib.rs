@@ -2018,6 +2018,8 @@ fn specta_builder() -> Builder<tauri::Wry> {
             konto::konto_bild_lesen,
             assistent::assistent_einstufen,
             assistent::assistent_messung_melden,
+            assistent::assistent_letzte_ausgabe,
+            assistent::assistent_ausgabe_vergessen,
             assistent::change_assistent_einstufung_aktiv_setting,
             projekte::befehle::projekte_liste,
             projekte::befehle::projekt_anlegen,

@@ -6,25 +6,31 @@
 //!   Vorlagenantwort (`antwort`), ab S1 eine Ansage (`ansage`); kein Modell erzeugt diesen Text.
 //! * Messung: `assistent_messung_melden` nimmt die Messpunkte E9 entgegen (nur Zeiten und Merkmale).
 //!
-//! Einstellung `assistent_einstufung_aktiv` (Standard an): aus = `assistent_einstufen` liefert
-//! `None`, der Sprachanruf laeuft wie vor A2.
+//! Einstellung `assistent_einstufung_aktiv` (Standard an): sie steuert NUR die Ansagen und die
+//! S0-Vorlagen in der Oberflaeche (`assistent_einstufen` liefert bei „aus“ `None`). Das Tor vor
+//! dem Modellaufruf ([`tor`]) bleibt immer aktiv.
 //!
 //! # Eingehaengt
-//! `src/components/voice-call/engine.ts` stuft vor dem Modellaufruf ein (Sprachanruf und Textmodus
-//! des Gespraechs): S0 wird aus der Vorlage beantwortet ohne Modellaufruf, ab S1 kommt die Ansage
-//! sofort, danach laeuft der bisherige Ablauf.
-//!
-//! # Belegregel (E4.2): nur verfuegbar, NICHT im Antwortpfad
-//! [`belege_pruefen`] und [`ansagen`] machen `wai_assistent::belegregel` nutzbar und sind getestet
-//! (`tests.rs`). Sie sind bewusst noch nicht in den bestehenden Antwortpfad geschaltet: das
-//! Quellenmodell (welche Quelle belegt welchen Satz) kommt mit A3/A4. Bis dahin gibt das Sprach-
-//! gespraech Modellsaetze unveraendert aus; die Belegregel greift dort noch nicht.
+//! * `voice_call::voice_call_chat` und `voice_call::turn::voice_call_turn` rufen vor jedem
+//!   Modellaufruf [`tor::vor_nachrichten`] (Einstufung in Rust, S0/Fehler = kein Netzaufruf);
+//!   `book_ai::talk::book_talk_ask` ebenso ([`tor::vor_modellaufruf`]).
+//! * `voice_call_chat` schickt die Modellausgabe durch [`tor::Ausgabetor`] (Belegregel E4.2) und
+//!   gibt nur geprueft freigegebene Saetze an Anzeige und Sprachausgabe. Belege sind dort die von
+//!   Rust frisch gelesenen App-Kontext-Treffer.
+//! * `voice_call_turn` schickt die Ausgabe des Sprechers durch [`tor::StromTor`] (dieselbe
+//!   Belegregel). Belege sind die Werkzeugergebnisse, die `voice_tool_call` selbst geliefert hat
+//!   ([`tor::werkzeugergebnis_merken`], [`tor::werkzeug_quellen`]); Werkzeugaufrufe `⟦…⟧` gehen
+//!   unveraendert durch. Die Ausgabe des Denkers ist nie sichtbar, sie geht nur an den Sprecher.
+//! * S0-Absichten ohne Vorlage ([`tor::FORTSETZUNG`]: „Ja“, lauter, ...) gehen als Fortsetzung zum
+//!   Modell, andere S0 nicht.
+//! * `src/components/voice-call/engine.ts` stuft fuer Ansagen und S0-Vorlagen ein (ohne Modell).
 //!
 //! # Datenschutz
 //! Weder die Aeusserung noch Antworten stehen im Log. Die Messung traegt Kennung, Zeiten und
 //! Merkmale. Sie wird nur als Debug-Zeile ohne Text ausgegeben; ein Feld im Beitrag (`ext`) gibt
 //! es dafuer noch nicht (siehe `assistent_messung_melden`).
 
+pub mod tor;
 pub mod uhr;
 
 #[cfg(test)]
@@ -36,8 +42,8 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 use tauri::AppHandle;
 use wai_assistent::{
-    einstufen, Ansagen, Einstufung, Messung, Pruefergebnis, Quellen, Regeltabelle, Satz, Sprache,
-    Stufe, Uhr, Weg,
+    Ansagen, Einstufung, Messung, Pruefergebnis, Quellen, Regeltabelle, Satz, Sprache, Stufe, Uhr,
+    Weg,
 };
 
 use uhr::SystemUhr;
@@ -119,31 +125,40 @@ impl From<Einstufung> for EinstufungDto {
     }
 }
 
-/// Sprache der Tabelle zu einem Sprachcode der Oberflaeche (`en`, `en-US` -> Englisch, sonst Deutsch).
+/// Sprache der Tabelle zu einem Sprachcode der Oberflaeche (`Sprache::aus_code` des Kerns: `de`,
+/// `de-DE`, `de-AT`, `de-CH`, `en`, `en-US`, `en-GB`). Leerraum am Rand und `_` statt `-` werden
+/// vorher geglaettet; alles andere wird Deutsch, mit einer Logzeile ohne Inhalte.
 pub fn sprache_aus(code: &str) -> Sprache {
-    if code.trim().to_ascii_lowercase().starts_with("en") {
-        Sprache::En
-    } else {
+    Sprache::aus_code(&code.trim().replace('_', "-")).unwrap_or_else(|| {
+        log::debug!("assistent: unbekannter Sprachcode, Deutsch");
         Sprache::De
-    }
+    })
 }
 
-/// Einstufung mit Schalter und Uhr von aussen (testbar). `None`: Schalter aus, kein Text oder zu lang.
+/// Sprache der Oberflaeche aus den Einstellungen.
+pub fn sprache_der_app(app: &AppHandle) -> Sprache {
+    sprache_aus(&crate::settings::get_settings(app).app_language)
+}
+
+/// Einstufung fuer Ansagen und S0-Vorlagen der Oberflaeche, mit Schalter und Uhr von aussen
+/// (testbar). `Ok(None)`: Schalter aus, leerer oder zu langer Text. `Err`: die Einstufung ist
+/// gescheitert (die Oberflaeche geht dann nicht ans Modell, sondern zeigt die feste Meldung).
 pub fn einstufen_mit(
     aktiv: bool,
     text: &str,
     sprache: Sprache,
     tabelle: &Regeltabelle,
     uhr: &dyn Uhr,
-) -> Option<EinstufungDto> {
+) -> Result<Option<EinstufungDto>, String> {
     if !aktiv || text.trim().is_empty() || text.chars().count() > MAX_TEXT_ZEICHEN {
-        return None;
+        return Ok(None);
     }
-    Some(einstufen(text, sprache, tabelle, uhr).into())
+    tor::einstufen_geschuetzt(text.trim(), sprache, tabelle, uhr).map(Some)
 }
 
-/// Stuft eine Aeusserung lokal ein (ADR-0028 E4.1). `None`, wenn die Einstufung abgeschaltet ist
-/// (`assistent_einstufung_aktiv`). Der Text wird nicht protokolliert.
+/// Stuft eine Aeusserung lokal ein (ADR-0028 E4.1) fuer Ansagen und S0-Vorlagen. `None`, wenn
+/// diese abgeschaltet sind (`assistent_einstufung_aktiv`); das Tor vor dem Modell bleibt davon
+/// unberuehrt. Der Text wird nicht protokolliert.
 #[tauri::command]
 #[specta::specta]
 pub fn assistent_einstufen(
@@ -152,13 +167,7 @@ pub fn assistent_einstufen(
     sprache: String,
 ) -> Result<Option<EinstufungDto>, String> {
     let aktiv = crate::settings::get_settings(&app).assistent_einstufung_aktiv;
-    Ok(einstufen_mit(
-        aktiv,
-        &text,
-        sprache_aus(&sprache),
-        tabelle(),
-        &SystemUhr,
-    ))
+    einstufen_mit(aktiv, &text, sprache_aus(&sprache), tabelle(), &SystemUhr)
 }
 
 /// Weg der Antwort (Messpunkt E9).
@@ -233,7 +242,21 @@ pub fn assistent_messung_melden(messung: MessungDto) -> Result<(), String> {
     Ok(())
 }
 
-/// „Einstufung vor dem Modellaufruf“ ein- oder ausschalten (Standard an).
+/// Letzte vom Tor freigegebene Ausgabe dieses Gespraechs (fuer „wiederholen“); `None` ohne eine.
+#[tauri::command]
+#[specta::specta]
+pub fn assistent_letzte_ausgabe(conversation_id: Option<String>) -> Option<String> {
+    tor::letzte_ausgabe(conversation_id.as_deref())
+}
+
+/// Vergisst die letzte Ausgabe (nach einer Antwort, die nicht durch das Tor lief).
+#[tauri::command]
+#[specta::specta]
+pub fn assistent_ausgabe_vergessen(conversation_id: Option<String>) {
+    tor::ausgabe_vergessen(conversation_id.as_deref());
+}
+
+/// Ansagen und S0-Vorlagen der Oberflaeche ein- oder ausschalten (Standard an); das Tor bleibt aktiv.
 #[tauri::command]
 #[specta::specta]
 pub fn change_assistent_einstufung_aktiv_setting(

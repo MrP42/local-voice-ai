@@ -860,8 +860,9 @@ async kontoBildLesen(id: string) : Promise<Result<string | null, string>> {
 }
 },
 /**
- * Stuft eine Aeusserung lokal ein (ADR-0028 E4.1). `None`, wenn die Einstufung abgeschaltet ist
- * (`assistent_einstufung_aktiv`). Der Text wird nicht protokolliert.
+ * Stuft eine Aeusserung lokal ein (ADR-0028 E4.1) fuer Ansagen und S0-Vorlagen. `None`, wenn
+ * diese abgeschaltet sind (`assistent_einstufung_aktiv`); das Tor vor dem Modell bleibt davon
+ * unberuehrt. Der Text wird nicht protokolliert.
  */
 async assistentEinstufen(text: string, sprache: string) : Promise<Result<EinstufungDto | null, string>> {
     try {
@@ -885,7 +886,19 @@ async assistentMessungMelden(messung: MessungDto) : Promise<Result<null, string>
 }
 },
 /**
- * „Einstufung vor dem Modellaufruf“ ein- oder ausschalten (Standard an).
+ * Letzte vom Tor freigegebene Ausgabe dieses Gespraechs (fuer „wiederholen“); `None` ohne eine.
+ */
+async assistentLetzteAusgabe(conversationId: string | null) : Promise<string | null> {
+    return await TAURI_INVOKE("assistent_letzte_ausgabe", { conversationId });
+},
+/**
+ * Vergisst die letzte Ausgabe (nach einer Antwort, die nicht durch das Tor lief).
+ */
+async assistentAusgabeVergessen(conversationId: string | null) : Promise<null> {
+    return await TAURI_INVOKE("assistent_ausgabe_vergessen", { conversationId });
+},
+/**
+ * Ansagen und S0-Vorlagen der Oberflaeche ein- oder ausschalten (Standard an); das Tor bleibt aktiv.
  */
 async changeAssistentEinstufungAktivSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
@@ -3925,9 +3938,9 @@ async voiceCallTranscribe(pcm16B64: string) : Promise<Result<string, string>> {
  * fertige Antwort ist der Rückgabewert. Bricht `voice_call_cancel` ab, endet
  * der Aufruf mit `Ok` und leerem Text.
  */
-async voiceCallChat(requestId: string, messages: VoiceCallMessage[], context: SpeakerContext | null) : Promise<Result<string, string>> {
+async voiceCallChat(requestId: string, messages: VoiceCallMessage[], context: SpeakerContext | null, conversationId: string | null) : Promise<Result<string, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("voice_call_chat", { requestId, messages, context }) };
+    return { status: "ok", data: await TAURI_INVOKE("voice_call_chat", { requestId, messages, context, conversationId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -8699,8 +8712,8 @@ meeting_mcp_enabled?: boolean;
  */
 meeting_mcp_include_transcript?: boolean; 
 /**
- * ADR-0028 A2 (E4): lokale Einstufung S0-S3 vor dem Modellaufruf im Sprachgespraech
- * (Vorlagenantwort bei S0, Ansage ab S1). Standard AN; aus = alter Ablauf ohne Einstufung.
+ * ADR-0028 A2 (E4): Ansagen und S0-Vorlagen der Oberflaeche (lokale Einstufung S0-S3). Standard
+ * AN. Steuert NUR die Oberflaeche; das Tor vor dem Modellaufruf (Rust) bleibt immer aktiv.
  */
 assistent_einstufung_aktiv?: boolean; 
 /**
