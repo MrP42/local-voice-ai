@@ -15,7 +15,11 @@
 //! Entfernen ([`entfernen_beginnen`]): erst `entfernen` mit Ziel im Papierkorb, Größe und SHA-256
 //! vermerken, dann die Datei ohne Ersetzen unter einen privaten Prüfnamen im Papierkorb legen, dort
 //! prüfen und nur bei gleicher Identität ans Ziel legen (sonst zurück nach `dateien/`, wo sie als
-//! `gefunden` angeboten wird), dann `papierkorb`. Danach nimmt der Dienst die
+//! `gefunden` angeboten wird), dann `papierkorb`. Vor dem Hashen wird der Abdruck (Datei-Kennung
+//! dev/ino bzw. FILE_ID_INFO, Größe, Änderungszeit) gemerkt und unmittelbar vor dem Verschieben neu
+//! gemessen; weicht er ab oder ist er nicht messbar, wird nicht verschoben. Grenze (wie beim Löschen
+//! von Sicherungen): kein gezielt austauschender Prozess im eigenen Konto; ein Fenster von einem
+//! Systemaufruf zwischen letzter Messung und Verschieben bleibt. Danach nimmt der Dienst die
 //! Mitgliedschaft weg (bzw. der Abgleich, weil die Herkunft dann nicht mehr besteht). Ein Abbruch
 //! dazwischen wird beim Wiederanlauf fortgesetzt. Nichts wird überschrieben oder endgültig gelöscht.
 //!
@@ -162,7 +166,8 @@ pub enum JournalLage {
     Fehlt,
     /// Kaputt oder mit ungültigen Namen.
     Defekt,
-    /// Von einer neueren App-Version: nie neu aufbauen.
+    /// Von einer neueren App-Version: nicht lesbar und nie neu aufbaubar (die Version wird vor der
+    /// übrigen Form geprüft).
     Neuer,
     /// Vorübergehend nicht lesbar (Rechte, Sperre, Datenträger): später erneut.
     NichtLesbar,
@@ -189,11 +194,23 @@ fn journal_laden(dir: &Path) -> Result<Journal, String> {
 
 fn journal_lage(dir: &Path) -> Result<Journal, JournalLage> {
     let j = match fs::read(dir.join(JOURNAL)) {
-        Ok(roh) => match serde_json::from_slice::<Journal>(&roh) {
-            Ok(j) if j.v <= VERSION => j,
-            Ok(_) => return Err(JournalLage::Neuer),
-            Err(_) => return Err(JournalLage::Defekt),
-        },
+        Ok(roh) => {
+            // Erst nur die Version: ein Journal einer neueren App ist nie „defekt“ (und damit nie
+            // neu aufbaubar), auch wenn seine übrige Form hier unbekannt ist.
+            #[derive(Deserialize)]
+            struct NurVersion {
+                v: u32,
+            }
+            match serde_json::from_slice::<NurVersion>(&roh) {
+                Ok(n) if n.v > VERSION => return Err(JournalLage::Neuer),
+                Ok(_) => {}
+                Err(_) => return Err(JournalLage::Defekt),
+            }
+            match serde_json::from_slice::<Journal>(&roh) {
+                Ok(j) => j,
+                Err(_) => return Err(JournalLage::Defekt),
+            }
+        }
         // Ohne Journal, aber mit Dateien: unklar, nicht leer (das Journal wird vor der ersten
         // Ablage geschrieben; fehlt es jetzt, ist es verloren gegangen).
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -543,19 +560,49 @@ fn pruefname(id: &str) -> String {
 fn pruefen_und_ablegen(dir: &Path, d: &Datei, id: &str, ziel: &str) -> Result<bool, String> {
     let korb = dir.join(PAPIERKORB);
     let privat = korb.join(pruefname(id));
-    if gleiche_datei(&privat, &d.entfernen_sha, d.entfernen_groesse) {
+    // Abdruck (Kennung, Größe, Zeit) vor dem Hashen merken und unmittelbar vor dem Verschieben neu
+    // messen: abweichend oder nicht messbar → nicht ablegen, sondern zurücklegen.
+    let vor = crate::library_layout::datei_abdruck(&privat);
+    let gleich = vor.is_ok() && gleiche_datei(&privat, &d.entfernen_sha, d.entfernen_groesse);
+    #[cfg(test)]
+    nach_pruefung(&privat);
+    let unveraendert = gleich
+        && vor
+            .as_ref()
+            .is_ok_and(|v| crate::library_layout::datei_abdruck(&privat).as_ref() == Ok(v));
+    if unveraendert {
         verschieben_ohne_ersetzen(&privat, &korb.join(ziel))
             .map_err(|e| format!("Datei nicht in den Papierkorb verschiebbar: {e}"))?;
         return Ok(true);
     }
-    // Nicht die vermerkte Datei: zurück, nie ersetzen.
+    // Nicht die vermerkte oder eine veränderte Datei: zurück, nie ersetzen.
     let ordner = dir.join(DATEIEN);
     if verschieben_ohne_ersetzen(&privat, &ordner.join(&d.name)).is_err() {
         let frei = crate::library_layout::freier_name(&ordner, &d.name)?;
         verschieben_ohne_ersetzen(&privat, &ordner.join(frei))
             .map_err(|e| format!("Datei nicht zurücklegbar: {e}"))?;
     }
-    Ok(false)
+    // Ohne messbare Kennung (Laufwerk ohne verlässliche Datei-Kennung) bleibt das Entfernen offen.
+    vor.map(|_| false)
+}
+
+#[cfg(test)]
+type Haken = Box<dyn Fn(&Path)>;
+
+#[cfg(test)]
+thread_local! {
+    /// Testhaken zwischen Prüfung und Verschieben.
+    static NACH_PRUEFUNG: std::cell::RefCell<Option<Haken>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn nach_pruefung(p: &Path) {
+    NACH_PRUEFUNG.with(|h| {
+        if let Some(f) = h.borrow().as_ref() {
+            f(p)
+        }
+    });
 }
 
 fn entfernen_fortsetzen(ablage: &Path, projekt: &str, id: &str) -> Result<Option<String>, String> {
@@ -1003,6 +1050,60 @@ mod tests {
             "zurückgelegt, nicht in den Papierkorb"
         );
         assert!(!dir.join(PAPIERKORB).join(pruefname(&id)).exists());
+        fs::remove_dir_all(&a).ok();
+    }
+
+    #[test]
+    fn nach_der_pruefung_ersetzte_datei_wird_nicht_abgelegt() {
+        let a = tmp();
+        let (id, name) = hinzufuegen(&a, P, &quelle(&a, "a.txt", "alt")).unwrap();
+        vermerken(&a, &id);
+        let dir = a.join(P);
+        // Gleicher Inhalt (gleicher Hash, gleiche Größe), aber eine andere Datei: nach der Prüfung
+        // unter den Prüfnamen getauscht.
+        let ersatz = a.join("ersatz.txt");
+        NACH_PRUEFUNG.with(|h| {
+            let e = ersatz.clone();
+            *h.borrow_mut() = Some(Box::new(move |p: &Path| {
+                fs::write(&e, "alt").unwrap();
+                fs::rename(&e, p).unwrap();
+            }));
+        });
+        let r = entfernen_beginnen(&a, P, &id);
+        NACH_PRUEFUNG.with(|h| *h.borrow_mut() = None);
+        r.unwrap();
+        let d = &liste(&a, P).unwrap()[&id];
+        assert_eq!(d.status, Status::Papierkorb);
+        assert!(d.papierkorb.is_none(), "nicht abgelegt");
+        assert_eq!(
+            fs::read_to_string(dir.join(DATEIEN).join(&name)).unwrap(),
+            "alt",
+            "zurückgelegt und als gefunden angeboten"
+        );
+        let korb: Vec<_> = fs::read_dir(dir.join(PAPIERKORB))
+            .unwrap()
+            .flatten()
+            .collect();
+        assert!(korb.is_empty(), "nichts im Papierkorb");
+        wiederanlauf(&a, P).unwrap();
+        assert!(liste(&a, P)
+            .unwrap()
+            .values()
+            .any(|x| x.name == name && x.status == Status::Gefunden));
+        fs::remove_dir_all(&a).ok();
+    }
+
+    #[test]
+    fn neueres_journal_mit_unbekanntem_feld_wird_nie_neu_aufgebaut() {
+        let a = tmp();
+        hinzufuegen(&a, P, &quelle(&a, "a.txt", "a")).unwrap();
+        let pfad = a.join(P).join(JOURNAL);
+        let roh = br#"{"v":2,"dateien":{"x":{"neu":true}},"zusatz":[1,2]}"#;
+        fs::write(&pfad, roh).unwrap();
+        assert_eq!(lage(&a, P).unwrap(), Some(JournalLage::Neuer));
+        assert_eq!(bestand(&a).unklar, vec![P.to_string()]);
+        assert!(neu_aufbauen(&a, P).is_err());
+        assert_eq!(fs::read(&pfad).unwrap(), roh, "unverändert");
         fs::remove_dir_all(&a).ok();
     }
 

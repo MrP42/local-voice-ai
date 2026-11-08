@@ -10440,7 +10440,8 @@ export type JournalLage =
  */
 "defekt" | 
 /**
- * Von einer neueren App-Version: nie neu aufbauen.
+ * Von einer neueren App-Version: nicht lesbar und nie neu aufbaubar (die Version wird vor der
+ * übrigen Form geprüft).
  */
 "neuer" | 
 /**
