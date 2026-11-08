@@ -312,9 +312,27 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
         led = ledger::Ledger::default();
     }
     led.konto = Some(kennung);
+    // Beschädigte Markierung: kein Zyklus (sonst würden gesperrte Daten hochladbar).
     let nur_lokal = super::uebernahme::data(app)
-        .map(|d| super::uebernahme_kern::nur_lokal_laden(&d))
-        .unwrap_or_default();
+        .and_then(|d| super::uebernahme_kern::nur_lokal_laden(&d))
+        .map_err(HubError::Other)?;
+    // Fassungsseiten gehören zu ihrem Buch: ist das Buch nur lokal, sind es auch sie.
+    let seite_buch: HashMap<String, String> = if nur_lokal.einheiten.is_empty() {
+        HashMap::new()
+    } else {
+        crate::commands::pages::load_index(app)
+            .map_err(HubError::Other)?
+            .pages
+            .into_iter()
+            .filter_map(|p| p.buch.map(|b| (p.id, b)))
+            .collect()
+    };
+    let buch_gesperrt = |collection: &str, id: &str| {
+        collection == "page"
+            && seite_buch
+                .get(id)
+                .is_some_and(|b| nur_lokal.einheiten.contains(b))
+    };
     let mut kollisionen: std::collections::BTreeSet<String> = Default::default();
     if app.state::<SyncEngine>().take_retry_files()
         && (!led.failed.is_empty() || !led.dead.is_empty())
@@ -364,7 +382,8 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
     if !nur_lokal.ist_leer() {
         let mut raus = |objs: &mut Vec<LocalObject>| {
             objs.retain(|o| {
-                let bleibt = nur_lokal.betrifft(o.collection, &o.id, &o.value);
+                let bleibt = nur_lokal.betrifft(o.collection, &o.id, &o.value)
+                    || buch_gesperrt(o.collection, &o.id);
                 if bleibt {
                     nur_lokal_vorhanden.push(ledger::key(o.collection, &o.id));
                 }
@@ -524,6 +543,9 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
         })
         .count() as u32
         + blocked_files.len() as u32;
+    // Lokal geschützte Objekte: eingehende Änderungen und Löschungen mit derselben
+    // Kennung (z. B. Fortschritt desselben Buchs im Konto) bleiben draußen.
+    let geschuetzt: HashSet<String> = nur_lokal_vorhanden.iter().cloned().collect();
     // Zurückgehaltene Bücher, Seiten und Dateien gelten nicht als gelöscht.
     let mut present: HashSet<String> = nur_lokal_vorhanden
         .into_iter()
@@ -815,7 +837,31 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
             }
             // Markierter Schlüssel (lva#400 U5): weder anwenden noch verbuchen. Eine
             // markierte Seite oder ein markiertes Buch im Konto ist eine Kollision.
-            if nur_lokal.sperrt_eingang(&remote.collection, &remote.object_id) {
+            // Abhängige Objekte (Fortschritt, Lesezeichen, Buchdateien) einer nur lokalen
+            // Einheit ebenfalls: sie würden lokale Stände überschreiben und nach einer
+            // Kollision als Grabsteine zurückkehren (Review lva#412). Freigegebene
+            // Einheiten lesen sie beim Neueinlesen (rescan) nach.
+            let abhaengig_gesperrt = !nur_lokal.ist_leer()
+                && matches!(
+                    remote.collection.as_str(),
+                    "progress" | "bookmark" | "book_file"
+                )
+                && (geschuetzt.contains(&ledger::key(&remote.collection, &remote.object_id))
+                    || (!remote.deleted
+                        && decrypt(&key, cfg, remote).is_ok_and(|v| {
+                            super::uebernahme_kern::einheit_von(
+                                &remote.collection,
+                                &remote.object_id,
+                                &v,
+                            )
+                            .is_some_and(|u| nur_lokal.einheiten.contains(&u))
+                        })));
+            if abhaengig_gesperrt {
+                continue;
+            }
+            if nur_lokal.sperrt_eingang(&remote.collection, &remote.object_id)
+                || buch_gesperrt(&remote.collection, &remote.object_id)
+            {
                 if !remote.deleted
                     && matches!(remote.collection.as_str(), "page" | "book")
                     && nur_lokal.einheiten.contains(&remote.object_id)

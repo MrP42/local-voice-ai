@@ -5,6 +5,7 @@ import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { ArchiveRestore, FolderOpen, Settings2, Trash2 } from "lucide-react";
 import { commands, type Sicherung } from "@/bindings";
 import { formatBytes } from "@/lib/library/remove";
+import { openSettingsTab } from "@/lib/openSettingsTab";
 import { Dialog } from "../ui/Dialog";
 import { Button } from "../ui/Button";
 
@@ -121,10 +122,24 @@ export const SicherungenListe: React.FC<Props> = ({ stand }) => {
   };
 
   return (
-    <div className="px-4 py-3 space-y-2 text-sm" data-testid="sync-sicherungen">
+    <div
+      className="px-4 py-3 space-y-2 text-sm"
+      data-testid="sync-sicherungen"
+      data-settings-anchor="konto-sicherungen"
+    >
       <div>
         <p className="font-medium">{t("sync.sicherungen.titel")}</p>
-        <p className="text-text-muted">{t("sync.sicherungen.hinweis")}</p>
+        <p className="text-text-muted">
+          {t("sync.sicherungen.hinweis")}{" "}
+          <button
+            type="button"
+            className="underline hover:text-text cursor-pointer max-sm:min-h-[44px] pointer-coarse:min-h-[44px]"
+            onClick={() => openSettingsTab("app", "bibliothek-sicherungen")}
+            data-testid="link-bibliothek-sicherungen"
+          >
+            {t("sync.sicherungen.zurBibliothek")}
+          </button>
+        </p>
       </div>
       <ul className="divide-y divide-mid-gray/15 rounded-md border border-mid-gray/20">
         {liste.map((s) => (
@@ -210,13 +225,18 @@ export const SicherungenListe: React.FC<Props> = ({ stand }) => {
         footer={
           <>
             <Button
+              className="max-sm:min-h-[44px] pointer-coarse:min-h-[44px]"
               variant="danger"
               onClick={() => void loeschenBestaetigt()}
               disabled={!!laeuft}
             >
               {t("sync.sicherungen.loeschen")}
             </Button>
-            <Button variant="secondary" onClick={() => setLoeschen(null)}>
+            <Button
+              className="max-sm:min-h-[44px] pointer-coarse:min-h-[44px]"
+              variant="secondary"
+              onClick={() => setLoeschen(null)}
+            >
               {t("sync.abmelden.abbrechen")}
             </Button>
           </>

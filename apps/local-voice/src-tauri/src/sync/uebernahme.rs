@@ -68,39 +68,88 @@ fn wartend_loeschen(app: &AppHandle) {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
 struct Widerruf {
     url: String,
     token: String,
 }
 
-/// Token am Hub widerrufen; scheitert es, später erneut (U10).
-async fn widerrufen(app: &AppHandle, url: &str, token: &str) {
-    if HubClient::new(url, token).logout().await.is_ok() {
-        return;
+/// Lese-Ändern-Schreiben der Widerrufsliste (nie über ein `await` gehalten).
+static WIDERRUF_SPERRE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Ausstehende Widerrufe; liest auch das frühere Einzelformat.
+fn widerrufe_laden(app: &AppHandle) -> Vec<Widerruf> {
+    let Some(raw) = konto_datei(app, WIDERRUF)
+        .ok()
+        .and_then(|p| std::fs::read(p).ok())
+    else {
+        return Vec::new();
+    };
+    serde_json::from_slice::<Vec<Widerruf>>(&raw)
+        .or_else(|_| serde_json::from_slice::<Widerruf>(&raw).map(|w| vec![w]))
+        .unwrap_or_default()
+}
+
+fn widerrufe_speichern(app: &AppHandle, liste: &[Widerruf]) -> Result<(), String> {
+    let p = konto_datei(app, WIDERRUF)?;
+    if liste.is_empty() {
+        return match std::fs::remove_file(&p) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.to_string()),
+            _ => Ok(()),
+        };
     }
+    let raw = serde_json::to_vec(liste).map_err(|e| e.to_string())?;
+    account::write_private(&p, &raw)
+}
+
+/// Widerruf dauerhaft vormerken, BEVOR die letzte Kopie des Tokens verschwindet (U10).
+/// Mehrere Aufträge bleiben erhalten; ein Schreibfehler bricht den Aufrufer ab.
+fn widerruf_vormerken(app: &AppHandle, url: &str, token: &str) -> Result<(), String> {
+    let _sperre = WIDERRUF_SPERRE.lock().unwrap_or_else(|e| e.into_inner());
+    let mut liste = widerrufe_laden(app);
     let w = Widerruf {
         url: url.to_string(),
         token: token.to_string(),
     };
-    if let (Ok(p), Ok(raw)) = (konto_datei(app, WIDERRUF), serde_json::to_vec(&w)) {
-        let _ = account::write_private(&p, &raw);
+    if !liste.contains(&w) {
+        liste.push(w);
     }
+    widerrufe_speichern(app, &liste)
 }
 
-/// Ausstehenden Widerruf wiederholen (Start, Anmeldung).
+/// Token widerrufen: erst vormerken, dann ausführen (scheitert es, beim nächsten Start).
+async fn widerrufen(app: &AppHandle, url: &str, token: &str) {
+    if let Err(e) = widerruf_vormerken(app, url, token) {
+        log::warn!("Sync: Widerruf nicht vorgemerkt: {e}");
+        // Ohne Vormerkung wenigstens jetzt versuchen.
+        let _ = HubClient::new(url, token).logout().await;
+        return;
+    }
+    widerruf_nachholen(app).await;
+}
+
+/// Ausstehende Widerrufe ausführen (Start, Anmeldung, nach Abbrechen/Abmelden).
 pub async fn widerruf_nachholen(app: &AppHandle) {
-    let Ok(p) = konto_datei(app, WIDERRUF) else {
-        return;
+    let offen = {
+        let _sperre = WIDERRUF_SPERRE.lock().unwrap_or_else(|e| e.into_inner());
+        widerrufe_laden(app)
     };
-    let Some(w) = std::fs::read(&p)
-        .ok()
-        .and_then(|r| serde_json::from_slice::<Widerruf>(&r).ok())
-    else {
+    let mut erledigt = Vec::new();
+    for w in offen {
+        if HubClient::new(&w.url, &w.token).logout().await.is_ok() {
+            erledigt.push(w);
+        }
+    }
+    if erledigt.is_empty() {
         return;
-    };
-    if HubClient::new(&w.url, &w.token).logout().await.is_ok() {
-        let _ = std::fs::remove_file(p);
+    }
+    let _sperre = WIDERRUF_SPERRE.lock().unwrap_or_else(|e| e.into_inner());
+    let rest: Vec<Widerruf> = widerrufe_laden(app)
+        .into_iter()
+        .filter(|w| !erledigt.contains(w))
+        .collect();
+    if let Err(e) = widerrufe_speichern(app, &rest) {
+        log::warn!("Sync: Widerrufsliste nicht gespeichert: {e}");
     }
 }
 
@@ -320,15 +369,17 @@ fn herkunft_fuer(app: &AppHandle, cfg: &SyncConfig) -> Option<kern::Herkunft> {
 }
 
 /// Bestand berechnen (Kopien der Objekte, damit `Erfasst` weiterverwendbar bleibt).
-fn bestand_von(app: &AppHandle, cfg: &SyncConfig, e: &Erfasst) -> Vec<kern::Objekt> {
+fn bestand_von(
+    app: &AppHandle,
+    cfg: &SyncConfig,
+    e: &Erfasst,
+) -> Result<Vec<kern::Objekt>, String> {
     let herkunft = herkunft_fuer(app, cfg);
-    let nur = data(app)
-        .map(|d| kern::nur_lokal_laden(&d))
-        .unwrap_or_default();
-    kern::bestand(&e.objekte, herkunft.as_ref(), &nur)
+    let nur = kern::nur_lokal_laden(&data(app)?)?;
+    Ok(kern::bestand(&e.objekte, herkunft.as_ref(), &nur)
         .into_iter()
         .cloned()
-        .collect()
+        .collect())
 }
 
 /// Der Bestand verlangt eine Wahl, wenn mehr als die Einstellungen betroffen ist. Nur
@@ -534,20 +585,25 @@ fn einstellungen_jetzt(app: &AppHandle) -> Value {
     )
 }
 
+fn anlass_von(art: Art) -> &'static str {
+    match art {
+        Art::Anmeldung => "anmeldung",
+        Art::Abmeldung => "abmeldung",
+        Art::Kollision => "kollision",
+        Art::Uebernahme => "freigabe",
+        Art::Wiederherstellen => "wiederherstellen",
+    }
+}
+
 /// Sichern (Phase `entscheidung` → `gesichert`) und umsetzen (`gesichert` → `umgesetzt`),
 /// unter Seiten- und Bibliothekssperre. Gibt die entfernten Fortschrittsschlüssel zurück.
 fn sichern_und_umsetzen(app: &AppHandle, j: &mut Journal) -> Result<Vec<String>, String> {
     let d = data(app)?;
-    let _seiten = pages::lock();
     let _bibliothek = crate::library::sync_lock();
+    let _seiten = pages::lock();
     if j.phase == Phase::Entscheidung {
         let einst = einstellungen_jetzt(app);
-        let anlass = match j.art {
-            Art::Anmeldung => "anmeldung",
-            Art::Abmeldung => "abmeldung",
-            Art::Kollision => "kollision",
-            Art::Uebernahme => "freigabe",
-        };
+        let anlass = anlass_von(j.art);
         let info = kern::sichern(
             &d,
             &kern::Auftrag {
@@ -582,7 +638,27 @@ fn sichern_und_umsetzen(app: &AppHandle, j: &mut Journal) -> Result<Vec<String>,
                 "Die Sicherung {name} ist nicht lesbar ({e}). Der Übergang ist angehalten; es wurde nichts entfernt."
             ));
         }
-        let u = kern::umsetzen(&d, &name, &j.plan)?;
+        let u = match kern::umsetzen(&d, &name, &j.plan) {
+            Err(e) if kern::ist_abweichung(&e) => {
+                // Lokal seit der Sicherung geändert (nichts entfernt): den jetzigen Stand
+                // zusätzlich sichern und gegen diese Sicherung umsetzen. Die frühere
+                // bleibt erhalten (Sicherungen werden nie automatisch gelöscht).
+                let einst = einstellungen_jetzt(app);
+                let info = kern::sichern(
+                    &d,
+                    &kern::Auftrag {
+                        anlass: anlass_von(j.art),
+                        konto: Some(&j.email),
+                        einstellungen: &einst,
+                        platz_frei: crate::commands::library_layout::freier_platz(&d),
+                    },
+                )?;
+                j.sicherung = Some(info.name.clone());
+                kern::journal_speichern(&d, j)?;
+                kern::umsetzen(&d, &info.name, &j.plan)?
+            }
+            r => r?,
+        };
         entfernt = u.entfernte_fortschritte;
         j.phase = Phase::Umgesetzt;
         kern::journal_speichern(&d, j)?;
@@ -602,25 +678,36 @@ fn abschliessen(app: &AppHandle, j: &Journal) -> Result<(), String> {
     let d = data(app)?;
     match j.art {
         Art::Anmeldung => {
-            let w = wartend_laden(app).ok_or("Wartende Anmeldung fehlt")?;
-            account::save(app, &w.cfg)?;
-            ledger::save(app, &neues_ledger(&w.cfg))?;
-            wartend_loeschen(app);
+            match wartend_laden(app) {
+                Some(w) => {
+                    account::save(app, &w.cfg)?;
+                    ledger::save(app, &neues_ledger(&w.cfg))?;
+                    wartend_loeschen(app);
+                }
+                // Absturz nach dem Löschen der wartenden Anmeldung: schon abgeschlossen.
+                None if account::load(app).is_some_and(|c| {
+                    c.user_id == j.user_id && kern::hub_gleich(&c.url, &j.hub)
+                }) => {}
+                None => return Err("Wartende Anmeldung fehlt".into()),
+            }
         }
-        Art::Abmeldung => {}
+        Art::Abmeldung | Art::Wiederherstellen => {}
         Art::Kollision | Art::Uebernahme => {
             // Ledger bereinigen: markierte und freigegebene Objekte ohne Basisrevision;
             // freigegebene Kennungen erneut einlesen, damit die Kontofassung ankommt.
             let mut led = ledger::load(app);
-            let nur = kern::nur_lokal_laden(&d);
+            let nur = kern::nur_lokal_laden(&d)?;
             led.objects.retain(|k, _| {
                 let (s, id) = k.split_once('/').unwrap_or(("", k));
                 !nur.schluessel.contains(k)
                     && !(matches!(s, "page" | "book") && nur.einheiten.contains(id))
                     && !j.plan.freigeben.contains(id)
                     && !j.plan.entfernen.contains(id)
+                    && !j.plan.frei_schluessel.contains(k)
+                    && !j.plan.ledger_weg.contains(k)
             });
-            if !j.plan.freigeben.is_empty() {
+            // Freigegebenes neu einlesen: Kontoobjekte, die gesperrt waren, kommen jetzt an.
+            if !j.plan.freigeben.is_empty() || !j.plan.frei_schluessel.is_empty() {
                 led.rescan = 0;
             }
             ledger::save(app, &led)?;
@@ -664,18 +751,25 @@ fn emit_entfernt(app: &AppHandle, keys: Vec<String>) {
 /// eine offene Entscheidung (Modal), `Ok(false)`: nichts offen.
 pub fn wiederanlauf(app: &AppHandle) -> Result<bool, String> {
     let d = data(app)?;
-    let Some(mut j) = kern::journal_laden(&d) else {
+    let Some(mut j) = kern::journal_laden(&d)? else {
         // Wartende Anmeldung ohne Journal (Absturz zwischen den beiden Dateien).
         return Ok(wartend_laden(app).is_some());
     };
-    if j.phase == Phase::Entscheidung && j.art == Art::Anmeldung && j.wahl.is_none() {
+    if j.phase == Phase::Entscheidung && j.art == Art::Anmeldung {
+        // Nichts verändert (auch nach einer gescheiterten Sicherung): Modal erneut.
         return Ok(true);
+    }
+    if j.art == Art::Wiederherstellen {
+        wiederherstellen_ausfuehren(app, &mut j)?;
+        let _ = app.emit(engine::EVENT_CHANGED, ());
+        return Ok(false);
     }
     if j.phase == Phase::Entscheidung && j.art == Art::Abmeldung {
         if let Some(cfg) = account::load(app) {
             if cfg.user_id == j.user_id && kern::hub_gleich(&cfg.url, &j.hub) {
                 herkunft_schreiben(app, &cfg)?;
             }
+            widerruf_vormerken(app, &cfg.url, &cfg.token)?;
             account::remove(app);
         }
         ledger::remove(app);
@@ -709,8 +803,9 @@ pub async fn anmelden(
     if ergebnis.is_err() {
         // Gescheitert, bevor eine Wahl getroffen war: Anmeldezustand bereinigen (U10).
         if let Ok(d) = data(app) {
-            let offen = kern::journal_laden(&d)
-                .is_some_and(|j| j.art == Art::Anmeldung && j.wahl.is_none());
+            let offen = kern::journal_laden(&d).is_ok_and(|j| {
+                j.is_some_and(|j| j.art == Art::Anmeldung && j.phase == Phase::Entscheidung)
+            });
             if offen {
                 wartend_loeschen(app);
                 let _ = kern::journal_loeschen(&d);
@@ -731,8 +826,11 @@ async fn anmelden_unter_sperre(
         widerrufen(app, &cfg.url, &cfg.token).await;
         return Err("Dieses Gerät ist schon angemeldet. Bitte zuerst abmelden.".into());
     }
-    if let Some(j) = kern::journal_laden(&d) {
-        if !(j.art == Art::Anmeldung && j.phase == Phase::Entscheidung) {
+    if kern::journal_vorhanden(&d) {
+        let offen_anmeldung = kern::journal_laden(&d).is_ok_and(|j| {
+            j.is_some_and(|j| j.art == Art::Anmeldung && j.phase == Phase::Entscheidung)
+        });
+        if !offen_anmeldung {
             widerrufen(app, &cfg.url, &cfg.token).await;
             return Err(
                 "Ein vorheriger Übergang ist noch nicht abgeschlossen. Bitte die App neu starten."
@@ -772,7 +870,7 @@ async fn anmelden_unter_sperre(
     w.konto = konto;
     w.gleiche_seiten = gleich;
     wartend_speichern(app, &w)?;
-    let bestand = bestand_von(app, &cfg, &erfasst);
+    let bestand = bestand_von(app, &cfg, &erfasst)?;
     if braucht_wahl(&bestand) {
         let e = entscheidung(app, &w, &erfasst, &bestand);
         return Ok(AnmeldeErgebnis {
@@ -782,7 +880,7 @@ async fn anmelden_unter_sperre(
     }
     // Nichts zu entscheiden: Zusammenführen ohne Modal; abweichende Einstellungen vorher
     // gesichert.
-    let mut j = kern::journal_laden(&d).ok_or("Journal fehlt")?;
+    let mut j = kern::journal_laden(&d)?.ok_or("Journal fehlt")?;
     j.wahl = Some(Wahl::Zusammenfuehren);
     if bestand.is_empty() {
         j.phase = Phase::Umgesetzt;
@@ -815,7 +913,7 @@ pub async fn sync_anmeldung_offen(app: AppHandle) -> Result<Option<Entscheidung>
     let erfasst = tauri::async_runtime::spawn_blocking(move || erfassen(&app2, &cfg))
         .await
         .map_err(|e| e.to_string())??;
-    let bestand = bestand_von(&app, &w.cfg, &erfasst);
+    let bestand = bestand_von(&app, &w.cfg, &erfasst)?;
     Ok(Some(entscheidung(&app, &w, &erfasst, &bestand)))
 }
 
@@ -839,7 +937,7 @@ pub async fn sync_anmeldung_entscheiden(
         }
         let app2 = app.clone();
         tauri::async_runtime::spawn_blocking(move || -> Result<Vec<String>, String> {
-            let mut j = kern::journal_laden(&d).unwrap_or(Journal {
+            let mut j = kern::journal_laden(&d)?.unwrap_or(Journal {
                 art: Art::Anmeldung,
                 hub: w.cfg.url.clone(),
                 user_id: w.cfg.user_id,
@@ -849,11 +947,13 @@ pub async fn sync_anmeldung_entscheiden(
                 sicherung: None,
                 plan: Plan::default(),
             });
-            if j.wahl.is_none() {
-                // Plan unter den Sperren aus dem frischen Bestand: was danach entsteht,
-                // wartet auf den ersten Lauf und ist dann gewöhnliche Arbeit im Konto.
+            if j.phase == Phase::Entscheidung {
+                // In `entscheidung` ist noch nichts verändert: Plan stets neu aus dem
+                // frischen Bestand mit der aktuellen Wahl (auch nach einer gescheiterten
+                // Sicherung, z. B. zu wenig Platz). Was zwischen Erfassen und Sicherung
+                // entsteht, ist danach gewöhnliche Arbeit im Konto.
                 let erfasst = erfassen(&app2, &w.cfg)?;
-                let bestand = bestand_von(&app2, &w.cfg, &erfasst);
+                let bestand = bestand_von(&app2, &w.cfg, &erfasst)?;
                 let wahl: Wahl = wahl.into();
                 j.plan = plan_bauen(&d, wahl, &w, &erfasst, &bestand);
                 j.wahl = Some(wahl);
@@ -879,19 +979,22 @@ pub async fn sync_anmeldung_abbrechen(
 ) -> Result<SyncStatus, String> {
     let _guard = engine.account_guard().await;
     let d = data(&app)?;
-    if let Some(j) = kern::journal_laden(&d) {
-        if j.art != Art::Anmeldung || j.phase != Phase::Entscheidung || j.wahl.is_some() {
+    if let Some(j) = kern::journal_laden(&d)? {
+        // Solange die Phase `entscheidung` ist, wurde nichts verändert (U11).
+        if j.art != Art::Anmeldung || j.phase != Phase::Entscheidung {
             return Err(
                 "Die Wahl wird schon umgesetzt und lässt sich nicht mehr abbrechen.".into(),
             );
         }
     }
     let w = wartend_laden(&app);
+    if let Some(w) = &w {
+        // Erst vormerken: danach gibt es keine andere Kopie des Tokens mehr.
+        widerruf_vormerken(&app, &w.cfg.url, &w.cfg.token)?;
+    }
     wartend_loeschen(&app);
     kern::journal_loeschen(&d)?;
-    if let Some(w) = w {
-        widerrufen(&app, &w.cfg.url, &w.cfg.token).await;
-    }
+    widerruf_nachholen(&app).await;
     Ok(status_mit(&engine, &app))
 }
 
@@ -900,7 +1003,15 @@ pub async fn abmelden(app: &AppHandle, engine: &SyncEngine, entfernen: bool) -> 
     let cfg = account::load(app);
     let _guard = engine.account_guard().await;
     let d = data(app)?;
+    if kern::journal_vorhanden(&d) {
+        return Err("Ein Übergang ist noch offen. Bitte zuerst „Erneut prüfen“.".into());
+    }
+    if entfernen && cfg.is_none() {
+        return Err("Nicht angemeldet.".into());
+    }
     if let Some(cfg) = &cfg {
+        // Herkunft zuerst (verändert keine Nutzdaten); scheitert sie, bleibt alles wie es war.
+        herkunft_schreiben(app, cfg)?;
         if entfernen {
             let index = pages::load_index(app)?;
             let mut plan = Plan::default();
@@ -932,19 +1043,19 @@ pub async fn abmelden(app: &AppHandle, engine: &SyncEngine, entfernen: bool) -> 
                 },
             )?;
         }
-        herkunft_schreiben(app, cfg)?;
+    }
+    if let Some(cfg) = &cfg {
+        widerruf_vormerken(app, &cfg.url, &cfg.token)?;
     }
     account::remove(app);
     ledger::remove(app);
-    if let Some(cfg) = &cfg {
-        widerrufen(app, &cfg.url, &cfg.token).await;
-    }
-    if entfernen && kern::journal_laden(&d).is_some() {
+    widerruf_nachholen(app).await;
+    if entfernen && kern::journal_vorhanden(&d) {
         let app2 = app.clone();
         let entfernt =
             tauri::async_runtime::spawn_blocking(move || -> Result<Vec<String>, String> {
                 let d = data(&app2)?;
-                let mut j = kern::journal_laden(&d).ok_or("Journal fehlt")?;
+                let mut j = kern::journal_laden(&d)?.ok_or("Journal fehlt")?;
                 let entfernt = sichern_und_umsetzen(&app2, &mut j)?;
                 abschliessen(&app2, &j)?;
                 Ok(entfernt)
@@ -963,7 +1074,7 @@ pub fn kollision_aufloesen(
     einheiten: &BTreeSet<String>,
 ) -> Result<(), String> {
     let d = data(app)?;
-    if kern::journal_laden(&d).is_some() {
+    if kern::journal_vorhanden(&d) {
         return Ok(()); // ein anderer Übergang läuft; der nächste Lauf versucht es erneut
     }
     let mut plan = Plan::default();
@@ -1028,28 +1139,31 @@ pub async fn sync_sicherung_wiederherstellen(
     let bericht =
         tauri::async_runtime::spawn_blocking(move || -> Result<WiederherstellBericht, String> {
             let d = data(&app2)?;
-            if kern::journal_laden(&d).is_some() {
+            if kern::journal_vorhanden(&d) {
                 return Err("Ein Übergang ist noch offen. Bitte erst abschließen.".into());
             }
-            let _seiten = pages::lock();
-            let _bibliothek = crate::library::sync_lock();
-            let w = kern::wiederherstellen(&d, &name)?;
-            // Alles Wiederhergestellte bleibt nur lokal (U8); Ledger-Einträge bereinigen.
-            let mut nur = kern::nur_lokal_laden(&d);
-            for u in w.neue_einheiten() {
-                nur.einheiten.insert(u.clone());
-            }
-            kern::nur_lokal_speichern(&d, &nur)?;
-            let mut led = ledger::load(&app2);
-            let vorher = led.objects.len();
-            led.objects.retain(|k, _| {
-                k.split_once('/').is_none_or(|(s, id)| {
-                    !(matches!(s, "page" | "book") && nur.einheiten.contains(id))
-                })
-            });
-            if led.objects.len() != vorher {
-                ledger::save(&app2, &led)?;
-            }
+            let cfg = account::load(&app2);
+            let plan = {
+                let _bibliothek = crate::library::sync_lock();
+                let _seiten = pages::lock();
+                wiederherstellen_planen(&d, &name)?
+            };
+            let mut j = Journal {
+                art: Art::Wiederherstellen,
+                hub: cfg.as_ref().map(|c| c.url.clone()).unwrap_or_default(),
+                user_id: cfg.as_ref().map(|c| c.user_id).unwrap_or_default(),
+                email: cfg
+                    .as_ref()
+                    .map(|c| c.user_email.clone())
+                    .unwrap_or_default(),
+                wahl: None,
+                phase: Phase::Entscheidung,
+                sicherung: Some(name.clone()),
+                plan,
+            };
+            // Ab hier läuft kein Zyklus, bis alles markiert und geschrieben ist (U8, U11).
+            kern::journal_speichern(&d, &j)?;
+            let w = wiederherstellen_ausfuehren(&app2, &mut j)?;
             Ok(WiederherstellBericht {
                 zurueck: w.zurueck.len() as u32,
                 zusaetzlich: w.zusaetzlich.len() as u32,
@@ -1068,6 +1182,71 @@ pub async fn sync_sicherung_wiederherstellen(
     Ok(bericht)
 }
 
+/// Wiederherstellung planen: Kennungen stehen fest, bevor etwas geschrieben wird; alles
+/// Zurückkommende ist nur lokal, auch ergänzte Fortschritte und Lesezeichen.
+fn wiederherstellen_planen(d: &Path, name: &str) -> Result<Plan, String> {
+    let mut plan = kern::wiederherstellen_plan(d, name)?;
+    for k in plan.fortschritt.clone() {
+        if let Some(s) = fortschritt_sync_schluessel(&k) {
+            plan.nur_lokal.schluessel.insert(s.clone());
+            plan.ledger_weg.insert(s);
+        }
+    }
+    for u in &plan.nur_lokal.einheiten {
+        plan.ledger_weg.insert(kern::schluessel("page", u));
+        plan.ledger_weg.insert(kern::schluessel("book", u));
+    }
+    Ok(plan)
+}
+
+/// Sync-Schlüssel eines Eintrags aus `fortschritt.json`.
+fn fortschritt_sync_schluessel(k: &str) -> Option<String> {
+    if let Some(sub) = k.strip_prefix("progress.") {
+        return Some(kern::schluessel(
+            "progress",
+            &books::progress_object_id(sub),
+        ));
+    }
+    books::is_bookmark_key(k).then(|| kern::schluessel("bookmark", &books::bookmark_object_id(k)))
+}
+
+/// Ledger-Einträge entfernen (nur mit Konto; ohne Konto gibt es kein Ledger).
+fn ledger_bereinigen(app: &AppHandle, weg: &BTreeSet<String>) -> Result<(), String> {
+    if weg.is_empty() || account::load(app).is_none() {
+        return Ok(());
+    }
+    let mut led = ledger::load(app);
+    let vorher = led.objects.len();
+    led.objects.retain(|k, _| !weg.contains(k));
+    if led.objects.len() != vorher {
+        ledger::save(app, &led)?;
+    }
+    Ok(())
+}
+
+/// Wiederherstellung nach Journal: erst markieren und Ledger bereinigen (Phase
+/// `gesichert`), dann schreiben, dann Journal löschen. Wiederholbar.
+fn wiederherstellen_ausfuehren(
+    app: &AppHandle,
+    j: &mut Journal,
+) -> Result<kern::Wiederhergestellt, String> {
+    let d = data(app)?;
+    let name = j.sicherung.clone().ok_or("Journal ohne Sicherung")?;
+    let _bibliothek = crate::library::sync_lock();
+    let _seiten = pages::lock();
+    if j.phase == Phase::Entscheidung {
+        let mut nur = kern::nur_lokal_laden(&d)?;
+        nur.vereinigen(&j.plan.nur_lokal);
+        kern::nur_lokal_speichern(&d, &nur)?;
+        ledger_bereinigen(app, &j.plan.ledger_weg)?;
+        j.phase = Phase::Gesichert;
+        kern::journal_speichern(&d, j)?;
+    }
+    let w = kern::wiederherstellen(&d, &name, &j.plan)?;
+    kern::journal_loeschen(&d)?;
+    Ok(w)
+}
+
 /// Einstellungen einer Sicherung zurückspielen (vorher Sicherung der aktuellen).
 #[tauri::command]
 #[specta::specta]
@@ -1082,8 +1261,8 @@ pub async fn sync_sicherung_einstellungen(
     let einst = einstellungen_jetzt(&app);
     let app2 = app.clone();
     tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
-        let _seiten = pages::lock();
         let _bibliothek = crate::library::sync_lock();
+        let _seiten = pages::lock();
         kern::sichern(
             &d,
             &kern::Auftrag {
@@ -1119,12 +1298,33 @@ pub async fn sync_nur_lokal_uebernehmen(
         let app2 = app.clone();
         tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
             let d = data(&app2)?;
-            if kern::journal_laden(&d).is_some() {
+            if kern::journal_vorhanden(&d) {
                 return Err("Ein Übergang ist noch offen.".into());
             }
-            let nur = kern::nur_lokal_laden(&d);
+            let nur = kern::nur_lokal_laden(&d)?;
             if nur.ist_leer() {
                 return Ok(());
+            }
+            // Ledger-Schlüssel aller betroffenen lokalen Objekte (auch Fortschritte,
+            // Lesezeichen, Buchdateien): Push mit Basis 0 (U5).
+            let erfasst = erfassen(&app2, &cfg)?;
+            let mut ledger_weg: BTreeSet<String> = erfasst
+                .objekte
+                .iter()
+                .filter(|o| {
+                    let k = kern::schluessel(&o.sammlung, &o.id);
+                    nur.schluessel.contains(&k)
+                        || o.einheit.as_ref().is_some_and(|u| {
+                            nur.einheiten.contains(u)
+                                || nur.einheiten.contains(&effektiv(&erfasst, u))
+                        })
+                })
+                .map(|o| kern::schluessel(&o.sammlung, &o.id))
+                .collect();
+            ledger_weg.extend(nur.schluessel.iter().cloned());
+            for u in &nur.einheiten {
+                ledger_weg.insert(kern::schluessel("page", u));
+                ledger_weg.insert(kern::schluessel("book", u));
             }
             let mut j = Journal {
                 art: Art::Uebernahme,
@@ -1136,20 +1336,15 @@ pub async fn sync_nur_lokal_uebernehmen(
                 sicherung: None,
                 plan: Plan {
                     freigeben: nur.einheiten.clone(),
+                    frei_schluessel: nur.schluessel.clone(),
+                    ledger_weg,
                     ..Default::default()
                 },
             };
             kern::journal_speichern(&d, &j)?;
+            // Derselbe wiederholbare Weg wie beim Wiederanlauf.
             sichern_und_umsetzen(&app2, &mut j)?;
-            // Ledger-Einträge der freigegebenen Objekte löschen (Basis 0), Liste leeren.
-            let mut led = ledger::load(&app2);
-            led.objects.retain(|k, _| {
-                let id = k.split_once('/').map(|(_, id)| id).unwrap_or(k);
-                !nur.schluessel.contains(k) && !nur.einheiten.contains(id)
-            });
-            ledger::save(&app2, &led)?;
-            kern::nur_lokal_speichern(&d, &kern::NurLokal::default())?;
-            kern::journal_loeschen(&d)
+            abschliessen(&app2, &j)
         })
         .await
         .map_err(|e| e.to_string())??;
@@ -1160,7 +1355,9 @@ pub async fn sync_nur_lokal_uebernehmen(
 /// Zahl der nur lokal gehaltenen Einträge (für den Status).
 pub fn nur_lokal_anzahl(app: &AppHandle) -> u32 {
     data(app)
-        .map(|d| kern::nur_lokal_laden(&d).anzahl())
+        .ok()
+        .and_then(|d| kern::nur_lokal_laden(&d).ok())
+        .map(|n| n.anzahl())
         .unwrap_or(0)
 }
 

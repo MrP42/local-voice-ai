@@ -5621,8 +5621,10 @@
       "entfernt": "Signed out. The data is backed up and removed from this device."
     },
     "sicherungen": {
-      "titel": "Backups",
-      "hinweis": "Before every account switch, removal and upload the app backs up the local data. Backups are never deleted automatically.",
+      "titel": "Backups from account actions",
+      "hinweis": "Before every sign-in with local data, account switch, removal and upload the app backs up the local data. Backups are never deleted automatically.",
+      "zurBibliothek": "Library backups",
+      "zuKonto": "Backups from account actions (Account & devices)",
       "anlass": {
         "anmeldung": "before sign-in",
         "abmeldung": "before sign-out",

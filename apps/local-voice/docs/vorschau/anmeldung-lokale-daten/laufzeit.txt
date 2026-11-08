@@ -1,0 +1,13 @@
+Laufzeitnachweise Anmeldung/Abmelden (Playwright, Chromium)
+390 px Kontowechsel, „getrennt halten“: 2 Kollisionen, letzte vollständig im Bild nach Scrollen.
+  Scrollbereich: 882px Inhalt in 656px.
+  Bestätigen: vollständig im Bild, aktiviert, Klick ruft sync_anmeldung_entscheiden, sync_status, sync_sicherungen, sync_hub_status auf.
+Fokusfalle Anmelde-Modal: 25 Tab/Umschalt+Tab-Schritte, Fokus blieb in allen im Dialog; Esc schließt nicht.
+Abmelden-Dialog: Fokus beim Öffnen im Dialog; nach Esc zurück auf „Abmelden“.
+Touchflächen bei 390 px mit Touch (pointer: coarse):
+  wahl-zusammenfuehren: 308×132 px
+  wahl-sichern: 308×72 px
+  wahl-getrennt: 278×92 px
+  wahl-entfernen: 278×112 px
+  anmeldung-bestaetigen: 308×44 px
+  anmeldung-abbrechen: 308×44 px

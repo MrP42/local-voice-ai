@@ -118,6 +118,11 @@ pub async fn sync_logout(
 ) -> Result<SyncStatus, String> {
     let ergebnis = uebernahme::abmelden(&app, &engine, entfernen).await;
     engine.refresh_from_config(&app);
+    if ergebnis.is_err() && uebernahme::uebergang_offen(&app) {
+        // Abgemeldet, aber Sicherung/Entfernen offen: Wiederanlauf versuchen und den
+        // Stand (mit `uebergang_fehler`) an die Oberfläche melden.
+        engine.run_once(&app).await;
+    }
     ergebnis?;
     Ok(engine.status())
 }

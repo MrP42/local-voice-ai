@@ -39,15 +39,19 @@ export const AnmeldungDatenDialog: React.FC<Props> = ({
   const [laeuft, setLaeuft] = useState<null | "wahl" | "abbrechen">(null);
   const [fehler, setFehler] = useState("");
 
+  // Nur beim Öffnen (oder bei anderem Vorkonto) zurücksetzen, nicht bei jedem neuen
+  // Stand aus dem Kern: sonst gingen Auswahl und laufende Wahl verloren.
+  const offen = entscheidung !== null;
+  const vorher = entscheidung?.vorher_konto ?? null;
   useEffect(() => {
-    if (!entscheidung) return;
+    if (!offen) return;
     // Kontowechsel: der vorsichtige Weg ist vorausgewählt (U3).
-    setWeg(entscheidung.vorher_konto ? "sichern" : "zusammenfuehren");
+    setWeg(vorher ? "sichern" : "zusammenfuehren");
     setTrennung("getrennt_halten");
     setKopieren(false);
     setFehler("");
     setLaeuft(null);
-  }, [entscheidung]);
+  }, [offen, vorher]);
 
   if (!entscheidung) return null;
 
@@ -146,6 +150,7 @@ export const AnmeldungDatenDialog: React.FC<Props> = ({
       footer={
         <>
           <Button
+            className="max-sm:min-h-[44px] pointer-coarse:min-h-[44px]"
             variant="primary"
             onClick={() => void bestaetigen()}
             disabled={!!laeuft || gesperrt}
@@ -154,6 +159,7 @@ export const AnmeldungDatenDialog: React.FC<Props> = ({
             {laeuft === "wahl" ? t("sync.anmeldung.laeuft") : knopf}
           </Button>
           <Button
+            className="max-sm:min-h-[44px] pointer-coarse:min-h-[44px]"
             variant="secondary"
             onClick={() => void abbrechen()}
             disabled={!!laeuft}
@@ -187,6 +193,7 @@ export const AnmeldungDatenDialog: React.FC<Props> = ({
           aria-label={t("sync.anmeldung.frage")}
         >
           <Radio
+            className="max-sm:min-h-[44px] pointer-coarse:min-h-[44px]"
             value="zusammenfuehren"
             label={
               <span>
@@ -203,6 +210,7 @@ export const AnmeldungDatenDialog: React.FC<Props> = ({
           {weg === "zusammenfuehren" && kontowechsel && (
             <div className="ms-8 mb-1">
               <Checkbox
+                className="max-sm:min-h-[44px] pointer-coarse:min-h-[44px]"
                 checked={kopieren}
                 onChange={(_, d) => setKopieren(!!d.checked)}
                 label={t("sync.anmeldung.kopierenBestaetigen", {
@@ -214,6 +222,7 @@ export const AnmeldungDatenDialog: React.FC<Props> = ({
             </div>
           )}
           <Radio
+            className="max-sm:min-h-[44px] pointer-coarse:min-h-[44px]"
             value="sichern"
             label={
               <span>
@@ -238,6 +247,7 @@ export const AnmeldungDatenDialog: React.FC<Props> = ({
             aria-label={t("sync.anmeldung.sichern")}
           >
             <Radio
+              className="max-sm:min-h-[44px] pointer-coarse:min-h-[44px]"
               value="getrennt_halten"
               label={
                 <span>
@@ -250,6 +260,7 @@ export const AnmeldungDatenDialog: React.FC<Props> = ({
               data-testid="wahl-getrennt"
             />
             <Radio
+              className="max-sm:min-h-[44px] pointer-coarse:min-h-[44px]"
               value="entfernen"
               label={
                 <span>

@@ -260,7 +260,7 @@ fn kollision_kopiert_seite_unter_neuer_kennung_und_gibt_alte_frei() {
     assert!(f.contains_key("progress.text:page_77:original"));
     assert!(f.contains_key("tts.resume.page_77:original"));
     assert!(!f.contains_key("progress.text:page_1:original"));
-    let n = nur_lokal_laden(d);
+    let n = nur_lokal_laden(d).unwrap();
     assert!(n.einheiten.contains("page_77") && !n.einheiten.contains("page_1"));
     // Wiederholbar: keine zweite Kopie.
     umsetzen(d, &info.name, &plan).unwrap();
@@ -281,9 +281,9 @@ fn journal_rundlauf() {
         plan: Plan::default(),
     };
     journal_speichern(t.path(), &j).unwrap();
-    assert_eq!(journal_laden(t.path()).unwrap(), j);
+    assert_eq!(journal_laden(t.path()).unwrap(), Some(j));
     journal_loeschen(t.path()).unwrap();
-    assert!(journal_laden(t.path()).is_none());
+    assert!(journal_laden(t.path()).unwrap().is_none());
 }
 
 #[test]
@@ -329,8 +329,17 @@ fn wiederherstellen_ueberschreibt_nie_und_legt_abweichendes_daneben() {
     )
     .unwrap();
 
-    let w = wiederherstellen(d, &info.name).unwrap();
+    let plan = wiederherstellen_plan(d, &info.name).unwrap();
+    assert!(plan.nur_lokal.einheiten.contains("book_1"));
+    assert_eq!(plan.kopien.len(), 1);
+    assert!(plan.nur_lokal.einheiten.contains(&plan.kopien["page_1"]));
+    assert_eq!(
+        plan.fortschritt,
+        ["progress.audio:book_1".to_string()].into()
+    );
+    let w = wiederherstellen(d, &info.name, &plan).unwrap();
     assert_eq!(w.zurueck, vec!["book_1"]);
+    assert_eq!(w.ergaenzte_fortschritte, vec!["progress.audio:book_1"]);
     assert_eq!(w.zusaetzlich.len(), 1);
     assert_eq!(
         fs::read(d.join("projects/page_1/state.json")).unwrap(),
@@ -350,8 +359,83 @@ fn wiederherstellen_ueberschreibt_nie_und_legt_abweichendes_daneben() {
     assert_eq!(w.fortschritte_ergaenzt, 1);
     assert_eq!(w.fortschritte_abweichend, 1);
     assert_eq!(fortschritt(d)["progress.audio:book_12"], "geaendert");
-    // Zweiter Lauf: alles gleich oder schon daneben, nichts überschrieben.
-    let w2 = wiederherstellen(d, &info.name).unwrap();
+    // Wiederanlauf mit demselben Plan: dieselben Kennungen, kein zweiter Index-Eintrag.
+    let ids = index_ids(d);
+    let w1 = wiederherstellen(d, &info.name, &plan).unwrap();
+    assert_eq!(w1.zusaetzlich, w.zusaetzlich);
+    assert_eq!(index_ids(d), ids);
+    // Neuer Plan: alles gleich oder schon daneben, nichts überschrieben.
+    let plan2 = wiederherstellen_plan(d, &info.name).unwrap();
+    assert!(!plan2.nur_lokal.einheiten.contains("book_1"));
+    let w2 = wiederherstellen(d, &info.name, &plan2).unwrap();
     assert!(w2.zurueck.is_empty());
     assert!(w2.gleich.contains(&"book_1".to_string()));
+}
+
+#[test]
+fn wiederherstellen_schreibt_nur_geplante_einheiten() {
+    let t = beispiel();
+    let d = t.path();
+    let einst = json!({});
+    let info = sichern(d, &auftrag(&einst)).unwrap();
+    // Plan ohne Einheiten (z. B. vor dem Verschwinden erstellt): nichts zurückschreiben.
+    fs::remove_dir_all(d.join("library/book_1")).unwrap();
+    let w = wiederherstellen(d, &info.name, &Plan::default()).unwrap();
+    assert!(w.zurueck.is_empty());
+    assert!(w.in_sicherung.contains(&"book_1".to_string()));
+    assert!(!d.join("library/book_1").exists());
+    assert_eq!(w.fortschritte_ergaenzt, 0);
+}
+
+#[test]
+fn beschaedigte_markierung_und_journal_sind_fehler() {
+    let t = tempfile::tempdir().unwrap();
+    let d = t.path();
+    assert!(nur_lokal_laden(d).unwrap().ist_leer());
+    assert!(journal_laden(d).unwrap().is_none());
+    assert!(!journal_vorhanden(d));
+    fs::write(d.join(NUR_LOKAL), b"{kaputt").unwrap();
+    fs::write(d.join(JOURNAL), b"{kaputt").unwrap();
+    assert!(nur_lokal_laden(d).is_err());
+    assert!(journal_laden(d).is_err());
+    assert!(journal_vorhanden(d));
+    // Umsetzen überschreibt eine beschädigte Markierung nicht.
+    let einst = json!({});
+    fs::remove_file(d.join(JOURNAL)).unwrap();
+    schreibe(d, "projects/page_1/state.json", b"x");
+    let info = sichern(d, &auftrag(&einst)).unwrap();
+    let plan = Plan {
+        nur_lokal: NurLokal {
+            einheiten: ["page_1".to_string()].into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    assert!(umsetzen(d, &info.name, &plan).is_err());
+    assert_eq!(fs::read(d.join(NUR_LOKAL)).unwrap(), b"{kaputt");
+}
+
+#[test]
+fn geaenderter_fortschritt_haelt_vor_jedem_entfernen() {
+    let t = beispiel();
+    let d = t.path();
+    let einst = json!({});
+    let info = sichern(d, &auftrag(&einst)).unwrap();
+    let mut f = fortschritt(d);
+    f.insert("progress.audio:book_1".into(), "neuer".into());
+    fs::write(
+        d.join("library/fortschritt.json"),
+        serde_json::to_vec(&f).unwrap(),
+    )
+    .unwrap();
+    let plan = Plan {
+        entfernen: ["book_1".to_string(), "page_1".to_string()].into(),
+        ..Default::default()
+    };
+    let e = umsetzen(d, &info.name, &plan).unwrap_err();
+    assert!(ist_abweichung(&e), "{e}");
+    // Nichts entfernt: Ordner und Fortschritt stehen noch.
+    assert!(d.join("library/book_1/buch.json").is_file());
+    assert!(d.join("projects/page_1/state.json").is_file());
+    assert_eq!(fortschritt(d)["progress.audio:book_1"], "neuer");
 }

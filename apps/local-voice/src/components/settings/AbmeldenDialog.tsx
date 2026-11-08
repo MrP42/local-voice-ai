@@ -10,6 +10,8 @@ interface Props {
   konto: string;
   onOpenChange: (open: boolean) => void;
   onAbgemeldet: (status: SyncStatus, entfernt: boolean) => void;
+  /** Nach einem Fehler: Stand neu laden (das Abmelden kann trotzdem erfolgt sein). */
+  onFehler: () => void;
 }
 
 /**
@@ -22,6 +24,7 @@ export const AbmeldenDialog: React.FC<Props> = ({
   konto,
   onOpenChange,
   onAbgemeldet,
+  onFehler,
 }) => {
   const { t } = useTranslation();
   const [wahl, setWahl] = useState<"behalten" | "entfernen">("behalten");
@@ -44,6 +47,7 @@ export const AbmeldenDialog: React.FC<Props> = ({
     setLaeuft(false);
     if (r.status === "error") {
       setFehler(r.error);
+      onFehler();
       return;
     }
     onAbgemeldet(r.data, entfernen);
@@ -64,6 +68,7 @@ export const AbmeldenDialog: React.FC<Props> = ({
       footer={
         <>
           <Button
+            className="max-sm:min-h-[44px] pointer-coarse:min-h-[44px]"
             variant="primary"
             onClick={() => void abmelden()}
             disabled={laeuft}
@@ -76,6 +81,7 @@ export const AbmeldenDialog: React.FC<Props> = ({
               : t("sync.abmelden.knopf")}
           </Button>
           <Button
+            className="max-sm:min-h-[44px] pointer-coarse:min-h-[44px]"
             variant="secondary"
             onClick={() => onOpenChange(false)}
             disabled={laeuft}
@@ -92,6 +98,7 @@ export const AbmeldenDialog: React.FC<Props> = ({
           aria-label={t("sync.abmelden.titel")}
         >
           <Radio
+            className="max-sm:min-h-[44px] pointer-coarse:min-h-[44px]"
             value="behalten"
             label={
               <span>
@@ -106,6 +113,7 @@ export const AbmeldenDialog: React.FC<Props> = ({
             data-testid="abmelden-behalten"
           />
           <Radio
+            className="max-sm:min-h-[44px] pointer-coarse:min-h-[44px]"
             value="entfernen"
             label={
               <span>

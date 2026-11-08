@@ -505,6 +505,157 @@ test("Nur lokal und Sicherungen: Zeile mit Übernahme, Liste mit Anlass", async 
   );
 });
 
+// Laufzeitnachweise (Codex 08.11.): Scrollbarkeit und Aktivierung bei 390 px,
+// Fokusfalle, Fokusrückgabe und Touchflächen. Ergebnis: laufzeit.txt.
+const nachweis: string[] = [];
+test.afterAll(async () => {
+  if (nachweis.length === 0) return;
+  const fs = await import("node:fs");
+  fs.mkdirSync(SHOTS, { recursive: true });
+  fs.writeFileSync(
+    `${SHOTS}/laufzeit.txt`,
+    ["Laufzeitnachweise Anmeldung/Abmelden (Playwright, Chromium)", ...nachweis]
+      .join("\n")
+      .concat("\n"),
+  );
+});
+
+test("390 px: Kollisionen scrollbar, Bestätigen erreichbar und aktiv", async ({
+  page,
+}) => {
+  await vorbereiten(page, { width: 390, wechsel: true });
+  await anmelden(page);
+  const m = modal(page);
+  await m.getByTestId("wahl-sichern").check();
+  await m.getByTestId("wahl-getrennt").check();
+  const koll = m.getByTestId("anmeldung-kollisionen");
+  await expect(koll).toBeVisible();
+  const letzte = koll.getByRole("listitem").last();
+  await letzte.scrollIntoViewIfNeeded();
+  await expect(letzte).toBeInViewport({ ratio: 1 });
+  const knopf = m.getByTestId("anmeldung-bestaetigen");
+  await knopf.scrollIntoViewIfNeeded();
+  await expect(knopf).toBeInViewport({ ratio: 1 });
+  await expect(knopf).toBeEnabled();
+  const scroll = await page.evaluate(() => {
+    const d = document.querySelector('[role="alertdialog"]') as HTMLElement;
+    const el = [d, ...Array.from(d.querySelectorAll<HTMLElement>("*"))].find(
+      (e) =>
+        e.scrollHeight > e.clientHeight + 1 &&
+        /(auto|scroll)/.test(getComputedStyle(e).overflowY),
+    );
+    return el
+      ? { scrollHeight: el.scrollHeight, clientHeight: el.clientHeight }
+      : null;
+  });
+  await page.screenshot({ path: `${SHOTS}/03b-kollisionen-gescrollt-390.png` });
+  const anzahl = await koll.getByRole("listitem").count();
+  expect(anzahl).toBeGreaterThan(0);
+  const vorher = (await calls(page)).length;
+  await knopf.click();
+  await expect
+    .poll(async () => (await calls(page)).length)
+    .toBeGreaterThan(vorher);
+  const neu = (await calls(page)).slice(vorher).map(([c]) => c);
+  nachweis.push(
+    `390 px Kontowechsel, „getrennt halten“: ${anzahl} Kollisionen, letzte vollständig im Bild nach Scrollen.`,
+    `  Scrollbereich: ${scroll ? `${scroll.scrollHeight}px Inhalt in ${scroll.clientHeight}px` : "kein Überlauf (passt ganz)"}.`,
+    `  Bestätigen: vollständig im Bild, aktiviert, Klick ruft ${neu.join(", ")} auf.`,
+  );
+});
+
+test("Fokusfalle im Modal und Fokusrückgabe nach Abmelden-Dialog", async ({
+  page,
+}) => {
+  await vorbereiten(page);
+  await anmelden(page);
+  const m = modal(page);
+  const ausserhalb: string[] = [];
+  for (let i = 0; i < 25; i++) {
+    await page.keyboard.press(i % 5 === 4 ? "Shift+Tab" : "Tab");
+    const drin = await page.evaluate(
+      () => !!document.activeElement?.closest('[role="alertdialog"]'),
+    );
+    if (!drin) ausserhalb.push(String(i));
+  }
+  expect(ausserhalb).toEqual([]);
+  await page.keyboard.press("Escape");
+  await expect(m).toBeVisible();
+  nachweis.push(
+    "Fokusfalle Anmelde-Modal: 25 Tab/Umschalt+Tab-Schritte, Fokus blieb in allen im Dialog; Esc schließt nicht.",
+  );
+  await m.getByTestId("anmeldung-abbrechen").click();
+  await page.evaluate(() => {
+    const w = window as any;
+    w.__sync.status = {
+      ...w.__sync.status,
+      connected: true,
+      user_email: "b@example.org",
+      device_name: "Test-PC",
+      hub_url: "https://portal.example.org",
+      anmeldung_offen: false,
+    };
+    w.__senden("sync-status", w.__sync.status);
+  });
+  const ab = page.getByRole("button", { name: "Abmelden" });
+  await ab.focus();
+  await ab.press("Enter");
+  await expect(page.getByTestId("abmelden-dialog")).toBeVisible();
+  const imDialog = await page.evaluate(
+    () =>
+      !!document.activeElement?.closest('[role="dialog"],[role="alertdialog"]'),
+  );
+  expect(imDialog).toBe(true);
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("abmelden-dialog")).toHaveCount(0);
+  await expect(ab).toBeFocused();
+  nachweis.push(
+    "Abmelden-Dialog: Fokus beim Öffnen im Dialog; nach Esc zurück auf „Abmelden“.",
+  );
+});
+
+test("Touchflächen mindestens 44 px (grober Zeiger)", async ({ page }) => {
+  // Navigation breit, dann auf Telefonbreite: die Schublade ist nicht Prüfgegenstand.
+  await vorbereiten(page, { wechsel: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  // Touch-Gerät nachbilden: in Chromium gilt danach (pointer: coarse).
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send("Emulation.setTouchEmulationEnabled", {
+    enabled: true,
+    maxTouchPoints: 5,
+  });
+  await anmelden(page);
+  const m = modal(page);
+  await m.getByTestId("wahl-sichern").check();
+  const grob = await page.evaluate(
+    () => matchMedia("(pointer: coarse)").matches,
+  );
+  expect(grob).toBe(true);
+  const ids = [
+    "wahl-zusammenfuehren",
+    "wahl-kopieren",
+    "wahl-sichern",
+    "wahl-getrennt",
+    "wahl-entfernen",
+    "anmeldung-bestaetigen",
+    "anmeldung-abbrechen",
+  ];
+  const zeilen: string[] = [];
+  for (const id of ids) {
+    const ziel = m.getByTestId(id);
+    if ((await ziel.count()) === 0) continue;
+    // Bei Radio/Checkbox ist die Trefferfläche die ganze Zeile (Wurzel).
+    const el = id.startsWith("wahl-") ? ziel.locator("..") : ziel;
+    const b = await el.boundingBox();
+    zeilen.push(`  ${id}: ${Math.round(b!.width)}×${Math.round(b!.height)} px`);
+    expect(b!.height, id).toBeGreaterThanOrEqual(44);
+  }
+  nachweis.push(
+    "Touchflächen bei 390 px mit Touch (pointer: coarse):",
+    ...zeilen,
+  );
+});
+
 for (const theme of ["light", "dark"]) {
   for (const width of [1440, 390]) {
     test(`Abnahmebilder ${theme} ${width}`, async ({ page }) => {

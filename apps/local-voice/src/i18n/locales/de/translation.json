@@ -5621,8 +5621,10 @@
       "entfernt": "Abgemeldet. Die Daten sind gesichert und vom Gerät entfernt."
     },
     "sicherungen": {
-      "titel": "Sicherungen",
-      "hinweis": "Vor jedem Kontowechsel, Entfernen und Übernehmen sichert die App die lokalen Daten. Sicherungen werden nie automatisch gelöscht.",
+      "titel": "Sicherungen bei Kontoaktionen",
+      "hinweis": "Vor jeder Anmeldung mit lokalen Daten, jedem Kontowechsel, Entfernen und Übernehmen sichert die App die lokalen Daten. Sicherungen werden nie automatisch gelöscht.",
+      "zurBibliothek": "Sicherungen der Bibliothek",
+      "zuKonto": "Sicherungen bei Kontoaktionen (Konto & Geräte)",
       "anlass": {
         "anmeldung": "vor der Anmeldung",
         "abmeldung": "vor dem Abmelden",

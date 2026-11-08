@@ -284,8 +284,20 @@ impl NurLokal {
     }
 }
 
-pub fn nur_lokal_laden(data: &Path) -> NurLokal {
-    lies_json(&data.join(NUR_LOKAL)).unwrap_or_default()
+/// Strikt lesen: fehlt die Datei, ist nichts markiert; ist sie unlesbar oder beschädigt,
+/// ist das ein Fehler (sonst würden gesperrte Daten hochladbar, Codex lva#412).
+fn lies_streng<T: for<'de> Deserialize<'de>>(pfad: &Path) -> Result<Option<T>, String> {
+    match fs::read(pfad) {
+        Ok(roh) => serde_json::from_slice(&roh)
+            .map(Some)
+            .map_err(|e| format!("{} ist beschädigt: {e}", pfad.display())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(format!("{} ist nicht lesbar: {e}", pfad.display())),
+    }
+}
+
+pub fn nur_lokal_laden(data: &Path) -> Result<NurLokal, String> {
+    Ok(lies_streng(&data.join(NUR_LOKAL))?.unwrap_or_default())
 }
 
 pub fn nur_lokal_speichern(data: &Path, n: &NurLokal) -> Result<(), String> {
@@ -667,8 +679,8 @@ pub fn einstellungen_der_sicherung(data: &Path, name: &str) -> Result<Value, Str
 /// Eine Sicherung auf ausdrücklichen Wunsch löschen; nicht, solange ein Übergang sie braucht.
 pub fn loeschen(data: &Path, name: &str) -> Result<(), String> {
     let dir = sicherungs_ordner(data, name)?;
-    if journal_laden(data).is_some_and(|j| j.sicherung.as_deref() == Some(name)) {
-        return Err("Diese Sicherung gehört zu einer noch nicht abgeschlossenen Anmeldung.".into());
+    if journal_vorhanden(data) {
+        return Err("Solange ein Übergang offen ist, lässt sich keine Sicherung löschen.".into());
     }
     fs::remove_dir_all(&dir).map_err(|e| format!("Sicherung nicht löschbar: {e}"))
 }
@@ -811,6 +823,8 @@ pub enum Wahl {
 #[serde(rename_all = "snake_case")]
 pub enum Phase {
     Entscheidung,
+    /// Bei `wiederherstellen`: Markierungen gesetzt, das Ledger bereinigt (vor dem Schreiben
+    /// der Dateien); sonst: Sicherung vollständig geprüft.
     Gesichert,
     Umgesetzt,
 }
@@ -834,6 +848,12 @@ pub struct Plan {
     /// Einheiten, deren Markierung entfällt, damit die Kontofassung ankommt.
     #[serde(default)]
     pub freigeben: BTreeSet<String>,
+    /// Exakte Schlüssel, deren Markierung entfällt (Übernahme ins Konto).
+    #[serde(default)]
+    pub frei_schluessel: BTreeSet<String>,
+    /// Ledger-Einträge, die beim Abschluss entfallen (Push mit Basis 0, U5).
+    #[serde(default)]
+    pub ledger_weg: BTreeSet<String>,
 }
 
 /// Wozu der Übergang gehört; alle laufen über dasselbe Journal (U11).
@@ -845,6 +865,8 @@ pub enum Art {
     Abmeldung,
     Kollision,
     Uebernahme,
+    /// Sicherung zurückspielen (U8): erst markieren, dann schreiben.
+    Wiederherstellen,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -862,8 +884,14 @@ pub struct Journal {
     pub plan: Plan,
 }
 
-pub fn journal_laden(data: &Path) -> Option<Journal> {
-    lies_json(&data.join(JOURNAL))
+/// Journal lesen; beschädigt → Fehler (Übergänge und Sync bleiben dann gesperrt).
+pub fn journal_laden(data: &Path) -> Result<Option<Journal>, String> {
+    lies_streng(&data.join(JOURNAL))
+}
+
+/// Ein Journal liegt vor (auch ein beschädigtes): kein Zyklus, kein neuer Übergang.
+pub fn journal_vorhanden(data: &Path) -> bool {
+    fs::symlink_metadata(data.join(JOURNAL)).is_ok()
 }
 
 pub fn journal_speichern(data: &Path, j: &Journal) -> Result<(), String> {
@@ -897,6 +925,14 @@ pub struct Umsetzung {
 /// Den Plan nach geprüfter Sicherung umsetzen. Idempotent: bereits Erledigtes wird
 /// übersprungen, Kopien entstehen unter der Kennung aus dem Plan. Entfernt wird nur, was
 /// vollständig in der Sicherung liegt; sonst bricht der Schritt ab, ohne zu löschen.
+/// Kennzeichen eines Fehlers „lokal seit der Sicherung geändert“: der Aufrufer sichert
+/// neu und setzt dann um (nichts wurde entfernt).
+pub const ABWEICHUNG: &str = "hat sich seit der Sicherung geändert";
+
+pub fn ist_abweichung(fehler: &str) -> bool {
+    fehler.contains(ABWEICHUNG)
+}
+
 pub fn umsetzen(data: &Path, sicherung: &str, plan: &Plan) -> Result<Umsetzung, String> {
     let dir = sicherungs_ordner(data, sicherung)?;
     let manifest = pruefen(&dir)?;
@@ -962,7 +998,7 @@ pub fn umsetzen(data: &Path, sicherung: &str, plan: &Plan) -> Result<Umsetzung, 
             let (_, sha) = pruefsumme(&data.join(rel)).map_err(|e| format!("{rel}: {e}"))?;
             if gesichert.get(rel.as_str()) != Some(&sha.as_str()) {
                 return Err(format!(
-                    "{rel} hat sich seit der Sicherung geändert oder fehlt darin. Es wurde nichts entfernt."
+                    "{rel} {ABWEICHUNG} oder fehlt darin. Es wurde nichts entfernt."
                 ));
             }
         }
@@ -972,6 +1008,25 @@ pub fn umsetzen(data: &Path, sicherung: &str, plan: &Plan) -> Result<Umsetzung, 
     let fortschritt: Option<BTreeMap<String, String>> = lies_json(&fortschritt_pfad);
     let gesicherter_fortschritt: BTreeMap<String, String> =
         lies_json(&dir.join(BIBLIOTHEK).join(FORTSCHRITT)).unwrap_or_default();
+    // Nur Werte entfernen, die so gesichert sind; geprüft, bevor irgendetwas weggeht.
+    let fortschritt_weg = |map: &BTreeMap<String, String>| -> Vec<String> {
+        map.keys()
+            .filter(|k| {
+                plan.fortschritt.contains(*k)
+                    || bezug(k).is_some_and(|b| plan.entfernen.contains(b))
+            })
+            .cloned()
+            .collect()
+    };
+    if let Some(map) = &fortschritt {
+        for k in fortschritt_weg(map) {
+            if gesicherter_fortschritt.get(&k) != map.get(&k) {
+                return Err(format!(
+                    "Fortschritt {k} {ABWEICHUNG}. Es wurde nichts entfernt."
+                ));
+            }
+        }
+    }
 
     // 3. Entfernen.
     for ordner in faellig {
@@ -993,22 +1048,7 @@ pub fn umsetzen(data: &Path, sicherung: &str, plan: &Plan) -> Result<Umsetzung, 
         .collect();
     index_entferne(data, &seiten, &buecher)?;
     if let Some(mut map) = fortschritt {
-        let weg: Vec<String> = map
-            .iter()
-            .filter(|(k, _)| {
-                plan.fortschritt.contains(*k)
-                    || bezug(k).is_some_and(|b| plan.entfernen.contains(b))
-            })
-            .map(|(k, _)| k.clone())
-            .collect();
-        // Nur Werte entfernen, die so gesichert sind.
-        for k in &weg {
-            if gesicherter_fortschritt.get(k) != map.get(k) {
-                return Err(format!(
-                    "Fortschritt {k} hat sich seit der Sicherung geändert. Es wurde nichts weiter entfernt."
-                ));
-            }
-        }
+        let weg = fortschritt_weg(&map);
         for k in &weg {
             map.remove(k);
         }
@@ -1022,10 +1062,14 @@ pub fn umsetzen(data: &Path, sicherung: &str, plan: &Plan) -> Result<Umsetzung, 
     }
 
     // 4. Nur-lokal-Liste: alte Kennungen freigeben, neue markieren.
-    if !plan.nur_lokal.ist_leer() || !plan.freigeben.is_empty() {
-        let mut n = nur_lokal_laden(data);
+    if !plan.nur_lokal.ist_leer() || !plan.freigeben.is_empty() || !plan.frei_schluessel.is_empty()
+    {
+        let mut n = nur_lokal_laden(data)?;
         for id in &plan.freigeben {
             n.einheit_freigeben(id);
+        }
+        for k in &plan.frei_schluessel {
+            n.schluessel.remove(k);
         }
         n.vereinigen(&plan.nur_lokal);
         nur_lokal_speichern(data, &n)?;
@@ -1048,15 +1092,10 @@ pub struct Wiederhergestellt {
     /// Abweichende Bücher (oder Buchseiten): bleiben in der Sicherung.
     pub in_sicherung: Vec<String>,
     pub fortschritte_ergaenzt: u32,
+    /// Ergänzte Schlüssel aus `fortschritt.json` (bleiben nur lokal, U8).
+    pub ergaenzte_fortschritte: Vec<String>,
     /// Abweichende Fortschrittswerte: aktuelle bleiben, die Sicherung behält ihre.
     pub fortschritte_abweichend: u32,
-}
-
-impl Wiederhergestellt {
-    /// Einheiten, die danach nur lokal sein sollen.
-    pub fn neue_einheiten(&self) -> impl Iterator<Item = &String> {
-        self.zurueck.iter().chain(self.zusaetzlich.iter())
-    }
 }
 
 fn einheit_gleich(data: &Path, manifest: &Manifest, wurzel: &str, einheit: &str) -> bool {
@@ -1079,7 +1118,46 @@ fn einheit_gleich(data: &Path, manifest: &Manifest, wurzel: &str, einheit: &str)
 }
 
 /// Seiten und Bücher aus einer Sicherung zurückholen, ohne je zu überschreiben.
-pub fn wiederherstellen(data: &Path, name: &str) -> Result<Wiederhergestellt, String> {
+/// Plan einer Wiederherstellung, ohne etwas zu schreiben (U8): fehlende Einheiten kommen
+/// zurück (`nur_lokal.einheiten`), abweichende lose Seiten erhalten eine neue Kennung
+/// (`kopien`, neue Kennung ebenfalls nur lokal), fehlende Fortschrittsschlüssel werden
+/// ergänzt (`fortschritt`). Abweichende Bücher bleiben in der Sicherung.
+pub fn wiederherstellen_plan(data: &Path, name: &str) -> Result<Plan, String> {
+    let dir = sicherungs_ordner(data, name)?;
+    let manifest = pruefen(&dir)?;
+    let mut plan = Plan::default();
+    let mut probe = index_laden(&data.join(PROJEKTE).join(INDEX));
+    for (wurzel, gueltig) in [
+        (PROJEKTE, gueltige_seite as fn(&str) -> bool),
+        (BIBLIOTHEK, gueltiges_buch as fn(&str) -> bool),
+    ] {
+        for einheit in einheiten(&manifest, wurzel, gueltig) {
+            let ziel = data.join(wurzel).join(&einheit);
+            if fs::symlink_metadata(&ziel).is_err() {
+                plan.nur_lokal.einheiten.insert(einheit);
+            } else if wurzel == PROJEKTE && !einheit_gleich(data, &manifest, wurzel, &einheit) {
+                let neu = neue_seiten_kennung(data, &probe);
+                index_seiten(&mut probe).push(serde_json::json!({ "id": neu }));
+                plan.nur_lokal.einheiten.insert(neu.clone());
+                plan.kopien.insert(einheit, neu);
+            }
+        }
+    }
+    let alt: BTreeMap<String, String> =
+        lies_json(&dir.join(BIBLIOTHEK).join(FORTSCHRITT)).unwrap_or_default();
+    let jetzt: BTreeMap<String, String> =
+        lies_json(&data.join(BIBLIOTHEK).join(FORTSCHRITT)).unwrap_or_default();
+    plan.fortschritt = alt
+        .keys()
+        .filter(|k| !jetzt.contains_key(*k))
+        .cloned()
+        .collect();
+    Ok(plan)
+}
+
+/// Wiederherstellung nach Plan ausführen; wiederholbar. Überschreibt nie: was seit dem
+/// Plan lokal entstanden ist oder nicht im Plan steht, bleibt in der Sicherung.
+pub fn wiederherstellen(data: &Path, name: &str, plan: &Plan) -> Result<Wiederhergestellt, String> {
     let dir = sicherungs_ordner(data, name)?;
     let manifest = pruefen(&dir)?;
     let mut w = Wiederhergestellt::default();
@@ -1092,114 +1170,125 @@ pub fn wiederherstellen(data: &Path, name: &str) -> Result<Wiederhergestellt, St
     ] {
         for einheit in einheiten(&manifest, wurzel, gueltig) {
             let ziel = data.join(wurzel).join(&einheit);
-            if fs::symlink_metadata(&ziel).is_ok() {
-                if einheit_gleich(data, &manifest, wurzel, &einheit) {
-                    w.gleich.push(einheit);
-                } else if wurzel == PROJEKTE {
-                    let eintrag = index_eintrag(&index_sicherung, &einheit)
-                        .unwrap_or_else(|| serde_json::json!({ "id": einheit, "title": "Seite" }));
-                    let neu = seite_kopieren(
-                        data,
-                        &dir.join(wurzel).join(&einheit),
-                        &eintrag,
-                        &zusatz,
-                        None,
-                    )?;
-                    w.zusaetzlich.push(neu);
-                } else {
-                    w.in_sicherung.push(einheit);
-                }
+            if let Some(neu) = plan.kopien.get(&einheit) {
+                let eintrag = index_eintrag(&index_sicherung, &einheit)
+                    .unwrap_or_else(|| serde_json::json!({ "id": einheit, "title": "Seite" }));
+                seite_kopieren(
+                    data,
+                    &dir.join(wurzel).join(&einheit),
+                    &eintrag,
+                    &zusatz,
+                    Some(neu),
+                )?;
+                w.zusaetzlich.push(neu.clone());
                 continue;
             }
-            let praefix = format!("{wurzel}/{einheit}/");
+            let geplant = plan.nur_lokal.einheiten.contains(&einheit);
             let tmp = data
                 .join(wurzel)
                 .join(format!(".wiederherstellen-{einheit}"));
-            let _ = fs::remove_dir_all(&tmp);
-            let kopiert = (|| -> Result<(), String> {
-                for d in manifest
-                    .dateien
-                    .iter()
-                    .filter(|d| d.pfad.starts_with(&praefix))
-                {
-                    let rest = &d.pfad[praefix.len()..];
-                    sichere_datei(&dir.join(&d.pfad), &tmp.join(rest))?;
+            if fs::symlink_metadata(&ziel).is_ok() {
+                if geplant && fs::symlink_metadata(&tmp).is_err() {
+                    // Schon zurückgekopiert (Wiederanlauf); Index unten nachtragen.
+                } else if einheit_gleich(data, &manifest, wurzel, &einheit) {
+                    w.gleich.push(einheit);
+                    continue;
+                } else {
+                    w.in_sicherung.push(einheit);
+                    continue;
                 }
-                fs::rename(&tmp, &ziel).map_err(|e| e.to_string())
-            })();
-            if let Err(e) = kopiert {
-                let _ = fs::remove_dir_all(&tmp);
-                return Err(format!("{wurzel}/{einheit} nicht wiederhergestellt: {e}"));
-            }
-            if wurzel == PROJEKTE {
-                let pfad = data.join(PROJEKTE).join(INDEX);
-                let mut index = index_laden(&pfad);
-                let seiten = index_seiten(&mut index);
-                if !seiten.iter().any(|e| e["id"] == einheit.as_str()) {
-                    let eintrag = index_eintrag(&index_sicherung, &einheit)
-                        .unwrap_or_else(|| serde_json::json!({ "id": einheit, "title": "Seite" }));
-                    seiten.push(eintrag);
-                    schreibe_atomar(
-                        &pfad,
-                        &serde_json::to_vec(&index).map_err(|e| e.to_string())?,
-                    )?;
-                }
+            } else if !geplant {
+                // Erst nach dem Plan verschwunden: ohne Markierung nicht zurückschreiben.
+                w.in_sicherung.push(einheit);
+                continue;
             } else {
-                // Fassungsseiten des Buchs zurück in den Index.
-                let pfad = data.join(PROJEKTE).join(INDEX);
-                let mut index = index_laden(&pfad);
-                let fehlend: Vec<Value> = index_sicherung
-                    .get("pages")
-                    .and_then(Value::as_array)
-                    .map(|p| {
-                        p.iter()
-                            .filter(|e| {
-                                e.get("buch").and_then(Value::as_str) == Some(einheit.as_str())
-                            })
-                            .cloned()
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                let seiten = index_seiten(&mut index);
-                let vorher = seiten.len();
-                for e in fehlend {
-                    if !seiten.iter().any(|x| x["id"] == e["id"]) {
-                        seiten.push(e);
+                let praefix = format!("{wurzel}/{einheit}/");
+                let _ = fs::remove_dir_all(&tmp);
+                let kopiert = (|| -> Result<(), String> {
+                    for d in manifest
+                        .dateien
+                        .iter()
+                        .filter(|d| d.pfad.starts_with(&praefix))
+                    {
+                        let rest = &d.pfad[praefix.len()..];
+                        sichere_datei(&dir.join(&d.pfad), &tmp.join(rest))?;
                     }
-                }
-                if seiten.len() != vorher {
-                    schreibe_atomar(
-                        &pfad,
-                        &serde_json::to_vec(&index).map_err(|e| e.to_string())?,
-                    )?;
+                    fs::rename(&tmp, &ziel).map_err(|e| e.to_string())
+                })();
+                if let Err(e) = kopiert {
+                    let _ = fs::remove_dir_all(&tmp);
+                    return Err(format!("{wurzel}/{einheit} nicht wiederhergestellt: {e}"));
                 }
             }
+            index_nachtragen(data, &index_sicherung, wurzel, &einheit)?;
             w.zurueck.push(einheit);
         }
     }
 
-    let alt: Option<BTreeMap<String, String>> = lies_json(&dir.join(BIBLIOTHEK).join(FORTSCHRITT));
-    if let Some(alt) = alt {
-        let pfad = data.join(BIBLIOTHEK).join(FORTSCHRITT);
-        let mut jetzt: BTreeMap<String, String> = lies_json(&pfad).unwrap_or_default();
-        for (k, v) in alt {
-            match jetzt.get(&k) {
-                None => {
-                    jetzt.insert(k, v);
-                    w.fortschritte_ergaenzt += 1;
-                }
-                Some(aktuell) if *aktuell != v => w.fortschritte_abweichend += 1,
-                Some(_) => {}
+    let alt: BTreeMap<String, String> =
+        lies_json(&dir.join(BIBLIOTHEK).join(FORTSCHRITT)).unwrap_or_default();
+    let pfad = data.join(BIBLIOTHEK).join(FORTSCHRITT);
+    let mut jetzt: BTreeMap<String, String> = lies_json(&pfad).unwrap_or_default();
+    let mut geaendert = false;
+    for (k, v) in alt {
+        match jetzt.get(&k) {
+            None if plan.fortschritt.contains(&k) => {
+                w.ergaenzte_fortschritte.push(k.clone());
+                jetzt.insert(k, v);
+                w.fortschritte_ergaenzt += 1;
+                geaendert = true;
             }
-        }
-        if w.fortschritte_ergaenzt > 0 {
-            schreibe_atomar(
-                &pfad,
-                &serde_json::to_vec(&jetzt).map_err(|e| e.to_string())?,
-            )?;
+            Some(aktuell) if *aktuell != v => w.fortschritte_abweichend += 1,
+            _ => {}
         }
     }
+    if geaendert {
+        schreibe_atomar(
+            &pfad,
+            &serde_json::to_vec(&jetzt).map_err(|e| e.to_string())?,
+        )?;
+    }
     Ok(w)
+}
+
+/// Index-Eintrag einer zurückgekopierten Seite bzw. die Fassungsseiten eines Buchs nachtragen.
+fn index_nachtragen(
+    data: &Path,
+    index_sicherung: &Value,
+    wurzel: &str,
+    einheit: &str,
+) -> Result<(), String> {
+    let pfad = data.join(PROJEKTE).join(INDEX);
+    let mut index = index_laden(&pfad);
+    let neu: Vec<Value> = if wurzel == PROJEKTE {
+        vec![index_eintrag(index_sicherung, einheit)
+            .unwrap_or_else(|| serde_json::json!({ "id": einheit, "title": "Seite" }))]
+    } else {
+        index_sicherung
+            .get("pages")
+            .and_then(Value::as_array)
+            .map(|p| {
+                p.iter()
+                    .filter(|e| e.get("buch").and_then(Value::as_str) == Some(einheit))
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let seiten = index_seiten(&mut index);
+    let vorher = seiten.len();
+    for e in neu {
+        if !seiten.iter().any(|x| x["id"] == e["id"]) {
+            seiten.push(e);
+        }
+    }
+    if seiten.len() != vorher {
+        schreibe_atomar(
+            &pfad,
+            &serde_json::to_vec(&index).map_err(|e| e.to_string())?,
+        )?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
