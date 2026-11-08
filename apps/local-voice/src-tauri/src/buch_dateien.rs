@@ -883,6 +883,180 @@ pub fn ausparken(bibliothek: &Path, id: &str) -> Result<(), String> {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Oberfläche: auflisten, Notiz anlegen, Anhänge hinzufügen, entfernen
+// ---------------------------------------------------------------------------
+
+/// Eine Datei im Buch-Ordner für die Inhaltsliste.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Datei {
+    pub rel: String,
+    pub rolle: Rolle,
+    /// Dateiname (letztes Glied).
+    pub name: String,
+    pub groesse: u64,
+    pub geaendert_ms: i64,
+    /// Fassung, zu der die Datei gehört (Transkript), sonst leer.
+    pub fassung: String,
+    /// Von einem anderen Gerät gemeldet, noch nicht geladen.
+    pub erwartet: bool,
+    /// Konfliktkopie (`… (Konflikt …)`).
+    pub konflikt: bool,
+}
+
+fn ist_konflikt(name: &str) -> bool {
+    let stamm = name.rsplit_once('.').map_or(name, |(s, _)| s);
+    stamm.ends_with(')') && stamm.contains(" (Konflikt ")
+}
+
+/// Notizen, Anhänge und Transkripte eines Buchs: was auf der Platte liegt und was noch
+/// kommt. Geordnet nach Rolle (Notiz, Anhang, Transkript), dann Pfad.
+pub fn auflisten(buch_dir: &Path) -> Result<Vec<Datei>, String> {
+    let stand = stand_laden(buch_dir)?;
+    let mut hinweise = Vec::new();
+    let gefunden = dateien_finden(buch_dir, &mut hinweise);
+    let mut aus: Vec<Datei> = Vec::new();
+    let name_von = |rel: &str| rel.rsplit('/').next().unwrap_or(rel).to_string();
+    for (rel, meta) in &gefunden {
+        let Some(rolle) = Rolle::aus_pfad(rel) else {
+            continue;
+        };
+        let (groesse, geaendert_ms) = stat(meta);
+        let e = stand.dateien.get(rel);
+        let name = name_von(rel);
+        aus.push(Datei {
+            rel: rel.clone(),
+            rolle,
+            konflikt: ist_konflikt(&name),
+            name,
+            groesse,
+            geaendert_ms,
+            fassung: e
+                .map(|e| e.edition.clone())
+                .filter(|f| !f.is_empty())
+                .unwrap_or_else(|| fassung_aus_pfad(rolle, rel)),
+            erwartet: e.is_some_and(|e| e.erwartet),
+        });
+    }
+    for (rel, e) in &stand.dateien {
+        if !e.erwartet || gefunden.contains_key(rel) {
+            continue;
+        }
+        let Some(rolle) = Rolle::aus_pfad(rel) else {
+            continue;
+        };
+        let name = name_von(rel);
+        aus.push(Datei {
+            rel: rel.clone(),
+            rolle,
+            konflikt: ist_konflikt(&name),
+            name,
+            groesse: e
+                .blob
+                .as_ref()
+                .and_then(|b| b.get("size"))
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+            geaendert_ms: e.updated as i64,
+            fassung: if e.edition.is_empty() {
+                fassung_aus_pfad(rolle, rel)
+            } else {
+                e.edition.clone()
+            },
+            erwartet: true,
+        });
+    }
+    let rang = |r: Rolle| match r {
+        Rolle::Notiz => 0,
+        Rolle::Anhang => 1,
+        Rolle::Transkript => 2,
+    };
+    aus.sort_by(|a, b| (rang(a.rolle), &a.rel).cmp(&(rang(b.rolle), &b.rel)));
+    Ok(aus)
+}
+
+/// Neue, leere Notiz `notizen/<Titel>.md` (Name nach 4.4, nie überschreiben).
+pub fn notiz_anlegen(buch_dir: &Path, titel: &str) -> Result<String, String> {
+    let titel = titel.trim();
+    if titel.is_empty() {
+        return Err("Bitte einen Titel für die Notiz angeben.".into());
+    }
+    ohne_verknuepfung(buch_dir, Rolle::Notiz.ordner())?;
+    let dir = buch_dir.join(Rolle::Notiz.ordner());
+    fs::create_dir_all(&dir).map_err(|e| format!("Notizen-Ordner nicht anlegbar: {e}"))?;
+    let name = freier_name(&dir, &format!("{titel}.md"))?;
+    let rel = format!("{}/{name}", Rolle::Notiz.ordner());
+    let kopf = format!("# {}\n\n", titel.replace(['\r', '\n'], " "));
+    let mut datei = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(buch_dir.join(&rel))
+        .map_err(|e| format!("Notiz nicht anlegbar: {e}"))?;
+    std::io::Write::write_all(&mut datei, kopf.as_bytes())
+        .and_then(|()| datei.sync_all())
+        .map_err(|e| format!("Notiz nicht schreibbar: {e}"))?;
+    Ok(rel)
+}
+
+/// Dateien als Anhänge in `anhaenge/` kopieren (Namen nach 4.4, bei Kollision
+/// `Name (2).ext`, nie überschreiben). Verknüpfungen und Ordner werden abgewiesen, bevor
+/// etwas kopiert wird; scheitert eine Kopie, bleibt keine halbe Datei zurück.
+pub fn anhaenge_hinzufuegen(buch_dir: &Path, quellen: &[PathBuf]) -> Result<Vec<String>, String> {
+    for q in quellen {
+        let meta =
+            fs::symlink_metadata(q).map_err(|e| format!("{} nicht lesbar: {e}", q.display()))?;
+        if meta.file_type().is_symlink() || !meta.is_file() {
+            return Err(format!("{} ist keine gewöhnliche Datei.", q.display()));
+        }
+    }
+    ohne_verknuepfung(buch_dir, Rolle::Anhang.ordner())?;
+    let dir = buch_dir.join(Rolle::Anhang.ordner());
+    fs::create_dir_all(&dir).map_err(|e| format!("Anhänge-Ordner nicht anlegbar: {e}"))?;
+    let mut aus = Vec::new();
+    for q in quellen {
+        let wunsch = q
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .ok_or_else(|| format!("{} hat keinen Dateinamen.", q.display()))?;
+        let name = freier_name(&dir, &wunsch)?;
+        let ziel = dir.join(&name);
+        let kopiert = (|| -> std::io::Result<()> {
+            let mut von = fs::File::open(q)?;
+            let mut nach = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&ziel)?;
+            std::io::copy(&mut von, &mut nach)?;
+            nach.sync_all()
+        })();
+        if let Err(e) = kopiert {
+            let _ = fs::remove_file(&ziel);
+            return Err(format!("{} nicht kopiert: {e}", q.display()));
+        }
+        aus.push(format!("{}/{name}", Rolle::Anhang.ordner()));
+    }
+    Ok(aus)
+}
+
+/// Pfad einer Datei im Buch-Ordner zum Öffnen: sicherer Pfad, keine Verknüpfung,
+/// vorhanden.
+pub fn pfad(buch_dir: &Path, rel: &str) -> Result<PathBuf, String> {
+    sicherer_pfad(rel)?;
+    ohne_verknuepfung(buch_dir, rel)?;
+    let p = buch_dir.join(rel);
+    if !p.is_file() {
+        return Err("Die Datei ist (noch) nicht da.".into());
+    }
+    Ok(p)
+}
+
+/// Eine Datei aus dem Buch-Ordner in den Papierkorb der Bibliothek legen. Der nächste
+/// Abgleich macht daraus einen Grabstein.
+pub fn entfernen(buch_dir: &Path, buch: &str, rel: &str) -> Result<(), String> {
+    pfad(buch_dir, rel)?;
+    in_papierkorb(buch_dir, buch, rel)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1255,5 +1429,60 @@ mod tests {
         assert_eq!(geparkt(bib), vec![(id.clone(), wert)]);
         ausparken(bib, &id).unwrap();
         assert!(geparkt(bib).is_empty());
+    }
+
+    #[test]
+    fn notiz_und_anhaenge_landen_im_buch_ordner_und_in_der_liste() {
+        let dir = buch("oberflaeche");
+        let quelle = dir.parent().unwrap().join("Tabelle?.xlsx");
+        fs::write(&quelle, b"tabelle").unwrap();
+        let a = anhaenge_hinzufuegen(&dir, std::slice::from_ref(&quelle)).unwrap();
+        let b = anhaenge_hinzufuegen(&dir, std::slice::from_ref(&quelle)).unwrap();
+        assert_eq!(a, vec!["anhaenge/Tabelle_.xlsx".to_string()]);
+        assert_eq!(b, vec!["anhaenge/Tabelle_ (2).xlsx".to_string()]);
+        assert!(anhaenge_hinzufuegen(&dir, &[dir.clone()]).is_err());
+        let n = notiz_anlegen(&dir, "Gedanken: Kapitel 1").unwrap();
+        assert_eq!(n, "notizen/Gedanken_ Kapitel 1.md");
+        assert_eq!(
+            fs::read_to_string(dir.join(&n)).unwrap(),
+            "# Gedanken: Kapitel 1\n\n"
+        );
+        assert_eq!(
+            notiz_anlegen(&dir, "Gedanken: Kapitel 1").unwrap(),
+            "notizen/Gedanken_ Kapitel 1 (2).md"
+        );
+        assert!(notiz_anlegen(&dir, "  ").is_err());
+        // Ein erwarteter Inhalt erscheint schon vor dem Laden.
+        let (id, wert) = fremder("transkript/page_9.md", 1.0, Some(blob(9)));
+        anwenden(&dir, "book_1", &id, &wert, false, "Mein PC").unwrap();
+        let liste = auflisten(&dir).unwrap();
+        let rels: Vec<&str> = liste.iter().map(|d| d.rel.as_str()).collect();
+        assert_eq!(
+            rels,
+            vec![
+                "notizen/Gedanken_ Kapitel 1 (2).md",
+                "notizen/Gedanken_ Kapitel 1.md",
+                "anhaenge/Tabelle_ (2).xlsx",
+                "anhaenge/Tabelle_.xlsx",
+                "transkript/page_9.md",
+            ]
+        );
+        let t = liste.last().unwrap();
+        assert!(t.erwartet && t.fassung == "page_9" && t.groesse == 5);
+        assert!(!liste[0].konflikt);
+        // Entfernen: in den Papierkorb, nicht weg.
+        entfernen(&dir, "book_1", "anhaenge/Tabelle_.xlsx").unwrap();
+        assert!(!dir.join("anhaenge/Tabelle_.xlsx").exists());
+        assert!(dir
+            .parent()
+            .unwrap()
+            .join(".papierkorb/dateien/book_1/anhaenge/Tabelle_.xlsx")
+            .is_file());
+        assert!(entfernen(&dir, "book_1", "../buch.json").is_err());
+        assert!(
+            pfad(&dir, "transkript/page_9.md").is_err(),
+            "noch nicht geladen"
+        );
+        assert!(ist_konflikt("a (Konflikt Mein PC).md") && !ist_konflikt("Konflikt.md"));
     }
 }

@@ -7046,6 +7046,62 @@ async libraryBookReveal(id: string) : Promise<Result<null, string>> {
 }
 },
 /**
+ * Notizen, Anhänge und Transkripte eines Buchs (auch noch nicht geladene).
+ */
+async libraryBookFolderFiles(id: string) : Promise<Result<BookFolderFile[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_book_folder_files", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Neue Notiz anlegen; liefert ihren Pfad im Buch-Ordner.
+ */
+async libraryBookNoteCreate(id: string, title: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_book_note_create", { id, title }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Dateien als Anhänge in den Buch-Ordner kopieren; liefert die neuen Pfade.
+ */
+async libraryBookAttachmentsAdd(id: string, paths: string[]) : Promise<Result<string[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_book_attachments_add", { id, paths }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Eine Datei mit dem Standardprogramm des Systems öffnen.
+ */
+async libraryBookFileOpen(id: string, rel: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_book_file_open", { id, rel }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Eine Datei in den Papierkorb der Bibliothek legen (auf allen Geräten nach dem
+ * nächsten Abgleich).
+ */
+async libraryBookFileRemove(id: string, rel: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_book_file_remove", { id, rel }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Gespeicherter Abgleich des Buchs (leer, wenn der Text sich geändert hat).
  */
 async audiosyncLoad(bookId: string) : Promise<Result<AudioSyncCache, string>> {
@@ -8887,6 +8943,30 @@ export type BookCharacter = { name: string;
  * voice_id der Stimme, mit der die Figur spricht (`None` = Standard).
  */
 voice_id: string | null; description: string }
+/**
+ * Eine Notiz, ein Anhang oder ein Transkript im Buch-Ordner.
+ */
+export type BookFolderFile = { 
+/**
+ * Pfad relativ zum Buch-Ordner, mit `/` (etwa `notizen/Gedanken.md`).
+ */
+rel: string; 
+/**
+ * `notiz`, `anhang` oder `transkript`.
+ */
+role: string; name: string; bytes: number; modified_ms: number; 
+/**
+ * Fassung (Transkript), sonst leer.
+ */
+edition: string; 
+/**
+ * Von einem anderen Gerät gemeldet, noch nicht geladen.
+ */
+pending: boolean; 
+/**
+ * Konfliktkopie aus dem Abgleich.
+ */
+conflict: boolean }
 export type BookPreview = { title: string; pages: number; voices: PackageVoice[]; rights_confirmed: boolean }
 /**
  * Die Antwort in zwei Formen (D5; Form wie `BookTalkAnswer` im Vertrag).
