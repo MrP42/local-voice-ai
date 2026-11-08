@@ -39,6 +39,7 @@ function modulModelle(section: string | undefined): React.ReactNode {
           <FunctionModelChip fn="meeting_protocol" />
         </>
       );
+    case "home":
     case "voice":
       // Der Sprecher steht im Eingabefeld des Gesprächs (F2).
       return <ModelSelector />;

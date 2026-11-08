@@ -1,3 +1,4 @@
+import { oeffneProfilmenue } from "./profilmenue";
 import { test, expect, type Page } from "@playwright/test";
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import {
@@ -858,8 +859,8 @@ test("Modal: Accessibility-Baum, Tab-Reihenfolge, Pfeile, Ansagen, Fokusrückgab
 
   await page.keyboard.press("Escape");
   await expect(tour(page)).toHaveCount(0);
-  await expect(page.getByTestId("workspace-start-tour")).toBeFocused();
-  log("Esc schließt, Fokus auf „Einführung ansehen“", true);
+  await expect(page.getByTestId("chat-input")).toBeFocused();
+  log("Esc schließt, Fokus im Chat-Eingabefeld", true);
   log(
     "inert nach dem Schließen aufgehoben",
     await page.evaluate(() => !document.querySelector("[inert]")),
@@ -872,9 +873,11 @@ test("Modal: Accessibility-Baum, Tab-Reihenfolge, Pfeile, Ansagen, Fokusrückgab
     after.top,
   );
 
-  await page.getByTestId("workspace-start-tour").click();
+  await oeffneProfilmenue(page);
+  await page.getByRole("button", { name: /^Hilfe/ }).click();
+  await page.getByTestId("titlebar-start-tour").click();
   await tour(page).getByRole("button", { name: "Überspringen" }).click();
-  await expect(page.getByTestId("workspace-start-tour")).toBeFocused();
+  await expect(page.getByTestId("chat-input")).toBeFocused();
   log("Überspringen: Fokus zurück an den Auslöser", true);
 });
 
@@ -945,7 +948,7 @@ test("Esc im Übungsfeld: Tour bleibt während einer Aufnahme offen (Abbruch sel
   await page.keyboard.press("Escape");
   await expect(tour(page)).toHaveCount(0);
   log("Ohne Aufnahme: Esc aus dem Übungsfeld schließt die Tour", true);
-  await expect(page.getByTestId("workspace-start-tour")).toBeFocused();
+  await expect(page.getByTestId("chat-input")).toBeFocused();
   log("Fokusrückgabe nach Esc aus dem Übungsfeld", true);
 });
 
@@ -1038,7 +1041,9 @@ test("Download scheitert, Wiederholen, Sperre bis Modellwahl abgeschlossen, Neus
   const before = (await commands(page)).filter(
     (c) => c.cmd === "download_model",
   ).length;
-  await page.getByTestId("workspace-start-tour").click();
+  await oeffneProfilmenue(page);
+  await page.getByRole("button", { name: /^Hilfe/ }).click();
+  await page.getByTestId("titlebar-start-tour").click();
   await expect(
     tour(page).getByRole("button", { name: "Tour starten" }),
   ).toBeEnabled();
