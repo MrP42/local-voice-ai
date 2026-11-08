@@ -19,8 +19,9 @@ const FRAME_MS: u32 = 10;
 /// Laut: rund −44 dBFS, derselbe Wert wie beim Kürzen der Randstille.
 const VOICED_THRESHOLD: f32 = 0.006;
 /// Kürzere Stille gehört zum Wort (Verschlusslaute, Silbengrenzen). Die
-/// kürzeste Kommapause des Sprachflusses ist 120 ms, sie bleibt eine Lücke.
-const MIN_GAP_MS: u32 = 100;
+/// kürzeste Kommapause des Sprachflusses ist 120 ms; mit Abstand zur
+/// Rahmengenauigkeit (±10 ms je Rand) bleibt sie sicher eine Lücke.
+const MIN_GAP_MS: u32 = 80;
 /// Kürzere Laute sind Knacken oder Atem, keine Sprache.
 const MIN_SPAN_MS: u32 = 30;
 
@@ -30,17 +31,23 @@ pub struct SentenceTiming {
     /// Dauer aller Stücke des Satzes samt Pausen.
     pub duration_ms: u32,
     /// Stimmhafte Abschnitte `[Beginn, Ende)` ab Satzbeginn, aufsteigend.
-    /// Leer, wenn das Audio nicht lesbar war: dann gilt die Gesamtdauer.
+    /// Leer, wenn ein Stück nicht lesbar war: dann gilt die Gesamtdauer
+    /// (lieber gleichmäßig als mit einem Loch, wo gesprochen wird).
     pub speech_ms: Vec<[u32; 2]>,
+    /// Beginn jedes Stücks ab Satzbeginn, in Spielreihenfolge.
+    pub pieces_ms: Vec<u32>,
 }
 
 /// Die stimmhaften Abschnitte der Stücke eines Satzes, in Spielreihenfolge.
 pub fn sentence_timing<'a>(blobs: impl IntoIterator<Item = &'a [u8]>) -> SentenceTiming {
     let mut timing = SentenceTiming::default();
+    let mut readable = true;
     for wav in blobs {
         let offset = timing.duration_ms;
+        timing.pieces_ms.push(offset);
         let Some((mono, rate)) = decode_mono(wav) else {
             timing.duration_ms = offset.saturating_add(super::wav_duration_ms(wav));
+            readable = false;
             continue;
         };
         for [a, b] in voiced_spans_ms(&mono, rate) {
@@ -52,6 +59,9 @@ pub fn sentence_timing<'a>(blobs: impl IntoIterator<Item = &'a [u8]>) -> Sentenc
             }
         }
         timing.duration_ms = offset.saturating_add(ms_of(mono.len(), rate));
+    }
+    if !readable {
+        timing.speech_ms.clear();
     }
     timing
 }
@@ -84,8 +94,10 @@ fn ms_of(samples: usize, rate: u32) -> u32 {
     (samples as u64 * 1000 / u64::from(rate.max(1))).min(u64::from(u32::MAX)) as u32
 }
 
-/// WAV → Mono-Abtastwerte und (Kopf-)Abtastrate. Die Kopfrate trägt das
-/// Stimmtempo (`scale_wav_rate`), passt also zur Spieldauer.
+/// WAV → ein Pegelwert je Frame und (Kopf-)Abtastrate. Die Kopfrate trägt
+/// das Stimmtempo (`scale_wav_rate`), passt also zur Spieldauer. Mehrkanalig
+/// zählt der lauteste Kanal (vorzeichenbehaftet): ein Mittel könnte
+/// gegenphasige Kanäle zu Stille auslöschen.
 fn decode_mono(wav: &[u8]) -> Option<(Vec<f32>, u32)> {
     let mut reader = hound::WavReader::new(std::io::Cursor::new(wav)).ok()?;
     let spec = reader.spec();
@@ -106,7 +118,11 @@ fn decode_mono(wav: &[u8]) -> Option<(Vec<f32>, u32)> {
     } else {
         samples
             .chunks(channels)
-            .map(|f| f.iter().sum::<f32>() / channels as f32)
+            .map(|f| {
+                f.iter()
+                    .copied()
+                    .fold(0.0f32, |m, v| if v.abs() > m.abs() { v } else { m })
+            })
             .collect()
     };
     Some((mono, spec.sample_rate))
@@ -148,15 +164,15 @@ mod tests {
 
     #[test]
     fn kommapause_trennt_kurze_luecke_nicht() {
-        let samples = [tone(400), quiet(60), tone(300), quiet(200), tone(500)].concat();
+        let samples = [tone(400), quiet(50), tone(300), quiet(120), tone(500)].concat();
         let spans = voiced_spans_ms(&samples, RATE);
         assert_eq!(
             spans.len(),
             2,
-            "60 ms gehört zum Wort, 200 ms ist eine Pause: {spans:?}"
+            "50 ms gehört zum Wort, die kürzeste Kommapause (120 ms) ist eine Lücke: {spans:?}"
         );
-        assert!(near(spans[0], [0, 760]), "{spans:?}");
-        assert!(near(spans[1], [960, 1460]), "{spans:?}");
+        assert!(near(spans[0], [0, 750]), "{spans:?}");
+        assert!(near(spans[1], [870, 1370]), "{spans:?}");
     }
 
     #[test]
@@ -202,6 +218,51 @@ mod tests {
     #[test]
     fn unlesbares_audio_liefert_nur_die_dauer() {
         let timing = sentence_timing([b"kein wav".as_slice()]);
-        assert_eq!(timing, SentenceTiming::default());
+        assert_eq!(timing.duration_ms, 0);
+        assert!(timing.speech_ms.is_empty());
+        assert_eq!(timing.pieces_ms, vec![0]);
+    }
+
+    #[test]
+    fn ein_unlesbares_stueck_schaltet_auf_gleichmaessig_zurueck() {
+        // Sprechzeit mit Loch wäre schlechter als die Gesamtdauer.
+        let a = wav(&tone(800));
+        let timing = sentence_timing([a.as_slice(), b"kaputt".as_slice()]);
+        assert!(timing.speech_ms.is_empty(), "{timing:?}");
+        assert!(timing.duration_ms.abs_diff(800) <= 2, "{timing:?}");
+    }
+
+    #[test]
+    fn stueckanfaenge_fuer_die_uhr() {
+        let a = wav(&tone(800));
+        let gap = wav(&quiet(500));
+        let b = wav(&tone(600));
+        let timing = sentence_timing([a.as_slice(), gap.as_slice(), b.as_slice()]);
+        assert_eq!(timing.pieces_ms.len(), 3);
+        assert_eq!(timing.pieces_ms[0], 0);
+        assert!(timing.pieces_ms[1].abs_diff(800) <= 1, "{timing:?}");
+        assert!(timing.pieces_ms[2].abs_diff(1300) <= 1, "{timing:?}");
+    }
+
+    #[test]
+    fn gegenphasiges_stereo_ist_nicht_still() {
+        let left = tone(500);
+        let stereo: Vec<f32> = left.iter().flat_map(|v| [*v, -*v]).collect();
+        let mut bytes = Vec::new();
+        {
+            let spec = hound::WavSpec {
+                channels: 2,
+                sample_rate: RATE,
+                bits_per_sample: 32,
+                sample_format: hound::SampleFormat::Float,
+            };
+            let mut w = hound::WavWriter::new(std::io::Cursor::new(&mut bytes), spec).unwrap();
+            for v in &stereo {
+                w.write_sample(*v).unwrap();
+            }
+            w.finalize().unwrap();
+        }
+        let timing = sentence_timing([bytes.as_slice()]);
+        assert_eq!(timing.speech_ms.len(), 1, "{timing:?}");
     }
 }

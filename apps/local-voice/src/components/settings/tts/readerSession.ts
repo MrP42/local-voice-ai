@@ -1,15 +1,34 @@
 import { listen } from "@tauri-apps/api/event";
 import { sentenceAfterProgress } from "./sentenceCounter";
-import { cleanSpans, type SpeechSpan } from "@/lib/speechTiming";
+import { anchorClock, cleanSpans, type SpeechSpan } from "@/lib/speechTiming";
 
 /** Beginn, Dauer und Sprechzeit des hörbaren Satzes (Wort- und Zeitlauf). */
 export interface SentenceStart {
   index: number | null;
   /** `performance.now()` beim Start des Satzes. */
   at: number;
+  /** Satzzeit, die bei `at` schon gespielt war (Stückbeginn, Tempowechsel). */
+  base?: number;
   ms: number;
   /** Stimmhafte Abschnitte (ms bei Tempo 1); leer bei älterem Kern. */
   speech?: SpeechSpan[];
+}
+
+/** Nächstes Stück desselben Satzes: die Uhr setzt am echten Start nach. */
+export function sentencePieceStarted(
+  start: SentenceStart | null,
+  payload: { index?: number; offset_ms?: number },
+  now: number,
+): SentenceStart | null {
+  if (
+    !start ||
+    typeof payload.index !== "number" ||
+    start.index !== payload.index
+  )
+    return start;
+  const offset = payload.offset_ms;
+  if (typeof offset !== "number" || !Number.isFinite(offset)) return start;
+  return anchorClock(start, now, Math.min(offset, start.ms));
 }
 
 /**
@@ -121,9 +140,20 @@ export const ensureReaderSessionListeners = () => {
       index,
       at: performance.now(),
       ms: e.payload.duration_ms ?? 0,
-      speech: cleanSpans(e.payload.speech_ms),
+      speech: cleanSpans(e.payload.speech_ms, e.payload.duration_ms),
     };
     readerSession.sentence = e.payload.text;
     readerSession.index = index;
   });
+  void listen<{ context: string; index?: number; offset_ms?: number }>(
+    "tts-sentence-piece",
+    (e) => {
+      if (e.payload.context !== "speak" || !readerSession.active) return;
+      readerSession.sentenceStart = sentencePieceStarted(
+        readerSession.sentenceStart,
+        e.payload,
+        performance.now(),
+      );
+    },
+  );
 };

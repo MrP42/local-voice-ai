@@ -245,7 +245,9 @@ fn play_stretched(
         ));
     }
     // Erst jetzt hörbar: Strom offen, gestreckte Abtastwerte übergeben.
-    if let Some(on_start) = on_start {
+    // Nach einem Abbruch (Stopp, neue Sitzung) darf kein Satzbeginn mehr
+    // gemeldet werden: er überschriebe den Satz der neuen Wiedergabe.
+    if let Some(on_start) = on_start.filter(|_| !cancelled.load(Ordering::Acquire)) {
         on_start();
     }
     let mut started = std::time::Instant::now();
@@ -319,7 +321,7 @@ impl RodioPlayer {
         }
         let sink =
             rodio::play(stream.mixer(), std::io::Cursor::new(wav)).map_err(|e| e.to_string())?;
-        if let Some(on_start) = on_start {
+        if let Some(on_start) = on_start.filter(|_| !cancelled.load(Ordering::Acquire)) {
             on_start();
         }
 

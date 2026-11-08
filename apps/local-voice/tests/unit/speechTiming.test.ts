@@ -2,9 +2,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  anchorClock,
   cleanSpans,
   clauses,
+  clockElapsed,
+  clockFraction,
+  retimeClock,
   spokenOffset,
+  type SentenceClock,
 } from "../../src/lib/speechTiming.ts";
 
 const whole = (text: string) => ({ start: 0, end: text.length });
@@ -115,4 +120,48 @@ test("ungültige Abschnitte aus dem Ereignis fallen weg", () => {
       [300, 400],
     ],
   );
+});
+
+const clock = (over: Partial<SentenceClock> = {}): SentenceClock => ({
+  index: 1,
+  at: 1000,
+  ms: 10_000,
+  speed: 1,
+  ...over,
+});
+
+test("Uhr: Stückbeginn setzt nach, das Öffnen dazwischen zählt nicht", () => {
+  // Stück 1 endet nach 4 s Satzzeit; das zweite Stück öffnet 300 ms langsam.
+  const c = clock();
+  const before = clockElapsed(c, 1000 + 4300);
+  assert.equal(before, 4300, "ohne Nachsetzen läuft die Uhr dem Audio voraus");
+  const piece = anchorClock(c, 1000 + 4300, 4000);
+  assert.equal(clockElapsed(piece, 1000 + 4300), 4000);
+  assert.equal(clockElapsed(piece, 1000 + 5300), 5000);
+});
+
+test("Uhr: Tempowechsel mitten im Satz springt nicht", () => {
+  const c = clock({ speed: 1 });
+  const now = 1000 + 3000;
+  const before = clockElapsed(c, now);
+  const retimed = { ...retimeClock(c, now, 1), speed: 2 };
+  assert.equal(clockElapsed(retimed, now), before, "kein Sprung beim Wechsel");
+  // Ab jetzt doppelt so schnell.
+  assert.equal(clockElapsed(retimed, now + 1000), before + 2000);
+  // Ohne Neuansetzen wäre die Markierung um 3 s nach vorn gesprungen.
+  assert.equal(clockElapsed({ ...c, speed: 2 }, now), 6000);
+});
+
+test("Uhr: bleibt im Satz und steht am Ende", () => {
+  const c = clock({ base: 9000 });
+  assert.equal(clockElapsed(c, 1000 + 5000), 10_000);
+  assert.equal(clockFraction(c, 1000 + 5000), 1);
+  // Vor `at` (Uhr eben neu gesetzt) nicht zurück unter die Basis gerechnet.
+  assert.equal(clockElapsed(c, 1000), 9000);
+});
+
+test("Abschnitte außerhalb der Satzdauer oder negativ gelten nicht", () => {
+  assert.deepEqual(cleanSpans([[-10, 100]], 1000), []);
+  assert.deepEqual(cleanSpans([[0, 1200]], 1000), []);
+  assert.deepEqual(cleanSpans([[0, 900]], 1000), [[0, 900]]);
 });

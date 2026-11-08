@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -152,10 +153,11 @@ import {
   endReaderSession,
   ensureReaderSessionListeners,
   readerSession,
+  sentencePieceStarted,
   sessionRef,
   type SentenceStart,
 } from "./readerSession";
-import { cleanSpans } from "@/lib/speechTiming";
+import { cleanSpans, retimeClock } from "@/lib/speechTiming";
 import {
   ReaderView,
   type ReaderMark,
@@ -880,12 +882,23 @@ export const TtsSettings = () => {
         index: typeof e.payload.index === "number" ? e.payload.index : null,
         at: performance.now(),
         ms: e.payload.duration_ms ?? 0,
-        speech: cleanSpans(e.payload.speech_ms),
+        speech: cleanSpans(e.payload.speech_ms, e.payload.duration_ms),
       });
       setCurrentSentence(e.payload.text);
       setCurrentIndex(
         typeof e.payload.index === "number" ? e.payload.index : null,
       );
+    });
+    // Jedes weitere Stück des Satzes setzt die Uhr am echten Start nach.
+    const unPiece = listen<{
+      context: string;
+      index?: number;
+      offset_ms?: number;
+    }>("tts-sentence-piece", (e) => {
+      if (e.payload.context !== "speak") return;
+      if (!sectionActiveRef.current && !readerSession.active) return;
+      const now = performance.now();
+      setSentenceStart((prev) => sentencePieceStarted(prev, e.payload, now));
     });
     // Eine Kuerzung darf nicht stumm bleiben: sonst hoert das Vorlesen
     // mitten im Text auf, ohne dass irgendwo steht, warum.
@@ -899,6 +912,7 @@ export const TtsSettings = () => {
       unExportError.then((f) => f());
       unProgress.then((f) => f());
       unSentence.then((f) => f());
+      unPiece.then((f) => f());
       unTruncated.then((f) => f());
     };
   }, []);
@@ -1236,6 +1250,19 @@ export const TtsSettings = () => {
   const phase = status?.phase ?? "stopped";
   const speaking = phase === "speaking";
   const playbackSpeed = getSetting("tts_speed") ?? 1.0;
+  // Tempowechsel mitten im Satz: das Gespielte mit dem alten Tempo
+  // festhalten, sonst springt die Markierung vor oder zurück. Vor dem
+  // Zeichnen, damit kein Bild mit dem Sprung entsteht.
+  const speedRef = useRef(playbackSpeed);
+  useLayoutEffect(() => {
+    const old = speedRef.current;
+    speedRef.current = playbackSpeed;
+    if (old === playbackSpeed) return;
+    const now = performance.now();
+    setSentenceStart((prev) =>
+      prev && prev.ms > 0 ? retimeClock(prev, now, old) : prev,
+    );
+  }, [playbackSpeed]);
   const sentenceClock = useMemo<SentenceClock | null>(
     () =>
       speaking && sentenceStart && sentenceStart.ms > 0

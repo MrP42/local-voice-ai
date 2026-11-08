@@ -7,10 +7,22 @@
  * sie verteilt, markiert gegen Satzende um genau diese Stille zu spät
  * (Patrick 08.11.). Verteilt wird deshalb nur über die Sprechzeit.
  *
- * Passt die Zahl der Abschnitte zu den Teilsätzen (Komma, Semikolon,
- * Doppelpunkt, Gedankenstrich), bekommt jeder Teilsatz seinen Abschnitt:
- * die Kommapause der Stimme hält die Markierung dann am Kommawort fest,
- * statt sie weiterlaufen zu lassen. Sonst gilt die Sprechzeit als Ganzes.
+ * Teilsätze sind eine HEURISTIK: Passt die Zahl der Abschnitte zu den
+ * Teilsätzen (Komma, Semikolon, Doppelpunkt, Gedankenstrich), bekommt jeder
+ * Teilsatz seinen Abschnitt, und die Kommapause hält die Markierung am
+ * Kommawort fest. Gleiche Anzahl beweist keine richtige Zuordnung: eine
+ * Atempause ohne Komma und ein Komma ohne hörbare Pause können sich
+ * ausgleichen, dann steht die Markierung in beiden Teilsätzen versetzt, bis
+ * der nächste Satz sie neu ansetzt. Belastbare Grenzen hätte nur die
+ * Synthese selbst (Wortzeitstempel); die liefern die Anbieter heute nicht.
+ * Passt die Anzahl nicht, gilt die Sprechzeit als Ganzes.
+ *
+ * Die Uhr ({@link SentenceClock}) läuft ab `at` mit dem Tempo und beginnt
+ * bei `base`: Der Kern meldet jedes weitere Stück eines Satzes (nach einem
+ * Pausen-Tag, der Absatzpause) mit seinem echten Start, und ein Tempowechsel
+ * setzt sie an der erreichten Stelle neu an. So zählt weder das Öffnen des
+ * Ausgabestroms zwischen zwei Stücken als gespielt, noch springt die
+ * Markierung bei einem Tempowechsel.
  */
 
 export type SpeechSpan = readonly [number, number];
@@ -23,15 +35,29 @@ export interface TextRange {
 /** Hinter diesen Zeichen (gefolgt von Leerraum) macht eine Stimme eine Pause. */
 const PAUSE_AFTER = /[,;:–—…]/;
 
-/** Gültige, aufsteigende Abschnitte; Unsinn aus dem Ereignis fällt weg. */
-export function cleanSpans(spans: unknown): SpeechSpan[] {
+/**
+ * Gültige, aufsteigende Abschnitte innerhalb von `0..durationMs`; ist einer
+ * davon Unsinn, gilt keiner (lieber gleichmäßig als falsch).
+ */
+export function cleanSpans(
+  spans: unknown,
+  durationMs: number = Infinity,
+): SpeechSpan[] {
   if (!Array.isArray(spans)) return [];
   const out: SpeechSpan[] = [];
-  let last = -Infinity;
+  let last = 0;
   for (const span of spans) {
     if (!Array.isArray(span) || span.length < 2) return [];
     const [a, b] = span;
-    if (!Number.isFinite(a) || !Number.isFinite(b) || b <= a || a < last)
+    if (
+      typeof a !== "number" ||
+      typeof b !== "number" ||
+      !Number.isFinite(a) ||
+      !Number.isFinite(b) ||
+      b <= a ||
+      a < last ||
+      b > durationMs
+    )
       return [];
     out.push([a, b]);
     last = b;
@@ -91,4 +117,55 @@ export function spokenOffset(
   if (total <= 0) return range.start;
   const at = range.start + Math.floor((spoken / total) * length);
   return Math.min(at, lastChar);
+}
+
+/** Uhr des hörbaren Satzes (alle Zeiten ms; Satzzeit bei Tempo 1). */
+export interface SentenceClock {
+  index: number | null;
+  /** `performance.now()`, ab dem die Uhr läuft. */
+  at: number;
+  /** Satzzeit, die bei `at` schon gespielt war (Stückbeginn, Tempowechsel). */
+  base?: number;
+  /** Dauer des Satzes samt Pausen. */
+  ms: number;
+  speed: number;
+  /** Stimmhafte Abschnitte, sofern der Kern sie meldet. */
+  speech?: readonly SpeechSpan[];
+}
+
+/** Gespielte Satzzeit bei Tempo 1 (0..ms). */
+export function clockElapsed(clock: SentenceClock, now: number): number {
+  const elapsed =
+    (clock.base ?? 0) + (now - clock.at) * Math.max(0.25, clock.speed);
+  return Math.max(0, Math.min(clock.ms, elapsed));
+}
+
+/** Anteil (0..1) des Satzes, der schon zu hören war. */
+export function clockFraction(clock: SentenceClock, now: number): number {
+  return clock.ms > 0 ? clockElapsed(clock, now) / clock.ms : 0;
+}
+
+/** Die Uhr ab `now` bei `base` weiterlaufen lassen. */
+export function anchorClock<T extends { at: number; base?: number }>(
+  clock: T,
+  now: number,
+  base: number,
+): T {
+  return { ...clock, at: now, base: Math.max(0, base) };
+}
+
+/**
+ * Tempowechsel mitten im Satz: das bis jetzt Gespielte mit dem ALTEN Tempo
+ * festhalten, ab jetzt läuft die Uhr mit dem neuen -- kein Sprung.
+ */
+export function retimeClock<T extends Omit<SentenceClock, "speed">>(
+  clock: T,
+  now: number,
+  oldSpeed: number,
+): T {
+  return anchorClock(
+    clock,
+    now,
+    clockElapsed({ ...clock, speed: oldSpeed }, now),
+  );
 }
