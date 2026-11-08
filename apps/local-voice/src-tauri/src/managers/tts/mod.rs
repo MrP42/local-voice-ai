@@ -33,6 +33,7 @@ pub mod providers;
 pub mod registry;
 pub mod state;
 pub mod stretch;
+pub mod timing;
 pub mod voices;
 
 use engine::{EngineCaps, TtsEngine, TtsEngineKind};
@@ -1547,10 +1548,15 @@ impl TtsCore {
                 continue;
             }
             let last_blob = blobs.len() - 1;
-            // Dauer des ganzen Satzes (samt Pausen) bei normalem Tempo: die
-            // Oberfläche rechnet daraus die Zeit sekundengenau und blättert
-            // an der Stelle um, die gerade zu hören ist.
-            let sentence_ms: u32 = blobs.iter().map(|(b, _)| wav_duration_ms(b)).sum();
+            // Dauer des ganzen Satzes (samt Pausen) und wann darin gesprochen
+            // wird, bei normalem Tempo: die Oberfläche rechnet daraus die
+            // Stelle, die gerade zu hören ist -- Wort, Zeit und Umblättern.
+            // Nur aus `on_playing` gebraucht; ohne Zuhörer kein Dekodieren.
+            let sentence_timing = on_playing.as_ref().map(|_| {
+                Arc::new(timing::sentence_timing(
+                    blobs.iter().map(|(b, _)| b.as_slice()),
+                ))
+            });
             for (blob_index, (bytes, gain)) in blobs.into_iter().enumerate() {
                 total_bytes += bytes.len();
                 // Vorheriges Stueck zu Ende spielen lassen (Reihenfolge!).
@@ -1572,20 +1578,33 @@ impl TtsCore {
                 if cancelled.load(Ordering::Acquire) {
                     break;
                 }
-                // Live-Anzeige: dieser Satz beginnt jetzt zu spielen.
-                if blob_index == 0 {
-                    if let Some(cb) = on_playing.as_ref() {
-                        cb(offset, sentence_ms);
+                // Live-Anzeige: dieser Satz beginnt jetzt zu spielen. Gemeldet
+                // wird erst, wenn der Ausgabestrom offen ist und das Audio
+                // anliegt -- das Öffnen dauert je Gerät unterschiedlich lang
+                // (Bluetooth deutlich länger), und die Uhr der Oberfläche
+                // beginnt mit dieser Meldung.
+                let started: Option<Box<dyn FnOnce() + Send>> = match (
+                    blob_index == 0,
+                    on_playing.as_ref(),
+                    sentence_timing.as_ref(),
+                ) {
+                    (true, Some(cb), Some(timing)) => {
+                        let (cb, timing) = (Arc::clone(cb), Arc::clone(timing));
+                        Some(Box::new(move || cb(offset, &timing)))
                     }
-                }
+                    _ => None,
+                };
                 let player = self.player.clone();
                 let device = self.output_device.lock().unwrap().clone();
                 let controls = Arc::clone(&self.controls);
                 let cancel_flag = cancelled.clone();
                 previous_playback = Some((
                     (blob_index == last_blob).then_some(offset),
-                    tauri::async_runtime::spawn_blocking(move || {
-                        player.play(bytes, device, gain, controls, cancel_flag)
+                    tauri::async_runtime::spawn_blocking(move || match started {
+                        Some(started) => {
+                            player.play_notify(bytes, device, gain, controls, cancel_flag, started)
+                        }
+                        None => player.play(bytes, device, gain, controls, cancel_flag),
                     }),
                 ));
             }
@@ -2188,8 +2207,9 @@ fn silence_wav(ms: u32, sample_rate: u32) -> Vec<u8> {
     encode_wav_mono(&samples, sample_rate)
 }
 
-/// Callback, sobald ein Satz zu spielen beginnt: Index und Dauer in ms.
-pub type OnPlaying = Arc<dyn Fn(usize, u32) + Send + Sync>;
+/// Callback, sobald ein Satz hörbar zu spielen beginnt (Ausgabestrom offen):
+/// Index, Dauer und stimmhafte Abschnitte in ms.
+pub type OnPlaying = Arc<dyn Fn(usize, &timing::SentenceTiming) + Send + Sync>;
 
 /// Spieldauer eines WAV-Blobs in ms, ohne ihn zu dekodieren (0, wenn unlesbar).
 fn wav_duration_ms(bytes: &[u8]) -> u32 {
@@ -3136,13 +3156,14 @@ impl TtsManager {
         // Live-Anzeige des Satzes, der gerade zu hören ist.
         let now_manager = Arc::clone(self);
         let now_sentences: Vec<String> = sentences.iter().map(|(text, _)| text.clone()).collect();
-        let on_playing: OnPlaying = Arc::new(move |idx, duration_ms| {
+        let on_playing: OnPlaying = Arc::new(move |idx, timing| {
             let _ = now_manager.app.emit(
                 "tts-current-sentence",
                 serde_json::json!({
                     "context": "speak",
                     "index": idx as u32,
-                    "duration_ms": duration_ms,
+                    "duration_ms": timing.duration_ms,
+                    "speech_ms": timing.speech_ms,
                     "text": now_sentences.get(idx).cloned().unwrap_or_default(),
                 }),
             );
@@ -4932,14 +4953,15 @@ impl TtsManager {
             // Live-Anzeige des gelesenen Satzes.
             let now_manager = Arc::clone(&manager);
             let now_sentences = sentences.clone();
-            let on_playing: OnPlaying = Arc::new(move |idx, duration_ms| {
+            let on_playing: OnPlaying = Arc::new(move |idx, timing| {
                 use tauri::Emitter;
                 let _ = now_manager.app.emit(
                     "tts-current-sentence",
                     serde_json::json!({
                         "context": "reading",
                         "index": idx as u32,
-                        "duration_ms": duration_ms,
+                        "duration_ms": timing.duration_ms,
+                        "speech_ms": timing.speech_ms,
                         "text": now_sentences.get(idx).cloned().unwrap_or_default(),
                     }),
                 );

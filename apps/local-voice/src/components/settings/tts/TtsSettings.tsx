@@ -153,7 +153,9 @@ import {
   ensureReaderSessionListeners,
   readerSession,
   sessionRef,
+  type SentenceStart,
 } from "./readerSession";
+import { cleanSpans } from "@/lib/speechTiming";
 import {
   ReaderView,
   type ReaderMark,
@@ -748,11 +750,7 @@ export const TtsSettings = () => {
   );
   /** Start und Dauer des hörbaren Satzes: Zeit und Umblättern laufen damit
    *  sekundengenau mit, nicht nur Satz für Satz. */
-  const [sentenceStart, setSentenceStart] = useState<{
-    index: number | null;
-    at: number;
-    ms: number;
-  } | null>(() => (readerSession.active ? readerSession.sentenceStart : null));
+  const [sentenceStart, setSentenceStart] = useState<SentenceStart | null>(() => (readerSession.active ? readerSession.sentenceStart : null));
   // Die Seite ist die Quelle, solange sie offen ist; ausgehängt schreibt
   // readerSession.ts die Ereignisse selbst mit.
   useEffect(() => {
@@ -874,6 +872,7 @@ export const TtsSettings = () => {
       index?: number;
       text: string;
       duration_ms?: number;
+      speech_ms?: unknown;
     }>("tts-current-sentence", (e) => {
       if (e.payload.context !== "speak") return;
       if (!sectionActiveRef.current && !readerSession.active) return;
@@ -881,6 +880,7 @@ export const TtsSettings = () => {
         index: typeof e.payload.index === "number" ? e.payload.index : null,
         at: performance.now(),
         ms: e.payload.duration_ms ?? 0,
+        speech: cleanSpans(e.payload.speech_ms),
       });
       setCurrentSentence(e.payload.text);
       setCurrentIndex(

@@ -1353,6 +1353,33 @@ test("Wort und Zeit laufen innerhalb des Satzes mit", async ({ page }) => {
   await expect(page.getByTestId("reader-elapsed")).not.toHaveText(elapsed0 ?? "");
 });
 
+// Highlighting zu spät (Patrick 08.11.): die Satzdauer enthält Nachklang und
+// Absatzpause. Gezählt wird nur die Zeit, in der die Stimme spricht.
+test("Wort folgt der Sprechzeit, nicht der Stille am Satzende", async ({ page }) => {
+  await page.clock.install();
+  await page.addInitScript(() => window.localStorage.setItem("lva.ui.tts.view", "read"));
+  await open(page, LONG_SENTENCE, 800);
+  await emit(page, "tts-state-changed", { phase: "speaking", message: null });
+  await emit(page, "tts-speak-progress", { position: 1, total: 2 });
+  await emit(page, "tts-current-sentence", {
+    context: "speak",
+    index: 1,
+    text: LONG_SENTENCE.split("\n\n")[1],
+    duration_ms: 60_000,
+    // Gesprochen wird nur in den ersten 40 s, danach ist Stille.
+    speech_ms: [[0, 40_000]],
+  });
+  await expect(page.locator(".reader-word")).toHaveText("Wort0");
+  await page.clock.runFor(30_000);
+  // 30 von 40 s Sprechzeit: drei Viertel des Satzes, nicht die Hälfte.
+  const at = Number((await page.locator(".reader-word").textContent())?.slice(4));
+  expect(at).toBeGreaterThan(95);
+  expect(at).toBeLessThan(120);
+  // In der Stille am Ende bleibt das letzte Wort stehen.
+  await page.clock.runFor(15_000);
+  await expect(page.locator(".reader-word")).toHaveText("Ende.");
+});
+
 test("Umblättern wortgenau: mitten im Satz, sobald das gehörte Wort auf der nächsten Seite steht", async ({
   page,
 }) => {

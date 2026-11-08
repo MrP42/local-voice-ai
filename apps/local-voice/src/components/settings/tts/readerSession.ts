@@ -1,5 +1,16 @@
 import { listen } from "@tauri-apps/api/event";
 import { sentenceAfterProgress } from "./sentenceCounter";
+import { cleanSpans, type SpeechSpan } from "@/lib/speechTiming";
+
+/** Beginn, Dauer und Sprechzeit des hörbaren Satzes (Wort- und Zeitlauf). */
+export interface SentenceStart {
+  index: number | null;
+  /** `performance.now()` beim Start des Satzes. */
+  at: number;
+  ms: number;
+  /** Stimmhafte Abschnitte (ms bei Tempo 1); leer bei älterem Kern. */
+  speech?: SpeechSpan[];
+}
 
 /**
  * Die laufende Vorlese-Sitzung der Vorlesen-Seite, unabhängig von der Komponente.
@@ -33,7 +44,7 @@ export interface ReaderSession {
   /** Nullbasierter Index dieses Satzes. */
   index: number | null;
   /** Beginn und Dauer des hörbaren Satzes (Wort- und Zeitlauf). */
-  sentenceStart: { index: number | null; at: number; ms: number } | null;
+  sentenceStart: SentenceStart | null;
   /** Anfang der zuletzt hervorgehobenen Stelle im Text der Sitzung: dort sucht
    *  die Seite nach der Rückkehr den aktuellen Satz, nicht am Textanfang. */
   rangeStart: number | null;
@@ -102,6 +113,7 @@ export const ensureReaderSessionListeners = () => {
     index?: number;
     text: string;
     duration_ms?: number;
+    speech_ms?: unknown;
   }>("tts-current-sentence", (e) => {
     if (e.payload.context !== "speak" || !readerSession.active) return;
     const index = typeof e.payload.index === "number" ? e.payload.index : null;
@@ -109,6 +121,7 @@ export const ensureReaderSessionListeners = () => {
       index,
       at: performance.now(),
       ms: e.payload.duration_ms ?? 0,
+      speech: cleanSpans(e.payload.speech_ms),
     };
     readerSession.sentence = e.payload.text;
     readerSession.index = index;

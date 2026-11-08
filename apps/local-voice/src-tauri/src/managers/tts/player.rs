@@ -77,6 +77,23 @@ pub trait Player: Send + Sync {
         cancelled: Arc<AtomicBool>,
     ) -> Result<(), String>;
 
+    /// Wie [`Self::play`]; `started` läuft genau einmal, sobald das Audio an
+    /// der Ausgabe anliegt (Strom geöffnet, Daten übergeben) -- die Uhr der
+    /// Lesehervorhebung beginnt damit. Die Standardumsetzung ruft es direkt
+    /// vor `play` auf.
+    fn play_notify(
+        &self,
+        wav: Vec<u8>,
+        device: Option<String>,
+        gain: f32,
+        controls: Arc<PlaybackControls>,
+        cancelled: Arc<AtomicBool>,
+        started: Box<dyn FnOnce() + Send>,
+    ) -> Result<(), String> {
+        started();
+        self.play(wav, device, gain, controls, cancelled)
+    }
+
     /// Spielt Audio ab, SOBALD es eintrifft (Probestimme der Anbieter-Schicht,
     /// Paket P3a): `segments` liefert Stücke, die Wiedergabe endet, wenn der
     /// Sender fallengelassen ist und alles gespielt wurde — oder bei
@@ -210,6 +227,7 @@ fn play_stretched(
     gain: f32,
     controls: &PlaybackControls,
     cancelled: &AtomicBool,
+    on_start: Option<Box<dyn FnOnce() + Send>>,
 ) -> Result<(), String> {
     let sink = rodio::Sink::connect_new(stream.mixer());
     let frames = pcm.samples.len() / pcm.channels.max(1) as usize;
@@ -225,6 +243,10 @@ fn play_stretched(
             pcm.sample_rate,
             first,
         ));
+    }
+    // Erst jetzt hörbar: Strom offen, gestreckte Abtastwerte übergeben.
+    if let Some(on_start) = on_start {
+        on_start();
     }
     let mut started = std::time::Instant::now();
     let mut pending: Option<(f32, std::time::Instant)> = None;
@@ -279,24 +301,27 @@ fn play_stretched(
     Ok(())
 }
 
-impl Player for RodioPlayer {
-    fn play(
-        &self,
+impl RodioPlayer {
+    fn play_inner(
         wav: Vec<u8>,
         device: Option<String>,
         gain: f32,
         controls: Arc<PlaybackControls>,
         cancelled: Arc<AtomicBool>,
+        on_start: Option<Box<dyn FnOnce() + Send>>,
     ) -> Result<(), String> {
         let stream = open_output_stream(device)?;
         // Tempo per Zeitstreckung statt `Sink::set_speed`: das resampelt und
         // zöge die Stimme hoch oder tief. Nur ein unlesbares WAV läuft noch
         // über den alten Weg.
         if let Some(pcm) = decode_interleaved(&wav) {
-            return play_stretched(&stream, pcm, gain, &controls, &cancelled);
+            return play_stretched(&stream, pcm, gain, &controls, &cancelled, on_start);
         }
         let sink =
             rodio::play(stream.mixer(), std::io::Cursor::new(wav)).map_err(|e| e.to_string())?;
+        if let Some(on_start) = on_start {
+            on_start();
+        }
 
         let mut applied_volume = controls.volume() * gain;
         let mut applied_speed = controls.speed();
@@ -324,6 +349,31 @@ impl Player for RodioPlayer {
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
         Ok(())
+    }
+}
+
+impl Player for RodioPlayer {
+    fn play(
+        &self,
+        wav: Vec<u8>,
+        device: Option<String>,
+        gain: f32,
+        controls: Arc<PlaybackControls>,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<(), String> {
+        Self::play_inner(wav, device, gain, controls, cancelled, None)
+    }
+
+    fn play_notify(
+        &self,
+        wav: Vec<u8>,
+        device: Option<String>,
+        gain: f32,
+        controls: Arc<PlaybackControls>,
+        cancelled: Arc<AtomicBool>,
+        started: Box<dyn FnOnce() + Send>,
+    ) -> Result<(), String> {
+        Self::play_inner(wav, device, gain, controls, cancelled, Some(started))
     }
 
     /// Echte Stream-Wiedergabe: EIN Ausgabestrom, jedes eintreffende Stück
