@@ -30,6 +30,22 @@ async function setup(page: Page, cfg: Cfg = {}, theme = "light") {
       let callback = 0;
       const w = window as unknown as Record<string, any>;
       w.__calls = [] as unknown[];
+      // Hoerproben ohne echtes Audio: Wiedergabe "laeuft", bis sie gestoppt
+      // wird oder der Test `ended` ausloest (`w.__audio` = letzte Probe).
+      w.__plays = 0;
+      w.Audio = class extends EventTarget {
+        constructor(public src?: string) {
+          super();
+        }
+        play() {
+          w.__plays += 1;
+          w.__audio = this;
+          return Promise.resolve();
+        }
+        pause() {
+          w.__paused = (w.__paused ?? 0) + 1;
+        }
+      };
       const entries = JSON.parse(JSON.stringify(real)) as any[];
       const find = (id: unknown) => entries.find((e) => e.descriptor.id === id);
       const recompute = (e: any) => {
@@ -204,6 +220,12 @@ async function setup(page: Page, cfg: Cfg = {}, theme = "light") {
           convertFileSrc: (path: string) => path,
           invoke: async (cmd: string, args?: Record<string, any>) => {
             w.__calls.push([cmd, args]);
+            if (cmd === "tts_voice_demo_cached") return null;
+            if (cmd === "tts_voice_demo")
+              return {
+                wav_path: `C:/demos/${String(args?.voiceId)}.wav`,
+                transcript: "Probe",
+              };
             const copy = <T>(x: T): T => JSON.parse(JSON.stringify(x));
             const sel = () => {
               entries.forEach((e) => {
@@ -528,7 +550,9 @@ test("Anbieter: Karten mit Zustand; Seitenblatt enthält die bisherigen Einstell
   await expect(page.locator("[data-provider-card='phonon']")).toContainText(
     "Nicht eingerichtet",
   );
-  await expect(page.getByTestId("tts-provider-card-enable-phonon")).toHaveCount(0);
+  await expect(page.getByTestId("tts-provider-card-enable-phonon")).toHaveCount(
+    0,
+  );
   await page.getByTestId("tts-provider-setup-phonon").click();
   const sheet = page.getByTestId("voice-provider-sheet");
   await expect(sheet).toBeVisible();
@@ -691,6 +715,32 @@ test("Umbenennen: Piper-Stimme bekommt einen eigenen Namen", async ({
   expect(
     (await calls(page, "tts_provider_set_voice_name"))[0][1],
   ).toMatchObject({ id: "piper", voice: "de_DE-thorsten-medium" });
+});
+
+test("Hörprobe einer Fish-Stimme: Knopf wird zum Stopp und beendet die Wiedergabe", async ({
+  page,
+}) => {
+  await setup(page);
+  await openManager(page);
+  const play = page.getByTestId("voice-play-fish:lea");
+  const w = (k: string) => page.evaluate((key) => (window as any)[key] ?? 0, k);
+  await expect(play).toHaveAttribute("aria-label", /Reinhören/);
+  await play.click();
+  // Die Probe läuft: Stopp-Beschriftung, kein Neustart beim zweiten Klick.
+  await expect(play).toHaveAttribute("aria-label", /stoppen/);
+  expect(await w("__plays")).toBe(1);
+  await play.click();
+  await expect(play).not.toHaveAttribute("aria-label", /stoppen/);
+  expect(await w("__plays")).toBe(1);
+  expect(await w("__paused")).toBeGreaterThan(0);
+  // Erneut starten, dann endet die Probe von selbst: Knopf wieder auf Abspielen.
+  await play.click();
+  await expect(play).toHaveAttribute("aria-label", /stoppen/);
+  expect(await w("__plays")).toBe(2);
+  await page.evaluate(() =>
+    (window as any).__audio.dispatchEvent(new Event("ended")),
+  );
+  await expect(play).not.toHaveAttribute("aria-label", /stoppen/);
 });
 
 test("Umbenennen: eigene Fish-Stimme ändert ihren Anzeigenamen", async ({
