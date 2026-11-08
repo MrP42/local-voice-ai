@@ -1,6 +1,6 @@
 # Lokale Daten bei Anmeldung, Abmeldung und Kontowechsel
 
-- Stand: 08.11.2026, Fassung 3 (nach Codex-Gegenprüfungen ceeab27 und 4157acba), Auftrag Patrick
+- Stand: 08.11.2026, Fassung 4 (nach Codex-Gegenprüfungen ceeab27, 4157acba, ac408f47), Auftrag Patrick
   (Thread „Lokale Daten bei Anmeldung sicher übernehmen“), Issue lva#400
 - Gilt für: Local Voice AI Windows/macOS (Rust-Kern + Oberfläche), danach iPhone (`LibrarySync`)
 - Bezug: Multi-Device-Spec 2026-09-14, Bibliothek-Sync 2026-11-02, Buch-Ordner 2026-11-07 (Löschschutz lva#377:
@@ -116,7 +116,8 @@ Das Ledger trägt sein Konto; der Zyklus verwirft ein Ledger eines anderen Konto
 **U7 Abmelden.** Dialog: „Abmelden, Daten auf diesem Gerät behalten“ (vorausgewählt), „Abmelden und Bibliothek und
 Seiten vom Gerät entfernen (vorher gesichert)“, „Abbrechen“. Entfernen ist ein Übergang der Art `abmeldung` (U11):
 Journal `entscheidung` mit Plan, Herkunft schreiben, Konto und Ledger entfernen (ab hier kein Zyklus, also keine
-Grabsteine), Sicherung, `gesichert`, Umsetzung, `umgesetzt`, Journal löschen. Besprechungen usw. bleiben (Text sagt es).
+Grabsteine), Sicherung, `gesichert`, Umsetzung, `umgesetzt`, Journal löschen. Jeder Schritt vor `gesichert` verändert
+nur Anmeldedaten, nie Nutzdaten, und wird beim Wiederanlauf idempotent nachgeholt (U11). Besprechungen usw. bleiben (Text sagt es).
 
 **U8 Wiederherstellen (e).** Liste der Sicherungen in „Konto & Geräte“. Je Einheit (Seitenordner, Buchordner):
 fehlt sie → zurückkopieren; gleich → überspringen; **abweicht** → lose Seite als **zusätzlicher Eintrag** unter neuer
@@ -151,12 +152,14 @@ vereinigt). Wiederanlauf beim Start und vor jedem Sync-Befehl:
 | Phase beim Start | Weiter |
 |---|---|
 | `entscheidung`, Art `anmeldung` | Modal erneut; nichts wurde verändert. |
-| `entscheidung`, andere Art | Sicherung neu anlegen und Ablauf fortsetzen (Abmeldung: Konto ist ggf. schon entfernt, das schadet nicht). |
+| `entscheidung`, Art `abmeldung` | Vorbereitende Schritte idempotent nachholen: Besteht `sync.json` noch, Herkunft aus Konto und Ledger neu schreiben (überschreibt nur mit demselben Konto), dann `sync.json` und Ledger entfernen (fehlen sie schon, ist der Schritt erledigt). Erst danach Sicherung anlegen, prüfen, `gesichert`. In `entscheidung` ist noch kein Nutzdatum verändert, die Sicherung erfasst also den vollständigen Bestand. |
+| `entscheidung`, Art `kollision`/`uebernahme` | Sicherung anlegen, prüfen, `gesichert`; Nutzdaten sind in dieser Phase unverändert. |
 | `gesichert`, Sicherung prüfbar | Umsetzung wiederholen, bis sie vollständig gelingt; erst dann `umgesetzt`. |
-| `gesichert`, Sicherung nicht prüfbar | Nichts entfernen; neue Sicherung, Phase neu `gesichert`. Scheitert auch das: Hinweis, kein Zyklus. |
+| `gesichert`, Sicherung nicht prüfbar | **Übergang blockiert.** Nichts wird entfernt, kopiert oder freigegeben, kein Zyklus. Die Sicherung aus dem Journal bleibt die einzige gültige Grundlage, weil nach einer Teilumsetzung der lokale Restbestand das Original nicht mehr vollständig enthält; eine neue Sicherung ersetzt sie daher nie. Zusätzlich legt der Kern eine Schutzsicherung des Restbestands an (Anlass `schutz`), ohne das Journal zu ändern. „Konto & Geräte“ zeigt „Sicherung vom … nicht lesbar – Übergang angehalten“ mit „Erneut prüfen“; erst wenn die Journal-Sicherung wieder vollständig geprüft ist, geht es weiter. |
 | `umgesetzt` | Abschluss je Art: `anmeldung` schreibt `sync.json` und Ledger (mit Kontobindung) und löscht `sync-anmeldung.json`; `kollision` und `uebernahme` bereinigen das Ledger; dann Journal löschen. |
 
 Ein Absturz in jeder Phase verliert nichts: Entfernt wird erst nach `gesichert`, freigegeben erst nach `umgesetzt`.
+Die Umsetzung prüft die Journal-Sicherung bei jedem Durchlauf vollständig, bevor sie etwas ändert.
 
 ## 5. iPhone (zweites Paket)
 
