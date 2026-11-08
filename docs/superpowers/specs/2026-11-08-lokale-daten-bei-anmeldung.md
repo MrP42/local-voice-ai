@@ -1,6 +1,6 @@
 # Lokale Daten bei Anmeldung, Abmeldung und Kontowechsel
 
-- Stand: 08.11.2026, Fassung 2 (nach Codex-Gegenprüfung ceeab27: a–g, harte Links), Auftrag Patrick
+- Stand: 08.11.2026, Fassung 3 (nach Codex-Gegenprüfungen ceeab27 und 4157acba), Auftrag Patrick
   (Thread „Lokale Daten bei Anmeldung sicher übernehmen“), Issue lva#400
 - Gilt für: Local Voice AI Windows/macOS (Rust-Kern + Oberfläche), danach iPhone (`LibrarySync`)
 - Bezug: Multi-Device-Spec 2026-09-14, Bibliothek-Sync 2026-11-02, Buch-Ordner 2026-11-07 (Löschschutz lva#377:
@@ -83,33 +83,40 @@ Zahlen), dazu `sync-nur-lokal.json` und `sync-herkunft.json`, falls vorhanden. A
 Manifest**, dann fsync des Ordners. Während Bestandsaufnahme, Sicherung und Entfernen hält der Kern die Seiten- und
 die Bibliothekssperre; Oberflächen-Schreibzugriffe warten. Sicherungen werden nie automatisch gelöscht.
 
-**U5 Nur auf diesem Gerät (d).** `sync-nur-lokal.json` hält (1) exakte Sync-Schlüssel (`page/<id>`, `progress/<id>`,
-`settings/app` …) und (2) Einheiten (Seiten- und Buchkennungen) für später entstehende abhängige Objekte. Abhängigkeit
-wird strukturiert ausgewertet: `book_file.book`, Fortschrittsschlüssel `progress.<seite|buch>`, Lesezeichen
-`tts.bookmarks.<id>`, `tts.resume.<id>`, `tts.voice.book.<buch>.<sprache>` (exakter Vergleich der Kennung, kein
-Teilwort). Der Zyklus nimmt diese Objekte aus dem Push **und** zählt sie als vorhanden (nie Grabstein). Eingehende
-Objekte mit einem markierten exakten Schlüssel werden nicht angewendet und **nicht** verbucht.
+**U5 Nur auf diesem Gerät (d).** `sync-nur-lokal.json` hält (1) **Einheiten** (Seiten- und Buchkennungen); alle
+abhängigen Objekte, auch künftige, sind über ihre Einheit markiert, und (2) **exakte Schlüssel** nur für Objekte ohne
+Einheit (`settings/app`, globale Stimmwahl `tts.voice.lang.*`). Abhängigkeit wird strukturiert ausgewertet:
+`book_file.book`, Fortschritt `progress.text:<seite>:…`, `progress.audio:<buch>`, `progress.doc:<buch>:…`, Lesezeichen
+`tts.resume.<seite>[:…]`, `tts.bookmarks.<seite>[:…]`, Stimme `tts.voice.book.<buch>.<sprache>` (exakter Vergleich der
+Kennung, kein Teilwort). Der Zyklus nimmt markierte Objekte aus dem Push **und** zählt sie als vorhanden (nie
+Grabstein). Eingehende Objekte mit markiertem Schlüssel werden weder angewendet noch verbucht.
 
-Kollisionen bekommen keine gemeinsame Kennung: Eine **lose Seite** wird vor der Freigabe als ganzer Ordner unter
-neuer Kennung kopiert (Titel unverändert, im Index neben dem Original), die Kopie ist nur lokal, das Original wird
-lokal entfernt (es liegt in der Sicherung und in der Kopie) und die Kontofassung kommt mit dem ersten Lauf. Ein
-**Buch** (und eine Seite im Buch-Ordner) lässt sich nicht gefahrlos umbenennen (Pfade und Verweise in `buch.json`):
-Die lokale Fassung bleibt dann **nur in der Sicherung**, auf dem Gerät erscheint die Kontofassung; das Modal nennt
-diese Einträge einzeln. Taucht eine markierte Kennung erst später im Konto auf (anderes Gerät), legt der Zyklus vorher
-eine Sicherung der betroffenen Einheit an und behandelt sie genauso.
+**Markieren bereinigt das Ledger:** Wer einen Schlüssel oder eine Einheit markiert, entfernt im selben Schritt die
+Ledger-Einträge dieser Objekte (bei der Anmeldung ist das Ledger ohnehin neu). Damit hat ein markiertes Objekt nie
+eine Basisrevision.
 
-**Übergang „Ins Konto übernehmen“:** Sicherung, dann werden die Schlüssel aus der Liste genommen. Sie haben keinen
-Ledger-Eintrag, also geht der Push mit Basis 0; der Hub antwortet bei vorhandenem Objekt `superseded` mit dem
-aktuellen Stand, und es gelten die Regeln von „zusammenführen“. Verdrängtes liegt in der Sicherung.
+**Kollision = getrennte Kennungen.** Eine **lose Seite** wird als ganzer Ordner unter neuer Kennung kopiert (Titel
+„… (nur auf diesem Gerät)“), ihre Fortschritte und Lesezeichen werden unter der neuen Kennung angelegt, die **neue**
+Kennung wird markiert, die alte Kennung samt Abhängigkeiten wird **freigegeben** und lokal entfernt (liegt in der
+Sicherung und in der Kopie). So kommt die Kontofassung unter der alten Kennung an. Ein **Buch** (und eine Seite im
+Buch-Ordner) lässt sich nicht gefahrlos umbenennen (Pfade und Verweise in `buch.json`): seine lokale Fassung bleibt
+**nur in der Sicherung**, die Einheit wird freigegeben und lokal entfernt, auf dem Gerät erscheint die Kontofassung;
+das Modal nennt diese Einträge einzeln. Taucht eine markierte Kennung erst später im Konto auf (anderes Gerät), hält
+der Zyklus an und startet einen Übergang der Art `kollision` mit genau diesem Plan (U11); erst danach läuft er weiter.
+
+**„Ins Konto übernehmen“** ist ein Übergang der Art `uebernahme`: Sicherung, dann Markierung entfernen und
+ausdrücklich alle Ledger-Einträge dieser Objekte löschen, sodass der Push mit **Basis 0** geht. Der Hub antwortet bei
+vorhandenem Objekt `superseded` mit dem aktuellen Stand, es gelten die Regeln von „zusammenführen“ (Seiten:
+Konfliktkopie). Verdrängtes liegt in der Sicherung.
 
 **U6 Herkunftsliste und Kontobindung (a, b).** Abmelden, 401 und jeder Kontowechsel schreiben zuerst
 `sync-herkunft.json` aus Konto und Ledger (Schlüssel → Hash, Revision), erst danach werden Konto und Ledger entfernt.
 Das Ledger trägt sein Konto; der Zyklus verwirft ein Ledger eines anderen Kontos.
 
 **U7 Abmelden.** Dialog: „Abmelden, Daten auf diesem Gerät behalten“ (vorausgewählt), „Abmelden und Bibliothek und
-Seiten vom Gerät entfernen (vorher gesichert)“, „Abbrechen“. Reihenfolge beim Entfernen: Herkunft schreiben, Konto
-und Ledger entfernen (ab hier kein Zyklus, also keine Grabsteine), Sicherung, Prüfung, Entfernen. Besprechungen usw.
-bleiben (Text sagt es).
+Seiten vom Gerät entfernen (vorher gesichert)“, „Abbrechen“. Entfernen ist ein Übergang der Art `abmeldung` (U11):
+Journal `entscheidung` mit Plan, Herkunft schreiben, Konto und Ledger entfernen (ab hier kein Zyklus, also keine
+Grabsteine), Sicherung, `gesichert`, Umsetzung, `umgesetzt`, Journal löschen. Besprechungen usw. bleiben (Text sagt es).
 
 **U8 Wiederherstellen (e).** Liste der Sicherungen in „Konto & Geräte“. Je Einheit (Seitenordner, Buchordner):
 fehlt sie → zurückkopieren; gleich → überspringen; **abweicht** → lose Seite als **zusätzlicher Eintrag** unter neuer
@@ -127,18 +134,29 @@ neue Ledger die entfernten Kennungen nie kennt. Nur-lokale Objekte zählen im Zy
 Anmeldezustand: `sync-anmeldung.json` gelöscht, Token am Hub widerrufen. Scheitert der Widerruf, steht er in
 `sync-widerruf.json` und wird bei jedem Start und jeder Anmeldung wiederholt; „Konto & Geräte“ zeigt den Hinweis.
 
-**U11 Wiederanlauf (c).** Journal-Phasen: `entscheidung` → `gesichert(<name>)` → `umgesetzt` → `freigegeben`. Jede
-Phase wird vor ihrer Wirkung geschrieben. Beim Start und vor jedem Sync-Befehl:
+**U11 Übergänge und Wiederanlauf (c).** Alle verändernden Abläufe laufen über ein Journal `sync-uebergang.json`
+mit `art` (`anmeldung`, `abmeldung`, `kollision`, `uebernahme`), Konto, Wahl, Plan und Phase. Solange ein Journal
+besteht, läuft kein Zyklus. Phasen bezeichnen **abgeschlossene Wirkung**, nicht Absicht:
+
+| Phase | Bedeutet | Geschrieben |
+|---|---|---|
+| `entscheidung` | Plan steht fest, noch nichts verändert | bevor irgendetwas geschieht |
+| `gesichert(<name>)` | Sicherung vollständig geschrieben, geprüft, fsync | **nach** erfolgreicher Prüfung |
+| `umgesetzt` | Kopien, Entfernen, Fortschritte, Nur-lokal-Liste vollständig und mit fsync geschrieben | **nach** erfolgreicher Umsetzung |
+
+Die Umsetzung ist idempotent (Kopien unter der Kennung aus dem Plan; entfernt wird nur, was noch da ist und
+byte-gleich in der Sicherung liegt; Fortschritte nur, wenn der Wert dem gesicherten gleicht; Nur-lokal-Liste wird
+vereinigt). Wiederanlauf beim Start und vor jedem Sync-Befehl:
 
 | Phase beim Start | Weiter |
 |---|---|
-| `entscheidung` (nur `sync-anmeldung.json`) | Modal erneut; nichts wurde verändert. |
-| `gesichert`, Sicherung prüfbar | Umsetzung idempotent wiederholen (Entfernen nur, was noch da ist und vollständig in der Sicherung liegt; Kopien unter Kennung aus dem Journal; Nur-lokal-Liste vereinigen), dann `umgesetzt`. |
-| `gesichert`, Sicherung nicht prüfbar | Nichts entfernen; Phase auf `entscheidung` zurück, Hinweis. |
-| `umgesetzt` | `sync.json` und Ledger (mit Kontobindung) schreiben, `sync-anmeldung.json` und Journal löschen. |
+| `entscheidung`, Art `anmeldung` | Modal erneut; nichts wurde verändert. |
+| `entscheidung`, andere Art | Sicherung neu anlegen und Ablauf fortsetzen (Abmeldung: Konto ist ggf. schon entfernt, das schadet nicht). |
+| `gesichert`, Sicherung prüfbar | Umsetzung wiederholen, bis sie vollständig gelingt; erst dann `umgesetzt`. |
+| `gesichert`, Sicherung nicht prüfbar | Nichts entfernen; neue Sicherung, Phase neu `gesichert`. Scheitert auch das: Hinweis, kein Zyklus. |
+| `umgesetzt` | Abschluss je Art: `anmeldung` schreibt `sync.json` und Ledger (mit Kontobindung) und löscht `sync-anmeldung.json`; `kollision` und `uebernahme` bereinigen das Ledger; dann Journal löschen. |
 
-Ein Absturz nach dem Entfernen und vor der Freigabe verliert nichts: das Entfernte liegt in der geprüften Sicherung,
-und `sync.json` existiert erst nach `umgesetzt`.
+Ein Absturz in jeder Phase verliert nichts: Entfernt wird erst nach `gesichert`, freigegeben erst nach `umgesetzt`.
 
 ## 5. iPhone (zweites Paket)
 
