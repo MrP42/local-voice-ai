@@ -60,6 +60,18 @@ pub struct SyncStatus {
     pub key_mismatch: bool,
     /// Anzahl synchronisierter Seiten laut Ledger.
     pub pages: u32,
+    /// Einträge, die nur auf diesem Gerät bleiben (lva#400 U5).
+    #[serde(default)]
+    pub nur_lokal: u32,
+    /// Eine Anmeldung wartet auf die Entscheidung über lokale Daten (lva#400 U1).
+    #[serde(default)]
+    pub anmeldung_offen: bool,
+    /// Ein Token-Widerruf am Hub steht noch aus (lva#400 U10).
+    #[serde(default)]
+    pub widerruf_offen: bool,
+    /// Ein Übergang ist angehalten (z. B. Sicherung nicht lesbar, lva#400 U11).
+    #[serde(default)]
+    pub uebergang_fehler: Option<String>,
 }
 
 pub struct SyncEngine {
@@ -130,6 +142,9 @@ impl SyncEngine {
             s.device_name = cfg.as_ref().map(|c| c.device_name.clone());
             s.hub_url = cfg.as_ref().map(|c| c.url.clone());
             s.dead_letters = led.dead.len() as u32;
+            s.nur_lokal = super::uebernahme::nur_lokal_anzahl(app);
+            s.anmeldung_offen = super::uebernahme::anmeldung_offen(app);
+            s.widerruf_offen = super::uebernahme::widerruf_offen(app);
             s.pages = led
                 .objects
                 .keys()
@@ -146,6 +161,26 @@ impl SyncEngine {
     /// Ein vollständiger Lauf. Läuft nie doppelt; ein zweiter Aufruf wartet.
     pub async fn run_once(&self, app: &AppHandle) -> SyncStatus {
         let _guard = self.run_lock.lock().await;
+        // Offener Übergang (lva#400 U11): erst fortsetzen, solange offen kein Zyklus.
+        if super::uebernahme::uebergang_offen(app) {
+            let app2 = app.clone();
+            let fehler = match tauri::async_runtime::spawn_blocking(move || {
+                super::uebernahme::wiederanlauf(&app2)
+            })
+            .await
+            {
+                Ok(Ok(_)) => None,
+                Ok(Err(e)) => Some(e),
+                Err(e) => Some(e.to_string()),
+            };
+            self.refresh_from_config(app);
+            self.set_status(|s| s.uebergang_fehler = fehler);
+            if super::uebernahme::uebergang_offen(app) {
+                let status = self.status();
+                let _ = app.emit(EVENT_STATUS, status.clone());
+                return status;
+            }
+        }
         let Some(cfg) = account::load(app) else {
             self.refresh_from_config(app);
             return self.status();
@@ -173,13 +208,31 @@ impl SyncEngine {
                 if !outcome.removed.is_empty() {
                     let _ = app.emit(EVENT_PROGRESS_REMOVED, outcome.removed.clone());
                 }
+                if !outcome.kollisionen.is_empty() {
+                    // Markierte Kennung im Konto aufgetaucht (lva#400 U5): Übergang
+                    // `kollision`, danach liest der nächste Lauf die Kontofassung ein.
+                    let (app2, cfg2, k) = (app.clone(), cfg.clone(), outcome.kollisionen.clone());
+                    let r = tauri::async_runtime::spawn_blocking(move || {
+                        super::uebernahme::kollision_aufloesen(&app2, &cfg2, &k)
+                    })
+                    .await
+                    .map_err(|e| e.to_string())
+                    .and_then(|r| r);
+                    match r {
+                        Ok(()) => self.touch(),
+                        Err(e) => self.set_status(|s| s.uebergang_fehler = Some(e)),
+                    }
+                }
                 if outcome.changed {
                     let _ = app.emit(EVENT_CHANGED, ());
                 }
             }
             Err(HubError::Unauthorized) => {
                 // Token widerrufen (Gerät im Portal abgemeldet): lokal abmelden,
-                // die Daten bleiben.
+                // die Daten bleiben. Vorher die Herkunft festhalten (lva#400 U6).
+                if let Err(e) = super::uebernahme::herkunft_schreiben(app, &cfg) {
+                    log::warn!("Sync: Herkunft nicht geschrieben: {e}");
+                }
                 account::remove(app);
                 self.refresh_from_config(app);
                 self.set_status(|s| s.last_error = Some(HubError::Unauthorized.to_string()));
@@ -201,8 +254,10 @@ pub fn start(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         let engine = app.state::<SyncEngine>();
         engine.refresh_from_config(&app);
-        // Erster Lauf kurz nach dem Start, nicht blockierend.
+        // Erster Lauf kurz nach dem Start, nicht blockierend. Ein ausstehender
+        // Token-Widerruf wird vorher nachgeholt (lva#400 U10).
         tokio::time::sleep(Duration::from_secs(5)).await;
+        super::uebernahme::widerruf_nachholen(&app).await;
         loop {
             engine.run_once(&app).await;
             tokio::select! {
@@ -225,6 +280,8 @@ struct Outcome {
     warning: Option<String>,
     /// Fortschritts-Schlüssel, die ein anderes Gerät gelöscht hat.
     removed: Vec<String>,
+    /// Nur lokal markierte Seiten/Bücher, die im Konto aufgetaucht sind (lva#400 U5).
+    kollisionen: std::collections::BTreeSet<String>,
 }
 
 /// Sammlungen, deren lokale Löschung als Grabstein zum Hub geht.
@@ -248,6 +305,17 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
     let my_key_id = crypto::key_id(&key);
     let client = HubClient::new(&cfg.url, &cfg.token);
     let mut led = ledger::load(app);
+    // Kontobindung (lva#400 U6): ein Ledger eines anderen Kontos gilt als leer.
+    let kennung = super::uebernahme_kern::konto_kennung(cfg.user_id, &cfg.url);
+    if led.konto.as_deref().is_some_and(|k| k != kennung) {
+        log::warn!("Sync: Ledger gehört zu einem anderen Konto, wird neu begonnen");
+        led = ledger::Ledger::default();
+    }
+    led.konto = Some(kennung);
+    let nur_lokal = super::uebernahme::data(app)
+        .map(|d| super::uebernahme_kern::nur_lokal_laden(&d))
+        .unwrap_or_default();
+    let mut kollisionen: std::collections::BTreeSet<String> = Default::default();
     if app.state::<SyncEngine>().take_retry_files()
         && (!led.failed.is_empty() || !led.dead.is_empty())
     {
@@ -287,6 +355,25 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
     };
     if let Some(w) = lib.warnings.first().or(book_files_local.warnings.first()) {
         warning = Some(w.clone());
+    }
+    // Nur auf diesem Gerät (lva#400 U5): nicht senden, nicht hochladen, aber als vorhanden
+    // zählen (nie Grabstein).
+    let mut lib = lib;
+    let mut book_files_local = book_files_local;
+    let mut nur_lokal_vorhanden: Vec<String> = Vec::new();
+    if !nur_lokal.ist_leer() {
+        let mut raus = |objs: &mut Vec<LocalObject>| {
+            objs.retain(|o| {
+                let bleibt = nur_lokal.betrifft(o.collection, &o.id, &o.value);
+                if bleibt {
+                    nur_lokal_vorhanden.push(ledger::key(o.collection, &o.id));
+                }
+                !bleibt
+            })
+        };
+        raus(&mut locals);
+        raus(&mut lib.objects);
+        raus(&mut book_files_local.objects);
     }
 
     // ---- Dateien hochladen ----------------------------------------------
@@ -438,9 +525,13 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
         .count() as u32
         + blocked_files.len() as u32;
     // Zurückgehaltene Bücher, Seiten und Dateien gelten nicht als gelöscht.
-    let mut present: HashSet<String> = blocked
-        .iter()
-        .map(|id| ledger::key(books::COLLECTION_BOOK, id))
+    let mut present: HashSet<String> = nur_lokal_vorhanden
+        .into_iter()
+        .chain(
+            blocked
+                .iter()
+                .map(|id| ledger::key(books::COLLECTION_BOOK, id)),
+        )
         .chain(
             held_pages
                 .iter()
@@ -722,6 +813,17 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
                 key_mismatch = true;
                 break 'pull; // Cursor bleibt stehen, bis der Schlüssel passt
             }
+            // Markierter Schlüssel (lva#400 U5): weder anwenden noch verbuchen. Eine
+            // markierte Seite oder ein markiertes Buch im Konto ist eine Kollision.
+            if nur_lokal.sperrt_eingang(&remote.collection, &remote.object_id) {
+                if !remote.deleted
+                    && matches!(remote.collection.as_str(), "page" | "book")
+                    && nur_lokal.einheiten.contains(&remote.object_id)
+                {
+                    kollisionen.insert(remote.object_id.clone());
+                }
+                continue;
+            }
             // Lokal ungesichert geaendert? Das entscheidet apply_page am
             // frischen Stand unter der Seiten-Sperre und sichert vorher die
             // Konfliktkopie -- ein Schnappschuss vom Zyklusanfang reicht
@@ -875,15 +977,9 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
         }
         ledger::save(app, &led).map_err(HubError::Other)?;
     }
-    Ok(finish(
-        app,
-        led,
-        changed,
-        pending,
-        key_mismatch,
-        warning,
-        removed,
-    ))
+    let mut outcome = finish(app, led, changed, pending, key_mismatch, warning, removed);
+    outcome.kollisionen = kollisionen;
+    Ok(outcome)
 }
 
 fn finish(
@@ -908,6 +1004,7 @@ fn finish(
             .count() as u32,
         warning,
         removed,
+        kollisionen: Default::default(),
     }
 }
 
@@ -920,7 +1017,7 @@ fn remote_hash(key: &[u8; crypto::KEY_LEN], cfg: &SyncConfig, remote: &RemoteObj
         .unwrap_or_default()
 }
 
-fn decrypt(
+pub(super) fn decrypt(
     key: &[u8; crypto::KEY_LEN],
     cfg: &SyncConfig,
     remote: &RemoteObject,
