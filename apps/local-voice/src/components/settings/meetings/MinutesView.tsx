@@ -399,10 +399,8 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
     }
     const measure = () => {
       const base = wrapper.getBoundingClientRect().top;
-      // Höhe des Abschnittsknopfs (schmal 44 px Touchziel, sonst h-8).
-      const penHeight = window.matchMedia("(max-width: 639px)").matches
-        ? 44
-        : 32;
+      // Höhe des Abschnittsstifts: 44 px Trefferfläche auf jeder Breite.
+      const penHeight = 44;
       const all = Array.from(
         preview.querySelectorAll<HTMLElement>(SECTION_HEADINGS),
       ).map((el) => {
@@ -796,7 +794,7 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
                 })}
                 onClick={() => startEdit(section.el)}
                 style={{ top: section.top }}
-                className="minutes-section-pen absolute end-2 flex h-8 w-8 items-center justify-center rounded-md text-text/60 hover:bg-logo-primary/10 hover:text-logo-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-logo-primary"
+                className="minutes-section-pen absolute end-1 flex h-[44px] w-[44px] items-center justify-center rounded-md text-text/60 hover:bg-logo-primary/10 hover:text-logo-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-logo-primary"
               >
                 <Pencil width={16} height={16} aria-hidden="true" />
               </button>

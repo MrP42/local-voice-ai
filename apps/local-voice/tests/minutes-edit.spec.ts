@@ -192,6 +192,9 @@ test.beforeEach(async ({ page }) => {
             }
             case "get_selected_model":
               return "";
+            // Schild in der Fusszeile (Vorschau: Schild direkt vor der Version).
+            case "compliance_status":
+              return { level: "green", profile: "eu", active_model: "Qwen3 4B", active: null, checks: [], plaintext_keys: 0 };
             case "meetings_start":
               return { ...w.__meetings[0], id: "m-neu", status: "recording" };
             case "meetings_is_recording":
@@ -670,7 +673,20 @@ test.describe("Protokoll bearbeiten: Vorschau", () => {
         expect(
           Math.abs(sh.y + sh.height / 2 - (sp.y + sp.height / 2)),
         ).toBeLessThan(6);
-        if (width === 390) expect(sp.height).toBeGreaterThanOrEqual(44);
+        // Trefferflaeche auf jeder Breite >= 44 x 44 px (Codex 08.11.).
+        expect(sp.height).toBeGreaterThanOrEqual(44);
+        expect(sp.width).toBeGreaterThanOrEqual(44);
+        // Fusszeile: Telefon, Schild, Version (Patrick 08.11.2026).
+        const bar = page.locator(".workspace-status");
+        const fx = async (sel: string) =>
+          (await bar.locator(sel).first().boundingBox())!.x;
+        await expect(bar.locator("[data-compliance-shield]")).toBeVisible();
+        expect(await fx(".lv-call-group")).toBeLessThan(
+          await fx("[data-compliance-shield]"),
+        );
+        expect(await fx("[data-compliance-shield]")).toBeLessThan(
+          await fx("[data-testid='footer-version']"),
+        );
         await page.screenshot({ path: name("1-stift") });
 
         await page

@@ -1241,7 +1241,11 @@ body,
 
 /* Protokoll bearbeiten: Markierung der Stelle unter dem Stift. Der
    Abschnitts-Stift ist nur ein Symbol (Patrick 08.11.) und steht im
-   Innenabstand des Dokuments; Überschriften brauchen keinen Extraplatz. */
+   Innenabstand des Dokuments (44 × 44 px, Codex 08.11.); die Überschriften
+   halten nur 1 rem Abstand zum Stift. */
+.minutes-preview [data-testid="minutes-doc"] :is(h2, h3) {
+  padding-inline-end: 1rem;
+}
 .minutes-preview [data-edit-hover] {
   border-radius: 4px;
   background: color-mix(in srgb, var(--color-logo-primary) 10%, transparent);
@@ -1263,13 +1267,6 @@ body,
   .minutes-preview .minutes-block-pen {
     width: 44px;
     height: 44px;
-  }
-  .minutes-preview .minutes-section-pen {
-    width: 44px;
-    height: 44px;
-  }
-  .minutes-preview [data-testid="minutes-doc"] :is(h2, h3) {
-    padding-inline-end: 1rem;
   }
   /* Schmal ist die Arbeitsfläche nur wenige Zeilen hoch: der Editor
      öffnet dann als Vollbild-Blatt (Speichern und Abbrechen oben). */
