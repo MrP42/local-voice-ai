@@ -7888,6 +7888,9 @@
         "other": "on another device"
       },
       "notLocal": "The {{lang}} audiobook is not on this device yet. Sync has been started.",
+      "notOnDevice": "Not on this device yet",
+      "syncFailed": "The {{lang}} audiobook could not be loaded: sync failed ({{error}}).",
+      "syncOff": "The {{lang}} audiobook is not on this device and sync is not set up.",
       "listenEdition": "Play audiobook · {{lang}}",
       "continueEdition": "Continue listening · {{lang}}",
       "section": {

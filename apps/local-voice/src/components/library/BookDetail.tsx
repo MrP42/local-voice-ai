@@ -138,6 +138,7 @@ export const BookDetail: React.FC<Props> = ({
   const audioLang = audioEdition
     ? langName(audioEdition.lang) || langShort(audioEdition.lang)
     : "";
+  const audioLocal = !!audioEdition && hasAudio(book, audioEdition);
   const audioRec = audioEdition
     ? loadProgress(audioKeyOf(book, audioEdition))
     : null;
@@ -353,7 +354,7 @@ export const BookDetail: React.FC<Props> = ({
               view={view}
               job={job}
               otherAudio={audioLang || undefined}
-              otherAudioLocal={!!audioEdition && hasAudio(book, audioEdition)}
+              otherAudioLocal={audioLocal}
             />
           </div>
           <dl className="library-kv">
@@ -422,6 +423,9 @@ export const BookDetail: React.FC<Props> = ({
               size="lg"
               icon={<Headphones size={16} aria-hidden="true" />}
               onClick={() => onListenEdition(audioEdition.id)}
+              aria-describedby={
+                audioLocal ? undefined : "library-detail-listen-edition-hint"
+              }
               data-testid="library-detail-listen-edition"
             >
               {t(
@@ -431,6 +435,15 @@ export const BookDetail: React.FC<Props> = ({
                 { lang: audioLang },
               )}
             </Button>
+          )}
+          {audioEdition && onListenEdition && !audioLocal && (
+            <div
+              id="library-detail-listen-edition-hint"
+              className="library-meta"
+              data-testid="library-detail-listen-edition-hint"
+            >
+              {t("library.sf.notOnDevice")}
+            </div>
           )}
           <Button
             size="lg"

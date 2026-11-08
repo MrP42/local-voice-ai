@@ -7888,6 +7888,9 @@
         "other": "auf einem anderen Gerät"
       },
       "notLocal": "Das Hörbuch ({{lang}}) ist auf diesem Gerät noch nicht geladen. Der Abgleich ist angestoßen.",
+      "notOnDevice": "Noch nicht auf diesem Gerät",
+      "syncFailed": "Das Hörbuch ({{lang}}) konnte nicht geladen werden: Der Abgleich ist fehlgeschlagen ({{error}}).",
+      "syncOff": "Das Hörbuch ({{lang}}) liegt nicht auf diesem Gerät, und der Abgleich ist nicht eingerichtet.",
       "listenEdition": "Hörbuch hören · {{lang}}",
       "continueEdition": "Weiterhören · {{lang}}",
       "section": {

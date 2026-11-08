@@ -1205,9 +1205,69 @@ test("Englisches Hörbuch noch nicht auf dem Gerät: Abgleich statt leerer Hörl
   await page.goto("/");
   await openBook(page);
   await page.getByTestId("library-detail-listen-edition").click();
+  await expect(
+    page.getByTestId("library-detail-listen-edition-hint"),
+  ).toHaveText("Noch nicht auf diesem Gerät");
+  await expect(
+    page.getByTestId("library-detail-listen-edition"),
+  ).toHaveAccessibleDescription("Noch nicht auf diesem Gerät");
+  await expect(page.getByTestId("library-fmt-audio")).toHaveAttribute(
+    "data-state",
+    "none",
+  );
   await expect(page.getByText(/noch nicht geladen/)).toBeVisible();
   await expect(page.getByTestId("library-audiobar")).toHaveCount(0);
   expect((await calls(page, "sync_now")).length).toBeGreaterThan(0);
+});
+
+test("Abgleich scheitert: Fehler statt „angestoßen“", async ({ page }) => {
+  await setup(page, [textOnlyDe(false)], { pageText: PAGES });
+  await page.addInitScript(() => {
+    const w = window as unknown as {
+      __TAURI_INTERNALS__: {
+        invoke: (c: string, a?: unknown) => Promise<unknown>;
+      };
+    };
+    const inner = w.__TAURI_INTERNALS__.invoke;
+    w.__TAURI_INTERNALS__.invoke = async (c, a) => {
+      if (c === "sync_now") throw "Hub nicht erreichbar";
+      return inner(c, a);
+    };
+  });
+  await page.goto("/");
+  await openBook(page);
+  await page.getByTestId("library-detail-listen-edition").click();
+  await expect(page.getByText(/Abgleich ist fehlgeschlagen/)).toBeVisible();
+  await expect(page.getByText(/Hub nicht erreichbar/)).toBeVisible();
+  await expect(page.getByText(/Der Abgleich ist angestoßen/)).toHaveCount(0);
+  await expect(page.getByTestId("library-audiobar")).toHaveCount(0);
+});
+
+test("Begonnenes Hörbuch der Fassung: Kopf sagt „Weiterhören“", async ({
+  page,
+}) => {
+  await setup(page, [textOnlyDe()], { pageText: PAGES });
+  await page.addInitScript(() =>
+    window.localStorage.setItem(
+      "lva.ui.progress.audio:book_a:ed_book_a_en",
+      JSON.stringify({
+        offset: 9000,
+        length: 45000,
+        heard: [[0, 9000]],
+        read: [],
+        unit: "ms",
+        updated: Date.now() - 1000,
+      }),
+    ),
+  );
+  await page.goto("/");
+  await openBook(page);
+  await expect(page.getByTestId("library-detail-listen-edition")).toHaveText(
+    /Weiterhören · English/,
+  );
+  await expect(
+    page.getByTestId("library-detail-listen-edition-hint"),
+  ).toHaveCount(0);
 });
 
 for (const width of [1440, 390])
@@ -1258,3 +1318,21 @@ for (const width of [1440, 390])
         path: `${dir}/fassung-hoerbuch-04-hoerleiste-${tag}.png`,
       });
     });
+
+for (const width of [1440, 390])
+  test(`Vorschau Hörbuch nicht auf dem Gerät ${width}`, async ({ page }) => {
+    test.skip(!process.env.LV_SHOT_DIR, "nur mit LV_SHOT_DIR");
+    await setup(page, [textOnlyDe(false)], { pageText: PAGES });
+    await page.setViewportSize({ width, height: width < 500 ? 844 : 900 });
+    await page.goto("/");
+    await openBook(page);
+    const dir = process.env.LV_SHOT_DIR!;
+    await page
+      .getByTestId("library-detail-listen-edition")
+      .scrollIntoViewIfNeeded();
+    await page.getByTestId("library-detail-listen-edition").click();
+    await expect(page.getByText(/noch nicht geladen/)).toBeVisible();
+    await page.screenshot({
+      path: `${dir}/fassung-hoerbuch-05-nicht-lokal-${width}-hell.png`,
+    });
+  });

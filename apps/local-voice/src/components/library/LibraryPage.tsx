@@ -357,10 +357,24 @@ export const LibraryPage: React.FC = () => {
     const e = editionById(book, editionId);
     if (!e?.audio) return;
     if (!hasAudio(book, e)) {
-      void commands.syncNow().catch(() => {});
-      toast(
-        t("library.sf.notLocal", { lang: langName(e.lang) || langShort(e.lang) }),
-      );
+      const lang = langName(e.lang) || langShort(e.lang);
+      void commands
+        .syncNow()
+        .then((r) => {
+          if (r.status === "error")
+            toast.error(t("library.sf.syncFailed", { lang, error: r.error }));
+          else if (!r.data.connected)
+            toast.error(t("library.sf.syncOff", { lang }));
+          else toast(t("library.sf.notLocal", { lang }));
+        })
+        .catch((err: unknown) =>
+          toast.error(
+            t("library.sf.syncFailed", {
+              lang,
+              error: err instanceof Error ? err.message : String(err),
+            }),
+          ),
+        );
       return;
     }
     setListening({
