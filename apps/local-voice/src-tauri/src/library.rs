@@ -1304,7 +1304,14 @@ fn restore_in(root: &Path, ids: &[String]) -> Result<Vec<LibraryBook>, String> {
         }
         // Unterbrochene endgültige Löschung: erst abschließen, nie ein halb
         // gelöschtes Buch zurückholen.
-        if crate::library_layout::loeschung_offen(&from) {
+        let offen = match crate::library_layout::loeschung_offen(&from) {
+            Ok(o) => o,
+            Err(e) => {
+                failed = Some(e);
+                break;
+            }
+        };
+        if offen {
             if let Some(data) = root.parent() {
                 if let Err(e) = crate::library_layout::buch_endgueltig_loeschen(data, &from) {
                     failed = Some(format!("Löschen von {id} nicht abschließbar: {e}"));
@@ -2617,8 +2624,11 @@ mod tests {
     }
 
     fn scratch(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("lv-lib-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        // Wie in der App: `<Datenordner>/library`, je Test ein eigener Datenordner
+        // (die Löschkaskade verlangt genau `<data>/library/.papierkorb/<buch>`).
+        let data = std::env::temp_dir().join(format!("lv-lib-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&data);
+        let dir = data.join("library");
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }

@@ -1151,7 +1151,7 @@ fn apply_book_on(
     // des Buchs sind damit wieder auffindbar. Danach wird wie gewohnt angeglichen.
     if !dir.exists() {
         let korb = root.join(TRASH).join(id);
-        if crate::library_layout::loeschung_offen(&korb) {
+        if crate::library_layout::loeschung_offen(&korb)? {
             // Endgültige Löschung war unterbrochen: erst abschließen, nichts
             // Halbgelöschtes zurückholen. Danach entsteht das Buch neu vom Server.
             let _pages = crate::commands::pages::lock();
@@ -2986,7 +2986,14 @@ mod tests {
                 source_name: None,
             });
         }
+        // Die Arbeitskopie spiegelt die Hauptfassung (sonst setzt `normalize` deren
+        // Text beim Schreiben auf die leere Arbeitskopie zurück).
+        book.text = book.editions[0].text.clone();
         library::sync_write_book(&dir, &book).unwrap();
+        assert_eq!(
+            crate::library_layout::buch_seiten(&data, "book_1"),
+            vec!["page_1", "page_2"]
+        );
         std::fs::write(dir.join("cover.png"), b"DE").unwrap();
         let projects = data.join("projects");
         for (page, text) in [
@@ -3036,7 +3043,9 @@ mod tests {
         let bericht = crate::library_layout::migrieren(&data, &optionen).unwrap();
         assert!(!bericht.angehalten, "{:?}", bericht.probleme);
         assert!(dir.join("fassungen/page_1/state.json").is_file());
+        assert!(!projects.join("page_1").exists());
         assert!(!projects.join("page_2").exists());
+        assert_eq!(host.text("page_1").as_deref(), Some("Deutsch"));
         assert_eq!(host.text("page_2").as_deref(), Some("English"));
 
         let nachher = datensatz(&host);

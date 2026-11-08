@@ -5474,9 +5474,11 @@ async llmWarm() : Promise<Result<string, string>> {
 }
 },
 /**
- * Alle Seiten in Anzeige-Reihenfolge. Gibt es keine, entsteht die erste —
+ * Alle Seiten in Anzeige-Reihenfolge. Gibt es gar keine, entsteht die erste —
  * eine leere Liste hieße für die Oberfläche „nichts, worin man arbeiten
- * kann", und diesen Zustand soll es nie geben.
+ * kann". Sind alle Seiten nur mit ihrem Buch im Papierkorb (Löschkaskade),
+ * entsteht keine: sonst käme bei jedem Wechsel zwischen Papierkorb und
+ * Wiederherstellen eine weitere „Erste Seite“ hinzu. Die Liste ist dann leer.
  */
 async pagesList() : Promise<Result<PageInfo[], string>> {
     try {
@@ -10414,9 +10416,6 @@ audio_path: string | null;
  */
 audio_paths?: string[] }
 /**
- * Ein Teil des Hörbuchs als Kapitelmarke (M4B).
- */
-/**
  * Ein Eintrag der Ansicht „Dateien im Buch-Ordner“.
  */
 export type LibraryBookFile = { 
@@ -10428,6 +10427,9 @@ rel: string; tiefe: number; ordner: boolean; bytes: number; dateien: number;
  * Inhalt nicht einzeln gezeigt (zu tief oder zu viele Dateien).
  */
 zusammengefasst: boolean }
+/**
+ * Ein Teil des Hörbuchs als Kapitelmarke (M4B).
+ */
 export type LibraryExportChapter = { title: string; duration_ms: number | null }
 /**
  * Angaben des Buchs für Kopf und Cover der Exportdatei.
