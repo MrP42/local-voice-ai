@@ -4354,7 +4354,6 @@ export const TtsSettings = () => {
                     info={
                       <InfoPopover
                         label={t("tts.writingRules.title")}
-                        text={t("tts.writingRules.short")}
                         testId="reader-info"
                       >
                         <p className="mb-1 font-semibold">

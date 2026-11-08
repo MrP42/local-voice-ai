@@ -1594,6 +1594,10 @@ test("Schreibregeln stehen hinter dem ⓘ-Knopf, nicht mehr rechts", async ({ pa
   await page.getByTestId("reader-info").click();
   const panel = page.getByTestId("reader-info-panel");
   await expect(panel).toContainText("Schreibregeln: Sprecher & Tags");
+  // Nur das ⓘ, ohne sichtbares Wort; Name und Tooltip bleiben (Patrick 08.11.).
+  const info = page.getByTestId("reader-info");
+  await expect(info).toHaveText("");
+  await expect(info).toHaveAccessibleName("Schreibregeln: Sprecher & Tags");
   await page.keyboard.press("Escape");
   await expect(panel).toHaveCount(0);
 });
@@ -1624,7 +1628,10 @@ test("Vollbild-Knopf füllt das Fenster, ohne es zu maximieren; F11 für echtes 
   await expect(frame).toHaveAttribute("data-fullscreen", "1");
   const box = (await frame.boundingBox())!;
   expect(box.x).toBeLessThanOrEqual(1);
-  expect(Math.abs(box.y - 48)).toBeLessThanOrEqual(1);
+  // Bündig unter der Titelleiste: kein Streifen der Navigation oder der
+  // runden Inhaltsecke dazwischen (Patrick 08.11.).
+  const bar = (await page.locator(".lv-titlebar").boundingBox())!;
+  expect(Math.abs(box.y - (bar.y + bar.height))).toBeLessThanOrEqual(0.5);
   expect(box.width).toBeGreaterThanOrEqual(1198);
   expect(box.y + box.height).toBeGreaterThanOrEqual(899);
   await expect(controls).toBeVisible();
