@@ -366,6 +366,41 @@
 .sf-row__menu {
   text-align: right;
 }
+/* Hörbuch der Fassung abspielen (Zelle „Hörbuch“): Fluent-„subtle“-Knopf. */
+.sf-listen {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  margin: -6px -8px;
+  padding: 4px 8px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.sf-listen svg {
+  color: var(--color-logo-primary);
+}
+.sf-listen:hover {
+  background: var(--sf-soft);
+}
+.sf-listen:active {
+  background: color-mix(in srgb, var(--color-logo-primary) 14%, transparent);
+}
+.sf-listen:focus-visible {
+  outline: 2px solid var(--color-logo-primary);
+  outline-offset: 1px;
+}
+@media (pointer: coarse), (max-width: 640px) {
+  .sf-listen {
+    min-height: 44px;
+    margin: 0;
+  }
+}
 .sf-section__foot {
   margin: 8px 0 0;
 }
