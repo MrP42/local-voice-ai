@@ -60,6 +60,7 @@ import {
 import {
   audioKeyOf,
   editionsOf,
+  hasAudio,
   langName,
   langShort,
   otherAudioEdition,
@@ -348,7 +349,12 @@ export const BookDetail: React.FC<Props> = ({
           )}
           <LastActive book={book} />
           <div style={{ margin: "10px 0" }}>
-            <Formats view={view} job={job} otherAudio={audioLang || undefined} />
+            <Formats
+              view={view}
+              job={job}
+              otherAudio={audioLang || undefined}
+              otherAudioLocal={!!audioEdition && hasAudio(book, audioEdition)}
+            />
           </div>
           <dl className="library-kv">
             {meta
@@ -418,8 +424,12 @@ export const BookDetail: React.FC<Props> = ({
               onClick={() => onListenEdition(audioEdition.id)}
               data-testid="library-detail-listen-edition"
             >
-              {audioStarted ? t("library.continuePlay") : t("library.listenOriginal")}
-              {` · ${audioLang}`}
+              {t(
+                audioStarted
+                  ? "library.sf.continueEdition"
+                  : "library.sf.listenEdition",
+                { lang: audioLang },
+              )}
             </Button>
           )}
           <Button

@@ -207,7 +207,9 @@ export const Formats: React.FC<{
   job?: TranscriptJob;
   /** Sprache einer anderen Fassung mit Hörbuch, wenn die aktive keines hat. */
   otherAudio?: string;
-}> = ({ view, job, otherAudio }) => {
+  /** Liegt dieses Hörbuch schon auf dem Gerät? */
+  otherAudioLocal?: boolean;
+}> = ({ view, job, otherAudio, otherAudioLocal = true }) => {
   const { t } = useTranslation();
   const other = !view.audioSource && !!otherAudio;
   return (
@@ -219,10 +221,15 @@ export const Formats: React.FC<{
           : t(`library.textShort.${view.text}`)}
       </span>
       <span
-        data-state={other ? "ok" : view.audio}
+        data-state={other ? (otherAudioLocal ? "ok" : "none") : view.audio}
         title={
           other
-            ? t("library.audioSource.other", { lang: otherAudio })
+            ? t(
+                otherAudioLocal
+                  ? "library.audioSource.other"
+                  : "library.audioSource.otherRemote",
+                { lang: otherAudio },
+              )
             : t(`library.audioSource.${view.audioSource ?? "none"}`)
         }
         data-testid="library-fmt-audio"

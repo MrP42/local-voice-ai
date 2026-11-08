@@ -7888,8 +7888,11 @@
         "other": "auf einem anderen Gerät"
       },
       "notLocal": "Das Hörbuch ({{lang}}) ist auf diesem Gerät noch nicht geladen. Der Abgleich ist angestoßen.",
+      "listenEdition": "Hörbuch hören · {{lang}}",
+      "continueEdition": "Weiterhören · {{lang}}",
       "section": {
         "listen": "Hörbuch {{lang}} abspielen ({{duration}})",
+        "listenNoDuration": "Hörbuch {{lang}} abspielen",
         "title": "Sprachfassungen",
         "edition": "Fassung",
         "progress": "Fortschritt",
@@ -8383,6 +8386,7 @@
     "readTitle": "„{{title}}“ lesen",
     "audioSource": {
       "other": "Audio: Hörbuch der Sprachfassung {{lang}}",
+      "otherRemote": "Audio: Hörbuch der Sprachfassung {{lang}}, noch nicht auf diesem Gerät",
       "audiobook": "Audio: importiertes Hörbuch",
       "narrated": "Audio: per Sprachausgabe vertont",
       "none": "Kein Audio – nur Lesen oder live vorlesen lassen"

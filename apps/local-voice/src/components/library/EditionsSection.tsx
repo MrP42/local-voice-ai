@@ -332,6 +332,12 @@ export const EditionsSection: React.FC<Props> = ({
             {list.map((e) => {
               const dur = e.audio ? totalDuration(e.audio) : null;
               const label = langName(e.lang) || langShort(e.lang);
+              const listenLabel = dur
+                ? t("library.sf.section.listen", {
+                    lang: label,
+                    duration: formatDuration(dur),
+                  })
+                : t("library.sf.section.listenNoDuration", { lang: label });
               return (
                 <tr
                   key={e.id}
@@ -367,14 +373,8 @@ export const EditionsSection: React.FC<Props> = ({
                         type="button"
                         className="sf-listen"
                         onClick={() => onListen(e.id)}
-                        aria-label={t("library.sf.section.listen", {
-                          lang: label,
-                          duration: dur ? formatDuration(dur) : "",
-                        })}
-                        title={t("library.sf.section.listen", {
-                          lang: label,
-                          duration: dur ? formatDuration(dur) : "",
-                        })}
+                        aria-label={listenLabel}
+                        title={listenLabel}
                         data-testid={`sf-edition-play-${e.id}`}
                       >
                         <Play size={14} aria-hidden="true" />

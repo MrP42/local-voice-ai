@@ -7888,8 +7888,11 @@
         "other": "on another device"
       },
       "notLocal": "The {{lang}} audiobook is not on this device yet. Sync has been started.",
+      "listenEdition": "Play audiobook · {{lang}}",
+      "continueEdition": "Continue listening · {{lang}}",
       "section": {
         "listen": "Play {{lang}} audiobook ({{duration}})",
+        "listenNoDuration": "Play {{lang}} audiobook",
         "title": "Language editions",
         "edition": "Edition",
         "progress": "Progress",
@@ -8383,6 +8386,7 @@
     "readTitle": "Read “{{title}}”",
     "audioSource": {
       "other": "Audio: audiobook of the {{lang}} edition",
+      "otherRemote": "Audio: audiobook of the {{lang}} edition, not on this device yet",
       "audiobook": "Audio: imported audiobook",
       "narrated": "Audio: narrated by speech synthesis",
       "none": "No audio – read or have it read aloud live"
