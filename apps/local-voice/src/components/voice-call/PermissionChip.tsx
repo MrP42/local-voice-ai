@@ -69,9 +69,9 @@ export const PermissionChip: React.FC = () => {
           className="inline-flex items-center gap-1.5 h-8 min-w-8 max-sm:h-[44px] max-sm:min-w-[44px] max-w-full rounded-full px-2 text-xs cursor-pointer text-text/80 hover:bg-mid-gray/15 border border-transparent focus-visible:border-logo-primary"
         >
           <Shield className="w-4 h-4 shrink-0" aria-hidden="true" />
-          <span className="truncate max-sm:hidden">{label}</span>
+          <span className="truncate">{label}</span>
           <ChevronDown
-            className="w-3 h-3 shrink-0 text-text-muted max-sm:hidden"
+            className="w-3 h-3 shrink-0 text-text-muted"
             aria-hidden="true"
           />
         </button>

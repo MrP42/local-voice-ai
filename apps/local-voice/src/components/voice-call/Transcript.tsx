@@ -79,8 +79,7 @@ export const Transcript: React.FC<{
    * keine Vorschläge. Ohne Angabe bleibt die Fläche leer.
    */
   greeting?: string;
-  /** Eingabezeile, die im leeren Gespräch unter der Begrüßung steht. */
-  emptyComposer?: React.ReactNode;
+
   /** Werkzeug, das der Orchestrator gerade aufruft (Name). */
   toolStatus?: string | null;
   /** Hinweis des Orchestrators (Code). */
@@ -95,7 +94,6 @@ export const Transcript: React.FC<{
   lines,
   active,
   greeting,
-  emptyComposer,
   toolStatus = null,
   notice = null,
   onOpenSettings,
@@ -174,15 +172,19 @@ export const Transcript: React.FC<{
   ) : null;
 
   if (lines.length === 0) {
+    // Die Eingabezeile steht unmittelbar darunter (VoiceCallPage, feste Baumposition):
+    // die Begrüßung sitzt unten in dieser Fläche, beide zusammen in der Mitte.
+    const title = active ? t("voiceCall.speakNow") : greeting;
     return (
-      <div className="flex-1 min-h-0 flex flex-col items-center justify-center gap-6 px-4 pb-[10vh] text-center">
-        <h2
-          className="m-0 text-[28px] max-sm:text-[22px] font-semibold text-text tracking-tight"
-          data-testid="chat-greeting"
-        >
-          {active ? t("voiceCall.speakNow") : greeting}
-        </h2>
-        {emptyComposer && <div className="w-full">{emptyComposer}</div>}
+      <div className="flex-1 min-h-0 flex flex-col items-center justify-end gap-3 px-4 pb-6 text-center">
+        {title && (
+          <h2
+            className="m-0 text-[28px] max-sm:text-[22px] font-semibold text-text tracking-tight"
+            data-testid="chat-greeting"
+          >
+            {title}
+          </h2>
+        )}
         {noticeBox}
         {liveRegion}
       </div>

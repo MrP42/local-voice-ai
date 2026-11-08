@@ -478,7 +478,7 @@ export const VoiceCallPage: React.FC = () => {
 
   return (
     <PageShell title={t("voiceCall.title")} fill>
-      <div className="relative flex h-full min-h-0 overflow-hidden">
+      <div className="lv-chat relative flex h-full min-h-0 overflow-hidden">
         {historyOpen && !narrow && (
           <aside
             id={historyId}
@@ -530,12 +530,18 @@ export const VoiceCallPage: React.FC = () => {
             }
             trailing={
               <>
-                {/* Codex lva#394 F2: Datenbereich bleibt ohne Öffnen sichtbar. */}
-                <PermissionChip />
+                {/* Codex lva#394 F2: Datenbereich bleibt ohne Öffnen sichtbar
+                    (schmal in einer eigenen Zeile darunter, siehe unten). */}
+                {!narrow && <PermissionChip />}
                 <ConversationOptions />
               </>
             }
           />
+          {narrow && (
+            <div className="flex items-center px-2 border-b border-mid-gray/20 min-w-0">
+              <PermissionChip />
+            </div>
+          )}
           {alerts.map((a) => (
             <div
               key={`${a.kind}-${a.text}`}
@@ -565,15 +571,17 @@ export const VoiceCallPage: React.FC = () => {
           <Transcript
             lines={lines}
             active={inCall}
-            greeting={greeting}
-            emptyComposer={composer}
+            greeting={switching ? undefined : greeting}
             toolStatus={toolStatus}
             notice={notice}
             onOpenSettings={() => store.getState().openSettings("models")}
             onEditLine={(id, text) => void store.getState().editLine(id, text)}
             canEdit={(line) => lineEditable(line, state, textBusy)}
           />
-          {lines.length > 0 && composer}
+          {/* Feste Baumposition: kein Neueinhängen der Eingabe beim ersten Senden. */}
+          <div className={lines.length === 0 ? "flex-1 min-h-0" : "contents"}>
+            {composer}
+          </div>
         </div>
         {settingsOpen && <SettingsPanel />}
       </div>

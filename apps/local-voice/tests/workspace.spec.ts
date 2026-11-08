@@ -366,3 +366,38 @@ test("every content page opens its context help from the head", async ({ page })
     await expect(panel).toHaveCount(0);
   }
 });
+
+// lva#394 (Codex): Touch-Eingabe → 44 × 44 px je Bedienelement im Chat, auch breit;
+// schmal bleibt der Datenbereich als Text sichtbar.
+test.describe("Chat bei Touch-Eingabe", () => {
+  test.use({ hasTouch: true });
+  for (const width of [1280, 390]) {
+    test(`44-px-Ziele und lesbarer Datenbereich (${width})`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 844 });
+      await page.goto("/");
+      await expect(page.getByTestId("chat-greeting")).toBeVisible();
+      expect(
+        await page.evaluate(() => matchMedia("(any-pointer: coarse)").matches),
+      ).toBe(true);
+      const sizes = await page.locator(".lv-chat button:visible").evaluateAll(
+        (els) =>
+          els.map((el) => {
+            const r = el.getBoundingClientRect();
+            return {
+              name: el.getAttribute("aria-label") ?? el.textContent,
+              w: r.width,
+              h: r.height,
+            };
+          }),
+      );
+      expect(sizes.length).toBeGreaterThan(3);
+      for (const s of sizes) {
+        expect(s.w, `${s.name} Breite`).toBeGreaterThanOrEqual(44);
+        expect(s.h, `${s.name} Höhe`).toBeGreaterThanOrEqual(44);
+      }
+      const chip = page.getByTestId("permission-chip");
+      await expect(chip).toBeVisible();
+      await expect(chip).toContainText(/·/);
+    });
+  }
+});

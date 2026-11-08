@@ -75,7 +75,10 @@ function App() {
   const [isReturningUser, setIsReturningUser] = useState(false);
   const [currentSection, setCurrentSection] =
     usePersistentState<SidebarSection>("section", "home", isSidebarSection);
-  // lva#394: Der Chat ist die Startseite. Alte Sprungziele „voice“ landen dort.
+  // lva#394: Der Chat ist die Startseite. Alte Sprungziele „voice“ landen dort;
+  // bis der Effekt umgestellt hat, gilt für das Layout schon „home“ (kein Flackern).
+  const shownSection: SidebarSection =
+    currentSection === "voice" ? "home" : currentSection;
   useEffect(() => {
     if (currentSection === "voice") setCurrentSection("home");
   }, [currentSection, setCurrentSection]);
@@ -591,7 +594,7 @@ function App() {
           <div className="lv-content flex-1 flex flex-col overflow-hidden min-w-0">
             <main
               id="workspace-content"
-              className={`flex-1 workspace-main ${currentSection === "tts" || currentSection === "meetings" || currentSection === "home" ? "workspace-main--fill" : ""} ${currentSection === "meetings" || currentSection === "home" ? "workspace-main--fixed" : ""}`}
+              className={`flex-1 workspace-main ${currentSection === "tts" || currentSection === "meetings" || shownSection === "home" ? "workspace-main--fill" : ""} ${currentSection === "meetings" || shownSection === "home" ? "workspace-main--fixed" : ""}`}
               aria-label={t(SECTIONS_CONFIG[currentSection].labelKey)}
             >
               {/* Fluid: the content uses whatever width the window offers, up
@@ -602,11 +605,11 @@ function App() {
                 className={`flex flex-col w-full mx-auto p-3 sm:p-4 gap-4 min-w-0 ${
                   currentSection === "tts" ||
                   currentSection === "meetings" ||
-                  currentSection === "home"
+                  shownSection === "home"
                     ? "workspace-content--fill"
                     : ""
                 } ${
-                  currentSection === "meetings" || currentSection === "home"
+                  currentSection === "meetings" || shownSection === "home"
                     ? "workspace-content--fixed"
                     : ""
                 } ${
@@ -619,7 +622,7 @@ function App() {
                   // Sprachgespräch: Verlauf zentriert, Einstellungen als Spalte rechts.
                   currentSection === "tts" ||
                   currentSection === "meetings" ||
-                  currentSection === "home"
+                  shownSection === "home"
                     ? ""
                     : "max-w-5xl"
                 }`}
