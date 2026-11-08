@@ -11,9 +11,14 @@ use crate::library;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use tauri::AppHandle;
 
 pub const COLLECTION_BOOK_FILE: &str = kern::SAMMLUNG;
+
+/// Zeiger der Prüfsummen-Reihe im Speicher (Bibliothek, Zeiger): scheitert das Sichern,
+/// geht die Reihe trotzdem weiter.
+static REIHE: Mutex<Option<(PathBuf, Option<String>)>> = Mutex::new(None);
 
 /// Die `book_file`-Objekte dieses Geräts.
 #[derive(Default)]
@@ -110,7 +115,14 @@ pub fn collect(
         .extend(kern::geparkt(&root).into_iter().map(|(id, _)| id));
     let now = now_ms();
     // Die Ausnahme vom Budget geht reihum (Zeiger in der Bibliothek), in fester Reihenfolge.
-    let mut hash_budget = kern::Budget::laden(&root, *budget);
+    let im_speicher = REIHE
+        .lock()
+        .ok()
+        .and_then(|g| g.clone())
+        .filter(|(r, _)| *r == root)
+        .map(|(_, z)| z);
+    let zeiger = im_speicher.unwrap_or_else(|| kern::Budget::zeiger_laden(&root));
+    let mut hash_budget = kern::Budget::mit_zeiger(*budget, zeiger);
     let mut dirs = books::book_dirs(&root)?;
     dirs.sort();
     for (buch, dir) in dirs {
@@ -126,6 +138,23 @@ pub fn collect(
         out.present.extend(found.vorhanden);
         // Hinweise nennen Dateinamen: nur in den Status, nie ins Log.
         out.warnings.extend(found.hinweise);
+        // „Vom Hub wiederherstellen“: den Verweis aus der eigenen Prüfsumme bilden.
+        for l in found.wiederherstellen {
+            let Some(rel) = l
+                .wert
+                .get("path")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+            else {
+                continue;
+            };
+            let blob = with_blob(key, l).and_then(|(o, _)| o.value.get("blob").cloned());
+            if let Some(b) = blob {
+                if kern::erwarten(&dir, &rel, &b).is_err() {
+                    log::warn!("Sync: Wiederherstellen in Buch {buch} nicht vorgemerkt");
+                }
+            }
+        }
         for l in found.lokal {
             let id = l.id.clone();
             let Some((obj, upload)) = with_blob(key, l) else {
@@ -143,6 +172,9 @@ pub fn collect(
         }
     }
     *budget = hash_budget.rest();
+    if let Ok(mut g) = REIHE.lock() {
+        *g = Some((root.clone(), hash_budget.naechster()));
+    }
     if hash_budget.sichern(&root).is_err() {
         log::warn!("Sync: Reihenfolge der Prüfsummen nicht gesichert");
     }

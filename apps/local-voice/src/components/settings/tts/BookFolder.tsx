@@ -432,6 +432,14 @@ export const BookNotesGroup: React.FC<{ bookId: string }> = ({ bookId }) => {
     reload();
   };
 
+  const restore = async (f: BookFolderFile) => {
+    const r = await commands
+      .libraryBookFileRestore(bookId, f.rel)
+      .catch((e) => ({ status: "error" as const, error: String(e) }));
+    if (r.status === "error") fail(r.error);
+    reload();
+  };
+
   const meta = (f: BookFolderFile): string => {
     const kind =
       f.role === "transkript"
@@ -443,7 +451,7 @@ export const BookNotesGroup: React.FC<{ bookId: string }> = ({ bookId }) => {
           : t("tts.folders.roleAttachment");
     const parts = [kind];
     if (f.held) parts.push(t("tts.folders.held"));
-    else if (f.folder_missing) parts.push(t("tts.folders.folderMissing"));
+    else if (f.missing) parts.push(t("tts.folders.missingLocal"));
     else if (f.pending) parts.push(t("tts.folders.pending"));
     else if (f.bytes > 0)
       parts.push(formatBytes(f.bytes, i18n.language || "de"));
@@ -488,11 +496,11 @@ export const BookNotesGroup: React.FC<{ bookId: string }> = ({ bookId }) => {
       {files.map((f) => {
         // Nur vorhandene Dateien lassen sich öffnen; entfernen geht auch, wenn ihr Ordner
         // fehlt (ausdrückliche Löschung), nicht aber bei Zurückgehaltenem oder Erwartetem.
-        const openable = !f.pending && !f.held && !f.folder_missing;
+        const openable = !f.pending && !f.held && !f.missing;
         const removable = !f.pending && !f.held;
         const Icon = f.pending
           ? CloudDownload
-          : f.held || f.folder_missing
+          : f.held || f.missing
             ? AlertTriangle
             : (ROLE_ICON[f.role] ?? FileText);
         const body = (
@@ -541,6 +549,18 @@ export const BookNotesGroup: React.FC<{ bookId: string }> = ({ bookId }) => {
                 title={t("tts.folders.openFile")}
               >
                 {body}
+              </button>
+            )}
+            {f.missing && (
+              <button
+                type="button"
+                className="flex min-h-[44px] min-w-[44px] shrink-0 cursor-pointer items-center justify-center rounded-md text-text/60 hover:bg-mid-gray/15 hover:text-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-logo-primary"
+                aria-label={t("tts.folders.restoreFile", { name: f.name })}
+                title={t("tts.folders.restore")}
+                data-testid="book-file-restore"
+                onClick={() => void restore(f)}
+              >
+                <CloudDownload width={16} height={16} aria-hidden="true" />
               </button>
             )}
             {removable && (

@@ -28,9 +28,9 @@ pub struct BookFolderFile {
     pub pending: bool,
     /// Konfliktkopie aus dem Abgleich.
     pub conflict: bool,
-    /// Bekannt, aber ihr Ordner fehlt (von außen entfernt): wiederherstellen oder in der
-    /// App löschen.
-    pub folder_missing: bool,
+    /// Bekannt, fehlt aber lokal (im Explorer gelöscht, Ordner fehlt): vom Hub
+    /// wiederherstellen oder in der App löschen.
+    pub missing: bool,
     /// Von einem anderen Gerät gemeldet, zurückgehalten: der Name fiele mit einer anderen
     /// Datei zusammen (Groß-/Kleinschreibung, Unicode-Form).
     pub held: bool,
@@ -61,7 +61,7 @@ pub fn library_book_folder_files(
             edition: d.fassung,
             pending: d.erwartet,
             conflict: d.konflikt,
-            folder_missing: d.ordner_fehlt,
+            missing: d.fehlt,
             held: d.zurueckgehalten,
         })
         .collect())
@@ -135,6 +135,24 @@ pub fn library_book_file_remove(
     {
         let _guard = library::sync_lock();
         kern::entfernen(&dir, &id, &rel)?;
+    }
+    engine.touch();
+    Ok(())
+}
+
+/// Eine lokal fehlende Datei vom Hub zurückholen (der nächste Abgleich lädt sie).
+#[tauri::command]
+#[specta::specta]
+pub fn library_book_file_restore(
+    app: AppHandle,
+    engine: State<'_, SyncEngine>,
+    id: String,
+    rel: String,
+) -> Result<(), String> {
+    let dir = buch_dir(&app, &id)?;
+    {
+        let _guard = library::sync_lock();
+        kern::wiederherstellen(&dir, &rel)?;
     }
     engine.touch();
     Ok(())

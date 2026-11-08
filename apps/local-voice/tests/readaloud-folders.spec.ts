@@ -207,7 +207,8 @@ test.beforeEach(async ({ page }) => {
               cmd === "library_book_note_create" ||
               cmd === "library_book_attachments_add" ||
               cmd === "library_book_file_open" ||
-              cmd === "library_book_file_remove"
+              cmd === "library_book_file_remove" ||
+              cmd === "library_book_file_restore"
             ) {
               const w = window as unknown as {
                 __lvFolderOps?: unknown[];
@@ -1270,7 +1271,7 @@ const FOLDER_FILES = [
     edition: "",
     pending: false,
     conflict: false,
-    folder_missing: false,
+    missing: false,
     held: false,
   },
   {
@@ -1282,7 +1283,7 @@ const FOLDER_FILES = [
     edition: "",
     pending: false,
     conflict: true,
-    folder_missing: false,
+    missing: false,
     held: false,
   },
   {
@@ -1294,7 +1295,7 @@ const FOLDER_FILES = [
     edition: "page_1",
     pending: true,
     conflict: false,
-    folder_missing: false,
+    missing: false,
     held: false,
   },
 ];
@@ -1375,7 +1376,7 @@ test("Notizen und Anhänge: Doppelklick öffnet einmal, Ladefehler eigener Zusta
   ).toHaveLength(1);
 });
 
-test("Notizen und Anhänge: Ordner fehlt (nur entfernen) und Zurückgehaltenes (nur Hinweis)", async ({
+test("Notizen und Anhänge: fehlt lokal (wiederherstellen, löschen) und Zurückgehaltenes (nur Hinweis)", async ({
   page,
 }) => {
   const base = {
@@ -1395,7 +1396,7 @@ test("Notizen und Anhänge: Ordner fehlt (nur entfernen) und Zurückgehaltenes (
         rel: "notizen/A.md",
         role: "notiz",
         name: "A.md",
-        folder_missing: false,
+        missing: false,
         held: false,
       },
       {
@@ -1403,7 +1404,7 @@ test("Notizen und Anhänge: Ordner fehlt (nur entfernen) und Zurückgehaltenes (
         rel: "notizen/a.md",
         role: "notiz",
         name: "a.md",
-        folder_missing: false,
+        missing: false,
         held: true,
       },
       {
@@ -1411,7 +1412,7 @@ test("Notizen und Anhänge: Ordner fehlt (nur entfernen) und Zurückgehaltenes (
         rel: "anhaenge/Tabelle.xlsx",
         role: "anhang",
         name: "Tabelle.xlsx",
-        folder_missing: true,
+        missing: true,
         held: false,
       },
     ],
@@ -1423,14 +1424,16 @@ test("Notizen und Anhänge: Ordner fehlt (nur entfernen) und Zurückgehaltenes (
   await expect(rowsIn.nth(1)).toContainText("zurückgehalten");
   await expect(rowsIn.nth(1).getByRole("button")).toHaveCount(0);
   await expect(rowsIn.nth(2)).toContainText(
-    "Ordner fehlt – wiederherstellen oder in der App löschen",
+    "Fehlt auf diesem Gerät – vom Hub wiederherstellen oder in der App löschen",
   );
-  // Ordner fehlt: nicht öffnen, aber in der App löschen (nach Rückfrage).
-  await expect(rowsIn.nth(2).getByRole("button")).toHaveCount(1);
+  // Fehlt lokal: nicht öffnen, aber vom Hub wiederherstellen oder in der App löschen.
+  await expect(rowsIn.nth(2).getByRole("button")).toHaveCount(2);
+  await rowsIn.nth(2).getByTestId("book-file-restore").click();
   await rowsIn.nth(2).getByTestId("book-file-remove").click();
   await expect
     .poll(() => folderOps(page))
     .toEqual([
+      ["library_book_file_restore", { id: "b1", rel: "anhaenge/Tabelle.xlsx" }],
       ["library_book_file_remove", { id: "b1", rel: "anhaenge/Tabelle.xlsx" }],
     ]);
 });

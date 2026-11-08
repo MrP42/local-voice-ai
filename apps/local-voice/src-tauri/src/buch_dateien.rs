@@ -12,8 +12,10 @@
 //!   Glied nach 4.4 bereinigt, nie absolut, nie `..`, nie versteckt.
 //! - Konflikt: neueres `updated` gewinnt, bei Gleichstand die größere Geräte-ID. Die
 //!   unterlegene Fassung bleibt als `Name (Konflikt Gerät).ext` erhalten.
-//! - Löschen: Grabstein (`deleted: true`) 30 Tage; der Empfänger legt die Datei in den
-//!   Papierkorb (`library/.papierkorb/dateien/<buch>/…`), nie ins Nichts.
+//! - Löschen: nur ausdrücklich in der App. Eine lokal fehlende Datei bleibt „fehlt lokal“
+//!   (vom Hub wiederherstellen oder in der App löschen). Grabstein (`deleted: true`) 30
+//!   Tage; der Empfänger legt die Datei in den Papierkorb
+//!   (`library/.papierkorb/dateien/<buch>/…`), nie ins Nichts.
 //! - Datensätze mit `v` > [`VERSION`] werden aufbewahrt, aber nie geschrieben.
 
 use crate::library_layout::{bereinigter_name, freier_name, schreibe_atomar, vergleichsschluessel};
@@ -160,10 +162,14 @@ struct Eintrag {
     /// Felder neuerer Geräte im Datensatz, unverändert weitergegeben.
     #[serde(default, skip_serializing_if = "Map::is_empty")]
     extra: Map<String, Value>,
-    /// In der App ausdrücklich entfernt, während ihr Ordner fehlt: wird beim nächsten
-    /// Sammeln zum Grabstein, auch wenn der Ort verdeckt ist.
+    /// In der App ausdrücklich gelöscht, während die Datei lokal fehlt: wird beim nächsten
+    /// Sammeln zum Grabstein. Nur so entstehen Grabsteine für fehlende Dateien.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     entfernt: bool,
+    /// „Vom Hub wiederherstellen“ für eine lokal fehlende Datei: das Sammeln liefert sie
+    /// in [`Sammlung::wiederherstellen`], der Aufrufer bildet den Verweis.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    wiederholen: bool,
 }
 
 #[derive(Serialize, Deserialize, Default, PartialEq, Debug)]
@@ -438,8 +444,6 @@ struct Fund {
     verdeckt: Vec<String>,
     /// Dateien, die da sind, aber nicht abgeglichen werden (Namenskollision).
     gehalten: BTreeMap<String, fs::Metadata>,
-    /// Rollen, deren Ordner fehlt (der Buch-Ordner selbst ist erreichbar).
-    fehlende_rollen: Vec<Rolle>,
 }
 
 impl Fund {
@@ -506,13 +510,7 @@ fn dateien_finden(buch_dir: &Path, hinweise: &mut Vec<String>) -> Fund {
             Ok(m) if m.is_dir() && !m.file_type().is_symlink() => {
                 gehen(&dir, rolle.ordner(), 1, &mut aus, hinweise);
             }
-            // Ein von außen entfernter Ordner (verschoben, Platzhalter, Laufwerk weg)
-            // löscht nichts: die Liste zeigt „Ordner fehlt“, gelöscht wird nur in der App.
-            // Ein leerer Ordner dagegen ist da: was fehlt, wird zum Grabstein.
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                aus.fehlende_rollen.push(rolle);
-                aus.verdeckt.push(rolle.ordner().to_string());
-            }
+            // Fehlt der Ordner oder ist er nicht lesbar, löscht das nichts.
             _ => aus.verdeckt.push(rolle.ordner().to_string()),
         }
     }
@@ -643,6 +641,9 @@ pub struct Sammlung {
     /// Prüfsumme über dem Budget). Sie gelten nicht als gelöscht.
     pub vorhanden: Vec<String>,
     pub hinweise: Vec<String>,
+    /// Lokal fehlende Dateien, die vom Hub zurückkommen sollen und deren Verweis der
+    /// Aufrufer aus der Quelle bildet (dann [`erwarten`]).
+    pub wiederherstellen: Vec<Lokal>,
 }
 
 fn datensatz(buch: &str, rel: &str, e: &Eintrag) -> Option<Value> {
@@ -714,24 +715,26 @@ pub struct Budget {
 pub const REIHE: &str = ".sync-dateien-reihe.json";
 
 impl Budget {
-    pub fn neu(rest: u64) -> Self {
-        Budget {
-            rest,
-            ..Budget::default()
-        }
-    }
-
-    /// Budget mit dem gespeicherten Zeiger der Bibliothek (fehlt er, beginnt die Reihe vorn).
-    pub fn laden(bibliothek: &Path, rest: u64) -> Self {
-        let ab = fs::read(bibliothek.join(REIHE))
+    /// Der gespeicherte Zeiger der Bibliothek.
+    pub fn zeiger_laden(bibliothek: &Path) -> Option<String> {
+        fs::read(bibliothek.join(REIHE))
             .ok()
             .and_then(|roh| serde_json::from_slice::<Option<String>>(&roh).ok())
-            .flatten();
+            .flatten()
+    }
+
+    /// Budget mit einem Zeiger (etwa dem im Speicher gehaltenen, wenn Sichern scheiterte).
+    pub fn mit_zeiger(rest: u64, ab: Option<String>) -> Self {
         Budget {
             rest,
             ab,
             ausnahme: None,
         }
+    }
+
+    /// Der Zeiger für den nächsten Lauf.
+    pub fn naechster(&self) -> Option<String> {
+        self.ausnahme.clone()
     }
 
     /// Den Zeiger für den nächsten Lauf sichern: die Ausnahme dieses Laufs; gab es keine,
@@ -780,13 +783,15 @@ pub fn sammeln(
     let mut aus = Sammlung::default();
     let fund = dateien_finden(buch_dir, &mut aus.hinweise);
     let gefunden = &fund.dateien;
-    // Grabsteine und erwartete Dateien hängen nicht an der Platte; nur lebende Einträge
-    // unter verdeckten Teilbäumen werden zurückgehalten.
+    // Eine lokal fehlende Datei wird nie von selbst zum Grabstein (gelöscht im Explorer,
+    // Ordner verschoben, Laufwerk weg …): sie bleibt „fehlt lokal“ und vorhanden, bis sie
+    // wiederkommt oder in der App gelöscht wird. Grabsteine und erwartete Dateien hängen
+    // nicht an der Platte.
     let mut zurueck: BTreeSet<String> = stand
         .dateien
         .iter()
         .filter(|(_, e)| !e.deleted && !e.erwartet && !e.entfernt)
-        .filter(|(rel, _)| !gefunden.contains_key(*rel) && fund.verdeckt(rel))
+        .filter(|(rel, _)| !gefunden.contains_key(*rel))
         .map(|(rel, _)| rel.clone())
         .collect();
     zurueck.extend(fund.gehalten.keys().cloned());
@@ -853,6 +858,7 @@ pub fn sammeln(
                 groesse,
                 mtime_ms,
                 entfernt: false,
+                wiederholen: false,
                 ..e
             },
             alt => {
@@ -877,10 +883,10 @@ pub fn sammeln(
 
     let mut weg: Vec<String> = Vec::new();
     for (rel, e) in stand.dateien.iter_mut() {
-        if gefunden.contains_key(rel) || e.erwartet || zurueck.contains(rel) {
+        if gefunden.contains_key(rel) {
             continue;
         }
-        if !e.deleted {
+        if e.entfernt {
             *e = Eintrag {
                 updated: jetzt_ms.max(e.updated + 1.0),
                 device: geraet.to_string(),
@@ -888,8 +894,12 @@ pub fn sammeln(
                 deleted: true,
                 ..Eintrag::default()
             };
-        } else if jetzt_ms - e.updated > GRABSTEIN_MS {
+        } else if e.deleted && jetzt_ms - e.updated > GRABSTEIN_MS {
             weg.push(rel.clone());
+        } else if e.wiederholen && !e.erwartet {
+            if let Some(l) = lokal_von(buch_dir, buch, rel, e) {
+                aus.wiederherstellen.push(l);
+            }
         }
     }
     for rel in weg {
@@ -1419,9 +1429,9 @@ pub struct Datei {
     pub erwartet: bool,
     /// Konfliktkopie (`… (Konflikt …)`).
     pub konflikt: bool,
-    /// Bekannt, aber ihr Ordner fehlt (von außen entfernt): wiederherstellen oder in der
-    /// App löschen.
-    pub ordner_fehlt: bool,
+    /// Bekannt, fehlt aber lokal (im Explorer gelöscht, Ordner fehlt): vom Hub
+    /// wiederherstellen oder in der App löschen.
+    pub fehlt: bool,
     /// Von einem anderen Gerät gemeldet, hier zurückgehalten: der Name fiele mit einer
     /// anderen Datei zusammen (Groß-/Kleinschreibung, Unicode-Form).
     pub zurueckgehalten: bool,
@@ -1461,7 +1471,7 @@ pub fn auflisten(buch_dir: &Path, buch: &str) -> Result<Vec<Datei>, String> {
             geaendert_ms,
             fassung,
             erwartet: false,
-            ordner_fehlt: false,
+            fehlt: false,
             zurueckgehalten: false,
         }
     };
@@ -1484,10 +1494,8 @@ pub fn auflisten(buch_dir: &Path, buch: &str) -> Result<Vec<Datei>, String> {
         let Some(rolle) = Rolle::aus_pfad(rel) else {
             continue;
         };
-        let fehlt = fund.fehlende_rollen.contains(&rolle);
-        if !e.erwartet && !fehlt {
-            continue;
-        }
+        // Erwartet (auch zum Wiederherstellen angefordert) oder lokal fehlend.
+        let kommt = e.erwartet || e.wiederholen;
         let groesse = if e.erwartet {
             e.blob
                 .as_ref()
@@ -1499,8 +1507,8 @@ pub fn auflisten(buch_dir: &Path, buch: &str) -> Result<Vec<Datei>, String> {
         };
         let fassung = fassung_von(rolle, rel, &e.edition);
         aus.push(Datei {
-            erwartet: e.erwartet,
-            ordner_fehlt: !e.erwartet,
+            erwartet: kommt,
+            fehlt: !kommt,
             ..neu(rel, rolle, groesse, e.updated as i64, fassung)
         });
     }
@@ -1642,26 +1650,64 @@ pub fn pfad(buch_dir: &Path, rel: &str) -> Result<PathBuf, String> {
 
 /// Eine Datei aus dem Buch-Ordner in den Papierkorb der Bibliothek legen. Der nächste
 /// Abgleich macht daraus einen Grabstein.
-/// Fehlt der Ordner der Rolle (von außen entfernt), ist das Entfernen in der App die
-/// ausdrückliche Löschung: der Eintrag wird beim nächsten Sammeln zum Grabstein.
+/// Fehlt die Datei lokal (im Explorer gelöscht, Ordner fehlt), ist das Entfernen in der App
+/// die ausdrückliche Löschung: der Eintrag wird beim nächsten Sammeln zum Grabstein.
 pub fn entfernen(buch_dir: &Path, buch: &str, rel: &str) -> Result<(), String> {
-    let rolle = sicherer_pfad(rel)?;
+    sicherer_pfad(rel)?;
     ohne_verknuepfung(buch_dir, rel)?;
     if buch_dir.join(rel).is_file() {
         return in_papierkorb(buch_dir, buch, rel);
     }
-    let ordner_fehlt = matches!(
-        fs::symlink_metadata(buch_dir.join(rolle.ordner())),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound
-    );
     let mut stand = stand_laden(buch_dir)?;
     match stand.dateien.get_mut(rel) {
-        Some(e) if ordner_fehlt && !e.deleted && !e.erwartet => {
+        Some(e) if !e.deleted && !e.entfernt => {
             e.entfernt = true;
+            e.wiederholen = false;
             stand_sichern(buch_dir, &mut stand)
         }
         _ => Err("Die Datei ist (noch) nicht da.".into()),
     }
+}
+
+/// Eine lokal fehlende Datei vom Hub zurückholen. Ist ihr Verweis schon bekannt, wird sie
+/// sofort erwartet; sonst bildet ihn das nächste Sammeln ([`Sammlung::wiederherstellen`]).
+pub fn wiederherstellen(buch_dir: &Path, rel: &str) -> Result<(), String> {
+    sicherer_pfad(rel)?;
+    ohne_verknuepfung(buch_dir, rel)?;
+    if buch_dir.join(rel).exists() {
+        return Err("Die Datei ist schon da.".into());
+    }
+    let mut stand = stand_laden(buch_dir)?;
+    let Some(e) = stand.dateien.get_mut(rel) else {
+        return Err("Die Datei ist nicht bekannt.".into());
+    };
+    if e.deleted || e.erwartet || e.entfernt {
+        return Err("Die Datei lässt sich nicht wiederherstellen.".into());
+    }
+    if e.blob.is_some() && !e.sha256.is_empty() && e.blob_sha == e.sha256 {
+        e.erwartet = true;
+        e.ersetzt_sha.clear();
+    } else {
+        e.wiederholen = true;
+    }
+    stand_sichern(buch_dir, &mut stand)
+}
+
+/// Der Aufrufer hat den Verweis einer wiederherzustellenden Datei gebildet: ab jetzt wird
+/// ihr Inhalt erwartet (geladen und abgelegt wie jeder Download).
+pub fn erwarten(buch_dir: &Path, rel: &str, blob: &Value) -> Result<(), String> {
+    let mut stand = stand_laden(buch_dir)?;
+    let Some(e) = stand.dateien.get_mut(rel) else {
+        return Ok(());
+    };
+    if !e.wiederholen || e.deleted || e.entfernt || buch_dir.join(rel).exists() {
+        return Ok(());
+    }
+    e.wiederholen = false;
+    e.erwartet = true;
+    e.ersetzt_sha.clear();
+    e.blob = Some(blob.clone());
+    stand_sichern(buch_dir, &mut stand)
 }
 
 #[cfg(test)]
@@ -1687,7 +1733,14 @@ mod tests {
     }
 
     fn alles(dir: &Path, jetzt: f64) -> Sammlung {
-        sammeln(dir, "book_1", ICH, jetzt, &mut Budget::neu(u64::MAX)).unwrap()
+        sammeln(
+            dir,
+            "book_1",
+            ICH,
+            jetzt,
+            &mut Budget::mit_zeiger(u64::MAX, None),
+        )
+        .unwrap()
     }
 
     fn nach_pfad<'a>(s: &'a Sammlung, rel: &str) -> &'a Lokal {
@@ -1809,7 +1862,7 @@ mod tests {
         schreiben(&dir, "anhaenge/gross.bin", &[7u8; 64]);
         schreiben(&dir, "anhaenge/zweite.bin", &[8u8; 64]);
         // Die erste Datei eines Laufs darf immer, auch über dem Budget; die zweite wartet.
-        let mut budget = Budget::neu(10);
+        let mut budget = Budget::mit_zeiger(10, None);
         let s = sammeln(&dir, "book_1", ICH, 1.0, &mut budget).unwrap();
         assert_eq!(budget.rest(), 0);
         assert_eq!(s.lokal.len(), 1);
@@ -1819,7 +1872,7 @@ mod tests {
             vec![datei_id("book_1", Rolle::Anhang, "anhaenge/zweite.bin")]
         );
         // Nächster Lauf: die erste ist bekannt (kein Lesen), die zweite kommt dran.
-        let s = sammeln(&dir, "book_1", ICH, 2.0, &mut Budget::neu(10)).unwrap();
+        let s = sammeln(&dir, "book_1", ICH, 2.0, &mut Budget::mit_zeiger(10, None)).unwrap();
         assert_eq!(s.lokal.len(), 2);
         assert!(s.vorhanden.is_empty());
     }
@@ -1835,7 +1888,15 @@ mod tests {
             .as_millis() as f64
             + 1000.0;
         alles(&dir, jetzt);
+        let id = datei_id("book_1", Rolle::Notiz, "notizen/a.md");
+        // Im Explorer gelöscht: fehlt lokal, aber kein Grabstein.
         fs::remove_file(dir.join("notizen/a.md")).unwrap();
+        let s = alles(&dir, jetzt + 1.0);
+        assert!(s.lokal.is_empty() && s.vorhanden.contains(&id));
+        let liste = auflisten(&dir, "book_1").unwrap();
+        assert!(liste.len() == 1 && liste[0].fehlt && !liste[0].erwartet);
+        // In der App gelöscht: Grabstein.
+        entfernen(&dir, "book_1", "notizen/a.md").unwrap();
         let s = alles(&dir, jetzt + TAG);
         let g = nach_pfad(&s, "notizen/a.md");
         assert_eq!(g.wert["deleted"], true);
@@ -2246,7 +2307,7 @@ mod tests {
         schreiben(&dir, "anhaenge/a.bin", &[1u8; 64]);
         schreiben(&dir, "anhaenge/b.bin", &[2u8; 64]);
         let lauf = |jetzt: f64| {
-            let mut b = Budget::laden(&bibliothek, 10);
+            let mut b = Budget::mit_zeiger(10, Budget::zeiger_laden(&bibliothek));
             let s = sammeln(&dir, "book_1", ICH, jetzt, &mut b).unwrap();
             b.sichern(&bibliothek).unwrap();
             s
@@ -2287,7 +2348,7 @@ mod tests {
         assert!(s.vorhanden.contains(&id_a) && s.vorhanden.contains(&id_b));
         let liste = auflisten(&dir, "book_1").unwrap();
         assert_eq!(liste.len(), 2);
-        assert!(liste.iter().all(|d| d.ordner_fehlt && !d.erwartet));
+        assert!(liste.iter().all(|d| d.fehlt && !d.erwartet));
         // In der App entfernt: Grabstein, die andere bleibt zurückgehalten.
         entfernen(&dir, "book_1", "notizen/a.md").unwrap();
         let s = alles(&dir, 3000.0);
@@ -2299,6 +2360,45 @@ mod tests {
         let s = alles(&dir, 4000.0);
         assert_eq!(nach_pfad(&s, "notizen/b.md").wert["deleted"], false);
         assert!(entfernen(&dir, "book_1", "notizen/a.md").is_err());
+    }
+
+    /// Review P3a/3a: „Neue Notiz“ legt den fehlenden Ordner neu an; die alten Notizen
+    /// bleiben „fehlt lokal“ und lassen sich vom Hub wiederherstellen.
+    #[test]
+    fn neu_angelegter_ordner_loescht_nichts_und_wiederherstellen() {
+        let dir = buch("neuer-ordner");
+        schreiben(&dir, "notizen/alt.md", b"alt");
+        let s = alles(&dir, 1000.0);
+        let id = nach_pfad(&s, "notizen/alt.md").id.clone();
+        fs::remove_dir_all(dir.join("notizen")).unwrap();
+        alles(&dir, 2000.0);
+        let neu = notiz_anlegen(&dir, "Neu").unwrap();
+        let s = alles(&dir, 3000.0);
+        assert!(s.lokal.iter().all(|l| l.id != id), "kein Grabstein");
+        assert!(s.vorhanden.contains(&id));
+        nach_pfad(&s, &neu);
+        // Eigene Datei: den Verweis bildet der Aufrufer beim nächsten Sammeln.
+        wiederherstellen(&dir, "notizen/alt.md").unwrap();
+        assert!(auflisten(&dir, "book_1")
+            .unwrap()
+            .iter()
+            .any(|d| d.rel == "notizen/alt.md" && d.erwartet && !d.fehlt));
+        let s = alles(&dir, 4000.0);
+        assert_eq!(s.wiederherstellen.len(), 1);
+        assert_eq!(s.wiederherstellen[0].id, id);
+        erwarten(&dir, "notizen/alt.md", &blob(7)).unwrap();
+        assert_eq!(laden(&dir, b"alt"), vec![dir.join("notizen/alt.md")]);
+        let s = alles(&dir, 5000.0);
+        assert_eq!(nach_pfad(&s, "notizen/alt.md").wert["deleted"], false);
+        assert!(alles(&dir, 6000.0).wiederherstellen.is_empty());
+        // Fremde Datei mit bekanntem Verweis: sofort erwartet.
+        let (fid, fremd) = fremder("notizen/f.md", 7000.0, Some(blob(8)));
+        anwenden(&dir, "book_1", &fid, &fremd, false, None, "Mein PC").unwrap();
+        laden(&dir, b"fremd");
+        fs::remove_file(dir.join("notizen/f.md")).unwrap();
+        wiederherstellen(&dir, "notizen/f.md").unwrap();
+        assert_eq!(erwartet(&dir).unwrap().len(), 1);
+        assert!(wiederherstellen(&dir, "notizen/Neu.md").is_err(), "ist da");
     }
 
     /// Review P3a/3b: zwei Datensätze A.md und a.md, auf der Platte eine Datei (auf jedem
@@ -2370,9 +2470,16 @@ mod tests {
         let s3 = alles(&dir, 2500.0);
         assert!(s3.lokal.iter().all(|l| l.id != id));
         assert!(s3.vorhanden.contains(&id));
-        // Wirklich gelöscht (Ordner da, Datei weg): der Grabstein kommt.
+        // Ordner neu angelegt (etwa durch „Neue Notiz“ oder einen Download), die alte
+        // Datei fehlt weiter: immer noch kein Grabstein.
         fs::create_dir(dir.join("anhaenge")).unwrap();
+        schreiben(&dir, "anhaenge/neu.pdf", b"neu");
         let s3 = alles(&dir, 3000.0);
+        assert!(s3.lokal.iter().all(|l| l.id != id));
+        assert!(s3.vorhanden.contains(&id));
+        // Erst das Löschen in der App macht den Grabstein.
+        entfernen(&dir, "book_1", "anhaenge/a.pdf").unwrap();
+        let s3 = alles(&dir, 3500.0);
         assert_eq!(nach_pfad(&s3, "anhaenge/a.pdf").wert["deleted"], true);
         assert_eq!(nach_pfad(&s3, "notizen/n.md").wert["deleted"], false);
     }

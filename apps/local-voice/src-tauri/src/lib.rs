@@ -2642,6 +2642,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::book_folder::library_book_attachments_add,
             commands::book_folder::library_book_file_open,
             commands::book_folder::library_book_file_remove,
+            commands::book_folder::library_book_file_restore,
             hoersync_live::audiosync_load,
             hoersync_live::audiosync_window,
             hoersync_live::audiosync_anchor,

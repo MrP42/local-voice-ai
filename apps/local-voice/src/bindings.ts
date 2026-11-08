@@ -7102,6 +7102,17 @@ async libraryBookFileRemove(id: string, rel: string) : Promise<Result<null, stri
 }
 },
 /**
+ * Eine lokal fehlende Datei vom Hub zurückholen (der nächste Abgleich lädt sie).
+ */
+async libraryBookFileRestore(id: string, rel: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_book_file_restore", { id, rel }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Gespeicherter Abgleich des Buchs (leer, wenn der Text sich geändert hat).
  */
 async audiosyncLoad(bookId: string) : Promise<Result<AudioSyncCache, string>> {
@@ -8968,10 +8979,10 @@ pending: boolean;
  */
 conflict: boolean; 
 /**
- * Bekannt, aber ihr Ordner fehlt (von außen entfernt): wiederherstellen oder in der
- * App löschen.
+ * Bekannt, fehlt aber lokal (im Explorer gelöscht, Ordner fehlt): vom Hub
+ * wiederherstellen oder in der App löschen.
  */
-folder_missing: boolean; 
+missing: boolean; 
 /**
  * Von einem anderen Gerät gemeldet, zurückgehalten: der Name fiele mit einer anderen
  * Datei zusammen (Groß-/Kleinschreibung, Unicode-Form).
