@@ -233,9 +233,8 @@ pub async fn projekt_kontext_uebersicht(
     Ok(z.dienste()
         .await?
         .projekte
-        .kontext(&suite_id)
-        .await?
-        .uebersicht)
+        .kontext_uebersicht(&suite_id)
+        .await?)
 }
 
 /// Schaltet „Als Kontext“ eines Eintrags. `form` ändert die Form, `edition` die Fassung eines

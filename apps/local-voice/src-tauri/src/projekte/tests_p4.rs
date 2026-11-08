@@ -256,3 +256,19 @@ async fn fremde_projektdatei_liefert_keinen_text() {
     let k = e.projekte.kontext(&p).await.unwrap();
     assert!(k.texte.is_empty());
 }
+
+#[tokio::test]
+async fn projekt_ki_pfade_liefern_ohne_p4c_freigabe_nichts() {
+    let e = env().await;
+    let p = projekt(&e).await;
+    seite(&e, "s1", GEHEIM);
+    e.projekte.seite_zuordnen(&p, "s1").await.unwrap();
+    // Die Übersicht zeigt den Eintrag (ohne Inhalt) …
+    let u = e.projekte.kontext_uebersicht(&p).await.unwrap();
+    assert_eq!(u.count, 1);
+    assert!(!serde_json::to_string(&u).unwrap().contains(GEHEIM));
+    // … der KI-Weg liefert vor P4c nichts.
+    let f = e.projekte.kontext_fuer_ki(&p).await;
+    assert!(f.is_err());
+    assert!(!format!("{:?}", f.err()).contains(GEHEIM));
+}

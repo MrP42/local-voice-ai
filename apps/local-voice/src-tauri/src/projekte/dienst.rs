@@ -43,6 +43,8 @@ use wai_security::Principal;
 
 /// Hoechstlaenge von Titeln in Eintraegen (Vertrag `project-entry.title`).
 const MAX_TITEL: usize = 300;
+/// Projekt-KI erst nach P4c (Codex-Auflage 3): bis dahin liefert `kontext_fuer_ki` nichts.
+const PROJEKT_KI_FREIGEGEBEN: bool = false;
 
 impl From<ProjektFehler> for Fehler {
     fn from(e: ProjektFehler) -> Self {
@@ -986,9 +988,28 @@ impl ProjektDienst {
             .collect()
     }
 
-    /// Der KI-Kontext eines Projekts (Spec §5.2): einziger Weg, über den KI-Wege im Projekt Inhalte
-    /// bekommen. Nur eingeschaltete, lesbare Einträge in ihrer gewählten Form.
-    pub async fn kontext(&self, suite_id: &str) -> Res<Kontext> {
+    /// Übersicht „Als Kontext“ für die Oberfläche: Schalter, Form, Token, Stand, ohne Inhalte.
+    pub async fn kontext_uebersicht(&self, suite_id: &str) -> Res<kontext::KontextUebersicht> {
+        Ok(self.kontext(suite_id).await?.uebersicht)
+    }
+
+    /// Einziger Zugang der KI-Wege zum Projektkontext (`projekt_kontext`, Spec §5.2). Bis P4c
+    /// (Widerruf, Versandrennen, Budget) gesperrt: liefert dann nichts, nur einen Fehler.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub async fn kontext_fuer_ki(&self, suite_id: &str) -> Res<Kontext> {
+        Self::projekt_pruefen(suite_id)?;
+        if !PROJEKT_KI_FREIGEGEBEN {
+            return Err(Fehler::neu(
+                "projekte.ki_gesperrt",
+                "Die KI im Projekt ist noch nicht freigegeben.",
+            ));
+        }
+        self.kontext(suite_id).await
+    }
+
+    /// Der KI-Kontext eines Projekts (Spec §5.2) mit Inhalten. Nur innerhalb des Moduls: Oberfläche
+    /// nutzt `kontext_uebersicht`, KI-Wege `kontext_fuer_ki`.
+    pub(super) async fn kontext(&self, suite_id: &str) -> Res<Kontext> {
         Self::projekt_pruefen(suite_id)?;
         let ablage = self.ablage()?.to_path_buf();
         let liste = self.eintraege(suite_id).await?;
@@ -1060,7 +1081,7 @@ impl ProjektDienst {
             "ok",
             if an { "an" } else { "aus" },
         );
-        Ok(self.kontext(suite_id).await?.uebersicht)
+        self.kontext_uebersicht(suite_id).await
     }
 
     // ---- Loeschkaskade und Aufbewahrung

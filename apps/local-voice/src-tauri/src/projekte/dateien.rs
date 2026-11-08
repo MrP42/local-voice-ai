@@ -70,6 +70,11 @@ pub struct Datei {
     pub eintrag: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub papierkorb: Option<String>,
+    /// Beim Entfernen: Identität der zu verschiebenden Datei (SHA-256, Größe), vorab vermerkt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entfernen_sha: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entfernen_groesse: Option<u64>,
     pub ms: i64,
 }
 
@@ -120,19 +125,51 @@ pub fn projekt_dir(ablage: &Path, projekt: &str) -> Result<PathBuf, String> {
     Ok(ablage.join(projekt))
 }
 
+/// Ein einzelner, zulässiger Dateiname: unverändert durch die Bereinigung (Regeln 4.4), also ohne
+/// Pfadtrenner, Laufwerks- oder Windows-Pfadsyntax, ohne `.`/`..`, nicht versteckt.
+pub fn name_ok(name: &str) -> bool {
+    !name.starts_with('.') && crate::library_layout::bereinigter_name(name).is_ok_and(|b| b == name)
+}
+
+/// Liegt in `dateien/` oder `papierkorb/` etwas?
+fn bestand_vorhanden(dir: &Path) -> bool {
+    [DATEIEN, PAPIERKORB].iter().any(|u| {
+        fs::read_dir(dir.join(u))
+            .map(|mut e| e.next().is_some())
+            .unwrap_or(false)
+    })
+}
+
 fn journal_laden(dir: &Path) -> Result<Journal, String> {
-    match fs::read(dir.join(JOURNAL)) {
+    let j = match fs::read(dir.join(JOURNAL)) {
         Ok(roh) => match serde_json::from_slice::<Journal>(&roh) {
-            Ok(j) if j.v <= VERSION => Ok(j),
-            Ok(_) => Err("Das Dateijournal stammt von einer neueren App-Version.".into()),
-            Err(_) => Err("Das Dateijournal ist nicht lesbar; nichts angefasst.".into()),
+            Ok(j) if j.v <= VERSION => j,
+            Ok(_) => return Err("Das Dateijournal stammt von einer neueren App-Version.".into()),
+            Err(_) => return Err("Das Dateijournal ist nicht lesbar; nichts angefasst.".into()),
         },
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Journal {
-            v: VERSION,
-            dateien: BTreeMap::new(),
-        }),
-        Err(e) => Err(format!("Dateijournal nicht lesbar: {e}")),
+        // Ohne Journal, aber mit Dateien: unklar, nicht leer (das Journal wird vor der ersten
+        // Ablage geschrieben; fehlt es jetzt, ist es verloren gegangen).
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            if bestand_vorhanden(dir) {
+                return Err(
+                    "Das Dateijournal fehlt, obwohl Dateien vorhanden sind; nichts angefasst."
+                        .into(),
+                );
+            }
+            Journal {
+                v: VERSION,
+                dateien: BTreeMap::new(),
+            }
+        }
+        Err(e) => return Err(format!("Dateijournal nicht lesbar: {e}")),
+    };
+    let gueltig = j.dateien.iter().all(|(id, d)| {
+        id_gueltig(id) && name_ok(&d.name) && d.papierkorb.as_deref().is_none_or(name_ok)
+    });
+    if !gueltig {
+        return Err("Das Dateijournal enthält ungültige Namen; nichts angefasst.".into());
     }
+    Ok(j)
 }
 
 fn journal_sichern(dir: &Path, j: &Journal) -> Result<(), String> {
@@ -220,6 +257,10 @@ pub fn hinzufuegen(
     let ziel = dir.join(DATEIEN);
     fs::create_dir_all(&ziel).map_err(|e| format!("Projektordner nicht anlegbar: {e}"))?;
     let mut j = journal_laden(&dir)?;
+    // Das Journal besteht vor der ersten Ablage: fehlt es später, ist der Bestand unklar.
+    if !dir.join(JOURNAL).exists() {
+        journal_sichern(&dir, &j)?;
+    }
     let id = neue_id();
     let tmp = ziel.join(format!("{TEIL}{id}"));
     let kopiert = (|| -> Result<(String, u64), String> {
@@ -264,6 +305,8 @@ pub fn hinzufuegen(
             groesse,
             eintrag: None,
             papierkorb: None,
+            entfernen_sha: None,
+            entfernen_groesse: None,
             ms: jetzt_ms(),
         },
     );
@@ -300,45 +343,112 @@ fn aendern(
     journal_sichern(&dir, &j)
 }
 
-/// Entfernen: vermerken, in den Papierkorb des Projekts legen, als `papierkorb` vermerken. Die
-/// Mitgliedschaft nimmt danach der Dienst weg. Liefert die Eintrags-ID, falls bekannt.
+/// Entfernen: Ziel im Papierkorb und Identität der Datei (Größe, SHA-256) vorab vermerken, dann
+/// genau diese Datei ohne Ersetzen dorthin legen, dann `papierkorb`. Die Mitgliedschaft nimmt danach
+/// der Dienst weg. Liefert die Eintrags-ID, falls bekannt.
 pub fn entfernen_beginnen(
     ablage: &Path,
     projekt: &str,
     id: &str,
 ) -> Result<Option<String>, String> {
-    aendern(ablage, projekt, id, |d| {
+    if !id_gueltig(id) {
+        return Err("Kennung der Datei ungültig.".into());
+    }
+    {
+        let _g = sperren();
+        let dir = projekt_dir(ablage, projekt)?;
+        let mut j = journal_laden(&dir)?;
+        let d = j.dateien.get_mut(id).ok_or("Datei nicht gefunden.")?;
         if matches!(d.status, Status::Papierkorb) {
-            return Ok(());
+            return Ok(d.eintrag.clone());
         }
-        d.status = Status::Entfernen;
-        Ok(())
-    })?;
+        if d.status != Status::Entfernen {
+            let quelle = dir.join(DATEIEN).join(&d.name);
+            ohne_verknuepfung(&dir, &format!("{DATEIEN}/{}", d.name))?;
+            let (sha, groesse) = match fs::symlink_metadata(&quelle) {
+                Ok(m) if m.is_file() => {
+                    let (sha, m) = sha256_stabil(&quelle)?;
+                    (Some(sha), Some(m.len()))
+                }
+                _ => (None, None),
+            };
+            d.status = Status::Entfernen;
+            d.entfernen_sha = sha;
+            d.entfernen_groesse = groesse;
+            d.papierkorb = korb_ziel(&dir, &d.name)?;
+            journal_sichern(&dir, &j)?;
+        }
+    }
     entfernen_fortsetzen(ablage, projekt, id)
+}
+
+/// Freier Name im Papierkorb des Projekts (Ordner wird angelegt).
+fn korb_ziel(dir: &Path, name: &str) -> Result<Option<String>, String> {
+    ohne_verknuepfung(dir, PAPIERKORB)?;
+    let korb = dir.join(PAPIERKORB);
+    fs::create_dir_all(&korb).map_err(|e| format!("Papierkorb nicht anlegbar: {e}"))?;
+    crate::library_layout::freier_name(&korb, name).map(Some)
+}
+
+/// Hat die Datei die vermerkte Identität?
+fn gleiche_datei(pfad: &Path, sha: &Option<String>, groesse: Option<u64>) -> bool {
+    let (Some(sha), Some(groesse)) = (sha, groesse) else {
+        return false;
+    };
+    match fs::symlink_metadata(pfad) {
+        Ok(m) if m.is_file() && m.len() == groesse => sha256_datei(pfad).is_ok_and(|s| &s == sha),
+        _ => false,
+    }
 }
 
 fn entfernen_fortsetzen(ablage: &Path, projekt: &str, id: &str) -> Result<Option<String>, String> {
     let _g = sperren();
     let dir = projekt_dir(ablage, projekt)?;
     let mut j = journal_laden(&dir)?;
-    let Some(d) = j.dateien.get_mut(id) else {
+    let Some(d) = j.dateien.get(id).cloned() else {
         return Ok(None);
     };
-    if d.status == Status::Entfernen {
-        let quelle = dir.join(DATEIEN).join(&d.name);
-        ohne_verknuepfung(&dir, &format!("{DATEIEN}/{}", d.name))?;
-        if quelle.is_file() {
-            let korb = dir.join(PAPIERKORB);
-            fs::create_dir_all(&korb).map_err(|e| format!("Papierkorb nicht anlegbar: {e}"))?;
-            d.papierkorb = Some(ablegen_frei(&quelle, &korb, &d.name)?);
-        }
-        d.status = Status::Papierkorb;
-        d.ms = jetzt_ms();
-        let eintrag = d.eintrag.clone();
-        journal_sichern(&dir, &j)?;
-        return Ok(eintrag);
+    if d.status != Status::Entfernen {
+        return Ok(d.eintrag);
     }
-    Ok(d.eintrag.clone())
+    let quelle = dir.join(DATEIEN).join(&d.name);
+    ohne_verknuepfung(&dir, &format!("{DATEIEN}/{}", d.name))?;
+    ohne_verknuepfung(&dir, PAPIERKORB)?;
+    let korb = dir.join(PAPIERKORB);
+    let (sha, groesse) = (&d.entfernen_sha, d.entfernen_groesse);
+    // Liegt am vermerkten Ziel schon genau diese Datei, ist das Verschieben geschehen.
+    let erledigt = d
+        .papierkorb
+        .as_ref()
+        .is_some_and(|z| gleiche_datei(&korb.join(z), sha, groesse));
+    let mut ziel = d.papierkorb.clone();
+    if !erledigt {
+        if gleiche_datei(&quelle, sha, groesse) {
+            // Ziel fehlt oder ist inzwischen von etwas anderem belegt: erst ein neues freies Ziel
+            // vermerken, dann verschieben.
+            if ziel.as_ref().is_none_or(|z| korb.join(z).exists()) {
+                ziel = korb_ziel(&dir, &d.name)?;
+                if let Some(x) = j.dateien.get_mut(id) {
+                    x.papierkorb = ziel.clone();
+                }
+                journal_sichern(&dir, &j)?;
+            }
+            let z = ziel.clone().ok_or("Kein Ziel im Papierkorb.")?;
+            verschieben_ohne_ersetzen(&quelle, &korb.join(z))
+                .map_err(|e| format!("Datei nicht in den Papierkorb verschiebbar: {e}"))?;
+        } else {
+            // Die vermerkte Datei ist nicht mehr da; was jetzt unter dem Namen liegt, ist eine
+            // andere Datei und bleibt unberührt (der Wiederanlauf bietet sie als gefunden an).
+            ziel = None;
+        }
+    }
+    let x = j.dateien.get_mut(id).ok_or("Datei nicht gefunden.")?;
+    x.papierkorb = ziel;
+    x.status = Status::Papierkorb;
+    x.ms = jetzt_ms();
+    let eintrag = x.eintrag.clone();
+    journal_sichern(&dir, &j)?;
+    Ok(eintrag)
 }
 
 /// Was der Wiederanlauf vorfand.
@@ -393,7 +503,7 @@ pub fn wiederanlauf(ablage: &Path, projekt: &str) -> Result<Wiederanlauf, String
                 w.teile += 1;
                 continue;
             }
-            if name.starts_with('.')
+            if !name_ok(&name)
                 || bekannt.contains(&crate::library_layout::vergleichsschluessel(&name))
             {
                 continue;
@@ -407,6 +517,8 @@ pub fn wiederanlauf(ablage: &Path, projekt: &str) -> Result<Wiederanlauf, String
                     groesse: meta.len(),
                     eintrag: None,
                     papierkorb: None,
+                    entfernen_sha: None,
+                    entfernen_groesse: None,
                     ms: jetzt_ms(),
                 },
             );
@@ -426,17 +538,26 @@ pub fn wiederanlauf(ablage: &Path, projekt: &str) -> Result<Wiederanlauf, String
     Ok(w)
 }
 
-/// Eine gefundene Datei bewusst aufnehmen: wird `abgelegt`, danach trägt der Dienst sie ein.
+/// Eine gefundene Datei bewusst aufnehmen: Identität vermerken, `abgelegt`; danach trägt der Dienst
+/// sie ein.
 pub fn gefundene_aufnehmen(ablage: &Path, projekt: &str, id: &str) -> Result<String, String> {
-    let mut name = String::new();
-    aendern(ablage, projekt, id, |d| {
-        if d.status != Status::Gefunden {
-            return Err("Die Datei ist nicht als gefunden vermerkt.".into());
-        }
-        d.status = Status::Abgelegt;
-        name = d.name.clone();
-        Ok(())
-    })?;
+    if !id_gueltig(id) {
+        return Err("Kennung der Datei ungültig.".into());
+    }
+    let _g = sperren();
+    let dir = projekt_dir(ablage, projekt)?;
+    let mut j = journal_laden(&dir)?;
+    let d = j.dateien.get_mut(id).ok_or("Datei nicht gefunden.")?;
+    if d.status != Status::Gefunden {
+        return Err("Die Datei ist nicht als gefunden vermerkt.".into());
+    }
+    ohne_verknuepfung(&dir, &format!("{DATEIEN}/{}", d.name))?;
+    let (sha, meta) = sha256_stabil(&dir.join(DATEIEN).join(&d.name))?;
+    d.sha256 = Some(sha);
+    d.groesse = meta.len();
+    d.status = Status::Abgelegt;
+    let name = d.name.clone();
+    journal_sichern(&dir, &j)?;
     Ok(name)
 }
 
@@ -593,17 +714,28 @@ mod tests {
         fs::remove_dir_all(&a).ok();
     }
 
+    /// Abbruch nach dem Vermerken (Ziel + Identität), vor dem Verschieben.
+    fn vermerken(a: &Path, id: &str) {
+        let dir = a.join(P);
+        let name = liste(a, P).unwrap()[id].name.clone();
+        let (sha, m) = sha256_stabil(&dir.join(DATEIEN).join(&name)).unwrap();
+        let ziel = korb_ziel(&dir, &name).unwrap();
+        aendern(a, P, id, |d| {
+            d.status = Status::Entfernen;
+            d.entfernen_sha = Some(sha);
+            d.entfernen_groesse = Some(m.len());
+            d.papierkorb = ziel;
+            Ok(())
+        })
+        .unwrap();
+    }
+
     #[test]
     fn entfernen_in_papierkorb_und_fortsetzen_nach_abbruch() {
         let a = tmp();
         let (id, name) = hinzufuegen(&a, P, &quelle(&a, "a.txt", "a")).unwrap();
         eingetragen(&a, P, &id, "e1").unwrap();
-        // Abbruch nach dem Vermerken, vor dem Verschieben.
-        aendern(&a, P, &id, |d| {
-            d.status = Status::Entfernen;
-            Ok(())
-        })
-        .unwrap();
+        vermerken(&a, &id);
         assert!(
             !liste(&a, P).unwrap()[&id].lebt(),
             "Herkunft gilt schon als weg"
@@ -620,6 +752,107 @@ mod tests {
         assert!(!a.join(P).join(DATEIEN).join(&name).exists());
         assert_eq!(entfernen_beginnen(&a, P, &id).unwrap(), Some("e1".into()));
         fs::remove_dir_all(&a).ok();
+    }
+
+    #[test]
+    fn absturz_nach_verschieben_trifft_keine_neue_gleichnamige_datei() {
+        let a = tmp();
+        let (id, name) = hinzufuegen(&a, P, &quelle(&a, "a.txt", "alt")).unwrap();
+        vermerken(&a, &id);
+        // Verschieben geschehen, Absturz vor dem Sichern von `papierkorb`.
+        let dir = a.join(P);
+        let z = liste(&a, P).unwrap()[&id].papierkorb.clone().unwrap();
+        fs::rename(dir.join(DATEIEN).join(&name), dir.join(PAPIERKORB).join(&z)).unwrap();
+        // Danach legt jemand eine neue Datei gleichen Namens ab.
+        fs::write(dir.join(DATEIEN).join(&name), "neu").unwrap();
+        wiederanlauf(&a, P).unwrap();
+        assert_eq!(liste(&a, P).unwrap()[&id].status, Status::Papierkorb);
+        assert_eq!(
+            fs::read_to_string(dir.join(DATEIEN).join(&name)).unwrap(),
+            "neu",
+            "neue Datei bleibt unberührt"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.join(PAPIERKORB).join(&z)).unwrap(),
+            "alt"
+        );
+        // Sie wird als gefunden angeboten, nicht still aufgenommen.
+        let l = liste(&a, P).unwrap();
+        assert!(l
+            .values()
+            .any(|x| x.name == name && x.status == Status::Gefunden));
+        fs::remove_dir_all(&a).ok();
+    }
+
+    #[test]
+    fn ersetzte_quelle_wird_nicht_verschoben() {
+        let a = tmp();
+        let (id, name) = hinzufuegen(&a, P, &quelle(&a, "a.txt", "alt")).unwrap();
+        vermerken(&a, &id);
+        // Vor dem Verschieben wird die Datei durch eine andere gleichen Namens ersetzt.
+        let f = a.join(P).join(DATEIEN).join(&name);
+        fs::write(&f, "anders").unwrap();
+        wiederanlauf(&a, P).unwrap();
+        let d = &liste(&a, P).unwrap()[&id];
+        assert_eq!(d.status, Status::Papierkorb);
+        assert!(d.papierkorb.is_none());
+        assert_eq!(fs::read_to_string(&f).unwrap(), "anders");
+        fs::remove_dir_all(&a).ok();
+    }
+
+    #[test]
+    fn belegtes_korbziel_wird_nicht_ueberschrieben() {
+        let a = tmp();
+        let (id, _) = hinzufuegen(&a, P, &quelle(&a, "a.txt", "alt")).unwrap();
+        vermerken(&a, &id);
+        let z = liste(&a, P).unwrap()[&id].papierkorb.clone().unwrap();
+        fs::write(a.join(P).join(PAPIERKORB).join(&z), "fremd").unwrap();
+        wiederanlauf(&a, P).unwrap();
+        let d = &liste(&a, P).unwrap()[&id];
+        assert_eq!(d.status, Status::Papierkorb);
+        let z2 = d.papierkorb.clone().unwrap();
+        assert_ne!(z2, z);
+        let korb = a.join(P).join(PAPIERKORB);
+        assert_eq!(fs::read_to_string(korb.join(&z)).unwrap(), "fremd");
+        assert_eq!(fs::read_to_string(korb.join(&z2)).unwrap(), "alt");
+        fs::remove_dir_all(&a).ok();
+    }
+
+    #[test]
+    fn fehlendes_journal_mit_dateien_ist_unklar() {
+        let a = tmp();
+        hinzufuegen(&a, P, &quelle(&a, "a.txt", "a")).unwrap();
+        fs::remove_file(a.join(P).join(JOURNAL)).unwrap();
+        let b = bestand(&a);
+        assert!(b.lebend.is_empty());
+        assert_eq!(b.unklar, vec![P.to_string()]);
+        assert!(wiederanlauf(&a, P).is_err());
+        assert!(a.join(P).join(DATEIEN).join("a.txt").exists());
+        fs::remove_dir_all(&a).ok();
+    }
+
+    #[test]
+    fn ungueltiger_name_im_journal_macht_unklar() {
+        for boese in [
+            "../x.txt",
+            "..",
+            "a/b.txt",
+            "a\\b.txt",
+            "C:x.txt",
+            ".versteckt",
+        ] {
+            let a = tmp();
+            let (id, _) = hinzufuegen(&a, P, &quelle(&a, "a.txt", "a")).unwrap();
+            let pfad = a.join(P).join(JOURNAL);
+            let mut v: serde_json::Value =
+                serde_json::from_slice(&fs::read(&pfad).unwrap()).unwrap();
+            v["dateien"][&id]["name"] = serde_json::Value::String(boese.into());
+            fs::write(&pfad, serde_json::to_vec(&v).unwrap()).unwrap();
+            assert_eq!(bestand(&a).unklar, vec![P.to_string()], "{boese}");
+            assert!(entfernen_beginnen(&a, P, &id).is_err(), "{boese}");
+            assert_eq!(kontext_text(&a, P, &id), Form::Fehlt(hinweis::NICHT_LESBAR));
+            fs::remove_dir_all(&a).ok();
+        }
     }
 
     #[test]
