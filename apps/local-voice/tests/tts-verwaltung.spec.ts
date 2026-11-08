@@ -30,22 +30,35 @@ async function setup(page: Page, cfg: Cfg = {}, theme = "light") {
       let callback = 0;
       const w = window as unknown as Record<string, any>;
       w.__calls = [] as unknown[];
-      // Hoerproben ohne echtes Audio: Wiedergabe "laeuft", bis sie gestoppt
-      // wird oder der Test `ended` ausloest (`w.__audio` = letzte Probe).
-      w.__plays = 0;
+      // Hoerproben ohne echtes Audio. Jede Instanz wird in `__audios`
+      // gefuehrt (laeuft, Pausen-Zaehler); `__holdPlay` laesst `play()` offen,
+      // damit ein Test die Ablehnung spaet ausloesen kann.
+      w.__audios = [] as unknown[];
       w.Audio = class extends EventTarget {
+        playing = false;
+        pauses = 0;
+        settle: { resolve: () => void; reject: (e: unknown) => void } | null =
+          null;
         constructor(public src?: string) {
           super();
+          w.__audios.push(this);
         }
         play() {
-          w.__plays += 1;
-          w.__audio = this;
-          return Promise.resolve();
+          this.playing = true;
+          if (!w.__holdPlay) return Promise.resolve();
+          return new Promise<void>((resolve, reject) => {
+            this.settle = { resolve, reject };
+          });
         }
         pause() {
-          w.__paused = (w.__paused ?? 0) + 1;
+          this.playing = false;
+          this.pauses += 1;
         }
       };
+      // Synthese der Fish-Probe: sofort, aus dem Cache (`__demoCached`), mit
+      // Fehler (`__demoFail`) oder zurueckgehalten (`__holdDemo`; offene
+      // Antworten in `__demoPending`, der Test loest sie spaeter auf).
+      w.__demoPending = [] as unknown[];
       const entries = JSON.parse(JSON.stringify(real)) as any[];
       const find = (id: unknown) => entries.find((e) => e.descriptor.id === id);
       const recompute = (e: any) => {
@@ -220,12 +233,24 @@ async function setup(page: Page, cfg: Cfg = {}, theme = "light") {
           convertFileSrc: (path: string) => path,
           invoke: async (cmd: string, args?: Record<string, any>) => {
             w.__calls.push([cmd, args]);
-            if (cmd === "tts_voice_demo_cached") return null;
-            if (cmd === "tts_voice_demo")
-              return {
-                wav_path: `C:/demos/${String(args?.voiceId)}.wav`,
+            if (cmd === "tts_voice_demo_cached")
+              return w.__demoCached?.[String(args?.voiceId)]
+                ? {
+                    wav_path: `C:/cache/${String(args?.voiceId)}.wav`,
+                    transcript: "Probe",
+                  }
+                : null;
+            if (cmd === "tts_voice_demo") {
+              const sample = {
+                wav_path: `C:/demos/${String(args?.voiceId)}-${w.__calls.length}.wav`,
                 transcript: "Probe",
               };
+              if (w.__demoFail) throw "Fish-Server nicht erreichbar";
+              if (!w.__holdDemo) return sample;
+              return new Promise((resolve) =>
+                w.__demoPending.push(() => resolve(sample)),
+              );
+            }
             const copy = <T>(x: T): T => JSON.parse(JSON.stringify(x));
             const sel = () => {
               entries.forEach((e) => {
@@ -717,30 +742,203 @@ test("Umbenennen: Piper-Stimme bekommt einen eigenen Namen", async ({
   ).toMatchObject({ id: "piper", voice: "de_DE-thorsten-medium" });
 });
 
-test("Hörprobe einer Fish-Stimme: Knopf wird zum Stopp und beendet die Wiedergabe", async ({
+// --- Hoerprobe einer Fish-Stimme: Stopp, Rennen, Fehler ---------------------
+
+type AudioState = { src: string; playing: boolean; pauses: number };
+const audios = (page: Page) =>
+  page.evaluate(() =>
+    ((window as any).__audios as AudioState[]).map((a) => ({
+      src: a.src,
+      playing: a.playing,
+      pauses: a.pauses,
+    })),
+  );
+const setFlag = (page: Page, key: string, value: unknown) =>
+  page.evaluate(([k, v]) => ((window as any)[k as string] = v), [key, value]);
+const releaseDemo = (page: Page, index: number) =>
+  page.evaluate((i) => (window as any).__demoPending[i](), index);
+const fireOnAudio = (page: Page, index: number, event: string) =>
+  page.evaluate(
+    ([i, e]) =>
+      (window as any).__audios[i as number].dispatchEvent(
+        new Event(e as string),
+      ),
+    [index, event],
+  );
+const STOP = /stoppen/;
+const PLAY = /Reinhören/;
+
+test("Hörprobe Fish: zweiter Klick stoppt genau die laufende Instanz, Ende gibt den Knopf frei", async ({
   page,
 }) => {
   await setup(page);
   await openManager(page);
   const play = page.getByTestId("voice-play-fish:lea");
-  const w = (k: string) => page.evaluate((key) => (window as any)[key] ?? 0, k);
-  await expect(play).toHaveAttribute("aria-label", /Reinhören/);
+  await expect(play).toHaveAttribute("aria-label", PLAY);
   await play.click();
-  // Die Probe läuft: Stopp-Beschriftung, kein Neustart beim zweiten Klick.
-  await expect(play).toHaveAttribute("aria-label", /stoppen/);
-  expect(await w("__plays")).toBe(1);
+  await expect(play).toHaveAttribute("aria-label", STOP);
+  let list = await audios(page);
+  expect(list).toHaveLength(1);
+  expect(list[0]).toMatchObject({ playing: true, pauses: 0 });
+  // Zweiter Klick: dieselbe Instanz wird angehalten, keine neue entsteht.
   await play.click();
-  await expect(play).not.toHaveAttribute("aria-label", /stoppen/);
-  expect(await w("__plays")).toBe(1);
-  expect(await w("__paused")).toBeGreaterThan(0);
-  // Erneut starten, dann endet die Probe von selbst: Knopf wieder auf Abspielen.
+  await expect(play).toHaveAttribute("aria-label", PLAY);
+  list = await audios(page);
+  expect(list).toHaveLength(1);
+  expect(list[0]).toMatchObject({ playing: false, pauses: 1 });
+  // Neu starten, dann endet die Probe von selbst.
   await play.click();
-  await expect(play).toHaveAttribute("aria-label", /stoppen/);
-  expect(await w("__plays")).toBe(2);
+  await expect(play).toHaveAttribute("aria-label", STOP);
+  expect(await audios(page)).toHaveLength(2);
+  await fireOnAudio(page, 1, "ended");
+  await expect(play).toHaveAttribute("aria-label", PLAY);
+});
+
+test("Hörprobe Fish: per Tastatur (Tab-Fokus, Enter, Leertaste) starten und stoppen", async ({
+  page,
+}) => {
+  await setup(page);
+  await openManager(page);
+  const play = page.getByTestId("voice-play-fish:lea");
+  // Echtes <button>, erreichbar ohne tabindex-Trick.
+  expect(await play.evaluate((el) => el.tagName)).toBe("BUTTON");
+  expect(await play.getAttribute("tabindex")).toBeNull();
+  await play.focus();
+  await expect(play).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(play).toHaveAttribute("aria-label", STOP);
+  await expect(play).toBeFocused();
+  await page.keyboard.press("Space");
+  await expect(play).toHaveAttribute("aria-label", PLAY);
+  const list = await audios(page);
+  expect(list).toHaveLength(1);
+  expect(list[0]).toMatchObject({ playing: false, pauses: 1 });
+});
+
+test("Hörprobe Fish: Stopp während der Synthese – spätes Ergebnis spielt nicht", async ({
+  page,
+}) => {
+  await setup(page);
+  await openManager(page);
+  await setFlag(page, "__holdDemo", true);
+  const play = page.getByTestId("voice-play-fish:lea");
+  await play.click();
+  // Synthese läuft: Stopp ist schon angeboten.
+  await expect(play).toHaveAttribute("aria-label", STOP);
+  await play.click();
+  await expect(play).toHaveAttribute("aria-label", PLAY);
+  await releaseDemo(page, 0);
+  await page.waitForTimeout(150);
+  expect(await audios(page)).toHaveLength(0);
+  await expect(play).toHaveAttribute("aria-label", PLAY);
+});
+
+test("Hörprobe Fish: stoppen, neu starten, alte Antwort kommt spät – der neue Lauf bleibt", async ({
+  page,
+}) => {
+  await setup(page);
+  await openManager(page);
+  await setFlag(page, "__holdDemo", true);
+  const play = page.getByTestId("voice-play-fish:lea");
+  await play.click(); // Lauf 1
+  await play.click(); // stoppen
+  await play.click(); // Lauf 2
+  await expect(play).toHaveAttribute("aria-label", STOP);
+  // Alte Antwort zuerst: nichts spielt, Lauf 2 bleibt aktiv.
+  await releaseDemo(page, 0);
+  await page.waitForTimeout(150);
+  expect(await audios(page)).toHaveLength(0);
+  await expect(play).toHaveAttribute("aria-label", STOP);
+  // Antwort von Lauf 2: genau eine Wiedergabe, Stopp bleibt angeboten.
+  await releaseDemo(page, 1);
+  await expect.poll(async () => (await audios(page)).length).toBe(1);
+  expect((await audios(page))[0].playing).toBe(true);
+  await expect(play).toHaveAttribute("aria-label", STOP);
+});
+
+test("Hörprobe Fish: späte Ereignisse der alten Instanz setzen die neue Wiedergabe nicht zurück", async ({
+  page,
+}) => {
+  await setup(page);
+  await openManager(page);
+  await setFlag(page, "__holdPlay", true);
+  const play = page.getByTestId("voice-play-fish:lea");
+  await play.click();
+  await expect(play).toHaveAttribute("aria-label", STOP);
+  await play.click();
+  await play.click();
+  await expect(play).toHaveAttribute("aria-label", STOP);
+  await expect.poll(async () => (await audios(page)).length).toBe(2);
+  // Die alte Instanz meldet spät Ende, Fehler und eine abgelehnte play().
+  await fireOnAudio(page, 0, "ended");
+  await fireOnAudio(page, 0, "error");
   await page.evaluate(() =>
-    (window as any).__audio.dispatchEvent(new Event("ended")),
+    (window as any).__audios[0].settle?.reject(new Error("abgebrochen")),
   );
-  await expect(play).not.toHaveAttribute("aria-label", /stoppen/);
+  await page.waitForTimeout(150);
+  await expect(play).toHaveAttribute("aria-label", STOP);
+  const list = await audios(page);
+  expect(list[1]).toMatchObject({ playing: true, pauses: 0 });
+});
+
+test("Hörprobe Fish: Synthese- und Wiedergabefehler geben den Knopf frei, Neustart klappt", async ({
+  page,
+}) => {
+  await setup(page);
+  await openManager(page);
+  const play = page.getByTestId("voice-play-fish:lea");
+  // Synthesefehler: Meldung, kein Stopp-Zustand.
+  await setFlag(page, "__demoFail", true);
+  await play.click();
+  await expect(page.getByText("Fish-Server nicht erreichbar")).toBeVisible();
+  await expect(play).toHaveAttribute("aria-label", PLAY);
+  expect(await audios(page)).toHaveLength(0);
+  // Wiedergabefehler (play() abgelehnt): Knopf wieder frei.
+  await setFlag(page, "__demoFail", false);
+  await setFlag(page, "__holdPlay", true);
+  await play.click();
+  await expect(play).toHaveAttribute("aria-label", STOP);
+  await expect.poll(async () => (await audios(page)).length).toBe(1);
+  await page.evaluate(() =>
+    (window as any).__audios[0].settle.reject(new Error("kein Gerät")),
+  );
+  await expect(play).toHaveAttribute("aria-label", PLAY);
+  // Fehler-Ereignis der Datei: ebenso frei; danach startet ein Neustart normal.
+  await setFlag(page, "__holdPlay", false);
+  await play.click();
+  await expect(play).toHaveAttribute("aria-label", STOP);
+  await fireOnAudio(page, 1, "error");
+  await expect(play).toHaveAttribute("aria-label", PLAY);
+  await play.click();
+  await expect(play).toHaveAttribute("aria-label", STOP);
+  const list = await audios(page);
+  expect(list).toHaveLength(3);
+  expect(list[2].playing).toBe(true);
+});
+
+test("Hörprobe Fish: Cache-Treffer spielt ohne Synthese; Stimmenwechsel stoppt die vorige", async ({
+  page,
+}) => {
+  await setup(page);
+  await openManager(page);
+  await setFlag(page, "__demoCached", { lea: true });
+  const lea = page.getByTestId("voice-play-fish:lea");
+  // Anton ist die aktive Stimme und steht auch im Kopf: die Karte nehmen.
+  const anton = page
+    .locator("[data-voice-card='fish:anton']")
+    .getByTestId("voice-play-fish:anton");
+  await lea.click();
+  await expect(lea).toHaveAttribute("aria-label", STOP);
+  expect(await calls(page, "tts_voice_demo")).toHaveLength(0);
+  expect((await audios(page))[0].src).toContain("C:/cache/lea.wav");
+  // Andere Stimme: Lea stoppt, Anton läuft.
+  await anton.click();
+  await expect(anton).toHaveAttribute("aria-label", STOP);
+  await expect(lea).toHaveAttribute("aria-label", PLAY);
+  const list = await audios(page);
+  expect(list).toHaveLength(2);
+  expect(list[0]).toMatchObject({ playing: false, pauses: 1 });
+  expect(list[1].playing).toBe(true);
 });
 
 test("Umbenennen: eigene Fish-Stimme ändert ihren Anzeigenamen", async ({
