@@ -617,7 +617,7 @@ for (const width of [1440, 390]) {
       page.getByText("Auch dieser Ordner kann Änderungen nicht sicher"),
     ).toBeVisible();
     await expect(
-      page.getByText("Nicht jeder übergeordnete Ordner des Ziels"),
+      page.getByText("Nicht jeder Ordner auf dem Weg zum Ziel"),
     ).toHaveCount(width === 390 ? 1 : 0);
     const args = await page.evaluate(
       () =>

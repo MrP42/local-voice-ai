@@ -1350,6 +1350,8 @@ thread_local! {
     static VOR_UMBENENNEN: std::cell::Cell<Option<fn(&Path)>> = const { std::cell::Cell::new(None) };
     /// Test: Eingriff, bevor ein abgebrochener Export entfernt wird (Ordner ausgetauscht).
     static VOR_EXPORT_ENTFERNEN: std::cell::Cell<Option<fn(&Path)>> = const { std::cell::Cell::new(None) };
+    /// Test: Kennungen beim Export (0 echt, 1 Laufwerk ohne Kennung, 2 Lesefehler).
+    static KENNUNG_TEST: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
 }
 
 /// Freier Name `sicherungen/.loeschen-<32 Hex>` mit zufälligem Teil (nicht angelegt: das
@@ -4497,8 +4499,8 @@ pub struct Export {
     /// Konnte das Ziel die Kopie dauerhaft sichern (Ordner-Sync)? `false`: kopiert und
     /// geprüft, aber das Ziel-Laufwerk sichert ebenfalls nicht.
     pub dauerhaft: bool,
-    /// `false`: das Ziel liegt nachweislich nicht im Datenordner, aber nicht jedes Glied
-    /// seines Pfads war prüfbar (etwa die Wurzel einer Netzfreigabe).
+    /// `false`: das Ziel liegt nachweislich nicht im Datenordner, aber mindestens ein Glied
+    /// seines Pfads war nur über die Prüfmarke auszuschließen (keine Kennung).
     pub ziel_vollstaendig_geprueft: bool,
 }
 
@@ -4544,6 +4546,12 @@ const EXPORT_MARKE: &str = ".export-marke-";
 
 /// Kennung eines Eintrags; `None`, wo das Laufwerk keine verlässliche Kennung hat.
 fn kennung_oder_keine(p: &Path) -> Result<Option<Kennung>, std::io::Error> {
+    #[cfg(test)]
+    match KENNUNG_TEST.with(|k| k.get()) {
+        1 => return Ok(None),
+        2 => return Err(std::io::Error::other("Testfehler Kennung")),
+        _ => {}
+    }
     let meta = fs::symlink_metadata(p)?;
     match kennung_roh(p, &meta) {
         Ok(k) => Ok(Some(k)),
@@ -4555,15 +4563,18 @@ fn kennung_oder_keine(p: &Path) -> Result<Option<Kennung>, std::io::Error> {
 /// Liegt `ziel_echt` (aufgelöst) außerhalb des Datenordners? Der Datenordner wird nur
 /// gelesen, damit auch ein Rettungsexport aus einem schreibgeschützten Datenordner geht.
 /// 1. Pfadvergleich der aufgelösten Pfade.
-/// 2. Ordneridentität (Unix: Gerät und Inode; Windows: FILE_ID_INFO) des Ziels und seiner
-///    Vorfahren gegen den Datenordner, so wie bei lokalen und UNC-Zugängen zum selben
-///    Ordner. Das Ziel selbst muss prüfbar sein; ein nicht prüfbarer Vorfahr (etwa die
-///    Wurzel einer Netzfreigabe) wird übersprungen und gemeldet.
-/// 3. Eine frische Marke im Ziel darf vom Datenordner aus unter keinem Teilpfad sichtbar
-///    sein (greift auch ohne Kennung, etwa auf Netzlaufwerken).
+/// 2. Für das Ziel und jeden Vorfahren `V` muss mindestens ein unabhängiger Ausschluss
+///    gelingen, sonst wird abgebrochen:
+///    - Ordneridentität (Unix: Gerät und Inode; Windows: FILE_ID_INFO) von `V` und vom
+///      Datenordner sind beide bekannt und verschieden, oder
+///    - die frische Marke im Ziel ist unter `<Datenordner>/<Rest von V bis zum Ziel>`
+///      nachweislich nicht vorhanden (greift auch ohne Kennung, etwa auf Netzlaufwerken).
 ///
-/// `Ok(true)`: alle Proben vollständig; `Ok(false)`: bestanden, aber nicht jedes Glied
-/// war prüfbar.
+///    Stimmt eine Kennung überein oder ist die Marke dort sichtbar, liegt das Ziel im
+///    Datenordner.
+///
+/// `Ok(true)`: jedes Glied auch per Kennung ausgeschlossen; `Ok(false)`: mindestens ein
+/// Glied nur über die Marke.
 fn ziel_ausserhalb(data: &Path, ziel_echt: &Path) -> Result<bool, String> {
     let data_echt = fs::canonicalize(data).map_err(|e| {
         format!("Datenordner nicht auflösbar ({e}); Zielprüfung unmöglich, nichts exportiert.")
@@ -4571,40 +4582,13 @@ fn ziel_ausserhalb(data: &Path, ziel_echt: &Path) -> Result<bool, String> {
     if ziel_echt.starts_with(&data_echt) {
         return Err(IM_DATENORDNER.into());
     }
-    let mut vollstaendig = true;
-    let mut luecke = |was: &str, e: &std::io::Error| {
+    let data_kennung = kennung_oder_keine(&data_echt).unwrap_or_else(|e| {
         log::warn!(
-            "Buch-Ordner: Exportziel, {was} nicht prüfbar ({:?})",
+            "Buch-Ordner: Exportziel, Kennung des Datenordners nicht lesbar ({:?})",
             e.kind()
         );
-        vollstaendig = false;
-    };
-    let data_kennung = match kennung_oder_keine(&data_echt) {
-        Ok(k) => k,
-        Err(e) => {
-            luecke("Datenordner", &e);
-            None
-        }
-    };
-    if let Some(dk) = data_kennung {
-        match kennung_oder_keine(ziel_echt) {
-            Ok(Some(k)) if k == dk => return Err(IM_DATENORDNER.into()),
-            Ok(_) => {}
-            Err(e) => {
-                return Err(format!(
-                    "{} nicht prüfbar ({e}); Zielprüfung unmöglich, nichts exportiert.",
-                    ziel_echt.display()
-                ))
-            }
-        }
-        for vorfahr in ziel_echt.ancestors().skip(1) {
-            match kennung_oder_keine(vorfahr) {
-                Ok(Some(k)) if k == dk => return Err(IM_DATENORDNER.into()),
-                Ok(_) => {}
-                Err(e) => luecke("übergeordneter Ordner", &e),
-            }
-        }
-    }
+        None
+    });
     let marke = format!("{EXPORT_MARKE}{}-{}", std::process::id(), jetzt_ms());
     let marke_pfad = ziel_echt.join(&marke);
     fs::OpenOptions::new()
@@ -4612,38 +4596,63 @@ fn ziel_ausserhalb(data: &Path, ziel_echt: &Path) -> Result<bool, String> {
         .create_new(true)
         .open(&marke_pfad)
         .map_err(|e| format!("Zielordner nicht beschreibbar ({e}); nichts exportiert."))?;
-    // Ist das Ziel `V/rest` und `V` derselbe Ordner wie der Datenordner, liegt die Marke
-    // auch unter `<Datenordner>/rest`.
-    let mut ergebnis = Ok(());
-    for vorfahr in ziel_echt.ancestors() {
-        let Ok(rest) = ziel_echt.strip_prefix(vorfahr) else {
-            continue;
-        };
-        match fs::symlink_metadata(data_echt.join(rest).join(&marke)) {
-            Ok(_) => {
-                ergebnis = Err(IM_DATENORDNER.to_string());
-                break;
+    let ergebnis = (|| -> Result<bool, String> {
+        let mut vollstaendig = true;
+        for vorfahr in ziel_echt.ancestors() {
+            let rest = ziel_echt
+                .strip_prefix(vorfahr)
+                .map_err(|_| "Zielpfad nicht zerlegbar; nichts exportiert.".to_string())?;
+            let per_kennung = match (data_kennung, kennung_oder_keine(vorfahr)) {
+                (Some(dk), Ok(Some(k))) if k == dk => return Err(IM_DATENORDNER.into()),
+                (Some(_), Ok(Some(_))) => true,
+                _ => false,
+            };
+            let per_marke = match fs::symlink_metadata(data_echt.join(rest).join(&marke)) {
+                Ok(_) => return Err(IM_DATENORDNER.into()),
+                Err(e) => matches!(
+                    e.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                ),
+            };
+            if !per_kennung && !per_marke {
+                return Err(format!(
+                    "{} lässt sich nicht vom Datenordner unterscheiden; Zielprüfung \
+                     unmöglich, nichts exportiert. Bitte einen Ordner auf einem lokalen \
+                     Laufwerk wählen.",
+                    vorfahr.display()
+                ));
             }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotADirectory => {}
-            Err(e) => luecke("Teilpfad im Datenordner", &e),
+            vollstaendig &= per_kennung;
         }
-    }
+        Ok(vollstaendig)
+    })();
     if let Err(e) = fs::remove_file(&marke_pfad) {
         log::warn!("Buch-Ordner: Markendatei der Zielprüfung nicht entfernbar ({e})");
     }
-    ergebnis.map(|()| vollstaendig)
+    ergebnis
 }
 
 /// Einen abgebrochenen Export entfernen, aber nur den eigenen: erst in einen privaten
 /// Namen umbenennen (nimmt eine Verknüpfung selbst mit, nie ihr Ziel), dann prüfen, dass
-/// es ein gewöhnlicher Ordner mit derselben Kennung und dem eigenen Besitznachweis ist.
+/// es ein gewöhnlicher Ordner mit dem eigenen Besitznachweis ist, und unmittelbar vor dem
+/// Löschen seine Kennung erneut messen. Bedrohungsmodell wie bei [`sicherung_loeschen`]:
+/// Sync-Programme und Unfälle, keine böswilligen Prozesse unter dem eigenen Konto. Jeder
+/// Kennungsfehler heißt „nicht löschen“.
 fn export_entfernen(
     ziel_echt: &Path,
     neu: &Path,
     besitz: &str,
-    kennung: Option<Kennung>,
+    kennung: &Result<Option<Kennung>, std::io::Error>,
 ) -> Result<(), (PathBuf, String)> {
+    let kennung = match kennung {
+        Ok(k) => *k,
+        Err(e) => {
+            return Err((
+                neu.to_path_buf(),
+                format!("Kennung beim Anlegen nicht lesbar: {e}"),
+            ))
+        }
+    };
     let privat = ziel_echt.join(format!(
         ".export-abbruch-{}-{}",
         std::process::id(),
@@ -4657,14 +4666,15 @@ fn export_entfernen(
         if ist_umweg(&meta) || !meta.is_dir() {
             return Err("kein gewöhnlicher Ordner mehr".into());
         }
-        if let Some(k) = kennung {
-            if kennung_oder_keine(&privat).map_err(|e| e.to_string())? != Some(k) {
-                return Err("nicht mehr der eben angelegte Ordner".into());
-            }
-        }
         let nachweis = fs::symlink_metadata(privat.join(besitz)).map_err(|e| e.to_string())?;
         if !nachweis.is_file() || ist_umweg(&nachweis) {
             return Err("Besitznachweis fehlt".into());
+        }
+        // Unmittelbar vor dem Löschen: dieselbe Kennung wie beim Anlegen.
+        let jetzt =
+            kennung_oder_keine(&privat).map_err(|e| format!("Kennung nicht lesbar: {e}"))?;
+        if jetzt != kennung {
+            return Err("nicht mehr der eben angelegte Ordner".into());
         }
         Ok(())
     };
@@ -4704,7 +4714,7 @@ pub fn sicherung_exportieren(data: &Path, name: &str, ziel: &Path) -> Result<Exp
     // Besitznachweis: nur ein Ordner mit dieser Datei und dieser Kennung wird bei einem
     // Abbruch entfernt.
     let besitz = format!("{EXPORT_MARKE}eigen-{}-{}", std::process::id(), jetzt_ms());
-    let kennung = kennung_oder_keine(&neu).ok().flatten();
+    let kennung = kennung_oder_keine(&neu);
     let kopiert = (|| -> Result<(), String> {
         fs::OpenOptions::new()
             .write(true)
@@ -4728,14 +4738,16 @@ pub fn sicherung_exportieren(data: &Path, name: &str, ziel: &Path) -> Result<Exp
         sicherung_pruefen(&neu).map(|_| ())
     })();
     if let Err(e) = kopiert {
-        return Err(match export_entfernen(&ziel_echt, &neu, &besitz, kennung) {
-            Ok(()) => format!("Export abgebrochen ({e}); der neue Ordner wurde entfernt."),
-            Err((rest, r)) => format!(
-                "Export abgebrochen ({e}). Der unvollständige Ordner {} ließ sich nicht \
-                 sicher entfernen ({r}); bitte von Hand löschen.",
-                rest.display()
-            ),
-        });
+        return Err(
+            match export_entfernen(&ziel_echt, &neu, &besitz, &kennung) {
+                Ok(()) => format!("Export abgebrochen ({e}); der neue Ordner wurde entfernt."),
+                Err((rest, r)) => format!(
+                    "Export abgebrochen ({e}). Die Teilkopie liegt unter {}; bitte von Hand \
+                 löschen. Sie wurde nicht automatisch entfernt ({r}).",
+                    rest.display()
+                ),
+            },
+        );
     }
     if let Err(e) = fs::remove_file(neu.join(&besitz)) {
         log::warn!("Buch-Ordner: Besitznachweis im Export nicht entfernbar ({e})");
@@ -5308,6 +5320,121 @@ mod tests {
         let _ = fs::remove_dir_all(&ziel);
     }
 
+    /// lva#375: Ohne Kennung schließt die Marke jedes Glied aus; ein Ziel im Datenordner
+    /// wird trotzdem erkannt, und ohne jeden Ausschluss wird abgebrochen.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn exportziel_ohne_kennung_nur_mit_marke() {
+        let data = datenordner("export-ohne-kennung");
+        fs::create_dir_all(data.join(PROJEKTE)).unwrap();
+        let echt = fs::canonicalize(data.join(PROJEKTE)).unwrap();
+        let alias = Path::new("/proc/self/root").join(echt.strip_prefix("/").unwrap());
+        let draussen = fs::canonicalize(data.parent().unwrap()).unwrap();
+        for modus in [1, 2] {
+            KENNUNG_TEST.with(|k| k.set(modus));
+            let im = ziel_ausserhalb(&data, &alias);
+            let aussen = ziel_ausserhalb(&data, &draussen);
+            KENNUNG_TEST.with(|k| k.set(0));
+            assert!(im.unwrap_err().contains("Datenordner"), "Modus {modus}");
+            assert_eq!(aussen, Ok(false), "Modus {modus}");
+        }
+        // Marke nicht prüfbar und keine Kennung: Abbruch. Ein Datenordner, dessen Teilpfad
+        // eine Datei statt eines Ordners ist, gilt dagegen als Ausschluss (ENOTDIR).
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let gesperrt = data.join("gesperrt");
+            fs::create_dir_all(&gesperrt).unwrap();
+            fs::set_permissions(&gesperrt, fs::Permissions::from_mode(0o000)).unwrap();
+            // Als root greifen Rechte nicht; dann ist nichts zu prüfen.
+            if fs::read_dir(&gesperrt).is_err() {
+                let ziel = draussen.join("gesperrt");
+                fs::create_dir_all(&ziel).unwrap();
+                KENNUNG_TEST.with(|k| k.set(1));
+                let r = ziel_ausserhalb(&data, &ziel);
+                KENNUNG_TEST.with(|k| k.set(0));
+                assert!(r
+                    .unwrap_err()
+                    .contains("nicht vom Datenordner unterscheiden"));
+                let _ = fs::remove_dir_all(&ziel);
+            }
+            fs::set_permissions(&gesperrt, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+    }
+
+    /// lva#375: Ein Kennungsfehler beim Anlegen oder vor dem Löschen heißt „nicht löschen“.
+    #[test]
+    fn export_mit_kennungsfehler_wird_nicht_geloescht() {
+        let data = standardlage("export-kennungsfehler");
+        migrieren(&data, &optionen()).unwrap();
+        let name = sicherungen_auflisten(&data)[0].name.clone();
+        let ziel = exportziel(&data, "kennungsfehler");
+        KENNUNG_TEST.with(|k| k.set(2));
+        OHNE_DATEI_SYNC.with(|o| o.set(true));
+        let e = sicherung_exportieren(&data, &name, &ziel);
+        OHNE_DATEI_SYNC.with(|o| o.set(false));
+        KENNUNG_TEST.with(|k| k.set(0));
+        let e = e.unwrap_err();
+        assert!(e.contains("Teilkopie liegt unter"), "{e}");
+        assert!(ziel.join(&name).is_dir());
+        // Laufwerk ohne Kennung: Besitznachweis und gleiche (fehlende) Kennung genügen.
+        let ziel2 = exportziel(&data, "ohne-kennung");
+        KENNUNG_TEST.with(|k| k.set(1));
+        OHNE_DATEI_SYNC.with(|o| o.set(true));
+        let e = sicherung_exportieren(&data, &name, &ziel2);
+        OHNE_DATEI_SYNC.with(|o| o.set(false));
+        KENNUNG_TEST.with(|k| k.set(0));
+        assert!(e.unwrap_err().contains("wurde entfernt"));
+        assert!(!ziel2.join(&name).exists());
+        let _ = fs::remove_dir_all(&ziel);
+        let _ = fs::remove_dir_all(&ziel2);
+    }
+
+    /// lva#375: Rettungsexport aus einem schreibgeschützten Datenordner (Windows-ACL). Die
+    /// Verweigerung nennt die Schreibrechte einzeln: `W` schlösse SYNCHRONIZE ein und
+    /// sperrte damit auch das Lesen.
+    #[cfg(windows)]
+    #[test]
+    fn export_aus_schreibgeschuetztem_datenordner() {
+        struct Acl(PathBuf, String);
+        impl Drop for Acl {
+            fn drop(&mut self) {
+                let _ = std::process::Command::new("icacls")
+                    .arg(&self.0)
+                    .args(["/remove:d", &self.1, "/T", "/C", "/Q"])
+                    .status();
+            }
+        }
+        let data = standardlage("export-acl");
+        migrieren(&data, &optionen()).unwrap();
+        let name = sicherungen_auflisten(&data)[0].name.clone();
+        let ziel = exportziel(&data, "acl");
+        let nutzer = std::env::var("USERNAME").unwrap();
+        let ok = std::process::Command::new("icacls")
+            .arg(&data)
+            .args([
+                "/deny",
+                &format!("{nutzer}:(OI)(CI)(WD,AD,WEA,WA,DC,DE)"),
+                "/T",
+                "/C",
+                "/Q",
+            ])
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok, "icacls /deny");
+        let acl = Acl(data.clone(), nutzer);
+        assert!(fs::write(data.join("probe.txt"), b"x").is_err());
+        let vorher = marken_in(&data);
+        let e = sicherung_exportieren(&data, &name, &ziel).unwrap();
+        assert!(sicherung_pruefen(&e.ordner).is_ok());
+        assert!(marken_in(&ziel).is_empty());
+        assert!(marken_in(&e.ordner).is_empty());
+        assert_eq!(marken_in(&data), vorher);
+        drop(acl);
+        let _ = fs::remove_dir_all(&ziel);
+    }
+
     /// lva#375: Ein abgebrochener Export entfernt nur den eigenen neuen Ordner.
     #[test]
     fn abgebrochener_export_entfernt_nur_den_eigenen_ordner() {
@@ -5340,7 +5467,7 @@ mod tests {
             OHNE_DATEI_SYNC.with(|o| o.set(false));
             VOR_EXPORT_ENTFERNEN.with(|h| h.set(None));
             let e = e.unwrap_err();
-            assert!(e.contains("nicht sicher entfernen"), "{e}");
+            assert!(e.contains("Teilkopie liegt unter"), "{e}");
             assert_eq!(fs::read(ziel.join("fremd/wichtig.txt")).unwrap(), b"bleibt");
 
             // Gegen einen gewöhnlichen fremden Ordner getauscht: Kennung und
@@ -5357,7 +5484,7 @@ mod tests {
             OHNE_DATEI_SYNC.with(|o| o.set(false));
             VOR_EXPORT_ENTFERNEN.with(|h| h.set(None));
             let e = e.unwrap_err();
-            assert!(e.contains("nicht sicher entfernen"), "{e}");
+            assert!(e.contains("Teilkopie liegt unter"), "{e}");
             let rest: Vec<_> = fs::read_dir(&ziel2).unwrap().flatten().collect();
             assert_eq!(rest.len(), 1);
             assert_eq!(

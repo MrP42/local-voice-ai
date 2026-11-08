@@ -472,8 +472,8 @@ pub struct LibraryBackupExport {
     pub dateien: u32,
     /// `false`: kopiert und geprüft, aber auch das Ziel sichert nicht dauerhaft.
     pub dauerhaft: bool,
-    /// `false`: Ziel liegt nachweislich außerhalb des Datenordners, aber nicht jedes Glied
-    /// seines Pfads war prüfbar (etwa die Wurzel einer Netzfreigabe).
+    /// `false`: das Ziel liegt nachweislich nicht im Datenordner, aber mindestens ein Glied
+    /// seines Pfads war nur über die Prüfmarke auszuschließen (keine Kennung).
     pub ziel_vollstaendig_geprueft: bool,
 }
 
