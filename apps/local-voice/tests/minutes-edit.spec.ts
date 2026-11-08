@@ -192,6 +192,9 @@ test.beforeEach(async ({ page }) => {
             }
             case "get_selected_model":
               return "";
+            // Schild in der Fusszeile (Vorschau: Schild direkt vor der Version).
+            case "compliance_status":
+              return { level: "green", profile: "eu", active_model: "Qwen3 4B", active: null, checks: [], plaintext_keys: 0 };
             case "meetings_start":
               return { ...w.__meetings[0], id: "m-neu", status: "recording" };
             case "meetings_is_recording":
@@ -433,7 +436,7 @@ test.describe("Protokoll bearbeiten", () => {
     );
   });
 
-  test("Abschnitt bearbeiten steht beschriftet an jeder Abschnittsueberschrift", async ({
+  test("Abschnitts-Stift steht als Symbol an jeder Abschnittsueberschrift", async ({
     page,
   }) => {
     await withMinutes(page);
@@ -454,7 +457,9 @@ test.describe("Protokoll bearbeiten", () => {
     const target = page.getByRole("button", {
       name: "Abschnitt „Besprochene Punkte“ bearbeiten",
     });
-    await expect(target).toHaveText("Abschnitt bearbeiten");
+    // Nur der Stift, kein Text (Patrick 08.11.2026); Name im Tooltip.
+    await expect(target).toHaveText("");
+    await expect(target).toHaveAttribute("title", /Besprochene Punkte/);
     // Der Knopf steht auf der Hoehe seiner Ueberschrift.
     const heading = await page
       .getByTestId("minutes-doc")
@@ -637,7 +642,7 @@ test.describe("Protokoll bearbeiten: Vorschau", () => {
         await expect(
           page.getByTestId("minutes-section-edit").first(),
         ).toBeVisible();
-        // Beschriftung auch schmal sichtbar, auf Hoehe von "Zusammenfassung".
+        // Stift auch schmal sichtbar, auf Hoehe von "Zusammenfassung".
         const summaryPen = page.getByRole("button", {
           name: "Abschnitt „Zusammenfassung“ bearbeiten",
         });
@@ -659,9 +664,7 @@ test.describe("Protokoll bearbeiten: Vorschau", () => {
                 bar.getBoundingClientRect().bottom -
                 16;
             });
-        await expect(
-          summaryPen.getByText("Abschnitt bearbeiten"),
-        ).toBeVisible();
+        await expect(summaryPen).toBeVisible();
         const sh = (await page
           .getByTestId("minutes-doc")
           .getByRole("heading", { name: "Zusammenfassung" })
@@ -670,7 +673,20 @@ test.describe("Protokoll bearbeiten: Vorschau", () => {
         expect(
           Math.abs(sh.y + sh.height / 2 - (sp.y + sp.height / 2)),
         ).toBeLessThan(6);
-        if (width === 390) expect(sp.height).toBeGreaterThanOrEqual(44);
+        // Trefferflaeche auf jeder Breite >= 44 x 44 px (Codex 08.11.).
+        expect(sp.height).toBeGreaterThanOrEqual(44);
+        expect(sp.width).toBeGreaterThanOrEqual(44);
+        // Fusszeile: Telefon, Schild, Version (Patrick 08.11.2026).
+        const bar = page.locator(".workspace-status");
+        const fx = async (sel: string) =>
+          (await bar.locator(sel).first().boundingBox())!.x;
+        await expect(bar.locator("[data-compliance-shield]")).toBeVisible();
+        expect(await fx(".lv-call-group")).toBeLessThan(
+          await fx("[data-compliance-shield]"),
+        );
+        expect(await fx("[data-compliance-shield]")).toBeLessThan(
+          await fx("[data-testid='footer-version']"),
+        );
         await page.screenshot({ path: name("1-stift") });
 
         await page
