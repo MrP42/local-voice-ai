@@ -285,6 +285,11 @@ fn seiten_laut_buch_json(pfad: &Path) -> Vec<String> {
     let Ok(wert) = serde_json::from_str::<serde_json::Value>(&roh) else {
         return Vec::new();
     };
+    seiten_aus_buch(&wert)
+}
+
+/// Seiten eines gelesenen `buch.json`: `text.page_id` und `editions[].text.page_id`.
+fn seiten_aus_buch(wert: &serde_json::Value) -> Vec<String> {
     let seite_von = |text: Option<&serde_json::Value>| -> Option<String> {
         text?
             .get("page_id")?
@@ -3722,8 +3727,9 @@ fn absicht_laden(pfad: &Path, buch: &str) -> Result<Option<Loeschabsicht>, Strin
 }
 
 /// Einträge dieser Seiten aus dem Seitenindex nehmen (atomar), aber nur, wenn die Seite
-/// dem gelöschten Buch gehört (Indexfeld `buch` leer oder gleich `buch`) und laut
-/// Fundortkarte nirgends sonst existiert (anderes Buch, `projects/`). Ohne Index nichts
+/// dem gelöschten Buch gehört (Indexfeld `buch` leer, gleich `buch` oder verwaist) und
+/// nachweislich nirgends sonst liegt (anderes Buch in Bibliothek oder Papierkorb,
+/// `projects/`). Ein Fehler beim Nachweis bricht ab, ohne auszutragen. Ohne Index nichts
 /// zu tun. Liefert die Zahl der ausgetragenen Einträge. Der Aufrufer hält die Seitensperre.
 fn seiten_austragen(
     data: &Path,
@@ -3764,6 +3770,11 @@ fn seiten_austragen(
         let mut namen = Vec::new();
         for e in eintraege {
             let e = e.map_err(|err| unerreichbar(dir, err))?;
+            // Nur echte Ordner sind Bücher (wie `buecher`); Dateien und Verknüpfungen nicht.
+            let art = e.file_type().map_err(|err| unerreichbar(&e.path(), err))?;
+            if !art.is_dir() {
+                continue;
+            }
             if let Some(n) = e.file_name().to_str().filter(|n| gueltiges_buch(n)) {
                 namen.push(n.to_owned());
             }
@@ -3776,13 +3787,13 @@ fn seiten_austragen(
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
             Err(e) => return Err(unerreichbar(datei, e)),
         };
-        serde_json::from_slice::<serde_json::Value>(&roh).map_err(|e| {
+        let wert = serde_json::from_slice::<serde_json::Value>(&roh).map_err(|e| {
             format!(
                 "{} unlesbar ({e}); Seiten nicht ausgetragen.",
                 datei.display()
             )
         })?;
-        Ok(seiten_laut_buch_json(datei))
+        Ok(seiten_aus_buch(&wert))
     };
     let bibliothek = data.join(BIBLIOTHEK);
     // Alle anderen Bücher: Bibliothek und Papierkorb, je Ordner und genannte Seiten.
