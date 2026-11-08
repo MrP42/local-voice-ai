@@ -1021,6 +1021,14 @@ fn kopieren_mit_pruefsumme(von: &Path, nach: &Path) -> Result<(u64, String), Str
                 .map_err(|e| format!("{} nicht schreibbar: {e}", nach.display()))?;
             groesse += n as u64;
         }
+        // Wie ein Dateisystem ohne Datei-Sync: `sync_all` scheitert schon beim Kopieren.
+        #[cfg(test)]
+        if OHNE_DATEI_SYNC.with(|o| o.get()) {
+            return Err(format!(
+                "{} nicht schreibbar: Datei-Sync fehlt (Test)",
+                nach.display()
+            ));
+        }
         ziel.sync_all()
             .map_err(|e| format!("{} nicht schreibbar: {e}", nach.display()))?;
         Ok((groesse, hex(&hasher.finalize())))
@@ -2001,11 +2009,25 @@ fn umbenennen(data: &Path, von: &Path, nach: &Path) -> Result<(), String> {
 fn dauerhaft(r: Result<bool, String>, pfad: &Path) -> Result<(), String> {
     match r? {
         true => Ok(()),
-        // Ausdrücklich gewählter Best-Effort-Lauf (lva#371): weiter, ohne Garantie.
+        // Ausdrücklich gewählter Best-Effort-Lauf (lva#371): weiter, ohne Garantie. Nur
+        // für Ordner-Sync; Datei-Sync prüft `datei_dauerhaft` immer streng.
         false if NACHSICHT.with(|n| n.get()) => Ok(()),
         false => Err(format!(
             "{} lässt sich auf diesem Dateisystem nicht dauerhaft sichern; nichts \
              überschrieben oder gelöscht.",
+            pfad.display()
+        )),
+    }
+}
+
+/// Datei-Sync ist immer streng, auch im Best-Effort-Modus (lva#371): der gilt nur für
+/// Laufwerke ohne ORDNER-Sync. Ohne Datei-Sync wäre nicht einmal der Inhalt gesichert.
+fn datei_dauerhaft(r: Result<bool, String>, pfad: &Path) -> Result<(), String> {
+    match r? {
+        true => Ok(()),
+        false => Err(format!(
+            "{} lässt sich auf diesem Dateisystem nicht dauerhaft sichern (Datei-Sync); \
+             nichts überschrieben oder gelöscht.",
             pfad.display()
         )),
     }
@@ -2016,7 +2038,7 @@ fn dauerhaft(r: Result<bool, String>, pfad: &Path) -> Result<(), String> {
 /// im bestehenden Vorfahren verankert. Streng: auch `Ok(false)` ist ein Fehler.
 fn kette_sichern(wurzel: &Path, pfad: &Path) -> Result<(), String> {
     if fs::symlink_metadata(pfad).is_ok_and(|m| m.is_file()) {
-        dauerhaft(datei_sync(pfad), pfad)?;
+        datei_dauerhaft(datei_sync(pfad), pfad)?;
     }
     let mut dir = pfad.parent();
     while let Some(d) = dir {
@@ -2055,6 +2077,10 @@ fn baum_sichern(wurzel: &Path, dir: &Path) -> Result<(), String> {
 
 /// Dateiinhalt dauerhaft machen (unter Windows braucht `FlushFileBuffers` Schreibzugriff).
 fn datei_sync(pfad: &Path) -> Result<bool, String> {
+    #[cfg(test)]
+    if OHNE_DATEI_SYNC.with(|o| o.get()) {
+        return Ok(false);
+    }
     let mut optionen = fs::OpenOptions::new();
     #[cfg(windows)]
     optionen.write(true);
@@ -2196,6 +2222,8 @@ thread_local! {
     static FEHLER_BEI: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
     /// Nur für Tests: das Dateisystem kann Ordner nicht synchronisieren.
     static OHNE_SYNC: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Nur für Tests: das Dateisystem kann auch Dateien nicht synchronisieren.
+    static OHNE_DATEI_SYNC: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// Nur für Tests: der Sync nach dem nächsten Schreiben des Plans scheitert (einmal).
     static PLAN_SYNC_FEHLER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
@@ -4377,8 +4405,12 @@ thread_local! {
 pub enum SyncFaehigkeit {
     /// Datei- und Ordner-Sync gelingen.
     Ja,
-    /// Das Dateisystem kennt Ordner- oder Datei-Sync nicht (manche Netz-/Cloud-Laufwerke).
+    /// Das Dateisystem kennt Ordner-Sync nicht (manche Netz-/Cloud-Laufwerke). Nur hier
+    /// ist der Best-Effort-Modus wählbar.
     NichtUnterstuetzt,
+    /// Das Dateisystem kennt nicht einmal Datei-Sync: Zurückspielen hier gesperrt, nur
+    /// Export.
+    DateiNichtUnterstuetzt,
     /// Anderer Fehler beim Prüfen (Zugriff, Platz …).
     Fehler(String),
 }
@@ -4388,6 +4420,7 @@ impl SyncFaehigkeit {
         match self {
             SyncFaehigkeit::Ja => "ok",
             SyncFaehigkeit::NichtUnterstuetzt => "nicht_unterstuetzt",
+            SyncFaehigkeit::DateiNichtUnterstuetzt => "datei_nicht_unterstuetzt",
             SyncFaehigkeit::Fehler(_) => "fehler",
         }
     }
@@ -4395,23 +4428,39 @@ impl SyncFaehigkeit {
 
 /// Das tatsächliche Sync-Ergebnis am Ort der Sicherungen ermitteln (nicht pauschal nach
 /// „Netz/Cloud“): einen Prüfordner mit einer Datei anlegen, Datei, Ordner und
-/// `sicherungen/` synchronisieren, den Prüfordner wieder entfernen.
+/// `sicherungen/` synchronisieren, den Prüfordner wieder entfernen. Jede Prüfung läuft,
+/// auch nach einem „nicht unterstützt“; ein Fehler (auch beim Aufräumen) geht vor, dann
+/// fehlender Datei-Sync, dann fehlender Ordner-Sync.
 pub fn sync_pruefen(data: &Path) -> SyncFaehigkeit {
     let basis = data.join(SICHERUNGEN);
     let probe = match neuer_ordner(&basis, PROBE_PRAEFIX) {
         Ok(d) => d,
         Err(e) => return SyncFaehigkeit::Fehler(e),
     };
-    let ergebnis = (|| -> Result<bool, String> {
-        let datei = probe.join("probe");
-        fs::write(&datei, b"probe").map_err(|e| format!("Prüfdatei nicht schreibbar: {e}"))?;
-        Ok(datei_sync(&datei)? && ordner_sync(&probe)? && ordner_sync(&basis)?)
-    })();
-    let _ = fs::remove_dir_all(&probe);
-    match ergebnis {
-        Ok(true) => SyncFaehigkeit::Ja,
-        Ok(false) => SyncFaehigkeit::NichtUnterstuetzt,
-        Err(e) => SyncFaehigkeit::Fehler(e),
+    let datei = probe.join("probe");
+    let ergebnisse: Vec<Result<bool, String>> =
+        match fs::write(&datei, b"probe").map_err(|e| format!("Prüfdatei nicht schreibbar: {e}")) {
+            Err(e) => vec![Err(e)],
+            Ok(()) => vec![datei_sync(&datei), ordner_sync(&probe), ordner_sync(&basis)],
+        };
+    let aufraeumen = fs::remove_dir_all(&probe).map_err(|e| {
+        format!(
+            "Prüfordner {} nicht entfernbar ({e}); bitte von Hand löschen.",
+            probe.display()
+        )
+    });
+    if let Some(e) = ergebnisse
+        .iter()
+        .filter_map(|r| r.as_ref().err())
+        .chain(aufraeumen.as_ref().err())
+        .next()
+    {
+        return SyncFaehigkeit::Fehler(e.clone());
+    }
+    match ergebnisse.as_slice() {
+        [Ok(false), ..] => SyncFaehigkeit::DateiNichtUnterstuetzt,
+        r if r.iter().all(|e| matches!(e, Ok(true))) => SyncFaehigkeit::Ja,
+        _ => SyncFaehigkeit::NichtUnterstuetzt,
     }
 }
 
@@ -4482,6 +4531,71 @@ fn baum_sync(dir: &Path) -> Result<bool, String> {
     Ok(ordner_sync(dir)? && alle)
 }
 
+const IM_DATENORDNER: &str = "Der Zielordner liegt im Datenordner der App. Bitte einen \
+                              Ordner außerhalb wählen, etwa auf einem lokalen Laufwerk.";
+
+/// Name der Markendatei, mit der [`ziel_ausserhalb`] den Datenordner wiedererkennt.
+const EXPORT_MARKE: &str = ".export-marke-";
+
+/// Liegt `ziel_echt` (aufgelöst) außerhalb des Datenordners? Drei Proben, jede muss
+/// bestehen, und ist eine nicht durchführbar, wird abgebrochen:
+/// 1. Pfadvergleich der aufgelösten Pfade.
+/// 2. Ordneridentität (Unix: Gerät und Inode; Windows: FILE_ID_INFO) für das Ziel und
+///    jeden Vorfahren gegen den Datenordner, so wie bei lokalen und UNC-Zugängen zum
+///    selben Ordner. Wo das Dateisystem keine verlässliche Kennung hat, entfällt nur diese
+///    Probe.
+/// 3. Eine frische Markendatei im Datenordner darf unter keinem Vorfahren des Ziels
+///    sichtbar sein (greift auch ohne Kennung, etwa auf Netzlaufwerken).
+fn ziel_ausserhalb(data: &Path, ziel_echt: &Path) -> Result<(), String> {
+    let data_echt = fs::canonicalize(data).map_err(|e| {
+        format!("Datenordner nicht auflösbar ({e}); Zielprüfung unmöglich, nichts exportiert.")
+    })?;
+    if ziel_echt.starts_with(&data_echt) {
+        return Err(IM_DATENORDNER.into());
+    }
+    let nicht_pruefbar = |p: &Path, e: &dyn std::fmt::Display| {
+        format!(
+            "{} nicht prüfbar ({e}); Zielprüfung unmöglich, nichts exportiert.",
+            p.display()
+        )
+    };
+    let kennung_von = |p: &Path| -> Result<Option<Kennung>, String> {
+        let meta = fs::symlink_metadata(p).map_err(|e| nicht_pruefbar(p, &e))?;
+        match kennung_roh(p, &meta) {
+            Ok(k) => Ok(Some(k)),
+            Err(KennungFehler::Laufwerk(_)) => Ok(None),
+            Err(KennungFehler::Io(e)) => Err(nicht_pruefbar(p, &e)),
+        }
+    };
+    let data_kennung = kennung_von(&data_echt)?;
+    let marke = format!("{EXPORT_MARKE}{}-{}", std::process::id(), jetzt_ms());
+    let marke_pfad = data_echt.join(&marke);
+    fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&marke_pfad)
+        .map_err(|e| nicht_pruefbar(&data_echt, &e))?;
+    let ergebnis = (|| -> Result<(), String> {
+        for vorfahr in ziel_echt.ancestors() {
+            match fs::symlink_metadata(vorfahr.join(&marke)) {
+                Ok(_) => return Err(IM_DATENORDNER.into()),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(nicht_pruefbar(vorfahr, &e)),
+            }
+            if let Some(dk) = data_kennung {
+                if kennung_von(vorfahr)? == Some(dk) {
+                    return Err(IM_DATENORDNER.into());
+                }
+            }
+        }
+        Ok(())
+    })();
+    if let Err(e) = fs::remove_file(&marke_pfad) {
+        log::warn!("Buch-Ordner: Markendatei der Zielprüfung nicht entfernbar ({e})");
+    }
+    ergebnis
+}
+
 /// Eine Sicherung in einen NEUEN Ordner `<ziel>/<name>` kopieren (Ausweg, wenn das
 /// Laufwerk des Datenordners kein sicheres Zurückspielen erlaubt): erst die Sicherung
 /// gegen ihr Manifest prüfen, dann jede Datei mit Prüfsumme kopieren und die Kopie als
@@ -4497,15 +4611,7 @@ pub fn sicherung_exportieren(data: &Path, name: &str, ziel: &Path) -> Result<Exp
     if !ziel_echt.is_dir() {
         return Err("Das Ziel ist kein Ordner; nichts exportiert.".into());
     }
-    if let Ok(data_echt) = fs::canonicalize(data) {
-        if ziel_echt.starts_with(&data_echt) {
-            return Err(
-                "Der Zielordner liegt im Datenordner der App. Bitte einen Ordner außerhalb \
-                 wählen, etwa auf einem lokalen Laufwerk."
-                    .into(),
-            );
-        }
-    }
+    ziel_ausserhalb(data, &ziel_echt)?;
     let manifest = sicherung_pruefen(&dir)?;
     let neu = ziel_echt.join(name);
     fs::create_dir(&neu).map_err(|e| {
@@ -4536,10 +4642,14 @@ pub fn sicherung_exportieren(data: &Path, name: &str, ziel: &Path) -> Result<Exp
         sicherung_pruefen(&neu).map(|_| ())
     })();
     if let Err(e) = kopiert {
-        let _ = fs::remove_dir_all(&neu);
-        return Err(format!(
-            "Export abgebrochen ({e}); der neue Ordner wurde entfernt."
-        ));
+        return Err(match fs::remove_dir_all(&neu) {
+            Ok(()) => format!("Export abgebrochen ({e}); der neue Ordner wurde entfernt."),
+            Err(r) => format!(
+                "Export abgebrochen ({e}). Der unvollständige Ordner {} ließ sich nicht \
+                 entfernen ({r}); bitte von Hand löschen.",
+                neu.display()
+            ),
+        });
     }
     let dauerhaft = baum_sync(&neu)
         .and_then(|b| Ok(b && ordner_sync(&ziel_echt)?))
@@ -4949,6 +5059,65 @@ mod tests {
         assert!(unterordner(&data.join(SICHERUNGEN))
             .iter()
             .all(|n| !n.starts_with(PROBE_PRAEFIX)));
+        // Ohne Datei-Sync (auch mit fehlendem Ordner-Sync): das schwerere Ergebnis zählt,
+        // jede Prüfung läuft.
+        OHNE_DATEI_SYNC.with(|o| o.set(true));
+        let nur_datei = sync_pruefen(&data);
+        OHNE_SYNC.with(|o| o.set(true));
+        let beides = sync_pruefen(&data);
+        OHNE_SYNC.with(|o| o.set(false));
+        OHNE_DATEI_SYNC.with(|o| o.set(false));
+        assert_eq!(nur_datei, SyncFaehigkeit::DateiNichtUnterstuetzt);
+        assert_eq!(beides, SyncFaehigkeit::DateiNichtUnterstuetzt);
+        assert_eq!(beides.name(), "datei_nicht_unterstuetzt");
+        // Ein Fehler geht vor: `sicherungen/` ist eine Datei.
+        let kaputt = datenordner("sync-pruefen-fehler");
+        let _ = fs::remove_dir_all(kaputt.join(SICHERUNGEN));
+        fs::write(kaputt.join(SICHERUNGEN), b"x").unwrap();
+        OHNE_SYNC.with(|o| o.set(true));
+        let f = sync_pruefen(&kaputt);
+        OHNE_SYNC.with(|o| o.set(false));
+        assert!(matches!(f, SyncFaehigkeit::Fehler(_)), "{f:?}");
+    }
+
+    /// lva#371: Der Best-Effort-Modus gilt nur für fehlenden ORDNER-Sync; ohne Datei-Sync
+    /// bleibt das Zurückspielen gesperrt.
+    #[test]
+    fn best_effort_hilft_nicht_ohne_datei_sync() {
+        let data = standardlage("best-effort-datei");
+        migrieren(&data, &optionen()).unwrap();
+        let name = sicherungen_auflisten(&data)[0].name.clone();
+        let vorher = stand(&data);
+        OHNE_DATEI_SYNC.with(|o| o.set(true));
+        let r = sicherung_zurueckspielen_nachsichtig(&data, &name, None);
+        OHNE_DATEI_SYNC.with(|o| o.set(false));
+        assert!(r.is_err(), "{r:?}");
+        assert_eq!(stand(&data), vorher);
+        keine_zwischenstaende(&data);
+    }
+
+    /// lva#371: Ein Ziel, das über einen anderen Pfad in den Datenordner führt, wird an der
+    /// Markendatei und der Ordner-Kennung erkannt; die Marke bleibt nicht liegen.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn exportziel_ueber_anderen_pfad_im_datenordner_wird_erkannt() {
+        let data = datenordner("export-alias");
+        fs::create_dir_all(data.join(PROJEKTE)).unwrap();
+        let echt = fs::canonicalize(data.join(PROJEKTE)).unwrap();
+        // `/proc/self/root` ist `/`: anderer Pfad, gleicher Ordner.
+        let alias = Path::new("/proc/self/root").join(echt.strip_prefix("/").unwrap());
+        assert!(!alias.starts_with(fs::canonicalize(&data).unwrap()));
+        let e = ziel_ausserhalb(&data, &alias).unwrap_err();
+        assert!(e.contains("Datenordner"), "{e}");
+        let draussen = fs::canonicalize(data.parent().unwrap()).unwrap();
+        assert!(ziel_ausserhalb(&data, &draussen).is_ok());
+        assert!(fs::read_dir(&data)
+            .unwrap()
+            .flatten()
+            .all(|e| !e.file_name().to_string_lossy().starts_with(EXPORT_MARKE)));
+        // Ohne auflösbaren Datenordner: abbrechen statt die Prüfung auszulassen.
+        let fehlt = data.join("gibt-es-nicht");
+        assert!(ziel_ausserhalb(&fehlt, &draussen).is_err());
     }
 
     /// lva#371: Best-Effort nur ausdrücklich; danach gilt wieder die strenge Regel.

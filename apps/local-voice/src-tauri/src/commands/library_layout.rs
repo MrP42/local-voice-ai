@@ -412,7 +412,7 @@ pub async fn library_backup_restore(
 /// Was das Laufwerk des Datenordners beim Sichern tatsächlich kann (lva#371).
 #[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct LibrarySyncCheck {
-    /// `ok`, `nicht_unterstuetzt` oder `fehler`.
+    /// `ok`, `nicht_unterstuetzt` (Ordner-Sync), `datei_nicht_unterstuetzt` oder `fehler`.
     pub ergebnis: String,
     /// Bei `fehler`: die Ursache.
     pub meldung: Option<String>,

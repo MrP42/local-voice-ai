@@ -154,8 +154,20 @@ test.beforeEach(async ({ page }) => {
             __lvSync?: string;
             __lvExportDurable?: boolean;
             __lvExportArgs?: Record<string, unknown>;
+            __lvDialogCalls?: number;
+            __lvDialogCancel?: boolean;
+            __lvOpened?: unknown;
           };
-          if (cmd === "plugin:dialog|open") return "D:\\Sicherungen";
+          if (cmd === "plugin:dialog|open") {
+            lv.__lvDialogCalls = (lv.__lvDialogCalls ?? 0) + 1;
+            // Verzögert wie ein echter Dialog: ein zweiter Klick fällt in die Wartezeit.
+            const answer = lv.__lvDialogCancel ? null : "D:\\Sicherungen";
+            return new Promise((r) => setTimeout(() => r(answer), 150));
+          }
+          if (cmd === "plugin:opener|open_url") {
+            lv.__lvOpened = args?.url;
+            return null;
+          }
           if (
             cmd.startsWith("library_layout") ||
             cmd.startsWith("library_backup")
@@ -493,6 +505,59 @@ test("a working drive restores normally after the check (lva#371)", async ({
   expect(c).not.toContain("library_backup_restore_best_effort");
 });
 
+test("without file sync restoring is blocked, no best effort, guide offered (lva#371)", async ({
+  page,
+}) => {
+  await withBackup(page, false);
+  await drive(page, "datei_nicht_unterstuetzt");
+  await openApp(page);
+  await page
+    .getByTestId("library-backup")
+    .getByRole("button", { name: "Zurückspielen …" })
+    .click();
+  await expect(page.getByTestId("library-restore-nosync")).toContainText(
+    "nicht einmal Dateien sicher festschreiben",
+  );
+  await expect(page.getByTestId("library-restore-besteffort")).toHaveCount(0);
+  await expect(page.getByTestId("library-layout-apply")).toBeDisabled();
+  await expect(page.getByRole("dialog")).toContainText(
+    "App vollständig beenden",
+  );
+  await page.getByTestId("library-restore-guide").click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => (window as unknown as { __lvOpened?: string }).__lvOpened,
+      ),
+    )
+    .toContain("docs/DATENORDNER.md");
+});
+
+test("export opens one folder dialog at a time; cancelling keeps the dialog (lva#371)", async ({
+  page,
+}) => {
+  await withBackup(page, false);
+  await drive(page, "nicht_unterstuetzt");
+  await page.addInitScript(() => {
+    Object.assign(window, { __lvDialogCancel: true });
+  });
+  await openApp(page);
+  await page
+    .getByTestId("library-backup")
+    .getByRole("button", { name: "Zurückspielen …" })
+    .click();
+  const exportButton = page.getByTestId("library-restore-export");
+  await exportButton.dispatchEvent("click");
+  await exportButton.dispatchEvent("click");
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await expect(exportButton).toBeEnabled();
+  const n = await page.evaluate(
+    () => (window as unknown as { __lvDialogCalls?: number }).__lvDialogCalls,
+  );
+  expect(n).toBe(1);
+  expect(await calls(page)).not.toContain("library_backup_export");
+});
+
 test("a failing drive check blocks restoring (lva#371)", async ({ page }) => {
   await withBackup(page, false);
   await drive(page, "fehler");
@@ -520,6 +585,21 @@ for (const width of [1440, 390]) {
       .getByRole("button", { name: "Zurückspielen …" })
       .click();
     await expect(page.getByTestId("library-restore-nosync")).toBeVisible();
+    if (width === 390) {
+      // Touch-Ziele ≥ 44 px: Fußknöpfe, Schließen, Auswege.
+      const dialog = page.getByRole("dialog");
+      for (const target of [
+        page.getByTestId("library-layout-apply"),
+        dialog.getByRole("button", { name: "Später" }),
+        dialog.getByRole("button", { name: "Schließen" }),
+        page.getByTestId("library-restore-export"),
+        page.getByTestId("library-restore-guide"),
+      ]) {
+        const box = await target.boundingBox();
+        expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
+        expect(box?.width ?? 0).toBeGreaterThanOrEqual(44);
+      }
+    }
     await page.screenshot({
       path: `test-results/sicherung-ohne-sync-${width}.png`,
     });

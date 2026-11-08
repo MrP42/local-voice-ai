@@ -212,6 +212,8 @@ export const Dialog: React.FC<DialogProps> = ({
                   <FluentButton
                     appearance="subtle"
                     size="small"
+                    // Touch-Ziel ≥ 44 px auf schmalen und groben Zeigegeräten (lva#371).
+                    className="lv-dialog__close max-sm:min-h-[44px] max-sm:min-w-[44px]! pointer-coarse:min-h-[44px] pointer-coarse:min-w-[44px]! max-sm:max-w-none! pointer-coarse:max-w-none!"
                     icon={<X className="h-4 w-4" aria-hidden="true" />}
                     onClick={() => onOpenChange(false)}
                   />

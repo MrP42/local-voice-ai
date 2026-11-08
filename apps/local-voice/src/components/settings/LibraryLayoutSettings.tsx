@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   commands,
   type LibraryBackup,
@@ -50,6 +51,9 @@ const isNoSync = (error: string) =>
 const OPEN_PHASES = new Set(["geplant", "gesichert", "rueckfall"]);
 /** Touch-Ziel ≥ 44 px auf schmalen und groben Zeigegeräten. */
 const TOUCH = "max-sm:min-h-[44px] pointer-coarse:min-h-[44px]";
+/** Anleitung „Datenordner auf ein lokales Laufwerk umziehen“ (lva#371). */
+const MOVE_GUIDE_URL =
+  "https://github.com/MrP42/local-voice-ai/blob/main/docs/DATENORDNER.md";
 
 export const LibraryLayoutSettings: React.FC<{ grouped?: boolean }> = ({
   grouped = true,
@@ -84,12 +88,16 @@ export const LibraryLayoutSettings: React.FC<{ grouped?: boolean }> = ({
     };
   }, [restoreName]);
 
-  const noSyncDrive = syncCheck?.ergebnis === "nicht_unterstuetzt";
+  // Ohne Ordner-Sync ist Best-Effort wählbar; ohne Datei-Sync nie (lva#371).
+  const noFileSync = syncCheck?.ergebnis === "datei_nicht_unterstuetzt";
+  const noDirSync = syncCheck?.ergebnis === "nicht_unterstuetzt";
+  const noSyncDrive = noDirSync || noFileSync;
   const restoreBlocked =
     pending?.kind === "restore" &&
     (syncCheck == null ||
       syncCheck.ergebnis === "fehler" ||
-      (noSyncDrive && !bestEffort));
+      noFileSync ||
+      (noDirSync && !bestEffort));
 
   const load = useCallback(async () => {
     const [s, b] = await Promise.all([
@@ -197,16 +205,19 @@ export const LibraryLayoutSettings: React.FC<{ grouped?: boolean }> = ({
   // Ausweg (lva#371): die Sicherung in einen neuen Ordner kopieren und prüfen.
   const exportBackup = async (backup: LibraryBackup) => {
     if (running.current) return;
-    const target = await openDialog({
-      directory: true,
-      multiple: false,
-      title: t("settings.app.libraryLayout.exportTitle"),
-    });
-    if (typeof target !== "string") return;
+    // Vor dem Ordnerdialog sperren: kein zweiter Dialog, kein paralleler Lauf.
     running.current = true;
     setBusy(true);
+    let finished = false;
     try {
+      const target = await openDialog({
+        directory: true,
+        multiple: false,
+        title: t("settings.app.libraryLayout.exportTitle"),
+      });
+      if (typeof target !== "string") return;
       const r = await commands.libraryBackupExport(backup.name, target);
+      finished = true;
       if (r.status === "error") {
         setNotice({
           kind: "error",
@@ -227,7 +238,8 @@ export const LibraryLayoutSettings: React.FC<{ grouped?: boolean }> = ({
     } finally {
       running.current = false;
       setBusy(false);
-      setPending(null);
+      // Abgebrochene Ordnerwahl: der Dialog bleibt offen.
+      if (finished) setPending(null);
     }
   };
 
@@ -310,6 +322,7 @@ export const LibraryLayoutSettings: React.FC<{ grouped?: boolean }> = ({
               </p>
               <p>{t("settings.app.libraryLayout.noSyncText")}</p>
               <p>{t("settings.app.libraryLayout.noSyncWays")}</p>
+              <p>{t("settings.app.libraryLayout.moveDataDir")}</p>
               <div className="mt-2 flex flex-wrap gap-2">
                 {notice.backup && (
                   <Button
@@ -331,6 +344,14 @@ export const LibraryLayoutSettings: React.FC<{ grouped?: boolean }> = ({
                   onClick={() => void commands.openAppDataDir()}
                 >
                   {t("settings.app.libraryLayout.openDataDir")}
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className={TOUCH}
+                  onClick={() => void openUrl(MOVE_GUIDE_URL)}
+                >
+                  {t("settings.app.libraryLayout.moveGuide")}
                 </Button>
               </div>
             </Alert>
@@ -447,9 +468,10 @@ export const LibraryLayoutSettings: React.FC<{ grouped?: boolean }> = ({
         closeLabel={t("settings.app.libraryLayout.close")}
         className="max-w-lg"
         footer={
-          <div className="flex justify-end gap-2">
+          <div className="flex flex-wrap justify-end gap-2">
             <Button
               variant="secondary"
+              className={TOUCH}
               disabled={busy}
               onClick={() => setPending(null)}
             >
@@ -457,6 +479,7 @@ export const LibraryLayoutSettings: React.FC<{ grouped?: boolean }> = ({
             </Button>
             <Button
               variant={pending?.kind === "delete" ? "danger" : "primary"}
+              className={TOUCH}
               disabled={
                 busy ||
                 (pending?.kind === "migrate" && noSpace) ||
@@ -467,7 +490,7 @@ export const LibraryLayoutSettings: React.FC<{ grouped?: boolean }> = ({
             >
               {busy
                 ? t("settings.app.libraryLayout.running")
-                : pending?.kind === "restore" && noSyncDrive && bestEffort
+                : pending?.kind === "restore" && noDirSync && bestEffort
                   ? t("settings.app.libraryLayout.bestEffortApply")
                   : applyLabel(pending, t)}
             </Button>
@@ -525,9 +548,14 @@ export const LibraryLayoutSettings: React.FC<{ grouped?: boolean }> = ({
                     className="font-semibold"
                     data-testid="library-restore-nosync"
                   >
-                    {t("settings.app.libraryLayout.noSyncTitle")}
+                    {t(
+                      noFileSync
+                        ? "settings.app.libraryLayout.noFileSyncTitle"
+                        : "settings.app.libraryLayout.noSyncTitle",
+                    )}
                   </p>
                   <p>{t("settings.app.libraryLayout.noSyncWays")}</p>
+                  <p>{t("settings.app.libraryLayout.moveDataDir")}</p>
                   <div className="mt-2 flex flex-wrap gap-2">
                     <Button
                       variant="secondary"
@@ -547,27 +575,38 @@ export const LibraryLayoutSettings: React.FC<{ grouped?: boolean }> = ({
                     >
                       {t("settings.app.libraryLayout.openDataDir")}
                     </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      className={TOUCH}
+                      onClick={() => void openUrl(MOVE_GUIDE_URL)}
+                      data-testid="library-restore-guide"
+                    >
+                      {t("settings.app.libraryLayout.moveGuide")}
+                    </Button>
                   </div>
-                  <label
-                    className={`mt-3 flex items-start gap-2 ${TOUCH}`}
-                    data-testid="library-restore-besteffort"
-                  >
-                    <input
-                      type="checkbox"
-                      className="mt-1"
-                      checked={bestEffort}
-                      disabled={busy}
-                      onChange={(e) => setBestEffort(e.target.checked)}
-                    />
-                    <span>
-                      <span className="font-semibold">
-                        {t("settings.app.libraryLayout.bestEffortLabel")}
+                  {noDirSync && (
+                    <label
+                      className={`mt-3 flex items-start gap-2 ${TOUCH}`}
+                      data-testid="library-restore-besteffort"
+                    >
+                      <input
+                        type="checkbox"
+                        className="mt-1"
+                        checked={bestEffort}
+                        disabled={busy}
+                        onChange={(e) => setBestEffort(e.target.checked)}
+                      />
+                      <span>
+                        <span className="font-semibold">
+                          {t("settings.app.libraryLayout.bestEffortLabel")}
+                        </span>
+                        <span className="block">
+                          {t("settings.app.libraryLayout.bestEffortWarning")}
+                        </span>
                       </span>
-                      <span className="block">
-                        {t("settings.app.libraryLayout.bestEffortWarning")}
-                      </span>
-                    </span>
-                  </label>
+                    </label>
+                  )}
                 </Alert>
               )}
             </>

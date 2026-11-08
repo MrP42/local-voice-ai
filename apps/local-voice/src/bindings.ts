@@ -10550,22 +10550,22 @@ platz_benoetigt: number;
  */
 platz_frei: number | null }
 /**
- * Zustimmung des Nutzers zu den Lizenzangaben eines Anbieters. Gilt nur,
- * solange `fingerprint` dem aktuellen Stand entspricht (siehe
- * [`license_fingerprint`]).
- */
-/**
  * Was das Laufwerk des Datenordners beim Sichern tatsächlich kann (lva#371).
  */
 export type LibrarySyncCheck = { 
 /**
- * `ok`, `nicht_unterstuetzt` oder `fehler`.
+ * `ok`, `nicht_unterstuetzt` (Ordner-Sync), `datei_nicht_unterstuetzt` oder `fehler`.
  */
 ergebnis: string; 
 /**
  * Bei `fehler`: die Ursache.
  */
 meldung: string | null }
+/**
+ * Zustimmung des Nutzers zu den Lizenzangaben eines Anbieters. Gilt nur,
+ * solange `fingerprint` dem aktuellen Stand entspricht (siehe
+ * [`license_fingerprint`]).
+ */
 export type LicenseAck = { provider_id: string; fingerprint: string; 
 /**
  * RFC 3339, UTC.
