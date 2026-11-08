@@ -1,0 +1,354 @@
+{
+ "vorschau_sha256": "0ddf0c7fe59cdfde834888c4e4f3728fced6afff0f1efbb9163057188bdbc393",
+ "erzeugt": "2026-11-08T22:43:08.841Z",
+ "bilder": {
+  "01-liste-2560-hell": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 32,
+   "unter44": [],
+   "modal": false,
+   "fokus_beim_oeffnen": null
+  },
+  "01-liste-2560-dunkel": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 32,
+   "unter44": [],
+   "modal": false,
+   "fokus_beim_oeffnen": null
+  },
+  "01-liste-1440-hell": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 32,
+   "unter44": [],
+   "modal": false,
+   "fokus_beim_oeffnen": null
+  },
+  "01-liste-1440-dunkel": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 32,
+   "unter44": [],
+   "modal": false,
+   "fokus_beim_oeffnen": null
+  },
+  "01-liste-768-hell": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 23,
+   "unter44": [],
+   "modal": true,
+   "fokus_beim_oeffnen": "Details schließen",
+   "fokus_bleibt_im_dialog": true,
+   "escape": {
+    "geschlossen": true,
+    "fokus_zurueck": "PDFRahmenvertrag Wartung 2026."
+   }
+  },
+  "01-liste-768-dunkel": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 23,
+   "unter44": [],
+   "modal": true,
+   "fokus_beim_oeffnen": "Details schließen",
+   "fokus_bleibt_im_dialog": true,
+   "escape": {
+    "geschlossen": true,
+    "fokus_zurueck": "PDFRahmenvertrag Wartung 2026."
+   }
+  },
+  "01-liste-390-hell": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 16,
+   "unter44": [],
+   "modal": true,
+   "fokus_beim_oeffnen": "Details schließen",
+   "fokus_bleibt_im_dialog": true,
+   "escape": {
+    "geschlossen": true,
+    "fokus_zurueck": "PDFRahmenvertrag Wartung 2026."
+   }
+  },
+  "01-liste-390-dunkel": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 16,
+   "unter44": [],
+   "modal": true,
+   "fokus_beim_oeffnen": "Details schließen",
+   "fokus_bleibt_im_dialog": true,
+   "escape": {
+    "geschlossen": true,
+    "fokus_zurueck": "PDFRahmenvertrag Wartung 2026."
+   }
+  },
+  "02-hochladen-1440-hell": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 31,
+   "unter44": [],
+   "modal": false,
+   "fokus_beim_oeffnen": null,
+   "ausloeser_test": {
+    "#btnup": "kein Blatt auf dieser Breite (Liste in der Seitenspalte)"
+   }
+  },
+  "02-hochladen-1440-dunkel": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 31,
+   "unter44": [],
+   "modal": false,
+   "fokus_beim_oeffnen": null,
+   "ausloeser_test": {
+    "#btnup": "kein Blatt auf dieser Breite (Liste in der Seitenspalte)"
+   }
+  },
+  "02-hochladen-390-hell": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 15,
+   "unter44": [],
+   "modal": true,
+   "fokus_beim_oeffnen": "Hochladeliste schließen",
+   "fokus_bleibt_im_dialog": true,
+   "escape": {
+    "geschlossen": true,
+    "fokus_zurueck": "Dateien hochladen"
+   },
+   "ausloeser_test": {
+    "#btnup": "#btnup Dateien hochladen"
+   }
+  },
+  "02-hochladen-390-dunkel": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 15,
+   "unter44": [],
+   "modal": true,
+   "fokus_beim_oeffnen": "Hochladeliste schließen",
+   "fokus_bleibt_im_dialog": true,
+   "escape": {
+    "geschlossen": true,
+    "fokus_zurueck": "Dateien hochladen"
+   },
+   "ausloeser_test": {
+    "#btnup": "#btnup Dateien hochladen"
+   }
+  },
+  "03-ordner-1440-hell": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 36,
+   "unter44": [],
+   "modal": true,
+   "fokus_beim_oeffnen": "An",
+   "fokus_bleibt_im_dialog": true,
+   "escape": {
+    "geschlossen": true,
+    "fokus_zurueck": "Ordnereinstellungen"
+   }
+  },
+  "03-ordner-1440-dunkel": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 36,
+   "unter44": [],
+   "modal": true,
+   "fokus_beim_oeffnen": "An",
+   "fokus_bleibt_im_dialog": true,
+   "escape": {
+    "geschlossen": true,
+    "fokus_zurueck": "Ordnereinstellungen"
+   }
+  },
+  "03-ordner-390-hell": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 20,
+   "unter44": [],
+   "modal": true,
+   "fokus_beim_oeffnen": "An",
+   "fokus_bleibt_im_dialog": true,
+   "escape": {
+    "geschlossen": true,
+    "fokus_zurueck": "Ordnereinstellungen"
+   }
+  },
+  "03-ordner-390-dunkel": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 20,
+   "unter44": [],
+   "modal": true,
+   "fokus_beim_oeffnen": "An",
+   "fokus_bleibt_im_dialog": true,
+   "escape": {
+    "geschlossen": true,
+    "fokus_zurueck": "Ordnereinstellungen"
+   }
+  },
+  "04-suche-1440-hell": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 24,
+   "unter44": [],
+   "modal": false,
+   "fokus_beim_oeffnen": null,
+   "reiter_pfeil": "Dieser Ordner / true"
+  },
+  "04-suche-1440-dunkel": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 24,
+   "unter44": [],
+   "modal": false,
+   "fokus_beim_oeffnen": null,
+   "reiter_pfeil": "Dieser Ordner / true"
+  },
+  "04-suche-390-hell": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 9,
+   "unter44": [],
+   "modal": false,
+   "fokus_beim_oeffnen": null,
+   "reiter_pfeil": "Dieser Ordner / true"
+  },
+  "04-suche-390-dunkel": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 9,
+   "unter44": [],
+   "modal": false,
+   "fokus_beim_oeffnen": null,
+   "reiter_pfeil": "Dieser Ordner / true"
+  },
+  "05-konflikt-1440-hell": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 32,
+   "unter44": [],
+   "modal": false,
+   "fokus_beim_oeffnen": null
+  },
+  "05-konflikt-1440-dunkel": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 32,
+   "unter44": [],
+   "modal": false,
+   "fokus_beim_oeffnen": null
+  },
+  "05-konflikt-390-hell": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 16,
+   "unter44": [],
+   "modal": true,
+   "fokus_beim_oeffnen": "Konfliktansicht schließen",
+   "fokus_bleibt_im_dialog": true,
+   "escape": {
+    "geschlossen": true,
+    "fokus_zurueck": "DOCXLeistungsbeschreibung v3.d"
+   }
+  },
+  "05-konflikt-390-dunkel": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 16,
+   "unter44": [],
+   "modal": true,
+   "fokus_beim_oeffnen": "Konfliktansicht schließen",
+   "fokus_bleibt_im_dialog": true,
+   "escape": {
+    "geschlossen": true,
+    "fokus_zurueck": "DOCXLeistungsbeschreibung v3.d"
+   }
+  },
+  "06-papierkorb-1440-hell": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 20,
+   "unter44": [],
+   "modal": false,
+   "fokus_beim_oeffnen": null
+  },
+  "06-papierkorb-1440-dunkel": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 20,
+   "unter44": [],
+   "modal": false,
+   "fokus_beim_oeffnen": null
+  },
+  "06-papierkorb-390-hell": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 5,
+   "unter44": [],
+   "modal": false,
+   "fokus_beim_oeffnen": null
+  },
+  "06-papierkorb-390-dunkel": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 5,
+   "unter44": [],
+   "modal": false,
+   "fokus_beim_oeffnen": null
+  },
+  "07-leer-1440-hell": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 21,
+   "unter44": [],
+   "modal": false,
+   "fokus_beim_oeffnen": null,
+   "ausloeser_test": {
+    "#btnwahl": "#btnwahl Dateien auswählen",
+    "#btnup": "#btnup Dateien hochladen"
+   }
+  },
+  "07-leer-1440-dunkel": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 21,
+   "unter44": [],
+   "modal": false,
+   "fokus_beim_oeffnen": null,
+   "ausloeser_test": {
+    "#btnwahl": "#btnwahl Dateien auswählen",
+    "#btnup": "#btnup Dateien hochladen"
+   }
+  },
+  "07-leer-390-hell": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 5,
+   "unter44": [],
+   "modal": false,
+   "fokus_beim_oeffnen": null,
+   "ausloeser_test": {
+    "#btnwahl": "#btnwahl Dateien auswählen",
+    "#btnup": "#btnup Dateien hochladen"
+   }
+  },
+  "07-leer-390-dunkel": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 5,
+   "unter44": [],
+   "modal": false,
+   "fokus_beim_oeffnen": null,
+   "ausloeser_test": {
+    "#btnwahl": "#btnwahl Dateien auswählen",
+    "#btnup": "#btnup Dateien hochladen"
+   }
+  }
+ }
+}

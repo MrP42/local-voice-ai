@@ -62,3 +62,31 @@ export function useErwartung(
     leeren: () => ids.current.clear(),
   };
 }
+
+let angefragtAm = 0;
+
+/** Hat `oeffneProjekt` die Seite gerade eben geöffnet (vor weniger als 3 s)? */
+export const projektAnfrageFrisch = (): boolean =>
+  Date.now() - angefragtAm < 3000;
+
+/** Schlüssel der gemerkten Projektauswahl im Bereich „Projekte“ (`usePersistentState`). */
+export const PROJEKT_AUSWAHL_KEY = "lva.ui.projekte-auswahl";
+
+/**
+ * Öffnet die Projektseite im Bereich „Projekte“ (aus der Leiste von Vorlesen und Sprachgespräch).
+ * Die Auswahl steht vorher im Speicher, damit eine noch nicht eingehängte Seite sie beim Start liest;
+ * eine schon offene Seite folgt dem Ereignis.
+ */
+export function oeffneProjekt(projektId: string): void {
+  angefragtAm = Date.now();
+  try {
+    window.localStorage.setItem(PROJEKT_AUSWAHL_KEY, projektId);
+  } catch {
+    /* ohne Speicher wirkt nur das Ereignis */
+  }
+  window.dispatchEvent(
+    new CustomEvent("lv-navigate", {
+      detail: { section: "projekte", projektId },
+    }),
+  );
+}

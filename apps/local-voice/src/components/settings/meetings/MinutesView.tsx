@@ -55,7 +55,7 @@ import { useRegenerateGuard } from "./useRegenerateGuard";
 
 /** Blöcke der Leseansicht, die einzeln zum Bearbeiten angeklickt werden können. */
 const EDIT_BLOCKS = "h1, h2, h3, p, li, td, th, blockquote";
-/** Abschnitte mit eigenem, immer sichtbarem „Abschnitt bearbeiten“. */
+/** Abschnitte mit eigenem, immer sichtbarem Stift (nur Symbol, Patrick 08.11.). */
 const SECTION_HEADINGS = "h2, h3";
 
 /** Nächster Vorfahr, der senkrecht scrollt (Reiterfläche der Besprechung). */
@@ -399,10 +399,8 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
     }
     const measure = () => {
       const base = wrapper.getBoundingClientRect().top;
-      // Höhe des Abschnittsknopfs (schmal 44 px Touchziel, sonst h-8).
-      const penHeight = window.matchMedia("(max-width: 639px)").matches
-        ? 44
-        : 32;
+      // Höhe des Abschnittsstifts: 44 px Trefferfläche auf jeder Breite.
+      const penHeight = 44;
       const all = Array.from(
         preview.querySelectorAll<HTMLElement>(SECTION_HEADINGS),
       ).map((el) => {
@@ -796,12 +794,9 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
                 })}
                 onClick={() => startEdit(section.el)}
                 style={{ top: section.top }}
-                className="minutes-section-pen absolute end-2 flex h-8 items-center gap-1.5 rounded-md border border-mid-gray/30 bg-background px-2 text-xs font-medium text-text/80 hover:border-logo-primary hover:text-logo-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-logo-primary"
+                className="minutes-section-pen absolute end-1 flex h-[44px] w-[44px] items-center justify-center rounded-md text-text/60 hover:bg-logo-primary/10 hover:text-logo-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-logo-primary"
               >
-                <Pencil width={14} height={14} aria-hidden="true" />
-                <span className="minutes-section-pen__text">
-                  {t("meetings.minutes.edit.section")}
-                </span>
+                <Pencil width={16} height={16} aria-hidden="true" />
               </button>
             ))}
           {hoverPen && !running && (
