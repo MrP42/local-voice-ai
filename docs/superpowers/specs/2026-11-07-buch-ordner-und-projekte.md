@@ -235,7 +235,14 @@ Zurückschreiben unbekannte Felder verlieren könnte. Sie kommen in die neue Sam
   "blob": { BlobRef }, "updated": 1731000000000, "device": "dev_pc", "deleted": false }
 ```
 
-- ID: `bf_` + 40 Hex von SHA-256(`buch-id` + `role` + normalisierter relativer Pfad). Stabil über Geräte.
+- ID: `bf_` + 40 Hex von SHA-256(`buch-id` + `role` + normalisierter relativer Pfad), UTF-8, ohne
+  Trenner verkettet. Stabil über Geräte. Prüfwert: `book_1` + `anhang` + `anhaenge/Cashflow-Tabelle.xlsx`
+  → `bf_ce4f353fbfa464d98f752e46a581809c114b23c2`.
+- Umsetzung Desktop (P3a): Kern `src-tauri/src/buch_dateien.rs` (Stand je Buch in
+  `sync-dateien.json`, Papierkorb `library/.papierkorb/dateien/<buch>/…`, Datensätze ohne Buch
+  warten in `library/.sync-dateien-wartend/`), Sync `src-tauri/src/sync/book_files.rs`. Die
+  Löschbremse der Sammlung folgt der von `book`: fehlen alle Bücher, gehen auch keine
+  Datei-Grabsteine hinaus. Hub: wai-portal#19.
 - `path` ist relativ zum Buch-Ordner, nach 4.4 bereinigt, nie absolut, nie mit `..`.
 - Konflikt: neuester `updated` gewinnt; gleiche Zeit → größere Geräte-ID. Die unterlegene Fassung wird
   als `Name (Konflikt Gerät).ext` behalten, nicht verworfen.

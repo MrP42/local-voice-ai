@@ -16,6 +16,7 @@ pub mod book_talk_eval {
     pub use crate::book_ai::talk::eval::*;
 }
 mod books;
+mod buch_dateien; // lva#365 P3: Notizen, Anhänge, Transkript im Buch-Ordner (Kern)
 mod catalog;
 pub mod cli;
 mod clipboard;

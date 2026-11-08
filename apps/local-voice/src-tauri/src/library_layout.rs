@@ -4319,7 +4319,6 @@ fn kuerzen(name: &str, max: usize) -> String {
 /// Dateiname nach 4.4 bereinigen: keine `/ \ : * ? " < > |`, keine Steuerzeichen (jeweils
 /// durch `_` ersetzt), kein `.`/`..`, kein reservierter Windows-Name (bekommt `_` davor),
 /// keine Endung mit Punkt oder Leerzeichen, höchstens 120 Zeichen, Unicode-NFC.
-#[allow(dead_code)] // Anhänge, Notizen, Projektdateien (P2b/P3)
 pub fn bereinigter_name(name: &str) -> Result<String, String> {
     let ersetzt: String = name
         .nfc()
@@ -4364,7 +4363,6 @@ fn vergleichsschluessel(name: &str) -> String {
 
 /// Freien, bereinigten Namen in `dir` finden: bei Kollision (ohne Groß-/Kleinschreibung,
 /// nach NFC) `Name (2).ext`, `Name (3).ext` … Ein vorhandener Name wird nie zurückgegeben.
-#[allow(dead_code)] // Anhänge, Notizen, Projektdateien (P2b/P3)
 pub fn freier_name(dir: &Path, wunsch: &str) -> Result<String, String> {
     let name = bereinigter_name(wunsch)?;
     let belegt: BTreeSet<String> = fs::read_dir(dir)

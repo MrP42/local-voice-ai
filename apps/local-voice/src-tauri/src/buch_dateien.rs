@@ -1,0 +1,1259 @@
+//! lva#365 P3: Notizen, Anhänge und Transkript-Text im Buch-Ordner und ihre Sync-Sammlung
+//! `book_file` (Spec `2026-11-07-buch-ordner-und-projekte.md`, 6.2). Kern ohne Tauri: Er
+//! kennt nur den Buch-Ordner und seinen Stand (`sync-dateien.json`); Schlüssel, Blobs und
+//! Hub bleiben in `sync/book_files.rs`.
+//!
+//! Ein Datensatz je Datei:
+//! `{ v, id, book, edition, role, path, blob, updated, device, deleted }`.
+//! - `id`: `bf_` + 40 Hex von SHA-256(Buch-ID + Rolle + relativer Pfad, ohne Trenner). Die
+//!   Rolle ist eines von drei festen Wörtern und der Pfad beginnt mit dem Ordner der Rolle;
+//!   die Verkettung ist damit eindeutig. Gleiche Datei, gleiche ID auf jedem Gerät.
+//! - `path`: relativ zum Buch-Ordner (`anhaenge/…`, `notizen/…`, `transkript/…`), jedes
+//!   Glied nach 4.4 bereinigt, nie absolut, nie `..`, nie versteckt.
+//! - Konflikt: neueres `updated` gewinnt, bei Gleichstand die größere Geräte-ID. Die
+//!   unterlegene Fassung bleibt als `Name (Konflikt Gerät).ext` erhalten.
+//! - Löschen: Grabstein (`deleted: true`) 30 Tage; der Empfänger legt die Datei in den
+//!   Papierkorb (`library/.papierkorb/dateien/<buch>/…`), nie ins Nichts.
+//! - Datensätze mit `v` > [`VERSION`] werden aufbewahrt, aber nie geschrieben.
+
+use crate::library_layout::{bereinigter_name, freier_name, schreibe_atomar};
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Map, Value};
+use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
+use std::io::Read;
+use std::path::{Path, PathBuf};
+
+/// Name der Sync-Sammlung.
+pub const SAMMLUNG: &str = "book_file";
+/// Höchste Datensatz-Version, die dieses Gerät schreibt.
+pub const VERSION: u64 = 1;
+/// Stand der Dateien eines Buchs (im Buch-Ordner).
+pub const STAND: &str = "sync-dateien.json";
+/// Ablage für halb geladene Dateien (im Buch-Ordner, gleicher Datenträger wie das Ziel).
+pub const ZWISCHENABLAGE: &str = ".sync-dateien";
+/// So lange reist ein Grabstein mit.
+pub const GRABSTEIN_MS: f64 = 30.0 * 24.0 * 60.0 * 60.0 * 1000.0;
+/// Datensätze, deren Buch hier (noch) fehlt: `library/<PARKPLATZ>/<id>.json`.
+pub const PARKPLATZ: &str = ".sync-dateien-wartend";
+/// Unterordner des Bibliotheks-Papierkorbs für einzelne Dateien.
+const PAPIERKORB_DATEIEN: &str = "dateien";
+const PAPIERKORB: &str = ".papierkorb";
+/// Höchste Tiefe unter dem Ordner der Rolle.
+const TIEFE: usize = 4;
+const STAND_VERSION: u32 = 1;
+
+/// Was eine Datei im Buch-Ordner ist.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Rolle {
+    Anhang,
+    Notiz,
+    Transkript,
+}
+
+impl Rolle {
+    pub const ALLE: [Rolle; 3] = [Rolle::Anhang, Rolle::Notiz, Rolle::Transkript];
+
+    /// Name im Datensatz (`role`).
+    pub fn name(self) -> &'static str {
+        match self {
+            Rolle::Anhang => "anhang",
+            Rolle::Notiz => "notiz",
+            Rolle::Transkript => "transkript",
+        }
+    }
+
+    /// Ordner im Buch-Ordner.
+    pub fn ordner(self) -> &'static str {
+        match self {
+            Rolle::Anhang => "anhaenge",
+            Rolle::Notiz => "notizen",
+            Rolle::Transkript => "transkript",
+        }
+    }
+
+    /// Rolle nach dem ersten Glied eines relativen Pfads.
+    pub fn aus_pfad(rel: &str) -> Option<Rolle> {
+        let erstes = rel.split('/').next()?;
+        Rolle::ALLE.into_iter().find(|r| r.ordner() == erstes)
+    }
+}
+
+/// Stabile ID einer Datei im Buch.
+pub fn datei_id(buch: &str, rolle: Rolle, rel: &str) -> String {
+    let digest = Sha256::digest(format!("{buch}{}{rel}", rolle.name()).as_bytes());
+    let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
+    format!("bf_{}", &hex[..40])
+}
+
+/// Eine gültige Datensatz-ID (auch als Dateiname auf dem Parkplatz).
+pub fn gueltige_id(id: &str) -> bool {
+    id.strip_prefix("bf_").is_some_and(|h| {
+        h.len() == 40
+            && h.bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    })
+}
+
+/// Ein relativer Pfad, den jedes Gerät gleich und sicher ablegen kann: Ordner der Rolle
+/// vorn, darunter 1 bis [`TIEFE`] Glieder, jedes schon nach 4.4 bereinigt und nicht
+/// versteckt. Liefert die Rolle.
+pub fn sicherer_pfad(rel: &str) -> Result<Rolle, String> {
+    let schlecht = || format!("Unzulässiger Pfad im Buch-Ordner: {rel}");
+    let rolle = Rolle::aus_pfad(rel).ok_or_else(schlecht)?;
+    let glieder: Vec<&str> = rel.split('/').collect();
+    if glieder.len() < 2 || glieder.len() > TIEFE + 1 {
+        return Err(schlecht());
+    }
+    for glied in &glieder[1..] {
+        if glied.starts_with('.') || bereinigter_name(glied).ok().as_deref() != Some(*glied) {
+            return Err(schlecht());
+        }
+    }
+    Ok(rolle)
+}
+
+/// Fassung, zu der eine Datei gehört: beim Transkript der Dateistamm
+/// (`transkript/<fassung>.md`), sonst unbestimmt.
+fn fassung_aus_pfad(rolle: Rolle, rel: &str) -> String {
+    if rolle != Rolle::Transkript {
+        return String::new();
+    }
+    match rel.split('/').collect::<Vec<_>>().as_slice() {
+        [_, name] => name.strip_suffix(".md").unwrap_or("").to_string(),
+        _ => String::new(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Stand
+// ---------------------------------------------------------------------------
+
+/// Eine Datei im Stand: vorhanden, gelöscht (Grabstein) oder erwartet (Download offen).
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+struct Eintrag {
+    /// SHA-256 des Inhalts (Hex); leer, solange nur erwartet.
+    #[serde(default)]
+    sha256: String,
+    #[serde(default)]
+    groesse: u64,
+    #[serde(default)]
+    mtime_ms: i64,
+    updated: f64,
+    device: String,
+    #[serde(default)]
+    edition: String,
+    #[serde(default)]
+    deleted: bool,
+    /// Blob-Verweis des abgeglichenen Datensatzes; gilt für den Inhalt `blob_sha`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    blob: Option<Value>,
+    #[serde(default)]
+    blob_sha: String,
+    /// Der Inhalt kommt noch von einem anderen Gerät.
+    #[serde(default)]
+    erwartet: bool,
+    /// Inhalt der Datei, die der erwartete Inhalt ersetzen darf (sonst Konfliktkopie).
+    #[serde(default)]
+    ersetzt_sha: String,
+    /// Felder neuerer Geräte im Datensatz, unverändert weitergegeben.
+    #[serde(default, skip_serializing_if = "Map::is_empty")]
+    extra: Map<String, Value>,
+}
+
+#[derive(Serialize, Deserialize, Default, PartialEq, Debug)]
+struct Stand {
+    #[serde(default)]
+    v: u32,
+    /// Relativer Pfad → Eintrag.
+    #[serde(default)]
+    dateien: BTreeMap<String, Eintrag>,
+    /// Datensätze neuerer Version (ID → Rohwert): nur lesen.
+    #[serde(default)]
+    fremd: BTreeMap<String, Value>,
+}
+
+fn stand_laden(buch_dir: &Path) -> Result<Stand, String> {
+    match fs::read(buch_dir.join(STAND)) {
+        Ok(roh) => serde_json::from_slice(&roh).map_err(|e| format!("{STAND} unlesbar: {e}")),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Stand::default()),
+        Err(e) => Err(format!("{STAND} nicht lesbar: {e}")),
+    }
+}
+
+fn stand_sichern(buch_dir: &Path, stand: &mut Stand) -> Result<(), String> {
+    stand.v = STAND_VERSION;
+    let bytes = serde_json::to_vec_pretty(stand).map_err(|e| e.to_string())?;
+    schreibe_atomar(&buch_dir.join(STAND), &bytes)
+}
+
+// ---------------------------------------------------------------------------
+// Dateien
+// ---------------------------------------------------------------------------
+
+fn sha256_datei(pfad: &Path) -> Result<String, String> {
+    let mut datei = fs::File::open(pfad).map_err(|e| format!("{}: {e}", pfad.display()))?;
+    let mut h = Sha256::new();
+    let mut puffer = vec![0u8; 1024 * 1024];
+    loop {
+        let n = datei
+            .read(&mut puffer)
+            .map_err(|e| format!("{}: {e}", pfad.display()))?;
+        if n == 0 {
+            break;
+        }
+        h.update(&puffer[..n]);
+    }
+    Ok(h.finalize().iter().map(|b| format!("{b:02x}")).collect())
+}
+
+fn stat(meta: &fs::Metadata) -> (u64, i64) {
+    let mtime = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or_default();
+    (meta.len(), mtime)
+}
+
+/// Kein Glied von `rel` unter `wurzel` ist eine Verknüpfung; ein fehlendes Glied beendet
+/// die Prüfung.
+fn ohne_verknuepfung(wurzel: &Path, rel: &str) -> Result<(), String> {
+    let mut pfad = wurzel.to_path_buf();
+    for teil in rel.split('/') {
+        pfad.push(teil);
+        match fs::symlink_metadata(&pfad) {
+            Ok(m) if m.file_type().is_symlink() => {
+                return Err(format!(
+                    "{} ist eine Verknüpfung; nichts angefasst.",
+                    pfad.display()
+                ))
+            }
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => return Err(format!("{} nicht lesbar: {e}", pfad.display())),
+        }
+    }
+    Ok(())
+}
+
+/// Dateien unter den Ordnern der Rollen (relativ zum Buch-Ordner). Versteckte Einträge und
+/// Verknüpfungen werden nie gelesen; Namen, die andere Systeme nicht ablegen könnten,
+/// bleiben lokal (Hinweis).
+fn dateien_finden(buch_dir: &Path, hinweise: &mut Vec<String>) -> BTreeMap<String, fs::Metadata> {
+    fn gehen(
+        dir: &Path,
+        rel: &str,
+        tiefe: usize,
+        aus: &mut BTreeMap<String, fs::Metadata>,
+        hinweise: &mut Vec<String>,
+    ) {
+        let Ok(eintraege) = fs::read_dir(dir) else {
+            return;
+        };
+        for eintrag in eintraege.flatten() {
+            let name = eintrag.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.') {
+                continue;
+            }
+            let kind = format!("{rel}/{name}");
+            let Ok(meta) = fs::symlink_metadata(eintrag.path()) else {
+                continue;
+            };
+            if meta.file_type().is_symlink() {
+                continue;
+            }
+            if bereinigter_name(&name).ok().as_deref() != Some(name.as_str()) {
+                hinweise.push(format!("{kind}: Name wird nicht abgeglichen"));
+                continue;
+            }
+            if meta.is_dir() {
+                if tiefe < TIEFE {
+                    gehen(&eintrag.path(), &kind, tiefe + 1, aus, hinweise);
+                }
+            } else if meta.is_file() {
+                aus.insert(kind, meta);
+            }
+        }
+    }
+    let mut aus = BTreeMap::new();
+    for rolle in Rolle::ALLE {
+        let dir = buch_dir.join(rolle.ordner());
+        let echt =
+            fs::symlink_metadata(&dir).is_ok_and(|m| m.is_dir() && !m.file_type().is_symlink());
+        if echt {
+            gehen(&dir, rolle.ordner(), 1, &mut aus, hinweise);
+        }
+    }
+    aus
+}
+
+/// Konfliktname neben `rel`: `Name (Konflikt <wer>).ext`, frei nach 4.4.
+fn konflikt_rel(buch_dir: &Path, rel: &str, wer: &str) -> Result<String, String> {
+    let (ordner, name) = rel.rsplit_once('/').ok_or("Pfad ohne Ordner")?;
+    let (stamm, endung) = match name.rfind('.') {
+        Some(pos) if pos > 0 => (&name[..pos], &name[pos..]),
+        _ => (name, ""),
+    };
+    let frei = freier_name(
+        &buch_dir.join(ordner),
+        &format!("{stamm} (Konflikt {wer}){endung}"),
+    )?;
+    Ok(format!("{ordner}/{frei}"))
+}
+
+/// Eine Datei in den Papierkorb der Bibliothek legen (`.papierkorb/dateien/<buch>/<rel>`),
+/// nie überschreiben.
+fn in_papierkorb(buch_dir: &Path, buch: &str, rel: &str) -> Result<(), String> {
+    let wurzel = buch_dir.parent().ok_or("Buch-Ordner ohne Bibliothek")?;
+    let (ordner, name) = rel.rsplit_once('/').ok_or("Pfad ohne Ordner")?;
+    let ziel_dir = wurzel
+        .join(PAPIERKORB)
+        .join(PAPIERKORB_DATEIEN)
+        .join(buch)
+        .join(ordner);
+    fs::create_dir_all(&ziel_dir).map_err(|e| format!("Papierkorb: {e}"))?;
+    let frei = freier_name(&ziel_dir, name)?;
+    fs::rename(buch_dir.join(rel), ziel_dir.join(frei))
+        .map_err(|e| format!("{rel} nicht in den Papierkorb gelegt: {e}"))
+}
+
+// ---------------------------------------------------------------------------
+// Sammeln
+// ---------------------------------------------------------------------------
+
+/// Eine Datei, deren Blob das Gerät selbst bilden (und hochladen) muss.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Quelle {
+    pub pfad: PathBuf,
+    pub sha256: String,
+    pub groesse: u64,
+    pub mtime_ms: i64,
+}
+
+/// Ein Datensatz dieses Geräts. `wert` trägt `blob`, wenn er bekannt ist; sonst bildet
+/// ihn der Aufrufer aus `quelle`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Lokal {
+    pub id: String,
+    pub wert: Value,
+    pub quelle: Option<Quelle>,
+}
+
+#[derive(Default, Debug)]
+pub struct Sammlung {
+    pub lokal: Vec<Lokal>,
+    /// IDs, die es gibt, die in diesem Lauf aber nicht gesendet werden (neuere Version,
+    /// Prüfsumme über dem Budget). Sie gelten nicht als gelöscht.
+    pub vorhanden: Vec<String>,
+    pub hinweise: Vec<String>,
+}
+
+fn datensatz(buch: &str, rel: &str, e: &Eintrag) -> Option<Value> {
+    let rolle = Rolle::aus_pfad(rel)?;
+    let mut m = e.extra.clone();
+    m.insert("v".into(), json!(VERSION));
+    m.insert("id".into(), json!(datei_id(buch, rolle, rel)));
+    m.insert("book".into(), json!(buch));
+    m.insert("edition".into(), json!(e.edition));
+    m.insert("role".into(), json!(rolle.name()));
+    m.insert("path".into(), json!(rel));
+    m.insert("updated".into(), json!(e.updated));
+    m.insert("device".into(), json!(e.device));
+    m.insert("deleted".into(), json!(e.deleted));
+    m.remove("blob");
+    let blob_gilt = e.erwartet || (!e.sha256.is_empty() && e.blob_sha == e.sha256);
+    if !e.deleted && blob_gilt {
+        if let Some(b) = &e.blob {
+            m.insert("blob".into(), b.clone());
+        }
+    }
+    Some(Value::Object(m))
+}
+
+/// Den Stand eines Buchs fortschreiben und seine Datensätze liefern. Neue und geänderte
+/// Dateien bekommen `updated` (Änderungszeit, mindestens eins mehr als zuvor) und dieses
+/// Gerät; verschwundene werden Grabsteine, Grabsteine über 30 Tage verfallen. `budget`
+/// begrenzt die Bytes, die für Prüfsummen neu gelesen werden. Der Aufrufer hält die
+/// Bibliotheks-Sperre.
+pub fn sammeln(
+    buch_dir: &Path,
+    buch: &str,
+    geraet: &str,
+    jetzt_ms: f64,
+    budget: &mut u64,
+) -> Result<Sammlung, String> {
+    let mut stand = stand_laden(buch_dir)?;
+    let vorher = serde_json::to_value(&stand).map_err(|e| e.to_string())?;
+    let mut aus = Sammlung::default();
+    let gefunden = dateien_finden(buch_dir, &mut aus.hinweise);
+    let mut zurueck: BTreeSet<String> = BTreeSet::new();
+
+    for (rel, meta) in &gefunden {
+        let Some(rolle) = Rolle::aus_pfad(rel) else {
+            continue;
+        };
+        let alt = stand.dateien.get(rel).cloned();
+        if alt.as_ref().is_some_and(|e| e.erwartet) {
+            continue; // die neue Fassung kommt noch; die alte bleibt bis dahin liegen
+        }
+        let (groesse, mtime_ms) = stat(meta);
+        let bekannt = alt
+            .as_ref()
+            .filter(|e| !e.deleted && e.groesse == groesse && e.mtime_ms == mtime_ms)
+            .filter(|e| !e.sha256.is_empty())
+            .map(|e| e.sha256.clone());
+        let sha = match bekannt {
+            Some(s) => s,
+            None => {
+                if groesse > *budget {
+                    zurueck.insert(rel.clone());
+                    continue;
+                }
+                *budget -= groesse;
+                match sha256_datei(&buch_dir.join(rel)) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        aus.hinweise.push(e);
+                        zurueck.insert(rel.clone());
+                        continue;
+                    }
+                }
+            }
+        };
+        let eintrag = match alt {
+            Some(e) if !e.deleted && e.sha256 == sha => Eintrag {
+                groesse,
+                mtime_ms,
+                ..e
+            },
+            alt => {
+                let zuvor = alt.as_ref().map(|e| e.updated).unwrap_or(f64::MIN);
+                Eintrag {
+                    sha256: sha,
+                    groesse,
+                    mtime_ms,
+                    updated: (mtime_ms as f64).max(zuvor + 1.0),
+                    device: geraet.to_string(),
+                    edition: alt
+                        .as_ref()
+                        .map(|e| e.edition.clone())
+                        .filter(|f| !f.is_empty())
+                        .unwrap_or_else(|| fassung_aus_pfad(rolle, rel)),
+                    ..Eintrag::default()
+                }
+            }
+        };
+        stand.dateien.insert(rel.clone(), eintrag);
+    }
+
+    let mut weg: Vec<String> = Vec::new();
+    for (rel, e) in stand.dateien.iter_mut() {
+        if gefunden.contains_key(rel) || e.erwartet || zurueck.contains(rel) {
+            continue;
+        }
+        if !e.deleted {
+            *e = Eintrag {
+                updated: jetzt_ms.max(e.updated + 1.0),
+                device: geraet.to_string(),
+                edition: e.edition.clone(),
+                deleted: true,
+                ..Eintrag::default()
+            };
+        } else if jetzt_ms - e.updated > GRABSTEIN_MS {
+            weg.push(rel.clone());
+        }
+    }
+    for rel in weg {
+        stand.dateien.remove(&rel);
+    }
+
+    for rel in zurueck.iter().filter(|r| !stand.dateien.contains_key(*r)) {
+        if let Some(rolle) = Rolle::aus_pfad(rel) {
+            aus.vorhanden.push(datei_id(buch, rolle, rel));
+        }
+    }
+    for (rel, e) in &stand.dateien {
+        let Some(rolle) = Rolle::aus_pfad(rel) else {
+            continue;
+        };
+        let id = datei_id(buch, rolle, rel);
+        if zurueck.contains(rel) {
+            aus.vorhanden.push(id);
+            continue;
+        }
+        let Some(wert) = datensatz(buch, rel, e) else {
+            continue;
+        };
+        let quelle = (!e.deleted && !e.erwartet && wert.get("blob").is_none()).then(|| Quelle {
+            pfad: buch_dir.join(rel),
+            sha256: e.sha256.clone(),
+            groesse: e.groesse,
+            mtime_ms: e.mtime_ms,
+        });
+        aus.lokal.push(Lokal { id, wert, quelle });
+    }
+    aus.vorhanden.extend(stand.fremd.keys().cloned());
+
+    if serde_json::to_value(&stand).map_err(|e| e.to_string())? != vorher {
+        stand_sichern(buch_dir, &mut stand)?;
+    }
+    Ok(aus)
+}
+
+// ---------------------------------------------------------------------------
+// Anwenden
+// ---------------------------------------------------------------------------
+
+/// Fehler beim Anwenden: unbrauchbarer Datensatz (überspringen) oder Ablage gerade nicht
+/// beschreibbar (nächster Lauf).
+#[derive(Debug, PartialEq)]
+pub enum AnwendFehler {
+    Ungueltig(String),
+    Wiederholen(String),
+}
+
+impl From<String> for AnwendFehler {
+    fn from(s: String) -> Self {
+        AnwendFehler::Wiederholen(s)
+    }
+}
+
+/// Ein empfangener Datensatz, geprüft.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Fremd {
+    pub book: String,
+    pub rel: String,
+    pub edition: String,
+    pub updated: f64,
+    pub device: String,
+    pub deleted: bool,
+    pub blob: Option<Value>,
+    extra: Map<String, Value>,
+}
+
+const BEKANNTE_FELDER: [&str; 10] = [
+    "v", "id", "book", "edition", "role", "path", "blob", "updated", "device", "deleted",
+];
+
+/// Version eines Datensatzes (fehlt sie, ist er ungültig).
+pub fn version(wert: &Value) -> Option<u64> {
+    wert.get("v").and_then(Value::as_u64)
+}
+
+/// Einen Datensatz der bekannten Version prüfen: ID passt zu Buch, Rolle und Pfad; der
+/// Pfad ist sicher; ein lebender Datensatz trägt einen Blob.
+pub fn pruefen(id: &str, wert: &Value) -> Result<Fremd, String> {
+    let m = wert.as_object().ok_or("Datensatz ist kein Objekt")?;
+    let text = |k: &str| m.get(k).and_then(Value::as_str).map(str::to_string);
+    if version(wert) != Some(VERSION) {
+        return Err("Datensatz ohne gültige Version".into());
+    }
+    let book = text("book").ok_or("Datensatz ohne Buch")?;
+    let rel = text("path").ok_or("Datensatz ohne Pfad")?;
+    let rolle = sicherer_pfad(&rel)?;
+    if text("role").as_deref() != Some(rolle.name()) {
+        return Err("Rolle passt nicht zum Pfad".into());
+    }
+    if text("id").as_deref() != Some(id) || datei_id(&book, rolle, &rel) != id {
+        return Err("ID passt nicht zu Buch und Pfad".into());
+    }
+    let updated = m
+        .get("updated")
+        .and_then(Value::as_f64)
+        .filter(|u| u.is_finite())
+        .ok_or("Datensatz ohne Zeit")?;
+    let device = text("device")
+        .filter(|d| !d.is_empty())
+        .ok_or("Datensatz ohne Gerät")?;
+    let deleted = m.get("deleted").and_then(Value::as_bool).unwrap_or(false);
+    let blob = m.get("blob").filter(|b| !b.is_null()).cloned();
+    let blob_gut = |b: &Value| {
+        b.get("blob")
+            .and_then(Value::as_str)
+            .is_some_and(|s| !s.is_empty())
+            && b.get("size").and_then(Value::as_u64).is_some()
+    };
+    if !deleted && !blob.as_ref().is_some_and(blob_gut) {
+        return Err("Datensatz ohne Blob".into());
+    }
+    let extra = m
+        .iter()
+        .filter(|(k, _)| !BEKANNTE_FELDER.contains(&k.as_str()))
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    Ok(Fremd {
+        book,
+        rel,
+        edition: text("edition").unwrap_or_default(),
+        updated,
+        device,
+        deleted,
+        blob: if deleted { None } else { blob },
+        extra,
+    })
+}
+
+/// Gewinnt `a` gegen `b`? Neueres `updated`, bei Gleichstand die größere Geräte-ID.
+fn gewinnt(a: (f64, &str), b: (f64, &str)) -> bool {
+    a.0 > b.0 || (a.0 == b.0 && a.1 > b.1)
+}
+
+fn kurz(geraet: &str) -> String {
+    format!("Gerät {}", geraet.chars().take(6).collect::<String>())
+}
+
+/// Einen empfangenen Datensatz anwenden. `lokal_offen`: der lokale Stand dieser Datei
+/// wurde seit dem letzten Abgleich geändert (Ledger). Dann entscheidet [`gewinnt`]; die
+/// unterlegene Fassung bleibt als Konfliktkopie. Neuere Versionen werden nur aufbewahrt.
+/// Der Aufrufer hält die Bibliotheks-Sperre. Liefert, ob sich lokal etwas geändert hat.
+pub fn anwenden(
+    buch_dir: &Path,
+    buch: &str,
+    id: &str,
+    wert: &Value,
+    lokal_offen: bool,
+    geraet_name: &str,
+) -> Result<bool, AnwendFehler> {
+    let mut stand = stand_laden(buch_dir)?;
+    if version(wert).is_some_and(|v| v > VERSION) {
+        if !gueltige_id(id) || wert.get("book").and_then(Value::as_str) != Some(buch) {
+            return Err(AnwendFehler::Ungueltig(
+                "Datensatz neuerer Version passt nicht".into(),
+            ));
+        }
+        if stand.fremd.get(id) == Some(wert) {
+            return Ok(false);
+        }
+        stand.fremd.insert(id.to_string(), wert.clone());
+        stand_sichern(buch_dir, &mut stand)?;
+        return Ok(true);
+    }
+    let r = pruefen(id, wert).map_err(AnwendFehler::Ungueltig)?;
+    if r.book != buch {
+        return Err(AnwendFehler::Ungueltig(
+            "Datensatz gehört zu einem anderen Buch".into(),
+        ));
+    }
+    ohne_verknuepfung(buch_dir, &r.rel)?;
+    let fremd_weg = stand.fremd.remove(id).is_some();
+    let alt = stand.dateien.get(&r.rel).cloned();
+    if let Some(e) = &alt {
+        if datensatz(buch, &r.rel, e).as_ref() == Some(wert) {
+            if fremd_weg {
+                stand_sichern(buch_dir, &mut stand)?;
+            }
+            return Ok(false);
+        }
+    }
+    let mut ersetzt_sha = alt
+        .as_ref()
+        .filter(|e| !e.deleted && !e.erwartet)
+        .map(|e| e.sha256.clone())
+        .unwrap_or_default();
+
+    if let (true, Some(e)) = (lokal_offen, &alt) {
+        if gewinnt((e.updated, &e.device), (r.updated, &r.device)) {
+            // Lokal gewinnt: der lokale Stand bleibt und geht hinaus; der fremde Inhalt
+            // kommt als Konfliktkopie daneben.
+            if let (false, Some(blob)) = (r.deleted, &r.blob) {
+                let kopie = konflikt_rel(buch_dir, &r.rel, &kurz(&r.device))?;
+                stand.dateien.insert(
+                    kopie,
+                    Eintrag {
+                        updated: r.updated,
+                        device: r.device.clone(),
+                        edition: r.edition.clone(),
+                        blob: Some(blob.clone()),
+                        erwartet: true,
+                        ..Eintrag::default()
+                    },
+                );
+            }
+            stand_sichern(buch_dir, &mut stand)?;
+            return Ok(true);
+        }
+        // Fremd gewinnt: die lokale Fassung beiseitelegen, sie wird zur eigenen Datei.
+        let pfad = buch_dir.join(&r.rel);
+        if !e.deleted && !e.erwartet && pfad.is_file() {
+            let kopie = konflikt_rel(buch_dir, &r.rel, geraet_name)?;
+            fs::rename(&pfad, buch_dir.join(&kopie))
+                .map_err(|err| format!("Konfliktkopie nicht anlegbar: {err}"))?;
+            ersetzt_sha.clear();
+        }
+    }
+
+    let pfad = buch_dir.join(&r.rel);
+    let neu = if r.deleted {
+        if !ersetzt_sha.is_empty() && pfad.is_file() {
+            // Nur einen unveränderten Inhalt wegräumen; ein frisch geänderter bleibt und
+            // wird beim nächsten Sammeln als eigene Änderung erkannt.
+            if sha256_datei(&pfad)? == ersetzt_sha {
+                in_papierkorb(buch_dir, buch, &r.rel)?;
+            }
+        }
+        Eintrag {
+            updated: r.updated,
+            device: r.device.clone(),
+            edition: r.edition.clone(),
+            deleted: true,
+            extra: r.extra.clone(),
+            ..Eintrag::default()
+        }
+    } else {
+        let gleicher_inhalt = alt.as_ref().filter(|e| {
+            !e.deleted && !e.erwartet && !ersetzt_sha.is_empty() && e.blob_sha == e.sha256
+        });
+        match gleicher_inhalt {
+            Some(e) if e.blob == r.blob => Eintrag {
+                updated: r.updated,
+                device: r.device.clone(),
+                edition: r.edition.clone(),
+                extra: r.extra.clone(),
+                ..e.clone()
+            },
+            _ => Eintrag {
+                updated: r.updated,
+                device: r.device.clone(),
+                edition: r.edition.clone(),
+                blob: r.blob.clone(),
+                erwartet: true,
+                ersetzt_sha,
+                extra: r.extra.clone(),
+                ..Eintrag::default()
+            },
+        }
+    };
+    stand.dateien.insert(r.rel.clone(), neu);
+    stand_sichern(buch_dir, &mut stand)?;
+    Ok(true)
+}
+
+/// Der Hub hat den Datensatz gelöscht (Grabstein verfallen, Buch weg): den Eintrag
+/// vergessen; eine unveränderte Datei geht in den Papierkorb.
+pub fn vergessen(buch_dir: &Path, buch: &str, id: &str) -> Result<bool, String> {
+    let mut stand = stand_laden(buch_dir)?;
+    let mut geaendert = stand.fremd.remove(id).is_some();
+    let treffer: Vec<String> = stand
+        .dateien
+        .keys()
+        .filter(|rel| Rolle::aus_pfad(rel).is_some_and(|r| datei_id(buch, r, rel) == id))
+        .cloned()
+        .collect();
+    for rel in treffer {
+        let Some(e) = stand.dateien.remove(&rel) else {
+            continue;
+        };
+        geaendert = true;
+        let pfad = buch_dir.join(&rel);
+        if !e.deleted && !e.erwartet && pfad.is_file() && sha256_datei(&pfad)? == e.sha256 {
+            in_papierkorb(buch_dir, buch, &rel)?;
+        }
+    }
+    if geaendert {
+        stand_sichern(buch_dir, &mut stand)?;
+    }
+    Ok(geaendert)
+}
+
+// ---------------------------------------------------------------------------
+// Herunterladen
+// ---------------------------------------------------------------------------
+
+/// Eine Datei, deren Inhalt ein anderes Gerät gemeldet hat und die hier fehlt.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Erwartet {
+    pub rel: String,
+    pub blob: Value,
+}
+
+pub fn erwartet(buch_dir: &Path) -> Result<Vec<Erwartet>, String> {
+    Ok(stand_laden(buch_dir)?
+        .dateien
+        .into_iter()
+        .filter(|(_, e)| e.erwartet)
+        .filter_map(|(rel, e)| e.blob.map(|blob| Erwartet { rel, blob }))
+        .collect())
+}
+
+/// Wohin ein Download zuerst geschrieben wird.
+pub fn zwischenpfad(buch_dir: &Path, blob_id: &str) -> PathBuf {
+    buch_dir
+        .join(ZWISCHENABLAGE)
+        .join(format!("{blob_id}.part"))
+}
+
+/// Eine geladene Datei ablegen. Ist der Eintrag inzwischen überholt, wird sie verworfen
+/// (`Ok(None)`). Eine Datei am Ziel, die nicht der erwartete Vorgänger ist (seither lokal
+/// geändert oder neu), bleibt als Konfliktkopie; der Vorgänger geht in den Papierkorb.
+/// Der Aufrufer hält die Bibliotheks-Sperre.
+pub fn ablegen(
+    buch_dir: &Path,
+    buch: &str,
+    rel: &str,
+    blob: &Value,
+    geladen: &Path,
+    geraet_name: &str,
+) -> Result<Option<PathBuf>, String> {
+    let mut stand = stand_laden(buch_dir)?;
+    let Some(e) = stand.dateien.get(rel).cloned() else {
+        let _ = fs::remove_file(geladen);
+        return Ok(None);
+    };
+    if !e.erwartet || e.blob.as_ref() != Some(blob) {
+        let _ = fs::remove_file(geladen);
+        return Ok(None);
+    }
+    sicherer_pfad(rel)?;
+    ohne_verknuepfung(buch_dir, rel)?;
+    let ziel = buch_dir.join(rel);
+    let sha = sha256_datei(geladen)?;
+    if ziel.is_file() {
+        if !e.ersetzt_sha.is_empty() && sha256_datei(&ziel)? == e.ersetzt_sha {
+            in_papierkorb(buch_dir, buch, rel)?;
+        } else {
+            let kopie = konflikt_rel(buch_dir, rel, geraet_name)?;
+            fs::rename(&ziel, buch_dir.join(kopie))
+                .map_err(|err| format!("Konfliktkopie nicht anlegbar: {err}"))?;
+        }
+    }
+    if let Some(dir) = ziel.parent() {
+        fs::create_dir_all(dir).map_err(|err| format!("{}: {err}", dir.display()))?;
+    }
+    fs::rename(geladen, &ziel).map_err(|err| format!("{rel} nicht ablegbar: {err}"))?;
+    let meta = fs::metadata(&ziel).map_err(|err| format!("{rel}: {err}"))?;
+    let (groesse, mtime_ms) = stat(&meta);
+    stand.dateien.insert(
+        rel.to_string(),
+        Eintrag {
+            sha256: sha.clone(),
+            groesse,
+            mtime_ms,
+            blob_sha: sha,
+            erwartet: false,
+            ersetzt_sha: String::new(),
+            ..e
+        },
+    );
+    stand_sichern(buch_dir, &mut stand)?;
+    Ok(Some(ziel))
+}
+
+// ---------------------------------------------------------------------------
+// Parkplatz: Datensätze, deren Buch (noch) fehlt
+// ---------------------------------------------------------------------------
+
+/// Einen Datensatz aufbewahren, bis sein Buch ankommt.
+pub fn parken(bibliothek: &Path, id: &str, wert: &Value) -> Result<(), String> {
+    if !gueltige_id(id) {
+        return Err(format!("Ungültige Datensatz-ID {id}"));
+    }
+    let bytes = serde_json::to_vec(wert).map_err(|e| e.to_string())?;
+    schreibe_atomar(
+        &bibliothek.join(PARKPLATZ).join(format!("{id}.json")),
+        &bytes,
+    )
+}
+
+/// Geparkte Datensätze (ID, Wert); unlesbare werden übergangen.
+pub fn geparkt(bibliothek: &Path) -> Vec<(String, Value)> {
+    let Ok(eintraege) = fs::read_dir(bibliothek.join(PARKPLATZ)) else {
+        return Vec::new();
+    };
+    let mut aus: Vec<(String, Value)> = eintraege
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let id = name.strip_suffix(".json")?.to_string();
+            let wert = serde_json::from_slice(&fs::read(e.path()).ok()?).ok()?;
+            gueltige_id(&id).then_some((id, wert))
+        })
+        .collect();
+    aus.sort_by(|a, b| a.0.cmp(&b.0));
+    aus
+}
+
+pub fn ausparken(bibliothek: &Path, id: &str) -> Result<(), String> {
+    match fs::remove_file(bibliothek.join(PARKPLATZ).join(format!("{id}.json"))) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!("Geparkter Datensatz nicht entfernbar: {e}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const ICH: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const DU: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    const TAG: f64 = 24.0 * 60.0 * 60.0 * 1000.0;
+
+    fn buch(name: &str) -> PathBuf {
+        let wurzel = std::env::temp_dir().join(format!("buch-dateien-{name}"));
+        let _ = fs::remove_dir_all(&wurzel);
+        let dir = wurzel.join("library").join("book_1");
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn schreiben(dir: &Path, rel: &str, inhalt: &[u8]) {
+        let p = dir.join(rel);
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        fs::write(p, inhalt).unwrap();
+    }
+
+    fn alles(dir: &Path, jetzt: f64) -> Sammlung {
+        sammeln(dir, "book_1", ICH, jetzt, &mut u64::MAX.clone()).unwrap()
+    }
+
+    fn nach_pfad<'a>(s: &'a Sammlung, rel: &str) -> &'a Lokal {
+        s.lokal
+            .iter()
+            .find(|l| l.wert["path"] == rel)
+            .unwrap_or_else(|| panic!("{rel} fehlt"))
+    }
+
+    fn blob(n: u8) -> Value {
+        json!({ "blob": format!("{n:02x}").repeat(32), "size": 5, "chunks": 1 })
+    }
+
+    fn fremder(rel: &str, updated: f64, inhalt: Option<Value>) -> (String, Value) {
+        let rolle = Rolle::aus_pfad(rel).unwrap();
+        let id = datei_id("book_1", rolle, rel);
+        let mut v = json!({
+            "v": 1, "id": id, "book": "book_1", "edition": "", "role": rolle.name(),
+            "path": rel, "updated": updated, "device": DU, "deleted": inhalt.is_none(),
+        });
+        if let Some(b) = inhalt {
+            v["blob"] = b;
+        }
+        (id, v)
+    }
+
+    /// Lädt jeden erwarteten Inhalt „herunter“ (hier: schreibt `inhalt`) und legt ihn ab.
+    fn laden(dir: &Path, inhalt: &[u8]) -> Vec<PathBuf> {
+        erwartet(dir)
+            .unwrap()
+            .into_iter()
+            .filter_map(|e| {
+                let tmp = zwischenpfad(dir, "x");
+                fs::create_dir_all(tmp.parent().unwrap()).unwrap();
+                fs::write(&tmp, inhalt).unwrap();
+                ablegen(dir, "book_1", &e.rel, &e.blob, &tmp, "Mein PC").unwrap()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn id_ist_stabil_und_entspricht_der_spec() {
+        assert_eq!(
+            datei_id("book_1", Rolle::Anhang, "anhaenge/Cashflow-Tabelle.xlsx"),
+            "bf_ce4f353fbfa464d98f752e46a581809c114b23c2"
+        );
+        assert!(gueltige_id("bf_ce4f353fbfa464d98f752e46a581809c114b23c2"));
+        assert!(!gueltige_id("bf_../x"));
+    }
+
+    #[test]
+    fn pfade_werden_streng_geprueft() {
+        assert_eq!(sicherer_pfad("notizen/a.md"), Ok(Rolle::Notiz));
+        assert_eq!(sicherer_pfad("anhaenge/Ordner/b.pdf"), Ok(Rolle::Anhang));
+        for schlecht in [
+            "notizen",
+            "notizen/",
+            "/notizen/a.md",
+            "notizen/../buch.json",
+            "notizen/.versteckt",
+            "notizen/a:b.md",
+            "notizen/CON.md",
+            "fassungen/x.md",
+            "notizen\\a.md",
+            "notizen/a/b/c/d/e.md",
+        ] {
+            assert!(sicherer_pfad(schlecht).is_err(), "{schlecht}");
+        }
+    }
+
+    #[test]
+    fn sammeln_findet_dateien_und_merkt_aenderungen() {
+        let dir = buch("sammeln");
+        schreiben(&dir, "anhaenge/Tabelle.xlsx", b"eins");
+        schreiben(&dir, "notizen/Gedanken.md", b"# Notiz");
+        schreiben(&dir, "transkript/page_7.md", b"Text");
+        schreiben(&dir, "notizen/.versteckt", b"x");
+        schreiben(&dir, "fassungen/page_7/state.json", b"{}");
+        let s = alles(&dir, 1000.0);
+        assert_eq!(s.lokal.len(), 3, "{:?}", s.lokal);
+        let t = nach_pfad(&s, "transkript/page_7.md");
+        assert_eq!(t.wert["edition"], "page_7");
+        assert_eq!(t.wert["role"], "transkript");
+        assert_eq!(t.wert["device"], ICH);
+        assert!(t.wert.get("blob").is_none() && t.quelle.is_some());
+        assert_eq!(
+            t.id,
+            datei_id("book_1", Rolle::Transkript, "transkript/page_7.md")
+        );
+        // Unverändert: gleiche Datensätze, der Stand wird nicht neu geschrieben.
+        let zeit = fs::metadata(dir.join(STAND)).unwrap().modified().unwrap();
+        let s2 = alles(&dir, 2000.0);
+        assert_eq!(s.lokal, s2.lokal);
+        assert_eq!(
+            fs::metadata(dir.join(STAND)).unwrap().modified().unwrap(),
+            zeit
+        );
+        // Geändert: neues `updated`, größer als zuvor.
+        let vorher = nach_pfad(&s, "anhaenge/Tabelle.xlsx").wert["updated"]
+            .as_f64()
+            .unwrap();
+        schreiben(&dir, "anhaenge/Tabelle.xlsx", b"zwei!");
+        let s3 = alles(&dir, 3000.0);
+        let neu = nach_pfad(&s3, "anhaenge/Tabelle.xlsx");
+        assert!(neu.wert["updated"].as_f64().unwrap() > vorher);
+        assert_ne!(
+            neu.quelle.as_ref().unwrap().sha256,
+            nach_pfad(&s, "anhaenge/Tabelle.xlsx")
+                .quelle
+                .as_ref()
+                .unwrap()
+                .sha256
+        );
+    }
+
+    #[test]
+    fn budget_haelt_zurueck_ohne_grabstein() {
+        let dir = buch("budget");
+        schreiben(&dir, "anhaenge/gross.bin", &[7u8; 64]);
+        let mut budget = 10;
+        let s = sammeln(&dir, "book_1", ICH, 1.0, &mut budget).unwrap();
+        assert!(s.lokal.is_empty());
+        assert_eq!(
+            s.vorhanden,
+            vec![datei_id("book_1", Rolle::Anhang, "anhaenge/gross.bin")]
+        );
+    }
+
+    #[test]
+    fn geloeschte_datei_wird_grabstein_und_verfaellt_nach_30_tagen() {
+        let dir = buch("grabstein");
+        schreiben(&dir, "notizen/a.md", b"a");
+        // Echte Uhrzeit: `updated` einer neuen Datei ist ihre Änderungszeit.
+        let jetzt = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as f64
+            + 1000.0;
+        alles(&dir, jetzt);
+        fs::remove_file(dir.join("notizen/a.md")).unwrap();
+        let s = alles(&dir, jetzt + TAG);
+        let g = nach_pfad(&s, "notizen/a.md");
+        assert_eq!(g.wert["deleted"], true);
+        assert_eq!(g.wert["updated"], json!(jetzt + TAG));
+        assert!(g.wert.get("blob").is_none() && g.quelle.is_none());
+        assert_eq!(alles(&dir, jetzt + 30.0 * TAG).lokal.len(), 1);
+        assert!(alles(&dir, jetzt + 31.5 * TAG).lokal.is_empty());
+    }
+
+    #[test]
+    fn empfangene_datei_wird_geladen_und_ist_danach_nicht_geaendert() {
+        let dir = buch("empfang");
+        let (id, wert) = fremder("anhaenge/Neu.pdf", 5000.0, Some(blob(1)));
+        assert_eq!(
+            anwenden(&dir, "book_1", &id, &wert, false, "Mein PC"),
+            Ok(true)
+        );
+        // Vor dem Laden: derselbe Datensatz (kein Echo als Änderung).
+        assert_eq!(
+            nach_pfad(&alles(&dir, 6000.0), "anhaenge/Neu.pdf").wert,
+            wert
+        );
+        let abgelegt = laden(&dir, b"inhalt");
+        assert_eq!(abgelegt, vec![dir.join("anhaenge/Neu.pdf")]);
+        assert_eq!(fs::read(dir.join("anhaenge/Neu.pdf")).unwrap(), b"inhalt");
+        let s = alles(&dir, 7000.0);
+        let l = nach_pfad(&s, "anhaenge/Neu.pdf");
+        assert_eq!(l.wert, wert, "nach dem Laden gleich dem empfangenen");
+        assert!(l.quelle.is_none());
+        // Noch einmal angewendet: nichts zu tun.
+        assert_eq!(
+            anwenden(&dir, "book_1", &id, &wert, false, "Mein PC"),
+            Ok(false)
+        );
+    }
+
+    #[test]
+    fn konflikt_lokal_neuer_behaelt_die_fremde_fassung_als_kopie() {
+        let dir = buch("konflikt-lokal");
+        schreiben(&dir, "notizen/a.md", b"lokal");
+        let lokal = alles(&dir, 1.0);
+        let lokal_zeit = nach_pfad(&lokal, "notizen/a.md").wert["updated"]
+            .as_f64()
+            .unwrap();
+        let (id, wert) = fremder("notizen/a.md", lokal_zeit - 10.0, Some(blob(2)));
+        assert_eq!(
+            anwenden(&dir, "book_1", &id, &wert, true, "Mein PC"),
+            Ok(true)
+        );
+        assert_eq!(fs::read(dir.join("notizen/a.md")).unwrap(), b"lokal");
+        let kopie = format!("notizen/a (Konflikt Gerät {}).md", &DU[..6]);
+        laden(&dir, b"fremd");
+        assert_eq!(fs::read(dir.join(&kopie)).unwrap(), b"fremd");
+        let s = alles(&dir, 2.0);
+        assert_eq!(nach_pfad(&s, "notizen/a.md").wert["device"], ICH);
+        assert_eq!(nach_pfad(&s, &kopie).wert["blob"], blob(2));
+    }
+
+    #[test]
+    fn konflikt_fremd_neuer_legt_die_lokale_fassung_beiseite() {
+        let dir = buch("konflikt-fremd");
+        schreiben(&dir, "notizen/a.md", b"lokal");
+        let lokal = alles(&dir, 1.0);
+        let lokal_zeit = nach_pfad(&lokal, "notizen/a.md").wert["updated"]
+            .as_f64()
+            .unwrap();
+        let (id, wert) = fremder("notizen/a.md", lokal_zeit + 10.0, Some(blob(3)));
+        assert_eq!(
+            anwenden(&dir, "book_1", &id, &wert, true, "Mein PC"),
+            Ok(true)
+        );
+        assert_eq!(
+            fs::read(dir.join("notizen/a (Konflikt Mein PC).md")).unwrap(),
+            b"lokal"
+        );
+        laden(&dir, b"fremd");
+        assert_eq!(fs::read(dir.join("notizen/a.md")).unwrap(), b"fremd");
+        let s = alles(&dir, 2.0);
+        assert_eq!(nach_pfad(&s, "notizen/a.md").wert, wert);
+        assert_eq!(
+            nach_pfad(&s, "notizen/a (Konflikt Mein PC).md").wert["device"],
+            ICH
+        );
+    }
+
+    #[test]
+    fn gleichstand_entscheidet_die_groessere_geraete_id() {
+        assert!(gewinnt((5.0, DU), (5.0, ICH)));
+        assert!(!gewinnt((5.0, ICH), (5.0, DU)));
+        assert!(gewinnt((6.0, ICH), (5.0, DU)));
+    }
+
+    #[test]
+    fn fremder_grabstein_legt_unveraenderte_datei_in_den_papierkorb() {
+        let dir = buch("papierkorb");
+        schreiben(&dir, "anhaenge/x.txt", b"x");
+        alles(&dir, 1.0);
+        let (id, wert) = fremder("anhaenge/x.txt", 9.0 * TAG, None);
+        assert_eq!(
+            anwenden(&dir, "book_1", &id, &wert, false, "Mein PC"),
+            Ok(true)
+        );
+        assert!(!dir.join("anhaenge/x.txt").exists());
+        let korb = dir
+            .parent()
+            .unwrap()
+            .join(".papierkorb/dateien/book_1/anhaenge/x.txt");
+        assert_eq!(fs::read(korb).unwrap(), b"x");
+        let s = alles(&dir, 9.5 * TAG);
+        assert_eq!(nach_pfad(&s, "anhaenge/x.txt").wert, wert);
+    }
+
+    #[test]
+    fn hub_loeschung_vergisst_den_eintrag() {
+        let dir = buch("vergessen");
+        schreiben(&dir, "anhaenge/y.txt", b"y");
+        alles(&dir, 1.0);
+        let id = datei_id("book_1", Rolle::Anhang, "anhaenge/y.txt");
+        assert_eq!(vergessen(&dir, "book_1", &id), Ok(true));
+        assert!(!dir.join("anhaenge/y.txt").exists());
+        assert!(dir
+            .parent()
+            .unwrap()
+            .join(".papierkorb/dateien/book_1/anhaenge/y.txt")
+            .is_file());
+        assert_eq!(vergessen(&dir, "book_1", &id), Ok(false));
+    }
+
+    #[test]
+    fn neuere_version_wird_nur_aufbewahrt() {
+        let dir = buch("version");
+        let (id, mut wert) = fremder("anhaenge/z.bin", 1.0, Some(blob(4)));
+        wert["v"] = json!(2);
+        wert["neu"] = json!("etwas");
+        assert_eq!(
+            anwenden(&dir, "book_1", &id, &wert, false, "Mein PC"),
+            Ok(true)
+        );
+        let s = alles(&dir, 2.0);
+        assert!(s.lokal.is_empty());
+        assert_eq!(s.vorhanden, vec![id.clone()]);
+        assert!(erwartet(&dir).unwrap().is_empty());
+        assert_eq!(
+            anwenden(&dir, "book_1", &id, &wert, false, "Mein PC"),
+            Ok(false)
+        );
+    }
+
+    #[test]
+    fn unbekannte_felder_gehen_unveraendert_weiter() {
+        let dir = buch("extra");
+        let (id, mut wert) = fremder("notizen/e.md", 1.0, Some(blob(5)));
+        wert["farbe"] = json!("blau");
+        anwenden(&dir, "book_1", &id, &wert, false, "Mein PC").unwrap();
+        laden(&dir, b"e");
+        assert_eq!(nach_pfad(&alles(&dir, 2.0), "notizen/e.md").wert, wert);
+    }
+
+    #[test]
+    fn ungueltige_datensaetze_werden_abgewiesen() {
+        let dir = buch("ungueltig");
+        let (id, wert) = fremder("notizen/a.md", 1.0, Some(blob(6)));
+        let falsch = |f: &dyn Fn(&mut Value)| {
+            let mut w = wert.clone();
+            f(&mut w);
+            anwenden(&dir, "book_1", &id, &w, false, "Mein PC")
+        };
+        for r in [
+            falsch(&|w| w["path"] = json!("notizen/../buch.json")),
+            falsch(&|w| w["role"] = json!("anhang")),
+            falsch(&|w| w["book"] = json!("book_2")),
+            falsch(&|w| w["v"] = json!(0)),
+            falsch(&|w| {
+                w.as_object_mut().unwrap().remove("blob");
+            }),
+            falsch(&|w| w["device"] = json!("")),
+        ] {
+            assert!(matches!(r, Err(AnwendFehler::Ungueltig(_))), "{r:?}");
+        }
+        assert!(erwartet(&dir).unwrap().is_empty());
+    }
+
+    #[test]
+    fn lokale_aenderung_waehrend_des_ladens_bleibt_als_kopie() {
+        let dir = buch("ablegen-konflikt");
+        schreiben(&dir, "notizen/b.md", b"alt");
+        alles(&dir, 1.0);
+        let (id, wert) = fremder("notizen/b.md", 9.0e12, Some(blob(7)));
+        anwenden(&dir, "book_1", &id, &wert, false, "Mein PC").unwrap();
+        schreiben(&dir, "notizen/b.md", b"inzwischen lokal");
+        laden(&dir, b"neu");
+        assert_eq!(fs::read(dir.join("notizen/b.md")).unwrap(), b"neu");
+        assert_eq!(
+            fs::read(dir.join("notizen/b (Konflikt Mein PC).md")).unwrap(),
+            b"inzwischen lokal"
+        );
+    }
+
+    #[test]
+    fn parkplatz_bewahrt_auf_bis_das_buch_kommt() {
+        let dir = buch("parken");
+        let bib = dir.parent().unwrap();
+        let (id, wert) = fremder("notizen/p.md", 1.0, Some(blob(8)));
+        parken(bib, &id, &wert).unwrap();
+        assert!(parken(bib, "../x", &wert).is_err());
+        assert_eq!(geparkt(bib), vec![(id.clone(), wert)]);
+        ausparken(bib, &id).unwrap();
+        assert!(geparkt(bib).is_empty());
+    }
+}
