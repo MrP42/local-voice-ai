@@ -215,8 +215,8 @@ Kandidaten sind Seiten aus lese- **oder** projektfreigegebenen Abschnitten, dere
 
 ### 5.3 Abbildung auf die Zeitachse
 
-`at_ms = blockzeit − besprechungsbeginn` (Wanduhr der Aufnahme `started_at`), geklemmt auf `[0, Dauer]`, sonst
-`None` („vor/nach der Besprechung“). Die Blöcke gehen als zweite Notizquelle neben den Notizblock der Aufnahme in
+`at_ms` nach der einen Regel aus §5.1: Intervall minus `started_at` der Aufnahme (Wanduhr), an den Rändern
+abgeschnitten; liegt es ganz außerhalb, `None` („vor/nach der Besprechung“). Gespeichert wird das Intervall samt Güte. Die Blöcke gehen als zweite Notizquelle neben den Notizblock der Aufnahme in
 KI-Notizen und Protokoll ein (`notes/enhance`, `minutes`): `NoteSource::Notizbuch {seite_id, block_id, stand}`. Sie
 werden **nicht** in `meeting_notes` kopiert (keine zweite Wahrheit, kein Auseinanderlaufen); geändert wird im
 Notizbuch, die Besprechung sieht beim nächsten Lauf den neuen Stand.
