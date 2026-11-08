@@ -1,11 +1,9 @@
 import React, { useEffect, useId, useState } from "react";
-import { Info, PenLine } from "lucide-react";
+import { Info } from "lucide-react";
 
 interface InfoPopoverProps {
+  /** Name und Tooltip des Knopfs; sichtbar ist nur das ⓘ (Patrick 08.11.). */
   label: string;
-  /** Sichtbare Beschriftung: macht aus dem ⓘ eine benannte Aktion, damit sie
-   * sich vom ⓘ am Seitentitel unterscheidet (ADR-0027 E4, Codex 01.11.). */
-  text?: string;
   children: React.ReactNode;
   testId?: string;
 }
@@ -17,7 +15,6 @@ interface InfoPopoverProps {
  */
 export const InfoPopover: React.FC<InfoPopoverProps> = ({
   label,
-  text,
   children,
   testId,
 }) => {
@@ -37,22 +34,15 @@ export const InfoPopover: React.FC<InfoPopoverProps> = ({
     <div className="relative">
       <button
         type="button"
-        className={`flex h-8 ${text ? "gap-1.5 px-2 text-sm" : "w-8"} cursor-pointer items-center justify-center rounded-md text-text/70 hover:bg-mid-gray/15 hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-logo-primary`}
+        className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-md text-text/70 hover:bg-mid-gray/15 hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-logo-primary"
         aria-expanded={open}
         aria-controls={id}
-        aria-label={text ? undefined : label}
+        aria-label={label}
         title={label}
         onClick={() => setOpen((o) => !o)}
         data-testid={testId}
       >
-        {text ? (
-          <>
-            <PenLine width={16} height={16} aria-hidden="true" />
-            <span>{text}</span>
-          </>
-        ) : (
-          <Info width={16} height={16} aria-hidden="true" />
-        )}
+        <Info width={16} height={16} aria-hidden="true" />
       </button>
       {open && (
         <>
