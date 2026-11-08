@@ -6,7 +6,8 @@ Grundlage: Spezifikation `docs/superpowers/specs/2026-11-08-dokumentenablage.md`
 Maß-Belege je Bild (Playwright): `scrollX` und Spaltenüberlauf 0; `unter44` misst jede sichtbare Bedienfläche
 (Links, Knöpfe, Eingabefeld, Auswahlliste, Schalter, Reiter, Optionsfelder) in Breite UND Höhe und ist überall leer.
 Bei Dialog/Blatt zusätzlich: Fokus beim Öffnen, Fokus bleibt bei Tab im Dialog, Escape schließt und gibt den Fokus an
-den Auslöser zurück. Suche: Pfeiltaste wechselt den Reiter.
+den tatsächlichen Auslöser zurück (gespeichert beim Öffnen; `ausloeser_test` prüft „Dateien hochladen“ und
+„Dateien auswählen“ je Breite). Suche: Pfeiltaste wechselt den Reiter.
 
 Bedienung: Ordner- und Dateizeilen sind Links, Suche ist ein echtes Eingabefeld, Datenklasse eine echte Auswahlliste,
 Schalter `button role=switch` (Fläche 52×44), KI-Freigabe als Optionsgruppe (Pfeiltasten), Suchreiter `role=tab`

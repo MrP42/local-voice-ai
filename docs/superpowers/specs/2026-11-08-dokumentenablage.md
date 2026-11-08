@@ -1,6 +1,6 @@
 # Dokumentenablage mit Sync und lokalem Abrufindex (Epic #395)
 
-Stand 08.11.2026, Fassung 3 (Codex-Runden 1 und 2 eingearbeitet). Entscheidungen: wai-sdk ADR-0029 (Abschnitte
+Stand 08.11.2026, Fassung 4 (Codex-Runden 1 bis 3 eingearbeitet). Entscheidungen: wai-sdk ADR-0029 (Abschnitte
 E1–E11 werden hier nur umgesetzt, nicht wiederholt). Baut auf Bibliothek-Sync (`2026-11-02-bibliothek-sync.md`),
 Projekten (`2026-11-07-buch-ordner-und-projekte.md`, P4-Plan), globalem Sprachassistenten (lva#325) und dem
 Assistenten (`2026-11-08-assistent-chat-und-sprache.md`, ADR-0028) auf.
@@ -47,8 +47,8 @@ Jede Ablage wie P4a `dateien.rs`: `.teil-<id>` (create_new) → Größe + SHA-25
      "texte": [{"textrev": "<hex>", "blob": "<64 hex>", "size": 40211, "extraktor": "pdf-extract",
                 "extraktor_version": "0.12.0", "marken_version": 1, "stand": "ok|kein_text|fehler"}]}
   ],
-  "abgeloest": ["fas_…"],
-  "wahl": {"fas": "fas_…", "zaehler": 4, "geraet": "g_…"},
+  "wahlen": [{"id": "wahl_…", "gewaehlt": "fas_…", "gegen": ["fas_…", "fas_…"], "ersetzt": ["wahl_…"],
+              "zaehler": 4, "geraet": "g_…"}],
   "entfernt": ["fas_…"],
   "blob_refs": ["<64 hex>"],
   "papierkorb": {"wert": null, "zaehler": 0, "geraet": "g_…"}
@@ -56,11 +56,13 @@ Jede Ablage wie P4a `dateien.rs`: `.teil-<id>` (create_new) → Größe + SHA-25
 ```
 
 Zusammenführen (ADR-0029 E4): Register nach höherem `(zaehler, geraet)`; `fassungen` vereinigt nach `fas`, ohne die
-IDs in `entfernt`; `entfernt`, `abgeloest` und `texte` vereinigt (nie verkleinert); Köpfe = Fassungen ohne Nachfolger
-und nicht in `abgeloest`; mehr als ein Kopf = Konflikt; kein Kopf (gleichzeitige Gegenwahl) = Konflikt mit allen
-zuletzt gewählten Fassungen. Eine Wahl trägt die nicht gewählten Köpfe in `abgeloest` ein; `wahl` dient nur der
-Anzeige. `zaehler` = größter am Gerät bekannter Wert + 1 (Lamport). `blob_refs` ist sichtbares Steuerfeld (AAD-gebunden)
-für die Referenzprüfung am Hub (§6).
+IDs in `entfernt`; `entfernt`, `wahlen` und `texte` vereinigt (nie verkleinert). Aktive Wahl = in keinem `ersetzt`
+genannt. Abgelöst ist F, wenn eine aktive Wahl F in `gegen` hat und nicht gewählt hat und keine aktive Wahl mit
+höherem `(zaehler, geraet)` F gewählt hat. Köpfe = ohne Nachfolger und nicht abgelöst; mehr als ein Kopf = Konflikt.
+Gegenwahl ergibt nach der Vorrangregel genau einen Kopf (Hinweis „gleichzeitig anders gewählt“); eine erneute Wahl
+nennt beide Ereignisse in `ersetzt`. Die Rechnung ist unabhängig von der Reihenfolge des Zusammenführens.
+`zaehler` = größter am Gerät bekannter Wert + 1 (Lamport). `blob_refs` ist sichtbares Steuerfeld (AAD-gebunden) für
+die Referenzprüfung am Hub (§6).
 
 ### 2.2 Datensatz `ablage_ordner` (synchronisiert)
 
@@ -182,7 +184,8 @@ Abdeckung, Budgetstopp sichtbar) · „Lege die Zusammenfassung als Notiz ab“ 
   Wiederanlauf am letzten Schritt; alte IDs bleiben lokal als Weiterleitung für Deep-Links.
 - Endgültig löschen: Grabstein; jedes Gerät entfernt Original, Texte, Index, Caches, Miniaturen; Blob-Löschung nur,
   wenn im vollständig gezogenen Bestand keine lebende Fassung den Blob nutzt, und nur bedingt.
-- Aufbewahrung: Fassung bleibt, wenn Kopf, gewählt, unter den 10 jüngsten oder jünger als 90 Tage; sonst `entfernt`.
+- Aufbewahrung: Fassung bleibt, wenn sie Kopf ist, von einer aktiven Wahl gewählt ist, jüngste gemeinsame
+  Vorgängerin offener Köpfe ist, zu den 10 jüngsten gehört oder jünger als 90 Tage ist; sonst `entfernt`.
 - iPhone (D5): Textfassung sofort, Original bei Bedarf („nur im WLAN“); eigene Importe zeigen „Text wird am PC
   erstellt“ und sind bis dahin nicht im Abruf; lexikalischer Index in VoiceCore; Assistent-Bereich wie Desktop.
 - Kontingent aus `GET /api/v1/voice/blobs`; Hochladen stoppt sichtbar bei Überschreitung.
@@ -209,7 +212,9 @@ geprüfte Momentkopie. Lokale OCR (Windows.Media.Ocr / Apple Vision) für Bild-P
   Verschieberennen ohne Zyklus; Grabstein → Offline-Gerät belebt nichts; Löschen ∥ Upload desselben Blobs → keine
   lebende Fassung ohne Blob (reservieren → löschen 409 → pushen; Reservierung abgelaufen → Push 422 → neu hochladen);
   `nur_geraet` erscheint nie im Hub (Mitschnitt), Wechsel entfernt Cloud-Kopien; Wahl B, dann B → C: ein Kopf;
-  Offline A → D: neuer Konflikt; gleichzeitige Gegenwahl: offen; Rückweg lokal → sync mit Abbruch nach jedem
+  Offline A → D: neuer Konflikt; Gegenwahl → genau ein Kopf (Vorrang) → erneut wählen → genau ein Kopf →
+  Weiterbearbeitung konfliktfrei, in allen Zusammenführ-Reihenfolgen; Aufbewahrung hält die gemeinsame Vorgängerin
+  offener Köpfe auch mit 12 neueren Fassungen und Alter 120 Tage; Rückweg lokal → sync mit Abbruch nach jedem
   Journalschritt; Projektverweis zeigt danach auf die neue ID.
 - D4b: Textfassung kommt mit passender `textrev`; fehlende Textfassung → Wartezustand.
 - D3: Kontrolltext in `aus`/`gesperrt` → 0 Treffer (gesperrt auch bei Projektmitgliedschaft an); Widerruf mitten im

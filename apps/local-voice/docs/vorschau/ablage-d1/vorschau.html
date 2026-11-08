@@ -124,6 +124,9 @@ select.sel{width:100%;min-height:44px;border:1px solid var(--line);border-radius
   .status .bar{width:64px}
 }
 @media (min-width:2000px){.work{grid-template-columns:300px minmax(0,1fr) 440px}.prev{height:420px}}
+.sheet.immer:not([hidden]){display:block;position:fixed;inset:0;z-index:4;background:rgba(0,0,0,.3)}
+.sheet.immer>.col{position:absolute;right:0;top:0;bottom:0;width:min(400px,100%);border-radius:0}
+@media (max-width:1023px){.sheet.immer>.col{top:auto;left:0;width:auto;max-height:66%;border-radius:12px 12px 0 0}}
 .grip{width:36px;height:4px;border-radius:2px;background:var(--line);margin:8px auto}
 </style>
 </head>
@@ -186,7 +189,7 @@ ${r('','trash','Papierkorb','4',sel==='p')}
 </nav>`}
 function srch(v){return `<label class="search">${sv('srch')}<span class="sr">In der Ablage suchen</span><input type="search" placeholder="In der Ablage suchen" value="${v||''}"></label>`}
 function head(){return `<div class="colhead"><div class="crumb"><button class="ib hide-s" aria-label="Zurück">${sv('back')}</button><span class="hide-s">Verträge</span><span class="sep hide-s" aria-hidden="true">›</span><h2>Wartung IT</h2></div>
-<div class="sp tools">${srch()}<button class="btn pri" aria-label="Dateien hochladen">${sv('up')}<span class="hide-s">Hochladen</span></button><button class="ib" aria-label="Ansicht wechseln">${sv('list')}</button><button class="ib" id="opener" aria-label="Ordnereinstellungen" aria-haspopup="dialog">${sv('gear')}</button></div></div>`}
+<div class="sp tools">${srch()}<button class="btn pri" id="btnup" data-oeffnet="mup" aria-haspopup="dialog" aria-label="Dateien hochladen">${sv('up')}<span class="hide-s">Hochladen</span></button><button class="ib" aria-label="Ansicht wechseln">${sv('list')}</button><button class="ib" id="opener" aria-label="Ordnereinstellungen" aria-haspopup="dialog">${sv('gear')}</button></div></div>`}
 function rows(selIdx,conf){return `<table><caption class="sr">Dateien in Wartung IT</caption><thead><tr><th scope="col">Name</th><th scope="col" class="c-date">Geändert</th><th scope="col" class="c-size">Größe</th><th scope="col" class="c-class">KI / Klasse</th><th scope="col">Sync</th></tr></thead><tbody>`+
  F.map((f,i)=>{let s=f[6];if(conf&&i===2)s='warn';const si=syncI[s];
  const ki=f[7]==='ki'?`<span class="chip ki">${sv('ki','width:14px;height:14px')}KI</span> `:f[7]==='kt'?'<span class="chip">kein Text</span> ':'';
@@ -214,14 +217,14 @@ function konflikt(id){return `<div class="colhead"><h2 id="${id}">Leistungsbesch
 <div class="mut" style="padding:12px 16px 16px">Die andere Fassung bleibt unter „Fassungen“ und lässt sich wiederherstellen. Bis zur Wahl nutzt die KI die gemeinsame Vorgängerfassung 3. Gibt es keine gemeinsame Fassung, nutzt die KI diese Datei bis zur Wahl nicht.</div>`}
 function shell(work,after){return `<div class="app"><header class="top"><h1>Ablage</h1><span class="be">Dokumente auf allen Geräten, Ende-zu-Ende verschlüsselt</span></header><div class="main">${nav()}<main style="display:contents">${work}</main></div>
 <footer class="status"><span>${sv('ok','width:14px;height:14px;vertical-align:-3px;color:var(--ok)')} Synchronisiert vor 1 Min.</span><span>4,2 GB von 30 GB <span class="bar" aria-hidden="true"><i></i></span></span><span class="hide-s">Index: 1 263 Dateien, aktuell</span></footer></div>${after||''}`}
-function sideAndSheet(fn){return `<section class="col side" aria-labelledby="sd">${fn('sd')}</section><div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sh"><section class="col"><div class="grip" aria-hidden="true"></div>${fn('sh')}</section></div>`}
+function sideAndSheet(fn,aus,id,zu){return `<section class="col side" aria-labelledby="sd">${fn('sd')}</section><div class="sheet" id="${id||'msh'}" ${zu?'hidden':''} data-ausloeser="${aus}" role="dialog" aria-modal="true" aria-labelledby="sh"><section class="col"><div class="grip" aria-hidden="true"></div>${fn('sh')}</section></div>`}
 let html='';
 if(S==='liste'){
- html=shell(`<div class="work">${tree('w')}<section class="col" aria-label="Dateien">${head()}${rows(1)}</section>${sideAndSheet(details)}</div>`);
+ html=shell(`<div class="work">${tree('w')}<section class="col" aria-label="Dateien">${head()}${rows(1)}</section>${sideAndSheet(details,'selfile')}</div>`);
 }else if(S==='hochladen'){
- html=shell(`<div class="work">${tree('w')}<section class="col" aria-label="Dateien">${head()}${rows(-1)}<div class="drop" aria-hidden="true"><div>${sv('up','width:40px;height:40px')}<br>Loslassen, um in „Wartung IT“ abzulegen<br><span class="mut" style="font-weight:400">Ordner behalten ihre Struktur · nichts wird überschrieben</span></div></div></section>${sideAndSheet(upload)}</div>`);
+ html=shell(`<div class="work">${tree('w')}<section class="col" aria-label="Dateien">${head()}${rows(-1)}<div class="drop" aria-hidden="true"><div>${sv('up','width:40px;height:40px')}<br>Loslassen, um in „Wartung IT“ abzulegen<br><span class="mut" style="font-weight:400">Ordner behalten ihre Struktur · nichts wird überschrieben</span></div></div></section>${sideAndSheet(upload,'btnup','mup')}</div>`);
 }else if(S==='ordner'){
- html=shell(`<div class="work zwei">${tree('v')}<section class="col" aria-label="Dateien">${head()}${rows(-1)}</section></div>`,`<div class="dlg" role="dialog" aria-modal="true" aria-labelledby="dh"><div class="box"><h2 id="dh">Ordner „Verträge“</h2>
+ html=shell(`<div class="work zwei">${tree('v')}<section class="col" aria-label="Dateien">${head()}${rows(-1)}</section></div>`,`<div class="dlg" id="mord" data-ausloeser="opener" role="dialog" aria-modal="true" aria-labelledby="dh"><div class="box"><h2 id="dh">Ordner „Verträge“</h2>
 <div class="sec"><div class="grp" style="padding:0 0 4px" id="kil">Für die KI</div><div class="seg" role="radiogroup" aria-labelledby="kil"><button role="radio" aria-checked="true" tabindex="0">An</button><button role="radio" aria-checked="false" tabindex="-1">Aus</button><button role="radio" aria-checked="false" tabindex="-1">Gesperrt</button></div>
 <div class="mut" style="margin:6px 0 8px">An: Assistent nutzt passende Auszüge mit Beleg. Aus: nur über Projekte. Gesperrt: nie, auch nicht in Projekten. Unterordner erben; „Gesperrt“ gewinnt immer. Gilt nur auf diesem Gerät.</div>
 <label class="grp" style="padding:8px 0 4px;display:block" for="dk">Datenklasse</label><select id="dk" class="sel"><option>Öffentlich</option><option>Intern</option><option selected>Vertraulich – nur lokale Modelle, Cloud nur mit Ausnahme</option><option>Personenbezogen – nur lokale Modelle</option></select>
@@ -239,7 +242,7 @@ if(S==='liste'){
 ${hits.map(h=>`<a href="#" class="hit"><span class="t"><span class="ic ${h[0]}" aria-hidden="true">${h[0].toUpperCase()}</span>${h[1]}</span><span class="mut">${h[2]}</span><p>${h[3]}</p></a>`).join('')}
 <div class="note">Frage lieber direkt? „Wie lange läuft der Wartungsvertrag?“ im Assistenten nutzt dieselben Auszüge und nennt die Quelle.</div></div></section></div>`);
 }else if(S==='konflikt'){
- html=shell(`<div class="work">${tree('w')}<section class="col" aria-label="Dateien">${head()}${rows(2,true)}</section>${sideAndSheet(konflikt)}</div>`);
+ html=shell(`<div class="work">${tree('w')}<section class="col" aria-label="Dateien">${head()}${rows(2,true)}</section>${sideAndSheet(konflikt,'selfile')}</div>`);
 }else if(S==='papierkorb'){
  html=shell(`<div class="work zwei">${tree('p')}<section class="col" aria-label="Papierkorb"><div class="colhead"><h2>Papierkorb</h2><div class="sp"><button class="btn">Papierkorb leeren …</button></div></div>
 <div class="note">Gelöschte Dateien bleiben 30 Tage und auf allen Geräten wiederherstellbar. Die KI nutzt sie nicht mehr.</div>
@@ -247,7 +250,7 @@ ${hits.map(h=>`<a href="#" class="hit"><span class="t"><span class="ic ${h[0]}" 
 ${[['pdf','Angebot alt.pdf','heute','Verträge › Wartung IT'],['doc','Entwurf Kündigung Mietvertrag Lager Nordstadt.docx','05.11.','Verträge › Miete'],['md','KI-Entwurf Zusammenfassung.md','01.11.','KI-Entwürfe'],['xls','Kosten 2025.xlsx','20.10.','Allgemein']].map(r=>`<tr><td class="nm"><span class="lnk" title="${r[1]}"><span class="ic ${r[0]}" aria-hidden="true">${r[0].toUpperCase()}</span><span>${r[1]}</span></span></td><td class="c-date mut">${r[2]}</td><td class="c-class mut">${r[3]}</td><td><button class="btn" aria-label="${r[1]} wiederherstellen">Wiederherstellen</button></td></tr>`).join('')}
 </tbody></table></section></div>`);
 }else if(S==='leer'){
- html=shell(`<div class="work zwei">${tree('w')}<section class="col" aria-label="Dateien">${head()}<div class="empty"><div>${sv('abl','width:48px;height:48px;color:var(--accent)')}<div class="big">Dateien hierher ziehen</div>PDF, Word, PowerPoint, Excel, Text, Mail und Bilder.<br>Alles bleibt verschlüsselt und auf deinen Geräten durchsuchbar.<div style="margin-top:16px"><button class="btn pri">${sv('up')}Dateien auswählen</button></div></div></div></section></div>`);
+ html=shell(`<div class="work zwei">${tree('w')}<section class="col" aria-label="Dateien">${head()}<div class="empty"><div>${sv('abl','width:48px;height:48px;color:var(--accent)')}<div class="big">Dateien hierher ziehen</div>PDF, Word, PowerPoint, Excel, Text, Mail und Bilder.<br>Alles bleibt verschlüsselt und auf deinen Geräten durchsuchbar.<div style="margin-top:16px"><button class="btn pri" id="btnwahl" data-oeffnet="mup" aria-haspopup="dialog">${sv('up')}Dateien auswählen</button></div></div></div></section></div>`,`<div class="sheet immer" id="mup" hidden data-ausloeser="btnwahl" role="dialog" aria-modal="true" aria-labelledby="sh"><section class="col"><div class="grip" aria-hidden="true"></div>${upload('sh')}</section></div>`);
 }
 document.getElementById('app').innerHTML=html;
 
@@ -255,9 +258,10 @@ document.getElementById('app').innerHTML=html;
 const FOC='a[href],button:not([disabled]),input,select,[tabindex]:not([tabindex="-1"])';
 const visible=e=>!!(e.offsetWidth||e.offsetHeight||e.getClientRects().length)&&getComputedStyle(e).visibility!=='hidden';
 const activeModal=()=>[...document.querySelectorAll('[aria-modal="true"]')].find(m=>!m.hidden&&visible(m));
-const opener=()=>document.getElementById('selfile')||document.getElementById('opener');
+let ausloeser=null;// tatsächlicher Auslöser des offenen Dialogs/Blatts
 function openModal(m){const f=[...m.querySelectorAll(FOC)].filter(visible);(m.querySelector('[role="radio"][aria-checked="true"]')||f[0]).focus()}
-function closeModal(m){m.hidden=true;const o=opener();if(o)o.focus()}
+function closeModal(m){m.hidden=true;const o=ausloeser||document.getElementById(m.dataset.ausloeser);ausloeser=null;if(o)o.focus()}
+function showModal(m,von){m.hidden=false;ausloeser=von;openModal(m)}
 function choose(r){const g=r.closest('[role="tablist"],[role="radiogroup"]');g.querySelectorAll('[role="tab"],[role="radio"]').forEach(x=>{const on=x===r;x.tabIndex=on?0:-1;x.setAttribute(x.getAttribute('role')==='tab'?'aria-selected':'aria-checked',String(on))})}
 document.addEventListener('keydown',e=>{const m=activeModal();
  if(m&&e.key==='Escape'){e.preventDefault();closeModal(m);return}
@@ -267,7 +271,8 @@ document.addEventListener('keydown',e=>{const m=activeModal();
  if(grp&&['ArrowLeft','ArrowRight','Home','End'].includes(e.key)){e.preventDefault();const it=[...grp.querySelectorAll('[role="tab"],[role="radio"]')];let i=it.indexOf(a);
   i=e.key==='Home'?0:e.key==='End'?it.length-1:(i+(e.key==='ArrowRight'?1:-1)+it.length)%it.length;choose(it[i]);it[i].focus()}
 });
-document.addEventListener('click',e=>{const t=e.target.closest('[role="switch"]');if(t)t.setAttribute('aria-checked',String(t.getAttribute('aria-checked')!=='true'));
+document.addEventListener('click',e=>{const op=e.target.closest('[data-oeffnet]');if(op){const m=document.getElementById(op.dataset.oeffnet);if(m){e.preventDefault();showModal(m,op);return}}
+ const t=e.target.closest('[role="switch"]');if(t)t.setAttribute('aria-checked',String(t.getAttribute('aria-checked')!=='true'));
  const c=e.target.closest('.js-close');if(c){const m=c.closest('[aria-modal="true"]');if(m)closeModal(m)}
  const r=e.target.closest('[role="radio"],[role="tab"]');if(r)choose(r)});
 const m0=activeModal();if(m0)openModal(m0);

@@ -1,6 +1,6 @@
 {
- "vorschau_sha256": "67bfbe44c013875153aa9362d97629d1cbde67590e7dacc66ff9ec53a4d08432",
- "erzeugt": "2026-11-08T22:39:51.961Z",
+ "vorschau_sha256": "0ddf0c7fe59cdfde834888c4e4f3728fced6afff0f1efbb9163057188bdbc393",
+ "erzeugt": "2026-11-08T22:43:08.841Z",
  "bilder": {
   "01-liste-2560-hell": {
    "scrollX": 0,
@@ -92,7 +92,10 @@
    "bedienelemente": 31,
    "unter44": [],
    "modal": false,
-   "fokus_beim_oeffnen": null
+   "fokus_beim_oeffnen": null,
+   "ausloeser_test": {
+    "#btnup": "kein Blatt auf dieser Breite (Liste in der Seitenspalte)"
+   }
   },
   "02-hochladen-1440-dunkel": {
    "scrollX": 0,
@@ -100,7 +103,10 @@
    "bedienelemente": 31,
    "unter44": [],
    "modal": false,
-   "fokus_beim_oeffnen": null
+   "fokus_beim_oeffnen": null,
+   "ausloeser_test": {
+    "#btnup": "kein Blatt auf dieser Breite (Liste in der Seitenspalte)"
+   }
   },
   "02-hochladen-390-hell": {
    "scrollX": 0,
@@ -112,7 +118,10 @@
    "fokus_bleibt_im_dialog": true,
    "escape": {
     "geschlossen": true,
-    "fokus_zurueck": "Ordnereinstellungen"
+    "fokus_zurueck": "Dateien hochladen"
+   },
+   "ausloeser_test": {
+    "#btnup": "#btnup Dateien hochladen"
    }
   },
   "02-hochladen-390-dunkel": {
@@ -125,7 +134,10 @@
    "fokus_bleibt_im_dialog": true,
    "escape": {
     "geschlossen": true,
-    "fokus_zurueck": "Ordnereinstellungen"
+    "fokus_zurueck": "Dateien hochladen"
+   },
+   "ausloeser_test": {
+    "#btnup": "#btnup Dateien hochladen"
    }
   },
   "03-ordner-1440-hell": {
@@ -296,7 +308,11 @@
    "bedienelemente": 21,
    "unter44": [],
    "modal": false,
-   "fokus_beim_oeffnen": null
+   "fokus_beim_oeffnen": null,
+   "ausloeser_test": {
+    "#btnwahl": "#btnwahl Dateien auswählen",
+    "#btnup": "#btnup Dateien hochladen"
+   }
   },
   "07-leer-1440-dunkel": {
    "scrollX": 0,
@@ -304,7 +320,11 @@
    "bedienelemente": 21,
    "unter44": [],
    "modal": false,
-   "fokus_beim_oeffnen": null
+   "fokus_beim_oeffnen": null,
+   "ausloeser_test": {
+    "#btnwahl": "#btnwahl Dateien auswählen",
+    "#btnup": "#btnup Dateien hochladen"
+   }
   },
   "07-leer-390-hell": {
    "scrollX": 0,
@@ -312,7 +332,11 @@
    "bedienelemente": 5,
    "unter44": [],
    "modal": false,
-   "fokus_beim_oeffnen": null
+   "fokus_beim_oeffnen": null,
+   "ausloeser_test": {
+    "#btnwahl": "#btnwahl Dateien auswählen",
+    "#btnup": "#btnup Dateien hochladen"
+   }
   },
   "07-leer-390-dunkel": {
    "scrollX": 0,
@@ -320,7 +344,11 @@
    "bedienelemente": 5,
    "unter44": [],
    "modal": false,
-   "fokus_beim_oeffnen": null
+   "fokus_beim_oeffnen": null,
+   "ausloeser_test": {
+    "#btnwahl": "#btnwahl Dateien auswählen",
+    "#btnup": "#btnup Dateien hochladen"
+   }
   }
  }
 }
