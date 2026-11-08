@@ -6974,6 +6974,43 @@ async libraryBackupRestore(name: string) : Promise<Result<LibraryBackupRestore, 
 }
 },
 /**
+ * Sicherung zurückspielen im ausdrücklich gewählten Best-Effort-Modus (lva#371):
+ * ein Laufwerk ohne Ordner-Sync hält den Lauf nicht an. Rückfallkopien bleiben.
+ */
+async libraryBackupRestoreBestEffort(name: string) : Promise<Result<LibraryBackupRestore, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_backup_restore_best_effort", { name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Vor dem Zurückspielen: kann das Laufwerk sicher schreiben? Entscheidet nach dem
+ * tatsächlichen Sync-Ergebnis (Prüfordner unter `sicherungen/`), nicht nach der Art
+ * des Laufwerks.
+ */
+async libraryBackupSyncCheck() : Promise<Result<LibrarySyncCheck, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_backup_sync_check") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Sicherung in einen neuen Ordner unter `ziel` kopieren und prüfen (lva#371). Nur
+ * lesend im Datenordner; die Bibliothekssperre hält ein gleichzeitiges Löschen fern.
+ */
+async libraryBackupExport(name: string, ziel: string) : Promise<Result<LibraryBackupExport, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_backup_export", { name, ziel }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Eine Sicherung auf ausdrücklichen Wunsch löschen (nach der Aufbewahrung von 30
  * Tagen fragt die Oberfläche). Abgelehnt, solange etwas sie noch braucht.
  */
@@ -10353,6 +10390,18 @@ erstellt_ms: number; dateien: number; bytes: number;
  */
 abgelaufen: boolean }
 /**
+ * Ergebnis von „Sicherung exportieren“.
+ */
+export type LibraryBackupExport = { 
+/**
+ * Neuer Ordner mit der Sicherung (absolut).
+ */
+ordner: string; dateien: number; 
+/**
+ * `false`: kopiert und geprüft, aber auch das Ziel sichert nicht dauerhaft.
+ */
+dauerhaft: boolean }
+/**
  * Ergebnis von „Sicherung zurückspielen“.
  */
 export type LibraryBackupRestore = { dateien: number; 
@@ -10505,6 +10554,18 @@ platz_frei: number | null }
  * solange `fingerprint` dem aktuellen Stand entspricht (siehe
  * [`license_fingerprint`]).
  */
+/**
+ * Was das Laufwerk des Datenordners beim Sichern tatsächlich kann (lva#371).
+ */
+export type LibrarySyncCheck = { 
+/**
+ * `ok`, `nicht_unterstuetzt` oder `fehler`.
+ */
+ergebnis: string; 
+/**
+ * Bei `fehler`: die Ursache.
+ */
+meldung: string | null }
 export type LicenseAck = { provider_id: string; fingerprint: string; 
 /**
  * RFC 3339, UTC.

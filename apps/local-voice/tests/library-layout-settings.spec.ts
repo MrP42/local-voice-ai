@@ -151,7 +151,11 @@ test.beforeEach(async ({ page }) => {
             __lvBackups?: Record<string, unknown>[];
             __lvCalls?: string[];
             __lvRestoreError?: string;
+            __lvSync?: string;
+            __lvExportDurable?: boolean;
+            __lvExportArgs?: Record<string, unknown>;
           };
+          if (cmd === "plugin:dialog|open") return "D:\\Sicherungen";
           if (
             cmd.startsWith("library_layout") ||
             cmd.startsWith("library_backup")
@@ -187,6 +191,24 @@ test.beforeEach(async ({ page }) => {
               angehalten: false,
               probleme: [],
               hinweise: [],
+            };
+          }
+          if (cmd === "library_backup_sync_check")
+            return {
+              ergebnis: lv.__lvSync ?? "ok",
+              meldung:
+                lv.__lvSync === "fehler"
+                  ? "Zugriff verweigert (os error 5)"
+                  : null,
+            };
+          if (cmd === "library_backup_restore_best_effort")
+            return { dateien: 7, papierkorb: "sicherungen/.papierkorb/2" };
+          if (cmd === "library_backup_export") {
+            lv.__lvExportArgs = args;
+            return {
+              ordner: "D:\\Sicherungen\\buch-ordner-1",
+              dateien: 7,
+              dauerhaft: lv.__lvExportDurable ?? true,
             };
           }
           if (cmd === "library_backup_restore") {
@@ -414,3 +436,108 @@ test("a drive without safe commit explains the way out (lva#371)", async ({
     page.getByRole("button", { name: "Datenordner öffnen" }),
   ).toBeVisible();
 });
+
+const drive = (page: Page, sync: string, durable = true) =>
+  page.addInitScript(
+    ([s, d]) => {
+      Object.assign(window, { __lvSync: s, __lvExportDurable: d });
+    },
+    [sync, durable] as const,
+  );
+
+test("the drive is checked first; without sync only an explicit best effort restores (lva#371)", async ({
+  page,
+}) => {
+  await withBackup(page, false);
+  await drive(page, "nicht_unterstuetzt");
+  await openApp(page);
+  await page
+    .getByTestId("library-backup")
+    .getByRole("button", { name: "Zurückspielen …" })
+    .click();
+  await expect(page.getByTestId("library-restore-nosync")).toHaveText(
+    "Dieses Laufwerk kann Änderungen nicht sicher festschreiben",
+  );
+  const apply = page.getByTestId("library-layout-apply");
+  await expect(apply).toBeDisabled();
+  await page
+    .getByLabel(/Trotzdem zurückspielen, ohne Schutz bei Absturz/)
+    .check();
+  await expect(apply).toHaveText("Trotzdem zurückspielen");
+  await apply.click();
+  await expect(
+    page.getByText("7 Dateien wurden zurückgespielt."),
+  ).toBeVisible();
+  const c = await calls(page);
+  expect(c).toContain("library_backup_sync_check");
+  expect(c).toContain("library_backup_restore_best_effort");
+  expect(c).not.toContain("library_backup_restore");
+});
+
+test("a working drive restores normally after the check (lva#371)", async ({
+  page,
+}) => {
+  await withBackup(page, false);
+  await openApp(page);
+  await page
+    .getByTestId("library-backup")
+    .getByRole("button", { name: "Zurückspielen …" })
+    .click();
+  await expect(page.getByTestId("library-restore-nosync")).toHaveCount(0);
+  await page.getByTestId("library-layout-apply").click();
+  await expect(
+    page.getByText("7 Dateien wurden zurückgespielt."),
+  ).toBeVisible();
+  const c = await calls(page);
+  expect(c).toContain("library_backup_restore");
+  expect(c).not.toContain("library_backup_restore_best_effort");
+});
+
+test("a failing drive check blocks restoring (lva#371)", async ({ page }) => {
+  await withBackup(page, false);
+  await drive(page, "fehler");
+  await openApp(page);
+  await page
+    .getByTestId("library-backup")
+    .getByRole("button", { name: "Zurückspielen …" })
+    .click();
+  await expect(page.getByRole("dialog")).toContainText(
+    "Das Laufwerk ließ sich nicht prüfen: Zugriff verweigert",
+  );
+  await expect(page.getByTestId("library-layout-apply")).toBeDisabled();
+});
+
+for (const width of [1440, 390]) {
+  test(`the backup is exported to a new folder (lva#371) @${width}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await withBackup(page, false);
+    await drive(page, "nicht_unterstuetzt", false);
+    await openApp(page);
+    await page
+      .getByTestId("library-backup")
+      .getByRole("button", { name: "Zurückspielen …" })
+      .click();
+    await expect(page.getByTestId("library-restore-nosync")).toBeVisible();
+    await page.screenshot({
+      path: `test-results/sicherung-ohne-sync-${width}.png`,
+    });
+    await page.getByTestId("library-restore-export").click();
+    await expect(page.getByTestId("library-layout-success")).toHaveText(
+      "Die Sicherung wurde mit 7 Dateien nach D:\\Sicherungen\\buch-ordner-1 kopiert und geprüft.",
+    );
+    await expect(
+      page.getByText("Auch dieser Ordner kann Änderungen nicht sicher"),
+    ).toBeVisible();
+    const args = await page.evaluate(
+      () =>
+        (window as unknown as { __lvExportArgs?: Record<string, unknown> })
+          .__lvExportArgs,
+    );
+    expect(args?.ziel).toBe("D:\\Sicherungen");
+    await page.screenshot({
+      path: `test-results/sicherung-exportiert-${width}.png`,
+    });
+  });
+}

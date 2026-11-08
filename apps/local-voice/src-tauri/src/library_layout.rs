@@ -2001,6 +2001,8 @@ fn umbenennen(data: &Path, von: &Path, nach: &Path) -> Result<(), String> {
 fn dauerhaft(r: Result<bool, String>, pfad: &Path) -> Result<(), String> {
     match r? {
         true => Ok(()),
+        // Ausdrücklich gewählter Best-Effort-Lauf (lva#371): weiter, ohne Garantie.
+        false if NACHSICHT.with(|n| n.get()) => Ok(()),
         false => Err(format!(
             "{} lässt sich auf diesem Dateisystem nicht dauerhaft sichern; nichts \
              überschrieben oder gelöscht.",
@@ -4358,6 +4360,201 @@ pub fn freier_name(dir: &Path, wunsch: &str) -> Result<String, String> {
 }
 
 // ---------------------------------------------------------------------------
+// Laufwerk ohne Ordner-Sync: prüfen, Sicherung exportieren, Best-Effort (lva#371)
+// ---------------------------------------------------------------------------
+
+/// Namensanfang eines kurzlebigen Prüfordners unter `sicherungen/`.
+const PROBE_PRAEFIX: &str = ".sync-probe-";
+
+thread_local! {
+    /// Ausdrücklich gewählter Best-Effort-Modus für genau einen Lauf auf diesem Thread:
+    /// „vom Dateisystem nicht unterstützt“ (`Ok(false)`) gilt dann nicht als Fehler.
+    static NACHSICHT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Was das Laufwerk des Datenordners beim Sichern tatsächlich kann.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SyncFaehigkeit {
+    /// Datei- und Ordner-Sync gelingen.
+    Ja,
+    /// Das Dateisystem kennt Ordner- oder Datei-Sync nicht (manche Netz-/Cloud-Laufwerke).
+    NichtUnterstuetzt,
+    /// Anderer Fehler beim Prüfen (Zugriff, Platz …).
+    Fehler(String),
+}
+
+impl SyncFaehigkeit {
+    pub fn name(&self) -> &'static str {
+        match self {
+            SyncFaehigkeit::Ja => "ok",
+            SyncFaehigkeit::NichtUnterstuetzt => "nicht_unterstuetzt",
+            SyncFaehigkeit::Fehler(_) => "fehler",
+        }
+    }
+}
+
+/// Das tatsächliche Sync-Ergebnis am Ort der Sicherungen ermitteln (nicht pauschal nach
+/// „Netz/Cloud“): einen Prüfordner mit einer Datei anlegen, Datei, Ordner und
+/// `sicherungen/` synchronisieren, den Prüfordner wieder entfernen.
+pub fn sync_pruefen(data: &Path) -> SyncFaehigkeit {
+    let basis = data.join(SICHERUNGEN);
+    let probe = match neuer_ordner(&basis, PROBE_PRAEFIX) {
+        Ok(d) => d,
+        Err(e) => return SyncFaehigkeit::Fehler(e),
+    };
+    let ergebnis = (|| -> Result<bool, String> {
+        let datei = probe.join("probe");
+        fs::write(&datei, b"probe").map_err(|e| format!("Prüfdatei nicht schreibbar: {e}"))?;
+        Ok(datei_sync(&datei)? && ordner_sync(&probe)? && ordner_sync(&basis)?)
+    })();
+    let _ = fs::remove_dir_all(&probe);
+    match ergebnis {
+        Ok(true) => SyncFaehigkeit::Ja,
+        Ok(false) => SyncFaehigkeit::NichtUnterstuetzt,
+        Err(e) => SyncFaehigkeit::Fehler(e),
+    }
+}
+
+/// Wie [`sicherung_zurueckspielen`], aber ausdrücklich ohne Absicherung durch
+/// Ordner-Sync (Best-Effort, nur nach Wahl in der Oberfläche): Ein Laufwerk, das Sync
+/// nicht kennt, hält den Lauf nicht an. Jeder andere Fehler bleibt ein Fehler. Die
+/// Rückfallkopien (Papierkorb des Zurückspielens, die Sicherung selbst) bleiben wie immer
+/// erhalten; bei einem Absturz mitten im Tausch ist der Stand aber nicht garantiert.
+pub fn sicherung_zurueckspielen_nachsichtig(
+    data: &Path,
+    name: &str,
+    platz_frei: Option<u64>,
+) -> Result<Wiederherstellung, String> {
+    struct Zuruecksetzen;
+    impl Drop for Zuruecksetzen {
+        fn drop(&mut self) {
+            NACHSICHT.with(|n| n.set(false));
+        }
+    }
+    NACHSICHT.with(|n| n.set(true));
+    let _z = Zuruecksetzen;
+    log::warn!("Buch-Ordner: Zurückspielen im Best-Effort-Modus (ohne Ordner-Sync)");
+    sicherung_zurueckspielen(data, name, platz_frei)
+}
+
+/// Ergebnis eines Exports.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Export {
+    /// Neuer Ordner mit der Sicherung.
+    pub ordner: PathBuf,
+    pub dateien: usize,
+    /// Konnte das Ziel die Kopie dauerhaft sichern (Ordner-Sync)? `false`: kopiert und
+    /// geprüft, aber das Ziel-Laufwerk sichert ebenfalls nicht.
+    pub dauerhaft: bool,
+}
+
+/// Ordner einer Sicherung unter `sicherungen/` (Name geprüft, kein Umweg).
+fn sicherung_ordner(data: &Path, name: &str) -> Result<PathBuf, String> {
+    let gueltiger_name = name.starts_with(SICHERUNG_PRAEFIX)
+        && !name.contains(['/', '\\', ':'])
+        && !name.contains("..");
+    if !gueltiger_name {
+        return Err(format!("Ungültiger Name einer Sicherung: {name}"));
+    }
+    ohne_umweg(data, &format!("{SICHERUNGEN}/{name}"))?;
+    let dir = data.join(SICHERUNGEN).join(name);
+    if !dir.is_dir() {
+        return Err(format!("Sicherung nicht gefunden: {name}"));
+    }
+    Ok(dir)
+}
+
+/// Ordner unter `dir` und `dir` selbst synchronisieren, ohne Verknüpfungen zu folgen.
+/// `Ok(false)`, sobald das Dateisystem Sync nicht kennt.
+fn baum_sync(dir: &Path) -> Result<bool, String> {
+    let mut alle = true;
+    let eintraege =
+        fs::read_dir(dir).map_err(|e| format!("{} nicht lesbar: {e}", dir.display()))?;
+    for eintrag in eintraege {
+        let pfad = eintrag
+            .map_err(|e| format!("{} nicht lesbar: {e}", dir.display()))?
+            .path();
+        let meta = fs::symlink_metadata(&pfad).map_err(|e| e.to_string())?;
+        if meta.is_dir() && !ist_umweg(&meta) {
+            alle &= baum_sync(&pfad)?;
+        }
+    }
+    Ok(ordner_sync(dir)? && alle)
+}
+
+/// Eine Sicherung in einen NEUEN Ordner `<ziel>/<name>` kopieren (Ausweg, wenn das
+/// Laufwerk des Datenordners kein sicheres Zurückspielen erlaubt): erst die Sicherung
+/// gegen ihr Manifest prüfen, dann jede Datei mit Prüfsumme kopieren und die Kopie als
+/// Ganzes erneut prüfen. Nichts wird überschrieben; das Ziel darf nicht im Datenordner
+/// liegen. Scheitert etwas, wird nur der neu angelegte Ordner wieder entfernt.
+pub fn sicherung_exportieren(data: &Path, name: &str, ziel: &Path) -> Result<Export, String> {
+    let dir = sicherung_ordner(data, name)?;
+    if !ziel.is_absolute() {
+        return Err("Bitte einen vollständigen Zielordner wählen.".into());
+    }
+    let ziel_echt = fs::canonicalize(ziel)
+        .map_err(|e| format!("Zielordner nicht erreichbar ({e}); nichts exportiert."))?;
+    if !ziel_echt.is_dir() {
+        return Err("Das Ziel ist kein Ordner; nichts exportiert.".into());
+    }
+    if let Ok(data_echt) = fs::canonicalize(data) {
+        if ziel_echt.starts_with(&data_echt) {
+            return Err(
+                "Der Zielordner liegt im Datenordner der App. Bitte einen Ordner außerhalb \
+                 wählen, etwa auf einem lokalen Laufwerk."
+                    .into(),
+            );
+        }
+    }
+    let manifest = sicherung_pruefen(&dir)?;
+    let neu = ziel_echt.join(name);
+    fs::create_dir(&neu).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::AlreadyExists {
+            format!(
+                "Im Zielordner gibt es schon „{name}“. Bitte einen anderen Ordner wählen; \
+                 nichts überschrieben."
+            )
+        } else {
+            format!("Ordner im Ziel nicht anlegbar ({e}); nichts exportiert.")
+        }
+    })?;
+    let kopiert = (|| -> Result<(), String> {
+        for rel in &manifest.ordner {
+            fs::create_dir_all(absolut(&neu, rel)).map_err(|e| format!("{rel}: {e}"))?;
+        }
+        for datei in &manifest.dateien {
+            ohne_umweg(data, &format!("{SICHERUNGEN}/{name}/{}", datei.pfad))?;
+            let (groesse, sha256) =
+                kopieren_mit_pruefsumme(&absolut(&dir, &datei.pfad), &absolut(&neu, &datei.pfad))?;
+            if groesse != datei.groesse || sha256 != datei.sha256 {
+                return Err(format!("{} wurde nicht unverändert kopiert", datei.pfad));
+            }
+        }
+        ohne_umweg(data, &format!("{SICHERUNGEN}/{name}/{MANIFEST}"))?;
+        kopieren_mit_pruefsumme(&dir.join(MANIFEST), &neu.join(MANIFEST))?;
+        // Die Kopie als Ganzes: Manifest lesbar, jede Datei mit Größe und Prüfsumme.
+        sicherung_pruefen(&neu).map(|_| ())
+    })();
+    if let Err(e) = kopiert {
+        let _ = fs::remove_dir_all(&neu);
+        return Err(format!(
+            "Export abgebrochen ({e}); der neue Ordner wurde entfernt."
+        ));
+    }
+    let dauerhaft = baum_sync(&neu)
+        .and_then(|b| Ok(b && ordner_sync(&ziel_echt)?))
+        .unwrap_or_else(|e| {
+            log::warn!("Buch-Ordner: Export nicht dauerhaft gesichert ({e})");
+            false
+        });
+    Ok(Export {
+        ordner: neu,
+        dateien: manifest.dateien.len(),
+        dauerhaft,
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Tests (nur synthetische Daten)
 // ---------------------------------------------------------------------------
 
@@ -4736,6 +4933,84 @@ mod tests {
             keine_zwischenstaende(&data);
         }
         assert!(geprueft >= 5, "{geprueft} Fehlerstellen");
+    }
+
+    /// lva#371: Die Entscheidung folgt dem tatsächlichen Sync-Ergebnis; der Prüfordner
+    /// verschwindet wieder.
+    #[test]
+    fn sync_pruefen_meldet_das_tatsaechliche_ergebnis() {
+        let data = datenordner("sync-pruefen");
+        assert_eq!(sync_pruefen(&data), SyncFaehigkeit::Ja);
+        OHNE_SYNC.with(|o| o.set(true));
+        let ohne = sync_pruefen(&data);
+        OHNE_SYNC.with(|o| o.set(false));
+        assert_eq!(ohne, SyncFaehigkeit::NichtUnterstuetzt);
+        assert_eq!(ohne.name(), "nicht_unterstuetzt");
+        assert!(unterordner(&data.join(SICHERUNGEN))
+            .iter()
+            .all(|n| !n.starts_with(PROBE_PRAEFIX)));
+    }
+
+    /// lva#371: Best-Effort nur ausdrücklich; danach gilt wieder die strenge Regel.
+    #[test]
+    fn best_effort_spielt_ohne_sync_zurueck_und_nur_ausdruecklich() {
+        let data = standardlage("best-effort");
+        migrieren(&data, &optionen()).unwrap();
+        let name = sicherungen_auflisten(&data)[0].name.clone();
+        OHNE_SYNC.with(|o| o.set(true));
+        assert!(sicherung_zurueckspielen(&data, &name, None).is_err());
+        let w = sicherung_zurueckspielen_nachsichtig(&data, &name, None);
+        let danach = sicherung_zurueckspielen(&data, &name, None);
+        OHNE_SYNC.with(|o| o.set(false));
+        let w = w.unwrap();
+        assert!(w.dateien > 0);
+        // Rückfallkopien bleiben: die Sicherung selbst ist noch da.
+        assert!(sicherungen_auflisten(&data).iter().any(|s| s.name == name));
+        assert!(!NACHSICHT.with(|n| n.get()));
+        assert!(danach.is_err(), "nach dem Lauf wieder streng");
+    }
+
+    /// lva#371: Export in einen neuen Ordner, geprüft; nie überschreiben, nie in den
+    /// Datenordner, eine beschädigte Sicherung hinterlässt nichts.
+    #[test]
+    fn sicherung_exportieren_in_neuen_ordner() {
+        let data = standardlage("export");
+        migrieren(&data, &optionen()).unwrap();
+        let name = sicherungen_auflisten(&data)[0].name.clone();
+        let ziel = data.parent().unwrap().join(format!(
+            "{}-ziel",
+            data.file_name().unwrap().to_string_lossy()
+        ));
+        let _ = fs::remove_dir_all(&ziel);
+        fs::create_dir_all(&ziel).unwrap();
+        let e = sicherung_exportieren(&data, &name, &ziel).unwrap();
+        assert_eq!(e.ordner, fs::canonicalize(&ziel).unwrap().join(&name));
+        assert!(e.dauerhaft);
+        assert_eq!(
+            e.dateien,
+            sicherung_pruefen(&e.ordner).unwrap().dateien.len()
+        );
+        // Zweimal: schon vorhanden, nichts überschrieben.
+        let zweit = sicherung_exportieren(&data, &name, &ziel).unwrap_err();
+        assert!(zweit.contains("schon"), "{zweit}");
+        assert!(sicherung_pruefen(&e.ordner).is_ok());
+        // Ziel im Datenordner und relative Ziele: abgelehnt.
+        assert!(sicherung_exportieren(&data, &name, &data.join(PROJEKTE)).is_err());
+        assert!(sicherung_exportieren(&data, &name, Path::new("relativ")).is_err());
+        assert!(sicherung_exportieren(&data, "../x", &ziel).is_err());
+        // Beschädigte Sicherung: kein halber Ordner im Ziel.
+        let ziel2 = ziel.join("zwei");
+        fs::create_dir_all(&ziel2).unwrap();
+        let manifest = sicherung_pruefen(&data.join(SICHERUNGEN).join(&name)).unwrap();
+        let erste = &manifest.dateien[0].pfad;
+        fs::write(
+            absolut(&data.join(SICHERUNGEN).join(&name), erste),
+            b"anders",
+        )
+        .unwrap();
+        assert!(sicherung_exportieren(&data, &name, &ziel2).is_err());
+        assert!(!ziel2.join(&name).exists());
+        let _ = fs::remove_dir_all(&ziel);
     }
 
     /// Ein Dateisystem ohne Ordner-Sync: das Zurückspielen beginnt gar nicht erst.
