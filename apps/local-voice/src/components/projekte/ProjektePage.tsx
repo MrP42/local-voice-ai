@@ -22,6 +22,7 @@ import {
 } from "@/bindings";
 import { auspacken, fehlerText } from "@/lib/projekte";
 import { meldeProjekte, projektAnfrageFrisch } from "@/lib/projekteBus";
+import { kopierEnde, kopierStart, useKopiert } from "@/lib/projekteKopieren";
 import {
   besprechungIdVon,
   buchIdVon,
@@ -82,7 +83,6 @@ export const ProjektePage: React.FC = () => {
   const [beschaeftigt, setBeschaeftigt] = useState<ReadonlySet<string>>(
     new Set(),
   );
-  const [kopiert, setKopiert] = useState(false);
   const [hinzu, setHinzu] = useState(false);
   const [details, setDetails] = useState(false);
   const [entfernen, setEntfernen] = useState<EintragSicht | null>(null);
@@ -99,22 +99,37 @@ export const ProjektePage: React.FC = () => {
     [stand.eintraege, suiteId],
   );
 
+  const kopiert = useKopiert(suiteId);
   const aktuell = kontext?.suiteId === suiteId ? kontext : null;
   const uebersicht = aktuell?.uebersicht ?? null;
   const gefunden = aktuell?.gefunden ?? [];
   const lage = aktuell?.lage ?? null;
 
-  /** Zähler: Projektwechsel, laufende Ladung, Schalt-Stand. Antworten mit altem Zähler werden verworfen. */
-  const projektGen = useRef(0);
-  const ladeGen = useRef(0);
-  const schaltGen = useRef(0);
+  /**
+   * Zähler je Projekt (Ladung, Schalt-Stand): eine Antwort zählt nur, wenn ihr Projekt noch angezeigt
+   * wird und ihr Zähler passt. Ein Schalten in Projekt A verwirft so nie die Ladung von Projekt B.
+   */
+  const gens = useRef(new Map<string, { lade: number; schalt: number }>());
+  const genVon = useCallback((s: string) => {
+    let g = gens.current.get(s);
+    if (!g) {
+      g = { lade: 0, schalt: 0 };
+      gens.current.set(s, g);
+    }
+    return g;
+  }, []);
+  /** Das gerade angezeigte Projekt; null nach dem Aushängen der Seite. */
+  const aktuellRef = useRef<string | null>(null);
+  const istAktuell = (s: string) => aktuellRef.current === s;
   const warteschlangen = useRef(new Map<string, Promise<void>>());
   const offen = useRef(new Map<string, number>());
-  const kopiertRef = useRef(false);
 
   useEffect(() => {
-    projektGen.current += 1;
+    aktuellRef.current = suiteId;
     setFehler(null);
+    return () => {
+      aktuellRef.current = null;
+    };
   }, [suiteId]);
 
   const teilSetzen = useCallback(
@@ -130,62 +145,64 @@ export const ProjektePage: React.FC = () => {
     [],
   );
 
-  const kontextLaden = useCallback(async () => {
-    if (!suiteId) {
-      setKontext(null);
-      return;
-    }
-    const s = suiteId;
-    const pg = projektGen.current;
-    const nr = ++ladeGen.current;
-    const sg = schaltGen.current;
-    const gueltig = () => projektGen.current === pg && ladeGen.current === nr;
-    let meldung: string | null = null;
-    const merke = (e: unknown) => {
-      if (meldung === null) meldung = fehlerText(e, t);
-    };
-    await Promise.all([
-      (async () => {
-        try {
-          const u = auspacken(await commands.projektKontextUebersicht(s));
-          // Hat inzwischen ein Schalten begonnen oder geendet, gilt dessen Antwort.
-          if (gueltig() && schaltGen.current === sg)
-            teilSetzen(s, { uebersicht: u });
-        } catch (e) {
-          merke(e);
-        }
-      })(),
-      (async () => {
-        try {
-          const g = await commands.projektDateienGefunden(s);
-          if (gueltig())
-            teilSetzen(s, {
-              gefunden:
-                g.status === "ok" && Array.isArray(g.data) ? g.data : [],
-            });
-        } catch {
-          if (gueltig()) teilSetzen(s, { gefunden: [] });
-        }
-      })(),
-      (async () => {
-        try {
-          const l = await commands.projektDateienLage(s);
-          if (gueltig())
-            teilSetzen(s, {
-              lage: l.status === "ok" ? (l.data ?? null) : null,
-            });
-        } catch {
-          if (gueltig()) teilSetzen(s, { lage: null });
-        }
-      })(),
-    ]);
-    if (gueltig()) setFehler(meldung);
-  }, [suiteId, t, teilSetzen]);
+  const laden = useCallback(
+    async (s: string | null) => {
+      if (!s) {
+        setKontext(null);
+        return;
+      }
+      const g = genVon(s);
+      const nr = ++g.lade;
+      const sg = g.schalt;
+      const gueltig = () => aktuellRef.current === s && g.lade === nr;
+      let meldung: string | null = null;
+      const merke = (e: unknown) => {
+        if (meldung === null) meldung = fehlerText(e, t);
+      };
+      await Promise.all([
+        (async () => {
+          try {
+            const u = auspacken(await commands.projektKontextUebersicht(s));
+            // Hat in diesem Projekt inzwischen ein Schalten begonnen oder geendet, gilt dessen Antwort.
+            if (gueltig() && g.schalt === sg) teilSetzen(s, { uebersicht: u });
+          } catch (e) {
+            merke(e);
+          }
+        })(),
+        (async () => {
+          try {
+            const r = await commands.projektDateienGefunden(s);
+            if (gueltig())
+              teilSetzen(s, {
+                gefunden:
+                  r.status === "ok" && Array.isArray(r.data) ? r.data : [],
+              });
+          } catch {
+            if (gueltig()) teilSetzen(s, { gefunden: [] });
+          }
+        })(),
+        (async () => {
+          try {
+            const l = await commands.projektDateienLage(s);
+            if (gueltig())
+              teilSetzen(s, {
+                lage: l.status === "ok" ? (l.data ?? null) : null,
+              });
+          } catch {
+            if (gueltig()) teilSetzen(s, { lage: null });
+          }
+        })(),
+      ]);
+      if (gueltig()) setFehler(meldung);
+    },
+    [t, teilSetzen, genVon],
+  );
+  const kontextLaden = () => laden(suiteId);
 
   // Neu laden, sobald sich Projekt oder Eintraege aendern (Zuordnen, Entfernen, Abgleich).
   useEffect(() => {
-    void kontextLaden();
-  }, [kontextLaden, stand.eintraege]);
+    void laden(suiteId);
+  }, [laden, suiteId, stand.eintraege]);
 
   useEffect(() => {
     commands
@@ -249,6 +266,9 @@ export const ProjektePage: React.FC = () => {
    * Alle Änderungen eines Projekts laufen nacheinander. Ein Form- oder Fassungswechsel liest den
    * Stand unmittelbar davor frisch vom Backend und übernimmt daraus `on`: ein ausgeschalteter
    * Eintrag bleibt aus, auch wenn die Anzeige hinterherhinkt.
+   * Bekannte Grenze: das Backend liefert keine Standkennung, die das Schalten gegen den gelesenen
+   * Stand prüft. Ändert zwischen frischem Lesen und Schalten etwas von außen denselben Eintrag,
+   * gilt der Wert aus dem Lesen (docs/plans/2026-11-08_projekte-p4.md, P4b).
    */
   const aendern = (
     e: EintragSicht,
@@ -261,9 +281,9 @@ export const ProjektePage: React.FC = () => {
     // Form- oder Fassungswechsel reiht sich ein und liest dann den Stand frisch.
     if ("on" in wunsch && offen.current.has(e.id)) return;
     sperrenZaehlen(e.id, 1);
-    const pg = projektGen.current;
+    const g = genVon(s);
     einreihen(s, async () => {
-      schaltGen.current += 1;
+      g.schalt += 1;
       try {
         let on: boolean;
         let form: KontextForm | null = null;
@@ -278,18 +298,19 @@ export const ProjektePage: React.FC = () => {
         const neu = auspacken(
           await commands.projektKontextSchalten(s, e.id, on, form, fassung),
         );
-        if (projektGen.current === pg) {
+        // Wird das Projekt nicht mehr angezeigt, wird nichts übernommen (es lädt beim nächsten Öffnen).
+        if (istAktuell(s)) {
           teilSetzen(s, { uebersicht: neu });
           setFehler(null);
         }
       } catch (x) {
-        if (projektGen.current === pg) {
+        if (istAktuell(s)) {
           // Stand neu lesen (zeigt, was wirklich gilt), dann die Meldung: das Laden loescht alte Fehler.
-          await kontextLaden();
-          setFehler(fehlerText(x, t));
+          await laden(s);
+          if (istAktuell(s)) setFehler(fehlerText(x, t));
         }
       } finally {
-        schaltGen.current += 1;
+        g.schalt += 1;
         sperrenZaehlen(e.id, -1);
       }
     });
@@ -302,16 +323,14 @@ export const ProjektePage: React.FC = () => {
 
   const bestaetigenEntfernen = async () => {
     const e = entfernen;
-    if (!e || !suiteId) return;
+    const s = suiteId;
+    if (!e || !s) return;
     setEntfernen(null);
     const g = gruppeVon(e);
     try {
       if (g === "dateien") {
         const sicher = auspacken(
-          await commands.projektDateiEntfernen(
-            suiteId,
-            dateiIdVon(e.link) ?? "",
-          ),
+          await commands.projektDateiEntfernen(s, dateiIdVon(e.link) ?? ""),
         );
         if (!sicher) {
           toast.warning(t("projektBereich.nichtSicherEntfernt"));
@@ -320,12 +339,12 @@ export const ProjektePage: React.FC = () => {
         }
       } else if (g === "buecher")
         auspacken(
-          await commands.projektBuchEntfernen(suiteId, buchIdVon(e.link) ?? ""),
+          await commands.projektBuchEntfernen(s, buchIdVon(e.link) ?? ""),
         );
       else if (g === "aufnahmen")
         auspacken(
           await commands.projektBesprechungEntfernen(
-            suiteId,
+            s,
             besprechungIdVon(e.link) ?? "",
           ),
         );
@@ -335,10 +354,7 @@ export const ProjektePage: React.FC = () => {
         );
       else
         auspacken(
-          await commands.projektSeiteEntfernen(
-            suiteId,
-            seiteIdVon(e.link) ?? "",
-          ),
+          await commands.projektSeiteEntfernen(s, seiteIdVon(e.link) ?? ""),
         );
       toast.success(
         t(
@@ -349,56 +365,54 @@ export const ProjektePage: React.FC = () => {
       );
       geaendert();
     } catch (x) {
-      setFehler(fehlerText(x, t));
+      if (istAktuell(s)) setFehler(fehlerText(x, t));
     }
   };
 
   const dateienKopieren = async (): Promise<string | null> => {
-    if (!suiteId || kopiertRef.current) return null;
-    kopiertRef.current = true;
-    setKopiert(true);
+    const s = suiteId;
+    if (!s || !kopierStart(s)) return null;
     try {
       const wahl = await dateienWaehlen({ multiple: true, directory: false });
       const paths = Array.isArray(wahl) ? wahl : wahl ? [wahl] : [];
       if (paths.length === 0) return null;
-      const r = auspacken(
-        await commands.projektDateienHinzufuegen(suiteId, paths),
-      );
+      const r = auspacken(await commands.projektDateienHinzufuegen(s, paths));
       toast.success(
         t("projektBereich.dialog.kopiert", {
           count: r?.length ?? paths.length,
         }),
       );
       geaendert();
-      setHinzu(false);
+      if (istAktuell(s)) setHinzu(false);
       return null;
     } catch (x) {
       return fehlerText(x, t);
     } finally {
-      kopiertRef.current = false;
-      setKopiert(false);
+      kopierEnde(s);
     }
   };
 
   const aufnehmen = async (d: GefundeneDatei) => {
-    if (!suiteId) return;
+    const s = suiteId;
+    if (!s) return;
     try {
-      auspacken(await commands.projektDateiGefundenAufnehmen(suiteId, d.id));
+      auspacken(await commands.projektDateiGefundenAufnehmen(s, d.id));
       geaendert();
     } catch (x) {
-      setFehler(fehlerText(x, t));
+      if (istAktuell(s)) setFehler(fehlerText(x, t));
     }
   };
 
   const bestandNeu = async () => {
-    if (!suiteId) return;
+    const s = suiteId;
+    if (!s) return;
     setNeuAufbauen(false);
     try {
-      auspacken(await commands.projektDateienNeuAufbauen(suiteId));
+      auspacken(await commands.projektDateienNeuAufbauen(s));
       geaendert();
-      await kontextLaden();
+      await laden(s);
     } catch (x) {
-      setFehler(fehlerText(x, t));
+      if (istAktuell(s)) setFehler(fehlerText(x, t));
     }
   };
 
@@ -710,6 +724,7 @@ export const ProjektePage: React.FC = () => {
       />
 
       <Dialog
+        contentFades={false}
         open={details}
         onOpenChange={setDetails}
         title={t("projektBereich.rechts")}
@@ -730,6 +745,7 @@ export const ProjektePage: React.FC = () => {
       </Dialog>
 
       <Dialog
+        contentFades={false}
         open={!!entfernen}
         onOpenChange={(o) => !o && setEntfernen(null)}
         title={t(
@@ -772,6 +788,7 @@ export const ProjektePage: React.FC = () => {
       </Dialog>
 
       <Dialog
+        contentFades={false}
         open={neuAufbauen}
         onOpenChange={setNeuAufbauen}
         title={t("projektBereich.lage.dialogTitel")}
@@ -800,6 +817,7 @@ export const ProjektePage: React.FC = () => {
       </Dialog>
 
       <Dialog
+        contentFades={false}
         open={neu}
         onOpenChange={setNeu}
         title={t("projektBereich.neuesProjekt")}

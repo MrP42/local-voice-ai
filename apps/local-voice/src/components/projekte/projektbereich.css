@@ -536,7 +536,8 @@
   color: var(--color-text-muted);
 }
 .pb-dlg-liste {
-  max-height: min(320px, 40vh);
+  padding-bottom: 4px;
+  max-height: min(440px, 52vh);
   overflow-y: auto;
 }
 .pb-drop {

@@ -926,6 +926,213 @@ test.describe("Projekte mit Als Kontext", () => {
     });
   }
 
+  test("Wechsel A zu B, während in A eine verzögerte Schaltung läuft: B behält seine Übersicht", async ({
+    page,
+  }) => {
+    await setup(page);
+    await kontextSetzen(
+      page,
+      `K.delay["projekt_kontext_schalten"] = 1500; K.delay["projekt_kontext_uebersicht:p-ki"] = 1800;`,
+    );
+    await schalter(page, "Telefonat Bank").click();
+    await waehleProjekt(page, "KI-Strategie LRA");
+    await expect(page.getByTestId("projekt-kopf-zahl")).toHaveText(
+      "23 Einträge",
+    );
+    // A schließt bei ca. 1,5 s ab, B antwortet erst bei ca. 1,8 s
+    await page.waitForTimeout(2600);
+    await expect(page.getByTestId("kontext-summe-text")).toHaveText(
+      /^[\d\s]+ von 128\s000 Token$/,
+    );
+    await expect(page.getByTestId("kontext-summe-text")).not.toHaveText(
+      /^15\s000 von/,
+    );
+    await expect(page.getByTestId("kontext-anzahl")).toContainText(
+      "Einträge als Kontext",
+    );
+    // A hat seine Schaltung nicht verloren
+    await waehleProjekt(page, "Finanzwissen");
+    await expect(schalter(page, "Telefonat Bank")).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+  });
+
+  test("Bestand neu aufbauen in A, dann Wechsel nach B: B bleibt korrekt", async ({
+    page,
+  }) => {
+    await setup(page, {
+      vorher: (p) =>
+        p.addInitScript(() => {
+          (window as any).__kontext.lage = "defekt";
+        }),
+    });
+    await kontextSetzen(
+      page,
+      `K.delay["projekt_dateien_neu_aufbauen"] = 800; K.delay["projekt_kontext_uebersicht:p-ki"] = 1400;`,
+    );
+    await page.getByTestId("lage-knopf").click();
+    await page.getByTestId("neu-aufbauen-bestaetigen").click();
+    await waehleProjekt(page, "KI-Strategie LRA");
+    await expect(page.getByTestId("projekt-kopf-zahl")).toHaveText(
+      "23 Einträge",
+    );
+    await page.waitForTimeout(2400);
+    await expect(page.getByTestId("kontext-summe-text")).toHaveText(
+      /^[\d\s]+ von 128\s000 Token$/,
+    );
+    await expect(page.getByTestId("banner-lage")).toHaveCount(0);
+    await expect(page.getByTestId("banner-gefunden")).toHaveCount(0);
+    expect(await aufrufe(page, "projekt_dateien_neu_aufbauen")).toHaveLength(1);
+  });
+
+  test("Kopiersperre übersteht einen Remount der Seite", async ({ page }) => {
+    await setup(page);
+    await kontextSetzen(
+      page,
+      `window.__pick = ["/home/test/Plan.md"]; K.delay["projekt_dateien_hinzufuegen"] = 2500;`,
+    );
+    await page.getByTestId("hinzufuegen").click();
+    await page.getByRole("tab", { name: "Dateien kopieren" }).click();
+    await page.getByTestId("dateien-waehlen").click();
+    await expect(page.getByTestId("kopier-hinweis")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await geheZu(page, "Verlauf");
+    await expect(bereich(page)).toHaveCount(0);
+    await geheZu(page, "Projekte");
+    await expect(bereich(page)).toBeVisible();
+    await page.getByTestId("hinzufuegen").click();
+    await page.getByRole("tab", { name: "Dateien kopieren" }).click();
+    await expect(page.getByTestId("dateien-waehlen")).toBeDisabled();
+    await page.getByTestId("dateien-waehlen").click({ force: true });
+    await expect(page.getByTestId("kopier-hinweis")).toBeVisible();
+    await expect(page.getByTestId("projekt-eintrag")).toHaveCount(10, {
+      timeout: 6000,
+    });
+    expect(await aufrufe(page, "projekt_dateien_hinzufuegen")).toHaveLength(1);
+  });
+
+  test("Dialog: verspätete Antwort nach Schließen und Wiederöffnen wird verworfen", async ({
+    page,
+  }) => {
+    await setup(page);
+    await kontextSetzen(
+      page,
+      `K.aufnahmen = 620; K.delay["meetings_list"] = 1500;`,
+    );
+    await page.getByTestId("hinzufuegen").click();
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await kontextSetzen(page, `K.aufnahmen = 3; K.delay["meetings_list"] = 0;`);
+    await page.getByTestId("hinzufuegen").click();
+    const dlg = page.getByRole("dialog");
+    const aufnahmen = dlg.getByRole("checkbox", { name: /Aufnahme \d+/ });
+    await expect(aufnahmen).toHaveCount(3);
+    await page.waitForTimeout(2000);
+    await expect(aufnahmen).toHaveCount(3);
+    await expect(dlg.getByTestId("dialog-mehr")).toHaveCount(0);
+  });
+
+  for (const [breite, hoehe] of [
+    [1440, 900],
+    [390, 844],
+  ] as const) {
+    test(`Dialoge vollständig sichtbar, nichts abgeschnitten (${breite}×${hoehe})`, async ({
+      page,
+    }) => {
+      await setup(page, {
+        width: breite,
+        height: hoehe,
+        vorher: (p) =>
+          p.addInitScript(() => {
+            (window as any).__kontext.lage = "defekt";
+          }),
+      });
+      await kontextSetzen(
+        page,
+        `window.__pick = ["/home/test/Plan.md"]; K.delay["projekt_dateien_hinzufuegen"] = 60000;`,
+      );
+      const pruefen = async (wo: string) => {
+        const dlg = page.getByRole("dialog");
+        await expect(dlg).toBeVisible();
+        await page.waitForTimeout(300);
+        const m = await page.evaluate(() => {
+          const d = document.querySelector<HTMLElement>('[role="dialog"]')!;
+          const c = d.querySelector<HTMLElement>(".lv-dialog__content")!;
+          const f = d.querySelector<HTMLElement>(".lv-dialog__actions");
+          const mask = getComputedStyle(c).maskImage;
+          const passt = c.scrollHeight <= c.clientHeight + 1;
+          let letzteSichtbar = passt;
+          if (!passt) {
+            c.scrollTop = c.scrollHeight;
+            const kind = c.lastElementChild as HTMLElement;
+            letzteSichtbar =
+              kind.getBoundingClientRect().bottom <=
+              c.getBoundingClientRect().bottom + 1;
+          }
+          const l = d.querySelector<HTMLElement>(".pb-dlg-liste");
+          let listeOk = true;
+          if (l && l.lastElementChild) {
+            l.scrollTop = l.scrollHeight;
+            listeOk =
+              l.lastElementChild.getBoundingClientRect().bottom <=
+              l.getBoundingClientRect().bottom + 1;
+          }
+          const r = d.getBoundingClientRect();
+          return {
+            listeOk,
+            passt,
+            letzteSichtbar,
+            mask,
+            imFenster: r.top >= 0 && r.bottom <= window.innerHeight + 1,
+            fussSichtbar: f
+              ? f.getBoundingClientRect().bottom <= window.innerHeight + 1
+              : true,
+          };
+        });
+        expect(m.mask === "none" || m.mask === "", `${wo} Maske`).toBe(true);
+        expect(m.letzteSichtbar, `${wo} letztes Element`).toBe(true);
+        expect(m.listeOk, `${wo} letzte Listenzeile`).toBe(true);
+        expect(m.imFenster, `${wo} im Fenster`).toBe(true);
+        expect(m.fussSichtbar, `${wo} Fußleiste`).toBe(true);
+      };
+      const schliessen = async () => {
+        await page.keyboard.press("Escape");
+        await expect(page.getByRole("dialog")).toHaveCount(0);
+      };
+      // Projekt anlegen (bei 390 px steht zuerst nur die Liste)
+      await page.getByTestId("projekt-neu").click();
+      await pruefen("Projekt anlegen");
+      await schliessen();
+      if (breite === 390) await waehleProjekt(page, "Finanzwissen");
+      for (const [name, wo] of [
+        ["Depotauszug-2026.pdf", "Entfernen Datei"],
+        ["Rich Dad Poor Dad", "Entfernen App-Inhalt"],
+      ] as const) {
+        await page
+          .getByRole("button", { name: `Weitere Aktionen für ${name}` })
+          .click();
+        await page
+          .getByRole("menuitem", { name: "Aus Projekt entfernen …" })
+          .click();
+        await pruefen(wo);
+        await schliessen();
+      }
+      await page.getByTestId("lage-knopf").click();
+      await pruefen("Bestand neu aufbauen");
+      await schliessen();
+      await page.getByTestId("hinzufuegen").click();
+      await expect(
+        page.getByRole("checkbox", { name: /The Burning Room/ }),
+      ).toBeVisible();
+      await pruefen("Hinzufügen App");
+      await page.getByRole("tab", { name: "Dateien kopieren" }).click();
+      await page.getByTestId("dateien-waehlen").click();
+      await expect(page.getByTestId("kopier-hinweis")).toBeVisible();
+      await pruefen("Hinzufügen Dateien");
+    });
+  }
+
   interface Szene {
     name: string;
     schmal?: boolean;
@@ -983,6 +1190,9 @@ test.describe("Projekte mit Als Kontext", () => {
       name: "09-dialog-hinzufuegen-app",
       schmal: true,
       los: async (p) => {
+        await p.evaluate(() => {
+          (window as any).__kontext.aufnahmen = 3;
+        });
         await p.getByTestId("hinzufuegen").click();
         await expect(
           p.getByRole("checkbox", { name: /The Burning Room/ }),

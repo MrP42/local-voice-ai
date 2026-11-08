@@ -78,6 +78,8 @@ export const HinzufuegenDialog: React.FC<Props> = ({
   const [ladeMehr, setLadeMehr] = useState(false);
   const [versuch, setVersuch] = useState(0);
   const aufnahmen = React.useRef(0);
+  /** Öffnungsgeneration: Antworten früherer Öffnungen (oder Wiederholungen) werden verworfen. */
+  const oeffnung = React.useRef(0);
 
   useEffect(() => {
     if (!open) return;
@@ -86,8 +88,11 @@ export const HinzufuegenDialog: React.FC<Props> = ({
     setFehler(null);
     setLaden("laedt");
     setWeitere(false);
+    setLadeMehr(false);
+    setKandidaten([]);
     aufnahmen.current = 0;
-    let aktuell = true;
+    const og = ++oeffnung.current;
+    const aktuell = () => oeffnung.current === og;
     void (async () => {
       try {
         const [b, p, m] = await Promise.all([
@@ -100,7 +105,7 @@ export const HinzufuegenDialog: React.FC<Props> = ({
           ...alsKandidaten<{ id: string; title: string }>("text", p),
           ...alsKandidaten<{ id: string; title: string }>("aufnahme", m),
         ];
-        if (!aktuell) return;
+        if (!aktuell()) return;
         const n =
           m.status === "ok" && Array.isArray(m.data) ? m.data.length : 0;
         aufnahmen.current = n;
@@ -108,20 +113,24 @@ export const HinzufuegenDialog: React.FC<Props> = ({
         setKandidaten(liste);
         setLaden("fertig");
       } catch {
-        if (aktuell) setLaden("fehler");
+        if (!aktuell()) return;
+        setKandidaten([]);
+        setLaden("fehler");
       }
     })();
     return () => {
-      aktuell = false;
+      oeffnung.current += 1;
     };
   }, [open, versuch]);
 
   const mehrLaden = async () => {
     if (ladeMehr) return;
+    const og = oeffnung.current;
     setLadeMehr(true);
     setFehler(null);
     try {
       const r = await commands.meetingsList(aufnahmen.current, SEITE);
+      if (og !== oeffnung.current) return;
       const neu = alsKandidaten<{ id: string; title: string }>("aufnahme", r);
       aufnahmen.current += neu.length;
       setWeitere(neu.length >= SEITE);
@@ -130,9 +139,10 @@ export const HinzufuegenDialog: React.FC<Props> = ({
         return [...alt, ...neu.filter((k) => !da.has(k.key))];
       });
     } catch {
-      setFehler(t("projektBereich.dialog.ladefehler"));
+      if (og === oeffnung.current)
+        setFehler(t("projektBereich.dialog.ladefehler"));
     } finally {
-      setLadeMehr(false);
+      if (og === oeffnung.current) setLadeMehr(false);
     }
   };
 
@@ -200,6 +210,7 @@ export const HinzufuegenDialog: React.FC<Props> = ({
 
   return (
     <Dialog
+      contentFades={false}
       open={open}
       onOpenChange={(o) => !o && onClose()}
       title={t("projektBereich.dialog.titel", { name: projekt?.title ?? "" })}
