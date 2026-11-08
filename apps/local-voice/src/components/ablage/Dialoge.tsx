@@ -220,7 +220,10 @@ export const OrdnerEinstellungen: React.FC<{
   const [nur, setNur] = useState(false);
   const [entwuerfe, setEntwuerfe] = useState(false);
   const [bestaetigen, setBestaetigen] = useState(false);
+  const ordnerId = ordner?.id ?? null;
   useEffect(() => {
+    // Nur beim Öffnen oder Ordnerwechsel zurücksetzen: ein Neuladen im Hintergrund
+    // (neues Objekt, gleiche Kennung) darf ungespeicherte Eingaben nicht verwerfen.
     if (!open || !ordner) return;
     const z = ordner.ki.zustand;
     setKi(z === "an" || z === "gesperrt" ? z : "aus");
@@ -229,7 +232,7 @@ export const OrdnerEinstellungen: React.FC<{
     setNur(ordner.nur_geraet);
     setEntwuerfe(ordner.zielordner_ki);
     setBestaetigen(false);
-  }, [open, ordner]);
+  }, [open, ordnerId]);
   const kiRef = useRef<HTMLButtonElement>(null);
   const unklar = ordner?.ki.zustand === "unklar";
   if (!ordner) return null;

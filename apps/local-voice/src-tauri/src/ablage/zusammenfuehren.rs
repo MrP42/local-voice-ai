@@ -462,6 +462,44 @@ pub fn kette(eltern: &BTreeMap<String, Eltern>, id: &str) -> Vec<String> {
     aus
 }
 
+/// Zusätzliche Vorfahren nur für Einschränkungen: Liegt ein Ordner wirksam unter „Wiederhergestellt“, bleibt
+/// die gespeicherte Elternkette für Sperre, Klasse und „nur dieses Gerät“ maßgeblich (streng: Vereinigung
+/// beider Ketten, die strengste Regel gewinnt).
+pub fn zusatzkette(
+    ordner: &BTreeMap<String, Ordner>,
+    eltern: &BTreeMap<String, Eltern>,
+    id: &str,
+) -> Vec<String> {
+    let wirksam = kette(eltern, id);
+    let mut zusatz: Vec<String> = Vec::new();
+    let Some(letzter) = wirksam.last() else {
+        return zusatz;
+    };
+    if !matches!(eltern.get(letzter), Some(Eltern::Wiederhergestellt)) {
+        return zusatz;
+    }
+    let mut aktuell = ordner.get(letzter).and_then(|o| o.eltern.wert.clone());
+    while let Some(p) = aktuell {
+        if wirksam.contains(&p) || zusatz.contains(&p) {
+            break;
+        }
+        aktuell = ordner.get(&p).and_then(|o| o.eltern.wert.clone());
+        zusatz.push(p);
+    }
+    zusatz
+}
+
+/// Wirksame Kette plus [`zusatzkette`].
+pub fn strenge_kette(
+    ordner: &BTreeMap<String, Ordner>,
+    eltern: &BTreeMap<String, Eltern>,
+    id: &str,
+) -> Vec<String> {
+    let mut k = kette(eltern, id);
+    k.extend(zusatzkette(ordner, eltern, id));
+    k
+}
+
 /// Datenklasse eines Ordners oder einer Datei.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -507,7 +545,7 @@ pub fn wirksame_klasse(
     id: &str,
 ) -> Klasse {
     let mut geerbt = Klasse::VORGABE;
-    for glied in kette(eltern, id).iter().rev() {
+    for glied in strenge_kette(ordner, eltern, id).iter().rev() {
         let Some(o) = ordner.get(glied) else {
             return Klasse::Unbekannt;
         };
@@ -546,7 +584,7 @@ pub fn wirksam_nur_geraet(
     eltern: &BTreeMap<String, Eltern>,
     id: &str,
 ) -> bool {
-    kette(eltern, id)
+    strenge_kette(ordner, eltern, id)
         .iter()
         .any(|g| ordner.get(g).is_some_and(|o| o.nur_geraet.wert))
 }

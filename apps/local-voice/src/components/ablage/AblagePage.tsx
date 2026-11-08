@@ -127,11 +127,16 @@ export const AblagePage: React.FC = () => {
     [fehlerText],
   );
 
+  const ladeZaehler = useRef(0);
   const neuLaden = useCallback(async () => {
+    const nr = ++ladeZaehler.current;
     try {
-      setSicht(await api.stand());
+      const neu = await api.stand();
+      if (nr !== ladeZaehler.current) return;
+      setSicht(neu);
       setLadefehler(null);
     } catch (e) {
+      if (nr !== ladeZaehler.current) return;
       const { code, text } = fehlerTeile(
         e instanceof Error ? e.message : String(e),
       );
@@ -336,8 +341,8 @@ export const AblagePage: React.FC = () => {
     const geaendert =
       e.datenklasse != null || e.nur_geraet != null || e.zielordner_ki != null;
     const gut = await tue(async () => {
-      if (a.ki !== undefined) await api.kiSetzen(id, a.ki);
       if (geaendert) await api.ordnerEinstellungen(id, e);
+      if (a.ki !== undefined) await api.kiSetzen(id, a.ki);
     }, t("ablage.toast.gespeichert"));
     if (gut) setDlg(null);
   };
@@ -578,9 +583,9 @@ export const AblagePage: React.FC = () => {
       {sicht.gefunden.length > 0 && !imKorb && (
         <Meldung warn testid="ablage-gefunden">
           <p>{t("ablage.gefunden.titel", { count: sicht.gefunden.length })}</p>
-          {sicht.gefunden.map((g) => (
+          {sicht.gefunden.map((g, i) => (
             <div
-              key={g.dat}
+              key={`${g.dat}-${i}`}
               style={{
                 display: "flex",
                 alignItems: "center",

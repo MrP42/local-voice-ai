@@ -435,6 +435,11 @@ fn wiederanlauf_prueft_das_original_vor_dem_nachtragen() {
     fs::write(&f, "VERÄNDERT").unwrap();
     let s = e.sicht();
     assert!(s.dateien.is_empty());
+    assert_eq!(
+        s.gefunden.len(),
+        1,
+        "das Original bleibt auffindbar, der Eintrag geht nicht still verloren"
+    );
 }
 
 fn alle_dateien_unter_dirs(p: &Path) -> String {
@@ -962,4 +967,177 @@ fn fehlertexte_enthalten_keine_namen() {
     assert!(!text.contains(GEHEIM));
     let f = super::Fehler::neu("ablage.x", "Allgemeiner Text.");
     assert_eq!(String::from(f), "ablage.x: Allgemeiner Text.");
+}
+
+// --- Review-Korrekturen ---------------------------------------------------------------------
+
+fn journal_json(e: &Env) -> serde_json::Value {
+    serde_json::from_slice(&fs::read(e.wurzel.join(JOURNAL)).unwrap()).unwrap()
+}
+
+fn journal_schreiben(e: &Env, v: &serde_json::Value) {
+    fs::write(e.wurzel.join(JOURNAL), serde_json::to_vec(v).unwrap()).unwrap();
+}
+
+#[test]
+fn unterbaum_folgt_der_wirksamen_zuordnung_nicht_der_gespeicherten() {
+    let e = env();
+    let root = e.standard();
+    let a = e.a.ordner_anlegen(Some(&root), "A").unwrap();
+    let b = e.a.ordner_anlegen(Some(&root), "B").unwrap();
+    let dat = e.ablegen("b.txt", "b", &b);
+    // Zyklus A <-> B: A (höherer Rang) liegt unter B, B unter „Wiederhergestellt“.
+    let mut v = journal_json(&e);
+    v["ordner"][&a]["eltern"] = serde_json::json!({"wert": b, "zaehler": 1000, "geraet": "g_t"});
+    v["ordner"][&b]["eltern"] = serde_json::json!({"wert": a, "zaehler": 900, "geraet": "g_t"});
+    journal_schreiben(&e, &v);
+    let s = e.sicht();
+    assert!(
+        s.ordner
+            .iter()
+            .find(|o| o.id == b)
+            .unwrap()
+            .wiederhergestellt
+    );
+    e.a.in_papierkorb(AblageArt::Ordner, &a).unwrap();
+    e.a.endgueltig_loeschen(AblageArt::Ordner, &a).unwrap();
+    let s = e.sicht();
+    assert!(s.ordner.iter().any(|o| o.id == b), "B bleibt erhalten");
+    assert!(s.dateien.iter().any(|d| d.id == dat), "Datei in B bleibt");
+    assert!(e.original(&dat).exists());
+}
+
+#[test]
+fn journal_geht_bei_fehler_nicht_verloren() {
+    let e = env();
+    let o = e.standard();
+    let d1 = e.ablegen("a.txt", "a", &o);
+    let d2 = e.ablegen("b.txt", "b", &o);
+    // Löschen von d1 scheitert (ein Verzeichnis ist durch eine Datei ersetzt).
+    fs::remove_dir_all(e.wurzel.join("dateien").join(&d1)).unwrap();
+    fs::write(e.wurzel.join("dateien").join(&d1), "x").unwrap();
+    let mut v = journal_json(&e);
+    v["journal"] = serde_json::json!([
+        {"art": "loeschen", "dat": [d1], "ordner": []},
+        {"art": "loeschen", "dat": [d2], "ordner": []}
+    ]);
+    journal_schreiben(&e, &v);
+    e.sicht();
+    let j = journal_json(&e);
+    assert_eq!(
+        j["journal"].as_array().unwrap().len(),
+        2,
+        "fehlgeschlagener und nachfolgender Eintrag bleiben im Journal"
+    );
+    assert!(e.wurzel.join("dateien").join(&d2).exists());
+    e.sicht();
+    assert!(journal_json(&e)["journal"].as_array().unwrap().is_empty());
+    assert!(!e.wurzel.join("dateien").join(&d2).exists());
+}
+
+#[test]
+fn teildateien_im_papierkorb_werden_geleert_und_laufen_ab() {
+    let e = env();
+    let o = e.standard();
+    let dat = e.ablegen("a.txt", "a", &o);
+    let teil = |n: &str| {
+        let fas = super::neue_id(super::PRAEFIX_FASSUNG);
+        let p = e
+            .wurzel
+            .join("dateien")
+            .join(&dat)
+            .join(format!(".teil-{fas}"));
+        fs::write(&p, n).unwrap();
+        fas
+    };
+    let alt = teil("alt");
+    e.sicht();
+    let ziel_alt = e.wurzel.join("papierkorb").join(format!("teil-{alt}"));
+    assert!(
+        ziel_alt.exists(),
+        "liegengebliebene Zwischendatei im Papierkorb"
+    );
+    let spaet = std::time::SystemTime::now() - std::time::Duration::from_secs(31 * 24 * 3600);
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&ziel_alt)
+        .unwrap()
+        .set_modified(spaet)
+        .unwrap();
+    let neu = teil("neu");
+    e.sicht();
+    assert!(!ziel_alt.exists(), "nach 30 Tagen entfernt");
+    let ziel_neu = e.wurzel.join("papierkorb").join(format!("teil-{neu}"));
+    assert!(ziel_neu.exists(), "jüngere bleibt");
+    e.a.papierkorb_leeren().unwrap();
+    assert!(
+        !ziel_neu.exists(),
+        "Papierkorb leeren entfernt auch Zwischendateien"
+    );
+}
+
+#[test]
+fn ki_sperre_der_gespeicherten_elternkette_gilt_unter_wiederhergestellt() {
+    let e = env();
+    let root = e.standard();
+    let a = e.a.ordner_anlegen(Some(&root), "A").unwrap();
+    let b = e.a.ordner_anlegen(Some(&root), "B").unwrap();
+    e.a.ordner_einstellungen(
+        &a,
+        &AblageEinstellungen {
+            nur_geraet: Some(true),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    e.a.ki_setzen(&a, Some(KiStufe::Gesperrt)).unwrap();
+    // B: gespeicherter Elternordner A, aber wirksam unter „Wiederhergestellt“ (Zyklus).
+    let mut v = journal_json(&e);
+    v["ordner"][&a]["eltern"] = serde_json::json!({"wert": b, "zaehler": 1000, "geraet": "g_t"});
+    v["ordner"][&b]["eltern"] = serde_json::json!({"wert": a, "zaehler": 900, "geraet": "g_t"});
+    journal_schreiben(&e, &v);
+    let s = e.sicht();
+    let ob = s.ordner.iter().find(|o| o.id == b).unwrap();
+    assert!(ob.wiederhergestellt);
+    assert_eq!(ob.ki.zustand, "gesperrt");
+    assert!(ob.nur_geraet_wirksam);
+}
+
+#[test]
+fn gefundene_aufnehmen_im_konflikt_haengt_an_juengsten_kopf() {
+    let e = env();
+    let o = e.standard();
+    let dat = e.ablegen("a.txt", "a", &o);
+    let mut v = journal_json(&e);
+    let f1 = v["dateien"][&dat]["fassungen"][0].clone();
+    let f1id = f1["fas"].as_str().unwrap().to_string();
+    let f2id = super::neue_id(super::PRAEFIX_FASSUNG);
+    let mut f2 = f1.clone();
+    f2["fas"] = serde_json::json!(f2id);
+    f2["vorgaenger"] = serde_json::Value::Null;
+    f2["zeit"] = serde_json::json!(f1["zeit"].as_i64().unwrap() + 100_000);
+    f2["blob"] = serde_json::json!("blob-zwei");
+    f2["original_sha256"] = serde_json::json!("sha-zwei");
+    v["dateien"][&dat]["fassungen"]
+        .as_array_mut()
+        .unwrap()
+        .push(f2);
+    let f3id = super::neue_id(super::PRAEFIX_FASSUNG);
+    v["gefunden"] = serde_json::json!([
+        {"dat": dat, "fas": f3id, "typ": "txt", "groesse": 1, "ms": 5}
+    ]);
+    journal_schreiben(&e, &v);
+    fs::write(
+        e.wurzel
+            .join("dateien")
+            .join(&dat)
+            .join(format!("{f3id}.txt")),
+        "c",
+    )
+    .unwrap();
+    e.a.gefundene_aufnehmen(&dat, &o).unwrap();
+    let f = e.a.fassungen(&dat).unwrap();
+    let neu = f.iter().find(|x| x.fas == f3id).unwrap();
+    assert_eq!(neu.vorgaenger.as_deref(), Some(f2id.as_str()));
+    assert_ne!(neu.vorgaenger.as_deref(), Some(f1id.as_str()));
 }

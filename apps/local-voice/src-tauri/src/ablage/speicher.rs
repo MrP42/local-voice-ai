@@ -553,8 +553,13 @@ pub struct AblageLoeschBericht {
 
 const KLASSEN: [&str; 5] = ["erbt", "public", "internal", "confidential", "personal"];
 
-fn ki_sicht(st: &Stand, lage: &freigabe::Lage, kette: &[String]) -> AblageKi {
-    let w = freigabe::wirksam(lage, kette);
+fn ki_sicht(st: &Stand, lage: &freigabe::Lage, kette: &[String], zusatz: &[String]) -> AblageKi {
+    let mut w = freigabe::wirksam(lage, kette);
+    // Unter „Wiederhergestellt“ gilt zusätzlich eine Sperre der gespeicherten Elternkette.
+    let z = freigabe::wirksam(lage, zusatz);
+    if z.stufe == KiStufe::Gesperrt && w.stufe != KiStufe::Gesperrt {
+        w = z;
+    }
     AblageKi {
         zustand: if w.unklar {
             "unklar".into()
@@ -700,7 +705,7 @@ impl Ablage {
         let _ = fs::create_dir_all(self.dir.join(DATEIEN));
         let _ = fs::create_dir_all(self.dir.join(PAPIERKORB));
         geaendert |= self.zwischendateien_raeumen();
-        geaendert |= self.journal_abarbeiten(&mut st).is_ok_and(|g| g);
+        geaendert |= self.journal_abarbeiten(&mut st).unwrap_or(true);
         let erster_lauf = gescannt()
             .lock()
             .map(|mut g| g.insert(self.dir.clone()))
@@ -709,6 +714,7 @@ impl Ablage {
             geaendert |= self.gefundenes_suchen(&mut st);
         }
         geaendert |= self.abgelaufene_loeschen(&mut st, jetzt_ms());
+        self.teildateien_loeschen(Some(jetzt_ms()));
         if st.ordner.is_empty() && st.dateien.is_empty() && st.begraben.is_empty() {
             let z = st.zaehler();
             let o = neuer_ordner(st.geraet(), None, STANDARD_ORDNER, z);
@@ -760,19 +766,55 @@ impl Ablage {
         bewegt
     }
 
-    /// Journal zu Ende führen. Liefert, ob etwas geändert wurde.
+    /// Verschobene Zwischendateien (`papierkorb/teil-*`) endgültig entfernen: mit `None` alle (Papierkorb
+    /// leeren), mit `Some(jetzt)` nur die, die älter als die Papierkorbfrist sind (Spec §10).
+    fn teildateien_loeschen(&self, jetzt: Option<i64>) {
+        let Ok(rest) = fs::read_dir(self.dir.join(PAPIERKORB)) else {
+            return;
+        };
+        for e in rest.flatten() {
+            if !e.file_name().to_string_lossy().starts_with("teil-") {
+                continue;
+            }
+            let Ok(m) = fs::symlink_metadata(e.path()) else {
+                continue;
+            };
+            if !m.is_file() {
+                continue;
+            }
+            if let Some(jetzt) = jetzt {
+                let alt = m
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_millis() as i64)
+                    .is_some_and(|t| jetzt - t >= PAPIERKORB_TAGE * TAG_MS);
+                if !alt {
+                    continue;
+                }
+            }
+            let _ = fs::remove_file(e.path());
+        }
+    }
+
+    /// Journal zu Ende führen. Liefert, ob etwas geändert wurde. Einträge gehen nie verloren: ein
+    /// fehlgeschlagener Löscheintrag und alle danach bleiben im Journal (für den nächsten Lauf); ein
+    /// `Abgelegt`-Eintrag mit fehlgeschlagener Prüfung wird als `gefunden` angeboten, das Original bleibt.
     fn journal_abarbeiten(&self, st: &mut Stand) -> Res<bool> {
         if st.journal.is_empty() {
             return Ok(false);
         }
         let eintraege = std::mem::take(&mut st.journal);
-        for e in eintraege {
-            match e {
+        let mut rest: Vec<Eintrag> = Vec::new();
+        let mut fehler: Option<Fehler> = None;
+        let mut it = eintraege.into_iter();
+        while let Some(e) = it.next() {
+            match &e {
                 Eintrag::Abgelegt {
-                    ref dat,
-                    ref fas,
-                    ref typ,
-                    ref sha256,
+                    dat,
+                    fas,
+                    typ,
+                    sha256,
                     groesse,
                     ..
                 } => {
@@ -790,18 +832,42 @@ impl Ablage {
                         .join(original_name(fas, typ));
                     let ok = ohne_umweg(&self.dir, &format!("{DATEIEN}/{dat}")).is_ok()
                         && fs::symlink_metadata(&pfad)
-                            .is_ok_and(|m| m.is_file() && m.len() == groesse)
+                            .is_ok_and(|m| m.is_file() && m.len() == *groesse)
                         && sha256_datei(&pfad).is_ok_and(|s| &s == sha256);
                     if ok {
                         anwenden_abgelegt(st, &e);
+                        continue;
+                    }
+                    let vorhanden = fs::symlink_metadata(&pfad)
+                        .ok()
+                        .filter(|m| m.is_file() && !ist_umweg(m));
+                    let bekannt =
+                        st.gefunden.iter().any(|g| &g.fas == fas) || st.begraben.contains(dat);
+                    if let (Some(m), false) = (vorhanden, bekannt) {
+                        st.gefunden.push(Gefunden {
+                            dat: dat.clone(),
+                            fas: fas.clone(),
+                            typ: typ.clone(),
+                            groesse: m.len(),
+                            ms: jetzt_ms(),
+                        });
                     }
                 }
                 Eintrag::Loeschen { dat, ordner } => {
-                    self.loeschen_ausfuehren(st, &dat, &ordner)?;
+                    if let Err(x) = self.loeschen_ausfuehren(st, dat, ordner) {
+                        fehler = Some(x);
+                        rest.push(e);
+                        rest.extend(it);
+                        break;
+                    }
                 }
             }
         }
-        Ok(true)
+        st.journal = rest;
+        match fehler {
+            Some(x) => Err(x),
+            None => Ok(true),
+        }
     }
 
     /// Dateien in `dateien/<dat>/`, die weder im Baum noch im Journal stehen: als `gefunden` vermerken.
@@ -941,7 +1007,12 @@ impl Ablage {
                     nur_geraet: o.nur_geraet.wert,
                     nur_geraet_wirksam: zf::wirksam_nur_geraet(&st.ordner, &eltern, &o.id),
                     zielordner_ki: o.zielordner_ki.wert,
-                    ki: ki_sicht(&st, &lage, &kette),
+                    ki: ki_sicht(
+                        &st,
+                        &lage,
+                        &kette,
+                        &zf::zusatzkette(&st.ordner, &eltern, &o.id),
+                    ),
                     dateien: st
                         .dateien
                         .values()
@@ -1156,7 +1227,7 @@ impl Ablage {
             }
         }
         if e.nur_geraet == Some(false) {
-            let kette = zf::kette(&eltern, id);
+            let kette = zf::strenge_kette(&st.ordner, &eltern, id);
             let darueber = kette
                 .iter()
                 .skip(1)
@@ -1652,6 +1723,7 @@ impl Ablage {
     pub fn papierkorb_leeren(&self) -> Res<AblageLoeschBericht> {
         let _g = sperren();
         let mut st = self.laden()?;
+        self.teildateien_loeschen(None);
         let eltern = st.eltern();
         let dat: Vec<String> = st
             .dateien
@@ -1885,7 +1957,18 @@ impl Ablage {
         let (z, ger) = (st.zaehler(), st.geraet().to_string());
         match st.dateien.get_mut(dat) {
             Some(d) => {
-                let mut vor = zf::aktuell(d);
+                // Im Konflikt (kein einzelner aktueller Kopf): der jüngste Kopf nach (zeit, id).
+                let zeit_von = |d: &Datei, id: &str| {
+                    d.fassungen
+                        .iter()
+                        .find(|f| f.fas == id)
+                        .map_or(0, |f| f.zeit)
+                };
+                let mut vor = zf::aktuell(d).or_else(|| {
+                    zf::koepfe(d)
+                        .into_iter()
+                        .max_by(|a, b| zeit_von(d, a).cmp(&zeit_von(d, b)).then_with(|| a.cmp(b)))
+                });
                 for mut f in neue {
                     f.vorgaenger = vor.clone();
                     vor = Some(f.fas.clone());
@@ -2030,7 +2113,8 @@ fn gleichnamig_pruefen(
     Ok(())
 }
 
-/// Der Ordner und alle Ordner darunter (nach der wirksamen und nach der gespeicherten Zuordnung).
+/// Der Ordner und alle Ordner darunter nach der WIRKSAMEN Zuordnung (Ordner unter „Wiederhergestellt“
+/// sind keine Kinder ihres gespeicherten Elternordners).
 fn unterbaum_von(st: &Stand, eltern: &BTreeMap<String, Eltern>, id: &str) -> BTreeSet<String> {
     let mut menge: BTreeSet<String> = BTreeSet::new();
     menge.insert(id.to_string());
@@ -2038,8 +2122,7 @@ fn unterbaum_von(st: &Stand, eltern: &BTreeMap<String, Eltern>, id: &str) -> BTr
         let vorher = menge.len();
         for o in st.ordner.values() {
             let wirksam = matches!(eltern.get(&o.id), Some(Eltern::Ordner(p)) if menge.contains(p));
-            let gespeichert = o.eltern.wert.as_ref().is_some_and(|p| menge.contains(p));
-            if wirksam || gespeichert {
+            if wirksam {
                 menge.insert(o.id.clone());
             }
         }
@@ -2081,7 +2164,12 @@ fn datei_sicht(
         klasse: zf::wirksame_klasse_datei(&st.ordner, eltern, d)
             .text()
             .into(),
-        ki: ki_sicht(st, lage, &kette),
+        ki: ki_sicht(
+            st,
+            lage,
+            &kette,
+            &zf::zusatzkette(&st.ordner, eltern, &d.ordner.wert),
+        ),
         nur_geraet: d.nur_geraet_min || zf::wirksam_nur_geraet(&st.ordner, eltern, &d.ordner.wert),
         text: f.and_then(|f| f.texte.last().map(|t| t.stand.clone())),
     }

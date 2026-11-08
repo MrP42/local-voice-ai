@@ -155,7 +155,12 @@ fn wiederherstellen_oder(dir: &Path, sonst: KiUnklar) -> Lage {
             let neu = Freigaben {
                 v: VERSION,
                 epoche: v.epoche + 2,
-                ordner: v.ordner,
+                // Fail-closed (Spec §5.1): alle wiederhergestellten Einträge stehen auf `gesperrt`.
+                ordner: v
+                    .ordner
+                    .into_keys()
+                    .map(|k| (k, KiStufe::Gesperrt))
+                    .collect(),
             };
             if beiseitelegen(dir).is_ok() && schreiben(dir, &neu).is_ok() {
                 Lage::Gueltig(neu)
@@ -419,6 +424,7 @@ mod tests {
         let (a, b) = (o(0), o(1));
         setzen(d.path(), &a, Some(KiStufe::Gesperrt)).unwrap();
         setzen(d.path(), &b, Some(KiStufe::An)).unwrap();
+        setzen(d.path(), &b, Some(KiStufe::An)).unwrap();
         let epoche = match laden(d.path()) {
             Lage::Gueltig(f) => f.epoche,
             _ => panic!(),
@@ -428,6 +434,11 @@ mod tests {
             panic!("keine Wiederherstellung")
         };
         assert_eq!(f.ordner[&a], KiStufe::Gesperrt, "gesperrt bleibt erhalten");
+        assert_eq!(
+            f.ordner[&b],
+            KiStufe::Gesperrt,
+            "auch `an` wird bei der Wiederherstellung gesperrt"
+        );
         assert!(f.epoche > epoche, "neue Epoche");
         let beiseite = fs::read_dir(d.path()).unwrap().flatten().any(|e| {
             e.file_name()
@@ -451,6 +462,24 @@ mod tests {
             panic!()
         };
         assert_eq!(f.ordner[&a], KiStufe::Gesperrt);
+    }
+
+    #[test]
+    fn geloeschte_datei_mit_vorher_ist_nie_leer_gueltig_und_nie_an() {
+        let d = tempfile::tempdir().unwrap();
+        let a = o(0);
+        setzen(d.path(), &a, Some(KiStufe::An)).unwrap();
+        setzen(d.path(), &a, Some(KiStufe::An)).unwrap();
+        fs::remove_file(d.path().join(DATEI)).unwrap();
+        match laden(d.path()) {
+            Lage::Gueltig(f) => assert!(f.ordner.values().all(|s| *s == KiStufe::Gesperrt)),
+            Lage::Unklar(_) => {}
+        }
+        // `.vorher` defekt und Datei weg: unklar, nicht leer-gültig.
+        fs::write(d.path().join(VORHER), b"{kaputt").unwrap();
+        let d2 = tempfile::tempdir().unwrap();
+        fs::write(d2.path().join(VORHER), b"{kaputt").unwrap();
+        assert_eq!(laden(d2.path()), Lage::Unklar(KiUnklar::Defekt));
     }
 
     #[test]
