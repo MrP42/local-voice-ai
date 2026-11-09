@@ -106,9 +106,10 @@ pub fn ausfuehren(
     for (k, v) in &prog.umgebung {
         cmd.env(k, v);
     }
-    if let Some(d) = datei.parent() {
-        cmd.current_dir(d);
-    }
+    // Arbeitsordner ist die Ablagewurzel, nie der Ordner der Datei: unter Windows hält das
+    // Arbeitsverzeichnis eines Prozesses seinen Ordner ohne FILE_SHARE_DELETE offen, und ein
+    // gleichzeitiges endgültiges Löschen schlüge dort fehl.
+    cmd.current_dir(wurzel);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
