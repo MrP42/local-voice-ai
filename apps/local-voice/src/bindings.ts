@@ -1095,6 +1095,40 @@ async ablageGefundeneAufnehmen(datei: string, ordner: string) : Promise<Result<n
 }
 },
 /**
+ * Volltextsuche in der Ablage (ohne KI): Fundstellen mit Auszug und Anker. Die Namenssuche läuft in der
+ * Oberfläche; beide Ergebnisse zeigt die Seite zusammen.
+ */
+async ablageSuchen(anfrage: string) : Promise<Result<AblageSuchtreffer[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_suchen", { anfrage }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * „Suchindex neu aufbauen“: `index.db` löschen und aus den Textfassungen neu erzeugen.
+ */
+async ablageIndexNeuAufbauen() : Promise<Result<AblageIndexBericht, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_index_neu_aufbauen") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Bricht die laufende Texterzeugung ab (bis zum nächsten Anstoß).
+ */
+async ablageTextAbbrechen() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_text_abbrechen") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Stuft eine Aeusserung lokal ein (ADR-0028 E4.1) fuer Ansagen und S0-Vorlagen. `None`, wenn
  * diese abgeschaltet sind (`assistent_einstufung_aktiv`); das Tor vor dem Modell bleibt davon
  * unberuehrt. Der Text wird nicht protokolliert.
@@ -8385,11 +8419,28 @@ ttsProviderVoiceSample: "tts-provider-voice-sample"
 export type AblageArt = "datei" | "ordner"
 export type AblageDatei = { id: string; name: string; ordner: string; typ: string; groesse: number; geaendert: number; fassungen: number; konflikt: boolean; klasse: string; ki: AblageKi; nur_geraet: boolean; 
 /**
- * Stand der jüngsten Textfassung (`ok`, `kein_text`, `fehler`); `null` = noch keine (D2).
+ * Stand der Textfassung der aktuellen Fassung: `ausstehend`, `ok`, `kein_text` oder `fehler`;
+ * `null` = Format ohne Textfassung (z. B. Bilder).
  */
-text: string | null }
+text: string | null; 
+/**
+ * Fehlercode bei `fehler` (z. B. `extrakt.zeit`, `extrakt.zip_grenze`); nie Inhalt.
+ */
+text_code: string | null }
 export type AblageEinstellungen = { datenklasse: string | null; nur_geraet: boolean | null; zielordner_ki: boolean | null }
 export type AblageFassung = { fas: string; nummer: number; vorgaenger: string | null; groesse: number; typ: string; zeit: number; aktuell: boolean; kopf: boolean; abgeloest: boolean }
+/**
+ * Fundstelle in einer Datei.
+ */
+export type AblageFundstelle = { 
+/**
+ * Anker nach Markenformat v1 (`seite=3`, `absatz=12`, `blatt=…&zeilen=2-21`, `teil=kopf`, …).
+ */
+anker: string; 
+/**
+ * Überschriftenpfad (DOCX/ODT/HTML) bzw. Blattname.
+ */
+pfad: string[]; auszug: string }
 export type AblageGefunden = { dat: string; typ: string; groesse: number }
 export type AblageImportStand = "abgelegt" | "neue_fassung" | 
 /**
@@ -8401,6 +8452,10 @@ export type AblageImportZeile = { quelle: string; stand: AblageImportStand;
  * Zielordner dieser Datei (bei Ordnerimport der Unterordner): für die Wiederholung mit Wahl.
  */
 ordner: string | null; dat: string | null; fas: string | null; name: string | null; code: string | null }
+/**
+ * Bericht eines Abgleichs (Tests, Oberfläche).
+ */
+export type AblageIndexBericht = { geschrieben: number; entfernt: number; dateien: number; stuecke: number }
 export type AblageKi = { 
 /**
  * `an`, `aus`, `gesperrt` oder `unklar`.
@@ -8476,6 +8531,14 @@ belegt: number;
  * geerbten Eintrag sind gesperrt, bis die Bedienung sie neu setzt oder den Stand bestätigt.
  */
 freigabe_wiederhergestellt: boolean }
+/**
+ * Suchtreffer: Name und/oder Inhalt einer lebenden Datei.
+ */
+export type AblageSuchtreffer = { dat: string; name: string; ordner: string; typ: string; 
+/**
+ * Bester Rang der Fundstellen (0..1).
+ */
+rang: number; stellen: AblageFundstelle[] }
 export type AccountState = "not_configured" | "no_capabilities" | "needs_sign_in" | "needs_consent" | "ready"
 /**
  * Eine Aufgabe (Zeile in `action_items`). `assignee_label` ist Freitext, die

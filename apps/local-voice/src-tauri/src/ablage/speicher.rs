@@ -5,7 +5,8 @@
 //! ```text
 //! ablage.json                   Version, Epoche, Gerät, Ordner, Dateien, Journal, Gefundenes, Begrabenes
 //! dateien/<dat>/<fas>.<typ>     Originale, unveränderlich, nach Kennung benannt
-//! text/<dat>/…                  Textfassungen (D2; hier nur beim endgültigen Löschen mitentfernt)
+//! text/<dat>/<textrev>.json     Textfassungen (D2, Markenformat v1; siehe `text_schreiben`)
+//! index.db                      abgeleiteter Suchindex (D2, siehe `index`), löschbar
 //! papierkorb/                   Zwischenspeicher beim endgültigen Löschen, liegengebliebene Zwischendateien
 //! freigabe.json                 gerätelokal (siehe `freigabe`)
 //! ```
@@ -24,7 +25,7 @@
 //! nachweislich leer. Jeder andere Fall ist unklar und blockiert, bis die Bedienung „Bestand neu aufbauen“
 //! ([`Ablage::neu_aufbauen`]) ein fehlendes oder defektes Journal ersetzt. Nie Namen oder Inhalte im Log.
 
-// `original_pfad`, `fassungen_aufraeumen` und `klasse_aus_text` sind für D2 bis D4 vorbereitet.
+// `original_pfad`, `fassungen_aufraeumen` und `klasse_aus_text` sind für D3/D4 vorbereitet.
 #![allow(dead_code)]
 
 use super::freigabe::{self, KiStufe, KiUnklar};
@@ -544,8 +545,11 @@ pub struct AblageDatei {
     pub klasse: String,
     pub ki: AblageKi,
     pub nur_geraet: bool,
-    /// Stand der jüngsten Textfassung (`ok`, `kein_text`, `fehler`); `null` = noch keine (D2).
+    /// Stand der Textfassung der aktuellen Fassung: `ausstehend`, `ok`, `kein_text` oder `fehler`;
+    /// `null` = Format ohne Textfassung (z. B. Bilder).
     pub text: Option<String>,
+    /// Fehlercode bei `fehler` (z. B. `extrakt.zeit`, `extrakt.zip_grenze`); nie Inhalt.
+    pub text_code: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
@@ -839,6 +843,7 @@ impl Ablage {
         }
         geaendert |= self.abgelaufene_loeschen(&mut st, jetzt_ms());
         self.teildateien_loeschen(Some(jetzt_ms()));
+        self.texte_raeumen(&st);
         if st.ordner.is_empty() && st.dateien.is_empty() && st.begraben.is_empty() {
             let z = st.zaehler();
             let o = neuer_ordner(st.geraet(), None, STANDARD_ORDNER, z);
@@ -2315,6 +2320,342 @@ impl Ablage {
 }
 
 // ---------------------------------------------------------------------------
+// D2: Textfassungen und Index (Spec §4)
+// ---------------------------------------------------------------------------
+
+/// Eine fehlende Textfassung: aktuelle Fassung einer lebenden Datei, Format mit Extraktor, keine
+/// Textfassung mit der erwarteten `textrev`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TextAuftrag {
+    pub dat: String,
+    pub fas: String,
+    pub typ: String,
+    pub sha256: String,
+    pub textrev: String,
+    pub pfad: PathBuf,
+    /// Bisherige Versuche (vorübergehender Fehler), sonst 0.
+    pub versuche: u32,
+}
+
+/// Ausgang von [`Ablage::text_ablegen`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TextAblage {
+    /// Eingetragen wie zurückgegeben (mit Blob und Größe).
+    Eingetragen(zf::Text),
+    /// Schon eine endgültige Textfassung mit dieser `textrev`.
+    Unveraendert,
+    /// Datei oder Fassung gibt es nicht mehr (endgültig gelöscht): nichts geschrieben, Rest geräumt.
+    Verschwunden,
+    /// Textdatei nicht schreibbar (Datenträger, Verknüpfung): nichts eingetragen.
+    NichtSpeicherbar,
+}
+
+/// Fehlercodes, die nicht am Inhalt liegen müssen (Start, Schutz, Absturz, Zeit, Lesen): sie werden
+/// höchstens [`MAX_VERSUCHE`]-mal versucht, jeweils frühestens beim nächsten Programmstart.
+pub const VORUEBERGEHEND: &[&str] = &[
+    "extrakt.start",
+    "extrakt.programm",
+    "extrakt.schutz",
+    "extrakt.abbruch",
+    "extrakt.zeit",
+    "extrakt.lesen",
+];
+pub const MAX_VERSUCHE: u32 = 3;
+
+/// Ein vorübergehender Fehler mit Versuchen übrig: der Auftrag bleibt offen.
+pub fn text_wiederholbar(t: &zf::Text) -> bool {
+    t.stand == "fehler"
+        && t.versuche < MAX_VERSUCHE
+        && t.code
+            .as_deref()
+            .is_some_and(|c| VORUEBERGEHEND.contains(&c))
+}
+
+/// Was der Index zu einer Datei wissen muss (auch im Papierkorb: dort gefiltert, nicht gelöscht).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IndexQuelle {
+    pub dat: String,
+    pub fas: String,
+    /// `textrev` der indizierten Textfassung (`stand == "ok"`), sonst `None`.
+    pub textrev: Option<String>,
+    pub stand: String,
+    /// Ordnerkette (IDs) vom Ordner der Datei bis zur obersten Ebene.
+    pub ordnerkette: Vec<String>,
+    pub klasse: String,
+    pub nur_geraet: bool,
+    pub papierkorb: bool,
+}
+
+/// Name und Ort einer lebenden Datei für die Trefferliste.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrefferInfo {
+    pub name: String,
+    pub ordner: String,
+    pub typ: String,
+}
+
+/// Erwartete `textrev` der Fassung mit dem aktuellen Extraktor; `None` = Format ohne Textfassung.
+pub fn erwartete_textrev(f: &Fassung) -> Option<String> {
+    let format = super::extrakt::format_aus_typ(&f.typ)?;
+    let (id, version) = super::extrakt::extraktor(format);
+    Some(super::extrakt::textrev(
+        &f.original_sha256,
+        id,
+        version,
+        super::extrakt::MARKEN_VERSION,
+    ))
+}
+
+/// Textstand für die Oberfläche: Stand der erwarteten Textfassung, sonst `ausstehend` (auch während
+/// eine ältere Extraktorversion noch gilt); `None` = Format ohne Textfassung.
+fn textstand(f: &Fassung) -> (Option<String>, Option<String>) {
+    let Some(rev) = erwartete_textrev(f) else {
+        return (None, None);
+    };
+    match f.texte.iter().find(|t| t.textrev == rev) {
+        Some(t) => (Some(t.stand.clone()), t.code.clone()),
+        None => (Some("ausstehend".into()), None),
+    }
+}
+
+impl Ablage {
+    pub fn text_pfad(&self, dat: &str, textrev: &str) -> PathBuf {
+        self.dir
+            .join(TEXT)
+            .join(dat)
+            .join(format!("{textrev}.json"))
+    }
+
+    /// Fehlende Textfassungen (Wiederanlauf: alles, was noch fehlt, steht hier; es gibt keine eigene
+    /// Warteschlangendatei). Endgültige Fehler werden nicht wiederholt, vorübergehende bis
+    /// [`MAX_VERSUCHE`] ([`text_wiederholbar`]).
+    pub fn text_auftraege(&self) -> Res<Vec<TextAuftrag>> {
+        let _g = sperren();
+        let st = self.laden()?;
+        let eltern = st.eltern();
+        let (offen, _) = st.offen_geloescht();
+        let mut aus = Vec::new();
+        for d in st.dateien.values() {
+            if !st.datei_lebt(&eltern, d) || offen.contains(d.id.as_str()) {
+                continue;
+            }
+            let Some(f) = aktuelle_fassung(d) else {
+                continue;
+            };
+            let Some(rev) = erwartete_textrev(f) else {
+                continue;
+            };
+            let vorhanden = f.texte.iter().find(|t| t.textrev == rev);
+            if vorhanden.is_some_and(|t| !text_wiederholbar(t)) {
+                continue;
+            }
+            let name = original_name(&f.fas, &f.typ);
+            if ohne_umweg(&self.dir, &format!("{DATEIEN}/{}/{name}", d.id)).is_err() {
+                continue;
+            }
+            aus.push(TextAuftrag {
+                dat: d.id.clone(),
+                fas: f.fas.clone(),
+                typ: f.typ.clone(),
+                sha256: f.original_sha256.clone(),
+                textrev: rev,
+                pfad: self.dir.join(DATEIEN).join(&d.id).join(name),
+                versuche: vorhanden.map(|t| t.versuche).unwrap_or(0),
+            });
+        }
+        Ok(aus)
+    }
+
+    /// Schreibt eine Textfassung atomar nach `text/<dat>/<textrev>.json` (ohne Folgen von Verknüpfungen).
+    /// Liefert die Blob-Kennung (SHA-256 der Bytes) und die Größe.
+    pub fn text_schreiben(&self, dat: &str, textrev: &str, json: &[u8]) -> Res<(String, u64)> {
+        datei_id_pruefen(dat)?;
+        if textrev.len() != 64 || !textrev.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(Fehler::ungueltig("Textfassung ungültig."));
+        }
+        ohne_umweg(&self.dir, &format!("{TEXT}/{dat}"))?;
+        fs::create_dir_all(self.dir.join(TEXT).join(dat))
+            .map_err(|_| Fehler::speicher("Textordner nicht anlegbar."))?;
+        ohne_umweg(&self.dir, &format!("{TEXT}/{dat}/{textrev}.json"))?;
+        schreibe_atomar(&self.text_pfad(dat, textrev), json)?;
+        Ok((super::extrakt::hex(&sha2_digest(json)), json.len() as u64))
+    }
+
+    /// Legt eine Textfassung (`json`, falls vorhanden) ab und trägt sie (oder ihren Fehler) bei der
+    /// Fassung ein: alles unter der Ablage-Sperre, damit ein gleichzeitiges endgültiges Löschen keine
+    /// Reste hinterlässt. Ist Datei oder Fassung inzwischen weg, wird nichts geschrieben und ein leerer
+    /// `text/<dat>/` entfernt. Ein vorübergehender Fehler wird durch das neue Ergebnis ersetzt.
+    pub fn text_ablegen(
+        &self,
+        dat: &str,
+        fas: &str,
+        json: Option<&[u8]>,
+        mut text: zf::Text,
+    ) -> Res<TextAblage> {
+        datei_id_pruefen(dat)?;
+        let _g = sperren();
+        let mut st = self.laden()?;
+        let (offen, _) = st.offen_geloescht();
+        let geloescht = offen.contains(dat);
+        let Some(d) = st.dateien.get_mut(dat).filter(|_| !geloescht) else {
+            self.textordner_leer_entfernen(dat);
+            return Ok(TextAblage::Verschwunden);
+        };
+        let Some(f) = d.fassungen.iter_mut().find(|f| f.fas == fas) else {
+            self.textordner_leer_entfernen(dat);
+            return Ok(TextAblage::Verschwunden);
+        };
+        let alt = f.texte.iter().position(|t| t.textrev == text.textrev);
+        if alt.is_some_and(|i| !text_wiederholbar(&f.texte[i])) {
+            return Ok(TextAblage::Unveraendert);
+        }
+        let mut geschrieben = None;
+        if let Some(json) = json {
+            match self.text_schreiben(dat, &text.textrev, json) {
+                Ok((blob, size)) => {
+                    text.blob = blob;
+                    text.size = size;
+                    geschrieben = Some(self.text_pfad(dat, &text.textrev));
+                }
+                Err(_) => {
+                    self.textordner_leer_entfernen(dat);
+                    return Ok(TextAblage::NichtSpeicherbar);
+                }
+            }
+        }
+        let eingetragen = text.clone();
+        match alt {
+            Some(i) => f.texte[i] = text,
+            None => f.texte.push(text),
+        }
+        d.blob_refs = zf::blob_refs_aus(&d.fassungen);
+        if let Err(e) = self.sichern(&mut st) {
+            if let Some(p) = geschrieben {
+                let _ = fs::remove_file(p);
+            }
+            self.textordner_leer_entfernen(dat);
+            return Err(e);
+        }
+        Ok(TextAblage::Eingetragen(eingetragen))
+    }
+
+    /// Entfernt `text/<dat>/`, wenn es leer ist (nie über eine Verknüpfung).
+    fn textordner_leer_entfernen(&self, dat: &str) {
+        if ohne_umweg(&self.dir, &format!("{TEXT}/{dat}")).is_ok() {
+            let _ = fs::remove_dir(self.dir.join(TEXT).join(dat));
+        }
+    }
+
+    /// Wartung: `text/<dat>/` ohne Datei im Bestand (weder lebend noch im Papierkorb) wird entfernt.
+    /// Verknüpfungen werden nie gefolgt und bleiben stehen.
+    fn texte_raeumen(&self, st: &Stand) {
+        if ohne_umweg(&self.dir, TEXT).is_err() {
+            return;
+        }
+        let Ok(dirs) = fs::read_dir(self.dir.join(TEXT)) else {
+            return;
+        };
+        let (offen, _) = st.offen_geloescht();
+        for e in dirs.flatten() {
+            let dat = e.file_name().to_string_lossy().into_owned();
+            if !id_gueltig(PRAEFIX_DATEI, &dat)
+                || (st.dateien.contains_key(&dat) && !offen.contains(dat.as_str()))
+            {
+                continue;
+            }
+            match fs::symlink_metadata(e.path()) {
+                Ok(m) if !ist_umweg(&m) && m.is_dir() => {
+                    let _ = fs::remove_dir_all(e.path());
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Alle Dateien für den Index (lebend und im Papierkorb; nicht endgültig gelöschte).
+    pub fn index_quellen(&self) -> Res<Vec<IndexQuelle>> {
+        let _g = sperren();
+        let st = self.laden()?;
+        let eltern = st.eltern();
+        let (offen, _) = st.offen_geloescht();
+        let mut aus = Vec::new();
+        for d in st.dateien.values() {
+            if offen.contains(d.id.as_str()) {
+                continue;
+            }
+            let Some(f) = aktuelle_fassung(d) else {
+                continue;
+            };
+            let erwartet = erwartete_textrev(f);
+            // Die Textfassung des aktuellen Extraktors, sonst die letzte brauchbare ältere (sie gilt bis
+            // zum Neuaufbau, Spec §4.2).
+            let gewaehlt = f
+                .texte
+                .iter()
+                .find(|t| Some(&t.textrev) == erwartet.as_ref() && t.stand != "fehler")
+                .or_else(|| f.texte.iter().rev().find(|t| t.stand == "ok"));
+            let stand = match (gewaehlt, &erwartet) {
+                (Some(t), _) => t.stand.clone(),
+                (None, Some(_)) => f
+                    .texte
+                    .iter()
+                    .find(|t| Some(&t.textrev) == erwartet.as_ref())
+                    .map(|t| t.stand.clone())
+                    .unwrap_or_else(|| "ausstehend".into()),
+                (None, None) => "kein_format".into(),
+            };
+            aus.push(IndexQuelle {
+                dat: d.id.clone(),
+                fas: f.fas.clone(),
+                textrev: gewaehlt
+                    .filter(|t| t.stand == "ok")
+                    .map(|t| t.textrev.clone()),
+                stand,
+                ordnerkette: zf::kette(&eltern, &d.ordner.wert),
+                klasse: zf::wirksame_klasse_datei(&st.ordner, &eltern, d)
+                    .text()
+                    .into(),
+                nur_geraet: d.nur_geraet_min
+                    || zf::wirksam_nur_geraet(&st.ordner, &eltern, &d.ordner.wert),
+                papierkorb: !st.datei_lebt(&eltern, d),
+            });
+        }
+        Ok(aus)
+    }
+
+    /// Name, Ordner und Typ lebender Dateien (Dateien im Papierkorb oder unbekannte fehlen).
+    pub fn treffer_infos(&self, dats: &[String]) -> Res<BTreeMap<String, TrefferInfo>> {
+        let _g = sperren();
+        let st = self.laden()?;
+        let eltern = st.eltern();
+        Ok(dats
+            .iter()
+            .filter_map(|id| {
+                let d = st.dateien.get(id)?;
+                if !st.datei_lebt(&eltern, d) {
+                    return None;
+                }
+                Some((
+                    id.clone(),
+                    TrefferInfo {
+                        name: d.name.wert.clone(),
+                        ordner: d.ordner.wert.clone(),
+                        typ: aktuelle_fassung(d)
+                            .map(|f| f.typ.clone())
+                            .unwrap_or_default(),
+                    },
+                ))
+            })
+            .collect())
+    }
+}
+
+fn sha2_digest(b: &[u8]) -> Vec<u8> {
+    use sha2::Digest;
+    sha2::Sha256::digest(b).to_vec()
+}
+
+// ---------------------------------------------------------------------------
 // Hilfen ohne Zustand
 // ---------------------------------------------------------------------------
 
@@ -2458,7 +2799,8 @@ fn datei_sicht(
             &zf::zusatzkette(&st.ordner, eltern, &d.ordner.wert),
         ),
         nur_geraet: d.nur_geraet_min || zf::wirksam_nur_geraet(&st.ordner, eltern, &d.ordner.wert),
-        text: f.and_then(|f| f.texte.last().map(|t| t.stand.clone())),
+        text: f.and_then(|f| textstand(f).0),
+        text_code: f.and_then(|f| textstand(f).1),
     }
 }
 

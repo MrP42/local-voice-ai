@@ -43,4 +43,6 @@ export const api = {
   bestandNeuAufbauen: () => ok(commands.ablageBestandNeuAufbauen()),
   gefundeneAufnehmen: (datei: string, ordner: string) =>
     ok(commands.ablageGefundeneAufnehmen(datei, ordner)),
+  suchen: (anfrage: string) => ok(commands.ablageSuchen(anfrage)),
+  indexNeuAufbauen: () => ok(commands.ablageIndexNeuAufbauen()),
 };

@@ -9124,7 +9124,29 @@
   "ablage": {
     "titel": "Files",
     "beschreibung": "Organise and keep documents locally.",
-    "suche": "Filter files by name",
+    "suche": "Search names and contents",
+    "anker": {
+      "seite": "Page {{n}}",
+      "absatz": "Paragraph {{n}}",
+      "folie": "Slide {{n}}",
+      "zeile": "from line {{n}}",
+      "teil": "Part {{n}}",
+      "kopf": "Email header",
+      "text": "Email text",
+      "blatt": "Sheet “{{blatt}}”, rows {{von}}–{{bis}}"
+    },
+    "suchergebnis": {
+      "titel": "Search results",
+      "hinweis": "All folders, excluding trash",
+      "imNamen": "In name ({{anzahl}})",
+      "imInhalt": "In content ({{anzahl}})",
+      "imInhaltOhneZahl": "In content",
+      "laedt": "Searching contents …",
+      "keine": "No match in content.",
+      "fehler": "Content search is not available right now.",
+      "fundstelle": "Location",
+      "oeffnen": "Open {{name}}: {{anker}}"
+    },
     "laedt": "Loading files …",
     "schliessen": "Close",
     "abbrechen": "Cancel",
@@ -9227,9 +9249,25 @@
       "textfassung": "Text version",
       "text": {
         "ok": "Text ready",
-        "ausstehend": "Text pending"
+        "ausstehend": "Text pending",
+        "kein_text": "No text contained",
+        "fehler": "Text not created"
       },
       "textNoch": "No text yet",
+      "textOhne": "No text for this format",
+      "textFehler": {
+        "allgemein": "The text could not be created.",
+        "zeit": "The 60-second time limit was reached.",
+        "abbruch": "The memory limit was reached or reading stopped.",
+        "zip_grenze": "The archive is too large or suspiciously compressed.",
+        "xml_doctype": "The file contains disallowed XML parts.",
+        "xml_entitaet": "The file contains disallowed XML parts.",
+        "pruefsumme": "The checksum of the version does not match.",
+        "zu_gross": "The file contains too much text.",
+        "format": "The format was not recognised.",
+        "pdf": "The PDF could not be read.",
+        "tabelle": "The spreadsheet could not be read."
+      },
       "fassungen": "Versions",
       "fassungAktuell": "{{nummer}} (current)",
       "abgeloest": "superseded",

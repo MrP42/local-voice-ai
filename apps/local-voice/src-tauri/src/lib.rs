@@ -16,7 +16,7 @@ pub mod book_talk_eval {
     pub use crate::book_ai::talk::adapter::*;
     pub use crate::book_ai::talk::eval::*;
 }
-mod ablage; // lva#407 D1: Dokumentenablage (Epic #395)
+mod ablage; // lva#407 D1, lva#408 D2: Dokumentenablage (Epic #395)
 mod books;
 mod buch_dateien; // lva#365 P3: Notizen, Anhänge, Transkript im Buch-Ordner (Kern)
 mod catalog;
@@ -51,6 +51,11 @@ mod paste_session;
 pub mod portable;
 pub mod portable_parts;
 mod process_guard;
+/// lva#408 D2: Einstieg des Extraktor-Unterprozesses (`lva-extrakt <pfad> <sha256> <typ>` bzw.
+/// `local-voice-ai --lva-extrakt …`). Liefert den Exitcode.
+pub fn lva_extrakt_main(args: &[String]) -> i32 {
+    ablage::extrakt::haupt(args)
+}
 mod projekte; // ADR-0026 PR-7: Suite-Projekte und Recherche
 pub mod provision;
 mod refinement;
@@ -2044,6 +2049,9 @@ fn specta_builder() -> Builder<tauri::Wry> {
             ablage::befehle::ablage_datei_verschieben,
             ablage::befehle::ablage_bestand_neu_aufbauen,
             ablage::befehle::ablage_gefundene_aufnehmen,
+            ablage::befehle::ablage_suchen,
+            ablage::befehle::ablage_index_neu_aufbauen,
+            ablage::befehle::ablage_text_abbrechen,
             assistent::assistent_einstufen,
             assistent::assistent_messung_melden,
             assistent::assistent_letzte_ausgabe,

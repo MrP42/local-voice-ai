@@ -14,6 +14,7 @@ import {
 import type {
   AblageDatei,
   AblageFassung,
+  AblageFundstelle,
   AblageImportStand,
   AblageKi,
   AblageKorb,
@@ -22,6 +23,7 @@ import type {
 } from "@/bindings";
 import { IconButton } from "../ui/IconButton";
 import { Button } from "../ui/Button";
+import { Auszug, fundstelleText } from "./Suche";
 import {
   baumBauen,
   dateiArt,
@@ -379,6 +381,9 @@ export const Details: React.FC<{
   onKi(): void;
   onSchliessen?: () => void;
   ueberschriftId: string;
+  /** D2: Fundstelle aus der Inhaltssuche (Anker, Pfad, Auszug). */
+  fundstelle?: AblageFundstelle | null;
+  anfrage?: string;
 }> = ({
   datei,
   pfad,
@@ -389,8 +394,18 @@ export const Details: React.FC<{
   onKi,
   onSchliessen,
   ueberschriftId,
+  fundstelle,
+  anfrage,
 }) => {
   const { t, i18n } = useTranslation();
+  const textFehler = datei.text_code
+    ? t(
+        `ablage.details.textFehler.${datei.text_code.replace(/^extrakt\./, "")}`,
+        {
+          defaultValue: t("ablage.details.textFehler.allgemein"),
+        },
+      )
+    : null;
   const kiText = (k: AblageKi) =>
     k.zustand === "unklar"
       ? t("ablage.ki.unklarKurz")
@@ -415,6 +430,20 @@ export const Details: React.FC<{
           </div>
         )}
       </div>
+      {fundstelle && (
+        <div
+          className="ablage-sec ablage-fundstelle"
+          data-testid="ablage-fundstelle"
+        >
+          <h3>{t("ablage.suchergebnis.fundstelle")}</h3>
+          <div className="ablage-fundstelle__anker">
+            {fundstelleText(t, fundstelle)}
+          </div>
+          <p className="ablage-suche__auszug">
+            <Auszug text={fundstelle.auszug} anfrage={anfrage ?? ""} />
+          </p>
+        </div>
+      )}
       <div
         className="ablage-vorschau"
         role="img"
@@ -452,9 +481,14 @@ export const Details: React.FC<{
               ? t(`ablage.details.text.${datei.text}`, {
                   defaultValue: datei.text,
                 })
-              : t("ablage.details.textNoch")}
+              : t("ablage.details.textOhne")}
           </Chip>
         </div>
+        {textFehler && (
+          <div className="ablage-mut" data-testid="ablage-textfehler">
+            {textFehler}
+          </div>
+        )}
       </div>
       <div className="ablage-sec">
         <h3>{t("ablage.details.fassungen")}</h3>
