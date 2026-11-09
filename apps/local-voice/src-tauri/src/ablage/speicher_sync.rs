@@ -42,6 +42,8 @@ pub struct SyncBestand {
     pub befreit: BTreeSet<String>,
     /// Von diesem Gerät hochgeladene Blobs (Wartung „Blobs abgleichen“).
     pub sync_blobs: BTreeMap<String, SyncBlob>,
+    /// Alte Kennungen nach dem Rückweg lokal → sync (alt → neu): am Hub noch lebende werden begraben.
+    pub weiterleitung: BTreeMap<String, String>,
 }
 
 impl SyncBestand {
@@ -154,6 +156,7 @@ impl Ablage {
             lokal: st.lokal_menge(),
             befreit: st.befreit_menge(),
             sync_blobs: st.sync_blobs.clone(),
+            weiterleitung: st.weiterleitung.clone(),
         })
     }
 
@@ -184,13 +187,19 @@ impl Ablage {
                         aus.verworfen.push(o.id.clone());
                         continue;
                     }
-                    if st.begraben.contains(&o.id) {
+                    if st.begraben.contains(&o.id) || st.weiterleitung.contains_key(&o.id) {
                         continue;
                     }
-                    let neu = match st.ordner.get(&o.id) {
+                    let mut neu = match st.ordner.get(&o.id) {
                         Some(alt) => zf::zusammenfuehren_ordner(alt, o),
                         None => o.clone(),
                     };
+                    // Eltern mit alter Kennung (Rückweg lokal → sync): der neuen folgen.
+                    if let Some(n) = neu.eltern.wert.as_ref().map(|p| st.aufgeloest(p)) {
+                        if neu.eltern.wert.as_deref() != Some(n.as_str()) {
+                            neu.eltern = Register::neu(Some(n), st.zaehler(), &st.geraet);
+                        }
+                    }
                     if st.ordner.get(&o.id) != Some(&neu) {
                         st.ordner.insert(o.id.clone(), neu);
                         aus.geaendert.push(o.id.clone());
@@ -202,7 +211,7 @@ impl Ablage {
                         aus.verworfen.push(d.id.clone());
                         continue;
                     }
-                    if st.begraben.contains(&d.id) {
+                    if st.begraben.contains(&d.id) || st.weiterleitung.contains_key(&d.id) {
                         continue;
                     }
                     let alt = st.dateien.get(&d.id).cloned();
@@ -211,6 +220,10 @@ impl Ablage {
                         None => zf::zusammenfuehren_datei(d, d),
                     };
                     neu.blob_refs = zf::blob_refs_aus(&neu.fassungen);
+                    let ziel = st.aufgeloest(&neu.ordner.wert);
+                    if ziel != neu.ordner.wert {
+                        neu.ordner = Register::neu(ziel, st.zaehler(), &st.geraet);
+                    }
                     if let Some(a) = &alt {
                         let bleibt: BTreeSet<&str> =
                             neu.fassungen.iter().map(|f| f.fas.as_str()).collect();
@@ -232,6 +245,9 @@ impl Ablage {
                     }
                 }
                 Eingang::Grab(id) => {
+                    if st.weiterleitung.contains_key(id) {
+                        continue; // alte Kennung nach dem Rückweg: der eigene Grabstein
+                    }
                     let gilt = !lokal.contains(id)
                         && teilnahme_vorher
                             .get(id)

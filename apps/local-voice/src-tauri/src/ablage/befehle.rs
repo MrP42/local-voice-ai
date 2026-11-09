@@ -139,8 +139,16 @@ pub async fn ablage_ordner_einstellungen(
     id: String,
     einstellungen: AblageEinstellungen,
 ) -> Antwort<()> {
+    let projekte = crate::portable::app_data_dir(&app)
+        .map_err(|e| e.to_string())?
+        .join("projekte");
     mit_nachlauf(&app, false, move |a| {
-        a.ordner_einstellungen(&id, &einstellungen)
+        a.ordner_einstellungen(&id, &einstellungen)?;
+        // Wieder synchron (D4): Rückweg lokal → sync sofort; scheitert er, setzt der Sync-Takt fort.
+        if let Err(e) = a.rueckweg(&super::speicher::ProjektVerweise::neu(projekte)) {
+            log::warn!("ablage: Rückweg lokal → sync: {}", e.code);
+        }
+        Ok(())
     })
     .await
 }

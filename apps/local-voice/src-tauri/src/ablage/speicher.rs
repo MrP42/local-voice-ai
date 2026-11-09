@@ -9,6 +9,7 @@
 //! index.db                      abgeleiteter Suchindex (D2, siehe `index`), löschbar
 //! papierkorb/                   Zwischenspeicher beim endgültigen Löschen, liegengebliebene Zwischendateien
 //! freigabe.json                 gerätelokal (siehe `freigabe`)
+//! uebergang-<ULID>.json         Rückweg lokal → sync, nur während er läuft (siehe `speicher_uebergang`)
 //! ```
 //!
 //! Ablauf je Datei (wie `projekte/dateien.rs`): `dateien/<dat>/.teil-<fas>` (`create_new`) vollständig
@@ -44,6 +45,9 @@ use std::path::{Path, PathBuf};
 #[path = "speicher_sync.rs"]
 mod abgleich_zugriff;
 pub use abgleich_zugriff::{Eingang, SyncBestand};
+#[path = "speicher_uebergang.rs"]
+mod uebergang;
+pub use uebergang::ProjektVerweise;
 
 pub const DATEIEN: &str = "dateien";
 pub const TEXT: &str = "text";
@@ -78,6 +82,18 @@ pub enum Schritt {
     LoeschenLesefehler,
     /// Beim endgültigen Löschen scheitert das Entfernen des Zwischenorts im Papierkorb.
     LoeschenEntfernfehler,
+    /// Rückweg lokal → sync (D4): nach dem Schreiben des Übergangsjournals (`begonnen`).
+    UebergangBegonnen,
+    /// … nachdem die Originale umgezogen sind, vor den Textfassungen und dem Stand.
+    UebergangDateien,
+    /// … nach Stand und Journalschritt `umgezogen`.
+    UebergangUmgezogen,
+    /// … nach dem Umschreiben der KI-Freigaben, vor Projektverweisen und Index.
+    UebergangFreigaben,
+    /// … nach dem Journalschritt `umgeschrieben`.
+    UebergangUmgeschrieben,
+    /// … nach dem Journalschritt `fertig`, bevor das Journal entfernt ist.
+    UebergangFertig,
 }
 
 #[cfg(test)]
@@ -167,6 +183,10 @@ struct Stand {
     /// „Blobs abgleichen“ (der Hub bietet keine Blob-Liste).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     sync_blobs: BTreeMap<String, SyncBlob>,
+    /// D4 Rückweg lokal → sync: alte Kennung → neue Kennung (Deep Links, Projektverweise). Stände vom
+    /// Hub zu alten Kennungen werden nie wieder aufgenommen.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    weiterleitung: BTreeMap<String, String>,
     /// Teilnahme beim Laden (nur im Speicher): Grundlage der Momentaufnahme in [`Ablage::sichern`].
     #[serde(skip)]
     vorher: Option<Vorher>,
@@ -201,6 +221,7 @@ impl Stand {
             lokal: Vec::new(),
             befreit: Vec::new(),
             sync_blobs: BTreeMap::new(),
+            weiterleitung: BTreeMap::new(),
             vorher: None,
         }
     }
@@ -452,6 +473,9 @@ fn stand_gueltig(s: &Stand) -> bool {
             .iter()
             .chain(s.befreit.iter())
             .all(|i| id_gueltig(PRAEFIX_DATEI, i) || id_gueltig(PRAEFIX_ORDNER, i))
+        && s.weiterleitung
+            .iter()
+            .all(|(a, n)| uebergang::gleiche_art(a, n))
         && s.gefunden.iter().all(|g| {
             id_gueltig(PRAEFIX_DATEI, &g.dat)
                 && id_gueltig(PRAEFIX_FASSUNG, &g.fas)
@@ -964,10 +988,15 @@ impl Ablage {
         let _ = fs::create_dir_all(self.dir.join(PAPIERKORB));
         geaendert |= self.zwischendateien_raeumen();
         geaendert |= self.journal_abarbeiten(&mut st).unwrap_or(true);
-        let erster_lauf = gescannt()
-            .lock()
-            .map(|mut g| g.insert(self.dir.clone()))
-            .unwrap_or(false);
+        // Ein begonnener Rückweg (D4) zieht erst fertig um; sonst sähe die Suche unten die umgezogenen
+        // Originale als Funde.
+        let (umgezogen, uebergang_ok) = self.uebergaenge_lokal(&mut st);
+        geaendert |= umgezogen;
+        let erster_lauf = uebergang_ok
+            && gescannt()
+                .lock()
+                .map(|mut g| g.insert(self.dir.clone()))
+                .unwrap_or(false);
         if erster_lauf {
             geaendert |= self.gefundenes_suchen(&mut st);
         }
@@ -1675,6 +1704,9 @@ impl Ablage {
         datei_id_pruefen(dat)?;
         let _g = sperren();
         let st = self.laden()?;
+        // Alte Kennung nach dem Rückweg lokal → sync (D4): der Weiterleitung folgen.
+        let dat = st.aufgeloest(dat);
+        let dat = dat.as_str();
         let d = st.dateien.get(dat).ok_or_else(nicht_gefunden)?;
         let f = aktuelle_fassung(d).ok_or_else(nicht_gefunden)?;
         ohne_umweg(

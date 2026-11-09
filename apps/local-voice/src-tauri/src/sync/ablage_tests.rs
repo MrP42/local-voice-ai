@@ -297,7 +297,7 @@ impl BlobTransport for FakeHub {
     async fn put_chunk(&self, blob_id: &str, index: usize, sealed: &[u8]) -> Result<(), HubError> {
         self.mit(|i| {
             if i.zu_viele && !i.blobs.contains_key(blob_id) {
-                return Err(HubError::Other("quota_exceeded: Zu viele Ablagen".into()));
+                return Err(HubError::Other("too_many_blobs: Zu viele Ablagen".into()));
             }
             let belegt: u64 = i
                 .blobs
@@ -972,7 +972,7 @@ fn wechsel_zu_nur_geraet_entfernt_cloud_kopien_und_behaelt_lokale() {
         a.bestand().lokal.contains(&dat),
         "im Ablagestand festgehalten"
     );
-    // Zurück auf sync: Rückweg ist offen, die Kennung bleibt lokal (nie erneut gesendet).
+    // Zurück auf sync: ohne Rückweg (läuft im App-Takt, siehe `rueckweg_*`) bleibt die Kennung lokal.
     a.a.ordner_einstellungen(
         &ord,
         &AblageEinstellungen {
@@ -1600,4 +1600,167 @@ fn verwaiste_eigene_blobs_werden_nach_sieben_tagen_geloescht() {
         "verwaister Blob gelöscht"
     );
     assert!(!a.bestand().sync_blobs.contains_key(&blob));
+}
+
+/// Hub-Vertrag (wai-portal#25): nur der Fehlercode `too_many_blobs` zählt, nie der Meldungstext.
+#[test]
+fn zu_viele_ablagen_nur_am_fehlercode() {
+    assert!(ist_zu_viele("too_many_blobs: Zu viele Ablagen"));
+    assert!(ist_zu_viele("too_many_blobs"));
+    assert!(!ist_zu_viele("quota_exceeded: Zu viele Ablagen"));
+    assert!(!ist_zu_viele("quota_exceeded: too_many_blobs"));
+    assert!(!ist_zu_viele("HTTP 507"));
+}
+
+fn rueckweg_aufbau() -> (FakeHub, Geraet, Geraet, String, String, String, String) {
+    use crate::ablage::freigabe::KiStufe;
+    let hub = FakeHub::neu();
+    let (a, b) = (geraet("a"), geraet("b"));
+    let x = a.ordner("Akte");
+    let u = a.a.ordner_anlegen(Some(&x), "Unterlagen").unwrap();
+    let f1 = a.ablegen("Eins.txt", "eins", &x);
+    let f2 = a.ablegen("Zwei.txt", "zwei", &u);
+    a.a.ki_setzen(&x, Some(KiStufe::An)).unwrap();
+    a.sync(&hub);
+    b.sync(&hub);
+    assert_eq!(b.original(&f2).as_deref(), Some("zwei"));
+    (hub, a, b, x, u, f1, f2)
+}
+
+/// Spec §9 Tests D4a: Rückweg lokal → sync mit Abbruch nach jedem Journalschritt; der Projektverweis
+/// zeigt danach auf die neue Kennung, die alte leitet weiter, und das andere Gerät bekommt den
+/// Teilbaum unter den neuen Kennungen.
+#[test]
+fn rueckweg_lokal_zu_sync_mit_abbruch_nach_jedem_journalschritt() {
+    use crate::ablage::freigabe;
+    use crate::ablage::speicher::{ProjektVerweise, Schritt, ABBRUCH, TEST_ABBRUCH};
+    use crate::projekte::{herkunft::ablage_link, kontext};
+    let punkte = [
+        None,
+        Some(Schritt::UebergangBegonnen),
+        Some(Schritt::UebergangDateien),
+        Some(Schritt::UebergangUmgezogen),
+        Some(Schritt::UebergangFreigaben),
+        Some(Schritt::UebergangUmgeschrieben),
+        Some(Schritt::UebergangFertig),
+    ];
+    for punkt in punkte {
+        let (hub, a, b, x, u, f1, f2) = rueckweg_aufbau();
+        let projekte = a._t.path().join("projekte");
+        assert!(kontext::anlegen(&projekte, "prj_test", "mit_1", &ablage_link(&f1), true).unwrap());
+        nur_geraet(&a, &x, true);
+        a.sync(&hub);
+        assert!(hub.objekt(SAMMLUNG_DATEI, &f1).unwrap().deleted);
+        assert!(hub.objekt(SAMMLUNG_ORDNER, &x).unwrap().deleted);
+        b.sync(&hub);
+        assert!(b.datei(&f1).is_none());
+        nur_geraet(&a, &x, false);
+        let verweise = ProjektVerweise::neu(&projekte);
+        if let Some(p) = punkt {
+            ABBRUCH.with(|c| c.set(Some(p)));
+            let e = a.a.rueckweg(&verweise);
+            ABBRUCH.with(|c| c.set(None));
+            assert_eq!(e.unwrap_err().code, TEST_ABBRUCH, "{p:?}");
+            assert_eq!(a.a.uebergaenge_offen(), 1, "{p:?}: Journal bleibt");
+            // Neustart: die Wartung führt den lokalen Teil zu Ende; nichts erscheint als Fund.
+            a.a.prozess_neustart();
+            assert_eq!(a.a.wartung(), None, "{p:?}");
+            let sicht = a.a.ansicht().unwrap();
+            assert!(sicht.gefunden.is_empty(), "{p:?}: {:?}", sicht.gefunden);
+            assert_eq!(a.original(&f1).as_deref(), Some("eins"), "{p:?}");
+        }
+        let n = a.a.rueckweg(&verweise).unwrap();
+        let wann = format!("{punkt:?}");
+        assert_eq!(a.a.uebergaenge_offen(), 0, "{wann}");
+        if punkt.is_none() {
+            assert_eq!(n, 4, "X, U, zwei Dateien");
+        } else {
+            assert_eq!(n, 0, "{wann}: fortgesetzt, nicht neu begonnen");
+        }
+        let [nx, nu, n1, n2] = [&x, &u, &f1, &f2].map(|id| a.a.aufloesen(id).unwrap());
+        for (alt, neu) in [(&x, &nx), (&u, &nu), (&f1, &n1), (&f2, &n2)] {
+            assert_ne!(alt, neu, "{wann}");
+        }
+        let bestand = a.bestand();
+        assert!(bestand.lokal.is_empty(), "{wann}: {:?}", bestand.lokal);
+        assert!(!bestand.dateien.contains_key(&f1) && !bestand.ordner.contains_key(&x));
+        assert_eq!(bestand.dateien[&n1].ordner.wert, nx, "{wann}");
+        assert_eq!(bestand.dateien[&n2].ordner.wert, nu, "{wann}");
+        assert_eq!(
+            bestand.ordner[&nu].eltern.wert.as_deref(),
+            Some(nx.as_str())
+        );
+        // Originale umgezogen; die alte Kennung leitet weiter (Deep Link).
+        assert_eq!(a.original(&n2).as_deref(), Some("zwei"), "{wann}");
+        assert_eq!(a.original(&f1).as_deref(), Some("eins"), "{wann}");
+        assert!(!a.a.dir().join("dateien").join(&f1).exists(), "{wann}");
+        // KI-Freigabe und Projektverweis folgen.
+        match freigabe::laden(a.a.dir()) {
+            freigabe::Lage::Gueltig(f) => {
+                assert!(
+                    f.ordner.contains_key(&nx) && !f.ordner.contains_key(&x),
+                    "{wann}"
+                )
+            }
+            freigabe::Lage::Unklar(_) => panic!("{wann}: Freigabe unklar"),
+        }
+        assert_eq!(
+            kontext::link_von(&projekte, "mit_1"),
+            Some(ablage_link(&n1)),
+            "{wann}"
+        );
+        assert_eq!(a.zustand_von(&n1), Some(AblageSyncZustand::Ausstehend));
+        // Abgleich: neue Kennungen am Hub und auf B, alte bleiben begraben.
+        a.sync(&hub);
+        b.sync(&hub);
+        assert_eq!(b.original(&n1).as_deref(), Some("eins"), "{wann}");
+        assert_eq!(b.original(&n2).as_deref(), Some("zwei"), "{wann}");
+        assert_eq!(b.datei(&n2).unwrap().ordner.wert, nu);
+        assert!(b.datei(&f1).is_none() && !b.bestand().ordner.contains_key(&x));
+        assert!(hub.objekt(SAMMLUNG_DATEI, &f1).unwrap().deleted);
+        assert!(!hub.objekt(SAMMLUNG_DATEI, &n1).unwrap().deleted);
+        assert_eq!(a.zustand_von(&n1), Some(AblageSyncZustand::Synchronisiert));
+        // Wiederholt: nichts mehr zu tun.
+        assert_eq!(a.a.rueckweg(&verweise).unwrap(), 0, "{wann}");
+        assert_eq!(
+            kontext::link_von(&projekte, "mit_1"),
+            Some(ablage_link(&n1))
+        );
+    }
+}
+
+/// Zurück auf synchron, bevor der Grabstein der alten Kennungen gesendet war: der Lauf begräbt die alten
+/// Kennungen am Hub (Dateien vor Ordnern), B bekommt nur die neuen, und ein später eintreffender Stand
+/// zur alten Kennung wird nicht wieder aufgenommen.
+#[test]
+fn rueckweg_vor_dem_abgleich_begraebt_alte_kennungen() {
+    use crate::ablage::speicher::ProjektVerweise;
+    let (hub, a, b, x, u, f1, f2) = rueckweg_aufbau();
+    nur_geraet(&a, &x, true);
+    nur_geraet(&a, &x, false);
+    let projekte = a._t.path().join("projekte");
+    assert_eq!(a.a.rueckweg(&ProjektVerweise::neu(&projekte)).unwrap(), 4);
+    let [nx, n1, n2] = [&x, &f1, &f2].map(|id| a.a.aufloesen(id).unwrap());
+    a.sync(&hub);
+    for (coll, alt) in [
+        (SAMMLUNG_ORDNER, &x),
+        (SAMMLUNG_ORDNER, &u),
+        (SAMMLUNG_DATEI, &f1),
+        (SAMMLUNG_DATEI, &f2),
+    ] {
+        assert!(hub.objekt(coll, alt).unwrap().deleted, "{alt} begraben");
+    }
+    b.sync(&hub);
+    assert_eq!(b.original(&n1).as_deref(), Some("eins"));
+    assert_eq!(b.original(&n2).as_deref(), Some("zwei"));
+    assert_eq!(b.datei(&n1).unwrap().ordner.wert, nx);
+    assert!(b.datei(&f1).is_none() && b.datei(&f2).is_none());
+    // Ein Stand zur alten Kennung (z. B. von einem Gerät, das noch offline war) belebt nichts.
+    let alt = a.a.sync_einspielen(&[Eingang::Datei({
+        let mut d = b.datei(&n1).unwrap();
+        d.id = f1.clone();
+        d
+    })]);
+    assert!(alt.unwrap().geaendert.is_empty());
+    assert!(a.datei(&f1).is_none());
 }

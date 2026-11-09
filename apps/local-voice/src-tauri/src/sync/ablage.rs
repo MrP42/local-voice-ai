@@ -25,7 +25,11 @@
 //!   betroffenen Kennungen beim Umschalten im eigenen Stand fest (Write-ahead, `lokal`); nur sie werden
 //!   (wenn alle Originale hier liegen) am Hub begraben, nie wieder gesendet, und ein Grabstein wird auf
 //!   sie nie angewendet. Später von anderen Geräten eingetroffene Einträge unter einem festgehaltenen
-//!   Ordner bleiben synchron („befreit“). Der Rückweg lokal → sync (neue IDs) ist noch offen.
+//!   Ordner bleiben synchron („befreit“).
+//! * Rückweg lokal → sync (`speicher_uebergang`, im App-Takt vor dem Lauf): der festgehaltene Teilbaum
+//!   bekommt neue Kennungen; die alten bleiben lokal als Weiterleitung. Lebt eine alte Kennung am Hub
+//!   noch, sendet der Lauf ihren Grabstein (Dateien vor Ordnern); Stände zu alten Kennungen werden nie
+//!   wieder aufgenommen.
 //! * Unlesbare entfernte Stände (Siegel, JSON, neueres Schema) halten das Objekt an: kein Push, keine
 //!   Blob-Löschung. Unbekannte Felder bleiben erhalten und reisen mit.
 //!
@@ -1067,6 +1071,28 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
                 refs: hub_refs(self.konto.key, d),
             });
         }
+        // Alte Kennungen nach dem Rückweg lokal → sync: am Hub begraben, Ordner erst nach ihren Dateien.
+        let alte_dateien_leben = b.weiterleitung.keys().any(|id| {
+            id.starts_with(crate::ablage::PRAEFIX_DATEI) && self.z.lebt_am_hub(SAMMLUNG_DATEI, id)
+        });
+        for id in b.weiterleitung.keys() {
+            let coll = if id.starts_with(crate::ablage::PRAEFIX_DATEI) {
+                SAMMLUNG_DATEI
+            } else {
+                SAMMLUNG_ORDNER
+            };
+            if !self.z.lebt_am_hub(coll, id)
+                || self.angehalten(coll, id)
+                || self.ruht(coll, id, jetzt)
+            {
+                continue;
+            }
+            if coll == SAMMLUNG_ORDNER && alte_dateien_leben {
+                ausstehend += 1;
+                continue;
+            }
+            aus.push(lokalisieren(coll, id));
+        }
         for id in &b.begraben {
             for coll in [SAMMLUNG_ORDNER, SAMMLUNG_DATEI] {
                 // Ein unlesbarer, neuerer Stand am Hub wird nicht blind begraben.
@@ -1562,9 +1588,11 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
     }
 }
 
-/// „Zu viele Ablagen“ (Anzahl der Blobs am Hub), getrennt von „Speicher voll“.
+/// „Zu viele Ablagen“ (Anzahl der Blobs am Hub, 507 `too_many_blobs`), getrennt von „Speicher voll“
+/// (`quota_exceeded`). Nur der Fehlercode zählt (`code` oder `code: Meldung`, siehe
+/// `sync::client`), nie der Meldungstext.
 fn ist_zu_viele(text: &str) -> bool {
-    text.contains("too_many_blobs") || text.contains("Zu viele Ablagen")
+    text.split_once(": ").map_or(text, |(c, _)| c) == "too_many_blobs"
 }
 
 // ---------------------------------------------------------------------------
@@ -1607,6 +1635,18 @@ pub async fn lauf_app(
         device_id: &cfg.device_id,
         hub_url: &cfg.url,
     };
+    // Rückweg lokal → sync (D4): neue Kennungen vor dem Lauf, damit er sie gleich hochlädt.
+    let projekte = crate::portable::app_data_dir(app)
+        .map_err(|e| HubError::Other(e.to_string()))?
+        .join("projekte");
+    let a = ablage.clone();
+    let rueck = tauri::async_runtime::spawn_blocking(move || {
+        a.rueckweg(&crate::ablage::speicher::ProjektVerweise::neu(projekte))
+    })
+    .await;
+    if let Ok(Err(e)) = rueck {
+        log::warn!("ablage-sync: Rückweg lokal → sync: {}", e.code);
+    }
     let bericht = lauf(&client, &ablage, &konto).await?;
     if bericht.geaendert {
         let a = ablage.clone();
