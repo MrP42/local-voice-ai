@@ -384,6 +384,99 @@ fn freier_name(belegt: &BTreeSet<String>, wunsch: &str) -> String {
     format!("{wunsch} ({})", neue_id(""))
 }
 
+/// Bereitet einen vom Nutzer gewählten Quellpfad für den Import vor.
+///
+/// Windows: Ein nicht verbatim angegebener Pfad, dessen letztes Glied ein reservierter Gerätename
+/// ist (`CON`, `NUL`, `AUX`, `PRN`, `COM1`…, `LPT1`…, `CONIN$`, `CONOUT$`, auch mit Endung oder
+/// angehängten Punkten/Leerzeichen), wird als Gerät abgewiesen (`ablage.geraet`), ebenso
+/// Gerätenamensräume (`\\.\…`, `\\?\GLOBALROOT…`). Ein `:` im letzten Glied adressiert einen
+/// alternativen Datenstrom und wird abgewiesen (`ablage.datenstrom`). Alles andere wird absolut
+/// gemacht und verbatim (`\\?\C:\…` bzw. `\\?\UNC\…`) zurückgegeben; Kinder aus `read_dir`
+/// bleiben damit ebenfalls verbatim. Ein schon verbatim angegebener Pfad meint immer die echte
+/// Datei (auch `CON.txt`) und wird nur auf Datenströme geprüft. Andere Systeme: unverändert.
+pub(super) fn quelle_vorbereiten(quelle: &Path) -> Result<PathBuf, &'static str> {
+    #[cfg(windows)]
+    {
+        windows_quelle(quelle)
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(quelle.to_path_buf())
+    }
+}
+
+/// Reservierter Windows-Gerätename (ohne Rücksicht auf Groß/Klein, Endung, Punkte, Leerzeichen).
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(super) fn ist_geraetename(name: &str) -> bool {
+    let stamm = name.split('.').next().unwrap_or("");
+    let stamm = stamm.trim_end_matches([' ', '.']).to_ascii_uppercase();
+    matches!(
+        stamm.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+    ) || ((stamm.starts_with("COM") || stamm.starts_with("LPT"))
+        && stamm.len() == 4
+        && matches!(stamm.as_bytes()[3], b'1'..=b'9'))
+        || stamm == "COM\u{b9}"
+        || stamm == "COM\u{b2}"
+        || stamm == "COM\u{b3}"
+        || stamm == "LPT\u{b9}"
+        || stamm == "LPT\u{b2}"
+        || stamm == "LPT\u{b3}"
+}
+
+#[cfg(windows)]
+fn windows_quelle(quelle: &Path) -> Result<PathBuf, &'static str> {
+    use std::path::{Component, Prefix};
+    let letzter = quelle
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let praefix = match quelle.components().next() {
+        Some(Component::Prefix(p)) => Some(p.kind()),
+        _ => None,
+    };
+    let verbatim = match praefix {
+        Some(Prefix::DeviceNS(_)) => return Err("ablage.geraet"),
+        Some(Prefix::Verbatim(_)) => return Err("ablage.geraet"),
+        Some(Prefix::VerbatimDisk(_)) | Some(Prefix::VerbatimUNC(..)) => true,
+        _ => false,
+    };
+    if letzter.contains(':') {
+        return Err("ablage.datenstrom");
+    }
+    if verbatim {
+        return Ok(quelle.to_path_buf());
+    }
+    if ist_geraetename(&letzter) {
+        return Err("ablage.geraet");
+    }
+    // Absolut machen (GetFullPathNameW), dann verbatim voranstellen.
+    let abs = std::path::absolute(quelle).map_err(|_| "ablage.quelle_nicht_lesbar")?;
+    let mut teile = abs.components();
+    let neu = match teile.next() {
+        Some(Component::Prefix(p)) => match p.kind() {
+            Prefix::Disk(b) => format!("\\\\?\\{}:", b as char),
+            Prefix::UNC(server, share) => format!(
+                "\\\\?\\UNC\\{}\\{}",
+                server.to_string_lossy(),
+                share.to_string_lossy()
+            ),
+            Prefix::VerbatimDisk(_) | Prefix::VerbatimUNC(..) => return Ok(abs),
+            _ => return Err("ablage.geraet"),
+        },
+        _ => return Err("ablage.quelle_nicht_lesbar"),
+    };
+    let mut pfad = PathBuf::from(neu);
+    for c in teile {
+        match c {
+            Component::RootDir => pfad.push("\\"),
+            Component::Normal(n) => pfad.push(n),
+            _ => return Err("ablage.quelle_nicht_lesbar"),
+        }
+    }
+    Ok(pfad)
+}
+
 pub(super) fn bereinigen(name: &str) -> Res<String> {
     bereinigter_name(name).map_err(|_| Fehler::neu("ablage.name_ungueltig", "Ungültiger Name."))
 }
@@ -1438,6 +1531,14 @@ impl Ablage {
         wahl: Option<AblageKollisionswahl>,
     ) -> Res<Vec<AblageImportZeile>> {
         ordner_id_pruefen(ordner)?;
+        // Windows: Geräte, Datenströme und Gerätenamensräume abweisen; echte Dateien werden ab hier
+        // nur noch verbatim (`\\?\`) adressiert, damit `Datei.`, `Datei `, `CON.txt` und lange Pfade
+        // genau die Datei treffen, die im Ordner liegt.
+        let quelle_pfad = match quelle_vorbereiten(quelle) {
+            Ok(p) => p,
+            Err(code) => return Ok(vec![AblageImportZeile::uebersprungen(quelle, code)]),
+        };
+        let quelle = quelle_pfad.as_path();
         let meta = match fs::symlink_metadata(quelle) {
             Ok(m) => m,
             Err(_) => {

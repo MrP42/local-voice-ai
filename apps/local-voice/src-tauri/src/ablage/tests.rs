@@ -1409,3 +1409,195 @@ fn entfernfehler_am_zwischenort_behaelt_auftrag_bis_er_weg_ist() {
     assert!(zwischenorte().is_empty());
     assert!(journal_json(&e)["journal"].as_array().unwrap().is_empty());
 }
+
+#[test]
+fn geraetenamen_werden_erkannt() {
+    use super::speicher::ist_geraetename;
+    for n in [
+        "CON",
+        "con.txt",
+        "NUL",
+        "nul.tar.gz",
+        "AUX.",
+        "PRN ",
+        "COM1",
+        "lpt9.log",
+        "CONIN$",
+        "conout$.x",
+    ] {
+        assert!(ist_geraetename(n), "{n}");
+    }
+    for n in [
+        "aux_.txt",
+        "CONX",
+        "COM0",
+        "COM10",
+        "LPT",
+        "Konto.txt",
+        "nulla.txt",
+        "",
+    ] {
+        assert!(!ist_geraetename(n), "{n}");
+    }
+}
+
+#[test]
+fn nfc_und_nfd_quellen_kollidieren_ohne_ueberschreiben() {
+    let e = env();
+    let o = e.standard();
+    let nfc = "\u{00c4}rger.txt";
+    let nfd = "A\u{0308}rger.txt";
+    let dat = e.ablegen(nfc, "erste", &o);
+    let q = e.quelle(nfd, "zweite");
+    let z = e.a.importieren(&q, &o, None).unwrap();
+    assert_eq!(z[0].stand, AblageImportStand::Kollision, "{:?}", z[0]);
+    assert_eq!(fs::read_to_string(e.original(&dat)).unwrap(), "erste");
+    assert_eq!(
+        fs::read_to_string(&q).unwrap(),
+        "zweite",
+        "Quelle unverändert"
+    );
+}
+
+/// Echte Windows-Dateisystemfälle (Codex, Windows-Tor): Dateien werden verbatim angelegt, der Import
+/// läuft über `importieren`; geprüft werden Originalbytes, Anzeigename, Ziel `<fas>.<typ>` und die
+/// unveränderte Quelle.
+#[cfg(windows)]
+mod windows_import {
+    use super::*;
+
+    fn verbatim(p: &Path) -> PathBuf {
+        let abs = std::path::absolute(p).unwrap();
+        let s = abs.to_string_lossy().into_owned();
+        if s.starts_with(r"\\?\") {
+            abs
+        } else if let Some(rest) = s.strip_prefix(r"\\") {
+            PathBuf::from(format!(r"\\?\UNC\{rest}"))
+        } else {
+            PathBuf::from(format!(r"\\?\{s}"))
+        }
+    }
+
+    fn pruefen(e: &Env, o: &str, quelle: &Path, inhalt: &[u8], anzeige: &str) {
+        let z = e.a.importieren(quelle, o, None).unwrap();
+        assert_eq!(z.len(), 1, "{z:?}");
+        assert_eq!(z[0].stand, AblageImportStand::Abgelegt, "{:?}", z[0]);
+        let dat = z[0].dat.clone().unwrap();
+        let ziel = e.original(&dat);
+        let zname = ziel.file_name().unwrap().to_string_lossy().into_owned();
+        assert!(zname.starts_with("fas_"), "Ziel {zname}");
+        assert_eq!(fs::read(&ziel).unwrap(), inhalt, "Originalbytes");
+        assert_eq!(z[0].name.as_deref(), Some(anzeige), "Anzeigename");
+        assert_eq!(fs::read(quelle).unwrap(), inhalt, "Quelle unverändert");
+    }
+
+    #[test]
+    fn echte_dateien_mit_punkt_leerzeichen_geraetenamen_und_langem_pfad() {
+        let e = env();
+        let o = e.standard();
+        let basis = verbatim(&e.quellen);
+
+        let aux = basis.join("aux_.txt");
+        fs::write(&aux, b"aux").unwrap();
+        pruefen(&e, &o, &aux, b"aux", "aux_.txt");
+
+        // Nachweislich echte Fixtures: nur verbatim anlegbar, per read_dir wiedergefunden.
+        let punkt = basis.join("Datei.");
+        fs::write(&punkt, b"punkt").unwrap();
+        let leer = basis.join("Datei ");
+        fs::write(&leer, b"leer").unwrap();
+        let namen: Vec<String> = fs::read_dir(&basis)
+            .unwrap()
+            .flatten()
+            .map(|x| x.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            namen.contains(&"Datei.".to_string()) && namen.contains(&"Datei ".to_string()),
+            "{namen:?}"
+        );
+        let zp = e.a.importieren(&punkt, &o, None).unwrap();
+        assert_eq!(zp[0].stand, AblageImportStand::Abgelegt, "{:?}", zp[0]);
+        assert_eq!(
+            fs::read(e.original(zp[0].dat.as_ref().unwrap())).unwrap(),
+            b"punkt"
+        );
+        let zl = e.a.importieren(&leer, &o, None).unwrap();
+        assert!(
+            matches!(
+                zl[0].stand,
+                AblageImportStand::Abgelegt | AblageImportStand::Kollision
+            ),
+            "{:?}",
+            zl[0]
+        );
+        if zl[0].stand == AblageImportStand::Abgelegt {
+            assert_eq!(
+                fs::read(e.original(zl[0].dat.as_ref().unwrap())).unwrap(),
+                b"leer"
+            );
+        }
+        assert_eq!(fs::read(&punkt).unwrap(), b"punkt");
+        assert_eq!(fs::read(&leer).unwrap(), b"leer");
+
+        // Echte Datei CON.txt (verbatim): wird übernommen, Anzeigename bereinigt.
+        let con = basis.join("CON.txt");
+        fs::write(&con, b"con").unwrap();
+        pruefen(&e, &o, &con, b"con", "_CON.txt");
+
+        // Langer, legaler Name mit Gesamtpfad > 260 Zeichen.
+        let tief = basis.join("u".repeat(120));
+        fs::create_dir_all(&tief).unwrap();
+        let lang = tief.join(format!("{}.txt", "l".repeat(150)));
+        assert!(lang.as_os_str().len() > 260);
+        fs::write(&lang, b"lang").unwrap();
+        let anzeige = format!("{}.txt", "l".repeat(150));
+        let z = e.a.importieren(&lang, &o, None).unwrap();
+        assert_eq!(z[0].stand, AblageImportStand::Abgelegt, "{:?}", z[0]);
+        assert_eq!(
+            fs::read(e.original(z[0].dat.as_ref().unwrap())).unwrap(),
+            b"lang"
+        );
+        assert!(z[0].name.as_deref().unwrap().starts_with(&anzeige[..100]));
+        assert_eq!(fs::read(&lang).unwrap(), b"lang");
+
+        // Ordnerimport: Kinder bleiben verbatim adressiert.
+        let ord = basis.join("Ordner");
+        fs::create_dir_all(&ord).unwrap();
+        fs::write(ord.join("Bericht."), b"kind").unwrap();
+        let z = e.a.importieren(&ord, &o, None).unwrap();
+        assert!(
+            z.iter().any(|r| r.stand == AblageImportStand::Abgelegt),
+            "{z:?}"
+        );
+    }
+
+    #[test]
+    fn geraete_und_datenstroeme_werden_abgewiesen() {
+        let e = env();
+        let o = e.standard();
+        for p in [
+            PathBuf::from("NUL"),
+            PathBuf::from(r"C:\NUL"),
+            e.quellen.join("con.txt"),
+            e.quellen.join("AUX"),
+            e.quellen.join("nul.tar.gz"),
+            PathBuf::from(r"\\.\NUL"),
+            PathBuf::from(r"\\.\PhysicalDrive0"),
+            PathBuf::from(r"\\?\GLOBALROOT\Device\Null"),
+        ] {
+            let z = e.a.importieren(&p, &o, None).unwrap();
+            assert_eq!(z[0].stand, AblageImportStand::Uebersprungen, "{p:?}");
+            assert_eq!(z[0].code.as_deref(), Some("ablage.geraet"), "{p:?}");
+        }
+        // Alternativer Datenstrom: abgewiesen, auch verbatim.
+        let a = e.quellen.join("a.txt");
+        fs::write(&a, b"haupt").unwrap();
+        let strom = e.quellen.join("a.txt:geheim");
+        fs::write(&strom, b"strom").unwrap();
+        for p in [strom.clone(), verbatim(&e.quellen).join("a.txt:geheim")] {
+            let z = e.a.importieren(&p, &o, None).unwrap();
+            assert_eq!(z[0].code.as_deref(), Some("ablage.datenstrom"), "{p:?}");
+        }
+        assert!(e.sicht().dateien.is_empty(), "nichts übernommen");
+    }
+}
