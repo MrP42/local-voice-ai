@@ -1,7 +1,7 @@
 //! Belegregel E4.2 (ADR-0028): Jeder ausgegebene Aussagesatz braucht einen Beleg; Saetze ohne Beleg
 //! werden nicht ausgegeben. Es gibt keine Ausnahme fuer Weltwissen.
 //!
-//! Belege: Quelle (Satzfenster: Zahlen, Daten, Namen, Polaritaet), Herleitung (das Tor rechnet selbst
+//! Belege: Quelle (Satzfenster: Zahlen, Daten, Namen, Polaritaet je zusammenhaengender Teilaussage), Herleitung (das Tor rechnet selbst
 //! nach, ganzzahlig in Hundertsteln, keine Gleitkommazahlen), Empfehlung (gekennzeichnet, jede
 //! Begruendung ist selbst ein belegter Satz). Rueckfragen und Ansagen sind keine Aussagesaetze.
 //! Die Gruende (`Grund`) tragen bewusst keine Inhalte.
@@ -150,6 +150,7 @@ pub enum Grund {
     DatumFehltInQuelle,
     NameFehltInQuelle,
     PolaritaetGekippt,
+    KeineZusammenhaengendeAussage,
     InhaltswortFehlt,
     VerneinungUnzulaessig,
     UngueltigeEingabe,
@@ -590,11 +591,168 @@ fn inhalt_gedeckt(text: &str, beleg: &str) -> Result<(), Grund> {
 }
 
 fn pruefe_quelle(text: &str, auszug: &str) -> Result<(), Grund> {
-    if hat_verneinung(text) != hat_verneinung(auszug) {
+    let zusammenhaengend = aussage_gebunden(text, auszug);
+    if !zusammenhaengend && hat_verneinung(text) != hat_verneinung(auszug) {
         return Err(Grund::PolaritaetGekippt);
     }
     inhalt_gedeckt(text, auszug)?;
-    inhaltswoerter_gedeckt(text, auszug)
+    inhaltswoerter_gedeckt(text, auszug)?;
+    if zusammenhaengend {
+        Ok(())
+    } else {
+        Err(Grund::KeineZusammenhaengendeAussage)
+    }
+}
+
+/// Nebenordnende Konjunktionen (DE und EN), an denen eine Aussage in Teilaussagen zerfaellt.
+const KONJUNKTIONEN: &[&str] = &[
+    "und",
+    "aber",
+    "oder",
+    "sondern",
+    "doch",
+    "jedoch",
+    "während",
+    "weil",
+    "da",
+    "obwohl",
+    "wohingegen",
+    "and",
+    "but",
+    "or",
+    "while",
+    "whereas",
+    "because",
+    "although",
+];
+
+const MONATE: &[&str] = &[
+    "januar",
+    "februar",
+    "märz",
+    "maerz",
+    "april",
+    "mai",
+    "juni",
+    "juli",
+    "august",
+    "september",
+    "oktober",
+    "november",
+    "dezember",
+];
+
+/// Hilfs- und Modalverben sowie Verneinungen am Anfang: die Teilaussage hat kein eigenes Subjekt.
+const OHNE_SUBJEKT_ANFANG: &[&str] = &[
+    "hat", "hatte", "hatten", "haben", "ist", "war", "waren", "sind", "wird", "wurde", "wurden",
+    "werden", "kann", "konnte", "muss", "soll", "sollte", "darf", "will", "wollte", "has", "have",
+    "had", "is", "was", "were", "are", "did", "does", "do", "will", "would", "can", "could",
+    "should", "must", "may", "might", "shall",
+];
+
+fn wort_klein(roh: &str) -> String {
+    roh.trim_matches(|c: char| !c.is_alphanumeric())
+        .to_lowercase()
+}
+
+/// Satzgrenze: `.` (nur vor Leerraum oder Ende, nicht bei Dezimal-, Datums- oder Monatspunkt),
+/// `!`, `?`, `;` und Zeilenumbruch.
+fn saetze_teilen(text: &str) -> Vec<String> {
+    let zeichen: Vec<char> = text.chars().collect();
+    let mut aus = Vec::new();
+    let mut aktuell = String::new();
+    for (i, &c) in zeichen.iter().enumerate() {
+        let grenze = match c {
+            '!' | '?' | ';' | '\n' | '\r' => true,
+            '.' => {
+                let danach = zeichen.get(i + 1);
+                let ende_oder_leer = danach.is_none_or(|d| d.is_whitespace());
+                let nach_ziffer = i > 0 && zeichen[i - 1].is_ascii_digit();
+                let monat = nach_ziffer
+                    && zeichen[i + 1..]
+                        .iter()
+                        .collect::<String>()
+                        .split_whitespace()
+                        .next()
+                        .is_some_and(|w| MONATE.contains(&wort_klein(w).as_str()));
+                ende_oder_leer && !monat
+            }
+            _ => false,
+        };
+        if grenze {
+            aus.push(std::mem::take(&mut aktuell));
+        } else {
+            aktuell.push(c);
+        }
+    }
+    aus.push(aktuell);
+    aus
+}
+
+/// Teilaussagen: Saetze, innerhalb davon getrennt an nebenordnenden Konjunktionen. Leere Reste entfallen.
+fn teilaussagen(text: &str) -> Vec<String> {
+    let mut aus = Vec::new();
+    for satz in saetze_teilen(text) {
+        let mut klausel: Vec<&str> = Vec::new();
+        for wort in satz.split_whitespace() {
+            if KONJUNKTIONEN.contains(&wort_klein(wort).as_str()) {
+                if !klausel.is_empty() {
+                    aus.push(klausel.join(" "));
+                    klausel.clear();
+                }
+            } else {
+                klausel.push(wort);
+            }
+        }
+        if !klausel.is_empty() {
+            aus.push(klausel.join(" "));
+        }
+    }
+    aus.into_iter()
+        .filter(|k| k.chars().any(|c| c.is_alphanumeric()))
+        .collect()
+}
+
+fn verneinungen_zaehlen(text: &str) -> usize {
+    text.to_lowercase()
+        .split(|c: char| !(c.is_alphanumeric() || c == '\'' || c == '\u{2019}'))
+        .filter(|w| {
+            let w = w.replace('\u{2019}', "'");
+            NEGATIONEN.contains(&w.as_str()) || w.starts_with("kein") || w.ends_with("n't")
+        })
+        .count()
+}
+
+fn ohne_eigenes_subjekt(klausel: &str) -> bool {
+    klausel.split_whitespace().next().is_some_and(|w| {
+        let w = wort_klein(w);
+        OHNE_SUBJEKT_ANFANG.contains(&w.as_str()) || NEGATIONEN.contains(&w.as_str())
+    })
+}
+
+/// Jede Teilaussage des Satzes braucht eine zusammenhaengende Quell-Teilaussage mit allen Inhaltswoertern,
+/// Zahlen, Daten und Namen und gleicher Polaritaet. Subjektlose Teilaussagen und Mehrfachverneinungen
+/// werden nicht freigegeben.
+fn aussage_gebunden(text: &str, auszug: &str) -> bool {
+    let ausgabe = teilaussagen(text);
+    if ausgabe.is_empty() {
+        return false;
+    }
+    let quelle: Vec<(String, usize)> = teilaussagen(auszug)
+        .into_iter()
+        .map(|k| {
+            let n = verneinungen_zaehlen(&k);
+            (k, n)
+        })
+        .collect();
+    ausgabe.iter().all(|o| {
+        let neg = verneinungen_zaehlen(o);
+        neg <= 1
+            && !ohne_eigenes_subjekt(o)
+            && quelle.iter().any(|(q, n)| {
+                *n == neg && inhalt_gedeckt(o, q).is_ok() && inhaltswoerter_gedeckt(o, q).is_ok()
+            })
+    })
 }
 
 /// Weitere Funktionswoerter (Hilfsverben, Gradpartikeln, Pronomen, Praepositionen), die als
@@ -2459,5 +2617,73 @@ mod tests {
         assert!(!ist_einzelne_frage("Das stimmt! Oder?"));
         assert!(!ist_einzelne_frage("Der Vertrag laeuft bis 2030"));
         assert!(!ist_einzelne_frage("?"));
+    }
+
+    // ---- Zusammenhaengende Teilaussagen
+
+    fn gebunden(text: &str, auszug: &str) -> Option<Grund> {
+        grund_von(quelle(text, auszug))
+    }
+
+    #[test]
+    fn gegenbeispiel_beide_richtungen_de() {
+        let a = "Der Kunde hat nicht zugesagt und der Lieferant hat zugesagt.";
+        assert_eq!(gebunden("Der Kunde hat nicht zugesagt.", a), None);
+        assert_eq!(gebunden("Der Lieferant hat zugesagt.", a), None);
+        assert!(gebunden("Der Lieferant hat nicht zugesagt.", a).is_some());
+        assert!(gebunden("Der Kunde hat zugesagt.", a).is_some());
+    }
+
+    #[test]
+    fn gegenbeispiel_en() {
+        let a = "The customer did not accept and the supplier accepted.";
+        assert_eq!(gebunden("The customer did not accept.", a), None);
+        assert_eq!(gebunden("The supplier accepted.", a), None);
+        assert!(gebunden("The supplier did not accept.", a).is_some());
+    }
+
+    #[test]
+    fn zwei_teilaussagen_aus_zwei_quellsaetzen() {
+        let a = "Der Kunde hat zugesagt. Der Lieferant hat nicht geliefert.";
+        let s = quelle(
+            "Der Kunde hat zugesagt und der Lieferant hat nicht geliefert.",
+            a,
+        );
+        assert_eq!(grund_von(s), None);
+        let s = quelle(
+            "Der Kunde hat nicht zugesagt und der Lieferant hat nicht geliefert.",
+            a,
+        );
+        assert!(grund_von(s).is_some());
+    }
+
+    #[test]
+    fn vermischung_zweier_teilaussagen_verworfen() {
+        let a = "Der Kunde hat Angebot geprüft und der Lieferant hat Rechnung gestellt.";
+        let s = quelle("Der Kunde hat Rechnung gestellt.", a);
+        assert_eq!(grund_von(s), Some(Grund::KeineZusammenhaengendeAussage));
+    }
+
+    #[test]
+    fn subjektlose_teilaussage_verworfen() {
+        let a = "Der Kunde hat nicht zugesagt und der Lieferant hat zugesagt.";
+        let s = quelle("Der Lieferant hat zugesagt und hat nicht zugesagt.", a);
+        assert!(grund_von(s).is_some());
+        let s = quelle("Der Kunde hat nicht zugesagt und hat nicht zugesagt.", a);
+        assert_eq!(grund_von(s), Some(Grund::KeineZusammenhaengendeAussage));
+    }
+
+    #[test]
+    fn doppelte_verneinung_verworfen() {
+        let a = "Der Kunde hat kein Angebot nicht angenommen.";
+        let s = quelle("Der Kunde hat kein Angebot nicht angenommen.", a);
+        assert_eq!(grund_von(s), Some(Grund::KeineZusammenhaengendeAussage));
+    }
+
+    #[test]
+    fn datumspunkt_trennt_nicht() {
+        let a = "Der Termin ist am 12. März 2026 und der Preis beträgt 3,5 Euro.";
+        let s = quelle("Der Termin ist am 12. März 2026.", a);
+        assert_eq!(grund_von(s), None);
     }
 }

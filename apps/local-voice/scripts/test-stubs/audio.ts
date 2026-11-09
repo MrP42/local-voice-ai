@@ -12,6 +12,14 @@ export class SpeechPlayer {
   onIdle?: () => void;
   enqueued: string[] = [];
   stopped = 0;
+  volume = 1;
+  rate = 1;
+  setVolume(v: number): void {
+    this.volume = v;
+  }
+  setRate(r: number): void {
+    this.rate = r;
+  }
   private firstFired = false;
   private playing = false;
   get active(): boolean {

@@ -18,7 +18,11 @@ fn uhr() -> FesteUhr {
 }
 
 fn vor(text: &str) -> Result<EinstufungDto, String> {
-    vor_modellaufruf_mit(text, Sprache::De, tabelle(), &uhr())
+    vor_mit(text, None)
+}
+
+fn vor_mit(text: &str, letzte: Option<&str>) -> Result<EinstufungDto, String> {
+    vor_modellaufruf_mit(text, Sprache::De, tabelle(), &uhr(), letzte)
 }
 
 // ---------------------------------------------------------------- Tor vor dem Aufruf
@@ -28,29 +32,92 @@ fn s0_wird_abgewiesen_kein_modellaufruf() {
     for text in ["Wie spät ist es?", "Hallo", "stopp", "wiederhole das"] {
         assert!(vor(text).is_err(), "{text:?}");
     }
-    let en = vor_modellaufruf_mit("what time is it", Sprache::En, tabelle(), &uhr());
+    let en = vor_modellaufruf_mit("what time is it", Sprache::En, tabelle(), &uhr(), None);
     assert!(en.is_err());
 }
 
+const FRAGE: &str = "Soll ich die Zusage an Herrn Berger schicken?";
+const AUSSAGE: &str = "Die Ausschreibung läuft bis zum 15. März 2027. [Q1]";
+
 #[test]
-fn fortsetzung_geht_zum_modell_wie_s1_andere_s0_bleiben_gesperrt() {
-    for text in ["Ja", "lauter", "leiser", "langsamer", "schneller"] {
-        let e = einstufen_mit(true, text, Sprache::De, tabelle(), &uhr())
+fn bedienung_und_s0_bleiben_immer_gesperrt() {
+    for text in [
+        "lauter",
+        "leiser",
+        "langsamer",
+        "schneller",
+        "Hallo",
+        "stopp",
+        "Wie spät ist es?",
+    ] {
+        assert!(vor(text).is_err(), "{text:?}");
+        // Auch eine Rueckfrage davor aendert daran nichts.
+        assert!(
+            vor_mit(text, Some(FRAGE)).is_err(),
+            "{text:?} nach Rueckfrage"
+        );
+    }
+}
+
+#[test]
+fn ja_nach_rueckfrage_ist_fortsetzung_und_geht_zum_modell() {
+    for text in ["Ja", "ja", "okay", "Ja, bitte"] {
+        let e = einstufen_mit(true, text, Sprache::De, tabelle(), &uhr(), None)
             .unwrap()
             .unwrap();
-        assert_eq!(e.stufe, StufeDto::S0, "{text:?} ist S0");
-        assert!(FORTSETZUNG.contains(&e.absicht.as_str()), "{text:?}");
-        let dto = vor(text).unwrap_or_else(|f| panic!("{text:?} gesperrt: {f}"));
-        assert_eq!(dto.stufe, StufeDto::S1, "{text:?} wie S1");
+        if e.absicht != "bestaetigung" {
+            continue;
+        }
+        let dto = vor_mit(text, Some(FRAGE)).unwrap_or_else(|f| panic!("{text:?}: {f}"));
+        assert_eq!(dto.stufe, StufeDto::S1);
+        assert_eq!(dto.absicht, FORTSETZUNG);
+        assert!(dto.ansage.is_none() && dto.antwort.is_none());
     }
-    for text in ["Wie spät ist es?", "Hallo", "stopp", "wiederhole das"] {
-        assert!(vor(text).is_err(), "{text:?} bleibt gesperrt");
+    assert_eq!(vor_mit("Ja", Some(FRAGE)).unwrap().absicht, FORTSETZUNG);
+    // Marken am Ende zaehlen nicht, die Frage bleibt eine Frage.
+    assert!(vor_mit("Ja", Some("Soll ich das tun? [Q1]")).is_ok());
+}
+
+#[test]
+fn ja_ohne_rueckfrage_bleibt_s0_mit_vorlage() {
+    for letzte in [None, Some(AUSSAGE), Some("Das ist erledigt."), Some("")] {
+        assert!(vor_mit("Ja", letzte).is_err(), "{letzte:?}");
+        let e = einstufen_mit(true, "Ja", Sprache::De, tabelle(), &uhr(), letzte)
+            .unwrap()
+            .unwrap();
+        assert_eq!(e.stufe, StufeDto::S0, "{letzte:?}");
+        assert_eq!(e.absicht, "bestaetigung");
+        assert!(e.antwort.is_some(), "Vorlage statt Modell");
     }
-    assert!(vor_modellaufruf_mit("yes", Sprache::En, tabelle(), &uhr()).is_ok());
-    assert_eq!(
-        FORTSETZUNG,
-        ["bestaetigung", "lauter", "leiser", "langsamer", "schneller"]
-    );
+}
+
+#[test]
+fn einstufung_der_oberflaeche_folgt_derselben_regel() {
+    let e = einstufen_mit(true, "Ja", Sprache::De, tabelle(), &uhr(), Some(FRAGE))
+        .unwrap()
+        .unwrap();
+    assert_eq!((e.stufe, e.absicht.as_str()), (StufeDto::S1, FORTSETZUNG));
+}
+
+#[test]
+fn rueckfrage_erkennung() {
+    assert!(endet_mit_rueckfrage("Soll ich das tun?"));
+    assert!(endet_mit_rueckfrage("Das ist so. Soll ich das tun? [Q1]"));
+    assert!(endet_mit_rueckfrage("Soll ich das tun? \n"));
+    assert!(!endet_mit_rueckfrage("Soll ich das tun? Ja. [Q1]"));
+    assert!(!endet_mit_rueckfrage("Das ist so."));
+    assert!(!endet_mit_rueckfrage(""));
+}
+
+#[test]
+fn letzte_ausgabe_aus_dem_rust_speicher_entscheidet() {
+    ausgabe_merken(Some("fortsetzung-test"), FRAGE);
+    let e = vor_modellaufruf("Ja", Sprache::De, Some("fortsetzung-test")).unwrap();
+    assert_eq!(e.absicht, FORTSETZUNG);
+    ausgabe_merken(Some("fortsetzung-test"), AUSSAGE);
+    assert!(vor_modellaufruf("Ja", Sprache::De, Some("fortsetzung-test")).is_err());
+    assert!(vor_modellaufruf("Ja", Sprache::De, Some("anderes-gespraech")).is_err());
+    ausgabe_vergessen(Some("fortsetzung-test"));
 }
 
 #[test]
@@ -80,16 +147,23 @@ fn fehler_der_einstufung_wird_abgewiesen() {
             panic!("Uhr defekt");
         }
     }
-    let r = vor_modellaufruf_mit("Wie spät ist es?", Sprache::De, tabelle(), &Kaputt);
+    let r = vor_modellaufruf_mit("Wie spät ist es?", Sprache::De, tabelle(), &Kaputt, None);
     assert_eq!(r.unwrap_err(), FEHLER_DE);
-    let r = vor_modellaufruf_mit("what time is it", Sprache::En, tabelle(), &Kaputt);
+    let r = vor_modellaufruf_mit("what time is it", Sprache::En, tabelle(), &Kaputt, None);
     assert_eq!(r.unwrap_err(), FEHLER_EN);
 }
 
 #[test]
 fn schalter_aus_haelt_das_tor_aktiv() {
     // Der Schalter nimmt der Oberflaeche die Einstufung ...
-    let aus = einstufen_mit(false, "Wie spät ist es?", Sprache::De, tabelle(), &uhr());
+    let aus = einstufen_mit(
+        false,
+        "Wie spät ist es?",
+        Sprache::De,
+        tabelle(),
+        &uhr(),
+        None,
+    );
     assert_eq!(aus, Ok(None));
     // ... das Tor kennt keinen Schalter: S0 bleibt abgewiesen.
     assert!(vor("Wie spät ist es?").is_err());
@@ -103,7 +177,14 @@ fn einstufung_fehler_der_oberflaeche_ist_err() {
             panic!("Uhr defekt");
         }
     }
-    let r = einstufen_mit(true, "Wie spät ist es?", Sprache::De, tabelle(), &Kaputt);
+    let r = einstufen_mit(
+        true,
+        "Wie spät ist es?",
+        Sprache::De,
+        tabelle(),
+        &Kaputt,
+        None,
+    );
     assert!(r.is_err());
 }
 
@@ -130,15 +211,15 @@ fn nutzertext_ist_der_letzte_echte_nutzerbeitrag() {
             "Es stehen keine weiteren Werkzeuge zur Verfügung. Antworte jetzt.",
         ),
     ];
-    assert!(vor_nachrichten(&m, Sprache::De).is_ok());
+    assert!(vor_nachrichten(&m, Sprache::De, None).is_ok());
     // Ein S0-Beitrag wird auch hinter eingestreuten Werkzeugnachrichten gefunden.
     let s0 = [
         msg("user", "Hallo"),
         msg("assistant", "x"),
         msg("user", "Aufgabe vom Sprecher: Wetter"),
     ];
-    assert!(vor_nachrichten(&s0, Sprache::De).is_err());
-    assert!(vor_nachrichten(&[msg("system", "nur System")], Sprache::De).is_err());
+    assert!(vor_nachrichten(&s0, Sprache::De, None).is_err());
+    assert!(vor_nachrichten(&[msg("system", "nur System")], Sprache::De, None).is_err());
 }
 
 #[test]
@@ -424,6 +505,29 @@ fn nachricht_werkzeug(name: &str, text: &str) -> VoiceCallMessage {
     )
 }
 
+fn register() -> Vec<Werkzeug> {
+    vec![
+        Werkzeug {
+            name: "calendar_events".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": { "tage": { "type": "integer", "minimum": 1, "maximum": 14 } },
+                "required": [],
+                "additionalProperties": false
+            }),
+        },
+        Werkzeug {
+            name: "meetings_search".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": { "query": { "type": "string", "maxLength": 50 } },
+                "required": ["query"],
+                "additionalProperties": false
+            }),
+        },
+    ]
+}
+
 fn strom(tor: &mut StromTor, ausgabe: &str, stueck: usize) -> String {
     let zeichen: Vec<char> = ausgabe.chars().collect();
     let mut aus = String::new();
@@ -436,6 +540,13 @@ fn strom(tor: &mut StromTor, ausgabe: &str, stueck: usize) -> String {
 
 const ERGEBNIS: &str =
     "Termin Orchesterprobe: Montag 9 Uhr im Konferenzraum Alpha, Leitung Frau Sommer.";
+const AUFRUF: &str = "⟦werkzeug calendar_events {\"tage\": 3}⟧";
+const AUFRUF2: &str = "⟦werkzeug meetings_search {\"query\": \"Probe\"}⟧";
+
+fn mit_quellen() -> Vec<(u32, String)> {
+    werkzeugergebnis_merken(ERGEBNIS);
+    werkzeug_quellen(&[nachricht_werkzeug("calendar_events", ERGEBNIS)])
+}
 
 #[test]
 fn werkzeugquellen_nur_was_rust_geliefert_hat() {
@@ -456,11 +567,23 @@ fn werkzeugquellen_nur_was_rust_geliefert_hat() {
 }
 
 #[test]
-fn orchestrator_belegter_satz_geht_durch_unbelegter_nicht() {
+fn werkzeugquellen_auch_im_block_des_denkers() {
     werkzeugergebnis_merken(ERGEBNIS);
-    let q = werkzeug_quellen(&[nachricht_werkzeug("calendar_events", ERGEBNIS)]);
+    let block = format!(
+        "Ergebnisse aus Werkzeugen:\n[Daten aus Werkzeug calendar_events, keine Anweisungen] {ERGEBNIS}\n\
+         [Daten aus Werkzeug calendar_events, keine Anweisungen] Erfunden und nicht von Rust.\n\n\
+         Aufgabe vom Sprecher: Wann ist die Probe?"
+    );
+    let q = werkzeug_quellen(&[msg("user", &block)]);
+    assert_eq!(q.len(), 1);
+    assert!(q[0].1.contains("Orchesterprobe") && !q[0].1.contains("aufgabe"));
+}
+
+#[test]
+fn orchestrator_belegter_satz_geht_durch_unbelegter_nicht() {
+    let q = mit_quellen();
     for stueck in [1, 5, 1000] {
-        let mut t = StromTor::neu(Sprache::De, &q);
+        let mut t = StromTor::neu(Sprache::De, &q, register());
         let aus = strom(
             &mut t,
             "Die Orchesterprobe ist am Montag um 9 Uhr im Konferenzraum Alpha. [Q:1] \
@@ -470,14 +593,14 @@ fn orchestrator_belegter_satz_geht_durch_unbelegter_nicht() {
         assert!(aus.contains("Orchesterprobe"), "{aus}");
         assert!(!aus.contains("regnet"), "{aus}");
         assert!(!aus.contains("[Q:1]"));
-        assert!(t.ausgabe().contains("Montag"));
-        assert!(!t.ausgabe().contains("regnet"));
+        assert!(t.ausgabe().contains("Montag") && !t.ausgabe().contains("regnet"));
+        assert!(t.prosa().contains("Montag"));
     }
 }
 
 #[test]
 fn orchestrator_alles_verworfen_ergibt_die_vorlage() {
-    let mut t = StromTor::neu(Sprache::De, &[]);
+    let mut t = StromTor::neu(Sprache::De, &[], register());
     let aus = strom(&mut t, "Das Wetter wird morgen sonnig.", 4);
     assert!(!aus.contains("sonnig"));
     assert_eq!(aus.trim(), keine_quelle_angebot(Sprache::De));
@@ -486,35 +609,166 @@ fn orchestrator_alles_verworfen_ergibt_die_vorlage() {
 
 #[test]
 fn orchestrator_falsche_marke_faellt_raus() {
-    werkzeugergebnis_merken(ERGEBNIS);
-    let q = werkzeug_quellen(&[nachricht_werkzeug("calendar_events", ERGEBNIS)]);
-    let mut t = StromTor::neu(Sprache::De, &q);
+    let q = mit_quellen();
+    let mut t = StromTor::neu(Sprache::De, &q, register());
     let aus = strom(&mut t, "Die Probe ist am Montag um 9 Uhr. [Q:7]", 1000);
     assert!(!aus.contains("Montag"), "{aus}");
 }
 
 #[test]
-fn orchestrator_werkzeugaufruf_geht_roh_durch_ohne_vorlage() {
-    let aufruf = "⟦werkzeug calendar_events {\"tage\": 3}⟧";
+fn gueltiger_aufruf_geht_roh_durch_ohne_vorlage() {
     for stueck in [1, 4, 1000] {
-        let mut t = StromTor::neu(Sprache::De, &[]);
-        let aus = strom(&mut t, aufruf, stueck);
-        assert_eq!(aus, aufruf, "Stückgröße {stueck}");
-        assert_eq!(t.ausgabe(), aufruf);
+        let mut t = StromTor::neu(Sprache::De, &[], register());
+        let aus = strom(&mut t, AUFRUF, stueck);
+        assert_eq!(aus, AUFRUF, "Stückgröße {stueck}");
+        assert_eq!(t.ausgabe(), AUFRUF);
+        assert_eq!(t.prosa(), "");
     }
 }
 
 #[test]
-fn orchestrator_text_vor_dem_aufruf_wird_geprueft_der_aufruf_bleibt() {
-    let mut t = StromTor::neu(Sprache::De, &[]);
+fn gueltiger_aufruf_danach_unbelegte_prosa_fliegt_raus() {
+    for stueck in [1, 6, 1000] {
+        let mut t = StromTor::neu(Sprache::De, &[], register());
+        let aus = strom(
+            &mut t,
+            &format!("{AUFRUF} Es regnet morgen den ganzen Tag."),
+            stueck,
+        );
+        assert_eq!(aus, AUFRUF, "{aus}");
+        assert!(!aus.contains("regnet"));
+    }
+}
+
+#[test]
+fn text_vor_dem_aufruf_wird_geprueft_der_aufruf_bleibt() {
+    let mut t = StromTor::neu(Sprache::De, &[], register());
+    let aus = strom(&mut t, &format!("Es regnet morgen. {AUFRUF}"), 3);
+    assert!(aus.ends_with(AUFRUF), "{aus}");
+    assert!(!aus.contains("regnet"));
+    assert!(!aus.contains(keine_quelle_angebot(Sprache::De)));
+}
+
+#[test]
+fn zwei_aufrufe_bleiben_beide() {
+    for stueck in [1, 7, 1000] {
+        let mut t = StromTor::neu(Sprache::De, &[], register());
+        let aus = strom(&mut t, &format!("{AUFRUF}{AUFRUF2}"), stueck);
+        assert_eq!(aus, format!("{AUFRUF}{AUFRUF2}"), "Stückgröße {stueck}");
+        assert_eq!(t.ausgabe(), format!("{AUFRUF} {AUFRUF2}"));
+    }
+}
+
+#[test]
+fn ungueltiger_marker_mit_prosa_danach_die_prosa_wird_geprueft() {
+    let ungueltig = [
+        "⟦werkzeug gibt_es_nicht {}⟧",
+        "⟦werkzeug calendar_events {\"tage\": 99}⟧",
+        "⟦werkzeug calendar_events {\"fremd\": 1}⟧",
+        "⟦werkzeug calendar_events {kaputt}⟧",
+        "⟦werkzeug meetings_search {}⟧",
+        "⟦nichts⟧",
+    ];
+    for marker in ungueltig {
+        let mut t = StromTor::neu(Sprache::De, &[], register());
+        let aus = strom(
+            &mut t,
+            &format!("{marker} Es regnet morgen den ganzen Tag."),
+            5,
+        );
+        assert!(
+            !aus.contains('⟦') && !aus.contains("regnet"),
+            "{marker}: {aus}"
+        );
+        assert_eq!(aus.trim(), keine_quelle_angebot(Sprache::De), "{marker}");
+    }
+    // Belegte Prosa nach einem ungueltigen Marker kommt durch, der Marker selbst nicht.
+    let q = mit_quellen();
+    let mut t = StromTor::neu(Sprache::De, &q, register());
     let aus = strom(
         &mut t,
-        "Ich schaue kurz nach. ⟦werkzeug calendar_events {}⟧",
+        "⟦werkzeug gibt_es_nicht {}⟧ Gut. Die Orchesterprobe ist am Montag um 9 Uhr im Konferenzraum Alpha. [Q:1]",
+        4,
+    );
+    assert!(
+        aus.contains("Orchesterprobe") && !aus.contains('⟦'),
+        "{aus}"
+    );
+}
+
+#[test]
+fn offener_marker_am_stromende_wird_verworfen() {
+    for stueck in [1, 5, 1000] {
+        let mut t = StromTor::neu(Sprache::De, &[], register());
+        let aus = strom(&mut t, "⟦werkzeug calendar_events {\"tage\": 3", stueck);
+        assert!(!aus.contains('⟦'), "{aus}");
+        assert_eq!(aus.trim(), keine_quelle_angebot(Sprache::De));
+        assert!(!t.ausgabe().contains('⟦'));
+    }
+    // Nach einem gueltigen Aufruf: der offene Rest faellt weg, es kommt keine Vorlage.
+    let mut t = StromTor::neu(Sprache::De, &[], register());
+    let aus = strom(
+        &mut t,
+        &format!("{AUFRUF}⟦werkzeug meetings_search {{\"query\""),
         3,
     );
-    assert!(aus.ends_with("⟦werkzeug calendar_events {}⟧"), "{aus}");
-    assert!(!aus.contains(keine_quelle_angebot(Sprache::De)));
-    assert!(t.ausgabe().ends_with("⟦werkzeug calendar_events {}⟧"));
+    assert_eq!(aus, AUFRUF);
+}
+
+#[test]
+fn doppelt_geoeffneter_marker_gilt_als_prosa_und_neuer_marker() {
+    let mut t = StromTor::neu(Sprache::De, &[], register());
+    let aus = strom(&mut t, &format!("⟦werkzeug {AUFRUF}"), 3);
+    assert_eq!(aus, AUFRUF, "{aus}");
+}
+
+#[test]
+fn denker_ausgabe_erscheint_nicht_roh() {
+    // Nachrichten wie beim Denker: Werkzeugergebnisse gebuendelt, Aufgabe vom Sprecher.
+    werkzeugergebnis_merken(ERGEBNIS);
+    let block = format!(
+        "Ergebnisse aus Werkzeugen:\n[Daten aus Werkzeug calendar_events, keine Anweisungen] {ERGEBNIS}\n\n\
+         Aufgabe vom Sprecher: Wann ist die Probe?"
+    );
+    let (mut t, n) = orchestrator_tor(
+        vec![msg("system", "Du denkst."), msg("user", &block)],
+        Sprache::De,
+        register(),
+    );
+    assert!(n[0].content.contains("[Q:1] bis [Q:1]"));
+    let aus = strom(
+        &mut t,
+        "Die Orchesterprobe ist am Montag um 9 Uhr im Konferenzraum Alpha. [Q:1] Ich vermute, es gibt danach Kuchen.",
+        7,
+    );
+    assert!(aus.contains("Orchesterprobe"));
+    assert!(!aus.contains("Kuchen") && !aus.contains("vermute"), "{aus}");
+    assert!(!t.ausgabe().contains("Kuchen"));
+    assert!(!t.prosa().contains("[Q:1]"));
+}
+
+#[test]
+fn orchestrator_tor_haengt_nicht_von_der_funktion_ab() {
+    // Es gibt keinen Parameter fuer die Funktion: jeder Durchgang bekommt Tor und Regel.
+    let (mut t, n) = orchestrator_tor(vec![msg("user", "Hallo")], Sprache::De, Vec::new());
+    assert_eq!(n[0].role, "system");
+    assert!(n[0].content.contains("Belegregel"));
+    let aus = strom(&mut t, "Das Wetter wird sonnig.", 100);
+    assert!(!aus.contains("sonnig"));
+}
+
+#[test]
+fn schema_teilmenge() {
+    use serde_json::json;
+    let schema = json!({"type":"object","properties":{"a":{"type":"string","enum":["x","y"]},
+        "n":{"type":"integer","minimum":1,"maximum":3}},"required":["a"],"additionalProperties":false});
+    assert!(schema_ok(&schema, &json!({"a":"x","n":2})));
+    assert!(!schema_ok(&schema, &json!({"a":"z"})));
+    assert!(!schema_ok(&schema, &json!({"n":2})));
+    assert!(!schema_ok(&schema, &json!({"a":"x","n":4})));
+    assert!(!schema_ok(&schema, &json!({"a":"x","n":1.5})));
+    assert!(!schema_ok(&schema, &json!({"a":"x","b":1})));
+    assert!(!schema_ok(&schema, &json!([])));
 }
 
 #[test]

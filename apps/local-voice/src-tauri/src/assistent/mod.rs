@@ -21,8 +21,10 @@
 //!   Belegregel). Belege sind die Werkzeugergebnisse, die `voice_tool_call` selbst geliefert hat
 //!   ([`tor::werkzeugergebnis_merken`], [`tor::werkzeug_quellen`]); Werkzeugaufrufe `⟦…⟧` gehen
 //!   unveraendert durch. Die Ausgabe des Denkers ist nie sichtbar, sie geht nur an den Sprecher.
-//! * S0-Absichten ohne Vorlage ([`tor::FORTSETZUNG`]: „Ja“, lauter, ...) gehen als Fortsetzung zum
-//!   Modell, andere S0 nicht.
+//! * Das Tor weist jede S0-Absicht ab. Einzige Ausnahme: eine Bestaetigung („ja“) nach einer
+//!   Rueckfrage des Modells (letzte freigegebene Ausgabe des Gespraechs endet mit `?`, aus dem
+//!   Rust-Speicher) ist die S1-Absicht `fortsetzung` ([`tor::mit_fortsetzung`]). Lauter, leiser,
+//!   schneller, langsamer fuehrt die Oberflaeche lokal aus.
 //! * `src/components/voice-call/engine.ts` stuft fuer Ansagen und S0-Vorlagen ein (ohne Modell).
 //!
 //! # Datenschutz
@@ -149,11 +151,14 @@ pub fn einstufen_mit(
     sprache: Sprache,
     tabelle: &Regeltabelle,
     uhr: &dyn Uhr,
+    letzte: Option<&str>,
 ) -> Result<Option<EinstufungDto>, String> {
     if !aktiv || text.trim().is_empty() || text.chars().count() > MAX_TEXT_ZEICHEN {
         return Ok(None);
     }
-    tor::einstufen_geschuetzt(text.trim(), sprache, tabelle, uhr).map(Some)
+    tor::einstufen_geschuetzt(text.trim(), sprache, tabelle, uhr)
+        .map(|e| tor::mit_fortsetzung(e, letzte))
+        .map(Some)
 }
 
 /// Stuft eine Aeusserung lokal ein (ADR-0028 E4.1) fuer Ansagen und S0-Vorlagen. `None`, wenn
@@ -165,9 +170,18 @@ pub fn assistent_einstufen(
     app: AppHandle,
     text: String,
     sprache: String,
+    conversation_id: Option<String>,
 ) -> Result<Option<EinstufungDto>, String> {
     let aktiv = crate::settings::get_settings(&app).assistent_einstufung_aktiv;
-    einstufen_mit(aktiv, &text, sprache_aus(&sprache), tabelle(), &SystemUhr)
+    let letzte = tor::letzte_ausgabe(conversation_id.as_deref());
+    einstufen_mit(
+        aktiv,
+        &text,
+        sprache_aus(&sprache),
+        tabelle(),
+        &SystemUhr,
+        letzte.as_deref(),
+    )
 }
 
 /// Weg der Antwort (Messpunkt E9).

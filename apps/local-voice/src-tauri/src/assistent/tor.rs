@@ -58,11 +58,44 @@ const GERAHMT: [&str; 4] = [
     "Aufgabe vom Sprecher:",
 ];
 
-/// S0-Absichten, die keine S0-Vorlage haben und deshalb als Fortsetzung zum Modell gehen („Ja“ antwortet
-/// meist auf dessen Frage; Bedienabsichten kann der Sprachanruf nicht ausfuehren). Das Tor behandelt
-/// sie wie S1; die Antwort laeuft wie jede andere durch das Ausgabetor. Spiegel: `FORTSETZUNG` in
-/// `assistentPlan.ts` (`scripts/assistent-plan.test.mjs` prueft die Gleichheit).
-pub const FORTSETZUNG: [&str; 5] = ["bestaetigung", "lauter", "leiser", "langsamer", "schneller"];
+/// Absicht der Fortsetzung: ein „Ja“ nach einer Rueckfrage des Modells (S1, geht zum Modell).
+pub const FORTSETZUNG: &str = "fortsetzung";
+
+/// Endet die Ausgabe mit einer Rueckfrage (letzter Satz mit `?`, Marken am Ende zaehlen nicht)?
+pub fn endet_mit_rueckfrage(text: &str) -> bool {
+    let mut t = text.trim_end();
+    loop {
+        let Some(offen) = t.rfind('[') else { break };
+        let rest = &t[offen..];
+        if rest.ends_with(']') && matches!(marke_lesen(rest), Marke::Ganz(l, _) if l == rest.len())
+        {
+            t = t[..offen].trim_end();
+        } else {
+            break;
+        }
+    }
+    t.trim_end_matches(['"', '“', '”', '\'', ')'])
+        .ends_with('?')
+}
+
+/// Eine Bestaetigung („ja“, „okay“) ist nur dann eine Fortsetzung, wenn die letzte vom Tor
+/// freigegebene Ausgabe dieses Gespraechs mit einer Rueckfrage endet. Das entscheidet allein
+/// Rust aus dem eigenen Speicher (`letzte`), nie eine Angabe der Oberflaeche. Sonst bleibt es S0
+/// mit der Vorlage und geht nicht ans Modell.
+pub fn mit_fortsetzung(dto: EinstufungDto, letzte: Option<&str>) -> EinstufungDto {
+    if dto.stufe == StufeDto::S0
+        && dto.absicht == "bestaetigung"
+        && letzte.is_some_and(endet_mit_rueckfrage)
+    {
+        return EinstufungDto {
+            stufe: StufeDto::S1,
+            absicht: FORTSETZUNG.to_string(),
+            ansage: None,
+            antwort: None,
+        };
+    }
+    dto
+}
 
 fn de(sprache: Sprache) -> bool {
     sprache == Sprache::De
@@ -104,6 +137,7 @@ pub fn vor_modellaufruf_mit(
     sprache: Sprache,
     tabelle: &Regeltabelle,
     uhr: &dyn Uhr,
+    letzte: Option<&str>,
 ) -> Result<EinstufungDto, String> {
     let text = nutzertext.trim();
     if text.is_empty() {
@@ -120,29 +154,38 @@ pub fn vor_modellaufruf_mit(
             "The question is too long.".into()
         });
     }
-    let mut dto = einstufen_geschuetzt(text, sprache, tabelle, uhr)?;
+    let dto = mit_fortsetzung(einstufen_geschuetzt(text, sprache, tabelle, uhr)?, letzte);
     if dto.stufe == StufeDto::S0 {
-        if !FORTSETZUNG.contains(&dto.absicht.as_str()) {
-            return Err(if de(sprache) {
-                "Das beantwortet die App direkt, ohne Modell.".into()
-            } else {
-                "The app answers this directly, without a model.".into()
-            });
-        }
-        dto.stufe = StufeDto::S1;
+        return Err(if de(sprache) {
+            "Das beantwortet die App direkt, ohne Modell.".into()
+        } else {
+            "The app answers this directly, without a model.".into()
+        });
     }
     Ok(dto)
 }
 
 /// Einstufung vor dem Modellaufruf mit der gemeinsamen Tabelle und der Systemuhr.
-pub fn vor_modellaufruf(nutzertext: &str, sprache: Sprache) -> Result<EinstufungDto, String> {
-    vor_modellaufruf_mit(nutzertext, sprache, tabelle(), &SystemUhr)
+pub fn vor_modellaufruf(
+    nutzertext: &str,
+    sprache: Sprache,
+    conversation_id: Option<&str>,
+) -> Result<EinstufungDto, String> {
+    let letzte = letzte_ausgabe(conversation_id);
+    vor_modellaufruf_mit(
+        nutzertext,
+        sprache,
+        tabelle(),
+        &SystemUhr,
+        letzte.as_deref(),
+    )
 }
 
 /// Das Tor fuer einen Aufruf mit Nachrichten (`voice_call_chat`, `voice_call_turn`).
 pub fn vor_nachrichten(
     nachrichten: &[VoiceCallMessage],
     sprache: Sprache,
+    conversation_id: Option<&str>,
 ) -> Result<EinstufungDto, String> {
     let text = menschentext(
         nachrichten
@@ -150,7 +193,7 @@ pub fn vor_nachrichten(
             .map(|m| (m.role.as_str(), m.content.as_str())),
     )
     .unwrap_or("");
-    vor_modellaufruf(text, sprache)
+    vor_modellaufruf(text, sprache, conversation_id)
 }
 
 // ---------------------------------------------------------------- Markenregel fuer das Modell
@@ -558,8 +601,12 @@ impl Ausgabetor {
 // ---------------------------------------------------------------- Orchestrator: Tor im Textstrom
 
 const MARKER_AUF: char = '⟦';
+const MARKER_ZU: char = '⟧';
+const MARKER_MAX_ZEICHEN: usize = 16 * 1024;
 const MAX_ERGEBNISSE: usize = 64;
 const MAX_QUELLE_ZEICHEN: usize = 4_000;
+const RAHMEN: &str = "[Daten aus Werkzeug";
+const AUFGABE: &str = "Aufgabe vom Sprecher:";
 
 static ERGEBNISSE: Lazy<Mutex<VecDeque<String>>> = Lazy::new(|| Mutex::new(VecDeque::new()));
 
@@ -584,8 +631,9 @@ fn kern(t: &str) -> String {
 }
 
 /// Belege eines Orchestrator-Durchgangs: die Werkzeugergebnisse in den Nachrichten
-/// (`[Daten aus Werkzeug …] …`), soweit Rust sie selbst geliefert hat. Eine eingeschobene oder
-/// veraenderte Nachricht zaehlt nicht. Nummeriert ab 1 in der Reihenfolge des Gespraechs.
+/// (`[Daten aus Werkzeug …] …`, auch gebuendelt im Block des Denkers), soweit Rust sie selbst
+/// geliefert hat. Eine eingeschobene oder veraenderte Nachricht zaehlt nicht. Nummeriert ab 1 in der
+/// Reihenfolge des Gespraechs.
 pub fn werkzeug_quellen(nachrichten: &[VoiceCallMessage]) -> Vec<(u32, String)> {
     let ring: Vec<String> = ERGEBNISSE
         .lock()
@@ -595,81 +643,281 @@ pub fn werkzeug_quellen(nachrichten: &[VoiceCallMessage]) -> Vec<(u32, String)> 
         .collect();
     let mut aus: Vec<(u32, String)> = Vec::new();
     for m in nachrichten.iter().filter(|m| m.role == "user") {
-        let Some(rest) = m.content.trim_start().strip_prefix("[Daten aus Werkzeug") else {
-            continue;
-        };
-        let Some((_, body)) = rest.split_once("] ") else {
-            continue;
-        };
-        let body = body.trim();
-        let k = kern(body);
-        if k.is_empty() || !ring.iter().any(|r| r.contains(&k)) {
-            continue;
+        let c = m.content.as_str();
+        let starts: Vec<usize> = c
+            .match_indices(RAHMEN)
+            .map(|(i, _)| i)
+            .filter(|&i| i == 0 || c[..i].ends_with('\n'))
+            .collect();
+        for (n, &st) in starts.iter().enumerate() {
+            let mut ende = starts.get(n + 1).copied().unwrap_or(c.len());
+            if let Some(a) = c[st..ende].find(AUFGABE) {
+                ende = st + a;
+            }
+            let Some((_, body)) = c[st..ende].split_once("] ") else {
+                continue;
+            };
+            let body = body.trim();
+            let k = kern(body);
+            if k.is_empty() || !ring.iter().any(|r| r.contains(&k)) {
+                continue;
+            }
+            let nr = aus.len() as u32 + 1;
+            aus.push((nr, body.chars().take(MAX_QUELLE_ZEICHEN).collect()));
         }
-        let nr = aus.len() as u32 + 1;
-        aus.push((nr, body.chars().take(MAX_QUELLE_ZEICHEN).collect()));
     }
     aus
 }
 
-/// Das Ausgabetor fuer den rohen Textstrom des Orchestrators (`voice_call_turn` des Sprechers).
-/// Text vor einem Werkzeugmarker `⟦…⟧` geht durch die Belegregel; ab dem Marker laeuft der Rest
-/// unveraendert durch (der Orchestrator wertet ihn aus, er wird nie gesprochen). Eine Runde nur mit
-/// Werkzeugaufruf bekommt keine Vorlage.
-pub struct StromTor {
-    tor: Ausgabetor,
-    roh: bool,
-    schwanz: String,
+/// Ein Werkzeug der Registrierung: Name und Schema der Argumente.
+#[derive(Debug, Clone)]
+pub struct Werkzeug {
+    pub name: String,
+    pub schema: serde_json::Value,
 }
 
-fn stuecke(pieces: Vec<String>) -> String {
-    pieces.into_iter().map(|p| format!("{p} ")).collect()
+fn typ_ok(typ: &str, wert: &serde_json::Value) -> bool {
+    match typ {
+        "object" => wert.is_object(),
+        "array" => wert.is_array(),
+        "string" => wert.is_string(),
+        "boolean" => wert.is_boolean(),
+        "null" => wert.is_null(),
+        "number" => wert.is_number(),
+        "integer" => wert.as_i64().is_some() || wert.as_u64().is_some(),
+        _ => false,
+    }
+}
+
+/// Prueft einen Wert gegen die Schema-Teilmenge der Werkzeuge: `type`, `enum`, `properties`,
+/// `required`, `additionalProperties`, Laengen, Grenzen, `items`. Unbekannte Felder im Objekt sind
+/// nur mit `additionalProperties: true` erlaubt.
+pub fn schema_ok(schema: &serde_json::Value, wert: &serde_json::Value) -> bool {
+    use serde_json::Value;
+    let Some(s) = schema.as_object() else {
+        return false;
+    };
+    let typ = match s.get("type") {
+        None => true,
+        Some(Value::String(t)) => typ_ok(t, wert),
+        Some(Value::Array(ts)) => ts
+            .iter()
+            .any(|t| t.as_str().is_some_and(|t| typ_ok(t, wert))),
+        Some(_) => false,
+    };
+    if !typ {
+        return false;
+    }
+    if let Some(e) = s.get("enum").and_then(Value::as_array) {
+        if !e.contains(wert) {
+            return false;
+        }
+    }
+    let zahl = |k: &str| s.get(k).and_then(Value::as_f64);
+    match wert {
+        Value::Object(m) => {
+            let props = s.get("properties").and_then(Value::as_object);
+            let pflicht = s.get("required").and_then(Value::as_array);
+            let fehlt = pflicht.is_some_and(|r| {
+                r.iter()
+                    .any(|k| k.as_str().is_none_or(|k| !m.contains_key(k)))
+            });
+            if fehlt {
+                return false;
+            }
+            let frei = s.get("additionalProperties") == Some(&Value::Bool(true));
+            m.iter().all(|(k, v)| match props.and_then(|p| p.get(k)) {
+                Some(ps) => schema_ok(ps, v),
+                None => frei,
+            })
+        }
+        Value::String(t) => {
+            let n = t.chars().count() as f64;
+            zahl("minLength").is_none_or(|g| n >= g) && zahl("maxLength").is_none_or(|g| n <= g)
+        }
+        Value::Number(n) => {
+            let x = n.as_f64().unwrap_or(f64::NAN);
+            zahl("minimum").is_none_or(|g| x >= g) && zahl("maximum").is_none_or(|g| x <= g)
+        }
+        Value::Array(a) => {
+            let n = a.len() as f64;
+            zahl("minItems").is_none_or(|g| n >= g)
+                && zahl("maxItems").is_none_or(|g| n <= g)
+                && s.get("items")
+                    .is_none_or(|i| a.iter().all(|v| schema_ok(i, v)))
+        }
+        _ => true,
+    }
+}
+
+/// Ist das ein vollstaendig gueltiger Werkzeugaufruf `⟦werkzeug name {json}⟧`: geschlossener
+/// Marker, Name aus der Registrierung, Argumente nach dem Schema des Werkzeugs?
+pub fn aufruf_gueltig(marker: &str, werkzeuge: &[Werkzeug]) -> bool {
+    let Some(inner) = marker
+        .strip_prefix(MARKER_AUF)
+        .and_then(|m| m.strip_suffix(MARKER_ZU))
+    else {
+        return false;
+    };
+    let Some(rest) = inner.trim().strip_prefix("werkzeug") else {
+        return false;
+    };
+    if !rest.starts_with(char::is_whitespace) {
+        return false;
+    }
+    let rest = rest.trim_start();
+    let ende = rest
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .unwrap_or(rest.len());
+    let (name, args) = rest.split_at(ende);
+    let Some(w) = werkzeuge
+        .iter()
+        .find(|w| !name.is_empty() && w.name == name)
+    else {
+        return false;
+    };
+    let args = args.trim();
+    let wert: serde_json::Value = if args.is_empty() {
+        serde_json::json!({})
+    } else {
+        match serde_json::from_str(args) {
+            Ok(v) => v,
+            Err(_) => return false,
+        }
+    };
+    schema_ok(&w.schema, &wert)
+}
+
+/// Das Ausgabetor fuer den rohen Textstrom des Orchestrators (`voice_call_turn`, Sprecher und
+/// Denker). Alles, was Rust Richtung Oberflaeche verlaesst, geht durch die Belegregel; ausgenommen
+/// sind nur vollstaendig gueltige Werkzeugaufrufe ([`aufruf_gueltig`]). Ungueltige oder offene Marker
+/// sind Prosa und fallen durch das Tor, ein offener Marker am Stromende wird verworfen. Eine Ausgabe
+/// ohne Freigabe und ohne Aufruf bekommt die feste Vorlage.
+pub struct StromTor {
+    sprache: Sprache,
+    quellen: Vec<(u32, String)>,
+    werkzeuge: Vec<Werkzeug>,
+    tor: Ausgabetor,
+    offen: Option<String>,
+    teile: Vec<String>,
+    prosa: Vec<String>,
+}
+
+fn stuecke(pieces: &[String]) -> String {
+    pieces.iter().map(|p| format!("{p} ")).collect()
 }
 
 impl StromTor {
-    pub fn neu(sprache: Sprache, quellen: &[(u32, String)]) -> Self {
+    pub fn neu(sprache: Sprache, quellen: &[(u32, String)], werkzeuge: Vec<Werkzeug>) -> Self {
         Self {
+            sprache,
+            quellen: quellen.to_vec(),
+            werkzeuge,
             tor: Ausgabetor::neu(sprache, quellen),
-            roh: false,
-            schwanz: String::new(),
+            offen: None,
+            teile: Vec::new(),
+            prosa: Vec::new(),
         }
+    }
+
+    fn freigeben(&mut self, pieces: Vec<String>) -> String {
+        let aus = stuecke(&pieces);
+        for p in pieces {
+            self.teile.push(p.clone());
+            self.prosa.push(p);
+        }
+        aus
+    }
+
+    fn prosa_speisen(&mut self, text: &mut String) -> String {
+        if text.is_empty() {
+            return String::new();
+        }
+        let pieces = self.tor.einspeisen(text);
+        text.clear();
+        self.freigeben(pieces)
+    }
+
+    /// Prosa vor einem Aufruf abschliessen; danach beginnt ein frisches Tor.
+    fn prosa_abschliessen(&mut self) -> String {
+        let pieces = self.tor.abschliessen();
+        self.tor = Ausgabetor::neu(self.sprache, &self.quellen);
+        self.freigeben(pieces)
     }
 
     /// Neuer Text aus dem Strom; gibt zurueck, was jetzt als Textstueck weitergeht.
     pub fn einspeisen(&mut self, delta: &str) -> String {
-        if self.roh {
-            self.schwanz.push_str(delta);
-            return delta.to_string();
+        let mut aus = String::new();
+        let mut prosa = String::new();
+        for c in delta.chars() {
+            let Some(offen) = self.offen.as_mut() else {
+                if c == MARKER_AUF {
+                    aus.push_str(&self.prosa_speisen(&mut prosa));
+                    self.offen = Some(c.to_string());
+                } else {
+                    prosa.push(c);
+                }
+                continue;
+            };
+            if c == MARKER_AUF {
+                // Ein neuer Marker, bevor der alte geschlossen ist: der alte war Prosa.
+                prosa.push_str(offen);
+                self.offen = Some(c.to_string());
+                continue;
+            }
+            offen.push(c);
+            if c == MARKER_ZU {
+                let marker = self.offen.take().unwrap_or_default();
+                if aufruf_gueltig(&marker, &self.werkzeuge) {
+                    aus.push_str(&self.prosa_speisen(&mut prosa));
+                    aus.push_str(&self.prosa_abschliessen());
+                    aus.push_str(&marker);
+                    self.teile.push(marker);
+                } else {
+                    prosa.push_str(&marker);
+                }
+            } else if offen.chars().count() > MARKER_MAX_ZEICHEN {
+                prosa.push_str(&self.offen.take().unwrap_or_default());
+            }
         }
-        let Some(i) = delta.find(MARKER_AUF) else {
-            return stuecke(self.tor.einspeisen(delta));
-        };
-        let (vor, nach) = delta.split_at(i);
-        let mut aus = stuecke(self.tor.einspeisen(vor));
-        aus.push_str(&stuecke(self.tor.abschliessen()));
-        self.roh = true;
-        self.schwanz.push_str(nach);
-        aus.push_str(nach);
+        aus.push_str(&self.prosa_speisen(&mut prosa));
         aus
     }
 
-    /// Ende des Stroms; ohne Werkzeugaufruf und ohne Freigabe kommt die feste Vorlage.
+    /// Ende des Stroms: ein offener Marker wird verworfen; ohne Freigabe und ohne Aufruf kommt die
+    /// feste Vorlage.
     pub fn beenden(&mut self) -> String {
-        if self.roh {
-            return String::new();
-        }
-        stuecke(self.tor.beenden())
+        self.offen = None;
+        let pieces = if self.teile.is_empty() {
+            self.tor.beenden()
+        } else {
+            self.tor.abschliessen()
+        };
+        self.freigeben(pieces)
     }
 
-    /// Rueckgabewert des Durchgangs: freigegebener Text plus ein Werkzeugaufruf, nie die Rohausgabe.
+    /// Rueckgabewert des Durchgangs: freigegebener Text und gueltige Aufrufe, nie die Rohausgabe.
     pub fn ausgabe(&self) -> String {
-        let frei = self.tor.freigegebener_text();
-        match (frei.is_empty(), self.schwanz.is_empty()) {
-            (_, true) => frei,
-            (true, false) => self.schwanz.clone(),
-            (false, false) => format!("{frei} {}", self.schwanz),
-        }
+        self.teile.join(" ")
     }
+
+    /// Nur die freigegebene Prosa (fuer „wiederholen“ und „ja“ nach einer Rueckfrage).
+    pub fn prosa(&self) -> String {
+        self.prosa.join(" ")
+    }
+}
+
+/// Tor und Nachrichten eines Orchestrator-Durchgangs. Gilt fuer jeden Aufruf, gleich welche Funktion
+/// (Sprecher, Denker) er hat: die Ausgabe beider erreicht die Oberflaeche. Belege sind die
+/// Werkzeugergebnisse in den Nachrichten; die Markenregel samt Nummerierung steht im Systemtext.
+pub fn orchestrator_tor(
+    nachrichten: Vec<VoiceCallMessage>,
+    sprache: Sprache,
+    werkzeuge: Vec<Werkzeug>,
+) -> (StromTor, Vec<VoiceCallMessage>) {
+    let quellen = werkzeug_quellen(&nachrichten);
+    let tor = StromTor::neu(sprache, &quellen, werkzeuge);
+    (tor, mit_werkzeugregel(nachrichten, sprache, quellen.len()))
 }
 
 // ---------------------------------------------------------------- Letzte Ausgabe je Gespraech

@@ -1,3 +1,4 @@
+import { bedienung, type Bedienung } from "./bedienung.ts";
 import type { EinstufungDto, MessungDto, StufeDto, WegDto } from "@/bindings";
 
 // ADR-0028 A2: was der Sprachanruf aus der lokalen Einstufung macht. Reine Logik ohne Tauri-Aufrufe
@@ -40,24 +41,11 @@ export function vorlage(name: VorlageName, sprache: Sprache): string {
 export type EinstufungErgebnis =
   { art: "ok"; einstufung: EinstufungDto | null } | { art: "fehler" };
 
-/**
- * S0-Absichten ohne S0-Vorlage: „Ja“ antwortet meist auf eine Frage des Modells, Bedienabsichten kann
- * der Sprachanruf nicht ausführen (ihre Vorlage „Lauter.“ würde etwas behaupten, das nicht geschieht).
- * Das Tor in Rust lässt sie wie S1 zum Modell durch; die Antwort läuft durch das Ausgabetor.
- * Spiegel von `FORTSETZUNG` in `src-tauri/src/assistent/tor.rs`; `scripts/assistent-plan.test.mjs`
- * prüft die Gleichheit.
- */
-export const FORTSETZUNG: ReadonlySet<string> = new Set([
-  "bestaetigung",
-  "lauter",
-  "leiser",
-  "langsamer",
-  "schneller",
-]);
-
 export type AssistentPlan =
-  /** Kein Eingriff: Modell (Ansagen und Vorlagen aus, oder Fortsetzung). Das Tor in Rust gilt trotzdem. */
+  /** Kein Eingriff: Modell (Ansagen und Vorlagen aus, S1 ohne Ansage, Fortsetzung). Das Tor in Rust gilt trotzdem. */
   | { kind: "weiter" }
+  /** S0 lauter/leiser/schneller/langsamer: lokal ausführen, wahre Meldung, KEIN Modellaufruf. */
+  | { kind: "bedienung"; art: Bedienung }
   /** S0: Vorlagenantwort sprechen/anzeigen, KEIN Modellaufruf. */
   | { kind: "antwort"; text: string; absicht: string }
   /** S0 „wiederholen“: nur die letzte vom Tor freigegebene Ausgabe, nicht ins Modell, nicht in den Verlauf. */
@@ -66,6 +54,21 @@ export type AssistentPlan =
   | { kind: "fehler"; text: string }
   /** S1–S3: Ansage sofort, danach das Modell. */
   | { kind: "ansage"; text: string; stufe: StufeDto; absicht: string };
+
+/** Pläne, die ohne Modell enden (Vorlage, Wiederholung, Bedienung, feste Meldung). */
+export type VorlagePlan = Extract<
+  AssistentPlan,
+  { kind: "antwort" | "wiederholen" | "fehler" | "bedienung" }
+>;
+
+export function istVorlage(plan: AssistentPlan): plan is VorlagePlan {
+  return (
+    plan.kind === "antwort" ||
+    plan.kind === "wiederholen" ||
+    plan.kind === "fehler" ||
+    plan.kind === "bedienung"
+  );
+}
 
 export function planAssistent(
   r: EinstufungErgebnis,
@@ -80,7 +83,8 @@ export function planAssistent(
   if (!e) return { kind: "weiter" };
   if (e.stufe === "S0") {
     if (e.absicht === "wiederholen") return { kind: "wiederholen" };
-    if (FORTSETZUNG.has(e.absicht)) return { kind: "weiter" };
+    const art = bedienung(e.absicht);
+    if (art) return { kind: "bedienung", art };
     if (!e.antwort) return fehler;
     return { kind: "antwort", text: e.antwort, absicht: e.absicht };
   }

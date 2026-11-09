@@ -5,13 +5,19 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
-  FORTSETZUNG,
   baueMessung,
   planAssistent,
   sprachwahl,
   stufeVon,
   vorlage,
 } from "../src/components/voice-call/assistentPlan.ts";
+import {
+  LAUTSTAERKE,
+  START_STUFEN,
+  TEMPO,
+  bedienen,
+  bedienung,
+} from "../src/components/voice-call/bedienung.ts";
 import {
   ANNOUNCE,
   BUCH_BRUECKEN,
@@ -52,24 +58,71 @@ test("S0 wiederholen ist ein eigener Plan (Text kommt aus Rust, nicht aus der Vo
   });
 });
 
-test("Fortsetzung (Ja, lauter, ...) geht zum Modell statt in die Vorlage", () => {
-  assert.ok(FORTSETZUNG.has("bestaetigung"));
-  for (const absicht of FORTSETZUNG)
-    assert.deepEqual(planAssistent(s0(absicht, "In Ordnung."), "de"), {
-      kind: "weiter",
+test("S0-Bedienung (lauter, leiser, schneller, langsamer) wird lokal ausgeführt, nicht ans Modell", () => {
+  for (const art of ["lauter", "leiser", "schneller", "langsamer"])
+    assert.deepEqual(planAssistent(s0(art, art + "."), "de"), {
+      kind: "bedienung",
+      art,
     });
 });
 
-test("Fortsetzung in TS und Rust ist dieselbe Liste", () => {
-  const rust = readFileSync(
-    new URL("../src-tauri/src/assistent/tor.rs", import.meta.url),
-    "utf8",
+test("Bestätigung: S0 mit Vorlage, nach einer Rückfrage (Rust: S1 fortsetzung) zum Modell", () => {
+  assert.deepEqual(planAssistent(s0("bestaetigung", "In Ordnung."), "de"), {
+    kind: "antwort",
+    text: "In Ordnung.",
+    absicht: "bestaetigung",
+  });
+  assert.deepEqual(
+    planAssistent(
+      ok({ stufe: "S1", absicht: "fortsetzung", ansage: null, antwort: null }),
+      "de",
+    ),
+    { kind: "weiter" },
   );
-  const m = /pub const FORTSETZUNG: \[&str; (\d+)\] = \[([^\]]*)\];/.exec(rust);
-  assert.ok(m, "FORTSETZUNG fehlt in tor.rs");
-  const liste = [...m[2].matchAll(/"([^"]+)"/g)].map((x) => x[1]);
-  assert.equal(Number(m[1]), liste.length);
-  assert.deepEqual([...liste].sort(), [...FORTSETZUNG].sort());
+});
+
+test("Bedienung: Stufen, Grenzen und wahre Meldungen", () => {
+  const start = START_STUFEN;
+  const l = bedienen("lauter", start, true, "de");
+  assert.equal(l.geaendert, true);
+  assert.equal(l.stufen.lautstaerke, start.lautstaerke + 1);
+  assert.equal(l.text, "Lauter.");
+  // Obere Grenze: nichts ändert sich, die Meldung sagt es.
+  let st = start;
+  for (let i = 0; i < LAUTSTAERKE.length; i++)
+    st = bedienen("lauter", st, true, "de").stufen;
+  assert.equal(st.lautstaerke, LAUTSTAERKE.length - 1);
+  const grenze = bedienen("lauter", st, true, "de");
+  assert.deepEqual(
+    [grenze.geaendert, grenze.text],
+    [false, "Lauter geht es nicht."],
+  );
+  assert.equal(
+    bedienen("leiser", { ...st, lautstaerke: 0 }, true, "en").text,
+    "I can't go any quieter.",
+  );
+  const t = bedienen("schneller", start, true, "de");
+  assert.deepEqual([t.stufen.tempo, t.text], [start.tempo + 1, "Schneller."]);
+  assert.equal(
+    bedienen("langsamer", { ...start, tempo: 0 }, true, "de").text,
+    "Langsamer geht es nicht.",
+  );
+  // Keine Stellgröße (Textmodus): wahre Meldung, nichts geändert.
+  assert.deepEqual(bedienen("lauter", start, false, "de"), {
+    stufen: start,
+    text: "Die Lautstärke kann ich hier nicht ändern.",
+    geaendert: false,
+  });
+  assert.equal(
+    bedienen("schneller", start, false, "en").text,
+    "I can't change the speed here.",
+  );
+  assert.equal(
+    bedienen("schneller", start, false, "de").text,
+    "Das Tempo kann ich hier nicht ändern.",
+  );
+  assert.equal(bedienung("uhrzeit"), null);
+  assert.ok(LAUTSTAERKE[start.lautstaerke] === 1 && TEMPO[start.tempo] === 1);
 });
 
 test("S0 ohne Antworttext: feste Meldung (das Tor lässt S0 nicht ans Modell)", () => {

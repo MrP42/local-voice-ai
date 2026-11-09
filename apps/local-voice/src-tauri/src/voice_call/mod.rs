@@ -433,7 +433,7 @@ pub async fn voice_call_chat(
     // ADR-0028 E4: Einstufung in Rust vor jedem Modellaufruf. S0, Fehler, leerer oder zu langer
     // Text: kein Netzaufruf, unabhängig vom Schalter der Oberfläche.
     let sprache = assistent::sprache_der_app(&app);
-    tor::vor_nachrichten(&messages, sprache)?;
+    tor::vor_nachrichten(&messages, sprache, conversation_id.as_deref())?;
     let settings =
         crate::settings::get_settings(&app).for_function(crate::settings::FN_VOICE_SPEAKER);
     let (provider, model, api_key) =

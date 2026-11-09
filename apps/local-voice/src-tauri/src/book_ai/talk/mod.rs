@@ -1070,6 +1070,7 @@ pub async fn book_talk_ask(
     if let Err(e) = crate::assistent::tor::vor_modellaufruf(
         &req.question,
         crate::assistent::sprache_aus(&settings.app_language),
+        None,
     ) {
         log::warn!("book_talk: Tor hat die Anfrage abgewiesen");
         return Err(e);

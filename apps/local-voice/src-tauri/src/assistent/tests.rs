@@ -20,7 +20,7 @@ fn feste_uhr() -> FesteUhr {
 }
 
 fn einstufen_text(text: &str, sprache: Sprache) -> Option<EinstufungDto> {
-    einstufen_mit(true, text, sprache, tabelle(), &feste_uhr()).expect("keine Panne")
+    einstufen_mit(true, text, sprache, tabelle(), &feste_uhr(), None).expect("keine Panne")
 }
 
 #[test]
@@ -78,6 +78,7 @@ fn schalter_aus_stuft_nicht_ein() {
         Sprache::De,
         tabelle(),
         &feste_uhr(),
+        None,
     );
     assert_eq!(e, Ok(None));
 }
@@ -142,6 +143,7 @@ fn sommerzeit_ist_im_versatz_der_zone_enthalten() {
         Sprache::De,
         tabelle(),
         &FesteUhr(z),
+        None,
     )
     .unwrap()
     .unwrap();

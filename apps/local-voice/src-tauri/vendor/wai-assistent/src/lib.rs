@@ -4,6 +4,7 @@
 //! - [`einstufung`]: lokale Einstufung S0-S3, S0 nur bei exakter Gleichheit, Eskalation ohne Rueckstufung.
 //! - [`belegregel`]: Belegtor E4.2 (Quelle, Herleitung, Empfehlung); Saetze ohne Beleg werden verworfen.
 //! - [`messung`]: Messpunkte E9, ohne Inhalte serialisierbar.
+//! - [`sync`]: geraeteseitiger Sync-Kern (Stufe A1, E3): Umschlag, Lease, Zusammenfuehren, Grabstein, Migration.
 //!
 //! Keine Systemuhr im Kern: Uhrzeit und Datum kommen ueber [`einstufung::Uhr`].
 
@@ -11,6 +12,7 @@ pub mod belegregel;
 pub mod einstufung;
 pub mod messung;
 pub mod regeltabelle;
+pub mod sync;
 
 pub use belegregel::{
     Ansagen, Beleg, Dezimal, Grund, Herleitung, Pruefergebnis, Quellen, QuellenMap, Satz, SatzArt,

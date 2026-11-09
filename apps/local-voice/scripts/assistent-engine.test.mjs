@@ -414,21 +414,119 @@ test("Wiederholen im Textmodus: Anzeige ohne Verlauf", async () => {
   assert.deepEqual(verlauf(t), []);
 });
 
-test("Antwort ohne Tor (Orchestrator) vergisst die letzte Ausgabe; neues Gespräch ebenso", async () => {
+test("Orchestrator-Antwort läuft mit dem Schlüssel des Gesprächs durchs Tor; neues Gespräch vergisst", async () => {
   const t = neu({}, { seiteMit: seite(ANTWORT) });
-  t.engine.ausgabeKey = { id: "c1" };
   await t.start("Was steht im Kalender?").done;
-  assert.deepEqual(t.aufrufe("assistent_ausgabe_vergessen")[0].args, {
+  assert.deepEqual(t.engine.ausgabeKey, { id: "c1" });
+  assert.equal(t.aufrufe("assistent_ausgabe_vergessen").length, 0);
+
+  t.engine.resetHistory();
+  assert.deepEqual(t.aufrufe("assistent_ausgabe_vergessen").at(-1).args, {
     conversationId: "c1",
   });
   assert.equal(t.engine.ausgabeKey, null);
+});
 
-  t.engine.ausgabeKey = { id: "c9" };
-  t.engine.resetHistory();
-  assert.deepEqual(t.aufrufe("assistent_ausgabe_vergessen").at(-1).args, {
-    conversationId: "c9",
+test("Einstufung bekommt den Schlüssel des Gesprächs (Rust entscheidet „ja“ nach Rückfrage)", async () => {
+  const t = neu({ voice_call_chat: chatSagt(ANTWORT) });
+  await t.start("Ja").done;
+  assert.deepEqual(t.aufrufe("assistent_einstufen")[0].args, {
+    text: "Ja",
+    sprache: "de",
+    conversationId: "c1",
   });
-  assert.equal(t.engine.ausgabeKey, null);
+});
+
+test("Ja nach einer Rückfrage (Rust: S1 fortsetzung) geht zum Modell", async () => {
+  const t = neu({
+    assistent_einstufen: () => ({
+      stufe: "S1",
+      absicht: "fortsetzung",
+      ansage: null,
+      antwort: null,
+    }),
+    voice_call_chat: chatSagt(ANTWORT),
+  });
+  await t.start("Ja").done;
+  assert.equal(t.aufrufe("voice_call_chat").length, 1);
+  assert.deepEqual(t.player.enqueued, [`wav:${ANTWORT}`]);
+});
+
+test("Ja ohne Rückfrage (Rust: S0 bestaetigung): Vorlage, kein Modellaufruf", async () => {
+  const t = neu({
+    assistent_einstufen: () => s0E("bestaetigung", "In Ordnung."),
+    voice_call_chat: chatSagt(ANTWORT),
+  });
+  await t.start("Ja").done;
+  assert.equal(t.aufrufe("voice_call_chat").length, 0);
+  assert.deepEqual(t.player.enqueued, ["wav:In Ordnung."]);
+});
+
+// -- S0 bleibt lokal: Bedienung ----------------------------------------------------
+
+test("Lauter: kein Netzaufruf, die Lautstärke ändert sich, die Vorlage wird gesprochen", async () => {
+  const t = neu({
+    assistent_einstufen: () => s0E("lauter", "Lauter."),
+    voice_call_chat: chatSagt(ANTWORT),
+  });
+  assert.equal(t.player.volume, 1);
+  await t.start("Sprich lauter").done;
+  assert.equal(t.aufrufe("voice_call_chat").length, 0);
+  assert.equal(t.player.volume, 1.4);
+  assert.deepEqual(t.player.enqueued, ["wav:Lauter."]);
+  assert.deepEqual(verlauf(t), []);
+});
+
+test("Lauter an der Grenze: wahre Meldung, nichts ändert sich", async () => {
+  const t = neu({ assistent_einstufen: () => s0E("lauter", "Lauter.") });
+  await t.start("lauter").done;
+  t.player.finish();
+  await t.start("noch lauter").done;
+  assert.deepEqual(t.player.enqueued, [
+    "wav:Lauter.",
+    "wav:Lauter geht es nicht.",
+  ]);
+  assert.equal(t.player.volume, 1.4);
+});
+
+test("Leiser, schneller, langsamer stellen Lautstärke und Tempo", async () => {
+  let art = "leiser";
+  const t = neu({ assistent_einstufen: () => s0E(art, "x") });
+  await t.start("leiser").done;
+  assert.equal(t.player.volume, 0.7);
+  t.player.finish();
+  art = "schneller";
+  await t.start("schneller").done;
+  assert.equal(t.player.rate, 1.15);
+  t.player.finish();
+  art = "langsamer";
+  await t.start("langsamer").done;
+  t.player.finish();
+  await t.start("langsamer").done;
+  assert.equal(t.player.rate, 0.9);
+  assert.equal(t.aufrufe("voice_call_chat").length, 0);
+});
+
+test("Verworfener spekulativer Schritt ändert die Lautstärke nicht", async () => {
+  const t = neu({ assistent_einstufen: () => s0E("lauter", "Lauter.") });
+  const { done } = t.start("lauter", { commit: false });
+  await settle();
+  t.engine.cancelTurn(false);
+  await done;
+  assert.equal(t.player.volume, 1);
+  assert.deepEqual(t.player.enqueued, []);
+});
+
+test("Bedienung im Textmodus ohne Wiedergabe: wahre Meldung statt falscher Zusage", async () => {
+  const t = neu({ assistent_einstufen: () => s0E("schneller", "Schneller.") });
+  t.engine.state = "idle";
+  await t.engine.sendText("schneller");
+  assert.equal(
+    t.log.assistant.at(-1).t,
+    "Das Tempo kann ich hier nicht ändern.",
+  );
+  assert.equal(t.player.rate, 1);
+  assert.equal(t.aufrufe("voice_call_chat").length, 0);
 });
 
 // -- KANN: Messung E9 -----------------------------------------------------------

@@ -40,6 +40,7 @@ import {
 } from "./assistent";
 import {
   baueMessung,
+  istVorlage,
   planAssistent,
   stufeVon,
   vorlage,
@@ -47,7 +48,15 @@ import {
   type Marken,
   type MessArt,
   type Sprache,
+  type VorlagePlan,
 } from "./assistentPlan";
+import {
+  LAUTSTAERKE,
+  START_STUFEN,
+  TEMPO,
+  bedienen,
+  type Stufen,
+} from "./bedienung";
 import { istUeberbrueckung } from "./ueberbrueckung";
 
 export const DEFAULT_SYSTEM_PROMPT = `Du bist ein Gesprächspartner am Telefon. Antworte so, wie man spricht: kurze, natürliche Sätze auf Deutsch, meist ein bis drei Sätze. Keine Listen, keine Aufzählungszeichen, keine Markdown-Zeichen, keine Emojis, keine Links. Zahlen und Abkürzungen so schreiben, wie man sie ausspricht. Stelle bei Unklarheit eine kurze Rückfrage, statt lange zu raten. Fasse dich kurz, der Gesprächspartner kann jederzeit nachfragen oder unterbrechen.`;
@@ -306,6 +315,7 @@ export class VoiceCallEngine {
       onUsage: (u) => this.cb.onUsage?.(u),
       onStatus: (s) => this.cb.onStatus?.(s),
       conversationId: async () => (await this.cb.conversationId?.()) ?? null,
+      ausgabeKey: () => this.konversation(),
     });
     // Ändern sich Modelle, Verbindungen, Regelwerk oder Einstellungen, liest der nächste Schritt neu.
     const invalidate = () => this.session.invalidate();
@@ -560,6 +570,7 @@ export class VoiceCallEngine {
       await ctx.resume();
       if (aborted()) throw new Error(START_ABORTED);
       this.player = new SpeechPlayer(ctx);
+      this.stufenAnwenden();
       this.player.onIdle = () => {
         if (this.turn?.audible && this.turn.done) this.finishTurn();
       };
@@ -864,8 +875,54 @@ export class VoiceCallEngine {
   /** Gespräch, dessen letzte Ausgabe das Tor in Rust gemerkt hat (`null`: noch keine). */
   private ausgabeKey: { id: string | null } | null = null;
 
+  /**
+   * Schlüssel des Gesprächs für den Speicher in Rust: einmal gewählt, bleibt er, solange das Gespräch
+   * läuft (auch wenn die Kennung erst nach dem ersten Beitrag da ist), sonst fände „ja“ nach einer
+   * Rückfrage und „wiederholen“ die letzte Ausgabe nicht.
+   */
   private async konversation(): Promise<string | null> {
+    if (this.ausgabeKey) return this.ausgabeKey.id;
     return (await this.cb.conversationId?.()) ?? null;
+  }
+
+  /** Stufen von Lautstärke und Tempo der Wiedergabe (lauter, leiser, schneller, langsamer). */
+  private stufen: Stufen = START_STUFEN;
+
+  private stufenAnwenden(): void {
+    this.player?.setVolume(LAUTSTAERKE[this.stufen.lautstaerke]);
+    this.player?.setRate(TEMPO[this.stufen.tempo]);
+  }
+
+  /**
+   * Ohne Modell enden: S0-Antwort, Wiederholen, feste Meldung, Bedienung. `bereit`: die Bedienung
+   * wirkt erst, wenn der Schritt hörbar wird (ein verworfener spekulativer Schritt ändert nichts).
+   * `null`: nicht mehr nötig (abgebrochen).
+   */
+  private async vorlagenstuecke(
+    plan: VorlagePlan,
+    sprache: Sprache,
+    bereit: () => Promise<boolean>,
+  ): Promise<{ pieces: string[]; inhalt: boolean } | null> {
+    switch (plan.kind) {
+      case "antwort":
+        return { pieces: [plan.text], inhalt: true };
+      case "fehler":
+        return { pieces: [plan.text], inhalt: false };
+      case "wiederholen":
+        return { pieces: await this.wiederholung(sprache), inhalt: false };
+      case "bedienung": {
+        if (!(await bereit())) return null;
+        const r = bedienen(
+          plan.art,
+          this.stufen,
+          this.player !== null && this.inCall,
+          sprache,
+        );
+        this.stufen = r.stufen;
+        if (r.geaendert) this.stufenAnwenden();
+        return { pieces: [r.text], inhalt: false };
+      }
+    }
   }
 
   /**
@@ -878,7 +935,7 @@ export class VoiceCallEngine {
     sprache: Sprache;
   }> {
     const sprache = aktuelleSprache();
-    const r = await einstufen(text);
+    const r = await einstufen(text, await this.konversation());
     return { plan: planAssistent(r, sprache), stufe: stufeVon(r), sprache };
   }
 
@@ -945,19 +1002,12 @@ export class VoiceCallEngine {
       };
       const { plan, stufe, sprache } = await this.plan(text);
       if (stale()) return;
-      if (
-        plan.kind === "antwort" ||
-        plan.kind === "wiederholen" ||
-        plan.kind === "fehler"
-      ) {
+      if (istVorlage(plan)) {
         // Vorlage, kein Modellaufruf. Nur die S0-Antwort gehört in den Verlauf.
-        const pieces =
-          plan.kind === "wiederholen"
-            ? await this.wiederholung(sprache)
-            : [plan.text];
-        if (stale()) return;
-        const kind: PieceKind = plan.kind === "antwort" ? "inhalt" : "vorlage";
-        for (const p of pieces) onPiece(p, kind);
+        const v = await this.vorlagenstuecke(plan, sprache, async () => true);
+        if (!v || stale()) return;
+        const kind: PieceKind = v.inhalt ? "inhalt" : "vorlage";
+        for (const p of v.pieces) onPiece(p, kind);
         marken.fertig = performance.now();
         if (kind === "inhalt") {
           const tag = this.historyTag;
@@ -996,6 +1046,11 @@ export class VoiceCallEngine {
       let full = "";
       if (side) {
         run.side = side;
+        if (!this.ausgabeKey) {
+          const id = await this.konversation();
+          if (stale()) return;
+          this.ausgabeKey = { id };
+        }
         const chat = side.chat(id, this.historyFor(text), onModel).then(
           (r) => (typeof r === "string" ? r : ""),
           () => "",
@@ -1060,7 +1115,6 @@ export class VoiceCallEngine {
       const answer = side
         ? modelPartial || rueckgabe
         : rueckgabe || modelPartial;
-      if (side && answer) this.ausgabeVergessen();
       if (!answer) {
         // Kein Modellinhalt (Fehler, Frist, leer, vom Tor abgelehnt): feste Vorlage, nicht in den Verlauf.
         onPiece(vorlage("fehler", sprache), "vorlage");
@@ -1219,20 +1273,16 @@ export class VoiceCallEngine {
     // ADR-0028 A2: lokale Einstufung vor dem Modellaufruf.
     const { plan, stufe, sprache } = await this.plan(text);
     if (dead()) return;
-    if (
-      plan.kind === "antwort" ||
-      plan.kind === "wiederholen" ||
-      plan.kind === "fehler"
-    ) {
+    if (istVorlage(plan)) {
       // Vorlage, kein Modellaufruf. Nur die S0-Antwort gehört in den Verlauf.
-      const pieces =
-        plan.kind === "wiederholen"
-          ? await this.wiederholung(sprache)
-          : [plan.text];
-      if (dead()) return;
-      const kind: PieceKind = plan.kind === "antwort" ? "inhalt" : "vorlage";
+      const v = await this.vorlagenstuecke(plan, sprache, async () => {
+        await turn.committedP;
+        return !dead();
+      });
+      if (!v || dead()) return;
+      const kind: PieceKind = v.inhalt ? "inhalt" : "vorlage";
       turn.noHistory = kind === "vorlage";
-      for (const p of pieces) onPiece(p, kind);
+      for (const p of v.pieces) onPiece(p, kind);
       await chain;
       this.sentenceHandlers.delete(turn.id);
       if (dead()) return;
@@ -1290,6 +1340,11 @@ export class VoiceCallEngine {
     if (side) {
       // Denker oder Werkzeuge aktiv: der Orchestrator liefert die Sätze (auch die Überbrückung).
       turn.side = side;
+      if (!this.ausgabeKey) {
+        const id = await this.konversation();
+        if (dead()) return;
+        this.ausgabeKey = { id };
+      }
       const chat = side.chat(turn.id, this.historyFor(text), onModel).then(
         () => "",
         () => "",
@@ -1364,7 +1419,6 @@ export class VoiceCallEngine {
     this.cb.onStatus?.(null);
     this.sentenceHandlers.delete(turn.id);
     if (dead()) return;
-    if (side && modelText) this.ausgabeVergessen();
     if (!modelText) {
       // Kein Modellinhalt (Fehler, Frist, leer, vom Tor abgelehnt): feste Vorlage, nicht in den Verlauf.
       turn.noHistory = true;

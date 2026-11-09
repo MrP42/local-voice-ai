@@ -104,6 +104,8 @@ export interface OrchestrationDeps {
   onStatus(status: CallStatus | null): void;
   /** Das laufende Gespräch (es bleibt den Gesprächswerkzeugen verborgen); `null` bis zum ersten Beitrag; wartet auf ein laufendes Speichern. */
   conversationId?(): string | null | Promise<string | null>;
+  /** Schlüssel der letzten Ausgabe in Rust (Tor: „ja“ nach einer Rückfrage, „wiederholen“); sonst `conversationId`. */
+  ausgabeKey?(): string | null | Promise<string | null>;
 }
 
 export interface Prepared {
@@ -399,6 +401,8 @@ function makeModel(
           modelId: info.id,
           stufe,
           forFunction,
+          conversationId:
+            (await (deps.ausgabeKey ?? deps.conversationId)?.()) ?? null,
         });
         // Auch nach Abbruch noch kurz auf den Verbrauch warten: er zählt trotzdem.
         await Promise.race([

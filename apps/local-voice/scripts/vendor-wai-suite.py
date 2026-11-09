@@ -62,6 +62,8 @@ ERLAUBT = {
     "serde", "serde_json", "thiserror", "getrandom", "tokio", "sqlx", "sha2", "cap-std", "keyring",
     "chacha20poly1305", "zeroize", "regex", "async-trait", "tokio-util", "futures-util", "bytes",
     "reqwest", "url", "scraper", "ego-tree",
+    # base64 0.22 (MIT OR Apache-2.0), im Lockfile und in Cargo.toml schon vorhanden; Sync-Kern von wai-assistent.
+    "base64",
 }
 
 

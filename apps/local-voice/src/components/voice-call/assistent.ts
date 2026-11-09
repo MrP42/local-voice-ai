@@ -16,9 +16,16 @@ export function aktuelleSprache(): Sprache {
  * S0-Vorlagen abgeschaltet sind (`assistent_einstufung_aktiv`). Ein Fehler ist ein eigenes
  * Ergebnis: die Oberfläche zeigt dann die feste Meldung und geht nie ans Modell.
  */
-export async function einstufen(text: string): Promise<EinstufungErgebnis> {
+export async function einstufen(
+  text: string,
+  conversationId: string | null,
+): Promise<EinstufungErgebnis> {
   try {
-    const r = await commands.assistentEinstufen(text, i18n.language || "de");
+    const r = await commands.assistentEinstufen(
+      text,
+      i18n.language || "de",
+      conversationId,
+    );
     return r.status === "ok"
       ? { art: "ok", einstufung: r.data }
       : { art: "fehler" };

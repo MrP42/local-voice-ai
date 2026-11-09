@@ -864,9 +864,9 @@ async kontoBildLesen(id: string) : Promise<Result<string | null, string>> {
  * diese abgeschaltet sind (`assistent_einstufung_aktiv`); das Tor vor dem Modell bleibt davon
  * unberuehrt. Der Text wird nicht protokolliert.
  */
-async assistentEinstufen(text: string, sprache: string) : Promise<Result<EinstufungDto | null, string>> {
+async assistentEinstufen(text: string, sprache: string, conversationId: string | null) : Promise<Result<EinstufungDto | null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("assistent_einstufen", { text, sprache }) };
+    return { status: "ok", data: await TAURI_INVOKE("assistent_einstufen", { text, sprache, conversationId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3949,9 +3949,9 @@ async voiceCallChat(requestId: string, messages: VoiceCallMessage[], context: Sp
 /**
  * Ein Durchgang eines Modells als roher Textstrom (Ereignisse `delta`, am Ende `usage`).
  */
-async voiceCallTurn(requestId: string, messages: VoiceCallMessage[], modelId: string, stufe: string, forFunction: string | null) : Promise<Result<string, string>> {
+async voiceCallTurn(requestId: string, messages: VoiceCallMessage[], modelId: string, stufe: string, forFunction: string | null, conversationId: string | null) : Promise<Result<string, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("voice_call_turn", { requestId, messages, modelId, stufe, forFunction }) };
+    return { status: "ok", data: await TAURI_INVOKE("voice_call_turn", { requestId, messages, modelId, stufe, forFunction, conversationId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
