@@ -9082,7 +9082,7 @@
         "aus": "Aus",
         "gesperrt": "Gesperrt"
       },
-      "erklaerung": "„An“ gibt die Dateien für die KI frei, „Aus“ hält sie zurück, „Gesperrt“ gewinnt immer, auch gegen „An“ in Unterordnern.",
+      "erklaerung": "Die KI erreicht Dateien auf zwei Wegen: direkt (der Assistent durchsucht die Ablage) und über Projekte als Kontext. „An“ erlaubt beide Wege. „Aus“ (auch ohne eigene Einstellung) sperrt nur den direkten Weg; als Projektkontext bleiben die Dateien nutzbar, solange sie im Projekt eingeschaltet sind. „Gesperrt“ sperrt beide Wege und gewinnt immer, auch gegen „An“ in Unterordnern. Zusätzlich gilt die Datenklasse: „Personenbezogen“ geht nie an Cloud-Modelle, „Vertraulich“ nur an lokale Modelle oder per Ausnahme.",
       "erben": "Vom übergeordneten Ordner erben",
       "chipAn": "KI an",
       "chipUnklar": "KI unklar",
@@ -9107,7 +9107,12 @@
       "neuFestlegen": "Freigaben neu festlegen",
       "neuFestlegenTitel": "Freigaben neu festlegen?",
       "neuFestlegenText": "Alle Ordner starten wieder ohne Freigabe. Danach können Sie die Freigaben einzeln setzen.",
-      "neuFestlegenAktion": "Neu festlegen"
+      "neuFestlegenAktion": "Neu festlegen",
+      "wiederhergestelltMeldung": "Die KI-Freigaben wurden aus der Sicherung wiederhergestellt. Alle gesicherten Ordner sind gesperrt, Ordner ohne Eintrag ebenfalls – auf beiden Wegen. Setzen Sie die Freigaben einzeln neu oder bestätigen Sie den Stand.",
+      "bestaetigen": "Stand bestätigen",
+      "bestaetigenTitel": "Wiederhergestellte Freigaben bestätigen?",
+      "bestaetigenText": "Gesperrte und neu gesetzte Ordner bleiben, wie sie sind. Diese Ordner ohne eigenen Eintrag fallen auf „Aus“ zurück (direkter Weg gesperrt, Projektkontext möglich):",
+      "bestaetigenAktion": "Bestätigen"
     },
     "klasse": {
       "titel": "Datenklasse",
@@ -9194,7 +9199,9 @@
       "zu_tief": "Die Ordner sind zu tief verschachtelt.",
       "zu_viele": "Zu viele Einträge.",
       "keine_datei": "Keine Datei.",
-      "nicht_neu_aufbaubar": "Der Bestand lässt sich nicht neu aufbauen."
+      "nicht_neu_aufbaubar": "Der Bestand lässt sich nicht neu aufbauen.",
+      "loeschen_offen": "Ein endgültiges Löschen ist noch nicht abgeschlossen. Bitte später erneut versuchen.",
+      "datei_im_papierkorb": "Die Datei liegt im Papierkorb."
     }
   }
 }

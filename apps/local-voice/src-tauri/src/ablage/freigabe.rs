@@ -7,8 +7,12 @@
 //!   Umbenennen).
 //! * Defekt, nicht lesbar oder neuer als bekannt = „Freigabe unklar“: die ganze Ablage gilt auf beiden
 //!   KI-Wegen als gesperrt. Ist die Datei defekt (oder fehlt sie trotz vorhandener `.vorher`) und die
-//!   `.vorher` gültig, wird sie automatisch wiederhergestellt (neue Epoche, die defekte Datei wird
-//!   beiseitegelegt). Sonst nur über [`neu_festlegen`] (alle Ordner `aus`).
+//!   `.vorher` gültig, wird sie automatisch wiederhergestellt (neue Epoche, alle Einträge `gesperrt`,
+//!   die defekte Datei wird beiseitegelegt). Sonst nur über [`neu_festlegen`] (alle Ordner `aus`).
+//! * Nach einer automatischen Wiederherstellung gilt die Sperre der Wiederherstellung
+//!   (`wiederhergestellt`): ein Ordner ohne Eintrag in seiner Kette (etwa einer, der in der `.vorher` noch
+//!   fehlte) ist auf beiden Wegen gesperrt statt `aus`, bis die Bedienung ihn (oder einen übergeordneten
+//!   Ordner) ausdrücklich neu setzt oder „Freigaben neu festlegen“ bestätigt.
 //!
 //! Die Funktionen sperren nicht selbst; der Aufrufer hält die Sperre der Ablage.
 
@@ -41,6 +45,10 @@ pub struct Freigaben {
     pub epoche: u64,
     #[serde(default)]
     pub ordner: BTreeMap<String, KiStufe>,
+    /// Automatisch aus `.vorher` wiederhergestellt und noch nicht bestätigt: Ordner ohne Eintrag in der
+    /// Kette gelten als `gesperrt` (nicht `aus`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub wiederhergestellt: bool,
 }
 
 impl Freigaben {
@@ -49,6 +57,7 @@ impl Freigaben {
             v: VERSION,
             epoche,
             ordner: BTreeMap::new(),
+            wiederhergestellt: false,
         }
     }
 }
@@ -161,6 +170,8 @@ fn wiederherstellen_oder(dir: &Path, sonst: KiUnklar) -> Lage {
                     .into_keys()
                     .map(|k| (k, KiStufe::Gesperrt))
                     .collect(),
+                // Ordner, die in der `.vorher` fehlen, dürfen nicht auf die Vorgabe `aus` fallen.
+                wiederhergestellt: true,
             };
             if beiseitelegen(dir).is_ok() && schreiben(dir, &neu).is_ok() {
                 Lage::Gueltig(neu)
@@ -223,11 +234,19 @@ fn vorher_ablegen(dir: &Path) -> Res<()> {
     }
 }
 
-/// „Freigaben neu festlegen“: nur bei unklarer, defekter Freigabe (nie bei neuerer Version oder
-/// vorübergehend nicht lesbarer Datei). Die defekte Datei wird beiseitegelegt, nie gelöscht; danach
-/// stehen alle Ordner auf `aus`.
+/// „Freigaben neu festlegen“: bei unklarer, defekter Freigabe (nie bei neuerer Version oder
+/// vorübergehend nicht lesbarer Datei) wird die defekte Datei beiseitegelegt, nie gelöscht; danach stehen
+/// alle Ordner auf `aus`. Nach einer automatischen Wiederherstellung bestätigt es den Stand: die Einträge
+/// bleiben (`gesperrt` und neu gesetzte), Ordner ohne Eintrag fallen wieder auf die Vorgabe `aus`.
 pub fn neu_festlegen(dir: &Path, alle_ordner: &[String]) -> Res<Freigaben> {
     match laden(dir) {
+        Lage::Gueltig(mut f) if f.wiederhergestellt => {
+            vorher_ablegen(dir)?;
+            f.wiederhergestellt = false;
+            f.epoche += 1;
+            schreiben(dir, &f)?;
+            return Ok(f);
+        }
         Lage::Gueltig(_) => {
             return Err(Fehler::neu(
                 "ablage.freigabe_klar",
@@ -254,6 +273,7 @@ pub fn neu_festlegen(dir: &Path, alle_ordner: &[String]) -> Res<Freigaben> {
             .iter()
             .map(|o| (o.clone(), KiStufe::Aus))
             .collect(),
+        wiederhergestellt: false,
     };
     schreiben(dir, &neu)?;
     Ok(neu)
@@ -267,12 +287,13 @@ pub struct Wirkung {
     pub von: Option<String>,
     /// Freigabe unklar: alles gesperrt.
     pub unklar: bool,
-    /// Kein Eintrag in der Kette: Vorgabe `aus`.
+    /// Kein Eintrag in der Kette: Vorgabe `aus` (nach einer Wiederherstellung `gesperrt`).
     pub vorgabe: bool,
 }
 
 /// `kette` ist der Ordner selbst bis zur Wurzel. `gesperrt` gewinnt immer; sonst der nächste Eintrag;
-/// ohne Eintrag `aus`. Bei unklarer Freigabe gilt alles als gesperrt.
+/// ohne Eintrag `aus`, nach einer unbestätigten Wiederherstellung `gesperrt`. Bei unklarer Freigabe gilt
+/// alles als gesperrt.
 pub fn wirksam(lage: &Lage, kette: &[String]) -> Wirkung {
     let f = match lage {
         Lage::Unklar(_) => {
@@ -305,7 +326,11 @@ pub fn wirksam(lage: &Lage, kette: &[String]) -> Wirkung {
             vorgabe: false,
         },
         None => Wirkung {
-            stufe: KiStufe::Aus,
+            stufe: if f.wiederhergestellt {
+                KiStufe::Gesperrt
+            } else {
+                KiStufe::Aus
+            },
             von: None,
             unklar: false,
             vorgabe: true,
@@ -480,6 +505,44 @@ mod tests {
         let d2 = tempfile::tempdir().unwrap();
         fs::write(d2.path().join(VORHER), b"{kaputt").unwrap();
         assert_eq!(laden(d2.path()), Lage::Unklar(KiUnklar::Defekt));
+    }
+
+    #[test]
+    fn nach_wiederherstellung_ist_ordner_ohne_sicherung_auf_beiden_wegen_gesperrt() {
+        let d = tempfile::tempdir().unwrap();
+        let (a, fehlt, neu_gesetzt) = (o(0), o(1), o(2));
+        setzen(d.path(), &a, Some(KiStufe::An)).unwrap();
+        setzen(d.path(), &a, Some(KiStufe::An)).unwrap();
+        // `.vorher` kennt nur `a`; `fehlt` und `neu_gesetzt` haben keinen Eintrag.
+        fs::write(d.path().join(DATEI), b"{kaputt").unwrap();
+        let l = laden(d.path());
+        let Lage::Gueltig(f) = &l else {
+            panic!("keine Wiederherstellung")
+        };
+        assert!(f.wiederhergestellt);
+        assert!(!f.ordner.contains_key(&fehlt));
+        let w = wirksam(&l, &kette(&[&fehlt]));
+        assert_eq!(w.stufe, KiStufe::Gesperrt);
+        assert!(
+            !global_erlaubt(&w) && !projekt_erlaubt(&w),
+            "Ordner ohne Sicherung: weder direkt noch über Projekte"
+        );
+        // Ausdrücklich neu gesetzt: gilt; der Rest bleibt gesperrt (auch nach erneutem Laden).
+        setzen(d.path(), &neu_gesetzt, Some(KiStufe::Aus)).unwrap();
+        let l = laden(d.path());
+        let w = wirksam(&l, &kette(&[&neu_gesetzt]));
+        assert!(!global_erlaubt(&w) && projekt_erlaubt(&w));
+        let w = wirksam(&l, &kette(&[&fehlt]));
+        assert!(!global_erlaubt(&w) && !projekt_erlaubt(&w));
+        assert_eq!(wirksam(&l, &kette(&[&a])).stufe, KiStufe::Gesperrt);
+        // Bestätigen: Einträge bleiben, Ordner ohne Eintrag fallen auf die Vorgabe `aus`.
+        let f = neu_festlegen(d.path(), &[a.clone(), fehlt.clone()]).unwrap();
+        assert!(!f.wiederhergestellt);
+        assert_eq!(f.ordner[&a], KiStufe::Gesperrt);
+        let l = laden(d.path());
+        let w = wirksam(&l, &kette(&[&fehlt]));
+        assert_eq!((w.stufe, w.vorgabe), (KiStufe::Aus, true));
+        assert!(neu_festlegen(d.path(), &[]).is_err(), "nur einmal");
     }
 
     #[test]

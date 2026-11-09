@@ -198,6 +198,7 @@ export const AblagePage: React.FC = () => {
   );
 
   const ordnerListe = sicht?.ordner ?? [];
+  const wiederhergestellt = sicht?.freigabe_wiederhergestellt ?? false;
   const aktuellerOrdner = ordnerListe.find((o) => o.id === ansicht) ?? null;
   const imKorb = ansicht === KORB;
   const pfad = pfadZu(ordnerListe, aktuellerOrdner?.id ?? null);
@@ -580,6 +581,17 @@ export const AblagePage: React.FC = () => {
           )}
         </Meldung>
       )}
+      {sicht.freigabe_wiederhergestellt && (
+        <Meldung warn testid="ablage-freigabe-wiederhergestellt">
+          <p>{t("ablage.ki.wiederhergestelltMeldung")}</p>
+          <Button
+            onClick={() => setDlg({ art: "freigaben" })}
+            data-testid="ablage-freigaben-bestaetigen"
+          >
+            {t("ablage.ki.bestaetigen")}
+          </Button>
+        </Meldung>
+      )}
       {sicht.gefunden.length > 0 && !imKorb && (
         <Meldung warn testid="ablage-gefunden">
           <p>{t("ablage.gefunden.titel", { count: sicht.gefunden.length })}</p>
@@ -874,12 +886,25 @@ export const AblagePage: React.FC = () => {
       />
       <BestaetigungDialog
         open={dlg?.art === "freigaben"}
-        titel={t("ablage.ki.neuFestlegenTitel")}
+        titel={t(
+          wiederhergestellt
+            ? "ablage.ki.bestaetigenTitel"
+            : "ablage.ki.neuFestlegenTitel",
+        )}
         text={
           <>
-            <p>{t("ablage.ki.neuFestlegenText")}</p>
+            <p>
+              {t(
+                wiederhergestellt
+                  ? "ablage.ki.bestaetigenText"
+                  : "ablage.ki.neuFestlegenText",
+              )}
+            </p>
             <ul style={{ margin: "8px 0 0 18px", listStyle: "disc" }}>
-              {ordnerListe.map((o) => (
+              {(wiederhergestellt
+                ? ordnerListe.filter((o) => o.ki.vorgabe)
+                : ordnerListe
+              ).map((o) => (
                 <li key={o.id}>
                   {pfadText(o.id)} — {t("ablage.ki.stufe.aus")}
                 </li>
@@ -887,7 +912,11 @@ export const AblagePage: React.FC = () => {
             </ul>
           </>
         }
-        aktion={t("ablage.ki.neuFestlegenAktion")}
+        aktion={t(
+          wiederhergestellt
+            ? "ablage.ki.bestaetigenAktion"
+            : "ablage.ki.neuFestlegenAktion",
+        )}
         busy={busy}
         onClose={() => setDlg(null)}
         onOk={async () => {

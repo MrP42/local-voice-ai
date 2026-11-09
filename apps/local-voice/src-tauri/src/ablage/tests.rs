@@ -1103,41 +1103,254 @@ fn ki_sperre_der_gespeicherten_elternkette_gilt_unter_wiederhergestellt() {
     assert!(ob.nur_geraet_wirksam);
 }
 
+// --- Review-Korrekturen, Runde 2 (Codex) -----------------------------------------------------
+
+fn fund_schreiben(e: &Env, v: &mut serde_json::Value, dat: &str, inhalt: &str) -> String {
+    let fas = super::neue_id(super::PRAEFIX_FASSUNG);
+    let dir = e.wurzel.join("dateien").join(dat);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join(format!("{fas}.txt")), inhalt).unwrap();
+    v["gefunden"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({"dat": dat, "fas": fas, "typ": "txt", "groesse": 1, "ms": 5}));
+    fas
+}
+
 #[test]
-fn gefundene_aufnehmen_im_konflikt_haengt_an_juengsten_kopf() {
+fn gefundene_aufnehmen_erfindet_keine_abstammung() {
+    let e = env();
+    let o = e.standard();
+    // Bestehende Datei mit einem Kopf, dazu zwei unabhängige Funde derselben `dat`.
+    let dat = e.ablegen("a.txt", "a", &o);
+    let kopf = e.a.fassungen(&dat).unwrap()[0].fas.clone();
+    let mut v = journal_json(&e);
+    v["gefunden"] = serde_json::json!([]);
+    let f1 = fund_schreiben(&e, &mut v, &dat, "b");
+    let f2 = fund_schreiben(&e, &mut v, &dat, "c");
+    journal_schreiben(&e, &v);
+    e.a.gefundene_aufnehmen(&dat, &o).unwrap();
+    let f = e.a.fassungen(&dat).unwrap();
+    assert_eq!(f.len(), 3);
+    for id in [&f1, &f2] {
+        let x = f.iter().find(|x| &x.fas == id).unwrap();
+        assert_eq!(x.vorgaenger, None, "keine erfundene Kante");
+        assert!(x.kopf, "eigener Kopf zur ausdrücklichen Wahl");
+    }
+    assert!(f.iter().find(|x| x.fas == kopf).unwrap().kopf);
+    assert!(
+        f.iter().all(|x| !x.aktuell),
+        "Konflikt: niemand ist still aktuell"
+    );
+    // Neue Datei aus zwei unabhängigen Funden: zwei Köpfe, keine Kante.
+    let neu = super::neue_id(super::PRAEFIX_DATEI);
+    let mut v = journal_json(&e);
+    let g1 = fund_schreiben(&e, &mut v, &neu, "x");
+    let g2 = fund_schreiben(&e, &mut v, &neu, "y");
+    journal_schreiben(&e, &v);
+    e.a.gefundene_aufnehmen(&neu, &o).unwrap();
+    let f = e.a.fassungen(&neu).unwrap();
+    assert_eq!(f.len(), 2);
+    assert!(f.iter().all(|x| x.vorgaenger.is_none() && x.kopf));
+    assert!([g1, g2].iter().all(|g| f.iter().any(|x| &x.fas == g)));
+    let s = e.sicht();
+    assert!(s.dateien.iter().find(|d| d.id == neu).unwrap().konflikt);
+}
+
+#[test]
+fn gefundene_aufnehmen_behaelt_vermerkte_vorgaengerin() {
     let e = env();
     let o = e.standard();
     let dat = e.ablegen("a.txt", "a", &o);
+    let kopf = e.a.fassungen(&dat).unwrap()[0].fas.clone();
     let mut v = journal_json(&e);
-    let f1 = v["dateien"][&dat]["fassungen"][0].clone();
-    let f1id = f1["fas"].as_str().unwrap().to_string();
-    let f2id = super::neue_id(super::PRAEFIX_FASSUNG);
-    let mut f2 = f1.clone();
-    f2["fas"] = serde_json::json!(f2id);
-    f2["vorgaenger"] = serde_json::Value::Null;
-    f2["zeit"] = serde_json::json!(f1["zeit"].as_i64().unwrap() + 100_000);
-    f2["blob"] = serde_json::json!("blob-zwei");
-    f2["original_sha256"] = serde_json::json!("sha-zwei");
-    v["dateien"][&dat]["fassungen"]
-        .as_array_mut()
-        .unwrap()
-        .push(f2);
-    let f3id = super::neue_id(super::PRAEFIX_FASSUNG);
-    v["gefunden"] = serde_json::json!([
-        {"dat": dat, "fas": f3id, "typ": "txt", "groesse": 1, "ms": 5}
-    ]);
+    let f1 = fund_schreiben(&e, &mut v, &dat, "b");
+    v["gefunden"][0]["vorgaenger"] = serde_json::json!(kopf);
     journal_schreiben(&e, &v);
-    fs::write(
-        e.wurzel
-            .join("dateien")
-            .join(&dat)
-            .join(format!("{f3id}.txt")),
-        "c",
-    )
-    .unwrap();
     e.a.gefundene_aufnehmen(&dat, &o).unwrap();
     let f = e.a.fassungen(&dat).unwrap();
-    let neu = f.iter().find(|x| x.fas == f3id).unwrap();
-    assert_eq!(neu.vorgaenger.as_deref(), Some(f2id.as_str()));
-    assert_ne!(neu.vorgaenger.as_deref(), Some(f1id.as_str()));
+    let x = f.iter().find(|x| x.fas == f1).unwrap();
+    assert_eq!(x.vorgaenger.as_deref(), Some(kopf.as_str()));
+    assert!(x.aktuell);
+}
+
+#[test]
+fn wiederhergestellte_freigabe_sperrt_ordner_ohne_sicherung() {
+    let e = env();
+    let root = e.standard();
+    e.a.ki_setzen(&root, Some(KiStufe::Aus)).unwrap();
+    e.a.ki_setzen(&root, Some(KiStufe::Aus)).unwrap();
+    // Neuer Ordner oberster Ebene: in der `.vorher` gibt es keinen Eintrag für ihn.
+    let neu = e.a.ordner_anlegen(None, "Neu").unwrap();
+    fs::write(e.wurzel.join(freigabe::DATEI), b"kaputt").unwrap();
+    let s = e.sicht();
+    assert!(s.freigabe_wiederhergestellt);
+    assert_eq!(s.freigabe_unklar, None);
+    let ki = |s: &AblageSicht, id: &str| s.ordner.iter().find(|o| o.id == id).unwrap().ki.clone();
+    assert_eq!(ki(&s, &neu).zustand, "gesperrt");
+    assert_eq!(ki(&s, &root).zustand, "gesperrt");
+    let l = freigabe::laden(&e.wurzel);
+    let w = freigabe::wirksam(&l, std::slice::from_ref(&neu));
+    assert!(!freigabe::global_erlaubt(&w) && !freigabe::projekt_erlaubt(&w));
+    // Ausdrücklich neu gesetzt: gilt; Bestätigen hebt die Sperre der Wiederherstellung auf.
+    e.a.ki_setzen(&neu, Some(KiStufe::An)).unwrap();
+    assert_eq!(ki(&e.sicht(), &neu).zustand, "an");
+    e.a.freigaben_neu_festlegen().unwrap();
+    let s = e.sicht();
+    assert!(!s.freigabe_wiederhergestellt);
+    assert_eq!(
+        ki(&s, &root).zustand,
+        "gesperrt",
+        "gesperrt bleibt erhalten"
+    );
+    assert_eq!(ki(&s, &neu).zustand, "an");
+}
+
+#[cfg(unix)]
+#[test]
+fn verknuepftes_dateien_wird_beim_loeschen_nie_gefolgt() {
+    let e = env();
+    let o = e.standard();
+    let dat = e.ablegen("a.txt", "a", &o);
+    e.a.in_papierkorb(AblageArt::Datei, &dat).unwrap();
+    // `dateien/` wird durch eine Verknüpfung auf einen fremden Ordner ersetzt, der eine gleichnamige
+    // `dat` und eine liegengebliebene Zwischendatei enthält.
+    let aussen = e._d.path().join("aussen-dateien");
+    fs::rename(e.wurzel.join("dateien"), &aussen).unwrap();
+    let teil = aussen
+        .join(&dat)
+        .join(format!(".teil-{}", super::neue_id(super::PRAEFIX_FASSUNG)));
+    fs::write(&teil, "fremd").unwrap();
+    std::os::unix::fs::symlink(&aussen, e.wurzel.join("dateien")).unwrap();
+    let r = e.a.endgueltig_loeschen(AblageArt::Datei, &dat);
+    assert_eq!(r.unwrap_err().code, "ablage.verknuepfung");
+    assert!(aussen.join(&dat).exists(), "nichts außerhalb gelöscht");
+    e.neustart();
+    let s = e.sicht();
+    assert_eq!(s.papierkorb.len(), 1, "Eintrag bleibt");
+    assert!(teil.exists(), "Wartung folgt der Verknüpfung nicht");
+    assert!(aussen.join(&dat).exists());
+    assert_eq!(journal_json(&e)["journal"].as_array().unwrap().len(), 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn verknuepfter_papierkorb_wird_beim_loeschen_nie_gefolgt() {
+    let e = env();
+    let o = e.standard();
+    let dat = e.ablegen("a.txt", "a", &o);
+    e.a.in_papierkorb(AblageArt::Datei, &dat).unwrap();
+    let aussen = e._d.path().join("aussen-korb");
+    let rest = aussen.join("dat_x.loeschen-y");
+    fs::create_dir_all(&rest).unwrap();
+    fs::write(rest.join("f"), "fremd").unwrap();
+    fs::remove_dir_all(e.wurzel.join("papierkorb")).unwrap();
+    std::os::unix::fs::symlink(&aussen, e.wurzel.join("papierkorb")).unwrap();
+    let r = e.a.endgueltig_loeschen(AblageArt::Datei, &dat);
+    assert_eq!(r.unwrap_err().code, "ablage.verknuepfung");
+    assert!(rest.join("f").exists());
+    assert!(
+        e.wurzel.join("dateien").join(&dat).exists(),
+        "Original bleibt"
+    );
+}
+
+/// Windows: `dateien/` als Junction (Reparse-Point). Läuft nur unter Windows (`mklink /J` braucht
+/// keine Adminrechte); unter Unix deckt der Symlink-Test denselben Pfad ab.
+#[cfg(windows)]
+#[test]
+fn junction_dateien_wird_beim_loeschen_nie_gefolgt() {
+    let e = env();
+    let o = e.standard();
+    let dat = e.ablegen("a.txt", "a", &o);
+    e.a.in_papierkorb(AblageArt::Datei, &dat).unwrap();
+    let aussen = e._d.path().join("aussen-dateien");
+    fs::rename(e.wurzel.join("dateien"), &aussen).unwrap();
+    let ok = std::process::Command::new("cmd")
+        .arg("/C")
+        .arg("mklink")
+        .arg("/J")
+        .arg(e.wurzel.join("dateien"))
+        .arg(&aussen)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if !ok {
+        // Ohne `mklink` (z. B. eingeschränkte Umgebung) lässt sich keine Junction anlegen.
+        return;
+    }
+    let r = e.a.endgueltig_loeschen(AblageArt::Datei, &dat);
+    assert_eq!(r.unwrap_err().code, "ablage.verknuepfung");
+    assert!(aussen.join(&dat).exists(), "nichts außerhalb gelöscht");
+}
+
+#[test]
+fn lesefehler_beim_endgueltigen_loeschen_behaelt_auftrag_und_datei() {
+    let e = env();
+    let o = e.standard();
+    let dat = e.ablegen("a.txt", "a", &o);
+    let original = e.original(&dat);
+    e.a.in_papierkorb(AblageArt::Datei, &dat).unwrap();
+    abbruch(Some(Schritt::LoeschenLesefehler));
+    assert!(e.a.endgueltig_loeschen(AblageArt::Datei, &dat).is_err());
+    // Neustart, Lesefehler besteht weiter: Auftrag offen, Eintrag und Original bleiben.
+    e.neustart();
+    let s = e.sicht();
+    abbruch(None);
+    assert_eq!(s.papierkorb.len(), 1, "Eintrag verschwindet nicht");
+    assert!(original.exists(), "Original noch da");
+    let j = journal_json(&e);
+    assert_eq!(j["journal"].as_array().unwrap().len(), 1, "Auftrag offen");
+    assert!(j["dateien"].get(&dat).is_some());
+    // Lesefehler behoben: der Wiederanlauf führt das Löschen zu Ende.
+    let s = e.sicht();
+    assert!(s.papierkorb.is_empty());
+    assert!(!original.exists());
+    assert!(journal_json(&e)["journal"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn offener_loeschauftrag_sperrt_verschieben_aus_dem_geloeschten_ordner() {
+    let e = env();
+    let root = e.standard();
+    let v = e.a.ordner_anlegen(Some(&root), "Weg").unwrap();
+    let ziel = e.a.ordner_anlegen(Some(&root), "Bleibt").unwrap();
+    let dat = e.ablegen("a.txt", "a", &v);
+    e.a.in_papierkorb(AblageArt::Ordner, &v).unwrap();
+    abbruch(Some(Schritt::LoeschenNachJournal));
+    assert!(e.a.endgueltig_loeschen(AblageArt::Ordner, &v).is_err());
+    abbruch(None);
+    // Ohne Wartung dazwischen: der Auftrag ist offen.
+    let r = e.a.datei_verschieben(&dat, &ziel);
+    assert_eq!(r.unwrap_err().code, "ablage.loeschen_offen");
+    assert_eq!(
+        e.a.datei_umbenennen(&dat, "b.txt").unwrap_err().code,
+        "ablage.loeschen_offen"
+    );
+    assert_eq!(
+        e.a.wiederherstellen(AblageArt::Ordner, &v)
+            .unwrap_err()
+            .code,
+        "ablage.loeschen_offen"
+    );
+    assert_eq!(
+        e.a.ordner_anlegen(Some(&v), "X").unwrap_err().code,
+        "ablage.loeschen_offen"
+    );
+    let q = e.quelle("neu.txt", "n");
+    let z = e.a.importieren(&q, &v, None).unwrap();
+    assert_eq!(z[0].code.as_deref(), Some("ablage.loeschen_offen"));
+    // Ohne offenen Auftrag: eine Datei im Papierkorb wird nicht verschoben.
+    let d2 = e.ablegen("c.txt", "c", &ziel);
+    e.a.in_papierkorb(AblageArt::Datei, &d2).unwrap();
+    assert_eq!(
+        e.a.datei_verschieben(&d2, &root).unwrap_err().code,
+        "ablage.datei_im_papierkorb"
+    );
+    // Die Wartung führt den Auftrag zu Ende; im lebenden Ordner wurde nichts mitgelöscht.
+    let s = e.sicht();
+    assert!(s.ordner.iter().all(|o| o.id != v));
+    assert!(s.ordner.iter().any(|o| o.id == ziel));
+    assert!(!e.wurzel.join("dateien").join(&dat).exists());
+    assert!(e.wurzel.join("dateien").join(&d2).exists());
 }

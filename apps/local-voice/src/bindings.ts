@@ -8320,7 +8320,12 @@ freigabe_unklar: KiUnklar | null; ordner: AblageOrdner[]; dateien: AblageDatei[]
 /**
  * Summe der Größen aller Fassungen (lokal belegt).
  */
-belegt: number }
+belegt: number; 
+/**
+ * KI-Freigaben wurden automatisch aus der Sicherung wiederhergestellt: Ordner ohne eigenen oder
+ * geerbten Eintrag sind gesperrt, bis die Bedienung sie neu setzt oder den Stand bestätigt.
+ */
+freigabe_wiederhergestellt: boolean }
 export type AccountState = "not_configured" | "no_capabilities" | "needs_sign_in" | "needs_consent" | "ready"
 /**
  * Eine Aufgabe (Zeile in `action_items`). `assignee_label` ist Freitext, die
