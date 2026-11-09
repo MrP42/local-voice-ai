@@ -263,7 +263,7 @@ pub fn bookmark_object_id(key: &str) -> String {
     format!("b_{}", hex40(key))
 }
 
-fn is_bookmark_key(k: &str) -> bool {
+pub(super) fn is_bookmark_key(k: &str) -> bool {
     BOOKMARK_PREFIXES.iter().any(|p| k.starts_with(p))
 }
 

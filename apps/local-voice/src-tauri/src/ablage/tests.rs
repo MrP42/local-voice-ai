@@ -149,17 +149,30 @@ fn unbekannte_endung_und_ohne_endung() {
 #[test]
 fn reservierte_und_gefaehrliche_namen() {
     let e = env();
-    let o = e.standard();
-    e.ablegen("CON.txt", "a", &o);
-    e.ablegen("..\\x", "b", &o);
-    e.ablegen("a:b*c?.txt", "c", &o);
-    let s = e.sicht();
-    let n = namen(&s);
-    assert!(n.contains(&"_CON.txt".to_string()), "{n:?}");
-    assert!(n.contains(&".._x".to_string()), "{n:?}");
-    assert!(n.contains(&"a_b_c_.txt".to_string()), "{n:?}");
-    // Nichts außerhalb von ablage/ entstanden
-    assert!(!e._d.path().join("x").exists());
+    // Unter Windows lassen sich solche Quelldateien nicht anlegen (CON ist ein Gerät, `\\` trennt
+    // Pfade, `:*?` sind verboten): dort wird die Bereinigung direkt geprüft, sonst zusätzlich über
+    // einen echten Import.
+    #[cfg(not(windows))]
+    {
+        let o = e.standard();
+        e.ablegen("CON.txt", "a", &o);
+        e.ablegen("..\\x", "b", &o);
+        e.ablegen("a:b*c?.txt", "c", &o);
+        let s = e.sicht();
+        let n = namen(&s);
+        assert!(n.contains(&"_CON.txt".to_string()), "{n:?}");
+        assert!(n.contains(&".._x".to_string()), "{n:?}");
+        assert!(n.contains(&"a_b_c_.txt".to_string()), "{n:?}");
+        // Nichts außerhalb von ablage/ entstanden
+        assert!(!e._d.path().join("x").exists());
+    }
+    for (roh, erwartet) in [
+        ("CON.txt", "_CON.txt"),
+        ("..\\x", ".._x"),
+        ("a:b*c?.txt", "a_b_c_.txt"),
+    ] {
+        assert_eq!(super::speicher::bereinigen(roh).unwrap(), erwartet, "{roh}");
+    }
     assert!(e.a.ordner_anlegen(None, "..").is_err());
     assert!(e.a.ordner_anlegen(None, "").is_err());
     assert!(e.a.ordner_anlegen(Some("../etc"), "x").is_err());

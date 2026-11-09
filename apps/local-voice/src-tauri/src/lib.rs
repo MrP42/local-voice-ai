@@ -15,6 +15,7 @@ pub mod book_talk_eval {
     pub use crate::book_ai::talk::adapter::*;
     pub use crate::book_ai::talk::eval::*;
 }
+mod ablage; // lva#407 D1, lva#408 D2: Dokumentenablage (Epic #395)
 mod books;
 mod buch_dateien; // lva#365 P3: Notizen, Anhänge, Transkript im Buch-Ordner (Kern)
 mod catalog;
@@ -49,8 +50,6 @@ mod paste_session;
 pub mod portable;
 pub mod portable_parts;
 mod process_guard;
-mod ablage; // lva#407 D1, lva#408 D2: Dokumentenablage (Epic #395)
-
 /// lva#408 D2: Einstieg des Extraktor-Unterprozesses (`lva-extrakt <pfad> <sha256> <typ>` bzw.
 /// `local-voice-ai --lva-extrakt …`). Liefert den Exitcode.
 pub fn lva_extrakt_main(args: &[String]) -> i32 {
@@ -2011,6 +2010,14 @@ fn specta_builder() -> Builder<tauri::Wry> {
             sync::booktalk_relay::booktalk_relay_renew_code,
             sync::booktalk_relay::booktalk_relay_revoke,
             sync::sync_logout,
+            sync::uebernahme::sync_anmeldung_offen,
+            sync::uebernahme::sync_anmeldung_entscheiden,
+            sync::uebernahme::sync_anmeldung_abbrechen,
+            sync::uebernahme::sync_sicherungen,
+            sync::uebernahme::sync_sicherung_wiederherstellen,
+            sync::uebernahme::sync_sicherung_einstellungen,
+            sync::uebernahme::sync_sicherung_loeschen,
+            sync::uebernahme::sync_nur_lokal_uebernehmen,
             sync::sync_status,
             sync::sync_now,
             sync::sync_touch,

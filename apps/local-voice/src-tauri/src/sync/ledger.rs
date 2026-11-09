@@ -46,6 +46,10 @@ pub struct Ledger {
     /// wegen einer zu strengen Prüfung übersprungen wurden).
     #[serde(default)]
     pub rescan: u32,
+    /// Konto, zu dem dieses Ledger gehört (`<user_id>@<hub>`, lva#400 U6). Ein Ledger eines
+    /// anderen Kontos gilt als leer; fehlt die Angabe (ältere Fassung), wird sie übernommen.
+    #[serde(default)]
+    pub konto: Option<String>,
 }
 
 /// 1: iPhone-Buchkennungen `book_<ms>_<hex>` wurden bis 0.23.5 übersprungen.

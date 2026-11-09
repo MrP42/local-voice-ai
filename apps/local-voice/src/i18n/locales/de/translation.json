@@ -5556,7 +5556,108 @@
     "pending": "{{count}} ausstehend",
     "keyMismatch": "Der Hub trägt Objekte mit einem anderen Schlüssel – wurde das Passwort geändert? Bitte auf allen Geräten neu anmelden.",
     "deadLetters": "{{count}} Objekte abgewiesen (zu groß oder ungültig)",
-    "devices": "Geräte"
+    "devices": "Geräte",
+    "widerrufOffen": "Die Anmeldung eines abgebrochenen Kontowechsels ist am Hub noch nicht widerrufen. Die App versucht es bei jedem Start erneut.",
+    "erneutPruefen": "Erneut prüfen",
+    "nurLokal": {
+      "anzahl_one": "{{count}} Eintrag nur auf diesem Gerät (nicht hochgeladen)",
+      "anzahl_other": "{{count}} Einträge nur auf diesem Gerät (nicht hochgeladen)",
+      "uebernehmen": "Ins Konto übernehmen",
+      "hinweis": "Wird vorher gesichert. Weicht ein Eintrag vom Konto ab, entsteht eine Konfliktkopie; nichts wird überschrieben.",
+      "uebernommen": "Gesichert und ins Konto übernommen. Der Abgleich läuft."
+    },
+    "anmeldung": {
+      "titel": "Lokale Daten gefunden",
+      "titelWechsel": "Daten aus einem anderen Konto gefunden",
+      "beschreibung": "Auf diesem Gerät liegen Daten, die noch nicht zu {{konto}} gehören. Was soll mit ihnen geschehen? Bis zu Ihrer Wahl wird nichts hochgeladen.",
+      "beschreibungWechsel": "Die Daten auf diesem Gerät stammen aus {{vorher}}. Sie melden sich jetzt mit {{konto}} an. Bis zu Ihrer Wahl wird nichts hochgeladen.",
+      "bestand": "Lokaler Bestand",
+      "seiten_one": "{{count}} Seite",
+      "seiten_other": "{{count}} Seiten",
+      "buecher_one": "{{count}} Buch",
+      "buecher_other": "{{count}} Bücher",
+      "fortschritte_one": "{{count}} Lesestand oder Lesezeichen",
+      "fortschritte_other": "{{count}} Lesestände und Lesezeichen",
+      "dateien_one": "{{count}} Buchdatei",
+      "dateien_other": "{{count}} Buchdateien",
+      "einstellungen": "Geänderte Einstellungen",
+      "groesse": "Sicherung vorher: etwa {{groesse}}",
+      "frage": "Was soll mit den lokalen Daten geschehen?",
+      "zusammenfuehren": "Übernehmen und zusammenführen",
+      "zusammenfuehrenText": "Wird vorher gesichert. Lokale Daten und Konto werden vereint; abweichende Seiten erscheinen als Konfliktkopie, nichts wird überschrieben.",
+      "kopierenBestaetigen": "Daten aus {{vorher}} in {{konto}} kopieren",
+      "sichern": "Sichern und …",
+      "sichernText": "Erst wird alles gesichert und geprüft, dann:",
+      "getrennt": "getrennt halten",
+      "getrenntText": "Bleibt auf diesem Gerät, wird nicht hochgeladen. Die Daten des Kontos kommen dazu.",
+      "entfernen": "vom Gerät entfernen",
+      "entfernenText": "Seiten, Bücher und Lesestände verschwinden vom Gerät; danach sehen Sie die Daten des Kontos. Die Sicherung bleibt erhalten.",
+      "kollisionen_one": "{{count}} Eintrag gibt es auch im Konto, mit anderem Inhalt:",
+      "kollisionen_other": "{{count}} Einträge gibt es auch im Konto, mit anderem Inhalt:",
+      "kollisionSeite": "„{{titel}}“ – bleibt als Kopie „(nur auf diesem Gerät)“, das Konto bringt seine Fassung",
+      "kollisionBuch": "„{{titel}}“ – die lokale Fassung bleibt in der Sicherung, auf dem Gerät erscheint die Fassung des Kontos",
+      "unberuehrt": "Besprechungen, Diktate, Stimmen und Modelle bleiben auf diesem Gerät und werden von keiner Wahl berührt.",
+      "knopfZusammenfuehren": "Sichern und zusammenführen",
+      "knopfGetrennt": "Sichern und getrennt halten",
+      "knopfEntfernen": "Sichern und entfernen",
+      "laeuft": "Wird gesichert …",
+      "abbrechen": "Abbrechen",
+      "abgebrochen": "Anmeldung abgebrochen. Auf diesem Gerät wurde nichts verändert.",
+      "erledigt": {
+        "zusammenfuehren": "Gesichert und zusammengeführt. Der erste Abgleich läuft.",
+        "getrennt_halten": "Gesichert. Die lokalen Daten bleiben auf diesem Gerät; die Daten des Kontos kommen dazu.",
+        "entfernen": "Gesichert und vom Gerät entfernt. Die Daten des Kontos werden geladen."
+      }
+    },
+    "abmelden": {
+      "titel": "Abmelden?",
+      "beschreibung": "Sie melden {{konto}} auf diesem Gerät ab.",
+      "behalten": "Abmelden, Daten auf diesem Gerät behalten",
+      "behaltenText": "Seiten, Bücher und Lesestände bleiben. Bei der nächsten Anmeldung fragt die App, was mit Neuem geschehen soll.",
+      "entfernen": "Abmelden und Bibliothek und Seiten vom Gerät entfernen",
+      "entfernenText": "Wird vorher gesichert und geprüft; erst dann wird entfernt. Die Sicherung finden Sie hier unter „Sicherungen“.",
+      "knopf": "Abmelden",
+      "laeuft": "Abmelden …",
+      "abbrechen": "Abbrechen",
+      "entfernt": "Abgemeldet. Die Daten sind gesichert und vom Gerät entfernt."
+    },
+    "sicherungen": {
+      "titel": "Sicherungen bei Kontoaktionen",
+      "hinweis": "Vor jeder Anmeldung mit lokalen Daten, jedem Kontowechsel, Entfernen und Übernehmen sichert die App die lokalen Daten. Sicherungen werden nie automatisch gelöscht.",
+      "zurBibliothek": "Sicherungen der Bibliothek",
+      "zuKonto": "Sicherungen bei Kontoaktionen (Konto & Geräte)",
+      "anlass": {
+        "anmeldung": "vor der Anmeldung",
+        "abmeldung": "vor dem Abmelden",
+        "kollision": "vor dem Trennen gleicher Einträge",
+        "freigabe": "vor dem Übernehmen ins Konto",
+        "schutz": "Schutzsicherung",
+        "vor_wiederherstellen": "vor dem Zurückspielen von Einstellungen"
+      },
+      "wiederherstellen": "Wiederherstellen",
+      "einstellungen": "Einstellungen",
+      "einstellungenHinweis": "Einstellungen aus dieser Sicherung zurückspielen (die aktuellen werden vorher gesichert)",
+      "einstellungenZurueck": "Einstellungen zurückgespielt. Die vorherigen liegen in einer neuen Sicherung.",
+      "ordner": "Ordner öffnen",
+      "loeschen": "Sicherung löschen",
+      "loeschenTitel": "Sicherung löschen?",
+      "loeschenText": "Die Sicherung vom {{datum}} wird endgültig gelöscht. Das lässt sich nicht rückgängig machen.",
+      "fehler": "Aktion mit der Sicherung fehlgeschlagen",
+      "wiederhergestellt": "Sicherung wiederhergestellt",
+      "zurueck_one": "{{count}} Eintrag zurück",
+      "zurueck_other": "{{count}} Einträge zurück",
+      "zusaetzlich_one": "{{count}} abweichender als zusätzlicher Eintrag",
+      "zusaetzlich_other": "{{count}} abweichende als zusätzliche Einträge",
+      "gleich_one": "{{count}} unverändert",
+      "gleich_other": "{{count}} unverändert",
+      "fortschritte_one": "{{count}} Lesestand ergänzt",
+      "fortschritte_other": "{{count}} Lesestände ergänzt",
+      "fortschritteAbweichend_one": "{{count}} abweichender Lesestand blieb in der Sicherung",
+      "fortschritteAbweichend_other": "{{count}} abweichende Lesestände blieben in der Sicherung",
+      "inSicherung_one": "in der Sicherung geblieben: {{liste}}",
+      "inSicherung_other": "in der Sicherung geblieben: {{liste}}",
+      "nurLokal": "Alles Wiederhergestellte bleibt nur auf diesem Gerät."
+    }
   },
   "guard": {
     "memoryLow": "Arbeitsspeicher fast voll: Vorlese- und Sprachmodell-Server wurden gestoppt, damit der Rechner bedienbar bleibt."
@@ -7360,6 +7461,31 @@
     "designs": {
       "fluent": "Standard: Fluent 2 mit neutralem Grau und Blau, passend zur Systemoberfläche.",
       "wai": "Wolff Applied AI: Navy im hellen, Signalgelb im dunklen Modus."
+    }
+  },
+  "chatGuide": {
+    "title": "Einführung im Chat",
+    "count": "{{n}} von {{total}}",
+    "voice": "Mit Sprache",
+    "skip": "Überspringen",
+    "back": "Zurück",
+    "next": "Weiter",
+    "step": {
+      "welcome": "Hallo! Ich bin dein Assistent in Local Voice. Ich zeige dir in einer Minute, was hier geht. Du kannst jederzeit überspringen.",
+      "talk": "Mit diesem Knopf sprichst du mit mir wie am Telefon. Du kannst mich jederzeit unterbrechen. Oder du schreibst einfach in die Zeile.",
+      "plus": "Mit dem Plus holst du dir Kontext dazu: eine Datei, eine Recherche im Web und mehr.",
+      "model": "Hier oben wählst du das Modell: lokal auf deinem Rechner oder in der Cloud, schnell oder gründlich.",
+      "knowledge": "Hier siehst du jederzeit, welche Daten ich nutzen darf. Besprechungen, Bücher und Notizen gibst du einzeln frei.",
+      "pages": "Links findest du alles Weitere: Verlauf, Aufnahmen deiner Besprechungen, Vorlesen und deine Bibliothek. Frag mich auch einfach danach.",
+      "story": "Zum Schluss probieren wir etwas aus: Ich erfinde eine kurze Geschichte und lese sie mit mehreren Stimmen vor. Worum soll es gehen?"
+    },
+    "story": {
+      "topic": "Thema der Geschichte",
+      "defaultTopic": "Ein kleiner Drache, der nicht schlafen kann",
+      "go": "Geschichte erzählen",
+      "display": "Erzähl mir eine Geschichte: {{topic}}",
+      "readVoices": "Mit Stimmen vorlesen",
+      "stop": "Vorlesen beenden"
     }
   },
   "voiceCall": {
