@@ -336,6 +336,10 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     // Meetings (M8): the store is shared by recorder and commands. A store
     // that fails to open must not take the whole app down — dictation and TTS
     // work without it, so meetings degrade to "unavailable" instead.
+    // lva#396 N4a: Ablage des Notizbuchs für Zuordnung und zweite Notizquelle der KI-Notizen.
+    managers::meetings::notizbuch::dienst::ablage_merken(
+        commands::voice_tools::notizbuch_pfad(app_handle).ok(),
+    );
     let meeting_store = match managers::meetings::store::MeetingStore::new(app_handle) {
         Ok(store) => Some(Arc::new(store)),
         Err(e) => {

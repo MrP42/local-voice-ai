@@ -1,26 +1,35 @@
 //! Notizbuch ↔ Besprechung zuordnen und Notizen zusammenführen (lva#396, Stufe N4a).
 //!
-//! Nur reine, deterministische Logik nach Spec `2026-11-08-notizbuch-fuer-assistent.md` §5:
-//! keine IO, keine Datenbank, keine UI, keine Modellaufrufe. Die Verdrahtung (Speicher
-//! `meeting_note_links`, Zugang zum Notizbuch, Tor-Messung) folgt in späteren Schritten.
+//! Reine, deterministische Logik nach Spec `2026-11-08-notizbuch-fuer-assistent.md` §5 (ohne IO):
 //!
 //! - [`zeit`]: Blockzeit-Intervalle mit Güte und Abbildung auf die Zeitachse (§5.1, §5.3)
 //! - [`zuordnung`]: Kandidaten, Bewertung, Einstufung (§5.2)
 //! - [`verlust`]: Duplikate, Widersprüche, Verlustprüfung (§5.4)
 //!
+//! Verdrahtung (Schritt 2):
+//!
+//! - [`links`]: Speicher `meeting_note_links` im Besprechungs-Store (Migration Index 16)
+//! - [`dienst`]: `zuordnen(meeting_id)` über den lesenden Zugang, nur freigegebene Abschnitte
+//! - [`quelle`]: zugeordnete Seiten als zweite Notizquelle der KI-Notizen, Verlustprüfung
+//!
 //! Inhalte aus dem Notizbuch sind hier bloße Daten: Text wird nur gefaltet, gezählt und
 //! verglichen, nie interpretiert oder ausgeführt.
-#![allow(dead_code)] // Verdrahtung folgt in den nächsten N4a-Schritten
+#![allow(dead_code)] // Oberfläche und Tor-Messung folgen in den nächsten N4a-Schritten
 
 use std::collections::BTreeSet;
 use wai_notizbuch_zugang::falte;
 
+pub mod dienst;
+pub mod links;
+pub mod quelle;
 pub mod verlust;
 pub mod zeit;
 pub mod zuordnung;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod verdrahtung_tests;
 
 #[allow(unused_imports)]
 pub use verlust::{

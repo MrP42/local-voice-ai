@@ -46,6 +46,7 @@ use crate::managers::meetings::llm_call::{
     ram_probe_for, resolve_provider_coded, retry_chunk, should_retry, sorted_segments, AskOptions,
     MeetingHead, SemanticRetry,
 };
+use crate::managers::meetings::notizbuch::quelle as notizbuch_quelle;
 use crate::managers::meetings::slides::prompt::{self as slide_prompt, LineStyle, SlideContext};
 use crate::managers::meetings::speakers::SpeakerDirectory;
 use crate::managers::meetings::store::{MeetingDocument, MeetingStore, StoredSegment};
@@ -1675,7 +1676,21 @@ async fn run_enhance(
             "Kein Transkript vorhanden",
         ));
     }
-    let blocks = store.get_notes(meeting_id).map_err(store_err)?.blocks;
+    let notizblock = store.get_notes(meeting_id).map_err(store_err)?.blocks;
+    // lva#396 N4a: zugeordnete Notizbuch-Seiten als zweite Notizquelle (nicht in `meeting_notes`
+    // kopiert). Notizbuchinhalt ist persoenlich und geht wie beim Assistenten nur an ein lokales
+    // Modell; mit entferntem Anbieter landen die Bloecke ohne Modell in „Weitere Notizen“.
+    let notizbuch = notizbuch_quelle::fuer_besprechung(&store, settings, meeting_id);
+    let notizbuch_im_prompt = local && !notizbuch.ist_leer();
+    let mut blocks = notizblock.clone();
+    if notizbuch_im_prompt {
+        blocks.extend(notizbuch.note_blocks());
+    }
+    let alle_bloecke: Vec<NoteBlock> = notizblock
+        .iter()
+        .cloned()
+        .chain(notizbuch.note_blocks())
+        .collect();
 
     let labels = SpeakerDirectory::load(&store, meeting_id);
     let resolved =
@@ -1750,7 +1765,7 @@ async fn run_enhance(
         }
     };
 
-    let (sections, mut stats) = assemble_with_slides(
+    let (mut sections, mut stats) = assemble_with_slides(
         raw,
         &ctx.spec,
         &ctx.blocks,
@@ -1758,6 +1773,9 @@ async fn run_enhance(
         &ctx.segments,
         &ctx.slide_numbers(),
     );
+    // §5.4: jeder Nutzerblock beider Quellen steht im Ergebnis (zugeordnet oder „Weitere Notizen“).
+    let verlust =
+        notizbuch_quelle::verlust_sichern(&mut sections, &mut stats, &notizblock, &notizbuch);
     stats.single_pass = single;
     stats.chunks_total = chunks_total;
     stats.chunks_failed = chunks_failed;
@@ -1807,6 +1825,13 @@ async fn run_enhance(
     if let (Value::Object(map), Value::Object(extra)) = (&mut metadata, basis_resolved.metadata()) {
         map.extend(extra);
     }
+    // lva#396 N4a: Notizbuch-Quelle nur als Kennungen, Stand und Zaehler (kein Inhalt).
+    if let (Value::Object(map), false) = (&mut metadata, notizbuch.ist_leer()) {
+        map.insert(
+            "notizbuch".to_string(),
+            notizbuch.metadaten(notizbuch_im_prompt, verlust.ergaenzt.len()),
+        );
+    }
     // D5: nur mit Folien ein Block `slides` (Zaehler, nie Inhalt); ohne bleibt es wie vorher.
     let slides_used: Vec<u32> = {
         let mut used: Vec<u32> = notes
@@ -1831,7 +1856,7 @@ async fn run_enhance(
             }),
         );
     }
-    let document = persist(&store, meeting_id, &notes, &ctx.blocks, metadata)?;
+    let document = persist(&store, meeting_id, &notes, &alle_bloecke, metadata)?;
     // A1: Herkunft der KI-Notizen. Scheitert das Schreiben, bleibt das Dokument
     // gueltig; die Herkunft liefert dann `generation_metadata_json`.
     let mut sources = vec![SourceRef::new(
@@ -1927,7 +1952,9 @@ async fn enhance_guarded_with(
         // A1: Erfassungsbereich fuer die Provenienz der KI-Notizen.
         crate::managers::usage::with_capture(basis::with_output_language(
             output_language,
-            run_enhance(
+            // Auf dem Heap: der Lauf ist ein grosser Zustandsautomat (seit der zweiten
+            // Notizquelle lva#396 N4a reicht der Test-Thread-Stack sonst nicht).
+            Box::pin(run_enhance(
                 settings,
                 store,
                 meeting_id,
@@ -1935,7 +1962,7 @@ async fn enhance_guarded_with(
                 doc_basis,
                 limits,
                 progress,
-            ),
+            )),
         )),
     )
     .await
