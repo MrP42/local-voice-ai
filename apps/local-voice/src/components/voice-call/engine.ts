@@ -29,7 +29,35 @@ import {
   type PreparedContext,
 } from "./globalContext";
 import { useSettingsStore } from "@/stores/settingsStore";
+import type { StufeDto } from "@/bindings";
 import type { ChatSide } from "@/vendor/wai-voice/backend.ts";
+import {
+  aktuelleSprache,
+  einstufen,
+  letzteAusgabe,
+  meldeMessung,
+  vergissAusgabe,
+} from "./assistent";
+import {
+  baueMessung,
+  istVorlage,
+  planAssistent,
+  stufeVon,
+  vorlage,
+  type AssistentPlan,
+  type Marken,
+  type MessArt,
+  type Sprache,
+  type VorlagePlan,
+} from "./assistentPlan";
+import {
+  LAUTSTAERKE,
+  START_STUFEN,
+  TEMPO,
+  bedienen,
+  type Stufen,
+} from "./bedienung";
+import { istUeberbrueckung } from "./ueberbrueckung";
 
 export const DEFAULT_SYSTEM_PROMPT = `Du bist ein Gesprächspartner am Telefon. Antworte so, wie man spricht: kurze, natürliche Sätze auf Deutsch, meist ein bis drei Sätze. Keine Listen, keine Aufzählungszeichen, keine Markdown-Zeichen, keine Emojis, keine Links. Zahlen und Abkürzungen so schreiben, wie man sie ausspricht. Stelle bei Unklarheit eine kurze Rückfrage, statt lange zu raten. Fasse dich kurz, der Gesprächspartner kann jederzeit nachfragen oder unterbrechen.`;
 
@@ -151,7 +179,14 @@ interface Turn {
   side?: ChatSide;
   /** Der Schritt antwortet mit App-Kontext (Widerruf beendet ihn). */
   withContext?: boolean;
+  /** Gesprochene Inhaltshäppchen (ohne Ansage und Vorlage): sie gehören in den Verlauf. */
   spoken: string[];
+  /** Alle Häppchen, die hörbar eingereiht wurden (auch Ansage und Vorlage). */
+  heard: number;
+  /** Vorlagenantwort („Ich wiederhole.“, feste Fehlermeldung): nie in den Verlauf. */
+  noHistory?: boolean;
+  /** Wird einmal gerufen, wenn der Schritt zu Ende gesprochen ist (Messung E9: `fertig_ms`). */
+  onEnde?: () => void;
   lastSpeechWall: number;
   startFrame: number;
 }
@@ -159,6 +194,39 @@ interface Turn {
 const PREROLL_FRAMES = 15;
 const TRAILING_FRAMES = 8;
 const MAX_HISTORY = 24;
+/** Stellschrauben, die Tests verkürzen dürfen. */
+export const TUNING = {
+  /** So lange darf das Modell ohne ersten Inhalt bleiben, bevor die feste Vorlage kommt (ms). */
+  modelFristMs: 30_000,
+};
+/** Was ein Häppchen ist: Inhalt (Modell, S0-Antwort), Ansage (Ab S1, Überbrückung) oder feste Vorlage. */
+type PieceKind = "inhalt" | "ansage" | "vorlage";
+
+const FRIST = Symbol("frist");
+
+/** Frist bis zum ersten Modellinhalt: `abgelaufen` löst nur aus, wenn `stop` vorher nicht kam. */
+function ersteFrist(ms: number): {
+  abgelaufen: Promise<typeof FRIST>;
+  stop: () => void;
+} {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const abgelaufen = new Promise<typeof FRIST>((r) => {
+    timer = setTimeout(() => r(FRIST), ms);
+  });
+  return { abgelaufen, stop: () => clearTimeout(timer) };
+}
+
+/** Wartet auf `p`, höchstens `ms`; der Zeitgeber wird immer abgeräumt. */
+async function warteMax(p: Promise<unknown>, ms: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([
+    p,
+    new Promise<void>((r) => {
+      timer = setTimeout(r, ms);
+    }),
+  ]);
+  clearTimeout(timer);
+}
 const MAX_UTTERANCE_FRAMES = 50 * 30;
 /** Stumm geschaltet: das Mikrofon liefert der Erkennung nur Stille. */
 const SILENT_FRAME = new Float32Array(FRAME_SAMPLES);
@@ -228,6 +296,8 @@ export class VoiceCallEngine {
     <T>(cmd: string, args?: Record<string, unknown>) => invoke<T>(cmd, args),
   );
   private speakerLocal = false;
+  /** Hat dieser Anruf schon eine Modellantwort geliefert (E9: `warm`)? */
+  private warm = false;
   private unwatch: (() => void) | null = null;
 
   constructor(cb: CallCallbacks, cfg: CallConfig) {
@@ -245,6 +315,7 @@ export class VoiceCallEngine {
       onUsage: (u) => this.cb.onUsage?.(u),
       onStatus: (s) => this.cb.onStatus?.(s),
       conversationId: async () => (await this.cb.conversationId?.()) ?? null,
+      ausgabeKey: () => this.konversation(),
     });
     // Ändern sich Modelle, Verbindungen, Regelwerk oder Einstellungen, liest der nächste Schritt neu.
     const invalidate = () => this.session.invalidate();
@@ -370,6 +441,7 @@ export class VoiceCallEngine {
     this.cancelText(false);
     this.cancelTurn(false);
     this.history = [];
+    this.ausgabeVergessen();
   }
 
   /**
@@ -490,6 +562,7 @@ export class VoiceCallEngine {
       const ready = await invoke<CallReady>("voice_call_start");
       if (aborted()) throw new Error(START_ABORTED);
       this.speakerLocal = ready.llm_local;
+      this.warm = false;
       if (this.globalContextOn())
         void invoke("app_context_warm").catch(() => undefined);
       ctx = new AudioContext({ latencyHint: "interactive" });
@@ -497,6 +570,7 @@ export class VoiceCallEngine {
       await ctx.resume();
       if (aborted()) throw new Error(START_ABORTED);
       this.player = new SpeechPlayer(ctx);
+      this.stufenAnwenden();
       this.player.onIdle = () => {
         if (this.turn?.audible && this.turn.done) this.finishTurn();
       };
@@ -669,6 +743,7 @@ export class VoiceCallEngine {
       historyPushed: false,
       userText: "",
       spoken: [],
+      heard: 0,
       lastSpeechWall,
       startFrame,
     };
@@ -797,6 +872,96 @@ export class VoiceCallEngine {
     ];
   }
 
+  /** Gespräch, dessen letzte Ausgabe das Tor in Rust gemerkt hat (`null`: noch keine). */
+  private ausgabeKey: { id: string | null } | null = null;
+
+  /**
+   * Schlüssel des Gesprächs für den Speicher in Rust: einmal gewählt, bleibt er, solange das Gespräch
+   * läuft (auch wenn die Kennung erst nach dem ersten Beitrag da ist), sonst fände „ja“ nach einer
+   * Rückfrage und „wiederholen“ die letzte Ausgabe nicht.
+   */
+  private async konversation(): Promise<string | null> {
+    if (this.ausgabeKey) return this.ausgabeKey.id;
+    return (await this.cb.conversationId?.()) ?? null;
+  }
+
+  /** Stufen von Lautstärke und Tempo der Wiedergabe (lauter, leiser, schneller, langsamer). */
+  private stufen: Stufen = START_STUFEN;
+
+  private stufenAnwenden(): void {
+    this.player?.setVolume(LAUTSTAERKE[this.stufen.lautstaerke]);
+    this.player?.setRate(TEMPO[this.stufen.tempo]);
+  }
+
+  /**
+   * Ohne Modell enden: S0-Antwort, Wiederholen, feste Meldung, Bedienung. `bereit`: die Bedienung
+   * wirkt erst, wenn der Schritt hörbar wird (ein verworfener spekulativer Schritt ändert nichts).
+   * `null`: nicht mehr nötig (abgebrochen).
+   */
+  private async vorlagenstuecke(
+    plan: VorlagePlan,
+    sprache: Sprache,
+    bereit: () => Promise<boolean>,
+  ): Promise<{ pieces: string[]; inhalt: boolean } | null> {
+    switch (plan.kind) {
+      case "antwort":
+        return { pieces: [plan.text], inhalt: true };
+      case "fehler":
+        return { pieces: [plan.text], inhalt: false };
+      case "wiederholen":
+        return { pieces: await this.wiederholung(sprache), inhalt: false };
+      case "bedienung": {
+        if (!(await bereit())) return null;
+        const r = bedienen(
+          plan.art,
+          this.stufen,
+          this.player !== null && this.inCall,
+          sprache,
+        );
+        this.stufen = r.stufen;
+        if (r.geaendert) this.stufenAnwenden();
+        return { pieces: [r.text], inhalt: false };
+      }
+    }
+  }
+
+  /**
+   * Lokale Einstufung (ADR-0028 A2, E4) vor dem Modellaufruf. Das Tor in Rust gilt unabhängig
+   * davon; hier entscheidet sich nur, was die Oberfläche daraus macht (Vorlage, Ansage, Meldung).
+   */
+  private async plan(text: string): Promise<{
+    plan: AssistentPlan;
+    stufe: StufeDto | null;
+    sprache: Sprache;
+  }> {
+    const sprache = aktuelleSprache();
+    const r = await einstufen(text, await this.konversation());
+    return { plan: planAssistent(r, sprache), stufe: stufeVon(r), sprache };
+  }
+
+  /** „Wiederholen“: die letzte vom Tor freigegebene Ausgabe, sonst die Vorlage „nichts gesagt“. */
+  private async wiederholung(sprache: Sprache): Promise<string[]> {
+    const key = this.ausgabeKey;
+    const again = key ? await letzteAusgabe(key.id) : null;
+    const text = again ? speakable(again) : "";
+    return text
+      ? [vorlage("wiederhole", sprache), text]
+      : [vorlage("nichts-zu-wiederholen", sprache)];
+  }
+
+  /** Nach einer Antwort, die nicht durchs Tor in Rust lief: keine ältere Ausgabe mehr wiederholen. */
+  private ausgabeVergessen(): void {
+    const key = this.ausgabeKey;
+    this.ausgabeKey = null;
+    if (key) void vergissAusgabe(key.id);
+  }
+
+  /** Merkmale der Messung (E9): Vorlagen sind immer warm und lokal, das Modell erst ab dem zweiten Schritt. */
+  private messArt(modell: boolean): MessArt {
+    if (!modell) return { warm: true, weg: "lokal" };
+    return { warm: this.warm, weg: this.speakerLocal ? "lokal" : "relay" };
+  }
+
   /** Textmodus ohne Anruf: Sätze ins UI streamen, nichts sprechen. */
   private async runTextOnly(text: string, display?: string): Promise<void> {
     if (this.textRun) return;
@@ -816,20 +981,86 @@ export class VoiceCallEngine {
       await this.ensureListener();
       if (stale()) return;
       this.cb.onUser(shown, id);
-      const onPiece = (piece: string) => {
+      const marken: Marken = { start: performance.now() };
+      // Was das Modell geliefert hat (ohne Ansage und Vorlagen): Verlauf und „nichts geantwortet“.
+      let modelPartial = "";
+      let ansageText = "";
+      let ansageGesprochen = false;
+      const onPiece = (piece: string, kind: PieceKind = "inhalt") => {
         run.partial += (run.partial ? " " : "") + piece;
         this.cb.onAssistant(run.partial, false, false);
+        const now = performance.now();
+        if (kind === "ansage") {
+          marken.ansage ??= now;
+          ansageGesprochen = true;
+          ansageText = piece;
+          return;
+        }
+        marken.inhalt ??= now;
+        if (kind === "inhalt")
+          modelPartial += (modelPartial ? " " : "") + piece;
       };
+      const { plan, stufe, sprache } = await this.plan(text);
+      if (stale()) return;
+      if (istVorlage(plan)) {
+        // Vorlage, kein Modellaufruf. Nur die S0-Antwort gehört in den Verlauf.
+        const v = await this.vorlagenstuecke(plan, sprache, async () => true);
+        if (!v || stale()) return;
+        const kind: PieceKind = v.inhalt ? "inhalt" : "vorlage";
+        for (const p of v.pieces) onPiece(p, kind);
+        marken.fertig = performance.now();
+        if (kind === "inhalt") {
+          const tag = this.historyTag;
+          this.history.push({
+            role: "user",
+            content: shown,
+            turnId: id,
+            ...tag,
+          });
+          this.history.push({
+            role: "assistant",
+            content: speakable(run.partial),
+            ...tag,
+          });
+          if (stufe)
+            meldeMessung(baueMessung(id, marken, stufe, this.messArt(false)));
+        }
+        this.cb.onAssistant(run.partial, true, false);
+        return;
+      }
       const { side, blocked, systemPrompt } = await this.orchestrate();
       if (stale() || blocked) return;
+      // Ab S1: Ansage sofort, danach das Modell.
+      if (plan.kind === "ansage") onPiece(plan.text, "ansage");
       const gctx = await this.contextFor(id, text, side);
       if (stale()) return;
+      const frist = ersteFrist(TUNING.modelFristMs);
+      let timedOut = false;
+      const onModel = (s: string) => {
+        if (stale() || timedOut) return;
+        // Nach einer Ansage keine zweite Überbrückung.
+        if (ansageGesprochen && istUeberbrueckung(s)) return;
+        frist.stop();
+        onPiece(s);
+      };
       let full = "";
       if (side) {
         run.side = side;
-        full = await side.chat(id, this.historyFor(text), (s) => {
-          if (!stale()) onPiece(s);
-        });
+        if (!this.ausgabeKey) {
+          const id = await this.konversation();
+          if (stale()) return;
+          this.ausgabeKey = { id };
+        }
+        const chat = side.chat(id, this.historyFor(text), onModel).then(
+          (r) => (typeof r === "string" ? r : ""),
+          () => "",
+        );
+        const r = await Promise.race([chat, frist.abgelaufen]);
+        if (r === FRIST) {
+          timedOut = true;
+          void side.cancel?.(id);
+        } else full = r;
+        frist.stop();
         if (stale()) return;
       } else {
         this.sentenceHandlers.set(id, (e) => {
@@ -844,37 +1075,71 @@ export class VoiceCallEngine {
             finish();
           }
           if (e.kind !== "sentence") return;
-          onPiece(e.text ?? "");
+          onModel(e.text ?? "");
         });
         const context = speakerContext(gctx);
         const messages = this.messagesFor(text, systemPrompt);
         // Auch eine Antwort auf abgeleiteten Verlauf gilt als abgeleitet.
         run.withContext = !!context || messages.some((m) => m.derived);
-        full = await invoke<string>("voice_call_chat", {
+        const conversationId = await this.konversation();
+        if (stale()) return;
+        this.ausgabeKey = { id: conversationId };
+        let abgelehnt = false;
+        const chat = invoke<string>("voice_call_chat", {
           requestId: id,
           messages,
           context,
-        });
-        if (stale()) return;
-        await Promise.race([
-          streamEnded,
-          new Promise<void>((r) => setTimeout(r, 3000)),
-        ]);
+          conversationId,
+        }).then(
+          (r) => (typeof r === "string" ? r : ""),
+          () => {
+            abgelehnt = true;
+            return "";
+          },
+        );
+        const r = await Promise.race([chat, frist.abgelaufen]);
+        if (r === FRIST) {
+          timedOut = true;
+          void invoke("voice_call_cancel", { requestId: id }).catch(
+            () => undefined,
+          );
+        } else {
+          full = r;
+          if (!stale() && !abgelehnt) await warteMax(streamEnded, 3000);
+        }
+        frist.stop();
         if (stale()) return;
       }
-      const answer = full.trim() || run.partial;
-      if (answer) {
-        const tag = this.historyTag;
-        this.history.push({ role: "user", content: shown, turnId: id, ...tag });
-        this.history.push({
-          role: "assistant",
-          content: speakable(answer),
-          ...tag,
-          ...(run.withContext ? { ctx: true } : {}),
-        });
-        this.cb.onAssistant(answer, true, false);
-        void this.reportCitations(id, answer, gctx);
+      // Mit Orchestrator zählt, was durch den Filter lief (die Rückgabe kann die Überbrückung enthalten).
+      const rueckgabe = timedOut || istUeberbrueckung(full) ? "" : full.trim();
+      const answer = side
+        ? modelPartial || rueckgabe
+        : rueckgabe || modelPartial;
+      if (!answer) {
+        // Kein Modellinhalt (Fehler, Frist, leer, vom Tor abgelehnt): feste Vorlage, nicht in den Verlauf.
+        onPiece(vorlage("fehler", sprache), "vorlage");
+        this.cb.onAssistant(run.partial, true, false);
+        return;
       }
+      marken.fertig = performance.now();
+      if (stufe)
+        meldeMessung(baueMessung(id, marken, stufe, this.messArt(true)));
+      this.warm = true;
+      const tag = this.historyTag;
+      this.history.push({ role: "user", content: shown, turnId: id, ...tag });
+      this.history.push({
+        role: "assistant",
+        content: speakable(answer),
+        ...tag,
+        ...(run.withContext ? { ctx: true } : {}),
+      });
+      // Die Ansage gehört zur angezeigten Antwort, nicht zur Prüfung der Belege.
+      this.cb.onAssistant(
+        ansageText ? `${ansageText} ${answer}` : answer,
+        true,
+        false,
+      );
+      void this.reportCitations(id, answer, gctx);
     } catch (e) {
       if (!stale()) this.cb.onError(String(e));
     } finally {
@@ -902,14 +1167,40 @@ export class VoiceCallEngine {
     let firstAudioAt = 0;
     let chain: Promise<void> = Promise.resolve();
     let assistantText = "";
+    // Was das Modell geliefert hat (ohne Ansage und Vorlagen): Verlauf, Belege, „nichts geantwortet“.
+    let modelText = "";
+    let ansageGesprochen = false;
+    // ADR-0028 E9: Zeitmarken dieses Schritts (ohne Inhalte).
+    const marken: Marken = { start: turn.lastSpeechWall };
+    let metricsSent = false;
     // Kontext dieses Schritts (für die Messung; gesetzt nach dem Abruf).
     let turnCtx: PreparedContext | null = null;
 
     let finishStream!: () => void;
     const streamEnded = new Promise<void>((r) => (finishStream = r));
     turn.finishStream = finishStream;
-    const onPiece = (piece: string) => {
-      if (!firstSentenceAt) firstSentenceAt = performance.now();
+    const emitMetrics = (at: number) => {
+      if (metricsSent) return;
+      metricsSent = true;
+      this.cb.onMetrics({
+        sttMs: Math.round(sttMs),
+        llmFirstMs: Math.round(firstSentenceAt - tChat),
+        ttsFirstMs: Math.round(firstAudioAt - firstSentenceAt),
+        firstSoundMs: Math.round(at - turn.lastSpeechWall),
+        ...(turnCtx
+          ? {
+              contextMs: turnCtx.promptMs,
+              contextHits: turnCtx.hits.hits.length,
+            }
+          : {}),
+      });
+    };
+    // `kind`: Inhalt (Modell, S0-Antwort), Ansage ab S1 oder feste Vorlage. Nur Inhalt kommt in den Verlauf.
+    const onPiece = (piece: string, kind: PieceKind = "inhalt") => {
+      const ansage = kind === "ansage";
+      if (!ansage && !firstSentenceAt) firstSentenceAt = performance.now();
+      if (ansage) ansageGesprochen = true;
+      if (kind === "inhalt") modelText += (modelText ? " " : "") + piece;
       assistantText += (assistantText ? " " : "") + piece;
       this.cb.onAssistant(assistantText, false, false);
       chain = chain.then(async () => {
@@ -927,7 +1218,7 @@ export class VoiceCallEngine {
           return;
         }
         if (dead()) return;
-        if (!firstAudioAt) firstAudioAt = performance.now();
+        if (!ansage && !firstAudioAt) firstAudioAt = performance.now();
         await turn.committedP;
         if (dead()) return;
         if (!turn.audible) {
@@ -935,23 +1226,32 @@ export class VoiceCallEngine {
           this.player?.rearm();
           this.player!.onFirstSound = (at) => {
             this.setState("speaking");
-            this.cb.onMetrics({
-              sttMs: Math.round(sttMs),
-              llmFirstMs: Math.round(firstSentenceAt - tChat),
-              ttsFirstMs: Math.round(firstAudioAt - firstSentenceAt),
-              firstSoundMs: Math.round(at - turn.lastSpeechWall),
-              ...(turnCtx
-                ? {
-                    contextMs: turnCtx.promptMs,
-                    contextHits: turnCtx.hits.hits.length,
-                  }
-                : {}),
-            });
+            if (ansage) {
+              // Die Metriken folgen mit dem ersten Satz danach.
+              marken.ansage = at;
+              return;
+            }
+            marken.inhalt = at;
+            emitMetrics(at);
           };
+        } else if (!ansage) {
+          // Die Ansage läuft schon: Zeit bis der erste Satz danach hörbar bereit ist.
+          marken.inhalt ??= performance.now();
+          emitMetrics(performance.now());
         }
-        turn.spoken.push(piece);
+        turn.heard++;
+        if (kind === "inhalt") turn.spoken.push(piece);
         await this.player!.enqueue(wav);
       });
+    };
+    // E9: `fertig_ms` erst, wenn der Schritt zu Ende gesprochen ist (`finishTurn`).
+    const messenBeiEnde = (stufe: StufeDto | null, modell: boolean) => {
+      if (!stufe) return;
+      turn.onEnde = () => {
+        marken.fertig = performance.now();
+        meldeMessung(baueMessung(turn.id, marken, stufe, this.messArt(modell)));
+        if (modell) this.warm = true;
+      };
     };
 
     // Buch-Gespräch: „allgemein“ / „im Buch“ wechselt den Bereich. Der
@@ -970,8 +1270,52 @@ export class VoiceCallEngine {
       return;
     }
 
+    // ADR-0028 A2: lokale Einstufung vor dem Modellaufruf.
+    const { plan, stufe, sprache } = await this.plan(text);
+    if (dead()) return;
+    if (istVorlage(plan)) {
+      // Vorlage, kein Modellaufruf. Nur die S0-Antwort gehört in den Verlauf.
+      const v = await this.vorlagenstuecke(plan, sprache, async () => {
+        await turn.committedP;
+        return !dead();
+      });
+      if (!v || dead()) return;
+      const kind: PieceKind = v.inhalt ? "inhalt" : "vorlage";
+      turn.noHistory = kind === "vorlage";
+      for (const p of v.pieces) onPiece(p, kind);
+      await chain;
+      this.sentenceHandlers.delete(turn.id);
+      if (dead()) return;
+      turn.done = true;
+      if (turn.heard === 0) {
+        this.dropTurn(turn);
+        return;
+      }
+      if (kind === "inhalt") {
+        const tag = this.historyTag;
+        this.history.push({
+          role: "user",
+          content: turn.userText,
+          turnId: turn.id,
+          ...tag,
+        });
+        this.history.push({
+          role: "assistant",
+          content: speakable(assistantText),
+          ...tag,
+        });
+        turn.historyPushed = true;
+        messenBeiEnde(stufe, false);
+      }
+      this.cb.onAssistant(assistantText, true, false);
+      if (!this.player?.active) this.finishTurn();
+      return;
+    }
+
     const { side, blocked, systemPrompt } = await this.orchestrate();
     if (dead()) return;
+    // Ab S1: Ansage sofort (vor dem Abruf des Kontexts), danach das Modell.
+    if (plan.kind === "ansage" && !blocked) onPiece(plan.text, "ansage");
     // Globaler Kontext: lokal geholt, schon beim spekulativen Start (Plan L1/M5).
     const gctx = blocked ? null : await this.contextFor(turn.id, text, side);
     turnCtx = gctx;
@@ -984,12 +1328,32 @@ export class VoiceCallEngine {
       this.dropTurn(turn);
       return;
     }
+    const frist = ersteFrist(TUNING.modelFristMs);
+    let timedOut = false;
+    const onModel = (s: string) => {
+      if (dead() || timedOut) return;
+      // Nach einer Ansage keine zweite Überbrückung (Orchestrator, Buch-Seite).
+      if (ansageGesprochen && istUeberbrueckung(s)) return;
+      frist.stop();
+      onPiece(s);
+    };
     if (side) {
       // Denker oder Werkzeuge aktiv: der Orchestrator liefert die Sätze (auch die Überbrückung).
       turn.side = side;
-      await side.chat(turn.id, this.historyFor(text), (s) => {
-        if (!dead()) onPiece(s);
-      });
+      if (!this.ausgabeKey) {
+        const id = await this.konversation();
+        if (dead()) return;
+        this.ausgabeKey = { id };
+      }
+      const chat = side.chat(turn.id, this.historyFor(text), onModel).then(
+        () => "",
+        () => "",
+      );
+      if ((await Promise.race([chat, frist.abgelaufen])) === FRIST) {
+        timedOut = true;
+        void side.cancel?.(turn.id);
+      }
+      frist.stop();
     } else {
       // Mit App-Kontext startet das Modell erst nach dem Commit, und der
       // Kontext wird davor erneut geprüft (Turn, Transkript, Stand; Codex
@@ -1021,27 +1385,55 @@ export class VoiceCallEngine {
           this.cb.onUsage?.(e.usage);
         if (e.kind === "done" || e.kind === "failed") finishStream();
         if (e.kind !== "sentence" || dead()) return;
-        onPiece(e.text ?? "");
+        onModel(e.text ?? "");
       });
-      await invoke<string>("voice_call_chat", {
+      const conversationId = await this.konversation();
+      if (dead()) return;
+      this.ausgabeKey = { id: conversationId };
+      let abgelehnt = false;
+      const chat = invoke<string>("voice_call_chat", {
         requestId: turn.id,
         messages,
         context,
-      });
-      // Das letzte Häppchen kann nach dem Rückgabewert eintreffen: auf `done` warten.
-      if (!dead())
-        await Promise.race([
-          streamEnded,
-          new Promise<void>((r) => setTimeout(r, 3000)),
-        ]);
+        conversationId,
+      }).then(
+        () => "",
+        () => {
+          abgelehnt = true;
+          return "";
+        },
+      );
+      if ((await Promise.race([chat, frist.abgelaufen])) === FRIST) {
+        timedOut = true;
+        finishStream();
+        void invoke("voice_call_cancel", { requestId: turn.id }).catch(
+          () => undefined,
+        );
+      } else if (!dead() && !abgelehnt) {
+        // Das letzte Häppchen kann nach dem Rückgabewert eintreffen: auf `done` warten.
+        await warteMax(streamEnded, 3000);
+      }
+      frist.stop();
     }
     await chain;
     this.cb.onStatus?.(null);
     this.sentenceHandlers.delete(turn.id);
     if (dead()) return;
+    if (!modelText) {
+      // Kein Modellinhalt (Fehler, Frist, leer, vom Tor abgelehnt): feste Vorlage, nicht in den Verlauf.
+      turn.noHistory = true;
+      onPiece(vorlage("fehler", sprache), "vorlage");
+      await chain;
+      if (dead()) return;
+    }
     turn.done = true;
-    if (turn.spoken.length === 0) {
+    if (turn.heard === 0) {
       this.dropTurn(turn);
+      return;
+    }
+    if (turn.noHistory) {
+      this.cb.onAssistant(assistantText, true, false);
+      if (!this.player?.active) this.finishTurn();
       return;
     }
     const tag = this.historyTag;
@@ -1051,15 +1443,18 @@ export class VoiceCallEngine {
       turnId: turn.id,
       ...tag,
     });
+    // Der Verlauf behält, was das Modell gesagt hat, nicht die Ansage.
     this.history.push({
       role: "assistant",
-      content: speakable(assistantText),
+      content: speakable(modelText),
       ...tag,
       ...(turn.withContext ? { ctx: true } : {}),
     });
     turn.historyPushed = true;
+    messenBeiEnde(stufe, true);
     this.cb.onAssistant(assistantText, true, false);
-    void this.reportCitations(turn.id, assistantText, turnCtx);
+    // Die Belege prüfen nur, was das Modell gesagt hat, nicht die Ansage.
+    void this.reportCitations(turn.id, modelText, turnCtx);
     // Ende der Wiedergabe meldet player.onIdle -> finishTurn.
     if (!this.player?.active) this.finishTurn();
   }
@@ -1071,7 +1466,9 @@ export class VoiceCallEngine {
   }
 
   private finishTurn(): void {
+    const ende = this.turn?.onEnde;
     this.turn = null;
+    ende?.();
     if (!this.utt) this.setState("listening");
   }
 
@@ -1090,7 +1487,7 @@ export class VoiceCallEngine {
     );
     this.cb.onStatus?.(null);
     turn.commit();
-    if (interrupted && turn.spoken.length > 0) {
+    if (interrupted && turn.spoken.length > 0 && !turn.noHistory) {
       // Nur das tatsächlich Gesprochene gehört in den Verlauf.
       if (turn.historyPushed) this.history.splice(-2, 2);
       const said = turn.spoken.join(" ");

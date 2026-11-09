@@ -99,6 +99,29 @@ pub async fn voice_tools_list(app: AppHandle) -> Result<Vec<VoiceToolInfo>, Stri
     Ok(voice::list(bridge.server().bridge().registry(), opts))
 }
 
+/// Die Werkzeuge, die der Orchestrator jetzt aufrufen darf, samt Schema (fuer das Ausgabetor:
+/// nur ein Aufruf eines hier genannten Werkzeugs mit gueltigen Argumenten geht roh durch).
+pub fn werkzeug_register(app: &AppHandle) -> Vec<crate::assistent::tor::Werkzeug> {
+    let opts = options(app);
+    if opts.areas.is_empty() {
+        return Vec::new();
+    }
+    let Ok((bridge, _)) = parts(app) else {
+        return Vec::new();
+    };
+    voice::list(bridge.server().bridge().registry(), opts)
+        .into_iter()
+        .filter_map(|i| {
+            serde_json::from_str(&i.parameters_json).ok().map(|schema| {
+                crate::assistent::tor::Werkzeug {
+                    name: i.name,
+                    schema,
+                }
+            })
+        })
+        .collect()
+}
+
 /// Ruft ein lesendes Werkzeug (Bereich frei, Audit über das Tor). `args` ist ein JSON-Objekt als
 /// Text, `conversation_id` das laufende Gespräch (es bleibt den Gesprächswerkzeugen verborgen). Die
 /// Antwort ist der JSON-Text des Ergebnisses; eine zu lange Antwort wird nie still gekürzt, sondern
@@ -124,7 +147,7 @@ pub async fn voice_tool_call(
         ));
     }
     let source = AppKnowledge::new(&app, store.clone());
-    tauri::async_runtime::spawn_blocking(move || {
+    let ergebnis = tauri::async_runtime::spawn_blocking(move || {
         let conn = store.get_connection().map_err(|e| e.to_string())?;
         let session = Session {
             registry: bridge.server().bridge().registry(),
@@ -134,7 +157,12 @@ pub async fn voice_tool_call(
         voice::call(&conn, &session, opts, &name, &args, now_ms())
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+    // Belegregel im Orchestrator: nur was Rust selbst geliefert hat, gilt dort als Beleg.
+    if let Ok(text) = &ergebnis {
+        crate::assistent::tor::werkzeugergebnis_merken(text);
+    }
+    ergebnis
 }
 
 // ---------------------------------------------------------------------------

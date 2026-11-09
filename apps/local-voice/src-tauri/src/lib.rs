@@ -6,6 +6,7 @@ mod app_context; // Globaler Sprachassistent: Abrufindex über alle Inhalte
 mod appdata_migration;
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 mod apple_intelligence;
+mod assistent; // ADR-0028 A2: Einstufung, Ansagen, Messung (wai-assistent)
 mod audio_feedback;
 pub mod audio_toolkit;
 mod book_ai; // lva#181: KI-Funktionen im Buch-Reader
@@ -2041,6 +2042,11 @@ fn specta_builder() -> Builder<tauri::Wry> {
             ablage::befehle::ablage_datei_verschieben,
             ablage::befehle::ablage_bestand_neu_aufbauen,
             ablage::befehle::ablage_gefundene_aufnehmen,
+            assistent::assistent_einstufen,
+            assistent::assistent_messung_melden,
+            assistent::assistent_letzte_ausgabe,
+            assistent::assistent_ausgabe_vergessen,
+            assistent::change_assistent_einstufung_aktiv_setting,
             projekte::befehle::projekte_liste,
             projekte::befehle::projekt_anlegen,
             projekte::befehle::projekt_web_freigabe,
