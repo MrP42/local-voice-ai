@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Stabiles lokales Signierzertifikat fuer den Mac-Build anlegen (lva#143). Einmalig auf dem
-# MacBook ausfuehren, Mac entsperrt (das Vertrauen fuer die Codesignatur fragt das Passwort ab).
+# MacBook ausfuehren, Mac entsperrt, im Terminal (das Vertrauen fuer die Codesignatur und die
+# Freigabe des Schluessels fuer codesign fragen das Anmeldepasswort ab).
 #
 # Warum: Ad-hoc signiert (signingIdentity "-") ist die Designated Requirement der App ihr cdhash,
 # der sich mit jedem Build aendert. macOS verlangt dann nach jedem Update Bedienungshilfen,
@@ -33,7 +34,8 @@ gueltig() { security find-identity -v -p codesigning "$KEYCHAIN" 2>/dev/null | g
 # es landet also weder in der Prozessliste noch in der Shell-Historie.
 codesign_freigeben() {
   echo "macOS fragt jetzt nach dem Anmeldepasswort (Schluessel fuer codesign freigeben):"
-  security set-key-partition-list -S apple-tool:,apple:,codesign: -s -l "$NAME" "$KEYCHAIN" >/dev/null
+  security set-key-partition-list -S apple-tool:,apple:,codesign: -s -l "$NAME" "$KEYCHAIN" >/dev/null ||
+    { echo "Freigabe fehlgeschlagen (abgebrochen oder falsches Passwort) - Skript erneut ausfuehren." >&2; exit 1; }
 }
 
 if gueltig; then
