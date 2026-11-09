@@ -37,7 +37,8 @@ export const SicherungenListe: React.FC<Props> = ({ stand }) => {
 
   const laden = useCallback(async () => {
     const r = await commands.syncSicherungen();
-    if (r?.status === "ok") setListe(r.data);
+    // Ältere Kerne bzw. Testattrappen ohne den Befehl liefern nichts: dann leer.
+    if (r?.status === "ok") setListe(Array.isArray(r.data) ? r.data : []);
   }, []);
 
   useEffect(() => {

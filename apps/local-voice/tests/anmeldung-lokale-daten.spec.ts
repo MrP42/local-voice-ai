@@ -507,18 +507,12 @@ test("Nur lokal und Sicherungen: Zeile mit Übernahme, Liste mit Anlass", async 
 
 // Laufzeitnachweise (Codex 08.11.): Scrollbarkeit und Aktivierung bei 390 px,
 // Fokusfalle, Fokusrückgabe und Touchflächen. Ergebnis: laufzeit.txt.
-const nachweis: string[] = [];
-test.afterAll(async () => {
-  if (nachweis.length === 0) return;
+// Je Test eine eigene Datei: parallele Worker überschreiben sich so nicht.
+const belegen = async (name: string, zeilen: string[]) => {
   const fs = await import("node:fs");
   fs.mkdirSync(SHOTS, { recursive: true });
-  fs.writeFileSync(
-    `${SHOTS}/laufzeit.txt`,
-    ["Laufzeitnachweise Anmeldung/Abmelden (Playwright, Chromium)", ...nachweis]
-      .join("\n")
-      .concat("\n"),
-  );
-});
+  fs.writeFileSync(`${SHOTS}/laufzeit-${name}.txt`, zeilen.join("\n") + "\n");
+};
 
 test("390 px: Kollisionen scrollbar, Bestätigen erreichbar und aktiv", async ({
   page,
@@ -557,11 +551,11 @@ test("390 px: Kollisionen scrollbar, Bestätigen erreichbar und aktiv", async ({
     .poll(async () => (await calls(page)).length)
     .toBeGreaterThan(vorher);
   const neu = (await calls(page)).slice(vorher).map(([c]) => c);
-  nachweis.push(
+  await belegen("390-scrollen", [
     `390 px Kontowechsel, „getrennt halten“: ${anzahl} Kollisionen, letzte vollständig im Bild nach Scrollen.`,
     `  Scrollbereich: ${scroll ? `${scroll.scrollHeight}px Inhalt in ${scroll.clientHeight}px` : "kein Überlauf (passt ganz)"}.`,
     `  Bestätigen: vollständig im Bild, aktiviert, Klick ruft ${neu.join(", ")} auf.`,
-  );
+  ]);
 });
 
 test("Fokusfalle im Modal und Fokusrückgabe nach Abmelden-Dialog", async ({
@@ -581,9 +575,9 @@ test("Fokusfalle im Modal und Fokusrückgabe nach Abmelden-Dialog", async ({
   expect(ausserhalb).toEqual([]);
   await page.keyboard.press("Escape");
   await expect(m).toBeVisible();
-  nachweis.push(
+  const fokus = [
     "Fokusfalle Anmelde-Modal: 25 Tab/Umschalt+Tab-Schritte, Fokus blieb in allen im Dialog; Esc schließt nicht.",
-  );
+  ];
   await m.getByTestId("anmeldung-abbrechen").click();
   await page.evaluate(() => {
     const w = window as any;
@@ -609,9 +603,10 @@ test("Fokusfalle im Modal und Fokusrückgabe nach Abmelden-Dialog", async ({
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("abmelden-dialog")).toHaveCount(0);
   await expect(ab).toBeFocused();
-  nachweis.push(
+  await belegen("fokus", [
+    ...fokus,
     "Abmelden-Dialog: Fokus beim Öffnen im Dialog; nach Esc zurück auf „Abmelden“.",
-  );
+  ]);
 });
 
 test("Touchflächen mindestens 44 px (grober Zeiger)", async ({ page }) => {
@@ -650,10 +645,10 @@ test("Touchflächen mindestens 44 px (grober Zeiger)", async ({ page }) => {
     zeilen.push(`  ${id}: ${Math.round(b!.width)}×${Math.round(b!.height)} px`);
     expect(b!.height, id).toBeGreaterThanOrEqual(44);
   }
-  nachweis.push(
+  await belegen("touch", [
     "Touchflächen bei 390 px mit Touch (pointer: coarse):",
     ...zeilen,
-  );
+  ]);
 });
 
 for (const theme of ["light", "dark"]) {

@@ -1,0 +1,3 @@
+390 px Kontowechsel, „getrennt halten“: 2 Kollisionen, letzte vollständig im Bild nach Scrollen.
+  Scrollbereich: 882px Inhalt in 656px.
+  Bestätigen: vollständig im Bild, aktiviert, Klick ruft sync_anmeldung_entscheiden, sync_status, sync_sicherungen, sync_hub_status auf.
