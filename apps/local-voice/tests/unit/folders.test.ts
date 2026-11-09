@@ -127,3 +127,32 @@ test("followFolder: offene Seite außerhalb der Auswahl folgt ihrem Ordner", () 
   // darf der Hook erst nach der jüngsten Antwort folgen.
   assert.equal(followFolder(groupPages(pages, []), [], all, "p1"), "texts");
 });
+
+import { FOLDER_BOOKS, showsBooks } from "../../src/lib/reader/folders.ts";
+
+test("Ordner „Bücher“ (lva#435): Seiten aller Bücher, Bücher nur bei Bedarf", () => {
+  const books = [
+    { id: "a", title: "A", text: { page_id: "p4" } },
+    {
+      id: "b",
+      title: "B",
+      text: { page_id: "p2" },
+      editions: [{ lang: "en", text: { page_id: "p5" } }],
+    },
+  ];
+  const f = groupPages(pages, books);
+  const all = pages.map((p) => p.id);
+  // Reihenfolge der Seitenliste, nicht der Bibliothek.
+  assert.deepEqual(pagesInFolder(f, FOLDER_BOOKS, all), ["p2", "p4", "p5"]);
+  assert.equal(resolveFolder(f, FOLDER_BOOKS), FOLDER_BOOKS);
+  // Auch ohne Bücher bleibt die Wahl gültig (Leerzustand mit Hinweis).
+  const leer = groupPages(pages, []);
+  assert.equal(resolveFolder(leer, FOLDER_BOOKS), FOLDER_BOOKS);
+  assert.deepEqual(pagesInFolder(leer, FOLDER_BOOKS, all), []);
+  assert.equal(showsBooks(FOLDER_BOOKS), true);
+  assert.equal(showsBooks(bookFolderKey("a")), true);
+  assert.equal(showsBooks(FOLDER_ALL), false);
+  assert.equal(showsBooks(FOLDER_TEXTS), false);
+  // Eine Buchseite bleibt unter „Bücher“ sichtbar: keine Seitenfolge.
+  assert.equal(followFolder(f, ["p2", "p4", "p5"], all, "p4"), null);
+});

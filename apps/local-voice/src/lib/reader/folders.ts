@@ -74,14 +74,25 @@ export const groupPages = (
 export const folderOf = (folders: PageFolders, pageId: string): string | null =>
   folders.books.find((b) => b.pageIds.includes(pageId))?.bookId ?? null;
 
-/** Auswahl in der Ordnerleiste: alle Seiten, lose Texte oder ein Buch. */
+/**
+ * Auswahl in der Ordnerleiste: alle Seiten, alle Bücher, lose Texte oder ein
+ * Buch. „Bücher“ (lva#435) zeigt die Seiten aller Bücher und klappt die
+ * einzelnen Bücher in der Leiste auf; sonst bleiben sie verborgen.
+ */
 export const FOLDER_ALL = "all";
+export const FOLDER_BOOKS = "books";
 export const FOLDER_TEXTS = "texts";
-export const bookFolderKey = (bookId: string) => `book:${bookId}`;
+const BOOK_PREFIX = "book:";
+export const bookFolderKey = (bookId: string) => `${BOOK_PREFIX}${bookId}`;
+
+/** Stehen die einzelnen Bücher in der Leiste (Bücher oder ein Buch gewählt)? */
+export const showsBooks = (key: string): boolean =>
+  key === FOLDER_BOOKS || key.startsWith(BOOK_PREFIX);
 
 /** Ist die gespeicherte Auswahl noch gültig? Sonst „Alle“. */
 export const resolveFolder = (folders: PageFolders, key: string): string =>
   key === FOLDER_TEXTS ||
+  key === FOLDER_BOOKS ||
   folders.books.some((b) => bookFolderKey(b.bookId) === key)
     ? key
     : FOLDER_ALL;
@@ -93,6 +104,10 @@ export const pagesInFolder = (
   allIds: string[],
 ): string[] => {
   if (key === FOLDER_TEXTS) return folders.loose;
+  if (key === FOLDER_BOOKS) {
+    const inBooks = new Set(folders.books.flatMap((b) => b.pageIds));
+    return allIds.filter((id) => inBooks.has(id));
+  }
   const book = folders.books.find((b) => bookFolderKey(b.bookId) === key);
   return book ? book.pageIds : allIds;
 };
