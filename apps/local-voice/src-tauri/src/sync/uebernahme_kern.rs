@@ -990,17 +990,61 @@ pub fn widerrufe_vormerken(
     schreiben(pfad, &roh)
 }
 
+/// Was nach einer gescheiterten Anmeldung zu tun ist (U10). Das frisch ausgestellte Token
+/// wird IMMER widerrufen, auch wenn noch nichts gespeichert wurde (Fehler vor dem Journal).
+#[derive(Debug, PartialEq, Eq)]
+pub struct Anmeldefehler {
+    /// Vorzumerken bzw. sofort zu widerrufen, bevor eine Datei gelöscht wird.
+    pub widerrufe: Vec<Widerruf>,
+    /// Wartedatei löschen (enthält nur Tokens aus `widerrufe`).
+    pub wartend_weg: bool,
+    /// Journal löschen (nur das offene Journal dieser Anmeldung).
+    pub journal_weg: bool,
+}
+
+/// `journal_offen`: Journal Anmeldung/Entscheidung liegt vor. `wartend`: Token der
+/// gespeicherten wartenden Anmeldung, falls vorhanden.
+pub fn anmeldefehler(
+    neu: Widerruf,
+    journal_offen: bool,
+    wartend: Option<Widerruf>,
+) -> Anmeldefehler {
+    let mut widerrufe = vec![neu.clone()];
+    let wartend_weg = match wartend {
+        // Ohne offenes Journal gehört eine fremde Wartedatei nicht zu diesem Versuch.
+        Some(w) if journal_offen || w == neu => {
+            if !widerrufe.contains(&w) {
+                widerrufe.push(w);
+            }
+            true
+        }
+        _ => false,
+    };
+    Anmeldefehler {
+        widerrufe,
+        wartend_weg,
+        journal_weg: journal_offen,
+    }
+}
+
 /// Gescheiterte Anmeldung verwerfen (U10): ERST die Tokens dauerhaft sichern
-/// (`vormerken`), dann wartende Anmeldung und Journal löschen. Scheitert das Vormerken,
-/// bleibt beides liegen: die Tokenquelle geht nie vor der Vormerkung verloren.
+/// (`vormerken`), dann Wartedatei und Journal löschen, soweit `plan` es vorsieht.
+/// Scheitert das Vormerken, bleibt alles liegen: die Tokenquelle geht nie vor der
+/// Vormerkung verloren.
 pub fn anmeldung_verwerfen(
-    vormerken: impl FnOnce() -> Result<(), String>,
+    vormerken: impl FnOnce(&[Widerruf]) -> Result<(), String>,
+    plan: &Anmeldefehler,
     wartend: &Path,
     data: &Path,
 ) -> Result<(), String> {
-    vormerken()?;
-    entferne_datei(wartend)?;
-    journal_loeschen(data)
+    vormerken(&plan.widerrufe)?;
+    if plan.wartend_weg {
+        entferne_datei(wartend)?;
+    }
+    if plan.journal_weg {
+        journal_loeschen(data)?;
+    }
+    Ok(())
 }
 
 /// Ordner einer Einheit im Datenordner (lose Seite oder Buch). Seiten im Buch-Ordner

@@ -528,22 +528,79 @@ fn beschaedigte_widerrufsliste_blockiert_und_bleibt_unveraendert() {
     assert_eq!(fs::read(&p).unwrap(), b"{kaputt");
 }
 
+fn wr(token: &str) -> Widerruf {
+    Widerruf {
+        url: "https://hub.example.org".into(),
+        token: token.into(),
+    }
+}
+
 #[test]
 fn gescheiterte_anmeldung_loescht_tokenquelle_erst_nach_vormerkung() {
     let t = tempfile::tempdir().unwrap();
     let d = t.path();
     let wartend = d.join("sync-anmeldung.json");
-    fs::write(&wartend, b"{\"token\":\"t\"}").unwrap();
+    fs::write(&wartend, b"{\"token\":\"alt\"}").unwrap();
     let mut j = anmelde_journal();
     j.phase = Phase::Entscheidung;
     journal_speichern(d, &j).unwrap();
+    let plan = anmeldefehler(wr("neu"), true, Some(wr("alt")));
+    assert_eq!(plan.widerrufe, vec![wr("neu"), wr("alt")]);
+    assert!(plan.wartend_weg && plan.journal_weg);
     // Vormerken scheitert (Datei und Netz): Wartedatei und Journal bleiben.
-    let r = anmeldung_verwerfen(|| Err("kein Platz".into()), &wartend, d);
+    let r = anmeldung_verwerfen(|_| Err("kein Platz".into()), &plan, &wartend, d);
     assert!(r.is_err());
     assert!(wartend.is_file());
     assert!(journal_vorhanden(d));
     // Vorgemerkt: erst jetzt verschwinden beide.
-    anmeldung_verwerfen(|| Ok(()), &wartend, d).unwrap();
+    let mut gesehen = Vec::new();
+    anmeldung_verwerfen(
+        |ws| {
+            gesehen = ws.to_vec();
+            Ok(())
+        },
+        &plan,
+        &wartend,
+        d,
+    )
+    .unwrap();
+    assert_eq!(gesehen, vec![wr("neu"), wr("alt")]);
     assert!(!wartend.exists());
     assert!(!journal_vorhanden(d));
+}
+
+#[test]
+fn fehler_vor_dem_journal_widerruft_das_neue_token_trotzdem() {
+    let t = tempfile::tempdir().unwrap();
+    let d = t.path();
+    let wartend = d.join("sync-anmeldung.json");
+    // Erstes Speichern der Wartedatei gescheitert: nichts auf der Platte.
+    let plan = anmeldefehler(wr("neu"), false, None);
+    assert_eq!(plan.widerrufe, vec![wr("neu")]);
+    assert!(!plan.wartend_weg && !plan.journal_weg);
+    let mut gesehen = Vec::new();
+    anmeldung_verwerfen(
+        |ws| {
+            gesehen = ws.to_vec();
+            Ok(())
+        },
+        &plan,
+        &wartend,
+        d,
+    )
+    .unwrap();
+    assert_eq!(gesehen, vec![wr("neu")]);
+    // Wartedatei geschrieben, Journal gescheitert: Token widerrufen, dann Datei weg.
+    fs::write(&wartend, b"{}").unwrap();
+    let plan = anmeldefehler(wr("neu"), false, Some(wr("neu")));
+    assert_eq!(plan.widerrufe, vec![wr("neu")]);
+    assert!(plan.wartend_weg && !plan.journal_weg);
+    assert!(anmeldung_verwerfen(|_| Err("x".into()), &plan, &wartend, d).is_err());
+    assert!(wartend.is_file());
+    anmeldung_verwerfen(|_| Ok(()), &plan, &wartend, d).unwrap();
+    assert!(!wartend.exists());
+    // Fremde Wartedatei ohne offenes Journal bleibt unangetastet, das neue Token nicht.
+    let plan = anmeldefehler(wr("neu"), false, Some(wr("fremd")));
+    assert_eq!(plan.widerrufe, vec![wr("neu")]);
+    assert!(!plan.wartend_weg);
 }

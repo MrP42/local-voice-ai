@@ -138,13 +138,6 @@ async fn widerrufen(app: &AppHandle, url: &str, token: &str) -> Result<(), Strin
     .await
 }
 
-/// Ein nur im Speicher gehaltenes Token widerrufen (es gibt keine Datei, die bliebe).
-async fn widerrufen_fluechtig(app: &AppHandle, url: &str, token: &str) {
-    if let Err(e) = widerrufen(app, url, token).await {
-        log::warn!("Sync: {e}");
-    }
-}
-
 /// Ausstehende Widerrufe ausführen (Start, Anmeldung, nach Abbrechen/Abmelden).
 /// Eine beschädigte Liste bleibt unangetastet (Hinweis „Widerruf offen“ bleibt sichtbar).
 pub async fn widerruf_nachholen(app: &AppHandle) {
@@ -840,31 +833,27 @@ pub async fn anmelden(
     let (url, token) = (cfg.url.clone(), cfg.token.clone());
     let ergebnis = anmelden_unter_sperre(app, engine, cfg).await;
     if ergebnis.is_err() {
-        // Gescheitert, bevor eine Wahl getroffen war: Anmeldezustand bereinigen (U10).
-        if let Ok(d) = data(app) {
-            let offen = kern::journal_laden(&d).is_ok_and(|j| {
+        // Gescheitert, bevor eine Wahl getroffen war (U10). Das neue Token wird immer
+        // widerrufen, auch wenn der Fehler vor Wartedatei oder Journal lag. Erst nach
+        // dauerhafter Vormerkung (oder erfolgreichem Sofort-Widerruf) fallen die Dateien.
+        let d = data(app);
+        let offen = d.as_ref().is_ok_and(|d| {
+            kern::journal_laden(d).is_ok_and(|j| {
                 j.is_some_and(|j| j.art == Art::Anmeldung && j.phase == Phase::Entscheidung)
-            });
-            if offen {
-                // Erst alle Tokens (neu und wartend) dauerhaft vormerken bzw. widerrufen,
-                // dann die Tokenquellen löschen. Scheitert beides, bleibt alles liegen.
-                let mut ws = vec![Widerruf { url, token }];
-                if let Some(w) = wartend_laden(app) {
-                    let alt = Widerruf {
-                        url: w.cfg.url,
-                        token: w.cfg.token,
-                    };
-                    if !ws.contains(&alt) {
-                        ws.push(alt);
-                    }
-                }
-                let gesichert = widerrufen_alle(app, &ws).await;
-                if let Err(e) = konto_datei(app, WARTEND)
-                    .and_then(|wp| kern::anmeldung_verwerfen(|| gesichert, &wp, &d))
-                {
-                    log::warn!("Sync: Anmeldung nicht verworfen: {e}");
-                }
-            }
+            })
+        });
+        let wartend = wartend_laden(app).map(|w| Widerruf {
+            url: w.cfg.url,
+            token: w.cfg.token,
+        });
+        let plan = kern::anmeldefehler(Widerruf { url, token }, offen, wartend);
+        let gesichert = widerrufen_alle(app, &plan.widerrufe).await;
+        let r = match (d, konto_datei(app, WARTEND)) {
+            (Ok(d), Ok(wp)) => kern::anmeldung_verwerfen(|_| gesichert, &plan, &wp, &d),
+            (Err(e), _) | (_, Err(e)) => gesichert.and(Err(e)),
+        };
+        if let Err(e) = r {
+            log::warn!("Sync: Anmeldung nicht verworfen: {e}");
         }
     }
     ergebnis
@@ -877,7 +866,6 @@ async fn anmelden_unter_sperre(
 ) -> Result<AnmeldeErgebnis, String> {
     let d = data(app)?;
     if account::load(app).is_some() {
-        widerrufen_fluechtig(app, &cfg.url, &cfg.token).await;
         return Err("Dieses Gerät ist schon angemeldet. Bitte zuerst abmelden.".into());
     }
     if kern::journal_vorhanden(&d) {
@@ -885,7 +873,6 @@ async fn anmelden_unter_sperre(
             j.is_some_and(|j| j.art == Art::Anmeldung && j.phase == Phase::Entscheidung)
         });
         if !offen_anmeldung {
-            widerrufen_fluechtig(app, &cfg.url, &cfg.token).await;
             return Err(
                 "Ein vorheriger Übergang ist noch nicht abgeschlossen. Bitte die App neu starten."
                     .into(),
