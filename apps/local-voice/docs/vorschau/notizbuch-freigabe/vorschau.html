@@ -16,6 +16,7 @@
   --on-accent:#0b1a2a;--focus:#8cc4ff;--off:#9e9e9e;
 }
 *{box-sizing:border-box}
+[hidden]{display:none!important}
 html,body{margin:0;height:100%;overflow:hidden}
 body{font:14px/1.45 "Segoe UI",system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text)}
 button,input{font:inherit;color:inherit}
@@ -51,14 +52,21 @@ svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8;stroke
 .sw[aria-disabled="true"]{cursor:default;opacity:.55}
 .sw .lb{font-size:14px}
 .hint{padding-left:52px;margin-top:-6px;font-size:12px;color:var(--muted)}
+.nbb .hint{padding-left:0;margin:-2px 0 6px;padding-right:4px}
 .nest{margin-left:24px;display:flex;flex-direction:column;gap:8px}
 .sum{font-size:12px;color:var(--muted);padding-left:4px}
 .nb{border:1px solid var(--line);border-radius:8px;background:var(--pane2)}
-.nbh{display:flex;align-items:center;gap:8px;width:100%;min-height:44px;padding:0 10px;border:0;background:none;cursor:pointer;text-align:left}
-.nbh .nm{flex:1;min-width:0;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.nbh .ct{font-size:12px;color:var(--muted);white-space:nowrap}
-.nbh svg{transition:transform .1s}
-.nbh[aria-expanded="true"] svg{transform:rotate(90deg)}
+.nbh{display:flex;align-items:center;min-height:44px;padding:0 10px 0 0}
+.ak{flex:1;min-width:0;display:flex;align-items:center;gap:8px;min-height:44px;padding:0;border:0;background:none;cursor:pointer;text-align:left}
+.cbx{display:grid;place-items:center;min-width:44px;min-height:44px;cursor:pointer;flex:none}
+.cbx input,.gh input{width:18px;height:18px;margin:0;accent-color:var(--accent)}
+.gh{display:flex;align-items:center;min-height:44px;font-weight:600}
+.gh .cbx{margin-left:-4px}
+.gb{margin-left:22px}
+.ak .nm{flex:1;min-width:0;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ak .ct{font-size:12px;color:var(--muted);white-space:nowrap}
+.ak svg{transition:transform .1s}
+.ak[aria-expanded="true"] svg{transform:rotate(90deg)}
 .nbb{padding:0 10px 6px;border-top:1px solid var(--line)}
 .nbb .sw .lb{font-size:13px}
 .ab{display:flex;align-items:center;gap:10px;min-height:44px;cursor:pointer;padding:0 4px;border-radius:6px}
@@ -89,30 +97,35 @@ svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8;stroke
       <div class="phead"><h2 id="ptitel">Gesprächseinstellungen</h2>
         <button class="ib" aria-label="Schließen"><svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8"/></svg></button></div>
       <div class="tabs" role="tablist" aria-label="Bereiche">
-        <button role="tab" aria-selected="false" tabindex="-1">Stimme</button>
-        <button role="tab" aria-selected="false" tabindex="-1">Modell</button>
-        <button role="tab" aria-selected="true">Wissen</button>
-        <button role="tab" aria-selected="false" tabindex="-1">Status</button>
+        <button role="tab" id="tab-stimme" aria-controls="tp-stimme" aria-selected="false" tabindex="-1">Stimme</button>
+        <button role="tab" id="tab-modell" aria-controls="tp-modell" aria-selected="false" tabindex="-1">Modell</button>
+        <button role="tab" id="tab-wissen" aria-controls="tp-wissen" aria-selected="true" tabindex="0">Wissen</button>
+        <button role="tab" id="tab-status" aria-controls="tp-status" aria-selected="false" tabindex="-1">Status</button>
       </div>
-      <div class="pbody" id="body" role="tabpanel" aria-label="Wissen"></div>
+      <div class="pbody" id="tp-stimme" role="tabpanel" aria-labelledby="tab-stimme" hidden><p>In dieser Vorschau nicht gezeigt.</p></div>
+      <div class="pbody" id="tp-modell" role="tabpanel" aria-labelledby="tab-modell" hidden><p>In dieser Vorschau nicht gezeigt.</p></div>
+      <div class="pbody" id="tp-wissen" role="tabpanel" aria-labelledby="tab-wissen"></div>
+      <div class="pbody" id="tp-status" role="tabpanel" aria-labelledby="tab-status" hidden><p>In dieser Vorschau nicht gezeigt.</p></div>
     </aside>
   </div>
   <footer class="status"><span>Bereit</span><span>Tor aktiv · jeder Zugriff im Protokoll</span></footer>
 </div>
 <script>
 const q = new URLSearchParams(location.search);
-const ansicht = q.get("s") || "freigabe";
+const ansicht = q.get("s") || "standard";
 document.documentElement.dataset.theme = q.get("t") === "dunkel" ? "dark" : "light";
 
+/* Zustand: Standard = leere Auswahl. Demo-Auswahl nur in ausdrücklich aufgerufenen Szenen. */
+const DEMO = ["freigabe", "aus", "version"].includes(ansicht);
 const NB = [
   { id: "nb1", name: "Arbeit", ganz: false, offen: true, ab: [
-    { id: "a1", name: "Besprechungen", seiten: 24, an: true },
-    { id: "a2", name: "Haushalt 2027", gruppe: "Projekte", seiten: 9, an: true },
+    { id: "a1", name: "Besprechungen", seiten: 24, an: DEMO },
+    { id: "a2", name: "Haushalt 2027", gruppe: "Projekte", seiten: 9, an: DEMO },
     { id: "a3", name: "Radwegekonzept", gruppe: "Projekte", seiten: 5, an: false },
     { id: "a4", name: "Personal", seiten: 12, an: false },
   ]},
-  { id: "nb2", name: "Assistent", ganz: true, offen: true, ab: [
-    { id: "a5", name: "Assistent", seiten: 3, an: true },
+  { id: "nb2", name: "Assistent", ganz: DEMO, offen: true, ab: [
+    { id: "a5", name: "Assistent", seiten: 3, an: DEMO },
   ]},
   { id: "nb3", name: "Privat", ganz: false, offen: false, ab: [
     { id: "a6", name: "Familie", seiten: 31, an: false },
@@ -127,14 +140,50 @@ const BEREICHE = [
   ["Vorlesen", "Seiten der Vorlesen-Bibliothek und die Sprachausgabe-Anbieter.", false],
 ];
 let notizbuchAn = ansicht !== "aus";
-if (ansicht === "leer") for (const n of NB) { n.ganz = false; for (const a of n.ab) a.an = false; }
+const DATENSCHUTZ = "Der Assistent darf alle vorhandenen und künftig hinzugefügten Abschnitte lesen und durchsuchen. Neue Abschnitte werden automatisch freigegeben.";
 
 const sw = (id, lb, an, opts = {}) =>
   `<button class="sw" role="switch" id="${id}" aria-checked="${an}" ${opts.dis ? 'aria-disabled="true"' : ""} ${opts.desc ? `aria-describedby="${opts.desc}"` : ""}><span class="track"><i></i></span><span class="lb">${lb}</span></button>`;
 const zeile = (i, [lb, hint, an]) =>
   `<div class="krow">${sw("b" + i, lb, an, { desc: "h" + i })}<span class="hint" id="h${i}">${hint}</span></div>`;
 
-function frei(n) { return n.ganz ? n.ab.length : n.ab.filter((a) => a.an).length; }
+const frei = (n) => (n.ganz ? n.ab.length : n.ab.filter((a) => a.an).length);
+const zustand = (liste, ganz) => {
+  const k = ganz ? liste.length : liste.filter((a) => a.an).length;
+  return { checked: k === liste.length && k > 0, indeterminate: k > 0 && k < liste.length };
+};
+const cb = (id, label, st, extra = "") =>
+  `<input type="checkbox" id="${id}" ${extra} aria-label="${label}" ${st.checked ? "checked" : ""} ${st.indeterminate ? 'data-ind="1"' : ""}>`;
+
+function abschnitt(n, a) {
+  const an = n.ganz || a.an;
+  return `<label class="ab${n.ganz ? " dis" : ""}"><input type="checkbox" id="cb-${a.id}" data-a="${a.id}" ${an ? "checked" : ""} ${n.ganz ? "disabled" : ""}>
+    <span class="nm">${a.name}</span><span class="sz">${a.seiten} Seiten</span></label>`;
+}
+
+function notizbuch(n) {
+  const f = frei(n);
+  const st = zustand(n.ab, n.ganz);
+  const dis = n.ganz ? "disabled" : "";
+  let h = `<div class="nb"><div class="nbh"><label class="cbx">${cb("cb-" + n.id, `Alle Abschnitte in ${n.name} auswählen`, st, `data-nb="${n.id}" ${dis}`)}</label>
+    <button class="ak" id="ak-${n.id}" data-ak="${n.id}" aria-expanded="${n.offen}" aria-controls="nbb-${n.id}">
+    <svg viewBox="0 0 16 16"><path d="M6 4l4 4-4 4"/></svg><span class="nm">${n.name}</span>
+    <span class="ct">${n.ganz ? "ganz" : `${f} von ${n.ab.length}`}</span></button></div>`;
+  h += `<div class="nbb" id="nbb-${n.id}" ${n.offen ? "" : "hidden"}>`;
+  h += sw("g-" + n.id, `Ganzes Notizbuch ${n.name} freigeben`, n.ganz, { desc: "gh-" + n.id });
+  h += n.ganz
+    ? `<div class="info" id="gh-${n.id}">Alle Abschnitte dieses Notizbuchs sind freigegeben, auch neue.</div>`
+    : `<div class="hint" id="gh-${n.id}">${DATENSCHUTZ}</div>`;
+  h += `<div role="group" aria-label="Abschnitte in ${n.name}">`;
+  h += n.ab.filter((a) => !a.gruppe).map((a) => abschnitt(n, a)).join("");
+  const gruppen = [...new Set(n.ab.filter((a) => a.gruppe).map((a) => a.gruppe))];
+  for (const g of gruppen) {
+    const liste = n.ab.filter((a) => a.gruppe === g);
+    h += `<div class="gh"><label class="cbx">${cb(`cb-g-${n.id}-${g}`, `Alle Abschnitte der Gruppe ${g} auswählen`, zustand(liste, n.ganz), `data-nbg="${n.id}" data-g="${g}" ${dis}`)}</label><span>${g}</span></div>`;
+    h += `<div class="gb" role="group" aria-label="Gruppe ${g}">${liste.map((a) => abschnitt(n, a)).join("")}</div>`;
+  }
+  return h + `</div></div></div>`;
+}
 
 function baum() {
   if (ansicht === "laden") return `<div class="sk" aria-hidden="true"></div><div class="sk" aria-hidden="true"></div><span class="sum" role="status">Gliederung wird gelesen …</span>`;
@@ -143,42 +192,59 @@ function baum() {
   const summe = NB.reduce((s, n) => s + frei(n), 0);
   const alle = NB.reduce((s, n) => s + n.ab.length, 0);
   let h = `<span class="sum" id="sum" role="status">${summe === 0 ? "Noch kein Abschnitt freigegeben: der Assistent liest nichts aus dem Notizbuch." : `${summe} von ${alle} Abschnitten freigegeben`}</span>`;
-  for (const n of NB) {
-    const f = frei(n);
-    h += `<div class="nb"><button class="nbh" aria-expanded="${n.offen}" aria-controls="nbb-${n.id}">
-      <svg viewBox="0 0 16 16"><path d="M6 4l4 4-4 4"/></svg><span class="nm">${n.name}</span>
-      <span class="ct">${n.ganz ? "ganz" : `${f} von ${n.ab.length}`}</span></button>`;
-    if (n.offen) {
-      h += `<div class="nbb" id="nbb-${n.id}">${sw("g-" + n.id, "Ganzes Notizbuch, auch künftige Abschnitte", n.ganz)}`;
-      h += `<div role="group" aria-label="Abschnitte in ${n.name}">`;
-      for (const a of n.ab) {
-        const an = n.ganz || a.an;
-        h += `<label class="ab${n.ganz ? " dis" : ""}"><input type="checkbox" ${an ? "checked" : ""} ${n.ganz ? "disabled" : ""}>
-          <span class="nm">${a.gruppe ? `<span class="gr">${a.gruppe} › </span>` : ""}${a.name}</span><span class="sz">${a.seiten} Seiten</span></label>`;
-      }
-      h += `</div>${n.ganz ? `<div class="info">Alle Abschnitte dieses Notizbuchs sind freigegeben, auch neue.</div>` : ""}</div>`;
-    }
-    h += `</div>`;
-  }
-  h += `<p class="sum">Der Assistent sieht nur diese Abschnitte: andere erscheinen weder in Antworten noch in Zahlen oder Rückfragen. Seiten im Papierkorb liest er nicht. Jede Antwort nennt die Seite als Quelle.</p>`;
-  return h;
+  h += NB.map(notizbuch).join("");
+  return h + `<p class="sum">Der Assistent sieht nur diese Abschnitte: andere erscheinen weder in Antworten noch in Zahlen oder Rückfragen. Seiten im Papierkorb liest er nicht. Jede Antwort nennt die Seite als Quelle.</p>`;
 }
 
 function render() {
+  const fid = document.activeElement && document.activeElement.id;
   let h = `<p>Was der Assistent im Gespräch nachschlagen darf. Standard: nichts.</p>`;
   h += BEREICHE.map((b, i) => zeile(i, b)).join("");
   h += `<div class="krow sep">${sw("nbsw", "Notizbuch", notizbuchAn, { desc: "nbh" })}<span class="hint" id="nbh">Seiten aus den Abschnitten, die du unten auswählst. Lesen, suchen und „was habe ich heute notiert“.</span></div>`;
-  if (notizbuchAn) h += `<div class="nest" role="group" aria-label="Freigegebene Notizbuch-Abschnitte">${baum()}</div>`;
-  document.getElementById("body").innerHTML = h;
+  if (notizbuchAn) h += `<div class="nest" role="group" aria-label="Freigegebene Notizbuch-Abschnitte" ${ansicht === "laden" ? 'aria-busy="true"' : ""}>${baum()}</div>`;
+  else h += `<div class="nest"><span class="sum" id="aus-info" role="status">Kein Zugriff; deine Auswahl bleibt gespeichert.</span></div>`;
+  const body = document.getElementById("tp-wissen");
+  body.innerHTML = h;
+  body.querySelectorAll("input[data-ind]").forEach((el) => { el.indeterminate = true; });
+  if (fid) { const el = document.getElementById(fid); if (el) el.focus(); }
 }
 render();
+
 document.addEventListener("click", (e) => {
   const s = e.target.closest(".sw");
-  if (s && s.id === "nbsw") { notizbuchAn = !notizbuchAn; render(); document.getElementById("nbsw").focus(); return; }
-  const g = e.target.closest(".sw[id^='g-']");
-  if (g) { const n = NB.find((x) => "g-" + x.id === g.id); n.ganz = !n.ganz; render(); document.getElementById(g.id).focus(); return; }
-  const k = e.target.closest(".nbh");
-  if (k) { const id = k.getAttribute("aria-controls").slice(4); const n = NB.find((x) => x.id === id); n.offen = !n.offen; render(); return; }
+  if (s && s.id === "nbsw") { notizbuchAn = !notizbuchAn; render(); return; }
+  if (s && s.id.startsWith("g-")) { const n = NB.find((x) => "g-" + x.id === s.id); n.ganz = !n.ganz; render(); return; }
+  const k = e.target.closest(".ak");
+  if (k) { const n = NB.find((x) => x.id === k.dataset.ak); n.offen = !n.offen; render(); }
+});
+document.addEventListener("change", (e) => {
+  const t = e.target;
+  if (!(t instanceof HTMLInputElement)) return;
+  if (t.dataset.a) { for (const n of NB) for (const a of n.ab) if (a.id === t.dataset.a) a.an = t.checked; }
+  else if (t.dataset.nb) { NB.find((n) => n.id === t.dataset.nb).ab.forEach((a) => { a.an = t.checked; }); }
+  else if (t.dataset.nbg) { NB.find((n) => n.id === t.dataset.nbg).ab.filter((a) => a.gruppe === t.dataset.g).forEach((a) => { a.an = t.checked; }); }
+  else return;
+  render();
+});
+
+const tabs = [...document.querySelectorAll('[role="tab"]')];
+function waehle(t, fokus) {
+  for (const x of tabs) {
+    const an = x === t;
+    x.setAttribute("aria-selected", an);
+    x.tabIndex = an ? 0 : -1;
+    document.getElementById(x.getAttribute("aria-controls")).hidden = !an;
+  }
+  if (fokus) t.focus();
+}
+tabs.forEach((t) => t.addEventListener("click", () => waehle(t, false)));
+document.querySelector('[role="tablist"]').addEventListener("keydown", (e) => {
+  const i = tabs.indexOf(document.activeElement);
+  if (i < 0) return;
+  const ziel = { ArrowRight: (i + 1) % tabs.length, ArrowLeft: (i + tabs.length - 1) % tabs.length, Home: 0, End: tabs.length - 1 }[e.key];
+  if (ziel === undefined) return;
+  e.preventDefault();
+  waehle(tabs[ziel], true);
 });
 </script>
 </body>
