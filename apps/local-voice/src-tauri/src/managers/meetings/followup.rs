@@ -36,6 +36,7 @@ use super::llm_call::{
 use super::mail::{draft_from_answer, MailDraft};
 use super::notes::enhance::{enhanced_to_markdown, single_pass_budget_chars};
 use super::notes::model::{NoteBlock, NoteBlockKind};
+use super::notizbuch::schutz as notizbuch_schutz;
 use super::store::MeetingStore;
 use crate::managers::provenance::generation::{record_generation, Fallback, Generation};
 use crate::managers::provenance::{ActorKind, SourceRef, SubjectKind};
@@ -116,8 +117,14 @@ fn render_own_notes(blocks: &[NoteBlock]) -> String {
         .join("\n")
 }
 
-/// Material aus dem Store. Nur lesend; eine fehlende Quelle bleibt leer.
-pub fn gather_sources(store: &MeetingStore, meeting_id: &str) -> Result<Sources, ChatError> {
+/// Material aus dem Store. Nur lesend; eine fehlende Quelle bleibt leer. `local`: der Anbieter
+/// ist lokal; sonst fehlen Notizbuch-Eintraege der KI-Notizen (lva#396 N4a,
+/// `notizbuch::schutz`).
+pub fn gather_sources(
+    store: &MeetingStore,
+    meeting_id: &str,
+    local: bool,
+) -> Result<Sources, ChatError> {
     let bundle = build_bundle(store, meeting_id).map_err(|e| {
         if e.starts_with("meeting_not_found") {
             ChatError::code_only(CODE_MEETING_NOT_FOUND)
@@ -129,8 +136,9 @@ pub fn gather_sources(store: &MeetingStore, meeting_id: &str) -> Result<Sources,
     let ai_notes = bundle
         .enhanced
         .as_ref()
+        .map(|n| notizbuch_schutz::fuer_modell(n, local))
         .filter(|n| n.sections.iter().any(|s| !s.entries.is_empty()))
-        .map(|n| enhanced_to_markdown(&bundle.meeting.title, n));
+        .map(|n| enhanced_to_markdown(&bundle.meeting.title, &n));
     let minutes = bundle.minutes_md.clone().filter(|m| !m.trim().is_empty());
     let segments = sorted_segments(&bundle.segments);
     let transcript = segments
@@ -420,10 +428,14 @@ async fn draft_captured(
     limits: RunLimits,
 ) -> Result<MailDraft, ChatError> {
     let started = std::time::Instant::now();
+    // Vor dem Lesen: ob Notizbuch-Eintraege der KI-Notizen ins Material duerfen (nur lokal).
+    let local_provider = resolve_provider_coded(settings)
+        .map(|(p, _, _)| crate::managers::llm::is_local(&p))
+        .unwrap_or(false);
     let sources = {
         let store = Arc::clone(&store);
         let id = meeting_id.to_string();
-        tokio::task::spawn_blocking(move || gather_sources(&store, &id))
+        tokio::task::spawn_blocking(move || gather_sources(&store, &id, local_provider))
             .await
             .map_err(|_| ChatError::new(CODE_STORE_FAILED, "join"))??
     };

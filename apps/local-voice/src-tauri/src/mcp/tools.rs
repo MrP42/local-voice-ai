@@ -737,6 +737,20 @@ fn get_meeting(args: &Value, backend: &Backend) -> Res<ToolOutcome> {
     };
     let meeting = ready_meeting(&store, id)?;
     let mut bundle = build_bundle(&store, id).map_err(|e| db_error(&e))?;
+    // lva#396 N4a: der MCP-Client ist ein Modell unbekannter Herkunft; Notizbuch-Eintraege der
+    // KI-Notizen und daraus abgeleitete Aufgaben gehen nicht hinaus.
+    {
+        use crate::managers::meetings::notizbuch::schutz;
+        bundle.action_items = schutz::aufgaben_fuer_modell(
+            std::mem::take(&mut bundle.action_items),
+            bundle.enhanced.as_ref(),
+            schutz::ANBIETER_UNBEKANNT,
+        );
+        bundle.enhanced = bundle
+            .enhanced
+            .take()
+            .map(|n| schutz::fuer_modell_besitz(n, schutz::ANBIETER_UNBEKANNT));
+    }
     bundle.participants = store
         .meeting_participant_rows(id)
         .map_err(|e| store_error(&e))?

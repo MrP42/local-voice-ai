@@ -15,16 +15,21 @@
 //! „Notizen unvollständig: <Titel>“ im Ergebnis.
 
 use std::collections::{BTreeMap, HashSet};
+use std::path::Path;
+use std::sync::Arc;
 
 use wai_notizbuch_zugang::{BlockArt, Freigabe, Seite, Zugang};
 
+use super::dienst::Sicht;
 use super::links::NoteLink;
 use super::verlust::{fehlende_bloecke, pruefbloecke_aus_seite};
 use super::zeit::{abbilden, blockzeit, Guete, Zeitachse};
 use crate::managers::meetings::notes::model::{
-    EnhanceStats, EnhancedEntry, EnhancedSection, EntryFlags, NoteBlock, NoteBlockKind, Origin,
-    SectionKind,
+    ActionItem, EnhanceStats, EnhancedEntry, EnhancedNotes, EnhancedSection, EntryFlags, NoteBlock,
+    NoteBlockKind, Origin, SectionKind, STATUS_DONE,
 };
+use crate::managers::meetings::store::MeetingStore;
+use crate::settings::AppSettings;
 
 /// Präfix der Kennung eines Notizbuch-Blocks in `NoteBlock.id` / `EnhancedEntry.note_id`.
 pub const PRAEFIX: &str = "nb:";
@@ -33,6 +38,8 @@ pub const WEITERE_ID: &str = "weitere_notizen";
 pub const WEITERE_TITEL: &str = "Weitere Notizen";
 /// Über dieser Textmenge (Bytes) gilt eine Seite als nicht vollständig lesbar (§5.4 M7).
 pub const MAX_SEITENTEXT: usize = 1024 * 1024;
+/// Anfang des Hinweises auf eine nicht vollständig lesbare Seite (danach der Seitentitel).
+pub const UNVOLLSTAENDIG_PRAEFIX: &str = "Notizen unvollständig: ";
 
 /// Herkunft eines Nutzerblocks in KI-Notizen und Protokoll.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -203,28 +210,117 @@ pub fn lesen(
     NotizbuchNotizen { seiten }
 }
 
-/// Notizbuch-Notizen einer Besprechung für einen Lauf; leer ohne Freigabe, ohne Zuordnung oder
-/// ohne Beginn der Aufnahme. Scheitert nie (die Besprechung geht ohne Notizbuch weiter).
-pub fn fuer_besprechung(
-    store: &crate::managers::meetings::store::MeetingStore,
-    settings: &crate::settings::AppSettings,
+/// Notizbuch-Notizen einer Besprechung mit gegebener Sicht (testbar ohne App); leer ohne Sicht,
+/// ohne Zuordnung oder ohne die Besprechung. Scheitert nie (die Besprechung geht ohne Notizbuch
+/// weiter).
+pub fn fuer_besprechung_mit(
+    store: &MeetingStore,
+    sicht: Option<(&Zugang, &Freigabe)>,
     meeting_id: &str,
 ) -> NotizbuchNotizen {
-    let links = match store.note_links(meeting_id) {
-        Ok(l) if l.iter().any(|l| l.art.ist_zugeordnet()) => l,
-        _ => return NotizbuchNotizen::default(),
-    };
-    let Some((zugang, freigabe)) = super::dienst::sicht_aus_einstellungen(settings) else {
+    let Some((zugang, freigabe)) = sicht else {
         return NotizbuchNotizen::default();
     };
-    let Ok(Some(m)) = store.get_meeting(meeting_id) else {
+    let Some(links) = zugeordnete_links(store, meeting_id) else {
         return NotizbuchNotizen::default();
     };
-    let achse = Zeitachse::neu(
+    let Some(achse) = achse_der_besprechung(store, meeting_id) else {
+        return NotizbuchNotizen::default();
+    };
+    lesen(zugang, freigabe, &links, &achse)
+}
+
+/// Zuordnungen mit mindestens einer zugeordneten Seite (sonst `None`: nichts zu lesen).
+fn zugeordnete_links(store: &MeetingStore, meeting_id: &str) -> Option<Vec<NoteLink>> {
+    match store.note_links(meeting_id) {
+        Ok(l) if l.iter().any(|l| l.art.ist_zugeordnet()) => Some(l),
+        _ => None,
+    }
+}
+
+fn achse_der_besprechung(store: &MeetingStore, meeting_id: &str) -> Option<Zeitachse> {
+    let m = store.get_meeting(meeting_id).ok()??;
+    Some(Zeitachse::neu(
         m.started_at.unwrap_or(0),
         m.duration_ms.map(|d| d as i64).unwrap_or(0),
-    );
-    lesen(&zugang, &freigabe, &links, &achse)
+    ))
+}
+
+/// Notizbuch-Notizen einer Besprechung für einen Lauf über die Ablage `pfad` (`None`: die der
+/// App, siehe [`super::dienst::ablage`]). Liest synchron; aus async-Code
+/// [`fuer_besprechung_nebenher`] nutzen.
+pub fn fuer_besprechung(
+    store: &MeetingStore,
+    settings: &AppSettings,
+    meeting_id: &str,
+    pfad: Option<&Path>,
+) -> NotizbuchNotizen {
+    // Ohne Zuordnung wird das Notizbuch gar nicht erst geöffnet.
+    if zugeordnete_links(store, meeting_id).is_none() {
+        return NotizbuchNotizen::default();
+    }
+    match super::dienst::sicht_mit(settings, pfad.or(super::dienst::ablage())) {
+        Sicht::Offen(z, f) => fuer_besprechung_mit(store, Some((&z, &f)), meeting_id),
+        Sicht::Aus | Sicht::Fehler => NotizbuchNotizen::default(),
+    }
+}
+
+/// Wie [`fuer_besprechung`], aber auf einem Blocking-Thread (`spawn_blocking`): Öffnen und Lesen
+/// des Notizbuchs (SQLite, bis 2 s Wartezeit bei Sperre) blockiert sonst die async-Laufzeit.
+pub async fn fuer_besprechung_nebenher(
+    store: Arc<MeetingStore>,
+    settings: &AppSettings,
+    meeting_id: &str,
+    pfad: Option<&Path>,
+) -> NotizbuchNotizen {
+    let Some(freigabe) = super::dienst::freigabe_aus_einstellungen(settings) else {
+        return NotizbuchNotizen::default();
+    };
+    let Some(pfad) = pfad.or(super::dienst::ablage()).map(Path::to_path_buf) else {
+        return NotizbuchNotizen::default();
+    };
+    let meeting_id = meeting_id.to_string();
+    tokio::task::spawn_blocking(move || {
+        if zugeordnete_links(&store, &meeting_id).is_none() {
+            return NotizbuchNotizen::default();
+        }
+        match Zugang::oeffnen(&pfad) {
+            Ok(z) => fuer_besprechung_mit(&store, Some((&z, &freigabe)), &meeting_id),
+            Err(_) => NotizbuchNotizen::default(),
+        }
+    })
+    .await
+    .unwrap_or_default()
+}
+
+/// Notizbuch-Aufgaben (`nb:`), die in den Aufgaben der Fassung `document_id` erledigt waren, als
+/// abgehakte Todo-Blöcke (nur Kennung und Stand, kein Text). Damit verliert eine neue Fassung
+/// (Anweisung, Handbearbeitung) den Erledigt-Stand nicht, auch wenn das Notizbuch gerade nicht
+/// lesbar ist.
+pub fn erledigte_aufgaben(
+    notes: &EnhancedNotes,
+    items: &[ActionItem],
+    document_id: &str,
+) -> Vec<NoteBlock> {
+    let erledigt: HashSet<&str> = items
+        .iter()
+        .filter(|i| i.status == STATUS_DONE && i.document_id.as_deref() == Some(document_id))
+        .filter_map(|i| i.entry_id.as_deref())
+        .collect();
+    notes
+        .sections
+        .iter()
+        .flat_map(|s| s.entries.iter())
+        .filter(|e| e.origin == Origin::User && erledigt.contains(e.id.as_str()))
+        .filter_map(|e| e.note_id.as_deref().filter(|id| ist_notizbuch_id(id)))
+        .map(|id| NoteBlock {
+            id: id.to_string(),
+            kind: NoteBlockKind::Todo,
+            text: String::new(),
+            at_ms: None,
+            checked: true,
+        })
+        .collect()
 }
 
 fn eintrag(origin: Origin, text: String, note_id: Option<String>) -> EnhancedEntry {
@@ -373,7 +469,7 @@ pub fn verlust_sichern(
             } else {
                 s.titel.clone()
             };
-            let text = format!("Notizen unvollständig: {titel}");
+            let text = format!("{UNVOLLSTAENDIG_PRAEFIX}{titel}");
             if !schon.contains(&text) {
                 sections[w].entries.push(eintrag(Origin::Ai, text, None));
             }

@@ -624,7 +624,13 @@ impl IndexerCore {
                 ChunkSource::UserNotes => drafts.extend(chunk_user_notes(&snap.blocks, &head)),
                 ChunkSource::AiNotes => {
                     if let Some((id, _, Some(notes))) = &snap.doc {
-                        drafts.extend(chunk_enhanced(id, notes, &head));
+                        // lva#396 N4a: der Index speist Chat, Assistent und MCP, deren Modell
+                        // hier unbekannt ist; Notizbuch-Eintraege kommen nicht hinein.
+                        let notes = crate::managers::meetings::notizbuch::schutz::fuer_modell(
+                            notes,
+                            crate::managers::meetings::notizbuch::schutz::ANBIETER_UNBEKANNT,
+                        );
+                        drafts.extend(chunk_enhanced(id, &notes, &head));
                     }
                 }
                 ChunkSource::Slide => {

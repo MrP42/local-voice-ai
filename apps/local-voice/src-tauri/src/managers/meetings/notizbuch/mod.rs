@@ -11,6 +11,7 @@
 //! - [`links`]: Speicher `meeting_note_links` im Besprechungs-Store (Migration Index 16)
 //! - [`dienst`]: `zuordnen(meeting_id)` über den lesenden Zugang, nur freigegebene Abschnitte
 //! - [`quelle`]: zugeordnete Seiten als zweite Notizquelle der KI-Notizen, Verlustprüfung
+//! - [`schutz`]: Notizbuch-Inhalt gespeicherter KI-Notizen nur an lokale Modelle
 //!
 //! Inhalte aus dem Notizbuch sind hier bloße Daten: Text wird nur gefaltet, gezählt und
 //! verglichen, nie interpretiert oder ausgeführt.
@@ -22,6 +23,7 @@ use wai_notizbuch_zugang::falte;
 pub mod dienst;
 pub mod links;
 pub mod quelle;
+pub mod schutz;
 pub mod verlust;
 pub mod zeit;
 pub mod zuordnung;
@@ -29,7 +31,7 @@ pub mod zuordnung;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
-mod verdrahtung_tests;
+pub(crate) mod verdrahtung_tests;
 
 #[allow(unused_imports)]
 pub use verlust::{

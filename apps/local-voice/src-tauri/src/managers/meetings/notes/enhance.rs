@@ -47,6 +47,7 @@ use crate::managers::meetings::llm_call::{
     MeetingHead, SemanticRetry,
 };
 use crate::managers::meetings::notizbuch::quelle as notizbuch_quelle;
+use crate::managers::meetings::notizbuch::schutz as notizbuch_schutz;
 use crate::managers::meetings::slides::prompt::{self as slide_prompt, LineStyle, SlideContext};
 use crate::managers::meetings::speakers::SpeakerDirectory;
 use crate::managers::meetings::store::{MeetingDocument, MeetingStore, StoredSegment};
@@ -250,6 +251,9 @@ struct RunLimits {
     /// Freier RAM in MB (0 = nicht messbar). Tests setzen 0: der reale Wert
     /// des Entwicklerrechners darf keinen Test kippen.
     free_mb: fn() -> u64,
+    /// lva#396 N4a: Notizbuch-Ablage; `None` = die der App (`notizbuch::dienst::ablage`).
+    /// Tests setzen hier ein synthetisches Notizbuch.
+    notizbuch_ablage: Option<&'static std::path::Path>,
 }
 
 impl Default for RunLimits {
@@ -258,6 +262,7 @@ impl Default for RunLimits {
             budget_chars: None,
             timeout: RUN_TIMEOUT,
             free_mb: crate::process_guard::available_ram_mb,
+            notizbuch_ablage: None,
         }
     }
 }
@@ -1636,6 +1641,40 @@ fn persist(
     Ok(document)
 }
 
+/// Notizquellen eines Laufs (lva#396 N4a).
+struct Notizquellen {
+    /// Bloecke, die das Modell sieht (`N<k>` = Position + 1).
+    prompt: Vec<NoteBlock>,
+    /// Alle Bloecke beider Quellen (Aufgaben-Stand beim Speichern).
+    alle: Vec<NoteBlock>,
+    notizbuch_im_prompt: bool,
+}
+
+/// Notizbuchinhalt ist persoenlich und geht wie beim Assistenten nur an ein lokales Modell
+/// (Spec §3.2); mit entferntem Anbieter sieht das Modell nur den Notizblock, und die
+/// Notizbuch-Bloecke landen ohne Modell in „Weitere Notizen“ (`verlust_sichern`).
+fn notizquellen(
+    notizblock: &[NoteBlock],
+    notizbuch: &notizbuch_quelle::NotizbuchNotizen,
+    local: bool,
+) -> Notizquellen {
+    let notizbuch_im_prompt = local && !notizbuch.ist_leer();
+    let mut prompt = notizblock.to_vec();
+    if notizbuch_im_prompt {
+        prompt.extend(notizbuch.note_blocks());
+    }
+    let alle = notizblock
+        .iter()
+        .cloned()
+        .chain(notizbuch.note_blocks())
+        .collect();
+    Notizquellen {
+        prompt,
+        alle,
+        notizbuch_im_prompt,
+    }
+}
+
 async fn run_enhance(
     settings: &AppSettings,
     store: Arc<MeetingStore>,
@@ -1678,19 +1717,17 @@ async fn run_enhance(
     }
     let notizblock = store.get_notes(meeting_id).map_err(store_err)?.blocks;
     // lva#396 N4a: zugeordnete Notizbuch-Seiten als zweite Notizquelle (nicht in `meeting_notes`
-    // kopiert). Notizbuchinhalt ist persoenlich und geht wie beim Assistenten nur an ein lokales
-    // Modell; mit entferntem Anbieter landen die Bloecke ohne Modell in „Weitere Notizen“.
-    let notizbuch = notizbuch_quelle::fuer_besprechung(&store, settings, meeting_id);
-    let notizbuch_im_prompt = local && !notizbuch.ist_leer();
-    let mut blocks = notizblock.clone();
-    if notizbuch_im_prompt {
-        blocks.extend(notizbuch.note_blocks());
-    }
-    let alle_bloecke: Vec<NoteBlock> = notizblock
-        .iter()
-        .cloned()
-        .chain(notizbuch.note_blocks())
-        .collect();
+    // kopiert), auf einem Blocking-Thread gelesen.
+    let notizbuch = notizbuch_quelle::fuer_besprechung_nebenher(
+        store.clone(),
+        settings,
+        meeting_id,
+        limits.notizbuch_ablage,
+    )
+    .await;
+    let quellen = notizquellen(&notizblock, &notizbuch, local);
+    let (blocks, alle_bloecke, notizbuch_im_prompt) =
+        (quellen.prompt, quellen.alle, quellen.notizbuch_im_prompt);
 
     let labels = SpeakerDirectory::load(&store, meeting_id);
     let resolved =
@@ -2114,6 +2151,12 @@ fn entries_block(notes: &EnhancedNotes) -> String {
     block
 }
 
+/// Eintragsblock der Anweisung: was das Modell von den gespeicherten Notizen sieht. Bei einem
+/// nicht lokalen Anbieter ohne Notizbuch-Eintraege (`notizbuch::schutz`).
+fn instruction_entries(stored: &EnhancedNotes, local: bool) -> String {
+    entries_block(&notizbuch_schutz::fuer_modell(stored, local))
+}
+
 /// Die zitierten Segmente plus je ein Nachbar (Reihenfolge des Transkripts).
 fn cited_excerpt(notes: &EnhancedNotes, segments: &[StoredSegment]) -> Vec<StoredSegment> {
     let cited: HashSet<u32> = notes
@@ -2231,7 +2274,9 @@ async fn run_instruction(
     let labels = SpeakerDirectory::load(&store, &meeting_id);
     let head = build_head_with(&meeting, &segments, &labels);
 
-    let entries = entries_block(&stored);
+    // lva#396 N4a: Notizbuch-Eintraege (`nb:`, Hinweise) nur fuer ein lokales Modell. Sie
+    // bleiben geschuetzt (`protected`) und kehren unveraendert an ihren Platz zurueck.
+    let entries = instruction_entries(&stored, local);
     let budget = match limits.budget_chars {
         Some(chars) => chars,
         None => single_pass_budget_chars(&model, local).await,
@@ -2277,8 +2322,9 @@ async fn run_instruction(
     .map_err(|e| classify_llm_error(e, (limits.free_mb)()))?;
 
     // Nutzertexte kommen ausschliesslich ueber `protected`; `notes` bleibt leer.
-    let (sections, mut stats) =
+    let (mut sections, mut stats) =
         assemble_with_slides(raw, &spec, &[], &protected, &segments, &cited_slides);
+    notizbuch_schutz::hinweise_uebernehmen(&stored, &mut sections);
     stats.single_pass = true;
     stats.chunks_total = 1;
     if total_entries(&sections) == 0 {
@@ -2307,7 +2353,22 @@ async fn run_instruction(
         "based_on": document_id,
         "instruction_chars": instruction_chars,
     });
-    let blocks = store.get_notes(&meeting_id).map_err(store_err)?.blocks;
+    // Aufgaben-Stand: Notizblock, aktueller Stand des Notizbuchs und - falls es nicht lesbar
+    // ist - die erledigten Notizbuch-Aufgaben der Vorversion.
+    let mut blocks = store.get_notes(&meeting_id).map_err(store_err)?.blocks;
+    let notizbuch = notizbuch_quelle::fuer_besprechung_nebenher(
+        store.clone(),
+        settings,
+        &meeting_id,
+        limits.notizbuch_ablage,
+    )
+    .await;
+    blocks.extend(notizbuch.note_blocks());
+    blocks.extend(notizbuch_quelle::erledigte_aufgaben(
+        &stored,
+        &store.list_action_items(&meeting_id).unwrap_or_default(),
+        document_id,
+    ));
     persist(&store, &meeting_id, &notes, &blocks, metadata)
 }
 
@@ -2594,6 +2655,7 @@ fn refresh_action_items(
     meeting_id: &str,
     document_id: &str,
     notes: &EnhancedNotes,
+    previous: &EnhancedNotes,
 ) {
     let latest = store.get_documents(meeting_id).ok().and_then(|docs| {
         docs.into_iter()
@@ -2603,10 +2665,17 @@ fn refresh_action_items(
     if latest.is_none_or(|d| d.id != document_id) {
         return;
     }
-    let blocks = store
+    let mut blocks = store
         .get_notes(meeting_id)
         .map(|n| n.blocks)
         .unwrap_or_default();
+    // lva#396 N4a: Notizbuch-Aufgaben behalten ihren Erledigt-Stand (Eintrags-IDs der Fassung
+    // vor der Bearbeitung).
+    blocks.extend(notizbuch_quelle::erledigte_aufgaben(
+        previous,
+        &store.list_action_items(meeting_id).unwrap_or_default(),
+        document_id,
+    ));
     if let Err(e) =
         store.replace_action_items(meeting_id, document_id, &action_items_from(notes, &blocks))
     {
@@ -2639,7 +2708,7 @@ pub fn update_enhanced(
     let stamp = store
         .update_document_body(document_id, &body, expected_updated_at)
         .map_err(|e| store_err(e).to_string())?;
-    refresh_action_items(store, &document.meeting_id, document_id, &merged);
+    refresh_action_items(store, &document.meeting_id, document_id, &merged, &stored);
     Ok(stamp)
 }
 
@@ -2685,13 +2754,34 @@ pub fn restore_relabeled(
 
 /// Markdown einer KI-Notizen-Version; erledigte Aufgaben abgehakt.
 pub fn markdown_for(store: &MeetingStore, document_id: &str) -> Result<String, String> {
+    markdown_for_with(store, document_id, true)
+}
+
+/// Wie [`markdown_for`], als Text fuer ein Modell: bei `local = false` ohne
+/// Notizbuch-Eintraege (`notizbuch::schutz`).
+pub fn markdown_for_model(
+    store: &MeetingStore,
+    document_id: &str,
+    local: bool,
+) -> Result<String, String> {
+    markdown_for_with(store, document_id, local)
+}
+
+fn markdown_for_with(
+    store: &MeetingStore,
+    document_id: &str,
+    local: bool,
+) -> Result<String, String> {
     let document = store
         .get_document(document_id)
         .map_err(|e| store_err(e).to_string())?
         .ok_or_else(|| EnhanceError::code_only("document_not_found").to_string())?;
     let document =
         super::super::relabel::Relabeler::load(store, &document.meeting_id).document(document);
-    let notes = parse_enhanced(&document).map_err(String::from)?;
+    let notes = notizbuch_schutz::fuer_modell_besitz(
+        parse_enhanced(&document).map_err(String::from)?,
+        local,
+    );
     let title = store
         .get_meeting(&document.meeting_id)
         .map_err(|e| store_err(e).to_string())?
@@ -2709,6 +2799,8 @@ pub fn markdown_for(store: &MeetingStore, document_id: &str) -> Result<String, S
     Ok(enhanced_to_markdown_with_done(&title, &notes, &done))
 }
 
+#[cfg(test)]
+mod notizbuch_tests;
 #[cfg(test)]
 mod slides_tests;
 
@@ -2793,6 +2885,7 @@ mod tests {
             budget_chars: budget,
             timeout: Duration::from_secs(30),
             free_mb: || 0, // nicht messbar: blockiert nie
+            notizbuch_ablage: None,
         }
     }
 

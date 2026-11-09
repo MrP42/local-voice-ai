@@ -853,11 +853,19 @@ impl Action for Summarize {
                         crate::managers::meetings::minutes::render_transcript_for_prompt(&segments)
                     }
                     _ => {
-                        let bundle = export::build_bundle(&store, &id).map_err(|e| {
+                        let mut bundle = export::build_bundle(&store, &id).map_err(|e| {
                             StepError::Transient(format!(
                                 "Die Besprechung ließ sich nicht lesen ({e})."
                             ))
                         })?;
+                        // lva#396 N4a: der Text geht an ein Modell, dessen Anbieter dieser
+                        // Schritt nicht kennt: ohne Notizbuch-Eintraege der KI-Notizen.
+                        bundle.enhanced = bundle.enhanced.map(|n| {
+                            crate::managers::meetings::notizbuch::schutz::fuer_modell_besitz(
+                                n,
+                                crate::managers::meetings::notizbuch::schutz::ANBIETER_UNBEKANNT,
+                            )
+                        });
                         let have = if source == "minutes" {
                             bundle.minutes_md.is_some()
                         } else {

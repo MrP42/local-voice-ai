@@ -10,7 +10,7 @@
 //! weder Zahl noch Rückgabe (M1). Log nur mit Zählern, nie mit Inhalten.
 
 use std::collections::{BTreeSet, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use anyhow::{anyhow, Result};
@@ -41,9 +41,14 @@ pub fn ablage_merken(pfad: Option<PathBuf>) {
     let _ = ABLAGE.set(pfad);
 }
 
-/// Zugang und Freigabe aus den Einstellungen; `None`, wenn der Bereich „Notizbuch“ aus ist, keine
-/// Abschnitte freigegeben sind oder kein Notizbuch lesbar ist.
-pub fn sicht_aus_einstellungen(settings: &AppSettings) -> Option<(Zugang, Freigabe)> {
+/// Pfad der Notizbuch-Ablage der App (`None`: keine, z. B. portable Fassung oder Tests).
+pub fn ablage() -> Option<&'static Path> {
+    ABLAGE.get()?.as_deref()
+}
+
+/// Freigabe aus den Einstellungen, ohne IO; `None`, wenn der Bereich „Notizbuch“ aus ist oder
+/// keine Abschnitte freigegeben sind.
+pub fn freigabe_aus_einstellungen(settings: &AppSettings) -> Option<Freigabe> {
     use crate::agent_bridge::voice::areas::{Area, Areas};
     let areas = Areas::from_settings(
         &settings.voice_call_knowledge,
@@ -55,11 +60,41 @@ pub fn sicht_aus_einstellungen(settings: &AppSettings) -> Option<(Zugang, Freiga
     let freigabe = crate::agent_bridge::voice::knowledge::notizbuch::freigabe_aus_einstellung(
         &settings.voice_call_notebook_sections,
     );
-    if freigabe.ist_leer() {
-        return None;
+    (!freigabe.ist_leer()).then_some(freigabe)
+}
+
+/// Sicht auf das Notizbuch für einen Lauf.
+pub enum Sicht {
+    /// Bereich „Notizbuch“ aus oder nichts freigegeben: es gibt bewusst nichts zu sehen.
+    Aus,
+    /// Freigegeben, aber das Notizbuch fehlt, ist gesperrt oder nicht lesbar. Wer hier schreibt,
+    /// würde Zuordnungen aus Unwissen verwerfen; darum ändert dann niemand etwas.
+    Fehler,
+    /// Lesbar, mit Freigabe.
+    Offen(Zugang, Freigabe),
+}
+
+/// Sicht aus den Einstellungen über die Ablage `pfad` (testbar ohne den globalen Pfad).
+pub fn sicht_mit(settings: &AppSettings, pfad: Option<&Path>) -> Sicht {
+    let Some(freigabe) = freigabe_aus_einstellungen(settings) else {
+        return Sicht::Aus;
+    };
+    let Some(pfad) = pfad else {
+        return Sicht::Fehler;
+    };
+    match Zugang::oeffnen(pfad) {
+        Ok(z) => Sicht::Offen(z, freigabe),
+        Err(_) => Sicht::Fehler,
     }
-    let pfad = ABLAGE.get()?.as_ref()?;
-    Zugang::oeffnen(pfad).ok().map(|z| (z, freigabe))
+}
+
+/// Zugang und Freigabe aus den Einstellungen über die Ablage der App; `None`, wenn der Bereich
+/// „Notizbuch“ aus ist, keine Abschnitte freigegeben sind oder kein Notizbuch lesbar ist.
+pub fn sicht_aus_einstellungen(settings: &AppSettings) -> Option<(Zugang, Freigabe)> {
+    match sicht_mit(settings, ablage()) {
+        Sicht::Offen(z, f) => Some((z, f)),
+        Sicht::Aus | Sicht::Fehler => None,
+    }
 }
 
 /// Eine sichtbare Zuordnung dieses Laufs (für Aufrufer und Tests).
@@ -153,19 +188,21 @@ fn iso(ms: i64) -> Option<String> {
 
 /// Seiten, die im Fenster angelegt oder seit Fensterbeginn geändert wurden – nur sichtbare.
 /// Eine Seite mit einer Blockzeit im Fenster wurde frühestens zu dieser Zeit geändert; daher
-/// genügt „geändert seit Fensterbeginn“ als Obermenge.
-fn kandidaten_ids(zugang: &Zugang, freigabe: &Freigabe, achse: &Zeitachse) -> Vec<String> {
+/// genügt „geändert seit Fensterbeginn“ als Obermenge. Ein Lesefehler bricht ab (kein
+/// Teilergebnis, das bestehende Zuordnungen verdrängen würde).
+fn kandidaten_ids(zugang: &Zugang, freigabe: &Freigabe, achse: &Zeitachse) -> Result<Vec<String>> {
     let (von, bis) = achse.fenster();
     let (Some(von), Some(bis)) = (iso(von), iso(bis)) else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
     let mut ids: BTreeSet<String> = BTreeSet::new();
     for ende in [bis.as_str(), OFFENES_ENDE] {
-        if let Ok(koepfe) = zugang.zeitraum(&von, ende, MAX_KANDIDATEN, freigabe) {
-            ids.extend(koepfe.into_iter().map(|k| k.id));
-        }
+        let koepfe = zugang
+            .zeitraum(&von, ende, MAX_KANDIDATEN, freigabe)
+            .map_err(|e| anyhow!("notizbuch_nicht_lesbar: {e}"))?;
+        ids.extend(koepfe.into_iter().map(|k| k.id));
     }
-    ids.into_iter().collect()
+    Ok(ids.into_iter().collect())
 }
 
 /// Zuordnungsgründe als JSON (für die Anzeige „Zeit, gemeinsame Begriffe, Link“).
@@ -198,6 +235,10 @@ pub fn gruende_json(gruende: &[Grund]) -> String {
 /// Kern des Dienstes mit gegebener Sicht (testbar ohne App). `sicht = None` heißt: nichts
 /// freigegeben → keine Kandidaten; vorhandene automatische Zeilen werden entfernt, Zeilen des
 /// Nutzers bleiben.
+///
+/// Scheitert das Lesen des Notizbuchs (gesperrt, Stand, Zeitraum oder Seite nicht lesbar), wird
+/// nichts geschrieben und nichts gelöscht; der Fehler geht an den Aufrufer, bestehende
+/// Zuordnungen bleiben stehen.
 pub fn zuordnen_mit(
     store: &MeetingStore,
     meeting_id: &str,
@@ -227,15 +268,16 @@ pub fn zuordnen_mit(
     }
     let besp = daten.als_besprechung();
     let achse = besp.zeitachse();
-    let stand = zugang.stand(freigabe).unwrap_or_default();
+    let nicht_lesbar = |e: wai_notizbuch_zugang::Fehler| anyhow!("notizbuch_nicht_lesbar: {e}");
+    let stand = zugang.stand(freigabe).map_err(nicht_lesbar)?;
 
     let mut neu: Vec<AutoLink> = Vec::new();
-    for id in kandidaten_ids(zugang, freigabe, &achse) {
+    for id in kandidaten_ids(zugang, freigabe, &achse)? {
         if bestaetigt.contains(id.as_str()) || geloest.contains(&id) {
             continue;
         }
         // Erneut über die Freigabe lesen: was nicht sichtbar ist, kommt nicht vor.
-        let Ok(Some(seite)) = zugang.seite(&id, freigabe) else {
+        let Some(seite) = zugang.seite(&id, freigabe).map_err(nicht_lesbar)? else {
             continue;
         };
         let k = Kandidat {
@@ -272,12 +314,26 @@ pub fn zuordnen_mit(
         .collect())
 }
 
+/// Dienst mit Sicht aus den Einstellungen über die Ablage `pfad`. Fehlt das Notizbuch oder ist
+/// es gesperrt bzw. nicht lesbar, bleibt alles unverändert (Fehler `notizbuch_nicht_lesbar`).
+pub fn zuordnen_ueber(
+    store: &MeetingStore,
+    settings: &AppSettings,
+    meeting_id: &str,
+    pfad: Option<&Path>,
+) -> Result<Vec<Zuordnung>> {
+    match sicht_mit(settings, pfad) {
+        Sicht::Aus => zuordnen_mit(store, meeting_id, None),
+        Sicht::Fehler => Err(anyhow!("notizbuch_nicht_lesbar")),
+        Sicht::Offen(z, f) => zuordnen_mit(store, meeting_id, Some((&z, &f))),
+    }
+}
+
 /// Dienst für die App: Sicht aus den Einstellungen (Bereich „Notizbuch“, Abschnittsfreigabe).
 pub fn zuordnen(
     store: &MeetingStore,
     settings: &AppSettings,
     meeting_id: &str,
 ) -> Result<Vec<Zuordnung>> {
-    let sicht = sicht_aus_einstellungen(settings);
-    zuordnen_mit(store, meeting_id, sicht.as_ref().map(|(z, f)| (z, f)))
+    zuordnen_ueber(store, settings, meeting_id, ablage())
 }

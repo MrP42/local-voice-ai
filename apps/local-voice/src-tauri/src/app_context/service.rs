@@ -358,7 +358,13 @@ fn meeting_doc(
         .filter(|d| d.kind == "enhanced_notes")
         .next_back()
     {
-        if let Ok(md) = crate::managers::meetings::notes::enhance::markdown_for(&store, &doc.id) {
+        // lva#396 N4a: der Index speist den Assistenten, dessen Modell hier unbekannt ist; ohne
+        // Notizbuch-Eintraege der KI-Notizen.
+        if let Ok(md) = crate::managers::meetings::notes::enhance::markdown_for_model(
+            store,
+            &doc.id,
+            crate::managers::meetings::notizbuch::schutz::ANBIETER_UNBEKANNT,
+        ) {
             text.push_str(&md);
         }
     }

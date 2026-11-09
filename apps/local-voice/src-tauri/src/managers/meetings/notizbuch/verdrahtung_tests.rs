@@ -10,7 +10,7 @@ use rusqlite_migration::Migrations;
 use serde_json::{json, Value};
 use wai_notizbuch_zugang::{falte, Freigabe, Zugang};
 
-use super::dienst::{zuordnen_mit, TOR_BESTANDEN};
+use super::dienst::{zuordnen_mit, zuordnen_ueber, TOR_BESTANDEN};
 use super::links::{AutoLink, LinkArt, NOTE_LINKS_MIGRATION};
 use super::quelle::{
     bloecke_aus_seite, lesen, verlust_sichern, NoteSource, NotizbuchNotizen, MAX_SEITENTEXT,
@@ -24,8 +24,8 @@ use crate::managers::meetings::notes::model::{
 use crate::managers::meetings::store::{MeetingSource, MeetingStore, StoredSegment, MIGRATIONS};
 
 /// Beginn der synthetischen Besprechung: 2026-11-05T09:00:00Z.
-const T0: i64 = 1_793_955_600;
-const DAUER_MS: i64 = 60 * 60_000;
+pub(crate) const T0: i64 = 1_793_955_600;
+pub(crate) const DAUER_MS: i64 = 60 * 60_000;
 
 fn iso(min: i64) -> String {
     chrono::DateTime::from_timestamp(T0 + min * 60, 0)
@@ -38,14 +38,14 @@ fn iso(min: i64) -> String {
 // Synthetische Notizbuch-Ablage (Schema des Notizbuch-Hosts, Migrationen 1 bis 3)
 // ---------------------------------------------------------------------------
 
-struct Ablage {
+pub(crate) struct Ablage {
     _dir: tempfile::TempDir,
-    pfad: PathBuf,
-    conn: Connection,
+    pub(crate) pfad: PathBuf,
+    pub(crate) conn: Connection,
 }
 
 impl Ablage {
-    fn neu() -> Self {
+    pub(crate) fn neu() -> Self {
         let dir = tempfile::tempdir().unwrap();
         let pfad = dir.path().join("notizbuch.db");
         let conn = Connection::open(&pfad).unwrap();
@@ -76,7 +76,7 @@ impl Ablage {
         a
     }
 
-    fn satz(&self, art: &str, v: Value) {
+    pub(crate) fn satz(&self, art: &str, v: Value) {
         let id = v["id"].as_str().unwrap().to_string();
         self.conn
             .execute(
@@ -87,7 +87,7 @@ impl Ablage {
     }
 
     /// Seite mit Blöcken `(bid, text, minute_nach_beginn)`; optional eine Aufgabe (erledigt).
-    fn seite(
+    pub(crate) fn seite(
         &self,
         id: &str,
         abschnitt: &str,
@@ -140,13 +140,13 @@ impl Ablage {
             .unwrap();
     }
 
-    fn zugang(&self) -> Zugang {
+    pub(crate) fn zugang(&self) -> Zugang {
         Zugang::oeffnen(&self.pfad).unwrap()
     }
 }
 
 /// Seiten: s1 (freigegeben, passt), s2 (freigegeben, Tage vorher), s3 (verborgen, passt genauso).
-fn ablage_mit_seiten() -> Ablage {
+pub(crate) fn ablage_mit_seiten() -> Ablage {
     let a = Ablage::neu();
     let passend: [(&str, &str, i64); 3] = [
         ("b1", "Budget Migration Frankfurt 120000 Euro", 3),
@@ -171,7 +171,7 @@ fn ablage_mit_seiten() -> Ablage {
     a
 }
 
-fn nur_arbeit() -> Freigabe {
+pub(crate) fn nur_arbeit() -> Freigabe {
     Freigabe::default().notizbuch("nb1")
 }
 
@@ -179,7 +179,7 @@ fn nur_arbeit() -> Freigabe {
 // Besprechungs-Store
 // ---------------------------------------------------------------------------
 
-fn tmp_store() -> (tempfile::TempDir, MeetingStore) {
+pub(crate) fn tmp_store() -> (tempfile::TempDir, MeetingStore) {
     let dir = tempfile::tempdir().unwrap();
     let s = MeetingStore::open_at(&dir.path().join("meetings.db")).unwrap();
     (dir, s)
@@ -198,7 +198,7 @@ fn segment(i: u32, start_min: u64, ende_min: u64, text: &str) -> StoredSegment {
 }
 
 /// Fertige Besprechung mit Beginn T0, einer Stunde Dauer und Transkript.
-fn besprechung(s: &MeetingStore) -> String {
+pub(crate) fn besprechung(s: &MeetingStore) -> String {
     let m = s
         .create_meeting("Jour fixe", MeetingSource::Live, Some(1))
         .unwrap();
@@ -485,6 +485,53 @@ fn bereich_aus_ergibt_nichts_und_raeumt_vorschlaege_ab() {
         vec![LinkArt::Bestaetigt],
         "nur die Nutzerzeile bleibt"
     );
+}
+
+fn einstellungen_arbeit() -> crate::settings::AppSettings {
+    let mut s = crate::settings::get_default_settings();
+    s.voice_call_knowledge = vec!["notebook".into()];
+    s.voice_call_notebook_sections = vec!["notizbuch:nb1".into()];
+    s
+}
+
+#[test]
+fn fehlt_oder_scheitert_das_notizbuch_bleiben_die_zuordnungen_stehen() {
+    let a = ablage_mit_seiten();
+    let (_d, s) = tmp_store();
+    let m = besprechung(&s);
+    let einst = einstellungen_arbeit();
+    // Über die Einstellungen und den Pfad: ein Vorschlag (s1) entsteht.
+    let r = zuordnen_ueber(&s, &einst, &m, Some(&a.pfad)).unwrap();
+    assert_eq!(r.len(), 1);
+    s.note_link_setzen(&m, "s2", LinkArt::Geloest, "").unwrap();
+    let vorher = s.note_links(&m).unwrap();
+    assert_eq!(vorher.len(), 2);
+
+    // Notizbuch fehlt: Fehler, nichts geschrieben oder gelöscht.
+    let fehlt = a.pfad.with_file_name("fehlt.db");
+    assert!(zuordnen_ueber(&s, &einst, &m, Some(&fehlt)).is_err());
+    assert!(zuordnen_ueber(&s, &einst, &m, None).is_err());
+    assert_eq!(s.note_links(&m).unwrap(), vorher);
+
+    // Lesefehler mitten im Lauf (Zeitraum/Stand nicht lesbar): nichts geschrieben.
+    let z = a.zugang();
+    a.conn.execute_batch("DROP TABLE saetze;").unwrap();
+    assert!(zuordnen_mit(&s, &m, Some((&z, &nur_arbeit()))).is_err());
+    assert_eq!(s.note_links(&m).unwrap(), vorher);
+
+    // Bereich aus: bewusst nichts sichtbar, Vorschläge werden abgeräumt (wie bisher).
+    let mut aus = einst.clone();
+    aus.voice_call_knowledge.clear();
+    assert!(zuordnen_ueber(&s, &aus, &m, Some(&fehlt))
+        .unwrap()
+        .is_empty());
+    let arten: Vec<LinkArt> = s
+        .note_links(&m)
+        .unwrap()
+        .into_iter()
+        .map(|l| l.art)
+        .collect();
+    assert_eq!(arten, vec![LinkArt::Geloest]);
 }
 
 // ---------------------------------------------------------------------------

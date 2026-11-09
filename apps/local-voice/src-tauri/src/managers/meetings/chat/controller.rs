@@ -38,6 +38,7 @@ use crate::managers::meetings::llm_call::{
 };
 use crate::managers::meetings::notes::enhance::{parse_enhanced, DOC_KIND};
 use crate::managers::meetings::notes::model::EnhancedNotes;
+use crate::managers::meetings::notizbuch::schutz as notizbuch_schutz;
 use crate::managers::meetings::search::chunking::TARGET_CHARS;
 use crate::managers::meetings::search::hybrid::{hybrid_search, EmbedError, EmbedKind, Embedder};
 use crate::managers::meetings::search::index::{ChatMessageRow, STATUS_LEXICAL, STATUS_READY};
@@ -329,6 +330,7 @@ pub async fn ask(
                 &question,
                 budget,
                 &previous_chunks,
+                local,
             )
             .await?
         }
@@ -340,6 +342,7 @@ pub async fn ask(
                 &question,
                 budget,
                 &previous_chunks,
+                local,
             )
             .await?
         }
@@ -561,14 +564,18 @@ fn meeting_ref(store: &MeetingStore, id: &str) -> Option<MeetingRef> {
     })
 }
 
-fn latest_enhanced(store: &MeetingStore, meeting_id: &str) -> Option<EnhancedNotes> {
+/// Juengste KI-Notizen, wie das Chat-Modell sie sehen darf: bei einem nicht lokalen Anbieter
+/// ohne Notizbuch-Eintraege (lva#396 N4a, `notizbuch::schutz`).
+fn latest_enhanced(store: &MeetingStore, meeting_id: &str, local: bool) -> Option<EnhancedNotes> {
     let doc = store
         .get_documents(meeting_id)
         .ok()?
         .into_iter()
         .filter(|d| d.kind == DOC_KIND)
         .max_by_key(|d| d.version)?;
-    parse_enhanced(&doc).ok()
+    parse_enhanced(&doc)
+        .ok()
+        .map(|n| notizbuch_schutz::fuer_modell_besitz(n, local))
 }
 
 fn folder_names(
@@ -603,10 +610,11 @@ fn card_for(
     store: &MeetingStore,
     meeting: MeetingRef,
     folders: &HashMap<String, String>,
+    local: bool,
 ) -> MeetingCard {
     let summary = [
         description_part(store, &meeting.id),
-        latest_enhanced(store, &meeting.id)
+        latest_enhanced(store, &meeting.id, local)
             .map(|n| card_summary(&n))
             .unwrap_or_default(),
     ]
@@ -644,6 +652,7 @@ async fn meeting_plan(
     question: &str,
     budget: usize,
     previous: &[i64],
+    local: bool,
 ) -> Result<ExcerptPlan, ChatError> {
     let meeting = meeting_ref(store, meeting_id)
         .ok_or_else(|| ChatError::code_only(CODE_MEETING_NOT_FOUND))?;
@@ -656,7 +665,7 @@ async fn meeting_plan(
     };
     let segments = store.get_segments(meeting_id).map_err(store_err)?;
     let epoch = store.segment_epoch(meeting_id).map_err(store_err)?;
-    let mut overview = latest_enhanced(store, meeting_id)
+    let mut overview = latest_enhanced(store, meeting_id, local)
         .map(|n| enhanced_excerpts(&meeting, &n))
         .unwrap_or_default();
     overview.extend(notes_excerpts(&meeting, &notes, TARGET_CHARS));
@@ -676,7 +685,7 @@ async fn meeting_plan(
         .collect();
     let mut plan = ExcerptPlan {
         meetings_in_scope: 1,
-        cards: vec![card_for(store, meeting.clone(), &folders)],
+        cards: vec![card_for(store, meeting.clone(), &folders, local)],
         ..ExcerptPlan::default()
     };
     let budget = budget.saturating_sub(cards_cost(&plan.cards));
@@ -830,6 +839,7 @@ async fn global_plan(
     question: &str,
     budget: usize,
     previous: &[i64],
+    local: bool,
 ) -> Result<ExcerptPlan, ChatError> {
     let ids = store.resolve_scope(filter).map_err(store_err)?;
     if ids.is_empty() {
@@ -922,7 +932,7 @@ async fn global_plan(
                 .flatten()
                 .or_else(|| meeting_ref(store, id))
         })
-        .map(|m| card_for(store, m, &folders))
+        .map(|m| card_for(store, m, &folders, local))
         .collect();
     let left = budget.saturating_sub(total_cost(&prefix) + cards_cost(&cards));
 
@@ -979,7 +989,7 @@ mod tests {
         let m = ready_meeting(&store, "Kick-off", 1_750_000_000);
         let reference = || meeting_ref(&store, &m.id).unwrap();
         let folders = HashMap::new();
-        let plain = card_line(&card_for(&store, reference(), &folders));
+        let plain = card_line(&card_for(&store, reference(), &folders, false));
         assert!(!plain.contains("Beschreibung"), "{plain}");
         store
             .update_metadata(
@@ -990,7 +1000,7 @@ mod tests {
                 },
             )
             .unwrap();
-        let line = card_line(&card_for(&store, reference(), &folders));
+        let line = card_line(&card_for(&store, reference(), &folders, false));
         assert!(
             line.contains("Beschreibung: Angebot Nordlicht mit dem Vertrieb"),
             "{line}"
@@ -1466,6 +1476,7 @@ mod tests {
             "Liefertermin Turbine",
             3_000,
             &[],
+            false,
         )
         .await
         .unwrap();
@@ -1510,7 +1521,7 @@ mod tests {
             &m,
             &texts.iter().map(|(t, _)| t.as_str()).collect::<Vec<_>>(),
         );
-        let plan = meeting_plan(&store, &LexicalOnly, &m.id, "Turbine", 4_000, &[])
+        let plan = meeting_plan(&store, &LexicalOnly, &m.id, "Turbine", 4_000, &[], false)
             .await
             .unwrap();
         let chunk_ids: Vec<i64> = plan.primary.iter().filter_map(|e| e.chunk_id).collect();
@@ -2097,5 +2108,137 @@ mod tests {
                 m.id.as_str()
             )
         );
+    }
+
+    // ---- lva#396 N4a: Notizbuch-Text nur an lokale Modelle ----------------------
+
+    /// Besprechung mit gespeicherten KI-Notizen, deren „Weitere Notizen“ die Bloecke der
+    /// zugeordneten Seite s1 aus einem synthetischen Notizbuch tragen (wie nach einem Lauf).
+    fn meeting_with_notebook_notes(
+        store: &MeetingStore,
+    ) -> (
+        Meeting,
+        crate::managers::meetings::notizbuch::verdrahtung_tests::Ablage,
+    ) {
+        use crate::managers::meetings::notes::enhance::DOC_FORMAT;
+        use crate::managers::meetings::notes::model::{
+            EnhanceStats, EnhancedEntry, EnhancedSection, Origin, SectionKind,
+        };
+        use crate::managers::meetings::notizbuch::links::LinkArt;
+        use crate::managers::meetings::notizbuch::quelle::{fuer_besprechung_mit, verlust_sichern};
+        use crate::managers::meetings::notizbuch::verdrahtung_tests::{
+            ablage_mit_seiten, nur_arbeit,
+        };
+        let ablage = ablage_mit_seiten();
+        let m = ready_meeting(store, "Jour fixe", 1_793_955_600);
+        segments(store, &m, &["Wir besprechen den Stand.", "Danke."]);
+        store
+            .note_link_setzen(&m.id, "s1", LinkArt::Bestaetigt, "")
+            .unwrap();
+        let z = ablage.zugang();
+        let nb = fuer_besprechung_mit(store, Some((&z, &nur_arbeit())), &m.id);
+        assert_eq!(nb.seiten.len(), 1);
+        let mut sections = vec![EnhancedSection {
+            id: "zusammenfassung".into(),
+            title: "Zusammenfassung".into(),
+            kind: SectionKind::Text,
+            entries: vec![EnhancedEntry {
+                id: "E1".into(),
+                origin: Origin::Ai,
+                text: "Der Stand wurde besprochen.".into(),
+                note_id: None,
+                source_segment_ids: vec![0],
+                source_slide_ids: vec![],
+                assignee: None,
+                due: None,
+                flags: Default::default(),
+            }],
+        }];
+        let mut stats = EnhanceStats::default();
+        verlust_sichern(&mut sections, &mut stats, &[], &nb);
+        let notes = EnhancedNotes {
+            format: DOC_FORMAT.into(),
+            template_id: None,
+            template_title: String::new(),
+            segment_epoch: store.segment_epoch(&m.id).unwrap(),
+            sections,
+            stats,
+        };
+        store
+            .insert_document(
+                &m.id,
+                DOC_KIND,
+                DOC_FORMAT,
+                &serde_json::to_string(&notes).unwrap(),
+                None,
+                None,
+            )
+            .unwrap();
+        (m, ablage)
+    }
+
+    const NOTEBOOK_TEXTS: [&str; 3] = [
+        "Budget Migration Frankfurt",
+        "Rollout Server Dezember abschalten",
+        "kontakt@example.org",
+    ];
+
+    fn plan_text(plan: &ExcerptPlan) -> String {
+        plan.primary
+            .iter()
+            .flat_map(|e| e.lines.iter().map(|l| l.text.clone()))
+            .chain(plan.cards.iter().map(card_line))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[tokio::test]
+    async fn the_meeting_excerpts_carry_notebook_text_only_for_a_local_model() {
+        let (_dir, store) = tmp_store();
+        let (m, _ablage) = meeting_with_notebook_notes(&store);
+        let cloud = plan_text(
+            &meeting_plan(&store, &LexicalOnly, &m.id, "Budget", 8_000, &[], false)
+                .await
+                .unwrap(),
+        );
+        let local = plan_text(
+            &meeting_plan(&store, &LexicalOnly, &m.id, "Budget", 8_000, &[], true)
+                .await
+                .unwrap(),
+        );
+        assert!(cloud.contains("Der Stand wurde besprochen."), "{cloud}");
+        for t in NOTEBOOK_TEXTS {
+            assert!(!cloud.contains(t), "Cloud: {t:?} im Auszug");
+            assert!(local.contains(t), "lokal: {t:?} fehlt");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_cloud_chat_never_sends_notebook_text_of_the_stored_notes() {
+        let (_dir, store) = tmp_store();
+        let store = Arc::new(store);
+        let (m, _ablage) = meeting_with_notebook_notes(&store);
+        let (port, prompts) = mock(vec!["Der Stand wurde besprochen [Q1]."]).await;
+        let settings = settings_with_mock_provider(port);
+        run(
+            &settings,
+            &store,
+            request(
+                ChatScope::Meeting {
+                    meeting_id: m.id.clone(),
+                },
+                "Was wurde zum Budget notiert?",
+            ),
+        )
+        .await
+        .unwrap();
+        let prompts = prompts.lock().unwrap();
+        assert!(!prompts.is_empty());
+        assert!(prompts[0].contains("Der Stand wurde besprochen."));
+        for p in prompts.iter() {
+            for t in NOTEBOOK_TEXTS {
+                assert!(!p.contains(t), "Cloud-Chat: {t:?} im Prompt");
+            }
+        }
     }
 }

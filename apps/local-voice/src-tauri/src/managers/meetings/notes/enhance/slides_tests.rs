@@ -62,6 +62,7 @@ fn limits(budget: Option<usize>) -> RunLimits {
         budget_chars: budget,
         timeout: Duration::from_secs(30),
         free_mb: || 0,
+        notizbuch_ablage: None,
     }
 }
 
