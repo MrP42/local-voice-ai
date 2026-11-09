@@ -75,6 +75,9 @@ pub struct Text {
     pub marken_version: u32,
     /// `ok`, `kein_text` oder `fehler`.
     pub stand: String,
+    /// Fehlercode bei `fehler` (nie Inhalt), z. B. `extrakt.zeit`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -146,7 +149,8 @@ pub fn blob_refs_aus(fassungen: &[Fassung]) -> Vec<String> {
     let mut m: BTreeSet<String> = BTreeSet::new();
     for f in fassungen {
         m.insert(f.blob.clone());
-        for t in &f.texte {
+        // Ein fehlgeschlagener Lauf hat keinen Blob (leere Kennung).
+        for t in f.texte.iter().filter(|t| !t.blob.is_empty()) {
             m.insert(t.blob.clone());
         }
     }
@@ -747,6 +751,7 @@ mod tests {
             extraktor_version: "1".into(),
             marken_version: 1,
             stand: "ok".into(),
+            code: None,
         };
         let mut fa = fas("f1", None, 1);
         fa.texte = vec![t("r1")];

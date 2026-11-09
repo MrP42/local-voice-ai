@@ -8960,7 +8960,29 @@
   "ablage": {
     "titel": "Ablage",
     "beschreibung": "Dokumente ordnen und lokal aufbewahren.",
-    "suche": "Dateien nach Namen filtern",
+    "suche": "Namen und Inhalte durchsuchen",
+    "anker": {
+      "seite": "Seite {{n}}",
+      "absatz": "Absatz {{n}}",
+      "folie": "Folie {{n}}",
+      "zeile": "ab Zeile {{n}}",
+      "teil": "Teil {{n}}",
+      "kopf": "E-Mail-Kopf",
+      "text": "E-Mail-Text",
+      "blatt": "Blatt „{{blatt}}“, Zeilen {{von}}–{{bis}}"
+    },
+    "suchergebnis": {
+      "titel": "Suchergebnisse",
+      "hinweis": "Alle Ordner, ohne Papierkorb",
+      "imNamen": "Im Namen ({{anzahl}})",
+      "imInhalt": "Im Inhalt ({{anzahl}})",
+      "imInhaltOhneZahl": "Im Inhalt",
+      "laedt": "Inhalte werden durchsucht …",
+      "keine": "Kein Treffer im Inhalt.",
+      "fehler": "Die Inhaltssuche ist gerade nicht verfügbar.",
+      "fundstelle": "Fundstelle",
+      "oeffnen": "{{name}} öffnen: {{anker}}"
+    },
     "laedt": "Ablage wird geladen …",
     "schliessen": "Schließen",
     "abbrechen": "Abbrechen",
@@ -9063,9 +9085,25 @@
       "textfassung": "Textfassung",
       "text": {
         "ok": "Text bereit",
-        "ausstehend": "Text ausstehend"
+        "ausstehend": "Text ausstehend",
+        "kein_text": "Kein Text enthalten",
+        "fehler": "Text nicht erstellt"
       },
       "textNoch": "Noch kein Text",
+      "textOhne": "Kein Text für dieses Format",
+      "textFehler": {
+        "allgemein": "Der Text ließ sich nicht erzeugen.",
+        "zeit": "Die Zeitgrenze von 60 Sekunden wurde erreicht.",
+        "abbruch": "Die Speichergrenze wurde erreicht oder das Lesen brach ab.",
+        "zip_grenze": "Das Archiv ist zu groß oder auffällig stark gepackt.",
+        "xml_doctype": "Die Datei enthält unzulässige XML-Bestandteile.",
+        "xml_entitaet": "Die Datei enthält unzulässige XML-Bestandteile.",
+        "pruefsumme": "Die Prüfsumme der Fassung stimmt nicht.",
+        "zu_gross": "Die Datei enthält zu viel Text.",
+        "format": "Das Format wurde nicht erkannt.",
+        "pdf": "Das PDF ließ sich nicht lesen.",
+        "tabelle": "Die Tabelle ließ sich nicht lesen."
+      },
       "fassungen": "Fassungen",
       "fassungAktuell": "{{nummer}} (aktuell)",
       "abgeloest": "abgelöst",

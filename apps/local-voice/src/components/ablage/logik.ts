@@ -175,3 +175,73 @@ export function fehlerTeile(meldung: string): {
 export type ListenZeile =
   | { art: "ordner"; ordner: AblageOrdner }
   | { art: "datei"; datei: AblageDatei };
+
+/**
+ * Anker des Markenformats v1 (`seite=3`, `absatz=12`, `folie=2`, `zeile=5`,
+ * `blatt=<name>&zeilen=2-21`, `teil=kopf|text|<n>`) in Art und Werte zerlegt.
+ * Unbekanntes bleibt `art: "roh"`.
+ */
+export type AnkerTeile =
+  | { art: "seite" | "absatz" | "folie" | "zeile" | "teil"; n: number }
+  | { art: "kopf" | "text" }
+  | { art: "blatt"; blatt: string; von: number; bis: number }
+  | { art: "roh"; text: string };
+
+const prozentDekodieren = (s: string) => {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
+};
+
+export function ankerTeile(anker: string): AnkerTeile {
+  const einfach = /^(seite|absatz|folie|zeile)=(\d+)$/.exec(anker);
+  if (einfach)
+    return {
+      art: einfach[1] as "seite" | "absatz" | "folie" | "zeile",
+      n: Number(einfach[2]),
+    };
+  const teil = /^teil=(kopf|text|\d+)$/.exec(anker);
+  if (teil) {
+    if (teil[1] === "kopf" || teil[1] === "text") return { art: teil[1] };
+    return { art: "teil", n: Number(teil[1]) };
+  }
+  const blatt = /^blatt=(.*)&zeilen=(\d+)-(\d+)$/.exec(anker);
+  if (blatt)
+    return {
+      art: "blatt",
+      blatt: prozentDekodieren(blatt[1]),
+      von: Number(blatt[2]),
+      bis: Number(blatt[3]),
+    };
+  return { art: "roh", text: anker };
+}
+
+/** Suchwörter für die Hervorhebung (mindestens zwei Zeichen, ohne Dubletten). */
+export function suchwoerter(anfrage: string): string[] {
+  const w = anfrage
+    .toLocaleLowerCase("de")
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((x) => x.length >= 2);
+  return [...new Set(w)];
+}
+
+/** Zerlegt `text` in Stücke; `treffer` markiert die Vorkommen der Suchwörter. */
+export function hervorheben(
+  text: string,
+  woerter: string[],
+): { text: string; treffer: boolean }[] {
+  if (woerter.length === 0) return [{ text, treffer: false }];
+  const muster = new RegExp(
+    `(${woerter.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})`,
+    "giu",
+  );
+  return text
+    .split(muster)
+    .filter((s) => s.length > 0)
+    .map((s) => ({
+      text: s,
+      treffer: woerter.includes(s.toLocaleLowerCase("de")),
+    }));
+}
