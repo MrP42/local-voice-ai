@@ -1,0 +1,204 @@
+{
+  "description": "Realistic rule table: closed S0 list with templates, S1-S3 intents with announcement templates in German and English.",
+  "data": {
+    "schema_version": "0.1.6",
+    "version": "1.0.0",
+    "s0": [
+      {
+        "absicht": "gruss",
+        "muster": {
+          "de": ["hallo", "guten morgen", "guten tag", "guten abend", "hi"],
+          "en": ["hello", "good morning", "good afternoon", "good evening", "hi"]
+        },
+        "antwort_vorlage": {
+          "de": "Hallo, ich bin da.",
+          "en": "Hello, I'm here."
+        }
+      },
+      {
+        "absicht": "bestaetigung",
+        "muster": {
+          "de": ["ja", "ja bitte", "okay", "mach das", "einverstanden"],
+          "en": ["yes", "yes please", "okay", "go ahead", "sounds good"]
+        },
+        "antwort_vorlage": {
+          "de": "In Ordnung.",
+          "en": "Okay."
+        }
+      },
+      {
+        "absicht": "stopp",
+        "muster": {
+          "de": ["stopp", "halt", "hör auf", "abbrechen"],
+          "en": ["stop", "cancel", "that's enough", "quiet"]
+        },
+        "antwort_vorlage": {
+          "de": "Gestoppt.",
+          "en": "Stopped."
+        }
+      },
+      {
+        "absicht": "lauter",
+        "muster": {
+          "de": ["lauter", "sprich lauter", "mach lauter"],
+          "en": ["louder", "speak louder", "volume up"]
+        },
+        "antwort_vorlage": {
+          "de": "Lauter.",
+          "en": "Louder."
+        }
+      },
+      {
+        "absicht": "leiser",
+        "muster": {
+          "de": ["leiser", "sprich leiser", "mach leiser"],
+          "en": ["quieter", "speak softer", "volume down"]
+        },
+        "antwort_vorlage": {
+          "de": "Leiser.",
+          "en": "Quieter."
+        }
+      },
+      {
+        "absicht": "wiederholen",
+        "muster": {
+          "de": ["wiederhole das", "noch einmal", "sag das nochmal"],
+          "en": ["repeat that", "say that again", "once more"]
+        },
+        "antwort_vorlage": {
+          "de": "Ich wiederhole.",
+          "en": "I'll repeat that."
+        }
+      },
+      {
+        "absicht": "langsamer",
+        "muster": {
+          "de": ["langsamer", "sprich langsamer"],
+          "en": ["slower", "speak slower"]
+        },
+        "antwort_vorlage": {
+          "de": "Langsamer.",
+          "en": "Slower."
+        }
+      },
+      {
+        "absicht": "schneller",
+        "muster": {
+          "de": ["schneller", "sprich schneller"],
+          "en": ["faster", "speak faster"]
+        },
+        "antwort_vorlage": {
+          "de": "Schneller.",
+          "en": "Faster."
+        }
+      },
+      {
+        "absicht": "rueckfrage",
+        "muster": {
+          "de": ["was", "wie bitte", "hä", "verstehe ich nicht"],
+          "en": ["what", "pardon", "sorry", "I don't understand"]
+        },
+        "antwort_vorlage": {
+          "de": "Wie meinst du das?",
+          "en": "What do you mean?"
+        }
+      },
+      {
+        "absicht": "uhrzeit",
+        "muster": {
+          "de": ["wie spät ist es", "wie viel uhr ist es", "uhrzeit"],
+          "en": ["what time is it", "what's the time", "time please"]
+        },
+        "antwort_vorlage": {
+          "de": "Es ist {uhrzeit} Uhr.",
+          "en": "It is {uhrzeit}."
+        }
+      },
+      {
+        "absicht": "datum",
+        "muster": {
+          "de": ["welches datum ist heute", "welcher tag ist heute", "datum"],
+          "en": ["what's the date today", "what day is it", "date please"]
+        },
+        "antwort_vorlage": {
+          "de": "Heute ist der {datum}.",
+          "en": "Today is {datum}."
+        }
+      }
+    ],
+    "absichten": [
+      {
+        "absicht": "kalender-abfragen",
+        "stufe": "S1",
+        "muster": {
+          "de": ["was steht heute im kalender", "habe ich morgen einen termin", "wann ist mein nächster termin"],
+          "en": ["what's on my calendar today", "do I have a meeting tomorrow", "when is my next appointment"]
+        },
+        "ansage_vorlage": {
+          "de": "Ich schaue in deinen Kalender.",
+          "en": "Let me check your calendar."
+        }
+      },
+      {
+        "absicht": "mail-abfragen",
+        "stufe": "S1",
+        "muster": {
+          "de": ["habe ich neue mails", "was hat der kunde geschrieben", "such die mail zum vertrag"],
+          "en": ["do I have new emails", "what did the client write", "find the email about the contract"]
+        },
+        "ansage_vorlage": {
+          "de": "Ich schaue in deine Mails.",
+          "en": "Let me check your emails."
+        }
+      },
+      {
+        "absicht": "projekt-nachschlagen",
+        "stufe": "S1",
+        "muster": {
+          "de": ["was steht im projektplan", "wie war der letzte stand im projekt"],
+          "en": ["what does the project plan say", "what was the last status of the project"]
+        },
+        "ansage_vorlage": {
+          "de": "Ich schaue in das Projekt.",
+          "en": "Let me look into the project."
+        }
+      },
+      {
+        "absicht": "terminvorschlag-abwaegen",
+        "stufe": "S2",
+        "muster": {
+          "de": ["wann passt ein treffen am besten", "sollte ich zusagen", "was würdest du empfehlen"],
+          "en": ["when would a meeting fit best", "should I accept", "what would you recommend"]
+        },
+        "ansage_vorlage": {
+          "de": "Ich überlege kurz und prüfe das anhand deiner Daten.",
+          "en": "Let me think about it and check it against your data."
+        }
+      },
+      {
+        "absicht": "mail-entwurf-erstellen",
+        "stufe": "S3",
+        "muster": {
+          "de": ["schreib eine antwort auf die mail", "entwirf eine zusage", "bereite eine mail vor"],
+          "en": ["write a reply to the email", "draft an acceptance", "prepare an email"]
+        },
+        "ansage_vorlage": {
+          "de": "Das ist ein Auftrag. Ich lege einen Entwurf an und melde mich.",
+          "en": "That's a job. I'll prepare a draft and get back to you."
+        }
+      },
+      {
+        "absicht": "recherche-starten",
+        "stufe": "S3",
+        "muster": {
+          "de": ["recherchiere dazu", "such im netz nach", "finde heraus, was"],
+          "en": ["research this", "search the web for", "find out what"]
+        },
+        "ansage_vorlage": {
+          "de": "Ich starte eine Recherche und melde mich mit Quellen.",
+          "en": "I'll start a research job and get back to you with sources."
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,23 @@
+# Erzeugt von scripts/vendor-wai-suite.py aus https://github.com/MrP42/wai-sdk (crates/wai-assistent, Commit 303fddfbeb6c). Nicht von Hand ändern.
+[package]
+name = "wai-assistent"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+license = "LicenseRef-WAI-Proprietary"
+publish = false
+description = "Assistent-Kern (ADR-0028 A2/A1): lokale Einstufung S0-S3, Belegregel E4.2, Messpunkte E9 und geraeteseitiger Sync-Kern E3 (Umschlag, Lease, Zusammenfuehren, Grabstein, Migration)"
+
+[lib]
+test = false
+doctest = false
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+chacha20poly1305 = "0.10"
+zeroize = "1"
+getrandom = "0.3"
+sha2 = "0.10"
+base64 = "0.22"
