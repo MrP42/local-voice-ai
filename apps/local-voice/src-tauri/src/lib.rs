@@ -63,6 +63,8 @@ pub mod sprachdienst; // ADR-0021 S2
 mod summarizer;
 mod sync;
 mod tagging;
+#[cfg(test)]
+mod testlog; // gemeinsamer Log-Fänger der Tests
 mod transcription_coordinator;
 mod translator;
 mod tray;

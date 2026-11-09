@@ -24,6 +24,7 @@ use crate::agent_bridge::voice::knowledge::{
     KnowledgeSource, MeetingInfo, PageInfo,
 };
 use crate::agent_bridge::voice::{self, RateLimiter, Session, VoiceOptions, VoiceToolInfo};
+use crate::assistent::schutz;
 use crate::conversations::store::ConversationStore;
 use crate::managers::history::HistoryManager;
 use crate::managers::meetings::store::MeetingStore;
@@ -69,6 +70,7 @@ pub fn change_voice_call_knowledge_setting(
     settings.voice_call_knowledge = areas::normalize_keys(&areas);
     crate::settings::write_settings(&app, settings);
     crate::app_context::service::on_settings_changed(&app);
+    schutz_nachpruefen(&app);
     Ok(())
 }
 
@@ -84,7 +86,70 @@ pub fn change_voice_notebook_sections_setting(
     settings.voice_call_notebook_sections = notizbuch::eintraege_normalisieren(&sections);
     crate::settings::write_settings(&app, settings);
     crate::app_context::service::on_settings_changed(&app);
+    // Widerruf sofort: was nicht mehr freigegeben ist, verschwindet aus Belegen und Ausgaben.
+    schutz_nachpruefen(&app);
     Ok(())
+}
+
+/// Freigabe-Einträge des Notizbuchs; `None`, wenn der Bereich „Notizbuch“ aus ist.
+fn notizbuch_freigabe(app: &AppHandle) -> Option<Vec<String>> {
+    let settings = crate::settings::get_settings(app);
+    let areas = Areas::from_settings(
+        &settings.voice_call_knowledge,
+        settings.voice_call_read_transcripts,
+    );
+    areas
+        .has(areas::Area::Notebook)
+        .then_some(settings.voice_call_notebook_sections)
+}
+
+/// Welche der Seiten unter `eintraege` jetzt sichtbar sind (eine Lesetransaktion).
+fn sichtbare_seiten(
+    app: &AppHandle,
+    eintraege: &[String],
+    ids: &[String],
+) -> Result<std::collections::BTreeSet<String>, ()> {
+    let freigabe = notizbuch::freigabe_aus_einstellung(eintraege);
+    let zugang = Zugang::oeffnen(notizbuch_pfad(app).map_err(|_| ())?).map_err(|_| ())?;
+    zugang
+        .sichtbare_seiten(ids, &freigabe)
+        .map(|m| m.wert)
+        .map_err(|_| ())
+}
+
+/// Prüft die Nachrichten eines Modellaufrufs gegen die Notizbuchfreigabe (Widerruf, Ersetzen,
+/// Datenklasse; `assistent::schutz`).
+pub fn schutz_pruefen(
+    app: &AppHandle,
+    nachrichten: Vec<crate::voice_call::VoiceCallMessage>,
+    gespraech: Option<&str>,
+) -> schutz::Pruefung {
+    let eintraege = notizbuch_freigabe(app);
+    let sichtbar = |ids: &[String]| match &eintraege {
+        Some(e) => sichtbare_seiten(app, e, ids),
+        None => Err(()),
+    };
+    schutz::pruefen(
+        nachrichten,
+        gespraech,
+        &schutz::Freigabestand {
+            eintraege: eintraege.as_deref(),
+            sichtbar: &sichtbar,
+        },
+    )
+}
+
+/// Widerruf nachprüfen ohne Modellaufruf (Einstellung geändert, „wiederholen“).
+pub fn schutz_nachpruefen(app: &AppHandle) {
+    let eintraege = notizbuch_freigabe(app);
+    let sichtbar = |ids: &[String]| match &eintraege {
+        Some(e) => sichtbare_seiten(app, e, ids),
+        None => Err(()),
+    };
+    schutz::widerruf_pruefen(&schutz::Freigabestand {
+        eintraege: eintraege.as_deref(),
+        sichtbar: &sichtbar,
+    });
 }
 
 /// Gliederung des Notizbuchs für die Freigabe-Einstellung (nur Namen und Seitenzahlen, kein
@@ -218,6 +283,9 @@ pub async fn voice_tool_call(
 ) -> Result<String, String> {
     let (bridge, store) = parts(&app)?;
     let opts = options(&app);
+    let freigabe = crate::settings::get_settings(&app).voice_call_notebook_sections;
+    let gespraech = conversation_id.clone();
+    let ist_notizbuch = notizbuch::ist_werkzeug(&name);
     let allowed = LIMITER
         .lock()
         .unwrap_or_else(|e| e.into_inner())
@@ -242,6 +310,10 @@ pub async fn voice_tool_call(
     .map_err(|e| e.to_string())?;
     // Belegregel im Orchestrator: nur was Rust selbst geliefert hat, gilt dort als Beleg.
     if let Ok(text) = &ergebnis {
+        // Datenklasse persönlich: bindet Gespräch und Inhalt an lokale Modelle (Codex lva#414 M1).
+        if ist_notizbuch {
+            schutz::notizbuch_ergebnis_merken(text, &freigabe, gespraech.as_deref());
+        }
         crate::assistent::tor::werkzeugergebnis_merken(text);
     }
     ergebnis

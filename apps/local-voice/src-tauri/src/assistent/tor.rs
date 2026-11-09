@@ -627,7 +627,7 @@ pub fn werkzeugergebnis_merken(text: &str) {
     }
 }
 
-fn kern(t: &str) -> String {
+pub(crate) fn kern(t: &str) -> String {
     t.chars()
         .filter(|c| c.is_alphanumeric())
         .flat_map(char::to_lowercase)
@@ -1004,6 +1004,25 @@ pub fn ausgabe_vergessen(conversation_id: Option<&str>) {
     let mut a = AUSGABEN.lock().unwrap_or_else(|e| e.into_inner());
     a.je_gespraech.remove(&key);
     a.reihenfolge.retain(|k| *k != key);
+}
+
+/// Vergisst Belege und gemerkte Ausgaben, deren Kern `trifft` (Widerruf, `schutz`).
+pub(crate) fn vergessen_wenn(trifft: impl Fn(&str) -> bool) {
+    ERGEBNISSE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .retain(|r| !trifft(&kern(r)));
+    let mut a = AUSGABEN.lock().unwrap_or_else(|e| e.into_inner());
+    let weg: Vec<String> = a
+        .je_gespraech
+        .iter()
+        .filter(|(_, t)| trifft(&kern(t)))
+        .map(|(k, _)| k.clone())
+        .collect();
+    for k in weg {
+        a.je_gespraech.remove(&k);
+        a.reihenfolge.retain(|x| *x != k);
+    }
 }
 
 #[cfg(test)]

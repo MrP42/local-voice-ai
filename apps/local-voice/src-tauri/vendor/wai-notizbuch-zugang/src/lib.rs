@@ -253,6 +253,79 @@ fn iso_norm(s: &str) -> Option<String> {
     Some(format!("{}.{ms}Z", &s[..19]))
 }
 
+/// Tabellen und Spalten, die dieser Zugang liest (Codex lva#414: nicht nur die Versionsnummer prüfen).
+const SCHEMA_SPALTEN: &[(&str, &[&str])] = &[
+    ("saetze", &["art", "id", "daten"]),
+    ("seiten_fts", &["id", "titel", "text"]),
+    ("_wai_migrations", &["version"]),
+];
+
+/// Prüft, dass jede gelesene Tabelle mit ihren Spalten existiert; `saetze` muss je `(art, id)`
+/// eindeutig sein und `seiten_fts` eine FTS5-Tabelle. Sonst [`Fehler::Version`].
+fn schema_pruefen(conn: &Connection) -> Ergebnis<()> {
+    for (tabelle, spalten) in SCHEMA_SPALTEN {
+        let mut st = conn
+            .prepare(&format!("PRAGMA table_info(\"{tabelle}\")"))
+            .map_err(|_| Fehler::Version)?;
+        let da: BTreeSet<String> = st
+            .query_map([], |r| r.get::<_, String>(1))
+            .map_err(|_| Fehler::Version)?
+            .collect::<Result<_, _>>()
+            .map_err(|_| Fehler::Version)?;
+        if !spalten.iter().all(|s| da.contains(*s)) {
+            return Err(Fehler::Version);
+        }
+    }
+    let fts: Option<String> = conn
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'seiten_fts'",
+            [],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|_| Fehler::Version)?;
+    if !fts.is_some_and(|s| s.to_ascii_lowercase().contains("using fts5")) {
+        return Err(Fehler::Version);
+    }
+    // Eindeutigkeit (art, id): Primärschlüssel oder eindeutiger Index genau über diese Spalten.
+    let mut st = conn
+        .prepare("SELECT name, \"unique\" FROM pragma_index_list('saetze')")
+        .map_err(|_| Fehler::Version)?;
+    let indizes: Vec<(String, bool)> = st
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+        .map_err(|_| Fehler::Version)?
+        .collect::<Result<_, _>>()
+        .map_err(|_| Fehler::Version)?;
+    let mut eindeutig = false;
+    for (name, _) in indizes.into_iter().filter(|(_, u)| *u) {
+        let mut st = conn
+            .prepare("SELECT name FROM pragma_index_info(?1)")
+            .map_err(|_| Fehler::Version)?;
+        let spalten: BTreeSet<String> = st
+            .query_map(params![name], |r| r.get::<_, String>(0))
+            .map_err(|_| Fehler::Version)?
+            .collect::<Result<_, _>>()
+            .map_err(|_| Fehler::Version)?;
+        if spalten == BTreeSet::from(["art".to_string(), "id".to_string()]) {
+            eindeutig = true;
+        }
+    }
+    if !eindeutig {
+        return Err(Fehler::Version);
+    }
+    Ok(())
+}
+
+/// Die Kennung der Datenbankzeile ist gültig und das JSON nennt keine andere.
+fn id_passt(id: &str, s: &Value) -> bool {
+    gueltige_id(id)
+        && match s.get("id") {
+            None | Some(Value::Null) => true,
+            Some(Value::String(j)) => j == id,
+            Some(_) => false,
+        }
+}
+
 fn lebt(v: &Value) -> bool {
     v.get("geloescht").is_none_or(Value::is_null)
 }
@@ -323,6 +396,7 @@ impl Zugang {
         if !v.is_some_and(|v| SCHEMA_VERSIONEN.contains(&v)) {
             return Err(Fehler::Version);
         }
+        schema_pruefen(&conn)?;
         Ok(Self { conn })
     }
 
@@ -345,22 +419,26 @@ impl Zugang {
     }
 
     /// Seitenköpfe ohne Inhalt (nur die Felder für Gliederung, Stand und Zeitraum), lebende Seiten.
-    fn seitenkoepfe(&self) -> Ergebnis<Vec<Value>> {
+    /// Je Seite `(Kennung der Datenbankzeile, Kopf-JSON)`.
+    fn seitenkoepfe(&self) -> Ergebnis<Vec<(String, Value)>> {
         let mut st = self.conn.prepare_cached(
             "SELECT id, json_extract(daten, '$.abschnittId'), json_extract(daten, '$.titel'), \
              json_extract(daten, '$.erstellt'), json_extract(daten, '$.geaendert'), \
-             json_extract(daten, '$.version') FROM saetze \
+             json_extract(daten, '$.version'), json_extract(daten, '$.id') FROM saetze \
              WHERE art = 'seiten' AND json_valid(daten) AND json_extract(daten, '$.geloescht') IS NULL",
         )?;
         let zeilen = st.query_map([], |r| {
-            Ok(serde_json::json!({
-                "id": r.get::<_, String>(0)?,
+            Ok((r.get::<_, String>(0)?, serde_json::json!({
                 "abschnittId": r.get::<_, Option<String>>(1).unwrap_or(None),
                 "titel": r.get::<_, Option<String>>(2).unwrap_or(None),
                 "erstellt": r.get::<_, Option<String>>(3).unwrap_or(None),
                 "geaendert": r.get::<_, Option<String>>(4).unwrap_or(None),
                 "version": r.get::<_, Option<i64>>(5).unwrap_or(None),
-            }))
+                "id": r.get::<_, Option<rusqlite::types::Value>>(6).unwrap_or(None).map(|v| match v {
+                    rusqlite::types::Value::Text(t) => Value::String(t),
+                    _ => Value::Bool(false),
+                }),
+            })))
         })?;
         Ok(zeilen.collect::<Result<_, _>>()?)
     }
@@ -398,13 +476,19 @@ impl Zugang {
             .filter(lebt))
     }
 
-    fn kopf(&self, g: &Gliederung, f: &Freigabe, s: &Value) -> Option<Seitenkopf> {
+    /// Kopf einer sichtbaren Seite. `id` ist die Kennung aus der Datenbankzeile (Primärschlüssel);
+    /// ein abweichendes `id` im JSON gilt als beschädigter Satz und die Seite als nicht sichtbar
+    /// (Codex lva#414: die Quelle darf nie aus dem JSON übernommen werden).
+    fn kopf(&self, g: &Gliederung, f: &Freigabe, id: &str, s: &Value) -> Option<Seitenkopf> {
+        if !id_passt(id, s) {
+            return None;
+        }
         let a = g.abschnitt(s.get("abschnittId")?.as_str()?)?;
         if !f.erlaubt(&a) {
             return None;
         }
         Some(Seitenkopf {
-            id: str_feld(s, "id"),
+            id: id.to_string(),
             titel: str_feld(s, "titel"),
             abschnitt_id: a.id.clone(),
             pfad: g.pfad(&a),
@@ -441,8 +525,8 @@ impl Zugang {
                 ));
             }
         }
-        for s in &self.seitenkoepfe()? {
-            if let Some(k) = self.kopf(&g, f, s) {
+        for (id, s) in &self.seitenkoepfe()? {
+            if let Some(k) = self.kopf(&g, f, id, s) {
                 let v = s.get("version").and_then(Value::as_i64).unwrap_or(0);
                 zeilen.push(format!(
                     "s\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{v}\u{1f}{}",
@@ -464,6 +548,11 @@ impl Zugang {
         self.lesend(|| self.baum_mit(|a| f.erlaubt(a)))
     }
 
+    /// Wie [`Zugang::baum`], dazu der Freigabestand aus **derselben** Lesetransaktion.
+    pub fn baum_mit_stand(&self, f: &Freigabe) -> Ergebnis<MitStand<Vec<Notizbuch>>> {
+        self.mit_stand(f, || self.baum_mit(|a| f.erlaubt(a)))
+    }
+
     /// Ganze aktive Gliederung, nur Namen und Zählung, für die Freigabe-Einstellung (kein Seiteninhalt).
     pub fn gliederung_fuer_einstellung(&self) -> Ergebnis<Vec<Notizbuch>> {
         self.lesend(|| self.baum_mit(|_| true))
@@ -472,7 +561,11 @@ impl Zugang {
     fn baum_mit(&self, sichtbar: impl Fn(&Abschnitt) -> bool) -> Ergebnis<Vec<Notizbuch>> {
         let g = self.gliederung()?;
         let mut zahl: HashMap<String, usize> = HashMap::new();
-        for s in &self.seitenkoepfe()? {
+        for (_, s) in self
+            .seitenkoepfe()?
+            .iter()
+            .filter(|(id, s)| id_passt(id, s))
+        {
             *zahl.entry(str_feld(s, "abschnittId")).or_default() += 1;
         }
         let mut nbs: Vec<Notizbuch> = g
@@ -502,6 +595,23 @@ impl Zugang {
         Ok(nbs)
     }
 
+    /// Führt `f` und die Berechnung des Freigabestands in **einer** Lesetransaktion aus (Codex lva#414
+    /// M2): Ergebnis und Stand stammen aus demselben Schnappschuss; ein gleichzeitiger Widerruf,
+    /// Papierkorb oder ein Verschieben trifft entweder beide oder keines.
+    fn mit_stand<T>(
+        &self,
+        f: &Freigabe,
+        op: impl FnOnce() -> Ergebnis<T>,
+    ) -> Ergebnis<MitStand<T>> {
+        self.lesend(|| {
+            let stand = self.stand_innen(f)?;
+            #[cfg(test)]
+            tests::zwischenschritt();
+            let wert = op()?;
+            Ok(MitStand { wert, stand })
+        })
+    }
+
     /// Eine Seite mit Blöcken; `None`, wenn nicht vorhanden, im Papierkorb oder nicht freigegeben.
     pub fn seite(&self, id: &str, f: &Freigabe) -> Ergebnis<Option<Seite>> {
         if !gueltige_id(id) {
@@ -510,12 +620,41 @@ impl Zugang {
         self.lesend(|| self.seite_innen(id, f))
     }
 
+    /// Wie [`Zugang::seite`], dazu der Freigabestand aus derselben Lesetransaktion.
+    pub fn seite_mit_stand(&self, id: &str, f: &Freigabe) -> Ergebnis<MitStand<Option<Seite>>> {
+        if !gueltige_id(id) {
+            return Err(Fehler::Eingabe);
+        }
+        self.mit_stand(f, || self.seite_innen(id, f))
+    }
+
+    /// Welche der Seiten `ids` jetzt sichtbar sind, samt Stand aus derselben Lesetransaktion. Für die
+    /// Nachprüfung schon gelieferter Ergebnisse (Widerruf, Papierkorb, Verschieben).
+    pub fn sichtbare_seiten(
+        &self,
+        ids: &[String],
+        f: &Freigabe,
+    ) -> Ergebnis<MitStand<BTreeSet<String>>> {
+        self.mit_stand(f, || {
+            let g = self.gliederung()?;
+            let mut aus = BTreeSet::new();
+            for id in ids.iter().filter(|id| gueltige_id(id)) {
+                if let Some(roh) = self.seite_roh(id)?
+                    && self.kopf(&g, f, id, &roh).is_some()
+                {
+                    aus.insert(id.clone());
+                }
+            }
+            Ok(aus)
+        })
+    }
+
     fn seite_innen(&self, id: &str, f: &Freigabe) -> Ergebnis<Option<Seite>> {
         let Some(roh) = self.seite_roh(id)? else {
             return Ok(None);
         };
         let g = self.gliederung()?;
-        let Some(kopf) = self.kopf(&g, f, &roh) else {
+        let Some(kopf) = self.kopf(&g, f, id, &roh) else {
             return Ok(None);
         };
         let bloecke = roh.get("inhalt").map(bloecke::bloecke).unwrap_or_default();
@@ -531,15 +670,33 @@ impl Zugang {
         }))
     }
 
-    /// Volltextsuche (FTS5, Titeltreffer zuerst) in freigegebenen Abschnitten.
+    /// Volltextsuche in freigegebenen Abschnitten. Rangfolge nur aus dem sichtbaren Bestand (BM25F, siehe `suchen_innen`).
     pub fn suchen(&self, anfrage: &str, grenze: usize, f: &Freigabe) -> Ergebnis<Suche> {
-        if anfrage.chars().count() > MAX_ANFRAGE_ZEICHEN
-            || anfrage.split_whitespace().count() > MAX_ANFRAGE_WOERTER
-        {
-            return Err(Fehler::Eingabe);
-        }
-        let grenze = grenze.clamp(1, MAX_TREFFER);
-        let Some(fts) = fts_anfrage(anfrage) else {
+        let fts = suche_pruefen(anfrage)?;
+        self.lesend(|| self.suche_in_transaktion(anfrage, fts.as_deref(), grenze, f))
+    }
+
+    /// Wie [`Zugang::suchen`], dazu der Freigabestand aus derselben Lesetransaktion.
+    pub fn suchen_mit_stand(
+        &self,
+        anfrage: &str,
+        grenze: usize,
+        f: &Freigabe,
+    ) -> Ergebnis<MitStand<Suche>> {
+        let fts = suche_pruefen(anfrage)?;
+        self.mit_stand(f, || {
+            self.suche_in_transaktion(anfrage, fts.as_deref(), grenze, f)
+        })
+    }
+
+    fn suche_in_transaktion(
+        &self,
+        anfrage: &str,
+        fts: Option<&str>,
+        grenze: usize,
+        f: &Freigabe,
+    ) -> Ergebnis<Suche> {
+        let Some(fts) = fts else {
             return Ok(Suche {
                 genutzt: false,
                 treffer: vec![],
@@ -551,9 +708,14 @@ impl Zugang {
                 treffer: vec![],
             });
         }
-        self.lesend(|| self.suchen_innen(anfrage, &fts, grenze, f))
+        self.suchen_innen(anfrage, fts, grenze.clamp(1, MAX_TREFFER), f)
     }
 
+    /// Treffer und Rangfolge hängen **nur** von sichtbaren Seiten ab (Codex lva#414 M3). FTS5 dient
+    /// allein als Filter (passt die Seite?); `bm25()` nutzt die Statistik des ganzen Index und würde
+    /// verborgene Seiten in die Rangfolge einfließen lassen. Stattdessen BM25F über den sichtbaren
+    /// Bestand: Seitenzahl, mittlere Länge und Dokumenthäufigkeit je Wort werden nur über sichtbare
+    /// Seiten gezählt, Titeltreffer zählen [`GEWICHT_TITEL`]-fach. Gleichstand: Kennung aufsteigend.
     fn suchen_innen(
         &self,
         anfrage: &str,
@@ -562,35 +724,62 @@ impl Zugang {
         f: &Freigabe,
     ) -> Ergebnis<Suche> {
         let g = self.gliederung()?;
-        // Freigabefilter schon in SQL, damit nicht freigegebene Treffer keine Plätze belegen.
         let erlaubt: Vec<&String> = g
             .abschnitte
             .keys()
             .filter(|id| g.abschnitt(id).is_some_and(|a| f.erlaubt(&a)))
             .collect();
         let erlaubt = serde_json::to_string(&erlaubt).unwrap_or_else(|_| "[]".into());
-        let mut st = self.conn.prepare_cached(
-            "SELECT seiten_fts.id FROM seiten_fts JOIN saetze s ON s.art = 'seiten' AND s.id = seiten_fts.id \
-             WHERE seiten_fts MATCH ?1 AND json_valid(s.daten) AND json_extract(s.daten, '$.geloescht') IS NULL \
-             AND json_extract(s.daten, '$.abschnittId') IN (SELECT value FROM json_each(?2)) \
-             ORDER BY bm25(seiten_fts, 0.0, 10.0, 1.0) LIMIT ?3",
-        )?;
-        let ids: Vec<String> = st
-            .query_map(params![fts, erlaubt, (grenze * 4) as i64], |r| r.get(0))?
-            .collect::<Result<_, _>>()?;
         let woerter: Vec<String> = falte(anfrage)
             .split_whitespace()
             .map(String::from)
             .collect();
+
+        let (n, mittel): (i64, f64) = self.conn.query_row(
+            &format!(
+                "SELECT COUNT(*), COALESCE(AVG(length(seiten_fts.titel) + length(seiten_fts.text)), 0.0) \
+                 FROM seiten_fts {SICHTBAR}"
+            ),
+            params![erlaubt],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        let mut idf = Vec::with_capacity(woerter.len());
+        for w in &woerter {
+            let einzeln = fts_anfrage(w).ok_or(Fehler::Eingabe)?;
+            let df: i64 = self.conn.query_row(
+                &format!("SELECT COUNT(*) FROM seiten_fts {SICHTBAR} AND seiten_fts MATCH ?2"),
+                params![erlaubt, einzeln],
+                |r| r.get(0),
+            )?;
+            let (n, df) = (n as f64, df as f64);
+            idf.push((1.0 + (n - df + 0.5) / (df + 0.5)).ln());
+        }
+
+        let mut st = self.conn.prepare_cached(&format!(
+            "SELECT seiten_fts.id, seiten_fts.titel, seiten_fts.text FROM seiten_fts {SICHTBAR} \
+             AND seiten_fts MATCH ?2 ORDER BY seiten_fts.id LIMIT ?3"
+        ))?;
+        let mut kandidaten: Vec<(f64, String)> = st
+            .query_map(params![erlaubt, fts, MAX_KANDIDATEN as i64], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            })?
+            .map(|z| z.map(|(id, titel, text)| (bm25f(&woerter, &idf, &titel, &text, mittel), id)))
+            .collect::<Result<_, _>>()?;
+        kandidaten.sort_by(|a, b| b.0.total_cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+
         let mut treffer = Vec::new();
-        for id in ids {
+        for (_, id) in kandidaten {
             if treffer.len() >= grenze {
                 break;
             }
             let Some(roh) = self.seite_roh(&id)? else {
                 continue;
             };
-            let Some(kopf) = self.kopf(&g, f, &roh) else {
+            let Some(kopf) = self.kopf(&g, f, &id, &roh) else {
                 continue;
             };
             let text = roh.get("text").and_then(Value::as_str).unwrap_or_default();
@@ -606,7 +795,7 @@ impl Zugang {
     }
 
     /// Seiten, die im Zeitraum `[von, bis)` angelegt oder geändert wurden (ISO-Zeiten, UTC `Z`),
-    /// neueste zuerst, höchstens `grenze`.
+    /// zuletzt geänderte zuerst (normalisierte Zeitwerte), höchstens `grenze`.
     pub fn zeitraum(
         &self,
         von: &str,
@@ -614,13 +803,20 @@ impl Zugang {
         grenze: usize,
         f: &Freigabe,
     ) -> Ergebnis<Vec<Seitenkopf>> {
-        let (Some(von), Some(bis)) = (iso_norm(von), iso_norm(bis)) else {
-            return Err(Fehler::Eingabe);
-        };
-        if von >= bis {
-            return Err(Fehler::Eingabe);
-        }
+        let (von, bis) = zeitraum_pruefen(von, bis)?;
         self.lesend(|| self.zeitraum_innen(&von, &bis, grenze, f))
+    }
+
+    /// Wie [`Zugang::zeitraum`], dazu der Freigabestand aus derselben Lesetransaktion.
+    pub fn zeitraum_mit_stand(
+        &self,
+        von: &str,
+        bis: &str,
+        grenze: usize,
+        f: &Freigabe,
+    ) -> Ergebnis<MitStand<Vec<Seitenkopf>>> {
+        let (von, bis) = zeitraum_pruefen(von, bis)?;
+        self.mit_stand(f, || self.zeitraum_innen(&von, &bis, grenze, f))
     }
 
     fn zeitraum_innen(
@@ -631,24 +827,84 @@ impl Zugang {
         f: &Freigabe,
     ) -> Ergebnis<Vec<Seitenkopf>> {
         let g = self.gliederung()?;
-        let mut out: Vec<Seitenkopf> = self
+        let drin = |t: &Option<String>| t.as_deref().is_some_and(|t| t >= von && t < bis);
+        let mut out: Vec<(String, Seitenkopf)> = self
             .seitenkoepfe()?
             .iter()
-            .filter_map(|s| self.kopf(&g, f, s))
-            .filter(|k| {
+            .filter_map(|(id, s)| self.kopf(&g, f, id, s))
+            .filter_map(|k| {
                 let e = iso_norm(&k.erstellt);
                 let a = iso_norm(&k.geaendert);
-                let drin = |t: &Option<String>| t.as_deref().is_some_and(|t| t >= von && t < bis);
-                drin(&e)
-                    || drin(&a)
-                    || (e.as_deref().is_some_and(|e| e < von)
-                        && a.as_deref().is_some_and(|a| a >= bis))
+                if !(drin(&e) || drin(&a)) {
+                    return None;
+                }
+                let schluessel = a.or(e).unwrap_or_default();
+                Some((schluessel, k))
             })
             .collect();
-        out.sort_by(|a, b| b.geaendert.cmp(&a.geaendert).then(a.id.cmp(&b.id)));
+        out.sort_by(|(sa, a), (sb, b)| sb.cmp(sa).then(a.id.cmp(&b.id)));
         out.truncate(grenze.clamp(1, 200));
-        Ok(out)
+        Ok(out.into_iter().map(|(_, k)| k).collect())
     }
+}
+
+/// Filter auf sichtbare Seiten in SQL (`?1` = JSON-Liste der freigegebenen, aktiven Abschnitte).
+const SICHTBAR: &str = "JOIN saetze s ON s.art = 'seiten' AND s.id = seiten_fts.id \
+     WHERE json_valid(s.daten) AND json_extract(s.daten, '$.geloescht') IS NULL \
+     AND json_extract(s.daten, '$.abschnittId') IN (SELECT value FROM json_each(?1))";
+
+/// Höchstzahl gerankter Kandidaten je Suche (feste Auswahl nach Kennung, unabhängig von Verborgenem).
+const MAX_KANDIDATEN: usize = 5_000;
+/// Gewicht eines Titeltreffers gegenüber dem Text (wie zuvor `bm25(…, 10.0, 1.0)`).
+const GEWICHT_TITEL: f64 = 10.0;
+const BM25_K1: f64 = 1.2;
+const BM25_B: f64 = 0.75;
+
+/// BM25F einer Seite (gefalteter Titel und Text aus dem Index) mit Statistik des sichtbaren Bestands.
+fn bm25f(woerter: &[String], idf: &[f64], titel: &str, text: &str, mittel: f64) -> f64 {
+    let laenge = (titel.chars().count() + text.chars().count()) as f64;
+    let norm = if mittel > 0.0 {
+        1.0 - BM25_B + BM25_B * laenge / mittel
+    } else {
+        1.0
+    };
+    woerter
+        .iter()
+        .zip(idf)
+        .map(|(w, idf)| {
+            let tf = GEWICHT_TITEL * titel.matches(w.as_str()).count() as f64
+                + text.matches(w.as_str()).count() as f64;
+            idf * tf * (BM25_K1 + 1.0) / (tf + BM25_K1 * norm)
+        })
+        .sum()
+}
+
+/// Prüft eine Suchanfrage; `Ok(None)`, wenn sie für den Index zu kurz ist.
+fn suche_pruefen(anfrage: &str) -> Ergebnis<Option<String>> {
+    if anfrage.chars().count() > MAX_ANFRAGE_ZEICHEN
+        || anfrage.split_whitespace().count() > MAX_ANFRAGE_WOERTER
+    {
+        return Err(Fehler::Eingabe);
+    }
+    Ok(fts_anfrage(anfrage))
+}
+
+/// Normalisiert und prüft `[von, bis)`.
+fn zeitraum_pruefen(von: &str, bis: &str) -> Ergebnis<(String, String)> {
+    let (Some(von), Some(bis)) = (iso_norm(von), iso_norm(bis)) else {
+        return Err(Fehler::Eingabe);
+    };
+    if von >= bis {
+        return Err(Fehler::Eingabe);
+    }
+    Ok((von, bis))
+}
+
+/// Ein Leseergebnis samt Freigabestand ([`Zugang::stand`]) aus derselben Lesetransaktion.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MitStand<T> {
+    pub wert: T,
+    pub stand: String,
 }
 
 /// Auszug um das erste Suchwort (gefaltet verglichen), höchstens [`AUSZUG`] Zeichen.

@@ -386,3 +386,107 @@ fn ohne_notizbuch_auf_dem_geraet_eine_klare_meldung() {
     let err = aufruf(&q, "notizbuch_baum", json!({})).unwrap_err();
     assert_eq!(err, "Auf diesem Gerät gibt es noch kein Notizbuch.");
 }
+
+/// Codex lva#414 M5: Argumente und Ergebnisse eines Notizbuchaufrufs fließen weder ins Audit noch
+/// ins Log. Weg wie im Gespräch: `voice::call` mit echtem Tor und echtem Audit.
+#[test]
+fn argumente_und_ergebnisse_nicht_in_audit_und_log() {
+    use crate::agent_bridge::catalog::ToolRegistry;
+    use crate::agent_bridge::voice::{call, Session, VoiceOptions};
+    use crate::managers::integrations::audit::{self, AuditFilter};
+    use crate::managers::integrations::test_support::Fx;
+
+    crate::testlog::installieren();
+    const GEHEIM_INHALT: &str = "NBXVERTRAULICHINHALT";
+    const GEHEIM_FRAGE: &str = "NBXVERTRAULICHFRAGE";
+    let a = Ablage::neu();
+    a.seite(
+        "s9",
+        "a1",
+        &format!("Titel {GEHEIM_INHALT}"),
+        &format!("Text {GEHEIM_INHALT} und {GEHEIM_FRAGE}"),
+        "2026-11-05T09:00:00Z",
+        "2026-11-05T09:00:00Z",
+    );
+    let q = Quelle::neu(&a, &["notizbuch:nb1"]);
+    let fx = Fx::new();
+    let conn = fx.conn();
+    let registry = ToolRegistry::new();
+    let session = Session {
+        registry: &registry,
+        source: &q,
+        conversation: None,
+    };
+    let opts = VoiceOptions {
+        areas: Areas::from_settings(&["notebook".to_string()], false),
+    };
+    let jetzt_ms = jetzt();
+    let s = call(
+        &conn,
+        &session,
+        opts,
+        "notizbuch_suchen",
+        &json!({ "anfrage": GEHEIM_FRAGE }).to_string(),
+        jetzt_ms,
+    )
+    .unwrap();
+    assert!(s.contains(GEHEIM_INHALT), "das Ergebnis geht an das Modell");
+    let s = call(
+        &conn,
+        &session,
+        opts,
+        "notizbuch_seite",
+        &json!({ "seite_id": "s9" }).to_string(),
+        jetzt_ms,
+    )
+    .unwrap();
+    assert!(s.contains(GEHEIM_INHALT));
+    // Fehlerpfad (verborgene Seite) ebenso.
+    assert!(call(
+        &conn,
+        &session,
+        opts,
+        "notizbuch_seite",
+        &json!({ "seite_id": "s3" }).to_string(),
+        jetzt_ms,
+    )
+    .is_err());
+
+    let rows = audit::list(&conn, &AuditFilter::default(), 100).unwrap();
+    assert!(rows
+        .iter()
+        .any(|r| r.target.as_deref() == Some("notizbuch_suchen · voice_orchestrator")));
+    for r in &rows {
+        let alles = format!("{r:?}");
+        assert!(
+            !alles.contains("NBXVERTRAULICH") && !alles.contains("s9"),
+            "Audit ohne Argumente und Inhalte: {alles}"
+        );
+    }
+    // Auch keine Rohspalte der Audit-Tabelle (falls die Darstellung etwas auslässt).
+    let mut st = conn.prepare("SELECT * FROM audit_log").unwrap();
+    let spalten = st.column_count();
+    let roh: Vec<String> = st
+        .query_map([], |r| {
+            Ok((0..spalten)
+                .map(|i| {
+                    format!(
+                        "{:?}",
+                        r.get_ref(i).map(|v| v.as_str().unwrap_or("")).unwrap_or("")
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("|"))
+        })
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert!(!roh.is_empty());
+    assert!(roh.iter().all(|z| !z.contains("NBXVERTRAULICH")), "{roh:?}");
+    // Log (alle Stufen): kein Inhalt, keine Anfrage.
+    let zeilen = crate::testlog::zeilen();
+    assert!(
+        zeilen.iter().all(|l| !l.contains("NBXVERTRAULICH")),
+        "Log ohne Inhalte: {zeilen:?}"
+    );
+}

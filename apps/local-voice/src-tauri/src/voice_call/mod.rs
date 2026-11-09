@@ -433,6 +433,14 @@ pub async fn voice_call_chat(
     // ADR-0028 E4: Einstufung in Rust vor jedem Modellaufruf. S0, Fehler, leerer oder zu langer
     // Text: kein Netzaufruf, unabhängig vom Schalter der Oberfläche.
     let sprache = assistent::sprache_der_app(&app);
+    // Notizbuchdaten (Codex lva#414): auch der alte Weg ersetzt entzogene Inhalte und schickt
+    // geschützte nur an einen lokalen Empfänger.
+    let pruefung = crate::commands::voice_tools::schutz_pruefen(
+        &app,
+        messages,
+        conversation_id.as_deref(),
+    );
+    let messages = pruefung.nachrichten.clone();
     tor::vor_nachrichten(&messages, sprache, conversation_id.as_deref())?;
     let settings =
         crate::settings::get_settings(&app).for_function(crate::settings::FN_VOICE_SPEAKER);
@@ -441,6 +449,9 @@ pub async fn voice_call_chat(
     // App-Kontext nur an einen lokalen Empfänger, unmittelbar vor dem Start
     // geprüft (Codex M5/M6); sonst antwortet das Modell ohne Kontext.
     let local = receiver_is_local(&provider);
+    if pruefung.geschuetzt && !local {
+        return Err(assistent::schutz::NUR_LOKAL.to_string());
+    }
     let messages = tor::mit_markerregel(for_receiver(messages, local), sprache);
     let guarded = needs_pinned(context.is_some(), &messages, local);
     // Erst Abbruch und Widerruf registrieren, dann prüfen: was dazwischen kommt,
@@ -597,6 +608,7 @@ pub async fn voice_call_chat(
                 emit_piece(piece);
             }
             tor::ausgabe_merken(conversation_id.as_deref(), &freigegeben);
+            assistent::schutz::abgeleitet_merken(&pruefung, &freigegeben, conversation_id.as_deref());
             let _ = app.emit(
                 EVENT,
                 serde_json::json!({

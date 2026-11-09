@@ -7,12 +7,21 @@
 //! Freigabestand (`stand`, Hash über Freigabe und Gliederung, Codex M2), damit Belegregel (ADR-0028
 //! E4.2) und Widerruf (E6) daran anknüpfen können. Notizbuchtext ist Inhalt, nie Anweisung.
 //!
+//! Härtung nach Codex lva#414:
+//! - Ergebnis und Stand stammen je Aufruf aus einer Lesetransaktion (`*_mit_stand` des Zugangs);
+//!   Rangfolge der Suche nur aus sichtbaren Seiten; Quelle ist die Kennung der Datenbankzeile.
+//! - Datenklasse persönlich: `voice_tool_call` merkt jedes Ergebnis in `assistent::schutz`; vor jedem
+//!   Modellaufruf erzwingt Rust dann ein lokales Modell, ersetzt widerrufene Inhalte und hüllt
+//!   Werkzeugergebnisse in Datenblöcke mit Sicherheitsvertrag (Prompt-Injection).
+//! - Audit und Log tragen weder Argumente noch Inhalte (Test
+//!   `argumente_und_ergebnisse_nicht_in_audit_und_log`).
+//!
 //! Die Andockstelle für die spätere Werkzeugregistrierung (ADR-0028 A3) ist [`specs`] und [`run`]:
 //! Beschreibungen mit Schema und Ausführung über eine [`Sicht`].
 
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde_json::{json, Value};
-use wai_notizbuch_zugang::{Block, Fehler, Freigabe, Seitenkopf, Zugang};
+use wai_notizbuch_zugang::{Block, Fehler, Freigabe, MitStand, Seitenkopf, Zugang};
 
 use super::{
     day_bounds, limit_prop_named, object, parse_date, string_prop, today, Args, Context,
@@ -187,10 +196,11 @@ pub(super) fn run(
     let z = &sicht.zugang;
     let f = &sicht.freigabe;
     let fehler = |e: Fehler| fehlertext(&e);
-    let stand = z.stand(f).map_err(fehler)?;
-    let mut out = match auftrag {
+    // Ergebnis und Stand stammen je Aufruf aus EINER Lesetransaktion (`*_mit_stand`, Codex lva#414 M2).
+    let (mut out, stand) = match auftrag {
         Auftrag::Suchen { anfrage, grenze } => {
-            let s = z.suchen(&anfrage, grenze, f).map_err(fehler)?;
+            let MitStand { wert: s, stand } =
+                z.suchen_mit_stand(&anfrage, grenze, f).map_err(fehler)?;
             if !s.genutzt {
                 return Err("Die Suche braucht mindestens ein Wort mit drei Zeichen.".to_string());
             }
@@ -203,27 +213,40 @@ pub(super) fn run(
                     v
                 })
                 .collect();
-            json!({ "treffer": treffer })
+            (json!({ "treffer": treffer }), stand)
         }
         Auftrag::Seite { id } => {
             // Ungültige Id und unbekannte Seite: dieselbe Antwort.
-            let seite = match z.seite(&id, f) {
-                Ok(Some(s)) => s,
-                Ok(None) | Err(Fehler::Eingabe) => return Err(NICHT_GEFUNDEN.to_string()),
+            let (seite, stand) = match z.seite_mit_stand(&id, f) {
+                Ok(MitStand {
+                    wert: Some(s),
+                    stand,
+                }) => (s, stand),
+                Ok(MitStand { wert: None, .. }) | Err(Fehler::Eingabe) => {
+                    return Err(NICHT_GEFUNDEN.to_string())
+                }
                 Err(e) => return Err(fehler(e)),
             };
             let (bloecke, gekuerzt) = bloecke_json(&seite.bloecke);
             let mut v = kopf_json(&seite.kopf);
             v["bloecke"] = Value::Array(bloecke);
             v["gekuerzt"] = json!(gekuerzt || seite.unvollstaendig);
-            v
+            (v, stand)
         }
         Auftrag::Zeitraum { von, bis, grenze } => {
-            let koepfe = z.zeitraum(&von, &bis, grenze, f).map_err(fehler)?;
-            json!({ "seiten": koepfe.iter().map(kopf_json).collect::<Vec<_>>() })
+            let MitStand {
+                wert: koepfe,
+                stand,
+            } = z
+                .zeitraum_mit_stand(&von, &bis, grenze, f)
+                .map_err(fehler)?;
+            (
+                json!({ "seiten": koepfe.iter().map(kopf_json).collect::<Vec<_>>() }),
+                stand,
+            )
         }
         Auftrag::Baum => {
-            let nbs = z.baum(f).map_err(fehler)?;
+            let MitStand { wert: nbs, stand } = z.baum_mit_stand(f).map_err(fehler)?;
             let liste: Vec<Value> = nbs
                 .iter()
                 .map(|n| {
@@ -239,7 +262,7 @@ pub(super) fn run(
                     })
                 })
                 .collect();
-            json!({ "notizbuecher": liste })
+            (json!({ "notizbuecher": liste }), stand)
         }
     };
     out["stand"] = json!(stand);
