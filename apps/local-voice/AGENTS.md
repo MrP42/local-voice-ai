@@ -125,9 +125,22 @@ scripts/release-macos-check.sh          # preflight: tools, Rust targets, gh log
 scripts/release-macos-local.sh          # aarch64 + x86_64; or: aarch64 | x86_64
 ```
 
-The Mac build is ad-hoc signed (`signingIdentity: "-"`), not notarized: the first install of a
-downloaded DMG needs right-click → Open (Gatekeeper); in-app updates are verified by the updater
-signature and are unaffected.
+The Mac release is signed with a fixed self-signed certificate "Local Voice Local Signing"
+(lva#143; `tauri.conf.json` keeps `signingIdentity: "-"` and the script sets `APPLE_SIGNING_IDENTITY`).
+Its designated requirement (`certificate leaf = H"…"`) stays the same across builds, so macOS keeps
+the Accessibility/Microphone grants after updates. The keychain is different (measured 09.11.2026): the
+vault key item (`tresor-v1`, lva#134) is bound to a partition `cdhash:…`, because a self-signed
+certificate has no Team ID. After every update macOS therefore asks once for the login password before
+the app may read the vault key ("Immer erlauben" adds the new build; plain "Erlauben" asks again at
+every app start). "Nicht erlauben" leaves the stored credentials untouched; the app then stops asking
+until the next app start or until the user saves a credential, and reports the keychain refusal
+instead of a broken credential. Accepted for 0.24.x and noted in
+the release text; the stable fix is a paid Developer ID (partition `teamid:…`), see lva#429. Set it up once on the MacBook with `scripts/macos-signing-setup.sh` (Mac unlocked; key and
+certificate land in `~/.tauri/local-voice-signing.{key,crt}` – back them up with the updater key).
+Without it the release script stops; `LVA_ADHOC=1` forces the old ad-hoc signature. For a local test
+build: `APPLE_SIGNING_IDENTITY="Local Voice Local Signing" pnpm tauri build`. Not notarized: the first
+install of a downloaded DMG needs right-click → Open (Gatekeeper); in-app updates are verified by the
+updater signature and are unaffected.
 
 It builds both DMGs, uploads DMG, `.app.tar.gz` and `.sig` to the release and
 merges the `darwin-*` entries into the release's `latest.json`. The Apple
