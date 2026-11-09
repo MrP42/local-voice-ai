@@ -229,7 +229,11 @@ pub async fn voice_call_turn(
         );
     }
     match result {
-        None => Ok(String::new()),
+        None => {
+            // Abbruch während der Pufferung: Zurückgehaltenes verworfen, kein Vermerk.
+            puffer.lock().unwrap_or_else(|e| e.into_inner()).verwerfen();
+            Ok(String::new())
+        }
         Some(Ok(_roh)) => {
             // Der Rueckgabewert ist der freigegebene Text, nie die rohe Modellausgabe.
             let (rest, ausgabe, prosa) = {
@@ -262,6 +266,7 @@ pub async fn voice_call_turn(
             Ok(ausgabe)
         }
         Some(Err(e)) => {
+            puffer.lock().unwrap_or_else(|e| e.into_inner()).verwerfen();
             let _ = app.emit(
                 EVENT,
                 serde_json::json!({"kind": "failed", "request_id": request_id}),

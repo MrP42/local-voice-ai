@@ -1,4 +1,4 @@
-# Erzeugt von scripts/vendor-wai-suite.py aus https://github.com/MrP42/wai-sdk (crates/wai-notizbuch-zugang, Commit 40cc276de7f5). Nicht von Hand ändern.
+# Erzeugt von scripts/vendor-wai-suite.py aus https://github.com/MrP42/wai-sdk (crates/wai-notizbuch-zugang, Commit 404fa8607bf8). Nicht von Hand ändern.
 [package]
 name = "wai-notizbuch-zugang"
 version = "0.1.0"
@@ -17,7 +17,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 sha2 = "0.10"
-rusqlite = { version = "0.37", features = ["bundled"] }
+rusqlite = { version = "0.41.1", features = ["bundled"] }
 
 [dev-dependencies]
 tempfile = "3"

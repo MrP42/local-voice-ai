@@ -790,3 +790,59 @@ fn antwortpuffer_gibt_erst_nach_sicherung_frei() {
         Some("Sonnig.".to_string())
     );
 }
+
+/// Codex lva#414 (Empfehlung): Stopp während der Pufferung. Zurückgehaltene Teile gehen nie
+/// hinaus, auch nicht verspätet oder über ein späteres Abschließen, und es entsteht kein Vermerk.
+#[test]
+fn stopp_waehrend_der_pufferung() {
+    let _g = sperre();
+    let (_d, _pfad) = speicher();
+    merken(
+        &ergebnis("s1", "Personalsache", AUSZUG),
+        &nb1(),
+        Some("g-s"),
+    );
+    let p = pruefe(vec![m("user", "Fass zusammen.")], Some("g-s"), &nb1());
+    assert!(p.antwort_puffern());
+    let antwort = "Zurückgehaltene Antwort über die Personalfrage am Freitag.";
+    let mut puffer = Antwortpuffer::<String>::neu(&p);
+    assert_eq!(puffer.durchlassen("Zurückgehaltene Antwort ".into()), None);
+    assert_eq!(
+        puffer.durchlassen("über die Personalfrage am Freitag.".into()),
+        None
+    );
+    // Stopp: zwei Teile verworfen.
+    assert_eq!(puffer.verwerfen(), 2);
+    // Ein verspätetes Stück aus dem Strom geht nicht mehr hinaus.
+    assert_eq!(puffer.durchlassen("Nachzügler.".into()), None);
+    // Auch ein (fälschlich) folgendes Abschließen gibt nichts frei.
+    assert!(puffer.abschliessen(true, ["Rest".to_string()]).is_empty());
+    assert_eq!(puffer.verwerfen(), 0);
+    // Kein Vermerk: die nie ausgegebene Antwort macht ein anderes Gespräch nicht zum Inhalt.
+    let q = pruefe(vec![m("assistant", antwort)], Some("g-t"), &nb1());
+    assert!(!q.inhalt);
+    // Ohne Notizbuchbezug: nach dem Stopp kommt ebenfalls nichts mehr hinaus.
+    let frei = pruefe(vec![m("user", "Wie wird das Wetter?")], Some("g-w"), &nb1());
+    let mut puffer = Antwortpuffer::<String>::neu(&frei);
+    assert_eq!(puffer.durchlassen("Sonnig.".into()), Some("Sonnig.".into()));
+    assert_eq!(puffer.verwerfen(), 0);
+    assert_eq!(puffer.durchlassen("Nachzügler.".into()), None);
+}
+
+/// Nach dem Abschließen kommt kein verspäteter Teil mehr hinaus.
+#[test]
+fn nach_dem_abschliessen_nichts_mehr() {
+    let _g = sperre();
+    let (_d, _pfad) = speicher();
+    merken(
+        &ergebnis("s1", "Personalsache", AUSZUG),
+        &nb1(),
+        Some("g-n"),
+    );
+    let p = pruefe(vec![m("user", "Fass zusammen.")], Some("g-n"), &nb1());
+    let mut puffer = Antwortpuffer::<String>::neu(&p);
+    assert_eq!(puffer.durchlassen("Satz.".into()), None);
+    assert_eq!(puffer.abschliessen(true, []), ["Satz."]);
+    assert_eq!(puffer.durchlassen("Spät.".into()), None);
+    assert!(puffer.abschliessen(true, ["Rest".to_string()]).is_empty());
+}

@@ -535,35 +535,61 @@ impl Pruefung {
 /// ist (Codex lva#414 Recheck 4). Ohne Notizbuchbezug geht jeder Teil sofort durch.
 #[derive(Debug)]
 pub struct Antwortpuffer<T> {
-    puffer: Option<Vec<T>>,
+    zustand: Puffer<T>,
+}
+
+#[derive(Debug)]
+enum Puffer<T> {
+    /// Ohne Notizbuchbezug: jeder Teil geht sofort hinaus.
+    Durch,
+    /// Mit Notizbuchbezug: zurückgehalten bis zum gesicherten Vermerk.
+    Halten(Vec<T>),
+    /// Abgeschlossen oder verworfen: nichts geht mehr hinaus, auch kein verspäteter Teil.
+    Beendet,
 }
 
 impl<T> Antwortpuffer<T> {
     pub fn neu(p: &Pruefung) -> Self {
         Self {
-            puffer: p.antwort_puffern().then(Vec::new),
+            zustand: if p.antwort_puffern() {
+                Puffer::Halten(Vec::new())
+            } else {
+                Puffer::Durch
+            },
         }
     }
 
-    /// Ein Teil der laufenden Antwort: `Some` = jetzt ausgeben, `None` = zurückgehalten.
+    /// Ein Teil der laufenden Antwort: `Some` = jetzt ausgeben, `None` = zurückgehalten (oder die
+    /// Antwort ist schon beendet).
     pub fn durchlassen(&mut self, teil: T) -> Option<T> {
-        match &mut self.puffer {
-            Some(p) => {
+        match &mut self.zustand {
+            Puffer::Durch => Some(teil),
+            Puffer::Halten(p) => {
                 p.push(teil);
                 None
             }
-            None => Some(teil),
+            Puffer::Beendet => None,
         }
     }
 
     /// Ende der Antwort: bei gesichertem Vermerk alles Zurückgehaltene und `rest` in Reihenfolge,
-    /// sonst nichts (verworfen).
+    /// sonst nichts (verworfen). Danach geht nichts mehr hinaus.
     pub fn abschliessen(&mut self, gesichert: bool, rest: impl IntoIterator<Item = T>) -> Vec<T> {
-        let zurueck = self.puffer.take().unwrap_or_default();
-        if !gesichert {
-            return Vec::new();
+        match std::mem::replace(&mut self.zustand, Puffer::Beendet) {
+            Puffer::Halten(zurueck) if gesichert => zurueck.into_iter().chain(rest).collect(),
+            Puffer::Durch if gesichert => rest.into_iter().collect(),
+            _ => Vec::new(),
         }
-        zurueck.into_iter().chain(rest).collect()
+    }
+
+    /// Abbruch oder Modellfehler während der Antwort: Zurückgehaltenes wird verworfen, ohne
+    /// Vermerk (es hat Rust nie verlassen), und auch später kommt nichts mehr hinaus. Gibt die
+    /// Zahl der verworfenen Teile zurück.
+    pub fn verwerfen(&mut self) -> usize {
+        match std::mem::replace(&mut self.zustand, Puffer::Beendet) {
+            Puffer::Halten(zurueck) => zurueck.len(),
+            _ => 0,
+        }
     }
 }
 
