@@ -131,6 +131,9 @@ pub(crate) static MIGRATIONS: &[M] = &[
     // Mehrere Audiodateien je Besprechung (Teile), Index 15: hinter lva#208. Nur
     // CREATE ... IF NOT EXISTS. Der SQL-Text steht in `parts.rs`.
     M::up(super::parts::PARTS_MIGRATION),
+    // lva#396 N4a (Notizbuch-Seiten <-> Besprechung), Index 16: hinter den Teilen. Nur
+    // CREATE ... IF NOT EXISTS. Der SQL-Text steht in `notizbuch/links.rs`.
+    M::up(super::notizbuch::links::NOTE_LINKS_MIGRATION),
 ];
 
 /// Migration Index 3 (M4, `entwurf/m4-chat-suche.md` §3).

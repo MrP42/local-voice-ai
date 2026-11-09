@@ -93,9 +93,9 @@ fn rundlauf(stamm: &str, erwartet: &[&str]) {
         assert_eq!(count(&conn, "SELECT COUNT(*) FROM audit_log"), 1);
         gesund(&conn);
     }
-    // Zweiter Start: `to_latest` laeuft erneut und aendert nichts. Die Fixtures stehen schon
-    // auf MIGRATIONS.len(); ein Upgrade aelterer Schemastaende pruefen migration_chain und
-    // agent_bridge::schema.
+    // Zweiter Start: `to_latest` laeuft erneut und aendert nichts. Die Fixtures stehen auf dem
+    // Stand aus `ERZEUGT_MIT.txt`; spaetere Schritte laufen beim ersten Oeffnen nach. Ein Upgrade
+    // aelterer Schemastaende pruefen migration_chain und agent_bridge::schema.
     {
         let store = MeetingStore::open_at(&path).unwrap();
         let conn = store.get_connection().unwrap();
@@ -128,10 +128,24 @@ fn fixtures_stammen_aus_rusqlite_037() {
         herkunft.starts_with("rusqlite 0.37.0, SQLite 3.5"),
         "{herkunft}"
     );
+    // Die Fixtures stehen auf dem Stand ihrer Erzeugung; spätere Schritte (z. B. lva#396 N4a,
+    // Index 16) hängen hinten an und laufen beim ersten Öffnen nach (`rundlauf`).
+    let stand: usize = herkunft
+        .split("MIGRATIONS.len() = ")
+        .nth(1)
+        .and_then(|r| r.trim().split_whitespace().next())
+        .and_then(|n| n.parse().ok())
+        .unwrap_or_else(|| panic!("Herkunft ohne Migrationsstand: {herkunft}"));
     assert!(
-        herkunft.contains(&format!("MIGRATIONS.len() = {}", MIGRATIONS.len())),
+        stand <= MIGRATIONS.len(),
         "Fixture passt nicht mehr zur Migrationskette: {herkunft}"
     );
+    for stamm in ["meetings-037", "meetings-037-wal"] {
+        // Auf einer Kopie: die Fixture selbst bleibt unberuehrt.
+        let dir = tempfile::tempdir().unwrap();
+        let conn = Connection::open(kopie(&dir, stamm)).unwrap();
+        assert_eq!(user_version(&conn), stand as i64, "{stamm}");
+    }
 }
 
 #[test]

@@ -241,7 +241,7 @@ pub struct NotebookOutlineSection {
 
 /// Ablage der Notizbuch-App (`<Datenordner>/de.wolffappliedai.notizbuch/notizbuch.db`, Spec
 /// lva#398 §3.1). Die Portable-Fassung hat kein Notizbuch neben sich.
-fn notizbuch_pfad(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+pub(crate) fn notizbuch_pfad(app: &AppHandle) -> Result<std::path::PathBuf, String> {
     if crate::portable::data_dir().is_some() {
         return Err("Das Notizbuch ist in der portablen Fassung nicht verfügbar.".to_string());
     }
