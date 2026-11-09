@@ -1178,13 +1178,14 @@ async changeAssistentEinstufungAktivSetting(enabled: boolean) : Promise<Result<n
 }
 },
 /**
- * Status des Assistent-Syncs (lva#388); ohne Netzaufruf.
+ * Status des Assistent-Syncs; ohne Netzaufruf.
  */
 async assistentSyncStatus() : Promise<AssistentSyncStatus> {
     return await TAURI_INVOKE("assistent_sync_status");
 },
 /**
- * Sofort abgleichen; ohne den Schalter `assistent_sync_aktiv` passiert nichts.
+ * Sofort abgleichen (schließt auch eine laufende Kopplung ab, sobald das andere Gerät aufgenommen
+ * hat). Ohne den Schalter `assistent_sync_aktiv` passiert nichts.
  */
 async assistentSyncStarten() : Promise<Result<AssistentSyncStatus, string>> {
     try {
@@ -1247,13 +1248,16 @@ async assistentSyncKopplungAufnehmen(antwort: string) : Promise<Result<null, str
 }
 },
 /**
- * Bricht eine laufende Kopplung als neues Gerät ab (verwirft die noch nicht aufgenommene Identität).
+ * Bricht eine laufende Kopplung als neues Gerät ab (verwirft die Identität). Der gesicherte Vermerk
+ * bleibt; der nächste Lauf oder Kopplungsbeginn löst den Versuch auf (neue Kennung, falls das andere
+ * Gerät schon aufgenommen hatte).
  */
 async assistentSyncKopplungAbbrechen() : Promise<AssistentSyncStatus> {
     return await TAURI_INVOKE("assistent_sync_kopplung_abbrechen");
 },
 /**
- * Laesst dieses Geraet mit dem Freigabecode eines zugelassenen Geraets zu und gleicht danach ab.
+ * Lässt dieses Gerät mit dem Freigabecode eines schon zugelassenen Geräts am Hub zu (`POST /geraet`,
+ * nur Transport) und gleicht danach ab. Für die Aufnahme ins Konto ist die Kopplung nötig.
  */
 async assistentSyncGeraetZulassen(freigabeCode: string) : Promise<Result<AssistentSyncStatus, string>> {
     try {
@@ -1264,7 +1268,9 @@ async assistentSyncGeraetZulassen(freigabeCode: string) : Promise<Result<Assiste
 }
 },
 /**
- * Widerruft ein Geraet (neue Schluesselepoche).
+ * Widerruft ein Gerät über das Verzeichnis (E3.8): dauerhafte Absicht, signierter Widerrufseintrag
+ * mit neuer Epoche, neuer Schlüssel nur als Pakete an die verbleibenden Geräte des geprüften
+ * Verzeichnisses; vor jedem Hub-Schritt gesichert, nach Abbruch beim nächsten Lauf fortgesetzt.
  */
 async assistentSyncGeraetWiderrufen(geraetId: string) : Promise<Result<AssistentWiderruf, string>> {
     try {
@@ -1275,7 +1281,8 @@ async assistentSyncGeraetWiderrufen(geraetId: string) : Promise<Result<Assistent
 }
 },
 /**
- * Gibt eine Kennung fuer ein weiteres Geraet frei und liefert den Einmalcode.
+ * Gibt eine Kennung für ein weiteres Gerät frei und liefert den Einmalcode (`POST /freigeben`, nur
+ * Transport; die Kopplung enthält den Code schon).
  */
 async assistentSyncFreigabeErzeugen(geraetId: string) : Promise<Result<AssistentFreigabe, string>> {
     try {
@@ -1286,7 +1293,8 @@ async assistentSyncFreigabeErzeugen(geraetId: string) : Promise<Result<Assistent
 }
 },
 /**
- * Zugelassene, nicht widerrufene Geraete des Kontos (Kennungen).
+ * Zugelassene, nicht widerrufene Geräte des Kontos laut **geprüftem** Verzeichnis (Kennungen); vorher
+ * wird das Verzeichnis vom Hub geholt und geprüft.
  */
 async assistentSyncGeraete() : Promise<Result<string[], string>> {
     try {
@@ -1310,7 +1318,10 @@ async assistentSyncSitzung(conversationId: string, uebernehmen: boolean) : Promi
 }
 },
 /**
- * Assistent-Sync ein- oder ausschalten (Standard aus).
+ * Schaltet den Assistent-Sync ein oder aus (Standard aus, E3.6). Erst nach dem Einschalten werden
+ * bestehende lokale Gespräche hochgeladen. Ausschalten setzt die Abbruchschranke, wartet, bis ein
+ * laufender Lauf geendet ist (danach geht kein Aufruf mehr ans Netz), und gibt die Schranke wieder
+ * frei. Einschalten bestätigt das angemeldete Konto (auch nach einem Konto- oder Schlüsselwechsel).
  */
 async changeAssistentSyncAktivSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
@@ -4484,7 +4495,7 @@ async conversationUpdateEntry(id: string, text: string, status: string) : Promis
 }
 },
 /**
- * Markiert ein Gespraech als nur auf diesem Geraet (wird nie hochgeladen).
+ * Markiert ein Gespräch als „nur auf diesem Gerät“ (E10): es wird nie hochgeladen.
  */
 async conversationSetGeraetLokal(id: string, lokal: boolean) : Promise<Result<null, string>> {
     try {
@@ -9294,8 +9305,9 @@ meeting_mcp_include_transcript?: boolean;
  */
 assistent_einstufung_aktiv?: boolean; 
 /**
- * ADR-0028 A1 (E3, lva#388): Verlauf des Assistenten ueber den Hub abgleichen. Standard AUS, fehlender
- * Wert gilt als aus; ohne den Schalter gibt es keinen Netzaufruf.
+ * ADR-0028 A1 (E3.6, lva#388): Verlauf des Assistenten über den Hub abgleichen. Standard AUS,
+ * ein fehlender Wert gilt als aus; ohne diesen Schalter gibt es keinen Netzaufruf des
+ * Assistent-Syncs und es wird nichts hochgeladen.
  */
 assistent_sync_aktiv?: boolean; 
 /**
@@ -9398,6 +9410,111 @@ reasons: string[];
  * Woher die Angaben stammen (URL) und wann sie geprueft wurden.
  */
 sources: string[]; checked: string | null }
+/**
+ * Ergebnis von `assistent_sync_freigabe_erzeugen`: Einmalcode für ein weiteres Gerät.
+ */
+export type AssistentFreigabe = { 
+/**
+ * Einmalgeheimnis; geht auf einem eigenen Kanal an das neue Gerät (z. B. QR).
+ */
+code: string; gueltig_bis: string }
+/**
+ * Ergebnis von `assistent_sync_kopplung_anbieten`: Inhalt des QR-Codes für das neue Gerät.
+ */
+export type AssistentKopplungsangebot = { 
+/**
+ * QR-Inhalt (Prüfpunkt, QR-Geheimnis, Freigabecode); nur einmal anzeigen.
+ */
+qr: string; gueltig_bis: string }
+/**
+ * Lease-Stand einer Sprachsitzung (E3.3).
+ */
+export type AssistentSitzung = { 
+/**
+ * Dieses Gerät hält die Lease.
+ */
+hier: boolean; 
+/**
+ * Fencing-Wert; Beiträge dieser Sitzung tragen ihn.
+ */
+generation: number; 
+/**
+ * Ablauf (ms seit Epoche).
+ */
+gueltig_bis_ms: number }
+/**
+ * Zähler des letzten Laufs (nie Inhalte).
+ */
+export type AssistentSyncBericht = { hochgeladen: number; heruntergeladen: number; geloescht: number; 
+/**
+ * Beiträge, die wegen „nur auf diesem Gerät“ oder Vertraulichkeit nicht hochgeladen werden.
+ */
+nur_lokal: number; 
+/**
+ * Objekte, die auf einen Epochenschlüssel oder einen Vorgänger warten.
+ */
+wartend: number; verworfen: number }
+export type AssistentSyncStatus = { 
+/**
+ * Schalter `assistent_sync_aktiv`.
+ */
+aktiv: boolean; 
+/**
+ * Ein Konto des Bibliotheks-Syncs ist angemeldet (Token, Hub-Adresse).
+ */
+angemeldet: boolean; 
+/**
+ * Dieses Gerät ist am Hub zugelassen (Transport).
+ */
+zugelassen: boolean; 
+/**
+ * Der Hub verlangt eine Freigabe von einem schon zugelassenen Gerät.
+ */
+braucht_freigabe: boolean; 
+/**
+ * Dieses Gerät hat einen gesicherten Sync-Zustand (gegründet oder gekoppelt).
+ */
+eingerichtet: boolean; 
+/**
+ * Geräte-Kennung dieses Geräts beim Assistent-Hub (für das Kopplungsangebot am anderen Gerät).
+ */
+geraet_kennung: string | null; 
+/**
+ * Eine Kopplung als neues Gerät wartet auf die Aufnahme.
+ */
+kopplung_offen: boolean; laeuft: boolean; 
+/**
+ * Aktuelle Schlüsselepoche laut geprüftem Verzeichnis (ab 1; 0 = unbekannt).
+ */
+epoche: number; 
+/**
+ * Ein Widerruf ist vorbereitet, aber noch nicht abgeschlossen.
+ */
+widerruf_offen: boolean; letzter_lauf_ms: number | null; 
+/**
+ * Fester Satz zur Anzeige; nie Inhalte.
+ */
+letzter_fehler: string | null; 
+/**
+ * Fehlercode des Hubs (`netz`, `kontingent`, `unauthorized`, …) zur Diagnose.
+ */
+fehler_code: string | null; 
+/**
+ * Lokal gelöschte Gespräche, deren Grabstein der Hub noch nicht bestätigt hat.
+ */
+grabsteine_offen: number; letzter_bericht: AssistentSyncBericht | null }
+/**
+ * Ergebnis von `assistent_sync_geraet_widerrufen`.
+ */
+export type AssistentWiderruf = { 
+/**
+ * Neue Schlüsselepoche.
+ */
+epoche: number; 
+/**
+ * Geräte, die den neuen Epochenschlüssel als Paket bekommen haben (laut geprüftem Verzeichnis).
+ */
+empfaenger: string[] }
 export type Attendee = { 
 /**
  * Klein geschrieben, ohne `mailto:`; `None`, wenn die Quelle keine
@@ -10356,12 +10473,6 @@ ref: string; added_by: string; added_at: string; source_release_id?: string | nu
  * Unterhaltung (Vertrag `Conversation`; ohne `shared`, `ai_settings` und
  * `cost_bearer`: Sprachgespräche sind persönlich und haben keinen Kostenträger).
  */
-export type AssistentFreigabe = { code: string; gueltig_bis: string }
-export type AssistentKopplungsangebot = { qr: string; gueltig_bis: string }
-export type AssistentSitzung = { hier: boolean; generation: number; gueltig_bis_ms: number }
-export type AssistentSyncBericht = { hochgeladen: number; heruntergeladen: number; geloescht: number; nur_lokal: number; wartend: number; verworfen: number }
-export type AssistentSyncStatus = { aktiv: boolean; angemeldet: boolean; zugelassen: boolean; braucht_freigabe: boolean; eingerichtet: boolean; geraet_kennung: string | null; kopplung_offen: boolean; laeuft: boolean; epoche: number; widerruf_offen: boolean; letzter_lauf_ms: number | null; letzter_fehler: string | null; fehler_code: string | null; grabsteine_offen: number; letzter_bericht: AssistentSyncBericht | null }
-export type AssistentWiderruf = { epoche: number; empfaenger: string[] }
 export type Conversation = { schema_version: string; id: string; ts: string; trace_id: string; title: string; created_at: string; updated_at: string; kind: string; scope: ConversationScope; participants: ConversationParticipant[]; context: ContextSource[]; pinned: boolean; archived: boolean; ext?: ConversationExt | null }
 /**
  * Anhang eines Beitrags (Vertrag `ConversationAttachment`).
@@ -11135,7 +11246,7 @@ offset: number; page: number | null; book_id: string | null }
  */
 export type KeyStatus = { 
 /**
- * Dieses System kann Geheimnisse verschlüsselt ablegen (Windows/DPAPI).
+ * Dieses System kann Geheimnisse verschlüsselt ablegen (Windows/DPAPI, macOS/Schlüsselbund).
  */
 supported: boolean; present: boolean; 
 /**
