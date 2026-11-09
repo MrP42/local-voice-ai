@@ -5555,7 +5555,108 @@
     "pending": "{{count}} pending",
     "keyMismatch": "The hub holds objects sealed with a different key – was the password changed? Please sign in again on all devices.",
     "deadLetters": "{{count}} objects rejected (too large or invalid)",
-    "devices": "Devices"
+    "devices": "Devices",
+    "widerrufOffen": "The sign-in of a cancelled account switch has not yet been revoked on the hub. The app retries on every start.",
+    "erneutPruefen": "Check again",
+    "nurLokal": {
+      "anzahl_one": "{{count}} item only on this device (not uploaded)",
+      "anzahl_other": "{{count}} items only on this device (not uploaded)",
+      "uebernehmen": "Add to account",
+      "hinweis": "Backed up first. If an item differs from the account, a conflict copy is created; nothing is overwritten.",
+      "uebernommen": "Backed up and added to the account. Sync is running."
+    },
+    "anmeldung": {
+      "titel": "Local data found",
+      "titelWechsel": "Data from another account found",
+      "beschreibung": "This device holds data that does not belong to {{konto}} yet. What should happen to it? Nothing is uploaded until you choose.",
+      "beschreibungWechsel": "The data on this device comes from {{vorher}}. You are now signing in with {{konto}}. Nothing is uploaded until you choose.",
+      "bestand": "Local data",
+      "seiten_one": "{{count}} page",
+      "seiten_other": "{{count}} pages",
+      "buecher_one": "{{count}} book",
+      "buecher_other": "{{count}} books",
+      "fortschritte_one": "{{count}} reading position or bookmark",
+      "fortschritte_other": "{{count}} reading positions and bookmarks",
+      "dateien_one": "{{count}} book file",
+      "dateien_other": "{{count}} book files",
+      "einstellungen": "Changed settings",
+      "groesse": "Backup first: about {{groesse}}",
+      "frage": "What should happen to the local data?",
+      "zusammenfuehren": "Add and merge",
+      "zusammenfuehrenText": "Backed up first. Local data and account are combined; differing pages appear as conflict copies, nothing is overwritten.",
+      "kopierenBestaetigen": "Copy data from {{vorher}} into {{konto}}",
+      "sichern": "Back up and …",
+      "sichernText": "Everything is backed up and verified first, then:",
+      "getrennt": "keep separate",
+      "getrenntText": "Stays on this device and is not uploaded. The account's data is added.",
+      "entfernen": "remove from this device",
+      "entfernenText": "Pages, books and reading positions are removed from this device; afterwards you see the account's data. The backup is kept.",
+      "kollisionen_one": "{{count}} item also exists in the account with different content:",
+      "kollisionen_other": "{{count}} items also exist in the account with different content:",
+      "kollisionSeite": "“{{titel}}” – kept as a copy “(only on this device)”, the account brings its version",
+      "kollisionBuch": "“{{titel}}” – the local version stays in the backup, the account's version appears on this device",
+      "unberuehrt": "Meetings, dictations, voices and models stay on this device and are not affected by any choice.",
+      "knopfZusammenfuehren": "Back up and merge",
+      "knopfGetrennt": "Back up and keep separate",
+      "knopfEntfernen": "Back up and remove",
+      "laeuft": "Backing up …",
+      "abbrechen": "Cancel",
+      "abgebrochen": "Sign-in cancelled. Nothing on this device was changed.",
+      "erledigt": {
+        "zusammenfuehren": "Backed up and merged. The first sync is running.",
+        "getrennt_halten": "Backed up. The local data stays on this device; the account's data is added.",
+        "entfernen": "Backed up and removed from this device. Loading the account's data."
+      }
+    },
+    "abmelden": {
+      "titel": "Sign out?",
+      "beschreibung": "You are signing {{konto}} out on this device.",
+      "behalten": "Sign out, keep data on this device",
+      "behaltenText": "Pages, books and reading positions stay. On the next sign-in the app asks what to do with new items.",
+      "entfernen": "Sign out and remove library and pages from this device",
+      "entfernenText": "Backed up and verified first; only then removed. You find the backup here under “Backups”.",
+      "knopf": "Sign out",
+      "laeuft": "Signing out …",
+      "abbrechen": "Cancel",
+      "entfernt": "Signed out. The data is backed up and removed from this device."
+    },
+    "sicherungen": {
+      "titel": "Backups from account actions",
+      "hinweis": "Before every sign-in with local data, account switch, removal and upload the app backs up the local data. Backups are never deleted automatically.",
+      "zurBibliothek": "Library backups",
+      "zuKonto": "Backups from account actions (Account & devices)",
+      "anlass": {
+        "anmeldung": "before sign-in",
+        "abmeldung": "before sign-out",
+        "kollision": "before separating matching items",
+        "freigabe": "before adding to the account",
+        "schutz": "safety backup",
+        "vor_wiederherstellen": "before restoring settings"
+      },
+      "wiederherstellen": "Restore",
+      "einstellungen": "Settings",
+      "einstellungenHinweis": "Restore settings from this backup (the current ones are backed up first)",
+      "einstellungenZurueck": "Settings restored. The previous ones are in a new backup.",
+      "ordner": "Open folder",
+      "loeschen": "Delete backup",
+      "loeschenTitel": "Delete backup?",
+      "loeschenText": "The backup from {{datum}} will be deleted permanently. This cannot be undone.",
+      "fehler": "Backup action failed",
+      "wiederhergestellt": "Backup restored",
+      "zurueck_one": "{{count}} item restored",
+      "zurueck_other": "{{count}} items restored",
+      "zusaetzlich_one": "{{count}} differing item added separately",
+      "zusaetzlich_other": "{{count}} differing items added separately",
+      "gleich_one": "{{count}} unchanged",
+      "gleich_other": "{{count}} unchanged",
+      "fortschritte_one": "{{count}} reading position added",
+      "fortschritte_other": "{{count}} reading positions added",
+      "fortschritteAbweichend_one": "{{count}} differing reading position stayed in the backup",
+      "fortschritteAbweichend_other": "{{count}} differing reading positions stayed in the backup",
+      "inSicherung_one": "stayed in the backup: {{liste}}",
+      "inSicherung_other": "stayed in the backup: {{liste}}",
+      "nurLokal": "Everything restored stays only on this device."
+    }
   },
   "guard": {
     "memoryLow": "Memory almost full: the read-aloud and language-model servers were stopped to keep the computer responsive."
@@ -7359,6 +7460,31 @@
     "designs": {
       "fluent": "Default: Fluent 2 with neutral gray and blue, matching the system interface.",
       "wai": "Wolff Applied AI: navy in light mode, signal yellow in dark mode."
+    }
+  },
+  "chatGuide": {
+    "title": "Chat introduction",
+    "count": "{{n}} of {{total}}",
+    "voice": "With voice",
+    "skip": "Skip",
+    "back": "Back",
+    "next": "Next",
+    "step": {
+      "welcome": "Hi! I'm your assistant in Local Voice. Let me show you what you can do here in one minute. You can skip at any time.",
+      "talk": "Use this button to talk to me like on a phone call. You can interrupt me at any time. Or just type in the line.",
+      "plus": "The plus adds context: a file, a web search and more.",
+      "model": "Up here you choose the model: local on your computer or in the cloud, fast or thorough.",
+      "knowledge": "Here you always see which data I may use. You enable meetings, books and notes individually.",
+      "pages": "On the left you find everything else: history, meeting recordings, read aloud and your library. You can also just ask me.",
+      "story": "Finally, let's try something: I'll make up a short story and read it with several voices. What should it be about?"
+    },
+    "story": {
+      "topic": "Story topic",
+      "defaultTopic": "A little dragon who can't sleep",
+      "go": "Tell the story",
+      "display": "Tell me a story: {{topic}}",
+      "readVoices": "Read with voices",
+      "stop": "Stop reading"
     }
   },
   "voiceCall": {

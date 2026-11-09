@@ -17,6 +17,12 @@ export interface TourMockOptions {
   holdSelect?: boolean;
   /** Desktop-App (window.isTauri): Fensterknöpfe werden gezeigt. */
   desktop?: boolean;
+  /** Oberflächensprache (app_language und Systemsprache), Standard „de“. */
+  language?: string;
+  /** Namen aus tts_provider_speakers. */
+  speakers?: string[];
+  /** tts_provider_speakers wartet auf window.__releaseSpeakers(). */
+  holdSpeakers?: boolean;
 }
 
 export const setup = async (page: Page, opts: TourMockOptions = {}) => {
@@ -34,6 +40,9 @@ export const setup = async (page: Page, opts: TourMockOptions = {}) => {
       selectFails,
       holdSelect,
       desktop,
+      language,
+      speakers,
+      holdSpeakers,
     }) => {
       const callbacks = new Map<number, (e: unknown) => void>();
       const listeners = new Map<string, number[]>();
@@ -65,7 +74,7 @@ export const setup = async (page: Page, opts: TourMockOptions = {}) => {
       };
       const settings = {
         onboarding_completed: onboardingCompleted,
-        app_language: "de",
+        app_language: language,
         theme,
         appearance: JSON.stringify({
           modus: theme === "dark" ? "dunkel" : "hell",
@@ -131,7 +140,20 @@ export const setup = async (page: Page, opts: TourMockOptions = {}) => {
             calls.push({ cmd, args });
             if (cmd === "get_app_settings" || cmd === "get_default_settings")
               return settings;
-            if (cmd === "plugin:os|locale") return "de-DE";
+            if (cmd === "plugin:os|locale")
+              return language === "de" ? "de-DE" : language;
+            if (cmd === "tts_provider_speakers") {
+              if (holdSpeakers)
+                await new Promise((resolve) =>
+                  Object.assign(window, { __releaseSpeakers: resolve }),
+                );
+              return speakers.map((name, i) => ({
+                id: `s${i}`,
+                name,
+                aliases: [],
+                gender: null,
+              }));
+            }
             if (cmd === "plugin:app|version") return "0.23.0";
             if (cmd === "plugin:event|listen") {
               const name = args.event as string;
@@ -199,6 +221,9 @@ export const setup = async (page: Page, opts: TourMockOptions = {}) => {
       selectFails: opts.selectFails ?? 0,
       holdSelect: opts.holdSelect ?? false,
       desktop: opts.desktop ?? false,
+      language: opts.language ?? "de",
+      speakers: opts.speakers ?? [],
+      holdSpeakers: opts.holdSpeakers ?? false,
     },
   );
 };

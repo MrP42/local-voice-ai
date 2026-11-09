@@ -673,10 +673,10 @@ async usageBudgetStates() : Promise<Result<BudgetState[], string>> {
 }
 },
 /**
- * Anmelden: Schlüssel ableiten (nur lokal), Token holen, Konto speichern,
- * Ledger leeren, ersten Lauf anstoßen.
+ * Anmelden: Schlüssel ableiten (nur lokal), Token holen. Das Konto wird erst nach der
+ * Entscheidung über vorhandene lokale Daten gespeichert (lva#400, `uebernahme`).
  */
-async syncLogin(email: string, password: string, deviceName: string, url: string | null) : Promise<Result<SyncStatus, string>> {
+async syncLogin(email: string, password: string, deviceName: string, url: string | null) : Promise<Result<AnmeldeErgebnis, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("sync_login", { email, password, deviceName, url }) };
 } catch (e) {
@@ -756,12 +756,89 @@ async booktalkRelayRevoke(deviceKey: string) : Promise<Result<null, string>> {
 }
 },
 /**
- * Abmelden: Token im Hub widerrufen (best effort), Konto und Ledger löschen.
- * Die Seiten bleiben auf diesem Gerät.
+ * Abmelden (lva#400 U7): Herkunft festhalten, Konto und Ledger entfernen, Token im Hub
+ * widerrufen (bei Fehler später erneut). Mit `entfernen` gehen Bibliothek und Seiten nach
+ * geprüfter Sicherung vom Gerät; sonst bleiben alle Daten.
  */
-async syncLogout() : Promise<Result<SyncStatus, string>> {
+async syncLogout(entfernen: boolean) : Promise<Result<SyncStatus, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("sync_logout") };
+    return { status: "ok", data: await TAURI_INVOKE("sync_logout", { entfernen }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async syncAnmeldungOffen() : Promise<Result<Entscheidung | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sync_anmeldung_offen") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Die Wahl im Modal umsetzen (U3, U11).
+ */
+async syncAnmeldungEntscheiden(wahl: AnmeldeWahl, kopierenBestaetigt: boolean) : Promise<Result<SyncStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sync_anmeldung_entscheiden", { wahl, kopierenBestaetigt }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Abbrechen (U10): Nutzdaten unverändert, wartende Anmeldung weg, Token widerrufen.
+ */
+async syncAnmeldungAbbrechen() : Promise<Result<SyncStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sync_anmeldung_abbrechen") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async syncSicherungen() : Promise<Result<Sicherung[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sync_sicherungen") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async syncSicherungWiederherstellen(name: string) : Promise<Result<WiederherstellBericht, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sync_sicherung_wiederherstellen", { name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Einstellungen einer Sicherung zurückspielen (vorher Sicherung der aktuellen).
+ */
+async syncSicherungEinstellungen(name: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sync_sicherung_einstellungen", { name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async syncSicherungLoeschen(name: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sync_sicherung_loeschen", { name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Nur lokal gehaltene Einträge ins angemeldete Konto übernehmen (U5, Art `uebernahme`).
+ */
+async syncNurLokalUebernehmen() : Promise<Result<SyncStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sync_nur_lokal_uebernehmen") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -8198,6 +8275,12 @@ export type AlignGroup = { a: number[]; b: number[]; confirmed: boolean }
  * Kapitelzuordnung zweier Fassungen, lückenlos in Gruppen.
  */
 export type Alignment = { a: string; b: string; updated: number; device?: string; groups: AlignGroup[] }
+export type AnmeldeErgebnis = { status: SyncStatus; 
+/**
+ * `Some`: das Modal zeigen; `None`: ohne Rückfrage freigegeben.
+ */
+entscheidung: Entscheidung | null }
+export type AnmeldeWahl = "zusammenfuehren" | "getrennt_halten" | "entfernen"
 export type AntwortSicht = { text: string; citations: number[]; unsupported: boolean }
 /**
  * Anfrage an den Abruf.
@@ -10131,6 +10214,15 @@ recording: number; meeting_id: string; segment_index: number; start_ms: number }
  * Eine Antwortfassung (Vertrag `Variant`, ohne Quellen- und Werkzeugfelder).
  */
 export type EntryVariant = { id: string; text: string; model: string; provider_id?: string | null; status: string; created_at: string; notice?: string | null }
+export type Entscheidung = { konto: string; 
+/**
+ * Konto, aus dem die lokalen Daten zuletzt kamen, wenn es ein anderes ist.
+ */
+vorher_konto: string | null; seiten: number; buecher: number; fortschritte: number; dateien: number; einstellungen: boolean; 
+/**
+ * Größe der Sicherung in Bytes (geschätzt aus dem lokalen Bestand).
+ */
+sicherung_bytes: number; kollisionen: Kollision[] }
 /**
  * Welche Teile in den Export kommen (`meetings_export`, Zwischenablage).
  * Fehlende Felder gelten als „an“: ein Aufruf ohne Auswahl exportiert alles.
@@ -10617,6 +10709,11 @@ export type Kind = "youtube" | "ics" | "graph" | "m365" | "smtp" | "folder" | "o
  * WAI Presenter (Etappe 4): Austauschordner fuer Besprechungspakete (`presenter.rs`).
  */
 "presenter"
+export type Kollision = { titel: string; 
+/**
+ * `seite` (wird unter neuer Kennung lokal behalten) oder `buch` (bleibt in der Sicherung).
+ */
+art: string }
 /**
  * Form, in der ein Eintrag als Kontext dient.
  */
@@ -12596,6 +12693,11 @@ export type ShieldCheck = { id: string; level: ShieldLevel; detail: string | nul
 export type ShieldLevel = "green" | "yellow" | "red"
 export type ShieldStatus = { level: ShieldLevel; profile: ComplianceProfile; active_model: string | null; active: Assessment | null; checks: ShieldCheck[] }
 export type ShortcutBinding = { id: string; name: string; description: string; default_binding: string; current_binding: string }
+export type Sicherung = { name: string; erstellt_ms: number; anlass: string; konto: string | null; seiten: number; buecher: number; dateien: number; bytes: number; 
+/**
+ * Voller Pfad des Sicherungsordners (für „Ordner öffnen“).
+ */
+ordner: string }
 /**
  * Ein Zeitbereich, in dem eine Folie zu sehen ist (ms im Video).
  */
@@ -12995,7 +13097,23 @@ key_mismatch: boolean;
 /**
  * Anzahl synchronisierter Seiten laut Ledger.
  */
-pages: number }
+pages: number; 
+/**
+ * Einträge, die nur auf diesem Gerät bleiben (lva#400 U5).
+ */
+nur_lokal?: number; 
+/**
+ * Eine Anmeldung wartet auf die Entscheidung über lokale Daten (lva#400 U1).
+ */
+anmeldung_offen?: boolean; 
+/**
+ * Ein Token-Widerruf am Hub steht noch aus (lva#400 U10).
+ */
+widerruf_offen?: boolean; 
+/**
+ * Ein Übergang ist angehalten (z. B. Sicherung nicht lesbar, lva#400 U11).
+ */
+uebergang_fehler?: string | null }
 export type SystemMemory = { ram_total_mb: number; ram_used_mb: number; 
 /**
  * Leer, wenn kein Adapter messbar ist. Software-Adapter (Microsoft
@@ -13735,6 +13853,11 @@ export type WaitReason =
  */
 export type WegDto = "lokal" | "relay"
 export type WiderspruchSicht = { statement: string; sourceIndices: number[] }
+export type WiederherstellBericht = { zurueck: number; zusaetzlich: number; gleich: number; 
+/**
+ * Abweichende Bücher, die in der Sicherung bleiben (Titel oder Kennung).
+ */
+in_sicherung: string[]; fortschritte_ergaenzt: number; fortschritte_abweichend: number; ordner: string }
 export type WindowsMicrophonePermissionStatus = { supported: boolean; overall_access: PermissionAccess; device_access: PermissionAccess; app_access: PermissionAccess; desktop_app_access: PermissionAccess }
 /**
  * Ein Treffer der Suche (alles fremder Text, bereinigt).
