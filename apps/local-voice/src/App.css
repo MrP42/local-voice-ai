@@ -793,19 +793,11 @@ html[data-fluent] .lva-logo__accent {
 .reader-folders__compact .app-select__control {
   min-height: 44px;
 }
-/* Breit: die Ansichten stehen in der Liste, der Kopf bleibt frei. Umbruch-
-   Layout: wieder im Kopf, die Liste bleibt ein niedriges Regal. */
-@media (min-width: 1101px) {
-  .reader-tabs--header.reader-tabs--header {
-    display: none !important;
-  }
-}
 @media (max-width: 1100px) {
   .reader-folders__compact {
     display: flex;
   }
-  .reader-folders__full,
-  [data-testid="page-sections"] {
+  .reader-folders__full {
     display: none !important;
   }
 }
@@ -864,11 +856,6 @@ html[data-fluent] .lva-logo__accent {
   .tts-mback--reader {
     display: flex;
   }
-}
-/* Ansichten der offenen Seite als senkrechte Reiter: Touchziel 44 px. */
-.lv-tablist--list .fui-Tab {
-  min-height: 44px;
-  justify-content: flex-start;
 }
 /* Gestapelt: Bedienung oben (natuerliche Hoehe, hoechstens die Haelfte der
    Spalte, sonst eigener Scroll), Dateien/Hilfe fuellen den Rest und scrollen
