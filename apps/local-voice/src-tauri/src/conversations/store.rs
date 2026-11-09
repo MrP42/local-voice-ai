@@ -19,7 +19,6 @@ use rusqlite_migration::{Migrations, M};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use specta::Type;
-use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 use tauri::AppHandle;
@@ -141,7 +140,7 @@ static MIGRATIONS: &[M] = &[
     // lva#388 (Prüfrunde): Zustand je Konto statt Zurücksetzen. `sync_konto`: das Konto, unter dem
     // das Gespräch für den Hub bestimmt wurde; es geht nie in ein anderes Konto. Grabsteine bleiben
     // dauerhaft (`erledigt` = der Hub hat bestätigt) und tragen ihr Konto. `assistent_sync_pruefpunkt`:
-    // höchste gesehene Hub-Revision je Objekt (Rollback-Schutz). `assistent_sync_beitrag`: Hub-Kennung
+    // ungenutzt seit E3.8 (Rollback-Schutz über die Höchststände des Kerns), bleibt für die Migrationsfolge. `assistent_sync_beitrag`: Hub-Kennung
     // eines Beitrags, der nach einer Korrektur unter neuer Kennung hochgeladen wurde.
     M::up(
         "ALTER TABLE conversations ADD COLUMN sync_konto TEXT;
@@ -1193,6 +1192,7 @@ impl ConversationStore {
     }
 
     /// Alle Gespräche (auch archivierte) mit Beiträgen und Sync-Feldern, in einem Zug gelesen.
+    #[cfg(test)]
     pub fn sync_alle(&self) -> Result<Vec<SyncStand>> {
         let conn = self.lock();
         Self::alle_staende(&conn)
@@ -1350,49 +1350,6 @@ impl ConversationStore {
         conn.execute(
             "UPDATE assistent_sync_grabsteine SET erledigt = 1 WHERE conversation_id = ?1",
             params![conversation_id],
-        )?;
-        Ok(())
-    }
-
-    /// Höchste gesehene Hub-Revision je Objekt (Rollback-Schutz).
-    pub fn sync_pruefpunkte(&self, konto: &str) -> Result<BTreeMap<String, u64>> {
-        let conn = self.lock();
-        let mut stmt = conn.prepare(
-            "SELECT objekt_id, revision FROM assistent_sync_pruefpunkt WHERE konto = ?1",
-        )?;
-        let rows = stmt.query_map(params![konto], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?.max(0) as u64))
-        })?;
-        Ok(rows.collect::<std::result::Result<_, _>>()?)
-    }
-
-    /// Hebt Prüfpunkte an (nie ab): `(objekt_id, unterhaltung_ref, revision)`.
-    pub fn sync_pruefpunkte_speichern(
-        &self,
-        konto: &str,
-        punkte: &[(String, String, u64)],
-    ) -> Result<()> {
-        let conn = self.lock();
-        let tx = conn.unchecked_transaction()?;
-        for (objekt, r, rev) in punkte {
-            tx.execute(
-                "INSERT INTO assistent_sync_pruefpunkt (konto, objekt_id, unterhaltung_ref, revision)
-                 VALUES (?1, ?2, ?3, ?4)
-                 ON CONFLICT(konto, objekt_id) DO UPDATE
-                    SET revision = MAX(revision, excluded.revision)",
-                params![konto, objekt, r, i64::try_from(*rev).unwrap_or(i64::MAX)],
-            )?;
-        }
-        tx.commit()?;
-        Ok(())
-    }
-
-    /// Verwirft die Prüfpunkte eines Kontos (nur auf ausdrücklichen Wunsch: Hub neu akzeptieren).
-    pub fn sync_pruefpunkte_verwerfen(&self, konto: &str) -> Result<()> {
-        let conn = self.lock();
-        conn.execute(
-            "DELETE FROM assistent_sync_pruefpunkt WHERE konto = ?1",
-            params![konto],
         )?;
         Ok(())
     }
