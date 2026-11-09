@@ -43,6 +43,8 @@ pub mod slides; // D1 (#70, M7): Folien aus Videos
 pub mod speaker_merges; // #266: Sprecher zusammenführen und trennen
 pub mod speaker_names; // U8
 pub mod speakers; // M3-P3b
+#[cfg(test)]
+mod sqlite_upgrade; // RUSTSEC-2026-0459: Altbestaende aus rusqlite 0.37 unter 0.41
 pub mod stats;
 pub mod store;
 pub mod subtitle;
