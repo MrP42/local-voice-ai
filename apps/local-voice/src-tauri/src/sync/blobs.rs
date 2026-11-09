@@ -222,6 +222,32 @@ pub fn blob_id_of(key: &[u8; KEY_LEN], stamp: &FileStamp) -> Option<String> {
 // Hoch- und Herunterladen
 // ---------------------------------------------------------------------------
 
+/// Die Blob-Routen des Hubs, die Hoch- und Herunterladen brauchen. Der echte Hub ist [`HubClient`];
+/// die Tests der Ablage (D4) setzen einen nachgebauten Hub im Prozess ein.
+#[async_trait::async_trait]
+pub trait BlobTransport: Send + Sync {
+    async fn blob_info(&self, blob_id: &str) -> Result<Option<super::client::BlobInfo>, HubError>;
+    async fn put_chunk(&self, blob_id: &str, index: usize, sealed: &[u8]) -> Result<(), HubError>;
+    async fn commit_blob(&self, blob_id: &str, chunks: usize) -> Result<CommitOutcome, HubError>;
+    async fn get_chunk(&self, blob_id: &str, index: usize) -> Result<Vec<u8>, HubError>;
+}
+
+#[async_trait::async_trait]
+impl BlobTransport for HubClient {
+    async fn blob_info(&self, blob_id: &str) -> Result<Option<super::client::BlobInfo>, HubError> {
+        HubClient::blob_info(self, blob_id).await
+    }
+    async fn put_chunk(&self, blob_id: &str, index: usize, sealed: &[u8]) -> Result<(), HubError> {
+        HubClient::put_chunk(self, blob_id, index, sealed).await
+    }
+    async fn commit_blob(&self, blob_id: &str, chunks: usize) -> Result<CommitOutcome, HubError> {
+        HubClient::commit_blob(self, blob_id, chunks).await
+    }
+    async fn get_chunk(&self, blob_id: &str, index: usize) -> Result<Vec<u8>, HubError> {
+        HubClient::get_chunk(self, blob_id, index).await
+    }
+}
+
 /// Woher der Klartext eines Uploads kommt.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Source {
@@ -270,8 +296,8 @@ pub enum Upload {
 /// Kennung stammt: ändert sich die Datei unterwegs, wird nicht
 /// abgeschlossen (ein abgeschlossener Blob ist auf dem Hub unveränderlich).
 #[allow(clippy::too_many_arguments)]
-pub async fn upload(
-    client: &HubClient,
+pub async fn upload<C: BlobTransport + ?Sized>(
+    client: &C,
     key: &[u8; KEY_LEN],
     user_id: i64,
     blob_id: &str,
@@ -337,8 +363,8 @@ pub async fn upload(
 /// Einen Blob herunterladen, jedes Stück prüfen, den ganzen Klartext gegen
 /// die Kennung prüfen und erst dann atomar an `target` legen. Liefert den
 /// SHA-256 des Klartexts (Hex).
-pub async fn download(
-    client: &HubClient,
+pub async fn download<C: BlobTransport + ?Sized>(
+    client: &C,
     key: &[u8; KEY_LEN],
     user_id: i64,
     blob_id: &str,

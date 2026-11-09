@@ -209,6 +209,31 @@ pub fn setzen(dir: &Path, ordner: &str, stufe: Option<KiStufe>) -> Res<Freigaben
     Ok(f)
 }
 
+/// D4 Rückweg: Freigaben von alten auf neue Ordnerkennungen umschreiben (wiederholbar). Eine fehlende
+/// Datei ist ein gültiger leerer Stand; bei unklarer Freigabe ein Fehler, damit der Journalschritt
+/// wiederholt wird, sobald die Freigabe neu festgelegt ist.
+pub fn umschreiben(dir: &Path, zuordnung: &BTreeMap<String, String>) -> Res<()> {
+    let Lage::Gueltig(mut f) = laden(dir) else {
+        return Err(Fehler::neu(
+            "ablage.freigabe_unklar",
+            "Die KI-Freigabe ist unklar; der Rückweg wird fortgesetzt, sobald sie neu festgelegt ist.",
+        ));
+    };
+    let mut geaendert = false;
+    for (alt, neu) in zuordnung {
+        if let Some(s) = f.ordner.remove(alt) {
+            f.ordner.entry(neu.clone()).or_insert(s);
+            geaendert = true;
+        }
+    }
+    if !geaendert {
+        return Ok(());
+    }
+    vorher_ablegen(dir)?;
+    f.epoche += 1;
+    schreiben(dir, &f)
+}
+
 /// Entfernt Einträge gelöschter Ordner (Aufräumen nach endgültigem Löschen); ändert sonst nichts.
 pub fn vergessen(dir: &Path, ordner: &[String]) -> Res<()> {
     let Lage::Gueltig(mut f) = laden(dir) else {

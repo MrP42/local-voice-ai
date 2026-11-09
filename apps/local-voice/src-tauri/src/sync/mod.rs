@@ -4,6 +4,7 @@
 //! Bibliothek (Bücher, Fortschritt, Lesezeichen, Dateiablage):
 //! `docs/superpowers/specs/2026-11-02-bibliothek-sync.md`.
 
+pub mod ablage;
 pub mod account;
 pub mod blobs;
 pub mod book_files;

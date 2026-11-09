@@ -239,7 +239,7 @@
         "languageModel": "{{language}} · {{name}}",
         "voices_one": "{{count}} voice",
         "voices_other": "{{count}} voices",
-        "gatedNeedsVault": "On this system only after agreeing to store the access in plain text (keychain support follows).",
+        "gatedNeedsVault": "On Linux only available after agreeing to store the access in plain text.",
         "licenseConsent": "I have read the licences. I use non-commercial models only non-commercially.",
         "licenseOpen": "View licence of “{{name}}”",
         "access": {
@@ -480,7 +480,7 @@
         "title": "Own voices",
           "summary_one": "{{count}} available",
           "summary_other": "{{count}} available",
-          "cloneBlocked": "Cloning is still locked on this system: the Gradium key needs the keychain vault coming with the next update. Voice files can already be imported.",
+          "cloneBlocked": "Cloning is locked on Linux: the Gradium key needs a secure vault (Windows, macOS). Voice files can still be imported.",
         "intro": "Import your own voices or create them from a recording with Gradium, including from existing Fish voices. They are then stored locally in the Phonon model and used without a network.",
         "noModel": "No Phonon model is installed yet. New voices are saved and become available as soon as a model is installed on the models page.",
         "empty": "No own voices yet.",
@@ -553,7 +553,7 @@
           "hint": "Only for “Create voice”. The key is stored encrypted on this computer and sent only to api.gradium.ai. Saving sends nothing over the network.",
           "present": "A key is saved.",
           "missing": "No key saved.",
-          "unsupported": "This system cannot store the key encrypted (Windows only). “Create voice” is not available here.",
+          "unsupported": "This system cannot store the key encrypted (Windows and macOS only). “Create voice” is not available here.",
           "problem": "The saved key cannot be read: {{problem}}",
           "label": "Gradium API key",
           "placeholder": "Enter API key",
@@ -3556,7 +3556,7 @@
         "hide": "Hide address",
         "connect": "Connect",
         "checking": "Checking the calendar …",
-        "privacy": "The address grants read access to the whole calendar. It is stored encrypted (Windows user account) on this computer and only sent to the calendar provider.",
+        "privacy": "The address grants read access to the whole calendar. It is stored encrypted (bound to your user account) on this computer and only sent to the calendar provider.",
         "helpTitle": "Where do I find the address?",
         "outlookTitle": "Outlook (Microsoft 365, Outlook on the web)",
         "outlookSteps": "Settings → Calendar → Shared calendars → “Publish a calendar”. Pick the calendar, permission “Can view all details” (otherwise attendees are missing), “Publish” and copy the ICS link. If IT blocks publishing, the option does not appear. Published calendars refresh with a delay of a few hours, depending on the provider.",
@@ -3567,7 +3567,7 @@
       },
       "graph": {
         "title": "Sign in with Microsoft (Outlook, Microsoft 365)",
-        "intro": "Reads the Outlook calendar directly through Microsoft Graph, including attendees and the Teams link. Read-only (Calendars.Read); sign-in happens in the browser and the sign-in token is stored encrypted (Windows user account) on this computer.",
+        "intro": "Reads the Outlook calendar directly through Microsoft Graph, including attendees and the Teams link. Read-only (Calendars.Read); sign-in happens in the browser and the sign-in token is stored encrypted (bound to your user account) on this computer.",
         "clientId": "Application (client) ID of your own Entra app",
         "tenant": "Directory (tenant), optional",
         "tenantHint": "“common” allows work, school and personal accounts. For a single company enter the directory ID or domain.",
@@ -6406,7 +6406,6 @@
   "integrations": {
     "secretStore": {
       "unavailable": {
-        "macos": "Not available on macOS yet: secure storage of credentials is not supported yet. Connections that need a password, token or secret address (Microsoft 365, email sending, calendars, knowledge, webhooks and services) cannot be set up yet.",
         "linux": "Not available on Linux yet: secure storage of credentials is not supported yet. Connections that need a password, token or secret address (Microsoft 365, email sending, calendars, knowledge, webhooks and services) cannot be set up yet.",
         "short": "Not available on this system yet (no secure credential storage)."
       }
@@ -6815,13 +6814,13 @@
         },
         "webhook": {
           "name": "n8n webhook",
-          "description": "Send data from a workflow to n8n (or another webhook). The address is a secret and is stored encrypted in your Windows account.",
+          "description": "Send data from a workflow to n8n (or another webhook). The address is a secret and is stored encrypted and bound to your user account.",
           "action": "Set up webhook"
         }
       },
       "services": {
         "title": "Services",
-        "description": "Send minutes, tasks and decisions straight into your team’s tools. Sign-in uses a key (API token) or a webhook address; both are stored encrypted in your Windows account.",
+        "description": "Send minutes, tasks and decisions straight into your team’s tools. Sign-in uses a key (API token) or a webhook address; both are stored encrypted and bound to your user account.",
         "connect": "Connect",
         "groups": {
           "chat": {
@@ -7207,7 +7206,7 @@
       "smtp": {
         "title": "Set up mailbox (SMTP)",
         "titleEdit": "Mailbox settings",
-        "description": "For sending through your own mailbox. The password is stored encrypted in your Windows account, never in the database.",
+        "description": "For sending through your own mailbox. The password is stored encrypted and bound to your user account, never in the database.",
         "host": "Server",
         "hostPlaceholder": "smtp.example.com",
         "port": "Port",
@@ -7235,7 +7234,7 @@
       "wissen": {
         "title": "Connect knowledge base",
         "titleEdit": "Knowledge base settings",
-        "description": "MCP endpoint of the AI-OS. https only; the key is stored encrypted in your Windows account.",
+        "description": "MCP endpoint of the AI-OS. https only; the key is stored encrypted and bound to your user account.",
         "endpoint": "Endpoint address",
         "endpointPlaceholder": "https://os.example.com/mcp",
         "tool": "Search tool",
@@ -7251,7 +7250,7 @@
         "url": "Webhook address",
         "urlWhat": "address",
         "urlPlaceholder": "https://n8n.example.com/webhook/…",
-        "urlHint": "The address is a secret, because it often carries the key in its path. It is stored encrypted in your Windows account; only the server is shown later. Only https is allowed, http only for this computer (localhost).",
+        "urlHint": "The address is a secret, because it often carries the key in its path. It is stored encrypted and bound to your user account; only the server is shown later. Only https is allowed, http only for this computer (localhost).",
         "n8nHint": "In n8n: open the Webhook node, copy the \"Production URL\" and activate the flow. The app never follows redirects."
       },
       "folder": {
@@ -7268,9 +7267,9 @@
         "optionalLabel": "{{label}} (optional)",
         "token": "Key (API token)",
         "tokenWhat": "key",
-        "tokenHint": "The key is stored encrypted in your Windows account and only goes to the service’s server.",
+        "tokenHint": "The key is stored encrypted and bound to your user account and only goes to the service’s server.",
         "webhookUrl": "Webhook address",
-        "webhookHint": "The address is a secret (it carries the key). It is stored encrypted in your Windows account; later only the server is shown. Only addresses of the service are accepted.",
+        "webhookHint": "The address is a secret (it carries the key). It is stored encrypted and bound to your user account; later only the server is shown. Only addresses of the service are accepted.",
         "help": "How to get access in {{service}}",
         "noTestPost": "“Test connection” only checks the address here and sends no test message to the channel.",
         "fields": {
@@ -9189,6 +9188,18 @@
     "drop": {
       "titel": "Drop files into “{{name}}”",
       "hinweis": "Release to add them."
+    },
+    "sync": {
+      "synchronisiert": "Synced",
+      "ausstehend": "Pending",
+      "konflikt": "Conflict",
+      "wartet_auf_text": "Waiting for text",
+      "nur_geraet": "This device only",
+      "angehalten": "Paused (unreadable)",
+      "nicht_erfasst": "Not yet recorded",
+      "cloud": "{{used}} of {{quota}} in the cloud",
+      "voll": "Cloud storage full – uploads paused",
+      "unvollstaendig": "Sync incomplete"
     },
     "fuss": {
       "belegt": "{{size}} used",

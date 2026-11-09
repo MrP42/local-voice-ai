@@ -45,4 +45,5 @@ export const api = {
     ok(commands.ablageGefundeneAufnehmen(datei, ordner)),
   suchen: (anfrage: string) => ok(commands.ablageSuchen(anfrage)),
   indexNeuAufbauen: () => ok(commands.ablageIndexNeuAufbauen()),
+  syncStand: () => ok(commands.ablageSyncStand()),
 };

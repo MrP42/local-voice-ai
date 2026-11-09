@@ -2048,10 +2048,10 @@ fn the_secret_blob_is_versioned_json_with_client_and_tenant() {
 /// Mit dem echten DPAPI-Speicher: ein grosses Erneuerungs-Token (mehr als die 2 560
 /// Byte des Anmeldeinformationsspeichers) geht hin und zurueck, und auf dem Datentraeger
 /// steht kein Klartext.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 struct DirVault(std::path::PathBuf);
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 impl SecretVault for DirVault {
     fn get(&self, name: &str) -> Result<Option<Zeroizing<Vec<u8>>>, String> {
         secret::get_in(&self.0, name)
@@ -2064,7 +2064,7 @@ impl SecretVault for DirVault {
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 #[tokio::test]
 async fn dpapi_roundtrip_of_a_large_refresh_token_through_the_real_vault() {
     let dir = tempfile::tempdir().unwrap();
