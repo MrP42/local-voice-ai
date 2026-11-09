@@ -1,7 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 
 // lva#365 P1: Ordnerleiste im Vorlesen (Alle, Buch-Ordner, Texte) und die
-// Ansichten der offenen Seite als senkrechte Reiter in der Liste (E2).
+// Ansichten der offenen Seite als waagerechte Reiter oben im Reader (lva#437).
 // Attrappe nach readaloud-standards.spec.ts, dazu ein Buch mit zwei Fassungen
 // (p1 Deutsch, p3 Englisch) und ein loser Text (p2).
 
@@ -768,9 +768,24 @@ test("Ansichten der Seite stehen waagerecht oben im Reader, nicht in der Liste (
   const b = (await translation.boundingBox())!;
   expect(b.x).toBeGreaterThan(a.x);
   expect(Math.abs(b.y - a.y)).toBeLessThan(4);
-  // Oben im Reader: über dem Text der Seite.
-  const frame = (await page.locator(".reader-frame").boundingBox())!;
-  expect(a.y - frame.y).toBeLessThan(80);
+  // Oben im Reader: erste Zeile der Reader-Karte.
+  const card = (await page.locator(".tts-editor").boundingBox())!;
+  expect(a.y - card.y).toBeLessThan(60);
+  // Bei 1280 px mit offener Seitenliste: Reiter sichtbar, Werkzeugleiste
+  // überlagert sie nicht.
+  await page.setViewportSize({ width: 1280, height: 1050 });
+  const tabs = (await sections.boundingBox())!;
+  const tools = (await page
+    .getByRole("button", { name: "Lesen", exact: true })
+    .boundingBox())!;
+  const overlap =
+    tabs.x < tools.x + tools.width &&
+    tools.x < tabs.x + tabs.width &&
+    tabs.y < tools.y + tools.height &&
+    tools.y < tabs.y + tabs.height;
+  expect(overlap).toBe(false);
+  await expect(original).toBeVisible();
+  await page.setViewportSize({ width: 1920, height: 1050 });
   await original.focus();
   await page.keyboard.press("ArrowRight");
   await expect(translation).toHaveAttribute("aria-selected", "true");
@@ -778,7 +793,7 @@ test("Ansichten der Seite stehen waagerecht oben im Reader, nicht in der Liste (
   await expect(original).toHaveAttribute("aria-selected", "true");
 });
 
-test("Umbruch-Layout: Ordner als Auswahl, Ansichten wieder im Kopf", async ({
+test("Umbruch-Layout: Ordner als Auswahl, Ansichten im Kopf", async ({
   page,
 }) => {
   await openReadAloud(page, 900);
@@ -794,9 +809,9 @@ test("Umbruch-Layout: Ordner als Auswahl, Ansichten wieder im Kopf", async ({
   await expect(
     page.getByRole("tab", { name: "Original", exact: true }),
   ).toHaveCount(1);
-  await expect(
-    page.getByRole("tab", { name: "Original", exact: true }),
-  ).toBeVisible();
+  const head = page.getByRole("tab", { name: "Original", exact: true });
+  await expect(head).toBeVisible();
+  expect((await head.boundingBox())!.height).toBeGreaterThanOrEqual(44);
   const overflow = await page.evaluate(
     () => document.documentElement.scrollWidth - window.innerWidth,
   );

@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useState, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { open } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
@@ -301,8 +301,8 @@ export const PagesSidebar: React.FC<{
       )}
 
       {shown.map((page, index) => (
-        <Fragment key={page.id}>
         <div
+          key={page.id}
           className={`tts-pages__list group relative flex items-center gap-1 rounded-md px-2 py-1.5 cursor-pointer transition-colors ${
             page.id === activeId
               ? "bg-logo-primary/15 text-text"
@@ -486,7 +486,6 @@ export const PagesSidebar: React.FC<{
             </>
           )}
         </div>
-        </Fragment>
       ))}
 
       {bookFolder?.missing}
