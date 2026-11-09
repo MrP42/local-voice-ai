@@ -21,6 +21,8 @@ const RECHERCHE: &str = "wai://lva/recherche/";
 const SEITE: &str = "wai://lva/seite/";
 /// Eigene Datei eines Projekts: `wai://lva/projektdatei/<projekt>/<datei>` (lva#365 P4).
 const PROJEKTDATEI: &str = "wai://lva/projektdatei/";
+/// Eintrag der Dokumentenablage (Ordner oder Datei): `wai://lva/ablage/<id>` (Spec Ablage §11).
+const ABLAGE: &str = "wai://lva/ablage/";
 
 /// Datenklasse einer Besprechung: personenbezogen (Sprache, Namen). Vertrag: Besprechungen `confidential`.
 pub const KLASSE_BESPRECHUNG: Klasse = Klasse::Personal;
@@ -60,6 +62,10 @@ pub fn seite_link(id: &str) -> String {
 
 pub fn projektdatei_link(projekt: &str, datei: &str) -> String {
     format!("{PROJEKTDATEI}{projekt}/{datei}")
+}
+
+pub fn ablage_link(id: &str) -> String {
+    format!("{ABLAGE}{id}")
 }
 
 pub fn seite_id(ref_: &str) -> Option<&str> {

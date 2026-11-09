@@ -195,6 +195,19 @@ impl SyncEngine {
             s.device_name = Some(cfg.device_name.clone());
             s.hub_url = Some(cfg.url.clone());
         });
+        // Dokumentenablage (D4): eigener Lauf; ihr Fehler hält den übrigen Abgleich nicht auf.
+        let result = match result {
+            Ok(outcome) => match super::ablage::lauf_app(app, &cfg).await {
+                Ok(_) => Ok(outcome),
+                Err(HubError::Unauthorized) => Err(HubError::Unauthorized),
+                // Der Fehler steht im Zustand der Ablage (`ablage_sync_stand`), nicht im Takt.
+                Err(_) => {
+                    log::warn!("Sync: Ablage-Lauf nicht abgeschlossen");
+                    Ok(outcome)
+                }
+            },
+            Err(e) => Err(e),
+        };
         match result {
             Ok(outcome) => {
                 self.set_status(|s| {
@@ -622,6 +635,7 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
                 payload: sealed,
                 key_id: my_key_id.clone(),
                 deleted: false,
+                blob_refs: None,
             },
             h,
         ));
@@ -679,6 +693,7 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
                 payload: String::new(),
                 key_id: my_key_id.clone(),
                 deleted: true,
+                blob_refs: None,
             },
             String::new(),
         ));
@@ -813,6 +828,10 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
         for remote in &page.objects {
             // Das Relay hat seinen eigenen Takt und Cursor (booktalk_relay.rs).
             if remote.collection == super::booktalk_relay::COLLECTION {
+                continue;
+            }
+            // Die Ablage hat ihren eigenen Lauf mit eigenen Cursorn (sync::ablage).
+            if super::ablage::ist_ablage(&remote.collection) {
                 continue;
             }
             if rescanning

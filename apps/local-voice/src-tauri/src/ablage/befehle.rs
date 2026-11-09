@@ -18,6 +18,9 @@ use tauri::{AppHandle, Emitter};
 /// Ereignis an die Oberfläche: eine Textfassung ist fertig (oder fehlgeschlagen).
 pub const EREIGNIS_TEXT: &str = "ablage-text";
 
+/// Ereignis an die Oberfläche: ein Abgleich der Ablage ist gelaufen (D4); Stand und Sync-Zustand neu laden.
+pub const EREIGNIS_SYNC: &str = "ablage-sync";
+
 type Antwort<T> = Result<T, String>;
 
 fn ablage(app: &AppHandle) -> Antwort<Ablage> {
@@ -144,8 +147,16 @@ pub async fn ablage_ordner_einstellungen(
     id: String,
     einstellungen: AblageEinstellungen,
 ) -> Antwort<()> {
+    let projekte = crate::portable::app_data_dir(&app)
+        .map_err(|e| e.to_string())?
+        .join("projekte");
     mit_nachlauf(&app, false, move |a| {
-        a.ordner_einstellungen(&id, &einstellungen)
+        a.ordner_einstellungen(&id, &einstellungen)?;
+        // Wieder synchron (D4): Rückweg lokal → sync sofort; scheitert er, setzt der Sync-Takt fort.
+        if let Err(e) = a.rueckweg(&super::speicher::ProjektVerweise::neu(projekte)) {
+            log::warn!("ablage: Rückweg lokal → sync: {}", e.code);
+        }
+        Ok(())
     })
     .await
 }
@@ -263,4 +274,20 @@ pub async fn ablage_index_neu_aufbauen(app: AppHandle) -> Antwort<AblageIndexBer
 pub async fn ablage_text_abbrechen() -> Antwort<()> {
     super::textfassung::abbrechen();
     Ok(())
+}
+
+/// Sync-Zustand je Ordner und Datei, Kontingent und letzter Fehler (D4). Ohne Konto: `verbunden = false`.
+#[tauri::command]
+#[specta::specta]
+pub async fn ablage_sync_stand(app: AppHandle) -> Antwort<crate::sync::ablage::AblageSyncStand> {
+    // Ohne lesbaren Schlüssel gilt das Konto als nicht verbunden (der Lauf liefe ebenso nicht).
+    let konto = crate::sync::account::load(&app).and_then(|cfg| {
+        cfg.key()
+            .ok()
+            .map(|k| crate::sync::ablage::konto_kennung(cfg.user_id, &k, &cfg.url))
+    });
+    blockierend(&app, move |a| {
+        crate::sync::ablage::stand(&a, konto.as_deref())
+    })
+    .await
 }
