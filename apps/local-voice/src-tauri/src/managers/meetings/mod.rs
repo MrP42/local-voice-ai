@@ -37,6 +37,8 @@ pub mod retention;
 pub mod retranscribe;
 pub mod search;
 pub mod segmenter;
+#[cfg(test)]
+mod sqlite_upgrade; // RUSTSEC-2026-0459: Altbestaende aus rusqlite 0.37 unter 0.41
 pub mod signal_watch; // M2-P2e
 pub mod simulate;
 pub mod slides; // D1 (#70, M7): Folien aus Videos
