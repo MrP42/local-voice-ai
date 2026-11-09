@@ -1033,6 +1033,7 @@ fn textfassung_kommt_mit_passender_textrev_an() {
         stand: "ok".into(),
         code: None,
         versuche: 0,
+        versuche_zeit: 0,
     };
     a.a.text_ablegen(&dat, &f.fas, Some(&json), text).unwrap();
     a.sync(&hub);
@@ -1080,6 +1081,7 @@ fn fehlende_textfassung_ergibt_wartezustand() {
         stand: "ok".into(),
         code: None,
         versuche: 0,
+        versuche_zeit: 0,
     };
     a.a.text_ablegen(&dat, &f.fas, Some(&text_json(&f, &rev, "t")), text)
         .unwrap();

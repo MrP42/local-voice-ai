@@ -660,6 +660,7 @@ impl<E: Embedder> Retriever<E> {
         let opts = SqliteConnectOptions::new()
             .filename(path)
             .create_if_missing(true)
+            .busy_timeout(std::time::Duration::from_secs(10))
             .pragma("secure_delete", "ON");
         let pool = SqlitePoolOptions::new()
             .max_connections(1)

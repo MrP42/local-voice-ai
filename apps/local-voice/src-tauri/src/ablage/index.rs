@@ -36,6 +36,7 @@ pub const MAX_TEXTFASSUNG: u64 = 32 * 1024 * 1024;
 /// Marke im Ablageordner: ein Abgleich ist fehlgeschlagen und wird beim nächsten Öffnen wiederholt
 /// (sonst bliebe Text endgültig gelöschter Dateien im Index).
 pub const OFFEN: &str = "index.offen";
+const CHECKPOINT_VERSUCHE: u32 = 5;
 
 /// Serialisiert die Schreiber ([`abgleichen`], [`neu_aufbauen`]). Die Suche nimmt sie nicht: SQLite im
 /// WAL-Modus liest neben einem Schreiber, und ein langer Abgleich (große Textfassungen) darf die Suche
@@ -186,6 +187,13 @@ fn verbinden(pfad: &Path) -> Res<Connection> {
     Ok(c)
 }
 
+/// Test: Code unter der Schreibersperre ausführen.
+#[cfg(test)]
+pub(crate) fn mit_sperre<T>(f: impl FnOnce() -> T) -> T {
+    let _g = sperren();
+    f()
+}
+
 /// `PRAGMA secure_delete` der eigenen Verbindung und der von `wai-retrieval` (Test).
 #[cfg(test)]
 pub(crate) fn secure_delete_stand(a: &Ablage) -> Res<(i64, i64)> {
@@ -252,12 +260,43 @@ pub(crate) fn begrenzt_lesen(p: &Path, textrev: &str, max: u64) -> Option<(Textf
         // Letzten vollständigen Abschnitt behalten: `abschnitte` steht zuletzt, ein Abschnitt beginnt
         // immer mit `{"anker"` (ein `"` im Text wäre als `\"` maskiert, die Folge ist also eindeutig).
         let trenner = b",{\"anker\"";
-        let pos = buf.windows(trenner.len()).rposition(|w| w == trenner)?;
-        buf.truncate(pos);
-        buf.extend_from_slice(b"]}");
+        match buf.windows(trenner.len()).rposition(|w| w == trenner) {
+            Some(pos) => {
+                buf.truncate(pos);
+                buf.extend_from_slice(b"]}");
+            }
+            None => {
+                // Schon der erste Abschnitt ist zu groß: seinen Text vorne behalten (auf einer
+                // UTF-8-Grenze und ohne halbes Escape gekürzt) statt nichts zu indizieren.
+                let t = kopf_text_kuerzen(&buf)?;
+                log::info!("ablage: erster Abschnitt der Textfassung gekürzt");
+                buf = t;
+            }
+        }
     }
     let t: Textfassung = serde_json::from_slice(&buf).ok()?;
     (t.textrev == textrev).then_some((t, gekuerzt))
+}
+
+/// Schließt abgeschnittenes JSON mit genau einem (gekürzten) Abschnitt wieder ab.
+fn kopf_text_kuerzen(buf: &[u8]) -> Option<Vec<u8>> {
+    let start = buf.windows(14).position(|w| w == b"\"abschnitte\":[")?;
+    let rest = &buf[start..];
+    let text0 = rest.windows(8).position(|w| w == b"\"text\":\"")? + 8;
+    let mut ende = buf.len();
+    // Bis zu 12 Bytes zurück: halbes Zeichen oder halbes Escape (`\u12`) entfernen.
+    for _ in 0..12 {
+        if ende <= start + text0 {
+            return None;
+        }
+        let mut v = buf[..ende].to_vec();
+        v.extend_from_slice(b"\"}]}");
+        if serde_json::from_slice::<Textfassung>(&v).is_ok() {
+            return Some(v);
+        }
+        ende -= 1;
+    }
+    None
 }
 
 /// Bericht eines Abgleichs (Tests, Oberfläche).
@@ -293,6 +332,12 @@ pub fn nachholen(a: &Ablage) -> Res<Option<AblageIndexBericht>> {
     if std::fs::symlink_metadata(a.dir().join(OFFEN)).is_err() {
         return Ok(None);
     }
+    // Läuft schon ein Abgleich (Schreiber), holt dieser selbst nach (Erfolg räumt die Marke); die Seite
+    // „Ablage“ wartet deshalb nicht auf die Sperre.
+    let Ok(g) = SPERRE.try_lock() else {
+        return Ok(None);
+    };
+    drop(g);
     abgleichen(a).map(Some)
 }
 
@@ -367,9 +412,26 @@ fn abgleichen_gesperrt(a: &Ablage) -> Res<AblageIndexBericht> {
         })
         .map_err(|_| fehler())? as u32;
     // WAL zurückschreiben und kürzen: gelöschter Text bleibt nicht in `index.db-wal` liegen.
-    c.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))
-        .map_err(|_| fehler())?;
+    checkpoint(&c)?;
     Ok(bericht)
+}
+
+/// `wal_checkpoint(TRUNCATE)`: Spalte 0 ist `busy` (≠ 0: ein Leser hielt den Abschluss auf). Kurz
+/// wiederholen; bleibt es busy, ist der Abgleich nicht abgeschlossen (Marke [`OFFEN`] über den Aufrufer,
+/// [`nachholen`] wiederholt später).
+pub(crate) fn checkpoint(c: &Connection) -> Res<()> {
+    for versuch in 0..CHECKPOINT_VERSUCHE {
+        let busy: i64 = c
+            .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| r.get(0))
+            .map_err(|_| fehler())?;
+        if busy == 0 {
+            return Ok(());
+        }
+        if versuch + 1 < CHECKPOINT_VERSUCHE {
+            std::thread::sleep(std::time::Duration::from_millis(150));
+        }
+    }
+    Err(fehler())
 }
 
 async fn schreiben(

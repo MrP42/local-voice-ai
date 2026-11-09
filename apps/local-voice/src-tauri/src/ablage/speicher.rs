@@ -2558,6 +2558,8 @@ pub struct TextAuftrag {
     pub pfad: PathBuf,
     /// Bisherige Versuche (vorübergehender Fehler), sonst 0.
     pub versuche: u32,
+    /// Bisherige Zeitüberschreitungen (eigener Zähler, siehe [`MAX_VERSUCHE_ZEIT`]).
+    pub versuche_zeit: u32,
 }
 
 /// Ausgang von [`Ablage::text_ablegen`].
@@ -2599,7 +2601,7 @@ pub fn text_wiederholbar(t: &zf::Text) -> bool {
         return false;
     }
     match t.code.as_deref() {
-        Some("extrakt.zeit") => t.versuche < MAX_VERSUCHE_ZEIT,
+        Some("extrakt.zeit") => t.versuche_zeit < MAX_VERSUCHE_ZEIT,
         Some(c) => VORUEBERGEHEND.contains(&c) && t.versuche < MAX_VERSUCHE,
         None => false,
     }
@@ -2703,6 +2705,7 @@ impl Ablage {
                 textrev: rev,
                 pfad: self.dir.join(DATEIEN).join(&d.id).join(name),
                 versuche: vorhanden.map(|t| t.versuche).unwrap_or(0),
+                versuche_zeit: vorhanden.map(|t| t.versuche_zeit).unwrap_or(0),
             });
         }
         Ok(aus)

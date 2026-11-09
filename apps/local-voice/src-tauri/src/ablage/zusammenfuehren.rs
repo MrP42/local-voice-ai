@@ -82,6 +82,10 @@ pub struct Text {
     /// Zusammenführen gewinnt der höhere Zähler.
     #[serde(default, skip_serializing_if = "ist_null")]
     pub versuche: u32,
+    /// Bisherige Zeitüberschreitungen (`extrakt.zeit`), eigener Zähler: genau ein Wiederholversuch mit
+    /// größerer Zeitgrenze, unabhängig von anderen vorübergehenden Fehlern.
+    #[serde(default, skip_serializing_if = "ist_null")]
+    pub versuche_zeit: u32,
 }
 
 fn ist_null(n: &u32) -> bool {
@@ -788,6 +792,7 @@ mod tests {
             stand: "ok".into(),
             code: None,
             versuche: 0,
+            versuche_zeit: 0,
         };
         let mut fa = fas("f1", None, 1);
         fa.texte = vec![t("r1")];

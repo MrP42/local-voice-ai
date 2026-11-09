@@ -54,6 +54,7 @@ fn text_aus(t: &Textfassung, blob: String, size: u64) -> Text {
         },
         code: None,
         versuche: 0,
+        versuche_zeit: 0,
     }
 }
 
@@ -71,6 +72,9 @@ fn fehler_text(auf: &TextAuftrag, code: &str) -> Text {
         stand: "fehler".into(),
         code: Some(code.chars().take(40).collect()),
         versuche: auf.versuche.saturating_add(1),
+        versuche_zeit: auf
+            .versuche_zeit
+            .saturating_add(u32::from(code == "extrakt.zeit")),
     }
 }
 
@@ -90,8 +94,8 @@ pub enum Ausgang {
 /// Zeitgrenze eines Auftrags: der erste Versuch läuft mit der Grundgrenze, der Wiederholversuch nach
 /// einer Zeitüberschreitung mit der dreifachen oder der nach Größe bemessenen (2 s je MiB), je nachdem,
 /// was größer ist, höchstens 15 Minuten.
-pub fn zeitgrenze(versuche: u32, grund: Duration, groesse: u64) -> Duration {
-    if versuche == 0 {
+pub fn zeitgrenze(versuche_zeit: u32, grund: Duration, groesse: u64) -> Duration {
+    if versuche_zeit == 0 {
         return grund;
     }
     let je_mib = Duration::from_secs(2 * (groesse / (1024 * 1024)));
@@ -111,7 +115,7 @@ pub fn bearbeiten(
 ) -> Res<Ausgang> {
     let groesse = std::fs::metadata(&auf.pfad).map(|m| m.len()).unwrap_or(0);
     let grenzen = Grenzen {
-        zeit: zeitgrenze(auf.versuche, grenzen.zeit, groesse),
+        zeit: zeitgrenze(auf.versuche_zeit, grenzen.zeit, groesse),
         ..grenzen
     };
     let ergebnis = textlauf::ausfuehren(

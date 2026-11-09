@@ -642,8 +642,23 @@ fn grosse_textfassung_wird_gekuerzt_gelesen() {
     assert!(gekuerzt);
     assert!(!teil.abschnitte.is_empty() && teil.abschnitte.len() < 5);
     assert_eq!(teil.abschnitte[0].anker, "absatz=1");
-    // Schon der erste Abschnitt passt nicht: nichts zu indizieren.
-    assert!(index::begrenzt_lesen(&p, "rev", 500).is_none());
+    // Schon der erste Abschnitt passt nicht: sein Anfang wird (auf UTF-8-Grenze) gekürzt indiziert.
+    let (anfang, gekuerzt) = index::begrenzt_lesen(&p, "rev", 500).unwrap();
+    assert!(gekuerzt);
+    assert_eq!(anfang.abschnitte.len(), 1);
+    assert!(anfang.abschnitte[0].text.starts_with("Text1 xxx"));
+    // Mehrbyte-Text mit Escapes: Schnitt mitten im Zeichen bleibt gültig.
+    let mut t2 = t.clone();
+    t2.abschnitte = vec![extrakt::Abschnitt {
+        anker: "absatz=1".into(),
+        pfad: vec![],
+        text: "ä\"€\n".repeat(400),
+    }];
+    fs::write(&p, serde_json::to_vec(&t2).unwrap()).unwrap();
+    for max in 300..312 {
+        let (k, g) = index::begrenzt_lesen(&p, "rev", max).unwrap();
+        assert!(g && !k.abschnitte[0].text.is_empty(), "{max}");
+    }
     // Fremde `textrev`: abgelehnt.
     assert!(index::begrenzt_lesen(&p, "andere", 1 << 20).is_none());
 }
@@ -996,6 +1011,7 @@ fn extraktorwechsel_ergibt_neue_textrev_alte_bleibt() {
                 stand: "ok".into(),
                 code: None,
                 versuche: 0,
+                versuche_zeit: 0,
             },
         )
         .unwrap();
@@ -1319,7 +1335,32 @@ fn extraktor_nur_mit_kennzeichen_und_unter_der_wurzel() {
         TEST_GRENZEN,
         &AtomicBool::new(false),
     );
-    assert_eq!(r.unwrap_err(), "extrakt.abbruch");
+    assert_eq!(r.unwrap_err(), "extrakt.programm");
+}
+
+#[cfg(unix)]
+#[test]
+fn unklare_beendigung_ist_voruebergehend_absturz_endgueltig() {
+    use std::os::unix::process::ExitStatusExt;
+    use std::process::ExitStatus;
+    let code = |c: i32| textlauf::unklarer_ausgang(&ExitStatus::from_raw(c << 8));
+    let signal = |s: i32| textlauf::unklarer_ausgang(&ExitStatus::from_raw(s));
+    // Nicht zugelassen (64), Thread-Start (71), stdout (74), unklar (1): nicht am Inhalt.
+    assert_eq!(code(64), "extrakt.programm");
+    assert_eq!(code(71), "extrakt.start");
+    assert_eq!(code(74), "extrakt.start");
+    assert_eq!(code(1), "extrakt.programm");
+    assert_eq!(signal(15), "extrakt.programm");
+    // Thread-Panic, Rust-Panic, abort, SIGKILL, SIGSEGV: endgültig.
+    for c in [70, 101, 134] {
+        assert_eq!(code(c), "extrakt.abbruch", "{c}");
+    }
+    for s in [6, 9, 11] {
+        assert_eq!(signal(s), "extrakt.abbruch", "{s}");
+    }
+    for c in ["extrakt.programm", "extrakt.start"] {
+        assert!(speicher::VORUEBERGEHEND.contains(&c));
+    }
 }
 
 fn fas_von(e: &Env, dat: &str) -> String {
@@ -1399,6 +1440,17 @@ fn wal_wird_nach_dem_abgleich_gekuerzt() {
     assert_eq!(groesse, 0, "WAL nach TRUNCATE-Checkpoint leer");
 }
 
+/// `nachholen` gibt bei belegter Schreibersperre (parallele Tests) `None` zurück; hier kurz erneut.
+fn nachholen_bald(a: &Ablage) -> Option<index::AblageIndexBericht> {
+    for _ in 0..200 {
+        if let Some(b) = index::nachholen(a).unwrap() {
+            return Some(b);
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    None
+}
+
 #[cfg(unix)]
 #[test]
 fn fehlgeschlagener_abgleich_wird_nachgeholt() {
@@ -1417,7 +1469,7 @@ fn fehlgeschlagener_abgleich_wird_nachgeholt() {
     assert!(e.a.dir().join(index::OFFEN).exists());
     // Nächster Start: Hartlink weg, die Wiederholung räumt den Index und die Marke.
     fs::remove_file(&kopie).unwrap();
-    let b = index::nachholen(&e.a).unwrap().expect("Wiederholung");
+    let b = nachholen_bald(&e.a).expect("Wiederholung");
     assert_eq!(b.dateien, 0);
     assert!(!e.a.dir().join(index::OFFEN).exists());
     assert!(e.treffer(KONTROLLE).is_empty());
@@ -1562,6 +1614,65 @@ fn zeitgrenze_hoechstens_ein_wiederholversuch() {
     textfassung::rueckstellung_vergessen(&fas2);
     assert!(e.a.text_auftraege().unwrap().is_empty());
     assert_eq!(e.textstand(&dat2).0.as_deref(), Some("fehler"));
+}
+
+#[test]
+fn zeitzaehler_ist_unabhaengig_von_anderen_fehlern() {
+    let e = env();
+    let o = e.standard();
+    let dat = e.ablegen("z.txt", b"Zaehler", &o);
+    let fas = fas_von(&e, &dat);
+    let g = Grenzen {
+        zeit: Duration::from_secs(1),
+        speicher_mb: 1024,
+    };
+    let lauf = |modus: &str| {
+        textfassung::lauf(&e.a, &kind(Some(modus)), g, &AtomicBool::new(false), &|| {}).unwrap()
+    };
+    let wieder = |f: &str| textfassung::rueckstellung_vergessen(f);
+    assert_eq!(lauf("endlos").fehler, 1); // Zeit 1
+    wieder(&fas);
+    assert_eq!(lauf("lesen").fehler, 1); // anderer vorübergehender Fehler
+    wieder(&fas);
+    let auf = e.a.text_auftraege().unwrap();
+    assert_eq!(
+        (auf.len(), auf[0].versuche, auf[0].versuche_zeit),
+        (1, 2, 1)
+    );
+    // Die zweite Zeitüberschreitung ist die letzte: genau ein Zeit-Wiederholversuch.
+    assert_eq!(lauf("endlos").fehler, 1);
+    wieder(&fas);
+    assert!(e.a.text_auftraege().unwrap().is_empty());
+}
+
+#[test]
+fn checkpoint_busy_wird_nicht_als_erfolg_gewertet() {
+    let d = tempfile::tempdir().unwrap();
+    let p = d.path().join("w.db");
+    let c = rusqlite::Connection::open(&p).unwrap();
+    c.busy_timeout(Duration::from_millis(0)).unwrap();
+    c.pragma_update(None, "journal_mode", "WAL").unwrap();
+    c.execute_batch("CREATE TABLE t(x); INSERT INTO t VALUES(1);")
+        .unwrap();
+    // Ein Leser hält einen Stand fest, danach kommen neue Frames: TRUNCATE kann nicht abschließen.
+    let leser = rusqlite::Connection::open(&p).unwrap();
+    leser.execute_batch("BEGIN; SELECT * FROM t;").unwrap();
+    c.execute("INSERT INTO t VALUES(2)", []).unwrap();
+    assert!(index::checkpoint(&c).is_err());
+    leser.execute_batch("COMMIT").unwrap();
+    assert!(index::checkpoint(&c).is_ok());
+}
+
+#[test]
+fn nachholen_wartet_nicht_auf_laufenden_abgleich() {
+    let e = env();
+    fs::write(e.a.dir().join(index::OFFEN), b"").unwrap();
+    let r = index::mit_sperre(|| index::nachholen(&e.a));
+    assert_eq!(r.unwrap(), None);
+    assert!(e.a.dir().join(index::OFFEN).exists());
+    // Ohne Sperre läuft die Wiederholung und räumt die Marke.
+    assert!(nachholen_bald(&e.a).is_some());
+    assert!(!e.a.dir().join(index::OFFEN).exists());
 }
 
 #[test]
