@@ -5,8 +5,12 @@
 //!
 //! Wiederanlauf: Es gibt keine eigene Warteschlangendatei. Offen ist, was im Stand fehlt
 //! ([`Ablage::text_auftraege`]); nach einem Neustart läuft der Arbeiter einfach erneut. Ein Fehler am
-//! Inhalt (ZIP-Bombe, Prüfsumme, Format) wird als `fehler` vermerkt und nicht wiederholt; ein
-//! vorübergehender Fehler (Start, Schutz, Absturz, Zeit, Lesen; [`super::speicher::VORUEBERGEHEND`])
+//! Inhalt (ZIP-Bombe, Prüfsumme, Format) wird als `fehler` vermerkt und nicht wiederholt; ebenso eine
+//! Giftdatei, deren Extraktion an der Speichergrenze oder durch Absturz des Kindes endet
+//! (`extrakt.abbruch`): sofort endgültig nicht extrahierbar. Bei der Zeitgrenze (`extrakt.zeit`) gibt es
+//! genau einen späteren Wiederholversuch mit nach Dateigröße vergrößerter Zeitgrenze
+//! ([`zeitgrenze`]). Ein Startfehler (`extrakt.start`) wird nicht als Ergebnis eingetragen. Ein
+//! vorübergehender Fehler (Start, Programm, Schutz, Lesen; [`super::speicher::VORUEBERGEHEND`])
 //! wird mit Zähler vermerkt und höchstens [`super::speicher::MAX_VERSUCHE`]-mal versucht, jeweils erst
 //! im nächsten Prozess (Rückstellung statt sofortiger Wiederholung). Eine neue Extraktorversion ergibt
 //! eine neue `textrev` und damit einen neuen Versuch. Nie Inhalt im Log, nur Zähler und Codes.
@@ -24,6 +28,7 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Condvar, Mutex, OnceLock};
+use std::time::Duration;
 
 /// Ergebnis eines Laufs (Tests, Log).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -49,6 +54,7 @@ fn text_aus(t: &Textfassung, blob: String, size: u64) -> Text {
         },
         code: None,
         versuche: 0,
+        versuche_zeit: 0,
     }
 }
 
@@ -66,6 +72,9 @@ fn fehler_text(auf: &TextAuftrag, code: &str) -> Text {
         stand: "fehler".into(),
         code: Some(code.chars().take(40).collect()),
         versuche: auf.versuche.saturating_add(1),
+        versuche_zeit: auf
+            .versuche_zeit
+            .saturating_add(u32::from(code == "extrakt.zeit")),
     }
 }
 
@@ -82,6 +91,19 @@ pub enum Ausgang {
     Verworfen,
 }
 
+/// Zeitgrenze eines Auftrags: der erste Versuch läuft mit der Grundgrenze, der Wiederholversuch nach
+/// einer Zeitüberschreitung mit der dreifachen oder der nach Größe bemessenen (2 s je MiB), je nachdem,
+/// was größer ist, höchstens 15 Minuten.
+pub fn zeitgrenze(versuche_zeit: u32, grund: Duration, groesse: u64) -> Duration {
+    if versuche_zeit == 0 {
+        return grund;
+    }
+    let je_mib = Duration::from_secs(2 * (groesse / (1024 * 1024)));
+    (grund * 3)
+        .max(grund + je_mib)
+        .min(Duration::from_secs(15 * 60).max(grund))
+}
+
 /// Ein Auftrag: Unterprozess, Ergebnis schreiben und eintragen (zusammen unter der Ablage-Sperre;
 /// ist die Datei inzwischen gelöscht, bleibt nichts zurück).
 pub fn bearbeiten(
@@ -91,6 +113,11 @@ pub fn bearbeiten(
     grenzen: Grenzen,
     abbrechen: &AtomicBool,
 ) -> Res<Ausgang> {
+    let groesse = std::fs::metadata(&auf.pfad).map(|m| m.len()).unwrap_or(0);
+    let grenzen = Grenzen {
+        zeit: zeitgrenze(auf.versuche_zeit, grenzen.zeit, groesse),
+        ..grenzen
+    };
     let ergebnis = textlauf::ausfuehren(
         prog,
         a.dir(),
@@ -109,6 +136,8 @@ pub fn bearbeiten(
         }
         Ok(_) => (fehler_text(auf, "extrakt.antwort"), None),
         Err(code) if code == "extrakt.abgebrochen" => return Ok(Ausgang::Abgebrochen),
+        // Kein Ergebnis über die Datei: der Start des Kindes ist gescheitert, nichts eintragen.
+        Err(code) if code == "extrakt.start" => return Ok(Ausgang::Uebersprungen),
         Err(code) => (fehler_text(auf, &code), None),
     };
     match a.text_ablegen(&auf.dat, &auf.fas, json.as_deref(), text)? {

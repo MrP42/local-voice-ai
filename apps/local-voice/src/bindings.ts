@@ -1128,6 +1128,17 @@ async ablageTextAbbrechen() : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Sync-Zustand je Ordner und Datei, Kontingent und letzter Fehler (D4). Ohne Konto: `verbunden = false`.
+ */
+async ablageSyncStand() : Promise<Result<AblageSyncStand, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_sync_stand") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async ablageSemantikStand() : Promise<Result<AblageSemantik, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("ablage_semantik_stand") };
@@ -1155,6 +1166,29 @@ async ablageSemantikSetzen(an: boolean) : Promise<Result<AblageSemantik, string>
 async ablageSemantikLaden() : Promise<Result<AblageSemantik, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("ablage_semantik_laden") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Bricht einen laufenden Modell-Download ab (halbe Dateien bleiben für die Fortsetzung liegen).
+ */
+async ablageSemantikAbbrechen() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_semantik_abbrechen") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Entfernt das Modell vom Gerät (auch halbe Downloads). Die Suche ist danach lexikalisch; die
+ * Einstellung bleibt, ein erneutes Laden stellt die semantische Suche wieder her.
+ */
+async ablageSemantikLoeschen() : Promise<Result<AblageSemantik, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_semantik_loeschen") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -8611,6 +8645,23 @@ export type AblageSuchtreffer = { dat: string; name: string; ordner: string; typ
  * Bester Rang der Fundstellen (0..1).
  */
 rang: number; stellen: AblageFundstelle[] }
+export type AblageSyncEintrag = { id: string; zustand: AblageSyncZustand }
+/**
+ * Stand des Abgleichs für die Seite „Ablage“.
+ */
+export type AblageSyncStand = { 
+/**
+ * Ein Konto ist angemeldet (sonst zeigt die Seite keine Sync-Zustände).
+ */
+verbunden: boolean; letzter_lauf_ms: number | null; fehler: string | null; kontingent_voll: boolean; 
+/**
+ * Belegt und Kontingent in Bytes (vom Hub), falls bekannt.
+ */
+belegt: number | null; kontingent: number | null; eintraege: AblageSyncEintrag[] }
+/**
+ * Sync-Zustand eines Ordners oder einer Datei.
+ */
+export type AblageSyncZustand = "synchronisiert" | "ausstehend" | "konflikt" | "wartet_auf_text" | "nur_geraet" | "angehalten"
 export type AccountState = "not_configured" | "no_capabilities" | "needs_sign_in" | "needs_consent" | "ready"
 /**
  * Eine Aufgabe (Zeile in `action_items`). `assignee_label` ist Freitext, die
@@ -11048,7 +11099,7 @@ offset: number; page: number | null; book_id: string | null }
  */
 export type KeyStatus = { 
 /**
- * Dieses System kann Geheimnisse verschlüsselt ablegen (Windows/DPAPI).
+ * Dieses System kann Geheimnisse verschlüsselt ablegen (Windows/DPAPI, macOS/Schlüsselbund).
  */
 supported: boolean; present: boolean; 
 /**

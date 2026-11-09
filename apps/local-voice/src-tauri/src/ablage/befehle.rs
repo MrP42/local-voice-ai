@@ -26,6 +26,9 @@ pub const EREIGNIS_TEXT: &str = "ablage-text";
 /// Ereignis an die Oberfläche: Zustand der semantischen Suche hat sich geändert (Vektoren fertig).
 pub const EREIGNIS_SEMANTIK: &str = "ablage-semantik";
 
+/// Ereignis an die Oberfläche: ein Abgleich der Ablage ist gelaufen (D4); Stand und Sync-Zustand neu laden.
+pub const EREIGNIS_SYNC: &str = "ablage-sync";
+
 type Antwort<T> = Result<T, String>;
 
 fn ablage(app: &AppHandle) -> Antwort<Ablage> {
@@ -86,6 +89,14 @@ fn nachlauf(a: &Ablage, app: AppHandle, ausdruecklich: bool) {
 #[specta::specta]
 pub async fn ablage_stand(app: AppHandle) -> Antwort<AblageSicht> {
     let melder = app.clone();
+    // Ein früher fehlgeschlagener Indexabgleich (Marke) wird beim Öffnen der Ablage wiederholt.
+    let _ = blockierend(&app, |a| {
+        if let Err(e) = super::index::nachholen(&a) {
+            log::warn!("ablage: Indexabgleich (Wiederholung): {}", e.code);
+        }
+        Ok(())
+    })
+    .await;
     let sicht = blockierend(&app, |a| a.ansicht()).await?;
     // Wiederanlauf der Textfassungen (offen ist, was im Stand fehlt, ohne Rückstellungen dieses
     // Prozesses); nicht nach einem Abbruch (angehalten bis zum nächsten ausdrücklichen Anstoß).
@@ -147,8 +158,16 @@ pub async fn ablage_ordner_einstellungen(
     id: String,
     einstellungen: AblageEinstellungen,
 ) -> Antwort<()> {
+    let projekte = crate::portable::app_data_dir(&app)
+        .map_err(|e| e.to_string())?
+        .join("projekte");
     mit_nachlauf(&app, false, move |a| {
-        a.ordner_einstellungen(&id, &einstellungen)
+        a.ordner_einstellungen(&id, &einstellungen)?;
+        // Wieder synchron (D4): Rückweg lokal → sync sofort; scheitert er, setzt der Sync-Takt fort.
+        if let Err(e) = a.rueckweg(&super::speicher::ProjektVerweise::neu(projekte)) {
+            log::warn!("ablage: Rückweg lokal → sync: {}", e.code);
+        }
+        Ok(())
     })
     .await
 }
@@ -157,14 +176,14 @@ pub async fn ablage_ordner_einstellungen(
 #[tauri::command]
 #[specta::specta]
 pub async fn ablage_ki_setzen(app: AppHandle, id: String, stufe: Option<KiStufe>) -> Antwort<()> {
-    blockierend(&app, move |a| a.ki_setzen(&id, stufe)).await
+    mit_nachlauf(&app, false, move |a| a.ki_setzen(&id, stufe)).await
 }
 
 /// „Freigaben neu festlegen“: nur bei unklarer (defekter) Freigabe; alle Ordner auf „aus“.
 #[tauri::command]
 #[specta::specta]
 pub async fn ablage_freigaben_neu_festlegen(app: AppHandle) -> Antwort<()> {
-    blockierend(&app, |a| a.freigaben_neu_festlegen()).await
+    mit_nachlauf(&app, false, |a| a.freigaben_neu_festlegen()).await
 }
 
 /// Legt eine Datei oder einen Ordner (mit Struktur) in einem Ordner der Ablage ab. Bei Namenskollision
@@ -268,6 +287,22 @@ pub async fn ablage_text_abbrechen() -> Antwort<()> {
     Ok(())
 }
 
+/// Sync-Zustand je Ordner und Datei, Kontingent und letzter Fehler (D4). Ohne Konto: `verbunden = false`.
+#[tauri::command]
+#[specta::specta]
+pub async fn ablage_sync_stand(app: AppHandle) -> Antwort<crate::sync::ablage::AblageSyncStand> {
+    // Ohne lesbaren Schlüssel gilt das Konto als nicht verbunden (der Lauf liefe ebenso nicht).
+    let konto = crate::sync::account::load(&app).and_then(|cfg| {
+        cfg.key()
+            .ok()
+            .map(|k| crate::sync::ablage::konto_kennung(cfg.user_id, &k, &cfg.url))
+    });
+    blockierend(&app, move |a| {
+        crate::sync::ablage::stand(&a, konto.as_deref())
+    })
+    .await
+}
+
 // ---------------------------------------------------------------------------
 // D6: semantische Suche
 // ---------------------------------------------------------------------------
@@ -293,6 +328,13 @@ fn nachziehen(app: &AppHandle) {
 }
 
 static LAEDT: AtomicBool = AtomicBool::new(false);
+/// Abbruch des laufenden Downloads ([`ablage_semantik_abbrechen`]).
+static ABBRUCH: std::sync::Mutex<Option<hf_hub::api::tokio::CancellationToken>> =
+    std::sync::Mutex::new(None);
+
+fn abbruch() -> std::sync::MutexGuard<'static, Option<hf_hub::api::tokio::CancellationToken>> {
+    ABBRUCH.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 /// Zustand der semantischen Suche für die Seite „Ablage“.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
@@ -363,16 +405,13 @@ pub async fn ablage_semantik_setzen(app: AppHandle, an: bool) -> Antwort<AblageS
     settings.ablage_semantische_suche = an;
     crate::settings::write_settings(&app, settings);
     semantik::einrichten(&models_root(&app)?, an);
+    // Der Abfrage-Zwischenspeicher trägt die Kennung der Einbettung im Schlüssel: eine Rangfolge der
+    // anderen Suchart kommt nicht wieder, Leeren ist nicht nötig.
     let a = ablage(&app)?;
     let h = app.clone();
-    let stand = tauri::async_runtime::spawn_blocking(move || {
-        if let Err(e) = super::index::zwischenspeicher_leeren(&a) {
-            log::warn!("ablage: Zwischenspeicher: {}", e.code);
-        }
-        semantik_stand(&h, &a)
-    })
-    .await
-    .map_err(|_| "ablage.semantik: Der Zustand ist gerade nicht verfügbar.".to_string())??;
+    let stand = tauri::async_runtime::spawn_blocking(move || semantik_stand(&h, &a))
+        .await
+        .map_err(|_| "ablage.semantik: Der Zustand ist gerade nicht verfügbar.".to_string())??;
     if an {
         nachziehen(&app);
     }
@@ -395,10 +434,13 @@ pub async fn ablage_semantik_laden(app: AppHandle) -> Antwort<AblageSemantik> {
     struct Zurueck;
     impl Drop for Zurueck {
         fn drop(&mut self) {
+            *abbruch() = None;
             LAEDT.store(false, Ordering::SeqCst);
         }
     }
     let _zurueck = Zurueck;
+    let cancel = hf_hub::api::tokio::CancellationToken::new();
+    *abbruch() = Some(cancel.clone());
     std::fs::create_dir_all(&ordner).map_err(|_| "semantik.ordner".to_string())?;
     for datei in &eintrag.files {
         let ziel = ordner.join(&datei.filename);
@@ -412,7 +454,6 @@ pub async fn ablage_semantik_laden(app: AppHandle) -> Antwort<AblageSemantik> {
                 let _ = handle.emit("model-download-progress", p);
             }
         };
-        let cancel = hf_hub::api::tokio::CancellationToken::new();
         let ergebnis = ModelManager::download_http_resumable_with_events(
             semantik::MODELL_ID,
             &datei.url,
@@ -438,9 +479,40 @@ pub async fn ablage_semantik_laden(app: AppHandle) -> Antwort<AblageSemantik> {
     }
     let a = ablage(&app)?;
     let h = app.clone();
+    tauri::async_runtime::spawn_blocking(move || semantik_stand(&h, &a))
+        .await
+        .map_err(|_| "ablage.semantik: Der Zustand ist gerade nicht verfügbar.".to_string())?
+}
+
+/// Bricht einen laufenden Modell-Download ab (halbe Dateien bleiben für die Fortsetzung liegen).
+#[tauri::command]
+#[specta::specta]
+pub async fn ablage_semantik_abbrechen() -> Antwort<()> {
+    if let Some(c) = abbruch().as_ref() {
+        c.cancel();
+    }
+    Ok(())
+}
+
+/// Entfernt das Modell vom Gerät (auch halbe Downloads). Die Suche ist danach lexikalisch; die
+/// Einstellung bleibt, ein erneutes Laden stellt die semantische Suche wieder her.
+#[tauri::command]
+#[specta::specta]
+pub async fn ablage_semantik_loeschen(app: AppHandle) -> Antwort<AblageSemantik> {
+    if LAEDT.load(Ordering::SeqCst) {
+        return Err("semantik.laedt: Das Modell wird gerade geladen.".into());
+    }
+    let root = models_root(&app)?;
+    let a = ablage(&app)?;
+    let h = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        // Die Suchart kann gewechselt haben: keine Rangfolge der bisherigen wiederverwenden.
-        let _ = super::index::zwischenspeicher_leeren(&a);
+        semantik::modell_entfernen(&root).map_err(|code| match code.as_str() {
+            "semantik.belegt" => {
+                "semantik.belegt: Der Suchindex wird gerade erweitert. Bitte später erneut versuchen."
+                    .to_string()
+            }
+            _ => "semantik.ordner: Das Modell konnte nicht entfernt werden.".to_string(),
+        })?;
         semantik_stand(&h, &a)
     })
     .await

@@ -1,6 +1,6 @@
 [package]
 name = "local-voice-ai"
-version = "0.24.0"
+version = "0.24.1"
 description = "Local Voice AI - lokale Sprach-KI (Diktat, Vorlesen, Stimmen, Übersetzung)"
 authors = ["Patrick Wolff"]
 edition = "2021"
@@ -72,7 +72,8 @@ tauri-plugin-os = "2.3.2"
 tauri-plugin-clipboard-manager = "2.3.2"
 tauri-plugin-macos-permissions = "2.3.0"
 tauri-plugin-process = "2.3.1"
-rusqlite_migration = "2.3"
+# RUSTSEC-2026-0459: 2.3.0 mit rusqlite 0.41, siehe vendor/rusqlite_migration/WAI-VENDOR.md.
+rusqlite_migration = { path = "vendor/rusqlite_migration" }
 tauri-plugin-fs = "2.4.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -105,7 +106,7 @@ strsim = "0.11.0"
 natural = "0.5.0"
 regex = "1"
 chrono = "0.4"
-rusqlite = { version = "0.37", features = ["bundled"] }
+rusqlite = { version = "0.41.1", features = ["bundled"] }
 tar = "0.4.44"
 flate2 = "1.0"
 sha2 = "0.10"
@@ -326,6 +327,8 @@ transcribe-cpp = { version = "=0.2.4", default-features = false, features = [
 transcribe-cpp = { version = "=0.2.4", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+# lva#134: Tresor-Schluessel im Anmelde-Schluesselbund (MIT OR Apache-2.0).
+security-framework = "3"
 tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2.1" }
 transcribe-cpp = { version = "=0.2.4", default-features = false, features = ["metal"] }
 
@@ -356,6 +359,8 @@ transcribe-cpp = { version = "=0.2.4", default-features = false, features = [
 [patch.crates-io]
 tao = { git = "https://github.com/cjpais/tao", rev = "c3bee28c1d446d95f08c95c3b6f8d4bde052b876" }
 tao-macros = { git = "https://github.com/cjpais/tao", rev = "c3bee28c1d446d95f08c95c3b6f8d4bde052b876" }
+# RUSTSEC-2026-0459: sqlx-sqlite 0.9.0 mit libsqlite3-sys 0.39 (SQLite 3.54), siehe vendor/sqlx-sqlite/WAI-VENDOR.md.
+sqlx-sqlite = { path = "vendor/sqlx-sqlite" }
 
 [dev-dependencies]
 tempfile = "3"

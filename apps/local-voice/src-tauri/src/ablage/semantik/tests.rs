@@ -82,6 +82,23 @@ fn ohne_modell_bleibt_die_einbettung_lexikalisch() {
     assert!(!aktuell().ist_semantisch());
     einrichten(d.path(), false);
     assert!(!aktuell().ist_semantisch());
+
+    // Modell entfernen: Dateien und halbe Downloads weg, leerer Ordner weg, fremde Dateien bleiben.
+    // (Im selben Test, weil der Prozesszustand geteilt ist.)
+    let ordner = modell_ordner(d.path());
+    std::fs::create_dir_all(&ordner).unwrap();
+    for n in [DATEI_MODELL, DATEI_ZERLEGER, "model.onnx.partial"] {
+        std::fs::write(ordner.join(n), b"x").unwrap();
+    }
+    assert!(modell_bereit(d.path()));
+    let nachbar = d.path().join("anderes-modell.bin");
+    std::fs::write(&nachbar, b"y").unwrap();
+    modell_entfernen(d.path()).unwrap();
+    assert!(!modell_bereit(d.path()));
+    assert!(!ordner.exists());
+    assert!(nachbar.is_file());
+    // Zweimal ist kein Fehler.
+    modell_entfernen(d.path()).unwrap();
 }
 
 // ---------------------------------------------------------------------------
@@ -277,15 +294,13 @@ fn hybrid_mit_fake_nachziehen_rueckfall_und_papierkorb() {
         .unwrap()
         .iter()
         .all(|t| t.dat != neu));
-    // Moduswechsel leert den Abfrage-Zwischenspeicher (wie `ablage_semantik_setzen`): sonst käme die
-    // zwischengespeicherte Rangfolge der anderen Suchart zurück.
-    index::zwischenspeicher_leeren(&b.a).unwrap();
+    // Moduswechsel ohne Leeren: der Abfrage-Zwischenspeicher trägt die Kennung der Einbettung im
+    // Schlüssel, die zwischengespeicherte Rangfolge der anderen Suchart kommt nicht zurück.
     assert!(index::suchen_mit(&b.a, "zebrafink", &lex)
         .unwrap()
         .is_empty());
 
     // Ausschalten: sofort wieder lexikalisch mit denselben Treffern wie vorher.
-    index::zwischenspeicher_leeren(&b.a).unwrap();
     let danach = messen(&k, &b, &lex);
     assert_eq!(
         (danach.recall5, danach.beleg, danach.kein_beleg),

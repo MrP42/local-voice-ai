@@ -2,8 +2,8 @@
 paket = "wai-notizbuch-zugang"
 quelle = "https://github.com/MrP42/wai-sdk"
 pfad = "crates/wai-notizbuch-zugang"
-referenz = "40cc276de7f582f64e0fb0c99476636eae39bdd3"
-commit = "40cc276de7f582f64e0fb0c99476636eae39bdd3"
+referenz = "404fa86"
+commit = "404fa8607bf85a3b2c7c6857f052f1e42e0a3073"
 commit_datum = "2026-11-09"
 uebernommen_am = "2026-11-09"
 ausgelassen = ["Tests und Fixtures im SDK-Arbeitsbaum"]

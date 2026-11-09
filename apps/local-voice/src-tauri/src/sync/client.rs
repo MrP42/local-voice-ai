@@ -32,6 +32,10 @@ pub struct PushObject {
     pub payload: String,
     pub key_id: String,
     pub deleted: bool,
+    /// Steuerfeld der Ablage (nur `ablage_datei`, ADR-0029 E9): Blob-Kennungen aller lebenden Fassungen
+    /// und Texte, sortiert und eindeutig. Bei anderen Sammlungen darf das Feld nicht gesendet werden.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blob_refs: Option<Vec<String>>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -49,6 +53,9 @@ pub struct RemoteObject {
     pub device_id: String,
     #[serde(default)]
     pub server_seq: i64,
+    /// Steuerfeld der Ablage (`ablage_datei`), wie der Hub es führt.
+    #[serde(default)]
+    pub blob_refs: Option<Vec<String>>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -64,6 +71,29 @@ pub struct PushResult {
     pub current: Option<RemoteObject>,
     #[serde(default)]
     pub reason: Option<String>,
+    /// Bei `rejected`/`blob_missing`: die fehlenden oder unvollständigen Blobs.
+    #[serde(default)]
+    pub missing: Vec<String>,
+}
+
+/// Verbrauch und Kontingent der Dateiablage (`GET /api/v1/voice/blobs`).
+#[derive(Deserialize, Serialize, Debug, Clone, Copy, Default, PartialEq, Eq, specta::Type)]
+pub struct BlobVerbrauch {
+    #[serde(default)]
+    pub used: u64,
+    #[serde(default)]
+    pub quota: u64,
+    #[serde(default)]
+    pub blobs: u64,
+}
+
+/// Ergebnis von `POST /api/v1/voice/blobs/{id}/delete`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BlobLoeschung {
+    /// Gelöscht (`true`) oder war schon weg (`false`).
+    Geloescht(bool),
+    /// 409: noch referenziert oder von einem anderen Gerät reserviert (Code des Hubs).
+    InGebrauch(String),
 }
 
 #[derive(Deserialize, Debug)]
@@ -477,6 +507,90 @@ impl HubClient {
             ));
         }
         Ok(bytes)
+    }
+
+    /// Pull einer einzelnen Sammlung mit eigenem Cursor (Ablage, ADR-0029).
+    pub async fn pull_collection(
+        &self,
+        since: i64,
+        limit: u32,
+        collection: &str,
+    ) -> Result<PullResponse, HubError> {
+        let res = self
+            .auth(http()?.get(format!("{}/api/v1/voice/sync/pull", self.url)))
+            .query(&[
+                ("since", since.to_string()),
+                ("limit", limit.to_string()),
+                ("collection", collection.to_string()),
+            ])
+            .send()
+            .await
+            .map_err(|e| HubError::Other(format!("Hub nicht erreichbar: {e}")))?;
+        if !res.status().is_success() {
+            return Err(error_from(res).await);
+        }
+        res.json::<PullResponse>()
+            .await
+            .map_err(|e| HubError::Other(format!("Antwort unlesbar: {e}")))
+    }
+
+    /// Blob für dieses Gerät 24 h reservieren (vor Upload oder Wiederverwendung, ADR-0029 E9).
+    pub async fn reserve_blob(&self, blob_id: &str, device_id: &str) -> Result<(), HubError> {
+        let res = self
+            .auth(http()?.post(format!("{}/reserve", self.blob_url(blob_id)?)))
+            .json(&serde_json::json!({ "device_id": device_id }));
+        let res = send_logged(res, Duration::from_secs(30)).await?;
+        if !res.status().is_success() {
+            return Err(error_from(res).await);
+        }
+        Ok(())
+    }
+
+    /// Bedingtes Löschen: 409 (referenziert/reserviert) ist ein Ergebnis, kein Fehler.
+    pub async fn delete_blob(
+        &self,
+        blob_id: &str,
+        device_id: &str,
+    ) -> Result<BlobLoeschung, HubError> {
+        #[derive(Deserialize)]
+        struct Body {
+            #[serde(default)]
+            deleted: bool,
+        }
+        let res = self
+            .auth(http()?.post(format!("{}/delete", self.blob_url(blob_id)?)))
+            .json(&serde_json::json!({ "device_id": device_id }));
+        let res = send_logged(res, Duration::from_secs(30)).await?;
+        let status = res.status().as_u16();
+        if status == 409 {
+            let text = res.text().await.unwrap_or_default();
+            let code = serde_json::from_str::<ApiError>(&text)
+                .map(|e| e.error.code)
+                .unwrap_or_else(|_| "conflict".into());
+            return Ok(BlobLoeschung::InGebrauch(code));
+        }
+        if !res.status().is_success() {
+            return Err(error_from(res).await);
+        }
+        res.json::<Body>()
+            .await
+            .map(|b| BlobLoeschung::Geloescht(b.deleted))
+            .map_err(|e| HubError::Other(format!("Antwort unlesbar: {e}")))
+    }
+
+    /// Verbrauch und Kontingent der Dateiablage.
+    pub async fn blob_usage(&self) -> Result<BlobVerbrauch, HubError> {
+        let res = self
+            .auth(http()?.get(format!("{}/api/v1/voice/blobs", self.url)))
+            .send()
+            .await
+            .map_err(|e| HubError::Other(format!("Hub nicht erreichbar: {e}")))?;
+        if !res.status().is_success() {
+            return Err(error_from(res).await);
+        }
+        res.json::<BlobVerbrauch>()
+            .await
+            .map_err(|e| HubError::Other(format!("Antwort unlesbar: {e}")))
     }
 
     /// Aufruf der Kopplungs- und Geräte-Routen (`/api/v1/voice/pair/*`,

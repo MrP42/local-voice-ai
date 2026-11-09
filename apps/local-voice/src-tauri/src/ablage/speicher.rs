@@ -9,6 +9,7 @@
 //! index.db                      abgeleiteter Suchindex (D2, siehe `index`), löschbar
 //! papierkorb/                   Zwischenspeicher beim endgültigen Löschen, liegengebliebene Zwischendateien
 //! freigabe.json                 gerätelokal (siehe `freigabe`)
+//! uebergang-<ULID>.json         Rückweg lokal → sync, nur während er läuft (siehe `speicher_uebergang`)
 //! ```
 //!
 //! Ablauf je Datei (wie `projekte/dateien.rs`): `dateien/<dat>/.teil-<fas>` (`create_new`) vollständig
@@ -41,12 +42,21 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+#[path = "speicher_sync.rs"]
+mod abgleich_zugriff;
+pub use abgleich_zugriff::{Eingang, SyncBestand};
+#[path = "speicher_uebergang.rs"]
+mod uebergang;
+pub use uebergang::ProjektVerweise;
+
 pub const DATEIEN: &str = "dateien";
 pub const TEXT: &str = "text";
 pub const PAPIERKORB: &str = "papierkorb";
 pub const JOURNAL: &str = "ablage.json";
 const TEIL: &str = ".teil-";
 const LOESCHEN: &str = ".loeschen-";
+/// Vom Hub begrabene Inhalte im Papierkorb (`grab-<ms>-<wurzel>-<dat>`), D4.
+const GRAB: &str = "grab-";
 const VERSION: u32 = 1;
 /// Papierkorb: so lange bleibt ein Eintrag wiederherstellbar.
 pub const PAPIERKORB_TAGE: i64 = 30;
@@ -72,6 +82,18 @@ pub enum Schritt {
     LoeschenLesefehler,
     /// Beim endgültigen Löschen scheitert das Entfernen des Zwischenorts im Papierkorb.
     LoeschenEntfernfehler,
+    /// Rückweg lokal → sync (D4): nach dem Schreiben des Übergangsjournals (`begonnen`).
+    UebergangBegonnen,
+    /// … nachdem die Originale umgezogen sind, vor den Textfassungen und dem Stand.
+    UebergangDateien,
+    /// … nach Stand und Journalschritt `umgezogen`.
+    UebergangUmgezogen,
+    /// … nach dem Umschreiben der KI-Freigaben, vor Projektverweisen und Index.
+    UebergangFreigaben,
+    /// … nach dem Journalschritt `umgeschrieben`.
+    UebergangUmgeschrieben,
+    /// … nach dem Journalschritt `fertig`, bevor das Journal entfernt ist.
+    UebergangFertig,
 }
 
 #[cfg(test)]
@@ -107,10 +129,13 @@ enum Eintrag {
         typ: String,
         zeit: i64,
     },
-    /// Endgültiges Löschen läuft.
+    /// Endgültiges Löschen läuft. `aufheben`: Grabstein vom Hub (D4) – Inhalte gehen für
+    /// [`PAPIERKORB_TAGE`] in den Papierkorb (`papierkorb/grab-<ms>-…`), statt sofort entfernt zu werden.
     Loeschen {
         dat: Vec<String>,
         ordner: Vec<String>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        aufheben: bool,
     },
 }
 
@@ -143,6 +168,43 @@ struct Stand {
     /// Endgültig gelöschte Kennungen (Grabsteine; D4 reicht sie weiter).
     #[serde(default)]
     begraben: Vec<String>,
+    /// D4: Kennungen, die beim Wechsel zu „nur dieses Gerät“ (oder `personal`/`confidential`) als
+    /// Momentaufnahme festgehalten wurden (Write-ahead, vor jedem Push). Sie verlassen das Gerät nie
+    /// wieder; ein Grabstein vom Hub wird auf sie nie angewendet (auch nicht nach Verlust von
+    /// `sync.json` oder Kontowechsel).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    lokal: Vec<String>,
+    /// D4: Einträge, die nach dem Umschalten von einem anderen Gerät unter einen festgehaltenen Ordner
+    /// kamen: sie bleiben synchron (der Ordner fehlt für sie, wie unter „Wiederhergestellt“) und werden
+    /// nie begraben.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    befreit: Vec<String>,
+    /// D4: von diesem Gerät hochgeladene Blobs (Hub-Kennung → Zeit, Konto) für die Wartung
+    /// „Blobs abgleichen“ (der Hub bietet keine Blob-Liste).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    sync_blobs: BTreeMap<String, SyncBlob>,
+    /// D4 Rückweg lokal → sync: alte Kennung → neue Kennung (Deep Links, Projektverweise). Stände vom
+    /// Hub zu alten Kennungen werden nie wieder aufgenommen.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    weiterleitung: BTreeMap<String, String>,
+    /// Teilnahme beim Laden (nur im Speicher): Grundlage der Momentaufnahme in [`Ablage::sichern`].
+    #[serde(skip)]
+    vorher: Option<Vorher>,
+}
+
+/// Ein hochgeladener Blob (D4, Wartung „Blobs abgleichen“).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SyncBlob {
+    pub ms: i64,
+    /// Kontokennung des Abgleichs (Benutzer, Schlüsselkennung, Hub).
+    pub konto: String,
+}
+
+/// Stand beim Laden: welche Einträge am Abgleich teilnahmen und wo befreite Einträge lagen.
+#[derive(Debug, Clone, Default)]
+struct Vorher {
+    sync: BTreeSet<String>,
+    befreit_lage: BTreeMap<String, Option<String>>,
 }
 
 impl Stand {
@@ -156,7 +218,84 @@ impl Stand {
             journal: Vec::new(),
             gefunden: Vec::new(),
             begraben: Vec::new(),
+            lokal: Vec::new(),
+            befreit: Vec::new(),
+            sync_blobs: BTreeMap::new(),
+            weiterleitung: BTreeMap::new(),
+            vorher: None,
         }
+    }
+
+    fn lokal_menge(&self) -> BTreeSet<String> {
+        self.lokal.iter().cloned().collect()
+    }
+
+    fn befreit_menge(&self) -> BTreeSet<String> {
+        self.befreit.iter().cloned().collect()
+    }
+
+    /// Teilnahme am Abgleich je Kennung (D4, [`crate::sync::ablage::teilnahmen`]).
+    fn teilnahmen(&self) -> BTreeMap<String, crate::sync::ablage::Teilnahme> {
+        crate::sync::ablage::teilnahmen(
+            &self.ordner,
+            &self.dateien,
+            &self.lokal_menge(),
+            &self.befreit_menge(),
+        )
+    }
+
+    /// Lage eines befreiten Eintrags (Ordner der Datei bzw. Eltern des Ordners).
+    fn lage_von(&self, id: &str) -> Option<Option<String>> {
+        if let Some(d) = self.dateien.get(id) {
+            return Some(Some(d.ordner.wert.clone()));
+        }
+        self.ordner.get(id).map(|o| o.eltern.wert.clone())
+    }
+
+    fn vorher_berechnen(&self) -> Vorher {
+        use crate::sync::ablage::Teilnahme;
+        Vorher {
+            sync: self
+                .teilnahmen()
+                .into_iter()
+                .filter(|(_, t)| *t == Teilnahme::Sync)
+                .map(|(id, _)| id)
+                .collect(),
+            befreit_lage: self
+                .befreit
+                .iter()
+                .filter_map(|id| self.lage_von(id).map(|l| (id.clone(), l)))
+                .collect(),
+        }
+    }
+
+    /// Momentaufnahme (D4): was durch eine Handlung auf diesem Gerät von „synchron“ zu „nur dieses
+    /// Gerät“ wechselt, wird festgehalten, bevor irgendein Abgleich davon erfährt. Ein befreiter
+    /// Eintrag, den der Nutzer hier verschiebt, verliert die Befreiung (der Ordner gilt dann wieder).
+    fn festhalten(&mut self, v: &Vorher) {
+        use crate::sync::ablage::Teilnahme;
+        let bewegt: Vec<String> = v
+            .befreit_lage
+            .iter()
+            .filter(|(id, l)| self.lage_von(id).is_some_and(|neu| neu != **l))
+            .map(|(id, _)| id.clone())
+            .collect();
+        self.befreit.retain(|b| !bewegt.contains(b));
+        let jetzt = self.teilnahmen();
+        let mut neu = false;
+        for (id, t) in jetzt {
+            if t == Teilnahme::Lokal && v.sync.contains(&id) && !self.lokal.contains(&id) {
+                self.lokal.push(id.clone());
+                self.befreit.retain(|b| *b != id);
+                neu = true;
+            }
+        }
+        if neu {
+            self.lokal.sort();
+            self.lokal.dedup();
+        }
+        let lebend: BTreeSet<&String> = self.ordner.keys().chain(self.dateien.keys()).collect();
+        self.befreit.retain(|b| lebend.contains(b));
     }
 
     /// Nächster Lamport-Zähler: größter bekannter Wert + 1.
@@ -190,7 +329,10 @@ impl Stand {
         let mut dat = BTreeSet::new();
         let mut ord = BTreeSet::new();
         for e in &self.journal {
-            if let Eintrag::Loeschen { dat: d, ordner: o } = e {
+            if let Eintrag::Loeschen {
+                dat: d, ordner: o, ..
+            } = e
+            {
                 dat.extend(d.iter().map(String::as_str));
                 ord.extend(o.iter().map(String::as_str));
             }
@@ -322,11 +464,18 @@ fn stand_gueltig(s: &Stand) -> bool {
                     && name_lesbar(name)
                     && typ_ok(typ)
             }
-            Eintrag::Loeschen { dat, ordner } => {
+            Eintrag::Loeschen { dat, ordner, .. } => {
                 dat.iter().all(|d| id_gueltig(PRAEFIX_DATEI, d))
                     && ordner.iter().all(|o| id_gueltig(PRAEFIX_ORDNER, o))
             }
         })
+        && s.lokal
+            .iter()
+            .chain(s.befreit.iter())
+            .all(|i| id_gueltig(PRAEFIX_DATEI, i) || id_gueltig(PRAEFIX_ORDNER, i))
+        && s.weiterleitung
+            .iter()
+            .all(|(a, n)| uebergang::gleiche_art(a, n))
         && s.gefunden.iter().all(|g| {
             id_gueltig(PRAEFIX_DATEI, &g.dat)
                 && id_gueltig(PRAEFIX_FASSUNG, &g.fas)
@@ -802,10 +951,15 @@ impl Ablage {
         if frisch {
             self.sichern(&mut s)?;
         }
+        s.vorher = Some(s.vorher_berechnen());
         Ok(s)
     }
 
     fn sichern(&self, st: &mut Stand) -> Res<()> {
+        if let Some(v) = st.vorher.take() {
+            st.festhalten(&v);
+            st.vorher = Some(st.vorher_berechnen());
+        }
         st.epoche += 1;
         fs::create_dir_all(&self.dir)
             .map_err(|_| Fehler::speicher("Ablageordner nicht anlegbar."))?;
@@ -834,15 +988,21 @@ impl Ablage {
         let _ = fs::create_dir_all(self.dir.join(PAPIERKORB));
         geaendert |= self.zwischendateien_raeumen();
         geaendert |= self.journal_abarbeiten(&mut st).unwrap_or(true);
-        let erster_lauf = gescannt()
-            .lock()
-            .map(|mut g| g.insert(self.dir.clone()))
-            .unwrap_or(false);
+        // Ein begonnener Rückweg (D4) zieht erst fertig um; sonst sähe die Suche unten die umgezogenen
+        // Originale als Funde.
+        let (umgezogen, uebergang_ok) = self.uebergaenge_lokal(&mut st);
+        geaendert |= umgezogen;
+        let erster_lauf = uebergang_ok
+            && gescannt()
+                .lock()
+                .map(|mut g| g.insert(self.dir.clone()))
+                .unwrap_or(false);
         if erster_lauf {
             geaendert |= self.gefundenes_suchen(&mut st);
         }
         geaendert |= self.abgelaufene_loeschen(&mut st, jetzt_ms());
         self.teildateien_loeschen(Some(jetzt_ms()));
+        self.graeber_loeschen(jetzt_ms());
         self.texte_raeumen(&st);
         if st.ordner.is_empty() && st.dateien.is_empty() && st.begraben.is_empty() {
             let z = st.zaehler();
@@ -938,6 +1098,39 @@ impl Ablage {
         }
     }
 
+    /// Vom Hub begrabene Inhalte (`papierkorb/grab-<ms>-…`) nach [`PAPIERKORB_TAGE`] endgültig entfernen.
+    fn graeber_loeschen(&self, jetzt: i64) {
+        if ohne_umweg(&self.dir, PAPIERKORB).is_err() {
+            return;
+        }
+        let Ok(rest) = fs::read_dir(self.dir.join(PAPIERKORB)) else {
+            return;
+        };
+        for e in rest.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let Some(ms) = name
+                .strip_prefix(GRAB)
+                .and_then(|r| r.split('-').next())
+                .and_then(|m| m.parse::<i64>().ok())
+            else {
+                continue;
+            };
+            if jetzt - ms < PAPIERKORB_TAGE * TAG_MS {
+                continue;
+            }
+            match fs::symlink_metadata(e.path()) {
+                Ok(m) if ist_umweg(&m) => {}
+                Ok(m) if m.is_dir() => {
+                    let _ = ordner_entfernen(&e.path());
+                }
+                Ok(_) => {
+                    let _ = fs::remove_file(e.path());
+                }
+                Err(_) => {}
+            }
+        }
+    }
+
     /// Journal zu Ende führen. Liefert, ob etwas geändert wurde. Einträge gehen nie verloren: ein
     /// fehlgeschlagener Löscheintrag und alle danach bleiben im Journal (für den nächsten Lauf); ein
     /// `Abgelegt`-Eintrag mit fehlgeschlagener Prüfung wird als `gefunden` angeboten, das Original bleibt.
@@ -996,8 +1189,12 @@ impl Ablage {
                         });
                     }
                 }
-                Eintrag::Loeschen { dat, ordner } => {
-                    if let Err(x) = self.loeschen_ausfuehren(st, dat, ordner) {
+                Eintrag::Loeschen {
+                    dat,
+                    ordner,
+                    aufheben,
+                } => {
+                    if let Err(x) = self.loeschen_ausfuehren(st, dat, ordner, *aufheben) {
                         fehler = Some(x);
                         rest.push(e);
                         rest.extend(it);
@@ -1048,7 +1245,7 @@ impl Ablage {
                 let Ok(fm) = fs::symlink_metadata(f.path()) else {
                     continue;
                 };
-                if ist_umweg(&fm) || !fm.is_file() {
+                if ist_umweg(&fm) || !fm.is_file() || super::pfad_hartverknuepft(&f.path()) {
                     continue;
                 }
                 let bekannt = st.dateien.get(&dat).is_some_and(|x| {
@@ -1507,6 +1704,9 @@ impl Ablage {
         datei_id_pruefen(dat)?;
         let _g = sperren();
         let st = self.laden()?;
+        // Alte Kennung nach dem Rückweg lokal → sync (D4): der Weiterleitung folgen.
+        let dat = st.aufgeloest(dat);
+        let dat = dat.as_str();
         let d = st.dateien.get(dat).ok_or_else(nicht_gefunden)?;
         let f = aktuelle_fassung(d).ok_or_else(nicht_gefunden)?;
         ohne_umweg(
@@ -2014,12 +2214,13 @@ impl Ablage {
         st.journal.push(Eintrag::Loeschen {
             dat: dat.clone(),
             ordner: ord.clone(),
+            aufheben: false,
         });
         self.sichern(st)?;
         haken_loeschen()?;
-        self.loeschen_ausfuehren(st, &dat, &ord)?;
+        self.loeschen_ausfuehren(st, &dat, &ord, false)?;
         st.journal.retain(
-            |e| !matches!(e, Eintrag::Loeschen { dat: d, ordner: o } if *d == dat && *o == ord),
+            |e| !matches!(e, Eintrag::Loeschen { dat: d, ordner: o, .. } if *d == dat && *o == ord),
         );
         Ok(AblageLoeschBericht {
             dateien: dat.len() as u32,
@@ -2034,7 +2235,14 @@ impl Ablage {
     /// geprüft: eine Verknüpfung oder ein Reparse-Point (Junction) bricht mit Fehler ab, nichts wird
     /// gefolgt. Nur „nicht vorhanden“ gilt als schon gelöscht; jeder andere Lesefehler bricht ab, der
     /// Löschauftrag und die Einträge im Baum bleiben für den nächsten Lauf.
-    fn loeschen_ausfuehren(&self, st: &mut Stand, dat: &[String], ord: &[String]) -> Res<()> {
+    fn loeschen_ausfuehren(
+        &self,
+        st: &mut Stand,
+        dat: &[String],
+        ord: &[String],
+        aufheben: bool,
+    ) -> Res<()> {
+        let jetzt = jetzt_ms();
         for wurzel in [DATEIEN, TEXT, PAPIERKORB] {
             ohne_umweg(&self.dir, wurzel)?;
         }
@@ -2059,6 +2267,20 @@ impl Ablage {
                 fs::create_dir_all(self.dir.join(PAPIERKORB))
                     .map_err(|_| Fehler::speicher("Papierkorb nicht anlegbar."))?;
                 ohne_umweg(&self.dir, PAPIERKORB)?;
+                if aufheben {
+                    // Grabstein vom Hub: aufheben, die Wartung entfernt es nach der Frist.
+                    let ziel = self
+                        .dir
+                        .join(PAPIERKORB)
+                        .join(format!("{GRAB}{jetzt}-{wurzel}-{d}"));
+                    if meta_ohne_folgen(&ziel).is_ok() {
+                        continue; // schon aufgehoben (Wiederanlauf in derselben Millisekunde)
+                    }
+                    fs::rename(&quelle, &ziel).map_err(|_| {
+                        Fehler::speicher("Datei nicht entfernbar; nichts verloren.")
+                    })?;
+                    continue;
+                }
                 let zwischen = self
                     .dir
                     .join(PAPIERKORB)
@@ -2203,7 +2425,7 @@ impl Ablage {
                 .join(original_name(&g.fas, &g.typ));
             let m = fs::symlink_metadata(&pfad)
                 .map_err(|_| Fehler::neu("ablage.nicht_gefunden", "Datei nicht gefunden."))?;
-            if ist_umweg(&m) || !m.is_file() {
+            if ist_umweg(&m) || !m.is_file() || super::pfad_hartverknuepft(&pfad) {
                 return Err(Fehler::neu(
                     "ablage.quelle_ungueltig",
                     "Keine gewöhnliche Datei.",
@@ -2272,6 +2494,7 @@ impl Ablage {
                         wahlen: vec![],
                         entfernt: vec![],
                         papierkorb: Register::neu(None, z, &ger),
+                        extra: Default::default(),
                     },
                 );
             }
@@ -2335,6 +2558,8 @@ pub struct TextAuftrag {
     pub pfad: PathBuf,
     /// Bisherige Versuche (vorübergehender Fehler), sonst 0.
     pub versuche: u32,
+    /// Bisherige Zeitüberschreitungen (eigener Zähler, siehe [`MAX_VERSUCHE_ZEIT`]).
+    pub versuche_zeit: u32,
 }
 
 /// Ausgang von [`Ablage::text_ablegen`].
@@ -2350,25 +2575,36 @@ pub enum TextAblage {
     NichtSpeicherbar,
 }
 
-/// Fehlercodes, die nicht am Inhalt liegen müssen (Start, Schutz, Absturz, Zeit, Lesen): sie werden
-/// höchstens [`MAX_VERSUCHE`]-mal versucht, jeweils frühestens beim nächsten Programmstart.
+/// Fehlercodes, die nicht am Inhalt liegen müssen (Start, Schutz, Lesen): sie werden höchstens
+/// [`MAX_VERSUCHE`]-mal versucht, jeweils frühestens beim nächsten Programmstart.
+///
+/// Bewusst nicht dabei:
+/// * `extrakt.abbruch` (Speichergrenze, Absturz oder Signal des Kindes): Giftdatei, sofort endgültig
+///   nicht extrahierbar; jeder weitere Versuch risikiert erneut Speicher und Rechenzeit.
+/// * `extrakt.zeit` (Zeitgrenze): genau ein späterer Wiederholversuch ([`MAX_VERSUCHE_ZEIT`]) mit nach
+///   Dateigröße vergrößerter Zeitgrenze ([`super::textfassung::zeitgrenze`]), danach endgültig.
+///
+/// Ein Abbruch durch die Bedienung (`extrakt.abgebrochen`) trägt nichts ein und ist davon nicht berührt.
 pub const VORUEBERGEHEND: &[&str] = &[
     "extrakt.start",
     "extrakt.programm",
     "extrakt.schutz",
-    "extrakt.abbruch",
-    "extrakt.zeit",
     "extrakt.lesen",
 ];
 pub const MAX_VERSUCHE: u32 = 3;
+/// Zeitgrenze überschritten: der erste Versuch plus genau ein Wiederholversuch.
+pub const MAX_VERSUCHE_ZEIT: u32 = 2;
 
 /// Ein vorübergehender Fehler mit Versuchen übrig: der Auftrag bleibt offen.
 pub fn text_wiederholbar(t: &zf::Text) -> bool {
-    t.stand == "fehler"
-        && t.versuche < MAX_VERSUCHE
-        && t.code
-            .as_deref()
-            .is_some_and(|c| VORUEBERGEHEND.contains(&c))
+    if t.stand != "fehler" {
+        return false;
+    }
+    match t.code.as_deref() {
+        Some("extrakt.zeit") => t.versuche_zeit < MAX_VERSUCHE_ZEIT,
+        Some(c) => VORUEBERGEHEND.contains(&c) && t.versuche < MAX_VERSUCHE,
+        None => false,
+    }
 }
 
 /// Was der Index zu einer Datei wissen muss (auch im Papierkorb: dort gefiltert, nicht gelöscht).
@@ -2382,6 +2618,9 @@ pub struct IndexQuelle {
     /// Ordnerkette (IDs) vom Ordner der Datei bis zur obersten Ebene.
     pub ordnerkette: Vec<String>,
     pub klasse: String,
+    /// Wirksame KI-Stufe des Ordners der Datei (`an`, `aus`, `gesperrt`, `unklar`). Geht in den Stempel
+    /// ein, damit D3 bei einer Freigabeänderung genau die betroffenen Dateien neu bewertet.
+    pub ki: String,
     pub nur_geraet: bool,
     pub papierkorb: bool,
 }
@@ -2453,6 +2692,11 @@ impl Ablage {
             if ohne_umweg(&self.dir, &format!("{DATEIEN}/{}/{name}", d.id)).is_err() {
                 continue;
             }
+            // D4: Eine Fassung von einem anderen Gerät, deren Original noch nicht hier liegt, wartet auf
+            // ihren Text (oder ihr Original); ein Lauf ohne Datei würde einen Fehler eintragen.
+            if !self.dir.join(DATEIEN).join(&d.id).join(&name).is_file() {
+                continue;
+            }
             aus.push(TextAuftrag {
                 dat: d.id.clone(),
                 fas: f.fas.clone(),
@@ -2461,6 +2705,7 @@ impl Ablage {
                 textrev: rev,
                 pfad: self.dir.join(DATEIEN).join(&d.id).join(name),
                 versuche: vorhanden.map(|t| t.versuche).unwrap_or(0),
+                versuche_zeit: vorhanden.map(|t| t.versuche_zeit).unwrap_or(0),
             });
         }
         Ok(aus)
@@ -2578,6 +2823,7 @@ impl Ablage {
         let st = self.laden()?;
         let eltern = st.eltern();
         let (offen, _) = st.offen_geloescht();
+        let lage = freigabe::laden(&self.dir);
         let mut aus = Vec::new();
         for d in st.dateien.values() {
             if offen.contains(d.id.as_str()) {
@@ -2604,6 +2850,17 @@ impl Ablage {
                     .unwrap_or_else(|| "ausstehend".into()),
                 (None, None) => "kein_format".into(),
             };
+            let kette = zf::kette(&eltern, &d.ordner.wert);
+            let w = freigabe::wirksam(&lage, &kette);
+            let ki = if w.unklar {
+                "unklar"
+            } else {
+                match w.stufe {
+                    KiStufe::An => "an",
+                    KiStufe::Aus => "aus",
+                    KiStufe::Gesperrt => "gesperrt",
+                }
+            };
             aus.push(IndexQuelle {
                 dat: d.id.clone(),
                 fas: f.fas.clone(),
@@ -2611,10 +2868,11 @@ impl Ablage {
                     .filter(|t| t.stand == "ok")
                     .map(|t| t.textrev.clone()),
                 stand,
-                ordnerkette: zf::kette(&eltern, &d.ordner.wert),
+                ordnerkette: kette,
                 klasse: zf::wirksame_klasse_datei(&st.ordner, &eltern, d)
                     .text()
                     .into(),
+                ki: ki.into(),
                 nur_geraet: d.nur_geraet_min
                     || zf::wirksam_nur_geraet(&st.ordner, &eltern, &d.ordner.wert),
                 papierkorb: !st.datei_lebt(&eltern, d),
@@ -2716,6 +2974,7 @@ fn neuer_ordner(geraet: &str, eltern: Option<&str>, name: &str, z: u64) -> Ordne
         nur_geraet: Register::neu(false, z, geraet),
         zielordner_ki: Register::neu(false, z, geraet),
         papierkorb: Register::neu(None, z, geraet),
+        extra: Default::default(),
     }
 }
 
@@ -2798,7 +3057,9 @@ fn datei_sicht(
             &kette,
             &zf::zusatzkette(&st.ordner, eltern, &d.ordner.wert),
         ),
-        nur_geraet: d.nur_geraet_min || zf::wirksam_nur_geraet(&st.ordner, eltern, &d.ordner.wert),
+        // Befreite Einträge (D4) bleiben synchron, auch unter einem Ordner „nur dieses Gerät“.
+        nur_geraet: !st.befreit.contains(&d.id)
+            && (d.nur_geraet_min || zf::wirksam_nur_geraet(&st.ordner, eltern, &d.ordner.wert)),
         text: f.and_then(|f| textstand(f).0),
         text_code: f.and_then(|f| textstand(f).1),
     }
@@ -2867,6 +3128,7 @@ fn anwenden_abgelegt(st: &mut Stand, e: &Eintrag) {
                     wahlen: vec![],
                     entfernt: vec![],
                     papierkorb: Register::neu(None, z, &g),
+                    extra: Default::default(),
                 },
             );
         }

@@ -117,6 +117,7 @@ mod tests {
             wahlen: vec![],
             entfernt: vec![],
             papierkorb: Register::neu(None, 0, "g_1"),
+            extra: Default::default(),
         }
     }
 

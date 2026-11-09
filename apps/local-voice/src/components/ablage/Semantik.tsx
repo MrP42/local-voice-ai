@@ -96,6 +96,22 @@ export const SemantikZeile: React.FC<{ onGeaendert(): void }> = ({
     }
   };
 
+  const abbrechen = () => {
+    api.semantikAbbrechen().catch(() => {});
+  };
+
+  const entfernen = async () => {
+    setBusy(true);
+    try {
+      setS(await api.semantikLoeschen());
+      onGeaendert();
+    } catch {
+      laden();
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const schluessel = statusSchluessel(s);
   return (
     <div className="ablage-semantik" data-testid="ablage-semantik">
@@ -125,6 +141,28 @@ export const SemantikZeile: React.FC<{ onGeaendert(): void }> = ({
           data-testid="ablage-semantik-laden"
         >
           {t("ablage.semantik.laden", { mb: s.groesse_mb })}
+        </Button>
+      )}
+      {s.laedt && (
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={abbrechen}
+          data-testid="ablage-semantik-abbrechen"
+        >
+          {t("ablage.semantik.abbrechen")}
+        </Button>
+      )}
+      {s.modell_bereit && !s.laedt && !s.nachziehen && (
+        <Button
+          variant="danger-ghost"
+          size="sm"
+          disabled={busy}
+          onClick={() => void entfernen()}
+          title={t("ablage.semantik.entfernenHinweis", { mb: s.groesse_mb })}
+          data-testid="ablage-semantik-entfernen"
+        >
+          {t("ablage.semantik.entfernen")}
         </Button>
       )}
       <Switch

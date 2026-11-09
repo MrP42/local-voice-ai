@@ -247,6 +247,31 @@ pub fn aktuell() -> AblageEinbettung {
     }
 }
 
+/// Entfernt Modell und Zerleger (samt halber Downloads) und gibt das geladene Modell frei. Während
+/// Vektoren erstellt werden, wird nichts gelöscht (`semantik.belegt`). Vektoren im Suchindex bleiben
+/// liegen (abgeleitet, lokal); ohne Modell wirkt nur die lexikalische Suche.
+pub fn modell_entfernen(models_root: &Path) -> Result<(), String> {
+    let mut z = zustand();
+    if nachziehen_laeuft() {
+        return Err("semantik.belegt".into());
+    }
+    z.modell = None;
+    z.ladefehler = false;
+    let d = modell_ordner(models_root);
+    for name in [DATEI_MODELL, DATEI_ZERLEGER] {
+        for p in [d.join(name), d.join(format!("{name}.partial"))] {
+            match std::fs::remove_file(&p) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(_) => return Err("semantik.ordner".into()),
+            }
+        }
+    }
+    // Nur ein leerer Ordner wird entfernt.
+    let _ = std::fs::remove_dir(&d);
+    Ok(())
+}
+
 /// Konnte das Modell nicht geladen werden?
 pub fn ladefehler() -> bool {
     zustand().ladefehler

@@ -25,6 +25,7 @@ pub mod mic_capture;
 mod migration_chain; // I1: Migrationskette A1, A3, U7
 pub mod minutes;
 pub mod notes;
+pub mod notizbuch; // lva#396 N4a
 pub mod parts; // Mehrere Audiodateien (Teile) je Besprechung
 pub mod pdf; // M6-P6b
 pub mod project_minutes_store; // G3 (#70): Projekt-Protokolle
@@ -43,6 +44,8 @@ pub mod slides; // D1 (#70, M7): Folien aus Videos
 pub mod speaker_merges; // #266: Sprecher zusammenführen und trennen
 pub mod speaker_names; // U8
 pub mod speakers; // M3-P3b
+#[cfg(test)]
+mod sqlite_upgrade; // RUSTSEC-2026-0459: Altbestaende aus rusqlite 0.37 unter 0.41
 pub mod stats;
 pub mod store;
 pub mod subtitle;

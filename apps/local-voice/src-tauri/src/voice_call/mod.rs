@@ -605,8 +605,12 @@ pub async fn voice_call_chat(
         .remove(&request_id);
 
     match result {
-        // Abgebrochen: das Restliche wird verworfen, die Sprachausgabe ist schon gestoppt.
-        None => Ok(String::new()),
+        // Abgebrochen: das Restliche wird verworfen, die Sprachausgabe ist schon gestoppt. Auch
+        // zurückgehaltene Sätze aus Notizbuchdaten gehen nie hinaus (kein Vermerk nötig).
+        None => {
+            puffer.lock().unwrap_or_else(|e| e.into_inner()).verwerfen();
+            Ok(String::new())
+        }
         Some(Ok(_roh)) => {
             // Der Rückgabewert ist der freigegebene Text, nie die rohe Modellausgabe.
             let (rest, freigegeben) = {
@@ -648,6 +652,7 @@ pub async fn voice_call_chat(
             Ok(freigegeben)
         }
         Some(Err(e)) => {
+            puffer.lock().unwrap_or_else(|e| e.into_inner()).verwerfen();
             // Auch ein fehlgeschlagener Aufruf kann schon Token verbraucht haben.
             let _ = app.emit(
                 EVENT,
@@ -745,6 +750,15 @@ fn cancel_synth(request_id: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `CONTEXT_REQUESTS`, `CANCELS` und `EARLY_CANCELS` sind prozessweit: `revoke_ids` leert die
+    /// ganze Liste. Tests, die sie benutzen, laufen deshalb nacheinander (sonst nimmt ein paralleler
+    /// Test die Kennung des anderen weg; Flake in lva#423).
+    static GLOBALE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn globale() -> std::sync::MutexGuard<'static, ()> {
+        GLOBALE.lock().unwrap_or_else(|e| e.into_inner())
+    }
 
     fn provider(id: &str, base: &str) -> crate::settings::PostProcessProvider {
         crate::settings::PostProcessProvider {
@@ -904,6 +918,7 @@ mod tests {
 
     #[tokio::test]
     async fn abbruch_waehrend_der_quellenpruefung_verhindert_den_versand() {
+        let _g = globale();
         // Registriert (wie in voice_call_chat) und während der Prüfung abgebrochen.
         let id = "bind-cancel-1";
         CANCELS
@@ -935,6 +950,7 @@ mod tests {
 
     #[test]
     fn widerruf_stoppt_auch_die_laufende_synthese() {
+        let _g = globale();
         let id = "ctx-revoke-1";
         mark_context(id);
         let flag = Arc::new(AtomicBool::new(false));

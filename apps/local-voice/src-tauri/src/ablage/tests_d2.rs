@@ -395,6 +395,40 @@ fn odt_absaetze_und_leerzeichen() {
 }
 
 #[test]
+fn odt_nachverfolgte_loeschung_bleibt_aus_dem_text() {
+    let content = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
+        <office:document-content xmlns:office=\"o\" xmlns:text=\"t\"><office:body><office:text>\
+        <text:tracked-changes><text:changed-region text:id=\"c1\"><text:deletion>\
+        <office:change-info><dc:creator xmlns:dc=\"d\">Wal</dc:creator></office:change-info>\
+        <text:p>Geheimwort gestrichen</text:p></text:deletion></text:changed-region></text:tracked-changes>\
+        <text:p>Sichtbar<text:change-start text:change-id=\"c1\"/><text:change-end text:change-id=\"c1\"/> bleibt.</text:p>\
+        </office:text></office:body></office:document-content>";
+    let b = zip_bauen(&[
+        ("mimetype", b"application/vnd.oasis.opendocument.text"),
+        ("content.xml", content.as_bytes()),
+    ]);
+    let a = extrakt::abschnitte(&b, Format::Odt).unwrap();
+    assert_eq!(a.len(), 1);
+    assert_eq!(a[0].text, "Sichtbar bleibt.");
+    assert!(a.iter().all(|x| !x.text.contains("Geheimwort")));
+}
+
+#[test]
+fn zu_viele_abschnitte_enden_mit_zu_gross() {
+    let n = extrakt::MAX_ABSCHNITTE + 1;
+    let text = "z\n\n".repeat(n);
+    let r = extrakt::abschnitte(text.as_bytes(), Format::Text);
+    assert_eq!(r.unwrap_err().code, "zu_gross");
+    let ok = "z\n\n".repeat(extrakt::MAX_ABSCHNITTE);
+    assert_eq!(
+        extrakt::abschnitte(ok.as_bytes(), Format::Text)
+            .unwrap()
+            .len(),
+        extrakt::MAX_ABSCHNITTE
+    );
+}
+
+#[test]
 fn pptx_folien_in_praesentationsreihenfolge() {
     let a = extrakt::abschnitte(&pptx(), Format::Pptx).unwrap();
     assert_eq!(anker(&a), ["folie=1", "folie=2"]);
@@ -565,6 +599,68 @@ fn stuecke_mit_ueberlappung() {
     let summe: usize = s.iter().map(|x| x.chars().count()).sum();
     assert!(summe > text.trim().chars().count());
     assert_eq!(index::stuecke("kurz", 220, 40), ["kurz"]);
+}
+
+#[test]
+fn stuecke_mehrbyte_zeichen_ohne_panik() {
+    let text = "äöü ßé€ ".repeat(300);
+    let s = index::stuecke(&text, index::STUECK, index::UEBERLAPPUNG);
+    assert!(s.len() >= 3);
+    assert!(s.iter().all(|x| x.chars().count() <= index::STUECK));
+    assert!(s.iter().all(|x| !x.is_empty()));
+    // Ohne Leerraum: harter Schnitt an Zeichengrenzen.
+    let dicht = "ä".repeat(1000);
+    let s = index::stuecke(&dicht, 220, 40);
+    assert!(s.iter().all(|x| x.chars().all(|c| c == 'ä')));
+    assert_eq!(s[0].chars().count(), 220);
+}
+
+#[test]
+fn grosse_textfassung_wird_gekuerzt_gelesen() {
+    let abschnitte: Vec<extrakt::Abschnitt> = (1..=5)
+        .map(|i| extrakt::Abschnitt {
+            anker: format!("absatz={i}"),
+            pfad: vec![],
+            text: format!("Text{i} {}", "x".repeat(1000)),
+        })
+        .collect();
+    let t = extrakt::Textfassung {
+        marken_version: extrakt::MARKEN_VERSION,
+        textrev: "rev".into(),
+        original_sha256: "ab".into(),
+        extraktor: "e".into(),
+        extraktor_version: "1".into(),
+        abschnitte,
+    };
+    let d = tempfile::tempdir().unwrap();
+    let p = d.path().join("t.json");
+    fs::write(&p, serde_json::to_vec(&t).unwrap()).unwrap();
+    let (voll, gekuerzt) = index::begrenzt_lesen(&p, "rev", 1 << 20).unwrap();
+    assert!(!gekuerzt);
+    assert_eq!(voll.abschnitte.len(), 5);
+    let (teil, gekuerzt) = index::begrenzt_lesen(&p, "rev", 2500).unwrap();
+    assert!(gekuerzt);
+    assert!(!teil.abschnitte.is_empty() && teil.abschnitte.len() < 5);
+    assert_eq!(teil.abschnitte[0].anker, "absatz=1");
+    // Schon der erste Abschnitt passt nicht: sein Anfang wird (auf UTF-8-Grenze) gekürzt indiziert.
+    let (anfang, gekuerzt) = index::begrenzt_lesen(&p, "rev", 500).unwrap();
+    assert!(gekuerzt);
+    assert_eq!(anfang.abschnitte.len(), 1);
+    assert!(anfang.abschnitte[0].text.starts_with("Text1 xxx"));
+    // Mehrbyte-Text mit Escapes: Schnitt mitten im Zeichen bleibt gültig.
+    let mut t2 = t.clone();
+    t2.abschnitte = vec![extrakt::Abschnitt {
+        anker: "absatz=1".into(),
+        pfad: vec![],
+        text: "ä\"€\n".repeat(400),
+    }];
+    fs::write(&p, serde_json::to_vec(&t2).unwrap()).unwrap();
+    for max in 300..312 {
+        let (k, g) = index::begrenzt_lesen(&p, "rev", max).unwrap();
+        assert!(g && !k.abschnitte[0].text.is_empty(), "{max}");
+    }
+    // Fremde `textrev`: abgelehnt.
+    assert!(index::begrenzt_lesen(&p, "andere", 1 << 20).is_none());
 }
 
 // ---------------------------------------------------------------------------
@@ -915,6 +1011,7 @@ fn extraktorwechsel_ergibt_neue_textrev_alte_bleibt() {
                 stand: "ok".into(),
                 code: None,
                 versuche: 0,
+                versuche_zeit: 0,
             },
         )
         .unwrap();
@@ -1238,7 +1335,32 @@ fn extraktor_nur_mit_kennzeichen_und_unter_der_wurzel() {
         TEST_GRENZEN,
         &AtomicBool::new(false),
     );
-    assert_eq!(r.unwrap_err(), "extrakt.abbruch");
+    assert_eq!(r.unwrap_err(), "extrakt.programm");
+}
+
+#[cfg(unix)]
+#[test]
+fn unklare_beendigung_ist_voruebergehend_absturz_endgueltig() {
+    use std::os::unix::process::ExitStatusExt;
+    use std::process::ExitStatus;
+    let code = |c: i32| textlauf::unklarer_ausgang(&ExitStatus::from_raw(c << 8));
+    let signal = |s: i32| textlauf::unklarer_ausgang(&ExitStatus::from_raw(s));
+    // Nicht zugelassen (64), Thread-Start (71), stdout (74), unklar (1): nicht am Inhalt.
+    assert_eq!(code(64), "extrakt.programm");
+    assert_eq!(code(71), "extrakt.start");
+    assert_eq!(code(74), "extrakt.start");
+    assert_eq!(code(1), "extrakt.programm");
+    assert_eq!(signal(15), "extrakt.programm");
+    // Thread-Panic, Rust-Panic, abort, SIGKILL, SIGSEGV: endgültig.
+    for c in [70, 101, 134] {
+        assert_eq!(code(c), "extrakt.abbruch", "{c}");
+    }
+    for s in [6, 9, 11] {
+        assert_eq!(signal(s), "extrakt.abbruch", "{s}");
+    }
+    for c in ["extrakt.programm", "extrakt.start"] {
+        assert!(speicher::VORUEBERGEHEND.contains(&c));
+    }
 }
 
 fn fas_von(e: &Env, dat: &str) -> String {
@@ -1262,7 +1384,7 @@ fn voruebergehende_fehler_begrenzt_wiederholt() {
     let schlecht = |e: &Env| {
         textfassung::lauf(
             &e.a,
-            &kaputtes_programm(),
+            &kind(Some("lesen")),
             TEST_GRENZEN,
             &AtomicBool::new(false),
             &|| {},
@@ -1303,6 +1425,336 @@ fn voruebergehende_fehler_begrenzt_wiederholt() {
     let b = e.ablegen("b.docx", &bombe, &o);
     e.lauf();
     textfassung::rueckstellung_vergessen(&fas_von(&e, &b));
+    assert!(e.a.text_auftraege().unwrap().is_empty());
+}
+
+#[test]
+fn wal_wird_nach_dem_abgleich_gekuerzt() {
+    let e = env();
+    let o = e.standard();
+    e.ablegen("w.txt", format!("Inhalt {KONTROLLE}").as_bytes(), &o);
+    e.lauf();
+    index::abgleichen(&e.a).unwrap();
+    let wal = e.a.dir().join("index.db-wal");
+    let groesse = fs::metadata(&wal).map(|m| m.len()).unwrap_or(0);
+    assert_eq!(groesse, 0, "WAL nach TRUNCATE-Checkpoint leer");
+}
+
+/// `nachholen` gibt bei belegter Schreibersperre (parallele Tests) `None` zurück; hier kurz erneut.
+fn nachholen_bald(a: &Ablage) -> Option<index::AblageIndexBericht> {
+    for _ in 0..200 {
+        if let Some(b) = index::nachholen(a).unwrap() {
+            return Some(b);
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    None
+}
+
+#[cfg(unix)]
+#[test]
+fn fehlgeschlagener_abgleich_wird_nachgeholt() {
+    let e = env();
+    let o = e.standard();
+    let dat = e.ablegen("g.txt", format!("Geheim {KONTROLLE}").as_bytes(), &o);
+    e.lauf();
+    assert_eq!(e.treffer(KONTROLLE).len(), 1);
+    assert_eq!(index::nachholen(&e.a).unwrap(), None);
+    e.a.in_papierkorb(AblageArt::Datei, &dat).unwrap();
+    e.a.endgueltig_loeschen(AblageArt::Datei, &dat).unwrap();
+    // Der Abgleich scheitert (Index als Hartlink): die Marke bleibt liegen.
+    let kopie = e.d.path().join("index-kopie.db");
+    fs::hard_link(e.a.dir().join(index::INDEX), &kopie).unwrap();
+    assert!(index::abgleichen(&e.a).is_err());
+    assert!(e.a.dir().join(index::OFFEN).exists());
+    // Nächster Start: Hartlink weg, die Wiederholung räumt den Index und die Marke.
+    fs::remove_file(&kopie).unwrap();
+    let b = nachholen_bald(&e.a).expect("Wiederholung");
+    assert_eq!(b.dateien, 0);
+    assert!(!e.a.dir().join(index::OFFEN).exists());
+    assert!(e.treffer(KONTROLLE).is_empty());
+}
+
+#[test]
+fn ein_dokument_belegt_nicht_alle_kandidatenplaetze() {
+    let e = env();
+    let o = e.standard();
+    let viele: String = (0..60)
+        .map(|i| format!("Narwal Narwal Narwal Abschnitt {i}\n\n"))
+        .collect();
+    let a = e.ablegen("viele.txt", viele.as_bytes(), &o);
+    let b = e.ablegen(
+        "eins.txt",
+        "Einmal der Narwal in einem langen Satz ohne weitere Wiederholung dieses Wortes".as_bytes(),
+        &o,
+    );
+    e.lauf();
+    let dats: Vec<String> = e.treffer("Narwal").into_iter().map(|t| t.dat).collect();
+    assert!(dats.contains(&a), "{dats:?}");
+    assert!(dats.contains(&b), "das einzelne Dokument fehlt: {dats:?}");
+}
+
+#[test]
+fn ki_stufe_geht_in_den_stempel_ein() {
+    use super::freigabe::KiStufe;
+    let e = env();
+    let o = e.standard();
+    let dat = e.ablegen("k.txt", format!("Frei {KONTROLLE}").as_bytes(), &o);
+    e.lauf();
+    assert_eq!(index::abgleichen(&e.a).unwrap().geschrieben, 0);
+    let q = e.a.index_quellen().unwrap();
+    assert_eq!(q.iter().find(|x| x.dat == dat).unwrap().ki, "aus");
+    e.a.ki_setzen(&o, Some(KiStufe::An)).unwrap();
+    let q = e.a.index_quellen().unwrap();
+    assert_eq!(q.iter().find(|x| x.dat == dat).unwrap().ki, "an");
+    // Genau die betroffene Datei wird neu bewertet, danach ist Ruhe.
+    assert_eq!(index::abgleichen(&e.a).unwrap().geschrieben, 1);
+    assert_eq!(index::abgleichen(&e.a).unwrap().geschrieben, 0);
+}
+
+#[test]
+fn index_db_ueberschreibt_geloeschte_seiten() {
+    let e = env();
+    let o = e.standard();
+    e.ablegen("a.md", b"Inhalt Wal", &o);
+    e.lauf();
+    assert_eq!(index::secure_delete_stand(&e.a).unwrap(), (1, 1));
+}
+
+#[cfg(unix)]
+#[test]
+fn hartlink_wird_nicht_extrahiert() {
+    let d = datei("h.txt", b"Hartlink");
+    std::fs::hard_link(&d.pfad, d._d.path().join("zweiter.txt")).unwrap();
+    let r = textlauf::ausfuehren(
+        &kind(None),
+        d._d.path(),
+        &d.pfad,
+        &d.sha,
+        "txt",
+        TEST_GRENZEN,
+        &AtomicBool::new(false),
+    );
+    assert_eq!(r.unwrap_err(), "extrakt.hartlink");
+    assert!(!speicher::VORUEBERGEHEND.contains(&"extrakt.hartlink"));
+}
+
+#[cfg(unix)]
+#[test]
+fn hartlink_wird_nicht_als_fund_angeboten_und_index_nicht_benutzt() {
+    let e = env();
+    let dat_dir = |name: &str| {
+        let dir =
+            e.a.dir()
+                .join("dateien")
+                .join(super::neue_id(super::PRAEFIX_DATEI));
+        fs::create_dir_all(&dir).unwrap();
+        (
+            dir.join(format!("{}.txt", super::neue_id(super::PRAEFIX_FASSUNG))),
+            name.to_string(),
+        )
+    };
+    let (gut, _) = dat_dir("gut");
+    fs::write(&gut, b"Fund").unwrap();
+    let (link, _) = dat_dir("link");
+    let draussen = e.d.path().join("draussen.txt");
+    fs::write(&draussen, b"Fremd").unwrap();
+    fs::hard_link(&draussen, &link).unwrap();
+    e.a.prozess_neustart();
+    let s = e.a.ansicht().unwrap();
+    assert_eq!(
+        s.gefunden.len(),
+        1,
+        "nur die gewöhnliche Datei wird angeboten"
+    );
+
+    // index.db als Hartlink: der Index wird nicht benutzt.
+    let o = e.standard();
+    e.ablegen("i.txt", b"Index", &o);
+    e.lauf();
+    index::abgleichen(&e.a).unwrap();
+    let ix = e.a.dir().join(index::INDEX);
+    fs::hard_link(&ix, e.d.path().join("index-kopie.db")).unwrap();
+    assert!(index::abgleichen(&e.a).is_err());
+    assert!(index::suchen(&e.a, "Index").is_err());
+}
+
+#[test]
+fn zeitgrenze_hoechstens_ein_wiederholversuch() {
+    let e = env();
+    let o = e.standard();
+    let dat = e.ablegen("gift.txt", b"Gift", &o);
+    let fas = fas_von(&e, &dat);
+    let g = Grenzen {
+        zeit: Duration::from_secs(1),
+        speicher_mb: 1024,
+    };
+    let lauf = |modus: &str| {
+        textfassung::lauf(&e.a, &kind(Some(modus)), g, &AtomicBool::new(false), &|| {}).unwrap()
+    };
+    // Erster Versuch: Zeitgrenze, vermerkt.
+    assert_eq!(lauf("endlos").fehler, 1);
+    let (stand, code) = e.textstand(&dat);
+    assert_eq!(stand.as_deref(), Some("fehler"));
+    assert_eq!(code.as_deref(), Some("extrakt.zeit"));
+    // Genau ein späterer Versuch, mit längerer Zeitgrenze (3 s statt 1 s): der Extraktor braucht
+    // 1,5 s und schafft es jetzt.
+    textfassung::rueckstellung_vergessen(&fas);
+    let auf = e.a.text_auftraege().unwrap();
+    assert_eq!((auf.len(), auf[0].versuche), (1, 1));
+    assert_eq!(lauf("langsam").ok, 1);
+    assert_eq!(e.textstand(&dat).0.as_deref(), Some("ok"));
+
+    // Zweite Datei: auch der Wiederholversuch scheitert, dann endgültig.
+    let dat2 = e.ablegen("gift2.txt", b"Gift zwei", &o);
+    let fas2 = fas_von(&e, &dat2);
+    assert_eq!(lauf("endlos").fehler, 1);
+    textfassung::rueckstellung_vergessen(&fas2);
+    assert_eq!(lauf("endlos").fehler, 1);
+    textfassung::rueckstellung_vergessen(&fas2);
+    assert!(e.a.text_auftraege().unwrap().is_empty());
+    assert_eq!(e.textstand(&dat2).0.as_deref(), Some("fehler"));
+}
+
+#[test]
+fn zeitzaehler_ist_unabhaengig_von_anderen_fehlern() {
+    let e = env();
+    let o = e.standard();
+    let dat = e.ablegen("z.txt", b"Zaehler", &o);
+    let fas = fas_von(&e, &dat);
+    let g = Grenzen {
+        zeit: Duration::from_secs(1),
+        speicher_mb: 1024,
+    };
+    let lauf = |modus: &str| {
+        textfassung::lauf(&e.a, &kind(Some(modus)), g, &AtomicBool::new(false), &|| {}).unwrap()
+    };
+    let wieder = |f: &str| textfassung::rueckstellung_vergessen(f);
+    assert_eq!(lauf("endlos").fehler, 1); // Zeit 1
+    wieder(&fas);
+    assert_eq!(lauf("lesen").fehler, 1); // anderer vorübergehender Fehler
+    wieder(&fas);
+    let auf = e.a.text_auftraege().unwrap();
+    assert_eq!(
+        (auf.len(), auf[0].versuche, auf[0].versuche_zeit),
+        (1, 2, 1)
+    );
+    // Die zweite Zeitüberschreitung ist die letzte: genau ein Zeit-Wiederholversuch.
+    assert_eq!(lauf("endlos").fehler, 1);
+    wieder(&fas);
+    assert!(e.a.text_auftraege().unwrap().is_empty());
+}
+
+#[test]
+fn checkpoint_busy_wird_nicht_als_erfolg_gewertet() {
+    let d = tempfile::tempdir().unwrap();
+    let p = d.path().join("w.db");
+    let c = rusqlite::Connection::open(&p).unwrap();
+    c.busy_timeout(Duration::from_millis(0)).unwrap();
+    c.pragma_update(None, "journal_mode", "WAL").unwrap();
+    c.execute_batch("CREATE TABLE t(x); INSERT INTO t VALUES(1);")
+        .unwrap();
+    // Ein Leser hält einen Stand fest, danach kommen neue Frames: TRUNCATE kann nicht abschließen.
+    let leser = rusqlite::Connection::open(&p).unwrap();
+    leser.execute_batch("BEGIN; SELECT * FROM t;").unwrap();
+    c.execute("INSERT INTO t VALUES(2)", []).unwrap();
+    assert!(index::checkpoint(&c).is_err());
+    leser.execute_batch("COMMIT").unwrap();
+    assert!(index::checkpoint(&c).is_ok());
+}
+
+#[test]
+fn nachholen_wartet_nicht_auf_laufenden_abgleich() {
+    let e = env();
+    fs::write(e.a.dir().join(index::OFFEN), b"").unwrap();
+    let r = index::mit_sperre(|| index::nachholen(&e.a));
+    assert_eq!(r.unwrap(), None);
+    assert!(e.a.dir().join(index::OFFEN).exists());
+    // Ohne Sperre läuft die Wiederholung und räumt die Marke.
+    assert!(nachholen_bald(&e.a).is_some());
+    assert!(!e.a.dir().join(index::OFFEN).exists());
+}
+
+#[test]
+fn zeitgrenze_waechst_mit_der_groesse() {
+    let g = Duration::from_secs(60);
+    assert_eq!(textfassung::zeitgrenze(0, g, 500 << 20), g);
+    assert_eq!(
+        textfassung::zeitgrenze(1, g, 1 << 20),
+        Duration::from_secs(180)
+    );
+    assert_eq!(
+        textfassung::zeitgrenze(1, g, 200 << 20),
+        Duration::from_secs(460)
+    );
+    assert_eq!(
+        textfassung::zeitgrenze(1, g, 5000 << 20),
+        Duration::from_secs(900)
+    );
+}
+
+#[test]
+fn startfehler_wird_nicht_eingetragen() {
+    let e = env();
+    let o = e.standard();
+    let dat = e.ablegen("s.txt", b"Start", &o);
+    let l = textfassung::lauf(
+        &e.a,
+        &kaputtes_programm(),
+        TEST_GRENZEN,
+        &AtomicBool::new(false),
+        &|| {},
+    )
+    .unwrap();
+    assert_eq!(l.fehler, 1);
+    // Nichts über die Datei vermerkt: kein Fehlerstand, der Auftrag bleibt für den nächsten Start offen.
+    assert_eq!(e.textstand(&dat).0.as_deref(), Some("ausstehend"));
+    textfassung::rueckstellung_vergessen(&fas_von(&e, &dat));
+    let auf = e.a.text_auftraege().unwrap();
+    assert_eq!((auf.len(), auf[0].versuche), (1, 0));
+}
+
+#[test]
+fn kind_arbeitet_nicht_in_der_ablagewurzel() {
+    let d = datei("w.txt", b"Wurzel");
+    let r = textlauf::ausfuehren(
+        &kind(Some("arbeitsordner")),
+        d._d.path(),
+        &d.pfad,
+        &d.sha,
+        "txt",
+        TEST_GRENZEN,
+        &AtomicBool::new(false),
+    );
+    assert!(r.is_ok(), "{r:?}");
+}
+
+#[test]
+fn kind_extrahiert_im_thread_mit_grossem_stack() {
+    let r = im_kind("t.txt", "txt", b"Tief", Some("stack"), TEST_GRENZEN);
+    assert!(r.is_ok(), "{r:?}");
+}
+
+#[cfg(unix)]
+#[test]
+fn speichergrenze_ist_sofort_endgueltig() {
+    let e = env();
+    let o = e.standard();
+    let dat = e.ablegen("gift.txt", b"Gift", &o);
+    let fas = fas_von(&e, &dat);
+    let l = textfassung::lauf(
+        &e.a,
+        &kind(Some("speicher")),
+        TEST_GRENZEN,
+        &AtomicBool::new(false),
+        &|| {},
+    )
+    .unwrap();
+    assert_eq!(l.fehler, 1);
+    let (stand, code) = e.textstand(&dat);
+    assert_eq!(stand.as_deref(), Some("fehler"));
+    assert_eq!(code.as_deref(), Some("extrakt.abbruch"));
+    textfassung::rueckstellung_vergessen(&fas);
     assert!(e.a.text_auftraege().unwrap().is_empty());
 }
 

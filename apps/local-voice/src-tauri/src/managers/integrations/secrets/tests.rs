@@ -188,7 +188,7 @@ fn deleting_an_integration_leaves_calendar_secrets_to_the_calendar() {
     assert!(dir.path().join("graph-1.bin").exists());
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 mod dpapi {
     use super::*;
 

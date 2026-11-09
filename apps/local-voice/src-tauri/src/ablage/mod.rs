@@ -130,6 +130,53 @@ pub fn ist_umweg(meta: &fs::Metadata) -> bool {
     false
 }
 
+/// Hat die offene Datei mehr als einen Verzeichniseintrag (Hartlink)? Ein Hartlink kann auf eine Datei
+/// außerhalb der Ablage zeigen (oder von dort kommen) und wird deshalb nicht gelesen, aufgenommen oder
+/// als Index benutzt. Unix `nlink`, Windows `nNumberOfLinks` (`GetFileInformationByHandle`); ein Fehler
+/// zählt als Hartlink (im Zweifel ablehnen).
+pub fn datei_hartverknuepft(f: &fs::File) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        f.metadata().map(|m| m.nlink() > 1).unwrap_or(true)
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::AsRawHandle;
+        use windows::Win32::Foundation::HANDLE;
+        use windows::Win32::Storage::FileSystem::{
+            GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+        };
+        let mut info = BY_HANDLE_FILE_INFORMATION::default();
+        // SAFETY: gültiges, offenes Dateihandle; `info` ist ein beschreibbarer Ausgabepuffer.
+        let ok = unsafe { GetFileInformationByHandle(HANDLE(f.as_raw_handle()), &mut info) };
+        ok.map(|_| info.nNumberOfLinks > 1).unwrap_or(true)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = f;
+        false
+    }
+}
+
+/// Wie [`datei_hartverknuepft`], für einen Pfad (ohne Folgen einer Verknüpfung geöffnet; nicht
+/// öffenbar zählt als Hartlink).
+pub fn pfad_hartverknuepft(p: &Path) -> bool {
+    let mut o = fs::OpenOptions::new();
+    o.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        o.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        o.custom_flags(0x0020_0000).share_mode(0x1 | 0x2 | 0x4);
+    }
+    o.open(p).map(|f| datei_hartverknuepft(&f)).unwrap_or(true)
+}
+
 /// Ordnereinträge dauerhaft machen (Unix: fsync auf den Ordner; sonst nichts).
 pub fn ordner_sync(dir: &Path) {
     #[cfg(unix)]
