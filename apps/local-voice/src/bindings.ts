@@ -1129,6 +1129,17 @@ async ablageTextAbbrechen() : Promise<Result<null, string>> {
 }
 },
 /**
+ * Sync-Zustand je Ordner und Datei, Kontingent und letzter Fehler (D4). Ohne Konto: `verbunden = false`.
+ */
+async ablageSyncStand() : Promise<Result<AblageSyncStand, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_sync_stand") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Stuft eine Aeusserung lokal ein (ADR-0028 E4.1) fuer Ansagen und S0-Vorlagen. `None`, wenn
  * diese abgeschaltet sind (`assistent_einstufung_aktiv`); das Tor vor dem Modell bleibt davon
  * unberuehrt. Der Text wird nicht protokolliert.
@@ -8539,6 +8550,23 @@ export type AblageSuchtreffer = { dat: string; name: string; ordner: string; typ
  * Bester Rang der Fundstellen (0..1).
  */
 rang: number; stellen: AblageFundstelle[] }
+export type AblageSyncEintrag = { id: string; zustand: AblageSyncZustand }
+/**
+ * Stand des Abgleichs für die Seite „Ablage“.
+ */
+export type AblageSyncStand = { 
+/**
+ * Ein Konto ist angemeldet (sonst zeigt die Seite keine Sync-Zustände).
+ */
+verbunden: boolean; letzter_lauf_ms: number | null; fehler: string | null; kontingent_voll: boolean; 
+/**
+ * Belegt und Kontingent in Bytes (vom Hub), falls bekannt.
+ */
+belegt: number | null; kontingent: number | null; eintraege: AblageSyncEintrag[] }
+/**
+ * Sync-Zustand eines Ordners oder einer Datei.
+ */
+export type AblageSyncZustand = "synchronisiert" | "ausstehend" | "konflikt" | "wartet_auf_text" | "nur_geraet"
 export type AccountState = "not_configured" | "no_capabilities" | "needs_sign_in" | "needs_consent" | "ready"
 /**
  * Eine Aufgabe (Zeile in `action_items`). `assignee_label` ist Freitext, die

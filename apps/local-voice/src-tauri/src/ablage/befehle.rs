@@ -18,6 +18,9 @@ use tauri::{AppHandle, Emitter};
 /// Ereignis an die Oberfläche: eine Textfassung ist fertig (oder fehlgeschlagen).
 pub const EREIGNIS_TEXT: &str = "ablage-text";
 
+/// Ereignis an die Oberfläche: ein Abgleich der Ablage ist gelaufen (D4); Stand und Sync-Zustand neu laden.
+pub const EREIGNIS_SYNC: &str = "ablage-sync";
+
 type Antwort<T> = Result<T, String>;
 
 fn ablage(app: &AppHandle) -> Antwort<Ablage> {
@@ -255,4 +258,12 @@ pub async fn ablage_index_neu_aufbauen(app: AppHandle) -> Antwort<AblageIndexBer
 pub async fn ablage_text_abbrechen() -> Antwort<()> {
     super::textfassung::abbrechen();
     Ok(())
+}
+
+/// Sync-Zustand je Ordner und Datei, Kontingent und letzter Fehler (D4). Ohne Konto: `verbunden = false`.
+#[tauri::command]
+#[specta::specta]
+pub async fn ablage_sync_stand(app: AppHandle) -> Antwort<crate::sync::ablage::AblageSyncStand> {
+    let verbunden = crate::sync::account::load(&app).is_some();
+    blockierend(&app, move |a| crate::sync::ablage::stand(&a, verbunden)).await
 }

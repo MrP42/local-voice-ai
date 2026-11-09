@@ -57,6 +57,19 @@ pub fn aad(user_id: i64, collection: &str, object_id: &str) -> Vec<u8> {
     format!("{user_id}\u{1f}{collection}\u{1f}{object_id}").into_bytes()
 }
 
+/// AAD der Ablage (ADR-0029 E9): wie [`aad`], dazu das sichtbare Steuerfeld `blob_refs` (sortiert,
+/// eindeutig). Ein Hub, der die Referenzen eines Objekts vertauscht oder kürzt, bricht so die Prüfung.
+pub fn aad_ablage(
+    user_id: i64,
+    collection: &str,
+    object_id: &str,
+    blob_refs: &[String],
+) -> Vec<u8> {
+    let mut a = aad(user_id, collection, object_id);
+    a.extend_from_slice(format!("\u{1f}blob_refs\u{1f}{}", blob_refs.join(",")).as_bytes());
+    a
+}
+
 /// Versiegeln: zufällige 24-Byte-Nonce, dann `base64(nonce ‖ chiffrat)`.
 pub fn seal(key: &[u8; KEY_LEN], aad: &[u8], plaintext: &[u8]) -> Result<String, String> {
     let cipher = XChaCha20Poly1305::new(key.into());

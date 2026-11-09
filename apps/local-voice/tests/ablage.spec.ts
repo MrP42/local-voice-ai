@@ -222,13 +222,13 @@ function leereSicht() {
 
 async function installMock(
   page: Page,
-  opts: { theme: Theme; leer?: boolean; wahl?: string[] },
+  opts: { theme: Theme; leer?: boolean; wahl?: string[]; sync?: unknown },
 ) {
   page.on("pageerror", (error) => {
     throw error;
   });
   await page.addInitScript(
-    ({ sicht, theme, wahl }) => {
+    ({ sicht, theme, wahl, sync }) => {
       const callbacks = new Map<number, unknown>();
       let callback = 0;
       const settings = {
@@ -251,6 +251,7 @@ async function installMock(
       w.__calls = [] as unknown[];
       w.__sicht = sicht;
       w.__pick = wahl;
+      w.__sync = sync;
       const listeners: Record<string, number[]> = {};
       window.localStorage.setItem("lva.ui.section", "ablage");
       Object.assign(window, {
@@ -296,6 +297,19 @@ async function installMock(
             if (cmd === "plugin:event|unlisten") return null;
             if (cmd === "plugin:dialog|open") return w.__pick ?? null;
             if (cmd === "ablage_stand") return JSON.parse(JSON.stringify(s));
+            // D4: Sync-Zustand (ohne Angabe: kein Konto).
+            if (cmd === "ablage_sync_stand")
+              return (
+                w.__sync ?? {
+                  verbunden: false,
+                  letzter_lauf_ms: null,
+                  fehler: null,
+                  kontingent_voll: false,
+                  belegt: null,
+                  kontingent: null,
+                  eintraege: [],
+                }
+              );
             // D2: Inhaltssuche mit synthetischen Fundstellen (Anker nach Markenformat v1).
             if (cmd === "ablage_suchen") {
               const q = String(args?.anfrage ?? "").toLowerCase();
@@ -458,6 +472,7 @@ async function installMock(
       sicht: opts.leer ? leereSicht() : demoSicht(),
       theme: opts.theme,
       wahl: opts.wahl ?? null,
+      sync: opts.sync ?? null,
     },
   );
 }
@@ -938,4 +953,45 @@ test("1440 px: Schließen der Desktopdetails gibt den Fokus an die Zeile zurück
   await details.getByRole("button", { name: "Details schließen" }).click();
   await expect(details).toHaveCount(0);
   await expect(zeile).toBeFocused();
+});
+
+test("1440 px: Sync-Zustand je Datei und Kontingent im Fuß (D4)", async ({
+  page,
+}) => {
+  await installMock(page, {
+    theme: "light",
+    sync: {
+      verbunden: true,
+      letzter_lauf_ms: T0,
+      fehler: null,
+      kontingent_voll: true,
+      belegt: 5_000_000,
+      kontingent: 5_000_000,
+      eintraege: [
+        { id: "d2", zustand: "synchronisiert" },
+        { id: "d3", zustand: "wartet_auf_text" },
+        { id: "d4", zustand: "konflikt" },
+        { id: "d5", zustand: "nur_geraet" },
+      ],
+    },
+  });
+  await offne(page, 1440, "light");
+  await waehle(page, "o_allg");
+  const zeile = (id: string) =>
+    page.locator("tr", { has: page.getByTestId(`ablage-datei-${id}`) });
+  await expect(
+    zeile("d2").getByRole("img", { name: "Synchronisiert" }),
+  ).toBeVisible();
+  await expect(
+    zeile("d3").getByRole("img", { name: "Wartet auf Text" }),
+  ).toBeVisible();
+  await expect(
+    zeile("d4").getByRole("img", { name: "Konflikt" }),
+  ).toBeVisible();
+  await expect(
+    zeile("d5").getByRole("img", { name: "Nur dieses Gerät" }),
+  ).toBeVisible();
+  await expect(page.getByTestId("ablage-fuss-cloud")).toHaveText(
+    "Cloud-Speicher voll – Hochladen angehalten",
+  );
 });

@@ -41,6 +41,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+#[path = "speicher_sync.rs"]
+mod abgleich_zugriff;
+pub use abgleich_zugriff::{Eingang, SyncBestand};
+
 pub const DATEIEN: &str = "dateien";
 pub const TEXT: &str = "text";
 pub const PAPIERKORB: &str = "papierkorb";
@@ -2451,6 +2455,11 @@ impl Ablage {
             }
             let name = original_name(&f.fas, &f.typ);
             if ohne_umweg(&self.dir, &format!("{DATEIEN}/{}/{name}", d.id)).is_err() {
+                continue;
+            }
+            // D4: Eine Fassung von einem anderen Gerät, deren Original noch nicht hier liegt, wartet auf
+            // ihren Text (oder ihr Original); ein Lauf ohne Datei würde einen Fehler eintragen.
+            if !self.dir.join(DATEIEN).join(&d.id).join(&name).is_file() {
                 continue;
             }
             aus.push(TextAuftrag {

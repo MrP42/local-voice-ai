@@ -31,6 +31,8 @@ import type {
   AblageOrdner,
   AblageSicht,
   AblageSuchtreffer,
+  AblageSyncStand,
+  AblageSyncZustand,
 } from "@/bindings";
 import { PageShell } from "../ui/PageShell";
 import { Button } from "../ui/Button";
@@ -102,6 +104,8 @@ export const AblagePage: React.FC = () => {
   const { t, i18n } = useTranslation();
   const schmal = useSchmal();
   const [sicht, setSicht] = useState<AblageSicht | null>(null);
+  // D4: Sync-Zustand je Eintrag; ohne Konto oder bei Fehler bleibt die Liste wie in D1.
+  const [syncStand, setSyncStand] = useState<AblageSyncStand | null>(null);
   const [ladefehler, setLadefehler] = useState<string | null>(null);
   const [ansicht, setAnsicht] = useState<string | null>(null);
   const [dateiId, setDateiId] = useState<string | null>(null);
@@ -150,6 +154,9 @@ export const AblagePage: React.FC = () => {
       if (nr !== ladeZaehler.current) return;
       setSicht(neu);
       setLadefehler(null);
+      const sync = await api.syncStand().catch(() => null);
+      if (nr !== ladeZaehler.current) return;
+      setSyncStand(sync);
     } catch (e) {
       if (nr !== ladeZaehler.current) return;
       const { code, text } = fehlerTeile(
@@ -175,6 +182,26 @@ export const AblagePage: React.FC = () => {
       aus?.();
     };
   }, [neuLaden]);
+
+  // D4: Nach jedem Abgleich der Ablage Stand und Sync-Zustand neu laden.
+  useEffect(() => {
+    let aus: (() => void) | null = null;
+    let aktiv = true;
+    listen("ablage-sync", () => void neuLaden())
+      .then((f) => (aktiv ? (aus = f) : f()))
+      .catch(() => {});
+    return () => {
+      aktiv = false;
+      aus?.();
+    };
+  }, [neuLaden]);
+
+  const syncJe = useMemo(() => {
+    if (!syncStand?.verbunden) return undefined;
+    return new Map<string, AblageSyncZustand>(
+      syncStand.eintraege.map((e) => [e.id, e.zustand]),
+    );
+  }, [syncStand]);
 
   // Inhaltssuche (verzögert); läuft erneut, wenn sich der Stand ändert (neue Textfassungen).
   const anfrage = suche.trim();
@@ -791,6 +818,7 @@ export const AblagePage: React.FC = () => {
       unter={unter}
       dateien={dateienHier}
       gewaehlt={dateiId}
+      sync={syncJe}
       onOrdner={wahl}
       onDatei={(id, ausloeser) => {
         letzterAusloeser.current = ausloeser;
@@ -876,7 +904,29 @@ export const AblagePage: React.FC = () => {
                 size: formatBytes(sicht.belegt, i18n.language),
               })}
             </span>
-            <span className="ablage-nur-breit">{t("ablage.fuss.lokal")}</span>
+            {syncStand?.verbunden ? (
+              <span
+                className={
+                  syncStand.kontingent_voll
+                    ? "ablage-fuss-voll"
+                    : "ablage-nur-breit"
+                }
+                data-testid="ablage-fuss-cloud"
+              >
+                {syncStand.kontingent_voll
+                  ? t("ablage.sync.voll")
+                  : syncStand.belegt != null && syncStand.kontingent != null
+                    ? t("ablage.sync.cloud", {
+                        used: formatBytes(syncStand.belegt, i18n.language),
+                        quota: formatBytes(syncStand.kontingent, i18n.language),
+                      })
+                    : syncStand.fehler
+                      ? t("ablage.sync.unvollstaendig")
+                      : null}
+              </span>
+            ) : (
+              <span className="ablage-nur-breit">{t("ablage.fuss.lokal")}</span>
+            )}
           </div>
         </section>
         {seiteOffen && !schmal && (

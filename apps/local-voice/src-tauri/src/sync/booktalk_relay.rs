@@ -1404,6 +1404,7 @@ impl Ctx {
                 payload,
                 key_id: self.key_id.clone(),
                 deleted: plain.is_none(),
+                blob_refs: None,
             };
             let results = self.client.push(&self.cfg.device_id, &[obj]).await?;
             let Some(r) = results.into_iter().next() else {

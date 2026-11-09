@@ -2052,6 +2052,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             ablage::befehle::ablage_suchen,
             ablage::befehle::ablage_index_neu_aufbauen,
             ablage::befehle::ablage_text_abbrechen,
+            ablage::befehle::ablage_sync_stand,
             assistent::assistent_einstufen,
             assistent::assistent_messung_melden,
             assistent::assistent_letzte_ausgabe,

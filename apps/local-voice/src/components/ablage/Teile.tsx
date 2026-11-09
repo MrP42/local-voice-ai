@@ -2,6 +2,9 @@ import React from "react";
 import { useTranslation } from "react-i18next";
 import {
   AlertTriangle,
+  Check,
+  Clock,
+  FileText,
   Folder,
   Monitor,
   Plus,
@@ -20,6 +23,7 @@ import type {
   AblageKorb,
   AblageOrdner,
   AblageKollisionswahl,
+  AblageSyncZustand,
 } from "@/bindings";
 import { IconButton } from "../ui/IconButton";
 import { Button } from "../ui/Button";
@@ -42,6 +46,33 @@ const Chip: React.FC<{
     {children}
   </span>
 );
+
+/** Sync-Zustand eines Eintrags (D4): Zeichen, auf breiten Fenstern mit Text. */
+export const SyncZeichen: React.FC<{ zustand: AblageSyncZustand }> = ({
+  zustand,
+}) => {
+  const { t } = useTranslation();
+  const Zeichen = {
+    synchronisiert: Check,
+    ausstehend: Clock,
+    konflikt: AlertTriangle,
+    wartet_auf_text: FileText,
+    nur_geraet: Monitor,
+  }[zustand];
+  const text = t(`ablage.sync.${zustand}`);
+  return (
+    <span
+      role="img"
+      aria-label={text}
+      title={text}
+      className={`ablage-sync ablage-sync--${zustand}`}
+      data-testid={`ablage-sync-${zustand}`}
+    >
+      <Zeichen size={16} aria-hidden="true" />
+      <span className="ablage-mut ablage-nur-breit">{text}</span>
+    </span>
+  );
+};
 
 /** KI-Zustand und Datenklasse als Chips (Liste und Details). */
 export const KiKlasseChips: React.FC<{ ki: AblageKi; klasse: string }> = ({
@@ -188,7 +219,9 @@ export const DateiTabelle: React.FC<{
   gewaehlt: string | null;
   onOrdner(id: string): void;
   onDatei(id: string, ausloeser: HTMLElement): void;
-}> = ({ titel, unter, dateien, gewaehlt, onOrdner, onDatei }) => {
+  /** Sync-Zustand je Kennung (D4); fehlt ohne Konto. */
+  sync?: Map<string, AblageSyncZustand>;
+}> = ({ titel, unter, dateien, gewaehlt, onOrdner, onDatei, sync }) => {
   const { t, i18n } = useTranslation();
   return (
     <table className="ablage-tabelle">
@@ -233,7 +266,9 @@ export const DateiTabelle: React.FC<{
             <td className="ablage-spalte-klasse">
               <KiKlasseChips ki={o.ki} klasse={o.klasse} />
             </td>
-            <td />
+            <td>
+              {sync?.get(o.id) && <SyncZeichen zustand={sync.get(o.id)!} />}
+            </td>
           </tr>
         ))}
         {dateien.map((d) => (
@@ -259,33 +294,39 @@ export const DateiTabelle: React.FC<{
             <td className="ablage-spalte-klasse">
               <KiKlasseChips ki={d.ki} klasse={d.klasse} />
             </td>
-            <td style={{ color: d.konflikt ? "var(--abl-warn)" : undefined }}>
-              {d.konflikt && (
-                <span
-                  role="img"
-                  aria-label={t("ablage.stand.konflikt")}
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 4,
-                  }}
-                >
-                  <AlertTriangle size={16} aria-hidden="true" />
-                  <span className="ablage-mut ablage-nur-breit">
-                    {t("ablage.stand.konflikt")}
+            {sync?.get(d.id) ? (
+              <td>
+                <SyncZeichen zustand={sync.get(d.id)!} />
+              </td>
+            ) : (
+              <td style={{ color: d.konflikt ? "var(--abl-warn)" : undefined }}>
+                {d.konflikt && (
+                  <span
+                    role="img"
+                    aria-label={t("ablage.stand.konflikt")}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 4,
+                    }}
+                  >
+                    <AlertTriangle size={16} aria-hidden="true" />
+                    <span className="ablage-mut ablage-nur-breit">
+                      {t("ablage.stand.konflikt")}
+                    </span>
                   </span>
-                </span>
-              )}
-              {!d.konflikt && d.nur_geraet && (
-                <span
-                  role="img"
-                  aria-label={t("ablage.nurGeraet.titel")}
-                  className="ablage-mut"
-                >
-                  <Monitor size={16} aria-hidden="true" />
-                </span>
-              )}
-            </td>
+                )}
+                {!d.konflikt && d.nur_geraet && (
+                  <span
+                    role="img"
+                    aria-label={t("ablage.nurGeraet.titel")}
+                    className="ablage-mut"
+                  >
+                    <Monitor size={16} aria-hidden="true" />
+                  </span>
+                )}
+              </td>
+            )}
           </tr>
         ))}
       </tbody>
