@@ -2,13 +2,13 @@ import { type } from "@tauri-apps/plugin-os";
 
 /**
  * Ob die App Zugangsdaten sicher speichern kann. Der Tresor
- * (`calendar::secret`) verschluesselt derzeit nur unter Windows (DPAPI); auf
- * macOS und Linux lehnt er jedes Speichern ab, ohne Klartext-Ersatz.
- * Die Oberflaeche sperrt deshalb dort alles, was ein Geheimnis braucht, und
- * sagt es vorher statt erst beim Speichern (Codex-Entscheidung 31.10.2026, Folge-Issue #134).
+ * (`calendar::secret`) verschluesselt unter Windows mit DPAPI und unter macOS
+ * mit einem Schluessel im Schluesselbund (lva#134); unter Linux lehnt er jedes
+ * Speichern ab, ohne Klartext-Ersatz. Die Oberflaeche sperrt deshalb dort alles,
+ * was ein Geheimnis braucht, und sagt es vorher statt erst beim Speichern.
  */
 export type SecretStoreState =
-  { available: true } | { available: false; os: "macos" | "linux" };
+  { available: true } | { available: false; os: "linux" };
 
 export function secretStoreState(): SecretStoreState {
   let os: string | undefined;
@@ -18,6 +18,6 @@ export function secretStoreState(): SecretStoreState {
     // Ohne Tauri (Vorschau, Tests) gilt der Windows-Pfad.
     return { available: true };
   }
-  if (os === "macos" || os === "linux") return { available: false, os };
+  if (os === "linux") return { available: false, os };
   return { available: true };
 }
