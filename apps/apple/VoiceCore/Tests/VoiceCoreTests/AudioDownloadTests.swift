@@ -123,6 +123,76 @@ final class AudioDownloadTests: XCTestCase {
         XCTAssertTrue(again.shouldRestart(part, index: 1, task: task))
     }
 
+    func testLocalAudioMustMatchAccountVersion() {
+        let parts = [AudioDownload.Part(blob: "neu", size: 10, chunks: 1, file: "a.m4a"), AudioDownload.Part(blob: "b", size: 20, chunks: 1, file: "b.m4a")]
+        XCTAssertTrue(AudioDownload.isCurrent(parts, sizes: [10, 20], blobs: ["a.m4a": "neu", "b.m4a": "b"]))
+        XCTAssertFalse(AudioDownload.isCurrent(parts, sizes: [10, 20], blobs: ["a.m4a": "alt"]), "gleicher Name und Größe, andere Fassung")
+        XCTAssertFalse(AudioDownload.isCurrent(parts, sizes: [9, 20], blobs: [:]), "Teil abgerissen oder andere Größe")
+        XCTAssertFalse(AudioDownload.isCurrent(parts, sizes: [nil, 20], blobs: [:]), "Teil entfernt")
+        XCTAssertFalse(AudioDownload.isCurrent(parts, sizes: [10], blobs: [:]), "Teil fehlt in der Aufstellung")
+        XCTAssertTrue(AudioDownload.isCurrent(parts, sizes: [10, 20], blobs: [:]), "ältere Dateien ohne Eintrag zählen über die Größe")
+    }
+
+    func testRemainingTime() {
+        XCTAssertNil(AudioDownload.remainingSeconds(doneBytes: 50, totalBytes: 100, startBytes: 0, elapsed: 1), "zu kurz gemessen")
+        XCTAssertNil(AudioDownload.remainingSeconds(doneBytes: 10, totalBytes: 100, startBytes: 10, elapsed: 30), "noch nichts geladen")
+        XCTAssertEqual(AudioDownload.remainingSeconds(doneBytes: 60, totalBytes: 100, startBytes: 20, elapsed: 40), 40)
+        XCTAssertEqual(AudioDownload.remainingText(20), "noch unter 1 Min")
+        XCTAssertEqual(AudioDownload.remainingText(170), "noch 3 Min")
+        XCTAssertEqual(AudioDownload.remainingText(3600), "noch 1 Std")
+        XCTAssertEqual(AudioDownload.remainingText(4800), "noch 1 Std 20 Min")
+    }
+
+    func testSpeedMeasureRestartsAfterPauseFailureAndCancel() {
+        var speed = AudioDownload.SpeedTracker()
+        let start = Date()
+        speed.note("b", phase: .running, bytes: 0, now: start)
+        XCTAssertEqual(speed.remaining("b", doneBytes: 50, totalBytes: 100, now: start.addingTimeInterval(10)), 10)
+        // Eine Stunde Pause zählt nicht als langsames Laden.
+        speed.note("b", phase: .paused, bytes: 50, now: start.addingTimeInterval(20))
+        XCTAssertNil(speed.remaining("b", doneBytes: 50, totalBytes: 100, now: start.addingTimeInterval(3620)))
+        speed.note("b", phase: .running, bytes: 50, now: start.addingTimeInterval(3620))
+        XCTAssertEqual(speed.remaining("b", doneBytes: 75, totalBytes: 100, now: start.addingTimeInterval(3630)), 10)
+        speed.note("b", phase: .failed, bytes: 75, now: start.addingTimeInterval(3631))
+        XCTAssertNil(speed.remaining("b", doneBytes: 75, totalBytes: 100, now: start.addingTimeInterval(3640)))
+        speed.note("b", phase: .running, bytes: 75, now: start.addingTimeInterval(3640))
+        speed.reset("b")  // Abbruch
+        XCTAssertNil(speed.remaining("b", doneBytes: 80, totalBytes: 100, now: start.addingTimeInterval(3650)))
+    }
+
+    /// Prüft die Bausteine `prepareStart` und `failedStart`. `AudioDownloads.start` selbst liegt im App-Ziel,
+    /// für das es kein Testziel gibt; es wendet nur deren Ergebnis an.
+    func testStartResetsMeasureAlsoWhenItFailsRightAway() {
+        var speed = AudioDownload.SpeedTracker()
+        let start = Date()
+        speed.note("book_1", phase: .running, bytes: 0, now: start)
+        // „Jetzt mobil laden“ mit zu wenig Speicher: Auftrag scheitert, die alte Messung darf nicht bleiben.
+        let failed = AudioDownload.prepareStart(job(), remainingBytes: 100, freeBytes: 1, format: { "\($0)" }, speed: &speed)
+        XCTAssertEqual(failed.phase, .failed)
+        XCTAssertNil(speed.remaining("book_1", doneBytes: 5, totalBytes: 10, now: start.addingTimeInterval(600)))
+        speed.note("book_1", phase: .running, bytes: 0, now: start)
+        let running = AudioDownload.prepareStart(job(), remainingBytes: 100, freeBytes: nil, format: { "\($0)" }, speed: &speed)
+        XCTAssertEqual(running.phase, job().phase)
+        XCTAssertNil(speed.remaining("book_1", doneBytes: 5, totalBytes: 10, now: start.addingTimeInterval(600)), "auch ein erfolgreicher Start misst neu")
+        speed.note("book_1", phase: .running, bytes: 0, now: start)
+        let noFolder = AudioDownload.failedStart(job(), message: "Ordner", speed: &speed)
+        XCTAssertEqual(noFolder.phase, .failed)
+        XCTAssertEqual(noFolder.message, "Ordner")
+        XCTAssertNil(speed.remaining("book_1", doneBytes: 5, totalBytes: 10, now: start.addingTimeInterval(600)))
+    }
+
+    func testNetworkChangeRestartsMeasureWithoutDownloadCallback() {
+        var speed = AudioDownload.SpeedTracker()
+        let start = Date()
+        speed.noteNetwork(expensive: false)
+        speed.note("b", phase: .running, bytes: 0, now: start)
+        speed.noteNetwork(expensive: false)  // gleiches Netz: Messung läuft weiter
+        XCTAssertNotNil(speed.remaining("b", doneBytes: 50, totalBytes: 100, now: start.addingTimeInterval(10)))
+        speed.noteNetwork(expensive: true)  // WLAN weg, kein Rückruf vom Download
+        speed.noteNetwork(expensive: false)
+        XCTAssertNil(speed.remaining("b", doneBytes: 50, totalBytes: 100, now: start.addingTimeInterval(3600)), "eine Stunde Warten zählt nicht")
+    }
+
     func testSpaceProblem() {
         let fmt: (Int64) -> String = { "\($0) B" }
         XCTAssertNil(AudioDownload.spaceProblem(remainingBytes: 100, freeBytes: nil, format: fmt))

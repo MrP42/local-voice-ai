@@ -20,17 +20,20 @@
 //! - Protokoll ohne Inhalte.
 
 use super::audit::{AuditEreignis, AuditSenke};
+use super::dateien;
 use super::herkunft::{
-    besprechung_link, buch_link, id_gueltig, recherche_link, suite_id_gueltig, LvaHerkunft,
-    KLASSE_BESPRECHUNG, KLASSE_BUCH, LINK_APP,
+    besprechung_id, besprechung_link, buch_id, buch_link, id_gueltig, projektdatei_id,
+    projektdatei_link, recherche_id, recherche_link, seite_link, suite_id_gueltig, LvaHerkunft,
+    KLASSE_BESPRECHUNG, KLASSE_BUCH, KLASSE_DATEI, KLASSE_SEITE, LINK_APP,
 };
+use super::kontext::{self, Form, Kontext, KontextForm, Mitglied, Schalter, Sorte};
 use super::quellen::LvaQuellen;
 use super::recherche::RechercheStore;
 use super::{Fehler, Res};
 use serde::Serialize;
 use specta::Type;
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use wai_projekte::{
     Aenderung, Art, Eintragsansicht, Klasse, LoeschBericht, NeuerEintrag, NeuesProjekt, Projekt,
@@ -40,6 +43,8 @@ use wai_security::Principal;
 
 /// Hoechstlaenge von Titeln in Eintraegen (Vertrag `project-entry.title`).
 const MAX_TITEL: usize = 300;
+/// Projekt-KI erst nach P4c (Codex-Auflage 3): bis dahin liefert `kontext_fuer_ki` nichts.
+const PROJEKT_KI_FREIGEGEBEN: bool = false;
 
 impl From<ProjektFehler> for Fehler {
     fn from(e: ProjektFehler) -> Self {
@@ -152,6 +157,15 @@ pub struct EintragSicht {
     pub link: Option<String>,
 }
 
+/// Datei im Projektordner ohne Journaleintrag (Absturz), zum bewussten Aufnehmen angeboten.
+#[derive(Debug, Clone, Serialize, Type, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct GefundeneDatei {
+    pub id: String,
+    pub name: String,
+    pub size: f64,
+}
+
 /// Ergebnis des Abgleichs eines Ordners mit seinem Suite-Projekt.
 #[derive(Debug, Clone, Default, Serialize, Type, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -184,6 +198,8 @@ pub struct ProjektDienst {
     recherchen: RechercheStore,
     principal: Principal,
     audit: Option<Arc<dyn AuditSenke>>,
+    /// Projektordner der App (`projekte/`): Kontextauswahl und Projektdateien (lva#365 P4).
+    ablage: Option<PathBuf>,
     /// Serialisiert Zuordnen und Abgleich: sonst koennte eine Momentaufnahme veralten, waehrend ein
     /// Eintrag fuer eine gerade angelegte Herkunft entsteht, und der Abgleich ihn faelschlich entfernen.
     sperre: tokio::sync::Mutex<()>,
@@ -221,8 +237,21 @@ impl ProjektDienst {
             recherchen,
             principal,
             audit: None,
+            ablage: None,
             sperre: tokio::sync::Mutex::new(()),
         })
+    }
+
+    /// Projektordner für Kontextauswahl und Projektdateien (lva#365 P4).
+    pub fn with_ablage(mut self, ablage: impl Into<PathBuf>) -> Self {
+        self.ablage = Some(ablage.into());
+        self
+    }
+
+    fn ablage(&self) -> Res<&Path> {
+        self.ablage
+            .as_deref()
+            .ok_or_else(|| Fehler::neu("projekte.storage", "Kein Projektordner verfügbar."))
     }
 
     pub fn with_audit(mut self, a: Arc<dyn AuditSenke>) -> Self {
@@ -258,6 +287,25 @@ impl ProjektDienst {
         for b in self.quellen.buecher().map_err(quelle)? {
             if id_gueltig(&b.id) {
                 h.hinzufuegen(buch_link(&b.id), true, KLASSE_BUCH);
+            }
+        }
+        if let Some(seiten) = self.quellen.seiten().map_err(quelle)? {
+            h.seiten_beurteilen();
+            for s in seiten {
+                if id_gueltig(&s.id) {
+                    h.hinzufuegen(seite_link(&s.id), s.lesbar, KLASSE_SEITE);
+                }
+            }
+        }
+        if let Some(ablage) = &self.ablage {
+            let b = dateien::bestand(ablage);
+            for p in &b.gelesen {
+                h.projektdateien_beurteilen(p);
+            }
+            for (p, d) in &b.lebend {
+                if id_gueltig(d) {
+                    h.hinzufuegen(projektdatei_link(p, d), true, KLASSE_DATEI);
+                }
             }
         }
         h.erweitern(self.recherchen.herkunft(&self.principal).await?);
@@ -544,6 +592,9 @@ impl ProjektDienst {
             .collect())
     }
 
+    /// Ordnet zu; liefert die ID eines neu angelegten Eintrags (`None`, wenn er schon bestand).
+    /// Von der Person zugeordnet: der Eintrag startet als Kontext eingeschaltet (bewusstes Zuordnen,
+    /// sichtbarer Schalter); ein vorhandener Stand bleibt unverändert.
     async fn verweis_zuordnen(
         &self,
         suite_id: &str,
@@ -552,13 +603,13 @@ impl ProjektDienst {
         titel: &str,
         klasse: Klasse,
         durch: ZugeordnetDurch,
-    ) -> Res<()> {
+    ) -> Res<Option<String>> {
         let h = self.herkunft().await?;
         let neu = NeuerEintrag {
             kind: art,
             title: clip(titel, MAX_TITEL),
             origin_app: LINK_APP.into(),
-            ref_,
+            ref_: ref_.clone(),
             data_class: klasse,
             assigned_by: durch,
             preview: None,
@@ -569,7 +620,18 @@ impl ProjektDienst {
             .eintrag_zuordnen(&self.principal, suite_id, neu, &h)
             .await
         {
-            Ok(_) | Err(ProjektFehler::Doppelt) => Ok(()),
+            Ok(e) => {
+                if durch == ZugeordnetDurch::Person {
+                    if let Some(ablage) = &self.ablage {
+                        // Scheitert das Speichern, bleibt der Eintrag ohne Stand und damit aus.
+                        if kontext::anlegen(ablage, suite_id, &e.id, &ref_, true).is_err() {
+                            self.protokoll("kontext_anlegen", suite_id, "fehler", "speicher");
+                        }
+                    }
+                }
+                Ok(Some(e.id))
+            }
+            Err(ProjektFehler::Doppelt) => Ok(None),
             Err(e) => Err(e.into()),
         }
     }
@@ -585,6 +647,9 @@ impl ProjektDienst {
                 Eintragsansicht::Sichtbar(e) if e.ref_ == ref_ => {
                     self.verz.eintrag_entfernen(&self.principal, &e.id).await?;
                     self.ausgang_bestaetigen().await?;
+                    if let Some(ablage) = &self.ablage {
+                        let _ = kontext::vergessen(ablage, std::slice::from_ref(&e.id));
+                    }
                     return Ok(true);
                 }
                 _ => {}
@@ -616,6 +681,7 @@ impl ProjektDienst {
             ZugeordnetDurch::Person,
         )
         .await
+        .map(|_| ())
     }
 
     /// Nimmt ein Buch aus dem Projekt (nie aus der Bibliothek). `true`, wenn es zugeordnet war.
@@ -647,6 +713,7 @@ impl ProjektDienst {
             ZugeordnetDurch::Person,
         )
         .await
+        .map(|_| ())
     }
 
     /// Nimmt eine Besprechung aus dem Projekt (nie aus der Aufnahmenliste).
@@ -680,6 +747,380 @@ impl ProjektDienst {
             durch,
         )
         .await
+        .map(|_| ())
+    }
+
+    // ---- Texte, Projektdateien und Kontext (lva#365 P4)
+
+    /// Ordnet einem Projekt eine Vorlesen-Seite zu (`wai://lva/seite/<id>`). Idempotent.
+    pub async fn seite_zuordnen(&self, suite_id: &str, seite_id: &str) -> Res<()> {
+        let _g = self.sperre.lock().await;
+        if !id_gueltig(seite_id) {
+            return Err(Fehler::ungueltig("Kennung der Seite ungültig."));
+        }
+        let titel = self
+            .quellen
+            .seiten()
+            .map_err(quelle)?
+            .ok_or_else(|| Fehler::neu("projekte.quelle", "Seiten nicht verfügbar."))?
+            .into_iter()
+            .find(|s| s.id == seite_id && s.lesbar)
+            .ok_or_else(|| Fehler::neu("projekte.not_found", "Nicht gefunden"))?
+            .titel;
+        let titel = if titel.trim().is_empty() {
+            "Text".to_string()
+        } else {
+            titel
+        };
+        self.verweis_zuordnen(
+            suite_id,
+            Art::Document,
+            seite_link(seite_id),
+            &titel,
+            KLASSE_SEITE,
+            ZugeordnetDurch::Person,
+        )
+        .await
+        .map(|_| ())
+    }
+
+    /// Nimmt eine Seite aus dem Projekt (nie aus Vorlesen).
+    pub async fn seite_entfernen(&self, suite_id: &str, seite_id: &str) -> Res<bool> {
+        let _g = self.sperre.lock().await;
+        self.verweis_entfernen(suite_id, &seite_link(seite_id))
+            .await
+    }
+
+    fn projekt_pruefen(suite_id: &str) -> Res<()> {
+        if suite_id_gueltig(suite_id) {
+            Ok(())
+        } else {
+            Err(Fehler::ungueltig("Kennung des Projekts ungültig."))
+        }
+    }
+
+    /// Kopiert fremde Dateien in den Projektordner und trägt sie danach ein (Spec §5.1). Liefert
+    /// die Datei-IDs. Bricht beim ersten Fehler ab; schon kopierte Dateien bleiben eingetragen.
+    pub async fn dateien_hinzufuegen(
+        &self,
+        suite_id: &str,
+        quellen: &[PathBuf],
+    ) -> Res<Vec<String>> {
+        let _g = self.sperre.lock().await;
+        Self::projekt_pruefen(suite_id)?;
+        // Das Projekt muss existieren und beschreibbar sein, bevor kopiert wird.
+        let p = self.verz.projekt_lesen(&self.principal, suite_id).await?;
+        if p.archived {
+            return Err(ProjektFehler::Archiviert.into());
+        }
+        let ablage = self.ablage()?.to_path_buf();
+        let mut ids = Vec::new();
+        for q in quellen {
+            let (id, name) = dateien::hinzufuegen(&ablage, suite_id, q).map_err(quelle)?;
+            self.datei_eintragen(&ablage, suite_id, &id, &name).await?;
+            ids.push(id);
+        }
+        self.protokoll(
+            "dateien_hinzugefuegt",
+            suite_id,
+            "ok",
+            &format!("n{}", ids.len()),
+        );
+        Ok(ids)
+    }
+
+    async fn datei_eintragen(
+        &self,
+        ablage: &Path,
+        suite_id: &str,
+        id: &str,
+        name: &str,
+    ) -> Res<()> {
+        let link = projektdatei_link(suite_id, id);
+        let neu = self
+            .verweis_zuordnen(
+                suite_id,
+                Art::Document,
+                link.clone(),
+                name,
+                KLASSE_DATEI,
+                ZugeordnetDurch::Person,
+            )
+            .await?;
+        let eintrag = match neu {
+            Some(e) => e,
+            None => self
+                .eintrag_mit_link(suite_id, &link)
+                .await?
+                .ok_or_else(|| Fehler::neu("projekte.not_found", "Nicht gefunden"))?,
+        };
+        dateien::eingetragen(ablage, suite_id, id, &eintrag).map_err(quelle)
+    }
+
+    async fn eintrag_mit_link(&self, suite_id: &str, link: &str) -> Res<Option<String>> {
+        let h = self.herkunft().await?;
+        Ok(self
+            .verz
+            .eintraege_auflisten(&self.principal, suite_id, &h)
+            .await?
+            .into_iter()
+            .find_map(|e| match e {
+                Eintragsansicht::Sichtbar(e) if e.ref_ == link => Some(e.id),
+                _ => None,
+            }))
+    }
+
+    /// Entfernt eine Projektdatei: Kopie in den Papierkorb des Projekts, dann Mitgliedschaft weg.
+    pub async fn datei_entfernen(&self, suite_id: &str, datei_id: &str) -> Res<bool> {
+        let _g = self.sperre.lock().await;
+        Self::projekt_pruefen(suite_id)?;
+        let ablage = self.ablage()?.to_path_buf();
+        dateien::entfernen_beginnen(&ablage, suite_id, datei_id).map_err(quelle)?;
+        let weg = self
+            .verweis_entfernen(suite_id, &projektdatei_link(suite_id, datei_id))
+            .await?;
+        // Ohne Eintrag (Abbruch davor, Abgleich): der Abgleich räumt nach, die Herkunft ist weg.
+        if !weg {
+            let h = self.herkunft().await?;
+            self.abgleich_ohne_sperre(&h).await?;
+        }
+        // `false`: nicht sicher entfernt (abgelehnt, Datei liegt weiter im Projektordner und wird
+        // als gefunden angeboten).
+        let sicher = !dateien::liste(&ablage, suite_id)
+            .map_err(quelle)?
+            .get(datei_id)
+            .is_some_and(|d| d.nicht_sicher);
+        self.protokoll(
+            "datei_entfernt",
+            suite_id,
+            "ok",
+            if sicher { "papierkorb" } else { "abgelehnt" },
+        );
+        Ok(sicher)
+    }
+
+    /// Dateien im Projektordner, die der Wiederanlauf ohne Journaleintrag fand.
+    pub async fn gefundene_dateien(&self, suite_id: &str) -> Res<Vec<GefundeneDatei>> {
+        Self::projekt_pruefen(suite_id)?;
+        self.verz.projekt_lesen(&self.principal, suite_id).await?;
+        let ablage = self.ablage()?;
+        Ok(dateien::liste(ablage, suite_id)
+            .map_err(quelle)?
+            .into_iter()
+            .filter(|(_, d)| d.status == dateien::Status::Gefunden)
+            .map(|(id, d)| GefundeneDatei {
+                id,
+                name: d.name,
+                size: d.groesse as f64,
+            })
+            .collect())
+    }
+
+    /// Zustand des Dateijournals eines Projekts für die Oberfläche: `None` = lesbar. Bei `fehlt`
+    /// oder `defekt` bietet die Projektseite „Bestand neu aufbauen“ an.
+    pub async fn dateien_lage(&self, suite_id: &str) -> Res<Option<dateien::JournalLage>> {
+        Self::projekt_pruefen(suite_id)?;
+        self.verz.projekt_lesen(&self.principal, suite_id).await?;
+        let ablage = self.ablage()?;
+        dateien::lage(ablage, suite_id).map_err(quelle)
+    }
+
+    /// Ausdrücklicher Neuaufbau des Dateijournals (nur bei `fehlt`/`defekt`). Dateien werden als
+    /// gefunden angeboten, nicht still aufgenommen. Liefert ihre Zahl.
+    pub async fn dateien_neu_aufbauen(&self, suite_id: &str) -> Res<u32> {
+        let _g = self.sperre.lock().await;
+        Self::projekt_pruefen(suite_id)?;
+        self.verz.projekt_lesen(&self.principal, suite_id).await?;
+        let ablage = self.ablage()?.to_path_buf();
+        let n = dateien::neu_aufbauen(&ablage, suite_id).map_err(quelle)?;
+        self.protokoll("dateien_neu_aufgebaut", suite_id, "ok", &format!("n{n}"));
+        Ok(n)
+    }
+
+    /// Bewusst aufnehmen, was der Wiederanlauf im Projektordner gefunden hat.
+    pub async fn gefundene_datei_aufnehmen(&self, suite_id: &str, datei_id: &str) -> Res<()> {
+        let _g = self.sperre.lock().await;
+        Self::projekt_pruefen(suite_id)?;
+        let ablage = self.ablage()?.to_path_buf();
+        let name = dateien::gefundene_aufnehmen(&ablage, suite_id, datei_id).map_err(quelle)?;
+        self.datei_eintragen(&ablage, suite_id, datei_id, &name)
+            .await
+    }
+
+    /// Wiederanlauf der Projektdateien aller Projekte (Start und Pflege): unterbrochene Entfernungen
+    /// fortsetzen, abgelegte Dateien eintragen, verwaiste Kopien als gefunden vermerken. Liefert die
+    /// Zahl der Projekte mit Befund.
+    pub async fn dateien_wiederanlauf(&self) -> Res<u32> {
+        let _g = self.sperre.lock().await;
+        let Some(ablage) = self.ablage.clone() else {
+            return Ok(0);
+        };
+        let mut n = 0;
+        for p in dateien::bestand(&ablage).gelesen {
+            let w = match dateien::wiederanlauf(&ablage, &p) {
+                Ok(w) => w,
+                Err(_) => {
+                    self.protokoll("dateien_wiederanlauf", &p, "fehler", "journal");
+                    continue;
+                }
+            };
+            let befund = w.gefunden + w.entfernt + w.teile + w.einzutragen.len() as u32;
+            let lebt = matches!(
+                self.verz.projekt_lesen(&self.principal, &p).await,
+                Ok(x) if !x.archived
+            );
+            if lebt {
+                let alle = dateien::liste(&ablage, &p).map_err(quelle)?;
+                for id in &w.einzutragen {
+                    if let Some(d) = alle.get(id) {
+                        if self
+                            .datei_eintragen(&ablage, &p, id, &d.name)
+                            .await
+                            .is_err()
+                        {
+                            self.protokoll("dateien_wiederanlauf", &p, "fehler", "eintragen");
+                        }
+                    }
+                }
+            }
+            if befund > 0 {
+                n += 1;
+                self.protokoll("dateien_wiederanlauf", &p, "ok", &format!("n{befund}"));
+            }
+        }
+        if n > 0 {
+            let h = self.herkunft().await?;
+            self.abgleich_ohne_sperre(&h).await?;
+        }
+        Ok(n)
+    }
+
+    /// Mitgliedschaften eines Projekts in der Sicht des Kontexts.
+    fn mitglieder(liste: &[EintragSicht]) -> Vec<Mitglied> {
+        liste
+            .iter()
+            .map(|e| {
+                let link = e.link.clone().unwrap_or_default();
+                let sorte = if buch_id(&link).is_some() {
+                    Sorte::Buch
+                } else if besprechung_id(&link).is_some() {
+                    Sorte::Aufnahme
+                } else {
+                    Sorte::Sonst
+                };
+                Mitglied {
+                    id: e.id.clone(),
+                    art: e.kind.clone(),
+                    sorte,
+                    titel: e.title.clone().unwrap_or_default(),
+                    lesbar: e.available && !link.is_empty(),
+                    link,
+                }
+            })
+            .collect()
+    }
+
+    /// Übersicht „Als Kontext“ für die Oberfläche: Schalter, Form, Token, Stand, ohne Inhalte.
+    pub async fn kontext_uebersicht(&self, suite_id: &str) -> Res<kontext::KontextUebersicht> {
+        Ok(self.kontext_bauen(suite_id).await?.uebersicht)
+    }
+
+    /// Einziger Zugang der KI-Wege zum Projektkontext (`projekt_kontext`, Spec §5.2). Bis P4c
+    /// (Widerruf, Versandrennen, Budget) gesperrt: liefert dann nichts, nur einen Fehler.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub async fn kontext_fuer_ki(&self, suite_id: &str) -> Res<Kontext> {
+        Self::projekt_pruefen(suite_id)?;
+        if !PROJEKT_KI_FREIGEGEBEN {
+            return Err(Fehler::neu(
+                "projekte.ki_gesperrt",
+                "Die KI im Projekt ist noch nicht freigegeben.",
+            ));
+        }
+        self.kontext_bauen(suite_id).await
+    }
+
+    /// Nur für Tests: der Kontext mit Inhalten, ohne die P4c-Sperre.
+    #[cfg(test)]
+    pub(super) async fn kontext_fuer_test(&self, suite_id: &str) -> Res<Kontext> {
+        self.kontext_bauen(suite_id).await
+    }
+
+    /// Der KI-Kontext eines Projekts (Spec §5.2) mit Inhalten. Privat: aufgerufen nur aus
+    /// `kontext_fuer_ki` (KI-Wege, gesperrt bis P4c), `kontext_uebersicht` (nur die Übersicht ohne
+    /// Inhalte) und dem Testzugang; ein Allowlist-Test in `tests_p4` prüft das.
+    async fn kontext_bauen(&self, suite_id: &str) -> Res<Kontext> {
+        Self::projekt_pruefen(suite_id)?;
+        let ablage = self.ablage()?.to_path_buf();
+        let liste = self.eintraege(suite_id).await?;
+        let mitglieder = Self::mitglieder(&liste);
+        let schalter = Schalter::laden(&ablage);
+        let mut recherchen = HashMap::new();
+        for m in mitglieder.iter().filter(|m| m.lesbar) {
+            if let Some(rid) = recherche_id(&m.link) {
+                let form = match self.recherchen.lesen(&self.principal, rid).await {
+                    Ok(Some(d)) => {
+                        let v = super::recherche::sicht(&d);
+                        Form::Text(format!("{}\n\n{}", v.question, v.read_aloud))
+                    }
+                    Ok(None) => Form::Fehlt(kontext::hinweis::FEHLT),
+                    Err(_) => Form::Fehlt(kontext::hinweis::NICHT_LESBAR),
+                };
+                recherchen.insert(m.id.clone(), form);
+            }
+        }
+        let quellen = self.quellen.clone();
+        Ok(kontext::bauen(
+            suite_id,
+            &mitglieder,
+            &schalter,
+            &mut |m, w| {
+                if let Some(f) = recherchen.get(&m.id) {
+                    return f.clone();
+                }
+                if let Some((p, d)) = projektdatei_id(&m.link) {
+                    if p != suite_id {
+                        return Form::Fehlt(kontext::hinweis::NICHT_LESBAR);
+                    }
+                    return dateien::kontext_text(&ablage, p, d);
+                }
+                quellen.kontext_text(&m.link, w)
+            },
+        ))
+    }
+
+    /// Schaltet „Als Kontext“ eines Eintrags und setzt optional Form und Fassung. Liefert die neue
+    /// Übersicht (mit neuem `stand`).
+    pub async fn kontext_schalten(
+        &self,
+        suite_id: &str,
+        eintrag_id: &str,
+        an: bool,
+        form: Option<KontextForm>,
+        fassung: Option<Option<String>>,
+    ) -> Res<kontext::KontextUebersicht> {
+        Self::projekt_pruefen(suite_id)?;
+        let ablage = self.ablage()?.to_path_buf();
+        let liste = self.eintraege(suite_id).await?;
+        let m = Self::mitglieder(&liste)
+            .into_iter()
+            .find(|m| m.id == eintrag_id)
+            .ok_or_else(|| Fehler::neu("projekte.not_found", "Nicht gefunden"))?;
+        if !m.lesbar && an {
+            return Err(ProjektFehler::KeinHerkunftsrecht.into());
+        }
+        if let Some(Some(f)) = &fassung {
+            if !id_gueltig(f) {
+                return Err(Fehler::ungueltig("Kennung der Fassung ungültig."));
+            }
+        }
+        kontext::setzen(&ablage, suite_id, &m, an, form, fassung).map_err(quelle)?;
+        self.protokoll(
+            "kontext_geschaltet",
+            suite_id,
+            "ok",
+            if an { "an" } else { "aus" },
+        );
+        self.kontext_uebersicht(suite_id).await
     }
 
     // ---- Loeschkaskade und Aufbewahrung
@@ -715,6 +1156,15 @@ impl ProjektDienst {
             .quellen
             .ordner_projekt_loesen_alle(suite_id)
             .map_err(quelle)?;
+        // Projektdateien und Kontextauswahl: der Projektordner geht in den Papierkorb. Scheitert
+        // das, räumt die Pflege den verwaisten Ordner später weg (nie endgültig gelöscht).
+        if let Some(ablage) = &self.ablage {
+            if suite_id_gueltig(suite_id)
+                && dateien::projekt_in_papierkorb(ablage, suite_id).is_err()
+            {
+                self.protokoll("projekt_geloescht", suite_id, "fehler", "ordner");
+            }
+        }
         self.ausgang_bestaetigen().await?;
         self.protokoll("projekt_geloescht", suite_id, "ok", "geloescht");
         Ok(LoeschErgebnis {
@@ -747,6 +1197,38 @@ impl ProjektDienst {
         if n > 0 {
             let h = self.herkunft().await?;
             self.abgleich_ohne_sperre(&h).await?;
+        }
+        Ok(n)
+    }
+
+    /// Legt Projektordner, deren Suite-Projekt nicht mehr existiert (Absturz mitten im Löschen), in
+    /// den Papierkorb. Liefert deren Zahl.
+    pub async fn verwaiste_projektordner_raeumen(&self) -> Res<u32> {
+        let _g = self.sperre.lock().await;
+        let Some(ablage) = self.ablage.clone() else {
+            return Ok(0);
+        };
+        let bekannt: HashSet<String> = self
+            .verz
+            .projekte_auflisten(&self.principal, true)
+            .await?
+            .into_iter()
+            .map(|p| p.id)
+            .collect();
+        let b = dateien::bestand(&ablage);
+        let mut n = 0;
+        for p in b.gelesen.iter().chain(b.unklar.iter()) {
+            if !bekannt.contains(p) && dateien::projekt_in_papierkorb(&ablage, p).unwrap_or(false) {
+                n += 1;
+            }
+        }
+        if n > 0 {
+            self.protokoll(
+                "projektordner_aufgeraeumt",
+                "verwaist",
+                "ok",
+                &format!("n{n}"),
+            );
         }
         Ok(n)
     }

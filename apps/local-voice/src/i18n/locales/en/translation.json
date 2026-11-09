@@ -10,6 +10,7 @@
     "cancel": "Cancel"
   },
   "sidebar": {
+    "projekte": "Projects",
     "library": "Library",
     "general": "General",
     "models": "Models",
@@ -20,7 +21,8 @@
     "debug": "Debug",
     "about": "About",
     "dictationTest": "Dictation test",
-    "voiceCall": "Voice conversation",
+    "voiceCall": "Chat",
+    "voiceCallHint": "Chat with AI using text or voice.",
     "tts": "Read Aloud",
     "meetings": "Meetings",
     "settings": "Settings",
@@ -1184,6 +1186,7 @@
       "scriptVoices": "Script with speakers",
       "modelDefault": "Default voice",
       "filter": { "label": "Filter voices by language", "auto": "Matching ({{language}})", "all": "All" },
+      "scope": { "lang": "Default voice for books in {{language}}", "book": "Own voice for this book ({{language}})", "bookMissing": "This book's own voice is missing here – the default voice for {{language}} reads", "bookOnly": "Only for this book" },
       "scriptVoicesHint": "The speakers in the script read their lines; text without a speaker uses the default voice.",
       "singleVoiceHint": "This voice reads the whole text – the speakers in the script are skipped."
     },
@@ -1260,6 +1263,61 @@
     "exportEta": "about {{time}} left",
     "exportEtaComputing": "estimating time left",
     "exportSaved": "Saved: {{path}}",
+    "folders": {
+      "label": "Folders",
+      "all": "All",
+      "books": "Books",
+      "noBooks": "No books yet",
+      "texts": "Texts",
+      "withoutBook": "Without book",
+      "back": "Back",
+      "noBooksHint": "Drop an EPUB, PDF, DOCX or audiobook here, or add one. Loose texts are under “Texts”.",
+      "addBook": "Add book",
+      "noLoose": "No loose texts",
+      "noPages": "No pages yet",
+      "newPage": "New page",
+      "editions_one": "{{count}} edition",
+      "editions_other": "{{count}} editions",
+      "continue": "Continue reading",
+      "groupEditions": "Editions",
+      "groupAudio": "Audiobook",
+      "groupAi": "AI documents",
+      "mainEdition": "Main edition",
+      "audioTitle": "Audiobook {{lang}}",
+      "audioMeta_one": "{{count}} part · {{duration}}",
+      "audioMeta_other": "{{count}} parts · {{duration}}",
+      "aiMetaMain": "Edition {{lang}} (main)",
+      "aiMeta": "Edition {{lang}}",
+      "missing": "File missing",
+      "missingHint": "Nothing was deleted.",
+      "backToFolders": "Back to folders",
+      "backToList": "Back to list",
+      "unknownLang": "Language unknown",
+      "groupFiles": "Notes and attachments",
+      "noFiles": "No notes or attachments yet.",
+      "loadError": "Notes and attachments could not be loaded.",
+      "reload": "Reload",
+      "missingLocal": "Missing on this device – restore from the hub or delete in the app",
+      "restore": "Restore from hub",
+      "restoreFile": "Restore {{name}} from the hub",
+      "held": "Name clashes with another file – held back",
+      "newNote": "New note",
+      "noteTitle": "Note title",
+      "noteCreate": "Create",
+      "addAttachment": "Add attachment",
+      "openFile": "Open with the default app",
+      "remove": "Remove",
+      "removeFile": "Remove “{{name}}”",
+      "removeTitle": "Remove file",
+      "removeAsk": "Move “{{name}}” to the library trash? After the next sync it also disappears on your other devices.",
+      "roleNote": "Note",
+      "roleAttachment": "Attachment",
+      "roleTranscript": "Transcript",
+      "roleTranscriptOf": "Transcript {{edition}}",
+      "pending": "Not on this device yet",
+      "conflict": "Conflict copy",
+      "fileError": "Action failed: {{error}}"
+    },
     "pages": {
       "title": "Pages",
       "create": "New page",
@@ -2839,9 +2897,82 @@
         "appearance": "Appearance",
         "startup": "Start-up",
         "storage": "Storage and files",
+        "library": "Library and backups",
         "updates": "Updates",
         "input": "Microphone",
         "feedback": "Audible feedback"
+      },
+      "libraryLayout": {
+        "title": "Library layout",
+        "description": "Every book has its own folder with its editions, translations and AI documents. Loose texts stay under “projects”.",
+        "loading": "Checking …",
+        "ordered": "All books are in their book folders.",
+        "pending_one": "{{count}} page is still outside its book folder.",
+        "pending_other": "{{count}} pages are still outside their book folders.",
+        "nothing": "There is nothing to reorganise.",
+        "open": "Reorganise library …",
+        "continue": "Continue reorganising",
+        "continueRollback": "Continue rollback",
+        "rollback": "Restore previous layout …",
+        "stoppedTitle": "Reorganising stopped",
+        "stoppedText": "Nothing was overwritten and nothing was reverted. All other books stay readable; restoring from the backup is possible.",
+        "paths": "Affected folders",
+        "hints": "Skipped",
+        "dialogTitle": "Reorganise library?",
+        "dialogText_one": "The text, translations and AI documents of {{count}} page move into its book folder. Loose texts stay where they are.",
+        "dialogText_other": "The texts, translations and AI documents of {{count}} pages move into one folder per book. Loose texts stay where they are.",
+        "dialogBackup": "A backup is created first ({{needed}} of free space needed).",
+        "dialogKeep": "Progress, bookmarks and voices are kept.",
+        "dialogStop": "If anything goes wrong, it stops. Existing files are never overwritten; restoring from the backup is possible.",
+        "dialogNoSpace": "Not enough free space: {{needed}} needed, {{free}} free. Please free up space and try again.",
+        "now": "Reorganise now",
+        "later": "Later",
+        "close": "Close",
+        "running": "Reorganising …",
+        "done_one": "{{count}} page moved into its book folder.",
+        "done_other": "{{count}} pages moved into their book folders.",
+        "rollbackTitle": "Restore previous layout?",
+        "rollbackText": "Editions move from the book folders back to “projects”. Progress, bookmarks and voices are kept. Existing files are never overwritten.",
+        "rollbackApply": "Restore",
+        "rolledBack_one": "{{count}} page is back under “projects”.",
+        "rolledBack_other": "{{count}} pages are back under “projects”.",
+        "backupsTitle": "Backups",
+        "backupsDescription": "A backup is created before every reorganisation. After 30 days the app asks whether it may be deleted.",
+        "noBackups": "No backups yet.",
+        "backupRow": "{{date}} · {{files}} files · {{size}}",
+        "expired": "Older than 30 days",
+        "restore": "Restore …",
+        "delete": "Delete …",
+        "restoreTitle": "Restore the backup from {{date}}?",
+        "restoreText": "The backup’s pages and files are recreated. Whatever is in their place today first moves to a recycle folder under “sicherungen”; nothing is overwritten or permanently deleted.",
+        "restoreApply": "Restore",
+        "restored_one": "{{count}} file was restored.",
+        "restored_other": "{{count}} files were restored.",
+        "restoredTrash": "Whatever had to make room is in {{path}}.",
+        "deleteTitle": "Delete the backup from {{date}}?",
+        "deleteText": "The backup is older than 30 days. Once deleted it can no longer be restored. Your library stays unchanged.",
+        "deleteApply": "Delete",
+        "deleted": "The backup was deleted.",
+        "noSyncTitle": "This drive cannot commit changes safely",
+        "noSyncText": "Restoring did not start; nothing was changed. This drive cannot guarantee that a swap survives a power cut or crash.",
+        "noSyncWays": "Ways out: export the backup to a new folder on a local drive, or move the data folder to a local drive and restore there.",
+        "noFileSyncTitle": "This drive cannot even commit files safely; restoring is not possible here",
+        "moveDataDir": "Move the data folder: quit the app completely (including the tray icon), move the entire data folder to a local drive and set up the new location. The guide explains the steps for each system.",
+        "moveGuide": "Moving guide",
+        "checking": "Checking whether this drive can write safely …",
+        "checkFailed": "The drive could not be checked: {{error}}. Nothing will be restored.",
+        "exportBackup": "Export backup …",
+        "exportTitle": "Choose a folder for the exported backup",
+        "exported_one": "The backup was copied to {{path}} with {{count}} file and verified.",
+        "exported_other": "The backup was copied to {{path}} with {{count}} files and verified.",
+        "exportedNotDurable": "Note: this folder cannot commit changes safely either. For a reliable copy please choose a local drive.",
+        "exportedPartlyChecked": "Not every folder on the way to the target has a reliable identity (for example on a network drive); there, a check marker confirmed that the target is outside the data folder.",
+        "exportOtherAccess": "The target is on a different access path than the data folder and cannot be safely told apart from it. Nothing was exported. Please export to a local drive.",
+        "bestEffortLabel": "Restore anyway, without crash protection",
+        "bestEffortWarning": "If the computer stops midway, a partial state may remain. The backup and everything moved aside (recycle folder under “sicherungen”) are kept.",
+        "bestEffortApply": "Restore anyway",
+        "openDataDir": "Open data folder",
+        "failed": "That did not work: {{error}}"
       },
       "localUpdateDir": {
         "title": "Local update folder",
@@ -2919,7 +3050,7 @@
         },
         "effort": "Effort for {{name}}",
         "names": {
-          "voice_speaker": "Voice conversation (speaker)",
+          "voice_speaker": "Chat (answer model)",
           "meeting_protocol": "Meeting minutes and notes",
           "dictation_refine": "Dictation refinement",
           "read_aloud": "Read aloud",
@@ -7229,6 +7360,31 @@
       "wai": "Wolff Applied AI: navy in light mode, signal yellow in dark mode."
     }
   },
+  "chatGuide": {
+    "title": "Chat introduction",
+    "count": "{{n}} of {{total}}",
+    "voice": "With voice",
+    "skip": "Skip",
+    "back": "Back",
+    "next": "Next",
+    "step": {
+      "welcome": "Hi! I'm your assistant in Local Voice. Let me show you what you can do here in one minute. You can skip at any time.",
+      "talk": "Use this button to talk to me like on a phone call. You can interrupt me at any time. Or just type in the line.",
+      "plus": "The plus adds context: a file, a web search and more.",
+      "model": "Up here you choose the model: local on your computer or in the cloud, fast or thorough.",
+      "knowledge": "Here you always see which data I may use. You enable meetings, books and notes individually.",
+      "pages": "On the left you find everything else: history, meeting recordings, read aloud and your library. You can also just ask me.",
+      "story": "Finally, let's try something: I'll make up a short story and read it with several voices. What should it be about?"
+    },
+    "story": {
+      "topic": "Story topic",
+      "defaultTopic": "A little dragon who can't sleep",
+      "go": "Tell the story",
+      "display": "Tell me a story: {{topic}}",
+      "readVoices": "Read with voices",
+      "stop": "Stop reading"
+    }
+  },
   "voiceCall": {
     "tool": {
       "generic": "Using the tool \"{{name}}\" …",
@@ -7255,8 +7411,8 @@
       "denker_blocked": "The thinker model is not allowed at this sovereignty level and is not used.",
       "openSettings": "Open settings"
     },
-    "title": "Voice conversation",
-    "description": "Talk to the AI like on the phone: it listens, answers right away and you can interrupt it.",
+    "title": "Chat",
+    "description": "Write or talk to the AI like on the phone: it listens, answers right away and you can interrupt it.",
     "begin": "Start conversation",
     "end": "End conversation",
     "newConversation": "New conversation",
@@ -7348,8 +7504,8 @@
       "none": "none yet"
     },
     "info": {
-      "open": "Information about the voice conversation",
-      "title": "Voice conversation",
+      "open": "Information about the chat",
+      "title": "Chat",
       "tipInterrupt": "Interrupt: just keep talking, the AI goes quiet.",
       "tipHeadset": "A headset gives the cleanest recognition; speakers work too thanks to echo cancellation.",
       "tipText": "You can also type and attach files, with or without a running conversation.",
@@ -7366,6 +7522,16 @@
       "title": "What would you like to talk about?",
       "hint": "Start the conversation and just talk. You can interrupt or type at any time."
     },
+    "greeting": {
+      "morning": ["Good morning, {{name}}. Where should we start?", "Good morning, {{name}}. What's on today?"],
+      "day": ["Hi {{name}}, how can I help?", "Hi {{name}}, what's new?"],
+      "evening": ["Good evening, {{name}}. What's up?", "Good evening, {{name}}. How can I help?"],
+      "night": ["Still up, {{name}}? What can I do?", "Hi {{name}}, what are you working on?"],
+      "morningAnon": ["Good morning. Where should we start?", "Good morning. What's on today?"],
+      "dayAnon": ["How can I help?", "What's new?"],
+      "eveningAnon": ["Good evening. What's up?", "Good evening. How can I help?"],
+      "nightAnon": ["Still up? What can I do?", "What are you working on?"]
+    },
     "suggestions": {
       "s1": "What is in my latest minutes?",
       "s2": "Summarize yesterday's meeting",
@@ -7380,6 +7546,7 @@
       "send": "Send message",
       "removeAttachment": "Remove attachment “{{name}}”",
       "attachFiles": "Attach files …",
+      "permissions": "Sovereignty and knowledge …",
       "fromCorporate": "From Corporate LLM",
       "corporateHint": "Connect Corporate LLM – skills, plugins and connectors come from there",
       "documents": "Documents",
@@ -7499,10 +7666,10 @@
       "reset": "Reset",
       "voice": "Voice",
       "voiceHint": "Same choice as under Read Aloud; it applies there too.",
-      "note": "The model comes from Models (active model, local or API), the voice from Read Aloud (default: Anton).",
+      "note": "You choose the answer model in the chat input field; the voice also applies to Read Aloud (default: Phonon, Anton).",
       "recognitionModel": "Speech recognition model",
       "answerModel": "Answer model",
-      "answerModelHint": "The active language model from the status bar.",
+      "answerModelHint": "Chosen at the bottom of the chat input field, left of the microphone.",
       "denker": "Thinker model",
       "denkerHint": "A second, stronger model for questions that need knowledge or longer thought. The speaker stays fast and asks the thinker only when needed.",
       "denkerOff": "Off",
@@ -7518,11 +7685,26 @@
         "eu": "EU",
         "frei": "Open"
       },
-      "transcripts": "Read transcripts in voice chat",
+      "transcripts": "Read transcripts in the chat",
       "transcriptsHint": "Off by default. When on, the AI may read and search meeting transcripts. The content then goes to the answer model, with \"local only\" that means a local one only.",
-      "speakerBlocked": "The answer model is not allowed at this sovereignty level. Pick a local model (footer) or a more open level, otherwise the AI will not answer.",
+      "speakerBlocked": "The answer model is not allowed at this sovereignty level. Pick a local model in the chat input field or a more open level here, otherwise the AI will not answer.",
       "tools": "Use LVA tools",
       "toolsHint": "Read-only: the AI looks things up in the areas you share under “Knowledge”. It changes nothing, every call is in the integrations log."
+    },
+    "sources": {
+      "label": "Sources",
+      "entry": "[Q{{k}}] {{kind}}: {{title}}",
+      "open": "Open source",
+      "page": "page {{page}}",
+      "kind": {
+        "book": "Book",
+        "book_note": "Book note",
+        "ki_doc": "AI document",
+        "meeting": "Meeting",
+        "dictation": "Dictation",
+        "conversation": "Conversation",
+        "tts_page": "Read-aloud page"
+      }
     },
     "knowledge": {
       "intro": "What the model may look up during the conversation. Every access is logged.",
@@ -7553,7 +7735,24 @@
         "tts": {
           "label": "Read aloud",
           "hint": "Pages of the read-aloud library and the speech providers."
+        },
+        "books": {
+          "label": "Books",
+          "hint": "Text of your books, only up to the point you have read or listened to."
+        },
+        "book_notes": {
+          "label": "Book notes",
+          "hint": "Your notes on books, only up to your reading position."
+        },
+        "ki_docs": {
+          "label": "AI documents",
+          "hint": "Summaries and other AI documents on books, only if they reveal nothing beyond your reading position."
         }
+      },
+      "global": {
+        "title": "Global knowledge (preview)",
+        "switch": "Search all shared content",
+        "hint": "Before each answer the app searches the shared areas locally and gives the model matching excerpts with sources. Local language model only; books only up to your reading position."
       }
     }
   },
@@ -7625,7 +7824,7 @@
       "history": "History: find every dictation again, copy, play or transcribe it again.",
       "meetings": "Recordings: transcribe meetings live or import audio and video files.",
       "tts": "Read aloud: listen to texts and documents and save them as audio.",
-      "voice": "Voice chat: like a phone call with the AI – speak and hear the answer."
+      "voice": "Chat: write or talk to the AI and read or hear the answer."
     }
   },
   "shell": {
@@ -7651,6 +7850,178 @@
     "suchen": "Search"
   },
   "library": {
+    "sf": {
+      "add": "Add language edition …",
+      "badges": "Language editions: {{langs}}. Last active: {{current}}.",
+      "kind": {
+        "audio": "Audiobook",
+        "text": "Text"
+      },
+      "notice": {
+        "close": "Dismiss notice",
+        "undo": "Undo",
+        "align": "Match chapters …",
+        "at": ", {{at}} of {{length}}",
+        "chapter": "**{{lang}}**, chapter-exact: chapter {{chapter}} of {{total}}{{at}}.",
+        "approx": "**{{lang}}**, approximately at {{percent}}%.",
+        "openGroup": "Chapter {{a}} ({{langA}}) belongs to chapter {{b}} ({{langB}}); the match is still open.",
+        "noAlignment": "The chapters have not been matched yet.",
+        "loading": "{{lang}} is downloading. Playback continues in {{current}}.",
+        "failed": "Switching the language edition failed.",
+        "undoBlocked": "Undo is not possible: the player did not confirm saving its position. Nothing was changed."
+      },
+      "switch": {
+        "button": "Language: {{lang}}, open selection",
+        "menu": "Choose language edition",
+        "audio": "Audiobook",
+        "text": "Text",
+        "noAudio": "No audiobook",
+        "noText": "No text",
+        "notLocal": "Not on this device",
+        "loading": "Downloading",
+        "narrator": "Narrator: {{name}}",
+        "alignedNote": "Chapters {{a}} ↔ {{b}} are matched: switching lands on the exact chapter.",
+        "openNote": "Chapters not matched: switching is approximate.",
+        "align": "Match chapters …"
+      },
+      "pairs": {
+        "barSure": "Same book in two languages?",
+        "barMaybe": "Maybe the same book in two languages?",
+        "barBooks": "“{{a}}” ({{langA}}) and “{{b}}” ({{langB}})",
+        "more": "and {{count}} more",
+        "later": "Later",
+        "reviewAll": "Review …",
+        "join": "Merge",
+        "title": "Review language editions",
+        "intro": "These books may be the same work in different languages. Nothing is merged without your confirmation.",
+        "confirm_one": "Merge {{count}} pair",
+        "confirm_other": "Merge {{count}} pairs",
+        "sure": "Sure",
+        "unsure": "Unsure",
+        "sameWork": "Same work ID",
+        "whyWork": "Same work ID: {{key}}",
+        "whyTitle": "Similar title, same author: {{author}}",
+        "whyAuthor": "Same author: {{author}}",
+        "foot": "Merged books can be separated again later.",
+        "joined_one": "{{count}} pair merged.",
+        "joined_other": "{{count}} pairs merged."
+      },
+      "offer": {
+        "title": "“{{title}}” added",
+        "same": "This is the same book as “{{title}}” ({{info}}). Add it as a {{lang}} language edition?",
+        "maybe": "Maybe the same book as “{{title}}” ({{info}}). Add it as a {{lang}} language edition?",
+        "legend": "How should the book be added?",
+        "edition": "Add as {{lang}} language edition",
+        "editionHint": "It appears as one card with several languages.",
+        "own": "Keep as its own book",
+        "ownHint": "It stays a separate entry in the library.",
+        "confirm": "Apply",
+        "done": "“{{title}}” is now the {{lang}} language edition."
+      },
+      "last": {
+        "line": "Last: {{lang}}, {{kind}}, {{percent}}% · {{where}}, {{when}}",
+        "here": "on this device",
+        "other": "on another device"
+      },
+      "notLocal": "The {{lang}} audiobook is not on this device yet. Sync has been started.",
+      "notOnDevice": "Not on this device yet",
+      "syncFailed": "The {{lang}} audiobook could not be loaded: sync failed ({{error}}).",
+      "syncOff": "The {{lang}} audiobook is not on this device and sync is not set up.",
+      "listenEdition": "Play audiobook · {{lang}}",
+      "continueEdition": "Continue listening · {{lang}}",
+      "section": {
+        "listen": "Play {{lang}} audiobook ({{duration}})",
+        "listenNoDuration": "Play {{lang}} audiobook",
+        "title": "Language editions",
+        "edition": "Edition",
+        "progress": "Progress",
+        "actions": "Actions",
+        "primary": "Primary edition",
+        "last": "Last",
+        "has": "Available",
+        "hasNot": "Not available",
+        "foot": "The primary edition determines title and cover. Deleted editions stay in the trash for 30 days.",
+        "alignedAll": "All chapters are matched.",
+        "alignedSome": "Chapters of {{a}} and {{b}} are partly matched."
+      },
+      "menu": {
+        "read": "Read text",
+        "listen": "Play audiobook",
+        "primary": "Make primary edition",
+        "align": "Match chapters …",
+        "export": "Export …",
+        "split": "Split off as its own book",
+        "remove": "Move to trash",
+        "removeHint": "Restorable for 30 days",
+        "for": "Actions for {{lang}}"
+      },
+      "split": {
+        "title": "Split off {{lang}} as its own book?",
+        "body": "“{{title}}” becomes its own book. Progress and files are kept.",
+        "confirm": "Split off",
+        "done": "“{{title}}” is now its own book."
+      },
+      "remove": {
+        "title": "Move {{lang}} to the trash?",
+        "body": "“{{title}}” disappears from the language editions. The files are kept for 30 days.",
+        "confirm": "Move to trash",
+        "done": "{{lang}} is in the trash.",
+        "doneHint": "Undo now or restore it later."
+      },
+      "replace": {
+        "legend": "Choose a new primary edition"
+      },
+      "graves": {
+        "title_one": "{{count}} deleted language edition",
+        "title_other": "{{count}} deleted language editions",
+        "row": "Deleted language edition {{n}}, removed {{date}}, restorable for {{days}} more days",
+        "restore": "Restore",
+        "done": "Language edition restored."
+      },
+      "align": {
+        "title": "Match chapters",
+        "intro": "“{{title}}”: {{langA}} has {{countA}} chapters, {{langB}} has {{countB}}. Confirm each group on its own.",
+        "mediumLabel": "Chapters from",
+        "medium": {
+          "text": "Text",
+          "audio": "Audiobook"
+        },
+        "loading": "Reading chapters …",
+        "noChapters": "This medium has no chapters.",
+        "count": "{{done}} of {{total}} groups confirmed ({{countA}} and {{countB}} chapters)",
+        "list": "Chapter groups",
+        "confirmed": "Confirmed",
+        "confirm": "Confirm",
+        "confirmGroup": "Confirm group {{n}}",
+        "confirmAll": "Confirm all",
+        "save": "Save",
+        "saved": "Chapter match saved.",
+        "edit": "Edit group {{n}}",
+        "editMenu": "Edit group {{n}}",
+        "split": "Split group",
+        "join": "Join with next group",
+        "move": {
+          "a": {
+            "next": "Move left boundary down",
+            "prev": "Move left boundary up"
+          },
+          "b": {
+            "next": "Move right boundary down",
+            "prev": "Move right boundary up"
+          }
+        },
+        "why": "“Confirm all” is only possible when every group is 1:1 and both editions have the same number of chapters. Otherwise confirm each group on its own."
+      },
+      "conflict": {
+        "text": "Last listened to **{{lang}}** on {{device}} ({{there}}). Here {{current}} is playing{{here}}.",
+        "iphone": "the iPhone",
+        "other": "another device",
+        "chapter": "chapter {{n}}",
+        "chapterHere": ", chapter {{n}}",
+        "go": "Switch there",
+        "stay": "Stay here"
+      }
+    },
     "fmt": {
       "text": "Text",
       "audiobook": "Audiobook",
@@ -7663,7 +8034,7 @@
     },
     "ki": {
       "title": "Create with AI",
-      "short": "Create with AI",
+      "short": "Create",
       "menuFor": "AI and export: {{title}}",
       "menuHint": "Translate, create a short book or AI document, export versions",
       "menuTranslate": "Translate …",
@@ -7774,7 +8145,16 @@
       "languages": "Available languages",
       "showLang": "Show book in brief in {{lang}}",
       "another": "Another language",
-      "createLang": "Create"
+      "createLang": "Create",
+      "failed": "Transcription failed. “Try again” starts it once more.",
+      "failedPartly": "Transcription was interrupted. Finished sections are kept; “Resume” only transcribes the missing ones.",
+      "retryTranscript": "Try again",
+      "resumeTranscript": "Resume",
+      "transcriptProgress": "Transcription progress of {{title}}",
+      "creating": "Creating summary book · section {{done}} of {{total}} · {{percent}} %",
+      "createProgress": "Summary book progress for {{title}}",
+      "cancel": "Cancel",
+      "cancelling": "Cancelling …"
     },
     "title": "Library",
     "description": "Books and audiobooks – one entry per work, as text, audio or both.",
@@ -7853,6 +8233,7 @@
       "none": "No text"
     },
     "audioShort": {
+      "other": "Audiobook ({{lang}})",
       "ok": "Audio",
       "busy": "…",
       "none": "No audio",
@@ -7861,6 +8242,7 @@
     },
     "job": {
       "parts": "Transcription {{done}} of {{total}}",
+      "percent": "{{percent}} %",
       "partsParallel": "Transcription {{done}} of {{total}} · {{running}} in parallel",
       "partsFailed": "Transcription {{done}} of {{total}} · {{failed}} failed",
       "queued": "Transcription queued",
@@ -7876,9 +8258,22 @@
     "back": "Library",
     "by": "by {{authors}}",
     "tabs": "Book view",
+    "bookFiles": {
+      "title": "Files in the book folder",
+      "reveal": "Show in Explorer",
+      "empty": "The book folder is empty.",
+      "failed": "Files could not be read: {{error}}",
+      "metadata": "Metadata, editions",
+      "primaryEdition": "{{lang}} · main edition",
+      "edition": "{{lang}}",
+      "looseEdition": "not assigned to an edition",
+      "summary_one": "{{count}} file, {{size}}",
+      "summary_other": "{{count}} files, {{size}}"
+    },
     "tab": {
       "overview": "Overview",
       "versions": "Versions",
+      "files": "Files",
       "metadata": "Metadata"
     },
     "noDescription": "No blurb yet. Fetch one from Open Library under “Metadata” or write your own.",
@@ -8029,6 +8424,8 @@
     "continueRead": "Continue reading",
     "readTitle": "Read “{{title}}”",
     "audioSource": {
+      "other": "Audio: audiobook of the {{lang}} edition",
+      "otherRemote": "Audio: audiobook of the {{lang}} edition, not on this device yet",
       "audiobook": "Audio: imported audiobook",
       "narrated": "Audio: narrated by speech synthesis",
       "none": "No audio – read or have it read aloud live"
@@ -8099,8 +8496,8 @@
       "scope": "Where should it go?",
       "trash": "Move to trash (restorable)",
       "delete": "Delete permanently (cannot be restored)",
-      "trashHint_one": "The entry with its cover and, if present, audiobook copy ({{size}}) moves to the trash and can be restored for 30 days. Its text or transcript stays in Read aloud.",
-      "trashHint_other": "The entries with their covers and, if present, audiobook copies ({{size}}) move to the trash and can be restored for 30 days. Texts and transcripts stay in Read aloud.",
+      "trashHint_one": "The entry with its cover and, if present, audiobook copy ({{size}}) moves to the trash and can be restored for 30 days. Its text, transcript and language editions in the book folder go with it and come back on restore.",
+      "trashHint_other": "The entries with their covers and, if present, audiobook copies ({{size}}) move to the trash and can be restored for 30 days. Texts, transcripts and language editions in the book folders go with them and come back on restore.",
       "deleteHint_one": "Deleted immediately and permanently: the entry with its cover and, if present, audiobook copy ({{size}}), its text or transcript in Read aloud ({{texts}}), running transcriptions and reading positions.",
       "deleteHint_other": "Deleted immediately and permanently: the entries with their covers and, if present, audiobook copies ({{size}}), their texts and transcripts in Read aloud ({{texts}}), running transcriptions and reading positions.",
       "sure_one": "I understand: 1 entry ({{size}}) and {{texts}} text or transcript in Read aloud will be permanently deleted.",
@@ -8170,6 +8567,175 @@
     "transcribeMissing": "Transcribe missing parts",
     "importedParts": "Imported audiobook in {{count}} parts",
     "appendAudio": "Add further parts"
+  },
+  "projektBereich": {
+    "nichtSicherEntfernt": "The file could not be removed safely. It stays in the project folder and is offered to you for adding.",
+    "titel": "Projects",
+    "beschreibung": "Bundle books, texts, recordings and files of a project and decide per entry what serves as context for the AI.",
+    "liste": "Projects",
+    "gruppeLeiste": "Projects",
+    "neuesProjekt": "New project",
+    "projektName": "Project name",
+    "klasse": "Data class",
+    "anlegen": "Create",
+    "abbrechen": "Cancel",
+    "zurueck": "Back to projects",
+    "ohneName": "Entry without read access",
+    "eintraege_one": "{{count}} entry",
+    "eintraege_other": "{{count}} entries",
+    "kopien_one": "{{count}} copy",
+    "kopien_other": "{{count}} copies",
+    "hinzufuegen": "Add",
+    "entfernt": "Removed from the project.",
+    "geloescht": "Research deleted.",
+    "gruppen": {
+      "buecher": "Books",
+      "texte": "Texts",
+      "aufnahmen": "Recordings",
+      "dateien": "Files in the project folder",
+      "recherchen": "Research"
+    },
+    "kopf": {
+      "eintrag": "Entry",
+      "art": "Type",
+      "kontext": "As context"
+    },
+    "art": {
+      "buch": "Book",
+      "text": "Text",
+      "aufnahme": "Recording",
+      "datei": "File",
+      "recherche": "Research"
+    },
+    "zugeordnetPerson": "assigned by you",
+    "zugeordnetAutomatik": "assigned automatically",
+    "schalter": "{{name}} as context",
+    "schalterGesperrt": "{{name}} as context, not available",
+    "form": "Form",
+    "fassung": "Edition",
+    "formUndFassung": "Form and edition",
+    "fassungWaehlen": "Choose edition: {{name}}",
+    "formWaehlen": "Choose form: {{form}}",
+    "vorgabe": "default",
+    "formen": {
+      "kurzbuch": "Short book",
+      "volltext": "Full text",
+      "protokoll": "Minutes",
+      "transkript": "Transcript",
+      "text": "Text"
+    },
+    "waehlen": {
+      "volltext": "Choose full text",
+      "transkript": "Choose transcript"
+    },
+    "token": "~{{n}} tokens",
+    "tokenAus": "off · ~{{n}}",
+    "keinText": "no text",
+    "hinweis": {
+      "kein_kurzbuch": "No short book – create one or choose the full text.",
+      "kein_protokoll": "No minutes – create them or choose the transcript.",
+      "kein_text": "No text yet.",
+      "format": "Format cannot be read as context",
+      "fehlt": "Source is missing.",
+      "nicht_lesbar": "No read access.",
+      "form": "Form does not fit the entry."
+    },
+    "nichtImKontextPunkt": "Not in context.",
+    "weitereAktionen": "More actions for {{name}}",
+    "weitereAktionenMenue": "More actions",
+    "entfernenMenue": "Remove from project …",
+    "rechercheLoeschenMenue": "Delete research …",
+    "entfernen": {
+      "titel": "Remove “{{name}}” from the project?",
+      "titelRecherche": "Delete research “{{name}}”?",
+      "nehmen": "Remove from project",
+      "loeschen": "Delete",
+      "text": {
+        "dateien": "The copy in the project folder moves to the project's trash. Your original stays untouched.",
+        "buecher": "The book stays in the library, with editions, audiobook and AI documents. Only the link to “{{projekt}}” is removed.",
+        "texte": "The text stays in Read aloud. Only the link to “{{projekt}}” is removed.",
+        "aufnahmen": "The recording stays in Recordings, with transcript and minutes. Only the link to “{{projekt}}” is removed.",
+        "recherchen": "The research will be deleted. This cannot be undone."
+      }
+    },
+    "rechts": "Context in the project",
+    "summe": "{{summe}} of {{fenster}} tokens",
+    "summeKurz": "{{summe}} tokens",
+    "meter": "{{prozent}} % of the model window used",
+    "zaehl_one": "{{count}} entry as context",
+    "zaehl_other": "{{count}} entries as context",
+    "zaehlKeine": "No entries as context",
+    "eintraegeKurz_one": "{{count}} entry",
+    "eintraegeKurz_other": "{{count}} entries",
+    "fenster": "Model window",
+    "fensterModell": "Model window {{modell}}",
+    "details": "Details",
+    "nichtImKontext": "Not in context",
+    "fehlt": {
+      "ohneKurzbuch_one": "{{count}} book without short book",
+      "ohneKurzbuch_other": "{{count}} books without short book",
+      "ohneProtokoll_one": "{{count}} recording without minutes",
+      "ohneProtokoll_other": "{{count}} recordings without minutes",
+      "formatNichtLesbar_one": "{{count}} file whose format cannot be read",
+      "formatNichtLesbar_other": "{{count}} files whose format cannot be read",
+      "ohneText_one": "{{count}} entry without readable text",
+      "ohneText_other": "{{count}} entries without readable text",
+      "ausgeschaltet_one": "{{count}} entry switched off",
+      "ausgeschaltet_other": "{{count}} entries switched off"
+    },
+    "geltung": {
+      "titel": "How the selection applies",
+      "text": "Only entries that are switched on go to the AI, in the chosen form. If the form is missing, nothing is substituted. The selection applies on this device; on other devices new entries start switched off."
+    },
+    "ki": {
+      "titel": "AI in the project",
+      "text": "Chat and voice conversation use this selection as soon as they are enabled for projects.",
+      "gesperrt": "Locked: AI calls in the project follow with the next step."
+    },
+    "banner": {
+      "reset": "The context selection of this device could not be read. For safety all entries are switched off. Switch on what the AI should use.",
+      "zuGross": "The context is larger than the model window ({{summe}} of {{fenster}} tokens). Switch entries off or choose a shorter form. Nothing is silently truncated. AI calls in the project are locked until the context fits the model window.",
+      "gefunden": "The project folder contains a file that does not belong to the project:",
+      "nichtAufgenommen": ". It was not added.",
+      "aufnehmen": "Add"
+    },
+    "leer": {
+      "titel": "{{name}} is still empty",
+      "text": "Add books, texts, recordings or files. App content is linked, files are copied into the project folder."
+    },
+        "lage": {
+      "fehlt": "The file list of this project is missing or damaged. Files in the project folder are therefore left untouched.",
+      "defekt": "The file list of this project is missing or damaged. Files in the project folder are therefore left untouched.",
+      "neuer": "The file list comes from a newer app version. Update the app; until then the files stay untouched.",
+      "nicht_lesbar": "The project folder cannot be read right now. Check access rights or syncing and reload the page.",
+      "neuAufbauen": "Rebuild inventory",
+      "erneut": "Check again",
+      "dialogTitel": "Rebuild inventory?",
+      "dialogText": "The damaged list is set aside, not deleted. Files in the project folder are then offered to you for adding; links to former files are removed."
+    },
+    "keins": {
+      "titel": "No project yet",
+      "text": "Create a project to bundle books, texts, recordings and files."
+    },
+    "dialog": {
+      "titel": "Add to “{{name}}”",
+      "ausDerApp": "From the app",
+      "dateienKopieren": "Copy files",
+      "appHinweis": "Books, texts and recordings are linked, not copied. Newly added entries are switched on as context; you can change this per entry.",
+      "nichtsFrei": "Everything the app knows already belongs to this project.",
+      "nHinzufuegen_one": "Add {{count}}",
+      "nHinzufuegen_other": "Add {{count}}",
+      "dateienText": "Files are copied into the project folder and checked after copying. The original stays unchanged. A file with the same name is not overwritten; the copy gets “(2)”.",
+      "dateienWaehlen": "Choose files …",
+      "kopiertLaeuft": "Copying files …",
+      "ladefehler": "The list could not be loaded.",
+      "erneut": "Try again",
+      "weitereLaden": "Load more",
+      "formatHinweis": "For now only .txt and .md can be read as context. Other formats are added and shown with a note.",
+      "kopiert_one": "{{count}} file copied.",
+      "kopiert_other": "{{count}} files copied.",
+      "schliessen": "Close"
+    }
   },
   "projekte": {
     "menu": {

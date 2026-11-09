@@ -61,6 +61,10 @@ final class ReaderAppearance: ObservableObject {
     /// Aktuelles Wort: auf Schwarz wäre Tinte unsichtbar.
     /// Heller Ton hinter dem gelesenen Satz; die Schrift bleibt die des Lesethemas.
     var sentenceBackground: Color { VoicePalette.brand.opacity(theme == .black ? 0.28 : 0.38) }
+    /// Gesprochenes Wort beim Mitlesen: kräftiger als der Satz. Nur Hintergrund, damit der Umbruch nicht springt.
+    /// Schrift darauf ist immer Tinte, auch im Thema Schwarz (sonst hell auf hellem Grund).
+    var wordBackground: Color { VoicePalette.brand.opacity(0.9) }
+    var wordText: Color { VoicePalette.ink }
 
     /// Nicht `.system(design: .serif)`: SwiftUI misst New York unter iOS 26 falsch und schneidet Absätze ab.
     func font(heading: Bool) -> Font {

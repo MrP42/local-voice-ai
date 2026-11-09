@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { commands, type LibraryBook } from "@/bindings";
 import { CHANGED_EVENT, HYDRATED_EVENT } from "@/lib/library/progress";
 import {
@@ -13,7 +13,10 @@ import { toast } from "sonner";
 import { listen } from "@tauri-apps/api/event";
 import i18n from "@/i18n";
 import { probeDuration } from "@/lib/library/probe";
-import { transcribeTracks } from "@/lib/library/importFile";
+import { editionsOf } from "@/lib/library/editions";
+import { resumeTranscription, transcribeTracks } from "@/lib/library/importFile";
+import { useMeetingProgress } from "@/hooks/useMeetingJobs";
+import type { ProgressMap } from "@/lib/meetingJobs";
 import {
   aggregateStatus,
   isSectioned,
@@ -49,9 +52,32 @@ export interface TranscriptJob {
   /** Davon gerade in Arbeit (gleichzeitig) und fehlgeschlagen oder verschwunden. */
   running: number;
   failed: number;
+  /** Aufträge ohne fertiges Transkript (für den anteiligen Fortschritt). */
+  open: string[];
 }
 
 const READY = new Set(["ready", "done"]);
+
+/**
+ * Anteil der fertigen Transkription eines Buchs (0…1): fertige Aufträge zählen
+ * ganz, laufende mit ihrem Stand aus `MeetingEvent::Progress` (Millisekunden
+ * Audio), wartende gar nicht. Ohne Aufträge `null`.
+ */
+export function transcriptFraction(
+  job: Pick<TranscriptJob, "done" | "total" | "open">,
+  live: ProgressMap,
+): number | null {
+  if (!(job.total > 0)) return null;
+  let partial = 0;
+  // Nur offene Aufträge: fertige zählen schon in `done`.
+  for (const id of job.open) {
+    const p = live[id];
+    if (!p || p.phase === "prepare") continue;
+    if (p.phase !== "transcription") partial += 1;
+    else if (p.total > 0) partial += Math.min(1, p.done / p.total);
+  }
+  return Math.min(1, (job.done + partial) / job.total);
+}
 
 export { aggregateStatus };
 
@@ -70,9 +96,18 @@ export function useLibrary() {
   const [tick, setTick] = useState(0);
   /** Jobs in Übernahme oder übernommen: nie zweimal verarbeiten. */
   const finishing = useRef(new Set<string>());
+  /** Übernahmen, die gerade laufen (dürfen beim Wiederholen nicht freigegeben werden). */
+  const inFlight = useRef(new Set<string>());
+  /** Freigabe-Timer gescheiterter Übernahmen; „Erneut versuchen“ entwertet sie. */
+  const releaseTimers = useRef(new Map<string, number>());
+
+  /** Laufnummer: ein veraltetes Ergebnis überschreibt kein neueres. */
+  const loadSeq = useRef(0);
 
   const reload = useCallback(async () => {
+    const seq = ++loadSeq.current;
     const result = await commands.libraryList();
+    if (seq !== loadSeq.current) return;
     if (result.status !== "ok") {
       setBooks([]);
       return;
@@ -81,18 +116,25 @@ export function useLibrary() {
     const list = result.data ?? [];
     setBooks(list);
     // Vertonte Dateien im Seitenordner = Audiofassung einer Textfassung.
+    // Auch die Seiten der übrigen Sprachfassungen (lva#344).
+    const pageIds = [
+      ...new Set(
+        list.flatMap((b) =>
+          editionsOf(b).flatMap((e) => (e.text ? [e.text.page_id] : [])),
+        ),
+      ),
+    ];
     const entries = await Promise.all(
-      list
-        .filter((b) => b.text)
-        .map(async (b) => {
-          const files = await commands.pageFiles(b.text!.page_id);
-          return [
-            b.text!.page_id,
-            files.status === "ok" &&
-              (files.data ?? []).some((f) => AUDIO_EXT.test(f.name)),
-          ] as const;
-        }),
+      pageIds.map(async (pageId) => {
+        const files = await commands.pageFiles(pageId);
+        return [
+          pageId,
+          files.status === "ok" &&
+            (files.data ?? []).some((f) => AUDIO_EXT.test(f.name)),
+        ] as const;
+      }),
     );
+    if (seq !== loadSeq.current) return;
     setPageAudio(Object.fromEntries(entries));
   }, []);
 
@@ -179,6 +221,7 @@ export function useLibrary() {
       const guard = `${bookId}:${jobs.join(",")}`;
       if (finishing.current.has(guard)) return;
       finishing.current.add(guard);
+      inFlight.current.add(guard);
       let done = false;
       let created: string | null = null;
       let restore: { pageId: string; json: string } | null = null;
@@ -357,8 +400,18 @@ export function useLibrary() {
       } finally {
         // Erfolgreich übernommene Jobs bleiben gesperrt; fehlgeschlagene
         // dürfen erst nach einer Pause erneut versucht werden.
-        if (!done)
-          window.setTimeout(() => finishing.current.delete(guard), 60_000);
+        inFlight.current.delete(guard);
+        if (!done) {
+          const old = releaseTimers.current.get(guard);
+          if (old !== undefined) window.clearTimeout(old);
+          const timer = window.setTimeout(() => {
+            if (releaseTimers.current.get(guard) !== timer) return;
+            releaseTimers.current.delete(guard);
+            // Ein inzwischen neu gestarteter Versuch behält seine Sperre.
+            if (!inFlight.current.has(guard)) finishing.current.delete(guard);
+          }, 60_000);
+          releaseTimers.current.set(guard, timer);
+        }
       }
     },
     [reload, giveUp],
@@ -396,6 +449,7 @@ export function useLibrary() {
           total: ids.length,
           running: statuses.filter((s) => s === "processing" || s === "transcribing").length,
           failed: statuses.filter((s) => RESTART_STATUSES.has(s)).length,
+          open: ids.filter((_, i) => !READY.has(statuses[i])),
         };
         if (status === "ready") void finishTranscript(book.id, durations);
       }
@@ -415,5 +469,53 @@ export function useLibrary() {
     };
   }, [pendingIds, books, finishTranscript, gaveUp]);
 
-  return { books, pageAudio, jobs, reload, save, tick };
+  /**
+   * Gescheiterte Transkription erneut anstoßen: Fehlversuche vergessen,
+   * fehlgeschlagene oder verschwundene Aufträge neu starten. Waren alle
+   * Aufträge fertig und nur die Übernahme scheiterte, versucht die nächste
+   * Abfrage sie erneut.
+   */
+  const retryTranscript = useCallback(
+    async (bookId: string) => {
+      failures.current.delete(bookId);
+      restarted.current.delete(bookId);
+      for (const [guard, timer] of [...releaseTimers.current])
+        if (guard.startsWith(`${bookId}:`)) {
+          window.clearTimeout(timer);
+          releaseTimers.current.delete(guard);
+        }
+      for (const guard of [...finishing.current])
+        if (guard.startsWith(`${bookId}:`) && !inFlight.current.has(guard))
+          finishing.current.delete(guard);
+      setGaveUp((prev) => {
+        if (!prev.has(bookId)) return prev;
+        const next = new Set(prev);
+        next.delete(bookId);
+        return next;
+      });
+      await resumeTranscription(bookId, (m) => toast.error(m));
+      await reload();
+    },
+    [reload],
+  );
+
+  // Fortschritt je Buch aus dem Stand der einzelnen Aufträge.
+  const live = useMeetingProgress();
+  const withProgress = useMemo(() => {
+    const out: Record<string, TranscriptJob> = {};
+    for (const [id, job] of Object.entries(jobs)) {
+      out[id] = { ...job, progress: transcriptFraction(job, live) };
+    }
+    return out;
+  }, [jobs, live]);
+
+  return {
+    books,
+    pageAudio,
+    jobs: withProgress,
+    reload,
+    save,
+    tick,
+    retryTranscript,
+  };
 }

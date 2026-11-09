@@ -1,6 +1,6 @@
 [package]
 name = "local-voice-ai"
-version = "0.23.0"
+version = "0.24.0"
 description = "Local Voice AI - lokale Sprach-KI (Diktat, Vorlesen, Stimmen, Übersetzung)"
 authors = ["Patrick Wolff"]
 edition = "2021"
@@ -88,6 +88,8 @@ vad-rs = { git = "https://github.com/cjpais/vad-rs", default-features = false }
 enigo = "0.6.1"
 rodio = { git = "https://github.com/cjpais/rodio.git" }
 reqwest = { version = "0.12", features = ["json", "stream"] }
+# Antwort aus dem curl-Umweg (Diagnose LV_SYNC_CURL) als reqwest::Response; schon transitiv im Baum.
+http = "1"
 futures-util = "0.3"
 rustfft = "6.4.0"
 strsim = "0.11.0"
@@ -160,6 +162,9 @@ krilla = "0.8"
 ttf-parser = "0.25"
 tempfile = "3"
 ulid = "1"
+# lva#365 P2a: Dateinamen nach Unicode-NFC vergleichen (Buch-Ordner, Spec 4.4).
+# Schon transitiv im Lock (0.1.25), MIT OR Apache-2.0.
+unicode-normalization = "0.1"
 # MP3-Export mit waehlbarer Bitrate. Bringt LAME als vendored C-Quellen mit
 # (cc-Build), baut daher auf Windows-MSVC ohne vorinstallierte Bibliothek.
 mp3lame-encoder = "0.2.5"
@@ -215,8 +220,15 @@ windows = { version = "0.61.3", features = [
   "Win32_System_Com_StructuredStorage",
   # Systemdialoge (z. B. „Nicht unterstützte 16 Bit-Anwendung“) vor Kindprozess-Starts abschalten.
   "Win32_System_Diagnostics_Debug",
+  # Piper: Prozess angehalten starten, erst nach der Job-Zuordnung fortsetzen.
+  "Win32_System_Diagnostics_ToolHelp",
   "Win32_System_LibraryLoader",
   "Win32_System_Threading",
+  # Sync: System-curl über GetSystemDirectoryW finden (nicht über PATH).
+  "Win32_System_SystemInformation",
+  # Sync: geschützte DACL für das curl-Temp-Verzeichnis (SDDL).
+  "Win32_Security_Authorization",
+  # Sync: curl-Arbeitsverzeichnis atomar mit DACL anlegen (CreateDirectoryW).
   # Abo-Vorschau: GetDriveTypeW (nur lokale feste Laufwerke fuer die CLI).
   "Win32_Storage_FileSystem",
   # Vorlesen: Bildschirm wach halten (SetThreadExecutionState).

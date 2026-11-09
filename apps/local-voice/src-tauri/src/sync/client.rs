@@ -152,11 +152,62 @@ fn http() -> Result<reqwest::Client, HubError> {
 
 /// Stücke der Dateiablage tragen bis zu 3,65 MiB; langsame Leitungen brauchen Zeit.
 fn http_with(timeout: Duration) -> Result<reqwest::Client, HubError> {
-    reqwest::Client::builder()
-        .timeout(timeout)
-        .user_agent(concat!("local-voice-ai/", env!("CARGO_PKG_VERSION")))
-        .build()
-        .map_err(|e| HubError::Other(e.to_string()))
+    let ua = std::env::var("LV_SYNC_UA")
+        .unwrap_or_else(|_| concat!("local-voice-ai/", env!("CARGO_PKG_VERSION")).to_string());
+    let mut b = reqwest::Client::builder().timeout(timeout).user_agent(ua);
+    // Diagnose-Schalter (Hub-500 nur bei POSTs der App, 06.11.2026):
+    // LV_SYNC_HTTP1=1 erzwingt HTTP/1.1, LV_SYNC_IPV4=1 nur IPv4,
+    // LV_SYNC_TITLECASE=1 Kopfzeilennamen wie curl (Content-Type statt content-type),
+    // LV_SYNC_UA=<text> ersetzt den User-Agent.
+    if std::env::var_os("LV_SYNC_HTTP1").is_some() {
+        b = b.http1_only();
+    }
+    if std::env::var_os("LV_SYNC_IPV4").is_some() {
+        b = b.local_address(Some(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)));
+    }
+    // LV_SYNC_NOPROXY=1 umgeht System-Proxy (reqwest liest unter Windows die
+    // Internetoptionen, curl nicht).
+    if std::env::var_os("LV_SYNC_NOPROXY").is_some() {
+        b = b.no_proxy();
+    }
+    if std::env::var_os("LV_SYNC_TITLECASE").is_some() {
+        b = b.http1_title_case_headers();
+    }
+    b.build().map_err(|e| HubError::Other(e.to_string()))
+}
+
+/// POST zum Hub. Unter Windows über das System-curl (siehe `sync::curl`),
+/// sonst über reqwest. Auf reqwest wird nur zurückgefallen, wenn curl fehlt.
+async fn send_logged(
+    rb: reqwest::RequestBuilder,
+    timeout: Duration,
+) -> Result<reqwest::Response, HubError> {
+    let (client, req) = rb.build_split();
+    let req = req.map_err(|e| HubError::Other(e.to_string()))?;
+    let req = if super::curl::enabled() {
+        let (r, back) = tauri::async_runtime::spawn_blocking(move || {
+            let r = super::curl::send(&req, timeout);
+            (r, req)
+        })
+        .await
+        .map_err(|e| HubError::Other(e.to_string()))?;
+        match r {
+            Ok(resp) => return Ok(reqwest::Response::from(resp)),
+            Err(super::curl::CurlError::Missing) => {
+                log::warn!("Sync: curl fehlt, sende über reqwest");
+                back
+            }
+            Err(super::curl::CurlError::Failed(e)) => {
+                return Err(HubError::Other(format!("Hub nicht erreichbar: {e}")))
+            }
+        }
+    } else {
+        req
+    };
+    client
+        .execute(req)
+        .await
+        .map_err(|e| HubError::Other(format!("Hub nicht erreichbar: {e}")))
 }
 
 fn base(url: &str) -> String {
@@ -165,11 +216,14 @@ fn base(url: &str) -> String {
 
 async fn error_from(res: reqwest::Response) -> HubError {
     let status = res.status();
-    let diag = if status.is_server_error() {
-        response_diag(&res)
-    } else {
-        String::new()
-    };
+    let kind = res
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(';').next())
+        .filter(|v| v.len() <= 64)
+        .unwrap_or("ohne Typ")
+        .to_string();
     let text = res.text().await.unwrap_or_default();
     let code = serde_json::from_str::<ApiError>(&text)
         .ok()
@@ -180,64 +234,12 @@ async fn error_from(res: reqwest::Response) -> HubError {
         (_, Some((code, msg))) if !msg.is_empty() => HubError::Other(format!("{code}: {msg}")),
         (_, Some((code, _))) => HubError::Other(code),
         (s, None) => {
-            // Kein JSON der App: Hosting oder PHP-Abbruch. Ein Auszug macht die Ursache im Log sichtbar.
-            let hint = body_hint(&text);
-            log::warn!("Hub: HTTP {s} ohne App-Fehler {diag}, Antwort: {hint:?}");
-            if hint.is_empty() {
-                HubError::Other(format!("HTTP {s}"))
-            } else {
-                HubError::Other(format!("HTTP {s} ({hint})"))
-            }
+            // Kein JSON der App (Hosting oder PHP-Abbruch). Ohne Antwortauszug
+            // und ohne Pfad ins Log, nur Status und Inhaltstyp.
+            log::warn!("Hub: HTTP {s} ohne App-Fehler ({kind})");
+            HubError::Other(format!("HTTP {s}"))
         }
     }
-}
-
-/// Pfad (Blob-Kennung gekürzt), HTTP-Version und die Kopfzeilen, die das
-/// Hosting verraten. Ohne Token und ohne Inhalte.
-fn response_diag(res: &reqwest::Response) -> String {
-    let path: String = res
-        .url()
-        .path()
-        .split('/')
-        .map(|seg| {
-            if seg.len() == 64 && seg.bytes().all(|b| b.is_ascii_hexdigit()) {
-                format!("{}…", &seg[..8])
-            } else {
-                seg.to_string()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("/");
-    let headers: Vec<String> = res
-        .headers()
-        .iter()
-        .filter(|(k, _)| {
-            let k = k.as_str();
-            matches!(k, "server" | "content-type" | "content-length" | "via") || k.starts_with("x-")
-        })
-        .map(|(k, v)| format!("{k}={}", v.to_str().unwrap_or("?")))
-        .collect();
-    format!("[{path} {:?} {}]", res.version(), headers.join(" "))
-}
-
-/// Kurzer, einzeiliger Auszug einer Fehlerantwort ohne HTML-Tags (höchstens 160 Zeichen).
-fn body_hint(text: &str) -> String {
-    let mut out = String::new();
-    let mut in_tag = false;
-    for c in text.chars() {
-        match c {
-            '<' => in_tag = true,
-            '>' => {
-                in_tag = false;
-                out.push(' ');
-            }
-            _ if in_tag => {}
-            c if c.is_whitespace() || c.is_control() => out.push(' '),
-            c => out.push(c),
-        }
-    }
-    let joined = out.split_whitespace().collect::<Vec<_>>().join(" ");
-    joined.chars().take(160).collect()
 }
 
 pub async fn login(
@@ -292,10 +294,8 @@ impl HubClient {
                 http_with(Duration::from_secs(120))?
                     .post(format!("{}/api/v1/voice/sync/push", self.url)),
             )
-            .json(&serde_json::json!({ "device_id": device_id, "objects": objects }))
-            .send()
-            .await
-            .map_err(|e| HubError::Other(format!("Hub nicht erreichbar: {e}")))?;
+            .json(&serde_json::json!({ "device_id": device_id, "objects": objects }));
+        let res = send_logged(res, Duration::from_secs(120)).await?;
         if !res.status().is_success() {
             return Err(error_from(res).await);
         }
@@ -402,10 +402,8 @@ impl HubClient {
                 http_with(Duration::from_secs(180))?
                     .post(format!("{}/chunks/{index}", self.blob_url(blob_id)?)),
             )
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| HubError::Other(format!("Hub nicht erreichbar: {e}")))?;
+            .json(&body);
+        let res = send_logged(res, Duration::from_secs(180)).await?;
         if !res.status().is_success() {
             log::warn!(
                 "Hub: Stück {index} abgelehnt (HTTP {}), Chiffrat {} Bytes, Body ~{} Bytes",
@@ -519,25 +517,5 @@ impl HubClient {
             return Err(error_from(res).await);
         }
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod body_hint_tests {
-    use super::body_hint;
-
-    #[test]
-    fn html_wird_zu_einer_zeile() {
-        let html = "<html><head><title>500 Internal Server Error</title></head>\n<body><h1>Internal\nServer Error</h1></body></html>";
-        assert_eq!(
-            body_hint(html),
-            "500 Internal Server Error Internal Server Error"
-        );
-    }
-
-    #[test]
-    fn leer_und_lang() {
-        assert_eq!(body_hint(""), "");
-        assert_eq!(body_hint(&"x".repeat(500)).chars().count(), 160);
     }
 }

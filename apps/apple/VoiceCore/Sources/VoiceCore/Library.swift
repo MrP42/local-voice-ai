@@ -100,6 +100,19 @@ public struct LibraryBook: Codable, Equatable, Identifiable, Sendable {
     public var finished: Bool
     /// Favorit (Desktop lva#222); fehlt in älteren buch.json.
     public var favorite: Bool = false
+    /// Sprachfassungen (lva#344, Schema 2). Das iPhone reicht sie unverändert
+    /// weiter; `text`/`audio`/`language` bleiben der Spiegel der Hauptfassung.
+    public var schema: Int?
+    public var workKey: String?
+    public var editions: PassthroughJSON?
+    public var primary: PassthroughJSON?
+    public var editionTombstones: PassthroughJSON?
+    public var reading: PassthroughJSON?
+    public var alignments: PassthroughJSON?
+    /// Nur zur Laufzeit, nie gespeichert und nie im Abgleich (kein Eintrag in `CodingKeys`): Ist es gesetzt, ist
+    /// dieses Buch die Sicht auf eine Sprachfassung. `title`, `subtitle`, `language`, `text` und `audio` sind dann die
+    /// der Fassung, alles Übrige das Buch selbst (`PhoneLibrary.editionView`).
+    public var editionId: String? = nil
 
     public init(id: String, title: String, authors: [String] = [], coverSource: String = "generated",
                 text: LibraryTextVersion? = nil, audio: LibraryAudioVersion? = nil, addedMs: Double, finished: Bool = false) {
@@ -110,6 +123,7 @@ public struct LibraryBook: Codable, Equatable, Identifiable, Sendable {
     enum CodingKeys: String, CodingKey {
         case id, title, subtitle, authors, language, isbn, publisher, publishDate = "publish_date", pages, description
         case metadataSource = "metadata_source", coverSource = "cover_source", text, audio, addedMs = "added_ms", finished, favorite
+        case schema, workKey = "work_key", editions, primary, editionTombstones = "edition_tombstones", reading, alignments
     }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -130,6 +144,13 @@ public struct LibraryBook: Codable, Equatable, Identifiable, Sendable {
         addedMs = try c.decodeIfPresent(Double.self, forKey: .addedMs) ?? 0
         finished = try c.decodeIfPresent(Bool.self, forKey: .finished) ?? false
         favorite = try c.decodeIfPresent(Bool.self, forKey: .favorite) ?? false
+        schema = try c.decodeIfPresent(Int.self, forKey: .schema)
+        workKey = try c.decodeIfPresent(String.self, forKey: .workKey)
+        editions = try c.decodeIfPresent(PassthroughJSON.self, forKey: .editions)
+        primary = try c.decodeIfPresent(PassthroughJSON.self, forKey: .primary)
+        editionTombstones = try c.decodeIfPresent(PassthroughJSON.self, forKey: .editionTombstones)
+        reading = try c.decodeIfPresent(PassthroughJSON.self, forKey: .reading)
+        alignments = try c.decodeIfPresent(PassthroughJSON.self, forKey: .alignments)
     }
 }
 
@@ -221,6 +242,29 @@ public enum LibraryProgress {
         let ends = rangesEnd(merged)
         merged.frontier = known.isEmpty && ends == 0 ? nil : max(known.max() ?? 0, ends)
         return merged
+    }
+
+    /// Zielfassung nach „Rückgängig“ (wie `undoSwitch` am Desktop): Stelle, Anker, Einheit und „fertig“ gehen auf den
+    /// Stand VOR dem Wechsel zurück; Bereiche sind die Vereinigung aus damals und seitdem Gehörtem. Gab es vorher
+    /// keinen Datensatz, bleibt nur, was seitdem gehört wurde (`nil`, wenn nichts).
+    public static func undoingSwitch(current: ProgressRecord?, before: ProgressRecord?, now: Double) -> ProgressRecord? {
+        var out: ProgressRecord
+        if let before {
+            out = before
+            if let current {
+                out.heard = mergeRanges(before.heard + current.heard)
+                out.read = mergeRanges(before.read + current.read)
+                out.length = max(before.length, current.length)
+                out.frontier = max(before.frontier ?? 0, current.frontier ?? 0, rangesEnd(out))
+            }
+            out.finished = before.finished == true ? true : nil
+        } else {
+            guard let current, !(current.heard.isEmpty && current.read.isEmpty) else { return nil }
+            out = current
+            out.finished = nil
+        }
+        out.updated = now
+        return out
     }
 
     /// Größtes Ende aller gehörten und gelesenen Bereiche; 0 ohne Bereiche.
@@ -365,6 +409,98 @@ public enum LibraryText {
     /// Satz, in dem die Stelle `location` des Absatzes liegt (der letzte davor, falls dazwischen).
     public static func sentenceIndex(_ sentences: [NSRange], at location: Int) -> Int {
         sentences.lastIndex { $0.location <= location } ?? 0
+    }
+
+    /// Kurzbuch für Lesen und Vorlesen: Überschriften bleiben, Hervorhebungen fallen weg.
+    public static func kurzbuchText(_ markdown: String) -> String {
+        markdown.replacingOccurrences(of: "**", with: "").replacingOccurrences(of: "__", with: "")
+    }
+
+    /// Sprache aus dem Dateinamen `kurzbuch-<sprache>.md`.
+    public static func kurzbuchLanguage(_ file: String?) -> String? {
+        guard let file, file.hasPrefix("kurzbuch-"), file.hasSuffix(".md") else { return nil }
+        let code = String(file.dropFirst("kurzbuch-".count).dropLast(".md".count))
+        return code.range(of: "^[a-z]{2,3}(-[a-z0-9]{2,8})?$", options: .regularExpression) != nil ? code : nil
+    }
+
+    /// Vorlesedauer bei normalem Tempo: rund 6 Zeichen je Wort und 150 Wörter je Minute, wie am Desktop.
+    public static func listenMilliseconds(chars: Double) -> Double { max(0, chars) / 6 / 150 * 60_000 }
+
+    /// Satz in etwa gleich lange Teile für eine kleine Anzeige, nach Zeichenzahl.
+    public static func sentenceParts(_ sentence: String, maxChars: Int) -> [String] {
+        guard maxChars > 0 else { return [] }
+        return sentenceParts(sentence) { $0.count <= maxChars }
+    }
+
+    /// Satz in etwa gleich lange Teile; `fits` sagt, ob ein Text in die Anzeige passt. Geteilt wird an Leerzeichen und
+    /// nach Gedankenstrichen, bevorzugt nach einem Satzzeichen. Was allein nicht passt, wird hart geteilt.
+    /// Es geht kein Zeichen verloren.
+    public static func sentenceParts(_ sentence: String, fits: (String) -> Bool) -> [String] {
+        let tokens = partTokens(sentence, fits: fits)
+        guard !tokens.isEmpty else { return [] }
+        func pack(limit: Int?) -> [String] {
+            var parts: [String] = []
+            var current = ""
+            for token in tokens {
+                let next = current + (token.joined || current.isEmpty ? "" : " ") + token.text
+                let pause = current.last.map { ",;:—–".contains($0) } ?? false
+                let tooLong = limit.map { next.count > $0 } ?? false
+                let early = pause && limit.map { current.count * 5 >= $0 * 3 } ?? false
+                if !current.isEmpty, !fits(next) || tooLong || early {
+                    parts.append(current)
+                    current = token.text
+                } else {
+                    current = next
+                }
+            }
+            if !current.isEmpty { parts.append(current) }
+            return parts
+        }
+        // Erst sehen, wie viele Teile es braucht; dann gleichmäßig füllen statt den letzten kurz zu lassen.
+        let greedy = pack(limit: nil)
+        guard greedy.count > 1 else { return greedy }
+        let total = greedy.reduce(0) { $0 + $1.count }
+        let target = (total + greedy.count - 1) / greedy.count
+        return pack(limit: target + target / 5)
+    }
+
+    private static func partTokens(_ sentence: String, fits: (String) -> Bool) -> [(text: String, joined: Bool)] {
+        var tokens: [(text: String, joined: Bool)] = []
+        for word in sentence.split(whereSeparator: \.isWhitespace) {
+            var first = true
+            var rest = Substring(word)
+            while !rest.isEmpty {
+                // Nach einem Gedankenstrich im Wort darf getrennt werden: „eins—zwei“.
+                let end = rest.firstIndex { "—–".contains($0) }.map { rest.index(after: $0) } ?? rest.endIndex
+                var piece = rest[..<end]
+                rest = rest[end...]
+                while !piece.isEmpty {
+                    var cut = piece.endIndex
+                    while cut > piece.index(after: piece.startIndex), !fits(String(piece[..<cut])) { cut = piece.index(before: cut) }
+                    tokens.append((String(piece[..<cut]), !first))
+                    first = false
+                    piece = piece[cut...]
+                }
+            }
+        }
+        return tokens
+    }
+
+    /// Welcher Teil gerade dran ist, nach dem Anteil des Satzes, der schon gesprochen sein dürfte.
+    public static func sentencePartIndex(_ parts: [String], elapsed: Double, total: Double) -> Int {
+        guard parts.count > 1, total > 0 else { return 0 }
+        let reached = min(1, max(0, elapsed / total)) * Double(parts.reduce(0) { $0 + $1.count })
+        var sum = 0.0
+        for (index, part) in parts.enumerated() {
+            sum += Double(part.count)
+            if reached < sum { return index }
+        }
+        return parts.count - 1
+    }
+
+    /// Favoriten zuerst, sonst bleibt die Reihenfolge, wie `sortViews` am Desktop.
+    public static func favoritesFirst(_ books: [LibraryBook]) -> [LibraryBook] {
+        books.filter(\.favorite) + books.filter { !$0.favorite }
     }
 
     /// Index des Absatzes, in dem `chars` liegt (der letzte davor, falls dazwischen).

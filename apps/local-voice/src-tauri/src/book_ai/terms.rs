@@ -442,11 +442,12 @@ pub fn load(page_dir: &Path) -> Result<TermsFile, String> {
 }
 
 pub fn save(page_dir: &Path, file: &TermsFile) -> Result<(), String> {
-    let dir = super::store::ki_dir(page_dir);
-    std::fs::create_dir_all(&dir)
-        .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
     let raw = serde_json::to_string_pretty(file).map_err(|e| e.to_string())?;
-    write_atomic(&dir.join("begriffe.json"), raw.as_bytes())
+    super::store::im_seitenordner(page_dir, || {
+        let dir = super::store::ki_dir(page_dir);
+        super::store::unterordner_anlegen(page_dir, &dir)?;
+        write_atomic(&dir.join("begriffe.json"), raw.as_bytes())
+    })
 }
 
 /// Nutzeränderung übernehmen (bearbeiten, ausblenden, neu anlegen).

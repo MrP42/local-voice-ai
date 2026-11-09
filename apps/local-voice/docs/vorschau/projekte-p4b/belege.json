@@ -1,0 +1,708 @@
+{
+ "01-projekt-2560-hell": {
+  "scrollX": 0,
+  "spaltenUeberlauf": 0,
+  "unter44": [],
+  "schalter": [
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   }
+  ]
+ },
+ "01-projekt-2560-dunkel": {
+  "scrollX": 0,
+  "spaltenUeberlauf": 0,
+  "unter44": [],
+  "schalter": [
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   }
+  ]
+ },
+ "01-projekt-1440-hell": {
+  "scrollX": 0,
+  "spaltenUeberlauf": 0,
+  "unter44": [],
+  "schalter": [
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   }
+  ]
+ },
+ "01-projekt-1440-dunkel": {
+  "scrollX": 0,
+  "spaltenUeberlauf": 0,
+  "unter44": [],
+  "schalter": [
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   }
+  ]
+ },
+ "01-projekt-768-hell": {
+  "scrollX": 0,
+  "spaltenUeberlauf": 0,
+  "unter44": [],
+  "schalter": [
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   }
+  ]
+ },
+ "01-projekt-768-dunkel": {
+  "scrollX": 0,
+  "spaltenUeberlauf": 0,
+  "unter44": [],
+  "schalter": [
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   }
+  ]
+ },
+ "01-projekt-390-hell": {
+  "scrollX": 0,
+  "spaltenUeberlauf": 0,
+  "unter44": [],
+  "schalter": [
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   }
+  ]
+ },
+ "01-projekt-390-dunkel": {
+  "scrollX": 0,
+  "spaltenUeberlauf": 0,
+  "unter44": [],
+  "schalter": [
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   }
+  ]
+ },
+ "02-form-1440-hell": {
+  "scrollX": 0,
+  "spaltenUeberlauf": 0,
+  "unter44": [],
+  "schalter": [
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   }
+  ]
+ },
+ "02-form-1440-dunkel": {
+  "scrollX": 0,
+  "spaltenUeberlauf": 0,
+  "unter44": [],
+  "schalter": [
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   }
+  ]
+ },
+ "02-form-390-hell": {
+  "scrollX": 0,
+  "spaltenUeberlauf": 0,
+  "unter44": [],
+  "schalter": [
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   }
+  ]
+ },
+ "02-form-390-dunkel": {
+  "scrollX": 0,
+  "spaltenUeberlauf": 0,
+  "unter44": [],
+  "schalter": [
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   }
+  ]
+ },
+ "03-zugross-1440-hell": {
+  "scrollX": 0,
+  "spaltenUeberlauf": 0,
+  "unter44": [],
+  "schalter": [
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   }
+  ]
+ },
+ "03-zugross-1440-dunkel": {
+  "scrollX": 0,
+  "spaltenUeberlauf": 0,
+  "unter44": [],
+  "schalter": [
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   }
+  ]
+ },
+ "03-zugross-390-hell": {
+  "scrollX": 0,
+  "spaltenUeberlauf": 0,
+  "unter44": [],
+  "schalter": [
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   }
+  ]
+ },
+ "03-zugross-390-dunkel": {
+  "scrollX": 0,
+  "spaltenUeberlauf": 0,
+  "unter44": [],
+  "schalter": [
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   }
+  ]
+ },
+ "04-reset-1440-hell": {
+  "scrollX": 0,
+  "spaltenUeberlauf": 0,
+  "unter44": [],
+  "schalter": [
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   }
+  ]
+ },
+ "04-reset-1440-dunkel": {
+  "scrollX": 0,
+  "spaltenUeberlauf": 0,
+  "unter44": [],
+  "schalter": [
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   }
+  ]
+ },
+ "04-reset-390-hell": {
+  "scrollX": 0,
+  "spaltenUeberlauf": 0,
+  "unter44": [],
+  "schalter": [
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   }
+  ]
+ },
+ "04-reset-390-dunkel": {
+  "scrollX": 0,
+  "spaltenUeberlauf": 0,
+  "unter44": [],
+  "schalter": [
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   }
+  ]
+ },
+ "05-hinzufuegen-1440-hell": {
+  "scrollX": 0,
+  "spaltenUeberlauf": 0,
+  "unter44": [],
+  "schalter": [
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   }
+  ]
+ },
+ "05-hinzufuegen-1440-dunkel": {
+  "scrollX": 0,
+  "spaltenUeberlauf": 0,
+  "unter44": [],
+  "schalter": [
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   }
+  ]
+ },
+ "05-hinzufuegen-390-hell": {
+  "scrollX": 0,
+  "spaltenUeberlauf": 0,
+  "unter44": [],
+  "schalter": [
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   }
+  ]
+ },
+ "05-hinzufuegen-390-dunkel": {
+  "scrollX": 0,
+  "spaltenUeberlauf": 0,
+  "unter44": [],
+  "schalter": [
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   }
+  ]
+ },
+ "05-dateien-1440-hell": {
+  "scrollX": 0,
+  "spaltenUeberlauf": 0,
+  "unter44": [],
+  "schalter": [
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   }
+  ]
+ },
+ "05-dateien-1440-dunkel": {
+  "scrollX": 0,
+  "spaltenUeberlauf": 0,
+  "unter44": [],
+  "schalter": [
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   }
+  ]
+ },
+ "06-entfernen-1440-hell": {
+  "scrollX": 0,
+  "spaltenUeberlauf": 0,
+  "unter44": [],
+  "schalter": [
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   }
+  ]
+ },
+ "06-entfernen-1440-dunkel": {
+  "scrollX": 0,
+  "spaltenUeberlauf": 0,
+  "unter44": [],
+  "schalter": [
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   }
+  ]
+ },
+ "06-entfernen-390-hell": {
+  "scrollX": 0,
+  "spaltenUeberlauf": 0,
+  "unter44": [],
+  "schalter": [
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   }
+  ]
+ },
+ "06-entfernen-390-dunkel": {
+  "scrollX": 0,
+  "spaltenUeberlauf": 0,
+  "unter44": [],
+  "schalter": [
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   }
+  ]
+ },
+ "06-entfernen-app-1440-hell": {
+  "scrollX": 0,
+  "spaltenUeberlauf": 0,
+  "unter44": [],
+  "schalter": [
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   }
+  ]
+ },
+ "06-entfernen-app-1440-dunkel": {
+  "scrollX": 0,
+  "spaltenUeberlauf": 0,
+  "unter44": [],
+  "schalter": [
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   }
+  ]
+ },
+ "06-menu-1440-hell": {
+  "scrollX": 0,
+  "spaltenUeberlauf": 0,
+  "unter44": [],
+  "schalter": [
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   }
+  ]
+ },
+ "06-menu-1440-dunkel": {
+  "scrollX": 0,
+  "spaltenUeberlauf": 0,
+  "unter44": [],
+  "schalter": [
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   },
+   {
+    "w": 48,
+    "h": 44
+   }
+  ]
+ },
+ "07-leer-1440-hell": {
+  "scrollX": 0,
+  "spaltenUeberlauf": 0,
+  "unter44": [],
+  "schalter": []
+ },
+ "07-leer-1440-dunkel": {
+  "scrollX": 0,
+  "spaltenUeberlauf": 0,
+  "unter44": [],
+  "schalter": []
+ },
+ "08-vorlesen-1440-hell": {
+  "scrollX": 0,
+  "spaltenUeberlauf": 0,
+  "unter44": [],
+  "schalter": []
+ },
+ "08-vorlesen-1440-dunkel": {
+  "scrollX": 0,
+  "spaltenUeberlauf": 0,
+  "unter44": [],
+  "schalter": []
+ },
+ "08-vorlesen-390-hell": {
+  "scrollX": 0,
+  "spaltenUeberlauf": 0,
+  "unter44": [],
+  "schalter": []
+ },
+ "08-vorlesen-390-dunkel": {
+  "scrollX": 0,
+  "spaltenUeberlauf": 0,
+  "unter44": [],
+  "schalter": []
+ },
+ "09-gespraech-1440-hell": {
+  "scrollX": 0,
+  "spaltenUeberlauf": 0,
+  "unter44": [],
+  "schalter": []
+ },
+ "09-gespraech-1440-dunkel": {
+  "scrollX": 0,
+  "spaltenUeberlauf": 0,
+  "unter44": [],
+  "schalter": []
+ },
+ "09-gespraech-390-hell": {
+  "scrollX": 0,
+  "spaltenUeberlauf": 0,
+  "unter44": [],
+  "schalter": []
+ },
+ "09-gespraech-390-dunkel": {
+  "scrollX": 0,
+  "spaltenUeberlauf": 0,
+  "unter44": [],
+  "schalter": []
+ }
+}

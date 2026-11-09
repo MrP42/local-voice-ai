@@ -1,6 +1,8 @@
 mod actions;
 mod agent; // C1 (Goal Lokaler Agent)
 pub mod agent_bridge; // A7
+#[allow(dead_code)] // reine Helfer teils nur in Tests und Folgepaketen (P3/P4)
+mod app_context; // Globaler Sprachassistent: Abrufindex über alle Inhalte
 mod appdata_migration;
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 mod apple_intelligence;
@@ -14,6 +16,7 @@ pub mod book_talk_eval {
     pub use crate::book_ai::talk::eval::*;
 }
 mod books;
+mod buch_dateien; // lva#365 P3: Notizen, Anhänge, Transkript im Buch-Ordner (Kern)
 mod catalog;
 pub mod cli;
 mod clipboard;
@@ -31,6 +34,7 @@ mod keep_awake; // Vorlesen: Bildschirm wach halten (Sonnen-Knopf)
 mod konto; // ADR-0024 Paket 1: Suite-Profil (lokal)
 mod library; // lva#152: Bibliothek für Bücher und Hörbücher
 mod library_export; // lva#236: Fassungen einzeln exportieren (EPUB, PDF, Word, M4B, MP3)
+mod library_layout; // lva#365 P2a: Buch-Ordner-Ablage (Kern ohne Tauri)
 mod llm_client;
 mod llm_keys;
 mod local_update;
@@ -226,6 +230,11 @@ fn should_force_show_permissions_window(app: &AppHandle) -> bool {
 }
 
 fn initialize_core_logic(app_handle: &AppHandle) {
+    // lva#365 P2a: ein offenes Journal der Buch-Ordner-Ablage auflösen, bevor
+    // irgendetwas die Bibliothek oder die Seiten liest (Sync, Abrufindex,
+    // Oberfläche). Hält bei Doppelung oder Fehlen an und verschiebt nichts.
+    commands::library_layout::start_hook(app_handle);
+
     // Note: Enigo (keyboard/mouse simulation) is NOT initialized here.
     // The frontend is responsible for calling the `initialize_enigo` command
     // after onboarding completes. This avoids triggering permission dialogs
@@ -2015,6 +2024,16 @@ fn specta_builder() -> Builder<tauri::Wry> {
             projekte::befehle::projekt_ordner_loesen,
             projekte::befehle::projekt_abgleichen,
             projekte::befehle::projekt_buch_zuordnen,
+            projekte::befehle::projekt_seite_zuordnen,
+            projekte::befehle::projekt_seite_entfernen,
+            projekte::befehle::projekt_dateien_hinzufuegen,
+            projekte::befehle::projekt_datei_entfernen,
+            projekte::befehle::projekt_dateien_gefunden,
+            projekte::befehle::projekt_dateien_lage,
+            projekte::befehle::projekt_dateien_neu_aufbauen,
+            projekte::befehle::projekt_datei_gefunden_aufnehmen,
+            projekte::befehle::projekt_kontext_uebersicht,
+            projekte::befehle::projekt_kontext_schalten,
             projekte::befehle::projekt_buch_entfernen,
             projekte::befehle::projekt_besprechung_zuordnen,
             projekte::befehle::projekt_besprechung_entfernen,
@@ -2502,6 +2521,13 @@ fn specta_builder() -> Builder<tauri::Wry> {
             book_ai::talk::change_book_talk_subscription_preview_setting,
             book_ai::talk::book_talk_preview_status,
             book_ai::talk::change_book_talk_cloud_consent_setting,
+            // lva#325: globaler Sprachassistent (Abrufindex)
+            app_context::service::app_context_warm,
+            app_context::service::app_context_status,
+            app_context::service::app_context_retrieve,
+            app_context::service::app_context_message,
+            app_context::service::app_context_verify,
+            app_context::service::change_voice_global_context_enabled_setting,
             library_export::library_export_text,
             library_export::library_ffmpeg_available,
             library_export::library_export_audio,
@@ -2589,6 +2615,14 @@ fn specta_builder() -> Builder<tauri::Wry> {
             library::library_sizes,
             library::library_purge,
             library::library_find_duplicate,
+            library::library_join_editions,
+            library::library_split_edition,
+            library::library_remove_edition,
+            library::library_restore_edition,
+            library::library_set_primary_edition,
+            library::library_set_reading,
+            library::library_set_alignment,
+            library::library_language_pairs,
             library::library_metadata_search,
             library::library_description,
             library::library_cover_fetch,
@@ -2602,6 +2636,23 @@ fn specta_builder() -> Builder<tauri::Wry> {
             library::library_merge_audio,
             library::library_progress_load,
             library::library_progress_put,
+            commands::library_layout::library_layout_status,
+            commands::library_layout::library_layout_migrate,
+            commands::library_layout::library_layout_rollback,
+            commands::library_layout::library_backup_list,
+            commands::library_layout::library_backup_restore,
+            commands::library_layout::library_backup_restore_best_effort,
+            commands::library_layout::library_backup_sync_check,
+            commands::library_layout::library_backup_export,
+            commands::library_layout::library_backup_delete,
+            commands::library_layout::library_book_files,
+            commands::library_layout::library_book_reveal,
+            commands::book_folder::library_book_folder_files,
+            commands::book_folder::library_book_note_create,
+            commands::book_folder::library_book_attachments_add,
+            commands::book_folder::library_book_file_open,
+            commands::book_folder::library_book_file_remove,
+            commands::book_folder::library_book_file_restore,
             hoersync_live::audiosync_load,
             hoersync_live::audiosync_window,
             hoersync_live::audiosync_anchor,

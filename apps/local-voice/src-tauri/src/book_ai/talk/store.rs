@@ -19,7 +19,13 @@ pub const MAX_TURNS: usize = 200;
 /// Verlaufsänderungen laufen nacheinander (Lesen, Ändern, Schreiben).
 static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// Fachsperre: nie unter der Seitensperre nehmen (Reihenfolge siehe
+/// `commands::pages::lock`).
 fn lock() -> std::sync::MutexGuard<'static, ()> {
+    debug_assert!(
+        !crate::commands::pages::gehalten(),
+        "Gesprächsverlauf-Sperre nicht unter der Seitensperre"
+    );
     LOCK.lock().unwrap_or_else(|e| e.into_inner())
 }
 
@@ -49,11 +55,14 @@ pub fn load(page_dir: &Path) -> Result<Vec<StoredTurn>, String> {
 }
 
 fn save(page_dir: &Path, turns: &[StoredTurn]) -> Result<(), String> {
-    let dir = ki_dir(page_dir);
-    std::fs::create_dir_all(&dir).map_err(|_| "book_talk:history_unwritable".to_string())?;
     let raw =
         serde_json::to_string(turns).map_err(|_| "book_talk:history_unwritable".to_string())?;
-    write_atomic(&path(page_dir), raw.as_bytes())
+    crate::book_ai::store::im_seitenordner(page_dir, || {
+        let dir = ki_dir(page_dir);
+        crate::book_ai::store::unterordner_anlegen(page_dir, &dir)?;
+        write_atomic(&path(page_dir), raw.as_bytes())
+    })
+    .map_err(|_| "book_talk:history_unwritable".to_string())
 }
 
 /// Wechsel anhängen; die ältesten über `MAX_TURNS` fallen weg.

@@ -1,0 +1,168 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
+import { commands, type LibraryBook, type PageInfo } from "@/bindings";
+import { usePersistentState } from "../../../hooks/usePersistentState";
+import {
+  FOLDER_ALL,
+  bookFolderKey,
+  followFolder,
+  groupPages,
+  pageLanguages,
+  pagesInFolder,
+  resolveFolder,
+} from "@/lib/reader/folders";
+
+/**
+ * Ordnerleiste im Vorlesen (lva#365 P1): lädt die Bücher, ordnet die Seiten
+ * in Buch-Ordner und lose Texte und hält die Auswahl. Öffnet jemand eine
+ * Seite außerhalb der Auswahl (Bibliothek, Suche), wechselt die Auswahl in
+ * ihren Ordner, damit die offene Seite in der Liste sichtbar bleibt.
+ */
+export function useReaderFolders(
+  pages: PageInfo[],
+  activePage: string,
+  active: boolean,
+) {
+  const [books, setBooks] = useState<LibraryBook[]>([]);
+  // Für welche Seitenmenge (Schlüssel aus den Seiten-IDs) die gelieferten
+  // Bücher gelten. Weicht sie ab, läuft (oder fehlt) die Anfrage dazu: das ist
+  // im selben Render bekannt, nicht erst nach einem Effekt. Der Schlüssel statt
+  // der Array-Referenz: `pages` wird bei jedem Seitenwechsel neu geladen, die
+  // Menge bleibt dabei gleich und braucht keine neue Bücheranfrage. Solange folgt die Auswahl der
+  // offenen Seite nicht, sonst bestimmen veraltete Bücher den Ordner (eine
+  // neue Buchseite landete unter „Ohne Buch“).
+  const pagesKey = useMemo(() => pages.map((p) => p.id).join("\n"), [pages]);
+  const [loadedFor, setLoadedFor] = useState<string | null>(null);
+  // Eine Anfrage nach einem Sync-Ereignis (Seitenmenge unverändert).
+  const [syncPending, setSyncPending] = useState(false);
+  // Die jüngste Anfrage ist gescheitert: keine Seitenfolge mit alten Daten.
+  const [failed, setFailed] = useState(false);
+  const pending = !active || loadedFor !== pagesKey || syncPending;
+  const [stored, setStored] = usePersistentState<string>(
+    "tts.folder",
+    FOLDER_ALL,
+  );
+
+  // Nur die jüngste Anfrage zählt: überlappende Antworten können in
+  // umgekehrter Reihenfolge eintreffen und sonst neue Bücher überschreiben.
+  const request = useRef(0);
+  const keyRef = useRef(pagesKey);
+  keyRef.current = pagesKey;
+  const reloadBooks = useCallback(async (forKey: string) => {
+    const mine = ++request.current;
+    const result = await commands.libraryList().catch(() => null);
+    if (mine !== request.current) return;
+    const ok = result?.status === "ok" && Array.isArray(result.data);
+    if (ok) setBooks(result.data);
+    // Gescheitert: die Bücher können veraltet sein. Nicht dauerhaft
+    // „pending“, aber die Seitenfolge setzt aus, bis eine Anfrage gelingt.
+    setFailed(!ok);
+    setLoadedFor(forKey);
+    setSyncPending(false);
+  }, []);
+  // Beim Abbau gilt keine ausstehende Antwort mehr.
+  useEffect(
+    () => () => {
+      request.current += 1;
+    },
+    [],
+  );
+
+  // Beim Sichtbarwerden und bei jeder neuen Seitenmenge neu laden: Bücher
+  // entstehen und verschwinden in der Bibliothek, während Vorlesen im
+  // Hintergrund erhalten bleibt. Verborgen gelten die Bücher als ungeladen,
+  // damit beim Zurückkehren bis zur Antwort keine Seitenfolge läuft.
+  useEffect(() => {
+    if (!active) {
+      request.current += 1;
+      setLoadedFor(null);
+      return;
+    }
+    void reloadBooks(pagesKey);
+  }, [active, pagesKey, reloadBooks]);
+
+  useEffect(() => {
+    const unlisten = listen("sync-changed", () => {
+      setSyncPending(true);
+      void reloadBooks(keyRef.current);
+    });
+    return () => {
+      void unlisten.then((fn) => fn()).catch(() => {});
+    };
+  }, [reloadBooks]);
+
+  const folders = useMemo(() => groupPages(pages, books), [pages, books]);
+  const selection = resolveFolder(folders, stored);
+  const allIds = useMemo(() => pages.map((p) => p.id), [pages]);
+  const visibleIds = useMemo(
+    () => pagesInFolder(folders, selection, allIds),
+    [folders, selection, allIds],
+  );
+  const langOf = useMemo(() => pageLanguages(books), [books]);
+  // Buch des gewählten Buch-Ordners (lva#365 P1b), sonst `null`.
+  const book = useMemo(
+    () => books.find((b) => bookFolderKey(b.id) === selection) ?? null,
+    [books, selection],
+  );
+
+  // Der offenen Seite folgen, wenn sie wechselt (Bibliothek, Suche, Löschen)
+  // oder wenn neue Bücherdaten sie aus dem unveränderten Ordner nehmen;
+  // nicht, wenn jemand einen Ordner wählt: ein gewählter leerer Ordner bleibt.
+  const seen = useRef<{ page: string; selection: string; visible: boolean }>({
+    page: "",
+    selection: "",
+    visible: false,
+  });
+  useEffect(() => {
+    // Bei gescheiterter Anfrage bleibt `seen` unverändert: gelingt die
+    // nächste, folgt die Auswahl dann mit gültigen Büchern.
+    if (pending || failed || !activePage || !allIds.includes(activePage))
+      return;
+    const visible = visibleIds.includes(activePage);
+    const last = seen.current;
+    seen.current = { page: activePage, selection, visible };
+    const pageChanged = last.page !== activePage;
+    const movedOut = last.selection === selection && last.visible && !visible;
+    if (!pageChanged && !movedOut) return;
+    const target = followFolder(folders, visibleIds, allIds, activePage);
+    if (target) setStored(target);
+  }, [
+    pending,
+    failed,
+    activePage,
+    selection,
+    visibleIds,
+    allIds,
+    folders,
+    setStored,
+  ]);
+
+  /** Ordner wählen; liegt die offene Seite nicht darin, öffnet die erste. */
+  const select = useCallback(
+    (key: string, open: (id: string) => void) => {
+      setStored(key);
+      const ids = pagesInFolder(folders, key, allIds);
+      const opens = ids.length > 0 && !ids.includes(activePage);
+      if (opens) open(ids[0]);
+      // Eine bewusste Wahl gilt als gesehen, auch während Bücher laden:
+      // sonst überschriebe die spätere Seitenfolge sie.
+      seen.current = {
+        page: opens ? ids[0] : activePage,
+        selection: key,
+        visible: opens || ids.includes(activePage),
+      };
+    },
+    [folders, allIds, activePage, setStored],
+  );
+
+  return {
+    books,
+    folders,
+    selection,
+    book,
+    select,
+    visibleIds,
+    langOf,
+    total: pages.length,
+  };
+}

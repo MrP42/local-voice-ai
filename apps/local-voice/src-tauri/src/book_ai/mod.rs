@@ -36,6 +36,11 @@ static CANCEL: AtomicBool = AtomicBool::new(false);
 /// Es läuft höchstens ein Lauf zur Zeit (das Modell rechnet ohnehin seriell).
 static RUNNING: AtomicBool = AtomicBool::new(false);
 
+/// Läuft gerade ein KI-Lauf? (Die Buch-Ordner-Migration startet dann nicht.)
+pub(crate) fn is_running() -> bool {
+    RUNNING.load(Ordering::SeqCst)
+}
+
 /// Fortschritt eines Laufs (Ereignis `book-ai-progress`).
 #[derive(Debug, Clone, Serialize, Type)]
 pub struct BookAiProgress {
@@ -152,7 +157,7 @@ pub fn book_ai_template_import(app: AppHandle, path: String) -> Result<BookTempl
 // --------------------------------------------------------------- Erzeugen --
 
 /// Originaltext der Seite aus ihrem Arbeitsstand (`state.json`, Feld `text`).
-fn page_text(dir: &std::path::Path) -> Result<String, String> {
+pub(crate) fn page_text(dir: &std::path::Path) -> Result<String, String> {
     let raw = std::fs::read_to_string(dir.join("state.json"))
         .map_err(|_| "book_ai:page_without_text".to_string())?;
     serde_json::from_str::<serde_json::Value>(&raw)
@@ -446,7 +451,13 @@ pub fn book_ai_document_delete(app: AppHandle, page_id: String, id: String) -> R
 /// `begriffe.json` wird vom Lauf und von Nutzerkorrekturen geschrieben.
 static TERMS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// Fachsperre: nie unter der Seitensperre nehmen (Reihenfolge siehe
+/// `commands::pages::lock`).
 fn terms_lock() -> std::sync::MutexGuard<'static, ()> {
+    debug_assert!(
+        !crate::commands::pages::gehalten(),
+        "TERMS_LOCK nicht unter der Seitensperre"
+    );
     TERMS_LOCK.lock().unwrap_or_else(|e| e.into_inner())
 }
 

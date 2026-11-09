@@ -1,9 +1,26 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Mic, Pencil } from "lucide-react";
-import type { VoiceLine } from "@/stores/voiceCallStore";
+import { Pencil, Play, Square } from "lucide-react";
+import { commands } from "@/bindings";
+import { splitStory, type StorySegment } from "./guide/steps";
+import { listen } from "@tauri-apps/api/event";
+import { useSpeakers } from "./guide/useSpeakers";
+import type { VoiceLine, VoiceSource } from "@/stores/voiceCallStore";
+import { sourceTarget } from "./globalContext";
+import { openInReader } from "@/lib/library/books";
 
-const SUGGESTIONS = ["s1", "s2", "s3", "s4"] as const;
+/** Beleg öffnen: Seite im Vorlesen oder den Bereich der Quelle. */
+function openSource(src: VoiceSource): void {
+  const target = sourceTarget(src.jump);
+  if (!target) return;
+  if ("page" in target) {
+    openInReader(target.page, false);
+    return;
+  }
+  window.dispatchEvent(
+    new CustomEvent("lv-navigate", { detail: { section: target.section } }),
+  );
+}
 
 /** Bearbeiten der eigenen erkannten Zeile: Enter speichert, Esc bricht ab (Umschalt+Enter = neue Zeile). */
 const LineEditor: React.FC<{
@@ -61,7 +78,12 @@ const LineEditor: React.FC<{
 export const Transcript: React.FC<{
   lines: VoiceLine[];
   active: boolean;
-  onSuggest: (text: string) => void;
+  /**
+   * Leeres Gespräch (lva#394, Vorbild ChatGPT): Begrüßung und Eingabezeile mittig,
+   * keine Vorschläge. Ohne Angabe bleibt die Fläche leer.
+   */
+  greeting?: string;
+
   /** Werkzeug, das der Orchestrator gerade aufruft (Name). */
   toolStatus?: string | null;
   /** Hinweis des Orchestrators (Code). */
@@ -75,7 +97,7 @@ export const Transcript: React.FC<{
 }> = ({
   lines,
   active,
-  onSuggest,
+  greeting,
   toolStatus = null,
   notice = null,
   onOpenSettings,
@@ -83,6 +105,56 @@ export const Transcript: React.FC<{
   canEdit,
 }) => {
   const { t, i18n } = useTranslation();
+  const speakers = useSpeakers();
+  // Zerlegung je Text einmal (Transcript rendert bei jedem gestreamten Token neu).
+  const storyCache = useMemo(
+    () => new Map<string, StorySegment[]>(),
+    [speakers],
+  );
+  const storyOf = (text: string): StorySegment[] => {
+    if (!speakers.length) return [];
+    let segs = storyCache.get(text);
+    if (!segs) {
+      segs = splitStory(text, speakers);
+      storyCache.set(text, segs);
+    }
+    return segs;
+  };
+  const isStory = (text: string) =>
+    storyOf(text).filter((x) => x.speaker).length > 1;
+  const [reading, setReading] = useState<number | null>(null);
+  const readingRef = useRef<number | null>(null);
+  readingRef.current = reading;
+  const heardSpeaking = useRef(false);
+  // Ende der Wiedergabe (natürlich oder fremd beendet) setzt den Knopf zurück.
+  useEffect(() => {
+    const un = listen<{ phase: string }>("tts-state-changed", (e) => {
+      if (readingRef.current === null) return;
+      if (e.payload.phase === "speaking") heardSpeaking.current = true;
+      else if (heardSpeaking.current && e.payload.phase !== "starting") {
+        heardSpeaking.current = false;
+        setReading(null);
+      }
+    });
+    return () => {
+      void un.then((off) => off());
+      if (readingRef.current !== null)
+        void commands.ttsCancel().catch(() => undefined);
+    };
+  }, []);
+  // lva#394 C3: Geschichte mit Markern über die Vorlese-Pipeline (schaltet die Stimmen selbst).
+  const toggleRead = async (id: number, text: string) => {
+    if (reading === id) {
+      setReading(null);
+      await commands.ttsCancel().catch(() => undefined);
+      return;
+    }
+    heardSpeaking.current = false;
+    setReading(id);
+    const r = await commands.ttsSpeakText(text).catch(() => null);
+    if (!r || r.status === "error")
+      setReading((cur) => (cur === id ? null : cur));
+  };
   const endRef = useRef<HTMLDivElement>(null);
   const [editing, setEditing] = useState<number | null>(null);
   const draft = useRef("");
@@ -154,29 +226,19 @@ export const Transcript: React.FC<{
   ) : null;
 
   if (lines.length === 0) {
+    // Die Eingabezeile steht unmittelbar darunter (VoiceCallPage, feste Baumposition):
+    // die Begrüßung sitzt unten in dieser Fläche, beide zusammen in der Mitte.
+    const title = active ? t("voiceCall.speakNow") : greeting;
     return (
-      <div className="flex-1 min-h-0 flex flex-col items-center justify-center gap-3 text-center p-6 text-text/70">
-        <span className="grid place-items-center w-14 h-14 rounded-full bg-logo-primary/15 text-logo-primary">
-          <Mic className="w-6 h-6" aria-hidden="true" />
-        </span>
-        <h2 className="m-0 text-xl font-semibold text-text">
-          {t("voiceCall.empty.title")}
-        </h2>
-        <p className="m-0">
-          {active ? t("voiceCall.speakNow") : t("voiceCall.empty.hint")}
-        </p>
-        <div className="flex flex-wrap justify-center gap-2 max-w-[640px]">
-          {SUGGESTIONS.map((k) => (
-            <button
-              key={k}
-              type="button"
-              onClick={() => onSuggest(t(`voiceCall.suggestions.${k}`))}
-              className="rounded-2xl border border-mid-gray/30 bg-background px-3 py-1 text-sm cursor-pointer text-text hover:border-logo-primary"
-            >
-              {t(`voiceCall.suggestions.${k}`)}
-            </button>
-          ))}
-        </div>
+      <div className="flex-1 min-h-0 flex flex-col items-center justify-end gap-3 px-4 pb-6 text-center">
+        {title && (
+          <h2
+            className="m-0 text-[28px] max-sm:text-[22px] font-semibold text-text tracking-tight"
+            data-testid="chat-greeting"
+          >
+            {title}
+          </h2>
+        )}
         {noticeBox}
         {liveRegion}
       </div>
@@ -236,8 +298,43 @@ export const Transcript: React.FC<{
                         : "bg-mid-gray/15 rounded-bl-sm"
                     }`}
                   >
-                    {line.text}
+                    {!user && isStory(line.text) ? (
+                      <StoryText segments={storyOf(line.text)} />
+                    ) : (
+                      line.text
+                    )}
                     {line.interrupted ? " …" : ""}
+                    {line.sources && line.sources.length > 0 && (
+                      <ul
+                        aria-label={t("voiceCall.sources.label")}
+                        data-testid="voice-sources"
+                        className="m-0 mt-1.5 p-0 list-none flex flex-col gap-0.5 text-xs text-text/70"
+                      >
+                        {line.sources.map((src) => (
+                          <li key={src.k}>
+                            <button
+                              type="button"
+                              data-testid="voice-source"
+                              disabled={!sourceTarget(src.jump)}
+                              onClick={() => openSource(src)}
+                              title={t("voiceCall.sources.open")}
+                              className="text-left underline-offset-2 hover:underline disabled:no-underline disabled:cursor-default"
+                            >
+                              {t("voiceCall.sources.entry", {
+                                k: src.k,
+                                kind: t(`voiceCall.sources.kind.${src.kind}`, {
+                                  defaultValue: src.kind,
+                                }),
+                                title: src.title,
+                              })}
+                              {src.page !== null
+                                ? `, ${t("voiceCall.sources.page", { page: src.page })}`
+                                : ""}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                   </div>
                 )}
                 <div
@@ -260,6 +357,24 @@ export const Transcript: React.FC<{
                       className="grid place-items-center w-7 h-7 -my-1.5 rounded cursor-pointer text-text/80 hover:bg-mid-gray/15 hover:text-logo-primary focus-visible:text-text"
                     >
                       <Pencil className="w-4 h-4" aria-hidden="true" />
+                    </button>
+                  )}
+                  {!user && isStory(line.text) && (
+                    <button
+                      type="button"
+                      data-testid="story-read"
+                      aria-pressed={reading === line.id}
+                      onClick={() => void toggleRead(line.id, line.text)}
+                      className="inline-flex items-center gap-1 -my-1 px-1.5 h-7 rounded cursor-pointer text-text/80 hover:bg-mid-gray/15 hover:text-logo-primary"
+                    >
+                      {reading === line.id ? (
+                        <Square className="w-3.5 h-3.5" aria-hidden="true" />
+                      ) : (
+                        <Play className="w-3.5 h-3.5" aria-hidden="true" />
+                      )}
+                      {reading === line.id
+                        ? t("chatGuide.story.stop")
+                        : t("chatGuide.story.readVoices")}
                     </button>
                   )}
                   <span>{time(line.at)}</span>
@@ -300,5 +415,40 @@ export const Transcript: React.FC<{
         <div ref={endRef} />
       </div>
     </div>
+  );
+};
+
+const SPEAKER_TONES = [
+  "bg-logo-primary/15 text-logo-primary",
+  "bg-red-500/10 text-red-600",
+  "bg-green-500/10 text-green-700",
+  "bg-yellow-500/15 text-yellow-700",
+];
+
+/** Geschichte mit Sprechern: je Abschnitt ein Namensschild statt des Markers. */
+const StoryText: React.FC<{
+  segments: { speaker: string | null; text: string }[];
+}> = ({ segments }) => {
+  const tone = new Map<string, string>();
+  return (
+    <span className="flex flex-col gap-1.5" data-testid="story-text">
+      {segments.map((seg, i) => {
+        const name = seg.speaker ?? "";
+        if (name && !tone.has(name))
+          tone.set(name, SPEAKER_TONES[tone.size % SPEAKER_TONES.length]);
+        return (
+          <span key={i} className="flex gap-2 items-baseline">
+            {name && (
+              <span
+                className={`shrink-0 rounded-full px-2 text-[11px] font-semibold ${tone.get(name)}`}
+              >
+                {name}
+              </span>
+            )}
+            <span>{seg.text}</span>
+          </span>
+        );
+      })}
+    </span>
   );
 };

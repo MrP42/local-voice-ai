@@ -51,6 +51,7 @@ pub fn change_voice_call_read_transcripts_setting(
     let mut settings = crate::settings::get_settings(&app);
     settings.voice_call_read_transcripts = enabled;
     crate::settings::write_settings(&app, settings);
+    crate::app_context::service::on_settings_changed(&app);
     Ok(())
 }
 
@@ -65,6 +66,7 @@ pub fn change_voice_call_knowledge_setting(
     let mut settings = crate::settings::get_settings(&app);
     settings.voice_call_knowledge = areas::normalize_keys(&areas);
     crate::settings::write_settings(&app, settings);
+    crate::app_context::service::on_settings_changed(&app);
     Ok(())
 }
 

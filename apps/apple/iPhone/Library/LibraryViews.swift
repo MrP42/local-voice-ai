@@ -30,6 +30,8 @@ struct LibraryCover: View {
     var compact = false
     /// Echtes Cover (aus der Hörbuchdatei, EPUB oder vom Desktop); sonst erzeugt.
     var image: UIImage? = nil
+    /// Abstand des Titels oben, wenn dort etwas aufliegt (Stern im Regal).
+    var titleTopInset: CGFloat = 0
     private static let colors: [(Color, Color)] = [
         (Color(red: 0.18, green: 0.29, blue: 0.24), Color(red: 0.95, green: 0.91, blue: 0.82)),
         (Color(red: 0.54, green: 0.23, blue: 0.18), Color(red: 0.98, green: 0.91, blue: 0.86)),
@@ -58,7 +60,7 @@ struct LibraryCover: View {
             .overlay(alignment: .topLeading) {
                 if !compact {
                     Text(title).font(.system(.footnote, design: .serif).weight(.bold)).foregroundStyle(pick.1)
-                        .lineLimit(5).minimumScaleFactor(0.6).padding(8)
+                        .lineLimit(5).minimumScaleFactor(0.6).padding(8).padding(.top, titleTopInset)
                 }
             }
             .clipped()
@@ -67,7 +69,7 @@ struct LibraryCover: View {
 }
 
 enum ShelfFilter: String, CaseIterable, Identifiable {
-    case all = "Alle", inProgress = "In Arbeit", audio = "Hörbuch", finished = "Fertig"
+    case all = "Alle", favorites = "Favoriten", inProgress = "In Arbeit", audio = "Hörbuch", finished = "Fertig"
     var id: String { rawValue }
 }
 
@@ -79,7 +81,11 @@ struct LibraryTab: View {
         NavigationStack { LibraryShelf() }
             .onAppear { playback.warmUp() }
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                if playback.book != nil && !playback.presented { LibraryMiniPlayer().padding(.horizontal, 8).padding(.bottom, 6) }
+                VStack(spacing: 0) {
+                    if !playback.presented { LanguageNoticeBar() }
+                    if playback.book != nil && !playback.presented { LibraryMiniPlayer().padding(.horizontal, 8).padding(.bottom, 6) }
+                }
+                .animation(.easeInOut(duration: 0.2), value: playback.languageNotice?.id)
             }
             .fullScreenCover(isPresented: $playback.presented) { LibraryPlayerScreen() }
             #if DEBUG
@@ -87,6 +93,9 @@ struct LibraryTab: View {
                 // Diagnose-Startargumente für Simulator-Bilder, kein Produktpfad.
                 let args = ProcessInfo.processInfo.arguments
                 if let i = args.firstIndex(of: "--pair-url"), i + 1 < args.count, let url = URL(string: args[i + 1]) { PairingFlow.shared.open(url) }
+                if args.contains("--library-mini"), let book = library.books.first {
+                    playback.open(book, autoplay: true); playback.presented = false
+                }
                 if args.contains("--phonon-probe") {
                     // Geräteprobe ohne Bedienung: Ergebnis landet in Documents/phonon-probe.txt.
                     let out = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("phonon-probe.txt")
@@ -112,9 +121,18 @@ struct LibraryTab: View {
                         guard await LibrarySync.shared.downloadAudio(book), let fresh = library.books.first(where: { $0.id == book.id }) else { return }
                         book = fresh
                     }
-                    playback.openAudiobook(book, autoplay: true); playback.presented = true
+                    playback.open(book, autoplay: true)
+                    if playback.source != .audiobook { playback.switchSource(to: .audiobook) }
                 }
-                if args.contains("--library-read") { playback.openReadAloud(book, autoplay: true); playback.presented = true }
+                if args.contains("--library-read") {
+                    playback.open(book, autoplay: true)
+                    if playback.source != .voice { playback.switchSource(to: .voice) }
+                    playback.show(.readListen)
+                }
+                // Ansicht für Simulator-Bilder erzwingen: --player-surface listen|readListen|read (nach --library-read/-listen).
+                if let i = args.firstIndex(of: "--player-surface"), i + 1 < args.count, let surface = PlayerSurface(rawValue: args[i + 1]) {
+                    playback.show(surface)
+                }
             }
             #endif
             .alert("Bibliothek", isPresented: Binding(get: { playback.error != nil }, set: { if !$0 { playback.error = nil } })) {
@@ -128,31 +146,61 @@ struct LibraryShelf: View {
     @ObservedObject var playback = LibraryPlayback.shared
     @State private var query = ""
     @State private var filter = ShelfFilter.all
+    @Environment(\.dynamicTypeSize) private var typeSize
     @State private var importing = false
     @State private var showSync = false
     @ObservedObject var sync = LibrarySync.shared
 
-    private func textFraction(_ b: LibraryBook) -> Double { LibraryProgress.fraction(library.record(library.textKey(b))) }
-    private func audioFraction(_ b: LibraryBook) -> Double { LibraryProgress.fraction(library.record(library.audioKey(b))) }
+    // Fortschritt des Buchs = Fortschritt der zuletzt aktiven Sprachfassung (lva#344).
+    private func textFraction(_ b: LibraryBook) -> Double { LibraryProgress.fraction(library.record(library.textKey(library.activeView(b)))) }
+    private func audioFraction(_ b: LibraryBook) -> Double { LibraryProgress.fraction(library.record(library.audioKey(library.activeView(b)))) }
 
     private var visible: [LibraryBook] {
         let q = query.trimmingCharacters(in: .whitespaces)
-        return library.books.filter { b in
+        return LibraryText.favoritesFirst(library.books.filter { b in
             let matches = q.isEmpty || b.title.localizedCaseInsensitiveContains(q) || b.authors.contains { $0.localizedCaseInsensitiveContains(q) }
             let done = b.finished || max(textFraction(b), audioFraction(b)) >= 1
             switch filter {
             case .all: return matches
+            case .favorites: return matches && b.favorite
             case .inProgress: return matches && !done && max(textFraction(b), audioFraction(b)) > 0
             case .audio: return matches && b.audio != nil
             case .finished: return matches && done
             }
+        })
+    }
+
+    /// In sehr großer Schrift steht das Cover über dem Text.
+    private var resumeLayout: AnyLayout {
+        typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 10)) : AnyLayout(HStackLayout(alignment: .top, spacing: 14))
+    }
+
+    /// Angaben der Karte „Weiterhören/Weiterlesen“: Stand, Rest und Umfang.
+    private func resumeFacts(_ book: LibraryBook, _ rec: ProgressRecord, isAudio: Bool) -> [String] {
+        // Stelle und Rest aus demselben Wert: Gehörte Bereiche können weiter reichen als die aktuelle Stelle.
+        let left = max(0, rec.length - rec.offset), percent = LibraryFormat.percent(rec.length > 0 ? min(1, rec.offset / rec.length) : 0)
+        let load = library.hasAudio(book) ? "geladen" : "im Konto"
+        guard isAudio else {
+            var facts = ["Text · \(percent)", "Vorlesen: noch ca. \(LibraryFormat.remaining(LibraryText.listenMilliseconds(chars: left))) bei Normaltempo"]
+            if book.audio != nil {
+                let heard = LibraryFormat.percent(LibraryProgress.fraction(library.record(library.audioKey(book))))
+                facts.append("Hörbuch · \(heard) · \(load)")
+            }
+            return facts
         }
+        var facts = ["Hörbuch · \(percent) · noch \(LibraryFormat.remaining(left))"]
+        if let chapters = library.cachedAudiobookInfo(book)?.chapters, chapters.count > 1 {
+            facts.append("Kapitel \(AudiobookChapters.index(at: rec.offset, in: chapters) + 1) von \(chapters.count) · Gesamt \(LibraryFormat.remaining(rec.length))")
+        }
+        facts.append(load.prefix(1).uppercased() + load.dropFirst())
+        return facts
     }
 
     /// Zuletzt gehörtes oder gelesenes, noch nicht fertiges Buch.
     private var resume: (LibraryBook, ProgressRecord, Bool)? {
         var best: (LibraryBook, ProgressRecord, Bool)?
-        for b in library.books where !b.finished {
+        for raw in library.books where !raw.finished {
+            let b = library.activeView(raw)
             for (key, isAudio) in [(library.audioKey(b), true), (library.textKey(b), false)] {
                 guard let r = library.record(key), r.offset > 0, r.finished != true else { continue }
                 if best == nil || r.updated > best!.1.updated { best = (b, r, isAudio) }
@@ -162,6 +210,7 @@ struct LibraryShelf: View {
     }
 
     var body: some View {
+        let shown = visible  // einmal je Durchlauf, das Regal zeichnet beim Hören laufend neu
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 HStack(spacing: 10) {
@@ -185,22 +234,34 @@ struct LibraryShelf: View {
                 }
 
                 if let (book, rec, isAudio) = resume, query.isEmpty, filter == .all {
+                    let facts = resumeFacts(book, rec, isAudio: isAudio)
                     Text(isAudio ? "WEITERHÖREN" : "WEITERLESEN").font(.caption.weight(.semibold)).tracking(0.6).foregroundStyle(VoicePalette.secondaryText)
                     NavigationLink { LibraryBookDetail(bookId: book.id) } label: {
-                        HStack(alignment: .top, spacing: 14) {
+                        resumeLayout {
                             LibraryCover(title: book.title, image: library.coverThumbnail(book)).frame(width: 64, height: 96)
                             VStack(alignment: .leading, spacing: 3) {
-                                Text(book.title).font(.headline)
-                                if !book.authors.isEmpty { Text(book.authors.joined(separator: ", ")).font(.subheadline).foregroundStyle(VoicePalette.secondaryText) }
-                                Text(isAudio ? "Hörbuch · noch \(LibraryFormat.remaining(max(0, rec.length - rec.offset)))" : "Text · \(LibraryFormat.percent(LibraryProgress.fraction(rec))) gelesen")
-                                    .font(.footnote).foregroundStyle(VoicePalette.secondaryText)
-                                ProgressView(value: LibraryProgress.fraction(rec)).tint(VoicePalette.accent)
+                                Text(book.title).font(.headline).fixedSize(horizontal: false, vertical: true)
+                                if !book.authors.isEmpty { Text(book.authors.joined(separator: ", ")).font(.subheadline).foregroundStyle(VoicePalette.secondaryText).fixedSize(horizontal: false, vertical: true) }
+                                ForEach(facts, id: \.self) { fact in
+                                    Text(fact).font(.footnote).foregroundStyle(VoicePalette.secondaryText).fixedSize(horizontal: false, vertical: true)
+                                }
+                                ProgressView(value: LibraryProgress.fraction(rec)).tint(VoicePalette.accent).accessibilityHidden(true)
                             }
-                        }.voiceCard()
+                        }
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(([book.title] + book.authors + facts).joined(separator: ", "))
+                        .voiceCard()
                     }.buttonStyle(.plain)
                 }
 
-                Text("ALLE BÜCHER · \(visible.count)").font(.caption.weight(.semibold)).tracking(0.6).foregroundStyle(VoicePalette.secondaryText)
+                Text("ALLE BÜCHER · \(shown.count)").font(.caption.weight(.semibold)).tracking(0.6).foregroundStyle(VoicePalette.secondaryText)
+                if library.anyAudioDownloaded {
+                    HStack(alignment: .top, spacing: 4) {
+                        DownloadedMark()
+                        Text("Hörbuch heruntergeladen, offline verfügbar").font(.caption).foregroundStyle(VoicePalette.secondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }.accessibilityHidden(true)
+                }
                 if library.books.isEmpty {
                     ContentUnavailableView {
                         Label("Noch keine Bücher", systemImage: "books.vertical")
@@ -209,14 +270,17 @@ struct LibraryShelf: View {
                     } actions: { Button("Buch hinzufügen") { importing = true }.buttonStyle(.borderedProminent) }
                 }
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: 12)], alignment: .leading, spacing: 16) {
-                    ForEach(visible) { book in
+                    ForEach(shown) { book in
                         NavigationLink { LibraryBookDetail(bookId: book.id) } label: { ShelfItem(book: book) }.buttonStyle(.plain)
+                            .overlay(alignment: .topLeading) { FavoriteStar(book: book) }
+                            .overlay(alignment: .topTrailing) { ShelfPlayButton(book: book) }
                     }
                 }
                 if library.importing { ProgressView("Importiere …") }
                 if let error = library.error { Text(error).font(.footnote).foregroundStyle(.red) }
             }.padding(16)
         }
+        .modifier(MiniPlayerClearance())
         .background(VoicePalette.background)
         .navigationTitle("Bibliothek")
         .toolbar {
@@ -242,21 +306,191 @@ struct LibraryShelf: View {
 struct ShelfItem: View {
     let book: LibraryBook
     @ObservedObject var library = PhoneLibrary.shared
+    @ObservedObject var downloads = AudioDownloads.shared
+    @Environment(\.dynamicTypeSize) private var typeSize
     var body: some View {
-        let audio = library.hasAudio(book), text = library.hasText(book)
-        let rec = audio || library.audioInAccount(book) ? library.record(library.audioKey(book)) : library.record(library.textKey(book))
+        // Sprachfassungen (lva#344): Stand und Hörbuch der zuletzt aktiven Fassung, dazu die Sprachkürzel.
+        let active = library.activeView(book)
+        let audio = library.hasAudio(active)
+        let rec = audio || library.audioInAccount(active) ? library.record(library.audioKey(active)) : library.record(library.textKey(active))
         VStack(alignment: .leading, spacing: 5) {
-            LibraryCover(title: book.title, image: library.coverThumbnail(book)).aspectRatio(2/3, contentMode: .fit)
+            LibraryCover(title: book.title, image: library.coverThumbnail(book), titleTopInset: 24).aspectRatio(2/3, contentMode: .fit)
+            if downloads.jobs[book.id] != nil {
+                ShelfDownloadStatus(book: book)
+            } else {
             ProgressView(value: book.finished ? 1 : LibraryProgress.fraction(rec)).tint(VoicePalette.accent)
-            Text(audio || library.audioInAccount(book) ? (rec == nil ? "Hörbuch · neu" : "Hörbuch · \(LibraryFormat.percent(LibraryProgress.fraction(rec)))")
-                       : "Text · \(LibraryFormat.percent(LibraryProgress.fraction(rec)))")
-                .font(.caption).foregroundStyle(VoicePalette.secondaryText)
-            let inAccount = library.audioInAccount(book)
-            Text(inAccount ? (text ? "Hörbuch im Konto" : "Im Konto, nicht geladen") : (audio || text ? "Auf dem iPhone" : "Im Konto, nicht geladen"))
-                .font(.caption.weight(.semibold)).foregroundStyle(!inAccount && (audio || text) ? Color.green : VoicePalette.secondaryText)
+            // Fester Platz für das Symbol: Lange Angaben brechen um und rücken nicht darunter.
+            metaLayout {
+                Text(audio || library.audioInAccount(active) ? (rec == nil ? "Hörbuch · neu" : "Hörbuch · \(LibraryFormat.percent(LibraryProgress.fraction(rec)))")
+                           : "Text · \(LibraryFormat.percent(LibraryProgress.fraction(rec)))")
+                    .font(.caption).foregroundStyle(VoicePalette.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: typeSize.isAccessibilitySize ? nil : .infinity, alignment: .leading)
+                if audio || !typeSize.isAccessibilitySize { DownloadedMark(visible: audio) }
+            }
+            LanguageBadges(book: book)
+            }
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(book.title), \(book.authors.joined(separator: ", "))")
+        .accessibilityLabel(spokenLabel(audio: audio))
+        .accessibilityValue(downloads.jobs[book.id] != nil ? ShelfDownloadStatus.line(book, downloads) : "")
+    }
+
+    private func spokenLabel(audio: Bool) -> String {
+        var parts: [String] = [book.title]
+        parts.append(contentsOf: book.authors)
+        if let languages = LanguageBadges.spoken(book) { parts.append(languages) }
+        if audio { parts.append("Hörbuch heruntergeladen, offline verfügbar") }
+        return parts.joined(separator: ", ")
+    }
+
+    /// In sehr großer Schrift untereinander, sonst bliebe dem Text kaum Breite.
+    private var metaLayout: AnyLayout {
+        typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 2)) : AnyLayout(HStackLayout(alignment: .top, spacing: 4))
+    }
+}
+
+/// Grüner Kreis mit Pfeil nach unten: Das Hörbuch liegt auf dem iPhone. Der Platz bleibt auch ohne Symbol frei.
+struct DownloadedMark: View {
+    var visible = true
+    @ScaledMetric(relativeTo: .caption) private var size: CGFloat = 15
+
+    var body: some View {
+        Image(systemName: "arrow.down.circle.fill")
+            .resizable().scaledToFit().frame(width: size, height: size)
+            .foregroundStyle(VoicePalette.success)
+            .opacity(visible ? 1 : 0)
+            .accessibilityHidden(true)
+    }
+}
+
+/// Kurzbuch auf der Buchseite. Es fasst das ganze Buch zusammen, deshalb einmal je Buch ein Hinweis.
+struct KurzbuchRow: View {
+    let book: LibraryBook
+    let ref: KurzbuchRef
+    let showLanguage: Bool
+    @ObservedObject var library = PhoneLibrary.shared
+    @ObservedObject var sync = LibrarySync.shared
+    @ObservedObject var playback = LibraryPlayback.shared
+    @State private var warning = false
+
+    private var seenKey: String { "kurzbuch.gesehen." + book.id }
+    private var title: String { "Kurzbuch" + (showLanguage ? " · \(ref.language ?? "")" : "") }
+    private var origin: String {
+        var parts: [String] = []
+        if let ms = ref.createdMs { parts.append(Date(timeIntervalSince1970: ms / 1000).formatted(date: .numeric, time: .omitted)) }
+        if let source = ref.source, !source.isEmpty { parts.append(source) }
+        if let model = ref.model, !model.isEmpty { parts.append(model) }
+        return parts.joined(separator: " · ")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if library.kurzbuchReady(book, ref) {
+                Button {
+                    if UserDefaults.standard.bool(forKey: seenKey) { open() } else { warning = true }
+                } label: {
+                    Label(title, systemImage: "text.book.closed").frame(maxWidth: .infinity, minHeight: 44)
+                }.buttonStyle(.bordered)
+            } else {
+                HStack {
+                    Label(sync.running ? "\(title) wird geladen" : "\(title) noch nicht geladen", systemImage: "text.book.closed")
+                        .font(.subheadline).foregroundStyle(VoicePalette.secondaryText)
+                    Spacer()
+                    if sync.running { ProgressView() }
+                    else { Button("Erneut laden") { Task { await sync.run() } }.frame(minHeight: 44) }
+                }
+            }
+            if !origin.isEmpty { Text(origin).font(.caption).foregroundStyle(VoicePalette.secondaryText).fixedSize(horizontal: false, vertical: true) }
+        }
+        .confirmationDialog("Das Kurzbuch fasst das ganze Buch zusammen und kann das Ende verraten.", isPresented: $warning, titleVisibility: .visible) {
+            Button("Kurzbuch öffnen") { UserDefaults.standard.set(true, forKey: seenKey); open() }
+            Button("Abbrechen", role: .cancel) {}
+        }
+    }
+
+    private func open() {
+        if let entry = library.kurzbuchBook(book, ref) { playback.open(entry) }
+    }
+}
+
+/// Solange ein Hörbuch lädt, ersetzt das die Fortschrittszeile unter dem Cover.
+struct ShelfDownloadStatus: View {
+    let book: LibraryBook
+    @ObservedObject var downloads = AudioDownloads.shared
+    @ObservedObject var sync = LibrarySync.shared  // Netzwechsel ändert die Zeile auch ohne neue Bytes
+
+    var body: some View {
+        Text(Self.line(book, downloads))
+            .font(.caption).foregroundStyle(VoicePalette.secondaryText)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    static func line(_ book: LibraryBook, _ downloads: AudioDownloads) -> String {
+        let job = downloads.jobs[book.id]
+        let total = max(1, job?.totalBytes ?? 1), bytes = downloads.done[book.id] ?? 0
+        let percent = LibraryFormat.percent(min(1, Double(bytes) / Double(total)))
+        switch job?.phase {
+        case .failed: return "Laden fehlgeschlagen"
+        case .paused: return "Angehalten · \(percent)"
+        default:
+            if downloads.waitsForWifi(book.id) { return "Wartet auf WLAN · \(percent)" }
+            let rest = downloads.remainingSeconds(book.id).map { " · " + AudioDownload.remainingText($0) } ?? ""
+            return "Lädt · \(percent)\(rest)"
+        }
+    }
+}
+
+/// Startet direkt aus dem Regal: Hörbuch, wenn es geladen ist, sonst Vorlesen. Der Mini-Player übernimmt.
+struct ShelfPlayButton: View {
+    let book: LibraryBook
+    @ObservedObject var library = PhoneLibrary.shared
+
+    var body: some View {
+        if library.hasAudio(book) || library.hasText(book) { ShelfPlayControl(book: book) }
+    }
+}
+
+/// Eigene Ansicht: Die Position ändert sich beim Hören laufend, das soll keine Dateien prüfen.
+private struct ShelfPlayControl: View {
+    let book: LibraryBook
+    @ObservedObject var playback = LibraryPlayback.shared
+
+    var body: some View {
+        let current = playback.book?.id == book.id
+        Button {
+            if current { playback.toggle() } else { playback.open(book, autoplay: true); playback.presented = false }
+        } label: {
+            Group {
+                if current && playback.preparing { ProgressView().controlSize(.small).tint(.white) }
+                else { Image(systemName: current && playback.playing ? "pause.fill" : "play.fill").font(.system(size: 13, weight: .semibold)) }
+            }
+            .foregroundStyle(Color.white)
+            .frame(width: 26, height: 26).background(.black.opacity(0.45), in: Circle())
+            .padding(4).frame(width: 44, height: 44, alignment: .topTrailing).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(current && playback.busy ? "Pause" : "Abspielen"): \(book.title)")
+    }
+}
+
+/// Stern am Cover; wie am PC stehen Favoriten oben im Regal. Der Abgleich nimmt die Wahl mit.
+struct FavoriteStar: View {
+    let book: LibraryBook
+    @ObservedObject var library = PhoneLibrary.shared
+
+    var body: some View {
+        Button {
+            LibrarySync.shared.setFavorite(book, !book.favorite)
+            Task { await LibrarySync.shared.run() }
+        } label: {
+            Image(systemName: book.favorite ? "star.fill" : "star")
+                .font(.system(size: 13, weight: .semibold)).foregroundStyle(book.favorite ? Color.yellow : Color.white)
+                .frame(width: 26, height: 26).background(.black.opacity(0.45), in: Circle())
+                .padding(4).frame(width: 44, height: 44, alignment: .topLeading).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(book.favorite ? "Aus Favoriten entfernen: \(book.title)" : "Zu Favoriten hinzufügen: \(book.title)")
     }
 }
 
@@ -279,7 +513,10 @@ struct LibraryBookDetail: View {
         else { ContentUnavailableView("Buch nicht mehr vorhanden", systemImage: "book.closed") }
     }
 
-    @ViewBuilder private func content(_ book: LibraryBook) -> some View {
+    /// `raw` ist das Buch im Regal (für alles, was es ändert), `book` die Sicht auf die zuletzt aktive Sprachfassung
+    /// (für alles, was angezeigt wird, lva#344).
+    @ViewBuilder private func content(_ raw: LibraryBook) -> some View {
+        let book = library.activeView(raw)
         let hasText = library.hasText(book), hasAudio = library.hasAudio(book), inAccount = library.audioInAccount(book)
         let audioRec = library.record(library.audioKey(book)), textRec = library.record(library.textKey(book))
         let tracks = book.audio?.allTracks ?? []
@@ -293,31 +530,28 @@ struct LibraryBookDetail: View {
                         if !book.authors.isEmpty { Text(book.authors.joined(separator: ", ")).font(.body) }
                         if hasText { Text("Text: \(book.text?.sourceName ?? "vorhanden")").font(.footnote).foregroundStyle(VoicePalette.secondaryText) }
                         if hasAudio { Text("Hörbuch: \(LibraryFormat.clock(total)) · \(tracks.count) \(tracks.count == 1 ? "Teil" : "Teile")").font(.footnote).foregroundStyle(VoicePalette.secondaryText) }
-                        Label("Auf dem iPhone", systemImage: "checkmark").font(.footnote.weight(.semibold)).foregroundStyle(.green)
+                        if !inAccount, hasText || hasAudio {
+                            Label("Auf dem iPhone", systemImage: "checkmark").font(.footnote.weight(.semibold)).foregroundStyle(VoicePalette.success)
+                        }
                     }
                 }
-                HStack(spacing: 10) {
-                    if hasText {
-                        Button { playback.openReadAloud(book); playback.presented = playback.book != nil } label: {
-                            Label("Text vorlesen", systemImage: "book").frame(maxWidth: .infinity, minHeight: 44)
-                        }.buttonStyle(.bordered).accessibilityIdentifier("readAloud")
+                // Ein Knopf für alles: Hören, Mitlesen und Lesen wählt man im Player.
+                Button {
+                    Task {
+                        if !hasText, !library.hasAudio(book) { guard await sync.downloadAudio(book) else { return } }
+                        guard let fresh = library.books.first(where: { $0.id == book.id }) else { return }
+                        playback.open(fresh)
                     }
-                    if hasAudio || inAccount {
-                        Button {
-                            Task {
-                                if !library.hasAudio(book) { guard await sync.downloadAudio(book) else { return } }
-                                guard let fresh = library.books.first(where: { $0.id == book.id }) else { return }
-                                playback.openAudiobook(fresh); playback.presented = playback.book != nil
-                            }
-                        } label: {
-                            Label("Hörbuch hören", systemImage: "headphones").frame(maxWidth: .infinity, minHeight: 44)
-                        }.buttonStyle(.borderedProminent).tint(VoicePalette.ink).foregroundStyle(VoicePalette.brand)
-                            .disabled(downloads.isActive(book.id)).accessibilityIdentifier("listen")
-                    }
-                }.font(.headline)
+                } label: {
+                    Label(audioRec != nil || textRec != nil ? "Weiter" : "Starten", systemImage: "play.fill")
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .buttonStyle(.borderedProminent).tint(VoicePalette.ink).foregroundStyle(VoicePalette.brand).font(.headline)
+                .disabled(!hasText && downloads.isActive(book.id)).accessibilityIdentifier("openBook")
+                .accessibilityHint(hasText ? "Öffnet den Player. Hören, Lesen und Hören oder Lesen wählst du dort." : "Spielt das Hörbuch ab.")
 
-                if inAccount || downloads.jobs[book.id] != nil || (hasAudio && !library.meta(book).files.audio.isEmpty) {
-                    AudioDownloadCard(book: book, onRemove: { askRemoveAudio($0) })
+                if inAccount || downloads.jobs[book.id] != nil || (hasAudio && !library.accountAudio(book).isEmpty) {
+                    AudioDownloadCard(book: book, onRemove: { _ in askRemoveAudio(raw) })
                 }
 
                 if hasAudio || hasText {
@@ -336,15 +570,18 @@ struct LibraryBookDetail: View {
                     }.voiceCard()
                 }
 
+                ForEach(library.kurzbuecher(book), id: \.blob) { ref in
+                    KurzbuchRow(book: book, ref: ref, showLanguage: library.kurzbuecher(book).count > 1)
+                }
+
                 if tracks.count > 1 {
                     Text("HÖRBUCH-TEILE").font(.caption.weight(.semibold)).tracking(0.6).foregroundStyle(VoicePalette.secondaryText)
                     let current = audioRec.map { LibraryTracks.position(of: $0.offset, in: tracks).index }
                     ForEach(Array(tracks.enumerated()), id: \.offset) { i, t in
                         Button {
-                            playback.openAudiobook(book, autoplay: false)
-                            guard playback.book?.id == book.id else { return }
+                            playback.open(book, prefer: .audiobook)
+                            guard playback.book?.id == book.id, playback.source == .audiobook else { return }
                             playback.seek(toMs: LibraryTracks.total(TrackPosition(index: i, offsetMs: 0), in: tracks))
-                            playback.presented = true
                         } label: {
                             HStack(spacing: 12) {
                                 Text("Teil \(i + 1) · \(t.title)").lineLimit(2)
@@ -357,14 +594,15 @@ struct LibraryBookDetail: View {
                 }
             }.padding(16)
         }
+        .modifier(MiniPlayerClearance())
         .background(VoicePalette.background)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu("Mehr", systemImage: "ellipsis.circle") {
-                    Button(book.finished ? "Als nicht fertig markieren" : "Als fertig markieren", systemImage: "checkmark.circle") { library.setFinished(book, !book.finished) }
-                    if library.hasLocalAudio(book) {
-                        Button("Hörbuch vom iPhone entfernen", systemImage: "icloud.and.arrow.down") { askRemoveAudio(book) }
+                    Button(raw.finished ? "Als nicht fertig markieren" : "Als fertig markieren", systemImage: "checkmark.circle") { library.setFinished(raw, !raw.finished) }
+                    if library.hasLocalAudio(raw) {
+                        Button("Hörbuch vom iPhone entfernen", systemImage: "icloud.and.arrow.down") { askRemoveAudio(raw) }
                             .disabled(removingAudio)
                     }
                     if sync.isSynced(book) {
@@ -380,7 +618,7 @@ struct LibraryBookDetail: View {
                 removingAudio = true
                 Task {
                     // Prüft vorher beim Konto, ob alle Teile vollständig dort liegen.
-                    let result = await sync.removeDownloads(book)
+                    let result = await sync.removeDownloads(raw)
                     removingAudio = false
                     if !result.verdict.allowed { offloadBlocked = result.verdict }
                 }
@@ -397,8 +635,8 @@ struct LibraryBookDetail: View {
                             isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Löschen", role: .destructive) {
                 if playback.book?.id == book.id { playback.stop() }
-                if sync.isSynced(book) { Task { await sync.deleteEverywhere(book); dismiss() } }
-                else { library.delete(book); dismiss() }
+                if sync.isSynced(raw) { Task { await sync.deleteEverywhere(raw); dismiss() } }
+                else { library.delete(raw); dismiss() }
             }
         } message: {
             Text(sync.isSynced(book)
@@ -438,7 +676,7 @@ struct AudioDownloadCard: View {
 
     var body: some View {
         let job = downloads.jobs[book.id]
-        let total = job?.totalBytes ?? library.meta(book).files.audioBytes
+        let total = job?.totalBytes ?? library.accountAudio(book).reduce(0) { $0 + $1.size }
         let done = downloads.done[book.id] ?? 0
         let amount = "\(LibraryBytes.text(done)) von \(LibraryBytes.text(total))"
         VStack(alignment: .leading, spacing: 8) {
@@ -522,6 +760,53 @@ struct AudioDownloadCard: View {
     private func fraction(_ done: Int, _ total: Int) -> Double { total > 0 ? min(1, Double(done) / Double(total)) : 0 }
 }
 
+/// Scrollflächen reichen unter den Mini-Player. Der Rand sorgt dafür, dass das Letzte frei gescrollt werden kann.
+struct MiniPlayerClearance: ViewModifier {
+    @ObservedObject var playback = LibraryPlayback.shared
+    @ScaledMetric(relativeTo: .subheadline) private var height: CGFloat = 76
+
+    func body(content: Content) -> some View {
+        content.contentMargins(.bottom, playback.book != nil && !playback.presented ? height : 0, for: .scrollContent)
+    }
+}
+
+/// Der gelesene Satz im Mini-Player: Teile, die in zwei Zeilen passen, nacheinander im Takt des Vorlesens. Der Platz ist
+/// immer zwei Zeilen hoch, damit der Titel still steht. Der Teil folgt der gesprochenen Zeit aus `LibraryPlayback`.
+struct SentenceParts: View {
+    let text: String
+    @ObservedObject var playback = LibraryPlayback.shared
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @State private var width: CGFloat = 0
+
+    /// Passt der Text wirklich in zwei Zeilen? Gemessen mit derselben Schrift, nicht geschätzt.
+    private func fits(_ candidate: String, font: UIFont) -> Bool {
+        let box = (candidate as NSString).boundingRect(with: CGSize(width: width, height: .greatestFiniteMagnitude),
+                                                       options: .usesLineFragmentOrigin, attributes: [.font: font], context: nil)
+        return box.height <= font.lineHeight * 2 + 1
+    }
+
+    var body: some View {
+        let font = UIFont.preferredFont(forTextStyle: .caption1, compatibleWith: UITraitCollection(preferredContentSizeCategory: UIContentSizeCategory(typeSize)))
+        let parts = width > 0 ? LibraryText.sentenceParts(text) { fits($0, font: font) } : [text]
+        let spoken = LibraryText.listenMilliseconds(chars: Double(text.utf16.count)) / 1000
+        TimelineView(.periodic(from: .now, by: 0.25)) { _ in
+            let index = LibraryText.sentencePartIndex(parts, elapsed: playback.sentenceSpokenSeconds, total: spoken)
+            MiniPlayerLine(text: parts.indices.contains(index) ? parts[index] : text)
+        }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+    }
+}
+
+/// Immer zwei Zeilen hoch, auch bei kurzem Text.
+struct MiniPlayerLine: View {
+    let text: String
+    var body: some View {
+        // Verkleinern statt kürzen, falls die Schätzung für die Teile einmal nicht reicht.
+        Text(text).font(.caption).lineLimit(2, reservesSpace: true).minimumScaleFactor(0.7).foregroundStyle(.white.opacity(0.85))
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
 struct LibraryMiniPlayer: View {
     @ObservedObject var playback = LibraryPlayback.shared
     var body: some View {
@@ -532,7 +817,11 @@ struct LibraryMiniPlayer: View {
                         .frame(width: 32, height: 44)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(playback.title).font(.subheadline.weight(.semibold)).lineLimit(1).foregroundStyle(.white)
-                        Text(subtitle).font(.caption).lineLimit(1).foregroundStyle(.white.opacity(0.75))
+                        if !playback.preparing, let sentence = playback.currentSentence {
+                            SentenceParts(text: sentence).accessibilityHidden(true)
+                        } else {
+                            MiniPlayerLine(text: subtitle)
+                        }
                     }
                     Spacer(minLength: 0)
                 }.frame(minHeight: 44).contentShape(Rectangle())
@@ -557,20 +846,23 @@ struct LibraryMiniPlayer: View {
 struct LibraryPlayerScreen: View {
     @ObservedObject var playback = LibraryPlayback.shared
     var body: some View {
-        if playback.mode == .readAloud { LibraryReadAloudView() } else { LibraryListenView() }
+        BookPlayerScreen()
     }
 }
 
-/// Text mit markiertem Absatz; bei eigenem Scrollen 5 s kein Mitscrollen.
+/// Text mit markiertem Absatz. Scrollt der Nutzer selbst, folgt der Text nicht mehr, bis er
+/// „Zur aktuellen Stelle“ tippt (wie Audible): kein Zurückspringen mitten im Lesen.
 struct FollowText<Row: View>: View {
     let paragraphs: [TextParagraph]
     let current: Int
+    /// Aus: kein Mitscrollen (Ansicht „Lesen“), die Stelle bleibt, wo der Nutzer liest.
+    var follow = true
     let row: (Int, TextParagraph) -> Row
-    @State private var pausedUntil = Date.distantPast
-    @State private var showReturn = false
+    /// Nutzer hat selbst gescrollt: kein Mitscrollen, Knopf „Zur aktuellen Stelle“ sichtbar.
+    @State private var detached = false
 
-    init(paragraphs: [TextParagraph], current: Int, @ViewBuilder row: @escaping (Int, TextParagraph) -> Row) {
-        self.paragraphs = paragraphs; self.current = current; self.row = row
+    init(paragraphs: [TextParagraph], current: Int, follow: Bool = true, @ViewBuilder row: @escaping (Int, TextParagraph) -> Row) {
+        self.paragraphs = paragraphs; self.current = current; self.follow = follow; self.row = row
     }
 
     var body: some View {
@@ -578,21 +870,44 @@ struct FollowText<Row: View>: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 4) {
                     ForEach(paragraphs.indices, id: \.self) { i in row(i, paragraphs[i]).id(i) }
-                }.padding(.horizontal, 12).padding(.vertical, 12)
+                }.padding(.horizontal, 12).padding(.top, 20).padding(.bottom, follow ? 76 : 56)  // Platz unter dem Rückkehrknopf
             }
-            .simultaneousGesture(DragGesture().onChanged { _ in pausedUntil = Date().addingTimeInterval(5); showReturn = true })
+            // Weiche Kanten oben und unten: keine halb abgeschnittene Zeile an der Kopfzeile oder am Hinweis.
+            // Die Innenabstände machen jede Zeile vollständig erreichbar.
+            .mask {
+                VStack(spacing: 0) {
+                    LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom).frame(height: 18)
+                    Color.black
+                    LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom).frame(height: 28)
+                }
+            }
+            // Scrollphase statt DragGesture: eine zusätzliche Geste auf der ScrollView konkurriert bei
+            // häufigem Neuzeichnen (Wortmarkierung der Stimme) mit dem Wischen und verliert Gesten.
+            .onScrollPhaseChange { _, phase in
+                if follow, phase == .interacting { detached = true }
+            }
             .overlay(alignment: .bottomTrailing) {
-                if showReturn {
-                    Button("Zur aktuellen Stelle", systemImage: "arrow.down.to.line") {
-                        pausedUntil = .distantPast; showReturn = false
+                if follow && detached {
+                    // Nur Symbol, feste Größe: wächst bei großer Schrift nicht über den Text.
+                    Button {
+                        detached = false
                         withAnimation { proxy.scrollTo(current, anchor: .center) }
-                    }.buttonStyle(.borderedProminent).tint(VoicePalette.ink).foregroundStyle(VoicePalette.brand).padding(12)
+                    } label: {
+                        Image(systemName: "arrow.down.to.line").font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(VoicePalette.brand)
+                            .frame(width: 48, height: 48).background(VoicePalette.ink, in: Circle())
+                            .shadow(color: .black.opacity(0.25), radius: 4, y: 2)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Zur aktuellen Stelle")
+                    .accessibilityHint("Der Text folgt wieder der Wiedergabe")
+                    .accessibilityShowsLargeContentViewer { Label("Zur aktuellen Stelle", systemImage: "arrow.down.to.line") }
+                    .padding(12)
                 }
             }
             .onAppear { proxy.scrollTo(current, anchor: .center) }  // ohne Animation: sonst baut die Liste jede Zeile bis dorthin
             .onChange(of: current) { old, value in
-                guard Date() >= pausedUntil else { return }
-                showReturn = false
+                guard follow, !detached else { return }
                 if abs(value - old) > 3 { proxy.scrollTo(value, anchor: .center) }
                 else { withAnimation { proxy.scrollTo(value, anchor: .center) } }
             }
@@ -601,11 +916,16 @@ struct FollowText<Row: View>: View {
 }
 
 struct ControlButton: View {
-    let title: String; let systemImage: String; let action: () -> Void
+    /// `title` ist der VoiceOver-Name; `caption` die kurze sichtbare Beschriftung (Standard: `title`).
+    let title: String; let systemImage: String; var caption: String? = nil; let action: () -> Void
     var body: some View {
         Button(action: action) {
-            VStack(spacing: 2) { Image(systemName: systemImage).font(.title2); Text(title).font(.caption2) }.frame(minWidth: 56, minHeight: 44)
-        }.buttonStyle(.plain).accessibilityLabel(title)
+            VStack(spacing: 2) {
+                Image(systemName: systemImage).font(.title2)
+                // Große Schrift: Beschriftung schrumpft statt mit dem Nachbarn zu kollidieren.
+                Text(caption ?? title).font(.caption2).lineLimit(1).minimumScaleFactor(0.7)
+            }.frame(minWidth: 56, minHeight: 44).contentShape(Rectangle())
+        }.buttonStyle(.plain).accessibilityLabel(title).accessibilityShowsLargeContentViewer()
     }
 }
 
@@ -700,80 +1020,34 @@ struct PlayButton: View {
     }
 }
 
-// LibraryListenView: siehe AudiobookPlayer.swift
-
-struct LibraryReadAloudView: View {
-    @ObservedObject var playback = LibraryPlayback.shared
-    @ObservedObject var look = ReaderAppearance.shared
-    @State private var voices = false
-
-    private func highlighted(_ p: TextParagraph) -> AttributedString {
-        var s = AttributedString(p.text)
-        guard let r = playback.sentenceRange, let range = Range(r, in: p.text), let a = AttributedString.Index(range.lowerBound, within: s),
-              let b = AttributedString.Index(range.upperBound, within: s) else { return s }
-        s[a..<b].backgroundColor = look.sentenceBackground
-        return s
-    }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            PlayerHeader(title: "\(playback.title) · Text", subtitle: playback.preparing ? "wird vorbereitet" : playback.playing ? "wird vorgelesen" : "pausiert",
-                         trailing: AnyView(ReaderAppearanceButton()))
-            Divider()
-            FollowText(paragraphs: playback.paragraphs, current: playback.paragraphIndex) { i, p in
-                Text(i == playback.paragraphIndex ? highlighted(p) : AttributedString(p.text))
-                    .font(look.font(heading: p.heading))
-                    .foregroundStyle(i == playback.paragraphIndex ? look.text : look.muted)
-                    .lineSpacing(look.lineSpacing).fixedSize(horizontal: false, vertical: true)
-                    .padding(10).frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle()).onTapGesture { playback.jump(toParagraph: i) }
-                    .accessibilityAddTraits(.isButton).accessibilityHint("Liest ab diesem Absatz vor")
-            }
-            .background(look.background)
-            VStack(spacing: 8) {
-                HStack {
-                    Text("Absatz antippen, um ab dort vorzulesen").font(.caption).foregroundStyle(VoicePalette.secondaryText)
-                    Spacer()
-                    BookTalkButton()
-                }
-                HStack {
-                    let rec = playback.book.map { PhoneLibrary.shared.record(PhoneLibrary.shared.textKey($0)) } ?? nil
-                    Text("Text: \(LibraryFormat.percent(LibraryProgress.fraction(rec))) gelesen")
-                    Spacer()
-                    Text("Stimme: \(currentVoiceName)")
-                }.font(.caption).foregroundStyle(VoicePalette.secondaryText)
-                HStack {
-                    RateMenu()
-                    Spacer(); ControlButton(title: "Satz zurück", systemImage: "backward.fill") { playback.step(sentences: -1) }
-                    Spacer(); PlayButton()
-                    Spacer(); ControlButton(title: "Satz vor", systemImage: "forward.fill") { playback.step(sentences: 1) }
-                    Spacer(); ControlButton(title: "Stimme", systemImage: "person.wave.2") { voices = true }
-                }
-            }.padding(.horizontal, 20).padding(.vertical, 10).background(.bar)
-        }
-        .background(VoicePalette.background)
-        .sheet(isPresented: $voices) { VoiceList() }
-    }
-
-    private var currentVoiceName: String {
-        if let phonon = PhononEngine.voiceName(playback.voiceIdentifier) { return PhononEngine.displayName(phonon) }
-        return (playback.voiceIdentifier.flatMap { AVSpeechSynthesisVoice(identifier: $0) } ?? LibraryPlayback.defaultVoice())?.name ?? "System"
-    }
-}
-
-private struct VoiceList: View {
+struct VoiceList: View {
     @ObservedObject var playback = LibraryPlayback.shared
     @ObservedObject var phonon = PhononEngine.shared
     @Environment(\.dismiss) private var dismiss
     var body: some View {
         NavigationStack {
             List {
+                // Wofür die Wahl gilt (lva#352): alle Bücher der Sprache oder nur dieses Buch.
+                if let lang = playback.voiceLanguage {
+                    let name = Locale.current.localizedString(forLanguageCode: lang) ?? lang
+                    Section {
+                        Toggle("Nur für dieses Buch", isOn: Binding(
+                            get: { playback.voiceScope == .book },
+                            set: { playback.setBookOnlyVoice($0) }))
+                        .frame(minHeight: 44)
+                    } footer: {
+                        Text(playback.voiceScope != .book ? "Standardstimme für Bücher auf \(name)."
+                             : playback.bookVoiceMissing
+                             ? "Die eigene Stimme dieses Buchs fehlt auf dem iPhone. Es liest die Standardstimme für \(name)."
+                             : "Eigene Stimme für dieses Buch (\(name)).")
+                    }
+                }
                 ForEach(PhononEngine.languages, id: \.self) { language in
                     if let names = phonon.voices[language] {
                         Section {
                             ForEach(names, id: \.self) { name in
                                 let id = PhononEngine.identifier(language: language, voice: name)
-                                Button { playback.voiceIdentifier = id; dismiss() } label: {
+                                Button { playback.chooseVoice(id); dismiss() } label: {
                                     HStack {
                                         Text(name)
                                         Spacer()
@@ -782,14 +1056,14 @@ private struct VoiceList: View {
                                 }.buttonStyle(.plain)
                             }
                         } header: { Text(PhononEngine.sectionTitle(language)) } footer: {
-                            Text("Läuft auf dem iPhone. Markiert wird der Absatz statt des Worts. Die erste Nutzung einer Sprache dauert einige Sekunden.")
+                            Text("Läuft auf dem iPhone. Markiert wird der Satz statt des Worts. Die erste Nutzung einer Sprache dauert einige Sekunden.")
                         }
                     }
                 }
                 Section {
-                    ForEach(LibraryPlayback.germanVoices, id: \.identifier) { v in
+                    ForEach(playback.systemVoices, id: \.identifier) { v in
                         Button {
-                            playback.voiceIdentifier = v.identifier; dismiss()
+                            playback.chooseVoice(v.identifier); dismiss()
                         } label: {
                             HStack {
                                 VStack(alignment: .leading) {
@@ -798,11 +1072,11 @@ private struct VoiceList: View {
                                 }
                                 Spacer()
                                 if v.identifier == playback.voiceIdentifier { Image(systemName: "checkmark") }
-                            }.frame(minHeight: 44)
+                            }.frame(minHeight: 44).contentShape(Rectangle())
                         }.buttonStyle(.plain)
                     }
                 } footer: {
-                    Text("Bessere Stimmen (Premium) lädst du kostenlos unter Einstellungen › Bedienungshilfen › Gesprochene Inhalte › Stimmen › Deutsch.")
+                    Text("Bessere Stimmen (Premium) lädst du kostenlos unter Einstellungen › Bedienungshilfen › Gesprochene Inhalte › Stimmen.")
                 }
             }
             .navigationTitle("Stimme").navigationBarTitleDisplayMode(.inline)

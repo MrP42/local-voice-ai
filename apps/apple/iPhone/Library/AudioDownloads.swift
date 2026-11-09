@@ -27,6 +27,7 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
     /// Fehlversuche je Stück (`<buch>|<teil>|<stück>`); erst nach dreien schlägt das Laden fehl.
     /// Je laufendem Auftrag; endet mit ihm, damit ein späteres Laden wieder zurückfallen darf.
     private var legacyFallbacks: [String: AudioDownload.LegacyFallback] = [:]
+    private var speed = AudioDownload.SpeedTracker()
     private var retries: [String: Int] = [:]
     private var assembling: Set<String> = []
     private var waiters: [String: [CheckedContinuation<Bool, Never>]] = [:]
@@ -64,41 +65,57 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
         return sync.wifiOnly && sync.expensiveNetwork
     }
 
-    /// Bis der Ladevorgang fertig ist (`true`) oder pausiert/fehlschlägt (`false`).
-    func waitUntilDone(_ id: String) async -> Bool {
-        guard jobs[id]?.phase == .running else { return jobs[id] == nil && isLocal(id) }
+    /// Bis der Ladevorgang dieser Fassung fertig ist (`true`) oder pausiert/fehlschlägt (`false`). Ein laufender Auftrag
+    /// mit anderen Teilen (andere Sprache) ist nicht der gemeinte: dann zählt nur, ob diese Fassung schon da ist.
+    func waitUntilDone(_ book: LibraryBook) async -> Bool {
+        let id = book.id
+        let job = jobs[id]
+        let mine = job.map { $0.parts == library.audioParts(library.accountAudio(book)) } ?? true
+        guard let job, job.phase == .running, mine else { return (job == nil || !mine) && library.hasAudio(book) }
         return await withCheckedContinuation { waiters[id, default: []].append($0) }
     }
-
-    private func isLocal(_ id: String) -> Bool { library.books.first { $0.id == id }.map { library.hasAudio($0) } ?? false }
 
     // MARK: Steuern
 
     /// Laden starten oder fortsetzen. Prüft vorher den freien Speicher.
-    func start(_ book: LibraryBook, allowCellular: Bool? = nil) {
-        guard LibrarySync.shared.account != nil else { return }
-        let refs = library.meta(book).files.audio
-        guard !refs.isEmpty, !library.hasAudio(book) else { return }
-        let previous = jobs[book.id]
-        if previous?.phase == .running, allowCellular == nil { assemble(book.id); return }
-        let parts = refs.enumerated().map { i, ref in
-            AudioDownload.Part(blob: ref.blob, size: ref.size, chunks: ref.chunks, file: LibrarySync.audioFileName(ref.file, index: i))
+    @discardableResult
+    func start(_ book: LibraryBook, allowCellular: Bool? = nil) -> Bool {
+        guard LibrarySync.shared.account != nil else { return false }
+        // Sprachfassungen (lva#344): Bei einer Sicht auf eine weitere Fassung sind es deren Teile (`files.editions`).
+        let refs = library.accountAudio(book)
+        guard !refs.isEmpty else { return false }
+        guard !library.hasAudio(book) else { return true }
+        var previous = jobs[book.id]
+        let parts = library.audioParts(refs)
+        // Ein Auftrag je Buch: Läuft gerade das Hörbuch einer anderen Fassung (andere Dateinamen), nicht verwerfen.
+        if let running = previous, running.phase == .running, running.parts != parts,
+           Set(running.parts.map(\.file)).isDisjoint(with: parts.map(\.file)) {
+            LibraryPlayback.shared.error = "Von diesem Buch lädt gerade das Hörbuch einer anderen Sprache. Bitte warten, bis es fertig ist."
+            return false
         }
+        // Konto hat die Dateien ersetzt: Weder alte Dateien noch angefangene Teile dürfen zählen.
+        library.removeStaleAudio(book)
+        if let stale = previous, stale.parts != parts {
+            discard(book.id)
+            for part in stale.parts { try? FileManager.default.removeItem(at: audioDir(book.id).appendingPathComponent(part.file).appendingPathExtension("part")) }
+            previous = nil
+        }
+        if previous?.phase == .running, allowCellular == nil { assemble(book.id); return true }
         var job = AudioDownload.Job(bookId: book.id, parts: parts, allowCellular: allowCellular ?? previous?.allowCellular ?? false)
         let remaining = job.totalBytes - AudioDownload.doneBytes(job, states: states(job))
-        if let problem = AudioDownload.spaceProblem(remainingBytes: remaining, freeBytes: library.freeBytes(), format: LibraryBytes.text) {
-            job.phase = .failed; job.message = problem
+        job = AudioDownload.prepareStart(job, remainingBytes: remaining, freeBytes: library.freeBytes(), format: LibraryBytes.text, speed: &speed)
+        if job.phase == .failed {
             jobs[book.id] = job; persist(); resolve(book.id, false)
-            return
+            return false
         }
         do {
             try FileManager.default.createDirectory(at: stagingDir(book.id), withIntermediateDirectories: true,
                                                     attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication])
             PhoneLibrary.excludeFromBackup(library.audioDir(book))
         } catch {
-            job.phase = .failed; job.message = "Der Ordner für das Hörbuch lässt sich nicht anlegen: \(error.localizedDescription)"
+            job = AudioDownload.failedStart(job, message: "Der Ordner für das Hörbuch lässt sich nicht anlegen: \(error.localizedDescription)", speed: &speed)
             jobs[book.id] = job; persist(); resolve(book.id, false)
-            return
+            return false
         }
         jobs[book.id] = job
         persist()
@@ -111,10 +128,12 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
             if ruleChanged { cancelTasks(id) }
             assemble(id)
         }
+        return true
     }
 
     func pause(_ id: String) {
         guard jobs[id]?.phase == .running else { return }
+        speed.reset(id)
         jobs[id]?.phase = .paused; jobs[id]?.message = nil
         persist(); resolve(id, false)
         cancelTasks(id)
@@ -126,13 +145,23 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
     /// Vom Nutzer abgebrochen: Auftrag verwerfen und alles Geladene löschen.
     /// Geladen wird nur, was im Konto liegt; das Hörbuch bleibt dort erhalten.
     func cancel(_ book: LibraryBook) {
+        // Nur die Teile dieses Auftrags und das Staging: das fertige Hörbuch einer anderen Fassung und lokal
+        // importierte, noch nicht hochgeladene Dateien bleiben liegen.
+        let job = jobs[book.id]
         discard(book.id)
-        _ = try? AudioOffload.remove(bookDir: library.dir(book))
+        let files = job?.parts.map(\.file) ?? []
+        for file in files {
+            let url = audioDir(book.id).appendingPathComponent(file)
+            try? FileManager.default.removeItem(at: url)
+            try? FileManager.default.removeItem(at: url.appendingPathExtension("part"))
+        }
+        library.forgetLocalAudio(bookId: book.id, files: files)
         library.reload()
     }
 
     /// Ladevorgang verwerfen (Hörbuch wird entfernt oder Buch gelöscht).
     func discard(_ id: String) {
+        speed.reset(id)
         legacyFallbacks[id] = nil
         guard jobs[id] != nil || inFlight[id] != nil else { return }
         jobs[id] = nil; done[id] = nil
@@ -161,7 +190,10 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
             let target = dir.appendingPathComponent(part.file), partial = target.appendingPathExtension("part")
             guard LibrarySync.fileSize(target) != part.size, LibrarySync.fileSize(partial) == part.size else { continue }
             _ = try? FileManager.default.removeItem(at: target)
-            if (try? FileManager.default.moveItem(at: partial, to: target)) != nil { LibrarySync.shared.markConfirmed(part.blob) }
+            if (try? FileManager.default.moveItem(at: partial, to: target)) != nil {
+                LibrarySync.shared.markConfirmed(part.blob)
+                library.noteLocalAudio(bookId: job.bookId, file: part.file, blob: part.blob)
+            }
         }
     }
 
@@ -189,6 +221,7 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
 
     /// Fehlende Stücke einreihen (höchstens `AudioDownload.window` unterwegs).
     private func pump(_ id: String) {
+        if waitsForWifi(id) { speed.reset(id) }  // Warten zählt nicht als langsames Laden.
         guard let job = jobs[id], job.phase == .running else { return }
         guard library.books.contains(where: { $0.id == id }) else { discard(id); return }
         guard let acc = LibrarySync.shared.account else { fail(id, "Nicht angemeldet. Bitte unter „Konto & Sync“ anmelden."); return }
@@ -263,6 +296,7 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
                         _ = try? FileManager.default.removeItem(at: target)
                         try FileManager.default.moveItem(at: target.appendingPathExtension("part"), to: target)
                         LibrarySync.shared.markConfirmed(part.blob)
+                        library.noteLocalAudio(bookId: id, file: part.file, blob: part.blob)
                     }
                 } catch {
                     try? FileManager.default.removeItem(at: file)
@@ -299,7 +333,16 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
         return index * chunkPlainBytes + plain.count
     }
 
+    func networkChanged(expensive: Bool) { speed.noteNetwork(expensive: expensive) }
+
+    /// Restzeit für das Regal; misst ab Beginn des laufenden Ladens.
+    func remainingSeconds(_ id: String) -> TimeInterval? {
+        guard let job = jobs[id], job.phase == .running, let bytes = done[id] else { return nil }
+        return speed.remaining(id, doneBytes: bytes, totalBytes: job.totalBytes, now: Date())
+    }
+
     private func finish(_ id: String) {
+        speed.reset(id)
         legacyFallbacks[id] = nil
         jobs[id] = nil; done[id] = nil
         inFlight[id] = nil
@@ -310,6 +353,7 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
     }
 
     private func fail(_ id: String, _ message: String) {
+        speed.reset(id)
         legacyFallbacks[id] = nil
         guard jobs[id] != nil else { return }
         jobs[id]?.phase = .failed; jobs[id]?.message = message
@@ -334,7 +378,9 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
 
     private func refreshDone(_ id: String) {
         guard let job = jobs[id] else { done[id] = nil; return }
-        done[id] = AudioDownload.doneBytes(job, states: states(job))
+        let bytes = AudioDownload.doneBytes(job, states: states(job))
+        done[id] = bytes
+        if waitsForWifi(id) { speed.reset(id) } else { speed.note(id, phase: job.phase, bytes: bytes, now: Date()) }
     }
 
     /// Nach einem Neustart: laufende Aufträge wieder zuordnen, liegengebliebene Stücke anhängen.

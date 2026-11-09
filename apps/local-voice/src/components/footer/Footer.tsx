@@ -39,6 +39,7 @@ function modulModelle(section: string | undefined): React.ReactNode {
           <FunctionModelChip fn="meeting_protocol" />
         </>
       );
+    case "home":
     case "voice":
       // Der Sprecher steht im Eingabefeld des Gesprächs (F2).
       return <ModelSelector />;
@@ -106,8 +107,8 @@ const Footer: React.FC<{ section?: string }> = ({ section }) => {
           </span>
         </div>
 
-        {/* Rechts (ADR-0027 E7, Codex 01.11.): nur Mikrofon und Telefon.
-            Speicher/GPU, Fish-Server und Schild nur als bewusst
+        {/* Rechts (ADR-0027 E7, Codex 01.11.): Mikrofon, Telefon und Schild.
+            Speicher/GPU und Fish-Server nur als bewusst
             eingeschaltete Diagnose (Profilmenü ▸ Hilfe), einklappbar. Die
             Version steht immer ganz rechts (Patrick 05.11., #281). */}
         <div className="flex items-center gap-0.5 shrink-0">
@@ -132,7 +133,6 @@ const Footer: React.FC<{ section?: string }> = ({ section }) => {
               {diagnose === "auf" && (
                 <>
                   <FishServerButton />
-                  <ComplianceShield />
                   <ResourceMeter />
                 </>
               )}
@@ -146,6 +146,10 @@ const Footer: React.FC<{ section?: string }> = ({ section }) => {
             <CallButton />
             {(callPage || callRunning) && <CallMenu />}
           </span>
+          {/* Das Schild steht immer sichtbar ganz rechts, direkt vor der
+              Version (Patrick 08.11.2026): grün/gelb/rot für Souveränität
+              und Regelwerk, Klick erklärt. */}
+          <ComplianceShield />
           {/* Update: sucht beim Start und auf Wunsch (Profilmenü ▸ Hilfe);
               ein gefundenes meldet sich als Fenster mit den Release-Notes. */}
           <UpdateChecker version={version} />

@@ -1,7 +1,7 @@
 import { commands, type LibraryBook, type TrashEntry } from "@/bindings";
 import { pendingJobs } from "./books";
+import { audioKeysOf, editionsOf } from "./editions";
 import {
-  audioProgressKey,
   flushProgress,
   removeProgress,
   textProgressKey,
@@ -11,7 +11,9 @@ import {
  * Entfernen (Codex-Abnahme lva#221): zwei klar getrennte Wege.
  * - **Papierkorb:** Der Kern verschiebt den Buchordner (Eintrag, Cover,
  *   Hörbuch-Kopie) nach `library/.papierkorb`. Wiederherstellbar über den
- *   Papierkorb der Bibliothek, 30 Tage lang. Der Text bleibt im Vorlesen.
+ *   Papierkorb der Bibliothek, 30 Tage lang. Seit den Buch-Ordnern (lva#365
+ *   P2b-2) gehen Text und Sprachfassungen im Buch-Ordner mit und kommen beim
+ *   Wiederherstellen zurück; endgültiges Löschen trägt sie aus dem Vorlesen aus.
  * - **Endgültig:** sofort und ohne Rückweg, samt Text bzw. Transkript im
  *   Vorlesen, laufenden Aufträgen und Lesestellen.
  * Die Originaldateien auf dem Rechner berührt keiner der Wege.
@@ -54,7 +56,9 @@ export async function purgeBooks(books: LibraryBook[]): Promise<void> {
   if (r.status !== "ok") throw new Error(r.error);
   for (const book of books) {
     for (const job of pendingJobs(book)) await commands.meetingsDelete(job);
-    removeProgress(audioProgressKey(book.id));
+    for (const key of audioKeysOf(book)) removeProgress(key);
+    for (const e of editionsOf(book))
+      if (e.text) removeProgress(textProgressKey(e.text.page_id));
     if (book.text) {
       removeProgress(textProgressKey(book.text.page_id));
       await commands.pagesDelete(book.text.page_id);

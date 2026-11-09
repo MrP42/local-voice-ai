@@ -40,7 +40,7 @@ const splitAuthors = (s: string) =>
 export const AddBookDialog: React.FC<{
   open: boolean;
   onOpenChange(open: boolean): void;
-  onAdded(book: LibraryBook): void | Promise<void>;
+  onAdded(book: LibraryBook, attached: boolean): void | Promise<void>;
   /** Weitere gewählte Dateien (andere Bücher), nach dem Hinzufügen aufnehmen. */
   onImportRest?(paths: string[]): void;
 }> = ({ open, onOpenChange, onAdded, onImportRest }) => {
@@ -197,7 +197,7 @@ export const AddBookDialog: React.FC<{
       );
       const others = rest;
       onOpenChange(false);
-      await onAdded(book);
+      await onAdded(book, attached);
       if (others.length) onImportRest?.(others);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

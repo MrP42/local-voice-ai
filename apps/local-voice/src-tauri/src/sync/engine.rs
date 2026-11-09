@@ -6,7 +6,7 @@ use super::account::{self, SyncConfig};
 use super::client::{HubClient, HubError, PushObject, RemoteObject};
 use super::collect::{self, LocalObject};
 use super::ledger::{self, Entry, Ledger};
-use super::{blobs, books, crypto};
+use super::{blobs, book_files, books, crypto};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
@@ -14,7 +14,10 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::Notify;
 
-const PUSH_BATCH: usize = 100;
+/// Objekte je Push. Klein gehalten, weil der Hub je `superseded` das volle
+/// Serverobjekt (bis `collect::HUB_MAX_PAYLOAD`) zurückgibt; die Antwort ist
+/// damit nach oben begrenzt (siehe `curl::MAX_OUT`).
+pub const PUSH_BATCH: usize = 16;
 /// Der Hub nimmt 512 KiB je Anfrage; darunter bleiben, sonst blockieren zwei
 /// grosse Seiten den ganzen Abgleich.
 const PUSH_BATCH_BYTES: usize = 400 * 1024;
@@ -225,11 +228,12 @@ struct Outcome {
 }
 
 /// Sammlungen, deren lokale Löschung als Grabstein zum Hub geht.
-const TOMBSTONED: [&str; 4] = [
+const TOMBSTONED: [&str; 5] = [
     collect::COLLECTION_PAGE,
     books::COLLECTION_BOOK,
     books::COLLECTION_PROGRESS,
     books::COLLECTION_BOOKMARK,
+    book_files::COLLECTION_BOOK_FILE,
 ];
 
 fn is_library(collection: &str) -> bool {
@@ -260,22 +264,28 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
     let mut removed: Vec<String> = Vec::new();
 
     // ---- Sammeln ---------------------------------------------------------
-    let mut locals = collect::collect(app).map_err(HubError::Other)?;
+    let (mut locals, held_pages) = collect::collect(app).map_err(HubError::Other)?;
     // Bibliothek: Prüfsummen großer Dateien gehören nicht auf den Executor.
-    let lib = {
+    let (lib, book_files_local) = {
         let app2 = app.clone();
         let mut files = std::mem::take(&mut led.files);
-        let (lib, files) = tauri::async_runtime::spawn_blocking(move || {
+        let (device_id, device_name) = (cfg.device_id.clone(), cfg.device_name.clone());
+        let (lib, extra, files) = tauri::async_runtime::spawn_blocking(move || {
             let mut budget = HASH_BUDGET;
             let lib = books::collect_library(&app2, &key, &mut files, &mut budget);
-            (lib, files)
+            // Notizen, Anhänge, Transkript (lva#365 P3) aus dem restlichen Budget.
+            let extra = book_files::collect(&app2, &key, &device_id, &device_name, &mut budget);
+            (lib, extra, files)
         })
         .await
         .map_err(|e| HubError::Other(e.to_string()))?;
         led.files = files;
-        lib.map_err(HubError::Other)?
+        (
+            lib.map_err(HubError::Other)?,
+            extra.map_err(HubError::Other)?,
+        )
     };
-    if let Some(w) = lib.warnings.first() {
+    if let Some(w) = lib.warnings.first().or(book_files_local.warnings.first()) {
         warning = Some(w.clone());
     }
 
@@ -363,6 +373,59 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
         }
         ledger::save(app, &led).map_err(HubError::Other)?;
     }
+    // Dateien im Buch-Ordner (lva#365 P3): erst der Inhalt, dann der Datensatz.
+    let mut blocked_files: HashSet<String> = HashSet::new();
+    for o in &book_files_local.objects {
+        let h = collect::hash(&o.value);
+        if !led.is_dirty(o.collection, &o.id, &h) || led.is_dead(o.collection, &o.id, &h) {
+            continue;
+        }
+        let Some(u) = book_files_local.uploads.get(&o.id) else {
+            continue;
+        };
+        if led.uploaded.contains(&u.blob.blob) {
+            continue;
+        }
+        if upload_stopped || led.backing_off(&u.blob.blob, now_ms()) {
+            blocked_files.insert(o.id.clone());
+            continue;
+        }
+        match blobs::upload(
+            &client,
+            &key,
+            cfg.user_id,
+            &u.blob.blob,
+            &u.source,
+            u.blob.size,
+            u.stamp.as_ref(),
+            &mut upload_budget,
+        )
+        .await
+        {
+            Ok(blobs::Upload::Done) => {
+                led.uploaded.insert(u.blob.blob.clone());
+                led.failed.remove(&u.blob.blob);
+            }
+            Ok(blobs::Upload::Later) => {
+                blocked_files.insert(o.id.clone());
+                upload_stopped = upload_budget == 0;
+            }
+            Err(HubError::Unauthorized) => return Err(HubError::Unauthorized),
+            Err(e) => {
+                // Der Fehlertext kann einen Pfad enthalten: nur in die Statusanzeige.
+                log::warn!("Sync: Datei {} nicht hochgeladen", o.id);
+                warning = Some(format!("Datei nicht hochgeladen: {e}"));
+                blocked_files.insert(o.id.clone());
+                let text = e.to_string();
+                if text.contains("nicht erreichbar") || text.contains("quota_exceeded") {
+                    upload_stopped = true;
+                } else {
+                    led.note_failure(&u.blob.blob, now_ms());
+                }
+            }
+        }
+        ledger::save(app, &led).map_err(HubError::Other)?;
+    }
     let mut pending: u32 = blocked
         .iter()
         .filter(|id| {
@@ -372,11 +435,41 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
                     && led.is_dirty(o.collection, &o.id, &collect::hash(&o.value))
             })
         })
-        .count() as u32;
-    let present: HashSet<String> = blocked
+        .count() as u32
+        + blocked_files.len() as u32;
+    // Zurückgehaltene Bücher, Seiten und Dateien gelten nicht als gelöscht.
+    let mut present: HashSet<String> = blocked
         .iter()
         .map(|id| ledger::key(books::COLLECTION_BOOK, id))
+        .chain(
+            held_pages
+                .iter()
+                .map(|id| ledger::key(collect::COLLECTION_PAGE, id)),
+        )
         .collect();
+    present.extend(
+        book_files_local
+            .present
+            .iter()
+            .chain(blocked_files.iter())
+            .map(|id| ledger::key(book_files::COLLECTION_BOOK_FILE, id)),
+    );
+    if book_files_local.hold_all {
+        // Ein Buch-Ordner war unlesbar: in diesem Lauf keine Grabsteine für Dateien.
+        let prefix = format!("{}/", book_files::COLLECTION_BOOK_FILE);
+        present.extend(
+            led.objects
+                .keys()
+                .filter(|k| k.starts_with(&prefix))
+                .cloned(),
+        );
+    }
+    locals.extend(
+        book_files_local
+            .objects
+            .into_iter()
+            .filter(|o| !blocked_files.contains(&o.id)),
+    );
     locals.extend(
         lib.objects
             .into_iter()
@@ -456,6 +549,12 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
             ));
             braked.insert(c.to_string());
         }
+    }
+    // Dateien im Buch-Ordner (lva#365 P3) verschwinden absichtlich mit ihrem Buch oder
+    // wenn ihr Grabstein verfällt. Fehlen dagegen alle Bücher (Unfall), bleiben auch ihre
+    // Dateien auf den anderen Geräten.
+    if braked.contains(books::COLLECTION_BOOK) {
+        braked.insert(book_files::COLLECTION_BOOK_FILE.to_string());
     }
     for (c, id, e) in gone {
         if braked.contains(&c) {
@@ -728,6 +827,54 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
         changed = true;
         ledger::save(app, &led).map_err(HubError::Other)?;
     }
+    // Dateien im Buch-Ordner (lva#365 P3), im selben Budget.
+    for w in book_files::wanted(app).map_err(HubError::Other)? {
+        if led.backing_off(&w.blob.blob, now_ms()) {
+            continue;
+        }
+        // Wie bei den Büchern: mindestens eine Datei je Lauf, auch über dem Budget, sonst
+        // käme eine große Datei nie an.
+        if w.blob.size > download_budget && download_budget < DOWNLOAD_BUDGET {
+            break;
+        }
+        let target = book_files::download_target(&w);
+        match blobs::download(
+            &client,
+            &key,
+            cfg.user_id,
+            &w.blob.blob,
+            w.blob.size,
+            &target,
+        )
+        .await
+        {
+            Ok(_) => {}
+            Err(HubError::Unauthorized) => return Err(HubError::Unauthorized),
+            Err(e) => {
+                log::warn!("Sync: Datei für {} nicht geladen: {e}", w.book_id);
+                warning = Some(format!("Datei nicht geladen: {e}"));
+                led.note_failure(&w.blob.blob, now_ms());
+                if e.to_string().contains("nicht erreichbar") {
+                    break;
+                }
+                continue;
+            }
+        }
+        download_budget = download_budget.saturating_sub(w.blob.size);
+        match book_files::finish_download(&w, &cfg.device_name) {
+            Ok(_) => {
+                led.uploaded.insert(w.blob.blob.clone());
+                led.failed.remove(&w.blob.blob);
+                changed = true;
+            }
+            Err(e) => {
+                log::warn!("Sync: Datei für {} nicht abgelegt: {e}", w.book_id);
+                warning = Some(format!("Datei nicht abgelegt: {e}"));
+                led.note_failure(&w.blob.blob, now_ms());
+            }
+        }
+        ledger::save(app, &led).map_err(HubError::Other)?;
+    }
     Ok(finish(
         app,
         led,
@@ -919,6 +1066,19 @@ fn apply_remote(
                 &remote.object_id,
                 value.as_ref(),
                 synced_hash,
+            )
+        }
+        book_files::COLLECTION_BOOK_FILE => {
+            let value = (!remote.deleted)
+                .then(|| decrypt(key, cfg, remote))
+                .transpose()?;
+            book_files::apply(
+                app,
+                key,
+                &remote.object_id,
+                value.as_ref(),
+                synced_hash,
+                &cfg.device_name,
             )
         }
         other => {

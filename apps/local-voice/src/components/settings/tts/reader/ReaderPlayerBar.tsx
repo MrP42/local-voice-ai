@@ -375,6 +375,13 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
         "--lv-player-h",
         fixed && sectionActive ? `${h}px` : "0px",
       );
+      // Meldungen stehen 72 px über der Leiste (fluent-bridge.css) und sind
+      // ca. 56 px hoch: diese Zone ebenfalls freihalten, damit ein Knopf
+      // beim Hinscrollen über ihr landet und nicht darunter (lva#217/#365).
+      document.documentElement.style.setProperty(
+        "--lv-toast-zone",
+        fixed && sectionActive ? "128px" : "0px",
+      );
     };
     report();
     const ro = new ResizeObserver(report);
@@ -385,6 +392,7 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
       window.removeEventListener("resize", report);
       workspace.style.removeProperty("--reader-player-h");
       document.documentElement.style.removeProperty("--lv-player-h");
+      document.documentElement.style.removeProperty("--lv-toast-zone");
     };
   }, [sectionActive]);
 

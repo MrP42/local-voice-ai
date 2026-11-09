@@ -15,6 +15,36 @@ final class LibrarySyncModelTests: XCTestCase {
         XCTAssertEqual(back.book, book); XCTAssertEqual(back.files, files); XCTAssertEqual(back.updated, 42)
     }
 
+    /// lva#344: Sprachfassungen kennt nur der Desktop; das iPhone muss sie unverändert weiterreichen.
+    func testSyncedBookKeepsEditionFieldsFromDesktop() throws {
+        let json = """
+        {"id":"book_1","title":"Die Verwandlung","authors":["Franz Kafka"],"added_ms":1,"schema":2,
+         "work_key":"w1","primary":{"edition":"ed_book_1","updated":5,"device":"pc"},
+         "editions":[{"id":"ed_book_1","lang":"de","title":"Die Verwandlung","audio_key":"audio:book_1","origin":"import","added_ms":1,"updated":5,"device":"pc"},
+                     {"id":"ed_x","lang":"en","title":"The Metamorphosis","audio_key":"audio:book_1:ed_x","origin":"join","added_ms":2,"updated":6,"device":"pc",
+                      "audio":{"file":"ed_x__teil_001.mp3","duration_ms":1000}}],
+         "edition_tombstones":[{"id":"ed_y","removed_ms":7}],
+         "reading":{"edition":"ed_x","updated":8,"device":"pc","position":{"key":"audio:book_1:ed_x","unit":"ms","offset":1234.5}},
+         "alignments":[{"a":"ed_book_1","b":"ed_x","updated":9,"device":"pc","groups":[{"a":[0],"b":[0,1],"confirmed":true}]}],
+         "files":{"audio":[],"editions":{"ed_x":{"audio":[{"blob":"\(String(repeating: "c", count: 64))","size":5,"chunks":1,"file":"ed_x__teil_001.mp3"}]}}},
+         "updated":42}
+        """
+        let synced = try SyncedBook.decode(Data(json.utf8))
+        XCTAssertEqual(synced.book.schema, 2)
+        XCTAssertNotNil(synced.book.editions); XCTAssertNotNil(synced.files.editions)
+        let out = try JSONSerialization.jsonObject(with: synced.json()) as! [String: Any]
+        let inn = try JSONSerialization.jsonObject(with: Data(json.utf8)) as! [String: Any]
+        for key in ["schema", "work_key", "primary", "editions", "edition_tombstones", "reading", "alignments"] {
+            XCTAssertEqual(out[key] as? NSObject, inn[key] as? NSObject, key)
+        }
+        XCTAssertEqual((out["files"] as? [String: Any])?["editions"] as? NSObject,
+                       (inn["files"] as? [String: Any])?["editions"] as? NSObject)
+        // Ein Buch ohne Fassungen schreibt keine neuen Schlüssel.
+        let plain = try JSONSerialization.jsonObject(with: SyncedBook(book: LibraryBook(id: "b", title: "T", addedMs: 1),
+                                                                     files: BookFiles(), updated: 1).json()) as! [String: Any]
+        XCTAssertNil(plain["editions"]); XCTAssertNil(plain["schema"]); XCTAssertNil((plain["files"] as? [String: Any])?["editions"])
+    }
+
     func testObjectIdsFitHubRules() {
         let id = LibrarySyncFormat.progressObjectId("text:page_1:original")
         XCTAssertEqual(id.count, 42)
@@ -72,6 +102,94 @@ final class DesktopVectorTests: XCTestCase {
         XCTAssertTrue(String(decoding: data, as: UTF8.self).contains(#""added_ms":1730000000000"#), "Ganzzahlen ohne .0")
         XCTAssertEqual(try SyncedBook.decode(data).book.favorite, true)
         XCTAssertEqual(try JSONDecoder().decode(LibraryBook.self, from: Data(#"{"id":"a","title":"b"}"#.utf8)).favorite, false)
+    }
+
+    func testPendingFavoriteKeepsNewerRemoteChanges() {
+        var remote = LibraryBook(id: "b", title: "Neuer Titel", addedMs: 1)
+        remote.favorite = false
+        var local = LibraryBook(id: "b", title: "Alter Titel", addedMs: 1)
+        local.favorite = true
+        local.finished = true
+        let merged = SyncLedger.mergingPendingFavorite(true, into: remote, local: local)
+        XCTAssertEqual(merged.title, "Neuer Titel")
+        XCTAssertTrue(merged.favorite)
+        XCTAssertTrue(merged.finished)
+    }
+
+    func testOnlyFavoriteChangeIsDetected() throws {
+        var book = LibraryBook(id: "b", title: "Titel", addedMs: 1)
+        let before = try SyncLedger.fieldsHash(book, files: BookFiles())
+        book.favorite = true
+        XCTAssertTrue(SyncLedger.onlyFavoriteChanged(pendingFields: before, localFields: try SyncLedger.fieldsHash(book, files: BookFiles())))
+        // Import nach dem Stern: lokale Angaben dürfen nicht durch das Konto ersetzt werden.
+        var imported = BookFiles()
+        imported.text = BlobRef(blob: String(repeating: "a", count: 64), size: 1, chunks: 1)
+        XCTAssertFalse(SyncLedger.onlyFavoriteChanged(pendingFields: before, localFields: try SyncLedger.fieldsHash(book, files: imported)))
+        book.title = "Neu"
+        XCTAssertFalse(SyncLedger.onlyFavoriteChanged(pendingFields: before, localFields: try SyncLedger.fieldsHash(book, files: BookFiles())))
+        // Stand war beim Stern nicht abgeglichen: Es gibt keinen Vergleichswert.
+        XCTAssertFalse(SyncLedger.onlyFavoriteChanged(pendingFields: nil, localFields: before))
+    }
+
+    func testPendingFavoriteStaysWhenStarChangedDuringPush() {
+        XCTAssertTrue(SyncLedger.clearsPendingFavorite(accepted: "h1", sent: "h1", local: "h1"))
+        XCTAssertFalse(SyncLedger.clearsPendingFavorite(accepted: "h1", sent: "h1", local: "h2"), "während des Sendens erneut getippt")
+        XCTAssertFalse(SyncLedger.clearsPendingFavorite(accepted: "h0", sent: "h1", local: "h1"), "Hub hat nicht angenommen")
+    }
+
+    func testKurzbuecherFollowDesktopFormat() throws {
+        let empty = String(decoding: try JSONEncoder().encode(BookFiles()), as: UTF8.self)
+        XCTAssertFalse(empty.contains("kurzbuecher"), "ohne Kurzbuch bleibt der Hash aller Bücher gleich")
+        let blob = String(repeating: "a", count: 64)
+        let json = #"{"audio":[],"kurzbuecher":[{"blob":"\#(blob)","size":3,"chunks":1,"type":"md","file":"kurzbuch-de.md","model":"m","created_ms":5,"source":"Ganzes Buch"}]}"#
+        let files = try JSONDecoder().decode(BookFiles.self, from: Data(json.utf8))
+        XCTAssertEqual(files.kurzbuecher.first?.language, "de")
+        XCTAssertEqual(files.kurzbuecher.first?.model, "m")
+        XCTAssertEqual(files.kurzbuecher.first?.createdMs, 5)
+        XCTAssertEqual(try JSONDecoder().decode(BookFiles.self, from: JSONEncoder().encode(files)), files)
+        XCTAssertEqual(LibraryText.kurzbuchText("## Fazit\n\n**Wichtig** bleibt."), "## Fazit\n\nWichtig bleibt.")
+    }
+
+    func testKurzbuchRefsFromTheNetworkAreChecked() {
+        let blob = String(repeating: "a", count: 64)
+        func ref(blob b: String? = nil, size: Int = 3, chunks: Int = 1, file: String = "kurzbuch-de.md") -> KurzbuchRef {
+            KurzbuchRef(blob: b ?? blob, size: size, chunks: chunks, file: file)
+        }
+        XCTAssertTrue(ref().isUsable)
+        XCTAssertTrue(ref(file: "kurzbuch-pt-br.md").isUsable)
+        XCTAssertFalse(ref(blob: "../../sync").isUsable, "Pfad statt Kennung")
+        XCTAssertFalse(ref(blob: String(repeating: "A", count: 64)).isUsable)
+        XCTAssertFalse(ref(file: "kurzbuch-../x.md").isUsable, "Pfad im Sprachcode")
+        XCTAssertFalse(ref(file: "kurzbuch-DE.md").isUsable)
+        XCTAssertFalse(ref(file: "anderes.md").isUsable)
+        XCTAssertFalse(ref(size: 0).isUsable, "leeres Dokument")
+        XCTAssertFalse(ref(size: KurzbuchRef.maxBytes + 1, chunks: 1).isUsable, "zu groß")
+        XCTAssertFalse(ref(chunks: 5).isUsable, "Stückzahl passt nicht zur Größe")
+    }
+
+    /// Modelltest: prüft nur `LibrarySyncMeta.updatingFiles`. Einen echten Upload-/Pull-Ablauf deckt er nicht ab,
+    /// dafür fehlt ein Testziel für `LibrarySync`; der Ausbau ist eine eigene Aufgabe.
+    func testFileUpdateKeepsStarSetDuringUpload() throws {
+        // Upload beginnt, währenddessen setzt der Stern Zeitstempel und Merker; danach kommt der Verweis dazu.
+        let duringUpload = LibrarySyncMeta(updated: 200, pendingFavorite: true, pendingFields: "f")
+        let ref = BlobRef(blob: "a", size: 1, chunks: 1)
+        let after = duringUpload.updatingFiles { $0.text = ref }
+        XCTAssertEqual(after.files.text, ref)
+        XCTAssertEqual(after.updated, 200)
+        XCTAssertEqual(after.pendingFavorite, true)
+        XCTAssertEqual(after.pendingFields, "f")
+        // Alte Dateien bleiben lesbar.
+        let old = try JSONDecoder().decode(LibrarySyncMeta.self, from: Data(#"{"files":{"audio":[]},"updated":5}"#.utf8))
+        XCTAssertEqual(old.updated, 5)
+        XCTAssertNil(old.pendingFavorite)
+    }
+
+    func testTombstoneKeepsUnsavedLocalChanges() {
+        let synced = SyncLedger.Entry(revision: 3, hash: "h", deleted: false)
+        XCTAssertFalse(SyncLedger.keepsAgainstTombstone(synced, localHash: "h"), "abgeglichener Stand darf weg")
+        XCTAssertTrue(SyncLedger.keepsAgainstTombstone(synced, localHash: "favorit-geaendert"), "neuer als der Abgleich")
+        XCTAssertTrue(SyncLedger.keepsAgainstTombstone(nil, localHash: "h"), "war nie im Konto")
+        XCTAssertTrue(SyncLedger.keepsAgainstTombstone(.init(revision: 4, hash: "", deleted: true), localHash: "h"), "nach Grabstein neu entstanden")
     }
 
     func testChunkCountMatchesDesktopAndFitsHosting() {

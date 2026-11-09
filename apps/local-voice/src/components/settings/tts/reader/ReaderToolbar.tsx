@@ -55,6 +55,8 @@ interface ReaderToolbarProps {
   bookmarks?: React.ReactNode;
   /** Begriffe-Menü (lva#185, nur im Originaltext). */
   terms?: React.ReactNode;
+  /** Sprachknopf bei Büchern mit mehreren Sprachfassungen (lva#344). */
+  language?: React.ReactNode;
   fontFamily: ReaderFont;
   onFontFamily(font: ReaderFont): void;
   theme: ReaderTheme;
@@ -97,6 +99,7 @@ export const ReaderToolbar: React.FC<ReaderToolbarProps> = ({
   onFollow,
   bookmarks,
   terms,
+  language,
   fontFamily,
   onFontFamily,
   theme,
@@ -213,6 +216,7 @@ export const ReaderToolbar: React.FC<ReaderToolbarProps> = ({
               <BookOpen width={14} height={14} aria-hidden="true" />
             </button>
           </div>
+          {language}
           {bookmarks}
           {terms}
           {awake}

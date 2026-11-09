@@ -24,7 +24,8 @@ import {
  * dem Kern und schiebt rein lokale (aus der Zeit vor der Bibliothek) hinauf.
  *
  * Gespiegelt werden die Weiterlese-Stellen und Lesezeichen des Readers
- * (`tts.resume.*`, `tts.bookmarks.*`) und die Fortschritts-Datensätze
+ * (`tts.resume.*`, `tts.bookmarks.*`), die Stimmen je Buchsprache
+ * (`tts.voice.*`, lva#352) und die Fortschritts-Datensätze
  * (`progress.*`). Schlüssel der Datensätze:
  * - `text:<seite>:<reiter>` – Text einer Vorlesen-Seite (Zeichen),
  * - `audio:<buch>` – importiertes Hörbuch (Millisekunden),
@@ -32,7 +33,7 @@ import {
  */
 
 const LS_PREFIX = "lva.ui.";
-const MIRRORED = ["tts.resume.", "tts.bookmarks.", "progress."];
+const MIRRORED = ["tts.resume.", "tts.bookmarks.", "tts.voice.", "progress."];
 export const FLUSH_MS = 800;
 export const HYDRATED_EVENT = "lv-progress-hydrated";
 export const CHANGED_EVENT = "lv-progress-changed";

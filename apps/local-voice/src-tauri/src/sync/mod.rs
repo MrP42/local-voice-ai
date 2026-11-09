@@ -6,11 +6,13 @@
 
 pub mod account;
 pub mod blobs;
+pub mod book_files;
 pub mod books;
 pub mod booktalk_relay;
 pub mod client;
 pub mod collect;
 pub mod crypto;
+pub mod curl;
 pub mod engine;
 pub mod ledger;
 pub mod pairing;

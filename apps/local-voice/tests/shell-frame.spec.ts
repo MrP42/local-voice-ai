@@ -85,6 +85,12 @@ test("Fussleiste: 24 px, Modelle des Moduls links, Version ganz rechts", async (
   await setup(page, "light");
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
+  // lva#394: Start ist der Chat (Antwortmodell im Chatkopf); die Fußleiste mit
+  // Sprach- und KI-Modell zeigt eine Seite ohne eigene Modellwahl, z. B. Verlauf.
+  await page
+    .getByRole("navigation", { name: "Hauptnavigation" })
+    .getByRole("button", { name: "Verlauf", exact: true })
+    .click();
   const bar = page.locator(".lv-statusbar");
   expect((await bar.boundingBox())!.height).toBe(24);
   expect(await bar.evaluate((el) => getComputedStyle(el).fontSize)).toBe("12px");
@@ -93,7 +99,7 @@ test("Fussleiste: 24 px, Modelle des Moduls links, Version ganz rechts", async (
 
   // Patrick 02.11. (löst ADR-0027 E7 ab): die Modelle des geöffneten Moduls
   // stehen links unten. Patrick 05.11. (#281): die Version immer ganz rechts.
-  await expect(bar.getByTestId("fuss-modelle")).toHaveAttribute("data-modul", "home");
+  await expect(bar.getByTestId("fuss-modelle")).toHaveAttribute("data-modul", "history");
   await expect(bar.locator("[data-llm-selector]")).toHaveCount(1);
   await expect(bar.locator("[data-model-status]")).toHaveCount(1);
   const version = bar.getByTestId("footer-version");
@@ -109,14 +115,18 @@ test("Fussleiste: 24 px, Modelle des Moduls links, Version ganz rechts", async (
   await expect(mic).toHaveAttribute("aria-label", /Mikrofon: Systemvorgabe/);
   await expect(mic).toHaveText("");
 
-  // Codex 01.11.: rechts nur Mikrofon und Telefon; Speicher/GPU, Fish-Server
-  // und Schild nur als bewusst eingeschaltete Diagnose, einklappbar.
+  // Codex 01.11.: rechts Mikrofon und Telefon; Speicher/GPU und Fish-Server
+  // nur als bewusst eingeschaltete Diagnose, einklappbar. Das Schild steht
+  // immer da, ganz rechts vor der Version (Patrick 08.11.2026).
   await expect(bar.locator("[data-resource-meter]")).toHaveCount(0);
-  await expect(bar.locator("[data-compliance-shield]")).toHaveCount(0);
+  await expect(bar.locator("[data-compliance-shield]")).toBeVisible();
   await expect(bar.locator("[data-fish-server]")).toHaveCount(0);
   await expect(bar.getByTestId("statusbar-diagnose")).toHaveCount(0);
   const x = async (sel: string) => (await bar.locator(sel).first().boundingBox())!.x;
   expect(await x("[data-mic-selector]")).toBeLessThan(await x(".lv-call-group"));
+  // Patrick 08.11.2026: Schild ganz rechts, nach dem Telefon und direkt vor der Version.
+  expect(await x(".lv-call-group")).toBeLessThan(await x("[data-compliance-shield]"));
+  expect(await x("[data-compliance-shield]")).toBeLessThan(versionBox.x);
 
   // Profilmenü ▸ Hilfe ▸ Diagnose: Knopf erscheint, ausgeklappt mit Speicher
   await oeffneProfilmenue(page);
@@ -133,7 +143,7 @@ test("Fussleiste: 24 px, Modelle des Moduls links, Version ganz rechts", async (
   await diagnose.click();
   await expect(diagnose).toHaveAttribute("aria-expanded", "false");
   await expect(bar.locator("[data-resource-meter]")).toHaveCount(0);
-  await expect(bar.locator("[data-compliance-shield]")).toHaveCount(0);
+  await expect(bar.locator("[data-compliance-shield]")).toBeVisible();
   await expect(bar.locator("[data-fish-server]")).toHaveCount(0);
   // Eingeklappt bleibt eingeklappt (auch nach Neustart), Ausklappen holt alles zurück
   await page.reload();
@@ -155,6 +165,12 @@ test("Fußleiste ▸ Modelle: Rollen-Tooltips und Modellwahl", async ({ page }) 
   await setup(page, "light");
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
+  // lva#394: Start ist der Chat (Antwortmodell im Chatkopf); die Fußleiste mit
+  // Sprach- und KI-Modell zeigt eine Seite ohne eigene Modellwahl, z. B. Verlauf.
+  await page
+    .getByRole("navigation", { name: "Hauptnavigation" })
+    .getByRole("button", { name: "Verlauf", exact: true })
+    .click();
   await oeffneModellwahl(page);
   const modelle = page.getByTestId("fuss-modelle");
   await modelle.locator("[data-model-status]").hover();
@@ -299,7 +315,7 @@ test("Keine Titelzeile im Modul: Inhalt beginnt direkt unter der Titelleiste", a
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
   const nav = page.getByRole("navigation", { name: "Hauptnavigation" });
-  for (const label of ["Verlauf", "Aufnahmen", "Vorlesen", "Bibliothek", "Sprachgespräch"]) {
+  for (const label of ["Verlauf", "Aufnahmen", "Vorlesen", "Bibliothek"]) {
     await nav.getByRole("button", { name: label, exact: true }).click();
     const titel = page.getByRole("heading", { level: 1, name: label, exact: true });
     await expect(titel).toHaveCount(1);

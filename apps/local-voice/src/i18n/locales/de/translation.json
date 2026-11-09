@@ -10,6 +10,7 @@
     "cancel": "Abbrechen"
   },
   "sidebar": {
+    "projekte": "Projekte",
     "library": "Bibliothek",
     "general": "Allgemein",
     "models": "Modelle",
@@ -20,7 +21,8 @@
     "debug": "Debug",
     "about": "Info",
     "dictationTest": "Diktattest",
-    "voiceCall": "Sprachgespräch",
+    "voiceCall": "Chat",
+    "voiceCallHint": "Mit der KI schreiben oder sprechen.",
     "tts": "Vorlesen",
     "meetings": "Besprechungen",
     "settings": "Einstellungen",
@@ -1184,6 +1186,7 @@
       "scriptVoices": "Skript mit Sprechern",
       "modelDefault": "Standardstimme",
       "filter": { "label": "Stimmen nach Sprache filtern", "auto": "Passend ({{language}})", "all": "Alle" },
+      "scope": { "lang": "Standardstimme für Bücher auf {{language}}", "book": "Eigene Stimme für dieses Buch ({{language}})", "bookMissing": "Eigene Stimme dieses Buchs fehlt hier – es liest die Standardstimme für {{language}}", "bookOnly": "Nur für dieses Buch" },
       "scriptVoicesHint": "Die Sprecher im Skript lesen ihre Zeilen; Text ohne Sprecher liest die Standardstimme.",
       "singleVoiceHint": "Diese Stimme liest den ganzen Text – die Sprecher im Skript werden übergangen."
     },
@@ -1260,6 +1263,61 @@
     "exportEta": "noch etwa {{time}}",
     "exportEtaComputing": "Restzeit wird berechnet",
     "exportSaved": "Gespeichert: {{path}}",
+    "folders": {
+      "label": "Ordner",
+      "all": "Alle",
+      "books": "Bücher",
+      "noBooks": "Noch keine Bücher",
+      "texts": "Texte",
+      "withoutBook": "Ohne Buch",
+      "back": "Zurück",
+      "noBooksHint": "Ziehe ein EPUB, PDF, DOCX oder Hörbuch hierher oder füge es hinzu. Lose Texte findest du unter „Texte“.",
+      "addBook": "Buch hinzufügen",
+      "noLoose": "Keine losen Texte",
+      "noPages": "Noch keine Seiten",
+      "newPage": "Neue Seite",
+      "editions_one": "{{count}} Fassung",
+      "editions_other": "{{count}} Fassungen",
+      "continue": "Weiterlesen",
+      "groupEditions": "Fassungen",
+      "groupAudio": "Hörbuch",
+      "groupAi": "KI-Dokumente",
+      "mainEdition": "Hauptfassung",
+      "audioTitle": "Hörbuch {{lang}}",
+      "audioMeta_one": "{{count}} Teil · {{duration}}",
+      "audioMeta_other": "{{count}} Teile · {{duration}}",
+      "aiMetaMain": "Fassung {{lang}} (Haupt)",
+      "aiMeta": "Fassung {{lang}}",
+      "missing": "Datei fehlt",
+      "missingHint": "Nichts wurde gelöscht.",
+      "backToFolders": "Zurück zu den Ordnern",
+      "backToList": "Zurück zur Liste",
+      "unknownLang": "Sprache unbekannt",
+      "groupFiles": "Notizen und Anhänge",
+      "noFiles": "Noch keine Notizen oder Anhänge.",
+      "loadError": "Notizen und Anhänge konnten nicht geladen werden.",
+      "reload": "Erneut laden",
+      "missingLocal": "Fehlt auf diesem Gerät – vom Hub wiederherstellen oder in der App löschen",
+      "restore": "Vom Hub wiederherstellen",
+      "restoreFile": "{{name}} vom Hub wiederherstellen",
+      "held": "Name kollidiert mit einer anderen Datei – zurückgehalten",
+      "newNote": "Neue Notiz",
+      "noteTitle": "Titel der Notiz",
+      "noteCreate": "Anlegen",
+      "addAttachment": "Anhang hinzufügen",
+      "openFile": "Mit dem Standardprogramm öffnen",
+      "remove": "Entfernen",
+      "removeFile": "„{{name}}“ entfernen",
+      "removeTitle": "Datei entfernen",
+      "removeAsk": "„{{name}}“ in den Papierkorb der Bibliothek legen? Nach dem nächsten Abgleich verschwindet die Datei auch auf deinen anderen Geräten.",
+      "roleNote": "Notiz",
+      "roleAttachment": "Anhang",
+      "roleTranscript": "Transkript",
+      "roleTranscriptOf": "Transkript {{edition}}",
+      "pending": "Noch nicht auf diesem Gerät",
+      "conflict": "Konfliktkopie",
+      "fileError": "Aktion fehlgeschlagen: {{error}}"
+    },
     "pages": {
       "title": "Seiten",
       "create": "Neue Seite",
@@ -2395,7 +2453,7 @@
         "bindings": {
           "voice_call": {
             "name": "Hauptgespräch-Tastenkürzel",
-            "description": "Startet oder beendet das Sprachgespräch im festen Hauptgespräch, auch außerhalb der App. Die Antwort kommt als Sprache, der Text steht im Gesprächsverlauf. Reines Strg+Alt geht nicht, weil AltGr unter Windows Strg+Alt ist."
+            "description": "Startet oder beendet das gesprochene Hauptgespräch im Chat, auch außerhalb der App. Die Antwort kommt als Sprache, der Text steht im Gesprächsverlauf. Reines Strg+Alt geht nicht, weil AltGr unter Windows Strg+Alt ist."
           },
           "transcribe": {
             "name": "Transkriptions-Tastenkürzel",
@@ -2839,9 +2897,82 @@
         "appearance": "Erscheinungsbild",
         "startup": "Start",
         "storage": "Speicher und Dateien",
+        "library": "Bibliothek und Sicherungen",
         "updates": "Updates",
         "input": "Mikrofon",
         "feedback": "Hörbare Rückmeldung"
+      },
+      "libraryLayout": {
+        "title": "Ordnung der Bibliothek",
+        "description": "Jedes Buch hat einen eigenen Ordner mit seinen Fassungen, Übersetzungen und KI-Dokumenten. Lose Texte bleiben unter „projects“.",
+        "loading": "Wird geprüft …",
+        "ordered": "Alle Bücher liegen in ihren Buch-Ordnern.",
+        "pending_one": "{{count}} Seite liegt noch außerhalb ihres Buch-Ordners.",
+        "pending_other": "{{count}} Seiten liegen noch außerhalb ihrer Buch-Ordner.",
+        "nothing": "Es gibt nichts zu ordnen.",
+        "open": "Bibliothek neu ordnen …",
+        "continue": "Neu ordnen fortsetzen",
+        "continueRollback": "Zurücknehmen fortsetzen",
+        "rollback": "Alte Ordnung wiederherstellen …",
+        "stoppedTitle": "Neu ordnen angehalten",
+        "stoppedText": "Es wurde nichts überschrieben und nichts zurückgestellt. Alle anderen Bücher bleiben lesbar; Wiederherstellung aus der Sicherung ist möglich.",
+        "paths": "Betroffene Ordner",
+        "hints": "Übersprungen",
+        "dialogTitle": "Bibliothek neu ordnen?",
+        "dialogText_one": "Der Text, die Übersetzungen und die KI-Dokumente von {{count}} Seite werden in ihren Buch-Ordner verschoben. Lose Texte bleiben, wo sie sind.",
+        "dialogText_other": "Die Texte, Übersetzungen und KI-Dokumente von {{count}} Seiten werden in je einen Buch-Ordner verschoben. Lose Texte bleiben, wo sie sind.",
+        "dialogBackup": "Vorher wird eine Sicherung angelegt ({{needed}} frei nötig).",
+        "dialogKeep": "Fortschritt, Lesezeichen und Stimmen bleiben erhalten.",
+        "dialogStop": "Bei Problemen wird angehalten. Vorhandene Dateien werden nie überschrieben; Wiederherstellung aus der Sicherung ist möglich.",
+        "dialogNoSpace": "Zu wenig freier Speicher: nötig {{needed}}, frei {{free}}. Bitte Platz schaffen, dann erneut versuchen.",
+        "now": "Jetzt ordnen",
+        "later": "Später",
+        "close": "Schließen",
+        "running": "Wird geordnet …",
+        "done_one": "{{count}} Seite wurde in ihren Buch-Ordner verschoben.",
+        "done_other": "{{count}} Seiten wurden in ihre Buch-Ordner verschoben.",
+        "rollbackTitle": "Alte Ordnung wiederherstellen?",
+        "rollbackText": "Die Fassungen gehen aus den Buch-Ordnern zurück unter „projects“. Fortschritt, Lesezeichen und Stimmen bleiben erhalten. Vorhandene Dateien werden nie überschrieben.",
+        "rollbackApply": "Wiederherstellen",
+        "rolledBack_one": "{{count}} Seite liegt wieder unter „projects“.",
+        "rolledBack_other": "{{count}} Seiten liegen wieder unter „projects“.",
+        "backupsTitle": "Sicherungen",
+        "backupsDescription": "Vor jedem Neuordnen entsteht eine Sicherung. Nach 30 Tagen fragt die App, ob sie gelöscht werden darf.",
+        "noBackups": "Keine Sicherungen vorhanden.",
+        "backupRow": "{{date}} · {{files}} Dateien · {{size}}",
+        "expired": "Älter als 30 Tage",
+        "restore": "Zurückspielen …",
+        "delete": "Löschen …",
+        "restoreTitle": "Sicherung vom {{date}} zurückspielen?",
+        "restoreText": "Die Seiten und Dateien der Sicherung werden wieder angelegt. Was heute an ihrer Stelle liegt, geht vorher in einen Papierkorb unter „sicherungen“; nichts wird überschrieben oder endgültig gelöscht.",
+        "restoreApply": "Zurückspielen",
+        "restored_one": "{{count}} Datei wurde zurückgespielt.",
+        "restored_other": "{{count}} Dateien wurden zurückgespielt.",
+        "restoredTrash": "Was weichen musste, liegt in {{path}}.",
+        "deleteTitle": "Sicherung vom {{date}} löschen?",
+        "deleteText": "Die Sicherung ist älter als 30 Tage. Gelöscht lässt sie sich nicht mehr zurückspielen. Deine Bibliothek bleibt unverändert.",
+        "deleteApply": "Löschen",
+        "deleted": "Die Sicherung wurde gelöscht.",
+        "noSyncTitle": "Dieses Laufwerk kann Änderungen nicht sicher festschreiben",
+        "noSyncText": "Das Zurückspielen wurde nicht begonnen; es wurde nichts geändert. Dieses Laufwerk kann nicht garantieren, dass ein Austausch einen Stromausfall oder Absturz übersteht.",
+        "noSyncWays": "Auswege: die Sicherung in einen neuen Ordner auf einem lokalen Laufwerk exportieren, oder den Datenordner auf ein lokales Laufwerk verschieben und das Zurückspielen dort wiederholen.",
+        "noFileSyncTitle": "Dieses Laufwerk kann nicht einmal Dateien sicher festschreiben; Zurückspielen ist hier nicht möglich",
+        "moveDataDir": "Datenordner umziehen: App vollständig beenden (auch im Infobereich), den gesamten Datenordner auf ein lokales Laufwerk verschieben und den neuen Ort einrichten. Die Anleitung erklärt die Schritte je System.",
+        "moveGuide": "Anleitung zum Umzug",
+        "checking": "Prüfe, ob dieses Laufwerk sicher schreiben kann …",
+        "checkFailed": "Das Laufwerk ließ sich nicht prüfen: {{error}}. Es wird nichts zurückgespielt.",
+        "exportBackup": "Sicherung exportieren …",
+        "exportTitle": "Ordner für die exportierte Sicherung wählen",
+        "exported_one": "Die Sicherung wurde mit {{count}} Datei nach {{path}} kopiert und geprüft.",
+        "exported_other": "Die Sicherung wurde mit {{count}} Dateien nach {{path}} kopiert und geprüft.",
+        "exportedNotDurable": "Achtung: Auch dieser Ordner kann Änderungen nicht sicher festschreiben. Für eine verlässliche Kopie bitte ein lokales Laufwerk wählen.",
+        "exportedPartlyChecked": "Nicht jeder Ordner auf dem Weg zum Ziel hat eine verlässliche Kennung (etwa auf einem Netzlaufwerk); dort wurde über eine Prüfmarke sichergestellt, dass das Ziel außerhalb des Datenordners liegt.",
+        "exportOtherAccess": "Das Ziel liegt auf einem anderen Zugang als der Datenordner und lässt sich nicht sicher von ihm unterscheiden. Nichts wurde exportiert. Bitte auf ein lokales Laufwerk exportieren.",
+        "bestEffortLabel": "Trotzdem zurückspielen, ohne Schutz bei Absturz",
+        "bestEffortWarning": "Bricht der Rechner währenddessen ab, kann ein halber Stand bleiben. Die Sicherung und alles, was weichen muss (Papierkorb unter „sicherungen“), bleiben erhalten.",
+        "bestEffortApply": "Trotzdem zurückspielen",
+        "openDataDir": "Datenordner öffnen",
+        "failed": "Das hat nicht geklappt: {{error}}"
       },
       "localUpdateDir": {
         "title": "Lokaler Update-Ordner",
@@ -2919,7 +3050,7 @@
         },
         "effort": "Effort für {{name}}",
         "names": {
-          "voice_speaker": "Sprachgespräch (Sprecher)",
+          "voice_speaker": "Chat (Antwortmodell)",
           "meeting_protocol": "Besprechungsprotokoll und Notizen",
           "dictation_refine": "Diktat-Nachbearbeitung",
           "read_aloud": "Vorlesen",
@@ -7229,6 +7360,31 @@
       "wai": "Wolff Applied AI: Navy im hellen, Signalgelb im dunklen Modus."
     }
   },
+  "chatGuide": {
+    "title": "Einführung im Chat",
+    "count": "{{n}} von {{total}}",
+    "voice": "Mit Sprache",
+    "skip": "Überspringen",
+    "back": "Zurück",
+    "next": "Weiter",
+    "step": {
+      "welcome": "Hallo! Ich bin dein Assistent in Local Voice. Ich zeige dir in einer Minute, was hier geht. Du kannst jederzeit überspringen.",
+      "talk": "Mit diesem Knopf sprichst du mit mir wie am Telefon. Du kannst mich jederzeit unterbrechen. Oder du schreibst einfach in die Zeile.",
+      "plus": "Mit dem Plus holst du dir Kontext dazu: eine Datei, eine Recherche im Web und mehr.",
+      "model": "Hier oben wählst du das Modell: lokal auf deinem Rechner oder in der Cloud, schnell oder gründlich.",
+      "knowledge": "Hier siehst du jederzeit, welche Daten ich nutzen darf. Besprechungen, Bücher und Notizen gibst du einzeln frei.",
+      "pages": "Links findest du alles Weitere: Verlauf, Aufnahmen deiner Besprechungen, Vorlesen und deine Bibliothek. Frag mich auch einfach danach.",
+      "story": "Zum Schluss probieren wir etwas aus: Ich erfinde eine kurze Geschichte und lese sie mit mehreren Stimmen vor. Worum soll es gehen?"
+    },
+    "story": {
+      "topic": "Thema der Geschichte",
+      "defaultTopic": "Ein kleiner Drache, der nicht schlafen kann",
+      "go": "Geschichte erzählen",
+      "display": "Erzähl mir eine Geschichte: {{topic}}",
+      "readVoices": "Mit Stimmen vorlesen",
+      "stop": "Vorlesen beenden"
+    }
+  },
   "voiceCall": {
     "tool": {
       "generic": "Nutze das Werkzeug „{{name}}“ …",
@@ -7255,8 +7411,8 @@
       "denker_blocked": "Das Denker-Modell ist bei dieser Souveränität nicht zulässig und wird nicht genutzt.",
       "openSettings": "Einstellungen öffnen"
     },
-    "title": "Sprachgespräch",
-    "description": "Mit der KI sprechen wie am Telefon: Sie hört zu, antwortet sofort und lässt sich unterbrechen.",
+    "title": "Chat",
+    "description": "Mit der KI schreiben oder sprechen wie am Telefon: Sie hört zu, antwortet sofort und lässt sich unterbrechen.",
     "begin": "Gespräch beginnen",
     "end": "Gespräch beenden",
     "newConversation": "Neues Gespräch",
@@ -7348,8 +7504,8 @@
       "none": "noch keine"
     },
     "info": {
-      "open": "Informationen zum Sprachgespräch",
-      "title": "Sprachgespräch",
+      "open": "Informationen zum Chat",
+      "title": "Chat",
       "tipInterrupt": "Unterbrechen: einfach weitersprechen, die KI verstummt.",
       "tipHeadset": "Ein Headset liefert die sauberste Erkennung; Lautsprecher gehen dank Echo-Unterdrückung auch.",
       "tipText": "Du kannst auch schreiben und Dateien anhängen, mit und ohne laufendes Gespräch.",
@@ -7366,6 +7522,16 @@
       "title": "Worüber möchtest du sprechen?",
       "hint": "Gespräch beginnen und einfach lossprechen. Du kannst jederzeit unterbrechen oder schreiben."
     },
+    "greeting": {
+      "morning": ["Guten Morgen, {{name}}. Womit fangen wir an?", "Guten Morgen, {{name}}. Was steht heute an?"],
+      "day": ["Hallo {{name}}, wie kann ich helfen?", "Hallo {{name}}, was gibt es Neues?"],
+      "evening": ["Guten Abend, {{name}}. Was steht an?", "Guten Abend, {{name}}. Womit kann ich helfen?"],
+      "night": ["Noch wach, {{name}}? Was kann ich tun?", "Hallo {{name}}, woran arbeitest du gerade?"],
+      "morningAnon": ["Guten Morgen. Womit fangen wir an?", "Guten Morgen. Was steht heute an?"],
+      "dayAnon": ["Wie kann ich helfen?", "Was gibt es Neues?"],
+      "eveningAnon": ["Guten Abend. Was steht an?", "Guten Abend. Womit kann ich helfen?"],
+      "nightAnon": ["Noch wach? Was kann ich tun?", "Woran arbeitest du gerade?"]
+    },
     "suggestions": {
       "s1": "Was steht in meinen letzten Protokollen?",
       "s2": "Fasse das gestrige Meeting zusammen",
@@ -7380,6 +7546,7 @@
       "send": "Nachricht senden",
       "removeAttachment": "Anhang „{{name}}“ entfernen",
       "attachFiles": "Dateien anhängen …",
+      "permissions": "Souveränität und Wissen …",
       "fromCorporate": "Aus Corporate LLM",
       "corporateHint": "Corporate LLM verbinden – Skills, Plugins und Konnektoren kommen von dort",
       "documents": "Dokumente",
@@ -7499,10 +7666,10 @@
       "reset": "Zurücksetzen",
       "voice": "Stimme",
       "voiceHint": "Dieselbe Auswahl wie unter „Vorlesen“; sie gilt auch dort.",
-      "note": "Das Modell kommt aus „Modelle“ (aktives Modell, lokal oder API), die Stimme aus „Vorlesen“ (Standard: Anton).",
+      "note": "Das Antwortmodell wählst du im Eingabefeld des Chats, die Stimme gilt auch für „Vorlesen“ (Standard: Phonon, Anton).",
       "recognitionModel": "Spracherkennungsmodell",
       "answerModel": "Antwortmodell",
-      "answerModelHint": "Das aktive Sprachmodell aus der Fußleiste.",
+      "answerModelHint": "Wählst du unten im Eingabefeld des Chats, links neben dem Mikrofon.",
       "denker": "Denker-Modell",
       "denkerHint": "Ein zweites, stärkeres Modell für Fragen, die Wissen oder längeres Nachdenken brauchen. Der Sprecher bleibt schnell und fragt den Denker nur bei Bedarf.",
       "denkerOff": "Aus",
@@ -7518,11 +7685,26 @@
         "eu": "EU",
         "frei": "Frei"
       },
-      "transcripts": "Transkripte im Sprachgespräch lesen",
+      "transcripts": "Transkripte im Chat lesen",
       "transcriptsHint": "Standardmäßig aus. Ist es an, darf die KI Transkripte von Besprechungen lesen und in ihnen suchen. Der Inhalt geht dann an das Antwortmodell, bei „nur lokal“ also nur an ein lokales.",
-      "speakerBlocked": "Das Antwortmodell ist bei dieser Souveränität nicht zulässig. Wähle ein lokales Modell (Fußleiste) oder eine freiere Stufe, sonst antwortet die KI nicht.",
+      "speakerBlocked": "Das Antwortmodell ist bei dieser Souveränität nicht zulässig. Wähle im Eingabefeld des Chats ein lokales Modell oder hier eine freiere Stufe, sonst antwortet die KI nicht.",
       "tools": "LVA-Werkzeuge nutzen",
       "toolsHint": "Nur lesend: Die KI schlägt in den Bereichen nach, die du unter „Wissen“ freigibst. Sie ändert nichts, jeder Aufruf steht im Protokoll der Integrationen."
+    },
+    "sources": {
+      "label": "Quellen",
+      "entry": "[Q{{k}}] {{kind}}: {{title}}",
+      "open": "Quelle öffnen",
+      "page": "Seite {{page}}",
+      "kind": {
+        "book": "Buch",
+        "book_note": "Buchnotiz",
+        "ki_doc": "KI-Dokument",
+        "meeting": "Besprechung",
+        "dictation": "Diktat",
+        "conversation": "Gespräch",
+        "tts_page": "Vorlesen-Seite"
+      }
     },
     "knowledge": {
       "intro": "Was das Modell im Gespräch nachschlagen darf. Jeder Zugriff wird protokolliert.",
@@ -7553,7 +7735,24 @@
         "tts": {
           "label": "Vorlesen",
           "hint": "Seiten der Vorlesen-Bibliothek und die Sprachausgabe-Anbieter."
+        },
+        "books": {
+          "label": "Bücher",
+          "hint": "Text deiner Bücher, nur bis zu der Stelle, die du gelesen oder gehört hast."
+        },
+        "book_notes": {
+          "label": "Buchnotizen",
+          "hint": "Deine Notizen zu Büchern, nur bis zu deiner Leseposition."
+        },
+        "ki_docs": {
+          "label": "KI-Dokumente",
+          "hint": "Zusammenfassungen und andere KI-Dokumente zu Büchern, nur wenn sie nichts nach deiner Leseposition verraten."
         }
+      },
+      "global": {
+        "title": "Globales Wissen (Vorschau)",
+        "switch": "Alle freigegebenen Inhalte durchsuchen",
+        "hint": "Vor jeder Antwort sucht die App lokal in den freigegebenen Bereichen und gibt dem Modell die passenden Auszüge mit Belegen. Nur mit lokalem Sprachmodell; Bücher nur bis zu deiner Leseposition."
       }
     }
   },
@@ -7625,7 +7824,7 @@
       "history": "Verlauf: jedes Diktat wiederfinden, kopieren, anhören oder neu transkribieren.",
       "meetings": "Aufnahmen: Besprechungen live mitschreiben oder Audio- und Videodateien importieren.",
       "tts": "Vorlesen: Texte und Dokumente anhören und als Audiodatei speichern.",
-      "voice": "Sprachgespräch: wie ein Telefonat mit der KI – sprechen und die Antwort hören."
+      "voice": "Chat: mit der KI schreiben oder sprechen und die Antwort lesen oder hören."
     }
   },
   "shell": {
@@ -7651,6 +7850,178 @@
     "suchen": "Suchen"
   },
   "library": {
+    "sf": {
+      "add": "Sprachfassung hinzufügen …",
+      "badges": "Sprachfassungen: {{langs}}. Zuletzt aktiv: {{current}}.",
+      "kind": {
+        "audio": "Hörbuch",
+        "text": "Text"
+      },
+      "notice": {
+        "close": "Hinweis schließen",
+        "undo": "Rückgängig",
+        "align": "Kapitel zuordnen …",
+        "at": ", {{at}} von {{length}}",
+        "chapter": "**{{lang}}**, kapitelgenau: Kapitel {{chapter}} von {{total}}{{at}}.",
+        "approx": "**{{lang}}**, ungefähr bei {{percent}} %.",
+        "openGroup": "Kapitel {{a}} ({{langA}}) gehört zu Kapitel {{b}} ({{langB}}), die Zuordnung ist offen.",
+        "noAlignment": "Die Kapitel sind noch nicht zugeordnet.",
+        "loading": "{{lang}} wird geladen. Es läuft weiter auf {{current}}.",
+        "failed": "Der Wechsel der Sprachfassung ist fehlgeschlagen.",
+        "undoBlocked": "Rückgängig ist nicht möglich: Die Hörleiste hat ihre Stelle nicht gesichert. Nichts wurde geändert."
+      },
+      "switch": {
+        "button": "Sprache: {{lang}}, Auswahl öffnen",
+        "menu": "Sprachfassung wählen",
+        "audio": "Hörbuch",
+        "text": "Text",
+        "noAudio": "Kein Hörbuch",
+        "noText": "Kein Text",
+        "notLocal": "Nicht auf diesem Gerät",
+        "loading": "Wird geladen",
+        "narrator": "Sprecher: {{name}}",
+        "alignedNote": "Kapitel {{a}} ↔ {{b}} sind zugeordnet: Der Wechsel trifft das Kapitel genau.",
+        "openNote": "Kapitel nicht zugeordnet: Der Wechsel ist ungefähr.",
+        "align": "Kapitel zuordnen …"
+      },
+      "pairs": {
+        "barSure": "Gleiches Buch in zwei Sprachen?",
+        "barMaybe": "Vielleicht dasselbe Buch in zwei Sprachen?",
+        "barBooks": "„{{a}}“ ({{langA}}) und „{{b}}“ ({{langB}})",
+        "more": "und {{count}} weitere",
+        "later": "Später",
+        "reviewAll": "Prüfen …",
+        "join": "Zusammenlegen",
+        "title": "Sprachfassungen prüfen",
+        "intro": "Diese Bücher könnten dasselbe Werk in verschiedenen Sprachen sein. Es wird nichts ohne Ihre Bestätigung zusammengelegt.",
+        "confirm_one": "{{count}} Paar zusammenlegen",
+        "confirm_other": "{{count}} Paare zusammenlegen",
+        "sure": "Sicher",
+        "unsure": "Unsicher",
+        "sameWork": "Gleiche Werkkennung",
+        "whyWork": "Gleiche Werkkennung: {{key}}",
+        "whyTitle": "Ähnlicher Titel, gleiche Autorin oder gleicher Autor: {{author}}",
+        "whyAuthor": "Gleiche Autorin oder gleicher Autor: {{author}}",
+        "foot": "Zusammengelegte Bücher lassen sich später wieder trennen.",
+        "joined_one": "{{count}} Paar zusammengelegt.",
+        "joined_other": "{{count}} Paare zusammengelegt."
+      },
+      "offer": {
+        "title": "„{{title}}“ hinzugefügt",
+        "same": "Das ist dasselbe Buch wie „{{title}}“ ({{info}}). Als {{lang}} Sprachfassung hinzufügen?",
+        "maybe": "Vielleicht dasselbe Buch wie „{{title}}“ ({{info}}). Als {{lang}} Sprachfassung hinzufügen?",
+        "legend": "Wie soll das Buch aufgenommen werden?",
+        "edition": "Als {{lang}} Sprachfassung hinzufügen",
+        "editionHint": "Es erscheint als eine Karte mit mehreren Sprachen.",
+        "own": "Als eigenes Buch behalten",
+        "ownHint": "Es bleibt ein eigener Eintrag in der Bibliothek.",
+        "confirm": "Übernehmen",
+        "done": "„{{title}}“ ist jetzt die {{lang}} Sprachfassung."
+      },
+      "last": {
+        "line": "Zuletzt: {{lang}}, {{kind}}, {{percent}} % · {{where}}, {{when}}",
+        "here": "an diesem Gerät",
+        "other": "auf einem anderen Gerät"
+      },
+      "notLocal": "Das Hörbuch ({{lang}}) ist auf diesem Gerät noch nicht geladen. Der Abgleich ist angestoßen.",
+      "notOnDevice": "Noch nicht auf diesem Gerät",
+      "syncFailed": "Das Hörbuch ({{lang}}) konnte nicht geladen werden: Der Abgleich ist fehlgeschlagen ({{error}}).",
+      "syncOff": "Das Hörbuch ({{lang}}) liegt nicht auf diesem Gerät, und der Abgleich ist nicht eingerichtet.",
+      "listenEdition": "Hörbuch hören · {{lang}}",
+      "continueEdition": "Weiterhören · {{lang}}",
+      "section": {
+        "listen": "Hörbuch {{lang}} abspielen ({{duration}})",
+        "listenNoDuration": "Hörbuch {{lang}} abspielen",
+        "title": "Sprachfassungen",
+        "edition": "Fassung",
+        "progress": "Fortschritt",
+        "actions": "Aktionen",
+        "primary": "Hauptfassung",
+        "last": "Zuletzt",
+        "has": "Vorhanden",
+        "hasNot": "Nicht vorhanden",
+        "foot": "Die Hauptfassung bestimmt Titel und Cover. Gelöschte Fassungen liegen 30 Tage im Papierkorb.",
+        "alignedAll": "Alle Kapitel sind zugeordnet.",
+        "alignedSome": "Kapitel von {{a}} und {{b}} sind teilweise zugeordnet."
+      },
+      "menu": {
+        "read": "Text lesen",
+        "listen": "Hörbuch abspielen",
+        "primary": "Als Hauptfassung festlegen",
+        "align": "Kapitel zuordnen …",
+        "export": "Exportieren …",
+        "split": "Als eigenes Buch abspalten",
+        "remove": "In den Papierkorb",
+        "removeHint": "30 Tage wiederherstellbar",
+        "for": "Aktionen für {{lang}}"
+      },
+      "split": {
+        "title": "{{lang}} als eigenes Buch abspalten?",
+        "body": "„{{title}}“ wird ein eigenes Buch. Fortschritt und Dateien bleiben erhalten.",
+        "confirm": "Abspalten",
+        "done": "„{{title}}“ ist jetzt ein eigenes Buch."
+      },
+      "remove": {
+        "title": "{{lang}} in den Papierkorb legen?",
+        "body": "„{{title}}“ verschwindet aus den Sprachfassungen. Die Dateien bleiben 30 Tage erhalten.",
+        "confirm": "In den Papierkorb",
+        "done": "{{lang}} liegt im Papierkorb.",
+        "doneHint": "Rückgängig machen oder später wiederherstellen."
+      },
+      "replace": {
+        "legend": "Neue Hauptfassung wählen"
+      },
+      "graves": {
+        "title_one": "{{count}} gelöschte Sprachfassung",
+        "title_other": "{{count}} gelöschte Sprachfassungen",
+        "row": "Gelöschte Sprachfassung {{n}}, entfernt am {{date}}, noch {{days}} Tage wiederherstellbar",
+        "restore": "Wiederherstellen",
+        "done": "Sprachfassung wiederhergestellt."
+      },
+      "align": {
+        "title": "Kapitel zuordnen",
+        "intro": "„{{title}}“: {{langA}} hat {{countA}} Kapitel, {{langB}} hat {{countB}}. Bestätigen Sie jede Gruppe einzeln.",
+        "mediumLabel": "Kapitel aus",
+        "medium": {
+          "text": "Text",
+          "audio": "Hörbuch"
+        },
+        "loading": "Kapitel werden gelesen …",
+        "noChapters": "In diesem Medium gibt es keine Kapitel.",
+        "count": "{{done}} von {{total}} Gruppen bestätigt ({{countA}} und {{countB}} Kapitel)",
+        "list": "Kapitelgruppen",
+        "confirmed": "Bestätigt",
+        "confirm": "Bestätigen",
+        "confirmGroup": "Gruppe {{n}} bestätigen",
+        "confirmAll": "Alle bestätigen",
+        "save": "Speichern",
+        "saved": "Zuordnung gespeichert.",
+        "edit": "Gruppe {{n}} ändern",
+        "editMenu": "Gruppe {{n}} ändern",
+        "split": "Gruppe teilen",
+        "join": "Mit nächster Gruppe verbinden",
+        "move": {
+          "a": {
+            "next": "Grenze links nach unten",
+            "prev": "Grenze links nach oben"
+          },
+          "b": {
+            "next": "Grenze rechts nach unten",
+            "prev": "Grenze rechts nach oben"
+          }
+        },
+        "why": "„Alle bestätigen“ ist nur möglich, wenn jede Gruppe 1:1 zugeordnet ist und beide Fassungen gleich viele Kapitel haben. Sonst bitte jede Gruppe einzeln bestätigen."
+      },
+      "conflict": {
+        "text": "Auf {{device}} zuletzt **{{lang}}** gehört ({{there}}). Hier läuft {{current}}{{here}}.",
+        "iphone": "dem iPhone",
+        "other": "einem anderen Gerät",
+        "chapter": "Kapitel {{n}}",
+        "chapterHere": ", Kapitel {{n}}",
+        "go": "Dorthin wechseln",
+        "stay": "Hier bleiben"
+      }
+    },
     "fmt": {
       "text": "Text",
       "audiobook": "Hörbuch",
@@ -7663,7 +8034,7 @@
     },
     "ki": {
       "title": "Mit KI erstellen",
-      "short": "Mit KI erstellen",
+      "short": "Erstellen",
       "menuFor": "KI und Export: {{title}}",
       "menuHint": "Übersetzen, Kurzbuch oder KI-Dokument erstellen, Fassungen exportieren",
       "menuTranslate": "Übersetzen …",
@@ -7774,7 +8145,16 @@
       "languages": "Vorhandene Sprachen",
       "showLang": "Kurzbuch auf {{lang}} zeigen",
       "another": "Weitere Sprache",
-      "createLang": "Erstellen"
+      "createLang": "Erstellen",
+      "failed": "Die Transkription ist fehlgeschlagen. „Erneut versuchen“ startet sie noch einmal.",
+      "failedPartly": "Die Transkription ist unterbrochen. Fertige Abschnitte bleiben erhalten; „Fortsetzen“ transkribiert nur die fehlenden.",
+      "retryTranscript": "Erneut versuchen",
+      "resumeTranscript": "Fortsetzen",
+      "transcriptProgress": "Fortschritt der Transkription von {{title}}",
+      "creating": "Kurzbuch wird erstellt · Abschnitt {{done}} von {{total}} · {{percent}} %",
+      "createProgress": "Fortschritt des Kurzbuchs zu {{title}}",
+      "cancel": "Abbrechen",
+      "cancelling": "wird abgebrochen …"
     },
     "title": "Bibliothek",
     "description": "Bücher und Hörbücher – ein Eintrag je Werk, als Text, Audio oder beides.",
@@ -7853,6 +8233,7 @@
       "none": "Kein Text"
     },
     "audioShort": {
+      "other": "Hörbuch ({{lang}})",
       "ok": "Audio",
       "busy": "…",
       "none": "Kein Audio",
@@ -7861,6 +8242,7 @@
     },
     "job": {
       "parts": "Transkription {{done}} von {{total}}",
+      "percent": "{{percent}} %",
       "partsParallel": "Transkription {{done}} von {{total}} · {{running}} parallel",
       "partsFailed": "Transkription {{done}} von {{total}} · {{failed}} fehlgeschlagen",
       "queued": "Transkription wartet",
@@ -7876,9 +8258,22 @@
     "back": "Bibliothek",
     "by": "von {{authors}}",
     "tabs": "Buchansicht",
+    "bookFiles": {
+      "title": "Dateien im Buch-Ordner",
+      "reveal": "Im Explorer zeigen",
+      "empty": "Der Buch-Ordner ist leer.",
+      "failed": "Dateien nicht lesbar: {{error}}",
+      "metadata": "Metadaten, Fassungen",
+      "primaryEdition": "{{lang}} · Hauptfassung",
+      "edition": "{{lang}}",
+      "looseEdition": "keiner Fassung zugeordnet",
+      "summary_one": "{{count}} Datei, {{size}}",
+      "summary_other": "{{count}} Dateien, {{size}}"
+    },
     "tab": {
       "overview": "Übersicht",
       "versions": "Fassungen",
+      "files": "Dateien",
       "metadata": "Metadaten"
     },
     "noDescription": "Noch kein Klappentext. Unter „Metadaten“ lässt er sich aus Open Library übernehmen oder selbst schreiben.",
@@ -8029,6 +8424,8 @@
     "continueRead": "Weiterlesen",
     "readTitle": "„{{title}}“ lesen",
     "audioSource": {
+      "other": "Audio: Hörbuch der Sprachfassung {{lang}}",
+      "otherRemote": "Audio: Hörbuch der Sprachfassung {{lang}}, noch nicht auf diesem Gerät",
       "audiobook": "Audio: importiertes Hörbuch",
       "narrated": "Audio: per Sprachausgabe vertont",
       "none": "Kein Audio – nur Lesen oder live vorlesen lassen"
@@ -8099,8 +8496,8 @@
       "scope": "Wohin damit?",
       "trash": "In den Papierkorb (wiederherstellbar)",
       "delete": "Endgültig löschen (nicht wiederherstellbar)",
-      "trashHint_one": "Der Eintrag mit Cover und, falls vorhanden, Hörbuch-Kopie ({{size}}) kommt in den Papierkorb und lässt sich 30 Tage lang wiederherstellen. Text oder Transkript bleibt im Vorlesen.",
-      "trashHint_other": "Die Einträge mit Cover und, falls vorhanden, Hörbuch-Kopie ({{size}}) kommen in den Papierkorb und lassen sich 30 Tage lang wiederherstellen. Texte und Transkripte bleiben im Vorlesen.",
+      "trashHint_one": "Der Eintrag mit Cover und, falls vorhanden, Hörbuch-Kopie ({{size}}) kommt in den Papierkorb und lässt sich 30 Tage lang wiederherstellen. Text, Transkript und Sprachfassungen im Buch-Ordner gehen mit und kommen beim Wiederherstellen zurück.",
+      "trashHint_other": "Die Einträge mit Cover und, falls vorhanden, Hörbuch-Kopie ({{size}}) kommen in den Papierkorb und lassen sich 30 Tage lang wiederherstellen. Texte, Transkripte und Sprachfassungen in den Buch-Ordnern gehen mit und kommen beim Wiederherstellen zurück.",
       "deleteHint_one": "Sofort und endgültig gelöscht werden: der Eintrag mit Cover und, falls vorhanden, Hörbuch-Kopie ({{size}}), der zugehörige Text oder das Transkript im Vorlesen ({{texts}}), laufende Transkriptionen und Lesestellen.",
       "deleteHint_other": "Sofort und endgültig gelöscht werden: die Einträge mit Cover und, falls vorhanden, Hörbuch-Kopien ({{size}}), die zugehörigen Texte und Transkripte im Vorlesen ({{texts}}), laufende Transkriptionen und Lesestellen.",
       "sure_one": "Ich habe verstanden: 1 Eintrag ({{size}}) und {{texts}} Text bzw. Transkript im Vorlesen werden endgültig gelöscht.",
@@ -8170,6 +8567,175 @@
     "transcribeMissing": "Fehlende Teile transkribieren",
     "importedParts": "Importiertes Hörbuch in {{count}} Teilen",
     "appendAudio": "Weitere Teile anhängen"
+  },
+  "projektBereich": {
+    "nichtSicherEntfernt": "Die Datei konnte nicht sicher entfernt werden. Sie liegt weiter im Projektordner und wird dir zum Aufnehmen angeboten.",
+    "titel": "Projekte",
+    "beschreibung": "Bücher, Texte, Aufnahmen und Dateien eines Projekts bündeln und je Eintrag festlegen, was als Kontext für die KI dient.",
+    "liste": "Projekte",
+    "gruppeLeiste": "Projekte",
+    "neuesProjekt": "Neues Projekt",
+    "projektName": "Name des Projekts",
+    "klasse": "Datenklasse",
+    "anlegen": "Anlegen",
+    "abbrechen": "Abbrechen",
+    "zurueck": "Zurück zu den Projekten",
+    "ohneName": "Eintrag ohne Leserecht",
+    "eintraege_one": "{{count}} Eintrag",
+    "eintraege_other": "{{count}} Einträge",
+    "kopien_one": "{{count}} Kopie",
+    "kopien_other": "{{count}} Kopien",
+    "hinzufuegen": "Hinzufügen",
+    "entfernt": "Aus dem Projekt genommen.",
+    "geloescht": "Recherche gelöscht.",
+    "gruppen": {
+      "buecher": "Bücher",
+      "texte": "Texte",
+      "aufnahmen": "Aufnahmen",
+      "dateien": "Dateien im Projektordner",
+      "recherchen": "Recherchen"
+    },
+    "kopf": {
+      "eintrag": "Eintrag",
+      "art": "Art",
+      "kontext": "Als Kontext"
+    },
+    "art": {
+      "buch": "Buch",
+      "text": "Text",
+      "aufnahme": "Aufnahme",
+      "datei": "Datei",
+      "recherche": "Recherche"
+    },
+    "zugeordnetPerson": "von dir zugeordnet",
+    "zugeordnetAutomatik": "automatisch zugeordnet",
+    "schalter": "{{name}} als Kontext",
+    "schalterGesperrt": "{{name}} als Kontext, nicht verfügbar",
+    "form": "Form",
+    "fassung": "Fassung",
+    "formUndFassung": "Form und Fassung",
+    "fassungWaehlen": "Fassung wählen: {{name}}",
+    "formWaehlen": "Form wählen: {{form}}",
+    "vorgabe": "Vorgabe",
+    "formen": {
+      "kurzbuch": "Kurzbuch",
+      "volltext": "Volltext",
+      "protokoll": "Protokoll",
+      "transkript": "Transkript",
+      "text": "Text"
+    },
+    "waehlen": {
+      "volltext": "Volltext wählen",
+      "transkript": "Transkript wählen"
+    },
+    "token": "~{{n}} Token",
+    "tokenAus": "aus · ~{{n}}",
+    "keinText": "kein Text",
+    "hinweis": {
+      "kein_kurzbuch": "Kein Kurzbuch – erstellen oder Volltext wählen.",
+      "kein_protokoll": "Kein Protokoll – erstellen oder Transkript wählen.",
+      "kein_text": "Noch kein Text vorhanden.",
+      "format": "Format nicht als Kontext lesbar",
+      "fehlt": "Quelle fehlt.",
+      "nicht_lesbar": "Kein Leserecht.",
+      "form": "Form passt nicht zum Eintrag."
+    },
+    "nichtImKontextPunkt": "Nicht im Kontext.",
+    "weitereAktionen": "Weitere Aktionen für {{name}}",
+    "weitereAktionenMenue": "Weitere Aktionen",
+    "entfernenMenue": "Aus Projekt entfernen …",
+    "rechercheLoeschenMenue": "Recherche löschen …",
+    "entfernen": {
+      "titel": "„{{name}}“ aus dem Projekt nehmen?",
+      "titelRecherche": "Recherche „{{name}}“ löschen?",
+      "nehmen": "Aus Projekt nehmen",
+      "loeschen": "Löschen",
+      "text": {
+        "dateien": "Die Kopie im Projektordner kommt in den Papierkorb des Projekts. Dein Original bleibt unberührt.",
+        "buecher": "Das Buch bleibt in der Bibliothek, mit Fassungen, Hörbuch und KI-Dokumenten. Nur die Verknüpfung zu „{{projekt}}“ entfällt.",
+        "texte": "Der Text bleibt im Vorlesen. Nur die Verknüpfung zu „{{projekt}}“ entfällt.",
+        "aufnahmen": "Die Aufnahme bleibt in den Aufnahmen, mit Transkript und Protokoll. Nur die Verknüpfung zu „{{projekt}}“ entfällt.",
+        "recherchen": "Die Recherche wird gelöscht. Das lässt sich nicht rückgängig machen."
+      }
+    },
+    "rechts": "Kontext im Projekt",
+    "summe": "{{summe}} von {{fenster}} Token",
+    "summeKurz": "{{summe}} Token",
+    "meter": "{{prozent}} % des Modellfensters belegt",
+    "zaehl_one": "{{count}} Eintrag als Kontext",
+    "zaehl_other": "{{count}} Einträge als Kontext",
+    "zaehlKeine": "Keine Einträge als Kontext",
+    "eintraegeKurz_one": "{{count}} Eintrag",
+    "eintraegeKurz_other": "{{count}} Einträge",
+    "fenster": "Modellfenster",
+    "fensterModell": "Modellfenster {{modell}}",
+    "details": "Details",
+    "nichtImKontext": "Nicht im Kontext",
+    "fehlt": {
+      "ohneKurzbuch_one": "{{count}} Buch ohne Kurzbuch",
+      "ohneKurzbuch_other": "{{count}} Bücher ohne Kurzbuch",
+      "ohneProtokoll_one": "{{count}} Aufnahme ohne Protokoll",
+      "ohneProtokoll_other": "{{count}} Aufnahmen ohne Protokoll",
+      "formatNichtLesbar_one": "{{count}} Datei, deren Format nicht lesbar ist",
+      "formatNichtLesbar_other": "{{count}} Dateien, deren Format nicht lesbar ist",
+      "ohneText_one": "{{count}} Eintrag ohne lesbaren Text",
+      "ohneText_other": "{{count}} Einträge ohne lesbaren Text",
+      "ausgeschaltet_one": "{{count}} Eintrag ausgeschaltet",
+      "ausgeschaltet_other": "{{count}} Einträge ausgeschaltet"
+    },
+    "geltung": {
+      "titel": "So gilt die Auswahl",
+      "text": "Nur eingeschaltete Einträge gehen an die KI, in der gewählten Form. Fehlt die Form, wird nichts ersetzt. Die Auswahl gilt auf diesem Gerät; auf anderen Geräten sind neue Einträge zunächst aus."
+    },
+    "ki": {
+      "titel": "KI im Projekt",
+      "text": "Chat und Sprachgespräch nutzen diese Auswahl, sobald sie für Projekte freigegeben sind.",
+      "gesperrt": "Gesperrt: KI-Aufrufe im Projekt folgen mit dem nächsten Schritt."
+    },
+    "banner": {
+      "reset": "Die Kontextauswahl dieses Geräts war nicht lesbar. Zur Sicherheit sind alle Einträge ausgeschaltet. Schalte ein, was die KI nutzen soll.",
+      "zuGross": "Der Kontext ist größer als das Modellfenster ({{summe}} von {{fenster}} Token). Schalte Einträge aus oder wähle eine kürzere Form. Es wird nichts still gekürzt. KI-Aufrufe im Projekt sind gesperrt, bis der Kontext ins Modellfenster passt.",
+      "gefunden": "Im Projektordner liegt eine Datei, die nicht zum Projekt gehört:",
+      "nichtAufgenommen": ". Sie wurde nicht aufgenommen.",
+      "aufnehmen": "Aufnehmen"
+    },
+    "leer": {
+      "titel": "{{name}} ist noch leer",
+      "text": "Füge Bücher, Texte, Aufnahmen oder Dateien hinzu. App-Inhalte werden verknüpft, Dateien in den Projektordner kopiert."
+    },
+        "lage": {
+      "fehlt": "Die Dateiliste dieses Projekts fehlt oder ist beschädigt. Dateien im Projektordner werden deshalb nicht angefasst.",
+      "defekt": "Die Dateiliste dieses Projekts fehlt oder ist beschädigt. Dateien im Projektordner werden deshalb nicht angefasst.",
+      "neuer": "Die Dateiliste stammt von einer neueren App-Version. Aktualisiere die App; bis dahin bleiben die Dateien unberührt.",
+      "nicht_lesbar": "Der Projektordner ist gerade nicht lesbar. Prüfe Zugriffsrechte oder Synchronisierung und lade die Seite neu.",
+      "neuAufbauen": "Bestand neu aufbauen",
+      "erneut": "Erneut prüfen",
+      "dialogTitel": "Bestand neu aufbauen?",
+      "dialogText": "Die beschädigte Liste wird beiseitegelegt, nicht gelöscht. Dateien im Projektordner werden dir danach zum Aufnehmen angeboten; Verknüpfungen zu bisherigen Dateien entfallen."
+    },
+    "keins": {
+      "titel": "Noch kein Projekt",
+      "text": "Lege ein Projekt an, um Bücher, Texte, Aufnahmen und Dateien zu bündeln."
+    },
+    "dialog": {
+      "titel": "Zu „{{name}}“ hinzufügen",
+      "ausDerApp": "Aus der App",
+      "dateienKopieren": "Dateien kopieren",
+      "appHinweis": "Bücher, Texte und Aufnahmen werden verknüpft, nicht kopiert. Neu hinzugefügte Einträge sind als Kontext eingeschaltet; du kannst das je Eintrag ändern.",
+      "nichtsFrei": "Alles, was die App kennt, gehört schon zu diesem Projekt.",
+      "nHinzufuegen_one": "{{count}} hinzufügen",
+      "nHinzufuegen_other": "{{count}} hinzufügen",
+      "dateienText": "Dateien werden in den Projektordner kopiert und nach dem Kopieren geprüft. Das Original bleibt unverändert. Eine Datei mit gleichem Namen wird nicht überschrieben, die Kopie bekommt „(2)“.",
+      "dateienWaehlen": "Dateien wählen …",
+      "kopiertLaeuft": "Dateien werden kopiert …",
+      "ladefehler": "Die Liste konnte nicht geladen werden.",
+      "erneut": "Erneut versuchen",
+      "weitereLaden": "Weitere laden",
+      "formatHinweis": "Als Kontext lesbar sind vorerst .txt und .md. Andere Formate werden aufgenommen und mit Hinweis angezeigt.",
+      "kopiert_one": "{{count}} Datei kopiert.",
+      "kopiert_other": "{{count}} Dateien kopiert.",
+      "schliessen": "Schließen"
+    }
   },
   "projekte": {
     "menu": {

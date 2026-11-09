@@ -126,4 +126,59 @@ final class LibraryTests: XCTestCase {
         XCTAssertEqual(p[0].textStart, 2)
         XCTAssertEqual(p[1].textStart, p[1].start)
     }
+
+    func testFavoritesComeFirstAndKeepOrder() {
+        var books = ["a", "b", "c", "d"].map { LibraryBook(id: $0, title: $0, addedMs: 1) }
+        books[1].favorite = true
+        books[3].favorite = true
+        XCTAssertEqual(LibraryText.favoritesFirst(books).map(\.id), ["b", "d", "a", "c"])
+    }
+
+    func testResumeEstimates() {
+        XCTAssertEqual(LibraryText.listenMilliseconds(chars: 900), 60_000)
+        XCTAssertEqual(LibraryText.listenMilliseconds(chars: -5), 0)
+    }
+
+    func testSentencePartsKeepEveryWord() {
+        let sentence = "Dr. Meier ging wie immer zuerst zum Hafen, dann in die Stadt, wo ihn niemand erwartete und auch sonst keiner nach ihm fragte."
+        let parts = LibraryText.sentenceParts(sentence, maxChars: 50)
+        XCTAssertGreaterThan(parts.count, 1)
+        XCTAssertEqual(parts.joined(separator: " "), sentence)
+        XCTAssertTrue(parts.allSatisfy { $0.count <= 50 })
+        XCTAssertEqual(LibraryText.sentenceParts("Kurz  und\ngut.", maxChars: 50), ["Kurz und gut."])
+        XCTAssertEqual(LibraryText.sentenceParts("", maxChars: 50), [])
+        let long = LibraryText.sentenceParts("Donaudampfschifffahrtsgesellschaft ja", maxChars: 10)
+        XCTAssertTrue(long.allSatisfy { $0.count <= 10 }, "überlange Wörter werden geteilt")
+        XCTAssertEqual(long.joined().replacingOccurrences(of: " ", with: ""), "Donaudampfschifffahrtsgesellschaftja")
+        XCTAssertTrue(LibraryText.sentenceParts(String(repeating: "字", count: 30), maxChars: 8).allSatisfy { $0.count <= 8 }, "Schrift ohne Leerzeichen")
+    }
+
+    func testDashesInsideWordsAreBreakPoints() {
+        for dash in ["—", "–"] {
+            let word = "eins\(dash)zwei\(dash)drei"
+            let parts = LibraryText.sentenceParts("Heute \(word) morgen", maxChars: 10)
+            XCTAssertEqual(parts.joined().replacingOccurrences(of: " ", with: ""), "Heute" + word + "morgen", "kein Zeichen geht verloren")
+            XCTAssertTrue(parts.contains { $0.hasSuffix(dash) }, "getrennt wird nach dem Strich, nicht mitten im Wort: \(parts)")
+            XCTAssertTrue(parts.allSatisfy { !$0.contains("ein ") && $0.count <= 10 })
+        }
+        // Passt alles, bleibt das Wort samt Strich zusammen, ohne Leerzeichen.
+        XCTAssertEqual(LibraryText.sentenceParts("eins—zwei", maxChars: 50), ["eins—zwei"])
+    }
+
+    func testPartsFollowMeasuredFit() {
+        // Breite Zeichen zählen doppelt: Die Grenze kommt aus der Messung, nicht aus der Zeichenzahl.
+        let fits: (String) -> Bool = { text in text.reduce(0) { $0 + ($1 == "W" || $1 == "字" ? 2 : 1) } <= 10 }
+        for sentence in ["WWWWWWWWWWWW", String(repeating: "字", count: 12), "Wald Wiese WWW Weg"] {
+            XCTAssertTrue(LibraryText.sentenceParts(sentence, fits: fits).allSatisfy(fits), sentence)
+        }
+    }
+
+    func testSentencePartFollowsSpokenTime() {
+        let parts = ["aaaa", "bbbb", "cc"]
+        XCTAssertEqual(LibraryText.sentencePartIndex(parts, elapsed: 0, total: 10), 0)
+        XCTAssertEqual(LibraryText.sentencePartIndex(parts, elapsed: 5, total: 10), 1)
+        XCTAssertEqual(LibraryText.sentencePartIndex(parts, elapsed: 9, total: 10), 2)
+        XCTAssertEqual(LibraryText.sentencePartIndex(parts, elapsed: 99, total: 10), 2, "Ton langsamer als geschätzt: bleibt am letzten Teil")
+        XCTAssertEqual(LibraryText.sentencePartIndex(parts, elapsed: 5, total: 0), 0)
+    }
 }

@@ -11,6 +11,7 @@ import {
   ImageIcon,
   Pencil,
   Play,
+  Plus,
   RefreshCw,
   Sparkles,
   Trash2,
@@ -29,6 +30,8 @@ import { Formats, jobLabel, ProgressBar } from "./LibraryPage";
 import type { TranscriptJob } from "./useLibrary";
 import { MetadataPicker } from "./MetadataPicker";
 import { KurzbuchCard } from "./KurzbuchCard";
+import { EditionsSection, LastActive } from "./EditionsSection";
+import { BookFiles } from "./BookFiles";
 import "./fassungen.css";
 import type { KiCreateTab } from "./KiCreateDialog";
 import {
@@ -48,9 +51,22 @@ import {
   transcribeTracks,
 } from "@/lib/library/importFile";
 import { jobsOfTrack } from "@/lib/library/sections";
-import { audioProgressKey, removeProgress } from "@/lib/library/progress";
+import {
+  audioProgressKey,
+  loadProgress,
+  progressFraction,
+  removeProgress,
+} from "@/lib/library/progress";
+import {
+  audioKeyOf,
+  editionsOf,
+  hasAudio,
+  langName,
+  langShort,
+  otherAudioEdition,
+} from "@/lib/library/editions";
 
-type Tab = "overview" | "versions" | "metadata";
+type Tab = "overview" | "versions" | "files" | "metadata";
 
 interface Props {
   view: BookView;
@@ -60,6 +76,8 @@ interface Props {
   onListen(): void;
   /** Hören und gleichzeitig den Text mitlesen. */
   onListenFollow(): void;
+  /** Hörbuch einer bestimmten Sprachfassung abspielen. */
+  onListenEdition?(editionId: string): void;
   onToggleFinished(): void;
   /** Ändert den frisch gelesenen Stand des Buchs (siehe useLibrary.save). */
   onSave(
@@ -75,6 +93,12 @@ interface Props {
   onCreate?(tab: KiCreateTab): void;
   /** lva#236: Fassungen exportieren. */
   onExport?(): void;
+  /** lva#344: „Sprachfassung hinzufügen …“ (öffnet „Hinzufügen“). */
+  onAddEdition?(): void;
+  /** lva#344: Kapitel zweier Sprachfassungen zuordnen. */
+  onAlign?(pair: { a: string; b: string }): void;
+  /** Gescheiterte Transkription erneut anstoßen (useLibrary.retryTranscript). */
+  onRetryTranscript?(): Promise<void>;
 }
 
 /**
@@ -88,6 +112,7 @@ export const BookDetail: React.FC<Props> = ({
   onPlay,
   onListen,
   onListenFollow,
+  onListenEdition,
   onToggleFinished,
   onSave,
   onRemove,
@@ -95,9 +120,30 @@ export const BookDetail: React.FC<Props> = ({
   editTitle = false,
   onCreate,
   onExport,
+  onAddEdition,
+  onAlign,
+  onRetryTranscript,
 }) => {
   const { t } = useTranslation();
-  const { book } = view;
+  const { book, shown } = view;
+  const multi = editionsOf(book).length > 1;
+  const readingLang = view.edition
+    ? langName(view.edition.lang) || langShort(view.edition.lang)
+    : "";
+  // Die aktive Fassung hat kein Hörbuch, eine andere schon: im Kopf anbieten.
+  const audioEdition =
+    multi && !view.audioSource && onListenEdition
+      ? otherAudioEdition(book, view.edition)
+      : null;
+  const audioLang = audioEdition
+    ? langName(audioEdition.lang) || langShort(audioEdition.lang)
+    : "";
+  const audioLocal = !!audioEdition && hasAudio(book, audioEdition);
+  const audioRec = audioEdition
+    ? loadProgress(audioKeyOf(book, audioEdition))
+    : null;
+  const audioStarted =
+    !!audioRec && audioRec.offset > 0 && progressFraction(audioRec) < 0.995;
   const [tab, setTab] = useState<Tab>("overview");
   const [draft, setDraft] = useState(book);
   const [dirty, setDirty] = useState(false);
@@ -170,16 +216,25 @@ export const BookDetail: React.FC<Props> = ({
       await onChanged();
     });
 
-  /** Nur fehlende oder fehlgeschlagene Teile und Abschnitte neu starten. */
+  /**
+   * Nur fehlende oder fehlgeschlagene Teile und Abschnitte neu starten; ist
+   * nur die Übernahme gescheitert, wird sie erneut versucht.
+   */
   const resume = () =>
     run("transcribe", async () => {
-      await resumeTranscription(book.id, (m) => toast.error(m));
+      if (onRetryTranscript) await onRetryTranscript();
+      else await resumeTranscription(book.id, (m) => toast.error(m));
       await onChanged();
     });
 
   const missingParts =
     !book.text && tracksOf(book.audio).some((x) => !jobsOfTrack(x).length);
-  const canResume = job !== undefined && (missingParts || job.failed > 0);
+  const canResume =
+    job !== undefined &&
+    (missingParts ||
+      job.failed > 0 ||
+      job.status === "failed" ||
+      job.status === "missing");
 
   const saveDraft = () =>
     run("save", async () => {
@@ -293,8 +348,14 @@ export const BookDetail: React.FC<Props> = ({
               {t("library.by", { authors: book.authors.join(", ") })}
             </div>
           )}
+          <LastActive book={book} />
           <div style={{ margin: "10px 0" }}>
-            <Formats view={view} job={job} />
+            <Formats
+              view={view}
+              job={job}
+              otherAudio={audioLang || undefined}
+              otherAudioLocal={audioLocal}
+            />
           </div>
           <dl className="library-kv">
             {meta
@@ -319,20 +380,21 @@ export const BookDetail: React.FC<Props> = ({
               {view.fraction > 0 && !isFinished(view)
                 ? t("library.continuePlay")
                 : t("library.play")}
+              {multi && readingLang ? ` · ${readingLang}` : ""}
             </Button>
           )}
-          {book.text && (
+          {shown.text && (
             <Button
               size="lg"
               variant={view.audioSource ? undefined : "primary"}
               icon={<BookOpen size={16} aria-hidden="true" />}
-              onClick={() => openInReader(book.text!.page_id, false)}
+              onClick={() => openInReader(shown.text!.page_id, false)}
               data-testid="library-detail-read"
             >
               {!view.audioSource && view.fraction > 0 && !isFinished(view) ? t("library.continueRead") : t("library.read")}
             </Button>
           )}
-          {book.text && book.audio_path && (
+          {shown.text && shown.audio_path && (
             <Button
               size="lg"
               icon={<Headphones size={16} aria-hidden="true" />}
@@ -342,7 +404,7 @@ export const BookDetail: React.FC<Props> = ({
               {t("library.listenFollow")}
             </Button>
           )}
-          {book.audio_path && view.resumeWith !== "audio" && (
+          {shown.audio_path && view.resumeWith !== "audio" && (
             <Button
               size="lg"
               icon={<Headphones size={16} aria-hidden="true" />}
@@ -356,6 +418,33 @@ export const BookDetail: React.FC<Props> = ({
             label={t("library.progressLabel", { title: book.title })}
           />
           <div className="library-meta">{progressText}</div>
+          {audioEdition && onListenEdition && (
+            <Button
+              size="lg"
+              icon={<Headphones size={16} aria-hidden="true" />}
+              onClick={() => onListenEdition(audioEdition.id)}
+              aria-describedby={
+                audioLocal ? undefined : "library-detail-listen-edition-hint"
+              }
+              data-testid="library-detail-listen-edition"
+            >
+              {t(
+                audioStarted
+                  ? "library.sf.continueEdition"
+                  : "library.sf.listenEdition",
+                { lang: audioLang },
+              )}
+            </Button>
+          )}
+          {audioEdition && onListenEdition && !audioLocal && (
+            <div
+              id="library-detail-listen-edition-hint"
+              className="library-meta"
+              data-testid="library-detail-listen-edition-hint"
+            >
+              {t("library.sf.notOnDevice")}
+            </div>
+          )}
           <Button
             size="lg"
             icon={<Check size={16} aria-hidden="true" />}
@@ -363,6 +452,16 @@ export const BookDetail: React.FC<Props> = ({
           >
             {isFinished(view) ? t("library.markUnfinished") : t("library.markFinished")}
           </Button>
+          {onAddEdition && (
+            <Button
+              size="lg"
+              icon={<Plus size={16} aria-hidden="true" />}
+              onClick={onAddEdition}
+              data-testid="library-detail-add-edition"
+            >
+              {t("library.sf.add")}
+            </Button>
+          )}
           {(onCreate || onExport) && (
             <div className="library-actions__pair">
               {onCreate && (
@@ -370,6 +469,8 @@ export const BookDetail: React.FC<Props> = ({
                   size="lg"
                   icon={<Sparkles size={16} aria-hidden="true" />}
                   onClick={() => onCreate("translation")}
+                  title={t("library.ki.title")}
+                  aria-label={t("library.ki.title")}
                   data-testid="library-detail-ki"
                 >
                   {t("library.ki.short")}
@@ -390,10 +491,21 @@ export const BookDetail: React.FC<Props> = ({
         </div>
       </div>
 
+      {onAlign && (
+        <EditionsSection
+          book={book}
+          onChanged={onChanged}
+          onAlign={onAlign}
+          onExport={onExport}
+          onListen={onListenEdition}
+        />
+      )}
+
       <TabList<Tab>
         tabs={[
           { id: "overview", label: t("library.tab.overview") },
           { id: "versions", label: t("library.tab.versions") },
+          { id: "files", label: t("library.tab.files") },
           { id: "metadata", label: t("library.tab.metadata") },
         ]}
         value={tab}
@@ -408,6 +520,8 @@ export const BookDetail: React.FC<Props> = ({
             transcribing={view.transcription === "running" || job !== undefined}
             busy={busy !== null}
             onTranscribe={() => void transcribe()}
+            job={job}
+            onRetry={canResume ? () => void resume() : undefined}
           />
           {book.description ? (
             <p className="library-blurb">{book.description}</p>
@@ -416,6 +530,8 @@ export const BookDetail: React.FC<Props> = ({
           )}
         </div>
       )}
+
+      {tab === "files" && <BookFiles book={book} />}
 
       {tab === "versions" && (
         <div className="library-versions">

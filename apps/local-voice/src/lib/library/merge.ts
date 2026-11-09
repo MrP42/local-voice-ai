@@ -2,13 +2,13 @@ import { commands, type LibraryBook } from "@/bindings";
 import type { SplitGroup } from "./audioGroups";
 import { assetUrl, pendingJobs, totalDuration, tracksOf } from "./books";
 import {
-  audioProgressKey,
   flushProgress,
   loadProgress,
   recordPosition,
   removeProgress,
   textProgressKey,
 } from "./progress";
+import { primaryAudioKey } from "./editions";
 import { mergedPosition, type MergeEntry } from "./position";
 import { probeDuration } from "./probe";
 import { findWork, ImportError } from "./importFile";
@@ -282,7 +282,7 @@ export async function mergeGroup(
     durations.set(book.id, own);
     entries.push({
       durations: own,
-      progress: loadProgress(audioProgressKey(book.id)),
+      progress: loadProgress(primaryAudioKey(book)),
     });
   }
   const position = mergedPosition(entries);
@@ -323,11 +323,11 @@ export async function mergeGroup(
     removeProgress(textProgressKey(oldText.page_id));
     await commands.pagesDelete(oldText.page_id);
   }
-  if (plan.replacesAudio) removeProgress(audioProgressKey(target.id));
-  for (const source of sources) removeProgress(audioProgressKey(source.id));
+  if (plan.replacesAudio) removeProgress(primaryAudioKey(target));
+  for (const source of sources) removeProgress(primaryAudioKey(source));
   if (position) {
     const total = durationsSum(result);
-    recordPosition(audioProgressKey(target.id), {
+    recordPosition(primaryAudioKey(target), {
       to: position.ms,
       length: total ?? 0,
       unit: "ms",

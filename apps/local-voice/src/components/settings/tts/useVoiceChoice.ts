@@ -20,6 +20,10 @@ import { PROVIDER_VOICES_CHANGED } from "./providers/VisibleVoices";
 import { useVoiceSamplesOf } from "./providers/useVoiceSamples";
 import type { VoiceTryTarget } from "./providers/voiceTry";
 import { primaryLanguage } from "@/lib/reader/language";
+import { phononName, type VoicePref } from "@/lib/reader/voicePrefs";
+
+/** Anbieterkennung von Phonon (wie `PHONON_ID` im Kern). */
+const PHONON_PROVIDER = "phonon";
 
 /** Eintrag der Stimmenauswahl, der keine Stimme ist, sondern ein Sprung zur Verwaltung. */
 export const VOICE_MANAGE = "@manage";
@@ -98,6 +102,12 @@ export function useVoiceChoice(phase: string) {
       phase === "ready" ||
       phase === "speaking"
     : true;
+  /** Laufzeitstand gelesen oder Fish-Server läuft: erst dann ist `fishReady` belastbar. */
+  const fishKnown =
+    ttsRuntime !== null ||
+    phase === "starting" ||
+    phase === "ready" ||
+    phase === "speaking";
   const piperVoices = useMemo(
     () =>
       ttsDownloads
@@ -209,6 +219,12 @@ export function useVoiceChoice(phase: string) {
           await updateSetting("tts_piper_voice", value.slice(6));
           await updateSetting("tts_engine", "piper");
         } else {
+          // Fish ist hier nicht eingerichtet: eine gemerkte Fish-Stimme (Reiter,
+          // Seite) darf die laufende Stimme nicht still auf „nicht eingerichtet“
+          // umstellen (Patrick 06.11.2026: Phonon ist die Standardstimme).
+          // Das Wiederherstellen gemerkter Stimmen wartet dafür auf `fishKnown`
+          // (TtsSettings); eine Wahl von Hand gilt bei unbekanntem Stand.
+          if (!fishReady) return;
           if ((getSetting("tts_engine") ?? "fish") !== "fish") {
             await updateSetting("tts_engine", "fish");
           }
@@ -217,7 +233,7 @@ export function useVoiceChoice(phase: string) {
         await commands.ttsVoiceChanged().catch(() => undefined);
       })();
     },
-    [getSetting, updateSetting, refreshSettings],
+    [getSetting, updateSetting, refreshSettings, fishReady],
   );
 
   /* Ist die gerade gewaehlte Stimme nicht eingerichtet? Dann sagt ein Hinweis
@@ -525,6 +541,44 @@ export function useVoiceChoice(phase: string) {
     [options, languageOf],
   );
 
+  /** Plattformneutrale Phonon-Form `<sprache>:<name>` eines Werts (lva#352),
+      `null` für andere Anbieter oder unbekannte Sprache. */
+  const phononOf = useCallback(
+    (value: string): string | null => {
+      const picked = parseProviderVoiceValue(value);
+      if (!picked || picked.providerId !== PHONON_PROVIDER) return null;
+      if (picked.voice === PROVIDER_DEFAULT_VOICE) return null;
+      const lang = languageOf(value);
+      return lang ? `${lang}:${phononName(picked.voice)}` : null;
+    },
+    [languageOf],
+  );
+
+  /** Gemerkte Stimme (lva#352) als Wert der Auswahl, wenn sie hier wählbar
+      ist: erst die Desktop-Kennung, sonst dieselbe Phonon-Stimme. */
+  const valueOfPref = useCallback(
+    (pref: VoicePref): string | null => {
+      const usable = (value: string) =>
+        options.some((o) => o.value === value && !o.isDisabled);
+      if (pref.desktop && usable(pref.desktop)) return pref.desktop;
+      if (!pref.phonon) return null;
+      const cut = pref.phonon.indexOf(":");
+      if (cut < 0) return null;
+      const lang = pref.phonon.slice(0, cut);
+      const name = pref.phonon.slice(cut + 1);
+      const hit = providerVoices.find(
+        (o) =>
+          o.provider_id === PHONON_PROVIDER &&
+          primaryLanguage(o.voice.language) === lang &&
+          phononName(o.voice.id) === name,
+      );
+      if (!hit) return null;
+      const value = providerVoiceValue(PHONON_PROVIDER, hit.voice.id);
+      return usable(value) ? value : null;
+    },
+    [options, providerVoices],
+  );
+
   /** Sprung zur Stimmenverwaltung (Eintrag `VOICE_MANAGE`). */
   const openVoiceManagement = useCallback(() => {
     openSettingsTab("output");
@@ -534,6 +588,7 @@ export function useVoiceChoice(phase: string) {
     voices,
     speakers,
     fishReady,
+    fishKnown,
     piperVoices,
     providerEngineId,
     providerLabel,
@@ -549,5 +604,7 @@ export function useVoiceChoice(phase: string) {
     openVoiceManagement,
     languageOf,
     bestVoiceFor,
+    phononOf,
+    valueOfPref,
   };
 }

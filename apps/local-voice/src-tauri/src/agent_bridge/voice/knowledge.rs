@@ -593,7 +593,7 @@ pub fn run(
 /// Meldung, wenn ein Bereich nicht frei ist (auch fuer `voice::call`).
 pub fn not_shared(need: Need) -> String {
     format!(
-        "Der Bereich „{}“ ist für das Sprachgespräch nicht freigegeben. Der Nutzer kann ihn unter „Gesprächseinstellungen → Wissen“ freigeben. Es wurde nichts gelesen.",
+        "Der Bereich „{}“ ist für den Chat nicht freigegeben. Der Nutzer kann ihn unter „Gesprächseinstellungen → Wissen“ freigeben. Es wurde nichts gelesen.",
         need.labels()
     )
 }

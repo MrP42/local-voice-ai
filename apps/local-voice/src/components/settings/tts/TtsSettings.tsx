@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -35,6 +36,22 @@ import {
   PagesSidebar,
   TtsHelpDock,
 } from "./WorkspaceSidebars";
+import { ReaderFolders } from "./ReaderFolders";
+import { ProjekteGruppe } from "../../projekte/ProjekteGruppe";
+import { useReaderFolders } from "./useReaderFolders";
+import {
+  BookFolderGroups,
+  BookFolderHead,
+  MissingEdition,
+  editionNotes,
+  useBookKiDocs,
+} from "./BookFolder";
+import { editionsOf, readingEdition } from "@/lib/library/editions";
+import {
+  FOLDER_TEXTS,
+  bookFolderKey,
+  type BookFolder as FolderEntry,
+} from "@/lib/reader/folders";
 import { ResizeHandle } from "../../ui/ResizeHandle";
 import { useWorkspaceLayout } from "./useWorkspaceLayout";
 import { SettingsGroup } from "../../ui/SettingsGroup";
@@ -89,6 +106,7 @@ import {
   type LibraryKiDocRequest,
 } from "@/lib/library/books";
 import { ReaderDrop } from "@/components/library/ReaderDrop";
+import { ReaderLanguage } from "@/components/library/ReaderLanguage";
 import { ExportDialog } from "@/components/library/ExportDialog";
 import {
   clearResumePoint,
@@ -118,12 +136,13 @@ import {
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { Glyph } from "../../ui/AudioPlayer";
 import {
+  ArrowLeft,
   MessageSquare,
-  Mic,
   PanelRightClose,
   Plug,
   Replace,
   Settings,
+  Speech,
   TriangleAlert,
 } from "lucide-react";
 import { VOICE_MANAGE, useVoiceChoice } from "./useVoiceChoice";
@@ -135,8 +154,11 @@ import {
   endReaderSession,
   ensureReaderSessionListeners,
   readerSession,
+  sentencePieceStarted,
   sessionRef,
+  type SentenceStart,
 } from "./readerSession";
+import { cleanPieces, cleanSpans, retimeClock } from "@/lib/speechTiming";
 import {
   ReaderView,
   type ReaderMark,
@@ -159,10 +181,21 @@ import { inForeignDialog, isTextEntry } from "./booktalk/keys";
 import { BookTalkPanel } from "./booktalk/BookTalkPanel";
 import type { BookSpot, BookTalkHost } from "./booktalk/useBookVoice";
 import {
+  HYDRATED_EVENT as PROGRESS_HYDRATED,
   bookFrontier,
   raiseFrontier,
   textProgressKey,
 } from "../../../lib/library/progress";
+import {
+  VOICE_PREFS_EVENT,
+  bookVoiceKey,
+  clearPref,
+  hasBookPref,
+  langVoiceKey,
+  prefLanguage,
+  resolveVoicePref,
+  writeDesktopPref,
+} from "../../../lib/reader/voicePrefs";
 import { KurzbuchPanel } from "./kidocs/KurzbuchPanel";
 import { KURZBUCH_TEMPLATE_ID, parseKurzbuch } from "@/lib/kurzbuch/kurzbuch";
 import { KiDocumentDialog, type KiSelection } from "./kidocs/KiDocumentDialog";
@@ -488,6 +521,11 @@ export const TtsSettings = () => {
         audio: null,
         added_ms: 0,
         finished: false,
+        // Sprachfassungen (lva#344): leer = Schema 1, der Kern migriert.
+        schema: 0,
+        editions: [],
+        edition_tombstones: [],
+        alignments: [],
         cover_path: null,
         audio_path: null,
       },
@@ -513,6 +551,9 @@ export const TtsSettings = () => {
   const [voicesChosen, setVoicesChosen] = useState<Record<string, true>>({});
   /** Sprache des Originaltexts, im Arbeitsstand der Seite gespeichert. */
   const [pageLang, setPageLang] = useState<string | null>(null);
+  /** Seite, für die die Erkennung gelaufen ist: erst dann stellt die
+      Buchsprache Stimmen um. */
+  const [langCheckedFor, setLangCheckedFor] = useState<string | null>(null);
   /** "Sprecher auf allen Seiten ersetzen": offen, mit optionaler Vorbelegung. */
   const [replaceSpeaker, setReplaceSpeaker] = useState<{
     from?: string;
@@ -712,11 +753,7 @@ export const TtsSettings = () => {
   );
   /** Start und Dauer des hörbaren Satzes: Zeit und Umblättern laufen damit
    *  sekundengenau mit, nicht nur Satz für Satz. */
-  const [sentenceStart, setSentenceStart] = useState<{
-    index: number | null;
-    at: number;
-    ms: number;
-  } | null>(() => (readerSession.active ? readerSession.sentenceStart : null));
+  const [sentenceStart, setSentenceStart] = useState<SentenceStart | null>(() => (readerSession.active ? readerSession.sentenceStart : null));
   // Die Seite ist die Quelle, solange sie offen ist; ausgehängt schreibt
   // readerSession.ts die Ereignisse selbst mit.
   useEffect(() => {
@@ -838,6 +875,8 @@ export const TtsSettings = () => {
       index?: number;
       text: string;
       duration_ms?: number;
+      speech_ms?: unknown;
+      pieces_ms?: unknown;
     }>("tts-current-sentence", (e) => {
       if (e.payload.context !== "speak") return;
       if (!sectionActiveRef.current && !readerSession.active) return;
@@ -845,11 +884,24 @@ export const TtsSettings = () => {
         index: typeof e.payload.index === "number" ? e.payload.index : null,
         at: performance.now(),
         ms: e.payload.duration_ms ?? 0,
+        speech: cleanSpans(e.payload.speech_ms, e.payload.duration_ms),
+        pieces: cleanPieces(e.payload.pieces_ms, e.payload.duration_ms),
       });
       setCurrentSentence(e.payload.text);
       setCurrentIndex(
         typeof e.payload.index === "number" ? e.payload.index : null,
       );
+    });
+    // Jedes weitere Stück des Satzes setzt die Uhr am echten Start nach.
+    const unPiece = listen<{
+      context: string;
+      index?: number;
+      offset_ms?: number;
+    }>("tts-sentence-piece", (e) => {
+      if (e.payload.context !== "speak") return;
+      if (!sectionActiveRef.current && !readerSession.active) return;
+      const now = performance.now();
+      setSentenceStart((prev) => sentencePieceStarted(prev, e.payload, now));
     });
     // Eine Kuerzung darf nicht stumm bleiben: sonst hoert das Vorlesen
     // mitten im Text auf, ohne dass irgendwo steht, warum.
@@ -863,6 +915,7 @@ export const TtsSettings = () => {
       unExportError.then((f) => f());
       unProgress.then((f) => f());
       unSentence.then((f) => f());
+      unPiece.then((f) => f());
       unTruncated.then((f) => f());
     };
   }, []);
@@ -924,14 +977,70 @@ export const TtsSettings = () => {
     const result = await commands.pagesList();
     if (result.status !== "ok") return;
     setPages(result.data);
-    if (!result.data.some((p) => p.id === activePage) && result.data.length) {
-      setActivePage(result.data[0].id);
+    if (!result.data.some((p) => p.id === activePage)) {
+      // Leer, wenn alle Seiten mit ihrem Buch im Papierkorb liegen (lva#365).
+      setActivePage(result.data[0]?.id ?? "");
     }
   }, [activePage, setActivePage]);
 
   useEffect(() => {
     void reloadPages();
   }, [reloadPages]);
+
+  const readerTabs = useMemo(
+    () => [
+      { id: "original" as const, label: t("tts.tabOriginal") },
+      { id: "translation" as const, label: t("tts.tabTranslation") },
+      { id: "summary" as const, label: t("tts.tabSummary") },
+    ],
+    [t],
+  );
+  // lva#365 P1: Ordnerleiste (Alle, Buch-Ordner, Texte) über der Seitenliste.
+  const readerFolders = useReaderFolders(pages, activePage, sectionActive);
+  // Schmal (≤ 620 px): drei Ebenen Ordner → Liste → Reader (lva#365 P1b). Wer
+  // Vorlesen wieder öffnet, landet im Reader, wo er aufgehört hat.
+  const narrow = useSyncExternalStore(
+    (cb) => {
+      const mq = window.matchMedia("(max-width: 620px)");
+      mq.addEventListener("change", cb);
+      return () => mq.removeEventListener("change", cb);
+    },
+    () => window.matchMedia("(max-width: 620px)").matches,
+    () => false,
+  );
+  const [mobileLevel, setMobileLevel] = useState<"folders" | "list" | "reader">(
+    "reader",
+  );
+  useEffect(() => {
+    if (sectionActive) setMobileLevel("reader");
+  }, [sectionActive]);
+  // Ebenenwechsel (≤ 620 px) blendet den fokussierten Bereich aus: den Fokus
+  // auf den Anfang der neuen Ebene setzen, nicht auf <body> fallen lassen.
+  const levelShown = useRef(mobileLevel);
+  useEffect(() => {
+    if (levelShown.current === mobileLevel) return;
+    levelShown.current = mobileLevel;
+    if (!narrow) return;
+    const target =
+      mobileLevel === "reader"
+        ? '[data-testid="mback-reader"]'
+        : mobileLevel === "list"
+          ? '[data-testid="mback-list"]'
+          : '[data-testid="reader-folder"][aria-current="true"], [data-testid="reader-folder"]';
+    requestAnimationFrame(() =>
+      document.querySelector<HTMLElement>(target)?.focus(),
+    );
+  }, [mobileLevel, narrow]);
+  const folderEntry: FolderEntry | null =
+    readerFolders.folders.books.find(
+      (b) => bookFolderKey(b.bookId) === readerFolders.selection,
+    ) ?? null;
+  const folderPageIds = folderEntry?.pageIds ?? [];
+  const pageIdSet = useMemo(() => new Set(pages.map((p) => p.id)), [pages]);
+  const bookKiDocs = useBookKiDocs(
+    folderPageIds,
+    kiDocs.docs.map((d) => d.id).join("\n"),
+  );
 
   /** Neue Seite mit Text anlegen und aktiv machen (Skript-Werkstatt). */
   const createPageWithText = useCallback(
@@ -1144,6 +1253,19 @@ export const TtsSettings = () => {
   const phase = status?.phase ?? "stopped";
   const speaking = phase === "speaking";
   const playbackSpeed = getSetting("tts_speed") ?? 1.0;
+  // Tempowechsel mitten im Satz: das Gespielte mit dem alten Tempo
+  // festhalten, sonst springt die Markierung vor oder zurück. Vor dem
+  // Zeichnen, damit kein Bild mit dem Sprung entsteht.
+  const speedRef = useRef(playbackSpeed);
+  useLayoutEffect(() => {
+    const old = speedRef.current;
+    speedRef.current = playbackSpeed;
+    if (old === playbackSpeed) return;
+    const now = performance.now();
+    setSentenceStart((prev) =>
+      prev && prev.ms > 0 ? retimeClock(prev, now, old) : prev,
+    );
+  }, [playbackSpeed]);
   const sentenceClock = useMemo<SentenceClock | null>(
     () =>
       speaking && sentenceStart && sentenceStart.ms > 0
@@ -1533,6 +1655,7 @@ export const TtsSettings = () => {
     voiceValue,
     scriptMode,
     applyVoiceValue,
+    fishKnown,
     selectedVoiceNotSetUp,
     noVoiceSetUp,
     piperVoiceLabel,
@@ -1541,6 +1664,8 @@ export const TtsSettings = () => {
     tryOf,
     languageOf: voiceLanguageOf,
     bestVoiceFor,
+    phononOf,
+    valueOfPref,
   } = useVoiceChoice(phase);
 
   // Die Stimme gehoert zum Reiter -- bei der Uebersetzung zur Sprache: Englisch
@@ -1559,8 +1684,95 @@ export const TtsSettings = () => {
       : tab === "summary" && docLang
         ? `summary:${docLang}`
         : tab;
+  /** Sprache dessen, was der offene Reiter vorliest. */
+  const contentLang = useMemo(() => {
+    if (tab === "translation") return targetLangCode(targetLang);
+    if (tab === "summary") return docLang ?? detectLanguage(summary);
+    return pageLang;
+  }, [tab, targetLang, docLang, pageLang]);
+  // Stimme je Buchsprache (lva#352): wem die Seite gehört (Buch der
+  // Bibliothek, sonst die Seite selbst) und was dafür gemerkt ist.
+  // Erst nach der Suche in der Bibliothek steht fest, ob die Seite einem Buch
+  // gehört; bis dahin wird weder gemerkt noch angewendet (sonst landete eine
+  // frühe Wahl unter der Seite statt unter dem Buch).
+  const [pageOwner, setPageOwner] = useState<{
+    page: string;
+    owner: string;
+  } | null>(null);
+  useEffect(() => {
+    const page = activePage;
+    if (!page) return;
+    let cancelled = false;
+    const done = (bookId: string | null | undefined) => {
+      if (!cancelled) setPageOwner({ page, owner: bookId || `page_${page}` });
+    };
+    void commands
+      .libraryList()
+      .then((r) =>
+        done(
+          r.status === "ok"
+            ? r.data.find((b) => b.text?.page_id === page)?.id
+            : null,
+        ),
+      )
+      .catch(() => done(null));
+    return () => {
+      cancelled = true;
+    };
+  }, [activePage]);
+  const voiceOwner =
+    pageOwner && pageOwner.page === activePage ? pageOwner.owner : null;
+  const prefLang = voiceOwner ? prefLanguage(contentLang) : null;
+  const [prefsTick, setPrefsTick] = useState(0);
+  useEffect(() => {
+    const bump = () => setPrefsTick((n) => n + 1);
+    // Nicht `CHANGED_EVENT`: das feuert bei jedem gesicherten Lesestand.
+    const events = [VOICE_PREFS_EVENT, PROGRESS_HYDRATED];
+    for (const e of events) window.addEventListener(e, bump);
+    return () => {
+      for (const e of events) window.removeEventListener(e, bump);
+    };
+  }, []);
+  const resolvedPref = useMemo(
+    () => resolveVoicePref(voiceOwner, prefLang, valueOfPref),
+    // prefsTick: Änderung im Speicher (eigene Wahl, Abgleich, Start).
+    [voiceOwner, prefLang, valueOfPref, prefsTick],
+  );
+  // Gleiches Ergebnis, gleiches Objekt: die Effekte unten laufen nur bei
+  // einer echten Änderung.
+  const prefVoiceId = resolvedPref
+    ? `${resolvedPref.source}|${resolvedPref.value}`
+    : "";
+  const prefVoice = useMemo(
+    () => resolvedPref,
+    [prefVoiceId],
+  );
+  /** Wahl dieses Reiters merken: für die Sprache oder, hat das Buch eine
+      eigene Stimme, nur für das Buch. */
+  const rememberVoice = (value: string) => {
+    if (!prefLang || !value || value === VOICE_MANAGE) return;
+    const key =
+      voiceOwner && hasBookPref(voiceOwner, prefLang)
+        ? bookVoiceKey(voiceOwner, prefLang)
+        : langVoiceKey(prefLang);
+    writeDesktopPref(key, value, phononOf(value));
+  };
+  /** „Nur für dieses Buch“ ein- oder ausschalten. */
+  const setBookOnly = (on: boolean) => {
+    if (!voiceOwner || !prefLang) return;
+    const key = bookVoiceKey(voiceOwner, prefLang);
+    if (!on) {
+      clearPref(key);
+      return;
+    }
+    if (voiceValue && voiceValue !== VOICE_MANAGE)
+      writeDesktopPref(key, voiceValue, phononOf(voiceValue));
+  };
+  const bookOnly = prefsTick >= 0 && hasBookPref(voiceOwner, prefLang);
   // Seiten- oder Reiterwechsel (die Seite laedt `tabVoices` und `tab` aus ihrem
   // Zustand): die fuer diese Seite und diesen Reiter gemerkte Stimme wird aktiv.
+  // Vorrang hat die Stimme des Buchs bzw. der Sprache (lva#352); erst mit
+  // erkannter Sprache, sonst schaltete eine noch alte Sprache kurz um.
   // Je (Seite, Reiter, Stimme) genau einmal: ein Neuaufbau von `applyVoiceValue`
   // (Einstellungen neu geladen) wiederholt eine fehlgeschlagene Wahl nicht.
   const appliedFor = useRef<string | null>(null);
@@ -1570,12 +1782,20 @@ export const TtsSettings = () => {
     page: string | null;
     key: string;
   } | null>(null);
+  const langReady =
+    tab !== "original" || langCheckedFor === (activePage ?? null);
   useEffect(() => {
     const wanted =
+      (langReady ? prefVoice?.value : undefined) ??
       tabVoices[voiceKey] ??
       (tab === "translation" ? tabVoices.translation : undefined);
     if (!wanted) return;
-    const marker = `${activePage ?? ""}|${voiceKey}|${wanted}`;
+    // Erst mit bekanntem Fish-Stand; ändert er sich, darf die Wahl neu greifen
+    // (eine gemerkte Fish-Stimme kommt zurück, sobald Fish lauffähig ist).
+    const isFishValue =
+      !wanted.startsWith("piper:") && !wanted.startsWith("provider:");
+    if (isFishValue && !fishKnown) return;
+    const marker = `${activePage ?? ""}|${voiceKey}|${wanted}|${fishReady}`;
     // Schon aktiv (z. B. gerade im Dropdown gewaehlt): als erledigt merken, damit
     // ein spaeteres Zurueckschalten auf diese Wahl nicht an einer alten Marke haengt.
     if (wanted === voiceValue) {
@@ -1592,7 +1812,17 @@ export const TtsSettings = () => {
     applyVoiceValue(wanted);
     // voiceValue absichtlich nicht in den Abhaengigkeiten: der Effekt soll
     // beim Umschalten greifen, nicht bei jeder Einstellungsaenderung.
-  }, [tab, voiceKey, tabVoices, applyVoiceValue, activePage]);
+  }, [
+    tab,
+    voiceKey,
+    tabVoices,
+    applyVoiceValue,
+    activePage,
+    fishKnown,
+    fishReady,
+    prefVoice,
+    langReady,
+  ]);
   // Jede Wahl (Dropdown, Wiedergabeleiste, Einstellungen) gilt fuer die
   // aktuelle Seite und den aktuellen Reiter: so kommt man beim Zurueckschalten
   // zu ihr zurueck. Meldet `voiceValue` die Wahl des Effekts oben (sie kommt
@@ -1633,9 +1863,6 @@ export const TtsSettings = () => {
     [text, activePage, pageLoadTick],
   );
   const langSource = useDebouncedValue(langInput, 800);
-  /** Seite, für die die Erkennung gelaufen ist: erst dann stellt die
-      Buchsprache Stimmen um. */
-  const [langCheckedFor, setLangCheckedFor] = useState<string | null>(null);
   useEffect(() => {
     if (
       !pageLoaded.current ||
@@ -1662,12 +1889,6 @@ export const TtsSettings = () => {
       .catch(() => undefined);
     // pageLang absichtlich nicht: nur ein neuer Text löst die Erkennung aus.
   }, [langSource, activePage, pageLoadTick]);
-  /** Sprache dessen, was der offene Reiter vorliest. */
-  const contentLang = useMemo(() => {
-    if (tab === "translation") return targetLangCode(targetLang);
-    if (tab === "summary") return docLang ?? detectLanguage(summary);
-    return pageLang;
-  }, [tab, targetLang, docLang, pageLang]);
   const markVoiceChosen = (key: string) =>
     setVoicesChosen((current) =>
       current[key] ? current : { ...current, [key]: true },
@@ -1678,6 +1899,8 @@ export const TtsSettings = () => {
   const autoVoiceFor = useRef<string | null>(null);
   useEffect(() => {
     if (!pageLoaded.current || !contentLang || voicesChosen[voiceKey]) return;
+    // Gemerkte Stimme der Sprache oder des Buchs geht vor (lva#352).
+    if (prefVoice) return;
     if (langCheckedFor !== (activePage ?? null)) return;
     const current = tabVoices[voiceKey] ?? voiceValue;
     if (!current || current === VOICE_MANAGE) return;
@@ -1702,6 +1925,7 @@ export const TtsSettings = () => {
     activePage,
     pageLoadTick,
     langCheckedFor,
+    prefVoice,
   ]);
   // Sprachfilter der Stimmenauswahl: „Passend“ zeigt die Stimmen der
   // Textsprache und die, die jede Sprache sprechen; die gewählte bleibt immer.
@@ -1784,6 +2008,53 @@ export const TtsSettings = () => {
         })}
       </div>
     ) : undefined;
+
+  // Wofür die Wahl gilt (lva#352): für alle Bücher dieser Sprache oder nur
+  // für dieses Buch. Ohne erkannte Sprache bleibt die Wahl wie bisher.
+  const bookVoiceMissing = bookOnly && prefVoice?.source !== "book";
+  const voiceScopeRow = prefLang ? (
+    <div
+      className="flex items-center gap-2 border-b border-mid-gray/30 px-1 py-1.5 text-xs"
+      data-testid="voice-scope"
+    >
+      <button
+        type="button"
+        role="switch"
+        aria-checked={bookOnly}
+        aria-describedby="voice-scope-text"
+        onClick={() => setBookOnly(!bookOnly)}
+        className="flex min-h-8 shrink-0 cursor-pointer items-center gap-2 rounded px-1 text-text hover:bg-mid-gray/15"
+        data-testid="voice-scope-book"
+      >
+        <span
+          aria-hidden="true"
+          className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors ${
+            bookOnly
+              ? "border-logo-primary bg-logo-primary"
+              : "border-mid-gray/60 bg-mid-gray/25"
+          }`}
+        >
+          <span
+            className={`absolute h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${
+              bookOnly ? "translate-x-[18px]" : "translate-x-[2px]"
+            }`}
+          />
+        </span>
+        <span className="font-medium">{t("tts.voices.scope.bookOnly")}</span>
+      </button>
+      <span
+        id="voice-scope-text"
+        className="min-w-0 flex-1 text-right text-text/70"
+        data-testid="voice-scope-text"
+      >
+        {bookVoiceMissing
+          ? t("tts.voices.scope.bookMissing", { language: langName(prefLang) })
+          : bookOnly
+            ? t("tts.voices.scope.book", { language: langName(prefLang) })
+            : t("tts.voices.scope.lang", { language: langName(prefLang) })}
+      </span>
+    </div>
+  ) : null;
 
   /**
    * Welcher Text gerade im Feld steht — und damit auch, was das Abspielen
@@ -3294,6 +3565,31 @@ export const TtsSettings = () => {
   const textNowRef = useRef(text);
   textNowRef.current = text;
 
+  /** Buch-Ordner (lva#365 P1b): Seite öffnen, schmal weiter in den Reader. */
+  const openFolderPage = (id: string) => {
+    setActivePage(id);
+    setMobileLevel("reader");
+  };
+  /** Weiterlesen: zuletzt gelesene Fassung des Buchs, sonst die Hauptfassung. */
+  const continueBook = () => {
+    const book = readerFolders.book;
+    if (!book) return;
+    const wanted = readingEdition(book)?.text?.page_id;
+    const target =
+      wanted && pageIdSet.has(wanted) ? wanted : folderPageIds[0];
+    if (target) openFolderPage(target);
+  };
+  /** KI-Dokument aus dem Buch-Ordner: Seite öffnen, Reiter „summary“, Dokument wählen. */
+  const openBookKiDoc = (page: string, doc: string) => {
+    setMobileLevel("reader");
+    if (page === activePageRef.current && pageLoaded.current) {
+      openKiDocument(doc);
+      return;
+    }
+    libraryKiDoc.current = { page, doc, play: false };
+    setActivePage(page);
+  };
+
   /** Dokument als Originaltext laden (txt/md/pdf/docx/epub). */
   const loadDocument = async (dropped?: string) => {
     // Abgelegt per Drag & Drop (lva#152) oder über den Dateidialog.
@@ -3561,7 +3857,14 @@ export const TtsSettings = () => {
                 ? `tts-voice:auto:${contentLang ?? ""}`
                 : `tts-voice:${voiceLangFilter}`
             }
-            menuHeader={voiceFilterChips}
+            menuHeader={
+              voiceFilterChips || voiceScopeRow ? (
+                <>
+                  {voiceFilterChips}
+                  {voiceScopeRow}
+                </>
+              ) : undefined
+            }
             formatOptionLabel={(option, context) => {
               if (compact && context === "value")
                 return (
@@ -3570,7 +3873,9 @@ export const TtsSettings = () => {
                     title={`${t("tts.voices.title")}: ${option.label}`}
                     data-testid="voice-compact"
                   >
-                    <Mic width={16} height={16} aria-hidden="true" />
+                    {/* Sprechende Person statt Mikrofon (Patrick 06.11.2026):
+                        das Mikrofon steht rechts für die Aufnahme. */}
+                    <Speech width={16} height={16} aria-hidden="true" />
                     {/* Sprache der Stimme als Kürzel am Knopf (Codex zu
                         #199): englisches Buch, englische Stimme sichtbar. */}
                     {voiceLanguageOf(option.value) && (
@@ -3633,6 +3938,7 @@ export const TtsSettings = () => {
                 return;
               }
               applyVoiceValue(value);
+              rememberVoice(value);
               markVoiceChosen(voiceKey);
               setTabVoices((current) => ({
                 ...current,
@@ -3784,6 +4090,26 @@ export const TtsSettings = () => {
       />
   );
 
+  // lva#365: Inhaltsverzeichnis rechts; ist die rechte Spalte eingeklappt
+  // oder vom Buch-Gespräch belegt, steht es wie bisher links unter der Liste.
+  const tocElement =
+    viewMode === "read" ? (
+      <ReaderContents
+        entries={contents}
+        current={chapterIndex}
+        onGo={goToChapter}
+        pages={contentsPages}
+        book={book}
+        {...startProps}
+        onIsbn={
+          tab === "original" && activePage
+            ? () => setIsbnOpen(true)
+            : undefined
+        }
+      />
+    ) : null;
+  const tocRightVisible = !talkShown && filesCollapsed !== "1";
+
   return (
     <PageShell
       title={t("tts.title")}
@@ -3831,28 +4157,89 @@ export const TtsSettings = () => {
         <PagesSidebar
           pages={pages}
           activeId={activePage}
-          collapsed={pagesCollapsed === "1"}
+          collapsed={pagesCollapsed === "1" && !narrow}
           onToggle={() => setPagesCollapsed(pagesCollapsed === "1" ? "0" : "1")}
           onSelect={setActivePage}
           onChanged={() => void reloadPages()}
           onReplaceSpeaker={() => setReplaceSpeaker({})}
-          width={ws.pages.width}
-          contents={
-            viewMode === "read" ? (
-              <ReaderContents
-                entries={contents}
-                current={chapterIndex}
-                onGo={goToChapter}
-                pages={contentsPages}
-                book={book}
-                {...startProps}
-                onIsbn={
-                  tab === "original" && activePage
-                    ? () => setIsbnOpen(true)
-                    : undefined
+          onOpened={() => setMobileLevel("reader")}
+          mobileLevel={mobileLevel}
+          onBack={() => setMobileLevel("folders")}
+          editionNote={
+            readerFolders.book
+              ? editionNotes(
+                  readerFolders.book,
+                  t("tts.folders.mainEdition"),
+                  t("tts.folders.unknownLang"),
+                )
+              : undefined
+          }
+          emptyLabel={
+            readerFolders.selection === FOLDER_TEXTS &&
+            readerFolders.visibleIds.length === 0
+              ? t("tts.folders.noLoose")
+              : undefined
+          }
+          bookFolder={
+            readerFolders.book && folderEntry
+              ? {
+                  head: (
+                    <BookFolderHead
+                      book={readerFolders.book}
+                      onContinue={continueBook}
+                    />
+                  ),
+                  missing: editionsOf(readerFolders.book)
+                    .filter(
+                      (e) => e.text?.page_id && !pageIdSet.has(e.text.page_id),
+                    )
+                    .map((e) => <MissingEdition key={e.id} edition={e} />),
+                  after: (
+                    <BookFolderGroups
+                      book={readerFolders.book}
+                      pageIds={pageIdSet}
+                      kiDocs={bookKiDocs}
+                      activeDoc={
+                        tab === "summary" && openDocId && activePage
+                          ? { page: activePage, id: openDocId }
+                          : null
+                      }
+                      onOpenPage={openFolderPage}
+                      onOpenDoc={openBookKiDoc}
+                    />
+                  ),
                 }
+              : undefined
+          }
+          width={ws.pages.width}
+          activeSections={
+            <TabList
+              tabs={readerTabs}
+              value={tab}
+              onChange={setTab}
+              ariaLabel={t("tts.tabsLabel")}
+              vertical
+              className="lv-tablist--list"
+            />
+          }
+          contents={tocRightVisible ? null : tocElement}
+          visibleIds={readerFolders.visibleIds}
+          langOf={readerFolders.langOf}
+          folders={
+            <>
+              <ReaderFolders
+                folders={readerFolders.folders}
+                books={readerFolders.books}
+                total={readerFolders.total}
+                selection={readerFolders.selection}
+                onSelect={(key) => {
+                  readerFolders.select(key, setActivePage);
+                  setMobileLevel("list");
+                }}
+                onAddBook={() => void loadDocument()}
               />
-            ) : null
+              <ProjekteGruppe />
+            </>
           }
         />
         {pagesCollapsed !== "1" && (
@@ -3868,6 +4255,20 @@ export const TtsSettings = () => {
           />
         )}
         <div className="flex-1 min-w-0 min-h-0 flex gap-4">
+          <button
+            type="button"
+            className="tts-mback tts-mback--reader"
+            onClick={() => setMobileLevel("list")}
+            title={t("tts.folders.backToList")}
+            data-testid="mback-reader"
+          >
+            <ArrowLeft width={18} height={18} aria-hidden="true" />
+            {/* Name = „Zurück“ + sichtbarer Titel (WCAG 2.5.3). */}
+            <span className="sr-only">{t("tts.folders.back")} </span>
+            <span className="min-w-0 truncate">
+              {pages.find((p) => p.id === activePage)?.title ?? ""}
+            </span>
+          </button>
           <div className="tts-editor flex-1 min-w-0 min-h-0 flex flex-col rounded-lg border border-mid-gray/20 bg-background overflow-hidden">
             {truncated && (
               <p className="px-4 pb-2 text-sm text-orange-400">
@@ -3907,16 +4308,19 @@ export const TtsSettings = () => {
               die Uebersetzung liegt daneben, nicht darin. Wer zurueckschaltet,
               findet seinen Text unveraendert vor. */}
               <div className="flex flex-wrap items-end gap-x-3 gap-y-1 border-b border-mid-gray/20">
+                {/* lva#365 E2: Bei offener Seitenliste stehen die Ansichten der
+                    Seite in der Liste unter ihrer Zeile; nur eingeklappt hier. */}
                 <TabList
-                  tabs={[
-                    { id: "original", label: t("tts.tabOriginal") },
-                    { id: "translation", label: t("tts.tabTranslation") },
-                    { id: "summary", label: t("tts.tabSummary") },
-                  ]}
+                  tabs={readerTabs}
                   value={tab}
                   onChange={setTab}
                   ariaLabel={t("tts.tabsLabel")}
-                  className="min-w-0 flex-auto"
+                  className={`min-w-0 flex-auto ${
+                    pagesCollapsed !== "1" &&
+                    readerFolders.visibleIds.includes(activePage)
+                      ? "reader-tabs--header"
+                      : ""
+                  }`}
                 />
                 {/* Eigene Breite (flex-auto statt flex-1): reicht der Platz
                     nicht, bricht die Leiste um, statt über den Reitern zu liegen. */}
@@ -3950,7 +4354,6 @@ export const TtsSettings = () => {
                     info={
                       <InfoPopover
                         label={t("tts.writingRules.title")}
-                        text={t("tts.writingRules.short")}
                         testId="reader-info"
                       >
                         <p className="mb-1 font-semibold">
@@ -4011,6 +4414,20 @@ export const TtsSettings = () => {
                           busy={kiDocs.run !== null}
                           onExtract={() => void extractTerms()}
                           onCancel={bookTerms.cancel}
+                        />
+                      ) : undefined
+                    }
+                    language={
+                      tab === "original" && activePage ? (
+                        <ReaderLanguage
+                          page={activePage}
+                          text={spokenText}
+                          getOffset={() =>
+                            readRangeRef.current?.start ??
+                            loadResumePoint(`${activePage}:original`, spokenText) ??
+                            0
+                          }
+                          onOpen={setActivePage}
                         />
                       ) : undefined
                     }
@@ -4542,6 +4959,7 @@ export const TtsSettings = () => {
               width={ws.right.width}
               stacked={ws.stacked}
               onLayoutToggle={ws.toggleLayout}
+              contents={tocElement}
               /* Der Text einer erzeugten Aufnahme zurueck in den Editor: die eine
              falsche Zeile aendern und erneut erzeugen. Die unveraenderten
              Saetze kommen dann aus dem Satz-Cache, nur die geaenderten gehen

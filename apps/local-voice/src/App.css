@@ -785,6 +785,91 @@ html[data-fluent] .lva-logo__accent {
 .tts-workspace__files {
   width: var(--tts-w, 240px);
 }
+/* Ordnerleiste im Vorlesen (lva#365): voll in der Spalte, im Umbruch-Layout
+   eine Auswahl, damit das Regal über dem Text niedrig bleibt. */
+.reader-folders__compact {
+  display: none;
+}
+.reader-folders__compact .app-select__control {
+  min-height: 44px;
+}
+/* Breit: die Ansichten stehen in der Liste, der Kopf bleibt frei. Umbruch-
+   Layout: wieder im Kopf, die Liste bleibt ein niedriges Regal. */
+@media (min-width: 1101px) {
+  .reader-tabs--header.reader-tabs--header {
+    display: none !important;
+  }
+}
+@media (max-width: 1100px) {
+  .reader-folders__compact {
+    display: flex;
+  }
+  .reader-folders__full,
+  [data-testid="page-sections"] {
+    display: none !important;
+  }
+}
+/* Buch-Ordner (lva#365 P1b): Bedienziele 44 px, auch bei Fluent-Buttons. */
+.reader-folders__btn.lv-btn {
+  min-height: 44px;
+}
+/* Zurück-Knöpfe der schmalen Ebenen: nur ≤ 620 px sichtbar, mindestens 44 x 44. */
+.tts-mback {
+  display: none;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 44px;
+  min-height: 44px;
+  max-width: 100%;
+  padding: 0 0.75rem 0 0.5rem;
+  border-radius: 6px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--color-text);
+  cursor: pointer;
+}
+.tts-mback:hover {
+  background: color-mix(in srgb, var(--color-mid-gray) 15%, transparent);
+}
+.tts-mback:focus-visible {
+  outline: 2px solid var(--color-logo-primary);
+  outline-offset: 2px;
+}
+/* Drei Ebenen Ordner → Liste → Reader: je Ebene nur ein Bereich. Der Zustand
+   steht als data-mlevel an der Seitenliste. */
+@media (max-width: 620px) {
+  /* Doppelte Klasse: schlägt das Regal (max-height 210 px) des Umbruch-
+     Layouts, das weiter unten steht. Liste und Ordner füllen die Ebene. */
+  .tts-workspace .tts-workspace__pages.tts-workspace__pages {
+    max-height: none;
+  }
+  .tts-workspace__pages[data-mlevel="reader"] {
+    display: none;
+  }
+  .tts-workspace__pages:not([data-mlevel="reader"]) ~ .min-w-0 {
+    display: none;
+  }
+  .tts-workspace__pages[data-mlevel="folders"] .tts-pages__list {
+    display: none;
+  }
+  .tts-workspace__pages[data-mlevel="folders"] .reader-folders__full {
+    display: block !important;
+  }
+  .tts-workspace__pages[data-mlevel="folders"] .reader-folders__compact,
+  .tts-workspace__pages[data-mlevel="list"] .reader-folders__compact,
+  .tts-workspace__pages[data-mlevel="list"] .reader-folders__full {
+    display: none !important;
+  }
+  .tts-workspace__pages[data-mlevel="list"] .tts-mback--list,
+  .tts-mback--reader {
+    display: flex;
+  }
+}
+/* Ansichten der offenen Seite als senkrechte Reiter: Touchziel 44 px. */
+.lv-tablist--list .fui-Tab {
+  min-height: 44px;
+  justify-content: flex-start;
+}
 /* Gestapelt: Bedienung oben (natuerliche Hoehe, hoechstens die Haelfte der
    Spalte, sonst eigener Scroll), Dateien/Hilfe fuellen den Rest und scrollen
    selbst. */
@@ -1154,10 +1239,12 @@ body,
   }
 }
 
-/* Protokoll bearbeiten: Platz für „Abschnitt bearbeiten“ neben jeder
-   Abschnittsüberschrift und Markierung der Stelle unter dem Stift. */
+/* Protokoll bearbeiten: Markierung der Stelle unter dem Stift. Der
+   Abschnitts-Stift ist nur ein Symbol (Patrick 08.11.) und steht im
+   Innenabstand des Dokuments (44 × 44 px, Codex 08.11.); die Überschriften
+   halten nur 1 rem Abstand zum Stift. */
 .minutes-preview [data-testid="minutes-doc"] :is(h2, h3) {
-  padding-inline-end: 11rem;
+  padding-inline-end: 1rem;
 }
 .minutes-preview [data-edit-hover] {
   border-radius: 4px;
@@ -1181,15 +1268,6 @@ body,
     width: 44px;
     height: 44px;
   }
-  /* Die Beschriftung bleibt auch schmal sichtbar (Codex-Abnahme). */
-  .minutes-preview .minutes-section-pen {
-    min-width: 44px;
-    height: 44px;
-    padding-inline: 0.625rem;
-  }
-  .minutes-preview [data-testid="minutes-doc"] :is(h2, h3) {
-    padding-inline-end: 10.5rem;
-  }
   /* Schmal ist die Arbeitsfläche nur wenige Zeilen hoch: der Editor
      öffnet dann als Vollbild-Blatt (Speichern und Abbrechen oben). */
   .minutes-edit {
@@ -1211,4 +1289,45 @@ body,
     var(--color-logo-primary) 38%,
     transparent
   );
+}
+
+/* Umbruch-Layout mit Regal (621–1100 px, lva#365 P1b): der Buch-Kopf wird
+   eine Zeile ohne Cover, damit die Fassungen im niedrigen Regal sichtbar
+   bleiben. */
+@media (min-width: 621px) and (max-width: 1100px) {
+  .book-folder-head__cover {
+    display: none;
+  }
+  .book-folder-head__body {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    column-gap: 0.75rem;
+    align-items: center;
+  }
+  .book-folder-head__body > :not(.book-folder-head__continue) {
+    grid-column: 1;
+  }
+  /* Im Buch-Ordner trägt das Regal Kopf und Gruppen: etwas höher. */
+  .tts-workspace .tts-workspace__pages:has(.book-folder-head) {
+    max-height: 340px;
+  }
+  .book-folder-head__continue.book-folder-head__continue {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    margin-top: 0;
+  }
+}
+
+/* lva#394 (Codex): Bei Touch-Eingabe hat jedes Bedienelement im Chat eine
+   Trefferfläche von 44 × 44 px, unabhängig von der Fensterbreite. */
+@media (any-pointer: coarse) {
+  .lv-chat button,
+  .lv-chat [role="button"],
+  .lv-chat [role="menuitem"],
+  .lv-chat [role="menuitemradio"],
+  .lv-chat [role="menuitemcheckbox"],
+  .fui-MenuPopover [role^="menuitem"] {
+    min-width: 44px;
+    min-height: 44px;
+  }
 }

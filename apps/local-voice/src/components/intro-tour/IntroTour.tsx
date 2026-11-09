@@ -169,7 +169,8 @@ const DictationAnimation: React.FC<{
 
 /** Sinnvolles Ziel nach dem Schließen, wenn der Auslöser nicht mehr da ist. */
 const FOCUS_FALLBACKS = [
-  "[data-testid='workspace-start-tour']",
+  // lva#394: Der Chat ist die Startseite, das Eingabefeld ist das natürliche Ziel.
+  "[data-testid='chat-input']",
   "[data-tour='nav-profile'] button",
   "[data-tour='nav-home']",
 ];
@@ -244,8 +245,11 @@ export const IntroTour: React.FC = () => {
 
   const next = useCallback(() => {
     if (!canAdvance) return;
-    if (last) finish();
-    else setIndex((i) => i + 1);
+    if (last) {
+      // lva#394 C2: „Loslegen“ führt in die Führung im Chat (Überspringen/Esc nicht).
+      useIntroTourStore.getState().setChatGuidePending(true);
+      finish();
+    } else setIndex((i) => i + 1);
   }, [canAdvance, last, finish]);
   const back = useCallback(() => setIndex((i) => Math.max(0, i - 1)), []);
 
