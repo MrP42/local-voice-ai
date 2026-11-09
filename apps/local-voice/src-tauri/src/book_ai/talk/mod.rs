@@ -1066,6 +1066,15 @@ pub async fn book_talk_ask(
     let registration = CancelRegistration::new(&req.request_id);
     let cancel = registration.flag.clone();
     let settings = crate::settings::get_settings(&app);
+    // ADR-0028 E4: Einstufung in Rust vor jedem Modellaufruf (S0, Fehler, leer, zu lang: kein Aufruf).
+    if let Err(e) = crate::assistent::tor::vor_modellaufruf(
+        &req.question,
+        crate::assistent::sprache_aus(&settings.app_language),
+        None,
+    ) {
+        log::warn!("book_talk: Tor hat die Anfrage abgewiesen");
+        return Err(e);
+    }
     // Schalter aus: Fundstellen-Modus statt Fehler (lva#309); die Oberfläche
     // zeigt die Fundstellen mit einem Hinweis.
     let enabled = settings.book_talk_enabled;

@@ -1,0 +1,928 @@
+{
+  "schema_version": "0.1.6",
+  "version": "1.0.0",
+  "s0": [
+    {
+      "absicht": "gruss",
+      "muster": {
+        "de": [
+          "hallo",
+          "guten morgen",
+          "guten tag",
+          "guten abend",
+          "hi",
+          "moin",
+          "servus",
+          "hey",
+          "guten nachmittag",
+          "hallo zusammen"
+        ],
+        "en": [
+          "hello",
+          "good morning",
+          "good afternoon",
+          "good evening",
+          "hi",
+          "hey",
+          "hi there",
+          "hello there",
+          "morning"
+        ]
+      },
+      "antwort_vorlage": {
+        "de": "Hallo, ich bin da.",
+        "en": "Hello, I'm here."
+      }
+    },
+    {
+      "absicht": "bestaetigung",
+      "muster": {
+        "de": [
+          "ja",
+          "ja bitte",
+          "okay",
+          "mach das",
+          "einverstanden",
+          "ja gerne",
+          "genau",
+          "klar",
+          "passt",
+          "in ordnung",
+          "danke",
+          "vielen dank"
+        ],
+        "en": [
+          "yes",
+          "yes please",
+          "okay",
+          "go ahead",
+          "sounds good",
+          "sure",
+          "all right",
+          "alright",
+          "yes go ahead",
+          "fine",
+          "thanks",
+          "thank you"
+        ]
+      },
+      "antwort_vorlage": {
+        "de": "In Ordnung.",
+        "en": "Okay."
+      }
+    },
+    {
+      "absicht": "stopp",
+      "muster": {
+        "de": [
+          "stopp",
+          "halt",
+          "hör auf",
+          "abbrechen",
+          "stop",
+          "ruhe",
+          "pause"
+        ],
+        "en": [
+          "stop",
+          "cancel",
+          "that's enough",
+          "quiet",
+          "halt",
+          "enough",
+          "pause"
+        ]
+      },
+      "antwort_vorlage": {
+        "de": "Gestoppt.",
+        "en": "Stopped."
+      }
+    },
+    {
+      "absicht": "lauter",
+      "muster": {
+        "de": [
+          "lauter",
+          "sprich lauter",
+          "mach lauter",
+          "lauter bitte"
+        ],
+        "en": [
+          "louder",
+          "speak louder",
+          "volume up",
+          "speak up",
+          "turn it up"
+        ]
+      },
+      "antwort_vorlage": {
+        "de": "Lauter.",
+        "en": "Louder."
+      }
+    },
+    {
+      "absicht": "leiser",
+      "muster": {
+        "de": [
+          "leiser",
+          "sprich leiser",
+          "mach leiser",
+          "sei leiser"
+        ],
+        "en": [
+          "quieter",
+          "speak softer",
+          "volume down",
+          "turn it down",
+          "lower the volume"
+        ]
+      },
+      "antwort_vorlage": {
+        "de": "Leiser.",
+        "en": "Quieter."
+      }
+    },
+    {
+      "absicht": "wiederholen",
+      "muster": {
+        "de": [
+          "wiederhole das",
+          "noch einmal",
+          "sag das nochmal",
+          "wiederhole",
+          "noch mal",
+          "sag das noch einmal"
+        ],
+        "en": [
+          "repeat that",
+          "say that again",
+          "once more",
+          "repeat",
+          "say it again",
+          "one more time"
+        ]
+      },
+      "antwort_vorlage": {
+        "de": "Ich wiederhole.",
+        "en": "I'll repeat that."
+      }
+    },
+    {
+      "absicht": "langsamer",
+      "muster": {
+        "de": [
+          "langsamer",
+          "sprich langsamer",
+          "etwas langsamer"
+        ],
+        "en": [
+          "slower",
+          "speak slower",
+          "a bit slower",
+          "slow down"
+        ]
+      },
+      "antwort_vorlage": {
+        "de": "Langsamer.",
+        "en": "Slower."
+      }
+    },
+    {
+      "absicht": "schneller",
+      "muster": {
+        "de": [
+          "schneller",
+          "sprich schneller",
+          "etwas schneller"
+        ],
+        "en": [
+          "faster",
+          "speak faster",
+          "a bit faster",
+          "speed up"
+        ]
+      },
+      "antwort_vorlage": {
+        "de": "Schneller.",
+        "en": "Faster."
+      }
+    },
+    {
+      "absicht": "rueckfrage",
+      "muster": {
+        "de": [
+          "was",
+          "wie bitte",
+          "hä",
+          "verstehe ich nicht",
+          "wie",
+          "bitte",
+          "wie meinst du das"
+        ],
+        "en": [
+          "what",
+          "pardon",
+          "sorry",
+          "I don't understand",
+          "huh",
+          "come again",
+          "i didn't get that"
+        ]
+      },
+      "antwort_vorlage": {
+        "de": "Wie meinst du das?",
+        "en": "What do you mean?"
+      }
+    },
+    {
+      "absicht": "uhrzeit",
+      "muster": {
+        "de": [
+          "wie spät ist es",
+          "wie viel uhr ist es",
+          "uhrzeit",
+          "wie spät ist es jetzt",
+          "wie spät ist es gerade",
+          "sag mir die uhrzeit",
+          "wie viel uhr haben wir",
+          "wie spät"
+        ],
+        "en": [
+          "what time is it",
+          "what's the time",
+          "time please",
+          "what time is it now",
+          "what is the time",
+          "tell me the time",
+          "what's the time now"
+        ]
+      },
+      "antwort_vorlage": {
+        "de": "Es ist {uhrzeit} Uhr.",
+        "en": "It is {uhrzeit}."
+      }
+    },
+    {
+      "absicht": "datum",
+      "muster": {
+        "de": [
+          "welches datum ist heute",
+          "welcher tag ist heute",
+          "datum",
+          "welches datum haben wir heute",
+          "welches datum haben wir",
+          "der wievielte ist heute",
+          "welcher wochentag ist heute"
+        ],
+        "en": [
+          "what's the date today",
+          "what day is it",
+          "date please",
+          "what is the date today",
+          "what's today's date",
+          "what is today's date",
+          "what day is it today",
+          "tell me the date"
+        ]
+      },
+      "antwort_vorlage": {
+        "de": "Heute ist der {datum}.",
+        "en": "Today is {datum}."
+      }
+    }
+  ],
+  "absichten": [
+    {
+      "absicht": "kalender-abfragen",
+      "stufe": "S1",
+      "muster": {
+        "de": [
+          "was steht heute im kalender",
+          "habe ich morgen einen termin",
+          "wann ist mein nächster termin"
+        ],
+        "en": [
+          "what's on my calendar today",
+          "do I have a meeting tomorrow",
+          "when is my next appointment"
+        ]
+      },
+      "ansage_vorlage": {
+        "de": "Ich schaue in deinen Kalender.",
+        "en": "Let me check your calendar."
+      }
+    },
+    {
+      "absicht": "mail-abfragen",
+      "stufe": "S1",
+      "muster": {
+        "de": [
+          "habe ich neue mails",
+          "was hat der kunde geschrieben",
+          "such die mail zum vertrag"
+        ],
+        "en": [
+          "do I have new emails",
+          "what did the client write",
+          "find the email about the contract"
+        ]
+      },
+      "ansage_vorlage": {
+        "de": "Ich schaue in deine Mails.",
+        "en": "Let me check your emails."
+      }
+    },
+    {
+      "absicht": "projekt-nachschlagen",
+      "stufe": "S1",
+      "muster": {
+        "de": [
+          "was steht im projektplan",
+          "wie war der letzte stand im projekt"
+        ],
+        "en": [
+          "what does the project plan say",
+          "what was the last status of the project"
+        ]
+      },
+      "ansage_vorlage": {
+        "de": "Ich schaue in das Projekt.",
+        "en": "Let me look into the project."
+      }
+    },
+    {
+      "absicht": "terminvorschlag-abwaegen",
+      "stufe": "S2",
+      "muster": {
+        "de": [
+          "wann passt ein treffen am besten",
+          "sollte ich zusagen",
+          "was würdest du empfehlen"
+        ],
+        "en": [
+          "when would a meeting fit best",
+          "should I accept",
+          "what would you recommend"
+        ]
+      },
+      "ansage_vorlage": {
+        "de": "Ich überlege kurz und prüfe das anhand deiner Daten.",
+        "en": "Let me think about it and check it against your data."
+      }
+    },
+    {
+      "absicht": "mail-entwurf-erstellen",
+      "stufe": "S3",
+      "muster": {
+        "de": [
+          "schreib eine antwort auf die mail",
+          "entwirf eine zusage",
+          "bereite eine mail vor"
+        ],
+        "en": [
+          "write a reply to the email",
+          "draft an acceptance",
+          "prepare an email"
+        ]
+      },
+      "ansage_vorlage": {
+        "de": "Das ist ein Auftrag. Ich lege einen Entwurf an und melde mich.",
+        "en": "That's a job. I'll prepare a draft and get back to you."
+      }
+    },
+    {
+      "absicht": "recherche-starten",
+      "stufe": "S3",
+      "muster": {
+        "de": [
+          "recherchiere dazu",
+          "such im netz nach",
+          "finde heraus, was"
+        ],
+        "en": [
+          "research this",
+          "search the web for",
+          "find out what"
+        ]
+      },
+      "ansage_vorlage": {
+        "de": "Ich starte eine Recherche und melde mich mit Quellen.",
+        "en": "I'll start a research job and get back to you with sources."
+      }
+    },
+    {
+      "absicht": "heute-anstehend",
+      "stufe": "S1",
+      "muster": {
+        "de": [
+          "was steht heute an",
+          "was steht morgen an",
+          "was steht an",
+          "was liegt heute an",
+          "was ist heute los",
+          "was liegt an"
+        ],
+        "en": [
+          "what's on today",
+          "what is on today",
+          "what's up today",
+          "anything on today",
+          "what's coming up",
+          "what is coming up"
+        ]
+      },
+      "ansage_vorlage": {
+        "de": "Ich schaue nach, was ansteht.",
+        "en": "Let me check what's coming up."
+      }
+    },
+    {
+      "absicht": "kalender-lesen",
+      "stufe": "S1",
+      "muster": {
+        "de": [
+          "*kalender*",
+          "*termin*",
+          "*besprechung*",
+          "*meeting*",
+          "verabredung*",
+          "feiertag*",
+          "urlaub*"
+        ],
+        "en": [
+          "calendar*",
+          "appointment*",
+          "meeting*",
+          "holiday*",
+          "my schedule",
+          "vacation"
+        ]
+      },
+      "ansage_vorlage": {
+        "de": "Ich schaue in deinen Kalender.",
+        "en": "Let me check your calendar."
+      }
+    },
+    {
+      "absicht": "mail-lesen",
+      "stufe": "S1",
+      "muster": {
+        "de": [
+          "*mail*",
+          "e-mail*",
+          "posteingang",
+          "postfach",
+          "nachricht*",
+          "absender",
+          "betreff",
+          "anhang",
+          "anhänge",
+          "geschrieben",
+          "geantwortet",
+          "zurückgeschrieben"
+        ],
+        "en": [
+          "mail",
+          "mails",
+          "e-mail*",
+          "email*",
+          "inbox",
+          "message*",
+          "sender",
+          "subject line",
+          "attachment*",
+          "replied",
+          "wrote back",
+          "written to me",
+          "wrote to me",
+          "who wrote",
+          "who emailed",
+          "who called"
+        ]
+      },
+      "ansage_vorlage": {
+        "de": "Ich schaue in deine Mails.",
+        "en": "Let me check your emails."
+      }
+    },
+    {
+      "absicht": "dokument-lesen",
+      "stufe": "S1",
+      "muster": {
+        "de": [
+          "dokument*",
+          "*vertrag*",
+          "*verträge*",
+          "datei*",
+          "*rechnung*",
+          "*angebot*",
+          "pdf",
+          "*protokoll*",
+          "unterlagen",
+          "bescheid*",
+          "*bericht*",
+          "notiz*",
+          "präsentation*",
+          "folien",
+          "handbuch",
+          "richtlinie*"
+        ],
+        "en": [
+          "document*",
+          "contract*",
+          "file*",
+          "invoice*",
+          "offer*",
+          "quote",
+          "quotes",
+          "pdf",
+          "minutes",
+          "report*",
+          "note",
+          "notes",
+          "presentation*",
+          "slides",
+          "manual",
+          "policy",
+          "policies"
+        ]
+      },
+      "ansage_vorlage": {
+        "de": "Ich schaue in die Dokumente.",
+        "en": "Let me look into the documents."
+      }
+    },
+    {
+      "absicht": "projekt-status",
+      "stufe": "S1",
+      "muster": {
+        "de": [
+          "*projekt*",
+          "aufgabe*",
+          "ticket*",
+          "meilenstein*",
+          "budget*",
+          "deadline*",
+          "frist*",
+          "status",
+          "fortschritt",
+          "stand der"
+        ],
+        "en": [
+          "project*",
+          "task*",
+          "ticket*",
+          "milestone*",
+          "budget*",
+          "deadline*",
+          "status",
+          "progress",
+          "latest on"
+        ]
+      },
+      "ansage_vorlage": {
+        "de": "Ich schaue in das Projekt.",
+        "en": "Let me look into the project."
+      }
+    },
+    {
+      "absicht": "kontakt-lesen",
+      "stufe": "S1",
+      "muster": {
+        "de": [
+          "telefonnummer*",
+          "adresse*",
+          "ansprechpartner*",
+          "kontakt*",
+          "kollege*",
+          "kollegin*",
+          "kunde",
+          "kunden",
+          "lieferant*"
+        ],
+        "en": [
+          "phone number*",
+          "address*",
+          "contact*",
+          "colleague*",
+          "customer*",
+          "client*",
+          "supplier*",
+          "vendor*"
+        ]
+      },
+      "ansage_vorlage": {
+        "de": "Ich schaue in deine Kontakte.",
+        "en": "Let me check your contacts."
+      }
+    },
+    {
+      "absicht": "empfehlung-abwaegen",
+      "stufe": "S2",
+      "muster": {
+        "de": [
+          "empfehl*",
+          "sollte ich",
+          "sollten wir",
+          "sollen wir",
+          "soll ich",
+          "würdest du",
+          "was meinst du",
+          "was rätst du",
+          "rate mir",
+          "lohnt sich",
+          "lohnt es sich",
+          "besser",
+          "vergleich*",
+          "abwäg*",
+          "vor- und nachteile",
+          "vorteile",
+          "nachteile",
+          "pro und contra",
+          "priorisier*",
+          "wichtiger",
+          "dringender",
+          "einschätzung",
+          "bewert*",
+          "beurteil*",
+          "was denkst du",
+          "meinung",
+          "analysier*",
+          "risiko*",
+          "risiken",
+          "warum",
+          "wieso",
+          "weshalb",
+          "erklär*"
+        ],
+        "en": [
+          "recommend*",
+          "should i",
+          "should we",
+          "would you",
+          "what do you think",
+          "what would you",
+          "worth it",
+          "is it worth",
+          "worthwhile",
+          "better",
+          "compare*",
+          "weigh*",
+          "pros and cons",
+          "advantages",
+          "disadvantages",
+          "prioriti*",
+          "more important",
+          "more urgent",
+          "assessment",
+          "assess*",
+          "evaluate*",
+          "opinion",
+          "analy*",
+          "risk*",
+          "advice",
+          "advise",
+          "why",
+          "explain*"
+        ]
+      },
+      "ansage_vorlage": {
+        "de": "Ich überlege kurz und prüfe das anhand deiner Daten.",
+        "en": "Let me think about it and check it against your data."
+      }
+    },
+    {
+      "absicht": "herleitung-rechnen",
+      "stufe": "S2",
+      "muster": {
+        "de": [
+          "freie zeit*",
+          "freie termine",
+          "freien termine",
+          "freien termin",
+          "wann habe ich zeit",
+          "wann bin ich frei",
+          "wann passt",
+          "lücke*",
+          "freie slots",
+          "summe",
+          "insgesamt",
+          "gesamt*",
+          "zusammenrechnen",
+          "berechne*",
+          "rechne*",
+          "wie viele tage",
+          "wie viel kostet",
+          "wie viel kosten",
+          "fristende",
+          "wann endet",
+          "wann läuft",
+          "stundensatz",
+          "stundensätze"
+        ],
+        "en": [
+          "free time",
+          "free slot*",
+          "when am i free",
+          "when do i have time",
+          "when would",
+          "gap*",
+          "sum",
+          "total*",
+          "altogether",
+          "calculate*",
+          "how many days",
+          "how much does",
+          "how much do",
+          "how long until",
+          "when does the deadline",
+          "hourly rate",
+          "deadline end*"
+        ]
+      },
+      "ansage_vorlage": {
+        "de": "Ich rechne das aus deinen Daten nach.",
+        "en": "I'll work that out from your data."
+      }
+    },
+    {
+      "absicht": "entwurf-erstellen",
+      "stufe": "S3",
+      "muster": {
+        "de": [
+          "entwurf",
+          "entwirf*",
+          "entwerfe",
+          "antwortentwurf",
+          "formulier*",
+          "schreib",
+          "schreibe",
+          "schreiben",
+          "verfass*",
+          "bereite",
+          "erstell*",
+          "erarbeite*"
+        ],
+        "en": [
+          "draft",
+          "drafts",
+          "write a",
+          "write an",
+          "write the",
+          "write me",
+          "write up",
+          "write back",
+          "write to",
+          "write my",
+          "write it",
+          "write him",
+          "write her",
+          "write them",
+          "compose*",
+          "prepare*",
+          "formulate*",
+          "put together"
+        ]
+      },
+      "ansage_vorlage": {
+        "de": "Das ist ein Auftrag. Ich lege einen Entwurf an und melde mich.",
+        "en": "That's a job. I'll prepare a draft and get back to you."
+      }
+    },
+    {
+      "absicht": "recherche-auftrag",
+      "stufe": "S3",
+      "muster": {
+        "de": [
+          "recherchier*",
+          "recherche",
+          "such im netz",
+          "such im internet",
+          "suche im netz",
+          "suche im internet",
+          "finde heraus",
+          "find heraus",
+          "google*"
+        ],
+        "en": [
+          "research*",
+          "search the web",
+          "search online",
+          "look it up online",
+          "look this up online",
+          "google*",
+          "find out",
+          "investigate*"
+        ]
+      },
+      "ansage_vorlage": {
+        "de": "Ich starte eine Recherche und melde mich mit Quellen.",
+        "en": "I'll start a research job and get back to you with sources."
+      }
+    },
+    {
+      "absicht": "code-auftrag",
+      "stufe": "S3",
+      "muster": {
+        "de": [
+          "claude code",
+          "programmier*",
+          "implementier*",
+          "refactor*",
+          "pull request",
+          "repository",
+          "repo",
+          "bugfix",
+          "behebe",
+          "fix",
+          "deploy*"
+        ],
+        "en": [
+          "claude code",
+          "implement*",
+          "refactor*",
+          "pull request",
+          "repo",
+          "repository",
+          "bugfix",
+          "fix the bug",
+          "fix the",
+          "deploy*"
+        ]
+      },
+      "ansage_vorlage": {
+        "de": "Das ist ein Auftrag für Claude Code. Ich bereite ihn vor und melde mich.",
+        "en": "That's a job for Claude Code. I'll set it up and get back to you."
+      }
+    },
+    {
+      "absicht": "aktion-ausfuehren",
+      "stufe": "S3",
+      "muster": {
+        "de": [
+          "anlegen",
+          "lege * an",
+          "leg * an",
+          "eintragen",
+          "trag",
+          "trag * ein",
+          "verschieb*",
+          "absagen",
+          "sag * ab",
+          "sage * ab",
+          "buchen",
+          "buche",
+          "reserviere*",
+          "vereinbare*",
+          "bestell*",
+          "schick*",
+          "sende*",
+          "versende*",
+          "verschick*",
+          "weiterleiten",
+          "leite",
+          "lösch*",
+          "archiviere*",
+          "benenne",
+          "richte",
+          "aktualisier*",
+          "organisier*",
+          "plane",
+          "planen",
+          "starte",
+          "führe aus",
+          "erinnere*",
+          "erinnerung"
+        ],
+        "en": [
+          "create*",
+          "schedule a",
+          "schedule an",
+          "schedule the",
+          "book a",
+          "book the",
+          "reserve*",
+          "send",
+          "forward",
+          "delete*",
+          "archive*",
+          "reschedule*",
+          "cancel the",
+          "update the",
+          "set up",
+          "organize*",
+          "order",
+          "remind me",
+          "move the",
+          "rename*",
+          "arrange*",
+          "start the"
+        ]
+      },
+      "ansage_vorlage": {
+        "de": "Das ist ein Auftrag. Ich bereite ihn vor und frage vor der Ausführung nach.",
+        "en": "That's a job. I'll prepare it and ask before carrying it out."
+      }
+    }
+  ]
+}

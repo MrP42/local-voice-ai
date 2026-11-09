@@ -6,6 +6,7 @@ mod app_context; // Globaler Sprachassistent: Abrufindex über alle Inhalte
 mod appdata_migration;
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 mod apple_intelligence;
+mod assistent; // ADR-0028 A2: Einstufung, Ansagen, Messung (wai-assistent)
 mod audio_feedback;
 pub mod audio_toolkit;
 mod book_ai; // lva#181: KI-Funktionen im Buch-Reader
@@ -68,6 +69,8 @@ pub mod sprachdienst; // ADR-0021 S2
 mod summarizer;
 mod sync;
 mod tagging;
+#[cfg(test)]
+mod testlog; // gemeinsamer Log-Fänger der Tests
 mod transcription_coordinator;
 mod translator;
 mod tray;
@@ -2049,6 +2052,11 @@ fn specta_builder() -> Builder<tauri::Wry> {
             ablage::befehle::ablage_suchen,
             ablage::befehle::ablage_index_neu_aufbauen,
             ablage::befehle::ablage_text_abbrechen,
+            assistent::assistent_einstufen,
+            assistent::assistent_messung_melden,
+            assistent::assistent_letzte_ausgabe,
+            assistent::assistent_ausgabe_vergessen,
+            assistent::change_assistent_einstufung_aktiv_setting,
             projekte::befehle::projekte_liste,
             projekte::befehle::projekt_anlegen,
             projekte::befehle::projekt_web_freigabe,
@@ -2458,6 +2466,8 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::voice_tools::voice_tools_list,
             commands::voice_tools::change_voice_call_read_transcripts_setting,
             commands::voice_tools::change_voice_call_knowledge_setting,
+            commands::voice_tools::change_voice_notebook_sections_setting,
+            commands::voice_tools::voice_notebook_outline,
             commands::voice_tools::voice_tool_call,
             // Sprachgespraech Stufe 3: Lernen aus Korrekturen, Einrichtung durch Vorlesen
             speech_learning::speech_learning_feedback,

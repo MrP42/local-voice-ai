@@ -24,16 +24,18 @@
 //! | 6 | Abbruch oder Fehler nach schon verbrauchten Token | Ereignis `usage` kommt trotzdem | wie `voice_call_chat` |
 //! | 2 | Abbruch (`voice_call_cancel` mit der Kennung des Durchgangs) | endet mit `Ok("")`, nichts mehr gesendet | wie `voice_call_chat` |
 //! | 3 | Abbruch vor dem Start (IPC-Reihenfolge) | `EARLY_CANCELS` fängt ihn | wie `voice_call_chat` |
+//! | 7 | Antwort des Sprechers ohne Beleg | verworfen, bei leerem Ergebnis feste Vorlage | `tor::StromTor`, Tests in `assistent/tor/tests.rs` |
 //! | 4 | Modellfehler | Fehlertext zurück (ohne Inhalte), Ereignis `failed` | wie `voice_call_chat` |
 //!
 //! Texte stehen nie im Log.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use tauri::{AppHandle, Emitter};
 use tokio::sync::Notify;
 
 use super::{usage_payload, VoiceCallMessage, CANCELS, EARLY_CANCELS, EVENT};
+use crate::assistent::{schutz, tor};
 use crate::llm_client::{self, StreamMessage};
 use crate::managers::meetings::llm_call::ResolvedProvider;
 use crate::managers::usage::{self, Purpose};
@@ -109,6 +111,7 @@ pub async fn voice_call_turn(
     model_id: String,
     stufe: String,
     for_function: Option<String>,
+    conversation_id: Option<String>,
 ) -> Result<String, String> {
     // Ein vorgezogener Abbruch wird zuerst eingelöst, auch wenn unten etwas scheitert.
     if EARLY_CANCELS
@@ -118,9 +121,42 @@ pub async fn voice_call_turn(
     {
         return Ok(String::new());
     }
+    // Notizbuchdaten (Codex lva#414): Widerruf nachpruefen, entzogene Inhalte ersetzen, geschuetzte
+    // Inhalte erkennen. Sind welche dabei, ist nur ein lokales Modell zulaessig, gleich welche Stufe.
+    let pruefung =
+        crate::commands::voice_tools::schutz_pruefen(&app, messages, conversation_id.as_deref());
+    if pruefung.gesperrt {
+        return Err(schutz::UNGESICHERT.to_string());
+    }
+    let messages = pruefung.nachrichten.clone();
+    // ADR-0028 E4: Einstufung in Rust vor jedem Modellaufruf (Sprecher und Denker).
+    let sprache = crate::assistent::sprache_der_app(&app);
+    tor::vor_nachrichten(&messages, sprache, conversation_id.as_deref())?;
     let settings = crate::settings::get_settings(&app);
+    let stufe_wirksam = if pruefung.geschuetzt {
+        "nur_lokal"
+    } else {
+        stufe.as_str()
+    };
     let (provider, model, api_key) =
-        resolve(&settings, &model_id, &stufe, for_function.as_deref())?;
+        resolve(&settings, &model_id, stufe_wirksam, for_function.as_deref()).map_err(|e| {
+            if pruefung.geschuetzt && e.contains("nicht zulässig") {
+                schutz::NUR_LOKAL.to_string()
+            } else {
+                e
+            }
+        })?;
+    // Belegregel (E4.2) fuer JEDEN Durchgang, gleich welche Funktion: was Rust Richtung Oberflaeche
+    // verlaesst (Deltas, Rueckgabewert), geht durch das Tor. Belege sind die Werkzeugergebnisse, die
+    // Rust selbst geliefert hat; ausgenommen sind nur voll gueltige Werkzeugaufrufe.
+    let (strom, messages) = tor::orchestrator_tor(
+        messages,
+        sprache,
+        crate::commands::voice_tools::werkzeug_register(&app),
+    );
+    let tor_strom = Arc::new(Mutex::new(strom));
+    // Werkzeugrolle (M5): Ergebnisse als Datenbloecke mit Zufallskennung, Vertrag im Systemtext.
+    let messages = schutz::werkzeugrolle(messages, &schutz::neue_kennung());
     let messages: Vec<StreamMessage> = messages
         .into_iter()
         .map(|m| StreamMessage::new(&m.role, m.content))
@@ -131,13 +167,31 @@ pub async fn voice_call_turn(
         .unwrap_or_else(|e| e.into_inner())
         .insert(request_id.clone(), cancel.clone());
 
+    // Antwort aus Notizbuchdaten: nichts verlässt Rust, bevor der Vermerk gesichert ist.
+    let puffer = Arc::new(Mutex::new(schutz::Antwortpuffer::<String>::neu(&pruefung)));
     let on_delta = {
         let app = app.clone();
         let request_id = request_id.clone();
+        let tor_strom = tor_strom.clone();
+        let puffer = puffer.clone();
         move |delta: &str| {
+            let text = tor_strom
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .einspeisen(delta);
+            if text.is_empty() {
+                return;
+            }
+            let Some(text) = puffer
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .durchlassen(text)
+            else {
+                return;
+            };
             let _ = app.emit(
                 EVENT,
-                serde_json::json!({"kind": "delta", "request_id": request_id, "text": delta}),
+                serde_json::json!({"kind": "delta", "request_id": request_id, "text": text}),
             );
         }
     };
@@ -176,7 +230,37 @@ pub async fn voice_call_turn(
     }
     match result {
         None => Ok(String::new()),
-        Some(Ok(full)) => Ok(full),
+        Some(Ok(_roh)) => {
+            // Der Rueckgabewert ist der freigegebene Text, nie die rohe Modellausgabe.
+            let (rest, ausgabe, prosa) = {
+                let mut t = tor_strom.lock().unwrap_or_else(|e| e.into_inner());
+                (t.beenden(), t.ausgabe(), t.prosa())
+            };
+            // Erst nach dauerhaft gesichertem Vermerk wird die Antwort freigegeben (Recheck 3/1, 4):
+            // gepufferte Teile gehen erst danach hinaus, bei Fehler werden sie verworfen.
+            let gesichert =
+                schutz::abgeleitet_merken(&pruefung, &prosa, conversation_id.as_deref()).is_ok();
+            let hinaus: String = puffer
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .abschliessen(gesichert, [rest])
+                .concat();
+            if !hinaus.is_empty() {
+                let _ = app.emit(
+                    EVENT,
+                    serde_json::json!({"kind": "delta", "request_id": request_id, "text": hinaus}),
+                );
+            }
+            if !gesichert {
+                let _ = app.emit(
+                    EVENT,
+                    serde_json::json!({"kind": "failed", "request_id": request_id}),
+                );
+                return Err(schutz::UNGESICHERT.to_string());
+            }
+            tor::ausgabe_merken(conversation_id.as_deref(), &prosa);
+            Ok(ausgabe)
+        }
         Some(Err(e)) => {
             let _ = app.emit(
                 EVENT,

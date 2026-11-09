@@ -4125,8 +4125,10 @@ dependencies = [
  "unicode-normalization",
  "url",
  "vad-rs",
+ "wai-assistent",
  "wai-konto",
  "wai-links",
+ "wai-notizbuch-zugang",
  "wai-projekte",
  "wai-providers",
  "wai-recherche",
@@ -9202,6 +9204,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "wai-assistent"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "chacha20poly1305",
+ "getrandom 0.3.4",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.18",
+ "zeroize",
+]
+
+[[package]]
 name = "wai-konto"
 version = "0.1.0"
 dependencies = [
@@ -9214,6 +9230,17 @@ dependencies = [
 [[package]]
 name = "wai-links"
 version = "0.1.0"
+
+[[package]]
+name = "wai-notizbuch-zugang"
+version = "0.1.0"
+dependencies = [
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.18",
+]
 
 [[package]]
 name = "wai-projekte"
