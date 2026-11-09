@@ -2180,6 +2180,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             show_main_window_command,
             commands::cancel_operation,
             commands::is_portable,
+            commands::titelleiste_doppelklick,
             commands::set_level_monitoring,
             commands::get_app_dir_path,
             commands::get_app_settings,
@@ -3500,6 +3501,21 @@ pub fn run(cli_args: CliArgs) {
                 Err(error) => log::warn!("Could not load the window icon: {error}"),
             }
 
+            // macOS (lva#438): native traffic lights instead of the Windows
+            // caption buttons. The window keeps a (transparent) system title
+            // bar laid over the in-app one, so the green button offers real
+            // full screen and the window zooms like any other Mac app. The
+            // in-app bar stays the only visible one (hidden title); the
+            // lights sit vertically centred in its 40 px.
+            #[cfg(target_os = "macos")]
+            {
+                win_builder = win_builder
+                    .decorations(true)
+                    .title_bar_style(tauri::TitleBarStyle::Overlay)
+                    .hidden_title(true)
+                    .traffic_light_position(tauri::LogicalPosition::new(16.0, 12.0));
+            }
+
             if let Some(data_dir) = portable::data_dir() {
                 win_builder = win_builder.data_directory(data_dir.join("webview"));
             }
@@ -3600,7 +3616,23 @@ pub fn run(cli_args: CliArgs) {
         .on_window_event(|window, event| match event {
             tauri::WindowEvent::CloseRequested { api, .. } => {
                 api.prevent_close();
-                let _res = window.hide();
+                // macOS (lva#438): hiding a window in native full screen
+                // leaves an empty full-screen Space behind. Leave full screen
+                // first and hide once the animation has finished.
+                #[cfg(target_os = "macos")]
+                let hide_later = window.is_fullscreen().unwrap_or(false);
+                #[cfg(not(target_os = "macos"))]
+                let hide_later = false;
+                if hide_later {
+                    let _ = window.set_fullscreen(false);
+                    let later = window.clone();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_millis(900));
+                        let _ = later.hide();
+                    });
+                } else {
+                    let _res = window.hide();
+                }
 
                 #[cfg(target_os = "macos")]
                 {

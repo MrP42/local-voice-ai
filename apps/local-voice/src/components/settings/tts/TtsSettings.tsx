@@ -225,6 +225,12 @@ import { useKeepAwake } from "./reader/useKeepAwake";
 import { parseReaderDoc } from "@/lib/reader/readerDoc";
 import { stripPageMarks, toSpokenScript } from "@/lib/reader/spokenScript";
 import {
+  istMac,
+  istMacVollbild,
+  MAC_VOLLBILD_EVENT,
+  setzeMacVollbild,
+} from "@/lib/platform/macFenster";
+import {
   addChunk,
   emptyStream,
   streamText,
@@ -2191,10 +2197,52 @@ export const TtsSettings = () => {
     document.addEventListener("fullscreenchange", onChange);
     return () => document.removeEventListener("fullscreenchange", onChange);
   }, []);
+  // Mac (lva#438): der Knopf schaltet zusätzlich das echte macOS-Vollbild
+  // des Fensters. Nur wenn der Leser es selbst eingeschaltet hat, schaltet
+  // er es auch wieder aus; endet es von außen (grüner Knopf, ⌃⌘F), endet
+  // auch das Lese-Vollbild.
+  const macVollbildVomLeser = useRef(false);
+  useEffect(() => {
+    if (!istMac()) return;
+    const onMac = (e: Event) => {
+      if ((e as CustomEvent<boolean>).detail) return;
+      if (!macVollbildVomLeser.current) return;
+      macVollbildVomLeser.current = false;
+      setReaderFill(false);
+    };
+    window.addEventListener(MAC_VOLLBILD_EVENT, onMac);
+    return () => window.removeEventListener(MAC_VOLLBILD_EVENT, onMac);
+  }, []);
+  const beendeMacVollbild = () => {
+    if (!macVollbildVomLeser.current) return;
+    macVollbildVomLeser.current = false;
+    void setzeMacVollbild(false);
+  };
   const toggleFullscreen = () => {
     if (document.fullscreenElement) {
       void document.exitFullscreen().catch(() => undefined);
       setReaderFill(false);
+      return;
+    }
+    if (istMac()) {
+      if (readerFill) {
+        setReaderFill(false);
+        beendeMacVollbild();
+        return;
+      }
+      setReaderFill(true);
+      // Sofort als „vom Leser“ markieren: ein Schließen vor dem Ergebnis
+      // der Abfrage (zweiter Klick, Escape, Moduswechsel) setzt die Marke
+      // zurück, dann schaltet die Abfrage nichts mehr ein.
+      macVollbildVomLeser.current = true;
+      void istMacVollbild().then((schonAn) => {
+        if (!macVollbildVomLeser.current) return;
+        if (schonAn) {
+          macVollbildVomLeser.current = false;
+          return;
+        }
+        void setzeMacVollbild(true);
+      });
       return;
     }
     setReaderFill((on) => !on);
@@ -2204,6 +2252,11 @@ export const TtsSettings = () => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "F11") {
         e.preventDefault();
+        // Mac: dasselbe echte Fenster-Vollbild wie der Knopf (lva#438).
+        if (istMac()) {
+          toggleFullscreen();
+          return;
+        }
         if (document.fullscreenElement) {
           void document.exitFullscreen().catch(() => undefined);
         } else {
@@ -2219,14 +2272,26 @@ export const TtsSettings = () => {
       if (e.key === "Escape" && readerFill && !document.fullscreenElement) {
         if (e.defaultPrevented) return;
         setReaderFill(false);
+        beendeMacVollbild();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [viewMode, readerFill, sectionActive]);
   useEffect(() => {
-    if (viewMode !== "read") setReaderFill(false);
+    if (viewMode !== "read") {
+      setReaderFill(false);
+      beendeMacVollbild();
+    }
   }, [viewMode]);
+  // Leser verlassen (anderes Modul, Seite geschlossen): ein vom Leser
+  // eingeschaltetes Mac-Vollbild endet mit.
+  useEffect(() => {
+    if (sectionActive || !macVollbildVomLeser.current) return;
+    setReaderFill(false);
+    beendeMacVollbild();
+  }, [sectionActive]);
+  useEffect(() => () => beendeMacVollbild(), []);
   const [follow, setFollow] = useState(true);
   const [pageInfo, setPageInfo] = useState<ReaderPageInfo | null>(null);
   const readerApiRef = useRef<ReaderViewApi | null>(null);

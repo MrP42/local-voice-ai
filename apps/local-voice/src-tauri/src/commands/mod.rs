@@ -61,6 +61,64 @@ pub fn is_portable() -> bool {
     crate::portable::is_portable()
 }
 
+/// Doppelklick auf die freie Fläche der eigenen Titelleiste (lva#438).
+///
+/// Auf dem Mac folgt er der Systemeinstellung „Doppelklick auf die
+/// Titelleiste eines Fensters“ (`AppleActionOnDoubleClick`): Zoomen bzw.
+/// Füllen, Im Dock ablegen oder keine Aktion. Im Vollbild tut er nichts.
+/// Auf anderen Systemen schaltet er wie bisher Maximieren um.
+#[tauri::command]
+#[specta::specta]
+pub async fn titelleiste_doppelklick(app: AppHandle) {
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    #[cfg(target_os = "macos")]
+    {
+        if window.is_fullscreen().unwrap_or(false) {
+            return;
+        }
+        // `defaults` startet einen Prozess: nicht auf dem Hauptthread.
+        let aktion = tauri::async_runtime::spawn_blocking(mac_doppelklick_aktion)
+            .await
+            .unwrap_or_default();
+        match aktion.as_str() {
+            "Minimize" => {
+                let _ = window.minimize();
+                return;
+            }
+            "None" => return,
+            _ => {}
+        }
+    }
+    if window.is_maximized().unwrap_or(false) {
+        let _ = window.unmaximize();
+    } else {
+        let _ = window.maximize();
+    }
+}
+
+/// Liest die globale Einstellung; fehlt sie, gilt die ältere
+/// `AppleMiniaturizeOnDoubleClick` und sonst der Systemstandard „Zoomen“.
+#[cfg(target_os = "macos")]
+fn mac_doppelklick_aktion() -> String {
+    let lies = |schluessel: &str| {
+        std::process::Command::new("/usr/bin/defaults")
+            .args(["read", "-g", schluessel])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+    };
+    if let Some(aktion) = lies("AppleActionOnDoubleClick") {
+        return aktion;
+    }
+    match lies("AppleMiniaturizeOnDoubleClick").as_deref() {
+        Some("1") => "Minimize".into(),
+        _ => "Maximize".into(),
+    }
+}
+
 /// Subscribe the main window to microphone level events.
 ///
 /// Off by default: the levels fire at audio-callback rate, and delivering them

@@ -2260,6 +2260,17 @@ async isPortable() : Promise<boolean> {
     return await TAURI_INVOKE("is_portable");
 },
 /**
+ * Doppelklick auf die freie Fläche der eigenen Titelleiste (lva#438).
+ * 
+ * Auf dem Mac folgt er der Systemeinstellung „Doppelklick auf die
+ * Titelleiste eines Fensters“ (`AppleActionOnDoubleClick`): Zoomen bzw.
+ * Füllen, Im Dock ablegen oder keine Aktion. Im Vollbild tut er nichts.
+ * Auf anderen Systemen schaltet er wie bisher Maximieren um.
+ */
+async titelleisteDoppelklick() : Promise<void> {
+    await TAURI_INVOKE("titelleiste_doppelklick");
+},
+/**
  * Subscribe the main window to microphone level events.
  * 
  * Off by default: the levels fire at audio-callback rate, and delivering them
