@@ -69,6 +69,8 @@ pub enum Schritt {
     LoeschenNachJournal,
     /// Beim endgültigen Löschen liefert das Lesen der Metadaten einen Fehler (Rechte, Datenträger).
     LoeschenLesefehler,
+    /// Beim endgültigen Löschen scheitert das Entfernen des Zwischenorts im Papierkorb.
+    LoeschenEntfernfehler,
 }
 
 #[cfg(test)]
@@ -1957,22 +1959,45 @@ impl Ablage {
                     .join(format!("{d}{LOESCHEN}{}", neue_id("")));
                 fs::rename(&quelle, &zwischen)
                     .map_err(|_| Fehler::speicher("Datei nicht entfernbar; nichts verloren."))?;
-                fs::remove_dir_all(&zwischen)
+                ordner_entfernen(&zwischen)
                     .map_err(|_| Fehler::speicher("Datei nicht vollständig entfernt."))?;
             }
         }
-        // Reste früherer, abgebrochener Läufe (nie einer Verknüpfung folgen).
-        if let Ok(rest) = fs::read_dir(self.dir.join(PAPIERKORB)) {
-            for e in rest.flatten() {
-                if !e.file_name().to_string_lossy().contains(LOESCHEN) {
-                    continue;
-                }
-                match fs::symlink_metadata(e.path()) {
-                    Ok(m) if !ist_umweg(&m) && m.is_dir() => {
-                        let _ = fs::remove_dir_all(e.path());
-                    }
-                    _ => {}
-                }
+        // Reste früherer, abgebrochener Läufe (nie einer Verknüpfung folgen). Zwischenorte, die zu
+        // diesem Auftrag gehören, müssen nachweislich weg sein, sonst bleiben Auftrag und Baum
+        // stehen; fremde Reste werden nach Möglichkeit geräumt.
+        let rest = match fs::read_dir(self.dir.join(PAPIERKORB)) {
+            Ok(r) => Some(r),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(_) => {
+                return Err(Fehler::speicher(
+                    "Papierkorb nicht lesbar; der Auftrag bleibt.",
+                ))
+            }
+        };
+        for e in rest.into_iter().flatten() {
+            let e =
+                e.map_err(|_| Fehler::speicher("Papierkorb nicht lesbar; der Auftrag bleibt."))?;
+            let name = e.file_name().to_string_lossy().into_owned();
+            let Some(pos) = name.find(LOESCHEN) else {
+                continue;
+            };
+            let eigen = dat.iter().any(|d| d.as_str() == &name[..pos]);
+            let ergebnis = match meta_ohne_folgen(&e.path()) {
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Err(_) => Err(Fehler::speicher(
+                    "Rest im Papierkorb nicht lesbar; der Auftrag bleibt.",
+                )),
+                Ok(m) if ist_umweg(&m) => Err(verknuepfung()),
+                Ok(m) if m.is_dir() => ordner_entfernen(&e.path()).map_err(|_| {
+                    Fehler::speicher("Rest im Papierkorb nicht entfernt; der Auftrag bleibt.")
+                }),
+                Ok(_) => fs::remove_file(e.path()).map_err(|_| {
+                    Fehler::speicher("Rest im Papierkorb nicht entfernt; der Auftrag bleibt.")
+                }),
+            };
+            if eigen {
+                ergebnis?;
             }
         }
         for d in dat {
@@ -2208,6 +2233,15 @@ fn loeschen_offen() -> Fehler {
         "ablage.loeschen_offen",
         "Ein endgültiges Löschen ist noch nicht abgeschlossen; nichts geändert.",
     )
+}
+
+/// `remove_dir_all`, in Tests mit einstellbarem Fehler.
+fn ordner_entfernen(p: &Path) -> std::io::Result<()> {
+    #[cfg(test)]
+    if ABBRUCH.with(|a| a.get()) == Some(Schritt::LoeschenEntfernfehler) {
+        return Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+    }
+    fs::remove_dir_all(p)
 }
 
 /// `symlink_metadata`, in Tests mit einstellbarem Lesefehler.

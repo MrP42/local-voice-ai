@@ -1354,3 +1354,45 @@ fn offener_loeschauftrag_sperrt_verschieben_aus_dem_geloeschten_ordner() {
     assert!(!e.wurzel.join("dateien").join(&dat).exists());
     assert!(e.wurzel.join("dateien").join(&d2).exists());
 }
+
+#[test]
+fn entfernfehler_am_zwischenort_behaelt_auftrag_bis_er_weg_ist() {
+    let e = env();
+    let o = e.standard();
+    let dat = e.ablegen("a.txt", "a", &o);
+    e.a.in_papierkorb(AblageArt::Datei, &dat).unwrap();
+    // rename gelingt, remove_dir_all scheitert: Original liegt nur noch im Zwischenort.
+    abbruch(Some(Schritt::LoeschenEntfernfehler));
+    assert!(e.a.endgueltig_loeschen(AblageArt::Datei, &dat).is_err());
+    let zwischenorte = || -> Vec<String> {
+        fs::read_dir(e.wurzel.join("papierkorb"))
+            .map(|r| {
+                r.flatten()
+                    .map(|x| x.file_name().to_string_lossy().into_owned())
+                    .filter(|n| n.starts_with(&dat))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    assert!(!zwischenorte().is_empty(), "Zwischenort vorhanden");
+    assert!(
+        !e.original(&dat).exists(),
+        "Quelle verschoben (NotFound beim Wiederanlauf)"
+    );
+    // Wiederanlauf, Entfernen scheitert erneut: Auftrag und Eintrag bleiben.
+    e.neustart();
+    let s = e.sicht();
+    abbruch(None);
+    assert_eq!(s.papierkorb.len(), 1, "Eintrag verschwindet nicht");
+    assert_eq!(
+        journal_json(&e)["journal"].as_array().unwrap().len(),
+        1,
+        "Auftrag offen"
+    );
+    assert!(!zwischenorte().is_empty(), "Zwischenort noch da");
+    // Fehler behoben: der nächste Lauf räumt den Zwischenort und trägt erst dann aus.
+    let s = e.sicht();
+    assert!(s.papierkorb.is_empty());
+    assert!(zwischenorte().is_empty());
+    assert!(journal_json(&e)["journal"].as_array().unwrap().is_empty());
+}
