@@ -320,13 +320,37 @@ pub fn ausnahme_setzen(dir: &Path, ordner: &str, anbieter: &str, an: bool) -> Re
 }
 
 /// Gilt für die Kette (Ordner bis Wurzel) eine Cloud-Ausnahme für `anbieter`? Bei unklarer Freigabe nie.
-pub fn ausnahme_gilt(lage: &Lage, kette: &[String], anbieter: &str) -> bool {
+/// Eine Ausnahme wirkt nur, solange der Ordner, an dem sie hängt, aktuell wirksam `confidential` ist
+/// (`vertraulich`); nach einem Klassenwechsel und zurück bleibt sie so unwirksam.
+pub fn ausnahme_gilt(
+    lage: &Lage,
+    kette: &[String],
+    anbieter: &str,
+    vertraulich: impl Fn(&str) -> bool,
+) -> bool {
     match lage {
         Lage::Gueltig(f) => kette
             .iter()
-            .any(|o| f.ausnahmen.get(o).is_some_and(|a| a.contains(anbieter))),
+            .any(|o| f.ausnahmen.get(o).is_some_and(|a| a.contains(anbieter)) && vertraulich(o)),
         Lage::Unklar(_) => false,
     }
+}
+
+/// Entzieht alle Cloud-Ausnahmen der genannten Ordner (nach einem Klassenwechsel). Bei unklarer
+/// Freigabe nichts zu tun (Ausnahmen gelten dort ohnehin nie).
+pub fn ausnahmen_entziehen(dir: &Path, ordner: &[String]) -> Res<()> {
+    let Lage::Gueltig(mut f) = laden(dir) else {
+        return Ok(());
+    };
+    if !ordner.iter().any(|o| f.ausnahmen.contains_key(o)) {
+        return Ok(());
+    }
+    vorher_ablegen(dir)?;
+    for o in ordner {
+        f.ausnahmen.remove(o);
+    }
+    f.epoche += 1;
+    schreiben(dir, &f)
 }
 
 fn vorher_ablegen(dir: &Path) -> Res<()> {

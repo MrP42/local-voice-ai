@@ -989,6 +989,7 @@ impl Ablage {
         let _ = fs::create_dir_all(self.dir.join(DATEIEN));
         let _ = fs::create_dir_all(self.dir.join(PAPIERKORB));
         geaendert |= self.zwischendateien_raeumen();
+        self.entwurfsreste_raeumen();
         geaendert |= self.journal_abarbeiten(&mut st).unwrap_or(true);
         // Ein begonnener Rückweg (D4) zieht erst fertig um; sonst sähe die Suche unten die umgezogenen
         // Originale als Funde.
@@ -1016,6 +1017,36 @@ impl Ablage {
             return Some(AblageLage::NichtLesbar);
         }
         None
+    }
+
+    /// Räumt liegengebliebene Arbeitsordner `.entwurf-<ulid>` (D3) im Ablagewurzelordner weg, wenn sie
+    /// über eine Stunde alt sind (ein laufender Entwurf legt sie außerhalb der Sperre an). Verknüpfungen
+    /// werden nie gefolgt.
+    fn entwurfsreste_raeumen(&self) {
+        let Ok(inhalt) = fs::read_dir(&self.dir) else {
+            return;
+        };
+        let grenze = std::time::Duration::from_secs(3600);
+        for e in inhalt.flatten() {
+            let n = e.file_name().to_string_lossy().into_owned();
+            if !n
+                .strip_prefix(".entwurf-")
+                .is_some_and(|r| r.len() == 26 && ulid::Ulid::from_string(r).is_ok())
+            {
+                continue;
+            }
+            let Ok(m) = fs::symlink_metadata(e.path()) else {
+                continue;
+            };
+            let alt = m
+                .modified()
+                .ok()
+                .and_then(|t| t.elapsed().ok())
+                .is_some_and(|d| d >= grenze);
+            if m.is_dir() && !ist_umweg(&m) && alt {
+                let _ = fs::remove_dir_all(e.path());
+            }
+        }
     }
 
     /// Liegengebliebene Zwischendateien (`.teil-*`) in `dateien/<dat>/` gehen in den Papierkorb.
@@ -1615,9 +1646,11 @@ impl Ablage {
         }
         let (z, g) = (st.zaehler(), st.geraet().to_string());
         let o = st.ordner.get_mut(id).ok_or_else(nicht_gefunden)?;
+        let mut klasse_gewechselt = false;
         if let Some(k) = &e.datenklasse {
             if &o.datenklasse.wert != k {
                 o.datenklasse = Register::neu(k.clone(), z, &g);
+                klasse_gewechselt = true;
             }
         }
         if let Some(n) = e.nur_geraet {
@@ -1630,7 +1663,20 @@ impl Ablage {
                 o.zielordner_ki = Register::neu(k, z, &g);
             }
         }
-        self.sichern(&mut st)
+        self.sichern(&mut st)?;
+        if klasse_gewechselt {
+            // Cloud-Ausnahmen gelten nur für `confidential`: bei jedem Klassenwechsel verfallen sie für
+            // den Ordner und alle Unterordner (die wirksame Klasse kann sich dort mitändern).
+            let eltern = st.eltern();
+            let betroffen: Vec<String> = st
+                .ordner
+                .keys()
+                .filter(|k| zf::kette(&eltern, k).iter().any(|x| x == id))
+                .cloned()
+                .collect();
+            freigabe::ausnahmen_entziehen(&self.dir, &betroffen)?;
+        }
+        Ok(())
     }
 
     /// KI-Freigabe eines Ordners (gerätelokal, `freigabe.json`); `None` = erbt wieder.
@@ -1870,7 +1916,7 @@ impl Ablage {
         quelle: &Path,
         ordner: &str,
         wahl: Option<AblageKollisionswahl>,
-        entwurf: Option<&[String]>,
+        entwurf: Option<(&[String], Klasse)>,
     ) -> Res<AblageImportZeile> {
         let meta = fs::symlink_metadata(quelle)
             .map_err(|_| Fehler::neu("ablage.quelle_nicht_lesbar", "Quelle nicht lesbar."))?;
@@ -1892,8 +1938,8 @@ impl Ablage {
         let eltern = st.eltern();
         self.ordner_lebend(&st, &eltern, ordner)?;
         let entwurf = match entwurf {
-            Some(q) => {
-                let (k, nur) = ki_zugriff::entwurf_regel(&st, &eltern, ordner, q)?;
+            Some((q, mindest)) => {
+                let (k, nur) = ki_zugriff::entwurf_regel(&st, &eltern, ordner, q, mindest)?;
                 if nur && !zf::wirksam_nur_geraet(&st.ordner, &eltern, ordner) {
                     return Err(Fehler::neu(
                         "ablage.entwurf_geaendert",
@@ -2874,7 +2920,8 @@ impl Ablage {
                 (None, None) => "kein_format".into(),
             };
             let kette = zf::kette(&eltern, &d.ordner.wert);
-            let w = freigabe::wirksam(&lage, &kette);
+            let zusatz = zf::zusatzkette(&st.ordner, &eltern, &d.ordner.wert);
+            let w = freigabe::wirksam_mit_zusatz(&lage, &kette, &zusatz);
             let ki = if w.unklar {
                 "unklar"
             } else {

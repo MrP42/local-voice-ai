@@ -199,7 +199,9 @@ pub async fn ablage_cloud_ausnahme_setzen(
 /// Einziges schreibendes KI-Werkzeug (D3, Spec §5.5): legt einen Entwurf (Markdown) als neue Datei in
 /// „KI-Entwürfe“ oder in einem Zielordner mit `zielordner_ki` ab. Klasse = Maximum aus Zielordner und
 /// Quellen; ist eine Quelle „nur dieses Gerät“, landet er in „KI-Entwürfe (nur dieses Gerät)“. `quellen`:
-/// Herkunftsmarken (`dokument:<dat>@<fas>#<textrev>`), Verweise oder `dat_…`.
+/// Herkunftsmarken (`dokument:<dat>@<fas>#<textrev>`), Verweise oder `dat_…`. `mindestklasse`
+/// (`public` … `personal`): untere Schranke der Klasse; der Assistent übergibt das Maximum aller im
+/// Gespräch gelieferten Auszüge, weil die vom Modell benannten `quellen` unvollständig sein können.
 #[tauri::command]
 #[specta::specta]
 pub async fn ablage_entwurf_anlegen(
@@ -208,9 +210,16 @@ pub async fn ablage_entwurf_anlegen(
     name: String,
     inhalt_md: String,
     quellen: Vec<String>,
+    mindestklasse: Option<String>,
 ) -> Antwort<AblageEntwurf> {
     mit_nachlauf(&app, false, move |a| {
-        super::ki::entwurf_anlegen(&a, ordner.as_deref(), &name, &inhalt_md, &quellen)
+        let mindest = match mindestklasse.as_deref() {
+            None => None,
+            Some(t) => Some(super::zusammenfuehren::Klasse::aus_text(t).ok_or_else(|| {
+                super::Fehler::ungueltig("Unbekannte Mindestklasse des Entwurfs.")
+            })?),
+        };
+        super::ki::entwurf_anlegen(&a, ordner.as_deref(), &name, &inhalt_md, &quellen, mindest)
     })
     .await
 }

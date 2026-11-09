@@ -1020,11 +1020,13 @@ async ablageCloudAusnahmeSetzen(ordner: string, anbieter: string, an: boolean) :
  * Einziges schreibendes KI-Werkzeug (D3, Spec §5.5): legt einen Entwurf (Markdown) als neue Datei in
  * „KI-Entwürfe“ oder in einem Zielordner mit `zielordner_ki` ab. Klasse = Maximum aus Zielordner und
  * Quellen; ist eine Quelle „nur dieses Gerät“, landet er in „KI-Entwürfe (nur dieses Gerät)“. `quellen`:
- * Herkunftsmarken (`dokument:<dat>@<fas>#<textrev>`), Verweise oder `dat_…`.
+ * Herkunftsmarken (`dokument:<dat>@<fas>#<textrev>`), Verweise oder `dat_…`. `mindestklasse`
+ * (`public` … `personal`): untere Schranke der Klasse; der Assistent übergibt das Maximum aller im
+ * Gespräch gelieferten Auszüge, weil die vom Modell benannten `quellen` unvollständig sein können.
  */
-async ablageEntwurfAnlegen(ordner: string | null, name: string, inhaltMd: string, quellen: string[]) : Promise<Result<AblageEntwurf, string>> {
+async ablageEntwurfAnlegen(ordner: string | null, name: string, inhaltMd: string, quellen: string[], mindestklasse: string | null) : Promise<Result<AblageEntwurf, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("ablage_entwurf_anlegen", { ordner, name, inhaltMd, quellen }) };
+    return { status: "ok", data: await TAURI_INVOKE("ablage_entwurf_anlegen", { ordner, name, inhaltMd, quellen, mindestklasse }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };

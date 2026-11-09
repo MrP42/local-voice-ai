@@ -102,15 +102,16 @@ fn ok_textrev(f: &zf::Fassung) -> Option<String> {
         .map(|t| t.textrev.clone())
 }
 
-/// Klasse und „nur dieses Gerät“ eines Entwurfs: Maximum aus Zielordner und allen Quellen. Eine
-/// unbekannte Quelle oder Klasse ist ein Fehler (nie zu niedrig einstufen).
+/// Klasse und „nur dieses Gerät“ eines Entwurfs: Maximum aus Zielordner, allen Quellen und
+/// `mindestklasse`. Eine unbekannte Quelle oder Klasse ist ein Fehler (nie zu niedrig einstufen).
 pub(super) fn entwurf_regel(
     st: &Stand,
     eltern: &BTreeMap<String, Eltern>,
     ordner: &str,
     quellen: &[String],
+    mindestklasse: Klasse,
 ) -> Res<(Klasse, bool)> {
-    let mut klasse = zf::wirksame_klasse(&st.ordner, eltern, ordner);
+    let mut klasse = zf::wirksame_klasse(&st.ordner, eltern, ordner).max(mindestklasse);
     for d in quelldateien(st, quellen)? {
         klasse = klasse.max(zf::wirksame_klasse_datei(&st.ordner, eltern, d));
     }
@@ -298,16 +299,21 @@ impl Ablage {
         Ok((id, geaendert))
     }
 
-    /// `ablage_entwurf_anlegen(ordner, name, inhalt_md, quellen)` (Spec §5.5). `ordner`: Zielordner mit
-    /// `zielordner_ki`; ohne Angabe „KI-Entwürfe“. `quellen`: Kennungen der Quelldateien (`dat_…`).
-    /// Nie überschreibend: bei gleichem Namen entsteht ein freier Name.
+    /// `ablage_entwurf_anlegen(ordner, name, inhalt_md, quellen, mindestklasse)` (Spec §5.5). `ordner`:
+    /// Zielordner mit `zielordner_ki`; ohne Angabe „KI-Entwürfe“. `quellen`: Kennungen der Quelldateien
+    /// (`dat_…`). Klasse = max(Zielordner, Quellen, `mindestklasse`): die Quellen nennt der Aufrufer
+    /// bzw. das Modell, sie sind nicht verlässlich vollständig; der Assistent (P4c) übergibt deshalb als
+    /// `mindestklasse` das Maximum aller im Gespräch gelieferten Auszüge. Nie überschreibend: bei
+    /// gleichem Namen entsteht ein freier Name.
     pub fn entwurf_anlegen(
         &self,
         ordner: Option<&str>,
         name: &str,
         inhalt_md: &str,
         quellen: &[String],
+        mindestklasse: Option<Klasse>,
     ) -> Res<AblageEntwurf> {
+        let mindest = mindestklasse.unwrap_or(Klasse::Public);
         if inhalt_md.len() > MAX_ENTWURF {
             return Err(Fehler::neu(
                 "ablage.entwurf_zu_gross",
@@ -363,7 +369,7 @@ impl Ablage {
                 &quelle,
                 &ziel,
                 Some(AblageKollisionswahl::BeideBehalten),
-                Some(&quellen),
+                Some((&quellen, mindest)),
             )
         })();
         let _ = fs::remove_dir_all(&arbeit);

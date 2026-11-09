@@ -208,6 +208,8 @@ pub struct KiStelle {
 pub struct KiSuche {
     pub stellen: Vec<KiStelle>,
     pub indiziert: BTreeMap<String, (String, Option<String>)>,
+    /// Der Kandidatenpool war voll (es gäbe womöglich weitere Stellen).
+    pub voll: bool,
 }
 
 // Aufrufer `ki::auszuege` ist bis lva#365 P4c nur in Tests erreichbar.
@@ -252,6 +254,7 @@ pub fn ki_suchen(
         return Ok(KiSuche {
             stellen: vec![],
             indiziert,
+            voll: false,
         });
     }
     let trace = format!("{:032x}", ulid::Ulid::new().0);
@@ -292,7 +295,11 @@ pub fn ki_suchen(
             rang: z.score,
         });
     }
-    Ok(KiSuche { stellen, indiziert })
+    Ok(KiSuche {
+        stellen,
+        indiziert,
+        voll: antwort.citations.len() >= kandidaten,
+    })
 }
 
 /// Fundstelle in einer Datei.

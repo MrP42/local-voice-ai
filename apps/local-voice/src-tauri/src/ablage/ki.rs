@@ -41,6 +41,8 @@ pub const TOP_K: usize = 8;
 pub const MAX_K: usize = 32;
 /// Kandidaten aus dem Index (vor der Feinprüfung).
 const KANDIDATEN: usize = 200;
+/// Größter Kandidatenpool beim Nachladen nach der Feinprüfung.
+const KANDIDATEN_MAX: usize = 3200;
 /// Höchstens so viele Auszüge je Datei.
 const JE_DATEI: usize = 3;
 /// Längster Titel im Auszug (Zeichen).
@@ -184,36 +186,45 @@ pub struct Marke {
     pub textrev: String,
 }
 
+/// Feste Länge einer Herkunftsmarke: `dokument:` + `dat_`+26 + `@` + `fas_`+26 + `#` + 64 Hex.
+const MARKE_LAENGE: usize =
+    MARKE.len() + PRAEFIX_DATEI.len() + 26 + 1 + PRAEFIX_FASSUNG.len() + 26 + 1 + 64;
+
+/// Liest eine Herkunftsmarke streng und kanonisch: Kennungen in Großschreibung (ULID), `textrev` in
+/// Kleinschreibung. Groß geschriebene Hex-Ziffern werden also normalisiert, nicht abgelehnt.
 pub fn marke_lesen(s: &str) -> Option<Marke> {
     let r = s.strip_prefix(MARKE)?;
     let (dat, r) = r.split_once('@')?;
     let (fas, textrev) = r.split_once('#')?;
-    let ok = id_gueltig(PRAEFIX_DATEI, dat)
-        && id_gueltig(PRAEFIX_FASSUNG, fas)
-        && textrev.len() == 64
-        && textrev.bytes().all(|b| b.is_ascii_hexdigit());
+    let (dat, fas) = (
+        id_kanonisch(PRAEFIX_DATEI, dat)?,
+        id_kanonisch(PRAEFIX_FASSUNG, fas)?,
+    );
+    let ok = textrev.len() == 64 && textrev.bytes().all(|b| b.is_ascii_hexdigit());
     ok.then(|| Marke {
-        dat: dat.into(),
-        fas: fas.into(),
-        textrev: textrev.into(),
+        dat,
+        fas,
+        textrev: textrev.to_ascii_lowercase(),
     })
 }
 
-/// Alle Herkunftsmarken in einem Text (Verlauf, Zusammenfassung, Zwischenstand), ohne Doppelte.
+/// Kennung `<präfix><ULID>` mit großgeschriebener ULID, sonst `None`.
+fn id_kanonisch(praefix: &str, id: &str) -> Option<String> {
+    let r = id.strip_prefix(praefix)?.to_ascii_uppercase();
+    let kanonisch = format!("{praefix}{r}");
+    id_gueltig(praefix, &kanonisch).then_some(kanonisch)
+}
+
+/// Alle Herkunftsmarken in einem Text (Verlauf, Zusammenfassung, Zwischenstand), ohne Doppelte. Jede
+/// Marke wird mit fester Länge gelesen (angehängte Zeichen zählen nicht dazu) und kanonisch ausgegeben.
 pub fn marken_finden(text: &str) -> Vec<String> {
-    let mut aus = BTreeSet::new();
-    let mut rest = text;
-    while let Some(i) = rest.find(MARKE) {
-        let kand = &rest[i..];
-        let ende = kand[MARKE.len()..]
-            .find(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '_' | '@' | '#')))
-            .map_or(kand.len(), |e| e + MARKE.len());
-        if marke_lesen(&kand[..ende]).is_some() {
-            aus.insert(kand[..ende].to_string());
-        }
-        rest = &kand[MARKE.len()..];
-    }
-    aus.into_iter().collect()
+    text.match_indices(MARKE)
+        .filter_map(|(i, _)| text.get(i..i + MARKE_LAENGE))
+        .filter_map(marke_lesen)
+        .map(|m| marke(&m.dat, &m.fas, &m.textrev))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 /// Anker für das Fragment eines Links: `=` und `&` bleiben, alles außer `A-Za-z0-9-._~` wird
@@ -306,10 +317,14 @@ fn freigegeben(d: &KiDatei, weg: KiWeg, lage: &Lage) -> bool {
     }
 }
 
-fn klasse_ok(d: &KiDatei, ziel: &ZielAnbieter, lage: &Lage) -> bool {
+fn klasse_ok(d: &KiDatei, ziel: &ZielAnbieter, b: &KiBestand) -> bool {
     let ausnahme = d.klasse == Klasse::Confidential
         && !ziel.lokal
-        && freigabe::ausnahme_gilt(lage, &d.kette, &ziel.id);
+        && freigabe::ausnahme_gilt(&b.freigabe, &d.kette, &ziel.id, |o| {
+            b.ordner
+                .get(o)
+                .is_some_and(|x| x.lebend && x.klasse == Klasse::Confidential)
+        });
     klasse_erlaubt(d.klasse, ziel, ausnahme)
 }
 
@@ -318,7 +333,7 @@ fn berechtigt(d: &KiDatei, bereich: &KiBereich, ziel: &ZielAnbieter, b: &KiBesta
     !b.freigabe.ist_unklar()
         && im_bereich(d, bereich, b)
         && freigegeben(d, bereich.weg(), &b.freigabe)
-        && klasse_ok(d, ziel, &b.freigabe)
+        && klasse_ok(d, ziel, b)
 }
 
 // ---------------------------------------------------------------- Abruf
@@ -380,106 +395,117 @@ pub fn auszuege_mit(
     for d in bereich_dateien {
         if !freigegeben(d, weg, &b.freigabe) {
             ab.nicht_freigegeben += 1;
-        } else if !klasse_ok(d, ziel, &b.freigabe) {
+        } else if !klasse_ok(d, ziel, &b) {
             ab.klasse_abgewiesen += 1;
         } else {
             zugelassen.insert(d.dat.as_str(), d);
         }
     }
-    let suche = match (zugelassen.is_empty(), profil(ziel)) {
-        (false, Some(p)) => index::ki_suchen(a, frage, emb, &index::ki_leser(weg, p), KANDIDATEN)?,
-        _ => index::KiSuche::default(),
-    };
-    // Je zugelassener Datei: über den Index (aktuell), direkt (Konflikt) oder gar nicht.
-    let mut ueber_index: BTreeSet<&str> = BTreeSet::new();
-    let mut direkt: Vec<&KiDatei> = Vec::new();
-    for d in zugelassen.values() {
-        if d.konflikt {
-            ab.im_konflikt += 1;
-        }
-        let (Some(fas), true) = (&d.ki_fas, d.mit_text) else {
-            if !d.konflikt || d.ki_fas.is_some() {
-                ab.ohne_text += 1;
+    let basis = ab;
+    let mut pool = KANDIDATEN;
+    loop {
+        let mut ab = basis;
+        let suche = match (zugelassen.is_empty(), profil(ziel)) {
+            (false, Some(p)) => index::ki_suchen(a, frage, emb, &index::ki_leser(weg, p), pool)?,
+            _ => index::KiSuche::default(),
+        };
+        let voll = suche.voll;
+        // Je zugelassener Datei: über den Index (aktuell), direkt (Konflikt) oder gar nicht.
+        let mut ueber_index: BTreeSet<&str> = BTreeSet::new();
+        let mut direkt: Vec<&KiDatei> = Vec::new();
+        for d in zugelassen.values() {
+            if d.konflikt {
+                ab.im_konflikt += 1;
             }
-            continue;
-        };
-        let Some(rev) = &d.ki_textrev else {
-            ab.ohne_text += 1;
-            continue;
-        };
-        let aktuell = suche
-            .indiziert
-            .get(&d.dat)
-            .is_some_and(|(f, t)| f == fas && t.as_ref() == Some(rev));
-        if aktuell {
-            ueber_index.insert(d.dat.as_str());
-            ab.durchsucht += 1;
-        } else if d.konflikt {
-            direkt.push(d);
-            ab.durchsucht += 1;
-        } else {
-            ab.ausstehend += 1;
+            let (Some(fas), true) = (&d.ki_fas, d.mit_text) else {
+                if !d.konflikt || d.ki_fas.is_some() {
+                    ab.ohne_text += 1;
+                }
+                continue;
+            };
+            let Some(rev) = &d.ki_textrev else {
+                ab.ohne_text += 1;
+                continue;
+            };
+            let aktuell = suche
+                .indiziert
+                .get(&d.dat)
+                .is_some_and(|(f, t)| f == fas && t.as_ref() == Some(rev));
+            if aktuell {
+                ueber_index.insert(d.dat.as_str());
+                ab.durchsucht += 1;
+            } else if d.konflikt {
+                direkt.push(d);
+                ab.durchsucht += 1;
+            } else {
+                ab.ausstehend += 1;
+            }
         }
-    }
-    let mut kandidaten: Vec<Kandidat> = suche
-        .stellen
-        .into_iter()
-        .filter(|s| ueber_index.contains(s.dat.as_str()))
-        .map(|s| Kandidat {
-            dat: s.dat,
-            anker: s.anker,
-            pfad: s.pfad,
-            text: s.text,
-            rang: s.rang,
-        })
-        .collect();
-    for d in direkt {
-        kandidaten.extend(direkt_suchen(a, d, frage));
-    }
-    // Beste zuerst (stabil: bei Gleichstand die Indexreihenfolge), je Datei und Anker einmal.
-    kandidaten.sort_by(|x, y| {
-        y.rang
-            .partial_cmp(&x.rang)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-    let mut gesehen: BTreeSet<(String, String)> = BTreeSet::new();
-    let mut je_datei: BTreeMap<String, usize> = BTreeMap::new();
-    let mut auszuege = Vec::new();
-    for c in kandidaten {
-        if auszuege.len() >= k {
-            break;
+        let mut kandidaten: Vec<Kandidat> = suche
+            .stellen
+            .into_iter()
+            .filter(|s| ueber_index.contains(s.dat.as_str()))
+            .map(|s| Kandidat {
+                dat: s.dat,
+                anker: s.anker,
+                pfad: s.pfad,
+                text: s.text,
+                rang: s.rang,
+            })
+            .collect();
+        for d in direkt {
+            kandidaten.extend(direkt_suchen(a, d, frage));
         }
-        let n = je_datei.entry(c.dat.clone()).or_default();
-        if *n >= JE_DATEI || !gesehen.insert((c.dat.clone(), c.anker.clone())) {
-            continue;
-        }
-        *n += 1;
-        let d = zugelassen[c.dat.as_str()];
-        let (Some(fas), Some(rev)) = (&d.ki_fas, &d.ki_textrev) else {
-            continue;
-        };
-        let q = auszuege.len() as u32 + 1;
-        auszuege.push(Auszug {
-            q,
-            kennung: format!("[Q{q}]"),
-            titel: titel_maskieren(&d.name),
-            link: deep_link(&d.dat, fas, rev, &c.anker),
-            herkunft: marke(&d.dat, fas, rev),
-            anker: c.anker,
-            pfad: c.pfad.iter().map(|p| titel_maskieren(p)).collect(),
-            text: maskieren(&c.text),
-            dat: d.dat.clone(),
-            fas: fas.clone(),
-            textrev: rev.clone(),
-            klasse: d.klasse.text().into(),
+        // Beste zuerst (stabil: bei Gleichstand die Indexreihenfolge), je Datei und Anker einmal.
+        kandidaten.sort_by(|x, y| {
+            y.rang
+                .partial_cmp(&x.rang)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
+        let mut gesehen: BTreeSet<(String, String)> = BTreeSet::new();
+        let mut je_datei: BTreeMap<String, usize> = BTreeMap::new();
+        let mut auszuege = Vec::new();
+        for c in kandidaten {
+            if auszuege.len() >= k {
+                break;
+            }
+            let n = je_datei.entry(c.dat.clone()).or_default();
+            if *n >= JE_DATEI || !gesehen.insert((c.dat.clone(), c.anker.clone())) {
+                continue;
+            }
+            *n += 1;
+            let d = zugelassen[c.dat.as_str()];
+            let (Some(fas), Some(rev)) = (&d.ki_fas, &d.ki_textrev) else {
+                continue;
+            };
+            let q = auszuege.len() as u32 + 1;
+            auszuege.push(Auszug {
+                q,
+                kennung: format!("[Q{q}]"),
+                titel: titel_maskieren(&d.name),
+                link: deep_link(&d.dat, fas, rev, &c.anker),
+                herkunft: marke(&d.dat, fas, rev),
+                anker: c.anker,
+                pfad: c.pfad.iter().map(|p| titel_maskieren(p)).collect(),
+                text: maskieren(&c.text),
+                dat: d.dat.clone(),
+                fas: fas.clone(),
+                textrev: rev.clone(),
+                klasse: d.klasse.text().into(),
+            });
+        }
+        // Blieben nach der Feinprüfung weniger als `k` und war der Pool ausgeschöpft, mit größerem Pool
+        // erneut suchen (begrenzt).
+        if auszuege.len() >= k || !voll || pool >= KANDIDATEN_MAX {
+            return Ok(AuszugAntwort {
+                kein_beleg: auszuege.is_empty(),
+                auszuege,
+                abdeckung: ab,
+                gesperrt: None,
+            });
+        }
+        pool = (pool * 4).min(KANDIDATEN_MAX);
     }
-    Ok(AuszugAntwort {
-        kein_beleg: auszuege.is_empty(),
-        auszuege,
-        abdeckung: ab,
-        gesperrt: None,
-    })
 }
 
 /// Konfliktdatei: die Textfassung der gemeinsamen Vorgängerin direkt lesen (der Index hält den
@@ -488,7 +514,8 @@ fn direkt_suchen(a: &Ablage, d: &KiDatei, frage: &str) -> Vec<Kandidat> {
     let Some(rev) = &d.ki_textrev else {
         return vec![];
     };
-    let woerter: BTreeSet<String> = wai_retrieval::content_tokens(frage).into_iter().collect();
+    let frage: String = frage.chars().take(500).collect();
+    let woerter: BTreeSet<String> = wai_retrieval::content_tokens(&frage).into_iter().collect();
     if woerter.is_empty() {
         return vec![];
     }
@@ -529,7 +556,11 @@ pub fn als_text(a: &AuszugAntwort) -> String {
     }
     for x in &a.auszuege {
         s.push_str(&format!("<<<auszug Q{} | {}>>>\n", x.q, x.herkunft));
-        s.push_str(&format!("Titel: {}\nStelle: {}\n", x.titel, x.anker));
+        s.push_str(&format!(
+            "Titel: {}\nStelle: {}\n",
+            x.titel,
+            titel_maskieren(&x.anker)
+        ));
         if !x.pfad.is_empty() {
             s.push_str(&format!("Abschnitt: {}\n", x.pfad.join(" › ")));
         }
@@ -658,12 +689,17 @@ pub fn bereinigen(text: &str, pruefung: &[HerkunftPruefung]) -> Bereinigt {
         let marke = kopf
             .and_then(|k| k.split_once(" | "))
             .map(|(_, m)| m.trim());
+        // Der Block endet am LETZTEN passenden Ende vor dem nächsten Auszugsanfang (ein im Inhalt
+        // eingeschleustes Ende kann ihn so nicht verkürzen); ohne Ende gilt er bis zum nächsten Anfang.
+        let naechster = block[AUF.len()..].find(AUF).map(|p| p + AUF.len());
+        let fenster = &block[..naechster.unwrap_or(block.len())];
         let ende = nummer.and_then(|n| {
             let schluss = format!("<<<ende auszug Q{n}>>>");
-            block.find(&schluss).map(|p| p + schluss.len())
+            fenster.rfind(&schluss).map(|p| p + schluss.len())
         });
         match (marke, ende) {
-            (Some(m), Some(e)) => {
+            (Some(m), e) if e.is_some() || !erlaubt.contains(m) => {
+                let e = e.unwrap_or(fenster.len());
                 if erlaubt.contains(m) {
                     aus.push_str(&block[..e]);
                 } else {
@@ -691,14 +727,18 @@ pub fn bereinigen(text: &str, pruefung: &[HerkunftPruefung]) -> Bereinigt {
 
 // ---------------------------------------------------------------- Entwurf (§5.5)
 
-/// `ablage_entwurf_anlegen(ordner, name, inhalt_md, quellen)`: `quellen` als Herkunftsmarken,
-/// Verweise oder `dat_…`. Eine nicht lesbare Quelle ist ein Fehler (die Klasse wäre sonst unklar).
+/// `ablage_entwurf_anlegen(ordner, name, inhalt_md, quellen, mindestklasse)`: `quellen` als
+/// Herkunftsmarken, Verweise oder `dat_…`. Eine nicht lesbare Quelle ist ein Fehler (die Klasse wäre
+/// sonst unklar). Die Klasse des Entwurfs ist max(Zielordner, Quellen, `mindestklasse`); P4c übergibt
+/// als `mindestklasse` das Maximum aller im Gespräch gelieferten Auszüge, weil die benannten `quellen`
+/// vom Modell stammen und Quellen auslassen können.
 pub fn entwurf_anlegen(
     a: &Ablage,
     ordner: Option<&str>,
     name: &str,
     inhalt_md: &str,
     quellen: &[String],
+    mindestklasse: Option<Klasse>,
 ) -> Res<AblageEntwurf> {
     let dats = quellen
         .iter()
@@ -706,5 +746,5 @@ pub fn entwurf_anlegen(
             quelle_dat(q).ok_or_else(|| super::Fehler::ungueltig("Quelle des Entwurfs ungültig."))
         })
         .collect::<Res<Vec<_>>>()?;
-    a.entwurf_anlegen(ordner, name, inhalt_md, &dats)
+    a.entwurf_anlegen(ordner, name, inhalt_md, &dats, mindestklasse)
 }
