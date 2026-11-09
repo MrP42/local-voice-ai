@@ -1,18 +1,28 @@
-//! Assistent-Sync (lva#388, ADR-0028 A1): der Verlauf des Assistenten über den Hub, Tauri-Seite.
+//! Assistent-Sync (lva#388, ADR-0028 A1, E3.8): der Verlauf des Assistenten über den Hub, Tauri-Seite.
 //!
 //! Die Logik steht in reinen Modulen: `portal_hub` (Hub-Zugang), `conversations::sync` (Abgleich mit
-//! `conversations.db`), `assistent_zustand` (Schlüssel, Zustandsdatei). Dieses Modul verdrahtet sie
-//! mit Einstellung, Konto und Tauri-Befehlen.
+//! `conversations.db`), `assistent_zustand` (verschlüsselter Zustandsblock, Transportzulassung,
+//! Kopplungs-QR). Dieses Modul verdrahtet sie mit Einstellung, Konto und Tauri-Befehlen.
 //!
 //! Regeln:
 //! - **Schalter `assistent_sync_aktiv`** (Standard aus, fehlender Wert gilt als aus). Ohne Schalter
 //!   gibt es keinen Netzaufruf und es wird nichts gelesen oder hochgeladen (E3.6). Alle Befehle, die
 //!   den Hub ansprechen, prüfen ihn zuerst.
+//! - **Der Hub ist nicht vertrauenswürdig (E3.8).** Zulassung, Widerruf und Epoche stehen im signierten
+//!   Geräteverzeichnis, das der Kern selbst prüft. Das erste Gerät **gründet** das Konto (Vertrauensanker),
+//!   jedes weitere wird **gekoppelt**: das aufnehmende Gerät zeigt einen QR-Code mit Prüfpunkt des
+//!   Verzeichnisses, QR-Geheimnis und Freigabecode; das neue Gerät antwortet über einen Rückkanal mit
+//!   seinem Ausweis samt HMAC; das aufnehmende Gerät nimmt es per signiertem Eintrag auf und legt die
+//!   Epochenschlüssel als Pakete ab; das neue Gerät schließt nur auf einer Kette ab, die den Prüfpunkt
+//!   fortsetzt. Ein Widerruf ist ein signierter Verzeichniseintrag (Vorbereiten, Sichern, Abschließen).
+//! - **Zustand:** Der Kern wird vor jedem Lauf aus dem Zustandsblock geladen (`DateiSpeicher`) und sichert
+//!   sich selbst, vor jedem Hub-Schreiben (Ausgang) und nach jeder Hub-Runde. Scheitert eine Sicherung,
+//!   ist er gesperrt; der nächste Lauf lädt neu.
 //! - **Token und Weg des Bibliotheks-Syncs:** gleiche Konto-Datei (`sync.json`), gleicher HTTP-Weg
 //!   (`HubClient`, unter Windows curl). Das Token trägt `voice.sync` ausdrücklich (Login oder Kopplung).
 //! - **Keine Inhalte, Kennungen oder Geräte-IDs im Log.** Fehlertexte sind feste Sätze.
-//! - Noch keine Oberfläche: Status, Starten, Zulassen, Widerrufen und Freigeben sind Befehle für die
-//!   UI, die später folgt.
+//! - Noch keine Oberfläche: Status, Gründen, Koppeln, Widerrufen, Freigeben und Sitzung sind Befehle
+//!   für die UI, die später folgt.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -22,22 +32,30 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use tauri::{AppHandle, Emitter, Manager, State};
-use wai_assistent::sync::{Abgleich, HubFehler, HubSpeicher, SyncFehler};
+use wai_assistent::sync::{
+    Abgleich, AuthGeraet, HubFehler, HubSpeicher, Kopplung, Kopplungsangebot, Kopplungsantwort,
+    LeaseFehler, SyncFehler,
+};
+use zeroize::Zeroizing;
 
 use super::account::{self, SyncConfig};
-use super::assistent_zustand::{self as zustand, Zustand};
+use super::assistent_zustand::{self as zustand, DateiSpeicher, KopplungsQr, Zustand};
 use super::client::HubClient;
 use super::portal_hub::{Anfrage, Antwort, HubTransport, Methode, PortalHub, TransportFehler};
 use crate::conversations::store::ConversationStore;
-use crate::conversations::sync::{self as verlauf, LaufBericht, LaufFehler};
+use crate::conversations::sync::{self as verlauf, LaufBericht, LaufFehler, Sitzungsstand};
 
 /// Ereignis an die Oberfläche nach jedem Lauf und jeder Änderung des Zustands.
 pub const EVENT_STATUS: &str = "assistent-sync-status";
 
 /// Fester Code, wenn das Konto oder der Schlüssel gewechselt hat.
 pub const CODE_KONTO_GEWECHSELT: &str = "konto_gewechselt";
-/// Fester Code, solange der Widerruf gesperrt ist (kein Schlüsseltransport).
-pub const CODE_WIDERRUF_GESPERRT: &str = "widerruf_gesperrt";
+/// Fester Code, solange dieses Gerät weder gegründet noch gekoppelt ist.
+pub const CODE_NICHT_EINGERICHTET: &str = "nicht_eingerichtet";
+/// Fester Code, solange eine Kopplung auf die Aufnahme durch das andere Gerät wartet.
+pub const CODE_KOPPLUNG_OFFEN: &str = "kopplung_offen";
+/// Fester Code, wenn der gesicherte Zustand nicht lesbar ist (nichts wird überschrieben).
+pub const CODE_ZUSTAND: &str = "zustand_unlesbar";
 
 /// Takt des Hintergrundlaufs; zusätzlich stößt jedes lokale Schreiben einen Lauf an.
 const TAKT: Duration = Duration::from_secs(300);
@@ -52,7 +70,7 @@ pub struct AssistentSyncBericht {
     pub geloescht: u32,
     /// Beiträge, die wegen „nur auf diesem Gerät“ oder Vertraulichkeit nicht hochgeladen werden.
     pub nur_lokal: u32,
-    /// Objekte, die auf einen Epochenschlüssel warten.
+    /// Objekte, die auf einen Epochenschlüssel oder einen Vorgänger warten.
     pub wartend: u32,
     pub verworfen: u32,
 }
@@ -77,14 +95,18 @@ pub struct AssistentSyncStatus {
     pub aktiv: bool,
     /// Ein Konto des Bibliotheks-Syncs ist angemeldet (Token, Hub-Adresse).
     pub angemeldet: bool,
-    /// Dieses Gerät ist am Hub zugelassen.
+    /// Dieses Gerät ist am Hub zugelassen (Transport).
     pub zugelassen: bool,
     /// Der Hub verlangt eine Freigabe von einem schon zugelassenen Gerät.
     pub braucht_freigabe: bool,
+    /// Dieses Gerät hat einen gesicherten Sync-Zustand (gegründet oder gekoppelt).
+    pub eingerichtet: bool,
+    /// Eine Kopplung als neues Gerät wartet auf die Aufnahme.
+    pub kopplung_offen: bool,
     pub laeuft: bool,
-    /// Aktuelle Schlüsselepoche dieses Geräts (ab 1).
+    /// Aktuelle Schlüsselepoche laut geprüftem Verzeichnis (ab 1; 0 = unbekannt).
     pub epoche: u32,
-    /// Ein Widerruf wartet auf die Antwort des Hubs.
+    /// Ein Widerruf ist vorbereitet, aber noch nicht abgeschlossen.
     pub widerruf_offen: bool,
     pub letzter_lauf_ms: Option<f64>,
     /// Fester Satz zur Anzeige; nie Inhalte.
@@ -101,8 +123,7 @@ pub struct AssistentSyncStatus {
 pub struct AssistentWiderruf {
     /// Neue Schlüsselepoche.
     pub epoche: u32,
-    /// Geräte, an die der neue Epochenschlüssel über die Kopplung gehen muss. Der Schlüssel selbst
-    /// verlässt dieses Gerät hier nicht.
+    /// Geräte, die den neuen Epochenschlüssel als Paket bekommen haben (laut geprüftem Verzeichnis).
     pub empfaenger: Vec<String>,
 }
 
@@ -123,6 +144,34 @@ impl std::fmt::Debug for AssistentFreigabe {
     }
 }
 
+/// Ergebnis von `assistent_sync_kopplung_anbieten`: Inhalt des QR-Codes für das neue Gerät.
+#[derive(Serialize, Deserialize, Clone, Type)]
+pub struct AssistentKopplungsangebot {
+    /// QR-Inhalt (Prüfpunkt, QR-Geheimnis, Freigabecode); nur einmal anzeigen.
+    pub qr: String,
+    pub gueltig_bis: String,
+}
+
+impl std::fmt::Debug for AssistentKopplungsangebot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AssistentKopplungsangebot")
+            .field("qr", &"***")
+            .field("gueltig_bis", &self.gueltig_bis)
+            .finish()
+    }
+}
+
+/// Lease-Stand einer Sprachsitzung (E3.3).
+#[derive(Serialize, Deserialize, Clone, Debug, Type)]
+pub struct AssistentSitzung {
+    /// Dieses Gerät hält die Lease.
+    pub hier: bool,
+    /// Fencing-Wert; Beiträge dieser Sitzung tragen ihn.
+    pub generation: u32,
+    /// Ablauf (ms seit Epoche).
+    pub gueltig_bis_ms: f64,
+}
+
 /// Zustand des Dienstes (von Tauri verwaltet).
 pub struct AssistentSyncDienst {
     status: Mutex<AssistentSyncStatus>,
@@ -131,6 +180,10 @@ pub struct AssistentSyncDienst {
     notify: tokio::sync::Notify,
     /// Abbruchschranke aller Hub-Aufrufe (Ausschalten): gesetzt, geht kein Aufruf mehr ans Netz.
     abbruch: Arc<AtomicBool>,
+    /// Laufende Kopplung als neues Gerät (nur im Arbeitsspeicher; nach einem Neustart neu koppeln).
+    kopplung: Arc<Mutex<Option<Kopplung>>>,
+    /// Eigenes Kopplungsangebot als aufnehmendes Gerät (Transportform, nur im Arbeitsspeicher).
+    angebot: Arc<Mutex<Option<Zeroizing<Vec<u8>>>>>,
 }
 
 impl Default for AssistentSyncDienst {
@@ -140,6 +193,8 @@ impl Default for AssistentSyncDienst {
             sperre: tokio::sync::Mutex::new(()),
             notify: tokio::sync::Notify::new(),
             abbruch: Arc::new(AtomicBool::new(false)),
+            kopplung: Arc::new(Mutex::new(None)),
+            angebot: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -158,6 +213,10 @@ impl AssistentSyncDienst {
     /// Stößt einen Lauf an (entprellt im Takt der Hintergrundschleife).
     pub fn anstossen(&self) {
         self.notify.notify_one();
+    }
+
+    fn kopplung_offen(&self) -> bool {
+        self.kopplung.lock().map(|k| k.is_some()).unwrap_or(false)
     }
 }
 
@@ -181,8 +240,8 @@ fn aktiv(app: &AppHandle) -> bool {
 
 /// `HubTransport` über `HubClient`. Blockiert: nur aus einem Blockier-Thread (`spawn_blocking`)
 /// aufrufen, nie auf dem Async-Executor.
-struct ClientTransport {
-    client: HubClient,
+pub(crate) struct ClientTransport {
+    pub(crate) client: HubClient,
 }
 
 impl HubTransport for ClientTransport {
@@ -200,10 +259,10 @@ impl HubTransport for ClientTransport {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Konto, Zustandsdatei, Fehlertexte
+// Konto, Zustand, Fehlertexte
 // ---------------------------------------------------------------------------------------------
 
-/// Fehler mit festem Anzeigetext und optionalem Hub-Code.
+/// Fehler mit festem Anzeigetext und optionalem Code.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Meldung {
     text: String,
@@ -217,6 +276,14 @@ impl Meldung {
         Self {
             text: text.to_owned(),
             code: None,
+            braucht_freigabe: false,
+        }
+    }
+
+    fn mit_code(text: &str, code: &str) -> Self {
+        Self {
+            text: text.to_owned(),
+            code: Some(code.to_owned()),
             braucht_freigabe: false,
         }
     }
@@ -251,12 +318,12 @@ fn hub_meldung(f: &HubFehler, code: Option<String>) -> Meldung {
         (HubFehler::GeraetStimmtNichtUeberein, _) => {
             "Das Konto kennt dieses Gerät unter einer anderen Anmeldung."
         }
-        (
-            HubFehler::EpocheVeraltet { .. }
-            | HubFehler::EpocheVoraus { .. }
-            | HubFehler::EpocheKonflikt { .. },
-            _,
-        ) => "Die Schlüsselepoche passt nicht zum Hub. Bitte später erneut abgleichen.",
+        (HubFehler::EpocheVeraltet { .. } | HubFehler::EpocheVoraus { .. }, _) => {
+            "Die Schlüsselepoche passt nicht zum Hub. Bitte später erneut abgleichen."
+        }
+        (HubFehler::VerzeichnisKonflikt { .. }, _) => {
+            "Das Geräteverzeichnis hat sich zwischenzeitlich geändert. Bitte erneut abgleichen."
+        }
         (HubFehler::GrabsteinAbgewiesen, _) => {
             "Das Gespräch wurde auf einem anderen Gerät gelöscht."
         }
@@ -275,19 +342,59 @@ fn hub_meldung(f: &HubFehler, code: Option<String>) -> Meldung {
     }
 }
 
-fn lauf_meldung(f: &LaufFehler, code: Option<String>) -> Meldung {
+/// Feste Sätze zu Fehlern des Kerns.
+fn sync_meldung(f: &SyncFehler, code: Option<String>) -> Meldung {
     match f {
-        LaufFehler::NichtFreigegeben => Meldung::neu("Der Assistent-Sync ist ausgeschaltet."),
-        LaufFehler::Sync(SyncFehler::Hub(h)) => hub_meldung(h, code),
-        LaufFehler::Sync(_) => Meldung {
+        SyncFehler::Hub(h) => hub_meldung(h, code),
+        SyncFehler::NichtFreigegeben => Meldung::neu("Der Assistent-Sync ist ausgeschaltet."),
+        SyncFehler::Speicher => Meldung::mit_code(
+            "Der Zustand des Assistent-Syncs konnte nicht gesichert werden. Es wird beim nächsten Lauf neu geladen.",
+            CODE_ZUSTAND,
+        ),
+        SyncFehler::WiderrufOffen => Meldung::neu(
+            "Ein Widerruf ist noch nicht abgeschlossen; er wird beim nächsten Abgleich fortgesetzt.",
+        ),
+        SyncFehler::Verzeichnis(_) | SyncFehler::VerzeichnisGabelung => Meldung::neu(
+            "Das Geräteverzeichnis passt nicht. Es wurde nichts übernommen.",
+        ),
+        SyncFehler::Vertrag(_) | SyncFehler::Paket(_) => Meldung::neu(
+            "Die Kopplungs- oder Schlüsseldaten sind ungültig. Es wurde nichts übernommen.",
+        ),
+        _ => Meldung {
             text: "Der Abgleich ist an einem Objekt gescheitert.".to_owned(),
             code,
             braucht_freigabe: false,
         },
+    }
+}
+
+fn lauf_meldung(f: &LaufFehler, code: Option<String>) -> Meldung {
+    match f {
+        LaufFehler::NichtFreigegeben => Meldung::neu("Der Assistent-Sync ist ausgeschaltet."),
+        LaufFehler::Sync(e) => sync_meldung(e, code),
+        LaufFehler::Lease(LeaseFehler::Hub(h)) => hub_meldung(h, code),
+        LaufFehler::Lease(LeaseFehler::Krypto(e)) => sync_meldung(e, code),
+        LaufFehler::Lease(LeaseFehler::Konflikt) => Meldung::neu(
+            "Ein anderes Gerät hat die Sitzung gerade übernommen. Bitte neu laden und erneut fragen.",
+        ),
+        LaufFehler::Lease(LeaseFehler::Gabelung) => Meldung::neu(
+            "Die Sitzung ist wegen widersprüchlicher Stände gesperrt.",
+        ),
+        LaufFehler::Lease(_) => Meldung::neu("Die Sitzung konnte nicht übernommen werden."),
+        LaufFehler::Unbekannt => Meldung::neu(
+            "Dieses Gespräch ist (noch) nicht mit dem Assistent-Sync abgeglichen.",
+        ),
         LaufFehler::Speicher(_) => {
             Meldung::neu("Der Gesprächsverlauf konnte nicht gelesen oder geschrieben werden.")
         }
     }
+}
+
+fn nicht_eingerichtet() -> Meldung {
+    Meldung::mit_code(
+        "Dieses Gerät ist für den Assistent-Sync noch nicht eingerichtet: Konto gründen oder mit einem eingerichteten Gerät koppeln.",
+        CODE_NICHT_EINGERICHTET,
+    )
 }
 
 struct Sitzung {
@@ -295,6 +402,7 @@ struct Sitzung {
     geraet: String,
     store: Arc<ConversationStore>,
     pfad: PathBuf,
+    block_verzeichnis: PathBuf,
     sperre: Arc<AtomicBool>,
 }
 
@@ -326,7 +434,37 @@ impl Sitzung {
         .mit_sperre(self.sperre.clone())
     }
 
-    /// Inhalt der Zustandsdatei. Nur „fehlt“ gilt als leer; jeder andere Lesefehler ist ein Fehler.
+    fn auth(&self) -> AuthGeraet {
+        AuthGeraet::new(&self.geraet)
+    }
+
+    /// Zustandsspeicher des Kerns für dieses Konto und Gerät.
+    fn speicher(&self) -> Result<DateiSpeicher, Meldung> {
+        DateiSpeicher::neu(
+            &self.block_verzeichnis,
+            &self.konto()?,
+            &self.geraet,
+            &self.schluessel()?,
+        )
+        .map_err(Meldung::from)
+    }
+
+    /// Lädt den Kern aus dem Zustandsblock. `None`: dieses Gerät ist noch nicht eingerichtet. Ein
+    /// unlesbarer Block ist ein Fehler, nie „leer“ (nichts wird überschrieben).
+    fn abgleich(&self) -> Result<Option<Abgleich>, Meldung> {
+        Abgleich::wiederherstellen(Box::new(self.speicher()?)).map_err(|_| {
+            Meldung::mit_code(
+                "Der gesicherte Zustand des Assistent-Syncs ist nicht lesbar. Es wird nichts überschrieben.",
+                CODE_ZUSTAND,
+            )
+        })
+    }
+
+    fn abgleich_noetig(&self) -> Result<Abgleich, Meldung> {
+        self.abgleich()?.ok_or_else(nicht_eingerichtet)
+    }
+
+    /// Inhalt der Zulassungsdatei. Nur „fehlt“ gilt als leer; jeder andere Lesefehler ist ein Fehler.
     fn datei_lesen(&self) -> Result<Option<String>, Meldung> {
         match std::fs::read_to_string(&self.pfad) {
             Ok(t) => Ok(Some(t)),
@@ -337,7 +475,7 @@ impl Sitzung {
         }
     }
 
-    /// Zustand dieses Kontos und Geräts (fail-closed bei unlesbarer Datei).
+    /// Transportzulassung dieses Kontos und Geräts (fail-closed bei unlesbarer Datei).
     fn zustand(&self) -> Result<Zustand, Meldung> {
         let text = self.datei_lesen()?;
         Zustand::aus_datei(text.as_deref(), &self.konto()?, &self.geraet).map_err(Meldung::from)
@@ -377,11 +515,10 @@ impl Sitzung {
         match bekannt.as_deref() {
             Some(k) if k == konto => Ok(()),
             None => self.konto_bestaetigen(),
-            Some(_) => Err(Meldung {
-                text: "Das Konto oder der Schlüssel hat gewechselt. Der Assistent-Sync wurde ausgeschaltet; bitte neu einschalten, um das neue Konto zu bestätigen.".to_owned(),
-                code: Some(CODE_KONTO_GEWECHSELT.to_owned()),
-                braucht_freigabe: false,
-            }),
+            Some(_) => Err(Meldung::mit_code(
+                "Das Konto oder der Schlüssel hat gewechselt. Der Assistent-Sync wurde ausgeschaltet; bitte neu einschalten, um das neue Konto zu bestätigen.",
+                CODE_KONTO_GEWECHSELT,
+            )),
         }
     }
 
@@ -392,29 +529,7 @@ impl Sitzung {
             .map_err(|_| Meldung::neu("Der Gesprächsverlauf konnte nicht geschrieben werden."))
     }
 
-    /// Ein vorgemerkter Widerruf wird wiederholt, bevor etwas anderes läuft (verlorene Antwort).
-    fn widerruf_nachholen(&self, z: &mut Zustand) -> Result<(), Meldung> {
-        let Some(offen) = z.offenen_widerruf()? else {
-            return Ok(());
-        };
-        let hub = self.hub();
-        let mut a = Abgleich::new(&self.geraet, z.bund(&self.schluessel()?)?);
-        a.freigabe_einschalten();
-        a.offenen_widerruf_wiederherstellen(offen);
-        let r = a.widerruf_abschliessen(&hub);
-        z.aus_bund(a.bund());
-        z.offenen_widerruf_merken(a.offener_widerruf());
-        self.speichern(z)?;
-        match r {
-            Ok(_) => Ok(()),
-            Err(SyncFehler::Hub(h)) => Err(hub_meldung(&h, hub.letzter_code())),
-            Err(_) => Err(Meldung::neu(
-                "Der Widerruf konnte nicht abgeschlossen werden.",
-            )),
-        }
-    }
-
-    /// Lässt dieses Gerät zu, falls es das noch nicht ist (Erstgerät, Kopplung oder Freigabecode).
+    /// Lässt dieses Gerät am Hub zu, falls es das noch nicht ist (Erstgerät, Kopplung oder Freigabecode).
     fn zulassen(&self, z: &mut Zustand, code: Option<&str>) -> Result<(), Meldung> {
         if z.zugelassen && code.is_none() {
             return Ok(());
@@ -428,6 +543,14 @@ impl Sitzung {
             Err(h) => Err(hub_meldung(&h, hub.letzter_code())),
         }
     }
+
+    /// Vorbereitung jedes Hub-Befehls: Konto bestätigt, Transport zugelassen.
+    fn vorbereiten(&self) -> Result<PortalHub<ClientTransport>, Meldung> {
+        self.konto_abgleichen()?;
+        let mut z = self.zustand()?;
+        self.zulassen(&mut z, None)?;
+        Ok(self.hub())
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -437,18 +560,70 @@ impl Sitzung {
 struct Ergebnis {
     bericht: LaufBericht,
     epoche: u32,
+    widerruf_offen: bool,
 }
 
-fn lauf_blockierend(s: &Sitzung) -> Result<Ergebnis, Meldung> {
-    let mut z = s.zustand()?;
+fn epoche_anzeige(a: &Abgleich) -> u32 {
+    u32::try_from(a.epoche()).unwrap_or(u32::MAX)
+}
+
+fn widerruf_offen(a: &Abgleich) -> bool {
+    a.offener_widerruf().is_some() || a.offene_widerrufsabsichten().next().is_some()
+}
+
+/// Schließt eine laufende Kopplung ab, wenn das aufnehmende Gerät aufgenommen und die Schlüssel
+/// abgelegt hat. `Ok(None)`: noch nicht so weit (die Kopplung bleibt offen).
+fn kopplung_abschliessen(
+    s: &Sitzung,
+    hub: &PortalHub<ClientTransport>,
+    kopplung: &Mutex<Option<Kopplung>>,
+) -> Result<Option<Abgleich>, Meldung> {
+    let mut k = kopplung
+        .lock()
+        .map_err(|_| Meldung::neu("Die Kopplung ist nicht verfügbar."))?;
+    let Some(laufend) = k.as_ref() else {
+        return Ok(None);
+    };
+    match laufend.abschliessen(hub, Box::new(s.speicher()?)) {
+        Ok(Some(a)) => {
+            *k = None;
+            Ok(Some(a))
+        }
+        Ok(None) => Ok(None),
+        Err(SyncFehler::Hub(h)) => Err(hub_meldung(&h, hub.letzter_code())),
+        Err(e) => {
+            // Kette widerspricht dem Prüfpunkt aus dem QR-Code: diese Kopplung ist verbraucht.
+            *k = None;
+            Err(sync_meldung(&e, None))
+        }
+    }
+}
+
+fn lauf_blockierend(s: &Sitzung, kopplung: &Mutex<Option<Kopplung>>) -> Result<Ergebnis, Meldung> {
     s.konto_abgleichen()?;
-    s.zulassen(&mut z, None)?;
-    s.widerruf_nachholen(&mut z)?;
-    let bund = z.bund(&s.schluessel()?)?;
-    let epoche = u32::try_from(bund.aktuelle_epoche()).unwrap_or(u32::MAX);
-    let hub = s.hub();
-    match verlauf::lauf(&s.store, &hub, bund, &s.geraet, &s.konto()?, true) {
-        Ok(bericht) => Ok(Ergebnis { bericht, epoche }),
+    let gespeichert = s.abgleich()?;
+    let kopplung_laeuft = kopplung.lock().map(|k| k.is_some()).unwrap_or(false);
+    if gespeichert.is_none() && !kopplung_laeuft {
+        // Ohne Zustand und ohne Kopplung kein Netzaufruf.
+        return Err(nicht_eingerichtet());
+    }
+    let hub = s.vorbereiten()?;
+    let mut a = match gespeichert {
+        Some(a) => a,
+        None => kopplung_abschliessen(s, &hub, kopplung)?.ok_or_else(|| {
+            Meldung::mit_code(
+                "Die Kopplung wartet darauf, dass das andere Gerät dieses Gerät aufnimmt.",
+                CODE_KOPPLUNG_OFFEN,
+            )
+        })?,
+    };
+    let r = verlauf::lauf(&s.store, &hub, &mut a, &s.konto()?, true);
+    match r {
+        Ok(bericht) => Ok(Ergebnis {
+            bericht,
+            epoche: epoche_anzeige(&a),
+            widerruf_offen: widerruf_offen(&a),
+        }),
         Err(f) => Err(lauf_meldung(&f, hub.letzter_code())),
     }
 }
@@ -467,22 +642,17 @@ fn now_ms() -> f64 {
     chrono::Utc::now().timestamp_millis() as f64
 }
 
-/// Status aus Schalter, Konto und Zustandsdatei; ohne Netz.
+/// Status aus Schalter, Konto und Dateien; ohne Netz und ohne den Zustandsblock zu entschlüsseln.
 fn status_lokal(app: &AppHandle, dienst: &AssistentSyncDienst) -> AssistentSyncStatus {
     let mut st = dienst.status();
     st.aktiv = aktiv(app);
     let cfg = account::load(app);
     st.angemeldet = cfg.is_some();
+    st.kopplung_offen = dienst.kopplung_offen();
     if let Ok(s) = sitzung_ohne_schalter(app) {
         let z = s.zustand().unwrap_or_default();
         st.zugelassen = z.zugelassen;
-        st.widerruf_offen = z.offener_widerruf.is_some();
-        st.epoche = s
-            .schluessel()
-            .and_then(|k| z.bund(&k).map_err(Meldung::from))
-            .map_or(0, |b| {
-                u32::try_from(b.aktuelle_epoche()).unwrap_or(u32::MAX)
-            });
+        st.eingerichtet = s.speicher().is_ok_and(|sp| sp.vorhanden());
         st.grabsteine_offen = s
             .konto()
             .ok()
@@ -490,7 +660,7 @@ fn status_lokal(app: &AppHandle, dienst: &AssistentSyncDienst) -> AssistentSyncS
             .map_or(0, |g| u32::try_from(g.len()).unwrap_or(u32::MAX));
     } else {
         st.zugelassen = false;
-        st.widerruf_offen = false;
+        st.eingerichtet = false;
     }
     st
 }
@@ -504,9 +674,8 @@ fn sitzung_ohne_schalter(app: &AppHandle) -> Result<Sitzung, Meldung> {
         .try_state::<Arc<ConversationStore>>()
         .map(|s| s.inner().clone())
         .ok_or_else(|| Meldung::neu("Der Gesprächsverlauf ist nicht verfügbar."))?;
-    let pfad = crate::portable::app_data_dir(app)
-        .map(|d| d.join(zustand::DATEI))
-        .map_err(|_| Meldung::neu("Kein Datenverzeichnis."))?;
+    let daten =
+        crate::portable::app_data_dir(app).map_err(|_| Meldung::neu("Kein Datenverzeichnis."))?;
     let sperre = app
         .try_state::<AssistentSyncDienst>()
         .map(|d| d.abbruch.clone())
@@ -515,7 +684,8 @@ fn sitzung_ohne_schalter(app: &AppHandle) -> Result<Sitzung, Meldung> {
         cfg,
         geraet,
         store,
-        pfad,
+        pfad: daten.join(zustand::DATEI),
+        block_verzeichnis: daten.join(zustand::BLOCK_VERZEICHNIS),
         sperre,
     })
 }
@@ -524,6 +694,16 @@ fn melden(app: &AppHandle, dienst: &AssistentSyncDienst) -> AssistentSyncStatus 
     let st = status_lokal(app, dienst);
     let _ = app.emit(EVENT_STATUS, st.clone());
     st
+}
+
+/// Merkt eine Meldung im Status (und schaltet nach einem Kontowechsel aus).
+fn fehler_merken(app: &AppHandle, dienst: &AssistentSyncDienst, m: &Meldung) {
+    bei_kontowechsel_ausschalten(app, m);
+    dienst.setzen(|st| {
+        st.braucht_freigabe = m.braucht_freigabe;
+        st.letzter_fehler = Some(m.text.clone());
+        st.fehler_code = m.code.clone();
+    });
 }
 
 /// Ein Lauf. Ohne Schalter kein Netzaufruf.
@@ -542,26 +722,21 @@ async fn lauf_einmal(app: &AppHandle, dienst: &AssistentSyncDienst) -> Assistent
     };
     dienst.setzen(|st| st.laeuft = true);
     let _ = app.emit(EVENT_STATUS, status_lokal(app, dienst));
-    let r = blockierend(move || lauf_blockierend(&s)).await;
-    dienst.setzen(|st| {
-        st.laeuft = false;
-        match r {
-            Ok(e) => {
-                st.letzter_lauf_ms = Some(now_ms());
-                st.letzter_fehler = None;
-                st.fehler_code = None;
-                st.braucht_freigabe = false;
-                st.epoche = e.epoche;
-                st.letzter_bericht = Some((&e.bericht).into());
-            }
-            Err(m) => {
-                bei_kontowechsel_ausschalten(app, &m);
-                st.braucht_freigabe = m.braucht_freigabe;
-                st.letzter_fehler = Some(m.text);
-                st.fehler_code = m.code;
-            }
-        }
-    });
+    let kopplung = dienst.kopplung.clone();
+    let r = blockierend(move || lauf_blockierend(&s, &kopplung)).await;
+    dienst.setzen(|st| st.laeuft = false);
+    match r {
+        Ok(e) => dienst.setzen(|st| {
+            st.letzter_lauf_ms = Some(now_ms());
+            st.letzter_fehler = None;
+            st.fehler_code = None;
+            st.braucht_freigabe = false;
+            st.epoche = e.epoche;
+            st.widerruf_offen = e.widerruf_offen;
+            st.letzter_bericht = Some((&e.bericht).into());
+        }),
+        Err(m) => fehler_merken(app, dienst, &m),
+    }
     let geaendert = dienst
         .status()
         .letzter_bericht
@@ -594,6 +769,31 @@ pub fn start(app: AppHandle) {
     });
 }
 
+/// Führt einen Hub-Befehl unter der Dienstsperre im Blockier-Thread aus und merkt Fehler im Status.
+async fn befehl<T, F>(app: &AppHandle, dienst: &AssistentSyncDienst, f: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce(Sitzung) -> Result<T, Meldung> + Send + 'static,
+{
+    let r = {
+        let _sperre = dienst.sperre.lock().await;
+        match sitzung(app) {
+            Ok(s) => blockierend(move || f(s)).await,
+            Err(m) => Err(m),
+        }
+    };
+    if let Err(m) = &r {
+        fehler_merken(app, dienst, m);
+    } else {
+        dienst.setzen(|st| {
+            st.letzter_fehler = None;
+            st.fehler_code = None;
+        });
+    }
+    melden(app, dienst);
+    r.map_err(|m| m.text)
+}
+
 /// Status des Assistent-Syncs; ohne Netzaufruf.
 #[tauri::command]
 #[specta::specta]
@@ -604,8 +804,8 @@ pub fn assistent_sync_status(
     status_lokal(&app, &dienst)
 }
 
-/// Sofort abgleichen. Lässt das Gerät zu, wenn es das noch nicht ist (Erstgerät oder Kopplung).
-/// Ohne den Schalter `assistent_sync_aktiv` passiert nichts.
+/// Sofort abgleichen (schließt auch eine laufende Kopplung ab, sobald das andere Gerät aufgenommen
+/// hat). Ohne den Schalter `assistent_sync_aktiv` passiert nichts.
 #[tauri::command]
 #[specta::specta]
 pub async fn assistent_sync_starten(
@@ -615,8 +815,174 @@ pub async fn assistent_sync_starten(
     Ok(lauf_einmal(&app, &dienst).await)
 }
 
-/// Lässt dieses Gerät mit dem Freigabecode eines schon zugelassenen Geräts zu (`POST /geraet`) und
-/// gleicht danach ab.
+/// Gründet das Konto mit diesem Gerät als Vertrauensanker (Erstgerät): Transportzulassung, neue
+/// Identität, Epoche 1 und Kontosalz zufällig, Anker ins Verzeichnis; danach ein Abgleich. Hat das
+/// Konto am Hub schon ein Verzeichnis, wird nicht gegründet (dann koppeln).
+#[tauri::command]
+#[specta::specta]
+pub async fn assistent_sync_gruenden(
+    app: AppHandle,
+    dienst: State<'_, AssistentSyncDienst>,
+) -> Result<AssistentSyncStatus, String> {
+    befehl(&app, &dienst, |s| {
+        if s.abgleich()?.is_some() {
+            return Err(Meldung::neu("Dieses Gerät ist schon eingerichtet."));
+        }
+        let hub = s.vorbereiten()?;
+        let vorhanden = hub
+            .verzeichnis_lesen(&s.auth(), 0)
+            .map_err(|h| hub_meldung(&h, hub.letzter_code()))?;
+        if !vorhanden.is_empty() {
+            return Err(Meldung::neu(
+                "Das Konto hat schon eingerichtete Geräte. Bitte dieses Gerät mit einem davon koppeln.",
+            ));
+        }
+        let mut a = Abgleich::gruenden(&s.geraet, Box::new(s.speicher()?))
+            .map_err(|e| sync_meldung(&e, None))?;
+        a.freigabe_einschalten()
+            .map_err(|e| sync_meldung(&e, None))?;
+        // Anker ans Verzeichnis (scheitert das, holt der nächste Lauf es nach).
+        a.hochladen(&hub)
+            .map(|_| ())
+            .map_err(|e| sync_meldung(&e, hub.letzter_code()))
+    })
+    .await?;
+    Ok(lauf_einmal(&app, &dienst).await)
+}
+
+/// Kopplung, Schritt 1 (aufnehmendes, eingerichtetes Gerät): gibt die Kennung `geraet_id` am Hub frei
+/// und liefert den QR-Inhalt mit Prüfpunkt des Verzeichnisses, QR-Geheimnis und Freigabecode. Das
+/// Angebot bleibt nur im Arbeitsspeicher und wird für `assistent_sync_kopplung_aufnehmen` gebraucht.
+#[tauri::command]
+#[specta::specta]
+pub async fn assistent_sync_kopplung_anbieten(
+    app: AppHandle,
+    dienst: State<'_, AssistentSyncDienst>,
+    geraet_id: String,
+) -> Result<AssistentKopplungsangebot, String> {
+    let neu = geraet_id.trim().to_ascii_lowercase();
+    if !zustand::gueltige_kennung(&neu) {
+        return Err("Die Geräte-Kennung hat ein ungültiges Format.".into());
+    }
+    let ablage = dienst.angebot.clone();
+    befehl(&app, &dienst, move |s| {
+        let mut a = s.abgleich_noetig()?;
+        let hub = s.vorbereiten()?;
+        // Aktuelles, geprüftes Verzeichnis als Prüfpunkt.
+        a.herunterladen(&hub)
+            .map_err(|e| sync_meldung(&e, hub.letzter_code()))?;
+        let angebot = a.kopplung_anbieten().map_err(|e| sync_meldung(&e, None))?;
+        let freigabe = hub
+            .freigeben(&neu)
+            .map_err(|h| hub_meldung(&h, hub.letzter_code()))?;
+        let roh = Zeroizing::new(
+            serde_json::to_vec(&angebot)
+                .map_err(|_| Meldung::neu("Das Kopplungsangebot ist ungültig."))?,
+        );
+        let qr = KopplungsQr {
+            geraet_id: neu,
+            freigabe_code: Zeroizing::new(freigabe.code),
+            angebot,
+        }
+        .als_text()?;
+        *ablage
+            .lock()
+            .map_err(|_| Meldung::neu("Die Kopplung ist nicht verfügbar."))? = Some(roh);
+        Ok(AssistentKopplungsangebot {
+            qr: qr.to_string(),
+            gueltig_bis: freigabe.gueltig_bis,
+        })
+    })
+    .await
+}
+
+/// Kopplung, Schritt 2 (neues Gerät): liest den QR-Inhalt, lässt dieses Gerät mit dem Freigabecode am
+/// Hub zu, erzeugt die Geräteidentität und liefert die Antwort für den Rückkanal (Ausweis, HMAC mit dem
+/// QR-Geheimnis, Besitznachweis). Die Antwort geht auf beliebigem Weg zurück an das aufnehmende Gerät.
+#[tauri::command]
+#[specta::specta]
+pub async fn assistent_sync_kopplung_beginnen(
+    app: AppHandle,
+    dienst: State<'_, AssistentSyncDienst>,
+    qr: String,
+) -> Result<String, String> {
+    let ablage = dienst.kopplung.clone();
+    let qr = Zeroizing::new(qr);
+    befehl(&app, &dienst, move |s| {
+        if s.abgleich()?.is_some() {
+            return Err(Meldung::neu("Dieses Gerät ist schon eingerichtet."));
+        }
+        let qr = KopplungsQr::aus_text(&qr)?;
+        if qr.geraet_id != s.geraet {
+            return Err(Meldung::neu(
+                "Der Kopplungscode gilt für ein anderes Gerät.",
+            ));
+        }
+        s.konto_abgleichen()?;
+        let mut z = s.zustand()?;
+        s.zulassen(&mut z, Some(qr.freigabe_code.as_str()))?;
+        let k = Kopplung::neu(&s.geraet, qr.angebot).map_err(|e| sync_meldung(&e, None))?;
+        let antwort = k.antwort().map_err(|e| sync_meldung(&e, None))?;
+        let text = serde_json::to_string(&antwort)
+            .map_err(|_| Meldung::neu("Die Kopplungsantwort ist ungültig."))?;
+        *ablage
+            .lock()
+            .map_err(|_| Meldung::neu("Die Kopplung ist nicht verfügbar."))? = Some(k);
+        Ok(text)
+    })
+    .await
+}
+
+/// Kopplung, Schritt 3 (aufnehmendes Gerät): prüft die Antwort des neuen Geräts gegen das eigene
+/// Angebot (HMAC, Besitznachweis, Prüfpunkt), nimmt es per signiertem Verzeichniseintrag auf und legt
+/// die Epochenschlüssel als Pakete für es ab. Das neue Gerät schließt danach mit einem Abgleich ab.
+#[tauri::command]
+#[specta::specta]
+pub async fn assistent_sync_kopplung_aufnehmen(
+    app: AppHandle,
+    dienst: State<'_, AssistentSyncDienst>,
+    antwort: String,
+) -> Result<(), String> {
+    let ablage = dienst.angebot.clone();
+    befehl(&app, &dienst, move |s| {
+        let antwort = Kopplungsantwort::aus_json(antwort.trim().as_bytes())
+            .map_err(|_| Meldung::neu("Die Kopplungsantwort ist ungültig."))?;
+        let mut gemerkt = ablage
+            .lock()
+            .map_err(|_| Meldung::neu("Die Kopplung ist nicht verfügbar."))?;
+        let roh = gemerkt.as_ref().ok_or_else(|| {
+            Meldung::neu("Es gibt kein offenes Kopplungsangebot. Bitte neu anbieten.")
+        })?;
+        let angebot = Kopplungsangebot::aus_json(roh)
+            .map_err(|_| Meldung::neu("Das Kopplungsangebot ist ungültig."))?;
+        let mut a = s.abgleich_noetig()?;
+        let hub = s.vorbereiten()?;
+        a.geraet_aufnehmen(&hub, &angebot, &antwort)
+            .map_err(|e| sync_meldung(&e, hub.letzter_code()))?;
+        *gemerkt = None;
+        Ok(())
+    })
+    .await
+}
+
+/// Bricht eine laufende Kopplung als neues Gerät ab (verwirft die noch nicht aufgenommene Identität).
+#[tauri::command]
+#[specta::specta]
+pub fn assistent_sync_kopplung_abbrechen(
+    app: AppHandle,
+    dienst: State<'_, AssistentSyncDienst>,
+) -> AssistentSyncStatus {
+    if let Ok(mut k) = dienst.kopplung.lock() {
+        *k = None;
+    }
+    if let Ok(mut a) = dienst.angebot.lock() {
+        *a = None;
+    }
+    melden(&app, &dienst)
+}
+
+/// Lässt dieses Gerät mit dem Freigabecode eines schon zugelassenen Geräts am Hub zu (`POST /geraet`,
+/// nur Transport) und gleicht danach ab. Für die Aufnahme ins Konto ist die Kopplung nötig.
 #[tauri::command]
 #[specta::specta]
 pub async fn assistent_sync_geraet_zulassen(
@@ -626,63 +992,26 @@ pub async fn assistent_sync_geraet_zulassen(
 ) -> Result<AssistentSyncStatus, String> {
     let code = freigabe_code.trim().to_owned();
     // Einmalcode: base64url, 27 Zeichen; großzügig prüfen, nie in die Meldung übernehmen.
-    let form_ok = (8..=128).contains(&code.len())
+    let form_ok = (16..=128).contains(&code.len())
         && code
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
     if !form_ok {
         return Err("Der Freigabecode hat ein ungültiges Format.".into());
     }
-    {
-        let _sperre = dienst.sperre.lock().await;
-        let s = sitzung(&app).map_err(|m| m.text)?;
-        let r = blockierend(move || {
-            let mut z = s.zustand()?;
-            s.konto_abgleichen()?;
-            s.zulassen(&mut z, Some(&code))
-        })
-        .await;
-        match r {
-            Ok(()) => dienst.setzen(|st| {
-                st.braucht_freigabe = false;
-                st.letzter_fehler = None;
-                st.fehler_code = None;
-            }),
-            Err(m) => {
-                bei_kontowechsel_ausschalten(&app, &m);
-                dienst.setzen(|st| {
-                    st.braucht_freigabe = m.braucht_freigabe;
-                    st.letzter_fehler = Some(m.text.clone());
-                    st.fehler_code = m.code.clone();
-                });
-                melden(&app, &dienst);
-                return Err(m.text);
-            }
-        }
-    }
+    befehl(&app, &dienst, move |s| {
+        let mut z = s.zustand()?;
+        s.konto_abgleichen()?;
+        s.zulassen(&mut z, Some(&code))
+    })
+    .await?;
+    dienst.setzen(|st| st.braucht_freigabe = false);
     Ok(lauf_einmal(&app, &dienst).await)
 }
 
-/// Der Widerruf bleibt gesperrt, bis der Schlüsseltransport an die übrigen Geräte existiert: ohne ihn
-/// könnte ein Widerruf die Geräte des Kontos von ihrem eigenen Verlauf aussperren. Die Logik
-/// (`assistent_zustand::widerruf_durchfuehren`, erst sichern, dann Hub) ist fertig und getestet.
-const WIDERRUF_FREIGEGEBEN: bool = false;
-
-fn widerruf_pruefen() -> Result<(), Meldung> {
-    if WIDERRUF_FREIGEGEBEN {
-        return Ok(());
-    }
-    Err(Meldung {
-        text:
-            "Das Widerrufen von Geräten ist noch nicht freigeschaltet (Schlüsseltransport fehlt)."
-                .to_owned(),
-        code: Some(CODE_WIDERRUF_GESPERRT.to_owned()),
-        braucht_freigabe: false,
-    })
-}
-
-/// Widerruft ein Gerät. Gesperrt (Fehlercode `widerruf_gesperrt`), bis der Schlüsseltransport
-/// existiert; es gibt dann keinen Netzaufruf.
+/// Widerruft ein Gerät über das Verzeichnis (E3.8): dauerhafte Absicht, signierter Widerrufseintrag
+/// mit neuer Epoche, neuer Schlüssel nur als Pakete an die verbleibenden Geräte des geprüften
+/// Verzeichnisses; vor jedem Hub-Schritt gesichert, nach Abbruch beim nächsten Lauf fortgesetzt.
 #[tauri::command]
 #[specta::specta]
 pub async fn assistent_sync_geraet_widerrufen(
@@ -694,56 +1023,22 @@ pub async fn assistent_sync_geraet_widerrufen(
     if !zustand::gueltige_kennung(&ziel) {
         return Err("Die Geräte-Kennung hat ein ungültiges Format.".into());
     }
-    if let Err(m) = widerruf_pruefen() {
-        dienst.setzen(|st| {
-            st.letzter_fehler = Some(m.text.clone());
-            st.fehler_code = m.code.clone();
-        });
-        melden(&app, &dienst);
-        return Err(m.text);
-    }
-    let _sperre = dienst.sperre.lock().await;
-    let s = sitzung(&app).map_err(|m| m.text)?;
-    let r = blockierend(move || {
-        let mut z = s.zustand()?;
-        s.konto_abgleichen()?;
-        if !z.zugelassen {
-            return Err(Meldung::neu(
-                "Dieses Gerät ist am Hub noch nicht zugelassen.",
-            ));
-        }
-        let hub = s.hub();
-        let ergebnis = zustand::widerruf_durchfuehren(
-            &hub,
-            &s.geraet,
-            &s.schluessel()?,
-            &mut z,
-            &ziel,
-            &mut |z| s.speichern(z).map_err(|m| m.text),
-        );
-        match ergebnis {
-            Ok(epoche) => {
-                let auth = wai_assistent::sync::AuthGeraet::new(&s.geraet);
-                let mut empfaenger = hub.zugelassene(&auth).unwrap_or_default();
-                empfaenger.retain(|g| g != &s.geraet);
-                Ok(AssistentWiderruf {
-                    epoche: u32::try_from(epoche).unwrap_or(u32::MAX),
-                    empfaenger,
-                })
-            }
-            Err(zustand::WiderrufFehler::Hub(h)) => Err(hub_meldung(&h, hub.letzter_code())),
-            Err(zustand::WiderrufFehler::Speicher(t)) => Err(Meldung::from(t)),
-            Err(zustand::WiderrufFehler::Sync(_)) => {
-                Err(Meldung::neu("Der Widerruf ist gescheitert."))
-            }
-        }
+    befehl(&app, &dienst, move |s| {
+        let mut a = s.abgleich_noetig()?;
+        let hub = s.vorbereiten()?;
+        let epoche = a
+            .widerrufen(&hub, &ziel)
+            .map_err(|e| sync_meldung(&e, hub.letzter_code()))?;
+        Ok(AssistentWiderruf {
+            epoche: u32::try_from(epoche).unwrap_or(u32::MAX),
+            empfaenger: a.empfaenger(),
+        })
     })
-    .await;
-    melden(&app, &dienst);
-    r.map_err(|m| m.text)
+    .await
 }
 
-/// Gibt eine Kennung für ein weiteres Gerät frei und liefert den Einmalcode (`POST /freigeben`).
+/// Gibt eine Kennung für ein weiteres Gerät frei und liefert den Einmalcode (`POST /freigeben`, nur
+/// Transport; die Kopplung enthält den Code schon).
 #[tauri::command]
 #[specta::specta]
 pub async fn assistent_sync_freigabe_erzeugen(
@@ -755,10 +1050,8 @@ pub async fn assistent_sync_freigabe_erzeugen(
     if !zustand::gueltige_kennung(&neu) {
         return Err("Die Geräte-Kennung hat ein ungültiges Format.".into());
     }
-    let _sperre = dienst.sperre.lock().await;
-    let s = sitzung(&app).map_err(|m| m.text)?;
-    blockierend(move || {
-        let hub = s.hub();
+    befehl(&app, &dienst, move |s| {
+        let hub = s.vorbereiten()?;
         hub.freigeben(&neu)
             .map(|f| AssistentFreigabe {
                 code: f.code,
@@ -767,26 +1060,54 @@ pub async fn assistent_sync_freigabe_erzeugen(
             .map_err(|h| hub_meldung(&h, hub.letzter_code()))
     })
     .await
-    .map_err(|m| m.text)
 }
 
-/// Zugelassene, nicht widerrufene Geräte des Kontos (Kennungen).
+/// Zugelassene, nicht widerrufene Geräte des Kontos laut **geprüftem** Verzeichnis (Kennungen); vorher
+/// wird das Verzeichnis vom Hub geholt und geprüft.
 #[tauri::command]
 #[specta::specta]
 pub async fn assistent_sync_geraete(
     app: AppHandle,
     dienst: State<'_, AssistentSyncDienst>,
 ) -> Result<Vec<String>, String> {
-    let _sperre = dienst.sperre.lock().await;
-    let s = sitzung(&app).map_err(|m| m.text)?;
-    blockierend(move || {
-        let hub = s.hub();
-        let auth = wai_assistent::sync::AuthGeraet::new(&s.geraet);
-        hub.zugelassene(&auth)
-            .map_err(|h| hub_meldung(&h, hub.letzter_code()))
+    befehl(&app, &dienst, |s| {
+        let mut a = s.abgleich_noetig()?;
+        let hub = s.vorbereiten()?;
+        a.herunterladen(&hub)
+            .map_err(|e| sync_meldung(&e, hub.letzter_code()))?;
+        Ok(a.verzeichnis()
+            .zugelassene()
+            .into_iter()
+            .map(|g| g.geraet_id.clone())
+            .collect())
     })
     .await
-    .map_err(|m| m.text)
+}
+
+/// Lease der Sprachsitzung eines Gesprächs (E3.3): ohne `uebernehmen` nur lesen, sonst „hier
+/// übernehmen“ (neue Generation) bzw. die eigene, laufende Lease verlängern. Fencing nur über die
+/// Generation; ein Konflikt heißt: neu lesen und erneut fragen.
+#[tauri::command]
+#[specta::specta]
+pub async fn assistent_sync_sitzung(
+    app: AppHandle,
+    dienst: State<'_, AssistentSyncDienst>,
+    conversation_id: String,
+    uebernehmen: bool,
+) -> Result<Option<AssistentSitzung>, String> {
+    befehl(&app, &dienst, move |s| {
+        let mut a = s.abgleich_noetig()?;
+        let hub = s.vorbereiten()?;
+        let jetzt = u64::try_from(chrono::Utc::now().timestamp()).unwrap_or(0);
+        let stand = verlauf::sitzung(&s.store, &hub, &mut a, &conversation_id, jetzt, uebernehmen)
+            .map_err(|f| lauf_meldung(&f, hub.letzter_code()))?;
+        Ok(stand.map(|st: Sitzungsstand| AssistentSitzung {
+            hier: st.inhaber == s.geraet,
+            generation: u32::try_from(st.generation).unwrap_or(u32::MAX),
+            gueltig_bis_ms: st.gueltig_bis as f64 * 1000.0,
+        }))
+    })
+    .await
 }
 
 /// Schaltet den Assistent-Sync ein oder aus (Standard aus, E3.6). Erst nach dem Einschalten werden
@@ -842,19 +1163,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn widerruf_ist_gesperrt_mit_festem_code() {
-        let m = widerruf_pruefen().unwrap_err();
-        assert_eq!(m.code.as_deref(), Some(CODE_WIDERRUF_GESPERRT));
+    fn meldungen_tragen_feste_codes_und_keine_kennungen() {
+        let m = nicht_eingerichtet();
+        assert_eq!(m.code.as_deref(), Some(CODE_NICHT_EINGERICHTET));
         assert!(!m.braucht_freigabe);
-    }
-
-    #[test]
-    fn kontowechsel_meldung_hat_festen_code_und_keine_kennungen() {
-        let m = Meldung {
-            text: "x".into(),
-            code: Some(CODE_KONTO_GEWECHSELT.into()),
-            braucht_freigabe: false,
-        };
-        assert_eq!(m.code.as_deref(), Some("konto_gewechselt"));
+        let m = sync_meldung(&SyncFehler::Speicher, None);
+        assert_eq!(m.code.as_deref(), Some(CODE_ZUSTAND));
+        let m = hub_meldung(&HubFehler::NichtZugelassen, Some("nicht_zugelassen".into()));
+        assert!(m.braucht_freigabe);
+        let m = hub_meldung(&HubFehler::NichtZugelassen, Some("forbidden".into()));
+        assert!(!m.braucht_freigabe);
+        let m = hub_meldung(&HubFehler::VerzeichnisKonflikt { laenge: 3 }, None);
+        assert!(!m.text.contains('3'));
     }
 }

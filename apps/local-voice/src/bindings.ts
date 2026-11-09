@@ -1161,6 +1161,64 @@ async assistentSyncStarten() : Promise<Result<AssistentSyncStatus, string>> {
 }
 },
 /**
+ * Gründet das Konto mit diesem Gerät als Vertrauensanker (Erstgerät): Transportzulassung, neue
+ * Identität, Epoche 1 und Kontosalz zufällig, Anker ins Verzeichnis; danach ein Abgleich. Hat das
+ * Konto am Hub schon ein Verzeichnis, wird nicht gegründet (dann koppeln).
+ */
+async assistentSyncGruenden() : Promise<Result<AssistentSyncStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("assistent_sync_gruenden") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Kopplung, Schritt 1 (aufnehmendes, eingerichtetes Gerät): gibt die Kennung `geraet_id` am Hub frei
+ * und liefert den QR-Inhalt mit Prüfpunkt des Verzeichnisses, QR-Geheimnis und Freigabecode. Das
+ * Angebot bleibt nur im Arbeitsspeicher und wird für `assistent_sync_kopplung_aufnehmen` gebraucht.
+ */
+async assistentSyncKopplungAnbieten(geraetId: string) : Promise<Result<AssistentKopplungsangebot, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("assistent_sync_kopplung_anbieten", { geraetId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Kopplung, Schritt 2 (neues Gerät): liest den QR-Inhalt, lässt dieses Gerät mit dem Freigabecode am
+ * Hub zu, erzeugt die Geräteidentität und liefert die Antwort für den Rückkanal (Ausweis, HMAC mit dem
+ * QR-Geheimnis, Besitznachweis). Die Antwort geht auf beliebigem Weg zurück an das aufnehmende Gerät.
+ */
+async assistentSyncKopplungBeginnen(qr: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("assistent_sync_kopplung_beginnen", { qr }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Kopplung, Schritt 3 (aufnehmendes Gerät): prüft die Antwort des neuen Geräts gegen das eigene
+ * Angebot (HMAC, Besitznachweis, Prüfpunkt), nimmt es per signiertem Verzeichniseintrag auf und legt
+ * die Epochenschlüssel als Pakete für es ab. Das neue Gerät schließt danach mit einem Abgleich ab.
+ */
+async assistentSyncKopplungAufnehmen(antwort: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("assistent_sync_kopplung_aufnehmen", { antwort }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Bricht eine laufende Kopplung als neues Gerät ab (verwirft die noch nicht aufgenommene Identität).
+ */
+async assistentSyncKopplungAbbrechen() : Promise<AssistentSyncStatus> {
+    return await TAURI_INVOKE("assistent_sync_kopplung_abbrechen");
+},
+/**
  * Laesst dieses Geraet mit dem Freigabecode eines zugelassenen Geraets zu und gleicht danach ab.
  */
 async assistentSyncGeraetZulassen(freigabeCode: string) : Promise<Result<AssistentSyncStatus, string>> {
@@ -1199,6 +1257,19 @@ async assistentSyncFreigabeErzeugen(geraetId: string) : Promise<Result<Assistent
 async assistentSyncGeraete() : Promise<Result<string[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("assistent_sync_geraete") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Lease der Sprachsitzung eines Gesprächs (E3.3): ohne `uebernehmen` nur lesen, sonst „hier
+ * übernehmen“ (neue Generation) bzw. die eigene, laufende Lease verlängern. Fencing nur über die
+ * Generation; ein Konflikt heißt: neu lesen und erneut fragen.
+ */
+async assistentSyncSitzung(conversationId: string, uebernehmen: boolean) : Promise<Result<AssistentSitzung | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("assistent_sync_sitzung", { conversationId, uebernehmen }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -10223,8 +10294,10 @@ ref: string; added_by: string; added_at: string; source_release_id?: string | nu
  * `cost_bearer`: Sprachgespräche sind persönlich und haben keinen Kostenträger).
  */
 export type AssistentFreigabe = { code: string; gueltig_bis: string }
+export type AssistentKopplungsangebot = { qr: string; gueltig_bis: string }
+export type AssistentSitzung = { hier: boolean; generation: number; gueltig_bis_ms: number }
 export type AssistentSyncBericht = { hochgeladen: number; heruntergeladen: number; geloescht: number; nur_lokal: number; wartend: number; verworfen: number }
-export type AssistentSyncStatus = { aktiv: boolean; angemeldet: boolean; zugelassen: boolean; braucht_freigabe: boolean; laeuft: boolean; epoche: number; widerruf_offen: boolean; letzter_lauf_ms: number | null; letzter_fehler: string | null; fehler_code: string | null; grabsteine_offen: number; letzter_bericht: AssistentSyncBericht | null }
+export type AssistentSyncStatus = { aktiv: boolean; angemeldet: boolean; zugelassen: boolean; braucht_freigabe: boolean; eingerichtet: boolean; kopplung_offen: boolean; laeuft: boolean; epoche: number; widerruf_offen: boolean; letzter_lauf_ms: number | null; letzter_fehler: string | null; fehler_code: string | null; grabsteine_offen: number; letzter_bericht: AssistentSyncBericht | null }
 export type AssistentWiderruf = { epoche: number; empfaenger: string[] }
 export type Conversation = { schema_version: string; id: string; ts: string; trace_id: string; title: string; created_at: string; updated_at: string; kind: string; scope: ConversationScope; participants: ConversationParticipant[]; context: ContextSource[]; pinned: boolean; archived: boolean; ext?: ConversationExt | null }
 /**

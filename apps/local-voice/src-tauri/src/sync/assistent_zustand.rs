@@ -1,73 +1,206 @@
-//! Schlüsselmaterial und Zustandsdatei des Assistent-Syncs (lva#388, ADR-0028 E3.1).
+//! Zustand des Assistent-Syncs auf diesem Gerät (lva#388, ADR-0028 E3.8): reine Logik ohne Tauri und
+//! ohne Netz.
 //!
-//! Reine Logik ohne Tauri und ohne Netz.
+//! **Zustandsblock des Kerns** ([`DateiSpeicher`], `Zustandsspeicher`). Der Kern legt seinen ganzen
+//! Zustand (Geräteschlüssel, Schlüsselbund, geprüftes Geräteverzeichnis, Höchststände als Prüfpunkte,
+//! Grabsteine, Ausgang, offener Widerruf, Unterhaltungen) als **einen** Block ab. Er enthält Geheimnisse
+//! und wird deshalb verschlüsselt (XChaCha20-Poly1305, Schlüssel per HKDF aus dem Objekt-Schlüssel des
+//! Bibliotheks-Syncs, eigener Zweck in `info`) und **atomar** gesichert: temporäre Datei schreiben,
+//! auf die Platte zwingen, per Umbenennen ersetzen. Je Konto und Gerät gibt es eine Datei; die AAD
+//! bindet den Block an beide, ein vertauschter oder veränderter Block lädt nicht. Jeder Lese-, Prüf- oder
+//! Schreibfehler ist ein `SpeicherFehler`: der Kern sperrt sich dann (Must-fix 4), nichts gilt als leer.
+//! Bewusst keine `.bak`: eine ältere Kopie wäre ein Rollback des Zustands.
 //!
-//! **Schlüssel.** Der Hub hat keinen Inhaltsschlüssel (E3.0). Kontosalz und Schlüssel der Epoche 1
-//! leitet jedes Gerät mit HKDF-SHA256 aus dem Objekt-Schlüssel des Bibliotheks-Syncs ab (E3.1: „mit
-//! dem Kontoschlüssel des Bibliothek-Syncs“); Zweck und Version stehen in den `info`-Texten, damit
-//! der Assistent-Sync nie denselben Schlüssel wie der Bibliotheks-Sync benutzt. Alle Geräte eines
-//! Kontos, die sich mit denselben Zugangsdaten anmelden oder gekoppelt werden, kommen so ohne
-//! Zusatzübertragung auf denselben Bund der Epoche 1.
+//! **Transportzulassung** (`assistent_sync.json`, [`Zustand`]): je Kontokennung, ob dieses Gerät am Hub
+//! per `POST /geraet` zugelassen ist. Sie ist keine Sicherheitsaussage (die steht im Verzeichnis); die
+//! Datei ist fail-closed (nur „fehlt“ gilt als leer) und bekommt vor jedem Überschreiben eine `.bak`.
 //!
-//! **Epochen ab 2** (nach einem Geräte-Widerruf) sind zufällig und unabhängig; sie liegen in der
-//! Zustandsdatei `assistent_sync.json` (privat, wie `sync.json`) und müssen an die übrigen Geräte über
-//! die Kopplung gehen. Dieser Transport gehört nicht zu A1 (siehe Übergabe).
-//!
-//! **Zustandsdatei.** Sie hält je Kontokennung einen Eintrag (`konten`; Kennung: Hash aus Hub-URL,
-//! Konto-ID und Fingerabdruck des Bibliotheks-Schlüssels, NICHT die Geräte-Kennung). Einträge anderer
-//! Konten bleiben unberührt und werden nie gelöscht. Die Zulassung gehört zum Gerät: mit einer neuen
-//! Geräte-Kennung gilt sie nicht mehr, die Epochenschlüssel des Kontos bleiben. Die Datei ist
-//! fail-closed: nur „fehlt“ gilt als leer, ein Lese- oder Parsefehler ist ein Fehler (nichts wird
-//! zugelassen oder überschrieben); vor jedem Überschreiben liegt eine `.bak` daneben.
+//! **Kopplungs-QR** ([`KopplungsQr`]): Angebot des Kerns (Prüfpunkt des Verzeichnisses und
+//! QR-Geheimnis) samt Freigabecode für die Transportzulassung des neuen Geräts.
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 
-use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
+use chacha20poly1305::aead::{Aead, KeyInit, Payload};
+use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use hkdf::Hkdf;
+use rand::RngCore;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
-use wai_assistent::sync::{
-    Abgleich, Hex128, HubFehler, HubSpeicher, OffenerWiderruf, Schluessel, Schluesselbund,
-    SyncFehler,
-};
+use wai_assistent::sync::{Kopplungsangebot, SpeicherFehler, Zustandsspeicher};
+use zeroize::Zeroizing;
 
 pub const DATEI: &str = "assistent_sync.json";
+/// Verzeichnis der Zustandsblöcke (je Konto und Gerät eine Datei) im Datenverzeichnis der App.
+pub const BLOCK_VERZEICHNIS: &str = "assistent_sync";
 pub const KEY_LEN: usize = 32;
 
-const INFO_SALZ: &[u8] = b"wai-assistent-sync/v1/id-salz";
-const INFO_EPOCHE_1: &[u8] = b"wai-assistent-sync/v1/epoche-1";
 const INFO_KONTO: &[u8] = b"wai-assistent-sync/v1/konto-fingerabdruck";
+const INFO_BLOCK: &[u8] = b"wai-assistent-sync/v2/zustandsblock";
+const BLOCK_KENNUNG: &[u8; 8] = b"LVAZB\x00\x00\x01";
+const NONCE_LEN: usize = 24;
 
-fn ableiten(konto_schluessel: &[u8; KEY_LEN], info: &[u8]) -> Result<[u8; KEY_LEN], String> {
-    let mut aus = [0u8; KEY_LEN];
-    Hkdf::<Sha256>::new(None, konto_schluessel)
-        .expand(info, &mut aus)
-        .map_err(|_| "Schlüsselableitung fehlgeschlagen".to_string())?;
-    Ok(aus)
+// ---------------------------------------------------------------------------------------------
+// Zustandsblock des Kerns
+// ---------------------------------------------------------------------------------------------
+
+/// `Zustandsspeicher` über eine verschlüsselte Datei, atomar ersetzt.
+pub struct DateiSpeicher {
+    pfad: PathBuf,
+    schluessel: Zeroizing<[u8; KEY_LEN]>,
+    aad: Vec<u8>,
 }
 
-/// Bund der Epoche 1 aus dem Objekt-Schlüssel des Bibliotheks-Syncs.
-pub fn grundbund(konto_schluessel: &[u8; KEY_LEN]) -> Result<Schluesselbund, String> {
-    Ok(Schluesselbund::neu(
-        Schluessel::aus_bytes(ableiten(konto_schluessel, INFO_SALZ)?),
-        1,
-        Schluessel::aus_bytes(ableiten(konto_schluessel, INFO_EPOCHE_1)?),
-    ))
+impl fmt::Debug for DateiSpeicher {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("DateiSpeicher")
+    }
 }
 
-/// Vorgemerkter Widerruf in der Zustandsdatei (verlorene Antwort: wiederholbar mit derselben Kennung).
-#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct OffenerWiderrufDatei {
-    pub geraet: String,
-    pub erwartete_epoche: u64,
-    pub vorgang: String,
-    /// Kandidat für den Schlüssel der neuen Epoche, base64.
-    pub schluessel: String,
+impl DateiSpeicher {
+    /// Speicher für `konto` (Kontokennung) und `geraet` unter `verzeichnis`. Der Blockschlüssel wird aus
+    /// dem Objekt-Schlüssel des Bibliotheks-Syncs abgeleitet und nie mit ihm geteilt.
+    pub fn neu(
+        verzeichnis: &Path,
+        konto: &str,
+        geraet: &str,
+        konto_schluessel: &[u8; KEY_LEN],
+    ) -> Result<Self, String> {
+        let mut schluessel = Zeroizing::new([0u8; KEY_LEN]);
+        Hkdf::<Sha256>::new(None, konto_schluessel)
+            .expand(INFO_BLOCK, schluessel.as_mut())
+            .map_err(|_| "Schlüsselableitung fehlgeschlagen".to_string())?;
+        let mut aad = BLOCK_KENNUNG.to_vec();
+        for teil in [konto.as_bytes(), geraet.as_bytes()] {
+            aad.extend_from_slice(&(teil.len() as u32).to_be_bytes());
+            aad.extend_from_slice(teil);
+        }
+        Ok(Self {
+            pfad: verzeichnis.join(block_dateiname(konto, geraet)),
+            schluessel,
+            aad,
+        })
+    }
+
+    #[cfg(test)]
+    pub fn pfad(&self) -> &Path {
+        &self.pfad
+    }
+
+    /// Liegt schon ein Block (ohne ihn zu lesen)?
+    pub fn vorhanden(&self) -> bool {
+        self.pfad.exists()
+    }
+
+    fn chiffre(&self) -> XChaCha20Poly1305 {
+        XChaCha20Poly1305::new(self.schluessel.as_ref().into())
+    }
+
+    fn schreiben_atomar(&self, inhalt: &[u8]) -> std::io::Result<()> {
+        let dir = self
+            .pfad
+            .parent()
+            .ok_or_else(|| std::io::Error::other("kein Verzeichnis"))?;
+        std::fs::create_dir_all(dir)?;
+        let mut tmp_name = self
+            .pfad
+            .file_name()
+            .map(|n| n.to_os_string())
+            .unwrap_or_default();
+        tmp_name.push(".tmp");
+        let tmp = self.pfad.with_file_name(tmp_name);
+        {
+            let mut opt = std::fs::OpenOptions::new();
+            opt.write(true).create(true).truncate(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                opt.mode(0o600);
+            }
+            let mut f = opt.open(&tmp)?;
+            f.write_all(inhalt)?;
+            f.sync_all()?;
+        }
+        std::fs::rename(&tmp, &self.pfad)?;
+        // Das Umbenennen selbst dauerhaft machen (unter Windows nicht nötig und nicht möglich).
+        #[cfg(unix)]
+        std::fs::File::open(dir)?.sync_all()?;
+        Ok(())
+    }
 }
+
+/// Dateiname des Blocks: Hash aus Konto und Gerät (keine Kennung im Klartext auf der Platte).
+fn block_dateiname(konto: &str, geraet: &str) -> String {
+    let mut h = Sha256::new();
+    for teil in [konto.as_bytes(), geraet.as_bytes()] {
+        h.update((teil.len() as u32).to_be_bytes());
+        h.update(teil);
+    }
+    let hex: String = h.finalize()[..16]
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    format!("{hex}.bin")
+}
+
+impl Zustandsspeicher for DateiSpeicher {
+    fn sichern(&self, daten: &[u8]) -> Result<(), SpeicherFehler> {
+        let mut nonce = [0u8; NONCE_LEN];
+        rand::rngs::OsRng
+            .try_fill_bytes(&mut nonce)
+            .map_err(|_| SpeicherFehler)?;
+        let ct = self
+            .chiffre()
+            .encrypt(
+                XNonce::from_slice(&nonce),
+                Payload {
+                    msg: daten,
+                    aad: &self.aad,
+                },
+            )
+            .map_err(|_| SpeicherFehler)?;
+        let mut inhalt = Vec::with_capacity(BLOCK_KENNUNG.len() + NONCE_LEN + ct.len());
+        inhalt.extend_from_slice(BLOCK_KENNUNG);
+        inhalt.extend_from_slice(&nonce);
+        inhalt.extend_from_slice(&ct);
+        self.schreiben_atomar(&inhalt).map_err(|_| {
+            log::warn!("Assistent-Sync: Zustandsblock konnte nicht gesichert werden");
+            SpeicherFehler
+        })
+    }
+
+    fn laden(&self) -> Result<Option<Zeroizing<Vec<u8>>>, SpeicherFehler> {
+        let roh = match std::fs::read(&self.pfad) {
+            Ok(r) => r,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(_) => return Err(SpeicherFehler),
+        };
+        let kopf = BLOCK_KENNUNG.len() + NONCE_LEN;
+        if roh.len() < kopf || &roh[..BLOCK_KENNUNG.len()] != BLOCK_KENNUNG {
+            return Err(SpeicherFehler);
+        }
+        self.chiffre()
+            .decrypt(
+                XNonce::from_slice(&roh[BLOCK_KENNUNG.len()..kopf]),
+                Payload {
+                    msg: &roh[kopf..],
+                    aad: &self.aad,
+                },
+            )
+            .map(|klar| Some(Zeroizing::new(klar)))
+            .map_err(|_| SpeicherFehler)
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Transportzulassung je Konto (`assistent_sync.json`)
+// ---------------------------------------------------------------------------------------------
 
 /// Eintrag einer Kontokennung in `assistent_sync.json`.
-#[derive(Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, Default, PartialEq, Eq, Debug)]
 pub struct Zustand {
     /// Gerät, für das `zugelassen` gilt.
     #[serde(default)]
@@ -75,43 +208,19 @@ pub struct Zustand {
     /// Dieses Gerät ist am Hub zugelassen (`POST /geraet` war erfolgreich).
     #[serde(default)]
     pub zugelassen: bool,
-    /// Epochenschlüssel ab Epoche 2: Epochennummer → base64.
-    #[serde(default)]
-    pub epochen: BTreeMap<String, String>,
-    #[serde(default)]
-    pub offener_widerruf: Option<OffenerWiderrufDatei>,
 }
 
-/// Inhalt von `assistent_sync.json`.
+/// Inhalt von `assistent_sync.json`. Felder früherer Fassungen (Epochenschlüssel, offener Widerruf
+/// der alten Hub-API) werden beim nächsten Schreiben verworfen; A1 war nie freigeschaltet.
 #[derive(Clone, Serialize, Deserialize, Default)]
 struct Datei {
     #[serde(default)]
     konten: BTreeMap<String, Zustand>,
 }
 
-impl fmt::Debug for Zustand {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Zustand")
-            .field("geraet", &self.geraet)
-            .field("zugelassen", &self.zugelassen)
-            .field("epochen", &self.epochen.keys().collect::<Vec<_>>())
-            .field("offener_widerruf", &self.offener_widerruf.is_some())
-            .finish()
-    }
-}
-
-fn schluessel_aus(b64: &str) -> Result<Schluessel, String> {
-    let roh = B64
-        .decode(b64)
-        .map_err(|_| "assistent_sync.json: Schlüssel unlesbar".to_string())?;
-    let bytes: [u8; KEY_LEN] = roh
-        .try_into()
-        .map_err(|_| "assistent_sync.json: Schlüssel hat die falsche Länge".to_string())?;
-    Ok(Schluessel::aus_bytes(bytes))
-}
-
 impl Zustand {
     /// Leerer Zustand für dieses Gerät.
+    #[cfg(test)]
     pub fn neu(geraet: &str) -> Self {
         Self {
             geraet: geraet.to_owned(),
@@ -144,10 +253,9 @@ impl Zustand {
         let datei = Self::datei_lesen(text)?;
         let mut z = datei.konten.get(konto).cloned().unwrap_or_default();
         if z.geraet != geraet {
-            // Neue Geräte-Kennung: die Zulassung gilt nicht mehr, die Schlüssel des Kontos bleiben.
+            // Neue Geräte-Kennung: die Zulassung gilt nicht mehr.
             z.geraet = geraet.to_owned();
             z.zugelassen = false;
-            z.offener_widerruf = None;
         }
         Ok(z)
     }
@@ -167,128 +275,94 @@ impl Zustand {
             }),
         }
     }
+}
 
-    /// Bund dieses Geräts: Epoche 1 aus dem Kontoschlüssel, dazu die gespeicherten Epochen.
-    pub fn bund(&self, konto_schluessel: &[u8; KEY_LEN]) -> Result<Schluesselbund, String> {
-        let mut bund = grundbund(konto_schluessel)?;
-        for (epoche, schluessel) in &self.epochen {
-            let nummer: u64 = epoche
-                .parse()
-                .map_err(|_| "assistent_sync.json: Epoche unlesbar".to_string())?;
-            bund.epoche_aufnehmen(nummer, schluessel_aus(schluessel)?)
-                .map_err(|e| e.to_string())?;
+// ---------------------------------------------------------------------------------------------
+// Kopplungs-QR
+// ---------------------------------------------------------------------------------------------
+
+/// Größte Transportform des QR-Inhalts (Angebot ≤ 2048 Byte plus Freigabecode und Kennung).
+pub const MAX_QR: usize = 3072;
+const QR_VERSION: u32 = 1;
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct QrForm {
+    v: u32,
+    geraet_id: String,
+    freigabe_code: String,
+    angebot: Value,
+}
+
+/// Inhalt des Kopplungs-QR-Codes: Angebot des aufnehmenden Geräts (Prüfpunkt des Verzeichnisses und
+/// QR-Geheimnis) und der Freigabecode, mit dem sich das neue Gerät `geraet_id` am Hub zulässt.
+/// `Debug` zeigt weder Code noch Geheimnis.
+pub struct KopplungsQr {
+    pub geraet_id: String,
+    pub freigabe_code: Zeroizing<String>,
+    pub angebot: Kopplungsangebot,
+}
+
+impl fmt::Debug for KopplungsQr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("KopplungsQr")
+            .field("freigabe_code", &"***")
+            .field("angebot", &self.angebot)
+            .finish()
+    }
+}
+
+impl KopplungsQr {
+    /// Transportform für den QR-Code (enthält Geheimnisse; der Aufrufer zeigt sie nur einmal an).
+    pub fn als_text(&self) -> Result<Zeroizing<String>, String> {
+        let angebot =
+            serde_json::to_value(&self.angebot).map_err(|_| "Kopplungsangebot".to_string())?;
+        serde_json::to_string(&QrForm {
+            v: QR_VERSION,
+            geraet_id: self.geraet_id.clone(),
+            freigabe_code: self.freigabe_code.to_string(),
+            angebot,
+        })
+        .map(Zeroizing::new)
+        .map_err(|_| "Kopplungsangebot".to_string())
+    }
+
+    /// Liest den QR-Inhalt; Länge vor dem Lesen begrenzt, das Angebot über die Grenze des Kerns.
+    pub fn aus_text(text: &str) -> Result<Self, String> {
+        let fehler = || "Der Kopplungscode ist ungültig.".to_string();
+        if text.len() > MAX_QR {
+            return Err(fehler());
         }
-        Ok(bund)
-    }
-
-    /// Nimmt die Epochen ab 2 aus dem Bund auf (nach einem Widerruf).
-    pub fn aus_bund(&mut self, bund: &Schluesselbund) {
-        for epoche in 2..=bund.aktuelle_epoche() {
-            if let Some(s) = bund.schluessel(epoche) {
-                self.epochen
-                    .insert(epoche.to_string(), B64.encode(s.bytes()));
-            }
+        let form: QrForm = serde_json::from_str(text.trim()).map_err(|_| fehler())?;
+        if form.v != QR_VERSION || !gueltige_kennung(&form.geraet_id) {
+            return Err(fehler());
         }
-    }
-
-    pub fn offenen_widerruf_merken(&mut self, offen: Option<&OffenerWiderruf>) {
-        self.offener_widerruf = offen.map(|o| OffenerWiderrufDatei {
-            geraet: o.geraet().to_owned(),
-            erwartete_epoche: o.erwartete_epoche(),
-            vorgang: o.vorgang().as_str().to_owned(),
-            schluessel: B64.encode(o.schluessel().bytes()),
-        });
-    }
-
-    pub fn offenen_widerruf(&self) -> Result<Option<OffenerWiderruf>, String> {
-        let Some(d) = &self.offener_widerruf else {
-            return Ok(None);
-        };
-        let vorgang = Hex128::parse(&d.vorgang)
-            .map_err(|_| "assistent_sync.json: Vorgangskennung unlesbar".to_string())?;
-        Ok(Some(OffenerWiderruf::neu(
-            &d.geraet,
-            d.erwartete_epoche,
-            vorgang,
-            schluessel_aus(&d.schluessel)?,
-        )))
-    }
-}
-
-/// Fehler von [`widerruf_durchfuehren`]. Keine Variante trägt Schlüssel oder Inhalte.
-#[derive(Debug)]
-pub enum WiderrufFehler {
-    Hub(HubFehler),
-    Sync(SyncFehler),
-    /// Schlüsselmaterial oder Zustandsdatei unbrauchbar, oder das Sichern scheiterte.
-    Speicher(String),
-}
-
-fn sichern(
-    a: &Abgleich,
-    z: &mut Zustand,
-    speichern: &mut dyn FnMut(&Zustand) -> Result<(), String>,
-) -> Result<(), WiderrufFehler> {
-    z.aus_bund(a.bund());
-    z.offenen_widerruf_merken(a.offener_widerruf());
-    speichern(z).map_err(WiderrufFehler::Speicher)
-}
-
-/// Widerruft `ziel` am Hub. Der Kandidat für den neuen Epochenschlüssel und die Vorgangskennung
-/// werden **zuerst** dauerhaft gesichert (`speichern`), erst dann geht der Aufruf an den Hub. Stürzt
-/// das Gerät dazwischen oder danach ab, wiederholt der nächste Aufruf mit derselben Vorgangskennung;
-/// der Hub ist dafür idempotent und der gesicherte Schlüssel wird übernommen.
-pub fn widerruf_durchfuehren<H: HubSpeicher + ?Sized>(
-    hub: &H,
-    geraet: &str,
-    konto_schluessel: &[u8; KEY_LEN],
-    z: &mut Zustand,
-    ziel: &str,
-    speichern: &mut dyn FnMut(&Zustand) -> Result<(), String>,
-) -> Result<u64, WiderrufFehler> {
-    let bund = z.bund(konto_schluessel).map_err(WiderrufFehler::Speicher)?;
-    let mut a = Abgleich::new(geraet, bund);
-    a.freigabe_einschalten();
-    if let Some(offen) = z.offenen_widerruf().map_err(WiderrufFehler::Speicher)? {
-        let anderes_ziel = offen.geraet() != ziel;
-        a.offenen_widerruf_wiederherstellen(offen);
-        if anderes_ziel {
-            let r = a.widerruf_abschliessen(hub);
-            sichern(&a, z, speichern)?;
-            match r {
-                Ok(_) | Err(SyncFehler::Hub(HubFehler::EpocheKonflikt { .. })) => {}
-                Err(e) => return Err(WiderrufFehler::Sync(e)),
-            }
+        let code_ok = (16..=128).contains(&form.freigabe_code.len())
+            && form
+                .freigabe_code
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+        if !code_ok {
+            return Err(fehler());
         }
-    }
-    if a.offener_widerruf().is_none() {
-        let kandidat = OffenerWiderruf::neu(
-            ziel,
-            a.bund().aktuelle_epoche(),
-            Hex128::zufall().map_err(WiderrufFehler::Sync)?,
-            Schluessel::zufall().map_err(WiderrufFehler::Sync)?,
-        );
-        a.offenen_widerruf_wiederherstellen(kandidat);
-        // Dauerhaft sichern, bevor irgendetwas an den Hub geht.
-        sichern(&a, z, speichern)?;
-    }
-    let r = a.widerruf_abschliessen(hub);
-    sichern(&a, z, speichern)?;
-    match r {
-        Ok(Some(epoche)) => Ok(epoche),
-        Ok(None) => Err(WiderrufFehler::Speicher("kein Widerruf offen".into())),
-        Err(SyncFehler::Hub(h)) => Err(WiderrufFehler::Hub(h)),
-        Err(e) => Err(WiderrufFehler::Sync(e)),
+        let roh = Zeroizing::new(serde_json::to_vec(&form.angebot).map_err(|_| fehler())?);
+        let angebot = Kopplungsangebot::aus_json(&roh).map_err(|_| fehler())?;
+        Ok(Self {
+            geraet_id: form.geraet_id,
+            freigabe_code: Zeroizing::new(form.freigabe_code),
+            angebot,
+        })
     }
 }
 
-/// Kennung dieses Geräts für den Assistent-Hub: klein geschrieben, `[A-Za-z0-9._-]{1,64}`.
+/// Kennung dieses Geräts für den Assistent-Hub: klein geschrieben, `[A-Za-z0-9._-]{1,64}`. Der Hub
+/// nimmt jede Kennung von 1 bis 128 Byte unverändert; die App bleibt bei ihrer strengeren, stabilen Form.
 pub fn geraete_kennung(device_id: &str) -> Option<String> {
     let k = device_id.to_ascii_lowercase();
     gueltige_kennung(&k).then_some(k)
 }
 
-/// Form einer Geräte-Kennung nach der Hub-Doku.
+/// Form einer Geräte-Kennung der App.
 pub fn gueltige_kennung(k: &str) -> bool {
     (1..=64).contains(&k.len())
         && k.bytes()
@@ -298,43 +372,116 @@ pub fn gueltige_kennung(k: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wai_assistent::sync::{Abgleich, MemHub, Testkonto};
 
     const KEY: [u8; KEY_LEN] = [7; KEY_LEN];
 
-    #[test]
-    fn grundbund_ist_auf_jedem_geraet_gleich_und_vom_kontoschluessel_getrennt() {
-        let (a, b) = (grundbund(&KEY).unwrap(), grundbund(&KEY).unwrap());
-        assert_eq!(a.id_salz(), b.id_salz());
-        assert_eq!(
-            a.schluessel(1).unwrap().bytes(),
-            b.schluessel(1).unwrap().bytes()
-        );
-        assert_eq!(a.aktuelle_epoche(), 1);
-        // Weder Salz noch Epochenschlüssel sind der Kontoschlüssel oder gleich.
-        assert_ne!(a.schluessel(1).unwrap().bytes(), &KEY);
-        assert_ne!(a.id_salz(), &KEY);
-        assert_ne!(a.id_salz(), a.schluessel(1).unwrap().bytes());
-        // Anderes Konto, anderer Bund.
-        let c = grundbund(&[8; KEY_LEN]).unwrap();
-        assert_ne!(
-            a.schluessel(1).unwrap().bytes(),
-            c.schluessel(1).unwrap().bytes()
-        );
+    fn speicher(dir: &Path, konto: &str, geraet: &str) -> DateiSpeicher {
+        DateiSpeicher::neu(dir, konto, geraet, &KEY).unwrap()
     }
 
     #[test]
-    fn zwei_geraete_lesen_gegenseitig_ihre_objekte() {
-        use wai_assistent::sync::{oeffnen, versiegeln, Hex128, Sammlung, Steuerfelder};
-        let (pc, tablet) = (grundbund(&KEY).unwrap(), grundbund(&KEY).unwrap());
-        let steuer = Steuerfelder::inhalt(
-            Sammlung::Beitrag,
-            Hex128::zufall().unwrap(),
-            Hex128::zufall().unwrap(),
-            "pc",
-            1,
+    fn block_rundlauf_verschluesselt_und_atomar() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = speicher(dir.path(), "konto-1", "dev-a");
+        assert_eq!(s.laden().unwrap(), None, "fehlt: noch nie gesichert");
+        s.sichern(b"{\"geheim\":\"Schluessel-4711\"}").unwrap();
+        let roh = std::fs::read(s.pfad()).unwrap();
+        assert!(
+            !String::from_utf8_lossy(&roh).contains("Schluessel-4711"),
+            "kein Klartext auf der Platte"
         );
-        let u = versiegeln(&pc, &steuer, &serde_json::json!({ "x": 1 })).unwrap();
-        assert_eq!(oeffnen(&tablet, &u).unwrap().inhalt["x"], 1);
+        assert_eq!(
+            s.laden().unwrap().unwrap().as_slice(),
+            b"{\"geheim\":\"Schluessel-4711\"}"
+        );
+        s.sichern(b"zwei").unwrap();
+        assert_eq!(s.laden().unwrap().unwrap().as_slice(), b"zwei");
+        // Keine Reste: nur der Block selbst liegt im Verzeichnis.
+        let dateien: Vec<_> = std::fs::read_dir(dir.path()).unwrap().collect();
+        assert_eq!(dateien.len(), 1);
+        // Kennungen stehen nicht im Dateinamen.
+        let name = s.pfad().file_name().unwrap().to_string_lossy().to_string();
+        assert!(!name.contains("dev-a") && !name.contains("konto-1"));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(s.pfad()).unwrap().permissions().mode();
+            assert_eq!(mode & 0o077, 0, "nur für den Eigentümer");
+        }
+    }
+
+    #[test]
+    fn veraenderter_vertauschter_oder_fremder_block_ist_ein_fehler() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = speicher(dir.path(), "konto-1", "dev-a");
+        a.sichern(b"stand").unwrap();
+        // Ein Bit gekippt: Fehler, nie „leer“.
+        let mut roh = std::fs::read(a.pfad()).unwrap();
+        let n = roh.len() - 1;
+        roh[n] ^= 1;
+        std::fs::write(a.pfad(), &roh).unwrap();
+        assert_eq!(a.laden(), Err(SpeicherFehler));
+        // Abgeschnitten.
+        std::fs::write(a.pfad(), b"LVAZ").unwrap();
+        assert_eq!(a.laden(), Err(SpeicherFehler));
+        // Block eines anderen Geräts unter diesem Namen: AAD passt nicht.
+        let b = speicher(dir.path(), "konto-1", "dev-b");
+        b.sichern(b"anderes").unwrap();
+        std::fs::copy(b.pfad(), a.pfad()).unwrap();
+        assert_eq!(a.laden(), Err(SpeicherFehler));
+        // Anderer Bibliotheks-Schlüssel: nicht lesbar.
+        let fremd = DateiSpeicher::neu(dir.path(), "konto-1", "dev-b", &[8; KEY_LEN]).unwrap();
+        assert_eq!(fremd.laden(), Err(SpeicherFehler));
+    }
+
+    #[test]
+    fn nicht_schreibbares_ziel_ist_ein_speicherfehler_und_sperrt_den_kern() {
+        let dir = tempfile::tempdir().unwrap();
+        // Ziel ist ein Verzeichnis: das Umbenennen scheitert.
+        let s = speicher(dir.path(), "konto-1", "dev-a");
+        std::fs::create_dir_all(s.pfad()).unwrap();
+        assert_eq!(s.sichern(b"x"), Err(SpeicherFehler));
+        // Der Kern übernimmt keinen Zustand, den er nicht sichern konnte.
+        let hub = MemHub::new();
+        let k = Testkonto::mit_hub(&["dev-a"], &hub);
+        let kaputt = speicher(dir.path(), "konto-1", "dev-a");
+        let gekoppelt = Abgleich::gekoppelt(
+            k.schluessel("dev-a").clone(),
+            k.bund().clone(),
+            k.verzeichnis().clone(),
+            Box::new(kaputt),
+        );
+        assert!(gekoppelt.is_err(), "erste Sicherung scheitert");
+    }
+
+    #[test]
+    fn kern_ueberlebt_den_neustart_ueber_den_dateispeicher() {
+        let dir = tempfile::tempdir().unwrap();
+        let hub = MemHub::new();
+        let k = Testkonto::mit_hub(&["dev-a"], &hub);
+        let mut a = Abgleich::gekoppelt(
+            k.schluessel("dev-a").clone(),
+            k.bund().clone(),
+            k.verzeichnis().clone(),
+            Box::new(speicher(dir.path(), "konto-1", "dev-a")),
+        )
+        .unwrap();
+        a.freigabe_einschalten().unwrap();
+        a.herunterladen(&hub).unwrap();
+        let konto = a.konto().clone();
+        drop(a);
+        let wieder = Abgleich::wiederherstellen(Box::new(speicher(dir.path(), "konto-1", "dev-a")))
+            .unwrap()
+            .expect("gesichert");
+        assert_eq!(wieder.konto(), &konto);
+        assert!(wieder.freigabe().ist_aktiv());
+        assert!(
+            Abgleich::wiederherstellen(Box::new(speicher(dir.path(), "konto-2", "dev-a")))
+                .unwrap()
+                .is_none(),
+            "anderes Konto: eigener Block"
+        );
     }
 
     #[test]
@@ -355,23 +502,14 @@ mod tests {
             Zustand::konto_kennung("ab", 1, &KEY),
             Zustand::konto_kennung("a", 1, &KEY)
         );
-        assert!(
-            !k1.contains(&B64.encode(KEY)),
-            "kein Schlüssel in der Kennung"
-        );
     }
 
     #[test]
-    fn zustand_je_konto_neues_geraet_behaelt_schluessel_aber_nicht_die_zulassung() {
+    fn zulassung_je_konto_und_geraet() {
         let mut z = Zustand::neu("geraet-a");
         z.zugelassen = true;
-        let mut bund = grundbund(&KEY).unwrap();
-        bund.neue_epoche().unwrap();
-        z.aus_bund(&bund);
         let json = z.in_datei(None, "konto-1").unwrap();
-        // Zweites Konto in derselben Datei: Eintrag eins bleibt unberührt.
-        let mut z2 = Zustand::neu("geraet-a");
-        z2.zugelassen = true;
+        let z2 = Zustand::neu("geraet-a");
         let json = z2.in_datei(Some(&json), "konto-2").unwrap();
         assert!(
             Zustand::aus_datei(Some(&json), "konto-1", "geraet-a")
@@ -379,19 +517,21 @@ mod tests {
                 .zugelassen
         );
         assert!(
-            Zustand::aus_datei(Some(&json), "konto-2", "geraet-a")
+            !Zustand::aus_datei(Some(&json), "konto-2", "geraet-a")
                 .unwrap()
                 .zugelassen
         );
-        let neu = Zustand::aus_datei(Some(&json), "konto-1", "geraet-b").unwrap();
-        assert!(!neu.zugelassen, "neues Gerät muss neu zugelassen werden");
-        assert_eq!(neu.epochen, z.epochen, "Schlüssel des Kontos bleiben");
-        let unbekannt = Zustand::aus_datei(Some(&json), "konto-3", "geraet-a").unwrap();
-        assert!(!unbekannt.zugelassen && unbekannt.epochen.is_empty());
-        assert!(Zustand::aus_datei(None, "k", "g")
-            .unwrap()
-            .epochen
-            .is_empty());
+        assert!(
+            !Zustand::aus_datei(Some(&json), "konto-1", "geraet-b")
+                .unwrap()
+                .zugelassen,
+            "neues Gerät muss neu zugelassen werden"
+        );
+        // Felder der alten Fassung stören nicht und verschwinden beim nächsten Schreiben.
+        let alt = r#"{"konten":{"k":{"geraet":"g","zugelassen":true,"epochen":{"2":"AAAA"},"offener_widerruf":null}}}"#;
+        let z = Zustand::aus_datei(Some(alt), "k", "g").unwrap();
+        assert!(z.zugelassen);
+        assert!(!z.in_datei(Some(alt), "k").unwrap().contains("epochen"));
     }
 
     #[test]
@@ -402,242 +542,46 @@ mod tests {
     }
 
     #[test]
-    fn epochen_ab_zwei_ueberleben_die_zustandsdatei() {
-        let mut bund = grundbund(&KEY).unwrap();
-        assert_eq!(bund.neue_epoche().unwrap(), 2);
-        let mut z = Zustand::neu("g");
-        z.aus_bund(&bund);
-        assert_eq!(z.epochen.keys().collect::<Vec<_>>(), ["2"]);
-        let z2 = Zustand::aus_datei(Some(&z.in_datei(None, "k").unwrap()), "k", "g").unwrap();
-        let wieder = z2.bund(&KEY).unwrap();
-        assert_eq!(wieder.aktuelle_epoche(), 2);
-        assert_eq!(
-            wieder.schluessel(2).unwrap().bytes(),
-            bund.schluessel(2).unwrap().bytes()
-        );
-        assert_eq!(
-            wieder.schluessel(1).unwrap().bytes(),
-            bund.schluessel(1).unwrap().bytes()
-        );
-        // Debug zeigt keinen Schlüssel.
-        let text = format!("{z:?}");
-        assert!(!text.contains(&B64.encode(bund.schluessel(2).unwrap().bytes())));
-    }
-
-    #[test]
-    fn offener_widerruf_ueberlebt_den_neustart() {
-        let o = OffenerWiderruf::neu(
-            "tablet",
-            3,
-            Hex128::zufall().unwrap(),
-            Schluessel::aus_bytes([5; KEY_LEN]),
-        );
-        let mut z = Zustand::neu("g");
-        z.offenen_widerruf_merken(Some(&o));
-        let z2 = Zustand::aus_datei(Some(&z.in_datei(None, "k").unwrap()), "k", "g").unwrap();
-        let o2 = z2.offenen_widerruf().unwrap().unwrap();
-        assert_eq!((o2.geraet(), o2.erwartete_epoche()), ("tablet", 3));
-        assert_eq!(o2.vorgang(), o.vorgang());
-        assert_eq!(o2.schluessel().bytes(), o.schluessel().bytes());
-        z.offenen_widerruf_merken(None);
-        assert!(z.offenen_widerruf().unwrap().is_none());
-        let kaputt = Zustand {
-            offener_widerruf: Some(OffenerWiderrufDatei {
-                geraet: "x".into(),
-                erwartete_epoche: 1,
-                vorgang: "kein-hex".into(),
-                schluessel: "AAAA".into(),
-            }),
-            ..Zustand::neu("g")
+    fn kopplungs_qr_rundlauf_ohne_geheimnis_im_debug() {
+        let hub = MemHub::new();
+        let k = Testkonto::mit_hub(&["dev-a"], &hub);
+        let a = k.geraet("dev-a");
+        let qr = KopplungsQr {
+            geraet_id: "dev-neu".into(),
+            freigabe_code: Zeroizing::new("Abcdefghijklmnopqrstuvwxyz0".into()),
+            angebot: a.kopplung_anbieten().unwrap(),
         };
-        assert!(kaputt.offenen_widerruf().is_err());
+        let text = qr.als_text().unwrap();
+        let zurueck = KopplungsQr::aus_text(&text).unwrap();
+        assert_eq!(zurueck.geraet_id, "dev-neu");
+        assert_eq!(
+            zurueck.freigabe_code.as_str(),
+            "Abcdefghijklmnopqrstuvwxyz0"
+        );
+        assert_eq!(&zurueck.angebot.konto, a.konto());
+        assert_eq!(zurueck.angebot.laenge, a.verzeichnis().laenge());
+        let dbg = format!("{zurueck:?}");
+        assert!(!dbg.contains("Abcdefghijklmnopqrstuvwxyz0"));
+        let geheimnis = serde_json::from_str::<Value>(&text).unwrap()["angebot"]["geheimnis"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert!(!dbg.contains(&geheimnis));
+        // Kaputte oder fremde Formen.
+        for falsch in [
+            String::from("{}"),
+            text.replace("\"v\":1", "\"v\":2"),
+            text.replace("dev-neu", "hat leerzeichen"),
+            text.replace("Abcdefghijklmnopqrstuvwxyz0", "kurz"),
+            format!("{}{}", &text[..text.len() - 1], ",\"x\":1}"),
+            "x".repeat(MAX_QR + 1),
+        ] {
+            assert!(KopplungsQr::aus_text(&falsch).is_err(), "{falsch:.40}");
+        }
     }
 
     #[test]
-    fn beschaedigte_epochen_sind_ein_fehler_und_kein_stiller_verlust() {
-        let mut z = Zustand::neu("g");
-        z.epochen.insert("2".into(), "AAAA".into());
-        assert!(z.bund(&KEY).is_err());
-        z.epochen.clear();
-        z.epochen.insert("zwei".into(), B64.encode([1u8; KEY_LEN]));
-        assert!(z.bund(&KEY).is_err());
-    }
-
-    // --- Widerruf: erst sichern, dann Hub ---------------------------------------------------
-
-    use std::cell::{Cell, RefCell};
-    use std::rc::Rc;
-    use wai_assistent::sync::{AuthGeraet, LeseFilter, MemHub, Sammlung, Schreiben, Umschlag};
-
-    /// Hub mit Absturz-Schalter: 0 normal, 1 Aufruf kommt nie an, 2 Hub wendet an, Antwort geht verloren.
-    struct Absturzhub {
-        inner: MemHub,
-        modus: Cell<u8>,
-        datei: Rc<RefCell<Option<String>>>,
-        aufrufe: Cell<u32>,
-    }
-
-    impl HubSpeicher for Absturzhub {
-        fn schreiben(&self, a: &AuthGeraet, u: &Umschlag) -> Result<Schreiben, HubFehler> {
-            self.inner.schreiben(a, u)
-        }
-        fn cas(
-            &self,
-            a: &AuthGeraet,
-            s: Sammlung,
-            id: &Hex128,
-            e: Option<u64>,
-            u: &Umschlag,
-        ) -> Result<u64, HubFehler> {
-            self.inner.cas(a, s, id, e, u)
-        }
-        fn holen(
-            &self,
-            a: &AuthGeraet,
-            s: Sammlung,
-            id: &Hex128,
-        ) -> Result<Option<Umschlag>, HubFehler> {
-            self.inner.holen(a, s, id)
-        }
-        fn lesen(&self, a: &AuthGeraet, f: &LeseFilter) -> Result<Vec<Umschlag>, HubFehler> {
-            self.inner.lesen(a, f)
-        }
-        fn widerrufen(
-            &self,
-            a: &AuthGeraet,
-            ziel: &str,
-            erwartet: u64,
-            vorgang: &Hex128,
-        ) -> Result<u64, HubFehler> {
-            self.aufrufe.set(self.aufrufe.get() + 1);
-            // Kandidat und Vorgangskennung müssen zu diesem Zeitpunkt schon auf der Platte liegen.
-            let gesichert = self.datei.borrow().as_deref().map(|t| {
-                Zustand::aus_datei(Some(t), "k", "pc")
-                    .unwrap()
-                    .offener_widerruf
-            });
-            assert!(
-                matches!(gesichert, Some(Some(ref d)) if d.vorgang == vorgang.as_str()),
-                "Hub-Aufruf vor dem dauerhaften Sichern"
-            );
-            match self.modus.get() {
-                1 => Err(HubFehler::Nichtverfuegbar),
-                2 => {
-                    let _ = self.inner.widerrufen(a, ziel, erwartet, vorgang);
-                    Err(HubFehler::Nichtverfuegbar)
-                }
-                _ => self.inner.widerrufen(a, ziel, erwartet, vorgang),
-            }
-        }
-        fn epoche(&self, a: &AuthGeraet) -> Result<u64, HubFehler> {
-            self.inner.epoche(a)
-        }
-        fn zugelassene(&self, a: &AuthGeraet) -> Result<Vec<String>, HubFehler> {
-            self.inner.zugelassene(a)
-        }
-    }
-
-    fn widerruf_aufbau() -> Absturzhub {
-        let inner = MemHub::new();
-        inner.zulassen("pc");
-        inner.zulassen("tablet");
-        Absturzhub {
-            inner,
-            modus: Cell::new(0),
-            datei: Rc::new(RefCell::new(None)),
-            aufrufe: Cell::new(0),
-        }
-    }
-
-    /// Ein „Prozesslauf“: Zustand frisch aus der Datei lesen, widerrufen, Datei schreiben.
-    fn widerruf_lauf(hub: &Absturzhub) -> Result<u64, WiderrufFehler> {
-        let text = hub.datei.borrow().clone();
-        let mut z = Zustand::aus_datei(text.as_deref(), "k", "pc").unwrap();
-        let datei = hub.datei.clone();
-        widerruf_durchfuehren(hub, "pc", &KEY, &mut z, "tablet", &mut |z| {
-            let alt = datei.borrow().clone();
-            let neu = z.in_datei(alt.as_deref(), "k")?;
-            *datei.borrow_mut() = Some(neu);
-            Ok(())
-        })
-    }
-
-    fn gesicherter_kandidat(hub: &Absturzhub) -> OffenerWiderruf {
-        let text = hub.datei.borrow().clone();
-        Zustand::aus_datei(text.as_deref(), "k", "pc")
-            .unwrap()
-            .offenen_widerruf()
-            .unwrap()
-            .expect("Kandidat gesichert")
-    }
-
-    #[test]
-    fn widerruf_absturz_zwischen_sichern_und_aufruf_wiederholt_mit_derselben_vorgangskennung() {
-        let hub = widerruf_aufbau();
-        hub.modus.set(1);
-        assert!(matches!(
-            widerruf_lauf(&hub),
-            Err(WiderrufFehler::Hub(HubFehler::Nichtverfuegbar))
-        ));
-        let kandidat = gesicherter_kandidat(&hub);
-        // Neustart: neuer Prozess, derselbe Vorgang, derselbe Schlüssel.
-        hub.modus.set(0);
-        assert_eq!(widerruf_lauf(&hub).unwrap(), 2);
-        let text = hub.datei.borrow().clone();
-        let z = Zustand::aus_datei(text.as_deref(), "k", "pc").unwrap();
-        assert!(z.offener_widerruf.is_none(), "Vormerkung ist abgeschlossen");
-        let bund = z.bund(&KEY).unwrap();
-        assert_eq!(bund.aktuelle_epoche(), 2);
-        assert_eq!(
-            bund.schluessel(2).unwrap().bytes(),
-            kandidat.schluessel().bytes(),
-            "der vor dem Aufruf gesicherte Schlüssel gilt"
-        );
-        assert_eq!(hub.inner.epoche(&AuthGeraet::new("pc")).unwrap(), 2);
-        assert!(!hub
-            .inner
-            .zugelassene(&AuthGeraet::new("pc"))
-            .unwrap()
-            .contains(&"tablet".to_string()));
-    }
-
-    #[test]
-    fn widerruf_absturz_nach_dem_aufruf_verliert_den_schluessel_nicht() {
-        let hub = widerruf_aufbau();
-        hub.modus.set(2);
-        assert!(widerruf_lauf(&hub).is_err(), "Antwort ging verloren");
-        assert_eq!(
-            hub.inner.epoche(&AuthGeraet::new("pc")).unwrap(),
-            2,
-            "Hub hat angewendet"
-        );
-        let kandidat = gesicherter_kandidat(&hub);
-        hub.modus.set(0);
-        assert_eq!(
-            widerruf_lauf(&hub).unwrap(),
-            2,
-            "idempotent mit derselben Kennung"
-        );
-        let text = hub.datei.borrow().clone();
-        let bund = Zustand::aus_datei(text.as_deref(), "k", "pc")
-            .unwrap()
-            .bund(&KEY)
-            .unwrap();
-        assert_eq!(
-            bund.schluessel(2).unwrap().bytes(),
-            kandidat.schluessel().bytes()
-        );
-        assert_eq!(hub.aufrufe.get(), 2);
-        assert_eq!(
-            hub.inner.epoche(&AuthGeraet::new("pc")).unwrap(),
-            2,
-            "keine dritte Epoche"
-        );
-    }
-
-    #[test]
-    fn geraetekennung_nach_der_hub_doku() {
-        // Die Kennung der App (32 Hexzeichen) passt.
+    fn geraetekennung_der_app() {
         assert_eq!(
             geraete_kennung("0123456789ABCDEF0123456789abcdef").as_deref(),
             Some("0123456789abcdef0123456789abcdef")

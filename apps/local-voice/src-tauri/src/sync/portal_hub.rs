@@ -1,16 +1,20 @@
-//! `PortalHub`: der Assistent-Sync-Hub im wai-portal als [`HubSpeicher`] (lva#388, ADR-0028 E3).
+//! `PortalHub`: der Assistent-Sync-Hub im wai-portal als [`HubSpeicher`] (lva#388, ADR-0028 E3, E3.8).
 //!
 //! Spricht die Endpunkte unter `/api/v1/assistent/sync/` (Doku: wai-portal `docs/ASSISTENT-SYNC.md`)
 //! und bildet deren Fehlercodes auf [`HubFehler`] des Sync-Kerns ab. Der Hub sieht nur Steuerfelder,
-//! Chiffrat und Nonce; dieser Baustein kennt keinen Schlüssel.
+//! Chiffrat, Nonce, das signierte Geräteverzeichnis und gewrappte Schlüsselpakete; dieser Baustein
+//! kennt keinen Schlüssel und vertraut dem Hub nicht: Er reicht nur durch, was der Kern prüft.
 //!
 //! Der Transport steckt hinter [`HubTransport`]: In der App ist es der Hub-Client des
 //! Bibliotheks-Syncs (selbes Token, selber HTTP-Weg einschließlich curl unter Windows, siehe
-//! `assistent_sync::ClientTransport`), in Tests ein Hub im Arbeitsspeicher.
+//! `assistent_sync::ClientTransport`), in Tests ein Hub im Arbeitsspeicher oder der echte PHP-Hub.
 //!
 //! Regeln:
-//! - Zähler (`nach_revision`, `erwartete_*`, `cursor`, `key_epoch`) gehen als Int64String
-//!   (`"17"`) über die Leitung, nie als JSON-Zahl.
+//! - Zähler (`nach_revision`, `erwartete_*`, `cursor`, `key_epoch`, `ab`, `nummer`, `epoche`) gehen als
+//!   Int64String (`"17"`) über die Leitung, nie als JSON-Zahl.
+//! - **Transportgrenzen (E3.8, Must-fix 7):** Umschläge, Verzeichniseinträge und Schlüsselpakete werden
+//!   nur über `Umschlag::liste_aus_json`/`aus_json`, `Verzeichniseintrag::aus_json` und
+//!   `Schluesselpaket::aus_json` gelesen; die Byte- und Anzahlgrenzen gelten dort.
 //! - Der authentifizierte Absender ist das Gerät des Tokens. Eine fremde [`AuthGeraet`] oder ein
 //!   fremdes `geraet_id` im Umschlag wird schon hier abgewiesen, ohne Netzaufruf.
 //! - Kein Inhalt im Log: Es wird höchstens der Fehlercode des Hubs (fester Kurztext) und der
@@ -22,20 +26,25 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Value};
 use wai_assistent::sync::{
-    AuthGeraet, Hex128, HubFehler, HubSpeicher, LeseFilter, Sammlung, Schreiben, Umschlag,
+    AuthGeraet, Hex128, HubFehler, HubSpeicher, LeseFilter, Sammlung, Schluesselpaket, Schreiben,
+    Umschlag, Verzeichniseintrag,
 };
-
-/// Pfadteil hinter `/api/v1/assistent/sync`.
-pub const BASIS: &str = "/api/v1/assistent/sync";
 
 /// Höchstlänge des Chiffrats (Base64-Zeichen), die der Hub annimmt (Hoster-Grenze, Hub-Doku).
 pub const MAX_CIPHERTEXT: usize = 4_300_000;
 
-/// Seitengröße beim Lesen (Höchstwert des Hubs).
-const LESE_SEITE: u32 = 100;
+/// Seitengröße beim Lesen von Objekten und Fassungen (Höchstwert des Hubs).
+const LESE_SEITE: usize = 100;
+
+/// Höchstens so viele Pakete je `POST /pakete` (Hub-Grenze).
+const PAKETE_JE_ANFRAGE: usize = 100;
 
 /// Obergrenze der Lese-Seiten je Aufruf (Schutz vor einem Hub, der nie aufhört).
 const MAX_SEITEN: usize = 100_000;
+
+/// Höchstzahl der Verzeichniseinträge und Pakete je Antwort (Kontingent des Hubs: 1000 bzw. 10 000).
+const MAX_VERZEICHNIS: usize = 10_000;
+const MAX_PAKETE: usize = 100_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Methode {
@@ -43,7 +52,7 @@ pub enum Methode {
     Post,
 }
 
-/// Eine Anfrage an den Hub. `pfad` steht hinter [`BASIS`], z. B. `/schreiben`.
+/// Eine Anfrage an den Hub. `pfad` steht hinter `/api/v1/assistent/sync`, z. B. `/schreiben`.
 #[derive(Debug, Clone)]
 pub struct Anfrage {
     pub methode: Methode,
@@ -97,9 +106,11 @@ pub struct PortalHub<T: HubTransport> {
 /// Fester Code, wenn die Schranke einen Aufruf verhindert hat.
 pub const CODE_ABGEBROCHEN: &str = "abgebrochen";
 
+const UNGUELTIG: HubFehler = HubFehler::Vertrag("Hub-Antwort ungueltig");
+
 impl<T: HubTransport> PortalHub<T> {
-    /// `geraet_id` ist die Kennung dieses Geräts (klein geschrieben, `[A-Za-z0-9._-]{1,64}`); der
-    /// Transport trägt das Token, das der Hub an dieses Gerät gebunden hat.
+    /// `geraet_id` ist die Kennung dieses Geräts; der Transport trägt das Token, das der Hub an dieses
+    /// Gerät gebunden hat.
     pub fn new(transport: T, geraet_id: &str) -> Self {
         Self {
             transport,
@@ -141,6 +152,12 @@ impl<T: HubTransport> PortalHub<T> {
         }
     }
 
+    /// Unbrauchbare Antwort des Hubs: Code merken, Vertragsfehler.
+    fn ungueltig(&self) -> HubFehler {
+        self.merken("antwort_ungueltig");
+        UNGUELTIG
+    }
+
     /// Schickt die Anfrage und liefert den Körper einer erfolgreichen (2xx) Antwort.
     fn aufruf(&self, anfrage: Anfrage) -> Result<Value, HubFehler> {
         if self.sperre.load(Ordering::SeqCst) {
@@ -168,7 +185,9 @@ impl<T: HubTransport> PortalHub<T> {
     }
 
     /// Lässt dieses Gerät am Hub zu (`POST /geraet`): als Erstgerät, per Kopplung oder mit
-    /// `freigabe_code` einer Freigabe eines zugelassenen Geräts. Gibt die aktuelle Epoche zurück.
+    /// `freigabe_code` einer Freigabe eines zugelassenen Geräts. Das ist nur die Transportzulassung;
+    /// die kryptografische Aufnahme läuft über das Geräteverzeichnis. Gibt die Epoche des Hubs zurück
+    /// (nur zur Anzeige, der Kern leitet die Epoche aus dem geprüften Verzeichnis ab).
     pub fn zulassen(&self, freigabe_code: Option<&str>) -> Result<u64, HubFehler> {
         let mut body = json!({ "geraet_id": self.geraet_id });
         if let Some(code) = freigabe_code {
@@ -180,7 +199,7 @@ impl<T: HubTransport> PortalHub<T> {
             query: Vec::new(),
             body: Some(body),
         })?;
-        zaehler(antwort.get("epoche")).ok_or(HubFehler::Vertrag("Hub-Antwort ungueltig"))
+        zaehler(antwort.get("epoche")).ok_or_else(|| self.ungueltig())
     }
 
     /// Gibt eine Kennung für ein weiteres Gerät frei (`POST /freigeben`). Nur durch ein
@@ -197,7 +216,7 @@ impl<T: HubTransport> PortalHub<T> {
             (Some(code), Some(gueltig_bis)) if !code.is_empty() => {
                 Ok(Freigabe { code, gueltig_bis })
             }
-            _ => Err(HubFehler::Vertrag("Hub-Antwort ungueltig")),
+            _ => Err(self.ungueltig()),
         }
     }
 
@@ -211,6 +230,75 @@ impl<T: HubTransport> PortalHub<T> {
             return Err(HubFehler::Vertrag("ciphertext zu gross fuer den Hub"));
         }
         Ok(())
+    }
+
+    /// Liste `feld` einer Antwort als rohe JSON-Bytes (für die `aus_json`-Funktionen des Kerns).
+    fn liste<'a>(&self, antwort: &'a Value, feld: &str) -> Result<&'a Vec<Value>, HubFehler> {
+        antwort
+            .get(feld)
+            .and_then(Value::as_array)
+            .ok_or_else(|| self.ungueltig())
+    }
+
+    /// Eine Seite Umschläge (`objekte` bzw. `fassungen`) über die Transportgrenze des Kerns.
+    fn umschlaege(&self, liste: &[Value]) -> Result<Vec<Umschlag>, HubFehler> {
+        let roh = serde_json::to_vec(liste).map_err(|_| self.ungueltig())?;
+        Umschlag::liste_aus_json(&roh, LESE_SEITE).map_err(|_| self.ungueltig())
+    }
+
+    /// Blättert über `/lesen` bzw. `/fassungen`: Revisionen streng steigend über `nach`, `mehr` nur
+    /// mit Fortschritt (sonst liest der Hub dieselbe Seite endlos).
+    fn blaettern(
+        &self,
+        pfad: &'static str,
+        feld: &str,
+        nach_revision: u64,
+        query: &[(&'static str, String)],
+    ) -> Result<Vec<Umschlag>, HubFehler> {
+        let mut alle: Vec<Umschlag> = Vec::new();
+        let mut nach = nach_revision;
+        for _ in 0..MAX_SEITEN {
+            let mut q = vec![
+                ("nach_revision", als_text(nach)),
+                ("limit", LESE_SEITE.to_string()),
+            ];
+            q.extend(query.iter().cloned());
+            let antwort = self.aufruf(Anfrage {
+                methode: Methode::Get,
+                pfad,
+                query: q,
+                body: None,
+            })?;
+            let seite = self.umschlaege(self.liste(&antwort, feld)?)?;
+            let mehr = antwort
+                .get("mehr")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let leer = seite.is_empty();
+            for u in seite {
+                let rev = u.revision.ok_or_else(|| self.ungueltig())?;
+                if rev <= nach {
+                    return Err(self.ungueltig());
+                }
+                nach = rev;
+                alle.push(u);
+            }
+            if !mehr {
+                return Ok(alle);
+            }
+            if leer {
+                return Err(self.ungueltig());
+            }
+            // `/lesen` nennt den Cursor ausdrücklich: er darf nicht hinter die letzte Revision fallen.
+            if let Some(c) = antwort.get("cursor") {
+                match zaehler(Some(c)) {
+                    Some(c) if c >= nach => nach = c,
+                    _ => return Err(self.ungueltig()),
+                }
+            }
+        }
+        self.merken("antwort_ungueltig");
+        Err(HubFehler::Vertrag("Hub liefert kein Ende"))
     }
 }
 
@@ -244,15 +332,15 @@ pub fn abbilden(status: u16, body: &Value) -> (HubFehler, String) {
         (Some("revision_konflikt"), _) => HubFehler::RevisionKonflikt { aktuell },
         (Some("epoche_veraltet"), _) => match zaehler(feld("mindest")) {
             Some(mindest) => HubFehler::EpocheVeraltet { mindest },
-            None => HubFehler::Vertrag("Hub-Antwort ungueltig"),
+            None => UNGUELTIG,
         },
         (Some("epoche_voraus"), _) => match aktuell {
             Some(aktuell) => HubFehler::EpocheVoraus { aktuell },
-            None => HubFehler::Vertrag("Hub-Antwort ungueltig"),
+            None => UNGUELTIG,
         },
-        (Some("epoche_konflikt"), _) => match aktuell {
-            Some(aktuell) => HubFehler::EpocheKonflikt { aktuell },
-            None => HubFehler::Vertrag("Hub-Antwort ungueltig"),
+        (Some("verzeichnis_konflikt"), _) => match zaehler(feld("laenge")) {
+            Some(laenge) => HubFehler::VerzeichnisKonflikt { laenge },
+            None => UNGUELTIG,
         },
         (Some("nicht_zugelassen"), _) => HubFehler::NichtZugelassen,
         (Some("widerrufen"), _) => HubFehler::Widerrufen,
@@ -286,12 +374,9 @@ fn vertrag_grund(grund: &str) -> &'static str {
         "eigenes_geraet_im_widerruf" => "eigenes Geraet im Widerruf",
         "letztes_geraet" => "letztes Geraet kann nicht widerrufen werden",
         "loeschmarke_zu_gross" => "Loeschmarke zu gross",
+        "verzeichniseintrag" => "Verzeichniseintrag abgewiesen",
         _ => "vom Hub abgewiesen",
     }
-}
-
-fn umschlag_aus(wert: &Value) -> Result<Umschlag, HubFehler> {
-    serde_json::from_value(wert.clone()).map_err(|_| HubFehler::Vertrag("Hub-Antwort ungueltig"))
 }
 
 impl<T: HubTransport> HubSpeicher for PortalHub<T> {
@@ -309,7 +394,7 @@ impl<T: HubTransport> HubSpeicher for PortalHub<T> {
         match (antwort.get("ergebnis").and_then(Value::as_str), revision) {
             (Some("neu"), Some(r)) => Ok(Schreiben::Neu(r)),
             (Some("vorhanden"), Some(r)) => Ok(Schreiben::Vorhanden(r)),
-            _ => Err(HubFehler::Vertrag("Hub-Antwort ungueltig")),
+            _ => Err(self.ungueltig()),
         }
     }
 
@@ -341,7 +426,7 @@ impl<T: HubTransport> HubSpeicher for PortalHub<T> {
                 "umschlag": body,
             })),
         })?;
-        zaehler(antwort.get("revision")).ok_or(HubFehler::Vertrag("Hub-Antwort ungueltig"))
+        zaehler(antwort.get("revision")).ok_or_else(|| self.ungueltig())
     }
 
     fn holen(
@@ -362,115 +447,135 @@ impl<T: HubTransport> HubSpeicher for PortalHub<T> {
         })?;
         match antwort.get("objekt") {
             Some(Value::Null) => Ok(None),
-            Some(u) => umschlag_aus(u).map(Some),
-            None => Err(HubFehler::Vertrag("Hub-Antwort ungueltig")),
+            Some(u) => {
+                let roh = serde_json::to_vec(u).map_err(|_| self.ungueltig())?;
+                Umschlag::aus_json(&roh)
+                    .map(Some)
+                    .map_err(|_| self.ungueltig())
+            }
+            None => Err(self.ungueltig()),
         }
+    }
+
+    fn fassungen_lesen(
+        &self,
+        auth: &AuthGeraet,
+        sammlung: Sammlung,
+        objekt_id: &Hex128,
+    ) -> Result<Vec<Umschlag>, HubFehler> {
+        self.pruefen_auth(auth)?;
+        self.blaettern(
+            "/fassungen",
+            "fassungen",
+            0,
+            &[
+                ("sammlung", sammlung.name().to_owned()),
+                ("objekt_id", objekt_id.as_str().to_owned()),
+            ],
+        )
     }
 
     fn lesen(&self, auth: &AuthGeraet, filter: &LeseFilter) -> Result<Vec<Umschlag>, HubFehler> {
         self.pruefen_auth(auth)?;
-        let mut alle: Vec<Umschlag> = Vec::new();
-        let mut nach = filter.nach_revision;
-        for _ in 0..MAX_SEITEN {
-            let mut query = vec![
-                ("nach_revision", als_text(nach)),
-                ("limit", LESE_SEITE.to_string()),
-            ];
-            if let Some(r) = &filter.unterhaltung_ref {
-                query.push(("unterhaltung_ref", r.as_str().to_owned()));
-            }
-            if let Some(s) = filter.sammlung {
-                query.push(("sammlung", s.name().to_owned()));
-            }
-            let antwort = self.aufruf(Anfrage {
-                methode: Methode::Get,
-                pfad: "/lesen",
-                query,
-                body: None,
-            })?;
-            let objekte = antwort
-                .get("objekte")
-                .and_then(Value::as_array)
-                .ok_or(HubFehler::Vertrag("Hub-Antwort ungueltig"))?;
-            let mehr = antwort
-                .get("mehr")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            let cursor = zaehler(antwort.get("cursor"));
-            for o in objekte {
-                let u = umschlag_aus(o)?;
-                // Aufsteigend und nur neuer als der Stand davor: sonst ist die Antwort unbrauchbar.
-                let rev = u
-                    .revision
-                    .ok_or(HubFehler::Vertrag("Hub-Antwort ungueltig"))?;
-                if rev <= nach {
-                    return Err(HubFehler::Vertrag("Hub-Antwort ungueltig"));
-                }
-                nach = rev;
-                alle.push(u);
-            }
-            if !mehr {
-                return Ok(alle);
-            }
-            // Mit `mehr` muss der Cursor vorwärts gehen, sonst liest der Hub dieselbe Seite endlos.
-            match cursor {
-                Some(c) if c >= nach && !objekte.is_empty() => nach = c,
-                _ => return Err(HubFehler::Vertrag("Hub-Antwort ungueltig")),
-            }
+        let mut query = Vec::new();
+        if let Some(r) = &filter.unterhaltung_ref {
+            query.push(("unterhaltung_ref", r.as_str().to_owned()));
         }
-        Err(HubFehler::Vertrag("Hub liefert kein Ende"))
+        if let Some(s) = filter.sammlung {
+            query.push(("sammlung", s.name().to_owned()));
+        }
+        self.blaettern("/lesen", "objekte", filter.nach_revision, &query)
     }
 
-    fn widerrufen(
+    fn verzeichnis_anhaengen(
         &self,
         auth: &AuthGeraet,
-        widerrufenes_geraet: &str,
-        erwartete_epoche: u64,
-        vorgang: &Hex128,
-    ) -> Result<u64, HubFehler> {
+        eintrag: &Verzeichniseintrag,
+    ) -> Result<(), HubFehler> {
         self.pruefen_auth(auth)?;
+        let body =
+            serde_json::to_value(eintrag).map_err(|_| HubFehler::Vertrag("Verzeichniseintrag"))?;
         let antwort = self.aufruf(Anfrage {
             methode: Methode::Post,
-            pfad: "/widerruf",
+            pfad: "/verzeichnis",
             query: Vec::new(),
-            body: Some(json!({
-                "widerrufenes_geraet": widerrufenes_geraet,
-                "erwartete_epoche": als_text(erwartete_epoche),
-                "vorgang": vorgang.as_str(),
-            })),
+            body: Some(json!({ "eintrag": body })),
         })?;
-        zaehler(antwort.get("epoche")).ok_or(HubFehler::Vertrag("Hub-Antwort ungueltig"))
+        // Die Länge danach ist nur ein Lebenszeichen; der Kern glaubt ihr nicht.
+        zaehler(antwort.get("laenge"))
+            .map(|_| ())
+            .ok_or_else(|| self.ungueltig())
     }
 
-    fn epoche(&self, auth: &AuthGeraet) -> Result<u64, HubFehler> {
+    fn verzeichnis_lesen(
+        &self,
+        auth: &AuthGeraet,
+        ab: u64,
+    ) -> Result<Vec<Verzeichniseintrag>, HubFehler> {
         self.pruefen_auth(auth)?;
         let antwort = self.aufruf(Anfrage {
             methode: Methode::Get,
-            pfad: "/epoche",
-            query: Vec::new(),
+            pfad: "/verzeichnis",
+            query: vec![("ab", als_text(ab))],
             body: None,
         })?;
-        zaehler(antwort.get("epoche")).ok_or(HubFehler::Vertrag("Hub-Antwort ungueltig"))
-    }
-
-    fn zugelassene(&self, auth: &AuthGeraet) -> Result<Vec<String>, HubFehler> {
-        self.pruefen_auth(auth)?;
-        let antwort = self.aufruf(Anfrage {
-            methode: Methode::Get,
-            pfad: "/geraete",
-            query: Vec::new(),
-            body: None,
-        })?;
-        let liste = antwort
-            .get("geraete")
-            .and_then(Value::as_array)
-            .ok_or(HubFehler::Vertrag("Hub-Antwort ungueltig"))?;
+        let liste = self.liste(&antwort, "eintraege")?;
+        if liste.len() > MAX_VERZEICHNIS {
+            return Err(self.ungueltig());
+        }
         liste
             .iter()
-            .map(|g| {
-                g.as_str()
-                    .map(str::to_owned)
-                    .ok_or(HubFehler::Vertrag("Hub-Antwort ungueltig"))
+            .map(|e| {
+                let roh = serde_json::to_vec(e).map_err(|_| self.ungueltig())?;
+                Verzeichniseintrag::aus_json(&roh).map_err(|_| self.ungueltig())
+            })
+            .collect()
+    }
+
+    fn pakete_ablegen(
+        &self,
+        auth: &AuthGeraet,
+        pakete: &[Schluesselpaket],
+    ) -> Result<(), HubFehler> {
+        self.pruefen_auth(auth)?;
+        if pakete.iter().any(|p| p.absender != self.geraet_id) {
+            self.merken("geraet_stimmt_nicht_ueberein");
+            return Err(HubFehler::GeraetStimmtNichtUeberein);
+        }
+        // Je Anfrage höchstens 100; jeder Stapel ist am Hub atomar und idempotent.
+        for stapel in pakete.chunks(PAKETE_JE_ANFRAGE) {
+            let body =
+                serde_json::to_value(stapel).map_err(|_| HubFehler::Vertrag("Schluesselpaket"))?;
+            let antwort = self.aufruf(Anfrage {
+                methode: Methode::Post,
+                pfad: "/pakete",
+                query: Vec::new(),
+                body: Some(json!({ "pakete": body })),
+            })?;
+            if zaehler(antwort.get("neu")).is_none() {
+                return Err(self.ungueltig());
+            }
+        }
+        Ok(())
+    }
+
+    fn pakete_lesen(&self, auth: &AuthGeraet) -> Result<Vec<Schluesselpaket>, HubFehler> {
+        self.pruefen_auth(auth)?;
+        let antwort = self.aufruf(Anfrage {
+            methode: Methode::Get,
+            pfad: "/pakete",
+            query: Vec::new(),
+            body: None,
+        })?;
+        let liste = self.liste(&antwort, "pakete")?;
+        if liste.len() > MAX_PAKETE {
+            return Err(self.ungueltig());
+        }
+        liste
+            .iter()
+            .map(|p| {
+                let roh = serde_json::to_vec(p).map_err(|_| self.ungueltig())?;
+                Schluesselpaket::aus_json(&roh).map_err(|_| self.ungueltig())
             })
             .collect()
     }
@@ -479,3 +584,7 @@ impl<T: HubTransport> HubSpeicher for PortalHub<T> {
 #[cfg(test)]
 #[path = "portal_hub_tests.rs"]
 pub(crate) mod tests;
+
+#[cfg(test)]
+#[path = "portal_hub_interop.rs"]
+mod interop;

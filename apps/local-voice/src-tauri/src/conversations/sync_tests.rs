@@ -1,14 +1,18 @@
 //! Tests der Anbindung des Gesprächsverlaufs an den Assistent-Sync (lva#388): Migration (E11),
 //! Freigabe (E3.6), Freigabeliste (E10), Grabsteine (E3.2) und der Rundlauf zwischen zwei Geräten.
-//! Hub ist der Referenz-Hub `MemHub`, einmal auch der Fake-HTTP-Hub über `PortalHub`.
+//! Hub ist der Referenz-Hub `MemHub`, einmal auch der Fake-HTTP-Hub über `PortalHub`. Jedes Gerät hat
+//! wie in der App einen dauerhaften Abgleich (E3.8), hier im Arbeitsspeicher eines Testkontos.
 //! Alle Daten sind synthetisch.
 
+use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use wai_assistent::sync::{
     Abgleich, AltUnterhaltung, AuthGeraet, Beitrag, Einschraenkung, Hex128, HubFehler, HubSpeicher,
-    Kopf, LeseFilter, MemHub, Modus, Sammlung, Schluesselbund, Schreiben, Umschlag, ZielTyp,
+    Kopf, LeseFilter, MemHub, Modus, Sammlung, Schluesselbund, Schluesselpaket, Schreiben,
+    Testkonto, Umschlag, Verzeichniseintrag, ZielTyp,
 };
 
 use super::*;
@@ -16,16 +20,36 @@ use crate::sync::portal_hub::tests::{konto_hub, netz, portal};
 
 const KONTO: &str = "konto-test";
 
-fn bund() -> Schluesselbund {
-    Schluesselbund::zufaellig().unwrap()
+/// Gekoppeltes Testkonto; je Gerät ein dauerhafter Abgleich (wie der Zustandsspeicher der App).
+struct Konto {
+    k: Testkonto,
+    geraete: RefCell<BTreeMap<String, Abgleich>>,
 }
 
-fn hub(geraete: &[&str]) -> Arc<MemHub> {
-    let h = Arc::new(MemHub::new());
-    for g in geraete {
-        h.zulassen(g);
+impl Konto {
+    fn bund(&self) -> &Schluesselbund {
+        self.k.bund()
     }
-    h
+
+    /// Ruft `f` mit dem dauerhaften Abgleich des Geräts auf (beim ersten Mal angelegt).
+    fn mit<R>(&self, g: &str, f: impl FnOnce(&mut Abgleich) -> R) -> R {
+        let mut m = self.geraete.borrow_mut();
+        let a = m.entry(g.to_owned()).or_insert_with(|| self.k.geraet(g));
+        f(a)
+    }
+}
+
+/// Konto mit diesen Geräten, das Verzeichnis liegt beim Hub.
+fn konto_auf(h: &MemHub, geraete: &[&str]) -> Konto {
+    Konto {
+        k: Testkonto::mit_hub(geraete, h),
+        geraete: RefCell::new(BTreeMap::new()),
+    }
+}
+
+fn konto(geraete: &[&str]) -> (Konto, Arc<MemHub>) {
+    let h = Arc::new(MemHub::new());
+    (konto_auf(&h, geraete), h)
 }
 
 fn eintrag(role: &str, text: &str) -> NewEntry {
@@ -98,10 +122,11 @@ fn gespraech_mit_titel(s: &ConversationStore, titel: &str) -> Option<String> {
 fn lauf_ok<H: HubSpeicher + ?Sized>(
     s: &ConversationStore,
     h: &H,
-    b: &Schluesselbund,
+    b: &Konto,
     g: &str,
 ) -> LaufBericht {
-    lauf(s, h, b.clone(), g, KONTO, true).unwrap_or_else(|e| panic!("Lauf scheitert: {e}"))
+    b.mit(g, |a| lauf(s, h, a, KONTO, true))
+        .unwrap_or_else(|e| panic!("Lauf scheitert: {e}"))
 }
 
 fn loeschmarken(h: &MemHub) -> usize {
@@ -170,17 +195,38 @@ impl HubSpeicher for Zaehlhub {
         self.zaehlen()?;
         self.inner.lesen(a, f)
     }
-    fn widerrufen(&self, a: &AuthGeraet, w: &str, e: u64, v: &Hex128) -> Result<u64, HubFehler> {
+    fn fassungen_lesen(
+        &self,
+        a: &AuthGeraet,
+        s: Sammlung,
+        i: &Hex128,
+    ) -> Result<Vec<Umschlag>, HubFehler> {
         self.zaehlen()?;
-        self.inner.widerrufen(a, w, e, v)
+        self.inner.fassungen_lesen(a, s, i)
     }
-    fn epoche(&self, a: &AuthGeraet) -> Result<u64, HubFehler> {
+    fn verzeichnis_anhaengen(
+        &self,
+        a: &AuthGeraet,
+        e: &Verzeichniseintrag,
+    ) -> Result<(), HubFehler> {
         self.zaehlen()?;
-        self.inner.epoche(a)
+        self.inner.verzeichnis_anhaengen(a, e)
     }
-    fn zugelassene(&self, a: &AuthGeraet) -> Result<Vec<String>, HubFehler> {
+    fn verzeichnis_lesen(
+        &self,
+        a: &AuthGeraet,
+        ab: u64,
+    ) -> Result<Vec<Verzeichniseintrag>, HubFehler> {
         self.zaehlen()?;
-        self.inner.zugelassene(a)
+        self.inner.verzeichnis_lesen(a, ab)
+    }
+    fn pakete_ablegen(&self, a: &AuthGeraet, p: &[Schluesselpaket]) -> Result<(), HubFehler> {
+        self.zaehlen()?;
+        self.inner.pakete_ablegen(a, p)
+    }
+    fn pakete_lesen(&self, a: &AuthGeraet) -> Result<Vec<Schluesselpaket>, HubFehler> {
+        self.zaehlen()?;
+        self.inner.pakete_lesen(a)
     }
 }
 
@@ -190,9 +236,8 @@ impl HubSpeicher for Zaehlhub {
 
 #[test]
 fn ref_entspricht_der_migration() {
-    let b = bund();
-    let mut a = Abgleich::new("dev-a", b.clone());
-    a.freigabe_einschalten();
+    let b = Testkonto::neu(&["dev-a"]);
+    let mut a = b.geraet("dev-a");
     let alt = AltUnterhaltung {
         id: "conv_01ARZ3NDEKTSV4RRFFQ69G5FAV".into(),
         titel: None,
@@ -202,14 +247,14 @@ fn ref_entspricht_der_migration() {
         eintraege: Vec::new(),
     };
     a.migrieren("bestand-1", std::slice::from_ref(&alt));
-    let erwartet = ref_aus_lokaler_id(&b, "bestand-1", &alt.id);
+    let erwartet = ref_aus_lokaler_id(b.bund(), "bestand-1", &alt.id);
     assert!(
         a.unterhaltung(&erwartet).is_some(),
         "die Ableitung des Hosts stimmt mit dem Kern überein"
     );
     assert_ne!(
         erwartet,
-        ref_aus_lokaler_id(&b, "bestand-2", &alt.id),
+        ref_aus_lokaler_id(b.bund(), "bestand-2", &alt.id),
         "Datenbestände kollidieren nie"
     );
 }
@@ -231,7 +276,7 @@ fn datenbestand_id_ist_stabil_und_zufaellig() {
 
 #[test]
 fn migration_ist_wiederholbar_und_dupliziert_nichts() {
-    let (b, h) = (bund(), hub(&["dev-a"]));
+    let (b, h) = konto(&["dev-a"]);
     let s = ConversationStore::open_in_memory().unwrap();
     gespraech(&s, "Eins", 4);
     gespraech(&s, "Zwei", 3);
@@ -246,7 +291,7 @@ fn migration_ist_wiederholbar_und_dupliziert_nichts() {
 
 #[test]
 fn neue_geraete_id_derselben_daten_ergibt_keine_dopplung_am_hub() {
-    let (b, h) = (bund(), hub(&["dev-a", "dev-a2"]));
+    let (b, h) = konto(&["dev-a", "dev-a2"]);
     let s = ConversationStore::open_in_memory().unwrap();
     gespraech(&s, "Eins", 4);
     lauf_ok(&s, &h, &b, "dev-a");
@@ -261,14 +306,12 @@ fn neue_geraete_id_derselben_daten_ergibt_keine_dopplung_am_hub() {
 
 #[test]
 fn migration_erfindet_keine_angaben() {
-    let (b, h) = (bund(), hub(&["dev-a"]));
+    let (b, h) = konto(&["dev-a", "dev-b"]);
     let s = ConversationStore::open_in_memory().unwrap();
     let id = gespraech(&s, "Eins", 2);
     lauf_ok(&s, &h, &b, "dev-a");
     // Gerät B liest: fehlendes Modell (Nutzerbeitrag) bleibt `unbekannt`, das gesetzte bleibt.
-    let mut b_dev = Abgleich::new("dev-b", b.clone());
-    b_dev.freigabe_einschalten();
-    h.zulassen("dev-b");
+    let mut b_dev = b.k.geraet("dev-b");
     b_dev.herunterladen(&h).unwrap();
     let bs: Vec<Beitrag> = b_dev
         .unterhaltungen()
@@ -289,11 +332,11 @@ fn migration_erfindet_keine_angaben() {
 
 #[test]
 fn e3_6_ohne_freigabe_kein_hub_zugriff_und_kein_lesen_der_gespraeche() {
-    let h = hub(&["dev-a"]);
+    let (b, h) = konto(&["dev-a"]);
     let z = Zaehlhub::neu(&h);
     let s = ConversationStore::open_in_memory().unwrap();
     gespraech(&s, "Eins", 2);
-    let r = lauf(&s, &z, bund(), "dev-a", KONTO, false);
+    let r = b.mit("dev-a", |a| lauf(&s, &z, a, KONTO, false));
     assert!(matches!(r, Err(LaufFehler::NichtFreigegeben)));
     assert_eq!(z.aufrufe.load(Ordering::SeqCst), 0, "kein Hub-Aufruf");
     assert_eq!(h.schreibversuche(), 0);
@@ -307,7 +350,7 @@ fn e3_6_ohne_freigabe_kein_hub_zugriff_und_kein_lesen_der_gespraeche() {
 
 #[test]
 fn vor_dem_ersten_lauf_gibt_es_keine_grabsteine_fuer_nie_synchrone_gespraeche() {
-    let (b, h) = (bund(), hub(&["dev-a"]));
+    let (b, h) = konto(&["dev-a"]);
     let s = ConversationStore::open_in_memory().unwrap();
     let id = gespraech(&s, "Nie synchron", 2);
     s.delete(&id).unwrap();
@@ -330,7 +373,7 @@ fn setze_klasse(s: &ConversationStore, id: &str, klasse: &str, sonder: bool) {
 
 #[test]
 fn e10_vertrauliche_und_lokale_gespraeche_werden_nie_hochgeladen() {
-    let (b, h) = (bund(), hub(&["dev-a"]));
+    let (b, h) = konto(&["dev-a"]);
     let s = ConversationStore::open_in_memory().unwrap();
     let normal = gespraech(&s, "Normal", 3);
     let lokal = gespraech(&s, "Nur lokal", 3);
@@ -361,14 +404,14 @@ fn e10_vertrauliche_und_lokale_gespraeche_werden_nie_hochgeladen() {
         (&unbekannt, "unbekannt"),
         (&sonder, "sonderkategorie"),
     ] {
-        let r = ref_aus_lokaler_id(&b, &datenbestand, id);
+        let r = ref_aus_lokaler_id(b.bund(), &datenbestand, id);
         assert_eq!(
             h.anzahl_je_unterhaltung(&r),
             0,
             "{name}: nichts am Hub, auch kein Kopf"
         );
     }
-    let r_normal = ref_aus_lokaler_id(&b, &datenbestand, &normal);
+    let r_normal = ref_aus_lokaler_id(b.bund(), &datenbestand, &normal);
     assert_eq!(
         h.anzahl_je_unterhaltung(&r_normal),
         4,
@@ -389,7 +432,7 @@ fn gespraech_mit_klasse_personal(s: &ConversationStore) {
 #[test]
 fn e10_geraet_lokal_wird_auch_nach_spaeterem_setzen_nicht_mehr_hochgeladen_und_nichts_uebernommen()
 {
-    let (b, h) = (bund(), hub(&["dev-a", "dev-b"]));
+    let (b, h) = konto(&["dev-a", "dev-b"]);
     let sa = ConversationStore::open_in_memory().unwrap();
     let sb = ConversationStore::open_in_memory().unwrap();
     let id = gespraech(&sa, "Wechsel", 2);
@@ -424,7 +467,7 @@ fn e10_geraet_lokal_wird_auch_nach_spaeterem_setzen_nicht_mehr_hochgeladen_und_n
 
 #[test]
 fn rundlauf_zwei_geraete_ohne_verlust_und_dopplung() {
-    let (b, h) = (bund(), hub(&["dev-a", "dev-b"]));
+    let (b, h) = konto(&["dev-a", "dev-b"]);
     let sa = ConversationStore::open_in_memory().unwrap();
     let sb = ConversationStore::open_in_memory().unwrap();
     let id_a = gespraech(&sa, "Rundlauf", 6);
@@ -466,7 +509,7 @@ fn rundlauf_zwei_geraete_ohne_verlust_und_dopplung() {
 
 #[test]
 fn offline_fortsetzung_auf_beiden_geraeten_fuehrt_ohne_verlust_zusammen() {
-    let (b, h) = (bund(), hub(&["dev-a", "dev-b"]));
+    let (b, h) = konto(&["dev-a", "dev-b"]);
     let sa = ConversationStore::open_in_memory().unwrap();
     let sb = ConversationStore::open_in_memory().unwrap();
     let id_a = gespraech(&sa, "Offline", 2);
@@ -491,7 +534,7 @@ fn offline_fortsetzung_auf_beiden_geraeten_fuehrt_ohne_verlust_zusammen() {
 
 #[test]
 fn fehlerhafte_beitraege_bleiben_lokal() {
-    let (b, h) = (bund(), hub(&["dev-a", "dev-b"]));
+    let (b, h) = konto(&["dev-a", "dev-b"]);
     let sa = ConversationStore::open_in_memory().unwrap();
     let sb = ConversationStore::open_in_memory().unwrap();
     let id = gespraech(&sa, "Fehler", 2);
@@ -506,7 +549,7 @@ fn fehlerhafte_beitraege_bleiben_lokal() {
 
 #[test]
 fn titel_und_anheftung_wandern_und_aeltere_staende_ueberschreiben_nichts() {
-    let (b, h) = (bund(), hub(&["dev-a", "dev-b"]));
+    let (b, h) = konto(&["dev-a", "dev-b"]);
     let sa = ConversationStore::open_in_memory().unwrap();
     let sb = ConversationStore::open_in_memory().unwrap();
     let id_a = gespraech(&sa, "Alt", 2);
@@ -542,7 +585,7 @@ fn titel_und_anheftung_wandern_und_aeltere_staende_ueberschreiben_nichts() {
 
 #[test]
 fn e3_2_geloeschtes_gespraech_setzt_grabstein_und_verschwindet_auf_dem_anderen_geraet() {
-    let (b, h) = (bund(), hub(&["dev-a", "dev-b"]));
+    let (b, h) = konto(&["dev-a", "dev-b"]);
     let sa = ConversationStore::open_in_memory().unwrap();
     let sb = ConversationStore::open_in_memory().unwrap();
     let id_a = gespraech(&sa, "Weg damit", 3);
@@ -579,7 +622,7 @@ fn e3_2_geloeschtes_gespraech_setzt_grabstein_und_verschwindet_auf_dem_anderen_g
     assert!(gespraech_mit_titel(&sb, "Weg damit").is_none());
     assert_eq!(
         h.anzahl_je_unterhaltung(&ref_aus_lokaler_id(
-            &b,
+            b.bund(),
             &sa.sync_datenbestand_id().unwrap(),
             &id_a
         )),
@@ -592,7 +635,7 @@ fn e3_2_geloeschtes_gespraech_setzt_grabstein_und_verschwindet_auf_dem_anderen_g
 
 #[test]
 fn e3_2_grabstein_eines_gespraechs_von_einem_anderen_geraet_traegt_dessen_hub_kennung() {
-    let (b, h) = (bund(), hub(&["dev-a", "dev-b"]));
+    let (b, h) = konto(&["dev-a", "dev-b"]);
     let sa = ConversationStore::open_in_memory().unwrap();
     let sb = ConversationStore::open_in_memory().unwrap();
     gespraech(&sa, "Gemeinsam", 2);
@@ -609,7 +652,7 @@ fn e3_2_grabstein_eines_gespraechs_von_einem_anderen_geraet_traegt_dessen_hub_ke
 
 #[test]
 fn e3_2_grabstein_geht_bei_hubausfall_nicht_verloren() {
-    let (b, h) = (bund(), hub(&["dev-a"]));
+    let (b, h) = konto(&["dev-a"]);
     let s = ConversationStore::open_in_memory().unwrap();
     let id = gespraech(&s, "Ausfall", 2);
     lauf_ok(&s, &h, &b, "dev-a");
@@ -617,7 +660,7 @@ fn e3_2_grabstein_geht_bei_hubausfall_nicht_verloren() {
 
     let z = Zaehlhub::neu(&h);
     z.ausfall.store(true, Ordering::SeqCst);
-    let r = lauf(&s, &z, b.clone(), "dev-a", KONTO, true);
+    let r = b.mit("dev-a", |a| lauf(&s, &z, a, KONTO, true));
     assert!(matches!(r, Err(LaufFehler::Sync(_))));
     assert_eq!(
         s.sync_grabsteine_offen(KONTO).unwrap().len(),
@@ -635,7 +678,7 @@ fn e3_2_grabstein_geht_bei_hubausfall_nicht_verloren() {
 
 #[test]
 fn e10_geloeschtes_lokales_gespraech_das_nie_beim_hub_war_erzeugt_keine_loeschmarke() {
-    let (b, h) = (bund(), hub(&["dev-a"]));
+    let (b, h) = konto(&["dev-a"]);
     let s = ConversationStore::open_in_memory().unwrap();
     let lokal = gespraech(&s, "Lokal", 2);
     s.sync_geraet_lokal_setzen(&lokal, true).unwrap();
@@ -655,16 +698,15 @@ fn e10_geloeschtes_lokales_gespraech_das_nie_beim_hub_war_erzeugt_keine_loeschma
 
 #[test]
 fn eingetroffener_beitrags_grabstein_loescht_den_beitrag_lokal() {
-    let (b, h) = (bund(), hub(&["dev-a", "dev-b", "dev-x"]));
+    let (b, h) = konto(&["dev-a", "dev-b", "dev-x"]);
     let sa = ConversationStore::open_in_memory().unwrap();
     let id_a = gespraech(&sa, "Beitragsloeschung", 3);
     lauf_ok(&sa, &h, &b, "dev-a");
-    let ref_a = ref_aus_lokaler_id(&b, &sa.sync_datenbestand_id().unwrap(), &id_a);
+    let ref_a = ref_aus_lokaler_id(b.bund(), &sa.sync_datenbestand_id().unwrap(), &id_a);
     let opfer = ids(&sa, &id_a)[1].clone();
 
     // Ein weiteres Gerät (reiner Kern) löscht einen Beitrag.
-    let mut x = Abgleich::new("dev-x", b.clone());
-    x.freigabe_einschalten();
+    let mut x = b.k.geraet("dev-x");
     x.herunterladen(&h).unwrap();
     x.beitrag_loeschen(&ref_a, &opfer).unwrap();
     x.hochladen(&h).unwrap();
@@ -688,10 +730,9 @@ fn eingetroffener_beitrags_grabstein_loescht_den_beitrag_lokal() {
 
 #[test]
 fn gespraech_mit_vertraulichen_beitraegen_von_aussen_wird_lokal_gesperrt() {
-    let (b, h) = (bund(), hub(&["dev-x", "dev-a"]));
+    let (b, h) = konto(&["dev-x", "dev-a"]);
     // Ein anderes Gerät (iOS) lädt ein Gespräch mit vertraulichem Beitrag hoch.
-    let mut x = Abgleich::new("dev-x", b.clone());
-    x.freigabe_einschalten();
+    let mut x = b.k.geraet("dev-x");
     let r = x
         .unterhaltung_anlegen(
             Kopf {
@@ -735,9 +776,8 @@ fn gespraech_mit_vertraulichen_beitraegen_von_aussen_wird_lokal_gesperrt() {
 
 #[test]
 fn beitraege_mit_fremder_kennung_werden_gezaehlt_aber_nicht_abgelegt() {
-    let (b, h) = (bund(), hub(&["dev-x", "dev-a"]));
-    let mut x = Abgleich::new("dev-x", b.clone());
-    x.freigabe_einschalten();
+    let (b, h) = konto(&["dev-x", "dev-a"]);
+    let mut x = b.k.geraet("dev-x");
     let r = x
         .unterhaltung_anlegen(
             Kopf {
@@ -824,7 +864,7 @@ fn migration_des_speichers_behaelt_bestehende_daten_und_setzt_sichere_standardwe
 fn grabstein_und_zuordnung_ueberleben_einen_neustart() {
     let dir = tempfile::tempdir().unwrap();
     let pfad = dir.path().join("conversations.db");
-    let (b, h) = (bund(), hub(&["dev-a"]));
+    let (b, h) = konto(&["dev-a"]);
     let id = {
         let s = ConversationStore::open(&pfad).unwrap();
         let id = gespraech(&s, "Neustart", 2);
@@ -846,10 +886,10 @@ fn grabstein_und_zuordnung_ueberleben_einen_neustart() {
 
 #[test]
 fn rundlauf_und_grabstein_ueber_den_portal_hub() {
-    let b = bund();
-    let (hub, konto) = konto_hub();
-    let pa = portal(&hub, &konto, "dev-a");
-    let pb = portal(&hub, &konto, "dev-b");
+    let (hub, pk) = konto_hub();
+    let b = konto_auf(&hub, &["dev-a", "dev-b"]);
+    let pa = portal(&hub, &pk, "dev-a");
+    let pb = portal(&hub, &pk, "dev-b");
     let sa = ConversationStore::open_in_memory().unwrap();
     let sb = ConversationStore::open_in_memory().unwrap();
     let id_a = gespraech(&sa, "Über HTTP", 5);
@@ -872,15 +912,15 @@ fn rundlauf_und_grabstein_ueber_den_portal_hub() {
 
 #[test]
 fn hubausfall_ueber_den_portal_hub_laesst_lokale_daten_unberuehrt() {
-    let b = bund();
-    let (hub, konto) = konto_hub();
-    let aus = portal(&hub, &konto, "dev-a");
+    let (hub, pk) = konto_hub();
+    let b = konto_auf(&hub, &["dev-a"]);
+    let aus = portal(&hub, &pk, "dev-a");
     let s = ConversationStore::open_in_memory().unwrap();
     let id = gespraech(&s, "Offline", 3);
     // Netz weg: der Transport meldet Netzfehler, der Lauf bricht ab.
     netz(&aus, false);
     assert!(matches!(
-        lauf(&s, &aus, b.clone(), "dev-a", KONTO, true),
+        b.mit("dev-a", |a| lauf(&s, &aus, a, KONTO, true)),
         Err(LaufFehler::Sync(_))
     ));
     assert_eq!(texte(&s, &id).len(), 3);
@@ -894,9 +934,9 @@ fn hubausfall_ueber_den_portal_hub_laesst_lokale_daten_unberuehrt() {
 // ---------------------------------------------------------------------------------------------
 
 /// Texte aller Beiträge, wie der Hub sie (für ein Gerät mit dem Schlüssel) enthält.
-fn hub_texte(h: &MemHub, b: &Schluesselbund) -> Vec<String> {
-    let mut a = Abgleich::new("dev-a", b.clone());
-    a.freigabe_einschalten();
+fn hub_texte(h: &MemHub, b: &Konto) -> Vec<String> {
+    let mut a =
+        b.k.geraet(b.k.verzeichnis().eintraege()[0].unterzeichner.as_str());
     a.herunterladen(h).unwrap();
     let mut t: Vec<String> = a
         .unterhaltungen()
@@ -913,16 +953,19 @@ fn hub_texte(h: &MemHub, b: &Schluesselbund) -> Vec<String> {
 
 #[test]
 fn loeschen_im_fenster_nach_der_momentaufnahme_hinterlaesst_einen_grabstein_und_belebt_nichts() {
-    let (b, h) = (bund(), hub(&["dev-a", "dev-b"]));
+    let (b, h) = konto(&["dev-a", "dev-b"]);
     let s = ConversationStore::open_in_memory().unwrap();
     let id = gespraech(&s, "Fenster", 2);
     // Das Gespräch war noch nie beim Hub: genau das ist das gefährliche Fenster.
     let mut geloescht = false;
-    let r = lauf_mit(&s, &*h, b.clone(), "dev-a", KONTO, true, &mut || {
-        s.delete(&id).unwrap();
-        geloescht = true;
-    })
-    .unwrap();
+    let r = b
+        .mit("dev-a", |a| {
+            lauf_mit(&s, &*h, a, KONTO, true, &mut || {
+                s.delete(&id).unwrap();
+                geloescht = true;
+            })
+        })
+        .unwrap();
     assert!(geloescht);
     assert!(lokale_ids(&s).is_empty(), "nichts wiederbelebt");
     assert_eq!(r.unterhaltungen_neu, 0);
@@ -946,7 +989,7 @@ fn loeschen_im_fenster_nach_der_momentaufnahme_hinterlaesst_einen_grabstein_und_
 
 #[test]
 fn korrigierter_beitrag_entfernt_den_alten_text_beim_hub() {
-    let (b, h) = (bund(), hub(&["dev-a", "dev-b"]));
+    let (b, h) = konto(&["dev-a", "dev-b"]);
     let (sa, sb) = (
         ConversationStore::open_in_memory().unwrap(),
         ConversationStore::open_in_memory().unwrap(),
@@ -995,22 +1038,25 @@ fn korrigierter_beitrag_entfernt_den_alten_text_beim_hub() {
 
 #[test]
 fn gespraeche_eines_anderen_kontos_gehen_nie_in_das_neue_konto_und_grabsteine_bleiben() {
-    let b = bund();
-    let (h1, h2) = (hub(&["dev-a"]), hub(&["dev-a"]));
+    // Zwei Konten, je mit eigenem Hub und eigenem dauerhaftem Zustand desselben Geräts.
+    let ((b1, h1), (b2, h2)) = (konto(&["dev-a"]), konto(&["dev-a"]));
     let s = ConversationStore::open_in_memory().unwrap();
     let altes = gespraech(&s, "Altes Konto", 2);
     let (weg, bleibt) = (gespraech(&s, "Wird gelöscht", 2), altes.clone());
-    lauf(&s, &*h1, b.clone(), "dev-a", "konto-1", true).unwrap();
+    b1.mit("dev-a", |a| lauf(&s, &*h1, a, "konto-1", true))
+        .unwrap();
     s.delete(&weg).unwrap();
     // Hub 1 ist gerade nicht erreichbar: der Grabstein bleibt offen und gehört zu Konto 1.
     assert_eq!(s.sync_grabsteine_offen("konto-1").unwrap().len(), 1);
 
     // Anderes Konto am anderen Hub: die Gespräche des alten Kontos werden nicht hochgeladen.
     let neu = gespraech(&s, "Neues Konto", 2);
-    let r = lauf(&s, &*h2, b.clone(), "dev-a", "konto-2", true).unwrap();
+    let r = b2
+        .mit("dev-a", |a| lauf(&s, &*h2, a, "konto-2", true))
+        .unwrap();
     assert_eq!(r.beitraege_hoch, 2, "nur das neue Gespräch geht hoch");
     assert_eq!(h2.anzahl(Sammlung::Unterhaltung), 1);
-    assert!(hub_texte(&h2, &b)
+    assert!(hub_texte(&h2, &b2)
         .iter()
         .all(|t| t.starts_with("Neues Konto")));
     assert!(
@@ -1026,14 +1072,16 @@ fn gespraeche_eines_anderen_kontos_gehen_nie_in_das_neue_konto_und_grabsteine_bl
         "aufbewahrt, nie gelöscht"
     );
     // Zurück zu Konto 1: der Grabstein geht jetzt hoch.
-    let r = lauf(&s, &*h1, b.clone(), "dev-a", "konto-1", true).unwrap();
+    let r = b1
+        .mit("dev-a", |a| lauf(&s, &*h1, a, "konto-1", true))
+        .unwrap();
     assert_eq!(r.grabsteine_hoch, 1);
     assert_eq!(loeschmarken(&h1), 1);
 }
 
 #[test]
 fn grabstein_mit_gespeicherter_fremder_kennung_wird_nur_mit_dieser_kennung_erledigt() {
-    let (b, h) = (bund(), hub(&["dev-a", "dev-b"]));
+    let (b, h) = konto(&["dev-a", "dev-b"]);
     let sa = ConversationStore::open_in_memory().unwrap();
     let sb = ConversationStore::open_in_memory().unwrap();
     gespraech(&sa, "Fremd", 2);
@@ -1048,10 +1096,10 @@ fn grabstein_mit_gespeicherter_fremder_kennung_wird_nur_mit_dieser_kennung_erled
         .unwrap()
         .0;
     sb.delete(&id_b).unwrap();
-    // Eine andere, leere Hub-Welt kennt die gespeicherte Kennung nicht: nichts wird unter einer
-    // abgeleiteten Kennung begraben, der Grabstein bleibt offen.
-    let leer = hub(&["dev-b"]);
-    let r = lauf_ok(&sb, &*leer, &b, "dev-b");
+    // Ein Gerätezustand, der die gespeicherte Kennung nicht kennt (frisch gekoppelt, leerer Hub): nichts
+    // wird unter einer abgeleiteten Kennung begraben, der Grabstein bleibt offen.
+    let (anders, leer) = konto(&["dev-b"]);
+    let r = lauf_ok(&sb, &*leer, &anders, "dev-b");
     assert_eq!(r.grabsteine_hoch, 0);
     assert_eq!(loeschmarken(&leer), 0);
     assert_eq!(sb.sync_grabsteine_offen(KONTO).unwrap().len(), 1);
@@ -1068,15 +1116,14 @@ fn grabstein_mit_gespeicherter_fremder_kennung_wird_nur_mit_dieser_kennung_erled
 
 #[test]
 fn loeschwissen_bleibt_dauerhaft_gegen_einen_aelteren_hubstand() {
-    let b = bund();
-    let (neu, alt) = (hub(&["dev-a"]), hub(&["dev-a"]));
+    let (b, h) = konto(&["dev-a"]);
     let s = ConversationStore::open_in_memory().unwrap();
     let id = gespraech(&s, "Wiederauftauchen", 2);
-    lauf_ok(&s, &*alt, &b, "dev-a");
-    lauf_ok(&s, &*neu, &b, "dev-a");
+    lauf_ok(&s, &*h, &b, "dev-a");
+    let aelter = h.schnappschuss();
     s.delete(&id).unwrap();
-    lauf_ok(&s, &*neu, &b, "dev-a");
-    assert_eq!(loeschmarken(&neu), 1);
+    lauf_ok(&s, &*h, &b, "dev-a");
+    assert_eq!(loeschmarken(&h), 1);
     assert!(
         s.sync_grabsteine_offen(KONTO).unwrap().is_empty(),
         "bestätigt"
@@ -1086,9 +1133,11 @@ fn loeschwissen_bleibt_dauerhaft_gegen_einen_aelteren_hubstand() {
         1,
         "Löschwissen bleibt"
     );
-    // Der ältere Stand kennt das Gespräch noch und hat keine Löschmarke.
-    let r = lauf_ok(&s, &*alt, &b, "dev-a");
-    assert_eq!(r.unterhaltungen_neu, 0);
+    // Der Hub spielt einen älteren Stand zurück: er kennt das Gespräch noch und hat keine Löschmarke.
+    h.zuruecksetzen(&aelter);
+    if let Ok(r) = b.mit("dev-a", |a| lauf(&s, &*h, a, KONTO, true)) {
+        assert_eq!(r.unterhaltungen_neu, 0);
+    }
     assert!(lokale_ids(&s).is_empty(), "nichts kommt zurück");
 }
 
@@ -1109,18 +1158,20 @@ fn migration_legt_vor_dem_schemawechsel_eine_sicherung_an() {
 fn ausschalten_waehrend_eines_laufs_stoppt_jeden_weiteren_netzaufruf() {
     use crate::sync::portal_hub::tests::FakeHttp;
     use crate::sync::portal_hub::PortalHub;
-    let (mh, konto) = konto_hub();
+    let (mh, pk) = konto_hub();
+    let b = konto_auf(&mh, &["dev-a"]);
     let schranke = Arc::new(AtomicBool::new(false));
-    let p =
-        PortalHub::new(FakeHttp::neu(&mh, &konto, "dev-a"), "dev-a").mit_sperre(schranke.clone());
+    let p = PortalHub::new(FakeHttp::neu(&mh, &pk, "dev-a"), "dev-a").mit_sperre(schranke.clone());
     p.zulassen(None).unwrap();
     let s = ConversationStore::open_in_memory().unwrap();
     gespraech(&s, "Läuft", 2);
     let stand = std::cell::Cell::new(0usize);
     // Der Nutzer schaltet mitten im Lauf aus: direkt nach der Momentaufnahme, vor dem Hochladen.
-    let r = lauf_mit(&s, &p, bund(), "dev-a", KONTO, true, &mut || {
-        schranke.store(true, Ordering::SeqCst);
-        stand.set(p.transport.log.lock().unwrap().len());
+    let r = b.mit("dev-a", |a| {
+        lauf_mit(&s, &p, a, KONTO, true, &mut || {
+            schranke.store(true, Ordering::SeqCst);
+            stand.set(p.transport.log.lock().unwrap().len());
+        })
     });
     assert!(matches!(r, Err(LaufFehler::Sync(_))));
     assert_eq!(

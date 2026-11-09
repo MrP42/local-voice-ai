@@ -1,9 +1,11 @@
 //! Anbindung des Gesprächsverlaufs an den Assistent-Sync (lva#388, ADR-0028 A1: E3, E10, E11).
 //!
-//! Der Sync-Kern (`wai_assistent::sync`) hält den Abgleich nur im Arbeitsspeicher und kennt keine
-//! Datenbank. Dieses Modul baut ihn bei jedem Lauf aus `conversations.db` neu auf, lässt ihn gegen
-//! den Hub laufen und schreibt das Ergebnis zurück. Reine Logik über [`ConversationStore`] und
-//! [`HubSpeicher`]: kein Tauri, kein Netz, keine Systemuhr.
+//! Der Sync-Kern (`wai_assistent::sync`) kennt keine Datenbank. Sein Zustand (Geräteschlüssel,
+//! geprüftes Verzeichnis, Höchststände als Prüfpunkte, Grabsteine, Ausgang, Unterhaltungen) liegt
+//! dauerhaft in einem Zustandsspeicher des Hosts (`assistent_zustand::DateiSpeicher`, E3.8); der Aufrufer
+//! lädt ihn vor dem Lauf und übergibt den [`Abgleich`]. Dieses Modul gleicht ihn mit `conversations.db`
+//! ab, lässt ihn gegen den Hub laufen und schreibt das Ergebnis zurück. Reine Logik über
+//! [`ConversationStore`] und [`HubSpeicher`]: kein Tauri, kein Netz, keine Systemuhr.
 //!
 //! Ablauf eines Laufs ([`lauf`]):
 //! 1. **Freigabe (E3.6):** Ohne Freigabe kein Hub-Zugriff und kein Lesen der Gespräche.
@@ -16,7 +18,9 @@
 //!    (`confidential`/`restricted`, auch unbekannte Datenklasse, sowie Sonderkategorie) gehen als
 //!    `geraet_lokal` in den Abgleich und werden nie hochgeladen. Der Kern setzt das durch.
 //! 5. **Grabsteine (E3.2):** Lokal gelöschte Gespräche (vom Speicher vorgemerkt) gehen je
-//!    `unterhaltung_ref` hoch, wenn das Gespräch je für den Hub bestimmt war.
+//!    `unterhaltung_ref` hoch, wenn das Gespräch je für den Hub bestimmt war. Lokal gelöschte Gespräche,
+//!    die nie für den Hub bestimmt waren, löscht der Kern nur lokal (kein Metadatenabfluss), damit sie
+//!    aus dem dauerhaften Zustand nicht als „fremde“ Gespräche wiederkommen.
 //! 6. **Hochladen**, dann **Zurückschreiben:** neue Gespräche und Beiträge anderer Geräte, geänderte
 //!    Köpfe und eingetroffene Grabsteine (löschen lokal, belebt nichts wieder).
 //!
@@ -30,7 +34,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use wai_assistent::sync::{
     Abgleich, AltUnterhaltung, Beitrag, Datenklasse, Einschraenkung, Hex128, HubSpeicher, Kopf,
-    Modus, Schluesselbund, SyncFehler,
+    LeaseFehler, Modus, Schluesselbund, SyncFehler,
 };
 
 use super::store::{
@@ -52,6 +56,10 @@ pub enum LaufFehler {
     Sync(SyncFehler),
     /// Fehler im lokalen Speicher (Meldungen des Speichers enthalten keine Inhalte).
     Speicher(String),
+    /// Fehler an der Lease einer Sprachsitzung (E3.3).
+    Lease(LeaseFehler),
+    /// Das Gespräch ist dem Abgleich (noch) nicht bekannt.
+    Unbekannt,
 }
 
 impl fmt::Display for LaufFehler {
@@ -60,6 +68,8 @@ impl fmt::Display for LaufFehler {
             Self::NichtFreigegeben => write!(f, "Der Assistent-Sync ist nicht freigegeben."),
             Self::Sync(e) => write!(f, "{e}"),
             Self::Speicher(m) => write!(f, "{m}"),
+            Self::Lease(e) => write!(f, "{e}"),
+            Self::Unbekannt => write!(f, "Das Gespräch ist dem Abgleich nicht bekannt."),
         }
     }
 }
@@ -249,17 +259,18 @@ impl BeitragIds {
 }
 
 /// Ein Sync-Lauf (siehe Moduldoku). `freigegeben` ist der Schalter `assistent_sync_aktiv`; ohne ihn
-/// passiert nichts, auch kein Lesen. `konto` ist die Kennung des angemeldeten Kontos: Gespräche, die
-/// unter einem anderen Konto für den Hub bestimmt wurden, gehen nie in dieses.
+/// passiert nichts, auch kein Lesen und kein Hub-Zugriff. `konto` ist die Kennung des angemeldeten
+/// Kontos: Gespräche, die unter einem anderen Konto für den Hub bestimmt wurden, gehen nie in dieses.
+/// `abgleich` ist der aus dem Zustandsspeicher geladene Kern dieses Kontos und Geräts; er sichert sich
+/// selbst (vor jedem Hub-Schreiben, nach jeder Hub-Runde) und ist nach einem Sicherungsfehler gesperrt.
 pub fn lauf<H: HubSpeicher + ?Sized>(
     store: &ConversationStore,
     hub: &H,
-    bund: Schluesselbund,
-    geraet_id: &str,
+    abgleich: &mut Abgleich,
     konto: &str,
     freigegeben: bool,
 ) -> Result<LaufBericht, LaufFehler> {
-    lauf_mit(store, hub, bund, geraet_id, konto, freigegeben, &mut || {})
+    lauf_mit(store, hub, abgleich, konto, freigegeben, &mut || {})
 }
 
 /// Wie [`lauf`]; `nach_momentaufnahme` läuft direkt nach der Momentaufnahme des Verlaufs und vor allem,
@@ -267,8 +278,7 @@ pub fn lauf<H: HubSpeicher + ?Sized>(
 pub fn lauf_mit<H: HubSpeicher + ?Sized>(
     store: &ConversationStore,
     hub: &H,
-    bund: Schluesselbund,
-    geraet_id: &str,
+    abgleich: &mut Abgleich,
     konto: &str,
     freigegeben: bool,
     nach_momentaufnahme: &mut dyn FnMut(),
@@ -276,14 +286,19 @@ pub fn lauf_mit<H: HubSpeicher + ?Sized>(
     if !freigegeben {
         return Err(LaufFehler::NichtFreigegeben);
     }
+    if abgleich.gesperrt() {
+        // Eine Sicherung ist gescheitert: erst neu laden (E3.8, Must-fix 4).
+        return Err(LaufFehler::Sync(SyncFehler::Speicher));
+    }
+    if !abgleich.freigabe().ist_aktiv() {
+        abgleich.freigabe_einschalten()?;
+    }
     let datenbestand = store.sync_datenbestand_id()?;
-    let mut abgleich = Abgleich::new(geraet_id, bund);
-    abgleich.freigabe_einschalten();
     let mut bericht = LaufBericht::default();
+    let verworfen_vorher = abgleich.verworfen();
 
     // 2. Stand des Hubs zuerst.
-    let heruntergeladen = abgleich.herunterladen(hub)?;
-    bericht.verworfen = heruntergeladen.verworfen;
+    abgleich.herunterladen(hub)?;
 
     // 3./4. Momentaufnahme und Hub-Vormerkung in einer Transaktion: wer ab jetzt gelöscht wird,
     // hinterlässt einen Grabstein (kein Löschen ohne Grabstein im Fenster bis zum Hochladen).
@@ -305,7 +320,7 @@ pub fn lauf_mit<H: HubSpeicher + ?Sized>(
         let conv_id = stand.detail.conversation.id.clone();
         let abgeleitet = ref_aus_lokaler_id(abgleich.bund(), &datenbestand, &conv_id);
         let Some(hub_ref) = hub_ref_fuer(
-            &abgleich,
+            abgleich,
             zuordnung.get(&conv_id).map(String::as_str),
             abgeleitet,
         ) else {
@@ -329,7 +344,7 @@ pub fn lauf_mit<H: HubSpeicher + ?Sized>(
 
     let mut ids = BeitragIds::laden(store)?;
     for l in &lokale {
-        lokal_einfuegen(store, &mut abgleich, &datenbestand, l, &mut ids)?;
+        lokal_einfuegen(store, abgleich, &datenbestand, l, &mut ids)?;
         // Eine bestehende Zuordnung (Gespräch von einem anderen Gerät) nie überschreiben.
         let c = &l.stand.detail.conversation.id;
         if !zuordnung.contains_key(c) {
@@ -364,7 +379,27 @@ pub fn lauf_mit<H: HubSpeicher + ?Sized>(
             }
             abgleich.migrieren(&datenbestand, &[leere_unterhaltung(&g.conversation_id)]);
         }
-        abgleich.unterhaltung_loeschen(&hub_ref);
+        abgleich.unterhaltung_loeschen(&hub_ref)?;
+    }
+
+    // Lokal gelöschte Gespräche, die nie für den Hub bestimmt waren (kein vorgemerkter Grabstein): der
+    // Kern hat sie aus einem früheren Lauf im dauerhaften Zustand. Er löscht sie nur lokal (nie
+    // synchron: kein Grabstein am Hub), damit sie nicht als Gespräch eines anderen Geräts wiederkommen.
+    let noch_da = store.sync_ids()?;
+    let vergessen: Vec<Hex128> = abgleich
+        .migrationsmarke()
+        .unterhaltungen
+        .iter()
+        .filter(|id| !noch_da.contains(*id))
+        .map(|id| ref_aus_lokaler_id(abgleich.bund(), &datenbestand, id))
+        .filter(|r| {
+            abgleich
+                .unterhaltung(r)
+                .is_some_and(|u| !u.jemals_synchron())
+        })
+        .collect();
+    for r in &vergessen {
+        abgleich.unterhaltung_loeschen(r)?;
     }
 
     // 6. Hochladen.
@@ -382,7 +417,7 @@ pub fn lauf_mit<H: HubSpeicher + ?Sized>(
 
     zurueckschreiben(
         store,
-        &abgleich,
+        abgleich,
         &lokale,
         &datenbestand,
         konto,
@@ -391,7 +426,61 @@ pub fn lauf_mit<H: HubSpeicher + ?Sized>(
         &mut bericht,
     )?;
     bericht.zurueckgestellt = abgleich.zurueckgestellt();
+    bericht.verworfen = usize::try_from(abgleich.verworfen().saturating_sub(verworfen_vorher))
+        .unwrap_or(usize::MAX);
     Ok(bericht)
+}
+
+/// Lease-Stand einer Sprachsitzung, ohne Inhalte.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Sitzungsstand {
+    pub inhaber: String,
+    pub generation: u64,
+    /// Ablauf in Unix-Sekunden.
+    pub gueltig_bis: u64,
+}
+
+/// Liest die Lease der Sprachsitzung eines lokalen Gesprächs (E3.3) und übernimmt sie auf Wunsch
+/// („hier übernehmen“; die eigene, laufende Lease wird dabei mit gleicher Generation verlängert).
+/// `None`, wenn der Hub keine Lease kennt und nicht übernommen werden soll. Ein Gespräch, das der
+/// Abgleich nicht kennt (nie hochgeladen), ergibt [`LaufFehler::Unbekannt`].
+pub fn sitzung<H: HubSpeicher + ?Sized>(
+    store: &ConversationStore,
+    hub: &H,
+    abgleich: &mut Abgleich,
+    conversation_id: &str,
+    jetzt: u64,
+    uebernehmen: bool,
+) -> Result<Option<Sitzungsstand>, LaufFehler> {
+    if !abgleich.freigabe().ist_aktiv() {
+        return Err(LaufFehler::NichtFreigegeben);
+    }
+    let datenbestand = store.sync_datenbestand_id()?;
+    let gespeichert = store
+        .sync_zuordnung()?
+        .into_iter()
+        .find(|(_, c)| c == conversation_id)
+        .map(|(r, _)| r);
+    let abgeleitet = ref_aus_lokaler_id(abgleich.bund(), &datenbestand, conversation_id);
+    let r = hub_ref_fuer(abgleich, gespeichert.as_deref(), abgeleitet)
+        .filter(|r| abgleich.unterhaltung(r).is_some())
+        .ok_or(LaufFehler::Unbekannt)?;
+    let gelesen = abgleich.lease_lesen(hub, &r).map_err(LaufFehler::Lease)?;
+    if !uebernehmen {
+        return Ok(gelesen.map(|g| Sitzungsstand {
+            inhaber: g.lease.inhaber,
+            generation: g.lease.generation,
+            gueltig_bis: g.lease.gueltig_bis,
+        }));
+    }
+    let halt = abgleich
+        .lease_uebernehmen(hub, &r, jetzt, gelesen.as_ref())
+        .map_err(LaufFehler::Lease)?;
+    Ok(Some(Sitzungsstand {
+        inhaber: abgleich.geraet_id().to_owned(),
+        generation: halt.generation,
+        gueltig_bis: halt.gueltig_bis,
+    }))
 }
 
 /// Kennung eines Gesprächs beim Hub. Ohne Zuordnung oder bei einer Zuordnung, die der lokalen

@@ -1,6 +1,7 @@
-//! Tests des `PortalHub` (lva#388): Fehlerabbildung gegen die Doku des Hubs, Drahtformat und die
-//! Abnahmefälle aus ADR-0028 (E3.0 Bindung der Steuerfelder, E3.3 (a) bis (c) Lease) gegen den
-//! Referenz-Hub `MemHub` und gegen einen Fake-HTTP-Hub, der die Endpunkte der Hub-Doku nachbildet.
+//! Tests des `PortalHub` (lva#388, ADR-0028 E3.8): Fehlerabbildung gegen die Doku des Hubs, Drahtformat,
+//! Transportgrenzen und die Abnahmefälle (E3.0 Bindung der Steuerfelder, E3.3 (a) bis (c) Lease, Widerruf
+//! über das Verzeichnis, Kopplung mit Schlüsselpaketen, manipulierte Antworten eines bösartigen Hubs)
+//! gegen den Referenz-Hub `MemHub` und gegen einen Fake-HTTP-Hub, der die Endpunkte der Hub-Doku nachbildet.
 //! Alle Daten sind synthetisch.
 
 use std::collections::BTreeMap;
@@ -10,9 +11,9 @@ use std::thread;
 
 use serde_json::{json, Value};
 use wai_assistent::sync::{
-    Abgleich, AuthGeraet, Beitrag, Einschraenkung, Hex128, HubFehler, HubSpeicher, Kopf,
-    LeaseFehler, LeseFilter, MemHub, Modus, Sammlung, Schluessel, Schluesselbund, Schreiben,
-    Umschlag, ZweigGrund,
+    Abgleich, AuthGeraet, Beitrag, Einschraenkung, Hex128, HubFehler, HubSpeicher, Kopf, Kopplung,
+    Kopplungsangebot, Kopplungsantwort, LeaseFehler, LeseFilter, MemHub, MemSpeicher, Modus,
+    Sammlung, Schreiben, SyncFehler, Testkonto, Umschlag, ZweigGrund,
 };
 
 use super::*;
@@ -30,14 +31,16 @@ pub(crate) struct Konto {
     freigaben: BTreeMap<String, String>,
 }
 
+/// Verändert den Körper einer erfolgreichen Antwort (Pfad, Körper): ein Angreifer mit Hubzugang.
+type Manipulation = Box<dyn Fn(&str, &mut Value) + Send + Sync>;
+
 pub(crate) struct FakeHttp {
     hub: Arc<MemHub>,
     konto: Arc<Mutex<Konto>>,
     /// Gerät, an das das Token gebunden ist.
     geraet: String,
     pub(crate) log: Mutex<Vec<Anfrage>>,
-    /// Ein Angreifer mit Hubzugang verändert Antworten von `/lesen` (Objekt für Objekt).
-    manipulation: Option<Box<dyn Fn(&mut Value) + Send + Sync>>,
+    manipulation: Option<Manipulation>,
     /// Netz weg.
     offline: AtomicBool,
 }
@@ -77,16 +80,19 @@ fn fehler_antwort(f: &HubFehler) -> Antwort {
             "epoche_voraus",
             json!({ "aktuell": aktuell.to_string() }),
         ),
-        HubFehler::EpocheKonflikt { aktuell } => (
+        HubFehler::VerzeichnisKonflikt { laenge } => (
             409,
-            "epoche_konflikt",
-            json!({ "aktuell": aktuell.to_string() }),
+            "verzeichnis_konflikt",
+            json!({ "laenge": laenge.to_string() }),
         ),
         HubFehler::NichtZugelassen => (403, "nicht_zugelassen", json!({})),
         HubFehler::Widerrufen => (403, "widerrufen", json!({})),
         HubFehler::GeraetStimmtNichtUeberein => (403, "geraet_stimmt_nicht_ueberein", json!({})),
         HubFehler::GrabsteinAbgewiesen => (410, "grabstein", json!({})),
         HubFehler::NichtVeraenderlich => (422, "nicht_veraenderlich", json!({})),
+        HubFehler::Vertrag("verzeichniseintrag") => {
+            (422, "vertrag", json!({ "grund": "verzeichniseintrag" }))
+        }
         HubFehler::Vertrag(_) => (422, "vertrag", json!({ "grund": "schema" })),
         HubFehler::Nichtverfuegbar => (503, "hub_busy", json!({})),
     };
@@ -125,8 +131,28 @@ impl HubTransport for FakeHttp {
         if self.offline.load(Ordering::SeqCst) {
             return Err(TransportFehler);
         }
-        Ok(self.verarbeiten(a).unwrap_or_else(|e| e))
+        let mut antwort = self.verarbeiten(a).unwrap_or_else(|e| e);
+        if let (Some(m), 200) = (&self.manipulation, antwort.status) {
+            m(a.pfad, &mut antwort.body);
+        }
+        Ok(antwort)
     }
+}
+
+/// Eine Seite aufsteigend nach Revision (wie `/lesen` und `/fassungen`).
+fn seite(alle: &[Umschlag], nach: u64, limit: usize) -> (Vec<Value>, bool, u64) {
+    let rest: Vec<&Umschlag> = alle
+        .iter()
+        .filter(|u| u.revision.is_some_and(|r| r > nach))
+        .collect();
+    let teil: Vec<&Umschlag> = rest.iter().take(limit.min(100)).copied().collect();
+    let mehr = rest.len() > teil.len();
+    let cursor = teil.last().and_then(|u| u.revision).unwrap_or(nach);
+    let werte = teil
+        .iter()
+        .map(|u| serde_json::to_value(u).unwrap())
+        .collect();
+    (werte, mehr, cursor)
 }
 
 impl FakeHttp {
@@ -137,11 +163,23 @@ impl FakeHttp {
         let umschlag = |v: &Value| -> Result<Umschlag, Antwort> {
             serde_json::from_value(v.clone()).map_err(|_| fehler_antwort(&HubFehler::Vertrag("u")))
         };
+        let sammlung_id = || -> Result<(Sammlung, Hex128), Antwort> {
+            let s: Sammlung = serde_json::from_value(json!(q(a, "sammlung")))
+                .map_err(|_| fehler_antwort(&HubFehler::Vertrag("sammlung")))?;
+            let id = Hex128::parse(q(a, "objekt_id").unwrap_or_default())
+                .map_err(|_| fehler_antwort(&HubFehler::Vertrag("objekt_id")))?;
+            Ok((s, id))
+        };
+        let limit: usize = q(a, "limit").and_then(|l| l.parse().ok()).unwrap_or(100);
         match (a.methode, a.pfad) {
             (Methode::Post, "/geraet") => {
                 let id = body["geraet_id"].as_str().unwrap_or_default().to_owned();
                 if id != self.geraet {
                     return Err(fehler(HubFehler::GeraetStimmtNichtUeberein));
+                }
+                // Ein widerrufenes Gerät kommt nie wieder hinein.
+                if let Err(HubFehler::Widerrufen) = self.hub.verzeichnis_lesen(&auth, 0) {
+                    return Err(fehler(HubFehler::Widerrufen));
                 }
                 let mut k = self.konto.lock().unwrap();
                 let code = body.get("freigabe_code").and_then(Value::as_str);
@@ -154,10 +192,12 @@ impl FakeHttp {
                 k.freigaben.remove(&id);
                 drop(k);
                 self.hub.zulassen(&id);
-                Ok(ok(json!({ "geraet_id": id, "epoche": "1" })))
+                Ok(ok(
+                    json!({ "geraet_id": id, "epoche": self.hub.epoche().to_string() }),
+                ))
             }
             (Methode::Post, "/freigeben") => {
-                self.hub.epoche(&auth).map_err(fehler)?;
+                self.hub.verzeichnis_lesen(&auth, 0).map_err(fehler)?;
                 let id = body["geraet_id"].as_str().unwrap_or_default().to_owned();
                 let code = format!("code-{id}-einmal");
                 self.konto
@@ -194,56 +234,57 @@ impl FakeHttp {
                 Ok(ok(json!({ "revision": r.to_string() })))
             }
             (Methode::Get, "/objekt") => {
-                let sammlung: Sammlung = serde_json::from_value(json!(q(a, "sammlung")))
-                    .map_err(|_| fehler(HubFehler::Vertrag("sammlung")))?;
-                let id = Hex128::parse(q(a, "objekt_id").unwrap_or_default())
-                    .map_err(|_| fehler(HubFehler::Vertrag("objekt_id")))?;
-                let o = self.hub.holen(&auth, sammlung, &id).map_err(fehler)?;
+                let (s, id) = sammlung_id()?;
+                let o = self.hub.holen(&auth, s, &id).map_err(fehler)?;
                 Ok(ok(json!({ "objekt": o })))
+            }
+            (Methode::Get, "/fassungen") => {
+                let (s, id) = sammlung_id()?;
+                let nach = zaehler_string(&json!(q(a, "nach_revision").unwrap_or("0")))?;
+                let alle = self.hub.fassungen_lesen(&auth, s, &id).map_err(fehler)?;
+                let (fassungen, mehr, _) = seite(&alle, nach, limit);
+                Ok(ok(json!({ "fassungen": fassungen, "mehr": mehr })))
             }
             (Methode::Get, "/lesen") => {
                 let nach = zaehler_string(&json!(q(a, "nach_revision").unwrap_or("0")))?;
-                let limit: usize = q(a, "limit").and_then(|l| l.parse().ok()).unwrap_or(100);
                 let filter = LeseFilter {
                     nach_revision: nach,
                     unterhaltung_ref: q(a, "unterhaltung_ref").and_then(|r| Hex128::parse(r).ok()),
                     sammlung: q(a, "sammlung").and_then(|s| serde_json::from_value(json!(s)).ok()),
                 };
                 let alle = self.hub.lesen(&auth, &filter).map_err(fehler)?;
-                let seite: Vec<&Umschlag> = alle.iter().take(limit.min(100)).collect();
-                let mehr = alle.len() > seite.len();
-                let cursor = seite.last().and_then(|u| u.revision).unwrap_or(nach);
-                let mut objekte: Vec<Value> = seite
-                    .iter()
-                    .map(|u| serde_json::to_value(u).unwrap())
-                    .collect();
-                if let Some(m) = &self.manipulation {
-                    objekte.iter_mut().for_each(|o| m(o));
-                }
+                let (objekte, mehr, cursor) = seite(&alle, nach, limit);
                 Ok(ok(json!({
                     "objekte": objekte,
                     "cursor": cursor.to_string(),
                     "mehr": mehr
                 })))
             }
-            (Methode::Post, "/widerruf") => {
-                let e = zaehler_string(&body["erwartete_epoche"])?;
-                let vorgang = Hex128::parse(body["vorgang"].as_str().unwrap_or_default())
-                    .map_err(|_| fehler(HubFehler::Vertrag("vorgang")))?;
-                let ziel = body["widerrufenes_geraet"].as_str().unwrap_or_default();
-                let n = self
-                    .hub
-                    .widerrufen(&auth, ziel, e, &vorgang)
-                    .map_err(fehler)?;
-                Ok(ok(json!({ "epoche": n.to_string() })))
+            (Methode::Post, "/verzeichnis") => {
+                let e = serde_json::from_value(body["eintrag"].clone())
+                    .map_err(|_| fehler(HubFehler::Vertrag("verzeichniseintrag")))?;
+                self.hub.verzeichnis_anhaengen(&auth, &e).map_err(fehler)?;
+                Ok(ok(
+                    json!({ "laenge": self.hub.verzeichnis().len().to_string() }),
+                ))
             }
-            (Methode::Get, "/epoche") => {
-                let e = self.hub.epoche(&auth).map_err(fehler)?;
-                Ok(ok(json!({ "epoche": e.to_string() })))
+            (Methode::Get, "/verzeichnis") => {
+                let ab = zaehler_string(&json!(q(a, "ab").unwrap_or("0")))?;
+                let e = self.hub.verzeichnis_lesen(&auth, ab).map_err(fehler)?;
+                Ok(ok(json!({ "eintraege": e })))
             }
-            (Methode::Get, "/geraete") => {
-                let g = self.hub.zugelassene(&auth).map_err(fehler)?;
-                Ok(ok(json!({ "geraete": g })))
+            (Methode::Post, "/pakete") => {
+                let p: Vec<wai_assistent::sync::Schluesselpaket> =
+                    serde_json::from_value(body["pakete"].clone())
+                        .map_err(|_| fehler(HubFehler::Vertrag("paket")))?;
+                let vorher = self.hub.pakete().len();
+                self.hub.pakete_ablegen(&auth, &p).map_err(fehler)?;
+                // Die Doku gibt `neu` als JSON-Zahl zurück.
+                Ok(ok(json!({ "neu": self.hub.pakete().len() - vorher })))
+            }
+            (Methode::Get, "/pakete") => {
+                let p = self.hub.pakete_lesen(&auth).map_err(fehler)?;
+                Ok(ok(json!({ "pakete": p })))
             }
             _ => Err(Antwort {
                 status: 404,
@@ -280,12 +321,6 @@ pub(crate) fn portal(hub: &Arc<MemHub>, konto: &Arc<Mutex<Konto>>, name: &str) -
     h
 }
 
-fn geraet(name: &str, bund: &Schluesselbund) -> Abgleich {
-    let mut a = Abgleich::new(name, bund.clone());
-    a.freigabe_einschalten();
-    a
-}
-
 fn beitrag(id: &str, eltern: Option<&str>, generation: u64, text: &str) -> Beitrag {
     Beitrag::neu(id, eltern, generation, "user", Modus::Typed, text)
 }
@@ -297,6 +332,13 @@ fn kopf(titel: &str) -> Kopf {
         modellwunsch: "standard".into(),
         angeheftet: false,
     }
+}
+
+/// Kopie eines Angebots wie nach dem Lesen des QR-Codes (das Angebot ist absichtlich nicht `Clone`).
+fn qr(a: &Abgleich) -> (Kopplungsangebot, Kopplungsangebot) {
+    let angebot = a.kopplung_anbieten().unwrap();
+    let kopie = Kopplungsangebot::aus_json(&serde_json::to_vec(&angebot).unwrap()).unwrap();
+    (angebot, kopie)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -341,9 +383,9 @@ fn fehlercodes_der_doku_werden_auf_hubfehler_abgebildet() {
         ),
         (
             409,
-            "epoche_konflikt",
-            json!({ "aktuell": "4" }),
-            EpocheKonflikt { aktuell: 4 },
+            "verzeichnis_konflikt",
+            json!({ "laenge": "4" }),
+            VerzeichnisKonflikt { laenge: 4 },
         ),
         (403, "nicht_zugelassen", json!({}), NichtZugelassen),
         (403, "widerrufen", json!({}), Widerrufen),
@@ -372,6 +414,12 @@ fn fehlercodes_der_doku_werden_auf_hubfehler_abgebildet() {
             "vertrag",
             json!({ "grund": "loeschmarke_zu_gross" }),
             Vertrag("Loeschmarke zu gross"),
+        ),
+        (
+            422,
+            "vertrag",
+            json!({ "grund": "verzeichniseintrag", "detail": "kette" }),
+            Vertrag("Verzeichniseintrag abgewiesen"),
         ),
         (
             422,
@@ -437,11 +485,23 @@ fn unbekanntes_und_serverfehler_ohne_app_code() {
         abbilden(503, &fehlerkoerper("teekanne", json!({}))).0,
         HubFehler::Nichtverfuegbar
     );
-    // Fehlende Pflichtzusatzfelder: nie raten.
+    // Der alte Code `epoche_konflikt` gibt es nicht mehr: unbekannt, also Vertragsverletzung.
     assert_eq!(
-        abbilden(409, &fehlerkoerper("epoche_konflikt", json!({}))).0,
-        HubFehler::Vertrag("Hub-Antwort ungueltig")
+        abbilden(
+            409,
+            &fehlerkoerper("epoche_konflikt", json!({ "aktuell": "4" }))
+        )
+        .0,
+        HubFehler::Vertrag("unerwartete Antwort des Hubs")
     );
+    // Fehlende Pflichtzusatzfelder: nie raten.
+    for code in ["verzeichnis_konflikt", "epoche_voraus", "epoche_veraltet"] {
+        assert_eq!(
+            abbilden(409, &fehlerkoerper(code, json!({}))).0,
+            HubFehler::Vertrag("Hub-Antwort ungueltig"),
+            "{code}"
+        );
+    }
     // Ein Code mit Fremdzeichen wird nicht angezeigt oder weitergereicht.
     let (_, anzeige) = abbilden(422, &fehlerkoerper("Ü<script>", json!({})));
     assert_eq!(anzeige, "http_422");
@@ -463,9 +523,18 @@ fn fest(status: u16, body: Value) -> PortalHub<Fest> {
 #[test]
 fn fehler_kommen_ueber_alle_methoden_an_und_der_code_wird_gemerkt() {
     let auth = AuthGeraet::new("dev-pc");
+    let id = Hex128::zufall().unwrap();
     let h = fest(403, fehlerkoerper("widerrufen", json!({})));
-    assert_eq!(h.epoche(&auth), Err(HubFehler::Widerrufen));
-    assert_eq!(h.zugelassene(&auth), Err(HubFehler::Widerrufen));
+    assert_eq!(h.verzeichnis_lesen(&auth, 0), Err(HubFehler::Widerrufen));
+    assert_eq!(h.pakete_lesen(&auth), Err(HubFehler::Widerrufen));
+    assert_eq!(
+        h.fassungen_lesen(&auth, Sammlung::Unterhaltung, &id),
+        Err(HubFehler::Widerrufen)
+    );
+    assert_eq!(
+        h.holen(&auth, Sammlung::Sitzung, &id),
+        Err(HubFehler::Widerrufen)
+    );
     assert_eq!(
         h.lesen(&auth, &LeseFilter::default()),
         Err(HubFehler::Widerrufen)
@@ -473,8 +542,23 @@ fn fehler_kommen_ueber_alle_methoden_an_und_der_code_wird_gemerkt() {
     assert_eq!(h.letzter_code().as_deref(), Some("widerrufen"));
     assert_eq!(h.zulassen(None), Err(HubFehler::Widerrufen));
 
+    let k = fest(
+        409,
+        fehlerkoerper("verzeichnis_konflikt", json!({ "laenge": "3" })),
+    );
+    let konto = Testkonto::neu(&["dev-pc"]);
+    let e = konto.verzeichnis().eintraege()[0].clone();
+    assert_eq!(
+        k.verzeichnis_anhaengen(&auth, &e),
+        Err(HubFehler::VerzeichnisKonflikt { laenge: 3 })
+    );
+    assert_eq!(k.letzter_code().as_deref(), Some("verzeichnis_konflikt"));
+
     let offline = PortalHub::new(Fest(Err(TransportFehler)), "dev-pc");
-    assert_eq!(offline.epoche(&auth), Err(HubFehler::Nichtverfuegbar));
+    assert_eq!(
+        offline.verzeichnis_lesen(&auth, 0),
+        Err(HubFehler::Nichtverfuegbar)
+    );
     assert_eq!(offline.letzter_code().as_deref(), Some("netz"));
 }
 
@@ -483,7 +567,7 @@ fn erfolg_loescht_den_gemerkten_fehlercode() {
     let (hub, konto) = konto_hub();
     let p = portal(&hub, &konto, "dev-pc");
     let auth = AuthGeraet::new("dev-pc");
-    assert_eq!(p.epoche(&auth), Ok(1));
+    assert!(p.verzeichnis_lesen(&auth, 0).unwrap().is_empty());
     assert_eq!(p.letzter_code(), None);
 }
 
@@ -493,12 +577,12 @@ fn fremde_identitaet_und_fremdes_geraet_im_umschlag_gehen_nie_ans_netz() {
     let p = portal(&hub, &konto, "dev-pc");
     let vorher = p.transport.log.lock().unwrap().len();
     assert_eq!(
-        p.epoche(&AuthGeraet::new("dev-anders")),
+        p.verzeichnis_lesen(&AuthGeraet::new("dev-anders"), 0),
         Err(HubFehler::GeraetStimmtNichtUeberein)
     );
 
-    let bund = Schluesselbund::zufaellig().unwrap();
-    let mut fremd = geraet("dev-anders", &bund);
+    let fremd_konto = Testkonto::neu(&["dev-anders"]);
+    let mut fremd = fremd_konto.geraet("dev-anders");
     let r = fremd
         .unterhaltung_anlegen(kopf("T"), Einschraenkung::default())
         .unwrap();
@@ -512,32 +596,52 @@ fn fremde_identitaet_und_fremdes_geraet_im_umschlag_gehen_nie_ans_netz() {
 }
 
 #[test]
+fn fremder_absender_im_schluesselpaket_geht_nie_ans_netz() {
+    let hub = Arc::new(MemHub::new());
+    let k = Testkonto::mit_hub(&["dev-pc", "dev-iphone", "dev-tablet"], &hub);
+    let mut pc = k.geraet("dev-pc");
+    pc.widerrufen(&*hub, "dev-tablet").unwrap();
+    let pakete = hub.pakete();
+    assert!(!pakete.is_empty());
+    let konto = Arc::new(Mutex::new(Konto {
+        je_zugelassen: true,
+        ..Konto::default()
+    }));
+    let ip = PortalHub::new(FakeHttp::neu(&hub, &konto, "dev-iphone"), "dev-iphone");
+    assert_eq!(
+        ip.pakete_ablegen(&AuthGeraet::new("dev-iphone"), &pakete),
+        Err(HubFehler::GeraetStimmtNichtUeberein)
+    );
+    assert!(ip.transport.log.lock().unwrap().is_empty());
+}
+
+#[test]
 fn zu_grosses_chiffrat_wird_vor_dem_netz_abgewiesen() {
     let (hub, konto) = konto_hub();
+    let k = Testkonto::mit_hub(&["dev-pc"], &hub);
     let p = portal(&hub, &konto, "dev-pc");
-    let bund = Schluesselbund::zufaellig().unwrap();
-    let mut pc = geraet("dev-pc", &bund);
+    let mut pc = k.geraet("dev-pc");
     let r = pc
         .unterhaltung_anlegen(kopf("T"), Einschraenkung::default())
         .unwrap();
     pc.beitrag_anlegen(&r, beitrag("a", None, 1, &"x".repeat(3_300_000)))
         .unwrap();
-    let vorher = p.transport.log.lock().unwrap().len();
     let f = pc.hochladen(&p).unwrap_err();
-    assert!(matches!(
-        f,
-        wai_assistent::sync::SyncFehler::Hub(HubFehler::Vertrag(_))
-    ));
-    assert_eq!(
-        p.transport.log.lock().unwrap().len(),
-        vorher,
-        "kein Netzaufruf"
+    assert!(matches!(f, SyncFehler::Hub(HubFehler::Vertrag(_))));
+    assert!(
+        p.transport
+            .log
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|a| a.pfad != "/schreiben" && a.pfad != "/cas"),
+        "kein Schreibaufruf"
     );
     assert_eq!(p.letzter_code().as_deref(), Some("ciphertext_zu_gross"));
 }
 
 // ---------------------------------------------------------------------------------------------
-// Drahtformat
+// Drahtformat und Transportgrenzen
 // ---------------------------------------------------------------------------------------------
 
 /// Alle Zähler gehen als String, nie als JSON-Zahl, und jede Anfrage trägt nur die
@@ -545,9 +649,9 @@ fn zu_grosses_chiffrat_wird_vor_dem_netz_abgewiesen() {
 #[test]
 fn zaehler_gehen_als_int64string_ueber_die_leitung() {
     let (hub, konto) = konto_hub();
+    let k = Testkonto::mit_hub(&["dev-pc", "dev-zweit", "dev-drei"], &hub);
     let p = portal(&hub, &konto, "dev-pc");
-    let bund = Schluesselbund::zufaellig().unwrap();
-    let mut pc = geraet("dev-pc", &bund);
+    let mut pc = k.geraet("dev-pc");
     let r = pc
         .unterhaltung_anlegen(kopf("T"), Einschraenkung::default())
         .unwrap();
@@ -557,31 +661,28 @@ fn zaehler_gehen_als_int64string_ueber_die_leitung() {
     pc.kopf_aendern(&r, kopf("T2")).unwrap();
     pc.hochladen(&p).unwrap(); // cas mit erwarteter Revision
     pc.herunterladen(&p).unwrap();
-    p.widerrufen(
-        &AuthGeraet::new("dev-pc"),
-        "dev-zweit",
-        1,
-        &Hex128::zufall().unwrap(),
-    )
-    .ok();
+    assert_eq!(pc.widerrufen(&p, "dev-zweit"), Ok(2));
 
     let log = p.transport.log.lock().unwrap().clone();
-    let zahlen_als_zahl = |w: &Value| -> bool {
-        fn suche(w: &Value) -> bool {
-            match w {
-                Value::Number(_) => true,
-                Value::Array(a) => a.iter().any(suche),
-                Value::Object(o) => o.values().any(suche),
-                _ => false,
-            }
+    fn zahl(w: &Value) -> bool {
+        match w {
+            Value::Number(_) => true,
+            Value::Array(a) => a.iter().any(zahl),
+            Value::Object(o) => o.values().any(zahl),
+            _ => false,
         }
-        suche(w)
-    };
+    }
     let cas: Vec<_> = log.iter().filter(|a| a.pfad == "/cas").collect();
     assert!(!cas.is_empty());
+    assert!(log
+        .iter()
+        .any(|a| a.pfad == "/verzeichnis" && a.methode == Methode::Post));
+    assert!(log
+        .iter()
+        .any(|a| a.pfad == "/pakete" && a.methode == Methode::Post));
     for a in &log {
         if let Some(b) = &a.body {
-            assert!(!zahlen_als_zahl(b), "{}: JSON-Zahl im Körper", a.pfad);
+            assert!(!zahl(b), "{}: JSON-Zahl im Körper", a.pfad);
         }
     }
     let kopf_cas = cas.last().unwrap().body.as_ref().unwrap();
@@ -592,8 +693,12 @@ fn zaehler_gehen_als_int64string_ueber_die_leitung() {
     );
     assert!(log
         .iter()
-        .filter(|a| a.pfad == "/lesen")
+        .filter(|a| a.pfad == "/lesen" || a.pfad == "/fassungen")
         .all(|a| q(a, "nach_revision").is_some()));
+    assert!(log
+        .iter()
+        .filter(|a| a.pfad == "/verzeichnis" && a.methode == Methode::Get)
+        .all(|a| q(a, "ab").is_some()));
     let umschlag = &cas[0].body.as_ref().unwrap()["umschlag"];
     assert!(umschlag["key_epoch"].is_string());
     assert!(
@@ -624,9 +729,9 @@ fn zaehler_gehen_als_int64string_ueber_die_leitung() {
 #[test]
 fn lesen_blaettert_ueber_alle_seiten() {
     let (hub, konto) = konto_hub();
+    let k = Testkonto::mit_hub(&["dev-pc"], &hub);
     let p = portal(&hub, &konto, "dev-pc");
-    let bund = Schluesselbund::zufaellig().unwrap();
-    let mut pc = geraet("dev-pc", &bund);
+    let mut pc = k.geraet("dev-pc");
     let r = pc
         .unterhaltung_anlegen(kopf("T"), Einschraenkung::default())
         .unwrap();
@@ -638,6 +743,14 @@ fn lesen_blaettert_ueber_alle_seiten() {
         eltern = Some(id);
     }
     pc.hochladen(&p).unwrap();
+    let vorher = p
+        .transport
+        .log
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|a| a.pfad == "/lesen")
+        .count();
     let alle = p
         .lesen(&AuthGeraet::new("dev-pc"), &LeseFilter::default())
         .unwrap();
@@ -652,7 +765,7 @@ fn lesen_blaettert_ueber_alle_seiten() {
         .iter()
         .filter(|a| a.pfad == "/lesen")
         .count();
-    assert_eq!(seiten, 3);
+    assert_eq!(seiten - vorher, 3);
     // Filter gehen mit.
     let nur_kopf = p
         .lesen(
@@ -668,41 +781,175 @@ fn lesen_blaettert_ueber_alle_seiten() {
 }
 
 #[test]
+fn fassungen_kommen_vollstaendig_und_aufsteigend() {
+    let (hub, konto) = konto_hub();
+    let k = Testkonto::mit_hub(&["dev-pc"], &hub);
+    let p = portal(&hub, &konto, "dev-pc");
+    let mut pc = k.geraet("dev-pc");
+    let r = pc
+        .unterhaltung_anlegen(kopf("T0"), Einschraenkung::default())
+        .unwrap();
+    pc.hochladen(&p).unwrap();
+    for i in 1..=3 {
+        pc.kopf_aendern(&r, kopf(&format!("T{i}"))).unwrap();
+        pc.hochladen(&p).unwrap();
+    }
+    let kopf_id = hub
+        .alle_umschlaege()
+        .into_iter()
+        .find(|u| u.sammlung == Sammlung::Unterhaltung)
+        .unwrap()
+        .objekt_id;
+    let f = p
+        .fassungen_lesen(&AuthGeraet::new("dev-pc"), Sammlung::Unterhaltung, &kopf_id)
+        .unwrap();
+    assert_eq!(f.len(), 4, "jede Fassung bleibt beim Hub");
+    assert!(f
+        .windows(2)
+        .all(|w| w[0].revision.unwrap() < w[1].revision.unwrap()));
+    let anfrage = p
+        .transport
+        .log
+        .lock()
+        .unwrap()
+        .iter()
+        .rev()
+        .find(|a| a.pfad == "/fassungen")
+        .cloned()
+        .unwrap();
+    assert_eq!(q(&anfrage, "sammlung"), Some("unterhaltung"));
+    assert_eq!(q(&anfrage, "objekt_id"), Some(kopf_id.as_str()));
+}
+
+#[test]
 fn lesen_traut_einem_kaputten_hub_nicht() {
     let auth = AuthGeraet::new("dev-pc");
+    let vertrag = |r: Result<Vec<Umschlag>, HubFehler>| matches!(r, Err(HubFehler::Vertrag(_)));
     // `mehr` ohne Fortschritt: sonst endlose Schleife.
     let h = fest(200, json!({ "objekte": [], "cursor": "0", "mehr": true }));
-    assert!(matches!(
-        h.lesen(&auth, &LeseFilter::default()),
-        Err(HubFehler::Vertrag(_))
-    ));
+    assert!(vertrag(h.lesen(&auth, &LeseFilter::default())));
     // Unbrauchbare Objekte.
     let h = fest(
         200,
         json!({ "objekte": [{ "x": 1 }], "cursor": "1", "mehr": false }),
     );
+    assert!(vertrag(h.lesen(&auth, &LeseFilter::default())));
+
+    // Echte Umschläge in falscher Reihenfolge oder doppelt: abgewiesen.
+    let hub = Arc::new(MemHub::new());
+    let k = Testkonto::mit_hub(&["dev-pc"], &hub);
+    let mut pc = k.geraet("dev-pc");
+    let r = pc
+        .unterhaltung_anlegen(kopf("T"), Einschraenkung::default())
+        .unwrap();
+    pc.beitrag_anlegen(&r, beitrag("a", None, 1, "t")).unwrap();
+    pc.hochladen(&*hub).unwrap();
+    let u: Vec<Value> = hub
+        .alle_umschlaege()
+        .iter()
+        .map(|u| serde_json::to_value(u).unwrap())
+        .collect();
+    assert_eq!(u.len(), 2);
+    let mut u = u;
+    u.sort_by_key(|o| o["revision"].as_str().unwrap().parse::<u64>().unwrap());
+    let rueckwaerts = json!([u[1].clone(), u[0].clone()]);
+    let h = fest(
+        200,
+        json!({ "objekte": rueckwaerts, "cursor": "2", "mehr": false }),
+    );
+    assert!(vertrag(h.lesen(&auth, &LeseFilter::default())));
+    let doppelt = json!([u[0].clone(), u[0].clone()]);
+    let h = fest(200, json!({ "fassungen": doppelt, "mehr": false }));
+    assert!(vertrag(h.fassungen_lesen(
+        &auth,
+        Sammlung::Unterhaltung,
+        &Hex128::zufall().unwrap()
+    )));
+    // Cursor hinter die letzte Revision zurück.
+    let h = fest(
+        200,
+        json!({ "objekte": [u[1].clone()], "cursor": "0", "mehr": true }),
+    );
+    assert!(vertrag(h.lesen(&auth, &LeseFilter::default())));
+
+    // Fehlende oder unbrauchbare Felder in Verzeichnis und Paketen.
     assert!(matches!(
-        h.lesen(&auth, &LeseFilter::default()),
+        fest(200, json!({})).verzeichnis_lesen(&auth, 0),
         Err(HubFehler::Vertrag(_))
     ));
-    // Fehlende Pflichtfelder in anderen Antworten.
     assert!(matches!(
-        fest(200, json!({})).epoche(&auth),
+        fest(200, json!({ "eintraege": [1] })).verzeichnis_lesen(&auth, 0),
         Err(HubFehler::Vertrag(_))
     ));
     assert!(matches!(
-        fest(200, json!({ "geraete": [1] })).zugelassene(&auth),
+        fest(200, json!({ "pakete": [{ "x": 1 }] })).pakete_lesen(&auth),
         Err(HubFehler::Vertrag(_))
     ));
+    let e = k.verzeichnis().eintraege()[0].clone();
+    assert!(matches!(
+        fest(200, json!({})).verzeichnis_anhaengen(&auth, &e),
+        Err(HubFehler::Vertrag(_))
+    ));
+    assert_eq!(
+        fest(200, json!({ "laenge": "1" })).verzeichnis_anhaengen(&auth, &e),
+        Ok(())
+    );
+}
+
+/// Transportgrenzen (Must-fix 7): unbekannte Felder und übergroße Elemente aus der Hub-Antwort werden
+/// vor dem Kern abgewiesen.
+#[test]
+fn transportgrenzen_weisen_fremde_felder_und_uebergroesse_ab() {
+    let auth = AuthGeraet::new("dev-pc");
+    let hub = Arc::new(MemHub::new());
+    let k = Testkonto::mit_hub(&["dev-pc", "dev-iphone", "dev-tablet"], &hub);
+    let mut pc = k.geraet("dev-pc");
+    pc.widerrufen(&*hub, "dev-tablet").unwrap();
+    let eintrag = serde_json::to_value(&hub.verzeichnis()[0]).unwrap();
+    let paket = serde_json::to_value(&hub.pakete()[0]).unwrap();
+
+    let mut zusatz = eintrag.clone();
+    zusatz["fremd"] = json!("x");
+    assert!(matches!(
+        fest(200, json!({ "eintraege": [zusatz] })).verzeichnis_lesen(&auth, 0),
+        Err(HubFehler::Vertrag(_))
+    ));
+    let mut gross = eintrag.clone();
+    gross["unterzeichner"] = json!("d".repeat(5000));
+    assert!(matches!(
+        fest(200, json!({ "eintraege": [gross] })).verzeichnis_lesen(&auth, 0),
+        Err(HubFehler::Vertrag(_))
+    ));
+    let mut p_gross = paket.clone();
+    p_gross["chiffrat"] = json!("A".repeat(4000));
+    assert!(matches!(
+        fest(200, json!({ "pakete": [p_gross] })).pakete_lesen(&auth),
+        Err(HubFehler::Vertrag(_))
+    ));
+    // Unverändert geht es durch.
+    assert_eq!(
+        fest(200, json!({ "eintraege": [eintrag] }))
+            .verzeichnis_lesen(&auth, 0)
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        fest(200, json!({ "pakete": [paket] }))
+            .pakete_lesen(&auth)
+            .unwrap()
+            .len(),
+        1
+    );
 }
 
 #[test]
 fn rundlauf_ueber_zwei_geraete_per_http_ohne_verlust_und_dopplung() {
     let (hub, konto) = konto_hub();
+    let k = Testkonto::mit_hub(&["dev-pc", "dev-iphone"], &hub);
     let pc_hub = portal(&hub, &konto, "dev-pc");
     let ip_hub = portal(&hub, &konto, "dev-iphone");
-    let bund = Schluesselbund::zufaellig().unwrap();
-    let mut pc = geraet("dev-pc", &bund);
+    let mut pc = k.geraet("dev-pc");
     let r = pc
         .unterhaltung_anlegen(kopf("Rundlauf"), Einschraenkung::default())
         .unwrap();
@@ -718,7 +965,7 @@ fn rundlauf_ueber_zwei_geraete_per_http_ohne_verlust_und_dopplung() {
     // Wiederholung: nichts doppelt am Hub.
     let b2 = pc.hochladen(&pc_hub).unwrap();
     assert_eq!((b2.beitraege, b2.koepfe, b2.bereits_beim_hub), (0, 0, 0));
-    let mut ip = geraet("dev-iphone", &bund);
+    let mut ip = k.geraet("dev-iphone");
     let down = ip.herunterladen(&ip_hub).unwrap();
     assert_eq!(down.beitraege_neu, 20);
     assert_eq!(ip.unterhaltung(&r).unwrap().kopf().titel, "Rundlauf");
@@ -750,7 +997,9 @@ fn zulassung_als_erstgeraet_und_per_freigabe_mit_code() {
     );
     assert_eq!(tablet.zulassen(Some(&freigabe.code)), Ok(1));
     // Danach darf das Tablet lesen.
-    assert_eq!(tablet.epoche(&AuthGeraet::new("dev-tablet")), Ok(1));
+    assert!(tablet
+        .verzeichnis_lesen(&AuthGeraet::new("dev-tablet"), 0)
+        .is_ok());
     let body = tablet
         .transport
         .log
@@ -767,44 +1016,115 @@ fn zulassung_als_erstgeraet_und_per_freigabe_mit_code() {
 }
 
 #[test]
-fn widerruf_per_http_und_geraeteliste() {
+fn gruenden_und_kopplung_mit_schluesselpaket_ueber_http() {
     let (hub, konto) = konto_hub();
+    // Erstgerät gründet das Konto: der Anker geht mit dem ersten Hochladen an den Hub.
     let pc_hub = portal(&hub, &konto, "dev-pc");
-    let _tablet = portal(&hub, &konto, "dev-tablet");
-    let bund = Schluesselbund::zufaellig().unwrap();
-    let mut pc = geraet("dev-pc", &bund);
+    let mut pc = Abgleich::gruenden("dev-pc", Box::new(MemSpeicher::new())).unwrap();
+    pc.freigabe_einschalten().unwrap();
+    let r = pc
+        .unterhaltung_anlegen(kopf("Gegründet"), Einschraenkung::default())
+        .unwrap();
+    pc.beitrag_anlegen(&r, beitrag("a", None, 1, "vorher"))
+        .unwrap();
+    pc.hochladen(&pc_hub).unwrap();
+    assert_eq!(hub.verzeichnis().len(), 1, "Anker beim Hub");
+
+    // Neues Gerät: Transportzulassung per Freigabe, kryptografische Aufnahme per QR und Rückkanal.
+    let ip_hub = PortalHub::new(FakeHttp::neu(&hub, &konto, "dev-iphone"), "dev-iphone");
+    let freigabe = pc_hub.freigeben("dev-iphone").unwrap();
+    ip_hub.zulassen(Some(&freigabe.code)).unwrap();
+    let (angebot, kopie) = qr(&pc);
+    let kopplung = Kopplung::neu("dev-iphone", kopie).unwrap();
+    assert!(
+        kopplung
+            .abschliessen(&ip_hub, Box::new(MemSpeicher::new()))
+            .unwrap()
+            .is_none(),
+        "vor der Aufnahme kein Abschluss"
+    );
+    let antwort = antwort_ueber_kanal(&kopplung);
+    pc.geraet_aufnehmen(&pc_hub, &angebot, &antwort).unwrap();
+    let mut ip = kopplung
+        .abschliessen(&ip_hub, Box::new(MemSpeicher::new()))
+        .unwrap()
+        .expect("aufgenommen");
+    assert_eq!(ip.konto(), pc.konto());
+    let b = ip.herunterladen(&ip_hub).unwrap();
+    assert_eq!(b.beitraege_neu, 1);
+    assert_eq!(ip.unterhaltung(&r).unwrap().kopf().titel, "Gegründet");
+    // Ein Paket lag beim Hub; der Hub hat den Schlüssel nie im Klartext gesehen.
+    assert!(hub.pakete().iter().any(|p| p.empfaenger == "dev-iphone"));
+    let draht: String = pc_hub
+        .transport
+        .log
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|a| a.body.as_ref().map(Value::to_string))
+        .collect();
+    assert!(!draht.contains("vorher"));
+}
+
+/// Die Antwort geht über einen beliebigen Kanal (auch den Hub): als JSON hin und zurück.
+fn antwort_ueber_kanal(k: &Kopplung) -> Kopplungsantwort {
+    let a = k.antwort().unwrap();
+    Kopplungsantwort::aus_json(&serde_json::to_vec(&a).unwrap()).unwrap()
+}
+
+#[test]
+fn widerruf_ueber_das_verzeichnis_per_http() {
+    let (hub, konto) = konto_hub();
+    let k = Testkonto::mit_hub(&["dev-pc", "dev-tablet", "dev-iphone"], &hub);
+    let pc_hub = portal(&hub, &konto, "dev-pc");
+    let ip_hub = portal(&hub, &konto, "dev-iphone");
+    let tablet_hub = portal(&hub, &konto, "dev-tablet");
+    let mut pc = k.geraet("dev-pc");
+    let mut pc_empf = pc.empfaenger();
+    pc_empf.sort();
     assert_eq!(
-        pc.empfaenger_fuer_epoche(&pc_hub).unwrap(),
-        vec!["dev-tablet".to_owned()]
+        pc_empf,
+        vec!["dev-iphone".to_owned(), "dev-tablet".to_owned()]
     );
     let epoche = pc.widerrufen(&pc_hub, "dev-tablet").unwrap();
     assert_eq!(epoche, 2);
     assert_eq!(pc.bund().aktuelle_epoche(), 2);
-    assert!(pc.empfaenger_fuer_epoche(&pc_hub).unwrap().is_empty());
-    // Das widerrufene Gerät kommt nicht mehr hinein.
-    let tablet_hub = PortalHub::new(FakeHttp::neu(&hub, &konto, "dev-tablet"), "dev-tablet");
+    assert_eq!(pc.empfaenger(), vec!["dev-iphone".to_owned()]);
     assert_eq!(
-        tablet_hub.epoche(&AuthGeraet::new("dev-tablet")),
+        hub.epoche(),
+        2,
+        "Hub leitet die Epoche aus dem Verzeichnis ab"
+    );
+    // Das widerrufene Gerät kommt nicht mehr hinein, auch nicht mit Zulassung.
+    assert_eq!(
+        tablet_hub.verzeichnis_lesen(&AuthGeraet::new("dev-tablet"), 0),
         Err(HubFehler::Widerrufen)
+    );
+    assert_eq!(tablet_hub.zulassen(None), Err(HubFehler::Widerrufen));
+    // Das iPhone bekommt den neuen Schlüssel als Paket über HTTP.
+    let mut ip = k.geraet("dev-iphone");
+    let b = ip.herunterladen(&ip_hub).unwrap();
+    assert_eq!(b.schluessel_neu, 1);
+    assert_eq!(
+        ip.bund().schluessel(2).unwrap().bytes(),
+        pc.bund().schluessel(2).unwrap().bytes()
     );
 }
 
 #[test]
 fn hubausfall_bricht_den_lauf_mit_nichtverfuegbar_ab_und_verliert_nichts() {
     let (hub, konto) = konto_hub();
+    let k = Testkonto::mit_hub(&["dev-pc"], &hub);
     let aus = portal(&hub, &konto, "dev-pc");
     netz(&aus, false);
-    let bund = Schluesselbund::zufaellig().unwrap();
-    let mut pc = geraet("dev-pc", &bund);
+    let mut pc = k.geraet("dev-pc");
     let r = pc
         .unterhaltung_anlegen(kopf("T"), Einschraenkung::default())
         .unwrap();
     pc.beitrag_anlegen(&r, beitrag("a", None, 0, "t")).unwrap();
     assert!(matches!(
         pc.hochladen(&aus),
-        Err(wai_assistent::sync::SyncFehler::Hub(
-            HubFehler::Nichtverfuegbar
-        ))
+        Err(SyncFehler::Hub(HubFehler::Nichtverfuegbar))
     ));
     // Später wieder da: alles geht nach.
     let wieder = PortalHub::new(FakeHttp::neu(&hub, &konto, "dev-pc"), "dev-pc");
@@ -812,24 +1132,38 @@ fn hubausfall_bricht_den_lauf_mit_nichtverfuegbar_ab_und_verliert_nichts() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// E3.0: sichtbare Steuerfelder sind kryptografisch gebunden
+// E3.0 und E3.8: ein bösartiger Hub verändert Objekte, Verzeichnis und Pakete auf der Leitung
 // ---------------------------------------------------------------------------------------------
 
-/// Bund mit gleichem Schlüsselmaterial in Epoche 2: nur die AAD kann die Epoche noch binden.
-fn bund_mit_zweiter_epoche(bund: &Schluesselbund) -> Schluesselbund {
-    let mut b = bund.clone();
-    b.epoche_aufnehmen(
-        2,
-        Schluessel::aus_bytes(*bund.schluessel(1).unwrap().bytes()),
-    )
-    .unwrap();
-    b
+/// Konto mit Widerruf (Epoche 2 am Hub): ein Beitrag in Epoche 1 vom PC, Leser haben beide Schlüssel.
+fn konto_mit_epoche_2() -> (Arc<MemHub>, Arc<Mutex<Konto>>, Testkonto, Hex128) {
+    let (hub, konto) = konto_hub();
+    let k = Testkonto::mit_hub(&["dev-pc", "dev-iphone", "dev-tablet", "dev-weg"], &hub);
+    let pc_hub = portal(&hub, &konto, "dev-pc");
+    let mut pc = k.geraet("dev-pc");
+    let r = pc
+        .unterhaltung_anlegen(kopf("T"), Einschraenkung::default())
+        .unwrap();
+    pc.beitrag_anlegen(&r, beitrag("a", None, 0, "geheim"))
+        .unwrap();
+    pc.hochladen(&pc_hub).unwrap();
+    assert_eq!(pc.widerrufen(&pc_hub, "dev-weg"), Ok(2));
+    (hub, konto, k, r)
+}
+
+fn mit_manipulation(
+    hub: &Arc<MemHub>,
+    konto: &Arc<Mutex<Konto>>,
+    name: &str,
+    m: impl Fn(&str, &mut Value) + Send + Sync + 'static,
+) -> Fake {
+    let mut p = portal(hub, konto, name);
+    p.transport.manipulation = Some(Box::new(m));
+    p
 }
 
 #[test]
 fn e3_0_vertauschte_steuerfelder_auf_der_leitung_werden_je_feld_verworfen() {
-    let bund = Schluesselbund::zufaellig().unwrap();
-    let leser_bund = bund_mit_zweiter_epoche(&bund);
     let andere_id = Hex128::zufall().unwrap();
     let andere_ref = Hex128::zufall().unwrap();
 
@@ -847,59 +1181,226 @@ fn e3_0_vertauschte_steuerfelder_auf_der_leitung_werden_je_feld_verworfen() {
         ("sammlung", Box::new(|o| o["sammlung"] = json!("hinweis"))),
         (
             "geraet_id",
-            Box::new(|o| o["geraet_id"] = json!("dev-fremd")),
+            Box::new(|o| o["geraet_id"] = json!("dev-tablet")),
         ),
+        // Epoche 2 ist gültig und dem Leser bekannt: nur die AAD verwirft das Objekt.
         ("key_epoch", Box::new(|o| o["key_epoch"] = json!("2"))),
+        (
+            "ciphertext",
+            Box::new(|o| {
+                let c = o["ciphertext"].as_str().unwrap().to_owned();
+                let erstes = if c.starts_with('A') { "B" } else { "A" };
+                o["ciphertext"] = json!(format!("{erstes}{}", &c[1..]));
+            }),
+        ),
     ];
+    let transport: Mutex<Vec<(&str, bool)>> = Mutex::new(Vec::new());
     for (feld, aendern) in faelle {
-        let (hub, konto) = konto_hub();
-        let pc_hub = portal(&hub, &konto, "dev-pc");
-        // Epoche 2 am Hub, damit „key_epoch 2“ gültig wäre und nur die AAD es verwirft.
-        hub.zulassen("dev-weg");
-        let mut pc = geraet("dev-pc", &bund);
-        let r = pc
-            .unterhaltung_anlegen(kopf("T"), Einschraenkung::default())
-            .unwrap();
-        pc.beitrag_anlegen(&r, beitrag("a", None, 0, "geheim"))
-            .unwrap();
-        pc.hochladen(&pc_hub).unwrap();
-        pc_hub
-            .widerrufen(
-                &AuthGeraet::new("dev-pc"),
-                "dev-weg",
-                1,
-                &Hex128::zufall().unwrap(),
-            )
-            .unwrap();
-
-        let mut angriff = portal(&hub, &konto, "dev-iphone");
-        // Nur Beiträge verändern (der Hub liefert manipulierte Objekte).
-        angriff.transport.manipulation = Some(Box::new(move |o: &mut Value| {
-            if o["sammlung"] == "beitrag" {
-                aendern(o);
+        let (hub, konto, k, r) = konto_mit_epoche_2();
+        // Erst die Schlüssel der Epoche 2 holen (ohne Manipulation), dann manipuliert lesen.
+        let mut ip = k.geraet("dev-iphone");
+        let sauber_ip = portal(&hub, &konto, "dev-iphone");
+        ip.verzeichnis_und_pakete_holen(&sauber_ip);
+        let angriff = mit_manipulation(&hub, &konto, "dev-iphone", move |pfad, b| {
+            if pfad != "/lesen" {
+                return;
             }
-        }));
-        let mut ip = geraet("dev-iphone", &leser_bund);
-        let bericht = ip.herunterladen(&angriff).unwrap();
-        assert_eq!(
-            bericht.beitraege_neu, 0,
-            "{feld}: manipuliertes Objekt darf nicht ankommen"
-        );
-        assert_eq!(
-            bericht.verworfen, 1,
-            "{feld}: genau das manipulierte Objekt wird verworfen"
-        );
+            for o in b["objekte"].as_array_mut().unwrap() {
+                if o["sammlung"] == "beitrag" {
+                    aendern(o);
+                }
+            }
+        });
+        // Entweder weist schon die Transportgrenze die Seite ab (Form, z. B. `art` passt nicht zur
+        // Sammlung), oder der Kern verwirft das Objekt (Bindung der Steuerfelder in der AAD).
+        match ip.herunterladen(&angriff) {
+            Ok(bericht) => {
+                assert_eq!(
+                    bericht.beitraege_neu, 0,
+                    "{feld}: manipuliertes Objekt darf nicht ankommen"
+                );
+                assert!(
+                    bericht.verworfen + bericht.zurueckgestellt + bericht.nach_widerruf >= 1,
+                    "{feld}: das manipulierte Objekt wird nicht übernommen: {bericht:?}"
+                );
+                transport.lock().unwrap().push((feld, false));
+            }
+            Err(f) => {
+                assert_eq!(
+                    f,
+                    SyncFehler::Hub(HubFehler::Vertrag("Hub-Antwort ungueltig")),
+                    "{feld}"
+                );
+                transport.lock().unwrap().push((feld, true));
+            }
+        }
         assert!(
-            ip.unterhaltung(&r).map_or(true, |u| u.verlauf().is_empty()),
+            ip.unterhaltung(&r).is_none_or(|u| u.verlauf().is_empty()),
             "{feld}: nichts landet im Verlauf"
         );
         // Und ohne Manipulation kommt es an: der Test prüft die Bindung, nicht Zufall.
         let sauber = portal(&hub, &konto, "dev-tablet");
-        let mut tab = geraet("dev-tablet", &leser_bund);
+        let mut tab = k.geraet("dev-tablet");
         assert_eq!(
             tab.herunterladen(&sauber).unwrap().beitraege_neu,
             1,
             "{feld}: Gegenprobe"
+        );
+    } // Die kryptografische Bindung muss greifen, wo die Form gültig bleibt.
+    let am_kern: Vec<&str> = transport
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(_, t)| !t)
+        .map(|(f, _)| *f)
+        .collect();
+    for f in [
+        "objekt_id",
+        "unterhaltung_ref",
+        "geraet_id",
+        "key_epoch",
+        "ciphertext",
+    ] {
+        assert!(
+            am_kern.contains(&f),
+            "{f} erreicht den Kern nicht: {am_kern:?}"
+        );
+    }
+}
+
+/// Hilfszug: holt Verzeichnis und Pakete ohne Objekte (ein `herunterladen` gegen einen Hub, der keine
+/// Objekte liefert).
+trait Vorbereiten {
+    fn verzeichnis_und_pakete_holen(&mut self, hub: &Fake);
+}
+
+impl Vorbereiten for Abgleich {
+    fn verzeichnis_und_pakete_holen(&mut self, hub: &Fake) {
+        let leer = PortalHub::new(
+            FakeHttp {
+                hub: hub.transport.hub.clone(),
+                konto: hub.transport.konto.clone(),
+                geraet: hub.transport.geraet.clone(),
+                log: Mutex::new(Vec::new()),
+                manipulation: Some(Box::new(|pfad, b| {
+                    if pfad == "/lesen" {
+                        *b = json!({ "objekte": [], "cursor": "0", "mehr": false });
+                    }
+                })),
+                offline: AtomicBool::new(false),
+            },
+            &hub.transport.geraet,
+        );
+        let b = self.herunterladen(&leer).unwrap();
+        assert_eq!(b.schluessel_neu, 1, "Schlüssel der Epoche 2");
+    }
+}
+
+#[test]
+fn e3_8_manipulierte_schluesselpakete_werden_abgewiesen() {
+    type Aendern = Box<dyn Fn(&mut Value) + Send + Sync>;
+    let faelle: Vec<(&str, Aendern)> = vec![
+        (
+            "chiffrat",
+            Box::new(|p| {
+                let c = p["chiffrat"].as_str().unwrap().to_owned();
+                let erstes = if c.starts_with('A') { "B" } else { "A" };
+                p["chiffrat"] = json!(format!("{erstes}{}", &c[1..]));
+            }),
+        ),
+        ("epoche", Box::new(|p| p["epoche"] = json!("3"))),
+        (
+            "absender",
+            Box::new(|p| p["absender"] = json!("dev-tablet")),
+        ),
+        (
+            "verzeichnis_nummer",
+            Box::new(|p| p["verzeichnis_nummer"] = json!("0")),
+        ),
+        ("signatur", {
+            Box::new(|p| {
+                let s = p["signatur"].as_str().unwrap().to_owned();
+                let erstes = if s.starts_with('0') { "1" } else { "0" };
+                p["signatur"] = json!(format!("{erstes}{}", &s[1..]));
+            })
+        }),
+    ];
+    for (feld, aendern) in faelle {
+        let (hub, konto, k, _) = konto_mit_epoche_2();
+        let angriff = mit_manipulation(&hub, &konto, "dev-iphone", move |pfad, b| {
+            if pfad == "/pakete" {
+                b["pakete"]
+                    .as_array_mut()
+                    .unwrap()
+                    .iter_mut()
+                    .for_each(&aendern);
+            }
+        });
+        let mut ip = k.geraet("dev-iphone");
+        let b = ip.herunterladen(&angriff).unwrap();
+        assert_eq!(
+            b.schluessel_neu, 0,
+            "{feld}: kein Schlüssel aus einem manipulierten Paket"
+        );
+        assert!(b.pakete_abgewiesen >= 1, "{feld}: {b:?}");
+        assert!(ip.bund().schluessel(2).is_none(), "{feld}");
+        assert!(ip.bund().schluessel(3).is_none(), "{feld}");
+        // Gegenprobe ohne Manipulation.
+        let sauber = portal(&hub, &konto, "dev-iphone");
+        assert_eq!(
+            ip.herunterladen(&sauber).unwrap().schluessel_neu,
+            1,
+            "{feld}"
+        );
+    }
+}
+
+#[test]
+fn e3_8_manipuliertes_oder_verborgenes_verzeichnis_wird_nicht_uebernommen() {
+    // Ein veränderter Widerrufseintrag (andere Epoche, anderes Ziel) passt nicht zur Signatur.
+    type Aendern = Box<dyn Fn(&mut Value) + Send + Sync>;
+    let faelle: Vec<(&str, Aendern)> = vec![
+        (
+            "widerruf.geraet_id",
+            Box::new(|e| e["aenderung"]["widerruf"]["geraet_id"] = json!("dev-iphone")),
+        ),
+        (
+            "widerruf.epoche",
+            Box::new(|e| e["aenderung"]["widerruf"]["epoche"] = json!("5")),
+        ),
+        (
+            "unterzeichner",
+            Box::new(|e| e["unterzeichner"] = json!("dev-tablet")),
+        ),
+    ];
+    for (feld, aendern) in faelle {
+        let (hub, konto, k, _) = konto_mit_epoche_2();
+        let laenge = k.verzeichnis().laenge();
+        let angriff = mit_manipulation(&hub, &konto, "dev-tablet", move |pfad, b| {
+            if pfad != "/verzeichnis" {
+                return;
+            }
+            for e in b["eintraege"].as_array_mut().unwrap() {
+                if e.get("aenderung").and_then(|a| a.get("widerruf")).is_some() {
+                    aendern(e);
+                }
+            }
+        });
+        let mut tab = k.geraet("dev-tablet");
+        let ergebnis = tab.herunterladen(&angriff);
+        if let Ok(b) = &ergebnis {
+            assert_eq!(b.verzeichnis_neu, 0, "{feld}: {b:?}");
+        }
+        assert_eq!(tab.verzeichnis().laenge(), laenge, "{feld}");
+        assert_eq!(tab.epoche(), 1, "{feld}");
+        assert!(
+            tab.verzeichnis()
+                .stand()
+                .mitglied("dev-iphone")
+                .unwrap()
+                .widerrufen
+                .is_none(),
+            "{feld}: kein untergeschobener Widerruf"
         );
     }
 }
@@ -907,9 +1408,9 @@ fn e3_0_vertauschte_steuerfelder_auf_der_leitung_werden_je_feld_verworfen() {
 #[test]
 fn e3_0_hub_sieht_keinen_klartext_und_nur_die_steuerfelder() {
     let (hub, konto) = konto_hub();
+    let k = Testkonto::mit_hub(&["dev-pc"], &hub);
     let p = portal(&hub, &konto, "dev-pc");
-    let bund = Schluesselbund::zufaellig().unwrap();
-    let mut pc = geraet("dev-pc", &bund);
+    let mut pc = k.geraet("dev-pc");
     let r = pc
         .unterhaltung_anlegen(
             kopf("Streng vertraulicher Titel"),
@@ -929,10 +1430,6 @@ fn e3_0_hub_sieht_keinen_klartext_und_nur_die_steuerfelder() {
         .collect();
     assert!(!draht.contains("Inhalt-Geheimnis-4711"));
     assert!(!draht.contains("Streng vertraulicher Titel"));
-    assert!(
-        !draht.contains("dev-pc") || draht.contains("\"geraet_id\":\"dev-pc\""),
-        "Gerät nur als Steuerfeld"
-    );
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -940,42 +1437,47 @@ fn e3_0_hub_sieht_keinen_klartext_und_nur_die_steuerfelder() {
 // Fake-HTTP-Hub
 // ---------------------------------------------------------------------------------------------
 
-/// Erzeugt für jedes Gerät einen Zugang zu demselben Hub.
-type Zugang = Box<dyn Fn(&str) -> Box<dyn HubSpeicher + Send + Sync>>;
+const LEASE_GERAETE: [&str; 12] = [
+    "dev-pc",
+    "dev-iphone",
+    "dev-pruefer",
+    "dev-start",
+    "dev-0",
+    "dev-1",
+    "dev-2",
+    "dev-3",
+    "dev-4",
+    "dev-5",
+    "dev-6",
+    "dev-7",
+];
+
+/// Erzeugt für ein Gerät einen Zugang zum Hub.
+type HubFabrik = Box<dyn Fn(&str) -> Box<dyn HubSpeicher + Send + Sync> + Send>;
+
+/// Ein Konto und für jedes Gerät ein Zugang zu demselben Hub.
+struct Zugang {
+    konto: Testkonto,
+    hub: HubFabrik,
+}
 
 fn zugang_memhub() -> Zugang {
     let h = Arc::new(MemHub::new());
-    for g in ["dev-pc", "dev-iphone", "dev-pruefer", "dev-start"]
-        .into_iter()
-        .chain([
-            "dev-0", "dev-1", "dev-2", "dev-3", "dev-4", "dev-5", "dev-6", "dev-7",
-        ])
-    {
-        h.zulassen(g);
+    let konto = Testkonto::mit_hub(&LEASE_GERAETE, &h);
+    Zugang {
+        konto,
+        hub: Box::new(move |_| Box::new(h.clone())),
     }
-    Box::new(move |_| Box::new(h.clone()))
 }
 
 fn zugang_http() -> Zugang {
-    let (hub, konto) = konto_hub();
-    for g in [
-        "dev-pc",
-        "dev-iphone",
-        "dev-pruefer",
-        "dev-start",
-        "dev-0",
-        "dev-1",
-        "dev-2",
-        "dev-3",
-        "dev-4",
-        "dev-5",
-        "dev-6",
-        "dev-7",
-    ] {
-        hub.zulassen(g);
+    let (hub, k) = konto_hub();
+    let konto = Testkonto::mit_hub(&LEASE_GERAETE, &hub);
+    k.lock().unwrap().je_zugelassen = true;
+    Zugang {
+        konto,
+        hub: Box::new(move |name| Box::new(PortalHub::new(FakeHttp::neu(&hub, &k, name), name))),
     }
-    konto.lock().unwrap().je_zugelassen = true;
-    Box::new(move |name| Box::new(PortalHub::new(FakeHttp::neu(&hub, &konto, name), name)))
 }
 
 fn beide(f: impl Fn(&str, &Zugang)) {
@@ -985,10 +1487,9 @@ fn beide(f: impl Fn(&str, &Zugang)) {
 
 #[test]
 fn e3_3_a_antwort_ueber_mindestens_drei_verlaengerungen_bleibt_im_zweig() {
-    beide(|name, zugang| {
-        let bund = Schluesselbund::zufaellig().unwrap();
-        let (hub_pc, hub_ip) = (zugang("dev-pc"), zugang("dev-iphone"));
-        let mut pc = geraet("dev-pc", &bund);
+    beide(|name, z| {
+        let (hub_pc, hub_ip) = ((z.hub)("dev-pc"), (z.hub)("dev-iphone"));
+        let mut pc = z.konto.geraet("dev-pc");
         let r = pc
             .unterhaltung_anlegen(kopf("Lease"), Einschraenkung::default())
             .unwrap();
@@ -1016,7 +1517,7 @@ fn e3_3_a_antwort_ueber_mindestens_drei_verlaengerungen_bleibt_im_zweig() {
             .unwrap();
         pc.hochladen(&*hub_pc).unwrap();
 
-        let mut iphone = geraet("dev-iphone", &bund);
+        let mut iphone = z.konto.geraet("dev-iphone");
         iphone.herunterladen(&*hub_ip).unwrap();
         let stand = iphone.lease_lesen(&*hub_ip, &r).unwrap().unwrap();
         assert_eq!(
@@ -1039,10 +1540,9 @@ fn e3_3_a_antwort_ueber_mindestens_drei_verlaengerungen_bleibt_im_zweig() {
 
 #[test]
 fn e3_3_b_uebernahme_waehrend_laufender_antwort_alte_wird_zweig_neue_haengt_am_gewaehlten() {
-    beide(|name, zugang| {
-        let bund = Schluesselbund::zufaellig().unwrap();
-        let (hub_pc, hub_ip) = (zugang("dev-pc"), zugang("dev-iphone"));
-        let mut pc = geraet("dev-pc", &bund);
+    beide(|name, z| {
+        let (hub_pc, hub_ip) = ((z.hub)("dev-pc"), (z.hub)("dev-iphone"));
+        let mut pc = z.konto.geraet("dev-pc");
         let r = pc
             .unterhaltung_anlegen(kopf("Übernahme"), Einschraenkung::default())
             .unwrap();
@@ -1051,7 +1551,7 @@ fn e3_3_b_uebernahme_waehrend_laufender_antwort_alte_wird_zweig_neue_haengt_am_g
             .unwrap();
         pc.hochladen(&*hub_pc).unwrap();
 
-        let mut iphone = geraet("dev-iphone", &bund);
+        let mut iphone = z.konto.geraet("dev-iphone");
         iphone.herunterladen(&*hub_ip).unwrap();
         let gelesen = iphone.lease_lesen(&*hub_ip, &r).unwrap();
         let halt_ip = iphone
@@ -1091,13 +1591,12 @@ fn e3_3_b_uebernahme_waehrend_laufender_antwort_alte_wird_zweig_neue_haengt_am_g
 
 #[test]
 fn e3_3_c_gleichzeitige_uebernahme_ergibt_genau_einen_inhaber() {
-    beide(|name, zugang| {
-        let bund = Schluesselbund::zufaellig().unwrap();
+    beide(|name, z| {
         let r = Hex128::zufall().unwrap();
         let mut geraete: Vec<(Abgleich, _)> = (0..6)
             .map(|i| {
                 let n = format!("dev-{i}");
-                (geraet(&n, &bund), zugang(&n))
+                (z.konto.geraet(&n), (z.hub)(&n))
             })
             .collect();
         // Runde 1: keine Lease vorhanden, alle lesen „nichts“ und übernehmen.
@@ -1114,11 +1613,10 @@ fn e3_3_c_gleichzeitige_uebernahme_ergibt_genau_einen_inhaber() {
             "{name}"
         );
         // Runde 2: alle lesen denselben Stand, alle übernehmen mit generation + 1.
-        let gelesen = geraete[0]
-            .0
-            .lease_lesen(&*geraete[0].1, &r)
-            .unwrap()
-            .unwrap();
+        let gelesen = {
+            let (g, h) = &mut geraete[0];
+            g.lease_lesen(&**h, &r).unwrap().unwrap()
+        };
         let ergebnisse: Vec<_> = geraete
             .iter_mut()
             .map(|(g, h)| g.lease_uebernehmen(&**h, &r, T0 + 100, Some(&gelesen)))
@@ -1130,9 +1628,9 @@ fn e3_3_c_gleichzeitige_uebernahme_ergibt_genau_einen_inhaber() {
             .map(|(i, _)| i)
             .collect();
         assert_eq!(erfolge.len(), 1, "{name}: genau ein Inhaber");
-        let neu = geraete[0]
-            .0
-            .lease_lesen(&*geraete[0].1, &r)
+        let mut pruefer = z.konto.geraet("dev-pruefer");
+        let neu = pruefer
+            .lease_lesen(&*(z.hub)("dev-pruefer"), &r)
             .unwrap()
             .unwrap();
         assert_eq!(neu.lease.generation, 2, "{name}");
@@ -1142,19 +1640,16 @@ fn e3_3_c_gleichzeitige_uebernahme_ergibt_genau_einen_inhaber() {
 
 #[test]
 fn e3_3_c_gleichzeitige_uebernahme_mit_threads_ergibt_genau_einen_inhaber() {
-    let bund = Schluesselbund::zufaellig().unwrap();
-    for (name, zugang) in [
+    for (name, z) in [
         ("MemHub", zugang_memhub()),
         ("PortalHub/HTTP", zugang_http()),
     ] {
-        let zugang = Arc::new(Mutex::new(zugang));
         for runde in 0..10u64 {
             let r = Hex128::zufall().unwrap();
             {
-                let z = zugang.lock().unwrap();
-                let mut a = geraet("dev-start", &bund);
+                let mut a = z.konto.geraet("dev-start");
                 assert_eq!(
-                    a.lease_uebernehmen(&*z("dev-start"), &r, T0, None)
+                    a.lease_uebernehmen(&*(z.hub)("dev-start"), &r, T0, None)
                         .unwrap()
                         .generation,
                     1
@@ -1163,11 +1658,11 @@ fn e3_3_c_gleichzeitige_uebernahme_mit_threads_ergibt_genau_einen_inhaber() {
             let barriere = Arc::new(Barrier::new(8));
             let handles: Vec<_> = (0..8)
                 .map(|i| {
-                    let (bund, barriere, r) = (bund.clone(), barriere.clone(), r.clone());
+                    let (barriere, r) = (barriere.clone(), r.clone());
                     let n = format!("dev-{i}");
-                    let hub = zugang.lock().unwrap()(&n);
+                    let hub = (z.hub)(&n);
+                    let mut g = z.konto.geraet(&n);
                     thread::spawn(move || {
-                        let mut g = geraet(&n, &bund);
                         let gelesen = g.lease_lesen(&*hub, &r).unwrap();
                         barriere.wait();
                         (
@@ -1180,10 +1675,9 @@ fn e3_3_c_gleichzeitige_uebernahme_mit_threads_ergibt_genau_einen_inhaber() {
             let ergebnisse: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
             let sieger: Vec<_> = ergebnisse.iter().filter(|(_, e)| e.is_ok()).collect();
             assert_eq!(sieger.len(), 1, "{name} Runde {runde}: genau ein Inhaber");
-            let z = zugang.lock().unwrap();
-            let pruefer = geraet("dev-pruefer", &bund);
+            let mut pruefer = z.konto.geraet("dev-pruefer");
             let stand = pruefer
-                .lease_lesen(&*z("dev-pruefer"), &r)
+                .lease_lesen(&*(z.hub)("dev-pruefer"), &r)
                 .unwrap()
                 .unwrap();
             assert_eq!(
@@ -1203,13 +1697,16 @@ fn schranke_verhindert_jeden_weiteren_netzaufruf_vor_dem_transport() {
         PortalHub::new(FakeHttp::neu(&hub, &konto, "dev-pc"), "dev-pc").mit_sperre(sperre.clone());
     assert_eq!(p.zulassen(None), Ok(1));
     let auth = AuthGeraet::new("dev-pc");
-    assert_eq!(p.epoche(&auth), Ok(1));
+    assert!(p.verzeichnis_lesen(&auth, 0).is_ok());
     let vorher = p.transport.log.lock().unwrap().len();
     assert!(vorher >= 2);
 
     sperre.store(true, Ordering::SeqCst);
-    assert_eq!(p.epoche(&auth), Err(HubFehler::Nichtverfuegbar));
-    assert_eq!(p.zugelassene(&auth), Err(HubFehler::Nichtverfuegbar));
+    assert_eq!(
+        p.verzeichnis_lesen(&auth, 0),
+        Err(HubFehler::Nichtverfuegbar)
+    );
+    assert_eq!(p.pakete_lesen(&auth), Err(HubFehler::Nichtverfuegbar));
     assert_eq!(
         p.lesen(&auth, &LeseFilter::default()),
         Err(HubFehler::Nichtverfuegbar)
@@ -1224,5 +1721,8 @@ fn schranke_verhindert_jeden_weiteren_netzaufruf_vor_dem_transport() {
     );
 
     sperre.store(false, Ordering::SeqCst);
-    assert_eq!(p.epoche(&auth), Ok(1), "ohne Schranke geht es wieder");
+    assert!(
+        p.verzeichnis_lesen(&auth, 0).is_ok(),
+        "ohne Schranke geht es wieder"
+    );
 }
