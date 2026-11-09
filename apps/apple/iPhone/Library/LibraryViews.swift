@@ -301,8 +301,8 @@ struct ShelfItem: View {
     @ObservedObject var library = PhoneLibrary.shared
     @ObservedObject var downloads = AudioDownloads.shared
     @Environment(\.dynamicTypeSize) private var typeSize
-    /// Höhe des Download-Symbols: Jede Statuszeile ist mindestens so hoch, mit oder ohne Symbol (lva#421).
-    @ScaledMetric(relativeTo: .caption) private var markHeight: CGFloat = 15
+    /// Feste Höhe der Statuszeile (Zeilenhöhe von .caption), damit alle Kacheln gleich hoch sind (lva#421).
+    @ScaledMetric(relativeTo: .caption) private var rowHeight: CGFloat = 16
     var body: some View {
         // Sprachfassungen (lva#344): Stand und Hörbuch der zuletzt aktiven Fassung, dazu die Sprachkürzel.
         let active = library.activeView(book)
@@ -315,30 +315,32 @@ struct ShelfItem: View {
             } else {
             ProgressView(value: book.finished ? 1 : LibraryProgress.fraction(rec)).tint(VoicePalette.accent)
             // Statuszeile einzeilig (lva#421): Stand links, Sprachkürzel und Download-Symbol rechts.
-            metaLayout {
-                Text(audio || library.audioInAccount(active) ? (rec == nil ? "Hörbuch · neu" : "Hörbuch · \(LibraryFormat.percent(LibraryProgress.fraction(rec)))")
-                           : "Text · \(LibraryFormat.percent(LibraryProgress.fraction(rec)))")
-                    .font(.caption).foregroundStyle(VoicePalette.secondaryText)
-                    // Eine Zeile je Kachel (lva#421): lieber etwas kleiner als eine zweite Zeile, die die Reihe versetzt.
-                    .lineLimit(typeSize.isAccessibilitySize ? nil : 1)
-                    .minimumScaleFactor(typeSize.isAccessibilitySize ? 1 : 0.75)
-                    .fixedSize(horizontal: false, vertical: typeSize.isAccessibilitySize)
-                    .layoutPriority(1)
-                if typeSize.isAccessibilitySize {
+            // Schrift überall gleich groß; reicht der Platz nicht, wird der Text kürzer, nicht kleiner.
+            let isAudio = audio || library.audioInAccount(active)
+            let stand = rec == nil && isAudio ? "neu" : LibraryFormat.percent(LibraryProgress.fraction(rec))
+            if typeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("\(isAudio ? "Hörbuch" : "Text") · \(stand)").font(.caption).foregroundStyle(VoicePalette.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
                     LanguageBadges(book: book, compact: true)
-                } else {
-                    Spacer(minLength: 0)
-                    // Sprachkürzel klein und rechtsbündig in der Statuszeile, vor dem Download-Symbol.
-                    // Reicht die Breite nicht, nur die aktive Sprache, sonst keine; VoiceOver nennt alle.
-                    ViewThatFits(in: .horizontal) {
-                        LanguageBadges(book: book, compact: true).fixedSize()
-                        LanguageBadges(book: book, compact: true, onlyActive: true).fixedSize()
-                        EmptyView()
-                    }
+                    if audio { DownloadedMark() }
                 }
-                if audio { DownloadedMark() }
+            } else {
+                HStack(alignment: .center, spacing: 3) {
+                    ViewThatFits(in: .horizontal) {
+                        Text("\(isAudio ? "Hörbuch" : "Text") · \(stand)")
+                        Text("\(Image(systemName: isAudio ? "headphones" : "text.alignleft")) \(stand)")
+                        Text(stand)
+                    }
+                    .font(.caption).foregroundStyle(VoicePalette.secondaryText).lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    // Alle Sprachkürzel, klein und rechtsbündig vor dem Download-Symbol.
+                    LanguageBadges(book: book, compact: true).fixedSize()
+                    if audio { DownloadedMark().fixedSize() }
+                }
+                // Feste Höhe: jede Kachel einer Reihe exakt gleich hoch, mit oder ohne Symbol und Kürzel.
+                .frame(height: rowHeight)
             }
-            .frame(minHeight: typeSize.isAccessibilitySize ? nil : markHeight)
             }
         }
         .accessibilityElement(children: .combine)
@@ -352,11 +354,6 @@ struct ShelfItem: View {
         if let languages = LanguageBadges.spoken(book) { parts.append(languages) }
         if audio { parts.append("Hörbuch heruntergeladen, offline verfügbar") }
         return parts.joined(separator: ", ")
-    }
-
-    /// In sehr großer Schrift untereinander, sonst bliebe dem Text kaum Breite.
-    private var metaLayout: AnyLayout {
-        typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 2)) : AnyLayout(HStackLayout(alignment: .center, spacing: 4))
     }
 }
 
