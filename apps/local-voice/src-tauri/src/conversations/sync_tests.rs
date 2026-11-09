@@ -386,6 +386,9 @@ fn e10_vertrauliche_und_lokale_gespraeche_werden_nie_hochgeladen() {
     setze_klasse(&s, &unbekannt, "GEHEIMSTUFE", false);
     let sonder = gespraech(&s, "Sonderkategorie", 3);
     setze_klasse(&s, &sonder, "INTERNAL", true);
+    // Sonderkategorie nur als Datenklasse, ohne Flag: bleibt ebenfalls auf dem Gerät.
+    let sonderklasse = gespraech(&s, "Sonderklasse", 3);
+    setze_klasse(&s, &sonderklasse, "SPECIAL", false);
     gespraech_mit_klasse_personal(&s);
 
     let r = lauf_ok(&s, &h, &b, "dev-a");
@@ -394,7 +397,10 @@ fn e10_vertrauliche_und_lokale_gespraeche_werden_nie_hochgeladen() {
         3 + 3,
         "nur das normale und das personenbezogene Gespräch"
     );
-    assert_eq!(r.nur_lokal, 15, "fünf blockierte Gespräche à drei Beiträge");
+    assert_eq!(
+        r.nur_lokal, 18,
+        "sechs blockierte Gespräche à drei Beiträge"
+    );
 
     let datenbestand = s.sync_datenbestand_id().unwrap();
     for (id, name) in [
@@ -403,6 +409,7 @@ fn e10_vertrauliche_und_lokale_gespraeche_werden_nie_hochgeladen() {
         (&vertraulich, "confidential"),
         (&unbekannt, "unbekannt"),
         (&sonder, "sonderkategorie"),
+        (&sonderklasse, "sonderklasse"),
     ] {
         let r = ref_aus_lokaler_id(b.bund(), &datenbestand, id);
         assert_eq!(
@@ -419,7 +426,13 @@ fn e10_vertrauliche_und_lokale_gespraeche_werden_nie_hochgeladen() {
     );
     // Der Hub-Inhalt enthält keinen Klartext der blockierten Gespräche.
     let draht = serde_json::to_string(&h.alle_umschlaege()).unwrap();
-    for t in ["Nur lokal", "Streng", "Vertraulich", "Sonderkategorie"] {
+    for t in [
+        "Nur lokal",
+        "Streng",
+        "Vertraulich",
+        "Sonderkategorie",
+        "Sonderklasse",
+    ] {
         assert!(!draht.contains(t));
     }
 }
@@ -820,6 +833,180 @@ fn beitraege_mit_fremder_kennung_werden_gezaehlt_aber_nicht_abgelegt() {
     assert_eq!((bericht.beitraege_neu, bericht.nicht_uebernommen), (0, 2));
     let id = gespraech_mit_titel(&s, "Fremde IDs").unwrap();
     assert!(s.get(&id).unwrap().entries.is_empty());
+}
+
+/// Gespräch eines anderen Geräts mit einem Beitrag dieser Datenklasse.
+fn fremdes_gespraech(b: &Konto, h: &MemHub, titel: &str, beitraege: Vec<Beitrag>) {
+    let mut x = b.k.geraet("dev-x");
+    let r = x
+        .unterhaltung_anlegen(
+            Kopf {
+                titel: titel.into(),
+                bereich: "x".into(),
+                modellwunsch: "x".into(),
+                angeheftet: false,
+            },
+            Einschraenkung::default(),
+        )
+        .unwrap();
+    for beitrag in beitraege {
+        x.beitrag_anlegen(&r, beitrag).unwrap();
+    }
+    x.hochladen(h).unwrap();
+}
+
+#[test]
+fn e10_sonderkategorie_von_aussen_wird_markiert_und_bleibt_danach_auf_dem_geraet() {
+    let (b, h) = konto(&["dev-x", "dev-a"]);
+    let mut beitrag = Beitrag::neu(
+        "entry_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        None,
+        0,
+        "user",
+        Modus::Typed,
+        "Gesundheitsangabe (synthetisch)",
+    );
+    beitrag.datenklasse = wai_assistent::sync::Datenklasse::Special;
+    fremdes_gespraech(&b, &h, "Sonder von iOS", vec![beitrag]);
+
+    let s = ConversationStore::open_in_memory().unwrap();
+    let bericht = lauf_ok(&s, &h, &b, "dev-a");
+    assert_eq!((bericht.unterhaltungen_neu, bericht.beitraege_neu), (1, 1));
+    let lokal = gespraech_mit_titel(&s, "Sonder von iOS").unwrap();
+    let scope = s.get(&lokal).unwrap().conversation.scope;
+    assert_eq!(scope.data_class, "SPECIAL");
+    assert!(scope.special_category, "Sonderkategorie auch als Flag");
+    assert!(nur_auf_dem_geraet(&scope, false));
+    s.append_entry(&lokal, eintrag("user", "Antwort darauf"))
+        .unwrap();
+    let objekte = objekte_ohne_marken(&h);
+    let bericht = lauf_ok(&s, &h, &b, "dev-a");
+    assert_eq!(bericht.beitraege_hoch, 0);
+    assert_eq!(objekte_ohne_marken(&h), objekte);
+}
+
+#[test]
+fn import_mit_schon_vergebener_eintragskennung_ueberspringt_und_zaehlt() {
+    let (b, h) = konto(&["dev-x", "dev-a"]);
+    let doppelt = "entry_01ARZ3NDEKTSV4RRFFQ69G5FAV";
+    fremdes_gespraech(
+        &b,
+        &h,
+        "Kollision",
+        vec![
+            Beitrag::neu(doppelt, None, 0, "user", Modus::Typed, "Vom anderen Gerät"),
+            Beitrag::neu(
+                "entry_01ARZ3NDEKTSV4RRFFQ69G5FAW",
+                Some(doppelt),
+                0,
+                "assistant",
+                Modus::Typed,
+                "Zweiter Beitrag",
+            ),
+        ],
+    );
+    // Lokal trägt schon ein Eintrag (in einem nur lokalen Gespräch) dieselbe Kennung.
+    let s = ConversationStore::open_in_memory().unwrap();
+    let c = s.create(Some("Lokal".into())).unwrap();
+    s.sync_geraet_lokal_setzen(&c.id, true).unwrap();
+    let mut e = eintrag("user", "Lokaler Eintrag");
+    e.id = Some(doppelt.to_owned());
+    s.append_entry(&c.id, e).unwrap();
+
+    let bericht = lauf_ok(&s, &h, &b, "dev-a");
+    assert_eq!(
+        (
+            bericht.unterhaltungen_neu,
+            bericht.beitraege_neu,
+            bericht.nicht_uebernommen
+        ),
+        (1, 1, 1),
+        "der Lauf bricht nicht ab; die Kollision wird gezählt"
+    );
+    let id = gespraech_mit_titel(&s, "Kollision").unwrap();
+    assert_eq!(texte(&s, &id), vec!["Zweiter Beitrag"]);
+    assert_eq!(texte(&s, &c.id), vec!["Lokaler Eintrag"]);
+}
+
+/// Antwort, die die Sprachsitzung unter der Lease-Generation `g` anhängt.
+fn antwort_unter_lease(text: &str, g: u64) -> NewEntry {
+    let mut e = eintrag("assistant", text);
+    e.ext = Some(ConversationExt {
+        local_voice_ai: Some(VoiceExt {
+            lease_generation: Some(u32::try_from(g).unwrap()),
+            ..VoiceExt::default()
+        }),
+    });
+    e
+}
+
+/// E3.3 Fencing über `lauf()`: A antwortet unter seiner Lease, B übernimmt währenddessen und
+/// antwortet unter der höheren Generation. Die alte Antwort geht nicht verloren, wird aber nie
+/// Hauptlinie, sondern ein Zweig `VeralteteGeneration`, auf beiden Geräten.
+#[test]
+fn e3_3_uebernahme_waehrend_laufender_antwort_macht_die_alte_antwort_zum_zweig() {
+    let (b, h) = konto(&["dev-a", "dev-b"]);
+    let sa = ConversationStore::open_in_memory().unwrap();
+    let sb = ConversationStore::open_in_memory().unwrap();
+    let id_a = gespraech(&sa, "Sitzung", 1);
+    lauf_ok(&sa, &h, &b, "dev-a");
+    lauf_ok(&sb, &h, &b, "dev-b");
+    let id_b = gespraech_mit_titel(&sb, "Sitzung").unwrap();
+    let jetzt = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    let g1 = b
+        .mit("dev-a", |a| sitzung(&sa, &*h, a, &id_a, jetzt, true))
+        .unwrap()
+        .unwrap()
+        .generation;
+    let g2 = b
+        .mit("dev-b", |a| sitzung(&sb, &*h, a, &id_b, jetzt + 1, true))
+        .unwrap()
+        .unwrap()
+        .generation;
+    assert!(g2 > g1, "die Übernahme erhöht die Generation");
+
+    sb.append_entry(&id_b, antwort_unter_lease("Neue Antwort", g2))
+        .unwrap();
+    lauf_ok(&sb, &h, &b, "dev-b");
+    // A beendet die alte Antwort unter seiner (überholten) Generation und gleicht ab.
+    let alt = sa
+        .append_entry(&id_a, antwort_unter_lease("Alte Antwort", g1))
+        .unwrap()
+        .id;
+    lauf_ok(&sa, &h, &b, "dev-a");
+    lauf_ok(&sb, &h, &b, "dev-b");
+
+    for g in ["dev-a", "dev-b"] {
+        let ansicht = b.mit(g, |a| {
+            let (_, u) = a.unterhaltungen().next().unwrap();
+            u.verlauf().ansicht(0)
+        });
+        assert!(!ansicht.hauptlinie.contains(&alt), "{g}: nie Hauptlinie");
+        let zweig = ansicht
+            .zweige
+            .iter()
+            .find(|z| z.eintraege.contains(&alt))
+            .unwrap_or_else(|| panic!("{g}: alte Antwort ist ein Zweig"));
+        assert_eq!(
+            zweig.grund,
+            wai_assistent::sync::ZweigGrund::VeralteteGeneration
+        );
+    }
+    // Die Generation übersteht den Weg über den Hub (B legt die alte Antwort mit ihr ab).
+    let e = sb.get(&id_b).unwrap().entries;
+    let bei_b = e.iter().find(|x| x.id == alt).expect("alte Antwort kam an");
+    assert_eq!(
+        bei_b
+            .ext
+            .as_ref()
+            .and_then(|x| x.local_voice_ai.as_ref())
+            .and_then(|v| v.lease_generation),
+        Some(u32::try_from(g1).unwrap())
+    );
 }
 
 // ---------------------------------------------------------------------------------------------

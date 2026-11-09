@@ -222,6 +222,13 @@ pub struct VoiceExt {
     pub provider_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub local: Option<bool>,
+    /// Lease-Generation (ADR-0028 E3.3), unter der dieser Beitrag angehängt wurde. Setzt die
+    /// Sprachsitzung, wenn sie unter einer Lease antwortet (Generation aus
+    /// `conversations::sync::sitzung`); der Assistent-Sync gibt sie als `lease_generation` an den
+    /// Kern, der einen Beitrag aus einer überholten Generation als Zweig ablegt. Fehlt sie, wurde
+    /// ohne Lease geschrieben (Generation 0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lease_generation: Option<u32>,
 }
 
 /// Erweiterung je Herkunft (Vertrag `ConversationExt`): diese App schreibt nur ihren Schlüssel.
@@ -881,6 +888,13 @@ impl ConversationStore {
     }
 
     pub fn create(&self, title: Option<String>) -> Result<Conversation> {
+        let conversation = Self::neues_gespraech(title)?;
+        let conn = self.lock();
+        Self::einfuegen(&conn, &conversation)?;
+        Ok(conversation)
+    }
+
+    fn neues_gespraech(title: Option<String>) -> Result<Conversation> {
         let title = match title.as_deref().map(str::trim) {
             None | Some("") => DEFAULT_TITLE.to_string(),
             Some(t) => clean_title(t)?,
@@ -927,7 +941,10 @@ impl ConversationStore {
             archived: false,
             ext: None,
         };
-        let conn = self.lock();
+        Ok(conversation)
+    }
+
+    fn einfuegen(conn: &Connection, conversation: &Conversation) -> Result<()> {
         conn.execute(
             &format!(
                 "INSERT INTO conversations ({CONVERSATION_COLUMNS})
@@ -950,7 +967,7 @@ impl ConversationStore {
                 opt_to_json(&conversation.ext)?,
             ],
         )?;
-        Ok(conversation)
+        Ok(())
     }
 
     /// Ändert Titel, Anheften oder Archiv. `updated_at` bleibt unberührt: es
@@ -1273,21 +1290,6 @@ impl ConversationStore {
         Ok(())
     }
 
-    /// Merkt, dass diese Gespräche für den Hub bestimmt sind (ab jetzt geht beim Löschen ein
-    /// Grabstein hoch). Der Sync-Lauf ruft das vor dem ersten Hochladen auf.
-    pub fn sync_jemals_setzen(&self, ids: &[String], konto: &str) -> Result<()> {
-        let conn = self.lock();
-        let tx = conn.unchecked_transaction()?;
-        for id in ids {
-            tx.execute(
-                "UPDATE conversations SET sync_jemals = 1, sync_konto = ?2 WHERE id = ?1",
-                params![id, konto],
-            )?;
-        }
-        tx.commit()?;
-        Ok(())
-    }
-
     pub fn sync_kopf_setzen(&self, id: &str, fingerabdruck: &str) -> Result<()> {
         let conn = self.lock();
         conn.execute(
@@ -1314,6 +1316,58 @@ impl ConversationStore {
             params![hub_ref, conversation_id],
         )?;
         Ok(())
+    }
+
+    /// Legt ein Gespräch eines anderen Geräts an: Gespräch (mit Datenklasse, Sonderkategorie und
+    /// Anheftung), Zuordnung zur Hub-Kennung und `sync_jemals` in EINER Transaktion. Bricht etwas ab,
+    /// bleibt kein lokales Gespräch ohne Zuordnung zurück (das sonst beim nächsten Lauf als neues
+    /// Gespräch hochginge).
+    pub fn sync_import_anlegen(
+        &self,
+        title: Option<String>,
+        hub_ref: &str,
+        konto: &str,
+        data_class: &str,
+        special_category: bool,
+        pinned: bool,
+    ) -> Result<Conversation> {
+        let mut c = Self::neues_gespraech(title)?;
+        c.scope.data_class = data_class.to_string();
+        c.scope.special_category = special_category;
+        c.pinned = pinned;
+        let conn = self.lock();
+        let tx = conn.unchecked_transaction()?;
+        Self::einfuegen(&tx, &c)?;
+        if pinned {
+            tx.execute(
+                "UPDATE conversations SET pinned_at = ?1 WHERE id = ?2",
+                params![Utc::now().timestamp_millis(), c.id],
+            )?;
+        }
+        tx.execute(
+            "INSERT OR REPLACE INTO assistent_sync_zuordnung (unterhaltung_ref, conversation_id)
+             VALUES (?1, ?2)",
+            params![hub_ref, c.id],
+        )?;
+        tx.execute(
+            "UPDATE conversations SET sync_jemals = 1, sync_konto = ?2 WHERE id = ?1",
+            params![c.id, konto],
+        )?;
+        tx.commit()?;
+        Ok(c)
+    }
+
+    /// Gibt es einen Eintrag mit dieser Kennung schon (in irgendeinem Gespräch)?
+    pub fn sync_eintrag_vorhanden(&self, entry_id: &str) -> Result<bool> {
+        let conn = self.lock();
+        Ok(conn
+            .query_row(
+                "SELECT 1 FROM conversation_entries WHERE id = ?1",
+                params![entry_id],
+                |r| r.get::<_, i64>(0),
+            )
+            .optional()?
+            .is_some())
     }
 
     /// Noch nicht bestätigte Grabsteine dieses Kontos.
@@ -1433,7 +1487,9 @@ impl ConversationStore {
         Ok(())
     }
 
-    /// Setzt Datenklasse und Sonderkategorie des Gesprächs (aus dem Hub übernommen).
+    /// Setzt Datenklasse und Sonderkategorie des Gesprächs (Tests; der Import setzt beides in
+    /// [`Self::sync_import_anlegen`]).
+    #[cfg(test)]
     pub fn sync_datenklasse_setzen(
         &self,
         id: &str,

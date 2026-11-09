@@ -9,7 +9,12 @@
 //! auf die Platte zwingen, per Umbenennen ersetzen. Je Konto und Gerät gibt es eine Datei; die AAD
 //! bindet den Block an beide, ein vertauschter oder veränderter Block lädt nicht. Jeder Lese-, Prüf- oder
 //! Schreibfehler ist ein `SpeicherFehler`: der Kern sperrt sich dann (Must-fix 4), nichts gilt als leer.
-//! Bewusst keine `.bak`: eine ältere Kopie wäre ein Rollback des Zustands.
+//! Bewusst keine `.bak`: eine ältere Kopie wäre ein Rollback des Zustands. **Grenze:** Der Block hat
+//! keinen monotonen Anker außerhalb der Datei. Wer eine ältere Fassung zurückspielt (Backup,
+//! Dateisystem-Schnappschuss), setzt den Zustand des Kerns zurück; die Höchststände greifen dann ab
+//! diesem älteren Stand. Unter Unix ist der Block nur für den Eigentümer lesbar (0600); unter Windows
+//! gelten die Rechte des Profilordners (keine eigene ACL). Eine `.tmp` bleibt nach einem gescheiterten
+//! Schreiben nicht liegen.
 //!
 //! **Transportzulassung** (`assistent_sync.json`, [`Zustand`]): je Kontokennung, ob dieses Gerät am Hub
 //! per `POST /geraet` zugelassen ist. Sie ist keine Sicherheitsaussage (die steht im Verzeichnis); die
@@ -30,7 +35,9 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use wai_assistent::sync::{Kopplungsangebot, SpeicherFehler, Zustandsspeicher};
+use wai_assistent::sync::{
+    Aenderung, Kopplungsangebot, SpeicherFehler, Verzeichniseintrag, Zustandsspeicher,
+};
 use zeroize::Zeroizing;
 
 pub const DATEI: &str = "assistent_sync.json";
@@ -112,6 +119,14 @@ impl DateiSpeicher {
             .unwrap_or_default();
         tmp_name.push(".tmp");
         let tmp = self.pfad.with_file_name(tmp_name);
+        let r = self.ersetzen(dir, &tmp, inhalt);
+        if r.is_err() {
+            let _ = std::fs::remove_file(&tmp);
+        }
+        r
+    }
+
+    fn ersetzen(&self, dir: &Path, tmp: &Path, inhalt: &[u8]) -> std::io::Result<()> {
         {
             let mut opt = std::fs::OpenOptions::new();
             opt.write(true).create(true).truncate(true);
@@ -120,11 +135,11 @@ impl DateiSpeicher {
                 use std::os::unix::fs::OpenOptionsExt;
                 opt.mode(0o600);
             }
-            let mut f = opt.open(&tmp)?;
+            let mut f = opt.open(tmp)?;
             f.write_all(inhalt)?;
             f.sync_all()?;
         }
-        std::fs::rename(&tmp, &self.pfad)?;
+        std::fs::rename(tmp, &self.pfad)?;
         // Das Umbenennen selbst dauerhaft machen (unter Windows nicht nötig und nicht möglich).
         #[cfg(unix)]
         std::fs::File::open(dir)?.sync_all()?;
@@ -355,6 +370,107 @@ impl KopplungsQr {
     }
 }
 
+// ---------------------------------------------------------------------------------------------
+// Kennung je Kopplungsversuch
+// ---------------------------------------------------------------------------------------------
+
+/// Gerätename des Kennungsblocks (`#` kommt in keiner Geräte-Kennung vor, also keine Kollision).
+const KENNUNG_BLOCK: &str = "#kennung/";
+
+/// Stand der Assistent-Geräte-Kennung dieses Geräts je Konto, verschlüsselt wie der Zustandsblock.
+///
+/// Die Identität einer laufenden Kopplung lebt nur im Arbeitsspeicher (der Kern bietet keine
+/// serialisierbare Kopplung und keine Kopplung mit vorgegebener Identität). Geht sie verloren (Neustart,
+/// Abbruch) **nachdem** das andere Gerät die Kennung schon aufgenommen hat, ist diese Kennung dauerhaft
+/// verbraucht: der Kern nimmt eine aufgenommene Kennung nicht noch einmal auf. Deshalb hat jeder
+/// Kopplungsversuch eine Generation; die Kennung ist `<Grundkennung>` (Generation 0, wie bisher) bzw.
+/// `<Grundkennung>-<n>`. `kopplung_begonnen` wird gesichert, BEVOR die Kopplungsantwort das Gerät
+/// verlässt; ein Versuch, der danach ohne Abschluss endet, wird mit [`Self::verlorenen_versuch_aufloesen`]
+/// beendet.
+#[derive(Serialize, Deserialize, Default, Clone, Copy, PartialEq, Eq, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct Kennungsstand {
+    #[serde(default)]
+    pub generation: u32,
+    #[serde(default)]
+    pub kopplung_begonnen: bool,
+}
+
+impl Kennungsstand {
+    /// Kennung dieser Generation; die Grundkennung wird gekürzt, damit sie in 64 Zeichen passt.
+    pub fn kennung(&self, basis: &str) -> String {
+        if self.generation == 0 {
+            return basis.to_owned();
+        }
+        let zusatz = format!("-{}", self.generation);
+        // `basis` ist eine gültige Kennung (ASCII), Byte- und Zeichengrenzen fallen zusammen.
+        let n = basis.len().min(64 - zusatz.len());
+        format!("{}{zusatz}", &basis[..n])
+    }
+
+    /// Ein Kopplungsversuch ist ohne Abschluss zu Ende (Identität verloren). Hat das andere Gerät die
+    /// Kennung schon aufgenommen (`aufgenommen`), ist sie verbraucht und die nächste Generation gilt;
+    /// sonst kann dieselbe Kennung erneut koppeln. Gibt zurück, ob die Kennung gewechselt hat.
+    pub fn verlorenen_versuch_aufloesen(&mut self, aufgenommen: bool) -> bool {
+        self.kopplung_begonnen = false;
+        if aufgenommen {
+            self.generation = self.generation.saturating_add(1);
+        }
+        aufgenommen
+    }
+}
+
+/// Ob das Verzeichnis (so wie der Hub es liefert, ungeprüft) eine Aufnahme dieser Kennung enthält.
+/// Nur für die Wahl der Kennung: ein lügender Hub kann damit höchstens eine Kennung zu viel oder zu
+/// wenig verbrauchen lassen (Verfügbarkeit), nie ein Gerät aufnehmen.
+pub fn aufgenommen_laut_hub(eintraege: &[Verzeichniseintrag], kennung: &str) -> bool {
+    eintraege.iter().any(|e| match &e.aenderung {
+        Aenderung::Anker { ausweis } | Aenderung::Aufnahme { ausweis } => {
+            ausweis.geraet_id == kennung
+        }
+        Aenderung::Widerruf { .. } => false,
+    })
+}
+
+/// Verschlüsselter Speicher des [`Kennungsstand`]s je Konto und Grundkennung.
+pub struct KennungsSpeicher {
+    block: DateiSpeicher,
+}
+
+impl KennungsSpeicher {
+    pub fn neu(
+        verzeichnis: &Path,
+        konto: &str,
+        basis: &str,
+        konto_schluessel: &[u8; KEY_LEN],
+    ) -> Result<Self, String> {
+        Ok(Self {
+            block: DateiSpeicher::neu(
+                verzeichnis,
+                konto,
+                &format!("{KENNUNG_BLOCK}{basis}"),
+                konto_schluessel,
+            )?,
+        })
+    }
+
+    /// Fehlt der Block, gilt Generation 0 ohne laufenden Versuch; ein unlesbarer Block ist ein Fehler.
+    pub fn laden(&self) -> Result<Kennungsstand, String> {
+        let fehler = || "Die Geräte-Kennung des Assistent-Syncs ist nicht lesbar.".to_string();
+        match self.block.laden().map_err(|_| fehler())? {
+            None => Ok(Kennungsstand::default()),
+            Some(roh) => serde_json::from_slice(&roh).map_err(|_| fehler()),
+        }
+    }
+
+    pub fn sichern(&self, stand: &Kennungsstand) -> Result<(), String> {
+        let roh = serde_json::to_vec(stand).map_err(|e| e.to_string())?;
+        self.block
+            .sichern(&roh)
+            .map_err(|_| "Die Geräte-Kennung konnte nicht gesichert werden.".to_string())
+    }
+}
+
 /// Kennung dieses Geräts für den Assistent-Hub: klein geschrieben, `[A-Za-z0-9._-]{1,64}`. Der Hub
 /// nimmt jede Kennung von 1 bis 128 Byte unverändert; die App bleibt bei ihrer strengeren, stabilen Form.
 pub fn geraete_kennung(device_id: &str) -> Option<String> {
@@ -372,7 +488,7 @@ pub fn gueltige_kennung(k: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wai_assistent::sync::{Abgleich, MemHub, Testkonto};
+    use wai_assistent::sync::{Abgleich, Kopplung, MemHub, Testkonto};
 
     const KEY: [u8; KEY_LEN] = [7; KEY_LEN];
 
@@ -482,6 +598,124 @@ mod tests {
                 .is_none(),
             "anderes Konto: eigener Block"
         );
+    }
+
+    #[test]
+    fn kennung_je_generation() {
+        let mut st = Kennungsstand::default();
+        assert_eq!(st.kennung("dev-b"), "dev-b", "Generation 0: wie bisher");
+        st.kopplung_begonnen = true;
+        assert!(!st.verlorenen_versuch_aufloesen(false));
+        assert_eq!(
+            (st.kennung("dev-b"), st.kopplung_begonnen),
+            ("dev-b".into(), false)
+        );
+        st.kopplung_begonnen = true;
+        assert!(st.verlorenen_versuch_aufloesen(true));
+        assert_eq!(st.kennung("dev-b"), "dev-b-1");
+        let lang = "x".repeat(64);
+        let k = st.kennung(&lang);
+        assert!(gueltige_kennung(&k) && k.ends_with("-1") && k.len() == 64);
+    }
+
+    #[test]
+    fn kennungsstand_ist_verschluesselt_und_fail_closed() {
+        let dir = tempfile::tempdir().unwrap();
+        let sp = KennungsSpeicher::neu(dir.path(), "konto-1", "dev-b", &KEY).unwrap();
+        assert_eq!(sp.laden().unwrap(), Kennungsstand::default());
+        let st = Kennungsstand {
+            generation: 3,
+            kopplung_begonnen: true,
+        };
+        sp.sichern(&st).unwrap();
+        assert_eq!(
+            KennungsSpeicher::neu(dir.path(), "konto-1", "dev-b", &KEY)
+                .unwrap()
+                .laden()
+                .unwrap(),
+            st
+        );
+        // Der Block liegt neben dem Zustandsblock der Kennung, ohne ihn zu berühren.
+        assert!(!speicher(dir.path(), "konto-1", "dev-b").vorhanden());
+        let falsch = KennungsSpeicher::neu(dir.path(), "konto-1", "dev-b", &[8; KEY_LEN]).unwrap();
+        assert!(falsch.laden().is_err(), "unlesbar ist nie Generation 0");
+    }
+
+    /// Must-fix 1: Neustart zwischen `geraet_aufnehmen` (anderes Gerät) und `abschliessen` (dieses
+    /// Gerät). Die Identität der Kopplung ist verloren, die Kennung beim Kern verbraucht; der
+    /// gesicherte Kennungsstand führt zur nächsten Generation, unter der die Kopplung gelingt.
+    #[test]
+    fn neustart_zwischen_aufnahme_und_abschluss_koppelt_unter_neuer_kennung() {
+        let dir = tempfile::tempdir().unwrap();
+        let hub = MemHub::new();
+        let k = Testkonto::mit_hub(&["dev-a"], &hub);
+        let mut a = k.geraet("dev-a");
+        a.herunterladen(&hub).unwrap();
+        let kennungen = || KennungsSpeicher::neu(dir.path(), "konto-1", "dev-b", &KEY).unwrap();
+        let angebot = |a: &Abgleich| {
+            let o = a.kopplung_anbieten().unwrap();
+            let kopie = Kopplungsangebot::aus_json(&serde_json::to_vec(&o).unwrap()).unwrap();
+            (o, kopie)
+        };
+
+        // Versuch 1: Stand vor der Antwort gesichert, A nimmt auf, dann Neustart vor dem Abschluss.
+        let mut st = kennungen().laden().unwrap();
+        let kennung = st.kennung("dev-b");
+        hub.zulassen(&kennung);
+        let (o, kopie) = angebot(&a);
+        let kopplung = Kopplung::neu(&kennung, kopie).unwrap();
+        st.kopplung_begonnen = true;
+        kennungen().sichern(&st).unwrap();
+        let antwort = kopplung.antwort().unwrap();
+        a.geraet_aufnehmen(&hub, &o, &antwort).unwrap();
+        drop(kopplung);
+
+        // Nach dem Neustart: nur der gesicherte Stand ist da.
+        let mut st = kennungen().laden().unwrap();
+        assert!(st.kopplung_begonnen);
+        assert!(aufgenommen_laut_hub(&hub.verzeichnis(), &kennung));
+        // Mit derselben Kennung ginge es nicht mehr: der Kern weist die zweite Aufnahme ab.
+        let (o, kopie) = angebot(&a);
+        let wieder = Kopplung::neu(&kennung, kopie).unwrap();
+        assert!(a
+            .geraet_aufnehmen(&hub, &o, &wieder.antwort().unwrap())
+            .is_err());
+        assert!(st.verlorenen_versuch_aufloesen(true));
+        kennungen().sichern(&st).unwrap();
+
+        // Versuch 2 unter der neuen Kennung gelingt.
+        let mut st = kennungen().laden().unwrap();
+        let neu = st.kennung("dev-b");
+        assert_eq!(neu, "dev-b-1");
+        assert!(!aufgenommen_laut_hub(&hub.verzeichnis(), &neu));
+        hub.zulassen(&neu);
+        let (o, kopie) = angebot(&a);
+        let kopplung = Kopplung::neu(&neu, kopie).unwrap();
+        st.kopplung_begonnen = true;
+        kennungen().sichern(&st).unwrap();
+        a.geraet_aufnehmen(&hub, &o, &kopplung.antwort().unwrap())
+            .unwrap();
+        let b = kopplung
+            .abschliessen(&hub, Box::new(speicher(dir.path(), "konto-1", &neu)))
+            .unwrap()
+            .expect("aufgenommen");
+        assert_eq!(b.konto(), a.konto());
+        st.kopplung_begonnen = false;
+        kennungen().sichern(&st).unwrap();
+        assert_eq!(kennungen().laden().unwrap().kennung("dev-b"), "dev-b-1");
+    }
+
+    #[test]
+    fn neustart_vor_der_aufnahme_behaelt_die_kennung() {
+        let hub = MemHub::new();
+        let _k = Testkonto::mit_hub(&["dev-a"], &hub);
+        let mut st = Kennungsstand {
+            generation: 0,
+            kopplung_begonnen: true,
+        };
+        assert!(!aufgenommen_laut_hub(&hub.verzeichnis(), "dev-b"));
+        assert!(!st.verlorenen_versuch_aufloesen(false));
+        assert_eq!(st.kennung("dev-b"), "dev-b");
     }
 
     #[test]

@@ -21,6 +21,18 @@
 //! - **Token und Weg des Bibliotheks-Syncs:** gleiche Konto-Datei (`sync.json`), gleicher HTTP-Weg
 //!   (`HubClient`, unter Windows curl). Das Token trägt `voice.sync` ausdrücklich (Login oder Kopplung).
 //! - **Keine Inhalte, Kennungen oder Geräte-IDs im Log.** Fehlertexte sind feste Sätze.
+//! - **Kennung je Kopplungsversuch (Must-fix 1):** Die Identität einer laufenden Kopplung liegt nur im
+//!   Arbeitsspeicher (der Kern bietet keine serialisierbare Kopplung). Damit ein Neustart zwischen der
+//!   Aufnahme durch das andere Gerät und dem Abschluss die Kennung nicht dauerhaft blockiert, trägt der
+//!   verschlüsselte Kennungsstand (`assistent_zustand::Kennungsstand`) eine Generation und den Vermerk
+//!   „Kopplung begonnen“, gesichert bevor die Antwort das Gerät verlässt. Ein verlorener Versuch wird beim
+//!   nächsten Lauf aufgelöst: hat der Hub die Kennung schon im Verzeichnis, gilt die nächste Generation
+//!   (`<Grundkennung>-<n>`), sonst dieselbe. Weil der Hub das Token an genau eine Kennung bindet, braucht die
+//!   neue Kennung eine neue Anmeldung. Solange eine Kopplung offen ist, fragt die Hintergrundschleife alle
+//!   [`KOPPLUNG_TAKT`] ab.
+//! - **Gründen vertraut der Leermeldung des Hubs:** Ob das Konto schon Geräte hat, sagt nur der Hub
+//!   (`GET /verzeichnis` leer). Ein Hub, der ein bestehendes Verzeichnis verschweigt, kann ein zweites
+//!   Konto gründen lassen (Gabelung, kein Datenverlust; die anderen Geräte erkennen die fremde Kette).
 //! - Noch keine Oberfläche: Status, Gründen, Koppeln, Widerrufen, Freigeben und Sitzung sind Befehle
 //!   für die UI, die später folgt.
 
@@ -56,11 +68,15 @@ pub const CODE_NICHT_EINGERICHTET: &str = "nicht_eingerichtet";
 pub const CODE_KOPPLUNG_OFFEN: &str = "kopplung_offen";
 /// Fester Code, wenn der gesicherte Zustand nicht lesbar ist (nichts wird überschrieben).
 pub const CODE_ZUSTAND: &str = "zustand_unlesbar";
+/// Fester Code, wenn ein unterbrochener Kopplungsversuch die Kennung verbraucht hat (neue Kennung).
+pub const CODE_KENNUNG_NEU: &str = "kennung_neu";
 
 /// Takt des Hintergrundlaufs; zusätzlich stößt jedes lokale Schreiben einen Lauf an.
 const TAKT: Duration = Duration::from_secs(300);
 /// Wartezeit nach einem Anstoß, damit mehrere Schreibvorgänge einen Lauf ergeben.
 const ENTPRELLEN: Duration = Duration::from_secs(5);
+/// Takt, solange eine Kopplung als neues Gerät auf die Aufnahme wartet.
+const KOPPLUNG_TAKT: Duration = Duration::from_secs(5);
 
 /// Zähler des letzten Laufs (nie Inhalte).
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq, Type)]
@@ -101,6 +117,8 @@ pub struct AssistentSyncStatus {
     pub braucht_freigabe: bool,
     /// Dieses Gerät hat einen gesicherten Sync-Zustand (gegründet oder gekoppelt).
     pub eingerichtet: bool,
+    /// Geräte-Kennung dieses Geräts beim Assistent-Hub (für das Kopplungsangebot am anderen Gerät).
+    pub geraet_kennung: Option<String>,
     /// Eine Kopplung als neues Gerät wartet auf die Aufnahme.
     pub kopplung_offen: bool,
     pub laeuft: bool,
@@ -181,7 +199,7 @@ pub struct AssistentSyncDienst {
     /// Abbruchschranke aller Hub-Aufrufe (Ausschalten): gesetzt, geht kein Aufruf mehr ans Netz.
     abbruch: Arc<AtomicBool>,
     /// Laufende Kopplung als neues Gerät (nur im Arbeitsspeicher; nach einem Neustart neu koppeln).
-    kopplung: Arc<Mutex<Option<Kopplung>>>,
+    kopplung: Arc<Mutex<Kopplungsablage>>,
     /// Eigenes Kopplungsangebot als aufnehmendes Gerät (Transportform, nur im Arbeitsspeicher).
     angebot: Arc<Mutex<Option<Zeroizing<Vec<u8>>>>>,
 }
@@ -193,7 +211,7 @@ impl Default for AssistentSyncDienst {
             sperre: tokio::sync::Mutex::new(()),
             notify: tokio::sync::Notify::new(),
             abbruch: Arc::new(AtomicBool::new(false)),
-            kopplung: Arc::new(Mutex::new(None)),
+            kopplung: Arc::new(Mutex::new(Kopplungsablage::default())),
             angebot: Arc::new(Mutex::new(None)),
         }
     }
@@ -216,8 +234,20 @@ impl AssistentSyncDienst {
     }
 
     fn kopplung_offen(&self) -> bool {
-        self.kopplung.lock().map(|k| k.is_some()).unwrap_or(false)
+        self.kopplung
+            .lock()
+            .map(|k| k.kopplung.is_some())
+            .unwrap_or(false)
     }
+}
+
+/// Laufende Kopplung mit Versuchszähler: Ein Abschluss nimmt die Kopplung für die Netzaufrufe heraus
+/// (kein Mutex über Hub-Aufrufe) und legt sie nur zurück, wenn inzwischen weder abgebrochen noch neu
+/// begonnen wurde.
+#[derive(Default)]
+struct Kopplungsablage {
+    versuch: u64,
+    kopplung: Option<Kopplung>,
 }
 
 /// Anstoß nach einem lokalen Schreiben im Verlauf. Wirkt nur, wenn der Schalter an ist.
@@ -253,8 +283,7 @@ impl HubTransport for ClientTransport {
             &query,
             a.body.as_ref(),
         ))
-        .map(|(status, body)| Antwort { status, body })
-        .map_err(|_| TransportFehler)
+        .map(|(status, roh)| Antwort { status, roh })
     }
 }
 
@@ -399,6 +428,9 @@ fn nicht_eingerichtet() -> Meldung {
 
 struct Sitzung {
     cfg: SyncConfig,
+    /// Grundkennung aus der Geräte-ID des Bibliotheks-Syncs.
+    basis: String,
+    /// Kennung beim Assistent-Hub: Grundkennung der aktuellen Generation (Kennungsstand).
     geraet: String,
     store: Arc<ConversationStore>,
     pfad: PathBuf,
@@ -458,6 +490,17 @@ impl Sitzung {
                 CODE_ZUSTAND,
             )
         })
+    }
+
+    /// Verschlüsselter Kennungsstand dieses Kontos und dieser Grundkennung.
+    fn kennungen(&self) -> Result<zustand::KennungsSpeicher, Meldung> {
+        zustand::KennungsSpeicher::neu(
+            &self.block_verzeichnis,
+            &self.konto()?,
+            &self.basis,
+            &self.schluessel()?,
+        )
+        .map_err(Meldung::from)
     }
 
     fn abgleich_noetig(&self) -> Result<Abgleich, Meldung> {
@@ -572,39 +615,107 @@ fn widerruf_offen(a: &Abgleich) -> bool {
 }
 
 /// Schließt eine laufende Kopplung ab, wenn das aufnehmende Gerät aufgenommen und die Schlüssel
-/// abgelegt hat. `Ok(None)`: noch nicht so weit (die Kopplung bleibt offen).
+/// abgelegt hat. `Ok(None)`: noch nicht so weit (die Kopplung bleibt offen). Die Kopplung wird für die
+/// Netzaufrufe aus der Ablage genommen; der Mutex wird nie über einen Hub-Aufruf gehalten.
 fn kopplung_abschliessen(
     s: &Sitzung,
     hub: &PortalHub<ClientTransport>,
-    kopplung: &Mutex<Option<Kopplung>>,
+    ablage: &Mutex<Kopplungsablage>,
 ) -> Result<Option<Abgleich>, Meldung> {
-    let mut k = kopplung
-        .lock()
-        .map_err(|_| Meldung::neu("Die Kopplung ist nicht verfügbar."))?;
-    let Some(laufend) = k.as_ref() else {
-        return Ok(None);
+    let nicht_verfuegbar = || Meldung::neu("Die Kopplung ist nicht verfügbar.");
+    let speicher = s.speicher()?;
+    let (versuch, laufend) = {
+        let mut g = ablage.lock().map_err(|_| nicht_verfuegbar())?;
+        match g.kopplung.take() {
+            Some(k) => (g.versuch, k),
+            None => return Ok(None),
+        }
     };
-    match laufend.abschliessen(hub, Box::new(s.speicher()?)) {
+    let zuruecklegen = |k: Kopplung| {
+        if let Ok(mut g) = ablage.lock() {
+            if g.versuch == versuch && g.kopplung.is_none() {
+                g.kopplung = Some(k);
+            }
+        }
+    };
+    let ergebnis = laufend.abschliessen(hub, Box::new(speicher));
+    match ergebnis {
         Ok(Some(a)) => {
-            *k = None;
+            kopplung_vermerk_loeschen(s);
             Ok(Some(a))
         }
-        Ok(None) => Ok(None),
-        Err(SyncFehler::Hub(h)) => Err(hub_meldung(&h, hub.letzter_code())),
-        Err(e) => {
-            // Kette widerspricht dem Prüfpunkt aus dem QR-Code: diese Kopplung ist verbraucht.
-            *k = None;
-            Err(sync_meldung(&e, None))
+        Ok(None) => {
+            zuruecklegen(laufend);
+            Ok(None)
         }
+        Err(SyncFehler::Hub(h)) => {
+            zuruecklegen(laufend);
+            Err(hub_meldung(&h, hub.letzter_code()))
+        }
+        // Kette widerspricht dem Prüfpunkt aus dem QR-Code: diese Kopplung ist verbraucht. Der
+        // Vermerk bleibt; der nächste Lauf löst den Versuch auf (ggf. mit neuer Kennung).
+        Err(e) => Err(sync_meldung(&e, None)),
     }
 }
 
-fn lauf_blockierend(s: &Sitzung, kopplung: &Mutex<Option<Kopplung>>) -> Result<Ergebnis, Meldung> {
+/// Der Kopplungsversuch ist abgeschlossen. Scheitert das Sichern, holt es der nächste Lauf nach
+/// (der Zustandsblock liegt dann schon).
+fn kopplung_vermerk_loeschen(s: &Sitzung) {
+    let r = s.kennungen().and_then(|sp| {
+        let mut st = sp.laden()?;
+        st.kopplung_begonnen = false;
+        sp.sichern(&st).map_err(Meldung::from)
+    });
+    if r.is_err() {
+        log::warn!("Assistent-Sync: Kopplungsvermerk konnte nicht zurückgesetzt werden");
+    }
+}
+
+/// Löst einen Kopplungsversuch auf, dessen Identität verloren ist (Neustart oder Abbruch nach dem
+/// Sichern des Vermerks). Liegt schon ein Zustandsblock, war er abgeschlossen. Sonst entscheidet das
+/// (ungeprüfte) Verzeichnis des Hubs, ob die Kennung schon aufgenommen und damit verbraucht ist; dann
+/// gilt die nächste Generation und der Aufruf meldet [`CODE_KENNUNG_NEU`]. Ohne Vermerk kein Netzaufruf.
+fn verlorene_kopplung_aufloesen(s: &mut Sitzung) -> Result<(), Meldung> {
+    let sp = s.kennungen()?;
+    let mut st = sp.laden()?;
+    if !st.kopplung_begonnen {
+        return Ok(());
+    }
+    if s.speicher()?.vorhanden() {
+        st.kopplung_begonnen = false;
+        return sp.sichern(&st).map_err(Meldung::from);
+    }
+    let hub = s.vorbereiten()?;
+    let eintraege = hub
+        .verzeichnis_lesen(&s.auth(), 0)
+        .map_err(|h| hub_meldung(&h, hub.letzter_code()))?;
+    let gewechselt =
+        st.verlorenen_versuch_aufloesen(zustand::aufgenommen_laut_hub(&eintraege, &s.geraet));
+    sp.sichern(&st)?;
+    if gewechselt {
+        s.geraet = st.kennung(&s.basis);
+        return Err(Meldung::mit_code(
+            "Die letzte Kopplung wurde unterbrochen, nachdem das andere Gerät dieses Gerät schon aufgenommen hatte. Dieses Gerät koppelt deshalb unter einer neuen Geräte-Kennung: bitte neu anmelden und am anderen Gerät für die neue Kennung erneut anbieten.",
+            CODE_KENNUNG_NEU,
+        ));
+    }
+    Ok(())
+}
+
+fn lauf_blockierend(
+    s: &mut Sitzung,
+    kopplung: &Mutex<Kopplungsablage>,
+) -> Result<Ergebnis, Meldung> {
     s.konto_abgleichen()?;
     let gespeichert = s.abgleich()?;
-    let kopplung_laeuft = kopplung.lock().map(|k| k.is_some()).unwrap_or(false);
+    let kopplung_laeuft = kopplung
+        .lock()
+        .map(|k| k.kopplung.is_some())
+        .unwrap_or(false);
     if gespeichert.is_none() && !kopplung_laeuft {
-        // Ohne Zustand und ohne Kopplung kein Netzaufruf.
+        // Ohne Zustand und ohne Kopplung kein Netzaufruf, außer um einen unterbrochenen
+        // Kopplungsversuch aufzulösen.
+        verlorene_kopplung_aufloesen(s)?;
         return Err(nicht_eingerichtet());
     }
     let hub = s.vorbereiten()?;
@@ -653,6 +764,7 @@ fn status_lokal(app: &AppHandle, dienst: &AssistentSyncDienst) -> AssistentSyncS
         let z = s.zustand().unwrap_or_default();
         st.zugelassen = z.zugelassen;
         st.eingerichtet = s.speicher().is_ok_and(|sp| sp.vorhanden());
+        st.geraet_kennung = Some(s.geraet.clone());
         st.grabsteine_offen = s
             .konto()
             .ok()
@@ -668,7 +780,7 @@ fn status_lokal(app: &AppHandle, dienst: &AssistentSyncDienst) -> AssistentSyncS
 /// Wie [`sitzung`], aber ohne den Schalter zu verlangen (nur lokale Statusanzeige); ohne Netzaufruf.
 fn sitzung_ohne_schalter(app: &AppHandle) -> Result<Sitzung, Meldung> {
     let cfg = account::load(app).ok_or_else(|| Meldung::neu("Nicht angemeldet."))?;
-    let geraet = zustand::geraete_kennung(&cfg.device_id)
+    let basis = zustand::geraete_kennung(&cfg.device_id)
         .ok_or_else(|| Meldung::neu("Die Geräte-Kennung ist ungültig."))?;
     let store = app
         .try_state::<Arc<ConversationStore>>()
@@ -680,14 +792,18 @@ fn sitzung_ohne_schalter(app: &AppHandle) -> Result<Sitzung, Meldung> {
         .try_state::<AssistentSyncDienst>()
         .map(|d| d.abbruch.clone())
         .unwrap_or_default();
-    Ok(Sitzung {
+    let mut s = Sitzung {
         cfg,
-        geraet,
+        geraet: basis.clone(),
+        basis,
         store,
         pfad: daten.join(zustand::DATEI),
         block_verzeichnis: daten.join(zustand::BLOCK_VERZEICHNIS),
         sperre,
-    })
+    };
+    // Kennung der aktuellen Generation (fail-closed: ein unlesbarer Stand ist ein Fehler).
+    s.geraet = s.kennungen()?.laden()?.kennung(&s.basis);
+    Ok(s)
 }
 
 fn melden(app: &AppHandle, dienst: &AssistentSyncDienst) -> AssistentSyncStatus {
@@ -723,7 +839,11 @@ async fn lauf_einmal(app: &AppHandle, dienst: &AssistentSyncDienst) -> Assistent
     dienst.setzen(|st| st.laeuft = true);
     let _ = app.emit(EVENT_STATUS, status_lokal(app, dienst));
     let kopplung = dienst.kopplung.clone();
-    let r = blockierend(move || lauf_blockierend(&s, &kopplung)).await;
+    let r = blockierend(move || {
+        let mut s = s;
+        lauf_blockierend(&mut s, &kopplung)
+    })
+    .await;
     dienst.setzen(|st| st.laeuft = false);
     match r {
         Ok(e) => dienst.setzen(|st| {
@@ -756,8 +876,14 @@ pub fn start(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         let dienst = app.state::<AssistentSyncDienst>();
         loop {
+            // Wartet eine Kopplung auf die Aufnahme, kurz und häufig abfragen.
+            let takt = if dienst.kopplung_offen() {
+                KOPPLUNG_TAKT
+            } else {
+                TAKT
+            };
             tokio::select! {
-                _ = tokio::time::sleep(TAKT) => {}
+                _ = tokio::time::sleep(takt) => {}
                 _ = dienst.notify.notified() => {
                     tokio::time::sleep(ENTPRELLEN).await;
                 }
@@ -908,10 +1034,25 @@ pub async fn assistent_sync_kopplung_beginnen(
 ) -> Result<String, String> {
     let ablage = dienst.kopplung.clone();
     let qr = Zeroizing::new(qr);
-    befehl(&app, &dienst, move |s| {
+    befehl(&app, &dienst, move |mut s| {
         if s.abgleich()?.is_some() {
             return Err(Meldung::neu("Dieses Gerät ist schon eingerichtet."));
         }
+        let nicht_verfuegbar = || Meldung::neu("Die Kopplung ist nicht verfügbar.");
+        if ablage
+            .lock()
+            .map_err(|_| nicht_verfuegbar())?
+            .kopplung
+            .is_some()
+        {
+            return Err(Meldung::mit_code(
+                "Eine Kopplung läuft bereits. Bitte warten oder sie abbrechen.",
+                CODE_KOPPLUNG_OFFEN,
+            ));
+        }
+        // Ein unterbrochener Versuch wird zuerst aufgelöst (ggf. neue Kennung, dann passt der QR-Code
+        // nicht mehr und das andere Gerät muss neu anbieten).
+        verlorene_kopplung_aufloesen(&mut s)?;
         let qr = KopplungsQr::aus_text(&qr)?;
         if qr.geraet_id != s.geraet {
             return Err(Meldung::neu(
@@ -925,9 +1066,15 @@ pub async fn assistent_sync_kopplung_beginnen(
         let antwort = k.antwort().map_err(|e| sync_meldung(&e, None))?;
         let text = serde_json::to_string(&antwort)
             .map_err(|_| Meldung::neu("Die Kopplungsantwort ist ungültig."))?;
-        *ablage
-            .lock()
-            .map_err(|_| Meldung::neu("Die Kopplung ist nicht verfügbar."))? = Some(k);
+        // Vermerk sichern, BEVOR die Antwort das Gerät verlässt: geht die Identität danach verloren,
+        // weiß der nächste Lauf davon.
+        let sp = s.kennungen()?;
+        let mut st = sp.laden()?;
+        st.kopplung_begonnen = true;
+        sp.sichern(&st)?;
+        let mut g = ablage.lock().map_err(|_| nicht_verfuegbar())?;
+        g.versuch = g.versuch.wrapping_add(1);
+        g.kopplung = Some(k);
         Ok(text)
     })
     .await
@@ -965,7 +1112,9 @@ pub async fn assistent_sync_kopplung_aufnehmen(
     .await
 }
 
-/// Bricht eine laufende Kopplung als neues Gerät ab (verwirft die noch nicht aufgenommene Identität).
+/// Bricht eine laufende Kopplung als neues Gerät ab (verwirft die Identität). Der gesicherte Vermerk
+/// bleibt; der nächste Lauf oder Kopplungsbeginn löst den Versuch auf (neue Kennung, falls das andere
+/// Gerät schon aufgenommen hatte).
 #[tauri::command]
 #[specta::specta]
 pub fn assistent_sync_kopplung_abbrechen(
@@ -973,7 +1122,8 @@ pub fn assistent_sync_kopplung_abbrechen(
     dienst: State<'_, AssistentSyncDienst>,
 ) -> AssistentSyncStatus {
     if let Ok(mut k) = dienst.kopplung.lock() {
-        *k = None;
+        k.versuch = k.versuch.wrapping_add(1);
+        k.kopplung = None;
     }
     if let Ok(mut a) = dienst.angebot.lock() {
         *a = None;
@@ -1019,7 +1169,7 @@ pub async fn assistent_sync_geraet_widerrufen(
     dienst: State<'_, AssistentSyncDienst>,
     geraet_id: String,
 ) -> Result<AssistentWiderruf, String> {
-    let ziel = geraet_id.trim().to_owned();
+    let ziel = geraet_id.trim().to_ascii_lowercase();
     if !zustand::gueltige_kennung(&ziel) {
         return Err("Die Geräte-Kennung hat ein ungültiges Format.".into());
     }

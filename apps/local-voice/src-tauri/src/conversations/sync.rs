@@ -38,8 +38,8 @@ use wai_assistent::sync::{
 };
 
 use super::store::{
-    ConversationEntry, ConversationScope, ConversationStore, NewEntry, OffenerGrabstein, SyncStand,
-    DEFAULT_DATA_CLASS, DEFAULT_TITLE, MAX_TEXT_CHARS, MAX_TITLE_CHARS,
+    ConversationEntry, ConversationExt, ConversationScope, ConversationStore, NewEntry,
+    OffenerGrabstein, SyncStand, VoiceExt, DEFAULT_TITLE, MAX_TEXT_CHARS, MAX_TITLE_CHARS,
 };
 
 const UNBEKANNT: &str = "unbekannt";
@@ -145,9 +145,11 @@ fn strenge(k: Datenklasse) -> u8 {
 }
 
 /// Freigabeliste des Hosts (E10): Darf dieses Gespräch an den Hub? `confidential` (entspricht
-/// `RESTRICTED`), unbekannte Datenklasse und Sonderkategorie bleiben auf dem Gerät.
+/// `RESTRICTED`), unbekannte Datenklasse und Sonderkategorie (Flag oder Datenklasse `SPECIAL`)
+/// bleiben auf dem Gerät.
 pub fn nur_auf_dem_geraet(scope: &ConversationScope, geraet_lokal: bool) -> bool {
-    geraet_lokal || scope.special_category || klasse(scope).ist_vertraulich()
+    let k = klasse(scope);
+    geraet_lokal || scope.special_category || k == Datenklasse::Special || k.ist_vertraulich()
 }
 
 fn modus_aus(mode: &str) -> Modus {
@@ -186,7 +188,13 @@ fn beitrag_aus(
     Beitrag {
         id: hub_id.to_owned(),
         eltern_id: eltern.map(str::to_owned),
-        lease_generation: 0,
+        // E3.3: Generation der Lease, unter der der Beitrag entstand (0 = ohne Lease).
+        lease_generation: e
+            .ext
+            .as_ref()
+            .and_then(|x| x.local_voice_ai.as_ref())
+            .and_then(|v| v.lease_generation)
+            .map_or(0, u64::from),
         autor: angabe(&e.role),
         modus: modus_aus(&e.mode),
         text: e.text.clone(),
@@ -634,6 +642,7 @@ fn kopf_abgleichen(abgleich: &mut Abgleich, l: &Lokal) -> Result<(), SyncFehler>
 
 /// `kopf_ok`: Der Hub hat alle Kopfänderungen dieses Laufs angenommen (kein Konflikt); nur dann gilt
 /// ein lokal geänderter Kopf als abgeglichen.
+#[allow(clippy::too_many_arguments)]
 fn zurueckschreiben(
     store: &ConversationStore,
     abgleich: &Abgleich,
@@ -717,23 +726,22 @@ fn zurueckschreiben(
         {
             continue;
         }
-        let c = store.create(Some(sauberer_titel(&u.kopf().titel)))?;
         let strengste = u
             .verlauf()
             .beitraege()
             .map(|b| b.datenklasse)
             .max_by_key(|k| strenge(*k))
             .unwrap_or(Datenklasse::Internal);
-        if klasse_name(strengste) != DEFAULT_DATA_CLASS {
-            store.sync_datenklasse_setzen(&c.id, klasse_name(strengste), false)?;
-        }
-        let c = if u.kopf().angeheftet {
-            store.set_pinned(&c.id, true)?
-        } else {
-            c
-        };
-        store.sync_zuordnung_setzen(r.as_str(), &c.id)?;
-        store.sync_jemals_setzen(std::slice::from_ref(&c.id), konto)?;
+        // Gespräch, Zuordnung und `sync_jemals` in einer Transaktion; Sonderkategorie (E10) auch als
+        // Flag, damit sie lokal überall als solche gilt.
+        let c = store.sync_import_anlegen(
+            Some(sauberer_titel(&u.kopf().titel)),
+            r.as_str(),
+            konto,
+            klasse_name(strengste),
+            strengste == Datenklasse::Special,
+            u.kopf().angeheftet,
+        )?;
         let n = beitraege_importieren(
             store,
             &c.id,
@@ -767,6 +775,11 @@ fn beitraege_importieren<'a>(
             *nicht_uebernommen += 1;
             continue;
         };
+        // Kennung schon in einem anderen Gespräch vergeben: überspringen statt den Lauf abzubrechen.
+        if store.sync_eintrag_vorhanden(&b.id)? {
+            *nicht_uebernommen += 1;
+            continue;
+        }
         store.append_entry(conv_id, eintrag)?;
         angelegt += 1;
     }
@@ -821,7 +834,16 @@ fn eintrag_aus(b: &Beitrag) -> Option<NewEntry> {
             .collect(),
         untrusted: None,
         reply_to: None,
-        ext: None,
+        // Die Lease-Generation bleibt erhalten, sonst ginge ein späterer Wiederupload mit 0 hoch.
+        ext: u32::try_from(b.lease_generation)
+            .ok()
+            .filter(|g| *g > 0)
+            .map(|g| ConversationExt {
+                local_voice_ai: Some(VoiceExt {
+                    lease_generation: Some(g),
+                    ..VoiceExt::default()
+                }),
+            }),
     })
 }
 

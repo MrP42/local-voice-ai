@@ -10360,7 +10360,7 @@ export type AssistentFreigabe = { code: string; gueltig_bis: string }
 export type AssistentKopplungsangebot = { qr: string; gueltig_bis: string }
 export type AssistentSitzung = { hier: boolean; generation: number; gueltig_bis_ms: number }
 export type AssistentSyncBericht = { hochgeladen: number; heruntergeladen: number; geloescht: number; nur_lokal: number; wartend: number; verworfen: number }
-export type AssistentSyncStatus = { aktiv: boolean; angemeldet: boolean; zugelassen: boolean; braucht_freigabe: boolean; eingerichtet: boolean; kopplung_offen: boolean; laeuft: boolean; epoche: number; widerruf_offen: boolean; letzter_lauf_ms: number | null; letzter_fehler: string | null; fehler_code: string | null; grabsteine_offen: number; letzter_bericht: AssistentSyncBericht | null }
+export type AssistentSyncStatus = { aktiv: boolean; angemeldet: boolean; zugelassen: boolean; braucht_freigabe: boolean; eingerichtet: boolean; geraet_kennung: string | null; kopplung_offen: boolean; laeuft: boolean; epoche: number; widerruf_offen: boolean; letzter_lauf_ms: number | null; letzter_fehler: string | null; fehler_code: string | null; grabsteine_offen: number; letzter_bericht: AssistentSyncBericht | null }
 export type AssistentWiderruf = { epoche: number; empfaenger: string[] }
 export type Conversation = { schema_version: string; id: string; ts: string; trace_id: string; title: string; created_at: string; updated_at: string; kind: string; scope: ConversationScope; participants: ConversationParticipant[]; context: ContextSource[]; pinned: boolean; archived: boolean; ext?: ConversationExt | null }
 /**
@@ -14202,7 +14202,15 @@ export type VoiceExt = { prompt_tokens?: number | null; completion_tokens?: numb
 /**
  * Ereignisse des Verbrauchs-Ledgers (`usage.db`).
  */
-usage_event_ids: number[]; provider_id?: string | null; local?: boolean | null }
+usage_event_ids: number[]; provider_id?: string | null; local?: boolean | null; 
+/**
+ * Lease-Generation (ADR-0028 E3.3), unter der dieser Beitrag angehängt wurde. Setzt die
+ * Sprachsitzung, wenn sie unter einer Lease antwortet (Generation aus
+ * `conversations::sync::sitzung`); der Assistent-Sync gibt sie als `lease_generation` an den
+ * Kern, der einen Beitrag aus einer überholten Generation als Zweig ablegt. Fehlt sie, wurde
+ * ohne Lease geschrieben (Generation 0).
+ */
+lease_generation?: number | null }
 /**
  * Eine Stimme mit ihren Metadaten, für die Stimmenübersicht.
  */

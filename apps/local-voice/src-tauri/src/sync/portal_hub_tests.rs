@@ -100,14 +100,11 @@ fn fehler_antwort(f: &HubFehler) -> Antwort {
     if let (Some(e), Some(z)) = (e.as_object_mut(), zusatz.as_object()) {
         e.extend(z.clone());
     }
-    Antwort {
-        status,
-        body: json!({ "error": e }),
-    }
+    Antwort::json(status, &json!({ "error": e }))
 }
 
 fn ok(body: Value) -> Antwort {
-    Antwort { status: 200, body }
+    Antwort::json(200, &body)
 }
 
 fn q<'a>(a: &'a Anfrage, name: &str) -> Option<&'a str> {
@@ -129,11 +126,13 @@ impl HubTransport for FakeHttp {
     fn senden(&self, a: &Anfrage) -> Result<Antwort, TransportFehler> {
         self.log.lock().unwrap().push(a.clone());
         if self.offline.load(Ordering::SeqCst) {
-            return Err(TransportFehler);
+            return Err(TransportFehler::Netz);
         }
         let mut antwort = self.verarbeiten(a).unwrap_or_else(|e| e);
         if let (Some(m), 200) = (&self.manipulation, antwort.status) {
-            m(a.pfad, &mut antwort.body);
+            let mut v = antwort.wert();
+            m(a.pfad, &mut v);
+            antwort = Antwort::json(200, &v);
         }
         Ok(antwort)
     }
@@ -286,10 +285,7 @@ impl FakeHttp {
                 let p = self.hub.pakete_lesen(&auth).map_err(fehler)?;
                 Ok(ok(json!({ "pakete": p })))
             }
-            _ => Err(Antwort {
-                status: 404,
-                body: Value::Null,
-            }),
+            _ => Err(Antwort::json(404, &Value::Null)),
         }
     }
 }
@@ -507,17 +503,33 @@ fn unbekanntes_und_serverfehler_ohne_app_code() {
     assert_eq!(anzeige, "http_422");
 }
 
-/// Transport, der eine feste Antwort liefert.
-struct Fest(Result<Antwort, TransportFehler>);
+/// Transport, der eine feste Antwort liefert und die Aufrufe zählt.
+struct Fest(
+    Result<Antwort, TransportFehler>,
+    std::sync::atomic::AtomicUsize,
+);
+
+impl Fest {
+    fn neu(r: Result<Antwort, TransportFehler>) -> Self {
+        Self(r, std::sync::atomic::AtomicUsize::new(0))
+    }
+}
 
 impl HubTransport for Fest {
     fn senden(&self, _: &Anfrage) -> Result<Antwort, TransportFehler> {
+        self.1.fetch_add(1, Ordering::SeqCst);
         self.0.clone()
     }
 }
 
+impl PortalHub<Fest> {
+    fn transport_aufrufe(&self) -> usize {
+        self.transport.1.load(Ordering::SeqCst)
+    }
+}
+
 fn fest(status: u16, body: Value) -> PortalHub<Fest> {
-    PortalHub::new(Fest(Ok(Antwort { status, body })), "dev-pc")
+    PortalHub::new(Fest::neu(Ok(Antwort::json(status, &body))), "dev-pc")
 }
 
 #[test]
@@ -554,7 +566,7 @@ fn fehler_kommen_ueber_alle_methoden_an_und_der_code_wird_gemerkt() {
     );
     assert_eq!(k.letzter_code().as_deref(), Some("verzeichnis_konflikt"));
 
-    let offline = PortalHub::new(Fest(Err(TransportFehler)), "dev-pc");
+    let offline = PortalHub::new(Fest::neu(Err(TransportFehler::Netz)), "dev-pc");
     assert_eq!(
         offline.verzeichnis_lesen(&auth, 0),
         Err(HubFehler::Nichtverfuegbar)
@@ -825,9 +837,10 @@ fn fassungen_kommen_vollstaendig_und_aufsteigend() {
 fn lesen_traut_einem_kaputten_hub_nicht() {
     let auth = AuthGeraet::new("dev-pc");
     let vertrag = |r: Result<Vec<Umschlag>, HubFehler>| matches!(r, Err(HubFehler::Vertrag(_)));
-    // `mehr` ohne Fortschritt: sonst endlose Schleife.
+    // `mehr` ohne Fortschritt: das Blättern endet (keine endlose Schleife), ohne Fehler.
     let h = fest(200, json!({ "objekte": [], "cursor": "0", "mehr": true }));
-    assert!(vertrag(h.lesen(&auth, &LeseFilter::default())));
+    assert_eq!(h.lesen(&auth, &LeseFilter::default()), Ok(Vec::new()));
+    assert_eq!(h.transport_aufrufe(), 1);
     // Unbrauchbare Objekte.
     let h = fest(
         200,
@@ -835,7 +848,9 @@ fn lesen_traut_einem_kaputten_hub_nicht() {
     );
     assert!(vertrag(h.lesen(&auth, &LeseFilter::default())));
 
-    // Echte Umschläge in falscher Reihenfolge oder doppelt: abgewiesen.
+    // Echte Umschläge in falscher Reihenfolge, doppelt oder mit Cursor zurück: kein Vertragsfehler
+    // hier, sondern unverändert an den Kern (er erkennt die Anomalie und liest vollständig neu,
+    // E3.8 Nr. 11); das Blättern endet an der Anomalie.
     let hub = Arc::new(MemHub::new());
     let k = Testkonto::mit_hub(&["dev-pc"], &hub);
     let mut pc = k.geraet("dev-pc");
@@ -857,20 +872,24 @@ fn lesen_traut_einem_kaputten_hub_nicht() {
         200,
         json!({ "objekte": rueckwaerts, "cursor": "2", "mehr": false }),
     );
-    assert!(vertrag(h.lesen(&auth, &LeseFilter::default())));
+    assert_eq!(h.lesen(&auth, &LeseFilter::default()).unwrap().len(), 2);
     let doppelt = json!([u[0].clone(), u[0].clone()]);
     let h = fest(200, json!({ "fassungen": doppelt, "mehr": false }));
-    assert!(vertrag(h.fassungen_lesen(
-        &auth,
-        Sammlung::Unterhaltung,
-        &Hex128::zufall().unwrap()
-    )));
-    // Cursor hinter die letzte Revision zurück.
+    assert_eq!(
+        h.fassungen_lesen(&auth, Sammlung::Unterhaltung, &Hex128::zufall().unwrap())
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(h.transport_aufrufe(), 1);
+    // Der Cursor des Hubs wird nicht gebraucht: weiter geht es nach der höchsten Revision; liefert
+    // der Hub dann dieselbe Seite erneut, endet das Blättern.
     let h = fest(
         200,
         json!({ "objekte": [u[1].clone()], "cursor": "0", "mehr": true }),
     );
-    assert!(vertrag(h.lesen(&auth, &LeseFilter::default())));
+    assert_eq!(h.lesen(&auth, &LeseFilter::default()).unwrap().len(), 2);
+    assert_eq!(h.transport_aufrufe(), 2);
 
     // Fehlende oder unbrauchbare Felder in Verzeichnis und Paketen.
     assert!(matches!(
@@ -1725,4 +1744,85 @@ fn schranke_verhindert_jeden_weiteren_netzaufruf_vor_dem_transport() {
         p.verzeichnis_lesen(&auth, 0).is_ok(),
         "ohne Schranke geht es wieder"
     );
+}
+
+/// Übergroße Antworten (Must-fix 3): weder der Körper über der Grenze noch ein vom Transport
+/// abgebrochenes Lesen erreicht den Kern; beides ist ein Vertragsfehler mit eigenem Code.
+#[test]
+fn uebergrosse_antwort_wird_abgewiesen() {
+    let auth = AuthGeraet::new("dev-pc");
+    let gross = PortalHub::new(
+        Fest::neu(Ok(Antwort {
+            status: 200,
+            roh: vec![b' '; MAX_ANTWORT + 1],
+        })),
+        "dev-pc",
+    );
+    let abgebrochen = PortalHub::new(Fest::neu(Err(TransportFehler::ZuGross)), "dev-pc");
+    for h in [&gross, &abgebrochen] {
+        assert_eq!(
+            h.lesen(&auth, &LeseFilter::default()),
+            Err(HubFehler::Vertrag("Hub-Antwort zu gross"))
+        );
+        assert_eq!(h.letzter_code().as_deref(), Some("antwort_zu_gross"));
+        assert!(matches!(h.pakete_lesen(&auth), Err(HubFehler::Vertrag(_))));
+        assert!(matches!(
+            h.verzeichnis_lesen(&auth, 0),
+            Err(HubFehler::Vertrag(_))
+        ));
+    }
+}
+
+/// Ein Hub, der mit `mehr: true` und stets neuen Revisionen nie aufhört.
+struct Endlos {
+    umschlag: Value,
+    je_seite: u64,
+    aufrufe: std::sync::atomic::AtomicUsize,
+}
+
+impl HubTransport for Endlos {
+    fn senden(&self, a: &Anfrage) -> Result<Antwort, TransportFehler> {
+        self.aufrufe.fetch_add(1, Ordering::SeqCst);
+        let nach: u64 = q(a, "nach_revision").unwrap().parse().unwrap();
+        let objekte: Vec<Value> = (1..=self.je_seite)
+            .map(|i| {
+                let mut u = self.umschlag.clone();
+                u["revision"] = json!((nach + i).to_string());
+                u
+            })
+            .collect();
+        Ok(Antwort::json(
+            200,
+            &json!({ "objekte": objekte, "cursor": "0", "mehr": true }),
+        ))
+    }
+}
+
+/// Endlose Antworten (Must-fix 3): das Blättern endet an den Gesamtgrenzen je Aufruf mit dem bis
+/// dahin Gelesenen, aufsteigend; der Kern liest den Rest beim nächsten Lauf.
+#[test]
+fn endloses_blaettern_endet_an_den_gesamtgrenzen() {
+    let auth = AuthGeraet::new("dev-pc");
+    let hub = Arc::new(MemHub::new());
+    let k = Testkonto::mit_hub(&["dev-pc"], &hub);
+    let mut pc = k.geraet("dev-pc");
+    pc.unterhaltung_anlegen(kopf("T"), Einschraenkung::default())
+        .unwrap();
+    pc.hochladen(&*hub).unwrap();
+    let umschlag = serde_json::to_value(&hub.alle_umschlaege()[0]).unwrap();
+
+    for (je_seite, aufrufe, objekte) in [(100, 200, 20_000), (1, 1_000, 1_000)] {
+        let h = PortalHub::new(
+            Endlos {
+                umschlag: umschlag.clone(),
+                je_seite,
+                aufrufe: Default::default(),
+            },
+            "dev-pc",
+        );
+        let v = h.lesen(&auth, &LeseFilter::default()).unwrap();
+        assert_eq!(v.len(), objekte);
+        assert_eq!(h.transport.aufrufe.load(Ordering::SeqCst), aufrufe);
+        assert!(v.windows(2).all(|w| w[0].revision < w[1].revision));
+    }
 }

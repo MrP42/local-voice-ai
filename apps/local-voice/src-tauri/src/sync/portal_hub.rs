@@ -15,15 +15,20 @@
 //! - **Transportgrenzen (E3.8, Must-fix 7):** Umschläge, Verzeichniseinträge und Schlüsselpakete werden
 //!   nur über `Umschlag::liste_aus_json`/`aus_json`, `Verzeichniseintrag::aus_json` und
 //!   `Schluesselpaket::aus_json` gelesen; die Byte- und Anzahlgrenzen gelten dort.
+//! - **Größengrenzen:** Ein Antwortkörper hat höchstens [`MAX_ANTWORT`] Bytes (der Transport liest
+//!   begrenzt und bricht sonst ab), Listen gehen als Rohtext ohne Umweg über einen JSON-Baum an den
+//!   Kern, und ein Leseaufruf blättert höchstens [`MAX_GESAMT_BYTES`] bzw. [`MAX_GESAMT_OBJEKTE`].
 //! - Der authentifizierte Absender ist das Gerät des Tokens. Eine fremde [`AuthGeraet`] oder ein
 //!   fremdes `geraet_id` im Umschlag wird schon hier abgewiesen, ohne Netzaufruf.
 //! - Kein Inhalt im Log: Es wird höchstens der Fehlercode des Hubs (fester Kurztext) und der
 //!   HTTP-Status protokolliert, nie Umschläge, Chiffrat, Kennungen oder Geräte-IDs.
 
+use std::collections::HashMap;
 use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
+use serde_json::value::RawValue;
 use serde_json::{json, Value};
 use wai_assistent::sync::{
     AuthGeraet, Hex128, HubFehler, HubSpeicher, LeseFilter, Sammlung, Schluesselpaket, Schreiben,
@@ -39,8 +44,17 @@ const LESE_SEITE: usize = 100;
 /// Höchstens so viele Pakete je `POST /pakete` (Hub-Grenze).
 const PAKETE_JE_ANFRAGE: usize = 100;
 
-/// Obergrenze der Lese-Seiten je Aufruf (Schutz vor einem Hub, der nie aufhört).
-const MAX_SEITEN: usize = 100_000;
+/// Höchstgröße eines Antwortkörpers in Bytes. Eine Seite endet beim Hub bei etwa 4 MiB Chiffrat
+/// (mindestens ein Objekt bis 4,3 MB); alles darüber ist kein ehrlicher Hub. Der Transport liest
+/// höchstens so viel (begrenzt gestreamt) und meldet sonst [`TransportFehler::ZuGross`].
+pub const MAX_ANTWORT: usize = 16 * 1024 * 1024;
+
+/// Gesamtgrenzen je Leseaufruf (`lesen`, `fassungen_lesen`): danach endet das Blättern mit dem bis
+/// dahin Gelesenen (aufsteigend). Der Kern setzt seinen Cursor auf die höchste gelieferte Revision
+/// und liest den Rest beim nächsten Lauf; ein Hub, der nie aufhört, bindet so keinen Speicher.
+const MAX_SEITEN: usize = 1_000;
+const MAX_GESAMT_BYTES: usize = 64 * 1024 * 1024;
+const MAX_GESAMT_OBJEKTE: usize = 20_000;
 
 /// Höchstzahl der Verzeichniseinträge und Pakete je Antwort (Kontingent des Hubs: 1000 bzw. 10 000).
 const MAX_VERZEICHNIS: usize = 10_000;
@@ -61,17 +75,39 @@ pub struct Anfrage {
     pub body: Option<Value>,
 }
 
-/// HTTP-Status und JSON-Körper (bei Nicht-JSON `Null`).
+/// HTTP-Status und roher Körper (höchstens [`MAX_ANTWORT`] Bytes). Listen gehen unverändert als
+/// Rohbytes an die `aus_json`-Funktionen des Kerns.
 #[derive(Debug, Clone)]
 pub struct Antwort {
     pub status: u16,
-    pub body: Value,
+    pub roh: Vec<u8>,
 }
 
-/// Der Hub war nicht zu erreichen (Netz, Zeitüberschreitung). Ohne Text, damit nie etwas Fremdes
-/// in Meldungen oder Log gelangt.
+impl Antwort {
+    /// Antwort mit diesem JSON-Körper (Tests).
+    #[cfg(test)]
+    pub fn json(status: u16, wert: &Value) -> Self {
+        Self {
+            status,
+            roh: serde_json::to_vec(wert).unwrap_or_default(),
+        }
+    }
+
+    /// Körper als JSON-Wert; kein JSON ergibt `Null`.
+    pub fn wert(&self) -> Value {
+        serde_json::from_slice(&self.roh).unwrap_or(Value::Null)
+    }
+}
+
+/// Der Transport hat keine verwertbare Antwort. Ohne Text, damit nie etwas Fremdes in Meldungen oder
+/// Log gelangt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TransportFehler;
+pub enum TransportFehler {
+    /// Nicht erreichbar (Netz, Zeitüberschreitung): später erneut versuchen.
+    Netz,
+    /// Der Körper ist größer als [`MAX_ANTWORT`]; das Lesen wurde abgebrochen.
+    ZuGross,
+}
 
 pub trait HubTransport: Send + Sync {
     fn senden(&self, anfrage: &Anfrage) -> Result<Antwort, TransportFehler>;
@@ -107,6 +143,7 @@ pub struct PortalHub<T: HubTransport> {
 pub const CODE_ABGEBROCHEN: &str = "abgebrochen";
 
 const UNGUELTIG: HubFehler = HubFehler::Vertrag("Hub-Antwort ungueltig");
+const ZU_GROSS: HubFehler = HubFehler::Vertrag("Hub-Antwort zu gross");
 
 impl<T: HubTransport> PortalHub<T> {
     /// `geraet_id` ist die Kennung dieses Geräts; der Transport trägt das Token, das der Hub an dieses
@@ -158,30 +195,62 @@ impl<T: HubTransport> PortalHub<T> {
         UNGUELTIG
     }
 
-    /// Schickt die Anfrage und liefert den Körper einer erfolgreichen (2xx) Antwort.
-    fn aufruf(&self, anfrage: Anfrage) -> Result<Value, HubFehler> {
+    /// Schickt die Anfrage und liefert den rohen Körper einer erfolgreichen (2xx) Antwort.
+    fn aufruf_roh(&self, anfrage: Anfrage) -> Result<Vec<u8>, HubFehler> {
         if self.sperre.load(Ordering::SeqCst) {
             self.merken(CODE_ABGEBROCHEN);
             return Err(HubFehler::Nichtverfuegbar);
         }
         let antwort = match self.transport.senden(&anfrage) {
-            Ok(a) => a,
-            Err(TransportFehler) => {
+            Ok(a) if a.roh.len() <= MAX_ANTWORT => a,
+            Ok(_) | Err(TransportFehler::ZuGross) => {
+                self.merken("antwort_zu_gross");
+                return Err(ZU_GROSS);
+            }
+            Err(TransportFehler::Netz) => {
                 self.merken("netz");
                 return Err(HubFehler::Nichtverfuegbar);
             }
         };
         if (200..300).contains(&antwort.status) {
             self.vergessen();
-            return Ok(antwort.body);
+            return Ok(antwort.roh);
         }
-        let (fehler, code) = abbilden(antwort.status, &antwort.body);
+        let (fehler, code) = abbilden(antwort.status, &antwort.wert());
         log::warn!(
             "Assistent-Sync: Hub lehnt ab (HTTP {}, {code})",
             antwort.status
         );
         self.merken(&code);
         Err(fehler)
+    }
+
+    /// Wie [`Self::aufruf_roh`] für kleine Antworten mit einzelnen Feldern (kein JSON: `Null`).
+    fn aufruf(&self, anfrage: Anfrage) -> Result<Value, HubFehler> {
+        let roh = self.aufruf_roh(anfrage)?;
+        Ok(serde_json::from_slice(&roh).unwrap_or(Value::Null))
+    }
+
+    /// Oberste Felder einer Antwort, unverändert als Rohtext (nichts wird umgeformt).
+    fn felder<'a>(&self, roh: &'a [u8]) -> Result<HashMap<String, &'a RawValue>, HubFehler> {
+        serde_json::from_slice(roh).map_err(|_| self.ungueltig())
+    }
+
+    /// Liste `feld` als Elemente im Rohtext; mehr als `max` Elemente sind ein Vertragsfehler.
+    fn elemente<'a>(
+        &self,
+        roh: &'a [u8],
+        feld: &str,
+        max: usize,
+    ) -> Result<Vec<&'a RawValue>, HubFehler> {
+        let felder = self.felder(roh)?;
+        let liste = felder.get(feld).ok_or_else(|| self.ungueltig())?;
+        let v: Vec<&'a RawValue> =
+            serde_json::from_str(liste.get()).map_err(|_| self.ungueltig())?;
+        if v.len() > max {
+            return Err(self.ungueltig());
+        }
+        Ok(v)
     }
 
     /// Lässt dieses Gerät am Hub zu (`POST /geraet`): als Erstgerät, per Kopplung oder mit
@@ -232,22 +301,11 @@ impl<T: HubTransport> PortalHub<T> {
         Ok(())
     }
 
-    /// Liste `feld` einer Antwort als rohe JSON-Bytes (für die `aus_json`-Funktionen des Kerns).
-    fn liste<'a>(&self, antwort: &'a Value, feld: &str) -> Result<&'a Vec<Value>, HubFehler> {
-        antwort
-            .get(feld)
-            .and_then(Value::as_array)
-            .ok_or_else(|| self.ungueltig())
-    }
-
-    /// Eine Seite Umschläge (`objekte` bzw. `fassungen`) über die Transportgrenze des Kerns.
-    fn umschlaege(&self, liste: &[Value]) -> Result<Vec<Umschlag>, HubFehler> {
-        let roh = serde_json::to_vec(liste).map_err(|_| self.ungueltig())?;
-        Umschlag::liste_aus_json(&roh, LESE_SEITE).map_err(|_| self.ungueltig())
-    }
-
-    /// Blättert über `/lesen` bzw. `/fassungen`: Revisionen streng steigend über `nach`, `mehr` nur
-    /// mit Fortschritt (sonst liest der Hub dieselbe Seite endlos).
+    /// Blättert über `/lesen` bzw. `/fassungen`. Die Seite geht als Rohtext an
+    /// `Umschlag::liste_aus_json`. Weiter geht es nur nach der höchsten gelieferten Revision (der
+    /// `cursor` des Hubs wird nicht gebraucht) und nur mit Fortschritt. Eine Anomalie (Revision fehlt
+    /// oder steigt nicht) wird nicht hier entschieden, sondern unverändert an den Kern gereicht; er
+    /// liest dann vollständig neu (Selbstheilung, E3.8). Gesamtgrenzen: siehe [`MAX_GESAMT_BYTES`].
     fn blaettern(
         &self,
         pfad: &'static str,
@@ -256,6 +314,7 @@ impl<T: HubTransport> PortalHub<T> {
         query: &[(&'static str, String)],
     ) -> Result<Vec<Umschlag>, HubFehler> {
         let mut alle: Vec<Umschlag> = Vec::new();
+        let mut bytes = 0usize;
         let mut nach = nach_revision;
         for _ in 0..MAX_SEITEN {
             let mut q = vec![
@@ -263,42 +322,31 @@ impl<T: HubTransport> PortalHub<T> {
                 ("limit", LESE_SEITE.to_string()),
             ];
             q.extend(query.iter().cloned());
-            let antwort = self.aufruf(Anfrage {
+            let roh = self.aufruf_roh(Anfrage {
                 methode: Methode::Get,
                 pfad,
                 query: q,
                 body: None,
             })?;
-            let seite = self.umschlaege(self.liste(&antwort, feld)?)?;
-            let mehr = antwort
-                .get("mehr")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            let leer = seite.is_empty();
-            for u in seite {
-                let rev = u.revision.ok_or_else(|| self.ungueltig())?;
-                if rev <= nach {
-                    return Err(self.ungueltig());
-                }
-                nach = rev;
-                alle.push(u);
-            }
-            if !mehr {
+            bytes = bytes.saturating_add(roh.len());
+            let felder = self.felder(&roh)?;
+            let liste = felder.get(feld).ok_or_else(|| self.ungueltig())?;
+            let seite = Umschlag::liste_aus_json(liste.get().as_bytes(), LESE_SEITE)
+                .map_err(|_| self.ungueltig())?;
+            let mehr = felder.get("mehr").is_some_and(|m| m.get() == "true");
+            let anomal = seite.iter().any(|u| u.revision.is_none_or(|r| r <= nach));
+            let hoechste = seite.iter().filter_map(|u| u.revision).max();
+            alle.extend(seite);
+            if !mehr || anomal || bytes >= MAX_GESAMT_BYTES || alle.len() >= MAX_GESAMT_OBJEKTE {
                 return Ok(alle);
             }
-            if leer {
-                return Err(self.ungueltig());
-            }
-            // `/lesen` nennt den Cursor ausdrücklich: er darf nicht hinter die letzte Revision fallen.
-            if let Some(c) = antwort.get("cursor") {
-                match zaehler(Some(c)) {
-                    Some(c) if c >= nach => nach = c,
-                    _ => return Err(self.ungueltig()),
-                }
+            match hoechste {
+                Some(h) if h > nach => nach = h,
+                // `mehr` ohne Fortschritt: sonst liest der Hub dieselbe Seite endlos.
+                _ => return Ok(alle),
             }
         }
-        self.merken("antwort_ungueltig");
-        Err(HubFehler::Vertrag("Hub liefert kein Ende"))
+        Ok(alle)
     }
 }
 
@@ -436,7 +484,7 @@ impl<T: HubTransport> HubSpeicher for PortalHub<T> {
         objekt_id: &Hex128,
     ) -> Result<Option<Umschlag>, HubFehler> {
         self.pruefen_auth(auth)?;
-        let antwort = self.aufruf(Anfrage {
+        let roh = self.aufruf_roh(Anfrage {
             methode: Methode::Get,
             pfad: "/objekt",
             query: vec![
@@ -445,14 +493,12 @@ impl<T: HubTransport> HubSpeicher for PortalHub<T> {
             ],
             body: None,
         })?;
-        match antwort.get("objekt") {
-            Some(Value::Null) => Ok(None),
-            Some(u) => {
-                let roh = serde_json::to_vec(u).map_err(|_| self.ungueltig())?;
-                Umschlag::aus_json(&roh)
-                    .map(Some)
-                    .map_err(|_| self.ungueltig())
-            }
+        let felder = self.felder(&roh)?;
+        match felder.get("objekt") {
+            Some(u) if u.get() == "null" => Ok(None),
+            Some(u) => Umschlag::aus_json(u.get().as_bytes())
+                .map(Some)
+                .map_err(|_| self.ungueltig()),
             None => Err(self.ungueltig()),
         }
     }
@@ -513,22 +559,15 @@ impl<T: HubTransport> HubSpeicher for PortalHub<T> {
         ab: u64,
     ) -> Result<Vec<Verzeichniseintrag>, HubFehler> {
         self.pruefen_auth(auth)?;
-        let antwort = self.aufruf(Anfrage {
+        let roh = self.aufruf_roh(Anfrage {
             methode: Methode::Get,
             pfad: "/verzeichnis",
             query: vec![("ab", als_text(ab))],
             body: None,
         })?;
-        let liste = self.liste(&antwort, "eintraege")?;
-        if liste.len() > MAX_VERZEICHNIS {
-            return Err(self.ungueltig());
-        }
-        liste
+        self.elemente(&roh, "eintraege", MAX_VERZEICHNIS)?
             .iter()
-            .map(|e| {
-                let roh = serde_json::to_vec(e).map_err(|_| self.ungueltig())?;
-                Verzeichniseintrag::aus_json(&roh).map_err(|_| self.ungueltig())
-            })
+            .map(|e| Verzeichniseintrag::aus_json(e.get().as_bytes()).map_err(|_| self.ungueltig()))
             .collect()
     }
 
@@ -561,22 +600,15 @@ impl<T: HubTransport> HubSpeicher for PortalHub<T> {
 
     fn pakete_lesen(&self, auth: &AuthGeraet) -> Result<Vec<Schluesselpaket>, HubFehler> {
         self.pruefen_auth(auth)?;
-        let antwort = self.aufruf(Anfrage {
+        let roh = self.aufruf_roh(Anfrage {
             methode: Methode::Get,
             pfad: "/pakete",
             query: Vec::new(),
             body: None,
         })?;
-        let liste = self.liste(&antwort, "pakete")?;
-        if liste.len() > MAX_PAKETE {
-            return Err(self.ungueltig());
-        }
-        liste
+        self.elemente(&roh, "pakete", MAX_PAKETE)?
             .iter()
-            .map(|p| {
-                let roh = serde_json::to_vec(p).map_err(|_| self.ungueltig())?;
-                Schluesselpaket::aus_json(&roh).map_err(|_| self.ungueltig())
-            })
+            .map(|p| Schluesselpaket::aus_json(p.get().as_bytes()).map_err(|_| self.ungueltig()))
             .collect()
     }
 }

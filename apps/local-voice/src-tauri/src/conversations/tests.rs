@@ -73,6 +73,7 @@ fn append_and_get_round_trip_in_order() {
             usage_event_ids: vec![7, 8],
             provider_id: Some("claude_cli".to_string()),
             local: Some(false),
+            lease_generation: None,
         }),
     });
     answer.attachments = vec![ConversationAttachment {
