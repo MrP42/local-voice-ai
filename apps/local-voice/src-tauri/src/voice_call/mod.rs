@@ -433,6 +433,14 @@ pub async fn voice_call_chat(
     // ADR-0028 E4: Einstufung in Rust vor jedem Modellaufruf. S0, Fehler, leerer oder zu langer
     // Text: kein Netzaufruf, unabhängig vom Schalter der Oberfläche.
     let sprache = assistent::sprache_der_app(&app);
+    // Notizbuchdaten (Codex lva#414): auch der alte Weg ersetzt entzogene Inhalte und schickt
+    // geschützte nur an einen lokalen Empfänger.
+    let pruefung =
+        crate::commands::voice_tools::schutz_pruefen(&app, messages, conversation_id.as_deref());
+    if pruefung.gesperrt {
+        return Err(assistent::schutz::UNGESICHERT.to_string());
+    }
+    let messages = pruefung.nachrichten.clone();
     tor::vor_nachrichten(&messages, sprache, conversation_id.as_deref())?;
     let settings =
         crate::settings::get_settings(&app).for_function(crate::settings::FN_VOICE_SPEAKER);
@@ -441,7 +449,12 @@ pub async fn voice_call_chat(
     // App-Kontext nur an einen lokalen Empfänger, unmittelbar vor dem Start
     // geprüft (Codex M5/M6); sonst antwortet das Modell ohne Kontext.
     let local = receiver_is_local(&provider);
+    if pruefung.geschuetzt && !local {
+        return Err(assistent::schutz::NUR_LOKAL.to_string());
+    }
     let messages = tor::mit_markerregel(for_receiver(messages, local), sprache);
+    // Werkzeugrolle (Codex lva#414 M5) auch im alten Weg: Ergebnisse als Datenbloecke.
+    let messages = assistent::schutz::werkzeugrolle(messages, &assistent::schutz::neue_kennung());
     let guarded = needs_pinned(context.is_some(), &messages, local);
     // Erst Abbruch und Widerruf registrieren, dann prüfen: was dazwischen kommt,
     // trifft die Anfrage (der Notify merkt sich den Abbruch).
@@ -537,16 +550,24 @@ pub async fn voice_call_chat(
             *i += 1;
         })
     };
+    // Antwort aus Notizbuchdaten: nichts verlässt Rust, bevor der Vermerk gesichert ist.
+    let puffer = Arc::new(Mutex::new(assistent::schutz::Antwortpuffer::<String>::neu(
+        &pruefung,
+    )));
     let on_delta = {
         let tor = tor_strom.clone();
         let emit_piece = emit_piece.clone();
+        let puffer = puffer.clone();
         move |delta: &str| {
             let pieces = tor
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .einspeisen(delta);
+            let mut p = puffer.lock().unwrap_or_else(|e| e.into_inner());
             for piece in pieces {
-                emit_piece(piece);
+                if let Some(piece) = p.durchlassen(piece) {
+                    emit_piece(piece);
+                }
             }
         }
     };
@@ -593,8 +614,27 @@ pub async fn voice_call_chat(
                 let rest = t.beenden();
                 (rest, t.freigegebener_text())
             };
-            for piece in rest {
+            // Erst nach dauerhaft gesichertem Vermerk wird die Antwort freigegeben (Recheck 3/1, 4):
+            // gepufferte Sätze gehen erst danach hinaus, bei Fehler werden sie verworfen.
+            let gesichert = assistent::schutz::abgeleitet_merken(
+                &pruefung,
+                &freigegeben,
+                conversation_id.as_deref(),
+            )
+            .is_ok();
+            let hinaus = puffer
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .abschliessen(gesichert, rest);
+            for piece in hinaus {
                 emit_piece(piece);
+            }
+            if !gesichert {
+                let _ = app.emit(
+                    EVENT,
+                    serde_json::json!({"kind": "failed", "request_id": request_id}),
+                );
+                return Err(assistent::schutz::UNGESICHERT.to_string());
             }
             tor::ausgabe_merken(conversation_id.as_deref(), &freigegeben);
             let _ = app.emit(

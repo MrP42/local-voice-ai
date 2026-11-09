@@ -110,8 +110,9 @@ fn kind_of(area: Area) -> Option<SourceKind> {
         Area::Dictations => Some(SourceKind::Dictation),
         Area::Conversations => Some(SourceKind::Conversation),
         Area::Tts => Some(SourceKind::TtsPage),
-        // Transkripte erweitern die Besprechungen; Termine bleiben Werkzeug.
-        Area::Transcripts | Area::Calendar => None,
+        // Transkripte erweitern die Besprechungen; Termine bleiben Werkzeug. Das Notizbuch wird
+        // eigene Indexquelle erst mit Spec lva#398 §3.4; bis dahin nur Werkzeuge.
+        Area::Transcripts | Area::Calendar | Area::Notebook => None,
     }
 }
 
