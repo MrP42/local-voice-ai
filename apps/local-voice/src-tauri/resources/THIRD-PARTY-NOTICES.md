@@ -90,7 +90,7 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - IBM Plex Sans (Schrift im PDF-Export) — OFL-1.1 — <https://github.com/IBM/plex>
 - Archivo (Schrift im PDF-Export) — OFL-1.1 — <https://github.com/Omnibus-Type/Archivo>
 
-## Rust-Bibliotheken (701)
+## Rust-Bibliotheken (707)
 
 - Inflector 0.11.4 — BSD-2-Clause
 - adler2 2.0.1 — MIT
@@ -113,6 +113,7 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - arrayref 0.3.9 — BSD-2-Clause
 - arrayvec 0.7.6 — MIT
 - async-trait 0.1.89 — MIT
+- atoi_simd 0.16.1 — MIT
 - atomic-waker 1.1.2 — MIT
 - auto-launch 0.5.0 — MIT
 - autocfg 1.5.0 — MIT
@@ -140,6 +141,7 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - byteorder 1.5.0 — MIT
 - byteorder-lite 0.1.0 — MIT
 - bytes 1.11.1 — MIT
+- calamine 0.32.0 — MIT
 - calcard 0.3.14 — MIT
 - camino 1.2.2 — MIT
 - cargo-platform 0.1.9 — MIT
@@ -167,6 +169,7 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - cmake 0.1.57 — MIT
 - cocoa 0.24.1 — MIT
 - cocoa-foundation 0.1.2 — MIT
+- codepage 0.1.3 — MIT
 - color_quant 1.1.0 — MIT
 - colorchoice 1.0.5 — MIT
 - console 0.16.3 — MIT
@@ -200,6 +203,7 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - darling_macro 0.20.11 — MIT
 - darling_macro 0.21.3 — MIT
 - dasp_sample 0.11.0 — MIT
+- debug_unsafe 0.1.4 — MIT
 - der 0.7.10 — MIT
 - deranged 0.5.7 — MIT
 - derive_builder 0.20.2 — MIT
@@ -241,6 +245,7 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - eyre 0.6.12 — MIT
 - fallible-iterator 0.3.0 — MIT
 - fallible-streaming-iterator 0.1.9 — MIT
+- fast-float2 0.2.4 — MIT
 - fastrand 2.3.0 — MIT
 - fax 0.2.6 — MIT
 - fax_derive 0.2.0 — MIT
@@ -787,6 +792,7 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - zerovec-derive 0.11.2 — Unicode-3.0
 - zip 2.4.2 — MIT
 - zip 4.6.1 — MIT
+- zlib-rs 0.6.8 — Zlib
 - zmij 1.0.21 — MIT
 - zopfli 0.8.3 — Apache-2.0
 - zune-core 0.4.12 — MIT
@@ -4432,7 +4438,7 @@ You should also get your employer (if you work as a programmer) or school, if an
 The GNU General Public License does not permit incorporating your program into proprietary programs. If your program is a subroutine library, you may consider it more useful to permit linking proprietary applications with the library. If this is what you want to do, use the GNU Lesser General Public License instead of this License. But first, please read <http://www.gnu.org/philosophy/why-not-lgpl.html>.
 ```
 
-#### MIT License (MIT) — adler2 2.0.1, anyhow 1.0.104, async-trait 0.1.89, atomic-waker 1.1.2, calcard 0.3.14, camino 1.2.2, cargo-platform 0.1.9, cargo_metadata 0.19.2, displaydoc 0.2.5, dtoa 1.0.11, dyn-clone 1.0.20, erased-serde 0.4.9, eyre 0.6.12, fastrand 2.3.0, hashify 0.2.9, indenter 0.3.4, is-terminal 0.4.17, itoa 1.0.17, kuchikiki 0.8.8-speedreader, mail-builder 1.0.0, mail-parser 0.11.9, once_cell 1.21.3, paste 1.0.15, pastey 0.1.1, pathdiff 0.2.3, pin-project-lite 0.2.16, portable-atomic 1.13.1, proc-macro2 1.0.106, quote 1.0.44, rodio 0.20.1, rustix 1.1.3, rustversion 1.0.22, semver 1.0.27, serde 1.0.228, serde-untagged 0.1.9, serde_core 1.0.228, serde_derive 1.0.228, serde_derive_internals 0.29.1, serde_json 1.0.149, serde_repr 0.1.20, servo_arc 0.2.0, servo_arc 0.4.3, syn 1.0.109, syn 2.0.117, syn 3.0.6, thiserror 1.0.69, thiserror 2.0.18, thiserror-impl 1.0.69, thiserror-impl 2.0.18, typeid 1.0.3, unicode-ident 1.0.24, utf-8 0.7.6, zmij 1.0.21
+#### MIT License (MIT) — adler2 2.0.1, anyhow 1.0.104, async-trait 0.1.89, atomic-waker 1.1.2, calcard 0.3.14, camino 1.2.2, cargo-platform 0.1.9, cargo_metadata 0.19.2, displaydoc 0.2.5, dtoa 1.0.11, dyn-clone 1.0.20, erased-serde 0.4.9, eyre 0.6.12, fast-float2 0.2.4, fastrand 2.3.0, hashify 0.2.9, indenter 0.3.4, is-terminal 0.4.17, itoa 1.0.17, kuchikiki 0.8.8-speedreader, mail-builder 1.0.0, mail-parser 0.11.9, once_cell 1.21.3, paste 1.0.15, pastey 0.1.1, pathdiff 0.2.3, pin-project-lite 0.2.16, portable-atomic 1.13.1, proc-macro2 1.0.106, quote 1.0.44, rodio 0.20.1, rustix 1.1.3, rustversion 1.0.22, semver 1.0.27, serde 1.0.228, serde-untagged 0.1.9, serde_core 1.0.228, serde_derive 1.0.228, serde_derive_internals 0.29.1, serde_json 1.0.149, serde_repr 0.1.20, servo_arc 0.2.0, servo_arc 0.4.3, syn 1.0.109, syn 2.0.117, syn 3.0.6, thiserror 1.0.69, thiserror 2.0.18, thiserror-impl 1.0.69, thiserror-impl 2.0.18, typeid 1.0.3, unicode-ident 1.0.24, utf-8 0.7.6, zmij 1.0.21
 
 ```
 Permission is hereby granted, free of charge, to any
@@ -4712,6 +4718,36 @@ DEALINGS IN THE SOFTWARE.
 
 ```
 Copyright (c) Ulrik Sverdrup "bluss" 2015-2023
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+```
+
+#### MIT License (MIT) — atoi_simd 0.16.1
+
+```
+Copyright (c) 2022 Dmitry Rodionov
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -5202,6 +5238,34 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
+#### MIT License (MIT) — calamine 0.32.0, quick-xml 0.38.4
+
+```
+The MIT License (MIT)
+
+Copyright (c) 2016 Johann Tuffe
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+```
+
 #### MIT License (MIT) — cast 0.3.0
 
 ```
@@ -5538,6 +5602,36 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
+#### MIT License (MIT) — codepage 0.1.3, encoding_rs 0.8.35, utf8_iter 1.0.4
+
+```
+Copyright Mozilla Foundation
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+```
+
 #### MIT License (MIT) — color_quant 1.1.0
 
 ```
@@ -5831,6 +5925,36 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+#### MIT License (MIT) — debug_unsafe 0.1.4
+
+```
+Copyright (c) 2025 Dmitry Rodionov
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+```
+
 #### MIT License (MIT) — der 0.7.10
 
 ```
@@ -6121,36 +6245,6 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE
-```
-
-#### MIT License (MIT) — encoding_rs 0.8.35, utf8_iter 1.0.4
-
-```
-Copyright Mozilla Foundation
-
-Permission is hereby granted, free of charge, to any
-person obtaining a copy of this software and associated
-documentation files (the "Software"), to deal in the
-Software without restriction, including without
-limitation the rights to use, copy, modify, merge,
-publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software
-is furnished to do so, subject to the following
-conditions:
-
-The above copyright notice and this permission notice
-shall be included in all copies or substantial portions
-of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
-ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
 ```
 
 #### MIT License (MIT) — enigo 0.6.1
@@ -8925,34 +9019,6 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-```
-
-#### MIT License (MIT) — quick-xml 0.38.4
-
-```
-The MIT License (MIT)
-
-Copyright (c) 2016 Johann Tuffe
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-
-The above copyright notice and this permission notice shall be included in
-all copies or substantial portions of the Software.
-
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-THE SOFTWARE.
 ```
 
 #### MIT License (MIT) — rand_core 0.10.1
@@ -12737,6 +12803,29 @@ the following restrictions:
 3. This notice may not be removed or altered from any source distribution.
 ```
 
+#### zlib License (Zlib) — zlib-rs 0.6.8
+
+```
+(C) 2024 Trifecta Tech Foundation 
+
+This software is provided 'as-is', without any express or implied
+warranty. In no event will the authors be held liable for any damages
+arising from the use of this software.
+
+Permission is granted to anyone to use this software for any purpose,
+including commercial applications, and to alter it and redistribute it
+freely, subject to the following restrictions:
+
+1. The origin of this software must not be misrepresented; you must not
+   claim that you wrote the original software. If you use this software
+   in a product, an acknowledgment in the product documentation would be
+   appreciated but is not required.
+
+2. Altered source versions must be plainly marked as such, and must not be
+   misrepresented as being the original software.
+
+3. This notice may not be removed or altered from any source distribution.
+```
 ## Frontend-Pakete (npm, Produktionsabhängigkeiten, 312)
 
 - @babel/code-frame 7.29.7 — MIT

@@ -106,10 +106,11 @@ pub fn ausfuehren(
     for (k, v) in &prog.umgebung {
         cmd.env(k, v);
     }
-    // Arbeitsordner ist die Ablagewurzel, nie der Ordner der Datei: unter Windows hält das
+    // Arbeitsordner ist weder der Ordner der Datei noch die Ablagewurzel: unter Windows hält das
     // Arbeitsverzeichnis eines Prozesses seinen Ordner ohne FILE_SHARE_DELETE offen, und ein
-    // gleichzeitiges endgültiges Löschen schlüge dort fehl.
-    cmd.current_dir(wurzel);
+    // gleichzeitiges Löschen oder Umbenennen (auch der Wurzel) schlüge dort fehl. Die Wurzel kommt
+    // über die Umgebung ([`ENV_WURZEL`]).
+    cmd.current_dir(std::env::temp_dir());
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -206,7 +207,7 @@ pub fn ausfuehren(
             Err(_) => {
                 beenden(&mut child);
                 let _ = leser.join();
-                return Err("extrakt.abbruch".into());
+                return Err("extrakt.programm".into());
             }
         }
         let abgebrochen = abbrechen.load(Ordering::Relaxed);
@@ -227,7 +228,7 @@ pub fn ausfuehren(
         return Err("extrakt.zu_gross".into());
     }
     if !ok {
-        return Err("extrakt.abbruch".into());
+        return Err(unklarer_ausgang(&status).into());
     }
     let antwort = antwort_lesen(&ausgabe);
     match (status.code(), antwort) {
@@ -235,8 +236,34 @@ pub fn ausfuehren(
         (Some(2), Some(Antwort::Fehler { fehler })) if code_ok(&fehler) => {
             Err(format!("extrakt.{fehler}"))
         }
-        // Signal (Speichergrenze, Absturz) oder unlesbare Ausgabe.
-        _ => Err("extrakt.abbruch".into()),
+        _ => Err(unklarer_ausgang(&status).into()),
+    }
+}
+
+/// Fehlercode für ein Ende ohne gültige Antwort. Endgültig (`extrakt.abbruch`, Giftdatei) nur bei
+/// Speicherlimit, Absturz oder Signal (SIGKILL, SIGSEGV, SIGABRT, SIGBUS, SIGILL, SIGFPE, SIGXCPU;
+/// Rust-Panic 101 und `abort` 134; Windows: NTSTATUS-Absturzcodes) und beim Thread-Panic (70).
+/// Alles andere (nicht zugelassen 64, Thread-Start 71, stdout 74, unklares Ende) liegt nicht am Inhalt:
+/// vorübergehend (`extrakt.start` bzw. `extrakt.programm`).
+pub(crate) fn unklarer_ausgang(status: &std::process::ExitStatus) -> &'static str {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        if let Some(sig) = status.signal() {
+            const ABSTURZ: [i32; 7] = [4, 6, 7, 8, 9, 11, 24];
+            return if ABSTURZ.contains(&sig) {
+                "extrakt.abbruch"
+            } else {
+                "extrakt.programm"
+            };
+        }
+    }
+    match status.code() {
+        Some(70 | 101 | 134) => "extrakt.abbruch",
+        Some(71 | 74) => "extrakt.start",
+        #[cfg(windows)]
+        Some(c) if (c as u32) >= 0xC000_0000 => "extrakt.abbruch",
+        _ => "extrakt.programm",
     }
 }
 
