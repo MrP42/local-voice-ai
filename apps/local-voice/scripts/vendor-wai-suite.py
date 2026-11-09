@@ -42,6 +42,7 @@ WURZEL = Path(__file__).resolve().parent.parent
 VENDOR = WURZEL / "src-tauri" / "vendor"
 CRATES = (
     "wai-links", "wai-security", "wai-storage", "wai-providers", "wai-projekte", "wai-recherche", "wai-assistent",
+    "wai-notizbuch-zugang",
 )
 UEBERNOMMEN = ("src/", "regeln/")
 # wai-assistent (ADR-0028 A2) bindet `regeln/standard.json` per include_str! ein und die Vertragsfixture aus
@@ -64,6 +65,8 @@ ERLAUBT = {
     "reqwest", "url", "scraper", "ego-tree",
     # base64 0.22 (MIT OR Apache-2.0), im Lockfile und in Cargo.toml schon vorhanden; Sync-Kern von wai-assistent.
     "base64",
+    # rusqlite 0.37 „bundled“ (MIT), in Local Voice schon vorhanden; nur lesender Notizbuch-Zugang (lva#396 N2).
+    "rusqlite",
 }
 
 

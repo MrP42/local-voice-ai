@@ -894,8 +894,8 @@ async assistentLetzteAusgabe(conversationId: string | null) : Promise<string | n
 /**
  * Vergisst die letzte Ausgabe (nach einer Antwort, die nicht durch das Tor lief).
  */
-async assistentAusgabeVergessen(conversationId: string | null) : Promise<null> {
-    return await TAURI_INVOKE("assistent_ausgabe_vergessen", { conversationId });
+async assistentAusgabeVergessen(conversationId: string | null) : Promise<void> {
+    await TAURI_INVOKE("assistent_ausgabe_vergessen", { conversationId });
 },
 /**
  * Ansagen und S0-Vorlagen der Oberflaeche ein- oder ausschalten (Standard an); das Tor bleibt aktiv.
@@ -4901,6 +4901,30 @@ async changeVoiceCallKnowledgeSetting(areas: string[]) : Promise<Result<null, st
 }
 },
 /**
+ * Notizbuch-Abschnitte, die das Gespräch lesen darf (lva#396 N2): `abschnitt:<id>` oder
+ * `notizbuch:<id>`. Gespeichert werden nur gültige Einträge, ohne Doppelte.
+ */
+async changeVoiceNotebookSectionsSetting(sections: string[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_voice_notebook_sections_setting", { sections }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Gliederung des Notizbuchs für die Freigabe-Einstellung (nur Namen und Seitenzahlen, kein
+ * Inhalt). Ohne Notizbuch auf dem Gerät: Klartext-Fehler.
+ */
+async voiceNotebookOutline() : Promise<Result<NotebookOutline[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("voice_notebook_outline") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Ruft ein lesendes Werkzeug (Bereich frei, Audit über das Tor). `args` ist ein JSON-Objekt als
  * Text, `conversation_id` das laufende Gespräch (es bleibt den Gesprächswerkzeugen verborgen). Die
  * Antwort ist der JSON-Text des Ergebnisses; eine zu lange Antwort wird nie still gekürzt, sondern
@@ -8712,8 +8736,9 @@ meeting_mcp_enabled?: boolean;
  */
 meeting_mcp_include_transcript?: boolean; 
 /**
- * ADR-0028 A2 (E4): Ansagen und S0-Vorlagen der Oberflaeche (lokale Einstufung S0-S3). Standard
- * AN. Steuert NUR die Oberflaeche; das Tor vor dem Modellaufruf (Rust) bleibt immer aktiv.
+ * ADR-0028 A2 (E4): Ansagen und S0-Vorlagen der Oberflaeche (lokale Einstufung S0-S3).
+ * Standard AN. Steuert NUR die Oberflaeche; das Tor vor dem Modellaufruf (Rust,
+ * `assistent::tor`) bleibt immer aktiv.
  */
 assistent_einstufung_aktiv?: boolean; 
 /**
@@ -8730,6 +8755,12 @@ voice_call_read_transcripts?: boolean;
  * `meetings`. Getrennt von den Rechten externer Agenten.
  */
 voice_call_knowledge?: string[]; 
+/**
+ * Notizbuch-Abschnitte, die das Gespräch lesen darf (lva#396 N2, Spec lva#398 §3.2), nur
+ * zusammen mit dem Bereich `notebook`: `abschnitt:<id>` oder `notizbuch:<id>` (ganzes
+ * Notizbuch samt künftiger Abschnitte). Standard LEER: dann ist nichts sichtbar.
+ */
+voice_call_notebook_sections?: string[]; 
 /**
  * Globaler Sprachassistent (lva#325): Abrufindex über die freigegebenen Bereiche
  * (`voice_call_knowledge`, inkl. `books`, `book_notes`, `ki_docs`). Standard AUS: dann
@@ -11611,6 +11642,14 @@ export type NewEntry = { id?: string | null; role: string; mode: string; text: s
  */
 export type NoteBlock = { id: string; kind: NoteBlockKind; text: string; at_ms: number | null; checked: boolean }
 export type NoteBlockKind = "paragraph" | "bullet" | "heading" | "todo"
+/**
+ * Ein Notizbuch in der Freigabe-Einstellung.
+ */
+export type NotebookOutline = { id: string; name: string; sections: NotebookOutlineSection[] }
+/**
+ * Ein Abschnitt in der Freigabe-Einstellung.
+ */
+export type NotebookOutlineSection = { id: string; name: string; group: string | null; pages: number }
 /**
  * Einstellungen des Ollama-Sprachanbieters.
  */

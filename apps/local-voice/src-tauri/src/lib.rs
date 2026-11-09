@@ -2430,6 +2430,8 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::voice_tools::voice_tools_list,
             commands::voice_tools::change_voice_call_read_transcripts_setting,
             commands::voice_tools::change_voice_call_knowledge_setting,
+            commands::voice_tools::change_voice_notebook_sections_setting,
+            commands::voice_tools::voice_notebook_outline,
             commands::voice_tools::voice_tool_call,
             // Sprachgespraech Stufe 3: Lernen aus Korrekturen, Einrichtung durch Vorlesen
             speech_learning::speech_learning_feedback,

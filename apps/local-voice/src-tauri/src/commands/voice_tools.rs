@@ -11,14 +11,16 @@ use std::sync::{Arc, Mutex};
 
 use chrono::DateTime;
 use once_cell::sync::Lazy;
+use serde::Serialize;
 use serde_json::{json, Value};
 use tauri::{AppHandle, Manager};
+use wai_notizbuch_zugang::Zugang;
 
 use crate::agent_bridge::runtime::AppBridge;
 use crate::agent_bridge::tools::meetings::READ_BUSY_TIMEOUT;
 use crate::agent_bridge::voice::areas::{self, Areas};
 use crate::agent_bridge::voice::knowledge::{
-    ConversationInfo, ConversationView, Dictation, EntryInfo, EntryLine, EventInfo,
+    notizbuch, ConversationInfo, ConversationView, Dictation, EntryInfo, EntryLine, EventInfo,
     KnowledgeSource, MeetingInfo, PageInfo,
 };
 use crate::agent_bridge::voice::{self, RateLimiter, Session, VoiceOptions, VoiceToolInfo};
@@ -69,6 +71,86 @@ pub fn change_voice_call_knowledge_setting(
     crate::app_context::service::on_settings_changed(&app);
     Ok(())
 }
+
+/// Notizbuch-Abschnitte, die das Gespräch lesen darf (lva#396 N2): `abschnitt:<id>` oder
+/// `notizbuch:<id>`. Gespeichert werden nur gültige Einträge, ohne Doppelte.
+#[tauri::command]
+#[specta::specta]
+pub fn change_voice_notebook_sections_setting(
+    app: AppHandle,
+    sections: Vec<String>,
+) -> Result<(), String> {
+    let mut settings = crate::settings::get_settings(&app);
+    settings.voice_call_notebook_sections = notizbuch::eintraege_normalisieren(&sections);
+    crate::settings::write_settings(&app, settings);
+    crate::app_context::service::on_settings_changed(&app);
+    Ok(())
+}
+
+/// Gliederung des Notizbuchs für die Freigabe-Einstellung (nur Namen und Seitenzahlen, kein
+/// Inhalt). Ohne Notizbuch auf dem Gerät: Klartext-Fehler.
+#[tauri::command]
+#[specta::specta]
+pub async fn voice_notebook_outline(app: AppHandle) -> Result<Vec<NotebookOutline>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let zugang =
+            Zugang::oeffnen(notizbuch_pfad(&app)?).map_err(|e| notizbuch::fehlertext(&e))?;
+        let nbs = zugang
+            .gliederung_fuer_einstellung()
+            .map_err(|e| notizbuch::fehlertext(&e))?;
+        Ok(nbs
+            .into_iter()
+            .map(|n| NotebookOutline {
+                id: n.id,
+                name: n.name,
+                sections: n
+                    .abschnitte
+                    .into_iter()
+                    .map(|a| NotebookOutlineSection {
+                        id: a.id,
+                        name: a.name,
+                        group: a.gruppe,
+                        pages: a.seiten as u32,
+                    })
+                    .collect(),
+            })
+            .collect())
+    })
+    .await
+    .map_err(|_| "Das Notizbuch ist gerade nicht lesbar.".to_string())?
+}
+
+/// Ein Notizbuch in der Freigabe-Einstellung.
+#[derive(Clone, Debug, Serialize, specta::Type)]
+pub struct NotebookOutline {
+    pub id: String,
+    pub name: String,
+    pub sections: Vec<NotebookOutlineSection>,
+}
+
+/// Ein Abschnitt in der Freigabe-Einstellung.
+#[derive(Clone, Debug, Serialize, specta::Type)]
+pub struct NotebookOutlineSection {
+    pub id: String,
+    pub name: String,
+    pub group: Option<String>,
+    pub pages: u32,
+}
+
+/// Ablage der Notizbuch-App (`<Datenordner>/de.wolffappliedai.notizbuch/notizbuch.db`, Spec
+/// lva#398 §3.1). Die Portable-Fassung hat kein Notizbuch neben sich.
+fn notizbuch_pfad(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    if crate::portable::data_dir().is_some() {
+        return Err("Das Notizbuch ist in der portablen Fassung nicht verfügbar.".to_string());
+    }
+    app.path()
+        .data_dir()
+        .map(|d| d.join(NOTIZBUCH_KENNUNG).join("notizbuch.db"))
+        .map_err(|_| "Das Notizbuch ist hier nicht verfügbar.".to_string())
+}
+
+/// Bundle-Kennung der Notizbuch-App (ihr Datenordner).
+const NOTIZBUCH_KENNUNG: &str = "de.wolffappliedai.notizbuch";
 
 fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
@@ -362,6 +444,14 @@ impl KnowledgeSource for AppKnowledge {
                 preview: p.preview,
             })
             .collect())
+    }
+
+    fn notizbuch(&self) -> Result<notizbuch::Sicht, String> {
+        let settings = crate::settings::get_settings(&self.app);
+        let freigabe = notizbuch::freigabe_aus_einstellung(&settings.voice_call_notebook_sections);
+        let zugang =
+            Zugang::oeffnen(notizbuch_pfad(&self.app)?).map_err(|e| notizbuch::fehlertext(&e))?;
+        Ok(notizbuch::Sicht { zugang, freigabe })
     }
 
     fn page_text(&self, id: &str) -> Result<String, String> {
