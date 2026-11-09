@@ -1,8 +1,10 @@
-//! Dokumentenablage, Stufen D1, D2 und D6 (Epic local-voice-ai#395, Issues #407/#408, wai-sdk ADR-0029).
+//! Dokumentenablage, Stufen D1, D2, D6 und Vorbau D3 (Epic local-voice-ai#395, Issues #407/#408, wai-sdk
+//! ADR-0029).
 //!
 //! Lokale Ablage im Datenordner der App: Ordner, Dateien mit Fassungen, Papierkorb, sichere Ablage mit
 //! Journal und Wiederanlauf, gerätelokale KI-Freigaben (D1); Textfassungen im begrenzten Unterprozess,
-//! lokaler Index und Volltextsuche ohne KI (D2). Kein Sync (D4), keine KI (D3).
+//! lokaler Index und Volltextsuche ohne KI (D2). D3-Vorbau: Abruf, Widerrufsprüfung und Entwurfswerkzeug
+//! für die KI ([`ki`]); eingehängt in Assistent und Projekt-KI wird erst mit lva#365 P4c.
 //!
 //! * [`zusammenfuehren`]: reine Merge-Logik der synchronisierten Datensätze (keine I/O, keine Uhr).
 //! * [`aufbewahrung`]: welche Fassungen bleiben (reine Funktion).
@@ -12,6 +14,7 @@
 //! * [`textlauf`]: der Unterprozess `lva-extrakt` mit Zeit- und Speichergrenze.
 //! * [`textfassung`]: Warteschlange (ein Arbeiter, abbrechbar, Wiederanlauf aus dem Stand).
 //! * [`index`]: `index.db` über `wai-retrieval`, Abgleich und Suche.
+//! * [`ki`]: D3, Form `auszuege`, Herkunftsmarken, Widerrufsprüfung, `ablage_entwurf_anlegen`.
 //! * [`semantik`]: D6, lokale Vektoren (`multilingual-e5-small`, ONNX) für die hybride Suche (Opt-in).
 //! * [`befehle`]: die Tauri-Befehle.
 //!
@@ -23,6 +26,7 @@ pub mod befehle;
 pub mod extrakt;
 pub mod freigabe;
 pub mod index;
+pub mod ki;
 pub mod semantik;
 pub mod speicher;
 pub mod textfassung;
@@ -33,6 +37,8 @@ pub mod zusammenfuehren;
 mod tests;
 #[cfg(test)]
 mod tests_d2;
+#[cfg(test)]
+mod tests_d3;
 
 use serde::Serialize;
 use std::fmt;

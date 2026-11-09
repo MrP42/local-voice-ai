@@ -8762,7 +8762,8 @@
       "volltext": "Full text",
       "protokoll": "Minutes",
       "transkript": "Transcript",
-      "text": "Text"
+      "text": "Text",
+      "auszuege": "Excerpts"
     },
     "waehlen": {
       "volltext": "Choose full text",
@@ -8778,7 +8779,8 @@
       "format": "Format cannot be read as context",
       "fehlt": "Source is missing.",
       "nicht_lesbar": "No read access.",
-      "form": "Form does not fit the entry."
+      "form": "Form does not fit the entry.",
+      "auszuege": "Excerpts per question from the document storage."
     },
     "nichtImKontextPunkt": "Not in context.",
     "weitereAktionen": "More actions for {{name}}",

@@ -22,9 +22,10 @@
 use super::audit::{AuditEreignis, AuditSenke};
 use super::dateien;
 use super::herkunft::{
-    besprechung_id, besprechung_link, buch_id, buch_link, id_gueltig, projektdatei_id,
-    projektdatei_link, recherche_id, recherche_link, seite_link, suite_id_gueltig, LvaHerkunft,
-    KLASSE_BESPRECHUNG, KLASSE_BUCH, KLASSE_DATEI, KLASSE_SEITE, LINK_APP,
+    ablage_id, ablage_klasse, ablage_link, besprechung_id, besprechung_link, buch_id, buch_link,
+    id_gueltig, projektdatei_id, projektdatei_link, recherche_id, recherche_link, seite_link,
+    suite_id_gueltig, LvaHerkunft, KLASSE_BESPRECHUNG, KLASSE_BUCH, KLASSE_DATEI, KLASSE_SEITE,
+    LINK_APP,
 };
 use super::kontext::{self, Form, Kontext, KontextForm, Mitglied, Schalter, Sorte};
 use super::quellen::LvaQuellen;
@@ -200,6 +201,9 @@ pub struct ProjektDienst {
     audit: Option<Arc<dyn AuditSenke>>,
     /// Projektordner der App (`projekte/`): Kontextauswahl und Projektdateien (lva#365 P4).
     ablage: Option<PathBuf>,
+    /// Dokumentenablage (`<Datenordner>/ablage`): Leserecht und Klasse der Verweisart `ablage`
+    /// (Spec Ablage §11, D3-Vorbau).
+    dokumentenablage: Option<PathBuf>,
     /// Serialisiert Zuordnen und Abgleich: sonst koennte eine Momentaufnahme veralten, waehrend ein
     /// Eintrag fuer eine gerade angelegte Herkunft entsteht, und der Abgleich ihn faelschlich entfernen.
     sperre: tokio::sync::Mutex<()>,
@@ -238,6 +242,7 @@ impl ProjektDienst {
             principal,
             audit: None,
             ablage: None,
+            dokumentenablage: None,
             sperre: tokio::sync::Mutex::new(()),
         })
     }
@@ -245,6 +250,12 @@ impl ProjektDienst {
     /// Projektordner für Kontextauswahl und Projektdateien (lva#365 P4).
     pub fn with_ablage(mut self, ablage: impl Into<PathBuf>) -> Self {
         self.ablage = Some(ablage.into());
+        self
+    }
+
+    /// Dokumentenablage für die Verweisart `ablage` (D3-Vorbau).
+    pub fn with_dokumentenablage(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.dokumentenablage = Some(dir.into());
         self
     }
 
@@ -305,6 +316,18 @@ impl ProjektDienst {
             for (p, d) in &b.lebend {
                 if id_gueltig(d) {
                     h.hinzufuegen(projektdatei_link(p, d), true, KLASSE_DATEI);
+                }
+            }
+        }
+        // Ablage-Verweise: Leserecht und Klasse. Sie werden nie „beurteilt“ (bleiben im Abgleich
+        // `Unbekannt`): eine D4-Umbenennung oder ein Lesefehler entfernt keine Mitgliedschaft.
+        if let Some(dir) = &self.dokumentenablage {
+            let a = crate::ablage::speicher::Ablage::neu(dir.clone());
+            if let Ok(alle) = tokio::task::spawn_blocking(move || a.verweise()).await {
+                for (id, lebend, klasse) in alle.unwrap_or_default() {
+                    let k = ablage_klasse(klasse);
+                    let lesbar = lebend && k != Klasse::Restricted;
+                    h.hinzufuegen(ablage_link(&id), lesbar, k);
                 }
             }
         }
@@ -1005,6 +1028,8 @@ impl ProjektDienst {
                     Sorte::Buch
                 } else if besprechung_id(&link).is_some() {
                     Sorte::Aufnahme
+                } else if ablage_id(&link).is_some() {
+                    Sorte::Ablage
                 } else {
                     Sorte::Sonst
                 };
@@ -1074,6 +1099,10 @@ impl ProjektDienst {
             &mitglieder,
             &schalter,
             &mut |m, w| {
+                if m.sorte == Sorte::Ablage {
+                    // Keine festen Inhalte: Auszüge je Frage (P4c, `ablage::ki::auszuege`).
+                    return Form::Auszuege;
+                }
                 if let Some(f) = recherchen.get(&m.id) {
                     return f.clone();
                 }

@@ -1005,6 +1005,32 @@ async ablageFreigabenNeuFestlegen() : Promise<Result<null, string>> {
 }
 },
 /**
+ * Cloud-Ausnahme je (Ordner, Anbieter) für einen vertraulichen Ordner erteilen (`an`) oder entziehen
+ * (D3, Spec §5.1). Gerätelokal in `freigabe.json`.
+ */
+async ablageCloudAusnahmeSetzen(ordner: string, anbieter: string, an: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_cloud_ausnahme_setzen", { ordner, anbieter, an }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Einziges schreibendes KI-Werkzeug (D3, Spec §5.5): legt einen Entwurf (Markdown) als neue Datei in
+ * „KI-Entwürfe“ oder in einem Zielordner mit `zielordner_ki` ab. Klasse = Maximum aus Zielordner und
+ * Quellen; ist eine Quelle „nur dieses Gerät“, landet er in „KI-Entwürfe (nur dieses Gerät)“. `quellen`:
+ * Herkunftsmarken (`dokument:<dat>@<fas>#<textrev>`), Verweise oder `dat_…`.
+ */
+async ablageEntwurfAnlegen(ordner: string | null, name: string, inhaltMd: string, quellen: string[]) : Promise<Result<AblageEntwurf, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_entwurf_anlegen", { ordner, name, inhaltMd, quellen }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Legt eine Datei oder einen Ordner (mit Struktur) in einem Ordner der Ablage ab. Bei Namenskollision
  * ohne `wahl` wird nichts geschrieben (Zeile `kollision`).
  */
@@ -8494,6 +8520,14 @@ text: string | null;
  */
 text_code: string | null }
 export type AblageEinstellungen = { datenklasse: string | null; nur_geraet: boolean | null; zielordner_ki: boolean | null }
+/**
+ * Ergebnis von `ablage_entwurf_anlegen`.
+ */
+export type AblageEntwurf = { dat: string; fas: string; ordner: string; name: string; 
+/**
+ * Wirksame Klasse des Entwurfs (`public` … `personal`).
+ */
+klasse: string; nur_geraet: boolean }
 export type AblageFassung = { fas: string; nummer: number; vorgaenger: string | null; groesse: number; typ: string; zeit: number; aktuell: boolean; kopf: boolean; abgeloest: boolean }
 /**
  * Fundstelle in einer Datei.
@@ -11214,7 +11248,11 @@ export type KontextForm =
 /**
  * Text, Datei, Recherche: der Text selbst.
  */
-"text"
+"text" | 
+/**
+ * Ablage-Eintrag (Datei oder Ordner, Spec Ablage §5.3): je Frage Top-k-Auszüge mit Abdeckung.
+ */
+"auszuege"
 /**
  * Übersicht für die Oberfläche: Zeilen, Summe, Anzahl, Stand.
  */

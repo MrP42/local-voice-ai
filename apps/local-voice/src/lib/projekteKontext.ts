@@ -104,7 +104,10 @@ export function nichtImKontext(
     if (z.hint === "kontext.kein_kurzbuch") plus("ohneKurzbuch");
     else if (z.hint === "kontext.kein_protokoll") plus("ohneProtokoll");
     else if (z.hint === "kontext.format") plus("formatNichtLesbar");
-    else if (z.hint) plus("ohneText");
+    // Ablage-Eintrag: keine festen Inhalte, Auszüge je Frage (Spec Ablage §5.3).
+    else if (z.hint === "kontext.auszuege") {
+      if (!z.on) plus("ausgeschaltet");
+    } else if (z.hint) plus("ohneText");
     else if (!z.on) plus("ausgeschaltet");
   }
   const ordnung: FehltArt[] = [

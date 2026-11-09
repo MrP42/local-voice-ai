@@ -8762,7 +8762,8 @@
       "volltext": "Volltext",
       "protokoll": "Protokoll",
       "transkript": "Transkript",
-      "text": "Text"
+      "text": "Text",
+      "auszuege": "Auszüge"
     },
     "waehlen": {
       "volltext": "Volltext wählen",
@@ -8778,7 +8779,8 @@
       "format": "Format nicht als Kontext lesbar",
       "fehlt": "Quelle fehlt.",
       "nicht_lesbar": "Kein Leserecht.",
-      "form": "Form passt nicht zum Eintrag."
+      "form": "Form passt nicht zum Eintrag.",
+      "auszuege": "Auszüge je Frage aus der Ablage."
     },
     "nichtImKontextPunkt": "Nicht im Kontext.",
     "weitereAktionen": "Weitere Aktionen für {{name}}",
