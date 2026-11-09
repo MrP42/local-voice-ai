@@ -28,7 +28,9 @@ const ERSATZ = new Map([
 const ENDUNGEN = ["", ".ts", ".tsx", "/index.ts"];
 
 function datei(basis) {
-  return ENDUNGEN.map((e) => basis + e).find(
+  // path.normalize: unter Windows mischt `basis + "/index.ts"` sonst Trennzeichen, und der
+  // ERSATZ-Abgleich (z. B. i18n mit import.meta.glob) greift nicht.
+  return ENDUNGEN.map((e) => path.normalize(basis + e)).find(
     (f) => existsSync(f) && statSync(f).isFile(),
   );
 }

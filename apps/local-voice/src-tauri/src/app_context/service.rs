@@ -985,8 +985,14 @@ mod quellen_tests {
     #[test]
     fn auszug_muss_im_dokument_stehen() {
         let doc = "Frau Berger:  Die Ausschreibung läuft bis zum 15. März 2027.\nDanach folgt die Vergabe.";
-        assert!(excerpt_in_doc("… Die Ausschreibung läuft bis zum 15. März 2027. …", doc));
-        assert!(excerpt_in_doc("danach folgt die vergabe", doc), "Groß/Klein und Zeichen egal");
+        assert!(excerpt_in_doc(
+            "… Die Ausschreibung läuft bis zum 15. März 2027. …",
+            doc
+        ));
+        assert!(
+            excerpt_in_doc("danach folgt die vergabe", doc),
+            "Groß/Klein und Zeichen egal"
+        );
         assert!(!excerpt_in_doc("Die Ausschreibung ist abgesagt.", doc));
         assert!(!excerpt_in_doc("…", doc), "leerer Auszug zählt nicht");
         assert!(!excerpt_in_doc("Die Ausschreibung", ""));

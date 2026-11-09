@@ -36,12 +36,12 @@ use specta::Type;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::Notify;
 
+use crate::assistent;
+use crate::assistent::tor::{self, Ausgabetor};
 use crate::llm_client::{self, StreamMessage};
 use crate::managers::transcription::TranscriptionManager;
 use crate::managers::tts::TtsManager;
 use crate::managers::usage::{self, CapturedCall, Purpose};
-use crate::assistent;
-use crate::assistent::tor::{self, Ausgabetor};
 
 /// Name des Ereignisses, über das Antwortstücke zum Frontend laufen.
 pub const EVENT: &str = "voice-call";
