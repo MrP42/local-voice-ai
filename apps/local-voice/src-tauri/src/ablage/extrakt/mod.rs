@@ -24,6 +24,10 @@ use sha2::{Digest, Sha256};
 pub const MARKEN_VERSION: u32 = 1;
 /// Mehr Text als das wird nicht ausgegeben (Schutz der App vor riesigen Ausgaben).
 pub const MAX_TEXT: usize = 64 * 1024 * 1024;
+/// Mehr Abschnitte als das (leere Absätze fallen vorher weg) gelten als Missbrauch: `zu_gross`.
+pub const MAX_ABSCHNITTE: usize = 100_000;
+/// Stack des Extraktionsthreads im Unterprozess (PDF-Rekursion); zählt zur Speichergrenze des Kindes.
+pub const STACK_KIND: usize = 64 * 1024 * 1024;
 /// Kommandozeilenschalter, mit dem das App-Programm selbst als Extraktor läuft (wenn kein eigenes
 /// `lva-extrakt` neben dem Programm liegt).
 pub const SCHALTER: &str = "--lva-extrakt";
@@ -137,14 +141,17 @@ pub fn abschnitte(bytes: &[u8], f: Format) -> Result<Vec<Abschnitt>, ExtraktFehl
         Format::Eml => einfach::eml(bytes)?,
     };
     let mut gesamt = 0usize;
-    let mut aus = Vec::with_capacity(roh.len());
+    let mut aus = Vec::with_capacity(roh.len().min(MAX_ABSCHNITTE));
     for mut a in roh {
         a.text = a.text.trim().to_string();
         if a.text.is_empty() {
             continue;
         }
-        gesamt += a.text.len();
-        if gesamt > MAX_TEXT {
+        // Text, Anker und Überschriftenpfad zählen zur Ausgabegröße (Pfad wird je Abschnitt wiederholt).
+        gesamt = gesamt.saturating_add(
+            a.text.len() + a.anker.len() + a.pfad.iter().map(|p| p.len() + 4).sum::<usize>(),
+        );
+        if gesamt > MAX_TEXT || aus.len() >= MAX_ABSCHNITTE {
             return Err(ExtraktFehler::neu("zu_gross"));
         }
         aus.push(a);
@@ -209,7 +216,19 @@ pub fn haupt(args: &[String]) -> i32 {
     if !zugelassen(pfad, &mut std::io::stdin().lock()) {
         return 64;
     }
-    let antwort = match ausfuehren(pfad, sha, typ) {
+    // Eigener Thread mit großem Stack: tief verschachtelte PDFs rekursieren sonst über den Haupt-Stack.
+    // Läuft der Thread nicht an oder gerät in Panik, endet der Prozess ohne Antwort (Abbruch).
+    let (p, h, t) = (pfad.to_path_buf(), sha.clone(), typ.clone());
+    let Ok(thread) = std::thread::Builder::new()
+        .stack_size(STACK_KIND)
+        .spawn(move || ausfuehren(&p, &h, &t))
+    else {
+        return 71;
+    };
+    let Ok(ergebnis) = thread.join() else {
+        return 70;
+    };
+    let antwort = match ergebnis {
         Ok(t) => Antwort::Ok(t),
         Err(e) => Antwort::Fehler {
             fehler: e.code.to_string(),
@@ -306,6 +325,10 @@ pub(crate) fn datei_lesen(pfad: &std::path::Path, max: u64) -> Result<Vec<u8>, E
             return Err(lesen());
         }
     }
+    // Hartlink: könnte eine Datei außerhalb der Ablage sein; endgültig abgelehnt.
+    if super::datei_hartverknuepft(&datei) {
+        return Err(ExtraktFehler::neu("hartlink"));
+    }
     if meta.len() > max {
         return Err(ExtraktFehler::neu("zu_gross"));
     }
@@ -324,7 +347,9 @@ fn ausfuehren(pfad: &std::path::Path, sha: &str, typ: &str) -> Result<Textfassun
     let f = format_aus_typ(typ).ok_or(ExtraktFehler::neu("format"))?;
     let bytes = datei_lesen(pfad, MAX_EINGABE)?;
     #[cfg(test)]
-    tests_kind::haken(typ);
+    if let Some(f) = tests_kind::haken(typ) {
+        return Err(f);
+    }
     // Erst die Prüfsumme, dann der Inhalt: Text und Original stammen aus demselben Stand (E9).
     if hex(&Sha256::digest(&bytes)) != sha.to_ascii_lowercase() {
         return Err(ExtraktFehler::neu("pruefsumme"));
@@ -432,8 +457,31 @@ pub(crate) fn attr<'v>(attrs: &'v [(String, String)], name: &str) -> Option<&'v 
 /// Testhaken des Kindprozesses: simuliert einen hängenden oder speicherhungrigen Extraktor.
 #[cfg(test)]
 pub(crate) mod tests_kind {
-    pub fn haken(typ: &str) {
+    pub fn haken(typ: &str) -> Option<super::ExtraktFehler> {
         match std::env::var("LVA_EXTRAKT_TEST").as_deref() {
+            // Vorübergehender Fehler im Kind (Lesen scheitert).
+            Ok("lesen") if typ == "txt" => return Some(super::ExtraktFehler::neu("lesen")),
+            // Braucht rund 40 MiB Stack: läuft nur im Thread mit großem Stack durch.
+            Ok("stack") if typ == "txt" => {
+                fn tief(n: u32) -> u8 {
+                    let block = [n as u8; 1024 * 1024];
+                    let r = if n == 0 { 0 } else { tief(n - 1) };
+                    std::hint::black_box(&block);
+                    r.wrapping_add(block[17])
+                }
+                std::hint::black_box(tief(40));
+            }
+            // Arbeitsordner des Kindes darf nicht die Ablagewurzel sein (sie wäre unter Windows
+            // gegen Umbenennen und Löschen gesperrt).
+            Ok("arbeitsordner") if typ == "txt" => {
+                let cwd = std::env::current_dir().and_then(std::fs::canonicalize);
+                let wurzel = std::env::var_os(super::ENV_WURZEL).map(std::fs::canonicalize);
+                if let (Ok(c), Some(Ok(w))) = (cwd, wurzel) {
+                    if c.starts_with(&w) {
+                        std::process::exit(3);
+                    }
+                }
+            }
             Ok("endlos") if typ == "txt" => loop {
                 std::hint::black_box(0u64);
             },
@@ -456,5 +504,6 @@ pub(crate) mod tests_kind {
             }
             _ => {}
         }
+        None
     }
 }

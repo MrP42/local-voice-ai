@@ -31,8 +31,18 @@ pub const STUECK: usize = 220;
 pub const UEBERLAPPUNG: usize = 40;
 const KANDIDATEN: usize = 60;
 const STELLEN_JE_DATEI: usize = 3;
+/// Größere Textfassungen werden nur bis hierher gelesen und gekürzt indiziert (Speicherschutz).
+pub const MAX_TEXTFASSUNG: u64 = 32 * 1024 * 1024;
+/// Marke im Ablageordner: ein Abgleich ist fehlgeschlagen und wird beim nächsten Öffnen wiederholt
+/// (sonst bliebe Text endgültig gelöschter Dateien im Index).
+pub const OFFEN: &str = "index.offen";
 
+/// Serialisiert die Schreiber ([`abgleichen`], [`neu_aufbauen`]). Die Suche nimmt sie nicht: SQLite im
+/// WAL-Modus liest neben einem Schreiber, und ein langer Abgleich (große Textfassungen) darf die Suche
+/// nicht blockieren.
 static SPERRE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+/// Nur [`neu_aufbauen`] hält sie schreibend (Dateien löschen), die Suche lesend (Datenbank öffnen).
+static DATEIEN_SPERRE: std::sync::RwLock<()> = std::sync::RwLock::new(());
 
 fn sperren() -> std::sync::MutexGuard<'static, ()> {
     SPERRE.lock().unwrap_or_else(|e| e.into_inner())
@@ -77,35 +87,59 @@ pub struct AblageSuchtreffer {
 }
 
 /// Stücke eines Abschnitts: höchstens `max` Zeichen, Überlappung `ueber` Zeichen, Schnitt möglichst an
-/// Leerraum. Offsets in Zeichen.
+/// Leerraum. Arbeitet auf Byte-Positionen an Zeichengrenzen (kein `Vec<char>` des ganzen Abschnitts).
 pub fn stuecke(text: &str, max: usize, ueber: usize) -> Vec<String> {
-    let z: Vec<char> = text.chars().collect();
+    /// Byte-Position `n` Zeichen nach `pos` (höchstens das Ende).
+    fn vor(t: &str, pos: usize, n: usize) -> usize {
+        t[pos..]
+            .char_indices()
+            .nth(n)
+            .map_or(t.len(), |(i, _)| pos + i)
+    }
+    /// Byte-Position `n` Zeichen vor `pos` (höchstens der Anfang).
+    fn zurueck(t: &str, pos: usize, n: usize) -> usize {
+        if n == 0 {
+            return pos;
+        }
+        t[..pos]
+            .char_indices()
+            .rev()
+            .nth(n - 1)
+            .map_or(0, |(i, _)| i)
+    }
+    let n = text.len();
     let mut aus = Vec::new();
     let mut start = 0usize;
-    while start < z.len() {
-        while start < z.len() && z[start].is_whitespace() {
-            start += 1;
-        }
-        if start >= z.len() {
+    while start < n {
+        start += text[start..].len() - text[start..].trim_start().len();
+        if start >= n {
             break;
         }
-        let mut ende = (start + max).min(z.len());
-        if ende < z.len() {
-            if let Some(i) = (start + max / 2..ende)
+        let mut ende = vor(text, start, max);
+        if ende < n {
+            let halb = vor(text, start, max / 2);
+            if let Some((i, _)) = text[halb..ende]
+                .char_indices()
                 .rev()
-                .find(|&i| z[i].is_whitespace())
+                .find(|(_, c)| c.is_whitespace())
             {
-                ende = i;
+                ende = halb + i;
             }
         }
-        aus.push(z[start..ende].iter().collect::<String>().trim().to_string());
-        if ende >= z.len() {
+        aus.push(text[start..ende].trim().to_string());
+        if ende >= n {
             break;
         }
-        let mut naechster = ende.saturating_sub(ueber).max(start + 1);
+        let erstes = text[start..].chars().next().map_or(1, char::len_utf8);
+        let mut naechster = zurueck(text, ende, ueber).max(start + erstes);
         // Am Wortanfang beginnen.
-        while naechster < ende && !z[naechster - 1].is_whitespace() {
-            naechster += 1;
+        while naechster < ende
+            && !text[..naechster]
+                .chars()
+                .next_back()
+                .is_some_and(char::is_whitespace)
+        {
+            naechster += text[naechster..].chars().next().map_or(1, char::len_utf8);
         }
         start = naechster;
     }
@@ -120,6 +154,7 @@ fn stempel(q: &IndexQuelle) -> String {
         q.textrev.as_deref().unwrap_or("-"),
         &q.ordnerkette.join("/"),
         &q.klasse,
+        &q.ki,
         if q.nur_geraet { "1" } else { "0" },
         if q.papierkorb { "1" } else { "0" },
         &q.stand,
@@ -135,6 +170,9 @@ fn verbinden(pfad: &Path) -> Res<Connection> {
     let c = Connection::open(pfad).map_err(|_| fehler())?;
     c.busy_timeout(std::time::Duration::from_secs(10))
         .map_err(|_| fehler())?;
+    // Gelöschte Seiten überschreiben: Text entfernter Dokumente bleibt nicht in der Datei liegen.
+    c.pragma_update(None, "secure_delete", "ON")
+        .map_err(|_| fehler())?;
     c.execute_batch(
         "CREATE TABLE IF NOT EXISTS ablage_dok(
             dat TEXT PRIMARY KEY, stempel TEXT NOT NULL, version INTEGER NOT NULL,
@@ -146,6 +184,23 @@ fn verbinden(pfad: &Path) -> Res<Connection> {
     )
     .map_err(|_| fehler())?;
     Ok(c)
+}
+
+/// `PRAGMA secure_delete` der eigenen Verbindung und der von `wai-retrieval` (Test).
+#[cfg(test)]
+pub(crate) fn secure_delete_stand(a: &Ablage) -> Res<(i64, i64)> {
+    let pfad = index_pfad(a)?;
+    let c = verbinden(&pfad)?;
+    let eigene: i64 = c
+        .query_row("PRAGMA secure_delete", [], |r| r.get(0))
+        .map_err(|_| fehler())?;
+    let fremde = laufzeit()?.block_on(async {
+        let r = Retriever::open(&pfad, OhneEinbettung)
+            .await
+            .map_err(|_| fehler())?;
+        r.secure_delete().await.map_err(|_| fehler())
+    })?;
+    Ok((eigene, fremde))
 }
 
 fn laufzeit() -> Res<tokio::runtime::Runtime> {
@@ -164,7 +219,7 @@ fn index_pfad(a: &Ablage) -> Res<PathBuf> {
     }
     let p = a.dir().join(INDEX);
     if let Ok(m) = std::fs::symlink_metadata(&p) {
-        if super::ist_umweg(&m) {
+        if super::ist_umweg(&m) || super::pfad_hartverknuepft(&p) {
             return Err(fehler());
         }
     }
@@ -172,14 +227,37 @@ fn index_pfad(a: &Ablage) -> Res<PathBuf> {
 }
 
 /// Textfassung lesen und prüfen (passende `textrev`); `None` bei fehlender oder fremder Datei.
-fn textfassung_lesen(a: &Ablage, dat: &str, textrev: &str) -> Option<Textfassung> {
-    let p = a.text_pfad(dat, textrev);
-    let m = std::fs::symlink_metadata(&p).ok()?;
+/// Der zweite Wert ist `true`, wenn die Fassung über [`MAX_TEXTFASSUNG`] lag und nur ihr Anfang (volle
+/// Abschnitte) gelesen wurde.
+fn textfassung_lesen(a: &Ablage, dat: &str, textrev: &str) -> Option<(Textfassung, bool)> {
+    begrenzt_lesen(&a.text_pfad(dat, textrev), textrev, MAX_TEXTFASSUNG)
+}
+
+pub(crate) fn begrenzt_lesen(p: &Path, textrev: &str, max: u64) -> Option<(Textfassung, bool)> {
+    use std::io::Read;
+    let m = std::fs::symlink_metadata(p).ok()?;
     if super::ist_umweg(&m) || !m.is_file() {
         return None;
     }
-    let t: Textfassung = serde_json::from_slice(&std::fs::read(&p).ok()?).ok()?;
-    (t.textrev == textrev).then_some(t)
+    // Die Größe steht vor dem Lesen fest: nie mehr als `max` Bytes in den Speicher.
+    let mut buf = Vec::with_capacity(m.len().min(max) as usize);
+    std::fs::File::open(p)
+        .ok()?
+        .take(max.saturating_add(1))
+        .read_to_end(&mut buf)
+        .ok()?;
+    let gekuerzt = m.len() > max || buf.len() as u64 > max;
+    if gekuerzt {
+        buf.truncate(max as usize);
+        // Letzten vollständigen Abschnitt behalten: `abschnitte` steht zuletzt, ein Abschnitt beginnt
+        // immer mit `{"anker"` (ein `"` im Text wäre als `\"` maskiert, die Folge ist also eindeutig).
+        let trenner = b",{\"anker\"";
+        let pos = buf.windows(trenner.len()).rposition(|w| w == trenner)?;
+        buf.truncate(pos);
+        buf.extend_from_slice(b"]}");
+    }
+    let t: Textfassung = serde_json::from_slice(&buf).ok()?;
+    (t.textrev == textrev).then_some((t, gekuerzt))
 }
 
 /// Bericht eines Abgleichs (Tests, Oberfläche).
@@ -191,9 +269,34 @@ pub struct AblageIndexBericht {
     pub stuecke: u32,
 }
 
-/// Bringt `index.db` auf den Stand der Ablage (nur Abweichungen werden geschrieben).
+/// Bringt `index.db` auf den Stand der Ablage (nur Abweichungen werden geschrieben). Scheitert der
+/// Abgleich, bleibt die Marke [`OFFEN`] liegen ([`nachholen`] wiederholt ihn beim nächsten Öffnen).
 pub fn abgleichen(a: &Ablage) -> Res<AblageIndexBericht> {
     let _g = sperren();
+    let marke = a.dir().join(OFFEN);
+    match abgleichen_gesperrt(a) {
+        Ok(b) => {
+            let _ = std::fs::remove_file(&marke);
+            Ok(b)
+        }
+        Err(e) => {
+            if a.dir().is_dir() {
+                let _ = std::fs::write(&marke, b"");
+            }
+            Err(e)
+        }
+    }
+}
+
+/// Wiederholt einen früher fehlgeschlagenen Abgleich (Marke [`OFFEN`]); sonst nichts.
+pub fn nachholen(a: &Ablage) -> Res<Option<AblageIndexBericht>> {
+    if std::fs::symlink_metadata(a.dir().join(OFFEN)).is_err() {
+        return Ok(None);
+    }
+    abgleichen(a).map(Some)
+}
+
+fn abgleichen_gesperrt(a: &Ablage) -> Res<AblageIndexBericht> {
     let quellen = a.index_quellen()?;
     let pfad = index_pfad(a)?;
     std::fs::create_dir_all(a.dir()).map_err(|_| fehler())?;
@@ -247,7 +350,39 @@ pub fn abgleichen(a: &Ablage) -> Res<AblageIndexBericht> {
             let r = Retriever::open(&pfad, OhneEinbettung)
                 .await
                 .map_err(|_| fehler())?;
-            for d in &weg {
+            let erg = schreiben(a, &r, &mut c, &weg, &neu, &mut bericht).await;
+            r.close().await;
+            erg
+        })?;
+    }
+    // Stücke ohne Dokumenteintrag (verwaist) fallen weg.
+    c.execute(
+        "DELETE FROM ablage_stueck WHERE dat NOT IN (SELECT dat FROM ablage_dok)",
+        [],
+    )
+    .map_err(|_| fehler())?;
+    bericht.stuecke = c
+        .query_row("SELECT COUNT(*) FROM ablage_stueck", [], |r| {
+            r.get::<_, i64>(0)
+        })
+        .map_err(|_| fehler())? as u32;
+    // WAL zurückschreiben und kürzen: gelöschter Text bleibt nicht in `index.db-wal` liegen.
+    c.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))
+        .map_err(|_| fehler())?;
+    Ok(bericht)
+}
+
+async fn schreiben(
+    a: &Ablage,
+    r: &Retriever<OhneEinbettung>,
+    c: &mut Connection,
+    weg: &[String],
+    neu: &[(&IndexQuelle, String, i64)],
+    bericht: &mut AblageIndexBericht,
+) -> Res<()> {
+    {
+        {
+            for d in weg {
                 r.delete(d).await.map_err(|_| fehler())?;
                 let tx = c.transaction().map_err(|_| fehler())?;
                 tx.execute("DELETE FROM ablage_stueck WHERE dat = ?1", params![d])
@@ -257,11 +392,17 @@ pub fn abgleichen(a: &Ablage) -> Res<AblageIndexBericht> {
                 tx.commit().map_err(|_| fehler())?;
                 bericht.entfernt += 1;
             }
-            for (q, s, version) in &neu {
+            for (q, s, version) in neu {
                 let text = q
                     .textrev
                     .as_deref()
-                    .and_then(|rev| textfassung_lesen(a, &q.dat, rev));
+                    .and_then(|rev| textfassung_lesen(a, &q.dat, rev))
+                    .map(|(t, gekuerzt)| {
+                        if gekuerzt {
+                            log::info!("ablage: Textfassung gekürzt indiziert ({})", q.dat);
+                        }
+                        t
+                    });
                 let mut seiten: Vec<String> = Vec::new();
                 let mut zuordnung: Vec<(usize, String, String)> = Vec::new();
                 if let Some(t) = &text {
@@ -321,21 +462,9 @@ pub fn abgleichen(a: &Ablage) -> Res<AblageIndexBericht> {
                 tx.commit().map_err(|_| fehler())?;
                 bericht.geschrieben += 1;
             }
-            Ok::<_, Fehler>(())
-        })?;
+        }
     }
-    // Stücke ohne Dokumenteintrag (verwaist) fallen weg.
-    c.execute(
-        "DELETE FROM ablage_stueck WHERE dat NOT IN (SELECT dat FROM ablage_dok)",
-        [],
-    )
-    .map_err(|_| fehler())?;
-    bericht.stuecke = c
-        .query_row("SELECT COUNT(*) FROM ablage_stueck", [], |r| {
-            r.get::<_, i64>(0)
-        })
-        .map_err(|_| fehler())? as u32;
-    Ok(bericht)
+    Ok(())
 }
 
 /// „Index neu aufbauen“: `index.db` löschen und vollständig abgleichen (Extraktor-/Embedder-Wechsel,
@@ -343,6 +472,7 @@ pub fn abgleichen(a: &Ablage) -> Res<AblageIndexBericht> {
 pub fn neu_aufbauen(a: &Ablage) -> Res<AblageIndexBericht> {
     {
         let _g = sperren();
+        let _d = DATEIEN_SPERRE.write().unwrap_or_else(|e| e.into_inner());
         let p = index_pfad(a)?;
         for endung in ["", "-wal", "-shm", "-journal"] {
             let q = PathBuf::from(format!("{}{endung}", p.display()));
@@ -381,15 +511,22 @@ pub fn suchen(a: &Ablage, anfrage: &str) -> Res<Vec<AblageSuchtreffer>> {
     if !pfad.is_file() {
         return Ok(vec![]);
     }
-    let _g = sperren();
+    // Nur gegen das Löschen der Dateien sperren (`neu_aufbauen`); neben einem laufenden Abgleich liest die
+    // Suche weiter (WAL).
+    let _d = DATEIEN_SPERRE.read().unwrap_or_else(|e| e.into_inner());
     let trace = format!("{:032x}", ulid::Ulid::new().0);
     let antwort = laufzeit()?.block_on(async {
         let r = Retriever::open(&pfad, OhneEinbettung)
             .await
-            .map_err(|_| fehler())?;
-        r.query(&leser(), &trace, &anfrage, KANDIDATEN)
+            .map_err(|_| fehler())?
+            // Ein Dokument mit vielen Treffern soll nicht alle Kandidatenplätze belegen.
+            .with_max_per_source(STELLEN_JE_DATEI);
+        let erg = r
+            .query(&leser(), &trace, &anfrage, KANDIDATEN)
             .await
-            .map_err(|_| fehler())
+            .map_err(|_| fehler());
+        r.close().await;
+        erg
     })?;
     let c = verbinden(&pfad)?;
     let dats: Vec<String> = antwort

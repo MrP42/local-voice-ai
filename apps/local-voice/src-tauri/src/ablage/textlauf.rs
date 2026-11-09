@@ -106,10 +106,11 @@ pub fn ausfuehren(
     for (k, v) in &prog.umgebung {
         cmd.env(k, v);
     }
-    // Arbeitsordner ist die Ablagewurzel, nie der Ordner der Datei: unter Windows hält das
+    // Arbeitsordner ist weder der Ordner der Datei noch die Ablagewurzel: unter Windows hält das
     // Arbeitsverzeichnis eines Prozesses seinen Ordner ohne FILE_SHARE_DELETE offen, und ein
-    // gleichzeitiges endgültiges Löschen schlüge dort fehl.
-    cmd.current_dir(wurzel);
+    // gleichzeitiges Löschen oder Umbenennen (auch der Wurzel) schlüge dort fehl. Die Wurzel kommt
+    // über die Umgebung ([`ENV_WURZEL`]).
+    cmd.current_dir(std::env::temp_dir());
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;

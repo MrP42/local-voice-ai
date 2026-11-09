@@ -1048,7 +1048,7 @@ impl Ablage {
                 let Ok(fm) = fs::symlink_metadata(f.path()) else {
                     continue;
                 };
-                if ist_umweg(&fm) || !fm.is_file() {
+                if ist_umweg(&fm) || !fm.is_file() || super::pfad_hartverknuepft(&f.path()) {
                     continue;
                 }
                 let bekannt = st.dateien.get(&dat).is_some_and(|x| {
@@ -2203,7 +2203,7 @@ impl Ablage {
                 .join(original_name(&g.fas, &g.typ));
             let m = fs::symlink_metadata(&pfad)
                 .map_err(|_| Fehler::neu("ablage.nicht_gefunden", "Datei nicht gefunden."))?;
-            if ist_umweg(&m) || !m.is_file() {
+            if ist_umweg(&m) || !m.is_file() || super::pfad_hartverknuepft(&pfad) {
                 return Err(Fehler::neu(
                     "ablage.quelle_ungueltig",
                     "Keine gewöhnliche Datei.",
@@ -2350,25 +2350,36 @@ pub enum TextAblage {
     NichtSpeicherbar,
 }
 
-/// Fehlercodes, die nicht am Inhalt liegen müssen (Start, Schutz, Absturz, Zeit, Lesen): sie werden
-/// höchstens [`MAX_VERSUCHE`]-mal versucht, jeweils frühestens beim nächsten Programmstart.
+/// Fehlercodes, die nicht am Inhalt liegen müssen (Start, Schutz, Lesen): sie werden höchstens
+/// [`MAX_VERSUCHE`]-mal versucht, jeweils frühestens beim nächsten Programmstart.
+///
+/// Bewusst nicht dabei:
+/// * `extrakt.abbruch` (Speichergrenze, Absturz oder Signal des Kindes): Giftdatei, sofort endgültig
+///   nicht extrahierbar; jeder weitere Versuch risikiert erneut Speicher und Rechenzeit.
+/// * `extrakt.zeit` (Zeitgrenze): genau ein späterer Wiederholversuch ([`MAX_VERSUCHE_ZEIT`]) mit nach
+///   Dateigröße vergrößerter Zeitgrenze ([`super::textfassung::zeitgrenze`]), danach endgültig.
+///
+/// Ein Abbruch durch die Bedienung (`extrakt.abgebrochen`) trägt nichts ein und ist davon nicht berührt.
 pub const VORUEBERGEHEND: &[&str] = &[
     "extrakt.start",
     "extrakt.programm",
     "extrakt.schutz",
-    "extrakt.abbruch",
-    "extrakt.zeit",
     "extrakt.lesen",
 ];
 pub const MAX_VERSUCHE: u32 = 3;
+/// Zeitgrenze überschritten: der erste Versuch plus genau ein Wiederholversuch.
+pub const MAX_VERSUCHE_ZEIT: u32 = 2;
 
 /// Ein vorübergehender Fehler mit Versuchen übrig: der Auftrag bleibt offen.
 pub fn text_wiederholbar(t: &zf::Text) -> bool {
-    t.stand == "fehler"
-        && t.versuche < MAX_VERSUCHE
-        && t.code
-            .as_deref()
-            .is_some_and(|c| VORUEBERGEHEND.contains(&c))
+    if t.stand != "fehler" {
+        return false;
+    }
+    match t.code.as_deref() {
+        Some("extrakt.zeit") => t.versuche < MAX_VERSUCHE_ZEIT,
+        Some(c) => VORUEBERGEHEND.contains(&c) && t.versuche < MAX_VERSUCHE,
+        None => false,
+    }
 }
 
 /// Was der Index zu einer Datei wissen muss (auch im Papierkorb: dort gefiltert, nicht gelöscht).
@@ -2382,6 +2393,9 @@ pub struct IndexQuelle {
     /// Ordnerkette (IDs) vom Ordner der Datei bis zur obersten Ebene.
     pub ordnerkette: Vec<String>,
     pub klasse: String,
+    /// Wirksame KI-Stufe des Ordners der Datei (`an`, `aus`, `gesperrt`, `unklar`). Geht in den Stempel
+    /// ein, damit D3 bei einer Freigabeänderung genau die betroffenen Dateien neu bewertet.
+    pub ki: String,
     pub nur_geraet: bool,
     pub papierkorb: bool,
 }
@@ -2578,6 +2592,7 @@ impl Ablage {
         let st = self.laden()?;
         let eltern = st.eltern();
         let (offen, _) = st.offen_geloescht();
+        let lage = freigabe::laden(&self.dir);
         let mut aus = Vec::new();
         for d in st.dateien.values() {
             if offen.contains(d.id.as_str()) {
@@ -2604,6 +2619,17 @@ impl Ablage {
                     .unwrap_or_else(|| "ausstehend".into()),
                 (None, None) => "kein_format".into(),
             };
+            let kette = zf::kette(&eltern, &d.ordner.wert);
+            let w = freigabe::wirksam(&lage, &kette);
+            let ki = if w.unklar {
+                "unklar"
+            } else {
+                match w.stufe {
+                    KiStufe::An => "an",
+                    KiStufe::Aus => "aus",
+                    KiStufe::Gesperrt => "gesperrt",
+                }
+            };
             aus.push(IndexQuelle {
                 dat: d.id.clone(),
                 fas: f.fas.clone(),
@@ -2611,10 +2637,11 @@ impl Ablage {
                     .filter(|t| t.stand == "ok")
                     .map(|t| t.textrev.clone()),
                 stand,
-                ordnerkette: zf::kette(&eltern, &d.ordner.wert),
+                ordnerkette: kette,
                 klasse: zf::wirksame_klasse_datei(&st.ordner, &eltern, d)
                     .text()
                     .into(),
+                ki: ki.into(),
                 nur_geraet: d.nur_geraet_min
                     || zf::wirksam_nur_geraet(&st.ordner, &eltern, &d.ordner.wert),
                 papierkorb: !st.datei_lebt(&eltern, d),

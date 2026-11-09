@@ -410,6 +410,9 @@ pub struct Retriever<E: Embedder> {
     clock: fn() -> u64,
     vec_ext: bool,
     reindex_needed: AtomicBool,
+    /// Lokale Abweichung (lva#426): höchstens so viele lexikalische Kandidaten je Quelle, damit ein
+    /// Dokument mit vielen Treffern nicht alle Plätze belegt. `None` = unbegrenzt (SDK-Verhalten).
+    max_per_source: Option<usize>,
 }
 
 fn system_ms() -> u64 {
@@ -652,14 +655,24 @@ impl<E: Embedder> Retriever<E> {
     }
 
     pub async fn open(path: &std::path::Path, embedder: E) -> Result<Self> {
+        // Lokale Abweichung (lva#426): gelöschte Seiten werden überschrieben, damit Text aus
+        // entfernten Dokumenten nicht in freien Seiten der Datei überlebt. Gilt je Verbindung.
         let opts = SqliteConnectOptions::new()
             .filename(path)
-            .create_if_missing(true);
+            .create_if_missing(true)
+            .pragma("secure_delete", "ON");
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
             .connect_with(opts)
             .await?;
         Self::init(pool, embedder).await
+    }
+
+    /// Wert von `PRAGMA secure_delete` der Verbindung dieses Retrievers (0 aus, 1 an, 2 schnell).
+    pub async fn secure_delete(&self) -> Result<i64> {
+        Ok(sqlx::query_scalar("PRAGMA secure_delete")
+            .fetch_one(&self.pool)
+            .await?)
     }
 
     async fn init(pool: SqlitePool, embedder: E) -> Result<Self> {
@@ -690,6 +703,7 @@ impl<E: Embedder> Retriever<E> {
             clock: system_ms,
             vec_ext,
             reindex_needed: AtomicBool::new(reindex),
+            max_per_source: None,
         })
     }
 
@@ -834,6 +848,17 @@ impl<E: Embedder> Retriever<E> {
         let id = self.embedder.id();
         let st = tenant_state(&mut *self.pool.acquire().await?, tenant, &id).await?;
         Ok(st.current)
+    }
+
+    /// Lokale Abweichung (lva#426): höchstens `n` lexikalische Kandidaten je Quelle (mindestens 1).
+    pub fn with_max_per_source(mut self, n: usize) -> Self {
+        self.max_per_source = Some(n.max(1));
+        self
+    }
+
+    /// Schließt den Verbindungspool (nach dem Schreiben, vor einem Checkpoint durch Dritte).
+    pub async fn close(&self) {
+        self.pool.close().await;
     }
 
     /// Fester Zeitgeber fuer reproduzierbare Tests.
@@ -1015,13 +1040,11 @@ impl<E: Embedder> Retriever<E> {
             ));
         }
         let generation = meta_get(&self.pool, "gen").await?.unwrap_or_default();
-        let key = hex(&Sha256::digest(
-            format!(
-                "{}\0{}\0{}\0{}\0{}",
-                actor.tenant, actor.principal, text, k, generation
-            )
-            .as_bytes(),
-        ));
+        let schluessel = format!(
+            "{}\0{}\0{}\0{}\0{}\0{:?}",
+            actor.tenant, actor.principal, text, k, generation, self.max_per_source
+        );
+        let key = hex(&Sha256::digest(schluessel.as_bytes()));
         let cached: Option<String> = sqlx::query("SELECT ranked FROM qcache WHERE key = ?")
             .bind(&key)
             .fetch_optional(&self.pool)
@@ -1121,8 +1144,13 @@ impl<E: Embedder> Retriever<E> {
                 .map(|t| format!("\"{}\"", t.replace('"', "")))
                 .collect::<Vec<_>>()
                 .join(" OR ");
+            // Mit Kappung je Quelle mehr Zeilen holen und danach je Quelle kürzen (lva#426).
+            let limit = match self.max_per_source {
+                Some(_) => k.max(CANDIDATES) * 50,
+                None => CANDIDATES,
+            };
             let sql = format!(
-                "SELECT c.id FROM chunks_fts f JOIN chunks c ON c.id = f.rowid JOIN docs d ON d.source_id = c.source_id WHERE chunks_fts MATCH ?3 AND {ACL_SQL} ORDER BY bm25(chunks_fts), c.id LIMIT {CANDIDATES}"
+                "SELECT c.id, c.source_id FROM chunks_fts f JOIN chunks c ON c.id = f.rowid JOIN docs d ON d.source_id = c.source_id WHERE chunks_fts MATCH ?3 AND {ACL_SQL} ORDER BY bm25(chunks_fts), c.id LIMIT {limit}"
             );
             let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
                 .bind(&actor.tenant)
@@ -1130,8 +1158,21 @@ impl<E: Embedder> Retriever<E> {
                 .bind(m)
                 .fetch_all(&self.pool)
                 .await?;
-            for (r, row) in rows.iter().enumerate() {
+            let mut je_quelle: HashMap<String, usize> = HashMap::new();
+            let mut r = 0usize;
+            for row in rows.iter() {
+                if let Some(max) = self.max_per_source {
+                    let n = je_quelle.entry(row.get::<String, _>(1)).or_default();
+                    if *n >= max {
+                        continue;
+                    }
+                    *n += 1;
+                    if r >= k.max(CANDIDATES) {
+                        break;
+                    }
+                }
                 *rrf.entry(row.get(0)).or_default() += 1.0 / (RRF_K + 1.0 + r as f64);
+                r += 1;
             }
         }
         let q = if self.tenant_current(&actor.tenant).await? {

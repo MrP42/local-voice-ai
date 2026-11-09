@@ -105,8 +105,19 @@ pub fn odt(bytes: &[u8]) -> Result<Vec<Abschnitt>, ExtraktFehler> {
     let mut r = XmlLeser::neu(&xml);
     let mut a = Absaetze::default();
     let mut stapel: Vec<(String, Option<usize>)> = Vec::new();
+    // Nachverfolgte Änderungen: gelöschter Text steht in `text:tracked-changes` / `text:deletion`
+    // und gehört nicht zum Dokument (kein Weg in den Index).
+    let mut geloescht = 0usize;
     loop {
         match r.naechstes()? {
+            X::Start(n, _) if n == "text:tracked-changes" || n == "text:deletion" => {
+                geloescht += 1;
+            }
+            X::Ende(n) if n == "text:tracked-changes" || n == "text:deletion" => {
+                geloescht = geloescht.saturating_sub(1);
+            }
+            X::Eof => break,
+            _ if geloescht > 0 => {}
             X::Start(n, attrs) if n == "text:h" => {
                 let e = attr(&attrs, "text:outline-level")
                     .and_then(|v| v.parse().ok())
@@ -143,7 +154,6 @@ pub fn odt(bytes: &[u8]) -> Result<Vec<Abschnitt>, ExtraktFehler> {
                     top.0.push_str(&t);
                 }
             }
-            X::Eof => break,
             _ => {}
         }
     }

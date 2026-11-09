@@ -78,6 +78,14 @@ fn nachlauf(a: &Ablage, app: AppHandle, ausdruecklich: bool) {
 #[specta::specta]
 pub async fn ablage_stand(app: AppHandle) -> Antwort<AblageSicht> {
     let melder = app.clone();
+    // Ein früher fehlgeschlagener Indexabgleich (Marke) wird beim Öffnen der Ablage wiederholt.
+    let _ = blockierend(&app, |a| {
+        if let Err(e) = super::index::nachholen(&a) {
+            log::warn!("ablage: Indexabgleich (Wiederholung): {}", e.code);
+        }
+        Ok(())
+    })
+    .await;
     let sicht = blockierend(&app, |a| a.ansicht()).await?;
     // Wiederanlauf der Textfassungen (offen ist, was im Stand fehlt, ohne Rückstellungen dieses
     // Prozesses); nicht nach einem Abbruch (angehalten bis zum nächsten ausdrücklichen Anstoß).
@@ -146,14 +154,14 @@ pub async fn ablage_ordner_einstellungen(
 #[tauri::command]
 #[specta::specta]
 pub async fn ablage_ki_setzen(app: AppHandle, id: String, stufe: Option<KiStufe>) -> Antwort<()> {
-    blockierend(&app, move |a| a.ki_setzen(&id, stufe)).await
+    mit_nachlauf(&app, false, move |a| a.ki_setzen(&id, stufe)).await
 }
 
 /// „Freigaben neu festlegen“: nur bei unklarer (defekter) Freigabe; alle Ordner auf „aus“.
 #[tauri::command]
 #[specta::specta]
 pub async fn ablage_freigaben_neu_festlegen(app: AppHandle) -> Antwort<()> {
-    blockierend(&app, |a| a.freigaben_neu_festlegen()).await
+    mit_nachlauf(&app, false, |a| a.freigaben_neu_festlegen()).await
 }
 
 /// Legt eine Datei oder einen Ordner (mit Struktur) in einem Ordner der Ablage ab. Bei Namenskollision
