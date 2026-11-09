@@ -150,15 +150,27 @@ fn stand_umziehen(st: &mut Stand, m: &BTreeMap<String, String>) -> bool {
             geaendert = true;
         }
     }
+    // Neue Kennungen kennt sonst niemand: ihre Verweise behalten den Rang (ein später gezogener Stand
+    // zur alten Kennung entscheidet dann wie gewohnt nach Rang). Übrige Einträge (befreit, synchron)
+    // bekommen ein neues Register, damit der Umzug am Hub weitergeht.
+    let neue: BTreeSet<&String> = m.values().collect();
     for o in st.ordner.values_mut() {
         if let Some(n) = o.eltern.wert.as_ref().and_then(|p| m.get(p)) {
-            o.eltern = Register::neu(Some(n.clone()), z, &g);
+            o.eltern = if neue.contains(&o.id) {
+                Register::neu(Some(n.clone()), o.eltern.zaehler, &o.eltern.geraet)
+            } else {
+                Register::neu(Some(n.clone()), z, &g)
+            };
             geaendert = true;
         }
     }
     for d in st.dateien.values_mut() {
         if let Some(n) = m.get(&d.ordner.wert) {
-            d.ordner = Register::neu(n.clone(), z, &g);
+            d.ordner = if neue.contains(&d.id) {
+                Register::neu(n.clone(), d.ordner.zaehler, &d.ordner.geraet)
+            } else {
+                Register::neu(n.clone(), z, &g)
+            };
             geaendert = true;
         }
     }

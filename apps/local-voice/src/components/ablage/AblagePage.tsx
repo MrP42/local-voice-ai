@@ -899,31 +899,45 @@ export const AblagePage: React.FC = () => {
             </div>
           )}
           <div className="ablage-fuss">
-            <span>
+            <span className="ablage-fuss-belegt">
               {t("ablage.fuss.belegt", {
                 size: formatBytes(sicht.belegt, i18n.language),
               })}
             </span>
             {syncStand?.verbunden ? (
-              <span
-                className={
-                  syncStand.kontingent_voll
-                    ? "ablage-fuss-voll"
-                    : "ablage-nur-breit"
-                }
-                data-testid="ablage-fuss-cloud"
-              >
-                {syncStand.kontingent_voll
-                  ? t("ablage.sync.voll")
-                  : syncStand.belegt != null && syncStand.kontingent != null
-                    ? t("ablage.sync.cloud", {
-                        used: formatBytes(syncStand.belegt, i18n.language),
-                        quota: formatBytes(syncStand.kontingent, i18n.language),
-                      })
-                    : syncStand.fehler
-                      ? t("ablage.sync.unvollstaendig")
+              <>
+                <span
+                  className={
+                    syncStand.kontingent_voll
+                      ? "ablage-fuss-voll"
+                      : "ablage-nur-breit"
+                  }
+                  role="status"
+                  data-testid="ablage-fuss-cloud"
+                >
+                  {syncStand.kontingent_voll
+                    ? t("ablage.sync.voll")
+                    : syncStand.belegt != null && syncStand.kontingent != null
+                      ? t("ablage.sync.cloud", {
+                          used: formatBytes(syncStand.belegt, i18n.language),
+                          quota: formatBytes(
+                            syncStand.kontingent,
+                            i18n.language,
+                          ),
+                        })
                       : null}
-              </span>
+                </span>
+                {syncStand.fehler && (
+                  <span
+                    className="ablage-fuss-voll"
+                    role="status"
+                    title={syncStand.fehler}
+                    data-testid="ablage-fuss-fehler"
+                  >
+                    {t("ablage.sync.unvollstaendig")}
+                  </span>
+                )}
+              </>
             ) : (
               <span className="ablage-nur-breit">{t("ablage.fuss.lokal")}</span>
             )}

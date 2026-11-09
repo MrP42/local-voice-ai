@@ -16,6 +16,10 @@ const USER: i64 = 7;
 const HUB_URL: &str = "https://hub.example.org";
 const STUNDE: i64 = 3600;
 
+fn test_konto() -> String {
+    konto_kennung(USER, &schluessel_konto(), HUB_URL)
+}
+
 fn schluessel_konto() -> [u8; KEY_LEN] {
     let mut k = [0u8; KEY_LEN];
     for (i, b) in k.iter_mut().enumerate() {
@@ -75,6 +79,7 @@ struct FakeHub {
     innen: Mutex<HubInnen>,
     vor_push: Mutex<Vec<Haken>>,
     beim_reservieren: Mutex<Vec<GeraeteHaken>>,
+    beim_hochladen: Mutex<Vec<GeraeteHaken>>,
 }
 
 impl FakeHub {
@@ -86,12 +91,18 @@ impl FakeHub {
             }),
             vor_push: Mutex::new(Vec::new()),
             beim_reservieren: Mutex::new(Vec::new()),
+            beim_hochladen: Mutex::new(Vec::new()),
         }
     }
 
     /// Läuft einmal während der nächsten Reservierung (der Nutzer handelt mitten im Lauf).
     fn beim_naechsten_reservieren(&self, h: impl FnOnce() + Send + 'static) {
         self.beim_reservieren.lock().unwrap().push(Box::new(h));
+    }
+
+    /// Läuft einmal während des nächsten hochgeladenen Stücks (der Nutzer handelt beim Upload).
+    fn beim_naechsten_hochladen(&self, h: impl FnOnce() + Send + 'static) {
+        self.beim_hochladen.lock().unwrap().push(Box::new(h));
     }
 
     /// Ein „Hub“ setzt einen Stand direkt (neue Revision, neuer Cursor).
@@ -295,6 +306,10 @@ impl BlobTransport for FakeHub {
         }))
     }
     async fn put_chunk(&self, blob_id: &str, index: usize, sealed: &[u8]) -> Result<(), HubError> {
+        let haken: Vec<GeraeteHaken> = std::mem::take(&mut *self.beim_hochladen.lock().unwrap());
+        for h in haken {
+            h();
+        }
         self.mit(|i| {
             if i.zu_viele && !i.blobs.contains_key(blob_id) {
                 return Err(HubError::Other("too_many_blobs: Zu viele Ablagen".into()));
@@ -516,7 +531,7 @@ impl Geraet {
     }
 
     fn zustand_von(&self, id: &str) -> Option<AblageSyncZustand> {
-        stand(&self.a, true)
+        stand(&self.a, Some(&test_konto()))
             .unwrap()
             .eintraege
             .into_iter()
@@ -1095,7 +1110,7 @@ fn kontingent_ueberschritten_stoppt_hochladen_sichtbar() {
         hub.objekt(SAMMLUNG_DATEI, &dat).is_none(),
         "ohne Blob kein Objekt"
     );
-    let st = stand(&a.a, true).unwrap();
+    let st = stand(&a.a, Some(&test_konto())).unwrap();
     assert!(st.kontingent_voll);
     assert_eq!(st.kontingent, Some(10.0));
     assert_eq!(a.zustand_von(&dat), Some(AblageSyncZustand::Ausstehend));
@@ -1240,7 +1255,13 @@ fn gefaelschter_grabstein_loescht_nichts_echter_geht_in_den_papierkorb() {
     assert_eq!(b.original(&g).as_deref(), Some("Inhalt G"));
     assert!(b.datei(&f).is_some() && b.datei(&g).is_some());
     assert!(bericht.warnung.unwrap_or_default().contains("Siegel"));
-    assert!(stand(&b.a, true)
+    // Fixrunde 6: ein Grabstein ohne gültiges Siegel hält an, gilt aber nicht als gelöscht.
+    for id in [&f, &g] {
+        let o = b.zustand().objekt(SAMMLUNG_DATEI, id).cloned().unwrap();
+        assert!(o.angehalten && !o.deleted, "{o:?}");
+        assert_eq!(b.zustand_von(id), Some(AblageSyncZustand::Angehalten));
+    }
+    assert!(stand(&b.a, Some(&test_konto()))
         .unwrap()
         .fehler
         .unwrap_or_default()
@@ -1755,12 +1776,217 @@ fn rueckweg_vor_dem_abgleich_begraebt_alte_kennungen() {
     assert_eq!(b.original(&n2).as_deref(), Some("zwei"));
     assert_eq!(b.datei(&n1).unwrap().ordner.wert, nx);
     assert!(b.datei(&f1).is_none() && b.datei(&f2).is_none());
-    // Ein Stand zur alten Kennung (z. B. von einem Gerät, das noch offline war) belebt nichts.
-    let alt = a.a.sync_einspielen(&[Eingang::Datei({
+    // Ein Stand zur alten Kennung (z. B. von einem Gerät, das noch offline war) belebt die alte Kennung
+    // nicht, sondern wird mit der neuen zusammengeführt.
+    let e = a.a.sync_einspielen(&[Eingang::Datei({
         let mut d = b.datei(&n1).unwrap();
         d.id = f1.clone();
         d
     })]);
-    assert!(alt.unwrap().geaendert.is_empty());
+    assert!(e.unwrap().geaendert.iter().all(|id| *id == n1));
+    assert!(a.datei(&f1).is_none() && a.datei(&n1).is_some());
+}
+
+/// Fixrunde 3: Ein Gerät, das die alte Kennung noch hatte, benennt die Datei um, bevor A den Rückweg
+/// abgleicht. A bildet den gezogenen Stand auf die neue Kennung ab (Name kommt mit, Ordner ebenso),
+/// sendet dann den Grabstein der alten; B bekommt die neue Kennung mit dem neuen Namen.
+#[test]
+fn rueckweg_fuehrt_staende_alter_kennungen_mit_der_neuen_zusammen() {
+    use crate::ablage::speicher::ProjektVerweise;
+    let (hub, a, b, x, u, f1, _f2) = rueckweg_aufbau();
+    nur_geraet(&a, &x, true);
+    nur_geraet(&a, &x, false);
+    // B (noch mit den alten Kennungen) benennt um und verschiebt in den Unterordner.
+    b.a.datei_umbenennen(&f1, "Eins neu.txt").unwrap();
+    b.a.datei_verschieben(&f1, &u).unwrap();
+    b.sync(&hub);
+    assert!(!hub.objekt(SAMMLUNG_DATEI, &f1).unwrap().deleted);
+    let projekte = a._t.path().join("projekte");
+    a.a.rueckweg(&ProjektVerweise::neu(&projekte)).unwrap();
+    let [n1, nu] = [&f1, &u].map(|id| a.a.aufloesen(id).unwrap());
+    a.sync(&hub);
+    let d = a.datei(&n1).unwrap();
+    assert_eq!(d.name.wert, "Eins neu.txt");
+    assert_eq!(d.ordner.wert, nu, "Ordnerverweis folgt der Weiterleitung");
     assert!(a.datei(&f1).is_none());
+    assert!(hub.objekt(SAMMLUNG_DATEI, &f1).unwrap().deleted);
+    b.sync(&hub);
+    let d = b.datei(&n1).unwrap();
+    assert_eq!(d.name.wert, "Eins neu.txt");
+    assert_eq!(d.ordner.wert, nu);
+    assert_eq!(b.original(&n1).as_deref(), Some("eins"));
+    assert!(b.datei(&f1).is_none());
+}
+
+/// Fixrunde 1: Ein Objekt mit fremdem Schlüssel ruht wie ein unlesbares; der Pull läuft weiter (auch
+/// `ablage_datei` nach `ablage_ordner`), ist aber nicht vollständig.
+#[test]
+fn fremder_schluessel_haelt_nur_das_objekt_an() {
+    let hub = FakeHub::neu();
+    let (a, b) = (geraet("a"), geraet("b"));
+    let ord = a.ordner("Schlüssel");
+    let f = a.ablegen("F.txt", "Inhalt F", &ord);
+    let g = a.ablegen("G.txt", "Inhalt G", &ord);
+    a.sync(&hub);
+    b.sync(&hub);
+    hub.faelschen(SAMMLUNG_ORDNER, &ord, |o| o.key_id = "fremd".into());
+    a.a.datei_umbenennen(&g, "G neu.txt").unwrap();
+    a.sync(&hub);
+    hub.faelschen(SAMMLUNG_DATEI, &f, |o| o.key_id = "fremd".into());
+    let bericht = b.sync(&hub);
+    assert!(!bericht.vollstaendig);
+    assert!(bericht
+        .warnung
+        .unwrap_or_default()
+        .contains("anderem Schlüssel"));
+    assert_eq!(
+        b.datei(&g).unwrap().name.wert,
+        "G neu.txt",
+        "Pull ging weiter"
+    );
+    assert_eq!(b.zustand_von(&f), Some(AblageSyncZustand::Angehalten));
+    assert_eq!(b.zustand_von(&ord), Some(AblageSyncZustand::Angehalten));
+    let z = b.zustand();
+    assert!(z.cursor.get(SAMMLUNG_DATEI).copied().unwrap_or(0) > 0);
+    // Nichts überschrieben, keine Blob-Löschung für das ruhende Objekt.
+    let vorher = hub.objekt(SAMMLUNG_DATEI, &f).unwrap();
+    b.a.datei_umbenennen(&f, "F2.txt").unwrap();
+    b.sync(&hub);
+    assert_eq!(
+        hub.objekt(SAMMLUNG_DATEI, &f).unwrap().payload,
+        vorher.payload
+    );
+    assert!(hub.mit(|i| i.fertig(&hid("Inhalt F"))));
+}
+
+/// Fixrunde 2: Wird ein Eintrag während des Hochladens lokal, geht die Kopie sofort wieder weg und
+/// wird weder als hochgeladen noch als eigener Blob vermerkt.
+#[test]
+fn upload_waehrend_wechsel_zu_nur_geraet_wird_sofort_geloescht() {
+    let hub = FakeHub::neu();
+    let a = geraet("a");
+    let ord = a.ordner("Bald privat");
+    let dat = a.ablegen("Geheim.txt", "GEHEIM-upload", &ord);
+    let (ablage, ord2) = (a.a.clone(), ord.clone());
+    hub.beim_naechsten_hochladen(move || {
+        ablage
+            .ordner_einstellungen(
+                &ord2,
+                &AblageEinstellungen {
+                    nur_geraet: Some(true),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+    });
+    a.sync(&hub);
+    let h = hid("GEHEIM-upload");
+    assert!(hub.mit(|i| i.hochgeladen.contains(&h)), "Upload lief");
+    assert!(
+        hub.mit(|i| !i.blobs.contains_key(&h)),
+        "Kopie sofort gelöscht"
+    );
+    assert!(!a.zustand().hochgeladen.contains(&h));
+    assert!(!a.bestand().sync_blobs.contains_key(&h));
+    assert!(hub.mit(|i| !i.mitschnitt.iter().any(|o| o.object_id == dat)));
+    assert_eq!(a.zustand_von(&dat), Some(AblageSyncZustand::NurGeraet));
+}
+
+/// Fixrunde 7: Nach einem erfolgreichen Upload ruht das Hochladen nicht mehr wegen „zu vieler Ablagen“.
+#[test]
+fn zu_viele_ablagen_endet_mit_erfolgreichem_upload() {
+    let hub = FakeHub::neu();
+    let a = geraet("a");
+    let ord = a.ordner("Viele");
+    hub.mit(|i| i.zu_viele = true);
+    a.ablegen("Eins.txt", "viele-eins", &ord);
+    a.sync(&hub);
+    assert!(a.zustand().zu_viele.is_some());
+    hub.mit(|i| i.zu_viele = false);
+    // Rückstellung abgelaufen (Uhr des Zustands zurückgedreht), dann gelingt der Upload.
+    let mut z = a.zustand();
+    z.zu_viele = z.zu_viele.map(|mut r| {
+        r.bis_ms = 0;
+        r
+    });
+    z.speichern(&a.a).unwrap();
+    a.sync(&hub);
+    assert!(a.zustand().zu_viele.is_none());
+}
+
+/// Fixrunde 5: Teilnahme `Halten` erscheint als „angehalten“, nicht als „nur dieses Gerät“; ein
+/// Zustand eines anderen Kontos zählt in der Anzeige nicht.
+#[test]
+fn stand_zeigt_halten_als_angehalten_und_prueft_das_konto() {
+    let hub = FakeHub::neu();
+    let a = geraet("a");
+    let ord = a.ordner("Halten");
+    let dat = a.ablegen("H.txt", "halten", &ord);
+    a.sync(&hub);
+    assert_eq!(a.zustand_von(&dat), Some(AblageSyncZustand::Synchronisiert));
+    let anderes = konto_kennung(USER + 1, &schluessel_konto(), HUB_URL);
+    let st = stand(&a.a, Some(&anderes)).unwrap();
+    let z = st.eintraege.iter().find(|e| e.id == dat).unwrap().zustand;
+    assert_eq!(
+        z,
+        AblageSyncZustand::Ausstehend,
+        "fremder Zustand gilt nicht"
+    );
+    assert!(st.belegt.is_none() && st.fehler.is_none());
+    let mut d = a.datei(&dat).unwrap();
+    d.klasse_min = zf::Register::neu("zukunft".into(), 999, "g_zukunft");
+    let b = SyncBestand {
+        dateien: [(dat.clone(), d)].into(),
+        ordner: a.bestand().ordner,
+        ..Default::default()
+    };
+    let zst = zustaende(&b, &Zustand::default());
+    let z = zst.iter().find(|e| e.id == dat).unwrap().zustand;
+    assert_eq!(z, AblageSyncZustand::Angehalten);
+}
+
+/// Fixrunde 4: Unklare Freigabe oder defekter Schalterbestand der Projekte halten den Rückweg im
+/// Journal an (Fehler statt stillem Erfolg); sind beide wieder lesbar, schreibt der nächste Lauf alles
+/// um. Ein fehlender Schalterbestand ist kein Fehler.
+#[test]
+fn rueckweg_wiederholt_bei_unklarer_freigabe_und_defektem_kontext() {
+    use crate::ablage::freigabe;
+    use crate::ablage::speicher::ProjektVerweise;
+    use crate::projekte::{herkunft::ablage_link, kontext};
+    let (_hub, a, _b, x, _u, f1, _f2) = rueckweg_aufbau();
+    let projekte = a._t.path().join("projekte");
+    assert!(kontext::anlegen(&projekte, "prj_test", "mit_1", &ablage_link(&f1), true).unwrap());
+    let verweise = ProjektVerweise::neu(&projekte);
+    nur_geraet(&a, &x, true);
+    nur_geraet(&a, &x, false);
+    // Freigabe von einer neueren Version: unklar.
+    let fpfad = a.a.dir().join(freigabe::DATEI);
+    let fgut = std::fs::read(&fpfad).unwrap();
+    std::fs::write(&fpfad, br#"{"v": 99, "epoche": 1}"#).unwrap();
+    assert!(a.a.rueckweg(&verweise).is_err());
+    assert_eq!(a.a.uebergaenge_offen(), 1);
+    std::fs::write(&fpfad, &fgut).unwrap();
+    // Schalterbestand defekt.
+    let kpfad = projekte.join(kontext::DATEI);
+    let kgut = std::fs::read(&kpfad).unwrap();
+    std::fs::write(&kpfad, b"{kaputt").unwrap();
+    assert!(a.a.rueckweg(&verweise).is_err());
+    assert_eq!(a.a.uebergaenge_offen(), 1);
+    std::fs::write(&kpfad, &kgut).unwrap();
+    a.a.rueckweg(&verweise).unwrap();
+    assert_eq!(a.a.uebergaenge_offen(), 0);
+    let [nx, n1] = [&x, &f1].map(|id| a.a.aufloesen(id).unwrap());
+    assert_eq!(
+        kontext::link_von(&projekte, "mit_1"),
+        Some(ablage_link(&n1))
+    );
+    match freigabe::laden(a.a.dir()) {
+        freigabe::Lage::Gueltig(f) => assert!(f.ordner.contains_key(&nx)),
+        freigabe::Lage::Unklar(_) => panic!("Freigabe unklar"),
+    }
+    // Ohne Schalterbestand: nichts umzuschreiben, kein Fehler.
+    assert_eq!(
+        kontext::links_umschreiben(&a._t.path().join("fehlt"), &[]),
+        Ok(0)
+    );
 }

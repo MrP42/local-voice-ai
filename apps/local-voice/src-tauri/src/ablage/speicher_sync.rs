@@ -187,7 +187,20 @@ impl Ablage {
                         aus.verworfen.push(o.id.clone());
                         continue;
                     }
-                    if st.begraben.contains(&o.id) || st.weiterleitung.contains_key(&o.id) {
+                    // Stand zu einer alten Kennung (Rückweg lokal → sync): auf die neue abbilden und
+                    // zusammenführen, nie verwerfen (ohne lebendes Ziel bleibt er draußen).
+                    let umgeleitet;
+                    let o = match st.weiterleitung.get(&o.id).map(|_| st.aufgeloest(&o.id)) {
+                        Some(ziel) if st.ordner.contains_key(&ziel) => {
+                            let mut x = o.clone();
+                            x.id = ziel;
+                            umgeleitet = x;
+                            &umgeleitet
+                        }
+                        Some(_) => continue,
+                        None => o,
+                    };
+                    if st.begraben.contains(&o.id) {
                         continue;
                     }
                     let mut neu = match st.ordner.get(&o.id) {
@@ -211,7 +224,18 @@ impl Ablage {
                         aus.verworfen.push(d.id.clone());
                         continue;
                     }
-                    if st.begraben.contains(&d.id) || st.weiterleitung.contains_key(&d.id) {
+                    let umgeleitet;
+                    let d = match st.weiterleitung.get(&d.id).map(|_| st.aufgeloest(&d.id)) {
+                        Some(ziel) if st.dateien.contains_key(&ziel) => {
+                            let mut x = d.clone();
+                            x.id = ziel;
+                            umgeleitet = x;
+                            &umgeleitet
+                        }
+                        Some(_) => continue,
+                        None => d,
+                    };
+                    if st.begraben.contains(&d.id) {
                         continue;
                     }
                     let alt = st.dateien.get(&d.id).cloned();

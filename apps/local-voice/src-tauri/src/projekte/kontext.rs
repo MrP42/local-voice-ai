@@ -432,10 +432,13 @@ pub fn vergessen(ablage: &Path, eintraege: &[String]) -> Result<usize, String> {
 
 /// Schreibt Verweise um (`alt` → `neu`, ganze Links), z. B. beim Rückweg einer Ablage-Datei auf eine
 /// neue Kennung (D4). Schalter, Form und Fassung bleiben. Wiederholbar; liefert die Zahl der Stände.
+/// Fehlt der Bestand, gibt es nichts umzuschreiben; ist er defekt, ein Fehler (der Aufrufer wiederholt).
 pub fn links_umschreiben(ablage: &Path, paare: &[(String, String)]) -> Result<usize, String> {
     let _g = sperren();
-    let (Lage::Gelesen, Some(mut d)) = lesen_roh(ablage) else {
-        return Ok(0);
+    let mut d = match lesen_roh(ablage) {
+        (Lage::Gelesen, Some(d)) => d,
+        (Lage::Fehlt, _) => return Ok(0),
+        _ => return Err("Schalterbestand der Projekte nicht lesbar.".into()),
     };
     let mut n = 0;
     for s in d.mitglieder.values_mut() {

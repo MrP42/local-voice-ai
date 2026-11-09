@@ -14,6 +14,7 @@ import {
   Trash2,
   X,
   Lock,
+  CircleDashed,
 } from "lucide-react";
 import type {
   AblageDatei,
@@ -296,7 +297,7 @@ export const DateiTabelle: React.FC<{
             <td className="ablage-spalte-klasse">
               <KiKlasseChips ki={d.ki} klasse={d.klasse} />
             </td>
-            {sync?.get(d.id) ? (
+            {sync?.get(d.id) && !d.konflikt ? (
               <td>
                 <SyncZeichen zustand={sync.get(d.id)!} />
               </td>
@@ -318,7 +319,18 @@ export const DateiTabelle: React.FC<{
                     </span>
                   </span>
                 )}
-                {!d.konflikt && d.nur_geraet && (
+                {!d.konflikt && sync && (
+                  <span
+                    role="img"
+                    aria-label={t("ablage.sync.nicht_erfasst")}
+                    title={t("ablage.sync.nicht_erfasst")}
+                    className="ablage-mut"
+                    data-testid="ablage-sync-nicht-erfasst"
+                  >
+                    <CircleDashed size={16} aria-hidden="true" />
+                  </span>
+                )}
+                {!d.konflikt && !sync && d.nur_geraet && (
                   <span
                     role="img"
                     aria-label={t("ablage.nurGeraet.titel")}

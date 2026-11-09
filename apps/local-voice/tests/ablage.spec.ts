@@ -963,7 +963,7 @@ test("1440 px: Sync-Zustand je Datei und Kontingent im Fuß (D4)", async ({
     sync: {
       verbunden: true,
       letzter_lauf_ms: T0,
-      fehler: null,
+      fehler: "Ablage: Objekte mit anderem Schlüssel im Konto",
       kontingent_voll: true,
       belegt: 5_000_000,
       kontingent: 5_000_000,
@@ -979,9 +979,17 @@ test("1440 px: Sync-Zustand je Datei und Kontingent im Fuß (D4)", async ({
   await waehle(page, "o_allg");
   const zeile = (id: string) =>
     page.locator("tr", { has: page.getByTestId(`ablage-datei-${id}`) });
+  // Ohne Sync-Eintrag: neutral „Noch nicht erfasst“.
+  await expect(
+    zeile("d1").getByRole("img", { name: "Noch nicht erfasst" }),
+  ).toBeVisible();
+  // Ein lokaler Konflikt hat Vorrang vor dem Sync-Eintrag.
+  await expect(
+    zeile("d2").getByRole("img", { name: "Konflikt" }),
+  ).toBeVisible();
   await expect(
     zeile("d2").getByRole("img", { name: "Synchronisiert" }),
-  ).toBeVisible();
+  ).toHaveCount(0);
   await expect(
     zeile("d3").getByRole("img", { name: "Wartet auf Text" }),
   ).toBeVisible();
@@ -994,4 +1002,9 @@ test("1440 px: Sync-Zustand je Datei und Kontingent im Fuß (D4)", async ({
   await expect(page.getByTestId("ablage-fuss-cloud")).toHaveText(
     "Cloud-Speicher voll – Hochladen angehalten",
   );
+  // Der letzte Fehler steht zusätzlich da.
+  await expect(page.getByTestId("ablage-fuss-fehler")).toHaveText(
+    "Abgleich unvollständig",
+  );
+  await page.screenshot({ path: join(SHOT_DIR, "d4-sync-1440-light.png") });
 });

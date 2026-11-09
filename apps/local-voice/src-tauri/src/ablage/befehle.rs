@@ -272,6 +272,14 @@ pub async fn ablage_text_abbrechen() -> Antwort<()> {
 #[tauri::command]
 #[specta::specta]
 pub async fn ablage_sync_stand(app: AppHandle) -> Antwort<crate::sync::ablage::AblageSyncStand> {
-    let verbunden = crate::sync::account::load(&app).is_some();
-    blockierend(&app, move |a| crate::sync::ablage::stand(&a, verbunden)).await
+    // Ohne lesbaren Schlüssel gilt das Konto als nicht verbunden (der Lauf liefe ebenso nicht).
+    let konto = crate::sync::account::load(&app).and_then(|cfg| {
+        cfg.key()
+            .ok()
+            .map(|k| crate::sync::ablage::konto_kennung(cfg.user_id, &k, &cfg.url))
+    });
+    blockierend(&app, move |a| {
+        crate::sync::ablage::stand(&a, konto.as_deref())
+    })
+    .await
 }

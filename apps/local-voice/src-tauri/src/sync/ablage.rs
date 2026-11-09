@@ -165,6 +165,19 @@ pub struct ObjStand {
     pub angehalten: bool,
 }
 
+impl ObjStand {
+    /// Grabstein vom Hub: mit gültigem Siegel begraben; ohne ruht das Objekt (nicht als gelöscht
+    /// vermerkt, kein Push darüber, keine Blob-Löschung).
+    fn grab(revision: i64, echt: bool) -> Self {
+        Self {
+            revision,
+            deleted: echt,
+            angehalten: !echt,
+            ..Default::default()
+        }
+    }
+}
+
 /// Rückstellung eines Objekts oder der Ablage (exponentiell).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Rueck {
@@ -566,12 +579,7 @@ pub async fn lauf<H: AblageHub + ?Sized>(
     konto: &Konto<'_>,
 ) -> Result<Bericht, HubError> {
     let mut z = Zustand::laden(ablage);
-    let kennung = format!(
-        "{}:{}:{}",
-        konto.user_id,
-        crypto::key_id(konto.key),
-        konto.hub_url.trim_end_matches('/')
-    );
+    let kennung = konto_kennung(konto.user_id, konto.key, konto.hub_url);
     if z.konto != kennung {
         z = Zustand {
             v: ZUSTAND_VERSION,
@@ -640,6 +648,9 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
 
     /// Liefert `true`, wenn beide Sammlungen bis zum Ende gezogen sind.
     async fn pull(&mut self) -> Result<bool, HubError> {
+        // Objekte mit fremdem Schlüssel ruhen wie unlesbare; der Pull läuft weiter, ist aber nicht
+        // vollständig (keine Blob-Löschung).
+        let mut vollstaendig = true;
         for coll in [SAMMLUNG_ORDNER, SAMMLUNG_DATEI] {
             let mut since = self.z.cursor.get(coll).copied().unwrap_or(0);
             let mut zurueckgesetzt = false;
@@ -688,8 +699,7 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
                 }
                 if fremder_schluessel {
                     self.warnen("Ablage: Objekte mit anderem Schlüssel im Konto");
-                    self.z.speichern(self.ablage)?;
-                    return Ok(false);
+                    vollstaendig = false;
                 }
                 since = seite.cursor.max(since);
                 self.z.cursor.insert(coll.to_string(), since);
@@ -716,11 +726,11 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
             self.z.ordnergraeber.clear();
             self.z.speichern(self.ablage)?;
         }
-        Ok(true)
+        Ok(vollstaendig)
     }
 
     /// Eine Pull-Seite entschlüsseln und prüfen. Liefert Eingänge, die neuen Objektstände und ob ein
-    /// fremder Schlüssel auftauchte (dann endet die Seite dort, der Cursor bleibt stehen).
+    /// fremder Schlüssel auftauchte (das Objekt ruht wie ein unlesbares; die Seite geht weiter).
     fn seite_lesen(
         &mut self,
         coll: &'static str,
@@ -728,6 +738,7 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
     ) -> (Vec<Eingang>, Vec<(String, ObjStand)>, bool) {
         let mut eingaenge = Vec::new();
         let mut buch = Vec::new();
+        let mut fremd = false;
         for r in &seite.objects {
             if r.collection != coll {
                 continue;
@@ -744,34 +755,43 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
             if r.deleted {
                 // Nur ein vom Konto versiegelter Grabstein gilt; die Ablage wendet ihn außerdem nie auf
                 // festgehaltene oder lokale Einträge an (`sync_einspielen`).
-                if grab_echt(
+                let echt = grab_echt(
                     self.konto.key,
                     self.konto.user_id,
                     coll,
                     &r.object_id,
                     &r.key_id,
                     &r.payload,
-                ) {
+                );
+                if echt {
                     eingaenge.push(Eingang::Grab(r.object_id.clone()));
                 } else {
                     log::warn!(
-                        "ablage-sync: {coll}/{} Grabstein ohne Siegel, ignoriert",
+                        "ablage-sync: {coll}/{} Grabstein ohne Siegel, angehalten",
                         r.object_id
                     );
                     self.warnen("Ablage: ein Grabstein ohne gültiges Siegel wurde ignoriert");
                 }
+                buch.push((k, ObjStand::grab(r.revision, echt)));
+                continue;
+            }
+            if r.key_id != self.key_id {
+                // Fremder Schlüssel: ruht wie unlesbar (nie überschreiben), der Pull geht weiter.
+                log::warn!(
+                    "ablage-sync: {coll}/{} fremder Schlüssel, angehalten",
+                    r.object_id
+                );
+                fremd = true;
                 buch.push((
                     k,
                     ObjStand {
                         revision: r.revision,
-                        deleted: true,
+                        refs: r.blob_refs.clone().unwrap_or_default(),
+                        angehalten: true,
                         ..Default::default()
                     },
                 ));
                 continue;
-            }
-            if r.key_id != self.key_id {
-                return (eingaenge, buch, true);
             }
             let refs = r.blob_refs.clone().unwrap_or_default();
             let gelesen = self.entschluesseln(coll, &r.object_id, &refs, &r.payload);
@@ -798,7 +818,7 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
                 },
             ));
         }
-        (eingaenge, buch, false)
+        (eingaenge, buch, fremd)
     }
 
     /// Öffnet ein Objekt (AAD mit `blob_refs`, `key_id`, `deleted`) und prüft Kennung, Schema und
@@ -1227,6 +1247,25 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
             .await;
             match r {
                 Ok(Upload::Done) => {
+                    // Das Hochladen kann dauern: ist der Eintrag inzwischen nicht mehr synchron
+                    // (Klasse, „nur dieses Gerät“), geht die Kopie sofort wieder weg (bedingt) und wird
+                    // nirgends vermerkt.
+                    let noch = self
+                        .ablage
+                        .sync_noch_synchron(std::slice::from_ref(&k.id))
+                        .map_err(ablage_fehler)?;
+                    if !noch.contains(&k.id) {
+                        match self.hub.blob_loeschen(&hid, self.konto.device_id).await {
+                            Err(HubError::Unauthorized) => return Err(HubError::Unauthorized),
+                            Ok(BlobLoeschung::Geloescht(_)) => {}
+                            _ => {
+                                // Später erneut (bedingt, nur ohne lebende Fassung).
+                                self.z.blob_loeschen.insert(hid);
+                            }
+                        }
+                        return Ok(false);
+                    }
+                    self.z.zu_viele = None;
                     // Dauerhaft im Ablagestand (Wartung „Blobs abgleichen“).
                     if let Err(e) = self.ablage.sync_blob_vermerken(&hid, &self.kennung) {
                         log::warn!("ablage-sync: Blob nicht vermerkt: {}", e.code);
@@ -1378,6 +1417,9 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
             ("accepted", _) => {
                 let grab = k.art != Art::Stand;
                 self.z.rueck.remove(&schl);
+                if k.collection == SAMMLUNG_DATEI && !grab {
+                    self.z.zu_viele = None;
+                }
                 self.z.objekte.insert(
                     schl,
                     ObjStand {
@@ -1408,14 +1450,9 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
                             &cur.key_id,
                             &cur.payload,
                         );
-                        self.z.objekte.insert(
-                            schl,
-                            ObjStand {
-                                revision: cur.revision,
-                                deleted: true,
-                                ..Default::default()
-                            },
-                        );
+                        self.z
+                            .objekte
+                            .insert(schl, ObjStand::grab(cur.revision, echt));
                         if !echt {
                             self.warnen(
                                 "Ablage: ein Grabstein ohne gültiges Siegel wurde ignoriert",
@@ -1714,6 +1751,8 @@ pub fn zustaende(b: &SyncBestand, z: &Zustand) -> Vec<AblageSyncEintrag> {
                     AblageSyncZustand::Ausstehend
                 }
             }
+            // Unbekannte Klasse oder unvollständige Kette: weder gesendet noch lokal festgehalten.
+            Some(Teilnahme::Halten) => AblageSyncZustand::Angehalten,
             _ => AblageSyncZustand::NurGeraet,
         };
         aus.push(AblageSyncEintrag {
@@ -1745,6 +1784,8 @@ pub fn zustaende(b: &SyncBestand, z: &Zustand) -> Vec<AblageSyncEintrag> {
                     AblageSyncZustand::Ausstehend
                 }
             }
+            // Unbekannte Klasse oder unvollständige Kette: weder gesendet noch lokal festgehalten.
+            Some(Teilnahme::Halten) => AblageSyncZustand::Angehalten,
             _ => AblageSyncZustand::NurGeraet,
         };
         aus.push(AblageSyncEintrag {
@@ -1795,11 +1836,31 @@ pub fn wartet_auf_text(b: &SyncBestand, d: &Datei) -> bool {
     !original_hier || eingetragen
 }
 
-/// Stand für die Oberfläche (ohne Hub-Aufruf).
-pub fn stand(ablage: &Ablage, verbunden: bool) -> Result<AblageSyncStand, crate::ablage::Fehler> {
-    let z = Zustand::laden(ablage);
-    if !verbunden {
+/// Kontokennung des Abgleichs (Benutzer, Schlüsselkennung, Hub): gehört der Zustand zu einem anderen
+/// Konto, gilt er nicht.
+pub fn konto_kennung(user_id: i64, key: &[u8; KEY_LEN], hub_url: &str) -> String {
+    format!(
+        "{}:{}:{}",
+        user_id,
+        crypto::key_id(key),
+        hub_url.trim_end_matches('/')
+    )
+}
+
+/// Stand für die Oberfläche (ohne Hub-Aufruf). `konto`: Kennung des verbundenen Kontos
+/// ([`konto_kennung`]); `None` = nicht verbunden. Ein Zustand eines anderen Kontos (Kontowechsel vor
+/// dem ersten Lauf) zählt nicht: alles ist dann ausstehend, ohne alten Fehler und Verbrauch.
+pub fn stand(
+    ablage: &Ablage,
+    konto: Option<&str>,
+) -> Result<AblageSyncStand, crate::ablage::Fehler> {
+    let Some(konto) = konto else {
         return Ok(AblageSyncStand::default());
+    };
+    let verbunden = true;
+    let mut z = Zustand::laden(ablage);
+    if z.konto != konto {
+        z = Zustand::default();
     }
     let b = ablage.sync_bestand()?;
     Ok(AblageSyncStand {

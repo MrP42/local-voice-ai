@@ -704,3 +704,6 @@
 .ablage-fuss-voll {
   color: var(--abl-warn);
 }
+.ablage-fuss-belegt {
+  white-space: nowrap;
+}

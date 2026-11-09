@@ -9197,6 +9197,7 @@
       "wartet_auf_text": "Waiting for text",
       "nur_geraet": "This device only",
       "angehalten": "Paused (unreadable)",
+      "nicht_erfasst": "Not yet recorded",
       "cloud": "{{used}} of {{quota}} in the cloud",
       "voll": "Cloud storage full – uploads paused",
       "unvollstaendig": "Sync incomplete"

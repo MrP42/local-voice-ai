@@ -209,11 +209,15 @@ pub fn setzen(dir: &Path, ordner: &str, stufe: Option<KiStufe>) -> Res<Freigaben
     Ok(f)
 }
 
-/// D4 Rückweg: Freigaben von alten auf neue Ordnerkennungen umschreiben (wiederholbar). Bei unklarer
-/// Freigabe bleibt alles, wie es ist (die neuen Kennungen haben dann keinen Eintrag: fail-closed).
+/// D4 Rückweg: Freigaben von alten auf neue Ordnerkennungen umschreiben (wiederholbar). Eine fehlende
+/// Datei ist ein gültiger leerer Stand; bei unklarer Freigabe ein Fehler, damit der Journalschritt
+/// wiederholt wird, sobald die Freigabe neu festgelegt ist.
 pub fn umschreiben(dir: &Path, zuordnung: &BTreeMap<String, String>) -> Res<()> {
     let Lage::Gueltig(mut f) = laden(dir) else {
-        return Ok(());
+        return Err(Fehler::neu(
+            "ablage.freigabe_unklar",
+            "Die KI-Freigabe ist unklar; der Rückweg wird fortgesetzt, sobald sie neu festgelegt ist.",
+        ));
     };
     let mut geaendert = false;
     for (alt, neu) in zuordnung {
