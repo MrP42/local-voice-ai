@@ -3555,7 +3555,7 @@
         "hide": "Hide address",
         "connect": "Connect",
         "checking": "Checking the calendar …",
-        "privacy": "The address grants read access to the whole calendar. It is stored encrypted (Windows user account) on this computer and only sent to the calendar provider.",
+        "privacy": "The address grants read access to the whole calendar. It is stored encrypted (bound to your user account) on this computer and only sent to the calendar provider.",
         "helpTitle": "Where do I find the address?",
         "outlookTitle": "Outlook (Microsoft 365, Outlook on the web)",
         "outlookSteps": "Settings → Calendar → Shared calendars → “Publish a calendar”. Pick the calendar, permission “Can view all details” (otherwise attendees are missing), “Publish” and copy the ICS link. If IT blocks publishing, the option does not appear. Published calendars refresh with a delay of a few hours, depending on the provider.",
@@ -3566,7 +3566,7 @@
       },
       "graph": {
         "title": "Sign in with Microsoft (Outlook, Microsoft 365)",
-        "intro": "Reads the Outlook calendar directly through Microsoft Graph, including attendees and the Teams link. Read-only (Calendars.Read); sign-in happens in the browser and the sign-in token is stored encrypted (Windows user account) on this computer.",
+        "intro": "Reads the Outlook calendar directly through Microsoft Graph, including attendees and the Teams link. Read-only (Calendars.Read); sign-in happens in the browser and the sign-in token is stored encrypted (bound to your user account) on this computer.",
         "clientId": "Application (client) ID of your own Entra app",
         "tenant": "Directory (tenant), optional",
         "tenantHint": "“common” allows work, school and personal accounts. For a single company enter the directory ID or domain.",

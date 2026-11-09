@@ -3555,7 +3555,7 @@
         "hide": "Adresse verbergen",
         "connect": "Verbinden",
         "checking": "Kalender wird geprüft …",
-        "privacy": "Die Adresse gibt Lesezugriff auf den ganzen Kalender. Sie wird verschlüsselt (Windows-Benutzerkonto) auf diesem Rechner gespeichert und nur an den Kalenderanbieter gesendet.",
+        "privacy": "Die Adresse gibt Lesezugriff auf den ganzen Kalender. Sie wird verschlüsselt (an dein Benutzerkonto gebunden) auf diesem Rechner gespeichert und nur an den Kalenderanbieter gesendet.",
         "helpTitle": "Wo finde ich die Adresse?",
         "outlookTitle": "Outlook (Microsoft 365, Outlook im Web)",
         "outlookSteps": "Einstellungen → Kalender → Freigegebene Kalender → „Kalender veröffentlichen“. Kalender wählen, Berechtigung „Alle Details anzeigen“ (sonst fehlen die Teilnehmenden), „Veröffentlichen“ und den ICS-Link kopieren. Sperrt die IT das Veröffentlichen, erscheint die Option nicht. Veröffentlichte Kalender werden je nach Anbieter mit einigen Stunden Verzögerung aktualisiert.",
@@ -3566,7 +3566,7 @@
       },
       "graph": {
         "title": "Mit Microsoft anmelden (Outlook, Microsoft 365)",
-        "intro": "Liest den Outlook-Kalender direkt über Microsoft Graph, mit Teilnehmenden und Teams-Link. Nur lesend (Calendars.Read); die Anmeldung läuft im Browser, das Anmelde-Token wird verschlüsselt (Windows-Benutzerkonto) auf diesem Rechner gespeichert.",
+        "intro": "Liest den Outlook-Kalender direkt über Microsoft Graph, mit Teilnehmenden und Teams-Link. Nur lesend (Calendars.Read); die Anmeldung läuft im Browser, das Anmelde-Token wird verschlüsselt (an dein Benutzerkonto gebunden) auf diesem Rechner gespeichert.",
         "clientId": "Anwendungs-(Client-)ID der eigenen Entra-App",
         "tenant": "Verzeichnis (Tenant), optional",
         "tenantHint": "„common“ erlaubt Arbeits-, Schul- und private Konten. Für eine einzelne Firma die Verzeichnis-ID oder Domain eintragen.",
