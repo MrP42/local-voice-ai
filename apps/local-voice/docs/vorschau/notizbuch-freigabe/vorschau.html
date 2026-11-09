@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Notizbuch-Freigabe</title>
+<style>
+:root{
+  --bg:#f5f5f5;--pane:#fff;--pane2:#fafafa;--line:#e0e0e0;--text:#242424;--muted:#616161;
+  --accent:#0f6cbd;--accent-soft:#ebf3fc;--sel:#e6eef8;--warn:#a33f06;--warn-soft:#fdf3ec;--chip:#f0f0f0;
+  --on-accent:#fff;--focus:#0f6cbd;--off:#8a8a8a;
+}
+:root[data-theme="dark"]{
+  --bg:#1f1f1f;--pane:#292929;--pane2:#2e2e2e;--line:#3d3d3d;--text:#fff;--muted:#c7c7c7;
+  --accent:#479ef5;--accent-soft:#1a2c40;--sel:#243447;--warn:#f1a35c;--warn-soft:#3a2a1c;--chip:#383838;
+  --on-accent:#0b1a2a;--focus:#8cc4ff;--off:#9e9e9e;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;overflow:hidden}
+body{font:14px/1.45 "Segoe UI",system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text)}
+button,input{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--focus);outline-offset:-2px;border-radius:6px}
+svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.app{display:grid;grid-template-rows:44px 1fr 32px;height:100%}
+.top{display:flex;align-items:center;gap:12px;padding:0 12px;border-bottom:1px solid var(--line);background:var(--pane);min-width:0}
+.top h1{font-size:15px;font-weight:600;margin:0;white-space:nowrap}
+.top .be{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.status{display:flex;align-items:center;gap:16px;padding:0 12px;font-size:12px;color:var(--muted);border-top:1px solid var(--line);background:var(--pane);white-space:nowrap;overflow:hidden}
+.main{position:relative;display:flex;min-height:0;min-width:0}
+.chat{flex:1;min-width:0;display:flex;flex-direction:column;gap:12px;padding:16px;overflow:auto}
+.msg{max-width:70ch;padding:10px 12px;border-radius:8px;background:var(--pane);border:1px solid var(--line)}
+.msg.me{align-self:flex-end;background:var(--accent-soft)}
+.msg .q{font-size:12px;color:var(--muted);margin-top:6px}
+.msg .q a{color:var(--accent);display:inline-flex;align-items:center;min-height:44px}
+.panel{width:380px;flex:none;display:flex;flex-direction:column;min-height:0;border-left:1px solid var(--line);background:var(--pane)}
+@media (max-width:820px){.panel{position:absolute;inset:0;width:auto;border-left:0;z-index:2}}
+.phead{display:flex;align-items:center;height:44px;padding:0 4px 0 16px;border-bottom:1px solid var(--line)}
+.phead h2{margin:0;font-size:14px;font-weight:600}
+.ib{margin-left:auto;display:grid;place-items:center;width:44px;height:44px;border:0;background:none;border-radius:6px;cursor:pointer;color:var(--muted)}
+.tabs{display:flex;gap:2px;padding:0 8px;border-bottom:1px solid var(--line);overflow-x:auto}
+.tabs button{min-height:44px;min-width:44px;padding:0 10px;border:0;background:none;cursor:pointer;color:var(--muted);border-bottom:2px solid transparent;white-space:nowrap}
+.tabs button[aria-selected="true"]{color:var(--text);font-weight:600;border-bottom-color:var(--accent)}
+.pbody{flex:1;overflow:auto;padding:12px 16px 24px;display:flex;flex-direction:column;gap:12px}
+.pbody>p{margin:0;font-size:13px}
+.krow{display:flex;flex-direction:column}
+.sw{display:flex;align-items:center;gap:10px;min-height:44px;border:0;background:none;padding:0;cursor:pointer;text-align:left;width:100%}
+.sw .track{width:40px;height:20px;border-radius:10px;border:1px solid var(--off);position:relative;flex:none;margin:0 6px}
+.sw .track i{position:absolute;top:3px;left:3px;width:12px;height:12px;border-radius:50%;background:var(--off)}
+.sw[aria-checked="true"] .track{background:var(--accent);border-color:var(--accent)}
+.sw[aria-checked="true"] .track i{left:23px;background:var(--on-accent)}
+.sw[aria-disabled="true"]{cursor:default;opacity:.55}
+.sw .lb{font-size:14px}
+.hint{padding-left:52px;margin-top:-6px;font-size:12px;color:var(--muted)}
+.nest{margin-left:24px;display:flex;flex-direction:column;gap:8px}
+.sum{font-size:12px;color:var(--muted);padding-left:4px}
+.nb{border:1px solid var(--line);border-radius:8px;background:var(--pane2)}
+.nbh{display:flex;align-items:center;gap:8px;width:100%;min-height:44px;padding:0 10px;border:0;background:none;cursor:pointer;text-align:left}
+.nbh .nm{flex:1;min-width:0;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.nbh .ct{font-size:12px;color:var(--muted);white-space:nowrap}
+.nbh svg{transition:transform .1s}
+.nbh[aria-expanded="true"] svg{transform:rotate(90deg)}
+.nbb{padding:0 10px 6px;border-top:1px solid var(--line)}
+.nbb .sw .lb{font-size:13px}
+.ab{display:flex;align-items:center;gap:10px;min-height:44px;cursor:pointer;padding:0 4px;border-radius:6px}
+.ab input{width:18px;height:18px;margin:0 3px;accent-color:var(--accent);flex:none}
+.ab .nm{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ab .gr{color:var(--muted)}
+.ab .sz{font-size:12px;color:var(--muted);white-space:nowrap}
+.ab.dis{cursor:default;color:var(--muted)}
+.info{font-size:12px;color:var(--muted);padding:2px 4px 6px}
+.note{border-radius:8px;border:1px solid var(--line);background:var(--chip);padding:10px 12px;font-size:12px}
+.note.warn{background:var(--warn-soft);border-color:transparent;color:var(--text)}
+.note strong{display:block;font-size:13px;margin-bottom:2px}
+.lnk{display:inline-flex;align-items:center;min-height:44px;color:var(--accent);background:none;border:0;padding:0;cursor:pointer;text-decoration:underline}
+.sep{border-top:1px solid var(--line);padding-top:10px}
+.sk{height:44px;border-radius:8px;background:var(--chip)}
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="top"><h1>Chat</h1><span class="be">Sprachgespräch · lokales Modell</span></header>
+  <div class="main">
+    <section class="chat" aria-label="Gespräch">
+      <div class="msg me">Was habe ich heute im Jour fixe notiert?</div>
+      <div class="msg">Drei Punkte: Haushaltsplan besprechen, Radwege ergänzen und Termin mit dem Bauamt.
+        <div class="q">Quelle: <a href="#">Arbeit › Besprechungen › Jour fixe</a> (Notizbuch)</div></div>
+    </section>
+    <aside class="panel" aria-labelledby="ptitel">
+      <div class="phead"><h2 id="ptitel">Gesprächseinstellungen</h2>
+        <button class="ib" aria-label="Schließen"><svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8"/></svg></button></div>
+      <div class="tabs" role="tablist" aria-label="Bereiche">
+        <button role="tab" aria-selected="false" tabindex="-1">Stimme</button>
+        <button role="tab" aria-selected="false" tabindex="-1">Modell</button>
+        <button role="tab" aria-selected="true">Wissen</button>
+        <button role="tab" aria-selected="false" tabindex="-1">Status</button>
+      </div>
+      <div class="pbody" id="body" role="tabpanel" aria-label="Wissen"></div>
+    </aside>
+  </div>
+  <footer class="status"><span>Bereit</span><span>Tor aktiv · jeder Zugriff im Protokoll</span></footer>
+</div>
+<script>
+const q = new URLSearchParams(location.search);
+const ansicht = q.get("s") || "freigabe";
+document.documentElement.dataset.theme = q.get("t") === "dunkel" ? "dark" : "light";
+
+const NB = [
+  { id: "nb1", name: "Arbeit", ganz: false, offen: true, ab: [
+    { id: "a1", name: "Besprechungen", seiten: 24, an: true },
+    { id: "a2", name: "Haushalt 2027", gruppe: "Projekte", seiten: 9, an: true },
+    { id: "a3", name: "Radwegekonzept", gruppe: "Projekte", seiten: 5, an: false },
+    { id: "a4", name: "Personal", seiten: 12, an: false },
+  ]},
+  { id: "nb2", name: "Assistent", ganz: true, offen: true, ab: [
+    { id: "a5", name: "Assistent", seiten: 3, an: true },
+  ]},
+  { id: "nb3", name: "Privat", ganz: false, offen: false, ab: [
+    { id: "a6", name: "Familie", seiten: 31, an: false },
+    { id: "a7", name: "Reisen", seiten: 7, an: false },
+  ]},
+];
+const BEREICHE = [
+  ["Besprechungen", "Liste und Suche deiner Besprechungen: Titel, Datum, Dauer und Notizen.", true],
+  ["Diktate", "Dein Diktat-Verlauf: die letzten Diktate und die Suche darin.", false],
+  ["Frühere Gespräche", "Gespräche aus deinem Verlauf, ohne das laufende.", false],
+  ["Termine", "Termine aus deinen verbundenen Kalendern, nur der gespeicherte Stand.", true],
+  ["Vorlesen", "Seiten der Vorlesen-Bibliothek und die Sprachausgabe-Anbieter.", false],
+];
+let notizbuchAn = ansicht !== "aus";
+if (ansicht === "leer") for (const n of NB) { n.ganz = false; for (const a of n.ab) a.an = false; }
+
+const sw = (id, lb, an, opts = {}) =>
+  `<button class="sw" role="switch" id="${id}" aria-checked="${an}" ${opts.dis ? 'aria-disabled="true"' : ""} ${opts.desc ? `aria-describedby="${opts.desc}"` : ""}><span class="track"><i></i></span><span class="lb">${lb}</span></button>`;
+const zeile = (i, [lb, hint, an]) =>
+  `<div class="krow">${sw("b" + i, lb, an, { desc: "h" + i })}<span class="hint" id="h${i}">${hint}</span></div>`;
+
+function frei(n) { return n.ganz ? n.ab.length : n.ab.filter((a) => a.an).length; }
+
+function baum() {
+  if (ansicht === "laden") return `<div class="sk" aria-hidden="true"></div><div class="sk" aria-hidden="true"></div><span class="sum" role="status">Gliederung wird gelesen …</span>`;
+  if (ansicht === "kein") return `<div class="note" role="status"><strong>Auf diesem Gerät gibt es noch kein Notizbuch.</strong>Sobald du die App „Notizbuch“ installiert und eine Seite angelegt hast, erscheinen hier ihre Abschnitte.</div>`;
+  if (ansicht === "version") return `<div class="note warn" role="status"><strong>Diese Notizbuch-Version wird nicht unterstützt.</strong>Bitte Notizbuch und Local Voice aktualisieren. Bis dahin liest der Assistent nichts aus dem Notizbuch; deine Auswahl bleibt gespeichert.</div>`;
+  const summe = NB.reduce((s, n) => s + frei(n), 0);
+  const alle = NB.reduce((s, n) => s + n.ab.length, 0);
+  let h = `<span class="sum" id="sum" role="status">${summe === 0 ? "Noch kein Abschnitt freigegeben: der Assistent liest nichts aus dem Notizbuch." : `${summe} von ${alle} Abschnitten freigegeben`}</span>`;
+  for (const n of NB) {
+    const f = frei(n);
+    h += `<div class="nb"><button class="nbh" aria-expanded="${n.offen}" aria-controls="nbb-${n.id}">
+      <svg viewBox="0 0 16 16"><path d="M6 4l4 4-4 4"/></svg><span class="nm">${n.name}</span>
+      <span class="ct">${n.ganz ? "ganz" : `${f} von ${n.ab.length}`}</span></button>`;
+    if (n.offen) {
+      h += `<div class="nbb" id="nbb-${n.id}">${sw("g-" + n.id, "Ganzes Notizbuch, auch künftige Abschnitte", n.ganz)}`;
+      h += `<div role="group" aria-label="Abschnitte in ${n.name}">`;
+      for (const a of n.ab) {
+        const an = n.ganz || a.an;
+        h += `<label class="ab${n.ganz ? " dis" : ""}"><input type="checkbox" ${an ? "checked" : ""} ${n.ganz ? "disabled" : ""}>
+          <span class="nm">${a.gruppe ? `<span class="gr">${a.gruppe} › </span>` : ""}${a.name}</span><span class="sz">${a.seiten} Seiten</span></label>`;
+      }
+      h += `</div>${n.ganz ? `<div class="info">Alle Abschnitte dieses Notizbuchs sind freigegeben, auch neue.</div>` : ""}</div>`;
+    }
+    h += `</div>`;
+  }
+  h += `<p class="sum">Der Assistent sieht nur diese Abschnitte: andere erscheinen weder in Antworten noch in Zahlen oder Rückfragen. Seiten im Papierkorb liest er nicht. Jede Antwort nennt die Seite als Quelle.</p>`;
+  return h;
+}
+
+function render() {
+  let h = `<p>Was der Assistent im Gespräch nachschlagen darf. Standard: nichts.</p>`;
+  h += BEREICHE.map((b, i) => zeile(i, b)).join("");
+  h += `<div class="krow sep">${sw("nbsw", "Notizbuch", notizbuchAn, { desc: "nbh" })}<span class="hint" id="nbh">Seiten aus den Abschnitten, die du unten auswählst. Lesen, suchen und „was habe ich heute notiert“.</span></div>`;
+  if (notizbuchAn) h += `<div class="nest" role="group" aria-label="Freigegebene Notizbuch-Abschnitte">${baum()}</div>`;
+  document.getElementById("body").innerHTML = h;
+}
+render();
+document.addEventListener("click", (e) => {
+  const s = e.target.closest(".sw");
+  if (s && s.id === "nbsw") { notizbuchAn = !notizbuchAn; render(); document.getElementById("nbsw").focus(); return; }
+  const g = e.target.closest(".sw[id^='g-']");
+  if (g) { const n = NB.find((x) => "g-" + x.id === g.id); n.ganz = !n.ganz; render(); document.getElementById(g.id).focus(); return; }
+  const k = e.target.closest(".nbh");
+  if (k) { const id = k.getAttribute("aria-controls").slice(4); const n = NB.find((x) => x.id === id); n.offen = !n.offen; render(); return; }
+});
+</script>
+</body>
+</html>

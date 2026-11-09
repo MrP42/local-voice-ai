@@ -1,0 +1,173 @@
+{
+ "quelle_sha256": "aca61d8c93928573051e1d040e5678a81c206810ed9b1b52de187488195fe961",
+ "bilder": [
+  {
+   "datei": "01-freigabe-2560-hell.png",
+   "scrollX": 0,
+   "panelUeberlauf": 0,
+   "unter44": []
+  },
+  {
+   "datei": "01-freigabe-2560-dunkel.png",
+   "scrollX": 0,
+   "panelUeberlauf": 0,
+   "unter44": []
+  },
+  {
+   "datei": "01-freigabe-1440-hell.png",
+   "scrollX": 0,
+   "panelUeberlauf": 0,
+   "unter44": []
+  },
+  {
+   "datei": "01-freigabe-1440-dunkel.png",
+   "scrollX": 0,
+   "panelUeberlauf": 0,
+   "unter44": []
+  },
+  {
+   "datei": "01-freigabe-768-hell.png",
+   "scrollX": 0,
+   "panelUeberlauf": 0,
+   "unter44": []
+  },
+  {
+   "datei": "01-freigabe-768-dunkel.png",
+   "scrollX": 0,
+   "panelUeberlauf": 0,
+   "unter44": []
+  },
+  {
+   "datei": "01-freigabe-390-hell.png",
+   "scrollX": 0,
+   "panelUeberlauf": 0,
+   "unter44": []
+  },
+  {
+   "datei": "01-freigabe-390-dunkel.png",
+   "scrollX": 0,
+   "panelUeberlauf": 0,
+   "unter44": []
+  },
+  {
+   "datei": "02-aus-1440-hell.png",
+   "scrollX": 0,
+   "panelUeberlauf": 0,
+   "unter44": []
+  },
+  {
+   "datei": "02-aus-1440-dunkel.png",
+   "scrollX": 0,
+   "panelUeberlauf": 0,
+   "unter44": []
+  },
+  {
+   "datei": "02-aus-390-hell.png",
+   "scrollX": 0,
+   "panelUeberlauf": 0,
+   "unter44": []
+  },
+  {
+   "datei": "02-aus-390-dunkel.png",
+   "scrollX": 0,
+   "panelUeberlauf": 0,
+   "unter44": []
+  },
+  {
+   "datei": "03-leer-1440-hell.png",
+   "scrollX": 0,
+   "panelUeberlauf": 0,
+   "unter44": []
+  },
+  {
+   "datei": "03-leer-1440-dunkel.png",
+   "scrollX": 0,
+   "panelUeberlauf": 0,
+   "unter44": []
+  },
+  {
+   "datei": "03-leer-390-hell.png",
+   "scrollX": 0,
+   "panelUeberlauf": 0,
+   "unter44": []
+  },
+  {
+   "datei": "03-leer-390-dunkel.png",
+   "scrollX": 0,
+   "panelUeberlauf": 0,
+   "unter44": []
+  },
+  {
+   "datei": "04-kein-notizbuch-1440-hell.png",
+   "scrollX": 0,
+   "panelUeberlauf": 0,
+   "unter44": []
+  },
+  {
+   "datei": "04-kein-notizbuch-1440-dunkel.png",
+   "scrollX": 0,
+   "panelUeberlauf": 0,
+   "unter44": []
+  },
+  {
+   "datei": "04-kein-notizbuch-390-hell.png",
+   "scrollX": 0,
+   "panelUeberlauf": 0,
+   "unter44": []
+  },
+  {
+   "datei": "04-kein-notizbuch-390-dunkel.png",
+   "scrollX": 0,
+   "panelUeberlauf": 0,
+   "unter44": []
+  },
+  {
+   "datei": "05-version-1440-hell.png",
+   "scrollX": 0,
+   "panelUeberlauf": 0,
+   "unter44": []
+  },
+  {
+   "datei": "05-version-1440-dunkel.png",
+   "scrollX": 0,
+   "panelUeberlauf": 0,
+   "unter44": []
+  },
+  {
+   "datei": "05-version-390-hell.png",
+   "scrollX": 0,
+   "panelUeberlauf": 0,
+   "unter44": []
+  },
+  {
+   "datei": "05-version-390-dunkel.png",
+   "scrollX": 0,
+   "panelUeberlauf": 0,
+   "unter44": []
+  },
+  {
+   "datei": "06-laden-1440-hell.png",
+   "scrollX": 0,
+   "panelUeberlauf": 0,
+   "unter44": []
+  },
+  {
+   "datei": "06-laden-1440-dunkel.png",
+   "scrollX": 0,
+   "panelUeberlauf": 0,
+   "unter44": []
+  },
+  {
+   "datei": "06-laden-390-hell.png",
+   "scrollX": 0,
+   "panelUeberlauf": 0,
+   "unter44": []
+  },
+  {
+   "datei": "06-laden-390-dunkel.png",
+   "scrollX": 0,
+   "panelUeberlauf": 0,
+   "unter44": []
+  }
+ ]
+}
