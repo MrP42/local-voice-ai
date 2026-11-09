@@ -605,8 +605,12 @@ pub async fn voice_call_chat(
         .remove(&request_id);
 
     match result {
-        // Abgebrochen: das Restliche wird verworfen, die Sprachausgabe ist schon gestoppt.
-        None => Ok(String::new()),
+        // Abgebrochen: das Restliche wird verworfen, die Sprachausgabe ist schon gestoppt. Auch
+        // zurückgehaltene Sätze aus Notizbuchdaten gehen nie hinaus (kein Vermerk nötig).
+        None => {
+            puffer.lock().unwrap_or_else(|e| e.into_inner()).verwerfen();
+            Ok(String::new())
+        }
         Some(Ok(_roh)) => {
             // Der Rückgabewert ist der freigegebene Text, nie die rohe Modellausgabe.
             let (rest, freigegeben) = {
@@ -648,6 +652,7 @@ pub async fn voice_call_chat(
             Ok(freigegeben)
         }
         Some(Err(e)) => {
+            puffer.lock().unwrap_or_else(|e| e.into_inner()).verwerfen();
             // Auch ein fehlgeschlagener Aufruf kann schon Token verbraucht haben.
             let _ = app.emit(
                 EVENT,
