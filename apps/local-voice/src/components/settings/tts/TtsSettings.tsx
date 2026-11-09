@@ -48,6 +48,7 @@ import {
 } from "./BookFolder";
 import { editionsOf, readingEdition } from "@/lib/library/editions";
 import {
+  FOLDER_BOOKS,
   FOLDER_TEXTS,
   bookFolderKey,
   type BookFolder as FolderEntry,
@@ -4175,9 +4176,12 @@ export const TtsSettings = () => {
               : undefined
           }
           emptyLabel={
-            readerFolders.selection === FOLDER_TEXTS &&
             readerFolders.visibleIds.length === 0
-              ? t("tts.folders.noLoose")
+              ? readerFolders.selection === FOLDER_TEXTS
+                ? t("tts.folders.noLoose")
+                : readerFolders.selection === FOLDER_BOOKS
+                  ? t("tts.folders.noBooks")
+                  : undefined
               : undefined
           }
           bookFolder={
@@ -4233,8 +4237,14 @@ export const TtsSettings = () => {
                 total={readerFolders.total}
                 selection={readerFolders.selection}
                 onSelect={(key) => {
+                  // lva#435: „Bücher“ klappt mobil zuerst die Bücher auf;
+                  // erst die zweite Wahl (oder ein Buch) führt zur Liste.
+                  const stay =
+                    key === FOLDER_BOOKS &&
+                    readerFolders.selection !== FOLDER_BOOKS &&
+                    readerFolders.folders.books.length > 0;
                   readerFolders.select(key, setActivePage);
-                  setMobileLevel("list");
+                  if (!stay) setMobileLevel("list");
                 }}
                 onAddBook={() => void loadDocument()}
               />
