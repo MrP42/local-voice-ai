@@ -52,7 +52,7 @@ pub(crate) fn fundortkarte_neu(data: &Path) {
 
 /// Freier Platz (für den Nutzer verfügbar) auf dem Datenträger von `dir`.
 #[cfg(windows)]
-fn freier_platz(dir: &Path) -> Option<u64> {
+pub(crate) fn freier_platz(dir: &Path) -> Option<u64> {
     use std::os::windows::ffi::OsStrExt;
     use windows::core::PCWSTR;
     use windows::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
@@ -77,7 +77,7 @@ fn freier_platz(dir: &Path) -> Option<u64> {
 }
 
 #[cfg(unix)]
-fn freier_platz(dir: &Path) -> Option<u64> {
+pub(crate) fn freier_platz(dir: &Path) -> Option<u64> {
     use std::os::unix::ffi::OsStrExt;
     let pfad = std::ffi::CString::new(dir.as_os_str().as_bytes()).ok()?;
     let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
@@ -89,7 +89,7 @@ fn freier_platz(dir: &Path) -> Option<u64> {
 }
 
 #[cfg(not(any(windows, unix)))]
-fn freier_platz(_dir: &Path) -> Option<u64> {
+pub(crate) fn freier_platz(_dir: &Path) -> Option<u64> {
     None
 }
 
