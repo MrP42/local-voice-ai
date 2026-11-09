@@ -110,8 +110,9 @@ fn kind_of(area: Area) -> Option<SourceKind> {
         Area::Dictations => Some(SourceKind::Dictation),
         Area::Conversations => Some(SourceKind::Conversation),
         Area::Tts => Some(SourceKind::TtsPage),
-        // Transkripte erweitern die Besprechungen; Termine bleiben Werkzeug.
-        Area::Transcripts | Area::Calendar => None,
+        // Transkripte erweitern die Besprechungen; Termine bleiben Werkzeug. Das Notizbuch wird
+        // eigene Indexquelle erst mit Spec lva#398 §3.4; bis dahin nur Werkzeuge.
+        Area::Transcripts | Area::Calendar | Area::Notebook => None,
     }
 }
 
@@ -782,6 +783,39 @@ pub(crate) fn admissible(
         })
 }
 
+/// Kontextnachricht samt den von Rust geprüften Quellen eines Sprecheraufrufs.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GebundenerKontext {
+    pub nachricht: String,
+    /// (Belegnummer `k`, Auszug): jeder Auszug steht nachweislich im frisch gelesenen Dokument.
+    pub quellen: Vec<(u32, String)>,
+}
+
+/// Steht der Auszug (ohne die Auslassungszeichen am Rand) im Dokumenttext? Verglichen werden nur
+/// Buchstaben und Ziffern ohne Groß-/Kleinschreibung, damit Leerraum, Satzzeichen und Silbentrennung
+/// nicht trennen, erfundener Inhalt aber schon.
+pub(crate) fn excerpt_in_doc(excerpt: &str, doc_text: &str) -> bool {
+    let kern = |t: &str| -> String {
+        t.chars()
+            .filter(|c| c.is_alphanumeric())
+            .flat_map(char::to_lowercase)
+            .collect()
+    };
+    let ex = kern(excerpt.trim().trim_start_matches('…').trim_end_matches('…'));
+    !ex.is_empty() && kern(doc_text).contains(&ex)
+}
+
+/// Auszug für die Belegregel: ohne die Auslassungszeichen am Rand, Leerraum gefaltet.
+pub(crate) fn excerpt_clean(excerpt: &str) -> String {
+    excerpt
+        .trim()
+        .trim_start_matches('…')
+        .trim_end_matches('…')
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// Kontextnachricht für einen Sprecheraufruf, unmittelbar vor dem Modellstart
 /// geprüft (Codex Auflagen 4–6): `None` heißt ohne Kontext antworten.
 pub fn bind_for_speaker(
@@ -791,6 +825,19 @@ pub fn bind_for_speaker(
     request_id: &str,
     question: &str,
 ) -> Option<String> {
+    bind_for_speaker_quellen(app, ctx, local, request_id, question).map(|g| g.nachricht)
+}
+
+/// Wie [`bind_for_speaker`], liefert aber zusätzlich die Quellen für die Belegregel (ADR-0028
+/// E4.2). Rust liest jedes Dokument frisch und verlangt, dass der Auszug darin steht; ein von der
+/// Oberfläche gelieferter Auszug, den es im Dokument nicht gibt, heißt kein Kontext.
+pub fn bind_for_speaker_quellen(
+    app: &AppHandle,
+    ctx: &super::model::SpeakerContext,
+    local: bool,
+    request_id: &str,
+    question: &str,
+) -> Option<GebundenerKontext> {
     if !bound_to(ctx, request_id, question) {
         return None;
     }
@@ -811,9 +858,16 @@ pub fn bind_for_speaker(
     }
     // Quellen frisch lesen: gelöscht, umklassifiziert oder geändert seit dem
     // letzten Abgleich heißt kein Kontext (Codex M5 Must-fix 4).
+    let mut quellen = Vec::with_capacity(ctx.hits.hits.len());
     let fresh = ctx.hits.hits.iter().all(|h| {
         fetch_one(app, h.kind, &h.jump.id, &settings).is_some_and(|d| {
-            !d.restricted && format!("{:016x}", super::index::doc_hash(&d)) == h.version
+            let ok = !d.restricted
+                && format!("{:016x}", super::index::doc_hash(&d)) == h.version
+                && excerpt_in_doc(&h.excerpt, &d.text);
+            if ok {
+                quellen.push((h.k, excerpt_clean(&h.excerpt)));
+            }
+            ok
         })
     });
     if !fresh {
@@ -821,6 +875,7 @@ pub fn bind_for_speaker(
         return None;
     }
     super::prompt::context_message(&ctx.hits.hits, ctx.german)
+        .map(|nachricht| GebundenerKontext { nachricht, quellen })
 }
 
 /// Gehört der Kontext zu dieser Anfrage und genau dieser Frage? Rein, testbar.
@@ -921,5 +976,32 @@ mod grant_tests {
     fn belegmarken_erkennen() {
         assert!(super::super::prompt::has_marker("Bis März [Q2]."));
         assert!(!super::super::prompt::has_marker("Kein [Qx] und [Q] Beleg"));
+    }
+}
+
+#[cfg(test)]
+mod quellen_tests {
+    use super::*;
+
+    #[test]
+    fn auszug_muss_im_dokument_stehen() {
+        let doc = "Frau Berger:  Die Ausschreibung läuft bis zum 15. März 2027.\nDanach folgt die Vergabe.";
+        assert!(excerpt_in_doc(
+            "… Die Ausschreibung läuft bis zum 15. März 2027. …",
+            doc
+        ));
+        assert!(
+            excerpt_in_doc("danach folgt die vergabe", doc),
+            "Groß/Klein und Zeichen egal"
+        );
+        assert!(!excerpt_in_doc("Die Ausschreibung ist abgesagt.", doc));
+        assert!(!excerpt_in_doc("…", doc), "leerer Auszug zählt nicht");
+        assert!(!excerpt_in_doc("Die Ausschreibung", ""));
+    }
+
+    #[test]
+    fn auszug_ohne_rand_und_mit_gefaltetem_leerraum() {
+        assert_eq!(excerpt_clean("… Eins  zwei\n drei …"), "Eins zwei drei");
+        assert_eq!(excerpt_clean("   "), "");
     }
 }

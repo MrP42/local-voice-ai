@@ -6,6 +6,7 @@ mod app_context; // Globaler Sprachassistent: Abrufindex über alle Inhalte
 mod appdata_migration;
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 mod apple_intelligence;
+mod assistent; // ADR-0028 A2: Einstufung, Ansagen, Messung (wai-assistent)
 mod audio_feedback;
 pub mod audio_toolkit;
 mod book_ai; // lva#181: KI-Funktionen im Buch-Reader
@@ -15,6 +16,7 @@ pub mod book_talk_eval {
     pub use crate::book_ai::talk::adapter::*;
     pub use crate::book_ai::talk::eval::*;
 }
+mod ablage; // lva#407 D1, lva#408 D2: Dokumentenablage (Epic #395)
 mod books;
 mod buch_dateien; // lva#365 P3: Notizen, Anhänge, Transkript im Buch-Ordner (Kern)
 mod catalog;
@@ -49,6 +51,11 @@ mod paste_session;
 pub mod portable;
 pub mod portable_parts;
 mod process_guard;
+/// lva#408 D2: Einstieg des Extraktor-Unterprozesses (`lva-extrakt <pfad> <sha256> <typ>` bzw.
+/// `local-voice-ai --lva-extrakt …`). Liefert den Exitcode.
+pub fn lva_extrakt_main(args: &[String]) -> i32 {
+    ablage::extrakt::haupt(args)
+}
 mod projekte; // ADR-0026 PR-7: Suite-Projekte und Recherche
 pub mod provision;
 mod refinement;
@@ -62,6 +69,8 @@ pub mod sprachdienst; // ADR-0021 S2
 mod summarizer;
 mod sync;
 mod tagging;
+#[cfg(test)]
+mod testlog; // gemeinsamer Log-Fänger der Tests
 mod transcription_coordinator;
 mod translator;
 mod tray;
@@ -2004,6 +2013,14 @@ fn specta_builder() -> Builder<tauri::Wry> {
             sync::booktalk_relay::booktalk_relay_renew_code,
             sync::booktalk_relay::booktalk_relay_revoke,
             sync::sync_logout,
+            sync::uebernahme::sync_anmeldung_offen,
+            sync::uebernahme::sync_anmeldung_entscheiden,
+            sync::uebernahme::sync_anmeldung_abbrechen,
+            sync::uebernahme::sync_sicherungen,
+            sync::uebernahme::sync_sicherung_wiederherstellen,
+            sync::uebernahme::sync_sicherung_einstellungen,
+            sync::uebernahme::sync_sicherung_loeschen,
+            sync::uebernahme::sync_nur_lokal_uebernehmen,
             sync::sync_status,
             sync::sync_now,
             sync::sync_touch,
@@ -2015,6 +2032,31 @@ fn specta_builder() -> Builder<tauri::Wry> {
             konto::konto_bild_setzen,
             konto::konto_bild_entfernen,
             konto::konto_bild_lesen,
+            ablage::befehle::ablage_stand,
+            ablage::befehle::ablage_ordner_anlegen,
+            ablage::befehle::ablage_ordner_umbenennen,
+            ablage::befehle::ablage_ordner_verschieben,
+            ablage::befehle::ablage_ordner_einstellungen,
+            ablage::befehle::ablage_ki_setzen,
+            ablage::befehle::ablage_freigaben_neu_festlegen,
+            ablage::befehle::ablage_importieren,
+            ablage::befehle::ablage_in_papierkorb,
+            ablage::befehle::ablage_wiederherstellen,
+            ablage::befehle::ablage_endgueltig_loeschen,
+            ablage::befehle::ablage_papierkorb_leeren,
+            ablage::befehle::ablage_fassungen,
+            ablage::befehle::ablage_datei_umbenennen,
+            ablage::befehle::ablage_datei_verschieben,
+            ablage::befehle::ablage_bestand_neu_aufbauen,
+            ablage::befehle::ablage_gefundene_aufnehmen,
+            ablage::befehle::ablage_suchen,
+            ablage::befehle::ablage_index_neu_aufbauen,
+            ablage::befehle::ablage_text_abbrechen,
+            assistent::assistent_einstufen,
+            assistent::assistent_messung_melden,
+            assistent::assistent_letzte_ausgabe,
+            assistent::assistent_ausgabe_vergessen,
+            assistent::change_assistent_einstufung_aktiv_setting,
             projekte::befehle::projekte_liste,
             projekte::befehle::projekt_anlegen,
             projekte::befehle::projekt_web_freigabe,
@@ -2424,6 +2466,8 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::voice_tools::voice_tools_list,
             commands::voice_tools::change_voice_call_read_transcripts_setting,
             commands::voice_tools::change_voice_call_knowledge_setting,
+            commands::voice_tools::change_voice_notebook_sections_setting,
+            commands::voice_tools::voice_notebook_outline,
             commands::voice_tools::voice_tool_call,
             // Sprachgespraech Stufe 3: Lernen aus Korrekturen, Einrichtung durch Vorlesen
             speech_learning::speech_learning_feedback,

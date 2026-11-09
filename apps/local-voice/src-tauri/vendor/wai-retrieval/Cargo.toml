@@ -1,0 +1,23 @@
+# Erzeugt von scripts/vendor-wai-suite.py aus https://github.com/MrP42/wai-sdk (crates/wai-retrieval, Commit 56533672647b). Nicht von Hand ändern.
+[package]
+name = "wai-retrieval"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+license = "LicenseRef-WAI-Proprietary"
+publish = false
+description = "SDK-09: Retrieval-Kern (SQLite FTS5 + Vektoren, ACL vor Ranking und Zitat, Loeschpropagation)"
+
+[lib]
+test = false
+doctest = false
+
+[dependencies]
+sqlx = { version = "=0.9.0", default-features = false, features = ["runtime-tokio", "sqlite"] }
+tokio = { version = "1", features = ["rt", "macros"] }
+sha2 = "0.10"
+thiserror = "2"
+wai-security = { path = "../wai-security", version = "0.1.0" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.13", default-features = false, features = ["json"] }

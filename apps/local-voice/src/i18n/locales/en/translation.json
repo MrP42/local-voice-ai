@@ -12,6 +12,7 @@
   "sidebar": {
     "projekte": "Projects",
     "library": "Library",
+    "ablage": "Files",
     "general": "General",
     "models": "Models",
     "integrations": "Integrations",
@@ -5555,7 +5556,108 @@
     "pending": "{{count}} pending",
     "keyMismatch": "The hub holds objects sealed with a different key – was the password changed? Please sign in again on all devices.",
     "deadLetters": "{{count}} objects rejected (too large or invalid)",
-    "devices": "Devices"
+    "devices": "Devices",
+    "widerrufOffen": "The sign-in of a cancelled account switch has not yet been revoked on the hub. The app retries on every start.",
+    "erneutPruefen": "Check again",
+    "nurLokal": {
+      "anzahl_one": "{{count}} item only on this device (not uploaded)",
+      "anzahl_other": "{{count}} items only on this device (not uploaded)",
+      "uebernehmen": "Add to account",
+      "hinweis": "Backed up first. If an item differs from the account, a conflict copy is created; nothing is overwritten.",
+      "uebernommen": "Backed up and added to the account. Sync is running."
+    },
+    "anmeldung": {
+      "titel": "Local data found",
+      "titelWechsel": "Data from another account found",
+      "beschreibung": "This device holds data that does not belong to {{konto}} yet. What should happen to it? Nothing is uploaded until you choose.",
+      "beschreibungWechsel": "The data on this device comes from {{vorher}}. You are now signing in with {{konto}}. Nothing is uploaded until you choose.",
+      "bestand": "Local data",
+      "seiten_one": "{{count}} page",
+      "seiten_other": "{{count}} pages",
+      "buecher_one": "{{count}} book",
+      "buecher_other": "{{count}} books",
+      "fortschritte_one": "{{count}} reading position or bookmark",
+      "fortschritte_other": "{{count}} reading positions and bookmarks",
+      "dateien_one": "{{count}} book file",
+      "dateien_other": "{{count}} book files",
+      "einstellungen": "Changed settings",
+      "groesse": "Backup first: about {{groesse}}",
+      "frage": "What should happen to the local data?",
+      "zusammenfuehren": "Add and merge",
+      "zusammenfuehrenText": "Backed up first. Local data and account are combined; differing pages appear as conflict copies, nothing is overwritten.",
+      "kopierenBestaetigen": "Copy data from {{vorher}} into {{konto}}",
+      "sichern": "Back up and …",
+      "sichernText": "Everything is backed up and verified first, then:",
+      "getrennt": "keep separate",
+      "getrenntText": "Stays on this device and is not uploaded. The account's data is added.",
+      "entfernen": "remove from this device",
+      "entfernenText": "Pages, books and reading positions are removed from this device; afterwards you see the account's data. The backup is kept.",
+      "kollisionen_one": "{{count}} item also exists in the account with different content:",
+      "kollisionen_other": "{{count}} items also exist in the account with different content:",
+      "kollisionSeite": "“{{titel}}” – kept as a copy “(only on this device)”, the account brings its version",
+      "kollisionBuch": "“{{titel}}” – the local version stays in the backup, the account's version appears on this device",
+      "unberuehrt": "Meetings, dictations, voices and models stay on this device and are not affected by any choice.",
+      "knopfZusammenfuehren": "Back up and merge",
+      "knopfGetrennt": "Back up and keep separate",
+      "knopfEntfernen": "Back up and remove",
+      "laeuft": "Backing up …",
+      "abbrechen": "Cancel",
+      "abgebrochen": "Sign-in cancelled. Nothing on this device was changed.",
+      "erledigt": {
+        "zusammenfuehren": "Backed up and merged. The first sync is running.",
+        "getrennt_halten": "Backed up. The local data stays on this device; the account's data is added.",
+        "entfernen": "Backed up and removed from this device. Loading the account's data."
+      }
+    },
+    "abmelden": {
+      "titel": "Sign out?",
+      "beschreibung": "You are signing {{konto}} out on this device.",
+      "behalten": "Sign out, keep data on this device",
+      "behaltenText": "Pages, books and reading positions stay. On the next sign-in the app asks what to do with new items.",
+      "entfernen": "Sign out and remove library and pages from this device",
+      "entfernenText": "Backed up and verified first; only then removed. You find the backup here under “Backups”.",
+      "knopf": "Sign out",
+      "laeuft": "Signing out …",
+      "abbrechen": "Cancel",
+      "entfernt": "Signed out. The data is backed up and removed from this device."
+    },
+    "sicherungen": {
+      "titel": "Backups from account actions",
+      "hinweis": "Before every sign-in with local data, account switch, removal and upload the app backs up the local data. Backups are never deleted automatically.",
+      "zurBibliothek": "Library backups",
+      "zuKonto": "Backups from account actions (Account & devices)",
+      "anlass": {
+        "anmeldung": "before sign-in",
+        "abmeldung": "before sign-out",
+        "kollision": "before separating matching items",
+        "freigabe": "before adding to the account",
+        "schutz": "safety backup",
+        "vor_wiederherstellen": "before restoring settings"
+      },
+      "wiederherstellen": "Restore",
+      "einstellungen": "Settings",
+      "einstellungenHinweis": "Restore settings from this backup (the current ones are backed up first)",
+      "einstellungenZurueck": "Settings restored. The previous ones are in a new backup.",
+      "ordner": "Open folder",
+      "loeschen": "Delete backup",
+      "loeschenTitel": "Delete backup?",
+      "loeschenText": "The backup from {{datum}} will be deleted permanently. This cannot be undone.",
+      "fehler": "Backup action failed",
+      "wiederhergestellt": "Backup restored",
+      "zurueck_one": "{{count}} item restored",
+      "zurueck_other": "{{count}} items restored",
+      "zusaetzlich_one": "{{count}} differing item added separately",
+      "zusaetzlich_other": "{{count}} differing items added separately",
+      "gleich_one": "{{count}} unchanged",
+      "gleich_other": "{{count}} unchanged",
+      "fortschritte_one": "{{count}} reading position added",
+      "fortschritte_other": "{{count}} reading positions added",
+      "fortschritteAbweichend_one": "{{count}} differing reading position stayed in the backup",
+      "fortschritteAbweichend_other": "{{count}} differing reading positions stayed in the backup",
+      "inSicherung_one": "stayed in the backup: {{liste}}",
+      "inSicherung_other": "stayed in the backup: {{liste}}",
+      "nurLokal": "Everything restored stays only on this device."
+    }
   },
   "guard": {
     "memoryLow": "Memory almost full: the read-aloud and language-model servers were stopped to keep the computer responsive."
@@ -7747,12 +7849,50 @@
         "ki_docs": {
           "label": "AI documents",
           "hint": "Summaries and other AI documents on books, only if they reveal nothing beyond your reading position."
+        },
+        "notebook": {
+          "label": "Notebook",
+          "hint": "Pages from the sections you select below. Read, search and “what did I note today”. Content only goes to local models."
         }
       },
       "global": {
         "title": "Global knowledge (preview)",
         "switch": "Search all shared content",
         "hint": "Before each answer the app searches the shared areas locally and gives the model matching excerpts with sources. Local language model only; books only up to your reading position."
+      },
+      "notebook": {
+        "groupLabel": "Shared notebook sections",
+        "off": "No access; your selection is kept.",
+        "loading": "Reading the outline …",
+        "none": "No section shared yet: the assistant reads nothing from the notebook.",
+        "summary_one": "{{count}} of {{total}} sections shared",
+        "summary_other": "{{count}} of {{total}} sections shared",
+        "rule": "The assistant only sees these sections: others appear neither in answers nor in counts or follow-up questions. It does not read pages in the trash. Every answer names the page as its source.",
+        "selectAll": "Select all sections in {{name}}",
+        "selectGroup": "Select all sections of group {{name}}",
+        "group": "Group {{name}}",
+        "sectionsIn": "Sections in {{name}}",
+        "whole": "whole",
+        "countOf_one": "{{count}} of {{total}}",
+        "countOf_other": "{{count}} of {{total}}",
+        "wholeSwitch": "Share the whole notebook {{name}}",
+        "wholeHint": "The assistant may read and search all existing and future sections. New sections are shared automatically.",
+        "wholeOn": "All sections of this notebook are shared, including new ones.",
+        "pages_one": "{{count}} page",
+        "pages_other": "{{count}} pages",
+        "fehler": {
+          "title": "The notebook cannot be read right now.",
+          "text": "Please try again later. Until then the assistant reads nothing from the notebook; your selection is kept."
+        },
+        "saveError": "The selection could not be saved. The previous selection still applies.",
+        "kein": {
+          "title": "There is no notebook on this device yet.",
+          "text": "Once you have installed the “Notebook” app and created a page, its sections appear here."
+        },
+        "version": {
+          "title": "This notebook version is not supported.",
+          "text": "Please update Notebook and Local Voice. Until then the assistant reads nothing from the notebook; your selection is kept."
+        }
       }
     }
   },
@@ -8978,6 +9118,294 @@
     },
     "vorlesen": {
       "nurLokal": "Personal content is read aloud with local speech output only."
+    }
+  },
+  "ablage": {
+    "titel": "Files",
+    "beschreibung": "Organise and keep documents locally.",
+    "suche": "Search names and contents",
+    "anker": {
+      "seite": "Page {{n}}",
+      "absatz": "Paragraph {{n}}",
+      "folie": "Slide {{n}}",
+      "zeile": "from line {{n}}",
+      "teil": "Part {{n}}",
+      "kopf": "Email header",
+      "text": "Email text",
+      "blatt": "Sheet “{{blatt}}”, rows {{von}}–{{bis}}"
+    },
+    "suchergebnis": {
+      "titel": "Search results",
+      "hinweis": "All folders, excluding trash",
+      "imNamen": "In name ({{anzahl}})",
+      "imInhalt": "In content ({{anzahl}})",
+      "imInhaltOhneZahl": "In content",
+      "laedt": "Searching contents …",
+      "keine": "No match in content.",
+      "fehler": "Content search is not available right now.",
+      "fundstelle": "Location",
+      "oeffnen": "Open {{name}}: {{anker}}"
+    },
+    "laedt": "Loading files …",
+    "schliessen": "Close",
+    "abbrechen": "Cancel",
+    "speichern": "Save",
+    "zurueck": "Back",
+    "baum": {
+      "knopf": "Choose folder",
+      "label": "Folders",
+      "meine": "My folders",
+      "wiederhergestellt": "Restored",
+      "weitere": "More folders"
+    },
+    "ordner": {
+      "neu": "New folder",
+      "name": "Folder name",
+      "anlegen": "Create",
+      "umbenennen": "Rename",
+      "papierkorb": "Move folder to trash"
+    },
+    "liste": {
+      "label": "Files",
+      "caption": "Files in {{name}}",
+      "name": "Name",
+      "geaendert": "Modified",
+      "groesse": "Size",
+      "klasse": "Class",
+      "stand": "Status",
+      "dateien_one": "{{count}} file",
+      "dateien_other": "{{count}} files"
+    },
+    "stand": {
+      "konflikt": "Conflict"
+    },
+    "leer": {
+      "titel": "No files yet",
+      "formate": "PDF, Word, Excel, text, images and more. You can drag in folders too.",
+      "lokal": "Everything stays on this device.",
+      "keineTreffer": "No file matches this search."
+    },
+    "drop": {
+      "titel": "Drop files into “{{name}}”",
+      "hinweis": "Release to add them."
+    },
+    "fuss": {
+      "belegt": "{{size}} used",
+      "lokal": "Only on this device"
+    },
+    "hochladen": {
+      "titel_one": "Adding {{count}} file",
+      "titel_other": "Adding {{count}} files",
+      "schliessen": "Done",
+      "knopf": "Upload",
+      "dateien": "Files",
+      "ordner": "Folders",
+      "auswaehlen": "Choose",
+      "dateienWaehlen": "Choose files",
+      "ordnerWaehlen": "Choose folder",
+      "kollisionHinweis": "A file with this name already exists. What should happen?",
+      "kollisionGruppe": "Choice for {{name}}",
+      "neueFassung": "As new version",
+      "beideBehalten": "Keep both",
+      "ueberspringen": "Skip",
+      "erben": "New files inherit the settings of “{{name}}”.",
+      "stand": {
+        "laeuft": "Adding …",
+        "abgelegt": "Added",
+        "neue_fassung": "New version added",
+        "kollision": "Name already exists",
+        "uebersprungen": "Skipped",
+        "fehler": "Failed"
+      }
+    },
+    "papierkorb": {
+      "titel": "Trash",
+      "caption": "Deleted files and folders",
+      "geloescht": "Deleted",
+      "ursprung": "Origin",
+      "ohneUrsprung": "Unknown",
+      "aktion": "Action",
+      "tageRest_one": "{{count}} day left",
+      "tageRest_other": "{{count}} days left",
+      "wiederherstellen": "Restore",
+      "wiederherstellenName": "Restore {{name}}",
+      "endgueltigName": "Delete {{name}} permanently",
+      "endgueltig": "Delete permanently",
+      "endgueltigTitel": "Delete “{{name}}” permanently?",
+      "endgueltigText": "This cannot be undone. All versions are removed.",
+      "leeren": "Empty trash",
+      "leerenTitel_one": "Delete {{count}} item permanently?",
+      "leerenTitel_other": "Delete {{count}} items permanently?",
+      "leerenAktion": "Delete all",
+      "leer": "The trash is empty.",
+      "hinweis": "Items are deleted permanently after 30 days.",
+      "oeffnen": "Open trash"
+    },
+    "details": {
+      "schliessen": "Close details",
+      "vorschau": "Preview",
+      "vorschauHinweis": "Preview will follow in a later version.",
+      "textfassung": "Text version",
+      "text": {
+        "ok": "Text ready",
+        "ausstehend": "Text pending",
+        "kein_text": "No text contained",
+        "fehler": "Text not created"
+      },
+      "textNoch": "No text yet",
+      "textOhne": "No text for this format",
+      "textFehler": {
+        "allgemein": "The text could not be created.",
+        "zeit": "The 60-second time limit was reached.",
+        "abbruch": "The memory limit was reached or reading stopped.",
+        "zip_grenze": "The archive is too large or suspiciously compressed.",
+        "xml_doctype": "The file contains disallowed XML parts.",
+        "xml_entitaet": "The file contains disallowed XML parts.",
+        "pruefsumme": "The checksum of the version does not match.",
+        "zu_gross": "The file contains too much text.",
+        "format": "The format was not recognised.",
+        "pdf": "The PDF could not be read.",
+        "tabelle": "The spreadsheet could not be read."
+      },
+      "fassungen": "Versions",
+      "fassungAktuell": "{{nummer}} (current)",
+      "abgeloest": "superseded",
+      "angaben": "Details",
+      "ordner": "Folder",
+      "ablage": "Storage",
+      "nurDiesesGeraet": "Only on this device",
+      "umbenennen": "Rename file",
+      "papierkorb": "Move to trash"
+    },
+    "ki": {
+      "titel": "AI access",
+      "stufe": {
+        "an": "On",
+        "aus": "Off",
+        "gesperrt": "Locked"
+      },
+      "erklaerung": "The AI reaches files in two ways: directly (the assistant searches the file store) and through projects as context. “On” allows both ways. “Off” (also when nothing is set) blocks only the direct way; files stay usable as project context as long as they are switched on in the project. “Locked” blocks both ways and always wins, even over “On” in subfolders. The data class applies on top: “Personal data” never goes to cloud models, “Confidential” only to local models or by exception.",
+      "erben": "Inherit from parent folder",
+      "chipAn": "AI on",
+      "chipUnklar": "AI unclear",
+      "fuerKiFreigegeben": "Shared with the AI",
+      "fuerDieKi": "For the AI",
+      "nurAuszuege": "The AI only sees excerpts, never the originals.",
+      "aendern": "Change",
+      "zustand": {
+        "an": "On",
+        "aus": "Off",
+        "gesperrt": "Locked",
+        "unklar": "Unclear"
+      },
+      "geerbtVon": "inherited from {{name}}",
+      "unklarKurz": "Sharing unclear",
+      "unklarHinweis": "This device's sharing settings are ambiguous. Until resolved, all files stay locked for the AI.",
+      "unklarMeldung": "Sharing is unclear. Please reset it first.",
+      "unklar": {
+        "neuer": "The sharing settings come from a newer version of the app.",
+        "unlesbar": "The sharing settings cannot be read."
+      },
+      "neuFestlegen": "Reset sharing",
+      "neuFestlegenTitel": "Reset sharing?",
+      "neuFestlegenText": "All folders start without sharing again. You can then set sharing one folder at a time.",
+      "neuFestlegenAktion": "Reset",
+      "wiederhergestelltMeldung": "The AI sharing settings were restored from the backup. All backed-up folders are locked, and so are folders without an entry – on both ways. Set sharing again folder by folder or confirm the state.",
+      "bestaetigen": "Confirm state",
+      "bestaetigenTitel": "Confirm restored sharing?",
+      "bestaetigenText": "Locked folders and folders you set again stay as they are. These folders without their own entry fall back to “Off” (direct way blocked, project context possible):",
+      "bestaetigenAktion": "Confirm"
+    },
+    "klasse": {
+      "titel": "Data class",
+      "erbt": "Inherits from parent folder",
+      "standard": "Default",
+      "lang": {
+        "erbt": "Inherit",
+        "public": "Public",
+        "internal": "Internal",
+        "confidential": "Confidential",
+        "personal": "Personal data"
+      },
+      "kurz": {
+        "erbt": "Inherits",
+        "public": "Public",
+        "internal": "Internal",
+        "confidential": "Confidential",
+        "personal": "Personal",
+        "unbekannt": "Unknown"
+      }
+    },
+    "nurGeraet": {
+      "titel": "Only on this device",
+      "hinweis": "Files in this folder never leave the device.",
+      "geerbt": "Inherited from a parent folder."
+    },
+    "entwuerfe": {
+      "titel": "AI drafts",
+      "hinweis": "AI drafts are saved in this folder."
+    },
+    "einstellungen": {
+      "titel": "Settings for “{{name}}”",
+      "knopf": "Folder settings",
+      "nurFrage": "Keep only on this device?",
+      "nurFolge": "Files in this folder and all subfolders will not be synced with other devices.",
+      "nurBestaetigen": "Only on this device",
+      "syncFrage": "Sync with other devices again?",
+      "syncFolge": "Copies already stored in the cloud cannot be retrieved afterwards.",
+      "syncBestaetigen": "Allow sync"
+    },
+    "lage": {
+      "titel": "The files cannot be opened",
+      "fehlt": "The file index is missing, but files exist.",
+      "defekt": "The file index is damaged.",
+      "neuer": "The files come from a newer version of the app.",
+      "nicht_lesbar": "The file index cannot be read.",
+      "neuAufbauen": "Rebuild index",
+      "aufgebaut_one": "{{count}} file recovered",
+      "aufgebaut_other": "{{count}} files recovered"
+    },
+    "gefunden": {
+      "titel_one": "{{count}} file found that is not in the index.",
+      "titel_other": "{{count}} files found that are not in the index.",
+      "aufnehmen": "Add",
+      "ohneTyp": "no type"
+    },
+    "toast": {
+      "imPapierkorb": "Moved to trash",
+      "wiederhergestellt": "Restored",
+      "gespeichert": "Saved",
+      "aufgenommen": "Added",
+      "geloescht": "Deleted permanently",
+      "geleert": "Trash emptied"
+    },
+    "fehler": {
+      "allgemein": "That did not work.",
+      "name_vorhanden": "This name is already taken.",
+      "name_ungueltig": "This name is not allowed.",
+      "journal_defekt": "The file index is damaged.",
+      "verknuepfung": "Links are not followed.",
+      "zyklus": "A folder cannot be placed inside itself.",
+      "nur_geraet_geerbt": "This folder inherits “only this device” from a parent folder.",
+      "freigabe_unklar": "Sharing is unclear.",
+      "konflikt": "The file has an open conflict.",
+      "ordner_im_papierkorb": "The folder is in the trash.",
+      "nicht_gefunden": "Not found.",
+      "nicht_im_papierkorb": "Not in the trash.",
+      "schon_im_papierkorb": "Already in the trash.",
+      "quelle_nicht_lesbar": "The source cannot be read.",
+      "quelle_ungueltig": "The source is not a regular file.",
+      "pruefsumme": "The checksum does not match.",
+      "speicher": "Saving failed.",
+      "ungueltig": "Invalid input.",
+      "zu_tief": "Folders are nested too deeply.",
+      "zu_viele": "Too many entries.",
+      "keine_datei": "No file.",
+      "geraet": "This is a device, not a file; not imported.",
+      "datenstrom": "Alternate data streams are not imported.",
+      "nicht_neu_aufbaubar": "The index cannot be rebuilt.",
+      "loeschen_offen": "A permanent deletion has not finished yet. Please try again later.",
+      "datei_im_papierkorb": "The file is in the trash."
     }
   }
 }

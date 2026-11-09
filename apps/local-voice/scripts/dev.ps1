@@ -27,7 +27,10 @@
     0, wenn das Ziel wirklich erfolgreich war.
 
 .PARAMETER Target
-    test        cargo test --lib (Rust-Tests, kein Frontend noetig)
+    test        cargo test --lib (Rust-Tests, kein Frontend noetig), danach die
+                Tests der vendorten Crates mit Sicherheitsregeln
+                (vendor-wai-suite.py --test, Codex lva#414); mit WAI_SDK zusaetzlich
+                der Abgleich der Vendor-Ordner mit ihrem gepinnten Commit (--check)
     fmt         cargo fmt --check
     clippy      cargo clippy --all-targets -- -D warnings
                 (Achtung: der aus Handy uebernommene Bestand hat noch rund
@@ -125,10 +128,31 @@ if ($Target -ne 'fmt') {
     }
 }
 
+function Invoke-VendorTests {
+    # Pflicht: Tests der vendorten Crates in MIT_TESTS (Notizbuch-Zugang). Mit
+    # WAI_SDK (Pfad zum wai-sdk-Checkout) auch der reproduzierbare Abgleich.
+    $pyExe = 'python'
+    $pyArgs = @()
+    if (Get-Command 'py' -ErrorAction SilentlyContinue) {
+        $pyExe = 'py'
+        $pyArgs = @('-3')
+    }
+    $script = Join-Path $PSScriptRoot 'vendor-wai-suite.py'
+    Invoke-Step 'vendor tests (vendor-wai-suite.py --test)' { & $pyExe @pyArgs $script --test }
+    if ($env:WAI_SDK) {
+        Invoke-Step 'vendor check (vendor-wai-suite.py --check)' { & $pyExe @pyArgs $script --check }
+    } else {
+        Write-Host 'WAI_SDK nicht gesetzt: Vendor-Abgleich gegen den Commit uebersprungen.' -ForegroundColor Yellow
+    }
+}
+
 Push-Location $TauriDir
 try {
     switch ($Target) {
-        'test'   { Invoke-Step 'cargo test --lib' { cargo test --lib @Rest } }
+        'test'   {
+            Invoke-Step 'cargo test --lib' { cargo test --lib @Rest }
+            Invoke-VendorTests
+        }
         'fmt'    { Invoke-Step 'cargo fmt --check' { cargo fmt --check @Rest } }
         'clippy' { Invoke-Step 'cargo clippy' { cargo clippy --all-targets @Rest -- -D warnings } }
         'check'  {
@@ -136,6 +160,7 @@ try {
             # sauber, ein rotes 'check' fuer fremde Altlasten waere wertlos.
             Invoke-Step 'cargo fmt --check' { cargo fmt --check }
             Invoke-Step 'cargo test --lib'  { cargo test --lib }
+            Invoke-VendorTests
         }
         default {
             # build/bundle laufen ueber die Tauri-CLI aus dem App-Verzeichnis:

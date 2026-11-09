@@ -1,0 +1,161 @@
+{
+  "kopf": "73cca600",
+  "befunde": [
+    {
+      "bild": "hochladen-1440-dunkel.png",
+      "scrollBreit": 1440,
+      "fenster": 1440,
+      "unter44": []
+    },
+    {
+      "bild": "hochladen-1440-hell.png",
+      "scrollBreit": 1440,
+      "fenster": 1440,
+      "unter44": []
+    },
+    {
+      "bild": "hochladen-390-dunkel.png",
+      "scrollBreit": 390,
+      "fenster": 390,
+      "unter44": []
+    },
+    {
+      "bild": "hochladen-390-hell.png",
+      "scrollBreit": 390,
+      "fenster": 390,
+      "unter44": []
+    },
+    {
+      "bild": "leer-1440-dunkel.png",
+      "scrollBreit": 1440,
+      "fenster": 1440,
+      "unter44": []
+    },
+    {
+      "bild": "leer-1440-hell.png",
+      "scrollBreit": 1440,
+      "fenster": 1440,
+      "unter44": []
+    },
+    {
+      "bild": "leer-390-dunkel.png",
+      "scrollBreit": 390,
+      "fenster": 390,
+      "unter44": []
+    },
+    {
+      "bild": "leer-390-hell.png",
+      "scrollBreit": 390,
+      "fenster": 390,
+      "unter44": []
+    },
+    {
+      "bild": "liste-1440-dunkel.png",
+      "scrollBreit": 1440,
+      "fenster": 1440,
+      "unter44": []
+    },
+    {
+      "bild": "liste-1440-hell.png",
+      "scrollBreit": 1440,
+      "fenster": 1440,
+      "unter44": []
+    },
+    {
+      "bild": "liste-390-dunkel.png",
+      "scrollBreit": 390,
+      "fenster": 390,
+      "unter44": []
+    },
+    {
+      "bild": "liste-390-hell.png",
+      "scrollBreit": 390,
+      "fenster": 390,
+      "unter44": []
+    },
+    {
+      "bild": "ordner-1440-dunkel.png",
+      "scrollBreit": 1440,
+      "fenster": 1440,
+      "unter44": []
+    },
+    {
+      "bild": "ordner-1440-hell.png",
+      "scrollBreit": 1440,
+      "fenster": 1440,
+      "unter44": []
+    },
+    {
+      "bild": "ordner-390-dunkel.png",
+      "scrollBreit": 390,
+      "fenster": 390,
+      "unter44": []
+    },
+    {
+      "bild": "ordner-390-hell.png",
+      "scrollBreit": 390,
+      "fenster": 390,
+      "unter44": []
+    },
+    {
+      "bild": "ordnerwahl-390-dunkel.png",
+      "scrollBreit": 390,
+      "fenster": 390,
+      "unter44": []
+    },
+    {
+      "bild": "ordnerwahl-390-hell.png",
+      "scrollBreit": 390,
+      "fenster": 390,
+      "unter44": []
+    },
+    {
+      "bild": "papierkorb-1440-dunkel.png",
+      "scrollBreit": 1440,
+      "fenster": 1440,
+      "unter44": []
+    },
+    {
+      "bild": "papierkorb-1440-hell.png",
+      "scrollBreit": 1440,
+      "fenster": 1440,
+      "unter44": []
+    },
+    {
+      "bild": "papierkorb-390-dunkel.png",
+      "scrollBreit": 390,
+      "fenster": 390,
+      "unter44": []
+    },
+    {
+      "bild": "papierkorb-390-hell.png",
+      "scrollBreit": 390,
+      "fenster": 390,
+      "unter44": []
+    },
+    {
+      "bild": "suche-1440-dunkel.png",
+      "scrollBreit": 1440,
+      "fenster": 1440,
+      "unter44": []
+    },
+    {
+      "bild": "suche-1440-hell.png",
+      "scrollBreit": 1440,
+      "fenster": 1440,
+      "unter44": []
+    },
+    {
+      "bild": "suche-390-dunkel.png",
+      "scrollBreit": 390,
+      "fenster": 390,
+      "unter44": []
+    },
+    {
+      "bild": "suche-390-hell.png",
+      "scrollBreit": 390,
+      "fenster": 390,
+      "unter44": []
+    }
+  ]
+}

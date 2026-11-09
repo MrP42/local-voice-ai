@@ -1,0 +1,2 @@
+Fokusfalle Anmelde-Modal: 25 Tab/Umschalt+Tab-Schritte, Fokus blieb in allen im Dialog; Esc schließt nicht.
+Abmelden-Dialog: Fokus beim Öffnen im Dialog; nach Esc zurück auf „Abmelden“.

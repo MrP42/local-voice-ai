@@ -1,0 +1,1046 @@
+//! Nur lesender Zugang zur Ablage des WAI Notizbuchs für den Assistenten (lva#396, Stufe N0).
+//!
+//! Öffnet `notizbuch.db` (Notizbuch-Host: `<Datenordner>/de.wolffappliedai.notizbuch/notizbuch.db`)
+//! **nur lesend** (`SQLITE_OPEN_READ_ONLY`, `query_only`) und ohne Migration. Passt die Schema-Version
+//! nicht, liefert [`Zugang::oeffnen`] [`Fehler::Version`] statt am Schema zu raten. Geschrieben wird
+//! nie direkt, sondern über den Eingang ([`eingang`], Spec §4.1).
+//!
+//! Sichtbarkeit (gleiche Regel wie der Wissens-Endpunkt `notizbuch-store::wissen`): Eine Seite ist
+//! sichtbar, wenn sie, ihr Abschnitt, dessen Gruppe und Notizbuch existieren und nicht im Papierkorb
+//! liegen **und** der Abschnitt in der [`Freigabe`] steht. Nicht freigegeben und nicht vorhanden
+//! ergeben dieselbe Antwort (`None` bzw. kein Treffer).
+//!
+//! Inhalte gehen nie ins Log; Fehler tragen nur Codes.
+
+pub mod bloecke;
+pub mod eingang;
+
+use std::cmp::Reverse;
+use std::collections::{BTreeSet, BinaryHeap, HashMap};
+use std::path::Path;
+
+use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
+use serde::Serialize;
+use serde_json::Value;
+
+pub use bloecke::{Block, BlockArt};
+
+/// Schema-Versionen der Notizbuch-Ablage (`_wai_migrations`), die dieser Zugang lesen kann.
+pub const SCHEMA_VERSIONEN: &[i64] = &[2, 3];
+/// Höchstzahl Treffer und Zeichen je Seite (wie der Wissens-Endpunkt).
+pub const MAX_TREFFER: usize = 20;
+pub const MAX_TEXT: usize = 32_000;
+/// Längste Suchanfrage (Zeichen) und höchste Zahl Wörter.
+pub const MAX_ANFRAGE_ZEICHEN: usize = 200;
+pub const MAX_ANFRAGE_WOERTER: usize = 10;
+/// Länge des Auszugs in Treffern.
+const AUSZUG: usize = 240;
+/// Bis hierher (Zeichen) wird für den Auszug nach dem Suchwort gesucht.
+const AUSZUG_SUCHFENSTER: usize = 100_000;
+
+#[derive(Debug, thiserror::Error)]
+pub enum Fehler {
+    #[error("notizbuch.fehlt")]
+    Fehlt,
+    #[error("notizbuch.version")]
+    Version,
+    #[error("notizbuch.eingabe")]
+    Eingabe,
+    #[error("notizbuch.lesen")]
+    Lesen,
+}
+
+impl From<rusqlite::Error> for Fehler {
+    fn from(_: rusqlite::Error) -> Self {
+        Fehler::Lesen
+    }
+}
+
+pub type Ergebnis<T> = Result<T, Fehler>;
+
+/// Ids im Notizbuch: kurze Bezeichner ohne Sonderzeichen (wie `notizbuch-store::gueltige_id`).
+pub fn gueltige_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 64
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+/// Faltung wie `falte()` im Notizbuch (Frontend und Store): klein, ohne Akzente, ß → ss.
+/// Muss mit `notizbuch-store::falte` übereinstimmen, sonst findet die Suche im Index nichts.
+pub fn falte(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        let basis = match c {
+            'ß' | 'ẞ' => {
+                out.push_str("ss");
+                continue;
+            }
+            'æ' | 'Æ' => {
+                out.push_str("ae");
+                continue;
+            }
+            'œ' | 'Œ' => {
+                out.push_str("oe");
+                continue;
+            }
+            'à'..='å' | 'À'..='Å' | 'ā' | 'Ā' | 'ă' | 'Ă' | 'ą' | 'Ą' => 'a',
+            'ç' | 'Ç' | 'ć' | 'Ć' | 'č' | 'Č' => 'c',
+            'ď' | 'Ď' => 'd',
+            'è'..='ë' | 'È'..='Ë' | 'ē' | 'Ē' | 'ė' | 'Ė' | 'ę' | 'Ę' | 'ě' | 'Ě' => {
+                'e'
+            }
+            'ì'..='ï' | 'Ì'..='Ï' | 'ī' | 'Ī' | 'į' | 'Į' => 'i',
+            'ł' | 'Ł' | 'ľ' | 'Ľ' => 'l',
+            'ñ' | 'Ñ' | 'ń' | 'Ń' | 'ň' | 'Ň' => 'n',
+            'ò'..='ö' | 'Ò'..='Ö' | 'ø' | 'Ø' | 'ō' | 'Ō' | 'ő' | 'Ő' => 'o',
+            'ř' | 'Ř' => 'r',
+            'ś' | 'Ś' | 'š' | 'Š' | 'ş' | 'Ş' => 's',
+            'ť' | 'Ť' | 'ţ' | 'Ţ' => 't',
+            'ù'..='ü' | 'Ù'..='Ü' | 'ū' | 'Ū' | 'ů' | 'Ů' | 'ű' | 'Ű' => 'u',
+            'ý' | 'ÿ' | 'Ý' | 'Ÿ' => 'y',
+            'ź' | 'Ź' | 'ż' | 'Ż' | 'ž' | 'Ž' => 'z',
+            _ => {
+                out.extend(c.to_lowercase());
+                continue;
+            }
+        };
+        out.push(basis);
+    }
+    out
+}
+
+/// FTS5-Anfrage wie `notizbuch-store::fts_anfrage`: jedes Wort als Zeichenkette, alle per UND.
+/// `None`, wenn ein Wort kürzer als drei Zeichen ist (Trigramm-Index trägt dann nicht).
+pub fn fts_anfrage(anfrage: &str) -> Option<String> {
+    let gefaltet = falte(anfrage);
+    let woerter: Vec<&str> = gefaltet.split_whitespace().collect();
+    if woerter.is_empty() || woerter.iter().any(|w| w.chars().count() < 3) {
+        return None;
+    }
+    Some(
+        woerter
+            .iter()
+            .map(|w| format!("\"{}\"", w.replace('"', "\"\"")))
+            .collect::<Vec<_>>()
+            .join(" AND "),
+    )
+}
+
+/// Freigegebene Abschnitte (für Lesen). Leer = nichts sichtbar.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Freigabe {
+    abschnitte: BTreeSet<String>,
+    notizbuecher: BTreeSet<String>,
+}
+
+impl Freigabe {
+    /// Einzelne Abschnitte.
+    pub fn abschnitt(mut self, id: &str) -> Self {
+        if gueltige_id(id) {
+            self.abschnitte.insert(id.to_string());
+        }
+        self
+    }
+    /// Ganzes Notizbuch: alle heutigen und künftigen Abschnitte darin.
+    pub fn notizbuch(mut self, id: &str) -> Self {
+        if gueltige_id(id) {
+            self.notizbuecher.insert(id.to_string());
+        }
+        self
+    }
+    pub fn ist_leer(&self) -> bool {
+        self.abschnitte.is_empty() && self.notizbuecher.is_empty()
+    }
+    fn erlaubt(&self, a: &Abschnitt) -> bool {
+        self.abschnitte.contains(&a.id) || self.notizbuecher.contains(&a.notizbuch_id)
+    }
+}
+
+/// Knoten der Gliederung (Notizbuch, Gruppe, Abschnitt) für die Freigabe-Einstellung.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Notizbuch {
+    pub id: String,
+    pub name: String,
+    pub abschnitte: Vec<Abschnitt>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Abschnitt {
+    pub id: String,
+    pub name: String,
+    pub notizbuch_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gruppe: Option<String>,
+    /// Zahl aktiver Seiten.
+    pub seiten: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Seitenkopf {
+    pub id: String,
+    pub titel: String,
+    pub abschnitt_id: String,
+    /// „Notizbuch › Gruppe › Abschnitt“.
+    pub pfad: String,
+    pub erstellt: String,
+    pub geaendert: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Seite {
+    #[serde(flatten)]
+    pub kopf: Seitenkopf,
+    pub bloecke: Vec<Block>,
+    /// Klartext höchstens [`MAX_TEXT`] Zeichen.
+    pub text: String,
+    /// `text` wurde auf [`MAX_TEXT`] gekürzt (Werkzeugausgabe); `bloecke` sind dann noch vollständig.
+    pub gekuerzt: bool,
+    /// Die Blockliste erreichte [`bloecke::MAX_BLOECKE`]: die Seite ist nicht vollständig gelesen (Spec §5.4).
+    pub unvollstaendig: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Treffer {
+    #[serde(flatten)]
+    pub kopf: Seitenkopf,
+    pub auszug: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Suche {
+    /// `false`: Anfrage für den Index zu kurz (Wort unter drei Zeichen); dann keine Treffer.
+    pub genutzt: bool,
+    pub treffer: Vec<Treffer>,
+}
+
+/// Lesender Zugang.
+pub struct Zugang {
+    conn: Connection,
+}
+
+fn str_feld(v: &Value, f: &str) -> String {
+    bloecke::sauber(v.get(f).and_then(Value::as_str).unwrap_or_default())
+}
+
+/// ISO-Zeit `YYYY-MM-DDTHH:MM:SS[.f…]Z` (UTC, 1–9 Nachkommastellen) in die feste Form
+/// `YYYY-MM-DDTHH:MM:SS.nnnnnnnnnZ`, die sich als Text vergleichen lässt. Die Nachkommastellen werden
+/// auf neun aufgefüllt, nicht abgeschnitten: so liegt `…00.0005Z` nicht auf derselben Stelle wie
+/// `…00.000Z`, und die Fenstergrenzen gelten exakt. Kalenderdatum und Uhrzeit müssen gültig sein
+/// (Schaltjahre, keine Schaltsekunde, kein `24:00`), sonst `None`.
+fn iso_norm(s: &str) -> Option<String> {
+    let b = s.as_bytes();
+    let ziffer = |i: usize| b.get(i).is_some_and(u8::is_ascii_digit);
+    let form = b.len() >= 20
+        && [0, 1, 2, 3, 5, 6, 8, 9, 11, 12, 14, 15, 17, 18]
+            .iter()
+            .all(|&i| ziffer(i))
+        && b[4] == b'-'
+        && b[7] == b'-'
+        && b[10] == b'T'
+        && b[13] == b':'
+        && b[16] == b':'
+        && *b.last()? == b'Z';
+    if !form {
+        return None;
+    }
+    let zahl = |von: usize, bis: usize| s[von..bis].parse::<u32>().ok();
+    let (jahr, monat, tag) = (zahl(0, 4)?, zahl(5, 7)?, zahl(8, 10)?);
+    let (stunde, minute, sekunde) = (zahl(11, 13)?, zahl(14, 16)?, zahl(17, 19)?);
+    let schalt = jahr % 4 == 0 && (jahr % 100 != 0 || jahr % 400 == 0);
+    let tage = match monat {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if schalt => 29,
+        2 => 28,
+        _ => return None,
+    };
+    if tag == 0 || tag > tage || stunde > 23 || minute > 59 || sekunde > 59 {
+        return None;
+    }
+    let rest = &s[19..s.len() - 1];
+    let bruch = match rest.strip_prefix('.') {
+        None if rest.is_empty() => "",
+        Some(f) if !f.is_empty() && f.len() <= 9 && f.bytes().all(|c| c.is_ascii_digit()) => f,
+        _ => return None,
+    };
+    Some(format!("{}.{bruch:0<9}Z", &s[..19]))
+}
+
+/// Tabellen und Spalten, die dieser Zugang liest (Codex lva#414: nicht nur die Versionsnummer prüfen).
+const SCHEMA_SPALTEN: &[(&str, &[&str])] = &[
+    ("saetze", &["art", "id", "daten"]),
+    ("seiten_fts", &["id", "titel", "text"]),
+    ("_wai_migrations", &["version"]),
+];
+
+/// Prüft, dass jede gelesene Tabelle mit ihren Spalten existiert; `saetze` muss je `(art, id)`
+/// eindeutig sein und `seiten_fts` eine FTS5-Tabelle. Sonst [`Fehler::Version`].
+fn schema_pruefen(conn: &Connection) -> Ergebnis<()> {
+    for (tabelle, spalten) in SCHEMA_SPALTEN {
+        let mut st = conn
+            .prepare(&format!("PRAGMA table_info(\"{tabelle}\")"))
+            .map_err(|_| Fehler::Version)?;
+        let da: BTreeSet<String> = st
+            .query_map([], |r| r.get::<_, String>(1))
+            .map_err(|_| Fehler::Version)?
+            .collect::<Result<_, _>>()
+            .map_err(|_| Fehler::Version)?;
+        if !spalten.iter().all(|s| da.contains(*s)) {
+            return Err(Fehler::Version);
+        }
+    }
+    fts_pruefen(conn)?;
+    // Eindeutigkeit (art, id): Primärschlüssel oder eindeutiger Index genau über diese Spalten.
+    let mut st = conn
+        .prepare("SELECT name, \"unique\" AND NOT partial FROM pragma_index_list('saetze')")
+        .map_err(|_| Fehler::Version)?;
+    let indizes: Vec<(String, bool)> = st
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+        .map_err(|_| Fehler::Version)?
+        .collect::<Result<_, _>>()
+        .map_err(|_| Fehler::Version)?;
+    let mut eindeutig = false;
+    for (name, _) in indizes.into_iter().filter(|(_, u)| *u) {
+        // Schlüsselspalten des Index; eine andere Sortierfolge als BINARY (etwa NOCASE) macht
+        // `(art, id)` nicht eindeutig im Sinne des Vergleichs `s.id = seiten_fts.id`.
+        let mut st = conn
+            .prepare(
+                "SELECT CASE WHEN coll = 'BINARY' THEN name END \
+                 FROM pragma_index_xinfo(?1) WHERE key",
+            )
+            .map_err(|_| Fehler::Version)?;
+        let spalten: BTreeSet<Option<String>> = st
+            .query_map(params![name], |r| r.get::<_, Option<String>>(0))
+            .map_err(|_| Fehler::Version)?
+            .collect::<Result<_, _>>()
+            .map_err(|_| Fehler::Version)?;
+        if spalten == BTreeSet::from([Some("art".to_string()), Some("id".to_string())]) {
+            eindeutig = true;
+        }
+    }
+    if !eindeutig {
+        return Err(Fehler::Version);
+    }
+    Ok(())
+}
+
+/// Vertrag des Suchindex wie `notizbuch-store` (Migration 1), ohne Leerraum und klein geschrieben.
+const FTS_SQL: &str =
+    "createvirtualtableseiten_ftsusingfts5(idunindexed,titel,text,tokenize='trigram')";
+/// Schattentabellen einer FTS5-Tabelle mit eigenem Inhalt (kein `content=`, nicht inhaltslos).
+const FTS_SCHATTEN: &[&str] = &["config", "content", "data", "docsize", "idx"];
+
+/// `seiten_fts` ist eine echte FTS5-Tabelle mit genau den Spalten `id UNINDEXED, titel, text`,
+/// Trigramm-Tokenizer und eigenem Inhalt (Codex lva#414: kein Textvergleich auf `using fts5`, den
+/// eine gewöhnliche Tabelle per Kommentar vortäuschen könnte). Kommentare im SQL gelten als fremd.
+fn fts_pruefen(conn: &Connection) -> Ergebnis<()> {
+    let sql: Option<String> = conn
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'seiten_fts'",
+            [],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|_| Fehler::Version)?;
+    let Some(sql) = sql else {
+        return Err(Fehler::Version);
+    };
+    let kompakt: String = sql
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .flat_map(char::to_lowercase)
+        .collect();
+    if sql.contains("--") || sql.contains("/*") || kompakt != FTS_SQL {
+        return Err(Fehler::Version);
+    }
+    for teil in FTS_SCHATTEN {
+        let da: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                params![format!("seiten_fts_{teil}")],
+                |r| r.get(0),
+            )
+            .map_err(|_| Fehler::Version)?;
+        if da != 1 {
+            return Err(Fehler::Version);
+        }
+    }
+    // Probe: MATCH gelingt nur auf einer FTS-Tabelle.
+    conn.query_row(
+        "SELECT COUNT(*) FROM (SELECT 1 FROM seiten_fts WHERE seiten_fts MATCH '\"abc\"' LIMIT 1)",
+        [],
+        |r| r.get::<_, i64>(0),
+    )
+    .map_err(|_| Fehler::Version)?;
+    Ok(())
+}
+
+/// Die Kennung der Datenbankzeile ist gültig und das JSON nennt keine andere.
+fn id_passt(id: &str, s: &Value) -> bool {
+    gueltige_id(id)
+        && match s.get("id") {
+            None | Some(Value::Null) => true,
+            Some(Value::String(j)) => j == id,
+            Some(_) => false,
+        }
+}
+
+fn lebt(v: &Value) -> bool {
+    v.get("geloescht").is_none_or(Value::is_null)
+}
+
+/// Aktive Gliederung, einmal je Aufruf aus der Ablage gelesen.
+struct Gliederung {
+    notizbuecher: HashMap<String, Value>,
+    gruppen: HashMap<String, Value>,
+    abschnitte: HashMap<String, Value>,
+}
+
+impl Gliederung {
+    /// Abschnitt, wenn er samt Gruppe und Notizbuch aktiv ist.
+    fn abschnitt(&self, id: &str) -> Option<Abschnitt> {
+        let a = self.abschnitte.get(id)?;
+        let nb = str_feld(a, "notizbuchId");
+        self.notizbuecher.get(&nb)?;
+        let gruppe = match a.get("gruppeId").and_then(Value::as_str) {
+            Some(g) => Some(str_feld(self.gruppen.get(g)?, "name")),
+            None => None,
+        };
+        Some(Abschnitt {
+            id: id.to_string(),
+            name: str_feld(a, "name"),
+            notizbuch_id: nb,
+            gruppe,
+            seiten: 0,
+        })
+    }
+
+    fn pfad(&self, a: &Abschnitt) -> String {
+        let nb = self
+            .notizbuecher
+            .get(&a.notizbuch_id)
+            .map(|v| str_feld(v, "name"))
+            .unwrap_or_default();
+        match &a.gruppe {
+            Some(g) => format!("{nb} › {g} › {}", a.name),
+            None => format!("{nb} › {}", a.name),
+        }
+    }
+}
+
+fn kuerzen(s: &str, max: usize) -> (String, bool) {
+    if s.chars().count() <= max {
+        (s.to_string(), false)
+    } else {
+        (s.chars().take(max).collect(), true)
+    }
+}
+
+impl Zugang {
+    /// Öffnet die Ablage nur lesend und prüft die Schema-Version.
+    pub fn oeffnen(pfad: impl AsRef<Path>) -> Ergebnis<Self> {
+        let pfad = pfad.as_ref();
+        if !pfad.is_file() {
+            return Err(Fehler::Fehlt);
+        }
+        let conn = Connection::open_with_flags(
+            pfad,
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        conn.pragma_update(None, "query_only", true)?;
+        conn.busy_timeout(std::time::Duration::from_secs(2))?;
+        let v: Option<i64> = conn
+            .query_row("SELECT MAX(version) FROM _wai_migrations", [], |r| r.get(0))
+            .map_err(|_| Fehler::Version)?;
+        if !v.is_some_and(|v| SCHEMA_VERSIONEN.contains(&v)) {
+            return Err(Fehler::Version);
+        }
+        schema_pruefen(&conn)?;
+        Ok(Self { conn })
+    }
+
+    fn saetze(&self, art: &str) -> Ergebnis<HashMap<String, Value>> {
+        let mut st = self
+            .conn
+            .prepare_cached("SELECT id, daten FROM saetze WHERE art = ?1")?;
+        let mut out = HashMap::new();
+        let mut rows = st.query(params![art])?;
+        while let Some(r) = rows.next()? {
+            let id: String = r.get(0)?;
+            let daten: String = r.get(1)?;
+            if let Ok(v) = serde_json::from_str::<Value>(&daten)
+                && lebt(&v)
+            {
+                out.insert(id, v);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Seitenköpfe ohne Inhalt (nur die Felder für Gliederung, Stand und Zeitraum), lebende Seiten.
+    /// Je Seite `(Kennung der Datenbankzeile, Kopf-JSON)`.
+    fn seitenkoepfe(&self) -> Ergebnis<Vec<(String, Value)>> {
+        let mut st = self.conn.prepare_cached(
+            "SELECT id, json_extract(daten, '$.abschnittId'), json_extract(daten, '$.titel'), \
+             json_extract(daten, '$.erstellt'), json_extract(daten, '$.geaendert'), \
+             json_extract(daten, '$.version'), json_extract(daten, '$.id') FROM saetze \
+             WHERE art = 'seiten' AND json_valid(daten) AND json_extract(daten, '$.geloescht') IS NULL",
+        )?;
+        let zeilen = st.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, serde_json::json!({
+                "abschnittId": r.get::<_, Option<String>>(1).unwrap_or(None),
+                "titel": r.get::<_, Option<String>>(2).unwrap_or(None),
+                "erstellt": r.get::<_, Option<String>>(3).unwrap_or(None),
+                "geaendert": r.get::<_, Option<String>>(4).unwrap_or(None),
+                "version": r.get::<_, Option<i64>>(5).unwrap_or(None),
+                "id": r.get::<_, Option<rusqlite::types::Value>>(6).unwrap_or(None).map(|v| match v {
+                    rusqlite::types::Value::Text(t) => Value::String(t),
+                    _ => Value::Bool(false),
+                }),
+            })))
+        })?;
+        Ok(zeilen.collect::<Result<_, _>>()?)
+    }
+
+    /// Führt `f` in einer Lesetransaktion aus: alle Abfragen eines Aufrufs sehen denselben Stand.
+    fn lesend<T>(&self, f: impl FnOnce() -> Ergebnis<T>) -> Ergebnis<T> {
+        self.conn.execute_batch("BEGIN DEFERRED")?;
+        let r = f();
+        let ende = self
+            .conn
+            .execute_batch(if r.is_ok() { "COMMIT" } else { "ROLLBACK" });
+        let r = r?;
+        ende?;
+        Ok(r)
+    }
+
+    fn gliederung(&self) -> Ergebnis<Gliederung> {
+        Ok(Gliederung {
+            notizbuecher: self.saetze("notizbuecher")?,
+            gruppen: self.saetze("gruppen")?,
+            abschnitte: self.saetze("abschnitte")?,
+        })
+    }
+
+    fn seite_roh(&self, id: &str) -> Ergebnis<Option<Value>> {
+        let d: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT daten FROM saetze WHERE art = 'seiten' AND id = ?1",
+                params![id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(d.and_then(|d| serde_json::from_str::<Value>(&d).ok())
+            .filter(lebt))
+    }
+
+    /// Kopf einer sichtbaren Seite. `id` ist die Kennung aus der Datenbankzeile (Primärschlüssel);
+    /// ein abweichendes `id` im JSON gilt als beschädigter Satz und die Seite als nicht sichtbar
+    /// (Codex lva#414: die Quelle darf nie aus dem JSON übernommen werden).
+    fn kopf(&self, g: &Gliederung, f: &Freigabe, id: &str, s: &Value) -> Option<Seitenkopf> {
+        if !id_passt(id, s) {
+            return None;
+        }
+        let a = g.abschnitt(s.get("abschnittId")?.as_str()?)?;
+        if !f.erlaubt(&a) {
+            return None;
+        }
+        Some(Seitenkopf {
+            id: id.to_string(),
+            titel: str_feld(s, "titel"),
+            abschnitt_id: a.id.clone(),
+            pfad: g.pfad(&a),
+            erstellt: str_feld(s, "erstellt"),
+            geaendert: str_feld(s, "geaendert"),
+        })
+    }
+
+    /// Freigabestand (Spec §3.2, Codex M2): Hash über die Freigabe und den Gliederungszustand aller
+    /// sichtbaren Abschnitte und Seiten (Notizbuch, Gruppe, Abschnitt, Papierkorb, Stand). Papierkorb und
+    /// Verschieben ändern ihn auch ohne neuen Seitenzeitstempel; ein anderer Stand verwirft Caches.
+    pub fn stand(&self, f: &Freigabe) -> Ergebnis<String> {
+        self.lesend(|| self.stand_innen(f))
+    }
+
+    fn stand_innen(&self, f: &Freigabe) -> Ergebnis<String> {
+        use sha2::{Digest, Sha256};
+        let g = self.gliederung()?;
+        let mut zeilen: Vec<String> = Vec::new();
+        for a in &f.abschnitte {
+            zeilen.push(format!("fa\u{1f}{a}"));
+        }
+        for n in &f.notizbuecher {
+            zeilen.push(format!("fn\u{1f}{n}"));
+        }
+        for id in g.abschnitte.keys() {
+            if let Some(a) = g.abschnitt(id).filter(|a| f.erlaubt(a)) {
+                zeilen.push(format!(
+                    "a\u{1f}{}\u{1f}{}\u{1f}{:?}\u{1f}{}",
+                    a.id,
+                    a.notizbuch_id,
+                    a.gruppe,
+                    g.pfad(&a)
+                ));
+            }
+        }
+        for (id, s) in &self.seitenkoepfe()? {
+            if let Some(k) = self.kopf(&g, f, id, s) {
+                let v = s.get("version").and_then(Value::as_i64).unwrap_or(0);
+                zeilen.push(format!(
+                    "s\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{v}\u{1f}{}",
+                    k.id, k.abschnitt_id, k.geaendert, k.titel
+                ));
+            }
+        }
+        zeilen.sort();
+        let mut h = Sha256::new();
+        for z in &zeilen {
+            h.update(z.as_bytes());
+            h.update(b"\n");
+        }
+        Ok(h.finalize().iter().map(|b| format!("{b:02x}")).collect())
+    }
+
+    /// Gliederung der **freigegebenen** Abschnitte mit Seitenzahl.
+    pub fn baum(&self, f: &Freigabe) -> Ergebnis<Vec<Notizbuch>> {
+        self.lesend(|| self.baum_mit(|a| f.erlaubt(a)))
+    }
+
+    /// Wie [`Zugang::baum`], dazu der Freigabestand aus **derselben** Lesetransaktion.
+    pub fn baum_mit_stand(&self, f: &Freigabe) -> Ergebnis<MitStand<Vec<Notizbuch>>> {
+        self.mit_stand(f, || self.baum_mit(|a| f.erlaubt(a)))
+    }
+
+    /// Ganze aktive Gliederung, nur Namen und Zählung, für die Freigabe-Einstellung (kein Seiteninhalt).
+    pub fn gliederung_fuer_einstellung(&self) -> Ergebnis<Vec<Notizbuch>> {
+        self.lesend(|| self.baum_mit(|_| true))
+    }
+
+    fn baum_mit(&self, sichtbar: impl Fn(&Abschnitt) -> bool) -> Ergebnis<Vec<Notizbuch>> {
+        let g = self.gliederung()?;
+        let mut zahl: HashMap<String, usize> = HashMap::new();
+        for (_, s) in self
+            .seitenkoepfe()?
+            .iter()
+            .filter(|(id, s)| id_passt(id, s))
+        {
+            *zahl.entry(str_feld(s, "abschnittId")).or_default() += 1;
+        }
+        let mut nbs: Vec<Notizbuch> = g
+            .notizbuecher
+            .iter()
+            .map(|(id, v)| Notizbuch {
+                id: id.clone(),
+                name: str_feld(v, "name"),
+                abschnitte: vec![],
+            })
+            .collect();
+        let mut abschnitte: Vec<Abschnitt> = g
+            .abschnitte
+            .keys()
+            .filter_map(|id| g.abschnitt(id))
+            .filter(|a| sichtbar(a))
+            .collect();
+        abschnitte.sort_by(|a, b| a.name.cmp(&b.name).then(a.id.cmp(&b.id)));
+        for mut a in abschnitte {
+            a.seiten = zahl.get(&a.id).copied().unwrap_or(0);
+            if let Some(nb) = nbs.iter_mut().find(|n| n.id == a.notizbuch_id) {
+                nb.abschnitte.push(a);
+            }
+        }
+        nbs.retain(|n| !n.abschnitte.is_empty());
+        nbs.sort_by(|a, b| a.name.cmp(&b.name).then(a.id.cmp(&b.id)));
+        Ok(nbs)
+    }
+
+    /// Führt `f` und die Berechnung des Freigabestands in **einer** Lesetransaktion aus (Codex lva#414
+    /// M2): Ergebnis und Stand stammen aus demselben Schnappschuss; ein gleichzeitiger Widerruf,
+    /// Papierkorb oder ein Verschieben trifft entweder beide oder keines.
+    fn mit_stand<T>(
+        &self,
+        f: &Freigabe,
+        op: impl FnOnce() -> Ergebnis<T>,
+    ) -> Ergebnis<MitStand<T>> {
+        self.lesend(|| {
+            let stand = self.stand_innen(f)?;
+            #[cfg(test)]
+            tests::zwischenschritt();
+            let wert = op()?;
+            Ok(MitStand { wert, stand })
+        })
+    }
+
+    /// Eine Seite mit Blöcken; `None`, wenn nicht vorhanden, im Papierkorb oder nicht freigegeben.
+    pub fn seite(&self, id: &str, f: &Freigabe) -> Ergebnis<Option<Seite>> {
+        if !gueltige_id(id) {
+            return Err(Fehler::Eingabe);
+        }
+        self.lesend(|| self.seite_innen(id, f))
+    }
+
+    /// Wie [`Zugang::seite`], dazu der Freigabestand aus derselben Lesetransaktion.
+    pub fn seite_mit_stand(&self, id: &str, f: &Freigabe) -> Ergebnis<MitStand<Option<Seite>>> {
+        if !gueltige_id(id) {
+            return Err(Fehler::Eingabe);
+        }
+        self.mit_stand(f, || self.seite_innen(id, f))
+    }
+
+    /// Welche der Seiten `ids` jetzt sichtbar sind, samt Stand aus derselben Lesetransaktion. Für die
+    /// Nachprüfung schon gelieferter Ergebnisse (Widerruf, Papierkorb, Verschieben).
+    pub fn sichtbare_seiten(
+        &self,
+        ids: &[String],
+        f: &Freigabe,
+    ) -> Ergebnis<MitStand<BTreeSet<String>>> {
+        self.mit_stand(f, || {
+            let g = self.gliederung()?;
+            let mut aus = BTreeSet::new();
+            for id in ids.iter().filter(|id| gueltige_id(id)) {
+                if let Some(roh) = self.seite_roh(id)?
+                    && self.kopf(&g, f, id, &roh).is_some()
+                {
+                    aus.insert(id.clone());
+                }
+            }
+            Ok(aus)
+        })
+    }
+
+    fn seite_innen(&self, id: &str, f: &Freigabe) -> Ergebnis<Option<Seite>> {
+        let Some(roh) = self.seite_roh(id)? else {
+            return Ok(None);
+        };
+        let g = self.gliederung()?;
+        let Some(kopf) = self.kopf(&g, f, id, &roh) else {
+            return Ok(None);
+        };
+        let bloecke = roh.get("inhalt").map(bloecke::bloecke).unwrap_or_default();
+        let unvollstaendig = bloecke.len() >= bloecke::MAX_BLOECKE;
+        let voll = bloecke::klartext(&bloecke, MAX_TEXT + 1);
+        let (text, gekuerzt) = kuerzen(&voll, MAX_TEXT);
+        Ok(Some(Seite {
+            kopf,
+            bloecke,
+            text,
+            gekuerzt,
+            unvollstaendig,
+        }))
+    }
+
+    /// Volltextsuche in freigegebenen Abschnitten. Rangfolge nur aus dem sichtbaren Bestand (gewichtetes Substring-BM25, siehe `suchen_innen`).
+    pub fn suchen(&self, anfrage: &str, grenze: usize, f: &Freigabe) -> Ergebnis<Suche> {
+        let fts = suche_pruefen(anfrage)?;
+        self.lesend(|| self.suche_in_transaktion(anfrage, fts.as_deref(), grenze, f))
+    }
+
+    /// Wie [`Zugang::suchen`], dazu der Freigabestand aus derselben Lesetransaktion.
+    pub fn suchen_mit_stand(
+        &self,
+        anfrage: &str,
+        grenze: usize,
+        f: &Freigabe,
+    ) -> Ergebnis<MitStand<Suche>> {
+        let fts = suche_pruefen(anfrage)?;
+        self.mit_stand(f, || {
+            self.suche_in_transaktion(anfrage, fts.as_deref(), grenze, f)
+        })
+    }
+
+    fn suche_in_transaktion(
+        &self,
+        anfrage: &str,
+        fts: Option<&str>,
+        grenze: usize,
+        f: &Freigabe,
+    ) -> Ergebnis<Suche> {
+        let Some(fts) = fts else {
+            return Ok(Suche {
+                genutzt: false,
+                treffer: vec![],
+            });
+        };
+        if f.ist_leer() {
+            return Ok(Suche {
+                genutzt: true,
+                treffer: vec![],
+            });
+        }
+        self.suchen_innen(anfrage, fts, grenze.clamp(1, MAX_TREFFER), f)
+    }
+
+    /// Treffer und Rangfolge hängen **nur** von sichtbaren Seiten ab (Codex lva#414 M3). FTS5 dient
+    /// allein als Filter (passt die Seite?); `bm25()` nutzt die Statistik des ganzen Index und würde
+    /// verborgene Seiten in die Rangfolge einfließen lassen. Stattdessen gewichtetes Substring-BM25
+    /// ([`substring_bm25`]) über den sichtbaren Bestand: Seitenzahl, mittlere Länge und Dokumenthäufigkeit je Wort werden nur über sichtbare
+    /// Seiten gezählt, Titeltreffer zählen [`GEWICHT_TITEL`]-fach. Gleichstand: Kennung aufsteigend.
+    fn suchen_innen(
+        &self,
+        anfrage: &str,
+        fts: &str,
+        grenze: usize,
+        f: &Freigabe,
+    ) -> Ergebnis<Suche> {
+        let g = self.gliederung()?;
+        let erlaubt: Vec<&String> = g
+            .abschnitte
+            .keys()
+            .filter(|id| g.abschnitt(id).is_some_and(|a| f.erlaubt(&a)))
+            .collect();
+        let erlaubt = serde_json::to_string(&erlaubt).unwrap_or_else(|_| "[]".into());
+        let woerter: Vec<String> = falte(anfrage)
+            .split_whitespace()
+            .map(String::from)
+            .collect();
+
+        let (n, mittel): (i64, f64) = self.conn.query_row(
+            &format!(
+                "SELECT COUNT(*), COALESCE(AVG(length(seiten_fts.titel) + length(seiten_fts.text)), 0.0) \
+                 FROM seiten_fts {SICHTBAR}"
+            ),
+            params![erlaubt],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        let mut idf = Vec::with_capacity(woerter.len());
+        for w in &woerter {
+            let einzeln = fts_anfrage(w).ok_or(Fehler::Eingabe)?;
+            let df: i64 = self.conn.query_row(
+                &format!("SELECT COUNT(*) FROM seiten_fts {SICHTBAR} AND seiten_fts MATCH ?2"),
+                params![erlaubt, einzeln],
+                |r| r.get(0),
+            )?;
+            let (n, df) = (n as f64, df as f64);
+            idf.push((1.0 + (n - df + 0.5) / (df + 0.5)).ln());
+        }
+
+        // Alle sichtbaren Kandidaten werden bewertet (kein LIMIT vor dem Ranking); behalten werden
+        // nur die besten `grenze` in einem begrenzten Heap (Codex lva#414).
+        let mut st = self.conn.prepare_cached(&format!(
+            "SELECT seiten_fts.id, seiten_fts.titel, seiten_fts.text FROM seiten_fts {SICHTBAR} \
+             AND seiten_fts MATCH ?2"
+        ))?;
+        let mut zeilen = st.query(params![erlaubt, fts])?;
+        let mut beste: BinaryHeap<Reverse<Kandidat>> = BinaryHeap::with_capacity(grenze + 1);
+        while let Some(r) = zeilen.next()? {
+            let (id, titel, text): (String, String, String) = (r.get(0)?, r.get(1)?, r.get(2)?);
+            let wert = substring_bm25(&woerter, &idf, &titel, &text, mittel);
+            beste.push(Reverse(Kandidat { wert, id }));
+            if beste.len() > grenze {
+                beste.pop();
+            }
+        }
+        let kandidaten: Vec<Kandidat> = beste
+            .into_sorted_vec()
+            .into_iter()
+            .map(|Reverse(k)| k)
+            .collect();
+
+        let mut treffer = Vec::new();
+        for Kandidat { id, .. } in kandidaten {
+            let Some(roh) = self.seite_roh(&id)? else {
+                continue;
+            };
+            let Some(kopf) = self.kopf(&g, f, &id, &roh) else {
+                continue;
+            };
+            let text = roh.get("text").and_then(Value::as_str).unwrap_or_default();
+            treffer.push(Treffer {
+                kopf,
+                auszug: auszug(text, &woerter),
+            });
+        }
+        Ok(Suche {
+            genutzt: true,
+            treffer,
+        })
+    }
+
+    /// Seiten, die im Zeitraum `[von, bis)` angelegt oder geändert wurden (ISO-Zeiten, UTC `Z`),
+    /// zuletzt geänderte zuerst (normalisierte Zeitwerte), höchstens `grenze`.
+    pub fn zeitraum(
+        &self,
+        von: &str,
+        bis: &str,
+        grenze: usize,
+        f: &Freigabe,
+    ) -> Ergebnis<Vec<Seitenkopf>> {
+        let (von, bis) = zeitraum_pruefen(von, bis)?;
+        self.lesend(|| self.zeitraum_innen(&von, &bis, grenze, f))
+    }
+
+    /// Wie [`Zugang::zeitraum`], dazu der Freigabestand aus derselben Lesetransaktion.
+    pub fn zeitraum_mit_stand(
+        &self,
+        von: &str,
+        bis: &str,
+        grenze: usize,
+        f: &Freigabe,
+    ) -> Ergebnis<MitStand<Vec<Seitenkopf>>> {
+        let (von, bis) = zeitraum_pruefen(von, bis)?;
+        self.mit_stand(f, || self.zeitraum_innen(&von, &bis, grenze, f))
+    }
+
+    fn zeitraum_innen(
+        &self,
+        von: &str,
+        bis: &str,
+        grenze: usize,
+        f: &Freigabe,
+    ) -> Ergebnis<Vec<Seitenkopf>> {
+        let g = self.gliederung()?;
+        let drin = |t: &Option<String>| t.as_deref().is_some_and(|t| t >= von && t < bis);
+        let mut out: Vec<(String, Seitenkopf)> = self
+            .seitenkoepfe()?
+            .iter()
+            .filter_map(|(id, s)| self.kopf(&g, f, id, s))
+            .filter_map(|k| {
+                let e = iso_norm(&k.erstellt);
+                let a = iso_norm(&k.geaendert);
+                if !(drin(&e) || drin(&a)) {
+                    return None;
+                }
+                let schluessel = a.or(e).unwrap_or_default();
+                Some((schluessel, k))
+            })
+            .collect();
+        out.sort_by(|(sa, a), (sb, b)| sb.cmp(sa).then(a.id.cmp(&b.id)));
+        out.truncate(grenze.clamp(1, 200));
+        Ok(out.into_iter().map(|(_, k)| k).collect())
+    }
+}
+
+/// Filter auf sichtbare Seiten in SQL (`?1` = JSON-Liste der freigegebenen, aktiven Abschnitte).
+/// Deckt dieselben Bedingungen ab wie [`Zugang::kopf`] samt [`id_passt`] und [`lebt`]: gültige
+/// DB-Kennung (auch ohne NUL, an dem GLOB und C-Zeichenketten enden), JSON-`id` fehlt, ist `null` oder gleich der DB-Kennung, nicht im Papierkorb,
+/// Abschnitt als Text und freigegeben. So zählen Aggregate und Kandidaten nur, was `kopf` auch
+/// zeigt (Codex lva#414: Identitätsprüfung vor allen Aggregaten).
+const SICHTBAR: &str = "JOIN saetze s ON s.art = 'seiten' AND s.id = seiten_fts.id \
+     WHERE typeof(s.id) = 'text' AND length(s.id) BETWEEN 1 AND 64 \
+     AND s.id NOT GLOB '*[^-A-Za-z0-9_]*' AND instr(s.id, char(0)) = 0 \
+     AND json_valid(s.daten) AND json_type(s.daten) = 'object' \
+     AND (json_type(s.daten, '$.id') IS NULL OR json_type(s.daten, '$.id') = 'null' \
+          OR (json_type(s.daten, '$.id') = 'text' AND json_extract(s.daten, '$.id') = s.id)) \
+     AND (json_type(s.daten, '$.geloescht') IS NULL OR json_type(s.daten, '$.geloescht') = 'null') \
+     AND json_type(s.daten, '$.abschnittId') = 'text' \
+     AND json_extract(s.daten, '$.abschnittId') IN (SELECT value FROM json_each(?1))";
+
+/// Ein bewerteter Kandidat; größer = besser (höherer Wert, bei Gleichstand kleinere Kennung).
+#[derive(Debug, PartialEq)]
+struct Kandidat {
+    wert: f64,
+    id: String,
+}
+
+impl Eq for Kandidat {}
+
+impl Ord for Kandidat {
+    fn cmp(&self, o: &Self) -> std::cmp::Ordering {
+        self.wert
+            .total_cmp(&o.wert)
+            .then_with(|| o.id.cmp(&self.id))
+    }
+}
+
+impl PartialOrd for Kandidat {
+    fn partial_cmp(&self, o: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(o))
+    }
+}
+
+/// Gewicht eines Titeltreffers gegenüber dem Text (wie zuvor `bm25(…, 10.0, 1.0)`).
+const GEWICHT_TITEL: f64 = 10.0;
+const BM25_K1: f64 = 1.2;
+const BM25_B: f64 = 0.75;
+
+/// Gewichtetes Substring-BM25 einer Seite (kein BM25F): Häufigkeit je Wort = nicht überlappende
+/// Vorkommen als Teilzeichenkette (`str::matches`) im gefalteten Titel mal [`GEWICHT_TITEL`] plus im
+/// Text; Länge = Zeichen von Titel und Text; IDF und mittlere Länge aus dem sichtbaren Bestand.
+fn substring_bm25(woerter: &[String], idf: &[f64], titel: &str, text: &str, mittel: f64) -> f64 {
+    let laenge = (titel.chars().count() + text.chars().count()) as f64;
+    let norm = if mittel > 0.0 {
+        1.0 - BM25_B + BM25_B * laenge / mittel
+    } else {
+        1.0
+    };
+    woerter
+        .iter()
+        .zip(idf)
+        .map(|(w, idf)| {
+            let tf = GEWICHT_TITEL * titel.matches(w.as_str()).count() as f64
+                + text.matches(w.as_str()).count() as f64;
+            idf * tf * (BM25_K1 + 1.0) / (tf + BM25_K1 * norm)
+        })
+        .sum()
+}
+
+/// Prüft eine Suchanfrage; `Ok(None)`, wenn sie für den Index zu kurz ist.
+fn suche_pruefen(anfrage: &str) -> Ergebnis<Option<String>> {
+    if anfrage.chars().count() > MAX_ANFRAGE_ZEICHEN
+        || anfrage.split_whitespace().count() > MAX_ANFRAGE_WOERTER
+    {
+        return Err(Fehler::Eingabe);
+    }
+    Ok(fts_anfrage(anfrage))
+}
+
+/// Normalisiert und prüft `[von, bis)`.
+fn zeitraum_pruefen(von: &str, bis: &str) -> Ergebnis<(String, String)> {
+    let (Some(von), Some(bis)) = (iso_norm(von), iso_norm(bis)) else {
+        return Err(Fehler::Eingabe);
+    };
+    if von >= bis {
+        return Err(Fehler::Eingabe);
+    }
+    Ok((von, bis))
+}
+
+/// Ein Leseergebnis samt Freigabestand ([`Zugang::stand`]) aus derselben Lesetransaktion.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MitStand<T> {
+    pub wert: T,
+    pub stand: String,
+}
+
+/// Auszug um das erste Suchwort (gefaltet verglichen), höchstens [`AUSZUG`] Zeichen.
+fn auszug(text: &str, woerter: &[String]) -> String {
+    // Nur der Anfang wird nach dem Wort durchsucht; das begrenzt die Kosten bei sehr langen Seiten.
+    let zeichen: Vec<char> = text.chars().take(AUSZUG_SUCHFENSTER).collect();
+    let gefaltet: Vec<String> = zeichen.iter().map(|c| falte(&c.to_string())).collect();
+    let mut start = 0;
+    if let Some(w) = woerter.first() {
+        let mut acc = String::new();
+        let mut index = Vec::new();
+        for (i, g) in gefaltet.iter().enumerate() {
+            for _ in g.chars() {
+                index.push(i);
+            }
+            acc.push_str(g);
+        }
+        if let Some(pos) = acc.find(w.as_str()) {
+            let zeichen_pos = acc[..pos].chars().count();
+            start = index
+                .get(zeichen_pos)
+                .copied()
+                .unwrap_or(0)
+                .saturating_sub(AUSZUG / 3);
+        }
+    }
+    let ende = (start + AUSZUG).min(zeichen.len());
+    let mut s: String = zeichen[start..ende]
+        .iter()
+        .collect::<String>()
+        .replace('\n', " ");
+    if start > 0 {
+        s.insert(0, '…');
+    }
+    if ende < zeichen.len() || text.chars().nth(ende).is_some() {
+        s.push('…');
+    }
+    s
+}
+
+#[cfg(test)]
+mod tests;

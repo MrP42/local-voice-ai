@@ -255,13 +255,6 @@ struct LibraryShelf: View {
                 }
 
                 Text("ALLE BÜCHER · \(shown.count)").font(.caption.weight(.semibold)).tracking(0.6).foregroundStyle(VoicePalette.secondaryText)
-                if library.anyAudioDownloaded {
-                    HStack(alignment: .top, spacing: 4) {
-                        DownloadedMark()
-                        Text("Hörbuch heruntergeladen, offline verfügbar").font(.caption).foregroundStyle(VoicePalette.secondaryText)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }.accessibilityHidden(true)
-                }
                 if library.books.isEmpty {
                     ContentUnavailableView {
                         Label("Noch keine Bücher", systemImage: "books.vertical")
@@ -269,7 +262,7 @@ struct LibraryShelf: View {
                         Text("Füge EPUB, PDF, TXT oder ein Hörbuch (MP3, M4A, M4B) aus der Dateien-App hinzu. Mehrere Audiodateien zusammen werden ein Hörbuch mit Teilen.")
                     } actions: { Button("Buch hinzufügen") { importing = true }.buttonStyle(.borderedProminent) }
                 }
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: 12)], alignment: .leading, spacing: 16) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: 12, alignment: .top)], alignment: .leading, spacing: 16) {
                     ForEach(shown) { book in
                         NavigationLink { LibraryBookDetail(bookId: book.id) } label: { ShelfItem(book: book) }.buttonStyle(.plain)
                             .overlay(alignment: .topLeading) { FavoriteStar(book: book) }
@@ -308,6 +301,8 @@ struct ShelfItem: View {
     @ObservedObject var library = PhoneLibrary.shared
     @ObservedObject var downloads = AudioDownloads.shared
     @Environment(\.dynamicTypeSize) private var typeSize
+    /// Feste Höhe der Statuszeile (Zeilenhöhe von .caption), damit alle Kacheln gleich hoch sind (lva#421).
+    @ScaledMetric(relativeTo: .caption) private var rowHeight: CGFloat = 16
     var body: some View {
         // Sprachfassungen (lva#344): Stand und Hörbuch der zuletzt aktiven Fassung, dazu die Sprachkürzel.
         let active = library.activeView(book)
@@ -319,16 +314,33 @@ struct ShelfItem: View {
                 ShelfDownloadStatus(book: book)
             } else {
             ProgressView(value: book.finished ? 1 : LibraryProgress.fraction(rec)).tint(VoicePalette.accent)
-            // Fester Platz für das Symbol: Lange Angaben brechen um und rücken nicht darunter.
-            metaLayout {
-                Text(audio || library.audioInAccount(active) ? (rec == nil ? "Hörbuch · neu" : "Hörbuch · \(LibraryFormat.percent(LibraryProgress.fraction(rec)))")
-                           : "Text · \(LibraryFormat.percent(LibraryProgress.fraction(rec)))")
-                    .font(.caption).foregroundStyle(VoicePalette.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: typeSize.isAccessibilitySize ? nil : .infinity, alignment: .leading)
-                if audio || !typeSize.isAccessibilitySize { DownloadedMark(visible: audio) }
+            // Statuszeile einzeilig (lva#421): Stand links, Sprachkürzel und Download-Symbol rechts.
+            // Schrift überall gleich groß; reicht der Platz nicht, wird der Text kürzer, nicht kleiner.
+            let isAudio = audio || library.audioInAccount(active)
+            let stand = rec == nil && isAudio ? "neu" : LibraryFormat.percent(LibraryProgress.fraction(rec))
+            if typeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("\(isAudio ? "Hörbuch" : "Text") · \(stand)").font(.caption).foregroundStyle(VoicePalette.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                    LanguageBadges(book: book, compact: true)
+                    if audio { DownloadedMark() }
+                }
+            } else {
+                HStack(alignment: .center, spacing: 3) {
+                    ViewThatFits(in: .horizontal) {
+                        Text("\(isAudio ? "Hörbuch" : "Text") · \(stand)")
+                        Text("\(Image(systemName: isAudio ? "headphones" : "text.alignleft")) \(stand)")
+                        Text(stand)
+                    }
+                    .font(.caption).foregroundStyle(VoicePalette.secondaryText).lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    // Alle Sprachkürzel, klein und rechtsbündig vor dem Download-Symbol.
+                    LanguageBadges(book: book, compact: true).fixedSize()
+                    if audio { DownloadedMark().fixedSize() }
+                }
+                // Feste Höhe: jede Kachel einer Reihe exakt gleich hoch, mit oder ohne Symbol und Kürzel.
+                .frame(height: rowHeight)
             }
-            LanguageBadges(book: book)
             }
         }
         .accessibilityElement(children: .combine)
@@ -342,11 +354,6 @@ struct ShelfItem: View {
         if let languages = LanguageBadges.spoken(book) { parts.append(languages) }
         if audio { parts.append("Hörbuch heruntergeladen, offline verfügbar") }
         return parts.joined(separator: ", ")
-    }
-
-    /// In sehr großer Schrift untereinander, sonst bliebe dem Text kaum Breite.
-    private var metaLayout: AnyLayout {
-        typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 2)) : AnyLayout(HStackLayout(alignment: .top, spacing: 4))
     }
 }
 

@@ -43,6 +43,15 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 # name = "cli"
 # path = "src/audio_toolkit/bin/cli.rs"
 
+# lva#408 D2: Extraktor der Ablage als eigenes Hilfsprogramm. Nur auf Wunsch gebaut
+# (`cargo build --features extrakt-bin --bin lva-extrakt`), damit Release-Builds nicht ein zweites
+# Mal das ganze Programm linken. Ohne das Hilfsprogramm startet die App sich selbst als Unterprozess
+# (`--lva-extrakt`, siehe src/ablage/textlauf.rs); Grenzen und Schutz sind dieselben.
+[[bin]]
+name = "lva-extrakt"
+path = "src/bin/lva-extrakt.rs"
+required-features = ["extrakt-bin"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 serde_json = "1"
@@ -63,7 +72,8 @@ tauri-plugin-os = "2.3.2"
 tauri-plugin-clipboard-manager = "2.3.2"
 tauri-plugin-macos-permissions = "2.3.0"
 tauri-plugin-process = "2.3.1"
-rusqlite_migration = "2.3"
+# RUSTSEC-2026-0459: 2.3.0 mit rusqlite 0.41, siehe vendor/rusqlite_migration/WAI-VENDOR.md.
+rusqlite_migration = { path = "vendor/rusqlite_migration" }
 tauri-plugin-fs = "2.4.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -96,7 +106,7 @@ strsim = "0.11.0"
 natural = "0.5.0"
 regex = "1"
 chrono = "0.4"
-rusqlite = { version = "0.37", features = ["bundled"] }
+rusqlite = { version = "0.41.1", features = ["bundled"] }
 tar = "0.4.44"
 flate2 = "1.0"
 sha2 = "0.10"
@@ -126,6 +136,12 @@ wai-storage = { path = "vendor/wai-storage" }
 wai-providers = { path = "vendor/wai-providers" }
 wai-projekte = { path = "vendor/wai-projekte" }
 wai-recherche = { path = "vendor/wai-recherche" }
+# lva#408 D2: Index der Ablage (FTS5/BM25, Rechtefilter vor dem Ranking), vendort aus wai-sdk
+wai-retrieval = { path = "vendor/wai-retrieval" }
+# ADR-0028 A2: Assistent-Kern (Einstufung, Belegregel, Messung), vendort aus wai-sdk (vendor/wai-assistent/VENDOR.toml)
+wai-assistent = { path = "vendor/wai-assistent" }
+# Nur lesender Zugang zur Notizbuch-Ablage (lva#396 N2, ADR-0028).
+wai-notizbuch-zugang = { path = "vendor/wai-notizbuch-zugang" }
 async-trait = "0.1"
 # TLS-Anbieter fuer wai-recherche (reqwest 0.13 ohne eingebauten Anbieter): ring statt aws-lc
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
@@ -155,6 +171,14 @@ hf-hub = { git = "https://github.com/cjpais/hf-hub", branch = "cancellable-downl
 ] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 pdf-extract = "0.12.0"
+# lva#408 D2 (Ablage, Textfassung): Office-XML ohne DOCTYPE/Entitäten lesen (MIT, schon im Lock),
+# Tabellen XLSX/ODS (calamine, MIT; Version passend zu quick-xml 0.38/zip 4 im Lock), E-Mails (.eml,
+# Apache-2.0 OR MIT, schon über calcard im Lock), HTML ohne Skripte (scraper, ISC, schon über
+# wai-recherche im Lock).
+quick-xml = "0.38"
+calamine = { version = "=0.32.0", default-features = false }
+mail-parser = { version = "=0.11.9", default-features = false }
+scraper = "0.29"
 # Dokument-Export (Entwurf 2026-10-13): PDF mit Briefkopf, plattformgleich ohne Browser.
 # MIT OR Apache-2.0. Standardfunktionen: Text mit Shaping (rustybuzz), PNG/JPEG-Logos.
 krilla = "0.8"
@@ -187,6 +211,8 @@ native-tls = "0.2"
 # library and the glslc shader compiler). The NVIDIA runtime driver alone is not
 # enough. Without this feature the app runs the ggml CPU backends.
 gpu-vulkan = ["transcribe-cpp/vulkan"]
+# lva#408 D2: baut das Hilfsprogramm `lva-extrakt` (siehe [[bin]] oben).
+extrakt-bin = []
 
 [target.'cfg(unix)'.dependencies]
 signal-hook = "0.3"
@@ -333,6 +359,8 @@ transcribe-cpp = { version = "=0.2.4", default-features = false, features = [
 [patch.crates-io]
 tao = { git = "https://github.com/cjpais/tao", rev = "c3bee28c1d446d95f08c95c3b6f8d4bde052b876" }
 tao-macros = { git = "https://github.com/cjpais/tao", rev = "c3bee28c1d446d95f08c95c3b6f8d4bde052b876" }
+# RUSTSEC-2026-0459: sqlx-sqlite 0.9.0 mit libsqlite3-sys 0.39 (SQLite 3.54), siehe vendor/sqlx-sqlite/WAI-VENDOR.md.
+sqlx-sqlite = { path = "vendor/sqlx-sqlite" }
 
 [dev-dependencies]
 tempfile = "3"
