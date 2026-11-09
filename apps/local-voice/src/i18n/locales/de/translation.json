@@ -12,6 +12,7 @@
   "sidebar": {
     "projekte": "Projekte",
     "library": "Bibliothek",
+    "ablage": "Ablage",
     "general": "Allgemein",
     "models": "Modelle",
     "integrations": "Integrationen",
@@ -9118,6 +9119,256 @@
     },
     "vorlesen": {
       "nurLokal": "Bei personenbezogenen Inhalten nur mit lokaler Sprachausgabe."
+    }
+  },
+  "ablage": {
+    "titel": "Ablage",
+    "beschreibung": "Dokumente ordnen und lokal aufbewahren.",
+    "suche": "Dateien nach Namen filtern",
+    "laedt": "Ablage wird geladen …",
+    "schliessen": "Schließen",
+    "abbrechen": "Abbrechen",
+    "speichern": "Speichern",
+    "zurueck": "Zurück",
+    "baum": {
+      "knopf": "Ordner wählen",
+      "label": "Ordner",
+      "meine": "Meine Ordner",
+      "wiederhergestellt": "Wiederhergestellt",
+      "weitere": "Weitere Ordner"
+    },
+    "ordner": {
+      "neu": "Neuer Ordner",
+      "name": "Name des Ordners",
+      "anlegen": "Anlegen",
+      "umbenennen": "Umbenennen",
+      "papierkorb": "Ordner in den Papierkorb"
+    },
+    "liste": {
+      "label": "Dateien",
+      "caption": "Dateien in {{name}}",
+      "name": "Name",
+      "geaendert": "Geändert",
+      "groesse": "Größe",
+      "klasse": "Klasse",
+      "stand": "Stand",
+      "dateien_one": "{{count}} Datei",
+      "dateien_other": "{{count}} Dateien"
+    },
+    "stand": {
+      "konflikt": "Konflikt"
+    },
+    "leer": {
+      "titel": "Noch keine Dateien",
+      "formate": "PDF, Word, Excel, Text, Bilder und mehr. Ordner können Sie ebenfalls hineinziehen.",
+      "lokal": "Alles bleibt auf diesem Gerät.",
+      "keineTreffer": "Keine Datei passt zu dieser Suche."
+    },
+    "drop": {
+      "titel": "Dateien in „{{name}}“ ablegen",
+      "hinweis": "Loslassen, um sie zu übernehmen."
+    },
+    "fuss": {
+      "belegt": "{{size}} belegt",
+      "lokal": "Nur auf diesem Gerät"
+    },
+    "hochladen": {
+      "titel_one": "{{count}} Datei wird abgelegt",
+      "titel_other": "{{count}} Dateien werden abgelegt",
+      "schliessen": "Fertig",
+      "knopf": "Hochladen",
+      "dateien": "Dateien",
+      "ordner": "Ordner",
+      "auswaehlen": "Auswählen",
+      "dateienWaehlen": "Dateien auswählen",
+      "ordnerWaehlen": "Ordner auswählen",
+      "kollisionHinweis": "Eine Datei mit diesem Namen gibt es schon. Was soll geschehen?",
+      "kollisionGruppe": "Auswahl für {{name}}",
+      "neueFassung": "Als neue Fassung",
+      "beideBehalten": "Beide behalten",
+      "ueberspringen": "Überspringen",
+      "erben": "Neue Dateien erben die Einstellungen von „{{name}}“.",
+      "stand": {
+        "laeuft": "Wird abgelegt …",
+        "abgelegt": "Abgelegt",
+        "neue_fassung": "Neue Fassung abgelegt",
+        "kollision": "Name schon vorhanden",
+        "uebersprungen": "Übersprungen",
+        "fehler": "Fehlgeschlagen"
+      }
+    },
+    "papierkorb": {
+      "titel": "Papierkorb",
+      "caption": "Gelöschte Dateien und Ordner",
+      "geloescht": "Gelöscht",
+      "ursprung": "Ursprung",
+      "ohneUrsprung": "Unbekannt",
+      "aktion": "Aktion",
+      "tageRest_one": "noch {{count}} Tag",
+      "tageRest_other": "noch {{count}} Tage",
+      "wiederherstellen": "Wiederherstellen",
+      "wiederherstellenName": "{{name}} wiederherstellen",
+      "endgueltigName": "{{name}} endgültig löschen",
+      "endgueltig": "Endgültig löschen",
+      "endgueltigTitel": "„{{name}}“ endgültig löschen?",
+      "endgueltigText": "Das lässt sich nicht rückgängig machen. Alle Fassungen werden entfernt.",
+      "leeren": "Papierkorb leeren",
+      "leerenTitel_one": "{{count}} Eintrag endgültig löschen?",
+      "leerenTitel_other": "{{count}} Einträge endgültig löschen?",
+      "leerenAktion": "Alles löschen",
+      "leer": "Der Papierkorb ist leer.",
+      "hinweis": "Einträge werden nach 30 Tagen endgültig gelöscht.",
+      "oeffnen": "Papierkorb öffnen"
+    },
+    "details": {
+      "schliessen": "Details schließen",
+      "vorschau": "Vorschau",
+      "vorschauHinweis": "Die Vorschau folgt in einer späteren Version.",
+      "textfassung": "Textfassung",
+      "text": {
+        "ok": "Text bereit",
+        "ausstehend": "Text ausstehend"
+      },
+      "textNoch": "Noch kein Text",
+      "fassungen": "Fassungen",
+      "fassungAktuell": "{{nummer}} (aktuell)",
+      "abgeloest": "abgelöst",
+      "angaben": "Angaben",
+      "ordner": "Ordner",
+      "ablage": "Ablage",
+      "nurDiesesGeraet": "Nur auf diesem Gerät",
+      "umbenennen": "Datei umbenennen",
+      "papierkorb": "In den Papierkorb"
+    },
+    "ki": {
+      "titel": "KI-Zugriff",
+      "stufe": {
+        "an": "An",
+        "aus": "Aus",
+        "gesperrt": "Gesperrt"
+      },
+      "erklaerung": "Die KI erreicht Dateien auf zwei Wegen: direkt (der Assistent durchsucht die Ablage) und über Projekte als Kontext. „An“ erlaubt beide Wege. „Aus“ (auch ohne eigene Einstellung) sperrt nur den direkten Weg; als Projektkontext bleiben die Dateien nutzbar, solange sie im Projekt eingeschaltet sind. „Gesperrt“ sperrt beide Wege und gewinnt immer, auch gegen „An“ in Unterordnern. Zusätzlich gilt die Datenklasse: „Personenbezogen“ geht nie an Cloud-Modelle, „Vertraulich“ nur an lokale Modelle oder per Ausnahme.",
+      "erben": "Vom übergeordneten Ordner erben",
+      "chipAn": "KI an",
+      "chipUnklar": "KI unklar",
+      "fuerKiFreigegeben": "Für die KI freigegeben",
+      "fuerDieKi": "Für die KI",
+      "nurAuszuege": "Die KI sieht nur Auszüge, nie die Originale.",
+      "aendern": "Ändern",
+      "zustand": {
+        "an": "An",
+        "aus": "Aus",
+        "gesperrt": "Gesperrt",
+        "unklar": "Unklar"
+      },
+      "geerbtVon": "geerbt von {{name}}",
+      "unklarKurz": "Freigabe unklar",
+      "unklarHinweis": "Die Freigaben dieses Geräts sind nicht eindeutig. Bis zur Klärung bleibt die ganze Ablage für die KI gesperrt.",
+      "unklarMeldung": "Die Freigabe ist unklar. Bitte zuerst neu festlegen.",
+      "unklar": {
+        "neuer": "Die Freigaben stammen von einer neueren Version der App.",
+        "unlesbar": "Die Freigaben sind nicht lesbar."
+      },
+      "neuFestlegen": "Freigaben neu festlegen",
+      "neuFestlegenTitel": "Freigaben neu festlegen?",
+      "neuFestlegenText": "Alle Ordner starten wieder ohne Freigabe. Danach können Sie die Freigaben einzeln setzen.",
+      "neuFestlegenAktion": "Neu festlegen",
+      "wiederhergestelltMeldung": "Die KI-Freigaben wurden aus der Sicherung wiederhergestellt. Alle gesicherten Ordner sind gesperrt, Ordner ohne Eintrag ebenfalls – auf beiden Wegen. Setzen Sie die Freigaben einzeln neu oder bestätigen Sie den Stand.",
+      "bestaetigen": "Stand bestätigen",
+      "bestaetigenTitel": "Wiederhergestellte Freigaben bestätigen?",
+      "bestaetigenText": "Gesperrte und neu gesetzte Ordner bleiben, wie sie sind. Diese Ordner ohne eigenen Eintrag fallen auf „Aus“ zurück (direkter Weg gesperrt, Projektkontext möglich):",
+      "bestaetigenAktion": "Bestätigen"
+    },
+    "klasse": {
+      "titel": "Datenklasse",
+      "erbt": "Erbt vom übergeordneten Ordner",
+      "standard": "Standard",
+      "lang": {
+        "erbt": "Erben",
+        "public": "Öffentlich",
+        "internal": "Intern",
+        "confidential": "Vertraulich",
+        "personal": "Personenbezogen"
+      },
+      "kurz": {
+        "erbt": "Erbt",
+        "public": "Öffentlich",
+        "internal": "Intern",
+        "confidential": "Vertraulich",
+        "personal": "Personenbezogen",
+        "unbekannt": "Unbekannt"
+      }
+    },
+    "nurGeraet": {
+      "titel": "Nur auf diesem Gerät",
+      "hinweis": "Dateien in diesem Ordner verlassen das Gerät nie.",
+      "geerbt": "Von einem übergeordneten Ordner geerbt."
+    },
+    "entwuerfe": {
+      "titel": "KI-Entwürfe",
+      "hinweis": "Entwürfe der KI landen in diesem Ordner."
+    },
+    "einstellungen": {
+      "titel": "Einstellungen für „{{name}}“",
+      "knopf": "Ordnereinstellungen",
+      "nurFrage": "Nur auf diesem Gerät behalten?",
+      "nurFolge": "Die Dateien dieses Ordners und aller Unterordner werden nicht mit anderen Geräten abgeglichen.",
+      "nurBestaetigen": "Nur auf diesem Gerät",
+      "syncFrage": "Wieder mit anderen Geräten abgleichen?",
+      "syncFolge": "Bereits abgelegte Kopien in der Cloud können danach nicht zurückgeholt werden.",
+      "syncBestaetigen": "Abgleich erlauben"
+    },
+    "lage": {
+      "titel": "Die Ablage kann nicht geöffnet werden",
+      "fehlt": "Das Verzeichnis der Ablage fehlt, es liegen aber Dateien vor.",
+      "defekt": "Das Verzeichnis der Ablage ist beschädigt.",
+      "neuer": "Die Ablage stammt von einer neueren Version der App.",
+      "nicht_lesbar": "Das Verzeichnis der Ablage lässt sich nicht lesen.",
+      "neuAufbauen": "Bestand neu aufbauen",
+      "aufgebaut_one": "{{count}} Datei wieder aufgenommen",
+      "aufgebaut_other": "{{count}} Dateien wieder aufgenommen"
+    },
+    "gefunden": {
+      "titel_one": "{{count}} Datei gefunden, die nicht im Verzeichnis steht.",
+      "titel_other": "{{count}} Dateien gefunden, die nicht im Verzeichnis stehen.",
+      "aufnehmen": "Aufnehmen",
+      "ohneTyp": "ohne Typ"
+    },
+    "toast": {
+      "imPapierkorb": "In den Papierkorb gelegt",
+      "wiederhergestellt": "Wiederhergestellt",
+      "gespeichert": "Gespeichert",
+      "aufgenommen": "Aufgenommen",
+      "geloescht": "Endgültig gelöscht",
+      "geleert": "Papierkorb geleert"
+    },
+    "fehler": {
+      "allgemein": "Das hat nicht geklappt.",
+      "name_vorhanden": "Dieser Name ist schon vergeben.",
+      "name_ungueltig": "Dieser Name ist nicht erlaubt.",
+      "journal_defekt": "Das Verzeichnis der Ablage ist beschädigt.",
+      "verknuepfung": "Verknüpfungen werden nicht verfolgt.",
+      "zyklus": "Ein Ordner kann nicht in sich selbst liegen.",
+      "nur_geraet_geerbt": "Dieser Ordner erbt „nur dieses Gerät“ von einem übergeordneten Ordner.",
+      "freigabe_unklar": "Die Freigabe ist unklar.",
+      "konflikt": "Die Datei hat einen offenen Konflikt.",
+      "ordner_im_papierkorb": "Der Ordner liegt im Papierkorb.",
+      "nicht_gefunden": "Nicht gefunden.",
+      "nicht_im_papierkorb": "Nicht im Papierkorb.",
+      "schon_im_papierkorb": "Schon im Papierkorb.",
+      "quelle_nicht_lesbar": "Die Quelle lässt sich nicht lesen.",
+      "quelle_ungueltig": "Die Quelle ist keine gewöhnliche Datei.",
+      "pruefsumme": "Die Prüfsumme stimmt nicht.",
+      "speicher": "Das Speichern ist fehlgeschlagen.",
+      "ungueltig": "Ungültige Angabe.",
+      "zu_tief": "Die Ordner sind zu tief verschachtelt.",
+      "zu_viele": "Zu viele Einträge.",
+      "keine_datei": "Keine Datei.",
+      "geraet": "Das ist ein Gerät, keine Datei; nicht übernommen.",
+      "datenstrom": "Alternative Datenströme werden nicht übernommen.",
+      "nicht_neu_aufbaubar": "Der Bestand lässt sich nicht neu aufbauen.",
+      "loeschen_offen": "Ein endgültiges Löschen ist noch nicht abgeschlossen. Bitte später erneut versuchen.",
+      "datei_im_papierkorb": "Die Datei liegt im Papierkorb."
     }
   }
 }
