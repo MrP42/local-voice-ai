@@ -659,7 +659,7 @@ test("Keine Anfrageschleife: libraryList-Aufrufe bleiben über Renders konstant"
   // Viele Renders ohne neue Seitenmenge: Reiter und Ordner wechseln. (Ein
   // Seitenwechsel lädt anderswo im Vorlesen die Bibliothek ohnehin neu und
   // würde hier mitgezählt.)
-  const sections = page.getByTestId("page-sections");
+  const sections = page.getByRole("tablist", { name: "Textfassung" });
   for (let i = 0; i < 3; i++) {
     await sections
       .getByRole("tab", { name: "Übersetzung", exact: true })
@@ -744,27 +744,38 @@ test("Bedienziele und gedämpfter Text bei 390 und 768 px", async ({ page }) => 
   }
 });
 
-test("Ansichten der Seite stehen senkrecht unter ihrer Zeile, nicht im Kopf", async ({
+test("Ansichten der Seite stehen waagerecht oben im Reader, nicht in der Liste (lva#437)", async ({
   page,
 }) => {
   await openReadAloud(page);
-  const sections = page.getByTestId("page-sections");
+  const sections = page.getByRole("tablist", { name: "Textfassung" });
   const original = sections.getByRole("tab", { name: "Original", exact: true });
   const translation = sections.getByRole("tab", {
     name: "Übersetzung",
     exact: true,
   });
+  await expect(original).toBeVisible();
   await expect(original).toHaveAttribute("aria-selected", "true");
-  // Genau eine Reiterleiste ist sichtbar.
+  // Genau eine Reiterleiste, und sie steht nicht in der Seitenliste.
   await expect(
     page.getByRole("tab", { name: "Original", exact: true }),
   ).toHaveCount(1);
+  await expect(
+    page.getByTestId("tts-pages").getByRole("tablist"),
+  ).toHaveCount(0);
+  // Waagerecht: Übersetzung rechts neben Original, gleiche Zeile.
+  const a = (await original.boundingBox())!;
+  const b = (await translation.boundingBox())!;
+  expect(b.x).toBeGreaterThan(a.x);
+  expect(Math.abs(b.y - a.y)).toBeLessThan(4);
+  // Oben im Reader: über dem Text der Seite.
+  const frame = (await page.locator(".reader-frame").boundingBox())!;
+  expect(a.y - frame.y).toBeLessThan(80);
   await original.focus();
-  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowRight");
   await expect(translation).toHaveAttribute("aria-selected", "true");
-  await page.keyboard.press("ArrowUp");
+  await page.keyboard.press("ArrowLeft");
   await expect(original).toHaveAttribute("aria-selected", "true");
-  expect((await original.boundingBox())!.height).toBeGreaterThanOrEqual(44);
 });
 
 test("Umbruch-Layout: Ordner als Auswahl, Ansichten wieder im Kopf", async ({
@@ -780,7 +791,6 @@ test("Umbruch-Layout: Ordner als Auswahl, Ansichten wieder im Kopf", async ({
   await select.click();
   await page.getByRole("option", { name: "Der Sturm (2)" }).click();
   await expect(rows(page)).toHaveText(["Der Sturm", "The Tempest"]);
-  await expect(page.getByTestId("page-sections")).toBeHidden();
   await expect(
     page.getByRole("tab", { name: "Original", exact: true }),
   ).toHaveCount(1);
@@ -933,7 +943,7 @@ test("Klick auf ein KI-Dokument öffnet Seite, Reiter und Dokument", async ({
   await openReadAloud(page);
   await openBook(page);
   const docs = page.getByTestId("book-ai-doc");
-  const sections = page.getByTestId("page-sections");
+  const sections = page.getByRole("tablist", { name: "Textfassung" });
   // Dokument einer anderen Fassung: Seite p3 öffnen, Reiter „KI-Dokumente“.
   await docs.nth(1).click();
   await expect.poll(() => activePage(page)).toBe("p3");
@@ -1673,4 +1683,23 @@ test("Belege lva#435", async ({ page }) => {
   await shot("04-ordner-zu-390");
   await nav.locator('[data-folder="books"]').click();
   await shot("05-ordner-buecher-auf-390");
+});
+
+// Belege lva#437: Reiter Original/Übersetzung/KI-Dokumente oben im Reader.
+//   LV_437_SHOTS=docs/vorschau/reiter-oben LV_THEME=dark pnpm exec playwright test readaloud-folders -g "Belege lva#437"
+test("Belege lva#437", async ({ page }) => {
+  const dir = process.env.LV_437_SHOTS;
+  test.skip(!dir, "nur für Vorschaubilder");
+  const theme = process.env.LV_THEME === "dark" ? "dunkel" : "hell";
+  const shot = async (name: string) => {
+    await page.waitForTimeout(300);
+    await page.screenshot({ path: `${dir}/${name}-${theme}.png` });
+  };
+  await openReadAloud(page, 1440);
+  await shot("01-reiter-oben-1440");
+  await pickBook(page.getByTestId("reader-folders"), "b1");
+  await shot("02-buch-gewaehlt-1440");
+  await openReadAloud(page, 768);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await shot("03-reiter-oben-390");
 });

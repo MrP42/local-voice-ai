@@ -140,8 +140,6 @@ export const PagesSidebar: React.FC<{
   visibleIds?: string[];
   /** Sprache je Seite, wenn sie Fassung eines Buchs ist („de“, „en“ …). */
   langOf?: Map<string, string>;
-  /** Inhalte der offenen Seite (Original, Übersetzung, KI-Dokumente) unter ihrer Zeile (lva#365 E2). */
-  activeSections?: ReactNode;
   /** Inhaltsverzeichnis, nur wenn die rechte Spalte nicht sichtbar ist (lva#365). */
   contents?: ReactNode;
   /**
@@ -171,7 +169,6 @@ export const PagesSidebar: React.FC<{
   folders,
   visibleIds,
   langOf,
-  activeSections,
   contents,
   bookFolder,
   editionNote,
@@ -489,11 +486,6 @@ export const PagesSidebar: React.FC<{
             </>
           )}
         </div>
-        {page.id === activeId && activeSections && (
-          <div className="ms-3 border-s border-mid-gray/20 ps-1" data-testid="page-sections">
-            {activeSections}
-          </div>
-        )}
         </Fragment>
       ))}
 
