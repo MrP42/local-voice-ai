@@ -75,6 +75,9 @@ ERLAUBT = {
     "base64",
     # rusqlite 0.37 „bundled“ (MIT), in Local Voice schon vorhanden; nur lesender Notizbuch-Zugang (lva#396 N2).
     "rusqlite",
+    # Sync-Kern gegen bösartigen Hub (ADR-0028 E3.8, wai-sdk#1092): ed25519-dalek 3 und x25519-dalek 3
+    # (dalek, BSD-3-Clause), hkdf 0.13 und hmac 0.13 (RustCrypto, MIT OR Apache-2.0), subtle 2.6 (BSD-3-Clause).
+    "ed25519-dalek", "x25519-dalek", "hkdf", "hmac", "subtle",
 }
 
 

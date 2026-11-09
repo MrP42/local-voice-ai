@@ -2,8 +2,8 @@
 paket = "wai-assistent"
 quelle = "https://github.com/MrP42/wai-sdk"
 pfad = "crates/wai-assistent"
-referenz = "303fddfb"
-commit = "303fddfbeb6c8e14299c3785f3fb6f251258ab3e"
+referenz = "f1be22f0d71ebc972984957f869c25c1a47d8772"
+commit = "f1be22f0d71ebc972984957f869c25c1a47d8772"
 commit_datum = "2026-11-09"
 uebernommen_am = "2026-11-09"
 ausgelassen = ["Tests und Fixtures im SDK-Arbeitsbaum"]

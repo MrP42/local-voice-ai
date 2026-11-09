@@ -35,6 +35,22 @@ pub enum SyncFehler {
     UnbekannteUnterhaltung,
     #[error("Zweigwahl ungueltig: Beitrag ist kein Kind des Elternteils")]
     ZweigUngueltig,
+    #[error("Autor ist im Geraeteverzeichnis unbekannt")]
+    AutorUnbekannt,
+    #[error("Signatur des Autors ungueltig")]
+    Signatur,
+    #[error("Geraeteverzeichnis: {0}")]
+    Verzeichnis(&'static str),
+    #[error("Geraeteverzeichnis gegabelt: zwei Fassungen desselben Eintrags")]
+    VerzeichnisGabelung,
+    #[error("Schluesselpaket: {0}")]
+    Paket(&'static str),
+    #[error("Zustandsversion aelter als der lokale Hoechststand (Rollback)")]
+    Rollback,
+    #[error("Widerruf noch nicht abgeschlossen: Schreibzugriffe gesperrt")]
+    WiderrufOffen,
+    #[error("Zustand konnte nicht dauerhaft gespeichert werden")]
+    Speicher,
     #[error("Hub: {0}")]
     Hub(#[from] HubFehler),
 }

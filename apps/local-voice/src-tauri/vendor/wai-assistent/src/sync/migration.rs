@@ -15,6 +15,8 @@
 
 use std::collections::BTreeSet;
 
+use serde::{Deserialize, Serialize};
+
 use super::abgleich::{Abgleich, Kopf, Unterhaltung};
 use super::freigabe::Einschraenkung;
 use super::verlauf::{Beitrag, Datenklasse, Einfuegen, Modus};
@@ -51,7 +53,7 @@ pub struct AltUnterhaltung {
 }
 
 /// Migrationsmarke je Geraet.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Migrationsmarke {
     pub version: u32,
     pub unterhaltungen: BTreeSet<String>,
@@ -80,7 +82,7 @@ fn angabe(wert: &Option<String>) -> String {
 
 impl Abgleich {
     pub fn migrationsmarke(&self) -> &Migrationsmarke {
-        &self.marke
+        &self.z.marke
     }
 
     /// Uebernimmt bestehende lokale Unterhaltungen. `datenbestand_id` ist die stabile, in der lokalen
@@ -93,11 +95,11 @@ impl Abgleich {
         let mut bericht = Migrationsbericht::default();
         for a in alt {
             let r = self.ref_aus_lokaler_id(datenbestand_id, &a.id);
-            if self.grabsteine.unterhaltung_geloescht(&r) {
+            if self.z.grabsteine.unterhaltung_geloescht(&r) {
                 bericht.geloescht += 1;
                 continue;
             }
-            if self.unterhaltungen.contains_key(&r) {
+            if self.z.unterhaltungen.contains_key(&r) {
                 bericht.unterhaltungen_bekannt += 1;
             } else {
                 let kopf = Kopf {
@@ -110,14 +112,15 @@ impl Abgleich {
                     geraet_lokal: a.geraet_lokal,
                     modell_lokal: a.modell_lokal,
                 };
-                self.unterhaltungen
+                self.z
+                    .unterhaltungen
                     .insert(r.clone(), Unterhaltung::neu(kopf, einschraenkung));
                 bericht.unterhaltungen_neu += 1;
             }
             let mut vorheriger: Option<&str> = None;
             for e in &a.eintraege {
                 let oid = self.beitrag_objekt_id(&r, &e.id);
-                if self.grabsteine.schlaegt(&r, &oid) {
+                if self.z.grabsteine.schlaegt(&r, &oid) {
                     bericht.geloescht += 1;
                     vorheriger = Some(&e.id);
                     continue;
@@ -138,7 +141,7 @@ impl Abgleich {
                     datenklasse: e.datenklasse.unwrap_or(Datenklasse::Restricted),
                 };
                 vorheriger = Some(&e.id);
-                let Some(u) = self.unterhaltungen.get_mut(&r) else {
+                let Some(u) = self.z.unterhaltungen.get_mut(&r) else {
                     continue;
                 };
                 match u.verlauf.einfuegen(beitrag) {
@@ -148,9 +151,9 @@ impl Abgleich {
                     Einfuegen::Geloescht => bericht.geloescht += 1,
                 }
             }
-            self.marke.unterhaltungen.insert(a.id.clone());
+            self.z.marke.unterhaltungen.insert(a.id.clone());
         }
-        self.marke.version = MIGRATIONSVERSION;
+        self.z.marke.version = MIGRATIONSVERSION;
         bericht
     }
 }

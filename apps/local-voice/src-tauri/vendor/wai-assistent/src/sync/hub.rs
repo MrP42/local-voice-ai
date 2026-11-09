@@ -1,16 +1,22 @@
 //! Abstraktion des Sync-Hubs (wai-portal). Der Kern kennt keinen Transport; Tests nutzen [`super::memhub::MemHub`].
 //!
-//! Vertrag des Hubs (ADR-0028 E3.0 bis E3.3): Er sieht nur die Steuerfelder, vergibt `revision`, nutzt sie
+//! Vertrag des Hubs (ADR-0028 E3.0 bis E3.3, E3.8): Er sieht nur die Steuerfelder, vergibt `revision`, nutzt sie
 //! ausschliesslich fuer das atomare Vergleichsschreiben, ordnet Schreibvorgaenge ueber die
 //! Geraete-Authentifizierung (`AuthGeraet`, nicht aus dem Umschlag) dem Geraet zu, weist widerrufene Geraete und alte
 //! Epochen ab und weist nach einem Grabstein jedes spaetere Objekt der Unterhaltung ab.
+//!
+//! **Der Kern vertraut keiner dieser Regeln** (E3.8, boesartiger Hub): Sie sind Verteidigung in der Tiefe und
+//! entlasten die Geraete. Integritaet und Vertraulichkeit haengen nur an Signaturen, dem gepruften
+//! Geraeteverzeichnis, Kettengliedern und lokalen Hoechststaenden; der Hub kann nur zurueckhalten.
 
 use std::sync::Arc;
 
 use thiserror::Error;
 
 use super::kennung::Hex128;
+use super::paket::Schluesselpaket;
 use super::umschlag::{Sammlung, Umschlag};
+use super::verzeichnis::Verzeichniseintrag;
 
 /// Vom Transport authentifizierte Geraeteidentitaet (z. B. aus dem Geraete-Token des Hubs).
 ///
@@ -43,8 +49,8 @@ pub enum HubFehler {
     EpocheVeraltet { mindest: u64 },
     #[error("Schluesselepoche gibt es noch nicht (aktuell {aktuell})")]
     EpocheVoraus { aktuell: u64 },
-    #[error("Epochenwechsel verloren: Hub steht auf Epoche {aktuell}")]
-    EpocheKonflikt { aktuell: u64 },
+    #[error("Verzeichnis hat schon {laenge} Eintraege")]
+    VerzeichnisKonflikt { laenge: u64 },
     #[error("durch Grabstein geloescht, Objekt abgewiesen")]
     GrabsteinAbgewiesen,
     #[error("Revision stimmt nicht (aktuell: {aktuell:?})")]
@@ -77,16 +83,21 @@ pub struct LeseFilter {
 
 /// Speicher des Hubs. Jede Methode bekommt die authentifizierte Identitaet des Aufrufers.
 ///
+/// Transportgrenzen (E3.8, Must-fix 7): Eine Netz-Implementierung liest Objekte nur ueber
+/// [`Umschlag::aus_json`] bzw. [`Umschlag::liste_aus_json`], [`Verzeichniseintrag::aus_json`] und
+/// [`Schluesselpaket::aus_json`]; dort ist die Rohlaenge vor jeder Deserialisierung begrenzt.
+///
 /// Hubregeln: Nur zugelassene, nicht widerrufene Geraete schreiben und lesen; beim Schreiben muss
 /// `umschlag.geraet_id == auth` gelten. Objekte mit `key_epoch` unter der Mindestepoche oder ueber der
-/// aktuellen Epoche werden abgewiesen. Die aktuelle Epoche vergibt der Hub per Vergleichsschreiben.
+/// aktuellen Epoche werden abgewiesen. Zulassung, Widerruf und Epoche leitet der Hub aus dem
+/// Geraeteverzeichnis ab (Aufnahme, Widerruf); die Geraete pruefen es selbst.
 pub trait HubSpeicher {
     /// Erstschreiben (unveraenderliche Sammlungen; bei veraenderlichen nur, solange das Objekt fehlt).
     fn schreiben(&self, auth: &AuthGeraet, umschlag: &Umschlag) -> Result<Schreiben, HubFehler>;
 
     /// Vergleichsschreiben: nur wenn die gespeicherte Revision `erwartete_revision` ist
     /// (`None` = Objekt darf noch nicht existieren). Genau ein gleichzeitiger Schreiber gewinnt.
-    /// Gibt die neue Revision zurueck. Die Revision hat keine Fencing-Bedeutung.
+    /// Gibt die neue Revision zurueck. Die Revision hat keine Fencing- und keine Versionsbedeutung.
     fn cas(
         &self,
         auth: &AuthGeraet,
@@ -104,30 +115,48 @@ pub trait HubSpeicher {
         objekt_id: &Hex128,
     ) -> Result<Option<Umschlag>, HubFehler>;
 
+    /// Alle aufbewahrten Fassungen eines veraenderlichen Objekts (Kopf, Lease), die Belege fuer die
+    /// lueckenlose Kette (E3.8, Must-fix 1). Der Hub bewahrt jede Fassung auf, die er je gespeichert hat;
+    /// das Geraet prueft jede Fassung selbst (Signatur, Glied, Abstammung). Fehlende Belege fuehren nur zum
+    /// Zurueckhalten, nie zum Uebernehmen. Standard: keine Belege.
+    fn fassungen_lesen(
+        &self,
+        _auth: &AuthGeraet,
+        _sammlung: Sammlung,
+        _objekt_id: &Hex128,
+    ) -> Result<Vec<Umschlag>, HubFehler> {
+        Ok(Vec::new())
+    }
+
     /// Objekte (inklusive Loeschmarken) nach Revision aufsteigend, jeweils mit gesetzter `revision`.
     fn lesen(&self, auth: &AuthGeraet, filter: &LeseFilter) -> Result<Vec<Umschlag>, HubFehler>;
 
-    /// Gerätewiderruf als Vergleichsschreiben auf die Epoche: nur wenn der Hub auf
-    /// `erwartete_epoche` steht, wird `widerrufenes_geraet` gesperrt, die Epoche um 1 erhoeht und als
-    /// Mindestepoche gesetzt. Gibt die neue Epoche zurueck. Zwei gleichzeitige Widerrufe erhalten nie
-    /// dieselbe Epochennummer (der zweite bekommt `EpocheKonflikt`). Nur durch ein zugelassenes Geraet.
-    ///
-    /// `vorgang` ist die vom Aufrufer vergebene Vorgangskennung. Der Hub speichert sie zur neuen Epoche;
-    /// eine Wiederholung mit derselben Kennung und demselben Geraet ist idempotent und liefert Erfolg mit
-    /// derselben Epoche (verlorene Antwort), auch wenn `erwartete_epoche` inzwischen veraltet ist.
-    fn widerrufen(
+    /// Haengt einen signierten Verzeichniseintrag an, nur wenn das Verzeichnis genau `eintrag.nummer`
+    /// Eintraege hat (Vergleichsschreiben auf die Laenge; sonst `VerzeichnisKonflikt`). Ein identischer
+    /// Eintrag an derselben Stelle ist idempotent erfolgreich (verlorene Antwort). Ein Widerruf sperrt das
+    /// Geraet und setzt aktuelle und Mindestepoche auf `epoche`.
+    fn verzeichnis_anhaengen(
         &self,
         auth: &AuthGeraet,
-        widerrufenes_geraet: &str,
-        erwartete_epoche: u64,
-        vorgang: &Hex128,
-    ) -> Result<u64, HubFehler>;
+        eintrag: &Verzeichniseintrag,
+    ) -> Result<(), HubFehler>;
 
-    /// Aktuelle Schluesselepoche des Kontos (Quelle der Wahrheit).
-    fn epoche(&self, auth: &AuthGeraet) -> Result<u64, HubFehler>;
+    /// Verzeichniseintraege ab Nummer `ab`, aufsteigend.
+    fn verzeichnis_lesen(
+        &self,
+        auth: &AuthGeraet,
+        ab: u64,
+    ) -> Result<Vec<Verzeichniseintrag>, HubFehler>;
 
-    /// Zugelassene, nicht widerrufene Geraete: nur an diese Liste geht ein neuer Epochenschluessel.
-    fn zugelassene(&self, auth: &AuthGeraet) -> Result<Vec<String>, HubFehler>;
+    /// Legt gewrappte Epochenschluessel ab (idempotent je Konto, Epoche und Empfaenger).
+    fn pakete_ablegen(
+        &self,
+        auth: &AuthGeraet,
+        pakete: &[Schluesselpaket],
+    ) -> Result<(), HubFehler>;
+
+    /// Gewrappte Epochenschluessel fuer das aufrufende Geraet (`empfaenger == auth`).
+    fn pakete_lesen(&self, auth: &AuthGeraet) -> Result<Vec<Schluesselpaket>, HubFehler>;
 }
 
 macro_rules! hub_delegieren {
@@ -156,20 +185,33 @@ macro_rules! hub_delegieren {
         fn lesen(&self, a: &AuthGeraet, f: &LeseFilter) -> Result<Vec<Umschlag>, HubFehler> {
             (**self).lesen(a, f)
         }
-        fn widerrufen(
+        fn fassungen_lesen(
             &self,
             a: &AuthGeraet,
-            w: &str,
-            e: u64,
-            v: &Hex128,
-        ) -> Result<u64, HubFehler> {
-            (**self).widerrufen(a, w, e, v)
+            s: Sammlung,
+            id: &Hex128,
+        ) -> Result<Vec<Umschlag>, HubFehler> {
+            (**self).fassungen_lesen(a, s, id)
         }
-        fn epoche(&self, a: &AuthGeraet) -> Result<u64, HubFehler> {
-            (**self).epoche(a)
+        fn verzeichnis_anhaengen(
+            &self,
+            a: &AuthGeraet,
+            e: &Verzeichniseintrag,
+        ) -> Result<(), HubFehler> {
+            (**self).verzeichnis_anhaengen(a, e)
         }
-        fn zugelassene(&self, a: &AuthGeraet) -> Result<Vec<String>, HubFehler> {
-            (**self).zugelassene(a)
+        fn verzeichnis_lesen(
+            &self,
+            a: &AuthGeraet,
+            ab: u64,
+        ) -> Result<Vec<Verzeichniseintrag>, HubFehler> {
+            (**self).verzeichnis_lesen(a, ab)
+        }
+        fn pakete_ablegen(&self, a: &AuthGeraet, p: &[Schluesselpaket]) -> Result<(), HubFehler> {
+            (**self).pakete_ablegen(a, p)
+        }
+        fn pakete_lesen(&self, a: &AuthGeraet) -> Result<Vec<Schluesselpaket>, HubFehler> {
+            (**self).pakete_lesen(a)
         }
     };
 }
