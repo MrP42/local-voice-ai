@@ -1,6 +1,6 @@
 # Third-Party-Notices
 
-Local Voice AI 0.21.18 enthält Software und nutzt Modelle Dritter. Diese Datei nennt sie mit ihren Lizenzen und wird mit `apps/local-voice/scripts/gen-notices.mjs` aus `Cargo.lock`, `pnpm-lock.yaml`, dem Modellkatalog und `docs/m2-evidence/ATTRIBUTION.md` erzeugt. Nicht von Hand ändern.
+Local Voice AI 0.24.1 enthält Software und nutzt Modelle Dritter. Diese Datei nennt sie mit ihren Lizenzen und wird mit `apps/local-voice/scripts/gen-notices.mjs` aus `Cargo.lock`, `pnpm-lock.yaml`, dem Modellkatalog und `docs/m2-evidence/ATTRIBUTION.md` erzeugt. Nicht von Hand ändern.
 
 ## Hinweise
 
@@ -26,6 +26,7 @@ Local Voice AI 0.21.18 enthält Software und nutzt Modelle Dritter. Diese Datei 
 - Lessac (High Quality) — Blizzard-2013-Research-Licence
 - Lessac (Medium Quality) — Blizzard-2013-Research-Licence
 - Ryan (High Quality) — CC-BY-NC-SA-4.0
+- Phonon 40m (German, q8) — CC-BY-NC-4.0
 
 Modelle werden bei Bedarf geladen und nicht mit dem Installer ausgeliefert; Ausnahme ist die kleine Silero-VAD-Datei.
 
@@ -78,6 +79,63 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - Multitalker Parakeet Streaming EN (`handy-computer/multitalker-parakeet-streaming-0.6b-v1-gguf`) — NVIDIA Open Model License — <https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/>
 - Nemotron 3.5 ASR Streaming (`handy-computer/nemotron-3.5-asr-streaming-0.6b-gguf`) — OpenMDW-1.1 — <https://openmdw.ai/license/1-1/>
 - Nemotron Speech Streaming EN (`handy-computer/nemotron-speech-streaming-en-0.6b-gguf`) — NVIDIA Open Model License — <https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/>
+- Phonon 31m (English, q8) (`phonon-31m-en`) — Apache-2.0 — <https://huggingface.co/gradium/phonon-31m-en>. Gewichte Apache-2.0 (Hugging-Face-Karte, Abruf 27.10.2026), öffentlich, kein Zugang nötig. Das Programm ptts steht unter MIT OR Apache-2.0.
+- Phonon 40m (German, q8) (`phonon-40m-de`) — CC-BY-NC-4.0 — **nur nicht-kommerziell** — <https://huggingface.co/gradium/phonon-40m-de>. Gewichte CC BY-NC 4.0: nur nicht-kommerziell nutzbar (Hugging-Face-Karte, Abruf 27.10.2026). Gated (auto): Bedingungen auf huggingface.co/gradium/phonon-40m-de annehmen und anmelden (hf auth login) oder HF_TOKEN setzen. Das Programm ptts steht unter MIT OR Apache-2.0.
+- Phonon program ptts (Linux ARM64) (`phonon-runtime-linux-aarch64`) — MIT OR Apache-2.0 — <https://github.com/gradium-ai/xn-ptts/blob/v0.4.2/LICENSE-MIT>. Programm ptts unter MIT OR Apache-2.0 (README und Archivdateien LICENSE-MIT, LICENSE-APACHE; beide liegen nach der Installation im Programmordner). Wird auf Wunsch von GitHub geladen und nicht mit dem Installer ausgeliefert. Die Gewichte der Modelle haben eigene Lizenzen.
+- Phonon program ptts (Linux x64) (`phonon-runtime-linux-x64`) — MIT OR Apache-2.0 — <https://github.com/gradium-ai/xn-ptts/blob/v0.4.2/LICENSE-MIT>. Programm ptts unter MIT OR Apache-2.0 (README und Archivdateien LICENSE-MIT, LICENSE-APACHE; beide liegen nach der Installation im Programmordner). Wird auf Wunsch von GitHub geladen und nicht mit dem Installer ausgeliefert. Die Gewichte der Modelle haben eigene Lizenzen.
+- Phonon program ptts (macOS Apple Silicon) (`phonon-runtime-macos-aarch64`) — MIT OR Apache-2.0 — <https://github.com/gradium-ai/xn-ptts/blob/v0.4.2/LICENSE-MIT>. Programm ptts unter MIT OR Apache-2.0 (README und Archivdateien LICENSE-MIT, LICENSE-APACHE; beide liegen nach der Installation im Programmordner). Wird auf Wunsch von GitHub geladen und nicht mit dem Installer ausgeliefert. Die Gewichte der Modelle haben eigene Lizenzen.
+- Phonon program ptts (macOS Intel) (`phonon-runtime-macos-x64`) — MIT OR Apache-2.0 — <https://github.com/gradium-ai/xn-ptts/blob/v0.4.2/LICENSE-MIT>. Programm ptts unter MIT OR Apache-2.0 (README und Archivdateien LICENSE-MIT, LICENSE-APACHE; beide liegen nach der Installation im Programmordner). Wird auf Wunsch von GitHub geladen und nicht mit dem Installer ausgeliefert. Die Gewichte der Modelle haben eigene Lizenzen.
+- Phonon program ptts (Windows x64) (`phonon-runtime-windows-x64`) — MIT OR Apache-2.0 — <https://github.com/gradium-ai/xn-ptts/blob/v0.4.2/LICENSE-MIT>. Programm ptts unter MIT OR Apache-2.0 (README und Archivdateien LICENSE-MIT, LICENSE-APACHE; beide liegen nach der Installation im Programmordner). Wird auf Wunsch von GitHub geladen und nicht mit dem Installer ausgeliefert. Die Gewichte der Modelle haben eigene Lizenzen.
+- Annika (`phonon-voice-de-annika`) — Apache-2.0 — <https://huggingface.co/gradium/phonon-voices>. Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.
+- Anton (`phonon-voice-de-anton`) — Apache-2.0 — <https://huggingface.co/gradium/phonon-voices>. Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.
+- Henrik (`phonon-voice-de-henrik`) — Apache-2.0 — <https://huggingface.co/gradium/phonon-voices>. Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.
+- Jette (`phonon-voice-de-jette`) — Apache-2.0 — <https://huggingface.co/gradium/phonon-voices>. Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.
+- Josefine (`phonon-voice-de-josefine`) — Apache-2.0 — <https://huggingface.co/gradium/phonon-voices>. Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.
+- Jule (`phonon-voice-de-jule`) — Apache-2.0 — <https://huggingface.co/gradium/phonon-voices>. Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.
+- Leon (`phonon-voice-de-leon`) — Apache-2.0 — <https://huggingface.co/gradium/phonon-voices>. Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.
+- Lotta (`phonon-voice-de-lotta`) — Apache-2.0 — <https://huggingface.co/gradium/phonon-voices>. Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.
+- Mats (`phonon-voice-de-mats`) — Apache-2.0 — <https://huggingface.co/gradium/phonon-voices>. Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.
+- Mika (`phonon-voice-de-mika`) — Apache-2.0 — <https://huggingface.co/gradium/phonon-voices>. Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.
+- Mirko (`phonon-voice-de-mirko`) — Apache-2.0 — <https://huggingface.co/gradium/phonon-voices>. Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.
+- Nele (`phonon-voice-de-nele`) — Apache-2.0 — <https://huggingface.co/gradium/phonon-voices>. Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.
+- Svea (`phonon-voice-de-svea`) — Apache-2.0 — <https://huggingface.co/gradium/phonon-voices>. Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.
+- Alfie (`phonon-voice-en-alfie`) — Apache-2.0 — <https://huggingface.co/gradium/phonon-voices>. Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.
+- Azgorath (`phonon-voice-en-azgorath`) — Apache-2.0 — <https://huggingface.co/gradium/phonon-voices>. Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.
+- Bryony (`phonon-voice-en-bryony`) — Apache-2.0 — <https://huggingface.co/gradium/phonon-voices>. Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.
+- Captain Silas Blackwater (`phonon-voice-en-captain-silas-blackwater`) — Apache-2.0 — <https://huggingface.co/gradium/phonon-voices>. Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.
+- Delia (`phonon-voice-en-delia`) — Apache-2.0 — <https://huggingface.co/gradium/phonon-voices>. Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.
+- Easton (`phonon-voice-en-easton`) — Apache-2.0 — <https://huggingface.co/gradium/phonon-voices>. Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.
+- Edwin (`phonon-voice-en-edwin`) — Apache-2.0 — <https://huggingface.co/gradium/phonon-voices>. Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.
+- Elodie-Rose (`phonon-voice-en-elodie-rose`) — Apache-2.0 — <https://huggingface.co/gradium/phonon-voices>. Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.
+- Everly (`phonon-voice-en-everly`) — Apache-2.0 — <https://huggingface.co/gradium/phonon-voices>. Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.
+- Fairy Godmother (`phonon-voice-en-fairy-godmother`) — Apache-2.0 — <https://huggingface.co/gradium/phonon-voices>. Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.
+- Fennick the Young Elf (`phonon-voice-en-fennick-the-young-elf`) — Apache-2.0 — <https://huggingface.co/gradium/phonon-voices>. Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.
+- Freya (`phonon-voice-en-freya`) — Apache-2.0 — <https://huggingface.co/gradium/phonon-voices>. Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.
+- Grub the Ogre (`phonon-voice-en-grub-the-ogre`) — Apache-2.0 — <https://huggingface.co/gradium/phonon-voices>. Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.
+- Hadley (`phonon-voice-en-hadley`) — Apache-2.0 — <https://huggingface.co/gradium/phonon-voices>. Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.
+- Harper (`phonon-voice-en-harper`) — Apache-2.0 — <https://huggingface.co/gradium/phonon-voices>. Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.
+- Hugh (`phonon-voice-en-hugh`) — Apache-2.0 — <https://huggingface.co/gradium/phonon-voices>. Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.
+- Imogen (`phonon-voice-en-imogen`) — Apache-2.0 — <https://huggingface.co/gradium/phonon-voices>. Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.
+- Juniper (`phonon-voice-en-juniper`) — Apache-2.0 — <https://huggingface.co/gradium/phonon-voices>. Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.
+- Lottie (`phonon-voice-en-lottie`) — Apache-2.0 — <https://huggingface.co/gradium/phonon-voices>. Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.
+- Maeve (`phonon-voice-en-maeve`) — Apache-2.0 — <https://huggingface.co/gradium/phonon-voices>. Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.
+- Master Aldric (`phonon-voice-en-master-aldric`) — Apache-2.0 — <https://huggingface.co/gradium/phonon-voices>. Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.
+- Micah (`phonon-voice-en-micah`) — Apache-2.0 — <https://huggingface.co/gradium/phonon-voices>. Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.
+- Miles (`phonon-voice-en-miles`) — Apache-2.0 — <https://huggingface.co/gradium/phonon-voices>. Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.
+- Morwenna of the Deep (`phonon-voice-en-morwenna-of-the-deep`) — Apache-2.0 — <https://huggingface.co/gradium/phonon-voices>. Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.
+- Old Mortlake (`phonon-voice-en-old-mortlake`) — Apache-2.0 — <https://huggingface.co/gradium/phonon-voices>. Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.
+- Pippa (`phonon-voice-en-pippa`) — Apache-2.0 — <https://huggingface.co/gradium/phonon-voices>. Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.
+- Preston (`phonon-voice-en-preston`) — Apache-2.0 — <https://huggingface.co/gradium/phonon-voices>. Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.
+- Russell (`phonon-voice-en-russell`) — Apache-2.0 — <https://huggingface.co/gradium/phonon-voices>. Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.
+- Sir Bramwell (`phonon-voice-en-sir-bramwell`) — Apache-2.0 — <https://huggingface.co/gradium/phonon-voices>. Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.
+- Spencer (`phonon-voice-en-spencer`) — Apache-2.0 — <https://huggingface.co/gradium/phonon-voices>. Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.
+- Teddy (`phonon-voice-en-teddy`) — Apache-2.0 — <https://huggingface.co/gradium/phonon-voices>. Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.
+- The Snow Queen (`phonon-voice-en-the-snow-queen`) — Apache-2.0 — <https://huggingface.co/gradium/phonon-voices>. Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.
+- The Thing Under the Stairs (`phonon-voice-en-the-thing-under-the-stairs`) — Apache-2.0 — <https://huggingface.co/gradium/phonon-voices>. Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.
+- Toby (`phonon-voice-en-toby`) — Apache-2.0 — <https://huggingface.co/gradium/phonon-voices>. Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.
+- Trevor (`phonon-voice-en-trevor`) — Apache-2.0 — <https://huggingface.co/gradium/phonon-voices>. Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.
+- Vyrmathrax the Ancient (`phonon-voice-en-vyrmathrax-the-ancient`) — Apache-2.0 — <https://huggingface.co/gradium/phonon-voices>. Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.
+- Zoey (`phonon-voice-en-zoey`) — Apache-2.0 — <https://huggingface.co/gradium/phonon-voices>. Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.
 - Piper Runtime (macOS Apple Silicon) (`piper-runtime-macos-aarch64`) — MIT AND GPL-3.0-or-later — <https://github.com/rhasspy/piper/blob/master/LICENSE.md>. Piper (MIT); espeak-ng (GPL-3.0-or-later) ist Teil des Piper-Pakets. Das offizielle macOS-Archiv ist unvollständig (keine libespeak-ng/libpiper_phonemize/libonnxruntime-Dateien) und startet nicht.
 - Piper Runtime (macOS Intel) (`piper-runtime-macos-x64`) — MIT AND GPL-3.0-or-later — <https://github.com/rhasspy/piper/blob/master/LICENSE.md>. Piper (MIT); espeak-ng (GPL-3.0-or-later) ist Teil des Piper-Pakets. Das offizielle macOS-Archiv ist unvollständig (keine libespeak-ng/libpiper_phonemize/libonnxruntime-Dateien) und startet nicht.
 - Piper Runtime (Windows x64) (`piper-runtime-windows-x64`) — MIT AND GPL-3.0-or-later — <https://github.com/rhasspy/piper/blob/master/LICENSE.md>. Piper (MIT) mit piper-phonemize (MIT), onnxruntime 1.14.1 (MIT) und espeak-ng.dll (GPL-3.0-or-later, https://github.com/espeak-ng/espeak-ng). Wird auf Wunsch von GitHub geladen und nicht mit dem Installer ausgeliefert; das Archiv enthält keine Lizenzdateien.
@@ -90,7 +148,7 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - IBM Plex Sans (Schrift im PDF-Export) — OFL-1.1 — <https://github.com/IBM/plex>
 - Archivo (Schrift im PDF-Export) — OFL-1.1 — <https://github.com/Omnibus-Type/Archivo>
 
-## Rust-Bibliotheken (707)
+## Rust-Bibliotheken (759)
 
 - Inflector 0.11.4 — BSD-2-Clause
 - adler2 2.0.1 — MIT
@@ -102,17 +160,20 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - alloc-no-stdlib 2.0.4 — BSD-3-Clause
 - alloc-stdlib 0.2.2 — BSD-3-Clause
 - allocator-api2 0.2.21 — MIT
+- ambient-authority 0.0.2 — MIT
 - anstream 0.6.21 — MIT
 - anstyle 1.0.14 — MIT
 - anstyle-parse 0.2.7 — MIT
 - anstyle-query 1.1.5 — MIT
 - anstyle-wincon 3.0.11 — MIT
 - anyhow 1.0.104 — MIT
+- apple-native-keyring-store 1.0.2 — MIT
 - arboard 3.6.1 — MIT
 - argon2 0.5.3 — MIT
 - arrayref 0.3.9 — BSD-2-Clause
 - arrayvec 0.7.6 — MIT
 - async-trait 0.1.89 — MIT
+- atoi 2.0.0 — MIT
 - atoi_simd 0.16.1 — MIT
 - atomic-waker 1.1.2 — MIT
 - auto-launch 0.5.0 — MIT
@@ -144,6 +205,8 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - calamine 0.32.0 — MIT
 - calcard 0.3.14 — MIT
 - camino 1.2.2 — MIT
+- cap-primitives 4.0.3 — MIT
+- cap-std 4.0.3 — MIT
 - cargo-platform 0.1.9 — MIT
 - cargo_metadata 0.19.2 — MIT
 - cargo_toml 0.22.3 — MIT
@@ -172,6 +235,7 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - codepage 0.1.3 — MIT
 - color_quant 1.1.0 — MIT
 - colorchoice 1.0.5 — MIT
+- concurrent-queue 2.5.0 — MIT
 - console 0.16.3 — MIT
 - convert_case 0.4.0 — MIT
 - cookie 0.18.1 — MIT
@@ -187,15 +251,22 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - cpal 0.16.0 — Apache-2.0
 - cpufeatures 0.2.17 — MIT
 - cpufeatures 0.3.0 — MIT
+- crc 3.4.0 — MIT
+- crc-catalog 2.5.0 — MIT
 - crc32fast 1.5.0 — MIT
 - crossbeam-channel 0.5.15 — MIT
+- crossbeam-queue 0.3.14 — MIT
 - crossbeam-utils 0.8.21 — MIT
 - crypto-common 0.1.7 — MIT
 - cssparser 0.29.6 — MPL-2.0
 - cssparser 0.36.0 — MPL-2.0
+- cssparser 0.38.0 — MPL-2.0
 - cssparser-macros 0.6.1 — MPL-2.0
+- cssparser-macros 0.7.1 — MPL-2.0
 - ctor 0.8.0 — MIT
 - ctor-proc-macro 0.0.7 — MIT
+- curve25519-dalek 4.1.3 — BSD-3-Clause
+- curve25519-dalek-derive 0.1.1 — MIT
 - darling 0.20.11 — MIT
 - darling 0.21.3 — MIT
 - darling_core 0.20.11 — MIT
@@ -227,6 +298,8 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - dunce 1.0.5 — MIT-0
 - dyn-clone 1.0.20 — MIT
 - ecb 0.1.2 — MIT
+- ego-tree 0.11.1 — ISC
+- either 1.19.0 — MIT
 - embed-resource 3.0.6 — MIT
 - embed_plist 1.2.2 — MIT
 - encode_unicode 1.0.0 — MIT
@@ -241,6 +314,7 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - errno 0.3.14 — MIT
 - error-code 3.3.2 — BSL-1.0
 - euclid 0.20.14 — MIT
+- event-listener 5.4.1 — MIT
 - extended 0.1.0 — MIT
 - eyre 0.6.12 — MIT
 - fallible-iterator 0.3.0 — MIT
@@ -257,6 +331,7 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - find-msvc-tools 0.1.9 — MIT
 - flate2 1.1.9 — MIT
 - float-cmp 0.9.0 — MIT
+- flume 0.12.0 — MIT
 - fnv 1.0.7 — MIT
 - foldhash 0.1.5 — Zlib
 - foldhash 0.2.0 — Zlib
@@ -267,12 +342,14 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - foreign-types-shared 0.1.1 — MIT
 - foreign-types-shared 0.3.1 — MIT
 - form_urlencoded 1.2.2 — MIT
+- fs-set-times 0.20.3 — MIT
 - fst 0.4.7 — MIT
 - futf 0.1.5 — MIT
 - futures 0.3.32 — MIT
 - futures-channel 0.3.32 — MIT
 - futures-core 0.3.32 — MIT
 - futures-executor 0.3.32 — MIT
+- futures-intrusive 0.5.0 — MIT
 - futures-io 0.3.32 — MIT
 - futures-macro 0.3.32 — MIT
 - futures-sink 0.3.32 — MIT
@@ -281,6 +358,7 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - fxhash 0.2.1 — MIT
 - generic-array 0.14.7 — MIT
 - gethostname 1.1.0 — Apache-2.0
+- getopts 0.2.24 — MIT
 - getrandom 0.1.16 — MIT
 - getrandom 0.2.17 — MIT
 - getrandom 0.3.4 — MIT
@@ -294,8 +372,10 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - hashbrown 0.12.3 — MIT
 - hashbrown 0.15.5 — MIT
 - hashbrown 0.16.1 — MIT
+- hashbrown 0.17.1 — MIT
 - hashify 0.2.9 — MIT
-- hashlink 0.10.0 — MIT
+- hashlink 0.11.1 — MIT
+- hashlink 0.12.2 — MIT
 - heck 0.4.1 — MIT
 - heck 0.5.0 — MIT
 - hf-hub 0.5.0 — Apache-2.0
@@ -305,6 +385,7 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - hound 3.5.1 — Apache-2.0
 - html5ever 0.29.1 — MIT
 - html5ever 0.38.0 — MIT
+- html5ever 0.40.1 — MIT
 - http 1.4.0 — MIT
 - http-body 1.0.1 — MIT
 - http-body-util 0.1.3 — MIT
@@ -336,6 +417,9 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - indicatif 0.18.4 — MIT
 - infer 0.19.0 — MIT
 - inout 0.1.4 — MIT
+- io-extras 0.19.0 — MIT
+- io-lifetimes 2.0.4 — MIT
+- io-lifetimes 3.0.1 — MIT
 - ipnet 2.11.0 — MIT
 - iri-string 0.7.10 — MIT
 - is-terminal 0.4.17 — MIT
@@ -345,15 +429,17 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - json-patch 3.0.1 — MIT
 - jsonptr 0.6.3 — MIT
 - keyboard-types 0.7.0 — MIT
+- keyring 4.2.0 — MIT
+- keyring-core 1.0.1 — MIT
 - krilla 0.8.2 — MIT
 - kuchikiki 0.8.8-speedreader — MIT
 - kurbo 0.13.1 — MIT
 - lazy_static 1.5.0 — MIT
 - libc 0.2.182 — MIT
 - libm 0.2.16 — MIT
-- libsqlite3-sys 0.35.0 — MIT
+- libsqlite3-sys 0.39.1 — MIT
 - litemap 0.8.1 — Unicode-3.0
-- local-voice-ai 0.21.18 — MIT
+- local-voice-ai 0.24.1 — MIT
 - lock_api 0.4.14 — MIT
 - log 0.4.29 — MIT
 - lopdf 0.42.0 — MIT
@@ -366,9 +452,11 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - malloc_buf 0.0.6 — MIT
 - markup5ever 0.14.1 — MIT
 - markup5ever 0.38.0 — MIT
+- markup5ever 0.40.0 — MIT
 - match_token 0.1.0 — MIT
 - matches 0.1.10 — MIT
 - matrixmultiply 0.3.10 — MIT
+- maybe-owned 0.3.4 — MIT
 - md-5 0.10.6 — MIT
 - memchr 2.8.0 — MIT
 - mime 0.3.17 — MIT
@@ -427,6 +515,7 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - ort-sys 2.0.0-rc.12 — MIT
 - os_info 3.14.0 — MIT
 - osakit 0.3.1 — MIT
+- parking 2.2.1 — MIT
 - parking_lot 0.12.5 — MIT
 - parking_lot_core 0.9.12 — MIT
 - password-hash 0.5.0 — MIT
@@ -441,20 +530,25 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - phf 0.11.3 — MIT
 - phf 0.12.1 — MIT
 - phf 0.13.1 — MIT
+- phf 0.14.0 — MIT
 - phf 0.8.0 — MIT
 - phf_codegen 0.11.3 — MIT
 - phf_codegen 0.13.1 — MIT
+- phf_codegen 0.14.0 — MIT
 - phf_codegen 0.8.0 — MIT
 - phf_generator 0.10.0 — MIT
 - phf_generator 0.11.3 — MIT
 - phf_generator 0.13.1 — MIT
+- phf_generator 0.14.0 — MIT
 - phf_generator 0.8.0 — MIT
 - phf_macros 0.10.0 — MIT
 - phf_macros 0.13.1 — MIT
+- phf_macros 0.14.0 — MIT
 - phf_shared 0.10.0 — MIT
 - phf_shared 0.11.3 — MIT
 - phf_shared 0.12.1 — MIT
 - phf_shared 0.13.1 — MIT
+- phf_shared 0.14.0 — MIT
 - phf_shared 0.8.0 — MIT
 - pin-project-lite 0.2.16 — MIT
 - pin-utils 0.1.0 — MIT
@@ -475,6 +569,7 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - proc-macro-hack 0.5.20+deprecated — MIT
 - proc-macro2 1.0.106 — MIT
 - pxfm 0.1.27 — Apache-2.0
+- qrcode 0.14.1 — MIT
 - quick-error 2.0.1 — MIT
 - quick-xml 0.38.4 — MIT
 - quote 1.0.44 — MIT
@@ -506,7 +601,7 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - ringbuffer 0.15.0 — MIT
 - rodio 0.20.1 — MIT
 - rubato 0.16.2 — MIT
-- rusqlite 0.37.0 — MIT
+- rusqlite 0.41.1 — MIT
 - rusqlite_migration 2.3.0 — Apache-2.0
 - rust-stemmers 1.2.0 — MIT
 - rust_decimal 1.40.0 — MIT
@@ -526,10 +621,12 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - schemars 0.8.22 — MIT
 - schemars_derive 0.8.22 — MIT
 - scopeguard 1.2.0 — MIT
+- scraper 0.29.0 — ISC
 - security-framework 3.7.0 — MIT
 - security-framework-sys 2.17.0 — MIT
 - selectors 0.24.0 — MPL-2.0
 - selectors 0.36.1 — MPL-2.0
+- selectors 0.41.0 — MPL-2.0
 - semver 1.0.27 — MIT
 - serde 1.0.228 — MIT
 - serde-untagged 0.1.9 — MIT
@@ -546,6 +643,7 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - serialize-to-javascript-impl 0.1.2 — MIT
 - servo_arc 0.2.0 — MIT
 - servo_arc 0.4.3 — MIT
+- servo_arc 0.5.0 — MIT
 - sha2 0.10.9 — MIT
 - shlex 1.3.0 — MIT
 - signal-hook 0.3.18 — MIT
@@ -570,11 +668,17 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - specta-macros 2.0.0-rc.18 — MIT
 - specta-serde 0.0.9 — MIT
 - specta-typescript 0.0.9 — MIT
+- spin 0.9.9 — MIT
+- sqlx 0.9.0 — MIT
+- sqlx-core 0.9.0 — MIT
+- sqlx-sqlite 0.9.0 — MIT
 - stable_deref_trait 1.2.1 — MIT
 - strength_reduce 0.2.4 — MIT
 - strict-num 0.1.1 — MIT
+- string_cache 0.11.0 — MIT
 - string_cache 0.8.9 — MIT
 - string_cache 0.9.0 — MIT
+- string_cache_codegen 0.11.2 — MIT
 - string_cache_codegen 0.5.4 — MIT
 - string_cache_codegen 0.6.1 — MIT
 - stringprep 0.1.5 — MIT
@@ -653,6 +757,7 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - tokio-macros 2.6.0 — MIT
 - tokio-native-tls 0.3.1 — MIT
 - tokio-rustls 0.26.4 — MIT
+- tokio-stream 0.1.19 — MIT
 - tokio-util 0.7.18 — MIT
 - toml 0.9.12+spec-1.1.0 — MIT
 - toml_datetime 0.7.5+spec-1.1.0 — MIT
@@ -723,6 +828,7 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - wasm-bindgen-test-macro 0.3.79 — MIT
 - wasm-bindgen-test-shared 0.2.129 — MIT
 - web_atoms 0.2.5 — MIT
+- web_atoms 0.3.0 — MIT
 - webpki-root-certs 1.0.6 — CDLA-Permissive-2.0
 - webpki-roots 1.0.8 — CDLA-Permissive-2.0
 - webview2-com 0.38.2 — MIT
@@ -752,6 +858,7 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - windows-interface 0.59.3 — MIT
 - windows-link 0.1.3 — MIT
 - windows-link 0.2.1 — MIT
+- windows-native-keyring-store 1.1.0 — MIT
 - windows-numerics 0.2.0 — MIT
 - windows-numerics 0.3.1 — MIT
 - windows-registry 0.6.1 — MIT
@@ -775,9 +882,11 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - winnow 0.7.14 — MIT
 - winreg 0.10.1 — MIT
 - winreg 0.55.0 — MIT
+- winx 0.36.4 — Apache-2.0
 - write-fonts 0.48.1 — MIT
 - writeable 0.6.2 — Unicode-3.0
 - wry 0.55.1 — MIT
+- x25519-dalek 2.0.1 — BSD-3-Clause
 - xattr 1.6.1 — MIT
 - xmp-writer 0.3.3 — MIT
 - yoke 0.8.1 — Unicode-3.0
@@ -787,6 +896,7 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - zerofrom 0.1.6 — Unicode-3.0
 - zerofrom-derive 0.1.6 — Unicode-3.0
 - zeroize 1.8.2 — MIT
+- zeroize_derive 1.5.0 — MIT
 - zerotrie 0.2.3 — Unicode-3.0
 - zerovec 0.11.5 — Unicode-3.0
 - zerovec-derive 0.11.2 — Unicode-3.0
@@ -3010,6 +3120,229 @@ Apache License
    limitations under the License.
 ```
 
+#### Apache License 2.0 (Apache-2.0) — winx 0.36.4
+
+```
+Apache License
+                           Version 2.0, January 2004
+                        http://www.apache.org/licenses/
+
+   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+
+   1. Definitions.
+
+      "License" shall mean the terms and conditions for use, reproduction,
+      and distribution as defined by Sections 1 through 9 of this document.
+
+      "Licensor" shall mean the copyright owner or entity authorized by
+      the copyright owner that is granting the License.
+
+      "Legal Entity" shall mean the union of the acting entity and all
+      other entities that control, are controlled by, or are under common
+      control with that entity. For the purposes of this definition,
+      "control" means (i) the power, direct or indirect, to cause the
+      direction or management of such entity, whether by contract or
+      otherwise, or (ii) ownership of fifty percent (50%) or more of the
+      outstanding shares, or (iii) beneficial ownership of such entity.
+
+      "You" (or "Your") shall mean an individual or Legal Entity
+      exercising permissions granted by this License.
+
+      "Source" form shall mean the preferred form for making modifications,
+      including but not limited to software source code, documentation
+      source, and configuration files.
+
+      "Object" form shall mean any form resulting from mechanical
+      transformation or translation of a Source form, including but
+      not limited to compiled object code, generated documentation,
+      and conversions to other media types.
+
+      "Work" shall mean the work of authorship, whether in Source or
+      Object form, made available under the License, as indicated by a
+      copyright notice that is included in or attached to the work
+      (an example is provided in the Appendix below).
+
+      "Derivative Works" shall mean any work, whether in Source or Object
+      form, that is based on (or derived from) the Work and for which the
+      editorial revisions, annotations, elaborations, or other modifications
+      represent, as a whole, an original work of authorship. For the purposes
+      of this License, Derivative Works shall not include works that remain
+      separable from, or merely link (or bind by name) to the interfaces of,
+      the Work and Derivative Works thereof.
+
+      "Contribution" shall mean any work of authorship, including
+      the original version of the Work and any modifications or additions
+      to that Work or Derivative Works thereof, that is intentionally
+      submitted to Licensor for inclusion in the Work by the copyright owner
+      or by an individual or Legal Entity authorized to submit on behalf of
+      the copyright owner. For the purposes of this definition, "submitted"
+      means any form of electronic, verbal, or written communication sent
+      to the Licensor or its representatives, including but not limited to
+      communication on electronic mailing lists, source code control systems,
+      and issue tracking systems that are managed by, or on behalf of, the
+      Licensor for the purpose of discussing and improving the Work, but
+      excluding communication that is conspicuously marked or otherwise
+      designated in writing by the copyright owner as "Not a Contribution."
+
+      "Contributor" shall mean Licensor and any individual or Legal Entity
+      on behalf of whom a Contribution has been received by Licensor and
+      subsequently incorporated within the Work.
+
+   2. Grant of Copyright License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      copyright license to reproduce, prepare Derivative Works of,
+      publicly display, publicly perform, sublicense, and distribute the
+      Work and such Derivative Works in Source or Object form.
+
+   3. Grant of Patent License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      (except as stated in this section) patent license to make, have made,
+      use, offer to sell, sell, import, and otherwise transfer the Work,
+      where such license applies only to those patent claims licensable
+      by such Contributor that are necessarily infringed by their
+      Contribution(s) alone or by combination of their Contribution(s)
+      with the Work to which such Contribution(s) was submitted. If You
+      institute patent litigation against any entity (including a
+      cross-claim or counterclaim in a lawsuit) alleging that the Work
+      or a Contribution incorporated within the Work constitutes direct
+      or contributory patent infringement, then any patent licenses
+      granted to You under this License for that Work shall terminate
+      as of the date such litigation is filed.
+
+   4. Redistribution. You may reproduce and distribute copies of the
+      Work or Derivative Works thereof in any medium, with or without
+      modifications, and in Source or Object form, provided that You
+      meet the following conditions:
+
+      (a) You must give any other recipients of the Work or
+          Derivative Works a copy of this License; and
+
+      (b) You must cause any modified files to carry prominent notices
+          stating that You changed the files; and
+
+      (c) You must retain, in the Source form of any Derivative Works
+          that You distribute, all copyright, patent, trademark, and
+          attribution notices from the Source form of the Work,
+          excluding those notices that do not pertain to any part of
+          the Derivative Works; and
+
+      (d) If the Work includes a "NOTICE" text file as part of its
+          distribution, then any Derivative Works that You distribute must
+          include a readable copy of the attribution notices contained
+          within such NOTICE file, excluding those notices that do not
+          pertain to any part of the Derivative Works, in at least one
+          of the following places: within a NOTICE text file distributed
+          as part of the Derivative Works; within the Source form or
+          documentation, if provided along with the Derivative Works; or,
+          within a display generated by the Derivative Works, if and
+          wherever such third-party notices normally appear. The contents
+          of the NOTICE file are for informational purposes only and
+          do not modify the License. You may add Your own attribution
+          notices within Derivative Works that You distribute, alongside
+          or as an addendum to the NOTICE text from the Work, provided
+          that such additional attribution notices cannot be construed
+          as modifying the License.
+
+      You may add Your own copyright statement to Your modifications and
+      may provide additional or different license terms and conditions
+      for use, reproduction, or distribution of Your modifications, or
+      for any such Derivative Works as a whole, provided Your use,
+      reproduction, and distribution of the Work otherwise complies with
+      the conditions stated in this License.
+
+   5. Submission of Contributions. Unless You explicitly state otherwise,
+      any Contribution intentionally submitted for inclusion in the Work
+      by You to the Licensor shall be under the terms and conditions of
+      this License, without any additional terms or conditions.
+      Notwithstanding the above, nothing herein shall supersede or modify
+      the terms of any separate license agreement you may have executed
+      with Licensor regarding such Contributions.
+
+   6. Trademarks. This License does not grant permission to use the trade
+      names, trademarks, service marks, or product names of the Licensor,
+      except as required for reasonable and customary use in describing the
+      origin of the Work and reproducing the content of the NOTICE file.
+
+   7. Disclaimer of Warranty. Unless required by applicable law or
+      agreed to in writing, Licensor provides the Work (and each
+      Contributor provides its Contributions) on an "AS IS" BASIS,
+      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+      implied, including, without limitation, any warranties or conditions
+      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
+      PARTICULAR PURPOSE. You are solely responsible for determining the
+      appropriateness of using or redistributing the Work and assume any
+      risks associated with Your exercise of permissions under this License.
+
+   8. Limitation of Liability. In no event and under no legal theory,
+      whether in tort (including negligence), contract, or otherwise,
+      unless required by applicable law (such as deliberate and grossly
+      negligent acts) or agreed to in writing, shall any Contributor be
+      liable to You for damages, including any direct, indirect, special,
+      incidental, or consequential damages of any character arising as a
+      result of this License or out of the use or inability to use the
+      Work (including but not limited to damages for loss of goodwill,
+      work stoppage, computer failure or malfunction, or any and all
+      other commercial damages or losses), even if such Contributor
+      has been advised of the possibility of such damages.
+
+   9. Accepting Warranty or Additional Liability. While redistributing
+      the Work or Derivative Works thereof, You may choose to offer,
+      and charge a fee for, acceptance of support, warranty, indemnity,
+      or other liability obligations and/or rights consistent with this
+      License. However, in accepting such obligations, You may act only
+      on Your own behalf and on Your sole responsibility, not on behalf
+      of any other Contributor, and only if You agree to indemnify,
+      defend, and hold each Contributor harmless for any liability
+      incurred by, or claims asserted against, such Contributor by reason
+      of your accepting any such warranty or additional liability.
+
+   END OF TERMS AND CONDITIONS
+
+   APPENDIX: How to apply the Apache License to your work.
+
+      To apply the Apache License to your work, attach the following
+      boilerplate notice, with the fields enclosed by brackets "[]"
+      replaced with your own identifying information. (Don't include
+      the brackets!)  The text should be enclosed in the appropriate
+      comment syntax for the file format. We also recommend that a
+      file or class name and description of purpose be included on the
+      same "printed page" as the copyright notice for easier
+      identification within third-party archives.
+
+   Copyright [yyyy] [name of copyright owner]
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+
+
+--- LLVM Exceptions to the Apache 2.0 License ----
+
+As an exception, if, as a result of your compiling your source code, portions
+of this Software are embedded into an Object form of such source code, you
+may redistribute such embedded portions in such Object form without complying
+with the conditions of Sections 4(a), 4(b) and 4(d) of the License.
+
+In addition, if you combine or link compiled forms of this Software with
+software that is licensed under the GPLv2 ("Combined Software") and if a
+court of competent jurisdiction determines that the patent provision (Section
+3), the indemnity provision (Section 9) or other Section of the License
+conflicts with the conditions of the GPLv2, you may retroactively and
+prospectively choose to deem waived or otherwise exclude such Section(s) of
+the License, but only in their entirety and only with respect to the Combined
+Software.
+```
+
 #### Apache License 2.0 (Apache-2.0) — zopfli 0.8.3
 
 ```
@@ -3278,7 +3611,7 @@ Redistribution and use in source and binary forms, with or without modification,
 THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
-#### BSD 3-Clause "New" or "Revised" License (BSD-3-Clause) — alloc-stdlib 0.2.2, brotli 8.0.2, sonora-aec3 0.2.0
+#### BSD 3-Clause "New" or "Revised" License (BSD-3-Clause) — alloc-stdlib 0.2.2, brotli 8.0.2, curve25519-dalek 4.1.3, sonora-aec3 0.2.0
 
 ```
 Copyright (c) <year> <owner>. 
@@ -3489,6 +3822,40 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
+#### BSD 3-Clause "New" or "Revised" License (BSD-3-Clause) — x25519-dalek 2.0.1
+
+```
+Copyright (c) 2017-2021 isis agora lovecruft. All rights reserved.
+Copyright (c) 2019-2021 DebugSteven. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+1. Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright
+notice, this list of conditions and the following disclaimer in the
+documentation and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+contributors may be used to endorse or promote products derived from
+this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
+IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
+PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
+TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
 #### Boost Software License 1.0 (BSL-1.0) — clipboard-win 5.4.1
 
 ```
@@ -3593,6 +3960,25 @@ agreement.
 5.4. "Results" means any outcome obtained by computational analysis
 of Data, including for example machine learning models and models'
 insights.
+```
+
+#### ISC License (ISC) — ego-tree 0.11.1
+
+```
+Copyright © 2016, June McEnroe <june@causal.agency>
+Copyright © 2024-2025, rust-scraper Contributors
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 ```
 
 #### ISC License (ISC) — hmac-sha256 1.1.14
@@ -4111,6 +4497,26 @@ The files under third-party/chromium are licensed as described in
 third-party/chromium/LICENSE.
 ```
 
+#### ISC License (ISC) — scraper 0.29.0
+
+```
+Copyright © 2016, June McEnroe <june@causal.agency>
+Copyright © 2017, Vivek Kushwaha <yoursvivek@gmail.com>
+Copyright © 2024-2025, rust-scraper Contributors
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+```
+
 #### ISC License (ISC) — untrusted 0.9.0
 
 ```
@@ -4438,7 +4844,7 @@ You should also get your employer (if you work as a programmer) or school, if an
 The GNU General Public License does not permit incorporating your program into proprietary programs. If your program is a subroutine library, you may consider it more useful to permit linking proprietary applications with the library. If this is what you want to do, use the GNU Lesser General Public License instead of this License. But first, please read <http://www.gnu.org/philosophy/why-not-lgpl.html>.
 ```
 
-#### MIT License (MIT) — adler2 2.0.1, anyhow 1.0.104, async-trait 0.1.89, atomic-waker 1.1.2, calcard 0.3.14, camino 1.2.2, cargo-platform 0.1.9, cargo_metadata 0.19.2, displaydoc 0.2.5, dtoa 1.0.11, dyn-clone 1.0.20, erased-serde 0.4.9, eyre 0.6.12, fast-float2 0.2.4, fastrand 2.3.0, hashify 0.2.9, indenter 0.3.4, is-terminal 0.4.17, itoa 1.0.17, kuchikiki 0.8.8-speedreader, mail-builder 1.0.0, mail-parser 0.11.9, once_cell 1.21.3, paste 1.0.15, pastey 0.1.1, pathdiff 0.2.3, pin-project-lite 0.2.16, portable-atomic 1.13.1, proc-macro2 1.0.106, quote 1.0.44, rodio 0.20.1, rustix 1.1.3, rustversion 1.0.22, semver 1.0.27, serde 1.0.228, serde-untagged 0.1.9, serde_core 1.0.228, serde_derive 1.0.228, serde_derive_internals 0.29.1, serde_json 1.0.149, serde_repr 0.1.20, servo_arc 0.2.0, servo_arc 0.4.3, syn 1.0.109, syn 2.0.117, syn 3.0.6, thiserror 1.0.69, thiserror 2.0.18, thiserror-impl 1.0.69, thiserror-impl 2.0.18, typeid 1.0.3, unicode-ident 1.0.24, utf-8 0.7.6, zmij 1.0.21
+#### MIT License (MIT) — adler2 2.0.1, ambient-authority 0.0.2, anyhow 1.0.104, async-trait 0.1.89, atomic-waker 1.1.2, calcard 0.3.14, camino 1.2.2, cap-primitives 4.0.3, cap-std 4.0.3, cargo-platform 0.1.9, cargo_metadata 0.19.2, concurrent-queue 2.5.0, curve25519-dalek-derive 0.1.1, displaydoc 0.2.5, dtoa 1.0.11, dyn-clone 1.0.20, erased-serde 0.4.9, event-listener 5.4.1, eyre 0.6.12, fast-float2 0.2.4, fastrand 2.3.0, fs-set-times 0.20.3, hashify 0.2.9, indenter 0.3.4, io-extras 0.19.0, io-lifetimes 2.0.4, io-lifetimes 3.0.1, is-terminal 0.4.17, itoa 1.0.17, kuchikiki 0.8.8-speedreader, mail-builder 1.0.0, mail-parser 0.11.9, once_cell 1.21.3, parking 2.2.1, paste 1.0.15, pastey 0.1.1, pathdiff 0.2.3, pin-project-lite 0.2.16, portable-atomic 1.13.1, proc-macro2 1.0.106, quote 1.0.44, rodio 0.20.1, rustix 1.1.3, rustversion 1.0.22, semver 1.0.27, serde 1.0.228, serde-untagged 0.1.9, serde_core 1.0.228, serde_derive 1.0.228, serde_derive_internals 0.29.1, serde_json 1.0.149, serde_repr 0.1.20, servo_arc 0.2.0, servo_arc 0.4.3, servo_arc 0.5.0, syn 1.0.109, syn 2.0.117, syn 3.0.6, thiserror 1.0.69, thiserror 2.0.18, thiserror-impl 1.0.69, thiserror-impl 2.0.18, typeid 1.0.3, unicode-ident 1.0.24, utf-8 0.7.6, zmij 1.0.21
 
 ```
 Permission is hereby granted, free of charge, to any
@@ -4466,7 +4872,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-#### MIT License (MIT) — adobe-cmap-parser 0.4.1, block 0.1.6, block2 0.6.2, brotli-decompressor 5.0.0, cargo_toml 0.22.3, chrono 0.4.43, chrono-tz 0.10.4, convert_case 0.4.0, dasp_sample 0.11.0, dispatch 0.2.0, dispatch2 0.3.0, dpi 0.1.2, fax 0.2.6, fax_derive 0.2.0, fxhash 0.2.1, krilla 0.8.2, libm 0.2.16, local-voice-ai 0.21.18, mac 0.1.1, macos-accessibility-client 0.0.1, malloc_buf 0.0.6, match_token 0.1.0, minisign-verify 0.2.5, objc2 0.6.4, objc2-app-kit 0.3.2, objc2-audio-toolbox 0.3.2, objc2-cloud-kit 0.3.2, objc2-core-audio 0.3.2, objc2-core-audio-types 0.3.2, objc2-core-data 0.3.2, objc2-core-foundation 0.3.2, objc2-core-graphics 0.3.2, objc2-core-image 0.3.2, objc2-core-text 0.3.2, objc2-core-video 0.3.2, objc2-encode 4.1.0, objc2-exception-helper 0.1.1, objc2-foundation 0.3.2, objc2-io-kit 0.3.2, objc2-metal 0.3.2, objc2-osa-kit 0.3.2, objc2-quartz-core 0.3.2, objc2-web-kit 0.3.2, pdf-extract 0.12.0, phf 0.10.1, phf 0.8.0, phf_codegen 0.8.0, phf_generator 0.10.0, phf_generator 0.8.0, phf_macros 0.10.0, phf_shared 0.10.0, phf_shared 0.8.0, postscript 0.14.1, realfft 3.5.0, siphasher 0.3.11, siphasher 1.0.2, specta 2.0.0-rc.22, specta-macros 2.0.0-rc.18, specta-serde 0.0.9, specta-typescript 0.0.9, tauri 2.11.5, tauri-build 2.6.3, tauri-codegen 2.6.3, tauri-macros 2.6.3, tauri-plugin 2.5.3, tauri-plugin-autostart 2.5.1, tauri-plugin-clipboard-manager 2.3.2, tauri-plugin-dialog 2.6.0, tauri-plugin-fs 2.4.5, tauri-plugin-global-shortcut 2.3.2, tauri-plugin-log 2.8.0, tauri-plugin-opener 2.5.3, tauri-plugin-os 2.3.2, tauri-plugin-process 2.3.1, tauri-plugin-single-instance 2.4.0, tauri-plugin-store 2.4.2, tauri-plugin-updater 2.10.1, tauri-plugin-window-state 2.4.1, tauri-runtime 2.11.3, tauri-runtime-wry 2.11.4, tauri-specta 2.0.0-rc.21, tauri-specta-macros 2.0.0-rc.16, tauri-utils 2.9.3, type1-encoding-parser 0.1.1, unic-char-property 0.9.0, unic-char-range 0.9.0, unic-common 0.9.0, unic-ucd-ident 0.9.0, unic-ucd-version 0.9.0, vad-rs 0.1.6, webview2-com 0.38.2, webview2-com-macros 0.8.1, webview2-com-sys 0.38.2, whatlang 0.18.0, windows 0.54.0, windows 0.58.0, windows 0.61.3, windows 0.62.2, windows-collections 0.2.0, windows-collections 0.3.2, windows-core 0.54.0, windows-core 0.58.0, windows-core 0.61.2, windows-core 0.62.2, windows-future 0.2.1, windows-future 0.3.2, windows-implement 0.58.0, windows-implement 0.60.2, windows-interface 0.58.0, windows-interface 0.59.3, windows-link 0.1.3, windows-link 0.2.1, windows-numerics 0.2.0, windows-numerics 0.3.1, windows-registry 0.6.1, windows-result 0.1.2, windows-result 0.2.0, windows-result 0.3.4, windows-result 0.4.1, windows-strings 0.1.0, windows-strings 0.4.2, windows-strings 0.5.1, windows-sys 0.59.0, windows-sys 0.60.2, windows-sys 0.61.2, windows-targets 0.52.6, windows-targets 0.53.5, windows-threading 0.1.0, windows-threading 0.2.1, windows-version 0.1.7, windows_x86_64_msvc 0.52.6, windows_x86_64_msvc 0.53.1, zune-core 0.4.12, zune-jpeg 0.4.21
+#### MIT License (MIT) — adobe-cmap-parser 0.4.1, atoi_simd 0.16.1, block 0.1.6, block2 0.6.2, brotli-decompressor 5.0.0, cargo_toml 0.22.3, chrono 0.4.43, chrono-tz 0.10.4, convert_case 0.4.0, dasp_sample 0.11.0, dispatch 0.2.0, dispatch2 0.3.0, dpi 0.1.2, fax 0.2.6, fax_derive 0.2.0, fxhash 0.2.1, krilla 0.8.2, libm 0.2.16, local-voice-ai 0.24.1, mac 0.1.1, macos-accessibility-client 0.0.1, malloc_buf 0.0.6, match_token 0.1.0, minisign-verify 0.2.5, objc2 0.6.4, objc2-app-kit 0.3.2, objc2-audio-toolbox 0.3.2, objc2-cloud-kit 0.3.2, objc2-core-audio 0.3.2, objc2-core-audio-types 0.3.2, objc2-core-data 0.3.2, objc2-core-foundation 0.3.2, objc2-core-graphics 0.3.2, objc2-core-image 0.3.2, objc2-core-text 0.3.2, objc2-core-video 0.3.2, objc2-encode 4.1.0, objc2-exception-helper 0.1.1, objc2-foundation 0.3.2, objc2-io-kit 0.3.2, objc2-metal 0.3.2, objc2-osa-kit 0.3.2, objc2-quartz-core 0.3.2, objc2-web-kit 0.3.2, pdf-extract 0.12.0, phf 0.10.1, phf 0.8.0, phf_codegen 0.8.0, phf_generator 0.10.0, phf_generator 0.8.0, phf_macros 0.10.0, phf_shared 0.10.0, phf_shared 0.8.0, postscript 0.14.1, realfft 3.5.0, siphasher 0.3.11, siphasher 1.0.2, specta 2.0.0-rc.22, specta-macros 2.0.0-rc.18, specta-serde 0.0.9, specta-typescript 0.0.9, sqlx-core 0.9.0, sqlx-sqlite 0.9.0, tauri 2.11.5, tauri-build 2.6.3, tauri-codegen 2.6.3, tauri-macros 2.6.3, tauri-plugin 2.5.3, tauri-plugin-autostart 2.5.1, tauri-plugin-clipboard-manager 2.3.2, tauri-plugin-dialog 2.6.0, tauri-plugin-fs 2.4.5, tauri-plugin-global-shortcut 2.3.2, tauri-plugin-log 2.8.0, tauri-plugin-opener 2.5.3, tauri-plugin-os 2.3.2, tauri-plugin-process 2.3.1, tauri-plugin-single-instance 2.4.0, tauri-plugin-store 2.4.2, tauri-plugin-updater 2.10.1, tauri-plugin-window-state 2.4.1, tauri-runtime 2.11.3, tauri-runtime-wry 2.11.4, tauri-specta 2.0.0-rc.21, tauri-specta-macros 2.0.0-rc.16, tauri-utils 2.9.3, type1-encoding-parser 0.1.1, unic-char-property 0.9.0, unic-char-range 0.9.0, unic-common 0.9.0, unic-ucd-ident 0.9.0, unic-ucd-version 0.9.0, vad-rs 0.1.6, webview2-com 0.38.2, webview2-com-macros 0.8.1, webview2-com-sys 0.38.2, whatlang 0.18.0, windows 0.54.0, windows 0.58.0, windows 0.61.3, windows 0.62.2, windows-collections 0.2.0, windows-collections 0.3.2, windows-core 0.54.0, windows-core 0.58.0, windows-core 0.61.2, windows-core 0.62.2, windows-future 0.2.1, windows-future 0.3.2, windows-implement 0.58.0, windows-implement 0.60.2, windows-interface 0.58.0, windows-interface 0.59.3, windows-link 0.1.3, windows-link 0.2.1, windows-numerics 0.2.0, windows-numerics 0.3.1, windows-registry 0.6.1, windows-result 0.1.2, windows-result 0.2.0, windows-result 0.3.4, windows-result 0.4.1, windows-strings 0.1.0, windows-strings 0.4.2, windows-strings 0.5.1, windows-sys 0.59.0, windows-sys 0.60.2, windows-sys 0.61.2, windows-targets 0.52.6, windows-targets 0.53.5, windows-threading 0.1.0, windows-threading 0.2.1, windows-version 0.1.7, windows_x86_64_msvc 0.52.6, windows_x86_64_msvc 0.53.1, zune-core 0.4.12, zune-jpeg 0.4.21
 
 ```
 MIT License
@@ -4658,6 +5064,36 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+#### MIT License (MIT) — apple-native-keyring-store 1.0.2, keyring 4.2.0, keyring-core 1.0.1
+
+```
+Copyright (c) 2016 keyring Developers
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+```
+
 #### MIT License (MIT) — arboard 3.6.1
 
 ```
@@ -4744,34 +5180,30 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-#### MIT License (MIT) — atoi_simd 0.16.1
+#### MIT License (MIT) — atoi 2.0.0
 
 ```
-Copyright (c) 2022 Dmitry Rodionov
+MIT License
 
-Permission is hereby granted, free of charge, to any
-person obtaining a copy of this software and associated
-documentation files (the "Software"), to deal in the
-Software without restriction, including without
-limitation the rights to use, copy, modify, merge,
-publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software
-is furnished to do so, subject to the following
-conditions:
+Copyright (c) 2017 
 
-The above copyright notice and this permission notice
-shall be included in all copies or substantial portions
-of the Software.
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
-ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 ```
 
 #### MIT License (MIT) — atomic-waker 1.1.2
@@ -5023,7 +5455,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-#### MIT License (MIT) — bitflags 1.3.2, bitflags 2.11.0, glob 0.3.3, log 0.4.29, num-bigint 0.4.6, num-complex 0.4.6, num-integer 0.1.46, num-rational 0.4.2, num-traits 0.2.19, regex 1.12.3, regex-automata 0.4.14, regex-syntax 0.8.9
+#### MIT License (MIT) — bitflags 1.3.2, bitflags 2.11.0, getopts 0.2.24, glob 0.3.3, log 0.4.29, num-bigint 0.4.6, num-complex 0.4.6, num-integer 0.1.46, num-rational 0.4.2, num-traits 0.2.19, regex 1.12.3, regex-automata 0.4.14, regex-syntax 0.8.9
 
 ```
 Copyright (c) 2014 The Rust Project Developers
@@ -5238,7 +5670,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-#### MIT License (MIT) — calamine 0.32.0, quick-xml 0.38.4
+#### MIT License (MIT) — calamine 0.32.0
 
 ```
 The MIT License (MIT)
@@ -5452,7 +5884,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-#### MIT License (MIT) — chacha20 0.10.2
+#### MIT License (MIT) — chacha20 0.10.2, zeroize_derive 1.5.0
 
 ```
 Copyright (c) 2019-2026 The RustCrypto Project Developers
@@ -5572,7 +6004,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-#### MIT License (MIT) — cocoa 0.24.1, cocoa-foundation 0.1.2, core-foundation 0.10.1, core-foundation 0.9.4, core-foundation-sys 0.8.7, core-graphics 0.22.3, core-graphics 0.25.0, core-graphics-types 0.1.3, core-graphics-types 0.2.0, euclid 0.20.14, string_cache 0.8.9, string_cache 0.9.0, string_cache_codegen 0.5.4, string_cache_codegen 0.6.1
+#### MIT License (MIT) — cocoa 0.24.1, cocoa-foundation 0.1.2, core-foundation 0.10.1, core-foundation 0.9.4, core-foundation-sys 0.8.7, core-graphics 0.22.3, core-graphics 0.25.0, core-graphics-types 0.1.3, core-graphics-types 0.2.0, euclid 0.20.14, string_cache 0.11.0, string_cache 0.8.9, string_cache 0.9.0, string_cache_codegen 0.11.2, string_cache_codegen 0.5.4, string_cache_codegen 0.6.1
 
 ```
 Copyright (c) 2012-2013 Mozilla Foundation
@@ -5741,7 +6173,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-#### MIT License (MIT) — coreaudio-rs 0.13.0, rawpointer 0.2.1, serde_with 3.16.1, serde_with_macros 3.16.1
+#### MIT License (MIT) — coreaudio-rs 0.13.0, either 1.19.0, rawpointer 0.2.1, serde_with 3.16.1, serde_with_macros 3.16.1
 
 ```
 Copyright (c) 2015
@@ -5801,6 +6233,58 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
+#### MIT License (MIT) — crc 3.4.0
+
+```
+MIT License
+
+Copyright (c) 2017 crc-rs Developers
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+#### MIT License (MIT) — crc-catalog 2.5.0
+
+```
+MIT License
+
+Copyright (c) 2019 Akhil Velagapudi
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
 #### MIT License (MIT) — crc32fast 1.5.0
 
 ```
@@ -5827,7 +6311,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-#### MIT License (MIT) — crossbeam-channel 0.5.15, crossbeam-utils 0.8.21
+#### MIT License (MIT) — crossbeam-channel 0.5.15, crossbeam-queue 0.3.14, crossbeam-utils 0.8.21
 
 ```
 The MIT License (MIT)
@@ -6515,6 +6999,34 @@ FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
 IN THE SOFTWARE.
 ```
 
+#### MIT License (MIT) — flume 0.12.0, rustc-hash 2.1.3
+
+```
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+```
+
 #### MIT License (MIT) — fnv 1.0.7
 
 ```
@@ -6664,6 +7176,36 @@ DEALINGS IN THE SOFTWARE.
 ```
 Copyright (c) 2016 Alex Crichton
 Copyright (c) 2017 The Tokio Authors
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+```
+
+#### MIT License (MIT) — futures-intrusive 0.5.0
+
+```
+Copyright (c) 2019 Matthias Einwag
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -6972,7 +7514,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-#### MIT License (MIT) — hashbrown 0.12.3, hashbrown 0.15.5, hashbrown 0.16.1
+#### MIT License (MIT) — hashbrown 0.12.3, hashbrown 0.15.5, hashbrown 0.16.1, hashbrown 0.17.1
 
 ```
 Copyright (c) 2016 Amanieu d'Antras
@@ -7002,7 +7544,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-#### MIT License (MIT) — hashlink 0.10.0
+#### MIT License (MIT) — hashlink 0.11.1, hashlink 0.12.2
 
 ```
 This work is derived in part from the `linked-hash-map` crate, Copyright (c)
@@ -7094,7 +7636,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-#### MIT License (MIT) — html5ever 0.29.1, html5ever 0.38.0, markup5ever 0.14.1, markup5ever 0.38.0, web_atoms 0.2.5
+#### MIT License (MIT) — html5ever 0.29.1, html5ever 0.38.0, html5ever 0.40.1, markup5ever 0.14.1, markup5ever 0.38.0, markup5ever 0.40.0, web_atoms 0.2.5, web_atoms 0.3.0
 
 ```
 Copyright (c) 2014 The html5ever Project Developers
@@ -7862,7 +8404,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-#### MIT License (MIT) — libsqlite3-sys 0.35.0, rusqlite 0.37.0
+#### MIT License (MIT) — libsqlite3-sys 0.39.1, rusqlite 0.41.1
 
 ```
 Copyright (c) 2014 The rusqlite developers
@@ -8008,6 +8550,36 @@ DEALINGS IN THE SOFTWARE.
 Copyright (c) 2016 - 2023 Ulrik Sverdrup "bluss"
 Copyirhgt (c) 2018 R. Janis Goldschmidt
 Copyright (c) 2021 DutchGhost [constparse.rs]
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+```
+
+#### MIT License (MIT) — maybe-owned 0.3.4
+
+```
+Copyright (c) 2016 Philipp Korber
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -8718,7 +9290,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-#### MIT License (MIT) — phf 0.11.3, phf 0.12.1, phf 0.13.1, phf_codegen 0.11.3, phf_codegen 0.13.1, phf_generator 0.11.3, phf_generator 0.13.1, phf_macros 0.13.1, phf_shared 0.11.3, phf_shared 0.12.1, phf_shared 0.13.1
+#### MIT License (MIT) — phf 0.11.3, phf 0.12.1, phf 0.13.1, phf 0.14.0, phf_codegen 0.11.3, phf_codegen 0.13.1, phf_codegen 0.14.0, phf_generator 0.11.3, phf_generator 0.13.1, phf_generator 0.14.0, phf_macros 0.13.1, phf_macros 0.14.0, phf_shared 0.11.3, phf_shared 0.12.1, phf_shared 0.13.1, phf_shared 0.14.0
 
 ```
 The MIT License (MIT)
@@ -8997,6 +9569,29 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
+#### MIT License (MIT) — qrcode 0.14.1
+
+```
+Copyright (c) 2016 kennytm
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software is furnished to do so,
+subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+```
+
 #### MIT License (MIT) — quick-error 2.0.1
 
 ```
@@ -9019,6 +9614,34 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+```
+
+#### MIT License (MIT) — quick-xml 0.38.4
+
+```
+The MIT License (MIT)
+
+Copyright (c) 2016 Johann Tuffe
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
 ```
 
 #### MIT License (MIT) — rand_core 0.10.1
@@ -9320,34 +9943,6 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-```
-
-#### MIT License (MIT) — rustc-hash 2.1.3
-
-```
-Permission is hereby granted, free of charge, to any
-person obtaining a copy of this software and associated
-documentation files (the "Software"), to deal in the
-Software without restriction, including without
-limitation the rights to use, copy, modify, merge,
-publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software
-is furnished to do so, subject to the following
-conditions:
-
-The above copyright notice and this permission notice
-shall be included in all copies or substantial portions
-of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
-ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
 ```
 
 #### MIT License (MIT) — rustfft 6.4.1, strength_reduce 0.2.4
@@ -9906,6 +10501,63 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+#### MIT License (MIT) — spin 0.9.9
+
+```
+The MIT License (MIT)
+
+Copyright (c) 2014 Mathijs van de Nes
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+#### MIT License (MIT) — sqlx 0.9.0
+
+```
+Copyright (C) SQLx Contributors
+Portions of this work Copyright (C) LaunchBadge, LLC
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+```
+
 #### MIT License (MIT) — stable_deref_trait 1.2.1
 
 ```
@@ -10387,7 +11039,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-#### MIT License (MIT) — tokio 1.49.0, tokio-util 0.7.18
+#### MIT License (MIT) — tokio 1.49.0, tokio-stream 0.1.19, tokio-util 0.7.18
 
 ```
 MIT License
@@ -11345,6 +11997,36 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+#### MIT License (MIT) — windows-native-keyring-store 1.1.0
+
+```
+Copyright (c) 2016 keyring Developers
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+```
+
 #### MIT License (MIT) — winnow 0.7.14
 
 ```
@@ -11928,7 +12610,7 @@ Exhibit B - "Incompatible With Secondary Licenses" Notice
   defined by the Mozilla Public License, v. 2.0.
 ```
 
-#### Mozilla Public License 2.0 (MPL-2.0) — cssparser 0.29.6, cssparser 0.36.0, cssparser-macros 0.6.1
+#### Mozilla Public License 2.0 (MPL-2.0) — cssparser 0.29.6, cssparser 0.36.0, cssparser 0.38.0, cssparser-macros 0.6.1, cssparser-macros 0.7.1
 
 ```
 Mozilla Public License Version 2.0
@@ -12306,7 +12988,7 @@ Exhibit B - "Incompatible With Secondary Licenses" Notice
   defined by the Mozilla Public License, v. 2.0.
 ```
 
-#### Mozilla Public License 2.0 (MPL-2.0) — option-ext 0.2.0, selectors 0.24.0, selectors 0.36.1, symphonia 0.5.5, symphonia-bundle-flac 0.5.5, symphonia-bundle-mp3 0.5.5, symphonia-codec-aac 0.5.5, symphonia-codec-pcm 0.5.5, symphonia-codec-vorbis 0.5.5, symphonia-core 0.5.5, symphonia-format-isomp4 0.5.5, symphonia-format-ogg 0.5.5, symphonia-format-riff 0.5.5, symphonia-metadata 0.5.5, symphonia-utils-xiph 0.5.5
+#### Mozilla Public License 2.0 (MPL-2.0) — option-ext 0.2.0, selectors 0.24.0, selectors 0.36.1, selectors 0.41.0, symphonia 0.5.5, symphonia-bundle-flac 0.5.5, symphonia-bundle-mp3 0.5.5, symphonia-codec-aac 0.5.5, symphonia-codec-pcm 0.5.5, symphonia-codec-vorbis 0.5.5, symphonia-core 0.5.5, symphonia-format-isomp4 0.5.5, symphonia-format-ogg 0.5.5, symphonia-format-riff 0.5.5, symphonia-metadata 0.5.5, symphonia-utils-xiph 0.5.5
 
 ```
 Mozilla Public License Version 2.0
@@ -12826,6 +13508,7 @@ freely, subject to the following restrictions:
 
 3. This notice may not be removed or altered from any source distribution.
 ```
+
 ## Frontend-Pakete (npm, Produktionsabhängigkeiten, 312)
 
 - @babel/code-frame 7.29.7 — MIT
