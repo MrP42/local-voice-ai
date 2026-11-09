@@ -225,17 +225,20 @@ struct LanguageButton: View {
 /// Sprachkürzel im Regal (sf-10): die zuletzt aktive Sprache dunkel, die übrigen hell. Nur Anzeige.
 struct LanguageBadges: View {
     let book: LibraryBook
+    /// Klein für die Statuszeile der Bibliothekskachel (lva#421).
+    var compact = false
+    @ScaledMetric(relativeTo: .caption2) private var compactSize: CGFloat = 9
 
     var body: some View {
         let editions = BookEditions(book: book)
         if editions.hasLanguages {
             let current = editions.readingEdition?.id
-            HStack(spacing: 4) {
+            HStack(spacing: compact ? 2 : 4) {
                 ForEach(editions.editions) { e in
                     let on = e.id == current
-                    Text(e.languageShort).font(.caption2.weight(.bold))
+                    Text(e.languageShort).font(compact ? .system(size: compactSize, weight: .bold) : .caption2.weight(.bold))
                         .foregroundStyle(on ? Color.white : VoicePalette.secondaryText)
-                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .padding(.horizontal, compact ? 3 : 6).padding(.vertical, compact ? 1 : 2)
                         .background(on ? VoicePalette.ink : VoicePalette.border, in: RoundedRectangle(cornerRadius: 4))
                 }
             }

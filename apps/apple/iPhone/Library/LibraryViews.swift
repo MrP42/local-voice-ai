@@ -255,13 +255,6 @@ struct LibraryShelf: View {
                 }
 
                 Text("ALLE BÜCHER · \(shown.count)").font(.caption.weight(.semibold)).tracking(0.6).foregroundStyle(VoicePalette.secondaryText)
-                if library.anyAudioDownloaded {
-                    HStack(alignment: .top, spacing: 4) {
-                        DownloadedMark()
-                        Text("Hörbuch heruntergeladen, offline verfügbar").font(.caption).foregroundStyle(VoicePalette.secondaryText)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }.accessibilityHidden(true)
-                }
                 if library.books.isEmpty {
                     ContentUnavailableView {
                         Label("Noch keine Bücher", systemImage: "books.vertical")
@@ -269,7 +262,7 @@ struct LibraryShelf: View {
                         Text("Füge EPUB, PDF, TXT oder ein Hörbuch (MP3, M4A, M4B) aus der Dateien-App hinzu. Mehrere Audiodateien zusammen werden ein Hörbuch mit Teilen.")
                     } actions: { Button("Buch hinzufügen") { importing = true }.buttonStyle(.borderedProminent) }
                 }
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: 12)], alignment: .leading, spacing: 16) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: 12, alignment: .top)], alignment: .leading, spacing: 16) {
                     ForEach(shown) { book in
                         NavigationLink { LibraryBookDetail(bookId: book.id) } label: { ShelfItem(book: book) }.buttonStyle(.plain)
                             .overlay(alignment: .topLeading) { FavoriteStar(book: book) }
@@ -324,11 +317,15 @@ struct ShelfItem: View {
                 Text(audio || library.audioInAccount(active) ? (rec == nil ? "Hörbuch · neu" : "Hörbuch · \(LibraryFormat.percent(LibraryProgress.fraction(rec)))")
                            : "Text · \(LibraryFormat.percent(LibraryProgress.fraction(rec)))")
                     .font(.caption).foregroundStyle(VoicePalette.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
+                    // Eine Zeile je Kachel (lva#421): lieber etwas kleiner als eine zweite Zeile, die die Reihe versetzt.
+                    .lineLimit(typeSize.isAccessibilitySize ? nil : 1)
+                    .minimumScaleFactor(typeSize.isAccessibilitySize ? 1 : 0.75)
+                    .fixedSize(horizontal: false, vertical: typeSize.isAccessibilitySize)
                     .frame(maxWidth: typeSize.isAccessibilitySize ? nil : .infinity, alignment: .leading)
+                // Sprachkürzel klein und rechtsbündig in der Statuszeile, vor dem Download-Symbol.
+                LanguageBadges(book: book, compact: true).fixedSize()
                 if audio || !typeSize.isAccessibilitySize { DownloadedMark(visible: audio) }
             }
-            LanguageBadges(book: book)
             }
         }
         .accessibilityElement(children: .combine)
@@ -346,7 +343,7 @@ struct ShelfItem: View {
 
     /// In sehr großer Schrift untereinander, sonst bliebe dem Text kaum Breite.
     private var metaLayout: AnyLayout {
-        typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 2)) : AnyLayout(HStackLayout(alignment: .top, spacing: 4))
+        typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 2)) : AnyLayout(HStackLayout(alignment: .center, spacing: 4))
     }
 }
 
