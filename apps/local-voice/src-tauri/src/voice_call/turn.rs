@@ -167,10 +167,13 @@ pub async fn voice_call_turn(
         .unwrap_or_else(|e| e.into_inner())
         .insert(request_id.clone(), cancel.clone());
 
+    // Antwort aus Notizbuchdaten: nichts verlässt Rust, bevor der Vermerk gesichert ist.
+    let puffer = Arc::new(Mutex::new(schutz::Antwortpuffer::<String>::neu(&pruefung)));
     let on_delta = {
         let app = app.clone();
         let request_id = request_id.clone();
         let tor_strom = tor_strom.clone();
+        let puffer = puffer.clone();
         move |delta: &str| {
             let text = tor_strom
                 .lock()
@@ -179,6 +182,13 @@ pub async fn voice_call_turn(
             if text.is_empty() {
                 return;
             }
+            let Some(text) = puffer
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .durchlassen(text)
+            else {
+                return;
+            };
             let _ = app.emit(
                 EVENT,
                 serde_json::json!({"kind": "delta", "request_id": request_id, "text": text}),
@@ -226,14 +236,22 @@ pub async fn voice_call_turn(
                 let mut t = tor_strom.lock().unwrap_or_else(|e| e.into_inner());
                 (t.beenden(), t.ausgabe(), t.prosa())
             };
-            if !rest.is_empty() {
+            // Erst nach dauerhaft gesichertem Vermerk wird die Antwort freigegeben (Recheck 3/1, 4):
+            // gepufferte Teile gehen erst danach hinaus, bei Fehler werden sie verworfen.
+            let gesichert =
+                schutz::abgeleitet_merken(&pruefung, &prosa, conversation_id.as_deref()).is_ok();
+            let hinaus: String = puffer
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .abschliessen(gesichert, [rest])
+                .concat();
+            if !hinaus.is_empty() {
                 let _ = app.emit(
                     EVENT,
-                    serde_json::json!({"kind": "delta", "request_id": request_id, "text": rest}),
+                    serde_json::json!({"kind": "delta", "request_id": request_id, "text": hinaus}),
                 );
             }
-            // Erst nach dauerhaft gesichertem Vermerk wird die Antwort freigegeben (Recheck 3/1).
-            if schutz::abgeleitet_merken(&pruefung, &prosa, conversation_id.as_deref()).is_err() {
+            if !gesichert {
                 let _ = app.emit(
                     EVENT,
                     serde_json::json!({"kind": "failed", "request_id": request_id}),

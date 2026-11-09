@@ -522,6 +522,51 @@ pub struct Pruefung {
     quelle: Quelle,
 }
 
+impl Pruefung {
+    /// Die Antwort beruht auf Notizbuchdaten: Anzeige und Sprachausgabe erst, wenn
+    /// [`abgeleitet_merken`] den Vermerk gesichert hat (Codex lva#414 Recheck 4); bis dahin puffern,
+    /// bei Fehler verwerfen.
+    pub fn antwort_puffern(&self) -> bool {
+        self.inhalt
+    }
+}
+
+/// Hält Antwortteile zurück, solange der Vermerk einer Antwort aus Notizbuchdaten nicht gesichert
+/// ist (Codex lva#414 Recheck 4). Ohne Notizbuchbezug geht jeder Teil sofort durch.
+#[derive(Debug)]
+pub struct Antwortpuffer<T> {
+    puffer: Option<Vec<T>>,
+}
+
+impl<T> Antwortpuffer<T> {
+    pub fn neu(p: &Pruefung) -> Self {
+        Self {
+            puffer: p.antwort_puffern().then(Vec::new),
+        }
+    }
+
+    /// Ein Teil der laufenden Antwort: `Some` = jetzt ausgeben, `None` = zurückgehalten.
+    pub fn durchlassen(&mut self, teil: T) -> Option<T> {
+        match &mut self.puffer {
+            Some(p) => {
+                p.push(teil);
+                None
+            }
+            None => Some(teil),
+        }
+    }
+
+    /// Ende der Antwort: bei gesichertem Vermerk alles Zurückgehaltene und `rest` in Reihenfolge,
+    /// sonst nichts (verworfen).
+    pub fn abschliessen(&mut self, gesichert: bool, rest: impl IntoIterator<Item = T>) -> Vec<T> {
+        let zurueck = self.puffer.take().unwrap_or_default();
+        if !gesichert {
+            return Vec::new();
+        }
+        zurueck.into_iter().chain(rest).collect()
+    }
+}
+
 /// Provenienz einer Prüfung: Seiten und Freigabe-Einträge, von denen die Eingaben abhängen.
 #[derive(Debug, Default, Clone)]
 struct Quelle {

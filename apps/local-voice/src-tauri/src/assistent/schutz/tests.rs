@@ -739,3 +739,54 @@ fn json_beleg_nach_vielen_eintraegen_widerrufen() {
         "JSON-Beleg über Merkmale entfernt"
     );
 }
+
+/// Recheck 4: Antwortteile aus Notizbuchdaten gehen erst nach gesichertem Vermerk hinaus; bei
+/// Fehler nichts. Ohne Notizbuchbezug geht alles sofort durch.
+#[test]
+fn antwortpuffer_gibt_erst_nach_sicherung_frei() {
+    let _g = sperre();
+    let (_d, pfad) = speicher();
+    merken(
+        &ergebnis("s1", "Personalsache", AUSZUG),
+        &nb1(),
+        Some("g-p"),
+    );
+    let p = pruefe(vec![m("user", "Fass zusammen.")], Some("g-p"), &nb1());
+    let mut puffer = Antwortpuffer::<String>::neu(&p);
+    assert_eq!(puffer.durchlassen("Satz eins. ".into()), None);
+    assert_eq!(puffer.durchlassen("Satz zwei.".into()), None);
+    let antwort = "Satz eins. Satz zwei über die Personalfrage am Freitag.";
+    let ok = abgeleitet_merken(&p, antwort, Some("g-p")).is_ok();
+    assert!(ok);
+    assert_eq!(
+        puffer.abschliessen(ok, ["Rest".to_string()]),
+        ["Satz eins. ", "Satz zwei.", "Rest"]
+    );
+    // Schreibfehler: alles verworfen.
+    std::fs::create_dir(pfad.with_extension("json.tmp")).unwrap();
+    let p = pruefe(vec![m("user", "Noch einmal.")], Some("g-p"), &nb1());
+    let mut puffer = Antwortpuffer::<String>::neu(&p);
+    assert_eq!(puffer.durchlassen("Vertraulich.".into()), None);
+    let ok = abgeleitet_merken(
+        &p,
+        "Vertraulich über die Personalfrage am Freitag.",
+        Some("g-p"),
+    )
+    .is_ok();
+    assert!(!ok);
+    assert!(puffer.abschliessen(ok, ["Rest".to_string()]).is_empty());
+    // Ohne Notizbuchbezug: sofort durch.
+    std::fs::remove_dir(pfad.with_extension("json.tmp")).unwrap();
+    zuruecksetzen();
+    let (_d2, _p2) = speicher();
+    let p = pruefe(
+        vec![m("user", "Wie wird das Wetter?")],
+        Some("g-frei"),
+        &nb1(),
+    );
+    let mut puffer = Antwortpuffer::<String>::neu(&p);
+    assert_eq!(
+        puffer.durchlassen("Sonnig.".into()),
+        Some("Sonnig.".to_string())
+    );
+}

@@ -550,16 +550,24 @@ pub async fn voice_call_chat(
             *i += 1;
         })
     };
+    // Antwort aus Notizbuchdaten: nichts verlässt Rust, bevor der Vermerk gesichert ist.
+    let puffer = Arc::new(Mutex::new(assistent::schutz::Antwortpuffer::<String>::neu(
+        &pruefung,
+    )));
     let on_delta = {
         let tor = tor_strom.clone();
         let emit_piece = emit_piece.clone();
+        let puffer = puffer.clone();
         move |delta: &str| {
             let pieces = tor
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .einspeisen(delta);
+            let mut p = puffer.lock().unwrap_or_else(|e| e.into_inner());
             for piece in pieces {
-                emit_piece(piece);
+                if let Some(piece) = p.durchlassen(piece) {
+                    emit_piece(piece);
+                }
             }
         }
     };
@@ -606,17 +614,22 @@ pub async fn voice_call_chat(
                 let rest = t.beenden();
                 (rest, t.freigegebener_text())
             };
-            for piece in rest {
-                emit_piece(piece);
-            }
-            // Erst nach dauerhaft gesichertem Vermerk wird die Antwort freigegeben (Recheck 3/1).
-            if assistent::schutz::abgeleitet_merken(
+            // Erst nach dauerhaft gesichertem Vermerk wird die Antwort freigegeben (Recheck 3/1, 4):
+            // gepufferte Sätze gehen erst danach hinaus, bei Fehler werden sie verworfen.
+            let gesichert = assistent::schutz::abgeleitet_merken(
                 &pruefung,
                 &freigegeben,
                 conversation_id.as_deref(),
             )
-            .is_err()
-            {
+            .is_ok();
+            let hinaus = puffer
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .abschliessen(gesichert, rest);
+            for piece in hinaus {
+                emit_piece(piece);
+            }
+            if !gesichert {
                 let _ = app.emit(
                     EVENT,
                     serde_json::json!({"kind": "failed", "request_id": request_id}),
