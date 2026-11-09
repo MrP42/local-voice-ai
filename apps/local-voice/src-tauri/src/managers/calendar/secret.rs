@@ -470,7 +470,11 @@ mod sealed {
         Ok(out)
     }
 
-    pub fn open(key: &[u8; KEY_LEN], blob: &[u8], aad: &[u8]) -> Result<Zeroizing<Vec<u8>>, String> {
+    pub fn open(
+        key: &[u8; KEY_LEN],
+        blob: &[u8],
+        aad: &[u8],
+    ) -> Result<Zeroizing<Vec<u8>>, String> {
         const BROKEN: &str =
             "Das Geheimnis lässt sich nicht entschlüsseln (anderer Benutzer oder beschädigt): Zugang neu eingeben.";
         if blob.len() < MAGIC.len() + NONCE_LEN + 16 || &blob[..MAGIC.len()] != MAGIC {
@@ -575,14 +579,14 @@ mod dpapi {
         let fresh = sealed::new_key();
         // Nur ANLEGEN, nie ersetzen: ein überschriebener Schlüssel machte alle abgelegten
         // Geheimnisse unlesbar. `set_generic_password` würde aktualisieren.
-        let added = security_framework::os::macos::keychain::SecKeychain::default().and_then(|kc| {
-            kc.add_generic_password(SERVICE, ACCOUNT, fresh.as_ref())
-        });
+        let added = security_framework::os::macos::keychain::SecKeychain::default()
+            .and_then(|kc| kc.add_generic_password(SERVICE, ACCOUNT, fresh.as_ref()));
         match added {
             Ok(()) => {}
             // Ein zweiter Prozess war schneller: dessen Schlüssel gilt.
             Err(e) if e.code() == DUPLICATE => {
-                let k = read()?.ok_or_else(|| "Der Tresor-Schlüssel ist nicht lesbar.".to_string())?;
+                let k =
+                    read()?.ok_or_else(|| "Der Tresor-Schlüssel ist nicht lesbar.".to_string())?;
                 *slot = Some(k.clone());
                 return Ok(Some(k));
             }
@@ -637,16 +641,30 @@ mod tests {
         let key = super::sealed::new_key();
         let other = super::sealed::new_key();
         let blob = super::sealed::seal(&key, b"geheim", b"calendar-secret@1:a").unwrap();
-        assert!(!blob.windows(6).any(|w| w == b"geheim"), "kein Klartext im Blob");
+        assert!(
+            !blob.windows(6).any(|w| w == b"geheim"),
+            "kein Klartext im Blob"
+        );
         assert_eq!(
-            super::sealed::open(&key, &blob, b"calendar-secret@1:a").unwrap().as_slice(),
+            super::sealed::open(&key, &blob, b"calendar-secret@1:a")
+                .unwrap()
+                .as_slice(),
             b"geheim"
         );
-        assert!(super::sealed::open(&key, &blob, b"calendar-secret@1:b").is_err(), "anderer Name");
-        assert!(super::sealed::open(&other, &blob, b"calendar-secret@1:a").is_err(), "anderer Schlüssel");
+        assert!(
+            super::sealed::open(&key, &blob, b"calendar-secret@1:b").is_err(),
+            "anderer Name"
+        );
+        assert!(
+            super::sealed::open(&other, &blob, b"calendar-secret@1:a").is_err(),
+            "anderer Schlüssel"
+        );
         let mut bad = blob.clone();
         *bad.last_mut().unwrap() ^= 1;
-        assert!(super::sealed::open(&key, &bad, b"calendar-secret@1:a").is_err(), "verändert");
+        assert!(
+            super::sealed::open(&key, &bad, b"calendar-secret@1:a").is_err(),
+            "verändert"
+        );
         assert!(super::sealed::open(&key, b"LVK1", b"x").is_err(), "zu kurz");
         let again = super::sealed::seal(&key, b"geheim", b"calendar-secret@1:a").unwrap();
         assert_ne!(blob, again, "frischer Nonce je Speichern");
