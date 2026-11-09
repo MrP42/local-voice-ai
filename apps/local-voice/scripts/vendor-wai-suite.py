@@ -14,11 +14,14 @@ geändert; Anpassungen gehören ins SDK.
 Zwei bewusste Abweichungen der erzeugten `Cargo.toml` vom SDK:
 - `reqwest`: Feature `rustls` wird zu `rustls-no-provider`. `rustls` zöge `aws-lc-rs` (aws-lc-sys, Lizenz
   OpenSSL) ins Lock; Local Voice AI nutzt `ring`, und der Updater (reqwest 0.13) läuft schon so.
-- `[lib] test = false`: die Tests der Crates laufen im SDK.
+- `[lib] test = false`: die Tests der Crates laufen im SDK. Ausnahme `MIT_TESTS` (Codex lva#414): deren
+  Tests (Sicherheitsregeln des Notizbuch-Zugangs) laufen auch hier, `scripts/dev.ps1 test|check` ruft sie
+  verpflichtend mit `cargo test -p <crate>` auf; die Dev-Abhängigkeiten kommen dazu (nur `ERLAUBT_DEV`).
 
     python3 scripts/vendor-wai-suite.py [<wai-sdk-pfad>] [--commit <rev>]   übernehmen (Standard: origin/main)
     python3 scripts/vendor-wai-suite.py [<wai-sdk-pfad>] --nur <crate> [--commit <rev>]   nur ein Crate übernehmen
     python3 scripts/vendor-wai-suite.py [<wai-sdk-pfad>] --check            Ordner gegen den gepinnten Commit prüfen
+    python3 scripts/vendor-wai-suite.py --test                              Tests der Crates in MIT_TESTS ausführen
 
 Der SDK-Pfad kommt aus dem Argument oder der Umgebungsvariablen WAI_SDK. Gelesen wird nur per `git`, der
 Arbeitsbaum des SDK wird nicht angefasst. `--check` liest den Commit aus den `VENDOR.toml` und endet mit
@@ -42,6 +45,7 @@ WURZEL = Path(__file__).resolve().parent.parent
 VENDOR = WURZEL / "src-tauri" / "vendor"
 CRATES = (
     "wai-links", "wai-security", "wai-storage", "wai-providers", "wai-projekte", "wai-recherche", "wai-assistent",
+    "wai-notizbuch-zugang",
 )
 UEBERNOMMEN = ("src/", "regeln/")
 # wai-assistent (ADR-0028 A2) bindet `regeln/standard.json` per include_str! ein und die Vertragsfixture aus
@@ -50,6 +54,11 @@ UEBERNOMMEN = ("src/", "regeln/")
 FIXTURE_QUELLE = "contracts/fixtures/assistent-einstufung/valid/regeltabelle-de-en.json"
 FIXTURE_ALT = 'include_str!("../../../contracts/fixtures/assistent-einstufung/valid/regeltabelle-de-en.json")'
 FIXTURE_NEU = 'include_str!("../regeln/vertragsfixture.json")'
+
+# Crates, deren eigene Tests auch in Local Voice AI laufen (Sicherheitsregeln, Codex lva#414 M6).
+MIT_TESTS = ("wai-notizbuch-zugang",)
+# Dev-Abhängigkeiten dieser Tests; tempfile 3 (MIT OR Apache-2.0) nutzt Local Voice AI schon.
+ERLAUBT_DEV = {"tempfile"}
 
 VENDOR_DATEI = "VENDOR.toml"
 STANDARD_REV = "origin/main"
@@ -64,6 +73,8 @@ ERLAUBT = {
     "reqwest", "url", "scraper", "ego-tree",
     # base64 0.22 (MIT OR Apache-2.0), im Lockfile und in Cargo.toml schon vorhanden; Sync-Kern von wai-assistent.
     "base64",
+    # rusqlite 0.37 „bundled“ (MIT), in Local Voice schon vorhanden; nur lesender Notizbuch-Zugang (lva#396 N2).
+    "rusqlite",
 }
 
 
@@ -86,13 +97,13 @@ def toml_wert(w: object) -> str:
     raise SystemExit(f"TOML-Wert nicht unterstützt: {w!r}")
 
 
-def abhaengigkeit(crate: str, name: str, eigen: object, workspace: dict) -> object:
+def abhaengigkeit(crate: str, name: str, eigen: object, workspace: dict, erlaubt: set[str] = ERLAUBT) -> object:
     """Löst `workspace = true` gegen [workspace.dependencies] auf; zusätzliche Features werden vereinigt."""
     if name.startswith("wai-"):
         if name not in CRATES:
             raise SystemExit(f"{crate} braucht {name!r}, das hier nicht vendort wird: CRATES erweitern")
         return {"path": f"../{name}", "version": "0.1.0"}
-    if name not in ERLAUBT:
+    if name not in erlaubt:
         raise SystemExit(f"Neue Abhängigkeit {name!r} in {crate}: erst Lizenz prüfen und melden, dann ERLAUBT erweitern")
     if isinstance(eigen, dict) and eigen.get("workspace"):
         basis = workspace[name]
@@ -133,13 +144,19 @@ def cargo_toml(sdk: Path, commit: str, crate: str) -> bytes:
         f'description = {toml_wert(p["description"])}',
         "",
         "[lib]",
-        "test = false",
+        f"test = {'true' if crate in MIT_TESTS else 'false'}",
         "doctest = false",
         "",
         "[dependencies]",
     ]
     for name, eigen in paket.get("dependencies", {}).items():
         zeilen.append(f"{name} = {toml_wert(abhaengigkeit(crate, name, eigen, ws['dependencies']))}")
+    if crate in MIT_TESTS and paket.get("dev-dependencies"):
+        zeilen += ["", "[dev-dependencies]"]
+        for name, eigen in paket["dev-dependencies"].items():
+            zeilen.append(
+                f"{name} = {toml_wert(abhaengigkeit(crate, name, eigen, ws['dependencies'], ERLAUBT_DEV))}"
+            )
     return ("\n".join(zeilen) + "\n").encode("utf-8")
 
 
@@ -245,13 +262,45 @@ def pruefen(sdk: Path) -> int:
     return fehler
 
 
+def testen() -> int:
+    """Führt die Tests der Crates in `MIT_TESTS` aus, ohne SDK-Checkout und ohne den Baum zu verändern.
+
+    Die vendorten Crates sind keine Workspace-Mitglieder von Local Voice AI; `cargo test -p` geht für
+    Crates mit Dev-Abhängigkeiten deshalb nicht. Der Crate wird in einen temporären Ordner kopiert, mit
+    dem Cargo.lock von Local Voice AI (gleiche Versionen) und dem geteilten Target gebaut und getestet.
+    """
+    import tempfile
+
+    lock = WURZEL / "src-tauri" / "Cargo.lock"
+    target = os.environ.get("CARGO_TARGET_DIR") or str(WURZEL / "src-tauri" / "target")
+    fehler = 0
+    for crate in MIT_TESTS:
+        with tempfile.TemporaryDirectory(prefix=f"lva-test-{crate}-") as tmp:
+            kopie = Path(tmp) / crate
+            shutil.copytree(VENDOR / crate, kopie)
+            shutil.copy2(lock, kopie / "Cargo.lock")
+            r = subprocess.run(
+                ["cargo", "test", "--manifest-path", str(kopie / "Cargo.toml"), "--target-dir", target],
+                env={**os.environ, "CARGO_TARGET_DIR": target},
+            )
+            if r.returncode != 0:
+                print(f"{crate}: Tests rot (Exit {r.returncode})", file=sys.stderr)
+                fehler = 1
+            else:
+                print(f"{crate}: Tests grün")
+    return fehler
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("sdk", nargs="?", help="Pfad zum wai-sdk-Checkout (sonst WAI_SDK)")
     parser.add_argument("--commit", default=STANDARD_REV, help=f"Commit oder Zweig (Standard: {STANDARD_REV})")
     parser.add_argument("--nur", action="append", choices=CRATES, help="nur dieses Crate übernehmen (mehrfach möglich)")
     parser.add_argument("--check", action="store_true", help="nur prüfen, Exit 1 bei Abweichung")
+    parser.add_argument("--test", action="store_true", help="Tests der Crates in MIT_TESTS ausführen")
     a = parser.parse_args()
+    if a.test:
+        return testen()
     sdk = sdk_pfad(a.sdk)
     return pruefen(sdk) if a.check else uebernehmen(sdk, a.commit, a.nur)
 

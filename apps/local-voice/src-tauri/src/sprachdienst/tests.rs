@@ -1367,26 +1367,10 @@ async fn abbrechen_beim_sprechen_verwirft_wartendes_audio() {
     );
 }
 
-/// Fängt alles ab, was über `log` läuft (einmal je Prozess installiert).
-struct Fang;
-
-static ZEILEN: Mutex<Vec<String>> = Mutex::new(Vec::new());
-
-impl log::Log for Fang {
-    fn enabled(&self, _: &log::Metadata) -> bool {
-        true
-    }
-    fn log(&self, r: &log::Record) {
-        ZEILEN.lock().unwrap().push(format!("{}", r.args()));
-    }
-    fn flush(&self) {}
-}
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn inhalte_stehen_nicht_im_log() {
-    static FANG: Fang = Fang;
-    let _ = log::set_logger(&FANG);
-    log::set_max_level(log::LevelFilter::Trace);
+    // Gemeinsamer Fänger (`log` erlaubt nur einen Logger je Prozess).
+    crate::testlog::installieren();
 
     let st = stand();
     *st.engine.antwort.lock().unwrap() = Some("GEHEIMER-ERKANNTER-SATZ-4711".into());
@@ -1424,7 +1408,7 @@ async fn inhalte_stehen_nicht_im_log() {
     assert_eq!(k.fehler().await, (0, code::STROM_UNBEKANNT.into()));
     k.leitung_zu().await;
 
-    let zeilen = ZEILEN.lock().unwrap().clone();
+    let zeilen = crate::testlog::zeilen();
     assert!(
         zeilen.iter().any(|l| l.contains("erkannt strom=1")),
         "der Dienst protokolliert: {zeilen:?}"
@@ -1439,9 +1423,8 @@ async fn inhalte_stehen_nicht_im_log() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn kopplung_schreibt_weder_code_noch_schluessel_ins_log() {
-    static FANG: Fang = Fang;
-    let _ = log::set_logger(&FANG);
-    log::set_max_level(log::LevelFilter::Trace);
+    // Gemeinsamer Fänger (`log` erlaubt nur einen Logger je Prozess).
+    crate::testlog::installieren();
 
     let st = stand();
     let mut k = st.verbinden();
@@ -1452,7 +1435,7 @@ async fn kopplung_schreibt_weder_code_noch_schluessel_ins_log() {
     k.leitung_zu().await;
 
     let fp = fp_von(&ergebnis.schluessel);
-    let zeilen = ZEILEN.lock().unwrap().clone();
+    let zeilen = crate::testlog::zeilen();
     assert!(
         zeilen.iter().all(|l| !l.contains(&ergebnis.schluessel)
             && !l.contains(&fp)

@@ -25,6 +25,8 @@ use serde_json::{json, Map, Value};
 
 use super::areas::{Area, Areas};
 
+pub mod notizbuch;
+
 /// Laengste Suchanfrage (Zeichen) und hoechste Zahl Suchwoerter.
 pub const MAX_QUERY_CHARS: usize = 200;
 const MAX_TERMS: usize = 8;
@@ -146,6 +148,11 @@ pub trait KnowledgeSource {
     /// Seiten der Vorlesen-Bibliothek, zuletzt geaenderte zuerst.
     fn pages(&self) -> Result<Vec<PageInfo>, String>;
     fn page_text(&self, id: &str) -> Result<String, String>;
+    /// Notizbuch-Zugang mit der Abschnittsfreigabe dieser Runde (lva#396 N2). Ohne Notizbuch
+    /// auf dem Gerät oder ohne Anbindung: Klartext-Fehler.
+    fn notizbuch(&self) -> Result<notizbuch::Sicht, String> {
+        Err("Das Notizbuch ist hier nicht verfügbar.".to_string())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -211,6 +218,11 @@ fn limit_prop(default: i64, max: i64) -> Value {
             "description": format!("Höchstens so viele Treffer (Standard {default}, höchstens {max}).") })
 }
 
+/// Wie [`limit_prop`], aber unter dem Namen `grenze` (Notizbuch-Werkzeuge, Spec lva#398 §3.3).
+fn limit_prop_named(default: i64, max: i64) -> Value {
+    limit_prop(default, max)
+}
+
 fn object(properties: Value, required: &[&str]) -> Value {
     json!({ "type": "object", "properties": properties, "required": required,
             "additionalProperties": false })
@@ -218,6 +230,12 @@ fn object(properties: Value, required: &[&str]) -> Value {
 
 /// Alle Wissenswerkzeuge in fester Reihenfolge.
 pub fn specs() -> Vec<Spec> {
+    let mut out = eigene_specs();
+    out.extend(notizbuch::specs());
+    out
+}
+
+fn eigene_specs() -> Vec<Spec> {
     let date = |what: &str| string_prop(what, 10);
     vec![
         Spec {
@@ -586,6 +604,7 @@ pub fn run(
         "day_overview" => day_overview(source, ctx, a),
         "tts_pages_list" => tts_pages_list(source, a),
         "tts_page_text" => tts_page_text(source, a),
+        t if notizbuch::ist_werkzeug(t) => notizbuch::run(source, ctx, t, a),
         _ => Err("Dieses Wissenswerkzeug gibt es nicht.".to_string()),
     }
 }

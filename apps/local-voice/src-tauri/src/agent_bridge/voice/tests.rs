@@ -21,7 +21,7 @@ const READING: [&str; 3] = ["meetings_list", "meetings_search", "meeting_transcr
 const READING_OTHER: [&str; 1] = ["tts_providers_list"];
 /// Lesend, aber ohne Wissensbereich: das Gespraech bietet es nicht an.
 const READING_WITHOUT_AREA: [&str; 1] = ["list_workflows"];
-const KNOWLEDGE: [&str; 9] = [
+const KNOWLEDGE: [&str; 13] = [
     "dictations_recent",
     "dictations_search",
     "conversations_list",
@@ -31,6 +31,10 @@ const KNOWLEDGE: [&str; 9] = [
     "day_overview",
     "tts_pages_list",
     "tts_page_text",
+    "notizbuch_suchen",
+    "notizbuch_seite",
+    "notizbuch_zeitraum",
+    "notizbuch_baum",
 ];
 const WRITING: [&str; 4] = [
     "transcribe_file",
@@ -130,7 +134,15 @@ impl knowledge::KnowledgeSource for Source {
 
 fn all_areas() -> Areas {
     Areas::from_settings(
-        &["meetings", "dictations", "conversations", "calendar", "tts"].map(String::from),
+        &[
+            "meetings",
+            "dictations",
+            "conversations",
+            "calendar",
+            "tts",
+            "notebook",
+        ]
+        .map(String::from),
         true,
     )
 }

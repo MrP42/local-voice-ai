@@ -129,6 +129,8 @@ wai-projekte = { path = "vendor/wai-projekte" }
 wai-recherche = { path = "vendor/wai-recherche" }
 # ADR-0028 A2: Assistent-Kern (Einstufung, Belegregel, Messung), vendort aus wai-sdk (vendor/wai-assistent/VENDOR.toml)
 wai-assistent = { path = "vendor/wai-assistent" }
+# Nur lesender Zugang zur Notizbuch-Ablage (lva#396 N2, ADR-0028).
+wai-notizbuch-zugang = { path = "vendor/wai-notizbuch-zugang" }
 async-trait = "0.1"
 # TLS-Anbieter fuer wai-recherche (reqwest 0.13 ohne eingebauten Anbieter): ring statt aws-lc
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
