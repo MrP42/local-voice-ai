@@ -4076,6 +4076,7 @@ dependencies = [
  "wai-assistent",
  "wai-konto",
  "wai-links",
+ "wai-notizbuch-zugang",
  "wai-projekte",
  "wai-providers",
  "wai-recherche",
@@ -9175,6 +9176,17 @@ dependencies = [
 [[package]]
 name = "wai-links"
 version = "0.1.0"
+
+[[package]]
+name = "wai-notizbuch-zugang"
+version = "0.1.0"
+dependencies = [
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.18",
+]
 
 [[package]]
 name = "wai-projekte"

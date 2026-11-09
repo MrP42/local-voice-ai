@@ -1068,6 +1068,11 @@ pub struct AppSettings {
     /// `meetings`. Getrennt von den Rechten externer Agenten.
     #[serde(default)]
     pub voice_call_knowledge: Vec<String>,
+    /// Notizbuch-Abschnitte, die das Gespräch lesen darf (lva#396 N2, Spec lva#398 §3.2), nur
+    /// zusammen mit dem Bereich `notebook`: `abschnitt:<id>` oder `notizbuch:<id>` (ganzes
+    /// Notizbuch samt künftiger Abschnitte). Standard LEER: dann ist nichts sichtbar.
+    #[serde(default)]
+    pub voice_call_notebook_sections: Vec<String>,
     /// Globaler Sprachassistent (lva#325): Abrufindex über die freigegebenen Bereiche
     /// (`voice_call_knowledge`, inkl. `books`, `book_notes`, `ki_docs`). Standard AUS: dann
     /// kein Indexaufbau, kein Vorwärmen, kein Abruf. Freischaltung erst nach Eval-Tor (Plan M8).
@@ -2014,6 +2019,7 @@ pub fn get_default_settings() -> AppSettings {
         assistent_sync_aktiv: false,
         voice_call_read_transcripts: false,
         voice_call_knowledge: Vec::new(),
+        voice_call_notebook_sections: Vec::new(),
         voice_global_context_enabled: false,
         speech_learning_enabled: false,
         speech_learning_auto_apply: false,

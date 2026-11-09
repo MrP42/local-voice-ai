@@ -28,10 +28,13 @@ pub enum Area {
     BookNotes,
     /// Globaler Abrufindex: KI-Dokumente der Buch-KI (eigene Freigabe, Codex M1).
     KiDocs,
+    /// Notizbuch-App (lva#396 N2): nur die zusätzlich je Abschnitt freigegebenen Teile
+    /// (`voice_call_notebook_sections`); ohne Abschnitt ist trotz Bereich nichts sichtbar.
+    Notebook,
 }
 
 impl Area {
-    pub const ALL: [Area; 9] = [
+    pub const ALL: [Area; 10] = [
         Area::Meetings,
         Area::Transcripts,
         Area::Dictations,
@@ -41,6 +44,7 @@ impl Area {
         Area::Books,
         Area::BookNotes,
         Area::KiDocs,
+        Area::Notebook,
     ];
 
     /// Schluessel in der Einstellung und im Frontend.
@@ -55,6 +59,7 @@ impl Area {
             Area::Books => "books",
             Area::BookNotes => "book_notes",
             Area::KiDocs => "ki_docs",
+            Area::Notebook => "notebook",
         }
     }
 
@@ -74,6 +79,7 @@ impl Area {
             Area::Books => "Bücher",
             Area::BookNotes => "Buchnotizen",
             Area::KiDocs => "KI-Dokumente",
+            Area::Notebook => "Notizbuch",
         }
     }
 
@@ -166,7 +172,7 @@ mod tests {
         assert!(a.is_empty());
         assert_eq!(a, Areas::none());
         assert!(a.granted().is_empty());
-        assert_eq!(a.missing().len(), 8, "Transkripte fehlen nicht eigens");
+        assert_eq!(a.missing().len(), 9, "Transkripte fehlen nicht eigens");
         // Der Unterschalter allein gibt nichts frei.
         assert!(Areas::from_settings(&[], true).is_empty());
     }
@@ -208,7 +214,7 @@ mod tests {
         assert_eq!(all.granted().len(), 6);
         assert_eq!(
             all.missing(),
-            vec![Area::Books, Area::BookNotes, Area::KiDocs],
+            vec![Area::Books, Area::BookNotes, Area::KiDocs, Area::Notebook],
             "die Bereiche des Abrufindex sind eigene Freigaben"
         );
         let every = Areas::from_settings(

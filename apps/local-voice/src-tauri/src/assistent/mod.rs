@@ -32,6 +32,7 @@
 //! Merkmale. Sie wird nur als Debug-Zeile ohne Text ausgegeben; ein Feld im Beitrag (`ext`) gibt
 //! es dafuer noch nicht (siehe `assistent_messung_melden`).
 
+pub mod schutz;
 pub mod tor;
 pub mod uhr;
 
@@ -173,6 +174,7 @@ pub fn assistent_einstufen(
     conversation_id: Option<String>,
 ) -> Result<Option<EinstufungDto>, String> {
     let aktiv = crate::settings::get_settings(&app).assistent_einstufung_aktiv;
+    crate::commands::voice_tools::schutz_nachpruefen(&app);
     let letzte = tor::letzte_ausgabe(conversation_id.as_deref());
     einstufen_mit(
         aktiv,
@@ -259,7 +261,9 @@ pub fn assistent_messung_melden(messung: MessungDto) -> Result<(), String> {
 /// Letzte vom Tor freigegebene Ausgabe dieses Gespraechs (fuer „wiederholen“); `None` ohne eine.
 #[tauri::command]
 #[specta::specta]
-pub fn assistent_letzte_ausgabe(conversation_id: Option<String>) -> Option<String> {
+pub fn assistent_letzte_ausgabe(app: AppHandle, conversation_id: Option<String>) -> Option<String> {
+    // Widerruf zuerst: eine Ausgabe aus entzogenen Notizbuchdaten wird nicht wiederholt.
+    crate::commands::voice_tools::schutz_nachpruefen(&app);
     tor::letzte_ausgabe(conversation_id.as_deref())
 }
 
