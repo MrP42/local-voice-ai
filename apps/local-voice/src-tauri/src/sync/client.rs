@@ -507,6 +507,43 @@ impl HubClient {
         Ok((status, json))
     }
 
+    /// Aufruf der Assistent-Sync-Endpunkte (`/api/v1/assistent/sync/*`, lva#388) mit demselben Token
+    /// und demselben HTTP-Weg wie der Bibliotheks-Sync: POSTs über `send_logged` (unter Windows
+    /// curl), GETs über reqwest. Liefert Status und JSON-Körper (kein JSON: `Null`), damit
+    /// `portal_hub` die Fehlercodes selbst abbildet; nur Netzfehler sind `Err`. Der Fehlertext trägt
+    /// nichts aus der Anfrage (reqwest nennt sonst die URL samt Kennungen).
+    pub async fn assistent_aufruf(
+        &self,
+        post: bool,
+        pfad: &str,
+        query: &[(&str, String)],
+        body: Option<&serde_json::Value>,
+    ) -> Result<(u16, serde_json::Value), HubError> {
+        let timeout = Duration::from_secs(120);
+        let url = format!("{}/api/v1/assistent/sync{pfad}", self.url);
+        let client = http_with(timeout)?;
+        let mut rb = self.auth(if post { client.post(url) } else { client.get(url) });
+        if !query.is_empty() {
+            rb = rb.query(query);
+        }
+        if let Some(b) = body {
+            rb = rb.json(b);
+        }
+        let res = if post {
+            send_logged(rb, timeout).await?
+        } else {
+            rb.send()
+                .await
+                .map_err(|_| HubError::Other("Hub nicht erreichbar".into()))?
+        };
+        let status = res.status().as_u16();
+        let text = res.text().await.unwrap_or_default();
+        Ok((
+            status,
+            serde_json::from_str(&text).unwrap_or(serde_json::Value::Null),
+        ))
+    }
+
     pub async fn logout(&self) -> Result<(), HubError> {
         let res = self
             .auth(http()?.post(format!("{}/api/v1/voice/auth/logout", self.url)))

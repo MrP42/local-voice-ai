@@ -5,6 +5,8 @@
 //! `docs/superpowers/specs/2026-11-02-bibliothek-sync.md`.
 
 pub mod account;
+pub mod assistent_sync;
+pub mod assistent_zustand;
 pub mod blobs;
 pub mod book_files;
 pub mod books;
@@ -17,6 +19,7 @@ pub mod engine;
 pub mod ledger;
 pub mod pairing;
 pub mod pairing_proto;
+pub mod portal_hub;
 pub mod uebernahme;
 pub mod uebernahme_kern;
 

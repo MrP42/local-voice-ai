@@ -985,6 +985,78 @@ async changeAssistentEinstufungAktivSetting(enabled: boolean) : Promise<Result<n
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Status des Assistent-Syncs (lva#388); ohne Netzaufruf.
+ */
+async assistentSyncStatus() : Promise<AssistentSyncStatus> {
+    return await TAURI_INVOKE("assistent_sync_status");
+},
+/**
+ * Sofort abgleichen; ohne den Schalter `assistent_sync_aktiv` passiert nichts.
+ */
+async assistentSyncStarten() : Promise<Result<AssistentSyncStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("assistent_sync_starten") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Laesst dieses Geraet mit dem Freigabecode eines zugelassenen Geraets zu und gleicht danach ab.
+ */
+async assistentSyncGeraetZulassen(freigabeCode: string) : Promise<Result<AssistentSyncStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("assistent_sync_geraet_zulassen", { freigabeCode }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Widerruft ein Geraet (neue Schluesselepoche).
+ */
+async assistentSyncGeraetWiderrufen(geraetId: string) : Promise<Result<AssistentWiderruf, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("assistent_sync_geraet_widerrufen", { geraetId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Gibt eine Kennung fuer ein weiteres Geraet frei und liefert den Einmalcode.
+ */
+async assistentSyncFreigabeErzeugen(geraetId: string) : Promise<Result<AssistentFreigabe, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("assistent_sync_freigabe_erzeugen", { geraetId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Zugelassene, nicht widerrufene Geraete des Kontos (Kennungen).
+ */
+async assistentSyncGeraete() : Promise<Result<string[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("assistent_sync_geraete") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Assistent-Sync ein- oder ausschalten (Standard aus).
+ */
+async changeAssistentSyncAktivSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_assistent_sync_aktiv_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async projekteListe() : Promise<Result<SuiteProjekt[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("projekte_liste") };
@@ -4143,6 +4215,17 @@ async conversationAppendEntry(conversationId: string, entry: NewEntry) : Promise
 async conversationUpdateEntry(id: string, text: string, status: string) : Promise<Result<ConversationEntry, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("conversation_update_entry", { id, text, status }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Markiert ein Gespraech als nur auf diesem Geraet (wird nie hochgeladen).
+ */
+async conversationSetGeraetLokal(id: string, lokal: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("conversation_set_geraet_lokal", { id, lokal }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -8800,6 +8883,11 @@ meeting_mcp_include_transcript?: boolean;
  */
 assistent_einstufung_aktiv?: boolean; 
 /**
+ * ADR-0028 A1 (E3, lva#388): Verlauf des Assistenten ueber den Hub abgleichen. Standard AUS, fehlender
+ * Wert gilt als aus; ohne den Schalter gibt es keinen Netzaufruf.
+ */
+assistent_sync_aktiv?: boolean; 
+/**
  * Stufe 2 des Sprachgesprächs: darf die Sprach-KI Transkripte von Besprechungen lesen
  * (`meeting_transcript`, Treffer aus dem Transkript)? Getrennt vom MCP-Server; Standard AUS
  * (ADR-0021).
@@ -9851,6 +9939,10 @@ ref: string; added_by: string; added_at: string; source_release_id?: string | nu
  * Unterhaltung (Vertrag `Conversation`; ohne `shared`, `ai_settings` und
  * `cost_bearer`: Sprachgespräche sind persönlich und haben keinen Kostenträger).
  */
+export type AssistentFreigabe = { code: string; gueltig_bis: string }
+export type AssistentSyncBericht = { hochgeladen: number; heruntergeladen: number; geloescht: number; nur_lokal: number; wartend: number; verworfen: number }
+export type AssistentSyncStatus = { aktiv: boolean; angemeldet: boolean; zugelassen: boolean; braucht_freigabe: boolean; laeuft: boolean; epoche: number; widerruf_offen: boolean; letzter_lauf_ms: number | null; letzter_fehler: string | null; fehler_code: string | null; grabsteine_offen: number; letzter_bericht: AssistentSyncBericht | null }
+export type AssistentWiderruf = { epoche: number; empfaenger: string[] }
 export type Conversation = { schema_version: string; id: string; ts: string; trace_id: string; title: string; created_at: string; updated_at: string; kind: string; scope: ConversationScope; participants: ConversationParticipant[]; context: ContextSource[]; pinned: boolean; archived: boolean; ext?: ConversationExt | null }
 /**
  * Anhang eines Beitrags (Vertrag `ConversationAttachment`).

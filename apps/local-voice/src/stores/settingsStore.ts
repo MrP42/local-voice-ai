@@ -327,6 +327,8 @@ const settingUpdaters: {
   // ADR-0028 A2: Einstufung vor dem Modellaufruf
   assistent_einstufung_aktiv: (value) =>
     commands.changeAssistentEinstufungAktivSetting(value as boolean),
+  assistent_sync_aktiv: (value) =>
+    commands.changeAssistentSyncAktivSetting(value as boolean),
   // lva#325: globaler Sprachassistent
   voice_global_context_enabled: (value) =>
     commands.changeVoiceGlobalContextEnabledSetting(value as boolean),
