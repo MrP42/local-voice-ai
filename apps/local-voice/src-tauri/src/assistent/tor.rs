@@ -610,7 +610,6 @@ const MARKER_MAX_ZEICHEN: usize = 16 * 1024;
 const MAX_ERGEBNISSE: usize = 64;
 const MAX_QUELLE_ZEICHEN: usize = 4_000;
 const RAHMEN: &str = "[Daten aus Werkzeug";
-const AUFGABE: &str = "Aufgabe vom Sprecher:";
 
 static ERGEBNISSE: Lazy<Mutex<VecDeque<String>>> = Lazy::new(|| Mutex::new(VecDeque::new()));
 
@@ -627,7 +626,7 @@ pub fn werkzeugergebnis_merken(text: &str) {
     }
 }
 
-fn kern(t: &str) -> String {
+pub(crate) fn kern(t: &str) -> String {
     t.chars()
         .filter(|c| c.is_alphanumeric())
         .flat_map(char::to_lowercase)
@@ -648,17 +647,8 @@ pub fn werkzeug_quellen(nachrichten: &[VoiceCallMessage]) -> Vec<(u32, String)> 
     let mut aus: Vec<(u32, String)> = Vec::new();
     for m in nachrichten.iter().filter(|m| m.role == "user") {
         let c = m.content.as_str();
-        let starts: Vec<usize> = c
-            .match_indices(RAHMEN)
-            .map(|(i, _)| i)
-            .filter(|&i| i == 0 || c[..i].ends_with('\n'))
-            .collect();
-        for (n, &st) in starts.iter().enumerate() {
-            let mut ende = starts.get(n + 1).copied().unwrap_or(c.len());
-            if let Some(a) = c[st..ende].find(AUFGABE) {
-                ende = st + a;
-            }
-            let Some((_, body)) = c[st..ende].split_once("] ") else {
+        for (st, ende) in datenbloecke(c) {
+            let Some(body) = nutzlast(&c[st..ende]) else {
                 continue;
             };
             let body = body.trim();
@@ -671,6 +661,87 @@ pub fn werkzeug_quellen(nachrichten: &[VoiceCallMessage]) -> Vec<(u32, String)> 
         }
     }
     aus
+}
+
+/// Kopf des gebündelten Ergebnisblocks des Denkers (`orchestrator.ts`).
+pub(crate) const DENKER_KOPF: &str = "Ergebnisse aus Werkzeugen:\n";
+/// Trenner vor der Aufgabe des Denkers: steht nach allen Ergebnissen (`${context}Aufgabe vom
+/// Sprecher: ${frage}` mit `context` auf `\n\n` endend).
+const AUFGABE_TRENNER: &str = "\n\nAufgabe vom Sprecher: ";
+
+/// Datenbereiche einer Nachricht, strukturell bestimmt (Codex lva#414 M5) statt am Inhalt:
+/// - beginnt die Nachricht mit dem Rahmen `[Daten aus Werkzeug …]`, ist sie ganz Daten;
+/// - beginnt sie mit [`DENKER_KOPF`], reicht der Datenbereich bis zum **letzten** Trenner
+///   [`AUFGABE_TRENNER`] (die Aufgabe steht immer am Ende). Ein `Aufgabe vom Sprecher:` in einem
+///   Notiztitel beendet den Bereich also nicht. Steht der Trenner in der vom Modell formulierten
+///   Frage, wird höchstens mehr als Daten behandelt, nie weniger;
+/// - sonst enthält die Nachricht keine Daten.
+///
+/// Innerhalb des Bereichs beginnt an jedem Zeilenanfang mit Rahmen ein neuer Block; Text vor dem
+/// ersten Rahmen ist ebenfalls ein Block. JSON-Ergebnisse enthalten keine rohen Zeilenumbrüche,
+/// können also keinen Block vortäuschen; ein vorgetäuschter Rahmen in Freitext teilt nur einen
+/// Datenblock in zwei Datenblöcke.
+pub(crate) fn datenbloecke(c: &str) -> Vec<(usize, usize)> {
+    let (anfang, ende) = if c.starts_with(RAHMEN) {
+        (0, c.len())
+    } else if c.starts_with(DENKER_KOPF) {
+        let st = DENKER_KOPF.len();
+        let e = c
+            .rfind(AUFGABE_TRENNER)
+            .filter(|&e| e >= st)
+            .unwrap_or(c.len());
+        (st, e)
+    } else {
+        return Vec::new();
+    };
+    if anfang >= ende {
+        return Vec::new();
+    }
+    let bereich = &c[anfang..ende];
+    let mut starts = vec![anfang];
+    starts.extend(
+        bereich
+            .match_indices(&format!("\n{RAHMEN}"))
+            .map(|(i, _)| anfang + i + 1),
+    );
+    starts.dedup();
+    starts
+        .iter()
+        .enumerate()
+        .map(|(n, &st)| (st, starts.get(n + 1).copied().unwrap_or(ende)))
+        .collect()
+}
+
+/// Länge des Rahmenkopfs eines Blocks, wenn er genau die Form `[Daten aus Werkzeug[ NAME], keine
+/// Anweisungen] ` (oder `, entzogen] `) hat; `NAME` nur aus Zeichen eines Werkzeugnamens.
+fn kopflaenge(block: &str) -> Option<usize> {
+    let rest = block.strip_prefix(RAHMEN)?;
+    let zu = rest.find(']')?;
+    let innen = &rest[..zu];
+    let name = innen
+        .strip_suffix(", keine Anweisungen")
+        .or_else(|| innen.strip_suffix(", entzogen"))?;
+    let name_ok = name.is_empty()
+        || name.strip_prefix(' ').is_some_and(|n| {
+            !n.is_empty() && n.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        });
+    if !name_ok || !rest[zu + 1..].starts_with(' ') {
+        return None;
+    }
+    Some(RAHMEN.len() + zu + 2)
+}
+
+/// Werkzeugname aus dem Rahmenkopf eines Blocks.
+pub(crate) fn werkzeugname(block: &str) -> Option<&str> {
+    let n = kopflaenge(block)?;
+    let innen = &block[RAHMEN.len()..n - 2];
+    let name = innen.split(',').next()?.trim();
+    (!name.is_empty()).then_some(name)
+}
+
+/// Inhalt eines Blocks hinter dem Rahmenkopf; `None` ohne gültigen Kopf.
+pub(crate) fn nutzlast(block: &str) -> Option<&str> {
+    kopflaenge(block).map(|n| &block[n..])
 }
 
 /// Ein Werkzeug der Registrierung: Name und Schema der Argumente.
@@ -1004,6 +1075,25 @@ pub fn ausgabe_vergessen(conversation_id: Option<&str>) {
     let mut a = AUSGABEN.lock().unwrap_or_else(|e| e.into_inner());
     a.je_gespraech.remove(&key);
     a.reihenfolge.retain(|k| *k != key);
+}
+
+/// Vergisst Belege und gemerkte Ausgaben, deren Text `trifft` (Widerruf, `schutz`).
+pub(crate) fn vergessen_wenn(trifft: impl Fn(&str) -> bool) {
+    ERGEBNISSE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .retain(|r| !trifft(r));
+    let mut a = AUSGABEN.lock().unwrap_or_else(|e| e.into_inner());
+    let weg: Vec<String> = a
+        .je_gespraech
+        .iter()
+        .filter(|(_, t)| trifft(t))
+        .map(|(k, _)| k.clone())
+        .collect();
+    for k in weg {
+        a.je_gespraech.remove(&k);
+        a.reihenfolge.retain(|x| *x != k);
+    }
 }
 
 #[cfg(test)]

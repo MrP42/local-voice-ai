@@ -434,6 +434,22 @@ function parseParameters(json: string): VoiceTool["parameters"] | null {
   }
 }
 
+/**
+ * Werkzeuge mit persönlichen Daten (Notizbuch): ihre Ergebnisse dürfen nur an ein lokales Modell
+ * gehen (Codex lva#414 M1). Rust setzt das vor jedem Modellaufruf durch; die Oberfläche bietet sie
+ * einem Cloud-Sprecher deshalb gar nicht erst an.
+ */
+export function isLocalOnlyTool(name: string): boolean {
+  return name.startsWith("notizbuch_");
+}
+
+export function onlyLocalAllowed(
+  tools: VoiceTool[],
+  speaker: Pick<ModelDescription, "local">,
+): VoiceTool[] {
+  return speaker.local ? tools : tools.filter((t) => !isLocalOnlyTool(t.name));
+}
+
 /** Werkzeuge der Brücke als Registrierung; was der Vertrag nicht annimmt, fehlt. */
 export function toolsFrom(infos: VoiceToolInfo[]): VoiceTool[] {
   const registry = createToolRegistry();
@@ -576,7 +592,10 @@ export class OrchestrationSession {
       return { side: null, blocked: true, systemPrompt };
     }
     if (cfg.useTools) this.tools ??= await listTools();
-    const offered = cfg.useTools ? (this.tools ?? []) : [];
+    const offered = onlyLocalAllowed(
+      cfg.useTools ? (this.tools ?? []) : [],
+      active,
+    );
     const denkerInfo =
       cfg.denkerModelId !== ""
         ? all.find((m) => m.id === cfg.denkerModelId)
