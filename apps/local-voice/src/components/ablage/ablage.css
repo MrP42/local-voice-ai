@@ -595,3 +595,94 @@
     min-height: 44px !important;
   }
 }
+
+/* D2 (lva#408): Suchergebnisse über die ganze Ablage – Namen und Inhalte mit Fundstelle. */
+.ablage-suche {
+  margin: 12px 16px 4px;
+  padding: 8px 0 4px;
+  border: 1px solid var(--abl-line);
+  border-radius: 8px;
+  background: var(--abl-pane);
+}
+.ablage-suche__kopf {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  padding: 0 12px 6px;
+  font-weight: 600;
+}
+.ablage-suche__titel {
+  margin: 8px 12px 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+.ablage-suche > [role="status"] {
+  padding: 4px 12px 8px;
+}
+.ablage-suche__liste {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.ablage-suche__treffer,
+.ablage-suche__stelle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 8px;
+  width: 100%;
+  min-height: 44px;
+  padding: 6px 12px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.ablage-suche__treffer:hover,
+.ablage-suche__stelle:hover {
+  background: var(--abl-sel);
+}
+.ablage-suche__dateikopf {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 8px;
+  padding: 6px 12px 0;
+}
+.ablage-suche__name {
+  font-weight: 600;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.ablage-suche__stelle {
+  flex-direction: column;
+  align-items: flex-start;
+  padding-inline-start: 38px;
+}
+.ablage-suche__anker {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-logo-primary);
+}
+.ablage-suche__auszug {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.ablage-suche mark,
+.ablage-fundstelle mark {
+  background: color-mix(in srgb, var(--color-logo-primary) 28%, transparent);
+  color: inherit;
+  border-radius: 2px;
+}
+.ablage-fundstelle__anker {
+  margin-bottom: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-logo-primary);
+}

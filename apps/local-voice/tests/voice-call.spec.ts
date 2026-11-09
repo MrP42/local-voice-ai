@@ -401,6 +401,30 @@ async function install(
               return { phase: "stopped", message: null };
             case "get_custom_sounds":
               return { start: false, stop: false };
+            // lva#396 N2: Gliederung und Freigabe des Notizbuchs. `__outline` (Liste),
+            // `__outlineHang` (Antwort hält, `__outlineResolve` beendet), `__outlineError` (Text:
+            // Fehler des Kerns; Error: abgelehnte Promise). Speichern: `__sectionsHold` hält jede
+            // Antwort in `__sectionsPending` ({ ok, fail }), `__sectionsFail` lässt sie scheitern.
+            case "voice_notebook_outline":
+              if (w.__outlineHang)
+                return new Promise((resolve) => {
+                  w.__outlineResolve = () => resolve(w.__outline ?? []);
+                });
+              if (w.__outlineError === "error") throw new Error("weg");
+              if (w.__outlineError) throw w.__outlineError;
+              return w.__outline ?? [];
+            case "change_voice_notebook_sections_setting":
+              return new Promise((resolve, reject) => {
+                const ok = () => {
+                  settings.voice_call_notebook_sections = args.sections;
+                  resolve(null);
+                };
+                const fail = () => reject("Speichern fehlgeschlagen");
+                if (w.__sectionsHold)
+                  (w.__sectionsPending ??= []).push({ ok, fail });
+                else if (w.__sectionsFail) fail();
+                else ok();
+              });
             case "pages_list":
             case "page_files":
             case "tts_list_voices":
@@ -1954,6 +1978,7 @@ const AREA_SWITCHES = [
   "Frühere Gespräche",
   "Termine",
   "Vorlesen",
+  "Notizbuch",
 ];
 
 const knowledgeCalls = async (page: Page) =>
@@ -1986,7 +2011,8 @@ test.describe("Sprachgespraech Wissen: Bereiche für das Modell", () => {
         "Was das Modell im Gespräch nachschlagen darf. Jeder Zugriff wird protokolliert.",
       ),
     ).toBeVisible();
-    await expect(panel.getByRole("switch")).toHaveCount(AREA_SWITCHES.length);
+    // Alle Schalter aus, ohne auf ihre Gesamtzahl zu bauen (weitere Bereiche kommen hinzu).
+    await expect(panel.getByRole("switch", { checked: true })).toHaveCount(0);
     for (const name of AREA_SWITCHES) {
       const sw = panel.getByRole("switch", { name, exact: true });
       await expect(sw).toBeVisible();
@@ -3093,3 +3119,340 @@ for (const theme of ["light", "dark"] as const) {
     });
   }
 }
+
+// lva#396 N2: Freigabe der Notizbuch-Abschnitte im Reiter Wissen (Codex lva#418).
+const OUTLINE = [
+  {
+    id: "nb1",
+    name: "Arbeit",
+    sections: [
+      { id: "a1", name: "Besprechungen", group: null, pages: 24 },
+      { id: "a2", name: "Haushalt 2027", group: "Projekte", pages: 9 },
+    ],
+  },
+  {
+    id: "nb2",
+    name: "Privat",
+    sections: [
+      { id: "b1", name: "Reisen", group: null, pages: 3 },
+      { id: "b2", name: "Rezepte", group: null, pages: 7 },
+    ],
+  },
+];
+
+/** Attrappe des Notizbuchs: Variablen nach der Grundinstallation setzen. */
+async function notebookMock(page: Page, vars: Record<string, unknown> = {}) {
+  await page.addInitScript(
+    (v: Record<string, unknown>) => Object.assign(window as any, v),
+    { __outline: OUTLINE, ...vars },
+  );
+}
+
+const sectionCalls = async (page: Page) =>
+  (await calls(page, "change_voice_notebook_sections_setting")).map(
+    (c) => c.args.sections as string[],
+  );
+
+const notebookCard = (panel: ReturnType<Page["getByRole"]>, name: string) =>
+  panel.getByRole("button", { name: new RegExp(`^${name}\\b`) });
+
+test.describe("Sprachgespraech Wissen: Notizbuch-Freigabe", () => {
+  test("Standard (Neuinstallation und Update ohne Eintrag): nichts frei, Einschalten gibt nichts frei", async ({
+    page,
+  }) => {
+    // Kein `voice_call_notebook_sections` in den Einstellungen, wie nach einem Update.
+    await install(page, "light", {
+      settings: { ...LOCAL_SPEAKER, voice_call_knowledge: [] },
+    });
+    await notebookMock(page);
+    await openPage(page);
+    const panel = await openKnowledge(page);
+    const sw = panel.getByRole("switch", { name: "Notizbuch", exact: true });
+    await expect(sw).not.toBeChecked();
+    await expect(
+      panel.getByText("Kein Zugriff; deine Auswahl bleibt gespeichert."),
+    ).toBeVisible();
+    await sw.click();
+    await expect.poll(() => knowledgeCalls(page)).toEqual([["notebook"]]);
+    await expect(
+      panel.getByText("Noch kein Abschnitt freigegeben", { exact: false }),
+    ).toBeVisible();
+    await expect(panel.getByRole("checkbox", { checked: true })).toHaveCount(0);
+    // Ohne Auswahl ist nur das erste Notizbuch aufgeklappt.
+    await expect(notebookCard(panel, "Arbeit")).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    await expect(notebookCard(panel, "Privat")).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    await page.waitForTimeout(200);
+    expect(await sectionCalls(page)).toEqual([]);
+  });
+
+  test("Abwählen klappt nichts zu: der Fokus bleibt am Kästchen und am Schalter", async ({
+    page,
+  }) => {
+    await install(page, "light", {
+      settings: {
+        ...LOCAL_SPEAKER,
+        voice_call_knowledge: ["notebook"],
+        voice_call_notebook_sections: ["abschnitt:b1"],
+      },
+    });
+    await notebookMock(page);
+    await openPage(page);
+    const panel = await openKnowledge(page);
+    const privat = notebookCard(panel, "Privat");
+    await expect(privat).toHaveAttribute("aria-expanded", "true");
+    await expect(notebookCard(panel, "Arbeit")).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    // Fall A: letzter Abschnitt im zweiten Notizbuch abgewählt.
+    const reisen = panel.getByRole("checkbox", { name: /^Reisen/ });
+    await reisen.focus();
+    await page.keyboard.press("Space");
+    await expect(reisen).not.toBeChecked();
+    await expect.poll(() => sectionCalls(page)).toEqual([[]]);
+    await expect(privat).toHaveAttribute("aria-expanded", "true");
+    await expect(reisen).toBeFocused();
+    // Fall B: „Ganzes Notizbuch“ ohne Einzelauswahl aus.
+    const ganz = panel.getByRole("switch", {
+      name: "Ganzes Notizbuch Privat freigeben",
+    });
+    await ganz.focus();
+    await page.keyboard.press("Space");
+    await expect(ganz).toBeChecked();
+    await page.keyboard.press("Space");
+    await expect(ganz).not.toBeChecked();
+    await expect
+      .poll(() => sectionCalls(page))
+      .toEqual([[], ["notizbuch:nb2"], []]);
+    await expect(privat).toHaveAttribute("aria-expanded", "true");
+    await expect(ganz).toBeFocused();
+    // Der Ganz-Schalter nennt die Folge über aria-describedby.
+    const hint = await ganz.getAttribute("aria-describedby");
+    await expect(page.locator(`[id="${hint}"]`)).toContainText(
+      "künftig hinzugefügten",
+    );
+  });
+
+  test("Zwei schnelle Änderungen: nacheinander gespeichert, die letzte gilt", async ({
+    page,
+  }) => {
+    await install(page, "light", {
+      settings: {
+        ...LOCAL_SPEAKER,
+        voice_call_knowledge: ["notebook"],
+        voice_call_notebook_sections: [],
+      },
+    });
+    await notebookMock(page, { __sectionsHold: true });
+    await openPage(page);
+    const panel = await openKnowledge(page);
+    const a1 = panel.getByRole("checkbox", { name: /^Besprechungen/ });
+    const a2 = panel.getByRole("checkbox", { name: /^Haushalt 2027/ });
+    await a1.click();
+    await a2.click();
+    await a1.click();
+    // Die Anzeige folgt sofort, gespeichert wird nur ein Wert zur Zeit.
+    await expect(a1).not.toBeChecked();
+    await expect(a2).toBeChecked();
+    await expect.poll(() => sectionCalls(page)).toEqual([["abschnitt:a1"]]);
+    // Die erste Antwort kommt erst jetzt: sie überholt die neuere Auswahl nicht.
+    await page.evaluate(() => (window as any).__sectionsPending.shift().ok());
+    await expect
+      .poll(() => sectionCalls(page))
+      .toEqual([["abschnitt:a1"], ["abschnitt:a2"]]);
+    await expect(a1).not.toBeChecked();
+    await page.evaluate(() => (window as any).__sectionsPending.shift().ok());
+    await expect(a2).toBeChecked();
+    await expect(a1).not.toBeChecked();
+    await expect(panel.getByRole("alert")).toHaveCount(0);
+    expect(
+      await page.evaluate(
+        () => (window as any).__settings.voice_call_notebook_sections,
+      ),
+    ).toEqual(["abschnitt:a2"]);
+  });
+
+  test("Aus- und Einschalten während des Speicherns: die neue Auswahl gewinnt", async ({
+    page,
+  }) => {
+    await install(page, "light", {
+      settings: {
+        ...LOCAL_SPEAKER,
+        voice_call_knowledge: ["notebook"],
+        voice_call_notebook_sections: [],
+      },
+    });
+    await notebookMock(page, { __sectionsHold: true });
+    await openPage(page);
+    const panel = await openKnowledge(page);
+    const box = (name: RegExp) => panel.getByRole("checkbox", { name });
+    // A wird geschrieben (Antwort hält), B wartet.
+    await box(/^Besprechungen/).click();
+    await box(/^Haushalt 2027/).click();
+    await expect.poll(() => sectionCalls(page)).toEqual([["abschnitt:a1"]]);
+    // Bereich aus und wieder ein: ein neuer Baum, dieselbe Kette.
+    const sw = panel.getByRole("switch", { name: "Notizbuch", exact: true });
+    await sw.click();
+    await expect(box(/^Besprechungen/)).toHaveCount(0);
+    await sw.click();
+    await expect(box(/^Haushalt 2027/)).toBeChecked();
+    // C: Besprechungen wieder ab.
+    await box(/^Besprechungen/).click();
+    await expect(box(/^Besprechungen/)).not.toBeChecked();
+    await page.evaluate(() => (window as any).__sectionsPending.shift().ok());
+    await expect
+      .poll(() => sectionCalls(page))
+      .toEqual([["abschnitt:a1"], ["abschnitt:a2"]]);
+    await page.evaluate(() => (window as any).__sectionsPending.shift().ok());
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () => (window as any).__settings.voice_call_notebook_sections,
+        ),
+      )
+      .toEqual(["abschnitt:a2"]);
+    await page.waitForTimeout(200);
+    expect(await sectionCalls(page)).toHaveLength(2);
+    await expect(box(/^Besprechungen/)).not.toBeChecked();
+    await expect(box(/^Haushalt 2027/)).toBeChecked();
+    await expect(panel.getByRole("alert")).toHaveCount(0);
+  });
+
+  test("Speicherfehler: Meldung, die vorherige Auswahl gilt weiter", async ({
+    page,
+  }) => {
+    await install(page, "light", {
+      settings: {
+        ...LOCAL_SPEAKER,
+        voice_call_knowledge: ["notebook"],
+        voice_call_notebook_sections: ["abschnitt:a2"],
+      },
+    });
+    await notebookMock(page, { __sectionsFail: true });
+    await openPage(page);
+    const panel = await openKnowledge(page);
+    const a1 = panel.getByRole("checkbox", { name: /^Besprechungen/ });
+    await a1.click();
+    await expect(panel.getByRole("alert")).toHaveText(
+      "Die Freigabe konnte nicht gespeichert werden. Es gilt weiter die vorherige Auswahl.",
+    );
+    await expect(a1).not.toBeChecked();
+    await expect(
+      panel.getByRole("checkbox", { name: /^Haushalt 2027/ }),
+    ).toBeChecked();
+    // Nächster Versuch klappt: die Meldung verschwindet.
+    await page.evaluate(() => ((window as any).__sectionsFail = false));
+    await a1.click();
+    await expect(a1).toBeChecked();
+    await expect(panel.getByRole("alert")).toHaveCount(0);
+  });
+
+  test("Spät geladene Gliederung: erst Ladeanzeige, dann der Baum mit gespeicherter Auswahl", async ({
+    page,
+  }) => {
+    await install(page, "light", {
+      settings: {
+        ...LOCAL_SPEAKER,
+        voice_call_knowledge: ["notebook"],
+        voice_call_notebook_sections: ["notizbuch:nb1"],
+      },
+    });
+    await notebookMock(page, { __outlineHang: true });
+    await openPage(page);
+    const panel = await openKnowledge(page);
+    await expect(panel.getByText("Gliederung wird gelesen …")).toBeVisible();
+    await expect(panel.getByRole("checkbox")).toHaveCount(0);
+    await page.evaluate(() => (window as any).__outlineResolve());
+    await expect(notebookCard(panel, "Arbeit")).toContainText("ganz");
+    await expect(
+      panel.getByRole("switch", { name: "Ganzes Notizbuch Arbeit freigeben" }),
+    ).toBeChecked();
+    expect(await sectionCalls(page)).toEqual([]);
+  });
+
+  for (const [fall, fehler, titel, ohne] of [
+    [
+      "Fehler des Kerns",
+      "Das Notizbuch ist gerade nicht lesbar.",
+      "Das Notizbuch ist gerade nicht lesbar.",
+      "aktualisieren",
+    ],
+    [
+      "abgelehnte Anfrage",
+      "error",
+      "Das Notizbuch ist gerade nicht lesbar.",
+      "aktualisieren",
+    ],
+    [
+      "portable Fassung (unbekannter Text)",
+      "Das Notizbuch ist in der portablen Fassung nicht verfügbar.",
+      "Das Notizbuch ist gerade nicht lesbar.",
+      "portablen",
+    ],
+    [
+      "Version",
+      "Diese Notizbuch-Version wird nicht unterstützt. Bitte Notizbuch und Local Voice aktualisieren.",
+      "Diese Notizbuch-Version wird nicht unterstützt.",
+      "Versuch es später",
+    ],
+  ] as const) {
+    test(`Fehlerzustand übersetzt: ${fall}`, async ({ page }) => {
+      await install(page, "light", {
+        settings: {
+          ...LOCAL_SPEAKER,
+          voice_call_knowledge: ["notebook"],
+          voice_call_notebook_sections: [],
+        },
+      });
+      await notebookMock(page, { __outlineError: fehler });
+      await openPage(page);
+      const panel = await openKnowledge(page);
+      const box = panel
+        .getByRole("status")
+        .filter({ has: page.locator("strong") });
+      await expect(box.locator("strong")).toHaveText(titel);
+      await expect(box).not.toContainText(ohne);
+    });
+  }
+
+  test("Reiter: Pfeiltasten, Pos1/Ende und ein einziger Tabstopp", async ({
+    page,
+  }) => {
+    await install(page, "light", { settings: LOCAL_SPEAKER });
+    await notebookMock(page);
+    await openPage(page);
+    const panel = await openKnowledge(page);
+    const tabs = panel.getByRole("tab");
+    const wissen = panel.getByRole("tab", { name: "Wissen" });
+    await wissen.focus();
+    const sel = async (name: string) => {
+      const t = panel.getByRole("tab", { name });
+      await expect(t).toHaveAttribute("aria-selected", "true");
+      await expect(t).toBeFocused();
+    };
+    await page.keyboard.press("ArrowLeft");
+    await sel("Erkennung");
+    await page.keyboard.press("ArrowRight");
+    await sel("Wissen");
+    await page.keyboard.press("End");
+    await sel("Modelle");
+    await page.keyboard.press("ArrowRight");
+    await sel("Gespräch");
+    await page.keyboard.press("Home");
+    await sel("Gespräch");
+    await expect(tabs).toHaveCount(5);
+    // Ein Tabstopp: Tab verlässt die Reiterleiste, Umschalt+Tab führt zum gewählten Reiter zurück.
+    await page.keyboard.press("Tab");
+    expect(
+      await page.evaluate(() => document.activeElement?.getAttribute("role")),
+    ).not.toBe("tab");
+    await page.keyboard.press("Shift+Tab");
+    await expect(panel.getByRole("tab", { name: "Gespräch" })).toBeFocused();
+  });
+});

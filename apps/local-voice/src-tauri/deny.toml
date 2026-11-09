@@ -69,6 +69,10 @@ ignore = [
     # upstream release. Not reachable from our Windows runtime path, and both are
     # denial-of-service class requiring attacker-controlled XML input, which the
     # app never parses. Re-check when Tauri bumps plist.
+    # Seit lva#408 (Ablage D2) liest die App fremde Office-XML, aber nur im begrenzten Unterprozess
+    # `lva-extrakt` (60 s, 1 GiB, siehe src/ablage/textlauf.rs); der eigene Leser nutzt weder `NsReader`
+    # (0195) noch die quadratische Attributprüfung (0194, `with_checks(false)`). calamine 0.32 kann den
+    # quadratischen Weg erreichen; das trifft dann nur den Unterprozess und endet an der Zeitgrenze.
     "RUSTSEC-2026-0194",
     "RUSTSEC-2026-0195",
 
