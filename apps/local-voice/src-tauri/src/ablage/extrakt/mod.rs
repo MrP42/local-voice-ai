@@ -289,6 +289,9 @@ pub(crate) fn datei_lesen(pfad: &std::path::Path, max: u64) -> Result<Vec<u8>, E
         use std::os::windows::fs::OpenOptionsExt;
         // FILE_FLAG_OPEN_REPARSE_POINT: die Verknüpfung selbst öffnen, nicht ihr Ziel.
         o.custom_flags(0x0020_0000);
+        // FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE: Löschen und Verschieben bleiben
+        // während der Extraktion möglich.
+        o.share_mode(0x1 | 0x2 | 0x4);
     }
     let datei = o.open(pfad).map_err(|_| lesen())?;
     let meta = datei.metadata().map_err(|_| lesen())?;
