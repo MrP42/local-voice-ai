@@ -49,11 +49,16 @@ export const toggleSample = (path: string) => {
 };
 
 /** Pfad der gerade laufenden Hoerprobe (`null` = keine). */
+export const playingSample = (): string | null => current?.path ?? null;
+
+/** Bei jedem Wechsel der laufenden Hoerprobe benachrichtigen (Start, Stopp, Ende). */
+export const subscribeSample = (listener: () => void): (() => void) => {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+};
+
+/** Pfad der gerade laufenden Hoerprobe (`null` = keine). */
 export const usePlayingSample = (): string | null =>
-  useSyncExternalStore(
-    (listener) => {
-      listeners.add(listener);
-      return () => listeners.delete(listener);
-    },
-    () => current?.path ?? null,
-  );
+  useSyncExternalStore(subscribeSample, playingSample);

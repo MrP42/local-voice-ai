@@ -1046,6 +1046,11 @@ pub struct AppSettings {
     /// Treffer aus dem Transkript)? Nur wirksam mit `meeting_mcp_enabled`.
     #[serde(default = "default_true")]
     pub meeting_mcp_include_transcript: bool,
+    /// ADR-0028 A2 (E4): Ansagen und S0-Vorlagen der Oberflaeche (lokale Einstufung S0-S3).
+    /// Standard AN. Steuert NUR die Oberflaeche; das Tor vor dem Modellaufruf (Rust,
+    /// `assistent::tor`) bleibt immer aktiv.
+    #[serde(default = "default_true")]
+    pub assistent_einstufung_aktiv: bool,
     /// Stufe 2 des Sprachgesprächs: darf die Sprach-KI Transkripte von Besprechungen lesen
     /// (`meeting_transcript`, Treffer aus dem Transkript)? Getrennt vom MCP-Server; Standard AUS
     /// (ADR-0021).
@@ -2000,6 +2005,7 @@ pub fn get_default_settings() -> AppSettings {
         meeting_reminder_all_events: false,
         meeting_mcp_enabled: false,
         meeting_mcp_include_transcript: true,
+        assistent_einstufung_aktiv: true,
         voice_call_read_transcripts: false,
         voice_call_knowledge: Vec::new(),
         voice_global_context_enabled: false,

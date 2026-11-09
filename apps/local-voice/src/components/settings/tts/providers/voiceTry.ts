@@ -3,7 +3,9 @@ import { toast } from "sonner";
 import { commands, events } from "@/bindings";
 import {
   onSampleStart,
+  playingSample,
   stopSample,
+  subscribeSample,
   toggleSample,
 } from "@/lib/voices/samplePlayer";
 import { asTtsError } from "./providerModel";
@@ -18,7 +20,16 @@ export type VoiceTryTarget =
   | { kind: "fish"; voiceId: string }
   | { kind: "provider"; providerId: string; voice: string | null };
 
-type TryState = { key: string; requestId: string | null } | null;
+/**
+ * `path` ist gesetzt, solange die erzeugte Fish-Probe als Datei laeuft: Der
+ * Eintrag gilt dann weiter als aktiv (Stopp-Symbol), bis die Datei endet oder
+ * gestoppt wird.
+ */
+type TryState = {
+  key: string;
+  requestId: string | null;
+  path?: string;
+} | null;
 
 let state: TryState = null;
 /** Zaehler der Laeufe: jede asynchrone Fortsetzung prueft, ob ihr Lauf noch der aktuelle ist. */
@@ -59,8 +70,10 @@ export const onTryStart = (hook: () => void): (() => void) => {
 const cancelRunning = () => {
   seq += 1;
   const requestId = state?.requestId;
+  const path = state?.path;
   if (requestId) void commands.ttsProviderCancel(requestId).catch(() => null);
   set(null);
+  if (path && playingSample() === path) stopSample();
 };
 
 /** Laufende Karten-Hoerprobe beenden (Anbieter-Probestimme startet). */
@@ -74,6 +87,11 @@ const wire = () => {
   wired = true;
   onSampleStart(() => {
     if (state) cancelRunning();
+  });
+  // Fish-Probe als Datei: endet oder stoppt sie (auch von anderer Stelle), ist
+  // der Eintrag wieder frei.
+  subscribeSample(() => {
+    if (state?.path && playingSample() !== state.path) set(null);
   });
   void events.ttsProviderPreview.listen(({ payload }) => {
     if (
@@ -118,6 +136,10 @@ export async function toggleTry(target: VoiceTryTarget, text: string) {
       if (mine !== seq) return;
       set(null);
       toggleSample(sample.wav_path);
+      // Laeuft die Datei an, bleibt der Eintrag aktiv: zweiter Klick stoppt.
+      if (playingSample() === sample.wav_path) {
+        set({ key, requestId: null, path: sample.wav_path });
+      }
       return;
     }
     const result = await commands.ttsProviderPreview(

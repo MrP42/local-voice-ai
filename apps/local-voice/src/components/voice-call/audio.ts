@@ -130,9 +130,23 @@ export class SpeechPlayer {
   onFirstSound?: (at: number) => void;
   onIdle?: () => void;
   private firstFired = false;
+  private gain: GainNode;
+  private rate = 1;
 
   constructor(ctx: AudioContext) {
     this.ctx = ctx;
+    this.gain = ctx.createGain();
+    this.gain.connect(ctx.destination);
+  }
+
+  /** Lautstärke der Wiedergabe (Verstärkung, 1 = unverändert); gilt auch für Laufendes. */
+  setVolume(gain: number): void {
+    this.gain.gain.value = gain;
+  }
+
+  /** Abspielgeschwindigkeit für alles, was danach eingereiht wird (die Tonhöhe folgt ihr). */
+  setRate(rate: number): void {
+    this.rate = rate;
   }
 
   get active(): boolean {
@@ -145,9 +159,10 @@ export class SpeechPlayer {
     if (gen !== this.gen) return;
     const src = this.ctx.createBufferSource();
     src.buffer = buf;
-    src.connect(this.ctx.destination);
+    src.playbackRate.value = this.rate;
+    src.connect(this.gain);
     const start = Math.max(this.ctx.currentTime + 0.02, this.nextAt);
-    this.nextAt = start + buf.duration;
+    this.nextAt = start + buf.duration / this.rate;
     this.sources.add(src);
     if (!this.firstFired) {
       this.firstFired = true;

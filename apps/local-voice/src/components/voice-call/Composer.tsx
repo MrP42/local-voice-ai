@@ -175,6 +175,7 @@ export const Composer: React.FC<ComposerProps> = ({
           disabled={disabled}
           value={value}
           aria-label={labels.message}
+          data-testid="chat-input"
           placeholder={labels.placeholder}
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={(e) => {

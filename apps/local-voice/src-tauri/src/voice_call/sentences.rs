@@ -29,6 +29,15 @@ impl SentenceSplitter {
         Self::default()
     }
 
+    /// Nur Satzenden, kein Komma-Schnitt am Anfang: jedes Haeppchen ist ein ganzer Satz
+    /// (Belegtor `assistent::tor`; der Satz wird erst als Ganzes geprueft).
+    pub fn sentences_only() -> Self {
+        Self {
+            buf: String::new(),
+            emitted: 1,
+        }
+    }
+
     /// Nimmt neuen Text entgegen und gibt alle jetzt vollständigen Häppchen zurück.
     pub fn push(&mut self, delta: &str) -> Vec<String> {
         self.buf.push_str(delta);

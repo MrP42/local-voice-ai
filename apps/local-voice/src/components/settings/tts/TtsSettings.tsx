@@ -36,6 +36,7 @@ import {
   TtsHelpDock,
 } from "./WorkspaceSidebars";
 import { ReaderFolders } from "./ReaderFolders";
+import { ProjekteGruppe } from "../../projekte/ProjekteGruppe";
 import { useReaderFolders } from "./useReaderFolders";
 import {
   BookFolderGroups,
@@ -4196,17 +4197,20 @@ export const TtsSettings = () => {
           visibleIds={readerFolders.visibleIds}
           langOf={readerFolders.langOf}
           folders={
-            <ReaderFolders
-              folders={readerFolders.folders}
-              books={readerFolders.books}
-              total={readerFolders.total}
-              selection={readerFolders.selection}
-              onSelect={(key) => {
-                readerFolders.select(key, setActivePage);
-                setMobileLevel("list");
-              }}
-              onAddBook={() => void loadDocument()}
-            />
+            <>
+              <ReaderFolders
+                folders={readerFolders.folders}
+                books={readerFolders.books}
+                total={readerFolders.total}
+                selection={readerFolders.selection}
+                onSelect={(key) => {
+                  readerFolders.select(key, setActivePage);
+                  setMobileLevel("list");
+                }}
+                onAddBook={() => void loadDocument()}
+              />
+              <ProjekteGruppe />
+            </>
           }
         />
         {pagesCollapsed !== "1" && (
@@ -4321,7 +4325,6 @@ export const TtsSettings = () => {
                     info={
                       <InfoPopover
                         label={t("tts.writingRules.title")}
-                        text={t("tts.writingRules.short")}
                         testId="reader-info"
                       >
                         <p className="mb-1 font-semibold">

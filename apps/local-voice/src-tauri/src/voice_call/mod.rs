@@ -36,11 +36,12 @@ use specta::Type;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::Notify;
 
+use crate::assistent;
+use crate::assistent::tor::{self, Ausgabetor};
 use crate::llm_client::{self, StreamMessage};
 use crate::managers::transcription::TranscriptionManager;
 use crate::managers::tts::TtsManager;
 use crate::managers::usage::{self, CapturedCall, Purpose};
-use sentences::SentenceSplitter;
 
 /// Name des Ereignisses, über das Antwortstücke zum Frontend laufen.
 pub const EVENT: &str = "voice-call";
@@ -91,9 +92,9 @@ fn was_cancelled(id: &str) -> bool {
 /// Bindet den Kontext und prüft danach, ob die Anfrage währenddessen
 /// abgebrochen oder widerrufen wurde (Codex M5 Must-fix 2). `Err`: abbrechen,
 /// nichts senden.
-async fn bind_then_check<F>(request_id: &str, bind: F) -> Result<Option<String>, ()>
+async fn bind_then_check<T, F>(request_id: &str, bind: F) -> Result<Option<T>, ()>
 where
-    F: std::future::Future<Output = Option<String>>,
+    F: std::future::Future<Output = Option<T>>,
 {
     let context = bind.await;
     if was_cancelled(request_id) {
@@ -418,6 +419,7 @@ pub async fn voice_call_chat(
     request_id: String,
     messages: Vec<VoiceCallMessage>,
     context: Option<crate::app_context::model::SpeakerContext>,
+    conversation_id: Option<String>,
 ) -> Result<String, String> {
     // Ein vorgezogener Abbruch wird zuerst eingelöst, damit er auch bei einem Fehler unten
     // nicht ewig liegen bleibt.
@@ -428,6 +430,10 @@ pub async fn voice_call_chat(
     {
         return Ok(String::new());
     }
+    // ADR-0028 E4: Einstufung in Rust vor jedem Modellaufruf. S0, Fehler, leerer oder zu langer
+    // Text: kein Netzaufruf, unabhängig vom Schalter der Oberfläche.
+    let sprache = assistent::sprache_der_app(&app);
+    tor::vor_nachrichten(&messages, sprache, conversation_id.as_deref())?;
     let settings =
         crate::settings::get_settings(&app).for_function(crate::settings::FN_VOICE_SPEAKER);
     let (provider, model, api_key) =
@@ -435,7 +441,7 @@ pub async fn voice_call_chat(
     // App-Kontext nur an einen lokalen Empfänger, unmittelbar vor dem Start
     // geprüft (Codex M5/M6); sonst antwortet das Modell ohne Kontext.
     let local = receiver_is_local(&provider);
-    let messages = for_receiver(messages, local);
+    let messages = tor::mit_markerregel(for_receiver(messages, local), sprache);
     let guarded = needs_pinned(context.is_some(), &messages, local);
     // Erst Abbruch und Widerruf registrieren, dann prüfen: was dazwischen kommt,
     // trifft die Anfrage (der Notify merkt sich den Abbruch).
@@ -480,7 +486,9 @@ pub async fn voice_call_chat(
             Some(c) => {
                 let (app2, rid) = (app.clone(), request_id.clone());
                 tauri::async_runtime::spawn_blocking(move || {
-                    crate::app_context::service::bind_for_speaker(&app2, &c, local, &rid, &question)
+                    crate::app_context::service::bind_for_speaker_quellen(
+                        &app2, &c, local, &rid, &question,
+                    )
                 })
                 .await
                 .ok()
@@ -489,9 +497,13 @@ pub async fn voice_call_chat(
             None => None,
         }
     };
-    let Ok(context) = bind_then_check(&request_id, bind).await else {
+    let Ok(gebunden) = bind_then_check(&request_id, bind).await else {
         unregister(&request_id);
         return Ok(String::new());
+    };
+    let (context, quellen) = match gebunden {
+        Some(g) => (Some(g.nachricht), g.quellen),
+        None => (None, Vec::new()),
     };
     let pinned = needs_pinned(context.is_some(), &messages, local);
     // Gesendet wird an genau die vor der Prüfung gestartete Adresse.
@@ -509,7 +521,8 @@ pub async fn voice_call_chat(
         .map(|m| StreamMessage::new(&m.role, m.content))
         .collect();
 
-    let splitter = Arc::new(Mutex::new(SentenceSplitter::new()));
+    // Belegregel (E4.2): nur geprüft freigegebene Sätze gehen an Anzeige und Sprachausgabe.
+    let tor_strom = Arc::new(Mutex::new(Ausgabetor::neu(sprache, &quellen)));
     let index = Arc::new(Mutex::new(0u32));
     let emit_piece = {
         let app = app.clone();
@@ -525,13 +538,13 @@ pub async fn voice_call_chat(
         })
     };
     let on_delta = {
-        let splitter = splitter.clone();
+        let tor = tor_strom.clone();
         let emit_piece = emit_piece.clone();
         move |delta: &str| {
-            let pieces = splitter
+            let pieces = tor
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
-                .push(delta);
+                .einspeisen(delta);
             for piece in pieces {
                 emit_piece(piece);
             }
@@ -573,11 +586,17 @@ pub async fn voice_call_chat(
     match result {
         // Abgebrochen: das Restliche wird verworfen, die Sprachausgabe ist schon gestoppt.
         None => Ok(String::new()),
-        Some(Ok(full)) => {
-            let rest = splitter.lock().unwrap_or_else(|e| e.into_inner()).finish();
-            if let Some(rest) = rest {
-                emit_piece(rest);
+        Some(Ok(_roh)) => {
+            // Der Rückgabewert ist der freigegebene Text, nie die rohe Modellausgabe.
+            let (rest, freigegeben) = {
+                let mut t = tor_strom.lock().unwrap_or_else(|e| e.into_inner());
+                let rest = t.beenden();
+                (rest, t.freigegebener_text())
+            };
+            for piece in rest {
+                emit_piece(piece);
             }
+            tor::ausgabe_merken(conversation_id.as_deref(), &freigegeben);
             let _ = app.emit(
                 EVENT,
                 serde_json::json!({
@@ -586,7 +605,7 @@ pub async fn voice_call_chat(
                     "usage": usage_payload(&captured),
                 }),
             );
-            Ok(full)
+            Ok(freigegeben)
         }
         Some(Err(e)) => {
             // Auch ein fehlgeschlagener Aufruf kann schon Token verbraucht haben.

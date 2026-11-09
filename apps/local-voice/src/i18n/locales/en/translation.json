@@ -10,6 +10,7 @@
     "cancel": "Cancel"
   },
   "sidebar": {
+    "projekte": "Projects",
     "library": "Library",
     "general": "General",
     "models": "Models",
@@ -7497,6 +7498,16 @@
       "title": "What would you like to talk about?",
       "hint": "Start the conversation and just talk. You can interrupt or type at any time."
     },
+    "greeting": {
+      "morning": ["Good morning, {{name}}. Where should we start?", "Good morning, {{name}}. What's on today?"],
+      "day": ["Hi {{name}}, how can I help?", "Hi {{name}}, what's new?"],
+      "evening": ["Good evening, {{name}}. What's up?", "Good evening, {{name}}. How can I help?"],
+      "night": ["Still up, {{name}}? What can I do?", "Hi {{name}}, what are you working on?"],
+      "morningAnon": ["Good morning. Where should we start?", "Good morning. What's on today?"],
+      "dayAnon": ["How can I help?", "What's new?"],
+      "eveningAnon": ["Good evening. What's up?", "Good evening. How can I help?"],
+      "nightAnon": ["Still up? What can I do?", "What are you working on?"]
+    },
     "suggestions": {
       "s1": "What is in my latest minutes?",
       "s2": "Summarize yesterday's meeting",
@@ -7511,6 +7522,7 @@
       "send": "Send message",
       "removeAttachment": "Remove attachment “{{name}}”",
       "attachFiles": "Attach files …",
+      "permissions": "Sovereignty and knowledge …",
       "fromCorporate": "From Corporate LLM",
       "corporateHint": "Connect Corporate LLM – skills, plugins and connectors come from there",
       "documents": "Documents",
@@ -7887,7 +7899,15 @@
         "here": "on this device",
         "other": "on another device"
       },
+      "notLocal": "The {{lang}} audiobook is not on this device yet. Sync has been started.",
+      "notOnDevice": "Not on this device yet",
+      "syncFailed": "The {{lang}} audiobook could not be loaded: sync failed ({{error}}).",
+      "syncOff": "The {{lang}} audiobook is not on this device and sync is not set up.",
+      "listenEdition": "Play audiobook · {{lang}}",
+      "continueEdition": "Continue listening · {{lang}}",
       "section": {
+        "listen": "Play {{lang}} audiobook ({{duration}})",
+        "listenNoDuration": "Play {{lang}} audiobook",
         "title": "Language editions",
         "edition": "Edition",
         "progress": "Progress",
@@ -7901,6 +7921,8 @@
         "alignedSome": "Chapters of {{a}} and {{b}} are partly matched."
       },
       "menu": {
+        "read": "Read text",
+        "listen": "Play audiobook",
         "primary": "Make primary edition",
         "align": "Match chapters …",
         "export": "Export …",
@@ -8187,6 +8209,7 @@
       "none": "No text"
     },
     "audioShort": {
+      "other": "Audiobook ({{lang}})",
       "ok": "Audio",
       "busy": "…",
       "none": "No audio",
@@ -8377,6 +8400,8 @@
     "continueRead": "Continue reading",
     "readTitle": "Read “{{title}}”",
     "audioSource": {
+      "other": "Audio: audiobook of the {{lang}} edition",
+      "otherRemote": "Audio: audiobook of the {{lang}} edition, not on this device yet",
       "audiobook": "Audio: imported audiobook",
       "narrated": "Audio: narrated by speech synthesis",
       "none": "No audio – read or have it read aloud live"
@@ -8518,6 +8543,175 @@
     "transcribeMissing": "Transcribe missing parts",
     "importedParts": "Imported audiobook in {{count}} parts",
     "appendAudio": "Add further parts"
+  },
+  "projektBereich": {
+    "nichtSicherEntfernt": "The file could not be removed safely. It stays in the project folder and is offered to you for adding.",
+    "titel": "Projects",
+    "beschreibung": "Bundle books, texts, recordings and files of a project and decide per entry what serves as context for the AI.",
+    "liste": "Projects",
+    "gruppeLeiste": "Projects",
+    "neuesProjekt": "New project",
+    "projektName": "Project name",
+    "klasse": "Data class",
+    "anlegen": "Create",
+    "abbrechen": "Cancel",
+    "zurueck": "Back to projects",
+    "ohneName": "Entry without read access",
+    "eintraege_one": "{{count}} entry",
+    "eintraege_other": "{{count}} entries",
+    "kopien_one": "{{count}} copy",
+    "kopien_other": "{{count}} copies",
+    "hinzufuegen": "Add",
+    "entfernt": "Removed from the project.",
+    "geloescht": "Research deleted.",
+    "gruppen": {
+      "buecher": "Books",
+      "texte": "Texts",
+      "aufnahmen": "Recordings",
+      "dateien": "Files in the project folder",
+      "recherchen": "Research"
+    },
+    "kopf": {
+      "eintrag": "Entry",
+      "art": "Type",
+      "kontext": "As context"
+    },
+    "art": {
+      "buch": "Book",
+      "text": "Text",
+      "aufnahme": "Recording",
+      "datei": "File",
+      "recherche": "Research"
+    },
+    "zugeordnetPerson": "assigned by you",
+    "zugeordnetAutomatik": "assigned automatically",
+    "schalter": "{{name}} as context",
+    "schalterGesperrt": "{{name}} as context, not available",
+    "form": "Form",
+    "fassung": "Edition",
+    "formUndFassung": "Form and edition",
+    "fassungWaehlen": "Choose edition: {{name}}",
+    "formWaehlen": "Choose form: {{form}}",
+    "vorgabe": "default",
+    "formen": {
+      "kurzbuch": "Short book",
+      "volltext": "Full text",
+      "protokoll": "Minutes",
+      "transkript": "Transcript",
+      "text": "Text"
+    },
+    "waehlen": {
+      "volltext": "Choose full text",
+      "transkript": "Choose transcript"
+    },
+    "token": "~{{n}} tokens",
+    "tokenAus": "off · ~{{n}}",
+    "keinText": "no text",
+    "hinweis": {
+      "kein_kurzbuch": "No short book – create one or choose the full text.",
+      "kein_protokoll": "No minutes – create them or choose the transcript.",
+      "kein_text": "No text yet.",
+      "format": "Format cannot be read as context",
+      "fehlt": "Source is missing.",
+      "nicht_lesbar": "No read access.",
+      "form": "Form does not fit the entry."
+    },
+    "nichtImKontextPunkt": "Not in context.",
+    "weitereAktionen": "More actions for {{name}}",
+    "weitereAktionenMenue": "More actions",
+    "entfernenMenue": "Remove from project …",
+    "rechercheLoeschenMenue": "Delete research …",
+    "entfernen": {
+      "titel": "Remove “{{name}}” from the project?",
+      "titelRecherche": "Delete research “{{name}}”?",
+      "nehmen": "Remove from project",
+      "loeschen": "Delete",
+      "text": {
+        "dateien": "The copy in the project folder moves to the project's trash. Your original stays untouched.",
+        "buecher": "The book stays in the library, with editions, audiobook and AI documents. Only the link to “{{projekt}}” is removed.",
+        "texte": "The text stays in Read aloud. Only the link to “{{projekt}}” is removed.",
+        "aufnahmen": "The recording stays in Recordings, with transcript and minutes. Only the link to “{{projekt}}” is removed.",
+        "recherchen": "The research will be deleted. This cannot be undone."
+      }
+    },
+    "rechts": "Context in the project",
+    "summe": "{{summe}} of {{fenster}} tokens",
+    "summeKurz": "{{summe}} tokens",
+    "meter": "{{prozent}} % of the model window used",
+    "zaehl_one": "{{count}} entry as context",
+    "zaehl_other": "{{count}} entries as context",
+    "zaehlKeine": "No entries as context",
+    "eintraegeKurz_one": "{{count}} entry",
+    "eintraegeKurz_other": "{{count}} entries",
+    "fenster": "Model window",
+    "fensterModell": "Model window {{modell}}",
+    "details": "Details",
+    "nichtImKontext": "Not in context",
+    "fehlt": {
+      "ohneKurzbuch_one": "{{count}} book without short book",
+      "ohneKurzbuch_other": "{{count}} books without short book",
+      "ohneProtokoll_one": "{{count}} recording without minutes",
+      "ohneProtokoll_other": "{{count}} recordings without minutes",
+      "formatNichtLesbar_one": "{{count}} file whose format cannot be read",
+      "formatNichtLesbar_other": "{{count}} files whose format cannot be read",
+      "ohneText_one": "{{count}} entry without readable text",
+      "ohneText_other": "{{count}} entries without readable text",
+      "ausgeschaltet_one": "{{count}} entry switched off",
+      "ausgeschaltet_other": "{{count}} entries switched off"
+    },
+    "geltung": {
+      "titel": "How the selection applies",
+      "text": "Only entries that are switched on go to the AI, in the chosen form. If the form is missing, nothing is substituted. The selection applies on this device; on other devices new entries start switched off."
+    },
+    "ki": {
+      "titel": "AI in the project",
+      "text": "Chat and voice conversation use this selection as soon as they are enabled for projects.",
+      "gesperrt": "Locked: AI calls in the project follow with the next step."
+    },
+    "banner": {
+      "reset": "The context selection of this device could not be read. For safety all entries are switched off. Switch on what the AI should use.",
+      "zuGross": "The context is larger than the model window ({{summe}} of {{fenster}} tokens). Switch entries off or choose a shorter form. Nothing is silently truncated. AI calls in the project are locked until the context fits the model window.",
+      "gefunden": "The project folder contains a file that does not belong to the project:",
+      "nichtAufgenommen": ". It was not added.",
+      "aufnehmen": "Add"
+    },
+    "leer": {
+      "titel": "{{name}} is still empty",
+      "text": "Add books, texts, recordings or files. App content is linked, files are copied into the project folder."
+    },
+        "lage": {
+      "fehlt": "The file list of this project is missing or damaged. Files in the project folder are therefore left untouched.",
+      "defekt": "The file list of this project is missing or damaged. Files in the project folder are therefore left untouched.",
+      "neuer": "The file list comes from a newer app version. Update the app; until then the files stay untouched.",
+      "nicht_lesbar": "The project folder cannot be read right now. Check access rights or syncing and reload the page.",
+      "neuAufbauen": "Rebuild inventory",
+      "erneut": "Check again",
+      "dialogTitel": "Rebuild inventory?",
+      "dialogText": "The damaged list is set aside, not deleted. Files in the project folder are then offered to you for adding; links to former files are removed."
+    },
+    "keins": {
+      "titel": "No project yet",
+      "text": "Create a project to bundle books, texts, recordings and files."
+    },
+    "dialog": {
+      "titel": "Add to “{{name}}”",
+      "ausDerApp": "From the app",
+      "dateienKopieren": "Copy files",
+      "appHinweis": "Books, texts and recordings are linked, not copied. Newly added entries are switched on as context; you can change this per entry.",
+      "nichtsFrei": "Everything the app knows already belongs to this project.",
+      "nHinzufuegen_one": "Add {{count}}",
+      "nHinzufuegen_other": "Add {{count}}",
+      "dateienText": "Files are copied into the project folder and checked after copying. The original stays unchanged. A file with the same name is not overwritten; the copy gets “(2)”.",
+      "dateienWaehlen": "Choose files …",
+      "kopiertLaeuft": "Copying files …",
+      "ladefehler": "The list could not be loaded.",
+      "erneut": "Try again",
+      "weitereLaden": "Load more",
+      "formatHinweis": "For now only .txt and .md can be read as context. Other formats are added and shown with a note.",
+      "kopiert_one": "{{count}} file copied.",
+      "kopiert_other": "{{count}} files copied.",
+      "schliessen": "Close"
+    }
   },
   "projekte": {
     "menu": {

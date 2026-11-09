@@ -24,16 +24,18 @@
 //! | 6 | Abbruch oder Fehler nach schon verbrauchten Token | Ereignis `usage` kommt trotzdem | wie `voice_call_chat` |
 //! | 2 | Abbruch (`voice_call_cancel` mit der Kennung des Durchgangs) | endet mit `Ok("")`, nichts mehr gesendet | wie `voice_call_chat` |
 //! | 3 | Abbruch vor dem Start (IPC-Reihenfolge) | `EARLY_CANCELS` fängt ihn | wie `voice_call_chat` |
+//! | 7 | Antwort des Sprechers ohne Beleg | verworfen, bei leerem Ergebnis feste Vorlage | `tor::StromTor`, Tests in `assistent/tor/tests.rs` |
 //! | 4 | Modellfehler | Fehlertext zurück (ohne Inhalte), Ereignis `failed` | wie `voice_call_chat` |
 //!
 //! Texte stehen nie im Log.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use tauri::{AppHandle, Emitter};
 use tokio::sync::Notify;
 
 use super::{usage_payload, VoiceCallMessage, CANCELS, EARLY_CANCELS, EVENT};
+use crate::assistent::tor;
 use crate::llm_client::{self, StreamMessage};
 use crate::managers::meetings::llm_call::ResolvedProvider;
 use crate::managers::usage::{self, Purpose};
@@ -109,6 +111,7 @@ pub async fn voice_call_turn(
     model_id: String,
     stufe: String,
     for_function: Option<String>,
+    conversation_id: Option<String>,
 ) -> Result<String, String> {
     // Ein vorgezogener Abbruch wird zuerst eingelöst, auch wenn unten etwas scheitert.
     if EARLY_CANCELS
@@ -118,9 +121,21 @@ pub async fn voice_call_turn(
     {
         return Ok(String::new());
     }
+    // ADR-0028 E4: Einstufung in Rust vor jedem Modellaufruf (Sprecher und Denker).
+    let sprache = crate::assistent::sprache_der_app(&app);
+    tor::vor_nachrichten(&messages, sprache, conversation_id.as_deref())?;
     let settings = crate::settings::get_settings(&app);
     let (provider, model, api_key) =
         resolve(&settings, &model_id, &stufe, for_function.as_deref())?;
+    // Belegregel (E4.2) fuer JEDEN Durchgang, gleich welche Funktion: was Rust Richtung Oberflaeche
+    // verlaesst (Deltas, Rueckgabewert), geht durch das Tor. Belege sind die Werkzeugergebnisse, die
+    // Rust selbst geliefert hat; ausgenommen sind nur voll gueltige Werkzeugaufrufe.
+    let (strom, messages) = tor::orchestrator_tor(
+        messages,
+        sprache,
+        crate::commands::voice_tools::werkzeug_register(&app),
+    );
+    let tor_strom = Arc::new(Mutex::new(strom));
     let messages: Vec<StreamMessage> = messages
         .into_iter()
         .map(|m| StreamMessage::new(&m.role, m.content))
@@ -134,10 +149,18 @@ pub async fn voice_call_turn(
     let on_delta = {
         let app = app.clone();
         let request_id = request_id.clone();
+        let tor_strom = tor_strom.clone();
         move |delta: &str| {
+            let text = tor_strom
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .einspeisen(delta);
+            if text.is_empty() {
+                return;
+            }
             let _ = app.emit(
                 EVENT,
-                serde_json::json!({"kind": "delta", "request_id": request_id, "text": delta}),
+                serde_json::json!({"kind": "delta", "request_id": request_id, "text": text}),
             );
         }
     };
@@ -176,7 +199,21 @@ pub async fn voice_call_turn(
     }
     match result {
         None => Ok(String::new()),
-        Some(Ok(full)) => Ok(full),
+        Some(Ok(_roh)) => {
+            // Der Rueckgabewert ist der freigegebene Text, nie die rohe Modellausgabe.
+            let (rest, ausgabe, prosa) = {
+                let mut t = tor_strom.lock().unwrap_or_else(|e| e.into_inner());
+                (t.beenden(), t.ausgabe(), t.prosa())
+            };
+            if !rest.is_empty() {
+                let _ = app.emit(
+                    EVENT,
+                    serde_json::json!({"kind": "delta", "request_id": request_id, "text": rest}),
+                );
+            }
+            tor::ausgabe_merken(conversation_id.as_deref(), &prosa);
+            Ok(ausgabe)
+        }
         Some(Err(e)) => {
             let _ = app.emit(
                 EVENT,

@@ -6,6 +6,7 @@ import {
   type ModelCompliance,
 } from "@/bindings";
 import { modelLabel } from "@/lib/modelNames";
+import { ANNOUNCE } from "./ueberbrueckung";
 import type { ChatMessage, ChatSide } from "@/vendor/wai-voice/backend.ts";
 import {
   modelAllowed,
@@ -103,6 +104,8 @@ export interface OrchestrationDeps {
   onStatus(status: CallStatus | null): void;
   /** Das laufende Gespräch (es bleibt den Gesprächswerkzeugen verborgen); `null` bis zum ersten Beitrag; wartet auf ein laufendes Speichern. */
   conversationId?(): string | null | Promise<string | null>;
+  /** Schlüssel der letzten Ausgabe in Rust (Tor: „ja“ nach einer Rückfrage, „wiederholen“); sonst `conversationId`. */
+  ausgabeKey?(): string | null | Promise<string | null>;
 }
 
 export interface Prepared {
@@ -207,21 +210,6 @@ function toVoiceModelShape(m: ModelDescription): VoiceModel {
     turn: () => Promise.reject(new Error("nicht aufrufbar")),
   };
 }
-
-const ANNOUNCE: Record<string, string> = {
-  meetings_list: "Moment, ich schaue in den Besprechungen nach.",
-  meetings_search: "Moment, ich suche in den Besprechungen.",
-  meeting_transcript: "Moment, ich lese im Transkript nach.",
-  dictations_recent: "Moment, ich schaue in den Diktaten nach.",
-  dictations_search: "Moment, ich suche in den Diktaten.",
-  conversations_list: "Moment, ich schaue in den früheren Gesprächen nach.",
-  conversations_search: "Moment, ich suche in den früheren Gesprächen.",
-  conversation_get: "Moment, ich lese das frühere Gespräch.",
-  calendar_events: "Moment, ich schaue in den Terminen nach.",
-  day_overview: "Moment, ich verschaffe mir einen Überblick über den Tag.",
-  tts_pages_list: "Moment, ich schaue in den Vorlesen-Seiten nach.",
-  tts_page_text: "Moment, ich lese die Seite.",
-};
 
 /** Wissensbereiche des Gesprächs (Schlüssel der Einstellung `voice_call_knowledge`). */
 export const KNOWLEDGE_AREAS = [
@@ -413,6 +401,8 @@ function makeModel(
           modelId: info.id,
           stufe,
           forFunction,
+          conversationId:
+            (await (deps.ausgabeKey ?? deps.conversationId)?.()) ?? null,
         });
         // Auch nach Abbruch noch kurz auf den Verbrauch warten: er zählt trotzdem.
         await Promise.race([

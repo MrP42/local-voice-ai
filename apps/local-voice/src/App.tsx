@@ -11,7 +11,6 @@ import { ModelStateEvent, RecordingErrorEvent } from "./lib/types/events";
 import "./App.css";
 import AccessibilityPermissions from "./components/AccessibilityPermissions";
 import Footer from "./components/footer";
-import { WorkspaceHome } from "./components/workspace/WorkspaceHome";
 import Onboarding, { AccessibilityOnboarding } from "./components/onboarding";
 import {
   Sidebar,
@@ -76,6 +75,13 @@ function App() {
   const [isReturningUser, setIsReturningUser] = useState(false);
   const [currentSection, setCurrentSection] =
     usePersistentState<SidebarSection>("section", "home", isSidebarSection);
+  // lva#394: Der Chat ist die Startseite. Alte Sprungziele „voice“ landen dort;
+  // bis der Effekt umgestellt hat, gilt für das Layout schon „home“ (kein Flackern).
+  const shownSection: SidebarSection =
+    currentSection === "voice" ? "home" : currentSection;
+  useEffect(() => {
+    if (currentSection === "voice") setCurrentSection("home");
+  }, [currentSection, setCurrentSection]);
   // Einmal besuchte erhaltene Module (KeepAlive) bleiben eingehängt.
   const [visited, setVisited] = useState<SidebarSection[]>([]);
   useEffect(() => {
@@ -588,7 +594,7 @@ function App() {
           <div className="lv-content flex-1 flex flex-col overflow-hidden min-w-0">
             <main
               id="workspace-content"
-              className={`flex-1 workspace-main ${currentSection === "tts" || currentSection === "meetings" || currentSection === "voice" ? "workspace-main--fill" : ""} ${currentSection === "meetings" || currentSection === "voice" ? "workspace-main--fixed" : ""}`}
+              className={`flex-1 workspace-main ${currentSection === "tts" || currentSection === "meetings" || shownSection === "home" || currentSection === "projekte" ? "workspace-main--fill" : ""} ${currentSection === "meetings" || shownSection === "home" || currentSection === "projekte" ? "workspace-main--fixed" : ""}`}
               aria-label={t(SECTIONS_CONFIG[currentSection].labelKey)}
             >
               {/* Fluid: the content uses whatever width the window offers, up
@@ -599,11 +605,14 @@ function App() {
                 className={`flex flex-col w-full mx-auto p-3 sm:p-4 gap-4 min-w-0 ${
                   currentSection === "tts" ||
                   currentSection === "meetings" ||
-                  currentSection === "voice"
+                  shownSection === "home" ||
+                  currentSection === "projekte"
                     ? "workspace-content--fill"
                     : ""
                 } ${
-                  currentSection === "meetings" || currentSection === "voice"
+                  currentSection === "meetings" ||
+                  shownSection === "home" ||
+                  currentSection === "projekte"
                     ? "workspace-content--fixed"
                     : ""
                 } ${
@@ -616,17 +625,16 @@ function App() {
                   // Sprachgespräch: Verlauf zentriert, Einstellungen als Spalte rechts.
                   currentSection === "tts" ||
                   currentSection === "meetings" ||
-                  currentSection === "voice"
+                  shownSection === "home" ||
+                  currentSection === "projekte"
                     ? ""
                     : "max-w-5xl"
                 }`}
               >
                 <AccessibilityPermissions />
-                {currentSection === "home" ? (
-                  <WorkspaceHome onNavigate={setCurrentSection} />
-                ) : KEEP_ALIVE.includes(currentSection) ? null : (
-                  renderSettingsContent(currentSection)
-                )}
+                {KEEP_ALIVE.includes(currentSection)
+                  ? null
+                  : renderSettingsContent(currentSection)}
                 {/* Vorlesen und Bibliothek bleiben nach dem ersten Besuch
                     erhalten: Hin- und Herwechseln ohne Neuladen (Patrick 03.11.). */}
                 {KEEP_ALIVE.filter(
