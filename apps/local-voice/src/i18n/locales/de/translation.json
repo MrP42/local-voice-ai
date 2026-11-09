@@ -7849,12 +7849,45 @@
         "ki_docs": {
           "label": "KI-Dokumente",
           "hint": "Zusammenfassungen und andere KI-Dokumente zu Büchern, nur wenn sie nichts nach deiner Leseposition verraten."
+        },
+        "notebook": {
+          "label": "Notizbuch",
+          "hint": "Seiten aus den Abschnitten, die du unten auswählst. Lesen, suchen und „was habe ich heute notiert“. Inhalte gehen nur an lokale Modelle."
         }
       },
       "global": {
         "title": "Globales Wissen (Vorschau)",
         "switch": "Alle freigegebenen Inhalte durchsuchen",
         "hint": "Vor jeder Antwort sucht die App lokal in den freigegebenen Bereichen und gibt dem Modell die passenden Auszüge mit Belegen. Nur mit lokalem Sprachmodell; Bücher nur bis zu deiner Leseposition."
+      },
+      "notebook": {
+        "groupLabel": "Freigegebene Notizbuch-Abschnitte",
+        "off": "Kein Zugriff; deine Auswahl bleibt gespeichert.",
+        "loading": "Gliederung wird gelesen …",
+        "none": "Noch kein Abschnitt freigegeben: der Assistent liest nichts aus dem Notizbuch.",
+        "summary_one": "{{count}} von {{total}} Abschnitten freigegeben",
+        "summary_other": "{{count}} von {{total}} Abschnitten freigegeben",
+        "rule": "Der Assistent sieht nur diese Abschnitte: andere erscheinen weder in Antworten noch in Zahlen oder Rückfragen. Seiten im Papierkorb liest er nicht. Jede Antwort nennt die Seite als Quelle.",
+        "selectAll": "Alle Abschnitte in {{name}} auswählen",
+        "selectGroup": "Alle Abschnitte der Gruppe {{name}} auswählen",
+        "group": "Gruppe {{name}}",
+        "sectionsIn": "Abschnitte in {{name}}",
+        "whole": "ganz",
+        "countOf_one": "{{count}} von {{total}}",
+        "countOf_other": "{{count}} von {{total}}",
+        "wholeSwitch": "Ganzes Notizbuch {{name}} freigeben",
+        "wholeHint": "Der Assistent darf alle vorhandenen und künftig hinzugefügten Abschnitte lesen und durchsuchen. Neue Abschnitte werden automatisch freigegeben.",
+        "wholeOn": "Alle Abschnitte dieses Notizbuchs sind freigegeben, auch neue.",
+        "pages_one": "{{count}} Seite",
+        "pages_other": "{{count}} Seiten",
+        "kein": {
+          "title": "Auf diesem Gerät gibt es noch kein Notizbuch.",
+          "text": "Sobald du die App „Notizbuch“ installiert und eine Seite angelegt hast, erscheinen hier ihre Abschnitte."
+        },
+        "version": {
+          "title": "Diese Notizbuch-Version wird nicht unterstützt.",
+          "text": "Bitte Notizbuch und Local Voice aktualisieren. Bis dahin liest der Assistent nichts aus dem Notizbuch; deine Auswahl bleibt gespeichert."
+        }
       }
     }
   },

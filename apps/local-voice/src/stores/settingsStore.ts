@@ -324,6 +324,9 @@ const settingUpdaters: {
     commands.changeVoiceCallReadTranscriptsSetting(value as boolean),
   voice_call_knowledge: (value) =>
     commands.changeVoiceCallKnowledgeSetting(value as string[]),
+  // lva#396 N2: freigegebene Notizbuch-Abschnitte
+  voice_call_notebook_sections: (value) =>
+    commands.changeVoiceNotebookSectionsSetting(value as string[]),
   // ADR-0028 A2: Einstufung vor dem Modellaufruf
   assistent_einstufung_aktiv: (value) =>
     commands.changeAssistentEinstufungAktivSetting(value as boolean),

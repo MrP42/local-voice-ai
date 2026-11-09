@@ -7849,12 +7849,45 @@
         "ki_docs": {
           "label": "AI documents",
           "hint": "Summaries and other AI documents on books, only if they reveal nothing beyond your reading position."
+        },
+        "notebook": {
+          "label": "Notebook",
+          "hint": "Pages from the sections you select below. Read, search and “what did I note today”. Content only goes to local models."
         }
       },
       "global": {
         "title": "Global knowledge (preview)",
         "switch": "Search all shared content",
         "hint": "Before each answer the app searches the shared areas locally and gives the model matching excerpts with sources. Local language model only; books only up to your reading position."
+      },
+      "notebook": {
+        "groupLabel": "Shared notebook sections",
+        "off": "No access; your selection is kept.",
+        "loading": "Reading the outline …",
+        "none": "No section shared yet: the assistant reads nothing from the notebook.",
+        "summary_one": "{{count}} of {{total}} sections shared",
+        "summary_other": "{{count}} of {{total}} sections shared",
+        "rule": "The assistant only sees these sections: others appear neither in answers nor in counts or follow-up questions. It does not read pages in the trash. Every answer names the page as its source.",
+        "selectAll": "Select all sections in {{name}}",
+        "selectGroup": "Select all sections of group {{name}}",
+        "group": "Group {{name}}",
+        "sectionsIn": "Sections in {{name}}",
+        "whole": "whole",
+        "countOf_one": "{{count}} of {{total}}",
+        "countOf_other": "{{count}} of {{total}}",
+        "wholeSwitch": "Share the whole notebook {{name}}",
+        "wholeHint": "The assistant may read and search all existing and future sections. New sections are shared automatically.",
+        "wholeOn": "All sections of this notebook are shared, including new ones.",
+        "pages_one": "{{count}} page",
+        "pages_other": "{{count}} pages",
+        "kein": {
+          "title": "There is no notebook on this device yet.",
+          "text": "Once you have installed the “Notebook” app and created a page, its sections appear here."
+        },
+        "version": {
+          "title": "This notebook version is not supported.",
+          "text": "Please update Notebook and Local Voice. Until then the assistant reads nothing from the notebook; your selection is kept."
+        }
       }
     }
   },
