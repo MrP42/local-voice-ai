@@ -4,6 +4,7 @@ import React, {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import { useTranslation } from "react-i18next";
 import { Switch, useId } from "@fluentui/react-components";
@@ -53,6 +54,42 @@ const SCHLUESSEL = "voice_call_notebook_sections";
 
 const gleich = (a: readonly string[] | undefined, b: readonly string[]) =>
   !!a && a.length === b.length && a.every((x, i) => x === b[i]);
+
+/**
+ * Speichern der Freigabe, einmal je App statt je Baum (Codex lva#418): Schaltet man den Bereich
+ * aus und wieder ein, entsteht ein neuer Baum, aber dieselbe Kette. So überholt kein Schreiben
+ * des alten Baums die neue Auswahl. `lokal` ist die zuletzt gewählte, noch nicht bestätigte
+ * Auswahl; nach dem Ende der Kette gilt wieder der gespeicherte Stand (bei Fehler der alte).
+ */
+type Speicherstand = { lokal: string[] | null; fehler: boolean };
+let speicherstand: Speicherstand = { lokal: null, fehler: false };
+const hoerer = new Set<() => void>();
+const melden = (s: Speicherstand) => {
+  speicherstand = s;
+  hoerer.forEach((h) => h());
+};
+const freigabeKette = schreibkette<string[]>(
+  async (v) => {
+    await useSettingsStore.getState().updateSetting(SCHLUESSEL, v as never);
+    return gleich(
+      useSettingsStore.getState().settings?.[SCHLUESSEL] as
+        string[] | undefined,
+      v,
+    );
+  },
+  (ok) => melden({ lokal: null, fehler: !ok }),
+);
+function freigabeSpeichern(v: string[]) {
+  melden({ lokal: v, fehler: false });
+  freigabeKette.setze(v);
+}
+const abonnieren = (h: () => void) => {
+  hoerer.add(h);
+  return () => {
+    hoerer.delete(h);
+  };
+};
+const stand = () => speicherstand;
 
 const Pfeil: React.FC<{ offen: boolean }> = ({ offen }) => (
   <ChevronRight
@@ -268,12 +305,14 @@ const NotizbuchKarte: React.FC<{
 /** Baum der Abschnitte samt Zustandsmeldungen (laden, kein Notizbuch, Version, Fehler). */
 const Baum: React.FC<{ ids: string }> = ({ ids }) => {
   const { t } = useTranslation();
-  const { getSetting, updateSetting } = useSettings();
+  const { getSetting } = useSettings();
   const gespeichert = getSetting(SCHLUESSEL);
   // Während geschrieben wird, zeigt der Baum die zuletzt gewählte Auswahl; danach wieder den
   // gespeicherten Stand (bei einem Fehler also den alten).
-  const [lokal, setLokal] = useState<string[] | null>(null);
-  const [speicherFehler, setSpeicherFehler] = useState(false);
+  const { lokal, fehler: speicherFehler } = useSyncExternalStore(
+    abonnieren,
+    stand,
+  );
   const geladen = useSettingsStore((s) => s.settings !== null);
   const roh = lokal ?? gespeichert ?? [];
   const auswahl = useMemo(() => auswahlAus(roh), [roh]);
@@ -298,34 +337,11 @@ const Baum: React.FC<{ ids: string }> = ({ ids }) => {
     };
   }, []);
 
-  const kette = useMemo(
-    () =>
-      schreibkette<string[]>(
-        async (v) => {
-          await updateSetting(SCHLUESSEL, v as never);
-          return gleich(
-            useSettingsStore.getState().settings?.[SCHLUESSEL] as
-              string[] | undefined,
-            v,
-          );
-        },
-        (ok) => {
-          if (!aktiv.current) return;
-          setLokal(null);
-          setSpeicherFehler(!ok);
-        },
-      ),
-    [updateSetting],
-  );
-
   const speichern = useCallback(
     (a: Auswahl) => {
-      const neu = eintraegeAus(a, roh);
-      setLokal(neu);
-      setSpeicherFehler(false);
-      kette.setze(neu);
+      freigabeSpeichern(eintraegeAus(a, roh));
     },
-    [kette, roh],
+    [roh],
   );
 
   // Ohne geladene Einstellungen gäbe es keine Grundlage: speichern würde sonst gespeicherte

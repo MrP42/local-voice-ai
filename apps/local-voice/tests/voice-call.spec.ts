@@ -3278,6 +3278,52 @@ test.describe("Sprachgespraech Wissen: Notizbuch-Freigabe", () => {
     ).toEqual(["abschnitt:a2"]);
   });
 
+  test("Aus- und Einschalten während des Speicherns: die neue Auswahl gewinnt", async ({
+    page,
+  }) => {
+    await install(page, "light", {
+      settings: {
+        ...LOCAL_SPEAKER,
+        voice_call_knowledge: ["notebook"],
+        voice_call_notebook_sections: [],
+      },
+    });
+    await notebookMock(page, { __sectionsHold: true });
+    await openPage(page);
+    const panel = await openKnowledge(page);
+    const box = (name: RegExp) => panel.getByRole("checkbox", { name });
+    // A wird geschrieben (Antwort hält), B wartet.
+    await box(/^Besprechungen/).click();
+    await box(/^Haushalt 2027/).click();
+    await expect.poll(() => sectionCalls(page)).toEqual([["abschnitt:a1"]]);
+    // Bereich aus und wieder ein: ein neuer Baum, dieselbe Kette.
+    const sw = panel.getByRole("switch", { name: "Notizbuch", exact: true });
+    await sw.click();
+    await expect(box(/^Besprechungen/)).toHaveCount(0);
+    await sw.click();
+    await expect(box(/^Haushalt 2027/)).toBeChecked();
+    // C: Besprechungen wieder ab.
+    await box(/^Besprechungen/).click();
+    await expect(box(/^Besprechungen/)).not.toBeChecked();
+    await page.evaluate(() => (window as any).__sectionsPending.shift().ok());
+    await expect
+      .poll(() => sectionCalls(page))
+      .toEqual([["abschnitt:a1"], ["abschnitt:a2"]]);
+    await page.evaluate(() => (window as any).__sectionsPending.shift().ok());
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () => (window as any).__settings.voice_call_notebook_sections,
+        ),
+      )
+      .toEqual(["abschnitt:a2"]);
+    await page.waitForTimeout(200);
+    expect(await sectionCalls(page)).toHaveLength(2);
+    await expect(box(/^Besprechungen/)).not.toBeChecked();
+    await expect(box(/^Haushalt 2027/)).toBeChecked();
+    await expect(panel.getByRole("alert")).toHaveCount(0);
+  });
+
   test("Speicherfehler: Meldung, die vorherige Auswahl gilt weiter", async ({
     page,
   }) => {
