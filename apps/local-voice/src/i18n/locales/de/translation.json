@@ -9326,6 +9326,8 @@
       "zu_tief": "Die Ordner sind zu tief verschachtelt.",
       "zu_viele": "Zu viele Einträge.",
       "keine_datei": "Keine Datei.",
+      "geraet": "Das ist ein Gerät, keine Datei; nicht übernommen.",
+      "datenstrom": "Alternative Datenströme werden nicht übernommen.",
       "nicht_neu_aufbaubar": "Der Bestand lässt sich nicht neu aufbauen.",
       "loeschen_offen": "Ein endgültiges Löschen ist noch nicht abgeschlossen. Bitte später erneut versuchen.",
       "datei_im_papierkorb": "Die Datei liegt im Papierkorb."
