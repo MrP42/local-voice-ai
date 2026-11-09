@@ -7880,6 +7880,11 @@
         "wholeOn": "All sections of this notebook are shared, including new ones.",
         "pages_one": "{{count}} page",
         "pages_other": "{{count}} pages",
+        "fehler": {
+          "title": "The notebook cannot be read right now.",
+          "text": "Please try again later. Until then the assistant reads nothing from the notebook; your selection is kept."
+        },
+        "saveError": "The selection could not be saved. The previous selection still applies.",
         "kein": {
           "title": "There is no notebook on this device yet.",
           "text": "Once you have installed the “Notebook” app and created a page, its sections appear here."

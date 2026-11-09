@@ -63,3 +63,55 @@ export function frei(a: Auswahl, nb: NotebookOutline): number {
   if (a.ganz.has(nb.id)) return nb.sections.length;
   return nb.sections.filter((s) => a.abschnitte.has(s.id)).length;
 }
+
+/**
+ * Anfangs aufgeklappte Notizbücher: die mit Auswahl, ohne jede Auswahl das erste. Wird einmal beim
+ * ersten Anzeigen bestimmt; Änderungen der Auswahl klappen danach nichts mehr zu oder auf (sonst
+ * verschwände das fokussierte Kästchen, Codex lva#418).
+ */
+export function startOffen(
+  nbs: readonly NotebookOutline[],
+  a: Auswahl,
+): Record<string, boolean> {
+  const mitWahl = nbs.filter((n) => frei(a, n) > 0 || a.ganz.has(n.id));
+  const offen: Record<string, boolean> = {};
+  for (const n of mitWahl) offen[n.id] = true;
+  if (!mitWahl.length && nbs[0]) offen[nbs[0].id] = true;
+  return offen;
+}
+
+/**
+ * Schreibt Werte nacheinander: nie zwei Schreibvorgänge zugleich, und von mehreren Änderungen
+ * während eines Schreibens geht nur die letzte hinterher. So kann keine ältere Antwort eine neuere
+ * Auswahl überholen. `fertig` meldet das Ende einer Kette mit dem Ergebnis des letzten Schreibens.
+ */
+export function schreibkette<T>(
+  schreiben: (v: T) => Promise<boolean>,
+  fertig: (ok: boolean) => void,
+): { setze: (v: T) => void; laeuft: () => boolean } {
+  let laeuft = false;
+  let naechster: { v: T } | null = null;
+  const lauf = async (v: T) => {
+    laeuft = true;
+    let ok = false;
+    try {
+      ok = await schreiben(v);
+    } catch {
+      ok = false;
+    }
+    if (naechster) {
+      const n = naechster;
+      naechster = null;
+      return lauf(n.v);
+    }
+    laeuft = false;
+    fertig(ok);
+  };
+  return {
+    setze: (v) => {
+      if (laeuft) naechster = { v };
+      else void lauf(v);
+    },
+    laeuft: () => laeuft,
+  };
+}

@@ -7880,6 +7880,11 @@
         "wholeOn": "Alle Abschnitte dieses Notizbuchs sind freigegeben, auch neue.",
         "pages_one": "{{count}} Seite",
         "pages_other": "{{count}} Seiten",
+        "fehler": {
+          "title": "Das Notizbuch ist gerade nicht lesbar.",
+          "text": "Versuch es später noch einmal. Bis dahin liest der Assistent nichts aus dem Notizbuch; deine Auswahl bleibt gespeichert."
+        },
+        "saveError": "Die Freigabe konnte nicht gespeichert werden. Es gilt weiter die vorherige Auswahl.",
         "kein": {
           "title": "Auf diesem Gerät gibt es noch kein Notizbuch.",
           "text": "Sobald du die App „Notizbuch“ installiert und eine Seite angelegt hast, erscheinen hier ihre Abschnitte."

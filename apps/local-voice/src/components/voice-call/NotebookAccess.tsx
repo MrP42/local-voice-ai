@@ -1,4 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { Switch, useId } from "@fluentui/react-components";
 import { ChevronRight } from "lucide-react";
@@ -8,13 +14,16 @@ import {
   type NotebookOutlineSection,
 } from "@/bindings";
 import { useSettings } from "@/hooks/useSettings";
+import { useSettingsStore } from "@/stores/settingsStore";
 import {
   type Auswahl,
   auswahlAus,
   eintraegeAus,
   frei,
+  schreibkette,
   setzeAbschnitte,
   setzeGanz,
+  startOffen,
 } from "./notebookSelection";
 
 /**
@@ -29,14 +38,21 @@ type Laden =
   | { art: "ok"; nbs: NotebookOutline[] }
   | { art: "kein" }
   | { art: "version" }
-  | { art: "fehler"; text: string };
+  | { art: "fehler" };
 
+/** Fehlertexte des Kerns (`notizbuch::fehlertext`) auf eigene, übersetzte Zustände abbilden. */
 function ladeArt(fehler: string): Laden {
   if (fehler.startsWith("Auf diesem Gerät gibt es noch kein Notizbuch"))
     return { art: "kein" };
-  if (fehler.includes("Version")) return { art: "version" };
-  return { art: "fehler", text: fehler };
+  if (fehler.startsWith("Diese Notizbuch-Version wird nicht unterstützt"))
+    return { art: "version" };
+  return { art: "fehler" };
 }
+
+const SCHLUESSEL = "voice_call_notebook_sections";
+
+const gleich = (a: readonly string[] | undefined, b: readonly string[]) =>
+  !!a && a.length === b.length && a.every((x, i) => x === b[i]);
 
 const Pfeil: React.FC<{ offen: boolean }> = ({ offen }) => (
   <ChevronRight
@@ -249,41 +265,72 @@ const NotizbuchKarte: React.FC<{
   );
 };
 
-/** Baum der Abschnitte samt Zustandsmeldungen (laden, kein Notizbuch, Version). */
+/** Baum der Abschnitte samt Zustandsmeldungen (laden, kein Notizbuch, Version, Fehler). */
 const Baum: React.FC<{ ids: string }> = ({ ids }) => {
   const { t } = useTranslation();
   const { getSetting, updateSetting } = useSettings();
-  const roh = getSetting("voice_call_notebook_sections");
-  const auswahl = useMemo(() => auswahlAus(roh ?? []), [roh]);
+  const gespeichert = getSetting(SCHLUESSEL);
+  // Während geschrieben wird, zeigt der Baum die zuletzt gewählte Auswahl; danach wieder den
+  // gespeicherten Stand (bei einem Fehler also den alten).
+  const [lokal, setLokal] = useState<string[] | null>(null);
+  const [speicherFehler, setSpeicherFehler] = useState(false);
+  const geladen = useSettingsStore((s) => s.settings !== null);
+  const roh = lokal ?? gespeichert ?? [];
+  const auswahl = useMemo(() => auswahlAus(roh), [roh]);
   const [laden, setLaden] = useState<Laden>({ art: "laedt" });
   const [offen, setOffen] = useState<Record<string, boolean>>({});
+  const start = useRef<Record<string, boolean> | null>(null);
+  const aktiv = useRef(true);
 
   useEffect(() => {
-    let aktiv = true;
+    aktiv.current = true;
     commands
       .voiceNotebookOutline()
       .then((r) => {
-        if (!aktiv) return;
+        if (!aktiv.current) return;
         setLaden(
           r.status === "ok" ? { art: "ok", nbs: r.data } : ladeArt(r.error),
         );
       })
-      .catch(() => aktiv && setLaden(ladeArt("")));
+      .catch(() => aktiv.current && setLaden({ art: "fehler" }));
     return () => {
-      aktiv = false;
+      aktiv.current = false;
     };
   }, []);
 
-  const speichern = useCallback(
-    (a: Auswahl) =>
-      void updateSetting(
-        "voice_call_notebook_sections",
-        eintraegeAus(a, roh ?? []) as never,
+  const kette = useMemo(
+    () =>
+      schreibkette<string[]>(
+        async (v) => {
+          await updateSetting(SCHLUESSEL, v as never);
+          return gleich(
+            useSettingsStore.getState().settings?.[SCHLUESSEL] as
+              string[] | undefined,
+            v,
+          );
+        },
+        (ok) => {
+          if (!aktiv.current) return;
+          setLokal(null);
+          setSpeicherFehler(!ok);
+        },
       ),
-    [updateSetting, roh],
+    [updateSetting],
   );
 
-  if (laden.art === "laedt")
+  const speichern = useCallback(
+    (a: Auswahl) => {
+      const neu = eintraegeAus(a, roh);
+      setLokal(neu);
+      setSpeicherFehler(false);
+      kette.setze(neu);
+    },
+    [kette, roh],
+  );
+
+  // Ohne geladene Einstellungen gäbe es keine Grundlage: speichern würde sonst gespeicherte
+  // Freigaben mit einer leeren Auswahl überschreiben.
+  if (laden.art === "laedt" || !geladen)
     return (
       <div className="flex flex-col gap-2" aria-busy="true">
         <div className="h-11 rounded-lg bg-mid-gray/10" aria-hidden="true" />
@@ -301,13 +348,9 @@ const Baum: React.FC<{ ids: string }> = ({ ids }) => {
         className={`rounded-lg px-3 py-2.5 text-xs ${warn ? "bg-amber-500/15" : "border border-mid-gray/30 bg-mid-gray/10"}`}
       >
         <strong className="block text-[13px] mb-0.5">
-          {laden.art === "fehler"
-            ? laden.text
-            : t(`voiceCall.knowledge.notebook.${laden.art}.title`)}
+          {t(`voiceCall.knowledge.notebook.${laden.art}.title`)}
         </strong>
-        {t(
-          `voiceCall.knowledge.notebook.${laden.art === "fehler" ? "version" : laden.art}.text`,
-        )}
+        {t(`voiceCall.knowledge.notebook.${laden.art}.text`)}
       </div>
     );
   }
@@ -315,12 +358,10 @@ const Baum: React.FC<{ ids: string }> = ({ ids }) => {
   const nbs = laden.nbs;
   const summe = nbs.reduce((s, n) => s + frei(auswahl, n), 0);
   const alle = nbs.reduce((s, n) => s + n.sections.length, 0);
-  const keineWahl = nbs.every(
-    (n) => !auswahl.ganz.has(n.id) && frei(auswahl, n) === 0,
-  );
-  const istOffen = (n: NotebookOutline, i: number) =>
-    offen[n.id] ??
-    (auswahl.ganz.has(n.id) || frei(auswahl, n) > 0 || (keineWahl && i === 0));
+  // Einmal beim ersten Anzeigen; danach klappt nur der Knopf auf und zu.
+  start.current ??= startOffen(nbs, auswahl);
+  const anfang = start.current;
+  const istOffen = (n: NotebookOutline) => offen[n.id] ?? !!anfang[n.id];
 
   return (
     <>
@@ -332,13 +373,18 @@ const Baum: React.FC<{ ids: string }> = ({ ids }) => {
               total: alle,
             })}
       </span>
-      {nbs.map((n, i) => (
+      {speicherFehler && (
+        <span role="alert" className="text-xs text-red-600 dark:text-red-400">
+          {t("voiceCall.knowledge.notebook.saveError")}
+        </span>
+      )}
+      {nbs.map((n) => (
         <NotizbuchKarte
           key={n.id}
           nb={n}
           ids={ids}
           auswahl={auswahl}
-          offen={istOffen(n, i)}
+          offen={istOffen(n)}
           onOffen={(o) => setOffen((x) => ({ ...x, [n.id]: o }))}
           onAuswahl={speichern}
         />
