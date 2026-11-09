@@ -430,6 +430,39 @@ pub fn vergessen(ablage: &Path, eintraege: &[String]) -> Result<usize, String> {
     Ok(weg)
 }
 
+/// Schreibt Verweise um (`alt` → `neu`, ganze Links), z. B. beim Rückweg einer Ablage-Datei auf eine
+/// neue Kennung (D4). Schalter, Form und Fassung bleiben. Wiederholbar; liefert die Zahl der Stände.
+/// Fehlt der Bestand, gibt es nichts umzuschreiben; ist er defekt, ein Fehler (der Aufrufer wiederholt).
+pub fn links_umschreiben(ablage: &Path, paare: &[(String, String)]) -> Result<usize, String> {
+    let _g = sperren();
+    let mut d = match lesen_roh(ablage) {
+        (Lage::Gelesen, Some(d)) => d,
+        (Lage::Fehlt, _) => return Ok(0),
+        _ => return Err("Schalterbestand der Projekte nicht lesbar.".into()),
+    };
+    let mut n = 0;
+    for s in d.mitglieder.values_mut() {
+        if let Some((_, neu)) = paare.iter().find(|(alt, _)| *alt == s.link) {
+            s.link = neu.clone();
+            n += 1;
+        }
+    }
+    if n > 0 {
+        d.gen += 1;
+        sichern(ablage, &d)?;
+    }
+    Ok(n)
+}
+
+/// Verweis eines Stands (für Prüfungen und Werkzeuge).
+pub fn link_von(ablage: &Path, eintrag: &str) -> Option<String> {
+    let _g = sperren();
+    match lesen_roh(ablage) {
+        (Lage::Gelesen, Some(d)) => d.mitglieder.get(eintrag).map(|s| s.link.clone()),
+        _ => None,
+    }
+}
+
 // ---------------------------------------------------------------- Kontext
 
 /// Zeile der Übersicht für die Oberfläche (ohne Inhalte).

@@ -9189,6 +9189,18 @@
       "titel": "Drop files into “{{name}}”",
       "hinweis": "Release to add them."
     },
+    "sync": {
+      "synchronisiert": "Synced",
+      "ausstehend": "Pending",
+      "konflikt": "Conflict",
+      "wartet_auf_text": "Waiting for text",
+      "nur_geraet": "This device only",
+      "angehalten": "Paused (unreadable)",
+      "nicht_erfasst": "Not yet recorded",
+      "cloud": "{{used}} of {{quota}} in the cloud",
+      "voll": "Cloud storage full – uploads paused",
+      "unvollstaendig": "Sync incomplete"
+    },
     "fuss": {
       "belegt": "{{size}} used",
       "lokal": "Only on this device"

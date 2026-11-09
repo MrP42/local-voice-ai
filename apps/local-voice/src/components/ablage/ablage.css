@@ -686,3 +686,24 @@
   font-weight: 600;
   color: var(--color-logo-primary);
 }
+
+/* D4: Sync-Zustand in der Liste */
+.ablage-sync {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.ablage-sync--synchronisiert {
+  color: var(--abl-ok);
+}
+.ablage-sync--konflikt,
+.ablage-sync--wartet_auf_text,
+.ablage-sync--angehalten {
+  color: var(--abl-warn);
+}
+.ablage-fuss-voll {
+  color: var(--abl-warn);
+}
+.ablage-fuss-belegt {
+  white-space: nowrap;
+}

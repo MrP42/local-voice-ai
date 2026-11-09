@@ -9189,6 +9189,18 @@
       "titel": "Dateien in „{{name}}“ ablegen",
       "hinweis": "Loslassen, um sie zu übernehmen."
     },
+    "sync": {
+      "synchronisiert": "Synchronisiert",
+      "ausstehend": "Ausstehend",
+      "konflikt": "Konflikt",
+      "wartet_auf_text": "Wartet auf Text",
+      "nur_geraet": "Nur dieses Gerät",
+      "angehalten": "Angehalten (nicht lesbar)",
+      "nicht_erfasst": "Noch nicht erfasst",
+      "cloud": "{{used}} von {{quota}} in der Cloud",
+      "voll": "Cloud-Speicher voll – Hochladen angehalten",
+      "unvollstaendig": "Abgleich unvollständig"
+    },
     "fuss": {
       "belegt": "{{size}} belegt",
       "lokal": "Nur auf diesem Gerät"
