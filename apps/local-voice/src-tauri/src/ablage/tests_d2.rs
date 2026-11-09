@@ -317,7 +317,7 @@ fn pdf_mit(inhalte: Vec<Vec<u8>>) -> Vec<u8> {
     pdf_aus_objekten(&objekte)
 }
 
-fn pdf_aus_objekten(objekte: &[Vec<u8>]) -> Vec<u8> {
+pub(in crate::ablage) fn pdf_aus_objekten(objekte: &[Vec<u8>]) -> Vec<u8> {
     let mut out = b"%PDF-1.4\n".to_vec();
     let mut offsets = Vec::new();
     for (i, o) in objekte.iter().enumerate() {

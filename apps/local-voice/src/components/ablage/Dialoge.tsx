@@ -206,6 +206,8 @@ export interface EinstellungenAenderung {
 /**
  * Ordnereinstellungen: KI-Freigabe (gerätelokal), Datenklasse, Nur dieses Gerät, KI-Entwürfe.
  * Ein Wechsel von „Nur dieses Gerät“ braucht eine Bestätigung mit Folge im selben Dialog.
+ * D7: Bei einem verknüpften Ordner nur KI-Freigabe und Datenklasse (ohne „Erben“); „Nur dieses
+ * Gerät“ gilt dort immer, KI-Entwürfe landen nie dort.
  */
 export const OrdnerEinstellungen: React.FC<{
   open: boolean;
@@ -239,12 +241,19 @@ export const OrdnerEinstellungen: React.FC<{
   const unklar = ordner?.ki.zustand === "unklar";
   if (!ordner) return null;
   const hatEltern = !!ordner.eltern;
+  const verknuepft = ordner.verknuepft;
   const mindest = geerbteKlasse(alle, ordner.id);
   const klassenOptionen: SelectOption[] = [
-    {
-      value: "erbt",
-      label: hatEltern ? t("ablage.klasse.erbt") : t("ablage.klasse.standard"),
-    },
+    ...(verknuepft
+      ? []
+      : [
+          {
+            value: "erbt",
+            label: hatEltern
+              ? t("ablage.klasse.erbt")
+              : t("ablage.klasse.standard"),
+          },
+        ]),
     ...KLASSEN.map((k) => ({
       value: k,
       label: t(`ablage.klasse.lang.${k}`),
@@ -385,37 +394,49 @@ export const OrdnerEinstellungen: React.FC<{
             ariaLabel={t("ablage.klasse.titel")}
             onChange={(v) => v && setKlasse(v)}
           />
-          <div className="ablage-sw">
-            <span>
-              {t("ablage.nurGeraet.titel")}
-              <br />
-              <span className="ablage-mut">
-                {nurGeerbt
-                  ? t("ablage.nurGeraet.geerbt")
-                  : t("ablage.nurGeraet.hinweis")}
-              </span>
-            </span>
-            <Schalter
-              an={nur || nurGeerbt}
-              disabled={nurGeerbt}
-              label={t("ablage.nurGeraet.titel")}
-              onChange={setNur}
-            />
-          </div>
-          <div className="ablage-sw">
-            <span>
-              {t("ablage.entwuerfe.titel")}
-              <br />
-              <span className="ablage-mut">
-                {t("ablage.entwuerfe.hinweis")}
-              </span>
-            </span>
-            <Schalter
-              an={entwuerfe}
-              label={t("ablage.entwuerfe.titel")}
-              onChange={setEntwuerfe}
-            />
-          </div>
+          {verknuepft ? (
+            <p
+              className="ablage-mut"
+              style={{ margin: "8px 0 0" }}
+              data-testid="ablage-einstellungen-verknuepft"
+            >
+              {t("ablage.verknuepft.einstellungenHinweis")}
+            </p>
+          ) : (
+            <>
+              <div className="ablage-sw">
+                <span>
+                  {t("ablage.nurGeraet.titel")}
+                  <br />
+                  <span className="ablage-mut">
+                    {nurGeerbt
+                      ? t("ablage.nurGeraet.geerbt")
+                      : t("ablage.nurGeraet.hinweis")}
+                  </span>
+                </span>
+                <Schalter
+                  an={nur || nurGeerbt}
+                  disabled={nurGeerbt}
+                  label={t("ablage.nurGeraet.titel")}
+                  onChange={setNur}
+                />
+              </div>
+              <div className="ablage-sw">
+                <span>
+                  {t("ablage.entwuerfe.titel")}
+                  <br />
+                  <span className="ablage-mut">
+                    {t("ablage.entwuerfe.hinweis")}
+                  </span>
+                </span>
+                <Schalter
+                  an={entwuerfe}
+                  label={t("ablage.entwuerfe.titel")}
+                  onChange={setEntwuerfe}
+                />
+              </div>
+            </>
+          )}
         </div>
       )}
     </Dialog>

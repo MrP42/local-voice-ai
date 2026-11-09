@@ -16,8 +16,10 @@ import {
   FolderPlus,
   FolderUp,
   Pencil,
+  RefreshCw,
   Settings2,
   Trash2,
+  Unlink,
   Upload,
 } from "lucide-react";
 import type {
@@ -90,7 +92,8 @@ type Dlg =
   | { art: "einstellungen"; id: string }
   | { art: "endgueltig"; eintrag: AblageKorb }
   | { art: "leeren" }
-  | { art: "freigaben" };
+  | { art: "freigaben" }
+  | { art: "loesen"; id: string };
 
 let schluessel = 0;
 const neuerSchluessel = () => `u${++schluessel}`;
@@ -239,22 +242,33 @@ export const AblagePage: React.FC = () => {
   // Gültige Auswahl: Ordner (oder Papierkorb) und Datei.
   useEffect(() => {
     if (!sicht) return;
+    const verknuepft = sicht.verknuepft ?? [];
     const hatOrdner =
-      ansicht === KORB || sicht.ordner.some((o) => o.id === ansicht);
+      ansicht === KORB ||
+      sicht.ordner.some((o) => o.id === ansicht) ||
+      verknuepft.some((v) => v.ordner.id === ansicht);
     if (!hatOrdner) {
       const erster =
         sicht.ordner.find((o) => !o.eltern && !o.wiederhergestellt) ??
         sicht.ordner[0];
       setAnsicht(erster?.id ?? null);
     }
-    if (dateiId && !sicht.dateien.some((d) => d.id === dateiId)) {
+    if (
+      dateiId &&
+      !sicht.dateien.some((d) => d.id === dateiId) &&
+      !(sicht.verknuepft_dateien ?? []).some((d) => d.id === dateiId)
+    ) {
       setDateiId(null);
       setFundstelle(null);
     }
   }, [sicht, ansicht, dateiId]);
 
+  const dateiVerknuepft = useMemo(
+    () => (sicht?.verknuepft_dateien ?? []).some((d) => d.id === dateiId),
+    [sicht, dateiId],
+  );
   useEffect(() => {
-    if (!dateiId) {
+    if (!dateiId || dateiVerknuepft) {
       setFassungen([]);
       return;
     }
@@ -266,7 +280,7 @@ export const AblagePage: React.FC = () => {
     return () => {
       aktuell = false;
     };
-  }, [dateiId, sicht]);
+  }, [dateiId, dateiVerknuepft, sicht]);
 
   /** Aktion mit Fehlermeldung; lädt danach den Stand neu. Liefert, ob sie gelang. */
   const tue = useCallback(
@@ -287,12 +301,25 @@ export const AblagePage: React.FC = () => {
     [melden, neuLaden],
   );
 
-  const ordnerListe = sicht?.ordner ?? [];
+  const ordnerListe = useMemo(() => sicht?.ordner ?? [], [sicht]);
+  // D7: verknüpfte Ordner (nur lesen, nur dieses Gerät) mit ihren Dateien.
+  const verknuepftListe = useMemo(() => sicht?.verknuepft ?? [], [sicht]);
+  const alleOrdner = useMemo(
+    () => [...ordnerListe, ...verknuepftListe.map((v) => v.ordner)],
+    [ordnerListe, verknuepftListe],
+  );
+  const alleDateien = useMemo(
+    () => [...(sicht?.dateien ?? []), ...(sicht?.verknuepft_dateien ?? [])],
+    [sicht],
+  );
   const wiederhergestellt = sicht?.freigabe_wiederhergestellt ?? false;
-  const aktuellerOrdner = ordnerListe.find((o) => o.id === ansicht) ?? null;
+  const aktuellerOrdner = alleOrdner.find((o) => o.id === ansicht) ?? null;
+  const aktVerknuepft =
+    verknuepftListe.find((v) => v.ordner.id === ansicht) ?? null;
+  const nurLesen = !!aktVerknuepft;
   const imKorb = ansicht === KORB;
-  const pfad = pfadZu(ordnerListe, aktuellerOrdner?.id ?? null);
-  const datei = sicht?.dateien.find((d) => d.id === dateiId) ?? null;
+  const pfad = pfadZu(alleOrdner, aktuellerOrdner?.id ?? null);
+  const datei = alleDateien.find((d) => d.id === dateiId) ?? null;
   const unter = useMemo(
     () =>
       nachNameFiltern(
@@ -304,19 +331,19 @@ export const AblagePage: React.FC = () => {
   const dateienHier = useMemo(
     () =>
       nachNameFiltern(
-        (sicht?.dateien ?? []).filter((d) => d.ordner === ansicht),
+        alleDateien.filter((d) => d.ordner === ansicht),
         suche,
       ),
-    [sicht, ansicht, suche],
+    [alleDateien, ansicht, suche],
   );
   const pfadText = (id: string) =>
-    pfadZu(ordnerListe, id)
+    pfadZu(alleOrdner, id)
       .map((o) => o.name)
       .join(" › ");
   // Namenstreffer über alle Ordner (die Liste darunter filtert nur den aktuellen Ordner).
   const namensTreffer = useMemo(
-    () => (sucheAktiv ? nachNameFiltern(sicht?.dateien ?? [], anfrage) : []),
-    [sicht, anfrage, sucheAktiv],
+    () => (sucheAktiv ? nachNameFiltern(alleDateien, anfrage) : []),
+    [alleDateien, anfrage, sucheAktiv],
   );
 
   // --- Hochladen -----------------------------------------------------------------------
@@ -332,7 +359,8 @@ export const AblagePage: React.FC = () => {
 
   const hochladen = useCallback(
     async (pfade: string[]) => {
-      if (!aktuellerOrdner || pfade.length === 0) return;
+      if (!aktuellerOrdner || aktuellerOrdner.verknuepft || pfade.length === 0)
+        return;
       const ziel = aktuellerOrdner.id;
       setUploadOffen(true);
       setDateiId(null);
@@ -418,7 +446,7 @@ export const AblagePage: React.FC = () => {
   };
 
   const { over } = useFileDrop("[data-ablage-drop]", (pfade) => {
-    if (!imKorb && !dlg) void hochladen(pfade);
+    if (!imKorb && !nurLesen && !dlg) void hochladen(pfade);
   });
 
   // --- Aktionen ------------------------------------------------------------------------
@@ -442,6 +470,35 @@ export const AblagePage: React.FC = () => {
     }, t("ablage.toast.gespeichert"));
     if (gut) schliesseEinstellungen();
   };
+
+  // --- D7: verknüpfte Ordner ------------------------------------------------------------
+  const verknuepfen = async () => {
+    let pfadWahl: string | null = null;
+    try {
+      const antwort = await dateiDialog({
+        multiple: false,
+        directory: true,
+        title: t("ablage.verknuepft.waehlen"),
+      });
+      if (!antwort) return;
+      pfadWahl = Array.isArray(antwort) ? (antwort[0] ?? null) : antwort;
+    } catch (e) {
+      melden(e);
+      return;
+    }
+    if (!pfadWahl) return;
+    const quelle = pfadWahl;
+    let neu: string | null = null;
+    const gut = await tue(async () => {
+      neu = await api.verknuepfen(quelle);
+    }, t("ablage.verknuepft.toastVerknuepft"));
+    if (gut && neu) wahl(neu);
+  };
+  const neuEinlesen = (id: string) =>
+    void tue(
+      () => api.verknuepftAbtasten(id),
+      t("ablage.verknuepft.toastEingelesen"),
+    );
 
   const gefundenAufnehmen = (dat: string) => {
     if (!aktuellerOrdner) return;
@@ -636,6 +693,36 @@ export const AblagePage: React.FC = () => {
           >
             {t("ablage.papierkorb.leeren")}
           </Button>
+        ) : aktVerknuepft ? (
+          <>
+            <IconButton
+              icon={<RefreshCw size={20} aria-hidden="true" />}
+              label={t("ablage.verknuepft.neuEinlesen")}
+              size="md"
+              disabled={busy}
+              onClick={() => neuEinlesen(aktVerknuepft.ordner.id)}
+              data-testid="ablage-verknuepft-einlesen"
+            />
+            <IconButton
+              icon={<Settings2 size={20} aria-hidden="true" />}
+              label={t("ablage.einstellungen.knopf")}
+              size="md"
+              aria-haspopup="dialog"
+              onClick={() => oeffneEinstellungen(aktVerknuepft.ordner.id)}
+              data-testid="ablage-ordner-einstellungen"
+            />
+            <IconButton
+              icon={<Unlink size={20} aria-hidden="true" />}
+              label={t("ablage.verknuepft.loesen")}
+              size="md"
+              aria-haspopup="dialog"
+              disabled={busy}
+              onClick={() =>
+                setDlg({ art: "loesen", id: aktVerknuepft.ordner.id })
+              }
+              data-testid="ablage-verknuepfung-loesen"
+            />
+          </>
         ) : (
           aktuellerOrdner && (
             <>
@@ -708,6 +795,29 @@ export const AblagePage: React.FC = () => {
 
   const meldungen = (
     <>
+      {aktVerknuepft && (
+        <Meldung testid="ablage-verknuepft-hinweis">
+          <p>{t("ablage.verknuepft.hinweis")}</p>
+        </Meldung>
+      )}
+      {aktVerknuepft && !aktVerknuepft.erreichbar && (
+        <Meldung warn testid="ablage-verknuepft-unerreichbar">
+          <p>{t("ablage.verknuepft.nichtErreichbarText")}</p>
+        </Meldung>
+      )}
+      {aktVerknuepft &&
+        (aktVerknuepft.ausgelassen > 0 || aktVerknuepft.zu_viele) && (
+          <Meldung testid="ablage-verknuepft-ausgelassen">
+            {aktVerknuepft.ausgelassen > 0 && (
+              <p>
+                {t("ablage.verknuepft.ausgelassen", {
+                  count: aktVerknuepft.ausgelassen,
+                })}
+              </p>
+            )}
+            {aktVerknuepft.zu_viele && <p>{t("ablage.verknuepft.zuViele")}</p>}
+          </Meldung>
+        )}
       {sicht.freigabe_unklar && (
         <Meldung warn testid="ablage-freigabe-unklar">
           <p>{t("ablage.ki.unklarMeldung")}</p>
@@ -734,7 +844,7 @@ export const AblagePage: React.FC = () => {
           </Button>
         </Meldung>
       )}
-      {sicht.gefunden.length > 0 && !imKorb && (
+      {sicht.gefunden.length > 0 && !imKorb && !nurLesen && (
         <Meldung warn testid="ablage-gefunden">
           <p>{t("ablage.gefunden.titel", { count: sicht.gefunden.length })}</p>
           {sicht.gefunden.map((g, i) => (
@@ -752,7 +862,7 @@ export const AblagePage: React.FC = () => {
                 {formatBytes(g.groesse, i18n.language)}
               </span>
               <Button
-                disabled={busy || !aktuellerOrdner}
+                disabled={busy || !aktuellerOrdner || nurLesen}
                 onClick={() => gefundenAufnehmen(g.dat)}
                 data-testid="ablage-gefunden-aufnehmen"
               >
@@ -792,9 +902,13 @@ export const AblagePage: React.FC = () => {
             style={{ color: "var(--color-logo-primary)" }}
           />
           <div className="ablage-leer__gross">
-            {suche ? t("ablage.leer.keineTreffer") : t("ablage.leer.titel")}
+            {suche
+              ? t("ablage.leer.keineTreffer")
+              : nurLesen
+                ? t("ablage.verknuepft.leer")
+                : t("ablage.leer.titel")}
           </div>
-          {!suche && (
+          {!suche && !nurLesen && (
             <>
               {t("ablage.leer.formate")}
               <br />
@@ -833,14 +947,14 @@ export const AblagePage: React.FC = () => {
   );
 
   const dlgOrdner = (id: string): AblageOrdner | null =>
-    ordnerListe.find((o) => o.id === id) ?? null;
+    alleOrdner.find((o) => o.id === id) ?? null;
   // Beim Schließen bleibt der Dialog noch gemountet, damit der Fokus zum Auslöser zurückkehrt.
   const aktEinstellungen =
     dlg?.art === "einstellungen" ? dlgOrdner(dlg.id) : null;
   if (aktEinstellungen) letzteEinstellungen.current = aktEinstellungen;
   const einstellungenOrdner = aktEinstellungen ?? letzteEinstellungen.current;
   const dlgDatei = (id: string): AblageDatei | null =>
-    sicht.dateien.find((d) => d.id === id) ?? null;
+    alleDateien.find((d) => d.id === id) ?? null;
 
   return (
     <PageShell
@@ -863,6 +977,8 @@ export const AblagePage: React.FC = () => {
           korbAnzahl={korbAnzahl}
           onWahl={wahl}
           onNeu={() => setDlg({ art: "ordner-neu" })}
+          verknuepft={verknuepftListe}
+          onVerknuepfen={() => void verknuepfen()}
         />
         <section
           className="ablage-col"
@@ -885,7 +1001,7 @@ export const AblagePage: React.FC = () => {
             />
           )}
           {hauptInhalt}
-          {over && !imKorb && aktuellerOrdner && (
+          {over && !imKorb && !nurLesen && aktuellerOrdner && (
             <div
               className="ablage-drop"
               aria-hidden="true"
@@ -1008,6 +1124,11 @@ export const AblagePage: React.FC = () => {
                 setOrdnerBlatt(false);
                 setDlg({ art: "ordner-neu" });
               }}
+              verknuepft={verknuepftListe}
+              onVerknuepfen={() => {
+                setOrdnerBlatt(false);
+                void verknuepfen();
+              }}
             />
           </div>
         </Dialog>
@@ -1025,7 +1146,7 @@ export const AblagePage: React.FC = () => {
           let neu: string | null = null;
           const gut = await tue(async () => {
             neu = await api.ordnerAnlegen(
-              imKorb ? null : (aktuellerOrdner?.id ?? null),
+              imKorb || nurLesen ? null : (aktuellerOrdner?.id ?? null),
               name,
             );
           });
@@ -1132,8 +1253,8 @@ export const AblagePage: React.FC = () => {
             </p>
             <ul style={{ margin: "8px 0 0 18px", listStyle: "disc" }}>
               {(wiederhergestellt
-                ? ordnerListe.filter((o) => o.ki.vorgabe)
-                : ordnerListe
+                ? alleOrdner.filter((o) => o.ki.vorgabe)
+                : alleOrdner
               ).map((o) => (
                 <li key={o.id}>
                   {pfadText(o.id)} — {t("ablage.ki.stufe.aus")}
@@ -1154,6 +1275,27 @@ export const AblagePage: React.FC = () => {
             await tue(
               () => api.freigabenNeuFestlegen(),
               t("ablage.toast.gespeichert"),
+            )
+          )
+            setDlg(null);
+        }}
+      />
+      <BestaetigungDialog
+        open={dlg?.art === "loesen"}
+        titel={t("ablage.verknuepft.loesenTitel", {
+          name: dlg?.art === "loesen" ? (dlgOrdner(dlg.id)?.name ?? "") : "",
+        })}
+        text={t("ablage.verknuepft.loesenText")}
+        aktion={t("ablage.verknuepft.loesenAktion")}
+        busy={busy}
+        onClose={() => setDlg(null)}
+        onOk={async () => {
+          if (dlg?.art !== "loesen") return;
+          const id = dlg.id;
+          if (
+            await tue(
+              () => api.verknuepfungLoesen(id),
+              t("ablage.verknuepft.toastGeloest"),
             )
           )
             setDlg(null);

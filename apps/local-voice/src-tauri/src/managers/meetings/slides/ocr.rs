@@ -369,9 +369,24 @@ mod windows_impl {
                 .GetSoftwareBitmapAsync()
                 .and_then(|op| op.get())
                 .map_err(image_err)?;
+            self.recognize_bitmap(&bitmap)
+        }
+    }
+
+    impl WindowsOcr {
+        /// Groesste Kantenlaenge, die die Engine annimmt (Pixel).
+        pub fn max_dimension() -> Result<u32, OcrError> {
+            OcrEngine::MaxImageDimension().map_err(engine_err)
+        }
+
+        /// Liest ein schon dekodiertes Bild (lva#395 D7: gerenderte PDF-Seiten, Bilder der Ablage).
+        pub fn recognize_bitmap(
+            &self,
+            bitmap: &windows::Graphics::Imaging::SoftwareBitmap,
+        ) -> Result<OcrText, OcrError> {
             let result = self
                 .engine
-                .RecognizeAsync(&bitmap)
+                .RecognizeAsync(bitmap)
                 .and_then(|op| op.get())
                 .map_err(engine_err)?;
             let mut raw = String::new();

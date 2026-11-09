@@ -1,4 +1,4 @@
-//! Dokumentenablage, Stufen D1, D2 und D6 (Epic local-voice-ai#395, Issues #407/#408, wai-sdk ADR-0029).
+//! Dokumentenablage, Stufen D1, D2, D6 und D7 (Epic local-voice-ai#395, Issues #407/#408, wai-sdk ADR-0029).
 //!
 //! Lokale Ablage im Datenordner der App: Ordner, Dateien mit Fassungen, Papierkorb, sichere Ablage mit
 //! Journal und Wiederanlauf, gerätelokale KI-Freigaben (D1); Textfassungen im begrenzten Unterprozess,
@@ -13,6 +13,8 @@
 //! * [`textfassung`]: Warteschlange (ein Arbeiter, abbrechbar, Wiederanlauf aus dem Stand).
 //! * [`index`]: `index.db` über `wai-retrieval`, Abgleich und Suche.
 //! * [`semantik`]: D6, lokale Vektoren (`multilingual-e5-small`, ONNX) für die hybride Suche (Opt-in).
+//! * [`verknuepft`]: D7, verknüpfte Ordner des Geräts (nur lesen, nie synchronisiert), Dateibeobachter.
+//! * [`ocr`]: D7, lokale Texterkennung für Bild-PDFs und Bilder (Windows.Media.Ocr; macOS noch nicht).
 //! * [`befehle`]: die Tauri-Befehle.
 //!
 //! Datenschutz: nie Datei- oder Ordnernamen, Pfade oder Inhalte in Log oder Fehlertext; Fehler tragen
@@ -23,16 +25,20 @@ pub mod befehle;
 pub mod extrakt;
 pub mod freigabe;
 pub mod index;
+pub mod ocr;
 pub mod semantik;
 pub mod speicher;
 pub mod textfassung;
 pub mod textlauf;
+pub mod verknuepft;
 pub mod zusammenfuehren;
 
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod tests_d2;
+#[cfg(test)]
+mod tests_d7;
 
 use serde::Serialize;
 use std::fmt;

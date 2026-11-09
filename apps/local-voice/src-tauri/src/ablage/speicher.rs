@@ -679,6 +679,8 @@ pub struct AblageOrdner {
     pub zielordner_ki: bool,
     pub ki: AblageKi,
     pub dateien: u32,
+    /// D7: verknüpfter Ordner (nur lesen, nur dieses Gerät).
+    pub verknuepft: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
@@ -699,6 +701,8 @@ pub struct AblageDatei {
     pub text: Option<String>,
     /// Fehlercode bei `fehler` (z. B. `extrakt.zeit`, `extrakt.zip_grenze`); nie Inhalt.
     pub text_code: Option<String>,
+    /// D7: Datei eines verknüpften Ordners (nur lesen; Name = Pfad im verknüpften Ordner).
+    pub verknuepft: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
@@ -741,6 +745,9 @@ pub struct AblageSicht {
     /// KI-Freigaben wurden automatisch aus der Sicherung wiederhergestellt: Ordner ohne eigenen oder
     /// geerbten Eintrag sind gesperrt, bis die Bedienung sie neu setzt oder den Stand bestätigt.
     pub freigabe_wiederhergestellt: bool,
+    /// D7: verknüpfte Ordner (gerätelokal, nur lesen) und ihre Dateien.
+    pub verknuepft: Vec<super::verknuepft::AblageVerknuepft>,
+    pub verknuepft_dateien: Vec<AblageDatei>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
@@ -1332,6 +1339,8 @@ impl Ablage {
                 gefunden: vec![],
                 belegt: 0,
                 freigabe_wiederhergestellt: false,
+                verknuepft: vec![],
+                verknuepft_dateien: vec![],
             });
         }
         let st = self.laden()?;
@@ -1371,6 +1380,7 @@ impl Ablage {
                         .values()
                         .filter(|d| d.ordner.wert == o.id && d.papierkorb.wert.is_none())
                         .count() as u32,
+                    verknuepft: false,
                 }
             })
             .collect();
@@ -1427,8 +1437,11 @@ impl Ablage {
             .values()
             .flat_map(|d| d.fassungen.iter().map(|f| f.size))
             .sum();
+        let (verknuepft, verknuepft_dateien) = super::verknuepft::sicht(self, &lage);
         Ok(AblageSicht {
             lage: None,
+            verknuepft,
+            verknuepft_dateien,
             freigabe_unklar: match &lage {
                 freigabe::Lage::Unklar(u) => Some(*u),
                 _ => None,
@@ -1590,6 +1603,10 @@ impl Ablage {
     pub fn ordner_einstellungen(&self, id: &str, e: &AblageEinstellungen) -> Res<()> {
         ordner_id_pruefen(id)?;
         let _g = sperren();
+        // D7: verknüpfter Ordner: nur die Datenklasse ist einstellbar.
+        if super::verknuepft::ist_verknuepft(&self.dir, id) {
+            return super::verknuepft::einstellungen(self, id, e);
+        }
         let mut st = self.laden()?;
         let eltern = st.eltern();
         self.ordner_lebend(&st, &eltern, id)?;
@@ -1635,6 +1652,10 @@ impl Ablage {
     pub fn ki_setzen(&self, id: &str, stufe: Option<KiStufe>) -> Res<()> {
         ordner_id_pruefen(id)?;
         let _g = sperren();
+        // D7: verknüpfte Ordner tragen ihre Freigabe wie Ordner der Ablage.
+        if super::verknuepft::ist_verknuepft(&self.dir, id) {
+            return freigabe::setzen(&self.dir, id, stufe).map(|_| ());
+        }
         let st = self.laden()?;
         let eltern = st.eltern();
         self.ordner_lebend(&st, &eltern, id)?;
@@ -1645,7 +1666,8 @@ impl Ablage {
     pub fn freigaben_neu_festlegen(&self) -> Res<()> {
         let _g = sperren();
         let st = self.laden()?;
-        let alle: Vec<String> = st.ordner.keys().cloned().collect();
+        let mut alle: Vec<String> = st.ordner.keys().cloned().collect();
+        alle.extend(super::verknuepft::kennungen(&self.dir));
         freigabe::neu_festlegen(&self.dir, &alle).map(|_| ())
     }
 
@@ -2623,6 +2645,8 @@ pub struct IndexQuelle {
     pub ki: String,
     pub nur_geraet: bool,
     pub papierkorb: bool,
+    /// D7: Datei eines verknüpften Ordners (Textfassung unter `verknuepft/text/`).
+    pub verknuepft: bool,
 }
 
 /// Name und Ort einer lebenden Datei für die Trefferliste.
@@ -2876,6 +2900,7 @@ impl Ablage {
                 nur_geraet: d.nur_geraet_min
                     || zf::wirksam_nur_geraet(&st.ordner, &eltern, &d.ordner.wert),
                 papierkorb: !st.datei_lebt(&eltern, d),
+                verknuepft: false,
             });
         }
         Ok(aus)
@@ -3062,6 +3087,7 @@ fn datei_sicht(
             && (d.nur_geraet_min || zf::wirksam_nur_geraet(&st.ordner, eltern, &d.ordner.wert)),
         text: f.and_then(|f| textstand(f).0),
         text_code: f.and_then(|f| textstand(f).1),
+        verknuepft: false,
     }
 }
 

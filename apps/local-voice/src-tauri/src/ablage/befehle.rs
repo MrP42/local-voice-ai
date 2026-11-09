@@ -6,6 +6,10 @@
 //! wirken ohne Verzögerung auf die Suche) und der Textarbeiter angestoßen. Er meldet jedes Ergebnis mit
 //! dem Ereignis [`EREIGNIS_TEXT`]; die Seite lädt dann den Stand neu.
 //!
+//! D7: verknüpfte Ordner ([`ablage_verknuepfen`], [`ablage_verknuepfung_loesen`],
+//! [`ablage_verknuepft_abtasten`]); der Dateibeobachter startet mit dem ersten [`ablage_stand`] und meldet
+//! übernommene Änderungen wie der Textarbeiter mit [`EREIGNIS_TEXT`].
+//!
 //! D6: Schalter und Modell der semantischen Suche ([`ablage_semantik_stand`], [`ablage_semantik_setzen`],
 //! [`ablage_semantik_laden`]); das Ende des Nachziehens der Vektoren meldet [`EREIGNIS_SEMANTIK`].
 
@@ -98,6 +102,17 @@ pub async fn ablage_stand(app: AppHandle) -> Antwort<AblageSicht> {
     })
     .await;
     let sicht = blockierend(&app, |a| a.ansicht()).await?;
+    // D7: Dateibeobachter der verknüpften Ordner (einmal je Prozess).
+    if sicht.lage.is_none() && !sicht.verknuepft.is_empty() {
+        let a = ablage(&app)?;
+        let melder = app.clone();
+        super::verknuepft::beobachter_starten(
+            a.dir().to_path_buf(),
+            Box::new(move || {
+                let _ = melder.emit(EREIGNIS_TEXT, ());
+            }),
+        );
+    }
     // Wiederanlauf der Textfassungen (offen ist, was im Stand fehlt, ohne Rückstellungen dieses
     // Prozesses); nicht nach einem Abbruch (angehalten bis zum nächsten ausdrücklichen Anstoß).
     if sicht.lage.is_none() && !super::textfassung::angehalten() {
@@ -262,6 +277,53 @@ pub async fn ablage_gefundene_aufnehmen(
     ordner: String,
 ) -> Antwort<()> {
     mit_nachlauf(&app, true, move |a| a.gefundene_aufnehmen(&datei, &ordner)).await
+}
+
+/// D7: verknüpft einen Ordner des Geräts (nur lesen, nur dieses Gerät, nie hochgeladen). Liefert die
+/// Kennung; danach wird er gleich abgetastet, der Index abgeglichen und der Textarbeiter angestoßen.
+#[tauri::command]
+#[specta::specta]
+pub async fn ablage_verknuepfen(app: AppHandle, pfad: String) -> Antwort<String> {
+    let quelle = PathBuf::from(pfad);
+    let id = mit_nachlauf(&app, true, move |a| {
+        let id = super::verknuepft::verknuepfen(&a, &quelle)?;
+        if let Err(e) = super::verknuepft::abtasten(&a, &id) {
+            log::warn!("ablage: verknüpfter Ordner nicht abgetastet: {}", e.code);
+        }
+        Ok(id)
+    })
+    .await?;
+    let a = ablage(&app)?;
+    let melder = app.clone();
+    super::verknuepft::beobachter_starten(
+        a.dir().to_path_buf(),
+        Box::new(move || {
+            let _ = melder.emit(EREIGNIS_TEXT, ());
+        }),
+    );
+    Ok(id)
+}
+
+/// D7: löst eine Verknüpfung. Der Ordner und seine Dateien bleiben unberührt; Textfassungen, Index und
+/// Freigabe dieses Geräts zu ihm verschwinden.
+#[tauri::command]
+#[specta::specta]
+pub async fn ablage_verknuepfung_loesen(app: AppHandle, id: String) -> Antwort<()> {
+    mit_nachlauf(&app, false, move |a| super::verknuepft::loesen(&a, &id)).await
+}
+
+/// D7: „Neu einlesen“: einen (oder ohne Kennung alle) verknüpften Ordner sofort abtasten.
+#[tauri::command]
+#[specta::specta]
+pub async fn ablage_verknuepft_abtasten(app: AppHandle, id: Option<String>) -> Antwort<bool> {
+    mit_nachlauf(&app, true, move |a| match id {
+        Some(id) => {
+            super::ordner_id_pruefen(&id)?;
+            super::verknuepft::abtasten(&a, &id)
+        }
+        None => super::verknuepft::alle_abtasten(&a),
+    })
+    .await
 }
 
 /// Volltextsuche in der Ablage (ohne KI): Fundstellen mit Auszug und Anker. Die Namenssuche läuft in der
