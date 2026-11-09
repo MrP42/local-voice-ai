@@ -777,3 +777,32 @@ fn werkzeugregel_nummeriert_die_belege() {
     assert!(n[0].content.contains("[Q:1] bis [Q:2]"));
     assert!(n[0].content.starts_with("Du bist ein Sprecher."));
 }
+
+#[test]
+fn ungueltiger_marker_kommt_nicht_ueber_die_rueckfrage_durch() {
+    // Codex lva#410: `⟦nichts⟧ Soll ich fortfahren?` darf den Marker weder im Delta noch im
+    // Rueckgabewert enthalten; die freie Rueckfrage ist keine Hintertuer.
+    let faelle = [
+        "⟦nichts⟧ Soll ich fortfahren?",
+        "Soll ich ⟦nichts⟧ fortfahren?",
+        "⟦werkzeug gibt_es_nicht {}⟧Soll ich fortfahren?",
+        "Soll ich fortfahren⟧?",
+        "⟦⟦nichts⟧ Soll ich fortfahren?",
+    ];
+    for fall in faelle {
+        for stueck in [1, 3, 1000] {
+            let mut t = StromTor::neu(Sprache::De, &[], register());
+            let aus = strom(&mut t, fall, stueck);
+            for text in [aus.as_str(), t.ausgabe().as_str(), t.prosa().as_str()] {
+                assert!(
+                    !text.contains('⟦') && !text.contains('⟧') && !text.contains("nichts"),
+                    "{fall} / {stueck}: {text}"
+                );
+            }
+        }
+    }
+    // Der saubere Fall bleibt eine erlaubte Rueckfrage.
+    let mut t = StromTor::neu(Sprache::De, &[], register());
+    let aus = strom(&mut t, "⟦nichts⟧ Soll ich fortfahren?", 2);
+    assert_eq!(aus.trim(), "Soll ich fortfahren?");
+}

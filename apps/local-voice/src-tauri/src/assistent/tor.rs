@@ -549,6 +549,10 @@ impl Ausgabetor {
 
     /// `Some(Ausgabetext)`, wenn der Satz die Belegregel besteht.
     fn bewerten(&self, roh_text: &str, ids: &[u32]) -> Option<String> {
+        // Werkzeugmarker-Zeichen gehoeren nie in freigegebene Prosa, auch nicht in eine Rueckfrage.
+        if roh_text.contains(MARKER_AUF) || roh_text.contains(MARKER_ZU) {
+            return None;
+        }
         let text = roh_text;
         let frei = |art: SatzArt| {
             let satz = Satz {
@@ -854,14 +858,15 @@ impl StromTor {
                 if c == MARKER_AUF {
                     aus.push_str(&self.prosa_speisen(&mut prosa));
                     self.offen = Some(c.to_string());
-                } else {
+                } else if c != MARKER_ZU {
+                    // Ein loses Schlusszeichen ohne Marker gehoert nie in die Ausgabe.
                     prosa.push(c);
                 }
                 continue;
             };
             if c == MARKER_AUF {
-                // Ein neuer Marker, bevor der alte geschlossen ist: der alte war Prosa.
-                prosa.push_str(offen);
+                // Ein neuer Marker, bevor der alte geschlossen ist: der alte ist ungueltig und wird
+                // verworfen (nie als Prosa weitergegeben, Codex lva#410).
                 self.offen = Some(c.to_string());
                 continue;
             }
@@ -873,11 +878,11 @@ impl StromTor {
                     aus.push_str(&self.prosa_abschliessen());
                     aus.push_str(&marker);
                     self.teile.push(marker);
-                } else {
-                    prosa.push_str(&marker);
                 }
+                // Ungueltiger Marker: verworfen, bevor irgendeine Prosa (auch eine Rueckfrage)
+                // freigegeben wird.
             } else if offen.chars().count() > MARKER_MAX_ZEICHEN {
-                prosa.push_str(&self.offen.take().unwrap_or_default());
+                self.offen = None;
             }
         }
         aus.push_str(&self.prosa_speisen(&mut prosa));
