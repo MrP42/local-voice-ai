@@ -750,6 +750,7 @@ impl Ablage {
         }
         geaendert |= self.abgelaufene_loeschen(&mut st, jetzt_ms());
         self.teildateien_loeschen(Some(jetzt_ms()));
+        self.texte_raeumen(&st);
         if st.ordner.is_empty() && st.dateien.is_empty() && st.begraben.is_empty() {
             let z = st.zaehler();
             let o = neuer_ordner(st.geraet(), None, STANDARD_ORDNER, z);
@@ -2231,6 +2232,42 @@ pub struct TextAuftrag {
     pub sha256: String,
     pub textrev: String,
     pub pfad: PathBuf,
+    /// Bisherige Versuche (vorübergehender Fehler), sonst 0.
+    pub versuche: u32,
+}
+
+/// Ausgang von [`Ablage::text_ablegen`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TextAblage {
+    /// Eingetragen wie zurückgegeben (mit Blob und Größe).
+    Eingetragen(zf::Text),
+    /// Schon eine endgültige Textfassung mit dieser `textrev`.
+    Unveraendert,
+    /// Datei oder Fassung gibt es nicht mehr (endgültig gelöscht): nichts geschrieben, Rest geräumt.
+    Verschwunden,
+    /// Textdatei nicht schreibbar (Datenträger, Verknüpfung): nichts eingetragen.
+    NichtSpeicherbar,
+}
+
+/// Fehlercodes, die nicht am Inhalt liegen müssen (Start, Schutz, Absturz, Zeit, Lesen): sie werden
+/// höchstens [`MAX_VERSUCHE`]-mal versucht, jeweils frühestens beim nächsten Programmstart.
+pub const VORUEBERGEHEND: &[&str] = &[
+    "extrakt.start",
+    "extrakt.programm",
+    "extrakt.schutz",
+    "extrakt.abbruch",
+    "extrakt.zeit",
+    "extrakt.lesen",
+];
+pub const MAX_VERSUCHE: u32 = 3;
+
+/// Ein vorübergehender Fehler mit Versuchen übrig: der Auftrag bleibt offen.
+pub fn text_wiederholbar(t: &zf::Text) -> bool {
+    t.stand == "fehler"
+        && t.versuche < MAX_VERSUCHE
+        && t.code
+            .as_deref()
+            .is_some_and(|c| VORUEBERGEHEND.contains(&c))
 }
 
 /// Was der Index zu einer Datei wissen muss (auch im Papierkorb: dort gefiltert, nicht gelöscht).
@@ -2289,7 +2326,8 @@ impl Ablage {
     }
 
     /// Fehlende Textfassungen (Wiederanlauf: alles, was noch fehlt, steht hier; es gibt keine eigene
-    /// Warteschlangendatei). Fehlgeschlagene Läufe werden nicht wiederholt (Eintrag `fehler`).
+    /// Warteschlangendatei). Endgültige Fehler werden nicht wiederholt, vorübergehende bis
+    /// [`MAX_VERSUCHE`] ([`text_wiederholbar`]).
     pub fn text_auftraege(&self) -> Res<Vec<TextAuftrag>> {
         let _g = sperren();
         let st = self.laden()?;
@@ -2306,7 +2344,8 @@ impl Ablage {
             let Some(rev) = erwartete_textrev(f) else {
                 continue;
             };
-            if f.texte.iter().any(|t| t.textrev == rev) {
+            let vorhanden = f.texte.iter().find(|t| t.textrev == rev);
+            if vorhanden.is_some_and(|t| !text_wiederholbar(t)) {
                 continue;
             }
             let name = original_name(&f.fas, &f.typ);
@@ -2320,6 +2359,7 @@ impl Ablage {
                 sha256: f.original_sha256.clone(),
                 textrev: rev,
                 pfad: self.dir.join(DATEIEN).join(&d.id).join(name),
+                versuche: vorhanden.map(|t| t.versuche).unwrap_or(0),
             });
         }
         Ok(aus)
@@ -2340,25 +2380,95 @@ impl Ablage {
         Ok((super::extrakt::hex(&sha2_digest(json)), json.len() as u64))
     }
 
-    /// Trägt eine Textfassung (oder ihren Fehler) bei der Fassung ein. Idempotent; eine verschwundene
-    /// Fassung oder Datei ist kein Fehler (Ergebnis `false`).
-    pub fn text_eintragen(&self, dat: &str, fas: &str, text: zf::Text) -> Res<bool> {
+    /// Legt eine Textfassung (`json`, falls vorhanden) ab und trägt sie (oder ihren Fehler) bei der
+    /// Fassung ein: alles unter der Ablage-Sperre, damit ein gleichzeitiges endgültiges Löschen keine
+    /// Reste hinterlässt. Ist Datei oder Fassung inzwischen weg, wird nichts geschrieben und ein leerer
+    /// `text/<dat>/` entfernt. Ein vorübergehender Fehler wird durch das neue Ergebnis ersetzt.
+    pub fn text_ablegen(
+        &self,
+        dat: &str,
+        fas: &str,
+        json: Option<&[u8]>,
+        mut text: zf::Text,
+    ) -> Res<TextAblage> {
         datei_id_pruefen(dat)?;
         let _g = sperren();
         let mut st = self.laden()?;
-        let Some(d) = st.dateien.get_mut(dat) else {
-            return Ok(false);
+        let (offen, _) = st.offen_geloescht();
+        let geloescht = offen.contains(dat);
+        let Some(d) = st.dateien.get_mut(dat).filter(|_| !geloescht) else {
+            self.textordner_leer_entfernen(dat);
+            return Ok(TextAblage::Verschwunden);
         };
         let Some(f) = d.fassungen.iter_mut().find(|f| f.fas == fas) else {
-            return Ok(false);
+            self.textordner_leer_entfernen(dat);
+            return Ok(TextAblage::Verschwunden);
         };
-        if f.texte.iter().any(|t| t.textrev == text.textrev) {
-            return Ok(false);
+        let alt = f.texte.iter().position(|t| t.textrev == text.textrev);
+        if alt.is_some_and(|i| !text_wiederholbar(&f.texte[i])) {
+            return Ok(TextAblage::Unveraendert);
         }
-        f.texte.push(text);
+        let mut geschrieben = None;
+        if let Some(json) = json {
+            match self.text_schreiben(dat, &text.textrev, json) {
+                Ok((blob, size)) => {
+                    text.blob = blob;
+                    text.size = size;
+                    geschrieben = Some(self.text_pfad(dat, &text.textrev));
+                }
+                Err(_) => {
+                    self.textordner_leer_entfernen(dat);
+                    return Ok(TextAblage::NichtSpeicherbar);
+                }
+            }
+        }
+        let eingetragen = text.clone();
+        match alt {
+            Some(i) => f.texte[i] = text,
+            None => f.texte.push(text),
+        }
         d.blob_refs = zf::blob_refs_aus(&d.fassungen);
-        self.sichern(&mut st)?;
-        Ok(true)
+        if let Err(e) = self.sichern(&mut st) {
+            if let Some(p) = geschrieben {
+                let _ = fs::remove_file(p);
+            }
+            self.textordner_leer_entfernen(dat);
+            return Err(e);
+        }
+        Ok(TextAblage::Eingetragen(eingetragen))
+    }
+
+    /// Entfernt `text/<dat>/`, wenn es leer ist (nie über eine Verknüpfung).
+    fn textordner_leer_entfernen(&self, dat: &str) {
+        if ohne_umweg(&self.dir, &format!("{TEXT}/{dat}")).is_ok() {
+            let _ = fs::remove_dir(self.dir.join(TEXT).join(dat));
+        }
+    }
+
+    /// Wartung: `text/<dat>/` ohne Datei im Bestand (weder lebend noch im Papierkorb) wird entfernt.
+    /// Verknüpfungen werden nie gefolgt und bleiben stehen.
+    fn texte_raeumen(&self, st: &Stand) {
+        if ohne_umweg(&self.dir, TEXT).is_err() {
+            return;
+        }
+        let Ok(dirs) = fs::read_dir(self.dir.join(TEXT)) else {
+            return;
+        };
+        let (offen, _) = st.offen_geloescht();
+        for e in dirs.flatten() {
+            let dat = e.file_name().to_string_lossy().into_owned();
+            if !id_gueltig(PRAEFIX_DATEI, &dat)
+                || (st.dateien.contains_key(&dat) && !offen.contains(dat.as_str()))
+            {
+                continue;
+            }
+            match fs::symlink_metadata(e.path()) {
+                Ok(m) if !ist_umweg(&m) && m.is_dir() => {
+                    let _ = fs::remove_dir_all(e.path());
+                }
+                _ => {}
+            }
+        }
     }
 
     /// Alle Dateien für den Index (lebend und im Papierkorb; nicht endgültig gelöschte).

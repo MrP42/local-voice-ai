@@ -6,7 +6,8 @@
 //!   1 MiB; kleine XML-Teile packen sich legitim besser).
 //!
 //! Die angegebenen Größen im Archiv sind nicht vertrauenswürdig: gelesen wird höchstens die angegebene
-//! Größe + 1 Byte, ein Eintrag, der mehr liefert, wird abgewiesen.
+//! Größe + 1 Byte (und nie mehr als der Rest des Gesamtbudgets), ein Eintrag, der mehr liefert, wird
+//! abgewiesen; das Verhältnis wird zusätzlich an den tatsächlich gelesenen Bytes geprüft.
 
 use super::ExtraktFehler;
 use std::io::{Cursor, Read};
@@ -64,19 +65,25 @@ impl<'a> ZipLeser<'a> {
             Err(_) => return Err(ExtraktFehler::neu("zip")),
         };
         let angegeben = e.size();
+        let gepackt = e.compressed_size();
         let rest = MAX_ENTPACKT.saturating_sub(self.gelesen);
         if angegeben > rest {
             return Err(grenze());
         }
         let mut aus = Vec::with_capacity(angegeben.min(16 * 1024 * 1024) as usize);
+        // Zähler unabhängig von der angegebenen Größe: nie mehr als angegeben + 1 Byte.
         (&mut e)
-            .take(angegeben + 1)
+            .take(angegeben.saturating_add(1))
             .read_to_end(&mut aus)
             .map_err(|_| ExtraktFehler::neu("zip"))?;
-        if aus.len() as u64 > angegeben {
+        let n = aus.len() as u64;
+        if n > angegeben || n > rest {
             return Err(grenze());
         }
-        self.gelesen += aus.len() as u64;
+        if n >= VERHAELTNIS_AB && n / gepackt.max(1) > MAX_VERHAELTNIS {
+            return Err(grenze());
+        }
+        self.gelesen += n;
         Ok(Some(aus))
     }
 }

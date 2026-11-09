@@ -4,13 +4,19 @@
 //! ein (`ok`, `kein_text` oder `fehler` mit Code) und gleicht den Index ab.
 //!
 //! Wiederanlauf: Es gibt keine eigene Warteschlangendatei. Offen ist, was im Stand fehlt
-//! ([`Ablage::text_auftraege`]); nach einem Neustart läuft der Arbeiter einfach erneut. Ein
-//! fehlgeschlagener Lauf wird als `fehler` vermerkt und nicht endlos wiederholt (eine ZIP-Bombe bleibt
-//! eine ZIP-Bombe); eine neue Extraktorversion ergibt eine neue `textrev` und damit einen neuen Versuch.
-//! Nie Inhalt im Log, nur Zähler und Codes.
+//! ([`Ablage::text_auftraege`]); nach einem Neustart läuft der Arbeiter einfach erneut. Ein Fehler am
+//! Inhalt (ZIP-Bombe, Prüfsumme, Format) wird als `fehler` vermerkt und nicht wiederholt; ein
+//! vorübergehender Fehler (Start, Schutz, Absturz, Zeit, Lesen; [`super::speicher::VORUEBERGEHEND`])
+//! wird mit Zähler vermerkt und höchstens [`super::speicher::MAX_VERSUCHE`]-mal versucht, jeweils erst
+//! im nächsten Prozess (Rückstellung statt sofortiger Wiederholung). Eine neue Extraktorversion ergibt
+//! eine neue `textrev` und damit einen neuen Versuch. Nie Inhalt im Log, nur Zähler und Codes.
+//!
+//! Abbruch: [`abbrechen`] hält die Warteschlange an. Der laufende Lauf bricht ab, und erst ein
+//! ausdrücklicher Anstoß ([`anstossen`], z. B. Import) hebt das Anhalten auf; das Neuladen der Seite
+//! ([`wiederanlauf`]) startet einen angehaltenen Arbeiter nicht neu.
 
 use super::extrakt::Textfassung;
-use super::speicher::{Ablage, TextAuftrag};
+use super::speicher::{text_wiederholbar, Ablage, TextAblage, TextAuftrag};
 use super::textlauf::{self, Grenzen, Programm};
 use super::zusammenfuehren::Text;
 use super::Res;
@@ -42,6 +48,7 @@ fn text_aus(t: &Textfassung, blob: String, size: u64) -> Text {
             "ok".into()
         },
         code: None,
+        versuche: 0,
     }
 }
 
@@ -58,6 +65,7 @@ fn fehler_text(auf: &TextAuftrag, code: &str) -> Text {
         marken_version: super::extrakt::MARKEN_VERSION,
         stand: "fehler".into(),
         code: Some(code.chars().take(40).collect()),
+        versuche: auf.versuche.saturating_add(1),
     }
 }
 
@@ -70,9 +78,12 @@ pub enum Ausgang {
     Uebersprungen,
     /// Durch die Bedienung abgebrochen: nichts eingetragen.
     Abgebrochen,
+    /// Datei inzwischen gelöscht oder schon erledigt: nichts geschrieben.
+    Verworfen,
 }
 
-/// Ein Auftrag: Unterprozess, Ergebnis schreiben, eintragen.
+/// Ein Auftrag: Unterprozess, Ergebnis schreiben und eintragen (zusammen unter der Ablage-Sperre;
+/// ist die Datei inzwischen gelöscht, bleibt nichts zurück).
 pub fn bearbeiten(
     a: &Ablage,
     auf: &TextAuftrag,
@@ -80,31 +91,65 @@ pub fn bearbeiten(
     grenzen: Grenzen,
     abbrechen: &AtomicBool,
 ) -> Res<Ausgang> {
-    let ergebnis = textlauf::ausfuehren(prog, &auf.pfad, &auf.sha256, &auf.typ, grenzen, abbrechen);
-    let text = match ergebnis {
+    let ergebnis = textlauf::ausfuehren(
+        prog,
+        a.dir(),
+        &auf.pfad,
+        &auf.sha256,
+        &auf.typ,
+        grenzen,
+        abbrechen,
+    );
+    let (text, json) = match ergebnis {
         Ok(t) if t.textrev == auf.textrev => {
             let Ok(json) = serde_json::to_vec(&t) else {
                 return Ok(Ausgang::Uebersprungen);
             };
-            match a.text_schreiben(&auf.dat, &t.textrev, &json) {
-                Ok((blob, size)) => text_aus(&t, blob, size),
-                Err(_) => return Ok(Ausgang::Uebersprungen),
-            }
+            (text_aus(&t, String::new(), 0), Some(json))
         }
-        Ok(_) => fehler_text(auf, "extrakt.antwort"),
+        Ok(_) => (fehler_text(auf, "extrakt.antwort"), None),
         Err(code) if code == "extrakt.abgebrochen" => return Ok(Ausgang::Abgebrochen),
-        Err(code) => fehler_text(auf, &code),
+        Err(code) => (fehler_text(auf, &code), None),
     };
-    a.text_eintragen(&auf.dat, &auf.fas, text.clone())?;
-    Ok(Ausgang::Eingetragen(text))
+    match a.text_ablegen(&auf.dat, &auf.fas, json.as_deref(), text)? {
+        TextAblage::Eingetragen(t) => Ok(Ausgang::Eingetragen(t)),
+        TextAblage::NichtSpeicherbar => Ok(Ausgang::Uebersprungen),
+        TextAblage::Unveraendert | TextAblage::Verschwunden => Ok(Ausgang::Verworfen),
+    }
 }
 
-/// Aufträge, deren Ergebnis in diesem Prozess nicht speicherbar war (erst der nächste Start versucht
-/// sie erneut; sonst liefe der Arbeiter bei jedem Neuladen der Seite wieder los).
+/// Aufträge, die in diesem Prozess nicht mehr versucht werden: Ergebnis nicht speicherbar oder
+/// vorübergehender Fehler (erst der nächste Start versucht sie erneut; sonst liefe der Arbeiter bei
+/// jedem Neuladen der Seite wieder los).
 static UEBERSPRUNGEN: Mutex<BTreeSet<(String, String)>> = Mutex::new(BTreeSet::new());
+
+fn zurueckstellen(auf: &TextAuftrag) {
+    if let Ok(mut u) = UEBERSPRUNGEN.lock() {
+        u.insert((auf.fas.clone(), auf.textrev.clone()));
+    }
+}
 
 fn uebersprungen() -> BTreeSet<(String, String)> {
     UEBERSPRUNGEN.lock().map(|u| u.clone()).unwrap_or_default()
+}
+
+/// Test: neuer Prozess (Rückstellungen dieser Fassung vergessen).
+#[cfg(test)]
+pub fn rueckstellung_vergessen(fas: &str) {
+    if let Ok(mut u) = UEBERSPRUNGEN.lock() {
+        u.retain(|(f, _)| f != fas);
+    }
+}
+
+/// Gibt es Aufträge, die dieser Prozess noch bearbeiten würde (ohne Rückstellungen)?
+pub fn offen(a: &Ablage) -> bool {
+    let zurueck = uebersprungen();
+    a.text_auftraege()
+        .map(|v| {
+            v.iter()
+                .any(|x| !zurueck.contains(&(x.fas.clone(), x.textrev.clone())))
+        })
+        .unwrap_or(false)
 }
 
 /// Arbeitet alle offenen Aufträge ab und gleicht danach den Index ab. `melden` wird nach jedem
@@ -141,15 +186,20 @@ pub fn lauf(
             match bearbeiten(a, &auf, prog, grenzen, abbrechen)? {
                 Ausgang::Eingetragen(t) if t.stand == "ok" => l.ok += 1,
                 Ausgang::Eingetragen(t) if t.stand == "kein_text" => l.kein_text += 1,
-                Ausgang::Eingetragen(_) => l.fehler += 1,
+                Ausgang::Eingetragen(t) => {
+                    l.fehler += 1;
+                    if text_wiederholbar(&t) {
+                        // Vorübergehend: erst im nächsten Prozess wieder (Rückstellung).
+                        zurueckstellen(&auf);
+                    }
+                }
                 Ausgang::Uebersprungen => {
                     // Nichts geändert: kein Ereignis, und in diesem Prozess nicht erneut versuchen.
                     l.fehler += 1;
-                    if let Ok(mut u) = UEBERSPRUNGEN.lock() {
-                        u.insert((auf.fas.clone(), auf.textrev.clone()));
-                    }
+                    zurueckstellen(&auf);
                     continue;
                 }
+                Ausgang::Verworfen => continue,
                 Ausgang::Abgebrochen => {
                     l.abgebrochen = true;
                     let _ = super::index::abgleichen(a);
@@ -169,10 +219,65 @@ pub fn lauf(
 // Der eine Hintergrundarbeiter der App
 // ---------------------------------------------------------------------------
 
+/// Zustand der Warteschlange (ohne Thread, testbar). Alle Übergänge unter einer Sperre:
+///
+/// * [`Steuerung::anstossen`] (ausdrücklich: Import, Änderung durch die Bedienung) hebt das Anhalten
+///   auf und reiht ein, setzt aber das Abbruchkennzeichen eines laufenden Laufs **nicht** zurück;
+/// * [`Steuerung::wiederanlauf`] (Neuladen der Seite) reiht nur ein, wenn nicht angehalten;
+/// * [`Steuerung::abbrechen`] setzt das Kennzeichen, leert die Schlange und hält an;
+/// * [`Steuerung::nehmen`] (Arbeiter) nimmt den nächsten Ordner und setzt erst dann das Kennzeichen
+///   für den neuen Lauf zurück.
+#[derive(Default)]
+pub struct Steuerung {
+    zustand: Mutex<(BTreeSet<PathBuf>, bool)>,
+    pub abbrechen: AtomicBool,
+}
+
+impl Steuerung {
+    pub fn anstossen(&self, dir: PathBuf) {
+        if let Ok(mut z) = self.zustand.lock() {
+            z.1 = false;
+            z.0.insert(dir);
+        }
+    }
+
+    /// Wie [`Self::anstossen`], aber nicht nach einem Abbruch; `true`, wenn eingereiht.
+    pub fn wiederanlauf(&self, dir: PathBuf) -> bool {
+        match self.zustand.lock() {
+            Ok(mut z) if !z.1 => {
+                z.0.insert(dir);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    pub fn abbrechen(&self) {
+        if let Ok(mut z) = self.zustand.lock() {
+            self.abbrechen.store(true, Ordering::Relaxed);
+            z.0.clear();
+            z.1 = true;
+        }
+    }
+
+    pub fn angehalten(&self) -> bool {
+        self.zustand.lock().map(|z| z.1).unwrap_or(false)
+    }
+
+    /// Nächster Ordner; setzt das Abbruchkennzeichen für diesen neuen Lauf zurück.
+    pub fn nehmen(&self) -> Option<PathBuf> {
+        let mut z = self.zustand.lock().ok()?;
+        let d = z.0.iter().next().cloned()?;
+        z.0.remove(&d);
+        self.abbrechen.store(false, Ordering::Relaxed);
+        Some(d)
+    }
+}
+
 struct Schlange {
-    offen: Mutex<BTreeSet<PathBuf>>,
+    steuerung: Steuerung,
+    wecker: Mutex<()>,
     signal: Condvar,
-    abbrechen: AtomicBool,
     melden: Mutex<Option<Box<dyn Fn() + Send>>>,
 }
 
@@ -180,9 +285,9 @@ fn schlange() -> &'static Schlange {
     static S: OnceLock<Schlange> = OnceLock::new();
     S.get_or_init(|| {
         let s = Schlange {
-            offen: Mutex::new(BTreeSet::new()),
+            steuerung: Steuerung::default(),
+            wecker: Mutex::new(()),
             signal: Condvar::new(),
-            abbrechen: AtomicBool::new(false),
             melden: Mutex::new(None),
         };
         let gestartet = std::thread::Builder::new()
@@ -202,37 +307,49 @@ pub fn melden_setzen(f: Box<dyn Fn() + Send>) {
     }
 }
 
-/// Weckt den Arbeiter für die Ablage unter `dir` (nach Ablegen, neuer Fassung, Wiederherstellen, Start).
-pub fn anstossen(dir: PathBuf) {
-    let s = schlange();
-    s.abbrechen.store(false, Ordering::Relaxed);
-    if let Ok(mut o) = s.offen.lock() {
-        o.insert(dir);
-    }
+fn wecken(s: &Schlange) {
+    let _g = s.wecker.lock();
     s.signal.notify_one();
 }
 
-/// Bricht den laufenden Extraktor und die restliche Warteschlange ab (bis zum nächsten Anstoß).
-pub fn abbrechen() {
+/// Ausdrücklicher Anstoß (Import, Änderung am Bestand): weckt den Arbeiter für die Ablage unter `dir`
+/// und hebt ein Anhalten auf. Ein laufender, abgebrochener Lauf bleibt abgebrochen.
+pub fn anstossen(dir: PathBuf) {
     let s = schlange();
-    s.abbrechen.store(true, Ordering::Relaxed);
-    if let Ok(mut o) = s.offen.lock() {
-        o.clear();
+    s.steuerung.anstossen(dir);
+    wecken(s);
+}
+
+/// Wiederanlauf beim Laden der Seite: nur, wenn nicht nach einem Abbruch angehalten.
+pub fn wiederanlauf(dir: PathBuf) {
+    let s = schlange();
+    if s.steuerung.wiederanlauf(dir) {
+        wecken(s);
     }
+}
+
+/// Bricht den laufenden Extraktor und die restliche Warteschlange ab und hält an (bis zum nächsten
+/// ausdrücklichen Anstoß).
+pub fn abbrechen() {
+    schlange().steuerung.abbrechen();
+}
+
+/// Ist die Warteschlange nach einem Abbruch angehalten?
+pub fn angehalten() -> bool {
+    schlange().steuerung.angehalten()
 }
 
 fn arbeiter() {
     let s = schlange();
     loop {
         let dir = {
-            let Ok(mut o) = s.offen.lock() else { return };
+            let Ok(mut g) = s.wecker.lock() else { return };
             loop {
-                if let Some(d) = o.iter().next().cloned() {
-                    o.remove(&d);
+                if let Some(d) = s.steuerung.nehmen() {
                     break d;
                 }
-                o = match s.signal.wait(o) {
-                    Ok(g) => g,
+                g = match s.signal.wait_timeout(g, std::time::Duration::from_secs(5)) {
+                    Ok((g, _)) => g,
                     Err(_) => return,
                 };
             }
@@ -252,7 +369,13 @@ fn arbeiter() {
             }
         };
         let a = Ablage::neu(dir);
-        match lauf(&a, &prog, textlauf::STANDARD, &s.abbrechen, &melden) {
+        match lauf(
+            &a,
+            &prog,
+            textlauf::STANDARD,
+            &s.steuerung.abbrechen,
+            &melden,
+        ) {
             Ok(l) => log::info!(
                 "ablage: Textfassungen ok={} kein_text={} fehler={} abgebrochen={}",
                 l.ok,

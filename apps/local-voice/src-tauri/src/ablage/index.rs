@@ -212,10 +212,19 @@ pub fn abgleichen(a: &Ablage) -> Res<AblageIndexBericht> {
         }
     }
     let soll: BTreeSet<&str> = quellen.iter().map(|q| q.dat.as_str()).collect();
+    // Verwaist: Dokumente im Retriever ohne lebenden Eintrag (z. B. nach einem Abbruch zwischen beiden
+    // Schreibvorgängen) werden wie gelöschte Dateien entfernt.
+    let mut waisen: BTreeSet<String> = BTreeSet::new();
+    if let Ok(mut q) = c.prepare("SELECT source_id FROM docs WHERE tenant = ?1") {
+        if let Ok(zeilen) = q.query_map(params![MANDANT], |r| r.get::<_, String>(0)) {
+            waisen.extend(zeilen.flatten().filter(|d| !soll.contains(d.as_str())));
+        }
+    }
     let weg: Vec<String> = bekannt
         .keys()
         .filter(|d| !soll.contains(d.as_str()))
         .cloned()
+        .chain(waisen.into_iter().filter(|d| !bekannt.contains_key(d)))
         .collect();
     let neu: Vec<(&IndexQuelle, String, i64)> = quellen
         .iter()
@@ -315,6 +324,12 @@ pub fn abgleichen(a: &Ablage) -> Res<AblageIndexBericht> {
             Ok::<_, Fehler>(())
         })?;
     }
+    // Stücke ohne Dokumenteintrag (verwaist) fallen weg.
+    c.execute(
+        "DELETE FROM ablage_stueck WHERE dat NOT IN (SELECT dat FROM ablage_dok)",
+        [],
+    )
+    .map_err(|_| fehler())?;
     bericht.stuecke = c
         .query_row("SELECT COUNT(*) FROM ablage_stueck", [], |r| {
             r.get::<_, i64>(0)

@@ -8,7 +8,8 @@
 
 use super::extrakt::{self, Format};
 use super::index;
-use super::speicher::{Ablage, AblageArt, AblageImportStand};
+use super::speicher;
+use super::speicher::{Ablage, AblageArt, AblageImportStand, TextAblage};
 use super::textfassung;
 use super::textlauf::{self, Grenzen, Programm};
 use super::zusammenfuehren::Text;
@@ -89,6 +90,7 @@ fn im_kind(
     let d = datei(name, bytes);
     textlauf::ausfuehren(
         &kind(test),
+        d._d.path(),
         &d.pfad,
         &d.sha,
         typ,
@@ -588,6 +590,7 @@ fn unterprozess_prueft_pruefsumme() {
     let d = datei("v.txt", b"Hallo");
     let r = textlauf::ausfuehren(
         &kind(None),
+        d._d.path(),
         &d.pfad,
         &sha(b"anders"),
         "txt",
@@ -620,6 +623,7 @@ fn unterprozess_abbrechbar() {
     });
     let r = textlauf::ausfuehren(
         &kind(Some("endlos")),
+        d._d.path(),
         &d.pfad,
         &d.sha,
         "txt",
@@ -638,11 +642,11 @@ fn unterprozess_speichergrenze_beendet() {
     assert_eq!(r.unwrap_err(), "extrakt.abbruch");
 }
 
-#[cfg(unix)]
 #[test]
 fn uebergrosses_xlsx_endet_an_der_grenze() {
+    // Vorab aus der Blatt-XML erkannt, bevor calamine den Range anlegt.
     let r = im_kind("r.xlsx", "xlsx", &xlsx_riesig(), None, TEST_GRENZEN);
-    assert_eq!(r.unwrap_err(), "extrakt.abbruch");
+    assert_eq!(r.unwrap_err(), "extrakt.zu_gross");
 }
 
 #[test]
@@ -896,22 +900,25 @@ fn extraktorwechsel_ergibt_neue_textrev_alte_bleibt() {
         }],
     };
     let json = serde_json::to_vec(&alt).unwrap();
-    let (blob, size) = e.a.text_schreiben(&dat, &alt_rev, &json).unwrap();
-    e.a.text_eintragen(
-        &dat,
-        &fas,
-        Text {
-            textrev: alt_rev.clone(),
-            blob,
-            size,
-            extraktor: "lva-text".into(),
-            extraktor_version: "0".into(),
-            marken_version: 1,
-            stand: "ok".into(),
-            code: None,
-        },
-    )
-    .unwrap();
+    let r =
+        e.a.text_ablegen(
+            &dat,
+            &fas,
+            Some(&json),
+            Text {
+                textrev: alt_rev.clone(),
+                blob: String::new(),
+                size: 0,
+                extraktor: "lva-text".into(),
+                extraktor_version: "0".into(),
+                marken_version: 1,
+                stand: "ok".into(),
+                code: None,
+                versuche: 0,
+            },
+        )
+        .unwrap();
+    assert!(matches!(r, TextAblage::Eingetragen(ref t) if t.size == json.len() as u64));
     // Die alte gilt bis zum Neuaufbau: suchbar, Textstand aber „ausstehend“.
     index::abgleichen(&e.a).unwrap();
     assert_eq!(e.treffer(KONTROLLE).len(), 1);
@@ -979,4 +986,407 @@ fn verknuepfter_textordner_wird_abgewiesen() {
         // Nichts eingetragen: der nächste Start versucht es erneut.
         assert_eq!(e.textstand(&dat).0.as_deref(), Some("ausstehend"));
     }
+}
+
+// ---------------------------------------------------------------------------
+// Nachbesserungen aus dem Review (Regressionstests)
+// ---------------------------------------------------------------------------
+
+/// Setzt die unkomprimierte Größe jedes Eintrags (lokaler Kopf und Zentralverzeichnis) auf `n`.
+fn groesse_luegen(mut b: Vec<u8>, n: u32) -> Vec<u8> {
+    let le = n.to_le_bytes();
+    let mut i = 0;
+    while i + 4 <= b.len() {
+        let off = match &b[i..i + 4] {
+            b"PK\x03\x04" => Some(22),
+            b"PK\x01\x02" => Some(24),
+            _ => None,
+        };
+        if let Some(o) = off {
+            b[i + o..i + o + 4].copy_from_slice(&le);
+            i += 4;
+        } else {
+            i += 1;
+        }
+    }
+    b
+}
+
+#[test]
+fn gelogene_groesse_im_zip_bricht_ab() {
+    let mut inhalt = String::from("<?xml version=\"1.0\"?><worksheet><sheetData>");
+    for i in 0..4000 {
+        inhalt.push_str(&format!("<row r=\"{}\"/>", i + 1));
+    }
+    inhalt.push_str("</sheetData></worksheet>");
+    let x = groesse_luegen(xlsx_mit(&inhalt), 10);
+    let langer: Vec<(Option<&str>, &str)> = vec![(None, "Absatz mit Text"); 2000];
+    let d = groesse_luegen(docx(&langer), 10);
+    for (b, f) in [(x, Format::Tabelle), (d, Format::Docx)] {
+        let code = extrakt::abschnitte(&b, f).unwrap_err().code;
+        assert!(code == "zip_grenze" || code == "zip", "{f:?}: {code}");
+    }
+    // Direkt am Leser: nie mehr als angegeben + 1 Byte.
+    let roh = groesse_luegen(zip_bauen(&[("a.xml", &vec![b'a'; 50_000])]), 10);
+    let mut z = extrakt::zipsicher::ZipLeser::oeffnen(&roh).unwrap();
+    assert!(z.lesen("a.xml").is_err());
+}
+
+#[test]
+fn xlsx_a1_und_xfd1048576_vorab_abgewiesen() {
+    let start = std::time::Instant::now();
+    assert_eq!(
+        extrakt::abschnitte(&xlsx_riesig(), Format::Tabelle)
+            .unwrap_err()
+            .code,
+        "zu_gross"
+    );
+    // Ohne Range-Aufbau: sofort, ohne Gigabytes.
+    assert!(start.elapsed() < Duration::from_secs(5));
+    // Leere Zellen weit draußen (ohne Wert) zählen nicht.
+    let ok = xlsx_mit(&format!(
+        "<?xml version=\"1.0\"?><worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">\
+         <sheetData><row r=\"1\">{}</row><row r=\"1048576\"><c r=\"XFD1048576\" s=\"1\"/></row></sheetData></worksheet>",
+        zelle("A1", "Kopf")
+    ));
+    assert_eq!(
+        extrakt::abschnitte(&ok, Format::Tabelle).unwrap()[0].text,
+        "Kopf"
+    );
+}
+
+#[test]
+fn doctype_in_tabellen_xml_abgewiesen() {
+    let blatt = "<?xml version=\"1.0\"?><!DOCTYPE x [<!ENTITY a \"b\">]><worksheet><sheetData/></worksheet>";
+    assert_eq!(
+        extrakt::abschnitte(&xlsx_mit(blatt), Format::Tabelle)
+            .unwrap_err()
+            .code,
+        "xml_doctype"
+    );
+    // Auch in Nebenteilen (hier Arbeitsmappe, über den Inhaltstyp-Teil gleich mit).
+    let b = zip_bauen(&[
+        (
+            "xl/workbook.xml",
+            b"<?xml version=\"1.0\"?><!DOCTYPE w SYSTEM \"http://example.org/w.dtd\"><workbook/>",
+        ),
+        ("xl/worksheets/sheet1.xml", b"<worksheet/>"),
+    ]);
+    assert_eq!(
+        extrakt::abschnitte(&b, Format::Tabelle).unwrap_err().code,
+        "xml_doctype"
+    );
+    let ods = ods_mit("<?xml version=\"1.0\"?><!DOCTYPE c><office:document-content/>");
+    assert_eq!(
+        extrakt::abschnitte(&ods, Format::Tabelle).unwrap_err().code,
+        "xml_doctype"
+    );
+}
+
+fn ods_mit(content: &str) -> Vec<u8> {
+    let manifest = "<?xml version=\"1.0\"?><manifest:manifest xmlns:manifest=\"urn:oasis:names:tc:opendocument:xmlns:manifest:1.0\">\
+        <manifest:file-entry manifest:full-path=\"/\" manifest:media-type=\"application/vnd.oasis.opendocument.spreadsheet\"/>\
+        <manifest:file-entry manifest:full-path=\"content.xml\" manifest:media-type=\"text/xml\"/></manifest:manifest>";
+    zip_bauen(&[
+        (
+            "mimetype",
+            b"application/vnd.oasis.opendocument.spreadsheet",
+        ),
+        ("META-INF/manifest.xml", manifest.as_bytes()),
+        ("content.xml", content.as_bytes()),
+    ])
+}
+
+fn ods_tabelle(zeilen: &str) -> Vec<u8> {
+    ods_mit(&format!(
+        "<?xml version=\"1.0\"?><office:document-content xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" \
+         xmlns:table=\"urn:oasis:names:tc:opendocument:xmlns:table:1.0\" xmlns:text=\"urn:oasis:names:tc:opendocument:xmlns:text:1.0\">\
+         <office:body><office:spreadsheet><table:table table:name=\"Liste\">{zeilen}</table:table>\
+         </office:spreadsheet></office:body></office:document-content>"
+    ))
+}
+
+fn ods_zelle(t: &str) -> String {
+    format!(
+        "<table:table-cell office:value-type=\"string\"><text:p>{t}</text:p></table:table-cell>"
+    )
+}
+
+#[test]
+fn ods_wiederholungen_vorab_begrenzt() {
+    // Üblich: leere Wiederholungen am Ende (LibreOffice) bleiben erlaubt.
+    let ok = ods_tabelle(&format!(
+        "<table:table-row>{}{}<table:table-cell table:number-columns-repeated=\"16382\"/></table:table-row>\
+         <table:table-row>{}{}<table:table-cell table:number-columns-repeated=\"16382\"/></table:table-row>\
+         <table:table-row table:number-rows-repeated=\"1048574\"><table:table-cell table:number-columns-repeated=\"16384\"/></table:table-row>",
+        ods_zelle("Name"),
+        ods_zelle("Ort"),
+        ods_zelle("Anna"),
+        ods_zelle("Ulm")
+    ));
+    let a = extrakt::abschnitte(&ok, Format::Tabelle).unwrap();
+    assert_eq!(anker(&a), ["blatt=Liste&zeilen=1-2"]);
+    assert!(a[0].text.contains("Name: Anna; Ort: Ulm"));
+    // Belegte Zelle 20 000-fach in 1 000 wiederholten Zeilen: 20 Mio. Zellen.
+    let breit = ods_tabelle(
+        "<table:table-row table:number-rows-repeated=\"1000\"><table:table-cell office:value-type=\"float\" \
+         office:value=\"1\" table:number-columns-repeated=\"20000\"><text:p>1</text:p></table:table-cell></table:table-row>",
+    );
+    assert_eq!(
+        extrakt::abschnitte(&breit, Format::Tabelle)
+            .unwrap_err()
+            .code,
+        "zu_gross"
+    );
+    // Zwei Werte weit auseinander, dazwischen eine Million leerer Zeilen: calamine füllt auf.
+    let weit = ods_tabelle(&format!(
+        "<table:table-row>{}</table:table-row>\
+         <table:table-row table:number-rows-repeated=\"1000000\"><table:table-cell/></table:table-row>\
+         <table:table-row><table:table-cell table:number-columns-repeated=\"100\"/>{}</table:table-row>",
+        ods_zelle("a"),
+        ods_zelle("b")
+    ));
+    assert_eq!(
+        extrakt::abschnitte(&weit, Format::Tabelle)
+            .unwrap_err()
+            .code,
+        "zu_gross"
+    );
+}
+
+#[test]
+fn zu_grosse_ausgabe_als_zu_gross() {
+    let start = std::time::Instant::now();
+    let r = im_kind("f.txt", "txt", b"x", Some("flut"), TEST_GRENZEN);
+    assert_eq!(r.unwrap_err(), "extrakt.zu_gross");
+    // Sofort erkannt, nicht erst an der Zeitgrenze.
+    assert!(start.elapsed() < TEST_GRENZEN.zeit);
+}
+
+#[test]
+fn eingabe_ohne_verknuepfung_und_mit_groessengrenze() {
+    let d = datei("g.txt", b"Hallo");
+    assert_eq!(extrakt::datei_lesen(&d.pfad, 100).unwrap(), b"Hallo");
+    assert_eq!(
+        extrakt::datei_lesen(&d.pfad, 3).unwrap_err().code,
+        "zu_gross"
+    );
+    #[cfg(unix)]
+    {
+        let link = d._d.path().join("l.txt");
+        std::os::unix::fs::symlink(&d.pfad, &link).unwrap();
+        assert_eq!(extrakt::datei_lesen(&link, 100).unwrap_err().code, "lesen");
+        // Auch über den Unterprozess.
+        let r = textlauf::ausfuehren(
+            &kind(None),
+            d._d.path(),
+            &link,
+            &d.sha,
+            "txt",
+            TEST_GRENZEN,
+            &AtomicBool::new(false),
+        );
+        assert_eq!(r.unwrap_err(), "extrakt.lesen");
+    }
+}
+
+#[test]
+fn extraktor_nur_mit_kennzeichen_und_unter_der_wurzel() {
+    let d = datei("k.txt", b"Kennzeichen");
+    let p = kind(None);
+    let lauf = |kennung: Option<&str>, stdin: &[u8]| {
+        let mut c = std::process::Command::new(&p.pfad);
+        c.args(&p.vorweg)
+            .arg(&d.pfad)
+            .arg(&d.sha)
+            .arg("txt")
+            .env("LVA_EXTRAKT_KIND", "1")
+            .env(extrakt::ENV_WURZEL, d._d.path())
+            .env_remove(extrakt::ENV_KENNZEICHEN)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null());
+        if let Some(k) = kennung {
+            c.env(extrakt::ENV_KENNZEICHEN, k);
+        }
+        let mut kind = c.spawn().unwrap();
+        kind.stdin.take().unwrap().write_all(stdin).unwrap();
+        let aus = kind.wait_with_output().unwrap();
+        (aus.status.code(), aus.stdout)
+    };
+    let k = "ab".repeat(32);
+    // Ohne Kennzeichen (z. B. Start über eine Dateizuordnung): keine Ausgabe, Exitcode 64.
+    let (code, aus) = lauf(None, format!("{k}\n").as_bytes());
+    assert_eq!(code, Some(64));
+    assert!(!aus.contains(&b'{'));
+    // Kennzeichen nur in der Umgebung, nicht auf stdin.
+    let (code, aus) = lauf(Some(&k), b"falsch\n");
+    assert_eq!(code, Some(64));
+    assert!(!aus.contains(&b'{'));
+    // Beides: angenommen.
+    let (code, aus) = lauf(Some(&k), format!("{k}\n").as_bytes());
+    assert_eq!(code, Some(0));
+    assert!(aus.contains(&b'{'));
+    // Pfad außerhalb der Wurzel: keine Antwort (für den Elternprozess ein Abbruch).
+    let andere = tempfile::tempdir().unwrap();
+    let r = textlauf::ausfuehren(
+        &p,
+        andere.path(),
+        &d.pfad,
+        &d.sha,
+        "txt",
+        TEST_GRENZEN,
+        &AtomicBool::new(false),
+    );
+    assert_eq!(r.unwrap_err(), "extrakt.abbruch");
+}
+
+fn fas_von(e: &Env, dat: &str) -> String {
+    e.a.fassungen(dat).unwrap()[0].fas.clone()
+}
+
+fn kaputtes_programm() -> Programm {
+    Programm {
+        pfad: PathBuf::from("/nicht/vorhanden/lva-extrakt"),
+        vorweg: vec![],
+        umgebung: vec![],
+    }
+}
+
+#[test]
+fn voruebergehende_fehler_begrenzt_wiederholt() {
+    let e = env();
+    let o = e.standard();
+    let gut = e.ablegen("gut.txt", format!("Später {KONTROLLE}").as_bytes(), &o);
+    let fas = fas_von(&e, &gut);
+    let schlecht = |e: &Env| {
+        textfassung::lauf(
+            &e.a,
+            &kaputtes_programm(),
+            TEST_GRENZEN,
+            &AtomicBool::new(false),
+            &|| {},
+        )
+        .unwrap()
+    };
+    // Erster Versuch: vorübergehender Fehler, vermerkt mit Zähler.
+    assert_eq!(schlecht(&e).fehler, 1);
+    let (stand, code) = e.textstand(&gut);
+    assert_eq!(stand.as_deref(), Some("fehler"));
+    let code = code.unwrap();
+    assert!(speicher::VORUEBERGEHEND.contains(&code.as_str()), "{code}");
+    // Im selben Prozess nicht sofort wieder (Rückstellung), auch kein Wiederanlauf.
+    assert_eq!(schlecht(&e), textfassung::Lauf::default());
+    assert!(!textfassung::offen(&e.a));
+    // Nächster Start: erneut offen, mit dem bisherigen Zähler; jetzt klappt es.
+    textfassung::rueckstellung_vergessen(&fas);
+    let auf = e.a.text_auftraege().unwrap();
+    assert_eq!((auf.len(), auf[0].versuche), (1, 1));
+    assert!(textfassung::offen(&e.a));
+    assert_eq!(e.lauf().ok, 1);
+    assert_eq!(e.textstand(&gut), (Some("ok".into()), None));
+    assert_eq!(e.treffer(KONTROLLE).len(), 1);
+
+    // Höchstens drei Versuche, dann endgültig.
+    let dat = e.ablegen("nie.txt", b"Nie", &o);
+    let fas = fas_von(&e, &dat);
+    for versuch in 1..=speicher::MAX_VERSUCHE {
+        textfassung::rueckstellung_vergessen(&fas);
+        assert_eq!(schlecht(&e).fehler, 1, "Versuch {versuch}");
+    }
+    textfassung::rueckstellung_vergessen(&fas);
+    assert!(e.a.text_auftraege().unwrap().is_empty());
+    assert_eq!(e.textstand(&dat).0.as_deref(), Some("fehler"));
+
+    // Ein Fehler am Inhalt ist sofort endgültig.
+    let bombe = zip_bauen(&[("word/document.xml", &vec![b' '; 8 * 1024 * 1024])]);
+    let b = e.ablegen("b.docx", &bombe, &o);
+    e.lauf();
+    textfassung::rueckstellung_vergessen(&fas_von(&e, &b));
+    assert!(e.a.text_auftraege().unwrap().is_empty());
+}
+
+#[test]
+fn loeschen_waehrend_extraktion_hinterlaesst_nichts() {
+    let e = env();
+    let o = e.standard();
+    let dat = e.ablegen("weg.txt", format!("Flüchtig {KONTROLLE}").as_bytes(), &o);
+    let auf = e.a.text_auftraege().unwrap().remove(0);
+    // Der Extraktor braucht 1,5 s; währenddessen wird die Datei endgültig gelöscht.
+    let dir = e.a.dir().to_path_buf();
+    let d2 = dat.clone();
+    let loescher = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(400));
+        let a = Ablage::neu(dir);
+        a.in_papierkorb(AblageArt::Datei, &d2).unwrap();
+        a.endgueltig_loeschen(AblageArt::Datei, &d2).unwrap();
+    });
+    let aus = textfassung::bearbeiten(
+        &e.a,
+        &auf,
+        &kind(Some("langsam")),
+        TEST_GRENZEN,
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    loescher.join().unwrap();
+    assert_eq!(aus, textfassung::Ausgang::Verworfen);
+    assert!(!e.a.dir().join("text").join(&dat).exists());
+    let b = index::abgleichen(&e.a).unwrap();
+    assert_eq!(b.stuecke, 0);
+    assert!(e.treffer(KONTROLLE).is_empty());
+
+    // Wartung räumt einen liegengebliebenen Textordner ohne Datei weg (nicht den einer lebenden Datei).
+    let lebend = e.ablegen("da.txt", b"Da", &o);
+    e.lauf();
+    let rest =
+        e.a.dir()
+            .join("text")
+            .join(super::neue_id(super::PRAEFIX_DATEI));
+    fs::create_dir_all(&rest).unwrap();
+    fs::write(rest.join("x.json"), b"{}").unwrap();
+    assert_eq!(e.a.wartung(), None);
+    assert!(!rest.exists());
+    assert!(e.a.dir().join("text").join(&lebend).is_dir());
+
+    // Verwaiste Stücke und Dokumente im Index fallen beim Abgleich weg.
+    let c = rusqlite::Connection::open(e.a.dir().join(index::INDEX)).unwrap();
+    c.execute(
+        "INSERT INTO ablage_stueck(dat, seite, abschnitt, anker, pfad) VALUES('dat_waise', 1, 0, 'zeile=1', '[]')",
+        [],
+    )
+    .unwrap();
+    let vorher: i64 = c
+        .query_row("SELECT COUNT(*) FROM ablage_stueck", [], |r| r.get(0))
+        .unwrap();
+    let b = index::abgleichen(&e.a).unwrap();
+    assert_eq!(b.stuecke as i64, vorher - 1);
+}
+
+#[test]
+fn abbruch_bleibt_bis_zum_ausdruecklichen_anstoss() {
+    let s = textfassung::Steuerung::default();
+    let (a, b, c) = (
+        PathBuf::from("/a"),
+        PathBuf::from("/b"),
+        PathBuf::from("/c"),
+    );
+    let ab = |s: &textfassung::Steuerung| s.abbrechen.load(std::sync::atomic::Ordering::Relaxed);
+    s.anstossen(a.clone());
+    assert_eq!(s.nehmen(), Some(a));
+    // Lauf läuft; Abbruch durch die Bedienung.
+    s.abbrechen();
+    assert!(ab(&s) && s.angehalten());
+    // Neuladen der Seite startet nicht neu.
+    assert!(!s.wiederanlauf(b.clone()));
+    assert_eq!(s.nehmen(), None);
+    // Ein ausdrücklicher Anstoß während des abbrechenden Laufs setzt dessen Abbruch nicht zurück …
+    s.anstossen(c.clone());
+    assert!(ab(&s));
+    assert!(!s.angehalten());
+    // … erst der nächste Lauf beginnt ohne Abbruch.
+    assert_eq!(s.nehmen(), Some(c));
+    assert!(!ab(&s));
+    assert!(s.wiederanlauf(b.clone()));
+    assert_eq!(s.nehmen(), Some(b));
 }

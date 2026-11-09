@@ -9,14 +9,18 @@
 //!   Prozessgruppe (offen: Speicherwächter je Kind, falls nötig).
 //! * Kein Netz: der Extraktor enthält keinen Netzcode und bekommt nur den Pfad der einen Fassung. Eine
 //!   Netzsperre des Betriebssystems (Namensräume, Firewall-Regel) setzt diese Stufe nicht.
-//! * Ausgabe: stdout höchstens [`MAX_AUSGABE`]; stderr wird verworfen (nie Inhalt im Log).
+//! * Ausgabe: stdout höchstens [`MAX_AUSGABE`] (mehr → `extrakt.zu_gross`, der Prozess wird sofort
+//!   beendet); stderr wird verworfen (nie Inhalt im Log).
+//! * Aufruf: zufälliges Kennzeichen in der Umgebung und als erste Zeile auf stdin, dazu der Ablageordner
+//!   ([`super::extrakt::zugelassen`]); ohne beides antwortet der Extraktor nicht.
+//! * Jeder Ausgang nach dem Start beendet und erntet das Kind (samt Prozessgruppe).
 //!
 //! Programm: `lva-extrakt[.exe]` neben dem App-Programm, sonst das App-Programm selbst mit
 //! [`super::extrakt::SCHALTER`] (gebündelte App ohne eigenes Hilfsprogramm).
 
-use super::extrakt::{Antwort, Textfassung, SCHALTER};
+use super::extrakt::{Antwort, Textfassung, ENV_KENNZEICHEN, ENV_WURZEL, SCHALTER};
 use std::ffi::OsString;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -69,9 +73,18 @@ impl Programm {
     }
 }
 
+fn kennzeichen() -> String {
+    use rand::RngCore;
+    let mut b = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut b);
+    super::extrakt::hex(&b)
+}
+
 /// Ergebnis mit stabilem Fehlercode (`extrakt.zeit`, `extrakt.abbruch`, `extrakt.zip_grenze`, …).
+/// `wurzel` ist der Ablageordner; `datei` muss darunter liegen.
 pub fn ausfuehren(
     prog: &Programm,
+    wurzel: &Path,
     datei: &Path,
     sha256: &str,
     typ: &str,
@@ -79,14 +92,17 @@ pub fn ausfuehren(
     abbrechen: &AtomicBool,
 ) -> Result<Textfassung, String> {
     crate::process_guard::check_launchable(&prog.pfad).map_err(|_| "extrakt.programm")?;
+    let kennung = kennzeichen();
     let mut cmd = Command::new(&prog.pfad);
     cmd.args(&prog.vorweg)
         .arg(datei)
         .arg(sha256)
         .arg(typ)
-        .stdin(Stdio::null())
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null());
+        .stderr(Stdio::null())
+        .env(ENV_KENNZEICHEN, &kennung)
+        .env(ENV_WURZEL, wurzel);
     for (k, v) in &prog.umgebung {
         cmd.env(k, v);
     }
@@ -150,18 +166,47 @@ pub fn ausfuehren(
         }
         job
     };
-    let mut stdout = child.stdout.take().ok_or("extrakt.start")?;
+    // Ab hier beendet und erntet jeder Ausgang das Kind (auch ein früher Fehler).
+    let (Some(mut stdin), Some(mut stdout)) = (child.stdin.take(), child.stdout.take()) else {
+        beenden(&mut child);
+        return Err("extrakt.start".into());
+    };
+    // Kennzeichen als erste Zeile; danach stdin schließen (65 Bytes passen in jeden Pipe-Puffer).
+    let geschrieben = stdin
+        .write_all(format!("{kennung}\n").as_bytes())
+        .and_then(|_| stdin.flush());
+    drop(stdin);
+    if geschrieben.is_err() {
+        beenden(&mut child);
+        return Err("extrakt.start".into());
+    }
+    let zu_viel = std::sync::Arc::new(AtomicBool::new(false));
+    let zu_viel_leser = zu_viel.clone();
     let leser = std::thread::spawn(move || {
         let mut buf = Vec::new();
         let r = (&mut stdout).take(MAX_AUSGABE + 1).read_to_end(&mut buf);
+        if buf.len() as u64 > MAX_AUSGABE {
+            // Sofort melden; stdout wird mit dem Ende des Threads geschlossen, das Kind nicht abgewartet.
+            zu_viel_leser.store(true, Ordering::Relaxed);
+            return (false, Vec::new());
+        }
         (r.is_ok(), buf)
     });
     let ende = Instant::now() + grenzen.zeit;
     let status = loop {
+        if zu_viel.load(Ordering::Relaxed) {
+            beenden(&mut child);
+            let _ = leser.join();
+            return Err("extrakt.zu_gross".into());
+        }
         match child.try_wait() {
-            Ok(Some(s)) => break Some(s),
+            Ok(Some(s)) => break s,
             Ok(None) => {}
-            Err(_) => break None,
+            Err(_) => {
+                beenden(&mut child);
+                let _ = leser.join();
+                return Err("extrakt.abbruch".into());
+            }
         }
         let abgebrochen = abbrechen.load(Ordering::Relaxed);
         if abgebrochen || Instant::now() >= ende {
@@ -175,13 +220,13 @@ pub fn ausfuehren(
         }
         std::thread::sleep(Duration::from_millis(20));
     };
+    // Das Kind ist beendet und geerntet (kein Signal mehr an seine Kennung: sie kann neu vergeben sein).
     let (ok, ausgabe) = leser.join().unwrap_or((false, Vec::new()));
-    let Some(status) = status else {
-        beenden(&mut child);
-        return Err("extrakt.abbruch".into());
-    };
-    if !ok || ausgabe.len() as u64 > MAX_AUSGABE {
+    if zu_viel.load(Ordering::Relaxed) || ausgabe.len() as u64 > MAX_AUSGABE {
         return Err("extrakt.zu_gross".into());
+    }
+    if !ok {
+        return Err("extrakt.abbruch".into());
     }
     let antwort = antwort_lesen(&ausgabe);
     match (status.code(), antwort) {

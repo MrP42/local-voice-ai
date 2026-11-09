@@ -78,6 +78,14 @@ pub struct Text {
     /// Fehlercode bei `fehler` (nie Inhalt), z. B. `extrakt.zeit`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub code: Option<String>,
+    /// Bisherige Versuche bei einem vorübergehenden Fehler (siehe `textfassung::wiederholbar`); beim
+    /// Zusammenführen gewinnt der höhere Zähler.
+    #[serde(default, skip_serializing_if = "ist_null")]
+    pub versuche: u32,
+}
+
+fn ist_null(n: &u32) -> bool {
+    *n == 0
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -752,6 +760,7 @@ mod tests {
             marken_version: 1,
             stand: "ok".into(),
             code: None,
+            versuche: 0,
         };
         let mut fa = fas("f1", None, 1);
         fa.texte = vec![t("r1")];

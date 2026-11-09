@@ -27,6 +27,13 @@ pub const MAX_TEXT: usize = 64 * 1024 * 1024;
 /// Kommandozeilenschalter, mit dem das App-Programm selbst als Extraktor läuft (wenn kein eigenes
 /// `lva-extrakt` neben dem Programm liegt).
 pub const SCHALTER: &str = "--lva-extrakt";
+/// Größere Eingaben werden nicht gelesen (die Ablage legt größere Dateien zwar ab, extrahiert sie aber
+/// nicht; die Speichergrenze des Unterprozesses liegt bei 1 GiB).
+pub const MAX_EINGABE: u64 = 512 * 1024 * 1024;
+/// Umgebung des Unterprozesses (vom Elternprozess gesetzt): zufälliges Kennzeichen, das zusätzlich über
+/// stdin kommen muss, und der Ablageordner, unter dem die Eingabe liegen muss.
+pub const ENV_KENNZEICHEN: &str = "LVA_EXTRAKT_KENNZEICHEN";
+pub const ENV_WURZEL: &str = "LVA_EXTRAKT_WURZEL";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Abschnitt {
@@ -188,13 +195,21 @@ pub enum Antwort {
 }
 
 /// Einstieg des Unterprozesses: `<pfad> <original_sha256> <typ>`. Schreibt genau ein JSON-Dokument
-/// auf stdout; Rückgabe ist der Exitcode (0 = Textfassung, 2 = Fehlercode, 64 = Aufruf falsch).
-/// Nie Inhalt auf stderr.
+/// auf stdout; Rückgabe ist der Exitcode (0 = Textfassung, 2 = Fehlercode, 64 = Aufruf falsch oder nicht
+/// vom Elternprozess, dann ohne jede Ausgabe). Nie Inhalt auf stderr.
+///
+/// Angenommen wird der Aufruf nur, wenn [`ENV_KENNZEICHEN`] gesetzt ist, dasselbe Kennzeichen als erste
+/// Zeile auf stdin kommt (ein Start über Dateizuordnung, Verknüpfung oder Kommandozeile hat beides nicht)
+/// und der kanonische Pfad unter dem kanonischen [`ENV_WURZEL`] liegt.
 pub fn haupt(args: &[String]) -> i32 {
     let [pfad, sha, typ] = args else {
         return 64;
     };
-    let antwort = match ausfuehren(std::path::Path::new(pfad), sha, typ) {
+    let pfad = std::path::Path::new(pfad);
+    if !zugelassen(pfad, &mut std::io::stdin().lock()) {
+        return 64;
+    }
+    let antwort = match ausfuehren(pfad, sha, typ) {
         Ok(t) => Antwort::Ok(t),
         Err(e) => Antwort::Fehler {
             fehler: e.code.to_string(),
@@ -216,41 +231,102 @@ pub fn haupt(args: &[String]) -> i32 {
     code
 }
 
+fn kennzeichen_gueltig(k: &str) -> bool {
+    k.len() == 64 && k.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// Kennzeichen aus Umgebung und stdin, Pfad unter der Wurzel (beide kanonisch; die Datei selbst prüft
+/// [`datei_lesen`] ohne Folgen von Verknüpfungen).
+pub(crate) fn zugelassen(pfad: &std::path::Path, stdin: &mut dyn std::io::Read) -> bool {
+    use std::io::Read;
+    let Ok(k) = std::env::var(ENV_KENNZEICHEN) else {
+        return false;
+    };
+    if !kennzeichen_gueltig(&k) {
+        return false;
+    }
+    let mut zeile = Vec::new();
+    if std::io::Read::take(stdin, 66)
+        .read_to_end(&mut zeile)
+        .is_err()
+    {
+        return false;
+    }
+    let gelesen = String::from_utf8_lossy(&zeile);
+    if gelesen.trim_end_matches(['\r', '\n']) != k {
+        return false;
+    }
+    let Some(wurzel) = std::env::var_os(ENV_WURZEL) else {
+        return false;
+    };
+    let Ok(wurzel) = std::fs::canonicalize(wurzel) else {
+        return false;
+    };
+    let (Some(eltern), Some(name)) = (pfad.parent(), pfad.file_name()) else {
+        return false;
+    };
+    let Ok(eltern) = std::fs::canonicalize(eltern) else {
+        return false;
+    };
+    eltern.starts_with(&wurzel) && eltern.join(name).starts_with(&wurzel)
+}
+
+/// Öffnet die Eingabe ohne Folgen einer Verknüpfung (Unix `O_NOFOLLOW`, Windows
+/// `FILE_FLAG_OPEN_REPARSE_POINT`), prüft am offenen Handle, dass es eine gewöhnliche Datei ist, und
+/// liest höchstens `max` Bytes.
+pub(crate) fn datei_lesen(pfad: &std::path::Path, max: u64) -> Result<Vec<u8>, ExtraktFehler> {
+    use std::io::Read;
+    let lesen = || ExtraktFehler::neu("lesen");
+    let mut o = std::fs::OpenOptions::new();
+    o.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        o.custom_flags(libc::O_NOFOLLOW);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        // FILE_FLAG_OPEN_REPARSE_POINT: die Verknüpfung selbst öffnen, nicht ihr Ziel.
+        o.custom_flags(0x0020_0000);
+    }
+    let datei = o.open(pfad).map_err(|_| lesen())?;
+    let meta = datei.metadata().map_err(|_| lesen())?;
+    if super::ist_umweg(&meta) || !meta.is_file() {
+        return Err(lesen());
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        // FILE_ATTRIBUTE_REPARSE_POINT
+        if meta.file_attributes() & 0x400 != 0 {
+            return Err(lesen());
+        }
+    }
+    if meta.len() > max {
+        return Err(ExtraktFehler::neu("zu_gross"));
+    }
+    let mut bytes = Vec::with_capacity(meta.len() as usize);
+    datei
+        .take(max.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|_| lesen())?;
+    if bytes.len() as u64 > max {
+        return Err(ExtraktFehler::neu("zu_gross"));
+    }
+    Ok(bytes)
+}
+
 fn ausfuehren(pfad: &std::path::Path, sha: &str, typ: &str) -> Result<Textfassung, ExtraktFehler> {
     let f = format_aus_typ(typ).ok_or(ExtraktFehler::neu("format"))?;
+    let bytes = datei_lesen(pfad, MAX_EINGABE)?;
     #[cfg(test)]
     tests_kind::haken(typ);
-    // Keine Verknüpfung, nur eine gewöhnliche Datei (der Aufrufer hat den Pfad unter `ablage/` geprüft).
-    let meta = std::fs::symlink_metadata(pfad).map_err(|_| ExtraktFehler::neu("lesen"))?;
-    if super::ist_umweg(&meta) || !meta.is_file() {
-        return Err(ExtraktFehler::neu("lesen"));
-    }
-    let bytes = std::fs::read(pfad).map_err(|_| ExtraktFehler::neu("lesen"))?;
     // Erst die Prüfsumme, dann der Inhalt: Text und Original stammen aus demselben Stand (E9).
     if hex(&Sha256::digest(&bytes)) != sha.to_ascii_lowercase() {
         return Err(ExtraktFehler::neu("pruefsumme"));
     }
     textfassung(&bytes, &sha.to_ascii_lowercase(), f)
-}
-
-/// Testhaken des Kindprozesses: simuliert einen hängenden oder speicherhungrigen Extraktor.
-#[cfg(test)]
-pub(crate) mod tests_kind {
-    pub fn haken(typ: &str) {
-        match std::env::var("LVA_EXTRAKT_TEST").as_deref() {
-            Ok("endlos") if typ == "txt" => loop {
-                std::hint::black_box(0u64);
-            },
-            Ok("speicher") if typ == "txt" => {
-                let mut v: Vec<Vec<u8>> = Vec::new();
-                loop {
-                    v.push(vec![1u8; 64 * 1024 * 1024]);
-                    std::hint::black_box(&v);
-                }
-            }
-            _ => {}
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -348,4 +424,34 @@ pub(crate) fn attr<'v>(attrs: &'v [(String, String)], name: &str) -> Option<&'v 
         .iter()
         .find(|(k, _)| k == name)
         .map(|(_, v)| v.as_str())
+}
+
+/// Testhaken des Kindprozesses: simuliert einen hängenden oder speicherhungrigen Extraktor.
+#[cfg(test)]
+pub(crate) mod tests_kind {
+    pub fn haken(typ: &str) {
+        match std::env::var("LVA_EXTRAKT_TEST").as_deref() {
+            Ok("endlos") if typ == "txt" => loop {
+                std::hint::black_box(0u64);
+            },
+            Ok("langsam") if typ == "txt" => {
+                std::thread::sleep(std::time::Duration::from_millis(1500));
+            }
+            Ok("flut") if typ == "txt" => {
+                use std::io::Write;
+                let block = vec![b'x'; 1024 * 1024];
+                let mut out = std::io::stdout().lock();
+                while out.write_all(&block).is_ok() {}
+                std::process::exit(0);
+            }
+            Ok("speicher") if typ == "txt" => {
+                let mut v: Vec<Vec<u8>> = Vec::new();
+                loop {
+                    v.push(vec![1u8; 64 * 1024 * 1024]);
+                    std::hint::black_box(&v);
+                }
+            }
+            _ => {}
+        }
+    }
 }

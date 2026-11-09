@@ -6,6 +6,8 @@ use local_voice_ai_lib::CliArgs;
 
 fn main() {
     // lva#408 D2: Extraktor der Ablage als Unterprozess (vor allem anderen: kein Fenster, kein Log).
+    // `haupt` nimmt den Aufruf nur mit dem Kennzeichen des Elternprozesses (Umgebung + stdin) und einem
+    // Pfad unter dem Ablageordner an; sonst Exitcode 64 ohne jede Ausgabe.
     let roh: Vec<String> = std::env::args().skip(1).collect();
     if roh.first().map(String::as_str) == Some("--lva-extrakt") {
         std::process::exit(local_voice_ai_lib::lva_extrakt_main(&roh[1..]));
