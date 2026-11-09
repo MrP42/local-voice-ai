@@ -802,9 +802,19 @@ pub struct StromTor {
     quellen: Vec<(u32, String)>,
     werkzeuge: Vec<Werkzeug>,
     tor: Ausgabetor,
-    offen: Option<String>,
+    offen: Option<OffenerMarker>,
     teile: Vec<String>,
     prosa: Vec<String>,
+}
+
+/// Zustand eines geoeffneten Markers. Er endet NUR, wenn alle Oeffner geschlossen sind (Tiefe 0)
+/// oder der Strom endet; Ueberlaenge oder Verschachtelung machen ihn ungueltig, beenden aber nie
+/// das Verwerfen (Codex lva#410).
+struct OffenerMarker {
+    puffer: String,
+    zeichen: usize,
+    tiefe: u32,
+    ungueltig: bool,
 }
 
 fn stuecke(pieces: &[String]) -> String {
@@ -857,7 +867,12 @@ impl StromTor {
             let Some(offen) = self.offen.as_mut() else {
                 if c == MARKER_AUF {
                     aus.push_str(&self.prosa_speisen(&mut prosa));
-                    self.offen = Some(c.to_string());
+                    self.offen = Some(OffenerMarker {
+                        puffer: c.to_string(),
+                        zeichen: 1,
+                        tiefe: 1,
+                        ungueltig: false,
+                    });
                 } else if c != MARKER_ZU {
                     // Ein loses Schlusszeichen ohne Marker gehoert nie in die Ausgabe.
                     prosa.push(c);
@@ -865,24 +880,33 @@ impl StromTor {
                 continue;
             };
             if c == MARKER_AUF {
-                // Ein neuer Marker, bevor der alte geschlossen ist: der alte ist ungueltig und wird
-                // verworfen (nie als Prosa weitergegeben, Codex lva#410).
-                self.offen = Some(c.to_string());
-                continue;
+                // Verschachtelung: die ganze Sequenz bleibt ungueltig, bis alle Oeffner zu sind.
+                offen.tiefe = offen.tiefe.saturating_add(1);
+                offen.ungueltig = true;
+            } else if c == MARKER_ZU {
+                offen.tiefe -= 1;
             }
-            offen.push(c);
-            if c == MARKER_ZU {
-                let marker = self.offen.take().unwrap_or_default();
-                if aufruf_gueltig(&marker, &self.werkzeuge) {
-                    aus.push_str(&self.prosa_speisen(&mut prosa));
-                    aus.push_str(&self.prosa_abschliessen());
-                    aus.push_str(&marker);
-                    self.teile.push(marker);
+            if !offen.ungueltig {
+                offen.puffer.push(c);
+                offen.zeichen += 1;
+                if offen.zeichen > MARKER_MAX_ZEICHEN {
+                    // Ueberlang: Puffer kappen, aber bis zum Schluss weiter verwerfen.
+                    offen.ungueltig = true;
+                    offen.puffer = String::new();
                 }
-                // Ungueltiger Marker: verworfen, bevor irgendeine Prosa (auch eine Rueckfrage)
-                // freigegeben wird.
-            } else if offen.chars().count() > MARKER_MAX_ZEICHEN {
-                self.offen = None;
+            }
+            if offen.tiefe == 0 {
+                let fertig = self.offen.take();
+                if let Some(m) = fertig {
+                    if !m.ungueltig && aufruf_gueltig(&m.puffer, &self.werkzeuge) {
+                        aus.push_str(&self.prosa_speisen(&mut prosa));
+                        aus.push_str(&self.prosa_abschliessen());
+                        aus.push_str(&m.puffer);
+                        self.teile.push(m.puffer);
+                    }
+                    // Ungueltiger Marker: vollstaendig verworfen, nie als Prosa (auch nicht als
+                    // Rueckfrage) weitergegeben.
+                }
             }
         }
         aus.push_str(&self.prosa_speisen(&mut prosa));

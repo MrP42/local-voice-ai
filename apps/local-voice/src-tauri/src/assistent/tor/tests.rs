@@ -716,10 +716,53 @@ fn offener_marker_am_stromende_wird_verworfen() {
 }
 
 #[test]
-fn doppelt_geoeffneter_marker_gilt_als_prosa_und_neuer_marker() {
+fn verschachtelter_marker_schaltet_keinen_gueltigen_aufruf_frei() {
+    // Codex lva#410: `⟦⟦werkzeug <gueltig>⟧` und `⟦werkzeug <gueltig>` bleiben als ganze Sequenz
+    // ungueltig; der innere Aufruf erscheint weder im Delta noch im Rueckgabewert.
+    let faelle = [
+        format!("⟦{AUFRUF}"),
+        format!("⟦werkzeug {AUFRUF}"),
+        format!("⟦{AUFRUF}⟧"),
+        format!("⟦x {AUFRUF} y⟧ Soll ich fortfahren?"),
+    ];
+    for fall in &faelle {
+        for stueck in [1, 3, 1000] {
+            let mut t = StromTor::neu(Sprache::De, &[], register());
+            let aus = strom(&mut t, fall, stueck);
+            assert!(!aus.contains("calendar_events"), "{fall} / {stueck}: {aus}");
+            assert!(!t.ausgabe().contains("calendar_events"), "{fall}");
+            assert!(!aus.contains('⟦') && !aus.contains('⟧'), "{aus}");
+        }
+    }
+    // Nach vollstaendigem Schliessen der verschachtelten Sequenz geht ein neuer, gueltiger Aufruf.
     let mut t = StromTor::neu(Sprache::De, &[], register());
-    let aus = strom(&mut t, &format!("⟦werkzeug {AUFRUF}"), 3);
-    assert_eq!(aus, AUFRUF, "{aus}");
+    let aus = strom(&mut t, &format!("⟦{AUFRUF}⟧{AUFRUF2}"), 2);
+    assert_eq!(aus, AUFRUF2, "{aus}");
+}
+
+#[test]
+fn ueberlanger_offener_marker_verwirft_bis_zum_schluss() {
+    // Codex lva#410: Ueberlaenge darf den Verwerf-Zustand nie beenden, auch ueber Stueckgrenzen.
+    let lang = format!("⟦{}Soll ich fortfahren?⟧", "x".repeat(16_384));
+    for stueck in [1, 7, 4096, 100_000] {
+        let mut t = StromTor::neu(Sprache::De, &[], register());
+        let aus = strom(&mut t, &lang, stueck);
+        assert!(
+            !aus.contains("fortfahren") && !aus.contains('x'),
+            "{stueck}: {}",
+            aus.len()
+        );
+        assert!(!t.ausgabe().contains("fortfahren") && !t.prosa().contains("fortfahren"));
+        assert_eq!(aus.trim(), keine_quelle_angebot(Sprache::De), "{stueck}");
+    }
+    // Danach wieder normale Verarbeitung.
+    let mut t = StromTor::neu(Sprache::De, &[], register());
+    let aus = strom(&mut t, &format!("{lang} Soll ich weitermachen?"), 4096);
+    assert_eq!(aus.trim(), "Soll ich weitermachen?");
+    // Ueberlanger Marker ohne Schluss bis Stromende: alles verworfen.
+    let mut t = StromTor::neu(Sprache::De, &[], register());
+    let aus = strom(&mut t, &format!("⟦{} Soll ich?", "y".repeat(20_000)), 999);
+    assert_eq!(aus.trim(), keine_quelle_angebot(Sprache::De));
 }
 
 #[test]
