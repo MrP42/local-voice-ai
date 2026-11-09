@@ -9084,6 +9084,21 @@
     }
   },
   "ablage": {
+    "semantik": {
+      "titel": "Semantische Suche",
+      "hinweis": "Findet auch umschriebene Begriffe. Läuft nur auf diesem Gerät; die Vektoren bleiben im lokalen Suchindex und werden nie synchronisiert.",
+      "laden": "Modell laden ({{mb}} MB)",
+      "optIn": "Noch nicht Standard: zeigt öfter Treffer, auch wenn kein passender Beleg existiert.",
+      "status": {
+        "aus": "Aus – es wird wörtlich gesucht.",
+        "fehlt": "Modell nicht geladen ({{mb}} MB) – bis dahin wird wörtlich gesucht.",
+        "laedt": "Modell wird geladen … {{prozent}} %",
+        "fehler": "Das Modell konnte nicht geladen werden – es wird wörtlich gesucht.",
+        "nachziehen": "Suchindex wird erweitert …",
+        "wartet": "Noch {{anzahl}} Textstellen ohne Vektor – bis dahin wird wörtlich gesucht.",
+        "aktiv": "Aktiv – Treffer auch für sinngleiche Begriffe."
+      }
+    },
     "titel": "Ablage",
     "beschreibung": "Dokumente ordnen und lokal aufbewahren.",
     "suche": "Namen und Inhalte durchsuchen",

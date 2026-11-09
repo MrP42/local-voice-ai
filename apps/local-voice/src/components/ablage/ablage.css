@@ -612,6 +612,26 @@
   padding: 0 12px 6px;
   font-weight: 600;
 }
+.ablage-semantik {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin: 0 12px 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--color-border, rgba(0, 0, 0, 0.12));
+  border-radius: 6px;
+}
+.ablage-semantik__text {
+  display: flex;
+  flex: 1 1 220px;
+  flex-direction: column;
+  min-width: 0;
+  font-size: 12px;
+}
+.ablage-semantik__titel {
+  font-weight: 600;
+}
 .ablage-suche__titel {
   margin: 8px 12px 4px;
   font-size: 12px;

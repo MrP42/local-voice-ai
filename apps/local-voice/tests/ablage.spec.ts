@@ -435,6 +435,24 @@ async function installMock(
               s.papierkorb = s.papierkorb.filter((k) => k.id !== args?.id);
               return null;
             }
+            // D6: semantische Suche (Opt-in), Modell zunächst nicht geladen.
+            if (cmd.startsWith("ablage_semantik_")) {
+              const sem = ((w.__semantik as Record<string, unknown>) ??= {
+                an: false,
+                standard: false,
+                modell_bereit: false,
+                laedt: false,
+                groesse_mb: 488,
+                ladefehler: false,
+                nachziehen: false,
+                vektoren_fehlen: 0,
+                aktiv: false,
+              });
+              if (cmd === "ablage_semantik_setzen") sem.an = !!args?.an;
+              if (cmd === "ablage_semantik_laden") sem.modell_bereit = true;
+              sem.aktiv = !!sem.an && !!sem.modell_bereit;
+              return { ...sem };
+            }
             if (cmd.startsWith("ablage_")) return null;
             if (cmd === "tts_server_status")
               return { phase: "stopped", message: null };
@@ -735,6 +753,46 @@ for (const theme of THEMEN) {
         if (breite < 1024) await page.keyboard.press("Escape");
         await feld.fill("zzz");
         await expect(page.getByTestId("ablage-inhalt-leer")).toBeVisible();
+      });
+
+      test("suche: semantische Suche einschalten und Modell laden", async ({
+        page,
+      }) => {
+        await installMock(page, { theme });
+        await offne(page, breite, theme);
+        await waehle(page, "o_allg");
+        const feld = await suchfeld(page);
+        await feld.fill("Kündigung");
+        await expect(
+          page.getByTestId("ablage-inhaltstreffer-d7"),
+        ).toBeVisible();
+        const zeile = page.getByTestId("ablage-semantik");
+        await expect(zeile).toBeVisible();
+        const status = page.getByTestId("ablage-semantik-status");
+        await expect(status).toContainText("wörtlich gesucht");
+        await page.getByTestId("ablage-semantik-schalter").click();
+        await expect(status).toContainText("Modell nicht geladen (488 MB)");
+        await expect(status).toContainText("Noch nicht Standard");
+        await page.getByTestId("ablage-semantik-laden").click();
+        await expect(status).toContainText("Aktiv");
+        await expect(page.getByTestId("ablage-semantik-laden")).toHaveCount(0);
+        await expect(zeile).not.toContainText(/\bablage\.[a-z]+\./);
+        const aufrufe = () =>
+          page.evaluate(
+            () =>
+              (
+                (window as unknown as { __calls: [string, unknown][] })
+                  .__calls ?? []
+              ).filter(([c]) => c === "ablage_suchen").length,
+          );
+        // Jeder Wechsel der Suchart wiederholt die Inhaltssuche (verzögert).
+        const vorher = await aufrufe();
+        await page.getByTestId("ablage-semantik-schalter").click();
+        await expect(status).toContainText("wörtlich gesucht");
+        await expect.poll(aufrufe).toBeGreaterThan(vorher);
+        await page.getByTestId("ablage-semantik-schalter").click();
+        await expect(status).toContainText("Aktiv");
+        await aufnahme(page, "semantik", breite, theme, ROOT);
       });
 
       test("papierkorb: zwei Einträge", async ({ page }) => {

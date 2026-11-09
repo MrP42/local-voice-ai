@@ -1,4 +1,4 @@
-//! Dokumentenablage, Stufen D1 und D2 (Epic local-voice-ai#395, Issues #407/#408, wai-sdk ADR-0029).
+//! Dokumentenablage, Stufen D1, D2 und D6 (Epic local-voice-ai#395, Issues #407/#408, wai-sdk ADR-0029).
 //!
 //! Lokale Ablage im Datenordner der App: Ordner, Dateien mit Fassungen, Papierkorb, sichere Ablage mit
 //! Journal und Wiederanlauf, gerätelokale KI-Freigaben (D1); Textfassungen im begrenzten Unterprozess,
@@ -12,6 +12,7 @@
 //! * [`textlauf`]: der Unterprozess `lva-extrakt` mit Zeit- und Speichergrenze.
 //! * [`textfassung`]: Warteschlange (ein Arbeiter, abbrechbar, Wiederanlauf aus dem Stand).
 //! * [`index`]: `index.db` über `wai-retrieval`, Abgleich und Suche.
+//! * [`semantik`]: D6, lokale Vektoren (`multilingual-e5-small`, ONNX) für die hybride Suche (Opt-in).
 //! * [`befehle`]: die Tauri-Befehle.
 //!
 //! Datenschutz: nie Datei- oder Ordnernamen, Pfade oder Inhalte in Log oder Fehlertext; Fehler tragen
@@ -22,6 +23,7 @@ pub mod befehle;
 pub mod extrakt;
 pub mod freigabe;
 pub mod index;
+pub mod semantik;
 pub mod speicher;
 pub mod textfassung;
 pub mod textlauf;

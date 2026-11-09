@@ -9084,6 +9084,21 @@
     }
   },
   "ablage": {
+    "semantik": {
+      "titel": "Semantic search",
+      "hinweis": "Also finds paraphrased terms. Runs only on this device; the vectors stay in the local search index and are never synced.",
+      "laden": "Download model ({{mb}} MB)",
+      "optIn": "Not the default yet: more often shows results even when no matching evidence exists.",
+      "status": {
+        "aus": "Off – searching for exact words.",
+        "fehlt": "Model not downloaded ({{mb}} MB) – searching for exact words until then.",
+        "laedt": "Downloading model … {{prozent}} %",
+        "fehler": "The model could not be loaded – searching for exact words.",
+        "nachziehen": "Extending the search index …",
+        "wartet": "{{anzahl}} passages still without a vector – searching for exact words until then.",
+        "aktiv": "Active – also finds terms with the same meaning."
+      }
+    },
     "titel": "Files",
     "beschreibung": "Organise and keep documents locally.",
     "suche": "Search names and contents",

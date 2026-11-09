@@ -1128,6 +1128,38 @@ async ablageTextAbbrechen() : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async ablageSemantikStand() : Promise<Result<AblageSemantik, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_semantik_stand") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Einstellung „Semantische Suche“. Einschalten bettet die vorhandenen Stücke im Hintergrund ein (nur
+ * mit geladenem Modell); Ausschalten gibt das Modell frei, die Suche ist sofort wieder lexikalisch.
+ */
+async ablageSemantikSetzen(an: boolean) : Promise<Result<AblageSemantik, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_semantik_setzen", { an }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Lädt Modell und Zerleger (auf Knopfdruck), je Datei mit Größe und SHA-256 aus dem Katalog.
+ * Fortschritt über `model-download-progress` (Kennung [`semantik::MODELL_ID`]).
+ */
+async ablageSemantikLaden() : Promise<Result<AblageSemantik, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_semantik_laden") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Stuft eine Aeusserung lokal ein (ADR-0028 E4.1) fuer Ansagen und S0-Vorlagen. `None`, wenn
  * diese abgeschaltet sind (`assistent_einstufung_aktiv`); das Tor vor dem Modell bleibt davon
@@ -8513,6 +8545,46 @@ datenklasse: string;
  * Wirksame Klasse (`public` … `personal`, `unbekannt`).
  */
 klasse: string; nur_geraet: boolean; nur_geraet_wirksam: boolean; zielordner_ki: boolean; ki: AblageKi; dateien: number }
+/**
+ * Zustand der semantischen Suche für die Seite „Ablage“.
+ */
+export type AblageSemantik = { 
+/**
+ * Einstellung „Semantische Suche“.
+ */
+an: boolean; 
+/**
+ * Ist die semantische Suche Standard (Eval-Tor bestanden)?
+ */
+standard: boolean; 
+/**
+ * Modell und Zerleger liegen vor.
+ */
+modell_bereit: boolean; 
+/**
+ * Download läuft.
+ */
+laedt: boolean; 
+/**
+ * Downloadgröße in MB.
+ */
+groesse_mb: number; 
+/**
+ * Das Modell ließ sich nicht laden (lexikalische Suche aktiv).
+ */
+ladefehler: boolean; 
+/**
+ * Vektoren werden gerade erstellt.
+ */
+nachziehen: boolean; 
+/**
+ * Stücke ohne Vektor (bis zum Ende des Nachziehens wirkt nur die lexikalische Suche).
+ */
+vektoren_fehlen: number; 
+/**
+ * Die Suche nutzt gerade Vektoren.
+ */
+aktiv: boolean }
 export type AblageSicht = { 
 /**
  * `null` = lesbar; sonst blockiert alles bis zur Bedienung „Bestand neu aufbauen“ (falls möglich).
@@ -9045,6 +9117,12 @@ book_talk_preview_bindings?: PreviewBinding[];
  * geladen ist; ohne den Schluessel gilt `true`. Kein Abgleich ueber Besprechungen.
  */
 meeting_voice_suggestions?: boolean; 
+/**
+ * Ablage D6: semantische Suche (lokale Vektoren mit multilingual-e5-small). Wirkt erst, wenn
+ * das Modell geladen ist; ohne Modell bleibt die Suche lexikalisch. Standard aus dem Eval-Tor
+ * (`ablage::semantik::SEMANTIK_STANDARD`).
+ */
+ablage_semantische_suche?: boolean; 
 /**
  * D3 (#70): Bildanalyse fuer Folien. Gemma 4 E4B liest den Text erkannter Folien neu
  * (Zahlen und Tabellen stimmen) und beschreibt sie; dafuer startet der lokale Server

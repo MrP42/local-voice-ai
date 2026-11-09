@@ -12,8 +12,12 @@
 //! * [`abgleichen`] ist der einzige Schreibweg: vergleicht den Stempel je Datei mit dem Stand der Ablage
 //!   und schreibt nur Abweichungen (Ablegen, Löschen, Verschieben, Papierkorb, Wiederherstellen, neue
 //!   Textfassung). Zweimal hintereinander ändert nichts; [`neu_aufbauen`] löscht `index.db` und gleicht ab.
+//! * D6: Abgleich und Suche nehmen eine [`AblageEinbettung`] (Standard: die wirksame des Prozesses).
+//!   Ohne Vektoren bleibt alles lexikalisch wie in D2; mit Vektoren mischt `wai-retrieval` beide Listen
+//!   per RRF. [`vektoren_nachziehen`] bettet nach dem Einschalten alle Stücke ein.
 
 use super::extrakt::Textfassung;
+use super::semantik::AblageEinbettung;
 use super::speicher::{Ablage, IndexQuelle};
 use super::{datei_id_pruefen, Fehler, Res};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -21,7 +25,7 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use wai_retrieval::{Acl, Embedder, IngestDoc, RetrievalError, Retriever};
+use wai_retrieval::{Acl, IngestDoc, RetrievalError, Retriever};
 
 pub const INDEX: &str = "index.db";
 pub const MANDANT: &str = "ablage";
@@ -40,18 +44,6 @@ fn sperren() -> std::sync::MutexGuard<'static, ()> {
 
 fn fehler() -> Fehler {
     Fehler::neu("ablage.index", "Der Suchindex ist gerade nicht verfügbar.")
-}
-
-/// D2 sucht nur lexikalisch: kein Embedder (D6 ersetzt das durch das lokale Modell).
-struct OhneEinbettung;
-
-impl Embedder for OhneEinbettung {
-    fn id(&self) -> String {
-        "keiner".into()
-    }
-    async fn embed(&self, _text: &str) -> wai_retrieval::Result<Vec<f32>> {
-        Err(RetrievalError::Embedding("lexikalisch".into()))
-    }
 }
 
 /// Fundstelle in einer Datei.
@@ -191,8 +183,15 @@ pub struct AblageIndexBericht {
     pub stuecke: u32,
 }
 
-/// Bringt `index.db` auf den Stand der Ablage (nur Abweichungen werden geschrieben).
+/// Bringt `index.db` auf den Stand der Ablage (nur Abweichungen werden geschrieben), mit der wirksamen
+/// Einbettung des Prozesses ([`super::semantik::aktuell`]).
 pub fn abgleichen(a: &Ablage) -> Res<AblageIndexBericht> {
+    abgleichen_mit(a, &super::semantik::aktuell())
+}
+
+/// Wie [`abgleichen`] mit ausdrücklicher Einbettung. Neue Stücke bekommen sofort Vektoren, wenn der
+/// Index schon im Vektorraum von `emb` liegt; sonst bleiben sie lexikalisch bis [`vektoren_nachziehen`].
+pub fn abgleichen_mit(a: &Ablage, emb: &AblageEinbettung) -> Res<AblageIndexBericht> {
     let _g = sperren();
     let quellen = a.index_quellen()?;
     let pfad = index_pfad(a)?;
@@ -244,7 +243,7 @@ pub fn abgleichen(a: &Ablage) -> Res<AblageIndexBericht> {
     if !weg.is_empty() || !neu.is_empty() {
         let rt = laufzeit()?;
         rt.block_on(async {
-            let r = Retriever::open(&pfad, OhneEinbettung)
+            let r = Retriever::open(&pfad, emb.clone())
                 .await
                 .map_err(|_| fehler())?;
             for d in &weg {
@@ -341,6 +340,10 @@ pub fn abgleichen(a: &Ablage) -> Res<AblageIndexBericht> {
 /// „Index neu aufbauen“: `index.db` löschen und vollständig abgleichen (Extraktor-/Embedder-Wechsel,
 /// beschädigter Index).
 pub fn neu_aufbauen(a: &Ablage) -> Res<AblageIndexBericht> {
+    neu_aufbauen_mit(a, &super::semantik::aktuell())
+}
+
+pub fn neu_aufbauen_mit(a: &Ablage, emb: &AblageEinbettung) -> Res<AblageIndexBericht> {
     {
         let _g = sperren();
         let p = index_pfad(a)?;
@@ -353,7 +356,72 @@ pub fn neu_aufbauen(a: &Ablage) -> Res<AblageIndexBericht> {
             }
         }
     }
-    abgleichen(a)
+    abgleichen_mit(a, emb)
+}
+
+/// Bettet alle Stücke neu ein, wenn der Index nicht im Vektorraum von `emb` liegt oder Stücke ohne
+/// Vektor hat (Einschalten, Modellwechsel, Stücke aus der lexikalischen Zeit). Hält die Indexsperre
+/// nicht: `wai-retrieval` bettet außerhalb der Schreibtransaktion ein und verwirft das Ergebnis, wenn
+/// parallel neu indexiert wurde (dann ein zweiter Versuch). Liefert die Zahl eingebetteter Stücke.
+pub fn vektoren_nachziehen(a: &Ablage, emb: &AblageEinbettung) -> Res<u32> {
+    if !emb.ist_semantisch() {
+        return Ok(0);
+    }
+    let pfad = index_pfad(a)?;
+    if !pfad.is_file() {
+        return Ok(0);
+    }
+    laufzeit()?.block_on(async {
+        let r = Retriever::open(&pfad, emb.clone())
+            .await
+            .map_err(|_| fehler())?;
+        for _ in 0..2 {
+            let st = r.status_for(MANDANT).await.map_err(|_| fehler())?;
+            if !st.reindex_needed && st.missing_vectors == 0 {
+                return Ok(0);
+            }
+            match r.reindex(MANDANT).await {
+                Ok(n) => return Ok(n.min(u32::MAX as usize) as u32),
+                Err(RetrievalError::Conflict(_)) => continue,
+                Err(_) => return Err(fehler()),
+            }
+        }
+        Err(fehler())
+    })
+}
+
+/// Zustand der Vektoren für die Oberfläche: (Neuaufbau nötig, Stücke ohne Vektor). Ohne Index: (false, 0).
+pub fn vektor_stand(a: &Ablage, emb: &AblageEinbettung) -> Res<(bool, u32)> {
+    if !emb.ist_semantisch() {
+        return Ok((false, 0));
+    }
+    let pfad = index_pfad(a)?;
+    if !pfad.is_file() {
+        return Ok((false, 0));
+    }
+    laufzeit()?.block_on(async {
+        let r = Retriever::open(&pfad, emb.clone())
+            .await
+            .map_err(|_| fehler())?;
+        let st = r.status_for(MANDANT).await.map_err(|_| fehler())?;
+        Ok((
+            st.reindex_needed,
+            st.missing_vectors.clamp(0, u32::MAX as i64) as u32,
+        ))
+    })
+}
+
+/// Leert den Abfrage-Zwischenspeicher von `wai-retrieval` (Moduswechsel: eine zwischengespeicherte
+/// Rangfolge der anderen Suchart darf nicht wiederkommen).
+pub fn zwischenspeicher_leeren(a: &Ablage) -> Res<()> {
+    let _g = sperren();
+    let pfad = index_pfad(a)?;
+    if !pfad.is_file() {
+        return Ok(());
+    }
+    let c = verbinden(&pfad)?;
+    let _ = c.execute_batch("DELETE FROM qcache; DELETE FROM qcache_src;");
+    Ok(())
 }
 
 fn leser() -> wai_security::Principal {
@@ -373,6 +441,16 @@ fn leser() -> wai_security::Principal {
 /// Volltextsuche (ohne KI): Fundstellen lebender Dateien mit Auszug und Anker, beste zuerst. Der
 /// Papierkorb ist schon in SQL ausgeschlossen; zur Sicherheit wird gegen den aktuellen Stand gefiltert.
 pub fn suchen(a: &Ablage, anfrage: &str) -> Res<Vec<AblageSuchtreffer>> {
+    suchen_mit(a, anfrage, &super::semantik::aktuell())
+}
+
+/// Wie [`suchen`] mit ausdrücklicher Einbettung: mit Vektoren hybrid (BM25 + Kosinus, RRF), sonst
+/// lexikalisch. Die Vektorliste wirkt nur, wenn der Index im Vektorraum von `emb` liegt.
+pub fn suchen_mit(
+    a: &Ablage,
+    anfrage: &str,
+    emb: &AblageEinbettung,
+) -> Res<Vec<AblageSuchtreffer>> {
     let anfrage: String = anfrage.chars().take(200).collect();
     if wai_retrieval::content_tokens(&anfrage).is_empty() {
         return Ok(vec![]);
@@ -384,7 +462,7 @@ pub fn suchen(a: &Ablage, anfrage: &str) -> Res<Vec<AblageSuchtreffer>> {
     let _g = sperren();
     let trace = format!("{:032x}", ulid::Ulid::new().0);
     let antwort = laufzeit()?.block_on(async {
-        let r = Retriever::open(&pfad, OhneEinbettung)
+        let r = Retriever::open(&pfad, emb.clone())
             .await
             .map_err(|_| fehler())?;
         r.query(&leser(), &trace, &anfrage, KANDIDATEN)

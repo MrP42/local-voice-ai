@@ -179,6 +179,9 @@ export const AblagePage: React.FC = () => {
   // Inhaltssuche (verzögert); läuft erneut, wenn sich der Stand ändert (neue Textfassungen).
   const anfrage = suche.trim();
   const sucheAktiv = anfrage.length >= 2 && ansicht !== KORB;
+  // D6: Wechsel der Suchart (semantisch an/aus, Vektoren fertig) wiederholt die Inhaltssuche.
+  const [suchart, setSuchart] = useState(0);
+  const suchartGeaendert = useCallback(() => setSuchart((n) => n + 1), []);
   useEffect(() => {
     if (!sucheAktiv) {
       setInhaltTreffer(null);
@@ -204,7 +207,7 @@ export const AblagePage: React.FC = () => {
       aktuell = false;
       window.clearTimeout(zeit);
     };
-  }, [anfrage, sucheAktiv, sicht]);
+  }, [anfrage, sucheAktiv, sicht, suchart]);
 
   // Gültige Auswahl: Ordner (oder Papierkorb) und Datei.
   useEffect(() => {
@@ -849,6 +852,7 @@ export const AblagePage: React.FC = () => {
               inhalt={inhaltTreffer}
               fehler={suchFehler}
               pfadText={pfadText}
+              onSuchartGeaendert={suchartGeaendert}
               onOeffnen={trefferOeffnen}
             />
           )}
