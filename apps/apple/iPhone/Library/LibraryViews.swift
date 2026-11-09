@@ -301,6 +301,8 @@ struct ShelfItem: View {
     @ObservedObject var library = PhoneLibrary.shared
     @ObservedObject var downloads = AudioDownloads.shared
     @Environment(\.dynamicTypeSize) private var typeSize
+    /// Höhe des Download-Symbols: Jede Statuszeile ist mindestens so hoch, mit oder ohne Symbol (lva#421).
+    @ScaledMetric(relativeTo: .caption) private var markHeight: CGFloat = 15
     var body: some View {
         // Sprachfassungen (lva#344): Stand und Hörbuch der zuletzt aktiven Fassung, dazu die Sprachkürzel.
         let active = library.activeView(book)
@@ -336,6 +338,7 @@ struct ShelfItem: View {
                 }
                 if audio { DownloadedMark() }
             }
+            .frame(minHeight: typeSize.isAccessibilitySize ? nil : markHeight)
             }
         }
         .accessibilityElement(children: .combine)
