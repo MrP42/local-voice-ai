@@ -410,6 +410,8 @@ fn arbeiter() {
             }
         };
         let a = Ablage::neu(dir);
+        // Kopien verknüpfter Dateien, die ein Absturz hinterlassen hat (Kopien dieses Laufs bleiben).
+        super::verknuepft::zwischen_raeumen(a.dir());
         match lauf(
             &a,
             &prog,

@@ -46,12 +46,19 @@ pub trait OcrLeser {
 }
 
 /// Extraktor der Plattform, wenn sie eine OCR hat (Windows); sonst `None` (macOS, Linux).
+///
+/// In Tests immer `None` (Test-Naht): das Ergebnis hängt dann nicht von der Plattform ab; Tests mit OCR
+/// übergeben [`TEST_KENNUNG`] ausdrücklich.
 pub fn extraktor() -> Option<Kennung> {
-    #[cfg(windows)]
+    #[cfg(test)]
+    {
+        None
+    }
+    #[cfg(all(windows, not(test)))]
     {
         Some(windows_impl::KENNUNG)
     }
-    #[cfg(not(windows))]
+    #[cfg(all(not(windows), not(test)))]
     {
         None
     }
@@ -61,7 +68,10 @@ pub fn extraktor() -> Option<Kennung> {
 /// `ocr_nicht_verfuegbar`.
 fn leser() -> Result<Box<dyn OcrLeser>, ExtraktFehler> {
     #[cfg(test)]
-    if std::env::var("LVA_EXTRAKT_TEST").as_deref() == Ok("ocr") {
+    if matches!(
+        std::env::var("LVA_EXTRAKT_TEST").as_deref(),
+        Ok("ocr" | "ocr_zeit")
+    ) {
         return Ok(Box::new(TestLeser));
     }
     #[cfg(windows)]
@@ -146,6 +156,10 @@ impl OcrLeser for TestLeser {
     }
 
     fn pdf(&self, pfad: &Path, max_seiten: u32) -> Result<Vec<String>, ExtraktFehler> {
+        // `ocr_zeit`: vorübergehender Fehler der Engine (Zeitgrenze), der nicht am Inhalt liegt.
+        if std::env::var("LVA_EXTRAKT_TEST").as_deref() == Ok("ocr_zeit") {
+            return Err(ExtraktFehler::neu("zeit"));
+        }
         let b = std::fs::read(pfad).map_err(|_| ExtraktFehler::neu("lesen"))?;
         let t = String::from_utf8_lossy(&b);
         let Some((_, rest)) = t.split_once("OCRTEXT:") else {
@@ -177,6 +191,8 @@ mod windows_impl {
     use windows::Storage::{FileAccessMode, StorageFile};
 
     pub const KENNUNG: Kennung = ("windows-ocr", "1");
+    /// Längste Kante einer gerenderten PDF-Seite in Pixeln.
+    const MAX_RENDER_KANTE: u32 = 4000;
 
     fn bild_fehler(_: windows::core::Error) -> ExtraktFehler {
         ExtraktFehler::neu("ocr_bild")
@@ -220,8 +236,13 @@ mod windows_impl {
                 return Err(ExtraktFehler::neu("ocr_bild"));
             }
             if w <= self.grenze && h <= self.grenze {
+                // Auch ohne Verkleinern in das Format der Engine umwandeln (Bgra8, vormultipliziertes Alpha);
+                // `GetSoftwareBitmapAsync()` liefert das Rohformat der Datei (Gray8, Rgba16, Indexed …).
                 return decoder
-                    .GetSoftwareBitmapAsync()
+                    .GetSoftwareBitmapConvertedAsync(
+                        BitmapPixelFormat::Bgra8,
+                        BitmapAlphaMode::Premultiplied,
+                    )
                     .and_then(|op| op.get())
                     .map_err(bild_fehler);
             }
@@ -278,12 +299,14 @@ mod windows_impl {
             for i in 0..seiten {
                 let seite = doc.GetPage(i).map_err(pdf_fehler)?;
                 let groesse = seite.Size().map_err(pdf_fehler)?;
-                // Doppelte Größe (rund 192 dpi) für die Erkennung, höchstens die Grenze der Engine.
+                // Doppelte Größe (rund 192 dpi) für die Erkennung, höchstens die Grenze der Engine und
+                // `MAX_RENDER_KANTE` (große Pläne würden sonst hunderte MB je Seite belegen).
                 let (w, h) = (
                     f64::from(groesse.Width.max(1.0)) * 2.0,
                     f64::from(groesse.Height.max(1.0)) * 2.0,
                 );
-                let f = (f64::from(self.grenze) / w.max(h)).min(1.0);
+                let kante = f64::from(self.grenze.min(MAX_RENDER_KANTE));
+                let f = (kante / w.max(h)).min(1.0);
                 let optionen = PdfPageRenderOptions::new().map_err(pdf_fehler)?;
                 optionen
                     .SetDestinationWidth(((w * f) as u32).max(1))

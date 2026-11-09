@@ -14,10 +14,15 @@
 //! * `verknuepft/zwischen/`: Momentkopien, nur während einer Extraktion.
 //!
 //! Schutz: der verknüpfte Pfad ist kanonisch (kein Glied eine Verknüpfung) und wird vor jedem Abtasten erneut
-//! geprüft; im Baum werden Verknüpfungen (Symlink, Junction, Reparse Point) nie gefolgt, Hartlinks abgewiesen,
-//! Ausschlüsse (`~$*`, `*.tmp`, Systemordner) übersprungen. Die Momentkopie wird ohne Folgen von Verknüpfungen
-//! geöffnet, beim Kopieren gehasht, danach erneut gehasht und gegen Größe und Änderungszeit der Quelle vor und
-//! nach dem Kopieren geprüft. Nie Namen, Pfade oder Inhalte im Log.
+//! geprüft; im Baum werden Verknüpfungen (Symlink, Junction, unbekannte Reparse Points) nie gefolgt,
+//! Hartlinks abgewiesen, Ausschlüsse (`~$*`, `*.tmp`, Systemordner) übersprungen. Windows: Cloud-Platzhalter
+//! (OneDrive) gelten nur dann nicht als Verknüpfung, wenn die Datei auf dem Gerät liegt; sonst wird sie
+//! ausgelassen und nie ein Download ausgelöst (`ablage::reparse_urteil`). Die Momentkopie prüft vor dem Öffnen
+//! die Wurzel und jede Komponente des relativen Pfades (nicht nur die letzte), öffnet die Datei ohne Folgen
+//! von Verknüpfungen, vergleicht Größe und Änderungszeit am offenen Handle mit dem Bestand, hasht beim
+//! Kopieren, prüft die Quelle nach dem Kopieren erneut und hasht die Kopie noch einmal. Bleibt nach einem
+//! Absturz eine Kopie in `zwischen/` liegen, räumen Beobachter, Textarbeiter und das Lösen sie weg. Nie Namen,
+//! Pfade oder Inhalte im Log.
 //!
 //! Dateibeobachter: ein Hintergrundfaden tastet die verknüpften Ordner im Takt [`TAKT`] ab und übernimmt eine
 //! Änderung erst, wenn sie über die Ruhezeit [`RUHE`] stabil bleibt ([`Entpreller`]); dann Bestand, Index und
@@ -30,15 +35,15 @@ use super::ocr::{self, Kennung};
 use super::speicher::{Ablage, AblageDatei, AblageKi, AblageOrdner, IndexQuelle, TrefferInfo};
 use super::textlauf::{self, Grenzen, Programm};
 use super::{
-    datei_hartverknuepft, id_gueltig, ist_umweg, jetzt_ms, neue_id, ordner_sync, schreibe_atomar,
-    Fehler, Res, PRAEFIX_DATEI, PRAEFIX_ORDNER,
+    datei_hartverknuepft, id_gueltig, ist_umweg, ist_umweg_baum, ist_umweg_offen, jetzt_ms,
+    neue_id, ordner_sync, schreibe_atomar, Fehler, Res, PRAEFIX_DATEI, PRAEFIX_ORDNER,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
@@ -58,6 +63,8 @@ pub const MAX_VERKNUEPFT: usize = 32;
 pub const TAKT: Duration = Duration::from_secs(20);
 /// Ruhezeit der Entprellung: eine Änderung gilt erst, wenn die nächste Abtastung danach gleich aussieht.
 pub const RUHE: Duration = Duration::from_secs(3);
+/// Höchstens so oft wird „zuletzt abgetastet“ ohne Änderung in den Bestand geschrieben (ms).
+const STEMPEL_MS: i64 = 60_000;
 
 /// Gespeicherte Stände eines Eintrags (`stand`).
 pub const AUSSTEHEND: &str = "ausstehend";
@@ -310,7 +317,7 @@ fn wurzel_pruefen(pfad: &Path) -> Res<PathBuf> {
         )
     };
     let m = fs::symlink_metadata(pfad).map_err(|_| unerreichbar())?;
-    if ist_umweg(&m) {
+    if ist_umweg_baum(pfad, &m) {
         return Err(Fehler::neu(
             "ablage.verknuepfung",
             "Der Pfad führt über eine Verknüpfung; nichts angefasst.",
@@ -417,6 +424,7 @@ pub fn loesen(a: &Ablage, id: &str) -> Res<()> {
         }
     }
     let _ = freigabe::vergessen(a.dir(), &[id.to_string()]);
+    zwischen_raeumen(a.dir());
     Ok(())
 }
 
@@ -528,6 +536,9 @@ pub struct Abtastung {
     pub dateien: BTreeMap<String, (u64, i64, String)>,
     pub ausgelassen: u32,
     pub zu_viele: bool,
+    /// Unterordner (relativer Pfad), die sich nicht lesen ließen: ihre bekannten Dateien bleiben im Bestand
+    /// (nicht lesbar heißt nicht gelöscht).
+    pub unlesbar: Vec<String>,
 }
 
 impl Abtastung {
@@ -556,9 +567,18 @@ impl Bestand {
                 .collect(),
             ausgelassen: self.ausgelassen,
             zu_viele: self.zu_viele,
+            unlesbar: Vec::new(),
         }
         .fingerabdruck()
     }
+}
+
+fn verzeichnis_lesen(p: &Path) -> std::io::Result<fs::ReadDir> {
+    #[cfg(test)]
+    if tests_haken::DIR_FEHLER.with(|d| d.borrow().iter().any(|x| x == p)) {
+        return Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+    }
+    fs::read_dir(p)
 }
 
 /// Tastet den Baum unter `v.pfad` ab, ohne Verknüpfungen zu folgen. Fehler: Ordner nicht (mehr) erreichbar
@@ -575,8 +595,16 @@ pub fn abtasten_roh(v: &Verknuepfung) -> Res<Abtastung> {
     let mut ab = Abtastung::default();
     let mut stapel: Vec<(PathBuf, String, usize)> = vec![(wurzel, String::new(), 0)];
     while let Some((dir, rel, tiefe)) = stapel.pop() {
-        let Ok(inhalt) = fs::read_dir(&dir) else {
+        let Ok(inhalt) = verzeichnis_lesen(&dir) else {
+            if rel.is_empty() {
+                // Die Wurzel selbst ist nicht lesbar: nichts abtasten, der alte Bestand bleibt.
+                return Err(Fehler::neu(
+                    "ablage.nicht_erreichbar",
+                    "Der verknüpfte Ordner ist nicht erreichbar.",
+                ));
+            }
             ab.ausgelassen += 1;
+            ab.unlesbar.push(rel);
             continue;
         };
         for e in inhalt {
@@ -593,7 +621,7 @@ pub fn abtasten_roh(v: &Verknuepfung) -> Res<Abtastung> {
                 ab.ausgelassen += 1;
                 continue;
             };
-            if ist_umweg(&m) {
+            if ist_umweg_baum(&p, &m) {
                 ab.ausgelassen += 1;
                 continue;
             }
@@ -710,6 +738,15 @@ pub fn uebernehmen(a: &Ablage, id: &str, ab: Option<&Abtastung>) -> Res<bool> {
         };
         neu.dateien.insert(rel.clone(), e);
     }
+    for (rel, e) in &alt.dateien {
+        let unlesbar = ab.unlesbar.iter().any(|u| {
+            rel.strip_prefix(u.as_str())
+                .is_some_and(|r| r.starts_with('/'))
+        });
+        if unlesbar && !neu.dateien.contains_key(rel) {
+            neu.dateien.insert(rel.clone(), e.clone());
+        }
+    }
     let lebend: BTreeSet<&str> = neu.dateien.values().map(|e| e.dat.as_str()).collect();
     for e in alt.dateien.values() {
         if !lebend.contains(e.dat.as_str()) {
@@ -720,9 +757,8 @@ pub fn uebernehmen(a: &Ablage, id: &str, ab: Option<&Abtastung>) -> Res<bool> {
         || alt.ausgelassen != neu.ausgelassen
         || alt.zu_viele != neu.zu_viele
         || alt.nicht_erreichbar;
-    if geaendert || alt.abgetastet == 0 {
-        bestand_schreiben(a.dir(), id, &neu)?;
-    }
+    // Jede übernommene Abtastung schreibt den Zeitpunkt („zuletzt abgetastet“) mit.
+    bestand_schreiben(a.dir(), id, &neu)?;
     Ok(geaendert)
 }
 
@@ -745,6 +781,44 @@ pub fn alle_abtasten(a: &Ablage) -> Res<bool> {
     Ok(geaendert)
 }
 
+/// „Neu einlesen“: setzt OCR- und Fehlermarken der Dateien eines (oder aller) verknüpften Ordner zurück, damit
+/// die Textfassung (und bei einem Bild-PDF die OCR) noch einmal versucht wird; auch die Rückstellungen dieses
+/// Prozesses entfallen. Fertige Textfassungen bleiben.
+pub fn marken_zuruecksetzen(a: &Ablage, id: Option<&str>) -> Res<()> {
+    let _g = sperren();
+    let l = liste_lesen(a.dir())?;
+    if id.is_some_and(|i| !l.ordner.iter().any(|v| v.id == i)) {
+        return Err(nicht_gefunden());
+    }
+    let mut dats: BTreeSet<String> = BTreeSet::new();
+    for v in l.ordner.iter().filter(|v| id.is_none_or(|i| v.id == i)) {
+        let mut b = bestand_lesen(a.dir(), &v.id);
+        let mut geaendert = false;
+        for e in b.dateien.values_mut() {
+            let fehler = e.stand == "fehler";
+            let ocr_marke = e.stand == "kein_text" && e.ocr.is_some();
+            if !fehler && !ocr_marke {
+                continue;
+            }
+            if fehler || ocr::ist_bild(&e.typ) {
+                e.stand = anfangsstand(&e.typ).into();
+            }
+            e.code = None;
+            e.versuche = 0;
+            e.ocr = None;
+            dats.insert(e.dat.clone());
+            geaendert = true;
+        }
+        if geaendert {
+            bestand_schreiben(a.dir(), &v.id, &b)?;
+        }
+    }
+    if let Ok(mut z) = ZURUECK.lock() {
+        z.retain(|(d, _, _)| !dats.contains(d));
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Textfassungen: Momentkopie, Unterprozess, OCR
 // ---------------------------------------------------------------------------
@@ -764,6 +838,8 @@ pub struct Auftrag {
     pub typ: String,
     pub groesse: u64,
     pub zeit: i64,
+    /// Verknüpfter Ordner (Wurzel); `quelle` ist `wurzel` plus `rel`.
+    pub wurzel: PathBuf,
     pub quelle: PathBuf,
     pub art: Art,
     pub versuche: u32,
@@ -773,12 +849,30 @@ fn ocr_marke(k: Kennung) -> String {
     format!("{}@{}", k.0, k.1)
 }
 
-fn wiederholbar(e: &Eintrag) -> bool {
-    e.stand == "fehler"
-        && e.code.as_deref().is_some_and(|c| {
-            super::speicher::VORUEBERGEHEND.contains(&c) || c == "verknuepft.lesen"
-        })
+/// Fehler der OCR, die nicht am Inhalt liegen müssen (Zeitgrenze, Speichergrenze des Unterprozesses): sie
+/// werden wie die anderen vorübergehenden Fehler höchstens [`super::speicher::MAX_VERSUCHE`]-mal versucht,
+/// statt die Datei sofort endgültig als „nicht lesbar“ zu markieren.
+const OCR_VORUEBERGEHEND: &[&str] = &["extrakt.zeit", "extrakt.abbruch"];
+
+fn ocr_vorlaeufig_code(code: Option<&str>) -> bool {
+    code.is_some_and(|c| OCR_VORUEBERGEHEND.contains(&c))
+}
+
+/// Die OCR dieser Datei ist vorübergehend gescheitert und hat noch Versuche übrig.
+fn ocr_wiederholbar(e: &Eintrag) -> bool {
+    e.ocr.is_some()
+        && ocr_vorlaeufig_code(e.code.as_deref())
         && e.versuche < super::speicher::MAX_VERSUCHE
+}
+
+fn wiederholbar(e: &Eintrag) -> bool {
+    if e.stand != "fehler" || e.versuche >= super::speicher::MAX_VERSUCHE {
+        return false;
+    }
+    e.code
+        .as_deref()
+        .is_some_and(|c| super::speicher::VORUEBERGEHEND.contains(&c) || c == "verknuepft.lesen")
+        || ocr_wiederholbar(e)
 }
 
 fn auftrag_art(e: &Eintrag, ocr: Option<Kennung>) -> Option<Art> {
@@ -788,7 +882,9 @@ fn auftrag_art(e: &Eintrag, ocr: Option<Kennung>) -> Option<Art> {
         AUSSTEHEND if bild => ocr.map(|_| Art::Ocr),
         AUSSTEHEND => Some(Art::Text),
         // Bild-PDF: Text war leer, die OCR dieser Plattform hat es noch nicht gelesen.
-        "kein_text" if e.typ == "pdf" && ocr.is_some() && !schon_ocr => Some(Art::Ocr),
+        "kein_text" if e.typ == "pdf" && ocr.is_some() && (!schon_ocr || ocr_wiederholbar(e)) => {
+            Some(Art::Ocr)
+        }
         "fehler" if wiederholbar(e) => Some(if bild { Art::Ocr } else { Art::Text }),
         _ => None,
     }
@@ -809,11 +905,12 @@ pub fn auftraege(a: &Ablage, ocr: Option<Kennung>) -> Res<Vec<Auftrag>> {
             let Some(art) = auftrag_art(e, ocr) else {
                 continue;
             };
-            let mut quelle = wurzel.clone();
-            for t in rel.split('/') {
-                quelle.push(t);
-            }
+            // Ein Bestand mit `..`, leeren Gliedern, Laufwerk oder absolutem Pfad ist nicht vertrauenswürdig.
+            let Some(quelle) = quellpfad(&wurzel, rel) else {
+                continue;
+            };
             aus.push(Auftrag {
+                wurzel: wurzel.clone(),
                 ordner: v.id.clone(),
                 rel: rel.clone(),
                 dat: e.dat.clone(),
@@ -861,12 +958,83 @@ fn sha_datei(p: &Path) -> std::io::Result<String> {
     Ok(extrakt::hex(&h.finalize()))
 }
 
-/// Geprüfte Momentkopie (Spec §8): Quelle ohne Folgen von Verknüpfungen öffnen, kein Hartlink, Größe und
-/// Änderungszeit wie beim Abtasten; Kopie mit `create_new` unter `verknuepft/zwischen/`, beim Kopieren
-/// gehasht, Quelle danach unverändert, Kopie erneut gehasht. Liefert Kopie und Prüfsumme; Fehler als Code.
+/// Pfad der Quelle unter `wurzel`: jedes Glied von `rel` (mit `/` getrennt) muss ein gewöhnlicher Name sein
+/// (nicht leer, nicht `.` oder `..`, kein Laufwerk oder Präfix, kein absoluter Pfad, kein Trenner).
+fn quellpfad(wurzel: &Path, rel: &str) -> Option<PathBuf> {
+    let mut p = wurzel.to_path_buf();
+    for t in rel.split('/') {
+        let mut c = Path::new(t).components();
+        match (c.next(), c.next()) {
+            (Some(Component::Normal(n)), None) if n == std::ffi::OsStr::new(t) => {}
+            _ => return None,
+        }
+        p.push(t);
+    }
+    Some(p)
+}
+
+/// Prüft die Wurzel erneut und jedes Glied des relativen Pfades (auch die Zwischenverzeichnisse): keine
+/// Verknüpfung, kein nicht lesbarer Platzhalter. Liefert den Pfad der Quelle.
+fn quelle_pruefen(wurzel: &Path, rel: &str) -> Result<PathBuf, &'static str> {
+    let ziel = quellpfad(wurzel, rel).ok_or("ablage.verknuepfung")?;
+    wurzel_pruefen(wurzel).map_err(|f| {
+        if f.code == "ablage.verknuepfung" {
+            "ablage.verknuepfung"
+        } else {
+            "verknuepft.lesen"
+        }
+    })?;
+    let mut p = wurzel.to_path_buf();
+    for t in rel.split('/') {
+        p.push(t);
+        let m = fs::symlink_metadata(&p).map_err(|_| "verknuepft.lesen")?;
+        if ist_umweg_baum(&p, &m) {
+            return Err("ablage.verknuepfung");
+        }
+    }
+    Ok(ziel)
+}
+
+/// Momentkopien, die gerade in Arbeit sind (nicht wegräumen); die Sperre schützt Anlegen und Räumen.
+static KOPIEN: Mutex<BTreeSet<PathBuf>> = Mutex::new(BTreeSet::new());
+
+fn kopie_abmelden(p: &Path) {
+    if let Ok(mut k) = KOPIEN.lock() {
+        k.remove(p);
+    }
+}
+
+/// Entfernt liegengebliebene Momentkopien (Klartext vertraulicher Dateien nach einem Absturz) aus
+/// `verknuepft/zwischen/`; Kopien eines laufenden Auftrags bleiben.
+pub fn zwischen_raeumen(dir: &Path) {
+    if ohne_umweg(dir, &[ORDNER, ZWISCHEN]).is_err() {
+        return;
+    }
+    let Ok(in_arbeit) = KOPIEN.lock() else {
+        return;
+    };
+    let Ok(inhalt) = fs::read_dir(ordner_dir(dir).join(ZWISCHEN)) else {
+        return;
+    };
+    for e in inhalt.flatten() {
+        let p = e.path();
+        if in_arbeit.contains(&p) {
+            continue;
+        }
+        if fs::symlink_metadata(&p).is_ok_and(|m| !m.is_dir()) {
+            let _ = fs::remove_file(&p);
+        }
+    }
+}
+
+/// Geprüfte Momentkopie (Spec §8): Wurzel und alle Glieder des Pfades ohne Verknüpfung, Quelle ohne Folgen
+/// von Verknüpfungen öffnen, kein Hartlink, Größe und Änderungszeit am offenen Handle wie beim Abtasten;
+/// Kopie mit `create_new` unter `verknuepft/zwischen/`, beim Kopieren gehasht, Quelle danach unverändert,
+/// Kopie erneut gehasht. Liefert Kopie und Prüfsumme; Fehler als Code.
 pub fn momentkopie(a: &Ablage, auf: &Auftrag) -> Result<(PathBuf, String), &'static str> {
-    let vor = fs::symlink_metadata(&auf.quelle).map_err(|_| "verknuepft.lesen")?;
-    if ist_umweg(&vor) || !vor.is_file() {
+    let quelle = quelle_pruefen(&auf.wurzel, &auf.rel)?;
+    let vor = fs::symlink_metadata(&quelle).map_err(|_| "verknuepft.lesen")?;
+    if ist_umweg_baum(&quelle, &vor) || !vor.is_file() {
         return Err("ablage.verknuepfung");
     }
     if (vor.len(), zeit_ms(&vor)) != (auf.groesse, auf.zeit) {
@@ -875,10 +1043,18 @@ pub fn momentkopie(a: &Ablage, auf: &Auftrag) -> Result<(PathBuf, String), &'sta
     if vor.len() > extrakt::MAX_EINGABE {
         return Err("extrakt.zu_gross");
     }
-    let mut von = oeffnen_ohne_folgen(&auf.quelle).map_err(|_| "verknuepft.lesen")?;
+    let mut von = oeffnen_ohne_folgen(&quelle).map_err(|_| "verknuepft.lesen")?;
+    // Ab hier zählt, was das Handle sagt (nicht mehr der Pfad): Art, Größe und Änderungszeit.
     let offen = von.metadata().map_err(|_| "verknuepft.lesen")?;
-    if ist_umweg(&offen) || !offen.is_file() {
+    if ist_umweg_offen(&von, &offen) || !offen.is_file() {
         return Err("ablage.verknuepfung");
+    }
+    #[cfg(windows)]
+    if windows_attribute(&offen).1 {
+        return Err("verknuepft.cloud");
+    }
+    if (offen.len(), zeit_ms(&offen)) != (auf.groesse, auf.zeit) {
+        return Err("verknuepft.geaendert");
     }
     if datei_hartverknuepft(&von) {
         return Err("ablage.hartlink");
@@ -889,12 +1065,18 @@ pub fn momentkopie(a: &Ablage, auf: &Auftrag) -> Result<(PathBuf, String), &'sta
     ohne_umweg(a.dir(), &[ORDNER, ZWISCHEN]).map_err(|_| "ablage.verknuepfung")?;
     let endung = if auf.typ.is_empty() { "bin" } else { &auf.typ };
     let kopie = zwischen.join(format!("{}.{endung}", ulid::Ulid::new()));
-    let ergebnis = (|| -> Result<String, &'static str> {
-        let mut nach = fs::OpenOptions::new()
+    let mut nach = {
+        let mut in_arbeit = KOPIEN.lock().map_err(|_| "verknuepft.speicher")?;
+        let f = fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(&kopie)
             .map_err(|_| "verknuepft.speicher")?;
+        in_arbeit.insert(kopie.clone());
+        f
+    };
+    let (quelle_r, kopie_r) = (&quelle, &kopie);
+    let ergebnis = (move || -> Result<String, &'static str> {
         let mut h = Sha256::new();
         let mut puffer = vec![0u8; 1024 * 1024];
         let mut n_ges: u64 = 0;
@@ -914,16 +1096,18 @@ pub fn momentkopie(a: &Ablage, auf: &Auftrag) -> Result<(PathBuf, String), &'sta
         nach.sync_all().map_err(|_| "verknuepft.speicher")?;
         drop(nach);
         #[cfg(test)]
-        tests_haken::nach_kopie(&auf.quelle);
+        tests_haken::nach_kopie(quelle_r);
         let sha = extrakt::hex(&h.finalize());
-        let nachher = fs::symlink_metadata(&auf.quelle).map_err(|_| "verknuepft.geaendert")?;
-        if ist_umweg(&nachher)
+        let nachher = fs::symlink_metadata(quelle_r).map_err(|_| "verknuepft.geaendert")?;
+        let nachher_offen = von.metadata().map_err(|_| "verknuepft.geaendert")?;
+        if ist_umweg_baum(quelle_r, &nachher)
             || (nachher.len(), zeit_ms(&nachher)) != (auf.groesse, auf.zeit)
+            || (nachher_offen.len(), zeit_ms(&nachher_offen)) != (auf.groesse, auf.zeit)
             || n_ges != auf.groesse
         {
             return Err("verknuepft.geaendert");
         }
-        if sha_datei(&kopie).map_err(|_| "verknuepft.speicher")? != sha {
+        if sha_datei(kopie_r).map_err(|_| "verknuepft.speicher")? != sha {
             return Err("ablage.pruefsumme");
         }
         Ok(sha)
@@ -932,6 +1116,7 @@ pub fn momentkopie(a: &Ablage, auf: &Auftrag) -> Result<(PathBuf, String), &'sta
         Ok(sha) => Ok((kopie, sha)),
         Err(c) => {
             let _ = fs::remove_file(&kopie);
+            kopie_abmelden(&kopie);
             Err(c)
         }
     }
@@ -947,6 +1132,8 @@ pub(crate) mod tests_haken {
 
     thread_local! {
         pub static NACH_KOPIE: RefCell<Haken> = const { RefCell::new(None) };
+        /// Ordner, deren `read_dir` im Test scheitert (auch als Administrator).
+        pub static DIR_FEHLER: RefCell<Vec<std::path::PathBuf>> = const { RefCell::new(Vec::new()) };
     }
 
     pub fn nach_kopie(p: &Path) {
@@ -1026,7 +1213,8 @@ pub fn bearbeiten(
     let (kopie, sha) = match momentkopie(a, auf) {
         Ok(x) => x,
         Err("verknuepft.geaendert") => return Ok(Ausgang::Geaendert),
-        Err("verknuepft.speicher") => return Ok(Ausgang::Uebersprungen),
+        // Cloud-Platzhalter ohne Daten auf dem Gerät: nie ein Download, in diesem Prozess nicht erneut.
+        Err("verknuepft.speicher" | "verknuepft.cloud") => return Ok(Ausgang::Uebersprungen),
         Err(c @ ("ablage.hartlink" | "ablage.verknuepfung")) => {
             return eintragen(
                 a,
@@ -1101,6 +1289,7 @@ pub fn bearbeiten(
         }
     };
     let _ = fs::remove_file(&kopie);
+    kopie_abmelden(&kopie);
     let ergebnis = match ergebnis {
         Ok(e) => e,
         Err(c) if c == "extrakt.abgebrochen" => return Ok(Ausgang::Abgebrochen),
@@ -1117,7 +1306,15 @@ pub fn bearbeiten(
             ocr: (auf.art == Art::Ocr).then(|| ocr.map(ocr_marke)).flatten(),
         },
     };
-    eintragen(a, auf, ergebnis, Some(sha))
+    // Vorübergehende OCR-Fehler tragen einen Versuch ein, bleiben aber offen; in diesem Prozess nicht erneut.
+    let vorlaeufig = ergebnis.stand == "kein_text"
+        && ergebnis.ocr.is_some()
+        && ocr_vorlaeufig_code(ergebnis.code.as_deref());
+    let r = eintragen(a, auf, ergebnis, Some(sha));
+    if vorlaeufig {
+        zurueckstellen(auf);
+    }
+    r
 }
 
 fn eintragen(a: &Ablage, auf: &Auftrag, erg: Ergebnis, sha: Option<String>) -> Res<Ausgang> {
@@ -1170,7 +1367,9 @@ fn eintragen(a: &Ablage, auf: &Auftrag, erg: Ergebnis, sha: Option<String>) -> R
         }
         ordner_sync(&tdir);
     }
-    let versuche = if erg.stand == "fehler" {
+    let ocr_vorlaeufig =
+        erg.stand == "kein_text" && erg.ocr.is_some() && ocr_vorlaeufig_code(erg.code.as_deref());
+    let versuche = if erg.stand == "fehler" || ocr_vorlaeufig {
         auf.versuche.saturating_add(1)
     } else {
         0
@@ -1462,6 +1661,8 @@ pub struct Entpreller {
     bekannt: Option<String>,
     kandidat: Option<(String, i64)>,
     ruhe_ms: i64,
+    /// Zeitpunkt, an dem „zuletzt abgetastet“ im Bestand zuletzt geschrieben wurde.
+    gestempelt: i64,
 }
 
 impl Entpreller {
@@ -1470,6 +1671,7 @@ impl Entpreller {
             bekannt,
             kandidat: None,
             ruhe_ms: ruhe.as_millis() as i64,
+            gestempelt: 0,
         }
     }
 
@@ -1526,6 +1728,11 @@ pub fn beobachten(
             Ok(ab) => {
                 if e.melden(&ab.fingerabdruck(), jetzt) {
                     uebernommen |= uebernehmen(a, &v.id, Some(&ab)).unwrap_or(false);
+                    e.gestempelt = jetzt;
+                } else if !e.wartet() && jetzt - e.gestempelt >= STEMPEL_MS {
+                    // Unverändert: nur „zuletzt abgetastet“ nachführen (nicht bei jedem Takt schreiben).
+                    let _ = uebernehmen(a, &v.id, Some(&ab));
+                    e.gestempelt = jetzt;
                 }
                 wartet |= e.wartet();
             }
@@ -1553,6 +1760,7 @@ pub fn beobachter_starten(dir: PathBuf, geaendert: Box<dyn Fn() + Send>) {
             .name("ablage-verknuepft".into())
             .spawn(move || {
                 let mut entpreller = BTreeMap::new();
+                zwischen_raeumen(a.dir());
                 loop {
                     let (uebernommen, wartet) = beobachten(&a, &mut entpreller, jetzt_ms(), RUHE);
                     if uebernommen {

@@ -531,7 +531,8 @@ fn ocr_im_unterprozess_prueft_typ_und_pruefsumme() {
         .unwrap_err(),
         "extrakt.ocr_nicht_verfuegbar"
     );
-    #[cfg(not(windows))]
+    // Test-Naht: in Tests meldet die Plattform nie eine OCR (auch unter Windows), sonst hinge die Sicht
+    // („ausstehend“ für Bilder) vom Betriebssystem ab.
     assert_eq!(ocr::extraktor(), None);
 }
 
@@ -639,4 +640,291 @@ fn eigene_ablage_wartung_und_sync_sehen_nichts() {
     e.a.freigaben_neu_festlegen().unwrap();
     let f = fs::read_to_string(e.a.dir().join("freigabe.json")).unwrap();
     assert!(f.contains(&id));
+}
+
+// ---------------------------------------------------------------------------
+// Fix-Runde: Pfadglieder, Zwischenordner, OCR-Wiederholung, Unterordner, Reparse-Tags
+// ---------------------------------------------------------------------------
+
+#[cfg(unix)]
+#[test]
+fn momentkopie_prueft_jedes_pfadglied_nicht_nur_das_letzte() {
+    let e = env();
+    e.schreiben(
+        "sub/innen/brief.txt",
+        format!("vertraulich {KONTROLLE}").as_bytes(),
+    );
+    e.verknuepfen();
+    let auf = verknuepft::auftraege(&e.a, None)
+        .unwrap()
+        .into_iter()
+        .find(|a| a.rel == "sub/innen/brief.txt")
+        .unwrap();
+    // Nach dem Abtasten: das Zwischenverzeichnis wird durch eine Verknüpfung auf einen anderen Ordner
+    // ersetzt, in dem eine gleich große Datei mit gleicher Änderungszeit liegt.
+    let draussen = e.d.path().join("draussen");
+    fs::create_dir_all(draussen.join("innen")).unwrap();
+    fs::copy(
+        e.quelle.join("sub/innen/brief.txt"),
+        draussen.join("innen/brief.txt"),
+    )
+    .unwrap();
+    fs::remove_dir_all(e.quelle.join("sub")).unwrap();
+    std::os::unix::fs::symlink(&draussen, e.quelle.join("sub")).unwrap();
+    assert_eq!(
+        verknuepft::momentkopie(&e.a, &auf).unwrap_err(),
+        "ablage.verknuepfung"
+    );
+    assert!(e.zwischen_leer(), "nichts gelesen, keine Kopie");
+    // Der Auftrag wird abgewiesen eingetragen (nie gelesen).
+    let r = verknuepft::bearbeiten(
+        &e.a,
+        &auf,
+        &kind(None),
+        TEST_GRENZEN,
+        &AtomicBool::new(false),
+        None,
+    )
+    .unwrap();
+    assert_eq!(r, Ausgang::Eingetragen("abgewiesen".into()));
+    assert!(e.treffer(KONTROLLE).is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn momentkopie_weist_verknuepfte_wurzel_ab() {
+    let e = env();
+    e.schreiben("a.txt", b"inhalt");
+    e.verknuepfen();
+    let auf = verknuepft::auftraege(&e.a, None).unwrap().remove(0);
+    let anders = e.d.path().join("anders");
+    fs::create_dir_all(&anders).unwrap();
+    fs::copy(e.quelle.join("a.txt"), anders.join("a.txt")).unwrap();
+    fs::remove_dir_all(&e.quelle).unwrap();
+    std::os::unix::fs::symlink(&anders, &e.quelle).unwrap();
+    assert_eq!(
+        verknuepft::momentkopie(&e.a, &auf).unwrap_err(),
+        "ablage.verknuepfung"
+    );
+    assert!(e.zwischen_leer());
+}
+
+#[test]
+fn auftraege_weisen_unsaubere_relative_pfade_ab() {
+    let e = env();
+    e.schreiben("gut.txt", b"gut");
+    let id = e.verknuepfen();
+    let p = e.a.dir().join("verknuepft").join(&id).join("bestand.json");
+    let mut b: serde_json::Value = serde_json::from_slice(&fs::read(&p).unwrap()).unwrap();
+    let gut = b["dateien"]["gut.txt"].clone();
+    let schlecht = [
+        "../aussen.txt",
+        "a/../b.txt",
+        "./x.txt",
+        "/abs.txt",
+        "",
+        "a//b.txt",
+        "a/",
+    ];
+    for rel in schlecht {
+        b["dateien"][rel] = gut.clone();
+    }
+    fs::write(&p, serde_json::to_vec(&b).unwrap()).unwrap();
+    let auf = verknuepft::auftraege(&e.a, None).unwrap();
+    let rels: Vec<&str> = auf.iter().map(|a| a.rel.as_str()).collect();
+    assert_eq!(rels, vec!["gut.txt"], "nur der saubere Pfad bleibt");
+    assert!(auf[0].quelle.starts_with(&e.quelle));
+}
+
+#[test]
+fn zwischen_wird_nach_absturz_geraeumt_beim_start_und_beim_loesen() {
+    let e = env();
+    e.schreiben("a.txt", b"x");
+    let id = e.verknuepfen();
+    let zw = e.a.dir().join("verknuepft").join("zwischen");
+    fs::create_dir_all(&zw).unwrap();
+    fs::write(zw.join("liegengeblieben.pdf"), b"Klartext vertraulich").unwrap();
+    assert!(!e.zwischen_leer());
+    // Start (Beobachter und Textarbeiter rufen das auf).
+    verknuepft::zwischen_raeumen(e.a.dir());
+    assert!(e.zwischen_leer());
+    // Lösen räumt ebenfalls.
+    fs::write(zw.join("noch_eine.txt"), b"Klartext").unwrap();
+    verknuepft::loesen(&e.a, &id).unwrap();
+    assert!(e.zwischen_leer());
+    // Ein Ordner ohne `zwischen/` ist kein Fehler.
+    verknuepft::zwischen_raeumen(&e.d.path().join("nichts"));
+}
+
+#[test]
+fn voruebergehende_ocr_fehler_bleiben_offen_und_neu_einlesen_setzt_zurueck() {
+    let e = env();
+    e.schreiben("Scan.pdf", &bild_pdf(&format!("Vertrag {KONTROLLE}")));
+    e.schreiben("Tafel.png", b"\x89PNG OCRTEXT: Whiteboard Eisvogel)");
+    let id = e.verknuepfen();
+    let k = Some(ocr::TEST_KENNUNG);
+    // Die OCR scheitert an der Zeitgrenze. Nicht endgültig: weiter offen, bis die Versuche aufgebraucht sind.
+    for versuch in 1..=3u32 {
+        let l = e.lauf(k, Some("ocr_zeit"));
+        assert_eq!(l.ok, 0, "{l:?}");
+        let b = verknuepft::bestand(e.a.dir(), &id);
+        let scan = &b.dateien["Scan.pdf"];
+        assert_eq!(scan.stand, "kein_text");
+        assert_eq!(scan.code.as_deref(), Some("extrakt.zeit"));
+        assert_eq!(scan.versuche, versuch);
+        let bild = &b.dateien["Tafel.png"];
+        assert_eq!(bild.stand, "fehler");
+        assert_eq!(bild.code.as_deref(), Some("extrakt.zeit"));
+        assert_eq!(bild.versuche, versuch);
+        let offen = verknuepft::auftraege(&e.a, k).unwrap().len();
+        assert_eq!(
+            offen,
+            if versuch < 3 { 2 } else { 0 },
+            "nach Versuch {versuch}"
+        );
+    }
+    // Ein neuer Lauf tut nichts mehr (Versuche aufgebraucht).
+    let l = e.lauf(k, Some("ocr"));
+    assert_eq!(l.ok, 0);
+    // „Neu einlesen“ setzt die Marken zurück: beides wird wieder gelesen.
+    verknuepft::marken_zuruecksetzen(&e.a, Some(&id)).unwrap();
+    let b = verknuepft::bestand(e.a.dir(), &id);
+    for rel in ["Scan.pdf", "Tafel.png"] {
+        assert_eq!(b.dateien[rel].versuche, 0);
+        assert_eq!(b.dateien[rel].code, None);
+        assert!(b.dateien[rel].ocr.is_none());
+    }
+    assert_eq!(verknuepft::auftraege(&e.a, k).unwrap().len(), 2);
+    let l = e.lauf(k, Some("ocr"));
+    assert_eq!(l.ok, 2, "{l:?}");
+    assert_eq!(e.treffer(KONTROLLE).len(), 1);
+    assert_eq!(e.treffer("Eisvogel").len(), 1);
+    // Unbekannte Kennung: nicht gefunden.
+    let fremd = super::neue_id(super::PRAEFIX_ORDNER);
+    assert_eq!(
+        code(verknuepft::marken_zuruecksetzen(&e.a, Some(&fremd)).unwrap_err()),
+        "ablage.nicht_gefunden"
+    );
+}
+
+#[test]
+fn unlesbarer_unterordner_laesst_dateien_nicht_als_geloescht_gelten() {
+    let e = env();
+    e.schreiben("oben.txt", b"oben");
+    e.schreiben("sub/tief/a.txt", format!("alt {KONTROLLE}").as_bytes());
+    let id = e.verknuepfen();
+    e.lauf(None, None);
+    assert_eq!(e.treffer(KONTROLLE).len(), 1);
+    let dat = e.rel_dat(&id, "sub/tief/a.txt");
+    verknuepft::tests_haken::DIR_FEHLER.with(|d| *d.borrow_mut() = vec![e.quelle.join("sub")]);
+    let ab = verknuepft::abtasten_roh(&verknuepft::liste(e.a.dir()).unwrap()[0]).unwrap();
+    assert_eq!(ab.unlesbar, vec!["sub".to_string()]);
+    assert!(ab.dateien.contains_key("oben.txt"));
+    assert!(!ab.dateien.contains_key("sub/tief/a.txt"));
+    verknuepft::abtasten(&e.a, &id).unwrap();
+    let b = verknuepft::bestand(e.a.dir(), &id);
+    assert!(!b.nicht_erreichbar);
+    assert_eq!(
+        b.dateien["sub/tief/a.txt"].dat, dat,
+        "Eintrag und Kennung bleiben"
+    );
+    assert_eq!(b.dateien["sub/tief/a.txt"].stand, "ok");
+    assert_eq!(e.treffer(KONTROLLE).len(), 1, "Text und Index bleiben");
+    // Die Wurzel selbst nicht lesbar: die ganze Abtastung scheitert, der Bestand bleibt.
+    verknuepft::tests_haken::DIR_FEHLER.with(|d| *d.borrow_mut() = vec![e.quelle.clone()]);
+    assert!(verknuepft::abtasten_roh(&verknuepft::liste(e.a.dir()).unwrap()[0]).is_err());
+    verknuepft::abtasten(&e.a, &id).unwrap();
+    let b = verknuepft::bestand(e.a.dir(), &id);
+    assert!(b.nicht_erreichbar);
+    assert_eq!(b.dateien.len(), 2);
+    verknuepft::tests_haken::DIR_FEHLER.with(|d| d.borrow_mut().clear());
+    // Wieder lesbar und wirklich gelöscht: jetzt fällt die Datei weg.
+    fs::remove_dir_all(e.quelle.join("sub")).unwrap();
+    verknuepft::abtasten(&e.a, &id).unwrap();
+    let b = verknuepft::bestand(e.a.dir(), &id);
+    assert!(!b.nicht_erreichbar);
+    assert!(!b.dateien.contains_key("sub/tief/a.txt"));
+}
+
+/// Echter Berechtigungsfehler (als Administrator wirkungslos: dort liest `read_dir` trotz `chmod 000`).
+#[cfg(unix)]
+#[test]
+fn unterordner_ohne_leserecht_bleibt_im_bestand() {
+    use std::os::unix::fs::PermissionsExt;
+    // SAFETY: `geteuid` hat keine Voraussetzungen.
+    if unsafe { libc::geteuid() } == 0 {
+        // Der Pfad ist über den Testhaken (`DIR_FEHLER`) im Test
+        // `unlesbarer_unterordner_laesst_dateien_nicht_als_geloescht_gelten` abgedeckt.
+        return;
+    }
+    let e = env();
+    e.schreiben("sub/a.txt", b"alt");
+    let id = e.verknuepfen();
+    let sub = e.quelle.join("sub");
+    fs::set_permissions(&sub, fs::Permissions::from_mode(0o000)).unwrap();
+    let r = verknuepft::abtasten(&e.a, &id);
+    fs::set_permissions(&sub, fs::Permissions::from_mode(0o755)).unwrap();
+    r.unwrap();
+    let b = verknuepft::bestand(e.a.dir(), &id);
+    assert!(b.dateien.contains_key("sub/a.txt"));
+}
+
+#[test]
+fn abgetastet_wird_bei_jedem_abtasten_aktualisiert() {
+    let e = env();
+    e.schreiben("a.txt", b"x");
+    let id = e.verknuepfen();
+    let t1 = verknuepft::bestand(e.a.dir(), &id).abgetastet;
+    assert!(t1 > 0);
+    std::thread::sleep(Duration::from_millis(20));
+    // Nichts geändert: der Zeitpunkt zählt trotzdem.
+    assert!(!verknuepft::abtasten(&e.a, &id).unwrap());
+    assert!(verknuepft::bestand(e.a.dir(), &id).abgetastet > t1);
+}
+
+#[test]
+fn reparse_urteil_wertet_tags_und_attribute() {
+    use super::{reparse_tag_cloud, reparse_urteil, Umweg};
+    const REPARSE: u32 = 0x400;
+    const OFFLINE: u32 = 0x1000;
+    const RECALL_OPEN: u32 = 0x4_0000;
+    const RECALL_DATA: u32 = 0x40_0000;
+    const SYMLINK: u32 = 0xA000_000C;
+    const MOUNT: u32 = 0xA000_0003;
+    const CLOUD: u32 = 0x9000_001A;
+    // Ohne Reparse-Attribut ist der Tag belanglos.
+    assert_eq!(reparse_urteil(SYMLINK, 0x20, false), Umweg::Nein);
+    assert_eq!(reparse_urteil(0, 0x20, true), Umweg::Nein);
+    // Symlink, Mount-Point (Junction) und Unbekanntes: immer abgewiesen, auch als Ordner.
+    for tag in [
+        SYMLINK,
+        MOUNT,
+        0x8000_001B,
+        0x8000_0013,
+        0xA000_001D,
+        0,
+        0x9000_001B,
+    ] {
+        for dir in [false, true] {
+            assert_eq!(reparse_urteil(tag, REPARSE, dir), Umweg::Ja, "{tag:#x}");
+        }
+    }
+    // Cloud-Tags samt Untertags `_1` bis `_F`.
+    assert!(reparse_tag_cloud(CLOUD));
+    for n in 1..=0xFu32 {
+        let t = CLOUD | (n << 12);
+        assert!(reparse_tag_cloud(t), "{t:#x}");
+        assert_eq!(reparse_urteil(t, REPARSE, false), Umweg::Nein);
+    }
+    assert!(!reparse_tag_cloud(SYMLINK));
+    assert!(!reparse_tag_cloud(0x9000_001B));
+    assert!(!reparse_tag_cloud(0x8000_001A));
+    // Datei: nur hydriert; nie ein Download.
+    for nur_cloud in [OFFLINE, RECALL_OPEN, RECALL_DATA, OFFLINE | RECALL_DATA] {
+        assert_eq!(reparse_urteil(CLOUD, REPARSE | nur_cloud, false), Umweg::Ja);
+    }
+    assert_eq!(reparse_urteil(CLOUD, REPARSE | 0x20, false), Umweg::Nein);
+    // Ordner mit Cloud-Tag: betreten erlaubt; Junction bleibt abgewiesen.
+    assert_eq!(reparse_urteil(CLOUD, REPARSE | 0x10, true), Umweg::Nein);
+    assert_eq!(reparse_urteil(MOUNT, REPARSE | 0x10, true), Umweg::Ja);
 }

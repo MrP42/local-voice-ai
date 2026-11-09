@@ -9316,7 +9316,15 @@
         "zu_gross": "Die Datei enthält zu viel Text.",
         "format": "Das Format wurde nicht erkannt.",
         "pdf": "Das PDF ließ sich nicht lesen.",
-        "tabelle": "Die Tabelle ließ sich nicht lesen."
+        "tabelle": "Die Tabelle ließ sich nicht lesen.",
+        "antwort": "Das Leseprogramm lieferte keine gültige Antwort.",
+        "programm": "Das Leseprogramm ließ sich nicht ausführen.",
+        "schutz": "Das Lesen wurde aus Sicherheitsgründen abgelehnt.",
+        "start": "Das Leseprogramm ließ sich nicht starten.",
+        "abgebrochen": "Das Lesen wurde abgebrochen.",
+        "mail": "Die E-Mail-Datei ließ sich nicht lesen.",
+        "xml": "Die XML-Datei ließ sich nicht lesen.",
+        "zip": "Das Archiv ließ sich nicht lesen."
       },
       "fassungen": "Fassungen",
       "fassungAktuell": "{{nummer}} (aktuell)",
@@ -9336,6 +9344,7 @@
         "gesperrt": "Gesperrt"
       },
       "erklaerung": "Die KI erreicht Dateien auf zwei Wegen: direkt (der Assistent durchsucht die Ablage) und über Projekte als Kontext. „An“ erlaubt beide Wege. „Aus“ (auch ohne eigene Einstellung) sperrt nur den direkten Weg; als Projektkontext bleiben die Dateien nutzbar, solange sie im Projekt eingeschaltet sind. „Gesperrt“ sperrt beide Wege und gewinnt immer, auch gegen „An“ in Unterordnern. Zusätzlich gilt die Datenklasse: „Personenbezogen“ geht nie an Cloud-Modelle, „Vertraulich“ nur an lokale Modelle oder per Ausnahme.",
+      "erklaerungVerknuepft": "Die KI erreicht Dateien eines verknüpften Ordners nur direkt (der Assistent durchsucht die Ablage); als Projektkontext werden sie nicht eingebunden. „An“ erlaubt diesen Weg, „Aus“ (auch ohne eigene Einstellung) und „Gesperrt“ sperren ihn. Die Freigabe gilt für den ganzen verknüpften Ordner samt Unterordnern; abweichende Einstellungen darunter gibt es nicht. Zusätzlich gilt die Datenklasse: „Personenbezogen“ geht nie an Cloud-Modelle, „Vertraulich“ nur an lokale Modelle oder per Ausnahme.",
       "erben": "Vom übergeordneten Ordner erben",
       "chipAn": "KI an",
       "chipUnklar": "KI unklar",

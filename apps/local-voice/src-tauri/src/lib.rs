@@ -284,6 +284,8 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     managers::llm::install_globals(llm_runtime.clone(), llm_server.clone());
     // Ablage D6: Modellordner und Schalter der semantischen Suche (das Modell lädt erst bei Bedarf).
     ablage::befehle::semantik_einrichten(app_handle);
+    // Ablage D7: Dateibeobachter der verknüpften Ordner gleich beim Start (nur, wenn es welche gibt).
+    ablage::befehle::beobachter_einrichten(app_handle);
     // Speicherwächter: faellt der freie RAM unter die Notgrenze, stoppt die
     // App ihre eigenen Server (fish-speech, llama-server), bevor Windows in
     // die Auslagerung kippt und unbedienbar wird (Ausfall 15.09.2026).

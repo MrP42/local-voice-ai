@@ -9316,7 +9316,15 @@
         "zu_gross": "The file contains too much text.",
         "format": "The format was not recognised.",
         "pdf": "The PDF could not be read.",
-        "tabelle": "The spreadsheet could not be read."
+        "tabelle": "The spreadsheet could not be read.",
+        "antwort": "The reader program returned no valid answer.",
+        "programm": "The reader program could not be run.",
+        "schutz": "Reading was refused for safety reasons.",
+        "start": "The reader program could not be started.",
+        "abgebrochen": "Reading was cancelled.",
+        "mail": "The e-mail file could not be read.",
+        "xml": "The XML file could not be read.",
+        "zip": "The archive could not be read."
       },
       "fassungen": "Versions",
       "fassungAktuell": "{{nummer}} (current)",
@@ -9336,6 +9344,7 @@
         "gesperrt": "Locked"
       },
       "erklaerung": "The AI reaches files in two ways: directly (the assistant searches the file store) and through projects as context. “On” allows both ways. “Off” (also when nothing is set) blocks only the direct way; files stay usable as project context as long as they are switched on in the project. “Locked” blocks both ways and always wins, even over “On” in subfolders. The data class applies on top: “Personal data” never goes to cloud models, “Confidential” only to local models or by exception.",
+      "erklaerungVerknuepft": "The AI reaches files of a linked folder only directly (the assistant searches the file store); they are not included as project context. “On” allows this way; “Off” (also when nothing is set) and “Locked” block it. The setting applies to the whole linked folder including subfolders; there are no different settings below it. The data class applies on top: “Personal data” never goes to cloud models, “Confidential” only to local models or by exception.",
       "erben": "Inherit from parent folder",
       "chipAn": "AI on",
       "chipUnklar": "AI unclear",

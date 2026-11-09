@@ -7,7 +7,7 @@
 //! dem Ereignis [`EREIGNIS_TEXT`]; die Seite lädt dann den Stand neu.
 //!
 //! D7: verknüpfte Ordner ([`ablage_verknuepfen`], [`ablage_verknuepfung_loesen`],
-//! [`ablage_verknuepft_abtasten`]); der Dateibeobachter startet mit dem ersten [`ablage_stand`] und meldet
+//! [`ablage_verknuepft_abtasten`]); der Dateibeobachter startet mit der App ([`beobachter_einrichten`]) und meldet
 //! übernommene Änderungen wie der Textarbeiter mit [`EREIGNIS_TEXT`].
 //!
 //! D6: Schalter und Modell der semantischen Suche ([`ablage_semantik_stand`], [`ablage_semantik_setzen`],
@@ -319,9 +319,13 @@ pub async fn ablage_verknuepft_abtasten(app: AppHandle, id: Option<String>) -> A
     mit_nachlauf(&app, true, move |a| match id {
         Some(id) => {
             super::ordner_id_pruefen(&id)?;
+            super::verknuepft::marken_zuruecksetzen(&a, Some(&id))?;
             super::verknuepft::abtasten(&a, &id)
         }
-        None => super::verknuepft::alle_abtasten(&a),
+        None => {
+            super::verknuepft::marken_zuruecksetzen(&a, None)?;
+            super::verknuepft::alle_abtasten(&a)
+        }
     })
     .await
 }
@@ -640,6 +644,24 @@ pub async fn ablage_semantik_loeschen(app: AppHandle) -> Antwort<AblageSemantik>
     })
     .await
     .map_err(|_| "ablage.semantik: Der Zustand ist gerade nicht verfügbar.".to_string())?
+}
+
+/// Beim App-Start: den Dateibeobachter der verknüpften Ordner starten, wenn es welche gibt (sonst erst
+/// beim Verknüpfen des ersten Ordners), statt erst nach dem ersten Öffnen der Seite „Ablage“.
+pub fn beobachter_einrichten(app: &AppHandle) {
+    let Ok(a) = ablage(app) else {
+        return;
+    };
+    if super::verknuepft::kennungen(a.dir()).is_empty() {
+        return;
+    }
+    let melder = app.clone();
+    super::verknuepft::beobachter_starten(
+        a.dir().to_path_buf(),
+        Box::new(move || {
+            let _ = melder.emit(EREIGNIS_TEXT, ());
+        }),
+    );
 }
 
 /// Prozesszustand beim Start: Modellordner und Schalter (ohne das Modell schon zu laden).

@@ -136,6 +136,156 @@ pub fn ist_umweg(meta: &fs::Metadata) -> bool {
     false
 }
 
+/// Reparse-Tag: Symlink.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub const REPARSE_TAG_SYMLINK: u32 = 0xA000_000C;
+/// Reparse-Tag: Mount-Point (Junction).
+#[cfg_attr(not(windows), allow(dead_code))]
+pub const REPARSE_TAG_MOUNT_POINT: u32 = 0xA000_0003;
+/// Basis der Cloud-Tags (`IO_REPARSE_TAG_CLOUD`); `IO_REPARSE_TAG_CLOUD_1` bis `_F` setzen die Bits 12 bis 15.
+#[cfg_attr(not(windows), allow(dead_code))]
+const REPARSE_TAG_CLOUD: u32 = 0x9000_001A;
+#[cfg_attr(not(windows), allow(dead_code))]
+const REPARSE_TAG_CLOUD_MASKE: u32 = 0xFFFF_0FFF;
+#[cfg_attr(not(windows), allow(dead_code))]
+const ATTR_REPARSE_POINT: u32 = 0x400;
+#[cfg_attr(not(windows), allow(dead_code))]
+const ATTR_OFFLINE: u32 = 0x1000;
+#[cfg_attr(not(windows), allow(dead_code))]
+const ATTR_RECALL_ON_OPEN: u32 = 0x4_0000;
+#[cfg_attr(not(windows), allow(dead_code))]
+const ATTR_RECALL_ON_DATA_ACCESS: u32 = 0x40_0000;
+
+/// Ist `tag` ein Cloud-Tag (OneDrive und andere Cloud-Dateien-Anbieter)?
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn reparse_tag_cloud(tag: u32) -> bool {
+    tag & REPARSE_TAG_CLOUD_MASKE == REPARSE_TAG_CLOUD
+}
+
+/// Urteil über einen Eintrag im verknüpften Baum (rein, plattformneutral; die Windows-Teile liefern Tag und
+/// Attribute).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(windows), allow(dead_code))]
+pub enum Umweg {
+    /// Kein Reparse-Point oder Cloud-Platzhalter, der ohne Download lesbar ist: darf gelesen und betreten
+    /// werden.
+    Nein,
+    /// Verknüpfung (Symlink, Junction) oder unbekannter Reparse-Point: nie folgen, nie lesen.
+    Ja,
+}
+
+/// Wertet Reparse-Tag und Dateiattribute: Symlink, Mount-Point und alle unbekannten Tags werden abgewiesen;
+/// Cloud-Tags nur, wenn die Datei hydriert ist (weder `RECALL_ON_DATA_ACCESS`, `RECALL_ON_OPEN` noch
+/// `OFFLINE`), damit nie ein Download ausgelöst wird; ein Verzeichnis mit Cloud-Tag darf betreten werden.
+/// Ohne Reparse-Attribut ist der Tag belanglos.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn reparse_urteil(tag: u32, attribute: u32, verzeichnis: bool) -> Umweg {
+    if attribute & ATTR_REPARSE_POINT == 0 {
+        return Umweg::Nein;
+    }
+    if tag == REPARSE_TAG_SYMLINK || tag == REPARSE_TAG_MOUNT_POINT || !reparse_tag_cloud(tag) {
+        return Umweg::Ja;
+    }
+    if verzeichnis {
+        return Umweg::Nein;
+    }
+    let nur_cloud = ATTR_OFFLINE | ATTR_RECALL_ON_OPEN | ATTR_RECALL_ON_DATA_ACCESS;
+    if attribute & nur_cloud != 0 {
+        Umweg::Ja
+    } else {
+        Umweg::Nein
+    }
+}
+
+/// Reparse-Tag einer offenen Datei oder eines offenen Ordners (Windows, `GetFileInformationByHandleEx` mit
+/// `FileAttributeTagInfo`). Fehler: nicht bestimmbar.
+#[cfg(windows)]
+fn reparse_tag_offen(f: &fs::File) -> std::io::Result<u32> {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::Storage::FileSystem::{
+        FileAttributeTagInfo, GetFileInformationByHandleEx, FILE_ATTRIBUTE_TAG_INFO,
+    };
+    let mut info = FILE_ATTRIBUTE_TAG_INFO::default();
+    // SAFETY: gültiges, offenes Handle; `info` ist ein beschreibbarer Puffer der angegebenen Größe.
+    unsafe {
+        GetFileInformationByHandleEx(
+            HANDLE(f.as_raw_handle()),
+            FileAttributeTagInfo,
+            std::ptr::addr_of_mut!(info).cast::<std::ffi::c_void>(),
+            std::mem::size_of::<FILE_ATTRIBUTE_TAG_INFO>() as u32,
+        )
+    }
+    .map_err(std::io::Error::other)?;
+    Ok(info.ReparseTag)
+}
+
+/// Reparse-Tag eines Pfades, ohne ihm zu folgen: nur Attribute lesen (`FILE_READ_ATTRIBUTES`), mit
+/// `FILE_FLAG_OPEN_REPARSE_POINT` (nie ein Download) und `FILE_FLAG_BACKUP_SEMANTICS` (Ordner).
+#[cfg(windows)]
+fn reparse_tag_pfad(p: &Path) -> std::io::Result<u32> {
+    use std::os::windows::fs::OpenOptionsExt;
+    const FILE_READ_ATTRIBUTES: u32 = 0x80;
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    let f = fs::OpenOptions::new()
+        .access_mode(FILE_READ_ATTRIBUTES)
+        .share_mode(0x1 | 0x2 | 0x4)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS)
+        .open(p)?;
+    reparse_tag_offen(&f)
+}
+
+/// Wie [`ist_umweg`], aber für Einträge im verknüpften Baum: unter Windows werden Cloud-Platzhalter
+/// (OneDrive) nicht pauschal abgewiesen, sondern nach [`reparse_urteil`] gewertet; im Zweifel (Tag nicht
+/// bestimmbar) abgewiesen. Außerhalb von Windows gleich [`ist_umweg`].
+pub fn ist_umweg_baum(p: &Path, meta: &fs::Metadata) -> bool {
+    if meta.file_type().is_symlink() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        let attribute = meta.file_attributes();
+        if attribute & ATTR_REPARSE_POINT == 0 {
+            return false;
+        }
+        match reparse_tag_pfad(p) {
+            Ok(tag) => reparse_urteil(tag, attribute, meta.is_dir()) == Umweg::Ja,
+            Err(_) => true,
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = p;
+        ist_umweg(meta)
+    }
+}
+
+/// Wie [`ist_umweg_baum`], für eine schon geöffnete Datei (Tag und Attribute vom Handle, nicht vom Pfad).
+pub fn ist_umweg_offen(f: &fs::File, meta: &fs::Metadata) -> bool {
+    if meta.file_type().is_symlink() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        let attribute = meta.file_attributes();
+        if attribute & ATTR_REPARSE_POINT == 0 {
+            return false;
+        }
+        match reparse_tag_offen(f) {
+            Ok(tag) => reparse_urteil(tag, attribute, meta.is_dir()) == Umweg::Ja,
+            Err(_) => true,
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = f;
+        ist_umweg(meta)
+    }
+}
+
 /// Hat die offene Datei mehr als einen Verzeichniseintrag (Hartlink)? Ein Hartlink kann auf eine Datei
 /// außerhalb der Ablage zeigen (oder von dort kommen) und wird deshalb nicht gelesen, aufgenommen oder
 /// als Index benutzt. Unix `nlink`, Windows `nNumberOfLinks` (`GetFileInformationByHandle`); ein Fehler

@@ -366,7 +366,11 @@ export const OrdnerEinstellungen: React.FC<{
             }}
           />
           <p className="ablage-mut" style={{ margin: "6px 0 8px" }}>
-            {t("ablage.ki.erklaerung")}
+            {t(
+              verknuepft
+                ? "ablage.ki.erklaerungVerknuepft"
+                : "ablage.ki.erklaerung",
+            )}
           </p>
           {hatEltern && eigeneKi && !unklar && (
             <Button
