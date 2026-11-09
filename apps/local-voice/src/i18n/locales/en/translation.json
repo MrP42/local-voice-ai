@@ -9121,6 +9121,38 @@
     }
   },
   "ablage": {
+    "semantik": {
+      "titel": "Semantic search",
+      "hinweis": "Also finds paraphrased terms. Runs only on this device; the vectors stay in the local search index and are never synced.",
+      "laden": "Download model ({{mb}} MB)",
+      "optIn": "Not the default yet: more often shows results even when no matching evidence exists.",
+      "abbrechen": "Cancel",
+      "entfernen": "Remove model",
+      "fortschritt": "Model download progress",
+      "prozent": "{{prozent}} percent",
+      "fehler": {
+        "allgemein": "That did not work. Please try again.",
+        "download": "The model could not be downloaded. Please check the connection and try again.",
+        "abgebrochen": "The download was cancelled. Starting again resumes it.",
+        "laedt": "The model is being downloaded.",
+        "belegt": "The search index is being extended. Please try again later.",
+        "speichern": "The model could not be saved.",
+        "entfernen": "The model could not be removed.",
+        "katalog": "The model is not available in this version."
+      },
+      "entfernenHinweis": "Frees {{mb}} MB. Search is literal again until the model is downloaded again.",
+      "status": {
+        "aus": "Off – searching for exact words.",
+        "fehlt": "Model not downloaded ({{mb}} MB) – searching for exact words until then.",
+        "laedt": "Downloading model …",
+        "fehler": "The model could not be loaded – searching for exact words.",
+        "nachziehen": "Extending the search index …",
+        "neuaufbau": "The search index needs to be extended for semantic search – searching for exact words until then.",
+        "indexfehler": "Search index currently unavailable – searching for exact words.",
+        "wartet": "{{anzahl}} passages still without a vector – searching for exact words until then.",
+        "aktiv": "Active – also finds terms with the same meaning."
+      }
+    },
     "titel": "Files",
     "beschreibung": "Organise and keep documents locally.",
     "suche": "Search names and contents",

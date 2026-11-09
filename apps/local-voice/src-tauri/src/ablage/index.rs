@@ -12,8 +12,13 @@
 //! * [`abgleichen`] ist der einzige Schreibweg: vergleicht den Stempel je Datei mit dem Stand der Ablage
 //!   und schreibt nur Abweichungen (Ablegen, Löschen, Verschieben, Papierkorb, Wiederherstellen, neue
 //!   Textfassung). Zweimal hintereinander ändert nichts; [`neu_aufbauen`] löscht `index.db` und gleicht ab.
+//! * D6: Abgleich und Suche nehmen eine [`AblageEinbettung`] (Standard: die wirksame des Prozesses).
+//!   Ohne Vektoren bleibt alles lexikalisch wie in D2; mit Vektoren mischt `wai-retrieval` beide Listen
+//!   per RRF (Kappung je Datei in beiden Listen). [`vektoren_nachziehen`] bettet nach dem Einschalten alle
+//!   Stücke ein.
 
 use super::extrakt::Textfassung;
+use super::semantik::AblageEinbettung;
 use super::speicher::{Ablage, IndexQuelle};
 use super::{datei_id_pruefen, Fehler, Res};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -21,7 +26,7 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use wai_retrieval::{Acl, Embedder, IngestDoc, RetrievalError, Retriever};
+use wai_retrieval::{Acl, IngestDoc, RetrievalError, Retriever};
 
 pub const INDEX: &str = "index.db";
 pub const MANDANT: &str = "ablage";
@@ -44,6 +49,49 @@ const CHECKPOINT_VERSUCHE: u32 = 5;
 static SPERRE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// Nur [`neu_aufbauen`] hält sie schreibend (Dateien löschen), die Suche lesend (Datenbank öffnen).
 static DATEIEN_SPERRE: std::sync::RwLock<()> = std::sync::RwLock::new(());
+/// Wartende Schreiber der [`DATEIEN_SPERRE`]. Die Sperre ist nicht überall fair (Windows: SRWLock);
+/// das schrittweise [`vektoren_nachziehen`] nimmt deshalb keinen neuen Schritt, solange ein Schreiber
+/// wartet, und lässt ihm ausdrücklich den Vortritt.
+static SCHREIBER_WARTET: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static SCHREIBER_FERTIG: (std::sync::Mutex<()>, std::sync::Condvar) =
+    (std::sync::Mutex::new(()), std::sync::Condvar::new());
+/// Begonnene Schritte von [`vektoren_nachziehen`] (Test der Übergabe).
+static SCHRITTE_BEGONNEN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Schreibsperre der Dateien, als wartender Schreiber angemeldet (bis zum Freigeben).
+struct DateienExklusiv {
+    _g: std::sync::RwLockWriteGuard<'static, ()>,
+}
+
+impl Drop for DateienExklusiv {
+    fn drop(&mut self) {
+        // Läuft vor dem Freigeben der Sperre (Feld): ein geweckter Leser wartet dann noch kurz an
+        // der Sperre selbst.
+        SCHREIBER_WARTET.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+        let _m = SCHREIBER_FERTIG.0.lock().unwrap_or_else(|e| e.into_inner());
+        SCHREIBER_FERTIG.1.notify_all();
+    }
+}
+
+fn dateien_exklusiv() -> DateienExklusiv {
+    SCHREIBER_WARTET.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    DateienExklusiv {
+        _g: DATEIEN_SPERRE.write().unwrap_or_else(|e| e.into_inner()),
+    }
+}
+
+/// Wartet ohne Sperre, bis kein Schreiber der Dateien mehr ansteht.
+fn schreibern_vortritt_lassen() {
+    use std::sync::atomic::Ordering;
+    let mut m = SCHREIBER_FERTIG.0.lock().unwrap_or_else(|e| e.into_inner());
+    while SCHREIBER_WARTET.load(Ordering::SeqCst) > 0 {
+        m = SCHREIBER_FERTIG
+            .1
+            .wait_timeout(m, std::time::Duration::from_millis(50))
+            .unwrap_or_else(|e| e.into_inner())
+            .0;
+    }
+}
 
 fn sperren() -> std::sync::MutexGuard<'static, ()> {
     SPERRE.lock().unwrap_or_else(|e| e.into_inner())
@@ -51,18 +99,6 @@ fn sperren() -> std::sync::MutexGuard<'static, ()> {
 
 fn fehler() -> Fehler {
     Fehler::neu("ablage.index", "Der Suchindex ist gerade nicht verfügbar.")
-}
-
-/// D2 sucht nur lexikalisch: kein Embedder (D6 ersetzt das durch das lokale Modell).
-struct OhneEinbettung;
-
-impl Embedder for OhneEinbettung {
-    fn id(&self) -> String {
-        "keiner".into()
-    }
-    async fn embed(&self, _text: &str) -> wai_retrieval::Result<Vec<f32>> {
-        Err(RetrievalError::Embedding("lexikalisch".into()))
-    }
 }
 
 /// Fundstelle in einer Datei.
@@ -194,6 +230,27 @@ pub(crate) fn mit_sperre<T>(f: impl FnOnce() -> T) -> T {
     f()
 }
 
+/// Test: begonnene Schritte von [`vektoren_nachziehen`] (prozessweit).
+#[cfg(test)]
+pub(crate) fn schritte_begonnen() -> usize {
+    SCHRITTE_BEGONNEN.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// Test: meldet sich als Schreiber der Dateien an wie [`neu_aufbauen`] und liefert die begonnenen
+/// Schritte des Nachziehens bei der Anmeldung und beim Erhalt der Sperre.
+#[cfg(test)]
+pub(crate) fn dateisperre_uebergabe() -> (usize, usize) {
+    use std::sync::atomic::Ordering;
+    SCHREIBER_WARTET.fetch_add(1, Ordering::SeqCst);
+    let vorher = SCHRITTE_BEGONNEN.load(Ordering::SeqCst);
+    let g = DateienExklusiv {
+        _g: DATEIEN_SPERRE.write().unwrap_or_else(|e| e.into_inner()),
+    };
+    let nachher = SCHRITTE_BEGONNEN.load(Ordering::SeqCst);
+    drop(g);
+    (vorher, nachher)
+}
+
 /// `PRAGMA secure_delete` der eigenen Verbindung und der von `wai-retrieval` (Test).
 #[cfg(test)]
 pub(crate) fn secure_delete_stand(a: &Ablage) -> Res<(i64, i64)> {
@@ -203,7 +260,7 @@ pub(crate) fn secure_delete_stand(a: &Ablage) -> Res<(i64, i64)> {
         .query_row("PRAGMA secure_delete", [], |r| r.get(0))
         .map_err(|_| fehler())?;
     let fremde = laufzeit()?.block_on(async {
-        let r = Retriever::open(&pfad, OhneEinbettung)
+        let r = Retriever::open(&pfad, AblageEinbettung::Keine)
             .await
             .map_err(|_| fehler())?;
         r.secure_delete().await.map_err(|_| fehler())
@@ -308,12 +365,19 @@ pub struct AblageIndexBericht {
     pub stuecke: u32,
 }
 
-/// Bringt `index.db` auf den Stand der Ablage (nur Abweichungen werden geschrieben). Scheitert der
-/// Abgleich, bleibt die Marke [`OFFEN`] liegen ([`nachholen`] wiederholt ihn beim nächsten Öffnen).
+/// Bringt `index.db` auf den Stand der Ablage (nur Abweichungen werden geschrieben), mit der wirksamen
+/// Einbettung des Prozesses ([`super::semantik::aktuell`]). Scheitert der Abgleich, bleibt die Marke
+/// [`OFFEN`] liegen ([`nachholen`] wiederholt ihn beim nächsten Öffnen).
 pub fn abgleichen(a: &Ablage) -> Res<AblageIndexBericht> {
+    abgleichen_mit(a, &super::semantik::aktuell())
+}
+
+/// Wie [`abgleichen`] mit ausdrücklicher Einbettung. Neue Stücke bekommen sofort Vektoren, wenn der
+/// Index schon im Vektorraum von `emb` liegt; sonst bleiben sie lexikalisch bis [`vektoren_nachziehen`].
+pub fn abgleichen_mit(a: &Ablage, emb: &AblageEinbettung) -> Res<AblageIndexBericht> {
     let _g = sperren();
     let marke = a.dir().join(OFFEN);
-    match abgleichen_gesperrt(a) {
+    match abgleichen_gesperrt(a, emb) {
         Ok(b) => {
             let _ = std::fs::remove_file(&marke);
             Ok(b)
@@ -341,7 +405,7 @@ pub fn nachholen(a: &Ablage) -> Res<Option<AblageIndexBericht>> {
     abgleichen(a).map(Some)
 }
 
-fn abgleichen_gesperrt(a: &Ablage) -> Res<AblageIndexBericht> {
+fn abgleichen_gesperrt(a: &Ablage, emb: &AblageEinbettung) -> Res<AblageIndexBericht> {
     let quellen = a.index_quellen()?;
     let pfad = index_pfad(a)?;
     std::fs::create_dir_all(a.dir()).map_err(|_| fehler())?;
@@ -392,7 +456,7 @@ fn abgleichen_gesperrt(a: &Ablage) -> Res<AblageIndexBericht> {
     if !weg.is_empty() || !neu.is_empty() {
         let rt = laufzeit()?;
         rt.block_on(async {
-            let r = Retriever::open(&pfad, OhneEinbettung)
+            let r = Retriever::open(&pfad, emb.clone())
                 .await
                 .map_err(|_| fehler())?;
             let erg = schreiben(a, &r, &mut c, &weg, &neu, &mut bericht).await;
@@ -436,7 +500,7 @@ pub(crate) fn checkpoint(c: &Connection) -> Res<()> {
 
 async fn schreiben(
     a: &Ablage,
-    r: &Retriever<OhneEinbettung>,
+    r: &Retriever<AblageEinbettung>,
     c: &mut Connection,
     weg: &[String],
     neu: &[(&IndexQuelle, String, i64)],
@@ -532,9 +596,14 @@ async fn schreiben(
 /// „Index neu aufbauen“: `index.db` löschen und vollständig abgleichen (Extraktor-/Embedder-Wechsel,
 /// beschädigter Index).
 pub fn neu_aufbauen(a: &Ablage) -> Res<AblageIndexBericht> {
+    neu_aufbauen_mit(a, &super::semantik::aktuell())
+}
+
+/// Wie [`neu_aufbauen`] mit ausdrücklicher Einbettung.
+pub fn neu_aufbauen_mit(a: &Ablage, emb: &AblageEinbettung) -> Res<AblageIndexBericht> {
     {
         let _g = sperren();
-        let _d = DATEIEN_SPERRE.write().unwrap_or_else(|e| e.into_inner());
+        let _d = dateien_exklusiv();
         let p = index_pfad(a)?;
         for endung in ["", "-wal", "-shm", "-journal"] {
             let q = PathBuf::from(format!("{}{endung}", p.display()));
@@ -545,7 +614,109 @@ pub fn neu_aufbauen(a: &Ablage) -> Res<AblageIndexBericht> {
             }
         }
     }
-    abgleichen(a)
+    abgleichen_mit(a, emb)
+}
+
+/// Stücke je Schritt in [`vektoren_nachziehen`] (e5-small: rund 0,3 s auf einem Laptop-Kern).
+const NACHZIEHEN_STAPEL: usize = 32;
+/// Konflikte (paralleler Abgleich, Neuaufbau), nach denen [`vektoren_nachziehen`] aufgibt.
+const NACHZIEHEN_KONFLIKTE: u32 = 5;
+
+/// Bettet Stücke ohne Vektor ein, schrittweise zu [`NACHZIEHEN_STAPEL`] (Einschalten, Modellwechsel,
+/// Stücke aus der lexikalischen Zeit). Liegt der Index noch in einem anderen Vektorraum, wird er
+/// zuerst ohne Einbetten übernommen (alte Vektoren weg). Jeder Schritt öffnet den Index nur kurz unter
+/// der Lesesperre der Dateien und schreibt in einer kurzen Transaktion: [`neu_aufbauen`] und
+/// [`abgleichen`] warten höchstens einen Schritt. Konflikte mit parallelen Schreibern werden begrenzt
+/// wiederholt. Liefert die Zahl eingebetteter Stücke.
+pub fn vektoren_nachziehen(a: &Ablage, emb: &AblageEinbettung) -> Res<u32> {
+    if !emb.ist_semantisch() {
+        return Ok(0);
+    }
+    let pfad = index_pfad(a)?;
+    let rt = laufzeit()?;
+    let mut gesamt: u32 = 0;
+    let mut konflikte = 0u32;
+    // Obergrenze der Schritte: die anfangs fehlenden Stücke plus Spielraum für neu hinzukommende.
+    let mut runden: Option<u64> = None;
+    loop {
+        let schritt: Res<Option<usize>> = {
+            // Ausdrückliche Übergabe: ein wartender Schreiber (Neuaufbau) kommt vor dem nächsten
+            // Schritt dran, auch wenn die Sperre selbst Leser bevorzugt.
+            let _d = loop {
+                schreibern_vortritt_lassen();
+                let d = DATEIEN_SPERRE.read().unwrap_or_else(|e| e.into_inner());
+                SCHRITTE_BEGONNEN.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if SCHREIBER_WARTET.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+                    break d;
+                }
+                SCHRITTE_BEGONNEN.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+                drop(d);
+            };
+            if !pfad.is_file() {
+                return Ok(gesamt);
+            }
+            rt.block_on(async {
+                let r = Retriever::open(&pfad, emb.clone())
+                    .await
+                    .map_err(|_| fehler())?;
+                let erg = async {
+                    r.adopt_space(MANDANT).await?;
+                    if runden.is_none() {
+                        let st = r.status_for(MANDANT).await?;
+                        let fehlen = st.missing_vectors.max(0) as u64;
+                        runden = Some(fehlen / NACHZIEHEN_STAPEL as u64 * 2 + 8);
+                    }
+                    r.fill_missing(MANDANT, NACHZIEHEN_STAPEL).await
+                }
+                .await;
+                r.close().await;
+                match erg {
+                    Ok(n) => Ok(Some(n)),
+                    Err(RetrievalError::Conflict(_)) => Ok(None),
+                    Err(_) => Err(fehler()),
+                }
+            })
+        };
+        match schritt? {
+            Some(0) => return Ok(gesamt),
+            Some(n) => gesamt = gesamt.saturating_add(n.min(u32::MAX as usize) as u32),
+            None => {
+                konflikte += 1;
+                if konflikte >= NACHZIEHEN_KONFLIKTE {
+                    return Err(fehler());
+                }
+            }
+        }
+        match runden.as_mut() {
+            Some(0) => return Err(fehler()),
+            Some(r) => *r -= 1,
+            None => {}
+        }
+    }
+}
+
+/// Zustand der Vektoren für die Oberfläche: (Neuaufbau nötig, Stücke ohne Vektor). Ohne Index: (false, 0).
+pub fn vektor_stand(a: &Ablage, emb: &AblageEinbettung) -> Res<(bool, u32)> {
+    if !emb.ist_semantisch() {
+        return Ok((false, 0));
+    }
+    let pfad = index_pfad(a)?;
+    let _d = DATEIEN_SPERRE.read().unwrap_or_else(|e| e.into_inner());
+    if !pfad.is_file() {
+        return Ok((false, 0));
+    }
+    laufzeit()?.block_on(async {
+        let r = Retriever::open(&pfad, emb.clone())
+            .await
+            .map_err(|_| fehler())?;
+        let st = r.status_for(MANDANT).await.map_err(|_| fehler());
+        r.close().await;
+        let st = st?;
+        Ok((
+            st.reindex_needed,
+            st.missing_vectors.clamp(0, u32::MAX as i64) as u32,
+        ))
+    })
 }
 
 fn leser() -> wai_security::Principal {
@@ -565,6 +736,16 @@ fn leser() -> wai_security::Principal {
 /// Volltextsuche (ohne KI): Fundstellen lebender Dateien mit Auszug und Anker, beste zuerst. Der
 /// Papierkorb ist schon in SQL ausgeschlossen; zur Sicherheit wird gegen den aktuellen Stand gefiltert.
 pub fn suchen(a: &Ablage, anfrage: &str) -> Res<Vec<AblageSuchtreffer>> {
+    suchen_mit(a, anfrage, &super::semantik::aktuell())
+}
+
+/// Wie [`suchen`] mit ausdrücklicher Einbettung: mit Vektoren hybrid (BM25 + Kosinus, RRF), sonst
+/// lexikalisch. Die Vektorliste wirkt nur, wenn der Index im Vektorraum von `emb` liegt.
+pub fn suchen_mit(
+    a: &Ablage,
+    anfrage: &str,
+    emb: &AblageEinbettung,
+) -> Res<Vec<AblageSuchtreffer>> {
     let anfrage: String = anfrage.chars().take(200).collect();
     if wai_retrieval::content_tokens(&anfrage).is_empty() {
         return Ok(vec![]);
@@ -578,7 +759,7 @@ pub fn suchen(a: &Ablage, anfrage: &str) -> Res<Vec<AblageSuchtreffer>> {
     let _d = DATEIEN_SPERRE.read().unwrap_or_else(|e| e.into_inner());
     let trace = format!("{:032x}", ulid::Ulid::new().0);
     let antwort = laufzeit()?.block_on(async {
-        let r = Retriever::open(&pfad, OhneEinbettung)
+        let r = Retriever::open(&pfad, emb.clone())
             .await
             .map_err(|_| fehler())?
             // Ein Dokument mit vielen Treffern soll nicht alle Kandidatenplätze belegen.

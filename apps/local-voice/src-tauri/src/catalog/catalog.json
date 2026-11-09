@@ -5897,6 +5897,38 @@
       ]
     },
     {
+      "id": "ablage-e5-small",
+      "name": "multilingual-e5-small (semantische Suche der Ablage)",
+      "description": "Text-Einbettungen für die semantische Suche in der Ablage (intfloat/multilingual-e5-small, ONNX, 384 Dimensionen). Läuft nur lokal; die Vektoren bleiben im Suchindex dieses Geräts.",
+      "purpose": "ablage-embedding",
+      "category": "Suche",
+      "license": "MIT",
+      "license_url": "https://huggingface.co/intfloat/multilingual-e5-small/blob/614241f622f53c4eeff9890bdc4f31cfecc418b3/README.md",
+      "license_note": "Gewichte und ONNX-Export von intfloat (Microsoft), Hugging Face intfloat/multilingual-e5-small, Lizenz MIT (Modellkarte). Wird auf Wunsch geladen, nicht mitgeliefert.",
+      "revision": "614241f622f53c4eeff9890bdc4f31cfecc418b3",
+      "license_verified_on": "2026-11-09",
+      "source": "https://huggingface.co/intfloat/multilingual-e5-small",
+      "languages": [
+        "multi"
+      ],
+      "files": [
+        {
+          "filename": "model.onnx",
+          "quant": "onnx",
+          "size_bytes": 470268510,
+          "sha256": "ca456c06b3a9505ddfd9131408916dd79290368331e7d76bb621f1cba6bc8665",
+          "url": "https://huggingface.co/intfloat/multilingual-e5-small/resolve/614241f622f53c4eeff9890bdc4f31cfecc418b3/onnx/model.onnx"
+        },
+        {
+          "filename": "tokenizer.json",
+          "quant": "json",
+          "size_bytes": 17082730,
+          "sha256": "0b44a9d7b51c3c62626640cda0e2c2f70fdacdc25bbbd68038369d14ebdf4c39",
+          "url": "https://huggingface.co/intfloat/multilingual-e5-small/resolve/614241f622f53c4eeff9890bdc4f31cfecc418b3/onnx/tokenizer.json"
+        }
+      ]
+    },
+    {
       "id": "phonon-runtime-windows-x64",
       "name": "Phonon program ptts (Windows x64)",
       "description": "Phonon text-to-speech command line program ptts 0.4.2 for Windows x64, from the official gradium-ai/xn-ptts GitHub release v0.4.2.",

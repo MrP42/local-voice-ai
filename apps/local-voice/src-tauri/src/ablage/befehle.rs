@@ -5,18 +5,26 @@
 //! D2: Nach Änderungen am Bestand wird der Index sofort abgeglichen (Papierkorb, Verschieben, Löschen
 //! wirken ohne Verzögerung auf die Suche) und der Textarbeiter angestoßen. Er meldet jedes Ergebnis mit
 //! dem Ereignis [`EREIGNIS_TEXT`]; die Seite lädt dann den Stand neu.
+//!
+//! D6: Schalter und Modell der semantischen Suche ([`ablage_semantik_stand`], [`ablage_semantik_setzen`],
+//! [`ablage_semantik_laden`]); das Ende des Nachziehens der Vektoren meldet [`EREIGNIS_SEMANTIK`].
 
 use super::freigabe::KiStufe;
 use super::index::{AblageIndexBericht, AblageSuchtreffer};
+use super::semantik;
 use super::speicher::{
     Ablage, AblageArt, AblageEinstellungen, AblageFassung, AblageImportZeile, AblageKollisionswahl,
     AblageLoeschBericht, AblageSicht,
 };
+use serde::Serialize;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{AppHandle, Emitter};
 
 /// Ereignis an die Oberfläche: eine Textfassung ist fertig (oder fehlgeschlagen).
 pub const EREIGNIS_TEXT: &str = "ablage-text";
+/// Ereignis an die Oberfläche: Zustand der semantischen Suche hat sich geändert (Vektoren fertig).
+pub const EREIGNIS_SEMANTIK: &str = "ablage-semantik";
 
 /// Ereignis an die Oberfläche: ein Abgleich der Ablage ist gelaufen (D4); Stand und Sync-Zustand neu laden.
 pub const EREIGNIS_SYNC: &str = "ablage-sync";
@@ -106,6 +114,9 @@ pub async fn ablage_stand(app: AppHandle) -> Antwort<AblageSicht> {
             }));
             super::textfassung::wiederanlauf(dir);
         }
+    }
+    if sicht.lage.is_none() && crate::settings::get_settings(&app).ablage_semantische_suche {
+        nachziehen(&app);
     }
     Ok(sicht)
 }
@@ -265,7 +276,12 @@ pub async fn ablage_suchen(app: AppHandle, anfrage: String) -> Antwort<Vec<Ablag
 #[tauri::command]
 #[specta::specta]
 pub async fn ablage_index_neu_aufbauen(app: AppHandle) -> Antwort<AblageIndexBericht> {
-    blockierend(&app, |a| super::index::neu_aufbauen(&a)).await
+    let bericht = blockierend(&app, |a| super::index::neu_aufbauen(&a)).await?;
+    // D6: Stücke, die beim Neuaufbau ohne Vektor blieben (Nachziehen lief parallel), nachholen.
+    if crate::settings::get_settings(&app).ablage_semantische_suche {
+        nachziehen(&app);
+    }
+    Ok(bericht)
 }
 
 /// Bricht die laufende Texterzeugung ab (bis zum nächsten Anstoß).
@@ -290,4 +306,286 @@ pub async fn ablage_sync_stand(app: AppHandle) -> Antwort<crate::sync::ablage::A
         crate::sync::ablage::stand(&a, konto.as_deref())
     })
     .await
+}
+
+// ---------------------------------------------------------------------------
+// D6: semantische Suche
+// ---------------------------------------------------------------------------
+
+fn models_root(app: &AppHandle) -> Antwort<PathBuf> {
+    Ok(crate::portable::app_data_dir(app)
+        .map_err(|e| e.to_string())?
+        .join("models"))
+}
+
+/// Startet das Nachziehen der Vektoren im Hintergrund (nur wenn eingeschaltet).
+fn nachziehen(app: &AppHandle) {
+    let Ok(a) = ablage(app) else {
+        return;
+    };
+    let melder = app.clone();
+    semantik::nachziehen_anstossen(
+        a.dir().to_path_buf(),
+        Box::new(move || {
+            let _ = melder.emit(EREIGNIS_SEMANTIK, ());
+        }),
+    );
+}
+
+static LAEDT: AtomicBool = AtomicBool::new(false);
+/// Fortschritt des laufenden Downloads über alle Dateien (0–100), auch nach Neuaufbau der Seite.
+static PROZENT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+/// Ereignis mit dem Gesamtfortschritt (Prozent) des Modell-Downloads.
+const EREIGNIS_FORTSCHRITT: &str = "ablage-semantik-fortschritt";
+/// Abbruch des laufenden Downloads ([`ablage_semantik_abbrechen`]).
+static ABBRUCH: std::sync::Mutex<Option<hf_hub::api::tokio::CancellationToken>> =
+    std::sync::Mutex::new(None);
+
+fn abbruch() -> std::sync::MutexGuard<'static, Option<hf_hub::api::tokio::CancellationToken>> {
+    ABBRUCH.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Zustand der semantischen Suche für die Seite „Ablage“.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
+pub struct AblageSemantik {
+    /// Einstellung „Semantische Suche“.
+    pub an: bool,
+    /// Ist die semantische Suche Standard (Eval-Tor bestanden)?
+    pub standard: bool,
+    /// Modell und Zerleger liegen vor.
+    pub modell_bereit: bool,
+    /// Download läuft.
+    pub laedt: bool,
+    /// Fortschritt des Downloads über alle Dateien (0–100, nur bei `laedt`).
+    pub prozent: u32,
+    /// Halbe Downloads liegen im Modellordner (können entfernt werden).
+    pub reste: bool,
+    /// Downloadgröße in MB.
+    pub groesse_mb: u32,
+    /// Das Modell ließ sich nicht laden (lexikalische Suche aktiv).
+    pub ladefehler: bool,
+    /// Vektoren werden gerade erstellt.
+    pub nachziehen: bool,
+    /// Stücke ohne Vektor (bis zum Ende des Nachziehens wirkt nur die lexikalische Suche).
+    pub vektoren_fehlen: u32,
+    /// Der Index liegt noch nicht im Vektorraum des Modells (das Nachziehen übernimmt ihn).
+    pub neuaufbau: bool,
+    /// Der Zustand des Suchindex ließ sich nicht lesen.
+    pub index_fehler: bool,
+    /// Die Suche nutzt gerade Vektoren.
+    pub aktiv: bool,
+}
+
+fn semantik_stand(app: &AppHandle, a: &super::speicher::Ablage) -> Antwort<AblageSemantik> {
+    let an = crate::settings::get_settings(app).ablage_semantische_suche;
+    let root = models_root(app)?;
+    let groesse: u64 = semantik::katalog()
+        .map(|e| e.files.iter().map(|f| f.size_bytes).sum())
+        .unwrap_or(0);
+    let modell_bereit = semantik::modell_bereit(&root);
+    let emb = if an && modell_bereit {
+        semantik::aktuell()
+    } else {
+        semantik::AblageEinbettung::Keine
+    };
+    let (neu, fehlen, index_fehler) = match super::index::vektor_stand(a, &emb) {
+        Ok((neu, fehlen)) => (neu, fehlen, false),
+        Err(_) => (false, 0, true),
+    };
+    let nachziehen = semantik::nachziehen_laeuft();
+    let laedt = LAEDT.load(Ordering::Relaxed);
+    Ok(AblageSemantik {
+        an,
+        standard: semantik::SEMANTIK_STANDARD,
+        modell_bereit,
+        laedt,
+        prozent: if laedt {
+            PROZENT.load(Ordering::Relaxed).min(100)
+        } else {
+            0
+        },
+        reste: !laedt && semantik::reste_vorhanden(&root),
+        groesse_mb: groesse.div_ceil(1_000_000).min(u64::from(u32::MAX)) as u32,
+        ladefehler: an && modell_bereit && semantik::ladefehler(),
+        nachziehen,
+        vektoren_fehlen: fehlen,
+        neuaufbau: emb.ist_semantisch() && neu,
+        index_fehler: emb.ist_semantisch() && index_fehler,
+        aktiv: emb.ist_semantisch() && !index_fehler && !neu && fehlen == 0 && !nachziehen,
+    })
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn ablage_semantik_stand(app: AppHandle) -> Antwort<AblageSemantik> {
+    let a = ablage(&app)?;
+    let h = app.clone();
+    tauri::async_runtime::spawn_blocking(move || semantik_stand(&h, &a))
+        .await
+        .map_err(|_| "ablage.semantik: Der Zustand ist gerade nicht verfügbar.".to_string())?
+}
+
+/// Einstellung „Semantische Suche“. Einschalten bettet die vorhandenen Stücke im Hintergrund ein (nur
+/// mit geladenem Modell); Ausschalten gibt das Modell frei, die Suche ist sofort wieder lexikalisch.
+#[tauri::command]
+#[specta::specta]
+pub async fn ablage_semantik_setzen(app: AppHandle, an: bool) -> Antwort<AblageSemantik> {
+    let mut settings = crate::settings::get_settings(&app);
+    settings.ablage_semantische_suche = an;
+    crate::settings::write_settings(&app, settings);
+    let root = models_root(&app)?;
+    // Ausschalten gibt das Modell frei (rund 500 MB): nicht auf dem async-Thread.
+    tauri::async_runtime::spawn_blocking(move || semantik::einrichten(&root, an))
+        .await
+        .map_err(|_| "ablage.semantik: Der Zustand ist gerade nicht verfügbar.".to_string())?;
+    // Der Abfrage-Zwischenspeicher trägt die Kennung der Einbettung im Schlüssel: eine Rangfolge der
+    // anderen Suchart kommt nicht wieder, Leeren ist nicht nötig.
+    let a = ablage(&app)?;
+    let h = app.clone();
+    let stand = tauri::async_runtime::spawn_blocking(move || semantik_stand(&h, &a))
+        .await
+        .map_err(|_| "ablage.semantik: Der Zustand ist gerade nicht verfügbar.".to_string())??;
+    if an {
+        nachziehen(&app);
+    }
+    Ok(stand)
+}
+
+/// Lädt Modell und Zerleger (auf Knopfdruck), je Datei mit Größe und SHA-256 aus dem Katalog.
+/// Fortschritt über `model-download-progress` (Kennung [`semantik::MODELL_ID`]).
+#[tauri::command]
+#[specta::specta]
+pub async fn ablage_semantik_laden(app: AppHandle) -> Antwort<AblageSemantik> {
+    use crate::managers::model::download::{HttpDownloadEvent, HttpDownloadOutcome};
+    use crate::managers::model::ModelManager;
+    let eintrag = semantik::katalog()
+        .ok_or_else(|| "semantik.katalog: Das Modell steht nicht im Katalog.".to_string())?;
+    let root = models_root(&app)?;
+    let ordner = semantik::modell_ordner(&root);
+    if LAEDT.swap(true, Ordering::SeqCst) {
+        return Err("semantik.laedt: Das Modell wird bereits geladen.".into());
+    }
+    /// Räumt den Download-Zustand auf und meldet das Ende (auch einer neu geöffneten Seite, die nicht
+    /// auf diesen Aufruf wartet), bei Erfolg, Fehler und Abbruch.
+    struct Zurueck(AppHandle);
+    impl Drop for Zurueck {
+        fn drop(&mut self) {
+            *abbruch() = None;
+            LAEDT.store(false, Ordering::SeqCst);
+            PROZENT.store(0, Ordering::Relaxed);
+            let _ = self.0.emit(EREIGNIS_SEMANTIK, ());
+        }
+    }
+    let _zurueck = Zurueck(app.clone());
+    let cancel = hf_hub::api::tokio::CancellationToken::new();
+    *abbruch() = Some(cancel.clone());
+    PROZENT.store(0, Ordering::Relaxed);
+    let gesamt: u64 = eintrag
+        .files
+        .iter()
+        .map(|f| f.size_bytes)
+        .sum::<u64>()
+        .max(1);
+    let mut fertig_bytes: u64 = 0;
+    std::fs::create_dir_all(&ordner).map_err(|_| {
+        "semantik.speichern: Das Modell konnte nicht gespeichert werden.".to_string()
+    })?;
+    for datei in &eintrag.files {
+        let ziel = ordner.join(&datei.filename);
+        if ziel.is_file() {
+            fertig_bytes += datei.size_bytes;
+            continue;
+        }
+        let teil = PathBuf::from(format!("{}.partial", ziel.display()));
+        let handle = app.clone();
+        let basis = fertig_bytes;
+        let emit = move |ev: HttpDownloadEvent<'_>| {
+            if let HttpDownloadEvent::Progress(p) = ev {
+                let neu = ((basis + p.downloaded).min(gesamt) * 100 / gesamt) as u32;
+                // Nur bei Änderung melden (ganze Prozent).
+                if PROZENT.swap(neu, Ordering::Relaxed) != neu {
+                    let _ = handle.emit(EREIGNIS_FORTSCHRITT, neu);
+                }
+                let _ = handle.emit("model-download-progress", p);
+            }
+        };
+        let ergebnis = ModelManager::download_http_resumable_with_events(
+            semantik::MODELL_ID,
+            &datei.url,
+            &teil,
+            Some(datei.size_bytes),
+            datei.sha256.as_deref(),
+            &cancel,
+            &emit,
+        )
+        .await
+        .map_err(|_| "semantik.download: Das Modell konnte nicht geladen werden.".to_string())?;
+        if !matches!(ergebnis, HttpDownloadOutcome::Completed) {
+            return Err("semantik.abgebrochen: Das Laden wurde abgebrochen.".into());
+        }
+        std::fs::rename(&teil, &ziel).map_err(|_| {
+            "semantik.speichern: Das Modell konnte nicht gespeichert werden.".to_string()
+        })?;
+        fertig_bytes += datei.size_bytes;
+    }
+    let an = crate::settings::get_settings(&app).ablage_semantische_suche;
+    let r = root.clone();
+    tauri::async_runtime::spawn_blocking(move || semantik::einrichten(&r, an))
+        .await
+        .map_err(|_| "ablage.semantik: Der Zustand ist gerade nicht verfügbar.".to_string())?;
+    let _ = app.emit("model-download-complete", semantik::MODELL_ID);
+    drop(_zurueck);
+    if an {
+        nachziehen(&app);
+    }
+    let a = ablage(&app)?;
+    let h = app.clone();
+    tauri::async_runtime::spawn_blocking(move || semantik_stand(&h, &a))
+        .await
+        .map_err(|_| "ablage.semantik: Der Zustand ist gerade nicht verfügbar.".to_string())?
+}
+
+/// Bricht einen laufenden Modell-Download ab (halbe Dateien bleiben für die Fortsetzung liegen).
+#[tauri::command]
+#[specta::specta]
+pub async fn ablage_semantik_abbrechen() -> Antwort<()> {
+    if let Some(c) = abbruch().as_ref() {
+        c.cancel();
+    }
+    Ok(())
+}
+
+/// Entfernt das Modell vom Gerät (auch halbe Downloads). Die Suche ist danach lexikalisch; die
+/// Einstellung bleibt, ein erneutes Laden stellt die semantische Suche wieder her.
+#[tauri::command]
+#[specta::specta]
+pub async fn ablage_semantik_loeschen(app: AppHandle) -> Antwort<AblageSemantik> {
+    if LAEDT.load(Ordering::SeqCst) {
+        return Err("semantik.laedt: Das Modell wird gerade geladen.".into());
+    }
+    let root = models_root(&app)?;
+    let a = ablage(&app)?;
+    let h = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        semantik::modell_entfernen(&root).map_err(|code| match code.as_str() {
+            "semantik.belegt" => {
+                "semantik.belegt: Der Suchindex wird gerade erweitert. Bitte später erneut versuchen."
+                    .to_string()
+            }
+            _ => "semantik.entfernen: Das Modell konnte nicht entfernt werden.".to_string(),
+        })?;
+        semantik_stand(&h, &a)
+    })
+    .await
+    .map_err(|_| "ablage.semantik: Der Zustand ist gerade nicht verfügbar.".to_string())?
+}
+
+/// Prozesszustand beim Start: Modellordner und Schalter (ohne das Modell schon zu laden).
+pub fn semantik_einrichten(app: &AppHandle) {
+    if let Ok(root) = models_root(app) {
+        semantik::einrichten(
+            &root,
+            crate::settings::get_settings(app).ablage_semantische_suche,
+        );
+    }
 }
