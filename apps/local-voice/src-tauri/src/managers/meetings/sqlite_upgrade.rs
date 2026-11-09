@@ -1,6 +1,7 @@
 //! RUSTSEC-2026-0459: Datenbanken, die mit rusqlite 0.37 (gebuendeltes SQLite 3.50)
 //! entstanden sind, oeffnen ueber den echten Pfad der App (`MeetingStore::open_at`)
-//! unter rusqlite 0.41 (SQLite 3.54): Daten lesen, Migrationen zweimal, schreiben und
+//! unter rusqlite 0.41 (SQLite 3.54): Daten lesen, zweimal starten (Migrationskette auf
+//! aktuellem Stand, `to_latest` darf nichts aendern), schreiben und
 //! wieder oeffnen, `integrity_check` und Fremdschluessel, dazu ein Stand mit
 //! committeten, aber nicht checkpointeten WAL-Daten.
 //!
@@ -86,7 +87,9 @@ fn rundlauf(stamm: &str, erwartet: &[&str]) {
         assert_eq!(count(&conn, "SELECT COUNT(*) FROM audit_log"), 1);
         gesund(&conn);
     }
-    // Zweiter Start: die Migrationen laufen erneut und aendern nichts.
+    // Zweiter Start: `to_latest` laeuft erneut und aendert nichts. Die Fixtures stehen schon
+    // auf MIGRATIONS.len(); ein Upgrade aelterer Schemastaende pruefen migration_chain und
+    // agent_bridge::schema.
     {
         let store = MeetingStore::open_at(&path).unwrap();
         let conn = store.get_connection().unwrap();
