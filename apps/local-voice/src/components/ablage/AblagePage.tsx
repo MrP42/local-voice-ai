@@ -8,6 +8,7 @@ import React, {
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { open as dateiDialog } from "@tauri-apps/plugin-dialog";
+import { listen } from "@tauri-apps/api/event";
 import {
   ArrowLeft,
   FolderOpen,
@@ -23,11 +24,13 @@ import type {
   AblageArt,
   AblageDatei,
   AblageFassung,
+  AblageFundstelle,
   AblageImportZeile,
   AblageKollisionswahl,
   AblageKorb,
   AblageOrdner,
   AblageSicht,
+  AblageSuchtreffer,
 } from "@/bindings";
 import { PageShell } from "../ui/PageShell";
 import { Button } from "../ui/Button";
@@ -51,6 +54,7 @@ import {
   OrdnerBaum,
   type UploadZeile,
 } from "./Teile";
+import { SuchErgebnisse } from "./Suche";
 import {
   dateiname,
   fehlerTeile,
@@ -90,8 +94,9 @@ let schluessel = 0;
 const neuerSchluessel = () => `u${++schluessel}`;
 
 /**
- * Seite „Ablage“ (lva#407, D1): Ordnerbaum, Dateiliste, Details, Papierkorb. Nur lokal; Suche
- * (D2), Abgleich (D4) und KI-Zugriff (D3) folgen. Namen und Inhalte gehen nie ins Log.
+ * Seite „Ablage“ (lva#407 D1, lva#408 D2): Ordnerbaum, Dateiliste, Details, Papierkorb, Suche in
+ * Namen und Inhalten (ohne KI). Abgleich (D4) und KI-Zugriff (D3) folgen. Namen und Inhalte gehen
+ * nie ins Log.
  */
 export const AblagePage: React.FC = () => {
   const { t, i18n } = useTranslation();
@@ -104,6 +109,11 @@ export const AblagePage: React.FC = () => {
   const [uploads, setUploads] = useState<UploadZeile[]>([]);
   const [uploadOffen, setUploadOffen] = useState(false);
   const [suche, setSuche] = useState("");
+  const [inhaltTreffer, setInhaltTreffer] = useState<
+    AblageSuchtreffer[] | null
+  >(null);
+  const [suchFehler, setSuchFehler] = useState(false);
+  const [fundstelle, setFundstelle] = useState<AblageFundstelle | null>(null);
   const [busy, setBusy] = useState(false);
   const [dlg, setDlg] = useState<Dlg | null>(null);
   const letzteEinstellungen = useRef<AblageOrdner | null>(null);
@@ -153,6 +163,49 @@ export const AblagePage: React.FC = () => {
     void neuLaden();
   }, [neuLaden]);
 
+  // D2: Der Textarbeiter meldet jede fertige Textfassung; dann Stand (und Suche) neu laden.
+  useEffect(() => {
+    let aus: (() => void) | null = null;
+    let aktiv = true;
+    listen("ablage-text", () => void neuLaden())
+      .then((f) => (aktiv ? (aus = f) : f()))
+      .catch(() => {});
+    return () => {
+      aktiv = false;
+      aus?.();
+    };
+  }, [neuLaden]);
+
+  // Inhaltssuche (verzögert); läuft erneut, wenn sich der Stand ändert (neue Textfassungen).
+  const anfrage = suche.trim();
+  const sucheAktiv = anfrage.length >= 2 && ansicht !== KORB;
+  useEffect(() => {
+    if (!sucheAktiv) {
+      setInhaltTreffer(null);
+      setSuchFehler(false);
+      return;
+    }
+    let aktuell = true;
+    const zeit = window.setTimeout(() => {
+      api
+        .suchen(anfrage)
+        .then((r) => {
+          if (!aktuell) return;
+          setInhaltTreffer(r);
+          setSuchFehler(false);
+        })
+        .catch(() => {
+          if (!aktuell) return;
+          setInhaltTreffer([]);
+          setSuchFehler(true);
+        });
+    }, 250);
+    return () => {
+      aktuell = false;
+      window.clearTimeout(zeit);
+    };
+  }, [anfrage, sucheAktiv, sicht]);
+
   // Gültige Auswahl: Ordner (oder Papierkorb) und Datei.
   useEffect(() => {
     if (!sicht) return;
@@ -164,8 +217,10 @@ export const AblagePage: React.FC = () => {
         sicht.ordner[0];
       setAnsicht(erster?.id ?? null);
     }
-    if (dateiId && !sicht.dateien.some((d) => d.id === dateiId))
+    if (dateiId && !sicht.dateien.some((d) => d.id === dateiId)) {
       setDateiId(null);
+      setFundstelle(null);
+    }
   }, [sicht, ansicht, dateiId]);
 
   useEffect(() => {
@@ -228,6 +283,11 @@ export const AblagePage: React.FC = () => {
     pfadZu(ordnerListe, id)
       .map((o) => o.name)
       .join(" › ");
+  // Namenstreffer über alle Ordner (die Liste darunter filtert nur den aktuellen Ordner).
+  const namensTreffer = useMemo(
+    () => (sucheAktiv ? nachNameFiltern(sicht?.dateien ?? [], anfrage) : []),
+    [sicht, anfrage, sucheAktiv],
+  );
 
   // --- Hochladen -----------------------------------------------------------------------
   const zeilenAus = (z: AblageImportZeile[]): UploadZeile[] =>
@@ -395,7 +455,22 @@ export const AblagePage: React.FC = () => {
   const wahl = (id: string) => {
     setAnsicht(id);
     setDateiId(null);
+    setFundstelle(null);
     setSuche("");
+  };
+
+  /** Treffer öffnen: Ordner der Datei, Details mit Fundstelle; die Suche bleibt stehen. */
+  const trefferOeffnen = (
+    dat: string,
+    ordner: string,
+    f: AblageFundstelle | null,
+    ausloeser: HTMLElement,
+  ) => {
+    letzterAusloeser.current = ausloeser;
+    setUploadOffen(false);
+    setAnsicht(ordner);
+    setDateiId(dat);
+    setFundstelle(f);
   };
 
   const detailInhalt = (id: string) => {
@@ -426,6 +501,8 @@ export const AblagePage: React.FC = () => {
         onUmbenennen={() => setDlg({ art: "datei-umbenennen", id: datei.id })}
         onPapierkorb={() => void inKorb("datei", datei.id)}
         onKi={() => oeffneEinstellungen(datei.ordner)}
+        fundstelle={fundstelle}
+        anfrage={anfrage}
       />
     );
   };
@@ -675,36 +752,39 @@ export const AblagePage: React.FC = () => {
       </>
     )
   ) : unter.length === 0 && dateienHier.length === 0 ? (
-    <div className="ablage-leer" data-testid="ablage-leer">
-      <div>
-        <FolderOpen
-          size={48}
-          aria-hidden="true"
-          style={{ color: "var(--color-logo-primary)" }}
-        />
-        <div className="ablage-leer__gross">
-          {suche ? t("ablage.leer.keineTreffer") : t("ablage.leer.titel")}
+    sucheAktiv &&
+    (namensTreffer.length > 0 || (inhaltTreffer?.length ?? 0) > 0) ? null : (
+      <div className="ablage-leer" data-testid="ablage-leer">
+        <div>
+          <FolderOpen
+            size={48}
+            aria-hidden="true"
+            style={{ color: "var(--color-logo-primary)" }}
+          />
+          <div className="ablage-leer__gross">
+            {suche ? t("ablage.leer.keineTreffer") : t("ablage.leer.titel")}
+          </div>
+          {!suche && (
+            <>
+              {t("ablage.leer.formate")}
+              <br />
+              {t("ablage.leer.lokal")}
+              <div style={{ marginTop: 16 }}>
+                <Button
+                  variant="primary"
+                  icon={<Upload size={20} aria-hidden="true" />}
+                  onClick={() => void waehlen(false)}
+                  aria-haspopup="dialog"
+                  disabled={busy || !aktuellerOrdner}
+                >
+                  {t("ablage.hochladen.auswaehlen")}
+                </Button>
+              </div>
+            </>
+          )}
         </div>
-        {!suche && (
-          <>
-            {t("ablage.leer.formate")}
-            <br />
-            {t("ablage.leer.lokal")}
-            <div style={{ marginTop: 16 }}>
-              <Button
-                variant="primary"
-                icon={<Upload size={20} aria-hidden="true" />}
-                onClick={() => void waehlen(false)}
-                aria-haspopup="dialog"
-                disabled={busy || !aktuellerOrdner}
-              >
-                {t("ablage.hochladen.auswaehlen")}
-              </Button>
-            </div>
-          </>
-        )}
       </div>
-    </div>
+    )
   ) : (
     <DateiTabelle
       titel={aktuellerOrdner?.name ?? ""}
@@ -716,6 +796,7 @@ export const AblagePage: React.FC = () => {
         letzterAusloeser.current = ausloeser;
         setUploadOffen(false);
         setDateiId(id);
+        setFundstelle(null);
       }}
     />
   );
@@ -761,6 +842,16 @@ export const AblagePage: React.FC = () => {
         >
           {kopf}
           {meldungen}
+          {sucheAktiv && (
+            <SuchErgebnisse
+              anfrage={anfrage}
+              namen={namensTreffer}
+              inhalt={inhaltTreffer}
+              fehler={suchFehler}
+              pfadText={pfadText}
+              onOeffnen={trefferOeffnen}
+            />
+          )}
           {hauptInhalt}
           {over && !imKorb && aktuellerOrdner && (
             <div

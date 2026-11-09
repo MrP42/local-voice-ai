@@ -4,7 +4,7 @@
 Quelle:   https://github.com/MrP42/wai-sdk, Pfade crates/<name> der Crates unten
 Ziel:     apps/local-voice/src-tauri/vendor/<name>/
 
-Übernommen werden `wai-projekte`, `wai-recherche` und `wai-assistent` samt ihren wai-*-Pfadabhängigkeiten
+Übernommen werden `wai-projekte`, `wai-recherche`, `wai-retrieval` (Index der Ablage, D2) und `wai-assistent` samt ihren wai-*-Pfadabhängigkeiten
 (`wai-security`, `wai-storage`, `wai-links`, `wai-providers`). Muster wie `vendor-wai-voice-dienst.py`:
 Kopie von `src/` des festen Commits per `git archive` und eine eigenständige `Cargo.toml` ohne
 Workspace-Vererbung. Workspace-Abhängigkeiten werden auf konkrete Versionen aufgelöst; wo Local Voice AI
@@ -44,7 +44,7 @@ from pathlib import Path
 WURZEL = Path(__file__).resolve().parent.parent
 VENDOR = WURZEL / "src-tauri" / "vendor"
 CRATES = (
-    "wai-links", "wai-security", "wai-storage", "wai-providers", "wai-projekte", "wai-recherche", "wai-assistent",
+    "wai-links", "wai-security", "wai-storage", "wai-providers", "wai-projekte", "wai-recherche", "wai-retrieval", "wai-assistent",
     "wai-notizbuch-zugang",
 )
 UEBERNOMMEN = ("src/", "regeln/")

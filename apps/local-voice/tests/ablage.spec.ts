@@ -3,7 +3,7 @@ import { execSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-// Seite „Ablage“ (lva#407, D1): Abnahme-Belege. Die Befehle ablage_* sind mit
+// Seite „Ablage“ (lva#407 D1, lva#408 D2 Inhaltssuche): Abnahme-Belege. Die Befehle ablage_* sind mit
 // synthetischen Daten belegt (nur erfundene Namen, keine echten Inhalte).
 // Aufnahmen entstehen nur mit ABLAGE_SHOTS=1 (Verzeichnis docs/vorschau/ablage,
 // überschreibbar mit LV_SHOT_DIR); ohne die Variable laufen nur die Prüfungen.
@@ -76,6 +76,7 @@ const datei = (
   ki: ki("aus", null, null, true),
   nur_geraet: false,
   text: "ok",
+  text_code: null,
   ...extra,
 });
 
@@ -295,6 +296,42 @@ async function installMock(
             if (cmd === "plugin:event|unlisten") return null;
             if (cmd === "plugin:dialog|open") return w.__pick ?? null;
             if (cmd === "ablage_stand") return JSON.parse(JSON.stringify(s));
+            // D2: Inhaltssuche mit synthetischen Fundstellen (Anker nach Markenformat v1).
+            if (cmd === "ablage_suchen") {
+              const q = String(args?.anfrage ?? "").toLowerCase();
+              if (!q.includes("kündigung")) return [];
+              return [
+                {
+                  dat: "d7",
+                  name: "Dienstleistungsvertrag Reinigung.docx",
+                  ordner: "o_vert",
+                  typ: "docx",
+                  rang: 0.9,
+                  stellen: [
+                    {
+                      anker: "absatz=4",
+                      pfad: ["Dienstleistungsvertrag", "§ 4 Laufzeit"],
+                      auszug:
+                        "Die Kündigungsfrist beträgt drei Monate zum Quartalsende.",
+                    },
+                  ],
+                },
+                {
+                  dat: "d2",
+                  name: "Haushaltsplan 2027.xlsx",
+                  ordner: "o_allg",
+                  typ: "xlsx",
+                  rang: 0.5,
+                  stellen: [
+                    {
+                      anker: "blatt=Kosten%202027&zeilen=21-40",
+                      pfad: ["Kosten 2027"],
+                      auszug: "Posten: Kündigung Wartungsvertrag; Betrag: 1200",
+                    },
+                  ],
+                },
+              ];
+            }
             if (cmd === "ablage_fassungen")
               return [
                 {
@@ -357,6 +394,7 @@ async function installMock(
                   },
                   nur_geraet: false,
                   text: null,
+                  text_code: null,
                 });
               }
               return [
@@ -450,7 +488,7 @@ async function waehle(page: Page, id: string) {
 }
 
 const SUCHFELD = (page: Page) =>
-  page.getByPlaceholder("Dateien nach Namen filtern");
+  page.getByPlaceholder("Namen und Inhalte durchsuchen");
 
 /** Im schmalen Fenster liegt die Suche hinter einem Knopf der Titelleiste. */
 async function suchfeld(page: Page) {
@@ -655,6 +693,48 @@ for (const theme of THEMEN) {
         await feld.fill("vertrag");
         await expect(page.getByTestId(/^ablage-datei-/)).toHaveCount(3);
         await aufnahme(page, "suche", breite, theme, ROOT);
+      });
+
+      test("suche: Treffer im Inhalt mit Fundstelle", async ({ page }) => {
+        await installMock(page, { theme });
+        await offne(page, breite, theme);
+        await waehle(page, "o_allg");
+        const feld = await suchfeld(page);
+        await feld.fill("Kündigung");
+        const ergebnisse = page.getByTestId("ablage-suchergebnisse");
+        await expect(ergebnisse).toBeVisible();
+        // Namenstreffer aus einem anderen Ordner, Inhaltstreffer mit lesbarem Anker.
+        await expect(
+          ergebnisse.getByTestId("ablage-namenstreffer-d8"),
+        ).toBeVisible();
+        const stelle = ergebnisse.getByTestId("ablage-inhaltstreffer-d7");
+        await expect(stelle).toContainText(
+          "Absatz 4 · Dienstleistungsvertrag › § 4 Laufzeit",
+        );
+        await expect(stelle.locator("mark").first()).toHaveText(/kündigung/i);
+        await expect(
+          ergebnisse.getByTestId("ablage-inhaltstreffer-d2"),
+        ).toContainText("Blatt „Kosten 2027“, Zeilen 21–40");
+        await expect(ergebnisse).not.toContainText(/\bablage\.[a-z]+\./);
+        expect(
+          await page.evaluate(() =>
+            (
+              (window as unknown as { __calls: [string, unknown][] }).__calls ??
+              []
+            ).some(([c]) => c === "ablage_suchen"),
+          ),
+        ).toBe(true);
+        await aufnahme(page, "inhaltssuche", breite, theme, ROOT);
+        // Öffnen: Ordner der Datei, Details mit Fundstelle.
+        await stelle.click();
+        const fund = page.getByTestId("ablage-fundstelle");
+        await expect(fund).toBeVisible();
+        await expect(fund).toContainText("Absatz 4");
+        await expect(fund).toContainText("Kündigungsfrist");
+        // Ohne Inhaltstreffer: Hinweis statt Liste.
+        if (breite < 1024) await page.keyboard.press("Escape");
+        await feld.fill("zzz");
+        await expect(page.getByTestId("ablage-inhalt-leer")).toBeVisible();
       });
 
       test("papierkorb: zwei Einträge", async ({ page }) => {

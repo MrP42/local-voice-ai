@@ -1,12 +1,17 @@
-//! Dokumentenablage, Stufe D1 (Epic local-voice-ai#395, Issue #407, wai-sdk ADR-0029).
+//! Dokumentenablage, Stufen D1 und D2 (Epic local-voice-ai#395, Issues #407/#408, wai-sdk ADR-0029).
 //!
 //! Lokale Ablage im Datenordner der App: Ordner, Dateien mit Fassungen, Papierkorb, sichere Ablage mit
-//! Journal und Wiederanlauf, gerätelokale KI-Freigaben. Kein Index (D2), kein Sync (D4), keine KI (D3).
+//! Journal und Wiederanlauf, gerätelokale KI-Freigaben (D1); Textfassungen im begrenzten Unterprozess,
+//! lokaler Index und Volltextsuche ohne KI (D2). Kein Sync (D4), keine KI (D3).
 //!
 //! * [`zusammenfuehren`]: reine Merge-Logik der synchronisierten Datensätze (keine I/O, keine Uhr).
 //! * [`aufbewahrung`]: welche Fassungen bleiben (reine Funktion).
 //! * [`freigabe`]: `freigabe.json`, gerätelokal, mit `.vorher` und Zustand „unklar“.
 //! * [`speicher`]: `ablage.json` (Journal + Baum), Dateien, Papierkorb.
+//! * [`extrakt`]: Bytes → Abschnitte mit Ankern (Markenformat v1), läuft im Unterprozess.
+//! * [`textlauf`]: der Unterprozess `lva-extrakt` mit Zeit- und Speichergrenze.
+//! * [`textfassung`]: Warteschlange (ein Arbeiter, abbrechbar, Wiederanlauf aus dem Stand).
+//! * [`index`]: `index.db` über `wai-retrieval`, Abgleich und Suche.
 //! * [`befehle`]: die Tauri-Befehle.
 //!
 //! Datenschutz: nie Datei- oder Ordnernamen, Pfade oder Inhalte in Log oder Fehlertext; Fehler tragen
@@ -14,12 +19,18 @@
 
 pub mod aufbewahrung;
 pub mod befehle;
+pub mod extrakt;
 pub mod freigabe;
+pub mod index;
 pub mod speicher;
+pub mod textfassung;
+pub mod textlauf;
 pub mod zusammenfuehren;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_d2;
 
 use serde::Serialize;
 use std::fmt;
