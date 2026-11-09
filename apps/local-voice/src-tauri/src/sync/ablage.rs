@@ -16,13 +16,18 @@
 //! * Pull je Sammlung mit eigenem Cursor (Ordner vor Dateien), Zusammenführen über
 //!   [`zf`](crate::ablage::zusammenfuehren), danach Originale und Texte herunterladen (Texte zuerst),
 //!   `textrev` und `original_sha256` prüfen, Index abgleichen.
-//! * Grabsteine sind endgültig: lokal endgültig gelöscht → Grabstein; empfangen → Original, Texte, Index
-//!   weg. Blob-Löschung nur nach vollständigem Pull, nur ohne lebende Fassung im Bestand, nur bedingt
-//!   (409 wird hingenommen).
-//! * Wechsel sync → „nur dieses Gerät“ (oder Klasse `personal`/`confidential`): erst wenn alle Originale
-//!   hier liegen, Grabstein; die Kennung bleibt lokal (`lokalisiert`) und wird nie wieder gesendet.
-//!   Der Rückweg lokal → sync (neue IDs, Übergangsjournal) ist noch offen: solche Einträge bleiben
-//!   „nur dieses Gerät“.
+//! * Grabsteine sind endgültig und versiegelt: die Nutzlast `{id, collection, deleted: true}` ist mit
+//!   `deleted` und `key_id` in der AAD deterministisch versiegelt (eine Wiederholung trägt exakt
+//!   dasselbe Chiffrat). Ein Grabstein ohne gültiges Siegel wird nie angewendet (Warnung im Stand).
+//!   Empfangen → Original und Texte gehen für 30 Tage in den Papierkorb, Index weg. Blob-Löschung nur
+//!   nach vollständigem Pull, nur ohne lebende Fassung im Bestand, nur bedingt (409 wird hingenommen).
+//! * Wechsel sync → „nur dieses Gerät“ (oder Klasse `personal`/`confidential`): die Ablage hält die
+//!   betroffenen Kennungen beim Umschalten im eigenen Stand fest (Write-ahead, `lokal`); nur sie werden
+//!   (wenn alle Originale hier liegen) am Hub begraben, nie wieder gesendet, und ein Grabstein wird auf
+//!   sie nie angewendet. Später von anderen Geräten eingetroffene Einträge unter einem festgehaltenen
+//!   Ordner bleiben synchron („befreit“). Der Rückweg lokal → sync (neue IDs) ist noch offen.
+//! * Unlesbare entfernte Stände (Siegel, JSON, neueres Schema) halten das Objekt an: kein Push, keine
+//!   Blob-Löschung. Unbekannte Felder bleiben erhalten und reisen mit.
 //!
 //! Datenschutz: ins Log nur Kennungen und Codes, nie Namen oder Inhalte.
 
@@ -33,6 +38,7 @@ use super::client::{
 use super::collect;
 use super::crypto::{self, KEY_LEN};
 use crate::ablage::speicher::{Ablage, Eingang, SyncBestand};
+use crate::ablage::zusammenfuehren::Register;
 use crate::ablage::zusammenfuehren::{self as zf, Datei, Eltern, Klasse, Ordner};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -51,6 +57,16 @@ pub const UPLOAD_BUDGET: u64 = 256 * 1024 * 1024;
 pub const DOWNLOAD_BUDGET: u64 = 256 * 1024 * 1024;
 /// Runden je Lauf für `superseded`/`blob_missing`.
 const MAX_RUNDEN: usize = 4;
+/// Schema der Datensätze, das dieses Gerät versteht (ein neueres hält das Objekt an).
+const SCHEMA: u64 = 1;
+/// Rückstellung nach einer Abweisung: 1 min · 2^Stufe, höchstens 6 h.
+const RUECK_MAX_MS: i64 = 6 * 3600 * 1000;
+/// Verwaiste eigene Blobs werden erst nach dieser Frist gelöscht.
+const WAISE_MS: i64 = 7 * 24 * 3600 * 1000;
+
+fn rueck_dauer(stufe: u32) -> i64 {
+    (60_000i64 << stufe.min(20)).min(RUECK_MAX_MS)
+}
 
 pub fn ist_ablage(collection: &str) -> bool {
     collection == SAMMLUNG_ORDNER || collection == SAMMLUNG_DATEI
@@ -139,6 +155,27 @@ pub struct ObjStand {
     /// Hub-Kennungen, die dieses Objekt am Hub referenziert.
     #[serde(default)]
     pub refs: Vec<String>,
+    /// Der entfernte Stand ist hier unlesbar (Siegel, JSON, neueres Schema): kein Push, keine
+    /// Blob-Löschung, bis ein lesbarer Stand eintrifft.
+    #[serde(default)]
+    pub angehalten: bool,
+}
+
+/// Rückstellung eines Objekts oder der Ablage (exponentiell).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Rueck {
+    pub bis_ms: i64,
+    pub stufe: u32,
+}
+
+impl Rueck {
+    fn naechste(alt: Option<Rueck>, jetzt: i64) -> Rueck {
+        let stufe = alt.map(|r| r.stufe + 1).unwrap_or(0);
+        Rueck {
+            bis_ms: jetzt + rueck_dauer(stufe),
+            stufe,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -152,10 +189,16 @@ pub struct Zustand {
     pub cursor: BTreeMap<String, i64>,
     #[serde(default)]
     pub objekte: BTreeMap<String, ObjStand>,
-    /// Kennungen, die dieses Gerät beim Wechsel zu „nur dieses Gerät“ am Hub begraben hat; sie bleiben
-    /// lokal und werden nie wieder gesendet (Rückweg mit neuen IDs: offen).
+    /// Abgewiesene Objekte: bis wann sie ruhen (ohne erneute Reservierung).
     #[serde(default)]
-    pub lokalisiert: BTreeSet<String>,
+    pub rueck: BTreeMap<String, Rueck>,
+    /// „Zu viele Ablagen“ (Blob-Anzahl am Hub): Hochladen ruht bis dahin.
+    #[serde(default)]
+    pub zu_viele: Option<Rueck>,
+    /// Geprüfte Ordnergräber, die erst nach dem Pull der Dateien angewendet werden (sonst läge eine
+    /// gleichzeitig begrabene Datei noch darunter und hielte den Ordner).
+    #[serde(default)]
+    pub ordnergraeber: BTreeSet<String>,
     /// Blobs, die dieses Gerät abgeschlossen am Hub weiß.
     #[serde(default)]
     pub hochgeladen: BTreeSet<String>,
@@ -250,6 +293,145 @@ pub fn teilnahme_datei(
         Teilnahme::Sync => klasse_teilnahme(zf::wirksame_klasse_datei(ordner, eltern, d)),
         t => t,
     }
+}
+
+/// Ordner ohne eigene Regeln (für fehlende Elternordner und – aus Sicht befreiter Einträge –
+/// festgehaltene Ordner): wie „Wiederhergestellt“.
+fn neutraler_ordner(id: &str) -> Ordner {
+    Ordner {
+        id: id.to_string(),
+        eltern: Register::neu(None, 0, ""),
+        name: Register::neu(String::new(), 0, ""),
+        datenklasse: Register::neu("erbt".into(), 0, ""),
+        nur_geraet: Register::neu(false, 0, ""),
+        zielordner_ki: Register::neu(false, 0, ""),
+        papierkorb: Register::neu(None, 0, ""),
+        extra: BTreeMap::new(),
+    }
+}
+
+/// Teilnahme am Abgleich je Kennung (Ordner und Dateien), maßgeblich für Push, Grabsteine und
+/// Momentaufnahme der Ablage:
+/// * festgehalten (`lokal`) → `Lokal`, für immer;
+/// * ein fehlender Elternordner zählt neutral (wie „Wiederhergestellt“), nicht als unbekannt;
+/// * befreite Einträge sehen festgehaltene Ordner ebenfalls neutral (sie bleiben synchron);
+/// * sonst Klasse und „nur dieses Gerät“ entlang der Kette.
+pub fn teilnahmen(
+    ordner: &BTreeMap<String, Ordner>,
+    dateien: &BTreeMap<String, Datei>,
+    lokal: &BTreeSet<String>,
+    befreit: &BTreeSet<String>,
+) -> BTreeMap<String, Teilnahme> {
+    let mut voll = ordner.clone();
+    let fehlend: BTreeSet<&String> = dateien
+        .values()
+        .map(|d| &d.ordner.wert)
+        .chain(ordner.values().filter_map(|o| o.eltern.wert.as_ref()))
+        .filter(|id| !ordner.contains_key(*id))
+        .collect();
+    for id in fehlend {
+        voll.insert(id.clone(), neutraler_ordner(id));
+    }
+    let e_voll = zf::wirksame_eltern(&voll);
+    let frei = (!befreit.is_empty()).then(|| {
+        let mut f = voll.clone();
+        for id in lokal {
+            if f.contains_key(id) {
+                f.insert(id.clone(), neutraler_ordner(id));
+            }
+        }
+        let e = zf::wirksame_eltern(&f);
+        (f, e)
+    });
+    let sicht = |id: &str| match &frei {
+        Some((f, e)) if befreit.contains(id) => (f, e),
+        _ => (&voll, &e_voll),
+    };
+    let mut aus = BTreeMap::new();
+    for id in ordner.keys() {
+        let t = if lokal.contains(id) {
+            Teilnahme::Lokal
+        } else {
+            let (o, e) = sicht(id);
+            teilnahme_ordner(o, e, id)
+        };
+        aus.insert(id.clone(), t);
+    }
+    for d in dateien.values() {
+        let t = if lokal.contains(&d.id) {
+            Teilnahme::Lokal
+        } else {
+            let (o, e) = sicht(&d.id);
+            teilnahme_datei(o, e, d)
+        };
+        aus.insert(d.id.clone(), t);
+    }
+    aus
+}
+
+/// Kontoweit gleiche Kennung des Standardordners „Allgemein“: `ord_` + ULID aus SHA-256(Schlüssel ‖
+/// "lv-ablage-allgemein") (gekürzt auf 128 Bit).
+pub fn standard_id(key: &[u8; KEY_LEN]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(key);
+    h.update(b"lv-ablage-allgemein");
+    let d = h.finalize();
+    let mut b = [0u8; 16];
+    b.copy_from_slice(&d[..16]);
+    format!(
+        "{}{}",
+        crate::ablage::PRAEFIX_ORDNER,
+        ulid::Ulid::from_bytes(b)
+    )
+}
+
+/// Klartext eines Grabsteins (deterministisch).
+fn grab_klartext(collection: &str, id: &str) -> String {
+    collect::canonical(&serde_json::json!({
+        "collection": collection,
+        "deleted": true,
+        "id": id,
+    }))
+}
+
+/// Versiegelte Nutzlast eines Grabsteins: deterministisch, damit eine Wiederholung exakt dasselbe
+/// Chiffrat trägt (der Hub nimmt eine Wiederholung nur bei gleicher Nutzlast und `key_id` an).
+pub fn grab_nutzlast(
+    key: &[u8; KEY_LEN],
+    user_id: i64,
+    collection: &str,
+    id: &str,
+) -> Result<String, String> {
+    let kid = crypto::key_id(key);
+    crypto::seal_deterministisch(
+        key,
+        &crypto::aad_ablage(user_id, collection, id, &[], &kid, true),
+        grab_klartext(collection, id).as_bytes(),
+    )
+}
+
+/// Ist der Grabstein vom Konto selbst versiegelt (Kennung, Sammlung, `deleted` bestätigt)?
+fn grab_echt(
+    key: &[u8; KEY_LEN],
+    user_id: i64,
+    collection: &str,
+    id: &str,
+    key_id: &str,
+    payload: &str,
+) -> bool {
+    if payload.is_empty() || key_id != crypto::key_id(key) {
+        return false;
+    }
+    let aad = crypto::aad_ablage(user_id, collection, id, &[], key_id, true);
+    let Ok(plain) = crypto::open(key, &aad, payload) else {
+        return false;
+    };
+    serde_json::from_slice::<Value>(&plain).is_ok_and(|v| {
+        v.get("id").and_then(Value::as_str) == Some(id)
+            && v.get("collection").and_then(Value::as_str) == Some(collection)
+            && v.get("deleted").and_then(Value::as_bool) == Some(true)
+    })
 }
 
 fn unhex32(s: &str) -> Option<[u8; 32]> {
@@ -361,6 +543,8 @@ struct Lauf<'a, H: AblageHub + ?Sized> {
     ablage: &'a Ablage,
     konto: &'a Konto<'a>,
     key_id: String,
+    /// Kontokennung (Benutzer, Schlüsselkennung, Hub) für den Zustand und die Blob-Liste.
+    kennung: String,
     z: Zustand,
     bericht: Bericht,
 }
@@ -387,7 +571,7 @@ pub async fn lauf<H: AblageHub + ?Sized>(
     if z.konto != kennung {
         z = Zustand {
             v: ZUSTAND_VERSION,
-            konto: kennung,
+            konto: kennung.clone(),
             ..Default::default()
         };
     }
@@ -396,6 +580,7 @@ pub async fn lauf<H: AblageHub + ?Sized>(
         ablage,
         konto,
         key_id: crypto::key_id(konto.key),
+        kennung,
         z,
         bericht: Bericht::default(),
     };
@@ -419,7 +604,17 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
                 self.z.verbrauch = Some(v);
             }
             Err(HubError::Unauthorized) => return Err(HubError::Unauthorized),
+            // Ohne gelesenen Verbrauch bleibt `kontingent_voll`, wie es war.
             Err(_) => {}
+        }
+        // Ein unveränderter Standardordner zieht vor dem ersten Push auf die kontoweite Kennung um.
+        let ziel = standard_id(self.konto.key);
+        let z = &self.z;
+        let am_hub = |id: &str| z.objekt(SAMMLUNG_ORDNER, id).is_some();
+        match self.ablage.standard_umziehen(&ziel, &am_hub) {
+            Ok(true) => self.bericht.geaendert = true,
+            Ok(false) => {}
+            Err(e) => log::warn!("ablage-sync: Standardordner nicht umgezogen: {}", e.code),
         }
         self.bericht.vollstaendig = self.pull().await?;
         self.aufbewahren()?;
@@ -462,7 +657,16 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
                 if seite.more && seite.cursor <= since {
                     return Err(HubError::Other("Pull ohne Fortschritt (Ablage)".into()));
                 }
-                let (eingaenge, buch, fremder_schluessel) = self.seite_lesen(coll, &seite);
+                let (mut eingaenge, buch, fremder_schluessel) = self.seite_lesen(coll, &seite);
+                if coll == SAMMLUNG_ORDNER {
+                    eingaenge.retain(|e| match e {
+                        Eingang::Grab(id) => {
+                            self.z.ordnergraeber.insert(id.clone());
+                            false
+                        }
+                        _ => true,
+                    });
+                }
                 if !eingaenge.is_empty() {
                     let e = self
                         .ablage
@@ -491,13 +695,30 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
                 }
             }
         }
+        if !self.z.ordnergraeber.is_empty() {
+            let graeber: Vec<Eingang> = self
+                .z
+                .ordnergraeber
+                .iter()
+                .map(|id| Eingang::Grab(id.clone()))
+                .collect();
+            let e = self
+                .ablage
+                .sync_einspielen(&graeber)
+                .map_err(ablage_fehler)?;
+            if !e.begraben.is_empty() {
+                self.bericht.geaendert = true;
+            }
+            self.z.ordnergraeber.clear();
+            self.z.speichern(self.ablage)?;
+        }
         Ok(true)
     }
 
     /// Eine Pull-Seite entschlüsseln und prüfen. Liefert Eingänge, die neuen Objektstände und ob ein
     /// fremder Schlüssel auftauchte (dann endet die Seite dort, der Cursor bleibt stehen).
     fn seite_lesen(
-        &self,
+        &mut self,
         coll: &'static str,
         seite: &PullResponse,
     ) -> (Vec<Eingang>, Vec<(String, ObjStand)>, bool) {
@@ -516,20 +737,25 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
             {
                 continue; // schon bekannt (auch die eigene, bestätigte Änderung)
             }
-            if self.z.lokalisiert.contains(&r.object_id) {
-                // Eigener Grabstein beim Wechsel zu „nur dieses Gerät“: die lokale Kopie bleibt.
-                buch.push((
-                    k,
-                    ObjStand {
-                        revision: r.revision,
-                        deleted: r.deleted,
-                        ..Default::default()
-                    },
-                ));
-                continue;
-            }
             if r.deleted {
-                eingaenge.push(Eingang::Grab(r.object_id.clone()));
+                // Nur ein vom Konto versiegelter Grabstein gilt; die Ablage wendet ihn außerdem nie auf
+                // festgehaltene oder lokale Einträge an (`sync_einspielen`).
+                if grab_echt(
+                    self.konto.key,
+                    self.konto.user_id,
+                    coll,
+                    &r.object_id,
+                    &r.key_id,
+                    &r.payload,
+                ) {
+                    eingaenge.push(Eingang::Grab(r.object_id.clone()));
+                } else {
+                    log::warn!(
+                        "ablage-sync: {coll}/{} Grabstein ohne Siegel, ignoriert",
+                        r.object_id
+                    );
+                    self.warnen("Ablage: ein Grabstein ohne gültiges Siegel wurde ignoriert");
+                }
                 buch.push((
                     k,
                     ObjStand {
@@ -545,16 +771,18 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
             }
             let refs = r.blob_refs.clone().unwrap_or_default();
             let gelesen = self.entschluesseln(coll, &r.object_id, &refs, &r.payload);
-            let (eingang, hash) = match gelesen {
-                Some(x) => x,
+            let angehalten = gelesen.is_none();
+            let hash = match gelesen {
+                Some((e, h)) => {
+                    eingaenge.push(e);
+                    h
+                }
                 None => {
-                    log::warn!("ablage-sync: {coll}/{} unlesbar, übersprungen", r.object_id);
-                    (None, String::new())
+                    log::warn!("ablage-sync: {coll}/{} unlesbar, angehalten", r.object_id);
+                    self.warnen("Ablage: ein Eintrag vom Hub ist hier nicht lesbar und ruht");
+                    String::new()
                 }
             };
-            if let Some(e) = eingang {
-                eingaenge.push(e);
-            }
             buch.push((
                 k,
                 ObjStand {
@@ -562,36 +790,42 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
                     hash,
                     deleted: false,
                     refs,
+                    angehalten,
                 },
             ));
         }
         (eingaenge, buch, false)
     }
 
-    /// Öffnet ein Objekt (AAD mit `blob_refs`) und prüft Kennung und Steuerfeld gegen den Inhalt.
+    /// Öffnet ein Objekt (AAD mit `blob_refs`, `key_id`, `deleted`) und prüft Kennung, Schema und
+    /// Steuerfeld gegen den Inhalt. `None`: unlesbar (das Objekt ruht).
     fn entschluesseln(
         &self,
         coll: &str,
         id: &str,
         refs: &[String],
         payload: &str,
-    ) -> Option<(Option<Eingang>, String)> {
-        let aad = crypto::aad_ablage(self.konto.user_id, coll, id, refs);
+    ) -> Option<(Eingang, String)> {
+        let aad = crypto::aad_ablage(self.konto.user_id, coll, id, refs, &self.key_id, false);
         let plain = crypto::open(self.konto.key, &aad, payload).ok()?;
+        let roh: Value = serde_json::from_slice(&plain).ok()?;
+        if roh.get("v").and_then(Value::as_u64).unwrap_or(1) > SCHEMA {
+            return None; // neueres Schema: nicht verstehen heißt nicht überschreiben
+        }
         if coll == SAMMLUNG_ORDNER {
-            let o: Ordner = serde_json::from_slice(&plain).ok()?;
+            let o: Ordner = serde_json::from_value(roh).ok()?;
             if o.id != id || !refs.is_empty() {
                 return None;
             }
             let h = hash_ordner(&o);
-            Some((Some(Eingang::Ordner(o)), h))
+            Some((Eingang::Ordner(o), h))
         } else {
-            let d: Datei = serde_json::from_slice(&plain).ok()?;
+            let d: Datei = serde_json::from_value(roh).ok()?;
             if d.id != id || hub_refs(self.konto.key, &d) != refs {
                 return None;
             }
             let h = hash_datei(&d);
-            Some((Some(Eingang::Datei(d)), h))
+            Some((Eingang::Datei(d), h))
         }
     }
 
@@ -622,13 +856,13 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
         // Reste abgebrochener Downloads (es läuft nie mehr als ein Abgleich zugleich).
         self.ablage.sync_eingang_raeumen();
         let b = self.ablage.sync_bestand().map_err(ablage_fehler)?;
-        let eltern = zf::wirksame_eltern(&b.ordner);
+        let t = b.teilnahmen();
         // (Größe, Klasse: 0 Text, 1 Original) – Texte zuerst, dann nach Größe.
         let mut auftraege: Vec<(u8, u64, String, String, String)> = Vec::new();
         for d in b.dateien.values() {
             if b.begraben.contains(&d.id)
                 || !self.z.lebt_am_hub(SAMMLUNG_DATEI, &d.id)
-                || teilnahme_datei(&b.ordner, &eltern, d) == Teilnahme::Halten
+                || t.get(&d.id) == Some(&Teilnahme::Halten)
             {
                 continue;
             }
@@ -717,112 +951,129 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
 
     // --- Push --------------------------------------------------------------------------------
 
+    fn ruht(&self, collection: &str, id: &str, jetzt: i64) -> bool {
+        self.z
+            .rueck
+            .get(&schluessel(collection, id))
+            .is_some_and(|r| r.bis_ms > jetzt)
+    }
+
+    fn angehalten(&self, collection: &str, id: &str) -> bool {
+        self.z.objekt(collection, id).is_some_and(|o| o.angehalten)
+    }
+
     fn kandidaten(&mut self, b: &SyncBestand) -> Vec<Kandidat> {
+        let t = b.teilnahmen();
+        let jetzt = crate::ablage::jetzt_ms();
         let eltern = zf::wirksame_eltern(&b.ordner);
         let mut aus = Vec::new();
         let mut ausstehend = 0u32;
-        // Ein Ordner wird erst lokalisiert, wenn keine Datei darunter mehr am Hub lebt (sonst kämen
-        // ihre Kopien auf anderen Geräten vorübergehend unter „Wiederhergestellt“).
+        // Ein festgehaltener Ordner wird erst begraben, wenn keine festgehaltene Datei darunter mehr am
+        // Hub lebt (sonst kämen ihre Kopien anderswo vorübergehend unter „Wiederhergestellt“).
         let mut noch_belegt: BTreeSet<String> = BTreeSet::new();
         for d in b.dateien.values() {
-            if self.z.lebt_am_hub(SAMMLUNG_DATEI, &d.id) && !self.z.lokalisiert.contains(&d.id) {
+            if b.lokal.contains(&d.id) && self.z.lebt_am_hub(SAMMLUNG_DATEI, &d.id) {
                 noch_belegt.extend(zf::kette(&eltern, &d.ordner.wert));
             }
         }
+        let lokalisieren = |collection: &'static str, id: &str| Kandidat {
+            collection,
+            id: id.to_string(),
+            art: Art::Lokalisieren,
+            plain: String::new(),
+            hash: String::new(),
+            refs: Vec::new(),
+        };
         for o in b.ordner.values() {
-            if b.begraben.contains(&o.id) || self.z.lokalisiert.contains(&o.id) {
+            if b.begraben.contains(&o.id) || self.ruht(SAMMLUNG_ORDNER, &o.id, jetzt) {
                 continue;
             }
-            match teilnahme_ordner(&b.ordner, &eltern, &o.id) {
-                Teilnahme::Sync => {
-                    let wert = wert_ordner(o);
-                    let hash = collect::hash(&wert);
-                    if self
-                        .z
-                        .objekt(SAMMLUNG_ORDNER, &o.id)
-                        .is_some_and(|s| s.hash == hash && !s.deleted)
-                    {
-                        continue;
-                    }
-                    if self
-                        .z
-                        .objekt(SAMMLUNG_ORDNER, &o.id)
-                        .is_some_and(|s| s.deleted)
-                    {
-                        continue; // am Hub begraben: der Pull hat den Grabstein schon angewendet
-                    }
-                    aus.push(Kandidat {
-                        collection: SAMMLUNG_ORDNER,
-                        id: o.id.clone(),
-                        art: Art::Stand,
-                        plain: collect::canonical(&wert),
-                        hash,
-                        refs: Vec::new(),
-                    });
-                }
-                Teilnahme::Lokal if self.z.lebt_am_hub(SAMMLUNG_ORDNER, &o.id) => {
+            if self.angehalten(SAMMLUNG_ORDNER, &o.id) {
+                ausstehend += 1;
+                continue;
+            }
+            if b.lokal.contains(&o.id) {
+                if self.z.lebt_am_hub(SAMMLUNG_ORDNER, &o.id) {
                     if noch_belegt.contains(&o.id) {
                         ausstehend += 1;
-                        continue;
+                    } else {
+                        aus.push(lokalisieren(SAMMLUNG_ORDNER, &o.id));
                     }
-                    aus.push(Kandidat {
-                        collection: SAMMLUNG_ORDNER,
-                        id: o.id.clone(),
-                        art: Art::Lokalisieren,
-                        plain: String::new(),
-                        hash: String::new(),
-                        refs: Vec::new(),
-                    });
                 }
-                _ => {}
-            }
-        }
-        for d in b.dateien.values() {
-            if b.begraben.contains(&d.id) || self.z.lokalisiert.contains(&d.id) {
                 continue;
             }
-            match teilnahme_datei(&b.ordner, &eltern, d) {
-                Teilnahme::Sync => {
-                    let wert = wert_datei(d);
-                    let hash = collect::hash(&wert);
-                    let bekannt = self.z.objekt(SAMMLUNG_DATEI, &d.id);
-                    if bekannt.is_some_and(|s| s.deleted || s.hash == hash) {
-                        continue;
-                    }
-                    aus.push(Kandidat {
-                        collection: SAMMLUNG_DATEI,
-                        id: d.id.clone(),
-                        art: Art::Stand,
-                        plain: collect::canonical(&wert),
-                        hash,
-                        refs: hub_refs(self.konto.key, d),
-                    });
-                }
-                Teilnahme::Lokal if self.z.lebt_am_hub(SAMMLUNG_DATEI, &d.id) => {
+            if t.get(&o.id) != Some(&Teilnahme::Sync) {
+                continue;
+            }
+            let wert = wert_ordner(o);
+            let hash = collect::hash(&wert);
+            if self
+                .z
+                .objekt(SAMMLUNG_ORDNER, &o.id)
+                .is_some_and(|s| s.deleted || s.hash == hash)
+            {
+                continue; // unverändert, oder am Hub begraben (der Pull hat entschieden)
+            }
+            aus.push(Kandidat {
+                collection: SAMMLUNG_ORDNER,
+                id: o.id.clone(),
+                art: Art::Stand,
+                plain: collect::canonical(&wert),
+                hash,
+                refs: Vec::new(),
+            });
+        }
+        for d in b.dateien.values() {
+            if b.begraben.contains(&d.id) || self.ruht(SAMMLUNG_DATEI, &d.id, jetzt) {
+                continue;
+            }
+            if self.angehalten(SAMMLUNG_DATEI, &d.id) {
+                ausstehend += 1;
+                continue;
+            }
+            if b.lokal.contains(&d.id) {
+                if self.z.lebt_am_hub(SAMMLUNG_DATEI, &d.id) {
                     // Lokale Kopie prüfen: erst wenn jedes Original hier liegt, verschwindet die Cloud-Kopie.
                     let vollstaendig = d
                         .fassungen
                         .iter()
                         .all(|f| b.originale.contains(&(d.id.clone(), f.fas.clone())));
-                    if !vollstaendig {
+                    if vollstaendig {
+                        aus.push(lokalisieren(SAMMLUNG_DATEI, &d.id));
+                    } else {
                         ausstehend += 1;
-                        continue;
                     }
-                    aus.push(Kandidat {
-                        collection: SAMMLUNG_DATEI,
-                        id: d.id.clone(),
-                        art: Art::Lokalisieren,
-                        plain: String::new(),
-                        hash: String::new(),
-                        refs: Vec::new(),
-                    });
                 }
-                _ => {}
+                continue;
             }
+            if t.get(&d.id) != Some(&Teilnahme::Sync) {
+                continue;
+            }
+            let wert = wert_datei(d);
+            let hash = collect::hash(&wert);
+            if self
+                .z
+                .objekt(SAMMLUNG_DATEI, &d.id)
+                .is_some_and(|s| s.deleted || s.hash == hash)
+            {
+                continue;
+            }
+            aus.push(Kandidat {
+                collection: SAMMLUNG_DATEI,
+                id: d.id.clone(),
+                art: Art::Stand,
+                plain: collect::canonical(&wert),
+                hash,
+                refs: hub_refs(self.konto.key, d),
+            });
         }
         for id in &b.begraben {
             for coll in [SAMMLUNG_ORDNER, SAMMLUNG_DATEI] {
-                if self.z.lebt_am_hub(coll, id) && !self.z.lokalisiert.contains(id) {
+                // Ein unlesbarer, neuerer Stand am Hub wird nicht blind begraben.
+                if self.z.lebt_am_hub(coll, id)
+                    && !self.angehalten(coll, id)
+                    && !self.ruht(coll, id, jetzt)
+                {
                     aus.push(Kandidat {
                         collection: coll,
                         id: id.clone(),
@@ -836,6 +1087,27 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
         }
         self.bericht.ausstehend += ausstehend;
         aus
+    }
+
+    /// Fehler einer einzelnen Hub-Anfrage: Anmeldung abgelaufen bricht den Lauf ab, alles andere stellt
+    /// nur dieses Objekt zurück (`Ok(false)`).
+    fn einzelfehler(&mut self, id: &str, was: &str, e: HubError) -> Result<bool, HubError> {
+        match e {
+            HubError::Unauthorized => Err(HubError::Unauthorized),
+            HubError::Other(t) if ist_zu_viele(&t) => {
+                self.zu_viele_merken();
+                Ok(false)
+            }
+            _ => {
+                log::warn!("ablage-sync: {was} für {id} noch nicht möglich");
+                Ok(false)
+            }
+        }
+    }
+
+    fn zu_viele_merken(&mut self) {
+        self.z.zu_viele = Some(Rueck::naechste(self.z.zu_viele, crate::ablage::jetzt_ms()));
+        self.warnen("Ablage: zu viele Dateien im Konto, Hochladen ruht");
     }
 
     /// Neue Blobs einer Datei reservieren und (falls nötig) hochladen. `false`: noch nicht pushbar.
@@ -859,8 +1131,20 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
             if alt.contains(&hid) && self.z.hochgeladen.contains(&hid) {
                 continue; // vom Objekt schon referenziert: am Hub vor dem Löschen geschützt
             }
+            // Unmittelbar vor jeder Übertragung frisch prüfen: noch synchron? (Klasse, „nur dieses
+            // Gerät“ oder Ordner können sich seit der Momentaufnahme geändert haben.)
+            if !self
+                .ablage
+                .sync_noch_synchron(std::slice::from_ref(&k.id))
+                .map_err(ablage_fehler)?
+                .contains(&k.id)
+            {
+                return Ok(false);
+            }
             // 1. reservieren (auch beim Wiederverwenden eines vorhandenen Blobs)
-            self.hub.reservieren(&hid, self.konto.device_id).await?;
+            if let Err(e) = self.hub.reservieren(&hid, self.konto.device_id).await {
+                return self.einzelfehler(&k.id, "Reservierung", e);
+            }
             if self.z.hochgeladen.contains(&hid) {
                 continue;
             }
@@ -876,12 +1160,13 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
             };
             let Some(pfad) = pfad else {
                 // Nicht hier: vorhanden am Hub? Sonst wartet das Objekt (Gerät mit der Datei lädt hoch).
-                match self.hub.blob_info(&hid).await? {
-                    Some(i) if i.complete => {
+                match self.hub.blob_info(&hid).await {
+                    Ok(Some(i)) if i.complete => {
                         self.z.hochgeladen.insert(hid);
                         continue;
                     }
-                    _ => return Ok(false),
+                    Ok(_) => return Ok(false),
+                    Err(e) => return self.einzelfehler(&k.id, "Blob-Abfrage", e),
                 }
             };
             let ueber = self.z.kontingent_voll
@@ -891,9 +1176,13 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
                     .is_some_and(|v| v.quota > 0 && v.used.saturating_add(size) > v.quota);
             if ueber {
                 // Schon am Hub (z. B. von einem anderen Gerät): kein neuer Speicher nötig.
-                if matches!(self.hub.blob_info(&hid).await?, Some(i) if i.complete) {
-                    self.z.hochgeladen.insert(hid);
-                    continue;
+                match self.hub.blob_info(&hid).await {
+                    Ok(Some(i)) if i.complete => {
+                        self.z.hochgeladen.insert(hid);
+                        continue;
+                    }
+                    Ok(_) => {}
+                    Err(e) => return self.einzelfehler(&k.id, "Blob-Abfrage", e),
                 }
                 self.z.kontingent_voll = true;
                 self.warnen("Ablage: Speicher im Konto voll, Hochladen angehalten");
@@ -912,6 +1201,10 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
             .await;
             match r {
                 Ok(Upload::Done) => {
+                    // Dauerhaft im Ablagestand (Wartung „Blobs abgleichen“).
+                    if let Err(e) = self.ablage.sync_blob_vermerken(&hid, &self.kennung) {
+                        log::warn!("ablage-sync: Blob nicht vermerkt: {}", e.code);
+                    }
                     self.z.hochgeladen.insert(hid);
                     if let Some(v) = self.z.verbrauch.as_mut() {
                         v.used = v.used.saturating_add(size);
@@ -919,6 +1212,10 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
                 }
                 Ok(Upload::Later) => return Ok(false),
                 Err(HubError::Unauthorized) => return Err(HubError::Unauthorized),
+                Err(HubError::Other(e)) if ist_zu_viele(&e) => {
+                    self.zu_viele_merken();
+                    return Ok(false);
+                }
                 Err(HubError::Other(e)) if e.contains("quota_exceeded") => {
                     self.z.kontingent_voll = true;
                     self.warnen("Ablage: Speicher im Konto voll, Hochladen angehalten");
@@ -944,8 +1241,13 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
             }
             // Ordner vor Dateien, damit Dateien ihren Ordner vorfinden.
             let mut bereit: Vec<Kandidat> = Vec::new();
+            let jetzt = crate::ablage::jetzt_ms();
             for k in alle {
                 if k.collection == SAMMLUNG_DATEI && k.art == Art::Stand {
+                    if self.z.zu_viele.is_some_and(|r| r.bis_ms > jetzt) {
+                        self.bericht.ausstehend += 1;
+                        continue;
+                    }
                     if !self.blobs_bereitstellen(&b, &k, &mut budget).await? {
                         self.bericht.ausstehend += 1;
                         continue;
@@ -956,6 +1258,25 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
             bereit.sort_by_key(|k| (k.collection == SAMMLUNG_DATEI, k.id.clone()));
             let mut nochmal = false;
             for stapel in bereit.chunks(PUSH_STAPEL) {
+                // Unmittelbar vor dem Push frisch prüfen (unter der Ablage-Sperre): was nicht mehr
+                // synchron ist, fällt heraus; die Momentaufnahme der Ablage hat es festgehalten.
+                let staende: Vec<String> = stapel
+                    .iter()
+                    .filter(|k| k.art == Art::Stand)
+                    .map(|k| k.id.clone())
+                    .collect();
+                let noch = self
+                    .ablage
+                    .sync_noch_synchron(&staende)
+                    .map_err(ablage_fehler)?;
+                let stapel: Vec<Kandidat> = stapel
+                    .iter()
+                    .filter(|k| k.art != Art::Stand || noch.contains(&k.id))
+                    .cloned()
+                    .collect();
+                if stapel.is_empty() {
+                    continue;
+                }
                 let objekte: Vec<PushObject> = stapel
                     .iter()
                     .map(|k| self.push_objekt(k))
@@ -990,11 +1311,19 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
             .unwrap_or(0);
         let grab = k.art != Art::Stand;
         let payload = if grab {
-            String::new()
+            grab_nutzlast(self.konto.key, self.konto.user_id, k.collection, &k.id)
+                .map_err(HubError::Other)?
         } else {
             crypto::seal(
                 self.konto.key,
-                &crypto::aad_ablage(self.konto.user_id, k.collection, &k.id, &k.refs),
+                &crypto::aad_ablage(
+                    self.konto.user_id,
+                    k.collection,
+                    &k.id,
+                    &k.refs,
+                    &self.key_id,
+                    false,
+                ),
                 k.plain.as_bytes(),
             )
             .map_err(HubError::Other)?
@@ -1022,6 +1351,7 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
         match (r.outcome.as_str(), r.reason.as_deref()) {
             ("accepted", _) => {
                 let grab = k.art != Art::Stand;
+                self.z.rueck.remove(&schl);
                 self.z.objekte.insert(
                     schl,
                     ObjStand {
@@ -1029,22 +1359,29 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
                         hash: k.hash.clone(),
                         deleted: grab,
                         refs: if grab { Vec::new() } else { k.refs.clone() },
+                        angehalten: false,
                     },
                 );
-                if k.art == Art::Lokalisieren {
-                    self.z.lokalisiert.insert(k.id.clone());
-                }
                 let neu: BTreeSet<&String> = k.refs.iter().collect();
                 for alt in alt_refs.iter().filter(|a| grab || !neu.contains(a)) {
                     self.z.blob_loeschen.insert(alt.clone());
                 }
-                // Nach einer lokalisierten Datei kann ihr Ordner in der nächsten Runde folgen.
+                // Nach einer festgehaltenen Datei kann ihr Ordner in der nächsten Runde folgen.
                 Ok(k.art == Art::Lokalisieren && k.collection == SAMMLUNG_DATEI)
             }
             ("superseded", _) => {
                 match &r.current {
                     Some(cur) if cur.deleted => {
-                        // Endgültiger Grabstein am Hub: lokal anwenden (nie wiederbeleben).
+                        // Endgültiger Grabstein am Hub: nur mit gültigem Siegel lokal anwenden (die
+                        // Ablage hält ihn außerdem von festgehaltenen Einträgen fern).
+                        let echt = grab_echt(
+                            self.konto.key,
+                            self.konto.user_id,
+                            k.collection,
+                            &k.id,
+                            &cur.key_id,
+                            &cur.payload,
+                        );
                         self.z.objekte.insert(
                             schl,
                             ObjStand {
@@ -1053,11 +1390,18 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
                                 ..Default::default()
                             },
                         );
-                        if k.art == Art::Stand {
-                            self.ablage
+                        if !echt {
+                            self.warnen(
+                                "Ablage: ein Grabstein ohne gültiges Siegel wurde ignoriert",
+                            );
+                        } else if k.art == Art::Stand {
+                            let e = self
+                                .ablage
                                 .sync_einspielen(&[Eingang::Grab(k.id.clone())])
                                 .map_err(ablage_fehler)?;
-                            self.bericht.geaendert = true;
+                            if !e.begraben.is_empty() {
+                                self.bericht.geaendert = true;
+                            }
                         }
                         Ok(false)
                     }
@@ -1068,8 +1412,9 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
                         }
                         let refs = cur.blob_refs.clone().unwrap_or_default();
                         let gelesen = self.entschluesseln(k.collection, &k.id, &refs, &cur.payload);
+                        let angehalten = gelesen.is_none();
                         let hash = match gelesen {
-                            Some((Some(e), h)) => {
+                            Some((e, h)) => {
                                 let ein =
                                     self.ablage.sync_einspielen(&[e]).map_err(ablage_fehler)?;
                                 if !ein.geaendert.is_empty() {
@@ -1077,7 +1422,13 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
                                 }
                                 h
                             }
-                            _ => String::new(),
+                            None => {
+                                // Unlesbar: nie überschreiben, das Objekt ruht.
+                                self.warnen(
+                                    "Ablage: ein Eintrag vom Hub ist hier nicht lesbar und ruht",
+                                );
+                                String::new()
+                            }
                         };
                         self.z.objekte.insert(
                             schl,
@@ -1086,9 +1437,10 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
                                 hash,
                                 deleted: false,
                                 refs,
+                                angehalten,
                             },
                         );
-                        Ok(true)
+                        Ok(!angehalten)
                     }
                     None => {
                         // Der Hub kennt das Objekt nicht (mehr): erneut mit Basis 0.
@@ -1110,20 +1462,16 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
                 Ok(true)
             }
             ("rejected", Some("tombstoned")) => {
+                // Grabstein am Hub, den dieser Lauf nicht gezogen hat: nichts lokal anwenden (das
+                // tut nur ein Pull mit geprüftem Siegel); Revision 0, damit der Pull ihn noch liest.
                 self.z.objekte.insert(
                     schl,
                     ObjStand {
-                        revision: r.revision,
+                        revision: 0,
                         deleted: true,
                         ..Default::default()
                     },
                 );
-                if k.art == Art::Stand {
-                    self.ablage
-                        .sync_einspielen(&[Eingang::Grab(k.id.clone())])
-                        .map_err(ablage_fehler)?;
-                    self.bericht.geaendert = true;
-                }
                 Ok(false)
             }
             ("rejected", grund) => {
@@ -1133,6 +1481,11 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
                     k.id,
                     grund.unwrap_or("ohne Grund")
                 );
+                // Rückstellung mit wachsendem Abstand; bis dahin keine neue Reservierung.
+                let alt = self.z.rueck.get(&schl).copied();
+                self.z
+                    .rueck
+                    .insert(schl, Rueck::naechste(alt, crate::ablage::jetzt_ms()));
                 self.warnen("Ablage: ein Eintrag wurde vom Hub abgewiesen");
                 Ok(false)
             }
@@ -1145,28 +1498,28 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
 
     // --- Blob-Löschung ------------------------------------------------------------------------
 
-    /// Bedingte Löschung der Kandidaten: nur ohne lebende Fassung im (vollständig gezogenen) Bestand;
-    /// 409 (referenziert/reserviert) ist ein Ergebnis, der Kandidat entfällt.
-    async fn blobs_loeschen(&mut self) -> Result<(), HubError> {
-        if self.z.blob_loeschen.is_empty() {
-            return Ok(());
-        }
-        let b = self.ablage.sync_bestand().map_err(ablage_fehler)?;
-        // Lebend am Hub ist, was eine synchronisierte (nicht lokalisierte) Datei nutzt; was nur noch
-        // auf diesem Gerät liegt, braucht keine Cloud-Kopie.
-        let eltern = zf::wirksame_eltern(&b.ordner);
+    /// Hub-Kennungen, die noch gebraucht werden: Fassungen synchroner (oder unklarer) Dateien und
+    /// alles, was ein lebendes oder ruhendes Objekt am Hub referenziert.
+    fn lebende_blobs(&self, b: &SyncBestand) -> BTreeSet<String> {
+        let t = b.teilnahmen();
         let mut lebend: BTreeSet<String> = BTreeSet::new();
         for d in b.dateien.values() {
-            if !b.begraben.contains(&d.id)
-                && !self.z.lokalisiert.contains(&d.id)
-                && teilnahme_datei(&b.ordner, &eltern, d) != Teilnahme::Lokal
-            {
+            if !b.begraben.contains(&d.id) && t.get(&d.id) != Some(&Teilnahme::Lokal) {
                 lebend.extend(hub_refs(self.konto.key, d));
             }
         }
         for o in self.z.objekte.values().filter(|o| !o.deleted) {
             lebend.extend(o.refs.iter().cloned());
         }
+        lebend
+    }
+
+    /// Bedingte Löschung der Kandidaten: nur ohne lebende Fassung im (vollständig gezogenen) Bestand;
+    /// 409 (referenziert/reserviert) ist ein Ergebnis, der Kandidat entfällt. Danach die Wartung
+    /// „Blobs abgleichen“: eigene, länger als 7 Tage unbenutzte Blobs ebenso bedingt löschen.
+    async fn blobs_loeschen(&mut self) -> Result<(), HubError> {
+        let b = self.ablage.sync_bestand().map_err(ablage_fehler)?;
+        let lebend = self.lebende_blobs(&b);
         for c in std::mem::take(&mut self.z.blob_loeschen) {
             if lebend.contains(&c) {
                 continue;
@@ -1185,8 +1538,33 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
                 }
             }
         }
+        let jetzt = crate::ablage::jetzt_ms();
+        let mut weg: Vec<String> = Vec::new();
+        for (blob, info) in &b.sync_blobs {
+            if info.konto != self.kennung || jetzt - info.ms < WAISE_MS || lebend.contains(blob) {
+                continue;
+            }
+            match self.hub.blob_loeschen(blob, self.konto.device_id).await {
+                Ok(BlobLoeschung::Geloescht(_)) => {
+                    self.z.hochgeladen.remove(blob);
+                    weg.push(blob.clone());
+                }
+                Ok(BlobLoeschung::InGebrauch(_)) => {}
+                Err(HubError::Unauthorized) => return Err(HubError::Unauthorized),
+                Err(_) => {}
+            }
+        }
+        // Was der Abgleich noch braucht, bleibt in der Liste (es kann später verwaisen).
+        self.ablage
+            .sync_blobs_vergessen(&weg)
+            .map_err(ablage_fehler)?;
         Ok(())
     }
+}
+
+/// „Zu viele Ablagen“ (Anzahl der Blobs am Hub), getrennt von „Speicher voll“.
+fn ist_zu_viele(text: &str) -> bool {
+    text.contains("too_many_blobs") || text.contains("Zu viele Ablagen")
 }
 
 // ---------------------------------------------------------------------------
@@ -1252,6 +1630,7 @@ pub enum AblageSyncZustand {
     Konflikt,
     WartetAufText,
     NurGeraet,
+    Angehalten,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
@@ -1276,24 +1655,26 @@ pub struct AblageSyncStand {
 
 /// Zustand je Eintrag aus Bestand und Sync-Zustand (ohne Schlüssel: Hashes der Nutzlast).
 pub fn zustaende(b: &SyncBestand, z: &Zustand) -> Vec<AblageSyncEintrag> {
-    let eltern = zf::wirksame_eltern(&b.ordner);
+    let t = b.teilnahmen();
     let mut aus = Vec::new();
     for o in b.ordner.values() {
-        let zustand = if z.lokalisiert.contains(&o.id) {
-            AblageSyncZustand::NurGeraet
-        } else {
-            match teilnahme_ordner(&b.ordner, &eltern, &o.id) {
-                Teilnahme::Lokal | Teilnahme::Halten => AblageSyncZustand::NurGeraet,
-                Teilnahme::Sync => {
-                    if z.objekt(SAMMLUNG_ORDNER, &o.id)
-                        .is_some_and(|s| s.hash == hash_ordner(o))
-                    {
-                        AblageSyncZustand::Synchronisiert
-                    } else {
-                        AblageSyncZustand::Ausstehend
-                    }
+        let zustand = match t.get(&o.id) {
+            _ if z
+                .objekt(SAMMLUNG_ORDNER, &o.id)
+                .is_some_and(|s| s.angehalten) =>
+            {
+                AblageSyncZustand::Angehalten
+            }
+            Some(Teilnahme::Sync) => {
+                if z.objekt(SAMMLUNG_ORDNER, &o.id)
+                    .is_some_and(|s| s.hash == hash_ordner(o))
+                {
+                    AblageSyncZustand::Synchronisiert
+                } else {
+                    AblageSyncZustand::Ausstehend
                 }
             }
+            _ => AblageSyncZustand::NurGeraet,
         };
         aus.push(AblageSyncEintrag {
             id: o.id.clone(),
@@ -1301,28 +1682,30 @@ pub fn zustaende(b: &SyncBestand, z: &Zustand) -> Vec<AblageSyncEintrag> {
         });
     }
     for d in b.dateien.values() {
-        let zustand = if z.lokalisiert.contains(&d.id) {
-            AblageSyncZustand::NurGeraet
-        } else {
-            match teilnahme_datei(&b.ordner, &eltern, d) {
-                Teilnahme::Lokal | Teilnahme::Halten => AblageSyncZustand::NurGeraet,
-                Teilnahme::Sync if zf::konflikt(d) => AblageSyncZustand::Konflikt,
-                Teilnahme::Sync if wartet_auf_text(b, d) => AblageSyncZustand::WartetAufText,
-                Teilnahme::Sync => {
-                    let originale = d
-                        .fassungen
-                        .iter()
-                        .all(|f| b.originale.contains(&(d.id.clone(), f.fas.clone())));
-                    if originale
-                        && z.objekt(SAMMLUNG_DATEI, &d.id)
-                            .is_some_and(|s| s.hash == hash_datei(d))
-                    {
-                        AblageSyncZustand::Synchronisiert
-                    } else {
-                        AblageSyncZustand::Ausstehend
-                    }
+        let zustand = match t.get(&d.id) {
+            _ if z
+                .objekt(SAMMLUNG_DATEI, &d.id)
+                .is_some_and(|s| s.angehalten) =>
+            {
+                AblageSyncZustand::Angehalten
+            }
+            Some(Teilnahme::Sync) if zf::konflikt(d) => AblageSyncZustand::Konflikt,
+            Some(Teilnahme::Sync) if wartet_auf_text(b, d) => AblageSyncZustand::WartetAufText,
+            Some(Teilnahme::Sync) => {
+                let originale = d
+                    .fassungen
+                    .iter()
+                    .all(|f| b.originale.contains(&(d.id.clone(), f.fas.clone())));
+                if originale
+                    && z.objekt(SAMMLUNG_DATEI, &d.id)
+                        .is_some_and(|s| s.hash == hash_datei(d))
+                {
+                    AblageSyncZustand::Synchronisiert
+                } else {
+                    AblageSyncZustand::Ausstehend
                 }
             }
+            _ => AblageSyncZustand::NurGeraet,
         };
         aus.push(AblageSyncEintrag {
             id: d.id.clone(),

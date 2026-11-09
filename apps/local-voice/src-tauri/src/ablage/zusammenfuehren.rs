@@ -138,6 +138,9 @@ pub struct Datei {
     #[serde(default)]
     pub blob_refs: Vec<String>,
     pub papierkorb: Register<Option<i64>>,
+    /// Felder einer neueren Fassung des Datensatzes: bleiben erhalten und reisen mit (D4).
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, serde_json::Value>,
 }
 
 /// Datensatz `ablage_ordner` (Spec §2.2). Kein `ki`-Feld: Freigaben sind gerätelokal.
@@ -150,6 +153,27 @@ pub struct Ordner {
     pub nur_geraet: Register<bool>,
     pub zielordner_ki: Register<bool>,
     pub papierkorb: Register<Option<i64>>,
+    /// Felder einer neueren Fassung des Datensatzes: bleiben erhalten und reisen mit (D4).
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, serde_json::Value>,
+}
+
+/// Unbekannte Felder vereinigen; bei gleichem Schlüssel gewinnt der (als JSON) größere Wert, damit das
+/// Ergebnis nicht von der Reihenfolge abhängt.
+pub fn extra_vereinigen(
+    a: &BTreeMap<String, serde_json::Value>,
+    b: &BTreeMap<String, serde_json::Value>,
+) -> BTreeMap<String, serde_json::Value> {
+    let mut aus = a.clone();
+    for (k, v) in b {
+        match aus.get(k) {
+            Some(alt) if alt.to_string() >= v.to_string() => {}
+            _ => {
+                aus.insert(k.clone(), v.clone());
+            }
+        }
+    }
+    aus
 }
 
 /// Blob-Kennungen aller lebenden Fassungen und Texte (sichtbares Steuerfeld), sortiert und eindeutig.
@@ -226,6 +250,7 @@ pub fn zusammenfuehren_datei(a: &Datei, b: &Datei) -> Datei {
         wahlen: je_wahl.into_values().collect(),
         entfernt,
         papierkorb: gewinner(&a.papierkorb, &b.papierkorb),
+        extra: extra_vereinigen(&a.extra, &b.extra),
     }
 }
 
@@ -239,6 +264,7 @@ pub fn zusammenfuehren_ordner(a: &Ordner, b: &Ordner) -> Ordner {
         nur_geraet: gewinner(&a.nur_geraet, &b.nur_geraet),
         zielordner_ki: gewinner(&a.zielordner_ki, &b.zielordner_ki),
         papierkorb: gewinner(&a.papierkorb, &b.papierkorb),
+        extra: extra_vereinigen(&a.extra, &b.extra),
     }
 }
 
@@ -659,6 +685,7 @@ mod tests {
             wahlen,
             entfernt: vec![],
             papierkorb: Register::neu(None, 0, "g_1"),
+            extra: Default::default(),
         }
     }
 
@@ -904,6 +931,7 @@ mod tests {
             nur_geraet: Register::neu(false, 1, "g_0"),
             zielordner_ki: Register::neu(false, 1, "g_0"),
             papierkorb: Register::neu(None, 0, "g_0"),
+            extra: Default::default(),
         }
     }
 

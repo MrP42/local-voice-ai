@@ -58,24 +58,65 @@ pub fn aad(user_id: i64, collection: &str, object_id: &str) -> Vec<u8> {
 }
 
 /// AAD der Ablage (ADR-0029 E9): wie [`aad`], dazu das sichtbare Steuerfeld `blob_refs` (sortiert,
-/// eindeutig). Ein Hub, der die Referenzen eines Objekts vertauscht oder kürzt, bricht so die Prüfung.
+/// eindeutig), die Schlüsselkennung und das Grabstein-Kennzeichen. Ein Hub, der Referenzen vertauscht,
+/// ein Objekt zum Grabstein erklärt oder die Schlüsselkennung umschreibt, bricht so die Prüfung.
+/// (`revision` vergibt der Hub selbst; sie kann nicht gebunden werden.)
 pub fn aad_ablage(
     user_id: i64,
     collection: &str,
     object_id: &str,
     blob_refs: &[String],
+    key_id: &str,
+    deleted: bool,
 ) -> Vec<u8> {
     let mut a = aad(user_id, collection, object_id);
-    a.extend_from_slice(format!("\u{1f}blob_refs\u{1f}{}", blob_refs.join(",")).as_bytes());
+    a.extend_from_slice(
+        format!(
+            "\u{1f}blob_refs\u{1f}{}\u{1f}key_id\u{1f}{key_id}\u{1f}deleted\u{1f}{}",
+            blob_refs.join(","),
+            u8::from(deleted)
+        )
+        .as_bytes(),
+    );
     a
+}
+
+/// Deterministisches Siegel (für Grabsteine der Ablage): die Nonce ist ein Schlüssel-gebundener Hash
+/// aus AAD und Klartext. Gleiche Eingabe ergibt dasselbe Chiffrat, damit eine Wiederholung nach
+/// verlorener Antwort exakt dieselbe Nutzlast trägt (der Hub nimmt sie nur dann als `accepted`).
+/// Ungleiche Eingaben erhalten verschiedene Nonces; mehr als die Gleichheit verrät das Chiffrat nicht.
+pub fn seal_deterministisch(
+    key: &[u8; KEY_LEN],
+    aad: &[u8],
+    plaintext: &[u8],
+) -> Result<String, String> {
+    let mut h = Sha256::new();
+    h.update(b"lv-ablage-siegel-nonce\x1f");
+    h.update(key);
+    h.update((aad.len() as u64).to_be_bytes());
+    h.update(aad);
+    h.update(plaintext);
+    let d = h.finalize();
+    let mut nonce_bytes = [0u8; NONCE_LEN];
+    nonce_bytes.copy_from_slice(&d[..NONCE_LEN]);
+    seal_mit(key, &nonce_bytes, aad, plaintext)
 }
 
 /// Versiegeln: zufällige 24-Byte-Nonce, dann `base64(nonce ‖ chiffrat)`.
 pub fn seal(key: &[u8; KEY_LEN], aad: &[u8], plaintext: &[u8]) -> Result<String, String> {
-    let cipher = XChaCha20Poly1305::new(key.into());
     let mut nonce_bytes = [0u8; NONCE_LEN];
     rand::thread_rng().fill_bytes(&mut nonce_bytes);
-    let nonce = XNonce::from_slice(&nonce_bytes);
+    seal_mit(key, &nonce_bytes, aad, plaintext)
+}
+
+fn seal_mit(
+    key: &[u8; KEY_LEN],
+    nonce_bytes: &[u8; NONCE_LEN],
+    aad: &[u8],
+    plaintext: &[u8],
+) -> Result<String, String> {
+    let cipher = XChaCha20Poly1305::new(key.into());
+    let nonce = XNonce::from_slice(nonce_bytes);
     let ct = cipher
         .encrypt(
             nonce,
@@ -86,7 +127,7 @@ pub fn seal(key: &[u8; KEY_LEN], aad: &[u8], plaintext: &[u8]) -> Result<String,
         )
         .map_err(|_| "Verschlüsselung fehlgeschlagen".to_string())?;
     let mut out = Vec::with_capacity(NONCE_LEN + ct.len());
-    out.extend_from_slice(&nonce_bytes);
+    out.extend_from_slice(nonce_bytes);
     out.extend_from_slice(&ct);
     Ok(B64.encode(out))
 }

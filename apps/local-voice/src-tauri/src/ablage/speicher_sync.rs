@@ -8,13 +8,15 @@
 
 use super::{
     meta_ohne_folgen, name_lesbar, nicht_gefunden, ohne_umweg, original_name, typ_ok, Ablage,
-    Eintrag, DATEIEN, TEXT,
+    Eintrag, SyncBlob, DATEIEN, STANDARD_ORDNER, TEXT,
 };
-use crate::ablage::zusammenfuehren::{self as zf, Datei, Ordner};
+use crate::ablage::freigabe;
+use crate::ablage::zusammenfuehren::{self as zf, Datei, Ordner, Register};
 use crate::ablage::{
     datei_id_pruefen, id_gueltig, ist_umweg, neue_id, sperren, Fehler, Res, PRAEFIX_DATEI,
     PRAEFIX_FASSUNG, PRAEFIX_ORDNER, PRAEFIX_WAHL,
 };
+use crate::sync::ablage::Teilnahme;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -34,6 +36,19 @@ pub struct SyncBestand {
     pub originale: BTreeSet<(String, String)>,
     /// `(dat, textrev)` mit vorhandener Textfassung auf diesem Gerät.
     pub texte: BTreeSet<(String, String)>,
+    /// Festgehaltene Kennungen („nur dieses Gerät“, nie wieder senden, nie begraben).
+    pub lokal: BTreeSet<String>,
+    /// Befreite Kennungen (synchron trotz festgehaltenem Ordner).
+    pub befreit: BTreeSet<String>,
+    /// Von diesem Gerät hochgeladene Blobs (Wartung „Blobs abgleichen“).
+    pub sync_blobs: BTreeMap<String, SyncBlob>,
+}
+
+impl SyncBestand {
+    /// Teilnahme je Kennung ([`crate::sync::ablage::teilnahmen`]).
+    pub fn teilnahmen(&self) -> BTreeMap<String, Teilnahme> {
+        crate::sync::ablage::teilnahmen(&self.ordner, &self.dateien, &self.lokal, &self.befreit)
+    }
 }
 
 /// Ein entfernter Stand zum Einspielen.
@@ -52,8 +67,10 @@ pub struct Einspielung {
     pub geaendert: Vec<String>,
     /// Ungültige Datensätze (nicht geschrieben).
     pub verworfen: Vec<String>,
-    /// Begrabene Kennungen (lokal entfernt oder schon weg).
+    /// Begrabene Kennungen (lokal in den Papierkorb gelegt oder schon weg).
     pub begraben: Vec<String>,
+    /// Grabsteine, die hier nicht gelten (festgehalten, „nur dieses Gerät“ oder unklar).
+    pub gehalten: Vec<String>,
 }
 
 fn hex64(s: &str) -> bool {
@@ -134,6 +151,9 @@ impl Ablage {
             begraben,
             originale,
             texte,
+            lokal: st.lokal_menge(),
+            befreit: st.befreit_menge(),
+            sync_blobs: st.sync_blobs.clone(),
         })
     }
 
@@ -144,7 +164,13 @@ impl Ablage {
     pub fn sync_einspielen(&self, eingaenge: &[Eingang]) -> Res<Einspielung> {
         let _g = sperren();
         let mut st = self.laden()?;
+        // Entfernte Änderungen halten nichts fest (nur Handlungen auf diesem Gerät tun das).
+        st.vorher = None;
         self.offene_zuerst(&mut st)?;
+        st.vorher = None;
+        // Teilnahme vor dem Einspielen: ein Grabstein gilt nur für synchrone Einträge.
+        let teilnahme_vorher = st.teilnahmen();
+        let lokal = st.lokal_menge();
         let mut aus = Einspielung::default();
         let mut graeber_dat: Vec<String> = Vec::new();
         let mut graeber_ord: Vec<String> = Vec::new();
@@ -206,7 +232,13 @@ impl Ablage {
                     }
                 }
                 Eingang::Grab(id) => {
-                    if id_gueltig(PRAEFIX_DATEI, id) {
+                    let gilt = !lokal.contains(id)
+                        && teilnahme_vorher
+                            .get(id)
+                            .is_none_or(|t| *t == Teilnahme::Sync);
+                    if !gilt {
+                        aus.gehalten.push(id.clone());
+                    } else if id_gueltig(PRAEFIX_DATEI, id) {
                         graeber_dat.push(id.clone());
                     } else if id_gueltig(PRAEFIX_ORDNER, id) {
                         graeber_ord.push(id.clone());
@@ -215,6 +247,31 @@ impl Ablage {
                     }
                 }
             }
+        }
+        // Später eingetroffene Einträge unter einem festgehaltenen Ordner: befreit (bleiben synchron).
+        if !lokal.is_empty() && !aus.geaendert.is_empty() {
+            let eltern = st.eltern();
+            for id in &aus.geaendert {
+                if lokal.contains(id) || st.befreit.contains(id) {
+                    continue;
+                }
+                let start = match (st.dateien.get(id), st.ordner.get(id)) {
+                    (Some(d), _) => Some(d.ordner.wert.clone()),
+                    (None, Some(o)) => o.eltern.wert.clone(),
+                    _ => None,
+                };
+                let unter_lokal = start.is_some_and(|s| {
+                    zf::strenge_kette(&st.ordner, &eltern, &s)
+                        .iter()
+                        .any(|g| lokal.contains(g))
+                });
+                if unter_lokal {
+                    st.befreit.push(id.clone());
+                    geaendert = true;
+                }
+            }
+            st.befreit.sort();
+            st.befreit.dedup();
         }
         graeber_dat.sort();
         graeber_dat.dedup();
@@ -234,15 +291,31 @@ impl Ablage {
             .into_iter()
             .filter(|o| st.ordner.contains_key(o) || !st.begraben.contains(o))
             .collect();
+        // Ein Ordnergrab, unter dem hier noch lebende, nicht begrabene Einträge liegen (z. B. eine Datei,
+        // die ein Gerät vor dem Umschalten eines anderen hineinlegte), wird nicht angewendet: der Ordner
+        // bleibt als Behälter, seine Einträge bleiben synchron und werden nie mitgelöscht.
+        let eltern = st.eltern();
+        let bleibt_unter = |o: &String| {
+            st.dateien.values().any(|d| {
+                !graeber_dat.contains(&d.id) && zf::kette(&eltern, &d.ordner.wert).contains(o)
+            }) || st.ordner.values().any(|k| {
+                k.id != *o && !graeber_ord.contains(&k.id) && zf::kette(&eltern, &k.id).contains(o)
+            })
+        };
+        let (gehalten_ord, graeber_ord): (Vec<String>, Vec<String>) =
+            graeber_ord.iter().cloned().partition(|o| bleibt_unter(o));
+        aus.gehalten.extend(gehalten_ord);
         if !graeber_dat.is_empty() || !graeber_ord.is_empty() {
+            // Inhalte gehen für die Papierkorbfrist beiseite (`aufheben`), nicht sofort weg.
             st.journal.push(Eintrag::Loeschen {
                 dat: graeber_dat.clone(),
                 ordner: graeber_ord.clone(),
+                aufheben: true,
             });
             self.sichern(&mut st)?;
-            self.loeschen_ausfuehren(&mut st, &graeber_dat, &graeber_ord)?;
+            self.loeschen_ausfuehren(&mut st, &graeber_dat, &graeber_ord, true)?;
             st.journal.retain(|e| {
-                !matches!(e, Eintrag::Loeschen { dat: d, ordner: o } if *d == graeber_dat && *o == graeber_ord)
+                !matches!(e, Eintrag::Loeschen { dat: d, ordner: o, .. } if *d == graeber_dat && *o == graeber_ord)
             });
             aus.begraben.extend(graeber_dat);
             aus.begraben.extend(graeber_ord);
@@ -379,6 +452,127 @@ impl Ablage {
         let rel = format!("{TEXT}/{dat}/{textrev}.json");
         (id_gueltig(PRAEFIX_DATEI, dat) && hex64(textrev) && self.echte_datei(&rel))
             .then(|| self.dir.join(rel))
+    }
+
+    /// Frische Prüfung unter der Sperre (unmittelbar vor Upload oder Push): welche der Kennungen
+    /// nehmen noch am Abgleich teil (nicht begraben, nicht festgehalten, Teilnahme `Sync`)?
+    pub fn sync_noch_synchron(&self, ids: &[String]) -> Res<BTreeSet<String>> {
+        let _g = sperren();
+        let st = self.laden()?;
+        let t = st.teilnahmen();
+        let (offen_dat, offen_ord) = st.offen_geloescht();
+        Ok(ids
+            .iter()
+            .filter(|id| {
+                t.get(*id) == Some(&Teilnahme::Sync)
+                    && !st.begraben.contains(*id)
+                    && !offen_dat.contains(id.as_str())
+                    && !offen_ord.contains(id.as_str())
+            })
+            .cloned()
+            .collect())
+    }
+
+    /// Vermerkt einen von diesem Gerät hochgeladenen Blob (dauerhaft, Wartung „Blobs abgleichen“).
+    pub fn sync_blob_vermerken(&self, blob: &str, konto: &str) -> Res<()> {
+        let _g = sperren();
+        let mut st = self.laden()?;
+        if st.sync_blobs.get(blob).is_some_and(|b| b.konto == konto) {
+            return Ok(());
+        }
+        st.sync_blobs.insert(
+            blob.to_string(),
+            SyncBlob {
+                ms: crate::ablage::jetzt_ms(),
+                konto: konto.to_string(),
+            },
+        );
+        self.sichern(&mut st)
+    }
+
+    /// Vergisst Blobs (am Hub gelöscht oder schon weg).
+    pub fn sync_blobs_vergessen(&self, blobs: &[String]) -> Res<()> {
+        if blobs.is_empty() {
+            return Ok(());
+        }
+        let _g = sperren();
+        let mut st = self.laden()?;
+        let vorher = st.sync_blobs.len();
+        st.sync_blobs.retain(|b, _| !blobs.contains(b));
+        if st.sync_blobs.len() == vorher {
+            return Ok(());
+        }
+        self.sichern(&mut st)
+    }
+
+    /// D4: Zieht den unveränderten Standardordner „Allgemein“ auf die kontoweit gleiche Kennung `ziel`
+    /// um (ein atomarer Schreibvorgang: Ordner, Dateien und Unterordner umgehängt), damit zwei Geräte
+    /// nach dem ersten Abgleich ein einziges „Allgemein“ haben. Eine Kennung, die der Hub schon kennt
+    /// (`am_hub`), bleibt. Liefert, ob umgezogen wurde.
+    pub fn standard_umziehen(&self, ziel: &str, am_hub: &dyn Fn(&str) -> bool) -> Res<bool> {
+        if !id_gueltig(PRAEFIX_ORDNER, ziel) {
+            return Err(Fehler::ungueltig("Kennung des Ordners ungültig."));
+        }
+        let _g = sperren();
+        let mut st = self.laden()?;
+        if st.begraben.iter().any(|b| b == ziel) || !st.journal.is_empty() {
+            return Ok(false);
+        }
+        let freigaben = match freigabe::laden(&self.dir) {
+            freigabe::Lage::Gueltig(f) => Some(f),
+            _ => None,
+        };
+        let geraet = st.geraet.clone();
+        let alt = st
+            .ordner
+            .values()
+            .find(|o| {
+                o.id != ziel
+                    && o.name.wert == STANDARD_ORDNER
+                    && o.name.geraet == geraet
+                    && o.eltern.wert.is_none()
+                    && o.datenklasse.wert == "erbt"
+                    && !o.nur_geraet.wert
+                    && !o.zielordner_ki.wert
+                    && o.papierkorb.wert.is_none()
+                    && [
+                        o.eltern.zaehler,
+                        o.datenklasse.zaehler,
+                        o.nur_geraet.zaehler,
+                        o.zielordner_ki.zaehler,
+                        o.papierkorb.zaehler,
+                    ]
+                    .iter()
+                    .all(|z| *z == o.name.zaehler)
+                    && !am_hub(&o.id)
+                    && !st.lokal.contains(&o.id)
+                    && freigaben
+                        .as_ref()
+                        .is_some_and(|f| !f.ordner.contains_key(&o.id))
+            })
+            .map(|o| o.id.clone());
+        let Some(alt) = alt else {
+            return Ok(false);
+        };
+        let z = st.zaehler();
+        if !st.ordner.contains_key(ziel) {
+            let mut o = st.ordner[&alt].clone();
+            o.id = ziel.to_string();
+            st.ordner.insert(ziel.to_string(), o);
+        }
+        for d in st.dateien.values_mut() {
+            if d.ordner.wert == alt {
+                d.ordner = Register::neu(ziel.to_string(), z, &geraet);
+            }
+        }
+        for o in st.ordner.values_mut() {
+            if o.eltern.wert.as_deref() == Some(alt.as_str()) {
+                o.eltern = Register::neu(Some(ziel.to_string()), z, &geraet);
+            }
+        }
+        st.ordner.remove(&alt);
+        self.sichern(&mut st)?;
+        Ok(true)
     }
 
     /// Konflikt auflösen: eine neue Wahl für `fas` (Spec §2.1; Lamport-Zähler aus dem Stand).

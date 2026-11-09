@@ -9158,6 +9158,7 @@
       "konflikt": "Conflict",
       "wartet_auf_text": "Waiting for text",
       "nur_geraet": "This device only",
+      "angehalten": "Paused (unreadable)",
       "cloud": "{{used}} of {{quota}} in the cloud",
       "voll": "Cloud storage full – uploads paused",
       "unvollstaendig": "Sync incomplete"

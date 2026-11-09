@@ -8566,7 +8566,7 @@ belegt: number | null; kontingent: number | null; eintraege: AblageSyncEintrag[]
 /**
  * Sync-Zustand eines Ordners oder einer Datei.
  */
-export type AblageSyncZustand = "synchronisiert" | "ausstehend" | "konflikt" | "wartet_auf_text" | "nur_geraet"
+export type AblageSyncZustand = "synchronisiert" | "ausstehend" | "konflikt" | "wartet_auf_text" | "nur_geraet" | "angehalten"
 export type AccountState = "not_configured" | "no_capabilities" | "needs_sign_in" | "needs_consent" | "ready"
 /**
  * Eine Aufgabe (Zeile in `action_items`). `assignee_label` ist Freitext, die

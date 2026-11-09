@@ -7,6 +7,7 @@ import {
   FileText,
   Folder,
   Monitor,
+  PauseCircle,
   Plus,
   RotateCcw,
   Sparkles,
@@ -58,6 +59,7 @@ export const SyncZeichen: React.FC<{ zustand: AblageSyncZustand }> = ({
     konflikt: AlertTriangle,
     wartet_auf_text: FileText,
     nur_geraet: Monitor,
+    angehalten: PauseCircle,
   }[zustand];
   const text = t(`ablage.sync.${zustand}`);
   return (

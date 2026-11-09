@@ -697,7 +697,8 @@
   color: var(--abl-ok);
 }
 .ablage-sync--konflikt,
-.ablage-sync--wartet_auf_text {
+.ablage-sync--wartet_auf_text,
+.ablage-sync--angehalten {
   color: var(--abl-warn);
 }
 .ablage-fuss-voll {

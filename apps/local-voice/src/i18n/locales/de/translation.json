@@ -9158,6 +9158,7 @@
       "konflikt": "Konflikt",
       "wartet_auf_text": "Wartet auf Text",
       "nur_geraet": "Nur dieses Gerät",
+      "angehalten": "Angehalten (nicht lesbar)",
       "cloud": "{{used}} von {{quota}} in der Cloud",
       "voll": "Cloud-Speicher voll – Hochladen angehalten",
       "unvollstaendig": "Abgleich unvollständig"

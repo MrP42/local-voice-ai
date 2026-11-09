@@ -58,13 +58,23 @@ struct HubInnen {
     mitschnitt: Vec<PushObject>,
     /// Blob-Kennungen, für die Stücke hochgeladen wurden.
     hochgeladen: Vec<String>,
+    /// Jede Reservierung (Blob-Kennung).
+    reserviert: Vec<String>,
+    /// Reservierung dieser Blobs scheitert (5xx).
+    fehl_reservieren: BTreeSet<String>,
+    /// Diese Objekte weist der Hub ab (`payload_size`).
+    abweisen: BTreeSet<String>,
+    /// Hochladen scheitert mit „Zu viele Ablagen“.
+    zu_viele: bool,
 }
 
 type Haken = Box<dyn FnOnce(&mut HubInnen) + Send>;
+type GeraeteHaken = Box<dyn FnOnce() + Send>;
 
 struct FakeHub {
     innen: Mutex<HubInnen>,
     vor_push: Mutex<Vec<Haken>>,
+    beim_reservieren: Mutex<Vec<GeraeteHaken>>,
 }
 
 impl FakeHub {
@@ -75,7 +85,25 @@ impl FakeHub {
                 ..Default::default()
             }),
             vor_push: Mutex::new(Vec::new()),
+            beim_reservieren: Mutex::new(Vec::new()),
         }
+    }
+
+    /// Läuft einmal während der nächsten Reservierung (der Nutzer handelt mitten im Lauf).
+    fn beim_naechsten_reservieren(&self, h: impl FnOnce() + Send + 'static) {
+        self.beim_reservieren.lock().unwrap().push(Box::new(h));
+    }
+
+    /// Ein „Hub“ setzt einen Stand direkt (neue Revision, neuer Cursor).
+    fn faelschen(&self, coll: &str, id: &str, f: impl FnOnce(&mut HubObj)) {
+        self.mit(|i| {
+            i.seq += 1;
+            let seq = i.seq;
+            let o = i.objekte.get_mut(&(coll.into(), id.into())).unwrap();
+            f(o);
+            o.revision += 1;
+            o.server_seq = seq;
+        });
     }
 
     fn mit<T>(&self, f: impl FnOnce(&mut HubInnen) -> T) -> T {
@@ -161,6 +189,9 @@ impl HubInnen {
         if !ist_ablage(&o.collection) {
             return Self::abgewiesen(o, "collection");
         }
+        if self.abweisen.contains(&o.object_id) {
+            return Self::abgewiesen(o, "payload_size");
+        }
         if o.collection != SAMMLUNG_DATEI && o.blob_refs.is_some() {
             return Self::abgewiesen(o, "blob_refs_not_allowed");
         }
@@ -173,7 +204,8 @@ impl HubInnen {
                 return Self::abgewiesen(o, "blob_refs");
             }
         }
-        if o.deleted != o.payload.is_empty() {
+        // wai-portal#23: Grabsteine der Ablage tragen eine versiegelte Nutzlast (≤ 16 384 Bytes).
+        if (!o.deleted && o.payload.is_empty()) || (o.deleted && o.payload.len() > 16_384) {
             return Self::abgewiesen(o, "payload");
         }
         let k = (o.collection.clone(), o.object_id.clone());
@@ -184,7 +216,12 @@ impl HubInnen {
             return self.schreiben(o, 1, geraet);
         };
         if zeile.deleted {
-            if o.base_revision == zeile.revision - 1 && o.deleted {
+            // Wiederholung nur mit identischer Nutzlast und Schlüsselkennung.
+            if o.base_revision == zeile.revision - 1
+                && o.deleted
+                && o.payload == zeile.payload
+                && o.key_id == zeile.key_id
+            {
                 return Self::ergebnis(o, "accepted", zeile.revision);
             }
             let mut r = Self::abgewiesen(o, "tombstoned");
@@ -231,11 +268,7 @@ impl HubInnen {
             (o.collection.clone(), o.object_id.clone()),
             HubObj {
                 revision,
-                payload: if o.deleted {
-                    String::new()
-                } else {
-                    o.payload.clone()
-                },
+                payload: o.payload.clone(),
                 key_id: o.key_id.clone(),
                 deleted: o.deleted,
                 device_id: geraet.into(),
@@ -263,6 +296,9 @@ impl BlobTransport for FakeHub {
     }
     async fn put_chunk(&self, blob_id: &str, index: usize, sealed: &[u8]) -> Result<(), HubError> {
         self.mit(|i| {
+            if i.zu_viele && !i.blobs.contains_key(blob_id) {
+                return Err(HubError::Other("quota_exceeded: Zu viele Ablagen".into()));
+            }
             let belegt: u64 = i
                 .blobs
                 .values()
@@ -361,12 +397,20 @@ impl AblageHub for FakeHub {
         }))
     }
     async fn reservieren(&self, blob_id: &str, device_id: &str) -> Result<(), HubError> {
+        let haken: Vec<GeraeteHaken> = std::mem::take(&mut *self.beim_reservieren.lock().unwrap());
+        for h in haken {
+            h();
+        }
         self.mit(|i| {
+            i.reserviert.push(blob_id.into());
+            if i.fehl_reservieren.contains(blob_id) {
+                return Err(HubError::Other("HTTP 503".into()));
+            }
             let ablauf = i.uhr + 24 * STUNDE;
             i.reservierungen
                 .insert((blob_id.into(), device_id.into()), ablauf);
-        });
-        Ok(())
+            Ok(())
+        })
     }
     async fn blob_loeschen(
         &self,
@@ -490,6 +534,20 @@ impl Geraet {
     }
 }
 
+/// Ein versiegelter Grabstein, wie ihn ein anderes Gerät des Kontos sendet.
+fn grab_von_anderem_geraet(coll: &str, id: &str, rev: i64) -> PushObject {
+    let key = schluessel_konto();
+    PushObject {
+        collection: coll.into(),
+        object_id: id.into(),
+        base_revision: rev,
+        payload: grab_nutzlast(&key, USER, coll, id).unwrap(),
+        key_id: crypto::key_id(&key),
+        deleted: true,
+        blob_refs: None,
+    }
+}
+
 fn hid(inhalt: &str) -> String {
     hub_blob(&schluessel_konto(), &blobs::sha256_hex(inhalt.as_bytes())).unwrap()
 }
@@ -502,19 +560,22 @@ fn mitschnitt_klartexte(hub: &FakeHub) -> Vec<(String, String, String)> {
             .iter()
             .map(|o| {
                 let refs = o.blob_refs.clone().unwrap_or_default();
-                let plain = if o.deleted {
-                    String::new()
-                } else {
-                    String::from_utf8(
-                        crypto::open(
-                            &key,
-                            &crypto::aad_ablage(USER, &o.collection, &o.object_id, &refs),
-                            &o.payload,
-                        )
-                        .unwrap(),
+                let plain = String::from_utf8(
+                    crypto::open(
+                        &key,
+                        &crypto::aad_ablage(
+                            USER,
+                            &o.collection,
+                            &o.object_id,
+                            &refs,
+                            &o.key_id,
+                            o.deleted,
+                        ),
+                        &o.payload,
                     )
-                    .unwrap()
-                };
+                    .unwrap(),
+                )
+                .unwrap();
                 (o.collection.clone(), o.object_id.clone(), plain)
             })
             .collect()
@@ -759,15 +820,7 @@ fn loeschen_parallel_upload_reservierung_gibt_409_und_push_gelingt() {
     // Zwischen Reservierung (B) und Objekt-Push (B): A begräbt F und will den Blob löschen.
     hub.vor_naechstem_push(move |i| {
         let rev = i.objekte[&(SAMMLUNG_DATEI.to_string(), f2.clone())].revision;
-        let grab = PushObject {
-            collection: SAMMLUNG_DATEI.into(),
-            object_id: f2,
-            base_revision: rev,
-            payload: String::new(),
-            key_id: "abcd1234".into(),
-            deleted: true,
-            blob_refs: None,
-        };
+        let grab = grab_von_anderem_geraet(SAMMLUNG_DATEI, &f2, rev);
         assert_eq!(i.push_eins(&grab, &geraet_a).outcome, "accepted");
         *e2.lock().unwrap() = Some(i.loeschen(&blob2, &geraet_a));
     });
@@ -796,15 +849,7 @@ fn loeschen_parallel_upload_reservierung_abgelaufen_push_422_neu_hochladen() {
     hub.vor_naechstem_push(move |i| {
         i.uhr += 25 * STUNDE; // Reservierung abgelaufen
         let rev = i.objekte[&(SAMMLUNG_DATEI.to_string(), f2.clone())].revision;
-        let grab = PushObject {
-            collection: SAMMLUNG_DATEI.into(),
-            object_id: f2,
-            base_revision: rev,
-            payload: String::new(),
-            key_id: "abcd1234".into(),
-            deleted: true,
-            blob_refs: None,
-        };
+        let grab = grab_von_anderem_geraet(SAMMLUNG_DATEI, &f2, rev);
         assert_eq!(i.push_eins(&grab, "geraet-a-0001").outcome, "accepted");
         assert_eq!(
             i.loeschen(&blob2, "geraet-a-0001"),
@@ -923,7 +968,10 @@ fn wechsel_zu_nur_geraet_entfernt_cloud_kopien_und_behaelt_lokale() {
     a.sync(&hub);
     assert_eq!(a.original(&dat).as_deref(), Some("Brieftext"));
     assert_eq!(a.zustand_von(&dat), Some(AblageSyncZustand::NurGeraet));
-    assert!(a.zustand().lokalisiert.contains(&dat));
+    assert!(
+        a.bestand().lokal.contains(&dat),
+        "im Ablagestand festgehalten"
+    );
     // Zurück auf sync: Rückweg ist offen, die Kennung bleibt lokal (nie erneut gesendet).
     a.a.ordner_einstellungen(
         &ord,
@@ -1069,4 +1117,487 @@ fn anderes_konto_beginnt_mit_leerem_zustand() {
     let hub2 = FakeHub::neu();
     a.sync(&hub2);
     assert!(hub2.mit(|i| !i.objekte.is_empty()));
+}
+
+// ---------------------------------------------------------------------------
+// Sicherheits-Review (Befunde 1–9)
+// ---------------------------------------------------------------------------
+
+fn sync_json(g: &Geraet) -> PathBuf {
+    g.a.dir().join(ZUSTAND)
+}
+
+fn nur_geraet(g: &Geraet, ord: &str, an: bool) {
+    g.a.ordner_einstellungen(
+        ord,
+        &AblageEinstellungen {
+            nur_geraet: Some(an),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+}
+
+fn grab_im_papierkorb(g: &Geraet, dat: &str) -> bool {
+    std::fs::read_dir(g.a.dir().join("papierkorb"))
+        .map(|r| {
+            r.flatten().any(|e| {
+                let n = e.file_name().to_string_lossy().into_owned();
+                n.starts_with("grab-") && n.ends_with(dat)
+            })
+        })
+        .unwrap_or(false)
+}
+
+/// Befund 1: Die Kennzeichnung steht im Ablagestand, vor dem Push. Weder ein Absturz nach der Annahme am
+/// Hub (alter `sync.json`), noch ein defekter `sync.json`, noch ein Kontowechsel lassen den eigenen
+/// Grabstein die lokale Kopie löschen.
+#[test]
+fn festgehaltene_eintraege_ueberleben_absturz_defekten_zustand_und_kontowechsel() {
+    let hub = FakeHub::neu();
+    let (a, b) = (geraet("a"), geraet("b"));
+    let ord = a.ordner("Wird privat");
+    let dat = a.ablegen("Brief.txt", "Brieftext", &ord);
+    a.sync(&hub);
+    b.sync(&hub);
+    let alt = std::fs::read(sync_json(&a)).unwrap();
+    nur_geraet(&a, &ord, true);
+    // Write-ahead: festgehalten, bevor irgendein Abgleich lief.
+    let lokal = a.bestand().lokal;
+    assert!(lokal.contains(&ord) && lokal.contains(&dat), "{lokal:?}");
+    a.sync(&hub);
+    assert!(hub.objekt(SAMMLUNG_DATEI, &dat).unwrap().deleted);
+    assert!(hub.objekt(SAMMLUNG_ORDNER, &ord).unwrap().deleted);
+    let pruefen = |wann: &str| {
+        assert_eq!(a.original(&dat).as_deref(), Some("Brieftext"), "{wann}");
+        assert!(a.datei(&dat).is_some(), "{wann}");
+        assert!(a.bestand().ordner.contains_key(&ord), "{wann}");
+        assert_eq!(
+            a.zustand_von(&dat),
+            Some(AblageSyncZustand::NurGeraet),
+            "{wann}"
+        );
+    };
+    // 1. Absturz nach der Annahme am Hub, vor dem Speichern: der alte Zustand liegt wieder da.
+    std::fs::write(sync_json(&a), &alt).unwrap();
+    a.sync(&hub);
+    pruefen("nach Absturz");
+    // 2. Defekter Zustand.
+    std::fs::write(sync_json(&a), b"{kaputt").unwrap();
+    a.sync(&hub);
+    pruefen("nach defektem sync.json");
+    // 3. Kontowechsel (anderer Hub, gleiche Daten): der Zustand beginnt leer.
+    let mut z = a.zustand();
+    z.konto = "8:ffffffff:https://anderer.example.org".into();
+    z.speichern(&a.a).unwrap();
+    a.sync(&hub);
+    pruefen("nach Kontowechsel");
+    // Nie wieder gesendet.
+    let staende = hub.mit(|i| {
+        i.mitschnitt
+            .iter()
+            .filter(|o| (o.object_id == dat || o.object_id == ord) && !o.deleted)
+            .count()
+    });
+    assert_eq!(
+        staende, 2,
+        "nur die ursprünglichen Stände vor dem Umschalten"
+    );
+    // B legt seine Kopie in den Papierkorb (30 Tage), nicht sofort weg.
+    b.sync(&hub);
+    assert!(b.datei(&dat).is_none());
+    assert!(
+        grab_im_papierkorb(&b, &dat),
+        "Inhalt im Papierkorb aufgehoben"
+    );
+}
+
+/// Befund 2 und 9: Ein Hub, der `deleted = true` fälscht (ohne Siegel oder mit dem Siegel eines
+/// lebenden Stands), löscht nichts; ein versiegelter Grabstein gilt, der Inhalt bleibt 30 Tage im
+/// Papierkorb und die Wartung entfernt ihn danach.
+#[test]
+fn gefaelschter_grabstein_loescht_nichts_echter_geht_in_den_papierkorb() {
+    let hub = FakeHub::neu();
+    let (a, b) = (geraet("a"), geraet("b"));
+    let ord = a.ordner("Akten");
+    let f = a.ablegen("F.txt", "Inhalt F", &ord);
+    let g = a.ablegen("G.txt", "Inhalt G", &ord);
+    a.sync(&hub);
+    b.sync(&hub);
+    // Ohne Nutzlast.
+    hub.faelschen(SAMMLUNG_DATEI, &f, |o| {
+        o.deleted = true;
+        o.payload = String::new();
+        o.refs.clear();
+    });
+    // Mit dem Siegel des lebenden Stands (deleted steht in der AAD).
+    hub.faelschen(SAMMLUNG_DATEI, &g, |o| {
+        o.deleted = true;
+        o.refs.clear();
+    });
+    let bericht = b.sync(&hub);
+    assert_eq!(b.original(&f).as_deref(), Some("Inhalt F"));
+    assert_eq!(b.original(&g).as_deref(), Some("Inhalt G"));
+    assert!(b.datei(&f).is_some() && b.datei(&g).is_some());
+    assert!(bericht.warnung.unwrap_or_default().contains("Siegel"));
+    assert!(stand(&b.a, true)
+        .unwrap()
+        .fehler
+        .unwrap_or_default()
+        .contains("Siegel"));
+    // Ein echter, versiegelter Grabstein (A löscht endgültig) gilt.
+    let h = a.ablegen("H.txt", "Inhalt H", &ord);
+    a.sync(&hub);
+    b.sync(&hub);
+    a.a.in_papierkorb(AblageArt::Datei, &h).unwrap();
+    a.a.endgueltig_loeschen(AblageArt::Datei, &h).unwrap();
+    a.sync(&hub);
+    let o = hub.objekt(SAMMLUNG_DATEI, &h).unwrap();
+    assert!(
+        o.deleted && !o.payload.is_empty(),
+        "Grabstein trägt ein Siegel"
+    );
+    b.sync(&hub);
+    assert!(b.datei(&h).is_none());
+    assert!(grab_im_papierkorb(&b, &h));
+    // Nach der Frist räumt die Wartung.
+    let korb = b.a.dir().join("papierkorb");
+    for e in std::fs::read_dir(&korb).unwrap().flatten() {
+        let n = e.file_name().to_string_lossy().into_owned();
+        if let Some(rest) = n.strip_prefix("grab-") {
+            let (_, hinten) = rest.split_once('-').unwrap();
+            std::fs::rename(e.path(), korb.join(format!("grab-1000-{hinten}"))).unwrap();
+        }
+    }
+    assert_eq!(b.a.wartung(), None);
+    assert!(!grab_im_papierkorb(&b, &h), "nach 30 Tagen entfernt");
+}
+
+/// Deterministisches Siegel: eine Wiederholung nach verlorener Antwort trägt dieselbe Nutzlast und
+/// gilt beim Hub als angenommen (wai-portal#23).
+#[test]
+fn grabstein_wiederholung_traegt_dasselbe_siegel() {
+    let key = schluessel_konto();
+    let id = "dat_01JC0000000000000000000000";
+    assert_eq!(
+        grab_nutzlast(&key, USER, SAMMLUNG_DATEI, id).unwrap(),
+        grab_nutzlast(&key, USER, SAMMLUNG_DATEI, id).unwrap()
+    );
+    assert_ne!(
+        grab_nutzlast(&key, USER, SAMMLUNG_DATEI, id).unwrap(),
+        grab_nutzlast(&key, USER, SAMMLUNG_ORDNER, id).unwrap()
+    );
+    let hub = FakeHub::neu();
+    let a = geraet("a");
+    let ord = a.ordner("O");
+    let dat = a.ablegen("D.txt", "d", &ord);
+    a.sync(&hub);
+    a.a.in_papierkorb(AblageArt::Datei, &dat).unwrap();
+    a.a.endgueltig_loeschen(AblageArt::Datei, &dat).unwrap();
+    a.sync(&hub);
+    // Antwort verloren: dieselbe Wiederholung (Basis rev-1, gleiches Siegel) gilt als angenommen.
+    let rev = hub.objekt(SAMMLUNG_DATEI, &dat).unwrap().revision;
+    let wiederholung = PushObject {
+        collection: SAMMLUNG_DATEI.into(),
+        object_id: dat.clone(),
+        base_revision: rev - 1,
+        payload: grab_nutzlast(&key, USER, SAMMLUNG_DATEI, &dat).unwrap(),
+        key_id: crypto::key_id(&key),
+        deleted: true,
+        blob_refs: None,
+    };
+    let gesendet = hub.mit(|i| {
+        i.mitschnitt
+            .iter()
+            .rev()
+            .find(|o| o.object_id == dat && o.deleted)
+            .map(|o| o.payload.clone())
+    });
+    assert_eq!(gesendet.as_deref(), Some(wiederholung.payload.as_str()));
+    let r = hub.mit(|i| i.push_eins(&wiederholung, &a.id));
+    assert_eq!(r.outcome, "accepted");
+    let bericht = a.sync(&hub);
+    assert_eq!(bericht.warnung, None);
+    assert!(a.datei(&dat).is_none());
+}
+
+/// Befund 3: Eine Datei, die ein anderes Gerät vor dem Umschalten in den Ordner legte, die hier aber
+/// erst danach ankommt, wird nie begraben; sie bleibt synchron (Ordner fehlt → „Wiederhergestellt“).
+#[test]
+fn spaet_eintreffende_datei_unter_lokalisiertem_ordner_bleibt_synchron() {
+    let hub = FakeHub::neu();
+    let (a, b) = (geraet("a"), geraet("b"));
+    let ord = a.ordner("Projekt");
+    let f1 = a.ablegen("Alt.txt", "alt", &ord);
+    a.sync(&hub);
+    b.sync(&hub);
+    // B legt F3 in den Ordner und gleicht ab; A hat das noch nicht gesehen und schaltet um.
+    let f3 = b.ablegen("Neu.txt", "von B", &ord);
+    b.sync(&hub);
+    nur_geraet(&a, &ord, true);
+    assert!(!a.bestand().lokal.contains(&f3));
+    a.sync(&hub);
+    a.sync(&hub);
+    assert!(
+        hub.objekt(SAMMLUNG_DATEI, &f1).unwrap().deleted,
+        "F1 lokalisiert"
+    );
+    assert!(hub.objekt(SAMMLUNG_ORDNER, &ord).unwrap().deleted);
+    let o3 = hub.objekt(SAMMLUNG_DATEI, &f3).unwrap();
+    assert!(!o3.deleted, "F3 nie begraben");
+    assert!(
+        hub.mit(|i| !i.mitschnitt.iter().any(|o| o.object_id == f3 && o.deleted)),
+        "kein Grabstein für F3 gesendet"
+    );
+    let ba = a.bestand();
+    assert!(ba.befreit.contains(&f3));
+    assert_eq!(ba.teilnahmen().get(&f3), Some(&Teilnahme::Sync));
+    assert_eq!(a.original(&f3).as_deref(), Some("von B"));
+    // Auf B fehlt der Ordner: F3 bleibt (wie „Wiederhergestellt“) und weiter synchron.
+    b.sync(&hub);
+    assert!(b.datei(&f3).is_some());
+    assert!(b.datei(&f1).is_none());
+    b.a.datei_umbenennen(&f3, "Neu2.txt").unwrap();
+    b.sync(&hub);
+    a.sync(&hub);
+    assert_eq!(a.datei(&f3).unwrap().name.wert, "Neu2.txt");
+    // Verschiebt A die befreite Datei in einen anderen lokalen Ordner, gilt dieser wieder.
+    let privat = a.ordner("Privat");
+    nur_geraet(&a, &privat, true);
+    a.a.datei_verschieben(&f3, &privat).unwrap();
+    assert!(a.bestand().lokal.contains(&f3));
+}
+
+/// Befund 4: Teilnahme wird unmittelbar vor Upload und Push neu geprüft.
+#[test]
+fn teilnahme_wird_vor_upload_und_push_neu_geprueft() {
+    let hub = FakeHub::neu();
+    let a = geraet("a");
+    let ord = a.ordner("Bald privat");
+    let dat = a.ablegen("Geheim.txt", "GEHEIM-spaet", &ord);
+    let (ablage, ord2) = (a.a.clone(), ord.clone());
+    // Mitten im Lauf (während der Reservierung) stellt der Nutzer den Ordner auf „nur dieses Gerät“.
+    hub.beim_naechsten_reservieren(move || {
+        ablage
+            .ordner_einstellungen(
+                &ord2,
+                &AblageEinstellungen {
+                    nur_geraet: Some(true),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+    });
+    a.sync(&hub);
+    let gesendet: Vec<String> =
+        hub.mit(|i| i.mitschnitt.iter().map(|o| o.object_id.clone()).collect());
+    assert!(!gesendet.contains(&dat), "kein Push nach dem Umschalten");
+    assert!(!gesendet.contains(&ord));
+    assert_eq!(a.zustand_von(&dat), Some(AblageSyncZustand::NurGeraet));
+    // Ein späterer Lauf lädt nichts mehr hoch.
+    let uploads = hub.mit(|i| i.hochgeladen.len());
+    a.sync(&hub);
+    assert_eq!(hub.mit(|i| i.hochgeladen.len()), uploads);
+}
+
+/// Befund 5: Ein unlesbarer oder neuerer entfernter Stand wird nie überschrieben; unbekannte Felder
+/// reisen mit.
+#[test]
+fn unlesbarer_stand_haelt_an_und_unbekannte_felder_reisen_mit() {
+    let hub = FakeHub::neu();
+    let (a, b) = (geraet("a"), geraet("b"));
+    let key = schluessel_konto();
+    let kid = crypto::key_id(&key);
+    let ord = a.ordner("Schema");
+    let f = a.ablegen("F.txt", "Inhalt F", &ord);
+    let g = a.ablegen("G.txt", "Inhalt G", &ord);
+    a.sync(&hub);
+    b.sync(&hub);
+    // F: unlesbar (fremdes Chiffrat). G: neuere Felder. Ordner: neueres Schema.
+    hub.faelschen(SAMMLUNG_DATEI, &f, |o| {
+        o.payload = crypto::seal(&[9u8; KEY_LEN], b"x", b"{}").unwrap();
+    });
+    let neu_versiegeln = |coll: &str, id: &str, o: &mut HubObj, f: &dyn Fn(&mut Value)| {
+        let aad = crypto::aad_ablage(USER, coll, id, &o.refs, &kid, false);
+        let mut v: Value =
+            serde_json::from_slice(&crypto::open(&key, &aad, &o.payload).unwrap()).unwrap();
+        f(&mut v);
+        o.payload = crypto::seal(&key, &aad, collect::canonical(&v).as_bytes()).unwrap();
+    };
+    hub.faelschen(SAMMLUNG_DATEI, &g, |o| {
+        neu_versiegeln(SAMMLUNG_DATEI, &g, o, &|v| {
+            v["zukunft"] = serde_json::json!({"feld": 1});
+        })
+    });
+    hub.faelschen(SAMMLUNG_ORDNER, &ord, |o| {
+        neu_versiegeln(SAMMLUNG_ORDNER, &ord, o, &|v| {
+            v["v"] = serde_json::json!(2);
+        })
+    });
+    let f_vorher = hub.objekt(SAMMLUNG_DATEI, &f).unwrap();
+    b.sync(&hub);
+    assert_eq!(b.zustand_von(&f), Some(AblageSyncZustand::Angehalten));
+    assert_eq!(b.zustand_von(&ord), Some(AblageSyncZustand::Angehalten));
+    // Lokale Änderungen auf B überschreiben nichts.
+    b.a.datei_umbenennen(&f, "F2.txt").unwrap();
+    b.a.ordner_umbenennen(&ord, "Schema2").unwrap();
+    b.sync(&hub);
+    let f_nachher = hub.objekt(SAMMLUNG_DATEI, &f).unwrap();
+    assert_eq!(f_nachher.payload, f_vorher.payload, "F nicht überschrieben");
+    assert!(
+        hub.mit(|i| i.fertig(&hid("Inhalt F"))),
+        "keine Blob-Löschung für ruhende Objekte"
+    );
+    assert!(hub.mit(|i| !i
+        .mitschnitt
+        .iter()
+        .any(|o| o.object_id == ord && o.base_revision >= 2)));
+    // G: das unbekannte Feld bleibt erhalten und reist mit der nächsten Änderung zurück.
+    assert_eq!(
+        b.datei(&g).unwrap().extra.get("zukunft"),
+        Some(&serde_json::json!({"feld": 1}))
+    );
+    b.a.datei_umbenennen(&g, "G2.txt").unwrap();
+    b.sync(&hub);
+    let klar = mitschnitt_klartexte(&hub)
+        .into_iter()
+        .rev()
+        .find(|(_, id, _)| *id == g)
+        .unwrap()
+        .2;
+    assert!(
+        klar.contains("G2.txt") && klar.contains("zukunft"),
+        "{klar}"
+    );
+}
+
+/// Befund 6: Zwei Geräte mit je eigenem Standardordner haben nach dem ersten Abgleich ein „Allgemein“.
+#[test]
+fn zwei_geraete_ein_allgemein() {
+    let hub = FakeHub::neu();
+    let (a, b) = (geraet("a"), geraet("b"));
+    let allgemein = |g: &Geraet| -> Vec<String> {
+        g.bestand()
+            .ordner
+            .values()
+            .filter(|o| o.name.wert == crate::ablage::speicher::STANDARD_ORDNER)
+            .map(|o| o.id.clone())
+            .collect()
+    };
+    let vorher_a = allgemein(&a);
+    assert_eq!(vorher_a.len(), 1);
+    assert_ne!(vorher_a, allgemein(&b));
+    let dat = a.ablegen("Notiz.txt", "n", &vorher_a[0]);
+    a.sync(&hub);
+    b.sync(&hub);
+    a.sync(&hub);
+    let ziel = standard_id(&schluessel_konto());
+    assert!(crate::ablage::id_gueltig(
+        crate::ablage::PRAEFIX_ORDNER,
+        &ziel
+    ));
+    assert_eq!(allgemein(&a), vec![ziel.clone()]);
+    assert_eq!(allgemein(&b), vec![ziel.clone()]);
+    assert_eq!(b.datei(&dat).unwrap().ordner.wert, ziel, "Datei umgehängt");
+    let am_hub = hub.mit(|i| {
+        i.objekte
+            .keys()
+            .filter(|(c, _)| c == SAMMLUNG_ORDNER)
+            .count()
+    });
+    assert_eq!(am_hub, 1, "ein Ordner am Hub");
+}
+
+/// Befund 7: Einzelfehler stellen nur das Objekt zurück; Abweisungen ruhen ohne neue Reservierung;
+/// „Zu viele Ablagen“ ist ein eigener Stand.
+#[test]
+fn einzelfehler_stellen_nur_das_objekt_zurueck() {
+    let hub = FakeHub::neu();
+    let a = geraet("a");
+    let ord = a.ordner("Fehler");
+    let f1 = a.ablegen("Eins.txt", "eins", &ord);
+    let f2 = a.ablegen("Zwei.txt", "zwei", &ord);
+    hub.mit(|i| {
+        i.fehl_reservieren.insert(hid("eins"));
+    });
+    a.sync(&hub);
+    assert!(
+        hub.objekt(SAMMLUNG_DATEI, &f1).is_none(),
+        "F1 zurückgestellt"
+    );
+    assert!(
+        hub.objekt(SAMMLUNG_DATEI, &f2).is_some(),
+        "F2 trotzdem gesendet"
+    );
+    hub.mit(|i| i.fehl_reservieren.clear());
+    a.sync(&hub);
+    assert!(hub.objekt(SAMMLUNG_DATEI, &f1).is_some());
+    // Abweisung: Rückstellung, beim nächsten Lauf weder Push noch Reservierung.
+    let f3 = a.ablegen("Drei.txt", "drei", &ord);
+    hub.mit(|i| {
+        i.abweisen.insert(f3.clone());
+    });
+    a.sync(&hub);
+    let r = a.zustand().rueck[&format!("{SAMMLUNG_DATEI}/{f3}")];
+    assert!(r.bis_ms > crate::ablage::jetzt_ms());
+    let (pushes, res) = hub.mit(|i| {
+        (
+            i.mitschnitt.iter().filter(|o| o.object_id == f3).count(),
+            i.reserviert.iter().filter(|b| **b == hid("drei")).count(),
+        )
+    });
+    a.sync(&hub);
+    assert_eq!(
+        hub.mit(|i| i.mitschnitt.iter().filter(|o| o.object_id == f3).count()),
+        pushes
+    );
+    assert_eq!(
+        hub.mit(|i| i.reserviert.iter().filter(|b| **b == hid("drei")).count()),
+        res
+    );
+    assert!(rueck_dauer(30) <= RUECK_MAX_MS);
+    // Zu viele Ablagen: eigener Stand, kein „Speicher voll“.
+    hub.mit(|i| i.zu_viele = true);
+    let f4 = a.ablegen("Vier.txt", "vier", &ord);
+    let bericht = a.sync(&hub);
+    assert!(bericht.warnung.unwrap_or_default().contains("zu viele"));
+    let z = a.zustand();
+    assert!(z.zu_viele.is_some() && !z.kontingent_voll);
+    assert!(hub.objekt(SAMMLUNG_DATEI, &f4).is_none());
+}
+
+/// Befund 8: Eigene Blobs ohne lebende Fassung werden nach 7 Tagen bedingt gelöscht.
+#[test]
+fn verwaiste_eigene_blobs_werden_nach_sieben_tagen_geloescht() {
+    let hub = FakeHub::neu();
+    let a = geraet("a");
+    let ord = a.ordner("Waisen");
+    let dat = a.ablegen("W.txt", "verwaist", &ord);
+    // Upload gelingt, das Objekt wird abgewiesen; danach löscht der Nutzer die Datei endgültig.
+    hub.mit(|i| {
+        i.abweisen.insert(dat.clone());
+    });
+    a.sync(&hub);
+    let blob = hid("verwaist");
+    assert!(hub.mit(|i| i.fertig(&blob)));
+    assert!(
+        a.bestand().sync_blobs.contains_key(&blob),
+        "dauerhaft vermerkt"
+    );
+    a.a.in_papierkorb(AblageArt::Datei, &dat).unwrap();
+    a.a.endgueltig_loeschen(AblageArt::Datei, &dat).unwrap();
+    a.sync(&hub);
+    assert!(hub.mit(|i| i.fertig(&blob)), "jünger als 7 Tage: bleibt");
+    // 8 Tage später.
+    let pfad = a.a.dir().join("ablage.json");
+    let mut v: Value = serde_json::from_slice(&std::fs::read(&pfad).unwrap()).unwrap();
+    v["sync_blobs"][&blob]["ms"] =
+        serde_json::json!(crate::ablage::jetzt_ms() - 8 * 24 * 3600 * 1000);
+    std::fs::write(&pfad, serde_json::to_vec(&v).unwrap()).unwrap();
+    a.sync(&hub);
+    assert!(
+        hub.mit(|i| !i.blobs.contains_key(&blob)),
+        "verwaister Blob gelöscht"
+    );
+    assert!(!a.bestand().sync_blobs.contains_key(&blob));
 }
