@@ -794,7 +794,20 @@ for (const theme of THEMEN) {
         await expect(status).toContainText("wörtlich gesucht");
         await page.getByTestId("ablage-semantik-schalter").click();
         await expect(status).toContainText("Modell nicht geladen (488 MB)");
-        await expect(status).toContainText("Noch nicht Standard");
+        await expect(page.getByTestId("ablage-semantik-optin")).toContainText(
+          "Noch nicht Standard",
+        );
+        // Touch-Ziel des Schalters: Fläche mindestens 44 × 44 (vor allem bei 390 px).
+        const flaeche = await page
+          .getByTestId("ablage-semantik-schalterflaeche")
+          .boundingBox();
+        expect(flaeche?.width ?? 0).toBeGreaterThanOrEqual(44);
+        expect(flaeche?.height ?? 0).toBeGreaterThanOrEqual(44);
+        const treffer = await page
+          .getByTestId("ablage-semantik-schalter")
+          .boundingBox();
+        expect(treffer?.width ?? 0).toBeGreaterThanOrEqual(44);
+        expect(treffer?.height ?? 0).toBeGreaterThanOrEqual(44);
         await page.getByTestId("ablage-semantik-laden").click();
         await expect(status).toContainText("Aktiv");
         await expect(page.getByTestId("ablage-semantik-laden")).toHaveCount(0);

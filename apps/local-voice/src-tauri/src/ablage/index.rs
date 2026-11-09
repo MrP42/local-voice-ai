@@ -49,6 +49,49 @@ const CHECKPOINT_VERSUCHE: u32 = 5;
 static SPERRE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// Nur [`neu_aufbauen`] hält sie schreibend (Dateien löschen), die Suche lesend (Datenbank öffnen).
 static DATEIEN_SPERRE: std::sync::RwLock<()> = std::sync::RwLock::new(());
+/// Wartende Schreiber der [`DATEIEN_SPERRE`]. Die Sperre ist nicht überall fair (Windows: SRWLock);
+/// das schrittweise [`vektoren_nachziehen`] nimmt deshalb keinen neuen Schritt, solange ein Schreiber
+/// wartet, und lässt ihm ausdrücklich den Vortritt.
+static SCHREIBER_WARTET: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static SCHREIBER_FERTIG: (std::sync::Mutex<()>, std::sync::Condvar) =
+    (std::sync::Mutex::new(()), std::sync::Condvar::new());
+/// Begonnene Schritte von [`vektoren_nachziehen`] (Test der Übergabe).
+static SCHRITTE_BEGONNEN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Schreibsperre der Dateien, als wartender Schreiber angemeldet (bis zum Freigeben).
+struct DateienExklusiv {
+    _g: std::sync::RwLockWriteGuard<'static, ()>,
+}
+
+impl Drop for DateienExklusiv {
+    fn drop(&mut self) {
+        // Läuft vor dem Freigeben der Sperre (Feld): ein geweckter Leser wartet dann noch kurz an
+        // der Sperre selbst.
+        SCHREIBER_WARTET.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+        let _m = SCHREIBER_FERTIG.0.lock().unwrap_or_else(|e| e.into_inner());
+        SCHREIBER_FERTIG.1.notify_all();
+    }
+}
+
+fn dateien_exklusiv() -> DateienExklusiv {
+    SCHREIBER_WARTET.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    DateienExklusiv {
+        _g: DATEIEN_SPERRE.write().unwrap_or_else(|e| e.into_inner()),
+    }
+}
+
+/// Wartet ohne Sperre, bis kein Schreiber der Dateien mehr ansteht.
+fn schreibern_vortritt_lassen() {
+    use std::sync::atomic::Ordering;
+    let mut m = SCHREIBER_FERTIG.0.lock().unwrap_or_else(|e| e.into_inner());
+    while SCHREIBER_WARTET.load(Ordering::SeqCst) > 0 {
+        m = SCHREIBER_FERTIG
+            .1
+            .wait_timeout(m, std::time::Duration::from_millis(50))
+            .unwrap_or_else(|e| e.into_inner())
+            .0;
+    }
+}
 
 fn sperren() -> std::sync::MutexGuard<'static, ()> {
     SPERRE.lock().unwrap_or_else(|e| e.into_inner())
@@ -187,12 +230,25 @@ pub(crate) fn mit_sperre<T>(f: impl FnOnce() -> T) -> T {
     f()
 }
 
-/// Test: Wartezeit, bis [`neu_aufbauen`] die Dateien sperren könnte (Schreibsperre).
+/// Test: begonnene Schritte von [`vektoren_nachziehen`] (prozessweit).
 #[cfg(test)]
-pub(crate) fn dateisperre_warten() -> std::time::Duration {
-    let t = std::time::Instant::now();
-    let _d = DATEIEN_SPERRE.write().unwrap_or_else(|e| e.into_inner());
-    t.elapsed()
+pub(crate) fn schritte_begonnen() -> usize {
+    SCHRITTE_BEGONNEN.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// Test: meldet sich als Schreiber der Dateien an wie [`neu_aufbauen`] und liefert die begonnenen
+/// Schritte des Nachziehens bei der Anmeldung und beim Erhalt der Sperre.
+#[cfg(test)]
+pub(crate) fn dateisperre_uebergabe() -> (usize, usize) {
+    use std::sync::atomic::Ordering;
+    SCHREIBER_WARTET.fetch_add(1, Ordering::SeqCst);
+    let vorher = SCHRITTE_BEGONNEN.load(Ordering::SeqCst);
+    let g = DateienExklusiv {
+        _g: DATEIEN_SPERRE.write().unwrap_or_else(|e| e.into_inner()),
+    };
+    let nachher = SCHRITTE_BEGONNEN.load(Ordering::SeqCst);
+    drop(g);
+    (vorher, nachher)
 }
 
 /// `PRAGMA secure_delete` der eigenen Verbindung und der von `wai-retrieval` (Test).
@@ -547,7 +603,7 @@ pub fn neu_aufbauen(a: &Ablage) -> Res<AblageIndexBericht> {
 pub fn neu_aufbauen_mit(a: &Ablage, emb: &AblageEinbettung) -> Res<AblageIndexBericht> {
     {
         let _g = sperren();
-        let _d = DATEIEN_SPERRE.write().unwrap_or_else(|e| e.into_inner());
+        let _d = dateien_exklusiv();
         let p = index_pfad(a)?;
         for endung in ["", "-wal", "-shm", "-journal"] {
             let q = PathBuf::from(format!("{}{endung}", p.display()));
@@ -584,7 +640,18 @@ pub fn vektoren_nachziehen(a: &Ablage, emb: &AblageEinbettung) -> Res<u32> {
     let mut runden: Option<u64> = None;
     loop {
         let schritt: Res<Option<usize>> = {
-            let _d = DATEIEN_SPERRE.read().unwrap_or_else(|e| e.into_inner());
+            // Ausdrückliche Übergabe: ein wartender Schreiber (Neuaufbau) kommt vor dem nächsten
+            // Schritt dran, auch wenn die Sperre selbst Leser bevorzugt.
+            let _d = loop {
+                schreibern_vortritt_lassen();
+                let d = DATEIEN_SPERRE.read().unwrap_or_else(|e| e.into_inner());
+                SCHRITTE_BEGONNEN.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if SCHREIBER_WARTET.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+                    break d;
+                }
+                SCHRITTE_BEGONNEN.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+                drop(d);
+            };
             if !pfad.is_file() {
                 return Ok(gesamt);
             }

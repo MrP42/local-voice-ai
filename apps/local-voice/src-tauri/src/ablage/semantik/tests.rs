@@ -314,26 +314,31 @@ fn hybrid_mit_fake_nachziehen_rueckfall_und_papierkorb() {
     assert_eq!(index::vektor_stand(&b.a, &fake).unwrap(), (false, 0));
 }
 
-/// Das Nachziehen sperrt nur schrittweise: ein Neuaufbau mitten im (langsamen) Nachziehen wartet
-/// höchstens einen Schritt, nicht den ganzen Lauf; danach endet das Nachziehen sauber, und ein
-/// weiteres Nachziehen füllt alle Stücke.
+/// Das Nachziehen sperrt nur schrittweise und lässt einem wartenden Schreiber (Neuaufbau) den
+/// Vortritt: Bekommt der Schreiber die Dateisperre, hat seit seiner Anmeldung kein neuer Schritt
+/// begonnen (Handshake über die Schrittzahl, keine Zeitgrenze; gilt auch bei nicht fairen Sperren wie
+/// unter Windows). Danach endet das Nachziehen trotz Neuaufbau sauber und füllt alle Stücke.
 #[test]
 fn neuaufbau_waehrend_des_nachziehens_wartet_nur_einen_schritt() {
     let k = korpus();
     let b = aufbauen(&k);
-    let pause = std::time::Duration::from_millis(1000);
-    let langsam = AblageEinbettung::test_langsam(0.5, pause);
+    let langsam = AblageEinbettung::test_langsam(0.5, std::time::Duration::from_millis(200));
     let (stuecke, _) = vektoren(&b);
-    // 64 Stücke zu 32: mindestens zwei Schritte, zusammen ≥ 2 s.
+    // 64 Stücke zu 32: mehrere Schritte.
     assert!(stuecke > 32, "{stuecke}");
+    let start = index::schritte_begonnen();
     let a2 = Ablage::neu(b.a.dir().to_path_buf());
     let l2 = langsam.clone();
     let lauf = std::thread::spawn(move || index::vektoren_nachziehen(&a2, &l2));
-    std::thread::sleep(std::time::Duration::from_millis(100));
-    // Die Dateisperre (die `neu_aufbauen` braucht) ist nach höchstens einem Schritt frei; hielte das
-    // Nachziehen sie über den ganzen Lauf, wären es fast 2 s.
-    let gewartet = index::dateisperre_warten();
-    assert!(gewartet < pause * 15 / 10, "{gewartet:?}");
+    // Handshake: ein Schritt läuft.
+    while index::schritte_begonnen() == start {
+        std::thread::yield_now();
+    }
+    let (vorher, nachher) = index::dateisperre_uebergabe();
+    assert!(
+        nachher <= vorher,
+        "Schritt nach der Anmeldung: {vorher} → {nachher}"
+    );
     // Ein echter Neuaufbau mitten im Lauf: beide enden ohne Fehler.
     index::neu_aufbauen_mit(&b.a, &AblageEinbettung::Keine).unwrap();
     lauf.join().unwrap().unwrap();

@@ -619,8 +619,28 @@
   gap: 6px 10px;
   margin: 0 12px 6px;
   padding: 6px 10px;
-  border: 1px solid var(--color-border, rgba(0, 0, 0, 0.12));
+  border: 1px solid var(--abl-line);
   border-radius: 6px;
+}
+/* Touch-Ziel des Schalters: mindestens 44 × 44 (der Fluent-Switch selbst ist kleiner). */
+.ablage-semantik__schalter {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+}
+/* Die Trefferfläche des Switch (sein Eingabefeld deckt die Wurzel ab) füllt die 44 × 44. */
+.ablage-semantik__schalter > .fui-Switch {
+  min-width: 44px;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+}
+/* Opt-in-Hinweis in eigener Zeile unter Titel und Schalter (sonst wird die Textspalte sehr lang). */
+.ablage-semantik__hinweis {
+  flex: 1 0 100%;
+  font-size: 12px;
 }
 .ablage-semantik__text {
   display: flex;

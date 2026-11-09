@@ -143,7 +143,6 @@ export const SemantikZeile: React.FC<{ onGeaendert(): void }> = ({
             mb: s.groesse_mb,
             anzahl: s.vektoren_fehlen,
           })}
-          {!s.standard && s.an && ` ${t("ablage.semantik.optIn")}`}
         </span>
         {s.laedt && (
           <ProgressBar
@@ -200,15 +199,28 @@ export const SemantikZeile: React.FC<{ onGeaendert(): void }> = ({
           {t("ablage.semantik.entfernen")}
         </Button>
       )}
-      <Switch
-        checked={s.an}
-        disabled={busy}
-        onChange={(_e, d) => void schalten(d.checked)}
-        aria-label={t("ablage.semantik.titel")}
-        aria-description={t("ablage.semantik.hinweis")}
-        title={t("ablage.semantik.hinweis")}
-        data-testid="ablage-semantik-schalter"
-      />
+      <span
+        className="ablage-semantik__schalter"
+        data-testid="ablage-semantik-schalterflaeche"
+      >
+        <Switch
+          checked={s.an}
+          disabled={busy}
+          onChange={(_e, d) => void schalten(d.checked)}
+          aria-label={t("ablage.semantik.titel")}
+          aria-description={t("ablage.semantik.hinweis")}
+          title={t("ablage.semantik.hinweis")}
+          data-testid="ablage-semantik-schalter"
+        />
+      </span>
+      {!s.standard && s.an && (
+        <span
+          className="ablage-semantik__hinweis ablage-mut"
+          data-testid="ablage-semantik-optin"
+        >
+          {t("ablage.semantik.optIn")}
+        </span>
+      )}
     </div>
   );
 };
