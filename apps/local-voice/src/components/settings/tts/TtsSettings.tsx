@@ -51,6 +51,7 @@ import {
   FOLDER_BOOKS,
   FOLDER_TEXTS,
   bookFolderKey,
+  showsBooks,
   type BookFolder as FolderEntry,
 } from "@/lib/reader/folders";
 import { ResizeHandle } from "../../ui/ResizeHandle";
@@ -4179,7 +4180,8 @@ export const TtsSettings = () => {
             readerFolders.visibleIds.length === 0
               ? readerFolders.selection === FOLDER_TEXTS
                 ? t("tts.folders.noLoose")
-                : readerFolders.selection === FOLDER_BOOKS
+                : readerFolders.selection === FOLDER_BOOKS &&
+                    readerFolders.booksReady
                   ? t("tts.folders.noBooks")
                   : undefined
               : undefined
@@ -4235,15 +4237,15 @@ export const TtsSettings = () => {
                 folders={readerFolders.folders}
                 books={readerFolders.books}
                 total={readerFolders.total}
+                booksReady={readerFolders.booksReady}
                 selection={readerFolders.selection}
                 onSelect={(key) => {
-                  // lva#435: „Bücher“ klappt mobil zuerst die Bücher auf;
+                  // lva#435: „Bücher“ klappt zuerst nur die Bücher auf (mobil
+                  // bleibt die Ordner-Ebene, die offene Seite bleibt offen);
                   // erst die zweite Wahl (oder ein Buch) führt zur Liste.
                   const stay =
-                    key === FOLDER_BOOKS &&
-                    readerFolders.selection !== FOLDER_BOOKS &&
-                    readerFolders.folders.books.length > 0;
-                  readerFolders.select(key, setActivePage);
+                    key === FOLDER_BOOKS && !showsBooks(readerFolders.selection);
+                  readerFolders.select(key, setActivePage, !stay);
                   if (!stay) setMobileLevel("list");
                 }}
                 onAddBook={() => void loadDocument()}

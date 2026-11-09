@@ -34,9 +34,19 @@ export const ReaderFolders: React.FC<{
   total: number;
   selection: string;
   onSelect: (key: string) => void;
+  /** Bücher geladen; vorher kein Leerzustand „Noch keine Bücher“. */
+  booksReady?: boolean;
   /** „Buch hinzufügen“ im Leerzustand (Dokument-Import des Vorlesens). */
   onAddBook?: () => void;
-}> = ({ folders, books, total, selection, onSelect, onAddBook }) => {
+}> = ({
+  folders,
+  books,
+  total,
+  selection,
+  onSelect,
+  onAddBook,
+  booksReady = true,
+}) => {
   const { t } = useTranslation();
   const byId = new Map(books.map((b) => [b.id, b]));
   const booksOpen = showsBooks(selection);
@@ -92,7 +102,7 @@ export const ReaderFolders: React.FC<{
     // Bedarf auf und bleibt deshalb vollständig.
     ...folders.books.map((f) => ({
       value: bookFolderKey(f.bookId),
-      label: ` ${f.title} (${f.pageIds.length})`,
+      label: `   ${f.title} (${f.pageIds.length})`,
     })),
     {
       value: FOLDER_TEXTS,
@@ -158,35 +168,32 @@ export const ReaderFolders: React.FC<{
           },
         )}
         {booksOpen && (
-          <div
-            id={listId}
-            role="group"
-            aria-label={t("tts.folders.books")}
-            className="space-y-0.5"
-          >
+          <div id={listId} className="space-y-0.5">
             {folders.books.length === 0 ? (
-              <div
-                className="space-y-2 ps-6 pe-2 py-1"
-                data-testid="reader-folders-empty"
-              >
-                <p className="text-sm font-semibold text-text">
-                  {t("tts.folders.noBooks")}
-                </p>
-                <p className="text-xs text-text/70">
-                  {t("tts.folders.noBooksHint")}
-                </p>
-                {onAddBook && (
-                  <Button
-                    variant="primary"
-                    className="reader-folders__btn"
-                    icon={<Plus width={16} height={16} aria-hidden="true" />}
-                    onClick={onAddBook}
-                    data-testid="reader-add-book"
-                  >
-                    {t("tts.folders.addBook")}
-                  </Button>
-                )}
-              </div>
+              !booksReady ? null : (
+                <div
+                  className="space-y-2 ps-6 pe-2 py-1"
+                  data-testid="reader-folders-empty"
+                >
+                  <p className="text-sm font-semibold text-text">
+                    {t("tts.folders.noBooks")}
+                  </p>
+                  <p className="text-xs text-text/70">
+                    {t("tts.folders.noBooksHint")}
+                  </p>
+                  {onAddBook && (
+                    <Button
+                      variant="primary"
+                      className="reader-folders__btn"
+                      icon={<Plus width={16} height={16} aria-hidden="true" />}
+                      onClick={onAddBook}
+                      data-testid="reader-add-book"
+                    >
+                      {t("tts.folders.addBook")}
+                    </Button>
+                  )}
+                </div>
+              )
             ) : (
               folders.books.map((f) => {
                 const book = byId.get(f.bookId);

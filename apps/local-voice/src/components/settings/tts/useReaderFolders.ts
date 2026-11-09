@@ -137,12 +137,16 @@ export function useReaderFolders(
     setStored,
   ]);
 
-  /** Ordner wählen; liegt die offene Seite nicht darin, öffnet die erste. */
+  /**
+   * Ordner wählen; liegt die offene Seite nicht darin, öffnet die erste.
+   * `openFirst: false` (lva#435, mobil „Bücher“ aufklappen) wählt nur aus und
+   * lässt die offene Seite stehen.
+   */
   const select = useCallback(
-    (key: string, open: (id: string) => void) => {
+    (key: string, open: (id: string) => void, openFirst = true) => {
       setStored(key);
       const ids = pagesInFolder(folders, key, allIds);
-      const opens = ids.length > 0 && !ids.includes(activePage);
+      const opens = openFirst && ids.length > 0 && !ids.includes(activePage);
       if (opens) open(ids[0]);
       // Eine bewusste Wahl gilt als gesehen, auch während Bücher laden:
       // sonst überschriebe die spätere Seitenfolge sie.
@@ -164,5 +168,7 @@ export function useReaderFolders(
     visibleIds,
     langOf,
     total: pages.length,
+    /** Bücher geladen: erst dann darf „Noch keine Bücher“ erscheinen. */
+    booksReady: !pending && !failed,
   };
 }

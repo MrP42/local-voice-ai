@@ -1584,6 +1584,68 @@ test("Beleg P3b: Notizen und Anhänge bei 768, 1440 und 2560 px", async ({
   }
 });
 
+test("lva#435 mobil: „Bücher“ klappt zuerst auf, zweite Wahl führt zur Liste", async ({
+  page,
+}) => {
+  await openReadAloud(page, 768);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const nav = page.getByTestId("reader-folders");
+  await page.getByTestId("mback-reader").click();
+  await page.getByTestId("mback-list").click();
+  // Lose Seite offen, „Ohne Buch“ gewählt.
+  await nav.locator('[data-folder="texts"]').click();
+  await page.getByTestId("mback-list").click();
+  const before = await activePage(page);
+  const books = nav.locator('[data-folder="books"]');
+  await books.click();
+  // Erste Wahl: Ordner-Ebene bleibt, Bücher stehen da, offene Seite bleibt.
+  await expect(nav).toBeVisible();
+  await expect(books).toHaveAttribute("aria-expanded", "true");
+  await expect(nav.locator('[data-folder="book:b1"]')).toBeVisible();
+  expect(await activePage(page)).toBe(before);
+  // Zweite Wahl: Liste mit allen Buchseiten.
+  await books.click();
+  await expect(nav).toBeHidden();
+  await expect(rows(page)).toHaveText(["Der Sturm", "The Tempest"]);
+});
+
+test("lva#435 mobil ohne Bücher: Hinweis und „Buch hinzufügen“ erreichbar", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    (window as unknown as { __lvBooks?: unknown }).__lvBooks = [];
+  });
+  await openReadAloud(page, 768);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByTestId("mback-reader").click();
+  await page.getByTestId("mback-list").click();
+  const nav = page.getByTestId("reader-folders");
+  await nav.locator('[data-folder="books"]').click();
+  await expect(nav).toBeVisible();
+  const add = page
+    .getByTestId("reader-folders-empty")
+    .getByRole("button", { name: "Buch hinzufügen" });
+  await expect(add).toBeVisible();
+  expect((await add.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+});
+
+test("lva#435 Umbruch-Layout: Auswahl „Bücher“ zeigt alle Buchseiten", async ({
+  page,
+}) => {
+  await openReadAloud(page, 900);
+  const select = page
+    .getByTestId("reader-folders-compact")
+    .locator(".app-select__control");
+  await select.click();
+  await page.getByRole("option", { name: "Bücher (2)" }).click();
+  await expect(rows(page)).toHaveText(["Der Sturm", "The Tempest"]);
+  await select.click();
+  // Bücher eingerückt unter „Bücher“ (geschützte Leerzeichen).
+  await expect(
+    page.getByRole("option", { name: /Der Sturm \(2\)/ }),
+  ).toHaveText("\u00a0\u00a0\u00a0Der Sturm (2)");
+});
+
 // Belege lva#435 (Bücher nur bei Bedarf), nur mit LV_435_SHOTS:
 //   LV_435_SHOTS=docs/vorschau/buecher-bei-bedarf LV_THEME=dark pnpm exec playwright test readaloud-folders -g "Belege lva#435"
 test("Belege lva#435", async ({ page }) => {
