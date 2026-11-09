@@ -1,0 +1,201 @@
+{
+  "hinweis": "Synthetischer Eval-Korpus für D6 (semantische Suche). Alle Inhalte erfunden, nur Domains example.*; keine echten Personen, Firmen oder Bankdaten.",
+  "dokumente": [
+    {
+      "name": "Wartungsvertrag Aufzug.txt",
+      "absaetze": [
+        "Wartungsvertrag zwischen der Beispiel Hausverwaltung GmbH und der Muster Aufzugtechnik AG über die Aufzugsanlage im Gebäude Lindenweg 4.",
+        "§ 2 Leistungsumfang: Der Auftragnehmer führt viermal jährlich eine Inspektion durch, schmiert alle beweglichen Teile und prüft die Notrufeinrichtung. Die gesetzlich vorgeschriebene Hauptprüfung ist nicht enthalten.",
+        "§ 3 Vertragsdauer: Der Vertrag beginnt am 1. Januar 2026 und läuft 36 Monate. Er verlängert sich danach jeweils um ein weiteres Jahr, wenn er nicht mit einer Frist von drei Monaten zum Ende der Laufzeit gekündigt wird.",
+        "§ 4 Störungsbeseitigung: Bei einem Stillstand mit eingeschlossenen Personen ist der Techniker spätestens 30 Minuten nach Eingang der Meldung vor Ort. Sonstige Störungen werden innerhalb von 24 Stunden bearbeitet.",
+        "§ 5 Vergütung: Die Pauschale beträgt 1.840 Euro netto pro Jahr und wird quartalsweise im Voraus in Rechnung gestellt. Ersatzteile werden gesondert nach Aufwand abgerechnet.",
+        "§ 6 Ansprechpartner: Störungsmeldungen gehen an stoerung@aufzug.example.com, Vertragsfragen an vertrieb@aufzug.example.com."
+      ]
+    },
+    {
+      "name": "Mietvertrag Büro.txt",
+      "absaetze": [
+        "Gewerbemietvertrag über Büroräume im zweiten Obergeschoss, Hafenstraße 12, zwischen der Beispiel Immobilien KG als Vermieterin und der Beispiel Software GmbH als Mieterin.",
+        "§ 3 Miete: Die monatliche Kaltmiete beträgt 4.250 Euro. Hinzu kommt eine Vorauszahlung auf die Betriebskosten von 780 Euro, über die jährlich abgerechnet wird.",
+        "§ 4 Mietsicherheit: Die Mieterin leistet eine Kaution in Höhe von drei Monatskaltmieten, also 12.750 Euro, spätestens bei Übergabe der Räume.",
+        "§ 7 Instandhaltung: Kleinreparaturen bis 150 Euro im Einzelfall trägt die Mieterin. Schönheitsreparaturen sind bei Auszug nur geschuldet, wenn die Räume übermäßig abgenutzt sind.",
+        "§ 9 Untervermietung: Eine Untervermietung oder sonstige Überlassung an Dritte bedarf der vorherigen schriftlichen Zustimmung der Vermieterin.",
+        "§ 11 Parkplätze: Zur Mietsache gehören vier Stellplätze in der Tiefgarage. Weitere Stellplätze können für 95 Euro je Monat angemietet werden."
+      ]
+    },
+    {
+      "name": "Reisekostenrichtlinie.txt",
+      "absaetze": [
+        "Reisekostenrichtlinie der Beispiel Software GmbH, gültig ab 1. März 2026. Sie gilt für alle Beschäftigten und für dienstlich veranlasste Reisen im In- und Ausland.",
+        "Übernachtung: Hotelkosten werden bis 130 Euro pro Nacht inklusive Frühstück erstattet. In München, Hamburg und Frankfurt liegt die Grenze bei 160 Euro.",
+        "Bahnfahrten: Grundsätzlich wird die zweite Klasse gebucht. Bei einer einfachen Fahrtzeit von mehr als vier Stunden ist die erste Klasse erlaubt.",
+        "Verpflegung: Es gelten die steuerlichen Pauschalen, bei mehr als acht Stunden Abwesenheit 14 Euro, bei ganztägiger Abwesenheit 28 Euro. Gestellte Mahlzeiten werden gekürzt.",
+        "Abrechnung: Die Reisekostenabrechnung ist mit allen Belegen spätestens sechs Wochen nach Ende der Reise über das Portal reisen.example.net einzureichen. Später eingereichte Abrechnungen können abgelehnt werden.",
+        "Mietwagen: Ein Mietwagen ist nur zulässig, wenn öffentliche Verkehrsmittel nicht zumutbar sind. Gebucht wird höchstens die Kompaktklasse."
+      ]
+    },
+    {
+      "name": "IT-Sicherheitsrichtlinie.txt",
+      "absaetze": [
+        "IT-Sicherheitsrichtlinie für alle Beschäftigten. Ziel ist der Schutz von Kundendaten und internen Informationen vor Verlust und unbefugtem Zugriff.",
+        "Kennwörter: Ein Kennwort muss mindestens 14 Zeichen lang sein und darf nicht für andere Dienste verwendet werden. Ein Passwortmanager wird vom IT-Service bereitgestellt.",
+        "Anmeldung: Für den Fernzugriff, das E-Mail-Postfach und alle Cloud-Dienste ist die Zwei-Faktor-Authentifizierung mit der Authenticator-App verpflichtend.",
+        "Wechseldatenträger: Private USB-Sticks dürfen nicht an Dienstgeräte angeschlossen werden. Dienstliche Datenträger sind verschlüsselt und werden vom IT-Service ausgegeben.",
+        "Verdächtige Nachrichten: Wer eine verdächtige E-Mail erhält, klickt keine Links an und leitet sie an sicherheit@example.org weiter. Der IT-Service meldet sich innerhalb eines Arbeitstages.",
+        "Arbeitsplatz: Beim Verlassen des Arbeitsplatzes wird der Bildschirm gesperrt. Nach fünf Minuten ohne Eingabe sperrt sich das Gerät automatisch."
+      ]
+    },
+    {
+      "name": "Rechnung 2026-0457.txt",
+      "absaetze": [
+        "Rechnung Nr. 2026-0457 der Papierhandel Muster OHG an die Beispiel Software GmbH, Rechnungsdatum 14. Oktober 2026.",
+        "Positionen: 40 Kartons Kopierpapier A4, 80 g/m², je 500 Blatt, Einzelpreis 22,50 Euro, Gesamt 900,00 Euro. Lieferung frei Haus.",
+        "Summe: Nettobetrag 900,00 Euro zuzüglich 19 Prozent Umsatzsteuer 171,00 Euro, Rechnungsbetrag 1.071,00 Euro.",
+        "Zahlung: Zahlbar innerhalb von 30 Tagen ohne Abzug. Bei Zahlung innerhalb von 10 Tagen gewähren wir 2 Prozent Skonto.",
+        "Bankverbindung: Musterbank, Kontoinhaber Papierhandel Muster OHG, Verwendungszweck bitte immer mit Rechnungsnummer. Rückfragen an buchhaltung@papier.example.com."
+      ]
+    },
+    {
+      "name": "Protokoll Projekt Kundenportal.txt",
+      "absaetze": [
+        "Protokoll der Projektbesprechung Kundenportal vom 3. September 2026, Teilnehmende aus Vertrieb, Entwicklung und Kundenservice.",
+        "Termin: Das neue Kundenportal soll am 1. Dezember 2026 live gehen. Ein Testbetrieb mit zehn ausgewählten Kunden beginnt am 2. November.",
+        "Budget: Für das Projekt sind 85.000 Euro freigegeben, davon wurden bisher 52.000 Euro ausgegeben. Eine Aufstockung ist derzeit nicht vorgesehen.",
+        "Risiken: Die Schnittstelle zum Abrechnungssystem ist noch nicht fertig. Falls sie bis Mitte Oktober nicht steht, verschiebt sich der Start um vier Wochen.",
+        "Aufgaben: Die Entwicklung liefert bis 20. September einen Prototyp der Anmeldung. Der Kundenservice schreibt die Hilfetexte bis Ende Oktober."
+      ]
+    },
+    {
+      "name": "Datenschutzhinweise Website.txt",
+      "absaetze": [
+        "Datenschutzhinweise für die Website www.example.com der Beispiel Software GmbH.",
+        "Server-Protokolle: Beim Aufruf der Website speichert der Webserver IP-Adresse, Zeitpunkt und aufgerufene Seite. Diese Protokolle werden nach sieben Tagen automatisch gelöscht.",
+        "Cookies: Wir setzen nur technisch notwendige Cookies. Statistik- oder Werbe-Cookies werden nur nach ausdrücklicher Einwilligung im Cookie-Banner gesetzt.",
+        "Kontaktformular: Die Angaben aus dem Kontaktformular verwenden wir nur zur Bearbeitung der Anfrage und löschen sie sechs Monate nach Abschluss.",
+        "Ihre Rechte: Sie haben das Recht auf Auskunft, Berichtigung, Löschung und Widerspruch. Unsere Datenschutzbeauftragte erreichen Sie unter datenschutz@example.com."
+      ]
+    },
+    {
+      "name": "Urlaubsregelung.txt",
+      "absaetze": [
+        "Betriebsvereinbarung zur Urlaubsplanung bei der Beispiel Software GmbH.",
+        "Anspruch: Beschäftigte in Vollzeit haben einen Anspruch auf 30 Arbeitstage Erholungsurlaub im Kalenderjahr. Bei Teilzeit wird der Anspruch anteilig berechnet.",
+        "Übertragung: Nicht genommener Urlaub kann ins Folgejahr übertragen werden, muss aber bis zum 31. März genommen sein. Danach verfällt er.",
+        "Antrag: Urlaub von mehr als einer Woche ist mindestens vier Wochen vorher im Personalportal zu beantragen. Kürzere Abwesenheiten genügen mit einer Woche Vorlauf.",
+        "Sonderurlaub: Für einen Umzug gibt es einen Tag, für die eigene Hochzeit zwei Tage und bei der Geburt eines Kindes zwei Tage bezahlte Freistellung."
+      ]
+    },
+    {
+      "name": "Fuhrparkordnung.txt",
+      "absaetze": [
+        "Fuhrparkordnung für Dienstfahrzeuge der Beispiel Software GmbH.",
+        "Privatnutzung: Dienstwagen dürfen privat genutzt werden. Der geldwerte Vorteil wird nach der Ein-Prozent-Regel versteuert.",
+        "Tanken: Getankt wird ausschließlich mit der Tankkarte. Privatfahrten ins Ausland tankt die Fahrerin oder der Fahrer selbst.",
+        "Schäden: Ein Unfall oder Schaden ist innerhalb von 24 Stunden der Fuhrparkverwaltung unter fuhrpark@example.net zu melden, bei Personenschaden zusätzlich der Polizei.",
+        "Bereifung: Von Oktober bis Ostern sind Winterreifen aufzuziehen. Den Termin in der Vertragswerkstatt vereinbart die Fuhrparkverwaltung."
+      ]
+    },
+    {
+      "name": "Hausordnung.txt",
+      "absaetze": [
+        "Hausordnung für das Bürogebäude Hafenstraße 12.",
+        "Öffnungszeiten: Das Gebäude ist montags bis freitags von 6 bis 21 Uhr geöffnet. Außerhalb dieser Zeiten ist der Zutritt nur mit freigeschaltetem Ausweis möglich.",
+        "Kantine: Die Kantine im Erdgeschoss bietet von 11:30 bis 14 Uhr ein Mittagessen an. Bezahlt wird mit dem Mitarbeiterausweis.",
+        "Rauchen: Im gesamten Gebäude gilt Rauchverbot. Geraucht werden darf nur im ausgewiesenen Bereich im Innenhof.",
+        "Fundsachen: Gefundene Gegenstände werden am Empfang abgegeben und dort vier Wochen aufbewahrt."
+      ]
+    },
+    {
+      "name": "Softwarelizenzvertrag.txt",
+      "absaetze": [
+        "Lizenz- und Supportvertrag über die Software Planwerk zwischen der Beispiel Software GmbH und der Muster Cloud AG.",
+        "Lizenzen: Lizenziert werden 120 benannte Nutzerkonten. Zusätzliche Konten können jederzeit monatlich nachgebucht werden.",
+        "Verfügbarkeit: Die Muster Cloud AG sichert eine Verfügbarkeit von 99,5 Prozent im Kalendermonat zu. Wird sie unterschritten, gibt es eine Gutschrift von fünf Prozent der Monatsgebühr.",
+        "Support: Der Support ist werktags von 8 bis 18 Uhr unter support@cloud.example.org erreichbar. Kritische Störungen werden innerhalb von vier Stunden bearbeitet.",
+        "Vertragsende: Bei Vertragsende erhält die Kundin ihre Daten innerhalb von 30 Tagen als CSV-Export. Danach werden alle Daten gelöscht."
+      ]
+    },
+    {
+      "name": "Erste Hilfe im Betrieb.txt",
+      "absaetze": [
+        "Organisation der Ersten Hilfe am Standort Hafenstraße.",
+        "Ersthelfende: In jeder Etage sind mindestens zwei ausgebildete Ersthelferinnen oder Ersthelfer benannt. Die Namen hängen am Schwarzen Brett aus.",
+        "Fortbildung: Die Ausbildung zur Ersthelferin oder zum Ersthelfer muss alle zwei Jahre in einem eintägigen Kurs aufgefrischt werden. Die Kosten trägt der Betrieb.",
+        "Material: Verbandkästen befinden sich in jeder Teeküche. Ein Defibrillator hängt im Erdgeschoss neben dem Empfang.",
+        "Notfall: Im Notfall zuerst die 112 anrufen, danach den Empfang informieren, damit der Rettungsdienst eingewiesen werden kann."
+      ]
+    }
+  ],
+  "fragen": [
+    {"frage": "Wie lange läuft der Wartungsvertrag für den Aufzug?", "dok": 0, "absatz": 2, "art": "lexikalisch"},
+    {"frage": "Wann kann ich den Aufzugsvertrag beenden?", "dok": 0, "absatz": 2, "art": "umschrieben"},
+    {"frage": "Wie schnell muss der Techniker kommen, wenn jemand im Lift feststeckt?", "dok": 0, "absatz": 3, "art": "umschrieben"},
+    {"frage": "Was kostet die Wartung des Aufzugs im Jahr?", "dok": 0, "absatz": 4, "art": "umschrieben"},
+    {"frage": "Ist die Hauptprüfung im Wartungsumfang enthalten?", "dok": 0, "absatz": 1, "art": "lexikalisch"},
+    {"frage": "Wie hoch ist die Kaltmiete für das Büro?", "dok": 1, "absatz": 1, "art": "lexikalisch"},
+    {"frage": "Wie viel Sicherheit müssen wir dem Vermieter hinterlegen?", "dok": 1, "absatz": 2, "art": "umschrieben"},
+    {"frage": "Dürfen wir einen Teil der Büroräume an eine andere Firma weitergeben?", "dok": 1, "absatz": 4, "art": "umschrieben"},
+    {"frage": "Wer bezahlt kleine Reparaturen in den Mieträumen?", "dok": 1, "absatz": 3, "art": "umschrieben"},
+    {"frage": "Wie viele Stellplätze in der Tiefgarage gehören zur Mietsache?", "dok": 1, "absatz": 5, "art": "lexikalisch"},
+    {"frage": "Wie teuer darf ein Hotelzimmer auf Dienstreise sein?", "dok": 2, "absatz": 1, "art": "umschrieben"},
+    {"frage": "Ab wann darf ich erste Klasse mit dem Zug fahren?", "dok": 2, "absatz": 2, "art": "umschrieben"},
+    {"frage": "Bis wann muss die Reisekostenabrechnung eingereicht werden?", "dok": 2, "absatz": 4, "art": "lexikalisch"},
+    {"frage": "Wie viel Verpflegungsgeld gibt es für einen ganzen Reisetag?", "dok": 2, "absatz": 3, "art": "umschrieben"},
+    {"frage": "Welches Auto darf ich als Mietwagen nehmen?", "dok": 2, "absatz": 5, "art": "umschrieben"},
+    {"frage": "Wie lang muss ein Passwort mindestens sein?", "dok": 3, "absatz": 1, "art": "umschrieben"},
+    {"frage": "Ist Zwei-Faktor-Authentifizierung Pflicht?", "dok": 3, "absatz": 2, "art": "lexikalisch"},
+    {"frage": "Darf ich meinen eigenen Speicherstick am Firmenlaptop benutzen?", "dok": 3, "absatz": 3, "art": "umschrieben"},
+    {"frage": "Was mache ich mit einer Phishing-Mail?", "dok": 3, "absatz": 4, "art": "umschrieben"},
+    {"frage": "Nach wie vielen Minuten sperrt sich der Rechner von selbst?", "dok": 3, "absatz": 5, "art": "umschrieben"},
+    {"frage": "Wie hoch ist der Rechnungsbetrag der Papierrechnung?", "dok": 4, "absatz": 2, "art": "lexikalisch"},
+    {"frage": "Wie viel Rabatt bekommen wir bei schneller Bezahlung der Papierlieferung?", "dok": 4, "absatz": 3, "art": "umschrieben"},
+    {"frage": "Wie viele Kartons Kopierpapier wurden geliefert?", "dok": 4, "absatz": 1, "art": "lexikalisch"},
+    {"frage": "Wann startet das Kundenportal?", "dok": 5, "absatz": 1, "art": "umschrieben"},
+    {"frage": "Wie viel Geld ist vom Projektbudget des Kundenportals schon verbraucht?", "dok": 5, "absatz": 2, "art": "umschrieben"},
+    {"frage": "Was könnte den Start des Portals verzögern?", "dok": 5, "absatz": 3, "art": "umschrieben"},
+    {"frage": "Wer schreibt die Hilfetexte für das Portal?", "dok": 5, "absatz": 4, "art": "lexikalisch"},
+    {"frage": "Wie lange werden die Logdateien des Webservers aufbewahrt?", "dok": 6, "absatz": 1, "art": "umschrieben"},
+    {"frage": "Setzt die Website Tracking-Cookies ohne Zustimmung?", "dok": 6, "absatz": 2, "art": "umschrieben"},
+    {"frage": "Wie erreiche ich die Datenschutzbeauftragte?", "dok": 6, "absatz": 4, "art": "lexikalisch"},
+    {"frage": "Wann werden Anfragen aus dem Kontaktformular gelöscht?", "dok": 6, "absatz": 3, "art": "lexikalisch"},
+    {"frage": "Wie viele Urlaubstage habe ich in Vollzeit?", "dok": 7, "absatz": 1, "art": "umschrieben"},
+    {"frage": "Bis wann muss Resturlaub aus dem Vorjahr genommen werden?", "dok": 7, "absatz": 2, "art": "umschrieben"},
+    {"frage": "Wie früh muss ich zwei Wochen Ferien beantragen?", "dok": 7, "absatz": 3, "art": "umschrieben"},
+    {"frage": "Bekomme ich frei, wenn ich in eine neue Wohnung ziehe?", "dok": 7, "absatz": 4, "art": "umschrieben"},
+    {"frage": "Wie wird die private Nutzung des Firmenwagens versteuert?", "dok": 8, "absatz": 1, "art": "umschrieben"},
+    {"frage": "Bis wann muss ein Unfall mit dem Dienstwagen gemeldet werden?", "dok": 8, "absatz": 3, "art": "lexikalisch"},
+    {"frage": "Wann müssen Winterreifen aufgezogen werden?", "dok": 8, "absatz": 4, "art": "lexikalisch"},
+    {"frage": "Wie bezahle ich Benzin für das Firmenauto?", "dok": 8, "absatz": 2, "art": "umschrieben"},
+    {"frage": "Bis wie viel Uhr ist das Bürogebäude offen?", "dok": 9, "absatz": 1, "art": "umschrieben"},
+    {"frage": "Wann gibt es Mittagessen in der Kantine?", "dok": 9, "absatz": 2, "art": "lexikalisch"},
+    {"frage": "Wo darf man auf dem Gelände eine Zigarette rauchen?", "dok": 9, "absatz": 3, "art": "umschrieben"},
+    {"frage": "Ich habe einen Schlüssel gefunden, wohin damit?", "dok": 9, "absatz": 4, "art": "umschrieben"},
+    {"frage": "Welche Verfügbarkeit garantiert der Anbieter von Planwerk?", "dok": 10, "absatz": 2, "art": "lexikalisch"},
+    {"frage": "Wann ist der Planwerk-Support erreichbar?", "dok": 10, "absatz": 3, "art": "lexikalisch"},
+    {"frage": "Bekommen wir unsere Daten zurück, wenn wir Planwerk kündigen?", "dok": 10, "absatz": 4, "art": "umschrieben"},
+    {"frage": "Wie viele Benutzer dürfen Planwerk verwenden?", "dok": 10, "absatz": 1, "art": "umschrieben"},
+    {"frage": "Wie oft muss der Erste-Hilfe-Kurs wiederholt werden?", "dok": 11, "absatz": 2, "art": "umschrieben"},
+    {"frage": "Wo hängt der Defibrillator?", "dok": 11, "absatz": 3, "art": "lexikalisch"},
+    {"frage": "Was ist bei einem medizinischen Notfall als Erstes zu tun?", "dok": 11, "absatz": 4, "art": "umschrieben"},
+    {"frage": "Wie hoch ist der Zuschuss für ein Jobrad?", "art": "unbeantwortbar"},
+    {"frage": "Wann findet die Weihnachtsfeier statt?", "art": "unbeantwortbar"},
+    {"frage": "Welche Programmiersprache verwendet das Entwicklungsteam?", "art": "unbeantwortbar"},
+    {"frage": "Gibt es eine Regelung für Homeoffice an Freitagen?", "art": "unbeantwortbar"},
+    {"frage": "Wie hoch ist das Weihnachtsgeld?", "art": "unbeantwortbar"},
+    {"frage": "Wer ist der Geschäftsführer der Muster Aufzugtechnik?", "art": "unbeantwortbar"},
+    {"frage": "Welche Kündigungsfrist gilt für Arbeitsverträge in der Probezeit?", "art": "unbeantwortbar"},
+    {"frage": "Wie viele Bewerbungen gingen im letzten Quartal ein?", "art": "unbeantwortbar"},
+    {"frage": "Welcher Stromanbieter beliefert das Bürogebäude?", "art": "unbeantwortbar"},
+    {"frage": "Darf ich meinen Hund mit ins Büro bringen?", "art": "unbeantwortbar"},
+    {"frage": "Wie funktioniert die betriebliche Altersvorsorge?", "art": "unbeantwortbar"},
+    {"frage": "Welche Laptops bekommen neue Mitarbeitende?", "art": "unbeantwortbar"},
+    {"frage": "Wann ist die nächste Betriebsratswahl?", "art": "unbeantwortbar"},
+    {"frage": "Wie hoch war der Umsatz im Jahr 2025?", "art": "unbeantwortbar"},
+    {"frage": "Gibt es einen Zuschuss zum Deutschlandticket?", "art": "unbeantwortbar"},
+    {"frage": "Wie lautet das WLAN-Passwort für Gäste?", "art": "unbeantwortbar"},
+    {"frage": "Welche Versicherung deckt Schäden an Laptops ab?", "art": "unbeantwortbar"},
+    {"frage": "Wann wird das Dach des Gebäudes saniert?", "art": "unbeantwortbar"},
+    {"frage": "Wie viele Kunden nutzen das alte Portal?", "art": "unbeantwortbar"},
+    {"frage": "Wer genehmigt Überstunden?", "art": "unbeantwortbar"}
+  ]
+}

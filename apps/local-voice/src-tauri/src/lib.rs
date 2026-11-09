@@ -282,6 +282,8 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     llm_runtime.set_model_dirs(settings::get_settings(app_handle).llm_model_dirs);
     let llm_server = Arc::new(managers::llm::LocalLlmServer::new());
     managers::llm::install_globals(llm_runtime.clone(), llm_server.clone());
+    // Ablage D6: Modellordner und Schalter der semantischen Suche (das Modell lädt erst bei Bedarf).
+    ablage::befehle::semantik_einrichten(app_handle);
     // Speicherwächter: faellt der freie RAM unter die Notgrenze, stoppt die
     // App ihre eigenen Server (fish-speech, llama-server), bevor Windows in
     // die Auslagerung kippt und unbedienbar wird (Ausfall 15.09.2026).
@@ -2053,6 +2055,11 @@ fn specta_builder() -> Builder<tauri::Wry> {
             ablage::befehle::ablage_index_neu_aufbauen,
             ablage::befehle::ablage_text_abbrechen,
             ablage::befehle::ablage_sync_stand,
+            ablage::befehle::ablage_semantik_stand,
+            ablage::befehle::ablage_semantik_setzen,
+            ablage::befehle::ablage_semantik_laden,
+            ablage::befehle::ablage_semantik_abbrechen,
+            ablage::befehle::ablage_semantik_loeschen,
             assistent::assistent_einstufen,
             assistent::assistent_messung_melden,
             assistent::assistent_letzte_ausgabe,

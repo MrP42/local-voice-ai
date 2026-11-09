@@ -612,6 +612,53 @@
   padding: 0 12px 6px;
   font-weight: 600;
 }
+.ablage-semantik {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin: 0 12px 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--abl-line);
+  border-radius: 6px;
+}
+/* Touch-Ziel des Schalters: mindestens 44 × 44 (der Fluent-Switch selbst ist kleiner). */
+.ablage-semantik__schalter {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+}
+/* Die Trefferfläche des Switch (sein Eingabefeld deckt die Wurzel ab) füllt die 44 × 44. */
+.ablage-semantik__schalter > .fui-Switch {
+  min-width: 44px;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+}
+/* Opt-in-Hinweis in eigener Zeile unter Titel und Schalter (sonst wird die Textspalte sehr lang). */
+.ablage-semantik__hinweis {
+  flex: 1 0 100%;
+  font-size: 12px;
+}
+.ablage-semantik__text {
+  display: flex;
+  flex: 1 1 220px;
+  flex-direction: column;
+  min-width: 0;
+  font-size: 12px;
+}
+.ablage-semantik__titel {
+  font-weight: 600;
+}
+.ablage-semantik__fortschritt {
+  margin-top: 4px;
+}
+.ablage-semantik__fehler {
+  margin-top: 2px;
+  color: var(--colorPaletteRedForeground1);
+}
 .ablage-suche__titel {
   margin: 8px 12px 4px;
   font-size: 12px;

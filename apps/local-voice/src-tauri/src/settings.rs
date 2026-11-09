@@ -311,6 +311,10 @@ fn default_llm_effort() -> String {
     "medium".to_string()
 }
 
+fn default_ablage_semantische_suche() -> bool {
+    crate::ablage::semantik::SEMANTIK_STANDARD
+}
+
 fn default_true() -> bool {
     true
 }
@@ -972,6 +976,11 @@ pub struct AppSettings {
     /// geladen ist; ohne den Schluessel gilt `true`. Kein Abgleich ueber Besprechungen.
     #[serde(default = "default_true")]
     pub meeting_voice_suggestions: bool,
+    /// Ablage D6: semantische Suche (lokale Vektoren mit multilingual-e5-small). Wirkt erst, wenn
+    /// das Modell geladen ist; ohne Modell bleibt die Suche lexikalisch. Standard aus dem Eval-Tor
+    /// (`ablage::semantik::SEMANTIK_STANDARD`).
+    #[serde(default = "default_ablage_semantische_suche")]
+    pub ablage_semantische_suche: bool,
     /// D3 (#70): Bildanalyse fuer Folien. Gemma 4 E4B liest den Text erkannter Folien neu
     /// (Zahlen und Tabellen stimmen) und beschreibt sie; dafuer startet der lokale Server
     /// kurz mit Bild-Projektor. Standard AUS (der Projektor ist ein optionaler 990-MB-
@@ -1996,6 +2005,7 @@ pub fn get_default_settings() -> AppSettings {
         book_talk_subscription_preview: false,
         book_talk_preview_bindings: Vec::new(),
         meeting_voice_suggestions: true,
+        ablage_semantische_suche: default_ablage_semantische_suche(),
         meeting_slide_vision: false,
         meeting_echo_cancellation: MeetingEchoCancellation::Auto,
         meeting_final_model: default_meeting_final_model(),

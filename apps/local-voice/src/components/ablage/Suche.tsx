@@ -8,6 +8,7 @@ import type {
   AblageSuchtreffer,
 } from "@/bindings";
 import { ankerTeile, hervorheben, suchwoerter } from "./logik";
+import { SemantikZeile } from "./Semantik";
 
 /** Lesbare Beschriftung eines Ankers (`seite=3` → „Seite 3“). */
 export function ankerText(t: TFunction, anker: string): string {
@@ -62,13 +63,23 @@ export const SuchErgebnisse: React.FC<{
   inhalt: AblageSuchtreffer[] | null;
   fehler: boolean;
   pfadText(ordner: string): string;
+  /** D6: Suchart geändert (semantisch an/aus, Vektoren fertig) – Inhaltssuche erneut ausführen. */
+  onSuchartGeaendert(): void;
   onOeffnen(
     dat: string,
     ordner: string,
     fundstelle: AblageFundstelle | null,
     ausloeser: HTMLElement,
   ): void;
-}> = ({ anfrage, namen, inhalt, fehler, pfadText, onOeffnen }) => {
+}> = ({
+  anfrage,
+  namen,
+  inhalt,
+  fehler,
+  pfadText,
+  onSuchartGeaendert,
+  onOeffnen,
+}) => {
   const { t } = useTranslation();
   return (
     <section
@@ -81,6 +92,7 @@ export const SuchErgebnisse: React.FC<{
         <span>{t("ablage.suchergebnis.titel")}</span>
         <span className="ablage-mut">{t("ablage.suchergebnis.hinweis")}</span>
       </div>
+      <SemantikZeile onGeaendert={onSuchartGeaendert} />
       {namen.length > 0 && (
         <>
           <h3 className="ablage-suche__titel">

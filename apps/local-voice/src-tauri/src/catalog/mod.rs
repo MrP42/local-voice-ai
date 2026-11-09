@@ -62,6 +62,9 @@ pub enum Purpose {
     /// Stimmprofile 2a: Sprecher-Embedding-Modell (ONNX, CAM++), rechnet Stimmabdruecke
     /// fuer Zusammenfuehrungs-Vorschlaege (`managers::meetings::voiceprint`).
     SpeakerEmbedding,
+    /// D6 (Ablage): Text-Embedding-Modell (ONNX, multilingual-e5-small) fuer die semantische Suche
+    /// der Ablage (`ablage::semantik`). Nie im ASR- oder Sprachmodell-Katalog.
+    AblageEmbedding,
     /// Phonon: das Programm `ptts` je Plattform (Release-Archiv von GitHub),
     /// `managers::tts::phonon_models`. Getrennt von `TtsRuntime` (Piper).
     PhononRuntime,
@@ -675,6 +678,7 @@ mod tests {
             Purpose::LlmProjector,
             Purpose::Diarization,
             Purpose::SpeakerEmbedding,
+            Purpose::AblageEmbedding,
             Purpose::PhononRuntime,
             Purpose::PhononModel,
             Purpose::PhononVoice,

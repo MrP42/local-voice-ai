@@ -35,7 +35,7 @@ fn kind_einstieg() {
     std::process::exit(extrakt::haupt(&args[n - 3..]));
 }
 
-fn kind(test: Option<&str>) -> Programm {
+pub(in crate::ablage) fn kind(test: Option<&str>) -> Programm {
     let mut umgebung = vec![("LVA_EXTRAKT_KIND".into(), "1".into())];
     if let Some(t) = test {
         umgebung.push(("LVA_EXTRAKT_TEST".into(), t.into()));
@@ -53,7 +53,7 @@ fn kind(test: Option<&str>) -> Programm {
 }
 
 /// Kurze Grenzen für Tests (die Standardwerte gelten in der App).
-const TEST_GRENZEN: Grenzen = Grenzen {
+pub(in crate::ablage) const TEST_GRENZEN: Grenzen = Grenzen {
     zeit: Duration::from_secs(20),
     speicher_mb: 1024,
 };

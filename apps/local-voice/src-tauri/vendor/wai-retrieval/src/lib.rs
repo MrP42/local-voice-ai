@@ -842,6 +842,109 @@ impl<E: Embedder> Retriever<E> {
         Ok(ids.len())
     }
 
+    /// Lokale Abweichung (lva#395 D6): Übernimmt den Mandanten in den Vektorraum des aktuellen
+    /// Embedders, OHNE einzubetten: alte Vektoren des Mandanten weg, Kennung setzen. Danach füllt
+    /// [`Self::fill_missing`] die Vektoren schrittweise auf (kurze Schreibtransaktionen statt eines
+    /// langen [`Self::reindex`]). Liefert `false`, wenn der Mandant schon im Vektorraum liegt.
+    pub async fn adopt_space(&self, tenant: &str) -> Result<bool> {
+        if tenant.is_empty() {
+            return Err(RetrievalError::Invalid("tenant noetig".into()));
+        }
+        let id = self.embedder.id();
+        let mut tx = self.pool.begin().await?;
+        if tenant_state(&mut tx, tenant, &id).await?.current {
+            tx.rollback().await?;
+            return Ok(false);
+        }
+        sqlx::query(
+            "DELETE FROM vectors WHERE chunk_id IN (SELECT c.id FROM chunks c
+             JOIN docs d ON d.source_id = c.source_id WHERE d.tenant = ?)",
+        )
+        .bind(tenant)
+        .execute(&mut *tx)
+        .await?;
+        bump_generation(&mut tx).await?;
+        bump_tenant_generation(&mut tx, tenant).await?;
+        sqlx::query("INSERT OR REPLACE INTO meta(key, value) VALUES(?, ?)")
+            .bind(emb_key(tenant))
+            .bind(&id)
+            .execute(&mut *tx)
+            .await?;
+        let foreign = stale_tenants(&mut tx, &id).await?;
+        if foreign == 0 {
+            sqlx::query("INSERT OR REPLACE INTO meta(key, value) VALUES('embedder', ?)")
+                .bind(&id)
+                .execute(&mut *tx)
+                .await?;
+        }
+        tx.commit().await?;
+        if foreign == 0 {
+            self.reindex_needed.store(false, Ordering::Relaxed);
+        }
+        Ok(true)
+    }
+
+    /// Lokale Abweichung (lva#395 D6): Bettet höchstens `max` Textstellen des Mandanten OHNE Vektor
+    /// ein (aufsteigend nach Id) und schreibt sie in einer kurzen Transaktion. Der Mandant muss im
+    /// Vektorraum des Embedders liegen ([`Self::adopt_space`]); hat er ihn während des Einbettens
+    /// verlassen oder wurde er neu indexiert, bleibt der Index unverändert
+    /// ([`RetrievalError::Conflict`]). Liefert die Zahl geschriebener Vektoren; 0 heißt: nichts fehlt
+    /// (mehr).
+    pub async fn fill_missing(&self, tenant: &str, max: usize) -> Result<usize> {
+        if tenant.is_empty() {
+            return Err(RetrievalError::Invalid("tenant noetig".into()));
+        }
+        let id = self.embedder.id();
+        let before = tenant_state(&mut *self.pool.acquire().await?, tenant, &id).await?;
+        if !before.current {
+            return Err(RetrievalError::Conflict(format!(
+                "Mandant {tenant} liegt nicht im Vektorraum des Embedders"
+            )));
+        }
+        let rows = sqlx::query(
+            "SELECT c.id, c.text FROM chunks c JOIN docs d ON d.source_id = c.source_id
+             WHERE d.tenant = ? AND NOT EXISTS (SELECT 1 FROM vectors v WHERE v.chunk_id = c.id)
+             ORDER BY c.id LIMIT ?",
+        )
+        .bind(tenant)
+        .bind(max.max(1) as i64)
+        .fetch_all(&self.pool)
+        .await?;
+        if rows.is_empty() {
+            return Ok(0);
+        }
+        let ids: Vec<i64> = rows.iter().map(|r| r.get(0)).collect();
+        let texts: Vec<String> = rows.iter().map(|r| r.get(1)).collect();
+        // Einbetten ohne offene Schreibtransaktion.
+        let vecs = self.embedder.embed_batch(&texts).await?;
+        let mut tx = self.pool.begin().await?;
+        let now = tenant_state(&mut tx, tenant, &id).await?;
+        if !now.current || now.generation != before.generation {
+            tx.rollback().await?;
+            return Err(RetrievalError::Conflict(format!(
+                "Mandant {tenant} wurde parallel neu indexiert; bitte erneut starten"
+            )));
+        }
+        let mut n = 0usize;
+        for ((cid, text), v) in ids.iter().zip(&texts).zip(&vecs) {
+            // Nur fuer unveraenderte Textstellen; eine parallele Aufnahme hat ihre schon geschrieben.
+            n += sqlx::query(
+                "INSERT OR IGNORE INTO vectors(chunk_id, vec) SELECT id, ? FROM chunks WHERE id = ? AND text = ?",
+            )
+            .bind(to_blob(v))
+            .bind(cid)
+            .bind(text)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected() as usize;
+        }
+        bump_generation(&mut tx).await?;
+        tx.commit().await?;
+        // Mindestens 1, solange etwas fehlte: der Aufrufer fragt erneut (verschwundene Textstellen
+        // fehlen beim nächsten Mal nicht mehr).
+        Ok(n.max(1))
+    }
+
     /// Stammen die Vektoren des Mandanten aus dem aktuellen Embedder? (N3: Aufnahme und Suche
     /// pruefen den JEWEILIGEN Mandanten, nicht den globalen Zustand.) Ohne Textstellen: ja; ohne
     /// eigenen Vermerk: nein (R3-3).
@@ -1041,9 +1144,17 @@ impl<E: Embedder> Retriever<E> {
             ));
         }
         let generation = meta_get(&self.pool, "gen").await?.unwrap_or_default();
+        // Kennung des Embedders im Schluessel: eine Rangfolge eines anderen Vektorraums (oder der rein
+        // lexikalischen Suche) kommt nicht wieder (lva#395 D6).
         let schluessel = format!(
-            "{}\0{}\0{}\0{}\0{}\0{:?}",
-            actor.tenant, actor.principal, text, k, generation, self.max_per_source
+            "{}\0{}\0{}\0{}\0{}\0{:?}\0{}",
+            actor.tenant,
+            actor.principal,
+            text,
+            k,
+            generation,
+            self.max_per_source,
+            self.embedder.id()
         );
         let key = hex(&Sha256::digest(schluessel.as_bytes()));
         let cached: Option<String> = sqlx::query("SELECT ranked FROM qcache WHERE key = ?")
@@ -1184,7 +1295,7 @@ impl<E: Embedder> Retriever<E> {
         let mut complete = q.is_some();
         if let Some(q) = q.filter(|q| q.iter().any(|x| *x != 0.0)) {
             let sql = format!(
-                "SELECT c.id, v.vec FROM vectors v JOIN chunks c ON c.id = v.chunk_id JOIN docs d ON d.source_id = c.source_id WHERE {ACL_SQL}"
+                "SELECT c.id, v.vec, c.source_id FROM vectors v JOIN chunks c ON c.id = v.chunk_id JOIN docs d ON d.source_id = c.source_id WHERE {ACL_SQL}"
             );
             // R3-4: Zustand und Vektoren aus EINEM Snapshot (Lesetransaktion); ist der Mandant
             // inzwischen nicht mehr im Vektorraum des Embedders, werden die Vektoren verworfen.
@@ -1201,7 +1312,7 @@ impl<E: Embedder> Retriever<E> {
                 vec![]
             };
             tx.commit().await?;
-            let mut sims: Vec<(i64, f32)> = rows
+            let mut sims: Vec<(i64, f32, String)> = rows
                 .iter()
                 .map(|r| {
                     let v = from_blob(r.get::<&[u8], _>(1));
@@ -1210,12 +1321,22 @@ impl<E: Embedder> Retriever<E> {
                     } else {
                         0.0
                     };
-                    (r.get::<i64, _>(0), sim)
+                    (r.get::<i64, _>(0), sim, r.get::<String, _>(2))
                 })
-                .filter(|(_, s)| *s >= MIN_COSINE)
+                .filter(|(_, s, _)| *s >= MIN_COSINE)
                 .collect();
             sims.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
-            for (r, (id, _)) in sims.iter().take(CANDIDATES).enumerate() {
+            // Dieselbe Kappung je Quelle wie in der lexikalischen Liste (lva#426, D6).
+            let mut je_quelle: HashMap<&str, usize> = HashMap::new();
+            let behalten = sims.iter().filter(|(_, _, src)| match self.max_per_source {
+                Some(max) => {
+                    let n = je_quelle.entry(src.as_str()).or_default();
+                    *n += 1;
+                    *n <= max
+                }
+                None => true,
+            });
+            for (r, (id, _, _)) in behalten.take(CANDIDATES).enumerate() {
                 *rrf.entry(*id).or_default() += 1.0 / (RRF_K + 1.0 + r as f64);
             }
         }

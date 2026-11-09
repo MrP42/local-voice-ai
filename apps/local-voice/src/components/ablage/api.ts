@@ -46,4 +46,9 @@ export const api = {
   suchen: (anfrage: string) => ok(commands.ablageSuchen(anfrage)),
   indexNeuAufbauen: () => ok(commands.ablageIndexNeuAufbauen()),
   syncStand: () => ok(commands.ablageSyncStand()),
+  semantikStand: () => ok(commands.ablageSemantikStand()),
+  semantikSetzen: (an: boolean) => ok(commands.ablageSemantikSetzen(an)),
+  semantikLaden: () => ok(commands.ablageSemantikLaden()),
+  semantikAbbrechen: () => ok(commands.ablageSemantikAbbrechen()),
+  semantikLoeschen: () => ok(commands.ablageSemantikLoeschen()),
 };
