@@ -1,0 +1,165 @@
+{
+  "aad": [
+    {
+      "aad_hex": "371f61626c6167655f6f72646e65721f6f72645f3031485a58334b394d324e3450355136523753385439563057581f626c6f625f726566731f1f6b65795f69641f36333064636432391f64656c657465641f30",
+      "aad_utf8": "7\u001fablage_ordner\u001ford_01HZX3K9M2N4P5Q6R7S8T9V0WX\u001fblob_refs\u001f\u001fkey_id\u001f630dcd29\u001fdeleted\u001f0",
+      "blob_refs": [],
+      "collection": "ablage_ordner",
+      "deleted": false,
+      "key_id": "630dcd29",
+      "name": "ordner",
+      "object_id": "ord_01HZX3K9M2N4P5Q6R7S8T9V0WX",
+      "user_id": 7
+    },
+    {
+      "aad_hex": "371f61626c6167655f6f72646e65721f6f72645f3031485a58334b394d324e3450355136523753385439563057581f626c6f625f726566731f1f6b65795f69641f36333064636432391f64656c657465641f31",
+      "aad_utf8": "7\u001fablage_ordner\u001ford_01HZX3K9M2N4P5Q6R7S8T9V0WX\u001fblob_refs\u001f\u001fkey_id\u001f630dcd29\u001fdeleted\u001f1",
+      "blob_refs": [],
+      "collection": "ablage_ordner",
+      "deleted": true,
+      "key_id": "630dcd29",
+      "name": "ordner_grabstein",
+      "object_id": "ord_01HZX3K9M2N4P5Q6R7S8T9V0WX",
+      "user_id": 7
+    },
+    {
+      "aad_hex": "371f61626c6167655f64617465691f6461745f3031485a58334b394d324e3450355136523753385439563057591f626c6f625f726566731f1f6b65795f69641f36333064636432391f64656c657465641f30",
+      "aad_utf8": "7\u001fablage_datei\u001fdat_01HZX3K9M2N4P5Q6R7S8T9V0WY\u001fblob_refs\u001f\u001fkey_id\u001f630dcd29\u001fdeleted\u001f0",
+      "blob_refs": [],
+      "collection": "ablage_datei",
+      "deleted": false,
+      "key_id": "630dcd29",
+      "name": "datei_ohne_refs",
+      "object_id": "dat_01HZX3K9M2N4P5Q6R7S8T9V0WY",
+      "user_id": 7
+    },
+    {
+      "aad_hex": "371f61626c6167655f64617465691f6461745f3031485a58334b394d324e3450355136523753385439563057591f626c6f625f726566731f326336306137326434343763316662363338303831363063383365616432343231323766393431653137636664306264616233373437376534306330666536612c383837383236353132316162393830326539623035303937653661653132346366326433346666623530376662303331346632363037316264396130323862362c623065363030323935386538666437356137396266626537343830363130333537633962373630663337616531613563616162343931323465643730346534341f6b65795f69641f36333064636432391f64656c657465641f30",
+      "aad_utf8": "7\u001fablage_datei\u001fdat_01HZX3K9M2N4P5Q6R7S8T9V0WY\u001fblob_refs\u001f2c60a72d447c1fb63808160c83ead242127f941e17cfd0bdab37477e40c0fe6a,8878265121ab9802e9b05097e6ae124cf2d34ffb507fb0314f26071bd9a028b6,b0e6002958e8fd75a79bfbe7480610357c9b760f37ae1a5caab49124ed704e44\u001fkey_id\u001f630dcd29\u001fdeleted\u001f0",
+      "blob_refs": [
+        "2c60a72d447c1fb63808160c83ead242127f941e17cfd0bdab37477e40c0fe6a",
+        "8878265121ab9802e9b05097e6ae124cf2d34ffb507fb0314f26071bd9a028b6",
+        "b0e6002958e8fd75a79bfbe7480610357c9b760f37ae1a5caab49124ed704e44"
+      ],
+      "collection": "ablage_datei",
+      "deleted": false,
+      "key_id": "630dcd29",
+      "name": "datei_mit_refs",
+      "object_id": "dat_01HZX3K9M2N4P5Q6R7S8T9V0WY",
+      "user_id": 7
+    },
+    {
+      "aad_hex": "371f61626c6167655f64617465691f6461745f3031485a58334b394d324e3450355136523753385439563057591f626c6f625f726566731f326336306137326434343763316662363338303831363063383365616432343231323766393431653137636664306264616233373437376534306330666536611f6b65795f69641f36333064636432391f64656c657465641f30",
+      "aad_utf8": "7\u001fablage_datei\u001fdat_01HZX3K9M2N4P5Q6R7S8T9V0WY\u001fblob_refs\u001f2c60a72d447c1fb63808160c83ead242127f941e17cfd0bdab37477e40c0fe6a\u001fkey_id\u001f630dcd29\u001fdeleted\u001f0",
+      "blob_refs": [
+        "2c60a72d447c1fb63808160c83ead242127f941e17cfd0bdab37477e40c0fe6a"
+      ],
+      "collection": "ablage_datei",
+      "deleted": false,
+      "key_id": "630dcd29",
+      "name": "datei_ein_ref",
+      "object_id": "dat_01HZX3K9M2N4P5Q6R7S8T9V0WY",
+      "user_id": 7
+    },
+    {
+      "aad_hex": "371f61626c6167655f64617465691f6461745f3031485a58334b394d324e3450355136523753385439563057591f626c6f625f726566731f1f6b65795f69641f36333064636432391f64656c657465641f31",
+      "aad_utf8": "7\u001fablage_datei\u001fdat_01HZX3K9M2N4P5Q6R7S8T9V0WY\u001fblob_refs\u001f\u001fkey_id\u001f630dcd29\u001fdeleted\u001f1",
+      "blob_refs": [],
+      "collection": "ablage_datei",
+      "deleted": true,
+      "key_id": "630dcd29",
+      "name": "datei_grabstein",
+      "object_id": "dat_01HZX3K9M2N4P5Q6R7S8T9V0WY",
+      "user_id": 7
+    }
+  ],
+  "grabstein": [
+    {
+      "aad_hex": "371f61626c6167655f6f72646e65721f6f72645f3031485a58334b394d324e3450355136523753385439563057581f626c6f625f726566731f1f6b65795f69641f36333064636432391f64656c657465641f31",
+      "collection": "ablage_ordner",
+      "klartext": "{\"collection\":\"ablage_ordner\",\"deleted\":true,\"id\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\"}",
+      "nonce_hex": "d8833cecf75f631bc6f542d00327f5220ef76731d5fffc32",
+      "object_id": "ord_01HZX3K9M2N4P5Q6R7S8T9V0WX",
+      "payload_base64": "2IM87PdfYxvG9ULQAyf1Ig73ZzHV//wyosG/RodfNLlhluFsmC0o5YzSM/kMcPqHO2QApslWxfnlCl77t0EZ4caL+WZRIzJxvH60ISHhmD2R44lpvvuEIbLw+bTOM12ATtKWKmfYHdvkI1GEZfBAK23ytA9j69dJpeW9",
+      "payload_hex": "d8833cecf75f631bc6f542d00327f5220ef76731d5fffc32a2c1bf46875f34b96196e16c982d28e58cd233f90c70fa873b6400a6c956c5f9e50a5efbb74119e1c68bf96651233271bc7eb42121e1983d91e38969befb8421b2f0f9b4ce335d804ed2962a67d81ddbe423518465f0402b6df2b40f63ebd749a5e5bd"
+    },
+    {
+      "aad_hex": "371f61626c6167655f64617465691f6461745f3031485a58334b394d324e3450355136523753385439563057591f626c6f625f726566731f1f6b65795f69641f36333064636432391f64656c657465641f31",
+      "collection": "ablage_datei",
+      "klartext": "{\"collection\":\"ablage_datei\",\"deleted\":true,\"id\":\"dat_01HZX3K9M2N4P5Q6R7S8T9V0WY\"}",
+      "nonce_hex": "d14ffe3364e0e66696e8930a5f8de067023127b77d0560f4",
+      "object_id": "dat_01HZX3K9M2N4P5Q6R7S8T9V0WY",
+      "payload_base64": "0U/+M2Tg5maW6JMKX43gZwIxJ7d9BWD0xv4d3nhYz9L2IIVKlUN2MDPvmbVHGw2RigXRiuWcF4Tw2G28WkesV4O2CEs/0RmhFd1L5vgBwQZTV9us6n2cXihAagaTu31TTMbd2zGEnzfS8DB1L87VYk8lvI8xaopeTPM=",
+      "payload_hex": "d14ffe3364e0e66696e8930a5f8de067023127b77d0560f4c6fe1dde7858cfd2f620854a9543763033ef99b5471b0d918a05d18ae59c1784f0d86dbc5a47ac5783b6084b3fd119a115dd4be6f801c1065357dbacea7d9c5e28406a0693bb7d534cc6dddb31849f37d2f030752fced5624f25bc8f316a8a5e4cf3"
+    }
+  ],
+  "hinweis": "Synthetische Testvektoren der Dokumentenablage (D5). Erzeugt von sync::ablage::vektoren::json_passt_zum_code (LVA_VEKTOREN_SCHREIBEN=1). Nicht von Hand ändern.",
+  "hub_kennungen": [
+    {
+      "hub_kennung": "8878265121ab9802e9b05097e6ae124cf2d34ffb507fb0314f26071bd9a028b6",
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    {
+      "hub_kennung": "2c60a72d447c1fb63808160c83ead242127f941e17cfd0bdab37477e40c0fe6a",
+      "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    {
+      "hub_kennung": "b0e6002958e8fd75a79bfbe7480610357c9b760f37ae1a5caab49124ed704e44",
+      "sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+    }
+  ],
+  "key_id": "630dcd29",
+  "nutzlast": {
+    "datei": {
+      "blob_refs_hub": [
+        "2c60a72d447c1fb63808160c83ead242127f941e17cfd0bdab37477e40c0fe6a",
+        "8878265121ab9802e9b05097e6ae124cf2d34ffb507fb0314f26071bd9a028b6",
+        "b0e6002958e8fd75a79bfbe7480610357c9b760f37ae1a5caab49124ed704e44"
+      ],
+      "blob_refs_inhalt": [
+        "1111111111111111111111111111111111111111111111111111111111111111",
+        "2222222222222222222222222222222222222222222222222222222222222222",
+        "3333333333333333333333333333333333333333333333333333333333333333"
+      ],
+      "hash": "e5f2c4f489ee48457ba50758ae20afb4dea5cfa1daf215623ade52c781bdfe0d",
+      "kanonisch": "{\"blob_refs\":[\"1111111111111111111111111111111111111111111111111111111111111111\",\"2222222222222222222222222222222222222222222222222222222222222222\",\"3333333333333333333333333333333333333333333333333333333333333333\"],\"entfernt\":[],\"fassungen\":[{\"blob\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"fas\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W2\",\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"original_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"size\":1234,\"texte\":[{\"blob\":\"3333333333333333333333333333333333333333333333333333333333333333\",\"extraktor\":\"lva-text\",\"extraktor_version\":\"1\",\"marken_version\":1,\"size\":420,\"stand\":\"ok\",\"textrev\":\"aa\"},{\"blob\":\"\",\"code\":\"extrakt.zeit\",\"extraktor\":\"lva-text\",\"extraktor_version\":\"1\",\"marken_version\":1,\"size\":420,\"stand\":\"fehler\",\"textrev\":\"ff\",\"versuche\":2,\"versuche_zeit\":1}],\"typ\":\"txt\",\"vorgaenger\":null,\"zeit\":1762700000000},{\"blob\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"fas\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W3\",\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"original_sha256\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"size\":99,\"texte\":[],\"typ\":\"txt\",\"vorgaenger\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W2\",\"zeit\":1762700100000}],\"id\":\"dat_01HZX3K9M2N4P5Q6R7S8T9V0WY\",\"klasse_min\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":\"public\",\"zaehler\":1},\"name\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":\"Mietvertrag Köln.txt\",\"zaehler\":2},\"nur_geraet_min\":false,\"ordner\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"zaehler\":3},\"papierkorb\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":null,\"zaehler\":1},\"wahlen\":[{\"ersetzt\":[],\"gegen\":[\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W2\"],\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"gewaehlt\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W3\",\"id\":\"wahl_01HZX3K9M2N4P5Q6R7S8T9V0W4\",\"zaehler\":4}],\"zukunft\":{\"a\":1,\"b\":null}}"
+    },
+    "ordner": {
+      "hash": "3b1a06b073e14c54eced12dbb37f77367fe15655a4235d9fa4b1422e92c30bb8",
+      "kanonisch": "{\"datenklasse\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":\"erbt\",\"zaehler\":1},\"eltern\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":null,\"zaehler\":1},\"id\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"name\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":\"Verträge – Übersicht\",\"zaehler\":2},\"nur_geraet\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":false,\"zaehler\":1},\"papierkorb\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":null,\"zaehler\":1},\"zielordner_ki\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":false,\"zaehler\":1},\"zukunft\":{\"a\":[3,\"ü\",null],\"m\":true,\"z\":null}}"
+    }
+  },
+  "schluessel_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "standard_id": "ord_4TCSNDVY1EXTCJA0K1B37445HE",
+  "textfassung": {
+    "datei": "dat_01HZX3K9M2N4P5Q6R7S8T9V0WY",
+    "hub_kennung": "3047e05f0522660f19f2979345acf47d967b09a30d5809c1c0257021b9e16ca1",
+    "json_utf8": "{\"marken_version\":1,\"textrev\":\"22ce1b7c5b6b11423d01124bd33bb0e4a56b6178cc726f7bc050a8bed96fec92\",\"original_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"extraktor\":\"lva-text\",\"extraktor_version\":\"1\",\"abschnitte\":[{\"anker\":\"zeile=1\",\"text\":\"Die Miete beträgt 850 Euro.\"},{\"anker\":\"absatz=2\",\"pfad\":[\"§ 4 Laufzeit\"],\"text\":\"Kündigung \\\"zum Quartal\\\" – ohne Frist.\"}]}",
+    "sha256": "c0b677fae8e4a2e4c3ba7ca24bbb96659d84457a573552771f819835437aa344"
+  },
+  "textrev": [
+    {
+      "extraktor": "lva-text",
+      "extraktor_version": "1",
+      "marken_version": 1,
+      "original_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "textrev": "22ce1b7c5b6b11423d01124bd33bb0e4a56b6178cc726f7bc050a8bed96fec92"
+    },
+    {
+      "extraktor": "lva-text",
+      "extraktor_version": "1",
+      "marken_version": 2,
+      "original_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "textrev": "7cd15f7db5bbe7a827de3f4b078d1b6b61f8865611e22ae82636c20d7e9c9436"
+    },
+    {
+      "extraktor": "pdf-extract",
+      "extraktor_version": "0.12.0+lva1",
+      "marken_version": 1,
+      "original_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "textrev": "c8c0037e6bac0002f2a3216831e06c414a63cb32738e87ca7ba4c51d24bab54c"
+    }
+  ],
+  "user_id": 7,
+  "version": 1
+}
