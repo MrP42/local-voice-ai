@@ -53,7 +53,7 @@ pub struct PruefBlock {
 
 /// Kennung eines Notizbuch-Blocks: `seite_id#bid`; ohne `bid` (Altseite) als Notbehelf
 /// `seite_id#pos<Index>`.
-pub fn block_kennung(seite_id: &str, index: usize, block: &Block) -> String {
+fn block_kennung(seite_id: &str, index: usize, block: &Block) -> String {
     match block.bid.as_deref().filter(|b| !b.is_empty()) {
         Some(bid) => format!("{seite_id}#{bid}"),
         None => format!("{seite_id}#pos{index}"),
@@ -85,10 +85,23 @@ pub fn pruefbloecke_aus_seite(seite: &Seite) -> Vec<PruefBlock> {
         .collect()
 }
 
+/// Eine Zahl mit getrennt geführtem Wert, Einheit und Vergleichszeichen. Für Duplikate zählt
+/// alles; für Widersprüche nur Wert (samt echtem Minus) und – wenn beide Seiten eine haben – die
+/// Einheit.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Zahl {
+    /// Ziffern mit `.` als Dezimaltrenner, mit führendem `-` nur bei echtem Minus am Zahlwort.
+    pub wert: String,
+    /// Normalisiert: `€`, `%`, `$`, `£` oder leer.
+    pub einheit: String,
+    /// `<`, `>`, `≤`, `≥` oder leer.
+    pub vergleich: String,
+}
+
 /// Vergleichsmerkmale eines Blocks.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Merkmale {
-    pub zahlen: BTreeSet<String>,
+    pub zahlen: BTreeSet<Zahl>,
     /// Datums- und Uhrzeitangaben, normalisiert.
     pub zeiten: BTreeSet<String>,
     pub verneinungen: usize,
@@ -160,17 +173,29 @@ fn uhrzeit(h: &str, m: &str) -> Option<String> {
     (h < 24 && m < 60).then(|| format!("{h:02}:{m:02}"))
 }
 
-const VORZEICHEN: &[char] = &['-', '+', '−', '<', '>', '=', '≤', '≥', '~'];
+const VERGLEICH: &[char] = &['<', '>', '≤', '≥'];
 const EINHEITEN: &[char] = &['%', '€', '$', '£'];
 
-fn nur_zeichen_aus(w: &str, menge: &[char]) -> bool {
-    !w.is_empty() && w.chars().all(|c| menge.contains(&c))
+/// Einheit eines Wortes, normalisiert (`eur`/`euro` → `€`, `prozent`/`percent` → `%` …).
+fn einheit_von(w: &str) -> Option<char> {
+    match w {
+        "€" | "eur" | "euro" => Some('€'),
+        "%" | "prozent" | "percent" => Some('%'),
+        "$" | "usd" => Some('$'),
+        "£" | "gbp" => Some('£'),
+        _ => None,
+    }
 }
 
-/// Ziffernfolgen mit innerem `.`/`,` als Zahlen (`,` wird zu `.`). Vorzeichen bzw.
-/// Vergleichszeichen davor und Prozent-/Währungszeichen davor oder dahinter (auch als eigenes
-/// Nachbarwort `prev`/`next`) gehören zum Merkmal: `-5`, `5%`, `5€`, `<5` sind verschieden.
-fn zahlen_in(w: &str, prev: Option<&str>, next: Option<&str>) -> Vec<String> {
+fn randlos(w: &str) -> &str {
+    w.trim_matches(|c: char| matches!(c, ',' | '.' | ';' | ':' | '!' | '?' | '(' | ')' | '"'))
+}
+
+/// Ziffernfolgen mit innerem `.`/`,` als Zahlen (`,` wird zu `.`). Minus zählt nur direkt am
+/// Zahlwort (nicht nach Buchstabe/Ziffer, nie als freistehendes Wort); `+ ~ =` entfallen.
+/// Einheit: Zeichen direkt davor/dahinter oder Nachbarwort (`prev` nie, `next` für Einheit);
+/// Vergleichszeichen auch aus dem Vorwort.
+fn zahlen_in(w: &str, prev: Option<&str>, next: Option<&str>) -> Vec<Zahl> {
     let zeichen: Vec<char> = w.chars().collect();
     let mut spannen: Vec<(usize, usize, String)> = Vec::new();
     let mut akt = String::new();
@@ -196,20 +221,35 @@ fn zahlen_in(w: &str, prev: Option<&str>, next: Option<&str>) -> Vec<String> {
     spannen
         .into_iter()
         .map(|(von, bis, zahl)| {
-            let mut vor = String::new();
             let mut k = von;
-            while k > 0 && VORZEICHEN.contains(&zeichen[k - 1]) {
-                k -= 1;
-                vor.insert(0, zeichen[k]);
-            }
-            // Ein Bindestrich nach einem Buchstaben oder einer Ziffer ist kein Vorzeichen.
-            if k > 0 && zeichen[k - 1].is_alphanumeric() {
-                vor.retain(|c| c != '-' && c != '−');
-            }
-            if vor.is_empty() && von == 0 {
-                if let Some(p) = prev.filter(|p| nur_zeichen_aus(p, VORZEICHEN)) {
-                    vor = p.to_owned();
+            let mut vergleich = String::new();
+            let mut minus = false;
+            // Zeichen direkt vor dem Zahlwort (Einheitszeichen werden unten behandelt).
+            while k > 0 {
+                let c = zeichen[k - 1];
+                if VERGLEICH.contains(&c) {
+                    vergleich.insert(0, c);
+                } else if c == '-' || c == '−' {
+                    minus = true;
+                } else if !matches!(c, '+' | '~' | '=') {
+                    break;
                 }
+                k -= 1;
+            }
+            if minus && k > 0 && zeichen[k - 1].is_alphanumeric() {
+                minus = false;
+            }
+            if vergleich.is_empty() && von == 0 {
+                vergleich = prev
+                    .map(randlos)
+                    .filter(|p| matches!(*p, "<" | ">" | "≤" | "≥" | "=" | "<=" | ">="))
+                    .map(|p| match p {
+                        "<=" => "≤".to_owned(),
+                        ">=" => "≥".to_owned(),
+                        "=" => String::new(),
+                        _ => p.to_owned(),
+                    })
+                    .unwrap_or_default();
             }
             let mut einheit = String::new();
             if let Some(&e) = zeichen.get(bis).filter(|c| EINHEITEN.contains(c)) {
@@ -217,13 +257,15 @@ fn zahlen_in(w: &str, prev: Option<&str>, next: Option<&str>) -> Vec<String> {
             } else if von > 0 && EINHEITEN.contains(&zeichen[von - 1]) {
                 einheit.push(zeichen[von - 1]);
             } else if bis == zeichen.len() {
-                if let Some(n) =
-                    next.filter(|n| nur_zeichen_aus(n, EINHEITEN) && n.chars().count() == 1)
-                {
-                    einheit = n.to_owned();
+                if let Some(e) = next.map(randlos).and_then(einheit_von) {
+                    einheit.push(e);
                 }
             }
-            format!("{vor}{zahl}{einheit}")
+            Zahl {
+                wert: if minus { format!("-{zahl}") } else { zahl },
+                einheit,
+                vergleich,
+            }
         })
         .collect()
 }
@@ -330,7 +372,8 @@ fn begriffe_ohne_zahlen(text: &str) -> BTreeSet<String> {
         .collect()
 }
 
-/// Findet Duplikate und ähnliche Blöcke. Ein Block gilt nur als Duplikat, wenn Text und alle
+/// Findet Duplikate und ähnliche Blöcke (nur Notizen; Transkriptblöcke gehören nicht hinein,
+/// sie werden hier ausgefiltert). Ein Block gilt nur als Duplikat, wenn Text und alle
 /// Merkmale übereinstimmen; sonst höchstens „ähnlich“.
 pub fn finde_duplikate(bloecke: &[PruefBlock]) -> Vec<Paar> {
     let feat: Vec<Merkmale> = bloecke
@@ -339,7 +382,12 @@ pub fn finde_duplikate(bloecke: &[PruefBlock]) -> Vec<Paar> {
         .collect();
     let schl: Vec<String> = bloecke.iter().map(|b| textschluessel(&b.text)).collect();
     let mut gruppen: HashMap<&str, Vec<usize>> = HashMap::new();
-    for (i, s) in schl.iter().enumerate().filter(|(_, s)| !s.is_empty()) {
+    let ist_notiz = |i: usize| bloecke[i].quelle != Quelle::Transkript;
+    for (i, s) in schl
+        .iter()
+        .enumerate()
+        .filter(|(i, s)| !s.is_empty() && ist_notiz(*i))
+    {
         gruppen.entry(s.as_str()).or_default().push(i);
     }
     let mut out = Vec::new();
@@ -361,7 +409,12 @@ pub fn finde_duplikate(bloecke: &[PruefBlock]) -> Vec<Paar> {
         let terme: Vec<BTreeSet<String>> = bloecke.iter().map(|b| begriffe(&b.text)).collect();
         for a in 0..bloecke.len() {
             for b in a + 1..bloecke.len() {
-                if gleichtext.contains(&(a, b)) || terme[a].is_empty() || schl[a].is_empty() {
+                if !ist_notiz(a)
+                    || !ist_notiz(b)
+                    || gleichtext.contains(&(a, b))
+                    || terme[a].is_empty()
+                    || schl[a].is_empty()
+                {
                     continue;
                 }
                 if jaccard(&terme[a], &terme[b]) >= AEHNLICH_UEBERLAPP {
@@ -399,6 +452,24 @@ fn mengen_weichen_ab(a: &BTreeSet<String>, b: &BTreeSet<String>) -> bool {
     !a.is_empty() && !b.is_empty() && !a.is_subset(b) && !b.is_subset(a)
 }
 
+/// Zahlen weichen ab: Werte (mit echtem Minus) unterscheiden sich nach [`mengen_weichen_ab`];
+/// Einheiten zählen nur, wenn jede Zahl auf beiden Seiten eine hat.
+fn zahlen_weichen_ab(a: &BTreeSet<Zahl>, b: &BTreeSet<Zahl>) -> bool {
+    let mit_einheit = a.iter().chain(b).all(|z| !z.einheit.is_empty());
+    let schluessel = |m: &BTreeSet<Zahl>| -> BTreeSet<String> {
+        m.iter()
+            .map(|z| {
+                if mit_einheit {
+                    format!("{}{}", z.wert, z.einheit)
+                } else {
+                    z.wert.clone()
+                }
+            })
+            .collect()
+    };
+    mengen_weichen_ab(&schluessel(a), &schluessel(b))
+}
+
 fn intervalle_ueberlappen(a: Option<(i64, i64)>, b: Option<(i64, i64)>) -> bool {
     match (a, b) {
         (Some((a0, a1)), Some((b0, b1))) => a0 <= b1 && b0 <= a1,
@@ -434,7 +505,7 @@ pub fn finde_widersprueche(bloecke: &[PruefBlock]) -> Vec<Widerspruch> {
             }
             let (fa, fb) = (&feat[a], &feat[b]);
             let mut ab = Vec::new();
-            if mengen_weichen_ab(&fa.zahlen, &fb.zahlen) {
+            if zahlen_weichen_ab(&fa.zahlen, &fb.zahlen) {
                 ab.push(Abweichung::Zahlen);
             }
             if mengen_weichen_ab(&fa.zeiten, &fb.zeiten) {

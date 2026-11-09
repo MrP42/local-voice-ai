@@ -191,6 +191,7 @@ pub fn anzeige(l: &Lage, achse: &Zeitachse) -> String {
     }
     // Nie eine einzelne Minute ohne Güte `Genau`: mindestens eine Spanne von einer Minute.
     let von = min(a.von_ms);
-    let bis = min(a.bis_ms).max(von + 1);
+    let obergrenze = min(achse.dauer_ms() + 59_999).max(von);
+    let bis = min(a.bis_ms).max(von + 1).min(obergrenze);
     format!("zwischen Minute {von} und Minute {bis}")
 }

@@ -727,12 +727,13 @@ fn merkmale_zahlen_datum_zeit() {
         "Budget 1.500 Euro am 15.11. um 14:30 Uhr, Termin 2026-12-01 und 9 Uhr",
         None,
     );
-    assert!(m.zahlen.contains("1.500"));
+    let hat = |w: &str| m.zahlen.iter().any(|z| z.wert == w);
+    assert!(hat("1.500"));
     assert!(m.zeiten.contains("0000-11-15"));
     assert!(m.zeiten.contains("14:30"));
     assert!(m.zeiten.contains("2026-12-01"));
     assert!(m.zeiten.contains("09:00"));
-    assert!(!m.zahlen.contains("14") && !m.zahlen.contains("9"));
+    assert!(!hat("14") && !hat("9"));
 }
 
 #[test]
@@ -1121,4 +1122,36 @@ fn doppelte_bid_verdeckt_keinen_verlust() {
         fehlende_bloecke(&erwartet, &refs, &[]),
         vec!["s1#X#pos1".to_string()]
     );
+}
+
+#[test]
+fn einheit_vorzeichen_sind_kein_scheinwiderspruch() {
+    let ok = [
+        ("Budget Migration 5 EUR", "Budget Migration 5 €"),
+        ("Budget Migration 5 Euro", "Budget Migration 5"),
+        ("Rabatt Migration 5 Prozent", "Rabatt Migration 5%"),
+        ("Saldo Migration +5", "Saldo Migration 5"),
+        ("Menge Migration ~5", "Menge Migration ca. 5"),
+        ("Gäste Migration - 5 Leute", "Gäste Migration 5 Leute"),
+        ("Budget Migration - 5000", "Budget Migration 5000"),
+    ];
+    for (x, y) in ok {
+        let b = [pb("a", x, GLEICH), pbb("b", y, GLEICH)];
+        assert!(finde_widersprueche(&b).is_empty(), "{x} / {y}");
+    }
+    let b = [
+        pb("a", "Budget Migration 5 €", GLEICH),
+        pbb("b", "Budget Migration 6 €", GLEICH),
+    ];
+    assert_eq!(finde_widersprueche(&b).len(), 1);
+    let c = [
+        pb("a", "Budget Migration 5 €", GLEICH),
+        pbb("b", "Budget Migration 5 $", GLEICH),
+    ];
+    assert_eq!(finde_widersprueche(&c).len(), 1);
+    let d = [
+        pb("a", "Saldo Migration -5", GLEICH),
+        pbb("b", "Saldo Migration 5", GLEICH),
+    ];
+    assert_eq!(finde_widersprueche(&d).len(), 1);
 }
