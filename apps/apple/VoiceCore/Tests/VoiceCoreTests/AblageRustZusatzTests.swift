@@ -146,7 +146,7 @@ final class AblageRustZusatzTests: XCTestCase {
         XCTAssertEqual(d.hash(ordnen: false), R.datei_treu_hash)
         // `ordnen: true` = Ordnung des Zusammenführens (Rusts `zusammenfuehren_datei(d, d)`).
         XCTAssertEqual(text(d.kanonischeNutzlast(ordnen: true)), R.datei_sortiert_kanon)
-        XCTAssertEqual(d.hash(), R.datei_sortiert_hash)
+        XCTAssertEqual(d.hash(ordnen: true), R.datei_sortiert_hash)
         XCTAssertNotEqual(R.datei_treu_hash, R.datei_sortiert_hash, "Das Beispiel ist wirklich unsortiert")
         XCTAssertFalse(R.datei_treu_kanon.contains("stale"), "veraltetes blob_refs wird neu abgeleitet")
         XCTAssertEqual(R.texte_reihenfolge_unsortiert, Beispiel.fassung1.texte.map(\.textrev).joined(separator: ","))

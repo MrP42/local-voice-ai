@@ -134,8 +134,8 @@ extension AblageOrdner {
 }
 
 extension AblageDatei {
-    /// SHA-256 (hex) der kanonischen Nutzlast wie `hash_datei` (mit `ordnen: false` exakt dessen Verhalten,
-    /// mit `ordnen: true` in der Ordnung des Zusammenführens).
-    public func hash(ordnen: Bool = true) -> String { AblageKrypto.sha256Hex(kanonischeNutzlast(ordnen: ordnen)) }
+    /// SHA-256 (hex) der kanonischen Nutzlast. `ordnen` ist Pflicht: `false` = Rusts `hash_datei` (Reihenfolge der
+    /// Listen unverändert), `true` = Hash des Ergebnisses von `zusammenfuehren_datei` (siehe `geordnet()`).
+    public func hash(ordnen: Bool) -> String { AblageKrypto.sha256Hex(kanonischeNutzlast(ordnen: ordnen)) }
 }
 #endif

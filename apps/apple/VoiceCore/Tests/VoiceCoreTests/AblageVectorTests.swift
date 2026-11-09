@@ -221,7 +221,7 @@ final class AblageVectorTests: XCTestCase {
         XCTAssertEqual(text(d.kanonischeNutzlast(ordnen: false)), kanon)
         XCTAssertEqual(text(d.kanonischeNutzlast(ordnen: true)), kanon)
         XCTAssertEqual(d.hash(ordnen: false), hash)
-        XCTAssertEqual(d.hash(), hash)
+        XCTAssertEqual(d.hash(ordnen: true), hash)
         XCTAssertEqual(AblageDatei.inhaltsRefs(d.fassungen), inhalt)
         XCTAssertEqual(AblageKrypto.hubRefs(datei: d, key: key), hub)
 

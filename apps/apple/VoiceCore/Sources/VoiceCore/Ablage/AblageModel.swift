@@ -8,6 +8,9 @@ import Foundation
 // Ganzzahlen bis `UInt64.max` exakt bleiben, `null` nie verschwindet und unbekannte Felder (`extra`) in
 // `Datei` und `Ordner` erhalten bleiben und beim Schreiben wieder erscheinen.
 //
+// Bewusst kein `Codable` (siehe AblageJSON.swift): Lesen und Schreiben laufen nur über `init(nutzlast:)`,
+// `init(ablageJSON:)` und `kanonischeNutzlast`, damit der JSON-Text Byte für Byte erhalten bleibt.
+//
 // Hinweis zu `==`: Die synthetische Gleichheit der Typen folgt Swift-`String` (kanonische Äquivalenz).
 // Wo eine Entscheidung davon abhängt (Rang, Ordnung, Zusammenführen), gilt `AblageBytes`.
 
@@ -23,14 +26,6 @@ public protocol AblageWert: Equatable, Sendable {
 
 extension AblageWert {
     public static func fehlend() throws -> Self { throw AblageError.feld("fehlt") }
-}
-
-/// Ein Satz (Objekt) mit Codable über dieselbe Brücke.
-public protocol AblageSatz: AblageWert, Codable {}
-
-extension AblageSatz {
-    public init(from decoder: Decoder) throws { self = try Self(ablageJSON: try AblageJSON(from: decoder)) }
-    public func encode(to encoder: Encoder) throws { try ablageJSON.encode(to: encoder) }
 }
 
 extension String: AblageWert {
@@ -128,7 +123,7 @@ extension AblageJSON {
 // MARK: - Register
 
 /// `{"wert": …, "zaehler": u64, "geraet": "g_…"}`. Das höhere `(zaehler, geraet)` gewinnt (D5a-2).
-public struct AblageRegister<T: AblageWert>: AblageSatz {
+public struct AblageRegister<T: AblageWert>: AblageWert {
     public var wert: T
     public var zaehler: UInt64
     public var geraet: String
@@ -150,7 +145,7 @@ public struct AblageRegister<T: AblageWert>: AblageSatz {
 // MARK: - Text, Fassung, Wahl
 
 /// `Text` (Rust): Eintrag einer Textfassung bei einer Fassung.
-public struct AblageText: AblageSatz {
+public struct AblageText: AblageWert {
     public var textrev: String
     /// Hex-SHA-256 der Bytes der Textfassungs-Datei; leer bei `fehler`.
     public var blob: String
@@ -204,7 +199,7 @@ public struct AblageText: AblageSatz {
 }
 
 /// `Fassung` (Rust). Unbekannte Felder verwirft der Desktop beim Neuschreiben ebenfalls (kein `flatten`).
-public struct AblageFassung: AblageSatz {
+public struct AblageFassung: AblageWert {
     public var fas: String
     /// `null` oder Fassungs-ID der Vorgängerin.
     public var vorgaenger: String?
@@ -249,7 +244,7 @@ public struct AblageFassung: AblageSatz {
 }
 
 /// `Wahl` (Rust): unveränderliches Ereignis einer Konfliktentscheidung.
-public struct AblageWahl: AblageSatz {
+public struct AblageWahl: AblageWert {
     public var id: String
     public var gewaehlt: String
     public var gegen: [String]
@@ -282,7 +277,7 @@ public struct AblageWahl: AblageSatz {
 // MARK: - Ordner
 
 /// `ablage_ordner` (Spec §2.2). `extra` = alle unbekannten Wurzelschlüssel (auch `v`), bleiben erhalten.
-public struct AblageOrdner: AblageSatz {
+public struct AblageOrdner: AblageWert {
     public var id: String
     public var eltern: AblageRegister<String?>
     public var name: AblageRegister<String>
@@ -334,7 +329,7 @@ public struct AblageOrdner: AblageSatz {
 
 /// `ablage_datei` (Spec §2.1). `blobRefs` sind Inhalts-Hashes (hex), nicht Hub-Kennungen; beim Schreiben werden
 /// sie immer neu aus den Fassungen abgeleitet.
-public struct AblageDatei: AblageSatz {
+public struct AblageDatei: AblageWert {
     public var id: String
     public var ordner: AblageRegister<String>
     public var name: AblageRegister<String>
@@ -392,25 +387,29 @@ public struct AblageDatei: AblageSatz {
         return AblageBytes.sortedUnique(alle)
     }
 
-    /// Dieselbe Datei in der Ablage-Ordnung des Zusammenführens (`zusammenfuehren_datei`): `fassungen` nach `fas`,
-    /// `texte` je Fassung nach `textrev`, `wahlen` nach `id`, `entfernt` sortiert und eindeutig, `blob_refs` neu
-    /// abgeleitet; alles bytegenau. Fasst nichts zusammen und entfernt nichts (das ist Sache des Zusammenführens).
+    /// Dieselbe Datei in der Ablage-Ordnung des Zusammenführens: `fassungen` und `wahlen` nach der abgeleiteten
+    /// Rust-Ordnung (`#[derive(Ord)]`: alle Felder in Reihenfolge der Struktur, siehe `AblageOrdnung`), `texte` je
+    /// Fassung ebenso, `entfernt` sortiert und eindeutig, `blob_refs` neu abgeleitet; alles bytegenau. Genau gleiche
+    /// Einträge fallen wie in einer Menge zusammen. Einträge mit gleicher `fas`, `id` oder `textrev`, aber anderem
+    /// Inhalt bleiben beide stehen (deren Auflösung, das Größere gewinnt, ist Sache des Zusammenführens); ihre
+    /// Reihenfolge ist trotzdem von der Eingabe unabhängig. Entfernt keine Fassung aus `entfernt`.
     public func geordnet() -> AblageDatei {
         var d = self
-        d.fassungen = AblageBytes.sorted(fassungen, by: \.fas).map { f in
+        d.fassungen = AblageOrdnung.sortiertEindeutig(fassungen.map { f in
             var f = f
-            f.texte = AblageBytes.sorted(f.texte, by: \.textrev)
+            f.texte = AblageOrdnung.sortiertEindeutig(f.texte, AblageOrdnung.vergleiche)
             return f
-        }
-        d.wahlen = AblageBytes.sorted(wahlen, by: \.id)
+        }, AblageOrdnung.vergleiche)
+        d.wahlen = AblageOrdnung.sortiertEindeutig(wahlen, AblageOrdnung.vergleiche)
         d.entfernt = AblageBytes.sortedUnique(entfernt)
         d.blobRefs = Self.inhaltsRefs(d.fassungen)
         return d
     }
 
     /// Wie `wert_datei` am Desktop: `blob_refs` wird aus den Fassungen neu abgeleitet. Bekannte Felder gewinnen
-    /// über gleichnamige Einträge in `extra`.
-    public func nutzlastJSON(ordnen: Bool = true) -> AblageJSON {
+    /// über gleichnamige Einträge in `extra`. `ordnen` ist Pflicht: `false` = Reihenfolge unverändert (Rusts
+    /// `hash_datei`), `true` = Ergebnis von `zusammenfuehren_datei` (siehe `geordnet()`).
+    public func nutzlastJSON(ordnen: Bool) -> AblageJSON {
         let d = ordnen ? geordnet() : self
         return .objekt(d.extra.map { ($0.key, $0.value) } + [
             ("id", d.id.ablageJSON), ("ordner", d.ordner.ablageJSON), ("name", d.name.ablageJSON),
@@ -423,6 +422,64 @@ public struct AblageDatei: AblageSatz {
     public var ablageJSON: AblageJSON { nutzlastJSON(ordnen: false) }
 }
 
+// MARK: - Ordnung der Rust-Typen
+
+/// Die von Rust abgeleitete Ordnung (`#[derive(PartialOrd, Ord)]`) von `Text`, `Fassung` und `Wahl`: Felder in der
+/// Reihenfolge der Struktur, Zeichenketten nach UTF-8-Bytes, `Option` mit `None` vor `Some`, `Vec` lexikographisch
+/// (kürzere Liste bei gleichem Anfang zuerst). Ergebnis -1, 0 oder 1; 0 heißt in allen Feldern bytegleich.
+public enum AblageOrdnung {
+    private static func zahl<T: Comparable>(_ a: T, _ b: T) -> Int { a == b ? 0 : (a < b ? -1 : 1) }
+
+    private static func kette(_ schritte: (() -> Int)...) -> Int {
+        for s in schritte { let r = s(); if r != 0 { return r } }
+        return 0
+    }
+
+    public static func vergleiche(_ a: String?, _ b: String?) -> Int {
+        switch (a, b) {
+        case (nil, nil): return 0
+        case (nil, _): return -1
+        case (_, nil): return 1
+        case (let x?, let y?): return AblageBytes.compare(x, y)
+        }
+    }
+
+    public static func vergleiche(_ a: [String], _ b: [String]) -> Int {
+        for (x, y) in zip(a, b) { let r = AblageBytes.compare(x, y); if r != 0 { return r } }
+        return zahl(a.count, b.count)
+    }
+
+    public static func vergleiche(_ a: AblageText, _ b: AblageText) -> Int {
+        kette({ AblageBytes.compare(a.textrev, b.textrev) }, { AblageBytes.compare(a.blob, b.blob) }, { zahl(a.size, b.size) },
+              { AblageBytes.compare(a.extraktor, b.extraktor) }, { AblageBytes.compare(a.extraktorVersion, b.extraktorVersion) },
+              { zahl(a.markenVersion, b.markenVersion) }, { AblageBytes.compare(a.stand, b.stand) }, { vergleiche(a.code, b.code) },
+              { zahl(a.versuche, b.versuche) }, { zahl(a.versucheZeit, b.versucheZeit) })
+    }
+
+    public static func vergleiche(_ a: [AblageText], _ b: [AblageText]) -> Int {
+        for (x, y) in zip(a, b) { let r = vergleiche(x, y); if r != 0 { return r } }
+        return zahl(a.count, b.count)
+    }
+
+    public static func vergleiche(_ a: AblageFassung, _ b: AblageFassung) -> Int {
+        kette({ AblageBytes.compare(a.fas, b.fas) }, { vergleiche(a.vorgaenger, b.vorgaenger) }, { AblageBytes.compare(a.blob, b.blob) },
+              { zahl(a.size, b.size) }, { AblageBytes.compare(a.originalSha256, b.originalSha256) }, { AblageBytes.compare(a.typ, b.typ) },
+              { AblageBytes.compare(a.geraet, b.geraet) }, { zahl(a.zeit, b.zeit) }, { vergleiche(a.texte, b.texte) })
+    }
+
+    public static func vergleiche(_ a: AblageWahl, _ b: AblageWahl) -> Int {
+        kette({ AblageBytes.compare(a.id, b.id) }, { AblageBytes.compare(a.gewaehlt, b.gewaehlt) }, { vergleiche(a.gegen, b.gegen) },
+              { vergleiche(a.ersetzt, b.ersetzt) }, { zahl(a.zaehler, b.zaehler) }, { AblageBytes.compare(a.geraet, b.geraet) })
+    }
+
+    /// Aufsteigend sortiert, genau gleiche Elemente (Vergleich 0) nur einmal, wie `BTreeSet`.
+    public static func sortiertEindeutig<T>(_ xs: [T], _ vergleich: (T, T) -> Int) -> [T] {
+        var out: [T] = []
+        for x in xs.sorted(by: { vergleich($0, $1) < 0 }) where out.last.map({ vergleich($0, x) != 0 }) ?? true { out.append(x) }
+        return out
+    }
+}
+
 // MARK: - Kanonische Nutzlast
 
 extension AblageOrdner {
@@ -431,10 +488,11 @@ extension AblageOrdner {
 }
 
 extension AblageDatei {
-    /// Klartext der Nutzlast: `collect::canonical(wert_datei)`. `ordnen: true` (Vorgabe) gibt die Listen in der
-    /// Ordnung des Zusammenführens aus, damit zwei Geräte denselben Hash erzeugen; `ordnen: false` lässt die
-    /// Reihenfolge wie sie ist (genau `hash_datei` am Desktop, das nicht sortiert).
-    public func kanonischeNutzlast(ordnen: Bool = true) -> [UInt8] { nutzlastJSON(ordnen: ordnen).kanonisch() }
+    /// Klartext der Nutzlast: `collect::canonical(wert_datei)`. Die Wahl von `ordnen` trifft jede Aufrufstelle selbst:
+    /// - `false`: Reihenfolge der Listen unverändert, genau `hash_datei` am Desktop (der nicht sortiert).
+    /// - `true`: Listen in der Ordnung des Ergebnisses von `zusammenfuehren_datei` (siehe `geordnet()`), damit zwei
+    ///   Geräte denselben Hash erzeugen; richtig für Stände, die gesendet werden.
+    public func kanonischeNutzlast(ordnen: Bool) -> [UInt8] { nutzlastJSON(ordnen: ordnen).kanonisch() }
 }
 
 // MARK: - Kennungen

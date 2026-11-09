@@ -194,7 +194,7 @@ final class AblageModelTests: XCTestCase {
         XCTAssertEqual(d.wahlen, [])
         XCTAssertEqual(d.entfernt, [])
         XCTAssertEqual(d.blobRefs, [])
-        let text = String(decoding: d.kanonischeNutzlast(), as: UTF8.self)
+        let text = String(decoding: d.kanonischeNutzlast(ordnen: true), as: UTF8.self)
         for teil in ["\"nur_geraet_min\":false", "\"fassungen\":[]", "\"wahlen\":[]", "\"entfernt\":[]", "\"blob_refs\":[]"] {
             XCTAssertTrue(text.contains(teil), teil)
         }
@@ -286,21 +286,103 @@ final class AblageModelTests: XCTestCase {
         XCTAssertEqual(g.kanonischeNutzlast(ordnen: false), d.kanonischeNutzlast(ordnen: true))
     }
 
-    // MARK: Codable
+    // MARK: Zahlentreue (kein Codable)
 
-    func testCodableRundlaufBehaeltExakteZahlenUndExtra() throws {
-        let json = ordnerJSON(extra: ",\"neu\":{\"k\":[null,18446744073709551615]}").replacingOccurrences(of: "\"zaehler\":1,\"geraet\":\"\(G)\"},\"name\"", with: "\"zaehler\":18446744073709551615,\"geraet\":\"\(G)\"},\"name\"")
-        let o = try JSONDecoder().decode(AblageOrdner.self, from: Data(json.utf8))
-        XCTAssertEqual(o.eltern.zaehler, UInt64.max)
-        XCTAssertEqual(o.extra.map(\.key), ["neu"])
-        let enc = JSONEncoder()
-        enc.outputFormatting = [.sortedKeys]
-        let wieder = try JSONDecoder().decode(AblageOrdner.self, from: try enc.encode(o))
-        XCTAssertEqual(wieder.kanonischeNutzlast(), o.kanonischeNutzlast())
-        XCTAssertEqual(wieder.eltern.zaehler, UInt64.max)
-        XCTAssertTrue(String(decoding: o.kanonischeNutzlast(), as: UTF8.self).contains("\"neu\":{\"k\":[null,18446744073709551615]}"))
-        // Neueres Schema wird auch über Codable abgelehnt.
-        XCTAssertThrowsError(try JSONDecoder().decode(AblageOrdner.self, from: Data(ordnerJSON(extra: ",\"v\":2").utf8)))
+    func testGleitkommaInExtraBleibtByteGenauImRundlauf() throws {
+        // `JSONEncoder` würde 1.0 als `1`, -0.0 als `-0` und 1e20 als `1e+20` schreiben und 1.0 als Ganzzahl lesen.
+        // Hier läuft alles über AblageJSON: der Text bleibt wie bei serde_json, der Hash wie am Desktop.
+        let extra = ",\"f\":[1.0,-0.0,1e20,0.1,2.5,100.0,18446744073709551615,-0],\"g\":{\"x\":1.0,\"y\":1}"
+        let erwartet = "\"f\":[1.0,-0.0,1e+20,0.1,2.5,100.0,18446744073709551615,-0.0],\"g\":{\"x\":1.0,\"y\":1}"
+        let o = try AblageOrdner(nutzlast: Array(ordnerJSON(extra: extra).utf8))
+        let aus = o.kanonischeNutzlast()
+        XCTAssertTrue(String(decoding: aus, as: UTF8.self).contains(erwartet), String(decoding: aus, as: UTF8.self))
+        XCTAssertEqual(try AblageOrdner(nutzlast: aus).kanonischeNutzlast(), aus, "zweiter Rundlauf byte-identisch")
+        XCTAssertEqual(try AblageOrdner(nutzlast: try AblageOrdner(nutzlast: aus).kanonischeNutzlast()).kanonischeNutzlast(), aus)
+        // 1.0 bleibt eine Gleitkommazahl und wird nicht zur Ganzzahl 1.
+        XCTAssertEqual(o.extra.first { AblageBytes.equal($0.key, "g") }?.value, .objekt([("x", .double(1.0)), ("y", .uint(1))]))
+
+        let d = try AblageDatei(nutzlast: Array(dateiJSON(extra: extra).utf8))
+        for ordnen in [false, true] {
+            let da = d.kanonischeNutzlast(ordnen: ordnen)
+            let t = String(decoding: da, as: UTF8.self)
+            XCTAssertTrue(t.contains("\"f\":[1.0,-0.0,1e+20,0.1,2.5,100.0,18446744073709551615,-0.0]"), t)
+            XCTAssertTrue(t.contains("\"g\":{\"x\":1.0,\"y\":1}"), t)
+            XCTAssertEqual(try AblageDatei(nutzlast: da).kanonischeNutzlast(ordnen: ordnen), da)
+        }
+        // Ganze Zahlen über 2^53 und `v` bleiben ebenfalls exakt.
+        let g = try AblageOrdner(nutzlast: Array(ordnerJSON(extra: ",\"n\":9007199254740993,\"v\":1").utf8))
+        XCTAssertTrue(String(decoding: g.kanonischeNutzlast(), as: UTF8.self).contains("\"n\":9007199254740993"))
+    }
+
+    func testNichtEndlicheZahlenWerdenNull() {
+        // Wie serde_json: NaN und ±Unendlich ergeben `null`.
+        XCTAssertEqual(AblageJSON.array([.double(.infinity), .double(-.infinity), .double(.nan), .double(1.5)]).kanonischerText, "[null,null,null,1.5]")
+    }
+
+    func testNeueresSchemaAuchOhneCodableAbgelehnt() {
+        XCTAssertThrowsError(try AblageOrdner(nutzlast: Array(ordnerJSON(extra: ",\"v\":2").utf8))) { XCTAssertEqual($0 as? AblageError, .neueresSchema) }
+    }
+
+    // MARK: Ordnung der Rust-Typen
+
+    private func wahl(_ id: String, _ gew: String, gegen: [String] = [], ersetzt: [String] = [], z: UInt64, g: String = "g") -> AblageWahl {
+        AblageWahl(id: id, gewaehlt: gew, gegen: gegen, ersetzt: ersetzt, zaehler: z, geraet: g)
+    }
+
+    private func permutationen<T>(_ xs: [T]) -> [[T]] {
+        guard xs.count > 1 else { return [xs] }
+        return xs.indices.flatMap { i -> [[T]] in
+            var rest = xs
+            let x = rest.remove(at: i)
+            return permutationen(rest).map { [x] + $0 }
+        }
+    }
+
+    func testWahlenMitGleicherIdUndAnderemInhaltHabenFesteReihenfolge() throws {
+        let w1 = wahl("wahl_b", "f1", z: 2), w2 = wahl("wahl_b", "f1", z: 1), w3 = wahl("wahl_b", "f0", z: 9)
+        let w4 = wahl("wahl_a", "f9", z: 7), w5 = wahl("wahl_b", "f1", gegen: ["x"], z: 0)
+        // Abgeleitete Ordnung: id, gewaehlt, gegen (Liste lexikographisch, kürzere zuerst), ersetzt, zaehler, geraet.
+        let erwartet = [w4, w3, w2, w1, w5]
+        var d = try AblageDatei(nutzlast: Array(dateiJSON().utf8))
+        for p in permutationen([w1, w2, w3, w4, w5, w1, w2]) {
+            d.wahlen = p
+            let g = d.geordnet()
+            XCTAssertEqual(g.wahlen, erwartet, "Reihenfolge unabhängig von der Eingabe, genau gleiche Einträge nur einmal")
+        }
+        // Die Ausgabe selbst ist von der Eingabereihenfolge unabhängig (gleicher Hash).
+        d.wahlen = [w1, w2, w3, w4, w5]
+        let a = d.kanonischeNutzlast(ordnen: true)
+        d.wahlen = [w5, w4, w3, w2, w1, w1]
+        XCTAssertEqual(d.kanonischeNutzlast(ordnen: true), a)
+        XCTAssertEqual(AblageOrdnung.vergleiche(w4, w3), -1)
+        XCTAssertEqual(AblageOrdnung.vergleiche(w2, w5), -1, "gegen [] vor [\"x\"], obwohl der Zähler von w5 kleiner ist")
+        XCTAssertEqual(AblageOrdnung.vergleiche(w1, w1), 0)
+    }
+
+    func testFassungenMitGleicherFasHabenFesteReihenfolgeUndGleicheFallenZusammen() throws {
+        func text(_ rev: String, _ blob: String) -> AblageText { AblageText(textrev: rev, blob: blob, size: 1, extraktor: "e", extraktorVersion: "1", markenVersion: 1, stand: "ok") }
+        func fas(_ f: String, vorg: String? = nil, zeit: Int64, texte: [AblageText] = []) -> AblageFassung {
+            AblageFassung(fas: f, vorgaenger: vorg, blob: "aa", size: 1, originalSha256: "aa", typ: "txt", geraet: "g", zeit: zeit, texte: texte)
+        }
+        let a = fas("fas_x", zeit: 5), b = fas("fas_x", vorg: "fas_0", zeit: 1), c = fas("fas_x", zeit: 9)
+        let d1 = fas("fas_x", zeit: 5, texte: [text("r1", "b1")]), d2 = fas("fas_w", zeit: 5)
+        // fas, dann vorgaenger (None vor Some), dann blob … zeit, dann texte (leere Liste vor gefüllter).
+        let erwartet = [d2, a, d1, c, b]
+        var d = try AblageDatei(nutzlast: Array(dateiJSON().utf8))
+        for p in permutationen([a, b, c, d1, d2, a]) {
+            d.fassungen = p
+            XCTAssertEqual(d.geordnet().fassungen, erwartet)
+        }
+        // Texte je Fassung: Ordnung über alle Felder, genau gleiche nur einmal.
+        let t1 = text("r1", "b1"), t2 = text("r1", "b0"), t3 = text("r0", "zz")
+        var f = fas("fas_y", zeit: 1)
+        f.texte = [t1, t2, t3, t1]
+        d.fassungen = [f]
+        XCTAssertEqual(d.geordnet().fassungen[0].texte, [t3, t2, t1])
+        XCTAssertEqual(AblageOrdnung.vergleiche([AblageText](), [t1]), -1)
+        XCTAssertEqual(AblageOrdnung.vergleiche(nil as String?, "a"), -1)
+        XCTAssertEqual(AblageOrdnung.vergleiche(["a"], ["a", "b"]), -1)
+        XCTAssertEqual(AblageOrdnung.vergleiche(["b"], ["a", "b"]), 1)
     }
 
     // MARK: Kennungen

@@ -11,6 +11,10 @@ import Foundation
 //   `String` vergleicht nach kanonischer Äquivalenz ("é" == "e\u{301}"), Rust nach Bytes;
 //   ein `Dictionary<String, _>` würde zwei verschiedene Schlüssel zu einem machen.
 //
+// Bewusst kein `Codable`: `JSONEncoder`/`JSONDecoder` schreiben 1.0 als `1`, -0.0 als `-0`, 1e20 als `1e+20` und
+// lesen 1.0 als Ganzzahl. Ein Wert aus `extra` bekäme so beim Rundlauf einen anderen Hash als am Desktop
+// (Ping-Pong). Einziger Weg ist `AblageJSON.parse` (Bytes → Wert) und `kanonisch()` (Wert → Bytes).
+//
 // Fehler tragen nie Inhalte, nur Codes und Feldnamen (Spec §10: kein Log mit Inhalten).
 
 public enum AblageError: Error, Equatable, Sendable {
@@ -340,7 +344,9 @@ extension AblageJSON {
         case .bool(let b): out.append(contentsOf: Array((b ? "true" : "false").utf8))
         case .uint(let u): out.append(contentsOf: Array(String(u).utf8))
         case .int(let n): out.append(contentsOf: Array(String(n).utf8))
-        case .double(let d): out.append(contentsOf: Array(Self.gleitkomma(d).utf8))
+        case .double(let d):
+            // serde_json schreibt NaN und ±Unendlich als `null` (JSON kennt sie nicht).
+            out.append(contentsOf: Array((d.isFinite ? Self.gleitkomma(d) : "null").utf8))
         case .string(let s): Self.schreibeString(s, &out)
         case .array(let a):
             out.append(UInt8(ascii: "["))
@@ -412,54 +418,5 @@ extension AblageJSON {
         let e = (kk - 1 >= 0 ? "e+" : "e") + String(kk - 1)
         if n == 1 { return vorzeichen + z + e }
         return vorzeichen + String(z.prefix(1)) + "." + String(z.dropFirst(1)) + e
-    }
-}
-
-// MARK: - Codable-Brücke
-
-struct AblageDynamicKey: CodingKey {
-    var stringValue: String
-    var intValue: Int? { nil }
-    init(_ s: String) { stringValue = s }
-    init?(stringValue: String) { self.stringValue = stringValue }
-    init?(intValue: Int) { nil }
-}
-
-extension AblageJSON: Codable {
-    public init(from decoder: Decoder) throws {
-        if let k = try? decoder.container(keyedBy: AblageDynamicKey.self) {
-            var pairs: [(String, AblageJSON)] = []
-            for key in k.allKeys { pairs.append((key.stringValue, try k.decode(AblageJSON.self, forKey: key))) }
-            self = AblageJSON.objekt(pairs)
-        } else if var u = try? decoder.unkeyedContainer() {
-            var out: [AblageJSON] = []
-            while !u.isAtEnd { out.append(try u.decode(AblageJSON.self)) }
-            self = .array(out)
-        } else {
-            let c = try decoder.singleValueContainer()
-            if c.decodeNil() { self = .null }
-            else if let b = try? c.decode(Bool.self) { self = .bool(b) }
-            else if let u = try? c.decode(UInt64.self) { self = .uint(u) }
-            else if let n = try? c.decode(Int64.self) { self = .int(n) }
-            else if let d = try? c.decode(Double.self) { self = .double(d) }
-            else { self = .string(try c.decode(String.self)) }
-        }
-    }
-
-    public func encode(to encoder: Encoder) throws {
-        switch self {
-        case .null: var c = encoder.singleValueContainer(); try c.encodeNil()
-        case .bool(let b): var c = encoder.singleValueContainer(); try c.encode(b)
-        case .uint(let u): var c = encoder.singleValueContainer(); try c.encode(u)
-        case .int(let n): var c = encoder.singleValueContainer(); try c.encode(n)
-        case .double(let d): var c = encoder.singleValueContainer(); try c.encode(d)
-        case .string(let s): var c = encoder.singleValueContainer(); try c.encode(s)
-        case .array(let a):
-            var c = encoder.unkeyedContainer()
-            for v in a { try c.encode(v) }
-        case .object(let m):
-            var c = encoder.container(keyedBy: AblageDynamicKey.self)
-            for mem in m { try c.encode(mem.value, forKey: AblageDynamicKey(mem.key)) }
-        }
     }
 }

@@ -173,11 +173,11 @@ final class AblageKryptoTests: XCTestCase {
         let json = "{\"id\":\"\(DAT)\",\"ordner\":{\"wert\":\"o\",\"zaehler\":1,\"geraet\":\"g\"},\"name\":{\"wert\":\"n\",\"zaehler\":1,\"geraet\":\"g\"},"
             + "\"klasse_min\":{\"wert\":\"public\",\"zaehler\":1,\"geraet\":\"g\"},\"papierkorb\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g\"},\"x\":{\"b\":1,\"a\":[null]}}"
         let d = try! AblageDatei(nutzlast: Array(json.utf8))
-        let erwartet = d.hash()
+        let erwartet = d.hash(ordnen: true)
         let lock = NSLock()
         nonisolated(unsafe) var abweichungen = 0
         DispatchQueue.concurrentPerform(iterations: 200) { _ in
-            let h = (try? AblageDatei(nutzlast: Array(json.utf8)))?.hash()
+            let h = (try? AblageDatei(nutzlast: Array(json.utf8)))?.hash(ordnen: true)
             if h != erwartet { lock.lock(); abweichungen += 1; lock.unlock() }
         }
         XCTAssertEqual(abweichungen, 0)
