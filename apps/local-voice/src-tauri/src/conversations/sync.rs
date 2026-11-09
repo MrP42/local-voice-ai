@@ -34,7 +34,7 @@ use wai_assistent::sync::{
 };
 
 use super::store::{
-    ConversationEntry, ConversationScope, ConversationStore, NewEntry, SyncStand,
+    ConversationEntry, ConversationScope, ConversationStore, NewEntry, OffenerGrabstein, SyncStand,
     DEFAULT_DATA_CLASS, DEFAULT_TITLE, MAX_TEXT_CHARS, MAX_TITLE_CHARS,
 };
 
@@ -167,9 +167,14 @@ fn angabe(wert: &str) -> String {
     if t.is_empty() { UNBEKANNT } else { t }.to_owned()
 }
 
-fn beitrag_aus(e: &ConversationEntry, eltern: Option<&str>, klasse: Datenklasse) -> Beitrag {
+fn beitrag_aus(
+    e: &ConversationEntry,
+    hub_id: &str,
+    eltern: Option<&str>,
+    klasse: Datenklasse,
+) -> Beitrag {
     Beitrag {
-        id: e.id.clone(),
+        id: hub_id.to_owned(),
         eltern_id: eltern.map(str::to_owned),
         lease_generation: 0,
         autor: angabe(&e.role),
@@ -208,14 +213,65 @@ struct Lokal {
     klasse: Datenklasse,
 }
 
+/// Hub-Kennungen der Beiträge, die nach einer Korrektur unter neuer Kennung hochgingen.
+#[derive(Default)]
+struct BeitragIds {
+    /// Lokale Eintrags-ID → aktuelle Hub-Kennung.
+    aktuell: BTreeMap<String, String>,
+    /// Frühere Hub-Kennungen (Eintrags-ID, Hub-Kennung): am Hub zu begraben, sobald sie dort stehen.
+    alt: Vec<(String, String)>,
+}
+
+impl BeitragIds {
+    fn laden(store: &ConversationStore) -> Result<Self, LaufFehler> {
+        let mut ids = Self::default();
+        for (eintrag, hub, aktuell) in store.sync_beitrag_ids()? {
+            if aktuell {
+                ids.aktuell.insert(eintrag, hub);
+            } else {
+                ids.alt.push((eintrag, hub));
+            }
+        }
+        Ok(ids)
+    }
+
+    fn hub_id<'a>(&'a self, eintrag: &'a str) -> &'a str {
+        self.aktuell.get(eintrag).map_or(eintrag, String::as_str)
+    }
+
+    /// Alle Hub-Kennungen, die lokal schon einem Eintrag gehören (nie als neu importieren).
+    fn bekannt(&self) -> impl Iterator<Item = &str> {
+        self.aktuell
+            .values()
+            .map(String::as_str)
+            .chain(self.alt.iter().map(|(_, h)| h.as_str()))
+    }
+}
+
 /// Ein Sync-Lauf (siehe Moduldoku). `freigegeben` ist der Schalter `assistent_sync_aktiv`; ohne ihn
-/// passiert nichts, auch kein Lesen.
+/// passiert nichts, auch kein Lesen. `konto` ist die Kennung des angemeldeten Kontos: Gespräche, die
+/// unter einem anderen Konto für den Hub bestimmt wurden, gehen nie in dieses.
 pub fn lauf<H: HubSpeicher + ?Sized>(
     store: &ConversationStore,
     hub: &H,
     bund: Schluesselbund,
     geraet_id: &str,
+    konto: &str,
     freigegeben: bool,
+) -> Result<LaufBericht, LaufFehler> {
+    lauf_mit(store, hub, bund, geraet_id, konto, freigegeben, &mut || {})
+}
+
+/// Wie [`lauf`]; `nach_momentaufnahme` läuft direkt nach der Momentaufnahme des Verlaufs und vor allem,
+/// was an den Hub geht (Prüfpunkt für Tests des Löschfensters).
+pub fn lauf_mit<H: HubSpeicher + ?Sized>(
+    store: &ConversationStore,
+    hub: &H,
+    bund: Schluesselbund,
+    geraet_id: &str,
+    konto: &str,
+    freigegeben: bool,
+    nach_momentaufnahme: &mut dyn FnMut(),
 ) -> Result<LaufBericht, LaufFehler> {
     if !freigegeben {
         return Err(LaufFehler::NichtFreigegeben);
@@ -229,21 +285,34 @@ pub fn lauf<H: HubSpeicher + ?Sized>(
     let heruntergeladen = abgleich.herunterladen(hub)?;
     bericht.verworfen = heruntergeladen.verworfen;
 
-    // 3./4. Lokale Gespräche in den Abgleich, Freigabeliste anwenden.
+    // 3./4. Momentaufnahme und Hub-Vormerkung in einer Transaktion: wer ab jetzt gelöscht wird,
+    // hinterlässt einen Grabstein (kein Löschen ohne Grabstein im Fenster bis zum Hochladen).
     let zuordnung: BTreeMap<String, String> = store
         .sync_zuordnung()?
         .into_iter()
         .map(|(r, c)| (c, r))
         .collect();
+    let staende = store.sync_alle_vormerken(konto, |st| {
+        !nur_auf_dem_geraet(&st.detail.conversation.scope, st.geraet_lokal)
+    })?;
+    nach_momentaufnahme();
     let mut lokale: Vec<Lokal> = Vec::new();
-    for stand in store.sync_alle()? {
+    for stand in staende {
+        // Gehört zu einem anderen Konto: nie in dieses hochladen, nie ändern.
+        if stand.sync_konto.as_deref().is_some_and(|k| k != konto) {
+            continue;
+        }
         let conv_id = stand.detail.conversation.id.clone();
         let abgeleitet = ref_aus_lokaler_id(abgleich.bund(), &datenbestand, &conv_id);
-        let hub_ref = bekannte_ref(
+        let Some(hub_ref) = hub_ref_fuer(
             &abgleich,
             zuordnung.get(&conv_id).map(String::as_str),
             abgeleitet,
-        );
+        ) else {
+            // Gespeicherte fremde Kennung, die der Hub (noch) nicht kennt: nichts unter einer
+            // abgeleiteten Kennung neu anlegen.
+            continue;
+        };
         let scope = &stand.detail.conversation.scope;
         let einschraenkung = Einschraenkung {
             geraet_lokal: nur_auf_dem_geraet(scope, stand.geraet_lokal),
@@ -257,32 +326,39 @@ pub fn lauf<H: HubSpeicher + ?Sized>(
             klasse,
         });
     }
-    // Ab jetzt sind diese Gespräche für den Hub bestimmt: vor dem ersten Hochladen vermerken, damit
-    // ein Absturz mittendrin beim Löschen nie einen Grabstein verschluckt.
-    let fuer_den_hub: Vec<String> = lokale
-        .iter()
-        .filter(|l| !l.einschraenkung.geraet_lokal)
-        .map(|l| l.stand.detail.conversation.id.clone())
-        .collect();
-    store.sync_jemals_setzen(&fuer_den_hub)?;
 
+    let mut ids = BeitragIds::laden(store)?;
     for l in &lokale {
-        lokal_einfuegen(&mut abgleich, &datenbestand, l)?;
-        store.sync_zuordnung_setzen(l.hub_ref.as_str(), &l.stand.detail.conversation.id)?;
+        lokal_einfuegen(store, &mut abgleich, &datenbestand, l, &mut ids)?;
+        // Eine bestehende Zuordnung (Gespräch von einem anderen Gerät) nie überschreiben.
+        let c = &l.stand.detail.conversation.id;
+        if !zuordnung.contains_key(c) {
+            store.sync_zuordnung_setzen(l.hub_ref.as_str(), c)?;
+        }
     }
 
-    // 5. Lokal gelöschte Gespräche: Grabsteine vormerken.
-    let offen = store.sync_grabsteine_offen()?;
+    // 5. Lokal gelöschte Gespräche: Grabsteine vormerken. Erst jetzt gelesen, damit Löschungen seit
+    // der Momentaufnahme dabei sind.
+    let offen = store.sync_grabsteine_offen(konto)?;
+    let mut ziele: Vec<(&OffenerGrabstein, Hex128)> = Vec::new();
     for g in &offen {
         let abgeleitet = ref_aus_lokaler_id(abgleich.bund(), &datenbestand, &g.conversation_id);
-        let hub_ref = bekannte_ref(&abgleich, g.unterhaltung_ref.as_deref(), abgeleitet.clone());
+        let gespeichert = g
+            .unterhaltung_ref
+            .as_deref()
+            .and_then(|r| Hex128::parse(r).ok());
+        let hub_ref = match gespeichert {
+            Some(r) if r != abgeleitet => r,
+            _ => abgeleitet.clone(),
+        };
+        ziele.push((g, hub_ref.clone()));
         if abgleich.grabsteine().unterhaltung_geloescht(&hub_ref) {
             continue;
         }
         if abgleich.unterhaltung(&hub_ref).is_none() {
             // Nur ein lokal entstandenes Gespräch (abgeleitete Kennung) lässt sich so anlegen: für den
             // Kern eine für den Hub bestimmte Unterhaltung ohne Inhalt, damit der Grabstein hochgeht
-            // (`jemals_synchron`). Eine fremde Kennung, die der Hub nicht mehr kennt, entfällt.
+            // (`jemals_synchron`). Eine fremde Kennung, die der Hub nicht kennt, bleibt offen.
             if hub_ref != abgeleitet {
                 continue;
             }
@@ -297,14 +373,20 @@ pub fn lauf<H: HubSpeicher + ?Sized>(
     bericht.koepfe_hoch = hoch.koepfe;
     bericht.grabsteine_hoch = hoch.grabsteine;
     bericht.nur_lokal = hoch.geraet_lokal;
-    for g in &offen {
-        store.sync_grabstein_erledigt(&g.conversation_id)?;
+    // Als erledigt gilt ein Grabstein erst, wenn er für genau seine Kennung beim Kern steht.
+    for (g, hub_ref) in &ziele {
+        if abgleich.grabsteine().unterhaltung_geloescht(hub_ref) {
+            store.sync_grabstein_erledigt(&g.conversation_id)?;
+        }
     }
 
     zurueckschreiben(
         store,
         &abgleich,
         &lokale,
+        &datenbestand,
+        konto,
+        &ids,
         hoch.kopf_konflikte == 0,
         &mut bericht,
     )?;
@@ -312,15 +394,24 @@ pub fn lauf<H: HubSpeicher + ?Sized>(
     Ok(bericht)
 }
 
-/// Kennung eines Gesprächs beim Hub: die gespeicherte Zuordnung (Gespräch von einem anderen Gerät),
-/// solange der Abgleich sie kennt oder ein Grabstein sie trägt; sonst die aus der lokalen ID abgeleitete.
-fn bekannte_ref(abgleich: &Abgleich, gespeichert: Option<&str>, abgeleitet: Hex128) -> Hex128 {
-    gespeichert
-        .and_then(|r| Hex128::parse(r).ok())
-        .filter(|r| {
-            abgleich.unterhaltung(r).is_some() || abgleich.grabsteine().unterhaltung_geloescht(r)
-        })
-        .unwrap_or(abgeleitet)
+/// Kennung eines Gesprächs beim Hub. Ohne Zuordnung oder bei einer Zuordnung, die der lokalen
+/// Ableitung entspricht, die abgeleitete Kennung. Eine fremde gespeicherte Kennung (Gespräch von einem
+/// anderen Gerät) gilt nur, solange der Abgleich sie kennt oder ein Grabstein sie trägt; sonst `None`.
+fn hub_ref_fuer(
+    abgleich: &Abgleich,
+    gespeichert: Option<&str>,
+    abgeleitet: Hex128,
+) -> Option<Hex128> {
+    let Some(r) = gespeichert.and_then(|r| Hex128::parse(r).ok()) else {
+        return Some(abgeleitet);
+    };
+    if r == abgeleitet
+        || abgleich.unterhaltung(&r).is_some()
+        || abgleich.grabsteine().unterhaltung_geloescht(&r)
+    {
+        return Some(r);
+    }
+    None
 }
 
 fn leere_unterhaltung(conv_id: &str) -> AltUnterhaltung {
@@ -335,11 +426,17 @@ fn leere_unterhaltung(conv_id: &str) -> AltUnterhaltung {
 }
 
 /// Bringt ein lokales Gespräch samt Beiträgen in den Abgleich (idempotent).
+///
+/// Ein Beitrag, der schon am Hub steht und lokal anders lautet (Korrektur, unterbrochene Antwort),
+/// geht als Grabstein auf das alte Objekt und als neuer Beitrag unter neuer Hub-Kennung hoch; lokal
+/// bleibt die ID, die Zuordnung (`BeitragIds`) zeigt auf die neue Kennung.
 fn lokal_einfuegen(
+    store: &ConversationStore,
     abgleich: &mut Abgleich,
     datenbestand: &str,
     l: &Lokal,
-) -> Result<(), SyncFehler> {
+    ids: &mut BeitragIds,
+) -> Result<(), LaufFehler> {
     let c = &l.stand.detail.conversation;
     if abgleich.grabsteine().unterhaltung_geloescht(&l.hub_ref) {
         // Gelöscht (Grabstein): nichts hochladen, nichts wiederbeleben; der Rückschreib-Schritt
@@ -366,10 +463,22 @@ fn lokal_einfuegen(
     }
     abgleich.einschraenkung_setzen(&l.hub_ref, l.einschraenkung)?;
     kopf_abgleichen(abgleich, l)?;
+    // Frühere Hub-Kennungen korrigierter Beiträge begraben (idempotent, auch nach einem Absturz).
+    if !l.einschraenkung.geraet_lokal {
+        for (_, alt) in &ids.alt {
+            let am_hub = abgleich
+                .unterhaltung(&l.hub_ref)
+                .is_some_and(|u| u.verlauf().beitrag(alt).is_some());
+            let oid = abgleich.beitrag_objekt_id(&l.hub_ref, alt);
+            if am_hub && !abgleich.grabsteine().schlaegt(&l.hub_ref, &oid) {
+                abgleich.beitrag_loeschen(&l.hub_ref, alt)?;
+            }
+        }
+    }
     // Lineare Kette in lokaler Reihenfolge. Fehlerhafte Beiträge (`error`) bleiben lokal. Ist ein
     // Beitrag schon am Hub, gilt dessen Elternteil (die Struktur legt der erste Schreiber fest, auch
     // wenn sich lokal Vorgänger durch Löschen oder Einsortieren ändern).
-    let mut vorher: Option<&str> = None;
+    let mut vorher: Option<String> = None;
     for e in l
         .stand
         .detail
@@ -377,18 +486,43 @@ fn lokal_einfuegen(
         .iter()
         .filter(|e| e.status != "error")
     {
-        let eltern: Option<String> = abgleich
+        let mut hub_id = ids.hub_id(&e.id).to_owned();
+        let am_hub = abgleich
             .unterhaltung(&l.hub_ref)
-            .and_then(|u| u.verlauf().beitrag(&e.id))
-            .map(|b| b.eltern_id.clone())
-            .unwrap_or_else(|| vorher.map(str::to_owned));
-        match abgleich.beitrag_anlegen(&l.hub_ref, beitrag_aus(e, eltern.as_deref(), l.klasse)) {
-            Ok(_) | Err(SyncFehler::Geloescht) => {}
-            Err(f) => return Err(f),
+            .and_then(|u| u.verlauf().beitrag(&hub_id))
+            .map(|b| (b.eltern_id.clone(), b.text != e.text));
+        let mut eltern = match &am_hub {
+            Some((eltern, _)) => eltern.clone(),
+            None => vorher.clone(),
+        };
+        if let Some((alte_eltern, true)) = am_hub {
+            if !l.einschraenkung.geraet_lokal {
+                // Korrektur eines schon hochgeladenen Beitrags: altes Objekt begraben, neu anlegen.
+                let neu = neue_beitrags_id(&e.id);
+                store.sync_beitrag_neu_setzen(&e.id, &hub_id, &neu)?;
+                abgleich.beitrag_loeschen(&l.hub_ref, &hub_id)?;
+                ids.alt.push((e.id.clone(), hub_id.clone()));
+                ids.aktuell.insert(e.id.clone(), neu.clone());
+                hub_id = neu;
+                eltern = alte_eltern;
+            }
         }
-        vorher = Some(&e.id);
+        match abgleich.beitrag_anlegen(
+            &l.hub_ref,
+            beitrag_aus(e, &hub_id, eltern.as_deref(), l.klasse),
+        ) {
+            Ok(_) | Err(SyncFehler::Geloescht) => {}
+            Err(f) => return Err(f.into()),
+        }
+        vorher = Some(hub_id);
     }
     Ok(())
+}
+
+/// Neue Hub-Kennung für einen korrigierten Beitrag: gleicher Präfix wie die lokale ID, neue ULID.
+fn neue_beitrags_id(lokal: &str) -> String {
+    let praefix = lokal.split_once('_').map_or("entry", |(p, _)| p);
+    format!("{praefix}_{}", ulid::Ulid::new())
 }
 
 /// Lokaler Titel oder lokale Anheftung gewinnen nur, wenn sie sich seit dem letzten Abgleich
@@ -415,15 +549,23 @@ fn zurueckschreiben(
     store: &ConversationStore,
     abgleich: &Abgleich,
     lokale: &[Lokal],
+    datenbestand: &str,
+    konto: &str,
+    ids: &BeitragIds,
     kopf_ok: bool,
     bericht: &mut LaufBericht,
 ) -> Result<(), LaufFehler> {
     let mut behandelt: BTreeSet<Hex128> = BTreeSet::new();
+    // Was seit der Momentaufnahme lokal gelöscht wurde, wird nicht mehr angefasst.
+    let noch_da = store.sync_ids()?;
 
     // Lokale Gespräche: Grabsteine, Beiträge und Köpfe anderer Geräte.
     for l in lokale {
         behandelt.insert(l.hub_ref.clone());
         let conv_id = &l.stand.detail.conversation.id;
+        if !noch_da.contains(conv_id) {
+            continue;
+        }
         if abgleich.grabsteine().unterhaltung_geloescht(&l.hub_ref) {
             store.sync_loeschen(conv_id)?;
             bericht.unterhaltungen_geloescht += 1;
@@ -431,7 +573,7 @@ fn zurueckschreiben(
         }
         // Eingetroffene Grabsteine einzelner Beiträge.
         for e in &l.stand.detail.entries {
-            let oid = abgleich.beitrag_objekt_id(&l.hub_ref, &e.id);
+            let oid = abgleich.beitrag_objekt_id(&l.hub_ref, ids.hub_id(&e.id));
             if abgleich.grabsteine().schlaegt(&l.hub_ref, &oid) {
                 store.sync_eintrag_loeschen(&e.id)?;
                 bericht.beitraege_geloescht += 1;
@@ -451,6 +593,7 @@ fn zurueckschreiben(
             .entries
             .iter()
             .map(|e| e.id.as_str())
+            .chain(ids.bekannt())
             .collect();
         let n = beitraege_importieren(
             store,
@@ -463,9 +606,26 @@ fn zurueckschreiben(
         kopf_uebernehmen(store, l, u.kopf(), kopf_ok)?;
     }
 
+    // Lokal bekanntes Löschwissen bleibt dauerhaft: ein älterer oder fehlerhafter Hub-Stand belebt
+    // nichts wieder. Frisch gelesen, damit auch Löschungen aus diesem Lauf zählen.
+    let geloeschte: BTreeSet<Hex128> = store
+        .sync_grabsteine_alle(konto)?
+        .iter()
+        .map(|g| {
+            let abgeleitet = ref_aus_lokaler_id(abgleich.bund(), datenbestand, &g.conversation_id);
+            g.unterhaltung_ref
+                .as_deref()
+                .and_then(|r| Hex128::parse(r).ok())
+                .unwrap_or(abgeleitet)
+        })
+        .collect();
+
     // Gespräche anderer Geräte, die lokal noch fehlen.
     for (r, u) in abgleich.unterhaltungen() {
-        if behandelt.contains(r) || abgleich.grabsteine().unterhaltung_geloescht(r) {
+        if behandelt.contains(r)
+            || geloeschte.contains(r)
+            || abgleich.grabsteine().unterhaltung_geloescht(r)
+        {
             continue;
         }
         let c = store.create(Some(sauberer_titel(&u.kopf().titel)))?;
@@ -484,7 +644,7 @@ fn zurueckschreiben(
             c
         };
         store.sync_zuordnung_setzen(r.as_str(), &c.id)?;
-        store.sync_jemals_setzen(std::slice::from_ref(&c.id))?;
+        store.sync_jemals_setzen(std::slice::from_ref(&c.id), konto)?;
         let n = beitraege_importieren(
             store,
             &c.id,
@@ -543,11 +703,12 @@ fn eintrag_aus(b: &Beitrag) -> Option<NewEntry> {
     if !id_ok {
         return None;
     }
-    let rolle = if ROLLEN.contains(&b.autor.as_str()) {
-        b.autor.as_str()
-    } else {
-        "user"
-    };
+    // E11: Unbekanntes wird nicht erfunden. Eine Rolle, die der lokale Verlauf nicht kennt, macht den
+    // Beitrag nicht übernehmbar (er bleibt am Hub und wird gezählt).
+    if !ROLLEN.contains(&b.autor.as_str()) {
+        return None;
+    }
+    let rolle = b.autor.as_str();
     let text: String = b.text.chars().take(MAX_TEXT_CHARS).collect();
     Some(NewEntry {
         id: Some(b.id.clone()),

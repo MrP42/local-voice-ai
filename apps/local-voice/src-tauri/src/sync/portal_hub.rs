@@ -17,7 +17,8 @@
 //!   HTTP-Status protokolliert, nie Umschläge, Chiffrat, Kennungen oder Geräte-IDs.
 
 use std::fmt;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Value};
 use wai_assistent::sync::{
@@ -86,10 +87,15 @@ impl fmt::Debug for Freigabe {
 
 /// Der Hub als [`HubSpeicher`].
 pub struct PortalHub<T: HubTransport> {
-    transport: T,
+    pub(crate) transport: T,
     geraet_id: String,
     letzter_code: Mutex<Option<String>>,
+    /// Gemeinsame Schranke: Ist sie gesetzt, geht KEIN weiterer Aufruf ans Netz (Ausschalten).
+    sperre: Arc<AtomicBool>,
 }
+
+/// Fester Code, wenn die Schranke einen Aufruf verhindert hat.
+pub const CODE_ABGEBROCHEN: &str = "abgebrochen";
 
 impl<T: HubTransport> PortalHub<T> {
     /// `geraet_id` ist die Kennung dieses Geräts (klein geschrieben, `[A-Za-z0-9._-]{1,64}`); der
@@ -99,7 +105,14 @@ impl<T: HubTransport> PortalHub<T> {
             transport,
             geraet_id: geraet_id.to_owned(),
             letzter_code: Mutex::new(None),
+            sperre: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// Hängt die gemeinsame Abbruchschranke an. Sie wird vor JEDEM Netzaufruf geprüft.
+    pub fn mit_sperre(mut self, sperre: Arc<AtomicBool>) -> Self {
+        self.sperre = sperre;
+        self
     }
 
     /// Fehlercode (`error.code`, fester Kurztext) der letzten Ablehnung durch den Hub oder
@@ -130,6 +143,10 @@ impl<T: HubTransport> PortalHub<T> {
 
     /// Schickt die Anfrage und liefert den Körper einer erfolgreichen (2xx) Antwort.
     fn aufruf(&self, anfrage: Anfrage) -> Result<Value, HubFehler> {
+        if self.sperre.load(Ordering::SeqCst) {
+            self.merken(CODE_ABGEBROCHEN);
+            return Err(HubFehler::Nichtverfuegbar);
+        }
         let antwort = match self.transport.senden(&anfrage) {
             Ok(a) => a,
             Err(TransportFehler) => {

@@ -19,6 +19,7 @@ use rusqlite_migration::{Migrations, M};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use specta::Type;
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 use tauri::AppHandle;
@@ -135,6 +136,28 @@ static MIGRATIONS: &[M] = &[
          CREATE TABLE IF NOT EXISTS assistent_sync_grabsteine (
             conversation_id TEXT PRIMARY KEY NOT NULL,
             unterhaltung_ref TEXT
+         );",
+    ),
+    // lva#388 (Prüfrunde): Zustand je Konto statt Zurücksetzen. `sync_konto`: das Konto, unter dem
+    // das Gespräch für den Hub bestimmt wurde; es geht nie in ein anderes Konto. Grabsteine bleiben
+    // dauerhaft (`erledigt` = der Hub hat bestätigt) und tragen ihr Konto. `assistent_sync_pruefpunkt`:
+    // höchste gesehene Hub-Revision je Objekt (Rollback-Schutz). `assistent_sync_beitrag`: Hub-Kennung
+    // eines Beitrags, der nach einer Korrektur unter neuer Kennung hochgeladen wurde.
+    M::up(
+        "ALTER TABLE conversations ADD COLUMN sync_konto TEXT;
+         ALTER TABLE assistent_sync_grabsteine ADD COLUMN erledigt INTEGER NOT NULL DEFAULT 0;
+         ALTER TABLE assistent_sync_grabsteine ADD COLUMN konto TEXT;
+         CREATE TABLE IF NOT EXISTS assistent_sync_pruefpunkt (
+            konto TEXT NOT NULL,
+            objekt_id TEXT NOT NULL,
+            unterhaltung_ref TEXT NOT NULL,
+            revision INTEGER NOT NULL,
+            PRIMARY KEY (konto, objekt_id)
+         );
+         CREATE TABLE IF NOT EXISTS assistent_sync_beitrag (
+            hub_id TEXT PRIMARY KEY NOT NULL,
+            entry_id TEXT NOT NULL,
+            aktuell INTEGER NOT NULL
          );",
     ),
 ];
@@ -678,6 +701,8 @@ pub struct SyncStand {
     pub geraet_lokal: bool,
     /// Fingerabdruck des zuletzt abgeglichenen Kopfes.
     pub sync_kopf: Option<String>,
+    /// Konto, unter dem das Gespräch für den Hub bestimmt wurde (`None`: noch nie).
+    pub sync_konto: Option<String>,
 }
 
 /// Lokal gelöschtes Gespräch, dessen Grabstein der Hub noch nicht bestätigt hat.
@@ -706,9 +731,30 @@ impl ConversationStore {
     pub fn open(path: &Path) -> Result<Self> {
         let conn = Connection::open(path)?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
+        Self::sicherung_vor_migration(&conn, path);
         let store = Self::init(conn)?;
         info!("Gesprächsverlauf geöffnet: {}", path.display());
         Ok(store)
+    }
+
+    /// Vor einer Migration einer bestehenden Datei eine konsistente Sicherung ablegen
+    /// (`conversations.db.vor-v<N>.bak`, nur einmal je Version). Ein Fehler hier bricht nichts ab.
+    fn sicherung_vor_migration(conn: &Connection, path: &Path) {
+        let alt: i64 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap_or(0);
+        if alt <= 0 || alt as usize >= MIGRATIONS.len() {
+            return;
+        }
+        let mut name = path.file_name().map(|n| n.to_os_string()).unwrap_or_default();
+        name.push(format!(".vor-v{alt}.bak"));
+        let ziel = path.with_file_name(name);
+        if ziel.exists() {
+            return;
+        }
+        if let Err(e) = conn.execute("VACUUM INTO ?1", params![ziel.to_string_lossy()]) {
+            log::warn!("Sicherung vor der Migration des Gesprächsverlaufs fehlgeschlagen: {e}");
+        }
     }
 
     pub fn open_in_memory() -> Result<Self> {
@@ -723,6 +769,14 @@ impl ConversationStore {
         Migrations::new(MIGRATIONS[..1].to_vec()).to_latest(&mut conn)?;
         seed(&conn);
         Self::init(conn)
+    }
+
+    /// Nur für Tests: Datei auf einem älteren Schemastand (`n` Migrationen) anlegen.
+    #[cfg(test)]
+    pub fn alte_datei_anlegen(path: &Path, n: usize) -> Result<()> {
+        let mut conn = Connection::open(path)?;
+        Migrations::new(MIGRATIONS[..n].to_vec()).to_latest(&mut conn)?;
+        Ok(())
     }
 
     fn init(mut conn: Connection) -> Result<Self> {
@@ -944,15 +998,15 @@ impl ConversationStore {
         check_id(id)?;
         let conn = self.lock();
         let tx = conn.unchecked_transaction()?;
-        let war_synchron = tx
+        let (jemals, konto) = tx
             .query_row(
-                "SELECT sync_jemals FROM conversations WHERE id = ?1",
+                "SELECT sync_jemals, sync_konto FROM conversations WHERE id = ?1",
                 params![id],
-                |r| r.get::<_, i64>(0),
+                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Option<String>>(1)?)),
             )
             .optional()?
-            .ok_or_else(|| anyhow!("Das Gespräch gibt es nicht (mehr)."))?
-            != 0;
+            .ok_or_else(|| anyhow!("Das Gespräch gibt es nicht (mehr)."))?;
+        let war_synchron = jemals != 0;
         if war_synchron {
             let hub_ref = tx
                 .query_row(
@@ -963,9 +1017,10 @@ impl ConversationStore {
                 )
                 .optional()?;
             tx.execute(
-                "INSERT OR REPLACE INTO assistent_sync_grabsteine (conversation_id, unterhaltung_ref)
-                 VALUES (?1, ?2)",
-                params![id, hub_ref],
+                "INSERT OR REPLACE INTO assistent_sync_grabsteine
+                    (conversation_id, unterhaltung_ref, erledigt, konto)
+                 VALUES (?1, ?2, 0, ?3)",
+                params![id, hub_ref, konto],
             )?;
         }
         tx.execute("DELETE FROM conversations WHERE id = ?1", params![id])?;
@@ -1137,8 +1192,13 @@ impl ConversationStore {
     /// Alle Gespräche (auch archivierte) mit Beiträgen und Sync-Feldern, in einem Zug gelesen.
     pub fn sync_alle(&self) -> Result<Vec<SyncStand>> {
         let conn = self.lock();
+        Self::alle_staende(&conn)
+    }
+
+    fn alle_staende(conn: &Connection) -> Result<Vec<SyncStand>> {
         let mut stmt = conn.prepare(
-            "SELECT id, geraet_lokal, sync_kopf FROM conversations ORDER BY created_at ASC, rowid ASC",
+            "SELECT id, geraet_lokal, sync_kopf, sync_konto FROM conversations
+              ORDER BY created_at ASC, rowid ASC",
         )?;
         let zeilen = stmt
             .query_map([], |r| {
@@ -1146,19 +1206,54 @@ impl ConversationStore {
                     r.get::<_, String>(0)?,
                     r.get::<_, i64>(1)? != 0,
                     r.get::<_, Option<String>>(2)?,
+                    r.get::<_, Option<String>>(3)?,
                 ))
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
         zeilen
             .into_iter()
-            .map(|(id, geraet_lokal, sync_kopf)| {
+            .map(|(id, geraet_lokal, sync_kopf, sync_konto)| {
                 Ok(SyncStand {
-                    detail: Self::detail(&conn, &id)?,
+                    detail: Self::detail(conn, &id)?,
                     geraet_lokal,
                     sync_kopf,
+                    sync_konto,
                 })
             })
             .collect()
+    }
+
+    /// Momentaufnahme und Hub-Vormerkung in EINER Transaktion: Gespräche, für die `fuer_hub` gilt und
+    /// die nicht zu einem anderen Konto gehören, bekommen `sync_jemals` und `sync_konto`. Wer danach
+    /// (auch mitten im Lauf) gelöscht wird, hinterlässt einen Grabstein.
+    pub fn sync_alle_vormerken(
+        &self,
+        konto: &str,
+        fuer_hub: impl Fn(&SyncStand) -> bool,
+    ) -> Result<Vec<SyncStand>> {
+        let conn = self.lock();
+        let tx = conn.unchecked_transaction()?;
+        let staende = Self::alle_staende(&tx)?;
+        for st in &staende {
+            let fremd = st.sync_konto.as_deref().is_some_and(|k| k != konto);
+            if fremd || !fuer_hub(st) {
+                continue;
+            }
+            tx.execute(
+                "UPDATE conversations SET sync_jemals = 1, sync_konto = ?1 WHERE id = ?2",
+                params![konto, st.detail.conversation.id],
+            )?;
+        }
+        tx.commit()?;
+        Ok(staende)
+    }
+
+    /// Kennungen aller vorhandenen Gespräche.
+    pub fn sync_ids(&self) -> Result<std::collections::BTreeSet<String>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare("SELECT id FROM conversations")?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
     }
 
     /// Setzt oder löst „nur auf diesem Gerät“ (E3.5 `geraet_lokal`).
@@ -1177,13 +1272,13 @@ impl ConversationStore {
 
     /// Merkt, dass diese Gespräche für den Hub bestimmt sind (ab jetzt geht beim Löschen ein
     /// Grabstein hoch). Der Sync-Lauf ruft das vor dem ersten Hochladen auf.
-    pub fn sync_jemals_setzen(&self, ids: &[String]) -> Result<()> {
+    pub fn sync_jemals_setzen(&self, ids: &[String], konto: &str) -> Result<()> {
         let conn = self.lock();
         let tx = conn.unchecked_transaction()?;
         for id in ids {
             tx.execute(
-                "UPDATE conversations SET sync_jemals = 1 WHERE id = ?1",
-                params![id],
+                "UPDATE conversations SET sync_jemals = 1, sync_konto = ?2 WHERE id = ?1",
+                params![id, konto],
             )?;
         }
         tx.commit()?;
@@ -1218,13 +1313,25 @@ impl ConversationStore {
         Ok(())
     }
 
-    pub fn sync_grabsteine_offen(&self) -> Result<Vec<OffenerGrabstein>> {
+    /// Noch nicht bestätigte Grabsteine dieses Kontos.
+    pub fn sync_grabsteine_offen(&self, konto: &str) -> Result<Vec<OffenerGrabstein>> {
+        self.grabsteine(konto, true)
+    }
+
+    /// Alle lokal bekannten Grabsteine dieses Kontos, auch bestätigte: das Löschwissen bleibt
+    /// dauerhaft, damit ein älterer Hub-Stand nichts wiederbelebt.
+    pub fn sync_grabsteine_alle(&self, konto: &str) -> Result<Vec<OffenerGrabstein>> {
+        self.grabsteine(konto, false)
+    }
+
+    fn grabsteine(&self, konto: &str, nur_offen: bool) -> Result<Vec<OffenerGrabstein>> {
         let conn = self.lock();
         let mut stmt = conn.prepare(
             "SELECT conversation_id, unterhaltung_ref FROM assistent_sync_grabsteine
-             ORDER BY rowid ASC",
+              WHERE (konto IS NULL OR konto = ?1) AND (?2 = 0 OR erledigt = 0)
+              ORDER BY rowid ASC",
         )?;
-        let rows = stmt.query_map([], |r| {
+        let rows = stmt.query_map(params![konto, nur_offen as i64], |r| {
             Ok(OffenerGrabstein {
                 conversation_id: r.get(0)?,
                 unterhaltung_ref: r.get(1)?,
@@ -1233,25 +1340,90 @@ impl ConversationStore {
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
-    /// Der Hub hat den Grabstein bestätigt (oder er entfällt): Vormerkung entfernen.
+    /// Der Hub hat den Grabstein bestätigt (oder er entfällt): als erledigt markieren. Die Zeile
+    /// bleibt, sie ist das dauerhafte Löschwissen.
     pub fn sync_grabstein_erledigt(&self, conversation_id: &str) -> Result<()> {
         let conn = self.lock();
         conn.execute(
-            "DELETE FROM assistent_sync_grabsteine WHERE conversation_id = ?1",
+            "UPDATE assistent_sync_grabsteine SET erledigt = 1 WHERE conversation_id = ?1",
             params![conversation_id],
         )?;
         Ok(())
     }
 
-    /// Kontowechsel: Zuordnung, vorgemerkte Grabsteine und Sync-Marken gehören zum alten Konto und
-    /// werden verworfen. Die Gespräche selbst bleiben.
-    pub fn sync_zuruecksetzen(&self) -> Result<()> {
+    /// Höchste gesehene Hub-Revision je Objekt (Rollback-Schutz).
+    pub fn sync_pruefpunkte(&self, konto: &str) -> Result<BTreeMap<String, u64>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT objekt_id, revision FROM assistent_sync_pruefpunkt WHERE konto = ?1",
+        )?;
+        let rows = stmt.query_map(params![konto], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?.max(0) as u64))
+        })?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
+
+    /// Hebt Prüfpunkte an (nie ab): `(objekt_id, unterhaltung_ref, revision)`.
+    pub fn sync_pruefpunkte_speichern(
+        &self,
+        konto: &str,
+        punkte: &[(String, String, u64)],
+    ) -> Result<()> {
         let conn = self.lock();
         let tx = conn.unchecked_transaction()?;
-        tx.execute_batch(
-            "DELETE FROM assistent_sync_zuordnung;
-             DELETE FROM assistent_sync_grabsteine;
-             UPDATE conversations SET sync_jemals = 0, sync_kopf = NULL;",
+        for (objekt, r, rev) in punkte {
+            tx.execute(
+                "INSERT INTO assistent_sync_pruefpunkt (konto, objekt_id, unterhaltung_ref, revision)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(konto, objekt_id) DO UPDATE
+                    SET revision = MAX(revision, excluded.revision)",
+                params![konto, objekt, r, i64::try_from(*rev).unwrap_or(i64::MAX)],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Verwirft die Prüfpunkte eines Kontos (nur auf ausdrücklichen Wunsch: Hub neu akzeptieren).
+    pub fn sync_pruefpunkte_verwerfen(&self, konto: &str) -> Result<()> {
+        let conn = self.lock();
+        conn.execute(
+            "DELETE FROM assistent_sync_pruefpunkt WHERE konto = ?1",
+            params![konto],
+        )?;
+        Ok(())
+    }
+
+    /// Hub-Kennungen korrigierter Beiträge: `(entry_id, hub_id, aktuell)`. Jede je benutzte
+    /// Hub-Kennung bleibt stehen, damit das alte Objekt sicher begraben wird.
+    pub fn sync_beitrag_ids(&self) -> Result<Vec<(String, String, bool)>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT entry_id, hub_id, aktuell FROM assistent_sync_beitrag ORDER BY rowid ASC",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get::<_, i64>(2)? != 0))
+        })?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
+
+    /// Ein Beitrag geht ab jetzt unter `neu` zum Hub; `alt` (bisherige Kennung) wird begraben.
+    /// Wird vor dem Hochladen gesichert.
+    pub fn sync_beitrag_neu_setzen(&self, entry_id: &str, alt: &str, neu: &str) -> Result<()> {
+        let conn = self.lock();
+        let tx = conn.unchecked_transaction()?;
+        tx.execute(
+            "INSERT OR IGNORE INTO assistent_sync_beitrag (hub_id, entry_id, aktuell)
+             VALUES (?1, ?2, 0)",
+            params![alt, entry_id],
+        )?;
+        tx.execute(
+            "UPDATE assistent_sync_beitrag SET aktuell = 0 WHERE entry_id = ?1",
+            params![entry_id],
+        )?;
+        tx.execute(
+            "INSERT INTO assistent_sync_beitrag (hub_id, entry_id, aktuell) VALUES (?1, ?2, 1)",
+            params![neu, entry_id],
         )?;
         tx.commit()?;
         Ok(())
@@ -1262,6 +1434,27 @@ impl ConversationStore {
         check_id(id)?;
         let conn = self.lock();
         let tx = conn.unchecked_transaction()?;
+        let konto = tx
+            .query_row(
+                "SELECT sync_konto FROM conversations WHERE id = ?1",
+                params![id],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .optional()?
+            .flatten();
+        let hub_ref = tx
+            .query_row(
+                "SELECT unterhaltung_ref FROM assistent_sync_zuordnung WHERE conversation_id = ?1",
+                params![id],
+                |r| r.get::<_, String>(0),
+            )
+            .optional()?;
+        tx.execute(
+            "INSERT OR IGNORE INTO assistent_sync_grabsteine
+                (conversation_id, unterhaltung_ref, erledigt, konto)
+             VALUES (?1, ?2, 1, ?3)",
+            params![id, hub_ref, konto],
+        )?;
         tx.execute("DELETE FROM conversations WHERE id = ?1", params![id])?;
         tx.execute(
             "DELETE FROM assistent_sync_zuordnung WHERE conversation_id = ?1",

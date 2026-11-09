@@ -14,6 +14,8 @@ use wai_assistent::sync::{
 use super::*;
 use crate::sync::portal_hub::tests::{konto_hub, netz, portal};
 
+const KONTO: &str = "konto-test";
+
 fn bund() -> Schluesselbund {
     Schluesselbund::zufaellig().unwrap()
 }
@@ -99,7 +101,7 @@ fn lauf_ok<H: HubSpeicher + ?Sized>(
     b: &Schluesselbund,
     g: &str,
 ) -> LaufBericht {
-    lauf(s, h, b.clone(), g, true).unwrap_or_else(|e| panic!("Lauf scheitert: {e}"))
+    lauf(s, h, b.clone(), g, KONTO, true).unwrap_or_else(|e| panic!("Lauf scheitert: {e}"))
 }
 
 fn loeschmarken(h: &MemHub) -> usize {
@@ -291,7 +293,7 @@ fn e3_6_ohne_freigabe_kein_hub_zugriff_und_kein_lesen_der_gespraeche() {
     let z = Zaehlhub::neu(&h);
     let s = ConversationStore::open_in_memory().unwrap();
     gespraech(&s, "Eins", 2);
-    let r = lauf(&s, &z, bund(), "dev-a", false);
+    let r = lauf(&s, &z, bund(), "dev-a", KONTO, false);
     assert!(matches!(r, Err(LaufFehler::NichtFreigegeben)));
     assert_eq!(z.aufrufe.load(Ordering::SeqCst), 0, "kein Hub-Aufruf");
     assert_eq!(h.schreibversuche(), 0);
@@ -310,7 +312,7 @@ fn vor_dem_ersten_lauf_gibt_es_keine_grabsteine_fuer_nie_synchrone_gespraeche() 
     let id = gespraech(&s, "Nie synchron", 2);
     s.delete(&id).unwrap();
     assert!(
-        s.sync_grabsteine_offen().unwrap().is_empty(),
+        s.sync_grabsteine_offen(KONTO).unwrap().is_empty(),
         "nie für den Hub bestimmt: nichts vormerken"
     );
     lauf_ok(&s, &h, &b, "dev-a");
@@ -551,13 +553,13 @@ fn e3_2_geloeschtes_gespraech_setzt_grabstein_und_verschwindet_auf_dem_anderen_g
 
     sa.delete(&id_a).unwrap();
     assert_eq!(
-        sa.sync_grabsteine_offen().unwrap().len(),
+        sa.sync_grabsteine_offen(KONTO).unwrap().len(),
         1,
         "vorgemerkt, noch nicht beim Hub"
     );
     let r = lauf_ok(&sa, &h, &b, "dev-a");
     assert_eq!(r.grabsteine_hoch, 1);
-    assert!(sa.sync_grabsteine_offen().unwrap().is_empty());
+    assert!(sa.sync_grabsteine_offen(KONTO).unwrap().is_empty());
     assert_eq!(loeschmarken(&h), 1);
 
     // B hat offline noch weitergeschrieben: der Grabstein löscht, nichts wird wiederbelebt.
@@ -615,10 +617,10 @@ fn e3_2_grabstein_geht_bei_hubausfall_nicht_verloren() {
 
     let z = Zaehlhub::neu(&h);
     z.ausfall.store(true, Ordering::SeqCst);
-    let r = lauf(&s, &z, b.clone(), "dev-a", true);
+    let r = lauf(&s, &z, b.clone(), "dev-a", KONTO, true);
     assert!(matches!(r, Err(LaufFehler::Sync(_))));
     assert_eq!(
-        s.sync_grabsteine_offen().unwrap().len(),
+        s.sync_grabsteine_offen(KONTO).unwrap().len(),
         1,
         "bleibt vorgemerkt"
     );
@@ -627,7 +629,7 @@ fn e3_2_grabstein_geht_bei_hubausfall_nicht_verloren() {
     z.ausfall.store(false, Ordering::SeqCst);
     let r = lauf_ok(&s, &z, &b, "dev-a");
     assert_eq!(r.grabsteine_hoch, 1);
-    assert!(s.sync_grabsteine_offen().unwrap().is_empty());
+    assert!(s.sync_grabsteine_offen(KONTO).unwrap().is_empty());
     assert_eq!(loeschmarken(&h), 1);
 }
 
@@ -644,7 +646,7 @@ fn e10_geloeschtes_lokales_gespraech_das_nie_beim_hub_war_erzeugt_keine_loeschma
     s.delete(&lokal).unwrap();
     s.delete(&vertraulich).unwrap();
     assert!(
-        s.sync_grabsteine_offen().unwrap().is_empty(),
+        s.sync_grabsteine_offen(KONTO).unwrap().is_empty(),
         "nie synchron: kein Grabstein, kein Metadatenabfluss"
     );
     lauf_ok(&s, &h, &b, "dev-a");
@@ -774,14 +776,10 @@ fn beitraege_mit_fremder_kennung_werden_gezaehlt_aber_nicht_abgelegt() {
     x.hochladen(&h).unwrap();
     let s = ConversationStore::open_in_memory().unwrap();
     let bericht = lauf_ok(&s, &h, &b, "dev-a");
-    assert_eq!((bericht.beitraege_neu, bericht.nicht_uebernommen), (1, 1));
+    // Weder die fremde Kennung (iOS) noch der unbekannte Autor wird erfunden (E11): beide bleiben am Hub.
+    assert_eq!((bericht.beitraege_neu, bericht.nicht_uebernommen), (0, 2));
     let id = gespraech_mit_titel(&s, "Fremde IDs").unwrap();
-    let e = &s.get(&id).unwrap().entries[0];
-    assert_eq!(
-        (e.role.as_str(), e.mode.as_str()),
-        ("user", "spoken"),
-        "unbekannter Autor wird Nutzer"
-    );
+    assert!(s.get(&id).unwrap().entries.is_empty());
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -819,7 +817,7 @@ fn migration_des_speichers_behaelt_bestehende_daten_und_setzt_sichere_standardwe
     assert!(stand[0].sync_kopf.is_none());
     // Löschen eines Altgesprächs, das nie synchron war: kein Grabstein.
     s.delete(&altes_gespraech).unwrap();
-    assert!(s.sync_grabsteine_offen().unwrap().is_empty());
+    assert!(s.sync_grabsteine_offen(KONTO).unwrap().is_empty());
 }
 
 #[test]
@@ -835,7 +833,10 @@ fn grabstein_und_zuordnung_ueberleben_einen_neustart() {
         id
     };
     let s = ConversationStore::open(&pfad).unwrap();
-    assert_eq!(s.sync_grabsteine_offen().unwrap()[0].conversation_id, id);
+    assert_eq!(
+        s.sync_grabsteine_offen(KONTO).unwrap()[0].conversation_id,
+        id
+    );
     assert_eq!(lauf_ok(&s, &h, &b, "dev-a").grabsteine_hoch, 1);
 }
 
@@ -879,11 +880,254 @@ fn hubausfall_ueber_den_portal_hub_laesst_lokale_daten_unberuehrt() {
     // Netz weg: der Transport meldet Netzfehler, der Lauf bricht ab.
     netz(&aus, false);
     assert!(matches!(
-        lauf(&s, &aus, b.clone(), "dev-a", true),
+        lauf(&s, &aus, b.clone(), "dev-a", KONTO, true),
         Err(LaufFehler::Sync(_))
     ));
     assert_eq!(texte(&s, &id).len(), 3);
     assert_eq!(aus.letzter_code().as_deref(), Some("netz"));
     netz(&aus, true);
     assert_eq!(lauf_ok(&s, &aus, &b, "dev-a").beitraege_hoch, 3);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Prüfrunde (lva#415): Löschfenster, Korrekturen, Konten, dauerhaftes Löschwissen
+// ---------------------------------------------------------------------------------------------
+
+/// Texte aller Beiträge, wie der Hub sie (für ein Gerät mit dem Schlüssel) enthält.
+fn hub_texte(h: &MemHub, b: &Schluesselbund) -> Vec<String> {
+    let mut a = Abgleich::new("dev-a", b.clone());
+    a.freigabe_einschalten();
+    a.herunterladen(h).unwrap();
+    let mut t: Vec<String> = a
+        .unterhaltungen()
+        .flat_map(|(_, u)| {
+            u.verlauf()
+                .beitraege()
+                .map(|x| x.text.clone())
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    t.sort();
+    t
+}
+
+#[test]
+fn loeschen_im_fenster_nach_der_momentaufnahme_hinterlaesst_einen_grabstein_und_belebt_nichts() {
+    let (b, h) = (bund(), hub(&["dev-a", "dev-b"]));
+    let s = ConversationStore::open_in_memory().unwrap();
+    let id = gespraech(&s, "Fenster", 2);
+    // Das Gespräch war noch nie beim Hub: genau das ist das gefährliche Fenster.
+    let mut geloescht = false;
+    let r = lauf_mit(&s, &*h, b.clone(), "dev-a", KONTO, true, &mut || {
+        s.delete(&id).unwrap();
+        geloescht = true;
+    })
+    .unwrap();
+    assert!(geloescht);
+    assert!(lokale_ids(&s).is_empty(), "nichts wiederbelebt");
+    assert_eq!(r.unterhaltungen_neu, 0);
+    // Der Grabstein ist vorgemerkt (sync_jemals wurde mit der Momentaufnahme gesetzt) oder schon oben.
+    let offen = s.sync_grabsteine_offen(KONTO).unwrap().len();
+    let marken = loeschmarken(&h);
+    assert!(offen + marken >= 1, "Löschwissen darf nicht verloren gehen");
+    // Der Folgelauf schließt es ab, und ein zweites Gerät bekommt das Gespräch nie.
+    lauf_ok(&s, &*h, &b, "dev-a");
+    assert!(s.sync_grabsteine_offen(KONTO).unwrap().is_empty());
+    assert_eq!(loeschmarken(&h), 1);
+    let sb = ConversationStore::open_in_memory().unwrap();
+    lauf_ok(&sb, &*h, &b, "dev-b");
+    assert!(
+        lokale_ids(&sb).is_empty(),
+        "das Gespräch taucht nirgends wieder auf"
+    );
+    lauf_ok(&s, &*h, &b, "dev-a");
+    assert!(lokale_ids(&s).is_empty());
+}
+
+#[test]
+fn korrigierter_beitrag_entfernt_den_alten_text_beim_hub() {
+    let (b, h) = (bund(), hub(&["dev-a", "dev-b"]));
+    let (sa, sb) = (
+        ConversationStore::open_in_memory().unwrap(),
+        ConversationStore::open_in_memory().unwrap(),
+    );
+    let id = gespraech(&sa, "Korrektur", 2);
+    lauf_ok(&sa, &*h, &b, "dev-a");
+    lauf_ok(&sb, &*h, &b, "dev-b");
+    let alt = texte(&sa, &id)[1].clone();
+    assert!(hub_texte(&h, &b).contains(&alt));
+
+    let eintrag_id = ids(&sa, &id)[1].clone();
+    sa.update_entry(&eintrag_id, "Korrigierter Text".into(), "complete".into())
+        .unwrap();
+    let r = lauf_ok(&sa, &*h, &b, "dev-a");
+    assert!(r.beitraege_hoch >= 1 && r.grabsteine_hoch >= 1);
+    let t = hub_texte(&h, &b);
+    assert!(t.contains(&"Korrigierter Text".to_string()));
+    assert!(!t.contains(&alt), "der alte Text steht nicht mehr beim Hub");
+
+    // Lokal bleibt die ID, nichts wird doppelt; ein weiterer Lauf ist ruhig.
+    assert_eq!(ids(&sa, &id)[1], eintrag_id);
+    let r = lauf_ok(&sa, &*h, &b, "dev-a");
+    assert_eq!(
+        (r.beitraege_hoch, r.grabsteine_hoch, r.beitraege_neu),
+        (0, 0, 0)
+    );
+    assert_eq!(texte(&sa, &id).len(), 2);
+
+    // Das andere Gerät bekommt die Korrektur und verliert den alten Text.
+    lauf_ok(&sb, &*h, &b, "dev-b");
+    let idb = gespraech_mit_titel(&sb, "Korrektur").unwrap();
+    let tb = texte(&sb, &idb);
+    assert!(tb.contains(&"Korrigierter Text".to_string()), "{tb:?}");
+    assert!(!tb.contains(&alt));
+    assert_eq!(tb.len(), 2);
+
+    // Zweite Korrektur: wieder nur der aktuelle Text beim Hub.
+    sa.update_entry(&eintrag_id, "Noch einmal".into(), "complete".into())
+        .unwrap();
+    lauf_ok(&sa, &*h, &b, "dev-a");
+    let t = hub_texte(&h, &b);
+    assert!(t.contains(&"Noch einmal".to_string()));
+    assert!(!t.contains(&"Korrigierter Text".to_string()) && !t.contains(&alt));
+    assert_eq!(texte(&sa, &id).len(), 2);
+}
+
+#[test]
+fn gespraeche_eines_anderen_kontos_gehen_nie_in_das_neue_konto_und_grabsteine_bleiben() {
+    let b = bund();
+    let (h1, h2) = (hub(&["dev-a"]), hub(&["dev-a"]));
+    let s = ConversationStore::open_in_memory().unwrap();
+    let altes = gespraech(&s, "Altes Konto", 2);
+    let (weg, bleibt) = (gespraech(&s, "Wird gelöscht", 2), altes.clone());
+    lauf(&s, &*h1, b.clone(), "dev-a", "konto-1", true).unwrap();
+    s.delete(&weg).unwrap();
+    // Hub 1 ist gerade nicht erreichbar: der Grabstein bleibt offen und gehört zu Konto 1.
+    assert_eq!(s.sync_grabsteine_offen("konto-1").unwrap().len(), 1);
+
+    // Anderes Konto am anderen Hub: die Gespräche des alten Kontos werden nicht hochgeladen.
+    let neu = gespraech(&s, "Neues Konto", 2);
+    let r = lauf(&s, &*h2, b.clone(), "dev-a", "konto-2", true).unwrap();
+    assert_eq!(r.beitraege_hoch, 2, "nur das neue Gespräch geht hoch");
+    assert_eq!(h2.anzahl(Sammlung::Unterhaltung), 1);
+    assert!(hub_texte(&h2, &b)
+        .iter()
+        .all(|t| t.starts_with("Neues Konto")));
+    assert!(
+        s.get(&bleibt).is_ok() && s.get(&neu).is_ok(),
+        "nichts lokal gelöscht"
+    );
+    // Kein Grabstein des alten Kontos geht in das neue.
+    assert_eq!(loeschmarken(&h2), 0);
+    assert!(s.sync_grabsteine_offen("konto-2").unwrap().is_empty());
+    assert_eq!(
+        s.sync_grabsteine_offen("konto-1").unwrap().len(),
+        1,
+        "aufbewahrt, nie gelöscht"
+    );
+    // Zurück zu Konto 1: der Grabstein geht jetzt hoch.
+    let r = lauf(&s, &*h1, b.clone(), "dev-a", "konto-1", true).unwrap();
+    assert_eq!(r.grabsteine_hoch, 1);
+    assert_eq!(loeschmarken(&h1), 1);
+}
+
+#[test]
+fn grabstein_mit_gespeicherter_fremder_kennung_wird_nur_mit_dieser_kennung_erledigt() {
+    let (b, h) = (bund(), hub(&["dev-a", "dev-b"]));
+    let sa = ConversationStore::open_in_memory().unwrap();
+    let sb = ConversationStore::open_in_memory().unwrap();
+    gespraech(&sa, "Fremd", 2);
+    lauf_ok(&sa, &*h, &b, "dev-a");
+    lauf_ok(&sb, &*h, &b, "dev-b");
+    let id_b = gespraech_mit_titel(&sb, "Fremd").unwrap();
+    let gespeichert = sb
+        .sync_zuordnung()
+        .unwrap()
+        .into_iter()
+        .find(|(_, c)| *c == id_b)
+        .unwrap()
+        .0;
+    sb.delete(&id_b).unwrap();
+    // Eine andere, leere Hub-Welt kennt die gespeicherte Kennung nicht: nichts wird unter einer
+    // abgeleiteten Kennung begraben, der Grabstein bleibt offen.
+    let leer = hub(&["dev-b"]);
+    let r = lauf_ok(&sb, &*leer, &b, "dev-b");
+    assert_eq!(r.grabsteine_hoch, 0);
+    assert_eq!(loeschmarken(&leer), 0);
+    assert_eq!(sb.sync_grabsteine_offen(KONTO).unwrap().len(), 1);
+    // Am richtigen Hub geht er mit der gespeicherten Kennung hoch und gilt dann als erledigt.
+    let r = lauf_ok(&sb, &*h, &b, "dev-b");
+    assert_eq!(r.grabsteine_hoch, 1);
+    assert!(sb.sync_grabsteine_offen(KONTO).unwrap().is_empty());
+    let tab = sb.sync_grabsteine_alle(KONTO).unwrap();
+    assert_eq!(
+        tab[0].unterhaltung_ref.as_deref(),
+        Some(gespeichert.as_str())
+    );
+}
+
+#[test]
+fn loeschwissen_bleibt_dauerhaft_gegen_einen_aelteren_hubstand() {
+    let b = bund();
+    let (neu, alt) = (hub(&["dev-a"]), hub(&["dev-a"]));
+    let s = ConversationStore::open_in_memory().unwrap();
+    let id = gespraech(&s, "Wiederauftauchen", 2);
+    lauf_ok(&s, &*alt, &b, "dev-a");
+    lauf_ok(&s, &*neu, &b, "dev-a");
+    s.delete(&id).unwrap();
+    lauf_ok(&s, &*neu, &b, "dev-a");
+    assert_eq!(loeschmarken(&neu), 1);
+    assert!(
+        s.sync_grabsteine_offen(KONTO).unwrap().is_empty(),
+        "bestätigt"
+    );
+    assert_eq!(
+        s.sync_grabsteine_alle(KONTO).unwrap().len(),
+        1,
+        "Löschwissen bleibt"
+    );
+    // Der ältere Stand kennt das Gespräch noch und hat keine Löschmarke.
+    let r = lauf_ok(&s, &*alt, &b, "dev-a");
+    assert_eq!(r.unterhaltungen_neu, 0);
+    assert!(lokale_ids(&s).is_empty(), "nichts kommt zurück");
+}
+
+#[test]
+fn migration_legt_vor_dem_schemawechsel_eine_sicherung_an() {
+    let dir = tempfile::tempdir().unwrap();
+    let pfad = dir.path().join("conversations.db");
+    ConversationStore::alte_datei_anlegen(&pfad, 3).unwrap();
+    assert!(!dir.path().join("conversations.db.vor-v3.bak").exists());
+    drop(ConversationStore::open(&pfad).unwrap());
+    assert!(
+        dir.path().join("conversations.db.vor-v3.bak").exists(),
+        "Sicherung vor der Migration"
+    );
+}
+
+#[test]
+fn ausschalten_waehrend_eines_laufs_stoppt_jeden_weiteren_netzaufruf() {
+    use crate::sync::portal_hub::tests::FakeHttp;
+    use crate::sync::portal_hub::PortalHub;
+    let (mh, konto) = konto_hub();
+    let schranke = Arc::new(AtomicBool::new(false));
+    let p =
+        PortalHub::new(FakeHttp::neu(&mh, &konto, "dev-a"), "dev-a").mit_sperre(schranke.clone());
+    p.zulassen(None).unwrap();
+    let s = ConversationStore::open_in_memory().unwrap();
+    gespraech(&s, "Läuft", 2);
+    let stand = std::cell::Cell::new(0usize);
+    // Der Nutzer schaltet mitten im Lauf aus: direkt nach der Momentaufnahme, vor dem Hochladen.
+    let r = lauf_mit(&s, &p, bund(), "dev-a", KONTO, true, &mut || {
+        schranke.store(true, Ordering::SeqCst);
+        stand.set(p.transport.log.lock().unwrap().len());
+    });
+    assert!(matches!(r, Err(LaufFehler::Sync(_))));
+    assert_eq!(
+        p.transport.log.lock().unwrap().len(),
+        stand.get(),
+        "nach dem Ausschalten kein einziger weiterer Aufruf"
+    );
+    assert_eq!(mh.anzahl(Sammlung::Beitrag), 0);
+    assert_eq!(p.letzter_code().as_deref(), Some("abgebrochen"));
 }

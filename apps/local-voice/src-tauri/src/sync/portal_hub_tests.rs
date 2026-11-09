@@ -35,7 +35,7 @@ pub(crate) struct FakeHttp {
     konto: Arc<Mutex<Konto>>,
     /// Gerät, an das das Token gebunden ist.
     geraet: String,
-    log: Mutex<Vec<Anfrage>>,
+    pub(crate) log: Mutex<Vec<Anfrage>>,
     /// Ein Angreifer mit Hubzugang verändert Antworten von `/lesen` (Objekt für Objekt).
     manipulation: Option<Box<dyn Fn(&mut Value) + Send + Sync>>,
     /// Netz weg.
@@ -43,7 +43,7 @@ pub(crate) struct FakeHttp {
 }
 
 impl FakeHttp {
-    fn neu(hub: &Arc<MemHub>, konto: &Arc<Mutex<Konto>>, geraet: &str) -> Self {
+    pub(crate) fn neu(hub: &Arc<MemHub>, konto: &Arc<Mutex<Konto>>, geraet: &str) -> Self {
         Self {
             hub: hub.clone(),
             konto: konto.clone(),
@@ -1193,4 +1193,36 @@ fn e3_3_c_gleichzeitige_uebernahme_mit_threads_ergibt_genau_einen_inhaber() {
             );
         }
     }
+}
+
+#[test]
+fn schranke_verhindert_jeden_weiteren_netzaufruf_vor_dem_transport() {
+    let (hub, konto) = konto_hub();
+    let sperre = Arc::new(AtomicBool::new(false));
+    let p =
+        PortalHub::new(FakeHttp::neu(&hub, &konto, "dev-pc"), "dev-pc").mit_sperre(sperre.clone());
+    assert_eq!(p.zulassen(None), Ok(1));
+    let auth = AuthGeraet::new("dev-pc");
+    assert_eq!(p.epoche(&auth), Ok(1));
+    let vorher = p.transport.log.lock().unwrap().len();
+    assert!(vorher >= 2);
+
+    sperre.store(true, Ordering::SeqCst);
+    assert_eq!(p.epoche(&auth), Err(HubFehler::Nichtverfuegbar));
+    assert_eq!(p.zugelassene(&auth), Err(HubFehler::Nichtverfuegbar));
+    assert_eq!(
+        p.lesen(&auth, &LeseFilter::default()),
+        Err(HubFehler::Nichtverfuegbar)
+    );
+    assert_eq!(p.zulassen(None), Err(HubFehler::Nichtverfuegbar));
+    assert!(p.freigeben("dev-x").is_err());
+    assert_eq!(p.letzter_code().as_deref(), Some(CODE_ABGEBROCHEN));
+    assert_eq!(
+        p.transport.log.lock().unwrap().len(),
+        vorher,
+        "nach dem Ausschalten kein einziger weiterer Aufruf"
+    );
+
+    sperre.store(false, Ordering::SeqCst);
+    assert_eq!(p.epoche(&auth), Ok(1), "ohne Schranke geht es wieder");
 }

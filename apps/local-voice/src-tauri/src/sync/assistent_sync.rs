@@ -15,6 +15,7 @@
 //!   UI, die später folgt.
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -32,6 +33,11 @@ use crate::conversations::sync::{self as verlauf, LaufBericht, LaufFehler};
 
 /// Ereignis an die Oberfläche nach jedem Lauf und jeder Änderung des Zustands.
 pub const EVENT_STATUS: &str = "assistent-sync-status";
+
+/// Fester Code, wenn das Konto oder der Schlüssel gewechselt hat.
+pub const CODE_KONTO_GEWECHSELT: &str = "konto_gewechselt";
+/// Fester Code, solange der Widerruf gesperrt ist (kein Schlüsseltransport).
+pub const CODE_WIDERRUF_GESPERRT: &str = "widerruf_gesperrt";
 
 /// Takt des Hintergrundlaufs; zusätzlich stößt jedes lokale Schreiben einen Lauf an.
 const TAKT: Duration = Duration::from_secs(300);
@@ -123,6 +129,8 @@ pub struct AssistentSyncDienst {
     /// Ein Lauf oder Hub-Befehl zur Zeit.
     sperre: tokio::sync::Mutex<()>,
     notify: tokio::sync::Notify,
+    /// Abbruchschranke aller Hub-Aufrufe (Ausschalten): gesetzt, geht kein Aufruf mehr ans Netz.
+    abbruch: Arc<AtomicBool>,
 }
 
 impl Default for AssistentSyncDienst {
@@ -131,6 +139,7 @@ impl Default for AssistentSyncDienst {
             status: Mutex::new(AssistentSyncStatus::default()),
             sperre: tokio::sync::Mutex::new(()),
             notify: tokio::sync::Notify::new(),
+            abbruch: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -286,6 +295,7 @@ struct Sitzung {
     geraet: String,
     store: Arc<ConversationStore>,
     pfad: PathBuf,
+    sperre: Arc<AtomicBool>,
 }
 
 fn sitzung(app: &AppHandle) -> Result<Sitzung, Meldung> {
@@ -296,8 +306,14 @@ fn sitzung(app: &AppHandle) -> Result<Sitzung, Meldung> {
 }
 
 impl Sitzung {
-    fn konto(&self) -> String {
-        Zustand::konto_kennung(&self.cfg.url, self.cfg.user_id, &self.geraet)
+    /// Kontokennung: Hub-URL, Konto-ID und Fingerabdruck des Bibliotheks-Schlüssels (nicht die
+    /// Geräte-Kennung).
+    fn konto(&self) -> Result<String, Meldung> {
+        Ok(Zustand::konto_kennung(
+            &self.cfg.url,
+            self.cfg.user_id,
+            &self.schluessel()?,
+        ))
     }
 
     fn hub(&self) -> PortalHub<ClientTransport> {
@@ -307,16 +323,40 @@ impl Sitzung {
             },
             &self.geraet,
         )
+        .mit_sperre(self.sperre.clone())
     }
 
-    /// Zustandsdatei lesen (leer, wenn sie fehlt oder zu einem anderen Konto gehört).
-    fn zustand(&self) -> Zustand {
-        let text = std::fs::read_to_string(&self.pfad).ok();
-        Zustand::aus_json(text.as_deref(), &self.konto())
+    /// Inhalt der Zustandsdatei. Nur „fehlt“ gilt als leer; jeder andere Lesefehler ist ein Fehler.
+    fn datei_lesen(&self) -> Result<Option<String>, Meldung> {
+        match std::fs::read_to_string(&self.pfad) {
+            Ok(t) => Ok(Some(t)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(_) => Err(Meldung::neu(
+                "Die Zustandsdatei des Assistent-Syncs ist nicht lesbar. Es wird nichts überschrieben.",
+            )),
+        }
     }
 
+    /// Zustand dieses Kontos und Geräts (fail-closed bei unlesbarer Datei).
+    fn zustand(&self) -> Result<Zustand, Meldung> {
+        let text = self.datei_lesen()?;
+        Zustand::aus_datei(text.as_deref(), &self.konto()?, &self.geraet).map_err(Meldung::from)
+    }
+
+    /// Schreibt den Zustand; Einträge anderer Konten bleiben, vorher entsteht eine `.bak`.
     fn speichern(&self, z: &Zustand) -> Result<(), Meldung> {
-        let json = z.zu_json()?;
+        let alt = self.datei_lesen()?;
+        let json = z.in_datei(alt.as_deref(), &self.konto()?)?;
+        if alt.is_some() {
+            let mut name = self
+                .pfad
+                .file_name()
+                .map(|n| n.to_os_string())
+                .unwrap_or_default();
+            name.push(".bak");
+            std::fs::copy(&self.pfad, self.pfad.with_file_name(name))
+                .map_err(|_| Meldung::neu("Die Sicherung der Zustandsdatei ist gescheitert."))?;
+        }
         account::write_private(&self.pfad, json.as_bytes()).map_err(Meldung::from)
     }
 
@@ -324,19 +364,31 @@ impl Sitzung {
         self.cfg.key().map_err(Meldung::from)
     }
 
-    /// Kontowechsel: Zuordnung und Sync-Marken im Verlauf gehören zum alten Konto.
+    /// Kontowechsel (anderes Konto, anderer Hub oder anderer Bibliotheks-Schlüssel): nichts wird
+    /// gelöscht oder zurückgesetzt, der Zustand je Konto bleibt aufbewahrt. Der Lauf hält an
+    /// (`konto_gewechselt`), der Aufrufer schaltet den Assistent-Sync aus; erst das erneute
+    /// Einschalten durch die Nutzerin oder den Nutzer bestätigt das neue Konto.
     fn konto_abgleichen(&self) -> Result<(), Meldung> {
-        let konto = self.konto();
+        let konto = self.konto()?;
         let bekannt = self
             .store
             .sync_meta("konto")
             .map_err(|_| Meldung::neu("Der Gesprächsverlauf konnte nicht gelesen werden."))?;
-        if bekannt.as_deref() == Some(konto.as_str()) {
-            return Ok(());
+        match bekannt.as_deref() {
+            Some(k) if k == konto => Ok(()),
+            None => self.konto_bestaetigen(),
+            Some(_) => Err(Meldung {
+                text: "Das Konto oder der Schlüssel hat gewechselt. Der Assistent-Sync wurde ausgeschaltet; bitte neu einschalten, um das neue Konto zu bestätigen.".to_owned(),
+                code: Some(CODE_KONTO_GEWECHSELT.to_owned()),
+                braucht_freigabe: false,
+            }),
         }
+    }
+
+    /// Merkt das angemeldete Konto als das, mit dem dieser Verlauf abgleicht.
+    fn konto_bestaetigen(&self) -> Result<(), Meldung> {
         self.store
-            .sync_zuruecksetzen()
-            .and_then(|_| self.store.sync_meta_setzen("konto", &konto))
+            .sync_meta_setzen("konto", &self.konto()?)
             .map_err(|_| Meldung::neu("Der Gesprächsverlauf konnte nicht geschrieben werden."))
     }
 
@@ -388,14 +440,14 @@ struct Ergebnis {
 }
 
 fn lauf_blockierend(s: &Sitzung) -> Result<Ergebnis, Meldung> {
-    let mut z = s.zustand();
+    let mut z = s.zustand()?;
     s.konto_abgleichen()?;
     s.zulassen(&mut z, None)?;
     s.widerruf_nachholen(&mut z)?;
     let bund = z.bund(&s.schluessel()?)?;
     let epoche = u32::try_from(bund.aktuelle_epoche()).unwrap_or(u32::MAX);
     let hub = s.hub();
-    match verlauf::lauf(&s.store, &hub, bund, &s.geraet, true) {
+    match verlauf::lauf(&s.store, &hub, bund, &s.geraet, &s.konto()?, true) {
         Ok(bericht) => Ok(Ergebnis { bericht, epoche }),
         Err(f) => Err(lauf_meldung(&f, hub.letzter_code())),
     }
@@ -422,7 +474,7 @@ fn status_lokal(app: &AppHandle, dienst: &AssistentSyncDienst) -> AssistentSyncS
     let cfg = account::load(app);
     st.angemeldet = cfg.is_some();
     if let Ok(s) = sitzung_ohne_schalter(app) {
-        let z = s.zustand();
+        let z = s.zustand().unwrap_or_default();
         st.zugelassen = z.zugelassen;
         st.widerruf_offen = z.offener_widerruf.is_some();
         st.epoche = s
@@ -432,8 +484,9 @@ fn status_lokal(app: &AppHandle, dienst: &AssistentSyncDienst) -> AssistentSyncS
                 u32::try_from(b.aktuelle_epoche()).unwrap_or(u32::MAX)
             });
         st.grabsteine_offen = s
-            .store
-            .sync_grabsteine_offen()
+            .konto()
+            .ok()
+            .and_then(|k| s.store.sync_grabsteine_offen(&k).ok())
             .map_or(0, |g| u32::try_from(g.len()).unwrap_or(u32::MAX));
     } else {
         st.zugelassen = false;
@@ -454,11 +507,16 @@ fn sitzung_ohne_schalter(app: &AppHandle) -> Result<Sitzung, Meldung> {
     let pfad = crate::portable::app_data_dir(app)
         .map(|d| d.join(zustand::DATEI))
         .map_err(|_| Meldung::neu("Kein Datenverzeichnis."))?;
+    let sperre = app
+        .try_state::<AssistentSyncDienst>()
+        .map(|d| d.abbruch.clone())
+        .unwrap_or_default();
     Ok(Sitzung {
         cfg,
         geraet,
         store,
         pfad,
+        sperre,
     })
 }
 
@@ -497,6 +555,7 @@ async fn lauf_einmal(app: &AppHandle, dienst: &AssistentSyncDienst) -> Assistent
                 st.letzter_bericht = Some((&e.bericht).into());
             }
             Err(m) => {
+                bei_kontowechsel_ausschalten(app, &m);
                 st.braucht_freigabe = m.braucht_freigabe;
                 st.letzter_fehler = Some(m.text);
                 st.fehler_code = m.code;
@@ -578,7 +637,7 @@ pub async fn assistent_sync_geraet_zulassen(
         let _sperre = dienst.sperre.lock().await;
         let s = sitzung(&app).map_err(|m| m.text)?;
         let r = blockierend(move || {
-            let mut z = s.zustand();
+            let mut z = s.zustand()?;
             s.konto_abgleichen()?;
             s.zulassen(&mut z, Some(&code))
         })
@@ -590,6 +649,7 @@ pub async fn assistent_sync_geraet_zulassen(
                 st.fehler_code = None;
             }),
             Err(m) => {
+                bei_kontowechsel_ausschalten(&app, &m);
                 dienst.setzen(|st| {
                     st.braucht_freigabe = m.braucht_freigabe;
                     st.letzter_fehler = Some(m.text.clone());
@@ -603,9 +663,26 @@ pub async fn assistent_sync_geraet_zulassen(
     Ok(lauf_einmal(&app, &dienst).await)
 }
 
-/// Widerruft ein Gerät (Vergleichsschreiben auf die Epoche; das Gerät verliert auch sein Token).
-/// Der neue Epochenschlüssel bleibt auf diesem Gerät; die Antwort nennt die Geräte, an die er über
-/// die Kopplung gehen muss.
+/// Der Widerruf bleibt gesperrt, bis der Schlüsseltransport an die übrigen Geräte existiert: ohne ihn
+/// könnte ein Widerruf die Geräte des Kontos von ihrem eigenen Verlauf aussperren. Die Logik
+/// (`assistent_zustand::widerruf_durchfuehren`, erst sichern, dann Hub) ist fertig und getestet.
+const WIDERRUF_FREIGEGEBEN: bool = false;
+
+fn widerruf_pruefen() -> Result<(), Meldung> {
+    if WIDERRUF_FREIGEGEBEN {
+        return Ok(());
+    }
+    Err(Meldung {
+        text:
+            "Das Widerrufen von Geräten ist noch nicht freigeschaltet (Schlüsseltransport fehlt)."
+                .to_owned(),
+        code: Some(CODE_WIDERRUF_GESPERRT.to_owned()),
+        braucht_freigabe: false,
+    })
+}
+
+/// Widerruft ein Gerät. Gesperrt (Fehlercode `widerruf_gesperrt`), bis der Schlüsseltransport
+/// existiert; es gibt dann keinen Netzaufruf.
 #[tauri::command]
 #[specta::specta]
 pub async fn assistent_sync_geraet_widerrufen(
@@ -617,10 +694,18 @@ pub async fn assistent_sync_geraet_widerrufen(
     if !zustand::gueltige_kennung(&ziel) {
         return Err("Die Geräte-Kennung hat ein ungültiges Format.".into());
     }
+    if let Err(m) = widerruf_pruefen() {
+        dienst.setzen(|st| {
+            st.letzter_fehler = Some(m.text.clone());
+            st.fehler_code = m.code.clone();
+        });
+        melden(&app, &dienst);
+        return Err(m.text);
+    }
     let _sperre = dienst.sperre.lock().await;
     let s = sitzung(&app).map_err(|m| m.text)?;
     let r = blockierend(move || {
-        let mut z = s.zustand();
+        let mut z = s.zustand()?;
         s.konto_abgleichen()?;
         if !z.zugelassen {
             return Err(Meldung::neu(
@@ -628,26 +713,29 @@ pub async fn assistent_sync_geraet_widerrufen(
             ));
         }
         let hub = s.hub();
-        let mut a = Abgleich::new(&s.geraet, z.bund(&s.schluessel()?)?);
-        a.freigabe_einschalten();
-        if let Some(offen) = z.offenen_widerruf()? {
-            a.offenen_widerruf_wiederherstellen(offen);
-        }
-        let ergebnis = a.widerrufen(&hub, &ziel);
-        // Schlüssel und Vormerkung sofort sichern, auch bei Fehler (verlorene Antwort).
-        z.aus_bund(a.bund());
-        z.offenen_widerruf_merken(a.offener_widerruf());
-        s.speichern(&z)?;
+        let ergebnis = zustand::widerruf_durchfuehren(
+            &hub,
+            &s.geraet,
+            &s.schluessel()?,
+            &mut z,
+            &ziel,
+            &mut |z| s.speichern(z).map_err(|m| m.text),
+        );
         match ergebnis {
             Ok(epoche) => {
-                let empfaenger = a.empfaenger_fuer_epoche(&hub).unwrap_or_default();
+                let auth = wai_assistent::sync::AuthGeraet::new(&s.geraet);
+                let mut empfaenger = hub.zugelassene(&auth).unwrap_or_default();
+                empfaenger.retain(|g| g != &s.geraet);
                 Ok(AssistentWiderruf {
                     epoche: u32::try_from(epoche).unwrap_or(u32::MAX),
                     empfaenger,
                 })
             }
-            Err(SyncFehler::Hub(h)) => Err(hub_meldung(&h, hub.letzter_code())),
-            Err(_) => Err(Meldung::neu("Der Widerruf ist gescheitert.")),
+            Err(zustand::WiderrufFehler::Hub(h)) => Err(hub_meldung(&h, hub.letzter_code())),
+            Err(zustand::WiderrufFehler::Speicher(t)) => Err(Meldung::from(t)),
+            Err(zustand::WiderrufFehler::Sync(_)) => {
+                Err(Meldung::neu("Der Widerruf ist gescheitert."))
+            }
         }
     })
     .await;
@@ -702,20 +790,71 @@ pub async fn assistent_sync_geraete(
 }
 
 /// Schaltet den Assistent-Sync ein oder aus (Standard aus, E3.6). Erst nach dem Einschalten werden
-/// bestehende lokale Gespräche hochgeladen; beim Ausschalten bleibt alles, wie es ist.
+/// bestehende lokale Gespräche hochgeladen. Ausschalten setzt die Abbruchschranke, wartet, bis ein
+/// laufender Lauf geendet ist (danach geht kein Aufruf mehr ans Netz), und gibt die Schranke wieder
+/// frei. Einschalten bestätigt das angemeldete Konto (auch nach einem Konto- oder Schlüsselwechsel).
 #[tauri::command]
 #[specta::specta]
-pub fn change_assistent_sync_aktiv_setting(
+pub async fn change_assistent_sync_aktiv_setting(
     app: AppHandle,
     dienst: State<'_, AssistentSyncDienst>,
     enabled: bool,
 ) -> Result<(), String> {
-    let mut settings = crate::settings::get_settings(&app);
-    settings.assistent_sync_aktiv = enabled;
-    crate::settings::write_settings(&app, settings);
     if enabled {
+        let _sperre = dienst.sperre.lock().await;
+        if let Ok(s) = sitzung_ohne_schalter(&app) {
+            s.konto_bestaetigen().map_err(|m| m.text)?;
+        }
+        schalter_schreiben(&app, true);
+        drop(_sperre);
         dienst.anstossen();
+    } else {
+        ausschalten(&app, &dienst).await;
     }
     melden(&app, &dienst);
     Ok(())
+}
+
+fn schalter_schreiben(app: &AppHandle, an: bool) {
+    let mut settings = crate::settings::get_settings(app);
+    settings.assistent_sync_aktiv = an;
+    crate::settings::write_settings(app, settings);
+}
+
+/// Schalter aus, Schranke zu, auf das Ende eines laufenden Laufs warten, Schranke wieder auf.
+async fn ausschalten(app: &AppHandle, dienst: &AssistentSyncDienst) {
+    schalter_schreiben(app, false);
+    dienst.abbruch.store(true, Ordering::SeqCst);
+    let _lauf_zu_ende = dienst.sperre.lock().await;
+    dienst.abbruch.store(false, Ordering::SeqCst);
+}
+
+/// Nach einem Konto- oder Schlüsselwechsel: Schalter aus (ohne auf `sperre` zu warten, die der
+/// Aufrufer hält).
+fn bei_kontowechsel_ausschalten(app: &AppHandle, m: &Meldung) {
+    if m.code.as_deref() == Some(CODE_KONTO_GEWECHSELT) {
+        schalter_schreiben(app, false);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn widerruf_ist_gesperrt_mit_festem_code() {
+        let m = widerruf_pruefen().unwrap_err();
+        assert_eq!(m.code.as_deref(), Some(CODE_WIDERRUF_GESPERRT));
+        assert!(!m.braucht_freigabe);
+    }
+
+    #[test]
+    fn kontowechsel_meldung_hat_festen_code_und_keine_kennungen() {
+        let m = Meldung {
+            text: "x".into(),
+            code: Some(CODE_KONTO_GEWECHSELT.into()),
+            braucht_freigabe: false,
+        };
+        assert_eq!(m.code.as_deref(), Some("konto_gewechselt"));
+    }
 }
