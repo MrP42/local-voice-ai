@@ -11,6 +11,7 @@ import { open as dateiDialog } from "@tauri-apps/plugin-dialog";
 import {
   ArrowLeft,
   FolderOpen,
+  FolderTree,
   FolderPlus,
   FolderUp,
   Pencil,
@@ -105,6 +106,10 @@ export const AblagePage: React.FC = () => {
   const [suche, setSuche] = useState("");
   const [busy, setBusy] = useState(false);
   const [dlg, setDlg] = useState<Dlg | null>(null);
+  const letzteEinstellungen = useRef<AblageOrdner | null>(null);
+  const [ordnerBlatt, setOrdnerBlatt] = useState(false);
+  const einstellungenAusloeser = useRef<HTMLElement | null>(null);
+  const letzterAusloeser = useRef<HTMLElement | null>(null);
   const zaehler = useRef(0);
 
   const fehlerText = useCallback(
@@ -344,7 +349,7 @@ export const AblagePage: React.FC = () => {
       if (geaendert) await api.ordnerEinstellungen(id, e);
       if (a.ki !== undefined) await api.kiSetzen(id, a.ki);
     }, t("ablage.toast.gespeichert"));
-    if (gut) setDlg(null);
+    if (gut) schliesseEinstellungen();
   };
 
   const gefundenAufnehmen = (dat: string) => {
@@ -363,6 +368,29 @@ export const AblagePage: React.FC = () => {
 
   // --- Ansicht -------------------------------------------------------------------------
   const korbAnzahl = sicht?.papierkorb.length ?? 0;
+  const oeffneEinstellungen = (id: string) => {
+    const aktiv = document.activeElement;
+    einstellungenAusloeser.current =
+      aktiv instanceof HTMLElement && aktiv !== document.body ? aktiv : null;
+    setDlg({ art: "einstellungen", id });
+  };
+  const schliesseEinstellungen = () => {
+    setDlg(null);
+    const ziel = einstellungenAusloeser.current;
+    einstellungenAusloeser.current = null;
+    if (!ziel) return;
+    // Der Dialog gibt den Fokus nicht in jedem Fall zurück: nach dem Schließen nachziehen.
+    setTimeout(() => {
+      const a = document.activeElement;
+      if ((!a || a === document.body) && ziel.isConnected) ziel.focus();
+    }, 50);
+  };
+  const schliesseDetails = () => {
+    setDateiId(null);
+    const ziel = letzterAusloeser.current;
+    letzterAusloeser.current = null;
+    if (ziel) requestAnimationFrame(() => ziel.isConnected && ziel.focus());
+  };
   const wahl = (id: string) => {
     setAnsicht(id);
     setDateiId(null);
@@ -393,10 +421,10 @@ export const AblagePage: React.FC = () => {
         fassungen={fassungen}
         busy={busy}
         ueberschriftId={id}
-        onSchliessen={() => setDateiId(null)}
+        onSchliessen={schliesseDetails}
         onUmbenennen={() => setDlg({ art: "datei-umbenennen", id: datei.id })}
         onPapierkorb={() => void inKorb("datei", datei.id)}
-        onKi={() => setDlg({ art: "einstellungen", id: datei.ordner })}
+        onKi={() => oeffneEinstellungen(datei.ordner)}
       />
     );
   };
@@ -482,6 +510,15 @@ export const AblagePage: React.FC = () => {
         </h2>
       </div>
       <div className="ablage-head__tools">
+        <IconButton
+          icon={<FolderTree size={20} aria-hidden="true" />}
+          label={t("ablage.baum.knopf")}
+          size="md"
+          className="ablage-nur-schmal"
+          aria-haspopup="dialog"
+          onClick={() => setOrdnerBlatt(true)}
+          data-testid="ablage-ordner-waehlen"
+        />
         {imKorb ? (
           <Button
             variant="danger-ghost"
@@ -544,9 +581,7 @@ export const AblagePage: React.FC = () => {
                 label={t("ablage.einstellungen.knopf")}
                 size="md"
                 aria-haspopup="dialog"
-                onClick={() =>
-                  setDlg({ art: "einstellungen", id: aktuellerOrdner.id })
-                }
+                onClick={() => oeffneEinstellungen(aktuellerOrdner.id)}
                 data-testid="ablage-ordner-einstellungen"
               />
             </>
@@ -665,7 +700,8 @@ export const AblagePage: React.FC = () => {
       dateien={dateienHier}
       gewaehlt={dateiId}
       onOrdner={wahl}
-      onDatei={(id) => {
+      onDatei={(id, ausloeser) => {
+        letzterAusloeser.current = ausloeser;
         setUploadOffen(false);
         setDateiId(id);
       }}
@@ -674,6 +710,11 @@ export const AblagePage: React.FC = () => {
 
   const dlgOrdner = (id: string): AblageOrdner | null =>
     ordnerListe.find((o) => o.id === id) ?? null;
+  // Beim Schließen bleibt der Dialog noch gemountet, damit der Fokus zum Auslöser zurückkehrt.
+  const aktEinstellungen =
+    dlg?.art === "einstellungen" ? dlgOrdner(dlg.id) : null;
+  if (aktEinstellungen) letzteEinstellungen.current = aktEinstellungen;
+  const einstellungenOrdner = aktEinstellungen ?? letzteEinstellungen.current;
   const dlgDatei = (id: string): AblageDatei | null =>
     sicht.dateien.find((d) => d.id === id) ?? null;
 
@@ -746,9 +787,9 @@ export const AblagePage: React.FC = () => {
         )}
       </div>
 
-      {schmal && seiteOffen && (
+      {schmal && (
         <Dialog
-          open
+          open={seiteOffen}
           onOpenChange={(o) => {
             if (o) return;
             if (uploadOffen) {
@@ -767,6 +808,36 @@ export const AblagePage: React.FC = () => {
         >
           <div className="ablage" style={{ display: "block", height: "auto" }}>
             {detailInhalt("ablage-blatt-titel")}
+          </div>
+        </Dialog>
+      )}
+
+      {schmal && (
+        <Dialog
+          open={ordnerBlatt}
+          onOpenChange={setOrdnerBlatt}
+          title={t("ablage.baum.label")}
+          closeLabel={t("ablage.details.schliessen")}
+          className="ablage-sheet"
+          contentFades={false}
+        >
+          <div
+            className="ablage ablage-ordnerblatt"
+            style={{ display: "block", height: "auto" }}
+          >
+            <OrdnerBaum
+              ordner={ordnerListe}
+              gewaehlt={ansicht}
+              korbAnzahl={korbAnzahl}
+              onWahl={(id) => {
+                wahl(id);
+                setOrdnerBlatt(false);
+              }}
+              onNeu={() => {
+                setOrdnerBlatt(false);
+                setDlg({ art: "ordner-neu" });
+              }}
+            />
           </div>
         </Dialog>
       )}
@@ -829,11 +900,11 @@ export const AblagePage: React.FC = () => {
       />
       <OrdnerEinstellungen
         open={dlg?.art === "einstellungen"}
-        ordner={dlg?.art === "einstellungen" ? dlgOrdner(dlg.id) : null}
+        ordner={einstellungenOrdner}
         alle={ordnerListe}
         busy={busy}
         onSpeichern={(a) => void einstellungenSpeichern(a)}
-        onClose={() => setDlg(null)}
+        onClose={schliesseEinstellungen}
       />
       <BestaetigungDialog
         open={dlg?.art === "endgueltig"}

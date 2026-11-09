@@ -28,6 +28,7 @@ export const NameDialog: React.FC<{
   return (
     <Dialog
       open={open}
+      className="ablage-dlg"
       onOpenChange={(o) => !o && !busy && onClose()}
       title={titel}
       closeLabel={t("ablage.schliessen")}
@@ -88,6 +89,7 @@ export const BestaetigungDialog: React.FC<{
   return (
     <Dialog
       open={open}
+      className="ablage-dlg"
       onOpenChange={(o) => !o && !busy && onClose()}
       title={titel}
       closeLabel={t("ablage.schliessen")}
@@ -269,6 +271,7 @@ export const OrdnerEinstellungen: React.FC<{
   return (
     <Dialog
       open={open}
+      className="ablage-dlg"
       onOpenChange={(o) => !o && !busy && onClose()}
       title={t("ablage.einstellungen.titel", { name: ordner.name })}
       closeLabel={t("ablage.schliessen")}

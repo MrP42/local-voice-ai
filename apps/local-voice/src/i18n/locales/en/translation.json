@@ -8967,6 +8967,7 @@
     "speichern": "Save",
     "zurueck": "Back",
     "baum": {
+      "knopf": "Choose folder",
       "label": "Folders",
       "meine": "My folders",
       "wiederhergestellt": "Restored",

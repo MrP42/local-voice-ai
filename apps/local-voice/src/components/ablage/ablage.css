@@ -578,3 +578,20 @@
     display: inline-flex !important;
   }
 }
+.ablage-ordnerblatt .ablage-baum {
+  display: flex;
+  border: 0;
+}
+/* Touch: Bedienflächen unter 1024 px mindestens 44 × 44 px (Fluent-Größen sind kleiner). */
+@media (max-width: 1023px) {
+  .ablage button {
+    min-width: 44px !important;
+    min-height: 44px !important;
+  }
+}
+@media (max-width: 1023px) {
+  .ablage-dlg button {
+    min-width: 44px !important;
+    min-height: 44px !important;
+  }
+}
