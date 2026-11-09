@@ -318,6 +318,10 @@ fn zerlegen(text: &str) -> (Vec<String>, BTreeSet<String>) {
 fn nachrichtenkerne(c: &str) -> Vec<String> {
     let mut k = Vec::new();
     satzkerne(&entschaerfen(c), &mut k);
+    // Ungerahmtes JSON (etwa ein Beleg des Tors, `werkzeugergebnis_merken`): Blätter wie beim Merken.
+    if serde_json::from_str::<Value>(c.trim()).is_ok() {
+        k.extend(zerlegen(c).0);
+    }
     for (st, ende) in tor::datenbloecke(c) {
         if let Some(n) = tor::nutzlast(&c[st..ende]) {
             k.extend(zerlegen(n).0);
@@ -512,6 +516,9 @@ pub struct Pruefung {
     /// Geschützt, aber die Bindung ist nicht dauerhaft gesichert: nicht verarbeiten
     /// ([`UNGESICHERT`]).
     pub gesperrt: bool,
+    /// Die Eingaben enthalten tatsächlich Notizbuchdaten oder das Gespräch ist gebunden (ohne den
+    /// vorsorglichen Schutz bei ungesichertem Speicher); nur dann wird die Antwort gemerkt.
+    inhalt: bool,
     quelle: Quelle,
 }
 
@@ -671,7 +678,7 @@ pub fn pruefen(
                     .any(|k| entzogen_merkmale.contains(&merkmal(&salz, k))))
     };
     let mut p = Pruefung {
-        geschuetzt: r.defekt || gespraech.is_some_and(|g| r.bestand.gebunden.contains(g)),
+        geschuetzt: gespraech.is_some_and(|g| r.bestand.gebunden.contains(g)),
         ..Default::default()
     };
     let mut aus = Vec::with_capacity(nachrichten.len());
@@ -759,21 +766,31 @@ pub fn pruefen(
     drop(r);
     // Ein geschütztes Gespräch wird vor dem Modellaufruf dauerhaft gebunden; gelingt das nicht,
     // unterbleibt die Verarbeitung (sonst fehlte die Bindung der Antwort nach einem Neustart).
-    if p.geschuetzt {
-        let mut r = register();
+    let mut r = register();
+    p.inhalt = p.geschuetzt;
+    if p.inhalt {
         let neu = binden(&mut r, gespraech);
         if (neu || r.ungesichert) && !speichern(&mut r) {
             p.gesperrt = true;
         }
+    }
+    // Ist der Speicher ungesichert, fehlen womöglich Merkmale einer schon gezeigten Antwort: bis ein
+    // Schreiben gelingt, geht vorsorglich nichts an ein Cloud-Modell (Codex lva#414 Recheck 3/1).
+    // Unlesbarer Speicher: ohnehin alles lokal (fail closed).
+    if r.ungesichert || r.defekt {
+        p.geschuetzt = true;
     }
     p
 }
 
 /// Merkt die freigegebene Antwort eines Modellaufrufs mit geschützter Eingabe als selbst geschützt
 /// (Provenienz der Eingaben, bei gebundenem Gespräch dessen gültige Einträge); bindet das Gespräch.
-pub fn abgeleitet_merken(p: &Pruefung, ausgabe: &str, gespraech: Option<&str>) {
-    if !p.geschuetzt {
-        return;
+///
+/// `Err`: Merkmale und Provenienz sind nicht dauerhaft gesichert; der Aufrufer gibt die Antwort dann
+/// nicht frei (Rückgabewert, gemerkte Ausgabe) und meldet [`UNGESICHERT`].
+pub fn abgeleitet_merken(p: &Pruefung, ausgabe: &str, gespraech: Option<&str>) -> Result<(), ()> {
+    if !p.inhalt {
+        return Ok(());
     }
     let mut kerne = Vec::new();
     satzkerne(ausgabe, &mut kerne);
@@ -792,7 +809,11 @@ pub fn abgeleitet_merken(p: &Pruefung, ausgabe: &str, gespraech: Option<&str>) {
             ..Default::default()
         },
     );
-    speichern(&mut r);
+    if speichern(&mut r) {
+        Ok(())
+    } else {
+        Err(())
+    }
 }
 
 /// Sicherheitsvertrag zur Werkzeugrolle (an die erste Systemnachricht).

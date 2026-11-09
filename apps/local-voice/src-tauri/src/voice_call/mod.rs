@@ -609,12 +609,21 @@ pub async fn voice_call_chat(
             for piece in rest {
                 emit_piece(piece);
             }
-            tor::ausgabe_merken(conversation_id.as_deref(), &freigegeben);
-            assistent::schutz::abgeleitet_merken(
+            // Erst nach dauerhaft gesichertem Vermerk wird die Antwort freigegeben (Recheck 3/1).
+            if assistent::schutz::abgeleitet_merken(
                 &pruefung,
                 &freigegeben,
                 conversation_id.as_deref(),
-            );
+            )
+            .is_err()
+            {
+                let _ = app.emit(
+                    EVENT,
+                    serde_json::json!({"kind": "failed", "request_id": request_id}),
+                );
+                return Err(assistent::schutz::UNGESICHERT.to_string());
+            }
+            tor::ausgabe_merken(conversation_id.as_deref(), &freigegeben);
             let _ = app.emit(
                 EVENT,
                 serde_json::json!({

@@ -123,7 +123,7 @@ fn notizbuchdaten_verlangen_ein_lokales_modell_in_jeder_runde() {
     // nur noch den Verlauf (ohne Werkzeugergebnis) und bleibt trotzdem lokal.
     let p = pruefe(runde2, None, &nb1());
     let antwort = "Laut deinen Notizen wird die Kündigung von Frau Beispiel am Freitag besprochen.";
-    abgeleitet_merken(&p, antwort, None);
+    abgeleitet_merken(&p, antwort, None).unwrap();
     let spaeter = vec![
         m("user", "Was steht zur Personalsache im Notizbuch?"),
         m("assistant", antwort),
@@ -174,7 +174,7 @@ fn widerruf_entzieht_kontext_belege_und_letzte_ausgabe() {
         "Beleg vor dem Widerruf"
     );
     let antwort = "Die Kündigung von Frau Beispiel wird am Freitag besprochen [Q1].";
-    abgeleitet_merken(&p, antwort, Some("g-widerruf"));
+    abgeleitet_merken(&p, antwort, Some("g-widerruf")).unwrap();
     crate::assistent::tor::ausgabe_merken(Some("g-widerruf"), antwort);
 
     // Der Nutzer nimmt das Notizbuch nb1 zurück und gibt nur einen anderen Abschnitt frei.
@@ -405,7 +405,7 @@ fn teilwiderruf_trifft_antworten_aus_der_gespraechsbindung() {
     let p = pruefe(vec![m("user", "Erzähl mehr davon.")], Some("g2"), &nb1());
     assert!(p.geschuetzt);
     let antwort = "Umformuliert: Am Ende der Woche steht ein Gespräch über eine Personalfrage an.";
-    abgeleitet_merken(&p, antwort, Some("g2"));
+    abgeleitet_merken(&p, antwort, Some("g2")).unwrap();
     for i in 0..300 {
         merken(
             &ergebnis(
@@ -558,9 +558,9 @@ fn schreibfehler_sperrt_auslieferung_und_verarbeitung() {
     );
     assert!(p.geschuetzt);
     assert!(p.gesperrt);
-    // Unbeteiligtes Gespräch ohne Notizbuchdaten läuft weiter.
+    // Unbeteiligtes Gespräch ohne Notizbuchdaten läuft weiter, vorsorglich nur lokal.
     let p = pruefe(vec![m("user", "Hallo")], Some("g-frei"), &nb1());
-    assert!(!p.geschuetzt && !p.gesperrt);
+    assert!(p.geschuetzt && !p.gesperrt);
     // Neustart mit demselben (weiter kaputten) Pfad: kein Bestand, aber auch nie etwas ausgeliefert.
     neu_starten();
     assert!(notizbuch_ergebnis_merken(&text, &nb1(), Some("g-fehler")).is_err());
@@ -590,7 +590,7 @@ fn wiederholen_nach_widerruf_ohne_kerne() {
     );
     let p = pruefe(vec![m("user", "Fass zusammen.")], Some("g-w"), &nb1());
     let antwort = "Am Freitag geht es um eine Personalfrage, mehr steht nicht in den Notizen.";
-    abgeleitet_merken(&p, antwort, Some("g-w"));
+    abgeleitet_merken(&p, antwort, Some("g-w")).unwrap();
     crate::assistent::tor::ausgabe_merken(Some("g-w"), antwort);
     // Dieselbe Antwort als gemerkte Ausgabe eines anderen Gesprächs (Kopie).
     crate::assistent::tor::ausgabe_merken(Some("g-kopie"), antwort);
@@ -641,7 +641,7 @@ fn abschnitt_verschoben_entzieht_abgeleitete_antwort() {
     assert!(p.geschuetzt);
     assert!(p.quelle.abschnitte.contains("a1"));
     let antwort = "Es gibt einen Abschnitt zur Umzugsplanung des Personalrats mit drei Seiten.";
-    abgeleitet_merken(&p, antwort, Some("g-b"));
+    abgeleitet_merken(&p, antwort, Some("g-b")).unwrap();
     neu_starten();
     // a1 in ein anderes Notizbuch verschoben; nb1 bleibt freigegeben, Seiten unverändert.
     let p = pruefen(
@@ -654,4 +654,88 @@ fn abschnitt_verschoben_entzieht_abgeleitete_antwort() {
         },
     );
     assert_eq!(p.nachrichten[0].content, ENTZOGEN_ANTWORT);
+}
+
+// ---------------------------------------------------------------- Codex lva#414 Recheck 4
+
+/// Recheck 4/1: Schreibfehler beim Merken der Antwort. Die Antwort wird nicht freigegeben (`Err`),
+/// bis ein Schreiben gelingt geht in keinem Gespräch etwas an ein Cloud-Modell, und gemerkt wird
+/// nur für Gespräche mit echtem Notizbuchbezug.
+#[test]
+fn schreibfehler_beim_antwortmerken() {
+    let _g = sperre();
+    let (_d, pfad) = speicher();
+    merken(
+        &ergebnis("s1", "Personalsache", AUSZUG),
+        &nb1(),
+        Some("g-a"),
+    );
+    let p = pruefe(vec![m("user", "Fass zusammen.")], Some("g-a"), &nb1());
+    assert!(p.geschuetzt && !p.gesperrt);
+    // Ab jetzt scheitert jedes Schreiben.
+    let sperrordner = pfad.with_extension("json.tmp");
+    std::fs::create_dir(&sperrordner).unwrap();
+    let antwort = "Am Freitag geht es um eine Personalfrage aus den Notizen von gestern.";
+    assert!(
+        abgeleitet_merken(&p, antwort, Some("g-a")).is_err(),
+        "nicht freigeben"
+    );
+    // Dieselbe Antwort in einem anderen Gespräch: vorsorglich nur lokal.
+    let q = pruefe(vec![m("assistant", antwort)], Some("g-b"), &nb1());
+    assert!(q.geschuetzt);
+    // Die Antwort selbst gilt im Prozess weiter als geschützter Inhalt (Speicher im Arbeitsspeicher).
+    assert!(q.inhalt);
+    // Ein unbeteiligtes Gespräch wird nicht gemerkt und bindet nichts.
+    let frei = pruefe(vec![m("user", "Wie wird das Wetter?")], Some("g-c"), &nb1());
+    assert!(frei.geschuetzt && !frei.inhalt);
+    assert!(abgeleitet_merken(
+        &frei,
+        "Das Wetter wird morgen schön und sonnig.",
+        Some("g-c")
+    )
+    .is_ok());
+    // Neustart mit weiter kaputtem Schreiben: weiter vorsorglich lokal, g-a weiter gesperrt.
+    neu_starten();
+    let q = pruefe(vec![m("assistant", antwort)], Some("g-b"), &nb1());
+    assert!(q.geschuetzt);
+    assert!(pruefe(vec![m("user", "Weiter")], Some("g-a"), &nb1()).gesperrt);
+    // Schreiben geht wieder: g-a gebunden (vor dem Modellaufruf gesichert), g-b frei.
+    std::fs::remove_dir(&sperrordner).unwrap();
+    neu_starten();
+    let a = pruefe(vec![m("user", "Weiter")], Some("g-a"), &nb1());
+    assert!(a.geschuetzt && !a.gesperrt);
+    assert!(!pruefe(vec![m("user", "Hallo")], Some("g-b"), &nb1()).geschuetzt);
+    assert!(!pruefe(vec![m("user", "Hallo")], Some("g-c"), &nb1()).geschuetzt);
+}
+
+/// Recheck 4/2: Ein Beleg des Tors ist ungerahmtes JSON. Er wird nach einem Widerruf auch dann
+/// entfernt, wenn der Eintrag seine vollen Kerne verloren hat (mehr als 256 spätere Einträge).
+#[test]
+fn json_beleg_nach_vielen_eintraegen_widerrufen() {
+    let _g = sperre();
+    let (_d, _pfad) = speicher();
+    let text = ergebnis("s1", "Personalsache", AUSZUG);
+    crate::assistent::tor::werkzeugergebnis_merken(&text);
+    merken(&text, &nb1(), Some("g-j"));
+    let verlauf = vec![m("user", &rahmen("notizbuch_suchen", &text))];
+    assert_eq!(crate::assistent::tor::werkzeug_quellen(&verlauf).len(), 1);
+    for i in 0..300 {
+        merken(
+            &ergebnis(
+                &format!("j{i}"),
+                &format!("Füllnotiz {i}"),
+                "Ein weiterer längerer Satz.",
+            ),
+            &nb1(),
+            Some("g-fuell3"),
+        );
+    }
+    let ohne_s1 = |ids: &[String]| -> Result<BTreeSet<String>, ()> {
+        Ok(ids.iter().filter(|i| *i != "s1").cloned().collect())
+    };
+    assert!(widerruf_pruefen(&stand_mit(&nb1(), &ohne_s1)) >= 1);
+    assert!(
+        crate::assistent::tor::werkzeug_quellen(&verlauf).is_empty(),
+        "JSON-Beleg über Merkmale entfernt"
+    );
 }

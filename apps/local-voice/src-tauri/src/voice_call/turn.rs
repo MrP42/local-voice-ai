@@ -232,8 +232,15 @@ pub async fn voice_call_turn(
                     serde_json::json!({"kind": "delta", "request_id": request_id, "text": rest}),
                 );
             }
+            // Erst nach dauerhaft gesichertem Vermerk wird die Antwort freigegeben (Recheck 3/1).
+            if schutz::abgeleitet_merken(&pruefung, &prosa, conversation_id.as_deref()).is_err() {
+                let _ = app.emit(
+                    EVENT,
+                    serde_json::json!({"kind": "failed", "request_id": request_id}),
+                );
+                return Err(schutz::UNGESICHERT.to_string());
+            }
             tor::ausgabe_merken(conversation_id.as_deref(), &prosa);
-            schutz::abgeleitet_merken(&pruefung, &prosa, conversation_id.as_deref());
             Ok(ausgabe)
         }
         Some(Err(e)) => {
