@@ -7,4 +7,4 @@ commit = "56533672647b78a01659452e3e19549c299dfb4c"
 commit_datum = "2026-11-02"
 uebernommen_am = "2026-11-09"
 ausgelassen = ["Tests und Fixtures im SDK-Arbeitsbaum"]
-lokale_aenderungen = ["Retriever::open setzt PRAGMA secure_delete=ON und busy_timeout 10 s; Retriever::secure_delete(), close() und with_max_per_source() samt Kappung je Quelle in rank() (lva#426). Beim nächsten Vendor-Lauf erneut anwenden oder upstream einbringen.", "query(): Kennung des Embedders im Cache-Schlüssel; rank(): Kappung je Quelle auch in der Vektorliste (lva#395 D6). Beim nächsten Vendor-Lauf erneut anwenden oder upstream einbringen."]
+lokale_aenderungen = ["Retriever::open setzt PRAGMA secure_delete=ON und busy_timeout 10 s; Retriever::secure_delete(), close() und with_max_per_source() samt Kappung je Quelle in rank() (lva#426). Beim nächsten Vendor-Lauf erneut anwenden oder upstream einbringen.", "query(): Kennung des Embedders im Cache-Schlüssel; rank(): Kappung je Quelle auch in der Vektorliste; adopt_space() und fill_missing() für schrittweises Einbetten in kurzen Transaktionen (lva#395 D6). Beim nächsten Vendor-Lauf erneut anwenden oder upstream einbringen."]

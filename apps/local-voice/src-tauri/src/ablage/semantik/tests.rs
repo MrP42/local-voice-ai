@@ -63,12 +63,14 @@ fn modell_ist_im_katalog_mit_lizenz_und_pruefsummen() {
     assert_eq!(e.license.as_deref(), Some("MIT"));
     let namen: Vec<&str> = e.files.iter().map(|f| f.filename.as_str()).collect();
     assert_eq!(namen, [DATEI_MODELL, DATEI_ZERLEGER]);
+    // Die Revision steht nur im Katalog; Dateien und Kennung leiten sich daraus ab.
+    let rev = e.revision.clone().expect("gepinnte Revision");
+    assert_eq!(rev.len(), 40);
     for f in &e.files {
         assert!(f.sha256.as_deref().is_some_and(|s| s.len() == 64));
-        assert!(f
-            .url
-            .contains("/resolve/614241f622f53c4eeff9890bdc4f31cfecc418b3/"));
+        assert!(f.url.contains(&format!("/resolve/{rev}/")));
     }
+    assert_eq!(modell_kennung(), format!("e5-small@{}", &rev[..8]));
     let root = std::path::Path::new("/m");
     assert!(modell_ordner(root).starts_with(root.join(MODELL_ORDNER)));
     assert!(!modell_bereit(root));
@@ -91,10 +93,12 @@ fn ohne_modell_bleibt_die_einbettung_lexikalisch() {
         std::fs::write(ordner.join(n), b"x").unwrap();
     }
     assert!(modell_bereit(d.path()));
+    assert!(reste_vorhanden(d.path()));
     let nachbar = d.path().join("anderes-modell.bin");
     std::fs::write(&nachbar, b"y").unwrap();
     modell_entfernen(d.path()).unwrap();
     assert!(!modell_bereit(d.path()));
+    assert!(!reste_vorhanden(d.path()));
     assert!(!ordner.exists());
     assert!(nachbar.is_file());
     // Zweimal ist kein Fehler.
@@ -238,7 +242,8 @@ fn hybrid_mit_fake_nachziehen_rueckfall_und_papierkorb() {
     assert_eq!(vektoren(&b).1, 0);
     assert_eq!(index::vektor_stand(&b.a, &lex).unwrap(), (false, 0));
 
-    // Einschalten: der Index liegt im Raum „keiner“ → nachziehen bettet alle Stücke ein.
+    // Einschalten: der Index liegt im Raum „keiner“ → nachziehen übernimmt den Vektorraum und bettet
+    // alle Stücke schrittweise ein (64 Stücke, Schritte zu 32).
     assert!(index::vektor_stand(&b.a, &fake).unwrap().0);
     let n = index::vektoren_nachziehen(&b.a, &fake).unwrap();
     let (stuecke, vek) = vektoren(&b);
@@ -275,10 +280,8 @@ fn hybrid_mit_fake_nachziehen_rueckfall_und_papierkorb() {
     // Der Textlauf glich hier (Testprozess ohne Modell) lexikalisch ab: das neue Stück fehlt im
     // Vektorraum, bis nachgezogen wird; die Suche bleibt dabei vollständig (lexikalisch).
     assert_eq!(index::vektor_stand(&b.a, &fake).unwrap(), (false, 1));
-    assert_eq!(
-        index::vektoren_nachziehen(&b.a, &fake).unwrap() as i64,
-        vektoren(&b).0
-    );
+    // Nur das fehlende Stück wird eingebettet, nicht alle.
+    assert_eq!(index::vektoren_nachziehen(&b.a, &fake).unwrap(), 1);
     let (s2, v2) = vektoren(&b);
     assert_eq!(s2, v2);
     assert_eq!(
@@ -309,6 +312,35 @@ fn hybrid_mit_fake_nachziehen_rueckfall_und_papierkorb() {
     // Ein lexikalischer Abgleich löscht keine Vektoren und mischt keine fremden hinein.
     index::abgleichen_mit(&b.a, &lex).unwrap();
     assert_eq!(index::vektor_stand(&b.a, &fake).unwrap(), (false, 0));
+}
+
+/// Das Nachziehen sperrt nur schrittweise: ein Neuaufbau mitten im (langsamen) Nachziehen wartet
+/// höchstens einen Schritt, nicht den ganzen Lauf; danach endet das Nachziehen sauber, und ein
+/// weiteres Nachziehen füllt alle Stücke.
+#[test]
+fn neuaufbau_waehrend_des_nachziehens_wartet_nur_einen_schritt() {
+    let k = korpus();
+    let b = aufbauen(&k);
+    let pause = std::time::Duration::from_millis(1000);
+    let langsam = AblageEinbettung::test_langsam(0.5, pause);
+    let (stuecke, _) = vektoren(&b);
+    // 64 Stücke zu 32: mindestens zwei Schritte, zusammen ≥ 2 s.
+    assert!(stuecke > 32, "{stuecke}");
+    let a2 = Ablage::neu(b.a.dir().to_path_buf());
+    let l2 = langsam.clone();
+    let lauf = std::thread::spawn(move || index::vektoren_nachziehen(&a2, &l2));
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    // Die Dateisperre (die `neu_aufbauen` braucht) ist nach höchstens einem Schritt frei; hielte das
+    // Nachziehen sie über den ganzen Lauf, wären es fast 2 s.
+    let gewartet = index::dateisperre_warten();
+    assert!(gewartet < pause * 15 / 10, "{gewartet:?}");
+    // Ein echter Neuaufbau mitten im Lauf: beide enden ohne Fehler.
+    index::neu_aufbauen_mit(&b.a, &AblageEinbettung::Keine).unwrap();
+    lauf.join().unwrap().unwrap();
+    index::vektoren_nachziehen(&b.a, &langsam).unwrap();
+    assert_eq!(index::vektor_stand(&b.a, &langsam).unwrap(), (false, 0));
+    let (s2, v2) = vektoren(&b);
+    assert_eq!(s2, v2);
 }
 
 #[test]

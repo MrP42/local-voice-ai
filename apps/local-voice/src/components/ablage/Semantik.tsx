@@ -1,23 +1,23 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Switch } from "@fluentui/react-components";
+import { ProgressBar, Switch } from "@fluentui/react-components";
 import { listen } from "@tauri-apps/api/event";
 import { Sparkles } from "lucide-react";
 import type { AblageSemantik } from "@/bindings";
 import { Button } from "../ui/Button";
 import { api } from "./api";
+import { fehlerTeile } from "./logik";
 
-/** Kennung des Modells in `model-download-progress` (siehe `ablage::semantik::MODELL_ID`). */
-const MODELL_ID = "ablage-e5-small";
-
-/** Statuszeile der Einstellung als Text (ohne Prozent). */
+/** Statuszeile der Einstellung als Text (ohne Prozent: der Live-Bereich meldet nur Zustandswechsel). */
 function statusSchluessel(s: AblageSemantik): string {
   if (!s.an) return "aus";
   if (s.laedt) return "laedt";
   if (!s.modell_bereit) return "fehlt";
   if (s.ladefehler) return "fehler";
+  if (s.index_fehler) return "indexfehler";
   if (s.nachziehen) return "nachziehen";
-  if (!s.aktiv) return "wartet";
+  if (s.neuaufbau) return "neuaufbau";
+  if (s.vektoren_fehlen > 0) return "wartet";
   return "aktiv";
 }
 
@@ -30,8 +30,8 @@ export const SemantikZeile: React.FC<{ onGeaendert(): void }> = ({
 }) => {
   const { t } = useTranslation();
   const [s, setS] = useState<AblageSemantik | null>(null);
-  const [prozent, setProzent] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
+  const [fehler, setFehler] = useState<string | null>(null);
 
   const laden = useCallback(() => {
     api
@@ -54,13 +54,9 @@ export const SemantikZeile: React.FC<{ onGeaendert(): void }> = ({
     })
       .then(merken)
       .catch(() => {});
-    listen<{ model_id: string; percentage: number }>(
-      "model-download-progress",
-      (e) => {
-        if (e.payload.model_id === MODELL_ID)
-          setProzent(Math.round(e.payload.percentage));
-      },
-    )
+    listen<number>("ablage-semantik-fortschritt", (e) => {
+      setS((alt) => (alt ? { ...alt, laedt: true, prozent: e.payload } : alt));
+    })
       .then(merken)
       .catch(() => {});
     return () => {
@@ -69,14 +65,31 @@ export const SemantikZeile: React.FC<{ onGeaendert(): void }> = ({
     };
   }, [laden, onGeaendert]);
 
+  const melden = useCallback(
+    (e: unknown) => {
+      const { code, text } = fehlerTeile(
+        e instanceof Error ? e.message : String(e),
+      );
+      const suffix = (code ?? "").replace(/^semantik\./, "");
+      setFehler(
+        t(`ablage.semantik.fehler.${suffix || "allgemein"}`, {
+          defaultValue: text || t("ablage.semantik.fehler.allgemein"),
+        }),
+      );
+    },
+    [t],
+  );
+
   if (!s) return null;
 
   const schalten = async (an: boolean) => {
     setBusy(true);
+    setFehler(null);
     try {
       setS(await api.semantikSetzen(an));
       onGeaendert();
-    } catch {
+    } catch (e) {
+      melden(e);
       laden();
     } finally {
       setBusy(false);
@@ -84,28 +97,29 @@ export const SemantikZeile: React.FC<{ onGeaendert(): void }> = ({
   };
 
   const herunterladen = async () => {
-    setProzent(0);
-    setS({ ...s, laedt: true });
+    setFehler(null);
+    setS({ ...s, laedt: true, prozent: 0 });
     try {
       setS(await api.semantikLaden());
       onGeaendert();
-    } catch {
+    } catch (e) {
+      melden(e);
       laden();
-    } finally {
-      setProzent(null);
     }
   };
 
   const abbrechen = () => {
-    api.semantikAbbrechen().catch(() => {});
+    api.semantikAbbrechen().catch(melden);
   };
 
   const entfernen = async () => {
     setBusy(true);
+    setFehler(null);
     try {
       setS(await api.semantikLoeschen());
       onGeaendert();
-    } catch {
+    } catch (e) {
+      melden(e);
       laden();
     } finally {
       setBusy(false);
@@ -127,11 +141,32 @@ export const SemantikZeile: React.FC<{ onGeaendert(): void }> = ({
         >
           {t(`ablage.semantik.status.${schluessel}`, {
             mb: s.groesse_mb,
-            prozent: prozent ?? 0,
             anzahl: s.vektoren_fehlen,
           })}
           {!s.standard && s.an && ` ${t("ablage.semantik.optIn")}`}
         </span>
+        {s.laedt && (
+          <ProgressBar
+            className="ablage-semantik__fortschritt"
+            value={s.prozent}
+            max={100}
+            thickness="medium"
+            aria-label={t("ablage.semantik.fortschritt")}
+            aria-valuetext={t("ablage.semantik.prozent", {
+              prozent: s.prozent,
+            })}
+            data-testid="ablage-semantik-fortschritt"
+          />
+        )}
+        {fehler && (
+          <span
+            className="ablage-semantik__fehler"
+            role="alert"
+            data-testid="ablage-semantik-fehler"
+          >
+            {fehler}
+          </span>
+        )}
       </div>
       {s.an && !s.modell_bereit && !s.laedt && (
         <Button
@@ -153,7 +188,7 @@ export const SemantikZeile: React.FC<{ onGeaendert(): void }> = ({
           {t("ablage.semantik.abbrechen")}
         </Button>
       )}
-      {s.modell_bereit && !s.laedt && !s.nachziehen && (
+      {(s.modell_bereit || s.reste) && !s.laedt && !s.nachziehen && (
         <Button
           variant="danger-ghost"
           size="sm"

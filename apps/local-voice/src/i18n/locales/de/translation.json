@@ -9128,13 +9128,27 @@
       "optIn": "Noch nicht Standard: zeigt öfter Treffer, auch wenn kein passender Beleg existiert.",
       "abbrechen": "Abbrechen",
       "entfernen": "Modell entfernen",
+      "fortschritt": "Fortschritt des Modell-Downloads",
+      "prozent": "{{prozent}} Prozent",
+      "fehler": {
+        "allgemein": "Das hat nicht geklappt. Bitte erneut versuchen.",
+        "download": "Das Modell konnte nicht geladen werden. Bitte die Verbindung prüfen und erneut versuchen.",
+        "abgebrochen": "Das Laden wurde abgebrochen. Ein erneuter Start setzt fort.",
+        "laedt": "Das Modell wird gerade geladen.",
+        "belegt": "Der Suchindex wird gerade erweitert. Bitte später erneut versuchen.",
+        "speichern": "Das Modell konnte nicht gespeichert werden.",
+        "entfernen": "Das Modell konnte nicht entfernt werden.",
+        "katalog": "Das Modell ist in dieser Version nicht verfügbar."
+      },
       "entfernenHinweis": "Gibt {{mb}} MB frei. Die Suche ist danach wörtlich, bis das Modell erneut geladen wird.",
       "status": {
         "aus": "Aus – es wird wörtlich gesucht.",
         "fehlt": "Modell nicht geladen ({{mb}} MB) – bis dahin wird wörtlich gesucht.",
-        "laedt": "Modell wird geladen … {{prozent}} %",
+        "laedt": "Modell wird geladen …",
         "fehler": "Das Modell konnte nicht geladen werden – es wird wörtlich gesucht.",
         "nachziehen": "Suchindex wird erweitert …",
+        "neuaufbau": "Suchindex muss für die semantische Suche erweitert werden – bis dahin wird wörtlich gesucht.",
+        "indexfehler": "Suchindex gerade nicht verfügbar – es wird wörtlich gesucht.",
         "wartet": "Noch {{anzahl}} Textstellen ohne Vektor – bis dahin wird wörtlich gesucht.",
         "aktiv": "Aktiv – Treffer auch für sinngleiche Begriffe."
       }

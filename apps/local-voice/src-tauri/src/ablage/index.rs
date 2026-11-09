@@ -187,6 +187,14 @@ pub(crate) fn mit_sperre<T>(f: impl FnOnce() -> T) -> T {
     f()
 }
 
+/// Test: Wartezeit, bis [`neu_aufbauen`] die Dateien sperren könnte (Schreibsperre).
+#[cfg(test)]
+pub(crate) fn dateisperre_warten() -> std::time::Duration {
+    let t = std::time::Instant::now();
+    let _d = DATEIEN_SPERRE.write().unwrap_or_else(|e| e.into_inner());
+    t.elapsed()
+}
+
 /// `PRAGMA secure_delete` der eigenen Verbindung und der von `wai-retrieval` (Test).
 #[cfg(test)]
 pub(crate) fn secure_delete_stand(a: &Ablage) -> Res<(i64, i64)> {
@@ -553,46 +561,71 @@ pub fn neu_aufbauen_mit(a: &Ablage, emb: &AblageEinbettung) -> Res<AblageIndexBe
     abgleichen_mit(a, emb)
 }
 
-/// Bettet alle Stücke neu ein, wenn der Index nicht im Vektorraum von `emb` liegt oder Stücke ohne
-/// Vektor hat (Einschalten, Modellwechsel, Stücke aus der lexikalischen Zeit). Hält die Schreibersperre
-/// nicht: `wai-retrieval` bettet außerhalb der Schreibtransaktion ein und verwirft das Ergebnis, wenn
-/// parallel neu indexiert wurde (dann ein zweiter Versuch). Liefert die Zahl eingebetteter Stücke.
+/// Stücke je Schritt in [`vektoren_nachziehen`] (e5-small: rund 0,3 s auf einem Laptop-Kern).
+const NACHZIEHEN_STAPEL: usize = 32;
+/// Konflikte (paralleler Abgleich, Neuaufbau), nach denen [`vektoren_nachziehen`] aufgibt.
+const NACHZIEHEN_KONFLIKTE: u32 = 5;
+
+/// Bettet Stücke ohne Vektor ein, schrittweise zu [`NACHZIEHEN_STAPEL`] (Einschalten, Modellwechsel,
+/// Stücke aus der lexikalischen Zeit). Liegt der Index noch in einem anderen Vektorraum, wird er
+/// zuerst ohne Einbetten übernommen (alte Vektoren weg). Jeder Schritt öffnet den Index nur kurz unter
+/// der Lesesperre der Dateien und schreibt in einer kurzen Transaktion: [`neu_aufbauen`] und
+/// [`abgleichen`] warten höchstens einen Schritt. Konflikte mit parallelen Schreibern werden begrenzt
+/// wiederholt. Liefert die Zahl eingebetteter Stücke.
 pub fn vektoren_nachziehen(a: &Ablage, emb: &AblageEinbettung) -> Res<u32> {
     if !emb.ist_semantisch() {
         return Ok(0);
     }
     let pfad = index_pfad(a)?;
-    // Gegen das Löschen der Dateien durch [`neu_aufbauen`] (wie die Suche).
-    let _d = DATEIEN_SPERRE.read().unwrap_or_else(|e| e.into_inner());
-    if !pfad.is_file() {
-        return Ok(0);
-    }
-    laufzeit()?.block_on(async {
-        let r = Retriever::open(&pfad, emb.clone())
-            .await
-            .map_err(|_| fehler())?;
-        let mut erg = Err(fehler());
-        for _ in 0..2 {
-            let st = match r.status_for(MANDANT).await {
-                Ok(st) => st,
-                Err(_) => break,
-            };
-            if !st.reindex_needed && st.missing_vectors == 0 {
-                erg = Ok(0);
-                break;
+    let rt = laufzeit()?;
+    let mut gesamt: u32 = 0;
+    let mut konflikte = 0u32;
+    // Obergrenze der Schritte: die anfangs fehlenden Stücke plus Spielraum für neu hinzukommende.
+    let mut runden: Option<u64> = None;
+    loop {
+        let schritt: Res<Option<usize>> = {
+            let _d = DATEIEN_SPERRE.read().unwrap_or_else(|e| e.into_inner());
+            if !pfad.is_file() {
+                return Ok(gesamt);
             }
-            match r.reindex(MANDANT).await {
-                Ok(n) => {
-                    erg = Ok(n.min(u32::MAX as usize) as u32);
-                    break;
+            rt.block_on(async {
+                let r = Retriever::open(&pfad, emb.clone())
+                    .await
+                    .map_err(|_| fehler())?;
+                let erg = async {
+                    r.adopt_space(MANDANT).await?;
+                    if runden.is_none() {
+                        let st = r.status_for(MANDANT).await?;
+                        let fehlen = st.missing_vectors.max(0) as u64;
+                        runden = Some(fehlen / NACHZIEHEN_STAPEL as u64 * 2 + 8);
+                    }
+                    r.fill_missing(MANDANT, NACHZIEHEN_STAPEL).await
                 }
-                Err(RetrievalError::Conflict(_)) => continue,
-                Err(_) => break,
+                .await;
+                r.close().await;
+                match erg {
+                    Ok(n) => Ok(Some(n)),
+                    Err(RetrievalError::Conflict(_)) => Ok(None),
+                    Err(_) => Err(fehler()),
+                }
+            })
+        };
+        match schritt? {
+            Some(0) => return Ok(gesamt),
+            Some(n) => gesamt = gesamt.saturating_add(n.min(u32::MAX as usize) as u32),
+            None => {
+                konflikte += 1;
+                if konflikte >= NACHZIEHEN_KONFLIKTE {
+                    return Err(fehler());
+                }
             }
         }
-        r.close().await;
-        erg
-    })
+        match runden.as_mut() {
+            Some(0) => return Err(fehler()),
+            Some(r) => *r -= 1,
+            None => {}
+        }
+    }
 }
 
 /// Zustand der Vektoren für die Oberfläche: (Neuaufbau nötig, Stücke ohne Vektor). Ohne Index: (false, 0).

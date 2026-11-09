@@ -51,24 +51,37 @@ impl Zerleger {
 
     /// Aus einem Vokabular (Stück, Wert); Position = ID.
     pub fn neu(vocab: Vec<(String, f64)>, unk: i64) -> Self {
-        let unk_wert = vocab.iter().map(|(_, w)| *w).fold(f64::INFINITY, f64::min) - UNK_ABSCHLAG;
-        let max_len = vocab
+        let min = vocab.iter().map(|(_, w)| *w).fold(f64::INFINITY, f64::min);
+        Self::mit_ids(
+            vocab
+                .into_iter()
+                .enumerate()
+                .map(|(i, (s, w))| (s, w, i as i64))
+                .collect(),
+            unk,
+            min,
+        )
+    }
+
+    /// Aus (Stück, Wert, ID) und dem kleinsten Wert des ganzen Vokabulars (für den Abschlag von
+    /// `<unk>`); erlaubt einen Ausschnitt des Vokabulars (Referenztest).
+    pub fn mit_ids(stuecke: Vec<(String, f64, i64)>, unk: i64, min_wert: f64) -> Self {
+        let max_len = stuecke
             .iter()
-            .map(|(s, _)| s.chars().count())
+            .map(|(s, _, _)| s.chars().count())
             .max()
             .unwrap_or(1)
             .min(MAX_STUECK);
-        let stuecke = vocab
+        let stuecke = stuecke
             .into_iter()
-            .enumerate()
             // Sonderzeichen (`<s>`, `<pad>`, …) kommen im Text nie als Stück vor.
-            .filter(|(i, (s, _))| !(s.starts_with('<') && s.ends_with('>') && *i < 4))
-            .map(|(i, (s, w))| (s, (i as i64, w)))
+            .filter(|(s, _, i)| !(s.starts_with('<') && s.ends_with('>') && *i < 4))
+            .map(|(s, w, i)| (s, (i, w)))
             .collect();
         Self {
             stuecke,
             unk,
-            unk_wert,
+            unk_wert: min_wert - UNK_ABSCHLAG,
             max_len,
         }
     }
@@ -87,10 +100,27 @@ impl Zerleger {
                 }
             })
             .collect();
-        norm.split(' ')
-            .filter(|w| !w.is_empty())
-            .map(|w| format!("\u{2581}{w}"))
-            .collect()
+        // Wie `tokenizers` (Metaspace, `prepend_scheme = always`): Leerraumfolgen werden ein `▁`, vorne
+        // steht immer genau ein `▁`, jedes Wort beginnt mit `▁`; Leerraum am Ende bleibt ein eigenes `▁`.
+        let mut woerter: Vec<String> = Vec::new();
+        let mut leer = true;
+        for c in norm.chars() {
+            if c == ' ' {
+                leer = true;
+                continue;
+            }
+            if leer || woerter.is_empty() {
+                woerter.push("\u{2581}".into());
+                leer = false;
+            }
+            if let Some(w) = woerter.last_mut() {
+                w.push(c);
+            }
+        }
+        if leer && !norm.is_empty() {
+            woerter.push("\u{2581}".into());
+        }
+        woerter
     }
 
     /// Viterbi über ein Wort: beste Zerlegung nach Summe der Werte.
@@ -204,7 +234,7 @@ mod tests {
     fn leerraum_und_nfkc_werden_normalisiert() {
         assert_eq!(
             Zerleger::woerter("  a\u{00a0}\tb\n\u{fb01} "),
-            ["▁a", "▁b", "▁fi"]
+            ["▁a", "▁b", "▁fi", "▁"]
         );
     }
 
@@ -214,6 +244,31 @@ mod tests {
         let ids = z.kodieren(&"Vertrag ".repeat(100), 10);
         assert_eq!(ids.len(), 10);
         assert_eq!((ids[0], ids[9]), (BOS, EOS));
+    }
+
+    /// Referenz-IDs der Hugging-Face-Bibliothek `tokenizers` (Umlaute, ß, Ligaturen, Emoji, CJK,
+    /// Kompatibilitätszeichen, Leerraum), erzeugt aus dem echten `tokenizer.json` des Modells. Das
+    /// Vokabular ist auf die Stücke gekürzt, die in den Texten vorkommen können (für Viterbi
+    /// gleichwertig); der kleinste Wert des ganzen Vokabulars steht mit drin.
+    #[test]
+    fn stimmt_mit_den_referenz_ids_ueberein() {
+        #[derive(serde::Deserialize)]
+        struct Referenz {
+            unk_id: i64,
+            min_wert: f64,
+            stuecke: Vec<(String, f64, i64)>,
+            faelle: Vec<Fall>,
+        }
+        #[derive(serde::Deserialize)]
+        struct Fall {
+            text: String,
+            ids: Vec<i64>,
+        }
+        let r: Referenz = serde_json::from_str(include_str!("zerleger_referenz.json")).unwrap();
+        let z = Zerleger::mit_ids(r.stuecke, r.unk_id, r.min_wert);
+        for f in &r.faelle {
+            assert_eq!(z.kodieren(&f.text, 512), f.ids, "{:?}", f.text);
+        }
     }
 
     #[test]

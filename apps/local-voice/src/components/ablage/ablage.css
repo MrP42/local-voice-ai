@@ -632,6 +632,13 @@
 .ablage-semantik__titel {
   font-weight: 600;
 }
+.ablage-semantik__fortschritt {
+  margin-top: 4px;
+}
+.ablage-semantik__fehler {
+  margin-top: 2px;
+  color: var(--colorPaletteRedForeground1);
+}
 .ablage-suche__titel {
   margin: 8px 12px 4px;
   font-size: 12px;

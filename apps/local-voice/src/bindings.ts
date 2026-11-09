@@ -8600,6 +8600,14 @@ modell_bereit: boolean;
  */
 laedt: boolean; 
 /**
+ * Fortschritt des Downloads über alle Dateien (0–100, nur bei `laedt`).
+ */
+prozent: number; 
+/**
+ * Halbe Downloads liegen im Modellordner (können entfernt werden).
+ */
+reste: boolean; 
+/**
  * Downloadgröße in MB.
  */
 groesse_mb: number; 
@@ -8615,6 +8623,14 @@ nachziehen: boolean;
  * Stücke ohne Vektor (bis zum Ende des Nachziehens wirkt nur die lexikalische Suche).
  */
 vektoren_fehlen: number; 
+/**
+ * Der Index liegt noch nicht im Vektorraum des Modells (das Nachziehen übernimmt ihn).
+ */
+neuaufbau: boolean; 
+/**
+ * Der Zustand des Suchindex ließ sich nicht lesen.
+ */
+index_fehler: boolean; 
 /**
  * Die Suche nutzt gerade Vektoren.
  */

@@ -456,13 +456,19 @@ async function installMock(
                 standard: false,
                 modell_bereit: false,
                 laedt: false,
+                prozent: 0,
+                reste: false,
                 groesse_mb: 488,
                 ladefehler: false,
                 nachziehen: false,
                 vektoren_fehlen: 0,
+                neuaufbau: false,
+                index_fehler: false,
                 aktiv: false,
               });
               if (cmd === "ablage_semantik_setzen") sem.an = !!args?.an;
+              if (cmd === "ablage_semantik_laden" && w.__semantikFehler)
+                throw "semantik.download: Das Modell konnte nicht geladen werden.";
               if (cmd === "ablage_semantik_laden") sem.modell_bereit = true;
               if (cmd === "ablage_semantik_loeschen") sem.modell_bereit = false;
               sem.aktiv = !!sem.an && !!sem.modell_bereit;
@@ -1019,6 +1025,72 @@ test("1440 px: Schließen der Desktopdetails gibt den Fokus an die Zeile zurück
   await details.getByRole("button", { name: "Details schließen" }).click();
   await expect(details).toHaveCount(0);
   await expect(zeile).toBeFocused();
+});
+
+test("1440 px: semantische Suche – Fortschritt als Balken, Fehler als Hinweis, Status ohne Zahl", async ({
+  page,
+}) => {
+  await installMock(page, { theme: "light" });
+  // Download läuft schon (z. B. nach Neuöffnen der Seite), danach scheitert ein neuer Versuch.
+  await page.addInitScript(() => {
+    (window as unknown as Record<string, unknown>).__semantik = {
+      an: true,
+      standard: false,
+      modell_bereit: false,
+      laedt: true,
+      prozent: 42,
+      reste: false,
+      groesse_mb: 488,
+      ladefehler: false,
+      nachziehen: false,
+      vektoren_fehlen: 0,
+      neuaufbau: false,
+      index_fehler: false,
+      aktiv: false,
+    };
+  });
+  await offne(page, 1440, "light");
+  await waehle(page, "o_allg");
+  const feld = await suchfeld(page);
+  await feld.fill("Kündigung");
+  const status = page.getByTestId("ablage-semantik-status");
+  await expect(status).toContainText("Modell wird geladen");
+  await expect(status).not.toContainText("%");
+  const balken = page.getByRole("progressbar");
+  await expect(balken).toHaveAttribute("aria-valuenow", "42");
+  await expect(page.getByTestId("ablage-semantik-abbrechen")).toBeVisible();
+  // Download beendet mit Fehler: halbe Datei bleibt, Hinweis als Alarm, Entfernen wird angeboten.
+  await page.evaluate(() => {
+    const w = window as unknown as Record<string, Record<string, unknown>>;
+    Object.assign(w.__semantik, { laedt: false, prozent: 0, reste: true });
+    (w as unknown as Record<string, unknown>).__semantikFehler = true;
+  });
+  await page.getByTestId("ablage-semantik-schalter").click();
+  await page.getByTestId("ablage-semantik-schalter").click();
+  await expect(page.getByRole("progressbar")).toHaveCount(0);
+  await expect(page.getByTestId("ablage-semantik-entfernen")).toBeVisible();
+  await page.getByTestId("ablage-semantik-laden").click();
+  await expect(
+    page.getByRole("alert").filter({ hasText: "Verbindung" }),
+  ).toContainText("Das Modell konnte nicht geladen werden");
+  // Zustände ohne Vektoren: eigener Text statt „Noch 0 Textstellen“.
+  await page.evaluate(() => {
+    const w = window as unknown as Record<string, Record<string, unknown>>;
+    Object.assign(w.__semantik, { modell_bereit: true, index_fehler: true });
+  });
+  await page.getByTestId("ablage-semantik-schalter").click();
+  await page.getByTestId("ablage-semantik-schalter").click();
+  await expect(status).toContainText("Suchindex gerade nicht verfügbar");
+  await page.evaluate(() => {
+    const w = window as unknown as Record<string, Record<string, unknown>>;
+    Object.assign(w.__semantik, { index_fehler: false, neuaufbau: true });
+  });
+  await page.getByTestId("ablage-semantik-schalter").click();
+  await page.getByTestId("ablage-semantik-schalter").click();
+  await expect(status).toContainText(
+    "muss für die semantische Suche erweitert",
+  );
+  await expect(status).not.toContainText("Noch 0");
 });
 
 test("1440 px: Sync-Zustand je Datei und Kontingent im Fuß (D4)", async ({
