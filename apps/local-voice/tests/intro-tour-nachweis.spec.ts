@@ -803,6 +803,9 @@ test("Modal: Accessibility-Baum, Tab-Reihenfolge, Pfeile, Ansagen, Fokusrückgab
       return `${el.closest("[role=dialog]") ? "" : "AUSSERHALB "}${el.tagName === "TEXTAREA" ? "Übungsfeld" : el.innerText}`;
     });
   const order: string[] = [];
+  // Erst den Fokussprung des Schritts abwarten (rAF ins Übungsfeld), sonst holt er
+  // den Fokus nach dem Dialog-Fokus zurück und die Reihe beginnt eins später.
+  await expect(tour(page).getByRole("textbox")).toBeFocused();
   await tour(page).getByRole("dialog").focus();
   for (let i = 0; i < 8; i++) {
     await page.keyboard.press("Tab");
