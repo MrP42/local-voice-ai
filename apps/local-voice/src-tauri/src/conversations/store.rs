@@ -746,7 +746,10 @@ impl ConversationStore {
         if alt <= 0 || alt as usize >= MIGRATIONS.len() {
             return;
         }
-        let mut name = path.file_name().map(|n| n.to_os_string()).unwrap_or_default();
+        let mut name = path
+            .file_name()
+            .map(|n| n.to_os_string())
+            .unwrap_or_default();
         name.push(format!(".vor-v{alt}.bak"));
         let ziel = path.with_file_name(name);
         if ziel.exists() {
@@ -1297,8 +1300,8 @@ impl ConversationStore {
     /// Hub-Kennung und lokale Gesprächs-ID: `(unterhaltung_ref, conversation_id)`.
     pub fn sync_zuordnung(&self) -> Result<Vec<(String, String)>> {
         let conn = self.lock();
-        let mut stmt = conn
-            .prepare("SELECT unterhaltung_ref, conversation_id FROM assistent_sync_zuordnung")?;
+        let mut stmt =
+            conn.prepare("SELECT unterhaltung_ref, conversation_id FROM assistent_sync_zuordnung")?;
         let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
@@ -1401,9 +1404,7 @@ impl ConversationStore {
         let mut stmt = conn.prepare(
             "SELECT entry_id, hub_id, aktuell FROM assistent_sync_beitrag ORDER BY rowid ASC",
         )?;
-        let rows = stmt.query_map([], |r| {
-            Ok((r.get(0)?, r.get(1)?, r.get::<_, i64>(2)? != 0))
-        })?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get::<_, i64>(2)? != 0)))?;
         Ok(rows.collect::<std::result::Result<_, _>>()?)
     }
 

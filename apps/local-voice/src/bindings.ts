@@ -971,7 +971,7 @@ async assistentLetzteAusgabe(conversationId: string | null) : Promise<string | n
 /**
  * Vergisst die letzte Ausgabe (nach einer Antwort, die nicht durch das Tor lief).
  */
-async assistentAusgabeVergessen(conversationId: string | null) : Promise<null> {
+async assistentAusgabeVergessen(conversationId: string | null) : Promise<void> {
     return await TAURI_INVOKE("assistent_ausgabe_vergessen", { conversationId });
 },
 /**
