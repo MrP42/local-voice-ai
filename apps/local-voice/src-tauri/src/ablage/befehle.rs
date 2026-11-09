@@ -1,6 +1,7 @@
-//! Tauri-Befehle der Dokumentenablage (D1, D2). Die Ablage liegt unter `<Datenordner>/ablage/`, der
-//! Datenordner kommt wie bei den Projekten aus `portable::app_data_dir`. Fehlertexte enthalten nie Namen,
-//! Pfade oder Inhalte; an die Oberfläche geht `<code>: <text>`.
+//! Tauri-Befehle der Dokumentenablage (D1, D2, D3-Vorbau: Cloud-Ausnahme, KI-Entwurf). Die Ablage liegt
+//! unter `<Datenordner>/ablage/`, der Datenordner kommt wie bei den Projekten aus
+//! `portable::app_data_dir`. Fehlertexte enthalten nie Namen, Pfade oder Inhalte; an die Oberfläche geht
+//! `<code>: <text>`.
 //!
 //! D2: Nach Änderungen am Bestand wird der Index sofort abgeglichen (Papierkorb, Verschieben, Löschen
 //! wirken ohne Verzögerung auf die Suche) und der Textarbeiter angestoßen. Er meldet jedes Ergebnis mit
@@ -13,8 +14,8 @@ use super::freigabe::KiStufe;
 use super::index::{AblageIndexBericht, AblageSuchtreffer};
 use super::semantik;
 use super::speicher::{
-    Ablage, AblageArt, AblageEinstellungen, AblageFassung, AblageImportZeile, AblageKollisionswahl,
-    AblageLoeschBericht, AblageSicht,
+    Ablage, AblageArt, AblageEinstellungen, AblageEntwurf, AblageFassung, AblageImportZeile,
+    AblageKollisionswahl, AblageLoeschBericht, AblageSicht,
 };
 use serde::Serialize;
 use std::path::PathBuf;
@@ -177,6 +178,50 @@ pub async fn ablage_ordner_einstellungen(
 #[specta::specta]
 pub async fn ablage_ki_setzen(app: AppHandle, id: String, stufe: Option<KiStufe>) -> Antwort<()> {
     mit_nachlauf(&app, false, move |a| a.ki_setzen(&id, stufe)).await
+}
+
+/// Cloud-Ausnahme je (Ordner, Anbieter) für einen vertraulichen Ordner erteilen (`an`) oder entziehen
+/// (D3, Spec §5.1). Gerätelokal in `freigabe.json`.
+#[tauri::command]
+#[specta::specta]
+pub async fn ablage_cloud_ausnahme_setzen(
+    app: AppHandle,
+    ordner: String,
+    anbieter: String,
+    an: bool,
+) -> Antwort<()> {
+    blockierend(&app, move |a| {
+        a.cloud_ausnahme_setzen(&ordner, &anbieter, an)
+    })
+    .await
+}
+
+/// Einziges schreibendes KI-Werkzeug (D3, Spec §5.5): legt einen Entwurf (Markdown) als neue Datei in
+/// „KI-Entwürfe“ oder in einem Zielordner mit `zielordner_ki` ab. Klasse = Maximum aus Zielordner und
+/// Quellen; ist eine Quelle „nur dieses Gerät“, landet er in „KI-Entwürfe (nur dieses Gerät)“. `quellen`:
+/// Herkunftsmarken (`dokument:<dat>@<fas>#<textrev>`), Verweise oder `dat_…`. `mindestklasse`
+/// (`public` … `personal`): untere Schranke der Klasse; der Assistent übergibt das Maximum aller im
+/// Gespräch gelieferten Auszüge, weil die vom Modell benannten `quellen` unvollständig sein können.
+#[tauri::command]
+#[specta::specta]
+pub async fn ablage_entwurf_anlegen(
+    app: AppHandle,
+    ordner: Option<String>,
+    name: String,
+    inhalt_md: String,
+    quellen: Vec<String>,
+    mindestklasse: Option<String>,
+) -> Antwort<AblageEntwurf> {
+    mit_nachlauf(&app, false, move |a| {
+        let mindest = match mindestklasse.as_deref() {
+            None => None,
+            Some(t) => Some(super::zusammenfuehren::Klasse::aus_text(t).ok_or_else(|| {
+                super::Fehler::ungueltig("Unbekannte Mindestklasse des Entwurfs.")
+            })?),
+        };
+        super::ki::entwurf_anlegen(&a, ordner.as_deref(), &name, &inhalt_md, &quellen, mindest)
+    })
+    .await
 }
 
 /// „Freigaben neu festlegen“: nur bei unklarer (defekter) Freigabe; alle Ordner auf „aus“.

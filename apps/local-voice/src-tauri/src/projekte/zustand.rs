@@ -54,6 +54,9 @@ impl ProjekteZustand {
         let ordner = crate::portable::app_data_dir(&self.app)
             .map_err(|e| e.to_string())?
             .join("projekte");
+        let dokumentenablage = crate::portable::app_data_dir(&self.app)
+            .map_err(|e| e.to_string())?
+            .join("ablage");
         std::fs::create_dir_all(&ordner).map_err(|e| e.to_string())?;
         let app = self.app.clone();
         let app_seiten = self.app.clone();
@@ -95,7 +98,8 @@ impl ProjekteZustand {
         .await
         .map_err(|e| e.message)?
         .with_audit(audit.clone())
-        .with_ablage(ordner.clone());
+        .with_ablage(ordner.clone())
+        .with_dokumentenablage(dokumentenablage);
         let projekte = Arc::new(projekte);
         let recherche = RechercheDienst::open(
             rstore,

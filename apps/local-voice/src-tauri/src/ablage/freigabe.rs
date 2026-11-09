@@ -14,14 +14,17 @@
 //!   fehlte) ist auf beiden Wegen gesperrt statt `aus`, bis die Bedienung ihn (oder einen übergeordneten
 //!   Ordner) ausdrücklich neu setzt oder „Freigaben neu festlegen“ bestätigt.
 //!
+//! * Cloud-Ausnahmen je (Ordner, Anbieter) für `confidential` (Spec §5.1/§5.2, D3): gelten für den
+//!   Unterbaum. Eine Wiederherstellung aus `.vorher` und „Freigaben neu festlegen“ verwerfen sie
+//!   (fail-closed); eine ältere App, die die Datei neu schreibt, verliert sie ebenso (nie mehr Rechte).
+//!
 //! Die Funktionen sperren nicht selbst; der Aufrufer hält die Sperre der Ablage.
 
-// `global_erlaubt` und `projekt_erlaubt` sind die Abfragen für D3 (KI-Zugriff).
 #![allow(dead_code)]
 
 use super::{jetzt_ms, schreibe_atomar, Fehler, Res};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 
@@ -49,6 +52,9 @@ pub struct Freigaben {
     /// Kette gelten als `gesperrt` (nicht `aus`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub wiederhergestellt: bool,
+    /// Cloud-Ausnahmen für `confidential`: Ordner → Anbieter-Kennungen (gilt für den Unterbaum).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub ausnahmen: BTreeMap<String, BTreeSet<String>>,
 }
 
 impl Freigaben {
@@ -58,6 +64,7 @@ impl Freigaben {
             epoche,
             ordner: BTreeMap::new(),
             wiederhergestellt: false,
+            ausnahmen: BTreeMap::new(),
         }
     }
 }
@@ -111,7 +118,11 @@ fn lesen(pfad: &Path) -> Lesen {
         Ok(f)
             if f.ordner
                 .keys()
-                .all(|k| super::id_gueltig(super::PRAEFIX_ORDNER, k)) =>
+                .all(|k| super::id_gueltig(super::PRAEFIX_ORDNER, k))
+                && f.ausnahmen.iter().all(|(k, a)| {
+                    super::id_gueltig(super::PRAEFIX_ORDNER, k)
+                        && a.iter().all(|x| anbieter_gueltig(x))
+                }) =>
         {
             Lesen::Ok(f)
         }
@@ -172,6 +183,8 @@ fn wiederherstellen_oder(dir: &Path, sonst: KiUnklar) -> Lage {
                     .collect(),
                 // Ordner, die in der `.vorher` fehlen, dürfen nicht auf die Vorgabe `aus` fallen.
                 wiederhergestellt: true,
+                // Cloud-Ausnahmen kommen nicht zurück: sie müssen neu erteilt werden.
+                ausnahmen: BTreeMap::new(),
             };
             if beiseitelegen(dir).is_ok() && schreiben(dir, &neu).is_ok() {
                 Lage::Gueltig(neu)
@@ -225,6 +238,10 @@ pub fn umschreiben(dir: &Path, zuordnung: &BTreeMap<String, String>) -> Res<()> 
             f.ordner.entry(neu.clone()).or_insert(s);
             geaendert = true;
         }
+        if let Some(a) = f.ausnahmen.remove(alt) {
+            f.ausnahmen.entry(neu.clone()).or_default().extend(a);
+            geaendert = true;
+        }
     }
     if !geaendert {
         return Ok(());
@@ -239,12 +256,98 @@ pub fn vergessen(dir: &Path, ordner: &[String]) -> Res<()> {
     let Lage::Gueltig(mut f) = laden(dir) else {
         return Ok(());
     };
-    if !ordner.iter().any(|o| f.ordner.contains_key(o)) {
+    if !ordner
+        .iter()
+        .any(|o| f.ordner.contains_key(o) || f.ausnahmen.contains_key(o))
+    {
         return Ok(());
     }
     vorher_ablegen(dir)?;
     for o in ordner {
         f.ordner.remove(o);
+        f.ausnahmen.remove(o);
+    }
+    f.epoche += 1;
+    schreiben(dir, &f)
+}
+
+/// Kennung eines Anbieters für Cloud-Ausnahmen: 1–64 Zeichen aus `a-z`, `0-9`, `-`, `_`, `.`, `:`.
+pub fn anbieter_gueltig(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 64
+        && id.bytes().all(|b| {
+            b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'-' | b'_' | b'.' | b':')
+        })
+}
+
+/// Erteilt (`an`) oder entzieht eine Cloud-Ausnahme für `confidential` je (Ordner, Anbieter). Verweigert
+/// bei unklarer Freigabe. Ob der Ordner `confidential` ist, prüft der Aufrufer.
+pub fn ausnahme_setzen(dir: &Path, ordner: &str, anbieter: &str, an: bool) -> Res<Freigaben> {
+    let Lage::Gueltig(mut f) = laden(dir) else {
+        return Err(Fehler::neu(
+            "ablage.freigabe_unklar",
+            "Die KI-Freigabe ist unklar; sie muss zuerst neu festgelegt werden.",
+        ));
+    };
+    if !super::id_gueltig(super::PRAEFIX_ORDNER, ordner) {
+        return Err(Fehler::ungueltig("Kennung des Ordners ungültig."));
+    }
+    if !anbieter_gueltig(anbieter) {
+        return Err(Fehler::ungueltig("Kennung des Anbieters ungültig."));
+    }
+    let schon = f
+        .ausnahmen
+        .get(ordner)
+        .is_some_and(|a| a.contains(anbieter));
+    if schon == an {
+        return Ok(f);
+    }
+    vorher_ablegen(dir)?;
+    if an {
+        f.ausnahmen
+            .entry(ordner.to_string())
+            .or_default()
+            .insert(anbieter.to_string());
+    } else if let Some(a) = f.ausnahmen.get_mut(ordner) {
+        a.remove(anbieter);
+        if a.is_empty() {
+            f.ausnahmen.remove(ordner);
+        }
+    }
+    f.epoche += 1;
+    schreiben(dir, &f)?;
+    Ok(f)
+}
+
+/// Gilt für die Kette (Ordner bis Wurzel) eine Cloud-Ausnahme für `anbieter`? Bei unklarer Freigabe nie.
+/// Eine Ausnahme wirkt nur, solange der Ordner, an dem sie hängt, aktuell wirksam `confidential` ist
+/// (`vertraulich`); nach einem Klassenwechsel und zurück bleibt sie so unwirksam.
+pub fn ausnahme_gilt(
+    lage: &Lage,
+    kette: &[String],
+    anbieter: &str,
+    vertraulich: impl Fn(&str) -> bool,
+) -> bool {
+    match lage {
+        Lage::Gueltig(f) => kette
+            .iter()
+            .any(|o| f.ausnahmen.get(o).is_some_and(|a| a.contains(anbieter)) && vertraulich(o)),
+        Lage::Unklar(_) => false,
+    }
+}
+
+/// Entzieht alle Cloud-Ausnahmen der genannten Ordner (nach einem Klassenwechsel). Bei unklarer
+/// Freigabe nichts zu tun (Ausnahmen gelten dort ohnehin nie).
+pub fn ausnahmen_entziehen(dir: &Path, ordner: &[String]) -> Res<()> {
+    let Lage::Gueltig(mut f) = laden(dir) else {
+        return Ok(());
+    };
+    if !ordner.iter().any(|o| f.ausnahmen.contains_key(o)) {
+        return Ok(());
+    }
+    vorher_ablegen(dir)?;
+    for o in ordner {
+        f.ausnahmen.remove(o);
     }
     f.epoche += 1;
     schreiben(dir, &f)
@@ -299,6 +402,7 @@ pub fn neu_festlegen(dir: &Path, alle_ordner: &[String]) -> Res<Freigaben> {
             .map(|o| (o.clone(), KiStufe::Aus))
             .collect(),
         wiederhergestellt: false,
+        ausnahmen: BTreeMap::new(),
     };
     schreiben(dir, &neu)?;
     Ok(neu)
@@ -361,6 +465,19 @@ pub fn wirksam(lage: &Lage, kette: &[String]) -> Wirkung {
             vorgabe: true,
         },
     }
+}
+
+/// Wie [`wirksam`]; unter „Wiederhergestellt“ gilt zusätzlich eine Sperre der gespeicherten
+/// Elternkette `zusatz` (nur ein ausdrücklicher Eintrag dort zählt, nicht die Vorgabe einer leeren Kette).
+pub fn wirksam_mit_zusatz(lage: &Lage, kette: &[String], zusatz: &[String]) -> Wirkung {
+    let w = wirksam(lage, kette);
+    if !zusatz.is_empty() {
+        let z = wirksam(lage, zusatz);
+        if z.stufe == KiStufe::Gesperrt && !z.vorgabe && w.stufe != KiStufe::Gesperrt {
+            return z;
+        }
+    }
+    w
 }
 
 /// Globaler Weg (Assistent): nur Unterbäume mit `an`.

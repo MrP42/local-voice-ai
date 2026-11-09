@@ -48,6 +48,9 @@ pub use abgleich_zugriff::{Eingang, SyncBestand};
 #[path = "speicher_uebergang.rs"]
 mod uebergang;
 pub use uebergang::ProjektVerweise;
+#[path = "speicher_ki.rs"]
+mod ki_zugriff;
+pub use ki_zugriff::{AblageEntwurf, KiBestand, KiDatei};
 
 pub const DATEIEN: &str = "dateien";
 pub const TEXT: &str = "text";
@@ -128,6 +131,12 @@ enum Eintrag {
         groesse: u64,
         typ: String,
         zeit: i64,
+        /// D3 KI-Entwurf: Mindestklasse der neuen Datei (Maximum aus Zielordner und Quellen).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        klasse_min: Option<String>,
+        /// D3 KI-Entwurf: eine Quelle ist „nur dieses Gerät“.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        nur_geraet_min: bool,
     },
     /// Endgültiges Löschen läuft. `aufheben`: Grabstein vom Hub (D4) – Inhalte gehen für
     /// [`PAPIERKORB_TAGE`] in den Papierkorb (`papierkorb/grab-<ms>-…`), statt sofort entfernt zu werden.
@@ -828,15 +837,8 @@ pub struct AblageLoeschBericht {
 const KLASSEN: [&str; 5] = ["erbt", "public", "internal", "confidential", "personal"];
 
 fn ki_sicht(st: &Stand, lage: &freigabe::Lage, kette: &[String], zusatz: &[String]) -> AblageKi {
-    let mut w = freigabe::wirksam(lage, kette);
-    // Unter „Wiederhergestellt“ gilt zusätzlich eine Sperre der gespeicherten Elternkette (nur ein
-    // ausdrücklicher Eintrag dort zählt, nicht die Vorgabe einer leeren Kette).
-    if !zusatz.is_empty() {
-        let z = freigabe::wirksam(lage, zusatz);
-        if z.stufe == KiStufe::Gesperrt && !z.vorgabe && w.stufe != KiStufe::Gesperrt {
-            w = z;
-        }
-    }
+    // Unter „Wiederhergestellt“ gilt zusätzlich eine Sperre der gespeicherten Elternkette.
+    let w = freigabe::wirksam_mit_zusatz(lage, kette, zusatz);
     AblageKi {
         zustand: if w.unklar {
             "unklar".into()
@@ -987,6 +989,7 @@ impl Ablage {
         let _ = fs::create_dir_all(self.dir.join(DATEIEN));
         let _ = fs::create_dir_all(self.dir.join(PAPIERKORB));
         geaendert |= self.zwischendateien_raeumen();
+        self.entwurfsreste_raeumen();
         geaendert |= self.journal_abarbeiten(&mut st).unwrap_or(true);
         // Ein begonnener Rückweg (D4) zieht erst fertig um; sonst sähe die Suche unten die umgezogenen
         // Originale als Funde.
@@ -1014,6 +1017,36 @@ impl Ablage {
             return Some(AblageLage::NichtLesbar);
         }
         None
+    }
+
+    /// Räumt liegengebliebene Arbeitsordner `.entwurf-<ulid>` (D3) im Ablagewurzelordner weg, wenn sie
+    /// über eine Stunde alt sind (ein laufender Entwurf legt sie außerhalb der Sperre an). Verknüpfungen
+    /// werden nie gefolgt.
+    fn entwurfsreste_raeumen(&self) {
+        let Ok(inhalt) = fs::read_dir(&self.dir) else {
+            return;
+        };
+        let grenze = std::time::Duration::from_secs(3600);
+        for e in inhalt.flatten() {
+            let n = e.file_name().to_string_lossy().into_owned();
+            if !n
+                .strip_prefix(".entwurf-")
+                .is_some_and(|r| r.len() == 26 && ulid::Ulid::from_string(r).is_ok())
+            {
+                continue;
+            }
+            let Ok(m) = fs::symlink_metadata(e.path()) else {
+                continue;
+            };
+            let alt = m
+                .modified()
+                .ok()
+                .and_then(|t| t.elapsed().ok())
+                .is_some_and(|d| d >= grenze);
+            if m.is_dir() && !ist_umweg(&m) && alt {
+                let _ = fs::remove_dir_all(e.path());
+            }
+        }
     }
 
     /// Liegengebliebene Zwischendateien (`.teil-*`) in `dateien/<dat>/` gehen in den Papierkorb.
@@ -1613,9 +1646,11 @@ impl Ablage {
         }
         let (z, g) = (st.zaehler(), st.geraet().to_string());
         let o = st.ordner.get_mut(id).ok_or_else(nicht_gefunden)?;
+        let mut klasse_gewechselt = false;
         if let Some(k) = &e.datenklasse {
             if &o.datenklasse.wert != k {
                 o.datenklasse = Register::neu(k.clone(), z, &g);
+                klasse_gewechselt = true;
             }
         }
         if let Some(n) = e.nur_geraet {
@@ -1628,7 +1663,20 @@ impl Ablage {
                 o.zielordner_ki = Register::neu(k, z, &g);
             }
         }
-        self.sichern(&mut st)
+        self.sichern(&mut st)?;
+        if klasse_gewechselt {
+            // Cloud-Ausnahmen gelten nur für `confidential`: bei jedem Klassenwechsel verfallen sie für
+            // den Ordner und alle Unterordner (die wirksame Klasse kann sich dort mitändern).
+            let eltern = st.eltern();
+            let betroffen: Vec<String> = st
+                .ordner
+                .keys()
+                .filter(|k| zf::kette(&eltern, k).iter().any(|x| x == id))
+                .cloned()
+                .collect();
+            freigabe::ausnahmen_entziehen(&self.dir, &betroffen)?;
+        }
+        Ok(())
     }
 
     /// KI-Freigabe eines Ordners (gerätelokal, `freigabe.json`); `None` = erbt wieder.
@@ -1854,18 +1902,21 @@ impl Ablage {
         ordner: &str,
         wahl: Option<AblageKollisionswahl>,
     ) -> AblageImportZeile {
-        match self.datei_ablegen(quelle, ordner, wahl) {
+        match self.datei_ablegen(quelle, ordner, wahl, None) {
             Ok(z) => z,
             Err(e) => AblageImportZeile::fehler(quelle, &e),
         }
     }
 
-    /// Schritte 1 bis 4 der sicheren Ablage für genau eine Datei.
+    /// Schritte 1 bis 4 der sicheren Ablage für genau eine Datei. `entwurf` (D3): Quellen eines
+    /// KI-Entwurfs; Klasse und „nur dieses Gerät“ werden unter der Sperre bestimmt und stehen schon im
+    /// Journaleintrag.
     fn datei_ablegen(
         &self,
         quelle: &Path,
         ordner: &str,
         wahl: Option<AblageKollisionswahl>,
+        entwurf: Option<(&[String], Klasse)>,
     ) -> Res<AblageImportZeile> {
         let meta = fs::symlink_metadata(quelle)
             .map_err(|_| Fehler::neu("ablage.quelle_nicht_lesbar", "Quelle nicht lesbar."))?;
@@ -1886,6 +1937,22 @@ impl Ablage {
         let mut st = self.laden()?;
         let eltern = st.eltern();
         self.ordner_lebend(&st, &eltern, ordner)?;
+        let entwurf = match entwurf {
+            Some((q, mindest)) => {
+                let (k, nur) = ki_zugriff::entwurf_regel(&st, &eltern, ordner, q, mindest)?;
+                if nur && !zf::wirksam_nur_geraet(&st.ordner, &eltern, ordner) {
+                    return Err(Fehler::neu(
+                        "ablage.entwurf_geaendert",
+                        "Die Quellen haben sich geändert; bitte erneut versuchen.",
+                    ));
+                }
+                Some((k, nur))
+            }
+            None => None,
+        };
+        if entwurf.is_some() && wahl != Some(AblageKollisionswahl::BeideBehalten) {
+            return Err(Fehler::ungueltig("Ein Entwurf überschreibt nie."));
+        }
         // Namenskollision im Baum (ohne Groß-/Kleinschreibung, nach NFC).
         let schluessel = vergleichsschluessel(&name);
         let (offen_dat, _) = st.offen_geloescht();
@@ -1965,6 +2032,8 @@ impl Ablage {
             groesse,
             typ,
             zeit,
+            klasse_min: entwurf.map(|(k, _)| k.text().to_string()),
+            nur_geraet_min: entwurf.is_some_and(|(_, n)| n),
         };
         st.journal.push(eintrag.clone());
         // Scheitert das Vermerken, liegt das Original ohne Eintrag da: der Wiederanlauf findet es.
@@ -2851,7 +2920,8 @@ impl Ablage {
                 (None, None) => "kein_format".into(),
             };
             let kette = zf::kette(&eltern, &d.ordner.wert);
-            let w = freigabe::wirksam(&lage, &kette);
+            let zusatz = zf::zusatzkette(&st.ordner, &eltern, &d.ordner.wert);
+            let w = freigabe::wirksam_mit_zusatz(&lage, &kette, &zusatz);
             let ki = if w.unklar {
                 "unklar"
             } else {
@@ -3077,6 +3147,8 @@ fn anwenden_abgelegt(st: &mut Stand, e: &Eintrag) {
         groesse,
         typ,
         zeit,
+        klasse_min,
+        nur_geraet_min,
         ..
     } = e
     else {
@@ -3121,8 +3193,12 @@ fn anwenden_abgelegt(st: &mut Stand, e: &Eintrag) {
                     id: dat.clone(),
                     ordner: Register::neu(ordner.clone(), z, &g),
                     name: Register::neu(name.clone(), z, &g),
-                    klasse_min: Register::neu("public".into(), z, &g),
-                    nur_geraet_min: false,
+                    klasse_min: Register::neu(
+                        klasse_min.clone().unwrap_or_else(|| "public".into()),
+                        z,
+                        &g,
+                    ),
+                    nur_geraet_min: *nur_geraet_min,
                     blob_refs: zf::blob_refs_aus(std::slice::from_ref(&fassung)),
                     fassungen: vec![fassung],
                     wahlen: vec![],

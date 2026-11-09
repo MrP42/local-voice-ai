@@ -8,7 +8,8 @@
 //!   `nur_geraet`, Papierkorb, Stand, Stempel) und `ablage_stueck` (Seite → Abschnitt, Anker, Pfad).
 //! * Filter vor dem Ranking: das Quellrecht von `wai-retrieval` wird in derselben SQL-Abfrage geprüft.
 //!   Lebende Dateien tragen den Leser [`LESER_SUCHE`], Dateien im Papierkorb keinen; sie fallen damit vor
-//!   dem Ranking heraus. D3 ergänzt weitere Leser (Freigabe, Klasse).
+//!   dem Ranking heraus. D3: je KI-Weg (global/projekt) und Klassenprofil ein weiterer Leser
+//!   ([`leser_fuer`], [`ki_suchen`]); die Feinprüfung gegen den frischen Stand macht `ki`.
 //! * [`abgleichen`] ist der einzige Schreibweg: vergleicht den Stempel je Datei mit dem Stand der Ablage
 //!   und schreibt nur Abweichungen (Ablegen, Löschen, Verschieben, Papierkorb, Wiederherstellen, neue
 //!   Textfassung). Zweimal hintereinander ändert nichts; [`neu_aufbauen`] löscht `index.db` und gleicht ab.
@@ -99,6 +100,206 @@ fn sperren() -> std::sync::MutexGuard<'static, ()> {
 
 fn fehler() -> Fehler {
     Fehler::neu("ablage.index", "Der Suchindex ist gerade nicht verfügbar.")
+}
+
+/// Quellrecht einer Datei im Index: [`LESER_SUCHE`] für lebende Dateien, dazu (D3) je KI-Weg und
+/// Klassenprofil ein Leser [`ki_leser`]. So fallen nicht freigegebene oder zu hoch eingestufte Dateien
+/// schon in SQL vor dem Ranking heraus (Spec §4.3). Maßgeblich bleibt die Prüfung gegen den frischen
+/// Stand in `ki::auszuege`; das Quellrecht verhindert nur, dass gesperrte Dateien Plätze belegen.
+pub(crate) fn leser_fuer(q: &IndexQuelle) -> Vec<String> {
+    use super::zusammenfuehren::Klasse;
+    if q.papierkorb {
+        return vec![];
+    }
+    let mut l = vec![LESER_SUCHE.to_string()];
+    let Some(klasse) = Klasse::aus_text(&q.klasse) else {
+        return l;
+    };
+    let wege: &[KiWeg] = match q.ki.as_str() {
+        "an" => &[KiWeg::Global, KiWeg::Projekt],
+        "aus" => &[KiWeg::Projekt],
+        _ => &[],
+    };
+    for weg in wege {
+        for p in KiProfil::ALLE {
+            if p.erlaubt(klasse) {
+                l.push(ki_leser(*weg, p));
+            }
+        }
+    }
+    l
+}
+
+/// KI-Weg im Quellrecht des Index.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KiWeg {
+    /// Assistent: nur Unterbäume mit `an`.
+    Global,
+    /// Projekt: Mitgliedschaftsschalter; `gesperrt` schließt aus.
+    Projekt,
+}
+
+/// Klassenprofil des Ziels im Quellrecht des Index (grob; fein prüft `ki::klasse_erlaubt`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KiProfil {
+    /// Lokales Modell: jede bekannte Klasse.
+    Lokal,
+    /// Cloud bis `public`.
+    CloudPublic,
+    /// Cloud bis `internal`.
+    CloudInternal,
+    /// Cloud bis `confidential` (nur mit Ausnahme; die Ausnahme prüft `ki`).
+    CloudConfidential,
+}
+
+impl KiProfil {
+    pub const ALLE: [KiProfil; 4] = [
+        KiProfil::Lokal,
+        KiProfil::CloudPublic,
+        KiProfil::CloudInternal,
+        KiProfil::CloudConfidential,
+    ];
+
+    fn erlaubt(self, k: super::zusammenfuehren::Klasse) -> bool {
+        use super::zusammenfuehren::Klasse;
+        match self {
+            KiProfil::Lokal => k != Klasse::Unbekannt,
+            KiProfil::CloudPublic => k == Klasse::Public,
+            KiProfil::CloudInternal => k <= Klasse::Internal,
+            KiProfil::CloudConfidential => k <= Klasse::Confidential,
+        }
+    }
+
+    fn code(self) -> &'static str {
+        match self {
+            KiProfil::Lokal => "lokal",
+            KiProfil::CloudPublic => "cloud-public",
+            KiProfil::CloudInternal => "cloud-internal",
+            KiProfil::CloudConfidential => "cloud-confidential",
+        }
+    }
+}
+
+/// Leser im Quellrecht für einen KI-Weg und ein Klassenprofil.
+pub fn ki_leser(weg: KiWeg, p: KiProfil) -> String {
+    let w = match weg {
+        KiWeg::Global => "global",
+        KiWeg::Projekt => "projekt",
+    };
+    format!("ablage-ki-{w}-{}", p.code())
+}
+
+// Aufrufer `ki::auszuege` ist bis lva#365 P4c nur in Tests erreichbar.
+#[cfg_attr(not(test), allow(dead_code))]
+/// Eine Textstelle für die KI, roh aus dem Index (vor der Prüfung gegen den frischen Stand).
+#[derive(Debug, Clone, PartialEq)]
+pub struct KiStelle {
+    pub dat: String,
+    pub anker: String,
+    pub pfad: Vec<String>,
+    pub text: String,
+    pub rang: f64,
+}
+
+// Aufrufer `ki::auszuege` ist bis lva#365 P4c nur in Tests erreichbar.
+#[cfg_attr(not(test), allow(dead_code))]
+/// Ergebnis einer KI-Suche: Stellen (beste zuerst) und der Indexstand je Datei (`fas`, `textrev`).
+#[derive(Debug, Clone, Default)]
+pub struct KiSuche {
+    pub stellen: Vec<KiStelle>,
+    pub indiziert: BTreeMap<String, (String, Option<String>)>,
+    /// Der Kandidatenpool war voll (es gäbe womöglich weitere Stellen).
+    pub voll: bool,
+}
+
+// Aufrufer `ki::auszuege` ist bis lva#365 P4c nur in Tests erreichbar.
+#[cfg_attr(not(test), allow(dead_code))]
+/// Suche für die KI (D3): wie [`suchen_mit`], aber mit dem Leser des KI-Wegs (Filter in SQL vor dem
+/// Ranking) und ohne Gruppierung; dazu der Indexstand je Datei, damit der Aufrufer veraltete Stellen
+/// verwirft und die Abdeckung meldet. Kein Index: leeres Ergebnis.
+pub fn ki_suchen(
+    a: &Ablage,
+    anfrage: &str,
+    emb: &AblageEinbettung,
+    leser: &str,
+    kandidaten: usize,
+) -> Res<KiSuche> {
+    let anfrage: String = anfrage.chars().take(500).collect();
+    let pfad = index_pfad(a)?;
+    if !pfad.is_file() {
+        return Ok(KiSuche::default());
+    }
+    let _d = DATEIEN_SPERRE.read().unwrap_or_else(|e| e.into_inner());
+    let c = verbinden(&pfad)?;
+    let mut indiziert = BTreeMap::new();
+    {
+        let mut q = c
+            .prepare("SELECT dat, fas, textrev FROM ablage_dok")
+            .map_err(|_| fehler())?;
+        let zeilen = q
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, Option<String>>(2)?,
+                ))
+            })
+            .map_err(|_| fehler())?;
+        for z in zeilen {
+            let (d, f, t) = z.map_err(|_| fehler())?;
+            indiziert.insert(d, (f, t));
+        }
+    }
+    if wai_retrieval::content_tokens(&anfrage).is_empty() {
+        return Ok(KiSuche {
+            stellen: vec![],
+            indiziert,
+            voll: false,
+        });
+    }
+    let trace = format!("{:032x}", ulid::Ulid::new().0);
+    let antwort = laufzeit()?.block_on(async {
+        let r = Retriever::open(&pfad, emb.clone())
+            .await
+            .map_err(|_| fehler())?
+            .with_max_per_source(STELLEN_JE_DATEI);
+        let erg = r
+            .query(&principal(leser), &trace, &anfrage, kandidaten)
+            .await
+            .map_err(|_| fehler());
+        r.close().await;
+        erg
+    })?;
+    let mut stellen = Vec::new();
+    for z in &antwort.citations {
+        if datei_id_pruefen(&z.artifact_id).is_err() {
+            continue;
+        }
+        let seite = z.locator.page.unwrap_or(0) as i64;
+        let zeile: Option<(String, String)> = c
+            .query_row(
+                "SELECT anker, pfad FROM ablage_stueck WHERE dat = ?1 AND seite = ?2",
+                params![z.artifact_id, seite],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()
+            .map_err(|_| fehler())?;
+        let Some((anker, pfad)) = zeile else {
+            continue;
+        };
+        stellen.push(KiStelle {
+            dat: z.artifact_id.clone(),
+            anker,
+            pfad: serde_json::from_str(&pfad).unwrap_or_default(),
+            text: z.quote.clone(),
+            rang: z.score,
+        });
+    }
+    Ok(KiSuche {
+        stellen,
+        indiziert,
+        voll: antwort.citations.len() >= kandidaten,
+    })
 }
 
 /// Fundstelle in einer Datei.
@@ -195,7 +396,8 @@ fn stempel(q: &IndexQuelle) -> String {
         if q.nur_geraet { "1" } else { "0" },
         if q.papierkorb { "1" } else { "0" },
         &q.stand,
-        "v1",
+        // v2 (D3): Leser je KI-Weg und Klassenprofil im Quellrecht.
+        "v2",
     ] {
         h.update(teil.as_bytes());
         h.update([0u8]);
@@ -543,11 +745,7 @@ async fn schreiben(
                 if seiten.is_empty() {
                     r.delete(&q.dat).await.map_err(|_| fehler())?;
                 } else {
-                    let leser = if q.papierkorb {
-                        vec![]
-                    } else {
-                        vec![LESER_SUCHE.to_string()]
-                    };
+                    let leser = leser_fuer(q);
                     r.ingest(&IngestDoc {
                         source_id: q.dat.clone(),
                         tenant: MANDANT.into(),
@@ -720,12 +918,16 @@ pub fn vektor_stand(a: &Ablage, emb: &AblageEinbettung) -> Res<(bool, u32)> {
 }
 
 fn leser() -> wai_security::Principal {
+    principal(LESER_SUCHE)
+}
+
+fn principal(akteur: &str) -> wai_security::Principal {
     use wai_security::{
         resolve_principal, ActorId, ClientClaims, DataClass, Role, ServerSession, TenantId,
     };
     let sitzung = ServerSession {
         tenant: TenantId(MANDANT.into()),
-        actor: ActorId(LESER_SUCHE.into()),
+        actor: ActorId(akteur.into()),
         role: Role::Viewer,
         max_class: DataClass::Restricted,
         tool_rights: Default::default(),
