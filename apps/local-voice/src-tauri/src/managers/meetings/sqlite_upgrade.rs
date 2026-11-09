@@ -67,7 +67,10 @@ fn sqlite_ab_3_54(conn: &Connection) {
         .query_row("select sqlite_version()", [], |r| r.get(0))
         .unwrap();
     let t: Vec<u32> = v.split('.').map(|x| x.parse().unwrap_or(0)).collect();
-    assert!((t[0], t[1]) >= (3, 54), "SQLite {v} ist von RUSTSEC-2026-0459 betroffen");
+    assert!(
+        (t[0], t[1]) >= (3, 54),
+        "SQLite {v} ist von RUSTSEC-2026-0459 betroffen"
+    );
 }
 
 /// Gemeinsamer Ablauf: oeffnen, lesen, zweiter Start, schreiben, wieder oeffnen.
@@ -81,7 +84,10 @@ fn rundlauf(stamm: &str, erwartet: &[&str]) {
         assert_eq!(user_version(&conn), MIGRATIONS.len() as i64);
         assert_eq!(ids(&conn), erwartet, "Altdaten lesbar");
         assert_eq!(
-            count(&conn, "SELECT COUNT(*) FROM integration_grants WHERE integration_id = 'ordner1'"),
+            count(
+                &conn,
+                "SELECT COUNT(*) FROM integration_grants WHERE integration_id = 'ordner1'"
+            ),
             1
         );
         assert_eq!(count(&conn, "SELECT COUNT(*) FROM audit_log"), 1);
@@ -118,7 +124,10 @@ fn rundlauf(stamm: &str, erwartet: &[&str]) {
 #[test]
 fn fixtures_stammen_aus_rusqlite_037() {
     let herkunft = std::fs::read_to_string(fixture("ERZEUGT_MIT.txt")).unwrap();
-    assert!(herkunft.starts_with("rusqlite 0.37.0, SQLite 3.5"), "{herkunft}");
+    assert!(
+        herkunft.starts_with("rusqlite 0.37.0, SQLite 3.5"),
+        "{herkunft}"
+    );
     assert!(
         herkunft.contains(&format!("MIGRATIONS.len() = {}", MIGRATIONS.len())),
         "Fixture passt nicht mehr zur Migrationskette: {herkunft}"
@@ -136,6 +145,9 @@ fn nicht_checkpointete_wal_daten_aus_0_37_bleiben_erhalten() {
     let ohne_wal = tempfile::tempdir().unwrap();
     let p = ohne_wal.path().join("meetings.db");
     std::fs::copy(fixture("meetings-037-wal.db"), &p).unwrap();
-    assert!(ids(&Connection::open(&p).unwrap()).is_empty(), "Fixture ist schon checkpointet");
+    assert!(
+        ids(&Connection::open(&p).unwrap()).is_empty(),
+        "Fixture ist schon checkpointet"
+    );
     rundlauf("meetings-037-wal", &["M1", "M2"]);
 }
