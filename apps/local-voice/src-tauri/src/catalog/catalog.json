@@ -5872,6 +5872,31 @@
       ]
     },
     {
+      "id": "spk-campplus-voxceleb-16k",
+      "name": "CAM++ (Stimmabdruck)",
+      "description": "Stimmabdrücke für Vorschläge zum Zusammenführen von Sprechern innerhalb einer Besprechung (3D-Speaker CAM++, VoxCeleb, 16 kHz, ONNX). Die Abdrücke bleiben im Arbeitsspeicher und werden nicht gespeichert.",
+      "purpose": "speaker-embedding",
+      "category": "Sprechertrennung",
+      "license": "Apache-2.0",
+      "license_url": "https://www.modelscope.cn/models/iic/speech_campplus_sv_en_voxceleb_16k",
+      "license_note": "Gewichte von 3D-Speaker (Alibaba DAMO, ModelScope iic/speech_campplus_sv_en_voxceleb_16k, Lizenz Apache License 2.0), ONNX-Export aus dem sherpa-onnx-Release speaker-recongition-models. Wird auf Wunsch geladen, nicht mitgeliefert.",
+      "revision": "speaker-recongition-models",
+      "license_verified_on": "2026-11-04",
+      "source": "https://github.com/k2-fsa/sherpa-onnx/releases/tag/speaker-recongition-models",
+      "tags": [
+        "sprechertrennung"
+      ],
+      "files": [
+        {
+          "filename": "3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx",
+          "quant": "onnx",
+          "size_bytes": 29596978,
+          "sha256": "357a834f702b80161e5b981182c038e18553c1f2ca752ed6cec2052365d4129b",
+          "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx"
+        }
+      ]
+    },
+    {
       "id": "phonon-runtime-windows-x64",
       "name": "Phonon program ptts (Windows x64)",
       "description": "Phonon text-to-speech command line program ptts 0.4.2 for Windows x64, from the official gradium-ai/xn-ptts GitHub release v0.4.2.",

@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { titleId } from "../src/lib/kurzbuch/kurzbuch";
 
 // Vorlesen: Übersetzung und Zusammenfassung zeigen Fortschritt und lassen sich
 // abbrechen, haben ein Menü (Skript prüfen …), und die Sprecher der Übersetzung
@@ -73,7 +74,9 @@ test.beforeEach(async ({ page }) => {
         convertFileSrc: (path: string) => path,
         invoke: async (cmd: string, args?: Record<string, unknown>) => {
           (w.__calls as unknown[]).push([cmd, args]);
-          if (cmd === "get_app_settings" || cmd === "get_default_settings") return JSON.parse(JSON.stringify(settings));
+          if (cmd === "get_app_settings" || cmd === "get_default_settings")
+            // window.__theme: dunkle Belegbilder (lva#217).
+            return JSON.parse(JSON.stringify({ ...settings, ...(w.__theme ? { theme: w.__theme } : {}) }));
           if (cmd === "plugin:os|locale") return "de-DE";
           if (cmd === "plugin:app|version") return "0.21.14";
           if (cmd.includes("permission")) return true;
@@ -89,7 +92,35 @@ test.beforeEach(async ({ page }) => {
           if (cmd === "tts_list_voices") return voices.map((v) => v.id);
           if (cmd === "pages_list") return [{ id: "p1", title: "Podcast" }];
           if (cmd === "page_dir") return "C:\\projects\\p1";
-          if (cmd === "tts_translate" || cmd === "tts_summarize_text")
+          // KI-Dokumente (lva#183): zwei Vorlagen, Liste aus window.__kidocs.
+          if (cmd === "book_ai_templates" && w.__templates) return w.__templates;
+          if (cmd === "book_ai_templates")
+            return [
+              { id: "builtin:eine_seite", title: "Eine Seite", category: "ueberblick", description: "Das Buch auf einer Seite.", context: "", sections: [], target_words: 450, form: "Prose", audience: "allgemein", builtin: true },
+              { id: "builtin:lernzettel", title: "Lernzettel", category: "lernen", description: "Zum Wiederholen.", context: "", sections: [], target_words: 600, form: "List", audience: "lernende", builtin: true },
+            ];
+          if (cmd === "book_ai_documents") return (w.__kidocs as unknown[] | undefined) ?? [];
+          // Token-Prognose: Trockenlauf im Kern, hier fest.
+          if (cmd === "book_ai_estimate")
+            return (
+              w.__estimate ?? {
+                figures: { input_tokens: 41_850, output_tokens: 6_320, calls: 14, cost_micro: 0 },
+                local: true,
+                measured: false,
+                cached_steps: 3,
+                model: "qwen3-8b",
+              }
+            );
+          if (cmd === "page_state_load") return (w.__pageState as string | undefined) ?? null;
+          if (cmd === "book_ai_document_text") return (w.__docText as string | undefined) ?? "Kurz gesagt: alles gut.";
+          // Begriffe (lva#185): Liste und Fundstellen aus window.__terms / __hits.
+          if (cmd === "book_ai_terms") return (w.__terms as unknown[] | undefined) ?? [];
+          if (cmd === "book_ai_term_hits") return (w.__hits as unknown[] | undefined) ?? [];
+          if (cmd === "book_ai_terms_extract")
+            return new Promise((resolve, reject) => {
+              pending[cmd] = { resolve, reject };
+            });
+          if (cmd === "tts_translate" || cmd === "tts_summarize_text" || cmd === "book_ai_summarize")
             return new Promise((resolve, reject) => {
               pending[cmd] = { resolve, reject };
             });
@@ -164,20 +195,65 @@ test("im Reiter Übersetzung gibt es das Menü mit Skript prüfen und Sprecher t
   await expect(page.getByTestId("autotag-open")).toHaveCount(0);
 });
 
-test("im Reiter Zusammenfassung gibt es das Menü und den Fortschritt", async ({ page }) => {
+test("im Reiter KI-Dokumente gibt es das Menü, den Erstellen-Dialog und den Fortschritt", async ({ page }) => {
   await open(page);
-  await page.getByRole("tab", { name: "Zusammenfassung" }).click();
+  await page.getByRole("tab", { name: "KI-Dokumente" }).click();
   await page.getByTestId("tts-action-menu-summary").click();
   await expect(page.getByTestId("script-check-run")).toBeVisible();
   await expect(page.getByTestId("speaker-swap-open")).toHaveCount(0);
   await page.keyboard.press("Escape");
+  await expect(page.getByTestId("kidocs-empty")).toBeVisible();
+
+  // Neu erstellen: Quelle und Vorlage wählen, Laufzeit nur als Schätzung.
   await page.getByTestId("tts-action-summarize").click();
-  await emit(page, "tts-transform-progress", { kind: "summary", done: 0, total: 3 });
-  await expect(page.getByText("Fasse zusammen … Abschnitt 1 von 3")).toBeVisible();
-  await emit(page, "tts-transform-progress", { kind: "summary", done: 2, total: 3 });
-  await expect(page.getByText("Führe die Abschnitte zusammen …")).toBeVisible();
-  await finish(page, "tts_summarize_text", "Kurz gesagt: alles gut.");
-  await expect(page.locator("textarea").first()).toHaveValue("Kurz gesagt: alles gut.");
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toContainText("Neues KI-Dokument");
+  await expect(page.getByTestId("kidoc-src-book")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("kidoc-src-selection")).toBeDisabled();
+  await page.getByTestId("kidoc-tpl-search").fill("lern");
+  await expect(page.getByTestId("kidoc-tpl-builtin:eine_seite")).toHaveCount(0);
+  await page.getByTestId("kidoc-tpl-search").fill("");
+  await page.getByTestId("kidoc-tpl-builtin:eine_seite").click();
+  await expect(page.getByTestId("kidoc-estimate")).toContainText("Schätzung");
+  await page.getByTestId("kidoc-create").click();
+  await expect(dialog).toHaveCount(0);
+
+  // Erstellung läuft: als eigene Karte mit Schritten, getrennt vom Hörfortschritt.
+  await emit(page, "book-ai-progress", { page_id: "p1", kind: "summary", done: 1, total: 3 });
+  await expect(page.getByTestId("kidocs-running")).toContainText("1 von 3 Schritten");
+  const call = (await calls(page)).filter(([c]) => c === "book_ai_summarize").at(-1)!;
+  expect(call[1]).toMatchObject({
+    pageId: "p1",
+    source: { kind: "book" },
+    templateId: "builtin:eine_seite",
+    // lva#217: vorbelegt mit der App-Sprache.
+    targetLang: "de",
+  });
+
+  const doc = {
+    id: "01JAAAAAAAAAAAAAAAAAAAAAAA",
+    title: "Eine Seite – Ganzes Buch",
+    template_id: "builtin:eine_seite",
+    template_title: "Eine Seite",
+    source: { kind: "book" },
+    source_label: "Ganzes Buch",
+    created_ms: 1,
+    modified_ms: 1,
+    words: 4,
+    model: "ollama/x",
+  };
+  await page.evaluate((d) => {
+    (window as unknown as { __kidocs: unknown[] }).__kidocs = [d];
+  }, doc);
+  await finish(page, "book_ai_summarize", doc);
+
+  // Fertig: das Dokument öffnet sich im selben Reader, der Weg zurück ist sichtbar.
+  await expect(page.getByTestId("kidoc-head")).toContainText("Eine Seite – Ganzes Buch");
+  await expect(page.getByText("Kurz gesagt: alles gut.").first()).toBeVisible();
+  await page.getByTestId("kidoc-back").click();
+  const card = page.getByTestId(`kidocs-card-${doc.id}`);
+  await expect(card).toContainText("noch nicht gehört");
+  await expect(card).toContainText("Überblick · Ganzes Buch");
 });
 
 test("eine korrigierte Übersetzung wird abgelegt und beim Neuladen nicht überschrieben", async ({ page }) => {
@@ -248,4 +324,875 @@ test("eine aus dem Speicher geladene Übersetzung lässt sich nicht wegundo-n", 
   await expect(editor).toHaveValue("Hello there.");
   await editor.press("Control+z");
   await expect(editor).toHaveValue("Hello there.");
+});
+
+const kiDoc = (n: number, tpl: string) => ({
+  id: `01JKIDOC${String(n).padStart(18, "0")}`,
+  title: `Dokument ${n}`,
+  template_id: tpl,
+  template_title: tpl.endsWith("lernzettel") ? "Lernzettel" : "Eine Seite",
+  source: { kind: "book" },
+  source_label: "Ganzes Buch",
+  created_ms: 100 - n,
+  modified_ms: 1,
+  words: 10,
+  model: "ollama/x",
+});
+const manyKiDocs = Array.from({ length: 14 }, (_, i) =>
+  kiDoc(i + 1, i % 2 ? "builtin:eine_seite" : "builtin:lernzettel"),
+);
+
+test("zurück zu allen KI-Dokumenten behält Filter und Scrollstand", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 640 });
+  await page.addInitScript((docs) => {
+    (window as unknown as { __kidocs: unknown[] }).__kidocs = docs;
+  }, manyKiDocs);
+  await open(page);
+  await page.getByRole("tab", { name: "KI-Dokumente" }).click();
+  await page.getByTestId("kidocs-filter-lernen").click();
+  await expect(page.getByTestId("kidocs-filter-lernen")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator('[data-testid^="kidocs-card-"]')).toHaveCount(7);
+  const list = page.getByTestId("kidocs-list");
+  await list.evaluate((el) => {
+    el.scrollTop = 180;
+    el.dispatchEvent(new Event("scroll"));
+  });
+  const before = await list.evaluate((el) => el.scrollTop);
+  expect(before).toBeGreaterThan(0);
+
+  // Ohne Playwrights Hineinscrollen klicken: das verschöbe die Liste vor dem
+  // Öffnen, und die Liste merkte sich zu Recht diesen neuen Stand.
+  await page.getByTestId(`kidocs-card-${manyKiDocs[6].id}`).locator("button").first().dispatchEvent("click");
+  await expect(page.getByTestId("kidoc-head")).toContainText("Dokument 7");
+  await page.getByTestId("kidoc-back").click();
+
+  await expect(page.getByTestId("kidocs-filter-lernen")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator('[data-testid^="kidocs-card-"]')).toHaveCount(7);
+  await expect.poll(() => page.getByTestId("kidocs-list").evaluate((el) => el.scrollTop)).toBe(before);
+});
+
+test("das vorgelesene KI-Dokument ist in Kopfzeile und Liste gekennzeichnet", async ({ page }) => {
+  await page.addInitScript((docs) => {
+    (window as unknown as { __kidocs: unknown[] }).__kidocs = docs;
+  }, manyKiDocs.slice(0, 2));
+  await open(page);
+  await page.getByRole("tab", { name: "KI-Dokumente" }).click();
+  const id = manyKiDocs[0].id;
+  await page.getByTestId(`kidocs-play-${id}`).click();
+  await expect(page.getByTestId("kidoc-head")).toContainText("Dokument 1");
+  await emit(page, "tts-state-changed", { phase: "speaking", owns_server: false, message: null, server_up: true });
+  await expect(page.getByTestId("kidoc-playing")).toHaveText("Wird vorgelesen");
+  await page.getByTestId("kidoc-back").click();
+  await expect(page.getByTestId(`kidocs-card-${id}`).getByTestId("kidocs-playing")).toBeVisible();
+  await expect(page.getByTestId(`kidocs-card-${manyKiDocs[1].id}`).getByTestId("kidocs-playing")).toHaveCount(0);
+});
+
+// Begriffe (lva#185): Hervorhebung, Erklärfenster, Erkennungslauf.
+const TERM = {
+  id: "hallo",
+  term: "Hallo",
+  variants: [],
+  kind: "konzept",
+  from_book: "Ein Gruß im Buch.",
+  general: "Gängige Begrüßung im Deutschen.",
+  chapter: "Kapitel 1",
+  user_edited: false,
+  hidden: false,
+};
+const withTerms = async (page: Page, hits: { start: number; end: number }[]) => {
+  await page.addInitScript(
+    ([term, hits]) => {
+      const w = window as unknown as Record<string, unknown>;
+      w.__terms = [term];
+      w.__hits = (hits as { start: number; end: number }[]).map((h) => ({ term_id: "hallo", page: 12, ...h }));
+    },
+    [TERM, hits] as const,
+  );
+};
+const HALLO = { start: ORIGINAL.indexOf("Hallo"), end: ORIGINAL.indexOf("Hallo") + 5 };
+
+test("Begriffe sind gepunktet unterstrichen, das Erklärfenster pausiert, liest vor und setzt fort", async ({ page }) => {
+  // Eine veraltete Fundstelle (Text passt nicht mehr) wird nicht markiert.
+  await withTerms(page, [HALLO, { start: 0, end: 5 }]);
+  await open(page);
+  await page.getByTestId("reader-mode-read").click();
+  const mark = page.locator(".reader-term[role=button]");
+  await expect(mark).toHaveCount(1);
+  await expect(mark).toHaveText("Hallo");
+  await expect(mark).toHaveCSS("text-decoration-style", "dotted");
+
+  // Vorlesen läuft: Klick hält an und liest die Erklärung.
+  await emit(page, "tts-state-changed", { phase: "speaking", owns_server: false, message: null, server_up: true });
+  await mark.click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toContainText("Hallo");
+  await expect(page.getByTestId("term-from-book")).toHaveText("Ein Gruß im Buch.");
+  await expect(page.getByTestId("term-general")).toHaveText("Gängige Begrüßung im Deutschen.");
+  await expect(dialog).toContainText("nicht geprüft");
+  await expect(dialog).toContainText("Buchseite 12");
+  await expect(dialog).toContainText("Aus dem Buch, zusammengefasst");
+  await expect(page.getByTestId("term-continue")).toBeFocused();
+  let log = await calls(page);
+  expect(log.some(([c]) => c === "tts_cancel")).toBe(true);
+  const spoken = log.filter(([c]) => c === "tts_speak_text").at(-1)!;
+  expect(JSON.stringify(spoken[1])).toContain("Allgemeines Modellwissen, nicht geprüft");
+  expect(log.some(([c]) => c === "tts_speak_text_from")).toBe(false);
+
+  // „Mehr erfahren“: Wikipedia in der Sprache der Oberfläche.
+  await page.getByTestId("term-more").click();
+  log = await calls(page);
+  const opened = log.filter(([c]) => c === "plugin:opener|open_url").at(-1)!;
+  expect(JSON.stringify(opened[1])).toContain("https://de.wikipedia.org/w/index.php?search=Hallo");
+  // „In Notizen“ kommt erst mit B5 (Codex: bis dahin ausblenden).
+  await expect(page.getByTestId("term-notes")).toHaveCount(0);
+
+  // Eigene Suchadresse: aufklappbar, mit konkreter Fehlermeldung.
+  await page.getByTestId("term-search-toggle").click();
+  await expect(page.getByTestId("term-search-toggle")).toHaveAttribute("aria-expanded", "true");
+  await page.getByTestId("term-search-custom").check();
+  await expect(page.getByTestId("term-search-error")).toHaveText("Bitte eine Adresse eingeben.");
+  await expect(page.getByTestId("term-more")).toBeDisabled();
+  await page.getByTestId("term-search-url").fill("https://{q}.example.org/");
+  await expect(page.getByTestId("term-search-error")).toContainText("Servernamen");
+  await page.getByTestId("term-search-url").fill("https://example.org/suche?q={q}");
+  await expect(page.getByTestId("term-search-error")).toHaveCount(0);
+  await page.getByTestId("term-search-wikipedia").check();
+
+  // Weiterlesen: an der unterbrochenen Stelle.
+  await expect(page.getByTestId("term-continue")).toHaveText("Weiterlesen");
+  await page.getByTestId("term-continue").click();
+  await expect(dialog).toHaveCount(0);
+  log = await calls(page);
+  expect(log.some(([c]) => c === "tts_speak_text_from")).toBe(true);
+});
+
+test("Erklärfenster per Tastatur: Enter öffnet, Escape schließt; Vorlesen abschaltbar", async ({ page }) => {
+  await withTerms(page, [HALLO]);
+  await open(page);
+  await page.getByTestId("reader-mode-read").click();
+  const mark = page.locator(".reader-term[role=button]");
+  await expect(mark).toHaveCount(1);
+  await mark.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("dialog")).toBeVisible();
+  // Nichts lief: der Knopf liest ab dem Begriff.
+  await expect(page.getByTestId("term-continue")).toHaveText("Hier vorlesen");
+  await page.getByTestId("term-autoread").uncheck();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  const before = (await calls(page)).filter(([c]) => c === "tts_speak_text").length;
+  await mark.click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await page.waitForTimeout(200);
+  const after = (await calls(page)).filter(([c]) => c === "tts_speak_text").length;
+  expect(after).toBe(before);
+});
+
+test("die Hervorhebung lässt sich ausblenden, die Erkennung läuft auf Knopfdruck", async ({ page }) => {
+  await withTerms(page, [HALLO]);
+  await open(page);
+  await page.getByTestId("reader-mode-read").click();
+  await expect(page.locator(".reader-term")).toHaveCount(1);
+  await page.getByTestId("reader-terms").click();
+  await expect(page.getByTestId("reader-terms-status")).toHaveText("1 Begriff in diesem Buch");
+  await page.getByTestId("reader-terms-highlight").click();
+  await expect(page.locator(".reader-term")).toHaveCount(0);
+
+  await page.getByTestId("reader-terms-extract").click();
+  await emit(page, "book-ai-progress", { page_id: "p1", kind: "terms", done: 2, total: 5 });
+  await page.getByTestId("reader-terms").click();
+  await expect(page.getByTestId("reader-terms-status")).toHaveText("Erkenne Begriffe: Kapitel 2 von 5");
+  await page.getByTestId("reader-terms-cancel").click();
+  expect((await calls(page)).some(([c]) => c === "book_ai_cancel")).toBe(true);
+  await finish(page, "book_ai_terms_extract", null, "book_ai:cancelled");
+  await expect(page.getByTestId("reader-terms-running")).toHaveCount(0);
+});
+
+// Codex-Hinweise zu B2: alle 20 Vorlagen im Dialog, mobile Ziele mindestens 44 px.
+test("Erstellen-Dialog zeigt alle 20 Vorlagen; mobil sind alle Ziele mindestens 44 px hoch", async ({ page }) => {
+  const cats = ["ueberblick", "lernen", "analyse", "anwenden"];
+  const templates = Array.from({ length: 20 }, (_, i) => ({
+    id: `builtin:v${i}`,
+    title: `Vorlage ${i + 1}`,
+    category: cats[i % 4],
+    description: "Beschreibung.",
+    context: "",
+    sections: [],
+    target_words: 400,
+    form: "Prose",
+    audience: "allgemein",
+    builtin: true,
+  }));
+  await page.addInitScript((t) => {
+    (window as unknown as { __templates: unknown[] }).__templates = t;
+  }, templates);
+  await open(page);
+  await page.getByRole("tab", { name: "KI-Dokumente" }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByTestId("kidocs-new").click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toContainText("Neues KI-Dokument");
+  await expect(page.locator("[data-testid^=kidoc-tpl-builtin]")).toHaveCount(20);
+  const targets = dialog.locator("button:visible, input:visible");
+  const n = await targets.count();
+  expect(n).toBeGreaterThan(20);
+  for (let i = 0; i < n; i++) {
+    const box = await targets.nth(i).boundingBox();
+    if (!box) continue;
+    expect(box.height, `Ziel ${i}`).toBeGreaterThanOrEqual(44);
+  }
+});
+
+test("Erklärfenster und Lese-Werkzeugleiste: mobil alle Ziele mindestens 44 × 44 px", async ({ page }) => {
+  await withTerms(page, [HALLO]);
+  await open(page);
+  await page.getByTestId("reader-mode-read").click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  const toolbar = page.getByTestId("reader-toolbar").locator("button:visible");
+  const nt = await toolbar.count();
+  expect(nt).toBeGreaterThan(4);
+  for (let i = 0; i < nt; i++) {
+    const box = await toolbar.nth(i).boundingBox();
+    if (!box) continue;
+    expect(box.height, `Leiste ${i}`).toBeGreaterThanOrEqual(44);
+    expect(box.width, `Leiste ${i}`).toBeGreaterThanOrEqual(44);
+  }
+  await page.locator(".reader-term[role=button]").first().click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+  await page.getByTestId("term-search-toggle").click();
+  const targets = dialog.locator("button:visible, label:visible, input[type=text]:visible");
+  const n = await targets.count();
+  expect(n).toBeGreaterThan(6);
+  for (let i = 0; i < n; i++) {
+    const box = await targets.nth(i).boundingBox();
+    if (!box) continue;
+    expect(box.height, `Ziel ${i}`).toBeGreaterThanOrEqual(44);
+    expect(box.width, `Ziel ${i}`).toBeGreaterThanOrEqual(44);
+  }
+});
+
+// Kurzbuch (lva#205): Überblick neben dem Text, Vorlesen ab einer Kernaussage.
+const KURZBUCH = [
+  "## Worum es geht",
+  "",
+  "Ein Buch über Routinen und wie sie entstehen.",
+  "",
+  "## Für wen",
+  "",
+  "- Menschen mit guten Vorsätzen",
+  "- Teams",
+  "- Lernende",
+  "",
+  "## Kleiner Anfang: Eine Routine beginnt mit zwei Minuten.",
+  "",
+  "Wie fängt man an? Klein. ".repeat(20),
+  "",
+  "## Rückfall: Ein verpasster Tag ist kein Scheitern.",
+  "",
+  "Was tun nach einem schlechten Tag? Weitermachen. ".repeat(20),
+  "",
+  "## Fazit",
+  "",
+  "Kleine Schritte tragen weit.",
+].join("\n");
+
+test("ein Kurzbuch zeigt Überblick und Kernaussagen und liest ab einer Kernaussage vor", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1920, height: 1000 });
+  const doc = {
+    ...kiDoc(1, "builtin:kurzbuch"),
+    title: "Kurzbuch – Ganzes Buch",
+    template_title: "Kurzbuch",
+  };
+  await page.addInitScript(
+    ([docs, text]) => {
+      const w = window as unknown as Record<string, unknown>;
+      w.__kidocs = docs;
+      w.__docText = text;
+    },
+    [[doc], KURZBUCH] as const,
+  );
+  await open(page);
+  await page.getByRole("tab", { name: "KI-Dokumente" }).click();
+  await page
+    .getByTestId(`kidocs-card-${doc.id}`)
+    .locator("button")
+    .first()
+    .click();
+  await page
+    .getByRole("group", { name: "Ansicht" })
+    .getByRole("button", { name: "Lesen" })
+    .click();
+  const panel = page.getByRole("complementary", {
+    name: "Überblick des Kurzbuchs",
+  });
+  await expect(panel).toBeVisible();
+  await expect(panel).toContainText("2 Kernaussagen");
+  await expect(panel).toContainText("Für wen");
+  await expect(panel.getByRole("listitem")).toHaveCount(
+    2 + 3 /* Für wen */ + 1 /* Fazit */,
+  );
+  await page.screenshot({
+    path: "docs/vorschau/buch-ki-b7/03-app-kurzbuch.png",
+  });
+  // Schmaler Bereich (Seiten- und Werkzeugspalte offen): Überblick darüber,
+  // zugeklappt, damit der Lesetext Platz behält.
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await expect(panel).toBeVisible();
+  const toggle = panel.getByRole("button", {
+    name: "Kernaussagen und Details zeigen",
+  });
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(panel.getByRole("list", { name: "Kernaussagen" })).toBeHidden();
+  await page.screenshot({
+    path: "docs/vorschau/buch-ki-b7/04-app-kurzbuch-schmal.png",
+  });
+  await toggle.click();
+  await expect(panel.getByRole("list", { name: "Kernaussagen" })).toBeVisible();
+  const before = (await calls(page)).length;
+  await panel
+    .getByRole("button", { name: "Kernaussage 2 von 2 vorlesen" })
+    .click();
+  await expect
+    .poll(async () =>
+      (await calls(page)).slice(before).some(([c]) => c.startsWith("tts_")),
+    )
+    .toBe(true);
+});
+
+// Rahmen bleibt stehen (Patrick 02.11.): Gehörte Kernaussagen tragen ein
+// unsichtbares „Gehört.“ (sr-only, absolut). Tief unten in der Liste ragte es
+// aus dem Scrollbereich und machte das Dokument scrollbar – eine zweite
+// Scrollleiste ganz rechts schob Titelleiste und Navigation mit; mit
+// „Wach halten“ wanderte derselbe Überhang in die Lesespalte. Nur die
+// Inhaltsbereiche dürfen scrollen.
+const KURZBUCH_LANG = [
+  "## Worum es geht",
+  "",
+  "Ein Buch über Geld und Vermögen. ".repeat(6),
+  "",
+  "## Für wen",
+  "",
+  "- Angestellte",
+  "- Selbständige",
+  "",
+  ...Array.from({ length: 12 }, (_, i) => [
+    `## Schlagwort ${i + 1}: Eine lange Kernaussage, die in der schmalen Spalte über mehrere Zeilen umbricht.`,
+    "",
+    "Ein Absatz, der vorgelesen wird und die Seite füllt. ".repeat(12),
+    "",
+  ]).flat(),
+  "## Fazit",
+  "",
+  "Kleine Schritte tragen weit.",
+].join("\n");
+
+const shellStill = async (page: Page, label: string) => {
+  // Abnahmebilder nur auf Wunsch (LVA_SHOTS=Ordner).
+  if (process.env.LVA_SHOTS)
+    await page.screenshot({
+      path: `${process.env.LVA_SHOTS}/${label.replace(/\s+/g, "-")}.png`,
+    });
+  const m = await page.evaluate(() => {
+    const doc = document.scrollingElement as HTMLElement;
+    const frame = document.querySelector<HTMLElement>(".reader-frame");
+    const fill = document.querySelector<HTMLElement>(".workspace-main--fill");
+    return {
+      docOver: doc.scrollHeight - doc.clientHeight,
+      docTop: doc.scrollTop,
+      titlebarTop: document.querySelector(".lv-titlebar")!.getBoundingClientRect().top,
+      // Breit füllt die Lesespalte ihren Bereich und scrollt nicht als Ganzes;
+      // schmal (≤ 1100 px) scrollt der Hauptbereich, die Spalte wächst mit.
+      frameOver:
+        frame && fill && getComputedStyle(fill).overflowY === "hidden"
+          ? frame.scrollHeight - frame.clientHeight
+          : 0,
+      frameTop: frame?.scrollTop ?? 0,
+    };
+  });
+  expect(m.docOver, `${label}: Dokument ragt über das Fenster`).toBeLessThanOrEqual(0);
+  expect(m.docTop, `${label}: Dokument gescrollt`).toBe(0);
+  expect(m.titlebarTop, `${label}: Titelleiste verschoben`).toBe(0);
+  expect(m.frameOver, `${label}: Lesespalte scrollbar`).toBeLessThanOrEqual(1);
+  expect(m.frameTop, `${label}: Lesespalte gescrollt`).toBe(0);
+};
+
+test("Kurzbuch mit gehörten Kernaussagen: Dokument und Rahmen scrollen nie (1440 und 390 px)", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const doc = {
+    ...kiDoc(1, "builtin:kurzbuch"),
+    title: "Kurzbuch – Ganzes Buch",
+    template_title: "Kurzbuch",
+  };
+  const heard = Array.from({ length: 12 }, (_, i) =>
+    titleId(
+      `Schlagwort ${i + 1}: Eine lange Kernaussage, die in der schmalen Spalte über mehrere Zeilen umbricht.`,
+    ),
+  );
+  await page.addInitScript(
+    ([docs, text, key, heard]) => {
+      const w = window as unknown as Record<string, unknown>;
+      w.__kidocs = docs;
+      w.__docText = text;
+      window.localStorage.setItem(
+        key as string,
+        JSON.stringify({ heard, updated: Date.now() }),
+      );
+    },
+    [[doc], KURZBUCH_LANG, `lva.ui.progress.kurzbuch:p1:${doc.id}`, heard] as const,
+  );
+  await open(page);
+  await page.getByRole("tab", { name: "KI-Dokumente" }).click();
+  await page.getByTestId(`kidocs-card-${doc.id}`).locator("button").first().click();
+  await page
+    .getByRole("group", { name: "Ansicht" })
+    .getByRole("button", { name: "Lesen" })
+    .click();
+  const panel = page.getByRole("complementary", { name: "Überblick des Kurzbuchs" });
+  await expect(panel).toBeVisible();
+  await expect(panel.locator(".kurzbuch__text .sr-only")).toHaveCount(12);
+  await shellStill(page, "1440");
+  // „Wach halten“ verschiebt die Lesespalte; der Rahmen bleibt trotzdem stehen.
+  await page.getByTestId("reader-keep-awake").click();
+  await shellStill(page, "1440 wach");
+  // Fokus und scrollIntoView ganz unten in der Liste dürfen nur die Liste bewegen.
+  const toggle = panel.getByRole("button", { name: "Kernaussagen und Details zeigen" });
+  if (await toggle.isVisible()) await toggle.click();
+  await panel.getByRole("button", { name: "Kernaussage 12 von 12 vorlesen" }).focus();
+  await page.evaluate(() =>
+    document.querySelector(".kurzbuch__item:last-child")?.scrollIntoView({ block: "end" }),
+  );
+  await shellStill(page, "1440 Fokus unten");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(panel).toBeVisible();
+  await page.evaluate(() =>
+    document.querySelector(".kurzbuch__item:last-child")?.scrollIntoView({ block: "end" }),
+  );
+  await shellStill(page, "390");
+});
+
+// Patrick 02.11.2026: das Kurzbuch öffnete immer im Bearbeiten-Modus. Ein
+// geöffnetes Dokument zeigt die gemerkte Ansicht (Standard: Lesen).
+const kurzbuchDoc = {
+  ...kiDoc(1, "builtin:kurzbuch"),
+  title: "Kurzbuch – Ganzes Buch",
+  template_title: "Kurzbuch",
+};
+const kurzbuchPanel = (page: Page) =>
+  page.getByRole("complementary", { name: "Überblick des Kurzbuchs" });
+const viewButton = (page: Page, name: "Lesen" | "Bearbeiten") =>
+  page.getByRole("group", { name: "Ansicht" }).getByRole("button", { name });
+const openKurzbuchCard = (page: Page) =>
+  page.getByTestId(`kidocs-card-${kurzbuchDoc.id}`).locator("button").first().click();
+
+test("das Kurzbuch öffnet in der gemerkten Ansicht, auch nach Zurück und Wiederöffnen", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1920, height: 1000 });
+  await page.addInitScript(
+    ([docs, text]) => {
+      const w = window as unknown as Record<string, unknown>;
+      w.__kidocs = docs;
+      w.__docText = text;
+    },
+    [[kurzbuchDoc], KURZBUCH] as const,
+  );
+  await open(page);
+  await page.getByRole("tab", { name: "KI-Dokumente" }).click();
+  await openKurzbuchCard(page);
+  // Ohne Klick auf „Lesen“: die Standardansicht gilt.
+  await expect(kurzbuchPanel(page)).toBeVisible();
+  await expect(viewButton(page, "Lesen")).toHaveAttribute("aria-pressed", "true");
+  // Bearbeiten wählen, zurück zur Liste, wieder öffnen: bleibt Bearbeiten.
+  await viewButton(page, "Bearbeiten").click();
+  await expect(kurzbuchPanel(page)).toHaveCount(0);
+  await page.getByTestId("kidoc-head").getByRole("button").first().click();
+  await openKurzbuchCard(page);
+  await expect(page.getByTestId("kidoc-head")).toBeVisible();
+  await expect(viewButton(page, "Bearbeiten")).toHaveAttribute("aria-pressed", "true");
+  await expect(kurzbuchPanel(page)).toHaveCount(0);
+  // Und Lesen wieder gewählt: bleibt Lesen.
+  await viewButton(page, "Lesen").click();
+  await page.getByTestId("kidoc-head").getByRole("button").first().click();
+  await openKurzbuchCard(page);
+  await expect(kurzbuchPanel(page)).toBeVisible();
+});
+
+test("ein beim Start offenes Kurzbuch steht im Lesemodus", async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 1000 });
+  await page.addInitScript(
+    ([docs, text, state]) => {
+      const w = window as unknown as Record<string, unknown>;
+      w.__kidocs = docs;
+      w.__docText = text;
+      w.__pageState = state;
+    },
+    [
+      [kurzbuchDoc],
+      KURZBUCH,
+      JSON.stringify({ text: ORIGINAL, tab: "summary", kiDoc: kurzbuchDoc.id }),
+    ] as const,
+  );
+  await page.goto("/");
+  await page.getByRole("navigation").getByRole("button", { name: "Vorlesen", exact: true }).click();
+  await expect(kurzbuchPanel(page)).toBeVisible();
+  await expect(viewButton(page, "Lesen")).toHaveAttribute("aria-pressed", "true");
+});
+
+test("ein umgeschriebenes Kurzbuch ohne Gliederung bleibt eine normale Dokumentansicht", async ({
+  page,
+}) => {
+  const doc = {
+    ...kiDoc(1, "builtin:kurzbuch"),
+    title: "Kurzbuch – Ganzes Buch",
+  };
+  await page.addInitScript(
+    ([docs]) => {
+      const w = window as unknown as Record<string, unknown>;
+      w.__kidocs = docs;
+      w.__docText = "Nur noch Fließtext ohne Überschriften.";
+    },
+    [[doc]] as const,
+  );
+  await open(page);
+  await page.getByRole("tab", { name: "KI-Dokumente" }).click();
+  await page
+    .getByTestId(`kidocs-card-${doc.id}`)
+    .locator("button")
+    .first()
+    .click();
+  await expect(page.getByTestId("kidoc-head")).toContainText(
+    "Kurzbuch – Ganzes Buch",
+  );
+  await page
+    .getByRole("group", { name: "Ansicht" })
+    .getByRole("button", { name: "Lesen" })
+    .click();
+  await expect(
+    page.getByRole("complementary", { name: "Überblick des Kurzbuchs" }),
+  ).toHaveCount(0);
+});
+
+// lva#217: Sprache des Ergebnisses wählbar, z. B. ein deutsches Kurzbuch zu
+// einem englischen Buch; die Sprache steht am Ergebnis.
+const KURZBUCH_EN = [
+  "## What it is about",
+  "",
+  "A book about habits and how they form.",
+  "",
+  "## Who it is for",
+  "",
+  "- People with good intentions",
+  "- Teams",
+  "- Learners",
+  "",
+  "## Small start: A habit begins with two minutes.",
+  "",
+  "How do you start? Small. ".repeat(20),
+  "",
+  "## Relapse: One missed day is not failure.",
+  "",
+  "What to do after a bad day? Keep going. ".repeat(20),
+  "",
+  "## Conclusion",
+  "",
+  "Small steps carry far.",
+].join("\n");
+
+test("im Erstellen-Dialog ist die Sprache des Ergebnisses wählbar (lva#217)", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await open(page);
+  await page.getByRole("tab", { name: "KI-Dokumente" }).click();
+  await page.getByTestId("tts-action-summarize").click();
+  const dialog = page.getByRole("dialog");
+  const lang = dialog.getByRole("combobox", { name: "Sprache" });
+  await expect(page.getByTestId("kidoc-lang")).toContainText("Deutsch");
+  await lang.click();
+  await expect(page.getByRole("option", { name: "Wie das Buch" })).toBeVisible();
+  await page.getByRole("option", { name: "English" }).click();
+  await expect(page.getByTestId("kidoc-lang")).toContainText("English");
+  await page.screenshot({
+    path: "docs/vorschau/kurzbuch-sprache/01-dialog-1440.png",
+  });
+  await page.getByTestId("kidoc-create").click();
+  const call = (await calls(page))
+    .filter(([c]) => c === "book_ai_summarize")
+    .at(-1)!;
+  expect(call[1]).toMatchObject({ targetLang: "en" });
+  // Fertigmeldung bei 390 px (Codex): Belegbild mit sichtbarer Meldung.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await finish(page, "book_ai_summarize", kiDoc(1, "builtin:eine_seite"));
+  const toast = page.locator("[data-sonner-toast]");
+  await expect(toast).toBeVisible();
+  await expect(toast).toContainText("ist fertig");
+  // Einblendung abwarten, damit das Belegbild die fertige Meldung zeigt.
+  await page.waitForTimeout(600);
+  // Die Meldung darf den Knopf zum Erstellen nicht verdecken (Codex): beide
+  // sichtbar, Rechtecke ueberlappen nicht.
+  const createBtn = page.getByTestId("tts-action-summarize");
+  await createBtn.scrollIntoViewIfNeeded();
+  await expect(createBtn).toBeVisible();
+  await expect(toast).toBeVisible();
+  const b = (await createBtn.boundingBox())!;
+  const m = (await toast.boundingBox())!;
+  expect(b.y + b.height <= m.y || m.y + m.height <= b.y || b.x + b.width <= m.x || m.x + m.width <= b.x).toBe(true);
+  expect(b.y + b.height).toBeLessThanOrEqual(844);
+  // Unverdeckt anklickbar: an der Knopfmitte liegt der Knopf selbst oben,
+  // weder Meldung noch Spielerleiste (Codex).
+  expect(
+    await createBtn.evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      const top = document.elementFromPoint(
+        r.x + r.width / 2,
+        r.y + r.height / 2,
+      );
+      return !!top && (top === el || el.contains(top));
+    }),
+  ).toBe(true);
+  await page.screenshot({
+    path: "docs/vorschau/kurzbuch-sprache/08-fertigmeldung-390.png",
+  });
+
+  // Die Wahl gilt als Vorbelegung für das nächste Mal. Der Dialog räumt
+  // alte Meldungen ab, damit sie seine Knöpfe nicht verdecken (Codex).
+  await page.getByTestId("tts-action-summarize").click();
+  await expect(toast).toHaveCount(0);
+  await expect(page.getByTestId("kidoc-lang")).toContainText("English");
+  await page.screenshot({
+    path: "docs/vorschau/kurzbuch-sprache/02-dialog-390.png",
+  });
+  await lang.click();
+  await page.getByRole("option", { name: "Wie das Buch" }).click();
+  await page.getByTestId("kidoc-create").click();
+  const again = (await calls(page))
+    .filter(([c]) => c === "book_ai_summarize")
+    .at(-1)!;
+  expect(again[1]).toMatchObject({ targetLang: null });
+});
+
+test("ein englisches Kurzbuch wird erkannt und zeigt seine Sprache (lva#217)", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const doc = {
+    ...kiDoc(1, "builtin:kurzbuch"),
+    title: "Kurzbuch – Ganzes Buch",
+    template_title: "Kurzbuch",
+    language: "en",
+  };
+  await page.addInitScript(
+    ([docs, text]) => {
+      const w = window as unknown as Record<string, unknown>;
+      w.__kidocs = docs;
+      w.__docText = text;
+    },
+    [[doc], KURZBUCH_EN] as const,
+  );
+  await open(page);
+  await page.getByRole("tab", { name: "KI-Dokumente" }).click();
+  const card = page.getByTestId(`kidocs-card-${doc.id}`);
+  await expect(card).toContainText("Ganzes Buch · English");
+  await card.locator("button").first().click();
+  await expect(page.getByTestId("kidoc-head")).toContainText(
+    "Kurzbuch · Ganzes Buch · English",
+  );
+  await page
+    .getByRole("group", { name: "Ansicht" })
+    .getByRole("button", { name: "Lesen" })
+    .click();
+  const panel = page.getByRole("complementary", {
+    name: "Überblick des Kurzbuchs",
+  });
+  await expect(panel).toContainText("2 Kernaussagen");
+  await expect(page.getByTestId("kurzbuch-lang")).toHaveText(
+    "Sprache: English",
+  );
+  await page.screenshot({
+    path: "docs/vorschau/kurzbuch-sprache/03-kurzbuch-englisch-1440.png",
+  });
+});
+
+// lva#217 (Codex): lange Titel brechen in Leiste und Überlaufmenü um, hell
+// und dunkel, statt mit „…“ zu enden.
+const LONG_TITLE =
+  "Obstacles and action: Fear, cynicism, laziness, bad habits and arrogance hold people back, and a strong reason helps";
+const KURZBUCH_LONG = KURZBUCH_EN.replace(
+  "Relapse: One missed day is not failure.",
+  LONG_TITLE,
+);
+
+for (const theme of ["light", "dark"] as const) {
+  test(`ein langer Kernaussagen-Titel bricht in der Wiedergabe um (${theme}, lva#217)`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1920, height: 1000 });
+    const doc = {
+      ...kiDoc(1, "builtin:kurzbuch"),
+      title: "Kurzbuch – Ganzes Buch",
+      template_title: "Kurzbuch",
+      language: "en",
+    };
+    await page.addInitScript(
+      ([docs, text, theme]) => {
+        const w = window as unknown as Record<string, unknown>;
+        w.__kidocs = docs;
+        w.__docText = text;
+        w.__theme = theme;
+      },
+      [[doc], KURZBUCH_LONG, theme] as const,
+    );
+    await open(page);
+    await page.getByRole("tab", { name: "KI-Dokumente" }).click();
+    await page.getByTestId(`kidocs-card-${doc.id}`).locator("button").first().click();
+    await page
+      .getByRole("group", { name: "Ansicht" })
+      .getByRole("button", { name: "Lesen" })
+      .click();
+    const panel = page.getByRole("complementary", { name: "Überblick des Kurzbuchs" });
+    await expect(panel).toContainText(LONG_TITLE.split(": ")[1]);
+    await panel.getByRole("button", { name: "Kernaussage 2 von 2 vorlesen" }).click();
+    await expect
+      .poll(async () => (await calls(page)).some(([c]) => c.startsWith("tts_speak")))
+      .toBe(true);
+    await emit(page, "tts-speak-progress", { position: 9, total: 30 });
+    await emit(page, "tts-current-sentence", {
+      context: "speak",
+      index: 9,
+      text: "What to do after a bad day? Keep going.",
+    });
+    const chapter = page.getByTestId("reader-chapter");
+    await expect(chapter).toHaveText(LONG_TITLE);
+    // Vollständig sichtbar: kein Abschneiden in der Leiste.
+    const cut = await chapter
+      .locator(".reader-player__chapter-text")
+      .evaluate((el) => el.scrollWidth > el.clientWidth + 1);
+    expect(cut).toBe(false);
+    await page.screenshot({
+      path: `docs/vorschau/kurzbuch-sprache/06-wiedergabe-langer-titel-1920-${theme === "dark" ? "dunkel" : "hell"}.png`,
+    });
+    await page.setViewportSize({ width: 390, height: 844 });
+    // Lesebereich ohne Menü (Codex): Überschrift und Text vollständig in
+    // der Seite; Nachbarseiten liegen außerhalb des sichtbaren Rahmens.
+    const book = page.getByTestId("reader-book");
+    // Nach dem Umbruch auf 390 px paginiert der Reader neu: abwarten.
+    const clipped = () => book.evaluate((root) => {
+      const frame = root.getBoundingClientRect();
+      const out: string[] = [];
+      for (const el of root.querySelectorAll("h1, h2, h3, p")) {
+        for (const r of el.getClientRects()) {
+          const visible = r.right > frame.left && r.left < frame.right;
+          const inside = r.left >= frame.left - 1 && r.right <= frame.right + 1;
+          if (visible && !inside) out.push((el.textContent ?? "").slice(0, 40));
+        }
+      }
+      return out;
+    });
+    await expect.poll(clipped, { message: "angeschnittene Zeilen" }).toEqual([]);
+    await book.scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: `docs/vorschau/kurzbuch-sprache/09-lesebereich-390-${theme === "dark" ? "dunkel" : "hell"}.png`,
+    });
+    await page.getByTestId("reader-more").click();
+    const where = page.getByTestId("reader-more-where");
+    await expect(where).toContainText(LONG_TITLE);
+    const cutMenu = await where
+      .locator("div")
+      .first()
+      .evaluate((el) => el.scrollWidth > el.clientWidth + 1);
+    expect(cutMenu).toBe(false);
+    await page.screenshot({
+      path: `docs/vorschau/kurzbuch-sprache/07-wiedergabe-langer-titel-390-${theme === "dark" ? "dunkel" : "hell"}.png`,
+    });
+  });
+}
+for (const width of [1440, 390]) test(`KI-Dokument zeigt vorher die Token-Prognose und danach den Verbrauch (${width} px)`, async ({ page }) => {
+  const shots = "docs/vorschau/token-anzeige";
+  const wide = width >= 1000;
+  const suffix = String(width);
+  // Erst breit öffnen (schmal liegt die Navigation im Menü), dann auf die Zielbreite.
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await open(page);
+  if (!wide) await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("tab", { name: "KI-Dokumente" }).click();
+  await page.getByTestId("tts-action-summarize").click();
+  await page.getByTestId("kidoc-tpl-builtin:eine_seite").click();
+  const line = page.getByTestId("kidoc-token-estimate");
+  await expect(line).toContainText("Geschätzter Bedarf: ca. 48.200 Tokens");
+  await expect(line).toContainText("41.900 Eingabe, 6.320 Ausgabe");
+  await expect(line).toContainText("lokal, keine Kosten");
+  await expect(line).toContainText("ca. 3 Schritte schon zwischengespeichert");
+  await expect(line).toHaveAttribute("title", /14 Modellaufrufe/);
+  const est = (await calls(page)).filter(([c]) => c === "book_ai_estimate").at(-1)!;
+  expect(est[1]).toMatchObject({ pageId: "p1", source: { kind: "book" }, templateId: "builtin:eine_seite" });
+  await line.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: `${shots}/01-dialog-prognose-${suffix}.png` });
+
+  // Cloud-Anbieter mit Preis: Kosten statt „lokal“.
+  await page.evaluate(() => {
+    (window as unknown as { __estimate: unknown }).__estimate = {
+      figures: { input_tokens: 41_850, output_tokens: 6_320, calls: 14, cost_micro: 220_350 },
+      local: false,
+      measured: false,
+      cached_steps: 0,
+      model: "claude-sonnet-5-5",
+    };
+  });
+  await page.getByTestId("kidoc-tpl-builtin:lernzettel").click();
+  await expect(line).toContainText("ca. 0,22 USD (Preis für claude-sonnet-5-5)");
+  await line.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: `${shots}/02-dialog-prognose-kosten-${suffix}.png` });
+  await page.getByTestId("kidoc-create").click();
+
+  const doc = {
+    id: "01JAAAAAAAAAAAAAAAAAAAAAAB",
+    title: "Lernzettel – Ganzes Buch",
+    template_id: "builtin:lernzettel",
+    template_title: "Lernzettel",
+    source: { kind: "book" },
+    source_label: "Ganzes Buch",
+    created_ms: 1,
+    modified_ms: 1,
+    words: 612,
+    model: "anthropic/claude-sonnet-5-5",
+    usage: {
+      estimate: { input_tokens: 41_850, output_tokens: 6_320, calls: 14, cost_micro: 220_350 },
+      actual: { input_tokens: 44_120, output_tokens: 7_045, calls: 14, cost_micro: 238_035 },
+      local: false,
+    },
+  };
+  await page.evaluate((d) => {
+    (window as unknown as { __kidocs: unknown[] }).__kidocs = [d];
+  }, doc);
+  await finish(page, "book_ai_summarize", doc);
+
+  const used = page.getByTestId("kidoc-token-usage");
+  await expect(used).toContainText("Tatsächlicher Verbrauch: 51.200 Tokens");
+  await expect(used).toContainText("Schätzung vorher 48.200 (+6 % gegenüber Schätzung)");
+  await expect(used).toContainText("ca. 0,238 USD (Preis für claude-sonnet-5-5)");
+  await expect(used).toHaveAttribute("title", /Geschätzter Bedarf: 41.900 Tokens Eingabe/);
+  // Den Fertig-Hinweis abwarten, damit er im Bild nichts überdeckt.
+  await expect(page.locator("[data-sonner-toast]")).toHaveCount(0, { timeout: 15_000 });
+  const head = page.getByTestId("kidoc-head");
+  await head.scrollIntoViewIfNeeded();
+  if (wide) await page.screenshot({ path: `${shots}/03-dokument-verbrauch-${suffix}.png` });
+  else {
+    // Schmal: genau der Kopf samt Verbrauchszeile, nicht ein angeschnittener Ausschnitt.
+    const box = (await head.boundingBox())!;
+    await page.screenshot({
+      path: `${shots}/03-dokument-verbrauch-${suffix}.png`,
+      clip: { x: 0, y: Math.max(0, box.y - 4), width: 390, height: Math.min(844 - Math.max(0, box.y - 4), box.height + 220) },
+    });
+  }
+  await page.getByTestId("kidoc-back").click();
+  await expect(page.getByTestId(`kidocs-card-${doc.id}`)).toContainText("612 Wörter · 51.200 Tokens · noch nicht gehört");
+  const card = page.getByTestId(`kidocs-card-${doc.id}`);
+  await card.scrollIntoViewIfNeeded();
+  if (wide) await page.screenshot({ path: `${shots}/04-liste-verbrauch-${suffix}.png` });
+  else await card.screenshot({ path: `${shots}/04-liste-verbrauch-${suffix}.png` });
 });

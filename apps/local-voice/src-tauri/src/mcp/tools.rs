@@ -82,6 +82,9 @@ pub struct Backend<'a> {
     pub busy_timeout: Duration,
     /// Einstellung `meeting_mcp_include_transcript`.
     pub include_transcript: bool,
+    /// Zeichen je Seite von `get_transcript` (Standard [`TRANSCRIPT_PAGE_CHARS`]; die Sprachbruecke
+    /// nimmt kleinere Seiten, damit eine Seite samt `next_cursor` vollstaendig beim Modell ankommt).
+    pub transcript_page_chars: usize,
 }
 
 fn read_only_annotations() -> Value {
@@ -473,9 +476,14 @@ fn get_provenance(args: &Value, backend: &Backend) -> Res<ToolOutcome> {
     let wanted = |name: &str| part.is_none_or(|p| p == name);
     let mut entries: Vec<Value> = Vec::new();
     let mut note = |kind: SubjectKind, subject: &str, label: &str| -> Res<()> {
-        let list = provenance::get(&conn, kind, subject)
-            .map_err(|e| ToolOutcome::error(format!("Die Herkunft ließ sich nicht lesen ({e}).")))?;
-        entries.extend(list.iter().take(PROVENANCE_LIMIT).map(|e| provenance_json(label, e)));
+        let list = provenance::get(&conn, kind, subject).map_err(|e| {
+            ToolOutcome::error(format!("Die Herkunft ließ sich nicht lesen ({e})."))
+        })?;
+        entries.extend(
+            list.iter()
+                .take(PROVENANCE_LIMIT)
+                .map(|e| provenance_json(label, e)),
+        );
         Ok(())
     };
     if wanted("transcript") {
@@ -842,7 +850,7 @@ fn cursor_arg(args: &Value) -> Res<usize> {
 }
 
 /// Das ganze Transkript als Zeilen `[mm:ss] Sprecher: Text`.
-fn transcript_text(store: &MeetingStore, id: &str) -> Res<String> {
+pub(crate) fn transcript_text(store: &MeetingStore, id: &str) -> Res<String> {
     let mut segments = store.get_segments(id).map_err(|e| store_error(&e))?;
     segments.sort_by_key(|s| (s.start_ms, s.segment_index));
     let directory = SpeakerDirectory::load(store, id);
@@ -858,6 +866,8 @@ fn transcript_text(store: &MeetingStore, id: &str) -> Res<String> {
         }
         let label = match segment.speaker_index {
             Some(_) => directory.label(segment),
+            // Ganzer Kanal mit Namen ("Aufnahme" umbenannt).
+            None if directory.has_channel_name(segment.channel) => directory.label(segment),
             None => speaker_label(segment, &BTreeMap::new()),
         };
         let time = duration_label(segment.start_ms);
@@ -886,7 +896,7 @@ fn get_transcript(args: &Value, backend: &Backend) -> Res<ToolOutcome> {
     let meeting = ready_meeting(&store, id)?;
     let text = transcript_text(&store, id)?;
     let (page, next, total) =
-        page_text(&text, cursor, TRANSCRIPT_PAGE_CHARS).map_err(ToolOutcome::error)?;
+        page_text(&text, cursor, backend.transcript_page_chars).map_err(ToolOutcome::error)?;
     let mut out = json!({
         "meeting_id": meeting.id,
         "title": meeting.title,

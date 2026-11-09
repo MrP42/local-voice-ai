@@ -405,6 +405,7 @@ impl TtsManager {
             voice: voice.as_deref(),
             seed,
             speed: None,
+            cancel: None,
         };
         let bytes = self
             .core

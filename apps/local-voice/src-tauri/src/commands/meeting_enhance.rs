@@ -60,7 +60,10 @@ fn emit_failed(app: &AppHandle, meeting_id: &str, err: &str) {
 
 fn emit_done(app: &AppHandle, document: &MeetingDocument) {
     // M4-P4b: neue KI-Notizen-Version (Lauf oder Anweisung) in den Such-Index.
-    search_indexer::submit(app, search_indexer::IndexJob::Meeting(document.meeting_id.clone()));
+    search_indexer::submit(
+        app,
+        search_indexer::IndexJob::Meeting(document.meeting_id.clone()),
+    );
     let _ = MeetingNotesEvent::Done {
         meeting_id: document.meeting_id.clone(),
         document_id: document.id.clone(),
@@ -74,7 +77,8 @@ fn recording_conflict(
     settings: &crate::settings::AppSettings,
     recording_active: bool,
 ) -> Result<(), EnhanceError> {
-    match resolve_provider_coded(settings) {
+    // Wie `run_enhance`: das Modell der Funktion Protokoll/Notizen pruefen.
+    match resolve_provider_coded(&settings.for_function(crate::settings::FN_MEETING_PROTOCOL)) {
         Ok((provider, _, _)) => {
             check_recording_conflict(crate::managers::llm::is_local(&provider), recording_active)
         }
@@ -172,23 +176,30 @@ async fn enhance_and_notify_inner(
     let progress_job = Arc::clone(&handle);
     let run = job::scope(
         Arc::clone(&handle),
-        enhance::enhance_meeting_with_basis(&settings, store, meeting_id, template_id, doc_basis, move |step, total| {
-            let _ = MeetingNotesEvent::Progress {
-                meeting_id: progress_id.clone(),
-                step,
-                total,
-            }
-            .emit(&progress_app);
-            if step == 0 {
-                progress_job.begin_phase_ex(
-                    JobPhase::Notes,
-                    u64::from(total),
-                    total >= MIN_STEPS_TO_PAUSE,
-                );
-            } else {
-                progress_job.advance(u64::from(step));
-            }
-        }),
+        enhance::enhance_meeting_with_basis(
+            &settings,
+            store,
+            meeting_id,
+            template_id,
+            doc_basis,
+            move |step, total| {
+                let _ = MeetingNotesEvent::Progress {
+                    meeting_id: progress_id.clone(),
+                    step,
+                    total,
+                }
+                .emit(&progress_app);
+                if step == 0 {
+                    progress_job.begin_phase_ex(
+                        JobPhase::Notes,
+                        u64::from(total),
+                        total >= MIN_STEPS_TO_PAUSE,
+                    );
+                } else {
+                    progress_job.advance(u64::from(step));
+                }
+            },
+        ),
     );
     let result = tokio::select! {
         result = run => result,
@@ -256,7 +267,8 @@ pub fn auto_enhance_decision(
     if !has_user_notes {
         return Skip(AutoEnhanceSkip::NoUserNotes);
     }
-    match resolve_provider_coded(settings) {
+    // Wie `run_enhance`: das Modell der Funktion Protokoll/Notizen pruefen.
+    match resolve_provider_coded(&settings.for_function(crate::settings::FN_MEETING_PROTOCOL)) {
         Err(e) => Skip(AutoEnhanceSkip::NoProvider(e.code)),
         Ok((provider, _, _)) => {
             if check_recording_conflict(crate::managers::llm::is_local(&provider), recording_active)

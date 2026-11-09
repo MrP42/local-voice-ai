@@ -102,6 +102,7 @@ pub fn next_request_id(prefix: &str) -> String {
 pub fn engine_caps(desc: &ProviderDescriptor) -> EngineCaps {
     EngineCaps {
         style_tags: desc.caps.style_tags,
+        pace_tags: desc.caps.pace_tags,
         cloning: desc.caps.cloning,
         voice_switching: desc.caps.voice_switching,
         streaming: desc.caps.streaming == StreamingMode::Chunk,
@@ -113,6 +114,7 @@ pub fn engine_caps(desc: &ProviderDescriptor) -> EngineCaps {
 /// Engine-Fähigkeiten, solange der Anbieter unbekannt ist: nichts versprechen.
 const UNKNOWN_CAPS: EngineCaps = EngineCaps {
     style_tags: false,
+    pace_tags: false,
     cloning: false,
     voice_switching: false,
     streaming: false,
@@ -193,6 +195,13 @@ impl ProviderEngine {
     /// Die eigene (gewählte bzw. konfigurierte) Stimme dieser Engine.
     pub fn voice(&self) -> Option<&str> {
         self.voice.as_deref()
+    }
+
+    /// Rechnet der Anbieter auf diesem Rechner (Programm wie Phonon, keine Adresse)? Nur dann
+    /// bekommt er den Vorpuffer des Kerns: ein lokaler Anbieter kostet nichts je Anfrage und hat
+    /// kein Ratenlimit, ein Netzanbieter (auch auf Loopback) bleibt ohne.
+    pub fn is_local(&self) -> bool {
+        self.provider.is_some() && self.subject.base_url.is_none()
     }
 
     pub fn caps(&self) -> EngineCaps {
@@ -483,6 +492,9 @@ mod tests {
                 .unwrap()
                 .push((t.to_string(), o.voice.clone()));
             self.inner.synthesize(t, o, c)
+        }
+        fn use_subject(&self) -> UseSubject {
+            self.inner.use_subject()
         }
         fn cache_tag(&self, v: Option<&str>) -> String {
             self.inner.cache_tag(v)
@@ -1423,5 +1435,63 @@ mod tests {
             .ensure_ready()
             .await
             .is_err());
+    }
+
+    /// Vorpuffer auch fuer lokale Anbieter (Phonon): waehrend ein Satz spielt, rechnet der
+    /// Kern die naechsten drei voraus -- wie bei Fish und Piper. Netz-Anbieter (eine Adresse,
+    /// auch Loopback) bleiben ohne: dort waeren Saetze nach einem Stopp bezahlt und
+    /// parallele Anfragen ein Ratenlimit-Risiko.
+    #[tokio::test]
+    async fn lokale_anbieter_puffern_drei_saetze_voraus_netz_anbieter_nicht() {
+        let saetze: Vec<crate::managers::tts::Utterance> = (1..=6)
+            .map(|i| (format!("Satz Nummer {i} ist lang genug."), None))
+            .collect();
+        for (base_url, expected) in [(None, 3usize), (Some("http://127.0.0.1:8880"), 0)] {
+            let log = Arc::new(VoiceLog {
+                inner: MockProvider::new()
+                    .with_id("zzz")
+                    .with_subject("m", base_url),
+                calls: Mutex::new(Vec::new()),
+            });
+            let reg = registry_with(log.clone());
+            let engine = ProviderEngine::new(reg, "zzz", None, live_with(&["zzz"]));
+            assert_eq!(engine.is_local(), base_url.is_none());
+            let core = core_with(engine);
+            let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let (ready, ready_rx) = tokio::sync::watch::channel(0usize);
+            let warm = core.warm_ahead(&saetze, &cancelled, ready_rx);
+            tokio::pin!(warm);
+            // Bis der Puffer voll ist (oder sofort beim Netz-Anbieter), dann endet der
+            // Vorpuffer mit dem Ende der Wiedergabe (Sender weg).
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                tokio::select! {
+                    () = &mut warm => break,
+                    () = tokio::time::sleep(Duration::from_millis(5)) => {}
+                }
+                if log.calls.lock().unwrap().len() >= expected && expected > 0 {
+                    drop(ready);
+                    tokio::time::timeout(Duration::from_secs(5), &mut warm)
+                        .await
+                        .expect("der Vorpuffer endet mit der Wiedergabe");
+                    break;
+                }
+                assert!(Instant::now() < deadline, "Vorpuffer haengt");
+            }
+            let calls: Vec<String> = log
+                .calls
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|c| c.0.clone())
+                .collect();
+            assert_eq!(calls.len(), expected, "{base_url:?}: {calls:?}");
+            if expected > 0 {
+                assert!(
+                    calls[0].contains("Nummer 2"),
+                    "nach dem bereiten Satz 1: {calls:?}"
+                );
+            }
+        }
     }
 }

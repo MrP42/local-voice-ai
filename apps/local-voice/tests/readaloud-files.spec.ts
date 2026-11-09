@@ -79,7 +79,28 @@ test.beforeEach(async ({ page }) => {
           if (cmd === "plugin:os|locale") return "de-DE";
           if (cmd === "plugin:app|version") return "0.16.0";
           if (cmd.includes("permission")) return true;
-          if (cmd === "plugin:event|listen") return ++callback;
+          if (cmd === "plugin:event|listen") {
+            // Ereignisse für Tests auslösbar: __lvEmit("library-layout-changed").
+            const e = window as unknown as {
+              __lvEmit?: (event: string) => void;
+              __lvHandlers?: Map<string, number[]>;
+            };
+            e.__lvHandlers ??= new Map();
+            const name = String(args?.event);
+            e.__lvHandlers.set(name, [
+              ...(e.__lvHandlers.get(name) ?? []),
+              Number(args?.handler),
+            ]);
+            e.__lvEmit ??= (event: string) => {
+              for (const id of e.__lvHandlers?.get(event) ?? [])
+                (callbacks.get(id) as ((ev: unknown) => void) | undefined)?.({
+                  event,
+                  id: 0,
+                  payload: null,
+                });
+            };
+            return ++callback;
+          }
           if (cmd === "get_selected_model") return "";
           if (cmd === "meetings_is_recording") return false;
           if (cmd === "tts_server_status")
@@ -100,7 +121,11 @@ test.beforeEach(async ({ page }) => {
                 modified_ms: 0,
               },
             ];
-          if (cmd === "page_dir") return "C:\\projects\\p1";
+          if (cmd === "page_dir")
+            return (
+              (window as unknown as { __lvPageDir?: string }).__lvPageDir ??
+              "C:\\projects\\p1"
+            );
           if (cmd === "plugin:dialog|save") {
             const options = args?.options as { defaultPath?: string };
             w.__savePaths = [
@@ -202,5 +227,32 @@ test("saving with script voices proposes Skript as file name", async ({
   const path = await suggestedPath(page);
   expect(path).toMatch(
     /^C:\\projects\\p1\\Skript_\d{4}-\d{2}-\d{2}_\d{4}\.wav$/,
+  );
+});
+
+test("after the library is reorganised the player uses the page's new folder", async ({
+  page,
+}) => {
+  await openReadAloud(page);
+  const row = page.locator('span[title="Der-Sturm_2026-09-08_1405.wav"]');
+  await expect(row).toBeVisible();
+  await page.getByRole("button", { name: "Anhören" }).first().click();
+  const audio = page.locator("audio");
+  await expect(audio).toHaveAttribute(
+    "src",
+    "C:\\projects\\p1\\Der-Sturm_2026-09-08_1405.wav",
+  );
+  // Die Seite zieht in ihren Buch-Ordner um (lva#365): der Pfad wird neu geholt.
+  await page.evaluate(() => {
+    const w = window as unknown as {
+      __lvPageDir?: string;
+      __lvEmit?: (event: string) => void;
+    };
+    w.__lvPageDir = "C:\\library\\book_1\\fassungen\\p1";
+    w.__lvEmit?.("library-layout-changed");
+  });
+  await expect(audio).toHaveAttribute(
+    "src",
+    "C:\\library\\book_1\\fassungen\\p1\\Der-Sturm_2026-09-08_1405.wav",
   );
 });

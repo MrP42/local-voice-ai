@@ -608,8 +608,14 @@ mod tests {
         rec.close().unwrap();
 
         let fmt = |v: &Vec<Duration>| v.iter().map(ms).collect::<Vec<_>>().join(" / ");
-        eprintln!("LATENZ_KALT_MS  (Stream je Diktat neu, Verhalten vorher): {}", fmt(&cold));
-        eprintln!("LATENZ_WARM_MS  (Stream offen, Verhalten nachher):        {}", fmt(&warm));
+        eprintln!(
+            "LATENZ_KALT_MS  (Stream je Diktat neu, Verhalten vorher): {}",
+            fmt(&cold)
+        );
+        eprintln!(
+            "LATENZ_WARM_MS  (Stream offen, Verhalten nachher):        {}",
+            fmt(&warm)
+        );
     }
 }
 

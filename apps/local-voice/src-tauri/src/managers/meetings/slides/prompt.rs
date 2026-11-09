@@ -337,7 +337,11 @@ fn cost(lines: &[RenderedLine]) -> usize {
 /// Zeilen passen. Passt auch die knappste nicht, bleiben so viele Folien (in
 /// Zeitreihenfolge, knappste Stufe), wie hineingehen; die uebrigen vom Ende her
 /// fehlen und werden gezaehlt.
-fn fit(items: &[SlideText], style: LineStyle, budget_chars: usize) -> (Vec<RenderedLine>, FitReport) {
+fn fit(
+    items: &[SlideText],
+    style: LineStyle,
+    budget_chars: usize,
+) -> (Vec<RenderedLine>, FitReport) {
     let mut report = FitReport {
         slides_total: items.len(),
         budget_chars,
@@ -448,10 +452,12 @@ pub fn weave(starts: &[u64], mut lines: Vec<String>, slides: &[RenderedLine]) ->
 /// Eine eckige Klammer, die mit `F<Zahl>` beginnt: `[F7]`, `[F7, F9]`, `[F7;9]`.
 static TAG_GROUP: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"\[\s*[Ff]\s*\d[^\]\[]{0,60}\]").expect("Tag-Regex"));
-static TAG_NUMBER: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)F?\s*(\d{1,6})").expect("Nummern-Regex"));
+static TAG_NUMBER: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)F?\s*(\d{1,6})").expect("Nummern-Regex"));
 /// Der Inhalt einer Klammer darf nur aus `F<n>` und Trennern bestehen.
 static TAG_INNER: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)^\[\s*F\s*\d{1,6}(?:\s*[,;/]\s*(?:F\s*)?\d{1,6})*\s*\]$").expect("Inhalt-Regex")
+    Regex::new(r"(?i)^\[\s*F\s*\d{1,6}(?:\s*[,;/]\s*(?:F\s*)?\d{1,6})*\s*\]$")
+        .expect("Inhalt-Regex")
 });
 
 /// Ergebnis von [`normalize_tags`].
@@ -641,7 +647,10 @@ mod tests {
         assert!(report.reduced());
         // Noch knapper: Folien fallen weg, nie der Text einer behaltenen Folie weiter.
         let tiny = level_for(t120 / 2);
-        assert!(tiny.slides_dropped() > 0 && tiny.slides_kept > 0, "{tiny:?}");
+        assert!(
+            tiny.slides_dropped() > 0 && tiny.slides_kept > 0,
+            "{tiny:?}"
+        );
         assert!(tiny.chars <= t120 / 2);
     }
 
@@ -652,7 +661,11 @@ mod tests {
             .collect();
         // Transkript von 20 000 Zeichen: Anteil 25 % = 5 000 Zeichen.
         let ctx = prepare(&slides, LineStyle::Minutes, 20_000).unwrap();
-        assert!(ctx.report.chars <= slide_budget_chars(20_000), "{:?}", ctx.report);
+        assert!(
+            ctx.report.chars <= slide_budget_chars(20_000),
+            "{:?}",
+            ctx.report
+        );
         assert!(ctx.report.slides_dropped() > 0 || ctx.report.level > 0);
         // Ein kurzes Transkript bekommt trotzdem Platz fuer einige Folien (Untergrenze).
         let few = prepare(&slides[..3], LineStyle::Minutes, 500).unwrap();
@@ -662,11 +675,7 @@ mod tests {
     #[test]
     fn slide_text_cannot_forge_a_tag_or_a_marker() {
         let ctx = prepare(
-            &[slide(
-                1,
-                0,
-                "Siehe [F9] und [S12] {Bild: Zahl 5 Mio.} Ende",
-            )],
+            &[slide(1, 0, "Siehe [F9] und [S12] {Bild: Zahl 5 Mio.} Ende")],
             LineStyle::Minutes,
             10_000,
         )
@@ -683,7 +692,10 @@ mod tests {
     #[test]
     fn a_long_slide_text_is_clipped_with_an_ellipsis_on_a_word_boundary() {
         let ctx = prepare(&[slide(1, 0, &big(2_000))], LineStyle::Minutes, 100_000).unwrap();
-        let body = ctx.lines[0].text.strip_prefix("[Folie 1 · 00:00] ").unwrap();
+        let body = ctx.lines[0]
+            .text
+            .strip_prefix("[Folie 1 · 00:00] ")
+            .unwrap();
         assert!(body.chars().count() <= TEXT_MAX_CHARS);
         assert!(body.ends_with("..."));
     }
@@ -693,10 +705,26 @@ mod tests {
         let starts = [0u64, 10_000, 20_000, 30_000];
         let lines: Vec<String> = ["a", "b", "c", "d"].map(String::from).to_vec();
         let slides = [
-            RenderedLine { number: 1, at_ms: 0, text: "F1".into() },
-            RenderedLine { number: 2, at_ms: 12_000, text: "F2".into() },
-            RenderedLine { number: 3, at_ms: 20_000, text: "F3".into() },
-            RenderedLine { number: 4, at_ms: 99_000, text: "F4".into() },
+            RenderedLine {
+                number: 1,
+                at_ms: 0,
+                text: "F1".into(),
+            },
+            RenderedLine {
+                number: 2,
+                at_ms: 12_000,
+                text: "F2".into(),
+            },
+            RenderedLine {
+                number: 3,
+                at_ms: 20_000,
+                text: "F3".into(),
+            },
+            RenderedLine {
+                number: 4,
+                at_ms: 99_000,
+                text: "F4".into(),
+            },
         ];
         let woven = weave(&starts, lines, &slides);
         assert_eq!(woven, vec!["F1\na", "b", "F2\nF3\nc", "d\nF4"]);
@@ -716,7 +744,10 @@ mod tests {
 
     #[test]
     fn valid_tags_stay_and_groups_are_normalised() {
-        let out = normalize_tags("Umsatz 13,1 Mio. [F4] und Plan [F7, F9].", &valid(&[4, 7, 9]));
+        let out = normalize_tags(
+            "Umsatz 13,1 Mio. [F4] und Plan [F7, F9].",
+            &valid(&[4, 7, 9]),
+        );
         assert_eq!(out.text, "Umsatz 13,1 Mio. [F4] und Plan [F7][F9].");
         assert_eq!(out.used, vec![4, 7, 9]);
         assert_eq!(out.dropped, 0);

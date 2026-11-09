@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { geheZu, oeffneProfilmenue } from "./profilmenue";
 
 // Exercise the production React shell with deterministic native responses.
 // Audio capture/inference require separate native tests.
@@ -113,14 +114,18 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test("home exposes working destinations and remembers navigation", async ({
+test("home is the chat (lva#394) and navigation is remembered", async ({
   page,
 }) => {
   await page.goto("/");
+  // Startseite = Chat: Begrüßung und Eingabefeld mittig, keine Vorschläge, kein „Chat“-Eintrag.
+  await expect(page.getByTestId("chat-greeting")).toBeVisible();
+  await expect(page.getByTestId("chat-input")).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "Was möchtest du tun?" }),
-  ).toBeVisible();
-  await expect(page.getByText("⌃ Space", { exact: true })).toBeVisible();
+    page
+      .getByRole("navigation", { name: "Hauptnavigation" })
+      .getByRole("button", { name: "Chat", exact: true }),
+  ).toHaveCount(0);
   const nav = page.getByRole("navigation", { name: "Hauptnavigation" });
   await nav.getByRole("button", { name: "Verlauf", exact: true }).click();
   await expect(
@@ -131,9 +136,12 @@ test("home exposes working destinations and remembers navigation", async ({
     nav.getByRole("button", { name: "Verlauf", exact: true }),
   ).toHaveAttribute("aria-current", "page");
   await nav.getByRole("button", { name: "Start", exact: true }).click();
-  await page.getByRole("button", { name: /Besprechung oder Aufnahme/ }).click();
+  await expect(page.getByTestId("chat-input")).toBeVisible();
+  // Altes Sprungziel „voice“ (gemerkte Auswahl) landet auf Start.
+  await page.evaluate(() => localStorage.setItem("lva.ui.section", "voice"));
+  await page.reload();
   await expect(
-    nav.getByRole("button", { name: "Aufnahmen", exact: true }),
+    nav.getByRole("button", { name: "Start", exact: true }),
   ).toHaveAttribute("aria-current", "page");
 });
 
@@ -152,11 +160,9 @@ test("narrow navigation keeps labels and secondary destinations reachable", asyn
   await expect(
     nav.getByRole("button", { name: "Start", exact: true }),
   ).toBeVisible();
+  // Modelle und Einstellungen stehen im Profilmenü (ADR-0027), nicht mehr im Drawer.
   await expect(
-    nav.getByRole("button", { name: "Modelle", exact: true }),
-  ).toBeVisible();
-  await expect(
-    nav.getByRole("button", { name: "Einstellungen", exact: true }),
+    nav.getByRole("button", { name: /^Profil:/ }),
   ).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(nav).toBeHidden();
@@ -172,9 +178,7 @@ test("narrow navigation keeps labels and secondary destinations reachable", asyn
 test("WAI home in light and dark at desktop size", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("/");
-  await expect(
-    page.getByRole("heading", { name: "Was möchtest du tun?" }),
-  ).toBeVisible();
+  await expect(page.getByTestId("chat-greeting")).toBeVisible();
   await page.screenshot({ path: "test-results/workspace-light.png" });
   // Farbschema über das Erscheinungsbild (localStorage + storage-Ereignis,
   // wie ein Wechsel aus einem anderen Fenster).
@@ -201,10 +205,7 @@ test("settings tabs support keyboard selection without extra tab stops", async (
   page,
 }) => {
   await page.goto("/");
-  await page
-    .getByRole("navigation")
-    .getByRole("button", { name: "Einstellungen", exact: true })
-    .click();
+  await geheZu(page, "Einstellungen");
   const tabs = page.getByRole("tablist");
   const first = tabs.getByRole("tab").first();
   await first.focus();
@@ -228,9 +229,7 @@ test("Windows shell keeps the same task navigation", async ({ page }) => {
     );
   });
   await page.goto("/");
-  await expect(
-    page.getByRole("heading", { name: "Was möchtest du tun?" }),
-  ).toBeVisible();
+  await expect(page.getByTestId("chat-greeting")).toBeVisible();
   await expect(page.locator("html")).toHaveAttribute(
     "data-platform",
     "windows",
@@ -264,8 +263,15 @@ test("read-aloud workspace preserves editor width in a narrow window", async ({
   ).toBeVisible();
   // Keine Klappen mehr unter dem Editor: Stimmen wohnen auf der Modelle-Seite.
   await expect(page.getByText("Stimmen anhören & verwalten")).toHaveCount(0);
-  // Hilfe an Ort und Stelle: der Knopf im Kopf schaltet die rechte Leiste um.
-  await page.getByRole("button", { name: "Hilfe zu dieser Seite" }).click();
+  // Hilfe an Ort und Stelle (seit ADR-0027 kein Knopf im Kopf mehr): schmal ist der
+  // F1-Hörer mit dem Drawer nicht eingehängt, also über Profilmenü ▸ Hilfe.
+  await oeffneProfilmenue(page);
+  const menue = page.locator(".wai-konto-menue");
+  await menue.getByRole("button", { name: "Hilfe", exact: true }).click();
+  await menue.getByRole("button", { name: "Hilfe zu dieser Seite" }).click();
+  // Der Drawer bleibt nach dem Menüklick offen und verdeckt die Seite: schließen.
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("navigation", { name: "Hauptnavigation" })).toBeHidden();
   await expect(page.getByTestId("help-panel")).toContainText(
     "Sprecher und Betonung im Text",
   );
@@ -292,9 +298,14 @@ test("all five content pages share one head", async ({ page }) => {
     ["Einstellungen", "settings"],
   ];
   for (const [label, id] of pages) {
-    await page.getByRole("button", { name: label, exact: true }).click();
-    // Ein Kopf je Seite, immer gleich gebaut: h1 im PageShell.
-    const head = page.locator(".page-shell__head h1");
+    if (label === "Modelle" || label === "Einstellungen") {
+      await geheZu(page, label);
+    } else {
+      await page.getByRole("button", { name: label, exact: true }).click();
+    }
+    // Eine Überschrift je Seite, immer gleich gebaut: unsichtbares h1 im
+    // PageShell (keine Titelzeile im Modul, Patrick 02.11.).
+    const head = page.locator("h1#page-title");
     await expect(head).toHaveCount(1);
     await page.screenshot({
       path: `test-results/page-${id}.png`,
@@ -315,11 +326,11 @@ test("all five content pages share one head", async ({ page }) => {
   expect(c.y).toBeGreaterThanOrEqual(e.y + e.height - 1);
 });
 
-test("account & devices: sign in from the general tab, then sign out", async ({ page }) => {
+test("account & devices: sign in from the account tab, then sign out", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "Einstellungen", exact: true }).click();
-  await page.getByRole("tab", { name: "Allgemein" }).click();
-  await expect(page.getByText("Konto & Geräte")).toBeVisible();
+  await geheZu(page, "Einstellungen");
+  await page.getByRole("tab", { name: "Konto & Geräte" }).click();
+  await expect(page.getByRole("heading", { name: "Konto & Geräte" })).toBeVisible();
   const login = page.getByTestId("sync-login");
   await expect(login).toBeVisible();
   await expect(login.getByLabel("Gerätename")).toHaveValue("Test-PC");
@@ -342,12 +353,51 @@ test("every content page opens its context help from the head", async ({ page })
     ["Modelle", "Modelle"],
     ["Einstellungen", "Einstellungen"],
   ] as const) {
-    await page.getByRole("button", { name: label, exact: true }).last().click();
-    await page.getByRole("button", { name: "Hilfe zu dieser Seite" }).click();
+    if (label === "Modelle" || label === "Einstellungen") {
+      await geheZu(page, label);
+    } else {
+      await page.getByRole("button", { name: label, exact: true }).last().click();
+    }
+    await page.keyboard.press("F1");
     const panel = page.getByTestId("help-panel");
     await expect(panel).toBeVisible();
     await expect(panel.getByRole("heading", { level: 3, name: heading }).first()).toBeVisible();
     await page.getByRole("button", { name: "Hilfe schließen" }).click();
     await expect(panel).toHaveCount(0);
+  }
+});
+
+// lva#394 (Codex): Touch-Eingabe → 44 × 44 px je Bedienelement im Chat, auch breit;
+// schmal bleibt der Datenbereich als Text sichtbar.
+test.describe("Chat bei Touch-Eingabe", () => {
+  test.use({ hasTouch: true });
+  for (const width of [1280, 390]) {
+    test(`44-px-Ziele und lesbarer Datenbereich (${width})`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 844 });
+      await page.goto("/");
+      await expect(page.getByTestId("chat-greeting")).toBeVisible();
+      expect(
+        await page.evaluate(() => matchMedia("(any-pointer: coarse)").matches),
+      ).toBe(true);
+      const sizes = await page.locator(".lv-chat button:visible").evaluateAll(
+        (els) =>
+          els.map((el) => {
+            const r = el.getBoundingClientRect();
+            return {
+              name: el.getAttribute("aria-label") ?? el.textContent,
+              w: r.width,
+              h: r.height,
+            };
+          }),
+      );
+      expect(sizes.length).toBeGreaterThan(3);
+      for (const s of sizes) {
+        expect(s.w, `${s.name} Breite`).toBeGreaterThanOrEqual(44);
+        expect(s.h, `${s.name} Höhe`).toBeGreaterThanOrEqual(44);
+      }
+      const chip = page.getByTestId("permission-chip");
+      await expect(chip).toBeVisible();
+      await expect(chip).toContainText(/·/);
+    });
   }
 });

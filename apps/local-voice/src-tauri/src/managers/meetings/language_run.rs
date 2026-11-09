@@ -27,8 +27,8 @@ use tauri::Manager;
 use super::job::JobHandle;
 use super::language::{
     build_info, decide_run, detect_text, needs_probe, normalize_code, sample_windows, settle,
-    LanguageInfo, ModelCandidate, ModelReason, ProbeResult, RunInput, StoredLanguage,
-    METADATA_KEY, SOURCE_USER,
+    LanguageInfo, ModelCandidate, ModelReason, ProbeResult, RunInput, StoredLanguage, METADATA_KEY,
+    SOURCE_USER,
 };
 use super::store::MeetingStore;
 use super::variants;
@@ -53,7 +53,10 @@ pub struct RunRequest {
 
 impl RunRequest {
     fn model(&self) -> Option<&str> {
-        self.model_id.as_deref().map(str::trim).filter(|m| !m.is_empty())
+        self.model_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|m| !m.is_empty())
     }
 }
 
@@ -103,7 +106,11 @@ pub fn candidate_of(info: &ModelInfo) -> ModelCandidate {
 
 /// Alle Modelle des Katalogs, wie die Wahl sie sieht.
 pub fn candidates(models: &ModelManager) -> Vec<ModelCandidate> {
-    models.get_available_models().iter().map(candidate_of).collect()
+    models
+        .get_available_models()
+        .iter()
+        .map(candidate_of)
+        .collect()
 }
 
 fn unknown_candidate(id: &str) -> ModelCandidate {
@@ -293,7 +300,11 @@ fn transcript_sample(store: &MeetingStore, meeting_id: &str) -> String {
 
 /// Die Sprache ablegen: Spalte der Besprechung, Transkript und aktive Fassung (eine
 /// Transaktion in `variants::set_language`) und die Herkunft in `metadata_json`.
-pub fn persist(store: &MeetingStore, meeting_id: &str, stored: &StoredLanguage) -> Result<(), String> {
+pub fn persist(
+    store: &MeetingStore,
+    meeting_id: &str,
+    stored: &StoredLanguage,
+) -> Result<(), String> {
     let mut conn = store.get_connection().map_err(|e| e.to_string())?;
     variants::set_language(&mut conn, meeting_id, &stored.code).map_err(|e| e.to_string())?;
     let value = serde_json::to_value(stored).map_err(|e| e.to_string())?;
@@ -313,7 +324,12 @@ pub fn stored_language(store: &MeetingStore, meeting_id: &str) -> Option<StoredL
 }
 
 /// Nach dem Lauf: Gegenprobe am Transkript und Ablage. Nie ein Fehler nach aussen.
-pub fn finalize(store: &MeetingStore, meeting_id: &str, plan: &LanguagePlan, model_id: Option<String>) {
+pub fn finalize(
+    store: &MeetingStore,
+    meeting_id: &str,
+    plan: &LanguagePlan,
+    model_id: Option<String>,
+) {
     let text = detect_text(&transcript_sample(store, meeting_id));
     let model_id = model_id.or_else(|| Some(plan.model_id.clone()));
     let Some(stored) = settle(plan.planned.clone(), text, model_id) else {
@@ -330,8 +346,11 @@ pub fn finalize_from_text(store: &MeetingStore, meeting_id: &str, model_id: Opti
     if stored_language(store, meeting_id).is_some_and(|s| s.source == SOURCE_USER) {
         return;
     }
-    let Some(stored) = settle(None, detect_text(&transcript_sample(store, meeting_id)), model_id)
-    else {
+    let Some(stored) = settle(
+        None,
+        detect_text(&transcript_sample(store, meeting_id)),
+        model_id,
+    ) else {
         return;
     };
     if let Err(e) = persist(store, meeting_id, &stored) {
@@ -393,11 +412,14 @@ pub fn model_for_language(
         ModelReason::Switched => choice.id,
         _ => choice.suggestion.unwrap_or(choice.id),
     };
-    catalog.iter().find(|m| m.id == id).map(|m| super::language::ModelSuggestion {
-        model_id: m.id.clone(),
-        name: m.name.clone(),
-        downloaded: m.downloaded,
-    })
+    catalog
+        .iter()
+        .find(|m| m.id == id)
+        .map(|m| super::language::ModelSuggestion {
+            model_id: m.id.clone(),
+            name: m.name.clone(),
+            downloaded: m.downloaded,
+        })
 }
 
 #[cfg(test)]

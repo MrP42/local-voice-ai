@@ -122,6 +122,15 @@ pub(crate) static MIGRATIONS: &[M] = &[
     // A7 (Agentenbruecke: Zugaenge, Werkzeugrechte, Freigabe-Zuordnung), Index 12: hinter B1. Nur
     // CREATE. Der SQL-Text steht in `agent_bridge/schema.rs`.
     M::up(crate::agent_bridge::schema::AGENT_BRIDGE_MIGRATION),
+    // ADR-0026 PR-7 (Besprechungsordner <-> Suite-Projekt), Index 13: hinter A7. Nur ADD COLUMN
+    // (nullable) und ein Index. Der SQL-Text steht in `projekt.rs`.
+    M::up(super::projekt::PROJEKT_MIGRATION),
+    // lva#208 (Hoerbuch-Teile und -Abschnitte in der Warteschlange), Index 14: hinter
+    // ADR-0026 PR-7. Nur CREATE ... IF NOT EXISTS. Der SQL-Text steht in `queue_store.rs`.
+    M::up(super::queue_store::QUEUE_PART_MIGRATION),
+    // Mehrere Audiodateien je Besprechung (Teile), Index 15: hinter lva#208. Nur
+    // CREATE ... IF NOT EXISTS. Der SQL-Text steht in `parts.rs`.
+    M::up(super::parts::PARTS_MIGRATION),
 ];
 
 /// Migration Index 3 (M4, `entwurf/m4-chat-suche.md` §3).
@@ -450,6 +459,11 @@ fn write_speakers(
         };
         for (id, index) in rows {
             let old = index.and_then(|i| u32::try_from(i).ok());
+            // Der Name des ganzen Kanals (Segmente ohne Sprecher) haengt an
+            // keiner Diarisierung und bleibt stehen.
+            if old == Some(super::speakers::WHOLE_CHANNEL) {
+                continue;
+            }
             let target = old.and_then(|o| remap.get(&o).copied());
             match target {
                 Some(new) if Some(new) != old => {
@@ -491,6 +505,86 @@ fn write_speakers(
                 ],
             )?;
         }
+    }
+    Ok(())
+}
+
+/// #266: die lebenden Zeilen eines Kanals (Kennung, Nummer, Name), aelteste zuerst.
+fn speaker_rows_of_channel(
+    tx: &rusqlite::Transaction<'_>,
+    meeting_id: &str,
+    channel: u8,
+) -> rusqlite::Result<Vec<(String, u32, Option<String>)>> {
+    let mut stmt = tx.prepare(
+        "SELECT id, speaker_index, display_name FROM speakers
+         WHERE meeting_id = ?1 AND channel = ?2 AND deleted_at IS NULL
+           AND speaker_index IS NOT NULL ORDER BY created_at",
+    )?;
+    let mapped = stmt.query_map(params![meeting_id, i64::from(channel)], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, i64>(1)?.clamp(0, i64::from(u32::MAX)) as u32,
+            row.get::<_, Option<String>>(2)?,
+        ))
+    })?;
+    mapped.collect()
+}
+
+/// #266: `metadata_json` als Objekt innerhalb einer Transaktion (leer: neues
+/// Objekt; kein Objekt: Fehler, damit nichts ueberschrieben wird).
+fn metadata_object_tx(
+    tx: &rusqlite::Transaction<'_>,
+    meeting_id: &str,
+) -> Result<serde_json::Map<String, serde_json::Value>> {
+    let text: Option<String> = tx.query_row(
+        "SELECT metadata_json FROM meetings WHERE id = ?1 AND deleted_at IS NULL",
+        params![meeting_id],
+        |row| row.get(0),
+    )?;
+    match text.as_deref().map(str::trim) {
+        None | Some("") => Ok(serde_json::Map::new()),
+        Some(text) => match serde_json::from_str::<serde_json::Value>(text) {
+            Ok(serde_json::Value::Object(map)) => Ok(map),
+            _ => Err(anyhow!(
+                "metadata_json of {} is not a JSON object",
+                meeting_id
+            )),
+        },
+    }
+}
+
+fn write_metadata_object_tx(
+    tx: &rusqlite::Transaction<'_>,
+    meeting_id: &str,
+    map: serde_json::Map<String, serde_json::Value>,
+    now: i64,
+) -> Result<()> {
+    tx.execute(
+        "UPDATE meetings SET metadata_json = ?1, updated_at = ?2 WHERE id = ?3",
+        params![serde_json::Value::Object(map).to_string(), now, meeting_id],
+    )?;
+    Ok(())
+}
+
+/// Die frueheren Namen (#242) aus einem Metadaten-Objekt.
+fn former_names_of(
+    meta: &serde_json::Map<String, serde_json::Value>,
+) -> std::collections::BTreeMap<String, Vec<String>> {
+    meta.get(super::relabel::FORMER_NAMES_KEY)
+        .cloned()
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_default()
+}
+
+/// #266: Segmente neu geschrieben (Sprechertrennung, Neu-Transkription,
+/// Enddurchlauf): die Zusammenfuehrungen gelten nicht mehr.
+fn forget_merges_tx(tx: &rusqlite::Transaction<'_>, meeting_id: &str, now: i64) -> Result<()> {
+    let mut meta = match metadata_object_tx(tx, meeting_id) {
+        Ok(m) => m,
+        Err(_) => return Ok(()),
+    };
+    if meta.remove(super::speaker_merges::MERGES_KEY).is_some() {
+        write_metadata_object_tx(tx, meeting_id, meta, now)?;
     }
     Ok(())
 }
@@ -602,7 +696,27 @@ pub struct MeetingDocument {
     /// earlier still carry seconds — the value is only ever compared for
     /// equality, never interpreted, so both work.
     pub updated_at: i64,
+    /// Von Hand bearbeitet (Protokoll-Editor, KI-Notizen): der Stempel liegt
+    /// deutlich hinter dem Anlegen. Abgeleitet, keine eigene Spalte (siehe
+    /// `is_hand_edited`); die Oberflaeche warnt damit vor dem Neu-Erzeugen.
+    pub edited: bool,
 }
+
+/// Ob ein Dokument nach dem Anlegen von Hand geaendert wurde. `insert_document`
+/// setzt `created_at` (Sekunden) und `updated_at` (Millisekunden) aus demselben
+/// Augenblick; jede Aenderung ueber `update_document_body` hebt `updated_at` auf
+/// die Uhrzeit des Speicherns. Zwei Sekunden Abstand schliessen Zeilen aus, deren
+/// zwei Zeitstempel noch aus getrennten Uhrabfragen stammen (Sekundengrenze), und
+/// Altzeilen vor M1 (Stempel in Sekunden, also viel kleiner) zaehlen nie als
+/// bearbeitet.
+pub fn is_hand_edited(created_at: i64, updated_at: i64) -> bool {
+    updated_at >= created_at.saturating_add(2).saturating_mul(1000)
+}
+
+/// Obergrenze fuer den Text eines von Hand bearbeiteten Dokuments (Zeichen in
+/// Bytes). Ein Protokoll hat einige Kilobyte; die Grenze faengt nur Versehen ab
+/// (eingefuegte Datei statt Text).
+pub const MAX_DOCUMENT_TEXT_BYTES: usize = 2 * 1024 * 1024;
 
 // M9/M10 will let users pick a pinned template when generating minutes; the
 // `meeting_templates` table and its read path exist already so that later
@@ -860,7 +974,9 @@ impl MeetingStore {
         // A1, A3, U7 angleichen. Ein Fehler hier laesst die Datenbank unveraendert
         // (eine Transaktion); `to_latest` meldet dann den eigentlichen Fehler.
         match adopt_u7_first_database(&mut conn) {
-            Ok(true) => info!("Meetings database from a U7-only build adopted into the merged migration order"),
+            Ok(true) => info!(
+                "Meetings database from a U7-only build adopted into the merged migration order"
+            ),
             Ok(false) => {}
             Err(e) => warn!("Could not adopt a U7-only meetings database: {e}"),
         }
@@ -911,8 +1027,8 @@ impl MeetingStore {
     /// A1: gleicht das Register der Integrationen mit `calendar_sources` ab.
     fn reconcile_integrations(&self) -> Result<()> {
         let conn = self.get_connection()?;
-        let report = crate::managers::integrations::adopt::reconcile(&conn)
-            .map_err(|e| anyhow!("{e}"))?;
+        let report =
+            crate::managers::integrations::adopt::reconcile(&conn).map_err(|e| anyhow!("{e}"))?;
         if report.changed() > 0 {
             info!(
                 "integrations: {} adopted, {} updated, {} removed",
@@ -1311,6 +1427,7 @@ impl MeetingStore {
         let epoch = write_transcript_row(&tx, meeting_id, row, &json, &mode, now)?;
         if let Some(speakers) = speakers {
             write_speakers(&tx, meeting_id, speakers, now).map_err(|e| store_err(&e))?;
+            forget_merges_tx(&tx, meeting_id, now).map_err(|e| store_err(&e))?;
         }
         tx.commit().map_err(|e| store_err(&e))?;
         Ok(epoch as u32)
@@ -1417,106 +1534,123 @@ impl MeetingStore {
     /// M3-P3c: zwei Sprecher eines Kanals sind dieselbe Person. Segmente und
     /// Turns (`speaker_hints_json`) von `from` gehen an `into`, die Zeile von
     /// `from` faellt weg; ein Name von `from` bleibt erhalten, wenn `into`
-    /// keinen hat. Eine Transaktion, `content_revision + 1`, die Epoche bleibt
-    /// (Segmentnummern aendern sich nicht). Fehlercodes: `speaker_invalid`
-    /// (gleiche oder null-Nummer), `speaker_not_found`.
+    /// keinen hat. #266: `from` = 0 ordnet die Segmente ohne Sprecher
+    /// ("Aufnahme") `into` zu. `from_labels` (was Texte fuer `from` sagen)
+    /// kommen zu den frueheren Namen von `into` (#242); bei `from` = 0 nicht:
+    /// Kanalwoerter wie "Aufnahme" stehen in alten Texten auch fuer Stellen,
+    /// die nicht zu `into` gehoeren. Was sich aendert, steht
+    /// danach als [`MergeRecord`] in den Metadaten ("Trennen" nimmt es
+    /// zurueck); die Kennung kommt zurueck. Eine Transaktion,
+    /// `content_revision + 1`, die Epoche bleibt. Fehlercodes:
+    /// `speaker_invalid` (gleiche Nummer, Ziel 0), `speaker_not_found`.
     pub fn merge_speakers(
         &self,
         meeting_id: &str,
         channel: u8,
         from: u32,
         into: u32,
-    ) -> Result<()> {
-        if from == into || from == 0 || into == 0 {
+        from_labels: &[String],
+    ) -> Result<String> {
+        use super::speaker_merges::{self as sm, MergeRecord};
+        if from == into || into == 0 {
             return Err(anyhow!("speaker_invalid"));
         }
         let mut conn = self.get_connection()?;
         let now = Utc::now().timestamp();
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         Self::ensure_meeting_is_live(&tx, meeting_id)?;
-        let (transcript_id, segments_json, hints): (String, String, Option<String>) = tx
-            .query_row(
-                "SELECT id, segments_json, speaker_hints_json FROM transcripts
+        let (transcript_id, segments_json, hints, epoch): (String, String, Option<String>, i64) =
+            tx.query_row(
+                "SELECT id, segments_json, speaker_hints_json, segment_epoch FROM transcripts
                  WHERE meeting_id = ?1 AND deleted_at IS NULL",
                 params![meeting_id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
             .optional()?
             .ok_or_else(|| anyhow!("No transcript for meeting {}", meeting_id))?;
         let mut segments: Vec<StoredSegment> = serde_json::from_str(&segments_json)?;
-        let rows: Vec<(String, u32, Option<String>)> = {
-            let mut stmt = tx.prepare(
-                "SELECT id, speaker_index, display_name FROM speakers
-                 WHERE meeting_id = ?1 AND channel = ?2 AND deleted_at IS NULL
-                   AND speaker_index IS NOT NULL ORDER BY created_at",
-            )?;
-            let mapped = stmt.query_map(params![meeting_id, i64::from(channel)], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, i64>(1)?.clamp(0, i64::from(u32::MAX)) as u32,
-                    row.get::<_, Option<String>>(2)?,
-                ))
-            })?;
-            mapped.collect::<rusqlite::Result<_>>()?
+        let rows = speaker_rows_of_channel(&tx, meeting_id, channel)?;
+        let speaks =
+            |s: &StoredSegment, n: u32| s.channel == channel && s.speaker_index.unwrap_or(0) == n;
+        let known = |n: u32| segments.iter().any(|s| speaks(s, n)) || rows.iter().any(|r| r.1 == n);
+        // `from` = 0 zaehlt nur mit eigenen Segmenten (die Zeile des Kanals bleibt).
+        let from_known = if from == 0 {
+            segments.iter().any(|s| speaks(s, 0))
+        } else {
+            known(from)
         };
-        let known = |n: u32| {
-            segments
-                .iter()
-                .any(|s| s.channel == channel && s.speaker_index == Some(n))
-                || rows.iter().any(|r| r.1 == n)
-        };
-        if !known(from) || !known(into) {
+        if !from_known || !known(into) {
             return Err(anyhow!("speaker_not_found"));
         }
-        for s in segments
-            .iter_mut()
-            .filter(|s| s.channel == channel && s.speaker_index == Some(from))
-        {
+        let mut record = MergeRecord {
+            id: Ulid::new().to_string(),
+            channel,
+            from,
+            into,
+            epoch: epoch.clamp(0, i64::from(u32::MAX)) as u32,
+            at: now,
+            from_label: from_labels.last().cloned().unwrap_or_default(),
+            from_default_label: from_labels.first().cloned().unwrap_or_default(),
+            ..Default::default()
+        };
+        for s in segments.iter_mut().filter(|s| speaks(s, from)) {
+            record.segments.push(s.segment_index);
             s.speaker_index = Some(into);
         }
-        let from_rows: Vec<&(String, u32, Option<String>)> =
-            rows.iter().filter(|r| r.1 == from).collect();
-        let into_row = rows.iter().find(|r| r.1 == into);
-        let from_name = from_rows.iter().find_map(|r| r.2.clone());
-        match into_row {
-            Some((id, _, name)) => {
-                if name.is_none() {
-                    if let Some(carry) = &from_name {
-                        tx.execute(
-                            "UPDATE speakers SET display_name = ?1, updated_at = ?2 WHERE id = ?3",
-                            params![carry, now, id],
-                        )?;
+        if from != 0 {
+            let from_rows: Vec<&(String, u32, Option<String>)> =
+                rows.iter().filter(|r| r.1 == from).collect();
+            let into_row = rows.iter().find(|r| r.1 == into);
+            let from_name = from_rows.iter().find_map(|r| r.2.clone());
+            match into_row {
+                Some((id, _, name)) => {
+                    if name.is_none() {
+                        if let Some(carry) = &from_name {
+                            tx.execute(
+                                "UPDATE speakers SET display_name = ?1, updated_at = ?2 WHERE id = ?3",
+                                params![carry, now, id],
+                            )?;
+                            record.carried_name = Some(carry.clone());
+                        }
                     }
-                }
-                for (id, _, _) in &from_rows {
-                    tx.execute(
-                        "UPDATE speakers SET deleted_at = ?1, updated_at = ?1 WHERE id = ?2",
-                        params![now, id],
-                    )?;
-                }
-            }
-            None => {
-                // `into` hat noch keine Zeile: die von `from` zieht um und
-                // nimmt Namen und Personenbezug mit; weitere Zeilen entfallen.
-                for (i, (id, _, _)) in from_rows.iter().enumerate() {
-                    if i == 0 {
-                        tx.execute(
-                            "UPDATE speakers SET speaker_index = ?1, updated_at = ?2 WHERE id = ?3",
-                            params![i64::from(into), now, id],
-                        )?;
-                    } else {
+                    for (id, _, _) in &from_rows {
                         tx.execute(
                             "UPDATE speakers SET deleted_at = ?1, updated_at = ?1 WHERE id = ?2",
                             params![now, id],
                         )?;
+                        record.deleted_rows.push(id.clone());
+                    }
+                }
+                None => {
+                    // `into` hat noch keine Zeile: die von `from` zieht um und
+                    // nimmt Namen und Personenbezug mit; weitere Zeilen entfallen.
+                    for (i, (id, _, _)) in from_rows.iter().enumerate() {
+                        if i == 0 {
+                            tx.execute(
+                                "UPDATE speakers SET speaker_index = ?1, updated_at = ?2 WHERE id = ?3",
+                                params![i64::from(into), now, id],
+                            )?;
+                            record.moved_row = Some(id.clone());
+                            record.moved_name = from_rows[0].2.clone();
+                        } else {
+                            tx.execute(
+                                "UPDATE speakers SET deleted_at = ?1, updated_at = ?1 WHERE id = ?2",
+                                params![now, id],
+                            )?;
+                            record.deleted_rows.push(id.clone());
+                        }
                     }
                 }
             }
         }
         let json = serde_json::to_string(&segments)?;
-        let hints = hints
-            .filter(|h| !h.trim().is_empty())
-            .map(|h| super::speakers::rewrite_turn_speaker(&h, channel, from, into));
+        let hints = hints.filter(|h| !h.trim().is_empty()).map(|h| {
+            if from == 0 {
+                return h;
+            }
+            record.turns = super::speakers::turn_positions(&h, channel, from);
+            super::speakers::rewrite_turn_speaker(&h, channel, from, into)
+        });
         tx.execute(
             "UPDATE transcripts SET segments_json = ?1,
                  speaker_hints_json = COALESCE(?2, speaker_hints_json),
@@ -1524,6 +1658,183 @@ impl MeetingStore {
              WHERE id = ?4",
             params![json, hints, now, transcript_id],
         )?;
+        let mut meta = metadata_object_tx(&tx, meeting_id)?;
+        if from != 0 {
+            let mut former = former_names_of(&meta);
+            let (former_from, carried) =
+                sm::carry_former(&mut former, channel, from, into, from_labels);
+            record.former_from = former_from;
+            record.carried_former = carried;
+            meta.insert(
+                super::relabel::FORMER_NAMES_KEY.into(),
+                serde_json::json!(former),
+            );
+        }
+        let id = record.id.clone();
+        let current = record.epoch;
+        let mut list = sm::live(
+            sm::records(Some(&serde_json::Value::Object(meta.clone()))),
+            current,
+        );
+        list.push(record);
+        let excess = list.len().saturating_sub(sm::MAX_MERGES);
+        list.drain(..excess);
+        meta.insert(sm::MERGES_KEY.into(), serde_json::to_value(&list)?);
+        write_metadata_object_tx(&tx, meeting_id, meta, now)?;
+        tx.commit()?;
+        Ok(id)
+    }
+
+    /// #266: die Zusammenfuehrungen der Besprechung, die sich trennen lassen
+    /// (nur die der aktuellen Segmentepoche), aelteste zuerst.
+    pub fn speaker_merges(
+        &self,
+        meeting_id: &str,
+    ) -> Result<Vec<super::speaker_merges::SpeakerMerge>> {
+        use super::speaker_merges as sm;
+        let epoch = self.segment_epoch(meeting_id)?;
+        let meta = self.metadata_json(meeting_id)?;
+        Ok(sm::summaries(&sm::live(sm::records(meta.as_ref()), epoch)))
+    }
+
+    /// #266: eine Zusammenfuehrung zuruecknehmen ("Trennen"). Segmente und
+    /// Turns, die noch bei `into` stehen, gehen an `from` zurueck; Zeilen,
+    /// Name und fruehere Namen wie vorher. Was danach von Hand an einem
+    /// Segment geaendert wurde, bleibt. Fehlercodes: `merge_not_found`
+    /// (unbekannt oder durch eine neue Sprechertrennung verworfen),
+    /// `merge_blocked` (eine spaetere Zusammenfuehrung nahm `into` auf),
+    /// `speaker_taken` (die Nummer von `from` ist inzwischen neu vergeben).
+    pub fn unmerge_speakers(&self, meeting_id: &str, merge_id: &str) -> Result<()> {
+        use super::speaker_merges as sm;
+        let mut conn = self.get_connection()?;
+        let now = Utc::now().timestamp();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        Self::ensure_meeting_is_live(&tx, meeting_id)?;
+        let (transcript_id, segments_json, hints, epoch): (String, String, Option<String>, i64) =
+            tx.query_row(
+                "SELECT id, segments_json, speaker_hints_json, segment_epoch FROM transcripts
+                 WHERE meeting_id = ?1 AND deleted_at IS NULL",
+                params![meeting_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .optional()?
+            .ok_or_else(|| anyhow!("merge_not_found"))?;
+        let mut meta = metadata_object_tx(&tx, meeting_id)?;
+        let epoch = epoch.clamp(0, i64::from(u32::MAX)) as u32;
+        let mut list = sm::live(
+            sm::records(Some(&serde_json::Value::Object(meta.clone()))),
+            epoch,
+        );
+        let at = list
+            .iter()
+            .position(|r| r.id == merge_id)
+            .ok_or_else(|| anyhow!("merge_not_found"))?;
+        if !sm::is_undoable(&list, at) {
+            return Err(anyhow!("merge_blocked"));
+        }
+        let rec = list.remove(at);
+        let (channel, from, into) = (rec.channel, rec.from, rec.into);
+        let mut segments: Vec<StoredSegment> = serde_json::from_str(&segments_json)?;
+        let rows = speaker_rows_of_channel(&tx, meeting_id, channel)?;
+        // Die Nummer von `from` ist neu vergeben, wenn sie wieder Segmente oder
+        // einen Namen hat. Eine leere, namenlose Zeile (Segment hin- und
+        // wieder weggeschoben) blockiert nicht: sie entfaellt.
+        if from != 0 {
+            let has_segments = segments
+                .iter()
+                .any(|s| s.channel == channel && s.speaker_index == Some(from));
+            let named = rows.iter().any(|r| r.1 == from && r.2.is_some());
+            if has_segments || named {
+                return Err(anyhow!("speaker_taken"));
+            }
+            for (id, _, _) in rows.iter().filter(|r| r.1 == from) {
+                tx.execute(
+                    "UPDATE speakers SET deleted_at = ?1, updated_at = ?1 WHERE id = ?2",
+                    params![now, id],
+                )?;
+            }
+        }
+        for s in segments.iter_mut().filter(|s| {
+            s.channel == channel
+                && s.speaker_index == Some(into)
+                && rec.segments.contains(&s.segment_index)
+        }) {
+            s.speaker_index = (from != 0).then_some(from);
+        }
+        if let Some(id) = &rec.moved_row {
+            let current: Option<(Option<String>, Option<String>)> = tx
+                .query_row(
+                    "SELECT display_name, human_id FROM speakers
+                     WHERE id = ?1 AND speaker_index = ?2 AND deleted_at IS NULL",
+                    params![id, i64::from(into)],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()?;
+            if let Some((name, human)) = current {
+                let renamed = name != rec.moved_name;
+                tx.execute(
+                    "UPDATE speakers SET speaker_index = ?1, display_name = ?2,
+                         human_id = CASE WHEN ?3 THEN NULL ELSE human_id END, updated_at = ?4
+                     WHERE id = ?5",
+                    params![i64::from(from), rec.moved_name, renamed, now, id],
+                )?;
+                // `into` wurde nach dem Zusammenfuehren umbenannt: der Name
+                // bleibt bei `into` (eigene Zeile), `from` hat seinen alten.
+                if renamed && name.is_some() {
+                    tx.execute(
+                        "INSERT INTO speakers (id, meeting_id, channel, speaker_index,
+                             human_id, display_name, created_at, updated_at)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
+                        params![
+                            Ulid::new().to_string(),
+                            meeting_id,
+                            i64::from(channel),
+                            i64::from(into),
+                            human,
+                            name,
+                            now
+                        ],
+                    )?;
+                }
+            }
+        }
+        for id in &rec.deleted_rows {
+            tx.execute(
+                "UPDATE speakers SET deleted_at = NULL, updated_at = ?1
+                 WHERE id = ?2 AND meeting_id = ?3",
+                params![now, id, meeting_id],
+            )?;
+        }
+        if let Some(name) = &rec.carried_name {
+            // Nur, wenn `into` den Namen noch traegt (nicht inzwischen umbenannt).
+            tx.execute(
+                "UPDATE speakers SET display_name = NULL, updated_at = ?1
+                 WHERE meeting_id = ?2 AND channel = ?3 AND speaker_index = ?4
+                   AND deleted_at IS NULL AND display_name = ?5",
+                params![now, meeting_id, i64::from(channel), i64::from(into), name],
+            )?;
+        }
+        let json = serde_json::to_string(&segments)?;
+        let hints = hints
+            .filter(|h| !h.trim().is_empty())
+            .map(|h| super::speakers::restore_turn_speaker(&h, channel, &rec.turns, into, from));
+        tx.execute(
+            "UPDATE transcripts SET segments_json = ?1,
+                 speaker_hints_json = COALESCE(?2, speaker_hints_json),
+                 content_revision = content_revision + 1, updated_at = ?3
+             WHERE id = ?4",
+            params![json, hints, now, transcript_id],
+        )?;
+        if from != 0 {
+            let mut former = former_names_of(&meta);
+            sm::restore_former(&mut former, &rec, &list);
+            meta.insert(
+                super::relabel::FORMER_NAMES_KEY.into(),
+                serde_json::json!(former),
+            );
+        }
+        meta.insert(sm::MERGES_KEY.into(), serde_json::to_value(&list)?);
+        write_metadata_object_tx(&tx, meeting_id, meta, now)?;
         tx.commit()?;
         Ok(())
     }
@@ -1782,7 +2093,20 @@ impl MeetingStore {
         // DEFERRED wuerde ein Fremdschreiber dazwischen das Hochstufen sofort
         // scheitern lassen (SQLITE_BUSY_SNAPSHOT), statt den Busy-Timeout zu nutzen.
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let audio_paths = Self::soft_delete_in_tx(&tx, id, now)?;
+        tx.commit()?;
+        Ok(audio_paths)
+    }
 
+    /// Der Kern von [`Self::soft_delete_meeting`] in einer fremden Transaktion:
+    /// das Zusammenfuehren mehrerer Teile (`parts.rs`) loescht die angehaengten
+    /// Besprechungen in DERSELBEN Transaktion, in der die Zielbesprechung ihr
+    /// Transkript bekommt. Gibt die Audiopfade zurueck.
+    pub(super) fn soft_delete_in_tx(
+        tx: &rusqlite::Transaction<'_>,
+        id: &str,
+        now: i64,
+    ) -> Result<Vec<String>> {
         let paths: Option<(Option<String>, Option<String>)> = tx
             .query_row(
                 "SELECT mic_audio_path, system_audio_path FROM meetings WHERE id = ?1 AND deleted_at IS NULL",
@@ -1831,6 +2155,7 @@ impl MeetingStore {
         // und die Vektoren mit. Ordner behalten sich selbst, nur die Zuordnung
         // faellt weg. Besprechungsgebundene Chats gehen samt Nachrichten; globale
         // Verlaeufe behalten ihren Text (Zitate zeigt die UI dann als "geloescht").
+        tx.execute("DELETE FROM import_part WHERE meeting_id = ?1", params![id])?;
         tx.execute(
             "DELETE FROM meeting_chunks WHERE meeting_id = ?1",
             params![id],
@@ -1864,8 +2189,16 @@ impl MeetingStore {
             "DELETE FROM meeting_participants WHERE meeting_id = ?1",
             params![id],
         )?;
-
-        tx.commit()?;
+        // lva (Teile): ein geloeschter Teil wird nie mehr angehaengt, ein
+        // geloeschtes Ziel nimmt keine Teile mehr an; die Teilliste geht mit.
+        tx.execute(
+            "DELETE FROM meeting_append_pending WHERE meeting_id = ?1 OR target_id = ?1",
+            params![id],
+        )?;
+        tx.execute(
+            "DELETE FROM meeting_parts WHERE meeting_id = ?1",
+            params![id],
+        )?;
 
         let mut audio_paths = Vec::new();
         if let Some(mic) = mic {
@@ -2032,8 +2365,9 @@ impl MeetingStore {
         generation_metadata: Option<&str>,
     ) -> Result<String> {
         let mut conn = self.get_connection()?;
-        let now = Utc::now().timestamp();
+        // Beide Stempel aus EINEM Augenblick: `is_hand_edited` vergleicht sie.
         let now_ms = Utc::now().timestamp_millis();
+        let now = now_ms.div_euclid(1000);
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
 
         Self::ensure_meeting_is_live(&tx, meeting_id)?;
@@ -2093,6 +2427,7 @@ impl MeetingStore {
             created_at: row.get("created_at")?,
             template_id: row.get("template_id")?,
             updated_at: row.get("updated_at")?,
+            edited: is_hand_edited(row.get("created_at")?, row.get("updated_at")?),
         })
     }
 
@@ -2343,6 +2678,38 @@ impl MeetingStore {
         )?;
         tx.commit()?;
         Ok(new_stamp)
+    }
+
+    /// Handbearbeitung eines Markdown-Dokuments (Protokoll, Dokumenttypen):
+    /// ersetzt den Text der bestehenden Version unter der optimistischen Sperre
+    /// von `update_document_body` und liefert das gespeicherte Dokument. Eine
+    /// neue Version entsteht erst beim Neu-Erzeugen; die bearbeitete bleibt dann
+    /// als aeltere Version erhalten.
+    ///
+    /// Fehlercodes: `document_not_found`, `document_not_editable` (kein
+    /// Markdown, etwa KI-Notizen mit eigenem Editor), `document_empty`,
+    /// `document_too_large`, `stale_document`.
+    pub fn update_markdown_document(
+        &self,
+        document_id: &str,
+        body: &str,
+        expected_updated_at: i64,
+    ) -> Result<MeetingDocument> {
+        let document = self
+            .get_document(document_id)?
+            .ok_or_else(|| anyhow!("document_not_found"))?;
+        if !document.body_format.starts_with("markdown") {
+            return Err(anyhow!("document_not_editable"));
+        }
+        if body.trim().is_empty() {
+            return Err(anyhow!("document_empty"));
+        }
+        if body.len() > MAX_DOCUMENT_TEXT_BYTES {
+            return Err(anyhow!("document_too_large"));
+        }
+        self.update_document_body(document_id, body, expected_updated_at)?;
+        self.get_document(document_id)?
+            .ok_or_else(|| anyhow!("document_not_found"))
     }
 
     // ---- Vorlagen --------------------------------------------------------
@@ -3270,8 +3637,14 @@ mod tests {
     #[test]
     fn metadata_keys_are_merged_not_overwritten() {
         let s = store();
-        let m = s.create_meeting("Meta", MeetingSource::Live, Some(1)).unwrap();
-        assert_eq!(s.metadata_json(&m.id).unwrap(), None, "neue Besprechung: leer");
+        let m = s
+            .create_meeting("Meta", MeetingSource::Live, Some(1))
+            .unwrap();
+        assert_eq!(
+            s.metadata_json(&m.id).unwrap(),
+            None,
+            "neue Besprechung: leer"
+        );
         s.set_metadata_key(
             &m.id,
             "timeline",
@@ -3292,7 +3665,9 @@ mod tests {
     #[test]
     fn foreign_metadata_is_kept_and_garbage_is_never_overwritten() {
         let s = store();
-        let m = s.create_meeting("Alt", MeetingSource::Live, Some(1)).unwrap();
+        let m = s
+            .create_meeting("Alt", MeetingSource::Live, Some(1))
+            .unwrap();
         let conn = s.get_connection().unwrap();
         conn.execute(
             "UPDATE meetings SET metadata_json = ?1 WHERE id = ?2",
@@ -3321,7 +3696,9 @@ mod tests {
             )
             .unwrap();
         assert_eq!(raw, "kein json", "nichts ueberschrieben");
-        assert!(s.set_metadata_key("gibt-es-nicht", "a", serde_json::json!(1)).is_err());
+        assert!(s
+            .set_metadata_key("gibt-es-nicht", "a", serde_json::json!(1))
+            .is_err());
     }
 
     #[test]
@@ -3483,10 +3860,18 @@ mod tests {
         )
         .unwrap();
         // Ein echtes Fehlen: Besprechung ohne Transkript, und ein falscher Index.
-        let none = s.create_meeting("Leer", MeetingSource::Live, Some(1)).unwrap();
-        let missing = s.update_segment_text(&none.id, 0, "x").unwrap_err().to_string();
+        let none = s
+            .create_meeting("Leer", MeetingSource::Live, Some(1))
+            .unwrap();
+        let missing = s
+            .update_segment_text(&none.id, 0, "x")
+            .unwrap_err()
+            .to_string();
         assert!(missing.contains("No transcript"), "war: {missing}");
-        let wrong = s.update_segment_text(&m.id, 99, "x").unwrap_err().to_string();
+        let wrong = s
+            .update_segment_text(&m.id, 99, "x")
+            .unwrap_err()
+            .to_string();
         assert!(wrong.contains("Segment 99 not found"), "war: {wrong}");
 
         // Ein DB-Fehler (Tabelle weg, wie bei einer beschaedigten Datei).
@@ -3494,12 +3879,18 @@ mod tests {
             .unwrap()
             .execute_batch("DROP TABLE transcripts")
             .unwrap();
-        let broken = s.update_segment_text(&m.id, 0, "x").unwrap_err().to_string();
+        let broken = s
+            .update_segment_text(&m.id, 0, "x")
+            .unwrap_err()
+            .to_string();
         assert!(
             !broken.contains("No transcript"),
             "ein Datenbankfehler ist kein fehlendes Transkript, war: {broken}"
         );
-        assert!(broken.contains("transcripts"), "die DB-Ursache bleibt sichtbar: {broken}");
+        assert!(
+            broken.contains("transcripts"),
+            "die DB-Ursache bleibt sichtbar: {broken}"
+        );
     }
 
     #[test]
@@ -3814,6 +4205,51 @@ mod tests {
         );
         // Der Modus steht in der Datei: auch eine blanke Verbindung (Test, MCP) sieht WAL.
         assert_eq!(journal_mode(&Connection::open(&path).unwrap()), "wal");
+    }
+
+    /// ADR-0026 PR-7, Migration Index 13: eine Altdatenbank mit Zeilen in jeder Tabelle bekommt die Spalte
+    /// `meeting_folders.projekt_id` samt Index, ohne eine Zeile zu verlieren; Ordner bleiben ohne Verweis,
+    /// ein Verweis laesst sich setzen und loesen, und ein zweites Oeffnen aendert nichts.
+    #[test]
+    fn migration_13_adds_projekt_id_to_an_old_database_without_losing_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("meetings.db");
+        create_legacy_db(&path);
+        let cols: Vec<(String, Vec<String>)> = {
+            let conn = Connection::open(&path).unwrap();
+            LEGACY_TABLES
+                .iter()
+                .map(|t| (t.to_string(), table_columns(&conn, t)))
+                .collect()
+        };
+        let before = dump_all(&Connection::open(&path).unwrap(), &cols);
+
+        let s = MeetingStore::open_at(&path).unwrap();
+        let conn = s.get_connection().unwrap();
+        assert_eq!(dump_all(&conn, &cols), before, "Altzeilen unveraendert");
+        let spalten = table_columns(&conn, "meeting_folders");
+        assert!(spalten.iter().any(|c| c == "projekt_id"), "{spalten:?}");
+        let index: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_meeting_folders_projekt'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(index, 1);
+        drop(conn);
+
+        let f = s.folder_save(None, "Altordner", None).unwrap().id;
+        assert_eq!(s.ordner_verweise().unwrap()[0].projekt_id, None);
+        s.ordner_projekt_setzen(&f, Some("prj_01HZZZZZZZZZZZZZZZZZZZZZZZ"))
+            .unwrap();
+        drop(s);
+        let s = MeetingStore::open_at(&path).unwrap();
+        assert_eq!(
+            s.ordner_verweise().unwrap()[0].projekt_id.as_deref(),
+            Some("prj_01HZZZZZZZZZZZZZZZZZZZZZZZ"),
+            "erneutes Oeffnen aendert nichts"
+        );
     }
 
     /// G8, Abbruch mitten im Schreiben: eine Transaktion, die nicht abgeschlossen
@@ -4454,7 +4890,10 @@ mod tests {
     }
 
     fn p2d_deltas(s: &MeetingStore) -> i64 {
-        scalar(&s.get_connection().unwrap(), "SELECT COUNT(*) FROM transcript_deltas")
+        scalar(
+            &s.get_connection().unwrap(),
+            "SELECT COUNT(*) FROM transcript_deltas",
+        )
     }
 
     #[test]
@@ -4462,10 +4901,17 @@ mod tests {
         let (_dir, s) = tmp_store();
         let m = p2d_live(&s);
         let before = s.transcript_snapshot(&m.id).unwrap();
-        assert_eq!((before.epoch, before.revision, before.segments.len()), (0, 2, 2));
+        assert_eq!(
+            (before.epoch, before.revision, before.segments.len()),
+            (0, 2, 2)
+        );
         assert_eq!(p2d_deltas(&s), 2);
 
-        let mut fresh = vec![p2d_seg(0, "neu", 0), p2d_seg(1, "neu", 900), p2d_seg(2, "neu", 2_000)];
+        let mut fresh = vec![
+            p2d_seg(0, "neu", 0),
+            p2d_seg(1, "neu", 900),
+            p2d_seg(2, "neu", 2_000),
+        ];
         fresh[1].words = Some(vec![WordTime {
             text: "neu".into(),
             start_ms: 950,
@@ -4503,9 +4949,21 @@ mod tests {
         let snap = s.transcript_snapshot(&m.id).unwrap();
         s.update_segment_text(&m.id, 0, "von Hand").unwrap();
         let err = s
-            .replace_segments(&m.id, &[p2d_seg(0, "neu", 0)], "x", "segment@1", snap.revision)
+            .replace_segments(
+                &m.id,
+                &[p2d_seg(0, "neu", 0)],
+                "x",
+                "segment@1",
+                snap.revision,
+            )
             .unwrap_err();
-        assert_eq!(err, ReplaceError::Conflict { expected: 2, found: 3 });
+        assert_eq!(
+            err,
+            ReplaceError::Conflict {
+                expected: 2,
+                found: 3
+            }
+        );
         let now = s.transcript_snapshot(&m.id).unwrap();
         assert_eq!(now.epoch, 0);
         assert_eq!(now.segments[0].text, "von Hand");
@@ -4685,6 +5143,113 @@ mod tests {
             .collect();
         versions.sort_unstable();
         assert_eq!(versions, (1..=8).collect::<Vec<_>>());
+    }
+
+    /// Ein Protokoll, dessen Stempel zehn Sekunden zurueckliegen (sonst faellt
+    /// eine Bearbeitung im Test in dieselbe Sekunde wie das Anlegen).
+    fn aged_minutes(s: &MeetingStore, meeting_id: &str) -> MeetingDocument {
+        let id = s
+            .insert_document(
+                meeting_id,
+                "minutes",
+                "markdown@1",
+                "# Protokoll\n\n- Punkt",
+                None,
+                None,
+            )
+            .unwrap();
+        s.get_connection()
+            .unwrap()
+            .execute(
+                "UPDATE meeting_documents SET created_at = created_at - 10,
+                 updated_at = (created_at - 10) * 1000 WHERE id = ?1",
+                params![id],
+            )
+            .unwrap();
+        s.get_document(&id).unwrap().unwrap()
+    }
+
+    #[test]
+    fn hand_edit_rule_ignores_fresh_and_legacy_rows() {
+        // Frisch angelegt (gleicher Augenblick), Sekundengrenze, Altzeile in Sekunden.
+        assert!(!is_hand_edited(1_000, 1_000_000));
+        assert!(!is_hand_edited(1_000, 1_001_999));
+        assert!(!is_hand_edited(1_000, 1_000));
+        assert!(is_hand_edited(1_000, 1_002_000));
+    }
+
+    #[test]
+    fn new_documents_are_not_marked_edited() {
+        let (_dir, s) = tmp_store();
+        let m = live_meeting(&s);
+        let id = s
+            .insert_document(&m.id, "minutes", "markdown@1", "# P", None, None)
+            .unwrap();
+        let doc = s.get_document(&id).unwrap().unwrap();
+        assert!(!doc.edited);
+        assert_eq!(doc.updated_at.div_euclid(1000), doc.created_at);
+    }
+
+    #[test]
+    fn markdown_document_hand_edit_is_stored_and_marked() {
+        let (_dir, s) = tmp_store();
+        let m = live_meeting(&s);
+        let before = aged_minutes(&s, &m.id);
+        assert!(!before.edited);
+
+        let after = s
+            .update_markdown_document(&before.id, "# Protokoll\n\n- Korrigiert", before.updated_at)
+            .unwrap();
+        assert_eq!(after.body, "# Protokoll\n\n- Korrigiert");
+        assert_eq!(after.version, before.version, "keine neue Version");
+        assert!(after.edited);
+        assert!(after.updated_at > before.updated_at);
+        // Export, Kopieren, Mail und Vorlesen lesen das gespeicherte Dokument.
+        let latest = s.get_documents(&m.id).unwrap();
+        assert_eq!(latest.len(), 1);
+        assert_eq!(latest[0].body, "# Protokoll\n\n- Korrigiert");
+
+        // Neu erzeugen legt eine neue Version an; die bearbeitete bleibt.
+        s.insert_document(&m.id, "minutes", "markdown@1", "# Neu", None, None)
+            .unwrap();
+        let docs = s.get_documents(&m.id).unwrap();
+        assert_eq!(docs.len(), 2);
+        assert!(docs
+            .iter()
+            .any(|d| d.version == 1 && d.edited && d.body.contains("Korrigiert")));
+    }
+
+    #[test]
+    fn markdown_document_hand_edit_rejects_bad_input() {
+        let (_dir, s) = tmp_store();
+        let m = live_meeting(&s);
+        let doc = aged_minutes(&s, &m.id);
+        let code = |r: Result<MeetingDocument>| r.unwrap_err().to_string();
+
+        assert_eq!(
+            code(s.update_markdown_document(&doc.id, "  \n ", doc.updated_at)),
+            "document_empty"
+        );
+        let huge = "x".repeat(MAX_DOCUMENT_TEXT_BYTES + 1);
+        assert_eq!(
+            code(s.update_markdown_document(&doc.id, &huge, doc.updated_at)),
+            "document_too_large"
+        );
+        assert_eq!(
+            code(s.update_markdown_document(&doc.id, "# A", doc.updated_at - 1)),
+            "stale_document"
+        );
+        assert_eq!(
+            code(s.update_markdown_document("gibt-es-nicht", "# A", 1)),
+            "document_not_found"
+        );
+        let notes = enhanced_doc(&s, &m.id);
+        let stamp = s.get_document(&notes).unwrap().unwrap().updated_at;
+        assert_eq!(
+            code(s.update_markdown_document(&notes, "# A", stamp)),
+            "document_not_editable"
+        );
+        assert_eq!(s.get_document(&doc.id).unwrap().unwrap().body, doc.body);
     }
 
     #[test]
@@ -5519,7 +6084,8 @@ mod tests {
                 "parent_id",
                 "created_at",
                 "updated_at",
-                "deleted_at"
+                "deleted_at",
+                "projekt_id"
             ]
         );
         assert_eq!(

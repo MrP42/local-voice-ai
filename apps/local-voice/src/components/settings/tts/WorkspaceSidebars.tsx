@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type CSSProperties } from "react";
+import { Fragment, useCallback, useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { open } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
@@ -9,6 +9,7 @@ import {
   type PageInfo,
 } from "@/bindings";
 import { convertFileSrc } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { Button } from "../../ui/Button";
 import { IconButton } from "../../ui/IconButton";
 import { Input } from "../../ui/Input";
@@ -19,7 +20,9 @@ import { useHelpDockSlot } from "../../shell/PageHeaderSlot";
 import { splitFileNameTail } from "@/lib/utils/exportName";
 import { HelpPanel } from "../../help/HelpPanel";
 import { PageExportDialog, PageImportDialog } from "./pages/PagePackageDialogs";
+import { GROUP_HEAD } from "./BookFolder";
 import {
+  ArrowLeft,
   ChevronDown,
   ChevronUp,
   Columns2,
@@ -85,6 +88,41 @@ const ROW_ACTION_QUIET_DANGER =
  * und unten schieben, löschen — Löschen fragt nach, denn es nimmt den
  * Projektordner samt Dateien mit.
  */
+/** Eingeklappte Spalte: links wie rechts derselbe schmale Streifen mit nur
+ *  einem Symbol oben, Erklärung im Tooltip (Patrick 01.11.). Der Streifen
+ *  nimmt die halbe Spaltenlücke mit, damit er schmal bleibt. */
+export const ColumnStrip = ({
+  side,
+  label,
+  onClick,
+  testId,
+}: {
+  side: "left" | "right";
+  label: string;
+  onClick: () => void;
+  testId?: string;
+}) => (
+  <div
+    className={`tts-strip shrink-0 pt-1 ${side === "left" ? "-me-2" : "-ms-2"}`}
+    data-testid={testId ? `${testId}-strip` : undefined}
+  >
+    <button
+      type="button"
+      onClick={onClick}
+      title={label}
+      aria-label={label}
+      data-testid={testId}
+      className="flex h-7 w-6 cursor-pointer items-center justify-center rounded-md text-text/60 transition-colors hover:bg-mid-gray/20 hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-logo-primary"
+    >
+      {side === "left" ? (
+        <PanelLeftOpen width={16} height={16} aria-hidden="true" />
+      ) : (
+        <PanelRightOpen width={16} height={16} aria-hidden="true" />
+      )}
+    </button>
+  </div>
+);
+
 export const PagesSidebar: React.FC<{
   pages: PageInfo[];
   activeId: string;
@@ -96,6 +134,31 @@ export const PagesSidebar: React.FC<{
   onReplaceSpeaker?: () => void;
   /** Breite in Pixeln (Ziehgriff); ohne Angabe gilt die Standardbreite. */
   width?: number;
+  /** Ordnerleiste über der Liste (lva#365): Alle, Buch-Ordner, Texte. */
+  folders?: ReactNode;
+  /** Nur diese Seiten zeigen (Auswahl der Ordnerleiste); ohne Angabe alle. */
+  visibleIds?: string[];
+  /** Sprache je Seite, wenn sie Fassung eines Buchs ist („de“, „en“ …). */
+  langOf?: Map<string, string>;
+  /** Inhalte der offenen Seite (Original, Übersetzung, KI-Dokumente) unter ihrer Zeile (lva#365 E2). */
+  activeSections?: ReactNode;
+  /** Inhaltsverzeichnis, nur wenn die rechte Spalte nicht sichtbar ist (lva#365). */
+  contents?: ReactNode;
+  /**
+   * Buch-Ordner gewählt (lva#365 P1b): Kopf über den Fassungszeilen, nicht
+   * auffindbare Fassungen darunter, danach die Gruppen Hörbuch und KI-Dokumente.
+   */
+  bookFolder?: { head: ReactNode; missing: ReactNode; after: ReactNode };
+  /** Beschriftung „Sprache · Hauptfassung“ je Seite (nur im Buch-Ordner). */
+  editionNote?: Map<string, string>;
+  /** Text für einen gewählten Ordner ohne Seiten; leer = kein Leerzustand. */
+  emptyLabel?: string;
+  /** Schmal (≤ 620 px): Ebene Ordner, Liste oder Reader. */
+  mobileLevel?: "folders" | "list" | "reader";
+  /** Schmal: Zurück von der Liste zu den Ordnern. */
+  onBack?: () => void;
+  /** Eine Seite wurde bewusst geöffnet (Zeile, Weiterlesen, Hörbuch, KI-Dokument). */
+  onOpened?: () => void;
 }> = ({
   pages,
   activeId,
@@ -105,8 +168,22 @@ export const PagesSidebar: React.FC<{
   onChanged,
   onReplaceSpeaker,
   width,
+  folders,
+  visibleIds,
+  langOf,
+  activeSections,
+  contents,
+  bookFolder,
+  editionNote,
+  emptyLabel,
+  mobileLevel = "reader",
+  onBack,
+  onOpened,
 }) => {
   const { t, i18n } = useTranslation();
+  const shown = visibleIds
+    ? pages.filter((p) => visibleIds.includes(p.id))
+    : pages;
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<PageInfo | null>(null);
@@ -130,12 +207,17 @@ export const PagesSidebar: React.FC<{
     setEditingId(null);
   };
 
+  // Verschoben wird innerhalb der sichtbaren Liste: die Seite tauscht den Platz
+  // mit ihrer sichtbaren Nachbarin, die übrigen Seiten bleiben, wo sie sind.
   const move = async (id: string, delta: number) => {
+    const visible = shown.map((p) => p.id);
+    const at = visible.indexOf(id);
+    const other = visible[at + delta];
+    if (at < 0 || other === undefined) return;
     const ids = pages.map((p) => p.id);
-    const from = ids.indexOf(id);
-    const to = from + delta;
-    if (from < 0 || to < 0 || to >= ids.length) return;
-    ids.splice(to, 0, ids.splice(from, 1)[0]);
+    const a = ids.indexOf(id);
+    const b = ids.indexOf(other);
+    [ids[a], ids[b]] = [ids[b], ids[a]];
     await commands.pagesReorder(ids);
     onChanged();
   };
@@ -145,30 +227,31 @@ export const PagesSidebar: React.FC<{
     await commands.pagesDelete(page.id);
     onChanged();
     if (page.id === activeId) {
-      const rest = pages.filter((p) => p.id !== page.id);
-      if (rest.length > 0) onSelect(rest[0].id);
+      // Nachfolger aus der sichtbaren Liste (Nachbar), damit der Ordner bleibt.
+      const at = shown.findIndex((p) => p.id === page.id);
+      const visibleRest = shown.filter((p) => p.id !== page.id);
+      const next =
+        visibleRest[Math.min(Math.max(at, 0), visibleRest.length - 1)] ??
+        pages.find((p) => p.id !== page.id);
+      if (next) onSelect(next.id);
     }
   };
 
   if (collapsed) {
     return (
-      <div className="shrink-0 pt-1">
-        <button
-          type="button"
-          onClick={onToggle}
-          title={t("tts.pages.expand")}
-          aria-label={t("tts.pages.expand")}
-          className="p-1.5 rounded-md text-text/50 hover:text-text hover:bg-mid-gray/20 transition-colors cursor-pointer"
-        >
-          <PanelLeftOpen width={16} height={16} />
-        </button>
-      </div>
+      <ColumnStrip
+        side="left"
+        label={t("tts.pages.expand")}
+        onClick={onToggle}
+        testId="pages-expand"
+      />
     );
   }
 
   return (
     <div
       data-testid="tts-pages"
+      data-mlevel={mobileLevel}
       className="tts-workspace__pages shrink-0 space-y-1 min-h-0 overflow-y-auto"
       style={width ? ({ "--tts-w": `${width}px` } as CSSProperties) : undefined}
     >
@@ -176,7 +259,7 @@ export const PagesSidebar: React.FC<{
         <span className="text-xs font-semibold text-text/60">
           {t("tts.pages.title")}
         </span>
-        <div className="flex items-center">
+        <div className="lv-touch-icons flex items-center">
           <IconButton
             onClick={create}
             label={t("tts.pages.create")}
@@ -196,15 +279,42 @@ export const PagesSidebar: React.FC<{
         </div>
       </div>
 
-      {pages.map((page, index) => (
+      {onBack && (
+        <button
+          type="button"
+          className="tts-mback tts-mback--list"
+          onClick={onBack}
+          title={t("tts.folders.backToFolders")}
+          data-testid="mback-list"
+        >
+          <ArrowLeft width={18} height={18} aria-hidden="true" />
+          {/* Name = „Zurück“ + sichtbares „Ordner“ (WCAG 2.5.3). */}
+          <span className="sr-only">{t("tts.folders.back")} </span>
+          <span>{t("tts.folders.label")}</span>
+        </button>
+      )}
+
+      {folders}
+
+      {bookFolder?.head}
+      {bookFolder && (
+        <p className={`${GROUP_HEAD} tts-pages__list`}>
+          {t("tts.folders.groupEditions")}
+        </p>
+      )}
+
+      {shown.map((page, index) => (
+        <Fragment key={page.id}>
         <div
-          key={page.id}
-          className={`group relative flex items-center gap-1 rounded-md px-2 py-1.5 cursor-pointer transition-colors ${
+          className={`tts-pages__list group relative flex items-center gap-1 rounded-md px-2 py-1.5 cursor-pointer transition-colors ${
             page.id === activeId
               ? "bg-logo-primary/15 text-text"
               : "text-text/70 hover:bg-mid-gray/15 hover:text-text"
           }`}
-          onClick={() => onSelect(page.id)}
+          onClick={() => {
+            onSelect(page.id);
+            onOpened?.();
+          }}
           onDoubleClick={() => {
             setEditingId(page.id);
             setEditTitle(page.title);
@@ -232,7 +342,7 @@ export const PagesSidebar: React.FC<{
                 id: "down",
                 label: t("tts.pages.moveDown"),
                 icon: ChevronDown,
-                disabled: index === pages.length - 1,
+                disabled: index === shown.length - 1,
                 onSelect: () => void move(page.id, 1),
               },
               {
@@ -283,7 +393,19 @@ export const PagesSidebar: React.FC<{
           ) : (
             <>
               <span className="flex-1 min-w-0">
-                <span className="block truncate text-sm">{page.title}</span>
+                <span className="flex items-center gap-1.5">
+                  <span className="min-w-0 truncate text-sm">{page.title}</span>
+                  {langOf?.get(page.id) && (
+                    <span className="shrink-0 rounded bg-mid-gray/15 px-1 text-[11px] uppercase text-text/70">
+                      {langOf.get(page.id)}
+                    </span>
+                  )}
+                </span>
+                {editionNote?.get(page.id) && (
+                  <span className="block text-xs text-text/60">
+                    {editionNote.get(page.id)}
+                  </span>
+                )}
                 {/* Verlauf statt blosser Titel: was drinsteht und wann es
                     zuletzt angefasst wurde, ohne die Seite zu oeffnen. */}
                 <span className="block truncate text-xs text-text/60">
@@ -318,7 +440,7 @@ export const PagesSidebar: React.FC<{
                     e.stopPropagation();
                     void move(page.id, 1);
                   }}
-                  disabled={index === pages.length - 1}
+                  disabled={index === shown.length - 1}
                   title={t("tts.pages.moveDown")}
                   aria-label={t("tts.pages.moveDown")}
                   className={ROW_ACTION}
@@ -367,7 +489,37 @@ export const PagesSidebar: React.FC<{
             </>
           )}
         </div>
+        {page.id === activeId && activeSections && (
+          <div className="ms-3 border-s border-mid-gray/20 ps-1" data-testid="page-sections">
+            {activeSections}
+          </div>
+        )}
+        </Fragment>
       ))}
+
+      {bookFolder?.missing}
+      {bookFolder?.after}
+
+      {!bookFolder && shown.length === 0 && emptyLabel && (
+        <div
+          className="tts-pages__list px-2 py-3 space-y-2"
+          data-testid="pages-empty"
+        >
+          <p className="text-sm text-text/80">{emptyLabel}</p>
+          <Button
+            variant="secondary"
+            className="reader-folders__btn"
+            icon={<Plus width={16} height={16} aria-hidden="true" />}
+            onClick={() => {
+              void create().then(() => onOpened?.());
+            }}
+          >
+            {t("tts.folders.newPage")}
+          </Button>
+        </div>
+      )}
+
+      {contents && <div className="tts-pages__list">{contents}</div>}
 
       {rowMenu.menu}
       <PageExportDialog
@@ -446,6 +598,8 @@ export const FilesSidebar: React.FC<{
   stacked?: boolean;
   /** Umschalter Gestapelt/Nebeneinander im Kopf; ohne ihn kein Knopf. */
   onLayoutToggle?: () => void;
+  /** Inhaltsverzeichnis der offenen Seite (Leseansicht, lva#365: rechts statt links). */
+  contents?: ReactNode;
 }> = ({
   pageId,
   collapsed,
@@ -454,6 +608,7 @@ export const FilesSidebar: React.FC<{
   width,
   stacked = false,
   onLayoutToggle,
+  contents,
 }) => {
   const { t, i18n } = useTranslation();
   const [files, setFiles] = useState<PageFile[]>([]);
@@ -476,10 +631,20 @@ export const FilesSidebar: React.FC<{
 
   useEffect(() => {
     if (!pageId) return;
-    void commands.pageDir(pageId).then((result) => {
-      setDir(result.status === "ok" ? result.data : null);
-    });
+    let alive = true;
+    const load = () =>
+      void commands.pageDir(pageId).then((result) => {
+        if (alive) setDir(result.status === "ok" ? result.data : null);
+      });
+    load();
     setPlaying(null);
+    // Nach dem Umzug in Buch-Ordner (lva#365) liegt die Seite woanders: den
+    // gemerkten Pfad neu holen, sonst zeigt die Wiedergabe ins Leere.
+    const unlisten = listen("library-layout-changed", load);
+    return () => {
+      alive = false;
+      void unlisten.then((fn) => fn()).catch(() => {});
+    };
   }, [pageId]);
 
   const refresh = useCallback(async () => {
@@ -568,7 +733,7 @@ export const FilesSidebar: React.FC<{
         <span className="text-xs font-semibold text-text/60">
           {t("tts.files.title")}
         </span>
-        <div className="flex items-center">
+        <div className="lv-touch-icons flex items-center">
           {(
             <>
               <IconButton
@@ -610,6 +775,12 @@ export const FilesSidebar: React.FC<{
           />
         </div>
       </div>
+
+      {contents && (
+        <div className="border-b border-mid-gray/20 pb-2 mb-1" data-testid="reader-contents-right">
+          {contents}
+        </div>
+      )}
 
       {(
         <>

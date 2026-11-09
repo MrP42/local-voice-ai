@@ -1,7 +1,9 @@
 import React, { useEffect, useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Check, ChevronDown, Phone, Settings } from "lucide-react";
+import { Check, ChevronDown, MessageSquarePlus, Settings } from "lucide-react";
 import { useSettings } from "../../hooks/useSettings";
+import { useOsType } from "@/hooks/useOsType";
+import { formatKeyCombination } from "@/lib/utils/keyboard";
 import { useVoiceCallStore } from "@/stores/voiceCallStore";
 import { MicLevelMeter } from "../settings/MicLevelMeter";
 import { VOICE_MANAGE, useVoiceChoice } from "../settings/tts/useVoiceChoice";
@@ -32,9 +34,10 @@ const Switch: React.FC<{ on: boolean }> = ({ on }) => (
 );
 
 /**
- * „Gespräch“ in der Fußleiste, solange die Seite Sprachgespräch offen ist:
- * Mikrofon mit Pegel, Stimme, Sprachfluss. Alles Weitere öffnet das Panel
- * der Seite. Aufbau und Schließen wie bei der Mikrofonauswahl.
+ * Pfeil hinter dem Telefon der Fußleiste, solange ein Gespräch läuft oder die
+ * Seite Sprachgespräch offen ist: Mikrofon mit Pegel, Stimme, Sprachfluss.
+ * Alles Weitere öffnet das Panel der Seite. Aufbau und Schließen wie bei der
+ * Mikrofonauswahl.
  */
 export const CallMenu: React.FC = () => {
   const { t } = useTranslation();
@@ -48,6 +51,11 @@ export const CallMenu: React.FC = () => {
   const turn = useVoiceCallStore((s) => s.config.turn);
   const setConfig = useVoiceCallStore((s) => s.setConfig);
   const openSettings = useVoiceCallStore((s) => s.openSettings);
+  const pageOpen = useVoiceCallStore((s) => s.active);
+  const hasMain = useVoiceCallStore((s) => s.mainConversationId !== null);
+  const osType = useOsType();
+  const binding = getSetting("bindings")?.voice_call?.current_binding ?? "";
+  const keys = binding ? formatKeyCombination(binding, osType) : "";
   const phase = useServerPhase();
   const { options, voiceValue, applyVoiceValue, openVoiceManagement } =
     useVoiceChoice(phase);
@@ -131,10 +139,9 @@ export const CallMenu: React.FC = () => {
         aria-controls={open ? menuId : undefined}
         aria-haspopup="menu"
         title={t("voiceCall.footer.title")}
-        className="flex items-center gap-2 rounded px-1 bg-logo-primary/15 text-logo-primary font-semibold hover:opacity-90 transition-colors cursor-pointer"
+        aria-label={t("voiceCall.footer.title")}
+        className="lv-status-btn lv-call-menu-btn"
       >
-        <Phone className="w-3 h-3 shrink-0" aria-hidden="true" />
-        <span className="lv-status-label">{t("voiceCall.footer.label")}</span>
         <ChevronDown
           className={`w-3 h-3 transition-transform ${open ? "rotate-180" : ""}`}
           aria-hidden="true"
@@ -294,12 +301,44 @@ export const CallMenu: React.FC = () => {
           )}
 
           <div className="my-1 h-px bg-mid-gray/20" role="separator" />
+          {keys && (
+            <p
+              className="px-3 pt-1 pb-1 text-xs text-text/55"
+              role="presentation"
+            >
+              {t("voiceCall.footer.shortcutHint", { keys })}
+            </p>
+          )}
+          {hasMain && (
+            <button
+              type="button"
+              role="menuitem"
+              className={ITEM}
+              onClick={() => {
+                close();
+                void useVoiceCallStore.getState().newMainConversation();
+              }}
+            >
+              <MessageSquarePlus
+                className="w-3 h-3 shrink-0"
+                aria-hidden="true"
+              />
+              {t("voiceCall.footer.newMain")}
+            </button>
+          )}
           <button
             type="button"
             role="menuitem"
             className={ITEM}
             onClick={() => {
               close();
+              // Das Panel gehört zur Seite: läuft das Gespräch ohne sie, erst dorthin.
+              if (!pageOpen)
+                window.dispatchEvent(
+                  new CustomEvent("lv-navigate", {
+                    detail: { section: "voice" },
+                  }),
+                );
               openSettings();
             }}
           >

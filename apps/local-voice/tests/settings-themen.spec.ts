@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { geheZu } from "./profilmenue";
 
 // Einstellungen nach Thema (09.10.2026): Eingabe, Ausgabe, KI-Modelle &
 // Anbieter, Allgemein, Ueber. Ein gespeicherter Reiter aus der alten
@@ -71,14 +72,14 @@ const shots = process.env.SCREENS_DIR;
 
 const open = async (page: Page) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "Einstellungen", exact: true }).first().click();
+  await geheZu(page, "Einstellungen");
 };
 
 test("die Reiter sind nach Thema sortiert", async ({ page }) => {
   await setup(page);
   await open(page);
   const names = await page.getByRole("tab").allInnerTexts();
-  expect(names).toEqual(["Eingabe", "Ausgabe", "KI-Modelle & Anbieter", "Allgemein", "Über"]);
+  expect(names).toEqual(["Eingabe", "Ausgabe", "KI-Modelle & Anbieter", "Allgemein", "Konto & Geräte", "Über"]);
   await expect(page.getByRole("tab", { name: "Eingabe", exact: true })).toHaveAttribute("aria-selected", "true");
 });
 

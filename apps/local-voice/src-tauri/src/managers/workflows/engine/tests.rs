@@ -583,7 +583,11 @@ impl Action for Unmodeled {
     fn describe(&self, _params: &Value) -> String {
         "Wirkung ohne Recht".to_string()
     }
-    fn run(&self, _ctx: &RunCtx<'_>, _params: &Value) -> std::result::Result<StepOutput, StepError> {
+    fn run(
+        &self,
+        _ctx: &RunCtx<'_>,
+        _params: &Value,
+    ) -> std::result::Result<StepOutput, StepError> {
         panic!("ein Baustein ohne Recht darf nie laufen");
     }
 }

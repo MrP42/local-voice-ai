@@ -24,6 +24,21 @@ useModelStore.getState().initialize();
 import { useTtsModelStore } from "./stores/ttsModelStore";
 useTtsModelStore.getState().initialize();
 
+// Fortschritt (Weiterlesen, Gehörtes, Lesezeichen) aus dem App-Kern abgleichen,
+// damit er einen geleerten WebView-Speicher übersteht (lva#152).
+import {
+  adoptSyncedProgress,
+  hydrateProgress,
+  removeSyncedKeys,
+} from "./lib/library/progress";
+import { listen } from "@tauri-apps/api/event";
+void hydrateProgress();
+// Geräte-Sync (lva#210): Fortschritt und Lesezeichen anderer Geräte übernehmen.
+void listen("sync-changed", () => void adoptSyncedProgress()).catch(() => {});
+void listen<string[]>("sync-progress-removed", (e) =>
+  removeSyncedKeys(Array.isArray(e.payload) ? e.payload : []),
+).catch(() => {});
+
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <FluentRoot>

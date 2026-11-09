@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="de"><head><meta charset="utf-8">
+<title>Einheits-Player iPhone</title>
+<style>
+:root{--bg:#0B0B0C;--text:#EDEDE7;--sec:rgba(237,237,231,.72);--accent:#FFDD00;--brand:#FFDD00;--ink:#111418;--bar:#1C1C1E;--card:rgba(128,128,128,.14);--border:rgba(128,128,128,.2);--track:rgba(128,128,128,.35);--seg:#2C2C2E;--segsel:#636366;--sent:rgba(255,221,0,.28);--menu:#2C2C2E}
+.light{--bg:#F8F9FB;--text:#1F2937;--sec:rgba(31,41,55,.72);--accent:#111418;--bar:#EEF0F3;--card:rgba(128,128,128,.12);--track:rgba(128,128,128,.3);--seg:#E3E4E8;--segsel:#FFFFFF;--sent:rgba(255,221,0,.38);--menu:#FFFFFF}
+*{box-sizing:border-box;margin:0;padding:0}
+body{width:390px;height:844px;overflow:hidden;background:var(--bg);color:var(--text);font-family:Inter,system-ui,sans-serif;font-size:17px;position:relative;-webkit-font-smoothing:antialiased}
+.status{height:54px;display:flex;align-items:center;justify-content:space-between;padding:0 30px 0 38px;font-weight:600}
+.island{position:absolute;top:11px;left:50%;transform:translateX(-50%);width:124px;height:36px;border-radius:20px;background:#000}
+.home{position:absolute;bottom:8px;left:50%;transform:translateX(-50%);width:134px;height:5px;border-radius:3px;background:var(--text);z-index:20}
+.hdr{display:flex;align-items:center;height:52px;padding:0 4px}
+.b{width:44px;height:44px;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0}
+.hdr .t{flex:1;text-align:center;line-height:1.2;min-width:0}
+.hdr .t div:first-child{font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hdr .t div:last-child{font-size:12px;color:var(--sec)}
+.aa{font-family:Georgia,serif;font-size:19px}
+.seg{margin:4px 16px 8px;background:var(--seg);border-radius:9px;padding:2px;display:flex;height:34px}
+.seg div{flex:1;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:500;border-radius:7px}
+.seg div.on{background:var(--segsel);font-weight:600;box-shadow:0 1px 3px rgba(0,0,0,.18)}
+.div{height:.5px;background:var(--border)}
+.main{position:absolute;top:150px;bottom:var(--barh);left:0;right:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:0 24px}
+.cover{width:250px;height:250px;border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,.45);background:linear-gradient(160deg,#21445a,#0f1b2b);position:relative;overflow:hidden}
+.cover .sun{position:absolute;width:80px;height:80px;border-radius:50%;background:#f0c65a;left:58%;top:34%;box-shadow:0 0 60px rgba(240,198,90,.6)}
+.cover b{position:absolute;left:16px;top:16px;font-family:Georgia,serif;color:#f6efe0;font-size:28px}
+.cover span{position:absolute;left:16px;bottom:14px;color:#f6efe0;font-size:12px;letter-spacing:2px;text-transform:uppercase}
+.bt{font-size:20px;font-weight:700;text-align:center}.by{font-size:15px;color:var(--sec);text-align:center;margin-top:3px}
+.txt{position:absolute;top:150px;bottom:calc(var(--barh) + 24px);left:0;right:0;overflow:hidden;padding:8px 12px 0;-webkit-mask-image:linear-gradient(to bottom,transparent 0,#000 18px,#000 calc(100% - 28px),transparent 100%);mask-image:linear-gradient(to bottom,transparent 0,#000 18px,#000 calc(100% - 28px),transparent 100%);font-family:Georgia,'DejaVu Serif',serif;font-size:18px;line-height:1.6}
+.txt p{padding:10px;border-radius:10px;margin-bottom:4px}
+.txt .mut{color:var(--sec)}
+.txt h3{padding:10px;font-size:21px}
+.s{background:var(--sent);border-radius:3px}
+.w{background:rgba(255,221,0,.9);color:#111418;border-radius:3px;text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:3px}
+.txt p.pos{background:rgba(255,221,0,.13)}
+.hint{position:absolute;left:0;right:0;bottom:var(--barh);text-align:center;font-size:12px;color:var(--sec);padding:4px;background:var(--bg)}
+.bar{position:absolute;left:0;right:0;bottom:0;background:var(--bar);padding:10px 20px 30px;display:flex;flex-direction:column;gap:8px}
+.chap{display:flex;align-items:center;gap:10px;min-height:48px;padding:0 12px;border-radius:12px;background:var(--card)}
+.chap .l{flex:1;line-height:1.25}.chap .l div:first-child{font-size:12px;color:var(--sec)}.chap .l div:last-child{font-size:15px;font-weight:600}
+.slider{position:relative;height:28px}.slider .tr{position:absolute;left:0;right:0;top:12px;height:4px;border-radius:2px;background:var(--track)}
+.slider .fi{position:absolute;left:0;top:12px;height:4px;border-radius:2px;background:var(--accent);width:38%}
+.slider .kn{position:absolute;top:2px;left:38%;width:24px;height:24px;border-radius:50%;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.35);transform:translateX(-12px)}
+.row{display:flex;justify-content:space-between;font-size:12px;color:var(--sec);font-variant-numeric:tabular-nums}
+.ctr{display:flex;justify-content:space-between;align-items:center}
+.cb{min-width:56px;min-height:44px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-size:11px}
+.cb i{font-style:normal;font-size:21px;line-height:1}
+.play{width:64px;height:64px;border-radius:50%;background:#111418;color:#FFDD00;display:flex;align-items:center;justify-content:center;font-size:26px}
+.rate{font-size:17px;font-weight:600}
+.rbar{display:flex;align-items:center;gap:12px}
+.rbar .l{flex:1;line-height:1.3}.rbar .l div:first-child{font-size:15px;font-weight:600}.rbar .l div:last-child{font-size:12px;color:var(--sec)}
+.pill{background:#111418;color:#FFDD00;border-radius:22px;min-height:44px;padding:0 16px;display:flex;align-items:center;gap:8px;font-weight:600}
+.menu{position:absolute;right:96px;bottom:84px;width:230px;background:var(--menu);border-radius:13px;box-shadow:0 10px 40px rgba(0,0,0,.35);z-index:9;overflow:hidden}
+.menu div{padding:12px 16px;font-size:16px;border-bottom:.5px solid var(--border);display:flex;justify-content:space-between}
+.menu .off{color:var(--sec)}
+.dim{position:absolute;inset:0;background:rgba(0,0,0,.18);z-index:8}
+/* Buchdetail */
+.det{padding:8px 16px}
+.dh{display:flex;gap:16px}.dh .cv{width:96px;height:144px;border-radius:6px;background:linear-gradient(160deg,#21445a,#0f1b2b);flex-shrink:0}
+.dh h2{font-size:22px}.dh .m{font-size:13px;color:var(--sec);margin-top:3px}
+.go{margin-top:16px;background:#111418;color:#FFDD00;border-radius:12px;min-height:50px;display:flex;align-items:center;justify-content:center;gap:8px;font-weight:600;font-size:17px}
+.card{margin-top:16px;background:var(--card);border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:12px}
+.pr .h{display:flex;justify-content:space-between;font-size:15px;font-weight:600}.pr .d{font-size:12px;color:var(--sec)}
+.pr .tb{height:4px;border-radius:2px;background:var(--track);margin:6px 0}.pr .tb i{display:block;height:4px;border-radius:2px;background:var(--accent)}
+.ok{color:#30D158}.light .ok{color:#17703D}
+.navb{height:44px;display:flex;align-items:center;padding:0 8px;color:var(--accent);font-size:17px}
+</style></head>
+<body>
+<script>
+const q = new URLSearchParams(location.search);
+const theme = q.get('theme') || 'light', screen = q.get('screen') || 'mitlesen';
+document.body.className = theme;
+const P1 = 'In Front des schon seit Kurfürst Georg Wilhelm von der Familie von Briest bewohnten Herrenhauses zu Hohen-Cremmen fiel heller Sonnenschein auf die mittagsstille Dorfstraße, während nach der Park- und Gartenseite hin ein rechtwinklig angebauter Seitenflügel einen breiten Schatten warf.';
+const S1 = 'Einige zwanzig Schritte weiter lief eine ganz in kleinblättrigem Efeu stehende Kirchhofsmauer, ';
+const W = 'hinter';
+const S2 = ' der der Hohen-Cremmener Schindelturm mit seinem blitzenden Wetterhahn aufragte.';
+const S3 = ' Fliesengang, Sonnenuhr und Rondell bildeten zusammen einen kleinen, nach drei Seiten hin geschlossenen Raum.';
+const P3 = 'Und dieser Raum war es, wo jetzt, an einem sonnigen Tage, Mutter und Tochter saßen, mit einer Handarbeit beschäftigt.';
+const status = '<div class="status"><span>9:41</span><span>●●● ▮</span></div><div class="island"></div>';
+const header = (sub) => `<div class="hdr"><div class="b">⌄</div><div class="t"><div>Effi Briest</div><div>${sub}</div></div><div class="b aa">Aa</div><div class="b">💬</div><div class="b">ⓘ</div></div>`;
+const seg = (on) => `<div class="seg">${['Hören','Lesen &amp; Hören','Lesen'].map(t => `<div class="${t === on ? 'on' : ''}">${t}</div>`).join('')}</div><div class="div"></div>`;
+const audioBar = (compact = false) => `<div class="bar">${compact ? '' : `<div class="chap"><span>☰</span><div class="l"><div>Kapitel 1 von 36</div><div>Erstes Kapitel</div></div><span>⌃</span></div>`}
+<div class="slider"><div class="tr"></div><div class="fi"></div><div class="kn"></div></div>
+<div class="row"><span>4:12</span><span>noch 6:51 im Kapitel</span></div>
+${compact ? '' : '<div class="row"><span>Buch 1 % · noch 9 Std. 46 Min. · etwa Seite 3 von 349</span></div>'}
+<div class="ctr"><div class="cb"><i>⏮</i>Kapitel</div><div class="cb"><i>↺</i>15 s</div><div class="play">❚❚</div><div class="cb"><i>↻</i>15 s</div><div class="cb"><i>⏭</i>Kapitel</div></div>
+<div class="ctr"><div class="cb"><span class="rate">1,0×</span>Tempo</div><div class="cb"><i>▤</i>Inhalt</div><div class="cb"><i>⇄</i>Quelle</div><div class="cb"><i>☾</i>Schlaftimer</div></div></div>`;
+const text = (mode) => {
+  const follow = mode === 'mitlesen';
+  const mid = follow ? `<span class="s">${S1}<span class="w">${W}</span>${S2}</span>${S3}` : S1 + W + S2 + S3;
+  return `<div class="txt"><div style="margin-top:${follow ? -250 : -150}px"><h3 class="${follow ? 'mut' : ''}">Erstes Kapitel</h3><p class="${follow ? 'mut' : ''}">${P1}</p><p class="${follow ? '' : 'pos'}">${mid}</p><p class="${follow ? 'mut' : ''}">${P3}</p></div></div>`;
+};
+let html = status;
+document.body.style.setProperty('--barh', screen === 'lesen' ? '104px' : (screen === 'mitlesen' || screen === 'quelle') ? '246px' : '322px');
+if (screen === 'detail') {
+  html += `<div class="navb">‹ Bibliothek</div><div class="det"><div class="dh"><div class="cv"></div><div><h2>Effi Briest</h2><div class="m">Theodor Fontane</div><div class="m">Text: effi-briest.epub</div><div class="m">Hörbuch: 9:52:42 · 4 Teile</div><div class="m" class="ok" style="font-weight:600">✓ Auf dem iPhone</div></div></div>
+  <div class="go">▶ Weiter</div>
+  <div class="card"><div class="pr"><div class="h"><span>Hörbuch</span><span>1 %</span></div><div class="tb"><i style="width:1%"></i></div><div class="d">Teil 1 · 4:12 von 9:52:42</div></div><div class="pr"><div class="h"><span>Text</span><span>1 %</span></div><div class="tb"><i style="width:1%"></i></div><div class="d">1 % gelesen</div></div></div></div>`;
+} else if (screen === 'hoeren') {
+  html += header('Kapitel 1 von 36') + seg('Hören') + `<div class="main"><div class="cover"><div class="sun"></div><b>Effi Briest</b><span>Theodor Fontane</span></div><div><div class="bt">Effi Briest</div><div class="by">von Theodor Fontane · gelesen von Anna Muster</div></div></div>` + audioBar();
+} else if (screen === 'mitlesen' || screen === 'quelle') {
+  html += header('Kapitel 1 von 36') + seg('Lesen &amp; Hören') + text('mitlesen') + `<div class="hint">Absatz antippen springt im Hörbuch dorthin</div>` + audioBar(true);
+  if (screen === 'quelle') html += `<div class="dim"></div><div class="menu"><div>Hörbuch <span>✓</span></div><div>Vorlesestimme</div></div>`;
+} else if (screen === 'stimme') {
+  html += `<div class="hdr"><div class="b">⌄</div><div class="t"><div>Effi Briest</div><div>Vorlesestimme Anna (Premium)</div></div><div class="b aa">Aa</div><div class="b">💬</div></div>` + seg('Lesen &amp; Hören') + text('mitlesen') + `<div class="hint">Absatz antippen liest ab dort vor</div>
+  <div class="bar"><div class="row"><span>Text: 1 % gelesen</span><span>Stimme: Anna (Premium)</span></div>
+  <div class="ctr"><div class="cb"><i>⏮</i>Absatz</div><div class="cb"><i>◀◀</i>Satz</div><div class="play">❚❚</div><div class="cb"><i>▶▶</i>Satz</div><div class="cb"><i>⏭</i>Absatz</div></div>
+  <div class="ctr"><div class="cb"><span class="rate">1,0×</span>Tempo</div><div class="cb"><i>☺</i>Stimme</div><div class="cb"><i>⇄</i>Quelle</div><div class="cb"><i>☾</i>Schlaftimer</div></div></div>`;
+  document.body.style.setProperty('--barh', '234px');
+} else if (screen === 'lesen') {
+  html += header('Kapitel 1 von 36 · pausiert') + seg('Lesen') + text('lesen') + `<div class="hint">Absatz antippen setzt die Stelle, ▶ hört ab dort weiter</div>
+  <div class="bar"><div class="rbar"><div class="l"><div>etwa Seite 3 von 349</div><div>Hörbuch pausiert</div></div><div class="pill">▶ Ab hier hören</div></div></div>`;
+}
+html += '<div class="home"></div>';
+document.body.insertAdjacentHTML('beforeend', html);
+</script>
+</body></html>

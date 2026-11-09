@@ -45,13 +45,22 @@ fn catalog_names_are_unique_and_the_status_tool_is_not_in_it() {
     names.sort();
     names.dedup();
     assert_eq!(names.len(), CATALOG.len());
-    assert!(find(STATUS_TOOL).is_none(), "das eingebaute Werkzeug hat kein Recht");
+    assert!(
+        find(STATUS_TOOL).is_none(),
+        "das eingebaute Werkzeug hat kein Recht"
+    );
 }
 
 #[test]
 fn recording_stays_behind_the_recording_right() {
-    assert_eq!(find("start_recording").unwrap().capability, Capability::RecordingStart);
-    assert_eq!(find("stop_recording").unwrap().capability, Capability::RecordingStart);
+    assert_eq!(
+        find("start_recording").unwrap().capability,
+        Capability::RecordingStart
+    );
+    assert_eq!(
+        find("stop_recording").unwrap().capability,
+        Capability::RecordingStart
+    );
     assert!(Capability::RecordingStart.never_allow());
 }
 
@@ -77,8 +86,14 @@ fn a_tool_outside_the_catalog_is_refused_and_nothing_of_its_batch_is_taken() {
             names: vec!["transcribe_file", "delete_everything"],
         }))
         .unwrap_err();
-    assert_eq!(err, RegisterError::NotInCatalog("delete_everything".to_string()));
-    assert!(!r.has("transcribe_file"), "ein Werkzeug der Gruppe scheiterte: keines wird aufgenommen");
+    assert_eq!(
+        err,
+        RegisterError::NotInCatalog("delete_everything".to_string())
+    );
+    assert!(
+        !r.has("transcribe_file"),
+        "ein Werkzeug der Gruppe scheiterte: keines wird aufgenommen"
+    );
 }
 
 #[test]

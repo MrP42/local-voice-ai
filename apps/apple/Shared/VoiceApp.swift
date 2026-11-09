@@ -22,6 +22,10 @@ enum VoicePalette {
     static var text: Color { adaptive(light: lightText, dark: darkText) }
     static var secondaryText: Color { text.opacity(0.72) }
     static var background: Color { adaptive(light: lightBackground, dark: darkBackground) }
+    /// Fehlerrot mit mindestens 4,5:1 auf hellen und dunklen Flächen (#B3261E / #FF6961).
+    static var danger: Color { adaptive(light: 0xB3261E, dark: 0xFF6961) }
+    /// Erfolgsgrün mit mindestens 4,5:1 (#17703D / #30D158).
+    static var success: Color { adaptive(light: 0x17703D, dark: 0x30D158) }
 
     private static func color(_ hex: Int) -> Color {
         Color(red: Double((hex >> 16) & 255) / 255, green: Double((hex >> 8) & 255) / 255, blue: Double(hex & 255) / 255)
@@ -53,7 +57,12 @@ struct VoiceApp: App {
             VoiceHome(model: model)
                 .tint(VoicePalette.accent)
                 .foregroundStyle(VoicePalette.text)
-                .onChange(of: phase, initial: true) { _, value in model.scene(active: value == .active) }
+                .onChange(of: phase, initial: true) { _, value in
+                    model.scene(active: value == .active)
+                    #if os(iOS)
+                    LibraryPlayback.shared.scene(active: value == .active)
+                    #endif
+                }
         }
     }
 }
@@ -65,12 +74,13 @@ private struct VoiceHome: View {
     @State private var watchPath: [WatchDestination] = []
     #endif
     #if os(iOS)
-    @State private var showModels = false
+    @ObservedObject private var settings = AppSettings.shared
     @State private var query = ""
     @State private var selectedHistoryNote: Entry?
     @FocusState private var searchFocused: Bool
     #if DEBUG
-    @State private var tab = ProcessInfo.processInfo.arguments.contains("--meeting-import-probe") ? 2 : 0
+    @State private var tab = ProcessInfo.processInfo.arguments.contains("--meeting-import-probe") ? 2
+        : ProcessInfo.processInfo.arguments.contains("--library-tab") ? 3 : 0
     #else
     @State private var tab = 0
     #endif
@@ -152,7 +162,7 @@ private struct VoiceHome: View {
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .topBarTrailing) {
-                        Button("Einstellungen", systemImage: "slider.horizontal.3") { showModels = true }.accessibilityIdentifier("settings")
+                        SettingsButton().accessibilityIdentifier("settings")
                     }
                 }
             }
@@ -196,10 +206,17 @@ private struct VoiceHome: View {
                 }
                 .navigationTitle("Verlauf")
                 .navigationBarTitleDisplayMode(.inline)
+                .toolbar { ToolbarItem(placement: .topBarTrailing) { SettingsButton() } }
 
             }.tabItem { Label("Verlauf", systemImage: "clock.arrow.circlepath") }.tag(1)
+            LibraryTab().tabItem { Label("Bibliothek", systemImage: "books.vertical") }.tag(3)
         }
-        .sheet(isPresented: $showModels) { ModelPanel(model: model) }
+        .sheet(isPresented: $settings.shown) { ModelPanel(model: model) }
+        .task { await PhononEngine.shared.refresh() }
+        // „Öffnen in“ Local Voice: Datei vormerken, zu den Transkripten wechseln; dort folgt die Bestätigung.
+        .onOpenURL { url in
+            if url.isFileURL { IncomingFiles.shared.add(url); tab = 2 } else { PairingFlow.shared.open(url) }
+        }
         #endif
     }
 

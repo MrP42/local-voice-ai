@@ -155,7 +155,7 @@ html:root[data-fluent][data-scheme="dark"] .lv-btn--danger-ghost.lv-btn--danger-
   display: flex;
   align-items: center;
   gap: 8px;
-  height: 48px;
+  height: 40px;
   flex-shrink: 0;
   padding-inline: 8px 16px;
   background: var(--colorNeutralBackground3);
@@ -171,31 +171,51 @@ html:root[data-fluent][data-scheme="dark"] .lv-btn--danger-ghost.lv-btn--danger-
   font-weight: var(--fontWeightSemibold);
   white-space: nowrap;
 }
-.lv-titlebar__sep {
-  width: 1px;
-  height: 20px;
-  margin-inline: 8px;
-  background: var(--colorNeutralStroke2);
-  flex-shrink: 0;
-}
-.lv-titlebar__slot {
+/* ADR-0027: Titelleiste nur Navigation, App und freie Ziehfläche */
+.lv-titlebar__frei {
   flex: 1;
   min-width: 0;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
-.lv-titlebar__slot:empty {
-  display: none;
-}
-.lv-titlebar__fallback {
-  flex: 1;
+/* Gegenstand des Moduls (geöffnetes Buch): Mitte der Ziehfläche, reiner Text,
+   Klicks gehen an die Ziehfläche durch. */
+.lv-titlebar__kontext {
+  display: flex;
   min-width: 0;
-  font-size: var(--fontSizeBase400);
-  font-weight: var(--fontWeightSemibold);
-  white-space: nowrap;
+  max-width: min(560px, 100%);
+  pointer-events: none;
+}
+.page-shell__context {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  font-size: var(--fontSizeBase300, 14px);
+  line-height: 20px;
+}
+.page-shell__context-text {
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--fontWeightSemibold, 600);
+  color: var(--colorNeutralForeground1);
 }
-.lv-titlebar__slot:not(:empty) + .lv-titlebar__fallback {
-  display: none;
+.page-shell__context-detail {
+  flex-shrink: 0;
+  white-space: nowrap;
+  font-size: var(--fontSizeBase200, 12px);
+  color: var(--colorNeutralForeground3);
+}
+.page-shell__context-detail::before {
+  content: "·";
+  margin-inline-end: 8px;
+}
+/* Ohne Titelleiste (Tests ohne Rahmen): eigene Zeile über dem Inhalt. */
+.page-shell > .page-shell__context {
+  display: flex;
 }
 /* Fensterknöpfe (rahmenloses Hauptfenster): Windows 11, 46×48, bündig am
    rechten Rand; Schließen-Hover in Systemrot. */
@@ -215,7 +235,7 @@ html:root[data-fluent][data-scheme="dark"] .lv-btn--danger-ghost.lv-btn--danger-
   display: grid;
   place-items: center;
   width: 46px;
-  height: 48px;
+  height: 40px;
   padding: 0;
   border: 0;
   border-radius: 0;
@@ -244,29 +264,52 @@ html:root[data-fluent][data-scheme="dark"] .lv-btn--danger-ghost.lv-btn--danger-
     color: HighlightText;
   }
 }
-/* Seitenkopf in der Titelleiste: Titel links (Subtitle 2, 16/22),
-   Seitenaktionen rechts */
-.lv-titlebar .page-shell__head {
+/* Bedienelemente des Moduls (ⓘ, Suche, Aktionen): rechts in der Titelleiste,
+   keine eigene Titelzeile im Inhalt (Patrick 02.11.). Unter 768 px (und ohne
+   Titelleiste) stehen sie als schmale Zeile rechtsbündig über dem Inhalt. */
+.lv-titlebar__modul {
+  display: flex;
+  align-items: center;
+  flex-shrink: 1;
+  min-width: 0;
+}
+.lv-titlebar__modul:empty {
+  display: none;
+}
+/* Eigene Regel: ohne :has() bliebe sonst auch die :empty-Regel wirkungslos. */
+.lv-titlebar__modul:not(:has(> :not(.lv-keepslot:empty))) {
+  display: none;
+}
+/* Andockplatz eines erhaltenen Moduls (KeepAlive): ohne eigenes Kästchen. */
+.lv-keepslot {
+  display: contents;
+}
+.page-shell__head {
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  justify-content: flex-end;
+  gap: 4px;
   min-width: 0;
 }
-.lv-titlebar .page-shell__head > div:first-child {
-  min-width: 0;
+.lv-titlebar__modul .page-shell__head {
+  max-height: 40px;
 }
-.page-shell__title {
-  font-size: var(--fontSizeBase400);
-  line-height: var(--lineHeightBase400);
-  font-weight: var(--fontWeightSemibold);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.page-shell__info {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border-radius: var(--borderRadiusMedium);
+  color: var(--colorNeutralForeground3);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: help;
 }
-.page-shell:not(:has(> .page-shell__head)) > .page-shell__description:first-child {
-  margin-top: 0;
+.page-shell__info:focus-visible {
+  outline: 2px solid var(--colorStrokeFocus2);
 }
 
 .lv-content {
@@ -287,6 +330,9 @@ html:root[data-fluent][data-scheme="dark"] .lv-btn--danger-ghost.lv-btn--danger-
 .lv-helpdock:empty {
   display: none;
 }
+.lv-helpdock:not(:has(> :not(.lv-keepslot:empty))) {
+  display: none;
+}
 .lv-helpdock__panel {
   width: 320px;
   overflow-y: auto;
@@ -296,7 +342,7 @@ html:root[data-fluent][data-scheme="dark"] .lv-btn--danger-ghost.lv-btn--danger-
 @media (max-width: 767px) {
   .lv-helpdock:not(:empty) {
     position: absolute;
-    inset-block: 48px 24px;
+    inset-block: 40px 24px;
     inset-inline-end: 0;
     z-index: 20;
     box-shadow: var(--shadow16);
@@ -400,8 +446,7 @@ html:root[data-fluent][data-scheme="dark"] .lv-btn--danger-ghost.lv-btn--danger-
   .lv-content {
     border-radius: 0;
   }
-  .lv-titlebar__name,
-  .lv-titlebar__sep {
+  .lv-titlebar__name {
     display: none;
   }
 }
@@ -529,10 +574,34 @@ html:root[data-fluent][data-scheme="dark"] .lv-btn--danger-ghost.lv-btn--danger-
   cursor: default;
   background: transparent;
 }
-@media (pointer: coarse) {
-  .lv-menu-item {
+/* Touchziele >= 44 px (WCAG 2.5.5) auf Touch-Geräten und in der schmalen
+   Ansicht unter 640 px: Menüzeilen und die Symbolknöpfe in Leistenköpfen. */
+@media (pointer: coarse), (max-width: 639px) {
+  .lv-menu-item,
+  .lv-touch-row {
     min-height: 44px;
   }
+  .lv-touch-icons button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  /* Auswahllisten (Fluent Dropdown): Ausloeser und Eintraege. Der Knopf im
+     Ausloeser selbst, nicht nur der Rahmen darum (sonst 42 px innen). */
+  .lv-dropdown.lv-dropdown,
+  .lv-dropdown.lv-dropdown > .fui-Dropdown__button,
+  .fui-Listbox .fui-Option {
+    min-height: 44px;
+  }
+  .fui-Listbox .fui-Option {
+    align-items: center;
+  }
+}
+
+/* Platzhalter in Eingabefeldern mit dem gedämpften Texttoken statt
+   Foreground4: auf dunkler Fläche sonst zu schwach (WCAG 1.4.3). */
+.lv-input input::placeholder {
+  color: var(--color-text-muted);
+  opacity: 1;
 }
 
 /* ==========================================================================
@@ -582,6 +651,13 @@ html:root[data-fluent][data-scheme="dark"] .lv-btn--danger-ghost.lv-btn--danger-
 }
 .lv-status-btn:active {
   background: var(--colorSubtleBackgroundPressed);
+}
+/* Version mit Update-Angebot (#281): Akzentschrift, auch über dem
+   `color: inherit` der Statusknöpfe und beim Überfahren. */
+.lv-status-btn[data-angebot],
+.lv-status-btn[data-angebot]:hover {
+  color: var(--color-accent-text);
+  font-weight: 600;
 }
 .lv-status-btn:focus-visible {
   outline: 2px solid var(--colorStrokeFocus2);
@@ -727,60 +803,104 @@ html:root[data-fluent][data-scheme="dark"] .lv-btn--danger-ghost.lv-btn--danger-
   }
 }
 
-/* Titelleiste rechts: Suche, Benachrichtigungen, Hilfe, Einstellungen, Profil */
-.lv-titlebar__tools {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  flex-shrink: 0;
-}
+/* Suche im Modulkopf (ADR-0027 E5): nur in Modulen, die sie einschalten */
 .lv-search {
-  position: relative;
   width: clamp(140px, 24vw, 320px);
-  margin-inline-end: 8px;
 }
 .lv-search .fui-SearchBox {
   width: 100%;
-}
-.lv-search__list {
-  position: absolute;
-  inset-inline: 0;
-  top: calc(100% + 4px);
-  z-index: 60;
-  margin: 0;
-  padding: 4px;
-  list-style: none;
-  background: var(--colorNeutralBackground1);
-  border: 1px solid var(--colorNeutralStroke2);
-  border-radius: var(--borderRadiusMedium);
-  box-shadow: var(--shadow16);
-}
-.lv-search__item,
-.lv-search__none {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
-  border-radius: var(--borderRadiusSmall);
-  font-size: var(--fontSizeBase300);
-  cursor: pointer;
-}
-.lv-search__none {
-  cursor: default;
-  color: var(--colorNeutralForeground3);
-}
-.lv-search__item[data-active="true"],
-.lv-search__item:hover {
-  background: var(--colorSubtleBackgroundHover);
 }
 .lv-empty-note {
   margin: 0;
   padding: 4px 8px;
   color: var(--colorNeutralForeground2);
 }
-.lv-titlebar__profile {
-  padding: 0 4px;
-  min-width: 36px;
+/* Profilkreis unten in der Navigation (ADR-0027 E1); Kreismitte auf der
+   Symbolachse der Navigationseinträge (4 + 14 + 10 px). */
+.workspace-nav__fuss {
+  display: flex;
+  padding: 8px 0 0 4px;
+}
+/* Modellwahl im Profilmenü: Zeilen in voller Breite, Auswahllisten rechts
+   neben dem Menü statt darüber (die Fläche schneidet sonst ab). */
+.lv-profilmenue__modelle {
+  position: relative;
+  display: grid;
+  gap: 2px;
+  padding: 2px 4px 4px;
+}
+.lv-profilmenue__modelle > .relative {
+  position: static;
+}
+.lv-profilmenue__modelle .lv-status-btn {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: auto;
+  min-height: 34px;
+  justify-content: flex-start;
+  padding: 6px 10px;
+  font-size: var(--fontSizeBase300);
+}
+.lv-profilmenue__modelle .lv-status-btn > * {
+  flex-shrink: 0;
+}
+/* Lange Zustände („Kein Modell – Download erforderlich“) brechen um,
+   der Pfeil bleibt in der Menübreite (Codex 01.11.). */
+.lv-profilmenue__modelle .lv-status-btn > .lv-status-label {
+  max-width: none;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: visible;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: start;
+  line-height: 1.3;
+}
+.lv-profilmenue__modelle .absolute.bottom-full {
+  bottom: auto;
+  top: 0;
+  inset-inline-start: calc(100% + 12px);
+  margin: 0;
+}
+.wai-konto-menue__flaeche:has(.lv-profilmenue__modelle) {
+  overflow: visible;
+}
+.lv-profilmenue__leer {
+  margin: 0;
+  padding: 8px 12px 12px;
+  color: var(--colorNeutralForeground3);
+  font-size: var(--fontSizeBase300);
+}
+.lv-profilmenue__kontingent {
+  margin: 0;
+  padding: 4px 12px 12px;
+  list-style: none;
+  display: grid;
+  gap: 10px;
+  font-size: var(--fontSizeBase200);
+}
+.lv-profilmenue__kontingentkopf {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.lv-profilmenue__kontingentkopf > span:last-child {
+  color: var(--colorNeutralForeground3);
+  white-space: nowrap;
+}
+.lv-profilmenue__balken {
+  display: block;
+  height: 4px;
+  margin-top: 4px;
+  border-radius: 2px;
+  background: var(--colorNeutralStroke2);
+  overflow: hidden;
+}
+.lv-profilmenue__balken > i {
+  display: block;
+  height: 100%;
+  background: var(--colorBrandBackground);
 }
 .lv-shortcuts {
   display: grid;
@@ -800,10 +920,114 @@ html:root[data-fluent][data-scheme="dark"] .lv-btn--danger-ghost.lv-btn--danger-
   font-family: inherit;
   font-size: var(--fontSizeBase200);
 }
-/* Schmal: die Werkzeuge weichen den Fensterknöpfen (Navigation und
-   Einstellungen bleiben über den Navigationsbereich erreichbar). */
-@media (max-width: 767px) {
-  .lv-titlebar__tools {
-    display: none;
+
+/* Telefon in der Fußleiste (Sprachgespräch): grau ohne, grün mit laufendem Gespräch. */
+.lv-call-group {
+  display: inline-flex;
+  align-items: center;
+}
+.lv-call-btn {
+  color: var(--colorNeutralForeground4);
+}
+.lv-call-btn.is-active {
+  color: var(--colorPaletteGreenForeground1);
+  background: var(--colorPaletteGreenBackground1);
+}
+.lv-call-btn.is-active:hover {
+  color: var(--colorPaletteGreenForeground1);
+  background: var(--colorPaletteGreenBackground2);
+}
+.lv-call-menu-btn {
+  min-width: 16px;
+  padding-inline: 2px;
+}
+
+/* Statusleiste: Diagnose (ADR-0027 E7) – nur bewusst eingeschaltet, einklappbar. */
+.lv-diagnose {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding-inline-end: 4px;
+  margin-inline-end: 2px;
+  border-inline-end: 1px solid var(--colorNeutralStroke2);
+}
+
+/* Fußleiste je Modul (Patrick 02.11.): Modulplatz für Portale (Stimme beim
+   Vorlesen) und ein Kurzstatus, der von selbst verschwindet. Beide verschieben
+   nichts: der Status steht in der Zeile, die Zeile behält ihre Höhe. */
+.lv-fuss-modulplatz {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.lv-fuss-modulplatz:empty {
+  display: none;
+}
+.lv-fuss-status:empty {
+  display: none;
+}
+.lv-fuss-status {
+  padding-inline: 4px;
+  white-space: nowrap;
+}
+.lv-fuss-stimme {
+  flex-shrink: 0;
+}
+/* Kompakte Stimmenwahl (react-select) in der Statusleiste: so flach wie die
+   übrigen Einträge. */
+.lv-statusbar .lv-fuss-modulplatz .app-select__control {
+  min-height: 22px;
+  border-color: transparent;
+  background: transparent;
+}
+.lv-statusbar .lv-fuss-modulplatz .app-select__value-container {
+  padding-block: 0;
+}
+.lv-statusbar .lv-fuss-modulplatz .app-select__indicator {
+  padding: 0 2px;
+}
+
+/* Einträge der Modellliste: volle 44 px, auch innerhalb der flachen Leiste. */
+.lv-statusbar .workspace-status > div > div:first-child .lv-fuss-menue button {
+  min-height: 44px;
+  justify-content: flex-start;
+}
+
+/* Touch (Codex zu lva#213: Bedienelemente mindestens 44 px): mit grobem Zeiger
+   wird die Statusleiste so hoch, dass jeder Eintrag 44 px Trefferfläche hat. */
+@media (pointer: coarse) {
+  .lv-statusbar,
+  .lv-statusbar .workspace-status {
+    min-height: 44px;
+    height: auto;
   }
+  .lv-statusbar .workspace-status button,
+  .lv-statusbar .workspace-status button.lv-status-btn,
+  .lv-statusbar .workspace-status > div > div:first-child button,
+  .lv-statusbar .lv-fuss-modulplatz .app-select__control {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}
+
+/* Profilmenü schmal (Touch): Einträge ≥ 44 px hoch (Codex 03.11.). Die
+   Vorlage ist aus @wai/ui kopiert und bleibt unberührt; hier überschrieben. */
+@media (max-width: 767px) {
+  .wai-konto-menue .wai-konto-menue__eintrag {
+    min-block-size: 44px;
+  }
+}
+
+/* Feste Spielerleiste des Vorlesens (schmal, reader.css): Meldungen stehen
+   darüber, Bildlauf-Ziele (scrollIntoView) enden darüber. 0 px sonst. */
+:root {
+  --lv-player-h: 0px;
+  --lv-toast-zone: 0px;
+}
+[data-sonner-toaster] {
+  --offset-bottom: calc(72px + var(--lv-player-h)) !important;
+  --mobile-offset-bottom: calc(72px + var(--lv-player-h)) !important;
+}
+#workspace-content {
+  scroll-padding-bottom: calc(var(--lv-player-h) + var(--lv-toast-zone));
 }

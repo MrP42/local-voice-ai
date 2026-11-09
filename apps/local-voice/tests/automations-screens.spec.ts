@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { installTauriMock } from "./calendarMock";
 import { DEMO, installIntegrationsMock, NOW } from "./integrationsMock";
 import { AUTOMATIONS_DEMO, installAutomationsMock } from "./automationsMock";
+import { geheZu } from "./profilmenue";
 
 // B7 (#67, AK12): Bilder der Oberflaeche "Automationen" fuer die Abnahme: Liste, Editor,
 // Trockenlauf, Lauf mit Herkunft, Freigabe (und schmal). Nur mit LVA_SCREENS=1; die Bilder
@@ -39,10 +40,7 @@ const setup = async (page: Page, width = 1280, height = 900) => {
   await installAutomationsMock(page, AUTOMATIONS_DEMO);
   await page.setViewportSize({ width: 1280, height });
   await page.goto("/");
-  await page
-    .getByRole("navigation")
-    .getByRole("button", { name: "Integrationen", exact: true })
-    .click();
+  await geheZu(page, "Integrationen");
   await page.getByRole("tab", { name: "Automationen" }).click();
   await expect(page.getByTestId("workflow-card")).toHaveCount(2);
   if (width !== 1280) await page.setViewportSize({ width, height });

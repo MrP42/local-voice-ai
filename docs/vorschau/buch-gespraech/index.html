@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Buch-Gespräch Vorschau</title>
+<style>
+:root{--bg:#f5f5f5;--surface:#fff;--surface2:#fafafa;--text:#1b1b1b;--muted:#5c5c5c;--line:#d6d6d6;--accent:#0f6cbd;--accent-soft:#e6f0fa;--book:#fffdf8;--hl:#fff1b8;--ok:#107c10;--live:#c50f1f;--ios-bg:#f2f2f7;--ios-card:#fff;--ios-tint:#0066cc;--accent-fill:#0f6cbd;--live-fill:#c50f1f;--ios-fill:#0062cc}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#1b1b1b;--surface:#262626;--surface2:#2e2e2e;--text:#f0f0f0;--muted:#b4b4b4;--line:#3d3d3d;--accent:#4aa3ff;--accent-soft:#16324d;--book:#2d2c2a;--hl:#5a4a12;--ok:#54b054;--live:#ff6b75;--ios-bg:#000;--ios-card:#1c1c1e;--ios-tint:#0a84ff;--accent-fill:#1565c0;--live-fill:#c50f1f;--ios-fill:#0060df}}
+:root[data-theme=dark]{--bg:#1b1b1b;--surface:#262626;--surface2:#2e2e2e;--text:#f0f0f0;--muted:#b4b4b4;--line:#3d3d3d;--accent:#4aa3ff;--accent-soft:#16324d;--book:#2d2c2a;--hl:#5a4a12;--ok:#54b054;--live:#ff6b75;--ios-bg:#000;--ios-card:#1c1c1e;--ios-tint:#0a84ff;--accent-fill:#1565c0;--live-fill:#c50f1f;--ios-fill:#0060df}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 "Segoe UI",system-ui,sans-serif}
+.page{max-width:1500px;margin:auto;padding:16px 24px}
+h1{font-size:22px;margin:0 0 4px}h2.sec{font-size:17px;margin:28px 0 6px}
+.lead{color:var(--muted);margin:0 0 10px;max-width:95ch}
+.notes{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;margin:8px 0 14px}
+.notes div{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:10px 12px}
+.notes h3{margin:0 0 4px;font-size:13px}.notes ul{margin:0;padding-left:18px;color:var(--muted)}
+.theme{position:fixed;top:12px;right:16px;display:flex;gap:4px;z-index:5}
+.theme button{font:inherit;border:1px solid var(--line);background:var(--surface);color:var(--text);border-radius:6px;padding:4px 10px;cursor:pointer}
+button{font:inherit;color:inherit}
+svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:none}
+/* Desktop */
+.frame{overflow:auto;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.app{width:1440px;height:820px;display:grid;grid-template-rows:44px 1fr 40px;font-size:13px}
+.top{display:flex;align-items:center;gap:12px;padding:0 14px;border-bottom:1px solid var(--line)}
+.top b{font-size:14px}.top .sub{color:var(--muted);font-size:12px}
+.body{display:grid;grid-template-columns:48px 220px 1fr 400px;min-height:0}
+.rail{border-right:1px solid var(--line);display:flex;flex-direction:column;align-items:center;gap:6px;padding-top:10px}
+.rail span{width:32px;height:32px;border-radius:6px;display:flex;align-items:center;justify-content:center}.rail .on{background:var(--accent-soft);color:var(--accent)}
+.toc{border-right:1px solid var(--line);padding:12px 10px;font-size:12px;display:flex;flex-direction:column;gap:2px}
+.toc .h{font-weight:600;margin-bottom:6px}.toc .c{padding:5px 8px;border-radius:4px}.toc .c.on{background:var(--accent-soft)}
+.center{display:flex;flex-direction:column;min-width:0;padding:8px 16px 10px;gap:8px}
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--line)}
+.tab{padding:6px 10px;white-space:nowrap}.tab.on{border-bottom:2px solid var(--accent);font-weight:600}
+.book{flex:1;min-height:0;background:var(--book);border-radius:6px;box-shadow:0 6px 14px #0002;padding:28px 56px;font-family:Georgia,serif;font-size:17px;line-height:1.75;overflow:hidden}
+.book p{margin:0 0 12px}.book h3{font:600 20px Georgia,serif;margin:0 0 12px}
+.pm{font:600 11px "Segoe UI",sans-serif;color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:0 5px;margin-right:6px}
+.flash{background:var(--hl);border-radius:3px;box-shadow:0 0 0 3px var(--hl)}
+.pos{border-left:3px solid var(--accent);padding-left:10px;margin-left:-13px}
+.right{border-left:1px solid var(--line);display:flex;flex-direction:column;min-height:0;background:var(--surface)}
+.rtabs{display:flex;gap:2px;padding:6px 8px 0;border-bottom:1px solid var(--line)}
+.rtabs span{padding:6px 10px}.rtabs .on{border-bottom:2px solid var(--accent);font-weight:600}
+.rhead{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--line)}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.seg span{padding:4px 10px;font-size:12px;display:flex;gap:4px;align-items:center}.seg .on{background:var(--accent-soft);color:var(--accent);font-weight:600}
+.ib{min-width:30px;height:30px;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--line);background:var(--surface);padding:0 8px;gap:6px}
+.ml{margin-left:auto}
+.thread{flex:1;min-height:0;overflow:hidden;padding:12px;display:flex;flex-direction:column;gap:10px}
+.u{align-self:flex-end;max-width:85%;background:var(--accent-soft);border-radius:12px 12px 2px 12px;padding:8px 12px}
+.u small,.a small{display:flex;gap:4px;align-items:center;color:var(--muted);font-size:11px;margin-bottom:2px}
+.a{max-width:96%;}
+.a p{margin:0 0 6px}
+.chip{display:inline-flex;align-items:center;gap:3px;font:600 11px "Segoe UI",sans-serif;color:var(--accent);background:var(--accent-soft);border-radius:10px;padding:1px 7px;vertical-align:1px}
+.chip.on{background:var(--accent-fill);color:#fff}
+.gen{color:var(--muted);font-style:italic}
+.card{border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:8px;padding:8px 10px;background:var(--surface2);margin-top:4px}
+.card q{display:block;font-family:Georgia,serif;font-size:14px;line-height:1.5;quotes:"„" "“"}
+.card .meta{color:var(--muted);font-size:11px;margin-top:4px}
+.card .acts{display:flex;gap:6px;margin-top:8px}
+.sugg{display:flex;flex-wrap:wrap;gap:6px}
+.sugg span{border:1px solid var(--line);border-radius:14px;padding:4px 10px;font-size:12px}
+.composer{border-top:1px solid var(--line);padding:10px 12px;display:flex;gap:10px;align-items:center}
+.mic{width:52px;height:52px;border-radius:50%;background:var(--accent-fill);color:#fff;display:flex;align-items:center;justify-content:center;flex:none;box-shadow:0 2px 8px #0003}
+.mic svg{width:24px;height:24px}
+.mic.live{background:var(--live-fill);box-shadow:0 0 0 6px color-mix(in srgb,var(--live) 25%,transparent)}
+.field{flex:1;height:38px;border:1px solid var(--line);border-radius:19px;display:flex;align-items:center;padding:0 14px;color:var(--muted)}
+.state{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);padding:6px 12px;border-top:1px solid var(--line)}
+.wave{display:inline-flex;gap:2px;align-items:center;height:16px}.wave i{width:3px;border-radius:2px;background:var(--live)}
+.player{border-top:1px solid var(--line);display:flex;align-items:center;gap:12px;padding:0 14px;font-size:12px;color:var(--muted)}
+.bar{flex:1;height:4px;border-radius:2px;background:var(--line);position:relative}.bar i{position:absolute;left:0;top:0;bottom:0;width:38%;background:var(--accent);border-radius:2px}
+.paused{color:var(--text);font-weight:600}
+/* iPhone */
+.phones{display:flex;flex-wrap:wrap;gap:22px}
+.phone{width:390px;height:844px;border-radius:46px;border:10px solid #111;background:var(--ios-bg);overflow:hidden;position:relative;font:15px/1.4 -apple-system,"SF Pro Text",system-ui,sans-serif;flex:none}
+@media (max-width:600px){.page{padding:12px 0}.phones{justify-content:center}}
+.cap{width:390px;text-align:center;color:var(--muted);font-size:12px;margin-top:6px}
+.sb{height:47px;display:flex;justify-content:space-between;align-items:flex-end;padding:0 30px 6px;font-weight:600;font-size:15px}
+.nav2{height:44px;display:flex;align-items:center;justify-content:space-between;padding:0 16px;color:var(--ios-tint)}
+.nav2 b{color:var(--text);font-size:16px}
+.rtext{padding:4px 22px;font-family:Georgia,serif;font-size:18px;line-height:1.65;height:520px;overflow:hidden}
+.rtext p{margin:0 0 12px}
+.ctrl{position:absolute;left:0;right:0;bottom:0;background:var(--ios-card);border-top:1px solid var(--line);padding:10px 18px 30px}
+.ctrl .bar{margin:4px 0 10px}
+.btns{display:flex;justify-content:space-between;align-items:center}
+.t44{width:44px;height:44px;display:flex;align-items:center;justify-content:center;border-radius:22px;color:var(--text)}
+.t44 svg{width:22px;height:22px}
+.play{width:60px;height:60px;border-radius:30px;background:var(--text);color:var(--ios-bg)}
+.ask{height:44px;border-radius:22px;padding:0 16px;display:flex;gap:6px;align-items:center;background:var(--ios-fill);color:#fff;font-weight:600}
+.ask svg{width:20px;height:20px}
+.dim{position:absolute;inset:0;background:#0006}
+.sheet{position:absolute;left:0;right:0;bottom:0;background:var(--ios-card);border-radius:14px 14px 0 0;display:flex;flex-direction:column}
+.grab{width:36px;height:5px;border-radius:3px;background:var(--line);margin:6px auto 4px}
+.shead{display:flex;align-items:center;gap:8px;padding:4px 14px 8px}
+.shead b{font-size:17px}
+.sthread{flex:1;min-height:0;overflow:hidden;padding:4px 14px;display:flex;flex-direction:column;gap:10px}
+.sthread .u{font-size:15px}.sthread .a{font-size:15px}
+.sfoot{padding:10px 16px 30px;display:flex;align-items:center;gap:14px;border-top:1px solid var(--line)}
+.bigmic{width:72px;height:72px;border-radius:36px;background:var(--ios-fill);color:#fff;display:flex;align-items:center;justify-content:center;margin:auto}
+.bigmic svg{width:30px;height:30px}.bigmic.live{background:var(--live-fill)}
+.livetext{font-size:20px;line-height:1.35;padding:6px 18px;color:var(--text)}
+.livetext span{color:var(--muted)}
+.hint{font-size:12px;color:var(--muted);text-align:center}
+.scope{display:inline-flex;align-items:center;gap:5px;min-height:32px;padding:0 10px;border:1px solid var(--accent);border-radius:16px;color:var(--accent);background:var(--accent-soft);font-size:12px;font-weight:600}
+.scope.i{min-height:44px;padding:0 14px;font-size:14px;border-radius:22px}
+.banner{display:flex;align-items:center;gap:8px;margin:0 14px 6px;padding:0 6px 0 12px;min-height:44px;border-radius:10px;background:var(--surface2);font-size:13px;color:var(--muted)}
+.banner b{color:var(--text);font-weight:600}.banner .lk{margin-left:auto;color:var(--ios-tint);font-weight:600;min-height:44px;display:flex;align-items:center;padding:0 8px}
+.speak{display:flex;align-items:center;gap:8px;margin-top:8px;padding:0 4px 0 10px;min-height:44px;border-radius:10px;background:var(--accent-soft);color:var(--accent);font-weight:600;font-size:14px}
+.speak .stop{margin-left:auto;display:flex;align-items:center;gap:6px;min-height:44px;padding:0 10px;color:var(--text)}
+.menu{position:absolute;right:14px;width:300px;background:var(--ios-card);border-radius:12px;box-shadow:0 10px 30px #0005;border:1px solid var(--line);overflow:hidden;z-index:3}
+.menu div{min-height:48px;display:flex;align-items:center;gap:10px;padding:8px 14px;border-bottom:1px solid var(--line);font-size:15px}
+.menu small{display:block;color:var(--muted);font-size:12px}
+.alert{position:absolute;left:40px;right:40px;top:300px;background:var(--ios-card);border-radius:14px;box-shadow:0 10px 30px #0006;text-align:center;z-index:4;overflow:hidden}
+.alert p{margin:0;padding:16px 16px 12px;font-size:14px}.alert b{display:block;font-size:17px;margin-bottom:4px}
+.alert .row{display:flex;border-top:1px solid var(--line)}.alert .row span{flex:1;min-height:44px;display:flex;align-items:center;justify-content:center;color:var(--ios-tint);font-size:17px}
+.alert .row span+span{border-left:1px solid var(--line);font-weight:600}
+.big .sthread{font-size:21px}.big .sthread .u,.big .sthread .a{font-size:21px}.big .card q{font-size:19px}.big .shead b{font-size:22px}
+.pill{font-size:12px;border-radius:12px;padding:3px 9px;background:var(--accent-soft);color:var(--accent);font-weight:600}
+</style>
+</head>
+<body>
+<div class="theme"><button onclick="document.documentElement.dataset.theme='light'">Hell</button><button onclick="document.documentElement.dataset.theme='dark'">Dunkel</button></div>
+<div class="page">
+<h1>Buch-Gespräch – Vorschau zur Abnahme (lva#307)</h1>
+<p class="lead">Mit der KI per Sprache (Vorrang) und per Text über das Buch sprechen, lokal auf dem Gerät. Beispieltext ist das synthetische Testbuch „Zwei Lehrmeister“ aus den Fixtures. Eine Unterhaltung je Buch: Gesprochenes steht als Text im Verlauf. Jede Antwort hat Belege mit wörtlichem Zitat, Seite und Sprung.</p>
+<div class="notes">
+<div><h3>Entscheidungen zur Abnahme</h3><ul><li>Codex JA: Reiter „Chat“ heißt „Gespräch“.</li><li>Codex JA: Spoilerschutz Standard, Bereichsknopf immer sichtbar, Erweiterung nur mit Bestätigung (I4).</li><li>Codex JA: iPhone nur im Vordergrund; Sperren stoppt Mikrofon und Antwort, Fortsetzen durch dich.</li></ul></div>
+<div><h3>Sprache</h3><ul><li>Start: großer Sprechen-Knopf, Leertaste halten (Desktop), „Fragen“ im iPhone-Player.</li><li>Vorlesen pausiert und läuft danach weiter.</li><li>Befehle ohne KI: „Spring dahin“, „Lies mir die Stelle vor“, „Weiterlesen“, „Ganzes Buch“.</li></ul></div>
+<div><h3>Belege</h3><ul><li>Chip „S. 2“ öffnet die Karte mit Zitat.</li><li>„Hinspringen“ markiert den Satz im Buch, „Ab hier vorlesen“ startet dort.</li><li>Allgemeinwissen kursiv mit „Allgemein:“, ohne Beleg.</li></ul></div>
+</div>
+
+<h2 class="sec">D1 Desktop 1440 – Antwort mit Beleg, Sprung im Buch</h2>
+<div class="frame" id="d1"><div class="app">
+ <div class="top"><b>Vorlesen</b><span class="sub">Zwei Lehrmeister · Kapitel 2</span></div>
+ <div class="body">
+  <div class="rail"><span><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg></span><span class="on"><svg viewBox="0 0 24 24"><path d="M4 5a2 2 0 0 1 2-2h12v18H6a2 2 0 0 1-2-2z"/><path d="M8 7h6"/></svg></span><span><svg viewBox="0 0 24 24"><path d="M12 3a3 3 0 0 1 3 3v5a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3z"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></span></div>
+  <div class="toc"><div class="h">Inhalt</div><div class="c on">Einleitung: Zwei Lehrmeister</div><div class="c">Kapitel 1: Die Werkstatt am Fluss</div><div class="c">Kapitel 2: Vermögen und Verpflichtungen</div></div>
+  <div class="center">
+   <div class="tabs"><span class="tab on">Buch</span><span class="tab">KI-Dokumente</span></div>
+   <div class="book">
+    <h3>Einleitung: Zwei Lehrmeister</h3>
+    <p><span class="pm">S. 2</span><span class="flash">Ich hatte zwei Lehrmeister. Der eine war mein eigener Vater, den ich in diesem Buch den Lehrer nenne. Der andere war Konrad Ilg, der Vater meines besten Freundes Jonas, ein Schreiner ohne Abitur, dem später drei Werkstätten gehörten.</span> Ihn nenne ich den Meister.</p>
+    <p>Beide Männer gaben mir Ratschläge, aber ihre Ratschläge widersprachen sich oft. Der Lehrer sagte: „Lerne fleißig, dann bekommst du eine sichere Stelle.“ Der Meister sagte: „Lerne, wie Geld arbeitet, dann arbeitest du nicht für das Geld.“</p>
+    <p><span class="pm">S. 3</span>Weil ich beide liebte, musste ich mich entscheiden, wem ich folge. Dieses Buch erzählt, warum ich am Ende dem Meister folgte, ohne den Lehrer weniger zu achten.</p>
+   </div>
+  </div>
+  <div class="right">
+   <div class="rtabs"><span>Inhalt</span><span>Notizen</span><span class="on">Gespräch</span></div>
+   <div class="rhead"><span class="scope" title="Antworten nur aus dem bisher Gelesenen. Klicken, um aufs ganze Buch zu erweitern"><svg viewBox="0 0 24 24" style="width:13px;height:13px"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>Bis S. 6 geschützt<svg viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M6 9l6 6 6-6"/></svg></span><span class="ib ml" title="Weitere Aktionen"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></span></div>
+   <div class="thread">
+    <div class="u"><small><svg viewBox="0 0 24 24"><path d="M12 3a3 3 0 0 1 3 3v5a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3z"/><path d="M5 11a7 7 0 0 0 14 0"/></svg>gesprochen</small>Warum gibt es zwei Väter, und wo wird das erklärt?</div>
+    <div class="a"><small>Lokal · Gemma 4 E4B</small>
+     <p>Der Erzähler hat zwei Lehrmeister: seinen eigenen Vater, den er den Lehrer nennt, und Konrad Ilg, den Vater seines Freundes, den Meister <span class="chip on">S. 2</span>. Ihre Ratschläge widersprechen sich oft <span class="chip">S. 2</span>. Erklärt wird das gleich in der Einleitung.</p>
+     <div class="card"><q>Ich hatte zwei Lehrmeister. Der eine war mein eigener Vater, den ich in diesem Buch den Lehrer nenne. Der andere war Konrad Ilg, der Vater meines besten Freundes Jonas …</q><div class="meta">Einleitung · Seite 2</div>
+      <div class="acts"><span class="ib"><svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg>Hinspringen</span><span class="ib"><svg viewBox="0 0 24 24"><path d="M7 5v14l11-7z"/></svg>Ab hier vorlesen</span></div></div>
+    </div>
+    <div class="u"><small>getippt</small>Was meint der Meister mit Vermögenswert?</div>
+    <div class="a"><p>Ein Vermögenswert bringt jeden Monat Geld in die Tasche, eine Verpflichtung nimmt Geld heraus <span class="chip">S. 6</span>.</p><p class="gen">Allgemein: Gemeint sind etwa Mieteinnahmen oder Anteile an einem Unternehmen.</p></div>
+   </div>
+   <div class="composer"><span class="mic" title="Sprechen (Leertaste halten)"><svg viewBox="0 0 24 24"><path d="M12 3a3 3 0 0 1 3 3v5a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3z"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></span><span class="field">Frage zum Buch eingeben …</span><span class="ib" title="Senden"><svg viewBox="0 0 24 24"><path d="M4 12l16-8-6 16-2-7z"/></svg></span></div>
+  </div>
+ </div>
+ <div class="player"><span class="paused">Vorlesen pausiert – Gespräch läuft</span><span>S. 6</span><span class="bar"><i></i></span><span>Anton</span><span class="ib">Weiterlesen</span></div>
+</div></div>
+
+<h2 class="sec">D2 Desktop 1440 – Live-Gespräch: hört zu</h2>
+<div class="frame" id="d2"><div class="app" style="height:560px;grid-template-rows:44px 1fr">
+ <div class="top"><b>Vorlesen</b><span class="sub">Zwei Lehrmeister · Kapitel 1</span></div>
+ <div class="body" style="grid-template-columns:48px 1fr 400px">
+  <div class="rail"></div>
+  <div class="center"><div class="book"><h3>Kapitel 1: Die Werkstatt am Fluss</h3><p class="pos"><span class="pm">S. 5</span>Er strich mir den Lohn ganz. Ich sollte weiter fegen, aber ohne Geld. Zuerst war ich wütend. Dann bemerkte ich, dass die Kunden alte Holzreste wegwarfen.</p></div></div>
+  <div class="right">
+   <div class="rtabs"><span>Inhalt</span><span>Notizen</span><span class="on">Gespräch</span></div>
+   <div class="rhead"><span class="scope"><svg viewBox="0 0 24 24" style="width:13px;height:13px"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>Bis S. 5 geschützt<svg viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M6 9l6 6 6-6"/></svg></span></div>
+   <div class="thread"><div class="sugg"><span>Was ist bisher passiert?</span><span>Wer ist wer?</span><span>Erklär mir die letzte Seite</span></div>
+    <div class="u" style="opacity:.85"><small>hört zu …</small>Was ist in diesem Kapitel bisher passiert, und warum hat der Meister mir den Lohn ganz gestrichen, obwohl ich mich nur über den Staub beschwert hatte</div></div>
+   <div class="state"><span class="wave"><i style="height:6px"></i><i style="height:12px"></i><i style="height:16px"></i><i style="height:9px"></i><i style="height:13px"></i><i style="height:5px"></i></span>Hört zu – Stille beendet die Frage · Esc beendet das Gespräch</div>
+   <div class="composer"><span class="mic live" title="Gespräch beenden"><svg viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2"/></svg></span><span class="field">Oder tippen …</span></div>
+  </div>
+ </div>
+</div></div>
+
+<h2 class="sec">I iPhone – Fragen aus dem Player, Gesprächsblatt, Beleg</h2>
+<div class="phones">
+<div><div class="phone" id="i1">
+ <div class="sb"><span>9:41</span><span>●●● ▮</span></div>
+ <div class="nav2"><span>‹ Bibliothek</span><b>Zwei Lehrmeister</b><span>Aa</span></div>
+ <div class="rtext"><p><b>Kapitel 1: Die Werkstatt am Fluss</b></p><p>Mit zwölf fragte ich den Meister, wie man reich wird. Er lachte und gab mir eine Arbeit: Jeden Samstag sollte ich in seiner Werkstatt Späne fegen, für zehn Euro am Tag.</p><p class="pos">Nach drei Wochen beschwerte ich mich. Zehn Euro seien zu wenig für so viel Staub.</p></div>
+ <div class="ctrl"><div class="bar"><i></i></div>
+  <div class="btns"><span class="t44"><svg viewBox="0 0 24 24"><path d="M11 7l-5 5 5 5M18 7l-5 5 5 5"/></svg></span><span class="t44 play"><svg viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></svg></span><span class="t44"><svg viewBox="0 0 24 24"><path d="M13 7l5 5-5 5M6 7l5 5-5 5"/></svg></span><span class="ask"><svg viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/><path d="M9 10v1M12 9v3M15 10v1"/></svg>Fragen</span></div></div>
+</div><div class="cap">I1 Player: „Fragen“ neben der Wiedergabe (44 pt)</div></div>
+
+<div><div class="phone" id="i2">
+ <div class="sb"><span>9:41</span><span>●●● ▮</span></div>
+ <div class="rtext" style="opacity:.5"><p>Mit zwölf fragte ich den Meister, wie man reich wird.</p></div>
+ <div class="dim"></div>
+ <div class="sheet" style="top:120px">
+  <div class="grab"></div>
+  <div class="shead"><b>Gespräch</b><span class="scope i"><svg viewBox="0 0 24 24" style="width:13px;height:13px"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>Bis S. 4<svg viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M6 9l6 6 6-6"/></svg></span><span class="t44 ml" aria-label="Schließen">✕</span></div>
+  <div class="banner"><b>Vorlesen pausiert</b>· S. 4<span class="lk">Weiterlesen</span></div>
+  <div class="livetext">Warum gibt es in dem Buch eigentlich zwei Väter, <span>und wo wird das erklärt, ich habe das irgendwie vergessen</span></div>
+  <div style="flex:1"></div>
+  <div class="hint" style="margin-bottom:10px"><span class="wave"><i style="height:6px"></i><i style="height:14px"></i><i style="height:10px"></i><i style="height:16px"></i><i style="height:7px"></i></span> Hört zu · Stille beendet die Frage</div>
+  <div class="sfoot"><span class="t44"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h1M11 10h1M15 10h1M8 14h8"/></svg></span><span class="bigmic live"><svg viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2"/></svg></span><span class="t44"></span></div>
+ </div>
+</div><div class="cap">I2 Freihand: Live-Text, Stopp-Knopf, Tastatur links</div></div>
+
+<div><div class="phone" id="i3">
+ <div class="sb"><span>9:41</span><span>●●● ▮</span></div>
+ <div class="dim"></div>
+ <div class="sheet" style="top:60px">
+  <div class="grab"></div>
+  <div class="shead"><b>Gespräch</b><span class="scope i"><svg viewBox="0 0 24 24" style="width:13px;height:13px"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>Bis S. 4<svg viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M6 9l6 6 6-6"/></svg></span><span class="t44 ml" aria-label="Schließen">✕</span></div>
+  <div class="banner"><b>Vorlesen pausiert</b>· S. 4<span class="lk">Weiterlesen</span></div>
+  <div class="sthread">
+   <div class="u"><small>gesprochen</small>Warum gibt es zwei Väter, und wo wird das erklärt?</div>
+   <div class="a"><small>Lokal · Apple-Systemmodell</small><p>Der Erzähler hat zwei Lehrmeister: seinen Vater, den Lehrer, und Konrad Ilg, den Meister <span class="chip on">S. 2</span>. Ihre Ratschläge widersprechen sich oft <span class="chip">S. 2</span>.</p>
+    <div class="card"><q>Ich hatte zwei Lehrmeister. Der eine war mein eigener Vater, den ich in diesem Buch den Lehrer nenne …</q><div class="meta">Einleitung · Seite 2</div>
+     <div class="acts"><span class="ib" style="height:44px"><svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg>Hinspringen</span><span class="ib" style="height:44px"><svg viewBox="0 0 24 24"><path d="M7 5v14l11-7z"/></svg>Ab hier vorlesen</span></div></div>
+    <div class="speak"><span class="wave"><i style="height:6px;background:var(--accent)"></i><i style="height:14px;background:var(--accent)"></i><i style="height:10px;background:var(--accent)"></i><i style="height:16px;background:var(--accent)"></i></span>Anton spricht<span class="stop"><svg viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></svg>Antwort anhalten</span></div>
+    <p class="hint" style="text-align:left;margin-top:6px">Danach fragt Anton: „Soll ich dir die Stelle vorlesen?“ – sag „Ja“</p></div>
+  </div>
+  <div class="sfoot"><span class="t44"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h1M11 10h1M15 10h1M8 14h8"/></svg></span><span class="bigmic" aria-label="Sprechen, unterbricht die Antwort"><svg viewBox="0 0 24 24"><path d="M12 3a3 3 0 0 1 3 3v5a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3z"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></span><span class="t44"></span></div>
+ </div>
+</div><div class="cap">I3 Antwort mit Beleg; „Anton spricht“ mit „Antwort anhalten“ in einer Zeile; Sprechen unterbricht</div></div>
+
+<div><div class="phone" id="i4">
+ <div class="sb"><span>9:41</span><span>●●● ▮</span></div>
+ <div class="dim"></div>
+ <div class="sheet" style="top:120px">
+  <div class="grab"></div>
+  <div class="shead"><b>Gespräch</b><span class="scope i"><svg viewBox="0 0 24 24" style="width:13px;height:13px"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>Bis S. 4<svg viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M6 9l6 6 6-6"/></svg></span><span class="t44 ml">✕</span></div>
+  <div class="menu" style="top:60px"><div>✓ <span>Bis S. 4 geschützt<small>Nur was du schon gelesen oder gehört hast</small></span></div><div><span style="width:12px"></span><span>Ganzes Buch …<small>Kann die Handlung vorwegnehmen</small></span></div></div>
+  <div class="dim" style="border-radius:14px 14px 0 0"></div>
+  <div class="alert"><p><b>Spätere Kapitel einbeziehen?</b>Antworten können die Handlung nach Seite 4 vorwegnehmen. Gilt bis du das Gespräch schließt.</p><div class="row"><span>Abbrechen</span><span>Einbeziehen</span></div></div>
+  <div style="flex:1"></div>
+ </div>
+</div><div class="cap">I4 Bereich: Menü am Knopf, Erweiterung nur mit Bestätigung</div></div>
+
+<div><div class="phone big" id="i5">
+ <div class="sb"><span>9:41</span><span>●●● ▮</span></div>
+ <div class="dim"></div>
+ <div class="sheet" style="top:60px">
+  <div class="grab"></div>
+  <div class="shead"><b>Gespräch</b><span class="t44 ml">✕</span></div><div class="shead" style="padding-top:0"><span class="scope i" style="font-size:18px"><svg viewBox="0 0 24 24" style="width:13px;height:13px"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>Bis S. 4 geschützt<svg viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M6 9l6 6 6-6"/></svg></span></div>
+  <div class="banner" style="font-size:17px;flex-wrap:wrap"><b>Vorlesen pausiert</b>· S. 4<span class="lk">Weiterlesen</span></div>
+  <div class="sthread">
+   <div class="a"><p>Der Erzähler hat zwei Lehrmeister: seinen Vater, den Lehrer, und Konrad Ilg, den Meister <span class="chip on" style="font-size:16px">S. 2</span>.</p>
+    <div class="card"><q>Ich hatte zwei Lehrmeister. Der eine war mein eigener Vater …</q><div class="meta" style="font-size:15px">Einleitung · Seite 2</div>
+     <div class="acts" style="flex-direction:column"><span class="ib" style="height:48px;font-size:18px">Hinspringen</span><span class="ib" style="height:48px;font-size:18px">Ab hier vorlesen</span></div></div></div>
+  </div>
+  <div class="sfoot"><span class="t44"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h1M11 10h1M15 10h1M8 14h8"/></svg></span><span class="bigmic"><svg viewBox="0 0 24 24"><path d="M12 3a3 3 0 0 1 3 3v5a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3z"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></span><span class="t44"></span></div>
+ </div>
+</div><div class="cap">I5 Große Schrift (Dynamic Type AX1): Kopf bricht um, Knöpfe untereinander, Verlauf scrollt</div></div>
+</div>
+<p class="lead" style="margin-top:18px">Bedienung ohne Hinsehen: tippen = Freihand bis Stille, halten = Push-to-talk. AirPods-Pause hält die Antwort an. Ohne Modell zeigt das Blatt die zwei besten Fundstellen statt eines Fehlers.</p>
+</div>
+</body>
+</html>

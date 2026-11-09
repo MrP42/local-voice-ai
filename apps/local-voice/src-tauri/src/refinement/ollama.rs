@@ -262,9 +262,9 @@ mod tests {
                     Some(r#"{"models":[{"name":"qwen3:4b"}]}"#.to_string())
                 } else {
                     match behavior {
-                        Generate::Answer => Some(
-                            r#"{"response":"{\"text\":\"Das ist ein Test.\"}"}"#.to_string(),
-                        ),
+                        Generate::Answer => {
+                            Some(r#"{"response":"{\"text\":\"Das ist ein Test.\"}"}"#.to_string())
+                        }
                         Generate::DropConnection => None,
                         Generate::Stall => {
                             held.push(sock);
@@ -324,7 +324,11 @@ mod tests {
         let start = Instant::now();
         let out = r.refine("das is ein test", RefinementStage::Sentence).await;
         assert_eq!(out, None);
-        assert!(start.elapsed() < Duration::from_millis(3_000), "{:?}", start.elapsed());
+        assert!(
+            start.elapsed() < Duration::from_millis(3_000),
+            "{:?}",
+            start.elapsed()
+        );
         alive.store(false, Ordering::SeqCst);
     }
 
@@ -355,7 +359,11 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(80)).await; // Listener schliesst
         let start = Instant::now();
         assert_eq!(r.refine("zwei", RefinementStage::Sentence).await, None);
-        assert!(start.elapsed() < Duration::from_millis(2_500), "{:?}", start.elapsed());
+        assert!(
+            start.elapsed() < Duration::from_millis(2_500),
+            "{:?}",
+            start.elapsed()
+        );
     }
 
     // ---- Echtlauf gegen einen privaten Ollama-Dienst (Issue #5) ----------
@@ -402,7 +410,12 @@ mod tests {
             let client = reqwest::Client::builder().no_proxy().build().unwrap();
             let mut ok = false;
             for _ in 0..80 {
-                if client.get(format!("{base}/api/version")).send().await.is_ok() {
+                if client
+                    .get(format!("{base}/api/version"))
+                    .send()
+                    .await
+                    .is_ok()
+                {
                     ok = true;
                     break;
                 }
@@ -440,13 +453,23 @@ mod tests {
         let second = r2
             .refine("und danach gehen wir essen", RefinementStage::Sentence)
             .await;
-        eprintln!("ECHT satz2 (Dienst gestoppt) nach {:?}: {second:?}", t1.elapsed());
+        eprintln!(
+            "ECHT satz2 (Dienst gestoppt) nach {:?}: {second:?}",
+            t1.elapsed()
+        );
         assert_eq!(second, None);
-        assert!(t1.elapsed() < Duration::from_millis(2_500), "{:?}", t1.elapsed());
+        assert!(
+            t1.elapsed() < Duration::from_millis(2_500),
+            "{:?}",
+            t1.elapsed()
+        );
         // Auch die Modellaufloesung desselben Refiners bleibt harmlos.
         let t2 = Instant::now();
         let third = r.refine("noch ein satz", RefinementStage::Final).await;
-        eprintln!("ECHT satz3 (Final, alter Refiner) nach {:?}: {third:?}", t2.elapsed());
+        eprintln!(
+            "ECHT satz3 (Final, alter Refiner) nach {:?}: {third:?}",
+            t2.elapsed()
+        );
         assert_eq!(third, None);
     }
 

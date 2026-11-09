@@ -5,6 +5,7 @@ import {
   MCP_EXE_PLACEHOLDER,
   mcpSnippet,
 } from "../src/lib/mcpSnippets";
+import { geheZu } from "./profilmenue";
 
 // M6-P6e: Zeile "Lokaler MCP-Server (nur lesend)" (seit A4 auf der Seite
 // Integrationen, vorher in der Gruppe Besprechungen; Schalter, Warnung, Transkript-Freigabe, Kopier-Schnipsel)
@@ -60,10 +61,7 @@ const setup = async (page: Page, init?: () => void) => {
   await page.goto("/");
   // A4: der Schalter wohnt auf der Seite "Integrationen" (unter Einstellungen
   // > Besprechungen steht nur ein Verweis, siehe integrations.spec.ts).
-  await page
-    .getByRole("navigation")
-    .getByRole("button", { name: "Integrationen", exact: true })
-    .click();
+  await geheZu(page, "Integrationen");
   await expect(
     page.getByText("Lokaler MCP-Server (nur lesend)", { exact: true }),
   ).toBeVisible();

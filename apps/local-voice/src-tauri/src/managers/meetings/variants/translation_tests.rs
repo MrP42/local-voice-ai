@@ -51,8 +51,11 @@ fn fixture() -> Fx {
             params![meeting],
         )
         .unwrap();
-        c.execute("UPDATE meetings SET language = 'en' WHERE id = ?1", params![meeting])
-            .unwrap();
+        c.execute(
+            "UPDATE meetings SET language = 'en' WHERE id = ?1",
+            params![meeting],
+        )
+        .unwrap();
     }
     Fx {
         _dir: dir,
@@ -77,8 +80,9 @@ fn extra(source: &str) -> TranslationExtra {
     TranslationExtra {
         source_variant_id: source.to_string(),
         source_language: Some("en".into()),
-        meta_json: r#"{"target_language":"de","flagged":[{"segment_index":0,"reasons":["numbers"]}]}"#
-            .to_string(),
+        meta_json:
+            r#"{"target_language":"de","flagged":[{"segment_index":0,"reasons":["numbers"]}]}"#
+                .to_string(),
     }
 }
 
@@ -172,7 +176,11 @@ fn migration_9_widens_the_kind_check_and_keeps_every_variant_untouched() {
 
     let store = MeetingStore::open_at(&path).unwrap();
     let c = store.get_connection().unwrap();
-    assert_eq!(variant_dump(&c), before, "alle Zeilen wie zuvor, auch Marke und geloeschte");
+    assert_eq!(
+        variant_dump(&c),
+        before,
+        "alle Zeilen wie zuvor, auch Marke und geloeschte"
+    );
     // Die neuen Spalten sind leer, nichts wurde erfunden.
     let extras: i64 = c
         .query_row(
@@ -229,7 +237,9 @@ fn migration_9_runs_once_and_a_second_start_changes_nothing() {
     let store = MeetingStore::open_at(&path).unwrap();
     let c = store.get_connection().unwrap();
     assert_eq!(variant_dump(&c), first);
-    let version: i64 = c.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+    let version: i64 = c
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .unwrap();
     assert_eq!(version, MIGRATIONS.len() as i64);
 }
 
@@ -242,14 +252,20 @@ fn an_abort_inside_migration_9_leaves_the_old_table_complete() {
     // Der Umbau laeuft bis zum Ende durch und scheitert erst am letzten Befehl:
     // die Transaktion muss ALLES zuruecknehmen (alte Tabelle da, keine halbe neue).
     let broken: &'static str = Box::leak(
-        format!("{} SELECT no_such_function();", VARIANTS_TRANSLATION_MIGRATION).into_boxed_str(),
+        format!(
+            "{} SELECT no_such_function();",
+            VARIANTS_TRANSLATION_MIGRATION
+        )
+        .into_boxed_str(),
     );
     let mut steps = MIGRATIONS[..9].to_vec();
     steps.push(M::up(broken));
     let mut c = Connection::open(&path).unwrap();
     assert!(Migrations::new(steps).to_latest(&mut c).is_err());
 
-    let version: i64 = c.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+    let version: i64 = c
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .unwrap();
     assert_eq!(version, 9, "Version unveraendert");
     assert_eq!(variant_dump(&c), before, "keine Fassung verloren");
     let leftovers: i64 = c
@@ -321,8 +337,20 @@ fn a_translation_keeps_times_channels_and_speakers_of_the_source() {
     assert_eq!(translated.len(), original.len());
     for (t, o) in translated.iter().zip(&original) {
         assert_eq!(
-            (t.start_ms, t.end_ms, t.channel, t.speaker_index, t.segment_index),
-            (o.start_ms, o.end_ms, o.channel, o.speaker_index, o.segment_index)
+            (
+                t.start_ms,
+                t.end_ms,
+                t.channel,
+                t.speaker_index,
+                t.segment_index
+            ),
+            (
+                o.start_ms,
+                o.end_ms,
+                o.channel,
+                o.speaker_index,
+                o.segment_index
+            )
         );
     }
 }
@@ -343,7 +371,10 @@ fn switching_between_original_and_translation_loses_nothing() {
         .into_iter()
         .map(|s| s.text)
         .collect();
-    assert_eq!(live, vec!["Wir zahlen 120 Euro.", "Anna ist einverstanden."]);
+    assert_eq!(
+        live,
+        vec!["Wir zahlen 120 Euro.", "Anna ist einverstanden."]
+    );
     let language: Option<String> = c
         .query_row(
             "SELECT language FROM transcripts WHERE meeting_id = ?1",
@@ -351,7 +382,11 @@ fn switching_between_original_and_translation_loses_nothing() {
             |r| r.get(0),
         )
         .unwrap();
-    assert_eq!(language.as_deref(), Some("de"), "die Sprache folgt der aktiven Fassung");
+    assert_eq!(
+        language.as_deref(),
+        Some("de"),
+        "die Sprache folgt der aktiven Fassung"
+    );
 
     activate(&mut c, &source).unwrap();
     let back: Vec<String> = f
@@ -370,7 +405,11 @@ fn switching_between_original_and_translation_loses_nothing() {
         )
         .unwrap();
     assert_eq!(language.as_deref(), Some("en"));
-    assert_eq!(list(&mut c, &f.meeting).unwrap().len(), 2, "beide Fassungen bleiben");
+    assert_eq!(
+        list(&mut c, &f.meeting).unwrap().len(),
+        2,
+        "beide Fassungen bleiben"
+    );
 }
 
 #[test]
@@ -402,7 +441,11 @@ fn a_translation_of_an_unknown_or_foreign_source_is_refused() {
         add_translation(&mut c, translation(&f, false), extra(&foreign)).unwrap_err(),
         VariantError::NotFound
     );
-    assert_eq!(list(&mut c, &f.meeting).unwrap().len(), 1, "nichts angelegt");
+    assert_eq!(
+        list(&mut c, &f.meeting).unwrap().len(),
+        1,
+        "nichts angelegt"
+    );
 }
 
 #[test]
@@ -428,7 +471,10 @@ fn the_report_of_a_translation_can_be_read_back() {
     assert!(meta.contains("target_language"));
     // Eine Fassung ohne Bericht hat keinen.
     assert_eq!(get_meta(&c, &source).unwrap(), None);
-    assert_eq!(get_meta(&c, "gibt-es-nicht").unwrap_err(), VariantError::NotFound);
+    assert_eq!(
+        get_meta(&c, "gibt-es-nicht").unwrap_err(),
+        VariantError::NotFound
+    );
 }
 
 #[test]
@@ -445,13 +491,28 @@ fn setting_the_language_updates_transcript_meeting_and_active_variant() {
         )
         .unwrap();
     let meeting: Option<String> = c
-        .query_row("SELECT language FROM meetings WHERE id = ?1", params![f.meeting], |r| r.get(0))
+        .query_row(
+            "SELECT language FROM meetings WHERE id = ?1",
+            params![f.meeting],
+            |r| r.get(0),
+        )
         .unwrap();
     assert_eq!(transcript.as_deref(), Some("fr"));
     assert_eq!(meeting.as_deref(), Some("fr"));
     let variants = list(&mut c, &f.meeting).unwrap();
-    assert_eq!(variants.iter().find(|v| v.id == source).unwrap().language.as_deref(), Some("fr"));
-    assert_eq!(set_language(&mut c, "gibt-es-nicht", "fr").unwrap_err(), VariantError::NotFound);
+    assert_eq!(
+        variants
+            .iter()
+            .find(|v| v.id == source)
+            .unwrap()
+            .language
+            .as_deref(),
+        Some("fr")
+    );
+    assert_eq!(
+        set_language(&mut c, "gibt-es-nicht", "fr").unwrap_err(),
+        VariantError::NotFound
+    );
 }
 
 #[test]
@@ -462,7 +523,15 @@ fn a_language_correction_does_not_touch_other_variants() {
     let id = add_translation(&mut c, translation(&f, false), extra(&source)).unwrap();
     set_language(&mut c, &f.meeting, "nl").unwrap();
     let variants = list(&mut c, &f.meeting).unwrap();
-    assert_eq!(variants.iter().find(|v| v.id == id).unwrap().language.as_deref(), Some("de"));
+    assert_eq!(
+        variants
+            .iter()
+            .find(|v| v.id == id)
+            .unwrap()
+            .language
+            .as_deref(),
+        Some("de")
+    );
 }
 
 #[test]
@@ -471,7 +540,10 @@ fn no_language_correction_while_a_rerun_is_marked() {
     let mut c = conn(&f);
     list(&mut c, &f.meeting).unwrap();
     begin_rerun(&mut c, &f.meeting).unwrap();
-    assert_eq!(set_language(&mut c, &f.meeting, "fr").unwrap_err(), VariantError::Busy);
+    assert_eq!(
+        set_language(&mut c, &f.meeting, "fr").unwrap_err(),
+        VariantError::Busy
+    );
 }
 
 #[test]

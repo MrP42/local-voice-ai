@@ -287,6 +287,19 @@ export const EnhancedNotesView: React.FC<EnhancedNotesViewProps> = ({
     // Nur beim Wechsel der Besprechung neu laden.
   }, [meetingId]);
 
+  // #242: nach dem Umbenennen eines Sprechers zeigen Einträge und "Wer" den
+  // neuen Namen (Ungespeichertes bleibt stehen, wie bei jedem Neuladen).
+  useEffect(() => {
+    const un = events.speakersChanged.listen((e) => {
+      if (e.payload.meeting_id !== meetingId) return;
+      void loadDocs();
+      void loadItems();
+    });
+    return () => {
+      void un.then((f) => f());
+    };
+  }, [meetingId, loadDocs, loadItems]);
+
   useEffect(() => {
     let cancelled = false;
     void commands.meetingsSegmentEpoch(meetingId).then((result) => {

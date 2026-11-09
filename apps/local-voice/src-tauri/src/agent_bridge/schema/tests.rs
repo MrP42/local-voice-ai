@@ -7,7 +7,8 @@ use super::{AGENT_BRIDGE_MIGRATION, MIGRATION_INDEX};
 use crate::managers::meetings::store::{MeetingStore, MIGRATIONS};
 
 fn user_version(conn: &Connection) -> i64 {
-    conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap()
+    conn.query_row("PRAGMA user_version", [], |r| r.get(0))
+        .unwrap()
 }
 
 fn has_table(conn: &Connection, name: &str) -> bool {
@@ -88,7 +89,10 @@ fn the_chain_ends_with_the_agent_bridge_step() {
         .to_latest(&mut conn)
         .unwrap();
     for t in ["agent_clients", "agent_tool_grants", "agent_approvals"] {
-        assert!(!has_table(&conn, t), "{t} ist vor dem Schritt noch nicht da");
+        assert!(
+            !has_table(&conn, t),
+            "{t} ist vor dem Schritt noch nicht da"
+        );
     }
     let mut conn = Connection::open_in_memory().unwrap();
     Migrations::new(MIGRATIONS[..=MIGRATION_INDEX].to_vec())
@@ -170,7 +174,11 @@ fn an_abort_in_the_step_leaves_the_database_as_it_was() {
     let mut conn = Connection::open(&path).unwrap();
     assert!(Migrations::new(steps).to_latest(&mut conn).is_err());
 
-    assert_eq!(user_version(&conn), MIGRATION_INDEX as i64, "Version unveraendert");
+    assert_eq!(
+        user_version(&conn),
+        MIGRATION_INDEX as i64,
+        "Version unveraendert"
+    );
     for t in ["agent_clients", "agent_tool_grants", "agent_approvals"] {
         assert!(!has_table(&conn, t), "{t} darf nicht halb angelegt sein");
     }

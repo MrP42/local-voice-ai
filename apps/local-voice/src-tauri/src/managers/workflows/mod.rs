@@ -216,8 +216,8 @@ pub mod service_actions; // Welle 1 Verbindungen
 pub mod store;
 pub mod templates;
 pub mod toast; // B4
-pub mod ui; // B7
 pub mod trigger; // B2
+pub mod ui; // B7
 pub mod validate;
 
 #[allow(unused_imports)]

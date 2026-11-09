@@ -203,6 +203,15 @@ impl Host for AppHost {
         }))
     }
 
+    fn transcript_shared(&self) -> bool {
+        let s = crate::settings::get_settings(&self.app);
+        s.meeting_mcp_enabled && s.meeting_mcp_include_transcript
+    }
+
+    fn voice_transcript_shared(&self) -> bool {
+        crate::settings::get_settings(&self.app).voice_call_read_transcripts
+    }
+
     fn workflow_engine(&self) -> Option<Engine> {
         // Der Hub startet nach der Bruecke: bis dahin gibt es die Automationen noch nicht.
         self.app

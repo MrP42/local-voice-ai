@@ -1063,7 +1063,10 @@ mod tests {
         };
         let mut excerpts = super::super::context::slide_excerpts(
             &meeting("m1"),
-            &[slide(1, 12_000, "Umsatz Sued"), slide(2, 90_000, "Zeitplan Ost")],
+            &[
+                slide(1, 12_000, "Umsatz Sued"),
+                slide(2, 90_000, "Zeitplan Ost"),
+            ],
         );
         for (i, ex) in excerpts.iter_mut().enumerate() {
             ex.qid = i as u32 + 1;
@@ -1079,8 +1082,18 @@ mod tests {
         assert_eq!(
             got,
             vec![
-                (ChunkSource::Slide, Some("sl-1".to_string()), Some(12_000), None),
-                (ChunkSource::Slide, Some("sl-2".to_string()), Some(90_000), None),
+                (
+                    ChunkSource::Slide,
+                    Some("sl-1".to_string()),
+                    Some(12_000),
+                    None
+                ),
+                (
+                    ChunkSource::Slide,
+                    Some("sl-2".to_string()),
+                    Some(90_000),
+                    None
+                ),
             ]
         );
         assert_eq!(citations[0].quote, "Umsatz Sued");

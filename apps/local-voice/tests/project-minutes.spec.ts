@@ -21,6 +21,7 @@ import {
   shortTitle,
   sourceToCitation,
 } from "../src/lib/projectMinutes";
+import { geheZu } from "./profilmenue";
 
 // G3 (#70, U9): mehrere Aufnahmen eines Projekts per Haekchen waehlen und daraus EIN
 // gemeinsames Protokoll bzw. eine Zusammenfassung erzeugen. Die Regeln des Backends
@@ -349,9 +350,7 @@ test("Fortschritt und Stopp wie bei der Einzelverarbeitung; der Zustand ueberleb
   );
 
   // Seitenwechsel: weg und zurueck. Der Lauf gehoert dem Backend, nicht der Seite.
-  await page
-    .getByRole("button", { name: "Einstellungen", exact: true })
-    .click();
+  await geheZu(page, "Einstellungen");
   await expect(page.getByTestId("rec-content")).toHaveCount(0);
   await goToRecordings(page);
   await expect(projectRow(page, PM_FOLDER)).toBeVisible();
@@ -686,18 +685,32 @@ test("Zeilen und Kontextmenue anderer Seiten bleiben unveraendert, wenn nichts a
 // Barrierefreiheit (axe, inkl. color-contrast)
 // ---------------------------------------------------------------------------
 
-const axeSevere = async (page: Page) =>
-  (
-    await new AxeBuilder({ page })
-      // Fluent-Fokuswächter (Leitlinie §12.4)
-      .exclude("[data-tabster-dummy]")
-      .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "best-practice"])
-      .analyze()
-  ).violations
-    .filter((v) => v.impact === "critical" || v.impact === "serious")
-    .map(
-      (v) => `${v.id}: ${v.nodes.map((n) => n.target.join(" ")).join(" | ")}`,
-    );
+const axeSevere = async (page: Page) => {
+  // Fluent-Knoepfe blenden Farben beim Wechsel aktiv/deaktiviert ueber (~100 ms). Auf langsamen
+  // Rechnern misst axe sonst eine Zwischenfarbe (z. B. "pm-none" direkt nach "Alle").
+  await page.waitForFunction(() =>
+    document
+      .getAnimations()
+      .every(
+        (a) =>
+          a.playState !== "running" ||
+          a.effect?.getTiming().iterations === Infinity,
+      ),
+  );
+  return (
+    (
+      await new AxeBuilder({ page })
+        // Fluent-Fokuswächter (Leitlinie §12.4)
+        .exclude("[data-tabster-dummy]")
+        .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "best-practice"])
+        .analyze()
+    ).violations
+      .filter((v) => v.impact === "critical" || v.impact === "serious")
+      .map(
+        (v) => `${v.id}: ${v.nodes.map((n) => n.target.join(" ")).join(" | ")}`,
+      )
+  );
+};
 
 test("axe: Auswahl mit ausgegrauten Zeilen, Dialog, laufender Lauf und Ergebnis ohne schwere Befunde", async ({
   page,

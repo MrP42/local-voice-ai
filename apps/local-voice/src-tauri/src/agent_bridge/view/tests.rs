@@ -59,7 +59,10 @@ fn the_view_shows_the_effective_mode_and_why_a_tool_is_still_off() {
     .unwrap();
     let v = view_of(&conn, &made.client, &none).unwrap();
     let t = tool(&v, "transcribe_file");
-    assert_eq!((t.client_mode, t.effective_mode), (GrantMode::Ask, GrantMode::Ask));
+    assert_eq!(
+        (t.client_mode, t.effective_mode),
+        (GrantMode::Ask, GrantMode::Ask)
+    );
     assert_eq!(t.off_reason, None);
     // Aufnahme: nie erlaubt, auch wenn alles auf „erlaubt“ steht, hoechstens „fragen“.
     assert!(set_tool_mode(&conn, &id, "start_recording", GrantMode::Allow, &none, NOW).is_err());
@@ -70,7 +73,15 @@ fn creating_revoking_and_rights_changes_are_audited_as_user_actions() {
     let fx = Fx::new();
     let conn = fx.conn();
     let made = create_client(&conn, "Claude Code", None, NOW).unwrap();
-    set_tool_mode(&conn, &made.client.id, "transcribe_file", GrantMode::Ask, &avail(&[]), NOW + 1).unwrap();
+    set_tool_mode(
+        &conn,
+        &made.client.id,
+        "transcribe_file",
+        GrantMode::Ask,
+        &avail(&[]),
+        NOW + 1,
+    )
+    .unwrap();
     revoke_client(&conn, &made.client.id, NOW + 2).unwrap();
     // Zweites Zurueckziehen: keine zweite Zeile.
     revoke_client(&conn, &made.client.id, NOW + 3).unwrap();
@@ -79,13 +90,21 @@ fn creating_revoking_and_rights_changes_are_audited_as_user_actions() {
         .iter()
         .rev()
         .map(|r| {
-            let d: serde_json::Value = serde_json::from_str(r.detail_json.as_deref().unwrap()).unwrap();
+            let d: serde_json::Value =
+                serde_json::from_str(r.detail_json.as_deref().unwrap()).unwrap();
             assert_eq!(r.caller, "user");
             assert!(r.target.as_deref().unwrap().contains(&made.client.id));
             d["phase"].as_str().unwrap().to_string()
         })
         .collect();
-    assert_eq!(phases, vec!["agent_client_created", "agent_tool_mode", "agent_client_revoked"]);
+    assert_eq!(
+        phases,
+        vec![
+            "agent_client_created",
+            "agent_tool_mode",
+            "agent_client_revoked"
+        ]
+    );
     // Das Token steht nirgends im Audit.
     for r in &rows {
         assert!(!format!("{r:?}").contains(&made.token));
@@ -107,6 +126,12 @@ fn revoked_clients_stay_in_the_list_marked_as_revoked_and_deleting_removes_them(
     let views = client_views(&conn, &avail(&[])).unwrap();
     assert_eq!(views.len(), 1);
     assert_eq!(views[0].client.id, b.id);
-    assert!(matches!(delete_client(&conn, &a.id, NOW + 4), Err(IntegrationError::NotFound(_))));
-    assert!(matches!(revoke_client(&conn, "gibt-es-nicht", NOW), Err(IntegrationError::NotFound(_))));
+    assert!(matches!(
+        delete_client(&conn, &a.id, NOW + 4),
+        Err(IntegrationError::NotFound(_))
+    ));
+    assert!(matches!(
+        revoke_client(&conn, "gibt-es-nicht", NOW),
+        Err(IntegrationError::NotFound(_))
+    ));
 }

@@ -95,10 +95,16 @@ pub fn resolve(
     basis: &DocBasis,
 ) -> Result<ResolvedBasis, BasisError> {
     let output_language = basis.output_language.as_deref().and_then(normalize_code);
-    let requested = basis.variant_id.as_deref().map(str::trim).filter(|v| !v.is_empty());
+    let requested = basis
+        .variant_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty());
     let (variant, segments) = match requested {
         Some(id) => {
-            let conn = store.get_connection().map_err(|e| BasisError::Store(e.to_string()))?;
+            let conn = store
+                .get_connection()
+                .map_err(|e| BasisError::Store(e.to_string()))?;
             let (variant, segments) = variants::get_segments(&conn, id).map_err(|e| match e {
                 variants::VariantError::NotFound => BasisError::VariantNotFound,
                 other => BasisError::Store(other.to_string()),
@@ -133,7 +139,12 @@ pub fn resolve(
                 .and_then(|l| normalize_code(&l))
         })
         .or_else(|| {
-            let sample: String = segments.iter().take(40).map(|s| s.text.as_str()).collect::<Vec<_>>().join(" ");
+            let sample: String = segments
+                .iter()
+                .take(40)
+                .map(|s| s.text.as_str())
+                .collect::<Vec<_>>()
+                .join(" ");
             detect_text(&sample).map(|d| d.code)
         });
     Ok(ResolvedBasis {
@@ -176,14 +187,23 @@ pub fn from_metadata(metadata: &Value) -> Option<DocumentBasis> {
 
 /// Die Grundlage EINER Dokumentversion aus ihren Metadaten; `None` bei einer Version vor G5.
 pub fn document_basis(store: &MeetingStore, document_id: &str) -> Option<DocumentBasis> {
-    let metadata: Value =
-        serde_json::from_str(&store.document_generation_metadata(document_id).ok().flatten()?).ok()?;
+    let metadata: Value = serde_json::from_str(
+        &store
+            .document_generation_metadata(document_id)
+            .ok()
+            .flatten()?,
+    )
+    .ok()?;
     from_metadata(&metadata)
 }
 
 /// Die Grundlage der juengsten Dokumentversion einer Art (`minutes`, `enhanced_notes`);
 /// `None` ohne Dokument oder bei einer Version vor G5.
-pub fn latest_document_basis(store: &MeetingStore, meeting_id: &str, kind: &str) -> Option<DocumentBasis> {
+pub fn latest_document_basis(
+    store: &MeetingStore,
+    meeting_id: &str,
+    kind: &str,
+) -> Option<DocumentBasis> {
     let latest = store
         .get_documents(meeting_id)
         .ok()?
@@ -210,7 +230,11 @@ pub fn basis_line(basis: &DocumentBasis) -> String {
         .as_deref()
         .map(|l| format!(" ({})", name_de(l)))
         .unwrap_or_default();
-    let output = match basis.output_language.as_deref().or(basis.language.as_deref()) {
+    let output = match basis
+        .output_language
+        .as_deref()
+        .or(basis.language.as_deref())
+    {
         Some(code) => format!("auf {}", name_de(code)),
         None => "in der Sprache der Grundlage".to_string(),
     };

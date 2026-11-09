@@ -148,6 +148,13 @@ public struct MeetingMinutes: Codable, Equatable, Sendable {
 }
 
 public struct MeetingDocument: Codable, Identifiable, Sendable {
+    /// Darf dieser Abschnitt mit KI ausgewertet werden? Mit Nachweis (Live-Aufnahme)
+    /// nur, wenn die KI-Einwilligung den ganzen Zeitbereich deckt. Ohne Nachweis
+    /// (Dateiimport durch die Person selbst) wie bisher.
+    public func aiPermitted(_ s: MeetingSegment) -> Bool {
+        consent.map { $0.allows(.aiAnalysis, from: s.start, to: s.end) } ?? true
+    }
+
     public let id: UUID
     public let createdAt: Date
     public let originalName: String
@@ -162,6 +169,14 @@ public struct MeetingDocument: Codable, Identifiable, Sendable {
     public var summarizedSegments: Int?
     public var processingEvents: [ProcessingEvent]?
     public var timings: [String: Double]?
+    /// Einwilligungsnachweis (Zeitpunkt, Weg, Umfang, Zweck, Verantwortlicher, Löschfrist).
+    /// Fehlt bei Altbeständen vor 0.23.0.
+    public var consent: ConsentLog?
+    /// Laufendes Protokoll während der Aufnahme (Entwurf mit Belegen).
+    public var live: LiveState?
+    /// Live-Transkript (Apple SpeechTranscriber), bleibt neben dem Endlauf erhalten.
+    public var liveSegments: [LiveSegment]?
+    public var liveNotes: String?
 }
 
 /// Separate from short Watch captures. Commit the original before acknowledging import.
@@ -195,8 +210,46 @@ public actor MeetingArchive {
               try url.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink != true else { throw VoiceError.persistence }
         return url
     }
-    public func importMedia(_ source: URL, duration: Double) throws -> MeetingDocument {
+    /// Nachweis und Live-Ergebnis einer in der App aufgenommenen Besprechung.
+    public struct LiveImport: Sendable {
+        public var consent: ConsentLog
+        public var live: LiveState?
+        public var segments: [LiveSegment]
+        public var notes: String?
+        public init(consent: ConsentLog, live: LiveState?, segments: [LiveSegment], notes: String?) {
+            self.consent = consent; self.live = live; self.segments = segments; self.notes = notes
+        }
+    }
+
+    /// `live` wird im selben Schritt wie das Original geschrieben: ein Dokument
+    /// aus einer Live-Aufnahme existiert nie ohne seinen Einwilligungsnachweis.
+    ///
+    /// Mit `id` ist der Import wiederholbar: liegt das Dokument schon vollständig vor
+    /// (Absturz nach dem Übernehmen, vor dem Aufräumen der Quelle), wird es
+    /// unverändert zurückgegeben. Das Dokument entsteht in einem Staging-Ordner,
+    /// wird synchronisiert und erst dann mit einem einzigen Rename sichtbar.
+    public func importMedia(_ source: URL, duration: Double, live: LiveImport? = nil, id fixedId: UUID? = nil, name: String? = nil) throws -> MeetingDocument {
+        let displayName = String((name ?? source.lastPathComponent).prefix(255))
+        if let fixedId, fm.fileExists(atPath: folder(fixedId).path) {
+            // Wiederholung: nur dasselbe Original mit denselben Sitzungsdaten gilt als schon übernommen.
+            let existing = try load(fixedId)
+            let archived = try originalURL(fixedId)
+            let size = try archived.resourceValues(forKeys: [.fileSizeKey]).fileSize
+            guard existing.originalName == displayName,
+                  size == existing.bytes, try Self.sha256(of: archived) == existing.digest,
+                  try Self.sha256(of: source) == existing.digest,
+                  existing.consent == live?.consent, existing.live == live?.live,
+                  (existing.liveSegments ?? []) == (live?.segments ?? []),
+                  existing.liveNotes == live?.notes.flatMap({ $0.isEmpty ? nil : String($0.prefix(100_000)) }) else { throw VoiceError.conflict }
+            // Der erste Versuch kann nach dem Rename vor dem Sync abgebrochen sein: erneut sichern.
+            try commitSync(archived)
+            try commitSync(folder(fixedId).appendingPathComponent("meeting.json"))
+            try commitSync(folder(fixedId))
+            try commitSync(root)
+            return existing
+        }
         guard duration.isFinite, duration > 0, duration <= 7200 else { throw VoiceError.invalid }
+        if let live { guard live.consent.canRecord, live.segments.count <= 20_000 else { throw VoiceError.invalid } }
         let info = try source.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
         guard info.isRegularFile == true, info.isSymbolicLink != true, let bytes = info.fileSize, bytes > 0, bytes <= 2 * 1024 * 1024 * 1024 else { throw VoiceError.invalid }
         // Count actual files, including interrupted imports and damaged metadata.
@@ -209,7 +262,7 @@ public actor MeetingArchive {
         guard bytes <= quota - used else { throw VoiceError.full }
         let ext = source.pathExtension.lowercased()
         guard !ext.isEmpty, ext.count <= 10, ext.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber) }) else { throw VoiceError.invalid }
-        let id = UUID(), staging = root.appendingPathComponent(".import-" + UUID().uuidString)
+        let id = fixedId ?? UUID(), staging = root.appendingPathComponent(".import-" + UUID().uuidString)
         try fm.createDirectory(at: staging, withIntermediateDirectories: false)
         defer { try? fm.removeItem(at: staging) }
         let target = staging.appendingPathComponent("original." + ext)
@@ -222,15 +275,34 @@ public actor MeetingArchive {
             hash.update(data: part)
         }
         guard copied == bytes else { throw VoiceError.conflict }
-        try syncFile(target)
-        let doc = MeetingDocument(id: id, createdAt: Date(), originalName: String(source.lastPathComponent.prefix(255)), originalExtension: ext,
+        try commitSync(target)
+        var doc = MeetingDocument(id: id, createdAt: Date(), originalName: displayName, originalExtension: ext,
             digest: hash.finalize().map { String(format: "%02x", $0) }.joined(), bytes: bytes, duration: duration)
+        if let live {
+            doc.consent = live.consent; doc.live = live.live; doc.liveSegments = live.segments
+            doc.liveNotes = live.notes.flatMap { $0.isEmpty ? nil : String($0.prefix(100_000)) }
+        }
         try write(try JSONEncoder().encode(doc), at: staging.appendingPathComponent("meeting.json"))
-        try syncDirectory(staging)
+        try commitSync(staging.appendingPathComponent("meeting.json"))
+        try commitSync(staging)
         try fm.moveItem(at: staging, to: folder(id))
-        try syncDirectory(root)
+        try commitSync(root)
         return doc
     }
+
+    /// Ist das Dokument vollständig im Archiv (Original vorhanden, Größe und Prüfsumme wie
+    /// im Dokument)? Sichert den Commit erneut. Erst danach darf eine Quelle gelöscht werden.
+    public func verifyCommitted(_ id: UUID, digest expected: String) throws -> Bool {
+        guard let doc = try? load(id), doc.digest == expected, let original = try? originalURL(id),
+              (try original.resourceValues(forKeys: [.fileSizeKey]).fileSize) == doc.bytes,
+              try Self.sha256(of: original) == expected else { return false }
+        try commitSync(original)
+        try commitSync(folder(id).appendingPathComponent("meeting.json"))
+        try commitSync(folder(id))
+        try commitSync(root)
+        return true
+    }
+
     public func appendChunk(_ id: UUID, offset: Double, nextOffset: Double, segments: [MeetingSegment], event: ProcessingEvent? = nil) throws {
         var doc = try load(id)
         guard offset == doc.nextOffset else { throw VoiceError.conflict }
@@ -246,9 +318,28 @@ public actor MeetingArchive {
     public func appendMinutes(_ id: UUID, from: Int, through: Int, minutes: MeetingMinutes, event: ProcessingEvent? = nil) throws {
         var doc = try load(id)
         guard doc.nextOffset == doc.duration, from == (doc.summarizedSegments ?? 0), through > from, through <= doc.segments.count else { throw VoiceError.conflict }
+        guard doc.segments[from..<through].allSatisfy(doc.aiPermitted) else { throw VoiceError.invalid }
         let validated = try MeetingMinutes.decode(JSONEncoder().encode(minutes))
         try validated.validateEvidence(in: doc.segments[from..<through].map(\.text).joined(separator: "\n"))
         doc.summaryParts = (doc.summaryParts ?? []) + [validated]
+        doc.summarizedSegments = through
+        if let event { doc.processingEvents = (doc.processingEvents ?? []) + [event] }
+        try save(doc)
+    }
+    static func sha256(of url: URL) throws -> String {
+        let reader = try FileHandle(forReadingFrom: url)
+        defer { try? reader.close() }
+        var hash = SHA256()
+        while let part = try reader.read(upToCount: 1024 * 1024), !part.isEmpty { hash.update(data: part) }
+        return hash.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// Abschnitte ohne KI-Einwilligung überspringen: sie bleiben im Transkript, gehen
+    /// aber in keine Auswertung ein. Nur für Abschnitte, die wirklich nicht freigegeben sind.
+    public func skipMinutes(_ id: UUID, from: Int, through: Int, event: ProcessingEvent? = nil) throws {
+        var doc = try load(id)
+        guard doc.nextOffset == doc.duration, from == (doc.summarizedSegments ?? 0), through > from, through <= doc.segments.count else { throw VoiceError.conflict }
+        guard doc.segments[from..<through].allSatisfy({ !doc.aiPermitted($0) }) else { throw VoiceError.invalid }
         doc.summarizedSegments = through
         if let event { doc.processingEvents = (doc.processingEvents ?? []) + [event] }
         try save(doc)
@@ -276,6 +367,8 @@ public actor MeetingArchive {
     public func saveMinutes(_ id: UUID, minutes: MeetingMinutes) throws {
         var doc = try load(id)
         guard doc.nextOffset == doc.duration else { throw VoiceError.conflict }
+        // Gesamtprotokoll nur, wenn jeder Abschnitt für die KI-Auswertung freigegeben ist.
+        guard doc.segments.allSatisfy(doc.aiPermitted) else { throw VoiceError.invalid }
         doc.minutes = try MeetingMinutes.decode(JSONEncoder().encode(minutes))
         try save(doc)
     }
@@ -285,6 +378,17 @@ public actor MeetingArchive {
         guard data.count <= 32 * 1024 * 1024 else { throw VoiceError.full }
         try data.write(to: url, options: .atomic)
         try syncFile(url); try syncDirectory(url.deletingLastPathComponent())
+    }
+    /// Nur für den Archiv-Commit vor dem Löschen einer Quelle: F_FULLFSYNC (bis auf den
+    /// Datenträger). Rückfall auf fsync nur, wenn das Dateisystem es nicht unterstützt
+    /// (ENOTSUP, EINVAL, ENOTTY) – dann gilt die schwächere Garantie. Andere Fehler werden
+    /// weitergegeben. Die übrigen Archiv-Schreibvorgänge bleiben bei fsync.
+    private func commitSync(_ url: URL) throws {
+        let fd = Darwin.open(url.path, O_RDONLY)
+        guard fd >= 0 else { throw VoiceError.persistence }
+        defer { Darwin.close(fd) }
+        if fcntl(fd, F_FULLFSYNC) == 0 { return }
+        guard [ENOTSUP, EINVAL, ENOTTY].contains(errno), fsync(fd) == 0 else { throw VoiceError.persistence }
     }
     private func syncFile(_ url: URL) throws {
         let handle = try FileHandle(forWritingTo: url); defer { try? handle.close() }; try handle.synchronize()

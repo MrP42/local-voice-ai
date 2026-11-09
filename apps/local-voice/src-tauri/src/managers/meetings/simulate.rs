@@ -276,8 +276,8 @@ fn pace(start: Instant, audio_ms: u64) {
 }
 
 fn write_wav(path: &Path, samples: &[i16]) -> Result<(), String> {
-    let mut w = StreamingWavWriter::create(path, 16_000)
-        .map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut w =
+        StreamingWavWriter::create(path, 16_000).map_err(|e| format!("{}: {e}", path.display()))?;
     w.append(samples)
         .map_err(|e| format!("{}: {e}", path.display()))?;
     w.finalize()
@@ -856,6 +856,10 @@ mod tests {
         assert!(out["mic_aec_samples"].is_null());
         assert!(out["echo"].is_null());
         let id = out["meeting_id"].as_str().unwrap();
-        assert!(!dir.path().join(id).join(super::super::MIC_AEC_FILE).exists());
+        assert!(!dir
+            .path()
+            .join(id)
+            .join(super::super::MIC_AEC_FILE)
+            .exists());
     }
 }

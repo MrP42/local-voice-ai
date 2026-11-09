@@ -57,6 +57,7 @@ import {
   projectMinutesJobKey,
   sourceToCitation,
 } from "@/lib/projectMinutes";
+import { SuiteProjektSeite } from "../../projekte/SuiteProjektSeite";
 import {
   ProjectMinutesRun,
   ProjectMinutesView,
@@ -118,6 +119,8 @@ export const MeetingsSettings: React.FC = () => {
   // G3 (#70): ein Projekt-Protokoll (oder der laufende Lauf) in der Arbeitsflaeche.
   // Es verdraengt die Detailansicht und weicht, sobald eine Besprechung gewaehlt wird.
   const [openPm, setOpenPm] = useState<OpenProjectMinutes | null>(null);
+  // ADR-0026 PR-7: das Suite-Projekt eines Besprechungsordners in der Arbeitsflaeche (Ordner-ID).
+  const [openSuite, setOpenSuite] = useState<string | null>(null);
   const [pmRunError, setPmRunError] = useState<{
     folderId: string;
     text: string;
@@ -129,7 +132,10 @@ export const MeetingsSettings: React.FC = () => {
     (meeting: Meeting | null) => {
       setSelected(meeting);
       setSelectedId(meeting?.id ?? "");
-      if (meeting) setOpenPm(null);
+      if (meeting) {
+        setOpenPm(null);
+        setOpenSuite(null);
+      }
     },
     [setSelectedId],
   );
@@ -565,6 +571,48 @@ export const MeetingsSettings: React.FC = () => {
     [select, t],
   );
 
+  const openSuiteProject = useCallback(
+    (folderId: string) => {
+      select(null);
+      setOpenPm(null);
+      setOpenSuite(folderId);
+      layout.drawer.setOpen(false);
+    },
+    [select, layout.drawer],
+  );
+
+  const suiteSchmal = openSuite !== null && layout.mode === "narrow";
+  useEffect(() => {
+    if (!suiteSchmal) return;
+    const wurzel = document.documentElement;
+    wurzel.dataset.suiteSchmal = "1";
+    return () => {
+      delete wurzel.dataset.suiteSchmal;
+    };
+  }, [suiteSchmal]);
+
+  const suiteFolder = openSuite
+    ? projects.folders.find((f) => f.id === openSuite)
+    : undefined;
+  const suiteContent = suiteFolder ? (
+    <SuiteProjektSeite
+      key={suiteFolder.id}
+      ordner={{
+        id: suiteFolder.id,
+        name: suiteFolder.name,
+        projektId: suiteFolder.projekt_id ?? null,
+      }}
+      fluss={layout.mode === "narrow"}
+      onClose={() => setOpenSuite(null)}
+      onOpenMeeting={(id) =>
+        void findMeeting(id).then((meeting) => {
+          if (meeting) select(meeting);
+          else toast.error(t("meetings.projectMinutes.view.sourceDeleted"));
+        })
+      }
+    />
+  ) : null;
+
   const pmContent = openPm ? (
     openPm.kind === "doc" ? (
       <ProjectMinutesView
@@ -692,6 +740,7 @@ export const MeetingsSettings: React.FC = () => {
             }
             onOpenProjectMinutes={openPmDoc}
             onOpenProjectRun={openPmRun}
+            onOpenSuiteProject={openSuiteProject}
             activeProjectMinutes={openPm}
           />
         }
@@ -701,7 +750,9 @@ export const MeetingsSettings: React.FC = () => {
           controls: setControlsEl,
           notes: setNotesEl,
         }}
-        idleContent={pmContent ?? hint(t("meetings.layout.emptyContent"))}
+        idleContent={
+          suiteContent ?? pmContent ?? hint(t("meetings.layout.emptyContent"))
+        }
         controls={
           <RecorderCard
             target={emptyTarget}
@@ -712,6 +763,7 @@ export const MeetingsSettings: React.FC = () => {
             }}
           />
         }
+        flow={suiteContent !== null && selected === null}
         rightTab={rightTab}
         onRightTab={setRightTab}
         idleNotes={hint(t("meetings.layout.emptyNotes"))}

@@ -140,12 +140,13 @@ export interface AudioPlayerHandle {
    * `onEnd` kommt genau einmal: am Ende der Probe, bei jeder Pause (auch von
    * aussen, auch wenn ein anderer Player der Gruppe startet), bei `stop()`,
    * wenn eine neue Probe oder ein Sprung die Probe abloest oder das Abspielen
-   * scheitert.
+   * scheitert. `completed` ist nur wahr, wenn die Probe bis zu ihrem Ende
+   * (oder dem Ende der Datei) gelaufen ist.
    */
   playRange: (
     startSeconds: number,
     endSeconds: number,
-    onEnd: () => void,
+    onEnd: (completed: boolean) => void,
   ) => void;
   /** Haelt an (ohne zurueckzuspulen); beendet eine laufende Probe. */
   stop: () => void;
@@ -243,16 +244,23 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
   const dragTimeRef = useRef<number>(0);
   // Eine laufende Hoerprobe: Ende in Sekunden und der Rueckruf. Jede Pause,
   // das Ende der Datei und das Ende der Probe loesen ihn genau einmal aus.
-  const rangeRef = useRef<{ end: number; onEnd: () => void } | null>(null);
-  const finishRange = useCallback(() => {
+  const rangeRef = useRef<{
+    end: number;
+    reached: boolean;
+    onEnd: (completed: boolean) => void;
+  } | null>(null);
+  const finishRange = useCallback((completed = false) => {
     const range = rangeRef.current;
     rangeRef.current = null;
-    range?.onEnd();
+    range?.onEnd(completed || (range?.reached ?? false));
   }, []);
   const checkRange = useCallback(() => {
     const audio = audioRef.current;
     const range = rangeRef.current;
-    if (audio && range && audio.currentTime >= range.end) audio.pause();
+    if (audio && range && audio.currentTime >= range.end) {
+      range.reached = true;
+      audio.pause();
+    }
   }, []);
 
   // Use refs to avoid stale closures in animation loop
@@ -368,7 +376,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
       group?.releasePlayback(audio);
       setIsPlaying(false);
       setCurrentTime(audio.duration || 0);
-      finishRange();
+      finishRange(true);
     };
 
     const handlePlay = () => {
@@ -505,6 +513,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
         finishRange();
         rangeRef.current = {
           end: Math.max(startSeconds, endSeconds),
+          reached: false,
           onEnd,
         };
         void playFrom(startSeconds);
@@ -642,11 +651,17 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
       <button
         type="button"
         onClick={toggleRateMenu}
-        className={`px-1.5 py-0.5 text-xs font-semibold tabular-nums rounded-md border transition-colors cursor-pointer ${
-          playbackRate === 1
-            ? "border-mid-gray/80 bg-mid-gray/10 text-text/70 hover:border-logo-primary hover:bg-logo-primary/10"
-            : "border-logo-primary bg-logo-primary/10 text-text"
-        }`}
+        data-changed={dense && playbackRate !== 1 ? "" : undefined}
+        className={
+          dense
+            ? "mplayer__rate"
+            : `px-1.5 py-0.5 text-xs font-semibold tabular-nums rounded-md border transition-colors cursor-pointer ${
+                playbackRate === 1
+                  ? "border-mid-gray/80 bg-mid-gray/10 text-text/70 hover:border-logo-primary hover:bg-logo-primary/10"
+                  : "border-logo-primary bg-logo-primary/10 text-text"
+              }`
+        }
+        title={dense ? "Wiedergabetempo" : undefined}
         aria-label="Playback speed"
         aria-haspopup="listbox"
         aria-expanded={isRateMenuOpen}
@@ -697,7 +712,33 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
     </button>
   );
 
-  const slider = (
+  /** Pfeiltasten springen 5 s, Bild-Tasten 30 s, Pos1/Ende an Anfang und Ende
+   *  (der native Schritt von 0,01 s waere per Tastatur unbrauchbar). */
+  const handleSeekKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    const steps: Record<string, number> = {
+      ArrowLeft: -5,
+      ArrowDown: -5,
+      ArrowRight: 5,
+      ArrowUp: 5,
+      PageDown: -30,
+      PageUp: 30,
+    };
+    // Alt+Pfeil, Strg+Pos1 usw. gehoeren dem System, nicht dem Zeitstrahl.
+    if (e.altKey || e.ctrlKey || e.metaKey) return;
+    const audio = audioRef.current;
+    if (!audio || !isFinite(audio.duration)) return;
+    if (e.key in steps) {
+      e.preventDefault();
+      skip(steps[e.key]);
+    } else if (e.key === "Home" || e.key === "End") {
+      e.preventDefault();
+      const target = e.key === "Home" ? 0 : audio.duration;
+      audio.currentTime = target;
+      setCurrentTime(target);
+    }
+  };
+
+  const seekBar = (extraClass: string) => (
     <input
       type="range"
       min="0"
@@ -705,46 +746,66 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
       step="0.01"
       value={currentTime}
       aria-label="Wiedergabeposition"
+      aria-valuetext={`${formatTime(currentTime)} von ${formatTime(duration)}`}
       onChange={handleSeek}
+      onKeyDown={handleSeekKey}
       onMouseDown={handleSliderMouseDown}
       onTouchStart={handleSliderTouchStart}
-      className={`flex-1 min-w-0 h-1 rounded-lg appearance-none cursor-pointer focus:outline-none focus:ring-1 focus:ring-logo-primary ${progressPercent >= 99.5 ? "[&::-webkit-slider-thumb]:translate-x-0.5 [&::-moz-range-thumb]:translate-x-0.5" : ""}`}
-      style={{
-        // Signalgelb aus dem Token-Satz statt Handys Rosa, das hier aus
-        // dem Fork uebriggeblieben war.
-        background: `linear-gradient(to right, var(--color-logo-primary) 0%, var(--color-logo-primary) ${progressPercent}%, rgba(128, 128, 128, 0.2) ${progressPercent}%, rgba(128, 128, 128, 0.2) 100%)`,
-      }}
+      className={extraClass}
+      style={{ "--_seek": progressPercent / 100 } as React.CSSProperties}
     />
   );
 
   if (dense) {
+    // Ein Einzeiler je Spur nach dem Fluent-2-Medienmuster: Beschriftung,
+    // Transportgruppe (±10/30 s um Play), Zeitstrahl, Zeit, Tempo. Ist die
+    // Spalte schmal, entfallen die Sprungknoepfe (Container-Abfrage in
+    // App.css); springen geht dann per Pfeil-/Bildtasten auf dem Zeitstrahl.
     return (
-      <div
-        className={`flex flex-wrap items-center gap-x-2 gap-y-1 ${className}`}
-        data-player-dense
-      >
-        <audio ref={audioRef} src={src ?? undefined} preload="metadata" />
-        {label && (
-          <span className="w-16 shrink-0 truncate text-xs text-text/60">
-            {label}
-          </span>
-        )}
-        {skipButton(SKIP_BACK_SECONDS, false)}
-        <button
-          type="button"
-          className="mbtn mbtn--sm mbtn--primary shrink-0"
-          onClick={togglePlay}
-          disabled={isLoading}
-          aria-label={isPlaying ? "Pause" : "Wiedergabe"}
+      <div className={`mplayer ${className}`} data-player-dense>
+        <div
+          className="mplayer__row"
+          role="group"
+          aria-label={label ? `Wiedergabe ${label}` : "Wiedergabe"}
         >
-          <Glyph name={isPlaying ? "pause" : "play"} />
-        </button>
-        {skipButton(SKIP_FORWARD_SECONDS, true)}
-        <span className="shrink-0 text-xs text-text/60 tabular-nums">
-          {formatTime(currentTime)}/{formatTime(duration)}
-        </span>
-        {rateMenu}
-        <div className="order-last flex basis-full items-center">{slider}</div>
+          <audio ref={audioRef} src={src ?? undefined} preload="metadata" />
+          {label && (
+            <span className="mplayer__label" title={label}>
+              {label}
+            </span>
+          )}
+          <div className="mplayer__transport">
+            <span className="mplayer__skip">
+              {skipButton(SKIP_BACK_SECONDS, false)}
+            </span>
+            <button
+              type="button"
+              className="mbtn mbtn--primary mplayer__play"
+              onClick={togglePlay}
+              disabled={isLoading}
+              aria-label={isPlaying ? "Pause" : "Wiedergabe"}
+            >
+              <Glyph name={isPlaying ? "pause" : "play"} />
+            </button>
+            <span className="mplayer__skip">
+              {skipButton(SKIP_FORWARD_SECONDS, true)}
+            </span>
+          </div>
+          {seekBar("mplayer__seek")}
+          <span className="mplayer__time" aria-hidden="true">
+            {/* Platz fuer die laengste Laufzeit reservieren, damit der
+                Zeitstrahl beim Abspielen nicht springt und beide Spuren
+                gleich lang sind. */}
+            <span
+              className="mplayer__elapsed"
+              style={{ minWidth: `${formatTime(duration).length}ch` }}
+            >
+              {formatTime(currentTime)}
+            </span>
+            <span className="mplayer__total"> / {formatTime(duration)}</span>
+          </span>
+          {rateMenu}
+        </div>
       </div>
     );
   }
@@ -798,6 +859,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
           value={currentTime}
           aria-label="Wiedergabeposition"
           onChange={handleSeek}
+          onKeyDown={handleSeekKey}
           onMouseDown={handleSliderMouseDown}
           onTouchStart={handleSliderTouchStart}
           className={`flex-1 h-1 rounded-lg appearance-none cursor-pointer focus:outline-none focus:ring-1 focus:ring-logo-primary ${progressPercent >= 99.5 ? "[&::-webkit-slider-thumb]:translate-x-0.5 [&::-moz-range-thumb]:translate-x-0.5" : ""}`}

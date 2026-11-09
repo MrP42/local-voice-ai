@@ -6,6 +6,8 @@ import {
   PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
+  ChevronDown,
+  ChevronUp,
   X,
 } from "lucide-react";
 import { IconButton } from "../../ui/IconButton";
@@ -116,6 +118,12 @@ interface RecWorkspaceProps {
   chatBody: React.ReactNode;
   /** Ablagefeld ueber der Arbeitsflaeche, solange eine Datei darueber schwebt. */
   dropOverlay?: React.ReactNode;
+  /**
+   * Nur schmal: der Inhalt (z. B. die Projektseite) laeuft im normalen Seitenfluss mit einer
+   * einzigen Scrollleiste; der Reiterblock (Notizen, KI-Notizen, Fragen) steht darunter und ist
+   * einklappbar. Ohne Wirkung in den anderen Breiten.
+   */
+  flow?: boolean;
 }
 
 /**
@@ -149,11 +157,14 @@ export const RecWorkspace: React.FC<RecWorkspaceProps> = ({
   idleNotes,
   chatBody,
   dropOverlay,
+  flow = false,
 }) => {
   const { t } = useTranslation();
   const { mode, sessions, right, split, sessionsColumn } = layout;
   const { open: drawerWanted, setOpen: setDrawerOpen } = layout.drawer;
   const narrow = mode === "narrow";
+  const fluss = narrow && flow;
+  const [unterOffen, setUnterOffen] = useState(true);
   const drawerOpen = drawerWanted && !sessionsColumn;
   const showColumn = sessionsColumn || drawerOpen;
   const containerRef = layout.ref;
@@ -360,7 +371,13 @@ export const RecWorkspace: React.FC<RecWorkspaceProps> = ({
     <div
       ref={contentSlot.host}
       className="flex min-h-0 min-w-0 flex-col"
-      style={narrow ? { flex: `${split.value} 1 0` } : { flex: "1 1 0" }}
+      style={
+        fluss
+          ? { flex: "none" }
+          : narrow
+            ? { flex: `${split.value} 1 0` }
+            : { flex: "1 1 0" }
+      }
     />
   );
 
@@ -448,7 +465,14 @@ export const RecWorkspace: React.FC<RecWorkspaceProps> = ({
           />
         )}
         {narrow ? (
-          <>
+          <div
+            className={
+              fluss
+                ? "flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overflow-x-hidden"
+                : "contents"
+            }
+            data-testid={fluss ? "rec-flow" : undefined}
+          >
             {/* Aufnahmezeile (Start/Import oder laufende Aufnahme) samt
                 Wiedergabe und Fortschritt: steht fest ueber der Teilung. */}
             <div
@@ -456,39 +480,69 @@ export const RecWorkspace: React.FC<RecWorkspaceProps> = ({
               role="region"
               aria-label={t("meetings.layout.controls")}
               className="flex min-h-0 shrink-0 flex-col"
-              style={{ maxHeight: "40%" }}
+              style={fluss ? undefined : { maxHeight: "40%" }}
             >
               <div ref={controlsSlot.host} className="flex min-h-0 flex-col" />
             </div>
             <div
               ref={splitRef}
-              className="flex min-h-0 flex-1 flex-col gap-2"
+              className={
+                fluss
+                  ? "flex shrink-0 flex-col gap-2"
+                  : "flex min-h-0 flex-1 flex-col gap-2"
+              }
               data-testid="rec-split"
             >
               {contentHost}
-              <SplitHandle
-                container={splitRef}
-                value={split.value}
-                min={split.min}
-                max={split.max}
-                defaultValue={split.def}
-                label={t("meetings.layout.split")}
-                onChange={split.set}
-              />
+              {!fluss && (
+                <SplitHandle
+                  container={splitRef}
+                  value={split.value}
+                  min={split.min}
+                  max={split.max}
+                  defaultValue={split.def}
+                  label={t("meetings.layout.split")}
+                  onChange={split.set}
+                />
+              )}
               <div
                 data-testid="rec-controls"
                 role="region"
                 aria-label={t("meetings.layout.lowerTabs")}
                 className="flex min-h-0 min-w-0 flex-col"
-                style={{ flex: `${100 - split.value} 1 0` }}
+                style={
+                  fluss ? { flex: "none" } : { flex: `${100 - split.value} 1 0` }
+                }
               >
+                {fluss && (
+                  <button
+                    type="button"
+                    data-testid="rec-lower-toggle"
+                    aria-expanded={unterOffen}
+                    onClick={() => setUnterOffen((v) => !v)}
+                    className="mb-1 flex min-h-[44px] w-full items-center justify-between gap-2 rounded-md px-2 text-start text-xs font-semibold text-text/70 hover:bg-mid-gray/20"
+                  >
+                    <span>{t("meetings.layout.lowerTabs")}</span>
+                    {unterOffen ? (
+                      <ChevronUp width={16} height={16} aria-hidden="true" />
+                    ) : (
+                      <ChevronDown width={16} height={16} aria-hidden="true" />
+                    )}
+                  </button>
+                )}
                 <div
                   ref={lowerSlot.host}
-                  className="flex min-h-0 flex-1 flex-col"
+                  className={
+                    fluss && !unterOffen
+                      ? "hidden"
+                      : fluss
+                        ? "flex flex-col"
+                        : "flex min-h-0 flex-1 flex-col"
+                  }
                 />
               </div>
             </div>
-          </>
+          </div>
         ) : (
           <>
             {contentHost}

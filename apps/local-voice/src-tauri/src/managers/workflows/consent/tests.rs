@@ -260,7 +260,13 @@ use crate::agent_bridge::clients as agent_clients;
 
 /// Legt die Freigabe an, die die Agentenbruecke fuer einen Aufruf anlegt (Aufrufer
 /// `agent_external`, Faehigkeit `recording.start`), samt Zuordnung zu Zugang und Werkzeug.
-fn agent_request(conn: &rusqlite::Connection, client_label: &str, tool: &str, preview: &str, hash: &str) -> (String, String) {
+fn agent_request(
+    conn: &rusqlite::Connection,
+    client_label: &str,
+    tool: &str,
+    preview: &str,
+    hash: &str,
+) -> (String, String) {
     let (client, _token) = agent_clients::create(conn, client_label, None, T0).unwrap();
     let approval = approvals::create(
         conn,
@@ -305,7 +311,13 @@ fn an_agent_request_to_start_a_recording_is_a_consent_with_the_agents_name_and_t
 fn an_agent_request_without_a_title_still_shows_up_and_a_workflow_one_is_not_an_agent() {
     let w = world();
     let conn = w.fx.conn();
-    let (id, _) = agent_request(&conn, "Codex", "start_recording", "Ziel: start_recording · Codex (C2)", "h1");
+    let (id, _) = agent_request(
+        &conn,
+        "Codex",
+        "start_recording",
+        "Ziel: start_recording · Codex (C2)",
+        "h1",
+    );
     w.start_run("Kundentermin protokollieren", "t1");
     w.engine.tick().unwrap();
     let list = pending(&conn, T0).unwrap();
@@ -320,10 +332,26 @@ fn an_agent_request_without_a_title_still_shows_up_and_a_workflow_one_is_not_an_
 fn stopping_a_recording_is_never_a_consent_to_start_one() {
     let w = world();
     let conn = w.fx.conn();
-    let (stop, _) = agent_request(&conn, "Claude Code", "stop_recording", "Ziel: stop_recording", "h1");
-    assert!(pending(&conn, T0).unwrap().is_empty(), "das Beenden braucht kein Einwilligungsfenster");
-    assert_eq!(decide(&conn, &stop, true, true, T0).unwrap_err(), ConsentError::NotAConsent);
-    assert_eq!(approvals::get(&conn, &stop).unwrap().unwrap().state, ApprovalState::Pending, "unberuehrt");
+    let (stop, _) = agent_request(
+        &conn,
+        "Claude Code",
+        "stop_recording",
+        "Ziel: stop_recording",
+        "h1",
+    );
+    assert!(
+        pending(&conn, T0).unwrap().is_empty(),
+        "das Beenden braucht kein Einwilligungsfenster"
+    );
+    assert_eq!(
+        decide(&conn, &stop, true, true, T0).unwrap_err(),
+        ConsentError::NotAConsent
+    );
+    assert_eq!(
+        approvals::get(&conn, &stop).unwrap().unwrap().state,
+        ApprovalState::Pending,
+        "unberuehrt"
+    );
 }
 
 #[test]
@@ -334,10 +362,22 @@ fn the_user_can_say_yes_or_no_to_an_agents_request_in_the_window() {
     let (no, _) = agent_request(&conn, "Codex", "start_recording", "Ziel: s2", "h2");
     decide(&conn, &yes, true, true, T0).unwrap();
     decide(&conn, &no, false, true, T0).unwrap();
-    assert_eq!(approvals::get(&conn, &yes).unwrap().unwrap().state, ApprovalState::Approved);
-    assert_eq!(approvals::get(&conn, &no).unwrap().unwrap().state, ApprovalState::Denied);
-    assert!(pending(&conn, T0).unwrap().is_empty(), "entschieden: nicht mehr offen");
-    assert_eq!(decide(&conn, &yes, true, true, T0).unwrap_err(), ConsentError::NotPending);
+    assert_eq!(
+        approvals::get(&conn, &yes).unwrap().unwrap().state,
+        ApprovalState::Approved
+    );
+    assert_eq!(
+        approvals::get(&conn, &no).unwrap().unwrap().state,
+        ApprovalState::Denied
+    );
+    assert!(
+        pending(&conn, T0).unwrap().is_empty(),
+        "entschieden: nicht mehr offen"
+    );
+    assert_eq!(
+        decide(&conn, &yes, true, true, T0).unwrap_err(),
+        ConsentError::NotPending
+    );
 }
 
 #[test]
@@ -359,5 +399,8 @@ fn another_capability_of_an_agent_is_not_a_consent() {
     .unwrap();
     agent_clients::link_approval(&conn, &a.id, &client.id, "transcribe_file", T0).unwrap();
     assert!(pending(&conn, T0).unwrap().is_empty());
-    assert_eq!(decide(&conn, &a.id, true, true, T0).unwrap_err(), ConsentError::NotAConsent);
+    assert_eq!(
+        decide(&conn, &a.id, true, true, T0).unwrap_err(),
+        ConsentError::NotAConsent
+    );
 }

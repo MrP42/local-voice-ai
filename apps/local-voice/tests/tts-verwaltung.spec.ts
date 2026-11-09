@@ -1,6 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
-import { readFileSync, mkdirSync } from "node:fs";
+import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { geheZu } from "./profilmenue";
 
 // Vorlesen unter Modelle (Variante B): Umschalter Stimmen/Anbieter, Filterspalte
 // mit Zaehlern, Karten- und Listenansicht ueber alle Anbieter, Hoerprobe und
@@ -29,6 +30,35 @@ async function setup(page: Page, cfg: Cfg = {}, theme = "light") {
       let callback = 0;
       const w = window as unknown as Record<string, any>;
       w.__calls = [] as unknown[];
+      // Hoerproben ohne echtes Audio. Jede Instanz wird in `__audios`
+      // gefuehrt (laeuft, Pausen-Zaehler); `__holdPlay` laesst `play()` offen,
+      // damit ein Test die Ablehnung spaet ausloesen kann.
+      w.__audios = [] as unknown[];
+      w.Audio = class extends EventTarget {
+        playing = false;
+        pauses = 0;
+        settle: { resolve: () => void; reject: (e: unknown) => void } | null =
+          null;
+        constructor(public src?: string) {
+          super();
+          w.__audios.push(this);
+        }
+        play() {
+          this.playing = true;
+          if (!w.__holdPlay) return Promise.resolve();
+          return new Promise<void>((resolve, reject) => {
+            this.settle = { resolve, reject };
+          });
+        }
+        pause() {
+          this.playing = false;
+          this.pauses += 1;
+        }
+      };
+      // Synthese der Fish-Probe: sofort, aus dem Cache (`__demoCached`), mit
+      // Fehler (`__demoFail`) oder zurueckgehalten (`__holdDemo`; offene
+      // Antworten in `__demoPending`, der Test loest sie spaeter auf).
+      w.__demoPending = [] as unknown[];
       const entries = JSON.parse(JSON.stringify(real)) as any[];
       const find = (id: unknown) => entries.find((e) => e.descriptor.id === id);
       const recompute = (e: any) => {
@@ -89,7 +119,7 @@ async function setup(page: Page, cfg: Cfg = {}, theme = "light") {
         tts_engine: cfg.engine ?? "fish",
         tts_piper_voice: "de_DE-thorsten-medium",
         tts_fish_dir: "C:\\AI\\fish-speech",
-        tts_providers: { voices: {} },
+        tts_providers: { voices: {}, voice_names: {} },
       };
       const dl = (over: Record<string, unknown>) => ({
         kind: "voice",
@@ -203,6 +233,24 @@ async function setup(page: Page, cfg: Cfg = {}, theme = "light") {
           convertFileSrc: (path: string) => path,
           invoke: async (cmd: string, args?: Record<string, any>) => {
             w.__calls.push([cmd, args]);
+            if (cmd === "tts_voice_demo_cached")
+              return w.__demoCached?.[String(args?.voiceId)]
+                ? {
+                    wav_path: `C:/cache/${String(args?.voiceId)}.wav`,
+                    transcript: "Probe",
+                  }
+                : null;
+            if (cmd === "tts_voice_demo") {
+              const sample = {
+                wav_path: `C:/demos/${String(args?.voiceId)}-${w.__calls.length}.wav`,
+                transcript: "Probe",
+              };
+              if (w.__demoFail) throw "Fish-Server nicht erreichbar";
+              if (!w.__holdDemo) return sample;
+              return new Promise((resolve) =>
+                w.__demoPending.push(() => resolve(sample)),
+              );
+            }
             const copy = <T>(x: T): T => JSON.parse(JSON.stringify(x));
             const sel = () => {
               entries.forEach((e) => {
@@ -266,10 +314,37 @@ async function setup(page: Page, cfg: Cfg = {}, theme = "light") {
                     { voice_id: "ben", wav_path: null },
                   ]
                 : [];
+            // Eigene Namen wie im Backend (`apply_voice_names`): Name vor " – " ersetzen.
+            const named = (pid: string, list: any[]) =>
+              list.map((v) => {
+                const own = settings.tts_providers.voice_names[pid]?.[v.id];
+                if (!own) return v;
+                const rest = String(v.label).split(" – ").slice(1).join(" – ");
+                return { ...v, label: rest ? `${own} – ${rest}` : own };
+              });
+            if (cmd === "tts_provider_set_voice_name") {
+              const pid = String(args?.id);
+              const names = (settings.tts_providers.voice_names[pid] ??= {});
+              const name = String(args?.name ?? "").trim();
+              if (name.includes("<") || name.includes(":"))
+                throw {
+                  kind: "bad_request",
+                  retryable: false,
+                  message: "Der Name darf keine Zeichen < > : enthalten.",
+                };
+              if (!name || name === args?.original) delete names[args?.voice];
+              else names[args?.voice] = name;
+              if (Object.keys(names).length === 0)
+                delete settings.tts_providers.voice_names[pid];
+              return null;
+            }
+            if (cmd === "tts_set_voice_meta") return null;
             if (cmd === "tts_provider_voices") {
               const e = find(args?.id);
               if (e.blocked) throw e.blocked;
-              return e.descriptor.id === "phonon" ? copy(phononVoices) : [];
+              return e.descriptor.id === "phonon"
+                ? copy(named("phonon", phononVoices))
+                : [];
             }
             if (cmd === "tts_provider_voice_options") {
               const out: unknown[] = [];
@@ -291,7 +366,7 @@ async function setup(page: Page, cfg: Cfg = {}, theme = "light") {
                     provider_id: e.descriptor.id,
                     provider_label: e.descriptor.label,
                     voice_switching: false,
-                    voice: v,
+                    voice: named(e.descriptor.id, [v])[0],
                   });
               }
               return out;
@@ -379,10 +454,7 @@ const calls = (page: Page, cmd: string) =>
 
 const openManager = async (page: Page) => {
   await page.goto("/");
-  await page
-    .getByRole("navigation")
-    .getByRole("button", { name: "Modelle", exact: true })
-    .click();
+  await geheZu(page, "Modelle");
   await expect(page.getByTestId("voice-manager")).toBeVisible();
   await expect(page.getByTestId("voice-gallery")).toBeVisible();
 };
@@ -503,7 +575,9 @@ test("Anbieter: Karten mit Zustand; Seitenblatt enthält die bisherigen Einstell
   await expect(page.locator("[data-provider-card='phonon']")).toContainText(
     "Nicht eingerichtet",
   );
-  await expect(page.getByTestId("tts-provider-card-enable-phonon")).toHaveCount(0);
+  await expect(page.getByTestId("tts-provider-card-enable-phonon")).toHaveCount(
+    0,
+  );
   await page.getByTestId("tts-provider-setup-phonon").click();
   const sheet = page.getByTestId("voice-provider-sheet");
   await expect(sheet).toBeVisible();
@@ -534,9 +608,7 @@ test("Einstellungen › Ausgabe verweist auf die Anbieter unter Modelle", async 
     localStorage.setItem("lva.ui.settings.tab", "output"),
   );
   await page.goto("/");
-  await page
-    .getByRole("button", { name: "Einstellungen", exact: true })
-    .click();
+  await geheZu(page, "Einstellungen");
   await expect(page.getByTestId("tts-providers-open-models")).toBeVisible();
   await expect(page.getByTestId("tts-provider-fish")).toHaveCount(0);
   await page.getByTestId("tts-providers-open-models").click();
@@ -606,6 +678,367 @@ test("Schmal (390 px): keine waagerechte Rollleiste, Bedienziele mindestens 44 p
   expect(await noHorizontalScroll(page)).toBe(true);
 });
 
+test("Umbenennen: eigener Name einer Anbieter-Stimme, Kennung bleibt, zurück zum Original", async ({
+  page,
+}) => {
+  await setup(page, { phononReady: true });
+  await openManager(page);
+  const card = page.locator("[data-voice-card='phonon:nele']");
+  await expect(card.locator("h3")).toHaveText("Nele");
+  await page.getByTestId("voice-rename-phonon:nele").click();
+  const dialog = page.getByTestId("voice-rename-dialog");
+  await expect(dialog).toBeVisible();
+  await expect(page.getByTestId("voice-rename-id")).toContainText("nele");
+  // Ungültige Zeichen: Hinweis, Speichern gesperrt.
+  await page.getByTestId("voice-rename-input").fill("<Nele>");
+  await expect(page.getByTestId("voice-rename-error")).toBeVisible();
+  await expect(page.getByTestId("voice-rename-save")).toBeDisabled();
+  // Der Name einer anderen Stimme desselben Anbieters (auch mit Umlaut-Schreibweise): gesperrt.
+  await page.getByTestId("voice-rename-input").fill("anna");
+  await expect(page.getByTestId("voice-rename-error")).toContainText(
+    "andere Stimme",
+  );
+  await expect(page.getByTestId("voice-rename-save")).toBeDisabled();
+  await page.getByTestId("voice-rename-input").fill("Nelé  Groß");
+  await page.getByTestId("voice-rename-input").press("Enter");
+  await expect(dialog).toHaveCount(0);
+  const set = await calls(page, "tts_provider_set_voice_name");
+  expect(set[0][1]).toMatchObject({
+    id: "phonon",
+    voice: "nele",
+    name: "Nelé Groß",
+    original: "Nele",
+  });
+  // Katalog und Vorlesen-Auswahl zeigen den neuen Namen, die Kennung bleibt.
+  await expect(card.locator("h3")).toHaveText("Nelé Groß");
+  await expect(page.locator("[data-voice-card='phonon:nele']")).toHaveCount(1);
+  // Im Seitenblatt des Anbieters: Liste "Im Vorlesen anzeigen" mit Stift, zurück zum Original.
+  await page.getByTestId("voice-view-providers").click();
+  await page.getByTestId("tts-provider-open-phonon").click();
+  const row = page
+    .getByTestId("tts-provider-visible-list-phonon")
+    .locator("[data-voice-id='nele']");
+  await expect(row).toContainText("Nelé Groß");
+  await page.getByTestId("tts-provider-rename-nele").click();
+  await page.getByTestId("voice-rename-reset").click();
+  await expect(row).toContainText("Nele");
+  await expect(row).not.toContainText("Nelé");
+  const last = (await calls(page, "tts_provider_set_voice_name")).at(-1);
+  expect(last?.[1]).toMatchObject({ voice: "nele", name: null });
+});
+
+test("Umbenennen: Piper-Stimme bekommt einen eigenen Namen", async ({
+  page,
+}) => {
+  await setup(page);
+  await openManager(page);
+  const card = page.locator("[data-voice-card='piper:de_DE-thorsten-medium']");
+  await page.getByTestId("voice-rename-piper:de_DE-thorsten-medium").click();
+  await page.getByTestId("voice-rename-input").fill("Thorsten ruhig");
+  await page.getByTestId("voice-rename-save").click();
+  await expect(card.locator("h3")).toHaveText("Thorsten ruhig");
+  expect(
+    (await calls(page, "tts_provider_set_voice_name"))[0][1],
+  ).toMatchObject({ id: "piper", voice: "de_DE-thorsten-medium" });
+});
+
+// --- Hoerprobe einer Fish-Stimme: Stopp, Rennen, Fehler ---------------------
+
+type AudioState = { src: string; playing: boolean; pauses: number };
+const audios = (page: Page) =>
+  page.evaluate(() =>
+    ((window as any).__audios as AudioState[]).map((a) => ({
+      src: a.src,
+      playing: a.playing,
+      pauses: a.pauses,
+    })),
+  );
+const setFlag = (page: Page, key: string, value: unknown) =>
+  page.evaluate(([k, v]) => ((window as any)[k as string] = v), [key, value]);
+const releaseDemo = (page: Page, index: number) =>
+  page.evaluate((i) => (window as any).__demoPending[i](), index);
+const fireOnAudio = (page: Page, index: number, event: string) =>
+  page.evaluate(
+    ([i, e]) =>
+      (window as any).__audios[i as number].dispatchEvent(
+        new Event(e as string),
+      ),
+    [index, event],
+  );
+const STOP = /stoppen/;
+const PLAY = /Reinhören/;
+
+test("Hörprobe Fish: zweiter Klick stoppt genau die laufende Instanz, Ende gibt den Knopf frei", async ({
+  page,
+}) => {
+  await setup(page);
+  await openManager(page);
+  const play = page.getByTestId("voice-play-fish:lea");
+  await expect(play).toHaveAttribute("aria-label", PLAY);
+  await play.click();
+  await expect(play).toHaveAttribute("aria-label", STOP);
+  let list = await audios(page);
+  expect(list).toHaveLength(1);
+  expect(list[0]).toMatchObject({ playing: true, pauses: 0 });
+  // Zweiter Klick: dieselbe Instanz wird angehalten, keine neue entsteht.
+  await play.click();
+  await expect(play).toHaveAttribute("aria-label", PLAY);
+  list = await audios(page);
+  expect(list).toHaveLength(1);
+  expect(list[0]).toMatchObject({ playing: false, pauses: 1 });
+  // Neu starten, dann endet die Probe von selbst.
+  await play.click();
+  await expect(play).toHaveAttribute("aria-label", STOP);
+  expect(await audios(page)).toHaveLength(2);
+  await fireOnAudio(page, 1, "ended");
+  await expect(play).toHaveAttribute("aria-label", PLAY);
+});
+
+test("Hörprobe Fish: per Tastatur (Tab-Fokus, Enter, Leertaste) starten und stoppen", async ({
+  page,
+}) => {
+  await setup(page);
+  await openManager(page);
+  const play = page.getByTestId("voice-play-fish:lea");
+  // Echtes <button>, erreichbar ohne tabindex-Trick.
+  expect(await play.evaluate((el) => el.tagName)).toBe("BUTTON");
+  expect(await play.getAttribute("tabindex")).toBeNull();
+  await play.focus();
+  await expect(play).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(play).toHaveAttribute("aria-label", STOP);
+  await expect(play).toBeFocused();
+  await page.keyboard.press("Space");
+  await expect(play).toHaveAttribute("aria-label", PLAY);
+  const list = await audios(page);
+  expect(list).toHaveLength(1);
+  expect(list[0]).toMatchObject({ playing: false, pauses: 1 });
+});
+
+test("Hörprobe Fish: Stopp während der Synthese – spätes Ergebnis spielt nicht", async ({
+  page,
+}) => {
+  await setup(page);
+  await openManager(page);
+  await setFlag(page, "__holdDemo", true);
+  const play = page.getByTestId("voice-play-fish:lea");
+  await play.click();
+  // Synthese läuft: Stopp ist schon angeboten.
+  await expect(play).toHaveAttribute("aria-label", STOP);
+  await play.click();
+  await expect(play).toHaveAttribute("aria-label", PLAY);
+  await releaseDemo(page, 0);
+  await page.waitForTimeout(150);
+  expect(await audios(page)).toHaveLength(0);
+  await expect(play).toHaveAttribute("aria-label", PLAY);
+});
+
+test("Hörprobe Fish: stoppen, neu starten, alte Antwort kommt spät – der neue Lauf bleibt", async ({
+  page,
+}) => {
+  await setup(page);
+  await openManager(page);
+  await setFlag(page, "__holdDemo", true);
+  const play = page.getByTestId("voice-play-fish:lea");
+  await play.click(); // Lauf 1
+  await play.click(); // stoppen
+  await play.click(); // Lauf 2
+  await expect(play).toHaveAttribute("aria-label", STOP);
+  // Alte Antwort zuerst: nichts spielt, Lauf 2 bleibt aktiv.
+  await releaseDemo(page, 0);
+  await page.waitForTimeout(150);
+  expect(await audios(page)).toHaveLength(0);
+  await expect(play).toHaveAttribute("aria-label", STOP);
+  // Antwort von Lauf 2: genau eine Wiedergabe, Stopp bleibt angeboten.
+  await releaseDemo(page, 1);
+  await expect.poll(async () => (await audios(page)).length).toBe(1);
+  expect((await audios(page))[0].playing).toBe(true);
+  await expect(play).toHaveAttribute("aria-label", STOP);
+});
+
+test("Hörprobe Fish: späte Ereignisse der alten Instanz setzen die neue Wiedergabe nicht zurück", async ({
+  page,
+}) => {
+  await setup(page);
+  await openManager(page);
+  await setFlag(page, "__holdPlay", true);
+  const play = page.getByTestId("voice-play-fish:lea");
+  await play.click();
+  await expect(play).toHaveAttribute("aria-label", STOP);
+  await play.click();
+  await play.click();
+  await expect(play).toHaveAttribute("aria-label", STOP);
+  await expect.poll(async () => (await audios(page)).length).toBe(2);
+  // Die alte Instanz meldet spät Ende, Fehler und eine abgelehnte play().
+  await fireOnAudio(page, 0, "ended");
+  await fireOnAudio(page, 0, "error");
+  await page.evaluate(() =>
+    (window as any).__audios[0].settle?.reject(new Error("abgebrochen")),
+  );
+  await page.waitForTimeout(150);
+  await expect(play).toHaveAttribute("aria-label", STOP);
+  const list = await audios(page);
+  expect(list[1]).toMatchObject({ playing: true, pauses: 0 });
+});
+
+test("Hörprobe Fish: Synthese- und Wiedergabefehler geben den Knopf frei, Neustart klappt", async ({
+  page,
+}) => {
+  await setup(page);
+  await openManager(page);
+  const play = page.getByTestId("voice-play-fish:lea");
+  // Synthesefehler: Meldung, kein Stopp-Zustand.
+  await setFlag(page, "__demoFail", true);
+  await play.click();
+  await expect(page.getByText("Fish-Server nicht erreichbar")).toBeVisible();
+  await expect(play).toHaveAttribute("aria-label", PLAY);
+  expect(await audios(page)).toHaveLength(0);
+  // Wiedergabefehler (play() abgelehnt): Knopf wieder frei.
+  await setFlag(page, "__demoFail", false);
+  await setFlag(page, "__holdPlay", true);
+  await play.click();
+  await expect(play).toHaveAttribute("aria-label", STOP);
+  await expect.poll(async () => (await audios(page)).length).toBe(1);
+  await page.evaluate(() =>
+    (window as any).__audios[0].settle.reject(new Error("kein Gerät")),
+  );
+  await expect(play).toHaveAttribute("aria-label", PLAY);
+  // Fehler-Ereignis der Datei: ebenso frei; danach startet ein Neustart normal.
+  await setFlag(page, "__holdPlay", false);
+  await play.click();
+  await expect(play).toHaveAttribute("aria-label", STOP);
+  await fireOnAudio(page, 1, "error");
+  await expect(play).toHaveAttribute("aria-label", PLAY);
+  await play.click();
+  await expect(play).toHaveAttribute("aria-label", STOP);
+  const list = await audios(page);
+  expect(list).toHaveLength(3);
+  expect(list[2].playing).toBe(true);
+});
+
+test("Hörprobe Fish: Cache-Treffer spielt ohne Synthese; Stimmenwechsel stoppt die vorige", async ({
+  page,
+}) => {
+  await setup(page);
+  await openManager(page);
+  await setFlag(page, "__demoCached", { lea: true });
+  const lea = page.getByTestId("voice-play-fish:lea");
+  // Anton ist die aktive Stimme und steht auch im Kopf: die Karte nehmen.
+  const anton = page
+    .locator("[data-voice-card='fish:anton']")
+    .getByTestId("voice-play-fish:anton");
+  await lea.click();
+  await expect(lea).toHaveAttribute("aria-label", STOP);
+  expect(await calls(page, "tts_voice_demo")).toHaveLength(0);
+  expect((await audios(page))[0].src).toContain("C:/cache/lea.wav");
+  // Andere Stimme: Lea stoppt, Anton läuft.
+  await anton.click();
+  await expect(anton).toHaveAttribute("aria-label", STOP);
+  await expect(lea).toHaveAttribute("aria-label", PLAY);
+  const list = await audios(page);
+  expect(list).toHaveLength(2);
+  expect(list[0]).toMatchObject({ playing: false, pauses: 1 });
+  expect(list[1].playing).toBe(true);
+});
+
+test("Umbenennen: eigene Fish-Stimme ändert ihren Anzeigenamen", async ({
+  page,
+}) => {
+  await setup(page);
+  await openManager(page);
+  await page.getByTestId("voice-rename-fish:lea").click();
+  await page.getByTestId("voice-rename-input").fill("Léa");
+  await page.getByTestId("voice-rename-save").click();
+  await expect(page.getByTestId("voice-rename-dialog")).toHaveCount(0);
+  const meta = await calls(page, "tts_set_voice_meta");
+  expect(meta[0][1]).toMatchObject({
+    id: "lea",
+    meta: { display_name: "Léa" },
+  });
+});
+
+test("Bilder: Stimme umbenennen (nur mit SCREENS_DIR)", async ({ browser }) => {
+  const dir = process.env.SCREENS_DIR;
+  test.skip(!dir, "nur mit SCREENS_DIR");
+  test.setTimeout(240_000);
+  mkdirSync(dir as string, { recursive: true });
+  const masse: string[] = [];
+  for (const theme of ["light", "dark"] as const) {
+    const label = theme === "light" ? "hell" : "dunkel";
+    for (const width of [1440, 390]) {
+      const ctx = await browser.newContext();
+      const p = await ctx.newPage();
+      await setup(p, { phononReady: true }, theme);
+      await p.goto("/");
+      await geheZu(p, "Modelle");
+      await p.setViewportSize({ width, height: width === 1440 ? 1000 : 900 });
+      await expect(p.getByTestId("voice-gallery")).toBeVisible();
+      // Touchziel des Stifts auf der Karte messen (Beleg fuer >= 44 px unter 768 px).
+      const box = async (testId: string) => {
+        const b = await p.getByTestId(testId).boundingBox();
+        return b ? `${Math.round(b.width)}x${Math.round(b.height)}` : "fehlt";
+      };
+      masse.push(
+        `${label} ${width}px Karte  Stift voice-rename-phonon:nele: ${await box("voice-rename-phonon:nele")}`,
+      );
+      await p.getByTestId("voice-rename-phonon:nele").click();
+      // Doppelname: Fehlermeldung, Speichern gesperrt.
+      await p.getByTestId("voice-rename-input").fill("Anna");
+      await expect(p.getByTestId("voice-rename-save")).toBeDisabled();
+      await p.waitForTimeout(300);
+      await p.screenshot({
+        path: `${dir}/umbenennen-5-doppelname-${label}-${width}.png`,
+      });
+      await p.getByTestId("voice-rename-input").fill("Nelé");
+      await p.waitForTimeout(300);
+      await p.screenshot({
+        path: `${dir}/umbenennen-1-dialog-${label}-${width}.png`,
+      });
+      await p.getByTestId("voice-rename-save").click();
+      await expect(p.getByTestId("voice-rename-dialog")).toHaveCount(0);
+      await p.waitForTimeout(300);
+      await p.screenshot({
+        path: `${dir}/umbenennen-2-karte-${label}-${width}.png`,
+      });
+      await p.getByTestId("voice-view-providers").click();
+      await p.getByTestId("tts-provider-open-phonon").click();
+      const row = p
+        .getByTestId("tts-provider-visible-list-phonon")
+        .locator("[data-voice-id='nele']");
+      await row.scrollIntoViewIfNeeded();
+      await p.waitForTimeout(400);
+      masse.push(
+        `${label} ${width}px Liste  Stift tts-provider-rename-nele: ${await box("tts-provider-rename-nele")}`,
+      );
+      await p.screenshot({
+        path: `${dir}/umbenennen-3-liste-${label}-${width}.png`,
+      });
+      await p.getByTestId("tts-provider-rename-nele").click();
+      await p.getByTestId("voice-rename-input").fill("Anna");
+      await expect(p.getByTestId("voice-rename-save")).toBeDisabled();
+      await p.waitForTimeout(300);
+      await p.screenshot({
+        path: `${dir}/umbenennen-6-doppelname-liste-${label}-${width}.png`,
+      });
+      await p.getByTestId("voice-rename-input").fill("Nelé");
+      await p.waitForTimeout(300);
+      await p.screenshot({
+        path: `${dir}/umbenennen-4-zuruecksetzen-${label}-${width}.png`,
+      });
+      await ctx.close();
+    }
+  }
+  writeFileSync(
+    `${dir}/touchziele.txt`,
+    [
+      "Touchziele der Stifte (boundingBox, Breite x Hoehe in CSS-px).",
+      "Unter 768 px (Touch) gilt >= 44 px; ab 768 px (Maus) kompakter wie der Knopf Anbieter oeffnen daneben.",
+      ...masse,
+      "",
+    ].join("\n"),
+  );
+});
+
 test("Bilder der Verwaltung (nur mit SCREENS_DIR)", async ({ browser }) => {
   const dir = process.env.SCREENS_DIR;
   test.skip(!dir, "nur mit SCREENS_DIR");
@@ -618,10 +1051,7 @@ test("Bilder der Verwaltung (nur mit SCREENS_DIR)", async ({ browser }) => {
       const p = await ctx.newPage();
       await setup(p, { phononReady: true }, theme);
       await p.goto("/");
-      await p
-        .getByRole("navigation")
-        .getByRole("button", { name: "Modelle", exact: true })
-        .click();
+      await geheZu(p, "Modelle");
       await p.setViewportSize({ width, height: width === 1440 ? 1000 : 900 });
       await expect(p.getByTestId("voice-gallery")).toBeVisible();
       const s = (n: string) =>

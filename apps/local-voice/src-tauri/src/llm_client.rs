@@ -101,9 +101,11 @@ fn thinking_off_kwargs(local: bool, model: &str) -> Option<Value> {
 /// kaputten JSON. Entfernte Anbieter bleiben unveraendert.
 fn clean_local_content(local: bool, content: Option<String>) -> Option<String> {
     match content {
-        Some(text) if local && text.contains("think>") => {
-            Some(crate::managers::meetings::chat::citations::strip_think(&text).trim_start().to_string())
-        }
+        Some(text) if local && text.contains("think>") => Some(
+            crate::managers::meetings::chat::citations::strip_think(&text)
+                .trim_start()
+                .to_string(),
+        ),
         other => other,
     }
 }
@@ -193,6 +195,35 @@ fn create_client(provider: &PostProcessProvider, api_key: &str) -> Result<reqwes
         .default_headers(headers)
         .build()
         .map_err(|e| format!("Failed to build HTTP client: {}", e))
+}
+
+/// Client für das eingebaute lokale Modell mit App-Kontext: kein Proxy (auch
+/// keiner aus der Umgebung) und keine Umleitung, damit nichts den Rechner
+/// verlässt (Codex M5 Must-fix 1).
+fn create_pinned_local_client(
+    provider: &PostProcessProvider,
+    api_key: &str,
+) -> Result<reqwest::Client, String> {
+    let headers = build_headers(provider, api_key)?;
+    reqwest::Client::builder()
+        .default_headers(headers)
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|e| format!("Failed to build HTTP client: {}", e))
+}
+
+/// Zeigt die Adresse auf diesen Rechner (127.0.0.0/8, ::1, localhost)?
+pub(crate) fn is_loopback_url(url: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(url.trim()) else {
+        return false;
+    };
+    match url.host() {
+        Some(url::Host::Domain(d)) => d.eq_ignore_ascii_case("localhost"),
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
+    }
 }
 
 /// Send a chat completion request to an OpenAI-compatible API
@@ -422,6 +453,123 @@ async fn send_inner(
     ))
 }
 
+tokio::task_local! {
+    /// Zeitgrenze fuer CLI-Aufrufe im aktuellen Task (Relay fuer das iPhone:
+    /// 60 s statt der ueblichen Obergrenze). Ohne Wert gilt die Voreinstellung.
+    pub static CLI_TIMEOUT: std::time::Duration;
+}
+
+/// Was ein CLI-Aufruf ueber sich verraten hat: tatsaechliches Modell und Token.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CliMeta {
+    pub model: Option<String>,
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
+}
+
+tokio::task_local! {
+    /// Ablage fuer [`CliMeta`] im aktuellen Task (Relay: `model_tuple` der Antwort).
+    pub static CLI_META: std::sync::Arc<std::sync::Mutex<CliMeta>>;
+}
+
+tokio::task_local! {
+    /// Abbruchsignal fuer CLI-Aufrufe im aktuellen Task (Relay: Widerruf,
+    /// Zeitablauf, Abbruch durch das iPhone). Gesetzt beendet es den Prozessbaum.
+    pub static CLI_CANCEL: std::sync::Arc<std::sync::atomic::AtomicBool>;
+}
+
+tokio::task_local! {
+    /// Obergrenze der Ausgabe-Token fuer CLI-Aufrufe im aktuellen Task (Relay).
+    pub static CLI_MAX_TOKENS: u32;
+}
+
+tokio::task_local! {
+    /// Verlangt eine gueltige Nutzungsangabe der CLI (fehlt sie, ist der
+    /// Aufruf ein Fehler statt null Token).
+    pub static CLI_REQUIRE_USAGE: bool;
+}
+
+tokio::task_local! {
+    /// Abo-Vorschau des Buch-Gespraechs (lva#334): empirisches Budget,
+    /// gehaertete Isolation und fail-closed-Pruefung der CLI-Antwort. Nur
+    /// gesetzt, wenn Schalter und gebundenes Tupel gelten
+    /// (`managers::llm::preview`); andere Aufrufer bleiben unveraendert.
+    pub static CLI_PREVIEW: crate::managers::llm::preview::PreviewCheck;
+}
+
+tokio::task_local! {
+    /// Der Vorschau-Schalter live (lva#334): vor, waehrend und nach dem
+    /// CLI-Aufruf geprueft; „aus“ beendet den Prozessbaum und verwirft das
+    /// Ergebnis. Nur zusammen mit [`CLI_PREVIEW`] gesetzt.
+    pub static CLI_PREVIEW_SWITCH: crate::managers::llm::preview::PreviewSwitch;
+}
+
+/// Eine Zeile des Gespraechs, wie die CLI sie bekommt (`rolle: text`).
+pub fn dialog_line(role: &str, content: &str) -> String {
+    format!("{role}: {content}")
+}
+
+/// Zusaetze eines Streaming-Aufrufs fuer Aufrufer, die Ausgabegrenze und
+/// Vollstaendigkeit erzwingen muessen (Buch-Gespraech). `Default` ist das
+/// bisherige Verhalten: nichts gesetzt, nichts verlangt.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct StreamLimits {
+    /// Obergrenze der Ausgabe-Token: `max_tokens` (OpenAI-kompatibel, auch
+    /// llama-server), bei Ollama zusaetzlich `options.num_predict`, bei der
+    /// CLI die Ausgabegrenze der CLI.
+    pub max_tokens: Option<u32>,
+    /// Kontext, mit dem Ollama rechnen soll (`options.num_ctx`); sonst gilt
+    /// dessen Voreinstellung, die kleiner sein kann als der gepruefte Prompt.
+    pub num_ctx: Option<u32>,
+    /// Streng: ein Strom ohne Abschluss (`[DONE]`) oder ueber der Zeichen-
+    /// grenze und eine CLI-Antwort ohne gueltige Nutzungsangabe sind Fehler.
+    pub strict: bool,
+}
+
+/// Ist der Anbieter Ollama (Vorlage oder Standardport)?
+pub fn is_ollama(provider: &PostProcessProvider) -> bool {
+    provider.id == "ollama" || provider.base_url.contains(":11434")
+}
+
+/// Setzt die Grenzen in den Anfragekoerper. Ohne Grenzen bleibt er unveraendert.
+pub fn apply_limits(body: &mut Value, ollama: bool, limits: &StreamLimits) {
+    if let Some(n) = limits.max_tokens {
+        body["max_tokens"] = n.into();
+    }
+    if !ollama {
+        return;
+    }
+    let mut options = serde_json::Map::new();
+    if let Some(n) = limits.max_tokens {
+        options.insert("num_predict".into(), n.into());
+    }
+    if let Some(n) = limits.num_ctx {
+        options.insert("num_ctx".into(), n.into());
+    }
+    if !options.is_empty() {
+        body["options"] = Value::Object(options);
+    }
+}
+
+fn call_cli(
+    cli: crate::managers::llm::cli::Cli,
+    binary: &std::path::Path,
+    model: &str,
+    system: Option<&str>,
+    user: &str,
+    limit: Option<std::time::Duration>,
+    opts: &crate::managers::llm::cli::CallOptions,
+) -> Result<crate::managers::llm::cli::CliReply, String> {
+    use crate::managers::llm::cli;
+    match limit {
+        Some(t) => cli::call_with_options(cli, binary, model, system, user, t, opts),
+        None if opts.cancel.is_some() || opts.max_tokens.is_some() || opts.preview.is_some() => {
+            cli::call_with_options(cli, binary, model, system, user, cli::CALL_TIMEOUT, opts)
+        }
+        None => cli::call(cli, binary, model, system, user),
+    }
+}
+
 /// Abo-Modell ueber die CLI. Ein Schema wandert in den Systemtext (die CLIs
 /// kennen keine strukturierte Ausgabe); ein Codeblock um das JSON wird entfernt.
 async fn send_cli(
@@ -445,11 +593,33 @@ async fn send_cli(
         None => system_prompt,
     };
     let model = model.to_string();
+    let limit = CLI_TIMEOUT.try_with(|t| *t).ok();
+    let opts = cli::CallOptions {
+        cancel: CLI_CANCEL.try_with(|c| c.clone()).ok(),
+        max_tokens: CLI_MAX_TOKENS.try_with(|n| *n).ok(),
+        require_usage: CLI_REQUIRE_USAGE.try_with(|b| *b).unwrap_or(false),
+        preview: CLI_PREVIEW.try_with(|p| p.clone()).ok(),
+        preview_switch: CLI_PREVIEW_SWITCH.try_with(|p| p.clone()).ok(),
+    };
+    let preview_on = opts.preview.is_some();
     let first = {
-        let (binary, model, system, user_content) =
-            (binary.clone(), model.clone(), system.clone(), user_content.clone());
+        let (binary, model, system, user_content, opts) = (
+            binary.clone(),
+            model.clone(),
+            system.clone(),
+            user_content.clone(),
+            opts.clone(),
+        );
         tokio::task::spawn_blocking(move || {
-            cli::call(cli, &binary, &model, system.as_deref(), &user_content)
+            call_cli(
+                cli,
+                &binary,
+                &model,
+                system.as_deref(),
+                &user_content,
+                limit,
+                &opts,
+            )
         })
         .await
         .map_err(|e| format!("cli_failed: {e}"))?
@@ -457,26 +627,65 @@ async fn send_cli(
     let reply = match first {
         Ok(reply) => reply,
         Err(e) => {
+            // Nach einem Abbruch weder merken noch aktualisieren noch wiederholen.
+            let aborted = cli::is_cancelled(&e)
+                || opts
+                    .cancel
+                    .as_ref()
+                    .is_some_and(|c| c.load(std::sync::atomic::Ordering::SeqCst));
+            if aborted {
+                return Err(e);
+            }
             // Ursache merken (fuer die Fehlermeldung des Protokolls).
             crate::managers::llm::cli_update::remember_error(&e);
+            // Vorschau: nie aktualisieren und wiederholen. Ein Update aendert
+            // Version und Programm und machte die Freigabe ungueltig (`rebind`
+            // verwirft sie ohnehin); die Antwort waere dann nie verwendbar.
+            if opts.preview.is_some() {
+                return Err(e);
+            }
             // Ist die CLI zu alt, aktualisiert die App sie und versucht es einmal neu.
             let retry = crate::managers::llm::cli_update::on_cli_error(cli, &e)
-                && tokio::task::spawn_blocking(crate::managers::llm::cli_update::ensure_codex_updated)
-                    .await
-                    .unwrap_or(false);
+                && tokio::task::spawn_blocking(
+                    crate::managers::llm::cli_update::ensure_codex_updated,
+                )
+                .await
+                .unwrap_or(false);
             if !retry {
                 return Err(e);
             }
             // Die aktualisierte CLI liegt am selben Ort; neu suchen, falls der Pfad wechselte.
             let binary = cli::locate(cli).unwrap_or(binary);
             tokio::task::spawn_blocking(move || {
-                cli::call(cli, &binary, &model, system.as_deref(), &user_content)
+                call_cli(
+                    cli,
+                    &binary,
+                    &model,
+                    system.as_deref(),
+                    &user_content,
+                    limit,
+                    &opts,
+                )
             })
             .await
             .map_err(|e| format!("cli_failed: {e}"))?
             .inspect_err(|e| crate::managers::llm::cli_update::remember_error(e))?
         }
     };
+    // Vorschau: bis hierher kann der Schalter ausgeschaltet worden sein; dann
+    // geht der Text weder an die Oberflaeche noch an die Sprache.
+    if preview_on && !CLI_PREVIEW_SWITCH.try_with(|s| s.is_on()).unwrap_or(false) {
+        return Err(crate::managers::llm::preview::SWITCH_OFF.error());
+    }
+    let _ = CLI_META.try_with(|m| {
+        if let Ok(mut m) = m.lock() {
+            *m = CliMeta {
+                model: reply.model.clone(),
+                prompt_tokens: reply.prompt_tokens,
+                completion_tokens: reply.completion_tokens,
+            };
+        }
+    });
     let text = if wants_json {
         strip_code_fence(&reply.text)
     } else {
@@ -869,11 +1078,87 @@ pub async fn send_chat_completion_stream(
     messages: Vec<StreamMessage>,
     on_delta: &(dyn Fn(&str) + Send + Sync),
 ) -> Result<String, String> {
+    send_chat_completion_stream_limited(
+        purpose,
+        provider,
+        api_key,
+        model,
+        messages,
+        on_delta,
+        &StreamLimits::default(),
+    )
+    .await
+}
+
+/// Wie [`send_chat_completion_stream`], mit Ausgabegrenze und Strenge.
+pub async fn send_chat_completion_stream_limited(
+    purpose: Purpose,
+    provider: &PostProcessProvider,
+    api_key: String,
+    model: &str,
+    messages: Vec<StreamMessage>,
+    on_delta: &(dyn Fn(&str) + Send + Sync),
+    limits: &StreamLimits,
+) -> Result<String, String> {
+    send_stream_full(
+        purpose, provider, api_key, model, messages, on_delta, limits, None,
+    )
+    .await
+}
+
+/// Wie `send_chat_completion_stream`; mit `pinned_local` (der schon
+/// aufgelösten Adresse des eingebauten Modells) nur genau dorthin, ohne
+/// erneutes Auflösen oder Starten; sonst nur an das
+/// eingebaute lokale Modell: Loopback-Adresse, ohne Proxy, ohne Umleitung,
+/// ohne CLI. Sonst Fehler statt Versand (App-Kontext, Codex M5/M6).
+pub async fn send_chat_completion_stream_routed(
+    purpose: Purpose,
+    provider: &PostProcessProvider,
+    api_key: String,
+    model: &str,
+    messages: Vec<StreamMessage>,
+    on_delta: &(dyn Fn(&str) + Send + Sync),
+    pinned_local: Option<&str>,
+) -> Result<String, String> {
+    send_stream_full(
+        purpose,
+        provider,
+        api_key,
+        model,
+        messages,
+        on_delta,
+        &StreamLimits::default(),
+        pinned_local,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn send_stream_full(
+    purpose: Purpose,
+    provider: &PostProcessProvider,
+    api_key: String,
+    model: &str,
+    messages: Vec<StreamMessage>,
+    on_delta: &(dyn Fn(&str) + Send + Sync),
+    limits: &StreamLimits,
+    pinned_local: Option<&str>,
+) -> Result<String, String> {
     // Regelwerk vor dem Budget: ein gesperrter Anbieter bekommt gar nichts.
     crate::managers::compliance::check_call(provider)?;
     usage::check_budget(provider, model)?;
     let started = std::time::Instant::now();
-    let (result, tokens) = match stream_inner(provider, api_key, model, messages, on_delta).await {
+    let (result, tokens) = match stream_inner(
+        provider,
+        api_key,
+        model,
+        messages,
+        on_delta,
+        limits,
+        pinned_local,
+    )
+    .await
+    {
         Ok((content, tokens)) => (Ok(content), tokens),
         Err(e) => (Err(e), TokenUsage::default()),
     };
@@ -896,8 +1181,15 @@ async fn stream_inner(
     model: &str,
     messages: Vec<StreamMessage>,
     on_delta: &(dyn Fn(&str) + Send + Sync),
+    limits: &StreamLimits,
+    pinned_local: Option<&str>,
 ) -> Result<(String, TokenUsage), String> {
-    if let Some(cli) = crate::managers::llm::cli::Cli::from_base_url(&provider.base_url) {
+    if pinned_local.is_some() && !crate::managers::llm::is_local(provider) {
+        return Err("Kontext nur an das eingebaute lokale Modell".into());
+    }
+    if let Some(cli) = crate::managers::llm::cli::Cli::from_base_url(&provider.base_url)
+        .filter(|_| pinned_local.is_none())
+    {
         // Die CLI liefert am Stueck: Systemteile als Systemtext, der Rest als
         // Gespraech mit Rollen.
         let system: Vec<&str> = messages
@@ -908,26 +1200,47 @@ async fn stream_inner(
         let dialog: Vec<String> = messages
             .iter()
             .filter(|m| m.role != "system")
-            .map(|m| format!("{}: {}", m.role, m.content))
+            .map(|m| dialog_line(&m.role, &m.content))
             .collect();
         let system = (!system.is_empty()).then(|| system.join("\n\n"));
-        let (reply, tokens) = send_cli(cli, model, dialog.join("\n\n"), system, None).await?;
+        let call = send_cli(cli, model, dialog.join("\n\n"), system, None);
+        let call = CLI_REQUIRE_USAGE.scope(limits.strict, call);
+        let (reply, tokens) = match limits.max_tokens {
+            Some(n) => CLI_MAX_TOKENS.scope(n, call).await?,
+            None => call.await?,
+        };
         let text = reply.content.unwrap_or_default();
         on_delta(&text);
         return Ok((text, tokens));
     }
     use futures_util::StreamExt;
 
-    let resolved = crate::managers::llm::resolve_base_url(provider, model).await?;
+    // Gebunden: genau die Adresse, für die geprüft wurde (kein Neustart
+    // zwischen Prüfung und Versand, Codex M5).
+    let resolved = match pinned_local {
+        Some(base) => base.to_string(),
+        None => crate::managers::llm::resolve_base_url(provider, model).await?,
+    };
     let url = format!("{}/chat/completions", resolved.trim_end_matches('/'));
     debug!("Sending streaming chat completion request to: {}", url);
-    let client = create_client(provider, &api_key)?;
+    let client = if pinned_local.is_some() {
+        if !is_loopback_url(&url) {
+            return Err("Lokales Modell nicht auf Loopback".into());
+        }
+        create_pinned_local_client(provider, &api_key)?
+    } else {
+        create_client(provider, &api_key)?
+    };
     let local = crate::managers::llm::is_local(provider);
-    let fallback_body = stream_request_body(model, &messages, false, local);
+    let ollama = is_ollama(provider);
+    let mut fallback_body = stream_request_body(model, &messages, false, local);
+    apply_limits(&mut fallback_body, ollama, limits);
+    let mut stream_body = stream_request_body(model, &messages, true, local);
+    apply_limits(&mut stream_body, ollama, limits);
 
     let response = client
         .post(&url)
-        .json(&stream_request_body(model, &messages, true, local))
+        .json(&stream_body)
         .send()
         .await
         .map_err(|e| format!("HTTP request failed: {}", e))?;
@@ -955,6 +1268,7 @@ async fn stream_inner(
     let mut text = String::new();
     let mut text_chars = 0usize;
     let mut tokens = TokenUsage::default();
+    let mut finished = false;
     let mut stream = response.bytes_stream();
     'read: loop {
         let wait = if text.is_empty() {
@@ -982,6 +1296,9 @@ async fn stream_inner(
                         log::warn!(
                             "Stream: Antwort ueber {STREAM_MAX_CHARS} Zeichen, abgeschnitten"
                         );
+                        if limits.strict {
+                            return Err("Stream: Antwort zu lang".to_string());
+                        }
                         break 'read;
                     }
                     text_chars += delta_chars;
@@ -989,7 +1306,10 @@ async fn stream_inner(
                     on_delta(&delta);
                 }
                 SseEvent::Usage(u) => tokens = u,
-                SseEvent::Done => break 'read,
+                SseEvent::Done => {
+                    finished = true;
+                    break 'read;
+                }
                 SseEvent::Error(code) => {
                     return Err(format!("Stream-Fehler vom Server ({code})"));
                 }
@@ -998,6 +1318,9 @@ async fn stream_inner(
         if ended {
             break;
         }
+    }
+    if limits.strict && !finished {
+        return Err("Stream: ohne Abschluss beendet".to_string());
     }
     Ok((text, tokens))
 }
@@ -1150,7 +1473,10 @@ pub async fn post_image_prompt(
         .build()
         .map_err(|e| format!("request_failed: {e}"))?;
     let response = client
-        .post(format!("{}/chat/completions", base_url.trim_end_matches('/')))
+        .post(format!(
+            "{}/chat/completions",
+            base_url.trim_end_matches('/')
+        ))
         .json(&body)
         .send()
         .await
@@ -1396,7 +1722,12 @@ mod stream_tests {
         assert!(remote.get("chat_template_kwargs").is_none());
         // Sonst nur die bisherigen Felder.
         let body = request_json(true, "llm-gemma4-e4b-q4");
-        let mut keys: Vec<&str> = body.as_object().unwrap().keys().map(String::as_str).collect();
+        let mut keys: Vec<&str> = body
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
         keys.sort_unstable();
         assert_eq!(keys, vec!["messages", "model"]);
     }
@@ -1431,26 +1762,39 @@ mod stream_tests {
             request_json_for(true, "llm-gemma4-e4b-q4", Purpose::TranscriptTranslation);
         assert_eq!(translation["temperature"].as_f64(), Some(0.0));
         assert_eq!(translation["seed"], CHAT_SEED);
-        let translation_remote =
-            request_json_for(false, "gpt-4.1", Purpose::TranscriptTranslation);
+        let translation_remote = request_json_for(false, "gpt-4.1", Purpose::TranscriptTranslation);
         assert!(
             translation_remote.get("temperature").is_none()
                 && translation_remote.get("seed").is_none()
         );
         // Andere lokale Zwecke (Diktat, Tagging, ...) bleiben unveraendert.
-        for purpose in [Purpose::PostProcess, Purpose::Tagging, Purpose::Translation, Purpose::Summary] {
+        for purpose in [
+            Purpose::PostProcess,
+            Purpose::Tagging,
+            Purpose::Translation,
+            Purpose::Summary,
+        ] {
             let other = request_json_for(true, "llm-gemma4-e4b-q4", purpose);
-            assert!(other.get("temperature").is_none() && other.get("seed").is_none(), "{purpose:?}");
+            assert!(
+                other.get("temperature").is_none() && other.get("seed").is_none(),
+                "{purpose:?}"
+            );
         }
     }
 
     #[test]
     fn think_leftovers_are_removed_from_local_answers_only() {
         let raw = Some("<think>\nerst nachdenken\n</think>\n\n{\"a\":1}".to_string());
-        assert_eq!(clean_local_content(true, raw.clone()).as_deref(), Some("{\"a\":1}"));
+        assert_eq!(
+            clean_local_content(true, raw.clone()).as_deref(),
+            Some("{\"a\":1}")
+        );
         // Nur ein schliessendes Tag (Vorlage hat das oeffnende schon gesetzt).
         let tail = Some("Gedanken</think>\n{\"a\":1}".to_string());
-        assert_eq!(clean_local_content(true, tail).as_deref(), Some("{\"a\":1}"));
+        assert_eq!(
+            clean_local_content(true, tail).as_deref(),
+            Some("{\"a\":1}")
+        );
         // Nicht geschlossen: nichts Brauchbares dahinter.
         let open = Some("<think>ohne Ende".to_string());
         assert_eq!(clean_local_content(true, open).as_deref(), Some(""));
@@ -1686,7 +2030,10 @@ mod image_tests {
             "data:image/png;base64,{}",
             base64::engine::general_purpose::STANDARD.encode(png)
         );
-        assert_eq!(content[0]["image_url"]["url"].as_str(), Some(expected.as_str()));
+        assert_eq!(
+            content[0]["image_url"]["url"].as_str(),
+            Some(expected.as_str())
+        );
         assert_eq!(
             content[1],
             serde_json::json!({ "type": "text", "text": "Was steht da?" })
@@ -1809,5 +2156,178 @@ mod image_tests {
             .await
             .unwrap_err();
         assert!(err.starts_with("request_failed"), "{err}");
+    }
+}
+
+#[cfg(test)]
+mod pinned_tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::Arc;
+
+    fn provider(id: &str, base: &str) -> PostProcessProvider {
+        PostProcessProvider {
+            id: id.into(),
+            label: id.into(),
+            base_url: base.into(),
+            allow_base_url_edit: false,
+            models_endpoint: None,
+            supports_structured_output: false,
+        }
+    }
+
+    /// Ein Server, der jede Anfrage zählt und mit `answer` beantwortet.
+    fn serve(answer: String) -> (u16, Arc<AtomicU32>) {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        let hits = Arc::new(AtomicU32::new(0));
+        let h = hits.clone();
+        std::thread::spawn(move || {
+            for mut s in l.incoming().flatten() {
+                h.fetch_add(1, Ordering::SeqCst);
+                let mut buf = [0u8; 4096];
+                let _ = s.read(&mut buf);
+                let _ = s.write_all(answer.as_bytes());
+            }
+        });
+        (port, hits)
+    }
+
+    #[test]
+    fn loopback_erkennen() {
+        assert!(is_loopback_url("http://127.0.0.1:8080/v1/chat/completions"));
+        assert!(is_loopback_url("http://localhost:1/x"));
+        assert!(is_loopback_url("http://[::1]:1/x"));
+        assert!(!is_loopback_url("http://localhost.example.com/x"));
+        assert!(!is_loopback_url("https://api.example.com/v1"));
+        assert!(!is_loopback_url("kein url"));
+    }
+
+    #[tokio::test]
+    async fn gebundene_route_folgt_keiner_umleitung() {
+        let (target, target_hits) = serve("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}".into());
+        let (port, _) = serve(format!(
+            "HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:{target}/x\r\nContent-Length: 0\r\n\r\n"
+        ));
+        let p = provider("local", &format!("http://127.0.0.1:{port}/v1"));
+        let resp = create_pinned_local_client(&p, "")
+            .unwrap()
+            .post(format!("http://127.0.0.1:{port}/v1/chat/completions"))
+            .body("{}")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status().as_u16(), 302);
+        assert_eq!(
+            target_hits.load(Ordering::SeqCst),
+            0,
+            "Umleitung nicht gefolgt"
+        );
+    }
+
+    #[tokio::test]
+    async fn gebundene_route_ignoriert_den_umgebungsproxy() {
+        let (proxy, proxy_hits) =
+            serve("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n".into());
+        let (target, target_hits) = serve("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}".into());
+        let p = provider("local", &format!("http://127.0.0.1:{target}/v1"));
+        // Proxy aus der Umgebung nur für den Bau des Clients setzen.
+        let keys = ["HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"];
+        let saved: Vec<_> = keys.iter().map(|k| (k, std::env::var(k).ok())).collect();
+        let no_proxy = std::env::var("NO_PROXY").ok();
+        for k in keys {
+            std::env::set_var(k, format!("http://127.0.0.1:{proxy}"));
+        }
+        std::env::remove_var("NO_PROXY");
+        let client = create_pinned_local_client(&p, "");
+        for (k, v) in saved {
+            match v {
+                Some(v) => std::env::set_var(k, v),
+                None => std::env::remove_var(k),
+            }
+        }
+        if let Some(v) = no_proxy {
+            std::env::set_var("NO_PROXY", v);
+        }
+        let resp = client
+            .unwrap()
+            .post(format!("http://127.0.0.1:{target}/v1/chat/completions"))
+            .body("{}")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status().as_u16(), 200);
+        assert_eq!(proxy_hits.load(Ordering::SeqCst), 0, "kein Proxy");
+        assert_eq!(target_hits.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn gebundene_route_sendet_an_die_gepruefte_adresse() {
+        // Antwort ohne Streaming (der Server ignoriert `stream`).
+        let body = r#"{"choices":[{"message":{"role":"assistant","content":"ok"}}]}"#;
+        let (target, target_hits) = serve(format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        ));
+        // Der Anbieter zeigt woanders hin (Platzhalter): gesendet wird trotzdem
+        // nur an die vor der Prüfung aufgelöste Adresse, ohne Neustart.
+        let p = provider(
+            crate::managers::llm::LOCAL_PROVIDER_ID,
+            "http://127.0.0.1:0/v1",
+        );
+        let base = format!("http://127.0.0.1:{target}/v1");
+        let msgs = vec![StreamMessage::new("user", "Hallo".to_string())];
+        let (text, _) = stream_inner(
+            &p,
+            String::new(),
+            "m",
+            msgs,
+            &|_| {},
+            &StreamLimits::default(),
+            Some(&base),
+        )
+        .await
+        .unwrap();
+        assert_eq!(text, "ok");
+        assert_eq!(target_hits.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn gebundene_route_lehnt_entfernte_adresse_ab() {
+        let p = provider(
+            crate::managers::llm::LOCAL_PROVIDER_ID,
+            "http://127.0.0.1:0/v1",
+        );
+        let err = stream_inner(
+            &p,
+            String::new(),
+            "m",
+            Vec::new(),
+            &|_| {},
+            &StreamLimits::default(),
+            Some("https://api.example.com/v1"),
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("Loopback"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn gebundene_route_lehnt_fremde_anbieter_ab() {
+        let p = provider("openai", "https://api.example.com/v1");
+        let err = stream_inner(
+            &p,
+            String::new(),
+            "m",
+            Vec::new(),
+            &|_| {},
+            &StreamLimits::default(),
+            Some("http://127.0.0.1:1/v1"),
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("eingebaute"), "{err}");
     }
 }

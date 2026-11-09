@@ -1,0 +1,67 @@
+<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>iPhone Kopplung – Vorschau</title>
+<style>
+:root{--bg:#f2f2f7;--card:#fff;--text:#000;--text2:#3c3c4399;--sep:#c6c6c8;--tint:#007aff;--ok:#34c759;--warn:#ff9500;--danger:#ff3b30}
+:root[data-theme=dark]{--bg:#000;--card:#1c1c1e;--text:#fff;--text2:#ebebf599;--sep:#38383a;--tint:#0a84ff;--ok:#30d158;--warn:#ff9f0a;--danger:#ff453a}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:17px/22px -apple-system,"SF Pro Text",Inter,system-ui,sans-serif;min-height:100vh}
+.nav{height:44px;display:flex;align-items:center;justify-content:space-between;padding:0 16px;margin-top:47px}
+.nav button{border:0;background:none;color:var(--tint);font:inherit;min-height:44px;min-width:44px;cursor:pointer}
+h1{font-size:34px;line-height:41px;margin:4px 16px 16px;font-weight:700}
+.card{background:var(--card);border-radius:10px;margin:0 16px 16px;padding:16px}
+.muted{color:var(--text2)}.small{font-size:13px;line-height:18px}
+.scan{margin:0 16px 16px;border-radius:16px;aspect-ratio:1;background:#111 linear-gradient(135deg,#333,#111);position:relative;overflow:hidden}
+.scan .frame{position:absolute;inset:18%;border:4px solid #fff;border-radius:18px;box-shadow:0 0 0 999px rgba(0,0,0,.35)}
+.scan .hint{position:absolute;left:0;right:0;bottom:16px;text-align:center;color:#fff;font-size:15px}
+.sas{font-size:44px;line-height:52px;font-weight:700;letter-spacing:.06em;text-align:center;font-variant-numeric:tabular-nums;margin:8px 0}
+.btn{display:flex;align-items:center;justify-content:center;width:calc(100% - 32px);margin:0 16px 12px;min-height:50px;border-radius:12px;border:0;font:600 17px -apple-system,Inter,system-ui;cursor:pointer}
+.btn.primary{background:var(--tint);color:#fff}.btn.plain{background:transparent;color:var(--tint)}
+.state{display:none}body[data-s=scan] .s-scan,body[data-s=code] .s-code,body[data-s=verbunden] .s-verbunden,body[data-s=abgelehnt] .s-abgelehnt,body[data-s=verwendet] .s-verwendet,body[data-s=netz] .s-netz{display:block}
+.icon{width:64px;height:64px;border-radius:50%;display:grid;place-items:center;margin:8px auto 12px;font-size:30px;color:#fff}
+.center{text-align:center}
+.spin{display:inline-block;width:14px;height:14px;border:2px solid var(--sep);border-top-color:var(--tint);border-radius:50%;vertical-align:-2px;margin-right:6px}
+:focus-visible{outline:3px solid var(--tint);outline-offset:2px}
+</style></head><body data-s="scan">
+<div class="nav"><button aria-label="Zurück">‹ Konto</button><span></span><span style="width:44px"></span></div>
+<div class="state s-scan">
+ <h1>Mit Desktop verbinden</h1>
+ <div class="scan" role="img" aria-label="Kamerabild mit Suchrahmen"><div class="frame"></div><div class="hint">QR-Code aus „Handy verbinden“ in den Rahmen halten</div></div>
+ <div class="card small muted">Auf dem PC: Local Voice › Einstellungen › Konto &amp; Geräte › <b>QR-Code anzeigen</b>. Ihr Passwort brauchen Sie hier nicht.</div>
+ <button class="btn plain">Stattdessen mit Passwort anmelden</button>
+</div>
+<div class="state s-code">
+ <h1>Code vergleichen</h1>
+ <div class="card center">
+  <div class="muted small">Steht dieser Code auch am PC?</div>
+  <div class="sas" aria-label="Vergleichscode 4 8 2 9 1 3">482 913</div>
+  <div class="small"><span class="spin" aria-hidden="true"></span>Bitte am PC auf <b>„Ja, verbinden“</b> klicken.</div>
+ </div>
+ <div class="card small muted">Verbindung mit <b style="color:var(--text)">patrick@example.org</b> über portal.example.org. Stimmt der Code nicht, tippen Sie auf „Abbrechen“.</div>
+ <button class="btn plain" style="color:var(--danger)">Abbrechen</button>
+</div>
+<div class="state s-verbunden center">
+ <h1 style="text-align:left">Verbunden</h1>
+ <div class="icon" style="background:var(--ok)">✓</div>
+ <div class="card">Angemeldet als <b>patrick@example.org</b>.<div class="small muted" style="margin-top:6px">Die Bibliothek wird jetzt abgeglichen. Den Zugang können Sie am PC unter „Verbundene Geräte“ jederzeit abmelden.</div></div>
+ <button class="btn primary">Fertig</button>
+</div>
+<div class="state s-abgelehnt center">
+ <h1 style="text-align:left">Nicht verbunden</h1>
+ <div class="icon" style="background:var(--danger)">✕</div>
+ <div class="card" role="alert">Die Verbindung wurde am PC abgelehnt.<div class="small muted" style="margin-top:6px">Es wurde nichts übertragen. Zum erneuten Versuch am PC einen neuen Code anzeigen.</div></div>
+ <button class="btn primary">Erneut scannen</button>
+</div>
+<div class="state s-verwendet center">
+ <h1 style="text-align:left">Code nicht gültig</h1>
+ <div class="icon" style="background:var(--warn)">!</div>
+ <div class="card" role="alert">Dieser Code ist abgelaufen oder wurde schon verwendet.<div class="small muted" style="margin-top:6px">Haben Sie ihn nicht selbst gescannt? Dann am PC unter „Verbundene Geräte“ prüfen, ob ein fremdes Gerät erscheint, und es abmelden.</div></div>
+ <button class="btn primary">Neuen Code scannen</button>
+</div>
+<div class="state s-netz center">
+ <h1 style="text-align:left">Keine Verbindung</h1>
+ <div class="icon" style="background:var(--warn)">⚠</div>
+ <div class="card" role="alert">Der Server ist nicht erreichbar.<div class="small muted" style="margin-top:6px">Prüfen Sie WLAN oder mobile Daten. Der Code bleibt bis zu 2 Minuten gültig.</div></div>
+ <button class="btn primary">Erneut versuchen</button>
+ <button class="btn plain">Abbrechen</button>
+</div>
+<script>const p=new URLSearchParams(location.search);if(p.get('theme')==='dark')document.documentElement.dataset.theme='dark';document.body.dataset.s=p.get('s')||'scan';</script>
+</body></html>

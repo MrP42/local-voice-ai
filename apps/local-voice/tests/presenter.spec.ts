@@ -1,6 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import { calls, installTauriMock } from "./calendarMock";
 import { installIntegrationsMock, NOW } from "./integrationsMock";
+import { geheZu } from "./profilmenue";
 
 // Etappe 4a: WAI Presenter als Integrationsart (Austauschordner waehlt der Nutzer,
 // Datenschutzhinweis, Katalog abschaltbar, Rechte der zwei Faehigkeiten).
@@ -14,10 +15,7 @@ const setup = async (page: Page) => {
 };
 
 const openIntegrations = async (page: Page) => {
-  await page
-    .getByRole("navigation")
-    .getByRole("button", { name: "Integrationen", exact: true })
-    .click();
+  await geheZu(page, "Integrationen");
   await expect(
     page.getByRole("heading", { name: "Integrationen", level: 1 }),
   ).toBeVisible();

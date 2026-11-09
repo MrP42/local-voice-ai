@@ -1761,7 +1761,11 @@ fn a_swap_between_the_gate_check_and_the_send_in_a_real_run_is_never_sent() {
     });
     let outcomes = w.tick();
     race::clear();
-    assert_eq!(reads.get(), 2, "Tor und Baustein lesen den Anhang je einmal");
+    assert_eq!(
+        reads.get(),
+        2,
+        "Tor und Baustein lesen den Anhang je einmal"
+    );
     assert!(
         matches!(outcomes[0].1, RunOutcome::Failed { .. }),
         "{outcomes:?}"
@@ -1770,11 +1774,11 @@ fn a_swap_between_the_gate_check_and_the_send_in_a_real_run_is_never_sent() {
         w.graph.mails().is_empty(),
         "die genehmigte Fassung ist nicht die gesendete"
     );
-    assert!(w
-        .detail(&run)
-        .steps
-        .iter()
-        .any(|s| s.error.as_deref().unwrap_or("").contains("seit die Freigabe erteilt wurde")));
+    assert!(w.detail(&run).steps.iter().any(|s| s
+        .error
+        .as_deref()
+        .unwrap_or("")
+        .contains("seit die Freigabe erteilt wurde")));
     assert!(w.audit().iter().any(|a| a.outcome == "denied"
         && a.detail_json
             .as_deref()

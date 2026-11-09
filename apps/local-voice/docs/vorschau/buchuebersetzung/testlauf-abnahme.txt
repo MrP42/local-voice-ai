@@ -1,0 +1,36 @@
+
+Running 5 tests using 1 worker
+
+ARIA Modellknopf haspopup=listbox expanded(offen)=true
+  ✓  1 [chromium] › tests/readaloud-translate-stream.spec.ts:321:5 › Übersetzung streamt mit Fortschrittsblock und Fortsetzen (light, 1440) (9.0s)
+ARIA Modellknopf haspopup=listbox expanded(offen)=true
+TOUCH getByTestId('tts-actions').getByRole('group', { name: 'Zielsprache' }).locator('.app-select__control') 165.3x44.0
+TOUCH getByTestId('tts-action-translate') 44.0x44.0
+TOUCH getByTestId('tts-action-save') 44.0x44.0
+TOUCH getByTestId('tts-action-prewarm') 44.0x44.0
+TOUCH getByTestId('tts-action-menu-translation') 44.0x44.0
+TOUCH getByTestId('tts-translation-model').getByRole('button', { name: /^Modell wählen/ }) 363.8x47.0
+TOUCH getByTestId('reader-player').getByRole('button', { name: 'Vorheriger Satz' }) 44.0x44.0
+TOUCH getByTestId('reader-player').getByRole('button', { name: 'Nächster Satz' }) 44.0x44.0
+TOUCH getByTestId('reader-player').getByTestId('reader-more') 80.1x44.0
+TOUCH getByTestId('reader-player').getByTestId('reader-play') 52.0x52.0
+TOUCH getByTestId('reader-player').getByRole('button', { name: 'Stopp' }) 44.0x44.0
+  ✓  2 [chromium] › tests/readaloud-translate-stream.spec.ts:321:5 › Übersetzung streamt mit Fortschrittsblock und Fortsetzen (light, 390) (4.2s)
+ARIA Modellknopf haspopup=listbox expanded(offen)=true
+  ✓  3 [chromium] › tests/readaloud-translate-stream.spec.ts:321:5 › Übersetzung streamt mit Fortschrittsblock und Fortsetzen (dark, 1440) (3.8s)
+ARIA Modellknopf haspopup=listbox expanded(offen)=true
+TOUCH getByTestId('tts-actions').getByRole('group', { name: 'Zielsprache' }).locator('.app-select__control') 165.3x44.0
+TOUCH getByTestId('tts-action-translate') 44.0x44.0
+TOUCH getByTestId('tts-action-save') 44.0x44.0
+TOUCH getByTestId('tts-action-prewarm') 44.0x44.0
+TOUCH getByTestId('tts-action-menu-translation') 44.0x44.0
+TOUCH getByTestId('tts-translation-model').getByRole('button', { name: /^Modell wählen/ }) 363.8x47.0
+TOUCH getByTestId('reader-player').getByRole('button', { name: 'Vorheriger Satz' }) 44.0x44.0
+TOUCH getByTestId('reader-player').getByRole('button', { name: 'Nächster Satz' }) 44.0x44.0
+TOUCH getByTestId('reader-player').getByTestId('reader-more') 80.1x44.0
+TOUCH getByTestId('reader-player').getByTestId('reader-play') 52.0x52.0
+TOUCH getByTestId('reader-player').getByRole('button', { name: 'Stopp' }) 44.0x44.0
+  ✓  4 [chromium] › tests/readaloud-translate-stream.spec.ts:321:5 › Übersetzung streamt mit Fortschrittsblock und Fortsetzen (dark, 390) (4.1s)
+  ✓  5 [chromium] › tests/readaloud-translate-stream.spec.ts:452:1 › Abbruch zeigt eigenen Block mit Fortsetzen (light, 390) (3.4s)
+
+  5 passed (26.9s)

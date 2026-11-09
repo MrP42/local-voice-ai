@@ -1,43 +1,76 @@
 mod actions;
 mod agent; // C1 (Goal Lokaler Agent)
 pub mod agent_bridge; // A7
+#[allow(dead_code)] // reine Helfer teils nur in Tests und Folgepaketen (P3/P4)
+mod app_context; // Globaler Sprachassistent: Abrufindex über alle Inhalte
 mod appdata_migration;
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 mod apple_intelligence;
+mod assistent; // ADR-0028 A2: Einstufung, Ansagen, Messung (wai-assistent)
 mod audio_feedback;
-mod books;
 pub mod audio_toolkit;
+mod book_ai; // lva#181: KI-Funktionen im Buch-Reader
+
+/// Eval-Tor des Buch-Gesprächs (lva#324); Kern des Examples `book_talk_eval`.
+pub mod book_talk_eval {
+    pub use crate::book_ai::talk::adapter::*;
+    pub use crate::book_ai::talk::eval::*;
+}
+mod ablage; // lva#407 D1, lva#408 D2: Dokumentenablage (Epic #395)
+mod books;
+mod buch_dateien; // lva#365 P3: Notizen, Anhänge, Transkript im Buch-Ordner (Kern)
 mod catalog;
 pub mod cli;
 mod clipboard;
 mod commands;
-mod sync;
 #[cfg(windows)]
 mod context_menu;
 mod conversations; // U3: Sprachgespräche dauerhaft speichern
+mod cover_art; // Eingebettete Cover aus Hörbuch-Dateien
+mod ebook; // lva#149: EPUB-Import, PDF-Reflow
 mod helpers;
+mod hoersync_live; // Hörbuch-Sync Stufe 2: Live-Abgleich
 mod input;
-mod local_update;
+mod isbn; // lva#149: Buchdaten per ISBN aus Open Library
+mod keep_awake; // Vorlesen: Bildschirm wach halten (Sonnen-Knopf)
+mod konto; // ADR-0024 Paket 1: Suite-Profil (lokal)
+mod library; // lva#152: Bibliothek für Bücher und Hörbücher
+mod library_export; // lva#236: Fassungen einzeln exportieren (EPUB, PDF, Word, M4B, MP3)
+mod library_layout; // lva#365 P2a: Buch-Ordner-Ablage (Kern ohne Tauri)
 mod llm_client;
+mod llm_keys;
+mod local_update;
 mod managers;
-mod media;
-mod memory_guard;
 pub mod mcp; // M6-P6e
+mod media;
 mod meeting_prompt; // M5-P5b
+mod memory_guard;
 mod overlay;
 mod paste_guard;
 mod paste_session;
 pub mod portable;
+pub mod portable_parts;
 mod process_guard;
+/// lva#408 D2: Einstieg des Extraktor-Unterprozesses (`lva-extrakt <pfad> <sha256> <typ>` bzw.
+/// `local-voice-ai --lva-extrakt …`). Liefert den Exitcode.
+pub fn lva_extrakt_main(args: &[String]) -> i32 {
+    ablage::extrakt::haupt(args)
+}
+mod projekte; // ADR-0026 PR-7: Suite-Projekte und Recherche
+pub mod provision;
 mod refinement;
 pub mod segmenter;
 pub mod selftest;
-mod llm_keys;
 mod settings;
 mod shortcut;
 mod signal_handle;
+mod speech_learning; // Stufe 3: Lernen aus Korrekturen, Einrichtung durch Vorlesen
+pub mod sprachdienst; // ADR-0021 S2
 mod summarizer;
+mod sync;
 mod tagging;
+#[cfg(test)]
+mod testlog; // gemeinsamer Log-Fänger der Tests
 mod transcription_coordinator;
 mod translator;
 mod tray;
@@ -206,6 +239,11 @@ fn should_force_show_permissions_window(app: &AppHandle) -> bool {
 }
 
 fn initialize_core_logic(app_handle: &AppHandle) {
+    // lva#365 P2a: ein offenes Journal der Buch-Ordner-Ablage auflösen, bevor
+    // irgendetwas die Bibliothek oder die Seiten liest (Sync, Abrufindex,
+    // Oberfläche). Hält bei Doppelung oder Fehlen an und verschiebt nichts.
+    commands::library_layout::start_hook(app_handle);
+
     // Note: Enigo (keyboard/mouse simulation) is NOT initialized here.
     // The frontend is responsible for calling the `initialize_enigo` command
     // after onboarding completes. This avoids triggering permission dialogs
@@ -319,6 +357,9 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     app_handle.manage(transcription_manager.clone());
     app_handle.manage(history_manager.clone());
     app_handle.manage(tts_manager);
+    // Phonon mit Anton als Vorgabestimme, wenn Phonon schon freigegeben und eingerichtet ist
+    // (einmalig; auch für bestehende Installationen).
+    commands::tts_providers::spawn_default_voice(app_handle);
     app_handle.manage(tts_model_manager);
     app_handle.manage(llm_runtime);
     app_handle.manage(llm_server);
@@ -331,12 +372,25 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         }
         Err(e) => log::error!("Failed to initialize conversations store: {e}"),
     }
+    // Stufe 3: Lernspeicher der Spracherkennung. Fehlt er, melden die Befehle „nicht verfügbar“.
+    match speech_learning::open_store(app_handle) {
+        Ok(store) => {
+            app_handle.manage(Arc::new(store));
+        }
+        Err(e) => log::error!("Failed to initialize speech learning store: {e}"),
+    }
     app_handle.manage(commands::tts::AutoTagRun::default());
     app_handle.manage(commands::tts::BuilderRun::default());
     // Geraete-Sync: Status-Objekt fuer die Oberflaeche; die Schleife startet
     // nach dem Setup und laeuft nur, wenn sync.json existiert.
     app_handle.manage(sync::SyncEngine::default());
+    app_handle.manage(sync::pairing::PairingState::default());
     sync::start(app_handle.clone());
+    // ADR-0024: gemeinsamer Kontospeicher der Suite (nur lokales Profil).
+    konto::init(app_handle);
+    // ADR-0026 PR-7: Suite-Projekte und Recherche (Dateien oeffnen beim ersten Gebrauch).
+    app_handle.manage(projekte::zustand::ProjekteZustand::neu(app_handle.clone()));
+    projekte::zustand::pflege_starten(app_handle);
     app_handle.manage(tray::CurrentTrayIconState::new());
 
     // Entwuerfe des Stimmen-Baukastens aelter als 30 Tage entfernen:
@@ -383,6 +437,8 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         // A meeting still marked 'recording' means the app died mid recording:
         // repair the WAV headers and hand the meeting back as 'ready'.
         recorder.recover_orphans();
+        // Mehrere Audiodateien: Gruppen, deren Teile schon fertig sind, zusammenfuehren.
+        managers::meetings::parts::resume_pending_later(app_handle.clone(), store.clone());
         // Retention (Task 12): sweep for audio whose `audio_retention_until`
         // already passed while the app was closed (e.g. a `Days(n)` policy).
         // The `AfterMinutes` fast path also purges inline right after a
@@ -395,12 +451,12 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         let index_store = store.clone(); // M4-P4b
         let calendar_store = store.clone(); // M5-P5b
         let workflow_store = store.clone(); // B2
-        // A7: Agentenbruecke (Named Pipe, nur aktueller Benutzer). A8: die Werkzeuge der App
-        // (Datei transkribieren, YouTube-Quelle, Vorlesen, Aufnahme, Sessions) sind die Handler;
-        // sie loesen Warteschlange, Recorder und Sprachausgabe erst beim Aufruf auf. Eine neue
-        // Freigabe fuer `start_recording` zeigt sofort die Bitte um Einwilligung (dasselbe
-        // Hinweisfenster wie bei den Ablaeufen); alles andere entscheidet der Nutzer auf der
-        // Seite Integrationen.
+                                            // A7: Agentenbruecke (Named Pipe, nur aktueller Benutzer). A8: die Werkzeuge der App
+                                            // (Datei transkribieren, YouTube-Quelle, Vorlesen, Aufnahme, Sessions) sind die Handler;
+                                            // sie loesen Warteschlange, Recorder und Sprachausgabe erst beim Aufruf auf. Eine neue
+                                            // Freigabe fuer `start_recording` zeigt sofort die Bitte um Einwilligung (dasselbe
+                                            // Hinweisfenster wie bei den Ablaeufen); alles andere entscheidet der Nutzer auf der
+                                            // Seite Integrationen.
         let agent_tools: Arc<dyn agent_bridge::catalog::ToolHandler> =
             Arc::new(agent_bridge::tools::AppTools::new(
                 store.clone(),
@@ -421,6 +477,8 @@ fn initialize_core_logic(app_handle: &AppHandle) {
             vec![agent_tools],
             Some(approval_notifier),
         ));
+        // ADR-0021 S2: Sprachdienst (Opt-in, standardmaessig aus).
+        app_handle.manage(sprachdienst::app::init(app_handle));
         // U7: die Import-Warteschlange (Aufnahme hat Vorrang, Enddurchlauf und
         // Wiederherstellung halten die gemeinsame Engine).
         let queue = {
@@ -905,7 +963,11 @@ fn run_headless_meetings(app: &AppHandle, args: &CliArgs) -> i32 {
         );
         return 2;
     }
-    let job_script = match args.job_script.as_deref().map(managers::meetings::job_harness::parse_script) {
+    let job_script = match args
+        .job_script
+        .as_deref()
+        .map(managers::meetings::job_harness::parse_script)
+    {
         Some(Ok(steps)) => Some(steps),
         Some(Err(e)) => {
             eprintln!("error: --job-script: {e}");
@@ -1016,8 +1078,7 @@ fn run_headless_meetings(app: &AppHandle, args: &CliArgs) -> i32 {
         recorder.wait_final_jobs();
         println!("CONTINUE_MS={}", started.elapsed().as_millis());
         if args.dump_meeting.is_none() {
-            let mut payload =
-                meeting_payload(&store, &id).unwrap_or_else(|| serde_json::json!({}));
+            let mut payload = meeting_payload(&store, &id).unwrap_or_else(|| serde_json::json!({}));
             payload["meeting_id"] = serde_json::json!(id);
             payload["continue_ms"] = serde_json::json!(started.elapsed().as_millis() as u64);
             emit_headless_payload(&payload, args.out.as_deref());
@@ -1063,9 +1124,9 @@ fn run_headless_meetings(app: &AppHandle, args: &CliArgs) -> i32 {
 
         let started = std::time::Instant::now();
         start_job_script(); // P8a: Pause/Stopp wie die Knoepfe (nur mit --job-script)
-        // Consent is confirmed by the caller: a headless import is an
-        // explicit, deliberate act by whoever typed the flag (the UI gate
-        // itself is covered by the consent-gate scenario, not by this path).
+                            // Consent is confirmed by the caller: a headless import is an
+                            // explicit, deliberate act by whoever typed the flag (the UI gate
+                            // itself is covered by the consent-gate scenario, not by this path).
         let result = tauri::async_runtime::block_on(managers::meetings::import::import_media_file(
             app,
             Arc::clone(&store),
@@ -1220,9 +1281,10 @@ fn run_simulate_opts(
 ) -> i32 {
     use managers::meetings::simulate::simulate_with_app;
 
-    let model_id = args.model.clone().unwrap_or_else(|| {
-        tm.meeting_model_target(&get_settings(app))
-    });
+    let model_id = args
+        .model
+        .clone()
+        .unwrap_or_else(|| tm.meeting_model_target(&get_settings(app)));
     if model_id.is_empty() {
         eprintln!("error: no model selected (pass --model or pick one in the app)");
         return 2;
@@ -1305,9 +1367,7 @@ fn simulate_notes(
             runtime.set_model_dirs(settings::get_settings(app).llm_model_dirs);
             Arc::new(runtime)
         }
-        Err(e) => {
-            return serde_json::json!({ "ran": false, "error": format!("llm runtime: {e}") })
-        }
+        Err(e) => return serde_json::json!({ "ran": false, "error": format!("llm runtime: {e}") }),
     };
     let llm_server = Arc::new(managers::llm::LocalLlmServer::new());
     managers::llm::install_globals(llm_runtime, llm_server.clone());
@@ -1870,7 +1930,6 @@ fn run_headless_transcription(app: &AppHandle, args: &CliArgs) -> i32 {
     0
 }
 
-
 /// Alle Commands und Events für tauri-specta (eine Quelle für App und Bindings-Export).
 fn specta_builder() -> Builder<tauri::Wry> {
     Builder::<tauri::Wry>::new()
@@ -1910,9 +1969,13 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::llm::llm_check_new_models,
             commands::llm::llm_answer_model_updates,
             commands::llm::llm_set_auto_update_models,
+            commands::llm::llm_cli_status,
+            commands::llm::llm_cli_login,
+            commands::llm::llm_cli_setup,
             commands::llm::llm_set_cli_auto_update,
             commands::llm::llm_model_efforts,
             commands::llm::llm_set_default_effort,
+            commands::llm::llm_set_function_model,
             commands::llm::llm_model_offers_fast,
             commands::llm::llm_set_api_key,
             commands::llm::llm_local_list,
@@ -1943,17 +2006,101 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::usage::usage_clear,
             commands::usage::usage_budget_states,
             sync::sync_login,
+            sync::booktalk_relay::change_book_talk_relay_setting,
+            sync::booktalk_relay::booktalk_relay_grants,
+            sync::booktalk_relay::booktalk_relay_models,
+            sync::booktalk_relay::booktalk_relay_authorize,
+            sync::booktalk_relay::booktalk_relay_renew_code,
+            sync::booktalk_relay::booktalk_relay_revoke,
             sync::sync_logout,
+            sync::uebernahme::sync_anmeldung_offen,
+            sync::uebernahme::sync_anmeldung_entscheiden,
+            sync::uebernahme::sync_anmeldung_abbrechen,
+            sync::uebernahme::sync_sicherungen,
+            sync::uebernahme::sync_sicherung_wiederherstellen,
+            sync::uebernahme::sync_sicherung_einstellungen,
+            sync::uebernahme::sync_sicherung_loeschen,
+            sync::uebernahme::sync_nur_lokal_uebernehmen,
             sync::sync_status,
             sync::sync_now,
             sync::sync_touch,
             sync::sync_default_device_name,
+            konto::konto_status,
+            konto::konto_aendern,
+            konto::konto_aktivieren,
+            konto::konto_anlegen,
+            konto::konto_bild_setzen,
+            konto::konto_bild_entfernen,
+            konto::konto_bild_lesen,
+            ablage::befehle::ablage_stand,
+            ablage::befehle::ablage_ordner_anlegen,
+            ablage::befehle::ablage_ordner_umbenennen,
+            ablage::befehle::ablage_ordner_verschieben,
+            ablage::befehle::ablage_ordner_einstellungen,
+            ablage::befehle::ablage_ki_setzen,
+            ablage::befehle::ablage_freigaben_neu_festlegen,
+            ablage::befehle::ablage_importieren,
+            ablage::befehle::ablage_in_papierkorb,
+            ablage::befehle::ablage_wiederherstellen,
+            ablage::befehle::ablage_endgueltig_loeschen,
+            ablage::befehle::ablage_papierkorb_leeren,
+            ablage::befehle::ablage_fassungen,
+            ablage::befehle::ablage_datei_umbenennen,
+            ablage::befehle::ablage_datei_verschieben,
+            ablage::befehle::ablage_bestand_neu_aufbauen,
+            ablage::befehle::ablage_gefundene_aufnehmen,
+            ablage::befehle::ablage_suchen,
+            ablage::befehle::ablage_index_neu_aufbauen,
+            ablage::befehle::ablage_text_abbrechen,
+            assistent::assistent_einstufen,
+            assistent::assistent_messung_melden,
+            assistent::assistent_letzte_ausgabe,
+            assistent::assistent_ausgabe_vergessen,
+            assistent::change_assistent_einstufung_aktiv_setting,
+            projekte::befehle::projekte_liste,
+            projekte::befehle::projekt_anlegen,
+            projekte::befehle::projekt_web_freigabe,
+            projekte::befehle::projekt_loeschen,
+            projekte::befehle::projekt_eintraege,
+            projekte::befehle::projekt_ordner_verknuepfen,
+            projekte::befehle::projekt_ordner_loesen,
+            projekte::befehle::projekt_abgleichen,
+            projekte::befehle::projekt_buch_zuordnen,
+            projekte::befehle::projekt_seite_zuordnen,
+            projekte::befehle::projekt_seite_entfernen,
+            projekte::befehle::projekt_dateien_hinzufuegen,
+            projekte::befehle::projekt_datei_entfernen,
+            projekte::befehle::projekt_dateien_gefunden,
+            projekte::befehle::projekt_dateien_lage,
+            projekte::befehle::projekt_dateien_neu_aufbauen,
+            projekte::befehle::projekt_datei_gefunden_aufnehmen,
+            projekte::befehle::projekt_kontext_uebersicht,
+            projekte::befehle::projekt_kontext_schalten,
+            projekte::befehle::projekt_buch_entfernen,
+            projekte::befehle::projekt_besprechung_zuordnen,
+            projekte::befehle::projekt_besprechung_entfernen,
+            projekte::befehle::projekte_der_besprechung,
+            projekte::befehle::recherche_status,
+            projekte::befehle::recherche_adresse_setzen,
+            projekte::befehle::recherche_starten,
+            projekte::befehle::recherche_freigaben,
+            projekte::befehle::recherche_freigabe_entscheiden,
+            projekte::befehle::recherche_liste,
+            projekte::befehle::recherche_lesen,
+            projekte::befehle::recherche_loeschen,
             sync::sync_hub_status,
+            sync::pairing::pair_start,
+            sync::pairing::pair_poll,
+            sync::pairing::pair_approve,
+            sync::pairing::pair_cancel,
+            sync::pairing::sync_devices,
+            sync::pairing::sync_revoke_device,
             shortcut::change_tts_engine_setting,
             shortcut::change_tts_piper_voice_setting,
             shortcut::change_tts_piper_auto_language_setting,
             shortcut::change_tts_script_check_setting,
             shortcut::change_tts_speed_setting,
+            shortcut::change_tts_flow_setting,
             shortcut::change_tts_export_format_setting,
             shortcut::change_tts_export_bitrate_setting,
             shortcut::change_tts_context_menu_setting,
@@ -2098,12 +2245,20 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::meetings::meetings_get_documents,
             commands::meetings::meetings_delete,
             commands::meetings::meetings_import_file,
+            commands::meetings::meetings_import_audiobook_part,
+            commands::meetings::meetings_get_status,
             // U7
             commands::meeting_queue::meetings_queue_list,
             commands::meeting_queue::meetings_queue_remove,
             commands::meeting_queue::meetings_queue_to_front,
             commands::meeting_queue::meetings_update_metadata,
             commands::meeting_queue::change_meeting_import_parallel_setting,
+            commands::meeting_queue::get_meeting_import_parallel_recommendation,
+            // Mehrere Audiodateien je Besprechung
+            commands::meeting_parts::meetings_parts_info,
+            commands::meeting_parts::meetings_merge,
+            commands::meeting_parts::meetings_append_files,
+            commands::meeting_parts::meetings_append_detach,
             commands::meetings::meetings_generate_minutes,
             commands::meetings::meetings_minutes_file,
             // P1k
@@ -2115,6 +2270,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::meeting_documents::meetings_document_meta,
             commands::meeting_documents::meetings_generate_document,
             commands::meeting_documents::meetings_export_document_as,
+            commands::meeting_documents::meetings_update_document_text,
             commands::meeting_documents::letterheads_list,
             commands::meeting_documents::letterhead_save,
             commands::meeting_documents::letterhead_delete,
@@ -2218,12 +2374,15 @@ fn specta_builder() -> Builder<tauri::Wry> {
             voice_call::voice_call_start,
             voice_call::voice_call_transcribe,
             voice_call::voice_call_chat,
+            voice_call::turn::voice_call_turn,
             voice_call::voice_call_cancel,
             voice_call::voice_call_synthesize,
+            overlay::voice_call_overlay,
             conversations::conversations_list,
             conversations::conversation_get,
             conversations::conversation_create,
             conversations::conversation_update,
+            conversations::conversation_set_pinned,
             conversations::conversation_delete,
             conversations::conversation_append_entry,
             conversations::conversation_update_entry,
@@ -2243,6 +2402,16 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::meeting_speakers::meeting_speakers_list,
             commands::meeting_speakers::meeting_speaker_rename,
             commands::meeting_speakers::meeting_speaker_merge,
+            commands::meeting_speakers::meeting_speaker_merges,
+            commands::meeting_speakers::meeting_speaker_unmerge,
+            commands::meeting_voiceprint::meeting_voice_matches,
+            commands::meeting_voiceprint::meeting_voice_match_dismiss,
+            commands::meeting_diarization::meeting_diarization_model_status,
+            commands::meeting_diarization::meeting_diarization_model_download,
+            commands::meeting_diarization::meeting_diarization_model_cancel,
+            commands::meeting_voiceprint::meeting_voiceprint_status,
+            commands::meeting_voiceprint::meeting_voiceprint_download,
+            commands::meeting_voiceprint::change_meeting_voice_suggestions_setting,
             commands::meeting_speakers::meeting_segment_set_speaker,
             commands::meeting_speakers::meeting_speaker_notices,
             commands::meeting_speakers::meeting_speaker_suggestions,
@@ -2293,6 +2462,32 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::agent_bridge::agent_client_delete,
             commands::agent_bridge::agent_client_set_tool_mode,
             commands::agent_bridge::agent_bridge_status,
+            // Sprachgespraech Stufe 2: lesende Werkzeuge fuer den Orchestrator
+            commands::voice_tools::voice_tools_list,
+            commands::voice_tools::change_voice_call_read_transcripts_setting,
+            commands::voice_tools::change_voice_call_knowledge_setting,
+            commands::voice_tools::change_voice_notebook_sections_setting,
+            commands::voice_tools::voice_notebook_outline,
+            commands::voice_tools::voice_tool_call,
+            // Sprachgespraech Stufe 3: Lernen aus Korrekturen, Einrichtung durch Vorlesen
+            speech_learning::speech_learning_feedback,
+            speech_learning::speech_learning_list,
+            speech_learning::speech_learning_set_status,
+            speech_learning::speech_learning_delete,
+            speech_learning::speech_learning_clear,
+            speech_learning::speech_learning_setup_text,
+            speech_learning::speech_learning_setup_prepare,
+            speech_learning::speech_learning_setup_evaluate,
+            speech_learning::change_speech_learning_enabled_setting,
+            speech_learning::change_speech_learning_auto_apply_setting,
+            commands::sprachdienst::sprachdienst_status,
+            commands::sprachdienst::sprachdienst_aktiv_setzen,
+            commands::sprachdienst::sprachdienst_zugaenge,
+            commands::sprachdienst::sprachdienst_recht_setzen,
+            commands::sprachdienst::sprachdienst_widerrufen,
+            commands::sprachdienst::sprachdienst_entfernen,
+            commands::sprachdienst::sprachdienst_kopplungen,
+            commands::sprachdienst::sprachdienst_kopplung_entscheiden,
             commands::meetings::meetings_start_from_event,
             meeting_prompt::meeting_prompt_current,
             meeting_prompt::meeting_prompt_ready,
@@ -2335,12 +2530,51 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::tts::tts_cancel,
             commands::tts::tts_server_kill,
             commands::tts::tts_translate,
+            commands::tts::tts_translate_job,
             commands::tts::tts_cached_translation,
             commands::tts::tts_save_seed_voice,
             commands::tts::llm_ps,
             commands::tts::llm_unload,
             commands::tts::llm_warm,
             commands::pages::pages_list,
+            book_ai::book_ai_templates,
+            book_ai::book_ai_template_save,
+            book_ai::book_ai_template_delete,
+            book_ai::book_ai_template_export,
+            book_ai::book_ai_template_import,
+            book_ai::book_ai_summarize,
+            book_ai::book_ai_cancel,
+            book_ai::book_ai_estimate,
+            book_ai::book_ai_documents,
+            book_ai::book_ai_document_text,
+            book_ai::book_ai_document_update,
+            book_ai::book_ai_document_delete,
+            book_ai::book_ai_terms_extract,
+            book_ai::book_ai_terms,
+            book_ai::book_ai_term_save,
+            book_ai::book_ai_term_hits,
+            book_ai::book_ai_document_import,
+            book_ai::book_ai_document_export,
+            // lva#308
+            book_ai::talk::book_talk_ask,
+            book_ai::talk::book_talk_cancel,
+            book_ai::talk::book_talk_history,
+            book_ai::talk::book_talk_clear,
+            book_ai::talk::book_talk_command,
+            book_ai::talk::change_book_talk_enabled_setting,
+            book_ai::talk::change_book_talk_subscription_preview_setting,
+            book_ai::talk::book_talk_preview_status,
+            book_ai::talk::change_book_talk_cloud_consent_setting,
+            // lva#325: globaler Sprachassistent (Abrufindex)
+            app_context::service::app_context_warm,
+            app_context::service::app_context_status,
+            app_context::service::app_context_retrieve,
+            app_context::service::app_context_message,
+            app_context::service::app_context_verify,
+            app_context::service::change_voice_global_context_enabled_setting,
+            library_export::library_export_text,
+            library_export::library_ffmpeg_available,
+            library_export::library_export_audio,
             books::books_list,
             books::books_create,
             books::books_update,
@@ -2381,6 +2615,8 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::tts::tts_speak_text_at,
             commands::tts::tts_prewarm,
             commands::tts::tts_prewarm_cancel,
+            commands::tts::tts_prefetch_head,
+            commands::tts::screen_keep_awake,
             commands::tts::tts_server_status,
             commands::tts::tts_list_voices,
             commands::tts::tts_voice_demo,
@@ -2409,8 +2645,61 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::tts::tts_store_translation,
             commands::tts::tts_piper_voice_for_text,
             commands::tts::tts_tidy_text,
+            commands::tts::tts_text_assist,
+            commands::tts::tts_speech_text,
             commands::tts::tts_extract_document,
             commands::tts::tts_extract_url,
+            isbn::isbn_lookup,
+            library::library_list,
+            library::library_save,
+            library::library_delete,
+            library::library_trash,
+            library::library_restore,
+            library::library_trash_list,
+            library::library_sizes,
+            library::library_purge,
+            library::library_find_duplicate,
+            library::library_join_editions,
+            library::library_split_edition,
+            library::library_remove_edition,
+            library::library_restore_edition,
+            library::library_set_primary_edition,
+            library::library_set_reading,
+            library::library_set_alignment,
+            library::library_language_pairs,
+            library::library_metadata_search,
+            library::library_description,
+            library::library_cover_fetch,
+            library::library_cover_from_file,
+            library::library_cover_clear,
+            library::library_cover_candidates,
+            library::library_cover_from_audio,
+            library::library_cover_preview_clear,
+            library::library_audio_import,
+            library::library_audio_import_tracks,
+            library::library_merge_audio,
+            library::library_progress_load,
+            library::library_progress_put,
+            commands::library_layout::library_layout_status,
+            commands::library_layout::library_layout_migrate,
+            commands::library_layout::library_layout_rollback,
+            commands::library_layout::library_backup_list,
+            commands::library_layout::library_backup_restore,
+            commands::library_layout::library_backup_restore_best_effort,
+            commands::library_layout::library_backup_sync_check,
+            commands::library_layout::library_backup_export,
+            commands::library_layout::library_backup_delete,
+            commands::library_layout::library_book_files,
+            commands::library_layout::library_book_reveal,
+            commands::book_folder::library_book_folder_files,
+            commands::book_folder::library_book_note_create,
+            commands::book_folder::library_book_attachments_add,
+            commands::book_folder::library_book_file_open,
+            commands::book_folder::library_book_file_remove,
+            commands::book_folder::library_book_file_restore,
+            hoersync_live::audiosync_load,
+            hoersync_live::audiosync_window,
+            hoersync_live::audiosync_anchor,
             commands::tts::tts_voicechange_record_start,
             commands::tts::tts_voicechange_record_stop,
             commands::tts::tts_voicechange_file,
@@ -2466,6 +2755,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::tts_providers::tts_provider_acknowledge_license,
             commands::tts_providers::tts_provider_set_allow_remote,
             commands::tts_providers::tts_provider_set_visible_voices,
+            commands::tts_providers::tts_provider_set_voice_name,
             commands::tts_providers::tts_provider_voice_options,
             commands::tts_providers::tts_provider_speakers,
             commands::tts_providers::tts_provider_select,
@@ -2505,6 +2795,8 @@ fn specta_builder() -> Builder<tauri::Wry> {
             managers::meeting_detect::MeetingDetectEvent,
             // M4-P4c
             commands::meeting_chat::MeetingChatEvent,
+            // lva#308
+            book_ai::talk::BookTalkEvent,
             // M3-P3c
             commands::meeting_speakers::SpeakersChanged,
             // M5-P5b
@@ -2527,13 +2819,22 @@ pub fn export_bindings(path: &std::path::Path) -> Result<(), String> {
             Typescript::default().bigint(BigIntExportBehavior::Number),
             path,
         )
-        .map_err(|e| format!("Bindings-Export nach {} fehlgeschlagen: {e}", path.display()))
+        .map_err(|e| {
+            format!(
+                "Bindings-Export nach {} fehlgeschlagen: {e}",
+                path.display()
+            )
+        })
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run(cli_args: CliArgs) {
     // Detect portable mode before anything else
     portable::init();
+    // Offline-Paket: auf mehrere ZIPs verteilte Modelle (> 2 GiB) wieder zusammensetzen.
+    if let Some(dir) = portable::data_dir() {
+        portable_parts::assemble_all(dir);
+    }
 
     // Rebranding-Umzug der App-Daten (Settings, Verlauf, Modelle) — muss vor
     // dem ersten Store-Zugriff laufen und ist idempotent.
@@ -2560,6 +2861,7 @@ pub fn run(cli_args: CliArgs) {
     let headless_mode = cli_args.transcribe_file.is_some()
         || cli_args.list_devices
         || cli_args.list_models
+        || !cli_args.provision.is_empty() // portables Offline-Paket
         || cli_args.tts_test
         || cli_args.tts_providers // P3b
         || cli_args.tts_voices // P3b
@@ -2857,9 +3159,8 @@ pub fn run(cli_args: CliArgs) {
                     let app_handle = app.handle().clone();
                     let args = cli_args.clone();
                     std::thread::spawn(move || {
-                        let code = run_headless_guarded(|| {
-                            run_headless_workflow_run(&app_handle, &args)
-                        });
+                        let code =
+                            run_headless_guarded(|| run_headless_workflow_run(&app_handle, &args));
                         use std::io::Write;
                         let _ = std::io::stdout().flush();
                         let _ = std::io::stderr().flush();
@@ -2873,9 +3174,8 @@ pub fn run(cli_args: CliArgs) {
                     let app_handle = app.handle().clone();
                     let args = cli_args.clone();
                     std::thread::spawn(move || {
-                        let code = run_headless_guarded(|| {
-                            run_headless_audit_dump(&app_handle, &args)
-                        });
+                        let code =
+                            run_headless_guarded(|| run_headless_audit_dump(&app_handle, &args));
                         use std::io::Write;
                         let _ = std::io::stdout().flush();
                         let _ = std::io::stderr().flush();
@@ -2889,9 +3189,8 @@ pub fn run(cli_args: CliArgs) {
                     let app_handle = app.handle().clone();
                     let args = cli_args.clone();
                     std::thread::spawn(move || {
-                        let code = run_headless_guarded(|| {
-                            run_headless_agent_bridge(&app_handle, &args)
-                        });
+                        let code =
+                            run_headless_guarded(|| run_headless_agent_bridge(&app_handle, &args));
                         use std::io::Write;
                         let _ = std::io::stdout().flush();
                         let _ = std::io::stderr().flush();
@@ -2990,9 +3289,8 @@ pub fn run(cli_args: CliArgs) {
                     let app_handle = app.handle().clone();
                     let args = cli_args.clone();
                     std::thread::spawn(move || {
-                        let code = run_headless_guarded(|| {
-                            run_headless_eval_agent(&app_handle, &args)
-                        });
+                        let code =
+                            run_headless_guarded(|| run_headless_eval_agent(&app_handle, &args));
                         use std::io::Write;
                         let _ = std::io::stdout().flush();
                         let _ = std::io::stderr().flush();
@@ -3080,6 +3378,21 @@ pub fn run(cli_args: CliArgs) {
                         let code = run_headless_guarded(|| {
                             run_headless_followup_draft(&app_handle, &args, &id)
                         });
+                        use std::io::Write;
+                        let _ = std::io::stdout().flush();
+                        let _ = std::io::stderr().flush();
+                        std::process::exit(code);
+                    });
+                    return Ok(());
+                }
+
+                // Portables Offline-Paket: Modelle vorinstallieren und beenden.
+                if !cli_args.provision.is_empty() {
+                    let app_handle = app.handle().clone();
+                    let ids = cli_args.provision.clone();
+                    std::thread::spawn(move || {
+                        let code =
+                            run_headless_guarded(|| crate::provision::run(&app_handle, &ids));
                         use std::io::Write;
                         let _ = std::io::stdout().flush();
                         let _ = std::io::stderr().flush();
@@ -3489,7 +3802,10 @@ fn run_headless_audit_dump(app: &AppHandle, args: &CliArgs) -> i32 {
     if args.json {
         emit_headless_payload(&payload, args.out.as_deref());
     } else {
-        println!("{}", managers::integrations::dump::format_audit_table(&payload));
+        println!(
+            "{}",
+            managers::integrations::dump::format_audit_table(&payload)
+        );
         if let Some(path) = args.out.as_deref() {
             if let Err(e) = std::fs::write(
                 path,
@@ -3533,10 +3849,17 @@ fn run_headless_agent_bridge(app: &AppHandle, args: &CliArgs) -> i32 {
     } else if let Some(dir) = sandbox.as_deref() {
         // A8: die echten Handler gegen die Sandbox-Datenbank, mit der Attrappe des Hosts
         // (keine Warteschlange, kein Recorder, ein Testton statt der Sprach-Engine).
-        let pages = agent_bridge::tools::sandbox::SandboxHost::pages_dir_for(std::path::Path::new(dir));
-        let host = Arc::new(agent_bridge::tools::sandbox::SandboxHost::new(store.clone(), pages));
+        let pages =
+            agent_bridge::tools::sandbox::SandboxHost::pages_dir_for(std::path::Path::new(dir));
+        let host = Arc::new(agent_bridge::tools::sandbox::SandboxHost::new(
+            store.clone(),
+            pages,
+        ));
         host.start_workflow_worker(); // B8: Laeufe der Automationen werden fertig
-        handlers.push(Arc::new(agent_bridge::tools::AppTools::new(store.clone(), host)));
+        handlers.push(Arc::new(agent_bridge::tools::AppTools::new(
+            store.clone(),
+            host,
+        )));
     }
     agent_bridge::runtime::run_headless(store, handlers, args.seconds)
 }
@@ -3881,7 +4204,9 @@ fn run_headless_translate_meeting(app: &AppHandle, args: &CliArgs, id: &str) -> 
             }
         };
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        serde_json::to_string(&segments).unwrap_or_default().hash(&mut hasher);
+        serde_json::to_string(&segments)
+            .unwrap_or_default()
+            .hash(&mut hasher);
         (active, segments, hasher.finish())
     };
     let started = std::time::Instant::now();
@@ -3937,7 +4262,9 @@ fn run_headless_translate_meeting(app: &AppHandle, args: &CliArgs, id: &str) -> 
                     .map(|(_, s)| s)
                     .unwrap_or_default();
                 let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                serde_json::to_string(&after).unwrap_or_default().hash(&mut hasher);
+                serde_json::to_string(&after)
+                    .unwrap_or_default()
+                    .hash(&mut hasher);
                 let translated = variants::get_segments(&conn, &variant.id)
                     .map(|(_, s)| s)
                     .unwrap_or_default();
@@ -4060,17 +4387,18 @@ fn run_headless_followup_draft(app: &AppHandle, args: &CliArgs, id: &str) -> i32
             eprintln!("error: memory watchdog stopped the LLM server at {free_mb} MB free");
         });
     }
-    let (recipients, addressee) = match participant_recipients(&store, id, &settings.meeting_self_emails) {
-        Ok(r) if !r.names.is_empty() => {
-            let names = r.names.join(", ");
-            (r, names)
-        }
-        Ok(r) => (r, "die Teilnehmenden".to_string()),
-        Err(e) => {
-            eprintln!("error: {e}");
-            return 1;
-        }
-    };
+    let (recipients, addressee) =
+        match participant_recipients(&store, id, &settings.meeting_self_emails) {
+            Ok(r) if !r.names.is_empty() => {
+                let names = r.names.join(", ");
+                (r, names)
+            }
+            Ok(r) => (r, "die Teilnehmenden".to_string()),
+            Err(e) => {
+                eprintln!("error: {e}");
+                return 1;
+            }
+        };
     let result = tauri::async_runtime::block_on(draft(
         &settings,
         store.clone(),
@@ -4169,8 +4497,7 @@ fn run_headless_reindex_meetings(app: &AppHandle, args: &CliArgs) -> i32 {
             payload["mode"] = serde_json::json!("reindex_meetings");
             payload["seeded"] = serde_json::json!(seeded);
             payload["db"] = serde_json::json!(store.db_path().display().to_string());
-            payload["embed_server_running"] =
-                serde_json::json!(managers::llm::embedding_running());
+            payload["embed_server_running"] = serde_json::json!(managers::llm::embedding_running());
             emit_headless_payload(&payload, args.out.as_deref());
             if report.model_ready && report.vectors != report.chunks {
                 3
@@ -4211,7 +4538,10 @@ fn seed_meetings_from_fixtures(
         let fixture: MeetingFixture = match serde_json::from_str(&std::fs::read_to_string(&file)?) {
             Ok(f) => f,
             Err(_) => {
-                eprintln!("seed: {} ist keine Besprechungs-Fixture, uebersprungen", file.display());
+                eprintln!(
+                    "seed: {} ist keine Besprechungs-Fixture, uebersprungen",
+                    file.display()
+                );
                 continue;
             }
         };
@@ -4318,7 +4648,12 @@ fn run_headless_eval_chat(app: &AppHandle, args: &CliArgs, dir: &std::path::Path
 // keine Besprechungsdaten. Exit 0 Gate erfuellt, 3 verfehlt, 1 Fehler, 2 ohne --model.
 fn run_headless_eval_agent(app: &AppHandle, args: &CliArgs) -> i32 {
     crate::selftest::begin_headless_run();
-    let Some(model) = args.model.as_deref().map(str::trim).filter(|m| !m.is_empty()) else {
+    let Some(model) = args
+        .model
+        .as_deref()
+        .map(str::trim)
+        .filter(|m| !m.is_empty())
+    else {
         eprintln!("error: --eval-agent needs --model <id> (see --list-models)");
         return 2;
     };
@@ -4369,7 +4704,12 @@ fn run_headless_eval_agent(app: &AppHandle, args: &CliArgs) -> i32 {
 // Einstellungen, keine Besprechungsdaten. Exit 0 Ergebnis, 3 no_action, 1 Fehler, 2 ohne --model.
 fn run_headless_agent_extract(app: &AppHandle, args: &CliArgs, path: &std::path::Path) -> i32 {
     crate::selftest::begin_headless_run();
-    let Some(model) = args.model.as_deref().map(str::trim).filter(|m| !m.is_empty()) else {
+    let Some(model) = args
+        .model
+        .as_deref()
+        .map(str::trim)
+        .filter(|m| !m.is_empty())
+    else {
         eprintln!("error: --agent-extract needs --model <id> (see --list-models)");
         return 2;
     };
@@ -4405,7 +4745,12 @@ fn run_headless_agent_extract(app: &AppHandle, args: &CliArgs, path: &std::path:
     if args.json {
         emit_headless_payload(&payload, args.out.as_deref());
     } else {
-        println!("{}", payload["summary"].as_str().unwrap_or("agent-extract: kein Ergebnis"));
+        println!(
+            "{}",
+            payload["summary"]
+                .as_str()
+                .unwrap_or("agent-extract: kein Ergebnis")
+        );
         if let Some(path) = args.out.as_deref() {
             match std::fs::write(
                 path,
@@ -4518,7 +4863,10 @@ fn run_headless_eval_minutes(app: &AppHandle, args: &CliArgs, dir: &std::path::P
             eprintln!("error: memory watchdog stopped the LLM server at {free_mb} MB free");
         });
     }
-    let sandbox = match tempfile::Builder::new().prefix("lva-eval-minutes-").tempdir() {
+    let sandbox = match tempfile::Builder::new()
+        .prefix("lva-eval-minutes-")
+        .tempdir()
+    {
         Ok(dir) => dir,
         Err(e) => {
             eprintln!("error: no sandbox directory: {e}");
@@ -4595,7 +4943,10 @@ fn run_headless_eval_diarization(app: &AppHandle, args: &CliArgs, dir: &std::pat
         }
         Err(e) => {
             eprintln!("error: {e}");
-            let code = if matches!(e, DiarizeError::ModelMissing(_) | DiarizeError::WrongModel(_)) {
+            let code = if matches!(
+                e,
+                DiarizeError::ModelMissing(_) | DiarizeError::WrongModel(_)
+            ) {
                 2
             } else {
                 1

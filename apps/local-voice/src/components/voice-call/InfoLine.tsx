@@ -54,8 +54,15 @@ function useCostTexts(cost: CallCost) {
   }
 }
 
+interface InfoLineProps {
+  /** Ganz links, vor dem i-Symbol (Verlauf ausklappen, wenn die Spalte eingeklappt ist). */
+  leading?: React.ReactNode;
+  /** Ganz rechts (Kontextmenü „Gesprächsoptionen“). */
+  trailing?: React.ReactNode;
+}
+
 /** Genau eine Zeile: Status, Modell, erster Ton, Token, Kosten; Details hinter dem i. */
-export const InfoLine: React.FC = () => {
+export const InfoLine: React.FC<InfoLineProps> = ({ leading, trailing }) => {
   const { t, i18n } = useTranslation();
   const state = useVoiceCallStore((s) => s.state);
   const ready = useVoiceCallStore((s) => s.ready);
@@ -80,12 +87,13 @@ export const InfoLine: React.FC = () => {
   const model = ready?.llm || llm.label;
 
   return (
-    <div className="flex items-center gap-2.5 h-9 px-4 border-b border-mid-gray/20 text-xs text-text/70 whitespace-nowrap overflow-hidden">
+    <div className="flex items-center gap-2.5 max-sm:gap-1 h-9 max-sm:h-[44px] px-2 sm:px-4 border-b border-mid-gray/20 text-xs text-text/85 whitespace-nowrap overflow-hidden">
+      {leading}
       <Popover positioning="below-start" withArrow={false}>
         <PopoverTrigger disableButtonEnhancement>
           <button
             type="button"
-            className="grid place-items-center w-7 h-7 rounded cursor-pointer hover:bg-mid-gray/15 text-text/70 hover:text-text shrink-0"
+            className="grid place-items-center w-7 h-7 max-sm:w-[44px] max-sm:h-[44px] rounded cursor-pointer hover:bg-mid-gray/15 text-text/85 hover:text-text shrink-0"
             aria-label={t("voiceCall.info.open")}
           >
             <Info className="w-4 h-4" aria-hidden="true" />
@@ -131,7 +139,7 @@ export const InfoLine: React.FC = () => {
                 ].map(([k, v]) => (
                   <tr key={k} className="border-t border-mid-gray/20">
                     <td className="py-1 pe-3">{k}</td>
-                    <td className="py-1 text-end text-text/70">{v}</td>
+                    <td className="py-1 text-end text-text/85">{v}</td>
                   </tr>
                 ))}
               </tbody>
@@ -154,7 +162,9 @@ export const InfoLine: React.FC = () => {
           <span className="w-px h-3.5 bg-mid-gray/30 shrink-0" />
           <span className="truncate min-w-16" title={t("voiceCall.info.model")}>
             {model}
-            {ready?.llm_local ? ` · ${t("voiceCall.local")}` : ""}
+            {ready?.llm_local && !usage.anyCloud
+              ? ` · ${t("voiceCall.local")}`
+              : ""}
           </span>
         </>
       )}
@@ -178,9 +188,9 @@ export const InfoLine: React.FC = () => {
       )}
       {total > 0 && (
         <>
-          <span className="w-px h-3.5 bg-mid-gray/30 shrink-0" />
+          <span className="w-px h-3.5 bg-mid-gray/30 shrink-0 max-sm:hidden" />
           <span
-            className="shrink-0 tabular-nums"
+            className="shrink-0 tabular-nums max-sm:hidden"
             title={t("voiceCall.info.tokensHint", {
               input: num(usage.promptTokens),
               output: num(usage.completionTokens),
@@ -192,7 +202,7 @@ export const InfoLine: React.FC = () => {
       )}
       {costText.chip && (
         <span
-          className={`shrink-0 inline-flex items-center h-5 px-1.5 rounded-full border text-[11px] ${
+          className={`shrink-0 inline-flex items-center h-5 px-1.5 rounded-full border text-[11px] max-sm:hidden ${
             cost.kind === "usd"
               ? "bg-logo-primary/15 border-transparent text-logo-primary"
               : "bg-mid-gray/10 border-mid-gray/25"
@@ -201,6 +211,8 @@ export const InfoLine: React.FC = () => {
           {costText.chip}
         </span>
       )}
+      <span className="flex-1 min-w-0" />
+      {trailing}
     </div>
   );
 };

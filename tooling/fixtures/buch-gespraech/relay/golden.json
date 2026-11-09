@@ -1,0 +1,177 @@
+{
+  "_doc": "Gemeinsame Golden-Datei fuer das Abo-Relay (Spec 11.7 R2/R3, lva#320). MAC = hex(HMAC-SHA-256(key, canonical als UTF-8)). Zeiten: Unix-Sekunden (models list.issued_at: Sekunden). Zeichenketten in canonical: nur \\\" \\\\ \\n \\r \\t mit Kuerzel, sonst Zeichen unter 0x20 als \\u00xx, Rest roh UTF-8. Erzeugt mit gen_golden.py (unabhaengig von Rust und Swift).",
+  "key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "key_b64url": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+  "key_id": "5c9175d674991068",
+  "request": {
+    "request": {
+      "v": 1,
+      "request_id": "0123456789abcdef0123456789abcdef",
+      "device_id": "iphone-0123456789abcdef0123456789ab",
+      "key_id": "5c9175d674991068",
+      "function": "book_talk",
+      "model_id": "sonnet",
+      "system": "Antworte kurz und nur aus den Auszügen.",
+      "prompt": "Frage: Warum gibt es \"zwei Väter\"?\nAuszug [Q1]: Tab\there, Rückstrich \\ und Zeilenende\r\n",
+      "max_tokens": 400,
+      "created_at": 1793900000,
+      "expires_at": 1793900090,
+      "mac": "615d01a115cb4d320cb1a224da11557edd8c9e2bc97d642dea11ffcdf9bef6a2"
+    },
+    "canonical": "{\"created_at\":1793900000,\"device_id\":\"iphone-0123456789abcdef0123456789ab\",\"expires_at\":1793900090,\"function\":\"book_talk\",\"key_id\":\"5c9175d674991068\",\"max_tokens\":400,\"model_id\":\"sonnet\",\"prompt_sha256\":\"067570b9b789d3efc52cf5c1a19f4e6eeaf7a403f59492bec6676e492c20755f\",\"request_id\":\"0123456789abcdef0123456789abcdef\",\"system_sha256\":\"a8e9d35b70f6dc645ff047fd645b7c40459dbe199315155ea440b5f4c9b8fbc6\",\"v\":1}",
+    "mac": "615d01a115cb4d320cb1a224da11557edd8c9e2bc97d642dea11ffcdf9bef6a2",
+    "system_sha256": "a8e9d35b70f6dc645ff047fd645b7c40459dbe199315155ea440b5f4c9b8fbc6",
+    "prompt_sha256": "067570b9b789d3efc52cf5c1a19f4e6eeaf7a403f59492bec6676e492c20755f"
+  },
+  "request_special": {
+    "request": {
+      "v": 1,
+      "request_id": "fedcba9876543210fedcba9876543210",
+      "device_id": "iphone-0123456789abcdef0123456789ab",
+      "key_id": "5c9175d674991068",
+      "function": "book_talk",
+      "model_id": "mod\b\f\u0001-ü😀 \"/",
+      "system": "Antworte kurz und nur aus den Auszügen.",
+      "prompt": "Frage: Warum gibt es \"zwei Väter\"?\nAuszug [Q1]: Tab\there, Rückstrich \\ und Zeilenende\r\n",
+      "max_tokens": 400,
+      "created_at": 1793900000,
+      "expires_at": 1793900090,
+      "mac": "0650c01ffbfc4a2eb2f082154faf5043ad1b171343256058cd6eb07a2b8dd110"
+    },
+    "canonical": "{\"created_at\":1793900000,\"device_id\":\"iphone-0123456789abcdef0123456789ab\",\"expires_at\":1793900090,\"function\":\"book_talk\",\"key_id\":\"5c9175d674991068\",\"max_tokens\":400,\"model_id\":\"mod\\u0008\\u000c\\u0001-ü😀 \\\"/\",\"prompt_sha256\":\"067570b9b789d3efc52cf5c1a19f4e6eeaf7a403f59492bec6676e492c20755f\",\"request_id\":\"fedcba9876543210fedcba9876543210\",\"system_sha256\":\"a8e9d35b70f6dc645ff047fd645b7c40459dbe199315155ea440b5f4c9b8fbc6\",\"v\":1}",
+    "mac": "0650c01ffbfc4a2eb2f082154faf5043ad1b171343256058cd6eb07a2b8dd110",
+    "system_sha256": "a8e9d35b70f6dc645ff047fd645b7c40459dbe199315155ea440b5f4c9b8fbc6",
+    "prompt_sha256": "067570b9b789d3efc52cf5c1a19f4e6eeaf7a403f59492bec6676e492c20755f"
+  },
+  "responses": [
+    {
+      "response": {
+        "v": 1,
+        "request_id": "0123456789abcdef0123456789abcdef",
+        "device_id": "iphone-0123456789abcdef0123456789ab",
+        "seq": 1,
+        "model_tuple": "pending",
+        "text": "Die Väter ",
+        "done": false,
+        "mac": "f1e7d0ddd1f74e392d7d97febcc51ee97dc72e3ba4ac57730c362261ef40457f"
+      },
+      "canonical": "{\"device_id\":\"iphone-0123456789abcdef0123456789ab\",\"done\":false,\"error\":\"\",\"model_tuple\":\"pending\",\"request_id\":\"0123456789abcdef0123456789abcdef\",\"seq\":1,\"text_sha256\":\"31f788b7618948a3f435f3f67a899d5e4ba51cece6164e17481969a2ff927b67\",\"v\":1}",
+      "mac": "f1e7d0ddd1f74e392d7d97febcc51ee97dc72e3ba4ac57730c362261ef40457f"
+    },
+    {
+      "response": {
+        "v": 1,
+        "request_id": "0123456789abcdef0123456789abcdef",
+        "device_id": "iphone-0123456789abcdef0123456789ab",
+        "seq": 2,
+        "model_tuple": "claude-sonnet-5-5",
+        "text": "Die Väter sind der leibliche und der Adoptivvater. [Q1]",
+        "done": true,
+        "mac": "9145926f75c3b204fbcbf37fb9ce10741d3113837c7c2d40e42b32ad03511943"
+      },
+      "canonical": "{\"device_id\":\"iphone-0123456789abcdef0123456789ab\",\"done\":true,\"error\":\"\",\"model_tuple\":\"claude-sonnet-5-5\",\"request_id\":\"0123456789abcdef0123456789abcdef\",\"seq\":2,\"text_sha256\":\"9f78e5790c0f26a1df1e13748cfc548867972db4873b3896bc2f6caec4831c23\",\"v\":1}",
+      "mac": "9145926f75c3b204fbcbf37fb9ce10741d3113837c7c2d40e42b32ad03511943"
+    },
+    {
+      "response": {
+        "v": 1,
+        "request_id": "0123456789abcdef0123456789abcdef",
+        "device_id": "iphone-0123456789abcdef0123456789ab",
+        "seq": 1,
+        "model_tuple": "unknown",
+        "text": "",
+        "done": true,
+        "error": "timeout",
+        "mac": "2c1d959905a2c280e45be11182ace70d6c431cbf5a642d053b0bc8a9b47fbe71"
+      },
+      "canonical": "{\"device_id\":\"iphone-0123456789abcdef0123456789ab\",\"done\":true,\"error\":\"timeout\",\"model_tuple\":\"unknown\",\"request_id\":\"0123456789abcdef0123456789abcdef\",\"seq\":1,\"text_sha256\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"v\":1}",
+      "mac": "2c1d959905a2c280e45be11182ace70d6c431cbf5a642d053b0bc8a9b47fbe71"
+    },
+    {
+      "response": {
+        "v": 1,
+        "request_id": "0123456789abcdef0123456789abcdef",
+        "device_id": "iphone-0123456789abcdef0123456789ab",
+        "seq": 1,
+        "model_tuple": "pending",
+        "text": "",
+        "done": false,
+        "mac": "0a1d8b85c9fa945460e1c7100ed4a1e6c11044c7e7458f9c8a68e5d134d774ab"
+      },
+      "canonical": "{\"device_id\":\"iphone-0123456789abcdef0123456789ab\",\"done\":false,\"error\":\"\",\"model_tuple\":\"pending\",\"request_id\":\"0123456789abcdef0123456789abcdef\",\"seq\":1,\"text_sha256\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"v\":1}",
+      "mac": "0a1d8b85c9fa945460e1c7100ed4a1e6c11044c7e7458f9c8a68e5d134d774ab"
+    },
+    {
+      "response": {
+        "v": 1,
+        "request_id": "0123456789abcdef0123456789abcdef",
+        "device_id": "iphone-0123456789abcdef0123456789ab",
+        "seq": 1,
+        "model_tuple": "unknown",
+        "text": "",
+        "done": true,
+        "error": "clock",
+        "mac": "4f6af0001e650069ba7b56f7fa0f0c8f653b8b08c94eb9e8cd745d0cd7ddd375"
+      },
+      "canonical": "{\"device_id\":\"iphone-0123456789abcdef0123456789ab\",\"done\":true,\"error\":\"clock\",\"model_tuple\":\"unknown\",\"request_id\":\"0123456789abcdef0123456789abcdef\",\"seq\":1,\"text_sha256\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"v\":1}",
+      "mac": "4f6af0001e650069ba7b56f7fa0f0c8f653b8b08c94eb9e8cd745d0cd7ddd375"
+    },
+    {
+      "response": {
+        "v": 1,
+        "request_id": "0123456789abcdef0123456789abcdef",
+        "device_id": "iphone-0123456789abcdef0123456789ab",
+        "seq": 2,
+        "model_tuple": "mod\b\f\u0001-ü😀 \"/",
+        "text": "Text mit Zeilenumbruch\nund Tab\t",
+        "done": true,
+        "error": "err\b\f\u0001-ü😀 ",
+        "mac": "a3839248c217d40acb89d08ee8582356a9dd86a25e2ee44f3d17bed3dab7a197"
+      },
+      "canonical": "{\"device_id\":\"iphone-0123456789abcdef0123456789ab\",\"done\":true,\"error\":\"err\\u0008\\u000c\\u0001-ü😀 \",\"model_tuple\":\"mod\\u0008\\u000c\\u0001-ü😀 \\\"/\",\"request_id\":\"0123456789abcdef0123456789abcdef\",\"seq\":2,\"text_sha256\":\"5e6858da50e4fbf61011b99df56873a7c66554f23e482cce60de10f743b5d688\",\"v\":1}",
+      "mac": "a3839248c217d40acb89d08ee8582356a9dd86a25e2ee44f3d17bed3dab7a197"
+    }
+  ],
+  "model_list": {
+    "list": {
+      "v": 1,
+      "desktop_device_id": "desk0123456789abcdef0123456789abcd",
+      "device_id": "iphone-0123456789abcdef0123456789ab",
+      "issued_at": 1793900000,
+      "models": [
+        {
+          "id": "gpt-6.1-sol",
+          "label": "Codex \"Sol\"\t😀",
+          "provider": "codex_cli",
+          "context_tokens": 128000
+        },
+        {
+          "id": "sonnet",
+          "label": "Claude Sonnet 5.5 (Büro)",
+          "provider": "claude_cli",
+          "context_tokens": 200000
+        }
+      ],
+      "mac": "371f032f90bafd8e217012c495bc5a998070355b77775b15625c3b74e1e766a9"
+    },
+    "canonical": "{\"desktop_device_id\":\"desk0123456789abcdef0123456789abcd\",\"device_id\":\"iphone-0123456789abcdef0123456789ab\",\"issued_at\":1793900000,\"models\":[{\"context_tokens\":128000,\"id\":\"gpt-6.1-sol\",\"label\":\"Codex \\\"Sol\\\"\\t😀\",\"provider\":\"codex_cli\"},{\"context_tokens\":200000,\"id\":\"sonnet\",\"label\":\"Claude Sonnet 5.5 (Büro)\",\"provider\":\"claude_cli\"}],\"v\":1}",
+    "mac": "371f032f90bafd8e217012c495bc5a998070355b77775b15625c3b74e1e766a9"
+  },
+  "enrollment": {
+    "json": {
+      "v": 1,
+      "key_id": "5c9175d674991068",
+      "k": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+      "desktop_device_id": "desk0123456789abcdef0123456789abcd",
+      "desktop_name": "Büro-PC",
+      "device_id": "iphone-0123456789abcdef0123456789ab",
+      "model_ids": [
+        "sonnet",
+        "gpt-6.1-sol"
+      ],
+      "expires_at": 1793900600,
+      "grant_expires_at": 1801676000
+    },
+    "code": "lvrelay1:{\"desktop_device_id\":\"desk0123456789abcdef0123456789abcd\",\"desktop_name\":\"Büro-PC\",\"device_id\":\"iphone-0123456789abcdef0123456789ab\",\"expires_at\":1793900600,\"grant_expires_at\":1801676000,\"k\":\"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8\",\"key_id\":\"5c9175d674991068\",\"model_ids\":[\"sonnet\",\"gpt-6.1-sol\"],\"v\":1}"
+  }
+}

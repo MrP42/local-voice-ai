@@ -1,10 +1,24 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+/// Einstellungen aus jedem Bereich öffnen (das Blatt hängt an der Tab-Ansicht).
+@MainActor
+final class AppSettings: ObservableObject {
+    static let shared = AppSettings()
+    @Published var shown = false
+}
+
+struct SettingsButton: View {
+    var body: some View {
+        Button("Einstellungen", systemImage: "slider.horizontal.3") { AppSettings.shared.shown = true }
+    }
+}
+
 struct ModelPanel: View {
     @ObservedObject var model: VoiceModel
     @ObservedObject private var downloads = ModelDownloads.shared
     @State private var importing = false
+    @State private var accountShown = false
     @Environment(\.dismiss) private var dismiss
     var body: some View {
         NavigationStack {
@@ -14,7 +28,9 @@ struct ModelPanel: View {
                         Label("Stimme & Hörprobe", systemImage: "speaker.wave.2")
                     }.accessibilityIdentifier("voiceSettings")
                 }
+                Section { Button { accountShown = true } label: { Label("Konto & Sync", systemImage: "icloud") } }
                 Section("Mikrofon & Gespräch") { MicrophoneSettings(model: model) }
+                BookTalkSettings()
                 Section {
                     Text(model.providerDescription).font(.caption).foregroundStyle(VoicePalette.secondaryText)
                     ForEach(model.installedModels) { item in modelRow(item) }
@@ -56,6 +72,7 @@ struct ModelPanel: View {
             .scrollContentBackground(.hidden)
             .background(VoicePalette.background)
             .navigationTitle("Einstellungen")
+            .sheet(isPresented: $accountShown) { LibrarySyncSheet() }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Fertig") { dismiss() } } }
             .task { await model.refreshModels() }

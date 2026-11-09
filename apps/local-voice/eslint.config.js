@@ -3,6 +3,11 @@ import tsParser from "@typescript-eslint/parser";
 
 export default [
   {
+    // Vendorte Pakete (scripts/vendor-wai-*.py) werden nur im Quell-Repo
+    // geändert und dort geprüft; Befunde gehen als Issue an wai-sdk.
+    ignores: ["src/vendor/**"],
+  },
+  {
     files: ["src/**/*.{ts,tsx}"],
     languageOptions: {
       parser: tsParser,

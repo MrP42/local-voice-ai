@@ -531,6 +531,8 @@ impl ExportBundle {
             // Ohne: Kanalname ("Ich", "Gegenseite", Import ohne Praefix); "Ich"
             // traegt, wenn gesetzt, "Mein Name" (U8).
             None if segment.channel == 0 => self.speakers.label(segment),
+            // Ganzer Kanal mit Namen ("Aufnahme" umbenannt).
+            None if self.speakers.has_channel_name(segment.channel) => self.speakers.label(segment),
             None => speaker_label(segment, &BTreeMap::new()),
         }
     }
@@ -577,7 +579,14 @@ pub fn build_bundle(store: &MeetingStore, meeting_id: &str) -> Result<ExportBund
         .get_notes(meeting_id)
         .map_err(|e| e.to_string())?
         .blocks;
-    let documents = store.get_documents(meeting_id).map_err(|e| e.to_string())?;
+    // #242: alte Bezeichnungen in Protokoll, KI-Notizen und Aufgaben -> Namen.
+    let names = super::relabel::Relabeler::load(store, meeting_id);
+    let documents: Vec<_> = store
+        .get_documents(meeting_id)
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .map(|d| names.document(d))
+        .collect();
     let latest = |kind: &str| {
         documents
             .iter()
@@ -588,9 +597,11 @@ pub fn build_bundle(store: &MeetingStore, meeting_id: &str) -> Result<ExportBund
     let minutes_md = latest("minutes")
         .map(|d| d.body.clone())
         .filter(|b| !b.trim().is_empty());
-    let action_items = store
-        .list_action_items(meeting_id)
-        .map_err(|e| e.to_string())?;
+    let action_items = names.action_items(
+        store
+            .list_action_items(meeting_id)
+            .map_err(|e| e.to_string())?,
+    );
     let stamp = meeting.started_at.unwrap_or(meeting.created_at);
     let date_label = chrono::DateTime::from_timestamp(stamp, 0)
         .map(|d| {
@@ -2084,7 +2095,9 @@ pub(crate) mod tests {
     fn ein_leerer_eintrag_laesst_sich_in_jedem_format_exportieren() {
         let dir = tempfile::tempdir().unwrap();
         let store = MeetingStore::open_at(&dir.path().join("meetings.db")).unwrap();
-        let empty = store.create_empty_meeting("Neue Besprechung", None).unwrap();
+        let empty = store
+            .create_empty_meeting("Neue Besprechung", None)
+            .unwrap();
         store
             .save_notes(
                 &empty.id,
@@ -2101,7 +2114,10 @@ pub(crate) mod tests {
         let b = build_bundle(&store, &empty.id).unwrap();
         assert!(b.segments.is_empty() && b.minutes_md.is_none() && b.enhanced.is_none());
         let md = bundle_to_markdown(&b, &ExportParts::all());
-        assert!(md.contains("Nur eine Notiz") && !md.contains("## Transkript"), "{md}");
+        assert!(
+            md.contains("Nur eine Notiz") && !md.contains("## Transkript"),
+            "{md}"
+        );
         for (name, format) in [
             ("e.md", ExportFormat::Markdown),
             ("e.txt", ExportFormat::PlainText),

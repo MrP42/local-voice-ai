@@ -295,11 +295,19 @@ pub async fn meeting_chat_thread(
     store: State<'_, Arc<MeetingStore>>,
     thread_id: String,
 ) -> Result<Vec<ChatMessage>, String> {
-    let (_, rows) = store
+    let (thread, rows) = store
         .thread_get(&thread_id)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| CODE_THREAD_NOT_FOUND.to_string())?;
-    Ok(rows.iter().map(ChatMessage::from_row).collect())
+    let mut messages: Vec<ChatMessage> = rows.iter().map(ChatMessage::from_row).collect();
+    // #242: Antworten von vor dem Benennen zeigen die aktuellen Namen.
+    if let Some(meeting_id) = thread.meeting_id.as_deref() {
+        let names = crate::managers::meetings::relabel::Relabeler::load(&store, meeting_id);
+        for message in messages.iter_mut().filter(|m| m.role == "assistant") {
+            message.text = names.apply(&message.text);
+        }
+    }
+    Ok(messages)
 }
 
 /// Loescht einen Verlauf (Nachrichten hart).

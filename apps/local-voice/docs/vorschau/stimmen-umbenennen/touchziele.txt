@@ -1,0 +1,10 @@
+Touchziele der Stifte (boundingBox, Breite x Hoehe in CSS-px).
+Unter 768 px (Touch) gilt >= 44 px; ab 768 px (Maus) kompakter wie der Knopf Anbieter oeffnen daneben.
+hell 1440px Karte  Stift voice-rename-phonon:nele: 30x30
+hell 1440px Liste  Stift tts-provider-rename-nele: 26x26
+hell 390px Karte  Stift voice-rename-phonon:nele: 44x44
+hell 390px Liste  Stift tts-provider-rename-nele: 44x44
+dunkel 1440px Karte  Stift voice-rename-phonon:nele: 30x30
+dunkel 1440px Liste  Stift tts-provider-rename-nele: 26x26
+dunkel 390px Karte  Stift voice-rename-phonon:nele: 44x44
+dunkel 390px Liste  Stift tts-provider-rename-nele: 44x44

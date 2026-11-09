@@ -64,7 +64,13 @@ pub fn seal(key: &[u8; KEY_LEN], aad: &[u8], plaintext: &[u8]) -> Result<String,
     rand::thread_rng().fill_bytes(&mut nonce_bytes);
     let nonce = XNonce::from_slice(&nonce_bytes);
     let ct = cipher
-        .encrypt(nonce, Payload { msg: plaintext, aad })
+        .encrypt(
+            nonce,
+            Payload {
+                msg: plaintext,
+                aad,
+            },
+        )
         .map_err(|_| "Verschlüsselung fehlgeschlagen".to_string())?;
     let mut out = Vec::with_capacity(NONCE_LEN + ct.len());
     out.extend_from_slice(&nonce_bytes);
@@ -83,7 +89,10 @@ pub fn open(key: &[u8; KEY_LEN], aad: &[u8], sealed_b64: &str) -> Result<Vec<u8>
     let cipher = XChaCha20Poly1305::new(key.into());
     cipher
         .decrypt(XNonce::from_slice(nonce_bytes), Payload { msg: ct, aad })
-        .map_err(|_| "Entschlüsselung fehlgeschlagen (falscher Schlüssel oder manipuliertes Objekt)".to_string())
+        .map_err(|_| {
+            "Entschlüsselung fehlgeschlagen (falscher Schlüssel oder manipuliertes Objekt)"
+                .to_string()
+        })
 }
 
 #[cfg(test)]
@@ -113,13 +122,25 @@ mod tests {
     fn falscher_ort_oder_schluessel_oeffnet_nicht() {
         let key = test_key();
         let sealed = seal(&key, &aad(7, "page", "page_1"), b"x").unwrap();
-        assert!(open(&key, &aad(7, "page", "page_2"), &sealed).is_err(), "anderes Objekt");
-        assert!(open(&key, &aad(8, "page", "page_1"), &sealed).is_err(), "anderer Benutzer");
+        assert!(
+            open(&key, &aad(7, "page", "page_2"), &sealed).is_err(),
+            "anderes Objekt"
+        );
+        assert!(
+            open(&key, &aad(8, "page", "page_1"), &sealed).is_err(),
+            "anderer Benutzer"
+        );
         let mut other = test_key();
         other[0] ^= 1;
-        assert!(open(&other, &aad(7, "page", "page_1"), &sealed).is_err(), "anderer Schlüssel");
+        assert!(
+            open(&other, &aad(7, "page", "page_1"), &sealed).is_err(),
+            "anderer Schlüssel"
+        );
         assert!(open(&key, &aad(7, "page", "page_1"), "nicht base64!").is_err());
-        assert!(open(&key, &aad(7, "page", "page_1"), "AAAA").is_err(), "zu kurz");
+        assert!(
+            open(&key, &aad(7, "page", "page_1"), "AAAA").is_err(),
+            "zu kurz"
+        );
     }
 
     #[test]

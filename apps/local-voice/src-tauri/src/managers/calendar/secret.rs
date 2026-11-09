@@ -1,5 +1,6 @@
-//! Geheimnisse der Kalenderquellen (ICS-Adresse, spaeter Graph-Token) unter
-//! Windows mit DPAPI verschluesselt in `<appdata>/secrets/<id>.bin`
+//! Geheimnisse der Kalenderquellen (ICS-Adresse, Graph-Token) und weiterer Zugaenge,
+//! unter Windows mit DPAPI, unter macOS mit einem Schluessel im Anmelde-Schluesselbund
+//! verschluesselt in `<appdata>/secrets/<id>.bin`
 //! (M5, `entwurf/m5-m6-kalender-export.md` §3 „Geheimnisse“).
 //!
 //! - Nicht in `settings_store.json`, nicht in `meetings.db`, nicht im Geraete-Sync.
@@ -169,11 +170,7 @@ pub(crate) fn get_in(dir: &Path, name: &str) -> Result<Option<Zeroizing<Vec<u8>>
     get_raw(dir, name, &entropy_for(name))
 }
 
-fn get_raw(
-    dir: &Path,
-    name: &str,
-    entropy: &[u8],
-) -> Result<Option<Zeroizing<Vec<u8>>>, String> {
+fn get_raw(dir: &Path, name: &str, entropy: &[u8]) -> Result<Option<Zeroizing<Vec<u8>>>, String> {
     let path = secret_path(dir, name)?;
     let bytes = match std::fs::read(&path) {
         Ok(b) => b,
@@ -314,10 +311,7 @@ pub(crate) fn put_ref_in(dir: &Path, r: &SecretRef, data: &[u8]) -> Result<(), S
     put_raw(dir, &name, &entropy_for_ns(r.ns, &name), data)
 }
 
-pub(crate) fn get_ref_in(
-    dir: &Path,
-    r: &SecretRef,
-) -> Result<Option<Zeroizing<Vec<u8>>>, String> {
+pub(crate) fn get_ref_in(dir: &Path, r: &SecretRef) -> Result<Option<Zeroizing<Vec<u8>>>, String> {
     let name = r.name()?;
     get_raw(dir, &name, &entropy_for_ns(r.ns, &name))
 }
@@ -476,7 +470,11 @@ mod sealed {
         Ok(out)
     }
 
-    pub fn open(key: &[u8; KEY_LEN], blob: &[u8], aad: &[u8]) -> Result<Zeroizing<Vec<u8>>, String> {
+    pub fn open(
+        key: &[u8; KEY_LEN],
+        blob: &[u8],
+        aad: &[u8],
+    ) -> Result<Zeroizing<Vec<u8>>, String> {
         const BROKEN: &str =
             "Das Geheimnis lässt sich nicht entschlüsseln (anderer Benutzer oder beschädigt): Zugang neu eingeben.";
         if blob.len() < MAGIC.len() + NONCE_LEN + 16 || &blob[..MAGIC.len()] != MAGIC {
@@ -504,6 +502,7 @@ mod sealed {
 #[cfg(target_os = "macos")]
 mod dpapi {
     use super::sealed::{self, KEY_LEN};
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Mutex;
     use zeroize::Zeroizing;
 
@@ -514,7 +513,17 @@ mod dpapi {
     /// `errSecDuplicateItem`
     const DUPLICATE: i32 = -25299;
 
+    /// `userCanceledErr` (Abfrage abgebrochen bzw. „Nicht erlauben“)
+    const CANCELED: i32 = -128;
+    /// `errSecAuthFailed` (falsches Passwort)
+    const AUTH_FAILED: i32 = -25293;
+    const DENIED_MSG: &str = "Der Zugriff auf den Schlüsselbund wurde abgelehnt. Die gespeicherten Zugänge bleiben erhalten; macOS fragt beim nächsten App-Start oder beim Speichern eines Zugangs erneut.";
+
     static KEY: Mutex<Option<Zeroizing<[u8; KEY_LEN]>>> = Mutex::new(None);
+    /// Einmal abgelehnt: bis zum nächsten ausdrücklichen Speichern nicht erneut fragen, sonst
+    /// erzeugt jede Statusabfrage und jeder Sync einen neuen Passwortdialog (ohne Team-ID fragt
+    /// macOS nach jedem Update, lva#429).
+    static DENIED: AtomicBool = AtomicBool::new(false);
 
     fn as_key(bytes: &[u8]) -> Result<Zeroizing<[u8; KEY_LEN]>, String> {
         let arr: [u8; KEY_LEN] = bytes
@@ -530,6 +539,10 @@ mod dpapi {
                 as_key(&v).map(Some)
             }
             Err(e) if e.code() == NOT_FOUND => Ok(None),
+            Err(e) if e.code() == CANCELED || e.code() == AUTH_FAILED => {
+                DENIED.store(true, Ordering::SeqCst);
+                Err(DENIED_MSG.to_string())
+            }
             Err(e) => Err(format!(
                 "Der Schlüsselbund verweigert den Zugriff auf den Tresor (Zugriff in der Abfrage erlauben, Code {}).",
                 e.code()
@@ -550,6 +563,12 @@ mod dpapi {
             *slot = Some(k.clone());
             return Ok(Some(k));
         }
+        // Speichern ist eine ausdrückliche Handlung: dann darf macOS wieder fragen.
+        if create {
+            DENIED.store(false, Ordering::SeqCst);
+        } else if DENIED.load(Ordering::SeqCst) {
+            return Err(DENIED_MSG.to_string());
+        }
         if let Some(k) = read()? {
             *slot = Some(k.clone());
             return Ok(Some(k));
@@ -560,14 +579,14 @@ mod dpapi {
         let fresh = sealed::new_key();
         // Nur ANLEGEN, nie ersetzen: ein überschriebener Schlüssel machte alle abgelegten
         // Geheimnisse unlesbar. `set_generic_password` würde aktualisieren.
-        let added = security_framework::os::macos::keychain::SecKeychain::default().and_then(|kc| {
-            kc.add_generic_password(SERVICE, ACCOUNT, fresh.as_ref())
-        });
+        let added = security_framework::os::macos::keychain::SecKeychain::default()
+            .and_then(|kc| kc.add_generic_password(SERVICE, ACCOUNT, fresh.as_ref()));
         match added {
             Ok(()) => {}
             // Ein zweiter Prozess war schneller: dessen Schlüssel gilt.
             Err(e) if e.code() == DUPLICATE => {
-                let k = read()?.ok_or_else(|| "Der Tresor-Schlüssel ist nicht lesbar.".to_string())?;
+                let k =
+                    read()?.ok_or_else(|| "Der Tresor-Schlüssel ist nicht lesbar.".to_string())?;
                 *slot = Some(k.clone());
                 return Ok(Some(k));
             }
@@ -622,16 +641,30 @@ mod tests {
         let key = super::sealed::new_key();
         let other = super::sealed::new_key();
         let blob = super::sealed::seal(&key, b"geheim", b"calendar-secret@1:a").unwrap();
-        assert!(!blob.windows(6).any(|w| w == b"geheim"), "kein Klartext im Blob");
+        assert!(
+            !blob.windows(6).any(|w| w == b"geheim"),
+            "kein Klartext im Blob"
+        );
         assert_eq!(
-            super::sealed::open(&key, &blob, b"calendar-secret@1:a").unwrap().as_slice(),
+            super::sealed::open(&key, &blob, b"calendar-secret@1:a")
+                .unwrap()
+                .as_slice(),
             b"geheim"
         );
-        assert!(super::sealed::open(&key, &blob, b"calendar-secret@1:b").is_err(), "anderer Name");
-        assert!(super::sealed::open(&other, &blob, b"calendar-secret@1:a").is_err(), "anderer Schlüssel");
+        assert!(
+            super::sealed::open(&key, &blob, b"calendar-secret@1:b").is_err(),
+            "anderer Name"
+        );
+        assert!(
+            super::sealed::open(&other, &blob, b"calendar-secret@1:a").is_err(),
+            "anderer Schlüssel"
+        );
         let mut bad = blob.clone();
         *bad.last_mut().unwrap() ^= 1;
-        assert!(super::sealed::open(&key, &bad, b"calendar-secret@1:a").is_err(), "verändert");
+        assert!(
+            super::sealed::open(&key, &bad, b"calendar-secret@1:a").is_err(),
+            "verändert"
+        );
         assert!(super::sealed::open(&key, b"LVK1", b"x").is_err(), "zu kurz");
         let again = super::sealed::seal(&key, b"geheim", b"calendar-secret@1:a").unwrap();
         assert_ne!(blob, again, "frischer Nonce je Speichern");

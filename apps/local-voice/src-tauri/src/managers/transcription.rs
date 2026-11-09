@@ -583,7 +583,8 @@ impl TranscriptionManager {
         {
             return false;
         }
-        if self.app_handle
+        if self
+            .app_handle
             .try_state::<Arc<AudioRecordingManager>>()
             .is_some_and(|a| a.is_recording())
         {
@@ -1159,13 +1160,11 @@ impl TranscriptionManager {
                     LiveLoadPlan::Refuse { need_mb, free_mb } => {
                         // Nichts laden: ein geladenes Modell bleibt, die Aufnahme
                         // laeuft damit weiter (oder meldet, dass keins geladen ist).
-                        let message = crate::process_guard::check_ram_for_start(
-                            need_mb.saturating_sub(crate::process_guard::RAM_RESERVE_MB),
-                        )
-                            .err()
-                            .unwrap_or_else(|| {
-                                format!("Zu wenig freier Arbeitsspeicher: {free_mb} MB frei, gebraucht {need_mb} MB")
-                            });
+                        let message = format!(
+                            "Zu wenig freier Arbeitsspeicher für die Live-Transkription: {:.1} GB frei, gebraucht {:.1} GB. Andere Programme schließen; nach der Aufnahme lässt sich mit „Neu transkribieren“ alles nachholen.",
+                            free_mb as f64 / 1024.0,
+                            need_mb as f64 / 1024.0
+                        );
                         warn!("meetings: Live-Modell '{target}' nicht geladen, RAM-Tor: {message}");
                         let _ = self_clone.app_handle.emit(
                             "model-state-changed",
@@ -2295,7 +2294,8 @@ impl TranscriptionManager {
     // match) so the dictation path stays byte-identical and M3-stable; the
     // duplication is the price of that stability.
     pub fn transcribe_segments(&self, audio: Vec<f32>) -> Result<Vec<TimedSegment>> {
-        self.transcribe_segments_detecting(audio).map(|(segments, _)| segments)
+        self.transcribe_segments_detecting(audio)
+            .map(|(segments, _)| segments)
     }
 
     /// G5: wie [`Self::transcribe_segments`], dazu die Sprache, die das Modell selbst
@@ -2416,8 +2416,8 @@ impl TranscriptionManager {
                 );
             }
 
-            let transcribe_result =
-                catch_unwind(AssertUnwindSafe(|| -> Result<(Vec<TimedSegment>, Option<String>)> {
+            let transcribe_result = catch_unwind(AssertUnwindSafe(
+                || -> Result<(Vec<TimedSegment>, Option<String>)> {
                     match &mut engine {
                         LoadedEngine::TranscribeCpp(session) => {
                             // Custom words become the initial prompt ONLY for models
@@ -2463,7 +2463,9 @@ impl TranscriptionManager {
                             };
                             parakeet_engine
                                 .transcribe_with(&audio, &params)
-                                .map(|r| (segments_from_result(&r.text, r.segments, audio_ms), None))
+                                .map(|r| {
+                                    (segments_from_result(&r.text, r.segments, audio_ms), None)
+                                })
                                 .map_err(|e| {
                                     anyhow::anyhow!("Parakeet transcription failed: {}", e)
                                 })
@@ -2493,7 +2495,9 @@ impl TranscriptionManager {
                             };
                             sense_voice_engine
                                 .transcribe_with(&audio, &params)
-                                .map(|r| (segments_from_result(&r.text, r.segments, audio_ms), None))
+                                .map(|r| {
+                                    (segments_from_result(&r.text, r.segments, audio_ms), None)
+                                })
                                 .map_err(|e| {
                                     anyhow::anyhow!("SenseVoice transcription failed: {}", e)
                                 })
@@ -2515,7 +2519,9 @@ impl TranscriptionManager {
                             };
                             canary_engine
                                 .transcribe(&audio, &options)
-                                .map(|r| (segments_from_result(&r.text, r.segments, audio_ms), None))
+                                .map(|r| {
+                                    (segments_from_result(&r.text, r.segments, audio_ms), None)
+                                })
                                 .map_err(|e| anyhow::anyhow!("Canary transcription failed: {}", e))
                         }
                         LoadedEngine::Cohere(cohere_engine) => {
@@ -2530,11 +2536,14 @@ impl TranscriptionManager {
                             };
                             cohere_engine
                                 .transcribe(&audio, &options)
-                                .map(|r| (segments_from_result(&r.text, r.segments, audio_ms), None))
+                                .map(|r| {
+                                    (segments_from_result(&r.text, r.segments, audio_ms), None)
+                                })
                                 .map_err(|e| anyhow::anyhow!("Cohere transcription failed: {}", e))
                         }
                     }
-                }));
+                },
+            ));
 
             match transcribe_result {
                 Ok(inner_result) => {
@@ -2819,8 +2828,19 @@ pub enum LiveLoadPlan {
     Refuse { need_mb: u64, free_mb: u64 },
 }
 
-/// RAM-Tor fuers Live-Modell (wie fuer das End-Modell und die anderen
-/// Modellstarts: Bedarf = `final_pass::ram_need_mb`, dazu die Systemreserve).
+/// Reserve, die das Live-Modell einer Besprechung dem System laesst (MB).
+///
+/// Bewusst die Notgrenze des Waechters, nicht die Server-Reserve
+/// (`ram_reserve_mb`, 3 bis 6 GB): die gilt fuer Sprachmodell-Server, die sich
+/// beliebig Speicher nehmen. Ohne Live-Modell entsteht dagegen gar kein
+/// Transkript, jeder Block wird zur Luecke "[Nicht transkribiert …]". So am
+/// 05.11.2026 auf einem 16-GB-Rechner: 0.23.0 verlangte fuer Nemotron (750 MB)
+/// 1,6 GB + 6 GB Reserve frei, lud nichts und fuellte 35 Minuten mit Luecken,
+/// waehrend "Neu transkribieren" (ohne Tor) danach problemlos lief.
+pub const LIVE_MODEL_RESERVE_MB: u64 = crate::process_guard::RAM_EMERGENCY_MB;
+
+/// RAM-Tor fuers Live-Modell: Bedarf = `final_pass::ram_need_mb`, dazu
+/// [`LIVE_MODEL_RESERVE_MB`] (die Notgrenze, nicht die Server-Reserve).
 /// `free_ram_mb == 0` heisst nicht messbar und blockiert nie.
 /// `reclaimable_mb`: Speicher des Modells, das `load_model` vor dem neuen
 /// freigibt. `fallback`: (Modell-ID, Groesse in MB) des Ersatzes.
@@ -2835,8 +2855,7 @@ pub fn plan_live_load(
     }
     let available = free_ram_mb.saturating_add(reclaimable_mb);
     let need = |size_mb: u64| {
-        crate::managers::meetings::final_pass::ram_need_mb(size_mb)
-            + crate::process_guard::RAM_RESERVE_MB
+        crate::managers::meetings::final_pass::ram_need_mb(size_mb) + LIVE_MODEL_RESERVE_MB
     };
     if available >= need(target_size_mb) {
         return LiveLoadPlan::Target;
@@ -3403,6 +3422,17 @@ pub fn transcribe_gpu_memory() -> Vec<(String, u64)> {
         .collect()
 }
 
+/// Der groesste Grafikspeicher (MB) unter den GPU-Geraeten, die transcribe-cpp
+/// nutzen darf (Kapazitaet, nicht frei; aus dem Start-Zwischenspeicher).
+/// `None` ohne GPU oder wenn kein Treiber die Groesse meldet.
+pub fn transcribe_gpu_total_mb() -> Option<u64> {
+    cached_gpu_devices()
+        .iter()
+        .map(|d| d.total_vram_mb as u64)
+        .filter(|mb| *mb > 0)
+        .max()
+}
+
 fn available_transcribe_accelerators(gpu_disabled: bool) -> Vec<String> {
     if gpu_disabled {
         vec!["cpu".to_string()]
@@ -3510,12 +3540,28 @@ mod tests {
         assert_eq!(
             words,
             vec![
-                WordTime { text: "Guten".into(), start_ms: 120, end_ms: 480 },
-                WordTime { text: "Morgen".into(), start_ms: 520, end_ms: 3_000 },
-                WordTime { text: "x".into(), start_ms: 0, end_ms: 0 },
+                WordTime {
+                    text: "Guten".into(),
+                    start_ms: 120,
+                    end_ms: 480
+                },
+                WordTime {
+                    text: "Morgen".into(),
+                    start_ms: 520,
+                    end_ms: 3_000
+                },
+                WordTime {
+                    text: "x".into(),
+                    start_ms: 0,
+                    end_ms: 0
+                },
             ]
         );
-        assert_eq!(words_from_rows(&[], 1_000), None, "keine Wortzeiten, nie leere Liste");
+        assert_eq!(
+            words_from_rows(&[], 1_000),
+            None,
+            "keine Wortzeiten, nie leere Liste"
+        );
         assert_eq!(words_from_rows(&[(" ".into(), 0, 5)], 1_000), None);
     }
 
@@ -3634,17 +3680,32 @@ mod tests {
 
     // ---- P1i: RAM-Tor fuers Live-Modell der Besprechung -----------------------
 
-    const RESERVE: u64 = crate::process_guard::RAM_RESERVE_MB;
-
     fn need(size_mb: u64) -> u64 {
-        crate::managers::meetings::final_pass::ram_need_mb(size_mb) + RESERVE
+        crate::managers::meetings::final_pass::ram_need_mb(size_mb) + LIVE_MODEL_RESERVE_MB
+    }
+
+    /// Fall 05.11.2026: Nemotron (750 MB) auf einem 16-GB-Rechner mit 5 GB frei.
+    /// Mit der Server-Reserve (6 GB in 0.23.0) wurde nichts geladen und die
+    /// ganze Besprechung bestand aus Luecken; das Live-Modell laedt jetzt.
+    #[test]
+    fn nemotron_loads_live_on_a_busy_16_gb_machine() {
+        assert_eq!(plan_live_load(750, None, 5_000, 0), LiveLoadPlan::Target);
+        // Die Notgrenze bleibt: bei 3 GB frei laedt es nicht.
+        assert!(matches!(
+            plan_live_load(750, None, 3_000, 0),
+            LiveLoadPlan::Refuse { .. }
+        ));
+        assert!(LIVE_MODEL_RESERVE_MB < crate::process_guard::RAM_RESERVE_MIN_MB);
     }
 
     // ---- U7: eigene Engine fuer weitere gleichzeitige Importe -------------------
 
     #[test]
     fn an_extra_engine_belongs_to_the_thread_that_bound_it() {
-        assert!(!extra_engine_bound(), "ohne Bindung rechnet jeder mit der gemeinsamen Engine");
+        assert!(
+            !extra_engine_bound(),
+            "ohne Bindung rechnet jeder mit der gemeinsamen Engine"
+        );
         let binding = bind_extra_engine(ExtraEngine {
             engine: None,
             model_id: "eigenes-modell".into(),
@@ -3658,7 +3719,10 @@ mod tests {
         // Eine Engine, die es nicht mehr gibt (Panik im Lauf), wird nicht erfunden.
         assert!(take_bound_engine().is_none());
         drop(binding);
-        assert!(!extra_engine_bound(), "mit der Bindung ist auch die Engine frei");
+        assert!(
+            !extra_engine_bound(),
+            "mit der Bindung ist auch die Engine frei"
+        );
         assert_eq!(bound_model_id(), None);
     }
 
@@ -3682,8 +3746,14 @@ mod tests {
     #[test]
     fn the_live_model_loads_when_the_ram_gate_is_open() {
         // Genau auf der Grenze (Bedarf + Systemreserve): laden.
-        assert_eq!(plan_live_load(1_500, None, need(1_500), 0), LiveLoadPlan::Target);
-        assert_eq!(plan_live_load(1_500, Some(("diktat", 600)), 64_000, 0), LiveLoadPlan::Target);
+        assert_eq!(
+            plan_live_load(1_500, None, need(1_500), 0),
+            LiveLoadPlan::Target
+        );
+        assert_eq!(
+            plan_live_load(1_500, Some(("diktat", 600)), 64_000, 0),
+            LiveLoadPlan::Target
+        );
     }
 
     #[test]
@@ -3703,7 +3773,10 @@ mod tests {
         // Ohne Rueckfall (ausdrueckliche Wahl) oder mit zu grossem Rueckfall: nichts laden.
         assert_eq!(
             plan_live_load(1_500, None, free, 0),
-            LiveLoadPlan::Refuse { need_mb: need(1_500), free_mb: free }
+            LiveLoadPlan::Refuse {
+                need_mb: need(1_500),
+                free_mb: free
+            }
         );
         assert!(matches!(
             plan_live_load(1_500, Some(("gross", 3_000)), free, 0),
@@ -3717,9 +3790,15 @@ mod tests {
     #[test]
     fn the_memory_of_the_model_being_replaced_counts_as_available() {
         let free = need(1_500) - 500;
-        assert!(matches!(plan_live_load(1_500, None, free, 0), LiveLoadPlan::Refuse { .. }));
+        assert!(matches!(
+            plan_live_load(1_500, None, free, 0),
+            LiveLoadPlan::Refuse { .. }
+        ));
         assert_eq!(plan_live_load(1_500, None, free, 500), LiveLoadPlan::Target);
-        assert!(matches!(plan_live_load(1_500, None, free, 499), LiveLoadPlan::Refuse { .. }));
+        assert!(matches!(
+            plan_live_load(1_500, None, free, 499),
+            LiveLoadPlan::Refuse { .. }
+        ));
     }
 
     /// Ist nur die Grenze der Modellgroesse unbekannt (Modell nicht im Katalog, 0 MB),
@@ -3727,7 +3806,7 @@ mod tests {
     #[test]
     fn a_model_of_unknown_size_still_needs_the_minimum() {
         assert!(matches!(
-            plan_live_load(0, None, RESERVE + 100, 0),
+            plan_live_load(0, None, LIVE_MODEL_RESERVE_MB + 100, 0),
             LiveLoadPlan::Refuse { .. }
         ));
         assert_eq!(plan_live_load(0, None, need(0), 0), LiveLoadPlan::Target);

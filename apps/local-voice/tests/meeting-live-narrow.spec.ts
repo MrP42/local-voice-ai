@@ -857,7 +857,7 @@ test("Fenster wird waehrend der Aufnahme schmal und wieder breit: Notizblock, Te
   expect(await loads()).toBe(notesLoadsBefore);
   expect(await segLoads()).toBe(segLoadsBefore);
   // Und die Notiz wird gespeichert, sobald der Fokus geht.
-  await page.locator(".page-shell__head h1").click();
+  await page.locator(".lv-titlebar__app").click();
   await expect
     .poll(async () => (await calls(page, "meeting_notes_save")).length)
     .toBeGreaterThan(0);

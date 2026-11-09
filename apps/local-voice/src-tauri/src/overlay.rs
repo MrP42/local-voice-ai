@@ -474,6 +474,12 @@ static OVERLAY_STATE_GENERATION: AtomicU64 = AtomicU64::new(0);
 
 fn show_overlay_state(app_handle: &AppHandle, state: &str) {
     OVERLAY_STATE_GENERATION.fetch_add(1, Ordering::AcqRel);
+    // Diktat, Hinweis oder Besprechungsanzeige uebernehmen das Overlay: das
+    // Gespraech zeigt sich erst wieder, wenn sie es freigegeben haben.
+    if !state.starts_with("call-") {
+        CALL_OVERLAY_SHOWN.store(false, Ordering::Release);
+        OTHER_OVERLAY_ACTIVE.store(true, Ordering::Release);
+    }
 
     // Whether the overlay shows at all is governed by overlay_style; position
     // only chooses Top vs Bottom placement. The "notice" state is exempt: it
@@ -764,6 +770,8 @@ pub fn hide_recording_overlay(app_handle: &AppHandle) {
 fn hide_overlay_window(app_handle: &AppHandle) {
     // Always hide the overlay regardless of settings - if setting was changed while recording,
     // we still want to hide it properly
+    OTHER_OVERLAY_ACTIVE.store(false, Ordering::Release);
+    CALL_OVERLAY_SHOWN.store(false, Ordering::Release);
     if let Some(overlay_window) = app_handle.get_webview_window("recording_overlay") {
         let generation = OVERLAY_STATE_GENERATION.load(Ordering::Acquire);
         // Emit event to trigger fade-out animation
@@ -991,5 +999,94 @@ mod tests {
             ),
             (-1530, 1040, 500, 150)
         );
+    }
+}
+
+/// Zustaende des Sprachgespraechs im Overlay (Hauptgespraech per Tastenkuerzel).
+const CALL_OVERLAY_STATES: [&str; 4] = [
+    "call-listening",
+    "call-hearing",
+    "call-thinking",
+    "call-speaking",
+];
+
+/// Zeigt das Overlay gerade ein Gespraech? Nur dann darf ein Ende des Gespraechs
+/// es ausblenden (ein Diktat oder Hinweis, das inzwischen uebernommen hat, bleibt).
+static CALL_OVERLAY_SHOWN: AtomicBool = AtomicBool::new(false);
+
+/// Ein anderer Zustand (Diktat, Transkription, Hinweis, Besprechung) besitzt das
+/// Overlay, bis es ausgeblendet wird. Solange zeigt das Gespraech nichts.
+static OTHER_OVERLAY_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+/// Rein: Was soll ein Gespraechszustand am Overlay tun? `None` = nichts.
+/// `blocked`: ein Diktat, Hinweis oder die Besprechungsanzeige besitzt das Overlay,
+/// oder es ist abgeschaltet; dann zeigt und verbirgt das Gespraech nichts.
+/// Unbekannte Zustaende werden verworfen.
+pub(crate) fn call_overlay_action(
+    state: Option<&str>,
+    blocked: bool,
+    call_shown: bool,
+) -> Option<Option<&'static str>> {
+    if blocked {
+        return None;
+    }
+    match state {
+        Some(s) => CALL_OVERLAY_STATES
+            .iter()
+            .find(|k| **k == s)
+            .map(|k| Some(*k)),
+        None if call_shown => Some(None),
+        None => None,
+    }
+}
+
+/// Status des Sprachgespraechs im Overlay, wie beim Diktat: Hoert zu, Hoert,
+/// Denkt nach, Spricht. `None` blendet es aus (nur, wenn es ein Gespraech zeigt).
+/// Das Hauptfenster ruft das auf, auch wenn es verborgen ist.
+#[tauri::command]
+#[specta::specta]
+pub fn voice_call_overlay(app: AppHandle, state: Option<String>) {
+    let dictating = app
+        .try_state::<std::sync::Arc<crate::managers::audio::AudioRecordingManager>>()
+        .map(|m| m.is_recording())
+        .unwrap_or(false);
+    let shown = CALL_OVERLAY_SHOWN.load(Ordering::Acquire);
+    let style_off = settings::get_settings(&app).overlay_style == OverlayStyle::None;
+    let blocked = dictating || style_off || OTHER_OVERLAY_ACTIVE.load(Ordering::Acquire);
+    match call_overlay_action(state.as_deref(), blocked, shown) {
+        Some(Some(s)) => {
+            CALL_OVERLAY_SHOWN.store(true, Ordering::Release);
+            show_overlay_state(&app, s);
+        }
+        Some(None) => {
+            CALL_OVERLAY_SHOWN.store(false, Ordering::Release);
+            hide_recording_overlay(&app);
+        }
+        None => {}
+    }
+}
+
+#[cfg(test)]
+mod call_overlay_tests {
+    use super::call_overlay_action;
+
+    #[test]
+    fn known_call_states_show() {
+        assert_eq!(
+            call_overlay_action(Some("call-speaking"), false, false),
+            Some(Some("call-speaking"))
+        );
+    }
+
+    #[test]
+    fn unknown_states_and_dictation_are_ignored() {
+        assert_eq!(call_overlay_action(Some("recording"), false, false), None);
+        assert_eq!(call_overlay_action(Some("call-hearing"), true, true), None);
+    }
+
+    #[test]
+    fn hide_only_when_a_call_is_shown() {
+        assert_eq!(call_overlay_action(None, false, true), Some(None));
+        assert_eq!(call_overlay_action(None, false, false), None);
     }
 }

@@ -7,6 +7,7 @@ import { SettingsGroup } from "../ui/SettingsGroup";
 import { TabList } from "../ui/TabList";
 import { CalendarConnectDialog } from "../settings/meetings/CalendarConnectDialog";
 import { MeetingMcpSettings } from "../settings/meetings/MeetingMcpSettings";
+import { SprachdienstPanel } from "./SprachdienstPanel";
 import { usePersistentState } from "../../hooks/usePersistentState";
 import { commands } from "@/bindings";
 import { AutomationsPanel } from "../automations/AutomationsPanel";
@@ -286,6 +287,8 @@ export const IntegrationsPage: React.FC = () => {
               <MeetingMcpSettings />
             </SettingsGroup>
           </section>
+
+          <SprachdienstPanel />
         </div>
       )}
 

@@ -124,7 +124,11 @@ pub fn purge_meeting_audio(store: &MeetingStore, meeting: &Meeting) -> u32 {
         .iter()
         .map(|p| delete_audio_file(p))
         .collect();
-    let deleted = outcomes.iter().chain(&derived).filter(|o| o.removed).count() as u32;
+    let deleted = outcomes
+        .iter()
+        .chain(&derived)
+        .filter(|o| o.removed)
+        .count() as u32;
 
     let (clear_mic, clear_system) = paths_to_clear(
         meeting.mic_audio_path.as_deref(),
@@ -206,7 +210,10 @@ pub fn delete_audio_files(paths: &[String]) -> u32 {
 pub fn remove_meeting_dir(base: &std::path::Path, meeting_id: &str) -> Result<bool, String> {
     use std::path::Component;
     let mut parts = std::path::Path::new(meeting_id).components();
-    let one_name = matches!((parts.next(), parts.next()), (Some(Component::Normal(_)), None));
+    let one_name = matches!(
+        (parts.next(), parts.next()),
+        (Some(Component::Normal(_)), None)
+    );
     // Auch ein Rueckwaertsstrich (unter Linux ein gueltiger Name) zaehlt als Trenner:
     // die IDs sind ULIDs, nie etwas anderes.
     if !one_name || meeting_id.contains(['/', '\\']) {
@@ -468,7 +475,9 @@ mod tests {
         assert_eq!(stored.mic_audio_path, None);
 
         // Loeschen der Besprechung (soft delete + Dateien).
-        let meeting = s.create_meeting("T2", MeetingSource::Live, Some(1)).unwrap();
+        let meeting = s
+            .create_meeting("T2", MeetingSource::Live, Some(1))
+            .unwrap();
         std::fs::write(&mic_path, b"RIFF....WAVEfmt ").unwrap();
         std::fs::write(&aec_path, b"RIFF....WAVEfmt ").unwrap();
         s.set_audio_paths(&meeting.id, mic_path.to_str(), None, Some(1_000))
@@ -495,7 +504,10 @@ mod tests {
 
         assert_eq!(remove_meeting_dir(dir.path(), "01ABC"), Ok(true));
         assert!(!folder.exists());
-        assert!(other.join("mic.wav").exists(), "eine andere Besprechung bleibt");
+        assert!(
+            other.join("mic.wav").exists(),
+            "eine andere Besprechung bleibt"
+        );
         // Idempotent: den Ordner gibt es nicht mehr.
         assert_eq!(remove_meeting_dir(dir.path(), "01ABC"), Ok(false));
     }
@@ -509,7 +521,17 @@ mod tests {
         std::fs::create_dir_all(&victim).unwrap();
         std::fs::write(victim.join("wichtig.txt"), b"x").unwrap();
 
-        for bad in ["", ".", "..", "../fremd", "01ABC/..", "a/b", "a\\b", "C:\\Windows", "/etc"] {
+        for bad in [
+            "",
+            ".",
+            "..",
+            "../fremd",
+            "01ABC/..",
+            "a/b",
+            "a\\b",
+            "C:\\Windows",
+            "/etc",
+        ] {
             assert!(
                 remove_meeting_dir(&base, bad).is_err(),
                 "{bad:?} muss abgelehnt werden"

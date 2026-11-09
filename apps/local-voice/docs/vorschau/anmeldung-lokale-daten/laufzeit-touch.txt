@@ -1,0 +1,7 @@
+Touchflächen bei 390 px mit Touch (pointer: coarse):
+  wahl-zusammenfuehren: 308×132 px
+  wahl-sichern: 308×72 px
+  wahl-getrennt: 278×92 px
+  wahl-entfernen: 278×112 px
+  anmeldung-bestaetigen: 308×44 px
+  anmeldung-abbrechen: 308×44 px

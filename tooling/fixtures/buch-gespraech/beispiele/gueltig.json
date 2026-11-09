@@ -1,0 +1,17 @@
+{
+  "request": [
+    { "book_id": "b1", "request_id": "r1", "question": "Warum gibt es zwei Väter?", "frontier": 812, "scope": "until_position", "input": "voice" },
+    { "book_id": "b1", "request_id": "r2", "question": "Wer ist der Meister?", "scope": "book", "input": "text" }
+  ],
+  "event": [
+    { "kind": "sentence", "request_id": "r1", "sentence": { "index": 0, "text": "Der Erzähler hat zwei Lehrmeister.", "speech": "Der Erzähler hat zwei Lehrmeister. Das steht auf Seite 2: „Ich hatte zwei Lehrmeister.“", "citations": [ { "q": 1, "page": 2, "chapter_index": 0, "chapter_title": "Einleitung: Zwei Lehrmeister", "start": 210, "end": 238, "quote": "Ich hatte zwei Lehrmeister." } ], "general": false } },
+    { "kind": "failed", "request_id": "r1", "code": "cancelled" }
+  ],
+  "answer": [
+    { "intent": "locate", "sentences": [], "text": "Dazu steht bis hier nichts im Buch.", "speech": "Dazu steht bis hier nichts im Buch.", "citations": [], "found_only": true, "reason": "no_hits", "dropped": 0, "scope": "until_position", "frontier": 0 }
+  ],
+  "stored-turn": [
+    { "question": "Wer ist der Meister?", "answer": { "intent": "question", "sentences": [], "text": "", "speech": "", "citations": [], "found_only": true, "reason": "no_model", "dropped": 0, "scope": "book", "frontier": 812 }, "scope": "book", "frontier": 812, "input": "text", "at": "2026-11-05T18:00:00Z" }
+  ],
+  "command": [ { "kind": "jump" }, { "kind": "scope_book" } ]
+}

@@ -54,6 +54,7 @@ import {
 } from "./RecipeMenu";
 import { RecipeManagerDialog } from "./RecipeManagerDialog";
 import { ScopeChips } from "./ScopeChips";
+import { useChatRecherche } from "../../../projekte/ChatRecherche";
 
 /** Wo der Chat steht: Besprechung (Detail), laufende Aufnahme, viele. */
 export type ChatMode = "meeting" | "live" | "global";
@@ -454,6 +455,24 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     setMessages(result.status === "ok" ? (result.data ?? []) : []);
   };
 
+  // #242: ein umbenannter Sprecher erscheint auch in früheren Antworten.
+  useEffect(() => {
+    if (scope.kind !== "meeting") return;
+    const meetingId = scope.meeting_id;
+    const un = events.speakersChanged.listen((e) => {
+      const id = threadIdRef.current;
+      if (e.payload.meeting_id !== meetingId || !id || pendingRef.current)
+        return;
+      void commands.meetingChatThread(id).then((result) => {
+        if (result.status === "ok" && threadIdRef.current === id)
+          setMessages(result.data ?? []);
+      });
+    });
+    return () => {
+      void un.then((f) => f());
+    };
+  }, [scopeKey]);
+
   // M5-P5e: gespeicherter Brief. Wie beim Recipe erst nach den Mount-Effekten.
   const handledThreadNonce = useRef<number | null>(null);
   useEffect(() => {
@@ -517,6 +536,13 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
 
   const scopeLabel = t(`meetings.chat.scope.${mode}`);
   const busy = pending !== null;
+  const clearInput = useCallback(() => setInput(""), []);
+  const chatRecherche = useChatRecherche(
+    scope.kind === "meeting" ? scope.meeting_id : null,
+    input,
+    clearInput,
+    setNotice,
+  );
   const stageText = pending
     ? pending.round >= 2 && pending.stage !== "answering"
       ? t("meetings.chat.stage.retry")
@@ -712,6 +738,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
         </p>
       )}
 
+      {chatRecherche.unten}
+
       <RecipeBar
         items={fitting}
         disabled={busy}
@@ -762,6 +790,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             onKeyDown={onKeyDown}
             className="min-h-[2.5rem] flex-1 resize-none rounded-md border border-mid-gray/40 bg-mid-gray/10 px-2 py-1.5 text-sm focus:border-logo-primary focus:outline-none"
           />
+          {chatRecherche.knopf}
           {busy ? (
             <Button size="sm" variant="secondary" onClick={cancel}>
               <Square width={12} height={12} aria-hidden="true" />

@@ -148,6 +148,7 @@ const settingUpdaters: {
   tts_script_check: (value) =>
     commands.changeTtsScriptCheckSetting(value as boolean),
   tts_speed: (value) => commands.changeTtsSpeedSetting(value as number),
+  tts_flow: (value) => commands.changeTtsFlowSetting(value as number),
   tts_normalize: (value) =>
     commands.changeTtsNormalizeSetting(value as boolean),
   tts_prewarm: (value) => commands.changeTtsPrewarmSetting(value as boolean),
@@ -256,9 +257,20 @@ const settingUpdaters: {
     commands.changeMeetingDefaultTemplateSetting(
       (value as string | null) ?? null,
     ),
+  // Gespräch mit dem Buch (lva#309)
+  book_talk_enabled: (value) =>
+    commands.changeBookTalkEnabledSetting(value as boolean),
+  book_talk_cloud_consent: (value) =>
+    commands.changeBookTalkCloudConsentSetting(value as string[]),
+  // lva#320
+  book_talk_relay_enabled: (value) =>
+    commands.changeBookTalkRelaySetting(value as boolean),
   // M4-P4b
   meeting_semantic_search: (value) =>
     commands.changeMeetingSemanticSearchSetting(value as boolean),
+  // Stimmprofile 2a
+  meeting_voice_suggestions: (value) =>
+    commands.changeMeetingVoiceSuggestionsSetting(value as boolean),
   // D3
   meeting_slide_vision: (value) =>
     commands.changeMeetingSlideVisionSetting(value as boolean),
@@ -307,6 +319,30 @@ const settingUpdaters: {
     commands.changeMeetingMcpEnabledSetting(value as boolean),
   meeting_mcp_include_transcript: (value) =>
     commands.changeMeetingMcpIncludeTranscriptSetting(value as boolean),
+  // Sprachgespräch Stufe 2
+  voice_call_read_transcripts: (value) =>
+    commands.changeVoiceCallReadTranscriptsSetting(value as boolean),
+  voice_call_knowledge: (value) =>
+    commands.changeVoiceCallKnowledgeSetting(value as string[]),
+  // lva#396 N2: freigegebene Notizbuch-Abschnitte
+  // Ein Fehler des Kerns muss werfen, sonst bliebe die nicht gespeicherte Auswahl sichtbar.
+  voice_call_notebook_sections: async (value) => {
+    const r = await commands.changeVoiceNotebookSectionsSetting(
+      value as string[],
+    );
+    if (r.status === "error") throw new Error(r.error);
+  },
+  // ADR-0028 A2: Einstufung vor dem Modellaufruf
+  assistent_einstufung_aktiv: (value) =>
+    commands.changeAssistentEinstufungAktivSetting(value as boolean),
+  // lva#325: globaler Sprachassistent
+  voice_global_context_enabled: (value) =>
+    commands.changeVoiceGlobalContextEnabledSetting(value as boolean),
+  // Sprachgespräch Stufe 3
+  speech_learning_enabled: (value) =>
+    commands.changeSpeechLearningEnabledSetting(value as boolean),
+  speech_learning_auto_apply: (value) =>
+    commands.changeSpeechLearningAutoApplySetting(value as boolean),
   // A2 (YouTube)
   meeting_youtube_private: (value) =>
     commands.changeMeetingYoutubePrivateSetting(value as boolean),
@@ -452,9 +488,14 @@ export const useSettingsStore = create<SettingsStore>()(
         }
       } catch (error) {
         console.error(`Failed to update setting ${String(key)}:`, error);
-        if (settings) {
-          set({ settings: { ...settings, [key]: originalValue } });
-        }
+        // Nur diesen Schlüssel zurücksetzen und nur, wenn noch dieser Wert gilt: ein spätes
+        // Scheitern darf weder eine neuere Änderung desselben Schlüssels noch andere Schlüssel
+        // überschreiben (Codex lva#418).
+        set((state) =>
+          state.settings && state.settings[key] === value
+            ? { settings: { ...state.settings, [key]: originalValue } }
+            : {},
+        );
       } finally {
         setUpdating(updateKey, false);
       }
@@ -750,6 +791,12 @@ export const useSettingsStore = create<SettingsStore>()(
       listen("model-state-changed", () => {
         get().refreshSettings();
       });
+      // Die App hat einmalig die Vorgabestimme gewählt (Phonon mit Anton, sobald freigegeben
+      // und eingerichtet): Stimmenwahl und Vorlesen zeigen sie sofort.
+      // Kam das Ereignis schon vor dem Abonnieren (schneller Start), danach einmal nachlesen.
+      void listen("tts-default-voice-applied", () => {
+        get().refreshSettings();
+      }).then(() => get().refreshSettings());
     },
   })),
 );

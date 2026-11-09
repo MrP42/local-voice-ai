@@ -291,10 +291,8 @@ mod windows_impl {
                 let device_position = info.index;
                 // Instant::now() ist ein Zaehlerlesen: keine Allokation, keine Sperre, kein I/O.
                 let now = std::time::Instant::now();
-                let max_pad = max_plausible_pad_frames(
-                    now.duration_since(last_packet_at),
-                    mix_rate,
-                );
+                let max_pad =
+                    max_plausible_pad_frames(now.duration_since(last_packet_at), mix_rate);
                 last_packet_at = now;
                 let capped_before = timeline.capped_gaps();
                 let pad_frames = match timeline.on_buffer_capped(
@@ -326,8 +324,8 @@ mod windows_impl {
                 // M2-P2c2: QPC des ersten Frames DIESES Puffers (hinter der
                 // Stille); die eingeschobene Stille bekommt davon
                 // zurueckgerechnete Stempel. Kein gueltiger Stempel: alter Anker.
-                let qpc = (!info.flags.timestamp_error && info.timestamp > 0)
-                    .then_some(info.timestamp);
+                let qpc =
+                    (!info.flags.timestamp_error && info.timestamp > 0).then_some(info.timestamp);
                 stamper.mark(qpc, pad_frames);
                 if pad_frames > 0 {
                     padded_frames += pad_frames;
@@ -391,7 +389,9 @@ mod stub_impl {
     }
 
     impl LoopbackCapture {
-        pub fn start(_on_samples: impl FnMut(&[i16], Option<u64>) + Send + 'static) -> Result<Self> {
+        pub fn start(
+            _on_samples: impl FnMut(&[i16], Option<u64>) + Send + 'static,
+        ) -> Result<Self> {
             Err(anyhow!("loopback capture is windows-only in M8"))
         }
 
@@ -464,7 +464,11 @@ mod tests {
         s.mark(Some(1_000_000), 0);
         s.advance_input(2_880);
         assert_eq!(s.next_block(480), Some(1_000_000));
-        assert_eq!(s.next_block(480), Some(1_000_000 + 300_000), "30 ms spaeter");
+        assert_eq!(
+            s.next_block(480),
+            Some(1_000_000 + 300_000),
+            "30 ms spaeter"
+        );
         // Naechster Geraetepuffer mit eigenem Stempel (Uhr lief 1 ms vor):
         // ab jetzt zaehlt der neue Anker.
         s.mark(Some(1_000_000 + 600_000 + 10_000), 0);

@@ -56,7 +56,11 @@ fn fixture() -> Fx {
         .append_delta(
             &meeting,
             &TranscriptDelta {
-                new_segments: ORIGINAL.iter().enumerate().map(|(i, t)| seg(i as u32, t)).collect(),
+                new_segments: ORIGINAL
+                    .iter()
+                    .enumerate()
+                    .map(|(i, t)| seg(i as u32, t))
+                    .collect(),
             },
         )
         .unwrap();
@@ -71,7 +75,11 @@ fn fixture() -> Fx {
             kind: KIND_TRANSLATION,
             language: Some("de".into()),
             model: None,
-            segments: TRANSLATED.iter().enumerate().map(|(i, t)| seg(i as u32, t)).collect(),
+            segments: TRANSLATED
+                .iter()
+                .enumerate()
+                .map(|(i, t)| seg(i as u32, t))
+                .collect(),
             activate: false,
         },
         TranslationExtra {
@@ -111,7 +119,10 @@ fn limits() -> Limits {
 }
 
 /// Laeuft das Protokoll mit der Wahl; gibt das Dokument und alle Anfragen des Modells zurueck.
-async fn run_with(fx: &Fx, doc_basis: &DocBasis) -> (Result<MeetingDocument, MinutesError>, Vec<String>) {
+async fn run_with(
+    fx: &Fx,
+    doc_basis: &DocBasis,
+) -> (Result<MeetingDocument, MinutesError>, Vec<String>) {
     let seen = Arc::new(Mutex::new(Vec::<String>::new()));
     let log = Arc::clone(&seen);
     let port = spawn_llm_mock_with(move |body| {
@@ -135,7 +146,13 @@ async fn run_with(fx: &Fx, doc_basis: &DocBasis) -> (Result<MeetingDocument, Min
 }
 
 fn metadata_of(fx: &Fx, doc: &MeetingDocument) -> Value {
-    serde_json::from_str(&fx.store.document_generation_metadata(&doc.id).unwrap().unwrap()).unwrap()
+    serde_json::from_str(
+        &fx.store
+            .document_generation_metadata(&doc.id)
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap()
 }
 
 #[tokio::test]
@@ -152,15 +169,22 @@ async fn the_translation_as_basis_is_what_the_model_reads_and_the_header_says_so
     let doc = doc.unwrap();
     assert_eq!(bodies.len(), 1);
     let request = &bodies[0];
-    assert!(request.contains("Testphase geeinigt"), "das Modell liest die Uebersetzung");
-    assert!(!request.contains("after the test phase"), "und nicht das Original");
+    assert!(
+        request.contains("Testphase geeinigt"),
+        "das Modell liest die Uebersetzung"
+    );
+    assert!(
+        !request.contains("after the test phase"),
+        "und nicht das Original"
+    );
     assert!(
         request.contains("Write ALL texts of the reply in German"),
         "die Ausgabesprache wird ausdruecklich gefordert"
     );
     assert!(!request.contains("Same language as the transcript."));
     assert!(
-        doc.body.contains("**Grundlage:** Übersetzung (Deutsch) · Protokoll auf Deutsch"),
+        doc.body
+            .contains("**Grundlage:** Übersetzung (Deutsch) · Protokoll auf Deutsch"),
         "Kopfzeile fehlt: {}",
         doc.body
     );
@@ -168,7 +192,11 @@ async fn the_translation_as_basis_is_what_the_model_reads_and_the_header_says_so
     assert_eq!(meta["basis"]["variant_id"], json!(fx.translation));
     assert_eq!(meta["basis"]["variant_kind"], "translation");
     assert_eq!(meta["basis"]["language"], "de");
-    assert_eq!(meta["output_language"], Value::Null, "die Ausgabesprache steht in der Grundlage-Angabe");
+    assert_eq!(
+        meta["output_language"],
+        Value::Null,
+        "die Ausgabesprache steht in der Grundlage-Angabe"
+    );
 }
 
 #[tokio::test]
@@ -188,7 +216,8 @@ async fn the_original_can_be_the_basis_for_a_german_report() {
     assert!(bodies[0].contains("after the test phase"));
     assert!(bodies[0].contains("Write ALL texts of the reply in German"));
     assert!(
-        doc.body.contains("**Grundlage:** Original (Englisch) · Protokoll auf Deutsch"),
+        doc.body
+            .contains("**Grundlage:** Original (Englisch) · Protokoll auf Deutsch"),
         "{}",
         doc.body
     );
@@ -199,12 +228,19 @@ async fn without_a_choice_the_prompt_and_the_active_transcript_are_as_before() {
     let fx = fixture();
     let (doc, bodies) = run_with(&fx, &DocBasis::default()).await;
     let doc = doc.unwrap();
-    assert!(bodies[0].contains("Same language as the transcript."), "die alte Regel");
+    assert!(
+        bodies[0].contains("Same language as the transcript."),
+        "die alte Regel"
+    );
     assert!(!bodies[0].contains("Write ALL texts"));
-    assert!(bodies[0].contains("after the test phase"), "aktive Fassung = Original");
+    assert!(
+        bodies[0].contains("after the test phase"),
+        "aktive Fassung = Original"
+    );
     // Auch ohne Wahl steht die Grundlage im Kopf.
     assert!(
-        doc.body.contains("**Grundlage:** Original (Englisch) · Protokoll auf Englisch"),
+        doc.body
+            .contains("**Grundlage:** Original (Englisch) · Protokoll auf Englisch"),
         "{}",
         doc.body
     );
@@ -213,7 +249,13 @@ async fn without_a_choice_the_prompt_and_the_active_transcript_are_as_before() {
 #[tokio::test]
 async fn the_active_transcript_and_the_variants_are_not_touched() {
     let fx = fixture();
-    let before: Vec<String> = fx.store.get_segments(&fx.meeting).unwrap().into_iter().map(|s| s.text).collect();
+    let before: Vec<String> = fx
+        .store
+        .get_segments(&fx.meeting)
+        .unwrap()
+        .into_iter()
+        .map(|s| s.text)
+        .collect();
     let (doc, _) = run_with(
         &fx,
         &DocBasis {
@@ -223,7 +265,13 @@ async fn the_active_transcript_and_the_variants_are_not_touched() {
     )
     .await;
     doc.unwrap();
-    let after: Vec<String> = fx.store.get_segments(&fx.meeting).unwrap().into_iter().map(|s| s.text).collect();
+    let after: Vec<String> = fx
+        .store
+        .get_segments(&fx.meeting)
+        .unwrap()
+        .into_iter()
+        .map(|s| s.text)
+        .collect();
     assert_eq!(after, before);
     let mut conn = fx.store.get_connection().unwrap();
     let list = variants::list(&mut conn, &fx.meeting).unwrap();
@@ -262,7 +310,10 @@ async fn the_output_language_does_not_leak_into_the_next_run() {
     .await;
     assert!(with_language[0].contains("Write ALL texts of the reply in French"));
     let (_, plain) = run_with(&fx, &DocBasis::default()).await;
-    assert!(plain[0].contains("Same language as the transcript."), "der Bereich endet mit dem Lauf");
+    assert!(
+        plain[0].contains("Same language as the transcript."),
+        "der Bereich endet mit dem Lauf"
+    );
 }
 
 #[test]
@@ -280,7 +331,11 @@ fn the_markdown_head_gains_the_basis_line_only_when_given() {
         id: "zusammenfassung".into(),
         title: "Zusammenfassung".into(),
         kind: SectionKind::Text,
-        entries: vec![MinutesEntry { text: "Alles gut.".into(), assignee: None, due: None }],
+        entries: vec![MinutesEntry {
+            text: "Alles gut.".into(),
+            assignee: None,
+            due: None,
+        }],
     }];
     let plain = minutes_to_markdown(&head, "Allgemein", None, &sections, &[]);
     let with = minutes_to_markdown_with_basis(
@@ -293,7 +348,20 @@ fn the_markdown_head_gains_the_basis_line_only_when_given() {
     );
     assert!(!plain.contains("Grundlage"), "ohne Angabe wie vor G5");
     let lines: Vec<&str> = with.lines().collect();
-    let at = lines.iter().position(|l| l.starts_with("**Datum:**")).unwrap();
-    assert_eq!(lines[at + 1], "**Grundlage:** Original (Englisch) · Protokoll auf Deutsch", "direkt unter der Datumszeile");
-    assert_eq!(with.replace("**Grundlage:** Original (Englisch) · Protokoll auf Deutsch\n", ""), plain);
+    let at = lines
+        .iter()
+        .position(|l| l.starts_with("**Datum:**"))
+        .unwrap();
+    assert_eq!(
+        lines[at + 1],
+        "**Grundlage:** Original (Englisch) · Protokoll auf Deutsch",
+        "direkt unter der Datumszeile"
+    );
+    assert_eq!(
+        with.replace(
+            "**Grundlage:** Original (Englisch) · Protokoll auf Deutsch\n",
+            ""
+        ),
+        plain
+    );
 }

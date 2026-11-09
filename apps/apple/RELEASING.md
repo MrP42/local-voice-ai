@@ -6,6 +6,14 @@ keine App und löst kein Desktop-Release aus. Apple hat aktuell die eigene Versi
 0.2.0 / Build 2. Vor jeder Apple-Verteilung müssen der Projektgenerator und alle drei Info.plist-Dateien
 (Phone, Watch und Komplikationen) gemeinsam eine neue Version/Buildnummer erhalten.
 
+## Versionsregel (ab 0.23.0)
+
+Die Apple-Marketingversion folgt dem großen Desktop-Release: Desktop
+`app-v0.23.0` → iPhone/Watch `0.23.0`. Zwischenstände zwischen zwei großen
+Releases erhöhen nur die Buildnummer (`CFBundleVersion`, fortlaufend). Vor jedem
+großen Release wird `docs/apple-paritaet.md` abgeglichen; iOS-Lücken sind dann
+umgesetzt oder begründet offen.
+
 ## Bei jeder Apple-Integration
 
 Der Workflow `Apple validation` prüft VoiceCore, die reproduzierbare Projektdatei,

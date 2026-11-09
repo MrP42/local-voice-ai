@@ -28,9 +28,15 @@ fn the_window_slides() {
     // Nach einer Minute ist der erste Aufruf aus dem Fenster.
     assert_eq!(l.hit("c1", 1, WINDOW_MS), Limit::Allowed);
     // Eine Abweisung kurz danach gehoert noch zur gemeldeten (ab 30 s): still.
-    assert_eq!(l.hit("c1", 1, WINDOW_MS + 10), Limit::Limited { first: false });
+    assert_eq!(
+        l.hit("c1", 1, WINDOW_MS + 10),
+        Limit::Limited { first: false }
+    );
     // Eine Minute nach der letzten Meldung wird wieder gemeldet.
-    assert_eq!(l.hit("c1", 1, 30_000 + WINDOW_MS + 10), Limit::Limited { first: true });
+    assert_eq!(
+        l.hit("c1", 1, 30_000 + WINDOW_MS + 10),
+        Limit::Limited { first: true }
+    );
 }
 
 #[test]
@@ -38,7 +44,11 @@ fn clients_are_counted_separately() {
     let mut l = RateLimiter::new();
     assert_eq!(l.hit("a", 1, 0), Limit::Allowed);
     assert_eq!(l.hit("a", 1, 1), Limit::Limited { first: true });
-    assert_eq!(l.hit("b", 1, 2), Limit::Allowed, "ein anderer Zugang ist nicht betroffen");
+    assert_eq!(
+        l.hit("b", 1, 2),
+        Limit::Allowed,
+        "ein anderer Zugang ist nicht betroffen"
+    );
 }
 
 #[test]

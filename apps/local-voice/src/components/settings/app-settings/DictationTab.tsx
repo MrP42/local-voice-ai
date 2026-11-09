@@ -43,7 +43,7 @@ export const DictationTab: React.FC = () => {
   const { t } = useTranslation();
   const { getSetting } = useSettings();
   const pushToTalk = getSetting("push_to_talk");
-  const streamInjection = getSetting("stream_injection") ?? false;
+  const streamInjection = getSetting("stream_injection") ?? true;
   const isLinux = type() === "linux";
 
   return (
@@ -56,6 +56,8 @@ export const DictationTab: React.FC = () => {
         {!isLinux && !pushToTalk && (
           <ShortcutInput shortcutId="cancel" grouped={true} />
         )}
+        {/* Hauptgespräch: Sprachgespräch per Tastenkürzel, auch außerhalb der App. */}
+        <ShortcutInput shortcutId="voice_call" grouped={true} />
       </SettingsGroup>
 
       <SettingsGroup title={t("settings.app.groups.input")}>

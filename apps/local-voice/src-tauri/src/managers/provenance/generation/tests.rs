@@ -930,7 +930,8 @@ async fn a_youtube_meeting_gets_a_protocol_with_provenance_without_duration_or_a
     let settings = settings_with_mock_provider(port);
     let fx = Fx::new();
     let meeting_id = youtube_meeting_with_subtitles(&fx, 4);
-    let store = Arc::new(crate::managers::meetings::store::MeetingStore::open_at(&fx.db_path).unwrap());
+    let store =
+        Arc::new(crate::managers::meetings::store::MeetingStore::open_at(&fx.db_path).unwrap());
     let meeting = store.get_meeting(&meeting_id).unwrap().unwrap();
     assert_eq!((meeting.duration_ms, meeting.ended_at), (None, None));
     assert!(meeting.audio_paths().is_empty());
@@ -958,7 +959,12 @@ async fn a_youtube_meeting_gets_a_protocol_with_provenance_without_duration_or_a
     assert_eq!(entries[0].sources[0].reference, meeting_id);
 
     // Mit der Dauer aus dem Player nennt der Kopf diese statt der Segmentzeit.
-    assert!(crate::managers::youtube::variants::set_duration_if_missing(&store, &meeting_id, 1_800.0).unwrap());
+    assert!(crate::managers::youtube::variants::set_duration_if_missing(
+        &store,
+        &meeting_id,
+        1_800.0
+    )
+    .unwrap());
     let meeting = store.get_meeting(&meeting_id).unwrap().unwrap();
     let head = crate::managers::meetings::llm_call::build_head(&meeting, &segments);
     assert_eq!(head.duration_ms, 1_800_000);

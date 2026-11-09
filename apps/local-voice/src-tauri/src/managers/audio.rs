@@ -290,8 +290,8 @@ fn set_volume(level: f32) {
         else {
             return;
         };
-        let _ = volume_interface
-            .SetMasterVolumeLevelScalar(level.clamp(0.0, 1.0), std::ptr::null());
+        let _ =
+            volume_interface.SetMasterVolumeLevelScalar(level.clamp(0.0, 1.0), std::ptr::null());
     }
 }
 
@@ -325,7 +325,11 @@ fn get_volume() -> Option<f32> {
     {
         if out.status.success() {
             let s = String::from_utf8_lossy(&out.stdout);
-            if let Some(v) = s.split_whitespace().nth(1).and_then(|v| v.parse::<f32>().ok()) {
+            if let Some(v) = s
+                .split_whitespace()
+                .nth(1)
+                .and_then(|v| v.parse::<f32>().ok())
+            {
                 return Some(v.clamp(0.0, 1.0));
             }
         }

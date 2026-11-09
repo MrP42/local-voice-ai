@@ -267,9 +267,9 @@ fn xml_text(raw: &str) -> String {
             "gt" => Some('>'),
             "quot" => Some('"'),
             "apos" => Some('\''),
-            n if n.starts_with("#x") || n.starts_with("#X") => {
-                u32::from_str_radix(&n[2..], 16).ok().and_then(char::from_u32)
-            }
+            n if n.starts_with("#x") || n.starts_with("#X") => u32::from_str_radix(&n[2..], 16)
+                .ok()
+                .and_then(char::from_u32),
             n if n.starts_with('#') => n[1..].parse::<u32>().ok().and_then(char::from_u32),
             _ => None,
         };
@@ -319,7 +319,9 @@ fn entry_start(xml: &str, from: usize) -> Option<usize> {
 /// Wertet den Atom-Feed aus. Ein Video mit unbrauchbarer Kennung wird uebergangen.
 pub fn parse_feed(xml: &str) -> Result<Feed, FeedError> {
     let lower_head: String = xml.chars().take(4096).collect::<String>().to_lowercase();
-    if lower_head.contains("<!doctype") || lower_head.contains("<!entity") || xml.contains("<!ENTITY")
+    if lower_head.contains("<!doctype")
+        || lower_head.contains("<!entity")
+        || xml.contains("<!ENTITY")
     {
         return Err(bad("Dokumenttyp-Definitionen sind nicht erlaubt"));
     }
@@ -701,10 +703,9 @@ fn integration_gate(
 ) -> Result<Option<Integration>, String> {
     let wanted = spec.integration.as_deref().unwrap_or(INTEGRATION_ID);
     match register::get(conn, wanted) {
-        Ok(Some(i)) if i.kind != Kind::Youtube => Err(format!(
-            "„{}“ ist keine YouTube-Integration.",
-            i.label
-        )),
+        Ok(Some(i)) if i.kind != Kind::Youtube => {
+            Err(format!("„{}“ ist keine YouTube-Integration.", i.label))
+        }
         Ok(Some(i)) if !i.enabled => Err(format!(
             "Die Integration „{}“ ist ausgeschaltet; der Kanal wird nicht abgefragt.",
             i.label
@@ -803,7 +804,9 @@ pub fn on_tick(
             .fetch(&spec.channel_id)
             .and_then(|xml| parse_feed(&xml))
             .and_then(|feed| match feed.channel_id.as_deref() {
-                Some(id) if id != spec.channel_id => Err(bad("der Feed gehört zu einem anderen Kanal")),
+                Some(id) if id != spec.channel_id => {
+                    Err(bad("der Feed gehört zu einem anderen Kanal"))
+                }
                 _ => Ok(feed),
             });
         match feed {
@@ -815,10 +818,9 @@ pub fn on_tick(
                         spec.channel_id,
                         a.row.name
                     );
-                    report.skipped.push(format!(
-                        "{}: Der Kanal ist wieder erreichbar.",
-                        a.row.name
-                    ));
+                    report
+                        .skipped
+                        .push(format!("{}: Der Kanal ist wieder erreichbar.", a.row.name));
                     audit_channel(
                         &conn,
                         integration.as_ref(),

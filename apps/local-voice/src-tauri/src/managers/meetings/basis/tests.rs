@@ -49,7 +49,10 @@ fn fixture() -> Fx {
             kind: KIND_TRANSLATION,
             language: Some("de".into()),
             model: None,
-            segments: vec![seg(0, "Wir zahlen 120 Euro."), seg(1, "Anna ist einverstanden.")],
+            segments: vec![
+                seg(0, "Wir zahlen 120 Euro."),
+                seg(1, "Anna ist einverstanden."),
+            ],
             activate: false,
         },
         TranslationExtra {
@@ -99,7 +102,10 @@ fn a_chosen_translation_is_the_basis_even_while_the_original_is_active() {
         },
     )
     .unwrap();
-    assert_eq!(texts(&basis), vec!["Wir zahlen 120 Euro.", "Anna ist einverstanden."]);
+    assert_eq!(
+        texts(&basis),
+        vec!["Wir zahlen 120 Euro.", "Anna ist einverstanden."]
+    );
     assert_eq!(basis.variant.as_ref().unwrap().kind, KIND_TRANSLATION);
     assert_eq!(basis.source_language.as_deref(), Some("de"));
     // Das aktive Transkript wurde dabei nicht angefasst.
@@ -107,7 +113,12 @@ fn a_chosen_translation_is_the_basis_even_while_the_original_is_active() {
 }
 
 fn store_texts(f: &Fx) -> Vec<String> {
-    f.store.get_segments(&f.meeting).unwrap().into_iter().map(|s| s.text).collect()
+    f.store
+        .get_segments(&f.meeting)
+        .unwrap()
+        .into_iter()
+        .map(|s| s.text)
+        .collect()
 }
 
 #[test]
@@ -158,14 +169,21 @@ fn an_unknown_or_foreign_variant_is_refused() {
         },
     )
     .unwrap_err();
-    assert_eq!(err, BasisError::VariantNotFound, "die Fassung einer anderen Besprechung zaehlt nicht");
+    assert_eq!(
+        err,
+        BasisError::VariantNotFound,
+        "die Fassung einer anderen Besprechung zaehlt nicht"
+    );
 }
 
 #[test]
 fn a_meeting_without_transcript_has_an_empty_basis() {
     let dir = tempfile::tempdir().unwrap();
     let store = MeetingStore::open_at(&dir.path().join("m.db")).unwrap();
-    let id = store.create_meeting("leer", MeetingSource::Import, None).unwrap().id;
+    let id = store
+        .create_meeting("leer", MeetingSource::Import, None)
+        .unwrap()
+        .id;
     let basis = resolve(&store, &id, &DocBasis::default()).unwrap();
     assert!(basis.segments.is_empty() && basis.variant.is_none());
 }
@@ -173,7 +191,12 @@ fn a_meeting_without_transcript_has_an_empty_basis() {
 #[test]
 fn the_output_language_is_reduced_to_its_base_code() {
     let f = fixture();
-    for (given, expected) in [(Some("de-DE"), Some("de")), (Some("auto"), None), (Some(""), None), (None, None)] {
+    for (given, expected) in [
+        (Some("de-DE"), Some("de")),
+        (Some("auto"), None),
+        (Some(""), None),
+        (None, None),
+    ] {
         let basis = resolve(
             &f.store,
             &f.meeting,
@@ -261,7 +284,11 @@ fn the_metadata_round_trips_and_an_old_version_has_none() {
     assert_eq!(back.variant_kind.as_deref(), Some(KIND_TRANSLATION));
     assert_eq!(back.language.as_deref(), Some("de"));
     assert_eq!(back, basis.to_document_basis());
-    assert_eq!(from_metadata(&json!({"model": "x"})), None, "Version vor G5: keine Angabe");
+    assert_eq!(
+        from_metadata(&json!({"model": "x"})),
+        None,
+        "Version vor G5: keine Angabe"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -277,9 +304,16 @@ fn without_an_output_language_the_rule_is_the_old_sentence() {
 async fn an_output_language_is_demanded_explicitly_inside_the_scope_only() {
     let inside = with_output_language(Some("de".into()), async { language_rule() }).await;
     assert!(inside.contains("German"), "{inside}");
-    assert!(inside.contains("ALL"), "die Forderung ist ausdruecklich: {inside}");
+    assert!(
+        inside.contains("ALL"),
+        "die Forderung ist ausdruecklich: {inside}"
+    );
     assert!(inside.contains("Names, numbers"), "{inside}");
-    assert_eq!(language_rule(), "Same language as the transcript.", "danach wieder der alte Satz");
+    assert_eq!(
+        language_rule(),
+        "Same language as the transcript.",
+        "danach wieder der alte Satz"
+    );
     let none = with_output_language(None, async { language_rule() }).await;
     assert_eq!(none, "Same language as the transcript.");
 }
@@ -309,14 +343,32 @@ fn the_basis_of_the_latest_document_is_read_from_its_metadata() {
     .unwrap();
     // Eine aeltere Version ohne Angabe (vor G5), dann eine neue mit Grundlage.
     f.store
-        .insert_document(&f.meeting, "minutes", "markdown@1", "alt", None, Some(r#"{"model":"x"}"#))
+        .insert_document(
+            &f.meeting,
+            "minutes",
+            "markdown@1",
+            "alt",
+            None,
+            Some(r#"{"model":"x"}"#),
+        )
         .unwrap();
     assert_eq!(latest_document_basis(&f.store, &f.meeting, "minutes"), None);
     f.store
-        .insert_document(&f.meeting, "minutes", "markdown@1", "neu", None, Some(&basis.metadata().to_string()))
+        .insert_document(
+            &f.meeting,
+            "minutes",
+            "markdown@1",
+            "neu",
+            None,
+            Some(&basis.metadata().to_string()),
+        )
         .unwrap();
     let read = latest_document_basis(&f.store, &f.meeting, "minutes").unwrap();
     assert_eq!(read.variant_id.as_deref(), Some(f.translation.as_str()));
     assert_eq!(read.output_language.as_deref(), Some("en"));
-    assert_eq!(latest_document_basis(&f.store, &f.meeting, "enhanced_notes"), None, "andere Art: keine Angabe");
+    assert_eq!(
+        latest_document_basis(&f.store, &f.meeting, "enhanced_notes"),
+        None,
+        "andere Art: keine Angabe"
+    );
 }

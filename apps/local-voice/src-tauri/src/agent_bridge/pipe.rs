@@ -103,7 +103,10 @@ mod other {
         ready: Option<oneshot::Sender<io::Result<()>>>,
     ) -> io::Result<()> {
         if let Some(r) = ready {
-            let _ = r.send(Err(io::Error::new(io::ErrorKind::Unsupported, "nur Windows")));
+            let _ = r.send(Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "nur Windows",
+            )));
         }
         unsupported()
     }
@@ -135,9 +138,9 @@ mod win {
         AddAccessAllowedAce, AddAccessDeniedAce, CreateWellKnownSid, EqualSid, GetLengthSid,
         GetSidIdentifierAuthority, GetSidSubAuthority, GetSidSubAuthorityCount,
         GetTokenInformation, InitializeAcl, InitializeSecurityDescriptor,
-        SetSecurityDescriptorDacl, ACE_REVISION, ACL, ACL_REVISION, PSECURITY_DESCRIPTOR, PSID,
-        SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR, TOKEN_QUERY, TOKEN_USER, TokenUser,
-        WinNetworkSid,
+        SetSecurityDescriptorDacl, TokenUser, WinNetworkSid, ACE_REVISION, ACL, ACL_REVISION,
+        PSECURITY_DESCRIPTOR, PSID, SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR, TOKEN_QUERY,
+        TOKEN_USER,
     };
     use windows::Win32::System::Threading::{
         GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
@@ -336,16 +339,23 @@ mod win {
                 };
 
                 // Groesse: ACL-Kopf + je ACE (Kopf+Maske+SID, ohne das eingerechnete SID-Feld).
-                let ace_overhead = size_of::<windows::Win32::Security::ACCESS_ALLOWED_ACE>() - size_of::<u32>();
-                let acl_len = (size_of::<ACL>() + 2 * ace_overhead + user.len() + network.len() + 7) & !7;
+                let ace_overhead =
+                    size_of::<windows::Win32::Security::ACCESS_ALLOWED_ACE>() - size_of::<u32>();
+                let acl_len =
+                    (size_of::<ACL>() + 2 * ace_overhead + user.len() + network.len() + 7) & !7;
                 let mut acl = vec![0u64; acl_len / 8];
                 let pacl = acl.as_mut_ptr() as *mut ACL;
                 InitializeAcl(pacl, acl_len as u32, ACL_REVISION).map_err(win_err)?;
                 // Verbote zuerst, dann die Erlaubnis.
                 AddAccessDeniedAce(pacl, ACE_REVISION(ACL_REVISION.0), MASK_ALL, network.psid())
                     .map_err(win_err)?;
-                AddAccessAllowedAce(pacl, ACE_REVISION(ACL_REVISION.0), MASK_READ_WRITE, user.psid())
-                    .map_err(win_err)?;
+                AddAccessAllowedAce(
+                    pacl,
+                    ACE_REVISION(ACL_REVISION.0),
+                    MASK_READ_WRITE,
+                    user.psid(),
+                )
+                .map_err(win_err)?;
 
                 let mut descriptor = vec![0u64; size_of::<SECURITY_DESCRIPTOR>().div_ceil(8)];
                 let psd = PSECURITY_DESCRIPTOR(descriptor.as_mut_ptr() as *mut c_void);
@@ -500,7 +510,9 @@ mod win {
                 Ok(next) => listener = Some(next),
                 Err(e) => log::warn!("agent_bridge: keine neue Pipe-Instanz: {e}"),
             }
-            match client_pid(&current).and_then(|pid| pid_belongs_to(pid, &own).map(|same| (pid, same))) {
+            match client_pid(&current)
+                .and_then(|pid| pid_belongs_to(pid, &own).map(|same| (pid, same)))
+            {
                 Ok((_, true)) => {
                     tokio::spawn(server.clone().handle(current));
                 }
@@ -508,7 +520,11 @@ mod win {
                     reject(&server, "peer_not_current_user", json!({ "pid": pid }));
                 }
                 Err(e) => {
-                    reject(&server, "peer_unverifiable", json!({ "error": e.to_string() }));
+                    reject(
+                        &server,
+                        "peer_unverifiable",
+                        json!({ "error": e.to_string() }),
+                    );
                 }
             }
         }
@@ -535,12 +551,15 @@ mod win {
                 .open(name)
             {
                 Ok(f) => break f,
-                Err(e) if e.raw_os_error() == Some(ERROR_PIPE_BUSY) && Instant::now() < deadline => {
+                Err(e)
+                    if e.raw_os_error() == Some(ERROR_PIPE_BUSY) && Instant::now() < deadline =>
+                {
                     std::thread::sleep(Duration::from_millis(40));
                 }
                 Err(e) if e.raw_os_error() == Some(ERROR_FILE_NOT_FOUND) => {
                     return Err(ClientError::NotRunning(
-                        "Local Voice AI läuft nicht (die Pipe der Agentenbrücke fehlt).".to_string(),
+                        "Local Voice AI läuft nicht (die Pipe der Agentenbrücke fehlt)."
+                            .to_string(),
                     ));
                 }
                 Err(e) if e.raw_os_error() == Some(ERROR_PIPE_BUSY) => {
@@ -569,7 +588,8 @@ mod win {
     /// Wie `verify_server`, gegen eine erwartete SID (Tests).
     pub fn verify_server_for(file: &File, own: &OwnedSid) -> Result<(), ClientError> {
         let untrusted = |why: String| ClientError::UntrustedServer(why);
-        let pid = server_pid(file).map_err(|e| untrusted(format!("Server-Prozess unbekannt: {e}")))?;
+        let pid =
+            server_pid(file).map_err(|e| untrusted(format!("Server-Prozess unbekannt: {e}")))?;
         match pid_belongs_to(pid, own) {
             Ok(true) => Ok(()),
             Ok(false) => Err(untrusted(

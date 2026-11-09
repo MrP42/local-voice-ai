@@ -6,7 +6,7 @@ Drei Familien, alle lokal: Transkriptionsmodelle fürs Diktat, Sprachmodelle fü
 
 - **Parakeet** ist schnell und genau, auch ohne GPU. Die deutsch getunte Variante primeLine ist für Diktate auf Deutsch die erste Wahl.
 - **Whisper**-Modelle sind langsamer, kennen aber mehr Sprachen. Große Modelle brauchen eine GPU.
-- Das aktive Modell steht in der Fußleiste und lässt sich dort wechseln. Die Suche filtert nach Name, der Sprachfilter nach Sprache.
+- Das aktive Modell wechselst du im Profilmenü unten links unter Modelle. Die Suche filtert nach Name, der Sprachfilter nach Sprache.
 - Genauigkeit und Geschwindigkeit sind Richtwerte aus Messungen, keine Garantie.
 
 ## Sprachmodelle

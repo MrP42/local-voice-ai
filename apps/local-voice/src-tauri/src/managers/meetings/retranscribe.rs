@@ -117,7 +117,10 @@ pub async fn rerun_meeting(
 
     // P8a: was gerade aufgenommen oder verarbeitet wird, fasst niemand an
     // (ein zweiter Lauf schriebe gleichzeitig ins selbe Transkript).
-    if matches!(meeting.status.as_str(), "recording" | "processing" | "queued") {
+    if matches!(
+        meeting.status.as_str(),
+        "recording" | "processing" | "queued"
+    ) {
         return Err("meeting_busy".to_string());
     }
 
@@ -417,7 +420,10 @@ fn run_retranscribe(
     // laengsten Spur). Ab hier rechnet der Lauf mit `plan.model_id`; die Vorgabe gilt, solange
     // `plan` lebt.
     let plan = {
-        let longest = tracks.iter().max_by_key(|(s, _)| s.len()).map(|(s, _)| s.as_slice());
+        let longest = tracks
+            .iter()
+            .max_by_key(|(s, _)| s.len())
+            .map(|(s, _)| s.as_slice());
         super::language_run::prepare(app, tm, longest.unwrap_or(&[]), request, Some(job))
     };
     let target_owned = plan.model_id.clone();

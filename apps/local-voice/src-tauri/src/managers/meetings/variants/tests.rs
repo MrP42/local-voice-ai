@@ -102,7 +102,10 @@ fn migration_6_is_the_next_index_after_the_register() {
             == 1
     };
     assert!(has("transcript_variants"), "Index 6 legt die Fassungen an");
-    assert!(!has("import_queue"), "die Warteschlange folgt erst mit Index 7");
+    assert!(
+        !has("import_queue"),
+        "die Warteschlange folgt erst mit Index 7"
+    );
 }
 
 fn old_db(path: &std::path::Path) -> Connection {

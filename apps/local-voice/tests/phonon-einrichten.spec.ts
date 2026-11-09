@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { geheZu } from "./profilmenue";
 
 // One-Click-Einrichtung von Phonon im Seitenblatt (Modelle › Vorlesen › Anbieter):
 // Sprachwahl, Lizenz, Hugging-Face-Freigabe per Zwischenablage, Reihenfolge der
@@ -81,6 +82,8 @@ interface Opts {
   theme?: "light" | "dark";
   /** Schon eingerichtet (alle Downloads da, freigegeben). */
   installed?: boolean;
+  /** Nur diese Downloads sind da (Anbieter freigegeben), z. B. Programm und Deutsch. */
+  installedIds?: string[];
 }
 
 async function setup(page: Page, opts: Opts = {}) {
@@ -101,15 +104,16 @@ async function setup(page: Page, opts: Opts = {}) {
           callbacks.get(id)?.({ event, id, payload });
       };
       let access = opts.access === true;
-      if (opts.installed) {
+      if (opts.installed || opts.installedIds) {
         for (const d of downloads) {
+          if (opts.installedIds && !opts.installedIds.includes(d.id)) continue;
           d.is_downloaded = true;
           d.is_usable = true;
           d.bundled_voices_present = d.bundled_voices;
         }
       }
       const phonon = providers.find((p) => p.descriptor.id === "phonon");
-      if (opts.installed) {
+      if (opts.installed || opts.installedIds) {
         Object.assign(phonon, {
           enabled: true,
           license_acked: true,
@@ -315,10 +319,7 @@ async function contrastOf(loc: import("@playwright/test").Locator) {
 
 async function openSetup(page: Page) {
   await page.goto("/");
-  await page
-    .getByRole("navigation")
-    .getByRole("button", { name: "Modelle", exact: true })
-    .click();
+  await geheZu(page, "Modelle");
   await page.getByTestId("tts-provider-setup-phonon").click();
   const setupPanel = page.getByTestId("phonon-setup");
   await expect(setupPanel).toBeVisible();
@@ -506,10 +507,7 @@ test("Bilder für die Abnahme (nur mit SCREENS_DIR)", async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 1000 });
     await setup(page, { theme });
     await page.goto("/");
-    await page
-      .getByRole("navigation")
-      .getByRole("button", { name: "Modelle", exact: true })
-      .click();
+    await geheZu(page, "Modelle");
     await expect(page.getByTestId("voice-providers-view")).toBeVisible();
     await page.screenshot({ path: `${dir}/01-anbieterliste-${hell}.png` });
     await page.getByTestId("tts-provider-setup-phonon").click();
@@ -559,10 +557,7 @@ test("Bilder: laufend, fertig, macOS, schmal (nur mit SCREENS_DIR)", async ({
     const p = await ctx.newPage();
     await setup(p, { installed: true, theme });
     await p.goto("/");
-    await p
-      .getByRole("navigation")
-      .getByRole("button", { name: "Modelle", exact: true })
-      .click();
+    await geheZu(p, "Modelle");
     await p.getByTestId("tts-provider-open-phonon").click();
     await expect(p.getByTestId("phonon-setup")).toHaveAttribute(
       "data-complete",
@@ -679,15 +674,33 @@ test("Zugang aus dem System (hf auth): kein „Zugang entfernen“, stattdessen 
   );
 });
 
+test("Deutsch schon da: Englisch ist vorgewählt und wird mit einem Klick nachgeladen", async ({
+  page,
+}) => {
+  await setup(page, { installedIds: ["phonon-runtime", "phonon-40m-de"] });
+  await page.goto("/");
+  await geheZu(page, "Modelle");
+  await page.getByTestId("tts-provider-open-phonon").click();
+  const panel = page.getByTestId("phonon-setup");
+  await expect(panel).toHaveAttribute("data-complete", "false");
+  await expect(
+    page.getByTestId("phonon-setup-choose-phonon-31m-en"),
+  ).toBeChecked();
+  // Englisch ist Apache-2.0 und nicht gesperrt: keine Lizenzbestätigung, kein Zugang nötig.
+  await expect(page.getByTestId("phonon-setup-license")).toHaveCount(0);
+  await expect(page.getByTestId("phonon-setup-access")).toHaveCount(0);
+  await page.getByTestId("phonon-setup-start").click();
+  const ids = (await named(page, "tts_download_model")).map(([, a]) => a.id);
+  expect(ids).toEqual(["phonon-31m-en"]);
+  await expect(panel).toHaveAttribute("data-complete", "true");
+});
+
 test("Eingerichtet: Status, eigene Stimmen und Aktionen zeigen denselben Stand", async ({
   page,
 }) => {
   await setup(page, { installed: true });
   await page.goto("/");
-  await page
-    .getByRole("navigation")
-    .getByRole("button", { name: "Modelle", exact: true })
-    .click();
+  await geheZu(page, "Modelle");
   await page.getByTestId("tts-provider-open-phonon").click();
   await expect(page.getByTestId("phonon-setup")).toHaveAttribute(
     "data-complete",

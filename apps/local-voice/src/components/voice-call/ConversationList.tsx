@@ -11,7 +11,9 @@ import {
   ArchiveRestore,
   Cloud,
   MoreHorizontal,
+  PanelLeftClose,
   Pencil,
+  Phone,
   Pin,
   PinOff,
   Search,
@@ -33,6 +35,8 @@ export interface ConversationListItem {
   updatedAt: number;
   pinned: boolean;
   archived: boolean;
+  /** Das Hauptgespräch (Tastenkürzel und Telefon der Fußleiste setzen es fort). */
+  main?: boolean;
   /** Anfang des jüngsten Beitrags; die Suche schaut auch hier hinein. */
   lastText: string;
 }
@@ -40,14 +44,17 @@ export interface ConversationListItem {
 export interface ConversationListLabels {
   navLabel: string;
   newConversation: string;
+  /** Name des Lupenknopfs (öffnet die Suche). */
   search: string;
-  searchPlaceholder: string;
+  /** Tastenkürzel der Suche, im Tooltip der Lupe. */
+  searchKey: string;
+  /** Name und Tooltip des Verlauf-Symbols im Spaltenkopf. */
+  collapse: string;
   groupPinned: string;
   groupToday: string;
   groupWeek: string;
   groupOlder: string;
   empty: string;
-  noResults: string;
   /** Beschriftung des Menüknopfs (und des Menüs) eines Eintrags. */
   menu: (title: string) => string;
   rename: string;
@@ -64,6 +71,8 @@ export interface ConversationListLabels {
   confirmNo: string;
   showArchived: string;
   archivedBadge: string;
+  /** Beschriftung des Hauptgespräch-Symbols. */
+  mainBadge: string;
 }
 
 export interface ConversationListProps {
@@ -71,6 +80,12 @@ export interface ConversationListProps {
   activeId: string | null;
   onSelect: (id: string) => void;
   onNew: () => void;
+  /** Kennung der Spalte (aria-controls des Verlauf-Symbols). */
+  controlsId: string;
+  /** Spalte einklappen (Symbol im Kopf). */
+  onCollapse: () => void;
+  /** Suche öffnen (Lupe im Kopf). */
+  onSearch: () => void;
   onRename: (id: string, title: string) => void;
   onPin: (id: string, pinned: boolean) => void;
   onArchive: (id: string, archived: boolean) => void;
@@ -159,6 +174,9 @@ export const ConversationList: React.FC<ConversationListProps> = ({
   activeId,
   onSelect,
   onNew,
+  controlsId,
+  onCollapse,
+  onSearch,
   onRename,
   onPin,
   onArchive,
@@ -169,7 +187,6 @@ export const ConversationList: React.FC<ConversationListProps> = ({
   locale,
   now,
 }) => {
-  const [query, setQuery] = useState("");
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -183,13 +200,9 @@ export const ConversationList: React.FC<ConversationListProps> = ({
   const baseId = useId();
   const current = now ?? Date.now();
 
-  const visible = useMemo(
-    () => items.filter((i) => matchesQuery(i, query)),
-    [items, query],
-  );
   const groups = useMemo(
-    () => groupConversations(visible, current),
-    [visible, current],
+    () => groupConversations(items, current),
+    [items, current],
   );
   const groupTitle: Record<ConversationGroupId, string> = {
     pinned: labels.groupPinned,
@@ -325,43 +338,54 @@ export const ConversationList: React.FC<ConversationListProps> = ({
     focusRow(id);
   };
 
+  const iconButton =
+    "grid place-items-center w-[44px] h-[44px] md:w-8 md:h-8 rounded-md cursor-pointer text-text/85 hover:bg-mid-gray/15 hover:text-text";
   const rowButton =
-    "min-h-11 md:min-h-9 rounded-md cursor-pointer text-start transition-colors";
+    "min-h-[44px] md:min-h-9 rounded-md cursor-pointer text-start transition-colors";
 
   return (
     <nav
       aria-label={labels.navLabel}
       className="flex flex-col h-full min-h-0 bg-background"
     >
-      <div className="flex flex-col gap-2 p-2 border-b border-mid-gray/20">
+      <div className="flex flex-col gap-1 p-2 border-b border-mid-gray/20">
+        <div className="flex items-center justify-between">
+          <button
+            type="button"
+            aria-controls={controlsId}
+            aria-expanded="true"
+            aria-label={labels.collapse}
+            title={labels.collapse}
+            onClick={onCollapse}
+            className={iconButton}
+          >
+            <PanelLeftClose className="w-4 h-4" aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            aria-label={labels.search}
+            title={`${labels.search} (${labels.searchKey})`}
+            data-testid="history-search-open"
+            onClick={onSearch}
+            className={iconButton}
+          >
+            <Search className="w-4 h-4" aria-hidden="true" />
+          </button>
+        </div>
         <button
           type="button"
           onClick={onNew}
-          className="flex items-center gap-2 min-h-11 md:min-h-9 px-3 rounded-md border border-mid-gray/30 cursor-pointer text-sm text-text hover:border-logo-primary hover:bg-mid-gray/10"
+          className="flex items-center gap-2 min-h-[44px] md:min-h-9 px-2 rounded-md cursor-pointer text-sm text-text hover:bg-mid-gray/10"
         >
           <SquarePen className="w-4 h-4 shrink-0" aria-hidden="true" />
           <span className="truncate">{labels.newConversation}</span>
         </button>
-        <label className="relative block">
-          <span className="sr-only">{labels.search}</span>
-          <Search
-            className="absolute start-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-text/50 pointer-events-none"
-            aria-hidden="true"
-          />
-          <input
-            type="search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder={labels.searchPlaceholder}
-            className="w-full min-h-11 md:min-h-9 ps-8 pe-2 rounded-md border border-mid-gray/30 bg-transparent text-sm text-text placeholder:text-text/50 focus:outline-none focus:border-logo-primary"
-          />
-        </label>
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto px-2 py-2">
         {groups.length === 0 && (
-          <p className="m-0 px-2 py-4 text-sm text-text/60">
-            {query.trim() ? labels.noResults : labels.empty}
+          <p className="m-0 px-2 py-4 text-sm text-text-muted">
+            {labels.empty}
           </p>
         )}
         {groups.map((group) => {
@@ -375,7 +399,7 @@ export const ConversationList: React.FC<ConversationListProps> = ({
             >
               <div
                 id={headingId}
-                className="px-2 pb-1 text-xs font-medium text-text/55"
+                className="px-2 pb-1 text-xs font-medium text-text-muted"
               >
                 {groupTitle[group.id]}
               </div>
@@ -410,7 +434,7 @@ export const ConversationList: React.FC<ConversationListProps> = ({
                               setConfirmId(null);
                               onDelete(item.id);
                             }}
-                            className="min-h-11 md:min-h-8 px-3 rounded-md bg-red-600 text-white cursor-pointer hover:bg-red-700"
+                            className="min-h-[44px] md:min-h-8 px-3 rounded-md bg-red-600 text-white cursor-pointer hover:bg-red-700"
                           >
                             {labels.confirmYes}
                           </button>
@@ -421,7 +445,7 @@ export const ConversationList: React.FC<ConversationListProps> = ({
                               setConfirmId(null);
                               focusRow(item.id);
                             }}
-                            className="min-h-11 md:min-h-8 px-3 rounded-md border border-mid-gray/30 text-text cursor-pointer hover:bg-mid-gray/10"
+                            className="min-h-[44px] md:min-h-8 px-3 rounded-md border border-mid-gray/30 text-text cursor-pointer hover:bg-mid-gray/10"
                           >
                             {labels.confirmNo}
                           </button>
@@ -453,7 +477,7 @@ export const ConversationList: React.FC<ConversationListProps> = ({
                               finishRename(item, false);
                             }
                           }}
-                          className="flex-1 min-w-0 min-h-11 md:min-h-9 mx-1 px-2 rounded-md border border-logo-primary bg-background text-sm text-text focus:outline-none"
+                          className="flex-1 min-w-0 min-h-[44px] md:min-h-9 mx-1 px-2 rounded-md border border-logo-primary bg-background text-sm text-text focus:outline-none"
                         />
                       ) : (
                         <button
@@ -468,21 +492,30 @@ export const ConversationList: React.FC<ConversationListProps> = ({
                         >
                           {item.pinned && (
                             <Pin
-                              className="w-3 h-3 shrink-0 text-text/50"
+                              className="w-3 h-3 shrink-0 text-text-muted"
                               aria-hidden="true"
                             />
                           )}
                           <span className="flex-1 min-w-0 truncate">
                             {item.title}
                           </span>
+                          {item.main && (
+                            <Phone
+                              className="w-3 h-3 shrink-0 text-logo-primary/80"
+                              aria-label={labels.mainBadge}
+                              role="img"
+                            >
+                              <title>{labels.mainBadge}</title>
+                            </Phone>
+                          )}
                           {item.archived && (
-                            <span className="shrink-0 rounded px-1 text-[10px] bg-mid-gray/20 text-text/70">
+                            <span className="shrink-0 rounded px-1 text-[10px] bg-mid-gray/20 text-text/85">
                               {labels.archivedBadge}
                             </span>
                           )}
                           <time
                             dateTime={new Date(item.updatedAt).toISOString()}
-                            className="shrink-0 text-xs text-text/50"
+                            className="shrink-0 text-xs text-text-muted"
                           >
                             {formatWhen(item.updatedAt, current, locale)}
                           </time>
@@ -503,7 +536,7 @@ export const ConversationList: React.FC<ConversationListProps> = ({
                           aria-label={labels.menu(item.title)}
                           title={labels.menu(item.title)}
                           onClick={(e) => openMenu(item.id, e.currentTarget)}
-                          className={`grid place-items-center w-11 h-11 md:w-8 md:h-8 shrink-0 rounded-md cursor-pointer text-text/70 hover:bg-mid-gray/20 focus-visible:opacity-100 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 ${
+                          className={`grid place-items-center w-[44px] h-[44px] md:w-8 md:h-8 shrink-0 rounded-md cursor-pointer text-text/85 hover:bg-mid-gray/20 focus-visible:opacity-100 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 ${
                             menu?.id === item.id ? "md:opacity-100" : ""
                           }`}
                         >
@@ -522,7 +555,7 @@ export const ConversationList: React.FC<ConversationListProps> = ({
         })}
       </div>
 
-      <label className="flex items-center gap-2 min-h-11 md:min-h-9 px-3 border-t border-mid-gray/20 text-xs text-text/80 cursor-pointer">
+      <label className="flex items-center gap-2 min-h-[44px] md:min-h-9 px-3 border-t border-mid-gray/20 text-xs text-text/80 cursor-pointer">
         <input
           type="checkbox"
           role="switch"
@@ -619,7 +652,7 @@ const MenuButton: React.FC<{
     role="menuitem"
     aria-disabled={disabled ? "true" : undefined}
     onClick={disabled ? undefined : onSelect}
-    className={`flex items-start gap-2 min-h-11 md:min-h-9 px-2 py-1.5 rounded-md text-start text-sm ${
+    className={`flex items-start gap-2 min-h-[44px] md:min-h-9 px-2 py-1.5 rounded-md text-start text-sm ${
       disabled
         ? "cursor-not-allowed opacity-60"
         : `cursor-pointer hover:bg-mid-gray/15 ${danger ? "text-red-500" : "text-text"}`
@@ -628,7 +661,7 @@ const MenuButton: React.FC<{
     <span className="mt-0.5 shrink-0">{icon}</span>
     <span className="flex flex-col">
       <span>{label}</span>
-      {hint && <small className="text-text/60">{hint}</small>}
+      {hint && <small className="text-text-muted">{hint}</small>}
     </span>
   </button>
 );

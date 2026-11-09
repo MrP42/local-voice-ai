@@ -1,0 +1,8 @@
+Vorschlag 390 light: speaker-voice-merge 168x44, speaker-voice-dismiss 187x44
+Vorschlag 390 dark: speaker-voice-merge 168x44, speaker-voice-dismiss 187x44
+Vorschlag 1440 light: speaker-voice-merge 168x44, speaker-voice-dismiss 187x44
+Vorschlag 1440 dark: speaker-voice-merge 168x44, speaker-voice-dismiss 187x44
+Einstellung 390 light: Schalter 56x36, Laden 213x44
+Einstellung 390 dark: Schalter 56x36, Laden 213x44
+Einstellung 1440 light: Schalter 56x36, Laden 213x44
+Einstellung 1440 dark: Schalter 56x36, Laden 213x44

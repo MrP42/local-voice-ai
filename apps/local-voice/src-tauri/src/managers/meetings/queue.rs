@@ -51,11 +51,15 @@ use tauri_specta::Event;
 
 use super::final_pass::{ram_need_mb, Hardware};
 use super::job::{JobPhase, MeetingJobs};
-use super::queue_store::{CancelWaiting, QueueRow, STATE_RUNNING, STATE_WAITING};
+#[cfg(test)]
+use super::queue_store::KIND_AUDIOBOOK;
+use super::queue_store::{
+    CancelWaiting, MsRange, QueueRow, KIND_MEETING, STATE_RUNNING, STATE_WAITING,
+};
 use super::store::{Meeting, MeetingStore};
 
-/// Mehr als drei gleichzeitige Transkriptionen bietet die Einstellung nicht.
-pub const MAX_PARALLEL: usize = 3;
+/// Mehr als vier gleichzeitige Transkriptionen gibt es nicht.
+pub const MAX_PARALLEL: usize = 4;
 /// Reserve im Grafikspeicher ueber die Modellgroesse hinaus (MB).
 pub const VRAM_HEADROOM_MB: u64 = 1_024;
 /// So lange gilt ein Ergebnis des Speicher-Tors (es fragt Geraete ab).
@@ -73,6 +77,172 @@ pub fn more_waiting() -> bool {
 /// Die Einstellung als Anzahl gleichzeitiger Laeufe: 1 bis [`MAX_PARALLEL`].
 pub fn clamp_limit(value: u32) -> usize {
     (value as usize).clamp(1, MAX_PARALLEL)
+}
+
+/// Hoerbuch-Teile und -Abschnitte (lva#208) laufen bis zu so vielen gleichzeitig,
+/// auch wenn die Einstellung fuer Besprechungen kleiner ist (Vorgabe 1):
+/// min(4, max(1, Kerne / 2)). Das Speicher-Tor und der Aufnahme-Vorrang gelten
+/// unveraendert.
+pub fn bulk_parallel(cpus: usize) -> usize {
+    (cpus / 2).clamp(1, MAX_PARALLEL)
+}
+
+/// Die Grenze fuer die naechste Datei: Besprechungen behalten die Einstellung,
+/// Hoerbuch-Auftraege duerfen bis `bulk` ([`bulk_parallel`], mindestens die Einstellung).
+pub fn limit_for(audiobook: bool, setting: usize, bulk: usize) -> usize {
+    let setting = setting.clamp(1, MAX_PARALLEL);
+    if audiobook {
+        setting.max(bulk.clamp(1, MAX_PARALLEL))
+    } else {
+        setting
+    }
+}
+
+/// CPU-Threads je Engine, wenn sich `engines` Engines die Rechen-Threads des
+/// Systemschutzes (`process_guard::cpu_threads_for`) teilen: jede bekommt
+/// ihren Anteil, mindestens 1. Zusammen nie mehr als der Systemschutz erlaubt.
+pub fn threads_per_engine(cpus: usize, engines: usize) -> usize {
+    (crate::process_guard::cpu_threads_for(cpus) / engines.max(1)).max(1)
+}
+
+/// Einstellungswert fuer "Automatisch": die Zahl gleichzeitiger Laeufe richtet
+/// sich nach der Hardware ([`recommended_parallel`]).
+pub const PARALLEL_AUTO: u32 = 0;
+/// Ab so vielen logischen Kernen gibt es einen weiteren gleichzeitigen Lauf
+/// (jede Engine soll mindestens vier Rechen-Threads behalten).
+const CPUS_PER_RUN: usize = 4;
+/// Groesse, mit der gerechnet wird, wenn das Modell unbekannt ist (MB).
+const UNKNOWN_MODEL_MB: u64 = 1_024;
+
+/// Der gespeicherte Wert der Einstellung: 0 (Automatisch) bleibt, alles
+/// andere zaehlt als der naechste gueltige Wert von 1 bis [`MAX_PARALLEL`].
+pub fn normalize_setting(value: u32) -> u32 {
+    if value == PARALLEL_AUTO {
+        PARALLEL_AUTO
+    } else {
+        clamp_limit(value) as u32
+    }
+}
+
+/// Die wirksame Grenze: eine feste Zahl gilt, "Automatisch" nimmt die
+/// Empfehlung fuer diesen Rechner (erst dann gemessen).
+pub fn resolve_limit(setting: u32, recommended: impl FnOnce() -> usize) -> usize {
+    if setting == PARALLEL_AUTO {
+        recommended().clamp(1, MAX_PARALLEL)
+    } else {
+        clamp_limit(setting)
+    }
+}
+
+/// Was der Rechner fuer die Empfehlung hergibt (Gesamtwerte, nicht der
+/// gerade freie Speicher: den prueft das Speicher-Tor vor jedem Lauf).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct HardwareCapacity {
+    pub cpus: usize,
+    /// Arbeitsspeicher insgesamt (MB); 0 = nicht messbar.
+    pub ram_total_mb: u64,
+    /// Grafikspeicher der groessten eigenen Karte (MB), nur wenn die
+    /// Transkription die GPU nutzen darf; `None` = keine oder nicht messbar.
+    pub vram_total_mb: Option<u64>,
+}
+
+/// Wodurch die Empfehlung begrenzt ist (fuer die Begruendung in der Oberflaeche).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum ParallelLimitedBy {
+    /// Die Obergrenze der App ([`MAX_PARALLEL`]).
+    Maximum,
+    /// Die Zahl der Prozessorkerne.
+    Cpu,
+    /// Der Arbeitsspeicher.
+    Ram,
+    /// Der Grafikspeicher.
+    Vram,
+}
+
+/// Herleitung der Empfehlung: was jeder Faktor allein erlauben wuerde (ohne
+/// die Obergrenze der App) und was daraus folgt.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ParallelEstimate {
+    /// 1 bis [`MAX_PARALLEL`].
+    pub recommended: usize,
+    /// Der begrenzende Faktor. `Maximum` nur, wenn JEDER Faktor mehr als
+    /// [`MAX_PARALLEL`] erlauben wuerde (bei Gleichstand nennt er die Hardware).
+    pub limited_by: ParallelLimitedBy,
+    /// Laeufe nach Kernen (ein Lauf je [`CPUS_PER_RUN`]), mindestens 1.
+    pub by_cpu: usize,
+    /// Laeufe nach Arbeitsspeicher; `None` = nicht messbar.
+    pub by_ram: Option<usize>,
+    /// Laeufe nach Grafikspeicher; `None` = CPU-Modell oder nicht messbar.
+    pub by_vram: Option<usize>,
+    /// Bedarf je Lauf im Arbeitsspeicher (MB, [`ram_need_mb`]).
+    pub ram_per_run_mb: u64,
+    /// Bedarf je Lauf im Grafikspeicher (MB, [`vram_gate_mb`]); `None` = CPU-Modell.
+    pub vram_per_run_mb: Option<u64>,
+}
+
+/// Empfohlene Zahl gleichzeitiger Transkriptionen fuer diesen Rechner und
+/// dieses Modell (rein, ohne Messung):
+///
+/// - Kerne: ein Lauf je [`CPUS_PER_RUN`] logische Kerne.
+/// - Arbeitsspeicher: jede Engine laedt das Modell selbst ([`ram_need_mb`]);
+///   zusammen hoechstens die Haelfte des Arbeitsspeichers abzueglich der
+///   Systemreserve, der Rest bleibt fuer System und andere Programme.
+/// - Grafikspeicher (nur GPU-Modell auf GPU): jede Engine braucht
+///   [`vram_gate_mb`].
+///
+/// Das Ergebnis liegt immer zwischen 1 und [`MAX_PARALLEL`]. Was nicht messbar
+/// ist, begrenzt nicht; das Speicher-Tor vor jedem weiteren Lauf bleibt.
+pub fn recommended_parallel(
+    hw: &HardwareCapacity,
+    model_size_mb: u64,
+    gpu_model: bool,
+) -> ParallelEstimate {
+    let size_mb = if model_size_mb == 0 {
+        UNKNOWN_MODEL_MB
+    } else {
+        model_size_mb
+    };
+    let ram_per_run_mb = ram_need_mb(size_mb);
+    let vram_per_run_mb = gpu_model.then(|| vram_gate_mb(size_mb));
+    let by_cpu = (hw.cpus / CPUS_PER_RUN).max(1);
+    let by_ram = (hw.ram_total_mb > 0).then(|| {
+        let budget = hw
+            .ram_total_mb
+            .saturating_sub(crate::process_guard::reserve_for_total_mb(hw.ram_total_mb))
+            / 2;
+        ((budget / ram_per_run_mb) as usize).max(1)
+    });
+    let by_vram = vram_per_run_mb.and_then(|need| {
+        hw.vram_total_mb
+            .filter(|v| *v > 0)
+            .map(|vram| ((vram / need) as usize).max(1))
+    });
+    let mut hardware = (by_cpu, ParallelLimitedBy::Cpu);
+    for (n, by) in [
+        (by_ram, ParallelLimitedBy::Ram),
+        (by_vram, ParallelLimitedBy::Vram),
+    ] {
+        if let Some(n) = n {
+            if n < hardware.0 {
+                hardware = (n, by);
+            }
+        }
+    }
+    let (recommended, limited_by) = if hardware.0 > MAX_PARALLEL {
+        (MAX_PARALLEL, ParallelLimitedBy::Maximum)
+    } else {
+        hardware
+    };
+    ParallelEstimate {
+        recommended,
+        limited_by,
+        by_cpu,
+        by_ram,
+        by_vram,
+        ram_per_run_mb,
+        vram_per_run_mb,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -192,7 +362,7 @@ pub fn decide(
 /// RAM-Bedarf einer eigenen Engine mit diesem Modell: wie das Live-Modell
 /// (`final_pass::ram_need_mb`), plus die Systemreserve.
 pub fn ram_gate_mb(size_mb: u64) -> u64 {
-    ram_need_mb(size_mb) + crate::process_guard::RAM_RESERVE_MB
+    ram_need_mb(size_mb) + crate::process_guard::ram_reserve_mb()
 }
 
 /// Bedarf im Grafikspeicher: das Modell plus ein Viertel (Arbeitsspeicher der
@@ -247,6 +417,34 @@ pub fn title_from_path(path: &Path) -> String {
         .to_string()
 }
 
+/// Bereich eines Hoerbuch-Abschnitts: ohne Grenzen die ganze Datei, nur mit
+/// Anfang bis zum Dateiende (letzter Abschnitt), mit Ende hinter dem Anfang
+/// (`range_invalid`; ein Ende ohne Anfang ist ungueltig).
+pub fn part_range(start_ms: Option<u64>, end_ms: Option<u64>) -> Result<Option<MsRange>, String> {
+    match (start_ms, end_ms) {
+        (None, None) => Ok(None),
+        (Some(start), None) => Ok(Some((start, None))),
+        (Some(start), Some(end)) if end > start => Ok(Some((start, Some(end)))),
+        _ => Err("range_invalid".to_string()),
+    }
+}
+
+/// Titel der Hilfs-Besprechung eines Hoerbuch-Teils: der Dateiname, bei einem
+/// Abschnitt mit dem Beginn ("Name (ab 40:00)").
+pub fn part_title(path: &Path, range: Option<MsRange>) -> String {
+    let base = title_from_path(path);
+    let Some((start_ms, _)) = range else {
+        return base;
+    };
+    let secs = start_ms / 1_000;
+    let (h, m, s) = (secs / 3_600, secs / 60 % 60, secs % 60);
+    if h > 0 {
+        format!("{base} (ab {h}:{m:02}:{s:02})")
+    } else {
+        format!("{base} (ab {m}:{s:02})")
+    }
+}
+
 /// Vor dem Start: ist die Quelldatei noch da? `Some(Fehlercode)`, wenn nicht.
 pub fn source_problem(source: Option<&str>) -> Option<&'static str> {
     match source {
@@ -264,6 +462,13 @@ pub fn source_problem(source: Option<&str>) -> Option<&'static str> {
 pub struct RunRequest {
     pub meeting_id: String,
     pub source_path: String,
+    /// `queue_store::KIND_MEETING` oder `KIND_AUDIOBOOK`.
+    pub kind: String,
+    /// Nur dieser Bereich der Datei (ms), `None` = ganze Datei (lva#208).
+    pub range: Option<MsRange>,
+    /// Auf so viele Engines verteilen sich die CPU-Threads (die Grenze, die fuer
+    /// diesen Auftrag gilt).
+    pub engines: usize,
     pub slot: Slot,
     /// Der Lauf meldet, sobald seine eigene Engine geladen ist (oder keine
     /// gebraucht wird): erst dann laedt die Warteschlange die naechste.
@@ -324,6 +529,8 @@ pub struct QueueDeps {
     pub state_event: Arc<dyn Fn(&str, &str) + Send + Sync>,
     /// Fehler einer Besprechung: (Besprechung, Code).
     pub error_event: Arc<dyn Fn(&str, &str) + Send + Sync>,
+    /// Grenze fuer Hoerbuch-Auftraege ([`bulk_parallel`]).
+    pub bulk_limit: usize,
     /// Takt des Verteilers (Aufnahme und Speicher werden so oft geprueft).
     pub tick: Duration,
     /// So lange wartet die Warteschlange nach einem verschobenen Lauf.
@@ -336,6 +543,8 @@ struct RunInfo {
     held: bool,
     started: Instant,
     stop_requested: Arc<AtomicBool>,
+    /// Hoerbuch-Teil oder -Abschnitt (zaehlt fuer die wirksame Grenze).
+    audiobook: bool,
 }
 
 #[derive(Default)]
@@ -425,6 +634,31 @@ impl ImportQueue {
             .deps
             .store
             .queue_enqueue(title, source_path, consent_confirmed_at)
+            .map_err(|e| format!("queue_enqueue_failed: {e}"))?;
+        self.inner.notify();
+        Ok(meeting)
+    }
+
+    /// lva#208: reiht einen Hoerbuch-Teil (ganze Datei) oder einen Abschnitt davon
+    /// (`range`, ms) ein. Hoerbuch-Auftraege laufen bis zu [`BULK_PARALLEL`]
+    /// gleichzeitig; ihre Segmentzeiten sind relativ zum Bereich.
+    pub fn enqueue_part(
+        &self,
+        title: &str,
+        source_path: &str,
+        range: Option<MsRange>,
+    ) -> Result<Meeting, String> {
+        let meeting = self
+            .inner
+            .deps
+            .store
+            // Ein Hoerbuch, keine Gespraechsaufnahme: keine Einwilligung noetig.
+            .queue_enqueue_part(
+                title,
+                source_path,
+                Some(chrono::Utc::now().timestamp()),
+                range,
+            )
             .map_err(|e| format!("queue_enqueue_failed: {e}"))?;
         self.inner.notify();
         Ok(meeting)
@@ -535,8 +769,9 @@ impl ImportQueue {
     /// Der aktuelle Stand (aus der Datenbank und dem letzten Takt).
     pub fn snapshot(&self) -> QueueSnapshot {
         let rows = self.inner.deps.store.queue_rows().unwrap_or_default();
-        let limit = (self.inner.deps.limit)().clamp(1, MAX_PARALLEL);
+        let setting = (self.inner.deps.limit)().clamp(1, MAX_PARALLEL);
         let st = self.inner.lock();
+        let limit = effective_limit(&rows, &st, setting, self.inner.deps.bulk_limit);
         build_snapshot(&rows, &st, limit)
     }
 
@@ -558,6 +793,14 @@ impl ImportQueue {
             std::thread::sleep(Duration::from_millis(25));
         }
     }
+}
+
+/// Die wirksame Grenze: die Einstellung, solange nur Besprechungen warten oder
+/// laufen; sonst die hoehere Grenze der Hoerbuch-Auftraege.
+fn effective_limit(rows: &[QueueRow], st: &State, setting: usize, bulk: usize) -> usize {
+    let any_bulk =
+        rows.iter().any(|r| r.is_audiobook()) || st.running.values().any(|i| i.audiobook);
+    limit_for(any_bulk, setting, bulk)
 }
 
 fn build_snapshot(rows: &[QueueRow], st: &State, limit: usize) -> QueueSnapshot {
@@ -699,9 +942,11 @@ impl Inner {
                     extra_loading: !st.loading.is_empty(),
                 };
                 // Das Tor fragt nur, wenn die Planung eine eigene Engine braeuchte.
+                let row_limit =
+                    limit_for(waiting[next].is_audiobook(), limit, self.deps.bulk_limit);
                 let decision = {
                     let mut gate = || self.extra_gate_open(&mut st);
-                    decide(true, &occ, limit, recording, &mut gate)
+                    decide(true, &occ, row_limit, recording, &mut gate)
                 };
                 match decision {
                     Decision::Idle => break,
@@ -713,7 +958,13 @@ impl Inner {
                         let row = waiting[next];
                         next += 1;
                         match store.queue_mark_running(&row.meeting_id) {
-                            Ok(true) => self.spawn_run(&mut st, &row.meeting_id, slot),
+                            Ok(true) => self.spawn_run(
+                                &mut st,
+                                &row.meeting_id,
+                                slot,
+                                row.is_audiobook(),
+                                limit_for(row.is_audiobook(), limit, self.deps.bulk_limit),
+                            ),
                             // Inzwischen entfernt oder geloescht: die naechste.
                             Ok(false) => continue,
                             Err(e) => {
@@ -726,7 +977,8 @@ impl Inner {
             }
             st.blocked = blocked;
             let rows = store.queue_rows().unwrap_or(rows);
-            let snapshot = build_snapshot(&rows, &st, limit);
+            let shown = effective_limit(&rows, &st, limit, self.deps.bulk_limit);
+            let snapshot = build_snapshot(&rows, &st, shown);
             if st.last_published.as_ref() == Some(&snapshot) {
                 None
             } else {
@@ -739,7 +991,14 @@ impl Inner {
         }
     }
 
-    fn spawn_run(self: &Arc<Self>, st: &mut State, meeting_id: &str, slot: Slot) {
+    fn spawn_run(
+        self: &Arc<Self>,
+        st: &mut State,
+        meeting_id: &str,
+        slot: Slot,
+        audiobook: bool,
+        engines: usize,
+    ) {
         let stop_requested = Arc::new(AtomicBool::new(false));
         st.running.insert(
             meeting_id.to_string(),
@@ -748,6 +1007,7 @@ impl Inner {
                 held: false,
                 started: Instant::now(),
                 stop_requested: Arc::clone(&stop_requested),
+                audiobook,
             },
         );
         if slot == Slot::Extra {
@@ -758,7 +1018,7 @@ impl Inner {
         let name = format!("meeting-import-{}", &id[id.len().saturating_sub(6)..]);
         let spawned = std::thread::Builder::new().name(name).spawn({
             let id = id.clone();
-            move || inner.run_thread(id, slot, stop_requested)
+            move || inner.run_thread(id, slot, engines, stop_requested)
         });
         if let Err(e) = spawned {
             // Kein Thread: die Datei wartet wieder, der naechste Takt versucht es.
@@ -776,6 +1036,7 @@ impl Inner {
         self: Arc<Self>,
         meeting_id: String,
         slot: Slot,
+        engines: usize,
         stop_requested: Arc<AtomicBool>,
     ) {
         let _guard = RunGuard {
@@ -791,9 +1052,22 @@ impl Inner {
             self.fail(&meeting_id, code);
             return;
         }
+        // Ein Lesefehler darf nie zur Besprechung ohne Bereich werden: der
+        // Hoerbuch-Abschnitt wuerde sonst als ganze Datei transkribiert.
+        let (kind, range) = match deps.store.queue_part(&meeting_id) {
+            Ok(part) => part,
+            Err(e) => {
+                warn!("meetings: queue part unreadable ({meeting_id}): {e}");
+                self.fail(&meeting_id, "queue_part_unreadable");
+                return;
+            }
+        };
         let request = RunRequest {
             meeting_id: meeting_id.clone(),
             source_path: source.unwrap_or_default(),
+            kind,
+            range,
+            engines,
             slot,
             engine_ready: EngineReady {
                 inner: Arc::clone(&self),
@@ -919,9 +1193,12 @@ fn run_request(
     let RunRequest {
         meeting_id,
         source_path,
+        range,
+        engines,
         slot,
         engine_ready,
         stop_requested,
+        ..
     } = request;
 
     // Der Auftrag zuerst: waehrend eine eigene Engine laedt (Sekunden), zeigt die
@@ -945,7 +1222,7 @@ fn run_request(
         job.handle().begin_phase(JobPhase::Prepare, 0);
         let settings = crate::settings::get_settings(app);
         let model_id = tm.meeting_model_target(&settings);
-        let threads = extra_engine_threads();
+        let threads = threads_per_engine(crate::process_guard::logical_cpus(), engines) as i32;
         let loaded = tm.load_extra_engine(&model_id, threads);
         engine_ready.signal();
         match loaded {
@@ -960,21 +1237,115 @@ fn run_request(
         None
     };
     let path = PathBuf::from(&source_path);
-    let result = super::import::run_import(app, store, tm, &meeting_id, &path, job.handle());
+    let result = super::import::run_import(app, store, tm, &meeting_id, &path, range, job.handle());
     drop(job);
     match result {
-        Ok(()) => RunOutcome::Done,
+        Ok(()) => {
+            // Teil einer Besprechung aus mehreren Dateien: ist jetzt alles fertig,
+            // werden die Teile zusammengefuehrt (`parts.rs`).
+            super::parts::after_import(app, store, &meeting_id);
+            RunOutcome::Done
+        }
         Err(e) => RunOutcome::Failed(e),
     }
 }
 
-/// CPU-Threads einer weiteren Engine: die Haelfte der Rechen-Threads des
-/// Systemschutzes (`process_guard::cpu_threads_for`), mindestens 2. Zwei
-/// Engines mit allen Kernen je wuerden sich gegenseitig ausbremsen und den
-/// Rechner bedienunfaehig machen.
-fn extra_engine_threads() -> i32 {
-    let base = crate::process_guard::cpu_threads_for(crate::process_guard::logical_cpus());
-    (base / 2).max(2) as i32
+/// Empfehlung fuer diesen Rechner, wie die Einstellungen sie zeigen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct ParallelRecommendation {
+    /// So viele Transkriptionen laufen bei "Automatisch" gleichzeitig.
+    pub recommended: u32,
+    /// Hoechster einstellbarer Wert.
+    pub max: u32,
+    pub limited_by: ParallelLimitedBy,
+    /// Laeufe, die jeder Faktor allein erlauben wuerde (ohne Obergrenze).
+    pub by_cpu: u32,
+    pub by_ram: Option<u32>,
+    pub by_vram: Option<u32>,
+    /// Bedarf je weiterem Lauf (das Modell wird je Lauf neu geladen).
+    pub ram_per_run_mb: u64,
+    pub vram_per_run_mb: Option<u64>,
+    pub cpus: u32,
+    pub ram_total_mb: u64,
+    /// `None`: keine GPU fuer die Transkription oder nicht messbar.
+    pub vram_total_mb: Option<u64>,
+    /// Groesse des Besprechungsmodells (MB), mit der gerechnet wurde.
+    pub model_size_mb: u64,
+    /// Das Besprechungsmodell rechnet auf der GPU.
+    pub gpu_model: bool,
+}
+
+/// So lange gilt eine gemessene Empfehlung (der Verteiler fragt im Takt).
+const RECOMMENDATION_TTL: Duration = Duration::from_secs(30);
+/// Zwischenspeicher: (Zeitpunkt, GPU fuer die Transkription erlaubt, Empfehlung).
+static RECOMMENDATION_CACHE: Mutex<Option<(Instant, bool, ParallelRecommendation)>> =
+    Mutex::new(None);
+
+fn gpu_allowed(settings: &crate::settings::AppSettings) -> bool {
+    settings.transcribe_accelerator != crate::settings::TranscribeAcceleratorSetting::Cpu
+}
+
+/// Gesamtwerte des Rechners fuer [`recommended_parallel`]. Nur der
+/// Arbeitsspeicher wird je Aufruf gemessen; die GPU-Kapazitaet stammt aus dem
+/// Start-Zwischenspeicher der Geraete.
+pub fn probe_capacity(gpu_allowed: bool) -> HardwareCapacity {
+    let mut sys = sysinfo::System::new();
+    sys.refresh_memory();
+    HardwareCapacity {
+        cpus: crate::process_guard::logical_cpus(),
+        ram_total_mb: sys.total_memory() / (1024 * 1024),
+        vram_total_mb: if gpu_allowed {
+            crate::managers::transcription::transcribe_gpu_total_mb()
+        } else {
+            None
+        },
+    }
+}
+
+/// Die Empfehlung fuer das aktuelle Besprechungsmodell. Der Verteiler nutzt
+/// den Zwischenspeicher (30 s, neu bei geaendertem Beschleuniger) und fragt
+/// dann weder Modell noch Geraete ab; `fresh` (die Einstellungsseite) misst
+/// immer neu, etwa nach einem Modellwechsel. Gemessen wird ohne gehaltene Sperre.
+pub fn recommendation_for_app(
+    app: &AppHandle,
+    tm: &TranscriptionManager,
+    fresh: bool,
+) -> ParallelRecommendation {
+    let settings = crate::settings::get_settings(app);
+    let allowed = gpu_allowed(&settings);
+    if !fresh {
+        let cache = RECOMMENDATION_CACHE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some((at, cached_allowed, rec)) = *cache {
+            if cached_allowed == allowed && at.elapsed() < RECOMMENDATION_TTL {
+                return rec;
+            }
+        }
+    }
+    let (model_size_mb, gpu_model) = tm.meeting_model_footprint(&settings);
+    let hw = probe_capacity(allowed);
+    let gpu_model = gpu_model && hw.vram_total_mb.is_some();
+    let est = recommended_parallel(&hw, model_size_mb, gpu_model);
+    let rec = ParallelRecommendation {
+        recommended: est.recommended as u32,
+        max: MAX_PARALLEL as u32,
+        limited_by: est.limited_by,
+        by_cpu: est.by_cpu as u32,
+        by_ram: est.by_ram.map(|n| n as u32),
+        by_vram: est.by_vram.map(|n| n as u32),
+        ram_per_run_mb: est.ram_per_run_mb,
+        vram_per_run_mb: est.vram_per_run_mb,
+        cpus: hw.cpus as u32,
+        ram_total_mb: hw.ram_total_mb,
+        vram_total_mb: hw.vram_total_mb,
+        model_size_mb,
+        gpu_model,
+    };
+    *RECOMMENDATION_CACHE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some((Instant::now(), allowed, rec));
+    rec
 }
 
 impl ImportQueue {
@@ -990,6 +1361,7 @@ impl ImportQueue {
         limit_override: Option<usize>,
     ) -> Self {
         let limit_app = app.clone();
+        let limit_tm = Arc::clone(&tm);
         let gate_app = app.clone();
         let gate_tm = Arc::clone(&tm);
         let run_app = app.clone();
@@ -1005,7 +1377,10 @@ impl ImportQueue {
                 // Nur der Headless-Nachweis: gilt fuer diesen Lauf, schreibt nichts.
                 Some(limit) => limit.clamp(1, MAX_PARALLEL),
                 None => {
-                    clamp_limit(crate::settings::get_settings(&limit_app).meeting_import_parallel)
+                    let setting = crate::settings::get_settings(&limit_app).meeting_import_parallel;
+                    resolve_limit(setting, || {
+                        recommendation_for_app(&limit_app, &limit_tm, false).recommended as usize
+                    })
                 }
             }),
             recording,
@@ -1031,6 +1406,7 @@ impl ImportQueue {
             }),
             state_event: Arc::new(move |id, status| emit_state(&state_app, id, status)),
             error_event: Arc::new(move |id, code| emit_error(&error_app, id, code)),
+            bulk_limit: bulk_parallel(crate::process_guard::logical_cpus()),
             tick: APP_TICK,
             cooldown: APP_COOLDOWN,
         })
@@ -1202,7 +1578,7 @@ mod tests {
         let need = ram_gate_mb(1_600);
         assert_eq!(
             need,
-            ram_need_mb(1_600) + crate::process_guard::RAM_RESERVE_MB
+            ram_need_mb(1_600) + crate::process_guard::ram_reserve_mb()
         );
         assert!(
             plan_extra_slot(1_600, false, &hw(Some(need), false, None)).is_ok(),
@@ -1240,12 +1616,141 @@ mod tests {
     }
 
     #[test]
-    fn the_limit_is_one_to_three() {
+    fn auto_setting_stays_auto_and_resolves_to_the_recommendation() {
+        assert_eq!(normalize_setting(0), PARALLEL_AUTO);
+        assert_eq!(normalize_setting(3), 3);
+        assert_eq!(normalize_setting(99), 4);
+        assert_eq!(resolve_limit(0, || 3), 3);
+        assert_eq!(resolve_limit(0, || 0), 1);
+        assert_eq!(resolve_limit(0, || 99), MAX_PARALLEL);
+        assert_eq!(resolve_limit(2, || panic!("fest: keine Messung")), 2);
+    }
+
+    fn cap(cpus: usize, ram_gb: u64, vram_gb: Option<u64>) -> HardwareCapacity {
+        HardwareCapacity {
+            cpus,
+            ram_total_mb: ram_gb * 1024,
+            vram_total_mb: vram_gb.map(|g| g * 1024),
+        }
+    }
+
+    fn rec(hw: HardwareCapacity, size: u64, gpu: bool) -> (usize, ParallelLimitedBy) {
+        let e = recommended_parallel(&hw, size, gpu);
+        (e.recommended, e.limited_by)
+    }
+
+    #[test]
+    fn recommendation_follows_cores_ram_and_vram() {
+        use ParallelLimitedBy::*;
+        // 16 Threads, 32 GB, 12 GB GPU, Nemotron 750 MB: Kerne erlauben genau 4.
+        assert_eq!(rec(cap(16, 32, Some(12)), 750, true), (4, Cpu));
+        // Patricks PC (32 Threads, 64 GB, RTX 4090 24 GB): jede Hardware erlaubt
+        // mehr als 4 -> ehrlich die Obergrenze der App.
+        let e = recommended_parallel(&cap(32, 64, Some(24)), 750, true);
+        assert_eq!((e.recommended, e.limited_by), (4, Maximum));
+        assert_eq!(e.by_cpu, 8);
+        assert!(e.by_ram.unwrap() > 4 && e.by_vram.unwrap() > 4);
+        assert_eq!(e.ram_per_run_mb, ram_need_mb(750));
+        assert_eq!(e.vram_per_run_mb, Some(vram_gate_mb(750)));
+        // Wenige Kerne.
+        assert_eq!(rec(cap(8, 32, None), 750, false), (2, Cpu));
+        assert_eq!(rec(cap(2, 8, None), 750, false), (1, Cpu));
+        // Wenig Arbeitsspeicher: (16 GB - 3,2 GB Reserve) / 2 = 6,4 GB, je Engine ~4,7 GB.
+        assert_eq!(rec(cap(32, 16, None), 2_900, false), (1, Ram));
+        // Grosses Modell auf kleiner Karte: der Grafikspeicher begrenzt.
+        assert_eq!(rec(cap(32, 64, Some(8)), 3_000, true), (1, Vram));
+        assert_eq!(rec(cap(32, 64, Some(16)), 3_000, true), (3, Vram));
+        // CPU-Modell: der Grafikspeicher zaehlt nicht.
+        let cpu_model = recommended_parallel(&cap(32, 64, Some(4)), 3_000, false);
+        assert_eq!(cpu_model.recommended, 4);
+        assert_eq!((cpu_model.by_vram, cpu_model.vram_per_run_mb), (None, None));
+        // Nicht messbar begrenzt nicht; unbekanntes Modell = 1 GB.
+        let unknown = recommended_parallel(&cap(16, 0, None), 0, true);
+        assert_eq!((unknown.recommended, unknown.limited_by), (4, Cpu));
+        assert_eq!((unknown.by_ram, unknown.by_vram), (None, None));
+        // Nie unter 1, nie ueber MAX_PARALLEL.
+        for cpus in [0, 1, 3, 4, 100] {
+            for ram in [0, 1, 4, 512] {
+                let (n, _) = rec(cap(cpus, ram, Some(1)), 5_000, true);
+                assert!((1..=MAX_PARALLEL).contains(&n));
+            }
+        }
+    }
+
+    #[test]
+    fn the_limit_is_one_to_four() {
         assert_eq!(clamp_limit(0), 1);
         assert_eq!(clamp_limit(1), 1);
         assert_eq!(clamp_limit(2), 2);
         assert_eq!(clamp_limit(3), 3);
-        assert_eq!(clamp_limit(99), 3);
+        assert_eq!(clamp_limit(4), 4);
+        assert_eq!(clamp_limit(99), 4);
+    }
+
+    #[test]
+    fn audiobook_parts_get_up_to_four_slots_meetings_keep_their_setting() {
+        for setting in 1..=4 {
+            assert_eq!(
+                limit_for(false, setting, 4),
+                setting,
+                "Besprechung: Einstellung"
+            );
+            assert_eq!(
+                limit_for(true, setting, 4),
+                4,
+                "Hoerbuch: max(Einstellung, 4)"
+            );
+        }
+        assert_eq!(limit_for(false, 0, 4), 1);
+        assert_eq!(limit_for(false, 99, 4), 4);
+        assert_eq!(limit_for(true, 99, 4), 4);
+        // Wenige Kerne: Hoerbuch-Grenze kleiner, die Einstellung gilt mindestens.
+        assert_eq!(limit_for(true, 1, 2), 2);
+        assert_eq!(limit_for(true, 3, 2), 3);
+        for (cpus, want) in [(1, 1), (2, 1), (4, 2), (6, 3), (8, 4), (64, 4)] {
+            assert_eq!(bulk_parallel(cpus), want, "{cpus} Kerne");
+        }
+        // Threads teilen sich auf die Engines, zusammen nie mehr als der Systemschutz.
+        let total = crate::process_guard::cpu_threads_for(16);
+        assert_eq!(threads_per_engine(16, 1), total);
+        assert_eq!(threads_per_engine(16, 4), total / 4);
+        assert!(threads_per_engine(16, 4) * 4 <= total);
+        assert_eq!(threads_per_engine(2, 99), 1);
+        // Die Planung selbst: Limit 4 = vier Plaetze (Primary plus drei Extras).
+        assert_eq!(
+            decide_with(occ(true, false, 2), 4, false, true).0,
+            Decision::Start(Slot::Extra)
+        );
+        assert_eq!(
+            decide_with(occ(true, false, 3), 4, false, true).0,
+            Decision::Wait(WaitReason::Slot)
+        );
+    }
+
+    #[test]
+    fn a_part_title_names_the_section_start() {
+        let p = Path::new("C:/b/Buch.mp3");
+        assert_eq!(part_title(p, None), "Buch");
+        assert_eq!(part_title(p, Some((0, Some(60_000)))), "Buch (ab 0:00)");
+        assert_eq!(
+            part_title(p, Some((2_405_000, Some(3_600_000)))),
+            "Buch (ab 40:05)"
+        );
+        assert_eq!(part_title(p, Some((3_723_000, None))), "Buch (ab 1:02:03)");
+    }
+
+    #[test]
+    fn a_range_needs_a_start_and_an_end_behind_it_when_given() {
+        assert_eq!(part_range(None, None), Ok(None));
+        assert_eq!(part_range(Some(0), Some(10)), Ok(Some((0, Some(10)))));
+        assert_eq!(
+            part_range(Some(7), None),
+            Ok(Some((7, None))),
+            "offenes Ende"
+        );
+        for bad in [(None, Some(5)), (Some(5), Some(5)), (Some(9), Some(1))] {
+            assert_eq!(part_range(bad.0, bad.1), Err("range_invalid".to_string()));
+        }
     }
 
     #[test]
@@ -1298,6 +1803,8 @@ mod tests {
         events: Arc<Mutex<Vec<(String, String)>>>,
         errors: Arc<Mutex<Vec<(String, String)>>>,
         stop_seen: Arc<Mutex<Vec<String>>>,
+        /// Art und Bereich je gestartetem Lauf (lva#208).
+        parts: Arc<Mutex<HashMap<String, (String, Option<MsRange>)>>>,
         files: tempfile::TempDir,
     }
 
@@ -1318,22 +1825,28 @@ mod tests {
 
     struct RigOptions {
         limit: usize,
+        /// Grenze fuer Hoerbuch-Auftraege.
+        bulk: usize,
         gate: bool,
         /// Die Extra-Laeufe melden `engine_ready` selbst (Test des Ladens).
         manual_engine_ready: bool,
         /// Die Laeufe melden sich beim Auftragsverzeichnis mit Phase Transkription.
         register_jobs: bool,
         tick: Duration,
+        /// Abkuehlzeit nach einem verschobenen Lauf.
+        cooldown: Duration,
     }
 
     impl Default for RigOptions {
         fn default() -> Self {
             Self {
                 limit: 1,
+                bulk: 4,
                 gate: true,
                 manual_engine_ready: false,
                 register_jobs: false,
                 tick: Duration::from_millis(20),
+                cooldown: Duration::from_millis(150),
             }
         }
     }
@@ -1352,8 +1865,10 @@ mod tests {
         let events: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
         let errors: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
         let stop_seen: Arc<Mutex<Vec<String>>> = Arc::default();
+        let parts_outer: Arc<Mutex<HashMap<String, (String, Option<MsRange>)>>> = Arc::default();
 
         let runner: Runner = {
+            let parts = parts_outer.clone();
             let (starts, running_now, peak, release, jobs, store, stop_seen) = (
                 starts.clone(),
                 running_now.clone(),
@@ -1371,6 +1886,10 @@ mod tests {
                     .lock()
                     .unwrap()
                     .insert(request.meeting_id.clone(), Arc::clone(&slot));
+                parts.lock().unwrap().insert(
+                    request.meeting_id.clone(),
+                    (request.kind.clone(), request.range),
+                );
                 starts
                     .lock()
                     .unwrap()
@@ -1451,8 +1970,9 @@ mod tests {
                     .unwrap()
                     .push((id.to_string(), code.to_string()))
             }),
+            bulk_limit: options.bulk,
             tick: options.tick,
-            cooldown: Duration::from_millis(150),
+            cooldown: options.cooldown,
         });
         Rig {
             _dir: dir,
@@ -1470,6 +1990,7 @@ mod tests {
             events,
             errors,
             stop_seen,
+            parts: parts_outer,
             files: tempfile::tempdir().unwrap(),
         }
     }
@@ -1481,6 +2002,16 @@ mod tests {
             std::fs::write(&path, b"RIFF").unwrap();
             self.queue
                 .enqueue(name, path.to_str().unwrap(), Some(1))
+                .unwrap()
+                .id
+        }
+
+        /// Reiht einen Hoerbuch-Teil (lva#208) ein.
+        fn add_part(&self, name: &str, range: Option<MsRange>) -> String {
+            let path = self.files.path().join(format!("{name}.mp3"));
+            std::fs::write(&path, b"ID3").unwrap();
+            self.queue
+                .enqueue_part(name, path.to_str().unwrap(), range)
                 .unwrap()
                 .id
         }
@@ -1694,6 +2225,181 @@ mod tests {
         eventually(|| r.started().len() == 4, "jetzt beginnt der vierte");
         r.finish(&ids[3], Release::Done);
         assert!(r.queue.wait_idle(IDLE));
+    }
+
+    #[test]
+    fn audiobook_parts_run_four_at_once_with_the_meeting_setting_at_one() {
+        let r = rig(RigOptions {
+            limit: 1,
+            ..RigOptions::default()
+        });
+        let ids: Vec<String> = (0..6)
+            .map(|i| r.add_part(&format!("teil{i}"), None))
+            .collect();
+        eventually(|| r.started().len() == 4, "vier Teile beginnen");
+        settle(&r);
+        assert_eq!(r.started().len(), 4, "der fuenfte und sechste warten");
+        assert_eq!(r.peak.load(Ordering::SeqCst), 4);
+        assert_eq!(r.queue.snapshot().waiting, ids[4..].to_vec());
+        assert_eq!(r.queue.snapshot().blocked, Some(WaitReason::Slot));
+        assert_eq!(r.slot_of(&ids[0]), Slot::Primary);
+        for id in &ids[1..4] {
+            assert_eq!(r.slot_of(id), Slot::Extra);
+        }
+        for id in &ids[..4] {
+            r.finish(id, Release::Done);
+        }
+        eventually(|| r.started().len() == 6, "die letzten beiden beginnen");
+        for id in &ids[4..] {
+            r.finish(id, Release::Done);
+        }
+        assert!(r.queue.wait_idle(IDLE));
+        assert_eq!(r.peak.load(Ordering::SeqCst), 4, "nie mehr als vier");
+    }
+
+    #[test]
+    fn a_small_machine_limits_audiobook_parts_and_the_snapshot_shows_the_effective_limit() {
+        let r = rig(RigOptions {
+            limit: 1,
+            bulk: 2,
+            ..RigOptions::default()
+        });
+        let m = r.add("besprechung");
+        eventually(|| r.started() == vec![m.clone()], "Besprechung beginnt");
+        assert_eq!(
+            r.queue.snapshot().limit,
+            1,
+            "nur Besprechungen: die Einstellung"
+        );
+        r.finish(&m, Release::Done);
+        assert!(r.queue.wait_idle(IDLE));
+        let ids: Vec<String> = (0..3).map(|i| r.add_part(&format!("t{i}"), None)).collect();
+        eventually(|| r.started().len() == 3, "zwei Teile beginnen");
+        settle(&r);
+        assert_eq!(r.started().len(), 3, "der dritte Teil wartet (Grenze 2)");
+        assert_eq!(r.peak.load(Ordering::SeqCst), 2);
+        assert_eq!(r.queue.snapshot().limit, 2, "wirksame Grenze mit Hoerbuch");
+        for id in &ids {
+            r.finish(id, Release::Done);
+        }
+        assert!(r.queue.wait_idle(IDLE));
+    }
+
+    #[test]
+    fn meetings_keep_their_limit_while_parts_run_and_the_gate_still_applies() {
+        let r = rig(RigOptions {
+            limit: 1,
+            gate: false,
+            ..RigOptions::default()
+        });
+        let a = r.add_part("teil0", None);
+        let b = r.add_part("teil1", None);
+        eventually(|| r.started() == vec![a.clone()], "Teil 0 beginnt");
+        settle(&r);
+        assert_eq!(
+            r.started(),
+            vec![a.clone()],
+            "ohne Speicher keine zweite Engine, auch nicht fuer Teile"
+        );
+        assert_eq!(r.queue.snapshot().blocked, Some(WaitReason::Memory));
+        r.gate.store(true, Ordering::SeqCst);
+        eventually(|| r.started().len() == 2, "Tor offen: Teil 1 beginnt");
+        // Eine Besprechung dahinter wartet bei Einstellung 1, solange Teile laufen.
+        let m = r.add("besprechung");
+        settle(&r);
+        assert_eq!(r.started().len(), 2);
+        assert_eq!(r.status(&m), "queued");
+        r.finish(&a, Release::Done);
+        settle(&r);
+        assert_eq!(r.started().len(), 2, "ein Platz frei, aber Grenze 1 gilt");
+        r.finish(&b, Release::Done);
+        eventually(|| r.started().len() == 3, "die Besprechung beginnt");
+        r.finish(&m, Release::Done);
+        assert!(r.queue.wait_idle(IDLE));
+    }
+
+    #[test]
+    fn a_recording_holds_back_audiobook_parts_too() {
+        let r = rig(RigOptions::default());
+        r.recording.store(true, Ordering::SeqCst);
+        let a = r.add_part("teil0", None);
+        settle(&r);
+        assert!(r.started().is_empty());
+        assert_eq!(r.queue.snapshot().blocked, Some(WaitReason::Recording));
+        r.recording.store(false, Ordering::SeqCst);
+        eventually(|| r.started() == vec![a.clone()], "nach der Aufnahme");
+        r.finish(&a, Release::Done);
+        assert!(r.queue.wait_idle(IDLE));
+    }
+
+    #[test]
+    fn a_run_gets_its_kind_and_section_and_a_meeting_gets_neither() {
+        let r = rig(RigOptions {
+            limit: 4,
+            ..RigOptions::default()
+        });
+        let part = r.add_part("buch", Some((1_198_000, Some(2_402_000))));
+        let whole = r.add_part("ganz", None);
+        let meeting = r.add("besprechung");
+        eventually(|| r.started().len() == 3, "alle drei beginnen");
+        let parts = r.parts.lock().unwrap().clone();
+        assert_eq!(
+            parts[&part],
+            (
+                KIND_AUDIOBOOK.to_string(),
+                Some((1_198_000, Some(2_402_000)))
+            )
+        );
+        assert_eq!(parts[&whole], (KIND_AUDIOBOOK.to_string(), None));
+        assert_eq!(parts[&meeting], (KIND_MEETING.to_string(), None));
+        for id in [&part, &whole, &meeting] {
+            r.finish(id, Release::Done);
+        }
+        assert!(r.queue.wait_idle(IDLE));
+    }
+
+    #[test]
+    fn an_unreadable_part_row_fails_the_run_instead_of_importing_the_whole_file() {
+        let r = rig(RigOptions::default());
+        // Die Aufnahme haelt den Auftrag zurueck, bis die Zeile beschaedigt ist.
+        r.recording.store(true, Ordering::SeqCst);
+        let id = r.add_part("kaputt", Some((1_000, Some(9_000))));
+        // Beschaedigter Bereich (Ende vor dem Anfang), bevor der Lauf beginnt.
+        r.store
+            .get_connection()
+            .unwrap()
+            .execute(
+                "UPDATE import_part SET range_end_ms = 5 WHERE meeting_id = ?1",
+                [&id],
+            )
+            .unwrap();
+        r.recording.store(false, Ordering::SeqCst);
+        eventually(|| r.status(&id) == "failed", "Auftrag scheitert");
+        assert!(r.started().is_empty(), "nie als Besprechung gestartet");
+        // Die Fehlermeldung folgt dem Status `failed` (`fail`): darauf warten,
+        // nicht im selben Augenblick erwarten.
+        eventually(
+            || {
+                r.errors
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .any(|(m, c)| m == &id && c == "queue_part_unreadable")
+            },
+            "Fehlermeldung queue_part_unreadable",
+        );
+    }
+
+    #[test]
+    fn a_broken_range_is_refused_and_enqueues_nothing() {
+        let r = rig(RigOptions::default());
+        let path = r.files.path().join("x.mp3");
+        std::fs::write(&path, b"ID3").unwrap();
+        let err = r
+            .queue
+            .enqueue_part("x", path.to_str().unwrap(), Some((10, Some(10))));
+        assert!(err.is_err());
+        assert!(r.store.queue_rows().unwrap().is_empty());
     }
 
     #[test]
@@ -1955,8 +2661,12 @@ mod tests {
 
     #[test]
     fn a_deferred_extra_engine_puts_the_file_back_in_its_place_and_retries_later() {
+        // Abkuehlzeit lang genug, dass der Stand "b wartet wieder" auch auf einem
+        // ausgelasteten Rechner geprueft werden kann, bevor der zweite Versuch
+        // beginnt (150 ms reichten im Windows-Tor nicht).
         let r = rig(RigOptions {
             limit: 2,
+            cooldown: Duration::from_secs(2),
             ..RigOptions::default()
         });
         let (a, b, c) = (r.add("a"), r.add("b"), r.add("c"));
@@ -2060,6 +2770,7 @@ mod tests {
             publish: Arc::new(|_| {}),
             state_event: Arc::new(|_, _| {}),
             error_event: Arc::new(|_, _| {}),
+            bulk_limit: 4,
             tick: Duration::from_millis(20),
             cooldown: Duration::from_millis(50),
         });

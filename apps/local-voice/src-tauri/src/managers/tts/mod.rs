@@ -6,31 +6,34 @@
 //! Settings, Events, Prozess-Spawn, Idle-Watchdog und Exit-Teardown.
 
 pub mod abbreviations;
-pub mod pronunciation;
 pub mod availability;
 pub mod builder;
 pub mod compile_cache;
-pub mod notes;
 pub mod dsp;
 pub mod encode;
 pub mod engine;
 pub mod enhance;
+pub mod flow;
 pub mod gradium;
 pub mod hf_access;
+pub mod lang;
 pub mod loudness;
 pub mod models;
+pub mod notes;
 pub mod phonon_clip;
 pub mod phonon_clone;
 pub mod phonon_models;
 pub mod phonon_voices;
 pub mod piper;
-pub mod lang;
 pub mod player;
 pub mod portable;
+pub mod pronunciation;
 pub mod protocol;
 pub mod providers;
 pub mod registry;
 pub mod state;
+pub mod stretch;
+pub mod timing;
 pub mod voices;
 
 use engine::{EngineCaps, TtsEngine, TtsEngineKind};
@@ -120,6 +123,8 @@ pub struct TtsCore {
     normalize: AtomicBool,
     /// Klangbearbeitung und ihre Stufe (None = aus).
     enhance: Mutex<Option<enhance::Strength>>,
+    /// Sprachfluss (#318): Pausenlängen an Komma, Satz- und Absatzende.
+    flow: Mutex<flow::SpeechFlow>,
     /// Korrekturfaktor je Stimme, einmal je Sitzung aus dem ersten
     /// synthetisierten Satz dieser Stimme gemessen. Schlüssel ist die
     /// reference_id, leer für die Seed-Standardstimme.
@@ -148,6 +153,13 @@ pub struct TtsCore {
     /// vorbei ([`Self::pass_voice_switch`]) und sieht damit nie einen halb
     /// uebernommenen Stand -- etwa die neue Engine, deren Server noch nicht steht.
     voice_switch: tokio::sync::Mutex<()>,
+    /// Saetze, die gerade berechnet werden (Cache-Schluessel -> Sperre). Vorpuffer
+    /// und Wiedergabe fragen oft denselben Satz an; so rechnet ihn nur einer, der
+    /// andere wartet und trifft danach den Cache (lva#150).
+    inflight: Mutex<std::collections::HashMap<u64, Arc<tokio::sync::Mutex<()>>>>,
+    /// Vorpuffer: so viele Saetze rechnet die Pipeline hinter dem naechsten
+    /// voraus ([`LOOKAHEAD_SENTENCES`]; 0 = nur der Folgesatz wie bisher).
+    lookahead: std::sync::atomic::AtomicUsize,
     /// Ist im Stimmenfeld eine FESTE Stimme gewaehlt (`tts_voice` gesetzt)? Dann liest
     /// sie alles, auch Saetze mit Sprecher aus dem Skript. Eigenes Flag, weil
     /// `voice` die Seed-Referenz der Standardstimme tragen kann (siehe
@@ -304,6 +316,56 @@ struct SynthIdentity {
 
 /// Wartet, bis das Abbruch-Flag gesetzt ist (Abfrage alle 25 ms, wie bei den
 /// Anbietern -- ein Abbruch wirkt damit auch mitten in einer Berechnung).
+/// Vorpuffer (lva#150): so viele Saetze rechnet die Pipeline im Hintergrund
+/// voraus, damit ein langsamer Satz (lang, Stimmwechsel, kurz belegte GPU) beim
+/// Vorlesen keine Luecke reisst. Drei Saetze sind bei Hoerbuchtext gut eine
+/// halbe Minute Vorlauf, ohne bei einem Abbruch viel umsonst zu rechnen.
+const LOOKAHEAD_SENTENCES: usize = 3;
+
+/// Wie ein Abruf mit einem Satz umgeht, den gerade ein anderer berechnet.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Claim {
+    /// Warten und danach den Cache treffen (Wiedergabe, Export).
+    Wait,
+    /// Ueberspringen (Vorpuffer): wer ihn rechnet, legt ihn ohnehin ab.
+    Skip,
+}
+
+/// Cache-Verhalten eines Abrufs.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Fetch {
+    /// Mit Cache; rechnet ein anderer den Satz gerade, gilt [`Claim`].
+    Cached(Claim),
+    /// Ohne Cache (Sprachdienst, ADR-0021).
+    Uncached,
+}
+
+/// Haelt einen Satz fuer die Dauer seiner Berechnung; raeumt beim Verlassen
+/// (auch bei Abbruch des Futures) den Eintrag wieder ab.
+struct InflightClaim<'a> {
+    map: &'a Mutex<std::collections::HashMap<u64, Arc<tokio::sync::Mutex<()>>>>,
+    key: u64,
+    slot: Arc<tokio::sync::Mutex<()>>,
+    guard: Option<tokio::sync::OwnedMutexGuard<()>>,
+}
+
+impl Drop for InflightClaim<'_> {
+    fn drop(&mut self) {
+        // Erst die Sperre freigeben, dann aufraeumen: Wartende sind dann schon
+        // geweckt und halten ihren eigenen Verweis.
+        self.guard.take();
+        let mut map = self.map.lock().unwrap();
+        // Eintrag + dieser Verweis: niemand sonst wartet mehr darauf.
+        if Arc::strong_count(&self.slot) <= 2 {
+            if let Some(current) = map.get(&self.key) {
+                if Arc::ptr_eq(current, &self.slot) {
+                    map.remove(&self.key);
+                }
+            }
+        }
+    }
+}
+
 async fn wait_cancelled(flag: &AtomicBool) {
     while !flag.load(Ordering::Acquire) {
         tokio::time::sleep(Duration::from_millis(25)).await;
@@ -334,10 +396,13 @@ impl TtsCore {
             stop_requested: AtomicBool::new(false),
             normalize: AtomicBool::new(true),
             enhance: Mutex::new(None),
+            flow: Mutex::new(flow::SpeechFlow::default()),
             voice_gains: Mutex::new(std::collections::HashMap::new()),
             voice_sounds: Mutex::new(std::collections::HashMap::new()),
             voice_epoch: tokio::sync::watch::Sender::new(0),
             voice_switch: tokio::sync::Mutex::new(()),
+            inflight: Mutex::new(std::collections::HashMap::new()),
+            lookahead: std::sync::atomic::AtomicUsize::new(LOOKAHEAD_SENTENCES),
             fixed_voice: AtomicBool::new(false),
             on_phase_change: Mutex::new(None),
         }
@@ -491,8 +556,15 @@ impl TtsCore {
     ///   Sprechermarker bleiben dabei unberuehrt.
     fn spoken_text(engine: &EngineImpl, text: &str) -> String {
         let tagless;
-        let text = if engine.caps().style_tags {
+        let caps = engine.caps();
+        let text = if caps.style_tags {
             text
+        } else if caps.pace_tags {
+            // Phonon: Tempo-Tags bleiben stehen (Adapter macht daraus
+            // `duration_delta`), alle anderen Tags fallen weg. Sie gehen damit
+            // auch in den Cache-Schluessel ein: langsamer gesprochen ist anderes Audio.
+            tagless = protocol::strip_tag_spans_keep_pace(text);
+            tagless.as_str()
         } else {
             tagless = protocol::strip_tag_spans(text);
             tagless.as_str()
@@ -521,14 +593,26 @@ impl TtsCore {
             // Synthese eingebacken läge es dauerhaft im Satz-Cache und gälte
             // doppelt, weil der Player bereits live skaliert.
             speed: None,
+            cancel,
         };
-        match engine {
-            EngineImpl::Fish => self.fish_synthesize(port, req).await,
-            EngineImpl::Piper(p) => p.synthesize(req).await,
-            // Ein Anbieter hört auf das Abbruch-Flag auch mitten im Satz.
-            EngineImpl::Provider(p) => p.synthesize_voiced(text, voice, cancel).await,
-            #[cfg(test)]
-            EngineImpl::Mock(mock) => mock.synthesize(req).await,
+        let work = async {
+            match engine {
+                EngineImpl::Fish => self.fish_synthesize(port, req).await,
+                EngineImpl::Piper(p) => p.synthesize(req).await,
+                // Ein Anbieter hört auf das Abbruch-Flag auch mitten im Satz.
+                EngineImpl::Provider(p) => p.synthesize_voiced(text, voice, cancel).await,
+                #[cfg(test)]
+                EngineImpl::Mock(mock) => mock.synthesize(req).await,
+            }
+        };
+        // Fish und Piper kennen kein Flag: der Satz wird beim Abbruch fallen
+        // gelassen (HTTP-Anfrage bzw. Subprozess-Future endet sofort).
+        match cancel {
+            Some(flag) => tokio::select! {
+                r = work => r,
+                _ = wait_cancelled(flag) => Err(providers::pipeline::CANCELLED_MESSAGE.to_string()),
+            },
+            None => work.await,
         }
     }
 
@@ -658,8 +742,11 @@ impl TtsCore {
         if prepared.truncated {
             log::warn!("TTS text truncated to {max_chars} chars");
         }
-        let sentences = single_voice(protocol::split_sentences(&prepared.text));
-        self.speak_sentence_run(sentences, 0, None, None).await
+        let texts = protocol::split_sentences(&prepared.text);
+        let paragraphs = paragraph_ends(&prepared.text, &texts);
+        let sentences = single_voice(texts);
+        self.speak_sentence_run_paragraphs(sentences, &paragraphs, 0, None, None)
+            .await
     }
 
     /// Gemeinsamer Sprechpfad für Freitext und Hörbuch: Sätze pipelined
@@ -670,7 +757,23 @@ impl TtsCore {
         &self,
         sentences: Vec<Utterance>,
         start_index: usize,
-        on_playing: Option<Arc<dyn Fn(usize) + Send + Sync>>,
+        on_playing: Option<OnPlaying>,
+        on_played: Option<Arc<dyn Fn(usize) + Send + Sync>>,
+    ) -> Result<usize, String> {
+        self.speak_sentence_run_paragraphs(sentences, &[], start_index, on_playing, on_played)
+            .await
+    }
+
+    /// Wie [`Self::speak_sentence_run`], mit den Absatzenden der Sätze
+    /// ([`paragraph_ends`], gleicher Index wie `sentences`; fehlende Einträge
+    /// zählen als „kein Absatzende"): hinter einem Absatzende liegt die längere
+    /// Absatzpause des Sprachflusses.
+    pub async fn speak_sentence_run_paragraphs(
+        &self,
+        sentences: Vec<Utterance>,
+        paragraph_ends: &[bool],
+        start_index: usize,
+        on_playing: Option<OnPlaying>,
         on_played: Option<Arc<dyn Fn(usize) + Send + Sync>>,
     ) -> Result<usize, String> {
         if sentences.is_empty() {
@@ -694,6 +797,7 @@ impl TtsCore {
                 my_cancel.clone(),
                 on_playing,
                 on_played,
+                paragraph_ends,
             )
             .await;
         // Nur der jüngste, NICHT stornierte Auftrag darf den Endzustand
@@ -738,6 +842,57 @@ impl TtsCore {
         voice: Option<&str>,
         cancel: Option<&Arc<AtomicBool>>,
     ) -> Result<Vec<u8>, String> {
+        self.fetch_wav_inner(port, seed, text, voice, cancel, Fetch::Cached(Claim::Wait))
+            .await
+    }
+
+    /// Vorpuffer (lva#150): den Satz in den Cache legen, ohne auf einen
+    /// anderen zu warten, der ihn gerade rechnet. `Ok(false)`: uebersprungen.
+    async fn fetch_wav_ahead(
+        &self,
+        port: u16,
+        seed: i64,
+        text: &str,
+        voice: Option<&str>,
+        cancel: &Arc<AtomicBool>,
+    ) -> Result<bool, String> {
+        self.fetch_wav_inner(
+            port,
+            seed,
+            text,
+            voice,
+            Some(cancel),
+            Fetch::Cached(Claim::Skip),
+        )
+        .await
+        .map(|bytes| !bytes.is_empty())
+    }
+
+    /// Wie [`Self::fetch_wav_cancellable`], aber OHNE Cache: weder aus dem Speicher- noch aus dem
+    /// Plattencache gelesen, und nichts davon geschrieben. Für den Sprachdienst (ADR-0021): was
+    /// eine fremde App sprechen lässt, darf weder Treffer für das eigene Vorlesen sein noch als
+    /// Datei in `tts_cache` liegen bleiben.
+    async fn fetch_wav_uncached(
+        &self,
+        port: u16,
+        seed: i64,
+        text: &str,
+        voice: Option<&str>,
+        cancel: Option<&Arc<AtomicBool>>,
+    ) -> Result<Vec<u8>, String> {
+        self.fetch_wav_inner(port, seed, text, voice, cancel, Fetch::Uncached)
+            .await
+    }
+
+    async fn fetch_wav_inner(
+        &self,
+        port: u16,
+        seed: i64,
+        text: &str,
+        voice: Option<&str>,
+        cancel: Option<&Arc<AtomicBool>>,
+        fetch: Fetch,
+    ) -> Result<Vec<u8>, String> {
         // Laeuft gerade ein Stimmwechsel, erst danach Stimme und Engine lesen:
         // sonst entstuende ein Satz mit der neuen Engine, die noch nicht bereit
         // ist, oder mit einer halb uebernommenen Stimme.
@@ -770,6 +925,20 @@ impl TtsCore {
         // synthetisiert ist, braucht keine Engine — egal welche.
         let engine_tag = engine.cache_tag(voice.as_deref());
         let cache_key = WavCache::key(&engine_tag, text, seed, voice.as_deref());
+        let Fetch::Cached(claim) = fetch else {
+            return self
+                .engine_synthesize(&engine, port, seed, text, voice.as_deref(), cancel)
+                .await;
+        };
+        // Einmal rechnen (lva#150): rechnet den Satz schon jemand (Vorpuffer oder
+        // Wiedergabe), wartet dieser Abruf und trifft danach den Cache.
+        // `Skip` (Vorpuffer) liefert dann leere Bytes: nichts zu tun.
+        let Some(_claim) = self.claim_sentence(cache_key, claim, cancel).await else {
+            if claim == Claim::Wait {
+                return Err(providers::pipeline::CANCELLED_MESSAGE.to_string());
+            }
+            return Ok(Vec::new());
+        };
         if let Some(cached) = self.wav_cache.lock().unwrap().get(cache_key) {
             return Ok(cached);
         }
@@ -800,6 +969,41 @@ impl TtsCore {
             }
         }
         Ok(bytes)
+    }
+
+    /// Den Satz `key` fuer die eigene Berechnung belegen. `Claim::Wait` wartet,
+    /// bis ein anderer fertig ist; `Claim::Skip` gibt dann `None` zurueck.
+    async fn claim_sentence(
+        &self,
+        key: u64,
+        mode: Claim,
+        cancel: Option<&Arc<AtomicBool>>,
+    ) -> Option<InflightClaim<'_>> {
+        let slot = {
+            let mut map = self.inflight.lock().unwrap();
+            Arc::clone(
+                map.entry(key)
+                    .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(()))),
+            )
+        };
+        let guard = match mode {
+            // Abbrechbar: ein Export, der auf den Vorpuffer wartet, haengt
+            // nach seinem Abbruch nicht bis zu dessen Ende.
+            Claim::Wait => match cancel {
+                Some(flag) => tokio::select! {
+                    guard = Arc::clone(&slot).lock_owned() => guard,
+                    _ = wait_cancelled(flag) => return None,
+                },
+                None => Arc::clone(&slot).lock_owned().await,
+            },
+            Claim::Skip => Arc::clone(&slot).try_lock_owned().ok()?,
+        };
+        Some(InflightClaim {
+            map: &self.inflight,
+            key,
+            slot,
+            guard: Some(guard),
+        })
     }
 
     /// Wiedergabefaktor für einen synthetisierten Satz.
@@ -979,7 +1183,9 @@ impl TtsCore {
         parts: &[protocol::SpeechPart],
         voice: Option<&str>,
         cancelled: &Arc<AtomicBool>,
+        paragraph_end: bool,
     ) -> Result<Vec<(Vec<u8>, f32)>, String> {
+        let flow = *self.flow.lock().unwrap();
         let mut blobs: Vec<(Vec<u8>, f32)> = Vec::new();
         let mut pending_silence_ms = 0u32;
         let mut last_rate: Option<u32> = None;
@@ -1010,7 +1216,7 @@ impl TtsCore {
                     // laeuft, waehrend der vorige Satz noch spielt, faellt also
                     // nicht als Wartezeit auf.
                     let strength = *self.enhance.lock().unwrap();
-                    let bytes = prepare_sentence_audio(bytes, strength);
+                    let bytes = prepare_sentence_audio(bytes, strength, flow);
                     // Stimmen gleich laut: der Pegelausgleich dieses Satzes steht
                     // fest, der Nutzerregler skaliert ihn live.
                     let gain = self.playback_gain(voice, &bytes);
@@ -1020,6 +1226,11 @@ impl TtsCore {
                     blobs.push((bytes, gain));
                 }
             }
+        }
+        // Absatzende: zur Satzpause kommt Stille dazu, bis die Absatzpause
+        // erreicht ist (Sprachfluss, #318).
+        if paragraph_end {
+            pending_silence_ms += paragraph_extra_ms(flow);
         }
         // Pause am Satzende: Rate des letzten Stuecks, sonst die uebliche.
         if pending_silence_ms > 0 {
@@ -1054,16 +1265,148 @@ impl TtsCore {
     ///   Satz spielt derweil weiter);
     /// * unmittelbar vor dem Abspielen noch einmal, auch ohne Benachrichtigung.
     ///
-    /// Es liegt nie mehr als ein Satz voraus; verworfenes Audio belegt keinen
-    /// Speicher über den Satz hinaus. Der Player selbst (der Audio-Thread) wird
-    /// nicht angefasst.
+    /// In der Pipeline liegt nie mehr als ein Satz voraus; verworfenes Audio
+    /// belegt keinen Speicher über den Satz hinaus. Der Player selbst (der
+    /// Audio-Thread) wird nicht angefasst.
+    ///
+    /// ## Vorpuffer (lva#150)
+    ///
+    /// Daneben rechnet [`Self::warm_ahead`] die nächsten
+    /// [`LOOKAHEAD_SENTENCES`] Sätze in den Cache. Die Pipeline trifft sie dann
+    /// dort; rechnet der Vorpuffer einen Satz gerade, wartet sie auf ihn statt
+    /// ihn ein zweites Mal anzufordern ([`Claim`]). Der Vorpuffer beginnt erst,
+    /// wenn der erste Satz da ist — der Einstieg wird nicht langsamer.
     async fn fetch_and_play_pipelined(
         &self,
         sentences: &[Utterance],
         start_index: usize,
         cancelled: Arc<AtomicBool>,
-        on_playing: Option<Arc<dyn Fn(usize) + Send + Sync>>,
+        on_playing: Option<OnPlaying>,
         on_played: Option<Arc<dyn Fn(usize) + Send + Sync>>,
+        paragraph_ends: &[bool],
+    ) -> Result<usize, String> {
+        let (ready, ready_rx) = tokio::sync::watch::channel(usize::MAX);
+        let play = self.play_pipelined(
+            sentences,
+            start_index,
+            cancelled.clone(),
+            on_playing,
+            on_played,
+            ready,
+            paragraph_ends,
+        );
+        let warm = self.warm_ahead(sentences, &cancelled, ready_rx);
+        tokio::pin!(play);
+        tokio::pin!(warm);
+        // Endet die Wiedergabe (fertig, Abbruch, Fehler), faellt der Vorpuffer
+        // mitsamt laufender Anfrage weg — sonst stuende das Ende um einen Satz
+        // Rechenzeit spaeter fest.
+        let mut warm_done = false;
+        loop {
+            tokio::select! {
+                biased;
+                result = &mut play => return result,
+                () = &mut warm, if !warm_done => warm_done = true,
+            }
+        }
+    }
+
+    /// Vorpuffer: rechnet die Saetze hinter dem zuletzt bereitgestellten
+    /// (`ready`) voraus, hoechstens `lookahead` weit, in Lesereihenfolge.
+    /// Fehler bleiben hier stumm — die Pipeline trifft denselben Satz und meldet
+    /// sie dort, wo sie hingehoeren.
+    async fn warm_ahead(
+        &self,
+        sentences: &[Utterance],
+        cancelled: &Arc<AtomicBool>,
+        mut ready: tokio::sync::watch::Receiver<usize>,
+    ) {
+        let lookahead = self.lookahead.load(Ordering::Acquire);
+        // Netz-Anbieter (oft je Anfrage abgerechnet, mit Ratenlimit) bekommen
+        // keinen Vorpuffer: nach einem Stopp waeren sonst Saetze bezahlt, die
+        // niemand hoert, und zwei parallele Anfragen koennen ein 429 ausloesen.
+        // Lokale Anbieter wie Phonon (je Auftrag ein eigener Kindprozess) puffern
+        // wie Fish und Piper drei Saetze voraus: sonst reisst ein langer Satz
+        // beim Vorlesen eine Luecke.
+        let remote_provider =
+            matches!(self.engine_snapshot(), EngineImpl::Provider(ref p) if !p.is_local());
+        if lookahead == 0 || remote_provider {
+            return;
+        }
+        let max_chars = *self.max_chars.lock().unwrap();
+        let mut epoch = self.voice_epoch.subscribe();
+        let mut seen = *epoch.borrow_and_update();
+        let mut next = 0usize;
+        loop {
+            if cancelled.load(Ordering::Acquire) {
+                return;
+            }
+            // Neue Stimme: was voraus lag, gilt nicht mehr — ab dem naechsten
+            // Satz neu puffern.
+            let now = *epoch.borrow_and_update();
+            if now != seen {
+                seen = now;
+                next = 0;
+            }
+            let current = *ready.borrow_and_update();
+            let window = (current != usize::MAX).then(|| current + 1..=current + lookahead);
+            match window {
+                Some(window)
+                    if next.max(*window.start()) <= *window.end()
+                        && next.max(*window.start()) < sentences.len() =>
+                {
+                    next = next.max(*window.start());
+                }
+                _ => {
+                    // Noch kein Satz da, Puffer voll oder Textende erreicht: auf
+                    // den naechsten Satz oder eine neue Stimme warten (nach einem
+                    // Wechsel puffert er neu).
+                    tokio::select! {
+                        changed = ready.changed() => if changed.is_err() {
+                            return;
+                        },
+                        _ = epoch.changed() => {}
+                    }
+                    continue;
+                }
+            }
+            let (sentence, speaker) = &sentences[next];
+            if let Some(prepared) = protocol::prepare_text(sentence, max_chars) {
+                for part in protocol::split_pauses(&prepared.text) {
+                    let protocol::SpeechPart::Speak(text) = part else {
+                        continue;
+                    };
+                    if cancelled.load(Ordering::Acquire) || ready.has_changed().is_err() {
+                        return;
+                    }
+                    let voice = self.utterance_voice(speaker.as_ref());
+                    let port = *self.port.lock().unwrap();
+                    let seed = *self.seed.lock().unwrap();
+                    // Ein Stimmwechsel verwirft die laufende Anfrage sofort: sie
+                    // belegte sonst Server und GPU, waehrend die Wiedergabe den
+                    // ersten Satz mit der neuen Stimme braucht. Ein Fehler kostet
+                    // nur diesen Satz; die Wiedergabe meldet ihn selbst.
+                    tokio::select! {
+                        _ = self.fetch_wav_ahead(port, seed, &text, voice.as_deref(), cancelled) => {}
+                        _ = epoch.changed() => break,
+                    }
+                }
+            }
+            next += 1;
+        }
+    }
+
+    /// Die eigentliche Satz-Pipeline (siehe [`Self::fetch_and_play_pipelined`]).
+    /// `ready` meldet dem Vorpuffer jeden Satz, der zum Abspielen bereitliegt.
+    async fn play_pipelined(
+        &self,
+        sentences: &[Utterance],
+        start_index: usize,
+        cancelled: Arc<AtomicBool>,
+        on_playing: Option<OnPlaying>,
+        on_played: Option<Arc<dyn Fn(usize) + Send + Sync>>,
+        ready: tokio::sync::watch::Sender<usize>,
+        paragraph_ends: &[bool],
     ) -> Result<usize, String> {
         let max_chars = *self.max_chars.lock().unwrap();
         // Der Index wird erst nach dem LETZTEN Stück eines Satzes gemeldet —
@@ -1098,6 +1441,7 @@ impl TtsCore {
             if cancelled.load(Ordering::Acquire) {
                 break;
             }
+            let paragraph_end = paragraph_ends.get(offset).copied().unwrap_or(false);
             // Einzelne Sätze absichern (leere überspringen, Monster kappen).
             let Some(prepared) = protocol::prepare_text(sentence, max_chars) else {
                 notify(offset, cancelled.load(Ordering::Acquire));
@@ -1121,7 +1465,8 @@ impl TtsCore {
 
                 // 1. Satz berechnen, solange er noch zur Stimme passt.
                 let computed = {
-                    let work = self.prepare_sentence(&parts, voice.as_deref(), &cancelled);
+                    let work =
+                        self.prepare_sentence(&parts, voice.as_deref(), &cancelled, paragraph_end);
                     tokio::pin!(work);
                     loop {
                         tokio::select! {
@@ -1195,12 +1540,23 @@ impl TtsCore {
                 }
                 break blobs;
             };
+            // Vorpuffer weiterschieben: dieser Satz liegt bereit.
+            ready.send_replace(offset);
 
             if blobs.is_empty() {
                 notify(offset, cancelled.load(Ordering::Acquire));
                 continue;
             }
             let last_blob = blobs.len() - 1;
+            // Dauer des ganzen Satzes (samt Pausen) und wann darin gesprochen
+            // wird, bei normalem Tempo: die Oberfläche rechnet daraus die
+            // Stelle, die gerade zu hören ist -- Wort, Zeit und Umblättern.
+            // Nur aus `on_playing` gebraucht; ohne Zuhörer kein Dekodieren.
+            let sentence_timing = on_playing.as_ref().map(|_| {
+                Arc::new(timing::sentence_timing(
+                    blobs.iter().map(|(b, _)| b.as_slice()),
+                ))
+            });
             for (blob_index, (bytes, gain)) in blobs.into_iter().enumerate() {
                 total_bytes += bytes.len();
                 // Vorheriges Stueck zu Ende spielen lassen (Reihenfolge!).
@@ -1222,20 +1578,41 @@ impl TtsCore {
                 if cancelled.load(Ordering::Acquire) {
                     break;
                 }
-                // Live-Anzeige: dieser Satz beginnt jetzt zu spielen.
-                if blob_index == 0 {
-                    if let Some(cb) = on_playing.as_ref() {
-                        cb(offset);
-                    }
-                }
+                // Live-Anzeige: dieses Stück beginnt jetzt zu spielen. Gemeldet
+                // wird erst, wenn der Ausgabestrom offen ist und das Audio
+                // anliegt -- das Öffnen dauert je Gerät unterschiedlich lang
+                // (Bluetooth deutlich länger), und die Uhr der Oberfläche
+                // läuft ab dieser Meldung.
+                // Jedes Stück meldet seinen echten Start: zwischen zwei Stücken
+                // liegen Warten, Öffnen und Strecken, die in der reinen
+                // Audiodauer fehlen. Das Abbruch-Flag dieses Laufs ist seine
+                // Generation: ein überholter Lauf (Stopp, Sprung, neue
+                // Sitzung) meldet nichts mehr, auch wenn das Öffnen erst
+                // danach fertig wird.
+                let started: Option<Box<dyn FnOnce() + Send>> =
+                    match (on_playing.as_ref(), sentence_timing.as_ref()) {
+                        (Some(cb), Some(timing)) => {
+                            let (cb, timing) = (Arc::clone(cb), Arc::clone(timing));
+                            let run = cancelled.clone();
+                            Some(Box::new(move || {
+                                if !run.load(Ordering::Acquire) {
+                                    cb(offset, &timing, blob_index);
+                                }
+                            }))
+                        }
+                        _ => None,
+                    };
                 let player = self.player.clone();
                 let device = self.output_device.lock().unwrap().clone();
                 let controls = Arc::clone(&self.controls);
                 let cancel_flag = cancelled.clone();
                 previous_playback = Some((
                     (blob_index == last_blob).then_some(offset),
-                    tauri::async_runtime::spawn_blocking(move || {
-                        player.play(bytes, device, gain, controls, cancel_flag)
+                    tauri::async_runtime::spawn_blocking(move || match started {
+                        Some(started) => {
+                            player.play_notify(bytes, device, gain, controls, cancel_flag, started)
+                        }
+                        None => player.play(bytes, device, gain, controls, cancel_flag),
                     }),
                 ));
             }
@@ -1309,6 +1686,8 @@ pub struct TtsManager {
     export_cancel: Mutex<Arc<AtomicBool>>,
     /// Abbruch-Flag der Vorab-Erzeugung (eigenes Flag, wie beim Export).
     prewarm_cancel: Mutex<Arc<AtomicBool>>,
+    /// Abbruch-Flag des Anlaufs fuer den naechsten Buchteil (lva#150).
+    prefetch_cancel: Mutex<Arc<AtomicBool>>,
     /// Registry der Sprachausgabe-Anbieter (Goal tts-provider, P3a).
     provider_host: providers::setup::ProviderHost,
     /// Probestimme der Anbieter (streamt; siehe `providers::preview`).
@@ -1317,12 +1696,24 @@ pub struct TtsManager {
     /// (`utterances`) ist synchron, die Stimmenliste des Anbieters nicht: sie wird
     /// vorher (`ensure_provider_roster`) gelesen und hier gehalten.
     provider_roster: Mutex<Option<providers::speakers::RosterCache>>,
+    /// Der laufende (oder zuletzt beendete) Übersetzungsauftrag. Er läuft
+    /// im Hintergrund und hängt nicht am Aufrufer.
+    translate_job: Mutex<Option<TranslateJobHandle>>,
+}
+
+/// Ein Übersetzungsauftrag: Stand für die Oberfläche und der Kanal, über den
+/// jeder Wartende das Ende erfährt.
+struct TranslateJobHandle {
+    tracker: Arc<crate::translator::JobTracker>,
+    done: tokio::sync::watch::Receiver<Option<Result<String, String>>>,
 }
 
 struct SpeakSession {
     /// Satz samt Stimme — sonst spraeche ein "Fortsetzen" den Rest eines
     /// Dialogs mit der falschen Stimme weiter.
     sentences: Vec<Utterance>,
+    /// Absatzende je Satz ([`paragraph_ends`]); gleicher Index wie `sentences`.
+    paragraph_ends: Vec<bool>,
     position: usize,
 }
 
@@ -1330,6 +1721,8 @@ struct ReadingSession {
     key: String,
     title: String,
     sentences: Vec<String>,
+    /// Absatzende je Satz ([`paragraph_ends`]).
+    paragraph_ends: Vec<bool>,
 }
 
 /// Fortschritt eines Dokuments — Persistenz-Eintrag und Event-Payload.
@@ -1505,7 +1898,16 @@ fn decode_wav(bytes: &[u8]) -> Option<(Vec<f32>, u32, f32)> {
 ///
 /// Lässt sich der Blob nicht lesen, kommt er unverändert zurück. Eine
 /// Aufbereitung ist es nicht wert, an ihr zu scheitern.
-fn prepare_sentence_audio(bytes: Vec<u8>, strength: Option<enhance::Strength>) -> Vec<u8> {
+fn prepare_sentence_audio(
+    bytes: Vec<u8>,
+    strength: Option<enhance::Strength>,
+    flow: flow::SpeechFlow,
+) -> Vec<u8> {
+    let trim = enhance::EdgeTrim {
+        lead_ms: flow::SpeechFlow::LEAD_MS,
+        tail_ms: flow.tail_ms(),
+        inner_ms: Some(flow.comma_ms()),
+    };
     let Ok(reader) = hound::WavReader::new(std::io::Cursor::new(bytes.as_slice())) else {
         return bytes;
     };
@@ -1518,6 +1920,7 @@ fn prepare_sentence_audio(bytes: Vec<u8>, strength: Option<enhance::Strength>) -
         let Some(mut interleaved) = decode_interleaved(&bytes) else {
             return bytes;
         };
+        enhance::trim_edge_silence(&mut interleaved, channels, spec.sample_rate, trim);
         enhance::soften_edges(&mut interleaved, channels, spec.sample_rate);
         return write_wav_interleaved(&interleaved, spec).unwrap_or(bytes);
     }
@@ -1527,6 +1930,7 @@ fn prepare_sentence_audio(bytes: Vec<u8>, strength: Option<enhance::Strength>) -
     if let Some(strength) = strength {
         enhance::process(&mut samples, rate, strength);
     }
+    enhance::trim_edge_silence(&mut samples, 1, rate, trim);
     enhance::soften_edges(&mut samples, 1, rate);
     write_wav_pcm16(&samples, spec).unwrap_or(bytes)
 }
@@ -1728,11 +2132,141 @@ fn silence_sample_count(ms: u32, sample_rate: u32, channels: u16) -> usize {
     per_channel as usize * channels.max(1) as usize
 }
 
+/// Für jeden Satz: endet mit ihm ein Absatz (rein)?
+///
+/// `sentences` sind Teilstücke von `text` (aus `split_sentences` bzw.
+/// `split_speaker_segments`); der Rohtext zwischen dem Ende eines Satzes und
+/// dem Anfang des nächsten entscheidet:
+/// - Leerzeile: immer Absatzende.
+/// - Einzelner Umbruch: Absatzende, denn Dokumente (docx, Markdown, EPUB,
+///   einfache Textdateien) trennen Absätze oft so. Ausnahme Hardwrap-Text (fast
+///   alle Zeilen ähnlich lang, wie in PDF-Auszügen): dort zählt der Umbruch nur
+///   hinter einer deutlich kürzeren Zeile, sonst stockte jede Zeile.
+///
+/// Der letzte Satz endet nie einen Absatz (dahinter folgt nichts).
+pub fn paragraph_ends(text: &str, sentences: &[String]) -> Vec<bool> {
+    let spans = protocol::locate_sentences(text, sentences);
+    let chars: Vec<char> = text.chars().collect();
+    let wrap = hard_wrap_width(text);
+    (0..sentences.len())
+        .map(|i| {
+            let Some(next) = spans.get(i + 1) else {
+                return false;
+            };
+            let end = spans[i].1;
+            let Some(gap) = chars.get(end..next.0.max(end)) else {
+                return false;
+            };
+            let newlines = gap.iter().filter(|&&c| c == '\n').count();
+            if newlines >= 2 {
+                return true;
+            }
+            if newlines == 0 {
+                return false;
+            }
+            match wrap {
+                None => true,
+                Some(width) => {
+                    // Länge der Zeile, die mit diesem Satz endet.
+                    let line_start = chars[..end]
+                        .iter()
+                        .rposition(|&c| c == '\n')
+                        .map_or(0, |p| p + 1);
+                    (end - line_start) * 4 < width * 3
+                }
+            }
+        })
+        .collect()
+}
+
+/// Zeilenbreite eines Hardwrap-Textes, sonst `None`: mindestens vier Zeilen,
+/// die längsten (90. Perzentil) höchstens 120 Zeichen, und mindestens die Hälfte
+/// der Zeilen reicht bis auf 80 % dieser Breite.
+fn hard_wrap_width(text: &str) -> Option<usize> {
+    let mut lengths: Vec<usize> = text
+        .lines()
+        .map(|l| l.trim_end().chars().count())
+        .filter(|&n| n > 0)
+        .collect();
+    if lengths.len() < 4 {
+        return None;
+    }
+    lengths.sort_unstable();
+    let width = lengths[(lengths.len() * 9 / 10).min(lengths.len() - 1)];
+    let full = lengths.iter().filter(|&&n| n * 5 >= width * 4).count();
+    (width <= 120 && full * 2 >= lengths.len()).then_some(width)
+}
+
+/// [`paragraph_ends`] für Utterances (Satztext ohne Stimme).
+fn utterance_paragraph_ends(text: &str, sentences: &[Utterance]) -> Vec<bool> {
+    let texts: Vec<String> = sentences.iter().map(|(t, _)| t.clone()).collect();
+    paragraph_ends(text, &texts)
+}
+
+/// Stille, die zur Satzpause kommt, damit am Absatzende die Absatzpause steht.
+fn paragraph_extra_ms(flow: flow::SpeechFlow) -> u32 {
+    (flow.paragraph_ms() - flow.sentence_ms()).max(0.0).round() as u32
+}
+
 /// Ein Mono-WAV aus Stille — die Pause fürs Abspielen, mit der Abtastrate des
 /// Nachbarstücks, damit sie sich nahtlos einfügt.
 fn silence_wav(ms: u32, sample_rate: u32) -> Vec<u8> {
     let samples = vec![0.0f32; silence_sample_count(ms, sample_rate, 1)];
     encode_wav_mono(&samples, sample_rate)
+}
+
+/// Callback, sobald ein Stück eines Satzes hörbar zu spielen beginnt
+/// (Ausgabestrom offen, Audio übergeben): Satzindex, Zeitangaben des Satzes
+/// und Nummer des Stücks. Stück 0 ist der Satzbeginn; jedes weitere Stück
+/// (nach einem Pausen-Tag, der Absatzpause) öffnet den Strom neu, und seine
+/// tatsächliche Startzeit setzt die Uhr der Oberfläche nach.
+pub type OnPlaying = Arc<dyn Fn(usize, &timing::SentenceTiming, usize) + Send + Sync>;
+
+/// Das Ereignis zu [`OnPlaying`]: Stück 0 → `tts-current-sentence` (Satz,
+/// Dauer, Sprechzeit), jedes weitere → `tts-sentence-piece` mit der Stelle im
+/// Satz (ms bei Tempo 1), an der es beginnt.
+fn emit_sentence_piece(
+    app: &tauri::AppHandle,
+    context: &str,
+    idx: usize,
+    timing: &timing::SentenceTiming,
+    piece: usize,
+    text: impl FnOnce() -> String,
+) {
+    use tauri::Emitter;
+    let _ = if piece == 0 {
+        app.emit(
+            "tts-current-sentence",
+            serde_json::json!({
+                "context": context,
+                "index": idx as u32,
+                "duration_ms": timing.duration_ms,
+                "speech_ms": timing.speech_ms,
+                "pieces_ms": timing.pieces_ms,
+                "text": text(),
+            }),
+        )
+    } else {
+        app.emit(
+            "tts-sentence-piece",
+            serde_json::json!({
+                "context": context,
+                "index": idx as u32,
+                "offset_ms": timing.pieces_ms.get(piece).copied().unwrap_or(0),
+            }),
+        )
+    };
+}
+
+/// Spieldauer eines WAV-Blobs in ms, ohne ihn zu dekodieren (0, wenn unlesbar).
+fn wav_duration_ms(bytes: &[u8]) -> u32 {
+    hound::WavReader::new(std::io::Cursor::new(bytes))
+        .ok()
+        .map(|r| {
+            let rate = r.spec().sample_rate.max(1) as u64;
+            (u64::from(r.duration()) * 1000 / rate).min(u64::from(u32::MAX)) as u32
+        })
+        .unwrap_or(0)
 }
 
 /// Abtastrate eines WAV-Blobs, ohne ihn zu dekodieren.
@@ -1859,6 +2393,162 @@ const VOICECHANGE_BINDING: &str = "voicechange_input";
 /// Binding-Id des Diktats fuer das Vorlesefeld.
 const DICTATE_BINDING: &str = "dictate_input";
 
+/// Sendet die Ereignisse der Übersetzung an die Oberfläche:
+/// `tts-translate-start`, `tts-translate-chunk` (je fertigem Abschnitt, in
+/// Index-Reihenfolge) und `tts-transform-progress` (sofort bei jedem fertigen
+/// Abschnitt) — und hält nebenbei den Auftragszustand aktuell.
+struct TranslateEmitter {
+    app: tauri::AppHandle,
+    tracker: Arc<crate::translator::JobTracker>,
+}
+
+impl crate::translator::TranslateObserver for TranslateEmitter {
+    fn started(&self, info: &crate::translator::StartInfo) {
+        use tauri::Emitter;
+        self.tracker.started(info);
+        let _ = self.app.emit(
+            "tts-translate-start",
+            serde_json::json!({
+                "total": info.total,
+                "chapters": info.chapters,
+                "totalChars": info.total_chars,
+            }),
+        );
+    }
+
+    fn chunk(&self, info: &crate::translator::ChunkInfo) {
+        use tauri::Emitter;
+        self.tracker.chunk(info);
+        let _ = self.app.emit(
+            "tts-translate-chunk",
+            serde_json::json!({
+                "index": info.index,
+                "total": info.total,
+                "chapter": info.chapter,
+                "chapters": info.chapters,
+                "chapterTitle": info.chapter_title,
+                "text": info.text,
+                "cached": info.cached,
+            }),
+        );
+    }
+
+    fn progress(&self, info: &crate::translator::ProgressInfo) {
+        use tauri::Emitter;
+        self.tracker.progress(info);
+        let workers: Vec<_> = info
+            .workers
+            .iter()
+            .map(|&(done, total)| serde_json::json!({ "done": done, "total": total }))
+            .collect();
+        let _ = self.app.emit(
+            "tts-transform-progress",
+            serde_json::json!({
+                "kind": "translation",
+                "done": info.done,
+                "total": info.total,
+                "chapter": info.chapter,
+                "chapters": info.chapters,
+                "chapterTitle": info.chapter_title,
+                "doneChars": info.done_chars,
+                "totalChars": info.total_chars,
+                "workers": workers,
+            }),
+        );
+    }
+}
+
+/// Basisordner der Übersetzungs-Ablage.
+fn translation_base(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
+    use tauri::Manager;
+    crate::portable::data_dir()
+        .cloned()
+        .or_else(|| app.path().app_local_data_dir().ok())
+}
+
+/// Schlüssel einer Übersetzung: Streuwert aus Text und Sprache. Ändert sich
+/// das Original, zeigt er woandershin, und die alte Übersetzung wird nie
+/// fälschlich ausgeliefert.
+fn translation_key(text: &str, target_lang: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    text.hash(&mut hasher);
+    target_lang.hash(&mut hasher);
+    // Fassung der Uebersetzung: seit v2 bleiben Sprechermarken und Tags
+    // stehen. Aeltere Eintraege (mit uebersetzten Marken) gelten nicht mehr.
+    "v2-geschuetzte-marken".hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+}
+
+/// Ganztext-Übersetzung ablegen (am Buch hinterlegt; `tts_cached_translation`
+/// findet sie).
+fn write_translation(app: &tauri::AppHandle, key: &str, translation: &str) {
+    let Some(base) = translation_base(app) else {
+        return;
+    };
+    let dir = base.join("translations");
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        log::warn!("translation cache unavailable: {e}");
+        return;
+    }
+    if let Err(e) = std::fs::write(dir.join(format!("{key}.txt")), translation) {
+        log::warn!("could not cache translation: {e}");
+    }
+}
+
+/// Der Auftrag selbst — eigene Aufgabe, unabhängig vom aufrufenden Command.
+#[allow(clippy::too_many_arguments)]
+async fn run_translate_job(
+    app: tauri::AppHandle,
+    settings: crate::settings::AppSettings,
+    text: String,
+    target_lang: String,
+    gpu_busy: bool,
+    key: String,
+    tracker: Arc<crate::translator::JobTracker>,
+    done_tx: tokio::sync::watch::Sender<Option<Result<String, String>>>,
+) {
+    use tauri::Emitter;
+    let _ = app.emit("llm-activity", serde_json::json!({ "busy": true }));
+    let observer = TranslateEmitter {
+        app: app.clone(),
+        tracker: tracker.clone(),
+    };
+    // Fertige Abschnitte liegen auf Platte: nach einem Fehler oder Abbruch
+    // setzt der nächste Aufruf dort fort.
+    let dir = translation_base(&app).map(|b| b.join("translations").join("chunks"));
+    let cache = crate::translator::DiskSectionCache::new(dir, &target_lang);
+    let outcome = crate::translator::translate_blocks(
+        &settings,
+        &text,
+        &target_lang,
+        gpu_busy,
+        &cache,
+        &observer,
+    )
+    .await;
+    tracker.finish(&outcome);
+    if let Ok(done) = &outcome {
+        write_translation(&app, &key, &done.text);
+    }
+    let _ = app.emit(
+        "llm-activity",
+        serde_json::json!({ "busy": false, "error": outcome.as_ref().err().cloned() }),
+    );
+    let warnings = tracker.snapshot().warnings;
+    let _ = app.emit(
+        "tts-translate-done",
+        serde_json::json!({
+            "textKey": key,
+            "lang": target_lang,
+            "ok": outcome.is_ok(),
+            "error": outcome.as_ref().err().cloned(),
+            "warnings": warnings,
+        }),
+    );
+    let _ = done_tx.send(Some(outcome.map(|o| o.text)));
+}
+
 impl TtsManager {
     pub fn new(app: &tauri::AppHandle) -> Arc<Self> {
         use tauri::Emitter;
@@ -1894,9 +2584,11 @@ impl TtsManager {
                 speak_session: Mutex::new(None),
                 export_cancel: Mutex::new(Arc::new(AtomicBool::new(false))),
                 prewarm_cancel: Mutex::new(Arc::new(AtomicBool::new(false))),
+                prefetch_cancel: Mutex::new(Arc::new(AtomicBool::new(false))),
                 provider_host,
                 provider_preview,
                 provider_roster: Mutex::new(None),
+                translate_job: Mutex::new(None),
             }
         });
         manager.refresh_from_settings();
@@ -1999,6 +2691,7 @@ impl TtsManager {
             .then_some(settings.tts_enhance_strength);
         self.core.controls.set_volume(settings.tts_volume);
         self.core.controls.set_speed(settings.tts_speed);
+        *self.core.flow.lock().unwrap() = flow::SpeechFlow::new(settings.tts_flow);
         *self.core.export_format.lock().unwrap() = settings.tts_export_format;
         *self.core.output_device.lock().unwrap() = settings.selected_output_device;
         // Ob eine FESTE Stimme gewaehlt ist, haengt an der Engine: bei Fish das
@@ -2081,6 +2774,10 @@ impl TtsManager {
     }
 
     pub fn cancel(&self) {
+        self.prefetch_cancel
+            .lock()
+            .unwrap()
+            .store(true, Ordering::Release);
         self.core.cancel_core();
     }
 
@@ -2101,7 +2798,12 @@ impl TtsManager {
         sentence_index: usize,
     ) -> Result<usize, String> {
         use tauri::Emitter;
-        let max_chars = *self.core.max_chars.lock().unwrap();
+        // Eine Sitzung liest Satz fuer Satz und laesst sich jederzeit
+        // anhalten; die Grenze `tts_max_chars` gilt deshalb je Satz (zu lange
+        // Saetze teilt `utterances`), nicht fuer den ganzen Text -- sonst
+        // endete ein Buch nach 5000 Zeichen (lva#149). Die Meldung unten
+        // bleibt fuer den Fall, dass hier wieder eine Grenze eingefuehrt wird.
+        let max_chars = u32::MAX;
         let prepared =
             protocol::prepare_text(raw, max_chars).ok_or_else(|| "empty text".to_string())?;
         // Eine Kuerzung muss man sehen. Bisher fiel sie nur einer Funktion
@@ -2118,11 +2820,13 @@ impl TtsManager {
         }
         let sentences = self.utterances(&prepared.text).await;
         let start = clamp_start_sentence(sentence_index, sentences.len());
+        let paragraphs = utterance_paragraph_ends(&prepared.text, &sentences);
         *self.speak_session.lock().unwrap() = Some(SpeakSession {
             sentences: sentences.clone(),
+            paragraph_ends: paragraphs.clone(),
             position: start,
         });
-        self.run_speak_session(sentences, start).await
+        self.run_speak_session(sentences, paragraphs, start).await
     }
 
     /// Ab einem Satz vorlesen -- oder nur diesen einen. `char_offset` ist
@@ -2135,9 +2839,10 @@ impl TtsManager {
         char_offset: usize,
         only_one: bool,
     ) -> Result<usize, String> {
-        let max_chars = *self.core.max_chars.lock().unwrap();
+        // Ganzer Text wie in `speak_text_at`: die Grenze gilt je Satz, sonst
+        // waere ein Klick hinter Zeichen 5000 nicht erreichbar (lva#149).
         let prepared =
-            protocol::prepare_text(raw, max_chars).ok_or_else(|| "empty text".to_string())?;
+            protocol::prepare_text(raw, u32::MAX).ok_or_else(|| "empty text".to_string())?;
         // prepare_text trimmt vorn: den Offset entsprechend verschieben.
         let leading = raw.len() - raw.trim_start().len();
         let leading_chars = raw[..leading].chars().count();
@@ -2149,16 +2854,20 @@ impl TtsManager {
         let texts: Vec<String> = sentences.iter().map(|(t, _)| t.clone()).collect();
         let spans = protocol::locate_sentences(&prepared.text, &texts);
         let index = protocol::sentence_index_at(&spans, offset);
-        let (session_sentences, start) = if only_one {
-            (vec![sentences[index].clone()], 0)
+        let (session_sentences, session_paragraphs, start) = if only_one {
+            // Ein einzelner Satz: keine Absatzpause dahinter.
+            (vec![sentences[index].clone()], vec![false], 0)
         } else {
-            (sentences, index)
+            let paragraphs = utterance_paragraph_ends(&prepared.text, &sentences);
+            (sentences, paragraphs, index)
         };
         *self.speak_session.lock().unwrap() = Some(SpeakSession {
             sentences: session_sentences.clone(),
+            paragraph_ends: session_paragraphs.clone(),
             position: start,
         });
-        self.run_speak_session(session_sentences, start).await
+        self.run_speak_session(session_sentences, session_paragraphs, start)
+            .await
     }
 
     /// Geaenderte Saetze vorab erzeugen: alles, was nicht im Cache liegt,
@@ -2213,7 +2922,9 @@ impl TtsManager {
                 emit(done, true);
                 return Err("abgebrochen".to_string());
             }
-            self.core.fetch_wav(port, seed, &text, voice.as_deref()).await?;
+            self.core
+                .fetch_wav(port, seed, &text, voice.as_deref())
+                .await?;
             done += 1;
             emit(done, false);
         }
@@ -2221,7 +2932,72 @@ impl TtsManager {
     }
 
     pub fn prewarm_cancel(&self) {
-        self.prewarm_cancel.lock().unwrap().store(true, Ordering::Release);
+        self.prewarm_cancel
+            .lock()
+            .unwrap()
+            .store(true, Ordering::Release);
+    }
+
+    /// Anlauf fuer den naechsten Buchteil (lva#150): die ersten
+    /// [`LOOKAHEAD_SENTENCES`] Saetze still in den Cache legen, waehrend der
+    /// laufende Teil zu Ende spielt. So beginnt der naechste Teil ohne Pause.
+    /// Ohne Fortschrittsmeldung; ein neuer Aufruf oder ein Stopp bricht ab.
+    /// Laeuft nur, wenn die Engine schon bereit ist (kein Serverstart dafuer)
+    /// und nicht fuer Netz-Anbieter (wie der Vorpuffer; lokale wie Phonon schon). Gibt die Zahl der
+    /// angefragten Stuecke zurueck.
+    pub async fn prefetch_head(self: &Arc<Self>, raw: &str) -> Result<u32, String> {
+        if matches!(self.core.engine_snapshot(), EngineImpl::Provider(ref p) if !p.is_local()) {
+            return Ok(0);
+        }
+        if !matches!(self.core.phase(), TtsPhase::Ready | TtsPhase::Speaking) {
+            return Ok(0);
+        }
+        let cancel = Arc::new(AtomicBool::new(false));
+        {
+            let mut slot = self.prefetch_cancel.lock().unwrap();
+            slot.store(true, Ordering::Release);
+            *slot = cancel.clone();
+        }
+        let max_chars = *self.core.max_chars.lock().unwrap();
+        // Dieselbe Aufbereitung wie die Sitzung (`run_speak_session`), sonst
+        // passten die Cache-Schluessel nicht.
+        let utterances = without_speakers_unless_switching(
+            self.utterances(raw.trim()).await,
+            self.core.engine_caps().voice_switching,
+            self.core.fixed_voice.load(Ordering::Acquire),
+        );
+        let mut done = 0u32;
+        let mut sentences = 0usize;
+        for (sentence, speaker) in &utterances {
+            if sentences >= LOOKAHEAD_SENTENCES {
+                break;
+            }
+            let Some(prepared) = protocol::prepare_text(sentence, max_chars) else {
+                continue;
+            };
+            sentences += 1;
+            for part in protocol::split_pauses(&prepared.text) {
+                let protocol::SpeechPart::Speak(text) = part else {
+                    continue;
+                };
+                if cancel.load(Ordering::Acquire) {
+                    return Ok(done);
+                }
+                let voice = self.core.utterance_voice(speaker.as_ref());
+                let port = *self.core.port.lock().unwrap();
+                let seed = *self.core.seed.lock().unwrap();
+                // Fehler bleiben still: der Teil liest dann eben ohne Anlauf.
+                if self
+                    .core
+                    .fetch_wav_ahead(port, seed, &text, voice.as_deref(), &cancel)
+                    .await
+                    .is_ok()
+                {
+                    done += 1;
+                }
+            }
+        }
+        Ok(done)
     }
 
     /// Vorlesetext in Saetze samt Stimme zerlegen.
@@ -2268,7 +3044,18 @@ impl TtsManager {
         let single_voice = self.core.fixed_voice.load(Ordering::Acquire);
         let markers_apply =
             speaker_markers_apply(self.core.engine_caps().voice_switching, single_voice);
+        let max_chars = *self.core.max_chars.lock().unwrap();
+        // Ueberlange "Saetze" (Dialog ohne Satzgrenze, Verse, Listen) in
+        // Stuecke teilen: `fetch_and_play_pipelined` kuerzt je Satz auf
+        // `tts_max_chars` und wuerde den Rest sonst still verwerfen (lva#149).
         split_utterances(text, &self.active_speakers(), markers_apply)
+            .into_iter()
+            .flat_map(|(sentence, voice)| {
+                protocol::split_oversized(&sentence, max_chars)
+                    .into_iter()
+                    .map(move |part| (part, voice.clone()))
+            })
+            .collect()
     }
 
     /// Die gewaehlte Stimme oder Engine hat sich geaendert (die Einstellungen sind
@@ -2316,15 +3103,20 @@ impl TtsManager {
     /// Pausiertes Freitext-Vorlesen ab dem letzten vollständig gehörten Satz
     /// fortsetzen.
     pub async fn speak_resume(self: &Arc<Self>) -> Result<usize, String> {
-        let (sentences, position) = {
+        let (sentences, paragraphs, position) = {
             let guard = self.speak_session.lock().unwrap();
             let session = guard.as_ref().ok_or("nichts zum Fortsetzen")?;
             if session.position >= session.sentences.len() {
                 return Err("bereits zu Ende gelesen".into());
             }
-            (session.sentences.clone(), session.position)
+            (
+                session.sentences.clone(),
+                session.paragraph_ends.clone(),
+                session.position,
+            )
         };
-        self.run_speak_session(sentences, position).await
+        self.run_speak_session(sentences, paragraphs, position)
+            .await
     }
 
     /// Alles im Cache → gar keinen Server anfassen (Offline-Wiedergabe);
@@ -2357,6 +3149,7 @@ impl TtsManager {
     async fn run_speak_session(
         self: &Arc<Self>,
         sentences: Vec<Utterance>,
+        paragraphs: Vec<bool>,
         start: usize,
     ) -> Result<usize, String> {
         use tauri::Emitter;
@@ -2410,18 +3203,19 @@ impl TtsManager {
         // Live-Anzeige des Satzes, der gerade zu hören ist.
         let now_manager = Arc::clone(self);
         let now_sentences: Vec<String> = sentences.iter().map(|(text, _)| text.clone()).collect();
-        let on_playing: Arc<dyn Fn(usize) + Send + Sync> = Arc::new(move |idx| {
-            let _ = now_manager.app.emit(
-                "tts-current-sentence",
-                serde_json::json!({
-                    "context": "speak",
-                    "index": idx as u32,
-                    "text": now_sentences.get(idx).cloned().unwrap_or_default(),
-                }),
-            );
+        let on_playing: OnPlaying = Arc::new(move |idx, timing, piece| {
+            emit_sentence_piece(&now_manager.app, "speak", idx, timing, piece, || {
+                now_sentences.get(idx).cloned().unwrap_or_default()
+            });
         });
         self.core
-            .speak_sentence_run(sentences, start, Some(on_playing), Some(on_played))
+            .speak_sentence_run_paragraphs(
+                sentences,
+                &paragraphs,
+                start,
+                Some(on_playing),
+                Some(on_played),
+            )
             .await
     }
 
@@ -2668,11 +3462,7 @@ impl TtsManager {
     /// Grundlage dafuer, nur wirklich verwendbare Stimmen anzubieten (#29).
     pub fn runtime_status(&self) -> availability::TtsRuntimeStatus {
         let data = self.data_base_dir().unwrap_or_default();
-        availability::runtime_status(
-            &data,
-            &self.fish_dir(),
-            availability::current_platform_id(),
-        )
+        availability::runtime_status(&data, &self.fish_dir(), availability::current_platform_id())
     }
 
     /// `fish_dir` fuer die Command-Schicht: die Commands brauchen den Pfad,
@@ -2843,7 +3633,8 @@ impl TtsManager {
         text: &str,
         target_lang: &str,
     ) -> Result<String, String> {
-        let settings = crate::settings::get_settings(&self.app);
+        let settings =
+            crate::settings::get_settings(&self.app).for_function(crate::settings::FN_READ_ALOUD);
         let translation = crate::translator::translate(&settings, text, target_lang).await?;
         self.speak_in_background(translation.clone());
         Ok(translation)
@@ -2877,42 +3668,101 @@ impl TtsManager {
             return Err("kein Text zum Übersetzen".to_string());
         }
         if let Some(hit) = self.cached_translation(trimmed, target_lang) {
+            // Der Ganztext-Cache trifft: die Oberfläche bekommt trotzdem den
+            // Ablauf start + ein Abschnitt mit dem ganzen Text.
+            use crate::translator::TranslateObserver;
+            let observer = TranslateEmitter {
+                app: self.app.clone(),
+                tracker: Arc::new(crate::translator::JobTracker::new(target_lang, "")),
+            };
+            observer.started(&crate::translator::StartInfo {
+                total: 1,
+                chapters: 1,
+                total_chars: trimmed.chars().count(),
+            });
+            observer.chunk(&crate::translator::ChunkInfo {
+                index: 0,
+                total: 1,
+                chapter: 0,
+                chapters: 1,
+                chapter_title: None,
+                text: hit.clone(),
+                cached: true,
+            });
             return Ok(hit);
         }
-        let settings = crate::settings::get_settings(&self.app);
-        let gpu_busy = self.gpu_busy();
-        // Die Sprachmodell-Anzeige lebt von diesen beiden Ereignissen: Gelb,
-        // solange uebersetzt wird, danach zurueck (oder Orange bei Fehler).
-        use tauri::Emitter;
-        let _ = self
-            .app
-            .emit("llm-activity", serde_json::json!({ "busy": true }));
-        // Blockweise mit Fortschritt; Sprechermarken und Tags bleiben stehen.
-        let app = self.app.clone();
-        let progress = move |done: usize, total: usize| {
-            let _ = app.emit(
-                "tts-transform-progress",
-                serde_json::json!({ "kind": "translation", "done": done, "total": total }),
-            );
+        let key = translation_key(trimmed, target_lang);
+        // Läuft schon ein Auftrag für denselben Text und dieselbe Sprache,
+        // hängt sich dieser Aufruf daran an (kein Doppelstart).
+        let mut done_rx = {
+            let mut guard = self.translate_job.lock().unwrap();
+            let running = guard.as_ref().map(|h| h.tracker.snapshot());
+            match running {
+                Some(job) if job.running => {
+                    if job.text_key != key || job.lang != target_lang {
+                        return Err("Es läuft bereits eine Übersetzung für einen anderen Text oder eine andere Sprache.".to_string());
+                    }
+                    guard.as_ref().unwrap().done.clone()
+                }
+                _ => {
+                    // Modell der Funktion „Vorlesen“ (Fusszeile), sonst das aktive.
+                    let settings = crate::settings::get_settings(&self.app)
+                        .for_function(crate::settings::FN_READ_ALOUD);
+                    let gpu_busy = self.gpu_busy();
+                    let tracker = Arc::new(crate::translator::JobTracker::new(target_lang, &key));
+                    let (tx, rx) = tokio::sync::watch::channel(None);
+                    *guard = Some(TranslateJobHandle {
+                        tracker: tracker.clone(),
+                        done: rx.clone(),
+                    });
+                    let job = tauri::async_runtime::spawn(run_translate_job(
+                        self.app.clone(),
+                        settings,
+                        trimmed.to_string(),
+                        target_lang.to_string(),
+                        gpu_busy,
+                        key,
+                        tracker.clone(),
+                        tx,
+                    ));
+                    // Stirbt der Auftrag durch eine Panik, bliebe er sonst für
+                    // immer „laufend“ und blockierte jede weitere Übersetzung.
+                    tauri::async_runtime::spawn(async move {
+                        if job.await.is_err() {
+                            tracker.finish(&Err("Übersetzung unerwartet beendet".to_string()));
+                        }
+                    });
+                    rx
+                }
+            }
         };
-        let outcome = crate::translator::translate_blocks(
-            &settings,
-            trimmed,
-            target_lang,
-            gpu_busy,
-            &progress,
-        )
-        .await;
-        let _ = self.app.emit(
-            "llm-activity",
-            serde_json::json!({
-                "busy": false,
-                "error": outcome.as_ref().err().cloned(),
-            }),
-        );
-        let translated = outcome?;
-        self.store_translation(trimmed, target_lang, &translated);
-        Ok(translated)
+        let finished = done_rx
+            .wait_for(|v| v.is_some())
+            .await
+            .map_err(|_| "Übersetzung abgebrochen".to_string())?
+            .clone();
+        finished.unwrap_or_else(|| Err("Übersetzung abgebrochen".to_string()))
+    }
+
+    /// Stand des laufenden oder zuletzt beendeten Übersetzungsauftrags.
+    pub fn translate_job(&self) -> Option<crate::translator::TranslateJob> {
+        self.translate_job
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|h| h.tracker.snapshot())
+    }
+
+    /// Der Auftrag, aber nur wenn er zu GENAU diesem Text und dieser Sprache
+    /// gehört (Text wie bei `tts_translate`, also mit Seitenmarken).
+    pub fn translate_job_for(
+        &self,
+        text: &str,
+        target_lang: &str,
+    ) -> Option<crate::translator::TranslateJob> {
+        let key = translation_key(text.trim(), target_lang);
+        self.translate_job()
+            .filter(|job| job.text_key == key && job.lang == target_lang)
     }
 
     /// Liegt für diesen Text in dieser Sprache schon eine Übersetzung?
@@ -2934,37 +3784,16 @@ impl TtsManager {
     }
 
     fn store_translation(&self, text: &str, target_lang: &str, translation: &str) {
-        let Some(path) = self.translation_path(text, target_lang) else {
-            return;
-        };
-        if let Some(dir) = path.parent() {
-            if let Err(e) = std::fs::create_dir_all(dir) {
-                log::warn!("translation cache unavailable: {e}");
-                return;
-            }
-        }
-        if let Err(e) = std::fs::write(&path, translation) {
-            log::warn!("could not cache translation: {e}");
-        }
+        write_translation(&self.app, &translation_key(text, target_lang), translation);
     }
 
-    /// Ablageort einer Übersetzung. Der Dateiname ist der Streuwert aus Text
-    /// und Sprache — ändert sich das Original, zeigt er woandershin, und die
-    /// alte Übersetzung wird nie fälschlich ausgeliefert.
+    /// Ablageort einer Übersetzung (Dateiname = [`translation_key`]).
     fn translation_path(&self, text: &str, target_lang: &str) -> Option<std::path::PathBuf> {
-        use std::hash::{Hash, Hasher};
-        use tauri::Manager;
-        let base = crate::portable::data_dir()
-            .cloned()
-            .or_else(|| self.app.path().app_local_data_dir().ok())?;
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        text.hash(&mut hasher);
-        target_lang.hash(&mut hasher);
-        // Fassung der Uebersetzung: seit v2 bleiben Sprechermarken und Tags
-        // stehen. Aeltere Eintraege (mit uebersetzten Marken) gelten nicht mehr.
-        "v2-geschuetzte-marken".hash(&mut hasher);
-        let key = hasher.finish();
-        Some(base.join("translations").join(format!("{key:016x}.txt")))
+        Some(
+            translation_base(&self.app)?
+                .join("translations")
+                .join(format!("{}.txt", translation_key(text, target_lang))),
+        )
     }
 
     /// Diktat für das Vorlesefeld: Aufnahme starten.
@@ -3198,6 +4027,71 @@ impl TtsManager {
             .await?;
         *self.core.last_used.lock().unwrap() = Instant::now();
         Ok(wav)
+    }
+
+    /// Einen Text satzweise zu WAV-Stücken im Speicher (Sprachdienst, ADR-0021): dieselbe
+    /// Zerlegung, Aufbereitung und derselbe Engine-Weg wie der Datei-Export, aber ohne Datei,
+    /// ohne Wiedergabe und **ohne Cache** (kein Lesen, kein Schreiben von Speicher- und
+    /// Plattencache). `voice` überschreibt die Stimme, sonst gilt die eingestellte. `cancel`
+    /// wird vor und zwischen den Teilschritten geprüft (Abbruch, Widerruf, Verbindungsende).
+    pub async fn synthesize_wavs(
+        &self,
+        raw: &str,
+        voice: Option<&str>,
+        cancel: &Arc<AtomicBool>,
+    ) -> Result<Vec<Vec<u8>>, String> {
+        let abgebrochen = || cancel.load(Ordering::Acquire);
+        if abgebrochen() {
+            return Err(providers::pipeline::CANCELLED_MESSAGE.to_string());
+        }
+        let max_chars = *self.core.max_chars.lock().unwrap();
+        let utterances = self.utterances(raw.trim()).await;
+        if utterances.is_empty() {
+            return Err("empty text".to_string());
+        }
+        self.refresh_from_settings();
+        self.ensure_engine_ready().await?;
+        if abgebrochen() {
+            return Err(providers::pipeline::CANCELLED_MESSAGE.to_string());
+        }
+        self.bind_seed_voice().await;
+        let port = *self.core.port.lock().unwrap();
+        let seed = *self.core.seed.lock().unwrap();
+        let strength = *self.core.enhance.lock().unwrap();
+        let flow = *self.core.flow.lock().unwrap();
+        let paragraphs = utterance_paragraph_ends(raw.trim(), &utterances);
+        let mut out = Vec::new();
+        for (index, (sentence, own_voice)) in utterances.iter().enumerate() {
+            let Some(part) = protocol::prepare_text(sentence, max_chars) else {
+                continue;
+            };
+            for piece in protocol::split_pauses(&part.text) {
+                let protocol::SpeechPart::Speak(text) = piece else {
+                    continue;
+                };
+                if abgebrochen() {
+                    return Err(providers::pipeline::CANCELLED_MESSAGE.to_string());
+                }
+                let chosen = voice.or(own_voice.as_deref());
+                let bytes = self
+                    .core
+                    .fetch_wav_uncached(port, seed, &text, chosen, Some(cancel))
+                    .await?;
+                out.push(prepare_sentence_audio(bytes, strength, flow));
+            }
+            // Absatzende: zusätzliche Stille als eigenes Stück, in der
+            // Abtastrate des vorigen.
+            if paragraphs.get(index).copied().unwrap_or(false) {
+                if let Some(rate) = out.last().and_then(|wav| wav_sample_rate(wav)) {
+                    out.push(silence_wav(paragraph_extra_ms(flow), rate));
+                }
+            }
+        }
+        *self.core.last_used.lock().unwrap() = Instant::now();
+        if out.is_empty() {
+            return Err("empty text".to_string());
+        }
+        Ok(out)
     }
 
     /// Der Piper-Zweig des Datei-Exports: ein Lauf durch die Engine-Naht
@@ -3496,7 +4390,10 @@ impl TtsManager {
     /// Ob die abgelegte Hoerprobe noch gilt: sie muss existieren und darf
     /// nicht aelter sein als die Referenzaufnahme — wer eine Stimme unter
     /// demselben Namen neu aufnimmt, soll nicht die alte hoeren.
-    fn demo_is_fresh(out: &std::path::Path, reference_mtime: &Option<std::time::SystemTime>) -> bool {
+    fn demo_is_fresh(
+        out: &std::path::Path,
+        reference_mtime: &Option<std::time::SystemTime>,
+    ) -> bool {
         let Some(demo) = std::fs::metadata(out).ok().and_then(|m| m.modified().ok()) else {
             return false;
         };
@@ -3682,6 +4579,8 @@ impl TtsManager {
         // Lage jedes Satzes in der Datei, zunaechst in geschriebenen Werten:
         // die Abtastrate steht erst mit dem ersten Teilstueck fest.
         let mut marks: Vec<(String, Option<String>, usize, usize)> = Vec::new();
+        let flow = *self.core.flow.lock().unwrap();
+        let paragraphs = utterance_paragraph_ends(raw.trim(), &utterances);
         for (index, (sentence, voice)) in utterances.iter().enumerate() {
             if cancel.load(Ordering::Acquire) {
                 // Halbe Datei ist schlimmer als keine: sie sieht fertig aus.
@@ -3708,7 +4607,10 @@ impl TtsManager {
                     }
                     protocol::SpeechPart::Speak(text) => text,
                 };
-                let bytes = match self.core.fetch_wav(port, seed, &text, voice.as_deref()).await
+                let bytes = match self
+                    .core
+                    .fetch_wav(port, seed, &text, voice.as_deref())
+                    .await
                 {
                     Ok(bytes) => bytes,
                     // Die Vorpruefung sagte "alles im Cache", der Abruf sagt
@@ -3731,7 +4633,7 @@ impl TtsManager {
                 // Dieselbe Aufbereitung wie beim Hoeren — die Datei soll
                 // klingen wie das, was man vorher gehoert hat.
                 let strength = *self.core.enhance.lock().unwrap();
-                let bytes = prepare_sentence_audio(bytes, strength);
+                let bytes = prepare_sentence_audio(bytes, strength, flow);
                 // Derselbe Ausgleich wie beim Hören: eine exportierte Datei
                 // mit wechselnden Stimmen soll nicht lauter und leiser werden.
                 let gain = self.core.playback_gain(voice.as_deref(), &bytes);
@@ -3780,6 +4682,11 @@ impl TtsManager {
                 segment_start,
                 written,
             ));
+            // Absatzende: die Stille kommt vor das nächste Stück (oder ans
+            // Textende) und gehört damit nicht mehr zu diesem Satz.
+            if paragraphs.get(index).copied().unwrap_or(false) {
+                pending_silence_ms += paragraph_extra_ms(flow);
+            }
             self.emit_export_progress(index as u32 + 1, total, false);
         }
         // Pause am Textende: mit der `spec` des letzten Teilstuecks.
@@ -3833,11 +4740,7 @@ impl TtsManager {
                                     spec.sample_rate,
                                     spec.channels,
                                 ),
-                                end_ms: notes::samples_to_ms(
-                                    *end,
-                                    spec.sample_rate,
-                                    spec.channels,
-                                ),
+                                end_ms: notes::samples_to_ms(*end, spec.sample_rate, spec.channels),
                             })
                             .collect()
                     })
@@ -3859,13 +4762,17 @@ impl TtsManager {
     /// ein Sprung um 15 Sekunden gaebe es hier gar nicht. Der Satz ist die
     /// Einheit, in der man sich in vorgelesenem Text bewegt.
     pub async fn speak_seek(self: &Arc<Self>, delta: i32) -> Result<usize, String> {
-        let (sentences, target) = {
+        let (sentences, paragraphs, target) = {
             let mut guard = self.speak_session.lock().unwrap();
             let session = guard.as_mut().ok_or("nichts zum Springen")?;
             let len = session.sentences.len() as i32;
             let next = (session.position as i32 + delta).clamp(0, (len - 1).max(0));
             session.position = next as usize;
-            (session.sentences.clone(), next as usize)
+            (
+                session.sentences.clone(),
+                session.paragraph_ends.clone(),
+                next as usize,
+            )
         };
         // Die neue Position meldet `run_speak_session` gleich zu Beginn (jeder Lauf
         // tut das). Ohne diese Meldung erfuhr die Oberfläche vom Sprung nichts:
@@ -3873,7 +4780,7 @@ impl TtsManager {
         // wenn ein Satz VOLLSTÄNDIG gespielt wurde. Wer sprang und dann pausierte,
         // bekam beim nächsten Druck auf Play einen Neustart von vorn statt der
         // Fortsetzung an der Sprungmarke.
-        self.run_speak_session(sentences, target).await
+        self.run_speak_session(sentences, paragraphs, target).await
     }
 
     /// Tempo und Lautstaerke der laufenden Wiedergabe. Oeffentlich, damit
@@ -3882,6 +4789,12 @@ impl TtsManager {
     /// nur zu Beginn eines Sprechlaufs laeuft.
     pub fn controls(&self) -> &Arc<PlaybackControls> {
         &self.core.controls
+    }
+
+    /// Sprachfluss sofort setzen (Befehl `change_tts_flow_setting`): gilt ab dem
+    /// nächsten aufbereiteten Satz, ohne den laufenden Auftrag anzufassen.
+    pub fn set_flow(&self, value: f32) {
+        *self.core.flow.lock().unwrap() = flow::SpeechFlow::new(value);
     }
 
     /// Die aktive Stimme (oder der Seed, der die Standardstimme IST) hat sich
@@ -4010,6 +4923,7 @@ impl TtsManager {
         let p = std::path::Path::new(path);
         let text = crate::media::extract_document_text(p)?;
         let sentences = protocol::split_sentences(&text);
+        let paragraphs = paragraph_ends(&text, &sentences);
         let total = sentences.len() as u32;
         if total == 0 {
             return Err("Das Dokument enthält keine vorlesbaren Sätze".into());
@@ -4027,6 +4941,7 @@ impl TtsManager {
             key: path.to_string(),
             title: title.clone(),
             sentences,
+            paragraph_ends: paragraphs,
         });
         self.persist_reading(path, &title, position, total);
         let info = ReadingInfo {
@@ -4044,13 +4959,14 @@ impl TtsManager {
     /// Wiedergabe des geöffneten Dokuments ab der gespeicherten Position.
     /// Kehrt sofort zurück; Fortschritt kommt als `tts-reading-progress`.
     pub fn reading_play(self: &Arc<Self>) -> Result<(), String> {
-        let (key, title, sentences) = {
+        let (key, title, sentences, paragraphs) = {
             let guard = self.reading.lock().unwrap();
             let session = guard.as_ref().ok_or("kein Dokument geöffnet")?;
             (
                 session.key.clone(),
                 session.title.clone(),
                 session.sentences.clone(),
+                session.paragraph_ends.clone(),
             )
         };
         let total = sentences.len() as u32;
@@ -4077,16 +4993,10 @@ impl TtsManager {
             // Live-Anzeige des gelesenen Satzes.
             let now_manager = Arc::clone(&manager);
             let now_sentences = sentences.clone();
-            let on_playing: Arc<dyn Fn(usize) + Send + Sync> = Arc::new(move |idx| {
-                use tauri::Emitter;
-                let _ = now_manager.app.emit(
-                    "tts-current-sentence",
-                    serde_json::json!({
-                        "context": "reading",
-                        "index": idx as u32,
-                        "text": now_sentences.get(idx).cloned().unwrap_or_default(),
-                    }),
-                );
+            let on_playing: OnPlaying = Arc::new(move |idx, timing, piece| {
+                emit_sentence_piece(&now_manager.app, "reading", idx, timing, piece, || {
+                    now_sentences.get(idx).cloned().unwrap_or_default()
+                });
             });
             let cb_manager = Arc::clone(&manager);
             let cb_key = key.clone();
@@ -4105,8 +5015,9 @@ impl TtsManager {
             });
             let result = manager
                 .core
-                .speak_sentence_run(
+                .speak_sentence_run_paragraphs(
                     single_voice(sentences),
+                    &paragraphs,
                     start as usize,
                     Some(on_playing),
                     Some(on_played),
@@ -4469,16 +5380,15 @@ impl TtsManager {
                 }
             }
         }
-        let visible = crate::settings::get_settings(&self.app)
-            .tts_providers
-            .visible_voices
-            .get(p.id())
-            .cloned();
+        let tts_providers = crate::settings::get_settings(&self.app).tts_providers;
+        let visible = tts_providers.visible_voices.get(p.id()).cloned();
+        let names = tts_providers.voice_names_of(p.id()).cloned();
         let read = match p.list_voices().await {
-            Ok(voices) => Some(providers::speakers::build_roster(
+            Ok(voices) => Some(providers::speakers::build_roster_named(
                 &voices,
                 visible.as_ref(),
                 p.voice(),
+                names.as_ref(),
             )),
             Err(error) => {
                 log::info!(
@@ -5027,7 +5937,10 @@ fn without_speakers_unless_switching(
     if speaker_markers_apply(voice_switching, single_voice) {
         sentences
     } else {
-        sentences.into_iter().map(|(text, _)| (text, None)).collect()
+        sentences
+            .into_iter()
+            .map(|(text, _)| (text, None))
+            .collect()
     }
 }
 
@@ -5123,6 +6036,60 @@ mod test_support {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn absatzenden(text: &str) -> Vec<bool> {
+        let sentences = protocol::split_sentences(text);
+        paragraph_ends(text, &sentences)
+    }
+
+    #[test]
+    fn absatzende_leerzeile_und_einzelner_umbruch() {
+        // Leerzeile: Absatzende; innerhalb des Absatzes nicht.
+        let text = "Der erste Satz ist lang genug. Der zweite auch.\n\nNeuer Absatz beginnt hier.";
+        assert_eq!(absatzenden(text), vec![false, true, false]);
+        // Einzelner Umbruch (docx/Markdown): ebenfalls Absatzende.
+        let text = "Der erste Satz ist lang genug.\nDer zweite Satz folgt in Zeile zwei.";
+        assert_eq!(absatzenden(text), vec![true, false]);
+        // Umbruch mit Leerzeichen davor/dahinter.
+        let text = "Der erste Satz ist lang genug. \r\n  Der zweite Satz folgt hier.";
+        assert_eq!(absatzenden(text), vec![true, false]);
+    }
+
+    #[test]
+    fn absatzende_kein_umbruch_und_raender() {
+        assert_eq!(absatzenden("Nur ein einziger Satz ohne Ende."), vec![false]);
+        assert_eq!(
+            absatzenden("Erster Satz steht hier. Zweiter Satz steht hier."),
+            vec![false, false]
+        );
+        assert!(paragraph_ends("", &[]).is_empty());
+        // Letzter Satz endet nie einen Absatz, auch nicht mit Umbruch dahinter.
+        assert_eq!(absatzenden("Ein Satz mit Ende genug.\n"), vec![false]);
+        // Überschrift ohne Satzzeichen vor Leerzeile steht für sich.
+        let text = "Kapitel Eins\n\nEs war einmal ein langer Satz.";
+        assert_eq!(absatzenden(text), vec![true, false]);
+    }
+
+    #[test]
+    fn absatzende_hardwrap_nur_hinter_kurzer_zeile() {
+        // PDF-Auszug mit festem Zeilenumbruch: Satzenden am Zeilenende sind
+        // kein Absatz, nur die kurze Schlusszeile.
+        let text = "Am Morgen ging Anna los, denn der Weg zum Bahnhof war sehr weit.\n\
+Sie dachte an das Gespräch vom Vortag und an die Frage nach dem Zug.\n\
+Noch immer wusste sie keine Antwort darauf, was sie sagen sollte, nein.\n\
+Dann kam der Zug.\n\
+Sie stieg ein und setzte sich ans Fenster, wo die Sonne hereinschien.";
+        assert_eq!(absatzenden(text), vec![false, false, false, true, false]);
+    }
+
+    #[test]
+    fn absatzpause_ergaenzt_satzpause_bis_zur_absatzpause() {
+        for v in [0.0f32, 0.5, 1.0] {
+            let f = flow::SpeechFlow::new(v);
+            let total = f.sentence_ms() + paragraph_extra_ms(f) as f32;
+            assert!((total - f.paragraph_ms()).abs() <= 1.0, "{v}: {total}");
+        }
+    }
 
     /// "Ab Satz n fortsetzen" (Aufnahmen: Wiedergabe nach Seitenwechsel neu
     /// aufnehmen): ein gemerkter Satz hinter dem Textende darf nie ins Leere
@@ -5681,6 +6648,7 @@ mod tests {
         fn caps(&self) -> EngineCaps {
             EngineCaps {
                 style_tags: self.style_tags.load(Ordering::SeqCst),
+                pace_tags: false,
                 cloning: false,
                 voice_switching: self.voice_switching.load(Ordering::SeqCst),
                 streaming: false,
@@ -5997,6 +6965,10 @@ mod tests {
         wake: std::sync::Condvar,
         started: std::sync::Mutex<Vec<String>>,
         returned: std::sync::Mutex<Vec<(String, bool)>>,
+        /// Simuliertes Öffnen des Ausgabestroms vor der Startmeldung (ms).
+        open_delay_ms: AtomicU64,
+        /// Gerade im simulierten Öffnen.
+        opening: AtomicBool,
     }
 
     impl ScriptedPlayer {
@@ -6007,6 +6979,8 @@ mod tests {
                 wake: std::sync::Condvar::new(),
                 started: std::sync::Mutex::new(Vec::new()),
                 returned: std::sync::Mutex::new(Vec::new()),
+                open_delay_ms: AtomicU64::new(0),
+                opening: AtomicBool::new(false),
             }
         }
 
@@ -6067,6 +7041,28 @@ mod tests {
                 .push((label, cancelled.load(Ordering::Acquire)));
             Ok(())
         }
+
+        /// Wie ein langsames Gerät: erst öffnen (Verzögerung), dann melden --
+        /// absichtlich OHNE eigene Abbruchprüfung, damit die Tests die Wache
+        /// der Pipeline sehen.
+        fn play_notify(
+            &self,
+            wav: Vec<u8>,
+            device: Option<String>,
+            gain: f32,
+            controls: Arc<PlaybackControls>,
+            cancelled: Arc<AtomicBool>,
+            started: Box<dyn FnOnce() + Send>,
+        ) -> Result<(), String> {
+            let delay = self.open_delay_ms.load(Ordering::SeqCst);
+            if delay > 0 {
+                self.opening.store(true, Ordering::SeqCst);
+                std::thread::sleep(Duration::from_millis(delay));
+                self.opening.store(false, Ordering::SeqCst);
+            }
+            started();
+            self.play(wav, device, gain, controls, cancelled)
+        }
     }
 
     /// Kern mit Mock-Engine und mitschreibendem Player; `voice` ist die
@@ -6083,6 +7079,9 @@ mod tests {
         let engine = Arc::new(MockEngine::new());
         *core.engine.lock().unwrap() = EngineImpl::Mock(Arc::clone(&engine));
         *core.voice.lock().unwrap() = Some(voice.to_string());
+        // Die Stimmwechsel-Faelle zaehlen Syntheseauftraege Satz fuer Satz; der
+        // Vorpuffer hat eigene Tests (`vorpuffer_*`).
+        core.lookahead.store(0, Ordering::SeqCst);
         Stage {
             core,
             engine,
@@ -6108,6 +7107,65 @@ mod tests {
 
     const SAETZE: [&str; 3] = ["Satz eins.", "Satz zwei.", "Satz drei."];
 
+    /// Mitschrift der Startmeldungen: (Satz, Stück, wie viele Stücke der
+    /// Player zu diesem Zeitpunkt schon begonnen hatte).
+    type Meldungen = Arc<std::sync::Mutex<Vec<(usize, usize, usize)>>>;
+
+    fn mitschreiben(stage: &Stage) -> (OnPlaying, Meldungen) {
+        let log: Meldungen = Arc::default();
+        let (sink, player) = (Arc::clone(&log), Arc::clone(&stage.player));
+        let cb: OnPlaying = Arc::new(move |idx, _timing, piece| {
+            let begun = player.started().len();
+            sink.lock().unwrap().push((idx, piece, begun));
+        });
+        (cb, log)
+    }
+
+    /// lva#405: jedes Stück eines Satzes meldet seinen Start erst nach dem
+    /// (langsamen) Öffnen -- die Uhr der Oberfläche setzt so an jedem
+    /// Stück nach, statt die Öffnungszeit als gespielt zu zählen.
+    #[tokio::test]
+    async fn jedes_stueck_meldet_seinen_echten_start() {
+        let stage = stage("olga");
+        stage.player.open_delay_ms.store(40, Ordering::SeqCst);
+        let (cb, log) = mitschreiben(&stage);
+        let core = Arc::clone(&stage.core);
+        let list = single_voice(vec!["Eins [pause] zwei.".into(), "Drei.".into()]);
+        let run =
+            tokio::spawn(async move { core.speak_sentence_run(list, 0, Some(cb), None).await });
+        finish(run).await.unwrap();
+        let log = log.lock().unwrap().clone();
+        let pieces: Vec<(usize, usize)> = log.iter().map(|(i, p, _)| (*i, *p)).collect();
+        assert_eq!(pieces, vec![(0, 0), (0, 1), (0, 2), (1, 0)], "{log:?}");
+        // Gemeldet wird vor dem Abspielen des Stücks, nach dem Öffnen: genau
+        // so viele Stücke liefen schon, wie davor lagen.
+        let begun: Vec<usize> = log.iter().map(|(_, _, b)| *b).collect();
+        assert_eq!(begun, vec![0, 1, 2, 3], "{log:?}");
+    }
+
+    /// lva#405: Stopp, während der Strom des nächsten Satzes noch öffnet --
+    /// danach darf kein Satzbeginn des alten Laufs mehr kommen.
+    #[tokio::test]
+    async fn abbruch_waehrend_des_oeffnens_meldet_keinen_satz() {
+        let stage = stage("olga");
+        stage.player.open_delay_ms.store(150, Ordering::SeqCst);
+        let (cb, log) = mitschreiben(&stage);
+        let core = Arc::clone(&stage.core);
+        let list = single_voice(spielt(&SAETZE));
+        let run =
+            tokio::spawn(async move { core.speak_sentence_run(list, 0, Some(cb), None).await });
+        let player = Arc::clone(&stage.player);
+        wait_until("Öffnen des ersten Satzes", || {
+            player.opening.load(Ordering::SeqCst)
+        })
+        .await;
+        stage.core.cancel_core();
+        let _ = finish(run).await;
+        // Das Öffnen läuft noch zu Ende; danach still.
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(log.lock().unwrap().is_empty(), "{:?}", log.lock().unwrap());
+    }
+
     fn job(text: &str, voice: &str) -> (String, Option<String>) {
         (text.to_string(), Some(voice.to_string()))
     }
@@ -6132,6 +7190,186 @@ mod tests {
             .await
             .expect("die Sitzung endet nicht")
             .expect("der Sitzungs-Task ist abgestürzt")
+    }
+
+    /// Vorpuffer (lva#150): waehrend Satz 1 spielt, liegen die naechsten
+    /// `LOOKAHEAD_SENTENCES` Saetze schon bereit — und jeder Satz wird genau
+    /// EINMAL berechnet, obwohl Vorpuffer und Pipeline ihn beide anfordern.
+    #[tokio::test]
+    async fn vorpuffer_rechnet_voraus_und_jeden_satz_nur_einmal() {
+        let stage = stage("A");
+        stage
+            .core
+            .lookahead
+            .store(LOOKAHEAD_SENTENCES, Ordering::SeqCst);
+        stage.player.gate_playback();
+        let saetze = ["S1.", "S2.", "S3.", "S4.", "S5.", "S6."];
+
+        let run = stage.run(&saetze);
+        wait_until("Satz 1 spielt", || stage.player.started().len() == 1).await;
+        wait_until("Vorpuffer voll", || {
+            stage.engine.finished().len() == 1 + LOOKAHEAD_SENTENCES
+        })
+        .await;
+        // Ein wenig Zeit fuer einen (falschen) Satz zu viel.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(
+            stage.engine.started(),
+            vec![
+                job("S1.", "A"),
+                job("S2.", "A"),
+                job("S3.", "A"),
+                job("S4.", "A")
+            ],
+            "drei Saetze voraus, in Lesereihenfolge, keiner doppelt"
+        );
+
+        stage.player.release(10);
+        finish(run).await.unwrap();
+        assert_eq!(
+            stage.player.started(),
+            spielt(&[
+                "mock|A|S1.",
+                "mock|A|S2.",
+                "mock|A|S3.",
+                "mock|A|S4.",
+                "mock|A|S5.",
+                "mock|A|S6."
+            ])
+        );
+        assert_eq!(
+            stage.engine.started().len(),
+            saetze.len(),
+            "jeder Satz genau einmal berechnet: {:?}",
+            stage.engine.started()
+        );
+    }
+
+    /// Ein Export (eigenes Abbruch-Flag) wartet auf einen Satz, den gerade der
+    /// Vorpuffer rechnet. Bricht der Nutzer den Export ab, kehrt er sofort
+    /// zurueck, statt bis zum Ende der fremden Berechnung zu haengen.
+    #[tokio::test]
+    async fn warten_auf_einen_belegten_satz_ist_abbrechbar() {
+        let stage = stage("A");
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        *stage.engine.gate.lock().unwrap() = Some(gate.clone());
+        let ahead_cancel = Arc::new(AtomicBool::new(false));
+        let core = Arc::clone(&stage.core);
+        let flag = Arc::clone(&ahead_cancel);
+        // Der Vorpuffer belegt den Satz und haengt in der Synthese.
+        let ahead = tokio::spawn(async move {
+            core.fetch_wav_ahead(8080, 0, "Belegt.", Some("A"), &flag)
+                .await
+        });
+        wait_until("Vorpuffer rechnet", || stage.engine.started().len() == 1).await;
+
+        let export_cancel = Arc::new(AtomicBool::new(false));
+        let core = Arc::clone(&stage.core);
+        let flag = Arc::clone(&export_cancel);
+        let export = tokio::spawn(async move {
+            core.fetch_wav_cancellable(8080, 0, "Belegt.", Some("A"), Some(&flag))
+                .await
+        });
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(!export.is_finished(), "der Export wartet auf den Vorpuffer");
+        export_cancel.store(true, Ordering::Release);
+        let result = tokio::time::timeout(Duration::from_secs(1), export)
+            .await
+            .expect("der abgebrochene Export kehrt sofort zurueck")
+            .unwrap();
+        assert_eq!(
+            result,
+            Err(providers::pipeline::CANCELLED_MESSAGE.to_string())
+        );
+        assert_eq!(
+            stage.engine.started().len(),
+            1,
+            "der Export hat den Satz nicht ein zweites Mal angefordert"
+        );
+
+        gate.add_permits(10);
+        assert_eq!(ahead.await.unwrap(), Ok(true));
+    }
+
+    /// Der Einstieg wird durch den Vorpuffer nicht langsamer: solange Satz 1
+    /// rechnet, laeuft kein zweiter Auftrag daneben.
+    #[tokio::test]
+    async fn vorpuffer_wartet_auf_den_ersten_satz() {
+        let stage = stage("A");
+        stage
+            .core
+            .lookahead
+            .store(LOOKAHEAD_SENTENCES, Ordering::SeqCst);
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        *stage.engine.gate.lock().unwrap() = Some(gate.clone());
+
+        let run = stage.run(&SAETZE);
+        wait_until("Satz 1 beginnt", || stage.engine.started().len() == 1).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(stage.engine.started(), vec![job("Satz eins.", "A")]);
+
+        gate.add_permits(10);
+        finish(run).await.unwrap();
+        assert_eq!(stage.engine.started().len(), SAETZE.len());
+    }
+
+    /// Abbruch: die Sitzung endet sofort, auch wenn der Vorpuffer gerade an
+    /// einem Satz rechnet; der wird nicht mehr fertig.
+    #[tokio::test]
+    async fn vorpuffer_endet_mit_dem_abbruch() {
+        let stage = stage("A");
+        stage
+            .core
+            .lookahead
+            .store(LOOKAHEAD_SENTENCES, Ordering::SeqCst);
+        let gate = Arc::new(tokio::sync::Semaphore::new(1));
+        *stage.engine.gate.lock().unwrap() = Some(gate.clone());
+        stage.player.gate_playback();
+
+        let run = stage.run(&SAETZE);
+        wait_until("Satz 1 spielt", || stage.player.started().len() == 1).await;
+        wait_until("Satz 2 rechnet", || stage.engine.started().len() >= 2).await;
+        stage.core.cancel_core();
+        finish(run).await.unwrap();
+        assert_eq!(
+            stage.engine.finished(),
+            vec![job("Satz eins.", "A")],
+            "nach dem Abbruch wird nichts mehr fertig"
+        );
+    }
+
+    /// Nach einem Stimmwechsel liest die Pipeline mit der neuen Stimme, auch
+    /// wenn der Vorpuffer die Saetze schon mit der alten bereitgelegt hatte.
+    #[tokio::test]
+    async fn vorpuffer_mit_alter_stimme_wird_nicht_abgespielt() {
+        let stage = stage("A");
+        stage
+            .core
+            .lookahead
+            .store(LOOKAHEAD_SENTENCES, Ordering::SeqCst);
+        stage.player.gate_playback();
+
+        let run = stage.run(&SAETZE);
+        wait_until("Satz 1 spielt", || stage.player.started().len() == 1).await;
+        wait_until("Vorpuffer voll", || stage.engine.finished().len() == 3).await;
+        stage.switch_voice("B");
+        // Der Vorpuffer beginnt mit der neuen Stimme von vorn, waehrend Satz 1
+        // noch spielt.
+        wait_until("Satz 3 (B) im Vorpuffer", || {
+            stage.engine.started().contains(&job("Satz drei.", "B"))
+        })
+        .await;
+        assert_eq!(stage.player.started(), spielt(&["mock|A|Satz eins."]));
+        stage.player.release(10);
+        finish(run).await.unwrap();
+        assert_eq!(
+            stage.player.started(),
+            spielt(&[
+                "mock|A|Satz eins.",
+                "mock|B|Satz zwei.",
+                "mock|B|Satz drei."
+            ])
+        );
     }
 
     /// FEHLERFALL "Wechsel mitten in der Berechnung des Folgesatzes": Satz 1
@@ -6560,6 +7798,45 @@ mod tests {
         // Zweiter Abruf: aus dem Cache, keine zweite Synthese.
         stage.core.fetch_wav(1, 42, shown, None).await.unwrap();
         assert_eq!(stage.engine.calls.load(Ordering::SeqCst), 1);
+    }
+
+    /// Sprachdienst (ADR-0021): `fetch_wav_uncached` liest keinen Cache und schreibt keinen
+    /// (weder Speicher noch Platte); ein vorhandener Eintrag bleibt unberuehrt.
+    #[tokio::test]
+    async fn fetch_wav_uncached_beruehrt_den_cache_nicht() {
+        let stage = stage("A");
+        let dir = tempfile::tempdir().unwrap();
+        *stage.core.cache_dir.lock().unwrap() = Some(dir.path().to_path_buf());
+        let text = "Hallo Welt, das ist ein ganz gewöhnlicher Satz.";
+        let key = WavCache::key("mock/A", text, 42, Some("A"));
+
+        stage
+            .core
+            .fetch_wav_uncached(1, 42, text, None, None)
+            .await
+            .unwrap();
+        assert!(stage.core.wav_cache.lock().unwrap().get(key).is_none());
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+
+        // Zweimal sprechen heisst zweimal synthetisieren: kein Treffer aus dem Cache.
+        stage
+            .core
+            .fetch_wav_uncached(1, 42, text, None, None)
+            .await
+            .unwrap();
+        assert_eq!(stage.engine.calls.load(Ordering::SeqCst), 2);
+
+        // Ein Eintrag des normalen Vorlesens wird weder gelesen noch veraendert.
+        stage.core.fetch_wav(1, 42, text, None).await.unwrap();
+        let files = std::fs::read_dir(dir.path()).unwrap().count();
+        let calls = stage.engine.calls.load(Ordering::SeqCst);
+        stage
+            .core
+            .fetch_wav_uncached(1, 42, text, None, None)
+            .await
+            .unwrap();
+        assert_eq!(stage.engine.calls.load(Ordering::SeqCst), calls + 1);
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), files);
     }
 
     /// Texte ohne Abkuerzung behalten ihren Schluessel und ihren Wortlaut.

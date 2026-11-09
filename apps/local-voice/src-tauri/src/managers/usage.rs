@@ -662,7 +662,10 @@ pub fn provider_is_local(provider: &PostProcessProvider) -> bool {
     if crate::managers::llm::is_local(provider) {
         return true;
     }
-    match url::Url::parse(provider.base_url.trim()).ok().and_then(|u| u.host().map(|h| h.to_owned())) {
+    match url::Url::parse(provider.base_url.trim())
+        .ok()
+        .and_then(|u| u.host().map(|h| h.to_owned()))
+    {
         Some(url::Host::Domain(d)) => d.eq_ignore_ascii_case("localhost"),
         Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
         Some(url::Host::Ipv6(ip)) => ip.is_loopback(),

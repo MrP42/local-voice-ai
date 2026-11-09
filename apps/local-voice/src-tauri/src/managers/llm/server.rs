@@ -480,7 +480,12 @@ impl LocalLlmServer {
     /// P1h: vor jeder Wiederverwendung Lebendpruefung (Prozess + Port). Ein
     /// toter Server wird abgeraeumt und hoechstens einmal pro Minute neu
     /// gestartet; sonst antwortet `ensure` mit `server_crashed: ...`.
-    pub async fn ensure(&self, binary: &Path, opts: StartOptions, log_path: Option<PathBuf>) -> Result<u16, String> {
+    pub async fn ensure(
+        &self,
+        binary: &Path,
+        opts: StartOptions,
+        log_path: Option<PathBuf>,
+    ) -> Result<u16, String> {
         let _serial = self.start_lock.lock().await;
         self.detect_crash().await;
         if let Some(port) = self.serving_port_for(&opts.model_id, opts.mmproj.is_some()) {
@@ -669,7 +674,12 @@ impl LocalLlmServer {
         }
     }
 
-    async fn start(&self, binary: &Path, opts: StartOptions, log_path: Option<PathBuf>) -> Result<u16, String> {
+    async fn start(
+        &self,
+        binary: &Path,
+        opts: StartOptions,
+        log_path: Option<PathBuf>,
+    ) -> Result<u16, String> {
         if !binary.is_file() {
             let msg = format!("Laufzeit fehlt: {}", binary.display());
             self.set_phase(LocalLlmPhase::Error, Some(msg.clone()));
@@ -710,7 +720,8 @@ impl LocalLlmServer {
             self.set_phase(LocalLlmPhase::Error, Some(msg.clone()));
             msg
         })?;
-        let cpu_threads = crate::process_guard::cpu_threads_for(crate::process_guard::logical_cpus());
+        let cpu_threads =
+            crate::process_guard::cpu_threads_for(crate::process_guard::logical_cpus());
 
         let child = self.spawn_process(binary, &opts, port, cpu_threads, log_path.as_deref())?;
         self.starts.fetch_add(1, Ordering::AcqRel);
@@ -755,7 +766,10 @@ impl LocalLlmServer {
             }
             if self.health_ok(port).await {
                 self.set_phase(LocalLlmPhase::Ready, None);
-                log::info!("llama-server bereit nach {:.1} s", started.elapsed().as_secs_f32());
+                log::info!(
+                    "llama-server bereit nach {:.1} s",
+                    started.elapsed().as_secs_f32()
+                );
                 return Ok(port);
             }
             if started.elapsed() > START_TIMEOUT {
@@ -873,8 +887,8 @@ impl Drop for LocalLlmServer {
 /// den Socket wieder los -- die winzige Luecke bis zum Start des Servers ist
 /// das kleinere Uebel gegenueber einem festen Port, der belegt sein kann.
 fn free_port() -> Result<u16, String> {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0")
-        .map_err(|e| format!("kein freier Port: {e}"))?;
+    let listener =
+        std::net::TcpListener::bind("127.0.0.1:0").map_err(|e| format!("kein freier Port: {e}"))?;
     listener
         .local_addr()
         .map(|a| a.port())
@@ -983,8 +997,19 @@ mod tests {
     fn chat_args_are_unchanged_without_embedding() {
         let args = server_args(&opts("cuda", None), 5000, 16);
         let expected: Vec<String> = [
-            "--host", "127.0.0.1", "--port", "5000", "-c", "4096", "-ngl", "99", "--parallel",
-            "1", "-t", "16", "--no-webui",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "5000",
+            "-c",
+            "4096",
+            "-ngl",
+            "99",
+            "--parallel",
+            "1",
+            "-t",
+            "16",
+            "--no-webui",
         ]
         .iter()
         .map(|s| s.to_string())
@@ -1009,7 +1034,9 @@ mod tests {
         assert_eq!(args.last().map(String::as_str), Some("--no-webui"));
         // Ohne den Projektor: kein -b/-ub, kein --mmproj (die alte Kommandozeile).
         let plain = server_args(&opts("cuda", None), 5000, 16);
-        assert!(!plain.iter().any(|a| a == "--mmproj" || a == "-b" || a == "-ub"));
+        assert!(!plain
+            .iter()
+            .any(|a| a == "--mmproj" || a == "-b" || a == "-ub"));
         // Der Embedding-Modus kennt keinen Projektor.
         let mut emb = opts("cuda", Some(BGE));
         emb.mmproj = Some(PathBuf::from("x.gguf"));
@@ -1297,7 +1324,10 @@ mod tests {
 
             let mut vision = h.opts("m");
             vision.mmproj = Some(projector.clone());
-            h.server.ensure(&exe, vision.clone(), None).await.expect("Start mit Projektor");
+            h.server
+                .ensure(&exe, vision.clone(), None)
+                .await
+                .expect("Start mit Projektor");
             assert_eq!(h.spawned(), 2, "Neustart mit Projektor");
             assert!(h.server.has_vision());
 

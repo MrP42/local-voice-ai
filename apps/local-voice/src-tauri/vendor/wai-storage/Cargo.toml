@@ -1,0 +1,23 @@
+# Erzeugt von scripts/vendor-wai-suite.py aus https://github.com/MrP42/wai-sdk (crates/wai-storage, Commit 56533672647b). Nicht von Hand ändern.
+[package]
+name = "wai-storage"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+license = "LicenseRef-WAI-Proprietary"
+publish = false
+description = "SQLite-Persistenz (sqlx) mit versionierten Migrationen, Backup/Restore und Korruptionserkennung"
+
+[lib]
+test = false
+doctest = false
+
+[dependencies]
+sqlx = { version = "=0.9.0", default-features = false, features = ["runtime-tokio", "sqlite"] }
+tokio = { version = "1", default-features = false, features = ["fs", "macros", "rt", "time"] }
+sha2 = "0.10"
+getrandom = "0.3"
+cap-std = "4.0.3"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

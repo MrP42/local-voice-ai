@@ -1506,7 +1506,11 @@ mod tests {
         assert!(long.len() >= 3, "{} Chunks", long.len());
         for d in &long {
             assert!(d.text.chars().count() <= MAX_CHARS);
-            assert_eq!(d.ref_keys, vec!["sl-9".to_string()], "alle Teile gehoeren zur Folie");
+            assert_eq!(
+                d.ref_keys,
+                vec!["sl-9".to_string()],
+                "alle Teile gehoeren zur Folie"
+            );
             assert!(d.text.starts_with("Folie 9 00:00: "));
         }
     }

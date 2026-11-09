@@ -401,12 +401,7 @@ pub async fn draft(
     limits: RunLimits,
 ) -> Result<MailDraft, ChatError> {
     crate::managers::usage::with_capture(draft_captured(
-        settings,
-        store,
-        meeting_id,
-        addressee,
-        to,
-        limits,
+        settings, store, meeting_id, addressee, to, limits,
     ))
     .await
 }
@@ -501,11 +496,7 @@ async fn draft_captured(
                         actor_kind: ActorKind::User,
                         actor_ref: None,
                         started,
-                        sources: vec![SourceRef::new(
-                            "meeting",
-                            meeting_id,
-                            Some(&sources.title),
-                        )],
+                        sources: vec![SourceRef::new("meeting", meeting_id, Some(&sources.title))],
                         params: serde_json::json!({
                             "digest_source": format!("{:?}", prompt.source),
                             "clipped": prompt.clipped,

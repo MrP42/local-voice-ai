@@ -19,7 +19,9 @@ pub const MAX_KEYS: usize = 256;
 pub enum Limit {
     Allowed,
     /// Abgewiesen. `first`: erster abgewiesener Aufruf in diesem Fenster.
-    Limited { first: bool },
+    Limited {
+        first: bool,
+    },
 }
 
 #[derive(Default)]

@@ -55,7 +55,7 @@ use specta::Type;
 use super::contract::{is_valid_provider_id, ProviderDescriptor, TtsError, TtsErrorKind};
 use super::ollama_speech::{OllamaSpeechConfig, OLLAMA_ID};
 use super::openai_speech::{is_loopback_url, OpenAiSpeechConfig, DEFAULT_ID as OPENAI_DEFAULT_ID};
-use super::phonon::{PhononConfig, PHONON_ID};
+use super::phonon::{PhononConfig, PhononModelRef, PHONON_ID};
 
 pub const FISH_ID: &str = "fish";
 pub const PIPER_ID: &str = "piper";
@@ -103,6 +103,15 @@ pub struct TtsProvidersSettings {
     /// Die Liste „keine“ ist `["default"]` (die Standardstimme steht immer da). Die gerade gewählte
     /// Stimme bleibt in jedem Fall sichtbar ([`visible_voice`]).
     pub visible_voices: BTreeMap<String, Vec<String>>,
+    /// Eigene Anzeigenamen je Anbieter und Stimme (nur `tts_provider_set_voice_name`), z. B.
+    /// `phonon` → `Erzaehlerin` → `Erzählerin`. Die Kennung der Stimme bleibt unverändert (Synthese,
+    /// Auswahl, Sichtbarkeit, Hörproben); nur die Beschriftung wechselt ([`apply_voice_names`]).
+    /// Gilt für alle Anbieter mit Stimmenliste und für Piper (`piper` → Katalog-Kennung).
+    pub voice_names: BTreeMap<String, BTreeMap<String, String>>,
+    /// Anbieter, deren Vorgabestimme die App schon einmal selbst gewählt hat (Phonon: Anton,
+    /// sobald der Anbieter freigegeben und das deutsche Modell da ist; wie am iPhone). Danach gilt
+    /// nur noch die eigene Wahl. Setzt allein die App (`apply_default_voice`), nie ein Befehl.
+    pub default_voice_applied: Vec<String>,
 }
 
 /// Kennung der Standardstimme eines Anbieters (immer sichtbar, nie abwählbar).
@@ -118,7 +127,63 @@ pub fn visible_voice(visible: Option<&Vec<String>>, selected: Option<&str>, voic
         })
 }
 
+/// Längster eigener Anzeigename einer Stimme (wie ein Sprecher-Marker `<Name>`).
+pub const MAX_VOICE_NAME_CHARS: usize = 60;
+
+/// Bereinigt einen eigenen Anzeigenamen: getrimmt, höchstens [`MAX_VOICE_NAME_CHARS`] Zeichen,
+/// ohne Steuerzeichen und ohne `<`, `>`, `:` (der Name muss als Sprecher-Marker `<Name>` im Text
+/// stehen können) und ohne die Trenner ` – ` und ` · ` (sie trennen Name, Beschreibung und
+/// Zusätze in den Beschriftungen).
+/// `Ok(None)`: leer, also „ursprünglichen Namen verwenden“.
+pub fn clean_voice_name(name: &str) -> Result<Option<String>, String> {
+    let name = name.split_whitespace().collect::<Vec<_>>().join(" ");
+    if name.is_empty() {
+        return Ok(None);
+    }
+    if name.chars().count() > MAX_VOICE_NAME_CHARS {
+        return Err(format!(
+            "Der Name ist zu lang (höchstens {MAX_VOICE_NAME_CHARS} Zeichen)."
+        ));
+    }
+    if name.chars().any(char::is_control) || name.contains(['<', '>', ':']) {
+        return Err("Der Name darf keine Zeichen < > : enthalten.".to_string());
+    }
+    if name.contains(" – ") || name.contains(" · ") {
+        return Err("Der Name darf „ – “ und „ · “ mit Leerzeichen nicht enthalten.".to_string());
+    }
+    Ok(Some(name))
+}
+
+/// Die Beschriftung `label` mit dem eigenen Namen `name`: der Teil vor ` – ` (der Name) wird
+/// ersetzt, eine Beschreibung dahinter bleibt (`Nele – Rounded tone` → `Lena – Rounded tone`).
+pub fn renamed_label(label: &str, name: &str) -> String {
+    match label.split_once(" – ") {
+        Some((_, rest)) if !rest.trim().is_empty() => format!("{name} – {rest}"),
+        _ => name.to_string(),
+    }
+}
+
+/// Eigene Anzeigenamen eines Anbieters auf seine Stimmenliste anwenden (Kennungen bleiben).
+pub fn apply_voice_names(
+    voices: &mut [super::contract::VoiceDescriptor],
+    names: Option<&BTreeMap<String, String>>,
+) {
+    let Some(names) = names.filter(|n| !n.is_empty()) else {
+        return;
+    };
+    for voice in voices.iter_mut() {
+        if let Some(name) = names.get(&voice.id) {
+            voice.label = renamed_label(&voice.label, name);
+        }
+    }
+}
+
 impl TtsProvidersSettings {
+    /// Eigene Anzeigenamen des Anbieters `id` (falls welche gesetzt sind).
+    pub fn voice_names_of(&self, id: &str) -> Option<&BTreeMap<String, String>> {
+        self.voice_names.get(id)
+    }
+
     pub fn is_enabled(&self, id: &str) -> bool {
         self.enabled.iter().any(|e| e == id)
     }
@@ -212,6 +277,9 @@ pub struct ProviderOverrides {
 pub struct InstalledPhonon {
     pub exe_path: Option<String>,
     pub model: Option<String>,
+    /// Weitere vollstaendig installierte Modelle anderer Sprachen (z. B. das englische neben dem
+    /// deutschen). Der Anbieter bietet ihre Stimmen als `<sprache>:<stimme>` an.
+    pub others: Vec<PhononModelRef>,
 }
 
 /// Was die Modellseite installiert hat, für die Auflösungsstufe „installiert“.
@@ -990,6 +1058,7 @@ mod tests {
             phonon: InstalledPhonon {
                 exe_path: Some("D:/app/tts/phonon/windows-x64/ptts.exe".into()),
                 model: Some("D:/app/tts/phonon/models/phonon-40m-de".into()),
+                ..Default::default()
             },
         }
     }
@@ -1084,6 +1153,7 @@ mod tests {
             phonon: InstalledPhonon {
                 exe_path: Some("D:/x/ptts.exe".into()),
                 model: None,
+                ..Default::default()
             },
         };
         let r = resolve_provider_configs_with(
@@ -1632,8 +1702,12 @@ mod tests {
     fn ungueltige_konfiguration_wird_abgelehnt_und_aendert_nichts() {
         let mut s = TtsProvidersSettings::default();
         let before = s.clone();
-        let e = apply_config_json(&mut s, "phonon", r#"{"exe_path":"","model":"","threads":999}"#)
-            .unwrap_err();
+        let e = apply_config_json(
+            &mut s,
+            "phonon",
+            r#"{"exe_path":"","model":"","threads":999}"#,
+        )
+        .unwrap_err();
         assert_eq!(e.kind, TtsErrorKind::InvalidConfig);
         let e = apply_config_json(&mut s, "phonon", "kein json").unwrap_err();
         assert_eq!(e.kind, TtsErrorKind::InvalidConfig);

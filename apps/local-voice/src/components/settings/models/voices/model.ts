@@ -1,5 +1,6 @@
 import type { Device, TtsProviderEntry } from "@/bindings";
 import type { VoiceTryTarget } from "../../tts/providers/voiceTry";
+import type { RenameVoiceTarget } from "../../tts/providers/RenameVoiceDialog";
 
 /**
  * Reine Logik der Stimmenverwaltung (ohne Oberflaeche, ohne Tauri): das
@@ -54,6 +55,8 @@ export interface VoiceItem {
   hiddenInReadAloud: boolean;
   /** Sie ist die Stimme, die gerade vorliest. */
   selected: boolean;
+  /** Umbenennen (eigener Anzeigename); fehlt bei Eintraegen ohne eigene Stimme (Skript, Vorgabe). */
+  rename?: RenameVoiceTarget;
 }
 
 export function deviceGroup(device: Device): DeviceGroup {

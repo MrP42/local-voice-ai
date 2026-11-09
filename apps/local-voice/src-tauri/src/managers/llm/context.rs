@@ -99,11 +99,19 @@ mod tests {
     /// Qwen3.5-9B Q4_K_M (Hybrid: 8 von 32 Schichten mit KV) wie in P1e.
     const QWEN35_9B: u64 = 5_680_522_464;
     fn qwen35() -> KvShape {
-        KvShape { layers: 8, kv_heads: 4, head_dim: 256 }
+        KvShape {
+            layers: 8,
+            kv_heads: 4,
+            head_dim: 256,
+        }
     }
     /// Ein dichtes 8B-Modell mit vollem KV je Schicht: 36 x 8 x 128.
     fn dense_8b() -> KvShape {
-        KvShape { layers: 36, kv_heads: 8, head_dim: 128 }
+        KvShape {
+            layers: 36,
+            kv_heads: 8,
+            head_dim: 128,
+        }
     }
     fn gpu(budget: u64, used: u64, shared: bool) -> GpuMemory {
         GpuMemory {
@@ -138,7 +146,10 @@ mod tests {
         // Reserve (15 %) mitgerechnet: gerade genug fuer 12 288, nicht fuer 16 384.
         let free = (need_12k as f64 / 0.85).ceil() as u64 + 1;
         assert!(free < (need_16k as f64 / 0.85) as u64);
-        assert_eq!(choose_context_tokens(file, Some(dense_8b()), false, Some(free)), 12_288);
+        assert_eq!(
+            choose_context_tokens(file, Some(dense_8b()), false, Some(free)),
+            12_288
+        );
         // Knapp: nur noch der Standard.
         assert_eq!(
             choose_context_tokens(file, Some(dense_8b()), false, Some(need_12k)),
@@ -180,7 +191,11 @@ mod tests {
 
     #[test]
     fn free_vram_is_the_tightest_dedicated_card_and_ignores_shared_memory() {
-        let gpus = [gpu(24_000, 7_800, false), gpu(8_000, 6_000, false), gpu(30_000, 100, true)];
+        let gpus = [
+            gpu(24_000, 7_800, false),
+            gpu(8_000, 6_000, false),
+            gpu(30_000, 100, true),
+        ];
         assert_eq!(free_dedicated_vram_mb(&gpus), Some(2_000));
         // Nur eine iGPU: keine Aussage.
         assert_eq!(free_dedicated_vram_mb(&[gpu(30_000, 100, true)]), None);

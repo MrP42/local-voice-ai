@@ -30,6 +30,7 @@
 //! nur an `opt_in && (non_commercial || !verified)`.
 
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -132,6 +133,7 @@ impl TtsProvider for FishProvider {
                     .map(String::from)
                     .to_vec(),
                 style_tags: engine::FISH_CAPS.style_tags,
+                pace_tags: false,
                 voice_switching: engine::FISH_CAPS.voice_switching,
             },
             license: LicenseInfo {
@@ -325,6 +327,7 @@ impl TtsProvider for PiperProvider {
                     .map(String::from)
                     .to_vec(),
                 style_tags: piper::PIPER_CAPS.style_tags,
+                pace_tags: false,
                 voice_switching: piper::PIPER_CAPS.voice_switching,
             },
             license: LicenseInfo {
@@ -400,24 +403,8 @@ impl TtsProvider for PiperProvider {
                 .engine_for(opts.voice.as_deref())
                 .paths_for(text)
                 .map_err(TtsError::unavailable)?;
-            let (owned_text, speed) = (text.to_string(), opts.speed);
-            let kill_after = opts.timeout + PIPER_KILL_GRACE;
-            let job = tokio::task::spawn_blocking(move || {
-                piper::run_piper_blocking(&paths, &owned_text, speed, kill_after)
-            });
-            let wav = guarded(cancel, opts.timeout, "Piper", async {
-                match job.await {
-                    Ok(Ok(bytes)) => Ok(bytes),
-                    // Startfehler des Programms ist „nicht verfügbar“, jeder
-                    // andere Fehler (Exit-Code, kein WAV) ein Backend-Fehler.
-                    Ok(Err(msg)) if msg.starts_with(piper::ERR_BINARY_MISSING) => {
-                        Err(TtsError::unavailable(msg))
-                    }
-                    Ok(Err(msg)) => Err(TtsError::backend(msg)),
-                    Err(e) => Err(TtsError::backend(format!("Piper-Lauf abgebrochen: {e}"))),
-                }
-            })
-            .await?;
+            let wav = run_piper_guarded(paths, text.to_string(), opts.speed, opts.timeout, cancel)
+                .await?;
             AudioClip::from_wav(wav)
         })
     }
@@ -682,6 +669,77 @@ mod tests {
         );
     }
 
+    /// Wartet, bis der Fake-Piper seinen Herzschlag schreibt.
+    async fn heartbeat_started(hb: &Path) {
+        let until = std::time::Instant::now() + Duration::from_secs(15);
+        while std::fs::metadata(hb).map(|m| m.len()).unwrap_or(0) == 0 {
+            assert!(
+                std::time::Instant::now() < until,
+                "Herzschlag startet nicht"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    /// Prüft, dass kein Prozess des Baums mehr schreibt.
+    async fn heartbeat_stopped(hb: &Path) {
+        let len = || std::fs::metadata(hb).map(|m| m.len()).unwrap_or(0);
+        let settle = Duration::from_millis(if cfg!(windows) { 2500 } else { 300 });
+        tokio::time::sleep(settle).await;
+        let before = len();
+        tokio::time::sleep(settle).await;
+        assert_eq!(len(), before, "Piper-Prozessbaum läuft weiter");
+    }
+
+    /// Codex-Auflage: auch der Provider-Pfad (`provider:piper`) beendet den
+    /// Prozess bei Abbruch, statt ihn bis zum Timeout laufen zu lassen.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn piper_provider_abbruch_beendet_den_prozess() {
+        use crate::managers::tts::piper::tests::{fake_paths, Fake};
+        let dir = TempDir::new().unwrap();
+        let paths = fake_paths(dir.path(), Fake::Heartbeat);
+        let hb = dir.path().join("hb");
+        let cancel = CancelToken::detached();
+        let c2 = cancel.clone();
+        let text = "wort ".repeat(400_000);
+        let run = tokio::spawn(async move {
+            run_piper_guarded(paths, text, None, Duration::from_secs(60), &c2).await
+        });
+        heartbeat_started(&hb).await;
+        cancel.cancel();
+        let res = tokio::time::timeout(Duration::from_secs(20), run)
+            .await
+            .expect("Provider kehrt nach dem Abbruch zurück")
+            .unwrap();
+        assert_eq!(res.unwrap_err().kind, TtsErrorKind::Cancelled);
+        heartbeat_stopped(&hb).await;
+    }
+
+    /// Wird das Provider-Future fallen gelassen (Auftrag verworfen), endet
+    /// der Prozess ebenfalls.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn piper_provider_drop_beendet_den_prozess() {
+        use crate::managers::tts::piper::tests::{fake_paths, Fake};
+        let dir = TempDir::new().unwrap();
+        let paths = fake_paths(dir.path(), Fake::Heartbeat);
+        let hb = dir.path().join("hb");
+        let cancel = CancelToken::detached();
+        let run = tokio::spawn(async move {
+            run_piper_guarded(
+                paths,
+                "Hallo.".into(),
+                None,
+                Duration::from_secs(60),
+                &cancel,
+            )
+            .await
+        });
+        heartbeat_started(&hb).await;
+        run.abort();
+        let _ = run.await;
+        heartbeat_stopped(&hb).await;
+    }
+
     #[test]
     fn piper_beschreibung_nennt_cpu_sentence_und_ungeprueften_lizenzstand() {
         let d = PiperProvider::new(None).descriptor();
@@ -719,5 +777,47 @@ mod tests {
         assert!(health
             .iter()
             .all(|(_, h)| !h.available && h.reason.is_some()));
+    }
+}
+
+/// Setzt beim Fallenlassen das Abbruchflag eines Subprozess-Laufs.
+/// Ein Piper-Lauf mit Abbruch, Zeitlimit und Wächter. Endet der Auftrag
+/// vorzeitig (Abbruch, Zeitlimit) oder wird das Future fallen gelassen,
+/// setzt [`StopOnDrop`] das Flag, und `run_piper_cancellable` beendet den
+/// Prozessbaum statt ihn weiterlaufen zu lassen.
+async fn run_piper_guarded(
+    paths: piper::PiperPaths,
+    text: String,
+    speed: Option<f32>,
+    timeout: Duration,
+    cancel: &CancelToken,
+) -> Result<Vec<u8>, TtsError> {
+    let kill_after = timeout + PIPER_KILL_GRACE;
+    let stop = Arc::new(AtomicBool::new(false));
+    let flag = stop.clone();
+    let job = tokio::task::spawn_blocking(move || {
+        piper::run_piper_cancellable(&paths, &text, speed, kill_after, Some(&flag))
+    });
+    let _stop_on_drop = StopOnDrop(stop);
+    guarded(cancel, timeout, "Piper", async {
+        match job.await {
+            Ok(Ok(bytes)) => Ok(bytes),
+            // Startfehler des Programms ist „nicht verfügbar“, jeder
+            // andere Fehler (Exit-Code, kein WAV) ein Backend-Fehler.
+            Ok(Err(msg)) if msg.starts_with(piper::ERR_BINARY_MISSING) => {
+                Err(TtsError::unavailable(msg))
+            }
+            Ok(Err(msg)) => Err(TtsError::backend(msg)),
+            Err(e) => Err(TtsError::backend(format!("Piper-Lauf abgebrochen: {e}"))),
+        }
+    })
+    .await
+}
+
+struct StopOnDrop(Arc<AtomicBool>);
+
+impl Drop for StopOnDrop {
+    fn drop(&mut self) {
+        self.0.store(true, std::sync::atomic::Ordering::Release);
     }
 }

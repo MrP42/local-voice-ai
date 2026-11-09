@@ -2,7 +2,6 @@ import React from "react";
 import { useTranslation } from "react-i18next";
 import {
   Nav,
-  NavDivider,
   NavItem,
   OverlayDrawer,
   DrawerHeader,
@@ -14,11 +13,15 @@ import {
   Cog,
   History,
   Cpu,
-  Phone,
+  BotMessageSquare,
   Plug,
   Users,
   Volume2,
   House,
+  Library,
+  FolderArchive,
+  Folder,
+  UserRound,
   X,
 } from "lucide-react";
 import {
@@ -31,6 +34,10 @@ import {
 import { APP_NAME } from "./shell/frame";
 import { IntegrationsPage } from "./integrations/IntegrationsPage";
 import { VoiceCallPage } from "./voice-call/VoiceCallPage";
+import { KontoProfilSeite } from "./konto/KontoProfilSeite";
+import { LibraryPage } from "./library/LibraryPage";
+import { AblagePage } from "./ablage/AblagePage";
+import { ProjektePage } from "./projekte/ProjektePage";
 
 export type SidebarSection = keyof typeof SECTIONS_CONFIG;
 
@@ -44,6 +51,8 @@ interface IconProps {
 
 interface SectionConfig {
   labelKey: string;
+  /** Kurzer Tooltip zum Eintrag (z. B. was „Chat“ kann). */
+  hintKey?: string;
   icon: React.ComponentType<IconProps>;
   component: React.ComponentType;
 }
@@ -53,7 +62,13 @@ interface SectionConfig {
 // General, Advanced, the dictation test and the about page were four separate
 // rows before — four rows of navigation for one activity.
 export const SECTIONS_CONFIG = {
-  home: { labelKey: "workspace.home", icon: House, component: () => null },
+  // lva#394: Das Haus öffnet den Chat (Vorbild ChatGPT); die frühere Kachelseite entfällt.
+  home: {
+    labelKey: "workspace.home",
+    hintKey: "sidebar.voiceCallHint",
+    icon: House,
+    component: VoiceCallPage,
+  },
   history: {
     labelKey: "sidebar.history",
     icon: History,
@@ -64,9 +79,11 @@ export const SECTIONS_CONFIG = {
     icon: Users,
     component: MeetingsSettings,
   },
+  // Altes Sprungziel (Fußleiste, Assistent, gemerkte Auswahl): App.tsx leitet auf „home“ um.
   voice: {
     labelKey: "sidebar.voiceCall",
-    icon: Phone,
+    hintKey: "sidebar.voiceCallHint",
+    icon: BotMessageSquare,
     component: VoiceCallPage,
   },
   models: {
@@ -86,10 +103,35 @@ export const SECTIONS_CONFIG = {
     icon: Volume2,
     component: TtsSettings,
   },
+  // lva#152: Bücher und Hörbücher, ein Eintrag je Werk.
+  library: {
+    labelKey: "sidebar.library",
+    icon: Library,
+    component: LibraryPage,
+  },
+  // Dokumentenablage (Spec 2026-11-08, Stufe D1).
+  ablage: {
+    labelKey: "sidebar.ablage",
+    icon: FolderArchive,
+    component: AblagePage,
+  },
+  // lva#365 P4b: Projekte bündeln Bücher, Texte, Aufnahmen und Dateien; je Eintrag „Als Kontext“.
+  projekte: {
+    labelKey: "sidebar.projekte",
+    icon: Folder,
+    component: ProjektePage,
+  },
   settings: {
     labelKey: "sidebar.settings",
     icon: Cog,
     component: AppSettings,
+  },
+  // ADR-0024: „Mein Profil“ öffnet über das Profilmenü oben rechts; die Seitenleiste
+  // listet sie bewusst nicht (PRIMARY/UTILITIES nennen ihre Einträge einzeln).
+  profile: {
+    labelKey: "konto.meinProfil",
+    icon: UserRound,
+    component: KontoProfilSeite,
   },
 } as const satisfies Record<string, SectionConfig>;
 
@@ -105,17 +147,26 @@ interface SidebarProps {
   narrow: boolean;
   drawerOpen: boolean;
   onDrawerOpenChange: (open: boolean) => void;
+  /** Fuß der Navigation: der Profilkreis mit dem Profilmenü (ADR-0027 E1). */
+  fuss?: React.ReactNode;
 }
 
-const PRIMARY = ["home", "history", "meetings", "tts", "voice"] as const;
-// Fußeinträge vor „Einstellungen“ (Leitlinie §3: Einstellungen unten zuletzt).
-const UTILITIES = ["models", "integrations"] as const;
+const PRIMARY = [
+  "home",
+  "history",
+  "meetings",
+  "tts",
+  "library",
+  "ablage",
+  "projekte",
+] as const;
+// Modelle, Integrationen und Einstellungen stehen seit ADR-0027 im Profilmenü
+// (Profilkreis unten links), nicht mehr als Einträge der Navigation.
 
 /**
  * Navigationsbereich nach Fluent 2 (Leitlinie windows-fluent.md §2/§3):
- * Fluent Nav mit Auswahl-Pill, Arbeitsbereiche oben, Modelle und
- * Integrationen als Fußeinträge, Einstellungen ganz unten. Ein Tab-Stopp,
- * darin Pfeiltasten. Eingeklappt bleibt die Symbolleiste (Hamburger in der
+ * Fluent Nav mit Auswahl-Pill, nur die Arbeitsbereiche; unten der Profilkreis
+ * (ADR-0027). Ein Tab-Stopp, darin Pfeiltasten. Eingeklappt bleibt die Symbolleiste (Hamburger in der
  * Titelleiste); schmal öffnet der Hamburger einen Overlay-Drawer.
  */
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -125,13 +176,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
   narrow,
   drawerOpen,
   onDrawerOpenChange,
+  fuss,
 }) => {
   const { t } = useTranslation();
   const iconOnly = collapsed && !narrow;
 
   const item = (id: SidebarSection) => {
-    const { icon: Icon, labelKey } = SECTIONS_CONFIG[id];
+    const config: SectionConfig = SECTIONS_CONFIG[id];
+    const { icon: Icon, labelKey, hintKey } = config;
     const label = t(labelKey);
+    const hint = hintKey ? t(hintKey) : undefined;
     return (
       <NavItem
         key={id}
@@ -141,7 +195,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         aria-current={activeSection === id ? "page" : undefined}
         // Eingeklappt bleibt nur das Symbol; der Name steht dann im Tooltip
         // (title) und für Screenreader im aria-label.
-        title={iconOnly ? label : undefined}
+        title={iconOnly ? (hint ? `${label}: ${hint}` : label) : hint}
         aria-label={iconOnly ? label : undefined}
       >
         <Icon size={20} aria-hidden="true" />
@@ -172,18 +226,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
         >
           {PRIMARY.map(item)}
         </div>
-        <div className="workspace-nav__secondary">
-          <div
-            id="workspace-more"
-            className="workspace-nav__utilities"
-            data-tour="nav-utilities"
-          >
-            {UTILITIES.map(item)}
-            <NavDivider className="workspace-nav__divider" />
-            {item("settings")}
-          </div>
-        </div>
       </Nav>
+      {fuss && <div className="workspace-nav__fuss">{fuss}</div>}
     </nav>
   );
 
@@ -204,7 +248,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <DrawerHeader>
         <DrawerHeaderTitle
           action={
-            <FluentTooltip content={t("workspace.navClose")} relationship="label">
+            <FluentTooltip
+              content={t("workspace.navClose")}
+              relationship="label"
+            >
               <FluentButton
                 appearance="subtle"
                 icon={<X size={20} aria-hidden="true" />}

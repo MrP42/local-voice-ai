@@ -81,6 +81,12 @@ const APPLY_ATTEMPTS: usize = 3;
 // Labels
 // ---------------------------------------------------------------------------
 
+/// Sprechernummer fuer einen ganzen Kanal ohne Sprechertrennung (Segmente
+/// mit `speaker_index = None`, z. B. "Aufnahme" eines Imports). Getrennte
+/// Sprecher zaehlen ab 1; die 0 kommt in Segmenten nie vor und steht nur in
+/// `speakers`-Zeilen (Name des ganzen Kanals).
+pub const WHOLE_CHANNEL: u32 = 0;
+
 /// Anzeigenamen der Sprecher einer Besprechung. Ersetzt
 /// `stats::label_for_channel` an allen Aufrufstellen: Name, sonst
 /// "Gegenseite 2" / "Raum 1" / "Person 1" / "Ich".
@@ -192,6 +198,20 @@ impl SpeakerDirectory {
         directory
     }
 
+    /// Dasselbe Verzeichnis ohne vergebene Namen und ohne "Mein Name": die
+    /// Standardbezeichnungen ("Person 2", "Aufnahme").
+    pub fn without_names(mut self) -> Self {
+        self.names.clear();
+        self.self_name = None;
+        self.self_speaker = None;
+        self
+    }
+
+    /// Hat der ganze Kanal (Segmente ohne Sprecher) einen Namen?
+    pub fn has_channel_name(&self, channel: u8) -> bool {
+        self.name(channel, WHOLE_CHANNEL).is_some()
+    }
+
     /// Der eingetragene Name (getrimmt), falls es einen gibt.
     pub fn name(&self, channel: u8, speaker_index: u32) -> Option<&str> {
         self.names
@@ -205,6 +225,12 @@ impl SpeakerDirectory {
 
     pub fn label_for(&self, channel: u8, speaker_index: Option<u32>) -> String {
         let Some(n) = speaker_index else {
+            // Ein Kanal ohne Sprechertrennung ("Aufnahme", "Ich", "Gegenseite")
+            // ist der Sprecher [`WHOLE_CHANNEL`] und laesst sich wie jeder
+            // andere benennen.
+            if let Some(name) = self.name(channel, WHOLE_CHANNEL) {
+                return name.to_string();
+            }
             if let (0, Some(mine)) = (channel, &self.self_name) {
                 return mine.clone();
             }
@@ -336,6 +362,52 @@ pub fn rewrite_turn_speaker(hints: &str, channel: u8, from: u32, into: u32) -> S
         for turn in list.iter_mut().filter_map(Value::as_array_mut) {
             if turn.get(2).and_then(Value::as_u64) == Some(u64::from(from)) {
                 turn[2] = json!(into);
+            }
+        }
+    }
+    root.to_string()
+}
+
+/// #266: Positionen der Turns von `speaker` im Kanal `channel` (fuer "Trennen").
+pub fn turn_positions(hints: &str, channel: u8, speaker: u32) -> Vec<usize> {
+    let Ok(root) = serde_json::from_str::<Value>(hints) else {
+        return Vec::new();
+    };
+    root.get("channels")
+        .and_then(|c| c.get(channel.to_string()))
+        .and_then(Value::as_array)
+        .map(|list| {
+            list.iter()
+                .enumerate()
+                .filter(|(_, t)| t.get(2).and_then(Value::as_u64) == Some(u64::from(speaker)))
+                .map(|(i, _)| i)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// #266 (Trennen): die Turns an `positions`, die noch `into` gehoeren, gehen an
+/// `from` zurueck. Unlesbarer Text kommt unveraendert zurueck.
+pub fn restore_turn_speaker(
+    hints: &str,
+    channel: u8,
+    positions: &[usize],
+    into: u32,
+    from: u32,
+) -> String {
+    let Ok(mut root) = serde_json::from_str::<Value>(hints) else {
+        return hints.to_string();
+    };
+    let list = root
+        .get_mut("channels")
+        .and_then(|c| c.get_mut(channel.to_string()))
+        .and_then(Value::as_array_mut);
+    if let Some(list) = list {
+        for &at in positions {
+            if let Some(turn) = list.get_mut(at).and_then(Value::as_array_mut) {
+                if turn.get(2).and_then(Value::as_u64) == Some(u64::from(into)) {
+                    turn[2] = json!(from);
+                }
             }
         }
     }
@@ -1564,10 +1636,7 @@ mod tests {
         f.store
             .set_metadata_key(&f.id, "diarize_mic", json!(true))
             .unwrap();
-        let mut fake = Fake::new(&[
-            (0, vec![turn(0, 4_000, 1)]),
-            (1, vec![turn(0, 4_000, 1)]),
-        ]);
+        let mut fake = Fake::new(&[(0, vec![turn(0, 4_000, 1)]), (1, vec![turn(0, 4_000, 1)])]);
         let (r, _) = collect(&f, &m, &mut fake, true);
         assert!(r.unwrap().is_some());
         assert_eq!(
@@ -1582,7 +1651,11 @@ mod tests {
         let mut fake = Fake::new(&[]);
         fake.run_error = Some(|| DiarizeError::Run("kaputt".into()));
         let (_r, _) = collect(&f, &m, &mut fake, true);
-        assert_eq!(fake.progress.last(), Some(&(4_000, 4_000)), "Balken bleibt nicht stehen");
+        assert_eq!(
+            fake.progress.last(),
+            Some(&(4_000, 4_000)),
+            "Balken bleibt nicht stehen"
+        );
     }
 
     #[test]

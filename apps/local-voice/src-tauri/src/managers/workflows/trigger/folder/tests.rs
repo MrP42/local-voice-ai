@@ -180,7 +180,11 @@ fn a_file_is_taken_only_after_two_quiet_ticks_and_carries_its_data() {
     let runs = w.runs();
     assert_eq!(runs.len(), 1);
     assert!(runs[0].trigger_key.starts_with("file:"));
-    assert_eq!(runs[0].trigger_key.len(), "file:".len() + 64, "SHA-256 in Hex");
+    assert_eq!(
+        runs[0].trigger_key.len(),
+        "file:".len() + 64,
+        "SHA-256 in Hex"
+    );
     let t = &context_of(&runs[0])["trigger"];
     assert_eq!(t["integration"], "eingang");
     assert_eq!(t["name"], "Kundentermin.WAV");
@@ -210,7 +214,9 @@ fn a_file_written_in_parts_waits_until_it_stops_growing() {
     // Danach zwei ruhige Takte: jetzt ist sie fertig.
     let r = w.tick();
     assert_eq!(r.started.len(), 1, "{r:?}");
-    let size = context_of(&w.runs()[0])["trigger"]["size"].as_u64().unwrap();
+    let size = context_of(&w.runs()[0])["trigger"]["size"]
+        .as_u64()
+        .unwrap();
     assert_eq!(size, 20, "die ganze Datei, nicht ein Teil");
 }
 
@@ -259,7 +265,10 @@ fn the_system_probe_sees_a_writer_on_windows() {
     drop(writer);
     assert!(!probe.locked(&p), "wieder frei");
     let meta = fs::symlink_metadata(&p).unwrap();
-    assert!(!probe.cloud_only(&p, &meta), "eine gewoehnliche Datei ist lokal");
+    assert!(
+        !probe.cloud_only(&p, &meta),
+        "eine gewoehnliche Datei ist lokal"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -443,7 +452,12 @@ fn the_extension_list_of_the_trigger_narrows_the_choice() {
     let mut names: Vec<String> = w
         .runs()
         .iter()
-        .map(|r| context_of(r)["trigger"]["name"].as_str().unwrap().to_string())
+        .map(|r| {
+            context_of(r)["trigger"]["name"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        })
         .collect();
     names.sort();
     assert_eq!(names, vec!["b.pdf", "c.md"]);
@@ -488,7 +502,11 @@ fn a_cloud_only_placeholder_is_reported_once_never_read_and_taken_after_it_is_lo
     w.probe.set_cloud("nur-cloud.wav", true);
     let r = w.ticks(6);
     assert!(r.started.is_empty(), "{r:?}");
-    assert_eq!(r.skipped.len(), 1, "einmal gemeldet, nicht bei jedem Takt: {r:?}");
+    assert_eq!(
+        r.skipped.len(),
+        1,
+        "einmal gemeldet, nicht bei jedem Takt: {r:?}"
+    );
     assert!(r.skipped[0].contains("Cloud"), "{}", r.skipped[0]);
     assert!(r.skipped[0].contains("nur-cloud.wav"));
     assert_eq!(
@@ -499,7 +517,11 @@ fn a_cloud_only_placeholder_is_reported_once_never_read_and_taken_after_it_is_lo
     let listed = w.state.cloud_only();
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].name, "nur-cloud.wav");
-    assert_eq!(w.state.waiting(), 0, "keine Stabilitaetsuhr fuer einen Platzhalter");
+    assert_eq!(
+        w.state.waiting(),
+        0,
+        "keine Stabilitaetsuhr fuer einen Platzhalter"
+    );
 
     // Der Nutzer behaelt sie auf dem Geraet: jetzt zaehlt sie wie jede Datei.
     w.probe.set_cloud("nur-cloud.wav", false);
@@ -513,7 +535,10 @@ fn the_cloud_attribute_bits_are_recognised() {
     assert!(attributes_cloud_only(0x0040_0000), "RECALL_ON_DATA_ACCESS");
     assert!(attributes_cloud_only(0x0004_0000), "RECALL_ON_OPEN");
     assert!(attributes_cloud_only(0x0000_1000), "OFFLINE");
-    assert!(attributes_cloud_only(0x0040_0020), "mit anderen Bits gemischt");
+    assert!(
+        attributes_cloud_only(0x0040_0020),
+        "mit anderen Bits gemischt"
+    );
     // Normale, angeheftete (PINNED) und „Platz freigeben“-Dateien (UNPINNED) sind lokal.
     assert!(!attributes_cloud_only(0x0000_0020), "ARCHIVE");
     assert!(!attributes_cloud_only(0x0008_0000), "PINNED");
@@ -558,7 +583,10 @@ fn a_missing_integration_or_folder_is_reported_once_per_change_not_every_tick() 
     assert_eq!(first.skipped.len(), 1, "{first:?}");
     assert!(first.skipped[0].contains("Eingang") || first.skipped[0].contains("nicht"));
     let more = w.ticks(4);
-    assert!(more.skipped.is_empty(), "dasselbe Problem nicht erneut: {more:?}");
+    assert!(
+        more.skipped.is_empty(),
+        "dasselbe Problem nicht erneut: {more:?}"
+    );
     // Ordner wieder da: das Problem ist geloest, Dateien werden genommen.
     fs::rename(&moved, &gone).unwrap();
     w.put("wieder.wav", b"da");
@@ -574,14 +602,24 @@ fn a_missing_integration_or_folder_is_reported_once_per_change_not_every_tick() 
 fn the_right_files_read_off_skips_the_workflow_and_ask_still_enqueues() {
     let mut w = world();
     w.put("recht.wav", b"inhalt");
-    set_grant(&w.fx.conn(), "eingang", Capability::FilesRead, GrantMode::Off);
+    set_grant(
+        &w.fx.conn(),
+        "eingang",
+        Capability::FilesRead,
+        GrantMode::Off,
+    );
     let r = w.ticks(3);
     assert!(r.started.is_empty(), "{r:?}");
     assert_eq!(r.skipped.len(), 1);
     assert!(r.skipped[0].contains("Recht") || r.skipped[0].contains("aus"));
     assert_eq!(w.state.waiting(), 0, "ohne Recht wird nichts beobachtet");
     // „fragen“: eingereiht; gefragt wird beim Import-Schritt (Tor).
-    set_grant(&w.fx.conn(), "eingang", Capability::FilesRead, GrantMode::Ask);
+    set_grant(
+        &w.fx.conn(),
+        "eingang",
+        Capability::FilesRead,
+        GrantMode::Ask,
+    );
     assert_eq!(w.ticks(2).started.len(), 1);
 }
 
@@ -605,9 +643,16 @@ fn a_second_scan_at_the_same_time_is_refused_not_queued() {
     assert!(w.state.try_begin().is_none(), "ein Platz");
     let r = on_tick(&w.engine, &w.state, &w.fx.db_path, &w.probe, w.now + TICK);
     assert_eq!(r.skipped.len(), 1, "{r:?}");
-    assert_eq!(w.state.waiting(), 0, "der verweigerte Scan hat nichts angefasst");
+    assert_eq!(
+        w.state.waiting(),
+        0,
+        "der verweigerte Scan hat nichts angefasst"
+    );
     drop(guard);
-    assert!(w.state.try_begin().is_some(), "der Drop gibt den Platz frei");
+    assert!(
+        w.state.try_begin().is_some(),
+        "der Drop gibt den Platz frei"
+    );
 }
 
 #[test]
@@ -652,7 +697,10 @@ fn temp_and_system_names_are_ignored() {
 
 #[test]
 fn verbatim_windows_paths_are_shown_the_way_users_know_them() {
-    assert_eq!(display_path(Path::new(r"\\?\C:\Eingang\a.wav")), r"C:\Eingang\a.wav");
+    assert_eq!(
+        display_path(Path::new(r"\\?\C:\Eingang\a.wav")),
+        r"C:\Eingang\a.wav"
+    );
     assert_eq!(
         display_path(Path::new(r"\\?\UNC\server\share\a.wav")),
         r"\\server\share\a.wav"

@@ -84,7 +84,10 @@ impl std::fmt::Display for ConsentError {
             }
             ConsentError::NotAConsent => write!(f, "Das ist keine Anfrage zur Aufnahme."),
             ConsentError::ConsentRequired => {
-                write!(f, "Die Einwilligung aller Beteiligten wurde nicht bestätigt.")
+                write!(
+                    f,
+                    "Die Einwilligung aller Beteiligten wurde nicht bestätigt."
+                )
             }
             ConsentError::Store(m) => write!(f, "Speicherfehler: {m}"),
         }

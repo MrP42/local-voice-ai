@@ -166,6 +166,8 @@ pub struct Folder {
     pub meeting_count: u32,
     pub created_at: i64,
     pub updated_at: i64,
+    /// ADR-0026 PR-7: Suite-Projekt, auf das dieser Ordner zeigt (`None` = nicht verknuepft).
+    pub projekt_id: Option<String>,
 }
 
 /// Recipe mit Rohtext der Spezifikation; Form und Inhalt prueft das Chat-Modul (P4c).
@@ -1171,7 +1173,7 @@ impl MeetingStore {
                     (SELECT COUNT(*) FROM meeting_folder_items fi
                        JOIN meetings m ON m.id = fi.meeting_id AND m.deleted_at IS NULL
                       WHERE fi.folder_id = f.id),
-                    f.created_at, f.updated_at
+                    f.created_at, f.updated_at, f.projekt_id
              FROM meeting_folders f WHERE f.deleted_at IS NULL
              ORDER BY f.sort, f.name COLLATE NOCASE, f.id",
         )?;
@@ -1185,6 +1187,7 @@ impl MeetingStore {
                     meeting_count: row.get::<_, i64>(4)? as u32,
                     created_at: row.get(5)?,
                     updated_at: row.get(6)?,
+                    projekt_id: row.get(7)?,
                 })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -3372,9 +3375,7 @@ pub(crate) mod tests {
         // Geloeschte Ordner zaehlen nicht mit; ein neuer landet hinten.
         s.folder_delete(&b.id).unwrap();
         assert_eq!(
-            s.folders_reorder(&[b.id.clone()])
-                .unwrap_err()
-                .to_string(),
+            s.folders_reorder(&[b.id.clone()]).unwrap_err().to_string(),
             "folder_not_found"
         );
         let d = s.folder_save(None, "Delta", None).unwrap();
@@ -3396,7 +3397,8 @@ pub(crate) mod tests {
         let f = s.folder_save(None, "Kunden", None).unwrap();
         let gone = s.folder_save(None, "Alt", None).unwrap();
         s.set_meeting_folders(&filed.id, &[f.id.clone()]).unwrap();
-        s.set_meeting_folders(&orphan.id, &[gone.id.clone()]).unwrap();
+        s.set_meeting_folders(&orphan.id, &[gone.id.clone()])
+            .unwrap();
         s.folder_delete(&gone.id).unwrap();
 
         let unfiled = MeetingFilter {
@@ -3404,7 +3406,10 @@ pub(crate) mod tests {
             ..Default::default()
         };
         let page = s.search_meetings("", &unfiled, 0, 25).unwrap();
-        assert_eq!(meeting_titles(&page), vec!["Ohne Projekt", "Projekt geloescht"]);
+        assert_eq!(
+            meeting_titles(&page),
+            vec!["Ohne Projekt", "Projekt geloescht"]
+        );
         assert_eq!(page.total, 2);
         // Auch mit Suchtext (Such-Index-Pfad) und als Zaehler fuer die Liste.
         // Drei gleiche Texte haben gleichen Rang: ihre Reihenfolge ist Sache

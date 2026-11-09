@@ -22,6 +22,12 @@ export const speakerErrorText = (code: string, t: TFunction) => {
       return t("meetings.speakers.errors.segmentNotFound");
     case "stale_epoch":
       return t("meetings.speakers.errors.staleEpoch");
+    case "merge_not_found":
+      return t("meetings.speakers.errors.mergeNotFound");
+    case "merge_blocked":
+      return t("meetings.speakers.merge.blocked");
+    case "speaker_taken":
+      return t("meetings.speakers.errors.speakerTaken");
     default:
       return t("meetings.speakers.errors.failed");
   }
@@ -74,7 +80,10 @@ export const SpeakerPopover: React.FC<SpeakerPopoverProps> = ({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
-  const sameChannel = speakers.filter((s) => s.channel === speaker.channel);
+  // Der ganze Kanal (#242, Nummer 0) ist kein Ziel zum Zusammenführen/Umhängen.
+  const sameChannel = speakers.filter(
+    (s) => s.channel === speaker.channel && s.speaker_index !== 0,
+  );
   const others = sameChannel.filter(
     (s) => s.speaker_index !== speaker.speaker_index,
   );

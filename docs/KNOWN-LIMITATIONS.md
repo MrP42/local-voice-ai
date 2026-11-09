@@ -106,8 +106,11 @@ zurückgelesen:
 Keine Zeichenwiederholung, keine Duplikate; nach dem Stopp wächst der Text
 höchstens um den Rest (etwa den Schlusspunkt) und wird nicht erneut eingefügt.
 
-Die Funktion ist deshalb ein normaler Opt-in-Schalter und nicht mehr zusätzlich
-hinter `experimental_enabled` gesperrt.
+Die Funktion ist deshalb ein normaler Schalter und nicht mehr zusätzlich
+hinter `experimental_enabled` gesperrt. Seit Einstellungsschema 6 (05.11.2026)
+ist sie **standardmäßig an**; bestehende Installationen wurden einmalig
+umgestellt. Vorher stand der Text bei Neuinstallationen nur in der Vorschau
+über der Diktat-Animation und kam erst nach dem Stopp ins Textfeld.
 
 ### Fokus- und Rechteprüfung je Fragment (seit D14, Issue #9)
 
@@ -278,3 +281,15 @@ Fenstersystem steht aus.
 
 - Besprechungen, Protokoll: rechnet seit P1k (B12) wie die KI-Notizen in Token-Blöcken mit Halbieren; was auch als Viertel nicht auswertbar ist, steht als Hinweis im Protokoll und als Warnung im Reiter statt still zu fehlen. Das Protokoll folgt der Vorlage der Besprechung („Automatisch (nach Inhalt)“ wählt sie anhand eines kurzen Auszugs, „Allgemein“ bei Unsicherheit); Protokolle von vor P1k behalten ihr altes Format. Mit Qwen3.5-9B dauern KI-Notizen einer Stunde rund 3 min, mit Gemma 4 E4B rund 2,5 min nach Stopp.
 - Sprechertrennung: Sehr ähnlich klingende Stimmen (z. B. drei TTS-Stimmen mit fast gleicher Tonhöhe) werden zu einem Sprecher zusammengelegt; Test mit dem Hörspiel „Emilia, Sofie und Mara“: 4 von 7 Stimmen erkannt, DER 33,8 %. Deutlich verschiedene Stimmen werden zuverlässig getrennt. Sprecher lassen sich von Hand korrigieren; eine Nachtrennung per Stimmprofil folgt.
+
+## Suite-Projekte und Recherche
+
+- **Solo-Grenze:** Local Voice AI kennt keine Mehrbenutzer-Anmeldung. Der lokale Benutzer wird als
+  `lokaler_principal` mit der Rolle Admin geführt. Damit darf er die SearXNG-Adresse setzen und
+  Projekte verknüpfen. Eine Trennung von Rollen (Admin, Mitglied) gibt es erst mit der Suite-Anmeldung;
+  die Prüfungen im Backend (Web-Freigabe am Projekt, Freigabe oberhalb PERSONAL, Adressprüfung) laufen
+  schon heute serverseitig und gelten dann unverändert.
+- **Sprachen:** Die neuen Texte der Projekt- und Recherche-Oberfläche liegen auf Deutsch und Englisch vor;
+  in den übrigen Sprachen erscheint Englisch.
+- **Nur im Projekt suchen:** Das Backend kennt die Entscheidung „nur im Projekt“, die Oberfläche bietet
+  sie noch nicht an.

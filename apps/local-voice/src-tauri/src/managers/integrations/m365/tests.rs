@@ -22,7 +22,8 @@ use super::drive::{
 use super::error::M365Error;
 use super::event::{EventRef, NoteOutcome};
 use super::mail::{
-    message_from_draft, MailAttachment, MailBody, MailMessage, MAX_ATTACHMENTS, MAX_ATTACHMENT_BYTES,
+    message_from_draft, MailAttachment, MailBody, MailMessage, MAX_ATTACHMENTS,
+    MAX_ATTACHMENT_BYTES,
 };
 use super::service::{Acct, M365Service};
 use super::status::{status_of, AccountState};
@@ -953,7 +954,11 @@ async fn a_sign_out_during_a_refresh_is_not_undone_by_the_late_answer() {
         Err(M365Error::NeedsSignIn)
     );
     assert_eq!(count_path(&seen, "POST", "/v1.0/me/sendMail"), 0);
-    assert_eq!(count(&seen, is_token), 1, "kein zweites Erneuern fuer ein abgemeldetes Konto");
+    assert_eq!(
+        count(&seen, is_token),
+        1,
+        "kein zweites Erneuern fuer ein abgemeldetes Konto"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2450,7 +2455,10 @@ async fn an_attachment_goes_into_the_graph_request_as_a_file_attachment() {
     let (base, seen) = serve(ok_mail_server(tokens)).await;
     let w = World::new(&base, &[MAIL], true);
     let m = msg("a@example.com")
-        .with_attachments(vec![attachment("Protokoll Überprüfung.pdf", b"%PDF-1.7 Inhalt")])
+        .with_attachments(vec![attachment(
+            "Protokoll Überprüfung.pdf",
+            b"%PDF-1.7 Inhalt",
+        )])
         .unwrap();
     w.svc.send_mail(&w.acct(), &m).await.unwrap();
     let sent = seen
