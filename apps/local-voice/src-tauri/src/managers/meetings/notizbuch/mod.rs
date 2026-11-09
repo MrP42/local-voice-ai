@@ -25,7 +25,7 @@ mod tests;
 #[allow(unused_imports)]
 pub use verlust::{
     block_kennung, fehlende_bloecke, finde_duplikate, finde_widersprueche, pruefbloecke_aus_seite,
-    unvollstaendige_seiten, Abweichung, Beziehung, Paar, PruefBlock, Widerspruch,
+    unvollstaendige_seiten, Abweichung, Beziehung, Paar, PruefBlock, Quelle, Widerspruch,
 };
 #[allow(unused_imports)]
 pub use zeit::{

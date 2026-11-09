@@ -25,7 +25,7 @@ fn nach(min: i64) -> i64 {
 
 fn block(text: &str, zeit_min: Option<i64>) -> Block {
     Block {
-        bid: Some(format!("B{}", text.len())),
+        bid: Some(format!("B-{text}")),
         art: BlockArt::Absatz,
         text: text.into(),
         ebene: 0,
@@ -106,13 +106,24 @@ fn kand<'a>(s: &'a Seite) -> Kandidat<'a> {
     }
 }
 
-fn pb(kennung: &str, text: &str, intervall: Option<(i64, i64)>) -> PruefBlock {
+fn pbq(quelle: Quelle, kennung: &str, text: &str, intervall: Option<(i64, i64)>) -> PruefBlock {
     PruefBlock {
+        quelle,
         kennung: kennung.into(),
         text: text.into(),
         erledigt: None,
         intervall,
     }
+}
+
+/// Block aus dem Notizblock der Aufnahme.
+fn pb(kennung: &str, text: &str, intervall: Option<(i64, i64)>) -> PruefBlock {
+    pbq(Quelle::Notizblock, kennung, text, intervall)
+}
+
+/// Block aus dem Notizbuch.
+fn pbb(kennung: &str, text: &str, intervall: Option<(i64, i64)>) -> PruefBlock {
+    pbq(Quelle::Notizbuch, kennung, text, intervall)
 }
 
 const GLEICH: Option<(i64, i64)> = Some((0, 100));
@@ -259,6 +270,15 @@ fn anzeige_minute_nur_bei_genau() {
     assert_eq!(
         anzeige(&lage(&seite_z, &a), &a),
         "zwischen Minute 14 und Minute 40"
+    );
+    let eng = Blockzeit {
+        frueh_ms: nach(7),
+        spaet_ms: nach(7) + 10_000,
+        guete: Guete::Seite,
+    };
+    assert_eq!(
+        anzeige(&lage(&eng, &a), &a),
+        "zwischen Minute 7 und Minute 8"
     );
 }
 
@@ -733,7 +753,7 @@ fn merkmale_verneinungen() {
 fn duplikat_nur_bei_gleichen_merkmalen() {
     let b = vec![
         pb("a", "Budget beträgt 5000 Euro", GLEICH),
-        pb("b", "budget beträgt 5000 EURO!", GLEICH),
+        pb("b", "budget beträgt 5000 EURO", GLEICH),
         pb("c", "Budget beträgt 6000 Euro", GLEICH),
     ];
     let p = finde_duplikate(&b);
@@ -806,7 +826,7 @@ fn leere_texte_sind_keine_duplikate() {
 fn widerspruch_zahlen() {
     let b = vec![
         pb("n1", "Budget Migration beträgt 5000 Euro", GLEICH),
-        pb("t1", "Budget Migration beträgt 6000 Euro", GLEICH),
+        pbb("t1", "Budget Migration beträgt 6000 Euro", GLEICH),
     ];
     let w = finde_widersprueche(&b);
     assert_eq!(w.len(), 1);
@@ -817,7 +837,7 @@ fn widerspruch_zahlen() {
 fn ergaenzung_ist_kein_widerspruch() {
     let b = vec![
         pb("a", "Teilnehmende Workshop Migration: 5", GLEICH),
-        pb(
+        pbb(
             "b",
             "Teilnehmende Workshop Migration: 5 und 3 Gäste",
             GLEICH,
@@ -830,7 +850,7 @@ fn ergaenzung_ist_kein_widerspruch() {
 fn widerspruch_datum_und_uhrzeit() {
     let b = vec![
         pb("a", "Abnahme Migration am 15.11.2026", GLEICH),
-        pb("b", "Abnahme Migration am 22.11.2026", GLEICH),
+        pbb("b", "Abnahme Migration am 22.11.2026", GLEICH),
     ];
     assert_eq!(
         finde_widersprueche(&b)[0].abweichungen,
@@ -838,7 +858,7 @@ fn widerspruch_datum_und_uhrzeit() {
     );
     let c = vec![
         pb("a", "Jour fixe Migration um 10:00 Uhr", GLEICH),
-        pb("b", "Jour fixe Migration um 11:00 Uhr", GLEICH),
+        pbb("b", "Jour fixe Migration um 11:00 Uhr", GLEICH),
     ];
     assert_eq!(
         finde_widersprueche(&c)[0].abweichungen,
@@ -850,7 +870,7 @@ fn widerspruch_datum_und_uhrzeit() {
 fn widerspruch_verneinung_de_und_en() {
     let b = vec![
         pb("a", "Freigabe für Migration erteilt", GLEICH),
-        pb("b", "Freigabe für Migration nicht erteilt", GLEICH),
+        pbb("b", "Freigabe für Migration nicht erteilt", GLEICH),
     ];
     assert_eq!(
         finde_widersprueche(&b)[0].abweichungen,
@@ -858,7 +878,7 @@ fn widerspruch_verneinung_de_und_en() {
     );
     let e = vec![
         pb("a", "Approval for migration granted", GLEICH),
-        pb("b", "Approval for migration not granted", GLEICH),
+        pbb("b", "Approval for migration not granted", GLEICH),
     ];
     assert_eq!(
         finde_widersprueche(&e)[0].abweichungen,
@@ -869,7 +889,7 @@ fn widerspruch_verneinung_de_und_en() {
 #[test]
 fn widerspruch_aufgabenstand() {
     let mut a = pb("a", "Angebot Migration einholen", GLEICH);
-    let mut b = pb("b", "Angebot Migration einholen", GLEICH);
+    let mut b = pbb("b", "Angebot Migration einholen", GLEICH);
     a.erledigt = Some(true);
     b.erledigt = Some(false);
     assert_eq!(
@@ -881,7 +901,7 @@ fn widerspruch_aufgabenstand() {
 #[test]
 fn kein_widerspruch_bei_anderem_zeitintervall_oder_unbekannt() {
     let a = pb("a", "Budget Migration beträgt 5000 Euro", Some((0, 10)));
-    let b = pb("b", "Budget Migration beträgt 6000 Euro", Some((50, 60)));
+    let b = pbb("b", "Budget Migration beträgt 6000 Euro", Some((50, 60)));
     assert!(finde_widersprueche(&[a.clone(), b.clone()]).is_empty());
     let c = PruefBlock {
         intervall: None,
@@ -894,7 +914,7 @@ fn kein_widerspruch_bei_anderem_zeitintervall_oder_unbekannt() {
 fn kein_widerspruch_ohne_begriffsueberlappung() {
     let b = vec![
         pb("a", "Budget Migration 5000 Euro", GLEICH),
-        pb("b", "Pizza bestellen 6000 Krümel", GLEICH),
+        pbb("b", "Pizza bestellen 6000 Krümel", GLEICH),
     ];
     assert!(finde_widersprueche(&b).is_empty());
 }
@@ -903,7 +923,7 @@ fn kein_widerspruch_ohne_begriffsueberlappung() {
 fn gleiche_bloecke_sind_kein_widerspruch() {
     let b = vec![
         pb("a", "Budget Migration 5000 Euro", GLEICH),
-        pb("b", "Budget Migration 5000 Euro", GLEICH),
+        pbb("b", "Budget Migration 5000 Euro", GLEICH),
     ];
     assert!(finde_widersprueche(&b).is_empty());
 }
@@ -940,7 +960,7 @@ fn kennungen_und_pruefbloecke_aus_seite() {
     );
     let p = pruefbloecke_aus_seite(&s);
     assert_eq!(p.len(), 3);
-    assert_eq!(p[0].kennung, "seite-1#B11");
+    assert_eq!(p[0].kennung, "seite-1#B-Mit Kennung");
     assert_eq!(p[1].kennung, "seite-1#pos1");
     assert_eq!(p[2].erledigt, Some(false));
     assert!(p[0].intervall.is_some());
@@ -971,4 +991,134 @@ fn begriffe_falten_und_filtern() {
     let b = begriffe("Größe der Änderung, nicht 42 oder ab");
     assert!(b.contains("grosse") && b.contains("anderung") && b.contains("42"));
     assert!(!b.contains("nicht") && !b.contains("ab") && !b.contains("oder"));
+}
+
+// ---------- Nachbesserungen (Review) ----------
+
+#[test]
+fn langlebige_seite_wird_nicht_zugeordnet() {
+    let abs = abschnitte();
+    let tn: Vec<String> = vec![];
+    let b = besp("abc", &abs, &tn);
+    let tage = 24 * 60;
+    let s = seite(
+        "lang",
+        "Migrations-Jour-fixe Budget Migration Zeitplan Server Frankfurt",
+        -30 * tage,
+        60 * tage,
+        vec![
+            block("Budget für die Migration und Zeitplan", None),
+            block("Server Frankfurt Rollout Dezember", None),
+        ],
+    );
+    let k = Kandidat {
+        seite: &s,
+        projekt: Some("projekt-a"),
+        herkunft_local_voice: false,
+    };
+    assert!(ist_kandidat(&k, &b.zeitachse()));
+    let e = entscheide(&b, &k, &HashSet::new(), true);
+    assert_eq!(e.einstufung, Einstufung::Nichts, "{:?}", e.bewertung);
+}
+
+#[test]
+fn fenster_anteil_gewichtet_intervall() {
+    let a = Zeitachse::neu(T0, DAUER_MS);
+    let z = |f, s| Blockzeit {
+        frueh_ms: nach(f),
+        spaet_ms: nach(s),
+        guete: Guete::Seite,
+    };
+    assert_eq!(a.fenster_anteil_pm(&z(5, 5)), 1000);
+    assert_eq!(a.fenster_anteil_pm(&z(0, 30)), 1000);
+    assert_eq!(a.fenster_anteil_pm(&z(-100, 200)), 1000 * 105 / 300);
+    assert_eq!(a.fenster_anteil_pm(&z(200, 300)), 0);
+}
+
+#[test]
+fn widerspruch_nur_zwischen_zulaessigen_quellen() {
+    let alt = pbb("s#b1", "Budget Migration beträgt 5000 Euro", GLEICH);
+    let neu = pbb("s#b1#pos2", "Budget Migration beträgt 6000 Euro", GLEICH);
+    assert!(finde_widersprueche(&[alt.clone(), neu]).is_empty());
+    let n1 = pb("n1", "Budget Migration beträgt 5000 Euro", GLEICH);
+    let n2 = pb("n2", "Budget Migration beträgt 6000 Euro", GLEICH);
+    assert!(finde_widersprueche(&[n1.clone(), n2]).is_empty());
+    let nb = pbb("b1", "Budget Migration beträgt 6000 Euro", GLEICH);
+    assert_eq!(finde_widersprueche(&[n1.clone(), nb.clone()]).len(), 1);
+    let t = pbq(
+        Quelle::Transkript,
+        "t1",
+        "Budget Migration beträgt 6000 Euro",
+        GLEICH,
+    );
+    assert_eq!(finde_widersprueche(&[n1, t.clone()]).len(), 1);
+    assert_eq!(finde_widersprueche(&[alt, t.clone()]).len(), 1);
+    assert!(finde_widersprueche(&[t.clone(), t]).is_empty());
+}
+
+#[test]
+fn duplikat_verliert_keine_randzeichen() {
+    let paare = [
+        ("Saldo -5", "Saldo 5"),
+        ("Preis 5 €", "Preis 5 $"),
+        ("Rabatt 5%", "Rabatt 5"),
+        ("Wert x < 5", "Wert x > 5"),
+        ("Wert x<5", "Wert x>5"),
+        ("Bericht fertig.", "Bericht fertig"),
+    ];
+    for (x, y) in paare {
+        let b = vec![pb("a", x, GLEICH), pb("b", y, GLEICH)];
+        assert!(
+            finde_duplikate(&b)
+                .iter()
+                .all(|q| q.beziehung != Beziehung::Duplikat),
+            "{x} / {y}"
+        );
+    }
+    assert_ne!(
+        merkmale("Saldo -5", None).zahlen,
+        merkmale("Saldo 5", None).zahlen
+    );
+    assert_ne!(
+        merkmale("Preis 5 €", None).zahlen,
+        merkmale("Preis 5 $", None).zahlen
+    );
+    assert_ne!(
+        merkmale("Rabatt 5%", None).zahlen,
+        merkmale("Rabatt 5", None).zahlen
+    );
+    assert_ne!(
+        merkmale("x < 5", None).zahlen,
+        merkmale("x > 5", None).zahlen
+    );
+    assert_eq!(merkmale("Zeitraum 5-10", None).zahlen.len(), 2);
+}
+
+#[test]
+fn verneinung_nt_wird_erkannt() {
+    assert_eq!(
+        merkmale("We don't approve, it isn't done", None).verneinungen,
+        2
+    );
+    assert_eq!(merkmale("He won’t come", None).verneinungen, 1);
+    assert_eq!(merkmale("Wir bleiben dabei", None).verneinungen, 0);
+}
+
+#[test]
+fn doppelte_bid_verdeckt_keinen_verlust() {
+    let mut b2 = block("Zweiter Text", Some(2));
+    b2.bid = Some("X".into());
+    let mut b1 = block("Erster Text", Some(1));
+    b1.bid = Some("X".into());
+    let s = seite("s1", "T", 0, 5, vec![b1, b2]);
+    let p = pruefbloecke_aus_seite(&s);
+    assert_eq!(p[0].kennung, "s1#X");
+    assert_eq!(p[1].kennung, "s1#X#pos1");
+    assert!(p.iter().all(|x| x.quelle == Quelle::Notizbuch));
+    let erwartet: Vec<String> = p.iter().map(|x| x.kennung.clone()).collect();
+    let refs = vec!["s1#X".to_string()];
+    assert_eq!(
+        fehlende_bloecke(&erwartet, &refs, &[]),
+        vec!["s1#X#pos1".to_string()]
+    );
 }

@@ -1,12 +1,16 @@
 //! Zuordnung Notizbuch-Seite ↔ Besprechung (Spec §5.2): Kandidaten, Bewertung, Einstufung.
 //! Deterministisch, ohne Modellurteil. Automatik nur mit bestandenem Tor (M5).
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeMap, HashSet};
 
+use chrono::TimeZone;
 use wai_notizbuch_zugang::{falte, Seite};
 
 use super::begriffe;
 use super::zeit::{blockzeit, lage, Blockzeit, Lage, Zeitachse};
+
+/// Unter diesem Anteil (‰) des Intervalls im Fenster zählt der Begriffsvergleich nicht.
+const BEGRIFF_MIN_ANTEIL_PM: u64 = 200;
 
 /// Ab dieser Punktzahl wird automatisch zugeordnet (nur mit bestandenem Tor).
 pub const SCHWELLE_A: u32 = 60;
@@ -150,16 +154,20 @@ fn titel_grund(besp: &Besprechung, titel: &str) -> Vec<Grund> {
     let t = falte(titel);
     let achse = besp.zeitachse();
     let datum_treffer = [achse.beginn_ms, achse.ende_ms].iter().any(|&ms| {
-        chrono::DateTime::from_timestamp_millis(ms).is_some_and(|d| {
-            let d = d.date_naive();
-            [
-                d.format("%Y-%m-%d").to_string(),
-                d.format("%d.%m.%Y").to_string(),
-                d.format("%d.%m.%y").to_string(),
-            ]
-            .iter()
-            .any(|f| t.contains(f.as_str()))
-        })
+        // Lokales Datum: Titel nennen das Datum der Wanduhr des Nutzers, nicht UTC.
+        chrono::Local
+            .timestamp_millis_opt(ms)
+            .single()
+            .is_some_and(|d| {
+                let d = d.date_naive();
+                [
+                    d.format("%Y-%m-%d").to_string(),
+                    d.format("%d.%m.%Y").to_string(),
+                    d.format("%d.%m.%y").to_string(),
+                ]
+                .iter()
+                .any(|f| t.contains(f.as_str()))
+            })
     });
     if datum_treffer {
         out.push(Grund::TitelDatum);
@@ -187,12 +195,18 @@ fn zeit_grund(zeiten: &[Option<Blockzeit>], achse: &Zeitachse) -> Option<Grund> 
     if gesamt == 0 {
         return None;
     }
+    // Je Block: Güte-Gewicht (%) mal Anteil des Intervalls im Fenster (‰), alles in u64.
     let (summe, n) = zeiten
         .iter()
         .flatten()
         .filter(|z| achse.im_fenster(z))
-        .fold((0u32, 0usize), |(s, n), z| (s + z.guete.gewicht(), n + 1));
-    let punkte = PUNKTE_ZEIT_MAX * summe / (100 * gesamt as u32);
+        .fold((0u64, 0usize), |(s, n), z| {
+            (
+                s + u64::from(z.guete.gewicht()) * achse.fenster_anteil_pm(z),
+                n + 1,
+            )
+        });
+    let punkte = (u64::from(PUNKTE_ZEIT_MAX) * summe / (100 * 1000 * gesamt as u64)) as u32;
     (n > 0 && punkte > 0).then_some(Grund::ZeitAnteil {
         im_fenster: n,
         gesamt,
@@ -202,11 +216,16 @@ fn zeit_grund(zeiten: &[Option<Blockzeit>], achse: &Zeitachse) -> Option<Grund> 
 
 fn begriff_grund(k: &Kandidat, besp: &Besprechung) -> Option<Grund> {
     let achse = besp.zeitachse();
-    let mut gemeinsam: BTreeSet<String> = BTreeSet::new();
+    // Gemeinsamer Begriff → größter Anteil (‰) eines Blocks, in dem er vorkam.
+    let mut gemeinsam: BTreeMap<String, u64> = BTreeMap::new();
     for b in k.seite.bloecke.iter().filter(|b| !b.text.trim().is_empty()) {
         let Some(z) = blockzeit(b, &k.seite.kopf) else {
             continue;
         };
+        let anteil = achse.fenster_anteil_pm(&z);
+        if anteil < BEGRIFF_MIN_ANTEIL_PM {
+            continue;
+        }
         let Lage::Innerhalb(a) = lage(&z, &achse) else {
             continue;
         };
@@ -222,15 +241,19 @@ fn begriff_grund(k: &Kandidat, besp: &Besprechung) -> Option<Grund> {
             .filter(|s| s.start_ms <= bis && s.ende_ms >= von)
         {
             let sb = begriffe(&s.text);
-            gemeinsam.extend(bb.intersection(&sb).cloned());
+            for w in bb.intersection(&sb) {
+                let e = gemeinsam.entry(w.clone()).or_insert(0);
+                *e = (*e).max(anteil);
+            }
         }
     }
-    if gemeinsam.is_empty() {
+    let summe_pm: u64 = gemeinsam.values().sum();
+    let punkte = ((u64::from(PUNKTE_BEGRIFF_JE) * summe_pm / 1000) as u32).min(PUNKTE_BEGRIFFE_MAX);
+    if punkte == 0 {
         return None;
     }
-    let punkte = (gemeinsam.len() as u32 * PUNKTE_BEGRIFF_JE).min(PUNKTE_BEGRIFFE_MAX);
     Some(Grund::Begriffe {
-        begriffe: gemeinsam.into_iter().take(MAX_BEGRIFFE_ANZEIGE).collect(),
+        begriffe: gemeinsam.into_keys().take(MAX_BEGRIFFE_ANZEIGE).collect(),
         punkte,
     })
 }

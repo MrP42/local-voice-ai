@@ -15,9 +15,33 @@ pub const AEHNLICH_UEBERLAPP: f32 = 0.6;
 /// Über dieser Blockzahl wird der paarweise Ähnlichkeitsvergleich ausgelassen.
 const MAX_BLOECKE_PAARWEISE: usize = 1_500;
 
-/// Ein Block aus einer der beiden Quellen (Notizblock der Aufnahme oder Notizbuch).
+/// Herkunft eines Prüfblocks (§5.4 M8).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Quelle {
+    Notizblock,
+    Notizbuch,
+    Transkript,
+}
+
+impl Quelle {
+    /// Zulässige Widerspruchspaare: Notizblock ↔ Notizbuch und Notiz (Notizblock oder
+    /// Notizbuch) ↔ Transkript. Nie zwei Blöcke derselben Quelle.
+    pub fn paar_zulaessig(self, andere: Quelle) -> bool {
+        match (self, andere) {
+            (Quelle::Notizblock, Quelle::Notizbuch) | (Quelle::Notizbuch, Quelle::Notizblock) => {
+                true
+            }
+            (Quelle::Transkript, Quelle::Transkript) => false,
+            (Quelle::Transkript, _) | (_, Quelle::Transkript) => true,
+            _ => false,
+        }
+    }
+}
+
+/// Ein Block aus einer der Quellen (Notizblock der Aufnahme, Notizbuch oder Transkript).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PruefBlock {
+    pub quelle: Quelle,
     /// Stabile Kennung (`seite_id#bid`, siehe [`block_kennung`]) bzw. Notizblock-ID.
     pub kennung: String,
     pub text: String,
@@ -36,15 +60,24 @@ pub fn block_kennung(seite_id: &str, index: usize, block: &Block) -> String {
     }
 }
 
-/// Prüfblöcke einer Seite (leere Blöcke entfallen).
+/// Prüfblöcke einer Seite (leere Blöcke entfallen). Kommt eine `bid` auf der Seite mehrfach
+/// vor, behält der erste Block sie; jeder weitere bekommt `seite_id#bid#pos<i>` (i =
+/// Blockposition), damit die Verlustprüfung keinen Block hinter einer Doppelkennung verbirgt.
 pub fn pruefbloecke_aus_seite(seite: &Seite) -> Vec<PruefBlock> {
+    let mut gesehen: HashSet<&str> = HashSet::new();
     seite
         .bloecke
         .iter()
         .enumerate()
         .filter(|(_, b)| !b.text.trim().is_empty())
         .map(|(i, b)| PruefBlock {
-            kennung: block_kennung(&seite.kopf.id, i, b),
+            quelle: Quelle::Notizbuch,
+            kennung: match b.bid.as_deref().filter(|x| !x.is_empty()) {
+                Some(bid) if !gesehen.insert(bid) => {
+                    format!("{}#{bid}#pos{i}", seite.kopf.id)
+                }
+                _ => block_kennung(&seite.kopf.id, i, b),
+            },
             text: b.text.clone(),
             erledigt: b.erledigt,
             intervall: blockzeit(b, &seite.kopf).map(|z| (z.frueh_ms, z.spaet_ms)),
@@ -64,6 +97,12 @@ pub struct Merkmale {
 
 fn ist_verneinung(w: &str) -> bool {
     matches!(w, "nicht" | "no" | "not") || w.starts_with("kein")
+}
+
+/// Englische Kurzform mit „n't“ (don't, isn't, won't …), auch mit typografischem Apostroph.
+fn ist_nt_verneinung(w: &str) -> bool {
+    let w = w.trim_matches(|c: char| !c.is_alphanumeric());
+    w.len() > 3 && (w.ends_with("n't") || w.ends_with("n’t"))
 }
 
 fn nur_ziffern(s: &str) -> bool {
@@ -121,27 +160,72 @@ fn uhrzeit(h: &str, m: &str) -> Option<String> {
     (h < 24 && m < 60).then(|| format!("{h:02}:{m:02}"))
 }
 
-/// Ziffernfolgen mit innerem `.`/`,` als Zahlen (`,` wird zu `.`).
-fn zahlen_in(w: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut akt = String::new();
+const VORZEICHEN: &[char] = &['-', '+', '−', '<', '>', '=', '≤', '≥', '~'];
+const EINHEITEN: &[char] = &['%', '€', '$', '£'];
+
+fn nur_zeichen_aus(w: &str, menge: &[char]) -> bool {
+    !w.is_empty() && w.chars().all(|c| menge.contains(&c))
+}
+
+/// Ziffernfolgen mit innerem `.`/`,` als Zahlen (`,` wird zu `.`). Vorzeichen bzw.
+/// Vergleichszeichen davor und Prozent-/Währungszeichen davor oder dahinter (auch als eigenes
+/// Nachbarwort `prev`/`next`) gehören zum Merkmal: `-5`, `5%`, `5€`, `<5` sind verschieden.
+fn zahlen_in(w: &str, prev: Option<&str>, next: Option<&str>) -> Vec<String> {
     let zeichen: Vec<char> = w.chars().collect();
+    let mut spannen: Vec<(usize, usize, String)> = Vec::new();
+    let mut akt = String::new();
+    let mut start = 0;
     for (i, &c) in zeichen.iter().enumerate() {
         let trenner_innen = (c == '.' || c == ',')
             && !akt.is_empty()
             && zeichen.get(i + 1).is_some_and(|n| n.is_ascii_digit());
         if c.is_ascii_digit() {
+            if akt.is_empty() {
+                start = i;
+            }
             akt.push(c);
         } else if trenner_innen {
             akt.push('.');
         } else if !akt.is_empty() {
-            out.push(std::mem::take(&mut akt));
+            spannen.push((start, i, std::mem::take(&mut akt)));
         }
     }
     if !akt.is_empty() {
-        out.push(akt);
+        spannen.push((start, zeichen.len(), akt));
     }
-    out
+    spannen
+        .into_iter()
+        .map(|(von, bis, zahl)| {
+            let mut vor = String::new();
+            let mut k = von;
+            while k > 0 && VORZEICHEN.contains(&zeichen[k - 1]) {
+                k -= 1;
+                vor.insert(0, zeichen[k]);
+            }
+            // Ein Bindestrich nach einem Buchstaben oder einer Ziffer ist kein Vorzeichen.
+            if k > 0 && zeichen[k - 1].is_alphanumeric() {
+                vor.retain(|c| c != '-' && c != '−');
+            }
+            if vor.is_empty() && von == 0 {
+                if let Some(p) = prev.filter(|p| nur_zeichen_aus(p, VORZEICHEN)) {
+                    vor = p.to_owned();
+                }
+            }
+            let mut einheit = String::new();
+            if let Some(&e) = zeichen.get(bis).filter(|c| EINHEITEN.contains(c)) {
+                einheit.push(e);
+            } else if von > 0 && EINHEITEN.contains(&zeichen[von - 1]) {
+                einheit.push(zeichen[von - 1]);
+            } else if bis == zeichen.len() {
+                if let Some(n) =
+                    next.filter(|n| nur_zeichen_aus(n, EINHEITEN) && n.chars().count() == 1)
+                {
+                    einheit = n.to_owned();
+                }
+            }
+            format!("{vor}{zahl}{einheit}")
+        })
+        .collect()
 }
 
 /// Ermittelt die Vergleichsmerkmale eines Textes.
@@ -155,7 +239,8 @@ pub fn merkmale(text: &str, erledigt: Option<bool>) -> Merkmale {
     m.verneinungen = gefaltet
         .split(|c: char| !c.is_alphanumeric())
         .filter(|w| ist_verneinung(w))
-        .count();
+        .count()
+        + woerter.iter().filter(|w| ist_nt_verneinung(w)).count();
     let trimm = |s: &str| s.trim_matches(|c: char| !c.is_alphanumeric()).to_owned();
     for (i, roh) in woerter.iter().enumerate() {
         let w = roh.trim_matches(|c: char| {
@@ -189,19 +274,29 @@ pub fn merkmale(text: &str, erledigt: Option<bool>) -> Merkmale {
                 continue;
             }
         }
-        m.zahlen.extend(zahlen_in(w));
+        let nachbar = |j: Option<usize>| {
+            j.and_then(|j| woerter.get(j)).map(|n| {
+                n.trim_matches(|c: char| matches!(c, '(' | ')' | '"' | ';' | ':' | '!' | '?'))
+            })
+        };
+        m.zahlen.extend(zahlen_in(
+            w,
+            nachbar(i.checked_sub(1)),
+            nachbar(Some(i + 1)),
+        ));
     }
     m
 }
 
-/// Schlüssel für „gleicher gefalteter Text“: Wörter ohne Randzeichen, durch Leerzeichen getrennt.
+/// Schlüssel für „gleicher gefalteter Text“: nur Leerzeichen normalisiert. Satz- und
+/// Randzeichen (`-`, `%`, `<` …) bleiben erhalten, sie können die Bedeutung ändern. Ein Text
+/// ohne Buchstaben und Ziffern ergibt keinen Schlüssel.
 fn textschluessel(text: &str) -> String {
-    falte(text)
-        .split_whitespace()
-        .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()))
-        .filter(|w| !w.is_empty())
-        .collect::<Vec<_>>()
-        .join(" ")
+    let g = falte(text);
+    if !g.chars().any(char::is_alphanumeric) {
+        return String::new();
+    }
+    g.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -311,7 +406,8 @@ fn intervalle_ueberlappen(a: Option<(i64, i64)>, b: Option<(i64, i64)>) -> bool 
     }
 }
 
-/// Widersprüche nach §5.4: Blockpaare mit Begriffsüberlappung ≥ [`WIDERSPRUCH_UEBERLAPP`] im
+/// Widersprüche nach §5.4 (M8): nur zwischen zulässigen Quellenpaaren (Notizblock ↔ Notizbuch,
+/// Notiz ↔ Transkript, nie dieselbe Quelle). Blockpaare mit Begriffsüberlappung ≥ [`WIDERSPRUCH_UEBERLAPP`] im
 /// gleichen Zeitintervall, die sich in Zahlen, Datum/Uhrzeit, Verneinung oder Aufgabenstand
 /// unterscheiden. Andere Widersprüche werden nicht behauptet. Blöcke ohne Intervall werden
 /// nicht verglichen.
@@ -330,7 +426,8 @@ pub fn finde_widersprueche(bloecke: &[PruefBlock]) -> Vec<Widerspruch> {
             continue;
         }
         for b in a + 1..bloecke.len() {
-            if !intervalle_ueberlappen(bloecke[a].intervall, bloecke[b].intervall)
+            if !bloecke[a].quelle.paar_zulaessig(bloecke[b].quelle)
+                || !intervalle_ueberlappen(bloecke[a].intervall, bloecke[b].intervall)
                 || jaccard(&terme[a], &terme[b]) < WIDERSPRUCH_UEBERLAPP
             {
                 continue;

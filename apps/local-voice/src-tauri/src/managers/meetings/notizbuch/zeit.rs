@@ -112,6 +112,26 @@ impl Zeitachse {
         let (von, bis) = self.fenster();
         z.spaet_ms >= von && z.frueh_ms <= bis
     }
+
+    /// Anteil (‰, 0..=1000) des Intervalls, der im Fenster liegt: `|I ∩ Fenster| / |I|`.
+    /// Intervalllänge 0 zählt als Anteil 1 (1000), wenn der Punkt im Fenster liegt. Ein langes
+    /// Intervall, das das Fenster nur streift, bekommt so kaum Gewicht (keine Scheingenauigkeit).
+    pub fn fenster_anteil_pm(&self, z: &Blockzeit) -> u64 {
+        if !self.im_fenster(z) {
+            return 0;
+        }
+        let (von, bis) = self.fenster();
+        let laenge = z.spaet_ms.saturating_sub(z.frueh_ms).max(0) as u64;
+        if laenge == 0 {
+            return 1000;
+        }
+        let ueberlapp = z
+            .spaet_ms
+            .min(bis)
+            .saturating_sub(z.frueh_ms.max(von))
+            .max(0) as u64;
+        (ueberlapp.saturating_mul(1000) / laenge).min(1000)
+    }
 }
 
 /// Auf die Aufnahme abgebildetes Intervall (relativ zum Beginn, an den Rändern abgeschnitten).
@@ -169,12 +189,8 @@ pub fn anzeige(l: &Lage, achse: &Zeitachse) -> String {
     if a.von_ms <= 0 && a.bis_ms >= achse.dauer_ms() {
         return "während der Besprechung".into();
     }
-    if min(a.von_ms) == min(a.bis_ms) {
-        return format!("etwa in Minute {}", min(a.von_ms));
-    }
-    format!(
-        "zwischen Minute {} und Minute {}",
-        min(a.von_ms),
-        min(a.bis_ms)
-    )
+    // Nie eine einzelne Minute ohne Güte `Genau`: mindestens eine Spanne von einer Minute.
+    let von = min(a.von_ms);
+    let bis = min(a.bis_ms).max(von + 1);
+    format!("zwischen Minute {von} und Minute {bis}")
 }
