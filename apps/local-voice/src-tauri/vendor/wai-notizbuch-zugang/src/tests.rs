@@ -649,6 +649,13 @@ fn verschieben_innerhalb_und_aus_der_freigabe() {
 #[test]
 fn laufender_widerruf_trifft_stand_und_ergebnis_gemeinsam() {
     let a = Ablage::neu();
+    // Der Test setzt WAL voraus: nur dann darf der Schreiber während der Lesetransaktion schreiben,
+    // und der Leser behält seinen Schnappschuss.
+    let modus: String = a
+        .conn
+        .query_row("PRAGMA journal_mode", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(modus, "wal");
     let z = a.zugang();
     let f = arbeit();
     let vorher = z.stand(&f).unwrap();
@@ -689,4 +696,306 @@ fn laufender_widerruf_trifft_stand_und_ergebnis_gemeinsam() {
     assert_eq!(k.stand, n.stand);
     let b = z.baum_mit_stand(&f).unwrap();
     assert_eq!(b.stand, n.stand);
+}
+
+/// Eine Seitenzeile mit frei wählbarer DB-Kennung und JSON-`id` samt Indexzeile.
+fn seite_mit_kennung(a: &Ablage, db_id: &str, json_id: Value, abschnitt: &str, text: &str) {
+    let mut v = json!({"abschnittId": abschnitt, "titel": "x", "text": text, "inhalt": {},
+        "erstellt": "2026-11-01T00:00:00Z", "geaendert": "2026-11-01T00:00:00Z"});
+    if !json_id.is_null() || db_id.starts_with("null") {
+        v["id"] = json_id;
+    }
+    a.conn
+        .execute(
+            "INSERT OR REPLACE INTO saetze (art, id, daten) VALUES ('seiten', ?1, ?2)",
+            params![db_id, v.to_string()],
+        )
+        .unwrap();
+    a.conn
+        .execute(
+            "INSERT INTO seiten_fts (id, titel, text) VALUES (?1, 'x', ?2)",
+            params![db_id, falte(text)],
+        )
+        .unwrap();
+}
+
+/// Codex lva#414 (P1): Seiten mit ungültiger DB-Kennung oder abweichender JSON-`id` im freigegebenen
+/// Abschnitt zählen weder in Seitenzahl, mittlere Länge noch Dokumenthäufigkeit. Kontrolle: dieselben
+/// Seiten mit gültiger Identität verschieben die Rangfolge, der Test misst also etwas.
+#[test]
+fn identitaet_vor_allen_aggregaten() {
+    let fuellen = |a: &Ablage| {
+        a.seite(
+            "d1",
+            "a1",
+            "Notiz eins",
+            "alpha alpha alpha alpha alpha bravo",
+            "2026-11-01T00:00:00Z",
+            "2026-11-01T00:00:00Z",
+        );
+        a.seite(
+            "d2",
+            "a1",
+            "Notiz zwei",
+            "alpha bravo bravo bravo bravo",
+            "2026-11-01T00:00:00Z",
+            "2026-11-01T00:00:00Z",
+        );
+    };
+    let ids = |a: &Ablage| -> Vec<String> {
+        a.zugang()
+            .suchen("alpha bravo", 10, &arbeit())
+            .unwrap()
+            .treffer
+            .into_iter()
+            .map(|t| t.kopf.id)
+            .collect()
+    };
+    let ohne = Ablage::neu();
+    fuellen(&ohne);
+    let kaputt = Ablage::neu();
+    fuellen(&kaputt);
+    let kontrolle = Ablage::neu();
+    fuellen(&kontrolle);
+    for i in 0..40 {
+        let (db, js) = match i % 5 {
+            0 => (format!("k{i}"), json!("d1")),
+            1 => (format!("k{i}"), json!(i)),
+            2 => (format!("böse {i}"), Value::Null),
+            3 => (format!("k{i}\u{0}x"), Value::Null),
+            _ => (format!("k{i}.x"), Value::Null),
+        };
+        seite_mit_kennung(&kaputt, &db, js, "a1", "bravo");
+        seite_mit_kennung(&kontrolle, &format!("k{i}"), Value::Null, "a1", "bravo");
+    }
+    assert_eq!(ids(&ohne).len(), 2);
+    assert_ne!(
+        ids(&ohne),
+        ids(&kontrolle),
+        "Vorbedingung: gültige Seiten verschieben die Rangfolge"
+    );
+    assert_eq!(ids(&ohne), ids(&kaputt));
+    // Auch einzeln gesucht tauchen die beschädigten Sätze nicht auf.
+    assert!(
+        kaputt
+            .zugang()
+            .suchen("bravo", 20, &arbeit())
+            .unwrap()
+            .treffer
+            .iter()
+            .all(|t| t.kopf.id == "d1" || t.kopf.id == "d2")
+    );
+}
+
+/// Codex lva#414 (P2): der beste Treffer steht nach Kennung hinter 5 000 anderen Kandidaten und wird
+/// trotzdem gefunden (kein LIMIT vor dem Ranking).
+#[test]
+fn bester_treffer_hinter_vielen_kandidaten() {
+    let a = Ablage::neu();
+    a.conn.execute_batch("BEGIN").unwrap();
+    for i in 0..5_001 {
+        seite_mit_kennung(
+            &a,
+            &format!("m{i:05}"),
+            Value::Null,
+            "a1",
+            "ein langer text mit dem wort zielwort und viel fuelltext drumherum",
+        );
+    }
+    seite_mit_kennung(&a, "zz-bester", Value::Null, "a1", "zielwort zielwort");
+    a.conn.execute_batch("COMMIT").unwrap();
+    let t = a.zugang().suchen("zielwort", 3, &arbeit()).unwrap().treffer;
+    assert_eq!(t.len(), 3);
+    assert_eq!(t[0].kopf.id, "zz-bester");
+    // Gleichstand: Kennung aufsteigend.
+    assert_eq!(t[1].kopf.id, "m00000");
+    assert_eq!(t[2].kopf.id, "m00001");
+}
+
+/// Häufigkeitszählung und Titelgewicht des gewichteten Substring-BM25, getrennt geprüft.
+#[test]
+fn substring_bm25_zaehlung_und_titelgewicht() {
+    let w = |s: &str| vec![s.to_string()];
+    let nah = |x: f64, y: f64| (x - y).abs() < 1e-9;
+    // Nicht überlappende Vorkommen: "aaaa" enthält "aa" zweimal, "aaa" einmal.
+    // Mittlere Länge = eigene Länge, also Normierung 1: Wert = tf·2,2 / (tf + 1,2).
+    assert!(nah(
+        substring_bm25(&w("aa"), &[1.0], "", "aaaa", 4.0),
+        2.0 * 2.2 / 3.2
+    ));
+    assert!(nah(substring_bm25(&w("aa"), &[1.0], "", "aaa", 3.0), 1.0));
+    assert!(nah(substring_bm25(&w("xyz"), &[1.0], "", "abc", 3.0), 0.0));
+    // Ein Titeltreffer zählt zehnfach: tf = 10.
+    assert!(nah(
+        substring_bm25(&w("abc"), &[1.0], "abc", "", 3.0),
+        10.0 * 2.2 / 11.2
+    ));
+    // Gleich lang, gleiches Wort: Titel vor Text.
+    assert!(
+        substring_bm25(&w("abc"), &[1.0], "abc", "def", 6.0)
+            > substring_bm25(&w("abc"), &[1.0], "def", "abc", 6.0)
+    );
+    // IDF skaliert linear, Wörter addieren sich.
+    let zwei = substring_bm25(
+        &["abc".to_string(), "def".to_string()],
+        &[2.0, 1.0],
+        "",
+        "abc def",
+        7.0,
+    );
+    let einzeln = substring_bm25(&w("abc"), &[2.0], "", "abc def", 7.0)
+        + substring_bm25(&w("def"), &[1.0], "", "abc def", 7.0);
+    assert!(nah(zwei, einzeln));
+}
+
+/// Codex lva#414 (P2): Schemaumgehungen per Teilindex, abweichender Sortierfolge und vorgetäuschter
+/// FTS5-Tabelle werden abgewiesen.
+#[test]
+fn schemaumgehungen_werden_abgewiesen() {
+    let dir = tempfile::tempdir().unwrap();
+    let pfad = dir.path().join("notizbuch.db");
+    let c = Connection::open(&pfad).unwrap();
+    let fts = "CREATE VIRTUAL TABLE seiten_fts USING fts5(id UNINDEXED, titel, text, tokenize = 'trigram');";
+    c.execute_batch(&format!(
+        "CREATE TABLE _wai_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL);
+         INSERT INTO _wai_migrations VALUES (2, 'x');
+         CREATE TABLE saetze (art TEXT NOT NULL, id TEXT NOT NULL, daten TEXT NOT NULL);
+         {fts}"
+    ))
+    .unwrap();
+    let abgewiesen = |was: &str| {
+        assert!(
+            matches!(Zugang::oeffnen(&pfad), Err(Fehler::Version)),
+            "nicht abgewiesen: {was}"
+        );
+    };
+    // Eindeutiger Teilindex, der nichts erfasst.
+    c.execute_batch("CREATE UNIQUE INDEX u ON saetze(art, id) WHERE 0;")
+        .unwrap();
+    abgewiesen("Teilindex WHERE 0");
+    // Eindeutig nur ohne Groß-/Kleinschreibung.
+    c.execute_batch("DROP INDEX u; CREATE UNIQUE INDEX u ON saetze(art, id COLLATE NOCASE);")
+        .unwrap();
+    abgewiesen("NOCASE-Index");
+    // Richtiger Index: geht.
+    c.execute_batch("DROP INDEX u; CREATE UNIQUE INDEX u ON saetze(art, id);")
+        .unwrap();
+    assert!(Zugang::oeffnen(&pfad).is_ok());
+    let ersetzen = |neu: &str, was: &str| {
+        c.execute_batch(&format!("DROP TABLE seiten_fts; {neu}"))
+            .unwrap();
+        abgewiesen(was);
+    };
+    ersetzen(
+        "CREATE TABLE seiten_fts (id TEXT, titel TEXT, text TEXT /* using fts5 */);",
+        "gewöhnliche Tabelle mit Kommentar",
+    );
+    ersetzen(
+        "CREATE VIRTUAL TABLE seiten_fts USING fts5(id UNINDEXED, titel, text);",
+        "FTS5 ohne Trigramm",
+    );
+    ersetzen(
+        "CREATE VIRTUAL TABLE seiten_fts USING fts5(id UNINDEXED, titel, text, tokenize = 'trigram', content = '');",
+        "inhaltslose FTS5",
+    );
+    ersetzen(
+        "CREATE VIRTUAL TABLE seiten_fts USING fts5(id, titel, text, tokenize = 'trigram');",
+        "id indiziert",
+    );
+    ersetzen(
+        "CREATE VIRTUAL TABLE seiten_fts USING fts5(id UNINDEXED, titel, text, tokenize = 'trigram' /* x */);",
+        "Kommentar im Vertrag",
+    );
+    // Gleicher Vertrag, andere Schreibweise (Leerraum, Großschreibung): geht.
+    c.execute_batch(
+        "DROP TABLE seiten_fts; create virtual table seiten_fts using FTS5(
+            id unindexed,  titel,
+            text, tokenize='trigram');",
+    )
+    .unwrap();
+    assert!(Zugang::oeffnen(&pfad).is_ok());
+}
+
+/// Zeitraum (Codex lva#414): Kalenderprüfung, volle Nachkommastellen, Fenstergrenzen.
+#[test]
+fn zeitraum_kalender_und_grenzen() {
+    for falsch in [
+        "2026-02-29T00:00:00Z",
+        "2026-13-01T00:00:00Z",
+        "2026-00-10T00:00:00Z",
+        "2026-04-31T00:00:00Z",
+        "2026-11-00T00:00:00Z",
+        "2026-11-08T24:00:00Z",
+        "2026-11-08T23:60:00Z",
+        "2026-11-08T23:59:60Z",
+        "2026-11-08T12:00:00.Z",
+        "2026-11-08T12:00:00.1234567890Z",
+        "2026-11-08T12:00:00+01:00",
+    ] {
+        assert_eq!(iso_norm(falsch), None, "{falsch}");
+    }
+    assert!(iso_norm("2028-02-29T00:00:00Z").is_some());
+    assert!(iso_norm("2000-02-29T00:00:00Z").is_some());
+    assert_eq!(iso_norm("1900-02-29T00:00:00Z"), None);
+    assert_eq!(
+        iso_norm("2026-11-08T12:00:00Z").unwrap(),
+        "2026-11-08T12:00:00.000000000Z"
+    );
+    // Kein Abschneiden: 0,5 ms liegt nach 0 ms.
+    assert!(iso_norm("2026-11-08T12:00:00.0005Z") > iso_norm("2026-11-08T12:00:00.000Z"));
+
+    let a = Ablage::neu();
+    let z = a.zugang();
+    let f = arbeit();
+    assert!(matches!(
+        z.zeitraum("2026-02-30T00:00:00Z", "2026-12-01T00:00:00Z", 10, &f),
+        Err(Fehler::Eingabe)
+    ));
+    // Leeres Fenster ist ein Eingabefehler.
+    assert!(matches!(
+        z.zeitraum("2026-11-08T10:30:00Z", "2026-11-08T10:30:00Z", 10, &f),
+        Err(Fehler::Eingabe)
+    ));
+    // s1: erstellt 09:00, geändert 10:30. Anfang einschließlich, Ende ausschließlich.
+    let ids = |von: &str, bis: &str| -> Vec<String> {
+        z.zeitraum(von, bis, 50, &f)
+            .unwrap()
+            .into_iter()
+            .map(|k| k.id)
+            .collect()
+    };
+    assert!(ids("2026-11-08T10:30:00Z", "2026-11-08T11:00:00Z").contains(&"s1".to_string()));
+    assert!(!ids("2026-11-08T09:30:00Z", "2026-11-08T10:30:00Z").contains(&"s1".to_string()));
+    assert!(
+        ids("2026-11-08T09:00:00Z", "2026-11-08T09:00:00.000000001Z").contains(&"s1".to_string())
+    );
+    assert!(!ids("2026-11-08T10:30:00.0001Z", "2026-11-08T11:00:00Z").contains(&"s1".to_string()));
+}
+
+/// Codex #1089: eine DB-Kennung mit NUL (`abc\0x`) besteht `length`/`GLOB` in SQL, nicht aber
+/// `gueltige_id`. Sie darf weder zählen noch einen Platz im Top-k-Heap belegen.
+#[test]
+fn nul_in_der_kennung_belegt_keinen_platz() {
+    let a = Ablage::neu();
+    seite_mit_kennung(
+        &a,
+        "abc\u{0}x",
+        Value::Null,
+        "a1",
+        "zielwort zielwort zielwort",
+    );
+    seite_mit_kennung(&a, "gut", Value::Null, "a1", "zielwort und mehr text");
+    let t = a.zugang().suchen("zielwort", 1, &arbeit()).unwrap().treffer;
+    assert_eq!(t.len(), 1);
+    assert_eq!(t[0].kopf.id, "gut");
+    // Aggregat: dieselbe Seitenzahl wie ohne die NUL-Zeile.
+    let n: i64 = a
+        .conn
+        .query_row(
+            &format!("SELECT COUNT(*) FROM seiten_fts {SICHTBAR}"),
+            params![r#"["a1"]"#],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(n, 2, "s1 und gut, nicht abc\\0x");
 }

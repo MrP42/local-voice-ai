@@ -1,4 +1,4 @@
-# Erzeugt von scripts/vendor-wai-suite.py aus https://github.com/MrP42/wai-sdk (crates/wai-notizbuch-zugang, Commit 2c11dc7862a4). Nicht von Hand ändern.
+# Erzeugt von scripts/vendor-wai-suite.py aus https://github.com/MrP42/wai-sdk (crates/wai-notizbuch-zugang, Commit 40cc276de7f5). Nicht von Hand ändern.
 [package]
 name = "wai-notizbuch-zugang"
 version = "0.1.0"

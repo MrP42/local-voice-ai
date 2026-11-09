@@ -261,10 +261,7 @@ pub fn assistent_messung_melden(messung: MessungDto) -> Result<(), String> {
 /// Letzte vom Tor freigegebene Ausgabe dieses Gespraechs (fuer „wiederholen“); `None` ohne eine.
 #[tauri::command]
 #[specta::specta]
-pub fn assistent_letzte_ausgabe(
-    app: AppHandle,
-    conversation_id: Option<String>,
-) -> Option<String> {
+pub fn assistent_letzte_ausgabe(app: AppHandle, conversation_id: Option<String>) -> Option<String> {
     // Widerruf zuerst: eine Ausgabe aus entzogenen Notizbuchdaten wird nicht wiederholt.
     crate::commands::voice_tools::schutz_nachpruefen(&app);
     tor::letzte_ausgabe(conversation_id.as_deref())

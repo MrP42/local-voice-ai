@@ -435,11 +435,8 @@ pub async fn voice_call_chat(
     let sprache = assistent::sprache_der_app(&app);
     // Notizbuchdaten (Codex lva#414): auch der alte Weg ersetzt entzogene Inhalte und schickt
     // geschützte nur an einen lokalen Empfänger.
-    let pruefung = crate::commands::voice_tools::schutz_pruefen(
-        &app,
-        messages,
-        conversation_id.as_deref(),
-    );
+    let pruefung =
+        crate::commands::voice_tools::schutz_pruefen(&app, messages, conversation_id.as_deref());
     let messages = pruefung.nachrichten.clone();
     tor::vor_nachrichten(&messages, sprache, conversation_id.as_deref())?;
     let settings =
@@ -453,6 +450,8 @@ pub async fn voice_call_chat(
         return Err(assistent::schutz::NUR_LOKAL.to_string());
     }
     let messages = tor::mit_markerregel(for_receiver(messages, local), sprache);
+    // Werkzeugrolle (Codex lva#414 M5) auch im alten Weg: Ergebnisse als Datenbloecke.
+    let messages = assistent::schutz::werkzeugrolle(messages, &assistent::schutz::neue_kennung());
     let guarded = needs_pinned(context.is_some(), &messages, local);
     // Erst Abbruch und Widerruf registrieren, dann prüfen: was dazwischen kommt,
     // trifft die Anfrage (der Notify merkt sich den Abbruch).
@@ -608,7 +607,11 @@ pub async fn voice_call_chat(
                 emit_piece(piece);
             }
             tor::ausgabe_merken(conversation_id.as_deref(), &freigegeben);
-            assistent::schutz::abgeleitet_merken(&pruefung, &freigegeben, conversation_id.as_deref());
+            assistent::schutz::abgeleitet_merken(
+                &pruefung,
+                &freigegeben,
+                conversation_id.as_deref(),
+            );
             let _ = app.emit(
                 EVENT,
                 serde_json::json!({

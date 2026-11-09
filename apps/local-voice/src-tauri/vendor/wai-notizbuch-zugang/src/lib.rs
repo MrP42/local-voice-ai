@@ -15,7 +15,8 @@
 pub mod bloecke;
 pub mod eingang;
 
-use std::collections::{BTreeSet, HashMap};
+use std::cmp::Reverse;
+use std::collections::{BTreeSet, BinaryHeap, HashMap};
 use std::path::Path;
 
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
@@ -223,7 +224,11 @@ fn str_feld(v: &Value, f: &str) -> String {
     bloecke::sauber(v.get(f).and_then(Value::as_str).unwrap_or_default())
 }
 
-/// ISO-Zeit `YYYY-MM-DDTHH:MM:SS[.f…]Z` in die feste Form `YYYY-MM-DDTHH:MM:SS.mmmZ` (vergleichbar).
+/// ISO-Zeit `YYYY-MM-DDTHH:MM:SS[.f…]Z` (UTC, 1–9 Nachkommastellen) in die feste Form
+/// `YYYY-MM-DDTHH:MM:SS.nnnnnnnnnZ`, die sich als Text vergleichen lässt. Die Nachkommastellen werden
+/// auf neun aufgefüllt, nicht abgeschnitten: so liegt `…00.0005Z` nicht auf derselben Stelle wie
+/// `…00.000Z`, und die Fenstergrenzen gelten exakt. Kalenderdatum und Uhrzeit müssen gültig sein
+/// (Schaltjahre, keine Schaltsekunde, kein `24:00`), sonst `None`.
 fn iso_norm(s: &str) -> Option<String> {
     let b = s.as_bytes();
     let ziffer = |i: usize| b.get(i).is_some_and(u8::is_ascii_digit);
@@ -240,17 +245,27 @@ fn iso_norm(s: &str) -> Option<String> {
     if !form {
         return None;
     }
+    let zahl = |von: usize, bis: usize| s[von..bis].parse::<u32>().ok();
+    let (jahr, monat, tag) = (zahl(0, 4)?, zahl(5, 7)?, zahl(8, 10)?);
+    let (stunde, minute, sekunde) = (zahl(11, 13)?, zahl(14, 16)?, zahl(17, 19)?);
+    let schalt = jahr % 4 == 0 && (jahr % 100 != 0 || jahr % 400 == 0);
+    let tage = match monat {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if schalt => 29,
+        2 => 28,
+        _ => return None,
+    };
+    if tag == 0 || tag > tage || stunde > 23 || minute > 59 || sekunde > 59 {
+        return None;
+    }
     let rest = &s[19..s.len() - 1];
     let bruch = match rest.strip_prefix('.') {
         None if rest.is_empty() => "",
         Some(f) if !f.is_empty() && f.len() <= 9 && f.bytes().all(|c| c.is_ascii_digit()) => f,
         _ => return None,
     };
-    let mut ms: String = bruch.chars().take(3).collect();
-    while ms.len() < 3 {
-        ms.push('0');
-    }
-    Some(format!("{}.{ms}Z", &s[..19]))
+    Some(format!("{}.{bruch:0<9}Z", &s[..19]))
 }
 
 /// Tabellen und Spalten, die dieser Zugang liest (Codex lva#414: nicht nur die Versionsnummer prüfen).
@@ -276,20 +291,10 @@ fn schema_pruefen(conn: &Connection) -> Ergebnis<()> {
             return Err(Fehler::Version);
         }
     }
-    let fts: Option<String> = conn
-        .query_row(
-            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'seiten_fts'",
-            [],
-            |r| r.get(0),
-        )
-        .optional()
-        .map_err(|_| Fehler::Version)?;
-    if !fts.is_some_and(|s| s.to_ascii_lowercase().contains("using fts5")) {
-        return Err(Fehler::Version);
-    }
+    fts_pruefen(conn)?;
     // Eindeutigkeit (art, id): Primärschlüssel oder eindeutiger Index genau über diese Spalten.
     let mut st = conn
-        .prepare("SELECT name, \"unique\" FROM pragma_index_list('saetze')")
+        .prepare("SELECT name, \"unique\" AND NOT partial FROM pragma_index_list('saetze')")
         .map_err(|_| Fehler::Version)?;
     let indizes: Vec<(String, bool)> = st
         .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
@@ -298,21 +303,77 @@ fn schema_pruefen(conn: &Connection) -> Ergebnis<()> {
         .map_err(|_| Fehler::Version)?;
     let mut eindeutig = false;
     for (name, _) in indizes.into_iter().filter(|(_, u)| *u) {
+        // Schlüsselspalten des Index; eine andere Sortierfolge als BINARY (etwa NOCASE) macht
+        // `(art, id)` nicht eindeutig im Sinne des Vergleichs `s.id = seiten_fts.id`.
         let mut st = conn
-            .prepare("SELECT name FROM pragma_index_info(?1)")
+            .prepare(
+                "SELECT CASE WHEN coll = 'BINARY' THEN name END \
+                 FROM pragma_index_xinfo(?1) WHERE key",
+            )
             .map_err(|_| Fehler::Version)?;
-        let spalten: BTreeSet<String> = st
-            .query_map(params![name], |r| r.get::<_, String>(0))
+        let spalten: BTreeSet<Option<String>> = st
+            .query_map(params![name], |r| r.get::<_, Option<String>>(0))
             .map_err(|_| Fehler::Version)?
             .collect::<Result<_, _>>()
             .map_err(|_| Fehler::Version)?;
-        if spalten == BTreeSet::from(["art".to_string(), "id".to_string()]) {
+        if spalten == BTreeSet::from([Some("art".to_string()), Some("id".to_string())]) {
             eindeutig = true;
         }
     }
     if !eindeutig {
         return Err(Fehler::Version);
     }
+    Ok(())
+}
+
+/// Vertrag des Suchindex wie `notizbuch-store` (Migration 1), ohne Leerraum und klein geschrieben.
+const FTS_SQL: &str =
+    "createvirtualtableseiten_ftsusingfts5(idunindexed,titel,text,tokenize='trigram')";
+/// Schattentabellen einer FTS5-Tabelle mit eigenem Inhalt (kein `content=`, nicht inhaltslos).
+const FTS_SCHATTEN: &[&str] = &["config", "content", "data", "docsize", "idx"];
+
+/// `seiten_fts` ist eine echte FTS5-Tabelle mit genau den Spalten `id UNINDEXED, titel, text`,
+/// Trigramm-Tokenizer und eigenem Inhalt (Codex lva#414: kein Textvergleich auf `using fts5`, den
+/// eine gewöhnliche Tabelle per Kommentar vortäuschen könnte). Kommentare im SQL gelten als fremd.
+fn fts_pruefen(conn: &Connection) -> Ergebnis<()> {
+    let sql: Option<String> = conn
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'seiten_fts'",
+            [],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|_| Fehler::Version)?;
+    let Some(sql) = sql else {
+        return Err(Fehler::Version);
+    };
+    let kompakt: String = sql
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .flat_map(char::to_lowercase)
+        .collect();
+    if sql.contains("--") || sql.contains("/*") || kompakt != FTS_SQL {
+        return Err(Fehler::Version);
+    }
+    for teil in FTS_SCHATTEN {
+        let da: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                params![format!("seiten_fts_{teil}")],
+                |r| r.get(0),
+            )
+            .map_err(|_| Fehler::Version)?;
+        if da != 1 {
+            return Err(Fehler::Version);
+        }
+    }
+    // Probe: MATCH gelingt nur auf einer FTS-Tabelle.
+    conn.query_row(
+        "SELECT COUNT(*) FROM (SELECT 1 FROM seiten_fts WHERE seiten_fts MATCH '\"abc\"' LIMIT 1)",
+        [],
+        |r| r.get::<_, i64>(0),
+    )
+    .map_err(|_| Fehler::Version)?;
     Ok(())
 }
 
@@ -670,7 +731,7 @@ impl Zugang {
         }))
     }
 
-    /// Volltextsuche in freigegebenen Abschnitten. Rangfolge nur aus dem sichtbaren Bestand (BM25F, siehe `suchen_innen`).
+    /// Volltextsuche in freigegebenen Abschnitten. Rangfolge nur aus dem sichtbaren Bestand (gewichtetes Substring-BM25, siehe `suchen_innen`).
     pub fn suchen(&self, anfrage: &str, grenze: usize, f: &Freigabe) -> Ergebnis<Suche> {
         let fts = suche_pruefen(anfrage)?;
         self.lesend(|| self.suche_in_transaktion(anfrage, fts.as_deref(), grenze, f))
@@ -713,8 +774,8 @@ impl Zugang {
 
     /// Treffer und Rangfolge hängen **nur** von sichtbaren Seiten ab (Codex lva#414 M3). FTS5 dient
     /// allein als Filter (passt die Seite?); `bm25()` nutzt die Statistik des ganzen Index und würde
-    /// verborgene Seiten in die Rangfolge einfließen lassen. Stattdessen BM25F über den sichtbaren
-    /// Bestand: Seitenzahl, mittlere Länge und Dokumenthäufigkeit je Wort werden nur über sichtbare
+    /// verborgene Seiten in die Rangfolge einfließen lassen. Stattdessen gewichtetes Substring-BM25
+    /// ([`substring_bm25`]) über den sichtbaren Bestand: Seitenzahl, mittlere Länge und Dokumenthäufigkeit je Wort werden nur über sichtbare
     /// Seiten gezählt, Titeltreffer zählen [`GEWICHT_TITEL`]-fach. Gleichstand: Kennung aufsteigend.
     fn suchen_innen(
         &self,
@@ -755,27 +816,30 @@ impl Zugang {
             idf.push((1.0 + (n - df + 0.5) / (df + 0.5)).ln());
         }
 
+        // Alle sichtbaren Kandidaten werden bewertet (kein LIMIT vor dem Ranking); behalten werden
+        // nur die besten `grenze` in einem begrenzten Heap (Codex lva#414).
         let mut st = self.conn.prepare_cached(&format!(
             "SELECT seiten_fts.id, seiten_fts.titel, seiten_fts.text FROM seiten_fts {SICHTBAR} \
-             AND seiten_fts MATCH ?2 ORDER BY seiten_fts.id LIMIT ?3"
+             AND seiten_fts MATCH ?2"
         ))?;
-        let mut kandidaten: Vec<(f64, String)> = st
-            .query_map(params![erlaubt, fts, MAX_KANDIDATEN as i64], |r| {
-                Ok((
-                    r.get::<_, String>(0)?,
-                    r.get::<_, String>(1)?,
-                    r.get::<_, String>(2)?,
-                ))
-            })?
-            .map(|z| z.map(|(id, titel, text)| (bm25f(&woerter, &idf, &titel, &text, mittel), id)))
-            .collect::<Result<_, _>>()?;
-        kandidaten.sort_by(|a, b| b.0.total_cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+        let mut zeilen = st.query(params![erlaubt, fts])?;
+        let mut beste: BinaryHeap<Reverse<Kandidat>> = BinaryHeap::with_capacity(grenze + 1);
+        while let Some(r) = zeilen.next()? {
+            let (id, titel, text): (String, String, String) = (r.get(0)?, r.get(1)?, r.get(2)?);
+            let wert = substring_bm25(&woerter, &idf, &titel, &text, mittel);
+            beste.push(Reverse(Kandidat { wert, id }));
+            if beste.len() > grenze {
+                beste.pop();
+            }
+        }
+        let kandidaten: Vec<Kandidat> = beste
+            .into_sorted_vec()
+            .into_iter()
+            .map(|Reverse(k)| k)
+            .collect();
 
         let mut treffer = Vec::new();
-        for (_, id) in kandidaten {
-            if treffer.len() >= grenze {
-                break;
-            }
+        for Kandidat { id, .. } in kandidaten {
             let Some(roh) = self.seite_roh(&id)? else {
                 continue;
             };
@@ -849,19 +913,52 @@ impl Zugang {
 }
 
 /// Filter auf sichtbare Seiten in SQL (`?1` = JSON-Liste der freigegebenen, aktiven Abschnitte).
+/// Deckt dieselben Bedingungen ab wie [`Zugang::kopf`] samt [`id_passt`] und [`lebt`]: gültige
+/// DB-Kennung (auch ohne NUL, an dem GLOB und C-Zeichenketten enden), JSON-`id` fehlt, ist `null` oder gleich der DB-Kennung, nicht im Papierkorb,
+/// Abschnitt als Text und freigegeben. So zählen Aggregate und Kandidaten nur, was `kopf` auch
+/// zeigt (Codex lva#414: Identitätsprüfung vor allen Aggregaten).
 const SICHTBAR: &str = "JOIN saetze s ON s.art = 'seiten' AND s.id = seiten_fts.id \
-     WHERE json_valid(s.daten) AND json_extract(s.daten, '$.geloescht') IS NULL \
+     WHERE typeof(s.id) = 'text' AND length(s.id) BETWEEN 1 AND 64 \
+     AND s.id NOT GLOB '*[^-A-Za-z0-9_]*' AND instr(s.id, char(0)) = 0 \
+     AND json_valid(s.daten) AND json_type(s.daten) = 'object' \
+     AND (json_type(s.daten, '$.id') IS NULL OR json_type(s.daten, '$.id') = 'null' \
+          OR (json_type(s.daten, '$.id') = 'text' AND json_extract(s.daten, '$.id') = s.id)) \
+     AND (json_type(s.daten, '$.geloescht') IS NULL OR json_type(s.daten, '$.geloescht') = 'null') \
+     AND json_type(s.daten, '$.abschnittId') = 'text' \
      AND json_extract(s.daten, '$.abschnittId') IN (SELECT value FROM json_each(?1))";
 
-/// Höchstzahl gerankter Kandidaten je Suche (feste Auswahl nach Kennung, unabhängig von Verborgenem).
-const MAX_KANDIDATEN: usize = 5_000;
+/// Ein bewerteter Kandidat; größer = besser (höherer Wert, bei Gleichstand kleinere Kennung).
+#[derive(Debug, PartialEq)]
+struct Kandidat {
+    wert: f64,
+    id: String,
+}
+
+impl Eq for Kandidat {}
+
+impl Ord for Kandidat {
+    fn cmp(&self, o: &Self) -> std::cmp::Ordering {
+        self.wert
+            .total_cmp(&o.wert)
+            .then_with(|| o.id.cmp(&self.id))
+    }
+}
+
+impl PartialOrd for Kandidat {
+    fn partial_cmp(&self, o: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(o))
+    }
+}
+
 /// Gewicht eines Titeltreffers gegenüber dem Text (wie zuvor `bm25(…, 10.0, 1.0)`).
 const GEWICHT_TITEL: f64 = 10.0;
 const BM25_K1: f64 = 1.2;
 const BM25_B: f64 = 0.75;
 
-/// BM25F einer Seite (gefalteter Titel und Text aus dem Index) mit Statistik des sichtbaren Bestands.
-fn bm25f(woerter: &[String], idf: &[f64], titel: &str, text: &str, mittel: f64) -> f64 {
+/// Gewichtetes Substring-BM25 einer Seite (kein BM25F): Häufigkeit je Wort = nicht überlappende
+/// Vorkommen als Teilzeichenkette (`str::matches`) im gefalteten Titel mal [`GEWICHT_TITEL`] plus im
+/// Text; Länge = Zeichen von Titel und Text; IDF und mittlere Länge aus dem sichtbaren Bestand.
+fn substring_bm25(woerter: &[String], idf: &[f64], titel: &str, text: &str, mittel: f64) -> f64 {
     let laenge = (titel.chars().count() + text.chars().count()) as f64;
     let norm = if mittel > 0.0 {
         1.0 - BM25_B + BM25_B * laenge / mittel

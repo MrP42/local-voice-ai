@@ -117,6 +117,28 @@ fn sichtbare_seiten(
         .map_err(|_| ())
 }
 
+/// Sichtbare Abschnitte unter `eintraege` (für Gliederungsergebnisse).
+fn sichtbare_abschnitte(
+    app: &AppHandle,
+    eintraege: &[String],
+) -> Result<std::collections::BTreeSet<String>, ()> {
+    let freigabe = notizbuch::freigabe_aus_einstellung(eintraege);
+    let zugang = Zugang::oeffnen(notizbuch_pfad(app).map_err(|_| ())?).map_err(|_| ())?;
+    let baum = zugang.baum(&freigabe).map_err(|_| ())?;
+    Ok(baum
+        .into_iter()
+        .flat_map(|n| n.abschnitte.into_iter().map(|a| a.id))
+        .collect())
+}
+
+/// Bindet das Schutzregister an seine Datei im App-Datenordner (einmal je Pfad).
+fn schutz_speicher(app: &AppHandle) {
+    match crate::portable::resolve_app_data(app, "assistent/notizbuch-schutz.json") {
+        Ok(p) => schutz::speicher_setzen(&p),
+        Err(_) => log::warn!("Notizbuchschutz: kein App-Datenordner"),
+    }
+}
+
 /// Prüft die Nachrichten eines Modellaufrufs gegen die Notizbuchfreigabe (Widerruf, Ersetzen,
 /// Datenklasse; `assistent::schutz`).
 pub fn schutz_pruefen(
@@ -124,9 +146,14 @@ pub fn schutz_pruefen(
     nachrichten: Vec<crate::voice_call::VoiceCallMessage>,
     gespraech: Option<&str>,
 ) -> schutz::Pruefung {
+    schutz_speicher(app);
     let eintraege = notizbuch_freigabe(app);
     let sichtbar = |ids: &[String]| match &eintraege {
         Some(e) => sichtbare_seiten(app, e, ids),
+        None => Err(()),
+    };
+    let abschnitte = || match &eintraege {
+        Some(e) => sichtbare_abschnitte(app, e),
         None => Err(()),
     };
     schutz::pruefen(
@@ -135,20 +162,27 @@ pub fn schutz_pruefen(
         &schutz::Freigabestand {
             eintraege: eintraege.as_deref(),
             sichtbar: &sichtbar,
+            abschnitte: &abschnitte,
         },
     )
 }
 
 /// Widerruf nachprüfen ohne Modellaufruf (Einstellung geändert, „wiederholen“).
 pub fn schutz_nachpruefen(app: &AppHandle) {
+    schutz_speicher(app);
     let eintraege = notizbuch_freigabe(app);
     let sichtbar = |ids: &[String]| match &eintraege {
         Some(e) => sichtbare_seiten(app, e, ids),
         None => Err(()),
     };
+    let abschnitte = || match &eintraege {
+        Some(e) => sichtbare_abschnitte(app, e),
+        None => Err(()),
+    };
     schutz::widerruf_pruefen(&schutz::Freigabestand {
         eintraege: eintraege.as_deref(),
         sichtbar: &sichtbar,
+        abschnitte: &abschnitte,
     });
 }
 
@@ -312,6 +346,7 @@ pub async fn voice_tool_call(
     if let Ok(text) = &ergebnis {
         // Datenklasse persönlich: bindet Gespräch und Inhalt an lokale Modelle (Codex lva#414 M1).
         if ist_notizbuch {
+            schutz_speicher(&app);
             schutz::notizbuch_ergebnis_merken(text, &freigabe, gespraech.as_deref());
         }
         crate::assistent::tor::werkzeugergebnis_merken(text);
