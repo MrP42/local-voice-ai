@@ -383,7 +383,7 @@ fn freier_name(belegt: &BTreeSet<String>, wunsch: &str) -> String {
     format!("{wunsch} ({})", neue_id(""))
 }
 
-fn bereinigen(name: &str) -> Res<String> {
+pub(super) fn bereinigen(name: &str) -> Res<String> {
     bereinigter_name(name).map_err(|_| Fehler::neu("ablage.name_ungueltig", "Ungültiger Name."))
 }
 

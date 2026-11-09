@@ -15,6 +15,7 @@ pub mod book_talk_eval {
     pub use crate::book_ai::talk::adapter::*;
     pub use crate::book_ai::talk::eval::*;
 }
+mod ablage; // lva#407 D1: Dokumentenablage (Epic #395)
 mod books;
 mod buch_dateien; // lva#365 P3: Notizen, Anhänge, Transkript im Buch-Ordner (Kern)
 mod catalog;
@@ -49,7 +50,6 @@ mod paste_session;
 pub mod portable;
 pub mod portable_parts;
 mod process_guard;
-mod ablage; // lva#407 D1: Dokumentenablage (Epic #395)
 mod projekte; // ADR-0026 PR-7: Suite-Projekte und Recherche
 pub mod provision;
 mod refinement;
