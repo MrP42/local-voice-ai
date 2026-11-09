@@ -125,6 +125,9 @@ pub async fn voice_call_turn(
     // Inhalte erkennen. Sind welche dabei, ist nur ein lokales Modell zulaessig, gleich welche Stufe.
     let pruefung =
         crate::commands::voice_tools::schutz_pruefen(&app, messages, conversation_id.as_deref());
+    if pruefung.gesperrt {
+        return Err(schutz::UNGESICHERT.to_string());
+    }
     let messages = pruefung.nachrichten.clone();
     // ADR-0028 E4: Einstufung in Rust vor jedem Modellaufruf (Sprecher und Denker).
     let sprache = crate::assistent::sprache_der_app(&app);

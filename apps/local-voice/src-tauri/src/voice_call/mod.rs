@@ -437,6 +437,9 @@ pub async fn voice_call_chat(
     // geschützte nur an einen lokalen Empfänger.
     let pruefung =
         crate::commands::voice_tools::schutz_pruefen(&app, messages, conversation_id.as_deref());
+    if pruefung.gesperrt {
+        return Err(assistent::schutz::UNGESICHERT.to_string());
+    }
     let messages = pruefung.nachrichten.clone();
     tor::vor_nachrichten(&messages, sprache, conversation_id.as_deref())?;
     let settings =

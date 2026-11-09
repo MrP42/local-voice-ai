@@ -76,6 +76,8 @@ pub const ENTZOGEN_ERGEBNIS: &str = "[Daten aus Werkzeug, entzogen] Diese Notizb
 /// Ersatz einer Antwort, die auf entzogenen Daten beruhte.
 pub const ENTZOGEN_ANTWORT: &str =
     "(Diese Antwort beruhte auf Notizbuchdaten, deren Freigabe zurückgenommen wurde; Inhalt entfernt.)";
+/// Meldung, wenn der Schutzvermerk nicht dauerhaft gesichert werden kann.
+pub const UNGESICHERT: &str = "Der Schutzvermerk für Notizbuchdaten konnte nicht gespeichert werden. Zur Sicherheit wurde nichts ausgeliefert und nichts gesendet.";
 /// Meldung, wenn ein Cloud-Modell geschützte Daten bekäme.
 pub const NUR_LOKAL: &str = "Das Gespräch enthält persönliche Daten aus dem Notizbuch. Sie bleiben auf diesem Gerät; bitte ein lokales Modell wählen. Es wurde nichts gesendet.";
 
@@ -89,6 +91,9 @@ struct Eintrag {
     /// Gesalzene Hashes der Kerne (dauerhaft, kein Klartext).
     merkmale: BTreeSet<String>,
     seiten: BTreeSet<String>,
+    /// Abschnitte, von denen der Inhalt abhängt (Gliederung); jeder muss sichtbar bleiben.
+    #[serde(default)]
+    abschnitte: BTreeSet<String>,
     freigabe: BTreeSet<String>,
     gespraech: Option<String>,
     entzogen: bool,
@@ -110,7 +115,12 @@ struct Register {
     bestand: Bestand,
     pfad: Option<PathBuf>,
     /// Speicher unlesbar: jedes Gespräch gilt als gebunden (fail closed), nichts wird überschrieben.
+    /// Weil das auch nach einem Neustart gilt, ist der Schutz damit trotzdem dauerhaft.
     defekt: bool,
+    /// Letztes Schreiben fehlgeschlagen oder kein Speicherort: Bindungen sind nicht dauerhaft
+    /// bestätigt. Dann werden keine Notizbuchergebnisse ausgeliefert und geschützte Gespräche nicht
+    /// verarbeitet, bis ein Schreiben gelingt (Codex lva#414 Recheck 2/1).
+    ungesichert: bool,
     entzogen_kerne: VecDeque<String>,
 }
 
@@ -142,6 +152,7 @@ pub fn speicher_setzen(pfad: &Path) {
     }
     r.pfad = Some(pfad.to_path_buf());
     r.defekt = false;
+    r.ungesichert = false;
     match std::fs::read(pfad) {
         Ok(bytes) => match serde_json::from_slice::<Bestand>(&bytes) {
             Ok(b) if b.version == SPEICHER_VERSION && !b.salz.is_empty() => {
@@ -170,7 +181,15 @@ pub fn speicher_setzen(pfad: &Path) {
         }
     }
     salz_sichern(&mut r);
-    speichern(&r);
+    speichern(&mut r);
+}
+
+/// Kein Speicherort ermittelbar: Bindungen könnten nicht dauerhaft werden (fail closed).
+pub fn speicher_unmoeglich() {
+    let mut r = register();
+    if r.pfad.is_none() {
+        r.ungesichert = true;
+    }
 }
 
 fn salz_sichern(r: &mut Register) {
@@ -188,21 +207,37 @@ fn salz_sichern(r: &mut Register) {
     r.bestand.version = SPEICHER_VERSION;
 }
 
-fn speichern(r: &Register) {
-    let (Some(pfad), false) = (&r.pfad, r.defekt) else {
-        return;
+/// Schreibt den Bestand atomar und dauerhaft (Datei und Ordner mit fsync). `true`, wenn der Stand
+/// jetzt bestätigt auf der Platte liegt oder ohnehin dauerhaft geschützt ist (`defekt`) bzw. kein
+/// Speicher gebunden ist (Tests). Bei Fehler bleibt `ungesichert` gesetzt.
+fn speichern(r: &mut Register) -> bool {
+    if r.defekt {
+        return true;
+    }
+    let Some(pfad) = r.pfad.clone() else {
+        return !r.ungesichert;
     };
     let ergebnis = (|| -> std::io::Result<()> {
-        if let Some(dir) = pfad.parent() {
-            std::fs::create_dir_all(dir)?;
-        }
+        use std::io::Write;
+        let dir = pfad.parent().unwrap_or(Path::new("."));
+        std::fs::create_dir_all(dir)?;
         let tmp = pfad.with_extension("json.tmp");
-        std::fs::write(&tmp, serde_json::to_vec(&r.bestand)?)?;
-        std::fs::rename(&tmp, pfad)
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(&serde_json::to_vec(&r.bestand)?)?;
+        f.sync_all()?;
+        drop(f);
+        std::fs::rename(&tmp, &pfad)?;
+        // Den Ordnereintrag des Umbenennens sichern (unter Windows nicht möglich, dort genügt
+        // MoveFileEx mit Durchschreiben, das `rename` verwendet).
+        #[cfg(unix)]
+        std::fs::File::open(dir)?.sync_all()?;
+        Ok(())
     })();
-    if ergebnis.is_err() {
+    r.ungesichert = ergebnis.is_err();
+    if r.ungesichert {
         log::warn!("Notizbuchschutz: Speichern fehlgeschlagen");
     }
+    !r.ungesichert
 }
 
 fn merkmal(salz: &str, kern: &str) -> String {
@@ -303,7 +338,7 @@ fn binden(r: &mut Register, gespraech: Option<&str>) -> bool {
 }
 
 fn aufnehmen(r: &mut Register, mut e: Eintrag) {
-    if e.kerne.is_empty() && e.seiten.is_empty() {
+    if e.kerne.is_empty() && e.seiten.is_empty() && e.abschnitte.is_empty() {
         return;
     }
     salz_sichern(r);
@@ -333,8 +368,16 @@ fn entzogen_kerne_merken(r: &mut Register, kerne: &[String]) {
 
 /// Merkt ein Notizbuchergebnis, das Rust gerade ausliefert (`voice_tool_call`): Satzkerne, Seiten,
 /// die Freigabe, unter der es gelesen wurde, und bindet das Gespräch dauerhaft an lokale Modelle.
-pub fn notizbuch_ergebnis_merken(text: &str, freigabe: &[String], gespraech: Option<&str>) {
+///
+/// `Err`: der Vermerk ist nicht dauerhaft gesichert; das Ergebnis darf dann nicht ausgeliefert
+/// werden (sonst fehlte die Bindung nach einem Neustart).
+pub fn notizbuch_ergebnis_merken(
+    text: &str,
+    freigabe: &[String],
+    gespraech: Option<&str>,
+) -> Result<(), ()> {
     let (kerne, seiten) = zerlegen(text);
+    let abschnitte = abschnitte_aus(text);
     let mut r = register();
     binden(&mut r, gespraech);
     aufnehmen(
@@ -342,32 +385,54 @@ pub fn notizbuch_ergebnis_merken(text: &str, freigabe: &[String], gespraech: Opt
         Eintrag {
             kerne,
             seiten,
+            abschnitte,
             freigabe: freigabe.iter().cloned().collect(),
             gespraech: gespraech.filter(|g| !g.is_empty()).map(String::from),
             ..Default::default()
         },
     );
-    speichern(&r);
+    if speichern(&mut r) {
+        Ok(())
+    } else {
+        Err(())
+    }
+}
+
+/// Abschnitte eines Gliederungsergebnisses (siehe [`nb_block`]); sonst leer.
+fn abschnitte_aus(text: &str) -> BTreeSet<String> {
+    if !text.contains("\"notizbuecher\"") {
+        return BTreeSet::new();
+    }
+    nb_block("notizbuch_baum", text).abschnitte
 }
 
 /// Entzieht alle Einträge, deren Freigabe nicht mehr gilt; liefert die Zahl der entzogenen.
 /// Entzogen bleibt dauerhaft vermerkt (auch über einen Neustart); Belege des Tors und die gemerkte
 /// letzte Ausgabe mit diesen Inhalten verschwinden mit.
 pub fn widerruf_pruefen(stand: &Freigabestand<'_>) -> usize {
-    let (kopie, alle_seiten): (Vec<(u64, BTreeSet<String>, BTreeSet<String>)>, Vec<String>) = {
+    type Abh = (u64, BTreeSet<String>, BTreeSet<String>, BTreeSet<String>);
+    let (kopie, alle_seiten, mit_abschnitten): (Vec<Abh>, Vec<String>, bool) = {
         let r = register();
-        let aktiv: Vec<_> = r
+        let aktiv: Vec<Abh> = r
             .bestand
             .eintraege
             .iter()
             .filter(|e| !e.entzogen)
-            .map(|e| (e.nr, e.seiten.clone(), e.freigabe.clone()))
+            .map(|e| {
+                (
+                    e.nr,
+                    e.seiten.clone(),
+                    e.abschnitte.clone(),
+                    e.freigabe.clone(),
+                )
+            })
             .collect();
         if aktiv.is_empty() {
             return 0;
         }
-        let seiten: BTreeSet<String> = aktiv.iter().flat_map(|(_, s, _)| s.clone()).collect();
-        (aktiv, seiten.into_iter().collect())
+        let seiten: BTreeSet<String> = aktiv.iter().flat_map(|(_, s, _, _)| s.clone()).collect();
+        let mit = aktiv.iter().any(|(_, _, a, _)| !a.is_empty());
+        (aktiv, seiten.into_iter().collect(), mit)
     };
     // Die Datenbank wird ohne gehaltene Sperre gelesen.
     let jetzt: Option<BTreeSet<String>> = stand
@@ -378,20 +443,31 @@ pub fn widerruf_pruefen(stand: &Freigabestand<'_>) -> usize {
         Some(_) if alle_seiten.is_empty() => Ok(BTreeSet::new()),
         Some(_) => (stand.sichtbar)(&alle_seiten),
     };
+    let abschnitte: Result<BTreeSet<String>, ()> = match &jetzt {
+        None => Err(()),
+        Some(_) if !mit_abschnitten => Ok(BTreeSet::new()),
+        Some(_) => (stand.abschnitte)(),
+    };
     let weg: BTreeSet<u64> = kopie
         .iter()
-        .filter(|(_, seiten, freigabe)| {
+        .filter(|(_, seiten, abschn, freigabe)| {
             let Some(jetzt) = &jetzt else { return true };
             let Ok(sichtbar) = &sichtbar else { return true };
-            !freigabe.is_subset(jetzt) || !seiten.is_subset(sichtbar)
+            let abschnitte_weg = match &abschnitte {
+                Ok(a) => !abschn.is_subset(a),
+                Err(()) => !abschn.is_empty(),
+            };
+            !freigabe.is_subset(jetzt) || !seiten.is_subset(sichtbar) || abschnitte_weg
         })
-        .map(|(nr, _, _)| *nr)
+        .map(|(nr, _, _, _)| *nr)
         .collect();
     if weg.is_empty() {
         return 0;
     }
     let mut r = register();
     let mut kerne = Vec::new();
+    let mut merkmale = BTreeSet::new();
+    let mut gespraeche: BTreeSet<Option<String>> = BTreeSet::new();
     for e in r
         .bestand
         .eintraege
@@ -400,11 +476,25 @@ pub fn widerruf_pruefen(stand: &Freigabestand<'_>) -> usize {
     {
         e.entzogen = true;
         kerne.extend(e.kerne.iter().cloned());
+        merkmale.extend(e.merkmale.iter().cloned());
+        gespraeche.insert(e.gespraech.clone());
     }
+    let salz = r.bestand.salz.clone();
     entzogen_kerne_merken(&mut r, &kerne);
-    speichern(&r);
+    speichern(&mut r);
     drop(r);
-    tor::vergessen_wenn(|k| kerne.iter().any(|x| k.contains(x.as_str())));
+    // Caches des Tors: über Gespräch (Provenienz), volle Kerne und dauerhafte Merkmale, damit auch
+    // ein alter Eintrag ohne Kerne „wiederholen“ nicht mehr bedient (Codex lva#414 Recheck 2).
+    for g in &gespraeche {
+        tor::ausgabe_vergessen(g.as_deref());
+    }
+    tor::vergessen_wenn(|t| {
+        trifft(&kern_nachricht(t), &kerne)
+            || (!salz.is_empty()
+                && nachrichtenkerne(t)
+                    .iter()
+                    .any(|k| merkmale.contains(&merkmal(&salz, k))))
+    });
     weg.len()
 }
 
@@ -419,6 +509,9 @@ pub struct Pruefung {
     pub geschuetzt: bool,
     /// Ersetzte Nachrichten bzw. Ergebnisblöcke.
     pub ersetzt: usize,
+    /// Geschützt, aber die Bindung ist nicht dauerhaft gesichert: nicht verarbeiten
+    /// ([`UNGESICHERT`]).
+    pub gesperrt: bool,
     quelle: Quelle,
 }
 
@@ -426,6 +519,7 @@ pub struct Pruefung {
 #[derive(Debug, Default, Clone)]
 struct Quelle {
     seiten: BTreeSet<String>,
+    abschnitte: BTreeSet<String>,
     freigabe: BTreeSet<String>,
 }
 
@@ -612,6 +706,7 @@ pub fn pruefen(
                         // und der jetzigen Freigabe.
                         p.geschuetzt = true;
                         p.quelle.seiten.extend(b.seiten.iter().cloned());
+                        p.quelle.abschnitte.extend(b.abschnitte.iter().cloned());
                         p.quelle.freigabe.extend(jetzt.iter().cloned());
                     }
                     neu.push_str(block);
@@ -641,6 +736,7 @@ pub fn pruefen(
         {
             p.geschuetzt = true;
             p.quelle.seiten.extend(e.seiten.iter().cloned());
+            p.quelle.abschnitte.extend(e.abschnitte.iter().cloned());
             p.quelle.freigabe.extend(e.freigabe.iter().cloned());
         }
         aus.push(m);
@@ -655,10 +751,21 @@ pub fn pruefen(
             .filter(|e| !e.entzogen && e.gespraech.as_deref() == Some(g))
         {
             p.quelle.seiten.extend(e.seiten.iter().cloned());
+            p.quelle.abschnitte.extend(e.abschnitte.iter().cloned());
             p.quelle.freigabe.extend(e.freigabe.iter().cloned());
         }
     }
     p.nachrichten = aus;
+    drop(r);
+    // Ein geschütztes Gespräch wird vor dem Modellaufruf dauerhaft gebunden; gelingt das nicht,
+    // unterbleibt die Verarbeitung (sonst fehlte die Bindung der Antwort nach einem Neustart).
+    if p.geschuetzt {
+        let mut r = register();
+        let neu = binden(&mut r, gespraech);
+        if (neu || r.ungesichert) && !speichern(&mut r) {
+            p.gesperrt = true;
+        }
+    }
     p
 }
 
@@ -679,12 +786,13 @@ pub fn abgeleitet_merken(p: &Pruefung, ausgabe: &str, gespraech: Option<&str>) {
         Eintrag {
             kerne,
             seiten: p.quelle.seiten.clone(),
+            abschnitte: p.quelle.abschnitte.clone(),
             freigabe: p.quelle.freigabe.clone(),
             gespraech: gespraech.filter(|g| !g.is_empty()).map(String::from),
             ..Default::default()
         },
     );
-    speichern(&r);
+    speichern(&mut r);
 }
 
 /// Sicherheitsvertrag zur Werkzeugrolle (an die erste Systemnachricht).

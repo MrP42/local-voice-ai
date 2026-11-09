@@ -135,7 +135,10 @@ fn sichtbare_abschnitte(
 fn schutz_speicher(app: &AppHandle) {
     match crate::portable::resolve_app_data(app, "assistent/notizbuch-schutz.json") {
         Ok(p) => schutz::speicher_setzen(&p),
-        Err(_) => log::warn!("Notizbuchschutz: kein App-Datenordner"),
+        Err(_) => {
+            log::warn!("Notizbuchschutz: kein App-Datenordner");
+            schutz::speicher_unmoeglich();
+        }
     }
 }
 
@@ -345,9 +348,12 @@ pub async fn voice_tool_call(
     // Belegregel im Orchestrator: nur was Rust selbst geliefert hat, gilt dort als Beleg.
     if let Ok(text) = &ergebnis {
         // Datenklasse persönlich: bindet Gespräch und Inhalt an lokale Modelle (Codex lva#414 M1).
+        // Erst wenn der Vermerk dauerhaft gesichert ist, verlässt das Ergebnis Rust (Recheck 1).
         if ist_notizbuch {
             schutz_speicher(&app);
-            schutz::notizbuch_ergebnis_merken(text, &freigabe, gespraech.as_deref());
+            if schutz::notizbuch_ergebnis_merken(text, &freigabe, gespraech.as_deref()).is_err() {
+                return Err(schutz::UNGESICHERT.to_string());
+            }
         }
         crate::assistent::tor::werkzeugergebnis_merken(text);
     }

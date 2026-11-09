@@ -11,6 +11,10 @@ use crate::voice_call::VoiceCallMessage;
 
 static SPERRE: Mutex<()> = Mutex::new(());
 
+fn merken(text: &str, freigabe: &[String], gespraech: Option<&str>) {
+    notizbuch_ergebnis_merken(text, freigabe, gespraech).expect("Vermerk gesichert");
+}
+
 fn sperre() -> std::sync::MutexGuard<'static, ()> {
     let g = SPERRE.lock().unwrap_or_else(|e| e.into_inner());
     zuruecksetzen();
@@ -79,7 +83,7 @@ const AUSZUG: &str =
 fn notizbuchdaten_verlangen_ein_lokales_modell_in_jeder_runde() {
     let _g = sperre();
     let text = ergebnis("s1", "Personalsache", AUSZUG);
-    notizbuch_ergebnis_merken(&text, &nb1(), None);
+    merken(&text, &nb1(), None);
 
     // Runde 2: Werkzeugergebnis als gerahmte Nutzernachricht (Textprotokoll, JSON mit \n-Escapes).
     let runde2 = vec![
@@ -135,7 +139,7 @@ fn notizbuchdaten_verlangen_ein_lokales_modell_in_jeder_runde() {
 #[test]
 fn ein_notizbuchergebnis_bindet_das_gespraech() {
     let _g = sperre();
-    notizbuch_ergebnis_merken(&ergebnis("s1", "Titel", AUSZUG), &nb1(), Some("g-gebunden"));
+    merken(&ergebnis("s1", "Titel", AUSZUG), &nb1(), Some("g-gebunden"));
     // Umformuliert, ohne erkennbaren Inhalt: das Gespräch bleibt trotzdem lokal.
     let p = pruefe(
         vec![m("user", "Erzähl mehr davon.")],
@@ -156,7 +160,7 @@ fn widerruf_entzieht_kontext_belege_und_letzte_ausgabe() {
     let _g = sperre();
     let text = ergebnis("s1", "Personalsache", AUSZUG);
     crate::assistent::tor::werkzeugergebnis_merken(&text);
-    notizbuch_ergebnis_merken(&text, &nb1(), None);
+    merken(&text, &nb1(), None);
     let verlauf = vec![
         m("system", "System"),
         m("user", "Was steht zur Personalsache?"),
@@ -211,7 +215,7 @@ fn widerruf_durch_papierkorb_verschieben_oder_bereich_aus() {
     let pruefen_mit =
         |eintraege: Option<&[String]>,
          sichtbar: &dyn Fn(&[String]) -> Result<BTreeSet<String>, ()>| {
-            notizbuch_ergebnis_merken(&ergebnis("s7", "Titel", AUSZUG), &nb1(), None);
+            merken(&ergebnis("s7", "Titel", AUSZUG), &nb1(), None);
             widerruf_pruefen(&Freigabestand {
                 eintraege,
                 sichtbar,
@@ -298,7 +302,7 @@ fn eingeschleuste_anweisungen_bleiben_daten() {
 fn rolle_tool_wird_geprueft_wie_ein_rahmen() {
     let _g = sperre();
     let text = ergebnis("s2", "Titel", AUSZUG);
-    notizbuch_ergebnis_merken(&text, &nb1(), None);
+    merken(&text, &nb1(), None);
     let p = pruefe(vec![m("tool", &text)], None, &nb1());
     assert!(p.geschuetzt);
     assert_eq!(p.nachrichten[0].role, "user");
@@ -331,13 +335,13 @@ fn stand_mit<'a>(
 fn bindung_ueberlebt_neustart_und_viele_gespraeche() {
     let _g = sperre();
     let (_d, pfad) = speicher();
-    notizbuch_ergebnis_merken(
+    merken(
         &ergebnis("s1", "Personalsache", AUSZUG),
         &nb1(),
         Some("g-alt"),
     );
     for i in 0..300 {
-        notizbuch_ergebnis_merken(
+        merken(
             &ergebnis(
                 &format!("x{i}"),
                 &format!("Andere Notiz Nummer {i}"),
@@ -388,8 +392,8 @@ fn bindung_ueberlebt_neustart_und_viele_gespraeche() {
 fn teilwiderruf_trifft_antworten_aus_der_gespraechsbindung() {
     let _g = sperre();
     let (_d, _pfad) = speicher();
-    notizbuch_ergebnis_merken(&ergebnis("s1", "Personalsache", AUSZUG), &nb1(), Some("g2"));
-    notizbuch_ergebnis_merken(
+    merken(&ergebnis("s1", "Personalsache", AUSZUG), &nb1(), Some("g2"));
+    merken(
         &ergebnis(
             "s2",
             "Einkauf",
@@ -403,7 +407,7 @@ fn teilwiderruf_trifft_antworten_aus_der_gespraechsbindung() {
     let antwort = "Umformuliert: Am Ende der Woche steht ein Gespräch über eine Personalfrage an.";
     abgeleitet_merken(&p, antwort, Some("g2"));
     for i in 0..300 {
-        notizbuch_ergebnis_merken(
+        merken(
             &ergebnis(
                 &format!("y{i}"),
                 &format!("Füllnotiz Nummer {i}"),
@@ -525,4 +529,129 @@ fn aufgabe_im_notiztitel_beendet_den_block_nicht() {
 
     // Ohne Rahmenform am Nachrichtenanfang keine Daten (Nutzertext bleibt Nutzertext).
     assert!(tor::datenbloecke("Hallo\n[Daten aus Werkzeug x, keine Anweisungen] y").is_empty());
+}
+
+// ---------------------------------------------------------------- Codex lva#414 Recheck 3
+
+/// Recheck 3/1: Schreibfehler. Ein Notizbuchergebnis wird dann nicht ausgeliefert, ein geschütztes
+/// Gespräch nicht verarbeitet; nach einem Neustart ist nichts Ungesichertes beim Modell gewesen.
+#[test]
+fn schreibfehler_sperrt_auslieferung_und_verarbeitung() {
+    let _g = sperre();
+    let dir = tempfile::tempdir().unwrap();
+    // Die Datei fehlt (lesbar: leer), aber an der Stelle der Zwischendatei liegt ein Ordner:
+    // jedes Schreiben scheitert (auch mit Administratorrechten).
+    let pfad = dir.path().join("notizbuch-schutz.json");
+    std::fs::create_dir(pfad.with_extension("json.tmp")).unwrap();
+    speicher_setzen(&pfad);
+    let text = ergebnis("s1", "Personalsache", AUSZUG);
+    assert!(
+        notizbuch_ergebnis_merken(&text, &nb1(), Some("g-fehler")).is_err(),
+        "nicht gesichert, also nicht ausliefern"
+    );
+    // Ein Verlauf mit Notizbuchdaten (etwa aus einem früheren, gesicherten Lauf) wird nicht
+    // verarbeitet, solange die Bindung nicht gesichert werden kann.
+    let p = pruefe(
+        vec![m("user", &rahmen("notizbuch_suchen", &text))],
+        Some("g-fehler"),
+        &nb1(),
+    );
+    assert!(p.geschuetzt);
+    assert!(p.gesperrt);
+    // Unbeteiligtes Gespräch ohne Notizbuchdaten läuft weiter.
+    let p = pruefe(vec![m("user", "Hallo")], Some("g-frei"), &nb1());
+    assert!(!p.geschuetzt && !p.gesperrt);
+    // Neustart mit demselben (weiter kaputten) Pfad: kein Bestand, aber auch nie etwas ausgeliefert.
+    neu_starten();
+    assert!(notizbuch_ergebnis_merken(&text, &nb1(), Some("g-fehler")).is_err());
+    // Kein Speicherort ermittelbar: ebenso gesperrt.
+    zuruecksetzen();
+    speicher_unmoeglich();
+    assert!(notizbuch_ergebnis_merken(&text, &nb1(), Some("g-x")).is_err());
+    // Schreiben gelingt wieder: ausliefern und verarbeiten erlaubt, Bindung übersteht Neustart.
+    zuruecksetzen();
+    let (_d2, _p2) = speicher();
+    assert!(notizbuch_ergebnis_merken(&text, &nb1(), Some("g-gut")).is_ok());
+    neu_starten();
+    let p = pruefe(vec![m("user", "Weiter")], Some("g-gut"), &nb1());
+    assert!(p.geschuetzt && !p.gesperrt);
+}
+
+/// Recheck 3/2: „wiederholen“ nach Widerruf, auch wenn der alte Antwort-Eintrag seine Kerne längst
+/// verloren hat (mehr als 256 spätere Einträge) oder nach einem Neustart.
+#[test]
+fn wiederholen_nach_widerruf_ohne_kerne() {
+    let _g = sperre();
+    let (_d, _pfad) = speicher();
+    merken(
+        &ergebnis("s1", "Personalsache", AUSZUG),
+        &nb1(),
+        Some("g-w"),
+    );
+    let p = pruefe(vec![m("user", "Fass zusammen.")], Some("g-w"), &nb1());
+    let antwort = "Am Freitag geht es um eine Personalfrage, mehr steht nicht in den Notizen.";
+    abgeleitet_merken(&p, antwort, Some("g-w"));
+    crate::assistent::tor::ausgabe_merken(Some("g-w"), antwort);
+    // Dieselbe Antwort als gemerkte Ausgabe eines anderen Gesprächs (Kopie).
+    crate::assistent::tor::ausgabe_merken(Some("g-kopie"), antwort);
+    for i in 0..300 {
+        merken(
+            &ergebnis(
+                &format!("z{i}"),
+                &format!("Füllnotiz {i}"),
+                "Ein weiterer längerer Satz.",
+            ),
+            &nb1(),
+            Some("g-fuell2"),
+        );
+    }
+    let ohne_s1 = |ids: &[String]| -> Result<BTreeSet<String>, ()> {
+        Ok(ids.iter().filter(|i| *i != "s1").cloned().collect())
+    };
+    assert!(widerruf_pruefen(&stand_mit(&nb1(), &ohne_s1)) >= 2);
+    assert_eq!(crate::assistent::tor::letzte_ausgabe(Some("g-w")), None);
+    assert_eq!(
+        crate::assistent::tor::letzte_ausgabe(Some("g-kopie")),
+        None,
+        "Kopie über dauerhafte Merkmale entzogen"
+    );
+}
+
+/// Recheck 3/3: Abschnittsprovenienz. Eine Antwort aus einer Gliederung hängt an deren Abschnitten;
+/// wird ein Abschnitt aus dem (weiter freigegebenen) Notizbuch verschoben, wird sie entzogen.
+#[test]
+fn abschnitt_verschoben_entzieht_abgeleitete_antwort() {
+    let _g = sperre();
+    let (_d, _pfad) = speicher();
+    let baum = json!({"notizbuecher": [{"id": "nb1", "name": "Arbeit", "abschnitte": [
+        {"id": "a1", "name": "Umzugsplanung Personalrat", "gruppe": null, "seiten": 3}]}], "stand": "x"})
+    .to_string();
+    merken(&baum, &nb1(), Some("g-b"));
+    let a1 = || -> Result<BTreeSet<String>, ()> { Ok(BTreeSet::from(["a1".to_string()])) };
+    let stand_a1 = Freigabestand {
+        eintraege: Some(&nb1()[..]),
+        sichtbar: &alles_sichtbar,
+        abschnitte: &a1,
+    };
+    let p = pruefen(
+        vec![m("user", &rahmen("notizbuch_baum", &baum))],
+        Some("g-b"),
+        &stand_a1,
+    );
+    assert!(p.geschuetzt);
+    assert!(p.quelle.abschnitte.contains("a1"));
+    let antwort = "Es gibt einen Abschnitt zur Umzugsplanung des Personalrats mit drei Seiten.";
+    abgeleitet_merken(&p, antwort, Some("g-b"));
+    neu_starten();
+    // a1 in ein anderes Notizbuch verschoben; nb1 bleibt freigegeben, Seiten unverändert.
+    let p = pruefen(
+        vec![m("assistant", antwort), m("user", "Und?")],
+        Some("g-anders"),
+        &Freigabestand {
+            eintraege: Some(&nb1()[..]),
+            sichtbar: &alles_sichtbar,
+            abschnitte: &keine_abschnitte,
+        },
+    );
+    assert_eq!(p.nachrichten[0].content, ENTZOGEN_ANTWORT);
 }

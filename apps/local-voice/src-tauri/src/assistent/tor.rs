@@ -1077,17 +1077,17 @@ pub fn ausgabe_vergessen(conversation_id: Option<&str>) {
     a.reihenfolge.retain(|k| *k != key);
 }
 
-/// Vergisst Belege und gemerkte Ausgaben, deren Kern `trifft` (Widerruf, `schutz`).
+/// Vergisst Belege und gemerkte Ausgaben, deren Text `trifft` (Widerruf, `schutz`).
 pub(crate) fn vergessen_wenn(trifft: impl Fn(&str) -> bool) {
     ERGEBNISSE
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .retain(|r| !trifft(&kern(r)));
+        .retain(|r| !trifft(r));
     let mut a = AUSGABEN.lock().unwrap_or_else(|e| e.into_inner());
     let weg: Vec<String> = a
         .je_gespraech
         .iter()
-        .filter(|(_, t)| trifft(&kern(t)))
+        .filter(|(_, t)| trifft(t))
         .map(|(k, _)| k.clone())
         .collect();
     for k in weg {
