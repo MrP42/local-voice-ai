@@ -312,7 +312,7 @@ struct ShelfItem: View {
                 ShelfDownloadStatus(book: book)
             } else {
             ProgressView(value: book.finished ? 1 : LibraryProgress.fraction(rec)).tint(VoicePalette.accent)
-            // Fester Platz für das Symbol: Lange Angaben brechen um und rücken nicht darunter.
+            // Statuszeile einzeilig (lva#421): Stand links, Sprachkürzel und Download-Symbol rechts.
             metaLayout {
                 Text(audio || library.audioInAccount(active) ? (rec == nil ? "Hörbuch · neu" : "Hörbuch · \(LibraryFormat.percent(LibraryProgress.fraction(rec)))")
                            : "Text · \(LibraryFormat.percent(LibraryProgress.fraction(rec)))")
@@ -321,10 +321,20 @@ struct ShelfItem: View {
                     .lineLimit(typeSize.isAccessibilitySize ? nil : 1)
                     .minimumScaleFactor(typeSize.isAccessibilitySize ? 1 : 0.75)
                     .fixedSize(horizontal: false, vertical: typeSize.isAccessibilitySize)
-                    .frame(maxWidth: typeSize.isAccessibilitySize ? nil : .infinity, alignment: .leading)
-                // Sprachkürzel klein und rechtsbündig in der Statuszeile, vor dem Download-Symbol.
-                LanguageBadges(book: book, compact: true).fixedSize()
-                if audio || !typeSize.isAccessibilitySize { DownloadedMark(visible: audio) }
+                    .layoutPriority(1)
+                if typeSize.isAccessibilitySize {
+                    LanguageBadges(book: book, compact: true)
+                } else {
+                    Spacer(minLength: 0)
+                    // Sprachkürzel klein und rechtsbündig in der Statuszeile, vor dem Download-Symbol.
+                    // Reicht die Breite nicht, nur die aktive Sprache, sonst keine; VoiceOver nennt alle.
+                    ViewThatFits(in: .horizontal) {
+                        LanguageBadges(book: book, compact: true).fixedSize()
+                        LanguageBadges(book: book, compact: true, onlyActive: true).fixedSize()
+                        EmptyView()
+                    }
+                }
+                if audio { DownloadedMark() }
             }
             }
         }

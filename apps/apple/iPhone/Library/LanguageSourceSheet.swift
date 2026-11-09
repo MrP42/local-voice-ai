@@ -227,14 +227,16 @@ struct LanguageBadges: View {
     let book: LibraryBook
     /// Klein für die Statuszeile der Bibliothekskachel (lva#421).
     var compact = false
-    @ScaledMetric(relativeTo: .caption2) private var compactSize: CGFloat = 9
+    /// Nur das aktive Kürzel, wenn in der Kachel nicht alle Platz haben.
+    var onlyActive = false
+    @ScaledMetric(relativeTo: .caption2) var compactSize: CGFloat = 9
 
     var body: some View {
         let editions = BookEditions(book: book)
         if editions.hasLanguages {
             let current = editions.readingEdition?.id
             HStack(spacing: compact ? 2 : 4) {
-                ForEach(editions.editions) { e in
+                ForEach(onlyActive ? editions.editions.filter { $0.id == current } : editions.editions) { e in
                     let on = e.id == current
                     Text(e.languageShort).font(compact ? .system(size: compactSize, weight: .bold) : .caption2.weight(.bold))
                         .foregroundStyle(on ? Color.white : VoicePalette.secondaryText)
