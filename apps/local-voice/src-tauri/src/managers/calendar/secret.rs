@@ -1,5 +1,6 @@
-//! Geheimnisse der Kalenderquellen (ICS-Adresse, spaeter Graph-Token) unter
-//! Windows mit DPAPI verschluesselt in `<appdata>/secrets/<id>.bin`
+//! Geheimnisse der Kalenderquellen (ICS-Adresse, Graph-Token) und weiterer Zugaenge,
+//! unter Windows mit DPAPI, unter macOS mit einem Schluessel im Anmelde-Schluesselbund
+//! verschluesselt in `<appdata>/secrets/<id>.bin`
 //! (M5, `entwurf/m5-m6-kalender-export.md` §3 „Geheimnisse“).
 //!
 //! - Nicht in `settings_store.json`, nicht in `meetings.db`, nicht im Geraete-Sync.
@@ -497,6 +498,7 @@ mod sealed {
 #[cfg(target_os = "macos")]
 mod dpapi {
     use super::sealed::{self, KEY_LEN};
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Mutex;
     use zeroize::Zeroizing;
 
@@ -507,7 +509,17 @@ mod dpapi {
     /// `errSecDuplicateItem`
     const DUPLICATE: i32 = -25299;
 
+    /// `userCanceledErr` (Abfrage abgebrochen bzw. „Nicht erlauben“)
+    const CANCELED: i32 = -128;
+    /// `errSecAuthFailed` (falsches Passwort)
+    const AUTH_FAILED: i32 = -25293;
+    const DENIED_MSG: &str = "Der Zugriff auf den Schlüsselbund wurde abgelehnt. Die gespeicherten Zugänge bleiben erhalten; macOS fragt beim nächsten App-Start oder beim Speichern eines Zugangs erneut.";
+
     static KEY: Mutex<Option<Zeroizing<[u8; KEY_LEN]>>> = Mutex::new(None);
+    /// Einmal abgelehnt: bis zum nächsten ausdrücklichen Speichern nicht erneut fragen, sonst
+    /// erzeugt jede Statusabfrage und jeder Sync einen neuen Passwortdialog (ohne Team-ID fragt
+    /// macOS nach jedem Update, lva#429).
+    static DENIED: AtomicBool = AtomicBool::new(false);
 
     fn as_key(bytes: &[u8]) -> Result<Zeroizing<[u8; KEY_LEN]>, String> {
         let arr: [u8; KEY_LEN] = bytes
@@ -523,6 +535,10 @@ mod dpapi {
                 as_key(&v).map(Some)
             }
             Err(e) if e.code() == NOT_FOUND => Ok(None),
+            Err(e) if e.code() == CANCELED || e.code() == AUTH_FAILED => {
+                DENIED.store(true, Ordering::SeqCst);
+                Err(DENIED_MSG.to_string())
+            }
             Err(e) => Err(format!(
                 "Der Schlüsselbund verweigert den Zugriff auf den Tresor (Zugriff in der Abfrage erlauben, Code {}).",
                 e.code()
@@ -542,6 +558,12 @@ mod dpapi {
             let k = sealed::new_key();
             *slot = Some(k.clone());
             return Ok(Some(k));
+        }
+        // Speichern ist eine ausdrückliche Handlung: dann darf macOS wieder fragen.
+        if create {
+            DENIED.store(false, Ordering::SeqCst);
+        } else if DENIED.load(Ordering::SeqCst) {
+            return Err(DENIED_MSG.to_string());
         }
         if let Some(k) = read()? {
             *slot = Some(k.clone());

@@ -131,7 +131,10 @@ Its designated requirement (`certificate leaf = H"…"`) stays the same across b
 the Accessibility/Microphone grants after updates. The keychain is different (measured 09.11.2026): the
 vault key item (`tresor-v1`, lva#134) is bound to a partition `cdhash:…`, because a self-signed
 certificate has no Team ID. After every update macOS therefore asks once for the login password before
-the app may read the vault key ("Immer erlauben" adds the new build). Accepted for 0.24.x and noted in
+the app may read the vault key ("Immer erlauben" adds the new build; plain "Erlauben" asks again at
+every app start). "Nicht erlauben" leaves the stored credentials untouched; the app then stops asking
+until the next app start or until the user saves a credential, and reports the keychain refusal
+instead of a broken credential. Accepted for 0.24.x and noted in
 the release text; the stable fix is a paid Developer ID (partition `teamid:…`), see lva#429. Set it up once on the MacBook with `scripts/macos-signing-setup.sh` (Mac unlocked; key and
 certificate land in `~/.tauri/local-voice-signing.{key,crt}` – back them up with the updater key).
 Without it the release script stops; `LVA_ADHOC=1` forces the old ad-hoc signature. For a local test

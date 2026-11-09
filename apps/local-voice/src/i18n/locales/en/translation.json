@@ -553,7 +553,7 @@
           "hint": "Only for “Create voice”. The key is stored encrypted on this computer and sent only to api.gradium.ai. Saving sends nothing over the network.",
           "present": "A key is saved.",
           "missing": "No key saved.",
-          "unsupported": "This system cannot store the key encrypted (Windows only). “Create voice” is not available here.",
+          "unsupported": "This system cannot store the key encrypted (Windows and macOS only). “Create voice” is not available here.",
           "problem": "The saved key cannot be read: {{problem}}",
           "label": "Gradium API key",
           "placeholder": "Enter API key",
@@ -6814,13 +6814,13 @@
         },
         "webhook": {
           "name": "n8n webhook",
-          "description": "Send data from a workflow to n8n (or another webhook). The address is a secret and is stored encrypted in your Windows account.",
+          "description": "Send data from a workflow to n8n (or another webhook). The address is a secret and is stored encrypted and bound to your user account.",
           "action": "Set up webhook"
         }
       },
       "services": {
         "title": "Services",
-        "description": "Send minutes, tasks and decisions straight into your team’s tools. Sign-in uses a key (API token) or a webhook address; both are stored encrypted in your Windows account.",
+        "description": "Send minutes, tasks and decisions straight into your team’s tools. Sign-in uses a key (API token) or a webhook address; both are stored encrypted and bound to your user account.",
         "connect": "Connect",
         "groups": {
           "chat": {
@@ -7206,7 +7206,7 @@
       "smtp": {
         "title": "Set up mailbox (SMTP)",
         "titleEdit": "Mailbox settings",
-        "description": "For sending through your own mailbox. The password is stored encrypted in your Windows account, never in the database.",
+        "description": "For sending through your own mailbox. The password is stored encrypted and bound to your user account, never in the database.",
         "host": "Server",
         "hostPlaceholder": "smtp.example.com",
         "port": "Port",
@@ -7234,7 +7234,7 @@
       "wissen": {
         "title": "Connect knowledge base",
         "titleEdit": "Knowledge base settings",
-        "description": "MCP endpoint of the AI-OS. https only; the key is stored encrypted in your Windows account.",
+        "description": "MCP endpoint of the AI-OS. https only; the key is stored encrypted and bound to your user account.",
         "endpoint": "Endpoint address",
         "endpointPlaceholder": "https://os.example.com/mcp",
         "tool": "Search tool",
@@ -7250,7 +7250,7 @@
         "url": "Webhook address",
         "urlWhat": "address",
         "urlPlaceholder": "https://n8n.example.com/webhook/…",
-        "urlHint": "The address is a secret, because it often carries the key in its path. It is stored encrypted in your Windows account; only the server is shown later. Only https is allowed, http only for this computer (localhost).",
+        "urlHint": "The address is a secret, because it often carries the key in its path. It is stored encrypted and bound to your user account; only the server is shown later. Only https is allowed, http only for this computer (localhost).",
         "n8nHint": "In n8n: open the Webhook node, copy the \"Production URL\" and activate the flow. The app never follows redirects."
       },
       "folder": {
@@ -7267,9 +7267,9 @@
         "optionalLabel": "{{label}} (optional)",
         "token": "Key (API token)",
         "tokenWhat": "key",
-        "tokenHint": "The key is stored encrypted in your Windows account and only goes to the service’s server.",
+        "tokenHint": "The key is stored encrypted and bound to your user account and only goes to the service’s server.",
         "webhookUrl": "Webhook address",
-        "webhookHint": "The address is a secret (it carries the key). It is stored encrypted in your Windows account; later only the server is shown. Only addresses of the service are accepted.",
+        "webhookHint": "The address is a secret (it carries the key). It is stored encrypted and bound to your user account; later only the server is shown. Only addresses of the service are accepted.",
         "help": "How to get access in {{service}}",
         "noTestPost": "“Test connection” only checks the address here and sends no test message to the channel.",
         "fields": {

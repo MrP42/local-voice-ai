@@ -553,7 +553,7 @@
           "hint": "Nur für „Stimme erstellen“. Der Schlüssel wird verschlüsselt auf diesem Rechner abgelegt und nur an api.gradium.ai gesendet. Beim Speichern geht nichts ins Netz.",
           "present": "Ein Schlüssel ist gespeichert.",
           "missing": "Kein Schlüssel gespeichert.",
-          "unsupported": "Dieses System kann den Schlüssel nicht verschlüsselt speichern (nur unter Windows). „Stimme erstellen“ ist hier nicht verfügbar.",
+          "unsupported": "Dieses System kann den Schlüssel nicht verschlüsselt speichern (nur unter Windows und macOS). „Stimme erstellen“ ist hier nicht verfügbar.",
           "problem": "Der gespeicherte Schlüssel ist nicht lesbar: {{problem}}",
           "label": "Gradium-API-Schlüssel",
           "placeholder": "API-Schlüssel eingeben",
@@ -6814,13 +6814,13 @@
         },
         "webhook": {
           "name": "n8n-Webhook",
-          "description": "Daten aus einem Ablauf an n8n (oder einen anderen Webhook) senden. Die Adresse ist ein Geheimnis und liegt verschlüsselt im Windows-Konto.",
+          "description": "Daten aus einem Ablauf an n8n (oder einen anderen Webhook) senden. Die Adresse ist ein Geheimnis und liegt verschlüsselt und an dein Benutzerkonto gebunden.",
           "action": "Webhook einrichten"
         }
       },
       "services": {
         "title": "Dienste",
-        "description": "Protokolle, Aufgaben und Entscheidungen direkt in die Werkzeuge deines Teams. Angemeldet wird mit einem Schlüssel (API-Token) oder einer Webhook-Adresse; beides liegt verschlüsselt im Windows-Konto.",
+        "description": "Protokolle, Aufgaben und Entscheidungen direkt in die Werkzeuge deines Teams. Angemeldet wird mit einem Schlüssel (API-Token) oder einer Webhook-Adresse; beides liegt verschlüsselt und an dein Benutzerkonto gebunden.",
         "connect": "Verbinden",
         "groups": {
           "chat": {
@@ -7206,7 +7206,7 @@
       "smtp": {
         "title": "Postfach (SMTP) einrichten",
         "titleEdit": "Postfach-Einstellungen",
-        "description": "Zum Senden über dein eigenes Postfach. Das Passwort wird verschlüsselt im Windows-Konto abgelegt, nie in der Datenbank.",
+        "description": "Zum Senden über dein eigenes Postfach. Das Passwort wird verschlüsselt und an dein Benutzerkonto gebunden abgelegt, nie in der Datenbank.",
         "host": "Server",
         "hostPlaceholder": "smtp.example.de",
         "port": "Port",
@@ -7234,7 +7234,7 @@
       "wissen": {
         "title": "Wissensbasis verbinden",
         "titleEdit": "Einstellungen der Wissensbasis",
-        "description": "MCP-Endpunkt des AI-OS. Nur https, der Schlüssel liegt verschlüsselt im Windows-Konto.",
+        "description": "MCP-Endpunkt des AI-OS. Nur https, der Schlüssel liegt verschlüsselt und an dein Benutzerkonto gebunden.",
         "endpoint": "Adresse des Endpunkts",
         "endpointPlaceholder": "https://os.example.de/mcp",
         "tool": "Suchwerkzeug",
@@ -7250,7 +7250,7 @@
         "url": "Adresse des Webhooks",
         "urlWhat": "die Adresse",
         "urlPlaceholder": "https://n8n.example.de/webhook/…",
-        "urlHint": "Die Adresse ist ein Geheimnis, denn sie trägt oft den Schlüssel im Pfad. Sie liegt verschlüsselt im Windows-Konto; angezeigt wird später nur der Server. Erlaubt ist nur https, http nur für diesen Rechner (localhost).",
+        "urlHint": "Die Adresse ist ein Geheimnis, denn sie trägt oft den Schlüssel im Pfad. Sie liegt verschlüsselt und an dein Benutzerkonto gebunden; angezeigt wird später nur der Server. Erlaubt ist nur https, http nur für diesen Rechner (localhost).",
         "n8nHint": "In n8n: Webhook-Knoten öffnen, die „Production URL“ kopieren und den Ablauf aktivieren. Umleitungen folgt die App nie."
       },
       "folder": {
@@ -7267,9 +7267,9 @@
         "optionalLabel": "{{label}} (optional)",
         "token": "Schlüssel (API-Token)",
         "tokenWhat": "Geheimnis",
-        "tokenHint": "Der Schlüssel liegt verschlüsselt im Windows-Konto und geht nur an den Server des Dienstes.",
+        "tokenHint": "Der Schlüssel liegt verschlüsselt und an dein Benutzerkonto gebunden und geht nur an den Server des Dienstes.",
         "webhookUrl": "Webhook-Adresse",
-        "webhookHint": "Die Adresse ist ein Geheimnis (sie trägt den Schlüssel). Sie liegt verschlüsselt im Windows-Konto; angezeigt wird später nur der Server. Nur Adressen des Dienstes werden angenommen.",
+        "webhookHint": "Die Adresse ist ein Geheimnis (sie trägt den Schlüssel). Sie liegt verschlüsselt und an dein Benutzerkonto gebunden; angezeigt wird später nur der Server. Nur Adressen des Dienstes werden angenommen.",
         "help": "So bekommst du den Zugang bei {{service}}",
         "noTestPost": "„Verbindung testen“ prüft hier nur die Adresse und schickt keine Testnachricht in den Kanal.",
         "fields": {

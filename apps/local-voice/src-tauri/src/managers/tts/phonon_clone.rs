@@ -259,7 +259,7 @@ fn key_ref() -> SecretRef {
 /// Zustand des Schlüssels für die Oberfläche; nie der Schlüssel selbst.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
 pub struct KeyStatus {
-    /// Dieses System kann Geheimnisse verschlüsselt ablegen (Windows/DPAPI).
+    /// Dieses System kann Geheimnisse verschlüsselt ablegen (Windows/DPAPI, macOS/Schlüsselbund).
     pub supported: bool,
     pub present: bool,
     /// Ein Schlüssel liegt vor, ist aber nicht lesbar (anderes Konto, beschädigt).
