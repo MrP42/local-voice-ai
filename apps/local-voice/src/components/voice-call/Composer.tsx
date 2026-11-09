@@ -199,6 +199,7 @@ export const Composer: React.FC<ComposerProps> = ({
                 className={roundBtn}
                 aria-label={labels.add}
                 title={labels.add}
+                data-guide="plus"
                 aria-haspopup="menu"
                 aria-expanded={menuOpen}
                 aria-controls={menuOpen ? menuId : undefined}

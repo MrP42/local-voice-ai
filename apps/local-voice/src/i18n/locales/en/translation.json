@@ -7361,6 +7361,31 @@
       "wai": "Wolff Applied AI: navy in light mode, signal yellow in dark mode."
     }
   },
+  "chatGuide": {
+    "title": "Chat introduction",
+    "count": "{{n}} of {{total}}",
+    "voice": "With voice",
+    "skip": "Skip",
+    "back": "Back",
+    "next": "Next",
+    "step": {
+      "welcome": "Hi! I'm your assistant in Local Voice. Let me show you what you can do here in one minute. You can skip at any time.",
+      "talk": "Use this button to talk to me like on a phone call. You can interrupt me at any time. Or just type in the line.",
+      "plus": "The plus adds context: a file, a web search and more.",
+      "model": "Up here you choose the model: local on your computer or in the cloud, fast or thorough.",
+      "knowledge": "Here you always see which data I may use. You enable meetings, books and notes individually.",
+      "pages": "On the left you find everything else: history, meeting recordings, read aloud and your library. You can also just ask me.",
+      "story": "Finally, let's try something: I'll make up a short story and read it with several voices. What should it be about?"
+    },
+    "story": {
+      "topic": "Story topic",
+      "defaultTopic": "A little dragon who can't sleep",
+      "go": "Tell the story",
+      "display": "Tell me a story: {{topic}}",
+      "readVoices": "Read with voices",
+      "stop": "Stop reading"
+    }
+  },
   "voiceCall": {
     "tool": {
       "generic": "Using the tool \"{{name}}\" …",

@@ -1,6 +1,10 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Pencil } from "lucide-react";
+import { Pencil, Play, Square } from "lucide-react";
+import { commands } from "@/bindings";
+import { splitStory, type StorySegment } from "./guide/steps";
+import { listen } from "@tauri-apps/api/event";
+import { useSpeakers } from "./guide/useSpeakers";
 import type { VoiceLine, VoiceSource } from "@/stores/voiceCallStore";
 import { sourceTarget } from "./globalContext";
 import { openInReader } from "@/lib/library/books";
@@ -101,6 +105,56 @@ export const Transcript: React.FC<{
   canEdit,
 }) => {
   const { t, i18n } = useTranslation();
+  const speakers = useSpeakers();
+  // Zerlegung je Text einmal (Transcript rendert bei jedem gestreamten Token neu).
+  const storyCache = useMemo(
+    () => new Map<string, StorySegment[]>(),
+    [speakers],
+  );
+  const storyOf = (text: string): StorySegment[] => {
+    if (!speakers.length) return [];
+    let segs = storyCache.get(text);
+    if (!segs) {
+      segs = splitStory(text, speakers);
+      storyCache.set(text, segs);
+    }
+    return segs;
+  };
+  const isStory = (text: string) =>
+    storyOf(text).filter((x) => x.speaker).length > 1;
+  const [reading, setReading] = useState<number | null>(null);
+  const readingRef = useRef<number | null>(null);
+  readingRef.current = reading;
+  const heardSpeaking = useRef(false);
+  // Ende der Wiedergabe (natürlich oder fremd beendet) setzt den Knopf zurück.
+  useEffect(() => {
+    const un = listen<{ phase: string }>("tts-state-changed", (e) => {
+      if (readingRef.current === null) return;
+      if (e.payload.phase === "speaking") heardSpeaking.current = true;
+      else if (heardSpeaking.current && e.payload.phase !== "starting") {
+        heardSpeaking.current = false;
+        setReading(null);
+      }
+    });
+    return () => {
+      void un.then((off) => off());
+      if (readingRef.current !== null)
+        void commands.ttsCancel().catch(() => undefined);
+    };
+  }, []);
+  // lva#394 C3: Geschichte mit Markern über die Vorlese-Pipeline (schaltet die Stimmen selbst).
+  const toggleRead = async (id: number, text: string) => {
+    if (reading === id) {
+      setReading(null);
+      await commands.ttsCancel().catch(() => undefined);
+      return;
+    }
+    heardSpeaking.current = false;
+    setReading(id);
+    const r = await commands.ttsSpeakText(text).catch(() => null);
+    if (!r || r.status === "error")
+      setReading((cur) => (cur === id ? null : cur));
+  };
   const endRef = useRef<HTMLDivElement>(null);
   const [editing, setEditing] = useState<number | null>(null);
   const draft = useRef("");
@@ -244,7 +298,11 @@ export const Transcript: React.FC<{
                         : "bg-mid-gray/15 rounded-bl-sm"
                     }`}
                   >
-                    {line.text}
+                    {!user && isStory(line.text) ? (
+                      <StoryText segments={storyOf(line.text)} />
+                    ) : (
+                      line.text
+                    )}
                     {line.interrupted ? " …" : ""}
                     {line.sources && line.sources.length > 0 && (
                       <ul
@@ -301,6 +359,24 @@ export const Transcript: React.FC<{
                       <Pencil className="w-4 h-4" aria-hidden="true" />
                     </button>
                   )}
+                  {!user && isStory(line.text) && (
+                    <button
+                      type="button"
+                      data-testid="story-read"
+                      aria-pressed={reading === line.id}
+                      onClick={() => void toggleRead(line.id, line.text)}
+                      className="inline-flex items-center gap-1 -my-1 px-1.5 h-7 rounded cursor-pointer text-text/80 hover:bg-mid-gray/15 hover:text-logo-primary"
+                    >
+                      {reading === line.id ? (
+                        <Square className="w-3.5 h-3.5" aria-hidden="true" />
+                      ) : (
+                        <Play className="w-3.5 h-3.5" aria-hidden="true" />
+                      )}
+                      {reading === line.id
+                        ? t("chatGuide.story.stop")
+                        : t("chatGuide.story.readVoices")}
+                    </button>
+                  )}
                   <span>{time(line.at)}</span>
                   {line.latencyMs !== undefined && (
                     <span>
@@ -339,5 +415,40 @@ export const Transcript: React.FC<{
         <div ref={endRef} />
       </div>
     </div>
+  );
+};
+
+const SPEAKER_TONES = [
+  "bg-logo-primary/15 text-logo-primary",
+  "bg-red-500/10 text-red-600",
+  "bg-green-500/10 text-green-700",
+  "bg-yellow-500/15 text-yellow-700",
+];
+
+/** Geschichte mit Sprechern: je Abschnitt ein Namensschild statt des Markers. */
+const StoryText: React.FC<{
+  segments: { speaker: string | null; text: string }[];
+}> = ({ segments }) => {
+  const tone = new Map<string, string>();
+  return (
+    <span className="flex flex-col gap-1.5" data-testid="story-text">
+      {segments.map((seg, i) => {
+        const name = seg.speaker ?? "";
+        if (name && !tone.has(name))
+          tone.set(name, SPEAKER_TONES[tone.size % SPEAKER_TONES.length]);
+        return (
+          <span key={i} className="flex gap-2 items-baseline">
+            {name && (
+              <span
+                className={`shrink-0 rounded-full px-2 text-[11px] font-semibold ${tone.get(name)}`}
+              >
+                {name}
+              </span>
+            )}
+            <span>{seg.text}</span>
+          </span>
+        );
+      })}
+    </span>
   );
 };
