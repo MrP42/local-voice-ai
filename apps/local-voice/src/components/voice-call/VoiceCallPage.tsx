@@ -42,6 +42,8 @@ import { Transcript } from "./Transcript";
 import { SprachRecherche } from "../projekte/SprachRecherche";
 import { useKonto } from "../konto/useKonto";
 import { greetingKey, greetingName } from "./greeting";
+import { ChatGuide } from "./guide/ChatGuide";
+import { useIntroTourStore } from "@/stores/introTourStore";
 
 /** Mehr Text als das gehört nicht in eine Nachricht an die KI. */
 const MAX_FILE_CHARS = 20_000;
@@ -113,6 +115,16 @@ export const VoiceCallPage: React.FC = () => {
   const [attachError, setAttachError] = useState<string | null>(null);
   const attachId = useRef(0);
   const { aktiv: profil } = useKonto();
+  const guidePending = useIntroTourStore((s) => s.chatGuidePending);
+  const tourOpen = useIntroTourStore((s) => s.open);
+  const guideOpen = guidePending && !tourOpen;
+  // Wer schon schreibt oder ein Gespräch geöffnet hat, braucht die Führung nicht
+  // mehr; sonst tauchte sie beim nächsten leeren Gespräch wieder auf.
+  const hasLines = lines.length > 0;
+  useEffect(() => {
+    if (!hasLines || !guidePending) return;
+    useIntroTourStore.getState().setChatGuidePending(false);
+  }, [hasLines, guidePending]);
   // Je Aufruf der Seite eine andere Variante, innerhalb des Aufrufs stabil.
   const [greetingSeed] = useState(() => Date.now());
   const greeting = useMemo(() => {
@@ -574,13 +586,29 @@ export const VoiceCallPage: React.FC = () => {
           <Transcript
             lines={lines}
             active={inCall}
-            greeting={switching ? undefined : greeting}
+            greeting={switching || guideOpen ? undefined : greeting}
             toolStatus={toolStatus}
             notice={notice}
             onOpenSettings={() => store.getState().openSettings("models")}
             onEditLine={(id, text) => void store.getState().editLine(id, text)}
             canEdit={(line) => lineEditable(line, state, textBusy)}
           />
+          {lines.length === 0 && guideOpen && (
+            <div className="px-4 pb-4">
+              <ChatGuide
+                open={guideOpen}
+                onClose={() =>
+                  useIntroTourStore.getState().setChatGuidePending(false)
+                }
+                onStory={(prompt, display) =>
+                  void store
+                    .getState()
+                    .sendText(prompt, display, [])
+                    .catch((e: unknown) => console.warn("story send failed", e))
+                }
+              />
+            </div>
+          )}
           {/* Feste Baumposition: kein Neueinhängen der Eingabe beim ersten Senden. */}
           <div className={lines.length === 0 ? "flex-1 min-h-0" : "contents"}>
             {composer}

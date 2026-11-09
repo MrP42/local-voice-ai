@@ -33,6 +33,7 @@ pub mod providers;
 pub mod registry;
 pub mod state;
 pub mod stretch;
+pub mod timing;
 pub mod voices;
 
 use engine::{EngineCaps, TtsEngine, TtsEngineKind};
@@ -1547,10 +1548,15 @@ impl TtsCore {
                 continue;
             }
             let last_blob = blobs.len() - 1;
-            // Dauer des ganzen Satzes (samt Pausen) bei normalem Tempo: die
-            // Oberfläche rechnet daraus die Zeit sekundengenau und blättert
-            // an der Stelle um, die gerade zu hören ist.
-            let sentence_ms: u32 = blobs.iter().map(|(b, _)| wav_duration_ms(b)).sum();
+            // Dauer des ganzen Satzes (samt Pausen) und wann darin gesprochen
+            // wird, bei normalem Tempo: die Oberfläche rechnet daraus die
+            // Stelle, die gerade zu hören ist -- Wort, Zeit und Umblättern.
+            // Nur aus `on_playing` gebraucht; ohne Zuhörer kein Dekodieren.
+            let sentence_timing = on_playing.as_ref().map(|_| {
+                Arc::new(timing::sentence_timing(
+                    blobs.iter().map(|(b, _)| b.as_slice()),
+                ))
+            });
             for (blob_index, (bytes, gain)) in blobs.into_iter().enumerate() {
                 total_bytes += bytes.len();
                 // Vorheriges Stueck zu Ende spielen lassen (Reihenfolge!).
@@ -1572,20 +1578,41 @@ impl TtsCore {
                 if cancelled.load(Ordering::Acquire) {
                     break;
                 }
-                // Live-Anzeige: dieser Satz beginnt jetzt zu spielen.
-                if blob_index == 0 {
-                    if let Some(cb) = on_playing.as_ref() {
-                        cb(offset, sentence_ms);
-                    }
-                }
+                // Live-Anzeige: dieses Stück beginnt jetzt zu spielen. Gemeldet
+                // wird erst, wenn der Ausgabestrom offen ist und das Audio
+                // anliegt -- das Öffnen dauert je Gerät unterschiedlich lang
+                // (Bluetooth deutlich länger), und die Uhr der Oberfläche
+                // läuft ab dieser Meldung.
+                // Jedes Stück meldet seinen echten Start: zwischen zwei Stücken
+                // liegen Warten, Öffnen und Strecken, die in der reinen
+                // Audiodauer fehlen. Das Abbruch-Flag dieses Laufs ist seine
+                // Generation: ein überholter Lauf (Stopp, Sprung, neue
+                // Sitzung) meldet nichts mehr, auch wenn das Öffnen erst
+                // danach fertig wird.
+                let started: Option<Box<dyn FnOnce() + Send>> =
+                    match (on_playing.as_ref(), sentence_timing.as_ref()) {
+                        (Some(cb), Some(timing)) => {
+                            let (cb, timing) = (Arc::clone(cb), Arc::clone(timing));
+                            let run = cancelled.clone();
+                            Some(Box::new(move || {
+                                if !run.load(Ordering::Acquire) {
+                                    cb(offset, &timing, blob_index);
+                                }
+                            }))
+                        }
+                        _ => None,
+                    };
                 let player = self.player.clone();
                 let device = self.output_device.lock().unwrap().clone();
                 let controls = Arc::clone(&self.controls);
                 let cancel_flag = cancelled.clone();
                 previous_playback = Some((
                     (blob_index == last_blob).then_some(offset),
-                    tauri::async_runtime::spawn_blocking(move || {
-                        player.play(bytes, device, gain, controls, cancel_flag)
+                    tauri::async_runtime::spawn_blocking(move || match started {
+                        Some(started) => {
+                            player.play_notify(bytes, device, gain, controls, cancel_flag, started)
+                        }
+                        None => player.play(bytes, device, gain, controls, cancel_flag),
                     }),
                 ));
             }
@@ -2188,8 +2215,48 @@ fn silence_wav(ms: u32, sample_rate: u32) -> Vec<u8> {
     encode_wav_mono(&samples, sample_rate)
 }
 
-/// Callback, sobald ein Satz zu spielen beginnt: Index und Dauer in ms.
-pub type OnPlaying = Arc<dyn Fn(usize, u32) + Send + Sync>;
+/// Callback, sobald ein Stück eines Satzes hörbar zu spielen beginnt
+/// (Ausgabestrom offen, Audio übergeben): Satzindex, Zeitangaben des Satzes
+/// und Nummer des Stücks. Stück 0 ist der Satzbeginn; jedes weitere Stück
+/// (nach einem Pausen-Tag, der Absatzpause) öffnet den Strom neu, und seine
+/// tatsächliche Startzeit setzt die Uhr der Oberfläche nach.
+pub type OnPlaying = Arc<dyn Fn(usize, &timing::SentenceTiming, usize) + Send + Sync>;
+
+/// Das Ereignis zu [`OnPlaying`]: Stück 0 → `tts-current-sentence` (Satz,
+/// Dauer, Sprechzeit), jedes weitere → `tts-sentence-piece` mit der Stelle im
+/// Satz (ms bei Tempo 1), an der es beginnt.
+fn emit_sentence_piece(
+    app: &tauri::AppHandle,
+    context: &str,
+    idx: usize,
+    timing: &timing::SentenceTiming,
+    piece: usize,
+    text: impl FnOnce() -> String,
+) {
+    use tauri::Emitter;
+    let _ = if piece == 0 {
+        app.emit(
+            "tts-current-sentence",
+            serde_json::json!({
+                "context": context,
+                "index": idx as u32,
+                "duration_ms": timing.duration_ms,
+                "speech_ms": timing.speech_ms,
+                "pieces_ms": timing.pieces_ms,
+                "text": text(),
+            }),
+        )
+    } else {
+        app.emit(
+            "tts-sentence-piece",
+            serde_json::json!({
+                "context": context,
+                "index": idx as u32,
+                "offset_ms": timing.pieces_ms.get(piece).copied().unwrap_or(0),
+            }),
+        )
+    };
+}
 
 /// Spieldauer eines WAV-Blobs in ms, ohne ihn zu dekodieren (0, wenn unlesbar).
 fn wav_duration_ms(bytes: &[u8]) -> u32 {
@@ -3136,16 +3203,10 @@ impl TtsManager {
         // Live-Anzeige des Satzes, der gerade zu hören ist.
         let now_manager = Arc::clone(self);
         let now_sentences: Vec<String> = sentences.iter().map(|(text, _)| text.clone()).collect();
-        let on_playing: OnPlaying = Arc::new(move |idx, duration_ms| {
-            let _ = now_manager.app.emit(
-                "tts-current-sentence",
-                serde_json::json!({
-                    "context": "speak",
-                    "index": idx as u32,
-                    "duration_ms": duration_ms,
-                    "text": now_sentences.get(idx).cloned().unwrap_or_default(),
-                }),
-            );
+        let on_playing: OnPlaying = Arc::new(move |idx, timing, piece| {
+            emit_sentence_piece(&now_manager.app, "speak", idx, timing, piece, || {
+                now_sentences.get(idx).cloned().unwrap_or_default()
+            });
         });
         self.core
             .speak_sentence_run_paragraphs(
@@ -4932,17 +4993,10 @@ impl TtsManager {
             // Live-Anzeige des gelesenen Satzes.
             let now_manager = Arc::clone(&manager);
             let now_sentences = sentences.clone();
-            let on_playing: OnPlaying = Arc::new(move |idx, duration_ms| {
-                use tauri::Emitter;
-                let _ = now_manager.app.emit(
-                    "tts-current-sentence",
-                    serde_json::json!({
-                        "context": "reading",
-                        "index": idx as u32,
-                        "duration_ms": duration_ms,
-                        "text": now_sentences.get(idx).cloned().unwrap_or_default(),
-                    }),
-                );
+            let on_playing: OnPlaying = Arc::new(move |idx, timing, piece| {
+                emit_sentence_piece(&now_manager.app, "reading", idx, timing, piece, || {
+                    now_sentences.get(idx).cloned().unwrap_or_default()
+                });
             });
             let cb_manager = Arc::clone(&manager);
             let cb_key = key.clone();
@@ -6911,6 +6965,10 @@ Sie stieg ein und setzte sich ans Fenster, wo die Sonne hereinschien.";
         wake: std::sync::Condvar,
         started: std::sync::Mutex<Vec<String>>,
         returned: std::sync::Mutex<Vec<(String, bool)>>,
+        /// Simuliertes Öffnen des Ausgabestroms vor der Startmeldung (ms).
+        open_delay_ms: AtomicU64,
+        /// Gerade im simulierten Öffnen.
+        opening: AtomicBool,
     }
 
     impl ScriptedPlayer {
@@ -6921,6 +6979,8 @@ Sie stieg ein und setzte sich ans Fenster, wo die Sonne hereinschien.";
                 wake: std::sync::Condvar::new(),
                 started: std::sync::Mutex::new(Vec::new()),
                 returned: std::sync::Mutex::new(Vec::new()),
+                open_delay_ms: AtomicU64::new(0),
+                opening: AtomicBool::new(false),
             }
         }
 
@@ -6981,6 +7041,28 @@ Sie stieg ein und setzte sich ans Fenster, wo die Sonne hereinschien.";
                 .push((label, cancelled.load(Ordering::Acquire)));
             Ok(())
         }
+
+        /// Wie ein langsames Gerät: erst öffnen (Verzögerung), dann melden --
+        /// absichtlich OHNE eigene Abbruchprüfung, damit die Tests die Wache
+        /// der Pipeline sehen.
+        fn play_notify(
+            &self,
+            wav: Vec<u8>,
+            device: Option<String>,
+            gain: f32,
+            controls: Arc<PlaybackControls>,
+            cancelled: Arc<AtomicBool>,
+            started: Box<dyn FnOnce() + Send>,
+        ) -> Result<(), String> {
+            let delay = self.open_delay_ms.load(Ordering::SeqCst);
+            if delay > 0 {
+                self.opening.store(true, Ordering::SeqCst);
+                std::thread::sleep(Duration::from_millis(delay));
+                self.opening.store(false, Ordering::SeqCst);
+            }
+            started();
+            self.play(wav, device, gain, controls, cancelled)
+        }
     }
 
     /// Kern mit Mock-Engine und mitschreibendem Player; `voice` ist die
@@ -7024,6 +7106,65 @@ Sie stieg ein und setzte sich ans Fenster, wo die Sonne hereinschien.";
     }
 
     const SAETZE: [&str; 3] = ["Satz eins.", "Satz zwei.", "Satz drei."];
+
+    /// Mitschrift der Startmeldungen: (Satz, Stück, wie viele Stücke der
+    /// Player zu diesem Zeitpunkt schon begonnen hatte).
+    type Meldungen = Arc<std::sync::Mutex<Vec<(usize, usize, usize)>>>;
+
+    fn mitschreiben(stage: &Stage) -> (OnPlaying, Meldungen) {
+        let log: Meldungen = Arc::default();
+        let (sink, player) = (Arc::clone(&log), Arc::clone(&stage.player));
+        let cb: OnPlaying = Arc::new(move |idx, _timing, piece| {
+            let begun = player.started().len();
+            sink.lock().unwrap().push((idx, piece, begun));
+        });
+        (cb, log)
+    }
+
+    /// lva#405: jedes Stück eines Satzes meldet seinen Start erst nach dem
+    /// (langsamen) Öffnen -- die Uhr der Oberfläche setzt so an jedem
+    /// Stück nach, statt die Öffnungszeit als gespielt zu zählen.
+    #[tokio::test]
+    async fn jedes_stueck_meldet_seinen_echten_start() {
+        let stage = stage("olga");
+        stage.player.open_delay_ms.store(40, Ordering::SeqCst);
+        let (cb, log) = mitschreiben(&stage);
+        let core = Arc::clone(&stage.core);
+        let list = single_voice(vec!["Eins [pause] zwei.".into(), "Drei.".into()]);
+        let run =
+            tokio::spawn(async move { core.speak_sentence_run(list, 0, Some(cb), None).await });
+        finish(run).await.unwrap();
+        let log = log.lock().unwrap().clone();
+        let pieces: Vec<(usize, usize)> = log.iter().map(|(i, p, _)| (*i, *p)).collect();
+        assert_eq!(pieces, vec![(0, 0), (0, 1), (0, 2), (1, 0)], "{log:?}");
+        // Gemeldet wird vor dem Abspielen des Stücks, nach dem Öffnen: genau
+        // so viele Stücke liefen schon, wie davor lagen.
+        let begun: Vec<usize> = log.iter().map(|(_, _, b)| *b).collect();
+        assert_eq!(begun, vec![0, 1, 2, 3], "{log:?}");
+    }
+
+    /// lva#405: Stopp, während der Strom des nächsten Satzes noch öffnet --
+    /// danach darf kein Satzbeginn des alten Laufs mehr kommen.
+    #[tokio::test]
+    async fn abbruch_waehrend_des_oeffnens_meldet_keinen_satz() {
+        let stage = stage("olga");
+        stage.player.open_delay_ms.store(150, Ordering::SeqCst);
+        let (cb, log) = mitschreiben(&stage);
+        let core = Arc::clone(&stage.core);
+        let list = single_voice(spielt(&SAETZE));
+        let run =
+            tokio::spawn(async move { core.speak_sentence_run(list, 0, Some(cb), None).await });
+        let player = Arc::clone(&stage.player);
+        wait_until("Öffnen des ersten Satzes", || {
+            player.opening.load(Ordering::SeqCst)
+        })
+        .await;
+        stage.core.cancel_core();
+        let _ = finish(run).await;
+        // Das Öffnen läuft noch zu Ende; danach still.
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(log.lock().unwrap().is_empty(), "{:?}", log.lock().unwrap());
+    }
 
     fn job(text: &str, voice: &str) -> (String, Option<String>) {
         (text.to_string(), Some(voice.to_string()))
