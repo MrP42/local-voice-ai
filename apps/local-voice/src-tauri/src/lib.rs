@@ -16,6 +16,7 @@ pub mod book_talk_eval {
     pub use crate::book_ai::talk::adapter::*;
     pub use crate::book_ai::talk::eval::*;
 }
+mod ablage; // lva#407 D1: Dokumentenablage (Epic #395)
 mod books;
 mod buch_dateien; // lva#365 P3: Notizen, Anhänge, Transkript im Buch-Ordner (Kern)
 mod catalog;
@@ -2026,6 +2027,23 @@ fn specta_builder() -> Builder<tauri::Wry> {
             konto::konto_bild_setzen,
             konto::konto_bild_entfernen,
             konto::konto_bild_lesen,
+            ablage::befehle::ablage_stand,
+            ablage::befehle::ablage_ordner_anlegen,
+            ablage::befehle::ablage_ordner_umbenennen,
+            ablage::befehle::ablage_ordner_verschieben,
+            ablage::befehle::ablage_ordner_einstellungen,
+            ablage::befehle::ablage_ki_setzen,
+            ablage::befehle::ablage_freigaben_neu_festlegen,
+            ablage::befehle::ablage_importieren,
+            ablage::befehle::ablage_in_papierkorb,
+            ablage::befehle::ablage_wiederherstellen,
+            ablage::befehle::ablage_endgueltig_loeschen,
+            ablage::befehle::ablage_papierkorb_leeren,
+            ablage::befehle::ablage_fassungen,
+            ablage::befehle::ablage_datei_umbenennen,
+            ablage::befehle::ablage_datei_verschieben,
+            ablage::befehle::ablage_bestand_neu_aufbauen,
+            ablage::befehle::ablage_gefundene_aufnehmen,
             assistent::assistent_einstufen,
             assistent::assistent_messung_melden,
             assistent::assistent_letzte_ausgabe,
