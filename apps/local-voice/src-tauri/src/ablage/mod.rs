@@ -1,0 +1,169 @@
+//! Dokumentenablage, Stufe D1 (Epic local-voice-ai#395, Issue #407, wai-sdk ADR-0029).
+//!
+//! Lokale Ablage im Datenordner der App: Ordner, Dateien mit Fassungen, Papierkorb, sichere Ablage mit
+//! Journal und Wiederanlauf, gerätelokale KI-Freigaben. Kein Index (D2), kein Sync (D4), keine KI (D3).
+//!
+//! * [`zusammenfuehren`]: reine Merge-Logik der synchronisierten Datensätze (keine I/O, keine Uhr).
+//! * [`aufbewahrung`]: welche Fassungen bleiben (reine Funktion).
+//! * [`freigabe`]: `freigabe.json`, gerätelokal, mit `.vorher` und Zustand „unklar“.
+//! * [`speicher`]: `ablage.json` (Journal + Baum), Dateien, Papierkorb.
+//! * [`befehle`]: die Tauri-Befehle.
+//!
+//! Datenschutz: nie Datei- oder Ordnernamen, Pfade oder Inhalte in Log oder Fehlertext; Fehler tragen
+//! nur einen stabilen Code und einen allgemeinen Text.
+
+pub mod aufbewahrung;
+pub mod befehle;
+pub mod freigabe;
+pub mod speicher;
+pub mod zusammenfuehren;
+
+#[cfg(test)]
+mod tests;
+
+use serde::Serialize;
+use std::fmt;
+use std::fs;
+use std::io::Write;
+use std::path::Path;
+use ulid::Ulid;
+
+/// Fehler mit stabilem Code (Tests, Oberfläche) und allgemeinem Text ohne Namen oder Inhalte.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
+pub struct Fehler {
+    pub code: String,
+    pub message: String,
+}
+
+impl Fehler {
+    pub fn neu(code: &str, message: impl Into<String>) -> Self {
+        Self {
+            code: code.to_string(),
+            message: message.into(),
+        }
+    }
+
+    pub fn ungueltig(message: &str) -> Self {
+        Self::neu("ablage.ungueltig", message)
+    }
+
+    pub fn speicher(message: &str) -> Self {
+        Self::neu("ablage.speicher", message)
+    }
+}
+
+impl fmt::Display for Fehler {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for Fehler {}
+
+/// An die Oberfläche geht `<code>: <text>`; sie übersetzt den Code und zeigt sonst den Text.
+impl From<Fehler> for String {
+    fn from(f: Fehler) -> Self {
+        format!("{}: {}", f.code, f.message)
+    }
+}
+
+pub type Res<T> = Result<T, Fehler>;
+
+pub const PRAEFIX_ORDNER: &str = "ord_";
+pub const PRAEFIX_DATEI: &str = "dat_";
+pub const PRAEFIX_FASSUNG: &str = "fas_";
+pub const PRAEFIX_GERAET: &str = "g_";
+#[allow(dead_code)]
+pub const PRAEFIX_WAHL: &str = "wahl_";
+
+/// Neue Kennung `<präfix><ULID>`.
+pub fn neue_id(praefix: &str) -> String {
+    format!("{praefix}{}", Ulid::new())
+}
+
+/// Ist `id` eine Kennung `<präfix><ULID>`? Strenge Prüfung, auch gegen Pfadtrenner und `..`.
+pub fn id_gueltig(praefix: &str, id: &str) -> bool {
+    id.strip_prefix(praefix)
+        .is_some_and(|r| r.len() == 26 && Ulid::from_string(r).is_ok())
+}
+
+pub fn jetzt_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+static SPERRE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Eine Sperre für alle Schreib- und Lesevorgänge der Ablage in diesem Prozess.
+pub(crate) fn sperren() -> std::sync::MutexGuard<'static, ()> {
+    SPERRE.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Verknüpfung (Symlink, Junction) oder Reparse-Point: wird nie gefolgt.
+pub fn ist_umweg(meta: &fs::Metadata) -> bool {
+    if meta.file_type().is_symlink() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        if meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return true;
+        }
+    }
+    false
+}
+
+/// Ordnereinträge dauerhaft machen (Unix: fsync auf den Ordner; sonst nichts).
+pub fn ordner_sync(dir: &Path) {
+    #[cfg(unix)]
+    if let Ok(d) = fs::File::open(dir) {
+        let _ = d.sync_all();
+    }
+    #[cfg(not(unix))]
+    let _ = dir;
+}
+
+/// Schreibt `bytes` über eine eigene Zwischendatei (`create_new`, `sync_all`) und benennt sie in `ziel`
+/// um. Ein Absturz hinterlässt die alte oder die neue Datei, nie eine halbe.
+pub fn schreibe_atomar(ziel: &Path, bytes: &[u8]) -> Res<()> {
+    let dir = ziel
+        .parent()
+        .ok_or_else(|| Fehler::speicher("Pfad ohne Ordner."))?;
+    let tmp = dir.join(format!(".{}.tmp", Ulid::new()));
+    let schreiben = (|| -> std::io::Result<()> {
+        let mut f = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)?;
+        f.write_all(bytes)?;
+        f.sync_all()?;
+        fs::rename(&tmp, ziel)
+    })();
+    if schreiben.is_err() {
+        let _ = fs::remove_file(&tmp);
+        return Err(Fehler::speicher("Datei nicht speicherbar."));
+    }
+    ordner_sync(dir);
+    Ok(())
+}
+
+/// Sind `a` und `b` gültige, verschiedene Ordner-IDs? (Kleine Hilfe für die Befehle.)
+pub fn ordner_id_pruefen(id: &str) -> Res<()> {
+    if id_gueltig(PRAEFIX_ORDNER, id) {
+        Ok(())
+    } else {
+        Err(Fehler::ungueltig("Kennung des Ordners ungültig."))
+    }
+}
+
+pub fn datei_id_pruefen(id: &str) -> Res<()> {
+    if id_gueltig(PRAEFIX_DATEI, id) {
+        Ok(())
+    } else {
+        Err(Fehler::ungueltig("Kennung der Datei ungültig."))
+    }
+}

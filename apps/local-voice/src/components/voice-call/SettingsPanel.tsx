@@ -18,6 +18,7 @@ import { RecognitionLearning } from "./RecognitionLearning";
 import {
   KNOWLEDGE_AREAS,
   GLOBAL_AREAS,
+  NOTEBOOK_AREA,
   type GlobalArea,
   SOUVERAENITAET_STUFEN,
   blockedBy,
@@ -27,6 +28,7 @@ import {
   type ModelDescription,
 } from "./orchestration";
 import { useKnowledgeEditor } from "./useKnowledge";
+import { NotebookAccess } from "./NotebookAccess";
 import { useSettings } from "@/hooks/useSettings";
 import { useComplianceStore } from "@/stores/complianceStore";
 import type { LlmConnection, LlmModelConfig } from "@/bindings";
@@ -213,6 +215,10 @@ const KnowledgeTab: React.FC = () => {
           )}
         </React.Fragment>
       ))}
+      <NotebookAccess
+        on={!!knowledge.notebook}
+        onToggle={(on) => toggle(NOTEBOOK_AREA, on)}
+      />
       <GlobalKnowledge ids={ids} toggle={toggle} />
     </>
   );

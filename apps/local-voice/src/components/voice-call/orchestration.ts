@@ -228,8 +228,18 @@ export type KnowledgeArea = (typeof KNOWLEDGE_AREAS)[number];
  */
 export const GLOBAL_AREAS = ["books", "book_notes", "ki_docs"] as const;
 export type GlobalArea = (typeof GLOBAL_AREAS)[number];
-/** Alle Schlüssel in fester Reihenfolge (wie `normalize_keys` im Kern). */
-export const ALL_AREAS = [...KNOWLEDGE_AREAS, ...GLOBAL_AREAS] as const;
+/**
+ * Bereich „Notizbuch“ (lva#396 N2): eigener Schalter mit Abschnittsauswahl
+ * (`voice_call_notebook_sections`); ohne Abschnitt ist trotz Bereich nichts sichtbar.
+ */
+export const NOTEBOOK_AREA = "notebook" as const;
+export type NotebookArea = typeof NOTEBOOK_AREA;
+/** Alle Schlüssel in fester Reihenfolge (wie `Area::ALL` im Kern). */
+export const ALL_AREAS = [
+  ...KNOWLEDGE_AREAS,
+  ...GLOBAL_AREAS,
+  NOTEBOOK_AREA,
+] as const;
 
 /** Deutsche Namen der Bereiche für den Hinweis an das Modell (Transkripte hängen an den Besprechungen). */
 const AREA_LABEL: Record<KnowledgeArea | "transcripts", string> = {
@@ -246,6 +256,8 @@ export interface KnowledgeState {
   areas: KnowledgeArea[];
   /** `voice_call_read_transcripts`: wirkt nur mit „Besprechungen“. */
   transcripts: boolean;
+  /** Bereich „Notizbuch“ an (Abschnitte wählt die eigene Einstellung). */
+  notebook?: boolean;
 }
 
 export const NO_KNOWLEDGE: KnowledgeState = { areas: [], transcripts: false };
@@ -260,12 +272,13 @@ export function knowledgeFrom(
   return {
     areas: KNOWLEDGE_AREAS.filter((a) => raw.includes(a)),
     transcripts: settings?.voice_call_read_transcripts ?? false,
+    notebook: raw.includes(NOTEBOOK_AREA),
   };
 }
 
 /** Kein Bereich frei (der Standard): das Gespräch bekommt keine Wissenswerkzeuge. */
 export function noKnowledge(k: KnowledgeState): boolean {
-  return k.areas.length === 0;
+  return k.areas.length === 0 && !k.notebook;
 }
 
 const HINT_ORDER = [
