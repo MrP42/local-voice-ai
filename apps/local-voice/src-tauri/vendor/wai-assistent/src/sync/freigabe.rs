@@ -3,6 +3,8 @@
 //! Vor der ausdruecklichen Freigabe geht nichts an den Hub: kein Beitrag, kein Kopf, keine Lease, keine
 //! Loeschmarke. Auch das Lesen ist gesperrt. Standard ist aus.
 
+use serde::{Deserialize, Serialize};
+
 use super::verlauf::Beitrag;
 
 /// Schalter "Assistent-Sync" (Standard aus).
@@ -27,7 +29,7 @@ impl SyncFreigabe {
 }
 
 /// Einschraenkungen je Unterhaltung (E3.5).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Einschraenkung {
     /// Kein Cloud-Modell, kein Cloud-Werkzeug; Hub-Sync bleibt erlaubt.
     pub modell_lokal: bool,

@@ -65,6 +65,10 @@ STANDARD_REV = "origin/main"
 REPO = "https://github.com/MrP42/wai-sdk"
 # Versionen, die Local Voice AI schon nutzt; sie ersetzen die Workspace-Versionen des SDK.
 LVA_VERSIONEN = {"sha2": "0.10"}
+# Ausnahmen davon je Crate: wai-assistent braucht sha2 0.11 (digest 0.11), weil hmac 0.13 und hkdf 0.13 darauf
+# aufsetzen (Kopplungs-MAC, Schlüsselpakete, E3.8). sha2 0.11 liegt bereits im Lockfile; der Crate gibt keine
+# sha2-Typen nach außen, beide Versionen bestehen nebeneinander.
+SDK_VERSION_BEHALTEN = {"wai-assistent": {"sha2"}}
 # Mehr als das dürfen die Crates nicht brauchen; eine neue Abhängigkeit im SDK soll hier auffallen
 # (erst Lizenz prüfen und melden, dann erweitern).
 ERLAUBT = {
@@ -75,6 +79,9 @@ ERLAUBT = {
     "base64",
     # rusqlite 0.37 „bundled“ (MIT), in Local Voice schon vorhanden; nur lesender Notizbuch-Zugang (lva#396 N2).
     "rusqlite",
+    # Sync-Kern gegen bösartigen Hub (ADR-0028 E3.8, wai-sdk#1092): ed25519-dalek 3 und x25519-dalek 3
+    # (dalek, BSD-3-Clause), hkdf 0.13 und hmac 0.13 (RustCrypto, MIT OR Apache-2.0), subtle 2.6 (BSD-3-Clause).
+    "ed25519-dalek", "x25519-dalek", "hkdf", "hmac", "subtle",
 }
 
 
@@ -120,7 +127,7 @@ def abhaengigkeit(crate: str, name: str, eigen: object, workspace: dict, erlaubt
         basis = {"version": eigen}
     else:
         basis = dict(eigen)  # type: ignore[arg-type]
-    if name in LVA_VERSIONEN:
+    if name in LVA_VERSIONEN and name not in SDK_VERSION_BEHALTEN.get(crate, set()):
         basis["version"] = LVA_VERSIONEN[name]
     if name == "reqwest" and "features" in basis:
         basis["features"] = ["rustls-no-provider" if f == "rustls" else f for f in basis["features"]]

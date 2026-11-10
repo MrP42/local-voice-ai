@@ -1,8 +1,12 @@
 //! Minimale Zeitumrechnung (RFC 3339, UTC mit `Z`) ohne Systemuhr und ohne Zusatzabhaengigkeit.
 //! Der Kern rechnet in Unix-Sekunden; die Uhr liefert der Aufrufer.
 
-/// Unix-Sekunden als `YYYY-MM-DDTHH:MM:SSZ`.
+/// Groesster darstellbarer Zeitpunkt: 9999-12-31T23:59:59Z.
+pub const MAX_SEKUNDEN: u64 = 253_402_300_799;
+
+/// Unix-Sekunden als `YYYY-MM-DDTHH:MM:SSZ` (Werte ueber [`MAX_SEKUNDEN`] werden darauf begrenzt).
 pub fn rfc3339(sekunden: u64) -> String {
+    let sekunden = sekunden.min(MAX_SEKUNDEN);
     let tage = (sekunden / 86_400) as i64;
     let rest = sekunden % 86_400;
     let (j, m, t) = datum_aus_tagen(tage);
@@ -14,7 +18,9 @@ pub fn rfc3339(sekunden: u64) -> String {
     )
 }
 
-/// Liest `YYYY-MM-DDTHH:MM:SS[.f]Z`; Bruchteile werden verworfen. `None` bei jeder Abweichung.
+/// Liest `YYYY-MM-DDTHH:MM:SS[.f]Z`; Bruchteile werden verworfen. `None` bei jeder Abweichung, auch bei
+/// Kalenderdaten, die es nicht gibt (31. April, 29. Februar ausserhalb von Schaltjahren), und bei
+/// Schaltsekunden.
 pub fn aus_rfc3339(s: &str) -> Option<u64> {
     let b = s.as_bytes();
     if b.len() < 20 || *b.last()? != b'Z' {
@@ -35,7 +41,7 @@ pub fn aus_rfc3339(s: &str) -> Option<u64> {
     }
     let (j, m, t) = (ziffern(0, 4)?, ziffern(5, 7)?, ziffern(8, 10)?);
     let (h, mi, se) = (ziffern(11, 13)?, ziffern(14, 16)?, ziffern(17, 19)?);
-    if !(1..=12).contains(&m) || !(1..=31).contains(&t) || h > 23 || mi > 59 || se > 60 {
+    if !(1..=12).contains(&m) || t < 1 || t > tage_im_monat(j, m) || h > 23 || mi > 59 || se > 59 {
         return None;
     }
     let bruch_ok = b.len() == 20
@@ -47,6 +53,15 @@ pub fn aus_rfc3339(s: &str) -> Option<u64> {
     }
     let tage = tage_aus_datum(j, m, t);
     u64::try_from(tage * 86_400 + h * 3600 + mi * 60 + se).ok()
+}
+
+fn tage_im_monat(j: i64, m: i64) -> i64 {
+    match m {
+        4 | 6 | 9 | 11 => 30,
+        2 if (j % 4 == 0 && j % 100 != 0) || j % 400 == 0 => 29,
+        2 => 28,
+        _ => 31,
+    }
 }
 
 fn tage_aus_datum(j: i64, m: i64, t: i64) -> i64 {
@@ -85,6 +100,15 @@ mod tests {
     }
 
     #[test]
+    fn schaltjahre_und_grenzen() {
+        assert!(aus_rfc3339("2024-02-29T00:00:00Z").is_some());
+        assert!(aus_rfc3339("2000-02-29T00:00:00Z").is_some());
+        assert_eq!(rfc3339(MAX_SEKUNDEN), "9999-12-31T23:59:59Z");
+        assert_eq!(rfc3339(u64::MAX), "9999-12-31T23:59:59Z");
+        assert_eq!(aus_rfc3339("9999-12-31T23:59:59Z"), Some(MAX_SEKUNDEN));
+    }
+
+    #[test]
     fn rundlauf_ueber_schaltjahr() {
         for s in [
             0u64,
@@ -106,6 +130,10 @@ mod tests {
             "2026-11-07 20:00:00Z",
             "2026-11-07T20:00:00",
             "2026-11-07T20:00:00.Z",
+            "2026-04-31T00:00:00Z",
+            "2026-02-29T00:00:00Z",
+            "1900-02-29T00:00:00Z",
+            "2026-11-07T23:59:60Z",
         ] {
             assert_eq!(aus_rfc3339(s), None, "{s}");
         }

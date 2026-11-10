@@ -8,6 +8,7 @@
 //! enthalten nie Titel oder Beitragstexte, und es wird nichts davon geloggt.
 
 pub mod store;
+pub mod sync;
 
 #[cfg(test)]
 mod tests;
@@ -62,7 +63,9 @@ pub async fn conversation_create(
     app: AppHandle,
     title: Option<String>,
 ) -> Result<Conversation, String> {
-    run(&app, move |s| s.create(title)).await
+    let r = run(&app, move |s| s.create(title)).await;
+    crate::sync::assistent_sync::anstossen(&app);
+    r
 }
 
 /// Ändert Titel, Anheften und Archiv; nicht gesetzte Felder bleiben.
@@ -75,7 +78,9 @@ pub async fn conversation_update(
     pinned: Option<bool>,
     archived: Option<bool>,
 ) -> Result<Conversation, String> {
-    run(&app, move |s| s.update(&id, title, pinned, archived)).await
+    let r = run(&app, move |s| s.update(&id, title, pinned, archived)).await;
+    crate::sync::assistent_sync::anstossen(&app);
+    r
 }
 
 /// Heftet ein Gespräch an oder löst es.
@@ -86,14 +91,18 @@ pub async fn conversation_set_pinned(
     id: String,
     pinned: bool,
 ) -> Result<Conversation, String> {
-    run(&app, move |s| s.set_pinned(&id, pinned)).await
+    let r = run(&app, move |s| s.set_pinned(&id, pinned)).await;
+    crate::sync::assistent_sync::anstossen(&app);
+    r
 }
 
 /// Löscht die Unterhaltung samt aller Beiträge.
 #[tauri::command]
 #[specta::specta]
 pub async fn conversation_delete(app: AppHandle, id: String) -> Result<(), String> {
-    run(&app, move |s| s.delete(&id)).await
+    let r = run(&app, move |s| s.delete(&id)).await;
+    crate::sync::assistent_sync::anstossen(&app);
+    r
 }
 
 /// Hängt einen Beitrag an und setzt `updated_at` der Unterhaltung.
@@ -104,7 +113,9 @@ pub async fn conversation_append_entry(
     conversation_id: String,
     entry: NewEntry,
 ) -> Result<ConversationEntry, String> {
-    run(&app, move |s| s.append_entry(&conversation_id, entry)).await
+    let r = run(&app, move |s| s.append_entry(&conversation_id, entry)).await;
+    crate::sync::assistent_sync::anstossen(&app);
+    r
 }
 
 /// Ändert Text und Status eines Beitrags (unterbrochene, schon gespeicherte Antwort).
@@ -116,5 +127,20 @@ pub async fn conversation_update_entry(
     text: String,
     status: String,
 ) -> Result<ConversationEntry, String> {
-    run(&app, move |s| s.update_entry(&id, text, status)).await
+    let r = run(&app, move |s| s.update_entry(&id, text, status)).await;
+    crate::sync::assistent_sync::anstossen(&app);
+    r
+}
+
+/// Markiert ein Gespräch als „nur auf diesem Gerät“ (E10): es wird nie hochgeladen.
+#[tauri::command]
+#[specta::specta]
+pub async fn conversation_set_geraet_lokal(
+    app: AppHandle,
+    id: String,
+    lokal: bool,
+) -> Result<(), String> {
+    let r = run(&app, move |s| s.sync_geraet_lokal_setzen(&id, lokal)).await;
+    crate::sync::assistent_sync::anstossen(&app);
+    r
 }

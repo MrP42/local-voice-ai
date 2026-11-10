@@ -388,6 +388,8 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     app_handle.manage(sync::SyncEngine::default());
     app_handle.manage(sync::pairing::PairingState::default());
     sync::start(app_handle.clone());
+    app_handle.manage(sync::assistent_sync::AssistentSyncDienst::default());
+    sync::assistent_sync::start(app_handle.clone());
     // ADR-0024: gemeinsamer Kontospeicher der Suite (nur lokales Profil).
     konto::init(app_handle);
     // ADR-0026 PR-7: Suite-Projekte und Recherche (Dateien oeffnen beim ersten Gebrauch).
@@ -2067,6 +2069,19 @@ fn specta_builder() -> Builder<tauri::Wry> {
             assistent::assistent_letzte_ausgabe,
             assistent::assistent_ausgabe_vergessen,
             assistent::change_assistent_einstufung_aktiv_setting,
+            sync::assistent_sync::assistent_sync_status,
+            sync::assistent_sync::assistent_sync_starten,
+            sync::assistent_sync::assistent_sync_gruenden,
+            sync::assistent_sync::assistent_sync_kopplung_anbieten,
+            sync::assistent_sync::assistent_sync_kopplung_beginnen,
+            sync::assistent_sync::assistent_sync_kopplung_aufnehmen,
+            sync::assistent_sync::assistent_sync_kopplung_abbrechen,
+            sync::assistent_sync::assistent_sync_geraet_zulassen,
+            sync::assistent_sync::assistent_sync_geraet_widerrufen,
+            sync::assistent_sync::assistent_sync_freigabe_erzeugen,
+            sync::assistent_sync::assistent_sync_geraete,
+            sync::assistent_sync::assistent_sync_sitzung,
+            sync::assistent_sync::change_assistent_sync_aktiv_setting,
             projekte::befehle::projekte_liste,
             projekte::befehle::projekt_anlegen,
             projekte::befehle::projekt_web_freigabe,
@@ -2396,6 +2411,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             conversations::conversation_delete,
             conversations::conversation_append_entry,
             conversations::conversation_update_entry,
+            conversations::conversation_set_geraet_lokal,
             commands::meeting_chat::meeting_chat_ask,
             commands::meeting_chat::meeting_chat_cancel,
             commands::meeting_chat::meeting_chat_threads,

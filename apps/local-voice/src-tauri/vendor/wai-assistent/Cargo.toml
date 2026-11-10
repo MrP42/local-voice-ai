@@ -1,4 +1,4 @@
-# Erzeugt von scripts/vendor-wai-suite.py aus https://github.com/MrP42/wai-sdk (crates/wai-assistent, Commit 303fddfbeb6c). Nicht von Hand ändern.
+# Erzeugt von scripts/vendor-wai-suite.py aus https://github.com/MrP42/wai-sdk (crates/wai-assistent, Commit f1be22f0d71e). Nicht von Hand ändern.
 [package]
 name = "wai-assistent"
 version = "0.1.0"
@@ -19,5 +19,10 @@ thiserror = "2"
 chacha20poly1305 = "0.10"
 zeroize = "1"
 getrandom = "0.3"
-sha2 = "0.10"
+sha2 = "0.11"
 base64 = "0.22"
+ed25519-dalek = { version = "3", default-features = false, features = ["fast", "zeroize"] }
+x25519-dalek = { version = "3", default-features = false, features = ["static_secrets", "zeroize"] }
+hkdf = "0.13"
+hmac = "0.13"
+subtle = "2.6"

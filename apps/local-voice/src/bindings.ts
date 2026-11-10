@@ -1271,6 +1271,160 @@ async changeAssistentEinstufungAktivSetting(enabled: boolean) : Promise<Result<n
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Status des Assistent-Syncs; ohne Netzaufruf.
+ */
+async assistentSyncStatus() : Promise<AssistentSyncStatus> {
+    return await TAURI_INVOKE("assistent_sync_status");
+},
+/**
+ * Sofort abgleichen (schließt auch eine laufende Kopplung ab, sobald das andere Gerät aufgenommen
+ * hat). Ohne den Schalter `assistent_sync_aktiv` passiert nichts.
+ */
+async assistentSyncStarten() : Promise<Result<AssistentSyncStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("assistent_sync_starten") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Gründet das Konto mit diesem Gerät als Vertrauensanker (Erstgerät): Transportzulassung, neue
+ * Identität, Epoche 1 und Kontosalz zufällig, Anker ins Verzeichnis; danach ein Abgleich. Hat das
+ * Konto am Hub schon ein Verzeichnis, wird nicht gegründet (dann koppeln).
+ */
+async assistentSyncGruenden() : Promise<Result<AssistentSyncStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("assistent_sync_gruenden") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Kopplung, Schritt 1 (aufnehmendes, eingerichtetes Gerät): gibt die Kennung `geraet_id` am Hub frei
+ * und liefert den QR-Inhalt mit Prüfpunkt des Verzeichnisses, QR-Geheimnis und Freigabecode. Das
+ * Angebot bleibt nur im Arbeitsspeicher und wird für `assistent_sync_kopplung_aufnehmen` gebraucht.
+ */
+async assistentSyncKopplungAnbieten(geraetId: string) : Promise<Result<AssistentKopplungsangebot, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("assistent_sync_kopplung_anbieten", { geraetId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Kopplung, Schritt 2 (neues Gerät): liest den QR-Inhalt, lässt dieses Gerät mit dem Freigabecode am
+ * Hub zu, erzeugt die Geräteidentität und liefert die Antwort für den Rückkanal (Ausweis, HMAC mit dem
+ * QR-Geheimnis, Besitznachweis). Die Antwort geht auf beliebigem Weg zurück an das aufnehmende Gerät.
+ */
+async assistentSyncKopplungBeginnen(qr: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("assistent_sync_kopplung_beginnen", { qr }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Kopplung, Schritt 3 (aufnehmendes Gerät): prüft die Antwort des neuen Geräts gegen das eigene
+ * Angebot (HMAC, Besitznachweis, Prüfpunkt), nimmt es per signiertem Verzeichniseintrag auf und legt
+ * die Epochenschlüssel als Pakete für es ab. Das neue Gerät schließt danach mit einem Abgleich ab.
+ */
+async assistentSyncKopplungAufnehmen(antwort: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("assistent_sync_kopplung_aufnehmen", { antwort }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Bricht eine laufende Kopplung als neues Gerät ab (verwirft die Identität). Der gesicherte Vermerk
+ * bleibt; der nächste Lauf oder Kopplungsbeginn löst den Versuch auf (neue Kennung, falls das andere
+ * Gerät schon aufgenommen hatte).
+ */
+async assistentSyncKopplungAbbrechen() : Promise<AssistentSyncStatus> {
+    return await TAURI_INVOKE("assistent_sync_kopplung_abbrechen");
+},
+/**
+ * Lässt dieses Gerät mit dem Freigabecode eines schon zugelassenen Geräts am Hub zu (`POST /geraet`,
+ * nur Transport) und gleicht danach ab. Für die Aufnahme ins Konto ist die Kopplung nötig.
+ */
+async assistentSyncGeraetZulassen(freigabeCode: string) : Promise<Result<AssistentSyncStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("assistent_sync_geraet_zulassen", { freigabeCode }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Widerruft ein Gerät über das Verzeichnis (E3.8): dauerhafte Absicht, signierter Widerrufseintrag
+ * mit neuer Epoche, neuer Schlüssel nur als Pakete an die verbleibenden Geräte des geprüften
+ * Verzeichnisses; vor jedem Hub-Schritt gesichert, nach Abbruch beim nächsten Lauf fortgesetzt.
+ */
+async assistentSyncGeraetWiderrufen(geraetId: string) : Promise<Result<AssistentWiderruf, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("assistent_sync_geraet_widerrufen", { geraetId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Gibt eine Kennung für ein weiteres Gerät frei und liefert den Einmalcode (`POST /freigeben`, nur
+ * Transport; die Kopplung enthält den Code schon).
+ */
+async assistentSyncFreigabeErzeugen(geraetId: string) : Promise<Result<AssistentFreigabe, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("assistent_sync_freigabe_erzeugen", { geraetId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Zugelassene, nicht widerrufene Geräte des Kontos laut **geprüftem** Verzeichnis (Kennungen); vorher
+ * wird das Verzeichnis vom Hub geholt und geprüft.
+ */
+async assistentSyncGeraete() : Promise<Result<string[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("assistent_sync_geraete") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Lease der Sprachsitzung eines Gesprächs (E3.3): ohne `uebernehmen` nur lesen, sonst „hier
+ * übernehmen“ (neue Generation) bzw. die eigene, laufende Lease verlängern. Fencing nur über die
+ * Generation; ein Konflikt heißt: neu lesen und erneut fragen.
+ */
+async assistentSyncSitzung(conversationId: string, uebernehmen: boolean) : Promise<Result<AssistentSitzung | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("assistent_sync_sitzung", { conversationId, uebernehmen }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Schaltet den Assistent-Sync ein oder aus (Standard aus, E3.6). Erst nach dem Einschalten werden
+ * bestehende lokale Gespräche hochgeladen. Ausschalten setzt die Abbruchschranke, wartet, bis ein
+ * laufender Lauf geendet ist (danach geht kein Aufruf mehr ans Netz), und gibt die Schranke wieder
+ * frei. Einschalten bestätigt das angemeldete Konto (auch nach einem Konto- oder Schlüsselwechsel).
+ */
+async changeAssistentSyncAktivSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_assistent_sync_aktiv_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async projekteListe() : Promise<Result<SuiteProjekt[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("projekte_liste") };
@@ -4429,6 +4583,17 @@ async conversationAppendEntry(conversationId: string, entry: NewEntry) : Promise
 async conversationUpdateEntry(id: string, text: string, status: string) : Promise<Result<ConversationEntry, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("conversation_update_entry", { id, text, status }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Markiert ein Gespräch als „nur auf diesem Gerät“ (E10): es wird nie hochgeladen.
+ */
+async conversationSetGeraetLokal(id: string, lokal: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("conversation_set_geraet_lokal", { id, lokal }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -9321,6 +9486,12 @@ meeting_mcp_include_transcript?: boolean;
  */
 assistent_einstufung_aktiv?: boolean; 
 /**
+ * ADR-0028 A1 (E3.6, lva#388): Verlauf des Assistenten über den Hub abgleichen. Standard AUS,
+ * ein fehlender Wert gilt als aus; ohne diesen Schalter gibt es keinen Netzaufruf des
+ * Assistent-Syncs und es wird nichts hochgeladen.
+ */
+assistent_sync_aktiv?: boolean; 
+/**
  * Stufe 2 des Sprachgesprächs: darf die Sprach-KI Transkripte von Besprechungen lesen
  * (`meeting_transcript`, Treffer aus dem Transkript)? Getrennt vom MCP-Server; Standard AUS
  * (ADR-0021).
@@ -9420,6 +9591,111 @@ reasons: string[];
  * Woher die Angaben stammen (URL) und wann sie geprueft wurden.
  */
 sources: string[]; checked: string | null }
+/**
+ * Ergebnis von `assistent_sync_freigabe_erzeugen`: Einmalcode für ein weiteres Gerät.
+ */
+export type AssistentFreigabe = { 
+/**
+ * Einmalgeheimnis; geht auf einem eigenen Kanal an das neue Gerät (z. B. QR).
+ */
+code: string; gueltig_bis: string }
+/**
+ * Ergebnis von `assistent_sync_kopplung_anbieten`: Inhalt des QR-Codes für das neue Gerät.
+ */
+export type AssistentKopplungsangebot = { 
+/**
+ * QR-Inhalt (Prüfpunkt, QR-Geheimnis, Freigabecode); nur einmal anzeigen.
+ */
+qr: string; gueltig_bis: string }
+/**
+ * Lease-Stand einer Sprachsitzung (E3.3).
+ */
+export type AssistentSitzung = { 
+/**
+ * Dieses Gerät hält die Lease.
+ */
+hier: boolean; 
+/**
+ * Fencing-Wert; Beiträge dieser Sitzung tragen ihn.
+ */
+generation: number; 
+/**
+ * Ablauf (ms seit Epoche).
+ */
+gueltig_bis_ms: number }
+/**
+ * Zähler des letzten Laufs (nie Inhalte).
+ */
+export type AssistentSyncBericht = { hochgeladen: number; heruntergeladen: number; geloescht: number; 
+/**
+ * Beiträge, die wegen „nur auf diesem Gerät“ oder Vertraulichkeit nicht hochgeladen werden.
+ */
+nur_lokal: number; 
+/**
+ * Objekte, die auf einen Epochenschlüssel oder einen Vorgänger warten.
+ */
+wartend: number; verworfen: number }
+export type AssistentSyncStatus = { 
+/**
+ * Schalter `assistent_sync_aktiv`.
+ */
+aktiv: boolean; 
+/**
+ * Ein Konto des Bibliotheks-Syncs ist angemeldet (Token, Hub-Adresse).
+ */
+angemeldet: boolean; 
+/**
+ * Dieses Gerät ist am Hub zugelassen (Transport).
+ */
+zugelassen: boolean; 
+/**
+ * Der Hub verlangt eine Freigabe von einem schon zugelassenen Gerät.
+ */
+braucht_freigabe: boolean; 
+/**
+ * Dieses Gerät hat einen gesicherten Sync-Zustand (gegründet oder gekoppelt).
+ */
+eingerichtet: boolean; 
+/**
+ * Geräte-Kennung dieses Geräts beim Assistent-Hub (für das Kopplungsangebot am anderen Gerät).
+ */
+geraet_kennung: string | null; 
+/**
+ * Eine Kopplung als neues Gerät wartet auf die Aufnahme.
+ */
+kopplung_offen: boolean; laeuft: boolean; 
+/**
+ * Aktuelle Schlüsselepoche laut geprüftem Verzeichnis (ab 1; 0 = unbekannt).
+ */
+epoche: number; 
+/**
+ * Ein Widerruf ist vorbereitet, aber noch nicht abgeschlossen.
+ */
+widerruf_offen: boolean; letzter_lauf_ms: number | null; 
+/**
+ * Fester Satz zur Anzeige; nie Inhalte.
+ */
+letzter_fehler: string | null; 
+/**
+ * Fehlercode des Hubs (`netz`, `kontingent`, `unauthorized`, …) zur Diagnose.
+ */
+fehler_code: string | null; 
+/**
+ * Lokal gelöschte Gespräche, deren Grabstein der Hub noch nicht bestätigt hat.
+ */
+grabsteine_offen: number; letzter_bericht: AssistentSyncBericht | null }
+/**
+ * Ergebnis von `assistent_sync_geraet_widerrufen`.
+ */
+export type AssistentWiderruf = { 
+/**
+ * Neue Schlüsselepoche.
+ */
+epoche: number; 
+/**
+ * Geräte, die den neuen Epochenschlüssel als Paket bekommen haben (laut geprüftem Verzeichnis).
+ */
+empfaenger: string[] }
 export type Attendee = { 
 /**
  * Klein geschrieben, ohne `mailto:`; `None`, wenn die Quelle keine
@@ -14222,7 +14498,15 @@ export type VoiceExt = { prompt_tokens?: number | null; completion_tokens?: numb
 /**
  * Ereignisse des Verbrauchs-Ledgers (`usage.db`).
  */
-usage_event_ids: number[]; provider_id?: string | null; local?: boolean | null }
+usage_event_ids: number[]; provider_id?: string | null; local?: boolean | null; 
+/**
+ * Lease-Generation (ADR-0028 E3.3), unter der dieser Beitrag angehängt wurde. Setzt die
+ * Sprachsitzung, wenn sie unter einer Lease antwortet (Generation aus
+ * `conversations::sync::sitzung`); der Assistent-Sync gibt sie als `lease_generation` an den
+ * Kern, der einen Beitrag aus einer überholten Generation als Zweig ablegt. Fehlt sie, wurde
+ * ohne Lease geschrieben (Generation 0).
+ */
+lease_generation?: number | null }
 /**
  * Eine Stimme mit ihren Metadaten, für die Stimmenübersicht.
  */

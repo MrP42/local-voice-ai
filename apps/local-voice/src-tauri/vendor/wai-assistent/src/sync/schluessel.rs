@@ -2,15 +2,22 @@
 //!
 //! Epochenschluessel sind unabhaengig zufaellig (nicht voneinander ableitbar): Ein widerrufenes Geraet
 //! kennt nur die Epochen bis zu seinem Widerruf und kann spaetere nicht berechnen (E3.1). Die Verteilung
-//! an Geraete laeuft ausserhalb dieses Moduls ueber die Kopplung (QR).
+//! an Geraete laeuft als gewrappter Schluessel je Empfaenger-Geraeteschluessel (`paket`, E3.8).
 
 use std::collections::BTreeMap;
 use std::fmt;
 
-use zeroize::Zeroize;
+use serde::{Deserialize, Serialize};
+use zeroize::{Zeroize, Zeroizing};
 
 use super::fehler::SyncFehler;
-use super::kennung::zufall;
+use super::kennung::{GeheimHex, zufall};
+
+/// Vergleich zweier Geheimnisse in konstanter Zeit (`subtle`, E3.8 Must-fix 7).
+pub(crate) fn gleich(a: &[u8; 32], b: &[u8; 32]) -> bool {
+    use subtle::ConstantTimeEq;
+    bool::from(a.ct_eq(b))
+}
 
 /// 256-Bit-Geheimnis; wird beim Freigeben ueberschrieben, `Debug` zeigt nichts.
 #[derive(Clone)]
@@ -34,6 +41,18 @@ impl Schluessel {
 impl Drop for Schluessel {
     fn drop(&mut self) {
         self.0.zeroize();
+    }
+}
+
+impl Serialize for Schluessel {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        GeheimHex(Zeroizing::new(self.0)).serialize(s)
+    }
+}
+
+impl<'de> Deserialize<'de> for Schluessel {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        Ok(Schluessel(*GeheimHex::deserialize(d)?.0))
     }
 }
 
@@ -78,15 +97,13 @@ impl Schluesselbund {
         self.id_salz.bytes()
     }
 
-    /// Startet eine neue Epoche mit frischem Zufallsschluessel (Gerätewiderruf, E3.1).
-    pub fn neue_epoche(&mut self) -> Result<u64, SyncFehler> {
-        let neu = self
-            .aktuell
-            .checked_add(1)
-            .ok_or(SyncFehler::Vertrag("epoche ueberlaeuft"))?;
-        self.schluessel.insert(neu, Schluessel::zufall()?);
-        self.aktuell = neu;
-        Ok(neu)
+    pub(crate) fn salz(&self) -> &[u8; 32] {
+        self.id_salz.bytes()
+    }
+
+    /// Bekannte Epochennummern, aufsteigend.
+    pub fn epochen(&self) -> impl Iterator<Item = u64> + '_ {
+        self.schluessel.keys().copied()
     }
 
     /// Nimmt einen verteilten Epochenschluessel auf; die hoechste Epoche wird zur aktuellen.
@@ -99,7 +116,7 @@ impl Schluesselbund {
         schluessel: Schluessel,
     ) -> Result<(), SyncFehler> {
         if let Some(vorhanden) = self.schluessel.get(&epoche) {
-            return if vorhanden.bytes() == schluessel.bytes() {
+            return if gleich(vorhanden.bytes(), schluessel.bytes()) {
                 Ok(())
             } else {
                 Err(SyncFehler::EpocheKollision(epoche))
@@ -111,18 +128,68 @@ impl Schluesselbund {
     }
 }
 
+/// Sicherungsform; geheime Felder als [`GeheimHex`] (auch bei abgebrochenem Lesen ueberschrieben).
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BundGesichert {
+    salz: GeheimHex,
+    schluessel: Vec<(u64, GeheimHex)>,
+}
+
+/// Sicherung des Bundes (Host-Speicher, E3.8): enthaelt Geheimnisse, der Host legt sie geschuetzt ab.
+impl Serialize for Schluesselbund {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        BundGesichert {
+            salz: GeheimHex(Zeroizing::new(*self.id_salz.bytes())),
+            schluessel: self
+                .schluessel
+                .iter()
+                .map(|(e, k)| (*e, GeheimHex(Zeroizing::new(*k.bytes()))))
+                .collect(),
+        }
+        .serialize(s)
+    }
+}
+
+impl<'de> Deserialize<'de> for Schluesselbund {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        use serde::de::Error;
+        let g = BundGesichert::deserialize(d)?;
+        let id_salz = Schluessel(*g.salz.0);
+        let schluessel: BTreeMap<u64, Schluessel> = g
+            .schluessel
+            .iter()
+            .map(|(e, k)| (*e, Schluessel(*k.0)))
+            .collect();
+        let aktuell = *schluessel
+            .keys()
+            .next_back()
+            .ok_or_else(|| D::Error::custom("bund ohne epoche"))?;
+        Ok(Self {
+            id_salz,
+            schluessel,
+            aktuell,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn neue_epoche_ist_unabhaengig() {
+    fn sicherung_rundlauf() {
         let mut b = Schluesselbund::zufaellig().unwrap();
-        let alt = b.schluessel(1).unwrap().bytes().to_owned();
-        assert_eq!(b.neue_epoche().unwrap(), 2);
-        assert_eq!(b.aktuelle_epoche(), 2);
-        assert_ne!(b.schluessel(2).unwrap().bytes(), &alt);
-        assert!(b.schluessel(1).is_some(), "alte Epochen bleiben lesbar");
+        b.epoche_aufnehmen(2, Schluessel::zufall().unwrap())
+            .unwrap();
+        let j = serde_json::to_string(&b).unwrap();
+        let z: Schluesselbund = serde_json::from_str(&j).unwrap();
+        assert_eq!(z.aktuelle_epoche(), 2);
+        assert_eq!(
+            z.schluessel(1).unwrap().bytes(),
+            b.schluessel(1).unwrap().bytes()
+        );
+        assert_eq!(z.id_salz(), b.id_salz());
     }
 
     #[test]

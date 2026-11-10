@@ -113,6 +113,52 @@ static MIGRATIONS: &[M] = &[
             SET pinned_at = CAST(strftime('%s', updated_at) AS INTEGER) * 1000
           WHERE pinned = 1;",
     ),
+    // lva#388 (ADR-0028 A1): Assistent-Sync. Nur lokaler Stand, nichts davon gehört zum
+    // Unterhaltungs-Vertrag. `geraet_lokal`: dieses Gespräch geht nie an den Hub (E3.5).
+    // `sync_jemals`: es war (oder ist) für den Hub bestimmt; nur dann geht beim Löschen ein
+    // Grabstein hoch (E10: sonst Metadatenabfluss). `sync_kopf`: Fingerabdruck des zuletzt
+    // abgeglichenen Kopfes (Titel, Anheftung), um lokale von entfernten Änderungen zu trennen.
+    // `assistent_sync_zuordnung`: Hub-Kennung (`unterhaltung_ref`) je lokales Gespräch.
+    // `assistent_sync_grabsteine`: lokal gelöscht, Grabstein noch nicht beim Hub bestätigt.
+    M::up(
+        "ALTER TABLE conversations ADD COLUMN geraet_lokal INTEGER NOT NULL DEFAULT 0;
+         ALTER TABLE conversations ADD COLUMN sync_jemals INTEGER NOT NULL DEFAULT 0;
+         ALTER TABLE conversations ADD COLUMN sync_kopf TEXT;
+         CREATE TABLE IF NOT EXISTS assistent_sync_meta (
+            schluessel TEXT PRIMARY KEY NOT NULL,
+            wert TEXT NOT NULL
+         );
+         CREATE TABLE IF NOT EXISTS assistent_sync_zuordnung (
+            unterhaltung_ref TEXT PRIMARY KEY NOT NULL,
+            conversation_id TEXT NOT NULL UNIQUE
+         );
+         CREATE TABLE IF NOT EXISTS assistent_sync_grabsteine (
+            conversation_id TEXT PRIMARY KEY NOT NULL,
+            unterhaltung_ref TEXT
+         );",
+    ),
+    // lva#388 (Prüfrunde): Zustand je Konto statt Zurücksetzen. `sync_konto`: das Konto, unter dem
+    // das Gespräch für den Hub bestimmt wurde; es geht nie in ein anderes Konto. Grabsteine bleiben
+    // dauerhaft (`erledigt` = der Hub hat bestätigt) und tragen ihr Konto. `assistent_sync_pruefpunkt`:
+    // ungenutzt seit E3.8 (Rollback-Schutz über die Höchststände des Kerns), bleibt für die Migrationsfolge. `assistent_sync_beitrag`: Hub-Kennung
+    // eines Beitrags, der nach einer Korrektur unter neuer Kennung hochgeladen wurde.
+    M::up(
+        "ALTER TABLE conversations ADD COLUMN sync_konto TEXT;
+         ALTER TABLE assistent_sync_grabsteine ADD COLUMN erledigt INTEGER NOT NULL DEFAULT 0;
+         ALTER TABLE assistent_sync_grabsteine ADD COLUMN konto TEXT;
+         CREATE TABLE IF NOT EXISTS assistent_sync_pruefpunkt (
+            konto TEXT NOT NULL,
+            objekt_id TEXT NOT NULL,
+            unterhaltung_ref TEXT NOT NULL,
+            revision INTEGER NOT NULL,
+            PRIMARY KEY (konto, objekt_id)
+         );
+         CREATE TABLE IF NOT EXISTS assistent_sync_beitrag (
+            hub_id TEXT PRIMARY KEY NOT NULL,
+            entry_id TEXT NOT NULL,
+            aktuell INTEGER NOT NULL
+         );",
+    ),
 ];
 
 // ---------------------------------------------------------------------------
@@ -176,6 +222,13 @@ pub struct VoiceExt {
     pub provider_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub local: Option<bool>,
+    /// Lease-Generation (ADR-0028 E3.3), unter der dieser Beitrag angehängt wurde. Setzt die
+    /// Sprachsitzung, wenn sie unter einer Lease antwortet (Generation aus
+    /// `conversations::sync::sitzung`); der Assistent-Sync gibt sie als `lease_generation` an den
+    /// Kern, der einen Beitrag aus einer überholten Generation als Zweig ablegt. Fehlt sie, wurde
+    /// ohne Lease geschrieben (Generation 0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lease_generation: Option<u32>,
 }
 
 /// Erweiterung je Herkunft (Vertrag `ConversationExt`): diese App schreibt nur ihren Schlüssel.
@@ -647,6 +700,25 @@ fn entry_from(raw: RawEntry) -> Result<ConversationEntry> {
     })
 }
 
+/// Eine Unterhaltung samt Sync-Feldern (lva#388; nur lokal, nie Teil des Vertrags).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SyncStand {
+    pub detail: ConversationDetail,
+    pub geraet_lokal: bool,
+    /// Fingerabdruck des zuletzt abgeglichenen Kopfes.
+    pub sync_kopf: Option<String>,
+    /// Konto, unter dem das Gespräch für den Hub bestimmt wurde (`None`: noch nie).
+    pub sync_konto: Option<String>,
+}
+
+/// Lokal gelöschtes Gespräch, dessen Grabstein der Hub noch nicht bestätigt hat.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OffenerGrabstein {
+    pub conversation_id: String,
+    /// Hub-Kennung, wenn das Gespräch von einem anderen Gerät stammt (sonst aus der lokalen ID ableitbar).
+    pub unterhaltung_ref: Option<String>,
+}
+
 // ---------------------------------------------------------------------------
 // Speicher
 // ---------------------------------------------------------------------------
@@ -665,9 +737,33 @@ impl ConversationStore {
     pub fn open(path: &Path) -> Result<Self> {
         let conn = Connection::open(path)?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
+        Self::sicherung_vor_migration(&conn, path);
         let store = Self::init(conn)?;
         info!("Gesprächsverlauf geöffnet: {}", path.display());
         Ok(store)
+    }
+
+    /// Vor einer Migration einer bestehenden Datei eine konsistente Sicherung ablegen
+    /// (`conversations.db.vor-v<N>.bak`, nur einmal je Version). Ein Fehler hier bricht nichts ab.
+    fn sicherung_vor_migration(conn: &Connection, path: &Path) {
+        let alt: i64 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap_or(0);
+        if alt <= 0 || alt as usize >= MIGRATIONS.len() {
+            return;
+        }
+        let mut name = path
+            .file_name()
+            .map(|n| n.to_os_string())
+            .unwrap_or_default();
+        name.push(format!(".vor-v{alt}.bak"));
+        let ziel = path.with_file_name(name);
+        if ziel.exists() {
+            return;
+        }
+        if let Err(e) = conn.execute("VACUUM INTO ?1", params![ziel.to_string_lossy()]) {
+            log::warn!("Sicherung vor der Migration des Gesprächsverlaufs fehlgeschlagen: {e}");
+        }
     }
 
     pub fn open_in_memory() -> Result<Self> {
@@ -682,6 +778,14 @@ impl ConversationStore {
         Migrations::new(MIGRATIONS[..1].to_vec()).to_latest(&mut conn)?;
         seed(&conn);
         Self::init(conn)
+    }
+
+    /// Nur für Tests: Datei auf einem älteren Schemastand (`n` Migrationen) anlegen.
+    #[cfg(test)]
+    pub fn alte_datei_anlegen(path: &Path, n: usize) -> Result<()> {
+        let mut conn = Connection::open(path)?;
+        Migrations::new(MIGRATIONS[..n].to_vec()).to_latest(&mut conn)?;
+        Ok(())
     }
 
     fn init(mut conn: Connection) -> Result<Self> {
@@ -761,7 +865,11 @@ impl ConversationStore {
     pub fn get(&self, id: &str) -> Result<ConversationDetail> {
         check_id(id)?;
         let conn = self.lock();
-        let conversation = Self::conversation(&conn, id)?;
+        Self::detail(&conn, id)
+    }
+
+    fn detail(conn: &Connection, id: &str) -> Result<ConversationDetail> {
+        let conversation = Self::conversation(conn, id)?;
         let mut stmt = conn.prepare(&format!(
             "SELECT {ENTRY_COLUMNS} FROM conversation_entries
              WHERE conversation_id = ?1 ORDER BY created_at ASC, rowid ASC"
@@ -780,6 +888,13 @@ impl ConversationStore {
     }
 
     pub fn create(&self, title: Option<String>) -> Result<Conversation> {
+        let conversation = Self::neues_gespraech(title)?;
+        let conn = self.lock();
+        Self::einfuegen(&conn, &conversation)?;
+        Ok(conversation)
+    }
+
+    fn neues_gespraech(title: Option<String>) -> Result<Conversation> {
         let title = match title.as_deref().map(str::trim) {
             None | Some("") => DEFAULT_TITLE.to_string(),
             Some(t) => clean_title(t)?,
@@ -826,7 +941,10 @@ impl ConversationStore {
             archived: false,
             ext: None,
         };
-        let conn = self.lock();
+        Ok(conversation)
+    }
+
+    fn einfuegen(conn: &Connection, conversation: &Conversation) -> Result<()> {
         conn.execute(
             &format!(
                 "INSERT INTO conversations ({CONVERSATION_COLUMNS})
@@ -849,7 +967,7 @@ impl ConversationStore {
                 opt_to_json(&conversation.ext)?,
             ],
         )?;
-        Ok(conversation)
+        Ok(())
     }
 
     /// Ändert Titel, Anheften oder Archiv. `updated_at` bleibt unberührt: es
@@ -892,13 +1010,44 @@ impl ConversationStore {
     }
 
     /// Löscht die Unterhaltung samt Beiträgen (Fremdschlüssel kaskadiert).
+    ///
+    /// War das Gespräch für den Hub bestimmt (`sync_jemals`), merkt der Speicher in derselben
+    /// Transaktion einen Grabstein vor (lva#388, E3.2); der nächste Sync-Lauf schickt ihn.
     pub fn delete(&self, id: &str) -> Result<()> {
         check_id(id)?;
         let conn = self.lock();
-        let removed = conn.execute("DELETE FROM conversations WHERE id = ?1", params![id])?;
-        if removed == 0 {
-            bail!("Das Gespräch gibt es nicht (mehr).");
+        let tx = conn.unchecked_transaction()?;
+        let (jemals, konto) = tx
+            .query_row(
+                "SELECT sync_jemals, sync_konto FROM conversations WHERE id = ?1",
+                params![id],
+                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Option<String>>(1)?)),
+            )
+            .optional()?
+            .ok_or_else(|| anyhow!("Das Gespräch gibt es nicht (mehr)."))?;
+        let war_synchron = jemals != 0;
+        if war_synchron {
+            let hub_ref = tx
+                .query_row(
+                    "SELECT unterhaltung_ref FROM assistent_sync_zuordnung
+                      WHERE conversation_id = ?1",
+                    params![id],
+                    |r| r.get::<_, String>(0),
+                )
+                .optional()?;
+            tx.execute(
+                "INSERT OR REPLACE INTO assistent_sync_grabsteine
+                    (conversation_id, unterhaltung_ref, erledigt, konto)
+                 VALUES (?1, ?2, 0, ?3)",
+                params![id, hub_ref, konto],
+            )?;
         }
+        tx.execute("DELETE FROM conversations WHERE id = ?1", params![id])?;
+        tx.execute(
+            "DELETE FROM assistent_sync_zuordnung WHERE conversation_id = ?1",
+            params![id],
+        )?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -1014,6 +1163,349 @@ impl ConversationStore {
             raw_entry,
         )?;
         entry_from(raw)
+    }
+
+    // -----------------------------------------------------------------------
+    // Assistent-Sync (lva#388). Die Abgleich-Logik steht in `conversations::sync`; hier liegt nur
+    // der Zugriff auf die Sync-Felder und -Tabellen. Nichts davon schreibt ins Log.
+    // -----------------------------------------------------------------------
+
+    /// Wert aus der Sync-Ablage (Schlüssel/Wert).
+    pub fn sync_meta(&self, schluessel: &str) -> Result<Option<String>> {
+        let conn = self.lock();
+        Ok(conn
+            .query_row(
+                "SELECT wert FROM assistent_sync_meta WHERE schluessel = ?1",
+                params![schluessel],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+
+    pub fn sync_meta_setzen(&self, schluessel: &str, wert: &str) -> Result<()> {
+        let conn = self.lock();
+        conn.execute(
+            "INSERT OR REPLACE INTO assistent_sync_meta (schluessel, wert) VALUES (?1, ?2)",
+            params![schluessel, wert],
+        )?;
+        Ok(())
+    }
+
+    /// Stabile Kennung dieses Datenbestands (128 Bit, zufällig, einmal angelegt). Aus ihr und der
+    /// lokalen Gesprächs-ID leitet der Sync-Kern die Hub-Kennung ab (E11): nicht die Geräte-ID,
+    /// damit eine Neuinstallation mit denselben Daten nichts doppelt anlegt.
+    pub fn sync_datenbestand_id(&self) -> Result<String> {
+        let conn = self.lock();
+        conn.execute(
+            "INSERT OR IGNORE INTO assistent_sync_meta (schluessel, wert)
+             VALUES ('datenbestand_id', ?1)",
+            params![new_trace_id()],
+        )?;
+        Ok(conn.query_row(
+            "SELECT wert FROM assistent_sync_meta WHERE schluessel = 'datenbestand_id'",
+            [],
+            |r| r.get(0),
+        )?)
+    }
+
+    /// Alle Gespräche (auch archivierte) mit Beiträgen und Sync-Feldern, in einem Zug gelesen.
+    #[cfg(test)]
+    pub fn sync_alle(&self) -> Result<Vec<SyncStand>> {
+        let conn = self.lock();
+        Self::alle_staende(&conn)
+    }
+
+    fn alle_staende(conn: &Connection) -> Result<Vec<SyncStand>> {
+        let mut stmt = conn.prepare(
+            "SELECT id, geraet_lokal, sync_kopf, sync_konto FROM conversations
+              ORDER BY created_at ASC, rowid ASC",
+        )?;
+        let zeilen = stmt
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, i64>(1)? != 0,
+                    r.get::<_, Option<String>>(2)?,
+                    r.get::<_, Option<String>>(3)?,
+                ))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        zeilen
+            .into_iter()
+            .map(|(id, geraet_lokal, sync_kopf, sync_konto)| {
+                Ok(SyncStand {
+                    detail: Self::detail(conn, &id)?,
+                    geraet_lokal,
+                    sync_kopf,
+                    sync_konto,
+                })
+            })
+            .collect()
+    }
+
+    /// Momentaufnahme und Hub-Vormerkung in EINER Transaktion: Gespräche, für die `fuer_hub` gilt und
+    /// die nicht zu einem anderen Konto gehören, bekommen `sync_jemals` und `sync_konto`. Wer danach
+    /// (auch mitten im Lauf) gelöscht wird, hinterlässt einen Grabstein.
+    pub fn sync_alle_vormerken(
+        &self,
+        konto: &str,
+        fuer_hub: impl Fn(&SyncStand) -> bool,
+    ) -> Result<Vec<SyncStand>> {
+        let conn = self.lock();
+        let tx = conn.unchecked_transaction()?;
+        let staende = Self::alle_staende(&tx)?;
+        for st in &staende {
+            let fremd = st.sync_konto.as_deref().is_some_and(|k| k != konto);
+            if fremd || !fuer_hub(st) {
+                continue;
+            }
+            tx.execute(
+                "UPDATE conversations SET sync_jemals = 1, sync_konto = ?1 WHERE id = ?2",
+                params![konto, st.detail.conversation.id],
+            )?;
+        }
+        tx.commit()?;
+        Ok(staende)
+    }
+
+    /// Kennungen aller vorhandenen Gespräche.
+    pub fn sync_ids(&self) -> Result<std::collections::BTreeSet<String>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare("SELECT id FROM conversations")?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
+
+    /// Setzt oder löst „nur auf diesem Gerät“ (E3.5 `geraet_lokal`).
+    pub fn sync_geraet_lokal_setzen(&self, id: &str, lokal: bool) -> Result<()> {
+        check_id(id)?;
+        let conn = self.lock();
+        let n = conn.execute(
+            "UPDATE conversations SET geraet_lokal = ?1 WHERE id = ?2",
+            params![lokal as i64, id],
+        )?;
+        if n == 0 {
+            bail!("Das Gespräch gibt es nicht (mehr).");
+        }
+        Ok(())
+    }
+
+    pub fn sync_kopf_setzen(&self, id: &str, fingerabdruck: &str) -> Result<()> {
+        let conn = self.lock();
+        conn.execute(
+            "UPDATE conversations SET sync_kopf = ?1 WHERE id = ?2",
+            params![fingerabdruck, id],
+        )?;
+        Ok(())
+    }
+
+    /// Hub-Kennung und lokale Gesprächs-ID: `(unterhaltung_ref, conversation_id)`.
+    pub fn sync_zuordnung(&self) -> Result<Vec<(String, String)>> {
+        let conn = self.lock();
+        let mut stmt =
+            conn.prepare("SELECT unterhaltung_ref, conversation_id FROM assistent_sync_zuordnung")?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    pub fn sync_zuordnung_setzen(&self, hub_ref: &str, conversation_id: &str) -> Result<()> {
+        let conn = self.lock();
+        conn.execute(
+            "INSERT OR REPLACE INTO assistent_sync_zuordnung (unterhaltung_ref, conversation_id)
+             VALUES (?1, ?2)",
+            params![hub_ref, conversation_id],
+        )?;
+        Ok(())
+    }
+
+    /// Legt ein Gespräch eines anderen Geräts an: Gespräch (mit Datenklasse, Sonderkategorie und
+    /// Anheftung), Zuordnung zur Hub-Kennung und `sync_jemals` in EINER Transaktion. Bricht etwas ab,
+    /// bleibt kein lokales Gespräch ohne Zuordnung zurück (das sonst beim nächsten Lauf als neues
+    /// Gespräch hochginge).
+    pub fn sync_import_anlegen(
+        &self,
+        title: Option<String>,
+        hub_ref: &str,
+        konto: &str,
+        data_class: &str,
+        special_category: bool,
+        pinned: bool,
+    ) -> Result<Conversation> {
+        let mut c = Self::neues_gespraech(title)?;
+        c.scope.data_class = data_class.to_string();
+        c.scope.special_category = special_category;
+        c.pinned = pinned;
+        let conn = self.lock();
+        let tx = conn.unchecked_transaction()?;
+        Self::einfuegen(&tx, &c)?;
+        if pinned {
+            tx.execute(
+                "UPDATE conversations SET pinned_at = ?1 WHERE id = ?2",
+                params![Utc::now().timestamp_millis(), c.id],
+            )?;
+        }
+        tx.execute(
+            "INSERT OR REPLACE INTO assistent_sync_zuordnung (unterhaltung_ref, conversation_id)
+             VALUES (?1, ?2)",
+            params![hub_ref, c.id],
+        )?;
+        tx.execute(
+            "UPDATE conversations SET sync_jemals = 1, sync_konto = ?2 WHERE id = ?1",
+            params![c.id, konto],
+        )?;
+        tx.commit()?;
+        Ok(c)
+    }
+
+    /// Gibt es einen Eintrag mit dieser Kennung schon (in irgendeinem Gespräch)?
+    pub fn sync_eintrag_vorhanden(&self, entry_id: &str) -> Result<bool> {
+        let conn = self.lock();
+        Ok(conn
+            .query_row(
+                "SELECT 1 FROM conversation_entries WHERE id = ?1",
+                params![entry_id],
+                |r| r.get::<_, i64>(0),
+            )
+            .optional()?
+            .is_some())
+    }
+
+    /// Noch nicht bestätigte Grabsteine dieses Kontos.
+    pub fn sync_grabsteine_offen(&self, konto: &str) -> Result<Vec<OffenerGrabstein>> {
+        self.grabsteine(konto, true)
+    }
+
+    /// Alle lokal bekannten Grabsteine dieses Kontos, auch bestätigte: das Löschwissen bleibt
+    /// dauerhaft, damit ein älterer Hub-Stand nichts wiederbelebt.
+    pub fn sync_grabsteine_alle(&self, konto: &str) -> Result<Vec<OffenerGrabstein>> {
+        self.grabsteine(konto, false)
+    }
+
+    fn grabsteine(&self, konto: &str, nur_offen: bool) -> Result<Vec<OffenerGrabstein>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT conversation_id, unterhaltung_ref FROM assistent_sync_grabsteine
+              WHERE (konto IS NULL OR konto = ?1) AND (?2 = 0 OR erledigt = 0)
+              ORDER BY rowid ASC",
+        )?;
+        let rows = stmt.query_map(params![konto, nur_offen as i64], |r| {
+            Ok(OffenerGrabstein {
+                conversation_id: r.get(0)?,
+                unterhaltung_ref: r.get(1)?,
+            })
+        })?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    /// Der Hub hat den Grabstein bestätigt (oder er entfällt): als erledigt markieren. Die Zeile
+    /// bleibt, sie ist das dauerhafte Löschwissen.
+    pub fn sync_grabstein_erledigt(&self, conversation_id: &str) -> Result<()> {
+        let conn = self.lock();
+        conn.execute(
+            "UPDATE assistent_sync_grabsteine SET erledigt = 1 WHERE conversation_id = ?1",
+            params![conversation_id],
+        )?;
+        Ok(())
+    }
+
+    /// Hub-Kennungen korrigierter Beiträge: `(entry_id, hub_id, aktuell)`. Jede je benutzte
+    /// Hub-Kennung bleibt stehen, damit das alte Objekt sicher begraben wird.
+    pub fn sync_beitrag_ids(&self) -> Result<Vec<(String, String, bool)>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT entry_id, hub_id, aktuell FROM assistent_sync_beitrag ORDER BY rowid ASC",
+        )?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get::<_, i64>(2)? != 0)))?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
+
+    /// Ein Beitrag geht ab jetzt unter `neu` zum Hub; `alt` (bisherige Kennung) wird begraben.
+    /// Wird vor dem Hochladen gesichert.
+    pub fn sync_beitrag_neu_setzen(&self, entry_id: &str, alt: &str, neu: &str) -> Result<()> {
+        let conn = self.lock();
+        let tx = conn.unchecked_transaction()?;
+        tx.execute(
+            "INSERT OR IGNORE INTO assistent_sync_beitrag (hub_id, entry_id, aktuell)
+             VALUES (?1, ?2, 0)",
+            params![alt, entry_id],
+        )?;
+        tx.execute(
+            "UPDATE assistent_sync_beitrag SET aktuell = 0 WHERE entry_id = ?1",
+            params![entry_id],
+        )?;
+        tx.execute(
+            "INSERT INTO assistent_sync_beitrag (hub_id, entry_id, aktuell) VALUES (?1, ?2, 1)",
+            params![neu, entry_id],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Löscht ein Gespräch, weil ein Grabstein vom Hub eingetroffen ist: ohne neuen Grabstein.
+    pub fn sync_loeschen(&self, id: &str) -> Result<()> {
+        check_id(id)?;
+        let conn = self.lock();
+        let tx = conn.unchecked_transaction()?;
+        let konto = tx
+            .query_row(
+                "SELECT sync_konto FROM conversations WHERE id = ?1",
+                params![id],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .optional()?
+            .flatten();
+        let hub_ref = tx
+            .query_row(
+                "SELECT unterhaltung_ref FROM assistent_sync_zuordnung WHERE conversation_id = ?1",
+                params![id],
+                |r| r.get::<_, String>(0),
+            )
+            .optional()?;
+        tx.execute(
+            "INSERT OR IGNORE INTO assistent_sync_grabsteine
+                (conversation_id, unterhaltung_ref, erledigt, konto)
+             VALUES (?1, ?2, 1, ?3)",
+            params![id, hub_ref, konto],
+        )?;
+        tx.execute("DELETE FROM conversations WHERE id = ?1", params![id])?;
+        tx.execute(
+            "DELETE FROM assistent_sync_zuordnung WHERE conversation_id = ?1",
+            params![id],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Löscht einen Beitrag, weil ein Grabstein vom Hub eingetroffen ist.
+    pub fn sync_eintrag_loeschen(&self, entry_id: &str) -> Result<()> {
+        check_id(entry_id)?;
+        let conn = self.lock();
+        conn.execute(
+            "DELETE FROM conversation_entries WHERE id = ?1",
+            params![entry_id],
+        )?;
+        Ok(())
+    }
+
+    /// Setzt Datenklasse und Sonderkategorie des Gesprächs (Tests; der Import setzt beides in
+    /// [`Self::sync_import_anlegen`]).
+    #[cfg(test)]
+    pub fn sync_datenklasse_setzen(
+        &self,
+        id: &str,
+        data_class: &str,
+        special_category: bool,
+    ) -> Result<()> {
+        check_id(id)?;
+        let conn = self.lock();
+        let mut c = Self::conversation(&conn, id)?;
+        c.scope.data_class = data_class.to_string();
+        c.scope.special_category = special_category;
+        conn.execute(
+            "UPDATE conversations SET scope = ?1 WHERE id = ?2",
+            params![to_json(&c.scope)?, id],
+        )?;
+        Ok(())
     }
 
     fn conversation(conn: &Connection, id: &str) -> Result<Conversation> {

@@ -1,50 +1,129 @@
-//! In-Memory-Hub fuer Tests: setzt die Hub-Regeln aus E3.0 bis E3.3 um, ohne Netz.
+//! In-Memory-Hub fuer Tests: setzt die Hub-Regeln aus E3.0 bis E3.3 und E3.8 um, ohne Netz.
 //!
-//! Der Hub sieht nur Steuerfelder und Chiffrat. Alle Zugriffe laufen unter einem Mutex; dadurch gewinnt
-//! bei gleichzeitigem Vergleichsschreiben genau ein Schreiber.
+//! Der Hub sieht nur Steuerfelder, Chiffrat, Verzeichnis und gewrappte Schluessel. Alle Zugriffe laufen
+//! unter einem Mutex; dadurch gewinnt bei gleichzeitigem Vergleichsschreiben genau ein Schreiber.
+//!
+//! Mit [`MemHub::boese`] spielt der Hub einen Angreifer (E3.8): Durchsetzung aus, Umsortieren,
+//! Wiederholen, alte Fassungen veraenderlicher Objekte mit neuer Revision, Vorspulen des Cursors,
+//! Zurueckhalten, Einschleusen von Verzeichniseintraegen und Schluesselpaketen. Mit
+//! [`MemHub::schnappschuss`] und [`MemHub::zuruecksetzen`] rollt er seinen ganzen Stand zurueck.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Mutex, MutexGuard};
 
 use super::hub::{AuthGeraet, HubFehler, HubSpeicher, LeseFilter, Schreiben};
 use super::kennung::Hex128;
+use super::paket::Schluesselpaket;
 use super::umschlag::{Sammlung, Umschlag, ZielTyp};
+use super::verzeichnis::{Verzeichnis, Verzeichniseintrag};
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct Zustand {
     revision: u64,
-    epoche: u64,
     zugelassen: BTreeSet<String>,
     objekte: BTreeMap<(Sammlung, Hex128), Umschlag>,
-    widerrufen: BTreeSet<String>,
-    mindest_epoche: u64,
+    /// Alle Fassungen veraenderlicher Objekte (fuer den Angriff "alte Fassung").
+    fassungen: BTreeMap<(Sammlung, Hex128), Vec<Umschlag>>,
     grab_unterhaltungen: BTreeSet<Hex128>,
     grab_objekte: BTreeSet<Hex128>,
     schreibversuche: u64,
-    vorgaenge: BTreeMap<Hex128, (String, u64)>,
+    verzeichnis: Option<Verzeichnis>,
+    pakete: Vec<Schluesselpaket>,
 }
+
+impl Zustand {
+    fn epoche(&self) -> u64 {
+        self.verzeichnis.as_ref().map_or(1, |v| v.epoche().max(1))
+    }
+
+    fn widerrufen(&self, geraet: &str) -> bool {
+        self.verzeichnis
+            .as_ref()
+            .and_then(|v| v.stand().mitglied(geraet))
+            .is_some_and(|m| !m.zugelassen())
+    }
+
+    fn zugelassen(&self, geraet: &str) -> bool {
+        self.zugelassen.contains(geraet)
+            || self
+                .verzeichnis
+                .as_ref()
+                .is_some_and(|v| v.stand().zugelassen(geraet))
+    }
+}
+
+/// Angriffe des Hubs (E3.8). Standard: ehrlich.
+#[derive(Clone, Debug, Default)]
+pub struct Boese {
+    /// Keine Hubregel wird durchgesetzt (Widerrufene, alte Epochen, fremde `geraet_id`, Grabsteine).
+    pub ohne_durchsetzung: bool,
+    /// `lesen` liefert in umgekehrter Reihenfolge.
+    pub umsortieren: bool,
+    /// `lesen` liefert jedes Objekt doppelt.
+    pub wiederholen: bool,
+    /// Veraenderliche Objekte kommen in ihrer ersten Fassung, aber mit der aktuellen Revision.
+    pub alte_fassung: bool,
+    /// Auf jede gelieferte Revision wird dieser Wert aufgeschlagen (Cursor vorspulen).
+    pub revision_aufschlag: u64,
+    /// Diese Objekte werden nie geliefert.
+    pub zurueckhalten: BTreeSet<Hex128>,
+    /// Verzeichnis wird nur bis zu dieser Laenge geliefert (Widerruf vorenthalten).
+    pub verzeichnis_bis: Option<u64>,
+    /// Wird an jede Verzeichnisantwort angehaengt (eingeschleuste Eintraege).
+    pub verzeichnis_zusatz: Vec<Verzeichniseintrag>,
+    /// Wird an jede Paketantwort angehaengt (eingeschleuste Schluessel).
+    pub pakete_zusatz: Vec<Schluesselpaket>,
+    /// `fassungen_lesen` liefert keine Zwischenbelege (Ketten-Luecke erzwingen).
+    pub ohne_fassungen: bool,
+}
+
+/// Gesicherter Hubstand fuer den Rollback-Angriff.
+#[derive(Clone)]
+pub struct Schnappschuss(Zustand);
 
 /// Hub im Arbeitsspeicher.
 #[derive(Default)]
 pub struct MemHub {
     z: Mutex<Zustand>,
+    boese: Mutex<Boese>,
 }
 
 impl MemHub {
-    /// Leerer Hub in Epoche 1 ohne zugelassene Geraete (siehe [`MemHub::zulassen`]).
+    /// Leerer Hub ohne zugelassene Geraete (Zulassung ueber das Verzeichnis oder [`MemHub::zulassen`]).
     pub fn new() -> Self {
-        let hub = Self::default();
-        hub.sperre().epoche = 1;
-        hub
+        Self::default()
     }
 
-    /// Laesst ein Geraet zu (Kopplung); nur zugelassene Geraete schreiben und lesen.
+    /// Laesst ein Geraet auf Transportebene zu (nur fuer Tests ohne Verzeichnis).
     pub fn zulassen(&self, geraet: &str) {
         self.sperre().zugelassen.insert(geraet.to_owned());
     }
 
     fn sperre(&self) -> MutexGuard<'_, Zustand> {
         self.z.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn b(&self) -> Boese {
+        self.boese.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// Setzt das Angriffsverhalten.
+    pub fn boese(&self, b: Boese) {
+        *self.boese.lock().unwrap_or_else(|e| e.into_inner()) = b;
+    }
+
+    /// Wieder ehrlich.
+    pub fn ehrlich(&self) {
+        self.boese(Boese::default());
+    }
+
+    pub fn schnappschuss(&self) -> Schnappschuss {
+        Schnappschuss(self.sperre().clone())
+    }
+
+    /// Spielt einen frueheren Stand zurueck (Rollback-Angriff).
+    pub fn zuruecksetzen(&self, s: &Schnappschuss) {
+        *self.sperre() = s.0.clone();
     }
 
     /// Anzahl aller Schreibversuche (`schreiben` und `cas`), auch abgewiesener.
@@ -55,6 +134,16 @@ impl MemHub {
     /// Alle gespeicherten Umschlaege (Sicht des Hubs, z. B. fuer die Klartextsuche).
     pub fn alle_umschlaege(&self) -> Vec<Umschlag> {
         self.sperre().objekte.values().cloned().collect()
+    }
+
+    /// Alle Fassungen aller veraenderlichen Objekte (fuer Wiedereinspielen).
+    pub fn alle_fassungen(&self) -> Vec<Umschlag> {
+        self.sperre()
+            .fassungen
+            .values()
+            .flatten()
+            .cloned()
+            .collect()
     }
 
     pub fn anzahl(&self, sammlung: Sammlung) -> usize {
@@ -84,29 +173,63 @@ impl MemHub {
         )
     }
 
-    fn pruefen_auth(z: &Zustand, auth: &AuthGeraet) -> Result<(), HubFehler> {
-        if z.widerrufen.contains(auth.id()) {
+    /// Gespeicherte Verzeichniseintraege (Hubsicht).
+    pub fn verzeichnis(&self) -> Vec<Verzeichniseintrag> {
+        self.sperre()
+            .verzeichnis
+            .as_ref()
+            .map(|v| v.eintraege().to_vec())
+            .unwrap_or_default()
+    }
+
+    /// Gespeicherte Schluesselpakete (Hubsicht).
+    pub fn pakete(&self) -> Vec<Schluesselpaket> {
+        self.sperre().pakete.clone()
+    }
+
+    /// Aktuelle Epoche laut Verzeichnis (Hubsicht).
+    pub fn epoche(&self) -> u64 {
+        self.sperre().epoche()
+    }
+
+    /// Schreibt ohne jede Pruefung (Angriff: eingeschleustes Objekt).
+    pub fn einschleusen(&self, u: &Umschlag) -> u64 {
+        Self::speichern(&mut self.sperre(), u)
+    }
+
+    fn pruefen_auth(&self, z: &Zustand, auth: &AuthGeraet) -> Result<(), HubFehler> {
+        if self.b().ohne_durchsetzung {
+            return Ok(());
+        }
+        if z.widerrufen(auth.id()) {
             return Err(HubFehler::Widerrufen);
         }
-        if !z.zugelassen.contains(auth.id()) {
+        if !z.zugelassen(auth.id()) {
             return Err(HubFehler::NichtZugelassen);
         }
         Ok(())
     }
 
-    fn pruefen_schreiben(z: &Zustand, auth: &AuthGeraet, u: &Umschlag) -> Result<(), HubFehler> {
-        Self::pruefen_auth(z, auth)?;
+    fn pruefen_schreiben(
+        &self,
+        z: &Zustand,
+        auth: &AuthGeraet,
+        u: &Umschlag,
+    ) -> Result<(), HubFehler> {
+        self.pruefen_auth(z, auth)?;
+        if self.b().ohne_durchsetzung {
+            return Ok(());
+        }
         if u.geraet_id != auth.id() {
             return Err(HubFehler::GeraetStimmtNichtUeberein);
         }
         u.pruefen().map_err(|_| HubFehler::Vertrag("umschlag"))?;
-        if u.key_epoch < z.mindest_epoche {
-            return Err(HubFehler::EpocheVeraltet {
-                mindest: z.mindest_epoche,
-            });
+        let epoche = z.epoche();
+        if u.key_epoch < epoche {
+            return Err(HubFehler::EpocheVeraltet { mindest: epoche });
         }
-        if u.key_epoch > z.epoche {
-            return Err(HubFehler::EpocheVoraus { aktuell: z.epoche });
+        if u.key_epoch > epoche {
+            return Err(HubFehler::EpocheVoraus { aktuell: epoche });
         }
         if u.sammlung != Sammlung::Loeschmarke
             && (z.grab_unterhaltungen.contains(&u.unterhaltung_ref)
@@ -135,9 +258,32 @@ impl MemHub {
                 }
             }
         }
-        z.objekte
-            .insert((u.sammlung, u.objekt_id.clone()), u.mit_revision(rev));
+        let mit = u.mit_revision(rev);
+        if u.sammlung.veraenderlich() {
+            z.fassungen
+                .entry((u.sammlung, u.objekt_id.clone()))
+                .or_default()
+                .push(mit.clone());
+        }
+        z.objekte.insert((u.sammlung, u.objekt_id.clone()), mit);
         rev
+    }
+
+    /// Wendet Lese-Angriffe auf ein einzelnes Objekt an.
+    fn fassung(&self, z: &Zustand, u: &Umschlag, b: &Boese) -> Umschlag {
+        let mut aus = u.clone();
+        if b.alte_fassung
+            && let Some(erste) = z
+                .fassungen
+                .get(&(u.sammlung, u.objekt_id.clone()))
+                .and_then(|f| f.first())
+        {
+            aus = erste.mit_revision(u.revision.unwrap_or(0));
+        }
+        if b.revision_aufschlag > 0 {
+            aus.revision = aus.revision.map(|r| r.saturating_add(b.revision_aufschlag));
+        }
+        aus
     }
 }
 
@@ -151,7 +297,7 @@ impl HubSpeicher for MemHub {
     fn schreiben(&self, auth: &AuthGeraet, u: &Umschlag) -> Result<Schreiben, HubFehler> {
         let mut z = self.sperre();
         z.schreibversuche += 1;
-        Self::pruefen_schreiben(&z, auth, u)?;
+        self.pruefen_schreiben(&z, auth, u)?;
         if let Some(alt) = z.objekte.get(&(u.sammlung, u.objekt_id.clone())) {
             let rev = alt.revision.unwrap_or(0);
             return if u.sammlung.veraenderlich() {
@@ -179,10 +325,10 @@ impl HubSpeicher for MemHub {
         if neuer.sammlung != sammlung || &neuer.objekt_id != objekt_id {
             return Err(HubFehler::Vertrag("sammlung/objekt_id"));
         }
-        Self::pruefen_schreiben(&z, auth, neuer)?;
+        self.pruefen_schreiben(&z, auth, neuer)?;
         let aktuell = z.objekte.get(&(sammlung, objekt_id.clone()));
         let aktuelle_revision = aktuell.and_then(|o| o.revision);
-        if aktuelle_revision != erwartete_revision {
+        if aktuelle_revision != erwartete_revision && !self.b().ohne_durchsetzung {
             return Err(HubFehler::RevisionKonflikt {
                 aktuell: aktuelle_revision,
             });
@@ -202,374 +348,142 @@ impl HubSpeicher for MemHub {
         objekt_id: &Hex128,
     ) -> Result<Option<Umschlag>, HubFehler> {
         let z = self.sperre();
-        Self::pruefen_auth(&z, auth)?;
-        Ok(z.objekte.get(&(sammlung, objekt_id.clone())).cloned())
+        self.pruefen_auth(&z, auth)?;
+        let b = self.b();
+        if b.zurueckhalten.contains(objekt_id) {
+            return Ok(None);
+        }
+        Ok(z.objekte
+            .get(&(sammlung, objekt_id.clone()))
+            .map(|u| self.fassung(&z, u, &b)))
+    }
+
+    fn fassungen_lesen(
+        &self,
+        auth: &AuthGeraet,
+        sammlung: Sammlung,
+        objekt_id: &Hex128,
+    ) -> Result<Vec<Umschlag>, HubFehler> {
+        let z = self.sperre();
+        self.pruefen_auth(&z, auth)?;
+        if self.b().ohne_fassungen {
+            return Ok(Vec::new());
+        }
+        Ok(z.fassungen
+            .get(&(sammlung, objekt_id.clone()))
+            .cloned()
+            .unwrap_or_default())
     }
 
     fn lesen(&self, auth: &AuthGeraet, filter: &LeseFilter) -> Result<Vec<Umschlag>, HubFehler> {
         let z = self.sperre();
-        Self::pruefen_auth(&z, auth)?;
-        Ok(sortiert(z.objekte.values().filter(|u| {
+        self.pruefen_auth(&z, auth)?;
+        let b = self.b();
+        let mut v: Vec<Umschlag> = sortiert(z.objekte.values().filter(|u| {
             u.revision.unwrap_or(0) > filter.nach_revision
                 && filter.sammlung.is_none_or(|s| s == u.sammlung)
                 && filter
                     .unterhaltung_ref
                     .as_ref()
                     .is_none_or(|r| r == &u.unterhaltung_ref)
-        })))
+        }))
+        .into_iter()
+        .filter(|u| !b.zurueckhalten.contains(&u.objekt_id))
+        .map(|u| self.fassung(&z, &u, &b))
+        .collect();
+        if b.wiederholen {
+            v = v.iter().flat_map(|u| [u.clone(), u.clone()]).collect();
+        }
+        if b.umsortieren {
+            v.reverse();
+        }
+        Ok(v)
     }
 
-    fn widerrufen(
+    fn verzeichnis_anhaengen(
         &self,
         auth: &AuthGeraet,
-        widerrufenes_geraet: &str,
-        erwartete_epoche: u64,
-        vorgang: &Hex128,
-    ) -> Result<u64, HubFehler> {
+        e: &Verzeichniseintrag,
+    ) -> Result<(), HubFehler> {
         let mut z = self.sperre();
-        Self::pruefen_auth(&z, auth)?;
-        if let Some((geraet, epoche)) = z.vorgaenge.get(vorgang) {
-            return if geraet == widerrufenes_geraet {
-                Ok(*epoche)
-            } else {
-                Err(HubFehler::Vertrag(
-                    "vorgang gehoert zu einem anderen widerruf",
-                ))
-            };
+        let laenge = z.verzeichnis.as_ref().map_or(0, |v| v.laenge());
+        let gruendung = laenge == 0 && e.nummer == 0 && e.unterzeichner == auth.id();
+        if !gruendung {
+            self.pruefen_auth(&z, auth)?;
         }
-        if z.epoche != erwartete_epoche {
-            return Err(HubFehler::EpocheKonflikt { aktuell: z.epoche });
+        if e.nummer > laenge {
+            return Err(HubFehler::VerzeichnisKonflikt { laenge });
         }
-        let neu = z
-            .epoche
-            .checked_add(1)
-            .ok_or(HubFehler::Vertrag("epoche ueberlaeuft"))?;
-        z.widerrufen.insert(widerrufenes_geraet.to_owned());
-        z.epoche = neu;
-        z.mindest_epoche = neu;
-        z.vorgaenge
-            .insert(vorgang.clone(), (widerrufenes_geraet.to_owned(), neu));
-        Ok(neu)
+        let mut v = z
+            .verzeichnis
+            .clone()
+            .unwrap_or_else(|| Verzeichnis::gepinnt(e.konto.clone()));
+        match v.anhaengen(e.clone()) {
+            Ok(_) => {
+                z.verzeichnis = Some(v);
+                Ok(())
+            }
+            Err(super::fehler::SyncFehler::VerzeichnisGabelung) => {
+                Err(HubFehler::VerzeichnisKonflikt { laenge })
+            }
+            Err(_) => Err(HubFehler::Vertrag("verzeichniseintrag")),
+        }
     }
 
-    fn epoche(&self, auth: &AuthGeraet) -> Result<u64, HubFehler> {
+    fn verzeichnis_lesen(
+        &self,
+        auth: &AuthGeraet,
+        ab: u64,
+    ) -> Result<Vec<Verzeichniseintrag>, HubFehler> {
         let z = self.sperre();
-        Self::pruefen_auth(&z, auth)?;
-        Ok(z.epoche)
-    }
-
-    fn zugelassene(&self, auth: &AuthGeraet) -> Result<Vec<String>, HubFehler> {
-        let z = self.sperre();
-        Self::pruefen_auth(&z, auth)?;
-        Ok(z.zugelassen.difference(&z.widerrufen).cloned().collect())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::sync::schluessel::Schluesselbund;
-    use crate::sync::umschlag::{Steuerfelder, Ziel, versiegeln};
-    use serde_json::json;
-
-    fn bund() -> Schluesselbund {
-        Schluesselbund::zufaellig().unwrap()
-    }
-
-    fn hub() -> MemHub {
-        let h = MemHub::new();
-        for g in ["pc", "tablet", "iphone"] {
-            h.zulassen(g);
-        }
-        h
-    }
-
-    fn a(n: &str) -> AuthGeraet {
-        AuthGeraet::new(n)
-    }
-
-    fn objekt(
-        b: &Schluesselbund,
-        s: Sammlung,
-        id: &Hex128,
-        r: &Hex128,
-        geraet: &str,
-        epoche: u64,
-    ) -> Umschlag {
-        versiegeln(
-            b,
-            &Steuerfelder::inhalt(s, id.clone(), r.clone(), geraet, epoche),
-            &json!({"x": 1}),
-        )
-        .unwrap()
-    }
-
-    fn zufall() -> Hex128 {
-        Hex128::zufall().unwrap()
-    }
-
-    #[test]
-    fn erstschreiben_ist_idempotent_und_revision_steigt() {
-        let (hub, b) = (hub(), bund());
-        let (id, r) = (zufall(), zufall());
-        let u = objekt(&b, Sammlung::Beitrag, &id, &r, "pc", 1);
-        assert_eq!(hub.schreiben(&a("pc"), &u), Ok(Schreiben::Neu(1)));
-        assert_eq!(hub.schreiben(&a("pc"), &u), Ok(Schreiben::Vorhanden(1)));
-        let u2 = objekt(&b, Sammlung::Beitrag, &zufall(), &r, "pc", 1);
-        assert_eq!(hub.schreiben(&a("pc"), &u2), Ok(Schreiben::Neu(2)));
-        assert_eq!(hub.anzahl(Sammlung::Beitrag), 2);
-        assert_eq!(hub.schreibversuche(), 3);
-    }
-
-    #[test]
-    fn schreiber_wird_authentifiziert() {
-        let (hub, b) = (hub(), bund());
-        let r = zufall();
-        let als_pc = objekt(&b, Sammlung::Beitrag, &zufall(), &r, "pc", 1);
-        assert_eq!(
-            hub.schreiben(&a("tablet"), &als_pc),
-            Err(HubFehler::GeraetStimmtNichtUeberein),
-            "fremde geraet_id im Umschlag"
-        );
-        assert_eq!(
-            hub.schreiben(&a("fremd"), &als_pc),
-            Err(HubFehler::NichtZugelassen)
-        );
-        let fremd = objekt(&b, Sammlung::Beitrag, &zufall(), &r, "fremd", 1);
-        assert_eq!(
-            hub.schreiben(&a("fremd"), &fremd),
-            Err(HubFehler::NichtZugelassen)
-        );
-        assert_eq!(
-            hub.lesen(&a("fremd"), &LeseFilter::default()),
-            Err(HubFehler::NichtZugelassen)
-        );
-        assert_eq!(hub.epoche(&a("fremd")), Err(HubFehler::NichtZugelassen));
-        assert_eq!(hub.anzahl(Sammlung::Beitrag), 0);
-    }
-
-    #[test]
-    fn vergleichsschreiben_nur_mit_passender_revision() {
-        let (hub, b) = (hub(), bund());
-        let (id, r) = (zufall(), zufall());
-        let u = objekt(&b, Sammlung::Sitzung, &id, &r, "pc", 1);
-        let pc = a("pc");
-        let falsch = hub.cas(&pc, Sammlung::Sitzung, &id, Some(5), &u);
-        assert_eq!(falsch, Err(HubFehler::RevisionKonflikt { aktuell: None }));
-        let rev = hub.cas(&pc, Sammlung::Sitzung, &id, None, &u).unwrap();
-        let doppelt = hub.cas(&pc, Sammlung::Sitzung, &id, None, &u);
-        assert_eq!(
-            doppelt,
-            Err(HubFehler::RevisionKonflikt { aktuell: Some(rev) })
-        );
-        let zu_neu = hub.cas(&pc, Sammlung::Sitzung, &id, Some(rev + 1), &u);
-        assert_eq!(
-            zu_neu,
-            Err(HubFehler::RevisionKonflikt { aktuell: Some(rev) })
-        );
-        let neu = hub.cas(&pc, Sammlung::Sitzung, &id, Some(rev), &u).unwrap();
-        assert!(neu > rev);
-        assert_eq!(
-            hub.schreiben(&pc, &u),
-            Err(HubFehler::RevisionKonflikt { aktuell: Some(neu) })
-        );
-        let umgehaengt = objekt(&b, Sammlung::Sitzung, &id, &zufall(), "pc", 1);
-        assert!(matches!(
-            hub.cas(&pc, Sammlung::Sitzung, &id, Some(neu), &umgehaengt),
-            Err(HubFehler::Vertrag(_))
-        ));
-        let beitrag = objekt(&b, Sammlung::Beitrag, &id, &r, "pc", 1);
-        assert_eq!(
-            hub.cas(&pc, Sammlung::Beitrag, &id, None, &beitrag),
-            Err(HubFehler::NichtVeraenderlich)
-        );
-    }
-
-    #[test]
-    fn widerruf_ist_vergleichsschreiben_auf_die_epoche() {
-        let (hub, b) = (hub(), bund());
-        let r = zufall();
-        hub.schreiben(
-            &a("tablet"),
-            &objekt(&b, Sammlung::Beitrag, &zufall(), &r, "tablet", 1),
-        )
-        .unwrap();
-        assert_eq!(
-            hub.widerrufen(&a("pc"), "tablet", 7, &zufall()),
-            Err(HubFehler::EpocheKonflikt { aktuell: 1 })
-        );
-        assert_eq!(hub.widerrufen(&a("pc"), "tablet", 1, &zufall()), Ok(2));
-        assert_eq!(
-            hub.widerrufen(&a("iphone"), "uhr", 1, &zufall()),
-            Err(HubFehler::EpocheKonflikt { aktuell: 2 }),
-            "gleichzeitiger zweiter Widerruf bekommt nie dieselbe Nummer"
-        );
-        let mut b2 = b.clone();
-        b2.epoche_aufnehmen(2, crate::sync::schluessel::Schluessel::zufall().unwrap())
-            .unwrap();
-        let neu_tablet = objekt(&b2, Sammlung::Beitrag, &zufall(), &r, "tablet", 2);
-        assert_eq!(
-            hub.schreiben(&a("tablet"), &neu_tablet),
-            Err(HubFehler::Widerrufen)
-        );
-        assert_eq!(
-            hub.lesen(&a("tablet"), &LeseFilter::default()),
-            Err(HubFehler::Widerrufen)
-        );
-        assert_eq!(
-            hub.holen(&a("tablet"), Sammlung::Beitrag, &r),
-            Err(HubFehler::Widerrufen)
-        );
-        let alt = objekt(&b, Sammlung::Beitrag, &zufall(), &r, "pc", 1);
-        assert_eq!(
-            hub.schreiben(&a("pc"), &alt),
-            Err(HubFehler::EpocheVeraltet { mindest: 2 })
-        );
-        let ok = objekt(&b2, Sammlung::Beitrag, &zufall(), &r, "pc", 2);
-        assert!(hub.schreiben(&a("pc"), &ok).is_ok());
-        b2.epoche_aufnehmen(3, crate::sync::schluessel::Schluessel::zufall().unwrap())
-            .unwrap();
-        let zu_neu = objekt(&b2, Sammlung::Beitrag, &zufall(), &r, "pc", 3);
-        assert_eq!(
-            hub.schreiben(&a("pc"), &zu_neu),
-            Err(HubFehler::EpocheVoraus { aktuell: 2 })
-        );
-        assert_eq!(
-            hub.widerrufen(&a("tablet"), "pc", 2, &zufall()),
-            Err(HubFehler::Widerrufen),
-            "Widerrufene widerrufen niemanden"
-        );
-        assert_eq!(
-            hub.widerrufen(&a("fremd"), "pc", 2, &zufall()),
-            Err(HubFehler::NichtZugelassen)
-        );
-        let mut liste = hub.zugelassene(&a("pc")).unwrap();
-        liste.sort();
-        assert_eq!(
-            liste,
-            vec!["iphone", "pc"],
-            "widerrufene stehen nicht in der Empfaengerliste"
-        );
-    }
-
-    #[test]
-    fn widerruf_mit_gleicher_vorgangskennung_ist_idempotent() {
-        let hub = hub();
-        let v = zufall();
-        assert_eq!(hub.widerrufen(&a("pc"), "tablet", 1, &v), Ok(2));
-        assert_eq!(
-            hub.widerrufen(&a("pc"), "tablet", 1, &v),
-            Ok(2),
-            "verlorene Antwort: Wiederholung liefert dieselbe Epoche"
-        );
-        assert_eq!(hub.epoche(&a("pc")), Ok(2), "kein zweiter Epochensprung");
-        assert!(matches!(
-            hub.widerrufen(&a("pc"), "iphone", 1, &v),
-            Err(HubFehler::Vertrag(_))
-        ));
-        assert_eq!(
-            hub.widerrufen(&a("iphone"), "uhr", 1, &zufall()),
-            Err(HubFehler::EpocheKonflikt { aktuell: 2 }),
-            "andere Kennung bleibt ein Konflikt"
-        );
-    }
-
-    #[test]
-    fn grabstein_loescht_und_weist_spaetere_objekte_ab() {
-        let (hub, b) = (hub(), bund());
-        let (r, andere) = (zufall(), zufall());
-        hub.schreiben(
-            &a("pc"),
-            &objekt(&b, Sammlung::Beitrag, &zufall(), &r, "pc", 1),
-        )
-        .unwrap();
-        hub.schreiben(
-            &a("pc"),
-            &objekt(&b, Sammlung::Beitrag, &zufall(), &andere, "pc", 1),
-        )
-        .unwrap();
-        let grab = versiegeln(
-            &b,
-            &Steuerfelder::loeschmarke(
-                zufall(),
-                r.clone(),
-                "pc",
-                1,
-                Ziel {
-                    typ: ZielTyp::Unterhaltung,
-                    wert: r.clone(),
-                },
-            ),
-            &json!({}),
-        )
-        .unwrap();
-        hub.schreiben(&a("pc"), &grab).unwrap();
-        assert_eq!(hub.anzahl_je_unterhaltung(&r), 0);
-        assert_eq!(
-            hub.anzahl_je_unterhaltung(&andere),
-            1,
-            "andere Unterhaltungen bleiben"
-        );
-        let spaeter = objekt(&b, Sammlung::Beitrag, &zufall(), &r, "tablet", 1);
-        assert_eq!(
-            hub.schreiben(&a("tablet"), &spaeter),
-            Err(HubFehler::GrabsteinAbgewiesen)
-        );
-        let u = objekt(&b, Sammlung::Sitzung, &zufall(), &r, "tablet", 1);
-        assert_eq!(
-            hub.cas(&a("tablet"), Sammlung::Sitzung, &u.objekt_id, None, &u),
-            Err(HubFehler::GrabsteinAbgewiesen)
-        );
-        assert_eq!(hub.anzahl(Sammlung::Loeschmarke), 1, "Grabsteine bleiben");
-    }
-
-    #[test]
-    fn lesen_filtert_nach_revision_unterhaltung_und_sammlung() {
-        let (hub, b) = (hub(), bund());
-        let (r1, r2) = (zufall(), zufall());
-        for (r, s) in [
-            (&r1, Sammlung::Beitrag),
-            (&r2, Sammlung::Beitrag),
-            (&r1, Sammlung::Hinweis),
-        ] {
-            hub.schreiben(&a("pc"), &objekt(&b, s, &zufall(), r, "pc", 1))
-                .unwrap();
-        }
-        let pc = a("pc");
-        assert_eq!(hub.lesen(&pc, &LeseFilter::default()).unwrap().len(), 3);
-        let nach = LeseFilter {
-            nach_revision: 1,
-            ..Default::default()
-        };
-        assert_eq!(hub.lesen(&pc, &nach).unwrap().len(), 2);
-        let nur_r1 = LeseFilter {
-            unterhaltung_ref: Some(r1.clone()),
-            ..Default::default()
-        };
-        assert_eq!(hub.lesen(&pc, &nur_r1).unwrap().len(), 2);
-        let hinweise = LeseFilter {
-            sammlung: Some(Sammlung::Hinweis),
-            ..Default::default()
-        };
-        assert_eq!(hub.lesen(&pc, &hinweise).unwrap().len(), 1);
-        let revs: Vec<_> = hub
-            .lesen(&pc, &LeseFilter::default())
-            .unwrap()
-            .iter()
-            .map(|u| u.revision.unwrap())
+        self.pruefen_auth(&z, auth)?;
+        let b = self.b();
+        let mut v: Vec<Verzeichniseintrag> = z
+            .verzeichnis
+            .as_ref()
+            .map(|v| v.eintraege().to_vec())
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|e| e.nummer >= ab && b.verzeichnis_bis.is_none_or(|bis| e.nummer < bis))
             .collect();
-        assert_eq!(revs, vec![1, 2, 3], "aufsteigend");
+        v.extend(b.verzeichnis_zusatz.iter().cloned());
+        Ok(v)
     }
 
-    #[test]
-    fn vertragsverletzung_wird_abgewiesen() {
-        let (hub, b) = (hub(), bund());
-        let mut u = objekt(&b, Sammlung::Beitrag, &zufall(), &zufall(), "pc", 1);
-        u.art = Sammlung::Hinweis;
-        assert!(matches!(
-            hub.schreiben(&a("pc"), &u),
-            Err(HubFehler::Vertrag(_))
-        ));
-        assert_eq!(hub.anzahl(Sammlung::Beitrag), 0);
+    fn pakete_ablegen(
+        &self,
+        auth: &AuthGeraet,
+        pakete: &[Schluesselpaket],
+    ) -> Result<(), HubFehler> {
+        let mut z = self.sperre();
+        self.pruefen_auth(&z, auth)?;
+        for p in pakete {
+            if p.absender != auth.id() && !self.b().ohne_durchsetzung {
+                return Err(HubFehler::GeraetStimmtNichtUeberein);
+            }
+            if !z.pakete.contains(p) {
+                z.pakete.push(p.clone());
+            }
+        }
+        Ok(())
+    }
+
+    fn pakete_lesen(&self, auth: &AuthGeraet) -> Result<Vec<Schluesselpaket>, HubFehler> {
+        let z = self.sperre();
+        self.pruefen_auth(&z, auth)?;
+        let mut v: Vec<Schluesselpaket> = z
+            .pakete
+            .iter()
+            .filter(|p| p.empfaenger == auth.id())
+            .cloned()
+            .collect();
+        v.extend(
+            self.b()
+                .pakete_zusatz
+                .iter()
+                .filter(|p| p.empfaenger == auth.id())
+                .cloned(),
+        );
+        Ok(v)
     }
 }

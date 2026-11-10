@@ -1060,6 +1060,11 @@ pub struct AppSettings {
     /// `assistent::tor`) bleibt immer aktiv.
     #[serde(default = "default_true")]
     pub assistent_einstufung_aktiv: bool,
+    /// ADR-0028 A1 (E3.6, lva#388): Verlauf des Assistenten über den Hub abgleichen. Standard AUS,
+    /// ein fehlender Wert gilt als aus; ohne diesen Schalter gibt es keinen Netzaufruf des
+    /// Assistent-Syncs und es wird nichts hochgeladen.
+    #[serde(default)]
+    pub assistent_sync_aktiv: bool,
     /// Stufe 2 des Sprachgesprächs: darf die Sprach-KI Transkripte von Besprechungen lesen
     /// (`meeting_transcript`, Treffer aus dem Transkript)? Getrennt vom MCP-Server; Standard AUS
     /// (ADR-0021).
@@ -2021,6 +2026,7 @@ pub fn get_default_settings() -> AppSettings {
         meeting_mcp_enabled: false,
         meeting_mcp_include_transcript: true,
         assistent_einstufung_aktiv: true,
+        assistent_sync_aktiv: false,
         voice_call_read_transcripts: false,
         voice_call_knowledge: Vec::new(),
         voice_call_notebook_sections: Vec::new(),
@@ -2682,6 +2688,16 @@ mod tests {
 
     fn default_settings_json() -> serde_json::Value {
         serde_json::to_value(get_default_settings()).unwrap()
+    }
+
+    #[test]
+    fn assistent_sync_ist_standardmaessig_aus_und_fehlender_wert_gilt_als_aus() {
+        assert!(!get_default_settings().assistent_sync_aktiv);
+
+        let mut json = default_settings_json();
+        json.as_object_mut().unwrap().remove("assistent_sync_aktiv");
+        let settings: AppSettings = serde_json::from_value(json).unwrap();
+        assert!(!settings.assistent_sync_aktiv);
     }
 
     #[test]

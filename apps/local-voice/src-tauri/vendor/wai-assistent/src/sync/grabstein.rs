@@ -1,15 +1,17 @@
 //! Grabsteine (ADR-0028 E3.2): bekannte Loeschziele eines Geraets.
 //!
 //! Ein Grabstein schlaegt jedes Objekt seines Ziels, auch ein offline wieder auftauchendes; es gibt
-//! keine Wiederbelebung. Grabsteine bleiben dauerhaft.
+//! keine Wiederbelebung. Grabsteine bleiben dauerhaft und werden mit dem Geraetezustand gesichert (E3.8).
 
 use std::collections::BTreeSet;
+
+use serde::{Deserialize, Serialize};
 
 use super::kennung::Hex128;
 use super::umschlag::{Ziel, ZielTyp};
 
 /// Menge der dem Geraet bekannten Loeschziele.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Grabsteine {
     unterhaltungen: BTreeSet<Hex128>,
     objekte: BTreeSet<Hex128>,

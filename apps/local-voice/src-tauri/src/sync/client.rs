@@ -1,6 +1,7 @@
 //! HTTP-Client zum Hub (wai-portal, `/api/v1/voice/*`). Nur Chiffrate gehen
 //! über die Leitung; dieser Baustein kennt keinen Schlüssel.
 
+use super::portal_hub::{TransportFehler, MAX_ANTWORT};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
@@ -238,6 +239,25 @@ async fn send_logged(
         .execute(req)
         .await
         .map_err(|e| HubError::Other(format!("Hub nicht erreichbar: {e}")))
+}
+
+/// Liest einen Antwortkörper stückweise und bricht ab, sobald er `max` Bytes übersteigt (auch bei
+/// falscher oder fehlender `Content-Length`).
+async fn begrenzt_lesen(
+    mut res: reqwest::Response,
+    max: usize,
+) -> Result<Vec<u8>, TransportFehler> {
+    if res.content_length().is_some_and(|l| l > max as u64) {
+        return Err(TransportFehler::ZuGross);
+    }
+    let mut roh = Vec::new();
+    while let Some(stueck) = res.chunk().await.map_err(|_| TransportFehler::Netz)? {
+        if roh.len() + stueck.len() > max {
+            return Err(TransportFehler::ZuGross);
+        }
+        roh.extend_from_slice(&stueck);
+    }
+    Ok(roh)
 }
 
 fn base(url: &str) -> String {
@@ -621,6 +641,44 @@ impl HubClient {
         Ok((status, json))
     }
 
+    /// Aufruf der Assistent-Sync-Endpunkte (`/api/v1/assistent/sync/*`, lva#388) mit demselben Token
+    /// und demselben HTTP-Weg wie der Bibliotheks-Sync: POSTs über `send_logged` (unter Windows
+    /// curl), GETs über reqwest. Liefert Status und rohen Körper, damit `portal_hub` die Fehlercodes
+    /// selbst abbildet und Listen ohne Umweg an den Kern gibt; nur Netzfehler und ein Körper über
+    /// [`MAX_ANTWORT`] sind `Err`. Der Körper wird begrenzt gestreamt (nie mehr als die Grenze im
+    /// Speicher). Der Fehler trägt nichts aus der Anfrage (reqwest nennt sonst die URL samt Kennungen).
+    pub async fn assistent_aufruf(
+        &self,
+        post: bool,
+        pfad: &str,
+        query: &[(&str, String)],
+        body: Option<&serde_json::Value>,
+    ) -> Result<(u16, Vec<u8>), TransportFehler> {
+        let timeout = Duration::from_secs(120);
+        let url = format!("{}/api/v1/assistent/sync{pfad}", self.url);
+        let client = http_with(timeout).map_err(|_| TransportFehler::Netz)?;
+        let mut rb = self.auth(if post {
+            client.post(url)
+        } else {
+            client.get(url)
+        });
+        if !query.is_empty() {
+            rb = rb.query(query);
+        }
+        if let Some(b) = body {
+            rb = rb.json(b);
+        }
+        let res = if post {
+            send_logged(rb, timeout)
+                .await
+                .map_err(|_| TransportFehler::Netz)?
+        } else {
+            rb.send().await.map_err(|_| TransportFehler::Netz)?
+        };
+        let status = res.status().as_u16();
+        Ok((status, begrenzt_lesen(res, MAX_ANTWORT).await?))
+    }
+
     pub async fn logout(&self) -> Result<(), HubError> {
         let res = self
             .auth(http()?.post(format!("{}/api/v1/voice/auth/logout", self.url)))
@@ -631,5 +689,85 @@ impl HubClient {
             return Err(error_from(res).await);
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    /// Ein einzelner HTTP-Abruf gegen einen Server, der `kopf` und dann `koerper` schreibt.
+    async fn abrufen(
+        kopf: &'static str,
+        koerper: impl FnOnce(&mut std::net::TcpStream) + Send + 'static,
+        max: usize,
+    ) -> Result<Vec<u8>, TransportFehler> {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let adresse = l.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let (mut s, _) = l.accept().unwrap();
+            let mut puffer = [0u8; 1024];
+            let _ = s.read(&mut puffer);
+            let _ = s.write_all(kopf.as_bytes());
+            koerper(&mut s);
+        });
+        let res = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .unwrap()
+            .get(format!("http://{adresse}/"))
+            .send()
+            .await
+            .unwrap();
+        begrenzt_lesen(res, max).await
+    }
+
+    #[tokio::test]
+    async fn kleine_antwort_kommt_vollstaendig() {
+        let roh = abrufen(
+            "HTTP/1.1 200 OK\r\nContent-Length: 11\r\nConnection: close\r\n\r\n",
+            |s| {
+                let _ = s.write_all(b"{\"ok\":true}");
+            },
+            64,
+        )
+        .await;
+        assert_eq!(roh.unwrap(), b"{\"ok\":true}");
+    }
+
+    #[tokio::test]
+    async fn zu_grosse_laenge_wird_vorab_abgewiesen() {
+        let roh = abrufen(
+            "HTTP/1.1 200 OK\r\nContent-Length: 999999999\r\nConnection: close\r\n\r\n",
+            |_| {},
+            1024,
+        )
+        .await;
+        assert_eq!(roh, Err(TransportFehler::ZuGross));
+    }
+
+    #[tokio::test]
+    async fn endloser_koerper_endet_an_der_grenze() {
+        // Ohne Längenangabe, Stück um Stück ohne Ende: abgebrochen, sobald die Grenze überschritten ist.
+        let roh = abrufen(
+            "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n",
+            |s| {
+                let stueck = [b'x'; 4096];
+                loop {
+                    let kopf = format!("{:x}\r\n", stueck.len());
+                    if s.write_all(kopf.as_bytes()).is_err()
+                        || s.write_all(&stueck).is_err()
+                        || s.write_all(b"\r\n").is_err()
+                    {
+                        return;
+                    }
+                }
+            },
+            64 * 1024,
+        )
+        .await;
+        assert_eq!(roh, Err(TransportFehler::ZuGross));
     }
 }
