@@ -9,7 +9,10 @@ import Security
 ///
 /// - Die Ablage wird nur mit `collection=` und eigenem Cursor je Sammlung gezogen, nie über den globalen Pull.
 /// - Texte werden vorab geladen, Originale nur auf ausdrückliche Anforderung (`originalLaden`) und nur nach der Regel
-///   „nur im WLAN“ (`LibrarySync.wifiOnly`).
+///   „nur im WLAN“ (`LibrarySync.wifiOnly`). Textfassungen kommen auch im teuren Netz (Mobilfunk, Datensparmodus) unter
+///   „nur im WLAN“, aber höchstens 5 MiB je Lauf; was darüber liegt, wartet auf WLAN (`AblageLaufOptionen.mobil`).
+/// - Läufe, Original-Downloads und Abmelden koordiniert `AblageDienst` (VoiceCore): Abmelden wartet auf laufende Arbeit, bevor
+///   es löscht; Anforderungen während eines Laufs gehen nicht verloren.
 /// - Die Ablage liegt im App-Container (Application Support), nie im Bibliothek-Ordner. Kein Logging und keine Fehlertexte
 ///   mit Namen oder Inhalten (Spec §10).
 /// - Kein Push, keine Blob-Löschung: das iPhone liest in D5a nur.
@@ -90,10 +93,8 @@ final class AblageSync: ObservableObject {
     @Published private(set) var uebersicht: AblageUebersicht?
 
     let speicher: AblageSpeicher
+    private let dienst: AblageDienst
     private let sync: LibrarySync
-    private var again = false
-    /// Der laufende Abgleich, damit Abmelden ihn abbrechen kann.
-    private var laufTask: Task<AblageBericht, Error>?
 
     /// `Application Support/Ablage` im App-Container.
     static var standardWurzel: URL {
@@ -102,7 +103,9 @@ final class AblageSync: ObservableObject {
 
     init(sync: LibrarySync? = nil, wurzel: URL? = nil) {
         self.sync = sync ?? .shared
-        speicher = AblageSpeicher(wurzel: wurzel ?? Self.standardWurzel)
+        let sp = AblageSpeicher(wurzel: wurzel ?? Self.standardWurzel)
+        speicher = sp
+        dienst = AblageDienst(speicher: sp)
     }
 
     /// Ordner anlegen und aus Sicherungen ausnehmen: alles hier ist aus dem Konto neu ladbar (D5a). D5b (eigene, noch nicht
@@ -122,37 +125,41 @@ final class AblageSync: ObservableObject {
     // MARK: Abgleich
 
     /// Ein Lauf: Pull je Sammlung (Ordner vor Dateien), Texte vorab, `angefordert` (Originale) danach. Ohne Konto passiert
-    /// nichts. Unter „nur im WLAN“ und Mobilfunk ruhen die Downloads, der Pull läuft (er ist klein).
+    /// nichts. Unter „nur im WLAN“ und im teuren Netz (Mobilfunk) kommen nur Textfassungen bis 5 MiB, der Rest wartet auf WLAN;
+    /// der Pull läuft immer (er ist klein). Ein Aufruf während eines Laufs kehrt sofort zurück: seine Anforderungen werden
+    /// vorgemerkt und in einem Folgelauf nachgeholt, und der laufende Aufruf meldet das Ergebnis.
     func run(angefordert: [AblageOriginalAnforderung] = []) async {
         guard let acc = sync.account else { status = "Ablage: nicht angemeldet"; return }
-        if running { again = true; return }
-        running = true; error = nil; status = "Ablage: Abgleich …"
-        wurzelVorbereiten()
-        defer {
-            running = false
-            if again { again = false; Task { await self.run() } }
+        let erster = !running
+        let vorher = status
+        if erster {
+            running = true; error = nil; status = "Ablage: Abgleich …"
+            wurzelVorbereiten()
         }
+        defer { if erster { running = false } }
         var optionen = AblageLaufOptionen(angefordert: angefordert)
         optionen.bulk = sync.wifiOnly
-        optionen.downloadsErlaubt = !(sync.wifiOnly && sync.expensiveNetwork)
+        optionen.mobil = sync.wifiOnly && sync.expensiveNetwork
         do {
-            let hub = AblageHubHTTP(account: acc, sync: sync), speicher = speicher, kto = konto(acc), opt = optionen
-            let task = Task { try await AblageLauf.ausfuehren(hub: hub, speicher: speicher, konto: kto, optionen: opt) }
-            laufTask = task
-            defer { laufTask = nil }
-            let b = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+            let b = try await dienst.laufen(hub: AblageHubHTTP(account: acc, sync: sync), konto: konto(acc), optionen: optionen)
+            if b.uebersprungen {
+                // Ein anderer Lauf ist aktiv und meldet das Ergebnis, oder die Ablage wird gerade geleert: nichts melden,
+                // der Status bleibt, wie er war (nicht auf „Abgleich …“ hängen).
+                if erster { status = vorher }
+                return
+            }
             bericht = b
-            if b.uebersprungen { return }
             lastRun = Date()
-            status = b.downloadsRuhen ? "Ablage: abgeglichen, Dateien warten auf WLAN"
-                : b.downloadsUnterbrochen ? "Ablage: abgeglichen, Dateien unvollständig" : "Ablage: abgeglichen"
+            status = b.downloadsRuhen ? "Ablage: abgeglichen, Dateien warten"
+                : b.downloadsUnterbrochen ? "Ablage: abgeglichen, Dateien unvollständig"
+                : b.wartetAufWLAN > 0 ? "Ablage: abgeglichen, \(b.wartetAufWLAN) Dateien warten auf WLAN" : "Ablage: abgeglichen"
             await aktualisiere()
         } catch let e as AblageLaufFehler {
             error = e.localizedDescription
             status = e == .abgemeldet ? "Ablage: abgemeldet" : "Ablage: Abgleich unterbrochen"
             await aktualisiere()
         } catch is CancellationError {
-            status = "Ablage: Abgleich abgebrochen"
+            if sync.account != nil { status = "Ablage: Abgleich abgebrochen" }     // beim Abmelden setzt `kontoVerlassen` den Status
         } catch {
             self.error = "Ablage: Abgleich fehlgeschlagen."
             status = "Ablage: Abgleich unterbrochen"
@@ -160,12 +167,12 @@ final class AblageSync: ObservableObject {
     }
 
     /// Lädt ein Original auf ausdrückliche Anforderung (Vorschau, Öffnen, Teilen) und gibt den Pfad zurück. Gilt die Regel
-    /// „nur im WLAN“ und das Gerät ist im Mobilfunk, wird nichts geladen (`AblageLaufFehler.wlanRegel`).
+    /// „nur im WLAN“ und das Gerät ist im teuren Netz (Mobilfunk), wird nichts geladen (`AblageLaufFehler.wlanRegel`).
     func originalLaden(dat: String, fas: String) async throws -> URL {
         guard let acc = sync.account else { throw AblageLaufFehler.abgemeldet }
         if sync.wifiOnly && sync.expensiveNetwork { throw AblageLaufFehler.wlanRegel }
-        let url = try await AblageLauf.originalLaden(hub: AblageHubHTTP(account: acc, sync: sync), speicher: speicher, konto: konto(acc), dat: dat, fas: fas,
-                                                     bulk: sync.wifiOnly, freierPlatz: { Self.freierPlatz() })
+        let url = try await dienst.originalLaden(hub: AblageHubHTTP(account: acc, sync: sync), konto: konto(acc), dat: dat, fas: fas,
+                                                 bulk: sync.wifiOnly, freierPlatz: { Self.freierPlatz() })
         await aktualisiere()
         return url
     }
@@ -188,9 +195,10 @@ final class AblageSync: ObservableObject {
 
     /// Beim Abmelden: alles, was dieses Konto geladen hat, vom Gerät nehmen (Texte, Originale, Zustand). In D5a ist alles
     /// aus dem Konto neu ladbar. D5b (eigene Importe) muss noch nicht gesendete Importe hier ausnehmen.
-    func kontoVerlassen() {
-        laufTask?.cancel()
-        try? FileManager.default.removeItem(at: speicher.wurzel)
+    /// Bricht laufende Läufe und Downloads ab und WARTET, bis sie beendet sind, bevor es löscht (`AblageDienst.verlassen`):
+    /// sonst könnte ein Lauf nach dem Löschen den Zustand des alten Kontos neu schreiben.
+    func kontoVerlassen() async {
+        await dienst.verlassen()
         bericht = nil; uebersicht = nil; lastRun = nil; error = nil
         status = "Ablage: noch nicht abgeglichen"
     }
@@ -204,7 +212,7 @@ final class AblageSync: ObservableObject {
     func debugLauf(arguments args: [String]) async {
         for _ in 0..<240 where sync.account == nil { try? await Task.sleep(nanoseconds: 500_000_000) }
         guard sync.account != nil else { schreibeDebug(["fehler": "kein Konto"]); return }
-        if args.contains("--ablage-test-neu") { kontoVerlassen() }
+        if args.contains("--ablage-test-neu") { await kontoVerlassen() }
         await run()
         var geladen: [String: Any] = [:]
         if args.contains("--ablage-test-original"), let d = uebersicht?.dateien.first(where: { !$0.imKorb && $0.zustand != .angehalten && $0.aktuelleFassung != nil }),

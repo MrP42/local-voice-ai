@@ -148,7 +148,8 @@ final class LibrarySync: ObservableObject {
         Keychain.delete()
         account = nil
         ledger = SyncLedger(); saveLedger()
-        AblageSync.shared.kontoVerlassen()
+        // Erst jetzt (das Konto ist weg, neue Läufe starten nicht mehr): laufende Ablage-Arbeit abbrechen, abwarten, dann löschen.
+        await AblageSync.shared.kontoVerlassen()
         status = "Nicht angemeldet"
     }
 

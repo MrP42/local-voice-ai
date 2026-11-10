@@ -82,10 +82,14 @@ extension AblageLaufFehler: LocalizedError {
 }
 
 public struct AblageLaufOptionen: Sendable {
-    /// `false`: nur Pull, keine Downloads (z. B. „nur im WLAN“ und gerade Mobilfunk).
+    /// `false`: nur Pull, keine Downloads (z. B. kein Netz).
     public var downloadsErlaubt = true
-    /// Dateiverkehr unter „nur im WLAN“ (an den Hub-Weg gereicht).
+    /// Dateiverkehr unter „nur im WLAN“ (an den Hub-Weg gereicht: kein Mobilfunk, kein Datensparmodus).
     public var bulk = false
+    /// Teures Netz unter „nur im WLAN“ (Mobilfunk oder Datensparmodus): Textfassungen kommen trotzdem, aber höchstens
+    /// `mobilTextBudget` je Lauf (dafür ohne `bulk`, also auch im Mobilfunk); alles darüber und alle Originale warten auf WLAN.
+    public var mobil = false
+    public var mobilTextBudget = AblageDownloadBudget.mobilText
     /// Klartext-Bytes je Lauf zum Herunterladen (mindestens eine Datei).
     public var downloadBudget = AblageDownloadBudget.standard
     /// Originale, die in diesem Lauf (nach den Texten) geladen werden sollen.
@@ -115,8 +119,10 @@ public struct AblageBericht: Equatable, Sendable {
     public var begraben = 0
     /// Schlüssel (`<sammlung>/<id>`) der Objekte, die dieser Lauf angehalten hat.
     public var angehalten: [String] = []
-    /// Downloads liefen nicht, weil die Regel („nur im WLAN“) es verbot.
+    /// Downloads liefen nicht, weil `downloadsErlaubt` aus war.
     public var downloadsRuhen = false
+    /// Aufträge (Texte über dem Mobilfunk-Budget, angeforderte Originale), die im teuren Netz auf WLAN warten.
+    public var wartetAufWLAN = 0
     /// Downloads brachen ab (Netz weg, Speicher voll); der nächste Lauf versucht es erneut.
     public var downloadsUnterbrochen = false
 
@@ -179,6 +185,7 @@ public enum AblageLauf {
             // Dateien eines anderen Kontos bleiben nicht liegen; D5a hat nichts, was sich nicht neu ziehen ließe.
             speicher.alleDateienEntfernen()
             do { try speicher.speichern(z) } catch { throw AblageLaufFehler.speicher }
+            speicher.defektEntfernen()      // Namen eines Kontos, das hier nichts mehr verloren hat
         }
         speicher.eingangRaeumen()
 
@@ -188,6 +195,7 @@ public enum AblageLauf {
                                      bericht: &bericht, seitenBericht: &seitenBericht)
         }
         // Ordnergräber erst jetzt: eine gleichzeitig begrabene Datei darf den Ordner nicht halten.
+        try Task.checkCancellation()
         let g = AblagePullVerarbeitung.ordnergraeber(zustand: &z)
         seitenBericht.zusammenfuehren(g)
         do { try speicher.speichern(z) } catch { throw AblageLaufFehler.speicher }
@@ -198,7 +206,12 @@ public enum AblageLauf {
         bericht.angehalten = seitenBericht.angehalten
         for w in seitenBericht.warnungen { bericht.warne(w) }
         // Aufräumen nur bei vollständigem Pull: sonst fehlen dem Bestand Einträge, deren Dateien noch gebraucht werden.
-        if bericht.vollstaendig { speicher.bereinigen(bestand: z.bestand) }
+        // Ein vollständiger Pull hat den Zustand neu aufgebaut: eine beiseitegelegte unlesbare Datei wird nicht mehr gebraucht.
+        if bericht.vollstaendig {
+            speicher.bereinigen(bestand: z.bestand)
+            speicher.defektEntfernen()
+        }
+        try Task.checkCancellation()
 
         if optionen.downloadsErlaubt {
             try await herunterladen(hub: hub, speicher: speicher, konto: konto, optionen: optionen, z: z, bericht: &bericht)
@@ -232,6 +245,8 @@ public enum AblageLauf {
             } catch let e as AblageHubFehler {
                 throw fehler(e)
             }
+            // Wurde der Lauf während des Abrufs abgebrochen (z. B. Abmelden), schreibt er nichts mehr, auch wenn der Hub noch antwortete.
+            try Task.checkCancellation()
             if seite.more && seite.cursor <= since { throw AblageLaufFehler.ohneFortschritt }
             let b = AblagePullVerarbeitung.seite(sammlung: coll, objekte: seite.objects, konto: konto, zustand: &z)
             // Dateien begrabener Dateien gehen vor dem Speichern des Zustands weg: bricht es dazwischen ab, läuft die Seite
@@ -252,8 +267,13 @@ public enum AblageLauf {
     /// die Downloads dieses Laufs (der nächste versucht es wieder), ein Fehler einer einzelnen Datei überspringt nur sie.
     private static func herunterladen(hub: any AblageHub, speicher: AblageSpeicher, konto: AblageKonto, optionen: AblageLaufOptionen,
                                       z: AblageZustand, bericht: inout AblageBericht) async throws {
-        let plan = AblageDownloadPlan.auftraege(zustand: z, vorhanden: speicher.vorhanden(z.bestand), key: konto.key,
+        var plan = AblageDownloadPlan.auftraege(zustand: z, vorhanden: speicher.vorhanden(z.bestand), key: konto.key,
                                                 angefordert: optionen.angefordert)
+        if optionen.mobil {
+            let teil = AblageDownloadPlan.mobilAufteilen(plan, textBudget: optionen.mobilTextBudget)
+            plan = teil.jetzt
+            bericht.wartetAufWLAN = teil.wartet.count
+        }
         var budget = AblageDownloadBudget(rest: optionen.downloadBudget)
         for a in plan {
             try Task.checkCancellation()
@@ -261,7 +281,8 @@ public enum AblageLauf {
             let ziel = speicher.zwischenpfad()
             defer { speicher.zwischenEntfernen(ziel) }
             do {
-                try await hub.blobLaden(hubId: a.hubId, groesse: a.groesse, ziel: ziel, bulk: optionen.bulk)
+                // Im teuren Netz dürfen die (kleinen) Textfassungen auch über Mobilfunk, Originale nie.
+                try await hub.blobLaden(hubId: a.hubId, groesse: a.groesse, ziel: ziel, bulk: optionen.mobil && a.art == .text ? false : optionen.bulk)
             } catch AblageHubFehler.abgemeldet {
                 throw AblageLaufFehler.abgemeldet
             } catch AblageHubFehler.netz, AblageHubFehler.wlanRegel {
@@ -274,6 +295,7 @@ public enum AblageLauf {
             } catch is AblageHubFehler {
                 continue                          // Blob fehlt oder beschädigt: nur diese Datei bleibt offen
             }
+            try Task.checkCancellation()        // abgebrochen (z. B. Abmelden): nichts mehr ablegen
             budget.verbraucht(groesse: a.groesse)
             do {
                 switch a.art {
@@ -323,6 +345,7 @@ public enum AblageLauf {
         } catch let e as AblageHubFehler {
             throw fehler(e)
         }
+        try Task.checkCancellation()            // abgebrochen (z. B. Abmelden): nichts mehr ablegen
         // Mit frischem Stand ablegen: wurde die Datei inzwischen begraben, wird nichts abgelegt.
         let frisch = speicher.laden(konto: konto.kennung).zustand
         do {

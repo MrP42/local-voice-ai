@@ -7,6 +7,10 @@ import XCTest
 // Fehlerfälle dieses Pakets (D5a-3) und wo sie abgedeckt sind:
 // - Nebenläufigkeit: zwei gleichzeitige Läufe -> AblageLaufTests.testZweiLaeufeGleichzeitigNurEinerLaeuft; der Kern
 //   (Ledger, Verarbeitung, Plan) sind Werttypen ohne geteilten Zustand.
+// - Abmelden während eines Laufs oder Downloads (Fix-Runde zu PR #453): AblageDienstTests (wartet, löscht erst danach, nichts
+//   vom alten Konto bleibt, Anforderungen wandern nicht ins nächste Konto); Original-Download gegen gleichzeitiges Räumen
+//   des Eingangs: AblageLaufTests.testGleichzeitigerLaufRaeumtDenPart…; Anforderung während eines Laufs: AblageDienstTests.
+// - Zählerobergrenze (lva#450/#452, Fix-Runde): AblageZaehlerTests (genau ZAEHLER_MAX gilt, +1 ruht, nie vergeben darüber).
 // - Abbruch mitten im Vorgang: Zustand wird je Seite atomar geschrieben (temporäre Datei, dann Umbenennen) ->
 //   AblageSpeicherTests.testZustandRundlauf…, AblageLaufTests.testAbbruchNachErsterSeiteSetztFortUndDoppeltNichts;
 //   Downloads laufen über `eingang/` und werden erst nach Prüfung abgelegt (AblageSpeicherTests, AblageLaufTests).

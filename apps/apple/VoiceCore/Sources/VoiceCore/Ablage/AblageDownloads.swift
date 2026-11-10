@@ -59,6 +59,9 @@ public struct AblageAuftrag: Equatable, Sendable {
 /// Budget je Lauf: Klartext-Bytes, mindestens eine Datei je Lauf (`DOWNLOAD_BUDGET`, 256 MiB).
 public struct AblageDownloadBudget: Equatable, Sendable {
     public static let standard: UInt64 = 256 * 1024 * 1024
+    /// Klartext-Bytes an Textfassungen je Lauf im Mobilfunk unter „nur im WLAN“ (5 MiB); mehr wartet auf WLAN. Anders als
+    /// `standard` gilt hier die Grenze streng: auch die erste Datei muss hineinpassen.
+    public static let mobilText: UInt64 = 5 * 1024 * 1024
 
     public private(set) var rest: UInt64
     private var erste = true
@@ -132,6 +135,24 @@ public enum AblageDownloadPlan {
             aus.append(a)
         }
         return aus.sorted(by: AblageAuftrag.kleiner)
+    }
+
+    /// Teilt einen Plan für ein teures Netz (Mobilfunk oder Datensparmodus unter „nur im WLAN“): Textfassungen in der
+    /// Reihenfolge des Plans (kleinere zuerst), solange ihre Summe in `textBudget` passt; alles, was nicht mehr hineinpasst,
+    /// und alle Originale warten auf WLAN. Ohne Ausnahme für die erste Datei (anders als `AblageDownloadBudget.darfStarten`).
+    public static func mobilAufteilen(_ plan: [AblageAuftrag], textBudget: UInt64 = AblageDownloadBudget.mobilText)
+        -> (jetzt: [AblageAuftrag], wartet: [AblageAuftrag]) {
+        var rest = textBudget
+        var jetzt: [AblageAuftrag] = [], wartet: [AblageAuftrag] = []
+        for a in plan {
+            if a.art == .text, a.groesse <= rest {
+                jetzt.append(a)
+                rest -= a.groesse
+            } else {
+                wartet.append(a)
+            }
+        }
+        return (jetzt, wartet)
     }
 
     /// Auftrag für ein ausdrücklich angefordertes Original; `nil`, wenn die Datei oder Fassung unbekannt ist, nicht

@@ -39,6 +39,19 @@ extension AblageSpeicherFehler: LocalizedError {
     }
 }
 
+/// Laufende Downloads (Zwischenpfade im Prozess): `eingangRaeumen` fasst sie nie an. Ohne das räumte ein Lauf den
+/// `.part` eines gleichzeitig laufenden Original-Downloads weg. Gemeinsam für alle `AblageSpeicher`-Objekte (nach Pfad),
+/// nie über ein `await` gehalten.
+final class AblageZwischenRegister: @unchecked Sendable {
+    static let shared = AblageZwischenRegister()
+    private let lock = NSLock()
+    private var aktiv = Set<String>()
+
+    func anmelden(_ pfad: String) { lock.lock(); aktiv.insert(pfad); lock.unlock() }
+    func abmelden(_ pfad: String) { lock.lock(); aktiv.remove(pfad); lock.unlock() }
+    func istAktiv(_ pfad: String) -> Bool { lock.lock(); defer { lock.unlock() }; return aktiv.contains(pfad) }
+}
+
 public final class AblageSpeicher: @unchecked Sendable {
     public static let zustandsdatei = "ablage-zustand.json"
     static let dateienOrdner = "dateien"
@@ -104,12 +117,17 @@ public final class AblageSpeicher: @unchecked Sendable {
         if art(url) != nil { bytes = (try? Data(contentsOf: url)).map { [UInt8]($0) } ?? [] }
         let r = AblageZustand.laden(bytes: bytes, konto: konto)
         if r.verlust == .unlesbar || r.verlust == .neuereVersion {
-            let defekt = wurzel.appendingPathComponent(Self.zustandsdatei + ".defekt")
-            try? fm.removeItem(at: defekt)
-            try? fm.moveItem(at: url, to: defekt)
+            try? fm.removeItem(at: defektURL)
+            try? fm.moveItem(at: url, to: defektURL)
         }
         return r
     }
+
+    private var defektURL: URL { wurzel.appendingPathComponent(Self.zustandsdatei + ".defekt") }
+
+    /// Entfernt die beiseitegelegte unlesbare Zustandsdatei (sie kann Namen enthalten). Der Lauf tut das, sobald ein
+    /// vollständiger Pull den Zustand neu aufgebaut hat oder das Konto gewechselt hat; bis dahin dient sie nur der Diagnose.
+    public func defektEntfernen() { try? fm.removeItem(at: defektURL) }
 
     /// Schreibt den Zustand atomar (temporäre Datei, dann Umbenennen): bei Abbruch oder Fehler bleibt der alte Stand ganz.
     public func speichern(_ z: AblageZustand) throws {
@@ -165,20 +183,29 @@ public final class AblageSpeicher: @unchecked Sendable {
     public func zwischenpfad() -> URL {
         let dir = wurzel.appendingPathComponent(Self.eingangOrdner, isDirectory: true)
         try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent(".sync-\(UUID().uuidString)")
+        let ziel = dir.appendingPathComponent(".sync-\(UUID().uuidString)")
+        AblageZwischenRegister.shared.anmelden(ziel.path)    // gilt als laufender Download, bis `zwischenEntfernen`
+        return ziel
     }
 
     /// Entfernt eine Zwischendatei und ihren Teil `.part` (so legt der Transport unfertige Downloads an).
     public func zwischenEntfernen(_ ziel: URL) {
         try? fm.removeItem(at: ziel)
         try? fm.removeItem(at: ziel.appendingPathExtension("part"))
+        AblageZwischenRegister.shared.abmelden(ziel.path)
     }
 
-    /// Entfernt liegengebliebene Downloads (es läuft nie mehr als ein Abgleich zugleich).
+    /// Entfernt liegengebliebene Downloads früherer Läufe. Zwischendateien laufender Downloads dieses Prozesses (auch der
+    /// `.part` eines gleichzeitig laufenden Original-Downloads) bleiben unberührt.
     public func eingangRaeumen() {
         let dir = wurzel.appendingPathComponent(Self.eingangOrdner, isDirectory: true)
         guard let namen = try? fm.contentsOfDirectory(atPath: dir.path) else { return }
-        for n in namen { try? fm.removeItem(at: dir.appendingPathComponent(n)) }
+        for n in namen {
+            let u = dir.appendingPathComponent(n)
+            let basis = n.hasSuffix(".part") ? dir.appendingPathComponent(String(n.dropLast(5))) : u
+            if AblageZwischenRegister.shared.istAktiv(basis.path) { continue }
+            try? fm.removeItem(at: u)
+        }
     }
 
     /// Legt eine heruntergeladene Textfassung ab, wenn sie zu ihrem Eintrag passt (`text_einlegen`): SHA-256 der Bytes =
@@ -203,7 +230,10 @@ public final class AblageSpeicher: @unchecked Sendable {
     @discardableResult
     public func originalEinlegen(bestand: AblageBestand, dat: String, fas: String, zwischen: URL) throws -> Bool {
         var fertig = false
-        defer { if !fertig { try? fm.removeItem(at: zwischen) } }
+        defer {
+            if !fertig { try? fm.removeItem(at: zwischen) }
+            AblageZwischenRegister.shared.abmelden(zwischen.path)
+        }
         guard AblageId.idGueltig(dat, prefix: AblageId.praefixDatei), AblageId.idGueltig(fas, prefix: AblageId.praefixFassung) else {
             throw AblageSpeicherFehler.ungueltigeKennung
         }
@@ -268,7 +298,13 @@ public final class AblageSpeicher: @unchecked Sendable {
         return n
     }
 
-    /// Entfernt alle Originale, Texte und Zwischendateien (Konto gewechselt oder abgemeldet); der Zustand bleibt.
+    /// Entfernt den ganzen Speicherordner dieses Kontos (Zustand, `.defekt`, Originale, Texte, Zwischendateien): Abmelden.
+    /// Der Aufrufer sorgt dafür, dass kein Lauf mehr schreibt (siehe `AblageDienst.verlassen`).
+    public func alleEntfernen() {
+        try? fm.removeItem(at: wurzel)
+    }
+
+    /// Entfernt alle Originale, Texte und Zwischendateien (Konto gewechselt); der Zustand bleibt.
     public func alleDateienEntfernen() {
         for sub in [Self.dateienOrdner, Self.textOrdner, Self.eingangOrdner] {
             try? fm.removeItem(at: wurzel.appendingPathComponent(sub, isDirectory: true))

@@ -329,9 +329,37 @@ final class AblageSpeicherTests: XCTestCase {
         XCTAssertEqual(a.deletingLastPathComponent().lastPathComponent, "eingang")
         try Data("x".utf8).write(to: a)
         try Data("y".utf8).write(to: b.appendingPathExtension("part"))
-        XCTAssertEqual(list("eingang").count, 2)
+        // Reste früherer Läufe (nie angemeldet) gehen weg, laufende Downloads (a, b samt .part) bleiben.
+        try Data("alt".utf8).write(to: speicher.wurzel.appendingPathComponent("eingang/.sync-alt"))
+        try Data("alt".utf8).write(to: speicher.wurzel.appendingPathComponent("eingang/.sync-alt.part"))
+        XCTAssertEqual(list("eingang").count, 4)
+        speicher.eingangRaeumen()
+        XCTAssertEqual(Set(list("eingang")), [a.lastPathComponent, b.lastPathComponent + ".part"], "nur Reste weg, laufende bleiben")
+        // Beendet (zwischenEntfernen): beim nächsten Räumen ist nichts mehr da, auch nicht der .part.
+        speicher.zwischenEntfernen(a)
+        speicher.zwischenEntfernen(b)
+        XCTAssertEqual(list("eingang"), [])
+        // Ein Rest mit dem Namen eines beendeten Downloads wird wieder geräumt.
+        try Data("x".utf8).write(to: a)
         speicher.eingangRaeumen()
         XCTAssertEqual(list("eingang"), [])
+    }
+
+    func testDefektEntfernenUndAlleEntfernen() throws {
+        try fm.createDirectory(at: speicher.wurzel, withIntermediateDirectories: true)
+        let defekt = speicher.wurzel.appendingPathComponent("ablage-zustand.json.defekt")
+        try Data("Namen".utf8).write(to: defekt)
+        speicher.defektEntfernen()
+        XCTAssertFalse(fm.fileExists(atPath: defekt.path))
+        // Abmelden: der ganze Ordner ist weg (Zustand, Texte, Originale, Eingang, .defekt).
+        let b = beispiel()
+        try speicher.speichern(AblageZustand(konto: "k"))
+        XCTAssertTrue(try speicher.textEinlegen(bestand: bestand(b.datei), dat: b.datei.id, fas: W.fasId(1), textrev: b.eintrag.textrev, bytes: b.textBytes))
+        try Data("Namen".utf8).write(to: defekt)
+        _ = speicher.zwischenpfad()
+        speicher.alleEntfernen()
+        XCTAssertFalse(fm.fileExists(atPath: speicher.wurzel.path))
+        speicher.alleEntfernen()   // ohne Ordner kein Fehler
     }
 
     func testAlleDateienEntfernenLaesstDenZustand() throws {

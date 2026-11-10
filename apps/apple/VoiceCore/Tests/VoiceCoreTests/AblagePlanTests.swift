@@ -329,5 +329,31 @@ final class AblagePlanTests: XCTestCase {
         z.ledger.objekte[AblageLedger.schluessel(ORD, W.ordId(3))]?.angehalten = true
         XCTAssertEqual(AblageAnzeige.indexQuellen(z, vorhanden: da), [c.datei.id])
     }
+
+    // MARK: Teures Netz (Fix 4)
+
+    func testMobilAufteilenStrengNachBudgetOriginaleWarten() {
+        let a = mitText(1), b = mitText(2, extra: String(repeating: "x", count: 200)), c = mitText(3, extra: String(repeating: "y", count: 900))
+        let z = zustand([a.datei, b.datei, c.datei])
+        let anf = [AblageOriginalAnforderung(dat: a.datei.id, fas: W.fasId(1))]
+        let plan = AblageDownloadPlan.auftraege(zustand: z, vorhanden: AblageVorhanden(), key: key, angefordert: anf)
+        XCTAssertEqual(plan.map(\.art), [.text, .text, .text, .original])
+        // Budget für die zwei kleineren Texte: der große und das Original warten.
+        let t = AblageDownloadPlan.mobilAufteilen(plan, textBudget: a.text.size + b.text.size)
+        XCTAssertEqual(t.jetzt.map(\.dat), [a.datei.id, b.datei.id])
+        XCTAssertEqual(t.wartet.map(\.art), [.text, .original])
+        XCTAssertEqual(t.wartet.first?.dat, c.datei.id)
+        // Streng: auch die erste Datei muss hineinpassen (keine Ausnahme wie beim Budget je Lauf).
+        XCTAssertTrue(AblageDownloadPlan.mobilAufteilen(plan, textBudget: a.text.size - 1).jetzt.isEmpty)
+        // Passt alles, warten nur die Originale; Budget 0: alles wartet.
+        XCTAssertEqual(AblageDownloadPlan.mobilAufteilen(plan, textBudget: 10_000_000).wartet.map(\.art), [.original])
+        XCTAssertEqual(AblageDownloadPlan.mobilAufteilen(plan, textBudget: 0).jetzt.count, 0)
+        // Ein Text, der nicht passt, hält kleinere dahinter nicht auf (der Plan ist nach Größe geordnet, also gibt es keine).
+        XCTAssertEqual(AblageDownloadPlan.mobilAufteilen([], textBudget: 5).jetzt.count, 0)
+        // Vorgabe: 5 MiB.
+        XCTAssertEqual(AblageDownloadBudget.mobilText, 5 * 1024 * 1024)
+        XCTAssertEqual(AblageLaufOptionen().mobilTextBudget, 5 * 1024 * 1024)
+        XCTAssertFalse(AblageLaufOptionen().mobil)
+    }
 }
 #endif

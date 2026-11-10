@@ -141,7 +141,8 @@ public struct AblageSeitenBericht: Equatable, Sendable {
 
 // MARK: - Gültigkeit entfernter Datensätze
 
-/// Prüft entfernte Datensätze wie `ordner_gueltig` und `datei_gueltig` (`speicher_sync.rs`, `speicher.rs`).
+/// Prüft entfernte Datensätze wie `ordner_gueltig` und `datei_gueltig` (`speicher_sync.rs`, `speicher.rs`), samt der
+/// Zählerobergrenze `AblageZusammenfuehren.zaehlerMax`.
 public enum AblageValidierung {
     /// 64 Hex-Zeichen, klein.
     public static func hex64(_ s: String) -> Bool {
@@ -163,12 +164,14 @@ public enum AblageValidierung {
 
     public static func ordnerGueltig(_ o: AblageOrdner) -> Bool {
         AblageId.idGueltig(o.id, prefix: AblageId.praefixOrdner)
+            && AblageZusammenfuehren.ordnerZaehlerOk(o)
             && nameLesbar(o.name.wert)
             && (o.eltern.wert.map { AblageId.idGueltig($0, prefix: AblageId.praefixOrdner) && !AblageBytes.equal($0, o.id) } ?? true)
     }
 
     public static func dateiGueltig(_ d: AblageDatei) -> Bool {
         AblageId.idGueltig(d.id, prefix: AblageId.praefixDatei)
+            && AblageZusammenfuehren.dateiZaehlerOk(d)
             && nameLesbar(d.name.wert)
             && AblageId.idGueltig(d.ordner.wert, prefix: AblageId.praefixOrdner)
             && d.fassungen.allSatisfy { f in
@@ -277,10 +280,12 @@ public enum AblagePullVerarbeitung {
         guard let plain = try? SyncCrypto.open(key: konto.key, aad: aad, sealedBase64: payload) else { return nil }
         if AblageBytes.equal(sammlung, AblageLedger.sammlungOrdner) {
             // Schema (`v` > 1) und Felder prüft der Leser; danach Kennung und leere Refs.
-            guard let o = try? AblageOrdner(nutzlast: plain), AblageBytes.equal(o.id, id), refs.isEmpty else { return nil }
+            // Zähler über `zaehlerMax`: wie unlesbar, das Objekt ruht (nie überschreiben, nie indizieren).
+            guard let o = try? AblageOrdner(nutzlast: plain), AblageBytes.equal(o.id, id), refs.isEmpty,
+                  AblageZusammenfuehren.ordnerZaehlerOk(o) else { return nil }
             return (.ordner(o), o.hash())
         }
-        guard let d = try? AblageDatei(nutzlast: plain), AblageBytes.equal(d.id, id) else { return nil }
+        guard let d = try? AblageDatei(nutzlast: plain), AblageBytes.equal(d.id, id), AblageZusammenfuehren.dateiZaehlerOk(d) else { return nil }
         // `hub_refs(d) == blob_refs`: Listenvergleich in Reihenfolge (die Hub-Kennungen sind sortiert und eindeutig).
         let abgeleitet = AblageKrypto.hubRefs(datei: d, key: konto.key)
         guard abgeleitet.count == refs.count, zip(abgeleitet, refs).allSatisfy({ AblageBytes.equal($0, $1) }) else { return nil }
