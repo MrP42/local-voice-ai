@@ -174,8 +174,19 @@ fn escapes() -> Value {
         ),
         ("schraegstrich_nicht_escaped", r#"{"a\/b":"c\/d/e"}"#),
         ("nicht_ascii_roh", r#"{"k":"Größe – 日本語 😀"}"#),
-        ("ersatzpaar", r#""😀""#),
-        ("hexziffern_grossbuchstaben", r#""éÜ""#),
+        // Rohtext mit JSON-Escapes (nicht die Zeichen selbst): U+1F600 als Ersatzpaar, Hexziffern gross/klein.
+        ("ersatzpaar", r#""\ud83d\ude00""#),
+        ("ersatzpaar_grossbuchstaben", r#""\uD83D\uDE00""#),
+        ("hexziffern_grossbuchstaben", r#""\u00E9\u00DC""#),
+        ("hexziffern_kleinbuchstaben", r#""\u00e9\u00dc""#),
+        ("hexziffern_gemischt", r#""\u00E9\u00dc\uFfE0""#),
+        // Schlüssel als Escape: Ersatzpaar, zusammengesetzt und zerlegt (zwei verschiedene Schlüssel).
+        ("schluessel_ersatzpaar_escape", r#"{"\ud83d\ude00":1}"#),
+        (
+            "schluessel_zusammengesetzt_zerlegt_escape",
+            r#"{"\u00e9":1,"e\u0301":2}"#,
+        ),
+        ("schluessel_gleich_roh_und_escape", r#"{"\u00e9":1,"é":2}"#),
         ("leerraum", " {\n \"b\" : [ 1 , 2 ] ,\t\"a\" : { } }\r\n"),
         (
             "verschachtelt",
@@ -245,6 +256,14 @@ fn zahlen() -> Value {
         "1.0e+2",
         "-1e-7",
         "[1.0,-0.0,1e20,0.1]",
+        // Grenzen der Schreibweise: ab 1e-5 dezimal, darunter Exponent; ab 1e16 Exponent.
+        "1e-5",
+        "1e-6",
+        "1.5e-6",
+        "9.99e-7",
+        "9007199254740992.0",
+        "1e22",
+        "4.35",
     ];
     let ungueltig = [
         "01", "1.", ".5", "+1", "-", "1e", "1e+", "1e999", "--1", "1.e5", "0x10", "NaN",
@@ -280,6 +299,16 @@ fn umlaut_schluessel() -> Value {
         (
             "leer_emoji_und_grenzen",
             r#"{"":0,"😀":1,"~":2,"\u007f":3,"\u0080":4}"#,
+        ),
+        // UTF-8-Bytereihenfolge weicht von UTF-16 ab: U+FFE0 (EF BF A0) kommt vor U+1F600 (F0 9F 98 80), in UTF-16
+        // steht D83D DE00 vor FFE0. Roh und als Escape.
+        (
+            "bmp_ueber_ersatzbereich_roh",
+            "{\"\u{1F600}\":1,\"\u{FFE0}\":2,\"\u{E000}\":3,\"a\":4}",
+        ),
+        (
+            "bmp_ueber_ersatzbereich_escape",
+            r#"{"\ud83d\ude00":1,"\uffe0":2,"\ue000":3,"a":4}"#,
         ),
         (
             "schluessel_mit_escape",
@@ -936,7 +965,7 @@ fn zusammenfuehren() -> Value {
 /// Alle Zusatzvektoren; Quelle des Schlüssels `zusatz` in `ablage-testvektoren.json`.
 fn alle() -> Value {
     json!({
-        "hinweis": "Zusatzvektoren der Dokumentenablage (D5). Erzeugt von sync::ablage::vektoren_zusatz::json_passt_zum_code (LVA_VEKTOREN_SCHREIBEN=1). Nicht von Hand ändern. Gruppen: escapes, zahlen, umlaut_schluessel, serde_lesefaelle, id_gueltig, tiefe_127, hub_hex, grabstein_benutzer, zusammenfuehren.",
+        "hinweis": "Zusatzvektoren der Dokumentenablage (D5). Erzeugt von sync::ablage::vektoren_zusatz::json_passt_zum_code. Neu schreiben nur mit LVA_VEKTOREN_SCHREIBEN=1 (z. B. LVA_VEKTOREN_SCHREIBEN=1 cargo test --lib sync::ablage::vektoren_zusatz::json_passt_zum_code); ohne die Variable prüft der Test nur. Nicht von Hand ändern. Gruppen: escapes, zahlen, umlaut_schluessel, serde_lesefaelle, id_gueltig, tiefe_127, hub_hex, grabstein_benutzer, zusammenfuehren.",
         "user_id": USER,
         "escapes": escapes(),
         "zahlen": zahlen(),
