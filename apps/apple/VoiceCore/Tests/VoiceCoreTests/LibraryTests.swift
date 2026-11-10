@@ -134,6 +134,39 @@ final class LibraryTests: XCTestCase {
         XCTAssertEqual(LibraryText.favoritesFirst(books).map(\.id), ["b", "d", "a", "c"])
     }
 
+    func testSortRecentlyAddedNewestFirstFavoritesBeforeAndLegacyLast() {
+        var books = [
+            LibraryBook(id: "a", title: "Effi Briest", authors: ["Theodor Fontane"], addedMs: 2),
+            LibraryBook(id: "b", title: "Der Schimmelreiter", authors: ["Theodor Storm"], addedMs: 1),
+            LibraryBook(id: "c", title: "Die Verwandlung", authors: ["Franz Kafka"], addedMs: 3),
+            LibraryBook(id: "z", title: "Zauberberg", addedMs: 0),
+            LibraryBook(id: "y", title: "Ärger", addedMs: 0),
+        ]
+        XCTAssertEqual(LibraryText.sorted(books, by: .added).map(\.id), ["c", "a", "b", "y", "z"],
+                       "neueste zuerst, Altbestand ohne Datum am Ende nach Titel (Ä wie A)")
+        books[1].favorite = true
+        XCTAssertEqual(LibraryText.sorted(books, by: .added).map(\.id), ["b", "c", "a", "y", "z"])
+    }
+
+    func testSortRecentTitleAuthorMatchDesktop() {
+        let books = [
+            LibraryBook(id: "a", title: "Effi Briest", authors: ["Theodor Fontane"], addedMs: 2),
+            LibraryBook(id: "b", title: "Der Schimmelreiter", authors: ["Storm, Theodor"], addedMs: 1),
+            LibraryBook(id: "c", title: "Die Verwandlung", authors: ["Franz Kafka"], addedMs: 3),
+        ]
+        let used: [String: Double] = ["b": 50]
+        XCTAssertEqual(LibraryText.sorted(books, by: .recent) { used[$0.id] ?? 0 }.map(\.id), ["b", "c", "a"],
+                       "zuletzt benutzt, sonst Importdatum")
+        XCTAssertEqual(LibraryText.sorted(books, by: .title).map(\.id), ["b", "c", "a"])
+        XCTAssertEqual(LibraryText.sorted(books, by: .author).map(\.id), ["a", "c", "b"], "Fontane, Kafka, Storm")
+    }
+
+    func testStoredSortFallsBackToRecent() {
+        XCTAssertEqual(LibrarySort.stored("added"), .added)
+        XCTAssertEqual(LibrarySort.stored("unbekannt"), .recent)
+        XCTAssertEqual(LibrarySort.allCases.map(\.rawValue), ["recent", "added", "title", "author"], "wie Desktop")
+    }
+
     func testResumeEstimates() {
         XCTAssertEqual(LibraryText.listenMilliseconds(chars: 900), 60_000)
         XCTAssertEqual(LibraryText.listenMilliseconds(chars: -5), 0)

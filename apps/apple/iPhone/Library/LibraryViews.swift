@@ -149,6 +149,8 @@ struct LibraryShelf: View {
     @ObservedObject var playback = LibraryPlayback.shared
     @State private var query = ""
     @State private var filter = ShelfFilter.all
+    /// Sortierung, gerätelokal gemerkt; gleiche Werte wie am Desktop (dort `lva.ui.library.sort`, lva#474).
+    @AppStorage("library.sort") private var sortRaw = LibrarySort.recent.rawValue
     @Environment(\.dynamicTypeSize) private var typeSize
     @State private var importing = false
     @State private var showSync = false
@@ -158,9 +160,16 @@ struct LibraryShelf: View {
     private func textFraction(_ b: LibraryBook) -> Double { LibraryProgress.fraction(library.record(library.textKey(library.activeView(b)))) }
     private func audioFraction(_ b: LibraryBook) -> Double { LibraryProgress.fraction(library.record(library.audioKey(library.activeView(b)))) }
 
+    /// Jüngster Fortschrittsstempel der aktiven Fassung (Text oder Hörbuch) für „Zuletzt gehört“.
+    private func lastUsed(_ b: LibraryBook) -> Double {
+        let v = library.activeView(b)
+        return max(library.record(library.textKey(v))?.updated ?? 0, library.record(library.audioKey(v))?.updated ?? 0)
+    }
+
     private var visible: [LibraryBook] {
         let q = query.trimmingCharacters(in: .whitespaces)
-        return LibraryText.favoritesFirst(library.books.filter { b in
+        let sort = LibrarySort.stored(sortRaw)
+        return LibraryText.sorted(library.books.filter { b in
             let matches = q.isEmpty || b.title.localizedCaseInsensitiveContains(q) || b.authors.contains { $0.localizedCaseInsensitiveContains(q) }
             let done = b.finished || max(textFraction(b), audioFraction(b)) >= 1
             switch filter {
@@ -170,7 +179,7 @@ struct LibraryShelf: View {
             case .audio: return matches && b.audio != nil
             case .finished: return matches && done
             }
-        })
+        }, by: sort, lastUsed: lastUsed)
     }
 
     /// In sehr großer Schrift steht das Cover über dem Text.
@@ -257,7 +266,20 @@ struct LibraryShelf: View {
                     }.buttonStyle(.plain)
                 }
 
-                Text("ALLE BÜCHER · \(shown.count)").font(.caption.weight(.semibold)).tracking(0.6).foregroundStyle(VoicePalette.secondaryText)
+                HStack(alignment: .center, spacing: 8) {
+                    Text("ALLE BÜCHER · \(shown.count)").font(.caption.weight(.semibold)).tracking(0.6).foregroundStyle(VoicePalette.secondaryText)
+                    Spacer(minLength: 8)
+                    Menu {
+                        Picker("Sortieren", selection: $sortRaw) {
+                            ForEach(LibrarySort.allCases) { Text($0.label).tag($0.rawValue) }
+                        }
+                    } label: {
+                        Label(LibrarySort.stored(sortRaw).label, systemImage: "arrow.up.arrow.down")
+                            .font(.subheadline).frame(minHeight: 44).contentShape(Rectangle())
+                    }
+                    .accessibilityLabel("Sortieren: \(LibrarySort.stored(sortRaw).label)")
+                    .accessibilityIdentifier("librarySort")
+                }
                 if library.books.isEmpty {
                     ContentUnavailableView {
                         Label("Noch keine Bücher", systemImage: "books.vertical")

@@ -9,6 +9,10 @@ import XCTest
 // Test liest dieselbe Datei und verlangt vom Swift-Index dasselbe: gleiche Wörter (Anfrage und Tokenizer), gleiche Stücke und
 // Längen, gleiche Stoppwörter, gleiche Zeichentabellen, gleiche Rohränge (`bm25`) und gleiche erste fünf Dateien samt Ankern in
 // gleicher Reihenfolge. Nur synthetische Daten.
+//
+// lva#463 (Swift-Nachzug zu lva#465): Abschnitt `normalisierung` (Faltungstabelle und Proben von `ftsNormalisieren`, dazu die Wörter des
+// Tokenizers danach), die neuen Fragen („Strasse“ findet „Straße“ usw.) und `gesperrt` (Rohrang bei gemischtem Bestand: der Papierkorb des
+// Desktops zählt nicht in N, n und avgdl, also derselbe Rohrang wie am iPhone, das ihn nie im Index hat).
 
 private func bytes(_ s: String) -> [UInt8] { Array(s.utf8) }
 private func gleich(_ a: [String], _ b: [String]) -> Bool { a.map(bytes) == b.map(bytes) }
@@ -71,9 +75,46 @@ final class AblageIndexParitaetTests: XCTestCase {
         let falten = try XCTUnwrap(f["falten"] as? String).split(separator: ",").flatMap { $0.split(separator: ":").map { Int32($0)! } }
         XCTAssertEqual(AblageFts5Tabellen.falten, falten)
         // Stichproben der Faltung, wie FTS5 sie wirklich macht (die Proben oben prüfen weit mehr): nur Diakritika (Akzente, Umlautpunkte)
-        // fallen weg; Striche (ø, ł), „ß“ und die Akzente außerhalb des Lateinischen bleiben, nur klein geschrieben.
+        // fallen weg; Striche (ø, ł), „ß“ und die Akzente außerhalb des Lateinischen bleiben, nur klein geschrieben (die Faltung von ß, ø, ł,
+        // … ist `ftsNormalisieren` davor, siehe `testNormalisierungProbenGleichDesktop`).
         for (zeichen, soll) in [("Ä", "a"), ("ö", "o"), ("ü", "u"), ("é", "e"), ("ß", "ß"), ("ẞ", "ß"), ("Ø", "ø"), ("ł", "ł"), ("Ё", "ё"), ("ς", "σ"), ("ό", "ό")] {
             XCTAssertEqual(AblageSuchtext.fts5Woerter(zeichen).first.map(bytes), bytes(soll), zeichen)
+        }
+    }
+
+    // MARK: Faltung (lva#463)
+
+    /// Die Tabelle `AblageSuchtext.ftsFaltung` ist die von `wai_retrieval::FTS_FALTUNG` (Fixture `normalisierung.zeichen`): gleiche Zeichen
+    /// mit gleichem Ersatz, nichts mehr, nichts weniger. Der Ersatz ist klein geschrieben (auch für Großbuchstaben).
+    func testFaltungstabelleIstDieDerFixture() throws {
+        let n = try XCTUnwrap(root["normalisierung"] as? [String: Any])
+        let zeichen = try liste("zeichen", in: n)
+        XCTAssertEqual(zeichen.count, 21)
+        XCTAssertEqual(AblageSuchtext.ftsFaltung.count, zeichen.count, "Zahl der Zeichen")
+        for z in zeichen {
+            let von = try XCTUnwrap(z["von"] as? String), nach = try XCTUnwrap(z["nach"] as? String)
+            let cp = try XCTUnwrap(z["codepunkt"] as? Int)
+            XCTAssertEqual(von.unicodeScalars.count, 1)
+            XCTAssertEqual(Int(von.unicodeScalars.first!.value), cp, "Codepunkt von \(von)")
+            let e = AblageSuchtext.ftsFaltung.first { $0.von.value == UInt32(cp) }
+            XCTAssertNotNil(e, "Zeichen \(von) (U+\(String(cp, radix: 16))) fehlt in der Tabelle")
+            XCTAssertEqual(e.map { bytes($0.nach) }, bytes(nach), "Ersatz für \(von)")
+        }
+        XCTAssertEqual(Set(AblageSuchtext.ftsFaltung.map(\.von.value)).count, AblageSuchtext.ftsFaltung.count, "kein Zeichen doppelt")
+    }
+
+    /// `ftsNormalisieren` und danach der Tokenizer, je Probe Byte für Byte wie der Desktop (`fts_normalisieren`, `unicode61 remove_diacritics 2`).
+    func testNormalisierungProbenGleichDesktop() throws {
+        let n = try XCTUnwrap(root["normalisierung"] as? [String: Any])
+        let proben = try liste("proben", in: n)
+        XCTAssertGreaterThanOrEqual(proben.count, 16)
+        for p in proben {
+            let text = try XCTUnwrap(p["text"] as? String)
+            let soll = try XCTUnwrap(p["normalisiert"] as? String)
+            let fts5 = try strings("fts5", in: p)
+            let ist = AblageSuchtext.ftsNormalisieren(text)
+            XCTAssertEqual(bytes(ist), bytes(soll), "normalisiert \(text.debugDescription): \(ist.debugDescription) statt \(soll.debugDescription)")
+            XCTAssertTrue(gleich(AblageSuchtext.fts5Woerter(ist), fts5), "FTS5 nach Faltung \(text.debugDescription): \(AblageSuchtext.fts5Woerter(ist)) statt \(fts5)")
         }
     }
 
@@ -107,7 +148,7 @@ final class AblageIndexParitaetTests: XCTestCase {
                 XCTAssertEqual(bytes(erzeugt[i].text), bytes(s["text"] as! String), "\(d.name) Stück \(i + 1)")
                 XCTAssertEqual(erzeugt[i].abschnitt, s["abschnitt"] as? Int, d.name)
                 XCTAssertEqual(s["seite"] as? Int, i + 1, d.name)
-                XCTAssertEqual(AblageSuchtext.fts5Woerter(erzeugt[i].text).count, s["laenge"] as? Int, "Länge \(d.name) Stück \(i + 1)")
+                XCTAssertEqual(AblageSuchtext.fts5Woerter(AblageSuchtext.ftsNormalisieren(erzeugt[i].text)).count, s["laenge"] as? Int, "Länge \(d.name) Stück \(i + 1)")
             }
             if d.stuecke.count > d.abschnitte.count { vielfach += 1 }
         }
@@ -165,7 +206,7 @@ final class AblageIndexParitaetTests: XCTestCase {
     func testFragenGleichDesktop() throws {
         let ix = index(try korpus())
         let fragen = try liste("fragen")
-        XCTAssertGreaterThanOrEqual(fragen.count, 20)
+        XCTAssertGreaterThanOrEqual(fragen.count, 27, "mit „Strasse“ (lva#463) und den fünf angehängten Fragen")
         var mitTreffern = 0, ohneTreffer = 0
         for f in fragen {
             let frage = try XCTUnwrap(f["frage"] as? String)
@@ -209,7 +250,73 @@ final class AblageIndexParitaetTests: XCTestCase {
             if treffer.isEmpty { ohneTreffer += 1 } else { mitTreffern += 1 }
         }
         XCTAssertGreaterThan(mitTreffern, 12)
-        XCTAssertGreaterThan(ohneTreffer, 1, "mindestens die Stoppwortfrage und eine Frage ohne Fundstelle")
+        // Seit lva#463 trifft „Strasse“ (früher eine der Fragen ohne Fundstelle); übrig bleibt mindestens „Ruhe-Zeiten l'étage“.
+        XCTAssertGreaterThanOrEqual(ohneTreffer, 1, "mindestens eine Frage ohne Fundstelle")
+        XCTAssertEqual(ix.suche("Ruhe-Zeiten l'étage"), [])
+    }
+
+    /// lva#463: Die Fragen, die erst durch die Faltung treffen, treffen in der Fixture UND am iPhone. Ohne Faltung (Stand vor diesem Paket)
+    /// fanden „Strasse“, „STRASSE“, „Beispielstrasse“ und „Aero Orsted“ nichts; bei „Pariser Strasse“ und „Lodz Gdansk“ trug nur ein Wort
+    /// bei (halber Rohrang, siehe Summe unten: beide Wörter tragen jetzt bei).
+    func testFaltungsfragenTreffenBeiderseits() throws {
+        let ix = index(try korpus())
+        let fragen = try liste("fragen")
+        for frage in ["Strasse", "STRASSE", "Pariser Strasse", "Beispielstrasse", "Lodz Gdansk", "Aero Orsted"] {
+            let f = try XCTUnwrap(fragen.first { ($0["frage"] as? String) == frage }, "Frage \(frage) fehlt in der Fixture")
+            XCTAssertGreaterThan(f["treffer_gesamt"] as? Int ?? 0, 0, "Desktop: \(frage)")
+            XCTAssertFalse(ix.suche(frage).isEmpty, "iPhone: \(frage)")
+        }
+        // „Straße“ und „Strasse“ liefern dieselben Dateien, Stellen und denselben Rohrang.
+        let a = ix.rohzeilen("Straße"), b = ix.rohzeilen("Strasse"), c = ix.rohzeilen("STRASSE")
+        XCTAssertFalse(a.isEmpty)
+        XCTAssertEqual(a.map(\.dat), b.map(\.dat)); XCTAssertEqual(a.map(\.seite), b.map(\.seite)); XCTAssertEqual(a.map(\.bm25), b.map(\.bm25))
+        XCTAssertEqual(a.map(\.bm25), c.map(\.bm25))
+        // Zwei Wörter, von denen eines nur durch die Faltung trifft (ß, ł): der Rohrang ist die Summe beider Einzelwörter an derselben Stelle,
+        // also trägt das gefaltete Wort bei (vor der Faltung fehlte sein Anteil, der Rohrang war nur der des anderen Worts).
+        for (ganz, teile) in [("Pariser Strasse", ["Pariser", "Strasse"]), ("Lodz Gdansk", ["Lodz", "Gdansk"])] {
+            let zeilen = ix.rohzeilen(ganz)
+            XCTAssertEqual(zeilen.count, 1, ganz)
+            for z in zeilen {
+                var summe = 0.0
+                for t in teile {
+                    let r = ix.rohzeilen(t).first { $0.dat == z.dat && $0.seite == z.seite }
+                    XCTAssertNotNil(r, "\(t) trägt zu „\(ganz)“ bei")
+                    XCTAssertLessThan(r?.bm25 ?? 0, 0, t)
+                    summe += r?.bm25 ?? 0
+                }
+                gleichGenau(z.bm25, summe, "Summe der Wörter von „\(ganz)“")
+            }
+        }
+    }
+
+    /// Gemischter Bestand (Fixture `gesperrt`): der Papierkorb des Desktops zählt nicht in N, n und avgdl, der Rohrang ist der des
+    /// Korpus allein, also gleich dem Rohrang der Fragen ohne gesperrte Dateien und gleich dem des iPhone-Index über den Korpus. Dass die
+    /// gesperrten Dateien durch den echten Index-Tor nie in den iPhone-Index kommen, prüft `AblageSucheTests.testGesperrterBestandDurchDenTorGleichRohrangWieDesktop`.
+    func testGesperrterBestandGleichRohrang() throws {
+        let g = try XCTUnwrap(root["gesperrt"] as? [String: Any])
+        let dateien = try liste("dateien", in: g)
+        XCTAssertGreaterThanOrEqual(dateien.count, 3)
+        XCTAssertTrue(dateien.allSatisfy { ($0["grund"] as? String) == "papierkorb" })
+        let ohne = try liste("fragen")
+        let ix = index(try korpus())
+        let fragen = try liste("fragen", in: g)
+        XCTAssertGreaterThanOrEqual(fragen.count, 27)
+        for f in fragen {
+            let frage = try XCTUnwrap(f["frage"] as? String)
+            // Fixture-intern: gleich dem Rohrang ohne gesperrte Dateien.
+            let rein = try XCTUnwrap(ohne.first { ($0["frage"] as? String) == frage }, frage)
+            XCTAssertEqual(f["bm25_anzahl"] as? Int, rein["bm25_anzahl"] as? Int, "Zahl \(frage)")
+            let soll = try liste("bm25", in: f)
+            XCTAssertEqual(soll.map { $0["name"] as? String }, try liste("bm25", in: rein).map { $0["name"] as? String }, "Reihenfolge \(frage)")
+            // iPhone: derselbe Rohrang in derselben Reihenfolge.
+            let roh = ix.rohzeilen(frage)
+            XCTAssertEqual(roh.count, f["bm25_anzahl"] as? Int, "Zeilen \(frage)")
+            for (i, s) in soll.enumerated() where i < roh.count {
+                XCTAssertEqual(roh[i].dat, s["name"] as? String, "Reihenfolge \(frage) #\(i)")
+                XCTAssertEqual(roh[i].seite, s["seite"] as? Int, "Seite \(frage) #\(i)")
+                gleichGenau(roh[i].bm25, s["wert"] as! Double, "gesperrt bm25 \(frage) #\(i)")
+            }
+        }
     }
 
     /// Der Papierkorb des Desktops: Kontrolltext erst gefunden, dann 0 Treffer. (Die Gegenprobe am iPhone steht in `AblageSucheTests`.)
