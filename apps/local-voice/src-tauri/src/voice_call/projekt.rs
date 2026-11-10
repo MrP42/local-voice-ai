@@ -522,6 +522,7 @@ pub async fn durchlauf(
         zurueckgesetzt,
         abbruch,
         sitzung: _,
+        frage: _,
     } = freigabe;
 
     // Die Stufe kann nichts erweitern; ein lokales Ziel braucht seine gebundene Adresse.

@@ -74,7 +74,7 @@ pub(crate) struct FakeZiel {
 }
 
 impl FakeZiel {
-    fn neu(z: Ziel) -> Arc<Self> {
+    pub(crate) fn neu(z: Ziel) -> Arc<Self> {
         Arc::new(Self {
             ziel: Mutex::new(Some(z)),
             ..Default::default()
@@ -83,6 +83,21 @@ impl FakeZiel {
 
     pub(crate) fn setzen(&self, z: Ziel) {
         *self.ziel.lock().unwrap() = Some(z);
+    }
+
+    /// Ab jetzt scheitert die Zielbestimmung mit diesem Abbruch (`None`: wieder ein Ziel).
+    pub(crate) fn fehler_setzen(&self, e: Option<Abbruch>) {
+        *self.fehler.lock().unwrap() = e;
+    }
+
+    /// Läuft bei jeder Zielbestimmung, bevor das Ziel geliefert wird (P4c-3: Änderungen mitten im Lauf).
+    pub(crate) fn hook_setzen(&self, h: Option<Box<dyn Fn() + Send + Sync>>) {
+        *self.hook.lock().unwrap() = h;
+    }
+
+    /// Wie oft das Ziel bestimmt wurde (ein lokales Modell würde dabei gestartet).
+    pub(crate) fn aufrufe(&self) -> u32 {
+        self.aufrufe.load(Ordering::SeqCst)
     }
 }
 
@@ -144,7 +159,7 @@ fn kontext_von(texte: &[(&str, Klasse, &str)], ablage: &[String], stand: &str) -
     }
 }
 
-fn suite_projekt(klasse: &str) -> SuiteProjekt {
+pub(crate) fn suite_projekt(klasse: &str) -> SuiteProjekt {
     SuiteProjekt {
         id: P.into(),
         title: "Test".into(),
@@ -158,7 +173,7 @@ fn suite_projekt(klasse: &str) -> SuiteProjekt {
     }
 }
 
-struct FakeKontext {
+pub(crate) struct FakeKontext {
     frei: AtomicBool,
     projekt: Mutex<SuiteProjekt>,
     kontext: Mutex<Kontext>,
@@ -166,7 +181,7 @@ struct FakeKontext {
 }
 
 impl FakeKontext {
-    fn setzen(&self, texte: &[(&str, Klasse, &str)], ablage: &[String], stand: &str) {
+    pub(crate) fn setzen(&self, texte: &[(&str, Klasse, &str)], ablage: &[String], stand: &str) {
         *self.kontext.lock().unwrap() = kontext_von(texte, ablage, stand);
     }
 }
@@ -187,8 +202,8 @@ impl KontextQuelle for FakeKontext {
     }
 }
 
-struct FakeAblage {
-    auszuege: Mutex<AuszugAntwort>,
+pub(crate) struct FakeAblage {
+    pub(crate) auszuege: Mutex<AuszugAntwort>,
     urteile: Mutex<BTreeMap<String, Urteil>>,
     fehler: AtomicBool,
 }
@@ -239,7 +254,7 @@ fn leere_auszuege() -> AuszugAntwort {
 }
 
 /// Ein Auszug mit echter Herkunftsmarke; liefert Antwort und Marke.
-fn auszug(klasse: &str, text: &str) -> (AuszugAntwort, String) {
+pub(crate) fn auszug(klasse: &str, text: &str) -> (AuszugAntwort, String) {
     let (dat, fas) = (neue_id(PRAEFIX_DATEI), neue_id(PRAEFIX_FASSUNG));
     let rev = "a".repeat(64);
     let herkunft = ki::marke(&dat, &fas, &rev);
@@ -268,19 +283,19 @@ fn auszug(klasse: &str, text: &str) -> (AuszugAntwort, String) {
     )
 }
 
-fn ablage_verweis() -> String {
+pub(crate) fn ablage_verweis() -> String {
     format!("wai://lva/ablage/{}", neue_id(PRAEFIX_DATEI))
 }
 
-struct Szene {
-    tor: Arc<ProjektTor>,
-    kontext: Arc<FakeKontext>,
-    ziele: Arc<FakeZiel>,
-    ablage: Arc<FakeAblage>,
-    dir: tempfile::TempDir,
+pub(crate) struct Szene {
+    pub(crate) tor: Arc<ProjektTor>,
+    pub(crate) kontext: Arc<FakeKontext>,
+    pub(crate) ziele: Arc<FakeZiel>,
+    pub(crate) ablage: Arc<FakeAblage>,
+    pub(crate) dir: tempfile::TempDir,
 }
 
-fn szene() -> Szene {
+pub(crate) fn szene() -> Szene {
     szene_mit(suite_projekt("INTERNAL"), ziel(false), None)
 }
 
@@ -367,6 +382,9 @@ pub(crate) struct Env {
     _dir: tempfile::TempDir,
     _mdir: tempfile::TempDir,
     pub(crate) ordner: PathBuf,
+    /// Dokumentenablage (nur mit `env_mit_ablage` am Dienst angeschlossen).
+    pub(crate) ablage_dir: PathBuf,
+    pub(crate) rstore: RechercheStore,
     pub(crate) dienst: Arc<ProjektDienst>,
     pub(crate) tor: Arc<ProjektTor>,
     pub(crate) ziele: Arc<FakeZiel>,
@@ -395,6 +413,16 @@ impl KontextQuelle for TestKontext {
 }
 
 pub(crate) async fn env_mit(kontext_quelle: bool) -> Env {
+    env_baut(kontext_quelle, false).await
+}
+
+/// Wie `env`, mit angeschlossener Dokumentenablage: Der Dienst kennt ihre Dateien als Herkunft, das Tor
+/// liest sie wie in der App (`DateiAblage`).
+pub(crate) async fn env_mit_ablage() -> Env {
+    env_baut(true, true).await
+}
+
+async fn env_baut(kontext_quelle: bool, mit_ablage: bool) -> Env {
     let dir = tempfile::tempdir().unwrap();
     let (mdir, store) = tmp_store();
     let store = Arc::new(store);
@@ -414,6 +442,8 @@ pub(crate) async fn env_mit(kontext_quelle: bool) -> Env {
     let rstore = RechercheStore::open(ordner.join("recherche.db"))
         .await
         .unwrap();
+    let rstore_kopie = rstore.clone();
+    let ablage_dir = dir.path().join("ablage");
     let widerrufe = Arc::new(Mutex::new(Vec::<String>::new()));
     let zelle: Arc<OnceLock<Arc<ProjektTor>>> = Arc::new(OnceLock::new());
     let hook = {
@@ -425,29 +455,35 @@ pub(crate) async fn env_mit(kontext_quelle: bool) -> Env {
             }
         })
     };
-    let dienst = Arc::new(
-        ProjektDienst::open(
-            ordner.join("projekte.db"),
-            quellen,
-            rstore,
-            lokaler_principal(),
-        )
-        .await
-        .unwrap()
-        .with_ablage(ordner.clone())
-        .with_widerruf(hook),
-    );
+    let mut d = ProjektDienst::open(
+        ordner.join("projekte.db"),
+        quellen,
+        rstore,
+        lokaler_principal(),
+    )
+    .await
+    .unwrap()
+    .with_ablage(ordner.clone())
+    .with_widerruf(hook);
+    if mit_ablage {
+        d = d.with_dokumentenablage(ablage_dir.clone());
+    }
+    let dienst = Arc::new(d);
     let ziele = FakeZiel::neu(ziel(false));
     let quelle: Arc<dyn KontextQuelle> = if kontext_quelle {
         Arc::new(TestKontext(dienst.clone()))
     } else {
         dienst.clone()
     };
-    let ablage = Arc::new(FakeAblage {
-        auszuege: Mutex::new(leere_auszuege()),
-        urteile: Mutex::new(BTreeMap::new()),
-        fehler: AtomicBool::new(false),
-    });
+    let ablage: Arc<dyn AblageQuelle> = if mit_ablage {
+        Arc::new(DateiAblage::neu(ablage_dir.clone()))
+    } else {
+        Arc::new(FakeAblage {
+            auszuege: Mutex::new(leere_auszuege()),
+            urteile: Mutex::new(BTreeMap::new()),
+            fehler: AtomicBool::new(false),
+        })
+    };
     let tor = Arc::new(ProjektTor::neu(
         quelle,
         ziele.clone(),
@@ -459,6 +495,8 @@ pub(crate) async fn env_mit(kontext_quelle: bool) -> Env {
         _dir: dir,
         _mdir: mdir,
         ordner,
+        ablage_dir,
+        rstore: rstore_kopie,
         dienst,
         tor,
         ziele,
@@ -472,12 +510,33 @@ pub(crate) async fn env() -> Env {
     env_mit(true).await
 }
 
+impl Env {
+    /// Wie [`seite_text`], als Funktion für Hooks (Änderung mitten im Lauf, ohne Widerruf).
+    pub(crate) fn text_hebel(&self) -> Arc<dyn Fn(&str, &str) + Send + Sync> {
+        let t = self.texte.clone();
+        Arc::new(move |id: &str, text: &str| {
+            t.lock()
+                .unwrap()
+                .insert(format!("wai://lva/seite/{id}"), text.into());
+        })
+    }
+}
+
 pub(crate) fn seite(e: &Env, id: &str, text: &str) {
     e.seiten.lock().unwrap().push(SeiteKurz {
         id: id.into(),
         titel: format!("Text {id}"),
         lesbar: true,
     });
+    e.texte
+        .lock()
+        .unwrap()
+        .insert(format!("wai://lva/seite/{id}"), text.into());
+}
+
+/// Ändert den Text einer schon bekannten Seite, ohne dass der Dienst etwas davon erfährt (wie eine
+/// Änderung durch Sync von einem anderen Gerät): kein Widerruf, nur ein neuer Stand.
+pub(crate) fn seite_text(e: &Env, id: &str, text: &str) {
     e.texte
         .lock()
         .unwrap()

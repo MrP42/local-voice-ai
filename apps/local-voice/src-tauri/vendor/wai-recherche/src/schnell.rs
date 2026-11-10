@@ -56,6 +56,9 @@ pub struct SchnellOptionen {
     pub min_quellen: usize,
     pub max_treffer: usize,
     pub sprache: Option<String>,
+    /// Haelt jeden Lauf mit Suchanfragen vor dem ersten Abruf an (`FreigabeNoetig`), unabhaengig von der
+    /// Klasse. Vorgabe `false`: Halt nur ab PERSONAL.
+    pub freigabe_immer: bool,
 }
 
 impl Default for SchnellOptionen {
@@ -67,6 +70,7 @@ impl Default for SchnellOptionen {
             min_quellen: 1,
             max_treffer: 5,
             sprache: None,
+            freigabe_immer: false,
         }
     }
 }
@@ -650,8 +654,9 @@ async fn lauf(
     };
     queries.extend(plan.iter().cloned());
 
-    // Freigabe: ab PERSONAL darf nichts nach aussen, bevor die Person es fuer genau diese Anfragen erlaubt.
-    if klasse >= Datenklasse::Personal && !freigabe && !queries.is_empty() {
+    // Freigabe: ab PERSONAL (oder mit `freigabe_immer`) darf nichts nach aussen, bevor die Person es fuer genau
+    // diese Anfragen erlaubt.
+    if (klasse >= Datenklasse::Personal || opt.freigabe_immer) && !freigabe && !queries.is_empty() {
         let token = FreigabeToken {
             hash: anfragen_hash(&kontext.trace_id, frage, &queries),
             verbraucht: z.verbraucht(),

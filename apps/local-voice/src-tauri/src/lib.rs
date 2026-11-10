@@ -2091,6 +2091,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             projekte::befehle::projekt_datei_gefunden_aufnehmen,
             projekte::befehle::projekt_kontext_uebersicht,
             projekte::befehle::projekt_ki_status,
+            projekte::befehle::projekt_ki_dokument_erstellen,
             projekte::befehle::projekt_kontext_schalten,
             projekte::befehle::projekt_buch_entfernen,
             projekte::befehle::projekt_besprechung_zuordnen,

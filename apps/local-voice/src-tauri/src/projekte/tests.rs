@@ -31,7 +31,7 @@ const ADRESSE: &str = "https://suche.example.test";
 
 // ---------------------------------------------------------------- Fakes
 
-async fn server() -> u16 {
+pub(super) async fn server() -> u16 {
     let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = l.local_addr().unwrap().port();
     tokio::spawn(async move {

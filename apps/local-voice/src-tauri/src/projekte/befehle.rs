@@ -7,11 +7,14 @@ use super::dateien::JournalLage;
 use super::dienst::{
     klasse_aus_text, EintragSicht, GefundeneDatei, LoeschErgebnis, SuiteProjekt, SyncBericht,
 };
+use super::dokument::{self, DokumentAuftrag, DokumentErgebnis, WegVersand};
 use super::kontext::{KontextForm, KontextUebersicht};
 use super::recherche::{
     FreigabeAktion, FreigabeInfo, LaufAntwort, RechercheKurz, RechercheSicht, RechercheStatus,
 };
-use super::zustand::{modell_bereit, ProjekteZustand};
+use super::zustand::{modell_bereit, AppEntwurf, ProjekteZustand};
+use crate::voice_call::projekt::LlmWeg;
+use std::sync::Arc;
 use tauri::{AppHandle, State};
 use wai_recherche::Datenklasse;
 
@@ -377,6 +380,11 @@ pub async fn recherche_adresse_setzen(
 /// Chat-Werkzeug "recherche" (Modus Schnell). Der Kontext einer Besprechung ist mindestens
 /// `PERSONAL`; die Klasse des Projekts hebt sie an. Ab `PERSONAL` haelt der Lauf an
 /// (`status` = "freigabe") und wartet auf die Entscheidung in `recherche_freigabe_entscheiden`.
+///
+/// `mit_kontext` (lva#365 P4c-3): Die Recherche nimmt den Kontext des Projekts hinzu. Den liest das
+/// Versandtor frisch, ebenso Klassen und Modell; die Oberflaeche bestimmt davon nichts. Der Lauf haelt
+/// dann immer vor dem ersten Webzugriff an. Bis zur Freischaltung (P4c-4) antwortet das Tor mit
+/// `projekt.ki_gesperrt`.
 #[tauri::command]
 #[specta::specta]
 pub async fn recherche_starten(
@@ -385,24 +393,30 @@ pub async fn recherche_starten(
     frage: String,
     suite_projekt: Option<String>,
     besprechung: Option<String>,
+    mit_kontext: Option<bool>,
 ) -> Antwort<LaufAntwort> {
     let d = z.dienste().await?;
-    if let Err(e) = modell_bereit(&app) {
-        return Ok(LaufAntwort {
-            status: "fehler".into(),
-            recherche_id: None,
-            message: Some(e.message),
-            code: Some("kein_modell".into()),
-            halt_bleibt: false,
-        });
+    let mit_kontext = mit_kontext.unwrap_or(false);
+    // Mit Kontext bestimmt das Tor das Modell; die Einstellung der Besprechungs-Recherche gilt dann nicht.
+    if !mit_kontext {
+        if let Err(e) = modell_bereit(&app) {
+            return Ok(LaufAntwort {
+                status: "fehler".into(),
+                recherche_id: None,
+                message: Some(e.message),
+                code: Some("kein_modell".into()),
+                halt_bleibt: false,
+            });
+        }
     }
     Ok(d.recherche
-        .starten_fuer(
+        .starten_fuer_mit(
             besprechung.as_deref(),
             &frage,
             MODELL,
             Datenklasse::Personal,
             suite_projekt,
+            mit_kontext,
         )
         .await)
 }
@@ -451,4 +465,39 @@ pub async fn recherche_lesen(z: State<'_, ProjekteZustand>, id: String) -> Antwo
 #[specta::specta]
 pub async fn recherche_loeschen(z: State<'_, ProjekteZustand>, id: String) -> Antwort<()> {
     Ok(z.dienste().await?.recherche.loeschen(&id).await?)
+}
+
+// ---------------------------------------------------------------- KI-Dokument (lva#365 P4c-3)
+
+/// Die KI schreibt aus dem Kontext des Projekts ein Dokument und legt es als Entwurf in der Ablage ab
+/// (Ablauf und Regeln: `dokument.rs`). Kontext, Klassen und Modell bestimmt das Versandtor; der Befehl
+/// nimmt bewusst **keine** Mindestklasse und keine Quellen entgegen, die Oberflaeche kann die Klasse des
+/// Entwurfs also nicht senken. Der Entwurf ist im Projekt ausgeschaltet. Bis zur Freischaltung (P4c-4)
+/// antwortet das Tor mit `projekt.ki_gesperrt`.
+#[tauri::command]
+#[specta::specta]
+pub async fn projekt_ki_dokument_erstellen(
+    app: AppHandle,
+    z: State<'_, ProjekteZustand>,
+    suite_id: String,
+    auftrag: String,
+    ordner: Option<String>,
+    name: String,
+    expected_stand: Option<String>,
+) -> Antwort<DokumentErgebnis> {
+    let d = z.dienste().await?;
+    Ok(dokument::erstellen(
+        &d.tor,
+        &WegVersand(Arc::new(LlmWeg)),
+        &d.projekte,
+        &AppEntwurf(app),
+        DokumentAuftrag {
+            projekt: suite_id,
+            auftrag,
+            ordner,
+            name,
+            erwarteter_stand: expected_stand,
+        },
+    )
+    .await?)
 }
