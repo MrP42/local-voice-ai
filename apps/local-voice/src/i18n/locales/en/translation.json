@@ -7522,6 +7522,8 @@
         "ziel_fenster": "The size of this model's context window is not known. Nothing was sent. Enter the model's context limit under Settings > AI models & providers.",
         "ziel_lokal": "The local model is not ready right now. Nothing was sent. Wait a moment and ask again, or choose another model.",
         "modell": "The model did not answer. No answer was kept. Ask the question again or choose another model.",
+        "verspaetet": "The answer came too late: the selection in the project changed while it was being written. Nothing was kept.",
+        "zeitueberschreitung": "The model took too long (more than five minutes). The answer was discarded and nothing was spoken. Ask the question again, choose a smaller project context or use a faster model.",
         "andere": "An unexpected error occurred in the project. No answer was kept. Code: {{code}}."
       }
     },
