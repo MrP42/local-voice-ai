@@ -223,15 +223,6 @@ export const OrdnerBaum: React.FC<{
               <AlertTriangle size={16} aria-hidden="true" />
             </span>
           )}
-          {v.ordner.ki.zustand === "an" && (
-            <span
-              role="img"
-              aria-label={t("ablage.ki.fuerKiFreigegeben")}
-              style={{ color: "var(--color-logo-primary)" }}
-            >
-              <Sparkles size={16} aria-hidden="true" />
-            </span>
-          )}
           <span className="ablage-row__ct">{v.ordner.dateien}</span>
         </button>
       ))}
@@ -359,7 +350,10 @@ export const DateiTabelle: React.FC<{
               {formatBytes(d.groesse, i18n.language)}
             </td>
             <td className="ablage-spalte-klasse">
-              <KiKlasseChips ki={d.ki} klasse={d.klasse} />
+              <KiKlasseChips
+                ki={d.verknuepft ? { ...d.ki, zustand: "aus" } : d.ki}
+                klasse={d.klasse}
+              />
             </td>
             {sync?.get(d.id) && !d.konflikt ? (
               <td>
@@ -503,6 +497,8 @@ export const Details: React.FC<{
   /** D2: Fundstelle aus der Inhaltssuche (Anker, Pfad, Auszug). */
   fundstelle?: AblageFundstelle | null;
   anfrage?: string;
+  /** Im Blatt (schmales Fenster) trägt der Dialog Titel und Schließen-Knopf: kein zweiter Kopf. */
+  imBlatt?: boolean;
 }> = ({
   datei,
   pfad,
@@ -515,6 +511,7 @@ export const Details: React.FC<{
   ueberschriftId,
   fundstelle,
   anfrage,
+  imBlatt = false,
 }) => {
   const { t, i18n } = useTranslation();
   const textFehler = datei.text_code
@@ -534,21 +531,23 @@ export const Details: React.FC<{
           : "");
   return (
     <>
-      <div className="ablage-head">
-        <h2 id={ueberschriftId} title={datei.name}>
-          {datei.name}
-        </h2>
-        {onSchliessen && (
-          <div className="ablage-head__tools">
-            <IconButton
-              icon={<X size={20} aria-hidden="true" />}
-              label={t("ablage.details.schliessen")}
-              size="md"
-              onClick={onSchliessen}
-            />
-          </div>
-        )}
-      </div>
+      {!imBlatt && (
+        <div className="ablage-head">
+          <h2 id={ueberschriftId} title={datei.name}>
+            {datei.name}
+          </h2>
+          {onSchliessen && (
+            <div className="ablage-head__tools">
+              <IconButton
+                icon={<X size={20} aria-hidden="true" />}
+                label={t("ablage.details.schliessen")}
+                size="md"
+                onClick={onSchliessen}
+              />
+            </div>
+          )}
+        </div>
+      )}
       {fundstelle && (
         <div
           className="ablage-sec ablage-fundstelle"
@@ -572,20 +571,32 @@ export const Details: React.FC<{
       </div>
       <div className="ablage-sec">
         <h3>{t("ablage.ki.fuerDieKi")}</h3>
-        <div className="ablage-sw">
-          <span>
-            {kiText(datei.ki)}
-            <br />
-            <span className="ablage-mut">{t("ablage.ki.nurAuszuege")}</span>
-          </span>
-          <Button
-            onClick={onKi}
-            disabled={busy}
-            data-testid="ablage-ki-aendern"
-          >
-            {t("ablage.ki.aendern")}
-          </Button>
-        </div>
+        {datei.verknuepft ? (
+          // Die KI erreicht verknüpfte Ordner nie: nur ein Hinweis, kein Schalter.
+          <div className="ablage-sw">
+            <span
+              className="ablage-mut"
+              data-testid="ablage-ki-nicht-verfuegbar"
+            >
+              {t("ablage.ki.verknuepftNichtVerfuegbar")}
+            </span>
+          </div>
+        ) : (
+          <div className="ablage-sw">
+            <span>
+              {kiText(datei.ki)}
+              <br />
+              <span className="ablage-mut">{t("ablage.ki.nurAuszuege")}</span>
+            </span>
+            <Button
+              onClick={onKi}
+              disabled={busy}
+              data-testid="ablage-ki-aendern"
+            >
+              {t("ablage.ki.aendern")}
+            </Button>
+          </div>
+        )}
         <div className="ablage-sw">
           <span>{t("ablage.klasse.titel")}</span>
           <KiKlasseChips
@@ -606,6 +617,11 @@ export const Details: React.FC<{
         {textFehler && (
           <div className="ablage-mut" data-testid="ablage-textfehler">
             {textFehler}
+          </div>
+        )}
+        {datei.text === "nur_online" && (
+          <div className="ablage-mut" data-testid="ablage-nur-online-hinweis">
+            {t("ablage.verknuepft.nurOnlineHinweis")}
           </div>
         )}
       </div>
@@ -707,6 +723,8 @@ export const Hochladeliste: React.FC<{
   onWahl(z: UploadZeile, wahl: AblageKollisionswahl | null): void;
   onSchliessen(): void;
   fehlerText(code: string | null): string;
+  /** Im Blatt (schmales Fenster) trägt der Dialog Titel und Schließen-Knopf: kein zweiter Kopf. */
+  imBlatt?: boolean;
 }> = ({
   zeilen,
   ordnerName,
@@ -714,23 +732,26 @@ export const Hochladeliste: React.FC<{
   onWahl,
   onSchliessen,
   fehlerText,
+  imBlatt = false,
 }) => {
   const { t } = useTranslation();
   return (
     <>
-      <div className="ablage-head">
-        <h2 id={ueberschriftId}>
-          {t("ablage.hochladen.titel", { count: zeilen.length })}
-        </h2>
-        <div className="ablage-head__tools">
-          <IconButton
-            icon={<X size={20} aria-hidden="true" />}
-            label={t("ablage.hochladen.schliessen")}
-            size="md"
-            onClick={onSchliessen}
-          />
+      {!imBlatt && (
+        <div className="ablage-head">
+          <h2 id={ueberschriftId}>
+            {t("ablage.hochladen.titel", { count: zeilen.length })}
+          </h2>
+          <div className="ablage-head__tools">
+            <IconButton
+              icon={<X size={20} aria-hidden="true" />}
+              label={t("ablage.hochladen.schliessen")}
+              size="md"
+              onClick={onSchliessen}
+            />
+          </div>
         </div>
-      </div>
+      )}
       <div className="ablage-up" aria-live="polite">
         {zeilen.map((z) => (
           <div key={z.key} data-testid={`ablage-upload-${z.stand}`}>

@@ -220,7 +220,8 @@ function leereSicht() {
   };
 }
 
-// D7: verknüpfter Ordner (nur lesen, nur dieses Gerät) mit zwei Dateien.
+// D7: verknüpfter Ordner (nur lesen, nur dieses Gerät) mit drei Dateien (eine nur online) und einem
+// Unterordner, der nur online liegt.
 const verknuepftOrdner = (id: string, name: string, dateien: number) =>
   ordner(id, name, null, dateien, {
     datenklasse: "confidential",
@@ -235,9 +236,10 @@ function verknuepfteSicht() {
     ...demoSicht(),
     verknuepft: [
       {
-        ordner: verknuepftOrdner("ord_v1", "Projektunterlagen", 2),
+        ordner: verknuepftOrdner("ord_v1", "Projektunterlagen", 3),
         erreichbar: true,
         ausgelassen: 2,
+        nur_online: 2,
         zu_viele: false,
         abgetastet: T0,
       },
@@ -254,6 +256,12 @@ function verknuepfteSicht() {
         verknuepft: true,
         text: "fehler",
         text_code: "extrakt.ocr_nicht_verfuegbar",
+      }),
+      datei("dat_v3", "Wolke/Nur online.docx", "ord_v1", "docx", 48_200, 6, {
+        klasse: "confidential",
+        nur_geraet: true,
+        verknuepft: true,
+        text: "nur_online",
       }),
     ],
   };
@@ -370,6 +378,7 @@ async function installMock(
                 },
                 erreichbar: true,
                 ausgelassen: 0,
+                nur_online: 0,
                 zu_viele: false,
                 abgetastet: Date.now(),
               });
@@ -1266,9 +1275,13 @@ for (const breite of BREITEN) {
     await expect(page.getByTestId("ablage-ordnername")).toHaveText(
       "Projektunterlagen",
     );
-    await expect(page.getByTestId("ablage-verknuepft-hinweis")).toContainText(
-      "Nur lesen, nur dieses Gerät",
+    const hinweis = page.getByTestId("ablage-verknuepft-hinweis");
+    await expect(hinweis).toContainText("Nur lesen, nur dieses Gerät");
+    // Die KI erreicht verknüpfte Ordner nie: der Hinweis verspricht nichts anderes.
+    await expect(hinweis).toContainText(
+      "Die KI greift auf verknüpfte Ordner nicht zu.",
     );
+    await expect(hinweis).not.toContainText("für Suche und KI");
     await expect(
       page.getByTestId("ablage-verknuepft-ausgelassen"),
     ).toContainText("2 Einträge");
@@ -1302,6 +1315,140 @@ for (const breite of BREITEN) {
     else await breiteOk(page);
   });
 }
+
+// D7: Cloud-Dateien, die nur online liegen (Windows/OneDrive): sichtbar, nie gelesen.
+for (const breite of BREITEN) {
+  test(`${breite} px: verknüpfter Ordner – nur online: Zählung, Hinweis, Status ohne Text`, async ({
+    page,
+  }) => {
+    await installMock(page, { theme: "light", verknuepft: true });
+    await offne(page, breite, "light");
+    await waehle(page, "ord_v1");
+    const meldung = page.getByTestId("ablage-verknuepft-nur-online");
+    await expect(meldung).toContainText(
+      "2 Einträge liegen nur online und werden nicht gelesen.",
+    );
+    await expect(meldung).toContainText(
+      "In OneDrive „Immer auf diesem Gerät behalten“ wählen, damit der Text erfasst wird.",
+    );
+    // Die Übersprungenen nennen „nur online“ nicht mehr (eigene Zählung).
+    await expect(
+      page.getByTestId("ablage-verknuepft-ausgelassen"),
+    ).not.toContainText("online");
+    await page.getByTestId("ablage-datei-dat_v3").click();
+    const details =
+      breite >= 1024
+        ? page.getByTestId("ablage-seite-details")
+        : page.getByRole("dialog");
+    await expect(
+      details.getByTestId("ablage-nur-online-hinweis"),
+    ).toContainText("Immer auf diesem Gerät behalten");
+    await expect(details).toContainText("Nur online");
+    await expect(details.getByTestId("ablage-textfehler")).toHaveCount(0);
+  });
+
+  test(`${breite} px: verknüpfte Datei und Ordner – kein KI-Schalter, nur der Hinweis`, async ({
+    page,
+  }) => {
+    await installMock(page, { theme: "light", verknuepft: true });
+    await offne(page, breite, "light");
+    await waehle(page, "ord_v1");
+    // Liste und Ordnerbaum: kein KI-Chip, kein KI-Zeichen.
+    await expect(
+      page.getByTestId("ablage-datei-dat_v2").locator("xpath=ancestor::tr"),
+    ).not.toContainText("KI an");
+    await page.getByTestId("ablage-datei-dat_v2").click();
+    const details =
+      breite >= 1024
+        ? page.getByTestId("ablage-seite-details")
+        : page.getByRole("dialog");
+    await expect(details.getByTestId("ablage-ki-nicht-verfuegbar")).toHaveText(
+      "Nicht verfügbar (verknüpfter Ordner)",
+    );
+    await expect(details.getByTestId("ablage-ki-aendern")).toHaveCount(0);
+    // Datenklasse bleibt sichtbar.
+    await expect(details).toContainText("Vertraulich");
+    // Einstellungen des verknüpften Ordners: Datenklasse ja, KI-Schalter nein.
+    if (breite >= 1024)
+      await page
+        .getByTestId("ablage-seite-details")
+        .getByRole("button", { name: "Details schließen" })
+        .click();
+    else await page.keyboard.press("Escape");
+    await page.getByTestId("ablage-ordner-einstellungen").click();
+    const dlg = page.getByRole("dialog");
+    await expect(dlg.getByTestId("ablage-ki-nicht-verfuegbar")).toBeVisible();
+    await expect(dlg.getByTestId("ablage-ki-an")).toHaveCount(0);
+    await expect(dlg.getByTestId("ablage-ki-aus")).toHaveCount(0);
+    await expect(dlg.getByTestId("ablage-ki-gesperrt")).toHaveCount(0);
+    await expect(dlg.getByTestId("ablage-ki-erben")).toHaveCount(0);
+    await expect(
+      dlg.getByTestId("ablage-einstellungen-verknuepft"),
+    ).toContainText("die KI greift darauf nicht zu");
+    await expect(dlg).toContainText("Datenklasse");
+  });
+}
+
+// 390 px: das Blatt trägt Titel und Schließen-Knopf, der Inhalt hat keinen zweiten Kopf.
+test("390 px: Dateiblatt – genau ein Schließen-Knopf und der Titel genau einmal", async ({
+  page,
+}) => {
+  await installMock(page, { theme: "light", verknuepft: true });
+  await offne(page, 390, "light");
+  const pruefen = async (name: string) => {
+    const dlg = page.getByRole("dialog");
+    await expect(dlg).toBeVisible();
+    await expect(dlg.getByRole("button", { name: /schließen/i })).toHaveCount(
+      1,
+    );
+    await expect(dlg.getByText(name, { exact: true })).toHaveCount(1);
+    await expect(dlg.getByRole("heading", { name })).toHaveCount(1);
+    await dlg.getByRole("button", { name: /schließen/i }).click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+  };
+  // Verknüpfte Datei.
+  await waehle(page, "ord_v1");
+  await page.getByTestId("ablage-datei-dat_v2").click();
+  await pruefen("Scan Lageplan.png");
+  // Normale Ablage-Datei.
+  await waehle(page, "o_allg");
+  await page.getByTestId("ablage-datei-d1").click();
+  await pruefen("Protokoll Jour fixe 2026-11.docx");
+});
+
+test("390 px: Hochladeblatt – genau ein Schließen-Knopf und der Titel genau einmal", async ({
+  page,
+}) => {
+  await installMock(page, {
+    theme: "light",
+    wahl: ["C:/Eingang/Angebot Wartung 2027.pdf"],
+  });
+  await offne(page, 390, "light");
+  await waehle(page, "o_allg");
+  await page.getByTestId("ablage-hochladen").click();
+  const dlg = page.getByRole("dialog");
+  await expect(dlg).toBeVisible();
+  await expect(dlg.getByRole("button", { name: /schließen/i })).toHaveCount(1);
+  await expect(
+    dlg.getByRole("heading", { name: /hochladen|Datei/i }),
+  ).toHaveCount(1);
+});
+
+test("1440 px: Desktopdetails behalten ihren Kopf mit Titel und Schließen-Knopf", async ({
+  page,
+}) => {
+  await installMock(page, { theme: "light" });
+  await offne(page, 1440, "light");
+  await waehle(page, "o_allg");
+  await page.getByTestId("ablage-datei-d1").click();
+  const details = page.getByTestId("ablage-seite-details");
+  await expect(
+    details.getByRole("heading", { name: "Protokoll Jour fixe 2026-11.docx" }),
+  ).toHaveCount(1);
+  await expect(details.getByRole("button", { name: /schließen/i })).toHaveCount(
+    1,
+  );
+});
 
 test("1440 px: Ordner verknüpfen, neu einlesen und Verknüpfung lösen", async ({
   page,

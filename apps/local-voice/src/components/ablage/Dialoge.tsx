@@ -261,7 +261,9 @@ export const OrdnerEinstellungen: React.FC<{
     })),
   ];
   const nurGeaendert = nur !== ordner.nur_geraet;
+  // Die KI erreicht verknüpfte Ordner nie: dort gibt es keine KI-Einstellung (nur einen Hinweis).
   const kiGeaendert =
+    !verknuepft &&
     !unklar &&
     (ki !== ordner.ki.zustand ||
       eigeneKi !== (!ordner.ki.von && !ordner.ki.vorgabe));
@@ -284,7 +286,7 @@ export const OrdnerEinstellungen: React.FC<{
       onOpenChange={(o) => !o && !busy && onClose()}
       title={t("ablage.einstellungen.titel", { name: ordner.name })}
       closeLabel={t("ablage.schliessen")}
-      initialFocusRef={unklar || bestaetigen ? undefined : kiRef}
+      initialFocusRef={unklar || bestaetigen || verknuepft ? undefined : kiRef}
       footer={
         bestaetigen ? (
           <>
@@ -343,36 +345,53 @@ export const OrdnerEinstellungen: React.FC<{
         </div>
       ) : (
         <div>
-          <div
-            className="ablage-grp"
-            style={{ padding: "0 0 4px" }}
-            id="ablage-ki-label"
-          >
-            {t("ablage.ki.titel")}
-          </div>
-          {unklar && (
-            <p className="ablage-mut" role="status">
-              {t("ablage.ki.unklarHinweis")}
-            </p>
+          {verknuepft ? (
+            <>
+              <div
+                className="ablage-grp"
+                style={{ padding: "0 0 4px" }}
+                id="ablage-ki-label"
+              >
+                {t("ablage.ki.fuerDieKi")}
+              </div>
+              <p
+                className="ablage-mut"
+                style={{ margin: "0 0 8px" }}
+                data-testid="ablage-ki-nicht-verfuegbar"
+              >
+                {t("ablage.ki.verknuepftNichtVerfuegbar")}
+              </p>
+            </>
+          ) : (
+            <>
+              <div
+                className="ablage-grp"
+                style={{ padding: "0 0 4px" }}
+                id="ablage-ki-label"
+              >
+                {t("ablage.ki.titel")}
+              </div>
+              {unklar && (
+                <p className="ablage-mut" role="status">
+                  {t("ablage.ki.unklarHinweis")}
+                </p>
+              )}
+              <KiWahl
+                wert={ki}
+                disabled={unklar}
+                labelledBy="ablage-ki-label"
+                fokusRef={kiRef}
+                onChange={(w) => {
+                  setKi(w);
+                  setEigeneKi(true);
+                }}
+              />
+              <p className="ablage-mut" style={{ margin: "6px 0 8px" }}>
+                {t("ablage.ki.erklaerung")}
+              </p>
+            </>
           )}
-          <KiWahl
-            wert={ki}
-            disabled={unklar}
-            labelledBy="ablage-ki-label"
-            fokusRef={kiRef}
-            onChange={(w) => {
-              setKi(w);
-              setEigeneKi(true);
-            }}
-          />
-          <p className="ablage-mut" style={{ margin: "6px 0 8px" }}>
-            {t(
-              verknuepft
-                ? "ablage.ki.erklaerungVerknuepft"
-                : "ablage.ki.erklaerung",
-            )}
-          </p>
-          {hatEltern && eigeneKi && !unklar && (
+          {!verknuepft && hatEltern && eigeneKi && !unklar && (
             <Button
               type="button"
               variant="ghost"

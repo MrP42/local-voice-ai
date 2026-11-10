@@ -560,12 +560,14 @@ export const AblagePage: React.FC = () => {
     setFundstelle(f);
   };
 
-  const detailInhalt = (id: string) => {
+  /** `imBlatt`: im Dialog des schmalen Fensters; er trägt Titel und Schließen-Knopf selbst. */
+  const detailInhalt = (id: string, imBlatt = false) => {
     if (uploadOffen) {
       return (
         <Hochladeliste
           zeilen={uploads}
           ordnerName={aktuellerOrdner?.name ?? ""}
+          imBlatt={imBlatt}
           ueberschriftId={id}
           onWahl={kollisionWaehlen}
           onSchliessen={() => {
@@ -584,6 +586,7 @@ export const AblagePage: React.FC = () => {
         fassungen={fassungen}
         busy={busy}
         ueberschriftId={id}
+        imBlatt={imBlatt}
         onSchliessen={schliesseDetails}
         onUmbenennen={() => setDlg({ art: "datei-umbenennen", id: datei.id })}
         onPapierkorb={() => void inKorb("datei", datei.id)}
@@ -803,6 +806,16 @@ export const AblagePage: React.FC = () => {
       {aktVerknuepft && !aktVerknuepft.erreichbar && (
         <Meldung warn testid="ablage-verknuepft-unerreichbar">
           <p>{t("ablage.verknuepft.nichtErreichbarText")}</p>
+        </Meldung>
+      )}
+      {aktVerknuepft && aktVerknuepft.nur_online > 0 && (
+        <Meldung testid="ablage-verknuepft-nur-online">
+          <p>
+            {t("ablage.verknuepft.nurOnline", {
+              count: aktVerknuepft.nur_online,
+            })}
+          </p>
+          <p>{t("ablage.verknuepft.nurOnlineHinweis")}</p>
         </Meldung>
       )}
       {aktVerknuepft &&
@@ -1094,7 +1107,7 @@ export const AblagePage: React.FC = () => {
           contentFades={false}
         >
           <div className="ablage" style={{ display: "block", height: "auto" }}>
-            {detailInhalt("ablage-blatt-titel")}
+            {detailInhalt("ablage-blatt-titel", true)}
           </div>
         </Dialog>
       )}

@@ -2,6 +2,7 @@
 //! das Testprogramm selbst ([`super::tests_d2::kind`]); die OCR liefert in Tests ein Test-Leser
 //! (`LVA_EXTRAKT_TEST=ocr`, Kennung [`ocr::TEST_KENNUNG`]).
 
+use super::eintrag;
 use super::freigabe;
 use super::freigabe::KiStufe;
 use super::index;
@@ -887,19 +888,53 @@ fn abgetastet_wird_bei_jedem_abtasten_aktualisiert() {
 }
 
 #[test]
-fn reparse_urteil_wertet_tags_und_attribute() {
-    use super::{reparse_tag_cloud, reparse_urteil, Umweg};
+fn reparse_urteil_wertet_echte_masken_und_tags() {
+    use super::eintrag::{online_urteil, reparse_tag_cloud, reparse_urteil, Urteil};
     const REPARSE: u32 = 0x400;
     const OFFLINE: u32 = 0x1000;
     const RECALL_OPEN: u32 = 0x4_0000;
     const RECALL_DATA: u32 = 0x40_0000;
+    const PINNED: u32 = 0x8_0000;
+    const ORDNER: u32 = 0x10;
+    const ARCHIV: u32 = 0x20;
     const SYMLINK: u32 = 0xA000_000C;
     const MOUNT: u32 = 0xA000_0003;
     const CLOUD: u32 = 0x9000_001A;
-    // Ohne Reparse-Attribut ist der Tag belanglos.
-    assert_eq!(reparse_urteil(SYMLINK, 0x20, false), Umweg::Nein);
-    assert_eq!(reparse_urteil(0, 0x20, true), Umweg::Nein);
-    // Symlink, Mount-Point (Junction) und Unbekanntes: immer abgewiesen, auch als Ordner.
+    // OneDrive: Tag `IO_REPARSE_TAG_CLOUD_7`.
+    const ONEDRIVE: u32 = 0x9000_701A;
+
+    // Echte Maske einer Datei, die nur online liegt (Get-Item und Find-Daten: REPARSE_POINT, SPARSE,
+    // OFFLINE, UNPINNED, RECALL_ON_DATA_ACCESS).
+    assert_eq!(reparse_urteil(ONEDRIVE, 0x50_1620), Urteil::NurOnline);
+    // Was `fs::symlink_metadata` unter Rust meldet (ohne 0x400 und ohne OFFLINE, Tag 0): ebenfalls nur online.
+    assert_eq!(reparse_urteil(0, 0x50_0020), Urteil::NurOnline);
+    // Hydrierte Cloud-Datei (Tag Cloud, ohne RECALL): lesbar, auch angeheftet.
+    assert_eq!(
+        reparse_urteil(CLOUD, REPARSE | ARCHIV),
+        Urteil::Lesbar,
+        "hydriert"
+    );
+    assert_eq!(
+        reparse_urteil(ONEDRIVE, REPARSE | ARCHIV | PINNED),
+        Urteil::Lesbar
+    );
+    // Jedes der drei Online-Bits genügt, mit und ohne Reparse-Bit, bei Tag 0 und bei fremdem Tag.
+    for bit in [OFFLINE, RECALL_OPEN, RECALL_DATA] {
+        assert!(online_urteil(bit));
+        for tag in [0, CLOUD, ONEDRIVE, SYMLINK] {
+            for reparse in [0, REPARSE] {
+                assert_eq!(
+                    reparse_urteil(tag, ARCHIV | bit | reparse),
+                    Urteil::NurOnline,
+                    "{tag:#x} {bit:#x}"
+                );
+            }
+        }
+    }
+    assert!(!online_urteil(
+        ARCHIV | REPARSE | 0x20_0000 | PINNED | 0x10_0000
+    ));
+    // Symlink, Mount-Point (Junction) und Unbekanntes: abgewiesen, auch als Ordner.
     for tag in [
         SYMLINK,
         MOUNT,
@@ -909,28 +944,409 @@ fn reparse_urteil_wertet_tags_und_attribute() {
         0,
         0x9000_001B,
     ] {
-        for dir in [false, true] {
-            assert_eq!(reparse_urteil(tag, REPARSE, dir), Umweg::Ja, "{tag:#x}");
+        for attribute in [REPARSE | ARCHIV, REPARSE | ORDNER] {
+            assert_eq!(reparse_urteil(tag, attribute), Urteil::Umweg, "{tag:#x}");
         }
     }
+    // Ohne Reparse-Attribut ist der Tag belanglos.
+    assert_eq!(reparse_urteil(SYMLINK, ARCHIV), Urteil::Lesbar);
+    assert_eq!(reparse_urteil(0, ORDNER), Urteil::Lesbar);
     // Cloud-Tags samt Untertags `_1` bis `_F`.
     assert!(reparse_tag_cloud(CLOUD));
     for n in 1..=0xFu32 {
         let t = CLOUD | (n << 12);
         assert!(reparse_tag_cloud(t), "{t:#x}");
-        assert_eq!(reparse_urteil(t, REPARSE, false), Umweg::Nein);
+        assert_eq!(reparse_urteil(t, REPARSE | ARCHIV), Urteil::Lesbar);
     }
     assert!(!reparse_tag_cloud(SYMLINK));
     assert!(!reparse_tag_cloud(0x9000_001B));
     assert!(!reparse_tag_cloud(0x8000_001A));
-    // Datei: nur hydriert; nie ein Download.
-    for nur_cloud in [OFFLINE, RECALL_OPEN, RECALL_DATA, OFFLINE | RECALL_DATA] {
-        assert_eq!(reparse_urteil(CLOUD, REPARSE | nur_cloud, false), Umweg::Ja);
+    // Ordner: mit Cloud-Tag betretbar, mit RECALL (auch nur eines der drei Bits) nicht; Junction nie.
+    assert_eq!(reparse_urteil(ONEDRIVE, REPARSE | ORDNER), Urteil::Lesbar);
+    for bit in [OFFLINE, RECALL_OPEN, RECALL_DATA] {
+        assert_eq!(
+            reparse_urteil(ONEDRIVE, REPARSE | ORDNER | bit),
+            Urteil::NurOnline
+        );
+        assert_eq!(reparse_urteil(0, ORDNER | bit), Urteil::NurOnline);
     }
-    assert_eq!(reparse_urteil(CLOUD, REPARSE | 0x20, false), Umweg::Nein);
-    // Ordner mit Cloud-Tag: betreten erlaubt; Junction bleibt abgewiesen.
-    assert_eq!(reparse_urteil(CLOUD, REPARSE | 0x10, true), Umweg::Nein);
-    assert_eq!(reparse_urteil(MOUNT, REPARSE | 0x10, true), Umweg::Ja);
+    assert_eq!(reparse_urteil(MOUNT, REPARSE | ORDNER), Urteil::Umweg);
+}
+
+/// Rückt die Test-Naht beim Verlassen des Tests wieder gerade (Tests teilen sich unter
+/// `--test-threads=1` den Faden).
+struct NahtWaechter;
+
+impl Drop for NahtWaechter {
+    fn drop(&mut self) {
+        eintrag::naht::leeren();
+    }
+}
+
+fn naht_sauber() -> NahtWaechter {
+    eintrag::naht::leeren();
+    NahtWaechter
+}
+
+/// Find-Daten einer Datei, die nur online liegt (echte Maske aus der Windows-Probe).
+const NUR_ONLINE_DATEI: u32 = 0x50_1620;
+/// Find-Daten eines Ordners, der nur online liegt (RECALL_ON_DATA_ACCESS, Cloud-Tag).
+const NUR_ONLINE_ORDNER: u32 = 0x50_0410;
+const ONEDRIVE_TAG: u32 = 0x9000_701A;
+
+/// Ein Programm, das nicht startet: jeder Aufruf des Unterprozesses endete als Fehlerstand, nie als Erfolg.
+fn totes_programm() -> super::textlauf::Programm {
+    super::textlauf::Programm {
+        pfad: PathBuf::from("/nonexistent/lva-extrakt"),
+        vorweg: vec![],
+        umgebung: vec![],
+    }
+}
+
+fn lauf_mit(e: &Env, prog: &super::textlauf::Programm) -> verknuepft::Lauf {
+    verknuepft::rueckstellungen_vergessen();
+    verknuepft::lauf(
+        &e.a,
+        prog,
+        TEST_GRENZEN,
+        &AtomicBool::new(false),
+        &|| {},
+        None,
+    )
+    .unwrap()
+}
+
+#[test]
+fn nur_online_dateien_sind_sichtbar_aber_nie_gelesen_oder_indexiert() {
+    let _n = naht_sauber();
+    let e = env();
+    e.schreiben("Lokal.txt", format!("lokaler Text {KONTROLLE}").as_bytes());
+    let wolke = e.schreiben("Wolke.docx", b"niemals lesen");
+    let wolke_txt = e.schreiben("Akte/Nur online.txt", b"Wolkenwort Kuckuck");
+    e.schreiben("Offen/innen.txt", b"darin");
+    // Windows liefert diese Maske (Find-Daten); `fs::symlink_metadata` hätte 0x500020 gemeldet.
+    eintrag::naht::setzen(&wolke, NUR_ONLINE_DATEI, ONEDRIVE_TAG);
+    eintrag::naht::setzen(&wolke_txt, 0x50_0020, 0);
+    eintrag::naht::setzen(&e.quelle.join("Offen"), NUR_ONLINE_ORDNER, ONEDRIVE_TAG);
+    let id = e.verknuepfen();
+    let b = verknuepft::bestand(e.a.dir(), &id);
+    let rels: Vec<&str> = b.dateien.keys().map(String::as_str).collect();
+    assert_eq!(
+        rels,
+        ["Akte/Nur online.txt", "Lokal.txt", "Wolke.docx"],
+        "der Ordner „Offen“ wird nicht betreten"
+    );
+    assert_eq!(b.nur_online_ordner, 1);
+    assert_eq!(b.ausgelassen, 0);
+    for rel in ["Akte/Nur online.txt", "Wolke.docx"] {
+        let ein = &b.dateien[rel];
+        assert_eq!(ein.stand, verknuepft::NUR_ONLINE, "{rel}");
+        assert_eq!(
+            ein.groesse,
+            fs::metadata(e.quelle.join(rel)).unwrap().len(),
+            "Größe aus den Find-Daten"
+        );
+        assert_eq!(
+            (ein.sha256.as_deref(), ein.textrev.as_deref()),
+            (None, None)
+        );
+    }
+    assert_eq!(b.dateien["Lokal.txt"].stand, "ausstehend");
+    // Aufträge: nur die lokale Datei, nie die Wolkendateien.
+    let auf: Vec<String> = verknuepft::auftraege(&e.a, None)
+        .unwrap()
+        .into_iter()
+        .map(|a| a.rel)
+        .collect();
+    assert_eq!(auf, ["Lokal.txt"]);
+    // Lauf mit dem echten Unterprozess: nur die lokale Datei wird gelesen; Zwischenordner bleibt leer.
+    let l = e.lauf(None, None);
+    assert_eq!((l.ok, l.kein_text, l.fehler), (1, 0, 0));
+    assert!(e.zwischen_leer());
+    assert_eq!(e.treffer(KONTROLLE).len(), 1);
+    assert!(e.treffer("Kuckuck").is_empty(), "kein Text, kein Index");
+    let q = verknuepft::index_quellen(&e.a).unwrap();
+    let wolke_dat = e.rel_dat(&id, "Wolke.docx");
+    assert!(q.iter().all(|q| q.dat != wolke_dat), "nicht im Index");
+    assert_eq!(q.len(), 1);
+    // Sicht: Liste mit Name, Größe und Stand `nur_online`; Zählung (zwei Dateien, ein Ordner).
+    let s = e.a.ansicht().unwrap();
+    assert_eq!(s.verknuepft[0].nur_online, 3);
+    assert_eq!(s.verknuepft[0].ordner.dateien, 3);
+    let d = s
+        .verknuepft_dateien
+        .iter()
+        .find(|d| d.name == "Wolke.docx")
+        .unwrap();
+    assert_eq!(d.text.as_deref(), Some("nur_online"));
+    assert_eq!(d.groesse, 13);
+    assert!(d.verknuepft && d.nur_geraet);
+}
+
+#[test]
+fn nur_online_datei_erreicht_nie_momentkopie_oder_unterprozess() {
+    let _n = naht_sauber();
+    let e = env();
+    let a = e.schreiben("a.txt", b"Wolkenwort");
+    let b = e.schreiben("sub/b.pdf", b"%PDF-1.4");
+    eintrag::naht::setzen(&a, 0x50_0020, 0);
+    eintrag::naht::setzen(&b, NUR_ONLINE_DATEI, ONEDRIVE_TAG);
+    let id = e.verknuepfen();
+    // Alles liegt nur online: kein Auftrag, ein Lauf mit einem Programm, das nicht startet, bleibt leer
+    // (jeder Aufruf des Unterprozesses wäre als Fehlerstand eingetragen worden).
+    assert!(verknuepft::auftraege(&e.a, None).unwrap().is_empty());
+    assert!(!verknuepft::offen(&e.a, None));
+    assert_eq!(lauf_mit(&e, &totes_programm()), verknuepft::Lauf::default());
+    assert!(!e.a.dir().join("verknuepft").join("zwischen").exists());
+    // Ein veralteter Auftrag (die Datei war beim Abtasten noch hydriert) wird nicht kopiert.
+    let bestand = verknuepft::bestand(e.a.dir(), &id);
+    let ein = &bestand.dateien["a.txt"];
+    let auf = Auftrag {
+        ordner: id.clone(),
+        rel: "a.txt".into(),
+        dat: ein.dat.clone(),
+        typ: ein.typ.clone(),
+        groesse: ein.groesse,
+        zeit: ein.zeit,
+        wurzel: e.quelle.clone(),
+        quelle: a.clone(),
+        art: Art::Text,
+        versuche: 0,
+    };
+    assert_eq!(
+        verknuepft::momentkopie(&e.a, &auf).unwrap_err(),
+        "verknuepft.cloud"
+    );
+    assert!(!e.a.dir().join("verknuepft").join("zwischen").exists());
+    assert_eq!(
+        verknuepft::bearbeiten(
+            &e.a,
+            &auf,
+            &totes_programm(),
+            TEST_GRENZEN,
+            &AtomicBool::new(false),
+            None
+        )
+        .unwrap(),
+        Ausgang::Uebersprungen,
+        "nichts eingetragen, kein Unterprozess"
+    );
+    assert_eq!(
+        verknuepft::bestand(e.a.dir(), &id).dateien["a.txt"].stand,
+        verknuepft::NUR_ONLINE
+    );
+    assert!(e.treffer("Wolkenwort").is_empty());
+}
+
+#[test]
+fn momentkopie_prueft_am_handle_und_in_jedem_pfadglied_auf_nur_online() {
+    let _n = naht_sauber();
+    let e = env();
+    let datei = e.schreiben(
+        "Akte/brief.txt",
+        format!("vertraulich {KONTROLLE}").as_bytes(),
+    );
+    e.verknuepfen();
+    let auf = verknuepft::auftraege(&e.a, None).unwrap().remove(0);
+    // Die Find-Daten sehen eine hydrierte Datei, das Handle meldet RECALL: Wettlauf mit „Speicher
+    // freigeben“. Das Handle wird geschlossen, ohne zu lesen.
+    eintrag::naht::handle_setzen(&datei, NUR_ONLINE_DATEI, ONEDRIVE_TAG);
+    assert_eq!(
+        verknuepft::momentkopie(&e.a, &auf).unwrap_err(),
+        "verknuepft.cloud"
+    );
+    assert!(!e.a.dir().join("verknuepft").join("zwischen").exists());
+    // Ein Handle mit unbekanntem Tag: abgewiesen, nie gelesen.
+    eintrag::naht::handle_setzen(&datei, 0x420, 0x8000_001B);
+    assert_eq!(
+        verknuepft::momentkopie(&e.a, &auf).unwrap_err(),
+        "ablage.verknuepfung"
+    );
+    assert!(!e.a.dir().join("verknuepft").join("zwischen").exists());
+    // Hydriert und unauffällig: wird gelesen (die Kopie ist danach wieder weg).
+    eintrag::naht::handle_setzen(&datei, 0x420, 0x9000_001A);
+    let (kopie, _sha) = verknuepft::momentkopie(&e.a, &auf).unwrap();
+    assert!(kopie.is_file());
+    fs::remove_file(&kopie).unwrap();
+    eintrag::naht::leeren();
+    // Das Zwischenverzeichnis liegt inzwischen nur online: auch das ist ein Pfadglied.
+    eintrag::naht::setzen(&e.quelle.join("Akte"), NUR_ONLINE_ORDNER, ONEDRIVE_TAG);
+    assert_eq!(
+        verknuepft::momentkopie(&e.a, &auf).unwrap_err(),
+        "verknuepft.cloud"
+    );
+    // Ebenso die Wurzel selbst.
+    eintrag::naht::leeren();
+    eintrag::naht::setzen(&e.quelle, NUR_ONLINE_ORDNER, ONEDRIVE_TAG);
+    assert_eq!(
+        verknuepft::momentkopie(&e.a, &auf).unwrap_err(),
+        "verknuepft.cloud"
+    );
+    assert!(e.zwischen_leer());
+}
+
+#[test]
+fn hydrierte_datei_wird_beim_naechsten_lauf_aufgenommen_und_online_wieder_ausgeblendet() {
+    let _n = naht_sauber();
+    let e = env();
+    let p = e.schreiben("Vertrag.txt", format!("Laufzeit {KONTROLLE}").as_bytes());
+    eintrag::naht::setzen(&p, NUR_ONLINE_DATEI, ONEDRIVE_TAG);
+    let id = e.verknuepfen();
+    let dat = e.rel_dat(&id, "Vertrag.txt");
+    let online = verknuepft::abtasten_roh(&verknuepft::liste(e.a.dir()).unwrap()[0]).unwrap();
+    assert!(online.online.contains("Vertrag.txt"));
+    assert_eq!(e.lauf(None, None).ok, 0);
+    assert!(e.treffer(KONTROLLE).is_empty());
+    // Der Nutzer wählt „Immer auf diesem Gerät behalten“: hydriert, die Kennung bleibt.
+    eintrag::naht::leeren();
+    let hydriert = verknuepft::abtasten_roh(&verknuepft::liste(e.a.dir()).unwrap()[0]).unwrap();
+    assert_ne!(
+        online.fingerabdruck(),
+        hydriert.fingerabdruck(),
+        "die Entprellung sieht den Wechsel"
+    );
+    assert!(verknuepft::abtasten(&e.a, &id).unwrap());
+    let b = verknuepft::bestand(e.a.dir(), &id);
+    assert_eq!(b.dateien["Vertrag.txt"].stand, "ausstehend");
+    assert_eq!(b.dateien["Vertrag.txt"].dat, dat);
+    assert_eq!(e.lauf(None, None).ok, 1);
+    assert_eq!(e.treffer(KONTROLLE).len(), 1);
+    // „Speicher freigeben“: wieder nur online, Text und Indexeintrag verschwinden.
+    eintrag::naht::setzen(&p, NUR_ONLINE_DATEI, ONEDRIVE_TAG);
+    assert!(verknuepft::abtasten(&e.a, &id).unwrap());
+    index::abgleichen(&e.a).unwrap();
+    let b = verknuepft::bestand(e.a.dir(), &id);
+    assert_eq!(b.dateien["Vertrag.txt"].stand, verknuepft::NUR_ONLINE);
+    assert_eq!(b.dateien["Vertrag.txt"].textrev, None);
+    assert!(e.treffer(KONTROLLE).is_empty());
+    assert!(!e
+        .a
+        .dir()
+        .join("verknuepft")
+        .join("text")
+        .join(&dat)
+        .exists());
+}
+
+#[test]
+fn rueckstellung_einer_online_gewordenen_datei_entfaellt_bei_der_hydrierung() {
+    let _n = naht_sauber();
+    let e = env();
+    let p = e.schreiben("a.txt", format!("Text {KONTROLLE}").as_bytes());
+    let id = e.verknuepfen();
+    // Wettlauf: nach dem Abtasten wird die Datei wieder online (nur das Handle sieht es). Der Lauf liest
+    // nichts, stellt die Datei in diesem Prozess zurück und trägt nichts ein.
+    eintrag::naht::handle_setzen(&p, NUR_ONLINE_DATEI, ONEDRIVE_TAG);
+    verknuepft::rueckstellungen_vergessen();
+    let nochmal = || {
+        verknuepft::lauf(
+            &e.a,
+            &kind(None),
+            TEST_GRENZEN,
+            &AtomicBool::new(false),
+            &|| {},
+            None,
+        )
+        .unwrap()
+    };
+    let l = nochmal();
+    assert_eq!((l.ok, l.fehler), (0, 1));
+    assert!(e.zwischen_leer());
+    assert!(e.treffer(KONTROLLE).is_empty());
+    assert_eq!(nochmal().fehler, 0, "zurückgestellt");
+    // Der nächste Abtastlauf sieht sie auch in den Find-Daten als online.
+    eintrag::naht::leeren();
+    eintrag::naht::setzen(&p, NUR_ONLINE_DATEI, ONEDRIVE_TAG);
+    verknuepft::abtasten(&e.a, &id).unwrap();
+    assert_eq!(
+        verknuepft::bestand(e.a.dir(), &id).dateien["a.txt"].stand,
+        verknuepft::NUR_ONLINE
+    );
+    // Später hydriert: ohne Neustart gelesen (die Rückstellung des früheren Stands ist entfallen).
+    eintrag::naht::leeren();
+    verknuepft::abtasten(&e.a, &id).unwrap();
+    assert_eq!(nochmal().ok, 1);
+    index::abgleichen(&e.a).unwrap();
+    assert_eq!(e.treffer(KONTROLLE).len(), 1);
+}
+
+#[test]
+fn nur_online_ordner_wird_nicht_betreten_bekannte_dateien_bleiben() {
+    let _n = naht_sauber();
+    let e = env();
+    e.schreiben("Akte/alt.txt", format!("alt {KONTROLLE}").as_bytes());
+    let id = e.verknuepfen();
+    e.lauf(None, None);
+    assert_eq!(e.treffer(KONTROLLE).len(), 1);
+    // Der Ordner wird „nur online“: nicht betreten; die bekannten Dateien fallen nicht aus dem Bestand.
+    eintrag::naht::setzen(&e.quelle.join("Akte"), NUR_ONLINE_ORDNER, ONEDRIVE_TAG);
+    verknuepft::abtasten(&e.a, &id).unwrap();
+    let b = verknuepft::bestand(e.a.dir(), &id);
+    assert_eq!(b.nur_online_ordner, 1);
+    assert!(b.dateien.contains_key("Akte/alt.txt"));
+    // Der Fehler beim Auflisten gilt für den ganzen Ordner, nie für eine Teilliste.
+    eintrag::naht::leeren();
+    verknuepft::tests_haken::DIR_FEHLER.with(|d| d.borrow_mut().push(e.quelle.join("Akte")));
+    verknuepft::abtasten(&e.a, &id).unwrap();
+    verknuepft::tests_haken::DIR_FEHLER.with(|d| d.borrow_mut().clear());
+    assert!(verknuepft::bestand(e.a.dir(), &id)
+        .dateien
+        .contains_key("Akte/alt.txt"));
+}
+
+#[test]
+fn nur_online_wurzel_wird_nicht_verknuepft_und_nicht_abgetastet() {
+    let _n = naht_sauber();
+    let e = env();
+    e.schreiben("a.txt", b"x");
+    eintrag::naht::setzen(&e.quelle, NUR_ONLINE_ORDNER, ONEDRIVE_TAG);
+    assert_eq!(
+        code(verknuepft::verknuepfen(&e.a, &e.quelle).unwrap_err()),
+        "ablage.nur_online"
+    );
+    eintrag::naht::leeren();
+    let id = e.verknuepfen();
+    eintrag::naht::setzen(&e.quelle, NUR_ONLINE_ORDNER, ONEDRIVE_TAG);
+    verknuepft::abtasten(&e.a, &id).unwrap();
+    let b = verknuepft::bestand(e.a.dir(), &id);
+    assert!(b.nicht_erreichbar);
+    assert!(b.dateien.contains_key("a.txt"), "der alte Bestand bleibt");
+}
+
+#[test]
+fn altbestand_ohne_nur_online_feld_wird_gelesen_und_vorwaerts_uebernommen() {
+    let _n = naht_sauber();
+    let e = env();
+    e.schreiben("a.txt", format!("alt {KONTROLLE}").as_bytes());
+    e.schreiben("b.txt", b"b");
+    let id = e.verknuepfen();
+    e.lauf(None, None);
+    let dat = e.rel_dat(&id, "a.txt");
+    // Bestand der Vorversion: ohne `nur_online_ordner`, `ausgelassen` zählte die Cloud-Dateien mit.
+    let p = e.a.dir().join("verknuepft").join(&id).join("bestand.json");
+    let mut b: serde_json::Value = serde_json::from_slice(&fs::read(&p).unwrap()).unwrap();
+    assert!(b
+        .as_object_mut()
+        .unwrap()
+        .remove("nur_online_ordner")
+        .is_some());
+    b["ausgelassen"] = serde_json::json!(3);
+    fs::write(&p, serde_json::to_vec(&b).unwrap()).unwrap();
+    let alt = verknuepft::bestand(e.a.dir(), &id);
+    assert_eq!((alt.nur_online_ordner, alt.ausgelassen), (0, 3));
+    assert_eq!(alt.dateien["a.txt"].stand, "ok", "Text bleibt");
+    // Der nächste Abtastlauf übernimmt vorwärts: gleiche Kennungen, Text und Index bleiben, die alte
+    // Zählung der Ausgelassenen wird durch die echte ersetzt.
+    assert!(verknuepft::abtasten(&e.a, &id).unwrap());
+    let neu = verknuepft::bestand(e.a.dir(), &id);
+    assert_eq!((neu.nur_online_ordner, neu.ausgelassen), (0, 0));
+    assert_eq!(e.rel_dat(&id, "a.txt"), dat);
+    assert_eq!(neu.dateien["a.txt"].stand, "ok");
+    assert_eq!(e.treffer(KONTROLLE).len(), 1);
+    // Ein Bestand der neuen Version enthält das neue Feld und bleibt les- und abtastbar.
+    assert!(!verknuepft::abtasten(&e.a, &id).unwrap());
+    let roh: serde_json::Value = serde_json::from_slice(&fs::read(&p).unwrap()).unwrap();
+    assert_eq!(roh["nur_online_ordner"], 0);
 }
 
 // ---------------------------------------------------------------------------

@@ -8766,9 +8766,14 @@ export type AblageSyncZustand = "synchronisiert" | "ausstehend" | "konflikt" | "
  */
 export type AblageVerknuepft = { ordner: AblageOrdner; erreichbar: boolean; 
 /**
- * Übersprungene Einträge (Verknüpfungen, Hartlinks, nur in der Cloud, zu tief).
+ * Übersprungene Einträge (Verknüpfungen, Hartlinks, zu tief).
  */
 ausgelassen: number; 
+/**
+ * Dateien und Ordner, die nur online liegen (OneDrive „Dateien bei Bedarf“): die Dateien stehen mit Name
+ * und Größe in der Liste, werden aber nie gelesen; Ordner werden nicht betreten.
+ */
+nur_online: number; 
 /**
  * Mehr als [`MAX_DATEIEN`] Dateien: nur die ersten sind erfasst.
  */
