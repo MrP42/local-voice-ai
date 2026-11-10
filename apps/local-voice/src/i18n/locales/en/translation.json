@@ -121,6 +121,20 @@
       "replacedAll_other": "{{count}} spots replaced."
     },
     "reader": {
+      "search": {
+        "label": "Search in the book",
+        "placeholder": "Search in the book",
+        "hint": "Search the whole book (Ctrl+F). Enter jumps to the next hit, Shift+Enter to the previous one.",
+        "clear": "Clear search",
+        "results": "Search results",
+        "none": "No hits",
+        "count_one": "{{count}} hit",
+        "count_other": "{{count}} hits",
+        "countMore": "{{count}} hits, first {{shown}} shown",
+        "allWords_one": "{{count}} paragraph with all words",
+        "allWords_other": "{{count}} paragraphs with all words",
+        "position": "Hit {{n}} of {{total}}"
+      },
       "startHere": "Start",
       "startHint": "Reading aloud starts here unless a position is saved.",
       "frontMatter": "Front matter – skipped when reading aloud, but reachable here",

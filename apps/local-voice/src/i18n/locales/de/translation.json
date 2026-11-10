@@ -121,6 +121,20 @@
       "replacedAll_other": "{{count}} Stellen ersetzt."
     },
     "reader": {
+      "search": {
+        "label": "Im Buch suchen",
+        "placeholder": "Im Buch suchen",
+        "hint": "Im ganzen Buch suchen (Strg+F). Enter springt zum nächsten Treffer, Umschalt+Enter zum vorigen.",
+        "clear": "Suche leeren",
+        "results": "Suchergebnisse",
+        "none": "Keine Treffer",
+        "count_one": "{{count}} Treffer",
+        "count_other": "{{count}} Treffer",
+        "countMore": "{{count}} Treffer, die ersten {{shown}} angezeigt",
+        "allWords_one": "{{count}} Absatz mit allen Wörtern",
+        "allWords_other": "{{count}} Absätze mit allen Wörtern",
+        "position": "Treffer {{n}} von {{total}}"
+      },
       "startHere": "Start",
       "startHint": "Hier beginnt das Vorlesen, solange keine Stelle gemerkt ist.",
       "frontMatter": "Vorspann – wird beim Vorlesen übersprungen, ist aber hier erreichbar",
