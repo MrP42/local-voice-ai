@@ -1085,6 +1085,8 @@ export class VoiceCallEngine {
       if (stale()) return;
       const frist = ersteFrist(TUNING.modelFristMs);
       let timedOut = false;
+      // Das Tor im Projekt hat die Anfrage mit einem Code abgelehnt: Die Hinweisleiste sagt den Grund.
+      let projektStopp = false;
       const onModel = (s: string) => {
         if (stale() || timedOut) return;
         // Nach einer Ansage keine zweite Überbrückung.
@@ -1154,7 +1156,9 @@ export class VoiceCallEngine {
           (r) => (typeof r === "string" ? r : ""),
           (e) => {
             abgelehnt = true;
-            this.meldeProjekt(projekt ? hinweisAusFehler(e) : null);
+            const h = projekt ? hinweisAusFehler(e) : null;
+            projektStopp = h !== null;
+            this.meldeProjekt(h);
             return "";
           },
         );
@@ -1177,7 +1181,13 @@ export class VoiceCallEngine {
         ? modelPartial || rueckgabe
         : rueckgabe || modelPartial;
       if (!answer) {
-        // Kein Modellinhalt (Fehler, Frist, leer, vom Tor abgelehnt): feste Vorlage, nicht in den Verlauf.
+        // Im Projekt erklärt die Hinweisleiste, warum nichts gesendet wurde: keine zweite, unklare Zeile
+        // („Das kann ich gerade nicht sicher beantworten“) und kein Eintrag dazu im Gespräch.
+        if (projektStopp) {
+          if (run.partial) this.cb.onAssistant(run.partial, true, false);
+          return;
+        }
+        // Kein Modellinhalt (Fehler, Frist, leer): feste Vorlage, nicht in den Verlauf.
         onPiece(vorlage("fehler", sprache), "vorlage");
         this.cb.onAssistant(run.partial, true, false);
         return;
@@ -1396,6 +1406,8 @@ export class VoiceCallEngine {
     }
     const frist = ersteFrist(TUNING.modelFristMs);
     let timedOut = false;
+    // Das Tor im Projekt hat die Anfrage mit einem Code abgelehnt: Die Hinweisleiste sagt den Grund.
+    let projektStopp = false;
     const onModel = (s: string) => {
       if (dead() || timedOut) return;
       // Nach einer Ansage keine zweite Überbrückung (Orchestrator, Buch-Seite).
@@ -1480,7 +1492,9 @@ export class VoiceCallEngine {
         },
         (e) => {
           abgelehnt = true;
-          this.meldeProjekt(projekt ? hinweisAusFehler(e) : null);
+          const h = projekt ? hinweisAusFehler(e) : null;
+          projektStopp = h !== null;
+          this.meldeProjekt(h);
           return "";
         },
       );
@@ -1500,8 +1514,16 @@ export class VoiceCallEngine {
     this.cb.onStatus?.(null);
     this.sentenceHandlers.delete(turn.id);
     if (dead()) return;
+    if (!modelText && projektStopp) {
+      // Im Projekt erklärt die Hinweisleiste, warum nichts gesendet wurde: nichts sprechen, keine zweite
+      // Zeile („Das kann ich gerade nicht sicher beantworten“), kein Eintrag im Gespräch.
+      turn.noHistory = true;
+      turn.done = true;
+      this.dropTurn(turn);
+      return;
+    }
     if (!modelText) {
-      // Kein Modellinhalt (Fehler, Frist, leer, vom Tor abgelehnt): feste Vorlage, nicht in den Verlauf.
+      // Kein Modellinhalt (Fehler, Frist, leer): feste Vorlage, nicht in den Verlauf.
       turn.noHistory = true;
       onPiece(vorlage("fehler", sprache), "vorlage");
       await chain;

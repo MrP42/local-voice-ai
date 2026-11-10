@@ -112,6 +112,7 @@ const installGespraech = async (page: Page, frei: boolean) => {
           return c;
         }
         case "conversation_append_entry": {
+          merke(cmd, args);
           const c = find(args.conversationId);
           const stored = {
             ...args.entry,
@@ -245,9 +246,12 @@ test.describe("Gespräch im Projekt", () => {
     await waehleProjekt(page, "Finanzwissen");
     const knopf = await knopfSichtbar(page);
     await expect(knopf).toBeDisabled();
-    await expect(
-      page.getByText("Gespräch im Projekt: gesperrt", { exact: false }).first(),
-    ).toBeVisible();
+    // Der Grund steht genau einmal da (kein zweiter „Gesperrt“-Text über dem Knopf).
+    const bereich = page.getByTestId("ki-im-projekt").filter({ visible: true });
+    await expect(bereich.getByText(/Gesperrt/)).toHaveCount(1);
+    await expect(bereich).toContainText(
+      "Gesperrt: KI-Aufrufe im Projekt folgen mit dem nächsten Schritt.",
+    );
     expect(await aufrufe(page, "conversation_create")).toHaveLength(0);
   });
 
@@ -320,6 +324,138 @@ test.describe("Gespräch im Projekt", () => {
     // Schließen entfernt die Leiste.
     await page.getByTestId("projekt-hinweis-schliessen").click();
     await expect(leiste).toHaveCount(0);
+  });
+
+  test("Jeder Stoppcode hat einen eigenen verständlichen Text ohne Kennung", async ({
+    page,
+  }) => {
+    await setup(page);
+    await beginne(page);
+    const faelle: [string, string][] = [
+      ["projekt.ungueltig", "Das Projekt ist gerade nicht verfügbar."],
+      ["projekt.anfrage", "Die Anfrage war unvollständig."],
+      ["projekt.fremdkontext", "nur Inhalte aus dem Projekt zulässig"],
+      ["projekt.register", "Das Antwortregister des Projekts"],
+      ["projekt.ablage", "Die Dokumentenablage ist gerade nicht lesbar."],
+      ["projekt.bindung", "nicht mehr sicher zuordnen"],
+      ["projekt.kein_modell", "Es ist kein zulässiges Modell gewählt."],
+      ["projekt.ziel_compliance", "nach den Regeln der Organisation"],
+      ["projekt.ziel_fenster", "Größe des Kontextfensters"],
+      ["projekt.ziel_lokal", "Das lokale Modell ist gerade nicht bereit."],
+      ["projekt.werkzeuge_aus", "Werkzeuge ausgeschaltet"],
+      ["projekt.klasse_ziel", "zu schutzbedürftig"],
+    ];
+    for (const [code, text] of faelle) {
+      await frage(page, `Frage zu ${code}`);
+      await page.evaluate(
+        (c) => (window as any).__chat.reject(`${c}: Technischer Text.`),
+        code,
+      );
+      const leiste = hinweis(page);
+      await expect(leiste, code).toHaveAttribute("data-code", code);
+      await expect(leiste, code).toContainText(text);
+      await expect(leiste, code).not.toContainText("Kennung");
+      await expect(leiste, code).not.toContainText("projekt.");
+      await expect(leiste, code).not.toContainText("Technischer Text");
+      // Der Hinweis sagt höchstens einmal, dass nichts gesendet wurde.
+      const inhalt = (await leiste.textContent()) ?? "";
+      expect(inhalt.split("nichts gesendet").length - 1, code).toBeLessThan(2);
+      await page.getByTestId("projekt-hinweis-schliessen").click();
+      await expect(leiste).toHaveCount(0);
+    }
+  });
+
+  test("Unbekannter Code: eigener Text mit Kennung, ohne doppeltes „nichts gesendet“", async ({
+    page,
+  }) => {
+    await setup(page);
+    await beginne(page);
+    await frage(page, "Frage mit neuem Code");
+    await page.evaluate(() =>
+      (window as any).__chat.reject("projekt.neu_unbekannt: Text."),
+    );
+    const leiste = hinweis(page);
+    await expect(leiste).toHaveAttribute("data-code", "projekt.neu_unbekannt");
+    await expect(leiste).toContainText("unerwarteter Fehler");
+    await expect(leiste).toContainText("Kennung: projekt.neu_unbekannt");
+    await expect(leiste).not.toContainText("nichts gesendet");
+  });
+
+  test("Fehler des Modells: fester Text, nichts vom Anbieter", async ({
+    page,
+  }) => {
+    await setup(page);
+    await beginne(page);
+    const id = await frage(page, "Was kostet ein ETF?");
+    await page.evaluate((rid) => {
+      const w = window as any;
+      w.__emit("voice-call", {
+        kind: "projekt",
+        request_id: rid,
+        code: "projekt.modell",
+      });
+      w.__emit("voice-call", { kind: "failed", request_id: rid });
+      w.__chat.reject(
+        "projekt.modell: Das Modell hat nicht geantwortet. Es wurde keine Antwort übernommen.",
+      );
+    }, id);
+    const leiste = hinweis(page);
+    await expect(leiste).toHaveAttribute("data-code", "projekt.modell");
+    await expect(leiste).toContainText("Keine Antwort");
+    await expect(leiste).toContainText("Das Modell hat nicht geantwortet.");
+    await expect(leiste).not.toContainText("Kennung");
+  });
+
+  test("Abgelehnt im Projekt: nur die Hinweisleiste, keine Vorlagenzeile und kein Eintrag", async ({
+    page,
+  }) => {
+    await setup(page);
+    await beginne(page);
+    const vorlage = "Das kann ich gerade nicht sicher beantworten.";
+    for (const code of ["projekt.stand_veraltet", "projekt.register"]) {
+      await frage(page, `Frage mit Stopp ${code}`);
+      await page.evaluate(
+        (c) => (window as any).__chat.reject(`${c}: Technischer Text.`),
+        code,
+      );
+      await expect(hinweis(page)).toHaveAttribute("data-code", code);
+      // Weder in der Anzeige noch im gespeicherten Gespräch steht die Vorlage.
+      await expect(page.getByText(vorlage)).toHaveCount(0);
+      await expect(
+        page.getByRole("log").getByText("sicher beantworten"),
+      ).toHaveCount(0);
+      await page.getByTestId("projekt-hinweis-schliessen").click();
+    }
+    const gespeichert = await aufrufe(page, "conversation_append_entry");
+    expect(JSON.stringify(gespeichert)).not.toContain("sicher beantworten");
+    expect(
+      gespeichert.filter((c: any) => c.args.entry?.role === "assistant"),
+    ).toHaveLength(0);
+  });
+
+  test("Ohne Projekt bleibt die Vorlage bei einem Fehler (Gegenprobe)", async ({
+    page,
+  }) => {
+    await setup(page);
+    await beginne(page);
+    await page
+      .getByRole("button", { name: "Neues Gespräch", exact: true })
+      .click();
+    await expect(page.getByTestId("projekt-chip")).toHaveCount(0);
+    await frage(page, "Ganz gewöhnliche Frage");
+    await page.evaluate(() => (window as any).__chat.reject("Netzwerkfehler"));
+    await expect(
+      page
+        .getByRole("log")
+        .getByText("Das kann ich gerade nicht sicher beantworten."),
+    ).toBeVisible();
+    await expect(hinweis(page)).toHaveCount(0);
+    // Ohne Projekt wird die Vorlage wie bisher als Antwort gespeichert (die Probe misst also etwas).
+    await expect
+      .poll(async () =>
+        JSON.stringify(await aufrufe(page, "conversation_append_entry")),
+      )
+      .toContain("sicher beantworten");
   });
 
   test("Stand veraltet: Auswahl übernehmen holt den aktuellen Stand", async ({

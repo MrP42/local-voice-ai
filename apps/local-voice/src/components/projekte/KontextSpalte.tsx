@@ -60,9 +60,9 @@ export const KontextSumme: React.FC<{
 const GespraechBeginnen: React.FC<{
   projektId: string;
   stand: string | null;
-}> = ({ projektId, stand }) => {
+  frei: boolean;
+}> = ({ projektId, stand, frei }) => {
   const { t } = useTranslation();
-  const frei = useProjektKiFreigegeben() === true;
   const [busy, setBusy] = React.useState(false);
   const beginnen = async () => {
     setBusy(true);
@@ -111,6 +111,7 @@ export const KontextInhalt: React.FC<{
   fenster: Modellfenster;
 }> = ({ projektId, uebersicht, fenster }) => {
   const { t } = useTranslation();
+  const frei = useProjektKiFreigegeben() === true;
   const fehlt = nichtImKontext(uebersicht);
   return (
     <>
@@ -134,14 +135,18 @@ export const KontextInhalt: React.FC<{
       <section className="pb-box" data-testid="ki-im-projekt">
         <h3>{t("projektBereich.ki.titel")}</h3>
         <p style={{ margin: 0 }}>{t("projektBereich.ki.text")}</p>
-        <p className="pb-note" style={{ margin: "6px 0 0" }}>
-          {t("projektBereich.ki.gesperrt")}
-        </p>
-        {projektId && (
+        {projektId ? (
           <GespraechBeginnen
             projektId={projektId}
             stand={uebersicht?.stand ?? null}
+            frei={frei}
           />
+        ) : (
+          !frei && (
+            <p className="pb-note" style={{ margin: "6px 0 0" }}>
+              {t("projektBereich.ki.gesperrt")}
+            </p>
+          )
         )}
       </section>
     </>

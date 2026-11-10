@@ -164,8 +164,9 @@ fn widerruf_melden(app: &AppHandle, ids: &[String]) {
 }
 
 /// Darf ein Gespräch an dieses Projekt gebunden werden? Die Kennung muss gültig sein, das Projekt muss
-/// es geben und darf nicht archiviert sein (lva#365 P4c-2). Der Fehlertext enthält keine Titel.
-pub async fn projekt_fuer_gespraech(app: &AppHandle, id: &str) -> Result<(), String> {
+/// es geben und darf nicht archiviert sein (lva#365 P4c-2). Der Fehlertext enthält keine Titel. Bei
+/// Erfolg: Datenklasse und Sonderkategorie des Projekts für das neue Gespräch.
+pub async fn projekt_fuer_gespraech(app: &AppHandle, id: &str) -> Result<(String, bool), String> {
     if !super::herkunft::suite_id_gueltig(id) {
         return Err("projekt.ungueltig: Das Projekt ist nicht verfügbar.".to_string());
     }
@@ -179,10 +180,11 @@ pub async fn projekt_fuer_gespraech(app: &AppHandle, id: &str) -> Result<(), Str
         .projekt(id)
         .await
         .map_err(|_| "projekt.ungueltig: Das Projekt ist nicht verfügbar.".to_string())?;
-    if super::dienst::proj_aus(&p, 0).archived {
+    let sicht = super::dienst::proj_aus(&p, 0);
+    if sicht.archived {
         return Err("projekt.ungueltig: Das Projekt ist nicht verfügbar.".to_string());
     }
-    Ok(())
+    Ok((sicht.data_class, sicht.special_category))
 }
 
 /// Nach einer Änderung an der Dokumentenablage (Befehle in `ablage/befehle.rs`): laufende Projektläufe

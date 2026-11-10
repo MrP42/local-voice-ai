@@ -50,6 +50,11 @@ pub const WERKZEUGE_AUS: &str =
     "projekt.werkzeuge_aus: Im Projekt sind Werkzeuge aus. Es wurde nichts ausgeführt.";
 /// Code, wenn die Bindung eines Gesprächs nicht sicher gelesen werden kann.
 pub const CODE_BINDUNG: &str = "projekt.bindung";
+/// Code und fester Text, wenn das Modell oder sein Sendeweg scheitert. Der Fehlertext des Anbieters
+/// gelangt nie in die Oberfläche: Er kann Teile der Anfrage wiedergeben (Projektinhalte).
+pub const CODE_MODELL: &str = "projekt.modell";
+const MODELL_FEHLER: &str =
+    "projekt.modell: Das Modell hat nicht geantwortet. Es wurde keine Antwort übernommen.";
 
 /// Höchstzahl gemerkter gelöschter Projektgespräche (Grabsteine, siehe [`gespraech_geloescht`]).
 const MAX_GRABSTEINE: usize = 256;
@@ -71,6 +76,31 @@ pub fn gespraech_geloescht(id: &str) {
             q.pop_front();
         }
     }
+}
+
+/// Löscht ein Gespräch aus dem Speicher. Gehört es zu einem Projekt (oder lässt sich die Bindung nicht
+/// lesen), kommt der Grabstein **vor** dem Löschen: Nach dem Löschen wäre das Gespräch „nicht gefunden“,
+/// also gewöhnlich, und ein Aufruf in diesem Augenblick bekäme den Verlauf der Oberfläche ungeprüft durch.
+/// Scheitert das Löschen, bleibt der Grabstein harmlos, denn er gilt nur für ein fehlendes Gespräch.
+/// Gibt zurück, ob es ein Projektgespräch war.
+pub fn gespraech_loeschen(store: &ConversationStore, id: &str) -> anyhow::Result<bool> {
+    gespraech_loeschen_mit(store, id, |s| s.delete(id))
+}
+
+fn gespraech_loeschen_mit(
+    store: &ConversationStore,
+    id: &str,
+    loeschen: impl FnOnce(&ConversationStore) -> anyhow::Result<()>,
+) -> anyhow::Result<bool> {
+    let projekt = !matches!(
+        store.project_binding(id),
+        Ok(ProjectBinding::None | ProjectBinding::Missing)
+    );
+    if projekt {
+        gespraech_geloescht(id);
+    }
+    loeschen(store)?;
+    Ok(projekt)
 }
 
 fn ist_geloescht(id: &str) -> bool {
@@ -568,14 +598,16 @@ pub async fn durchlauf(
             tor.verwerfen(schein);
             Ok(String::new())
         }
-        Ausgang::Fertig(Err(e)) => {
+        Ausgang::Fertig(Err(_anbieterfehler)) => {
+            // Der Text des Anbieters wird weder gezeigt noch protokolliert: nur der feste Code.
             tor.verwerfen(schein);
+            bote.melden(hinweis(&id, CODE_MODELL, false, 0, None));
             bote.melden(serde_json::json!({
                 "kind": "failed",
                 "request_id": id,
                 "usage": (!erfasst.is_empty()).then(|| usage_payload(&erfasst)),
             }));
-            Err(e)
+            Err(MODELL_FEHLER.to_string())
         }
         Ausgang::Fertig(Ok(_roh)) => {
             // Das Urteil über den freigegebenen Text, nie über die rohe Modellausgabe.

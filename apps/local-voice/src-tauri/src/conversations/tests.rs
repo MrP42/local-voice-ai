@@ -531,6 +531,39 @@ fn migration_adds_pinned_at_idempotently_and_backfills() {
 }
 
 #[test]
+fn projektgespraech_traegt_die_datenklasse_des_projekts() {
+    let s = store();
+    let p = "prj_01HZZZZZZZZZZZZZZZZZZZZZZZ";
+    for klasse in ["PUBLIC", "INTERNAL", "PERSONAL", "SPECIAL", "RESTRICTED"] {
+        let c = s
+            .create_in_project_class(None, p, klasse, klasse == "SPECIAL")
+            .unwrap();
+        assert_eq!(c.scope.data_class, klasse);
+        assert_eq!(c.scope.special_category, klasse == "SPECIAL");
+        // Gespeichert, nicht nur zurückgegeben.
+        let gelesen = s.get(&c.id).unwrap().conversation.scope;
+        assert_eq!(gelesen.data_class, klasse);
+        assert_eq!(gelesen.special_category, klasse == "SPECIAL");
+        assert_eq!(gelesen.project_id.as_deref(), Some(p));
+    }
+    // Das gewöhnliche Gespräch bleibt INTERNAL.
+    assert_eq!(s.create(None).unwrap().scope.data_class, "INTERNAL");
+}
+
+#[test]
+fn unbekannte_datenklasse_legt_kein_projektgespraech_an() {
+    let s = store();
+    let p = "prj_01HZZZZZZZZZZZZZZZZZZZZZZZ";
+    for klasse in ["", "internal", "GEHEIM", "INTERNAL "] {
+        assert!(
+            s.create_in_project_class(None, p, klasse, false).is_err(),
+            "{klasse:?}"
+        );
+    }
+    assert!(s.list(true).unwrap().is_empty(), "nichts wurde angelegt");
+}
+
+#[test]
 fn create_in_project_binds_once_and_stays_bound() {
     let s = store();
     let p = "prj_01HZZZZZZZZZZZZZZZZZZZZZZZ";

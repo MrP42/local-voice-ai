@@ -152,11 +152,21 @@ fn werkzeugaufruf_im_projekt_wird_vor_allem_anderen_verweigert() {
 #[test]
 fn loeschen_eines_gespraechs_ruft_gespraech_vergessen() {
     let r = rumpf(CONVERSATIONS, "conversation_delete");
-    assert!(r.contains("project_binding"));
+    // Der Befehl löscht nur über `gespraech_loeschen`, nie mit einem eigenen `delete`.
+    assert!(r.contains("projekt::gespraech_loeschen("));
+    assert!(!r.contains(".delete("));
     assert!(r.contains("projekt::gespraech_vergessen"));
     let g = rumpf(PROJEKT, "gespraech_vergessen");
     assert!(g.contains("gespraech_geloescht("));
     assert!(g.contains(".gespraech_vergessen("));
+}
+
+#[test]
+fn grabstein_steht_vor_dem_loeschen() {
+    let l = rumpf(PROJEKT, "gespraech_loeschen_mit");
+    let stein = l.find("gespraech_geloescht(").expect("Grabstein fehlt");
+    let loeschen = l.find("loeschen(store)").expect("Löschen fehlt");
+    assert!(stein < loeschen, "Grabstein vor dem Löschen");
 }
 
 #[test]
@@ -211,4 +221,56 @@ fn nichts_wird_vor_dem_urteil_des_tors_gemeldet() {
     let a = rumpf(PROJEKT, "ausliefern");
     assert!(a.contains("\"sentence\"") && a.contains("\"done\""));
     assert_eq!(ohne_tests(PROJEKT).matches("ausliefern(bote").count(), 1);
+}
+
+#[test]
+fn der_fehlertext_des_anbieters_geht_nie_weiter() {
+    let r = code_ohne_kommentare(&rumpf(PROJEKT, "durchlauf"));
+    let arm = r
+        .find("Ausgang::Fertig(Err(")
+        .expect("Fehlerzweig des Modells fehlt");
+    let ende = r[arm..]
+        .find("Ausgang::Fertig(Ok(")
+        .expect("Erfolgszweig fehlt")
+        + arm;
+    let zweig = &r[arm..ende];
+    // Der Zweig bindet den Fehler nur unter einem Namen mit Unterstrich und gibt den festen Text zurück.
+    assert!(zweig.contains("Err(_anbieterfehler)"), "{zweig}");
+    assert!(zweig.contains("Err(MODELL_FEHLER.to_string())"), "{zweig}");
+    assert!(zweig.contains("CODE_MODELL"), "{zweig}");
+    assert!(
+        !zweig.contains("log::") && !zweig.contains("format!"),
+        "kein Anbietertext im Protokoll"
+    );
+}
+
+const ENGINE: &str = include_str!("../../../src/components/voice-call/engine.ts");
+
+/// Beide Wege der Oberfläche (Text und Sprache) zeigen und sprechen bei einem Stopp des Tors im Projekt
+/// keine Vorlage („Das kann ich gerade nicht sicher beantworten“): Die Hinweisleiste nennt den Grund.
+/// Das Verhalten des Textwegs prüft Playwright (`projekte-ki-gespraech.spec.ts`); der Sprachweg hat keinen
+/// Browsertest, darum hält dieser Test die Reihenfolge fest.
+#[test]
+fn stopp_im_projekt_zeigt_und_spricht_keine_vorlage() {
+    let e = ENGINE.replace("\r\n", "\n");
+    let vorlagen: Vec<usize> = e
+        .match_indices("onPiece(vorlage(\"fehler\"")
+        .map(|(i, _)| i)
+        .collect();
+    assert_eq!(vorlagen.len(), 2, "Text- und Sprachweg");
+    let stopps: Vec<usize> = e
+        .match_indices("projektStopp")
+        .filter(|(i, _)| e[*i..].starts_with("projektStopp = h !== null"))
+        .map(|(i, _)| i)
+        .collect();
+    assert_eq!(stopps.len(), 2, "beide Wege merken sich den Stopp");
+    for v in vorlagen {
+        let davor = &e[v.saturating_sub(900)..v];
+        assert!(
+            davor.contains("projektStopp"),
+            "vor der Vorlage wird der Stopp im Projekt geprüft"
+        );
+    }
+    // Der Stopp zählt nur mit Code aus dem Projekt (`hinweisAusFehler`), nie für gewöhnliche Fehler.
+    assert!(e.contains("const h = projekt ? hinweisAusFehler(e) : null;"));
 }

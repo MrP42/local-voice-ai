@@ -36,6 +36,9 @@ pub const VOICEBOT_ID: &str = "voicebot";
 pub const DEFAULT_TITLE: &str = "Neues Gespräch";
 /// Standard-Datenklasse (Vertrag `DataClass`).
 pub const DEFAULT_DATA_CLASS: &str = "INTERNAL";
+/// Die Datenklassen eines Projekts (`projekte::dienst::klasse_text`); eine andere Angabe legt kein
+/// Gespräch an.
+const PROJEKT_KLASSEN: [&str; 5] = ["PUBLIC", "INTERNAL", "PERSONAL", "SPECIAL", "RESTRICTED"];
 
 pub const MAX_TITLE_CHARS: usize = 200;
 pub const MAX_TEXT_CHARS: usize = 200_000;
@@ -547,6 +550,12 @@ struct RawConversation {
     ext: Option<String>,
 }
 
+/// Bedingung auf `conversations c`: der `scope` ist ein lesbares JSON-Objekt ohne `project_id`. Die
+/// Gespräche außerhalb eines Projekts; alles andere (auch ein unlesbarer `scope`) fällt heraus.
+const OHNE_PROJEKT: &str = "(CASE WHEN json_valid(c.scope) \
+     THEN (json_type(c.scope) = 'object' AND json_extract(c.scope, '$.project_id') IS NULL) \
+     ELSE 0 END)";
+
 const CONVERSATION_COLUMNS: &str = "id, schema_version, ts, trace_id, title, created_at, \
      updated_at, kind, scope, participants, context, pinned, archived, ext";
 
@@ -723,8 +732,24 @@ impl ConversationStore {
 
     /// Angeheftete zuerst (zuletzt angeheftet oben), dann nach letzter Änderung absteigend.
     pub fn list(&self, include_archived: bool) -> Result<Vec<ConversationSummary>> {
+        self.list_filtered(include_archived, false)
+    }
+
+    /// Wie [`list`](Self::list), aber ohne Projektgespräche (`scope.project_id`) und ohne Gespräche, deren
+    /// `scope` sich nicht sicher lesen lässt. Für alles, was Gespräche außerhalb des Projekts liest:
+    /// Gesprächswerkzeuge und globaler App-Kontext (lva#365 P4c-2). Projektinhalte verlassen das Projekt
+    /// nur über das Versandtor.
+    pub fn list_ohne_projekt(&self, include_archived: bool) -> Result<Vec<ConversationSummary>> {
+        self.list_filtered(include_archived, true)
+    }
+
+    fn list_filtered(
+        &self,
+        include_archived: bool,
+        ohne_projekt: bool,
+    ) -> Result<Vec<ConversationSummary>> {
         let conn = self.lock();
-        let mut stmt = conn.prepare(
+        let mut stmt = conn.prepare(&format!(
             "SELECT c.id, c.title, c.updated_at, c.pinned, c.archived,
                     (SELECT COUNT(*) FROM conversation_entries e
                       WHERE e.conversation_id = c.id),
@@ -732,38 +757,42 @@ impl ConversationStore {
                       WHERE e.conversation_id = c.id
                       ORDER BY e.created_at DESC, e.rowid DESC LIMIT 1)
              FROM conversations c
-             WHERE (?1 = 1 OR c.archived = 0)
+             WHERE (?1 = 1 OR c.archived = 0) AND (?3 = 0 OR {OHNE_PROJEKT})
              ORDER BY c.pinned DESC, c.pinned_at DESC, c.updated_at DESC, c.rowid DESC
-             LIMIT ?2",
+             LIMIT ?2"
+        ))?;
+        let rows = stmt.query_map(
+            params![include_archived as i64, MAX_LIST_ROWS, ohne_projekt as i64],
+            |r| {
+                Ok(ConversationSummary {
+                    id: r.get(0)?,
+                    title: r.get(1)?,
+                    updated_at: r.get(2)?,
+                    pinned: r.get::<_, i64>(3)? != 0,
+                    archived: r.get::<_, i64>(4)? != 0,
+                    entry_count: r.get::<_, i64>(5)? as u32,
+                    last_text: r
+                        .get::<_, Option<String>>(6)?
+                        .map(|t| one_line(&t))
+                        .unwrap_or_default(),
+                })
+            },
         )?;
-        let rows = stmt.query_map(params![include_archived as i64, MAX_LIST_ROWS], |r| {
-            Ok(ConversationSummary {
-                id: r.get(0)?,
-                title: r.get(1)?,
-                updated_at: r.get(2)?,
-                pinned: r.get::<_, i64>(3)? != 0,
-                archived: r.get::<_, i64>(4)? != 0,
-                entry_count: r.get::<_, i64>(5)? as u32,
-                last_text: r
-                    .get::<_, Option<String>>(6)?
-                    .map(|t| one_line(&t))
-                    .unwrap_or_default(),
-            })
-        })?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
-    /// Beitraege nicht archivierter Gespraeche, neueste zuerst, hoechstens `limit` (Sprachgespraech:
-    /// Suche in frueheren Gespraechen). Je Beitrag: Gespraech, Titel, Rolle, Zeitstempel, Text.
+    /// Beitraege nicht archivierter Gespraeche ohne Projektgespraeche, neueste zuerst, hoechstens `limit`
+    /// (Sprachgespraech: Suche in frueheren Gespraechen). Je Beitrag: Gespraech, Titel, Rolle, Zeitstempel,
+    /// Text. Projektgespraeche und Gespraeche mit unlesbarem `scope` fehlen (lva#365 P4c-2).
     pub fn recent_entries(&self, limit: usize) -> Result<Vec<EntryHit>> {
         let conn = self.lock();
-        let mut stmt = conn.prepare(
+        let mut stmt = conn.prepare(&format!(
             "SELECT e.conversation_id, c.title, e.role, e.created_at, e.text
              FROM conversation_entries e JOIN conversations c ON c.id = e.conversation_id
-             WHERE c.archived = 0
+             WHERE c.archived = 0 AND {OHNE_PROJEKT}
              ORDER BY e.created_at DESC, e.rowid DESC
-             LIMIT ?1",
-        )?;
+             LIMIT ?1"
+        ))?;
         let rows = stmt.query_map(params![limit.min(5_000) as i64], |r| {
             Ok(EntryHit {
                 conversation_id: r.get(0)?,
@@ -798,20 +827,48 @@ impl ConversationStore {
     }
 
     pub fn create(&self, title: Option<String>) -> Result<Conversation> {
-        self.create_in(title, None)
+        self.create_in(title, None, DEFAULT_DATA_CLASS, false)
     }
 
-    /// Legt ein Gespräch an, das an ein Suite-Projekt gebunden ist (`scope.project_id`, lva#365 P4c-2).
+    /// Legt ein Gespräch an, das an ein Suite-Projekt gebunden ist (`scope.project_id`, lva#365 P4c-2),
+    /// mit der Datenklasse des Projekts statt der festen Klasse INTERNAL. Die Klasse ist eine
+    /// Momentaufnahme zum Anlegen; das Versandtor liest sie bei jedem Versand frisch aus dem Projekt.
     /// Die Bindung wird nur hier gesetzt und von keinem Pfad geändert (`update`, `append_entry`).
+    pub fn create_in_project_class(
+        &self,
+        title: Option<String>,
+        project_id: &str,
+        data_class: &str,
+        special_category: bool,
+    ) -> Result<Conversation> {
+        if !PROJEKT_KLASSEN.contains(&data_class) {
+            anyhow::bail!("Die Datenklasse des Projekts ist unbekannt.");
+        }
+        self.create_in(
+            title,
+            Some(project_id.to_string()),
+            data_class,
+            special_category,
+        )
+    }
+
+    /// Wie [`Self::create_in_project_class`] mit der Klasse INTERNAL (Tests).
+    #[cfg(test)]
     pub fn create_in_project(
         &self,
         title: Option<String>,
         project_id: &str,
     ) -> Result<Conversation> {
-        self.create_in(title, Some(project_id.to_string()))
+        self.create_in_project_class(title, project_id, DEFAULT_DATA_CLASS, false)
     }
 
-    fn create_in(&self, title: Option<String>, project_id: Option<String>) -> Result<Conversation> {
+    fn create_in(
+        &self,
+        title: Option<String>,
+        project_id: Option<String>,
+        data_class: &str,
+        special_category: bool,
+    ) -> Result<Conversation> {
         let title = match title.as_deref().map(str::trim) {
             None | Some("") => DEFAULT_TITLE.to_string(),
             Some(t) => clean_title(t)?,
@@ -827,8 +884,8 @@ impl ConversationStore {
             updated_at: now.clone(),
             kind: KIND_VOICE.to_string(),
             scope: ConversationScope {
-                data_class: DEFAULT_DATA_CLASS.to_string(),
-                special_category: false,
+                data_class: data_class.to_string(),
+                special_category,
                 project_id,
                 knowledge_area: None,
                 sovereignty: None,
@@ -962,6 +1019,30 @@ impl ConversationStore {
             Some(p) => ProjectBinding::Project(p),
             None => ProjectBinding::None,
         })
+    }
+
+    /// Darf das Gespräch außerhalb des Projekts gelesen werden (Gesprächswerkzeuge, App-Kontext)? Nur ein
+    /// vorhandenes Gespräch ohne Projektbindung. Ein Projektgespräch, ein fehlendes Gespräch und ein
+    /// `scope`, der sich nicht sicher lesen lässt, ergeben `false` (fail-closed); ein Lesefehler ebenso.
+    pub fn ausserhalb_projekt_lesbar(&self, id: &str) -> bool {
+        if !valid_id(id) {
+            return false;
+        }
+        let conn = self.lock();
+        let gefunden = conn
+            .query_row(
+                &format!("SELECT 1 FROM conversations c WHERE c.id = ?1 AND {OHNE_PROJEKT}"),
+                params![id],
+                |_| Ok(()),
+            )
+            .optional();
+        match gefunden {
+            Ok(g) => g.is_some(),
+            Err(e) => {
+                log::warn!("conversations: Projektbindung nicht lesbar: {e}");
+                false
+            }
+        }
     }
 
     pub fn append_entry(

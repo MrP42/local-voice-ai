@@ -804,10 +804,10 @@ fn fehler_des_modells_gibt_failed_und_nichts_sonst() {
             let bote = FakeBote::default();
             let id = format!("pt-f1-{art:?}");
             let r = durch(&e, &weg, &bote, anfrage(&p, "g1", art, &id, verlauf(FRAGE))).await;
-            assert_eq!(
-                r,
-                Err("Verbindung zum Modell verloren".to_string()),
-                "{art:?}"
+            assert_eq!(r, Err(MODELL_FEHLER.to_string()), "{art:?}");
+            assert!(
+                bote.hinweis(CODE_MODELL).is_some(),
+                "{art:?}: fester Code für die Oberfläche"
             );
             assert!(bote.gab("failed"), "{art:?}");
             assert!(
@@ -815,6 +815,36 @@ fn fehler_des_modells_gibt_failed_und_nichts_sonst() {
                 "{art:?}: bruchstückhafter Text wird nie gezeigt"
             );
             assert_eq!(register_anzahl(&e), 0);
+            assert_eq!(e.tor.offene_laeufe(), 0);
+            assert!(!laeuft(&id) && !markiert(&id));
+        }
+    });
+}
+
+#[test]
+fn der_text_des_anbieters_erreicht_die_oberflaeche_nie() {
+    lauf(async {
+        for art in ARTEN {
+            let e = env().await;
+            let p = projekt_mit(&e, Klasse::Internal, &[("s1", BELEG)]).await;
+            let weg = FakeWeg::mit(&[]);
+            // Anbieter geben oft Teile der Anfrage im Fehlertext zurück (hier: ein Projektinhalt).
+            let anbietertext =
+                format!("400 Bad Request: ungültiger Inhalt \"{BELEG}\" im Feld messages");
+            *weg.fehler.lock().unwrap() = Some(anbietertext);
+            let bote = FakeBote::default();
+            let id = format!("pt-f2-{art:?}");
+            let fehler = durch(&e, &weg, &bote, anfrage(&p, "g1", art, &id, verlauf(FRAGE)))
+                .await
+                .unwrap_err();
+            assert!(fehler.starts_with("projekt.modell:"), "{art:?}: {fehler}");
+            assert!(!fehler.contains(BELEG) && !fehler.contains("Bad Request"));
+            let alles = bote.text();
+            assert!(
+                !alles.contains(BELEG) && !alles.contains("Bad Request"),
+                "{art:?}: kein Anbietertext in den Ereignissen"
+            );
+            assert!(bote.hinweis(CODE_MODELL).is_some());
             assert_eq!(e.tor.offene_laeufe(), 0);
             assert!(!laeuft(&id) && !markiert(&id));
         }
@@ -1405,6 +1435,79 @@ fn geloeschtes_projektgespraech_bleibt_ein_projektgespraech_fuer_die_bindung() {
     gespraech_geloescht(&c.id);
     assert_eq!(grabsteine().iter().filter(|x| **x == c.id).count(), 1);
     assert_eq!(bindung_aus_speicher(&s, Some(&gueltige_id(7))), Ok(None));
+}
+
+#[test]
+fn grabstein_steht_schon_vor_dem_loeschen() {
+    let s = ConversationStore::open_in_memory().unwrap();
+    let c = s
+        .create_in_project(None, "prj_01HZZZZZZZZZZZZZZZZZZZZZZZ")
+        .unwrap();
+    let id = c.id.clone();
+    let war = gespraech_loeschen_mit(&s, &c.id, |s| {
+        // Im Augenblick des Löschens steht der Grabstein schon.
+        assert!(ist_geloescht(&id), "Grabstein vor dem Löschen");
+        s.delete(&id)
+    })
+    .unwrap();
+    assert!(war);
+    // Gleich danach: ein Fehler statt „gewöhnlich“.
+    assert!(bindung_aus_speicher(&s, Some(&c.id)).is_err());
+}
+
+#[test]
+fn scheitert_das_loeschen_bleibt_das_projektgespraech_ein_projektgespraech() {
+    let s = ConversationStore::open_in_memory().unwrap();
+    let c = s
+        .create_in_project(None, "prj_01HZZZZZZZZZZZZZZZZZZZZZZZ")
+        .unwrap();
+    let r = gespraech_loeschen_mit(&s, &c.id, |_| Err(anyhow::anyhow!("Platte voll")));
+    assert!(r.is_err());
+    // Es gibt das Gespräch noch: Die Bindung kommt aus dem Speicher, der Grabstein stört nicht.
+    assert_eq!(
+        bindung_aus_speicher(&s, Some(&c.id)),
+        Ok(Some("prj_01HZZZZZZZZZZZZZZZZZZZZZZZ".to_string()))
+    );
+}
+
+#[test]
+fn gewoehnliches_gespraech_bekommt_keinen_grabstein() {
+    let s = ConversationStore::open_in_memory().unwrap();
+    let c = s.create(None).unwrap();
+    assert!(!gespraech_loeschen(&s, &c.id).unwrap());
+    assert!(!ist_geloescht(&c.id));
+    assert_eq!(bindung_aus_speicher(&s, Some(&c.id)), Ok(None));
+}
+
+/// Das Rennen: Ein Aufruf, der die Bindung liest, während das Gespräch gelöscht wird, sieht nie „gewöhnlich“.
+#[test]
+fn rennen_beim_loeschen_zeigt_nie_ein_gewoehnliches_gespraech() {
+    for _ in 0..20 {
+        let s = std::sync::Arc::new(ConversationStore::open_in_memory().unwrap());
+        let c = s
+            .create_in_project(None, "prj_01HZZZZZZZZZZZZZZZZZZZZZZZ")
+            .unwrap();
+        let aus = std::sync::Arc::new(AtomicBool::new(false));
+        let falsch = std::sync::Arc::new(AtomicU32::new(0));
+        let leser = {
+            let (s, aus, falsch, id) = (s.clone(), aus.clone(), falsch.clone(), c.id.clone());
+            std::thread::spawn(move || {
+                while !aus.load(Ordering::SeqCst) {
+                    if let Ok(None) = bindung_aus_speicher(&s, Some(&id)) {
+                        falsch.fetch_add(1, Ordering::SeqCst);
+                    }
+                }
+            })
+        };
+        assert!(gespraech_loeschen(&s, &c.id).unwrap());
+        // Nach dem Löschen noch ein paar Lesungen, dann Ende.
+        for _ in 0..50 {
+            assert!(bindung_aus_speicher(&s, Some(&c.id)).is_err());
+        }
+        aus.store(true, Ordering::SeqCst);
+        leser.join().unwrap();
+        assert_eq!(falsch.load(Ordering::SeqCst), 0, "nie „gewöhnlich“ gesehen");
+    }
 }
 
 #[test]

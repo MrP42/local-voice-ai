@@ -52,6 +52,7 @@ const STOERUNG: readonly string[] = [
   "projekt.bindung",
   "projekt.fremdkontext",
   "projekt.ablage",
+  "projekt.modell",
 ];
 
 const zahl = (n: number | undefined, sprache: string): string =>
@@ -91,9 +92,11 @@ const Hinweis: React.FC<{ hinweis: ProjektHinweis; projektId: string }> = ({
   const titel =
     name === "widerrufen"
       ? t("voiceCall.projekt.titel.widerrufen")
-      : info
-        ? t("voiceCall.projekt.titel.info")
-        : t("voiceCall.projekt.titel.stopp");
+      : name === "modell"
+        ? t("voiceCall.projekt.titel.modell")
+        : info
+          ? t("voiceCall.projekt.titel.info")
+          : t("voiceCall.projekt.titel.stopp");
 
   const uebernehmen = async () => {
     setBusy(true);

@@ -57,7 +57,9 @@ pub async fn conversation_get(app: AppHandle, id: String) -> Result<Conversation
 
 /// Legt eine leere Unterhaltung an (`kind` = `voice`, Datenklasse INTERNAL). Mit `project_id` gehört
 /// sie zu einem Suite-Projekt (`scope.project_id`, lva#365 P4c-2): Das Projekt muss es geben und darf
-/// nicht archiviert sein. Die Bindung wird nur hier gesetzt; kein Befehl ändert sie danach.
+/// nicht archiviert sein, und das Gespräch trägt die Datenklasse des Projekts (Momentaufnahme, das
+/// Versandtor liest sie bei jedem Versand frisch). Die Bindung wird nur hier gesetzt; kein Befehl
+/// ändert sie danach.
 #[tauri::command]
 #[specta::specta]
 pub async fn conversation_create(
@@ -68,8 +70,12 @@ pub async fn conversation_create(
     let Some(projekt) = project_id else {
         return run(&app, move |s| s.create(title)).await;
     };
-    crate::projekte::zustand::projekt_fuer_gespraech(&app, &projekt).await?;
-    run(&app, move |s| s.create_in_project(title, &projekt)).await
+    let (klasse, besonders) =
+        crate::projekte::zustand::projekt_fuer_gespraech(&app, &projekt).await?;
+    run(&app, move |s| {
+        s.create_in_project_class(title, &projekt, &klasse, besonders)
+    })
+    .await
 }
 
 /// Ändert Titel, Anheften und Archiv; nicht gesetzte Felder bleiben.
@@ -101,14 +107,12 @@ pub async fn conversation_set_pinned(
 #[tauri::command]
 #[specta::specta]
 pub async fn conversation_delete(app: AppHandle, id: String) -> Result<(), String> {
-    let id_lesen = id.clone();
-    let war_projekt = run(&app, move |s| s.project_binding(&id_lesen))
-        .await
-        .map(|b| matches!(b, store::ProjectBinding::Project(_)))
-        // Nicht lesbar: im Zweifel vergessen (schadet einem gewöhnlichen Gespräch nicht).
-        .unwrap_or(true);
+    // Der Grabstein eines Projektgesprächs steht vor dem Löschen (`gespraech_loeschen`).
     let id_loeschen = id.clone();
-    run(&app, move |s| s.delete(&id_loeschen)).await?;
+    let war_projekt = run(&app, move |s| {
+        crate::voice_call::projekt::gespraech_loeschen(s, &id_loeschen)
+    })
+    .await?;
     if war_projekt {
         crate::voice_call::projekt::gespraech_vergessen(&app, &id).await;
     }
