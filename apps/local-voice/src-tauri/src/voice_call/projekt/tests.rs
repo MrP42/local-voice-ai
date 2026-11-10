@@ -1,8 +1,9 @@
 //! lva#365 P4c-2: Tests des Projektzweigs. Der Kern (`durchlauf`) läuft mit dem echten Versandtor
 //! (`ProjektDienst` und `ProjektTor` aus `projekte::tests_p4c`, echte Dateien in Temp-Ordnern) und einer
-//! Attrappe für Sendeweg und Meldungen. Der Dienst ist die echte Kontextquelle (die Sperre
-//! `PROJEKT_KI_FREIGEGEBEN` ist seit P4c-4 aufgehoben); den Rückbau stellt `env_mit(false)` nach. Nur
-//! synthetische Daten.
+//! Attrappe für Sendeweg und Meldungen. Die Funktionstests nehmen die Testquelle (`env()`, der Dienst
+//! ohne die Sperre `PROJEKT_KI_FREIGEGEBEN`), damit der Rückbau (ein Wert) sie nicht berührt; nur die
+//! Abnahme `abnahme_9_*` läuft gegen den echten Dienst und setzt dafür `freigeschaltet()` voraus. Den
+//! Rückbau stellt `env_mit(false)` nach. Nur synthetische Daten.
 //!
 //! Die Läufe teilen sich die Listen der Abbrüche (`CANCELS`, `CONTEXT_REQUESTS`) mit den übrigen Tests
 //! des Moduls und laufen darum unter `globale()`.
@@ -10,7 +11,9 @@
 use super::*;
 use crate::conversations::store::{ConversationStore, ProjectBinding};
 use crate::projekte::kontext::KontextForm;
-use crate::projekte::tests_p4c::{buch, env, env_mit, projekt, seite, ziel, Env, GEHEIM};
+use crate::projekte::tests_p4c::{
+    buch, env, env_echt, env_mit, freigeschaltet, projekt, seite, ziel, Env, GEHEIM,
+};
 use crate::projekte::tor::{CODE_KLASSE, ENTZOGEN_ANTWORT_PROJEKT};
 use crate::projekte::tor_herkunft::{self, Register};
 use crate::voice_call::tests::globale;
@@ -295,11 +298,10 @@ const ARTEN: [Art; 2] = [Art::Chat, Art::Durchgang];
 
 // ---------------------------------------------------------------- Kontrolltext, Verlauf, Umetikettieren
 
-#[test]
-fn kontrolltext_aus_steht_in_keinem_prompt_und_in_keiner_meldung() {
+fn kontrolltext_aus_steht_in_keinem_prompt_und_in_keiner_meldung_lauf(echt: bool) {
     lauf(async {
         for art in ARTEN {
-            let e = env().await;
+            let e = abnahme_env(echt).await;
             let p = projekt_mit(
                 &e,
                 Klasse::Internal,
@@ -334,10 +336,22 @@ fn kontrolltext_aus_steht_in_keinem_prompt_und_in_keiner_meldung() {
 }
 
 #[test]
-fn ausschalten_mitten_im_gespraech_ersetzt_die_alte_antwort() {
+fn kontrolltext_aus_steht_in_keinem_prompt_und_in_keiner_meldung() {
+    kontrolltext_aus_steht_in_keinem_prompt_und_in_keiner_meldung_lauf(false);
+}
+
+/// Dasselbe gegen den echten Dienst als Kontextquelle (mit der Sperre); nur bei `freigeschaltet()`.
+#[test]
+fn abnahme_9_kontrolltext_aus_steht_in_keinem_prompt_und_in_keiner_meldung() {
+    if freigeschaltet() {
+        kontrolltext_aus_steht_in_keinem_prompt_und_in_keiner_meldung_lauf(true);
+    }
+}
+
+fn ausschalten_mitten_im_gespraech_ersetzt_die_alte_antwort_lauf(echt: bool) {
     lauf(async {
         for art in ARTEN {
-            let e = env().await;
+            let e = abnahme_env(echt).await;
             let g = format!("g-{art:?}");
             let p = projekt_mit(&e, Klasse::Internal, &[("s1", &geheimer_beleg())]).await;
             let weg = FakeWeg::mit(&[&geheime_antwort()]);
@@ -394,6 +408,19 @@ fn ausschalten_mitten_im_gespraech_ersetzt_die_alte_antwort() {
             );
         }
     });
+}
+
+#[test]
+fn ausschalten_mitten_im_gespraech_ersetzt_die_alte_antwort() {
+    ausschalten_mitten_im_gespraech_ersetzt_die_alte_antwort_lauf(false);
+}
+
+/// Dasselbe gegen den echten Dienst als Kontextquelle (mit der Sperre); nur bei `freigeschaltet()`.
+#[test]
+fn abnahme_9_ausschalten_mitten_im_gespraech_ersetzt_die_alte_antwort() {
+    if freigeschaltet() {
+        ausschalten_mitten_im_gespraech_ersetzt_die_alte_antwort_lauf(true);
+    }
 }
 
 #[test]
@@ -1659,17 +1686,27 @@ fn projekt_id_bleibt_nach_aenderungen_am_gespraech_unveraendert() {
 //
 // Kontrolltext in einem ausgeschalteten Eintrag, auch nach dem Ausschalten mitten im Gespräch, steht in
 // keinem Prompt und in keiner Meldung: `kontrolltext_aus_steht_in_keinem_prompt_und_in_keiner_meldung` und
-// `ausschalten_mitten_im_gespraech_ersetzt_die_alte_antwort` (beide je Art: Chat und Sprache, W1 und W2).
-// Der Dienst ist dabei die echte Kontextquelle; die Sperre ist aufgehoben. Fehlendes Kurzbuch:
+// `ausschalten_mitten_im_gespraech_ersetzt_die_alte_antwort` (beide je Art: Chat und Sprache, W1 und W2),
+// dazu das fehlende Kurzbuch. Jede dieser Prüfungen läuft zweimal: als Funktionstest gegen die Testquelle
+// (unabhängig vom Wert der Sperre) und als `abnahme_9_*` gegen den echten Dienst als Kontextquelle, nur
+// bei `freigeschaltet()`. Bei gesetztem Rückbau gilt stattdessen `gesetzte_sperre_der_projekt_ki_…`.
+
+/// Die Umgebung der Prüfung: der echte Dienst als Quelle (Abnahme) oder die Testquelle.
+async fn abnahme_env(echt: bool) -> Env {
+    if echt {
+        env_echt().await
+    } else {
+        env().await
+    }
+}
 
 /// Der Rohtext eines Buchs, das kein Kurzbuch hat.
 const ROHTEXT: &str = "ROHTEXT-BUCH-4d21";
 
-#[test]
-fn abnahme_9_fehlendes_kurzbuch_liefert_in_chat_und_sprache_keinen_rohtext() {
+fn kurzbuch_ohne_rohtext_lauf(echt: bool) {
     lauf(async {
         for art in ARTEN {
-            let e = env().await;
+            let e = abnahme_env(echt).await;
             let p = projekt_mit(&e, Klasse::Internal, &[("s1", BELEG)]).await;
             buch(&e, "b1", None, ROHTEXT);
             e.dienst.buch_zuordnen(&p, "b1").await.unwrap();
@@ -1707,6 +1744,19 @@ fn abnahme_9_fehlendes_kurzbuch_liefert_in_chat_und_sprache_keinen_rohtext() {
             assert!(weg.prompt(1).contains(ROHTEXT), "{art:?}");
         }
     });
+}
+
+#[test]
+fn kontext_fehlendes_kurzbuch_liefert_in_chat_und_sprache_keinen_rohtext() {
+    kurzbuch_ohne_rohtext_lauf(false);
+}
+
+/// Dasselbe gegen den echten Dienst als Kontextquelle (mit der Sperre); nur bei `freigeschaltet()`.
+#[test]
+fn abnahme_9_fehlendes_kurzbuch_liefert_in_chat_und_sprache_keinen_rohtext() {
+    if freigeschaltet() {
+        kurzbuch_ohne_rohtext_lauf(true);
+    }
 }
 
 async fn eintrag_zu_link(e: &Env, p: &str, link: &str) -> String {

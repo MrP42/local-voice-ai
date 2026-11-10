@@ -8,7 +8,8 @@ use super::lokaler_principal;
 use super::quellen::{Inhalt, ProdQuellen, SeiteKurz};
 use super::recherche::RechercheStore;
 use crate::managers::meetings::search::index::tests::tmp_store;
-use std::collections::HashMap;
+use regex::Regex;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use wai_projekte::Klasse;
@@ -260,9 +261,10 @@ async fn fremde_projektdatei_liefert_keinen_text() {
 /// Freischaltung (P4c-4): Die Sperre ist aufgehoben, und trotzdem gibt es Kontext nur über das Versandtor.
 /// Was der Dienst sonst nach außen gibt (Übersicht, Einträge, Projekte), trägt keinen Inhalt; den Text der
 /// Einträge liefert allein `kontext_fuer_ki`, und das ruft nur das Tor (Quelltest `ohne_tor_kein_kontext_im_code`).
+/// Die Abnahme setzt die Freischaltung voraus; bei gesetztem Rückbau (`PROJEKT_KI_FREIGEGEBEN = false`)
+/// gilt die Gegenprobe: `kontext_fuer_ki` liefert dann nur einen Fehler.
 #[tokio::test]
 async fn ohne_tor_kein_kontext() {
-    assert!(super::dienst::ki_freigegeben(), "P4c-4: Sperre aufgehoben");
     let e = env().await;
     let p = projekt(&e).await;
     seite(&e, "s1", GEHEIM);
@@ -278,25 +280,27 @@ async fn ohne_tor_kein_kontext() {
     ))
     .unwrap();
     assert!(!nach_aussen.contains(GEHEIM), "Inhalt ohne Tor sichtbar");
-    // Mit dem Tor (und nur so) kommt der Text an: Gegenprobe, dass der Test etwas sehen könnte.
-    let k = e.projekte.kontext_fuer_ki(&p).await.unwrap();
-    assert!(kontext::als_text(&k).contains(GEHEIM));
+    let k = e.projekte.kontext_fuer_ki(&p).await;
+    if super::dienst::ki_freigegeben() {
+        // Mit dem Tor (und nur so) kommt der Text an: Gegenprobe, dass der Test etwas sehen könnte.
+        assert!(kontext::als_text(&k.unwrap()).contains(GEHEIM));
+    } else {
+        assert!(k.is_err(), "Rückbau: kein Kontext, auch nicht für das Tor");
+    }
     // Ein Fehler trägt nie Inhalt.
     let f = e.projekte.kontext_fuer_ki("kein-projekt").await;
     assert!(f.is_err());
     assert!(!format!("{:?}", f.err()).contains(GEHEIM));
 }
 
-/// Der Rückbau bleibt ein Einzeiler: Die Sperre steht als eine Konstante in `dienst.rs`, und `kontext_fuer_ki`
-/// prüft sie vor dem Lesen jedes Inhalts.
+/// Der Rückbau bleibt ein Wert: Die Sperre steht als eine Konstante (`bool`) in `dienst.rs`, und
+/// `kontext_fuer_ki` prüft sie vor dem Lesen jedes Inhalts. Der Test hängt nicht am Wert der Konstante.
 #[test]
 fn rueckbau_ist_eine_konstante_vor_dem_lesen() {
     let q = include_str!("dienst.rs").replace("\r\n", "\n");
-    assert_eq!(
-        q.matches("const PROJEKT_KI_FREIGEGEBEN: bool = ").count(),
-        1
-    );
-    assert!(q.contains("const PROJEKT_KI_FREIGEGEBEN: bool = true;"));
+    let konstante = Regex::new(r"const PROJEKT_KI_FREIGEGEBEN: bool = (true|false);").unwrap();
+    assert_eq!(konstante.find_iter(&q).count(), 1, "genau eine Konstante");
+    assert_eq!(q.matches("const PROJEKT_KI_FREIGEGEBEN").count(), 1);
     let f = &q[q.find("pub(super) async fn kontext_fuer_ki(").unwrap()..];
     let f = &f[..f.find("\n    }\n").unwrap()];
     assert!(f.find("PROJEKT_KI_FREIGEGEBEN").unwrap() < f.find("kontext_bauen(").unwrap());
@@ -341,6 +345,38 @@ fn kontext_mit_inhalten_nur_ueber_erlaubte_zugaenge() {
 // (`dokument.rs`) und Stapel (`tor.rs`, `einzellauf`). Jeder Modellaufruf im Projekt steht hinter
 // `vor_versand`; jeder andere Modellaufruf der App kennt den Projektkontext nicht.
 
+/// Ist die Datei eine Testdatei? `tests.rs`, `tests_*.rs`, `*_tests.rs` und alles unter `tests/`, dazu jede
+/// Datei, die ihr Elternmodul unter `#[cfg(test)]` einbindet (`testkit.rs`, `test_support.rs`, Quelltests).
+/// Bewusst nicht jede Datei mit „test“ im Namen: `selftest.rs` und `agent_bridge/test_tools.rs` sind
+/// Produktivcode und gehören geprüft.
+fn ist_testdatei(rel: &str, alle: &BTreeMap<String, String>) -> bool {
+    let teile: Vec<&str> = rel.split('/').collect();
+    let (datei, ordner) = teile.split_last().unwrap();
+    let stamm = datei.trim_end_matches(".rs");
+    if ordner.contains(&"tests")
+        || stamm == "tests"
+        || stamm.starts_with("tests_")
+        || stamm.ends_with("_tests")
+    {
+        return true;
+    }
+    let eltern: Vec<String> = if ordner.is_empty() {
+        vec!["lib.rs".into(), "main.rs".into()]
+    } else {
+        let dir = ordner.join("/");
+        vec![format!("{dir}.rs"), format!("{dir}/mod.rs")]
+    };
+    let muster = Regex::new(&format!(
+        r"#\[cfg\(test\)\]\s*(?:pub(?:\([a-z]+\))?\s+)?mod\s+{}\s*;",
+        regex::escape(stamm)
+    ))
+    .unwrap();
+    eltern
+        .iter()
+        .filter_map(|e| alle.get(e))
+        .any(|src| muster.is_match(src))
+}
+
 /// Alle Quelldateien der App (ohne Testdateien) als `(Pfad, Code)`. Der Code ist ohne den eingebetteten
 /// Testteil und ohne Kommentarzeilen; Zeilenenden sind vereinheitlicht (ein Windows-Checkout liefert `\r\n`).
 fn quelldateien() -> Vec<(String, String)> {
@@ -357,9 +393,8 @@ fn quelldateien() -> Vec<(String, String)> {
     let src = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut pfade = Vec::new();
     sammeln(&src, &mut pfade);
-    let mut aus: Vec<(String, String)> = pfade
+    let alle: BTreeMap<String, String> = pfade
         .into_iter()
-        .filter(|p| !p.file_name().unwrap().to_string_lossy().contains("test"))
         .map(|p| {
             let rel = p
                 .strip_prefix(&src)
@@ -369,21 +404,47 @@ fn quelldateien() -> Vec<(String, String)> {
             let roh = std::fs::read_to_string(&p)
                 .unwrap_or_else(|e| panic!("{rel}: {e}"))
                 .replace("\r\n", "\n");
+            (rel, roh)
+        })
+        .collect();
+    alle.iter()
+        .filter(|(rel, _)| !ist_testdatei(rel, &alle))
+        .map(|(rel, roh)| {
             let ohne_tests = roh
                 .split("\n#[cfg(test)]\nmod tests {")
                 .next()
-                .unwrap_or(&roh)
-                .to_string();
+                .unwrap_or(roh);
             let code = ohne_tests
                 .lines()
                 .filter(|l| !l.trim_start().starts_with("//"))
                 .collect::<Vec<_>>()
                 .join("\n");
-            (rel, code)
+            (rel.clone(), code)
         })
-        .collect();
-    aus.sort();
-    aus
+        .collect()
+}
+
+/// Die Auswahl der Quelldateien trifft Produktivcode mit „test“ im Namen und lässt die Testdateien weg.
+#[test]
+fn quelldateien_nehmen_produktivcode_mit_test_im_namen_und_keine_testdateien() {
+    let namen: Vec<String> = quelldateien().into_iter().map(|(r, _)| r).collect();
+    for da in [
+        "selftest.rs",
+        "agent_bridge/test_tools.rs",
+        "projekte/tor.rs",
+    ] {
+        assert!(namen.iter().any(|n| n == da), "{da} fehlt");
+    }
+    for weg in [
+        "projekte/tests_p4.rs",
+        "projekte/tests.rs",
+        "voice_call/projekt_quelltests.rs",
+        "voice_call/projekt/tests.rs",
+        "agent_bridge/testkit.rs",
+        "commands/voice_tools/projekt_tests.rs",
+    ] {
+        assert!(!namen.iter().any(|n| n == weg), "{weg} ist Testcode");
+    }
 }
 
 fn code_von<'a>(dateien: &'a [(String, String)], rel: &str) -> &'a str {
@@ -409,26 +470,54 @@ fn rumpf<'a>(code: &'a str, name: &str) -> &'a str {
 }
 
 /// Ohne Tor kein Kontext, im Code: Den Kontexttext baut und liefert nur das Tor, und kein öffentlicher Zugang
-/// des Dienstes gibt einen Kontext mit Inhalten heraus (`kontext_fuer_ki` ist `pub(super)`).
+/// des Dienstes gibt einen Kontext mit Inhalten heraus (`kontext_fuer_ki` ist `pub(super)`). Die Prüfung
+/// geht über Wörter statt über Pfade (`kontext::als_text(`), damit eine Umbenennung beim Import sie nicht
+/// umgeht: jeder Aufruf von `als_text(`, jeder `Kontext>` oder `Kontext,` in einer Signatur, jedes
+/// `KiBereich::Projekt(`.
 #[test]
 fn ohne_tor_kein_kontext_im_code() {
     let dateien = quelldateien();
+    let aufruf = Regex::new(r"\bals_text\s*\(").unwrap();
+    let alias = Regex::new(r"\bals_text\s+as\b").unwrap();
+    // Aufrufe, nicht die Definitionen (`fn als_text(`).
     let mit_text: Vec<&str> = dateien
         .iter()
-        .filter(|(_, c)| c.contains("kontext::als_text("))
+        .filter(|(_, c)| {
+            aufruf
+                .find_iter(c)
+                .any(|m| !c[..m.start()].trim_end().ends_with("fn"))
+        })
         .map(|(r, _)| r.as_str())
         .collect();
     assert_eq!(mit_text, vec!["projekte/tor.rs"], "Kontexttext nur im Tor");
     for (rel, code) in &dateien {
-        for zeile in code.lines() {
-            if !(zeile.contains("Res<Kontext>") || zeile.contains("Result<Kontext")) {
+        assert!(
+            !alias.is_match(code),
+            "{rel}: `als_text` unter anderem Namen"
+        );
+    }
+    // Der Kontexttyp mit Inhalten (nicht der gleichnamige des Sprachdienstes) steht nur im Dienst, im
+    // Tor und in seinem eigenen Modul, und nie in einer öffentlichen Signatur von Dienst oder Tor.
+    let typ = Regex::new(r"\bKontext\s*[>,]|\bKontext\s+as\b").unwrap();
+    for (rel, code) in &dateien {
+        let betrifft_projekte = rel.starts_with("projekte/") || code.contains("projekte::");
+        for zeile in code.lines().filter(|z| typ.is_match(z)) {
+            if !betrifft_projekte {
                 continue;
             }
             assert!(
-                rel == "projekte/dienst.rs" || rel == "projekte/tor.rs",
-                "{rel}: Kontext mit Inhalten nur in Dienst und Tor"
+                [
+                    "projekte/dienst.rs",
+                    "projekte/tor.rs",
+                    "projekte/kontext.rs"
+                ]
+                .contains(&rel.as_str()),
+                "{rel}: Kontext mit Inhalten nur in Dienst, Tor und kontext.rs: {zeile}"
             );
             let z = zeile.trim_start();
+            if rel == "projekte/kontext.rs" {
+                continue;
+            }
             assert!(
                 !z.starts_with("pub async fn")
                     && !z.starts_with("pub fn")
@@ -437,6 +526,17 @@ fn ohne_tor_kein_kontext_im_code() {
             );
         }
     }
+    // Der Projektbereich der Ablage-Auszüge wird nur im Tor aufgebaut (in `ablage/ki.rs` steht der Typ selbst).
+    let bereich: Vec<&str> = dateien
+        .iter()
+        .filter(|(r, c)| r != "ablage/ki.rs" && c.contains("KiBereich::Projekt("))
+        .map(|(r, _)| r.as_str())
+        .collect();
+    assert_eq!(
+        bereich,
+        vec!["projekte/tor.rs"],
+        "KiBereich::Projekt nur im Tor"
+    );
 }
 
 /// Allowlist der Modellaufrufe (`send_chat_completion*`): Jede Datei der App mit einem direkten Aufruf ist
@@ -527,9 +627,41 @@ fn projektzweig_vor_versand_steht_vor_jedem_modellaufruf() {
     assert!(dokument.contains(".einzellauf("));
     assert!(!dokument.contains("send_chat_completion"));
     // Recherche: mit Projektkontext das Ziel aus dem Tor, die Modellquelle der Einstellungen nur ohne.
+    // Die Reihenfolge sichert der Typ: `weg_modell` nimmt ein `FreigegebenesZiel`, das nur eine Freigabe
+    // oder Fortsetzung des Tors herausgibt (Feld privat in `tor.rs`). Ein Test auf Dateipositionen wäre
+    // hier falsch-grün (`weg_modell` steht ohnehin hinter dem Halt); geprüft wird darum die Form.
     let rech = code_von(&dateien, "projekte/recherche.rs");
     assert!(!rech.contains("send_chat_completion"));
-    assert!(rech.find(".vor_versand(").unwrap() < rech.find("weg.senden(").unwrap());
+    assert!(
+        rech.contains("fn weg_modell(weg: Arc<dyn Modellweg>, ziel: FreigegebenesZiel)"),
+        "weg_modell nimmt nur ein vom Tor freigegebenes Ziel"
+    );
+    assert_eq!(rech.matches("weg.senden(").count(), 1, "ein Sendeweg");
+    assert!(rumpf(rech, "weg_modell").contains("weg.senden("));
+    assert!(
+        !rech.contains("Ziel {"),
+        "kein Ziel-Literal in der Recherche"
+    );
+    // Beide Aufrufer (Lauf mit der Freigabe `f`, Fortsetzen mit der `fortsetzung`) holen das Ziel aus dem Tor
+    // und reichen genau dieses an `weg_modell`.
+    let beleg = Regex::new(r"let (\w+) = (f|fortsetzung)\.freigegebenes_ziel\(\);").unwrap();
+    let belege: Vec<(String, String)> = beleg
+        .captures_iter(rech)
+        .map(|c| (c[1].to_string(), c[2].to_string()))
+        .collect();
+    let woher: Vec<&str> = belege.iter().map(|(_, q)| q.as_str()).collect();
+    assert_eq!(woher, vec!["f", "fortsetzung"], "Freigabe und Fortsetzung");
+    assert_eq!(
+        rech.matches("weg_modell(").count(),
+        3,
+        "Definition und zwei Aufrufe"
+    );
+    for (var, _) in &belege {
+        assert!(
+            rech.contains(&format!("weg_modell(ki.weg.clone(), {var})")),
+            "weg_modell bekommt das Ziel aus dem Tor ({var})"
+        );
+    }
     let ohne = rech
         .match_indices("self.modelle.modell(")
         .collect::<Vec<_>>();

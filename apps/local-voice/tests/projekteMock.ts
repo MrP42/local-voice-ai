@@ -247,7 +247,7 @@ export const installProjekteMock = async (page: Page) => {
             return {
               status: "fehler",
               rechercheId: null,
-              message: "Die KI im Projekt ist ausgeschaltet.",
+              message: "Die KI im Projekt ist in dieser Version abgeschaltet.",
               code: "projekt.ki_gesperrt",
               haltBleibt: false,
             };
@@ -672,7 +672,7 @@ export const installProjekteKontextMock = async (page: Page) => {
           w.__calls?.push({ cmd, args });
           if (w.__kiAus)
             throw new Error(
-              "projekt.ki_gesperrt: Die KI im Projekt ist ausgeschaltet.",
+              "projekt.ki_gesperrt: Die KI im Projekt ist in dieser Version abgeschaltet.",
             );
           if (K.dokumentFehler) throw new Error(K.dokumentFehler);
           if (K.dokumentMs)

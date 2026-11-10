@@ -197,7 +197,19 @@ for (const [breite, hoehe] of BREITEN) {
     expect(a).toHaveLength(1);
     expect(a[0].args.suiteId).toBe("p-fin");
     expect(typeof a[0].args.expectedStand).toBe("string");
+    // Breit ist die rechte Spalte mit der Rückmeldung höher als das Fenster; fürs Bild bekommt es etwas
+    // mehr Höhe, damit ihr Kopf (die Summenleiste) nicht angeschnitten ist. Schmal scrollt der Dialog.
+    if (breite >= 1000) {
+      await page.setViewportSize({ width: breite, height: hoehe + 160 });
+      await fertig.evaluate((el) => {
+        let sc = el.parentElement;
+        while (sc && !/(auto|scroll)/.test(getComputedStyle(sc).overflowY))
+          sc = sc.parentElement;
+        if (sc) sc.scrollTop = 0;
+      });
+    }
     await fertig.scrollIntoViewIfNeeded();
+    await expect(fertig).toBeInViewport();
     await aufnehmen(page, "04-dokument-fertig");
   });
 }
@@ -210,6 +222,24 @@ const chatSetup = async (page: Page, breite: number, hoehe: number) => {
   });
   await installLiveMock(page);
   await installProjekteMock(page);
+  // Ein Sprachmodell ist eingerichtet: Die Fußzeile zeigt es, statt „Kein Sprachmodell“.
+  await page.addInitScript(() => {
+    const w = window as any;
+    w.__settings.llm_connections = [
+      { id: "c1", kind: "api", enabled: true, label: "Test" },
+    ];
+    w.__settings.llm_models = [
+      {
+        id: "m-terra",
+        connection_id: "c1",
+        remote_id: "gpt-6.1-terra",
+        label: "GPT-6.1-Terra",
+        enabled: true,
+        context_limit: 128000,
+      },
+    ];
+    w.__settings.llm_active_model_id = "m-terra";
+  });
   if (DUNKEL)
     await page.addInitScript(() => {
       (window as any).__settings.theme = "dark";
@@ -254,6 +284,10 @@ for (const [breite, hoehe] of BREITEN) {
     const e = await calls(page, "recherche_freigabe_entscheiden");
     expect(e).toHaveLength(1);
     expect(e[0].args.auswahl).toEqual(["q1"]);
+    // Der Hinweis „Die Recherche ist fertig …“ liegt kurz über dem Eingabefeld: fürs Bild abwarten.
+    await expect(page.getByText("Die Recherche ist fertig")).toBeHidden({
+      timeout: 15000,
+    });
     await aufnehmen(page, "06-recherche-ergebnis");
   });
 }
@@ -270,7 +304,7 @@ test("Rückbau: Recherche und KI-Dokument melden die Sperre in Klartext, ohne Ke
   await panel.getByTestId("chat-recherche").click();
   await panel.getByRole("button", { name: "Geschäftlich" }).click();
   await expect(panel).toContainText(
-    "Die KI im Projekt ist ausgeschaltet. Es wurde nichts gesendet.",
+    "Die KI im Projekt ist in dieser Version abgeschaltet. Es wurde nichts gesendet.",
   );
   await expect(panel).not.toContainText("projekt.ki_gesperrt");
   await expect(page.getByRole("alertdialog")).toHaveCount(0);
@@ -290,7 +324,7 @@ test("Rückbau: das KI-Dokument zeigt den Klartext und behält die Eingaben", as
   await formular.getByTestId("projekt-dokument-senden").click();
   const fehler = page.getByTestId("projekt-dokument-fehler");
   await expect(fehler).toContainText(
-    "Die KI im Projekt ist ausgeschaltet. Es wurde nichts gesendet.",
+    "Die KI im Projekt ist in dieser Version abgeschaltet. Es wurde nichts gesendet.",
   );
   await expect(fehler).not.toContainText("projekt.ki_gesperrt");
   await expect(formular.getByTestId("projekt-dokument-auftrag")).toHaveValue(

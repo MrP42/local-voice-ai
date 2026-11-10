@@ -46,8 +46,15 @@ use wai_security::Principal;
 const MAX_TITEL: usize = 300;
 /// Freischaltung der KI im Projekt (lva#365 P4c-4, Codex-Auflage 3). Alle Wege (Chat, Sprache,
 /// Recherche, KI-Dokument, Stapel) laufen über das Versandtor (`tor.rs`); erst damit ist die Sperre
-/// aufgehoben. Der Rückbau ist dieser eine Wert: Mit `false` liefert `kontext_fuer_ki` nichts und das
-/// Tor bricht jeden Weg vor dem Versand mit `projekt.ki_gesperrt` ab; die Daten bleiben unverändert.
+/// aufgehoben.
+///
+/// **Rückbau:** Dieser eine Wert. Mit `false` liefert `kontext_fuer_ki` nichts, und das Tor bricht jeden
+/// Weg vor dem Versand mit `projekt.ki_gesperrt` ab („in dieser Version abgeschaltet“); die Daten bleiben
+/// unverändert. Die Oberfläche fragt den Wert nicht ab: Die Einstiege bleiben bedienbar und melden die
+/// Abschaltung beim Senden mit dem Text dieses Codes. Die Tests bleiben dabei grün: Die Funktionstests
+/// laufen über eine Testquelle (`tests_p4c::TestQuelle`) und kennen den Wert nicht; die Abnahme gegen den
+/// echten Dienst (`abnahme_9_*`, `ohne_tor_kein_kontext`) setzt `true` voraus und prüft bei `false` stattdessen,
+/// dass nichts herauskommt; den Rückbau stellen die Tests `gesetzte_sperre_*` je Weg nach.
 const PROJEKT_KI_FREIGEGEBEN: bool = true;
 
 /// Ist die Sperre der Projekt-KI aufgehoben? Das Versandtor (`tor.rs`) fragt vor allem anderen.
@@ -1161,7 +1168,7 @@ impl ProjektDienst {
         if !PROJEKT_KI_FREIGEGEBEN {
             return Err(Fehler::neu(
                 "projekte.ki_gesperrt",
-                "Die KI im Projekt ist ausgeschaltet.",
+                "Die KI im Projekt ist in dieser Version abgeschaltet.",
             ));
         }
         self.kontext_bauen(suite_id).await

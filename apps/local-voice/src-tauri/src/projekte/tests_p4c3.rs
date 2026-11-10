@@ -38,8 +38,8 @@ use super::recherche::{
 };
 use super::tests::server;
 use super::tests_p4c::{
-    ablage_verweis, auszug, buch, env, env_mit, env_mit_ablage, projekt, seite, seite_text, szene,
-    ziel, Env, GEHEIM, P,
+    ablage_verweis, auszug, buch, env, env_echt, env_echt_mit_ablage, env_mit, env_mit_ablage,
+    freigeschaltet, projekt, seite, seite_text, szene, ziel, Env, GEHEIM, P,
 };
 use super::tor::{Abbruch, Element, StapelAuftrag, Ziel, CODE_KLASSE};
 use super::tor_herkunft;
@@ -1808,9 +1808,13 @@ fn recherche_mit_kontext_beruehrt_weder_audiopfad_noch_neue_prozesse() {
 // ---------------------------------------------------------------- Abnahme Spec §9 „Kontext“ (P4c-4)
 //
 // Je Weg: Der Kontrolltext eines ausgeschalteten Eintrags erscheint nie (auch nicht nach dem Ausschalten
-// mitten in der Arbeit), und ein fehlendes Kurzbuch liefert keinen Rohtext. Der Dienst ist die echte
-// Kontextquelle, die Sperre ist aufgehoben. Chat und Sprache: `voice_call/projekt/tests.rs`.
-// Recherche, KI-Dokument und Stapel: hier.
+// mitten in der Arbeit), und ein fehlendes Kurzbuch liefert keinen Rohtext. Chat und Sprache:
+// `voice_call/projekt/tests.rs`. Recherche, KI-Dokument und Stapel: hier.
+//
+// Jede Prüfung läuft zweimal: als `abnahme_9_*` gegen den echten Dienst als Kontextquelle (mit der Sperre,
+// nur bei `freigeschaltet()`; bei gesetztem Rückbau gilt stattdessen `gesetzte_sperre_*`) und als
+// `kontext_*` gegen die Testquelle, die vom Wert der Sperre nicht abhängt. So ändert der Rückbau (ein
+// Wert) nur die Abnahme, nie die Funktionstests.
 
 /// Der Rohtext eines Buchs, das kein Kurzbuch hat.
 const ROHTEXT: &str = "ROHTEXT-BUCH-4d21";
@@ -1832,7 +1836,18 @@ async fn volltext_waehlen(e: &Env, p: &str, eintrag: &str) {
 
 #[tokio::test]
 async fn abnahme_9_recherche_fehlendes_kurzbuch_liefert_keinen_rohtext() {
-    let r = aufbau(Klasse::Internal).await;
+    if freigeschaltet() {
+        recherche_fehlendes_kurzbuch(env_echt().await).await;
+    }
+}
+
+#[tokio::test]
+async fn kontext_recherche_fehlendes_kurzbuch_liefert_keinen_rohtext() {
+    recherche_fehlendes_kurzbuch(env().await).await;
+}
+
+async fn recherche_fehlendes_kurzbuch(e: Env) {
+    let r = bauen(e, Klasse::Internal, true, true).await;
     let eintrag = buch_ohne_kurzbuch(&r.e, &r.p).await;
     let id = r.halt().await;
     assert!(!format!("{:?}", r.dienst.freigaben()).contains(ROHTEXT));
@@ -1851,7 +1866,18 @@ async fn abnahme_9_recherche_fehlendes_kurzbuch_liefert_keinen_rohtext() {
 
 #[tokio::test]
 async fn abnahme_9_recherche_kontrolltext_nach_dem_ausschalten_nie_mehr() {
-    let r = aufbau(Klasse::Internal).await;
+    if freigeschaltet() {
+        recherche_kontrolltext_nach_dem_ausschalten(env_echt().await).await;
+    }
+}
+
+#[tokio::test]
+async fn kontext_recherche_kontrolltext_nach_dem_ausschalten_nie_mehr() {
+    recherche_kontrolltext_nach_dem_ausschalten(env().await).await;
+}
+
+async fn recherche_kontrolltext_nach_dem_ausschalten(e: Env) {
+    let r = bauen(e, Klasse::Internal, true, true).await;
     seite(&r.e, "s2", GEHEIM);
     r.e.dienst.seite_zuordnen(&r.p, "s2").await.unwrap();
     // Eingeschaltet geht er in die Planung (die Abnahme sieht ihn also) …
@@ -1880,7 +1906,18 @@ async fn abnahme_9_recherche_kontrolltext_nach_dem_ausschalten_nie_mehr() {
 
 #[tokio::test]
 async fn abnahme_9_dokument_kontrolltext_und_fehlendes_kurzbuch() {
-    let d = d_bauen(env_mit_ablage().await, Klasse::Internal).await;
+    if freigeschaltet() {
+        dokument_kontrolltext_und_fehlendes_kurzbuch(env_echt_mit_ablage().await).await;
+    }
+}
+
+#[tokio::test]
+async fn kontext_dokument_kontrolltext_und_fehlendes_kurzbuch() {
+    dokument_kontrolltext_und_fehlendes_kurzbuch(env_mit_ablage().await).await;
+}
+
+async fn dokument_kontrolltext_und_fehlendes_kurzbuch(e: Env) {
+    let d = d_bauen(e, Klasse::Internal).await;
     // Ausgeschaltet von Anfang an: nie im Prompt.
     seite(&d.e, "s2", GEHEIM);
     d.e.dienst.seite_zuordnen(&d.p, "s2").await.unwrap();
@@ -1930,7 +1967,18 @@ async fn abnahme_9_dokument_kontrolltext_und_fehlendes_kurzbuch() {
 
 #[tokio::test]
 async fn abnahme_9_stapel_kontrolltext_und_fehlendes_kurzbuch() {
-    let d = d_bauen(env().await, Klasse::Internal).await;
+    if freigeschaltet() {
+        stapel_kontrolltext_und_fehlendes_kurzbuch(env_echt().await).await;
+    }
+}
+
+#[tokio::test]
+async fn kontext_stapel_kontrolltext_und_fehlendes_kurzbuch() {
+    stapel_kontrolltext_und_fehlendes_kurzbuch(env().await).await;
+}
+
+async fn stapel_kontrolltext_und_fehlendes_kurzbuch(e: Env) {
+    let d = d_bauen(e, Klasse::Internal).await;
     seite(&d.e, "s2", GEHEIM);
     d.e.dienst.seite_zuordnen(&d.p, "s2").await.unwrap();
     let s2 = eintrag_zu(&d.e, &d.p, "wai://lva/seite/s2").await;

@@ -146,7 +146,7 @@ test("Chat-Spalte: Der Rückbau des Backends gilt auch, wenn die Oberfläche ihn
   await panel.getByTestId("chat-recherche").click();
   await panel.getByRole("button", { name: "Geschäftlich" }).click();
   await expect(panel).toContainText(
-    "Die KI im Projekt ist ausgeschaltet. Es wurde nichts gesendet.",
+    "Die KI im Projekt ist in dieser Version abgeschaltet. Es wurde nichts gesendet.",
   );
   await expect(eingabe).toHaveValue(FRAGE);
   await expect(page.getByRole("alertdialog")).toHaveCount(0);

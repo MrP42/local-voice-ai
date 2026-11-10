@@ -201,8 +201,6 @@ pub fn ki_leser(weg: KiWeg, p: KiProfil) -> String {
     format!("ablage-ki-{w}-{}", p.code())
 }
 
-// Aufrufer `ki::auszuege` ist bis lva#365 P4c nur in Tests erreichbar.
-#[cfg_attr(not(test), allow(dead_code))]
 /// Eine Textstelle für die KI, roh aus dem Index (vor der Prüfung gegen den frischen Stand).
 #[derive(Debug, Clone, PartialEq)]
 pub struct KiStelle {
@@ -213,8 +211,6 @@ pub struct KiStelle {
     pub rang: f64,
 }
 
-// Aufrufer `ki::auszuege` ist bis lva#365 P4c nur in Tests erreichbar.
-#[cfg_attr(not(test), allow(dead_code))]
 /// Ergebnis einer KI-Suche: Stellen (beste zuerst) und der Indexstand je Datei (`fas`, `textrev`).
 #[derive(Debug, Clone, Default)]
 pub struct KiSuche {
@@ -224,8 +220,6 @@ pub struct KiSuche {
     pub voll: bool,
 }
 
-// Aufrufer `ki::auszuege` ist bis lva#365 P4c nur in Tests erreichbar.
-#[cfg_attr(not(test), allow(dead_code))]
 /// Suche für die KI (D3): wie [`suchen_mit`], aber mit dem Leser des KI-Wegs (Filter in SQL vor dem
 /// Ranking) und ohne Gruppierung; dazu der Indexstand je Datei, damit der Aufrufer veraltete Stellen
 /// verwirft und die Abdeckung meldet. Kein Index: leeres Ergebnis.

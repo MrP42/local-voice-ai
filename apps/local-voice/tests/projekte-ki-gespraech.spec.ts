@@ -241,7 +241,10 @@ test.describe("Gespräch im Projekt", () => {
       ["projekt.werkzeuge_aus", "Werkzeuge ausgeschaltet"],
       ["projekt.klasse_ziel", "zu schutzbedürftig"],
       // Rückbau (eine Konstante in Rust): Das Tor lehnt mit diesem Code ab, in Klartext.
-      ["projekt.ki_gesperrt", "Die KI im Projekt ist ausgeschaltet."],
+      [
+        "projekt.ki_gesperrt",
+        "Die KI im Projekt ist in dieser Version abgeschaltet.",
+      ],
     ];
     for (const [code, text] of faelle) {
       await frage(page, `Frage zu ${code}`);
