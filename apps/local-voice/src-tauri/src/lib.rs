@@ -48,6 +48,7 @@ mod memory_guard;
 mod overlay;
 mod paste_guard;
 mod paste_session;
+mod pdf_text; // lva#149: PDF-Zeilen mit Schriftgröße und Lesezeichen
 pub mod portable;
 pub mod portable_parts;
 mod process_guard;
@@ -2091,7 +2092,6 @@ fn specta_builder() -> Builder<tauri::Wry> {
             projekte::befehle::projekt_dateien_neu_aufbauen,
             projekte::befehle::projekt_datei_gefunden_aufnehmen,
             projekte::befehle::projekt_kontext_uebersicht,
-            projekte::befehle::projekt_ki_status,
             projekte::befehle::projekt_ki_dokument_erstellen,
             projekte::befehle::projekt_kontext_schalten,
             projekte::befehle::projekt_buch_entfernen,

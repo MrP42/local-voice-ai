@@ -112,12 +112,25 @@ const FRONT_HEADING = new RegExp(
       "lob für",
       "pressestimmen",
       "stimmen zum buch",
+      // Bildtafeln und Abbildungslisten (Grimm-PDF von archive.org).
+      "bildtafeln",
+      "bilderplatten",
+      "die bilderplatten",
+      "bildliche dokumentation",
+      "illustrationen",
+      "abbildungen",
+      "illustrations",
+      "list of illustrations",
     ]
       .map((w) => w.replace(/ /g, "\\s+"))
       .join("|") +
     ")$",
   "u",
 );
+
+/** Kopf eines Project-Gutenberg-E-Books („The Project Gutenberg eBook of …“). */
+const FRONT_PREFIX =
+  /^(?:the\s+)?project\s+gutenberg(?:'s)?\s+e-?(?:book|text)\b/u;
 
 /** Vorwort & Co.: Inhalt, aber nur mit `readPreface`. */
 // Ganze Überschrift: „Vorwort zur zweiten Auflage“ ja, „Einführung in die
@@ -157,6 +170,7 @@ export function normalizeHeading(raw: string): string {
     .trim()
     .replace(/[\s.:;,!?…–—-]+$/u, "")
     .replace(/^[\s.:;,…–—-]+/u, "")
+    .replace(/[’‘]/gu, "'")
     .toLowerCase();
 }
 
@@ -214,6 +228,13 @@ const lines = (s: Section) =>
 
 /** Autorzeile der Titelei, wie sie der EPUB-Import schreibt („von …“). */
 const BYLINE = /^(?:von|by)\s+\p{Lu}/u;
+
+/** Autorzeile als Überschrift („By Jacob Grimm“, „von Anna Muster“). */
+const HEADING_BYLINE = /^(?:[vV]on|[bB]y)\s+\p{Lu}/u;
+
+/** Überschrift eines Inhaltsverzeichnisses. */
+const TOC_HEADING =
+  /^(?:inhalt|inhaltsverzeichnis|inhaltsübersicht|contents|table of contents)$/u;
 
 /** Ein Satz, der wie Fließtext endet (nicht bloß ein Name oder Titel). */
 const PROSE = /[.!?…:"“”»«')]\s*$/u;
@@ -273,12 +294,26 @@ function classify(
   count: number,
   title: string | null,
   later: () => Set<string>,
+  tocSoon = false,
+  /** Ebene des nächsten Abschnitts (null: keiner). */
+  nextLevel: number | null = null,
 ): Kind {
   const text = bodyText(s);
   if (s.heading !== null) {
     const h = normalizeHeading(s.heading);
-    if (FRONT_HEADING.test(h)) return "front";
+    if (FRONT_HEADING.test(h) || FRONT_PREFIX.test(h)) return "front";
     if (title && h === title && index > 0) return "front";
+    // Autorzeile als Überschrift („## by Lewis Carroll“) gehört zur Titelei –
+    // aber nur ohne eigenen Text und ohne Unterkapitel: „## Von Hexen und
+    // Zauberern“ mit Geschichten darunter ist ein Kapitel.
+    if (
+      index < 5 &&
+      h.length <= 80 &&
+      text.trim().length <= 120 &&
+      (nextLevel === null || nextLevel <= s.level) &&
+      HEADING_BYLINE.test(s.heading.replace(/^[*_\s]+/u, ""))
+    )
+      return "front";
     if (PREFACE_HEADING.test(h)) return "preface";
     // Titelei: kurze Seite mit Autor- oder Genrezeile („von …“, „Roman“).
     if (count > 1 && looksLikeTitlePage(s)) return "front";
@@ -289,6 +324,9 @@ function classify(
   }
   if (looksLikeFront(text, FRONT_BODY_MAX) || looksLikeToc(s, later))
     return "front";
+  // PDF ohne Überschriften vorn: Text mit Impressum-Merkmal vor einem
+  // Inhaltsverzeichnis gleich danach ist Titelei, auch wenn er lang ist.
+  if (index === 0 && tocSoon && frontHits(text).size > 0) return "front";
   return "content";
 }
 
@@ -319,6 +357,16 @@ export function skipHeadingMark(text: string, at: number): number {
   return at + (/^#{1,6}[ \t]+/u.exec(text.slice(at, at + 8))?.[0].length ?? 0);
 }
 
+/**
+ * Titelei auf oberster Ebene (erste `#`-Überschrift oder der wiederholte
+ * Buchtitel), aber kein „# Impressum“ o. Ä.
+ */
+function titleContainer(s: Section, i: number, title: string | null): boolean {
+  if (s.heading === null || s.level !== 1) return false;
+  const h = normalizeHeading(s.heading);
+  return (i === 0 || h === title) && !FRONT_HEADING.test(h);
+}
+
 /** Startpunkt eines Buchtexts; 0, wenn kein Vorspann erkennbar ist. */
 export function bookStart(
   text: string,
@@ -332,6 +380,13 @@ export function bookStart(
       : null;
   const norm = secs.map((s) =>
     s.heading === null ? null : normalizeHeading(s.heading),
+  );
+  // Ein Inhaltsverzeichnis in den ersten 15 % des Texts.
+  const tocSoon = secs.some(
+    (s, i) =>
+      norm[i] !== null &&
+      TOC_HEADING.test(norm[i] as string) &&
+      s.start <= text.length * 0.15,
   );
   // Erst bauen, wenn ein Abschnitt wie ein Verzeichnis aussieht.
   const headingsFrom = (i: number) => () =>
@@ -350,7 +405,15 @@ export function bookStart(
     if (skipBelow !== null && s.heading !== null && s.level > skipBelow)
       continue;
     skipBelow = null;
-    const kind = classify(s, i, secs.length, title, headingsFrom(i));
+    const kind = classify(
+      s,
+      i,
+      secs.length,
+      title,
+      headingsFrom(i),
+      tocSoon,
+      secs[i + 1]?.level ?? null,
+    );
     if (kind === "neutral") {
       if (!pending || s.level <= pending.level)
         pending = { start: s.start, level: s.level };
@@ -359,7 +422,10 @@ export function bookStart(
     if (kind === "preface") hasPreface = true;
     if (kind === "front" || (kind === "preface" && !readPreface)) {
       pending = null;
-      if (s.heading !== null) skipBelow = s.level;
+      // Die Titelei vorn („# Titel“, „von …“) umschließt das ganze Buch:
+      // ihre Unterabschnitte („## Kapitel 1“) sind kein Vorspann.
+      if (s.heading !== null && !titleContainer(s, i, title))
+        skipBelow = s.level;
       continue;
     }
     const head = pending && pending.level < s.level ? pending.start : null;

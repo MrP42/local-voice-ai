@@ -9,7 +9,6 @@ import { useErwartung, type HaltEnde } from "@/lib/projekteBus";
 import { Button } from "../ui/Button";
 import { RechercheKarte } from "./RechercheKarte";
 import { useRechercheStart } from "./useRechercheStart";
-import { useProjektKiFreigegeben } from "./useProjekte";
 
 /**
  * Werkzeug "recherche" der Chat-Spalte (Modus Schnell, ADR-0026 PR-7). Der Chat der Besprechung
@@ -19,10 +18,9 @@ import { useProjektKiFreigegeben } from "./useProjekte";
  * der Freigabe-Wächter zeigt dann den Dialog mit der Frage und den Suchanfragen. Das Ergebnis wird
  * über die Kennung des Halts bzw. der Recherche zugeordnet und liegt im Projektordner.
  *
- * "Mit Projektkontext" (lva#365 P4c-3): Das Backend nimmt dann den Kontext des Projekts hinzu und hält vor
- * der Suche immer an; der Freigabe-Dialog zeigt die Suchanfragen. Der Schalter ist gesperrt, solange die
- * KI im Projekt nicht freigegeben ist (feste Sperre in Rust, P4c-4 hebt sie auf); die Oberfläche sperrt
- * nur sichtbar, die Entscheidung trifft das Backend.
+ * "Mit Projektkontext" (lva#365 P4c-3/P4c-4): Das Backend nimmt dann den Kontext des Projekts hinzu und
+ * hält vor der Suche immer an; der Freigabe-Dialog zeigt die Suchanfragen. Die Oberfläche bietet den
+ * Schalter an, die Entscheidung (Tor, Klasse, Budget, Freigabe) trifft allein das Backend.
  *
  * Gibt zurück: `knopf` (neben "Senden"), `unten` (Wahl des Projekts, Ergebnis) und `busy`.
  * `onGestartet` (Eingabefeld leeren) kommt erst, wenn der Start angenommen wurde.
@@ -35,7 +33,6 @@ export function useChatRecherche(
 ) {
   const { t } = useTranslation();
   const { start, busy } = useRechercheStart();
-  const frei = useProjektKiFreigegeben() === true;
   const [mitKontext, setMitKontext] = useState(false);
   const [wahl, setWahl] = useState<{
     frage: string;
@@ -68,7 +65,7 @@ export function useChatRecherche(
       setWahl(null);
       setKarte(null);
       erwartung.leeren();
-      const r = await start(text, projekt.id, meetingId, frei && mitKontext);
+      const r = await start(text, projekt.id, meetingId, mitKontext);
       if (r.status === "fehler") {
         onHinweis(r.message ?? t("projekte.fehler.unbekannt"));
         return;
@@ -88,7 +85,7 @@ export function useChatRecherche(
       onHinweis(t("projekte.chat.wartet"));
     },
     // erwartung ist je Render neu, aber nur ueber stabile Refs wirksam
-    [start, meetingId, frei, mitKontext, onGestartet, onHinweis, t],
+    [start, meetingId, mitKontext, onGestartet, onHinweis, t],
   );
 
   const los = useCallback(async () => {
@@ -131,8 +128,8 @@ export function useChatRecherche(
         <div className="text-xs" data-testid="chat-recherche-kontext-zeile">
           <Checkbox
             size="medium"
-            checked={frei && mitKontext}
-            disabled={!frei || busy}
+            checked={mitKontext}
+            disabled={busy}
             onChange={(_e, d) => setMitKontext(d.checked === true)}
             label={t("projekte.chat.mitKontext")}
             aria-describedby="chat-recherche-kontext-hinweis"
@@ -142,9 +139,7 @@ export function useChatRecherche(
             id="chat-recherche-kontext-hinweis"
             className="m-0 ps-8 text-text/60"
           >
-            {frei
-              ? t("projekte.chat.mitKontextHinweis")
-              : t("projekte.chat.mitKontextGesperrt")}
+            {t("projekte.chat.mitKontextHinweis")}
           </p>
         </div>
       )}

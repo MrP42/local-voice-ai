@@ -97,26 +97,3 @@ export function useModellfenster(): Modellfenster {
     };
   }, [models, aktiv]);
 }
-
-/**
- * Ist die KI im Projekt freigegeben? Die Sperre ist fest in Rust (`projekt_ki_status`), die Oberfläche
- * schaltet sie nicht. `null`, solange die Antwort aussteht oder der Aufruf scheitert (dann gilt: gesperrt).
- */
-export function useProjektKiFreigegeben(): boolean | null {
-  const [frei, setFrei] = useState<boolean | null>(null);
-  useEffect(() => {
-    let aktuell = true;
-    commands
-      .projektKiStatus()
-      .then((s) => {
-        if (aktuell) setFrei(s.freigegeben);
-      })
-      .catch(() => {
-        if (aktuell) setFrei(false);
-      });
-    return () => {
-      aktuell = false;
-    };
-  }, []);
-  return frei;
-}

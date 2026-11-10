@@ -14,8 +14,9 @@ import type { Page } from "@playwright/test";
  *   `__suite.entscheidenMs` (Entscheidung dauert), `__suite.entscheidenFehler` (Entscheidung scheitert).
  * - `recherche_starten` liefert bei INTERNAL sofort ein Ergebnis, ab PERSONAL einen Halt
  *   (`status: "freigabe"`) mit zwei Suchanfragen; mit `mitKontext` (lva#365 P4c-3) immer einen Halt
- *   (`withContext: true`) und nur, wenn die KI im Projekt frei ist (`__kiFrei`, sonst `projekt.ki_gesperrt`); `recherche_freigabe_entscheiden` sendet nur, was
- *   gewaehlt wurde. Ein Projekt ohne Web-Freigabe lehnt mit `fehler` ab.
+ *   (`withContext: true`); `recherche_freigabe_entscheiden` sendet nur, was gewaehlt wurde. Die KI im
+ *   Projekt ist seit P4c-4 frei; nur der Rueckbau laesst sich nachstellen: `__kiAus = true` laesst das Tor
+ *   mit `projekt.ki_gesperrt` ablehnen (Recherche mit Kontext, KI-Dokument). Ein Projekt ohne Web-Freigabe lehnt mit `fehler` ab.
  */
 export const installProjekteMock = async (page: Page) => {
   await page.addInitScript(() => {
@@ -239,16 +240,14 @@ export const installProjekteMock = async (page: Page) => {
             searxngUrl: "https://suche.example.org",
             canConfigure: true,
           };
-        case "projekt_ki_status":
-          return { freigegeben: !!w.__kiFrei };
         case "recherche_starten": {
           w.__calls?.push({ cmd, args });
           const p = s.projekte.find((x: any) => x.id === args.suiteProjekt);
-          if (args.mitKontext && !w.__kiFrei) {
+          if (args.mitKontext && w.__kiAus) {
             return {
               status: "fehler",
               rechercheId: null,
-              message: "Die KI im Projekt ist noch nicht freigegeben.",
+              message: "Die KI im Projekt ist in dieser Version abgeschaltet.",
               code: "projekt.ki_gesperrt",
               haltBleibt: false,
             };
@@ -669,10 +668,12 @@ export const installProjekteKontextMock = async (page: Page) => {
           return (K.entries[args.suiteId] ?? []).map((e: any) =>
             sicht(args.suiteId, e),
           );
-        case "projekt_ki_status":
-          return { freigegeben: !!w.__kiFrei };
         case "projekt_ki_dokument_erstellen": {
           w.__calls?.push({ cmd, args });
+          if (w.__kiAus)
+            throw new Error(
+              "projekt.ki_gesperrt: Die KI im Projekt ist in dieser Version abgeschaltet.",
+            );
           if (K.dokumentFehler) throw new Error(K.dokumentFehler);
           if (K.dokumentMs)
             await new Promise((r) => setTimeout(r, K.dokumentMs));
@@ -880,6 +881,109 @@ export const installProjekteKontextMock = async (page: Page) => {
       if (frist) await new Promise((r) => setTimeout(r, frist));
       if (gescheitert) throw fehler;
       return ergebnis;
+    };
+  });
+};
+
+/** Wie der Kern: die Gesprächsablage und der Sendeweg `voice_call_chat` (bleibt offen, bis der Test ihn beendet). */
+export const installGespraechMock = async (page: Page) => {
+  await page.addInitScript(() => {
+    const w = window as any;
+    const inner = w.__TAURI_INTERNALS__.invoke;
+    w.__chat = null;
+    const convs: any[] = [];
+    const entries: Record<string, any[]> = {};
+    let seq = 0;
+    const find = (id: string) => {
+      const c = convs.find((x) => x.id === id);
+      if (!c) throw "Das Gespräch gibt es nicht (mehr).";
+      return c;
+    };
+    // Erst eine Wahl im Wechsel treffen: die Gesprächsmeldungen der App brauchen `souveraenitaet: frei`,
+    // denn die Attrappe hat ein Cloud-Modell.
+    localStorage.setItem(
+      "voice-call.config",
+      JSON.stringify({ orchestration: { souveraenitaet: "frei" } }),
+    );
+    const merke = (cmd: string, args: Record<string, any>) =>
+      w.__calls.push({ cmd, args: JSON.parse(JSON.stringify(args)) });
+    w.__TAURI_INTERNALS__.invoke = async (
+      cmd: string,
+      args: Record<string, any> = {},
+    ) => {
+      switch (cmd) {
+        case "voice_call_start":
+          merke(cmd, args);
+          return null;
+        case "voice_call_cancel":
+          merke(cmd, args);
+          return false;
+        case "voice_tools_list":
+          return [];
+        case "voice_call_chat":
+          merke(cmd, args);
+          return new Promise((resolve, reject) => {
+            w.__chat = { args, resolve, reject };
+          });
+        case "conversations_list":
+          return convs.map((c) => ({
+            id: c.id,
+            title: c.title,
+            updated_at: c.updated_at,
+            pinned: false,
+            archived: false,
+            entry_count: (entries[c.id] ?? []).length,
+            last_text: "",
+          }));
+        case "conversation_create": {
+          merke(cmd, args);
+          const now = new Date().toISOString();
+          const c = {
+            id: `conv_${String(++seq).padStart(26, "0")}`,
+            title: args.title || "Neues Gespräch",
+            created_at: now,
+            updated_at: now,
+            kind: "voice",
+            pinned: false,
+            archived: false,
+            scope: args.projectId ? { project_id: args.projectId } : null,
+          };
+          convs.push(c);
+          entries[c.id] = [];
+          return c;
+        }
+        case "conversation_get":
+          return {
+            conversation: find(args.id),
+            entries: entries[args.id] ?? [],
+          };
+        case "conversation_update": {
+          const c = find(args.id);
+          if (args.title != null) c.title = args.title;
+          return c;
+        }
+        case "conversation_append_entry": {
+          merke(cmd, args);
+          const c = find(args.conversationId);
+          const stored = {
+            ...args.entry,
+            id: `entry_${String(++seq).padStart(26, "0")}`,
+            conversation_id: c.id,
+          };
+          entries[c.id].push(stored);
+          return stored;
+        }
+        case "conversation_update_entry": {
+          const found = Object.values(entries)
+            .flat()
+            .find((x) => x.id === args.id);
+          if (!found) throw "Den Beitrag gibt es nicht (mehr).";
+          found.text = args.text;
+          found.status = args.status;
+          return found;
+        }
+      }
+      return inner(cmd, args);
     };
   });
 };

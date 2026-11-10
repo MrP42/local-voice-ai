@@ -2,14 +2,17 @@ import { test, expect, type Page } from "@playwright/test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { installLiveMock } from "./recLiveMock";
-import { installProjekteKontextMock } from "./projekteMock";
+import {
+  installGespraechMock,
+  installProjekteKontextMock,
+} from "./projekteMock";
 
 // lva#365 P4c-2: Gespräch im Projekt (Chat und Sprache über das Versandtor). Die Regeln des Kerns
 // (Kontrolltext, Widerruf, Register, Budget, Injektion) prüfen die Rust-Tests in
 // `src-tauri/src/voice_call/projekt/tests.rs`; hier die Oberfläche gegen die Attrappe: Start des
 // Gesprächs im Projekt, Chip, Hinweisleiste (Budget, Stand veraltet, Antwort entfernt) und die
-// Bindung. Die Sperre der KI im Projekt steht fest in Rust (`PROJEKT_KI_FREIGEGEBEN = false`); die
-// Attrappe stellt sie über `projekt_ki_status` nach (`__kiFrei`), die App selbst kennt keinen Schalter.
+// Bindung. Seit P4c-4 ist die KI im Projekt freigeschaltet (`PROJEKT_KI_FREIGEGEBEN = true`); die
+// Oberfläche kennt keinen Schalter und fragt nichts ab, jede Entscheidung trifft das Versandtor.
 
 test.use({ timezoneId: "Europe/Berlin", locale: "de-DE" });
 
@@ -31,128 +34,21 @@ const BUDGET = {
   ausgabe: 4096,
 };
 
-/** Wie der Kern: die Gesprächsablage und der Sendeweg `voice_call_chat` (bleibt offen, bis der Test ihn beendet). */
-const installGespraech = async (page: Page, frei: boolean) => {
-  await page.addInitScript((kiFrei) => {
-    const w = window as any;
-    const inner = w.__TAURI_INTERNALS__.invoke;
-    w.__kiFrei = kiFrei;
-    w.__chat = null;
-    const convs: any[] = [];
-    const entries: Record<string, any[]> = {};
-    let seq = 0;
-    const find = (id: string) => {
-      const c = convs.find((x) => x.id === id);
-      if (!c) throw "Das Gespräch gibt es nicht (mehr).";
-      return c;
-    };
-    // Erst eine Wahl im Wechsel treffen: die Gesprächsmeldungen der App brauchen `souveraenitaet: frei`,
-    // denn die Attrappe hat ein Cloud-Modell.
-    localStorage.setItem(
-      "voice-call.config",
-      JSON.stringify({ orchestration: { souveraenitaet: "frei" } }),
-    );
-    const merke = (cmd: string, args: Record<string, any>) =>
-      w.__calls.push({ cmd, args: JSON.parse(JSON.stringify(args)) });
-    w.__TAURI_INTERNALS__.invoke = async (
-      cmd: string,
-      args: Record<string, any> = {},
-    ) => {
-      switch (cmd) {
-        case "projekt_ki_status":
-          return { freigegeben: w.__kiFrei };
-        case "voice_call_start":
-          merke(cmd, args);
-          return null;
-        case "voice_call_cancel":
-          merke(cmd, args);
-          return false;
-        case "voice_tools_list":
-          return [];
-        case "voice_call_chat":
-          merke(cmd, args);
-          return new Promise((resolve, reject) => {
-            w.__chat = { args, resolve, reject };
-          });
-        case "conversations_list":
-          return convs.map((c) => ({
-            id: c.id,
-            title: c.title,
-            updated_at: c.updated_at,
-            pinned: false,
-            archived: false,
-            entry_count: (entries[c.id] ?? []).length,
-            last_text: "",
-          }));
-        case "conversation_create": {
-          merke(cmd, args);
-          const now = new Date().toISOString();
-          const c = {
-            id: `conv_${String(++seq).padStart(26, "0")}`,
-            title: args.title || "Neues Gespräch",
-            created_at: now,
-            updated_at: now,
-            kind: "voice",
-            pinned: false,
-            archived: false,
-            scope: args.projectId ? { project_id: args.projectId } : null,
-          };
-          convs.push(c);
-          entries[c.id] = [];
-          return c;
-        }
-        case "conversation_get":
-          return {
-            conversation: find(args.id),
-            entries: entries[args.id] ?? [],
-          };
-        case "conversation_update": {
-          const c = find(args.id);
-          if (args.title != null) c.title = args.title;
-          return c;
-        }
-        case "conversation_append_entry": {
-          merke(cmd, args);
-          const c = find(args.conversationId);
-          const stored = {
-            ...args.entry,
-            id: `entry_${String(++seq).padStart(26, "0")}`,
-            conversation_id: c.id,
-          };
-          entries[c.id].push(stored);
-          return stored;
-        }
-        case "conversation_update_entry": {
-          const found = Object.values(entries)
-            .flat()
-            .find((x) => x.id === args.id);
-          if (!found) throw "Den Beitrag gibt es nicht (mehr).";
-          found.text = args.text;
-          found.status = args.status;
-          return found;
-        }
-      }
-      return inner(cmd, args);
-    };
-  }, frei);
-};
-
 const setup = async (
   page: Page,
   opts: {
-    frei?: boolean;
     width?: number;
     height?: number;
     dark?: boolean;
   } = {},
 ) => {
-  const { frei = true, width = 1440, height = 900, dark = false } = opts;
+  const { width = 1440, height = 900, dark = false } = opts;
   page.on("pageerror", (error) => {
     throw error;
   });
   await installLiveMock(page);
   await installProjekteKontextMock(page);
-  await installGespraech(page, frei);
+  await installGespraechMock(page);
   if (dark)
     await page.addInitScript(() => {
       (window as any).__settings.theme = "dark";
@@ -238,20 +134,20 @@ const aufnehmen = async (page: Page, name: string) => {
 };
 
 test.describe("Gespräch im Projekt", () => {
-  test("Gesperrt: der Knopf ist aus und es entsteht kein Gespräch", async ({
+  test("Der Knopf ist aktiv, ohne Sperrtext, und erklärt, was er tut", async ({
     page,
   }) => {
-    await setup(page, { frei: false });
+    await setup(page);
     await geheZu(page, "Projekte");
     await waehleProjekt(page, "Finanzwissen");
     const knopf = await knopfSichtbar(page);
-    await expect(knopf).toBeDisabled();
-    // Der Grund steht genau einmal da (kein zweiter „Gesperrt“-Text über dem Knopf).
+    await expect(knopf).toBeEnabled();
     const bereich = page.getByTestId("ki-im-projekt").filter({ visible: true });
-    await expect(bereich.getByText(/Gesperrt/)).toHaveCount(1);
+    await expect(bereich.getByText(/Gesperrt/)).toHaveCount(0);
     await expect(bereich).toContainText(
-      "Gesperrt: KI-Aufrufe im Projekt folgen mit dem nächsten Schritt.",
+      "Öffnet ein neues Gespräch, das nur diese Auswahl als Kontext nutzt.",
     );
+    // Beschreiben allein legt nichts an: erst der Klick erzeugt das Gespräch.
     expect(await aufrufe(page, "conversation_create")).toHaveLength(0);
   });
 
@@ -344,6 +240,11 @@ test.describe("Gespräch im Projekt", () => {
       ["projekt.ziel_lokal", "Das lokale Modell ist gerade nicht bereit."],
       ["projekt.werkzeuge_aus", "Werkzeuge ausgeschaltet"],
       ["projekt.klasse_ziel", "zu schutzbedürftig"],
+      // Rückbau (eine Konstante in Rust): Das Tor lehnt mit diesem Code ab, in Klartext.
+      [
+        "projekt.ki_gesperrt",
+        "Die KI im Projekt ist in dieser Version abgeschaltet.",
+      ],
     ];
     for (const [code, text] of faelle) {
       await frage(page, `Frage zu ${code}`);
@@ -719,12 +620,12 @@ test.describe("Gespräch im Projekt", () => {
     });
   }
 
-  test("Bild des gesperrten Knopfs (LVA_SCREENSHOTS=1)", async ({ page }) => {
+  test("Bild des aktiven Knopfs (LVA_SCREENSHOTS=1)", async ({ page }) => {
     test.skip(!process.env.LVA_SCREENSHOTS, "Bilder nur auf Wunsch");
-    await setup(page, { frei: false });
+    await setup(page);
     await geheZu(page, "Projekte");
     await waehleProjekt(page, "Finanzwissen");
-    await expect(await knopfSichtbar(page)).toBeDisabled();
-    await aufnehmen(page, "02-projekt-knopf-gesperrt-1440-hell.png");
+    await expect(await knopfSichtbar(page)).toBeEnabled();
+    await aufnehmen(page, "02-projekt-knopf-aktiv-1440-hell.png");
   });
 });

@@ -145,10 +145,15 @@ pub fn extract_document_text(path: &Path) -> Result<String, String> {
                 .to_string()
         }
         // Seitenweise, damit Kopf-/Fußzeilen und Seitenzahlen erkannt werden (lva#149).
-        "pdf" => crate::ebook::pdf_pages_to_text(
-            &pdf_extract::extract_text_by_pages(path)
-                .map_err(|e| format!("PDF text extraction failed: {e}"))?,
-        ),
+        // Mit Schriftgröße und Lesezeichen für die Überschriften (lva#149).
+        "pdf" => {
+            let bytes =
+                std::fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+            crate::ebook::pdf_book_to_text(
+                &crate::pdf_text::read_pdf(&bytes)
+                    .map_err(|e| format!("PDF text extraction failed: {e}"))?,
+            )
+        }
         "docx" => extract_docx(path)?,
         "epub" => {
             let file = std::fs::File::open(path)

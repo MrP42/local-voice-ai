@@ -9,7 +9,7 @@ import { auspacken, fehlerText, klassenName } from "@/lib/projekte";
 import { meldeProjekte } from "@/lib/projekteBus";
 import { nichtImKontext, zahl } from "@/lib/projekteKontext";
 import { useVoiceCallStore } from "@/stores/voiceCallStore";
-import { useProjektKiFreigegeben, type Modellfenster } from "./useProjekte";
+import type { Modellfenster } from "./useProjekte";
 
 const anteil = (u: KontextUebersicht | null, f: Modellfenster): number =>
   u && f.tokens > 0
@@ -59,15 +59,13 @@ export const KontextSumme: React.FC<{
 };
 
 /**
- * „Gespräch im Projekt beginnen“ (lva#365 P4c-2). Gesperrt, solange die KI im Projekt nicht freigegeben
- * ist (feste Sperre in Rust, P4c-4 hebt sie auf). Das Gespräch merkt sich den `stand` der Übersicht, die die
- * Person gesehen hat; weicht er beim Senden ab, stoppt das Tor mit `projekt.stand_veraltet`.
+ * „Gespräch im Projekt beginnen“ (lva#365 P4c-2). Das Gespräch merkt sich den `stand` der Übersicht, die
+ * die Person gesehen hat; weicht er beim Senden ab, stoppt das Tor mit `projekt.stand_veraltet`.
  */
 const GespraechBeginnen: React.FC<{
   projektId: string;
   stand: string | null;
-  frei: boolean;
-}> = ({ projektId, stand, frei }) => {
+}> = ({ projektId, stand }) => {
   const { t } = useTranslation();
   const [busy, setBusy] = React.useState(false);
   const beginnen = async () => {
@@ -89,9 +87,8 @@ const GespraechBeginnen: React.FC<{
         type="button"
         className="pb-btn pb-btn--pri"
         style={{ marginTop: 8 }}
-        disabled={!frei || busy || stand === null}
+        disabled={busy || stand === null}
         aria-describedby="pb-ki-start-hinweis"
-        title={frei ? t("projektBereich.ki.startHinweis") : undefined}
         data-testid="projekt-gespraech-beginnen"
         onClick={() => void beginnen()}
       >
@@ -102,9 +99,7 @@ const GespraechBeginnen: React.FC<{
         className="pb-note"
         style={{ margin: "6px 0 0" }}
       >
-        {frei
-          ? t("projektBereich.ki.startHinweis")
-          : t("projektBereich.ki.startGesperrt")}
+        {t("projektBereich.ki.startHinweis")}
       </p>
     </>
   );
@@ -114,14 +109,11 @@ const GespraechBeginnen: React.FC<{
  * „KI-Dokument erstellen“ (lva#365 P4c-3). Die KI schreibt aus der Auswahl im Projekt ein Dokument und legt
  * es als Entwurf in der Dokumentenablage ab; im Projekt bleibt es ausgeschaltet, bis die Person es
  * einschaltet. Klasse und Quellen bestimmt das Backend (die Oberfläche kann die Klasse nicht senken).
- * Gesperrt, solange die KI im Projekt nicht freigegeben ist; der Grund steht einmal im Hinweis unter
- * „Gespräch im Projekt beginnen“.
  */
 const DokumentErstellen: React.FC<{
   projektId: string;
   stand: string | null;
-  frei: boolean;
-}> = ({ projektId, stand, frei }) => {
+}> = ({ projektId, stand }) => {
   const { t } = useTranslation();
   const [offen, setOffen] = React.useState(false);
   const [auftrag, setAuftrag] = React.useState("");
@@ -164,16 +156,15 @@ const DokumentErstellen: React.FC<{
         type="button"
         className="pb-btn"
         style={{ marginTop: 8 }}
-        disabled={!frei || busy || stand === null}
-        aria-describedby={frei ? undefined : "pb-ki-start-hinweis"}
-        aria-expanded={frei ? offen : undefined}
-        title={frei ? t("projektBereich.ki.dokumentHinweis") : undefined}
+        disabled={busy || stand === null}
+        aria-expanded={offen}
+        title={t("projektBereich.ki.dokumentHinweis")}
         data-testid="projekt-dokument-erstellen"
         onClick={() => setOffen((o) => !o)}
       >
         {t("projektBereich.ki.dokument")}
       </button>
-      {frei && offen && (
+      {offen && (
         <form
           className="pb-dok"
           data-testid="projekt-dokument-formular"
@@ -260,7 +251,6 @@ export const KontextInhalt: React.FC<{
   fenster: Modellfenster;
 }> = ({ projektId, uebersicht, fenster }) => {
   const { t } = useTranslation();
-  const frei = useProjektKiFreigegeben() === true;
   const fehlt = nichtImKontext(uebersicht);
   return (
     <>
@@ -284,25 +274,17 @@ export const KontextInhalt: React.FC<{
       <section className="pb-box" data-testid="ki-im-projekt">
         <h3>{t("projektBereich.ki.titel")}</h3>
         <p style={{ margin: 0 }}>{t("projektBereich.ki.text")}</p>
-        {projektId ? (
+        {projektId && (
           <>
             <GespraechBeginnen
               projektId={projektId}
               stand={uebersicht?.stand ?? null}
-              frei={frei}
             />
             <DokumentErstellen
               projektId={projektId}
               stand={uebersicht?.stand ?? null}
-              frei={frei}
             />
           </>
-        ) : (
-          !frei && (
-            <p className="pb-note" style={{ margin: "6px 0 0" }}>
-              {t("projektBereich.ki.gesperrt")}
-            </p>
-          )
         )}
       </section>
     </>

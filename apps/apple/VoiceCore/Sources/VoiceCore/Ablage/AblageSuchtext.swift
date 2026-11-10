@@ -6,7 +6,8 @@ import Foundation
 //
 // 1. `inhaltsWoerter`: `wai_retrieval::content_tokens` (`vendor/wai-retrieval/src/lib.rs`): am Nicht-Alphanumerischen
 //    trennen (Rust `char::is_alphanumeric` = Alphabetic oder Nd/Nl/No), jedes Wort mit `str::to_lowercase`
-//    (Sonderfall Schluss-Sigma) klein, Stoppwörter (`STOP`) entfernt. So entsteht die Anfrage; sie wird nicht gefaltet.
+//    (Sonderfall Schluss-Sigma) klein, Stoppwörter (`STOP`) entfernt. So entsteht die Anfrage; `content_tokens` selbst faltet nicht
+//    (die Faltung nach Nr. 4 kommt danach, in `AblageIndex.phrasen`).
 // 2. `fts5Woerter`: die Zerlegung des FTS5-Tokenizers `unicode61 remove_diacritics 2` (SQLite), mit der der Desktop Stücke
 //    und Anfragewörter vergleicht. Die Zeichentabellen (welches Zeichen ein Wort bildet, was die Faltung daraus macht)
 //    stammen aus `docs/superpowers/plans/ablage-index-vektoren.json` (`fts5`), die der Rust-Test
@@ -14,6 +15,10 @@ import Foundation
 //    `apps/apple/scripts/gen_ablage_fts5_tabellen.py` erzeugt und vom Test gegen die Datei geprüft.
 // 3. `stuecke`: `ablage/index.rs::stuecke` (höchstens 220 Zeichen, 40 Überlappung, Schnitt am Leerraum in der zweiten
 //    Hälfte, Zeichen = Unicode-Skalare, nicht Bytes; Leerraum = White_Space wie Rust `char::is_whitespace`).
+// 4. `ftsNormalisieren` (lva#463): `wai_retrieval::fts_normalisieren`, die Faltung VOR dem Tokenizer für die Zeichen, die
+//    `unicode61 remove_diacritics 2` nicht auf das Grundalphabet bringt (ß → ss, æ → ae, ø → o, …). Der Desktop wendet sie beim
+//    Indexieren auf den Text jedes Stücks an und bei der Anfrage auf jedes Wort nach `content_tokens`; Anzeigetext, Stück und Zitat
+//    bleiben das Original. Die Tabelle steht in `ablage-index-vektoren.json` (`normalisierung.zeichen`, Probe und Vergleich im Test).
 //
 // Reine Funktionen, kein I/O, kein Zustand. Zeichenketten werden nur über Unicode-Skalare verglichen (nie über Swifts
 // kanonische Äquivalenz), weil Rust byteweise vergleicht.
@@ -89,6 +94,48 @@ public enum AblageSuchtext {
         }
         abschliessen()
         return aus
+    }
+
+    // MARK: Faltung vor FTS5 (lva#463)
+
+    /// Zeichen, die `unicode61 remove_diacritics 2` nicht auf das Grundalphabet faltet, und ihr Ersatz: genau `FTS_FALTUNG` aus
+    /// `vendor/wai-retrieval/src/lib.rs` (Reihenfolge wie dort). Der Ersatz ist immer klein geschrieben, auch für Großbuchstaben
+    /// (Æ → „ae“, nicht „Ae“); höchstens zwei Skalare. Der Test gleicht sie mit `normalisierung.zeichen` der Fixture ab.
+    static let ftsFaltung: [(von: Unicode.Scalar, nach: String)] = [
+        ("\u{DF}", "ss"), ("\u{1E9E}", "ss"),   // ß ẞ
+        ("\u{E6}", "ae"), ("\u{C6}", "ae"),     // æ Æ
+        ("\u{153}", "oe"), ("\u{152}", "oe"),   // œ Œ
+        ("\u{F8}", "o"), ("\u{D8}", "o"),       // ø Ø
+        ("\u{142}", "l"), ("\u{141}", "l"),     // ł Ł
+        ("\u{111}", "d"), ("\u{110}", "d"),     // đ Đ
+        ("\u{F0}", "d"), ("\u{D0}", "d"),       // ð Ð
+        ("\u{FE}", "th"), ("\u{DE}", "th"),     // þ Þ
+        ("\u{127}", "h"), ("\u{126}", "h"),     // ħ Ħ
+        ("\u{131}", "i"),                        // ı
+        ("\u{133}", "ij"), ("\u{132}", "ij"),   // ĳ Ĳ
+    ]
+
+    /// Der Ersatz je Skalar als ASCII-Bytes (alle Ersetzungen sind ASCII).
+    private static let ftsErsatz: [UInt32: [UInt8]] = Dictionary(uniqueKeysWithValues: ftsFaltung.map { ($0.von.value, Array($0.nach.utf8)) })
+
+    /// `wai_retrieval::fts_normalisieren`: Skalar für Skalar die Zeichen aus `ftsFaltung` ersetzen, alles andere bleibt (Groß-/
+    /// Kleinschreibung und Diakritika faltet der Tokenizer selbst). Codepunktgenau: keine kanonische Äquivalenz, keine Normalisierung
+    /// (ein zerlegtes „é“ bleibt zerlegt; hinter einem ß stehende Diakritika bleiben stehen). Reine Funktion. Das Ergebnis ist nie länger
+    /// als die Eingabe in UTF-8 (ß → ss, æ → ae, þ → th: gleich lang; ẞ → ss, ø → o: kürzer); es wird in Bytes aufgebaut, weil das
+    /// Anhängen an eine `String.UnicodeScalarView` bei langen Texten merklich überlinear wird.
+    public static func ftsNormalisieren(_ text: String) -> String {
+        var aus: [UInt8] = []
+        aus.reserveCapacity(text.utf8.count)
+        for s in text.unicodeScalars {
+            if s.value < 0x80 {
+                aus.append(UInt8(truncatingIfNeeded: s.value))
+            } else if let ersatz = ftsErsatz[s.value] {   // alle Zeichen der Tabelle liegen oberhalb von ASCII (wie `is_ascii` am Desktop)
+                aus.append(contentsOf: ersatz)
+            } else {
+                UTF8.encode(s, into: { aus.append($0) })
+            }
+        }
+        return String(decoding: aus, as: UTF8.self)
     }
 
     // MARK: FTS5 unicode61 remove_diacritics 2

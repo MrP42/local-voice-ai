@@ -1,0 +1,55 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R /Outlines 8 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [5 0 R 7 0 R] /Count 2 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+4 0 obj
+<< /Length 100 >>
+stream
+BT /F1 18 Tf 72 700 Td (Einführung) Tj ET BT /F1 11 Tf 72 650 Td (Das ist der Text der Seite.) Tj ET
+endstream
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 3 0 R >> >> >>
+endobj
+6 0 obj
+<< /Length 99 >>
+stream
+BT /F1 18 Tf 72 700 Td (Hauptteil) Tj ET BT /F1 11 Tf 72 650 Td (Das ist der Text der Seite.) Tj ET
+endstream
+endobj
+7 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 6 0 R /Resources << /Font << /F1 3 0 R >> >> >>
+endobj
+8 0 obj
+<< /Type /Outlines /First 9 0 R /Last 10 0 R /Count 2 >>
+endobj
+9 0 obj
+<< /Title (Einführung) /Parent 8 0 R /Dest [5 0 R /XYZ 0 792 0] /Next 10 0 R >>
+endobj
+10 0 obj
+<< /Title (Hauptteil) /Parent 8 0 R /Dest [7 0 R /XYZ 0 792 0] >>
+endobj
+xref
+0 11
+0000000000 65535 f 
+0000000009 00000 n 
+0000000074 00000 n 
+0000000137 00000 n 
+0000000234 00000 n 
+0000000385 00000 n 
+0000000511 00000 n 
+0000000660 00000 n 
+0000000786 00000 n 
+0000000858 00000 n 
+0000000953 00000 n 
+trailer
+<< /Size 11 /Root 1 0 R >>
+startxref
+1035
+%%EOF

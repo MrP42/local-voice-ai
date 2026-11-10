@@ -89,6 +89,11 @@ public enum AblageSuche {
 /// Kindprozess; Speicher: Stücke aller zugelassenen Texte und je Datei die Wörter einmal, die Stücke tragen nur Nummern (bei sehr
 /// großen Ablagen Sekunden und einige zehn MB).
 ///
+/// Nichts davon wird gespeichert (lva#463): `vorbereitet` und `index` liegen nur im Speicher und entstehen nach jedem Start neu aus den
+/// Textfassungen (D5a-4); die Faltung (ß → ss, …) steckt in `AblageIndex.vorbereiten`. Es gibt daher keinen Altbestand mit ungefaltetem
+/// FTS-Text und keine Umstellung wie `meta.fts_fmt` am Desktop. Würde der Zwischenspeicher je auf die Platte gelegt, bräuchte er eine
+/// Fassungsmarke und eine atomare Umstellung (erst schreiben, dann umbenennen).
+///
 /// Gleichzeitige Aktualisierungen (`ansichtAktualisieren`): jeder Aufruf trägt eine Nummer der Seite. Der Akteur arbeitet die Aufrufe
 /// nacheinander ab, liest den Zustand erst, wenn der Aufruf an der Reihe ist, und weist einen Aufruf ab, dessen Nummer unter der
 /// des zuletzt bearbeiteten liegt: ein älterer Aufruf, der später eintrifft, setzt den Index nie auf einen älteren Stand zurück.

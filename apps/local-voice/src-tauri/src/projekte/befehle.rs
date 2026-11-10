@@ -23,22 +23,6 @@ type Antwort<T> = Result<T, String>;
 
 const MODELL: &str = "app";
 
-/// Stand der Sperre der KI im Projekt (lva#365 P4c). Die Oberfläche richtet „Gespräch im Projekt
-/// beginnen“ danach aus. Es ist die feste Sperre aus `dienst.rs`, kein Laufzeitschalter.
-#[derive(Debug, Clone, serde::Serialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct ProjektKiStatus {
-    pub freigegeben: bool,
-}
-
-#[tauri::command]
-#[specta::specta]
-pub fn projekt_ki_status() -> ProjektKiStatus {
-    ProjektKiStatus {
-        freigegeben: super::dienst::ki_freigegeben(),
-    }
-}
-
 #[tauri::command]
 #[specta::specta]
 pub async fn projekte_liste(z: State<'_, ProjekteZustand>) -> Antwort<Vec<SuiteProjekt>> {
@@ -384,8 +368,8 @@ pub async fn recherche_adresse_setzen(
 ///
 /// `mit_kontext` (lva#365 P4c-3): Die Recherche nimmt den Kontext des Projekts hinzu. Den liest das
 /// Versandtor frisch, ebenso Klassen und Modell; die Oberflaeche bestimmt davon nichts. Der Lauf haelt
-/// dann immer vor dem ersten Webzugriff an. Bis zur Freischaltung (P4c-4) antwortet das Tor mit
-/// `projekt.ki_gesperrt`.
+/// dann immer vor dem ersten Webzugriff an. Ist die Sperre der KI im Projekt gesetzt (Rückbau,
+/// `dienst.rs`), antwortet das Tor mit `projekt.ki_gesperrt`.
 #[tauri::command]
 #[specta::specta]
 pub async fn recherche_starten(
@@ -506,8 +490,8 @@ pub async fn recherche_loeschen(z: State<'_, ProjekteZustand>, id: String) -> An
 /// Die KI schreibt aus dem Kontext des Projekts ein Dokument und legt es als Entwurf in der Ablage ab
 /// (Ablauf und Regeln: `dokument.rs`). Kontext, Klassen und Modell bestimmt das Versandtor; der Befehl
 /// nimmt bewusst **keine** Mindestklasse und keine Quellen entgegen, die Oberflaeche kann die Klasse des
-/// Entwurfs also nicht senken. Der Entwurf ist im Projekt ausgeschaltet. Bis zur Freischaltung (P4c-4)
-/// antwortet das Tor mit `projekt.ki_gesperrt`.
+/// Entwurfs also nicht senken. Der Entwurf ist im Projekt ausgeschaltet. Ist die Sperre der KI im Projekt
+/// gesetzt (Rückbau, `dienst.rs`), antwortet das Tor mit `projekt.ki_gesperrt`.
 #[tauri::command]
 #[specta::specta]
 pub async fn projekt_ki_dokument_erstellen(
