@@ -1388,6 +1388,150 @@ fn altbestand_ohne_nur_online_feld_wird_gelesen_und_vorwaerts_uebernommen() {
 }
 
 // ---------------------------------------------------------------------------
+// D7-Rest: Unterordnerbaum der verknüpften Ordner (nur lesen, nur Pfade)
+// ---------------------------------------------------------------------------
+
+fn unterordner(e: &Env, id: &str) -> Vec<(String, bool)> {
+    let s = e.a.ansicht().unwrap();
+    s.verknuepft
+        .iter()
+        .find(|v| v.ordner.id == id)
+        .unwrap()
+        .unterordner
+        .iter()
+        .map(|u| (u.pfad.clone(), u.nur_online))
+        .collect()
+}
+
+fn paar(p: &str, online: bool) -> (String, bool) {
+    (p.to_string(), online)
+}
+
+#[test]
+fn unterordner_stehen_im_bestand_und_in_der_sicht_auch_leere() {
+    let _n = naht_sauber();
+    let e = env();
+    e.schreiben("a.txt", b"a");
+    e.schreiben("Akte/Angebote/x.txt", b"x");
+    fs::create_dir_all(e.quelle.join("Leer")).unwrap();
+    fs::create_dir_all(e.quelle.join("Akte/Protokolle")).unwrap();
+    // Ausgeschlossene Ordner gehören nicht in den Baum.
+    fs::create_dir_all(e.quelle.join(".git")).unwrap();
+    fs::create_dir_all(e.quelle.join("$RECYCLE.BIN")).unwrap();
+    let id = e.verknuepfen();
+    let b = verknuepft::bestand(e.a.dir(), &id);
+    let ordner: Vec<&str> = b.ordner.iter().map(String::as_str).collect();
+    assert_eq!(ordner, ["Akte", "Akte/Angebote", "Akte/Protokolle", "Leer"]);
+    assert!(b.online_ordner.is_empty());
+    assert_eq!(
+        unterordner(&e, &id),
+        vec![
+            paar("Akte", false),
+            paar("Akte/Angebote", false),
+            paar("Akte/Protokolle", false),
+            paar("Leer", false),
+        ]
+    );
+    // Ein neuer und ein verschwundener Ordner zählen als Änderung (der Baum bleibt aktuell), ein
+    // unveränderter Lauf nicht.
+    fs::create_dir_all(e.quelle.join("Neu")).unwrap();
+    fs::remove_dir(e.quelle.join("Leer")).unwrap();
+    assert!(verknuepft::abtasten(&e.a, &id).unwrap());
+    let namen: Vec<String> = unterordner(&e, &id).into_iter().map(|p| p.0).collect();
+    assert_eq!(namen, ["Akte", "Akte/Angebote", "Akte/Protokolle", "Neu"]);
+    assert!(!verknuepft::abtasten(&e.a, &id).unwrap());
+}
+
+#[test]
+fn nur_online_ordner_stehen_im_baum_und_vererben_ihre_marke_nach_unten() {
+    let _n = naht_sauber();
+    let e = env();
+    e.schreiben("Akte/Angebote/x.txt", b"x");
+    e.schreiben("Frei/y.txt", b"y");
+    let id = e.verknuepfen();
+    // „Akte“ wird nur online: nicht betreten, der bekannte Unterbaum bleibt, aber als nur online gekennzeichnet.
+    eintrag::naht::setzen(&e.quelle.join("Akte"), NUR_ONLINE_ORDNER, ONEDRIVE_TAG);
+    assert!(verknuepft::abtasten(&e.a, &id).unwrap());
+    let b = verknuepft::bestand(e.a.dir(), &id);
+    assert!(b.online_ordner.contains("Akte"));
+    assert!(!b.ordner.contains("Akte"), "nicht betreten");
+    assert!(b.ordner.contains("Akte/Angebote"), "bekannt bleibt bekannt");
+    assert_eq!(
+        unterordner(&e, &id),
+        vec![
+            paar("Akte", true),
+            paar("Akte/Angebote", true),
+            paar("Frei", false),
+        ]
+    );
+    // Wieder lokal: die Marke entfällt, der Ordner wird betreten.
+    eintrag::naht::leeren();
+    assert!(verknuepft::abtasten(&e.a, &id).unwrap());
+    let b = verknuepft::bestand(e.a.dir(), &id);
+    assert!(b.online_ordner.is_empty());
+    assert!(b.ordner.contains("Akte"));
+    assert_eq!(unterordner(&e, &id)[0], paar("Akte", false));
+}
+
+#[test]
+fn altbestand_ohne_ordnerliste_leitet_den_baum_aus_den_dateipfaden_ab() {
+    let _n = naht_sauber();
+    let e = env();
+    e.schreiben("Akte/Angebote/x.txt", b"x");
+    e.schreiben("b.txt", b"b");
+    let id = e.verknuepfen();
+    let p = e.a.dir().join("verknuepft").join(&id).join("bestand.json");
+    let mut roh: serde_json::Value = serde_json::from_slice(&fs::read(&p).unwrap()).unwrap();
+    let o = roh.as_object_mut().unwrap();
+    assert!(o.remove("ordner").is_some());
+    assert!(o.remove("online_ordner").is_some());
+    fs::write(&p, serde_json::to_vec(&roh).unwrap()).unwrap();
+    let alt = verknuepft::bestand(e.a.dir(), &id);
+    assert!(alt.ordner.is_empty() && alt.online_ordner.is_empty());
+    // Ohne Ordnerliste zeigt die Sicht wenigstens die Ordner, in denen Dateien liegen.
+    assert_eq!(
+        unterordner(&e, &id),
+        vec![paar("Akte", false), paar("Akte/Angebote", false)]
+    );
+    // Der nächste Lauf übernimmt vorwärts (die Ordnerliste ist neu, das gilt als Änderung) und ist dann ruhig.
+    assert!(verknuepft::abtasten(&e.a, &id).unwrap());
+    assert!(!verknuepft::abtasten(&e.a, &id).unwrap());
+    let b = verknuepft::bestand(e.a.dir(), &id);
+    assert!(b.ordner.contains("Akte/Angebote"));
+}
+
+#[test]
+fn unlesbarer_unterordner_behaelt_seine_bekannten_unterordner() {
+    let _n = naht_sauber();
+    let e = env();
+    e.schreiben("Akte/Tief/x.txt", b"x");
+    fs::create_dir_all(e.quelle.join("Akte/Leer")).unwrap();
+    let id = e.verknuepfen();
+    verknuepft::tests_haken::DIR_FEHLER.with(|d| d.borrow_mut().push(e.quelle.join("Akte")));
+    verknuepft::abtasten(&e.a, &id).unwrap();
+    verknuepft::tests_haken::DIR_FEHLER.with(|d| d.borrow_mut().clear());
+    // Nicht lesbar heißt nicht gelöscht: „Akte“ selbst und alles darunter bleibt, auch der leere Ordner.
+    let b = verknuepft::bestand(e.a.dir(), &id);
+    let ordner: Vec<&str> = b.ordner.iter().map(String::as_str).collect();
+    assert_eq!(ordner, ["Akte", "Akte/Leer", "Akte/Tief"]);
+    assert!(b.dateien.contains_key("Akte/Tief/x.txt"));
+}
+
+#[test]
+fn ordnerzahl_ist_begrenzt_und_meldet_zu_viele() {
+    let _n = naht_sauber();
+    let e = env();
+    for i in 0..(verknuepft::MAX_ORDNER + 5) {
+        fs::create_dir_all(e.quelle.join(format!("o{i:05}"))).unwrap();
+    }
+    let id = e.verknuepfen();
+    let b = verknuepft::bestand(e.a.dir(), &id);
+    assert_eq!(b.ordner.len(), verknuepft::MAX_ORDNER);
+    assert!(b.zu_viele, "Überlauf wird gemeldet, nicht verschluckt");
+    assert_eq!(unterordner(&e, &id).len(), verknuepft::MAX_ORDNER);
+}
+
+// ---------------------------------------------------------------------------
 // D3 x D7: KI-Zugriff und verknüpfte Ordner (fail-closed)
 // ---------------------------------------------------------------------------
 

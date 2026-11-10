@@ -9267,7 +9267,12 @@
       "label": "Folders",
       "meine": "My folders",
       "wiederhergestellt": "Restored",
-      "weitere": "More folders"
+      "weitere": "More folders",
+      "aufklappen": "Expand {{name}}",
+      "zuklappen": "Collapse {{name}}",
+      "nurLesen": "Read-only",
+      "nurOnline": "Online-only",
+      "unterordner": "Subfolders of {{name}}"
     },
     "ordner": {
       "neu": "New folder",
@@ -9288,7 +9293,11 @@
       "dateien_other": "{{count}} files"
     },
     "stand": {
-      "konflikt": "Conflict"
+      "konflikt": "Conflict",
+      "imIndex": "In index",
+      "nurOnline": "Online-only",
+      "zuletztBekannt": "Last known",
+      "imIndexLabel": "In the search index"
     },
     "leer": {
       "titel": "No files yet",
@@ -9493,7 +9502,8 @@
       "nurBestaetigen": "Only on this device",
       "syncFrage": "Sync with other devices again?",
       "syncFolge": "Copies already stored in the cloud cannot be retrieved afterwards.",
-      "syncBestaetigen": "Allow sync"
+      "syncBestaetigen": "Allow sync",
+      "weiter": "Continue"
     },
     "lage": {
       "titel": "The files cannot be opened",
@@ -9519,6 +9529,61 @@
       "geloescht": "Deleted permanently",
       "geleert": "Trash emptied"
     },
+    "cloud": {
+      "titel": "Cloud exception",
+      "schalter": "The AI may use this folder through a cloud provider",
+      "schalterHinweis": "Only for confidential folders. Without an exception it stays with local models.",
+      "info": "The AI may send excerpts from this folder and its subfolders to the selected providers. This applies only on this device and only for the data class “Confidential”. Subfolders marked “Personal data” are excluded: they never go to a cloud provider.",
+      "anbieter": "Providers (rule set “{{regelwerk}}”)",
+      "regelwerk": {
+        "eu": "EU",
+        "nur_lokal": "Local only",
+        "keines": "No restriction"
+      },
+      "gesperrt": "blocked",
+      "grund": {
+        "regelwerk": "Does not meet the rule set “{{regelwerk}}”.",
+        "klasse": "Accepts “Internal” at most.",
+        "unbekannt": "No longer available. The exception can be withdrawn."
+      },
+      "keinAnbieter": "Select at least one provider.",
+      "nichtGeladen": "The provider list could not be loaded. Existing exceptions can still be revoked.",
+      "verwalten": "Manage rule set and providers",
+      "sperre": {
+        "nur_lokal": "The rule set “Local only” does not allow cloud providers. Confidential folders stay with local models.",
+        "keines": "The rule set “No restriction” does not release confidential data to cloud providers. That needs the rule set “EU”.",
+        "eu": "No configured provider meets the rule set “EU” for confidential data. It needs processing in the EU, a data processing agreement and no training on your data.",
+        "ki": "AI sharing is “Locked”. While it applies, no cloud exception can be granted. An existing exception stays and can be withdrawn."
+      },
+      "geerbt": "An exception from a parent folder also applies to this folder ({{anbieter}}).",
+      "braucht": "“{{klasse}}” needs no exception: excerpts may go to approved cloud models as far as the rule set allows.",
+      "personal": "Personal data only goes to local models. There is no cloud exception for it.",
+      "verfaellt": "The cloud exception ({{anbieter}}) lapses when you save. If you switch back to “Confidential” later, it has to be granted again.",
+      "erstSpeichern": "Save the data class “Confidential” first. After that you can grant a cloud exception here.",
+      "chip": "Cloud exception",
+      "chipGeerbt": "Cloud exception (inherited)",
+      "chipLabel": "Cloud exception: the AI may use this folder through {{anbieter}}. Open folder settings",
+      "chipLabelGeerbt": "Cloud exception from a parent folder: the AI may use this folder through {{anbieter}}. Open folder settings",
+      "baum": "Cloud exception",
+      "details": "Cloud",
+      "detailsWert": "Exception",
+      "detailsQuelle": "{{anbieter}} · inherited from {{ordner}}",
+      "frage": "Grant a cloud exception for “{{name}}”?",
+      "umfang_one": "Excerpts from {{count}} confidential file in “{{name}}” and its subfolders may be sent to:",
+      "umfang_other": "Excerpts from {{count}} confidential files in “{{name}}” and its subfolders may be sent to:",
+      "umfangNull": "There are currently no confidential files in “{{name}}” and its subfolders. The exception also applies to files added later. Excerpts may be sent to:",
+      "ausgenommen": "Excluded are subfolders with the data class “Personal data”: {{namen}}. They never go to a cloud provider.",
+      "anbieterZeile": "{{name}} (rule set “{{regelwerk}}”)",
+      "bedeutet": "What this means",
+      "punkt1": "The AI only sees excerpts, never the originals. The exception applies to the assistant (AI sharing “On”) and to projects in which the folder is switched on. “Locked” excludes both.",
+      "punkt2": "The exception applies only on this device and lapses when the data class is changed.",
+      "punkt3": "You can withdraw it at any time. Excerpts that were already sent cannot be retrieved.",
+      "punkt4": "Personal data does not belong in this folder. Classify it as “Personal data”; it never goes to a cloud provider.",
+      "erteilen": "Grant exception",
+      "verlassenTitel": "Discard unsaved changes?",
+      "verlassenText": "You have not saved your changes to the folder settings. If you switch to “AI models & providers” now, they are lost.",
+      "verlassenAktion": "Discard and switch"
+    },
     "verknuepft": {
       "gruppe": "Linked folders (read-only)",
       "verknuepfen": "Link folder",
@@ -9527,13 +9592,13 @@
       "hinweisKurz": "Read-only, this device only",
       "angabe": "Linked – read-only, this device only",
       "nichtErreichbar": "Not reachable",
-      "nichtErreichbarText": "The linked folder is not reachable right now or was moved. Known files stay in the list until it is back.",
+      "nichtErreichbarText": "The linked folder is not reachable right now or was moved. The last known files and subfolders stay in the list until it is back.",
       "ausgelassen_one": "{{count}} entry was skipped (link or hard link).",
       "ausgelassen_other": "{{count}} entries were skipped (links or hard links).",
-      "nurOnline_one": "{{count}} entry is online-only and is not read.",
-      "nurOnline_other": "{{count}} entries are online-only and are not read.",
+      "nurOnline_one": "{{count}} entry is online-only at the cloud provider (e.g. OneDrive) and is not read.",
+      "nurOnline_other": "{{count}} entries are online-only at the cloud provider (e.g. OneDrive) and are not read.",
       "nurOnlineHinweis": "In OneDrive, choose “Always keep on this device” so that the text can be captured.",
-      "zuViele": "The folder is very large; only the first 20,000 files are read.",
+      "zuViele": "The folder is very large: at most 20,000 files and 5,000 subfolders are captured.",
       "leer": "No readable files in this folder",
       "neuEinlesen": "Rescan",
       "loesen": "Unlink folder",
@@ -9543,7 +9608,19 @@
       "einstellungenHinweis": "Linked folder: read-only, this device only. It is never uploaded or synchronised; the AI does not access it. The data class can still be set.",
       "toastVerknuepft": "Folder linked",
       "toastEingelesen": "Folder rescanned",
-      "toastGeloest": "Folder unlinked"
+      "toastGeloest": "Folder unlinked",
+      "nurLesenChip": "Read-only",
+      "keineKi": "The AI never accesses linked folders – neither with local models nor through a cloud provider. That is why there is neither AI sharing nor a cloud exception here.",
+      "keineKi2": "If the AI should use certain files, put copies in a folder of your own in the file store and share that folder.",
+      "nurOnlineTipp": "The file is online-only at the cloud provider (e.g. OneDrive), not on this device. It is not read and not searched. Choose “Always keep on this device” in OneDrive to make it readable – the app never downloads by itself.",
+      "behaltenTitel": "Keep on this device",
+      "behaltenText": "This file is online-only at the cloud provider (e.g. OneDrive). The app never downloads by itself; as long as the file is not on the device, it stays unread and is missing from search.",
+      "behaltenSchritt1": "In File Explorer, right-click the file.",
+      "behaltenSchritt2": "Choose “Always keep on this device”.",
+      "behaltenDanach": "Once the file is on the device, the file store usually reads it itself within a minute. Otherwise “Rescan” helps.",
+      "keineVorschau": "No preview – the file is online-only.",
+      "keineVorschauLabel": "No preview: the file is online-only",
+      "unterordnerLeer": "No subfolders and no files in this folder"
     },
     "fehler": {
       "verknuepft_defekt": "The list of linked folders is damaged.",
@@ -9581,7 +9658,9 @@
       "datenstrom": "Alternate data streams are not imported.",
       "nicht_neu_aufbaubar": "The index cannot be rebuilt.",
       "loeschen_offen": "A permanent deletion has not finished yet. Please try again later.",
-      "datei_im_papierkorb": "The file is in the trash."
+      "datei_im_papierkorb": "The file is in the trash.",
+      "ausnahme_klasse": "Cloud exceptions exist only for confidential folders.",
+      "anbieter_nicht_zugelassen": "This provider is not approved for confidential folders."
     }
   }
 }

@@ -242,6 +242,10 @@ function verknuepfteSicht() {
         nur_online: 2,
         zu_viele: false,
         abgetastet: T0,
+        unterordner: [
+          { pfad: "Berichte", nur_online: false },
+          { pfad: "Wolke", nur_online: false },
+        ],
       },
     ],
     verknuepft_dateien: [
@@ -1326,7 +1330,7 @@ for (const breite of BREITEN) {
     await waehle(page, "ord_v1");
     const meldung = page.getByTestId("ablage-verknuepft-nur-online");
     await expect(meldung).toContainText(
-      "2 Einträge liegen nur online und werden nicht gelesen.",
+      "2 Einträge liegen nur online beim Cloud-Anbieter (z. B. OneDrive) und werden nicht gelesen.",
     );
     await expect(meldung).toContainText(
       "In OneDrive „Immer auf diesem Gerät behalten“ wählen, damit der Text erfasst wird.",
@@ -1335,6 +1339,10 @@ for (const breite of BREITEN) {
     await expect(
       page.getByTestId("ablage-verknuepft-ausgelassen"),
     ).not.toContainText("online");
+    // Die Datei liegt im Unterordner „Wolke“: die Liste zeigt nur, was direkt im Ordner liegt.
+    await expect(page.getByTestId("ablage-datei-dat_v3")).toHaveCount(0);
+    await page.getByTestId("ablage-unterordner-ord_v1|Wolke").click();
+    await expect(page.getByTestId("ablage-ordnername")).toHaveText("Wolke");
     await page.getByTestId("ablage-datei-dat_v3").click();
     const details =
       breite >= 1024

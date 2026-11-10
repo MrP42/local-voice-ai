@@ -232,11 +232,32 @@ pub async fn ablage_cloud_ausnahme_setzen(
     anbieter: String,
     an: bool,
 ) -> Antwort<()> {
+    // Erteilen nur für Anbieter, die Regelwerk und Datenklasse jetzt zulassen (die Liste kommt aus den
+    // Einstellungen, nie aus der Oberfläche); Entziehen geht immer.
+    let zulaessig = !an || {
+        let s = crate::settings::get_settings(&app);
+        super::anbieter::zulaessig(&s, &crate::managers::compliance::today(), &anbieter)
+    };
     let r = blockierend(&app, move |a| {
+        if !zulaessig {
+            return Err(super::Fehler::neu(
+                "ablage.anbieter_nicht_zugelassen",
+                "Für diesen Anbieter ist keine Cloud-Ausnahme möglich.",
+            ));
+        }
         a.cloud_ausnahme_setzen(&ordner, &anbieter, an)
     })
     .await;
     widerrufen(&app, r)
+}
+
+/// Anbieterliste für die Cloud-Ausnahme (D7-Rest): konfigurierte Verbindungen, gefiltert nach Regelwerk
+/// und Datenklasse; nicht wählbare stehen mit Grund darin.
+#[tauri::command]
+#[specta::specta]
+pub fn ablage_cloud_anbieter(app: AppHandle) -> super::anbieter::AblageAnbieterListe {
+    let s = crate::settings::get_settings(&app);
+    super::anbieter::anbieterliste(&s, &crate::managers::compliance::today())
 }
 
 /// Einziges schreibendes KI-Werkzeug (D3, Spec §5.5): legt einen Entwurf (Markdown) als neue Datei in

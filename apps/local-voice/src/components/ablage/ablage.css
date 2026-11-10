@@ -754,3 +754,369 @@
 .ablage-fuss-belegt {
   white-space: nowrap;
 }
+
+/* D7-Rest (lva#395): Cloud-Ausnahme, Unterordnerbaum verknüpfter Ordner, „Nur online“.
+   Maße und Abläufe nach docs/vorschau/ablage-d7-rest. */
+.ablage-chip--cloud {
+  background: var(--abl-soft);
+  color: var(--color-accent-text, var(--color-logo-primary));
+}
+.ablage-chip--warn {
+  background: var(--abl-warn-soft);
+  color: var(--abl-warn);
+}
+.ablage-chip svg {
+  flex: none;
+}
+/* Mit Cloud-Chip wird die Klassenspalte breit: die Chips dürfen umbrechen, der Name behält Platz. */
+.ablage-tabelle td.ablage-spalte-klasse {
+  padding-top: 4px;
+  padding-bottom: 4px;
+  line-height: 28px;
+  white-space: normal;
+}
+.ablage-tabelle td.ablage-name {
+  min-width: 160px;
+}
+/* Chip als Knopf: die Bedienfläche ist 44 px hoch, der Chip bleibt klein. */
+.ablage-chipbtn {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 2px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.ablage-chipbtn:hover .ablage-chip {
+  filter: brightness(0.94);
+}
+.ablage-ic--aus {
+  opacity: 0.55;
+}
+/* Baum: aufklappbar (nur verknüpfte Ordner). */
+.ablage-tl {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ablage-tl[hidden] {
+  display: none;
+}
+.ablage-trow {
+  display: flex;
+  align-items: center;
+  margin: 0 6px;
+  padding-left: calc(var(--lv, 0) * 14px);
+  border-radius: 6px;
+}
+.ablage-trow:hover {
+  background: var(--abl-chip);
+}
+.ablage-trow[data-aktiv="true"] {
+  background: var(--abl-sel);
+}
+.ablage-trow[data-aktiv="true"] .ablage-rm__name {
+  font-weight: 600;
+}
+.ablage-trow[data-weg="true"] .ablage-rm__name {
+  color: var(--color-text-muted);
+}
+.ablage-tsp {
+  flex: none;
+  width: 28px;
+}
+.ablage-tw {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  margin-right: -16px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+.ablage-rm {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  min-height: 44px;
+  padding: 0 12px 0 16px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--color-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ablage-rm svg {
+  flex: none;
+}
+.ablage-rm__name {
+  display: -webkit-box;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  line-height: 1.3;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+/* Stand in der Liste verknüpfter Ordner. */
+.ablage-stn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+.ablage-stn--ok {
+  color: var(--abl-ok);
+}
+.ablage-meta {
+  display: none;
+}
+/* Hinweis zu „Nur online“: Hover und Fokus, Escape schließt (data-offen steuert die Anzeige). */
+.ablage-tipw {
+  position: relative;
+  display: inline-block;
+}
+.ablage-tip {
+  position: absolute;
+  top: calc(100% + 2px);
+  right: 0;
+  z-index: 6;
+  display: none;
+  width: 300px;
+  max-width: calc(100vw - 32px);
+  padding: 10px 12px;
+  border: 1px solid var(--abl-line);
+  border-radius: 6px;
+  background: var(--color-background);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 25%);
+  color: var(--color-text);
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: left;
+  white-space: normal;
+}
+.ablage-tip[data-offen="true"] {
+  display: block;
+}
+.ablage-tip b {
+  display: block;
+  margin-bottom: 2px;
+  font-size: 13px;
+}
+/* Hinweisblock „Auf diesem Gerät behalten“ und Vorschau ohne Inhalt. */
+.ablage-hint {
+  margin: 12px 16px;
+  padding: 12px;
+  border-left: 3px solid var(--color-logo-primary);
+  border-radius: 6px;
+  background: var(--abl-soft);
+  font-size: 13px;
+}
+.ablage-hint__kopf {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.ablage-hint__kopf svg {
+  color: var(--color-logo-primary);
+}
+.ablage-hint p {
+  margin: 0 0 6px;
+}
+.ablage-hint ol {
+  margin: 0 0 10px;
+  padding-left: 20px;
+  list-style: decimal;
+}
+.ablage-hint li {
+  margin: 2px 0;
+}
+.ablage-vorschau--leer {
+  display: grid;
+  place-items: center;
+  text-align: center;
+}
+.ablage-vorschau--leer svg {
+  margin: 0 auto 6px;
+}
+.ablage-meldung__aktionen {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+/* Ordnereinstellungen: Cloud-Ausnahme. */
+.ablage-fold {
+  margin: 8px 0;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: var(--abl-soft);
+  font-size: 12px;
+}
+.ablage-fold--warn {
+  background: var(--abl-warn-soft);
+}
+.ablage-fold > p {
+  margin: 0;
+}
+.ablage-fold > p + p {
+  margin-top: 6px;
+}
+.ablage-cbs {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.ablage-cb {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-height: 56px;
+  margin: 0 0 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--abl-line);
+  border-radius: 6px;
+  background: var(--abl-pane);
+  cursor: pointer;
+}
+.ablage-cb input {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin: 2px 0 0;
+  accent-color: var(--color-logo-primary);
+}
+.ablage-cb[data-an="true"] {
+  border-color: var(--color-logo-primary);
+  background: var(--abl-soft);
+}
+.ablage-cb[data-gesperrt="true"] {
+  border-style: dashed;
+  background: none;
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+}
+.ablage-cb__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.ablage-cb__grund {
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+.ablage-cb[data-gesperrt="true"] .ablage-cb__grund {
+  color: var(--abl-warn);
+}
+.ablage-ul {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  list-style: disc;
+  font-size: 13px;
+}
+.ablage-ul li {
+  margin: 4px 0;
+}
+.ablage-fehler {
+  margin: 4px 0 0;
+  color: var(--abl-warn);
+  font-size: 12px;
+  font-weight: 600;
+}
+.ablage-lnkrow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 44px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--color-accent-text, var(--color-logo-primary));
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ablage-lnkrow:hover {
+  text-decoration: underline;
+}
+/* Listen verknüpfter Ordner als Karten (nur dort, bis 620 px). */
+@media (max-width: 620px) {
+  .ablage-karten thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+  .ablage-karten,
+  .ablage-karten tbody {
+    display: block;
+  }
+  .ablage-karten tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    column-gap: 8px;
+    padding: 2px 12px 6px;
+    border-bottom: 1px solid var(--abl-line);
+  }
+  .ablage-karten td {
+    display: block;
+    height: auto;
+    padding: 0;
+    border: 0;
+    white-space: normal;
+  }
+  /* Die Spaltenzellen bleiben aus: Größe, Datum und Zahl stehen in der Metazeile. */
+  .ablage-karten td.ablage-spalte-datum,
+  .ablage-karten td.ablage-spalte-groesse,
+  .ablage-karten td.ablage-spalte-klasse {
+    display: none;
+  }
+  .ablage-karten td.ablage-name {
+    grid-column: 1 / -1;
+    width: auto;
+    max-width: none;
+  }
+  .ablage-karten td.ablage-meta {
+    display: block;
+    grid-column: 1;
+    align-self: center;
+    color: var(--color-text-muted);
+    font-size: 12px;
+  }
+  .ablage-karten td.ablage-stand {
+    grid-column: 2;
+    justify-self: end;
+  }
+  .ablage-karten tr[data-gewaehlt="true"] {
+    background: var(--abl-sel);
+  }
+  .ablage-karten tr[data-gewaehlt="true"] td {
+    background: none;
+  }
+  .ablage-tipw .ablage-tip {
+    right: 0;
+    left: auto;
+  }
+}

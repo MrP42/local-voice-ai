@@ -11,6 +11,8 @@ import { open as dateiDialog } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
 import {
   ArrowLeft,
+  CloudCheck,
+  Eye,
   FolderOpen,
   FolderTree,
   FolderPlus,
@@ -23,6 +25,7 @@ import {
   Upload,
 } from "lucide-react";
 import type {
+  AblageAnbieterListe,
   AblageArt,
   AblageDatei,
   AblageFassung,
@@ -36,6 +39,7 @@ import type {
   AblageSyncStand,
   AblageSyncZustand,
 } from "@/bindings";
+import { openSettingsTab } from "@/lib/openSettingsTab";
 import { PageShell } from "../ui/PageShell";
 import { Button } from "../ui/Button";
 import { IconButton } from "../ui/IconButton";
@@ -60,12 +64,24 @@ import {
 } from "./Teile";
 import { SuchErgebnisse } from "./Suche";
 import {
+  ansichtZerlegen,
+  anbieterNamen,
+  cloudAlle,
+  cloudQuellen,
   dateiname,
+  dateienImPfad,
+  elternPfad,
   fehlerTeile,
   formatBytes,
+  knotenZu,
+  letztesGlied,
   nachNameFiltern,
   pfadZu,
+  unterAnsicht,
+  unterbaumBauen,
   unterordner,
+  vorfahrenPfade,
+  type UnterKnoten,
 } from "./logik";
 import "./ablage.css";
 
@@ -125,6 +141,10 @@ export const AblagePage: React.FC = () => {
   const [dlg, setDlg] = useState<Dlg | null>(null);
   const letzteEinstellungen = useRef<AblageOrdner | null>(null);
   const [ordnerBlatt, setOrdnerBlatt] = useState(false);
+  // D7-Rest: aufgeklappte Knoten im Baum der verknüpften Ordner (Ansichts-Schlüssel).
+  const [offen, setOffen] = useState<Set<string>>(() => new Set());
+  // D7-Rest: konfigurierte Anbieter für die Cloud-Ausnahme (`null` = nicht geladen).
+  const [anbieter, setAnbieter] = useState<AblageAnbieterListe | null>(null);
   const einstellungenAusloeser = useRef<HTMLElement | null>(null);
   const letzterAusloeser = useRef<HTMLElement | null>(null);
   const zaehler = useRef(0);
@@ -243,15 +263,26 @@ export const AblagePage: React.FC = () => {
   useEffect(() => {
     if (!sicht) return;
     const verknuepft = sicht.verknuepft ?? [];
+    const { ordner: ansichtId, pfad: ansichtUnter } = ansichtZerlegen(ansicht);
+    const wurzel = verknuepft.find((v) => v.ordner.id === ansichtId);
     const hatOrdner =
       ansicht === KORB ||
       sicht.ordner.some((o) => o.id === ansicht) ||
-      verknuepft.some((v) => v.ordner.id === ansicht);
+      !!wurzel;
     if (!hatOrdner) {
       const erster =
         sicht.ordner.find((o) => !o.eltern && !o.wiederhergestellt) ??
         sicht.ordner[0];
       setAnsicht(erster?.id ?? null);
+    } else if (wurzel && ansichtUnter) {
+      // Der Unterordner ist nach dem Neuladen weg (gelöscht, verschoben): zurück zur Wurzel.
+      const baum = unterbaumBauen(
+        wurzel.unterordner ?? [],
+        (sicht.verknuepft_dateien ?? [])
+          .filter((d) => d.ordner === wurzel.ordner.id)
+          .map((d) => d.name),
+      );
+      if (!knotenZu(baum, ansichtUnter)) setAnsicht(wurzel.ordner.id);
     }
     if (
       dateiId &&
@@ -313,33 +344,81 @@ export const AblagePage: React.FC = () => {
     [sicht],
   );
   const wiederhergestellt = sicht?.freigabe_wiederhergestellt ?? false;
-  const aktuellerOrdner = alleOrdner.find((o) => o.id === ansicht) ?? null;
+  // D7-Rest: Ansicht eines Unterordners verknüpfter Ordner: `<Kennung>|<Pfad>`.
+  const { ordner: ansichtId, pfad: ansichtUnter } = ansichtZerlegen(ansicht);
+  const aktuellerOrdner = alleOrdner.find((o) => o.id === ansichtId) ?? null;
   const aktVerknuepft =
-    verknuepftListe.find((v) => v.ordner.id === ansicht) ?? null;
+    verknuepftListe.find((v) => v.ordner.id === ansichtId) ?? null;
   const nurLesen = !!aktVerknuepft;
   const imKorb = ansicht === KORB;
   const pfad = pfadZu(alleOrdner, aktuellerOrdner?.id ?? null);
   const datei = alleDateien.find((d) => d.id === dateiId) ?? null;
+  // Unterordnerbäume der verknüpften Ordner (nur lesen): Backend-Ordner plus Pfade der Dateien.
+  const unterbaeume = useMemo(
+    () =>
+      new Map<string, UnterKnoten[]>(
+        verknuepftListe.map((v) => [
+          v.ordner.id,
+          unterbaumBauen(
+            v.unterordner ?? [],
+            (sicht?.verknuepft_dateien ?? [])
+              .filter((d) => d.ordner === v.ordner.id)
+              .map((d) => d.name),
+          ),
+        ]),
+      ),
+    [verknuepftListe, sicht],
+  );
+  const aktBaum = aktVerknuepft
+    ? (unterbaeume.get(aktVerknuepft.ordner.id) ?? [])
+    : [];
+  const aktKnoten = knotenZu(aktBaum, ansichtUnter);
   const unter = useMemo(
     () =>
       nachNameFiltern(
-        aktuellerOrdner ? unterordner(ordnerListe, aktuellerOrdner.id) : [],
+        aktuellerOrdner && !aktVerknuepft
+          ? unterordner(ordnerListe, aktuellerOrdner.id)
+          : [],
         suche,
       ),
-    [ordnerListe, aktuellerOrdner, suche],
+    [ordnerListe, aktuellerOrdner, aktVerknuepft, suche],
+  );
+  /** Unterordner des angezeigten Pfads in einem verknüpften Ordner (gefiltert wie die Liste). */
+  const unterPfade = useMemo(
+    () =>
+      nachNameFiltern(
+        aktVerknuepft ? (aktKnoten ? aktKnoten.kinder : aktBaum) : [],
+        suche,
+      ),
+    [aktVerknuepft, aktKnoten, aktBaum, suche],
   );
   const dateienHier = useMemo(
     () =>
       nachNameFiltern(
-        alleDateien.filter((d) => d.ordner === ansicht),
+        aktVerknuepft
+          ? dateienImPfad(
+              alleDateien.filter((d) => d.ordner === aktVerknuepft.ordner.id),
+              ansichtUnter,
+            )
+          : alleDateien.filter((d) => d.ordner === ansicht),
         suche,
       ),
-    [alleDateien, ansicht, suche],
+    [alleDateien, aktVerknuepft, ansicht, ansichtUnter, suche],
   );
   const pfadText = (id: string) =>
     pfadZu(alleOrdner, id)
       .map((o) => o.name)
       .join(" › ");
+  /** Pfad einer Datei für die Anzeige; in verknüpften Ordnern mit den Unterordnern davor. */
+  const dateiPfadText = (d: AblageDatei) =>
+    [
+      pfadText(d.ordner),
+      ...(d.verknuepft ? elternPfad(d.name).split("/").filter(Boolean) : []),
+    ].join(" › ");
+  const namenDerAnbieter = useCallback(
+    (ids: string[]) => anbieterNamen(ids, anbieter?.anbieter ?? []),
+    [anbieter],
+  );
   // Namenstreffer über alle Ordner (die Liste darunter filtert nur den aktuellen Ordner).
   const namensTreffer = useMemo(
     () => (sucheAktiv ? nachNameFiltern(alleDateien, anfrage) : []),
@@ -467,6 +546,12 @@ export const AblagePage: React.FC = () => {
     const gut = await tue(async () => {
       if (geaendert) await api.ordnerEinstellungen(id, e);
       if (a.ki !== undefined) await api.kiSetzen(id, a.ki);
+      // Je Anbieter ein eigener, für sich vollständiger Schritt: bricht einer ab, bleibt der Stand
+      // bis dahin gültig und der nächste Versuch holt den Rest nach. Entziehen zuerst.
+      for (const anb of a.cloud?.entziehen ?? [])
+        await api.cloudAusnahmeSetzen(id, anb, false);
+      for (const anb of a.cloud?.erteilen ?? [])
+        await api.cloudAusnahmeSetzen(id, anb, true);
     }, t("ablage.toast.gespeichert"));
     if (gut) schliesseEinstellungen();
   };
@@ -516,11 +601,29 @@ export const AblagePage: React.FC = () => {
 
   // --- Ansicht -------------------------------------------------------------------------
   const korbAnzahl = sicht?.papierkorb.length ?? 0;
+  const ladeAnbieter = useCallback(async () => {
+    try {
+      setAnbieter(await api.cloudAnbieter());
+    } catch {
+      setAnbieter(null);
+    }
+  }, []);
+  // Die Namen der Anbieter stehen schon in der Liste (Chips, Baum), nicht erst im Dialog.
+  useEffect(() => {
+    void ladeAnbieter();
+  }, [ladeAnbieter]);
   const oeffneEinstellungen = (id: string) => {
     const aktiv = document.activeElement;
     einstellungenAusloeser.current =
       aktiv instanceof HTMLElement && aktiv !== document.body ? aktiv : null;
-    setDlg({ art: "einstellungen", id });
+    // Die Anbieterliste ist frisch, wenn der Dialog aufgeht (Verbindungen können sich geändert haben).
+    void ladeAnbieter().then(() => setDlg({ art: "einstellungen", id }));
+  };
+  /** „Regelwerk und Anbieter verwalten“: der Dialog schließt, die Einstellungen öffnen sich. */
+  const zumRegelwerk = () => {
+    setDlg(null);
+    einstellungenAusloeser.current = null;
+    openSettingsTab("models", "connections");
   };
   const schliesseEinstellungen = () => {
     setDlg(null);
@@ -539,11 +642,30 @@ export const AblagePage: React.FC = () => {
     letzterAusloeser.current = null;
     if (ziel) requestAnimationFrame(() => ziel.isConnected && ziel.focus());
   };
+  /** Klappt die Vorfahren eines Unterordners (`<Kennung>|<Pfad>`) im Baum auf, damit er sichtbar ist. */
+  const aufklappenBis = (schl: string) => {
+    const { ordner: wurzel, pfad: unterPfad } = ansichtZerlegen(schl);
+    if (!wurzel || !unterPfad) return;
+    setOffen((alt) => {
+      const neu = new Set(alt);
+      neu.add(wurzel);
+      for (const v of vorfahrenPfade(unterPfad))
+        neu.add(unterAnsicht(wurzel, v));
+      return neu;
+    });
+  };
+  const umschalten = (schl: string) =>
+    setOffen((alt) => {
+      const neu = new Set(alt);
+      if (!neu.delete(schl)) neu.add(schl);
+      return neu;
+    });
   const wahl = (id: string) => {
     setAnsicht(id);
     setDateiId(null);
     setFundstelle(null);
     setSuche("");
+    aufklappenBis(id);
   };
 
   /** Treffer öffnen: Ordner der Datei, Details mit Fundstelle; die Suche bleibt stehen. */
@@ -555,7 +677,14 @@ export const AblagePage: React.FC = () => {
   ) => {
     letzterAusloeser.current = ausloeser;
     setUploadOffen(false);
-    setAnsicht(ordner);
+    // Eine Datei in einem Unterordner eines verknüpften Ordners: dessen Ansicht öffnen.
+    const treffer = alleDateien.find((d) => d.id === dat);
+    const ziel =
+      treffer?.verknuepft && elternPfad(treffer.name)
+        ? unterAnsicht(ordner, elternPfad(treffer.name))
+        : ordner;
+    setAnsicht(ziel);
+    aufklappenBis(ziel);
     setDateiId(dat);
     setFundstelle(f);
   };
@@ -579,10 +708,25 @@ export const AblagePage: React.FC = () => {
       );
     }
     if (!datei) return null;
+    // Ausnahmen, die für die Datei gelten, mit dem Ordner, an dem sie hängen.
+    const cloudIds = cloudAlle(datei.cloud);
+    const quellen = cloudQuellen(alleOrdner, datei.ordner, cloudIds);
+    const cloudDetails = cloudIds.map((anb) => ({
+      name: namenDerAnbieter([anb])[0] ?? anb,
+      von: quellen.get(anb) ?? null,
+    }));
     return (
       <Details
-        datei={datei}
-        pfad={pfadText(datei.ordner)}
+        datei={
+          datei.verknuepft
+            ? { ...datei, name: letztesGlied(datei.name) }
+            : datei
+        }
+        pfad={dateiPfadText(datei)}
+        cloud={cloudDetails}
+        onNeuEinlesen={
+          datei.verknuepft ? () => neuEinlesen(datei.ordner) : undefined
+        }
         fassungen={fassungen}
         busy={busy}
         ueberschriftId={id}
@@ -640,29 +784,52 @@ export const AblagePage: React.FC = () => {
     );
   }
 
+  // Kopfzeile: Zurück-Ziel, übergeordneter Name und Titel. In verknüpften Ordnern ist der Pfad im
+  // Unterordnerbaum maßgeblich, sonst die Ordnerkette.
+  const wurzelId = ordnerListe.find((o) => !o.eltern)?.id ?? "";
+  const kopfTitel = imKorb
+    ? t("ablage.papierkorb.titel")
+    : aktVerknuepft && ansichtUnter
+      ? letztesGlied(ansichtUnter)
+      : (aktuellerOrdner?.name ?? "");
+  const kopfEltern: string | null = aktVerknuepft
+    ? ansichtUnter
+      ? elternPfad(ansichtUnter)
+        ? letztesGlied(elternPfad(ansichtUnter))
+        : aktVerknuepft.ordner.name
+      : null
+    : pfad.length > 1
+      ? pfad[pfad.length - 2].name
+      : null;
+  const zurueckZiel: string | null = imKorb
+    ? wurzelId
+    : aktVerknuepft
+      ? ansichtUnter
+        ? unterAnsicht(aktVerknuepft.ordner.id, elternPfad(ansichtUnter))
+        : null
+      : pfad.length > 1
+        ? pfad[pfad.length - 2].id
+        : null;
+  // Cloud-Ausnahme am eigenen Ordner oder von oben: Chip als Knopf, öffnet die Einstellungen.
+  const kopfCloud =
+    aktuellerOrdner && !aktVerknuepft ? cloudAlle(aktuellerOrdner.cloud) : [];
+  const kopfCloudNamen = namenDerAnbieter(kopfCloud).join(", ");
+  const kopfCloudGeerbt = (aktuellerOrdner?.cloud?.anbieter.length ?? 0) === 0;
   const kopf = (
     <div className="ablage-head">
       <div className="ablage-crumb">
-        {(pfad.length > 1 || imKorb) && (
+        {zurueckZiel !== null && (
           <IconButton
             icon={<ArrowLeft size={20} aria-hidden="true" />}
             label={t("ablage.zurueck")}
             size="md"
-            onClick={() =>
-              wahl(
-                pfad.length > 1
-                  ? pfad[pfad.length - 2].id
-                  : (ordnerListe.find((o) => !o.eltern)?.id ?? ""),
-              )
-            }
+            onClick={() => wahl(zurueckZiel)}
             data-testid="ablage-zurueck"
           />
         )}
-        {pfad.length > 1 && (
+        {kopfEltern && (
           <>
-            <span className="ablage-nur-breit">
-              {pfad[pfad.length - 2].name}
-            </span>
+            <span className="ablage-nur-breit">{kopfEltern}</span>
             <span
               className="ablage-crumb__sep ablage-nur-breit"
               aria-hidden="true"
@@ -671,11 +838,37 @@ export const AblagePage: React.FC = () => {
             </span>
           </>
         )}
-        <h2 data-testid="ablage-ordnername">
-          {imKorb
-            ? t("ablage.papierkorb.titel")
-            : (aktuellerOrdner?.name ?? "")}
-        </h2>
+        <h2 data-testid="ablage-ordnername">{kopfTitel}</h2>
+        {aktVerknuepft && (
+          <span className="ablage-chip" data-testid="ablage-kopf-nur-lesen">
+            <Eye size={14} aria-hidden="true" />
+            {t("ablage.verknuepft.nurLesenChip")}
+          </span>
+        )}
+        {kopfCloud.length > 0 && aktuellerOrdner && (
+          <button
+            type="button"
+            className="ablage-chipbtn"
+            aria-haspopup="dialog"
+            aria-label={t(
+              kopfCloudGeerbt
+                ? "ablage.cloud.chipLabelGeerbt"
+                : "ablage.cloud.chipLabel",
+              { anbieter: kopfCloudNamen },
+            )}
+            onClick={() => oeffneEinstellungen(aktuellerOrdner.id)}
+            data-testid="ablage-kopf-cloud"
+          >
+            <span className="ablage-chip ablage-chip--cloud">
+              <CloudCheck size={14} aria-hidden="true" />
+              {t(
+                kopfCloudGeerbt
+                  ? "ablage.cloud.chipGeerbt"
+                  : "ablage.cloud.chip",
+              )}
+            </span>
+          </button>
+        )}
       </div>
       <div className="ablage-head__tools">
         <IconButton
@@ -806,6 +999,26 @@ export const AblagePage: React.FC = () => {
       {aktVerknuepft && !aktVerknuepft.erreichbar && (
         <Meldung warn testid="ablage-verknuepft-unerreichbar">
           <p>{t("ablage.verknuepft.nichtErreichbarText")}</p>
+          <div className="ablage-meldung__aktionen">
+            <Button
+              onClick={() => neuEinlesen(aktVerknuepft.ordner.id)}
+              disabled={busy}
+              icon={<RefreshCw size={16} aria-hidden="true" />}
+              data-testid="ablage-unerreichbar-einlesen"
+            >
+              {t("ablage.verknuepft.neuEinlesen")}
+            </Button>
+            <Button
+              onClick={() =>
+                setDlg({ art: "loesen", id: aktVerknuepft.ordner.id })
+              }
+              disabled={busy}
+              aria-haspopup="dialog"
+              data-testid="ablage-unerreichbar-loesen"
+            >
+              {t("ablage.verknuepft.loesen")}
+            </Button>
+          </div>
         </Meldung>
       )}
       {aktVerknuepft && aktVerknuepft.nur_online > 0 && (
@@ -904,7 +1117,9 @@ export const AblagePage: React.FC = () => {
         />
       </>
     )
-  ) : unter.length === 0 && dateienHier.length === 0 ? (
+  ) : unter.length === 0 &&
+    unterPfade.length === 0 &&
+    dateienHier.length === 0 ? (
     sucheAktiv &&
     (namensTreffer.length > 0 || (inhaltTreffer?.length ?? 0) > 0) ? null : (
       <div className="ablage-leer" data-testid="ablage-leer">
@@ -949,6 +1164,19 @@ export const AblagePage: React.FC = () => {
       dateien={dateienHier}
       gewaehlt={dateiId}
       sync={syncJe}
+      anbieterNamen={namenDerAnbieter}
+      verknuepft={
+        aktVerknuepft
+          ? {
+              wurzel: aktVerknuepft.ordner.id,
+              klasse: aktVerknuepft.ordner.klasse,
+              unterPfade,
+              onUnterPfad: wahl,
+              zuletztBekannt:
+                !aktVerknuepft.erreichbar || (aktKnoten?.nurOnline ?? false),
+            }
+          : undefined
+      }
       onOrdner={wahl}
       onDatei={(id, ausloeser) => {
         letzterAusloeser.current = ausloeser;
@@ -992,6 +1220,10 @@ export const AblagePage: React.FC = () => {
           onNeu={() => setDlg({ art: "ordner-neu" })}
           verknuepft={verknuepftListe}
           onVerknuepfen={() => void verknuepfen()}
+          unterbaeume={unterbaeume}
+          offen={offen}
+          onUmschalten={umschalten}
+          anbieterNamen={namenDerAnbieter}
         />
         <section
           className="ablage-col"
@@ -1100,7 +1332,11 @@ export const AblagePage: React.FC = () => {
           title={
             uploadOffen
               ? t("ablage.hochladen.titel", { count: uploads.length })
-              : (datei?.name ?? "")
+              : datei
+                ? datei.verknuepft
+                  ? letztesGlied(datei.name)
+                  : datei.name
+                : ""
           }
           closeLabel={t("ablage.details.schliessen")}
           className="ablage-sheet"
@@ -1142,6 +1378,11 @@ export const AblagePage: React.FC = () => {
                 setOrdnerBlatt(false);
                 void verknuepfen();
               }}
+              unterbaeume={unterbaeume}
+              offen={offen}
+              onUmschalten={umschalten}
+              anbieterNamen={namenDerAnbieter}
+              idVorsatz="blatt"
             />
           </div>
         </Dialog>
@@ -1207,8 +1448,11 @@ export const AblagePage: React.FC = () => {
         open={dlg?.art === "einstellungen"}
         ordner={einstellungenOrdner}
         alle={ordnerListe}
+        dateien={alleDateien}
+        anbieter={anbieter}
         busy={busy}
         onSpeichern={(a) => void einstellungenSpeichern(a)}
+        onRegelwerk={zumRegelwerk}
         onClose={schliesseEinstellungen}
       />
       <BestaetigungDialog

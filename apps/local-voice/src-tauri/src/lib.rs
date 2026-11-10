@@ -2044,6 +2044,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             ablage::befehle::ablage_ki_setzen,
             ablage::befehle::ablage_freigaben_neu_festlegen,
             ablage::befehle::ablage_cloud_ausnahme_setzen,
+            ablage::befehle::ablage_cloud_anbieter,
             ablage::befehle::ablage_entwurf_anlegen,
             ablage::befehle::ablage_importieren,
             ablage::befehle::ablage_in_papierkorb,

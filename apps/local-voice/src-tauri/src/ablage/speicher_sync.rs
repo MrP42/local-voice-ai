@@ -177,6 +177,8 @@ impl Ablage {
         // Teilnahme vor dem Einspielen: ein Grabstein gilt nur für synchrone Einträge.
         let teilnahme_vorher = st.teilnahmen();
         let lokal = st.lokal_menge();
+        // Cloud-Ausnahmen verfallen bei jedem Klassenwechsel, auch wenn er von einem anderen Gerät kommt.
+        let klassen_vorher = self.klassenstand(&st);
         let mut aus = Einspielung::default();
         let mut graeber_dat: Vec<String> = Vec::new();
         let mut graeber_ord: Vec<String> = Vec::new();
@@ -316,6 +318,10 @@ impl Ablage {
             st.befreit.sort();
             st.befreit.dedup();
         }
+        // Vor jedem Speichern des neuen Stands: ändert sich die wirksame Klasse eines Ordners mit Ausnahme,
+        // wird sie entzogen. Schlägt das fehl, wird nichts gespeichert; der Abgleich liefert den Stand
+        // beim nächsten Lauf erneut.
+        self.ausnahmen_nach_klassenwechsel(&st, &klassen_vorher)?;
         graeber_dat.sort();
         graeber_dat.dedup();
         graeber_ord.sort();

@@ -1,0 +1,465 @@
+{
+  "kopf": "b9fa95b1b",
+  "befunde": [
+    {
+      "bild": "01-cloud-aus-1440-dunkel.png",
+      "scrollBreit": 1440,
+      "fenster": 1440,
+      "unter44": []
+    },
+    {
+      "bild": "01-cloud-aus-1440-hell.png",
+      "scrollBreit": 1440,
+      "fenster": 1440,
+      "unter44": []
+    },
+    {
+      "bild": "01-cloud-aus-390-dunkel.png",
+      "scrollBreit": 390,
+      "fenster": 390,
+      "unter44": [
+        "Datenklasse (4×20)"
+      ]
+    },
+    {
+      "bild": "01-cloud-aus-390-hell.png",
+      "scrollBreit": 390,
+      "fenster": 390,
+      "unter44": [
+        "Datenklasse (4×20)"
+      ]
+    },
+    {
+      "bild": "01-cloud-aus-768-dunkel.png",
+      "scrollBreit": 768,
+      "fenster": 768,
+      "unter44": [
+        "Datenklasse (4×20)"
+      ]
+    },
+    {
+      "bild": "01-cloud-aus-768-hell.png",
+      "scrollBreit": 768,
+      "fenster": 768,
+      "unter44": [
+        "Datenklasse (4×20)"
+      ]
+    },
+    {
+      "bild": "02-cloud-anbieter-1440-dunkel.png",
+      "scrollBreit": 1440,
+      "fenster": 1440,
+      "unter44": []
+    },
+    {
+      "bild": "02-cloud-anbieter-1440-hell.png",
+      "scrollBreit": 1440,
+      "fenster": 1440,
+      "unter44": []
+    },
+    {
+      "bild": "02-cloud-anbieter-390-dunkel.png",
+      "scrollBreit": 390,
+      "fenster": 390,
+      "unter44": [
+        "Datenklasse (4×20)",
+        "ablage-cloud-anbieter-beispiel_eu (20×20)",
+        "ablage-cloud-anbieter-muster_ki (20×20)"
+      ]
+    },
+    {
+      "bild": "02-cloud-anbieter-390-hell.png",
+      "scrollBreit": 390,
+      "fenster": 390,
+      "unter44": [
+        "Datenklasse (4×20)",
+        "ablage-cloud-anbieter-beispiel_eu (20×20)",
+        "ablage-cloud-anbieter-muster_ki (20×20)"
+      ]
+    },
+    {
+      "bild": "02-cloud-anbieter-768-dunkel.png",
+      "scrollBreit": 768,
+      "fenster": 768,
+      "unter44": [
+        "Datenklasse (4×20)",
+        "ablage-cloud-anbieter-beispiel_eu (20×20)",
+        "ablage-cloud-anbieter-muster_ki (20×20)"
+      ]
+    },
+    {
+      "bild": "02-cloud-anbieter-768-hell.png",
+      "scrollBreit": 768,
+      "fenster": 768,
+      "unter44": [
+        "Datenklasse (4×20)",
+        "ablage-cloud-anbieter-beispiel_eu (20×20)",
+        "ablage-cloud-anbieter-muster_ki (20×20)"
+      ]
+    },
+    {
+      "bild": "03-cloud-bestaetigen-1440-dunkel.png",
+      "scrollBreit": 1440,
+      "fenster": 1440,
+      "unter44": []
+    },
+    {
+      "bild": "03-cloud-bestaetigen-1440-hell.png",
+      "scrollBreit": 1440,
+      "fenster": 1440,
+      "unter44": []
+    },
+    {
+      "bild": "03-cloud-bestaetigen-390-dunkel.png",
+      "scrollBreit": 390,
+      "fenster": 390,
+      "unter44": []
+    },
+    {
+      "bild": "03-cloud-bestaetigen-390-hell.png",
+      "scrollBreit": 390,
+      "fenster": 390,
+      "unter44": []
+    },
+    {
+      "bild": "03-cloud-bestaetigen-768-dunkel.png",
+      "scrollBreit": 768,
+      "fenster": 768,
+      "unter44": []
+    },
+    {
+      "bild": "03-cloud-bestaetigen-768-hell.png",
+      "scrollBreit": 768,
+      "fenster": 768,
+      "unter44": []
+    },
+    {
+      "bild": "04-cloud-chip-1440-dunkel.png",
+      "scrollBreit": 1440,
+      "fenster": 1440,
+      "unter44": []
+    },
+    {
+      "bild": "04-cloud-chip-1440-hell.png",
+      "scrollBreit": 1440,
+      "fenster": 1440,
+      "unter44": []
+    },
+    {
+      "bild": "04-cloud-chip-390-dunkel.png",
+      "scrollBreit": 390,
+      "fenster": 390,
+      "unter44": []
+    },
+    {
+      "bild": "04-cloud-chip-390-hell.png",
+      "scrollBreit": 390,
+      "fenster": 390,
+      "unter44": []
+    },
+    {
+      "bild": "04-cloud-chip-768-dunkel.png",
+      "scrollBreit": 768,
+      "fenster": 768,
+      "unter44": []
+    },
+    {
+      "bild": "04-cloud-chip-768-hell.png",
+      "scrollBreit": 768,
+      "fenster": 768,
+      "unter44": []
+    },
+    {
+      "bild": "05-cloud-klassenwechsel-1440-dunkel.png",
+      "scrollBreit": 1440,
+      "fenster": 1440,
+      "unter44": []
+    },
+    {
+      "bild": "05-cloud-klassenwechsel-1440-hell.png",
+      "scrollBreit": 1440,
+      "fenster": 1440,
+      "unter44": []
+    },
+    {
+      "bild": "05-cloud-klassenwechsel-390-dunkel.png",
+      "scrollBreit": 390,
+      "fenster": 390,
+      "unter44": [
+        "Datenklasse (4×20)"
+      ]
+    },
+    {
+      "bild": "05-cloud-klassenwechsel-390-hell.png",
+      "scrollBreit": 390,
+      "fenster": 390,
+      "unter44": [
+        "Datenklasse (4×20)"
+      ]
+    },
+    {
+      "bild": "05-cloud-klassenwechsel-768-dunkel.png",
+      "scrollBreit": 768,
+      "fenster": 768,
+      "unter44": [
+        "Datenklasse (4×20)"
+      ]
+    },
+    {
+      "bild": "05-cloud-klassenwechsel-768-hell.png",
+      "scrollBreit": 768,
+      "fenster": 768,
+      "unter44": [
+        "Datenklasse (4×20)"
+      ]
+    },
+    {
+      "bild": "06-verknuepft-eigenschaften-1440-dunkel.png",
+      "scrollBreit": 1440,
+      "fenster": 1440,
+      "unter44": []
+    },
+    {
+      "bild": "06-verknuepft-eigenschaften-1440-hell.png",
+      "scrollBreit": 1440,
+      "fenster": 1440,
+      "unter44": []
+    },
+    {
+      "bild": "06-verknuepft-eigenschaften-390-dunkel.png",
+      "scrollBreit": 390,
+      "fenster": 390,
+      "unter44": [
+        "Datenklasse (4×20)"
+      ]
+    },
+    {
+      "bild": "06-verknuepft-eigenschaften-390-hell.png",
+      "scrollBreit": 390,
+      "fenster": 390,
+      "unter44": [
+        "Datenklasse (4×20)"
+      ]
+    },
+    {
+      "bild": "06-verknuepft-eigenschaften-768-dunkel.png",
+      "scrollBreit": 768,
+      "fenster": 768,
+      "unter44": [
+        "Datenklasse (4×20)"
+      ]
+    },
+    {
+      "bild": "06-verknuepft-eigenschaften-768-hell.png",
+      "scrollBreit": 768,
+      "fenster": 768,
+      "unter44": [
+        "Datenklasse (4×20)"
+      ]
+    },
+    {
+      "bild": "07-baum-1440-dunkel.png",
+      "scrollBreit": 1440,
+      "fenster": 1440,
+      "unter44": []
+    },
+    {
+      "bild": "07-baum-1440-hell.png",
+      "scrollBreit": 1440,
+      "fenster": 1440,
+      "unter44": []
+    },
+    {
+      "bild": "07-baum-390-dunkel.png",
+      "scrollBreit": 390,
+      "fenster": 390,
+      "unter44": []
+    },
+    {
+      "bild": "07-baum-390-hell.png",
+      "scrollBreit": 390,
+      "fenster": 390,
+      "unter44": []
+    },
+    {
+      "bild": "07-baum-768-dunkel.png",
+      "scrollBreit": 768,
+      "fenster": 768,
+      "unter44": [
+        "Details schließen (24×24)"
+      ]
+    },
+    {
+      "bild": "07-baum-768-hell.png",
+      "scrollBreit": 768,
+      "fenster": 768,
+      "unter44": [
+        "Details schließen (24×24)"
+      ]
+    },
+    {
+      "bild": "08-baum-nicht-erreichbar-1440-dunkel.png",
+      "scrollBreit": 1440,
+      "fenster": 1440,
+      "unter44": []
+    },
+    {
+      "bild": "08-baum-nicht-erreichbar-1440-hell.png",
+      "scrollBreit": 1440,
+      "fenster": 1440,
+      "unter44": []
+    },
+    {
+      "bild": "08-baum-nicht-erreichbar-390-dunkel.png",
+      "scrollBreit": 390,
+      "fenster": 390,
+      "unter44": []
+    },
+    {
+      "bild": "08-baum-nicht-erreichbar-390-hell.png",
+      "scrollBreit": 390,
+      "fenster": 390,
+      "unter44": []
+    },
+    {
+      "bild": "08-baum-nicht-erreichbar-768-dunkel.png",
+      "scrollBreit": 768,
+      "fenster": 768,
+      "unter44": []
+    },
+    {
+      "bild": "08-baum-nicht-erreichbar-768-hell.png",
+      "scrollBreit": 768,
+      "fenster": 768,
+      "unter44": []
+    },
+    {
+      "bild": "08-baum-nicht-erreichbar-blatt-390-dunkel.png",
+      "scrollBreit": 390,
+      "fenster": 390,
+      "unter44": []
+    },
+    {
+      "bild": "08-baum-nicht-erreichbar-blatt-390-hell.png",
+      "scrollBreit": 390,
+      "fenster": 390,
+      "unter44": []
+    },
+    {
+      "bild": "08-baum-nicht-erreichbar-blatt-768-dunkel.png",
+      "scrollBreit": 768,
+      "fenster": 768,
+      "unter44": [
+        "Details schließen (24×24)"
+      ]
+    },
+    {
+      "bild": "08-baum-nicht-erreichbar-blatt-768-hell.png",
+      "scrollBreit": 768,
+      "fenster": 768,
+      "unter44": [
+        "Details schließen (24×24)"
+      ]
+    },
+    {
+      "bild": "09-nur-online-liste-1440-dunkel.png",
+      "scrollBreit": 1440,
+      "fenster": 1440,
+      "unter44": []
+    },
+    {
+      "bild": "09-nur-online-liste-1440-hell.png",
+      "scrollBreit": 1440,
+      "fenster": 1440,
+      "unter44": []
+    },
+    {
+      "bild": "09-nur-online-liste-390-dunkel.png",
+      "scrollBreit": 390,
+      "fenster": 390,
+      "unter44": []
+    },
+    {
+      "bild": "09-nur-online-liste-390-hell.png",
+      "scrollBreit": 390,
+      "fenster": 390,
+      "unter44": []
+    },
+    {
+      "bild": "09-nur-online-liste-768-dunkel.png",
+      "scrollBreit": 768,
+      "fenster": 768,
+      "unter44": []
+    },
+    {
+      "bild": "09-nur-online-liste-768-hell.png",
+      "scrollBreit": 768,
+      "fenster": 768,
+      "unter44": []
+    },
+    {
+      "bild": "09b-nur-online-tooltip-1440-dunkel.png",
+      "scrollBreit": 1440,
+      "fenster": 1440,
+      "unter44": []
+    },
+    {
+      "bild": "09b-nur-online-tooltip-1440-hell.png",
+      "scrollBreit": 1440,
+      "fenster": 1440,
+      "unter44": []
+    },
+    {
+      "bild": "09b-nur-online-tooltip-768-dunkel.png",
+      "scrollBreit": 768,
+      "fenster": 768,
+      "unter44": []
+    },
+    {
+      "bild": "09b-nur-online-tooltip-768-hell.png",
+      "scrollBreit": 768,
+      "fenster": 768,
+      "unter44": []
+    },
+    {
+      "bild": "10-nur-online-hinweis-1440-dunkel.png",
+      "scrollBreit": 1440,
+      "fenster": 1440,
+      "unter44": []
+    },
+    {
+      "bild": "10-nur-online-hinweis-1440-hell.png",
+      "scrollBreit": 1440,
+      "fenster": 1440,
+      "unter44": []
+    },
+    {
+      "bild": "10-nur-online-hinweis-390-dunkel.png",
+      "scrollBreit": 390,
+      "fenster": 390,
+      "unter44": []
+    },
+    {
+      "bild": "10-nur-online-hinweis-390-hell.png",
+      "scrollBreit": 390,
+      "fenster": 390,
+      "unter44": []
+    },
+    {
+      "bild": "10-nur-online-hinweis-768-dunkel.png",
+      "scrollBreit": 768,
+      "fenster": 768,
+      "unter44": [
+        "Details schließen (24×24)"
+      ]
+    },
+    {
+      "bild": "10-nur-online-hinweis-768-hell.png",
+      "scrollBreit": 768,
+      "fenster": 768,
+      "unter44": [
+        "Details schließen (24×24)"
+      ]
+    }
+  ]
+}
