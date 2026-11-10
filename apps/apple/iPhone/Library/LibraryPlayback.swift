@@ -153,6 +153,14 @@ final class LibraryPlayback: NSObject, ObservableObject {
             }
         }
         let center = NotificationCenter.default
+        // In den Einstellungen eine bessere Systemstimme geladen: ohne eigene Wahl gleich nutzen (lva#358).
+        sessionObservers.append(center.addObserver(forName: AVSpeechSynthesizer.availableVoicesDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.mode == .readAloud, let book = self.book else { return }
+                self.objectWillChange.send()
+                self.applyVoicePref(book, live: true)
+            }
+        })
         sessionObservers.append(center.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] note in
             let began = (note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt).flatMap(AVAudioSession.InterruptionType.init) == .began
             MainActor.assumeIsolated { if began, self?.busy == true { self?.pause() } }
@@ -701,10 +709,28 @@ final class LibraryPlayback: NSObject, ObservableObject {
         // Phonon nur, wenn der Katalog die Stimme kennt; sonst bliebe eine ungültige Kennung aktiv.
         // Ohne eigene Wahl: Phonon vor Systemstimme, auch wenn der Phonon-Katalog erst nach dem Öffnen geladen ist.
         let phononName = phononFailed ? nil : PhononEngine.shared.voices[lang]?.first
-        if let id = voiceIdentifier, voiceMatches(id, lang), PhononEngine.voiceName(id) != nil || phononName == nil { return nil }
+        let best = Self.bestSystemVoice(lang)
+        if let id = voiceIdentifier, voiceMatches(id, lang) {
+            if PhononEngine.voiceName(id) != nil { return nil }
+            // Systemstimme: bleibt, außer Phonon kommt dazu oder eine bessere (Erweitert/Premium) wurde geladen.
+            let quality = AVSpeechSynthesisVoice(identifier: id)?.quality.rawValue ?? 0
+            if phononName == nil, (best?.quality.rawValue ?? 0) <= quality { return nil }
+        }
         if let name = phononName { return PhononEngine.identifier(language: lang, voice: name) }
-        return AVSpeechSynthesisVoice.speechVoices().filter { $0.language.hasPrefix(lang) }
-            .max { $0.quality.rawValue < $1.quality.rawValue }?.identifier
+        return best?.identifier
+    }
+
+    /// Beste installierte Systemstimme der Sprache (Premium vor Erweitert vor Standard).
+    static func bestSystemVoice(_ lang: String) -> AVSpeechSynthesisVoice? {
+        AVSpeechSynthesisVoice.speechVoices().filter { $0.language.hasPrefix(lang) }
+            .max { ($0.quality.rawValue, $1.name) < ($1.quality.rawValue, $0.name) }
+    }
+
+    /// Für die Lesesprache gibt es weder Phonon noch eine bessere Systemstimme als „Standard“: Hinweis zum Laden
+    /// (Einstellungen › Bedienungshilfen › Gesprochene Inhalte › Stimmen; kostenlos, die App kann es nicht selbst).
+    var betterVoiceDownloadable: Bool {
+        guard let lang = voiceLanguage, PhononEngine.shared.voices[lang]?.isEmpty != false else { return false }
+        return (Self.bestSystemVoice(lang)?.quality ?? .default) == .default
     }
 
     /// Wahl in der Stimmenliste: gilt für die Sprache des Buchs (lva#352) bzw. nur das Buch.

@@ -1079,7 +1079,13 @@ struct VoiceListContent: View {
             } header: {
                 Text("Systemstimmen")
             } footer: {
-                Text("Bessere Stimmen (Premium) lädst du kostenlos unter Einstellungen › Bedienungshilfen › Gesprochene Inhalte › Stimmen.")
+                if playback.betterVoiceDownloadable, let lang {
+                    let name = Locale.current.localizedString(forLanguageCode: lang) ?? lang
+                    Text("Für \(name) ist nur die einfache Systemstimme geladen. Eine deutlich bessere Stimme (Erweitert oder Premium) lädst du kostenlos unter Einstellungen › Bedienungshilfen › Gesprochene Inhalte › Stimmen › \(name). Ohne eigene Wahl nimmt die App sie danach automatisch.")
+                        .foregroundStyle(.orange)
+                } else {
+                    Text("Bessere Stimmen (Premium) lädst du kostenlos unter Einstellungen › Bedienungshilfen › Gesprochene Inhalte › Stimmen.")
+                }
             }
             if !otherPhonon.isEmpty {
                 Section {
