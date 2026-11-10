@@ -1434,11 +1434,13 @@ async projektKontextUebersicht(suiteId: string) : Promise<Result<KontextUebersic
 },
 /**
  * Schaltet „Als Kontext“ eines Eintrags. `form` ändert die Form, `edition` die Fassung eines
- * Buchs (leer = Hauptfassung); fehlt eines, bleibt es, wie es ist.
+ * Buchs (leer = Hauptfassung); fehlt eines, bleibt es, wie es ist. `expected_stand`: der `stand` der
+ * angezeigten Übersicht; hat sich die Auswahl seitdem geändert, kommt `projekte.stand_veraltet` und es
+ * ändert sich nichts (P4c-1).
  */
-async projektKontextSchalten(suiteId: string, eintragId: string, on: boolean, form: KontextForm | null, edition: string | null) : Promise<Result<KontextUebersicht, string>> {
+async projektKontextSchalten(suiteId: string, eintragId: string, on: boolean, form: KontextForm | null, edition: string | null, expectedStand: string | null) : Promise<Result<KontextUebersicht, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("projekt_kontext_schalten", { suiteId, eintragId, on, form, edition }) };
+    return { status: "ok", data: await TAURI_INVOKE("projekt_kontext_schalten", { suiteId, eintragId, on, form, edition, expectedStand }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };

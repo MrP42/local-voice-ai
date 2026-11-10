@@ -39,6 +39,30 @@ fn ablage(app: &AppHandle) -> Antwort<Ablage> {
     Ok(Ablage::neu(dir))
 }
 
+/// Nach einer Änderung, die Freigaben, Klassen oder den Bestand der Ablage verengen kann: laufende
+/// Projektläufe mit Ablage-Inhalten abbrechen (lva#365 P4c-1, Widerruf). Auch nach einem Fehler, weil
+/// eine halb ausgeführte Änderung den Bestand schon verändert haben kann. Welche Befehle das tun
+/// müssen, steht in `ABLAGE_WIDERRUF`; der Quelltest `ablage_aenderungen_widerrufen_laufende_projektlaeufe`
+/// (tests_p4c) prüft, dass jeder davon [`widerrufen`] ruft.
+fn widerrufen<T>(app: &AppHandle, ergebnis: Antwort<T>) -> Antwort<T> {
+    crate::projekte::zustand::ablage_geaendert(app);
+    ergebnis
+}
+
+/// Befehle, die nach ihrer Ausführung [`widerrufen`] rufen müssen.
+#[cfg(test)]
+pub(crate) const ABLAGE_WIDERRUF: [&str; 9] = [
+    "ablage_ordner_verschieben",
+    "ablage_ordner_einstellungen",
+    "ablage_ki_setzen",
+    "ablage_cloud_ausnahme_setzen",
+    "ablage_freigaben_neu_festlegen",
+    "ablage_in_papierkorb",
+    "ablage_endgueltig_loeschen",
+    "ablage_papierkorb_leeren",
+    "ablage_datei_verschieben",
+];
+
 /// Führt eine blockierende Ablageoperation außerhalb des Async-Kerns aus.
 async fn blockierend<T: Send + 'static>(
     app: &AppHandle,
@@ -145,10 +169,11 @@ pub async fn ablage_ordner_verschieben(
     id: String,
     eltern: Option<String>,
 ) -> Antwort<()> {
-    mit_nachlauf(&app, false, move |a| {
+    let r = mit_nachlauf(&app, false, move |a| {
         a.ordner_verschieben(&id, eltern.as_deref())
     })
-    .await
+    .await;
+    widerrufen(&app, r)
 }
 
 /// Datenklasse, „Nur dieses Gerät“ und „KI-Entwürfe“ eines Ordners.
@@ -162,7 +187,7 @@ pub async fn ablage_ordner_einstellungen(
     let projekte = crate::portable::app_data_dir(&app)
         .map_err(|e| e.to_string())?
         .join("projekte");
-    mit_nachlauf(&app, false, move |a| {
+    let r = mit_nachlauf(&app, false, move |a| {
         a.ordner_einstellungen(&id, &einstellungen)?;
         // Wieder synchron (D4): Rückweg lokal → sync sofort; scheitert er, setzt der Sync-Takt fort.
         if let Err(e) = a.rueckweg(&super::speicher::ProjektVerweise::neu(projekte)) {
@@ -170,14 +195,16 @@ pub async fn ablage_ordner_einstellungen(
         }
         Ok(())
     })
-    .await
+    .await;
+    widerrufen(&app, r)
 }
 
 /// KI-Freigabe eines Ordners (gerätelokal); `null` = erbt wieder.
 #[tauri::command]
 #[specta::specta]
 pub async fn ablage_ki_setzen(app: AppHandle, id: String, stufe: Option<KiStufe>) -> Antwort<()> {
-    mit_nachlauf(&app, false, move |a| a.ki_setzen(&id, stufe)).await
+    let r = mit_nachlauf(&app, false, move |a| a.ki_setzen(&id, stufe)).await;
+    widerrufen(&app, r)
 }
 
 /// Cloud-Ausnahme je (Ordner, Anbieter) für einen vertraulichen Ordner erteilen (`an`) oder entziehen
@@ -190,10 +217,11 @@ pub async fn ablage_cloud_ausnahme_setzen(
     anbieter: String,
     an: bool,
 ) -> Antwort<()> {
-    blockierend(&app, move |a| {
+    let r = blockierend(&app, move |a| {
         a.cloud_ausnahme_setzen(&ordner, &anbieter, an)
     })
-    .await
+    .await;
+    widerrufen(&app, r)
 }
 
 /// Einziges schreibendes KI-Werkzeug (D3, Spec §5.5): legt einen Entwurf (Markdown) als neue Datei in
@@ -228,7 +256,8 @@ pub async fn ablage_entwurf_anlegen(
 #[tauri::command]
 #[specta::specta]
 pub async fn ablage_freigaben_neu_festlegen(app: AppHandle) -> Antwort<()> {
-    mit_nachlauf(&app, false, |a| a.freigaben_neu_festlegen()).await
+    let r = mit_nachlauf(&app, false, |a| a.freigaben_neu_festlegen()).await;
+    widerrufen(&app, r)
 }
 
 /// Legt eine Datei oder einen Ordner (mit Struktur) in einem Ordner der Ablage ab. Bei Namenskollision
@@ -248,7 +277,8 @@ pub async fn ablage_importieren(
 #[tauri::command]
 #[specta::specta]
 pub async fn ablage_in_papierkorb(app: AppHandle, art: AblageArt, id: String) -> Antwort<()> {
-    mit_nachlauf(&app, false, move |a| a.in_papierkorb(art, &id)).await
+    let r = mit_nachlauf(&app, false, move |a| a.in_papierkorb(art, &id)).await;
+    widerrufen(&app, r)
 }
 
 #[tauri::command]
@@ -264,13 +294,15 @@ pub async fn ablage_endgueltig_loeschen(
     art: AblageArt,
     id: String,
 ) -> Antwort<AblageLoeschBericht> {
-    mit_nachlauf(&app, false, move |a| a.endgueltig_loeschen(art, &id)).await
+    let r = mit_nachlauf(&app, false, move |a| a.endgueltig_loeschen(art, &id)).await;
+    widerrufen(&app, r)
 }
 
 #[tauri::command]
 #[specta::specta]
 pub async fn ablage_papierkorb_leeren(app: AppHandle) -> Antwort<AblageLoeschBericht> {
-    mit_nachlauf(&app, false, |a| a.papierkorb_leeren()).await
+    let r = mit_nachlauf(&app, false, |a| a.papierkorb_leeren()).await;
+    widerrufen(&app, r)
 }
 
 #[tauri::command]
@@ -288,7 +320,8 @@ pub async fn ablage_datei_umbenennen(app: AppHandle, id: String, name: String) -
 #[tauri::command]
 #[specta::specta]
 pub async fn ablage_datei_verschieben(app: AppHandle, id: String, ordner: String) -> Antwort<()> {
-    mit_nachlauf(&app, false, move |a| a.datei_verschieben(&id, &ordner)).await
+    let r = mit_nachlauf(&app, false, move |a| a.datei_verschieben(&id, &ordner)).await;
+    widerrufen(&app, r)
 }
 
 /// „Bestand neu aufbauen“: nur bei fehlendem oder defektem Ablagejournal. Liefert die Zahl der Funde.

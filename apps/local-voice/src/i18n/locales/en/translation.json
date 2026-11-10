@@ -9107,7 +9107,8 @@
       "recherche.unavailable": "Research is not set up.",
       "recherche.storage": "The research could not be saved.",
       "projekte.storage": "The project directory could not be read or written.",
-      "projekte.not_found": "Not found."
+      "projekte.not_found": "Not found.",
+      "projekte.stand_veraltet": "The selection changed since it was displayed. Please reload."
     },
     "ergebnis": {
       "modus": "Quick",

@@ -688,6 +688,7 @@ fn projektweg_verweisart_ablage_form_auszuege() {
         titel: "T".into(),
         link,
         lesbar: true,
+        klasse: wai_projekte::Klasse::Internal,
     };
     let a = m("a", herkunft::ablage_link(&dat));
     let b = m("b", herkunft::ablage_link(&ord));
