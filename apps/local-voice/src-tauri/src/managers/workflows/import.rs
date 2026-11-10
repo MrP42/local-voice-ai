@@ -74,7 +74,9 @@ use super::action::{
 };
 use super::catalog::{self, ActionSpec};
 use super::engine::Engine;
-use super::trigger::folder::{default_extensions, display_path, FileProbe, SystemProbe};
+use super::trigger::folder::{
+    default_extensions, display_path, entry_state, EntryState, FileProbe, SystemProbe,
+};
 
 /// Laengster Titel einer Besprechung (wie `meetings::metadata`).
 const TITLE_MAX_CHARS: usize = 300;
@@ -202,6 +204,9 @@ pub struct Source {
     pub name: String,
 }
 
+const MISSING_MESSAGE: &str = "Die Datei gibt es nicht (mehr) oder sie ist nicht lesbar.";
+const DETOUR_MESSAGE: &str =
+    "Die Datei ist eine Verknüpfung oder ein unbekannter Sonderfall und wird nicht gelesen.";
 const CLOUD_ONLY_MESSAGE: &str = "Die Datei liegt nur in der Cloud (OneDrive) und wird nicht heruntergeladen: „Immer auf diesem Gerät behalten“ wählen und den Lauf wiederholen.";
 
 fn permanent(m: impl Into<String>) -> StepError {
@@ -230,31 +235,33 @@ pub fn resolve_source(
     let sandbox = Sandbox::open(&config.path).map_err(|e| permanent(e.to_string()))?;
 
     let given = Path::new(raw_path);
-    // Cloud-Platzhalter VOR jeder Pfadaufloesung abweisen: `canonicalize` oeffnet die Datei. Die
-    // Rohdaten kommen ohne Oeffnen (`FindFirstFileExW`), nicht aus `fs::metadata`.
+    // VOR jeder Pfadaufloesung urteilen (`canonicalize` oeffnet die Datei), fail-closed: nicht lesbare
+    // Rohdaten, Verknuepfungen und Cloud-Platzhalter werden abgewiesen. Die Rohdaten kommen ohne
+    // Oeffnen (`FindFirstFileExW`), nicht aus `fs::metadata`.
     let candidate = if given.is_absolute() {
-        Some(given.to_path_buf())
+        given.to_path_buf()
     } else {
-        sandbox_folder::check_relative(raw_path)
-            .ok()
-            .map(|_| sandbox.root().join(raw_path))
+        sandbox_folder::check_relative(raw_path).map_err(|e| permanent(e.to_string()))?;
+        sandbox.root().join(raw_path)
     };
-    if let Some(c) = candidate {
-        if let Ok(roh) = eintrag::roh(&c) {
-            if roh.ist_datei() && probe.cloud_only(&c, &roh) {
-                return Err(permanent(CLOUD_ONLY_MESSAGE));
-            }
+    let first = eintrag::roh(&candidate).map_err(|_| permanent(MISSING_MESSAGE))?;
+    if first.ist_datei() {
+        match entry_state(&first) {
+            EntryState::Detour => return Err(permanent(DETOUR_MESSAGE)),
+            EntryState::CloudOnly => return Err(permanent(CLOUD_ONLY_MESSAGE)),
+            _ => {}
+        }
+        if probe.cloud_only(&candidate, &first) {
+            return Err(permanent(CLOUD_ONLY_MESSAGE));
         }
     }
     let canonical = if given.is_absolute() {
-        std::fs::canonicalize(given)
-            .map_err(|_| permanent("Die Datei gibt es nicht (mehr) oder sie ist nicht lesbar."))?
+        std::fs::canonicalize(given).map_err(|_| permanent(MISSING_MESSAGE))?
     } else {
         let resolved = sandbox
             .resolve_file(raw_path, false)
             .map_err(|e| permanent(e.to_string()))?;
-        std::fs::canonicalize(&resolved)
-            .map_err(|_| permanent("Die Datei gibt es nicht (mehr) oder sie ist nicht lesbar."))?
+        std::fs::canonicalize(&resolved).map_err(|_| permanent(MISSING_MESSAGE))?
     };
     if !sandbox.contains(&canonical) {
         return Err(permanent(format!(
@@ -267,10 +274,12 @@ pub fn resolve_source(
     sandbox
         .resolve_file(&rel, false)
         .map_err(|e| permanent(e.to_string()))?;
-    let roh = eintrag::roh(&canonical)
-        .map_err(|_| permanent("Die Datei gibt es nicht (mehr) oder sie ist nicht lesbar."))?;
+    let roh = eintrag::roh(&canonical).map_err(|_| permanent(MISSING_MESSAGE))?;
     if !roh.ist_datei() {
         return Err(permanent("Der Pfad ist keine Datei."));
+    }
+    if entry_state(&roh) == EntryState::Detour {
+        return Err(permanent(DETOUR_MESSAGE));
     }
     let extension = canonical
         .extension()

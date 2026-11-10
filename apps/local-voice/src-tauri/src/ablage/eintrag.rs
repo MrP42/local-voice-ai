@@ -177,21 +177,26 @@ pub fn verzeichnis(p: &Path) -> io::Result<Vec<Eintrag>> {
     Ok(v)
 }
 
-/// Urteil über eine schon geöffnete Datei, vom Handle (`GetFileInformationByHandleEx` mit
-/// `FileAttributeTagInfo`), nicht vom Pfad. Nicht bestimmbar: Umweg (im Zweifel ablehnen). `p` ist nur für die
-/// Test-Naht.
-pub fn offen_urteil(f: &fs::File, p: &Path) -> Urteil {
+/// Attribute und Reparse-Tag einer schon geöffneten Datei, vom Handle (`GetFileInformationByHandleEx` mit
+/// `FileAttributeTagInfo`), nicht vom Pfad. `None`: nicht bestimmbar. `p` ist nur für die Test-Naht.
+pub fn offen_daten(f: &fs::File, p: &Path) -> Option<(u32, u32)> {
     let _ = p;
     #[cfg_attr(not(test), allow(unused_mut))]
-    let mut u = match system::offen(f) {
-        Ok((attribute, tag)) => reparse_urteil(tag, attribute),
-        Err(_) => Urteil::Umweg,
-    };
+    let mut d = system::offen(f).ok();
     #[cfg(test)]
-    if let Some((attribute, tag)) = naht::handle(p) {
-        u = reparse_urteil(tag, attribute);
+    if let Some(x) = naht::handle(p) {
+        d = Some(x);
     }
-    u
+    d
+}
+
+/// Urteil über eine schon geöffnete Datei, vom Handle (siehe [`offen_daten`]). Nicht bestimmbar: Umweg (im
+/// Zweifel ablehnen).
+pub fn offen_urteil(f: &fs::File, p: &Path) -> Urteil {
+    match offen_daten(f, p) {
+        Some((attribute, tag)) => reparse_urteil(tag, attribute),
+        None => Urteil::Umweg,
+    }
 }
 
 #[cfg(not(windows))]

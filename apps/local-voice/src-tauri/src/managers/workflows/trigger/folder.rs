@@ -27,7 +27,7 @@
 //!    (Windows: Oeffnen mit `FILE_SHARE_READ` scheitert, solange ein Schreiber sie haelt).
 //! 3. **Lokal da**: OneDrive-Platzhalter, die nur in der Cloud liegen
 //!    (`RECALL_ON_DATA_ACCESS`/`RECALL_ON_OPEN`/`OFFLINE`), werden NICHT gelesen (jeder Zugriff
-//!    wuerde den Download anstossen), sondern gemeldet (`TickReport::skipped`, Log ohne Namen, und
+//!    wuerde den Download anstossen), sondern gemeldet (`TickReport::skipped` und Log, beide ohne Dateinamen, und
 //!    [`State::cloud_only`] fuer die Oberflaeche). Sobald der Nutzer sie herunterlaedt
 //!    („Immer auf diesem Gerät behalten“), wird sie wie jede andere Datei behandelt.
 //!    Die Attribute kommen unter Windows NICHT aus `fs::metadata`/`symlink_metadata` (Rust oeffnet
@@ -232,13 +232,37 @@ pub enum EntryState {
     Local,
 }
 
+/// `IO_REPARSE_TAG_WOF` (Windows Overlay Filter, „compact /exe“) und `IO_REPARSE_TAG_DEDUP`: der
+/// Treiber liefert die Daten beim normalen Oeffnen transparent und holt nichts aus der Cloud.
+const REPARSE_TAG_WOF: u32 = 0x8000_0017;
+const REPARSE_TAG_DEDUP: u32 = 0x8000_0013;
+
+/// Ist `tag` ein datentransparentes Tag (komprimierte oder deduplizierte lokale Datei)?
+pub fn reparse_tag_transparent(tag: u32) -> bool {
+    tag == REPARSE_TAG_WOF || tag == REPARSE_TAG_DEDUP
+}
+
+/// Urteil des Ausloesers ueber Attribute und Tag: wie `eintrag::reparse_urteil`, doch WOF und
+/// Dedup sind lokale Dateien. Der Ausloeser oeffnet OHNE `FILE_FLAG_OPEN_REPARSE_POINT` und liest
+/// damit den echten Inhalt. Die Ablage oeffnet mit diesem Flag und behaelt ihr strenges Urteil.
+pub fn trigger_urteil(tag: u32, attribute: u32) -> Urteil {
+    let u = eintrag::reparse_urteil(tag, attribute);
+    if u == Urteil::Umweg
+        && attribute & eintrag::ATTR_REPARSE_POINT != 0
+        && reparse_tag_transparent(tag)
+    {
+        return Urteil::Lesbar;
+    }
+    u
+}
+
 /// Reine Entscheidung „ausloesen ja/nein“ aus den Rohdaten (`ablage::eintrag::roh`). Nur
 /// [`EntryState::Local`] darf den Ausloeser anstossen; „nur online“ gilt unabhaengig vom Reparse-Bit.
 pub fn entry_state(roh: &Roh) -> EntryState {
     if !roh.ist_datei() {
         return EntryState::NotAFile;
     }
-    match roh.urteil() {
+    match trigger_urteil(roh.tag, roh.attribute) {
         Urteil::NurOnline => EntryState::CloudOnly,
         Urteil::Umweg => EntryState::Detour,
         Urteil::Lesbar => EntryState::Local,
@@ -320,14 +344,25 @@ pub fn open_no_recall(path: &Path) -> std::io::Result<fs::File> {
     let file = open_no_recall_with(path, 1 | 2 | 4)?;
     #[cfg(not(windows))]
     let file = fs::File::open(path)?;
-    if eintrag::offen_urteil(&file, path) != Urteil::Lesbar {
+    let lesbar = eintrag::offen_daten(&file, path)
+        .is_some_and(|(attribute, tag)| trigger_urteil(tag, attribute) == Urteil::Lesbar);
+    if !lesbar {
         return Err(std::io::Error::other("nur online oder Verknüpfung"));
     }
     Ok(file)
 }
 
-/// SHA-256 des Inhalts als Kleinbuchstaben-Hex, in Bloecken (kein Laden der ganzen Datei).
-pub fn sha256_file(path: &Path) -> std::io::Result<String> {
+/// Ergebnis des Hashens: Hash und Groesse/Zeit, wie das geprueft-geoeffnete Handle sie NACH dem Lesen
+/// meldet (der Verzeichniseintrag hinkt auf NTFS/SMB nach).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Hashed {
+    pub hash: String,
+    pub size: u64,
+    pub mtime_ms: i64,
+}
+
+/// SHA-256 des Inhalts, in Bloecken (kein Laden der ganzen Datei), ueber ein No-Recall-Handle.
+pub fn hash_file(path: &Path) -> std::io::Result<Hashed> {
     let mut file = open_no_recall(path)?;
     let mut hasher = Sha256::new();
     let mut buf = vec![0u8; HASH_BLOCK];
@@ -338,7 +373,21 @@ pub fn sha256_file(path: &Path) -> std::io::Result<String> {
         }
         hasher.update(&buf[..n]);
     }
-    Ok(format!("{:x}", hasher.finalize()))
+    let meta = file.metadata()?;
+    Ok(Hashed {
+        hash: format!("{:x}", hasher.finalize()),
+        size: meta.len(),
+        mtime_ms: meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or(0, |d| d.as_millis() as i64),
+    })
+}
+
+/// SHA-256 des Inhalts als Kleinbuchstaben-Hex.
+pub fn sha256_file(path: &Path) -> std::io::Result<String> {
+    hash_file(path).map(|h| h.hash)
 }
 
 /// Pfad fuer Anzeige und Parameter: ohne das `\\?\`-Praefix der kanonischen Windows-Pfade.
@@ -707,8 +756,10 @@ fn scan_workflow(
                     "workflows: „{}“: eine Datei liegt nur in OneDrive und wird nicht heruntergeladen",
                     a.row.name
                 );
+                // Kein Dateiname: `skipped` geht ins Log; der Name erreicht die Oberflaeche nur ueber
+                // `State::cloud_only`.
                 report.skipped.push(format!(
-                    "{}: „{name}“ liegt nur in der Cloud (OneDrive) und wird nicht heruntergeladen; \"Immer auf diesem Gerät behalten\" holt sie.",
+                    "{}: eine Datei liegt nur in der Cloud (OneDrive) und wird nicht heruntergeladen; \"Immer auf diesem Gerät behalten\" holt sie.",
                     a.row.name
                 ));
             }
@@ -747,8 +798,8 @@ fn scan_workflow(
             continue;
         }
         hashed += 1;
-        let hash = match sha256_file(&path) {
-            Ok(h) => h,
+        let (hash, at_hash) = match hash_file(&path) {
+            Ok(h) => (h.hash.clone(), h),
             Err(e) => {
                 // Gesperrt oder verschwunden: beim naechsten Takt erneut.
                 log::debug!("workflows: Datei nicht gelesen ({})", e.kind());
@@ -756,7 +807,12 @@ fn scan_workflow(
                 continue;
             }
         };
-        // Waehrend des Hashens veraendert? Dann war sie nicht fertig.
+        // Waehrend des Hashens veraendert? Dann war sie nicht fertig: zuerst nach dem Handle, dann
+        // nach dem Verzeichniseintrag.
+        if at_hash.size != size || at_hash.mtime_ms != modified {
+            state.reset(&key);
+            continue;
+        }
         match eintrag::roh(&path) {
             Ok(r)
                 if entry_state(&r) == EntryState::Local

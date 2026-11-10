@@ -340,7 +340,28 @@ fn the_decision_to_fire_comes_from_the_attributes_alone() {
     // Verknuepfungen und unbekannte Reparse-Points: nie.
     assert_eq!(datei(ATTR_REPARSE, 0xA000_000C), Detour, "Symlink");
     assert_eq!(datei(ATTR_REPARSE, 0xA000_0003), Detour, "Junction");
-    assert_eq!(datei(ATTR_REPARSE, 0x8000_0017), Detour, "unbekanntes Tag");
+    assert_eq!(datei(ATTR_REPARSE, 0x8000_0018), Detour, "fremdes Tag");
+    // Datentransparent (kein Abruf, normales Oeffnen liefert den Inhalt): lokale Dateien.
+    assert_eq!(
+        datei(ATTR_REPARSE | ATTR_ARCHIV, 0x8000_0017),
+        Local,
+        "WOF (compact /exe)"
+    );
+    assert_eq!(
+        datei(ATTR_REPARSE | ATTR_SPARSE, 0x8000_0013),
+        Local,
+        "Dedup"
+    );
+    assert_eq!(
+        datei(ATTR_REPARSE | 0x40_0000, 0x8000_0017),
+        CloudOnly,
+        "nur online schlaegt auch ein transparentes Tag"
+    );
+    assert_eq!(
+        datei(0x8000_0017, 0x8000_0017),
+        Local,
+        "ohne Reparse-Bit ist das Tag belanglos"
+    );
     // Keine Datei.
     assert_eq!(entry_state(&roh_with(Gattung::Ordner, 0x10, 0)), NotAFile);
     assert_eq!(entry_state(&roh_with(Gattung::Link, 0, 0)), NotAFile);
@@ -389,6 +410,24 @@ fn placeholders_reported_by_the_find_data_never_fire_and_are_never_hashed() {
     assert_eq!(all.started.len(), 1, "nur die lokale Datei: {all:?}");
     assert_eq!(all.skipped.len(), 4, "jede einmal gemeldet: {all:?}");
     assert_eq!(w.state.cloud_only().len(), 4);
+    for line in &all.skipped {
+        assert!(
+            !line.contains(".wav"),
+            "kein Dateiname im Bericht (Log): {line}"
+        );
+    }
+    let mut names: Vec<String> = w.state.cloud_only().into_iter().map(|c| c.name).collect();
+    names.sort();
+    assert_eq!(
+        names,
+        [
+            "a-ohne-bits.wav",
+            "b-voll.wav",
+            "c-open.wav",
+            "d-offline.wav"
+        ],
+        "die Namen erreichen die Oberflaeche nur ueber `State::cloud_only`"
+    );
     let runs = w.runs();
     assert_eq!(runs.len(), 1);
     assert_eq!(context_of(&runs[0])["trigger"]["name"], "lokal.wav");
@@ -466,6 +505,73 @@ fn a_file_that_goes_online_while_it_is_hashed_is_not_taken() {
     assert!(w.runs().is_empty());
     eintrag::naht::leeren();
     assert_eq!(w.ticks(2).started.len(), 1);
+}
+
+/// Handle-Urteil fuer transparente Tags: eine WOF-komprimierte Datei wird gehasht, ein fremdes Tag nicht.
+#[test]
+fn the_hash_accepts_a_transparent_reparse_handle_and_refuses_a_foreign_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path().join("w.wav");
+    fs::write(&p, b"inhalt").unwrap();
+    eintrag::naht::handle_setzen(&p, ATTR_REPARSE | ATTR_ARCHIV, 0x8000_0017);
+    assert!(sha256_file(&p).is_ok(), "WOF");
+    eintrag::naht::handle_setzen(&p, ATTR_REPARSE | ATTR_SPARSE, 0x8000_0013);
+    assert!(sha256_file(&p).is_ok(), "Dedup");
+    eintrag::naht::handle_setzen(&p, ATTR_REPARSE, 0x8000_0018);
+    assert!(sha256_file(&p).is_err(), "fremdes Tag");
+    eintrag::naht::handle_setzen(&p, ATTR_REPARSE, 0xA000_000C);
+    assert!(sha256_file(&p).is_err(), "Symlink");
+    eintrag::naht::leeren();
+}
+
+#[test]
+fn the_hash_reports_size_and_time_from_the_handle() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path().join("w.wav");
+    fs::write(&p, b"inhalt").unwrap();
+    let h = hash_file(&p).unwrap();
+    let roh = eintrag::roh(&p).unwrap();
+    assert_eq!(h.size, roh.groesse);
+    assert_eq!(h.mtime_ms, roh.zeit);
+    assert_eq!(h.hash, sha256_file(&p).unwrap());
+}
+
+/// Eine Attrappe, die die Datei zwischen Stabilitaetspruefung und Hash veraendert (wie ein Schreiber,
+/// dessen Verzeichniseintrag noch nicht nachgezogen hat).
+struct WriterProbe(PathBuf, AtomicUsize);
+
+impl FileProbe for WriterProbe {
+    fn cloud_only(&self, _path: &Path, _roh: &Roh) -> bool {
+        false
+    }
+    fn locked(&self, _path: &Path) -> bool {
+        if self.1.fetch_add(1, Ordering::SeqCst) == 0 {
+            let mut f = fs::OpenOptions::new().append(true).open(&self.0).unwrap();
+            f.write_all(b"-mehr").unwrap();
+        }
+        false
+    }
+}
+
+#[test]
+fn a_file_that_grows_before_the_hash_is_not_taken_until_it_is_quiet_again() {
+    let mut w = world();
+    let p = w.put("waechst.wav", b"inhalt");
+    let probe = WriterProbe(p, AtomicUsize::new(0));
+    let mut all = TickReport::default();
+    for _ in 0..2 {
+        all.absorb(w.tick_with(&probe));
+    }
+    assert!(
+        all.started.is_empty(),
+        "gewachsen waehrend des Hashens: {all:?}"
+    );
+    let mut after = TickReport::default();
+    for _ in 0..3 {
+        after.absorb(w.tick_with(&probe));
+    }
+    assert_eq!(after.started.len(), 1, "danach ruhig: {after:?}");
+    assert_eq!(context_of(&w.runs()[0])["trigger"]["size"], 11);
 }
 
 // ---------------------------------------------------------------------------
@@ -705,7 +811,11 @@ fn a_cloud_only_placeholder_is_reported_once_never_read_and_taken_after_it_is_lo
         "einmal gemeldet, nicht bei jedem Takt: {r:?}"
     );
     assert!(r.skipped[0].contains("Cloud"), "{}", r.skipped[0]);
-    assert!(r.skipped[0].contains("nur-cloud.wav"));
+    assert!(
+        !r.skipped[0].contains("nur-cloud.wav"),
+        "`skipped` geht ins Log: kein Dateiname: {}",
+        r.skipped[0]
+    );
     assert_eq!(
         w.probe.locked_calls.load(Ordering::SeqCst),
         0,
