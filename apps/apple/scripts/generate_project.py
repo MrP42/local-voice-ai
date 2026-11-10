@@ -35,6 +35,8 @@ for name, platform, bundle in [('VoicePhone','iphoneos','de.localvoice.prototype
         # „Öffnen in“ Local Voice für Audio und Video (Sprachmemos .m4a/.qta, Aufnahmen anderer Apps). Kopie statt Bearbeiten am Ort.
         'CFBundleDocumentTypes':[{'CFBundleTypeName':'Audio- und Videoaufnahme','CFBundleTypeRole':'Viewer','LSHandlerRank':'Alternate',
                                   'LSItemContentTypes':['public.audio','public.movie','public.audiovisual-content','com.apple.quicktime-audio','com.apple.m4a-audio']}],
+        # Documents bleibt privat: nie UIFileSharingEnabled, nie Öffnen am Ort. Der Debug-Bau schreibt dort Simulator-Berichte
+        # mit Namen (AblageSync.debugLauf, nur #if DEBUG); AblageDebugSchutzTests prüft beides.
         'LSSupportsOpeningDocumentsInPlace':False})
     put(root/(name+'-Info.plist'), plistlib.dumps(info))
     settings={'PRODUCT_NAME':name,'PRODUCT_BUNDLE_IDENTIFIER':bundle,'INFOPLIST_FILE':name+'-Info.plist','SDKROOT':platform,'SWIFT_VERSION':'5.0','TARGETED_DEVICE_FAMILY':'1' if platform=='iphoneos' else '4','CODE_SIGN_STYLE':'Automatic','GENERATE_INFOPLIST_FILE':'NO','SUPPORTED_PLATFORMS':'iphoneos iphonesimulator' if platform=='iphoneos' else 'watchos watchsimulator','IPHONEOS_DEPLOYMENT_TARGET':'26.0','WATCHOS_DEPLOYMENT_TARGET':'26.0','ENABLE_USER_SCRIPT_SANDBOXING':'YES'}

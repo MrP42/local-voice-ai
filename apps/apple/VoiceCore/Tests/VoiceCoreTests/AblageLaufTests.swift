@@ -675,6 +675,64 @@ final class AblageLaufTests: XCTestCase {
         XCTAssertEqual(list("dateien"), [])
     }
 
+    // MARK: Nachtrag zu D5a-3: offene Anforderungen im Bericht
+
+    /// Der Bericht nennt die angeforderten Originale, die der Lauf nicht erledigt hat: Mobilfunk, Budget, Netz weg, voller
+    /// Datenträger, keine Downloads, übersprungen. Unbekanntes und einzeln Gescheitertes nicht.
+    func testBerichtNenntOffeneAnforderungen() async throws {
+        let hub = AblageHubNachbau()
+        let ws = bestuecke(hub, [welt(1), welt(2)])
+        let a1 = AblageOriginalAnforderung(dat: ws[0].datei.id, fas: W.fasId(1)), a2 = AblageOriginalAnforderung(dat: ws[1].datei.id, fas: W.fasId(2))
+        let unbekannt = AblageOriginalAnforderung(dat: W.datId(9), fas: W.fasId(9))
+        let ids: Set<String> = [AblageKrypto.hubBlobId(key: W.key, sha256Hex: ws[0].datei.fassungen[0].blob)!,
+                                AblageKrypto.hubBlobId(key: W.key, sha256Hex: ws[1].datei.fassungen[0].blob)!]
+        _ = try await lauf(hub)                                                         // Texte vorab
+        // Mobilfunk: beide warten.
+        var o = AblageLaufOptionen(angefordert: [a2, unbekannt, a1, a2])               // Doppelte und Unbekanntes
+        o.bulk = true; o.mobil = true
+        var b = try await lauf(hub, o)
+        XCTAssertEqual(b.offeneAnforderungen, [a2, a1], "Reihenfolge der Anforderung, ohne Doppelte und ohne Unbekanntes")
+        // Budget: das erste läuft immer, das zweite bleibt offen (kleinere zuerst: a1 vor a2).
+        o = AblageLaufOptionen(angefordert: [a1, a2])
+        o.downloadBudget = 1
+        b = try await lauf(hub, o)
+        XCTAssertEqual(b.originaleGeladen, 1)
+        XCTAssertEqual(b.offeneAnforderungen, [a2])
+        // Das erledigte Original taucht nie wieder auf.
+        b = try await lauf(hub, AblageLaufOptionen(angefordert: [a1, a2]))
+        XCTAssertEqual(b.originaleGeladen, 1)
+        XCTAssertEqual(b.offeneAnforderungen, [])
+        // Netz weg und voller Datenträger (frischer Speicher): die abgebrochene und die folgenden bleiben offen.
+        for fehler in [AblageHubFehler.netz, .speicherVoll] {
+            speicher.alleEntfernen()
+            _ = try await lauf(hub)
+            hub.blobHook = { id in if ids.contains(id) { throw fehler } }
+            b = try await lauf(hub, AblageLaufOptionen(angefordert: [a1, a2]))
+            XCTAssertTrue(b.downloadsUnterbrochen, "\(fehler)")
+            XCTAssertEqual(b.offeneAnforderungen, [a1, a2], "\(fehler)")
+            hub.blobHook = nil
+        }
+        // Eine einzelne Datei, die scheitert (Blob fehlt), ist nicht „offen“.
+        hub.blobHook = { id in if id == ids.sorted()[0] { throw AblageHubFehler.http(404, "not_found") } }
+        b = try await lauf(hub, AblageLaufOptionen(angefordert: [a1, a2]))
+        XCTAssertEqual(b.originaleGeladen, 1)
+        XCTAssertEqual(b.offeneAnforderungen, [])
+        hub.blobHook = nil
+        // Keine Downloads erlaubt: nichts geladen, alle ladbaren Anforderungen offen.
+        speicher.alleEntfernen()
+        o = AblageLaufOptionen(angefordert: [a1, unbekannt, a2])
+        o.downloadsErlaubt = false
+        b = try await lauf(hub, o)
+        XCTAssertTrue(b.downloadsRuhen)
+        XCTAssertEqual(b.offeneAnforderungen, [a1, a2])
+        // Übersprungen (ein anderer Lauf hält den Speicherordner): nichts angefasst, alles offen.
+        XCTAssertTrue(AblageLaufSperre.shared.betreten(speicher.wurzel.path))
+        defer { AblageLaufSperre.shared.verlassen(speicher.wurzel.path) }
+        b = try await lauf(hub, AblageLaufOptionen(angefordert: [a1, a1, a2]))
+        XCTAssertTrue(b.uebersprungen)
+        XCTAssertEqual(b.offeneAnforderungen, [a1, a2])
+    }
+
     // MARK: Fix-Runde zu PR #453
 
     /// Fix 2: Ein Original-Download läuft, während ein Lauf `eingangRaeumen` ausführt: sein `.part` bleibt heil.
@@ -952,6 +1010,283 @@ final class AblageDienstTests: XCTestCase {
         XCTAssertEqual(b.originaleGeladen, 1)
         let rest = await dienst.vorgemerkteOriginale
         XCTAssertEqual(rest, [])
+    }
+
+    // MARK: Nachtrag zu D5a-3, Punkt 1: Anforderungen, die ein Lauf nicht erledigt, gehen nicht verloren
+
+    private func anforderung(_ w: Welt) -> AblageOriginalAnforderung { AblageOriginalAnforderung(dat: w.datei.id, fas: w.datei.fassungen[0].fas) }
+    private func originalHubId(_ w: Welt) -> String { AblageKrypto.hubBlobId(key: W.key, sha256Hex: w.datei.fassungen[0].blob)! }
+
+    /// Mobilfunk unter „nur im WLAN“: Originale warten, ihre Anforderung auch.
+    func testMobilWartendeOriginaleBleibenVorgemerktUndKommenImWlan() async throws {
+        let hub = AblageHubNachbau()
+        let ws = bestuecke(hub, [welt(1)])
+        let a = anforderung(ws[0])
+        var o = AblageLaufOptionen(angefordert: [a])
+        o.bulk = true; o.mobil = true
+        let b = try await dienst.laufen(hub: hub, konto: konto, optionen: o)
+        XCTAssertEqual(b.originaleGeladen, 0)
+        XCTAssertEqual(b.wartetAufWLAN, 1)
+        let vorgemerkt = await dienst.vorgemerkteOriginale
+        XCTAssertEqual(vorgemerkt, [a], "die Anforderung wartet mit dem Original auf WLAN")
+        // Später im WLAN (ohne neue Anforderung): der nächste Lauf holt es.
+        let b2 = try await dienst.laufen(hub: hub, konto: konto, optionen: AblageLaufOptionen())
+        XCTAssertEqual(b2.originaleGeladen, 1)
+        let rest = await dienst.vorgemerkteOriginale
+        XCTAssertEqual(rest, [])
+        XCTAssertTrue(speicher.vorhanden(zustand().bestand).original(ws[0].datei.id, W.fasId(1)))
+    }
+
+    /// Budget je Lauf erschöpft (die erste Datei läuft immer): der Rest bleibt vorgemerkt.
+    func testBudgetErschoepftRestDerAnforderungenBleibtVorgemerkt() async throws {
+        let hub = AblageHubNachbau()
+        let ws = bestuecke(hub, [welt(1), welt(2)])
+        _ = try await dienst.laufen(hub: hub, konto: konto, optionen: AblageLaufOptionen())      // Texte vorab
+        let a1 = anforderung(ws[0]), a2 = anforderung(ws[1])
+        var o = AblageLaufOptionen(angefordert: [a1, a2])
+        o.downloadBudget = 1
+        let b = try await dienst.laufen(hub: hub, konto: konto, optionen: o)
+        XCTAssertEqual(b.originaleGeladen, 1, "die erste Datei läuft immer")
+        let vorgemerkt = await dienst.vorgemerkteOriginale
+        XCTAssertEqual(vorgemerkt, [a2], "was das Budget nicht mehr schaffte, bleibt vorgemerkt")
+        let b2 = try await dienst.laufen(hub: hub, konto: konto, optionen: AblageLaufOptionen())
+        XCTAssertEqual(b2.originaleGeladen, 1)
+        let rest = await dienst.vorgemerkteOriginale
+        XCTAssertEqual(rest, [])
+        let v = speicher.vorhanden(zustand().bestand)
+        XCTAssertTrue(v.original(ws[0].datei.id, W.fasId(1)) && v.original(ws[1].datei.id, W.fasId(2)))
+    }
+
+    /// Netz weg, voller Datenträger, WLAN-Regel: die Downloads brechen ab, alle noch offenen Anforderungen bleiben vorgemerkt.
+    func testDownloadsUnterbrochenAnforderungenBleibenVorgemerkt() async throws {
+        let hub = AblageHubNachbau()
+        let ws = bestuecke(hub, [welt(1), welt(2)])
+        let a1 = anforderung(ws[0]), a2 = anforderung(ws[1])
+        let ids: Set<String> = [originalHubId(ws[0]), originalHubId(ws[1])]
+        for fehler in [AblageHubFehler.netz, .speicherVoll, .wlanRegel] {
+            _ = try await dienst.laufen(hub: hub, konto: konto, optionen: AblageLaufOptionen())      // Texte vorab
+            hub.blobHook = { id in if ids.contains(id) { throw fehler } }
+            let b = try await dienst.laufen(hub: hub, konto: konto, optionen: AblageLaufOptionen(angefordert: [a1, a2]))
+            XCTAssertTrue(b.downloadsUnterbrochen, "\(fehler)")
+            let vorgemerkt = await dienst.vorgemerkteOriginale
+            XCTAssertEqual(vorgemerkt, [a1, a2], "\(fehler): die abgebrochene und die noch nicht begonnene Anforderung bleiben")
+            hub.blobHook = nil
+            let b2 = try await dienst.laufen(hub: hub, konto: konto, optionen: AblageLaufOptionen())
+            XCTAssertEqual(b2.originaleGeladen, 2, "\(fehler)")
+            let rest = await dienst.vorgemerkteOriginale
+            XCTAssertEqual(rest, [], "\(fehler)")
+            await dienst.verlassen()                                    // frischer Stand für den nächsten Fall
+        }
+    }
+
+    /// Kein Netz (`downloadsErlaubt` aus): der Lauf lädt nichts, die Anforderung wartet.
+    func testDownloadsRuhenAnforderungBleibtVorgemerkt() async throws {
+        let hub = AblageHubNachbau()
+        let ws = bestuecke(hub, [welt(1)])
+        let a = anforderung(ws[0])
+        var o = AblageLaufOptionen(angefordert: [a])
+        o.downloadsErlaubt = false
+        let b = try await dienst.laufen(hub: hub, konto: konto, optionen: o)
+        XCTAssertTrue(b.downloadsRuhen)
+        let vorgemerkt = await dienst.vorgemerkteOriginale
+        XCTAssertEqual(vorgemerkt, [a])
+        let b2 = try await dienst.laufen(hub: hub, konto: konto, optionen: AblageLaufOptionen())
+        XCTAssertEqual(b2.originaleGeladen, 1)
+        let rest = await dienst.vorgemerkteOriginale
+        XCTAssertEqual(rest, [])
+    }
+
+    /// Was nie ladbar wird (unbekannt) oder an einer einzelnen Datei scheitert (Blob fehlt), wird nicht ewig vorgemerkt.
+    func testNichtLadbareAnforderungenWerdenNichtVorgemerkt() async throws {
+        let hub = AblageHubNachbau()
+        let ws = bestuecke(hub, [welt(1), welt(2)])
+        let fehlt = originalHubId(ws[1])
+        hub.blobHook = { id in if id == fehlt { throw AblageHubFehler.http(404, "not_found") } }
+        let unbekannt = AblageOriginalAnforderung(dat: W.datId(9), fas: W.fasId(9))
+        let b = try await dienst.laufen(hub: hub, konto: konto,
+                                        optionen: AblageLaufOptionen(angefordert: [unbekannt, anforderung(ws[0]), anforderung(ws[1])]))
+        XCTAssertEqual(b.originaleGeladen, 1)
+        let vorgemerkt = await dienst.vorgemerkteOriginale
+        XCTAssertEqual(vorgemerkt, [], "unbekannt und Blob-fehlt (nur diese Datei offen) kehren nicht in jedem Lauf wieder")
+    }
+
+    /// Abmelden verwirft auch Anforderungen, die ein beendeter Lauf noch offen hatte (Epoche des alten Kontos).
+    func testAbmeldenVerwirftVorgemerkteAnforderungen() async throws {
+        let hub = AblageHubNachbau()
+        let ws = bestuecke(hub, [welt(1)])
+        var o = AblageLaufOptionen(angefordert: [anforderung(ws[0])])
+        o.bulk = true; o.mobil = true
+        _ = try await dienst.laufen(hub: hub, konto: konto, optionen: o)
+        let davor = await dienst.vorgemerkteOriginale
+        XCTAssertEqual(davor.count, 1)
+        await dienst.verlassen()
+        let danach = await dienst.vorgemerkteOriginale
+        XCTAssertEqual(danach, [])
+        let b = try await dienst.laufen(hub: hub, konto: konto, optionen: AblageLaufOptionen())
+        XCTAssertEqual(b.originaleGeladen, 0, "das neue Konto erbt keine Anforderung")
+    }
+
+    // MARK: Nachtrag, Punkt 2: nach dem Abmelden kein Bericht des alten Kontos
+
+    /// Endet der abgebrochene Lauf mit einem anderen Fehler (hier: Netz), kommt trotzdem nur der Abbruch an: die Oberfläche
+    /// zeigt nach dem Abmelden keinen Fehler des alten Kontos.
+    func testAbmeldenMeldetNurAbbruchAuchWennDerLaufMitAnderemFehlerEndet() async throws {
+        let hub = AblageHubNachbau()
+        bestuecke(hub, [welt(1)])
+        let tor = AblageTor(), drin = AblageZaehler()
+        hub.pullHook = { _, coll in
+            if coll == "ablage_datei" { drin.erhoehe(); await tor.warten(); throw AblageHubFehler.netz }
+        }
+        let d = dienst!, k = konto
+        let lauf = Task { try await d.laufen(hub: hub, konto: k, optionen: AblageLaufOptionen()) }
+        await ablageWarteBis { drin.wert == 1 }
+        let abmelden = Task { await d.verlassen() }
+        try await Task.sleep(nanoseconds: 100_000_000)
+        tor.oeffnen()
+        await abmelden.value
+        do { _ = try await lauf.value; XCTFail("kein Ergebnis des alten Kontos") }
+        catch is CancellationError {}
+        catch { XCTFail("nur der Abbruch darf ankommen, nicht \(error)") }
+    }
+
+    // MARK: Nachtrag, Punkt 3: Abmelden wartet, bis wirklich nichts mehr läuft
+
+    /// Zwei gleichzeitige Abmeldungen und ein Aufruf direkt nach dem Abmelden: nichts geht verloren, nichts löscht das neue Konto.
+    func testZweiAbmeldungenGleichzeitigUndAufrufDanachVerlierenNichts() async throws {
+        let d = dienst!, k = konto
+        for runde in 0..<25 {
+            let hub = AblageHubNachbau()
+            bestuecke(hub, [welt(1)])
+            let tor = AblageTor(), drin = AblageZaehler()
+            hub.pullHook = { _, coll in if coll == "ablage_datei", drin.erhoehe() == 1 { await tor.warten() } }
+            // Der Lauf mit niedriger Priorität: seine Fortsetzung auf dem Akteur kommt nach der des Abmeldens (Fenster).
+            let lauf = Task(priority: .background) { try await d.laufen(hub: hub, konto: k, optionen: AblageLaufOptionen()) }
+            await ablageWarteBis { drin.wert == 1 }
+            let a = Task(priority: .userInitiated) { await d.verlassen() }
+            let b = Task(priority: .userInitiated) { await d.verlassen() }
+            try await Task.sleep(nanoseconds: 20_000_000)
+            let waehrend = try await d.laufen(hub: hub, konto: k, optionen: AblageLaufOptionen())
+            XCTAssertTrue(waehrend.uebersprungen, "Runde \(runde): beim Abmelden startet kein Lauf")
+            XCTAssertTrue(fm.fileExists(atPath: speicher.wurzel.path), "Runde \(runde): erst löschen, wenn nichts mehr läuft")
+            tor.oeffnen()
+            await a.value
+            // Der Aufruf nach dem Abmelden findet keinen aktiven Lauf mehr: er läuft selbst (kein „übersprungen“, kein verlorenes Folgen).
+            let neu = try await d.laufen(hub: hub, konto: k, optionen: AblageLaufOptionen())
+            XCTAssertFalse(neu.uebersprungen, "Runde \(runde): nach dem Abmelden ist niemand mehr aktiv")
+            await b.value
+            XCTAssertEqual(zustand().bestand.dateien.count, 1, "Runde \(runde): das zweite Abmelden löscht nicht das neue Konto")
+            do { _ = try await lauf.value; XCTFail("Runde \(runde)") } catch is CancellationError {}
+            await d.verlassen()
+        }
+    }
+
+    // MARK: Nachtrag, Punkt 4: kein Original einer begrabenen oder angehaltenen Datei bleibt liegen
+
+    /// Während des Downloads wird die Datei angehalten: das Original wird nicht abgelegt.
+    func testOriginalEinerWaehrendDesDownloadsAngehaltenenDateiBleibtNichtLiegen() async throws {
+        let hub = AblageHubNachbau()
+        let ws = bestuecke(hub, [welt(1)])
+        _ = try await dienst.laufen(hub: hub, konto: konto, optionen: AblageLaufOptionen())
+        let tor = AblageTor(), drin = AblageZaehler()
+        hub.blobVorher = { _, _ in drin.erhoehe(); await tor.warten() }
+        let d = dienst!, k = konto, dat = ws[0].datei.id
+        let download = Task { try await d.originalLaden(hub: hub, konto: k, dat: dat, fas: W.fasId(1), bulk: false) }
+        await ablageWarteBis { drin.wert == 1 }
+        var z = zustand()
+        z.ledger.objekte[AblageLedger.schluessel("ablage_datei", dat)]?.angehalten = true
+        try speicher.speichern(z)
+        tor.oeffnen()
+        do { _ = try await download.value; XCTFail("angehalten: nicht ladbar") } catch let e as AblageLaufFehler { XCTAssertEqual(e, .nichtLadbar) }
+        XCTAssertFalse(speicher.vorhanden(zustand().bestand).original(dat, W.fasId(1)))
+        XCTAssertEqual((try? fm.contentsOfDirectory(atPath: speicher.wurzel.appendingPathComponent("dateien").path)) ?? [], [])
+        XCTAssertEqual((try? fm.contentsOfDirectory(atPath: speicher.wurzel.appendingPathComponent("eingang").path)) ?? [], [])
+    }
+
+    /// Während des Downloads wird die Datei begraben (ein Lauf verarbeitet den Grabstein): nichts bleibt liegen.
+    func testOriginalEinerWaehrendDesDownloadsBegrabenenDateiBleibtNichtLiegen() async throws {
+        let hub = AblageHubNachbau()
+        let ws = bestuecke(hub, [welt(1)])
+        _ = try await dienst.laufen(hub: hub, konto: konto, optionen: AblageLaufOptionen())
+        let tor = AblageTor(), drin = AblageZaehler()
+        hub.blobVorher = { _, _ in drin.erhoehe(); await tor.warten() }
+        let d = dienst!, k = konto, dat = ws[0].datei.id
+        let download = Task { try await d.originalLaden(hub: hub, konto: k, dat: dat, fas: W.fasId(1), bulk: false) }
+        await ablageWarteBis { drin.wert == 1 }
+        hub.stelle(W.remoteGrab(collection: "ablage_datei", id: dat, revision: 99))
+        let b = try await dienst.laufen(hub: hub, konto: konto, optionen: AblageLaufOptionen())
+        XCTAssertEqual(b.begraben, 1)
+        tor.oeffnen()
+        do { _ = try await download.value; XCTFail("begraben: nicht ladbar") } catch let e as AblageLaufFehler { XCTAssertEqual(e, .nichtLadbar) }
+        XCTAssertEqual((try? fm.contentsOfDirectory(atPath: speicher.wurzel.appendingPathComponent("dateien").path)) ?? [], [])
+        XCTAssertEqual((try? fm.contentsOfDirectory(atPath: speicher.wurzel.appendingPathComponent("eingang").path)) ?? [], [])
+    }
+
+    /// Die Lücke im Lauf: Dateien der begrabenen Datei sind weg, der Zustand auf der Platte ist noch der alte. Ein Download,
+    /// der genau dann den Zustand liest, darf nichts ablegen: er wartet an der Sperre des Speichers, bis der Zustand
+    /// gespeichert ist, und sieht dann den Grabstein.
+    func testOriginalImFensterZwischenEntfernenUndSpeichernWartetUndBleibtNichtLiegen() async throws {
+        let hub = AblageHubNachbau()
+        let ws = bestuecke(hub, [welt(1)])
+        _ = try await dienst.laufen(hub: hub, konto: konto, optionen: AblageLaufOptionen())
+        let dat = ws[0].datei.id
+        var z = zustand()
+        _ = AblagePullVerarbeitung.seite(sammlung: "ablage_datei", objekte: [W.remoteGrab(collection: "ablage_datei", id: dat, revision: 99)],
+                                         konto: konto, zustand: &z)
+        let begraben = z, s = speicher!
+        let drin = AblageZaehler(), frei = DispatchSemaphore(value: 0)
+        // Wie `sammlungZiehen`: unter der Sperre erst die Dateien entfernen, dann den Zustand speichern; dazwischen ist Pause.
+        DispatchQueue.global().async {
+            try? s.exklusiv {
+                s.entfernen(dateien: [dat])
+                drin.erhoehe()
+                frei.wait()
+                try s.speichern(begraben)
+            }
+        }
+        await ablageWarteBis { drin.wert == 1 }
+        let fertig = AblageZaehler()
+        let d = dienst!, k = konto
+        let download = Task { defer { fertig.erhoehe() }; return try await d.originalLaden(hub: hub, konto: k, dat: dat, fas: W.fasId(1), bulk: false) }
+        try await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertEqual(fertig.wert, 0, "der Download liest den Zustand nicht in der Lücke, er wartet an der Sperre")
+        frei.signal()
+        do { _ = try await download.value; XCTFail("begraben: nicht ladbar") } catch let e as AblageLaufFehler { XCTAssertEqual(e, .nichtLadbar) }
+        XCTAssertEqual((try? fm.contentsOfDirectory(atPath: speicher.wurzel.appendingPathComponent("dateien").path)) ?? [], [], "kein verwaistes Original")
+        XCTAssertEqual((try? fm.contentsOfDirectory(atPath: speicher.wurzel.appendingPathComponent("eingang").path)) ?? [], [])
+    }
+
+    // MARK: Ersatz für den Lauf (Punkt 2, Lauf bemerkt den Abbruch nicht)
+
+    /// Ein Lauf, der den Abbruch nicht bemerkt und trotzdem mit einem Bericht endet, liefert nach dem Abmelden keinen Bericht
+    /// des alten Kontos (die Oberfläche setzte sonst „abgeglichen“) und merkt sich nichts vor.
+    func testLaufDerNachDemAbmeldenFertigWirdMeldetKeinenBericht() async throws {
+        let tor = AblageTor(), drin = AblageZaehler()
+        let anf = AblageOriginalAnforderung(dat: W.datId(1), fas: W.fasId(1))
+        let d = AblageDienst(speicher: speicher, lauf: { _, _, _, o in
+            drin.erhoehe()
+            await tor.warten()                                            // bemerkt den Abbruch nicht
+            var b = AblageBericht()
+            b.vollstaendig = true
+            b.offeneAnforderungen = o.angefordert
+            return b
+        })
+        let hub = AblageHubNachbau(), k = konto
+        let lauf = Task { try await d.laufen(hub: hub, konto: k, optionen: AblageLaufOptionen(angefordert: [anf])) }
+        await ablageWarteBis { drin.wert == 1 }
+        let abmelden = Task { await d.verlassen() }
+        try await Task.sleep(nanoseconds: 100_000_000)
+        tor.oeffnen()
+        await abmelden.value
+        do { _ = try await lauf.value; XCTFail("kein Bericht des alten Kontos") }
+        catch is CancellationError {}
+        catch { XCTFail("nur der Abbruch darf ankommen, nicht \(error)") }
+        let vorgemerkt = await d.vorgemerkteOriginale
+        XCTAssertEqual(vorgemerkt, [], "auch die offene Anforderung des alten Kontos verfällt")
+        // Ohne Abmelden kommt derselbe Bericht an und seine offenen Anforderungen bleiben vorgemerkt.
+        let b = try await d.laufen(hub: hub, konto: k, optionen: AblageLaufOptionen(angefordert: [anf]))
+        XCTAssertTrue(b.vollstaendig)
+        let bleibt = await d.vorgemerkteOriginale
+        XCTAssertEqual(bleibt, [anf])
     }
 }
 
