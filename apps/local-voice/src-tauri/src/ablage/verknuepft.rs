@@ -988,27 +988,24 @@ pub fn auftraege(a: &Ablage, ocr: Option<Kennung>) -> Res<Vec<Auftrag>> {
     Ok(aus)
 }
 
-/// Öffnet eine Datei ohne Folgen einer Verknüpfung (Unix `O_NOFOLLOW`, Windows
-/// `FILE_FLAG_OPEN_REPARSE_POINT` und `FILE_FLAG_OPEN_NO_RECALL`), Löschen und Umbenennen der Quelle bleiben
-/// möglich. Das Öffnen allein darf nie einen Abruf auslösen; ob die Datei hydriert ist, prüft der Aufrufer
-/// vorher ([`eintrag::roh`]) und danach am Handle ([`eintrag::offen_urteil`]), bevor gelesen wird.
-fn oeffnen_ohne_folgen(p: &Path) -> std::io::Result<fs::File> {
-    let mut o = fs::OpenOptions::new();
-    o.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        o.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::OpenOptionsExt;
-        const FILE_FLAG_OPEN_NO_RECALL: u32 = 0x0010_0000;
-        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
-        o.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_OPEN_NO_RECALL)
-            .share_mode(0x1 | 0x2 | 0x4);
-    }
-    o.open(p)
+/// Öffnet eine Datei ohne Folgen einer Verknüpfung (Unix `O_NOFOLLOW`, Windows `FILE_FLAG_OPEN_REPARSE_POINT`),
+/// Löschen und Umbenennen der Quelle bleiben möglich. Zweistufig ([`eintrag::oeffnen_ohne_abruf`]): erst
+/// ein Handle nur mit `FILE_READ_ATTRIBUTES` und das Urteil daran; nur bei „lesbar“ folgt das Öffnen mit
+/// Lesezugriff, dann wieder Urteil und Datei-Kennung. Das Öffnen mit Lesezugriff löst bei einem Platzhalter
+/// einen Abruf aus, der Schutz ist also das Urteil davor (Restrisiko: Auslagern im Fenster zwischen den
+/// Stufen, Millisekunden). Die Fehler tragen den Code, den der Aufrufer meldet.
+fn oeffnen_ohne_folgen(p: &Path) -> Result<fs::File, &'static str> {
+    use eintrag::OeffnenFehler;
+    let art = eintrag::OeffnenArt {
+        folgen: false,
+        teilen: 0x1 | 0x2 | 0x4,
+    };
+    eintrag::oeffnen_ohne_abruf(p, art, eintrag::reparse_urteil).map_err(|e| match e {
+        OeffnenFehler::Urteil(Urteil::NurOnline) => "verknuepft.cloud",
+        OeffnenFehler::Urteil(_) => "ablage.verknuepfung",
+        OeffnenFehler::Getauscht => "verknuepft.geaendert",
+        OeffnenFehler::Io(_) => "verknuepft.lesen",
+    })
 }
 
 fn sha_datei(p: &Path) -> std::io::Result<String> {
@@ -1119,20 +1116,9 @@ pub fn momentkopie(a: &Ablage, auf: &Auftrag) -> Result<(PathBuf, String), &'sta
     if vor.groesse > extrakt::MAX_EINGABE {
         return Err("extrakt.zu_gross");
     }
-    let mut von = oeffnen_ohne_folgen(&quelle).map_err(|_| "verknuepft.lesen")?;
-    // Ab hier zählt, was das Handle sagt (nicht mehr der Pfad). Zuerst „nur online“: dann wird das Handle
-    // geschlossen, ohne zu lesen (kein Abruf).
-    match eintrag::offen_urteil(&von, &quelle) {
-        Urteil::Lesbar => {}
-        Urteil::NurOnline => {
-            drop(von);
-            return Err("verknuepft.cloud");
-        }
-        Urteil::Umweg => {
-            drop(von);
-            return Err("ablage.verknuepfung");
-        }
-    }
+    let mut von = oeffnen_ohne_folgen(&quelle)?;
+    // Ab hier zählt, was das Handle sagt (nicht mehr der Pfad): „nur online“ und Umwege hat das zweistufige
+    // Öffnen schon vor dem Lesezugriff abgewiesen.
     let offen = von.metadata().map_err(|_| "verknuepft.lesen")?;
     if !offen.is_file() {
         return Err("ablage.verknuepfung");

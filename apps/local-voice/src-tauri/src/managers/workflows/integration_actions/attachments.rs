@@ -164,15 +164,13 @@ fn file_name_of(path: &Path) -> String {
         .collect()
 }
 
-#[cfg(windows)]
-fn is_cloud_only(meta: &std::fs::Metadata) -> bool {
-    use std::os::windows::fs::MetadataExt;
-    crate::managers::workflows::trigger::folder::attributes_cloud_only(meta.file_attributes())
-}
-
-#[cfg(not(windows))]
-fn is_cloud_only(_meta: &std::fs::Metadata) -> bool {
-    false
+/// Liegt die Datei nur in der Cloud (OneDrive)? Attribute ohne Oeffnen (`ablage::eintrag::roh`, unter
+/// Windows `FindFirstFileExW`); `fs::metadata` liefert fuer Platzhalter falsche Attribute.
+fn is_cloud_only(path: &Path) -> bool {
+    crate::ablage::eintrag::roh(path).is_ok_and(|roh| {
+        roh.ist_datei()
+            && crate::managers::workflows::trigger::folder::attributes_cloud_only(roh.attribute)
+    })
 }
 
 /// Der Ordner, unter dem die Datei liegt (kanonischer Pfad) samt Recht zum Lesen.
@@ -235,6 +233,13 @@ pub fn check(conn: &rusqlite::Connection, paths: &[String]) -> Result<Vec<Checke
             return Err(AttachError::BadPath(shown));
         }
         let name = file_name_of(path);
+        // Vor jedem Oeffnen: ein Platzhalter wird nie angefasst.
+        if is_cloud_only(path) {
+            return Err(AttachError::NotAFile(
+                name,
+                "nur in der Cloud, nicht auf diesem Rechner",
+            ));
+        }
         let meta = match std::fs::symlink_metadata(path) {
             Ok(m) => m,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -247,12 +252,6 @@ pub fn check(conn: &rusqlite::Connection, paths: &[String]) -> Result<Vec<Checke
         }
         if !meta.is_file() {
             return Err(AttachError::NotAFile(name, "kein Dokument"));
-        }
-        if is_cloud_only(&meta) {
-            return Err(AttachError::NotAFile(
-                name,
-                "nur in der Cloud, nicht auf diesem Rechner",
-            ));
         }
         let canonical: PathBuf =
             std::fs::canonicalize(path).map_err(|e| AttachError::Io(e.to_string()))?;
