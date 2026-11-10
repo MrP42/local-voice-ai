@@ -148,6 +148,8 @@ final class LibrarySync: ObservableObject {
         Keychain.delete()
         account = nil
         ledger = SyncLedger(); saveLedger()
+        // Erst jetzt (das Konto ist weg, neue Läufe starten nicht mehr): laufende Ablage-Arbeit abbrechen, abwarten, dann löschen.
+        await AblageSync.shared.kontoVerlassen()
         status = "Nicht angemeldet"
     }
 
@@ -546,6 +548,14 @@ final class LibrarySync: ObservableObject {
     /// schreiben; erst vollständig wird umbenannt. Ein Abbruch setzt beim
     /// nächsten Mal am ersten fehlenden Stück wieder an. Nie die ganze Datei im Speicher.
     private func downloadBlob(_ ref: BlobRef, _ acc: Account, to target: URL, progress: (Int) -> Void) async throws {
+        try await fetchBlob(ref, acc, to: target, bulk: wifiOnly, progress: progress)
+        // Vollständig aus dem Konto geladen: dort also vollständig vorhanden.
+        ledger.uploaded.insert(ref.blob); saveLedger()
+    }
+
+    /// Der Kern von `downloadBlob` ohne das Buchführen im Bibliothek-Ledger (auch für die Dokumentenablage, deren Blobs
+    /// dort nichts verloren haben). `bulk`: Dateiverkehr unter „nur im WLAN“.
+    func fetchBlob(_ ref: BlobRef, _ acc: Account, to target: URL, bulk: Bool, progress: (Int) -> Void) async throws {
         let part = target.appendingPathExtension("part")
         let fm = FileManager.default
         if !fm.fileExists(atPath: part.path) {
@@ -559,7 +569,7 @@ final class LibrarySync: ObservableObject {
         let key = [UInt8](acc.key), userId = acc.userId
         progress(first * chunk)
         for index in first..<ref.chunks {
-            let (code, data) = try await Self.send(acc.url + "/api/v1/voice/blobs/\(ref.blob)/chunks/\(index)", method: "GET", token: acc.token, bulk: wifiOnly)
+            let (code, data) = try await Self.send(acc.url + "/api/v1/voice/blobs/\(ref.blob)/chunks/\(index)", method: "GET", token: acc.token, bulk: bulk)
             guard code == 200 else { throw Self.httpError(code, data) }
             let written = try await Task.detached(priority: .utility) { () throws -> Int in
                 guard let json = try JSONSerialization.jsonObject(with: data) as? [String: String],
@@ -579,8 +589,6 @@ final class LibrarySync: ObservableObject {
         }
         _ = try? fm.removeItem(at: target)
         try fm.moveItem(at: part, to: target)
-        // Vollständig aus dem Konto geladen: dort also vollständig vorhanden.
-        ledger.uploaded.insert(ref.blob); saveLedger()
     }
 
     /// Cover laden (klein, meist ein Stück), als JPEG ablegen und merken,
