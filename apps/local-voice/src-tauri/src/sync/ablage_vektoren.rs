@@ -400,21 +400,64 @@ fn kanonische_nutzlast_und_hash() {
     assert_eq!(hash_datei(&d2), DATEI_HASH);
 }
 
-/// Die JSON-Datei enthält genau das, was der Code heute berechnet.
-#[test]
-fn json_passt_zum_code() {
-    let ist = alle();
-    let pfad = concat!(
+/// Pfad der gemeinsamen Vektordatei.
+pub(super) fn json_pfad() -> &'static str {
+    concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../../docs/superpowers/plans/ablage-testvektoren.json"
-    );
-    if std::env::var("LVA_VEKTOREN_SCHREIBEN").is_ok() {
-        let text = serde_json::to_string_pretty(&ist).unwrap() + "\n";
-        std::fs::write(pfad, text).unwrap();
+    )
+}
+
+static JSON_SPERRE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Gleicht einen Teil der gemeinsamen Vektordatei mit dem ab, was der Code heute berechnet, und liefert
+/// den Dateiinhalt. `teil`: `None` = alle Schlüssel außer `zusatz` (dieses Modul), `Some(schluessel)` = genau
+/// dieser Schlüssel (`ablage_vektoren_zusatz`). Nur bei `LVA_VEKTOREN_SCHREIBEN=1` wird der Teil in die Datei
+/// geschrieben (der Wert zählt, nicht das Vorhandensein); die übrigen Teile bleiben unberührt. Beide Tests
+/// laufen parallel, daher Lesen und Schreiben unter einer gemeinsamen Sperre.
+pub(super) fn json_abgleichen(teil: Option<&str>, ist: &Value) -> Value {
+    let _g = JSON_SPERRE.lock().unwrap_or_else(|e| e.into_inner());
+    let pfad = json_pfad();
+    let lesen =
+        || -> Option<Value> { serde_json::from_str(&std::fs::read_to_string(pfad).ok()?).ok() };
+    if std::env::var("LVA_VEKTOREN_SCHREIBEN").as_deref() == Ok("1") {
+        let mut neu = lesen().unwrap_or_else(|| json!({}));
+        let map = neu.as_object_mut().expect("Vektordatei ist kein Objekt");
+        match teil {
+            None => {
+                let zusatz = map.remove("zusatz");
+                *map = ist.as_object().expect("Vektoren sind kein Objekt").clone();
+                if let Some(z) = zusatz {
+                    map.insert("zusatz".to_string(), z);
+                }
+            }
+            Some(k) => {
+                map.insert(k.to_string(), ist.clone());
+            }
+        }
+        std::fs::write(pfad, serde_json::to_string_pretty(&neu).unwrap() + "\n").unwrap();
     }
-    let datei = std::fs::read_to_string(pfad).expect("ablage-testvektoren.json fehlt");
-    let soll: Value = serde_json::from_str(&datei).unwrap();
-    assert_eq!(soll, ist, "ablage-testvektoren.json weicht vom Code ab");
+    let soll = lesen().expect("ablage-testvektoren.json fehlt oder ist kein JSON");
+    match teil {
+        None => {
+            let mut ohne = soll.clone();
+            ohne.as_object_mut().unwrap().remove("zusatz");
+            assert_eq!(ohne, *ist, "ablage-testvektoren.json weicht vom Code ab");
+        }
+        Some(k) => assert_eq!(
+            soll.get(k),
+            Some(ist),
+            "ablage-testvektoren.json (`{k}`) weicht vom Code ab; neu schreiben mit LVA_VEKTOREN_SCHREIBEN=1"
+        ),
+    }
+    soll
+}
+
+/// Die JSON-Datei enthält genau das, was der Code heute berechnet (ohne den Schlüssel `zusatz`, den
+/// `ablage_vektoren_zusatz` prüft).
+#[test]
+fn json_passt_zum_code() {
+    let soll = json_abgleichen(None, &alle());
     // Und die Konstanten dieses Moduls stimmen mit der Datei überein.
     assert_eq!(g(&soll, &["key_id"]), KEY_ID);
     assert_eq!(g(&soll, &["standard_id"]), STANDARD_ID);
