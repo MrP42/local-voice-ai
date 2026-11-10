@@ -508,6 +508,14 @@ pub fn auszuege_mit(
     }
 }
 
+/// Wörter wie im Index: `content_tokens`, danach dieselbe Faltung (ß → ss, …, lva#463), damit „Strasse“ auch hier „Straße“ trifft.
+fn gefaltete_woerter(text: &str) -> BTreeSet<String> {
+    wai_retrieval::content_tokens(text)
+        .iter()
+        .map(|w| wai_retrieval::fts_normalisieren(w))
+        .collect()
+}
+
 /// Konfliktdatei: die Textfassung der gemeinsamen Vorgängerin direkt lesen (der Index hält den
 /// jüngsten Kopf) und lexikalisch bewerten (Anteil der Suchwörter im Stück, 0..1).
 fn direkt_suchen(a: &Ablage, d: &KiDatei, frage: &str) -> Vec<Kandidat> {
@@ -515,7 +523,7 @@ fn direkt_suchen(a: &Ablage, d: &KiDatei, frage: &str) -> Vec<Kandidat> {
         return vec![];
     };
     let frage: String = frage.chars().take(500).collect();
-    let woerter: BTreeSet<String> = wai_retrieval::content_tokens(&frage).into_iter().collect();
+    let woerter = gefaltete_woerter(&frage);
     if woerter.is_empty() {
         return vec![];
     }
@@ -527,7 +535,7 @@ fn direkt_suchen(a: &Ablage, d: &KiDatei, frage: &str) -> Vec<Kandidat> {
     let mut aus = Vec::new();
     for ab in &t.abschnitte {
         for st in index::stuecke(&ab.text, index::STUECK, index::UEBERLAPPUNG) {
-            let im: BTreeSet<String> = wai_retrieval::content_tokens(&st).into_iter().collect();
+            let im = gefaltete_woerter(&st);
             let treffer = woerter.iter().filter(|w| im.contains(*w)).count();
             if treffer > 0 {
                 aus.push(Kandidat {

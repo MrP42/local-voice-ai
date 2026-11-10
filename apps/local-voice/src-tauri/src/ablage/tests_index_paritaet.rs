@@ -1221,10 +1221,31 @@ fn strasse_findet_strasse_und_umgekehrt() {
     assert!(ki.stellen[0].text.contains("Straße"));
 }
 
-/// Bestehender Index (alter Stempel, ungefalteter FTS-Text) wird beim nächsten Abgleich neu geschrieben, ebenso beim
-/// ausdrücklichen Neuaufbau.
+/// Zählt Einbettungsaufrufe (Spion): die Umstellung eines Altbestands darf nie einbetten.
+struct Spion(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+
+impl wai_retrieval::Embedder for Spion {
+    fn id(&self) -> String {
+        "spion".into()
+    }
+
+    async fn embed(&self, _text: &str) -> wai_retrieval::Result<Vec<f32>> {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Err(wai_retrieval::RetrievalError::Embedding("spion".into()))
+    }
+
+    async fn embed_batch(&self, texts: &[String]) -> wai_retrieval::Result<Vec<Vec<f32>>> {
+        self.0
+            .fetch_add(texts.len().max(1), std::sync::atomic::Ordering::SeqCst);
+        Err(wai_retrieval::RetrievalError::Embedding("spion".into()))
+    }
+}
+
+/// Bestehender Index (ungefalteter FTS-Text, keine Marke `fts_fmt`) wird beim Öffnen einmalig umgestellt: ohne
+/// Einbetten (Spion), ohne den Stempel anzufassen (der Abgleich schreibt nichts), danach Treffer; ausdrücklicher
+/// Neuaufbau funktioniert weiter. (Eine Transaktion, die Marke steht erst am Ende: Abbruch lässt den alten Stand.)
 #[test]
-fn alter_index_wird_neu_aufgebaut() {
+fn alter_index_wird_ohne_einbetten_umgestellt() {
     let e = env();
     e.ablegen(
         "Eins.txt",
@@ -1238,9 +1259,16 @@ fn alter_index_wird_neu_aufgebaut() {
             .len()
     };
     assert_eq!(suche("Strasse"), 1);
+    let marke = |c: &Connection| -> Option<String> {
+        c.query_row("SELECT value FROM meta WHERE key = 'fts_fmt'", [], |r| {
+            r.get(0)
+        })
+        .ok()
+    };
+    assert_eq!(marke(&e.db()).as_deref(), Some("2"));
 
-    // Zustand der Version davor: FTS-Text ungefaltet, Stempel der alten Fassung.
-    {
+    // Zustand der Version davor: FTS-Text ungefaltet, keine Marke.
+    let altstand = |e: &Env| {
         let c = e.db();
         let zeilen: Vec<(i64, String)> = {
             let mut q = c.prepare("SELECT id, text FROM chunks").unwrap();
@@ -1258,28 +1286,112 @@ fn alter_index_wird_neu_aufgebaut() {
             )
             .unwrap();
         }
-        c.execute("UPDATE ablage_dok SET stempel = 'v2-alt'", [])
+        c.execute("DELETE FROM meta WHERE key = 'fts_fmt'", [])
             .unwrap();
         c.execute("DELETE FROM qcache", []).unwrap();
-    }
-    assert_eq!(suche("Strasse"), 0, "Altbestand: ungefaltet");
-    assert_eq!(
-        suche("Straße"),
-        0,
-        "Altbestand: die Anfrage wird jetzt gefaltet"
-    );
+        c.execute("DELETE FROM lexstat", []).unwrap();
+    };
+    altstand(&e);
+    assert!(marke(&e.db()).is_none());
 
-    let b = index::abgleichen_mit(&e.a, &AblageEinbettung::Keine).unwrap();
-    assert_eq!(b.geschrieben, 2, "beide Dateien neu geschrieben");
+    // Öffnen mit dem Spion stellt um, ohne einen Einbettungsaufruf.
+    let aufrufe = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let pfad = e.a.dir().join(index::INDEX);
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async {
+        let r = wai_retrieval::Retriever::open(&pfad, Spion(aufrufe.clone()))
+            .await
+            .unwrap();
+        r.close().await;
+    });
+    assert_eq!(aufrufe.load(std::sync::atomic::Ordering::SeqCst), 0);
+    assert_eq!(marke(&e.db()).as_deref(), Some("2"));
     assert_eq!(suche("Strasse"), 1);
     assert_eq!(suche("Straße"), 1);
     let b = index::abgleichen_mit(&e.a, &AblageEinbettung::Keine).unwrap();
-    assert_eq!(b.geschrieben, 0, "zweiter Abgleich ändert nichts");
+    assert_eq!(
+        b.geschrieben, 0,
+        "der Stempel bleibt: nichts wird neu eingebettet"
+    );
 
     // Ausdrücklicher Neuaufbau (index.db weg).
     let b = index::neu_aufbauen_mit(&e.a, &AblageEinbettung::Keine).unwrap();
     assert_eq!(b.geschrieben, 2);
     assert_eq!(suche("Strasse"), 1);
+}
+
+/// Stückzahl und Wörter der lesbaren Stücke werden je (Leser, Generation) einmal gezählt, unabhängig von `k`
+/// (wachsender Kandidatenpool der KI-Suche), und mit jeder Änderung des Index oder der Freigabe neu.
+#[test]
+fn zaehlung_je_leser_und_generation_einmal() {
+    let e = env();
+    let w = e.standard();
+    let frei = e.a.ordner_anlegen(Some(&w), "Frei").unwrap();
+    let zu = e.a.ordner_anlegen(Some(&w), "Zu").unwrap();
+    e.a.ki_setzen(&frei, Some(KiStufe::An)).unwrap();
+    e.a.ki_setzen(&zu, Some(KiStufe::Gesperrt)).unwrap();
+    e.ablegen_in(
+        "Frei-1.txt",
+        "Der Kuckuck ruft im Wald. Ein Fuchs im Wald.",
+        &frei,
+    );
+    e.ablegen_in("Frei-2.txt", "Im Garten blüht der Flieder.", &frei);
+    e.ablegen_in("Zu-1.txt", "Wald Wald Wald Eule Fuchs Wald.", &zu);
+    e.text_und_index();
+    let leser = index::ki_leser(KiWeg::Global, KiProfil::Lokal);
+    let zaehlungen = |e: &Env| -> i64 {
+        e.db()
+            .query_row(
+                "SELECT value FROM meta WHERE key = 'lexstat_zaehlungen'",
+                [],
+                |r| r.get::<_, String>(0),
+            )
+            .map(|v| v.parse().unwrap())
+            .unwrap_or(0)
+    };
+    let ki = |e: &Env, f: &str, k: usize| {
+        index::ki_suchen(&e.a, f, &AblageEinbettung::Keine, &leser, k).unwrap()
+    };
+    assert_eq!(zaehlungen(&e), 0);
+    let erste = ki(&e, "Wald", 20);
+    assert_eq!(erste.stellen.len(), 1);
+    assert_eq!(zaehlungen(&e), 1);
+    // Wachsender Pool und andere Wörter: nicht neu gezählt.
+    for k in [40, 160, 640] {
+        ki(&e, "Wald", k);
+    }
+    ki(&e, "Fuchs Garten", 20);
+    assert_eq!(zaehlungen(&e), 1, "je (Leser, Generation) einmal");
+    // Anderer Leser: eigene Zählung (er sieht mehr).
+    let ui = index::lexikalisch_zeilen(&e.a, "Wald", index::LESER_SUCHE, 100).unwrap();
+    assert_eq!(ui.len(), 2);
+    assert_eq!(zaehlungen(&e), 2);
+
+    // Neue Datei: neue Generation, neu gezählt, Ränge ändern sich.
+    let vorher = index::lexikalisch_zeilen(&e.a, "Wald", &leser, 100).unwrap()[0].bm25;
+    assert_eq!(zaehlungen(&e), 2);
+    e.ablegen_in("Frei-3.txt", "Wald und Wiese.", &frei);
+    e.text_und_index();
+    let danach = index::lexikalisch_zeilen(&e.a, "Wald", &leser, 100).unwrap();
+    assert_eq!(zaehlungen(&e), 3);
+    assert!(!nahe(vorher, danach.iter().find(|z| z.page == 1).unwrap().bm25) || danach.len() > 1);
+
+    // Freigabeänderung: der gesperrte Ordner wird freigegeben; er zählt ab jetzt mit.
+    let namen = e.namen();
+    assert!(danach
+        .iter()
+        .all(|z| namen[&z.source_id].starts_with("Frei")));
+    e.a.ki_setzen(&zu, Some(KiStufe::An)).unwrap();
+    e.text_und_index();
+    let frei_gegeben = index::lexikalisch_zeilen(&e.a, "Wald", &leser, 100).unwrap();
+    assert_eq!(zaehlungen(&e), 4);
+    let namen = e.namen();
+    assert!(frei_gegeben
+        .iter()
+        .any(|z| namen[&z.source_id].starts_with("Zu")));
 }
 
 /// Eine Datei im Papierkorb beeinflusst den Rohrang der übrigen nicht (UI-Leser), auch nicht nach dem Zurückholen

@@ -595,6 +595,8 @@ const SCHEMA: &[&str] = &[
     "CREATE TABLE IF NOT EXISTS qcache_src(key TEXT NOT NULL, source_id TEXT NOT NULL)",
     "CREATE INDEX IF NOT EXISTS qcache_src_i ON qcache_src(source_id)",
     "CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+    // Lokale Abweichung (lva#463): Stückzahl und Wörter der lesbaren Stücke je Leser und Generation.
+    "CREATE TABLE IF NOT EXISTS lexstat(key TEXT PRIMARY KEY, n INTEGER NOT NULL, woerter INTEGER NOT NULL)",
 ];
 
 /// Rechtefilter: Tenant-Gleichheit UND (Tenant-weit ODER Principal gelistet).
@@ -710,6 +712,77 @@ async fn bump_generation(tx: &mut sqlx::SqliteConnection) -> Result<()> {
     sqlx::query("DELETE FROM qcache").execute(&mut *tx).await?;
     sqlx::query("DELETE FROM qcache_src")
         .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM lexstat").execute(&mut *tx).await?;
+    Ok(())
+}
+
+/// Meta-Marke der FTS-Fassung: "2" = FTS-Text gefaltet ([`fts_normalisieren`], lva#463).
+const FTS_FMT: &str = "2";
+
+/// Einmalige Umstellung eines Altbestands (lva#463): der FTS-Text wird aus `chunks` gefaltet neu aufgebaut, ohne
+/// Einbetten (Vektoren und Stücke bleiben). Eine Transaktion; die Marke `fts_fmt` steht erst am Ende, ein Abbruch
+/// lässt den alten Stand und die nächste Öffnung wiederholt den Lauf.
+async fn fts_umstellen(pool: &SqlitePool) -> Result<()> {
+    if meta_get(pool, "fts_fmt").await?.as_deref() == Some(FTS_FMT) {
+        return Ok(());
+    }
+    let mut conn = pool.acquire().await?;
+    sqlx::query("BEGIN IMMEDIATE").execute(&mut *conn).await?;
+    let erg = fts_umstellen_tx(&mut conn).await;
+    match erg {
+        Ok(()) => {
+            sqlx::query("COMMIT").execute(&mut *conn).await?;
+            Ok(())
+        }
+        Err(e) => {
+            let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+            Err(e)
+        }
+    }
+}
+
+async fn fts_umstellen_tx(c: &mut sqlx::SqliteConnection) -> Result<()> {
+    let marke: Option<String> = sqlx::query("SELECT value FROM meta WHERE key = 'fts_fmt'")
+        .fetch_optional(&mut *c)
+        .await?
+        .map(|r| r.get(0));
+    if marke.as_deref() == Some(FTS_FMT) {
+        return Ok(());
+    }
+    let vorhanden: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM chunks")
+        .fetch_one(&mut *c)
+        .await?;
+    if vorhanden > 0 {
+        sqlx::query("DELETE FROM chunks_fts")
+            .execute(&mut *c)
+            .await?;
+        let mut ab = 0i64;
+        loop {
+            let rows =
+                sqlx::query("SELECT id, text FROM chunks WHERE id > ? ORDER BY id LIMIT 500")
+                    .bind(ab)
+                    .fetch_all(&mut *c)
+                    .await?;
+            if rows.is_empty() {
+                break;
+            }
+            for r in &rows {
+                let id: i64 = r.get(0);
+                let text: String = r.get(1);
+                sqlx::query("INSERT INTO chunks_fts(rowid, text) VALUES(?, ?)")
+                    .bind(id)
+                    .bind(fts_normalisieren(&text))
+                    .execute(&mut *c)
+                    .await?;
+                ab = id;
+            }
+        }
+        bump_generation(c).await?;
+    }
+    sqlx::query("INSERT OR REPLACE INTO meta(key, value) VALUES('fts_fmt', ?)")
+        .bind(FTS_FMT)
+        .execute(&mut *c)
         .await?;
     Ok(())
 }
@@ -846,6 +919,7 @@ impl<E: Embedder> Retriever<E> {
         for s in SCHEMA {
             sqlx::query(*s).execute(&pool).await?;
         }
+        fts_umstellen(&pool).await?;
         let vec_ext = sqlx::query("SELECT vec_version()")
             .fetch_one(&pool)
             .await
@@ -1415,8 +1489,10 @@ impl<E: Embedder> Retriever<E> {
 
     /// Lexikalische Rangliste (BM25 wie `bm25(chunks_fts)` von FTS5, k1 = 1,2, b = 0,75), beste zuerst, höchstens
     /// `limit` Zeilen; Gleichstand nach Stück-Kennung. Lokale Abweichung (lva#463): Stückzahl, mittlere Länge und
-    /// Dokumenthäufigkeit (IDF) zählen nur Stücke, die der Akteur lesen darf, nie Papierkorb oder für ihn gesperrte
-    /// Dateien; FTS5 selbst zählt über die ganze Tabelle. Anfragewörter werden wie der Text gefaltet
+    /// Dokumenthäufigkeit (IDF) zählen nur Stücke, die der Akteur dieses Aufrufs (Principal, bei der Ablage je
+    /// Weg und Klassenprofil, nicht je Projekt) laut Quellrecht lesen darf, nie Stücke ohne sein Leserecht;
+    /// FTS5 selbst zählt über die ganze Tabelle. Stückzahl und Wörter werden je (Akteur, Generation)
+    /// zwischengespeichert (`lexstat`, geleert mit jeder Generation), unabhängig von `limit`. Anfragewörter werden wie der Text gefaltet
     /// ([`fts_normalisieren`]). Mit Stücken, die der Akteur lesen darf, und denselben Wörtern ist der Rohrang
     /// gleich dem von FTS5.
     pub async fn lexikalisch(
@@ -1440,42 +1516,79 @@ impl<E: Embedder> Retriever<E> {
         }
         let mut conn = self.pool.acquire().await?;
         let phrasen = phrasen_zerlegen(&mut conn, toks).await?;
+        // Alles Weitere liest aus EINEM Snapshot: Treffer, Zählung und Längen passen zusammen.
+        let mut tx = sqlx::Connection::begin(&mut *conn).await?;
+        let generation = sqlx::query("SELECT value FROM meta WHERE key = 'gen'")
+            .fetch_optional(&mut *tx)
+            .await?
+            .map(|r| r.get::<String, _>(0))
+            .unwrap_or_default();
         let mut treffer: HashMap<&[String], HashMap<i64, u32>> = HashMap::new();
         for p in phrasen.iter().filter(|p| !p.is_empty()) {
             if !treffer.contains_key(p.as_slice()) {
-                let t = phrase_treffer(&mut conn, actor, p).await?;
+                let t = phrase_treffer(&mut tx, actor, p).await?;
                 treffer.insert(p.as_slice(), t);
             }
         }
         if treffer.values().all(|t| t.is_empty()) {
             return Ok(vec![]);
         }
-        // Stückzahl und Wörter aller lesbaren Stücke (N und avgdl), Länge je Stück (D).
+        // Stückzahl N und Wörter aller lesbaren Stücke (avgdl): je Leser und Generation einmal gezählt.
+        let stat_key = format!("{}\0{}\0{generation}", actor.tenant, actor.principal);
+        let gespeichert = sqlx::query("SELECT n, woerter FROM lexstat WHERE key = ?")
+            .bind(&stat_key)
+            .fetch_optional(&mut *tx)
+            .await?
+            .map(|r| (r.get::<i64, _>(0), r.get::<i64, _>(1)));
+        let (n_gesamt, woerter, neu_gezaehlt) = match gespeichert {
+            Some((n, w)) => (n, w, false),
+            None => {
+                let sql = format!(
+                    "SELECT s.sz FROM chunks_fts_docsize s JOIN chunks c ON c.id = s.id JOIN docs d ON d.source_id = c.source_id WHERE {ACL_SQL}"
+                );
+                let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
+                    .bind(&actor.tenant)
+                    .bind(&actor.principal)
+                    .fetch_all(&mut *tx)
+                    .await?;
+                let w: i64 = rows
+                    .iter()
+                    .map(|r| docsize_laenge(r.get::<&[u8], _>(0)))
+                    .sum();
+                (rows.len() as i64, w, true)
+            }
+        };
+        if n_gesamt <= 0 || woerter <= 0 {
+            return Ok(vec![]);
+        }
+        // Länge (D) der Stücke mit Treffer.
         let mut kandidaten: HashMap<i64, i64> = HashMap::new();
         for t in treffer.values() {
             for id in t.keys() {
                 kandidaten.insert(*id, 0);
             }
         }
-        let sql = format!(
-            "SELECT s.id, s.sz FROM chunks_fts_docsize s JOIN chunks c ON c.id = s.id JOIN docs d ON d.source_id = c.source_id WHERE {ACL_SQL}"
+        let ids = format!(
+            "[{}]",
+            kandidaten
+                .keys()
+                .map(|i| i.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
         );
-        let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
-            .bind(&actor.tenant)
-            .bind(&actor.principal)
-            .fetch_all(&mut *conn)
-            .await?;
-        let mut n_gesamt = 0f64;
-        let mut woerter = 0f64;
+        let rows = sqlx::query(
+            "SELECT id, sz FROM chunks_fts_docsize WHERE id IN (SELECT value FROM json_each(?))",
+        )
+        .bind(ids)
+        .fetch_all(&mut *tx)
+        .await?;
         for r in &rows {
-            let laenge = docsize_laenge(r.get::<&[u8], _>(1));
-            n_gesamt += 1.0;
-            woerter += laenge as f64;
             if let Some(d) = kandidaten.get_mut(&r.get::<i64, _>(0)) {
-                *d = laenge;
+                *d = docsize_laenge(r.get::<&[u8], _>(1));
             }
         }
-        let avgdl = woerter / n_gesamt;
+        let n_gesamt_f = n_gesamt as f64;
+        let avgdl = woerter as f64 / n_gesamt_f;
         let mut punkte: HashMap<i64, f64> = HashMap::new();
         for p in phrasen.iter().filter(|p| !p.is_empty()) {
             let t = &treffer[p.as_slice()];
@@ -1483,7 +1596,7 @@ impl<E: Embedder> Retriever<E> {
                 continue;
             }
             let n_hit = t.len() as f64;
-            let mut idf = ((n_gesamt - n_hit + 0.5) / (n_hit + 0.5)).ln();
+            let mut idf = ((n_gesamt_f - n_hit + 0.5) / (n_hit + 0.5)).ln();
             if idf <= 0.0 {
                 idf = 1e-6;
             }
@@ -1508,11 +1621,27 @@ impl<E: Embedder> Retriever<E> {
             "SELECT id, source_id, page FROM chunks WHERE id IN (SELECT value FROM json_each(?))",
         )
         .bind(ids)
-        .fetch_all(&mut *conn)
+        .fetch_all(&mut *tx)
         .await?;
+        tx.commit().await?;
         let mut herkunft: HashMap<i64, (String, u32)> = HashMap::new();
         for r in rows {
             herkunft.insert(r.get(0), (r.get(1), r.get::<i64, _>(2) as u32));
+        }
+        if neu_gezaehlt {
+            // Nur Zwischenspeicher: scheitert das Schreiben (Schreiber aktiv), zählt die nächste Suche neu.
+            let _ = sqlx::query("INSERT OR REPLACE INTO lexstat(key, n, woerter) VALUES(?, ?, ?)")
+                .bind(&stat_key)
+                .bind(n_gesamt)
+                .bind(woerter)
+                .execute(&mut *conn)
+                .await;
+            let _ = sqlx::query(
+                "INSERT INTO meta(key, value) VALUES('lexstat_zaehlungen', '1')
+                 ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + 1",
+            )
+            .execute(&mut *conn)
+            .await;
         }
         Ok(rang
             .into_iter()

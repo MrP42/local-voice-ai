@@ -5,8 +5,12 @@
 //!   `dat_…`). Jede Textstelle ist eine „Seite“ des Dokuments, damit Stücke und Anker hier bestimmt
 //!   werden: Stücke von höchstens [`STUECK`] Zeichen je Abschnitt mit [`UEBERLAPPUNG`] Zeichen Überlappung.
 //!   lva#463: Der FTS-Text ist gefaltet (`wai_retrieval::fts_normalisieren`: ß → ss, æ, œ, ø, ł, …; das
-//!   Zitat bleibt der Originaltext), und BM25 zählt Stückzahl, mittlere Länge und IDF nur über Stücke,
-//!   die der Leser lesen darf (nie Papierkorb oder für ihn gesperrte Dateien).
+//!   Zitat bleibt der Originaltext; ein Altbestand wird beim Öffnen einmalig umgestellt, ohne Neu-Einbetten).
+//!   BM25 zählt Stückzahl, mittlere Länge und IDF nur über Stücke, die der LESER des Aufrufs lesen darf, also
+//!   je Leser: Oberfläche ([`LESER_SUCHE`], alles außer Papierkorb) bzw. je KI-Weg und Klassenprofil
+//!   ([`ki_leser`]). Beim Projektweg ist das der Leser „projekt“ (alle Dateien, die dafür freigegeben sind),
+//!   nicht die Mitgliederliste des Projekts; diese Feinprüfung macht danach `ki`. Papierkorb und für den
+//!   Leser gesperrte Dateien zählen nie.
 //! * Begleittabellen `ablage_dok` (Felder je Datei: Fassung, `textrev`, Ordnerkette, Klasse,
 //!   `nur_geraet`, Papierkorb, Stand, Stempel) und `ablage_stueck` (Seite → Abschnitt, Anker, Pfad).
 //! * Filter vor dem Ranking: das Quellrecht von `wai-retrieval` wird in derselben SQL-Abfrage geprüft.
@@ -405,9 +409,9 @@ pub(crate) fn stempel(q: &IndexQuelle) -> String {
         if q.papierkorb { "1" } else { "0" },
         &q.stand,
         // v2 (D3): Leser je KI-Weg und Klassenprofil im Quellrecht.
-        // v3 (lva#463): ß → ss und weitere Faltungen im FTS-Text, BM25 mit IDF nur über lesbare Stücke:
-        // bestehende Indizes werden beim nächsten Abgleich Datei für Datei neu geschrieben.
-        "v3",
+        // Unverändert v2 (lva#463): die Faltung im FTS-Text stellt `wai-retrieval` einmalig im Index um
+        // (Marke `fts_fmt`, ohne Neu-Einbetten); ein neuer Stempel würde alle Stücke neu einbetten.
+        "v2",
     ] {
         h.update(teil.as_bytes());
         h.update([0u8]);
