@@ -267,6 +267,31 @@ pub async fn ablage_entwurf_anlegen(
     .await
 }
 
+/// Legt einen KI-Entwurf für die Projekt-KI an (lva#365 P4c-3, KI-Dokument). Nur aus Rust erreichbar, kein
+/// Befehl: Die Mindestklasse kommt vom Versandtor und ist hier ein fester Parameter, den keine
+/// Oberfläche setzt oder senkt. Wie der Befehl gleicht der Aufruf danach den Index ab und weckt den
+/// Textarbeiter. Der Fehler ist `<code>: <text>` der Ablage, ohne Namen, Pfade oder Inhalte.
+pub(crate) async fn entwurf_fuer_projekt(
+    app: &AppHandle,
+    ordner: Option<String>,
+    name: String,
+    inhalt_md: String,
+    quellen: Vec<String>,
+    mindestklasse: super::zusammenfuehren::Klasse,
+) -> Antwort<AblageEntwurf> {
+    mit_nachlauf(app, false, move |a| {
+        super::ki::entwurf_anlegen(
+            &a,
+            ordner.as_deref(),
+            &name,
+            &inhalt_md,
+            &quellen,
+            Some(mindestklasse),
+        )
+    })
+    .await
+}
+
 /// „Freigaben neu festlegen“: nur bei unklarer (defekter) Freigabe; alle Ordner auf „aus“.
 #[tauri::command]
 #[specta::specta]

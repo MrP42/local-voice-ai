@@ -8870,11 +8870,20 @@
     },
     "ki": {
       "titel": "KI im Projekt",
-      "text": "Chat und Sprachgespräch nutzen diese Auswahl, sobald sie für Projekte freigegeben sind.",
+      "text": "Chat, Sprachgespräch, Recherche und KI-Dokument nutzen diese Auswahl, sobald sie für Projekte freigegeben sind.",
       "gesperrt": "Gesperrt: KI-Aufrufe im Projekt folgen mit dem nächsten Schritt.",
       "start": "Gespräch im Projekt beginnen",
       "startGesperrt": "Gesperrt: KI-Aufrufe im Projekt folgen mit dem nächsten Schritt. Das Gespräch lässt sich erst danach beginnen.",
-      "startHinweis": "Öffnet ein neues Gespräch, das nur diese Auswahl als Kontext nutzt."
+      "startHinweis": "Öffnet ein neues Gespräch, das nur diese Auswahl als Kontext nutzt.",
+      "dokument": "KI-Dokument erstellen",
+      "dokumentHinweis": "Die KI schreibt aus der Auswahl im Projekt einen Entwurf in der Dokumentenablage.",
+      "dokumentAuftrag": "Auftrag an die KI",
+      "dokumentName": "Name des Dokuments",
+      "dokumentRegel": "Der Entwurf liegt in der Dokumentenablage und ist im Projekt ausgeschaltet. Seine Klasse ist mindestens so hoch wie die höchste Klasse der verwendeten Inhalte.",
+      "dokumentSenden": "Dokument erstellen",
+      "dokumentLaeuft": "Die KI schreibt …",
+      "dokumentFertig": "Entwurf „{{name}}“ angelegt (Klasse {{klasse}}). Er ist im Projekt ausgeschaltet; zum Nutzen als Kontext einschalten.",
+      "dokumentNurAblage": "Entwurf „{{name}}“ liegt in der Dokumentenablage (Klasse {{klasse}}), ließ sich aber dem Projekt nicht zuordnen."
     },
     "banner": {
       "reset": "Die Kontextauswahl dieses Geräts war nicht lesbar. Zur Sicherheit sind alle Einträge ausgeschaltet. Schalte ein, was die KI nutzen soll.",
@@ -8945,7 +8954,8 @@
       "kontextFrage": "Recherche „{{frage}}“ ({{klasse}})",
       "restzeit_one": "noch 1 Minute",
       "restzeit_other": "noch {{count}} Minuten",
-      "anfrageHinweis": "Kontext {{klasse}}: Freigabe nötig"
+      "anfrageHinweis": "Kontext {{klasse}}: Freigabe nötig",
+      "mitKontext": "Die Anfragen entstanden mit Inhalten aus Ihrem Projekt"
     },
     "karte": {
       "titel": "Recherche",
@@ -8960,7 +8970,10 @@
       "hinweis": "Frage per Web-Recherche (Modus Schnell) im Suite-Projekt dieses Ordners beantworten",
       "keinProjekt": "Für die Recherche muss der Besprechungsordner mit einem Suite-Projekt verknüpft sein, das das Web freigibt.",
       "projektWaehlen": "In welchem Projekt?",
-      "wartet": "Die Suchanfragen warten auf Ihre Freigabe."
+      "wartet": "Die Suchanfragen warten auf Ihre Freigabe.",
+      "mitKontext": "Mit Projektkontext recherchieren",
+      "mitKontextHinweis": "Die Suchanfragen entstehen mit den eingeschalteten Inhalten des Projekts. Vor der Suche zeigt ein Dialog sie zur Freigabe.",
+      "mitKontextGesperrt": "Gesperrt: KI-Aufrufe im Projekt folgen mit dem nächsten Schritt."
     },
     "sprache": {
       "menu": "Web-Recherche im Projekt …",
@@ -9140,7 +9153,25 @@
       "recherche_fehlgeschlagen": "Die Recherche ist fehlgeschlagen.",
       "speichern_fehlgeschlagen": "Das Recherche-Dokument konnte nicht gespeichert werden.",
       "projekt_passt_nicht": "Das Suite-Projekt gehört nicht zu dieser Besprechung. Die Recherche wurde nicht ausgeführt.",
-      "kein_modell": "Es ist kein Sprachmodell eingestellt."
+      "kein_modell": "Es ist kein Sprachmodell eingestellt.",
+      "kontext_geaendert": "Die Auswahl im Projekt hat sich geändert. Es wurde nichts gesendet und nichts gespeichert.",
+      "kontext_nicht_verfuegbar": "Die Recherche mit Projektkontext ist nicht verfügbar. Es wurde nichts gesendet.",
+      "projekt.ki_gesperrt": "Die KI im Projekt ist noch nicht freigegeben. Es wurde nichts gesendet.",
+      "projekt.klasse_ziel": "Ein Projektinhalt ist für dieses Modell zu schutzbedürftig. Ein lokales Modell wählen oder den Eintrag ausschalten. Es wurde nichts gesendet.",
+      "projekt.budget": "Zu viel Kontext für das Modell. Es wurde nichts gesendet und nichts gekürzt. Einträge im Projekt ausschalten oder ein Modell mit größerem Fenster wählen.",
+      "projekt.modell": "Das Modell hat nicht geantwortet. Es wurde keine Antwort übernommen.",
+      "projekt.kein_modell": "Es ist kein zulässiges Modell gewählt. Es wurde nichts gesendet. Unter Einstellungen > KI-Modelle & Anbieter ein Modell wählen.",
+      "projekt.ziel_lokal": "Das lokale Modell ist nicht bereit. Es wurde nichts gesendet.",
+      "projekt.ziel_fenster": "Für dieses Modell ist die Größe des Kontextfensters nicht bekannt. Das Kontextlimit des Modells in den Einstellungen eintragen. Es wurde nichts gesendet.",
+      "projekt.ziel_compliance": "Das Modell ist nach dem gewählten Regelwerk gesperrt. Es wurde nichts gesendet.",
+      "projekt.ungueltig": "Das Projekt ist gerade nicht verfügbar. Es wurde nichts gesendet.",
+      "projekt.anfrage": "Die Anfrage war unvollständig. Es wurde nichts gesendet.",
+      "projekt.stand_veraltet": "Die Auswahl im Projekt hat sich seit der Anzeige geändert. Es wurde nichts gesendet.",
+      "projekt.ablage": "Die Dokumentenablage ist gerade nicht lesbar. Es wurde nichts gesendet.",
+      "projekt.register": "Das Antwortregister des Projekts lässt sich gerade nicht lesen oder schreiben. Es wurde nichts übernommen.",
+      "projekt.verspaetet": "Die Auswahl im Projekt hat sich geändert, während die Antwort entstand. Die Antwort wurde nicht übernommen.",
+      "projekt.widerrufen": "Die Auswahl im Projekt hat sich geändert. Es wurde nichts gesendet.",
+      "projekt.fremdkontext": "Im Projekt sind nur Projektinhalte zulässig. Es wurde nichts gesendet."
     },
     "fehlercode": {
       "recherche.not_found": "Keine offene Freigabe mit dieser Kennung (abgelaufen, entschieden oder die App wurde neu gestartet).",
@@ -9150,7 +9181,10 @@
       "recherche.storage": "Die Recherche konnte nicht gespeichert werden.",
       "projekte.storage": "Das Projektverzeichnis konnte nicht gelesen oder geschrieben werden.",
       "projekte.not_found": "Nicht gefunden.",
-      "projekte.stand_veraltet": "Die Auswahl hat sich seit der Anzeige geändert. Bitte neu laden."
+      "projekte.stand_veraltet": "Die Auswahl hat sich seit der Anzeige geändert. Bitte neu laden.",
+      "projekt.dokument_eingabe": "Auftrag oder Name fehlen oder sind zu lang. Es wurde nichts gesendet.",
+      "projekt.dokument_leer": "Das Modell hat keinen Text geliefert. Es wurde kein Entwurf angelegt.",
+      "projekt.dokument_ablage": "Der Entwurf konnte nicht angelegt werden. Es wurde keine Datei erstellt."
     },
     "ergebnis": {
       "modus": "Schnell",

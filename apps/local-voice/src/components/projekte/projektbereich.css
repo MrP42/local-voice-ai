@@ -457,6 +457,44 @@
 }
 
 /* Menü (Portal an body) */
+/* KI-Dokument erstellen (lva#365 P4c-3): Formular in der Spalte „KI im Projekt“. */
+.pb-dok {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+.pb-dok label {
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.pb-dok textarea,
+.pb-dok input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--color-mid-gray) 55%, transparent);
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-weight: 400;
+}
+.pb-dok textarea {
+  min-height: 96px;
+  resize: vertical;
+}
+.pb-dok__acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+/* Beide Knöpfe passen auch bei 390 px nebeneinander; Abbrechen sieht aus wie jeder Zweitknopf. */
+.pb-dok__acts .pb-btn {
+  padding: 0 10px;
+}
 .pb-menue {
   position: fixed;
   z-index: 1000;

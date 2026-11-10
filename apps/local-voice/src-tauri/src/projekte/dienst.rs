@@ -830,6 +830,39 @@ impl ProjektDienst {
         .map(|_| ())
     }
 
+    /// Legt eine Datei der Dokumentenablage als Eintrag `wai://lva/ablage/<dat>` ab (KI-Dokument,
+    /// lva#365 P4c-3). Idempotent. Von der Automation zugeordnet entsteht kein Stand: Der Eintrag ist im
+    /// Projekt **aus**, und die Ausgabe der KI speist sich nicht selbst wieder in den Kontext ein, bis die
+    /// Person ihn einschaltet. Die Klasse ist die wirksame Klasse der Datei (unbekannt gilt als hoechste).
+    pub async fn ablage_zuordnen(
+        &self,
+        suite_id: &str,
+        dat_id: &str,
+        titel: &str,
+        klasse: crate::ablage::zusammenfuehren::Klasse,
+        durch: ZugeordnetDurch,
+    ) -> Res<()> {
+        let _g = self.sperre.lock().await;
+        if !crate::ablage::id_gueltig(crate::ablage::PRAEFIX_DATEI, dat_id) {
+            return Err(Fehler::ungueltig("Kennung der Datei ungültig."));
+        }
+        let titel = if titel.trim().is_empty() {
+            "Dokument"
+        } else {
+            titel
+        };
+        self.verweis_zuordnen(
+            suite_id,
+            Art::Document,
+            ablage_link(dat_id),
+            titel,
+            ablage_klasse(klasse),
+            durch,
+        )
+        .await
+        .map(|_| ())
+    }
+
     // ---- Texte, Projektdateien und Kontext (lva#365 P4)
 
     /// Ordnet einem Projekt eine Vorlesen-Seite zu (`wai://lva/seite/<id>`). Idempotent.

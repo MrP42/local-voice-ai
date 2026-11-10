@@ -7,12 +7,16 @@
 
 use super::audit::RegisterAudit;
 use super::dienst::ProjektDienst;
+use super::dokument::Entwurfsablage;
 use super::quellen::{Inhalt, ProdQuellen, SeiteKurz};
 use super::recherche::{ModellQuelle, RechercheDienst, RechercheStore, RueckrufModell, SearxngWeb};
 use super::tor::{Abbruch, DateiAblage, ProjektTor, Ziel, ZielQuelle};
 use super::tor_ziel;
 use super::{lokaler_principal, Res};
+use crate::ablage::speicher::AblageEntwurf;
+use crate::ablage::zusammenfuehren::Klasse as AblageKlasse;
 use crate::managers::meetings::store::MeetingStore;
+use crate::voice_call::projekt::LlmWeg;
 use async_trait::async_trait;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -91,6 +95,7 @@ impl ProjekteZustand {
         );
         let audit = Arc::new(RegisterAudit(store));
         let tor_zelle: Arc<OnceLock<Arc<ProjektTor>>> = Arc::new(OnceLock::new());
+        let recherche_zelle: Arc<OnceLock<Arc<RechercheDienst>>> = Arc::new(OnceLock::new());
         let rstore = RechercheStore::open(ordner.join("recherche.db"))
             .await
             .map_err(|e| e.message)?;
@@ -108,10 +113,15 @@ impl ProjekteZustand {
         .with_widerruf({
             // Das Tor entsteht erst nach dem Dienst (es liest ihn als Kontextquelle): bis dahin gibt
             // es keinen Lauf, den ein Widerruf treffen koennte.
-            let (zelle, app) = (tor_zelle.clone(), self.app.clone());
+            let (zelle, rzelle, app) =
+                (tor_zelle.clone(), recherche_zelle.clone(), self.app.clone());
             Arc::new(move |projekt: &str| {
                 if let Some(tor) = zelle.get() {
                     widerruf_melden(&app, &tor.widerrufen(projekt));
+                }
+                // Gehaltene Recherchen mit Projektkontext verlieren dabei ihre Texte (lva#365 P4c-3).
+                if let Some(r) = rzelle.get() {
+                    r.halte_widerrufen();
                 }
             })
         });
@@ -136,10 +146,17 @@ impl ProjekteZustand {
         )
         .await
         .map_err(|e| e.message)?
-        .with_audit(audit);
+        .with_audit(audit)
+        // Recherche mit Projektkontext (P4c-3): Kontext, Klassen und Ziel vom Tor, Versand über den
+        // einen Sendeweg der Projekt-KI.
+        .with_projekt_ki(tor.clone(), Arc::new(LlmWeg));
+        let recherche = Arc::new(recherche);
+        // Halte mit Projekttexten verfallen auch dann, wenn niemand die Oberfläche öffnet.
+        recherche.aufraeumen_aktivieren();
+        let _ = recherche_zelle.set(recherche.clone());
         Ok(Arc::new(Dienste {
             projekte,
-            recherche: Arc::new(recherche),
+            recherche,
             tor,
         }))
     }
@@ -150,6 +167,7 @@ impl ProjekteZustand {
     pub fn widerrufen_ablage(&self) {
         if let Some(d) = self.dienste.get() {
             widerruf_melden(&self.app, &d.tor.widerrufen_ablage());
+            d.recherche.halte_widerrufen();
         }
     }
 }
@@ -192,6 +210,45 @@ pub async fn projekt_fuer_gespraech(app: &AppHandle, id: &str) -> Result<(String
 pub fn ablage_geaendert(app: &AppHandle) {
     if let Some(z) = app.try_state::<ProjekteZustand>() {
         z.widerrufen_ablage();
+    }
+}
+
+/// Die Dokumentenablage der App für KI-Entwürfe des Projekts (lva#365 P4c-3): wie der Befehl der Ablage
+/// mit Index-Abgleich und Textarbeiter, aber mit der Mindestklasse des Tors als festem Parameter.
+pub struct AppEntwurf(pub AppHandle);
+
+/// Der Code einer Fehlermeldung der Ablage (`<code>: <text>`); nur der Code verlässt diese Stelle, nie
+/// der Text.
+fn ablage_code(meldung: &str) -> String {
+    let code = meldung.split(':').next().unwrap_or_default();
+    let sauber = !code.is_empty()
+        && code
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'_' | b'.'));
+    let ergebnis = if sauber { code } else { "ablage.speicher" };
+    ergebnis.to_string()
+}
+
+#[async_trait]
+impl Entwurfsablage for AppEntwurf {
+    async fn anlegen(
+        &self,
+        ordner: Option<&str>,
+        name: &str,
+        inhalt_md: &str,
+        quellen: &[String],
+        mindestklasse: AblageKlasse,
+    ) -> Result<AblageEntwurf, String> {
+        crate::ablage::befehle::entwurf_fuer_projekt(
+            &self.0,
+            ordner.map(str::to_string),
+            name.to_string(),
+            inhalt_md.to_string(),
+            quellen.to_vec(),
+            mindestklasse,
+        )
+        .await
+        .map_err(|e| ablage_code(&e))
     }
 }
 
