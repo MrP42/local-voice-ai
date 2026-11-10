@@ -244,8 +244,10 @@ pub fn reparse_tag_transparent(tag: u32) -> bool {
 }
 
 /// Urteil des Ausloesers ueber Attribute und Tag: wie `eintrag::reparse_urteil`, doch WOF und
-/// Dedup sind lokale Dateien. Der Ausloeser oeffnet OHNE `FILE_FLAG_OPEN_REPARSE_POINT` und liest
-/// damit den echten Inhalt. Die Ablage oeffnet mit diesem Flag und behaelt ihr strenges Urteil.
+/// Dedup sind lokale Dateien. Beim zweistufigen Oeffnen (`eintrag::oeffnen_ohne_abruf`) oeffnet
+/// Stufe 1 (nur Attribute) MIT `FILE_FLAG_OPEN_REPARSE_POINT` und urteilt ueber den Reparse-Point
+/// selbst; Stufe 2 (Lesezugriff) FOLGT ihm (ohne das Flag) und liest damit den echten Inhalt. Die
+/// Ablage oeffnet auch in Stufe 2 mit dem Flag und behaelt ihr strenges Urteil.
 pub fn trigger_urteil(tag: u32, attribute: u32) -> Urteil {
     let u = eintrag::reparse_urteil(tag, attribute);
     if u == Urteil::Umweg
