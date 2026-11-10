@@ -2,13 +2,17 @@
 //! das Testprogramm selbst ([`super::tests_d2::kind`]); die OCR liefert in Tests ein Test-Leser
 //! (`LVA_EXTRAKT_TEST=ocr`, Kennung [`ocr::TEST_KENNUNG`]).
 
+use super::freigabe;
 use super::freigabe::KiStufe;
 use super::index;
+use super::ki::{self, KiBereich, Urteil, ZielAnbieter};
 use super::ocr;
+use super::semantik::AblageEinbettung;
 use super::speicher::{Ablage, AblageEinstellungen};
 use super::tests_d2::{kind, pdf_aus_objekten, TEST_GRENZEN};
 use super::textfassung;
 use super::verknuepft::{self, Art, Auftrag, Ausgang, Entpreller};
+use super::zusammenfuehren::Klasse;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
@@ -927,4 +931,336 @@ fn reparse_urteil_wertet_tags_und_attribute() {
     // Ordner mit Cloud-Tag: betreten erlaubt; Junction bleibt abgewiesen.
     assert_eq!(reparse_urteil(CLOUD, REPARSE | 0x10, true), Umweg::Nein);
     assert_eq!(reparse_urteil(MOUNT, REPARSE | 0x10, true), Umweg::Ja);
+}
+
+// ---------------------------------------------------------------------------
+// D3 x D7: KI-Zugriff und verknüpfte Ordner (fail-closed)
+// ---------------------------------------------------------------------------
+
+fn lokal() -> ZielAnbieter {
+    ZielAnbieter {
+        id: "lokal".into(),
+        lokal: true,
+        datenklasse_max: Klasse::Personal,
+    }
+}
+
+fn cloud(id: &str, max: Klasse) -> ZielAnbieter {
+    ZielAnbieter {
+        id: id.into(),
+        lokal: false,
+        datenklasse_max: max,
+    }
+}
+
+fn ziele() -> Vec<ZielAnbieter> {
+    vec![
+        lokal(),
+        cloud("anbieter-x", Klasse::Public),
+        cloud("anbieter-x", Klasse::Internal),
+        cloud("anbieter-x", Klasse::Confidential),
+    ]
+}
+
+impl Env {
+    fn ki(&self, q: &str, b: &KiBereich, z: &ZielAnbieter) -> ki::AuszugAntwort {
+        ki::auszuege_mit(&self.a, q, b, z, ki::TOP_K, &AblageEinbettung::Keine).unwrap()
+    }
+
+    /// Alle Bereiche, die eine Datei oder einen Ordner der verknüpften Seite ansprechen können.
+    fn bereiche(&self, id: &str, dat: &str) -> Vec<KiBereich> {
+        vec![
+            KiBereich::Global,
+            KiBereich::Ordner(id.to_string()),
+            KiBereich::Projekt(vec![id.to_string()]),
+            KiBereich::Projekt(vec![format!("{}{dat}", ki::LINK)]),
+            KiBereich::Projekt(vec![format!("{}{id}", ki::LINK), dat.to_string()]),
+        ]
+    }
+
+    fn null_auszuege(&self, q: &str, id: &str, dat: &str) {
+        for b in self.bereiche(id, dat) {
+            for z in ziele() {
+                let r = self.ki(q, &b, &z);
+                assert!(r.auszuege.is_empty(), "{b:?} {z:?}");
+                assert!(r.kein_beleg, "{b:?} {z:?}");
+                assert_eq!(r.abdeckung.durchsucht, 0, "{b:?} {z:?}");
+                assert!(!ki::als_text(&r).contains(q), "{b:?} {z:?}");
+            }
+        }
+    }
+
+    /// Eine Datei in der eigenen Ablage (Kontrolle: die KI-Seite funktioniert, nur Verknüpftes fehlt).
+    fn eigene_datei(&self, name: &str, text: &str) -> (String, String) {
+        let w = self.a.ansicht().unwrap().ordner[0].id.clone();
+        let q = self.d.path().join("eigen").join(name);
+        fs::create_dir_all(q.parent().unwrap()).unwrap();
+        fs::write(&q, text).unwrap();
+        let z = self.a.importieren(&q, &w, None).unwrap();
+        textfassung::lauf(
+            &self.a,
+            &kind(None),
+            TEST_GRENZEN,
+            &AtomicBool::new(false),
+            &|| {},
+        )
+        .unwrap();
+        index::abgleichen_mit(&self.a, &AblageEinbettung::Keine).unwrap();
+        (w, z[0].dat.clone().unwrap())
+    }
+}
+
+#[test]
+fn verknuepfte_dateien_sind_fuer_die_ki_nie_erreichbar() {
+    let e = env();
+    e.schreiben(
+        "Verträge/Wartung.txt",
+        format!("Laufzeit {KONTROLLE} drei Jahre.").as_bytes(),
+    );
+    let id = e.verknuepfen();
+    let dat = e.rel_dat(&id, "Verträge/Wartung.txt");
+    e.lauf(None, None);
+    assert_eq!(
+        e.treffer(KONTROLLE).len(),
+        1,
+        "die Suche in der Ablage sieht sie"
+    );
+    // Jede Freigabe, jede Klasse, jeder Weg, jedes Ziel: 0 Auszüge.
+    for stufe in [
+        None,
+        Some(KiStufe::Aus),
+        Some(KiStufe::An),
+        Some(KiStufe::Gesperrt),
+    ] {
+        e.a.ki_setzen(&id, stufe).unwrap();
+        for k in ["public", "internal", "confidential", "personal"] {
+            e.a.ordner_einstellungen(
+                &id,
+                &AblageEinstellungen {
+                    datenklasse: Some(k.into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            index::abgleichen_mit(&e.a, &AblageEinbettung::Keine).unwrap();
+            e.null_auszuege(KONTROLLE, &id, &dat);
+        }
+    }
+    // Auch im Index selbst hat sie keinen KI-Leser: in SQL vor dem Ranking ausgeschlossen, selbst bei
+    // `an` und `public`, auf beiden Wegen und für jedes Profil.
+    e.a.ki_setzen(&id, Some(KiStufe::An)).unwrap();
+    e.a.ordner_einstellungen(
+        &id,
+        &AblageEinstellungen {
+            datenklasse: Some("public".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    index::abgleichen_mit(&e.a, &AblageEinbettung::Keine).unwrap();
+    for weg in [index::KiWeg::Global, index::KiWeg::Projekt] {
+        for p in index::KiProfil::ALLE {
+            let s = index::ki_suchen(
+                &e.a,
+                KONTROLLE,
+                &AblageEinbettung::Keine,
+                &index::ki_leser(weg, p),
+                50,
+            )
+            .unwrap();
+            assert!(s.stellen.is_empty(), "{weg:?} {p:?}");
+        }
+    }
+    // Kontrolle: dieselbe Frage trifft eine eigene, freigegebene Datei (der Test ist nicht leer).
+    let (w, eigen) = e.eigene_datei("Eigen.txt", &format!("Eigen {KONTROLLE} Text"));
+    e.a.ki_setzen(&w, Some(KiStufe::An)).unwrap();
+    let r = e.ki(KONTROLLE, &KiBereich::Global, &lokal());
+    assert_eq!(r.auszuege.len(), 1);
+    assert_eq!(r.auszuege[0].dat, eigen);
+    assert!(!r.auszuege.iter().any(|x| x.dat == dat));
+    assert_eq!(
+        r.abdeckung.im_bereich, 1,
+        "verknüpfte Dateien zählen nicht zum Bereich"
+    );
+    // Auch im Projektweg mit dem verknüpften Ordner als Mitgliedschaft: weiter nichts.
+    let r = e.ki(
+        KONTROLLE,
+        &KiBereich::Projekt(vec![id.clone(), eigen.clone()]),
+        &lokal(),
+    );
+    assert_eq!(
+        r.auszuege
+            .iter()
+            .map(|x| x.dat.as_str())
+            .collect::<Vec<_>>(),
+        [eigen.as_str()]
+    );
+}
+
+#[test]
+fn verknuepfte_dateien_im_index_ohne_ki_leser_stempel_wechselt() {
+    let e = env();
+    e.schreiben("a.txt", format!("x {KONTROLLE}").as_bytes());
+    let id = e.verknuepfen();
+    e.lauf(None, None);
+    e.a.ki_setzen(&id, Some(KiStufe::An)).unwrap();
+    for q in verknuepft::index_quellen(&e.a).unwrap() {
+        assert!(q.verknuepft);
+        assert_eq!(
+            index::leser_fuer(&q),
+            vec![index::LESER_SUCHE.to_string()],
+            "nur die Suche in der Ablage, nie ein KI-Weg"
+        );
+    }
+    // Der Stempel unterscheidet sie von einer eigenen Quelle sonst gleicher Felder.
+    let mut q = verknuepft::index_quellen(&e.a).unwrap().remove(0);
+    let vk = index::stempel(&q);
+    q.verknuepft = false;
+    assert_ne!(vk, index::stempel(&q));
+}
+
+#[test]
+fn herkunftsmarke_einer_verknuepften_datei_ist_entzogen_vor_und_nach_dem_loesen() {
+    let e = env();
+    e.schreiben("a.txt", format!("x {KONTROLLE}").as_bytes());
+    let id = e.verknuepfen();
+    let dat = e.rel_dat(&id, "a.txt");
+    e.lauf(None, None);
+    e.a.ki_setzen(&id, Some(KiStufe::An)).unwrap();
+    // Eine Marke, wie sie aus dieser Datei stammen müsste (Fassung ist eine Prüfsumme, keine `fas_`-
+    // Kennung; auch mit einer wohlgeformten Fassung gäbe es keine Berechtigung).
+    let rev = "ab".repeat(32);
+    let fas = super::neue_id(super::PRAEFIX_FASSUNG);
+    let m = ki::marke(&dat, &fas, &rev);
+    let roh = ki::marke(
+        &dat,
+        &verknuepft::bestand(e.a.dir(), &id).dateien["a.txt"]
+            .sha256
+            .clone()
+            .unwrap(),
+        &rev,
+    );
+    for z in ziele() {
+        for b in e.bereiche(&id, &dat) {
+            let p = ki::herkunft_pruefen(&e.a, &[m.clone(), roh.clone()], &b, &z);
+            assert!(
+                p.iter().all(|x| x.urteil == Urteil::Entzogen),
+                "{b:?} {z:?}"
+            );
+        }
+    }
+    verknuepft::loesen(&e.a, &id).unwrap();
+    for z in ziele() {
+        for b in e.bereiche(&id, &dat) {
+            let p = ki::herkunft_pruefen(&e.a, &[m.clone(), roh.clone()], &b, &z);
+            assert!(
+                p.iter().all(|x| x.urteil == Urteil::Entzogen),
+                "{b:?} {z:?}"
+            );
+        }
+    }
+    // Ein Text mit der Marke wird bereinigt: Auszug ersetzt.
+    let text = format!("<<<auszug Q1 | {m}>>>\nInhalt\n<<<ende auszug Q1>>>\n");
+    let p = ki::herkunft_pruefen(&e.a, std::slice::from_ref(&m), &KiBereich::Global, &lokal());
+    let b = ki::bereinigen(&text, &p);
+    assert_eq!(b.entzogen, 1);
+    assert!(!b.text.contains("Inhalt"));
+}
+
+#[test]
+fn cloud_ausnahme_fuer_verknuepfte_ordner_wird_abgewiesen_und_verfaellt() {
+    let e = env();
+    e.schreiben("a.txt", format!("x {KONTROLLE}").as_bytes());
+    let id = e.verknuepfen();
+    let dat = e.rel_dat(&id, "a.txt");
+    e.lauf(None, None);
+    e.a.ki_setzen(&id, Some(KiStufe::An)).unwrap();
+    // Standardklasse confidential: Erteilen trotzdem abgewiesen (nie erreichbar), nichts gespeichert.
+    let f =
+        e.a.cloud_ausnahme_setzen(&id, "anbieter-x", true)
+            .unwrap_err();
+    assert_eq!(code(f), "ablage.verknuepft_nur_lesen");
+    let lage = freigabe::laden(e.a.dir());
+    assert!(!freigabe::ausnahme_gilt(
+        &lage,
+        std::slice::from_ref(&id),
+        "anbieter-x",
+        |_| true
+    ));
+    // Entziehen bleibt erlaubt.
+    e.a.cloud_ausnahme_setzen(&id, "anbieter-x", false).unwrap();
+    // Eine (hypothetisch, etwa aus älterem Stand) vorhandene Ausnahme öffnet nichts: weder bei
+    // confidential noch bei personal.
+    freigabe::ausnahme_setzen(e.a.dir(), &id, "anbieter-x", true).unwrap();
+    let c = cloud("anbieter-x", Klasse::Confidential);
+    for k in ["confidential", "personal"] {
+        e.a.ordner_einstellungen(
+            &id,
+            &AblageEinstellungen {
+                datenklasse: Some(k.into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        for b in e.bereiche(&id, &dat) {
+            assert!(e.ki(KONTROLLE, &b, &c).auszuege.is_empty(), "{k} {b:?}");
+            assert!(
+                e.ki(KONTROLLE, &b, &lokal()).auszuege.is_empty(),
+                "{k} {b:?}"
+            );
+        }
+    }
+    // Klassenwechsel verwirft die Ausnahme (wie bei Ordnern).
+    freigabe::ausnahme_setzen(e.a.dir(), &id, "anbieter-x", true).unwrap();
+    e.a.ordner_einstellungen(
+        &id,
+        &AblageEinstellungen {
+            datenklasse: Some("internal".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let lage = freigabe::laden(e.a.dir());
+    assert!(!freigabe::ausnahme_gilt(
+        &lage,
+        std::slice::from_ref(&id),
+        "anbieter-x",
+        |_| true
+    ));
+    // Lösen verwirft Ausnahme und Freigabe-Eintrag des Ordners.
+    freigabe::ausnahme_setzen(e.a.dir(), &id, "anbieter-x", true).unwrap();
+    verknuepft::loesen(&e.a, &id).unwrap();
+    let f = fs::read_to_string(e.a.dir().join(freigabe::DATEI)).unwrap();
+    assert!(
+        !f.contains(&id),
+        "weder Freigabe noch Ausnahme bleiben stehen"
+    );
+}
+
+#[test]
+fn freigaben_neu_festlegen_schliesst_verknuepfte_ordner_ein_und_verwirft_ausnahmen() {
+    let e = env();
+    e.schreiben("a.txt", format!("x {KONTROLLE}").as_bytes());
+    let id = e.verknuepfen();
+    let dat = e.rel_dat(&id, "a.txt");
+    e.lauf(None, None);
+    e.a.ki_setzen(&id, Some(KiStufe::An)).unwrap();
+    freigabe::ausnahme_setzen(e.a.dir(), &id, "anbieter-x", true).unwrap();
+    // Freigabe defekt, ohne brauchbare Sicherung: alles gesperrt, auch das Verknüpfte.
+    fs::write(e.a.dir().join(freigabe::DATEI), b"kaputt").unwrap();
+    fs::write(e.a.dir().join(freigabe::VORHER), b"auch kaputt").unwrap();
+    let s = e.a.ansicht().unwrap();
+    assert_eq!(s.verknuepft[0].ordner.ki.zustand, "unklar");
+    e.null_auszuege(KONTROLLE, &id, &dat);
+    e.a.freigaben_neu_festlegen().unwrap();
+    let s = e.a.ansicht().unwrap();
+    assert_eq!(s.verknuepft[0].ordner.ki.zustand, "aus");
+    let lage = freigabe::laden(e.a.dir());
+    assert!(!freigabe::ausnahme_gilt(
+        &lage,
+        std::slice::from_ref(&id),
+        "anbieter-x",
+        |_| true
+    ));
+    e.null_auszuege(KONTROLLE, &id, &dat);
 }

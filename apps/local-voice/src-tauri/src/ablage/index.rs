@@ -112,6 +112,11 @@ pub(crate) fn leser_fuer(q: &IndexQuelle) -> Vec<String> {
         return vec![];
     }
     let mut l = vec![LESER_SUCHE.to_string()];
+    // D7: Dateien verknüpfter Ordner sind für die KI nie erreichbar (`ki::auszuege` kennt sie nicht,
+    // fail-closed). Ohne KI-Leser belegen sie auch keine Plätze im Kandidatenpool.
+    if q.verknuepft {
+        return l;
+    }
     let Some(klasse) = Klasse::aus_text(&q.klasse) else {
         return l;
     };
@@ -385,7 +390,7 @@ pub fn stuecke(text: &str, max: usize, ueber: usize) -> Vec<String> {
     aus
 }
 
-fn stempel(q: &IndexQuelle) -> String {
+pub(crate) fn stempel(q: &IndexQuelle) -> String {
     let mut h = Sha256::new();
     for teil in [
         q.fas.as_str(),
@@ -401,6 +406,11 @@ fn stempel(q: &IndexQuelle) -> String {
     ] {
         h.update(teil.as_bytes());
         h.update([0u8]);
+    }
+    // D7: verknüpfte Dateien tragen keine KI-Leser (anderes Quellrecht, also anderer Stempel). Der
+    // Stempel eigener Dateien bleibt unverändert, ihr Index wird nicht neu aufgebaut.
+    if q.verknuepft {
+        h.update(b"verknuepft\0");
     }
     super::extrakt::hex(&h.finalize())
 }
