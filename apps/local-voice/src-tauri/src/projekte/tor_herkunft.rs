@@ -5,21 +5,29 @@
 //! Antwort mit ihrer Herkunft ins Register ein und schlägt sie beim nächsten Turn wieder nach: Eine Antwort
 //! bleibt nur im Verlauf, wenn alle ihre Quellen noch gelten. Unbekannte Antworten gelten als entzogen.
 //!
-//! Datei `projekte/ki-herkunft.json` (gerätelokal):
+//! Datei `projekte/ki-herkunft.json` (gerätelokal, unter Unix mit Rechten 0600):
 //! - Je Antwort ein gesalzenes Merkmal (`HMAC-SHA256(salz, normalisierter Text)`), nie Klartext, Titel
-//!   oder Namen. Das Salz gilt je Datei.
+//!   oder Namen. Das Salz gilt je Datei und kommt vom Zufallsgenerator des Betriebssystems.
 //! - Schreiben atomar (eigene Temp-Datei, fsync, Umbenennen) und unter einer Prozess-Sperre. Ein Fehler
 //!   beim Schreiben lässt die bestehende Datei unverändert.
-//! - Fehlt die Datei, ist das Register leer. Ist sie **defekt** (nicht lesbar, kaputt, neuere Version),
-//!   wird sie als `ki-herkunft.json.defekt-<ms>` beiseitegelegt (nie gelöscht) und [`Lage::Defekt`]
-//!   gemeldet; das Tor setzt dann den Verlauf zurück. Alle alten Antworten sind danach unbekannt.
+//! - Fehlt die Datei, ist das Register leer. Ist ihr **Inhalt** defekt (kaputt, neuere Version), wird
+//!   sie als `ki-herkunft.json.defekt-<ms>` beiseitegelegt (nie gelöscht) und [`Lage::Defekt`] gemeldet;
+//!   das Tor setzt dann den Verlauf zurück. Alle alten Antworten sind danach unbekannt.
+//! - Ein **Lesefehler** (außer „Datei fehlt“: Zugriff verweigert, Datenträger, Pfad ist ein Ordner) ist
+//!   etwas anderes: Die Datei kann in Ordnung sein. Dann wird nichts umbenannt, `laden` und `eintragen`
+//!   scheitern, und das Tor bricht den Turn ab (fail-closed, das Register bleibt, wie es ist).
+//! - Trägt dieselbe Antwort ein zweites Mal ein, wird ihre Herkunft **vereinigt**, nie ersetzt: Sie gilt
+//!   nur, solange alle Quellen aus beiden Läufen gelten.
 //! - Der Bestand ist begrenzt ([`MAX_EINTRAEGE`]); die ältesten Einträge fallen zuerst heraus. Das ist
 //!   sicher: Was nicht im Register steht, gilt als entzogen.
+//! - Alle Aufrufe blockieren (Datei, Sperre); das Tor ruft sie über `spawn_blocking`.
 
 use crate::ablage::zusammenfuehren::Klasse as AblageKlasse;
 use hmac::{Hmac, Mac};
+use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use wai_projekte::Klasse;
@@ -43,9 +51,10 @@ pub struct Eintrag {
     pub merkmal: String,
     pub projekt: String,
     pub stand: String,
-    /// Marken `eintrag:<id>#<h16>` der gelieferten Projektinhalte.
+    /// Marken `eintrag:<id>#<h32>` der gelieferten Projektinhalte, vereinigt mit denen der im Verlauf
+    /// behaltenen Antworten, auf die sich die Antwort stützt.
     pub inhalte: Vec<String>,
-    /// Marken `dokument:<dat>@<fas>#<textrev>` der gelieferten Ablage-Auszüge.
+    /// Marken `dokument:<dat>@<fas>#<textrev>` der gelieferten Ablage-Auszüge, vereinigt wie `inhalte`.
     pub ablage: Vec<String>,
     /// Höchste wirksame Klasse der gelieferten Projektinhalte (mit Projektklasse und Art.-9-Kennzeichen).
     pub klasse_projekt: Klasse,
@@ -55,14 +64,16 @@ pub struct Eintrag {
     pub zeit: i64,
 }
 
-/// Angaben zu einer neu freigegebenen Antwort.
-pub struct Neu<'a> {
-    pub gespraech: &'a str,
-    pub antwort: &'a str,
-    pub projekt: &'a str,
-    pub stand: &'a str,
-    pub inhalte: &'a [String],
-    pub ablage: &'a [String],
+/// Angaben zu einer neu freigegebenen Antwort. Besitzend, damit der Aufruf in `spawn_blocking` laufen
+/// kann.
+#[derive(Debug, Clone)]
+pub struct Neu {
+    pub gespraech: String,
+    pub antwort: String,
+    pub projekt: String,
+    pub stand: String,
+    pub inhalte: Vec<String>,
+    pub ablage: Vec<String>,
     pub klasse_projekt: Klasse,
     pub klasse_ablage: Option<AblageKlasse>,
 }
@@ -119,12 +130,22 @@ fn jetzt_ms() -> i64 {
         .unwrap_or(0)
 }
 
-fn neues_salz() -> String {
-    format!(
-        "{:016x}{:016x}",
-        rand::random::<u64>(),
-        rand::random::<u64>()
-    )
+/// 256 Bit vom Zufallsgenerator des Betriebssystems. Scheitert der Generator, gibt es kein Salz und
+/// damit keinen Eintrag (fail-closed).
+fn neues_salz() -> Result<String, String> {
+    let mut b = [0u8; 32];
+    OsRng
+        .try_fill_bytes(&mut b)
+        .map_err(|_| "Antwortregister: kein Zufall für das Salz.".to_string())?;
+    Ok(b.iter().map(|x| format!("{x:02x}")).collect())
+}
+
+fn vereinigt(a: Vec<String>, b: Vec<String>) -> Vec<String> {
+    a.into_iter()
+        .chain(b)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 impl Bestand {
@@ -174,16 +195,28 @@ fn pfad(ordner: &Path) -> PathBuf {
     ordner.join(DATEI)
 }
 
-fn lesen_roh(ordner: &Path) -> (Lage, Option<Datei>) {
+/// Ergebnis des rohen Lesens. `Unlesbar` ist ein Lesefehler und kein Urteil über den Inhalt.
+enum Roh {
+    Fehlt,
+    Gelesen(Datei),
+    /// Gelesen, aber nicht auswertbar (kaputt, neuere Version, ohne Salz).
+    Kaputt,
+    /// Lesefehler außer „fehlt“: Die Datei wird nicht angefasst.
+    Unlesbar,
+}
+
+fn lesen_roh(ordner: &Path) -> Roh {
     match fs::read(pfad(ordner)) {
         Ok(roh) => match serde_json::from_slice::<Datei>(&roh) {
-            Ok(d) if d.v == VERSION && !d.salz.is_empty() => (Lage::Gelesen, Some(d)),
-            _ => (Lage::Defekt, None),
+            Ok(d) if d.v == VERSION && !d.salz.is_empty() => Roh::Gelesen(d),
+            _ => Roh::Kaputt,
         },
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (Lage::Fehlt, None),
-        Err(_) => (Lage::Defekt, None),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Roh::Fehlt,
+        Err(_) => Roh::Unlesbar,
     }
 }
+
+const UNLESBAR: &str = "Antwortregister: nicht lesbar.";
 
 /// Legt eine defekte Datei beiseite (nie löschen). `true`, wenn sie danach nicht mehr im Weg liegt.
 fn beiseitelegen(ordner: &Path) -> bool {
@@ -202,10 +235,12 @@ fn schreiben(ordner: &Path, d: &Datei) -> Result<(), String> {
     ));
     let ergebnis = (|| -> std::io::Result<()> {
         use std::io::Write;
-        let mut f = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&tmp)?;
+        let mut optionen = fs::OpenOptions::new();
+        optionen.write(true).create_new(true);
+        // Nur die eigene Person liest das Register (Merkmale, Marken, Klassen).
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut optionen, 0o600);
+        let mut f = optionen.open(&tmp)?;
         f.write_all(&roh)?;
         f.sync_all()?;
         drop(f);
@@ -230,62 +265,78 @@ impl Register {
         }
     }
 
-    /// Liest den Bestand. Eine defekte Datei wird beiseitegelegt und als [`Lage::Defekt`] gemeldet.
-    pub fn laden(&self) -> Bestand {
+    /// Liest den Bestand. Eine Datei mit defektem Inhalt wird beiseitegelegt und als [`Lage::Defekt`]
+    /// gemeldet. Ein Lesefehler ist ein `Err`: nichts wird umbenannt, der Turn muss abbrechen.
+    pub fn laden(&self) -> Result<Bestand, String> {
         let _g = sperren();
         match lesen_roh(&self.ordner) {
-            (Lage::Gelesen, Some(d)) => Bestand {
+            Roh::Gelesen(d) => Ok(Bestand {
                 lage: Lage::Gelesen,
                 salz: d.salz,
                 eintraege: d.eintraege,
-            },
-            (Lage::Fehlt, _) => Bestand::leer(Lage::Fehlt),
-            _ => {
+            }),
+            Roh::Fehlt => Ok(Bestand::leer(Lage::Fehlt)),
+            Roh::Kaputt => {
                 beiseitelegen(&self.ordner);
-                Bestand::leer(Lage::Defekt)
+                Ok(Bestand::leer(Lage::Defekt))
             }
+            Roh::Unlesbar => Err(UNLESBAR.into()),
         }
     }
 
-    /// Liest zum Ändern; fehlt die Datei oder ist sie defekt (dann beiseitegelegt), beginnt ein neuer
-    /// Bestand mit neuem Salz. Kann eine defekte Datei nicht beiseitegelegt werden, ist das ein Fehler.
+    /// Liest zum Ändern; fehlt die Datei oder ist ihr Inhalt defekt (dann beiseitegelegt), beginnt ein
+    /// neuer Bestand mit neuem Salz. Kann eine defekte Datei nicht beiseitegelegt werden, oder ist sie
+    /// nicht lesbar, ist das ein Fehler.
     fn zum_aendern(&self) -> Result<Datei, String> {
-        match lesen_roh(&self.ordner) {
-            (Lage::Gelesen, Some(d)) => Ok(d),
-            (Lage::Fehlt, _) => Ok(Datei {
+        let neu = || -> Result<Datei, String> {
+            Ok(Datei {
                 v: VERSION,
-                salz: neues_salz(),
+                salz: neues_salz()?,
                 eintraege: Vec::new(),
-            }),
-            _ => {
+            })
+        };
+        match lesen_roh(&self.ordner) {
+            Roh::Gelesen(d) => Ok(d),
+            Roh::Fehlt => neu(),
+            Roh::Kaputt => {
                 if !beiseitelegen(&self.ordner) {
                     return Err("Antwortregister: defekte Datei nicht beiseitelegbar.".into());
                 }
-                Ok(Datei {
-                    v: VERSION,
-                    salz: neues_salz(),
-                    eintraege: Vec::new(),
-                })
+                neu()
             }
+            Roh::Unlesbar => Err(UNLESBAR.into()),
         }
     }
 
     /// Trägt eine freigegebene Antwort ein. Bei einem Fehler bleibt die bestehende Datei unverändert.
-    pub fn eintragen(&self, n: Neu<'_>) -> Result<(), String> {
+    /// Gibt es die Antwort in diesem Gespräch schon, wird ihre Herkunft vereinigt und ihre Klasse zum
+    /// Maximum.
+    pub fn eintragen(&self, n: Neu) -> Result<(), String> {
         let _g = sperren();
         let mut d = self.zum_aendern()?;
-        let m = merkmal(&d.salz, n.antwort);
-        d.eintraege
-            .retain(|e| !(e.gespraech == n.gespraech && e.merkmal == m));
+        let m = merkmal(&d.salz, &n.antwort);
+        let (alt, rest): (Vec<Eintrag>, Vec<Eintrag>) = d
+            .eintraege
+            .into_iter()
+            .partition(|e| e.gespraech == n.gespraech && e.merkmal == m);
+        d.eintraege = rest;
+        let (mut inhalte, mut ablage) = (n.inhalte, n.ablage);
+        let (mut klasse_projekt, mut klasse_ablage) = (n.klasse_projekt, n.klasse_ablage);
+        for a in alt {
+            inhalte = vereinigt(inhalte, a.inhalte);
+            ablage = vereinigt(ablage, a.ablage);
+            klasse_projekt = klasse_projekt.max(a.klasse_projekt);
+            klasse_ablage = klasse_ablage.max(a.klasse_ablage);
+        }
         d.eintraege.push(Eintrag {
-            gespraech: n.gespraech.to_string(),
+            gespraech: n.gespraech,
             merkmal: m,
-            projekt: n.projekt.to_string(),
-            stand: n.stand.to_string(),
-            inhalte: n.inhalte.to_vec(),
-            ablage: n.ablage.to_vec(),
-            klasse_projekt: n.klasse_projekt,
-            klasse_ablage: n.klasse_ablage,
+            projekt: n.projekt,
+            stand: n.stand,
+            inhalte: vereinigt(inhalte, Vec::new()),
+            ablage: vereinigt(ablage, Vec::new()),
+            klasse_projekt,
+            klasse_ablage,
             zeit: jetzt_ms(),
         });
         if d.eintraege.len() > MAX_EINTRAEGE {
@@ -307,10 +358,12 @@ impl Register {
 
     fn entfernen(&self, weg: impl Fn(&Eintrag) -> bool) -> Result<usize, String> {
         let _g = sperren();
-        // Fehlt die Datei oder ist sie defekt, gibt es nichts zu entfernen (beim Lesen für das nächste
-        // Tor-Verfahren wird sie beiseitegelegt).
-        let (Lage::Gelesen, Some(mut d)) = lesen_roh(&self.ordner) else {
-            return Ok(0);
+        // Fehlt die Datei oder ist ihr Inhalt defekt, gibt es nichts zu entfernen (beim Lesen für das
+        // nächste Tor-Verfahren wird sie beiseitegelegt). Ein Lesefehler ist ein Fehler.
+        let mut d = match lesen_roh(&self.ordner) {
+            Roh::Gelesen(d) => d,
+            Roh::Fehlt | Roh::Kaputt => return Ok(0),
+            Roh::Unlesbar => return Err(UNLESBAR.into()),
         };
         let vorher = d.eintraege.len();
         d.eintraege.retain(|e| !weg(e));
@@ -330,27 +383,39 @@ mod tests {
         tempfile::tempdir().unwrap()
     }
 
-    fn neu<'a>(g: &'a str, antwort: &'a str, p: &'a str) -> Neu<'a> {
+    fn neu(g: &str, antwort: &str, p: &str) -> Neu {
         Neu {
-            gespraech: g,
-            antwort,
-            projekt: p,
-            stand: "s",
-            inhalte: &[],
-            ablage: &[],
+            gespraech: g.into(),
+            antwort: antwort.into(),
+            projekt: p.into(),
+            stand: "s".into(),
+            inhalte: vec![],
+            ablage: vec![],
             klasse_projekt: Klasse::Internal,
             klasse_ablage: None,
         }
+    }
+
+    fn beiseite(ordner: &Path) -> Vec<fs::DirEntry> {
+        fs::read_dir(ordner)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with(&format!("{DATEI}.defekt-"))
+            })
+            .collect()
     }
 
     #[test]
     fn eintragen_und_finden_normalisiert_leerraum() {
         let d = tmp();
         let r = Register::neu(d.path());
-        assert_eq!(r.laden().lage, Lage::Fehlt);
+        assert_eq!(r.laden().unwrap().lage, Lage::Fehlt);
         r.eintragen(neu("g1", "Das  ist\n eine Antwort", "prj_a"))
             .unwrap();
-        let b = r.laden();
+        let b = r.laden().unwrap();
         assert_eq!(b.lage, Lage::Gelesen);
         assert!(b.finden("g1", "Das ist eine Antwort ").is_some());
         assert!(b.finden("g2", "Das ist eine Antwort").is_none());
@@ -372,22 +437,14 @@ mod tests {
         let d = tmp();
         fs::write(d.path().join(DATEI), b"{kaputt").unwrap();
         let r = Register::neu(d.path());
-        assert_eq!(r.laden().lage, Lage::Defekt);
+        assert_eq!(r.laden().unwrap().lage, Lage::Defekt);
         assert!(!d.path().join(DATEI).exists());
-        let beiseite: Vec<_> = fs::read_dir(d.path())
-            .unwrap()
-            .filter_map(Result::ok)
-            .filter(|e| {
-                e.file_name()
-                    .to_string_lossy()
-                    .starts_with(&format!("{DATEI}.defekt-"))
-            })
-            .collect();
-        assert_eq!(beiseite.len(), 1);
-        assert_eq!(fs::read(beiseite[0].path()).unwrap(), b"{kaputt");
+        let b = beiseite(d.path());
+        assert_eq!(b.len(), 1);
+        assert_eq!(fs::read(b[0].path()).unwrap(), b"{kaputt");
         // Danach beginnt ein neuer Bestand.
         r.eintragen(neu("g1", "a", "prj_a")).unwrap();
-        assert_eq!(r.laden().lage, Lage::Gelesen);
+        assert_eq!(r.laden().unwrap().lage, Lage::Gelesen);
     }
 
     #[test]
@@ -398,7 +455,26 @@ mod tests {
             br#"{"v":99,"salz":"abc","eintraege":[]}"#,
         )
         .unwrap();
-        assert_eq!(Register::neu(d.path()).laden().lage, Lage::Defekt);
+        assert_eq!(Register::neu(d.path()).laden().unwrap().lage, Lage::Defekt);
+    }
+
+    /// Ein Lesefehler ist kein Urteil über den Inhalt: nichts wird beiseitegelegt, `laden`, `eintragen`
+    /// und `entfernen` scheitern, die Datei bleibt, wie sie ist. (Hier: der Pfad ist ein Ordner; unter
+    /// Unix scheitert das Lesen mit `EISDIR`, unter Windows mit „Zugriff verweigert“.)
+    #[test]
+    fn lesefehler_bricht_ab_ohne_umbenennen() {
+        let d = tmp();
+        let pfad = d.path().join(DATEI);
+        fs::create_dir(&pfad).unwrap();
+        fs::write(pfad.join("inhalt"), b"x").unwrap();
+        let r = Register::neu(d.path());
+        assert!(r.laden().is_err());
+        assert!(r.eintragen(neu("g1", "a", "prj_a")).is_err());
+        assert!(r.gespraech_vergessen("g1").is_err());
+        assert!(r.projekt_vergessen("prj_a").is_err());
+        assert!(pfad.is_dir(), "nicht umbenannt, nicht ersetzt");
+        assert_eq!(fs::read(pfad.join("inhalt")).unwrap(), b"x");
+        assert!(beiseite(d.path()).is_empty(), "nichts beiseitegelegt");
     }
 
     #[test]
@@ -417,7 +493,7 @@ mod tests {
         }
         fs::write(d.path().join(DATEI), serde_json::to_vec(&datei).unwrap()).unwrap();
         r.eintragen(neu("g1", "neueste", "prj_a")).unwrap();
-        let b = r.laden();
+        let b = r.laden().unwrap();
         assert_eq!(b.anzahl(), MAX_EINTRAEGE);
         assert!(b.finden("g1", "neueste").is_some());
         assert!(
@@ -434,9 +510,9 @@ mod tests {
         r.eintragen(neu("g1", "b", "prj_a")).unwrap();
         r.eintragen(neu("g2", "c", "prj_b")).unwrap();
         assert_eq!(r.gespraech_vergessen("g1").unwrap(), 2);
-        assert_eq!(r.laden().anzahl(), 1);
+        assert_eq!(r.laden().unwrap().anzahl(), 1);
         assert_eq!(r.projekt_vergessen("prj_b").unwrap(), 1);
-        assert_eq!(r.laden().anzahl(), 0);
+        assert_eq!(r.laden().unwrap().anzahl(), 0);
         assert_eq!(r.projekt_vergessen("prj_b").unwrap(), 0);
     }
 
@@ -467,10 +543,83 @@ mod tests {
                 });
             }
         });
-        let b = r.laden();
+        let b = r.laden().unwrap();
         assert_eq!(b.anzahl(), 16);
         for i in 0..16 {
             assert!(b.finden("g1", &format!("Antwort {i}")).is_some());
         }
+    }
+
+    #[test]
+    fn erneutes_eintragen_vereinigt_die_herkunft() {
+        let d = tmp();
+        let r = Register::neu(d.path());
+        let mut a = neu("g1", "Ja.", "prj_a");
+        a.inhalte = vec!["eintrag:x#1".into()];
+        a.ablage = vec!["dokument:1".into()];
+        a.klasse_projekt = Klasse::Personal;
+        a.klasse_ablage = Some(AblageKlasse::Internal);
+        r.eintragen(a).unwrap();
+        let mut b = neu("g1", "Ja.", "prj_a");
+        b.inhalte = vec!["eintrag:y#2".into(), "eintrag:x#1".into()];
+        b.ablage = vec!["dokument:2".into()];
+        b.klasse_projekt = Klasse::Internal;
+        b.klasse_ablage = Some(AblageKlasse::Confidential);
+        r.eintragen(b).unwrap();
+        let bestand = r.laden().unwrap();
+        assert_eq!(bestand.anzahl(), 1, "ein Eintrag, nicht zwei");
+        let e = bestand.finden("g1", "Ja.").unwrap();
+        assert_eq!(e.inhalte, vec!["eintrag:x#1", "eintrag:y#2"]);
+        assert_eq!(e.ablage, vec!["dokument:1", "dokument:2"]);
+        assert_eq!(e.klasse_projekt, Klasse::Personal, "Maximum");
+        assert_eq!(e.klasse_ablage, Some(AblageKlasse::Confidential), "Maximum");
+        // Ohne Klasse beim zweiten Mal bleibt die erste.
+        let mut c = neu("g1", "Ja.", "prj_a");
+        c.klasse_ablage = None;
+        r.eintragen(c).unwrap();
+        let bestand = r.laden().unwrap();
+        let e = bestand.finden("g1", "Ja.").unwrap();
+        assert_eq!(e.klasse_ablage, Some(AblageKlasse::Confidential));
+        assert_eq!(e.inhalte.len(), 2);
+    }
+
+    #[test]
+    fn salz_ist_lang_und_je_datei_verschieden() {
+        let (d1, d2) = (tmp(), tmp());
+        for d in [&d1, &d2] {
+            Register::neu(d.path())
+                .eintragen(neu("g1", "a", "prj_a"))
+                .unwrap();
+        }
+        let lies = |d: &tempfile::TempDir| -> Datei {
+            serde_json::from_slice(&fs::read(d.path().join(DATEI)).unwrap()).unwrap()
+        };
+        let (s1, s2) = (lies(&d1).salz, lies(&d2).salz);
+        assert_eq!(s1.len(), 64, "256 Bit als Hex");
+        assert!(s1.bytes().all(|b| b.is_ascii_hexdigit()));
+        assert_ne!(s1, s2);
+        // Dieselbe Antwort ergibt in zwei Dateien verschiedene Merkmale.
+        assert_ne!(merkmal(&s1, "a"), merkmal(&s2, "a"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn datei_hat_unter_unix_die_rechte_0600() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = tmp();
+        let r = Register::neu(d.path());
+        r.eintragen(neu("g1", "a", "prj_a")).unwrap();
+        let modus = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(modus(&d.path().join(DATEI)), 0o600);
+        // Auch nach dem zweiten Schreiben (neue Temp-Datei, Umbenennen).
+        r.eintragen(neu("g1", "b", "prj_a")).unwrap();
+        assert_eq!(modus(&d.path().join(DATEI)), 0o600);
+        // Keine Temp-Datei bleibt liegen.
+        let reste = fs::read_dir(d.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
+            .count();
+        assert_eq!(reste, 0);
     }
 }

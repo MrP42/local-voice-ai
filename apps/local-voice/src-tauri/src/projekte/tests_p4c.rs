@@ -10,10 +10,10 @@ use super::recherche::RechercheStore;
 use super::tor::{
     Abbruch, AblageQuelle, Bindung, Budgetbeleg, DateiAblage, Freigabe, KontextQuelle, Nachricht,
     ProjektTor, PromptTeile, Rolle, Versandauftrag, Weg, Ziel, ZielQuelle, AUSGABE_VORGABE,
-    CODE_ABLAGE, CODE_KLASSE, ENTZOGEN_ANTWORT_PROJEKT, FENSTER_VORGABE,
+    CODE_ABLAGE, CODE_KLASSE, ENTZOGEN_ANTWORT_PROJEKT, FENSTER_LOKAL_VORGABE,
 };
-use super::tor_herkunft::{self, Register};
-use super::tor_ziel::{self, CODE_COMPLIANCE, CODE_KEIN_MODELL};
+use super::tor_herkunft::{self, Neu, Register};
+use super::tor_ziel::{self, CODE_COMPLIANCE, CODE_FENSTER, CODE_KEIN_MODELL, CODE_ZIEL_LOKAL};
 use super::Res;
 use crate::ablage::ki::{self, Abdeckung, AuszugAntwort, HerkunftPruefung, Urteil, ZielAnbieter};
 use crate::ablage::zusammenfuehren::Klasse as AblageKlasse;
@@ -109,8 +109,13 @@ fn hash(t: &str) -> u64 {
     })
 }
 
+/// Marke im Format des Kerns: `eintrag:<id>#<32 Hex>`.
 fn marke(id: &str, text: &str) -> String {
-    format!("eintrag:{id}#{:016x}", hash(text))
+    format!(
+        "eintrag:{id}#{:016x}{:016x}",
+        hash(text),
+        hash(&format!("{text}/{id}"))
+    )
 }
 
 fn kontext_von(texte: &[(&str, Klasse, &str)], ablage: &[String], stand: &str) -> Kontext {
@@ -678,12 +683,13 @@ async fn register_defekt_setzt_zurueck() {
     assert_eq!(std::fs::read(beiseite[0].path()).unwrap(), b"{ kaputt");
     // Danach läuft das Register wieder.
     s.tor.abschliessen(f2.schein, "Antwort 2").await.unwrap();
-    assert_eq!(Register::neu(s.dir.path()).laden().anzahl(), 1);
+    assert_eq!(Register::neu(s.dir.path()).laden().unwrap().anzahl(), 1);
 }
 
 #[tokio::test]
-async fn register_schreibfehler_meldet_register_defekt() {
-    // Der Ordner des Registers liegt unter einer Datei: nicht anlegbar (voller oder gesperrter Datenträger).
+async fn register_ordner_unlesbar_bricht_den_turn_vor_dem_versand_ab() {
+    // Der Ordner des Registers liegt unter einer Datei: Lesen scheitert mit einem anderen Fehler als
+    // „fehlt“. Das Register wird weder als leer angenommen noch angefasst; der Turn geht nicht raus.
     let tmp = tempfile::tempdir().unwrap();
     let datei = tmp.path().join("datei");
     std::fs::write(&datei, b"x").unwrap();
@@ -692,11 +698,33 @@ async fn register_schreibfehler_meldet_register_defekt() {
         ziel(false),
         Some(datei.join("unter")),
     );
+    assert_eq!(
+        s.tor
+            .vor_versand(auftrag("r1", "g1", vec![], "Frage"))
+            .await
+            .err(),
+        Some(Abbruch::RegisterDefekt)
+    );
+    assert_eq!(s.tor.offene_laeufe(), 0);
+    assert_eq!(std::fs::read(&datei).unwrap(), b"x");
+}
+
+/// Schreibfehler beim Abschluss (voller oder gesperrter Datenträger): Das Lesen gelingt, das Anlegen des
+/// Ordners nicht. Der Turn meldet `RegisterDefekt`, der Lauf ist danach nicht mehr offen.
+#[cfg(unix)]
+#[tokio::test]
+async fn register_schreibfehler_meldet_register_defekt() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ordner = tmp.path().join("register");
+    let s = szene_mit(suite_projekt("INTERNAL"), ziel(false), Some(ordner.clone()));
     let f = s
         .tor
         .vor_versand(auftrag("r1", "g1", vec![], "Frage"))
         .await
         .unwrap();
+    // Zwischen Freigabe und Abschluss wird der Ordnerpfad zu einer ins Leere zeigenden Verknüpfung:
+    // Lesen meldet „fehlt“, Anlegen scheitert.
+    std::os::unix::fs::symlink(tmp.path().join("nirgendwo"), &ordner).unwrap();
     assert_eq!(
         s.tor.abschliessen(f.schein, "Antwort").await,
         Err(Abbruch::RegisterDefekt)
@@ -727,7 +755,7 @@ async fn gleichzeitiges_abschliessen_verliert_keinen_registereintrag() {
     for t in tasks {
         t.await.unwrap().unwrap();
     }
-    let b = Register::neu(s.dir.path()).laden();
+    let b = Register::neu(s.dir.path()).laden().unwrap();
     assert_eq!(b.anzahl(), 12);
     for i in 0..12 {
         assert!(b.finden("g1", &format!("Antwort {i}")).is_some());
@@ -757,7 +785,7 @@ async fn versandrennen_widerruf_zwischen_freigabe_und_abschluss() {
         Err(Abbruch::Verspaetet)
     );
     assert_eq!(
-        Register::neu(s.dir.path()).laden().anzahl(),
+        Register::neu(s.dir.path()).laden().unwrap().anzahl(),
         0,
         "nichts registriert"
     );
@@ -1019,7 +1047,7 @@ async fn aenderung_des_stands_verwirft_die_antwort_beim_abschluss() {
         s.tor.abschliessen(f.schein, "Antwort").await,
         Err(Abbruch::Verspaetet)
     );
-    assert_eq!(Register::neu(s.dir.path()).laden().anzahl(), 0);
+    assert_eq!(Register::neu(s.dir.path()).laden().unwrap().anzahl(), 0);
     // Auch die Klasse des Projekts zählt.
     let f = s
         .tor
@@ -1222,6 +1250,16 @@ async fn abgeleitete_zusammenfassung_wird_verworfen() {
     let s = szene();
     let (_, m) = auszug("internal", GEHEIM);
     s.ablage.urteil(&m, Urteil::Entzogen);
+    // Der unabhängige Zwischenstand stammt von einer früheren Stufe, die das Tor freigegeben hat.
+    let f0 = s
+        .tor
+        .vor_versand(auftrag("r0", "g1", vec![], "Frage 0"))
+        .await
+        .unwrap();
+    s.tor
+        .abschliessen_zwischenstand(f0.schein, "Harmlose Notiz")
+        .await
+        .unwrap();
     let mut a = auftrag("r1", "g1", vec![nutzer("Frage 1")], "Frage 2");
     a.teile.zwischenstaende = vec![
         format!("Zusammenfassung {GEHEIM} laut {m}."),
@@ -1269,7 +1307,7 @@ async fn mindestklasse_ist_maximum_im_gespraech() {
     let s = szene();
     // Unbekannt, solange nichts geliefert wurde, und für fremde oder fehlende Gespräche.
     assert_eq!(
-        s.tor.mindestklasse(&bindung("g1")).unwrap(),
+        s.tor.mindestklasse(&bindung("g1")).await.unwrap(),
         AblageKlasse::Unbekannt
     );
     assert_eq!(
@@ -1278,6 +1316,7 @@ async fn mindestklasse_ist_maximum_im_gespraech() {
                 projekt: P.into(),
                 gespraech: None
             })
+            .await
             .unwrap(),
         AblageKlasse::Unbekannt
     );
@@ -1289,7 +1328,7 @@ async fn mindestklasse_ist_maximum_im_gespraech() {
         .unwrap();
     s.tor.abschliessen(f1.schein, "A1").await.unwrap();
     assert_eq!(
-        s.tor.mindestklasse(&bindung("g1")).unwrap(),
+        s.tor.mindestklasse(&bindung("g1")).await.unwrap(),
         AblageKlasse::Internal
     );
     // Turn 2: ein persönlicher Eintrag (lokales Ziel). Schon der offene Schein zählt.
@@ -1302,7 +1341,7 @@ async fn mindestklasse_ist_maximum_im_gespraech() {
         .await
         .unwrap();
     assert_eq!(
-        s.tor.mindestklasse(&bindung("g1")).unwrap(),
+        s.tor.mindestklasse(&bindung("g1")).await.unwrap(),
         AblageKlasse::Personal
     );
     s.tor.abschliessen(f2.schein, "A2").await.unwrap();
@@ -1316,7 +1355,7 @@ async fn mindestklasse_ist_maximum_im_gespraech() {
         .unwrap();
     s.tor.abschliessen(f3.schein, "A3").await.unwrap();
     assert_eq!(
-        s.tor.mindestklasse(&bindung("g1")).unwrap(),
+        s.tor.mindestklasse(&bindung("g1")).await.unwrap(),
         AblageKlasse::Personal
     );
     // Ein Gespräch mit vertraulicher Ablage-Datei: Confidential, nicht weniger.
@@ -1330,19 +1369,19 @@ async fn mindestklasse_ist_maximum_im_gespraech() {
         .unwrap();
     s.tor.abschliessen(f4.schein, "A4").await.unwrap();
     assert_eq!(
-        s.tor.mindestklasse(&bindung("g2")).unwrap(),
+        s.tor.mindestklasse(&bindung("g2")).await.unwrap(),
         AblageKlasse::Confidential
     );
     // Gespräch vergessen: wieder unbekannt.
     s.tor.gespraech_vergessen("g2");
     assert_eq!(
-        s.tor.mindestklasse(&bindung("g2")).unwrap(),
+        s.tor.mindestklasse(&bindung("g2")).await.unwrap(),
         AblageKlasse::Unbekannt
     );
     // Defektes Register: unbekannt, nie niedriger.
     std::fs::write(s.dir.path().join(tor_herkunft::DATEI), b"kaputt").unwrap();
     assert_eq!(
-        s.tor.mindestklasse(&bindung("g1")).unwrap(),
+        s.tor.mindestklasse(&bindung("g1")).await.unwrap(),
         AblageKlasse::Unbekannt
     );
 }
@@ -1623,7 +1662,7 @@ async fn projekt_loeschen_widerruft_und_vergisst_antworten() {
         .await
         .unwrap();
     e.tor.abschliessen(f.schein, "Antwort").await.unwrap();
-    assert_eq!(Register::neu(&e.ordner).laden().anzahl(), 1);
+    assert_eq!(Register::neu(&e.ordner).laden().unwrap().anzahl(), 1);
     let lauf = e
         .tor
         .vor_versand(real_auftrag("r2", &p, "g1", vec![], "F"))
@@ -1632,7 +1671,7 @@ async fn projekt_loeschen_widerruft_und_vergisst_antworten() {
     e.dienst.loeschen(&p).await.unwrap();
     assert!(lauf.ist_widerrufen());
     assert_eq!(
-        Register::neu(&e.ordner).laden().anzahl(),
+        Register::neu(&e.ordner).laden().unwrap().anzahl(),
         0,
         "Merkmale des Projekts entfernt"
     );
@@ -1710,10 +1749,45 @@ fn heute_fuer(s: &AppSettings) -> String {
         .unwrap_or_else(compliance::today)
 }
 
+/// Wie [`einstellungen`], mit einem freigegebenen Modell samt Kontextgrenze. Ohne bekanntes Fenster gibt
+/// es für ein Ziel, das nicht streng lokal ist, kein Ziel.
+fn einstellungen_mit_fenster(provider: &str, fenster: u32) -> AppSettings {
+    let mut s = einstellungen(provider);
+    let p = s.post_process_provider(provider).unwrap().clone();
+    s.llm_connections.push(LlmConnection {
+        id: "v".into(),
+        kind: p.id.clone(),
+        label: "V".into(),
+        base_url: p.base_url.clone(),
+        enabled: true,
+        monthly_budget_usd: None,
+        budget_enforced: false,
+        training_opt_out: false,
+    });
+    s.llm_models.push(LlmModelConfig {
+        id: "v:m".into(),
+        connection_id: "v".into(),
+        remote_id: "modell-x".into(),
+        label: "M".into(),
+        enabled: true,
+        context_limit: Some(fenster),
+        max_input_tokens: None,
+        max_output_tokens: None,
+        price_input_per_mtok: None,
+        price_output_per_mtok: None,
+        tags: vec![],
+        effort: None,
+        fast: false,
+    });
+    s.llm_active_model_id = Some("v:m".into());
+    s.sync_legacy_from_llm();
+    s
+}
+
 #[test]
 fn ziel_nur_aus_konfiguration_loopback_ist_nicht_lokal() {
     // Ollama auf localhost zählt für Projektdaten nicht als lokal (es kann weiterleiten).
-    let s = einstellungen("ollama");
+    let s = einstellungen_mit_fenster("ollama", 32_768);
     let z =
         tor_ziel::aus_einstellungen(&s, "voice_speaker", None, &compliance::today(), None).unwrap();
     assert!(!z.anbieter.lokal);
@@ -1721,18 +1795,19 @@ fn ziel_nur_aus_konfiguration_loopback_ist_nicht_lokal() {
     assert!(z.pinned_local.is_none());
     assert!(!super::tor::klasse_zulaessig(Klasse::Personal, &z));
     assert!(super::tor::klasse_zulaessig(Klasse::Internal, &z));
-    // Der eingebaute Server ist lokal.
+    // Der eingebaute Server ist lokal; ohne jede Angabe gilt das kleine Fenster für Lokales.
     let s = einstellungen("local");
     let z =
         tor_ziel::aus_einstellungen(&s, "voice_speaker", None, &compliance::today(), None).unwrap();
     assert!(z.anbieter.lokal);
+    assert_eq!(z.fenster, FENSTER_LOKAL_VORGABE);
     assert_eq!(z.anbieter.datenklasse_max, AblageKlasse::Personal);
     assert!(super::tor::klasse_zulaessig(Klasse::Restricted, &z));
 }
 
 #[test]
 fn ziel_cloud_confidential_nur_unter_eu_mit_bekannten_angaben() {
-    let s = einstellungen("openai_eu");
+    let s = einstellungen_mit_fenster("openai_eu", 128_000);
     let heute = heute_fuer(&s);
     let z = tor_ziel::aus_einstellungen(&s, "voice_speaker", None, &heute, None).unwrap();
     assert!(!z.anbieter.lokal);
@@ -1869,22 +1944,679 @@ fn lokal_nimmt_kleineres_fenster() {
         tor_ziel::aus_einstellungen(&cloud, "voice_speaker", None, &heute, Some(4_096)).unwrap();
     assert!(!z.anbieter.lokal);
     assert_eq!(z.fenster, 100_000);
-    // Unbekannt: der kleine Vorgabewert, nie „unbegrenzt“.
-    let unbekannt = mit_modell(
-        "openai",
-        "https://api.openai.com/v1",
-        None,
-        Some(0),
-        Some(0),
-    );
-    let z = tor_ziel::aus_einstellungen(&unbekannt, "voice_speaker", None, &heute, None).unwrap();
-    assert_eq!(z.fenster, FENSTER_VORGABE);
+    // Lokal ohne jede Angabe: das kleine Fenster, nie „unbegrenzt“.
+    let z = tor_ziel::aus_einstellungen(&ohne, "voice_speaker", None, &heute, None).unwrap();
+    assert_eq!(z.fenster, FENSTER_LOKAL_VORGABE);
+    assert_eq!(FENSTER_LOKAL_VORGABE, 4_096);
     assert_eq!(z.ausgabe, AUSGABE_VORGABE);
+    // Ein Ziel, das nicht streng lokal ist, ohne bekanntes Fenster (nichts oder null): kein Ziel.
+    for (kontext, eingabe) in [(None, None), (Some(0), Some(0)), (None, Some(0))] {
+        let unbekannt = mit_modell(
+            "openai",
+            "https://api.openai.com/v1",
+            kontext,
+            eingabe,
+            Some(0),
+        );
+        let r = tor_ziel::aus_einstellungen(&unbekannt, "voice_speaker", None, &heute, None);
+        assert_eq!(
+            r.err(),
+            Some(Abbruch::ZielUnklar { code: CODE_FENSTER }),
+            "{kontext:?} {eingabe:?}"
+        );
+        // Ein Serverkontext gilt nur lokal und füllt hier nichts auf.
+        let r = tor_ziel::aus_einstellungen(&unbekannt, "voice_speaker", None, &heute, Some(8_192));
+        assert_eq!(r.err(), Some(Abbruch::ZielUnklar { code: CODE_FENSTER }));
+    }
+    // Auch Ollama auf localhost zählt nicht als streng lokal: ohne Fenster kein Ziel.
+    let ollama = mit_modell("ollama", "http://localhost:11434/v1", None, None, None);
+    let r = tor_ziel::aus_einstellungen(&ollama, "voice_speaker", None, &heute, Some(8_192));
+    assert_eq!(r.err(), Some(Abbruch::ZielUnklar { code: CODE_FENSTER }));
+    // Der Text sagt, was zu tun ist, ohne Inhalte.
+    let a = Abbruch::ZielUnklar { code: CODE_FENSTER };
+    assert!(a.text().contains("Kontext"), "{}", a.text());
     // Die Auswahl einer konfigurierten Kennung ist zulässig.
     let z =
         tor_ziel::aus_einstellungen(&cloud, "voice_speaker", Some("verbindung:m"), &heute, None)
             .unwrap();
     assert_eq!(z.modell, "m");
+}
+
+// ---------------------------------------------------------------- Herkunft vererben (M1)
+
+struct Turn {
+    nachrichten: Vec<Nachricht>,
+    entzogen: u32,
+    marken: (Vec<String>, Vec<String>),
+}
+
+/// Ein ganzer Turn: Freigabe, dann Abschluss mit `antwort_text`.
+async fn turn(
+    s: &Szene,
+    req: &str,
+    g: &str,
+    historie: Vec<Nachricht>,
+    frage: &str,
+    antwort_text: &str,
+) -> Turn {
+    let f = s
+        .tor
+        .vor_versand(auftrag(req, g, historie, frage))
+        .await
+        .unwrap();
+    let t = Turn {
+        nachrichten: f.nachrichten.clone(),
+        entzogen: f.entzogen,
+        marken: f.schein.marken(),
+    };
+    s.tor.abschliessen(f.schein, antwort_text).await.unwrap();
+    t
+}
+
+fn text_von(nachrichten: &[Nachricht]) -> String {
+    nachrichten
+        .iter()
+        .map(|n| n.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// A1 über X, A2 über Y mit A1 im Verlauf: Wird X entzogen, fällt auch A2, obwohl Turn 2 nur Y geliefert
+/// hat. Auszüge sind je Frage verschieden; die Herkunft von A2 schließt darum die von A1 ein.
+#[tokio::test]
+async fn antwort_ueber_behaltene_antwort_erbt_deren_ablage_quelle() {
+    let s = szene();
+    let verweis = ablage_verweis();
+    s.kontext.setzen(&[], std::slice::from_ref(&verweis), "st1");
+    let (ax, mx) = auszug("internal", "Inhalt X");
+    *s.ablage.auszuege.lock().unwrap() = ax;
+    turn(&s, "r1", "g1", vec![], "F1", "Antwort A1").await;
+
+    // Turn 2: Auszug über Y; A1 steht im Verlauf und gilt (X ist berechtigt).
+    let (ay, my) = auszug("internal", "Inhalt Y");
+    *s.ablage.auszuege.lock().unwrap() = ay;
+    let t2 = turn(
+        &s,
+        "r2",
+        "g1",
+        vec![nutzer("F1"), antwort("Antwort A1")],
+        "F2",
+        "Antwort A2",
+    )
+    .await;
+    assert!(text_von(&t2.nachrichten).contains("Antwort A1"));
+    assert_eq!(t2.entzogen, 0);
+    let mut erwartet = vec![mx.clone(), my.clone()];
+    erwartet.sort();
+    assert_eq!(
+        t2.marken.1, erwartet,
+        "Auszüge dieses Turns plus Erbe aus A1"
+    );
+
+    // X wird entzogen: A1 fällt, und A2 fällt mit ihr.
+    s.ablage.urteil(&mx, Urteil::Entzogen);
+    *s.ablage.auszuege.lock().unwrap() = leere_auszuege();
+    let f3 = s
+        .tor
+        .vor_versand(auftrag(
+            "r3",
+            "g1",
+            vec![
+                nutzer("F1"),
+                antwort("Antwort A1"),
+                nutzer("F2"),
+                antwort("Antwort A2"),
+            ],
+            "F3",
+        ))
+        .await
+        .unwrap();
+    let t = alle_texte(&f3);
+    assert!(!t.contains("Antwort A1"), "{t}");
+    assert!(!t.contains("Antwort A2"), "{t}");
+    assert_eq!(f3.entzogen, 2);
+    assert!(!f3.zurueckgesetzt);
+}
+
+/// Lokal mit persönlichem Auszug in Turn 1, danach lokal mit einem internen Auszug (A2 beruht auf A1),
+/// dann Cloud: A2 wird ersetzt, weil die Klasse und die Quelle von A1 in A2 weiterleben, obwohl Turn 2
+/// selbst keinen persönlichen Auszug enthielt.
+#[tokio::test]
+async fn persoenliche_herkunft_aus_turn_1_lebt_in_a2_und_wird_bei_cloud_ersetzt() {
+    let s = szene();
+    s.ziele.setzen(ziel(true));
+    s.kontext.setzen(&[], &[ablage_verweis()], "st1");
+    let (ax, mx) = auszug("personal", GEHEIM);
+    *s.ablage.auszuege.lock().unwrap() = ax;
+    let a1 = format!("A1 nennt {GEHEIM}");
+    turn(&s, "r1", "g1", vec![], "F1", &a1).await;
+
+    // Turn 2, weiter lokal: nur ein interner Auszug; A1 bleibt im Verlauf (lokal erlaubt).
+    let (ay, my) = auszug("internal", "Erlaubter Text aus Y");
+    *s.ablage.auszuege.lock().unwrap() = ay;
+    let t2 = turn(
+        &s,
+        "r2",
+        "g1",
+        vec![nutzer("F1"), antwort(&a1)],
+        "F2",
+        "A2 fasst A1 zusammen",
+    )
+    .await;
+    assert!(
+        text_von(&t2.nachrichten).contains(GEHEIM),
+        "lokal bleibt A1"
+    );
+    assert_eq!(t2.entzogen, 0);
+    assert!(t2.marken.1.contains(&mx), "A2 erbt die Quelle von A1");
+    assert!(t2.marken.1.contains(&my));
+    assert_eq!(
+        s.tor.mindestklasse(&bindung("g1")).await.unwrap(),
+        AblageKlasse::Personal
+    );
+
+    // Turn 3 an die Cloud, A1 gar nicht mehr im Verlauf: A2 allein trägt die persönliche Herkunft.
+    s.ziele.setzen(ziel(false));
+    *s.ablage.auszuege.lock().unwrap() = leere_auszuege();
+    let f3 = s
+        .tor
+        .vor_versand(auftrag(
+            "r3",
+            "g1",
+            vec![nutzer("F2"), antwort("A2 fasst A1 zusammen")],
+            "F3",
+        ))
+        .await
+        .unwrap();
+    let t = alle_texte(&f3);
+    assert!(!t.contains(GEHEIM));
+    assert!(!t.contains("A2 fasst A1 zusammen"), "A2 ist ersetzt: {t}");
+    assert_eq!(f3.entzogen, 1);
+}
+
+/// Die Klasse der Ablage-Datei steht im Register und wird gegen das aktuelle Ziel geprüft, auch wenn die
+/// Marke selbst noch berechtigt ist (hier meldet die Attrappe immer „berechtigt“).
+#[tokio::test]
+async fn ablage_klasse_im_register_wird_gegen_das_ziel_geprueft() {
+    let s = szene();
+    s.ziele.setzen(ziel(true));
+    s.kontext.setzen(&[], &[ablage_verweis()], "st1");
+    let (aus, _m) = auszug("personal", "Persönliche Datei");
+    *s.ablage.auszuege.lock().unwrap() = aus;
+    turn(&s, "r1", "g1", vec![], "F1", "A1 aus persönlicher Datei").await;
+    *s.ablage.auszuege.lock().unwrap() = leere_auszuege();
+    let t2 = turn(
+        &s,
+        "r2",
+        "g1",
+        vec![nutzer("F1"), antwort("A1 aus persönlicher Datei")],
+        "F2",
+        "A2 baut auf A1",
+    )
+    .await;
+    assert_eq!(t2.entzogen, 0, "lokal gilt alles");
+    let verlauf = vec![
+        nutzer("F1"),
+        antwort("A1 aus persönlicher Datei"),
+        nutzer("F2"),
+        antwort("A2 baut auf A1"),
+    ];
+    // Lokal bleiben beide.
+    let f = s
+        .tor
+        .vor_versand(auftrag("r3", "g1", verlauf.clone(), "F3"))
+        .await
+        .unwrap();
+    assert_eq!(f.entzogen, 0);
+    s.tor.verwerfen(f.schein);
+    // Cloud: beide fallen, nur wegen der Klasse.
+    s.ziele.setzen(ziel(false));
+    let f = s
+        .tor
+        .vor_versand(auftrag("r4", "g1", verlauf, "F3"))
+        .await
+        .unwrap();
+    assert_eq!(f.entzogen, 2);
+    assert!(!alle_texte(&f).contains("A1 aus persönlicher Datei"));
+    assert!(!alle_texte(&f).contains("A2 baut auf A1"));
+}
+
+/// `abschliessen` prüft die ganze Menge neu, auch das Erbe: Wird die vererbte Quelle zwischen Freigabe
+/// und Abschluss entzogen, ist die Antwort verspätet, obwohl dieser Turn selbst keinen Auszug lieferte.
+#[tokio::test]
+async fn abschliessen_prueft_auch_vererbte_ablage_marken_neu() {
+    let s = szene();
+    s.kontext.setzen(&[], &[ablage_verweis()], "st1");
+    let (aus, m) = auszug("internal", "Inhalt X");
+    *s.ablage.auszuege.lock().unwrap() = aus;
+    turn(&s, "r1", "g1", vec![], "F1", "Antwort A1").await;
+    *s.ablage.auszuege.lock().unwrap() = leere_auszuege();
+    let f2 = s
+        .tor
+        .vor_versand(auftrag(
+            "r2",
+            "g1",
+            vec![nutzer("F1"), antwort("Antwort A1")],
+            "F2",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(f2.schein.marken().1, vec![m.clone()], "vererbt");
+    s.ablage.urteil(&m, Urteil::Entzogen);
+    assert_eq!(
+        s.tor.abschliessen(f2.schein, "Antwort A2").await,
+        Err(Abbruch::Verspaetet)
+    );
+    assert_eq!(
+        Register::neu(s.dir.path()).laden().unwrap().anzahl(),
+        1,
+        "A2 ist nicht eingetragen"
+    );
+}
+
+/// Berechtigte Marken aus Nutzer- und Fragetext gehen in den Schein; ihre Klasse ist unbekannt und zählt
+/// als die höchste.
+#[tokio::test]
+async fn marken_aus_nutzer_und_fragetext_gehen_in_den_schein() {
+    let s = szene();
+    let (_, m1) = auszug("internal", "A");
+    let (_, m2) = auszug("internal", "B");
+    let f = s
+        .tor
+        .vor_versand(auftrag(
+            "r1",
+            "g1",
+            vec![nutzer(&format!("Ich habe {m1} gelesen"))],
+            &format!("Was sagt {m2}?"),
+        ))
+        .await
+        .unwrap();
+    let mut erwartet = vec![m1.clone(), m2.clone()];
+    erwartet.sort();
+    assert_eq!(f.schein.marken().1, erwartet);
+    s.tor.abschliessen(f.schein, "Antwort").await.unwrap();
+    assert_eq!(
+        s.tor.mindestklasse(&bindung("g1")).await.unwrap(),
+        AblageKlasse::Unbekannt,
+        "Klasse einer Marke ohne bekannte Herkunft: unbekannt"
+    );
+    // Eine entzogene Marke geht nicht in den Schein (der Text ist davon abgeleitet).
+    s.ablage.urteil(&m1, Urteil::Entzogen);
+    let f = s
+        .tor
+        .vor_versand(auftrag(
+            "r2",
+            "g2",
+            vec![nutzer(&format!("Ich habe {m1} gelesen"))],
+            "Frage",
+        ))
+        .await
+        .unwrap();
+    assert!(f.zurueckgesetzt);
+    assert!(f.schein.marken().1.is_empty());
+}
+
+// ---------------------------------------------------------------- Zwischenstände und Umetikettieren (M2)
+
+#[tokio::test]
+async fn unregistrierter_zwischenstand_wird_verworfen() {
+    let s = szene();
+    let mut a = auftrag("r1", "g1", vec![], "Frage");
+    a.teile.zwischenstaende = vec![format!("Selbst gebaute Zusammenfassung mit {GEHEIM}")];
+    let f = s.tor.vor_versand(a).await.unwrap();
+    assert!(!alle_texte(&f).contains(GEHEIM));
+    assert!(!alle_texte(&f).contains("Zwischenstände aus früheren"));
+    assert_eq!(f.entzogen, 1);
+}
+
+#[tokio::test]
+async fn registrierter_zwischenstand_bleibt_und_vererbt_nach_ausschalten_wird_er_ersetzt() {
+    let s = szene();
+    s.kontext.setzen(&[], &[ablage_verweis()], "st1");
+    let (aus, m) = auszug("internal", "Inhalt X");
+    *s.ablage.auszuege.lock().unwrap() = aus;
+    // Die erzeugende Stufe trägt den Zwischenstand über `abschliessen_zwischenstand` ein.
+    let f0 = s
+        .tor
+        .vor_versand(auftrag("r0", "g1", vec![], "Stufe 1"))
+        .await
+        .unwrap();
+    s.tor
+        .abschliessen_zwischenstand(f0.schein, "Zwischenstand Z")
+        .await
+        .unwrap();
+    *s.ablage.auszuege.lock().unwrap() = leere_auszuege();
+
+    // Stufe 2: der Zwischenstand bleibt und gibt seine Herkunft weiter.
+    let mut a = auftrag("r1", "g1", vec![], "Stufe 2");
+    a.teile.zwischenstaende = vec!["Zwischenstand Z".into()];
+    let f = s.tor.vor_versand(a).await.unwrap();
+    assert!(alle_texte(&f).contains("Zwischenstand Z"));
+    assert_eq!(f.entzogen, 0);
+    assert_eq!(
+        f.schein.marken().1,
+        vec![m.clone()],
+        "Erbe aus dem Zwischenstand"
+    );
+    s.tor.verwerfen(f.schein);
+
+    // Quelle entzogen: Der Zwischenstand wird ersetzt, nicht weitergereicht.
+    s.ablage.urteil(&m, Urteil::Entzogen);
+    let mut a = auftrag("r2", "g1", vec![], "Stufe 2");
+    a.teile.zwischenstaende = vec!["Zwischenstand Z".into()];
+    let f = s.tor.vor_versand(a).await.unwrap();
+    let t = alle_texte(&f);
+    assert!(!t.contains("Zwischenstand Z"), "{t}");
+    assert!(t.contains(ENTZOGEN_ANTWORT_PROJEKT));
+    assert_eq!(f.entzogen, 1);
+    assert!(f.schein.marken().1.is_empty(), "nichts geerbt");
+}
+
+#[tokio::test]
+async fn zwischenstand_mit_geaendertem_inhalt_wird_ersetzt() {
+    let s = szene();
+    let f0 = s
+        .tor
+        .vor_versand(auftrag("r0", "g1", vec![], "Stufe 1"))
+        .await
+        .unwrap();
+    s.tor
+        .abschliessen_zwischenstand(f0.schein, "Zwischenstand Z")
+        .await
+        .unwrap();
+    // Der Eintrag wird ausgeschaltet (ein anderer ist an): die Marke von t1 fehlt im frischen Kontext.
+    s.kontext
+        .setzen(&[("t2", Klasse::Internal, "Anderer Inhalt")], &[], "st2");
+    let mut a = auftrag("r1", "g1", vec![], "Stufe 2");
+    a.teile.zwischenstaende = vec!["Zwischenstand Z".into()];
+    let f = s.tor.vor_versand(a).await.unwrap();
+    assert!(!alle_texte(&f).contains("Zwischenstand Z"));
+    assert!(alle_texte(&f).contains(ENTZOGEN_ANTWORT_PROJEKT));
+    assert_eq!(f.entzogen, 1);
+}
+
+/// Eine als Nutzertext umetikettierte Antwort gilt wie die Antwort: Nach dem Widerruf wird sie ersetzt,
+/// auch als Frage.
+#[tokio::test]
+async fn umetikettierte_antwort_gilt_wie_die_antwort() {
+    let s = szene();
+    let a1 = format!("Antwort 1 nennt {GEHEIM}");
+    s.kontext
+        .setzen(&[("t1", Klasse::Internal, GEHEIM)], &[], "st1");
+    turn(&s, "r1", "g1", vec![], "F1", &a1).await;
+
+    // Solange sie gilt, bleibt sie (auch mit der Rolle Nutzer).
+    let f = s
+        .tor
+        .vor_versand(auftrag("r2", "g1", vec![nutzer(&a1)], "F2"))
+        .await
+        .unwrap();
+    assert!(alle_texte(&f).contains(&a1));
+    assert_eq!(f.entzogen, 0);
+    s.tor.verwerfen(f.schein);
+
+    // Der Eintrag wird ausgeschaltet: als Nutzertext umgelabelt wird sie trotzdem ersetzt.
+    s.kontext
+        .setzen(&[("t2", Klasse::Internal, "Anderer Text")], &[], "st2");
+    let f = s
+        .tor
+        .vor_versand(auftrag("r3", "g1", vec![nutzer(&a1)], "F3"))
+        .await
+        .unwrap();
+    assert!(!alle_texte(&f).contains(GEHEIM), "{}", alle_texte(&f));
+    assert_eq!(f.nachrichten[1].rolle, Rolle::Nutzer);
+    assert_eq!(f.nachrichten[1].text, ENTZOGEN_ANTWORT_PROJEKT);
+    assert_eq!(f.entzogen, 1);
+    assert!(!f.zurueckgesetzt);
+    s.tor.verwerfen(f.schein);
+
+    // Als Frage: ebenso.
+    let f = s
+        .tor
+        .vor_versand(auftrag("r4", "g1", vec![], &a1))
+        .await
+        .unwrap();
+    assert!(!alle_texte(&f).contains(GEHEIM));
+    assert!(alle_texte(&f).contains(ENTZOGEN_ANTWORT_PROJEKT));
+    assert_eq!(f.entzogen, 1);
+    // Und in einem anderen Gespräch ist sie unbekannt und damit nur ein Nutzertext.
+    let f = s
+        .tor
+        .vor_versand(auftrag("r5", "g2", vec![nutzer(&a1)], "F"))
+        .await
+        .unwrap();
+    assert_eq!(f.entzogen, 0, "fremdes Gespräch: kein Treffer");
+}
+
+// ---------------------------------------------------------------- Register: Lesefehler, Altformat, ohne Gespräch
+
+#[tokio::test]
+async fn lesefehler_des_registers_bricht_den_turn_ab_ohne_umbenennen() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pfad = tmp.path().join(tor_herkunft::DATEI);
+    std::fs::create_dir(&pfad).unwrap();
+    let s = szene_mit(
+        suite_projekt("INTERNAL"),
+        ziel(false),
+        Some(tmp.path().to_path_buf()),
+    );
+    let r = s.tor.vor_versand(auftrag("r1", "g1", vec![], "F")).await;
+    assert_eq!(r.err(), Some(Abbruch::RegisterDefekt));
+    assert_eq!(s.tor.offene_laeufe(), 0);
+    assert!(pfad.is_dir(), "nichts umbenannt");
+    let beiseite = std::fs::read_dir(tmp.path())
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|e| e.file_name().to_string_lossy().contains(".defekt-"))
+        .count();
+    assert_eq!(beiseite, 0);
+    // Die Mindestklasse ist dann unbekannt, nie niedriger.
+    assert_eq!(
+        s.tor.mindestklasse(&bindung("g1")).await.unwrap(),
+        AblageKlasse::Unbekannt
+    );
+}
+
+#[tokio::test]
+async fn marke_im_alten_format_mit_16_hex_gilt_als_entzogen() {
+    let s = szene();
+    // Ein Register aus der Zeit vor der 32-stelligen Marke (nie ausgeliefert, nur Entwicklungsstände).
+    let alte_marke = format!("eintrag:t1#{:016x}", hash("Erlaubter Text"));
+    Register::neu(s.dir.path())
+        .eintragen(Neu {
+            gespraech: "g1".into(),
+            antwort: "Alte Antwort".into(),
+            projekt: P.into(),
+            stand: "st1".into(),
+            inhalte: vec![alte_marke],
+            ablage: vec![],
+            klasse_projekt: Klasse::Internal,
+            klasse_ablage: None,
+        })
+        .unwrap();
+    let vorher = std::fs::read(s.dir.path().join(tor_herkunft::DATEI)).unwrap();
+    let f = s
+        .tor
+        .vor_versand(auftrag(
+            "r1",
+            "g1",
+            vec![nutzer("F"), antwort("Alte Antwort")],
+            "F2",
+        ))
+        .await
+        .unwrap();
+    assert!(!alle_texte(&f).contains("Alte Antwort"));
+    assert_eq!(f.entzogen, 1);
+    assert_eq!(
+        std::fs::read(s.dir.path().join(tor_herkunft::DATEI)).unwrap(),
+        vorher,
+        "das Register bleibt, wie es ist"
+    );
+}
+
+#[tokio::test]
+async fn ohne_gespraech_wird_nichts_registriert() {
+    let s = szene();
+    let mut a = auftrag("r1", "g1", vec![], "Frage");
+    a.bindung.gespraech = None;
+    let f = s.tor.vor_versand(a).await.unwrap();
+    s.tor.abschliessen(f.schein, "Antwort").await.unwrap();
+    assert!(!s.dir.path().join(tor_herkunft::DATEI).exists());
+    // Mit Gespräch wird eingetragen.
+    turn(&s, "r2", "g1", vec![], "F", "Antwort").await;
+    assert!(s.dir.path().join(tor_herkunft::DATEI).exists());
+}
+
+// ---------------------------------------------------------------- Ziel: Adresse, Fenster, Klasse (S1 bis S3)
+
+#[tokio::test]
+async fn lokales_ziel_ohne_gebundene_adresse_gibt_nichts_frei() {
+    let s = szene();
+    let mut z = ziel(true);
+    z.pinned_local = None;
+    s.ziele.setzen(z);
+    let r = s.tor.vor_versand(auftrag("r1", "g1", vec![], "F")).await;
+    assert_eq!(
+        r.err(),
+        Some(Abbruch::ZielUnklar {
+            code: CODE_ZIEL_LOKAL
+        })
+    );
+    assert_eq!(s.tor.offene_laeufe(), 0);
+    assert_eq!(
+        s.kontext.aufrufe.load(Ordering::SeqCst),
+        0,
+        "kein Kontext gelesen"
+    );
+    // Mit Adresse geht es.
+    s.ziele.setzen(ziel(true));
+    assert!(s
+        .tor
+        .vor_versand(auftrag("r2", "g1", vec![], "F"))
+        .await
+        .is_ok());
+}
+
+#[tokio::test]
+async fn cjk_text_wird_nicht_unterschaetzt() {
+    let s = szene();
+    let mut z = ziel(false);
+    z.fenster = 3_000;
+    z.ausgabe = 1_024;
+    s.ziele.setzen(z);
+    // 1 800 Zeichen: nach Zeichen/4 wären es 450 Token (passt), nach Bytes/3 sind es 1 800 (passt nicht).
+    let cjk = "日本語".repeat(600);
+    let r = s.tor.vor_versand(auftrag("r1", "g1", vec![], &cjk)).await;
+    let Err(Abbruch::Budget(b)) = r else {
+        panic!("{r:?}")
+    };
+    assert!(b.frage >= 1_800, "{b:?}");
+    // Dieselbe Länge ASCII passt.
+    let ascii = "a".repeat(1_800);
+    assert!(s
+        .tor
+        .vor_versand(auftrag("r2", "g1", vec![], &ascii))
+        .await
+        .is_ok());
+}
+
+#[tokio::test]
+async fn projektklasse_gilt_auch_bei_nur_ablage_verweisen() {
+    let s = szene_mit(suite_projekt("PERSONAL"), ziel(false), None);
+    s.kontext.setzen(&[], &[ablage_verweis()], "st1");
+    let r = s.tor.vor_versand(auftrag("r1", "g1", vec![], "F")).await;
+    assert_eq!(r.err(), Some(Abbruch::Klasse { code: CODE_KLASSE }));
+    assert_eq!(s.tor.offene_laeufe(), 0);
+    // Lokal geht es, und die Klasse des Projekts steht im Schein (Mindestklasse).
+    s.ziele.setzen(ziel(true));
+    let f = s
+        .tor
+        .vor_versand(auftrag("r2", "g1", vec![], "F"))
+        .await
+        .unwrap();
+    s.tor.abschliessen(f.schein, "A").await.unwrap();
+    assert_eq!(
+        s.tor.mindestklasse(&bindung("g1")).await.unwrap(),
+        AblageKlasse::Personal
+    );
+}
+
+// ---------------------------------------------------------------- Dienst: Widerruf-Pfade (S5)
+
+#[tokio::test]
+async fn web_freigabe_und_datei_entfernen_widerrufen_den_laufenden_lauf() {
+    let e = env().await;
+    let p = projekt(&e, Klasse::Internal).await;
+    let f = e
+        .tor
+        .vor_versand(real_auftrag("r1", &p, "g1", vec![], "F"))
+        .await
+        .unwrap();
+    e.dienst.web_freigabe(&p, true).await.unwrap();
+    assert!(f.ist_widerrufen(), "Web-Freigabe geändert");
+    e.tor.verwerfen(f.schein);
+
+    let quelle = e._dir.path().join("quelle.md");
+    std::fs::write(&quelle, "Text der Datei").unwrap();
+    let ids = e
+        .dienst
+        .dateien_hinzufuegen(&p, std::slice::from_ref(&quelle))
+        .await
+        .unwrap();
+    let f = e
+        .tor
+        .vor_versand(real_auftrag("r2", &p, "g1", vec![], "F"))
+        .await
+        .unwrap();
+    assert!(e.dienst.datei_entfernen(&p, &ids[0]).await.unwrap());
+    assert!(f.ist_widerrufen(), "Datei entfernt");
+    e.tor.verwerfen(f.schein);
+    assert_eq!(e.tor.offene_laeufe(), 0);
+}
+
+/// Der Rumpf einer Methode im `impl`-Block: ab `fn <name>(` bis zur schließenden Klammer auf
+/// Einrückung 4 (rustfmt-Format).
+fn rumpf<'a>(quelle: &'a str, name: &str) -> &'a str {
+    let start = quelle
+        .find(&format!("fn {name}("))
+        .unwrap_or_else(|| panic!("{name} fehlt"));
+    let rest = &quelle[start..];
+    let ende = rest.find("\n    }\n").unwrap_or(rest.len());
+    &rest[..ende]
+}
+
+/// Jede Änderung, die den Kontext eines Projekts betrifft, ruft den Widerruf. Die Entfernungen laufen
+/// über `verweis_entfernen`, dessen Rumpf ihn ruft.
+#[test]
+fn dienst_aenderungen_widerrufen_laufende_projektlaeufe() {
+    let q = quelltext("projekte/dienst.rs");
+    for name in [
+        "web_freigabe",
+        "ordner_loesen",
+        "datei_entfernen",
+        "kontext_schalten_mit_stand",
+        "loeschen",
+        "abgleich_ohne_sperre",
+        "sync_ohne_sperre",
+        "verweis_entfernen",
+    ] {
+        assert!(
+            rumpf(&q, name).contains("self.widerrufen("),
+            "{name} ruft widerrufen nicht"
+        );
+    }
+    for name in ["buch_entfernen", "besprechung_entfernen", "seite_entfernen"] {
+        assert!(
+            rumpf(&q, name).contains("self.verweis_entfernen("),
+            "{name} geht nicht über verweis_entfernen"
+        );
+    }
+    // Ein Fehler beim Entfernen widerruft ebenfalls.
+    let v = rumpf(&q, "verweis_entfernen");
+    assert!(v.contains("is_err()"), "{v}");
+    // Der Widerruf geht an das Tor.
+    let z = quelltext("projekte/zustand.rs");
+    assert!(z.contains("tor.widerrufen(projekt)"));
 }
 
 // ---------------------------------------------------------------- Quelltests
@@ -1948,6 +2680,62 @@ fn allowlist_kontext_fuer_ki_nur_im_tor() {
     assert!(dienst.contains("pub(super) async fn kontext_fuer_ki("));
     assert!(!dienst.contains("pub async fn kontext_fuer_ki("));
     assert!(!dienst.contains("pub(crate) async fn kontext_fuer_ki("));
+}
+
+/// Das Tor ist der einzige Weg zum Kontext: Die Quellen sind nur innerhalb von `projekte` sichtbar, und
+/// außerhalb von `tor.rs` benutzt sie keine Datei (weder das Merkmal noch den Aufruf `.kontext(<arg>)`).
+#[test]
+fn allowlist_kontextquelle_und_quellen_nur_im_tor() {
+    let src = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut dateien = Vec::new();
+    rust_dateien(&src, &mut dateien);
+    let mut mit_merkmal: Vec<String> = Vec::new();
+    let mut mit_aufruf: Vec<String> = Vec::new();
+    for d in dateien {
+        let name = d.file_name().unwrap().to_string_lossy().to_string();
+        if name.starts_with("tests") || name.ends_with("_tests.rs") || name == "tests.rs" {
+            continue;
+        }
+        let rel = d
+            .strip_prefix(&src)
+            .unwrap()
+            .to_string_lossy()
+            .replace('\\', "/");
+        let text = std::fs::read_to_string(&d).unwrap();
+        if text.contains("KontextQuelle") {
+            mit_merkmal.push(rel.clone());
+        }
+        // `.kontext()` ohne Argument ist etwas anderes (Sprachdienst).
+        let ruft = text
+            .match_indices(".kontext(")
+            .any(|(i, p)| !text[i + p.len()..].starts_with(')'));
+        if ruft {
+            mit_aufruf.push(rel);
+        }
+    }
+    mit_merkmal.sort();
+    mit_aufruf.sort();
+    assert_eq!(mit_merkmal, vec!["projekte/tor.rs".to_string()]);
+    assert_eq!(mit_aufruf, vec!["projekte/tor.rs".to_string()]);
+    let tor = quelltext("projekte/tor.rs");
+    for merkmal in ["KontextQuelle", "AblageQuelle", "ZielQuelle"] {
+        assert!(
+            tor.contains(&format!("pub(super) trait {merkmal}")),
+            "{merkmal} ist nicht pub(super)"
+        );
+        assert!(
+            !tor.contains(&format!("pub trait {merkmal}"))
+                && !tor.contains(&format!("pub(crate) trait {merkmal}")),
+            "{merkmal} ist zu sichtbar"
+        );
+    }
+    assert!(tor.contains("pub(super) struct DateiAblage"));
+    assert!(tor.contains("    pub(super) fn neu(\n        kontext: Arc<dyn KontextQuelle>"));
+    // Das Antwortregister wird nie auf dem Async-Thread gelesen oder geschrieben.
+    assert!(!tor.contains("self.register.laden()"));
+    assert!(!tor.contains("self.register.eintragen("));
+    assert!(tor.contains("spawn_blocking(move || r.laden())"));
+    assert!(tor.contains("spawn_blocking(move || r.eintragen(neu))"));
 }
 
 /// Jeder Ablage-Befehl, der Freigaben, Klassen oder Bestand verengen kann, ruft nach seiner Ausführung

@@ -280,7 +280,11 @@ impl ProjektDienst {
     }
 
     /// Widerruf für das Versandtor: wird nach jeder Änderung am Kontext eines Projekts gerufen
-    /// (Schalten, Form/Fassung, Entfernen, Löschen, Abgleich). Er muss schnell und ohne Warten sein.
+    /// (Schalten, Form/Fassung, Entfernen, Lösen eines Ordners, Löschen, Abgleich, Web-Freigabe). Er
+    /// muss schnell und ohne Warten sein. Ein Quelltest (`tests_p4c`) hält fest, welche Pfade ihn rufen.
+    /// Eine Änderung der Klasse oder die Archivierung eines Projekts gibt es in der App noch nicht
+    /// (`wai-projekte` kennt sie, der Dienst bietet keinen Pfad dafür an); das Tor prüft beides beim
+    /// Abschluss ohnehin neu. Kommt ein solcher Pfad dazu, muss er hier widerrufen.
     pub fn with_widerruf(mut self, f: Widerruf) -> Self {
         self.widerruf = Some(f);
         self
@@ -422,6 +426,8 @@ impl ProjektDienst {
                 },
             )
             .await?;
+        // Die Projektregeln haben sich geändert: laufende Läufe prüfen frisch.
+        self.widerrufen(id);
         self.protokoll(
             "web_freigabe",
             id,
@@ -586,6 +592,9 @@ impl ProjektDienst {
         self.quellen
             .ordner_projekt_setzen(ordner_id, None)
             .map_err(quelle)?;
+        // Die Besprechungen des Ordners verlassen das Projekt; laufende Läufe werden sofort
+        // abgebrochen, der Abgleich widerruft für jeden entfernten Eintrag noch einmal.
+        self.widerrufen(&suite);
         self.protokoll("ordner_geloest", &suite, "ok", "geloest");
         // Existiert das Suite-Projekt nicht mehr, ist die Verknuepfung trotzdem geloest.
         if self
@@ -693,7 +702,18 @@ impl ProjektDienst {
         }
     }
 
+    /// Nimmt einen Verweis aus dem Projekt und widerruft laufende Läufe: sofort nach dem Entfernen und
+    /// auch, wenn die Entfernung scheitert (eine halb ausgeführte Änderung kann den Stand schon
+    /// verändert haben). Wurde nichts entfernt, ändert sich nichts und es wird nichts abgebrochen.
     async fn verweis_entfernen(&self, suite_id: &str, ref_: &str) -> Res<bool> {
+        let r = self.verweis_entfernen_roh(suite_id, ref_).await;
+        if r.is_err() {
+            self.widerrufen(suite_id);
+        }
+        r
+    }
+
+    async fn verweis_entfernen_roh(&self, suite_id: &str, ref_: &str) -> Res<bool> {
         let h = self.herkunft().await?;
         for e in self
             .verz
@@ -935,7 +955,11 @@ impl ProjektDienst {
         let _g = self.sperre.lock().await;
         Self::projekt_pruefen(suite_id)?;
         let ablage = self.ablage()?.to_path_buf();
-        dateien::entfernen_beginnen(&ablage, suite_id, datei_id).map_err(quelle)?;
+        let begonnen = dateien::entfernen_beginnen(&ablage, suite_id, datei_id).map_err(quelle);
+        // Die Datei ist ab hier (halb) entfernt, auch wenn das Beginnen scheitert: Laufende Läufe
+        // prüfen frisch, bevor die Mitgliedschaft fällt.
+        self.widerrufen(suite_id);
+        begonnen?;
         let weg = self
             .verweis_entfernen(suite_id, &projektdatei_link(suite_id, datei_id))
             .await?;

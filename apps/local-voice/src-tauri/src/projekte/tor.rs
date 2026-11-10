@@ -1,11 +1,17 @@
 //! Versandtor der Projekt-KI (lva#365 P4c-1, Plan `docs/superpowers/plans/2026-11-10-projekte-p4c.md`).
 //!
 //! Alle KI-Wege im Projekt beziehen ihren Kontext ausschließlich über [`ProjektTor::vor_versand`]. Das Tor
-//! ist die einzige Stelle, die `ProjektDienst::kontext_fuer_ki` ruft (Quelltest in `tests_p4c`). Vor jedem
-//! Modellaufruf trägt es den Lauf ein, prüft die Sperre und das Projekt, bestimmt das Ziel aus der
-//! Konfiguration (nie aus der Oberfläche), liest den Kontext frisch, prüft die Klassen, bereinigt den
-//! gesamten Prompt und reserviert das Budget. Nach dem Aufruf verwirft [`ProjektTor::abschliessen`]
-//! verspätete Antworten.
+//! ist die einzige Stelle, die `ProjektDienst::kontext_fuer_ki` ruft und die [`KontextQuelle`] benutzt;
+//! die Quellen ([`KontextQuelle`], [`AblageQuelle`], [`ZielQuelle`]) und [`ProjektTor::neu`] sind nur
+//! innerhalb von `projekte` sichtbar (Quelltest in `tests_p4c`). Vor jedem Modellaufruf trägt das Tor
+//! den Lauf ein, prüft die Sperre und das Projekt, bestimmt das Ziel aus der Konfiguration (nie aus der
+//! Oberfläche), liest den Kontext frisch, prüft die Klassen, bereinigt den gesamten Prompt und
+//! reserviert das Budget. Nach dem Aufruf verwirft [`ProjektTor::abschliessen`] verspätete Antworten.
+//!
+//! Herkunft wird vererbt: Eine Antwort, ein Zwischenstand oder ein Nutzertext, der im Verlauf bleibt,
+//! trägt seine Quellen in jede spätere Antwort. Der Schein führt darum die **Vereinigung** aus den
+//! Quellen dieses Turns, denen aller behaltenen Texte und den berechtigten Marken aus den übrigen
+//! Texten; die Klassen sind das Maximum daraus. `abschliessen` prüft diese ganze Menge neu.
 //!
 //! P4c-1 schließt **keinen** Weg an: Die Sperre `PROJEKT_KI_FREIGEGEBEN` bleibt `false`. Das Tor ist mit
 //! Attrappen für Ziel, Kontext und Ablage getestet.
@@ -23,7 +29,8 @@
 use super::dienst::{ki_freigegeben, klasse_aus_text, proj_aus, ProjektDienst, SuiteProjekt};
 use super::herkunft::suite_id_gueltig;
 use super::kontext::{self, Kontext};
-use super::tor_herkunft::{self, Lage, Neu, Register};
+use super::tor_herkunft::{Bestand, Eintrag, Lage, Neu, Register};
+use super::tor_ziel::{CODE_FENSTER, CODE_ZIEL_LOKAL};
 use super::{Fehler, Res};
 use crate::ablage::ki::{self, AuszugAntwort, HerkunftPruefung, KiBereich, Urteil, ZielAnbieter};
 use crate::ablage::speicher::Ablage;
@@ -48,13 +55,15 @@ pub const CODE_KLASSE: &str = "projekt.klasse_ziel";
 /// Code, wenn die Ablage nicht lesbar ist.
 pub const CODE_ABLAGE: &str = "projekt.ablage";
 
-/// Aufschlag auf die Token-Schätzung (Prozent). Startwert, nicht gemessen: Die Schätzung ist
-/// Zeichen/4 (`kontext::tokens`) und kann je nach Sprache und Tokenizer abweichen.
+/// Aufschlag auf die Token-Schätzung (Prozent). Startwert, nicht gemessen: Die Schätzung ist bewusst
+/// vorsichtig (UTF-8-Bytes/3, bei CJK mindestens Zeichen/2; `kontext::tokens`) und kann je nach
+/// Sprache und Tokenizer trotzdem abweichen.
 pub const BUDGET_PUFFER_PROZENT: u64 = 10;
 /// Reserve für die Ausgabe, wenn das Modell keine eigene kennt (Token). Startwert.
 pub const AUSGABE_VORGABE: u32 = 1_024;
-/// Fenster, wenn das Modell keines kennt (Token). Bewusst klein; Startwert, nicht gemessen.
-pub const FENSTER_VORGABE: u32 = 8_192;
+/// Fenster eines **lokalen** Ziels ohne Angabe (Token): der übliche Mindestkontext. Ein Ziel, das nicht
+/// streng lokal ist, hat keine Vorgabe: ohne bekanntes Fenster gibt es kein Ziel (`tor_ziel`).
+pub const FENSTER_LOKAL_VORGABE: u32 = 4_096;
 
 // ---------------------------------------------------------------- Typen
 
@@ -73,7 +82,9 @@ pub enum Weg {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Bindung {
     pub projekt: String,
-    /// Gesprächs- oder Lauf-Kennung. Fehlt sie, gilt die Anfrage-Kennung.
+    /// Gesprächs- oder Lauf-Kennung. Fehlt sie, gilt die Anfrage-Kennung für diesen einen Aufruf, und
+    /// das Tor trägt nichts ins Antwortregister ein: Ohne Gespräch gibt es keinen Verlauf, der eine
+    /// Antwort wiederfinden könnte.
     pub gespraech: Option<String>,
 }
 
@@ -118,7 +129,11 @@ pub struct PromptTeile {
     /// Verlauf **ohne** die aktuelle Frage (Oberfläche oder Speicher). Nur Nutzer und Antwort;
     /// System- und Werkzeugnachrichten sind im Projekt nicht zulässig.
     pub historie: Vec<Nachricht>,
-    /// Zusammenfassungen, Ausgabe eines Denkers: abgeleiteter Text.
+    /// Zusammenfassungen, Ausgabe eines Denkers: abgeleiteter Text. Zulässig sind nur Texte, die das Tor
+    /// selbst freigegeben hat: Die Stufe, die sie erzeugt, löst ihren Schein mit
+    /// [`ProjektTor::abschliessen_zwischenstand`] ein und führt sie dann in dasselbe Gespräch (dieselbe
+    /// `Bindung::gespraech`) weiter. Ein unbekannter Zwischenstand wird verworfen, ein bekannter mit
+    /// entzogener Quelle durch [`ENTZOGEN_ANTWORT_PROJEKT`] ersetzt.
     pub zwischenstaende: Vec<String>,
     /// Fremde Treffer (App-Kontext, Notizbuch, Besprechungsindex): im Projekt nur leer zulässig.
     pub retrieval: Vec<String>,
@@ -223,6 +238,14 @@ impl Budgetbeleg {
 }
 
 /// Die Freigabe zum Versand. Der Schein ist genau einmal einzulösen (`abschliessen` oder `verwerfen`).
+///
+/// **Vertrag des Sendewegs:**
+/// - Für ein lokales Ziel (`ziel.anbieter.lokal`) geht der Aufruf **nur** an `ziel.pinned_local`, die
+///   Adresse des eingebauten Servers, die das Tor mitgibt (ohne Proxy, ohne Umleitung). Die `base_url`
+///   aus `ziel.provider` ist dafür nicht zu verwenden. Das Tor gibt kein lokales Ziel ohne
+///   `pinned_local` frei (`ZielUnklar`).
+/// - Der Aufruf läuft in `select! { biased; abbruch.notified() => …, call => … }`.
+/// - Die Antwort wird erst nach `abschliessen` gezeigt, gespeichert oder gesprochen.
 pub struct Freigabe {
     pub schein: Versandschein,
     /// Bereinigt; System zuerst, der Kontext steht in der letzten Nutzernachricht.
@@ -276,6 +299,8 @@ pub struct Versandschein {
     anbieter: ZielAnbieter,
     klasse_projekt: Klasse,
     klasse_ablage: Option<AblageKlasse>,
+    /// Nur mit Gespräch wird die Antwort ins Register eingetragen.
+    registrieren: bool,
 }
 
 impl Versandschein {
@@ -318,7 +343,7 @@ pub enum Abbruch {
     Ablage { code: &'static str },
     /// App-Kontext, Notizbuch, Treffer oder Werkzeug im Projektweg (Programmierfehler).
     Fremdkontext,
-    /// Das Antwortregister lässt sich nicht schreiben oder nicht lesen.
+    /// Das Antwortregister lässt sich nicht lesen (Lesefehler) oder nicht schreiben.
     RegisterDefekt,
     /// Ein Widerruf oder eine Änderung kam dazwischen; die Antwort wird nicht übernommen.
     Verspaetet,
@@ -373,6 +398,12 @@ impl Abbruch {
                  wählen oder den Eintrag ausschalten. Es wurde nichts gesendet."
                     .into()
             }
+            Abbruch::ZielUnklar { code } if *code == CODE_FENSTER => {
+                "Für dieses Modell ist die Größe des Kontextfensters nicht bekannt. Bitte in den \
+                 Einstellungen (KI-Modelle und Anbieter) das Kontextlimit des Modells eintragen. Es \
+                 wurde nichts gesendet."
+                    .into()
+            }
             Abbruch::ZielUnklar { .. } => {
                 "Es ist kein zulässiges Modell gewählt. Bitte die Einstellungen prüfen. Es wurde nichts \
                  gesendet."
@@ -385,8 +416,8 @@ impl Abbruch {
                 "Im Projekt sind nur Projektinhalte zulässig. Es wurde nichts gesendet.".into()
             }
             Abbruch::RegisterDefekt => {
-                "Die Herkunft der Antwort konnte nicht gesichert werden; die Antwort wird nicht \
-                 übernommen."
+                "Das Antwortregister lässt sich gerade nicht lesen oder schreiben. Es wird nichts \
+                 gesendet oder übernommen, bis es wieder verfügbar ist."
                     .into()
             }
             Abbruch::Verspaetet | Abbruch::Widerrufen => {
@@ -415,14 +446,21 @@ impl From<Abbruch> for String {
 
 /// Bestimmt das Ziel aus der Konfiguration. Produktion: `AppZiel` (zustand.rs). Das Ziel kommt nie aus
 /// der Oberfläche; `modell` wählt nur unter den konfigurierten, aktivierten Modellen.
+///
+/// Nur innerhalb von `projekte` sichtbar: Das Ziel trägt den Schlüssel des Anbieters, und nur das Tor
+/// soll es abfragen.
 #[async_trait]
-pub trait ZielQuelle: Send + Sync {
+pub(super) trait ZielQuelle: Send + Sync {
     async fn ziel(&self, funktion: &str, modell: Option<&str>) -> Result<Ziel, Abbruch>;
 }
 
 /// Quelle von Kontext und Projekt. Produktion: `ProjektDienst` (`kontext_fuer_ki`).
+///
+/// Nur innerhalb von `projekte` sichtbar (`pub(super)`), damit [`ProjektTor`] der einzige Weg zum
+/// Kontext ist: Außerhalb des Moduls lässt sich das Merkmal weder nennen noch aufrufen. Innerhalb
+/// sorgt der Quelltest `allowlist_kontext_fuer_ki_nur_im_tor` dafür, dass nur `tor.rs` es benutzt.
 #[async_trait]
-pub trait KontextQuelle: Send + Sync {
+pub(super) trait KontextQuelle: Send + Sync {
     /// Ist die Sperre der Projekt-KI aufgehoben? Das Tor fragt vor allem anderen, auch vor dem Ziel
     /// (ein lokales Modell wird dann nicht umsonst gestartet).
     fn freigegeben(&self) -> bool;
@@ -447,8 +485,9 @@ impl KontextQuelle for ProjektDienst {
 }
 
 /// Zugang zur Dokumentenablage für Auszüge und Widerrufsprüfung. Die Aufrufe blockieren (Dateien,
-/// Index); das Tor ruft sie über `spawn_blocking`.
-pub trait AblageQuelle: Send + Sync {
+/// Index); das Tor ruft sie über `spawn_blocking`. Nur innerhalb von `projekte` sichtbar, weil sie
+/// Auszüge (Inhalte) liefert.
+pub(super) trait AblageQuelle: Send + Sync {
     fn auszuege(
         &self,
         frage: &str,
@@ -465,12 +504,12 @@ pub trait AblageQuelle: Send + Sync {
 }
 
 /// Produktion: die Ablage im Datenordner der App.
-pub struct DateiAblage {
+pub(super) struct DateiAblage {
     ordner: PathBuf,
 }
 
 impl DateiAblage {
-    pub fn neu(ordner: impl Into<PathBuf>) -> Self {
+    pub(super) fn neu(ordner: impl Into<PathBuf>) -> Self {
         Self {
             ordner: ordner.into(),
         }
@@ -745,6 +784,15 @@ fn maskieren(s: &str) -> String {
     kontext::maskieren(s)
 }
 
+/// Der Registereintrag zu einem Text in diesem Gespräch, falls das Tor ihn freigegeben hat. Ein leerer
+/// Text hat keinen.
+fn nachschlagen<'b>(bestand: &'b Bestand, gespraech: &str, text: &str) -> Option<&'b Eintrag> {
+    if text.trim().is_empty() {
+        return None;
+    }
+    bestand.finden(gespraech, text)
+}
+
 /// Prüft und bereinigt Texte gegen den frischen Kontext und die Ablage-Urteile.
 struct Pruefer<'a> {
     frische: BTreeSet<&'a str>,
@@ -780,8 +828,9 @@ pub struct ProjektTor {
 }
 
 impl ProjektTor {
-    /// `ordner` ist der Projektordner der App (dort liegt `ki-herkunft.json`).
-    pub fn neu(
+    /// `ordner` ist der Projektordner der App (dort liegt `ki-herkunft.json`). Nur innerhalb von
+    /// `projekte` aufrufbar: Die Quellen sind nicht von außen nennbar.
+    pub(super) fn neu(
         kontext: Arc<dyn KontextQuelle>,
         ziele: Arc<dyn ZielQuelle>,
         ablage: Arc<dyn AblageQuelle>,
@@ -820,6 +869,7 @@ impl ProjektTor {
         if !suite_id_gueltig(&bindung.projekt) {
             return Err(Abbruch::ProjektUngueltig);
         }
+        let registrieren = bindung.gespraech.is_some();
         let gespraech = match &bindung.gespraech {
             Some(g) if kennung_gueltig(g) => g.clone(),
             Some(_) => return Err(Abbruch::Anfrage),
@@ -849,6 +899,12 @@ impl ProjektTor {
         // 3. Ziel aus der Konfiguration (ein lokales Modell wird vor dem Kontextlesen gestartet).
         let ziel = self.ziele.ziel(funktion, modell).await?;
         wache.pruefen()?;
+        // Ein lokales Ziel ohne gebundene Adresse ließe den Sendeweg auf die `base_url` ausweichen.
+        if ziel.anbieter.lokal && ziel.pinned_local.is_none() {
+            return Err(Abbruch::ZielUnklar {
+                code: CODE_ZIEL_LOKAL,
+            });
+        }
 
         // 4. Kontext frisch.
         let kontext = self
@@ -865,6 +921,15 @@ impl ProjektTor {
         let mut klasse_projekt = Klasse::Public;
         for t in &kontext.texte {
             let k = klasse_wirksam(t.klasse, projekt_klasse, projekt.special_category);
+            if !klasse_zulaessig(k, &ziel) {
+                return Err(Abbruch::Klasse { code: CODE_KLASSE });
+            }
+            klasse_projekt = klasse_projekt.max(k);
+        }
+        // Auch ein Projekt, das nur Ablage-Verweise einschaltet, hat seine Klasse: Sie gilt für alles,
+        // was aus ihm kommt, auch für die Auszüge (die Ablage prüft zusätzlich die Klasse je Datei).
+        if !kontext.ablage.is_empty() {
+            let k = klasse_wirksam(Klasse::Public, projekt_klasse, projekt.special_category);
             if !klasse_zulaessig(k, &ziel) {
                 return Err(Abbruch::Klasse { code: CODE_KLASSE });
             }
@@ -888,7 +953,7 @@ impl ProjektTor {
             Some(antwort)
         };
 
-        // 7. Verlauf bereinigen.
+        // 7. Verlauf, Zwischenstände und Frage gegen das Register und die Ablage prüfen.
         if !retrieval.is_empty() {
             return Err(Abbruch::Fremdkontext);
         }
@@ -898,15 +963,14 @@ impl ProjektTor {
         {
             return Err(Abbruch::Fremdkontext);
         }
-        let bestand = self.register.laden();
-        let hat_antwort = historie
-            .iter()
-            .any(|n| n.rolle == Rolle::Antwort && !n.text.trim().is_empty());
+        let bestand = self.register_laden().await?;
+        wache.pruefen()?;
         let mut entzogen = 0u32;
         let mut zurueckgesetzt = false;
         let (mut historie, mut zwischenstaende) = (historie, zwischenstaende);
-        // Ein nicht lesbares Register: nichts ist bekannt, der Verlauf beginnt neu.
-        if bestand.lage == Lage::Defekt && (hat_antwort || !zwischenstaende.is_empty()) {
+        // Ein Register mit defektem Inhalt: nichts ist bekannt, der Verlauf beginnt neu. Auch Nutzertexte
+        // zählen: Ein umetikettierter Antworttext ließe sich ohne Register nicht mehr erkennen.
+        if bestand.lage == Lage::Defekt && (!historie.is_empty() || !zwischenstaende.is_empty()) {
             entzogen = entzogen.saturating_add(
                 historie
                     .iter()
@@ -918,17 +982,30 @@ impl ProjektTor {
             zwischenstaende.clear();
             zurueckgesetzt = true;
         }
-        let eintraege: Vec<Option<&tor_herkunft::Eintrag>> = historie
+        // Registertreffer gibt es für Antworten **und** Nutzertexte (ein als Nutzer umetikettierter
+        // Antworttext gilt wie die Antwort), für Zwischenstände und für die Frage.
+        let eintraege: Vec<Option<&Eintrag>> = historie
             .iter()
             .map(|n| match n.rolle {
-                Rolle::Antwort if !n.text.trim().is_empty() => bestand.finden(&gespraech, &n.text),
+                Rolle::Antwort | Rolle::Nutzer => nachschlagen(&bestand, &gespraech, &n.text),
                 _ => None,
             })
             .collect();
-        // Alle Ablage-Marken, die zu prüfen sind: die der bekannten Antworten und die in den übrigen
-        // Texten (Nutzer, Zwischenstände, Frage).
+        let zw_eintraege: Vec<Option<&Eintrag>> = zwischenstaende
+            .iter()
+            .map(|t| nachschlagen(&bestand, &gespraech, t))
+            .collect();
+        let frage_eintrag = nachschlagen(&bestand, &gespraech, &frage);
+        // Alle Ablage-Marken, die zu prüfen sind: die der bekannten Texte und die in den übrigen Texten
+        // (Nutzer, Zwischenstände, Frage).
         let mut marken: BTreeSet<String> = BTreeSet::new();
-        for e in eintraege.iter().flatten() {
+        for e in eintraege
+            .iter()
+            .chain(&zw_eintraege)
+            .copied()
+            .chain([frage_eintrag])
+            .flatten()
+        {
             marken.extend(e.ablage.iter().cloned());
         }
         for n in historie.iter().filter(|n| n.rolle == Rolle::Nutzer) {
@@ -959,26 +1036,37 @@ impl ProjektTor {
             frische: kontext.texte.iter().map(|t| t.marke.as_str()).collect(),
             urteile,
         };
-        let gueltig = |e: &tor_herkunft::Eintrag| {
+        // Ein registrierter Text gilt, solange das Projekt dasselbe ist, Klassen und Ziel zusammenpassen
+        // und alle seine Quellen noch gelten.
+        let gueltig = |e: &Eintrag| {
             e.projekt == bindung.projekt
                 && klasse_zulaessig(e.klasse_projekt, &ziel)
+                && e.klasse_ablage
+                    .is_none_or(|k| ki::klasse_erlaubt(k, &ziel.anbieter, true))
                 && e.inhalte
                     .iter()
                     .all(|m| pruefer.frische.contains(m.as_str()))
                 && e.ablage.iter().all(|m| berechtigt.contains(m.as_str()))
         };
+        // Die Herkunft der Texte, die im Prompt bleiben, vererbt sich auf die nächste Antwort.
+        let mut behalten: Vec<&Eintrag> = Vec::new();
         let mut bereinigte: Vec<Nachricht> = Vec::with_capacity(historie.len());
-        for (n, e) in historie.iter().zip(&eintraege) {
-            match n.rolle {
-                Rolle::Antwort if n.text.trim().is_empty() => bereinigte.push(n.clone()),
-                Rolle::Antwort => match e {
-                    Some(e) if gueltig(e) => bereinigte.push(n.clone()),
-                    _ => {
-                        entzogen = entzogen.saturating_add(1);
-                        bereinigte.push(Nachricht::neu(Rolle::Antwort, ENTZOGEN_ANTWORT_PROJEKT));
-                    }
-                },
-                _ => {
+        for (n, e) in historie.iter().zip(eintraege.iter().copied()) {
+            match (n.rolle, e) {
+                (Rolle::Antwort, _) if n.text.trim().is_empty() => bereinigte.push(n.clone()),
+                (_, Some(e)) if gueltig(e) => {
+                    behalten.push(e);
+                    bereinigte.push(n.clone());
+                }
+                (rolle, Some(_)) => {
+                    entzogen = entzogen.saturating_add(1);
+                    bereinigte.push(Nachricht::neu(rolle, ENTZOGEN_ANTWORT_PROJEKT));
+                }
+                (Rolle::Antwort, None) => {
+                    entzogen = entzogen.saturating_add(1);
+                    bereinigte.push(Nachricht::neu(Rolle::Antwort, ENTZOGEN_ANTWORT_PROJEKT));
+                }
+                (_, None) => {
                     let b = pruefer.bereinigen(&n.text);
                     entzogen = entzogen.saturating_add(b.entzogen);
                     // Abgeleiteter Text in einer Nutzernachricht lässt sich nicht einzeln verwerfen.
@@ -987,23 +1075,43 @@ impl ProjektTor {
                 }
             }
         }
+        // Zwischenstände: nur registrierte bleiben. Ein unbekannter wird verworfen, ein bekannter mit
+        // entzogener Quelle ersetzt.
         let mut zwischen: Vec<String> = Vec::with_capacity(zwischenstaende.len());
-        for t in &zwischenstaende {
-            let b = pruefer.bereinigen(t);
-            entzogen = entzogen.saturating_add(b.entzogen);
-            if b.abgeleitet {
-                entzogen = entzogen.saturating_add(1);
-            } else {
-                zwischen.push(b.text);
+        for (t, e) in zwischenstaende.iter().zip(zw_eintraege.iter().copied()) {
+            match e {
+                None => entzogen = entzogen.saturating_add(1),
+                Some(e) if gueltig(e) => {
+                    behalten.push(e);
+                    zwischen.push(t.clone());
+                }
+                Some(_) => {
+                    entzogen = entzogen.saturating_add(1);
+                    zwischen.push(ENTZOGEN_ANTWORT_PROJEKT.to_string());
+                }
             }
         }
-        let frage = pruefer.bereinigen(&frage);
-        entzogen = entzogen.saturating_add(frage.entzogen);
-        let frage = frage.text;
         if zurueckgesetzt {
             bereinigte.clear();
             zwischen.clear();
+            behalten.clear();
         }
+        // Die Frage ist ein Nutzertext: Gibt sie eine bekannte Antwort wieder, gilt deren Herkunft.
+        let frage = match frage_eintrag {
+            Some(e) if gueltig(e) => {
+                behalten.push(e);
+                frage
+            }
+            Some(_) => {
+                entzogen = entzogen.saturating_add(1);
+                ENTZOGEN_ANTWORT_PROJEKT.to_string()
+            }
+            None => {
+                let b = pruefer.bereinigen(&frage);
+                entzogen = entzogen.saturating_add(b.entzogen);
+                b.text
+            }
+        };
 
         // 8. Prompt bauen: System, Verlauf, danach der Kontext vor der Frage in der letzten
         // Nutzernachricht. Werkzeuge gibt es im Projekt nicht.
@@ -1044,21 +1152,45 @@ impl ProjektTor {
             ausgabe: ziel.ausgabe,
             fenster: ziel.fenster,
         })?;
+
+        // 10. Herkunft und Klassen des Scheins: die Vereinigung aus den Quellen dieses Turns, denen der
+        // behaltenen Texte und den berechtigten Marken aus den übrigen Texten im Prompt.
+        let mut inhalte: BTreeSet<String> = kontext.texte.iter().map(|t| t.marke.clone()).collect();
+        let mut ablage_marken: BTreeSet<String> = auszuege
+            .iter()
+            .flat_map(|a| a.auszuege.iter().map(|x| x.herkunft.clone()))
+            .collect();
+        let mut klasse_ablage: Option<AblageKlasse> = auszuege
+            .iter()
+            .flat_map(|a| a.auszuege.iter().map(|x| ablage_klasse_aus_text(&x.klasse)))
+            .max();
+        for e in &behalten {
+            inhalte.extend(e.inhalte.iter().cloned());
+            ablage_marken.extend(e.ablage.iter().cloned());
+            klasse_projekt = klasse_projekt.max(e.klasse_projekt);
+            klasse_ablage = klasse_ablage.max(e.klasse_ablage);
+        }
+        // Eine berechtigte Marke in einem Nutzer-, Zwischenstands- oder Fragetext, die keine bekannte
+        // Herkunft hat: Ihre Klasse ist unbekannt und zählt als die höchste.
+        let sichtbar = bereinigte
+            .iter()
+            .filter(|n| n.rolle == Rolle::Nutzer)
+            .map(|n| n.text.as_str())
+            .chain(zwischen.iter().map(String::as_str))
+            .chain(std::iter::once(frage.as_str()));
+        for m in sichtbar.flat_map(ki::marken_finden) {
+            if berechtigt.contains(&m) && ablage_marken.insert(m) {
+                klasse_ablage = klasse_ablage.max(Some(AblageKlasse::Unbekannt));
+            }
+        }
         let mut nachrichten = Vec::with_capacity(bereinigte.len() + 2);
         nachrichten.push(Nachricht::neu(Rolle::System, system));
         nachrichten.extend(bereinigte);
         nachrichten.push(Nachricht::neu(Rolle::Nutzer, letzte));
 
-        // 10. Schein ausstellen: in einem Zug mit der letzten Prüfung auf Widerruf.
-        let ablage_marken: Vec<String> = auszuege
-            .iter()
-            .flat_map(|a| a.auszuege.iter().map(|x| x.herkunft.clone()))
-            .collect();
-        let klasse_ablage = auszuege
-            .iter()
-            .flat_map(|a| a.auszuege.iter().map(|x| ablage_klasse_aus_text(&x.klasse)))
-            .max();
-        let nutzt_ablage = !kontext.ablage.is_empty() || !marken.is_empty();
+        // Der Schein wird in einem Zug mit der letzten Prüfung auf Widerruf ausgestellt.
+        let nutzt_ablage =
+            !kontext.ablage.is_empty() || !marken.is_empty() || !ablage_marken.is_empty();
         wache.ausstellen(nutzt_ablage, (klasse_projekt, klasse_ablage))?;
         let stand = kontext.uebersicht.stand.clone();
         let sitzung = sitzung_von(&gespraech, &stand);
@@ -1071,12 +1203,13 @@ impl ProjektTor {
                 stand,
                 projekt_klasse,
                 projekt_art9: projekt.special_category,
-                inhalte: kontext.texte.iter().map(|t| t.marke.clone()).collect(),
-                ablage_marken,
+                inhalte: inhalte.into_iter().collect(),
+                ablage_marken: ablage_marken.into_iter().collect(),
                 verweise: kontext.ablage,
                 anbieter: ziel.anbieter.clone(),
                 klasse_projekt,
                 klasse_ablage,
+                registrieren,
             },
             nachrichten,
             ziel,
@@ -1088,13 +1221,27 @@ impl ProjektTor {
         })
     }
 
+    async fn register_laden(&self) -> Result<Bestand, Abbruch> {
+        let r = self.register.clone();
+        tokio::task::spawn_blocking(move || r.laden())
+            .await
+            .map_err(|_| Abbruch::RegisterDefekt)?
+            .map_err(|_| Abbruch::RegisterDefekt)
+    }
+
     /// Löst den Schein ein, nachdem das Modell geantwortet hat. `Ok`: Die Antwort ist freigegeben und im
     /// Register eingetragen. Jeder Fehler heißt: Die Antwort nicht übernehmen, nicht zeigen, nicht
     /// speichern, nicht sprechen (`Verspaetet`, `RegisterDefekt`).
     ///
     /// Verspätet ist die Antwort, wenn der Lauf widerrufen wurde, sich der `stand` oder die Klasse des
-    /// Projekts geändert hat oder eine Ablage-Marke des Scheins entzogen ist. Jede Änderung von `stand`
+    /// Projekts geändert hat oder eine Marke des Scheins nicht mehr gilt. Geprüft wird die **ganze**
+    /// Menge des Scheins neu: alle Inhaltsmarken (auch die der behaltenen Antworten) gegen den frischen
+    /// Kontext und alle Ablage-Marken (auch die vererbten) gegen die Ablage. Jede Änderung von `stand`
     /// verwirft, auch eine reine Inhaltsänderung eines eingeschalteten Eintrags; das ist konservativ.
+    ///
+    /// Ohne `Bindung::gespraech` wird nichts eingetragen. Wird der Lauf während des Eintragens
+    /// widerrufen, ist die Antwort verspätet; der Eintrag bleibt dann stehen (er gilt nur, solange
+    /// alle seine Quellen gelten).
     pub async fn abschliessen(&self, s: Versandschein, antwort: &str) -> Result<(), Abbruch> {
         if s.wache.veraltet() {
             return Err(Abbruch::Verspaetet);
@@ -1116,6 +1263,10 @@ impl ProjektTor {
             .await
             .map_err(|_| Abbruch::Verspaetet)?;
         if kontext.uebersicht.stand != s.stand {
+            return Err(Abbruch::Verspaetet);
+        }
+        let frische: BTreeSet<&str> = kontext.texte.iter().map(|t| t.marke.as_str()).collect();
+        if !s.inhalte.iter().all(|m| frische.contains(m.as_str())) {
             return Err(Abbruch::Verspaetet);
         }
         if !s.ablage_marken.is_empty() {
@@ -1140,21 +1291,42 @@ impl ProjektTor {
         if s.wache.veraltet() {
             return Err(Abbruch::Verspaetet);
         }
-        if antwort.trim().is_empty() {
+        if antwort.trim().is_empty() || !s.registrieren {
             return Ok(());
         }
-        self.register
-            .eintragen(Neu {
-                gespraech: &s.gespraech,
-                antwort,
-                projekt: &s.projekt,
-                stand: &s.stand,
-                inhalte: &s.inhalte,
-                ablage: &s.ablage_marken,
-                klasse_projekt: s.klasse_projekt,
-                klasse_ablage: s.klasse_ablage,
-            })
-            .map_err(|_| Abbruch::RegisterDefekt)
+        let neu = Neu {
+            gespraech: s.gespraech.clone(),
+            antwort: antwort.to_string(),
+            projekt: s.projekt.clone(),
+            stand: s.stand.clone(),
+            inhalte: s.inhalte.clone(),
+            ablage: s.ablage_marken.clone(),
+            klasse_projekt: s.klasse_projekt,
+            klasse_ablage: s.klasse_ablage,
+        };
+        let r = self.register.clone();
+        tokio::task::spawn_blocking(move || r.eintragen(neu))
+            .await
+            .map_err(|_| Abbruch::RegisterDefekt)?
+            .map_err(|_| Abbruch::RegisterDefekt)?;
+        // Während des Eintragens kann ein Widerruf gekommen sein (das Eintragen wartet auf Datei und
+        // Sperre): Die Antwort wird dann nicht übernommen.
+        if s.wache.veraltet() {
+            return Err(Abbruch::Verspaetet);
+        }
+        Ok(())
+    }
+
+    /// Wie [`Self::abschliessen`] für die Ausgabe einer Stufe, die ein späterer Aufruf als Zwischenstand
+    /// (`PromptTeile::zwischenstaende`) erhält: Der Text wird mit seiner Herkunft registriert, sonst
+    /// verwirft das Tor ihn beim nächsten Aufruf. Beide Stufen müssen dasselbe `Bindung::gespraech`
+    /// verwenden; die Herkunft des Zwischenstands geht dann in die Herkunft der nächsten Antwort ein.
+    pub async fn abschliessen_zwischenstand(
+        &self,
+        s: Versandschein,
+        text: &str,
+    ) -> Result<(), Abbruch> {
+        self.abschliessen(s, text).await
     }
 
     /// Gibt den Schein ohne Antwort zurück (Abbruch, Fehler): Der Lauf wird ausgetragen, nichts wird
@@ -1181,11 +1353,14 @@ impl ProjektTor {
     /// Auszüge, aus dem Antwortregister und den offenen Scheinen, nie aus den vom Modell genannten
     /// Quellen. Ist nichts bekannt oder das Register nicht lesbar, ist sie `Unbekannt`; dann legt
     /// `entwurf_anlegen` nichts an.
-    pub fn mindestklasse(&self, b: &Bindung) -> Result<AblageKlasse, Abbruch> {
+    pub async fn mindestklasse(&self, b: &Bindung) -> Result<AblageKlasse, Abbruch> {
         let Some(g) = b.gespraech.as_deref().filter(|g| kennung_gueltig(g)) else {
             return Ok(AblageKlasse::Unbekannt);
         };
-        let bestand = self.register.laden();
+        // Nicht lesbar ist nicht „nichts bekannt“, aber ebenso unbekannt: nie niedriger.
+        let Ok(bestand) = self.register_laden().await else {
+            return Ok(AblageKlasse::Unbekannt);
+        };
         if bestand.lage == Lage::Defekt {
             return Ok(AblageKlasse::Unbekannt);
         }

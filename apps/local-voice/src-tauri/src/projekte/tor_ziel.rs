@@ -14,9 +14,12 @@
 //!   `Personal` und höher gibt es nur lokal.
 //! - Meldet das Regelwerk `Blocked`, gibt es kein Ziel (`projekt.ziel_compliance`).
 //! - Das Fenster ist das Kleinste aus `max_input_tokens`, `context_limit` und (lokal) dem Kontext des
-//!   Servers; kennt es nichts davon, gilt [`FENSTER_VORGABE`].
+//!   Servers. Kennt ein lokales Ziel nichts davon, gilt [`FENSTER_LOKAL_VORGABE`] (4 096 Token, der
+//!   übliche Mindestkontext). Ein Ziel, das nicht streng lokal ist, braucht ein bekanntes Fenster:
+//!   sonst `projekt.ziel_fenster` (`ZielUnklar`), weil jede Vorgabe zu groß sein und ein Cloud-Modell
+//!   den Prompt dann abschneiden könnte.
 
-use super::tor::{Abbruch, Ziel, AUSGABE_VORGABE, FENSTER_VORGABE};
+use super::tor::{Abbruch, Ziel, AUSGABE_VORGABE, FENSTER_LOKAL_VORGABE};
 use crate::ablage::ki::ZielAnbieter;
 use crate::ablage::zusammenfuehren::Klasse as AblageKlasse;
 use crate::managers::compliance::{self, ComplianceProfile, Verdict};
@@ -26,6 +29,8 @@ use crate::settings::AppSettings;
 pub const CODE_KEIN_MODELL: &str = "projekt.kein_modell";
 pub const CODE_COMPLIANCE: &str = "projekt.ziel_compliance";
 pub const CODE_ZIEL_LOKAL: &str = "projekt.ziel_lokal";
+/// Kein bekanntes Fenster bei einem Ziel, das nicht streng lokal ist.
+pub const CODE_FENSTER: &str = "projekt.ziel_fenster";
 
 /// Bestimmt das Ziel aus den Einstellungen. `heute` als `YYYY-MM-DD` (Alter der Anbieterangaben).
 /// `server_kontext`: Kontext des lokalen Servers in Token, falls bekannt; er begrenzt nur das Fenster
@@ -77,12 +82,16 @@ pub fn aus_einstellungen(
         .map(|(_, m)| (m.context_limit, m.max_input_tokens, m.max_output_tokens))
         .unwrap_or_default();
     let server = server_kontext.filter(|_| lokal);
-    let fenster = [kontext, eingabe, server]
+    let fenster = match [kontext, eingabe, server]
         .into_iter()
         .flatten()
         .filter(|n| *n > 0)
         .min()
-        .unwrap_or(FENSTER_VORGABE);
+    {
+        Some(n) => n,
+        None if lokal => FENSTER_LOKAL_VORGABE,
+        None => return Err(Abbruch::ZielUnklar { code: CODE_FENSTER }),
+    };
     let ausgabe = ausgabe.filter(|n| *n > 0).unwrap_or(AUSGABE_VORGABE);
     Ok(Ziel {
         anbieter: ZielAnbieter {
