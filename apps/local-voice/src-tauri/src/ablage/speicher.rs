@@ -1746,10 +1746,10 @@ impl Ablage {
                 o.zielordner_ki = Register::neu(k, z, &g);
             }
         }
-        self.sichern(&mut st)?;
         if klasse_gewechselt {
             // Cloud-Ausnahmen gelten nur für `confidential`: bei jedem Klassenwechsel verfallen sie für
-            // den Ordner und alle Unterordner (die wirksame Klasse kann sich dort mitändern).
+            // den Ordner und alle Unterordner (die wirksame Klasse kann sich dort mitändern). Vor dem
+            // Speichern, fail-closed: scheitert das Entziehen, bleibt auch die Klasse unverändert.
             let eltern = st.eltern();
             let betroffen: Vec<String> = st
                 .ordner
@@ -1759,7 +1759,7 @@ impl Ablage {
                 .collect();
             freigabe::ausnahmen_entziehen(&self.dir, &betroffen)?;
         }
-        Ok(())
+        self.sichern(&mut st)
     }
 
     /// KI-Freigabe eines Ordners (gerätelokal, `freigabe.json`); `None` = erbt wieder.

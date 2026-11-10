@@ -479,9 +479,10 @@ pub fn klasse_setzen(a: &Ablage, id: &str, klasse: &str) -> Res<()> {
         return Ok(());
     }
     v.klasse = klasse.to_string();
-    liste_schreiben(a.dir(), &l)?;
-    // Cloud-Ausnahmen gelten nur für `confidential` und verfallen beim Klassenwechsel (wie bei Ordnern).
-    freigabe::ausnahmen_entziehen(a.dir(), &[id.to_string()])
+    // Cloud-Ausnahmen gelten nur für `confidential` und verfallen beim Klassenwechsel (wie bei Ordnern);
+    // vor dem Schreiben, fail-closed.
+    freigabe::ausnahmen_entziehen(a.dir(), &[id.to_string()])?;
+    liste_schreiben(a.dir(), &l)
 }
 
 /// Einstellungen eines verknüpften Ordners: nur die Klasse; „nur dieses Gerät“ gilt immer, Entwürfe der KI
