@@ -45,7 +45,8 @@ public enum BookStart {
         for (i, s) in secs.enumerated() {
             if let below = skipBelow, s.heading != nil, s.level > below { continue }
             skipBelow = nil
-            let kind = classify(s, index: i, count: secs.count, title: title, later: { Set(norm[(i + 1)...].compactMap { $0 }) }, tocSoon: tocSoon)
+            let kind = classify(s, index: i, count: secs.count, title: title, later: { Set(norm[(i + 1)...].compactMap { $0 }) }, tocSoon: tocSoon,
+                                nextLevel: i + 1 < secs.count ? secs[i + 1].level : nil)
             if kind == .neutral {
                 if pending == nil || s.level <= pending!.level { pending = (s.start, s.level) }
                 continue
@@ -238,14 +239,18 @@ public enum BookStart {
             && s.body.allSatisfy { ($0.text as NSString).length <= 200 && !matches(sentenceBreak, $0.text) }
     }
 
-    static func classify(_ s: Section, index: Int, count: Int, title: String?, later: () -> Set<String>, tocSoon: Bool = false) -> Kind {
+    static func classify(_ s: Section, index: Int, count: Int, title: String?, later: () -> Set<String>, tocSoon: Bool = false,
+                         nextLevel: Int? = nil) -> Kind {
         let text = bodyText(s)
         if let heading = s.heading {
             let h = normalizeHeading(heading)
             if matches(frontHeading, h) || matches(frontPrefix, h) { return .front }
             if let title, h == title, index > 0 { return .front }
-            // Autorzeile als Überschrift („## by Lewis Carroll“) gehört zur Titelei.
+            // Autorzeile als Überschrift („## by Lewis Carroll“) gehört zur Titelei – aber nur ohne
+            // eigenen Text und ohne Unterkapitel: „## Von Hexen und Zauberern“ ist ein Kapitel.
             if index < 5, (h as NSString).length <= 80,
+               (text.trimmingCharacters(in: .whitespacesAndNewlines) as NSString).length <= 120,
+               nextLevel.map({ $0 <= s.level }) ?? true,
                matches(headingByline, replace(regex("^[*_\\s]+"), heading, "")) { return .front }
             if matches(prefaceHeading, h) { return .preface }
             if count > 1, looksLikeTitlePage(s) { return .front }

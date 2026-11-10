@@ -295,16 +295,22 @@ function classify(
   title: string | null,
   later: () => Set<string>,
   tocSoon = false,
+  /** Ebene des nächsten Abschnitts (null: keiner). */
+  nextLevel: number | null = null,
 ): Kind {
   const text = bodyText(s);
   if (s.heading !== null) {
     const h = normalizeHeading(s.heading);
     if (FRONT_HEADING.test(h) || FRONT_PREFIX.test(h)) return "front";
     if (title && h === title && index > 0) return "front";
-    // Autorzeile als Überschrift („## by Lewis Carroll“) gehört zur Titelei.
+    // Autorzeile als Überschrift („## by Lewis Carroll“) gehört zur Titelei –
+    // aber nur ohne eigenen Text und ohne Unterkapitel: „## Von Hexen und
+    // Zauberern“ mit Geschichten darunter ist ein Kapitel.
     if (
       index < 5 &&
       h.length <= 80 &&
+      text.trim().length <= 120 &&
+      (nextLevel === null || nextLevel <= s.level) &&
       HEADING_BYLINE.test(s.heading.replace(/^[*_\s]+/u, ""))
     )
       return "front";
@@ -399,7 +405,15 @@ export function bookStart(
     if (skipBelow !== null && s.heading !== null && s.level > skipBelow)
       continue;
     skipBelow = null;
-    const kind = classify(s, i, secs.length, title, headingsFrom(i), tocSoon);
+    const kind = classify(
+      s,
+      i,
+      secs.length,
+      title,
+      headingsFrom(i),
+      tocSoon,
+      secs[i + 1]?.level ?? null,
+    );
     if (kind === "neutral") {
       if (!pending || s.level <= pending.level)
         pending = { start: s.start, level: s.level };

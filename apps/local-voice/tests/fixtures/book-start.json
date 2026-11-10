@@ -294,6 +294,17 @@
      "hasPreface": false
     }
    ]
+  },
+  {
+   "name": "Kapitel „Von …“ mit Unterkapiteln ist keine Autorzeile",
+   "text": "# Sagen\n\nvon Anna Muster\n\n## Inhalt\n\nVon Hexen und Zauberern\n\nVon Riesen und Zwergen\n\nDie Seejungfrau\n\n## Von Hexen und Zauberern\n\n### Die Hexe von Endor\n\nEs war einmal eine alte Frau, die wohnte am Rand des Waldes und kannte jedes Kraut, das dort wuchs. Die Leute aus dem Dorf kamen zu ihr, wenn sie krank waren.\n\n## Von Riesen und Zwergen\n\nEs war einmal eine alte Frau, die wohnte am Rand des Waldes und kannte jedes Kraut, das dort wuchs. Die Leute aus dem Dorf kamen zu ihr, wenn sie krank waren.\n\n## Die Seejungfrau\n\nEs war einmal eine alte Frau, die wohnte am Rand des Waldes und kannte jedes Kraut, das dort wuchs. Die Leute aus dem Dorf kamen zu ihr, wenn sie krank waren.\n",
+   "cases": [
+    {
+     "readPreface": true,
+     "startsWith": "## Von Hexen und Zauberern",
+     "hasPreface": false
+    }
+   ]
   }
  ]
 }

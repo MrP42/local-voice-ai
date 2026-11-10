@@ -140,49 +140,229 @@ impl OutputDev for SizedLines {
     }
 }
 
-/// Lesezeichen des PDFs, wenn vorhanden (Seiten 0-basiert, nur gültige).
-fn outline_of(doc: &pdf_extract::Document, page_count: usize) -> Vec<OutlineEntry> {
-    let Ok(toc) = doc.get_toc() else {
-        return Vec::new();
-    };
-    toc.toc
-        .into_iter()
-        .filter(|t| t.page >= 1 && t.page <= page_count)
-        .map(|t| OutlineEntry {
-            level: t.level.saturating_sub(1),
-            title: t.title.split_whitespace().collect::<Vec<_>>().join(" "),
-            page: t.page - 1,
+/// Höchstens so viele Lesezeichen und so tief: kaputte PDFs mit Ringen oder
+/// endlosen Ketten dürfen den Import nicht aufhalten.
+const MAX_OUTLINE: usize = 5000;
+const MAX_OUTLINE_DEPTH: usize = 32;
+const MAX_NAME_TREE: usize = 20_000;
+
+/// PDFDocEncoding 0x80–0xA0 (sonst wie Latin-1), PDF 1.7 Anhang D.
+const PDF_DOC_HIGH: [char; 33] = [
+    '•', '†', '‡', '…', '—', '–', 'ƒ', '⁄', '‹', '›', '−', '‰', '„', '“', '”', '‘', '’', '‚', '™',
+    'ﬁ', 'ﬂ', 'Ł', 'Œ', 'Š', 'Ÿ', 'Ž', 'ı', 'ł', 'œ', 'š', 'ž', '\u{FFFD}', '€',
+];
+
+/// Textstring eines PDFs: UTF-16BE oder UTF-8 mit BOM, sonst PDFDocEncoding
+/// (Voreinstellung etwa von LaTeX/hyperref; lopdf liest das als UTF-8 und
+/// macht aus „Einführung“ „Einf�hrung“).
+pub(crate) fn pdf_text_string(bytes: &[u8]) -> String {
+    if let Some(rest) = bytes.strip_prefix(&[0xFE, 0xFF]) {
+        let units: Vec<u16> = rest
+            .chunks_exact(2)
+            .map(|c| u16::from_be_bytes([c[0], c[1]]))
+            .collect();
+        return String::from_utf16_lossy(&units);
+    }
+    if let Some(rest) = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]) {
+        return String::from_utf8_lossy(rest).into_owned();
+    }
+    bytes
+        .iter()
+        .map(|&b| match b {
+            0x80..=0xA0 => PDF_DOC_HIGH[(b - 0x80) as usize],
+            _ => b as char,
         })
-        .filter(|t| t.title.chars().any(char::is_alphanumeric))
         .collect()
 }
 
-/// PDF laden: Zeilen mit Schriftgröße je Seite und Lesezeichen. pdf-extract
-/// kann bei kaputten PDFs in Panik geraten; das wird zur Fehlermeldung.
+/// Objekt auflösen (Verweise folgen, höchstens ein paar Stufen).
+fn resolve<'a>(
+    doc: &'a pdf_extract::Document,
+    mut obj: &'a pdf_extract::Object,
+) -> Option<&'a pdf_extract::Object> {
+    for _ in 0..8 {
+        match obj {
+            pdf_extract::Object::Reference(id) => obj = doc.get_object(*id).ok()?,
+            other => return Some(other),
+        }
+    }
+    None
+}
+
+fn dict_get<'a>(
+    doc: &'a pdf_extract::Document,
+    dict: &'a pdf_extract::Dictionary,
+    key: &[u8],
+) -> Option<&'a pdf_extract::Object> {
+    dict.get(key).ok().and_then(|o| resolve(doc, o))
+}
+
+/// Ziel eines benannten Sprungs im Namensbaum (`/Names /Dests`) oder im
+/// alten `/Dests`-Wörterbuch.
+fn named_dest<'a>(doc: &'a pdf_extract::Document, name: &[u8]) -> Option<&'a pdf_extract::Object> {
+    let catalog = doc.catalog().ok()?;
+    if let Some(pdf_extract::Object::Dictionary(dests)) = dict_get(doc, catalog, b"Dests") {
+        if let Some(d) = dict_get(doc, dests, name) {
+            return Some(d);
+        }
+    }
+    let names = match dict_get(doc, catalog, b"Names")? {
+        pdf_extract::Object::Dictionary(d) => d,
+        _ => return None,
+    };
+    let mut stack = vec![dict_get(doc, names, b"Dests")?];
+    let mut seen = 0;
+    while let Some(node) = stack.pop() {
+        seen += 1;
+        if seen > MAX_NAME_TREE {
+            return None;
+        }
+        let pdf_extract::Object::Dictionary(node) = node else {
+            continue;
+        };
+        if let Some(pdf_extract::Object::Array(pairs)) = dict_get(doc, node, b"Names") {
+            for pair in pairs.chunks_exact(2) {
+                if resolve(doc, &pair[0]).and_then(|k| k.as_str().ok()) == Some(name) {
+                    return resolve(doc, &pair[1]);
+                }
+            }
+        }
+        if let Some(pdf_extract::Object::Array(kids)) = dict_get(doc, node, b"Kids") {
+            stack.extend(kids.iter().filter_map(|k| resolve(doc, k)));
+        }
+    }
+    None
+}
+
+/// Seite (0-basiert) eines Lesezeichens aus `/Dest` oder `/A` (GoTo).
+fn outline_page(
+    doc: &pdf_extract::Document,
+    node: &pdf_extract::Dictionary,
+    pages: &std::collections::HashMap<pdf_extract::ObjectId, usize>,
+) -> Option<usize> {
+    let mut dest = dict_get(doc, node, b"Dest");
+    if dest.is_none() {
+        if let Some(pdf_extract::Object::Dictionary(action)) = dict_get(doc, node, b"A") {
+            if dict_get(doc, action, b"S").and_then(|s| s.as_name().ok())
+                == Some(b"GoTo".as_slice())
+            {
+                dest = dict_get(doc, action, b"D");
+            }
+        }
+    }
+    let mut dest = dest?;
+    for _ in 0..3 {
+        match dest {
+            pdf_extract::Object::Array(a) => {
+                return match a.first()? {
+                    pdf_extract::Object::Reference(id) => pages.get(id).copied(),
+                    _ => None,
+                };
+            }
+            pdf_extract::Object::Dictionary(d) => dest = dict_get(doc, d, b"D")?,
+            pdf_extract::Object::Name(n) | pdf_extract::Object::String(n, _) => {
+                dest = named_dest(doc, n)?
+            }
+            _ => return None,
+        }
+    }
+    None
+}
+
+/// Lesezeichen des PDFs, wenn vorhanden (Seiten 0-basiert, nur gültige).
+/// Eigener Durchlauf statt `get_toc()`: lopdf folgt `/Next` ohne
+/// Ringerkennung (ein kaputtes PDF hängt dann endlos), führt gleiche Titel
+/// zusammen und liest Titel ohne BOM als UTF-8.
+fn outline_of(doc: &pdf_extract::Document) -> Vec<OutlineEntry> {
+    let pages: std::collections::HashMap<pdf_extract::ObjectId, usize> = doc
+        .get_pages()
+        .into_iter()
+        .map(|(n, id)| (id, n as usize - 1))
+        .collect();
+    let Some(first) = doc
+        .catalog()
+        .ok()
+        .and_then(|c| dict_get(doc, c, b"Outlines"))
+        .and_then(|o| o.as_dict().ok())
+        .and_then(|o| o.get(b"First").ok())
+    else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    let mut visited = std::collections::HashSet::new();
+    // (Knoten, Tiefe); Geschwister kommen in Reihenfolge, Kinder davor.
+    let mut stack: Vec<(&pdf_extract::Object, usize)> = vec![(first, 0)];
+    while let Some((obj, level)) = stack.pop() {
+        if out.len() >= MAX_OUTLINE || visited.len() >= MAX_OUTLINE * 2 {
+            break;
+        }
+        if let pdf_extract::Object::Reference(id) = obj {
+            if !visited.insert(*id) {
+                continue;
+            }
+        }
+        let Some(pdf_extract::Object::Dictionary(node)) = resolve(doc, obj) else {
+            continue;
+        };
+        if let Ok(next) = node.get(b"Next") {
+            stack.push((next, level));
+        }
+        if level + 1 < MAX_OUTLINE_DEPTH {
+            if let Ok(child) = node.get(b"First") {
+                stack.push((child, level + 1));
+            }
+        }
+        let title = dict_get(doc, node, b"Title")
+            .and_then(|t| t.as_str().ok())
+            .map(pdf_text_string)
+            .unwrap_or_default();
+        let title = title.split_whitespace().collect::<Vec<_>>().join(" ");
+        if !title.chars().any(char::is_alphanumeric) {
+            continue;
+        }
+        if let Some(page) = outline_page(doc, node, &pages) {
+            out.push(OutlineEntry { level, title, page });
+        }
+    }
+    out
+}
+
+/// Panik als Fehler: pdf-extract und lopdf haben ungeschützte Zugriffe.
+fn guarded<T>(f: impl FnOnce() -> T) -> Option<T> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).ok()
+}
+
+/// PDF laden: Zeilen mit Schriftgröße je Seite und Lesezeichen. Eine Panik
+/// in pdf-extract kostet nur die Seite (bzw. die Lesezeichen), nicht das Buch.
 pub fn read_pdf(bytes: &[u8]) -> Result<PdfBook, String> {
-    let bytes = bytes.to_vec();
-    std::panic::catch_unwind(move || -> Result<PdfBook, String> {
-        let mut doc = pdf_extract::Document::load_mem(&bytes).map_err(|e| e.to_string())?;
+    let doc = guarded(|| -> Result<pdf_extract::Document, String> {
+        let mut doc = pdf_extract::Document::load_mem(bytes).map_err(|e| e.to_string())?;
         if doc.is_encrypted() {
             // Nur „offene“ PDFs mit leerem Benutzerpasswort (wie pdf-extract).
             doc.decrypt("").map_err(|e| e.to_string())?;
         }
-        let page_count = doc.get_pages().len();
-        let mut pages = Vec::with_capacity(page_count);
-        for n in 1..=page_count as u32 {
-            let mut out = SizedLines::new();
-            // Eine unlesbare Seite bleibt leer, statt das Buch zu verwerfen.
-            if pdf_extract::output_doc_page(&doc, &mut out, n).is_err() {
-                pages.push(Vec::new());
-                continue;
-            }
-            out.break_line();
-            pages.push(out.lines);
-        }
-        let outline = outline_of(&doc, page_count);
-        Ok(PdfBook { pages, outline })
+        Ok(doc)
     })
-    .unwrap_or_else(|_| Err("PDF konnte nicht gelesen werden".into()))
+    .unwrap_or_else(|| Err("PDF konnte nicht gelesen werden".into()))?;
+    let page_count = guarded(|| doc.get_pages().len()).unwrap_or(0);
+    if page_count == 0 {
+        return Err("PDF konnte nicht gelesen werden".into());
+    }
+    let mut pages = Vec::with_capacity(page_count);
+    for n in 1..=page_count as u32 {
+        // Eine unlesbare Seite bleibt leer, statt das Buch zu verwerfen.
+        let lines = guarded(|| {
+            let mut out = SizedLines::new();
+            pdf_extract::output_doc_page(&doc, &mut out, n).ok()?;
+            out.break_line();
+            Some(out.lines)
+        })
+        .flatten()
+        .unwrap_or_default();
+        pages.push(lines);
+    }
+    let outline = guarded(|| outline_of(&doc)).unwrap_or_default();
+    Ok(PdfBook { pages, outline })
 }
 
 #[cfg(test)]
@@ -256,6 +436,46 @@ mod tests {
         for h in ["\n## Der Brief\n", "\n## Der Bahnhof\n", "\n## Heimkehr\n"] {
             assert!(chapters.contains(h), "{h}: {chapters}");
         }
+    }
+
+    #[test]
+    fn outline_ring_latin1_and_duplicates() {
+        // Ring über /Next: endet, statt zu hängen; Titel ohne BOM in PDFDocEncoding.
+        for name in ["lesezeichen-ring.pdf", "lesezeichen-latin1.pdf"] {
+            let book = fixture(name);
+            let titles: Vec<&str> = book.outline.iter().map(|o| o.title.as_str()).collect();
+            assert_eq!(titles, ["Einführung", "Hauptteil"], "{name}");
+            let text = crate::ebook::pdf_book_to_text(&book);
+            assert!(text.contains("## Einführung\n"), "{name}: {text}");
+            assert!(!text.contains('\u{FFFD}'), "{name}: {text}");
+        }
+        // Gleiche Titel bleiben einzeln (lopdf führt sie zusammen).
+        let dup = fixture("lesezeichen-doppelt.pdf");
+        let titles: Vec<(&str, usize)> = dup
+            .outline
+            .iter()
+            .map(|o| (o.title.as_str(), o.page))
+            .collect();
+        assert_eq!(
+            titles,
+            [("Anmerkungen", 0), ("Anmerkungen", 1), ("Hauptteil", 1)]
+        );
+    }
+
+    #[test]
+    fn pdf_doc_encoding() {
+        assert_eq!(
+            pdf_text_string(b"Einf\xfchrung \x84 \x93"),
+            "Einführung — ﬁ"
+        );
+        assert_eq!(pdf_text_string(b"\xfe\xff\x00\xe4\x00\xdf"), "äß");
+        assert_eq!(pdf_text_string(b"\xef\xbb\xbf\xc3\xa4"), "ä");
+    }
+
+    #[test]
+    fn paragraph_continues_across_the_page_break() {
+        let text = crate::ebook::pdf_book_to_text(&fixture("kapitel-lesezeichen.pdf"));
+        assert!(!text.contains("obwohl\n\n"), "{text}");
     }
 
     #[test]

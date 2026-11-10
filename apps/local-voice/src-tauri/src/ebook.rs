@@ -44,6 +44,8 @@ re!(
     r"(?s)<!--.*?-->|<\?.*?\?>|<!\[CDATA\[.*?\]\]>|<!DOCTYPE[^>]*>"
 );
 re!(LIST_LINE_RE, r"^(?:[•\-–*]\s|\d{1,3}[.)]\s)");
+// Zahl mit Punkt, danach ein kleingeschriebenes Wort: Datum im Satz, keine Liste.
+re!(NUMBER_THEN_LOWER_RE, r"^\d{1,4}\.\s+\p{Ll}");
 re!(
     SPEAKER_LINE_RE,
     r"^(?:<[^<>]{1,40}>|[A-ZÄÖÜ][\w .'-]{0,30}:\s)"
@@ -430,10 +432,15 @@ fn promote_chapter_lines(md: &str) -> String {
             continue;
         }
         let next = blocks.get(i + 1).map(|n| block_plain(n));
+        // „Vorwort“ bekommt keinen Titel angehängt (sonst erkennt der Lesestart
+        // es nicht mehr), und ein Satz mit Ausruf oder Zitat ist kein Titel.
+        let special = SPECIAL_HEAD_RE.is_match(plain);
         match next {
             Some(t)
-                if !blocks[i + 1].trim_start().starts_with('#')
+                if !special
+                    && !blocks[i + 1].trim_start().starts_with('#')
                     && !t.contains('\n')
+                    && !t.ends_with(['!', '?', '…', '"', '“', '”', '»', '«'])
                     && looks_like_chapter_title(t, 0) =>
             {
                 out.push(format!("## {plain}: {t}"));
@@ -897,7 +904,8 @@ fn reflow_lines(raw: Vec<(String, Option<u32>)>) -> String {
         // „… und erst am / 23. kommt.“: eine Zahl mit Punkt am Zeilenanfang
         // beginnt nur dann einen Listenpunkt, wenn der Satz davor zu Ende ist
         // oder schon eine Liste läuft.
-        let mid_sentence = line.starts_with(|c: char| c.is_ascii_digit())
+        // „… und erst am ⏎ 23. kommt.“: Zahl mit Punkt, danach klein weiter.
+        let mid_sentence = NUMBER_THEN_LOWER_RE.is_match(line)
             && !current.is_empty()
             && !LIST_LINE_RE.is_match(&current)
             && !current
@@ -1182,13 +1190,27 @@ pub fn pdf_pages_to_text(pages: &[String]) -> String {
 /// - und Zeilen in **größerer Schrift** als der Fließtext.
 pub fn pdf_book_to_text(book: &crate::pdf_text::PdfBook) -> String {
     use std::collections::{HashMap, HashSet};
-    // Gesperrt gesetzte Wörter („S E I T E 12“) zusammenziehen, Leerzeilen weg.
+    // Leerzeilen weg; gesperrt gesetzte Wörter („S E I T E 12“) nur am
+    // Seitenrand zusammenziehen: im Fließtext wäre Sperrsatz („d e r K ö n i g“)
+    // nicht von Wortabständen zu unterscheiden und klebte zusammen.
     let owned: Vec<Vec<(String, f32, bool)>> = book
         .pages
         .iter()
         .map(|p| {
-            p.iter()
-                .map(|l| (despace(&l.text), l.size, l.gap))
+            let lines: Vec<&crate::pdf_text::PdfLine> =
+                p.iter().filter(|l| !l.text.trim().is_empty()).collect();
+            let n = lines.len();
+            lines
+                .iter()
+                .enumerate()
+                .map(|(i, l)| {
+                    let text = if page_zone(n, i).is_some() {
+                        despace(&l.text)
+                    } else {
+                        l.text.clone()
+                    };
+                    (text, l.size, l.gap)
+                })
                 .filter(|(t, _, _)| !t.trim().is_empty())
                 .collect()
         })
@@ -1321,6 +1343,12 @@ pub fn pdf_book_to_text(book: &crate::pdf_text::PdfBook) -> String {
                 gaps.push(owned[p][i].2);
             }
         }
+        // Die erste Zeile einer Seite steht immer „nach einem Abstand“ (Seitenkopf,
+        // entfernte Kopfzeile): kein Absatzwechsel, sonst risse jeder Seitenwechsel
+        // den Satz auseinander.
+        if let Some(first) = gaps.first_mut() {
+            *first = false;
+        }
         kept_pages.push(kept);
         kept_gaps.push(gaps);
         run_titles.push(run_title);
@@ -1343,12 +1371,20 @@ pub fn pdf_book_to_text(book: &crate::pdf_text::PdfBook) -> String {
         kept_pages.iter().map(|k| vec![None; k.len()]).collect();
     let mut titles: HashMap<usize, String> = HashMap::new();
     let mut group = 0usize;
-    // Am Seitenanfang eingefügte Überschriften (Lesezeichen ohne Fundstelle).
-    let mut inserted: Vec<Vec<(u8, String)>> = vec![Vec::new(); kept_pages.len()];
-    let has_outline = book.outline.len() >= 2;
-
-    if has_outline {
-        for entry in &book.outline {
+    // Eingefügte Überschriften (Lesezeichen ohne Fundstelle): Zeile, vor der
+    // sie stehen, Ebene, Text.
+    let mut inserted: Vec<Vec<(usize, u8, String)>> = vec![Vec::new(); kept_pages.len()];
+    // Seiten-Lesezeichen von Scannern („Seite 3“) sind keine Kapitel.
+    let outline: Vec<&crate::pdf_text::OutlineEntry> = book
+        .outline
+        .iter()
+        .filter(|e| !is_page_number(&e.title))
+        .collect();
+    let mut has_outline = false;
+    if outline.len() >= 2 {
+        let mut found_count = 0usize;
+        let mut missing = Vec::new();
+        for entry in &outline {
             let level = (entry.level + 2).min(3) as u8;
             group += 1;
             let found = [entry.page, entry.page + 1].into_iter().find(|&p| {
@@ -1358,14 +1394,33 @@ pub fn pdf_book_to_text(book: &crate::pdf_text::PdfBook) -> String {
             });
             match found {
                 Some(_) => {
+                    found_count += 1;
                     titles.insert(group, entry.title.clone());
                 }
-                None => inserted[entry.page].push((level, entry.title.clone())),
+                None => missing.push((entry.page, level, entry.title.clone())),
             }
         }
-    } else {
+        // Findet sich nicht wenigstens die Hälfte der Lesezeichen im Text,
+        // taugen sie nicht als Gliederung: dann die anderen Wege.
+        if found_count * 2 >= outline.len() {
+            has_outline = true;
+            for (page, level, title) in missing {
+                let at = insert_point(&kept_pages, page);
+                inserted[page].push((at, level, title));
+            }
+        } else {
+            for f in flags.iter_mut().flatten() {
+                *f = None;
+            }
+            titles.clear();
+        }
+    }
+    if !has_outline {
         // Inhaltsverzeichnis im ersten Drittel: Einträge im Text wiederfinden.
         if let Some((entries, start)) = toc_entries(&kept_pages) {
+            // Einmal normalisieren: sonst kostet der Abgleich (30 Einträge je
+            // Zeile) bei einem dicken Buch über eine Sekunde.
+            let norms: Vec<String> = entries.iter().map(|e| title_norm(e)).collect();
             let mut cursor = 0usize;
             let mut matched = 0usize;
             'pages: for p in start.0..kept_pages.len() {
@@ -1375,14 +1430,26 @@ pub fn pdf_book_to_text(book: &crate::pdf_text::PdfBook) -> String {
                     if cursor >= entries.len() {
                         break 'pages;
                     }
-                    let hit = (cursor..(cursor + 30).min(entries.len()))
-                        .find(|&e| title_match(kept_pages[p][i].0, &entries[e]).is_some());
+                    let line = kept_pages[p][i].0;
+                    let line_norm = title_norm(line);
+                    let hit = (cursor..(cursor + 30).min(entries.len())).find(|&e| {
+                        title_match_norm(line, &line_norm, &entries[e], &norms[e]).is_some()
+                    });
                     if let Some(e) = hit {
+                        // Zählt nur, wenn genau diese Zeile (ggf. mit Folgezeilen)
+                        // markiert wird, nicht eine spätere auf der Seite.
                         group += 1;
-                        mark_title(&kept_pages[p], &mut flags[p], &entries[e], 2, group, i);
-                        titles.insert(group, entries[e].clone());
-                        matched += 1;
-                        cursor = e + 1;
+                        let before = flags[p].clone();
+                        let marked =
+                            mark_title(&kept_pages[p], &mut flags[p], &entries[e], 2, group, i)
+                                && flags[p][i] == Some((2, group));
+                        if marked {
+                            titles.insert(group, entries[e].clone());
+                            matched += 1;
+                            cursor = e + 1;
+                        } else {
+                            flags[p] = before;
+                        }
                     }
                     i += 1;
                 }
@@ -1482,11 +1549,16 @@ pub fn pdf_book_to_text(book: &crate::pdf_text::PdfBook) -> String {
             .filter(|&n| n > 0);
         // Überschriften als eigene Absätze; die Seitenmarke gehört an die
         // erste Textzeile danach, sonst stünde sie mitten in der Überschrift.
-        for (level, h) in inserted[p].iter().chain(&headings[p]) {
+        for (level, h) in &headings[p] {
             heading(&mut out, *level, h);
         }
+        let mut ins = 0usize;
         let mut i = skip[p];
         while i < kept.len() {
+            while ins < inserted[p].len() && inserted[p][ins].0 <= i {
+                heading(&mut out, inserted[p][ins].1, &inserted[p][ins].2);
+                ins += 1;
+            }
             let Some((level, g)) = flags[p][i] else {
                 let starts_lower = kept[i].0.trim_start().starts_with(char::is_lowercase);
                 if use_gaps && kept_gaps[p][i] && !starts_lower {
@@ -1507,8 +1579,41 @@ pub fn pdf_book_to_text(book: &crate::pdf_text::PdfBook) -> String {
                 .unwrap_or_else(|| clean_heading(&parts.join(" ")));
             heading(&mut out, level, &text);
         }
+        for (_, level, h) in &inserted[p][ins..] {
+            heading(&mut out, *level, h);
+        }
     }
     reflow_lines(out)
+}
+
+/// Endet die Zeile einen Satz (auch hinter Anführungszeichen)?
+fn ends_sentence(line: &str) -> bool {
+    line.trim_end()
+        .trim_end_matches(['"', '“', '”', '«', '»', '’', '\'', ')'])
+        .ends_with(['.', '!', '?', '…', ':'])
+}
+
+/// Wohin eine Überschrift ohne Fundstelle auf ihrer Seite kommt: vor die
+/// erste Zeile, die nach einem Satzende beginnt. Sonst risse sie den letzten
+/// Absatz der Vorseite auseinander.
+fn insert_point(kept_pages: &[Vec<(&str, f32)>], page: usize) -> usize {
+    let Some(kept) = kept_pages.get(page) else {
+        return 0;
+    };
+    let before_page = kept_pages[..page]
+        .iter()
+        .rev()
+        .find_map(|k| k.last().map(|(l, _)| *l));
+    (0..kept.len())
+        .find(|&i| {
+            let prev = if i == 0 {
+                before_page
+            } else {
+                Some(kept[i - 1].0)
+            };
+            prev.is_none_or(ends_sentence)
+        })
+        .unwrap_or(0)
 }
 
 /// Gesperrt gesetzte Wörter zusammenziehen: drei und mehr einzelne
@@ -1557,15 +1662,18 @@ fn title_norm(s: &str) -> String {
 /// Zeichen mehr, etwa ein Fußnotenstern); `Some(false)`: sie ist der Anfang
 /// eines mehrzeiligen Titels (mindestens die Hälfte davon).
 fn title_match(line: &str, title: &str) -> Option<bool> {
-    let l = title_norm(line);
-    let t = title_norm(title);
+    title_match_norm(line, &title_norm(line), title, &title_norm(title))
+}
+
+/// `title_match` mit schon normalisierter Zeile und Titel.
+fn title_match_norm(line: &str, l: &str, title: &str, t: &str) -> Option<bool> {
     if t.chars().filter(|c| c.is_alphabetic()).count() < 2 || l.is_empty() {
         return None;
     }
-    if l == t || (l.starts_with(&t) && l.len() <= t.len() + 3) {
+    if l == t || (l.starts_with(t) && l.len() <= t.len() + 3) {
         return Some(true);
     }
-    if t.starts_with(&l) && t[l.len()..].starts_with(' ') && l.len() * 2 >= t.len() {
+    if t.starts_with(l) && t[l.len()..].starts_with(' ') && l.len() * 2 >= t.len() {
         return Some(false);
     }
     // Nummerierte Einträge („KHM 4. Märchen von …“): gleiche Nummer am
@@ -2617,6 +2725,63 @@ mod tests {
         let out = pdf_book_to_text(&book);
         assert!(out.starts_with("## Erstes Kapitel\n"), "{out}");
         assert!(out.contains("\n### Ein Abschnitt ohne Zeile\n"), "{out}");
+    }
+
+    #[test]
+    fn unusable_outline_falls_back_and_missing_titles_wait_for_sentence_end() {
+        let body = "Der Wind strich um den Turm, und Mara lauschte lange auf das Meer";
+        let end = "und hörte die Wellen bis zum Morgen.";
+        let entry = |title: &str, page: usize| crate::pdf_text::OutlineEntry {
+            level: 0,
+            title: title.into(),
+            page,
+        };
+        // Ein Titel fehlt im Text: er kommt hinter das Satzende, nicht in den Satz.
+        let mut book = sized(&[
+            &[("Erstes Kapitel", 11.0), (body, 11.0)],
+            &[(end, 11.0), ("Neuer Absatz beginnt hier.", 11.0)],
+            &[("Zweites Kapitel", 11.0), (body, 11.0), (end, 11.0)],
+        ]);
+        book.outline = vec![
+            entry("Erstes Kapitel", 0),
+            entry("Zwischenspiel", 1),
+            entry("Zweites Kapitel", 2),
+        ];
+        let out = pdf_book_to_text(&book);
+        assert!(
+            out.contains("Meer und hörte die Wellen bis zum Morgen."),
+            "{out}"
+        );
+        assert!(out.contains("## Zwischenspiel\n\nNeuer Absatz"), "{out}");
+        // Seiten-Lesezeichen eines Scanners zählen nicht; ohne brauchbare
+        // Lesezeichen greifen die Kapitelzeilen.
+        book.outline = vec![
+            entry("Seite 1", 0),
+            entry("Seite 2", 1),
+            entry("Seite 3", 2),
+        ];
+        let out = pdf_book_to_text(&book);
+        assert!(!out.contains("## Seite"), "{out}");
+        assert!(out.contains("## Zweites Kapitel"), "{out}");
+    }
+
+    #[test]
+    fn numbered_list_after_a_title_line_stays_a_list() {
+        let out = reflow_plain_text(
+            "Man braucht für den Teig nur wenige Zutaten, die es überall zu kaufen gibt\n\
+             1. Mehl aus der Mühle am Fluss\n\
+             2. Ei",
+        );
+        assert!(out.contains("\n\n1. Mehl"), "{out}");
+        assert!(out.contains("\n\n2. Ei"), "{out}");
+    }
+
+    #[test]
+    fn preface_heading_gets_no_title_appended() {
+        let out = promote_chapter_lines("Vorwort\n\nLiebe Leserinnen und Leser!\n\nDieses Buch …");
+        assert!(out.starts_with("## Vorwort\n\nLiebe Leserinnen"), "{out}");
+        let out = promote_chapter_lines("Erstes Kapitel\n\n„Komm her!“\n\nSie kam.");
+        assert!(out.starts_with("## Erstes Kapitel\n\n„Komm her!“"), "{out}");
     }
 
     #[test]
