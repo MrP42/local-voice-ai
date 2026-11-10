@@ -738,6 +738,75 @@ fn unterprozess_speichergrenze_beendet() {
     assert_eq!(r.unwrap_err(), "extrakt.abbruch");
 }
 
+/// lva#462: unter macOS lässt sich `RLIMIT_AS` nicht setzen (jeder Prozess hat dort rund 32 GiB
+/// virtuellen Adressraum; `setrlimit` scheitert im Kind mit EINVAL, der Start mit `extrakt.start`).
+/// Die Speichergrenze liegt dort im Elternprozess; hier mit kleiner Grenze, damit der Test schnell geht
+/// und wenig Speicher braucht.
+#[cfg(target_os = "macos")]
+#[test]
+fn mac_waechter_beendet_speicherhungriges_kind_und_erntet_es() {
+    let d = datei("s.txt", b"x");
+    let pid_ordner = tempfile::tempdir().unwrap();
+    let pid_datei = pid_ordner.path().join("kind.pid");
+    let mut prog = kind(Some("speicher"));
+    prog.umgebung
+        .push(("LVA_EXTRAKT_PIDDATEI".into(), pid_datei.clone().into()));
+    let g = Grenzen {
+        zeit: Duration::from_secs(20),
+        speicher_mb: 160,
+    };
+    let start = std::time::Instant::now();
+    let r = textlauf::ausfuehren(
+        &prog,
+        d._d.path(),
+        &d.pfad,
+        &d.sha,
+        "txt",
+        g,
+        &AtomicBool::new(false),
+    );
+    assert_eq!(r.unwrap_err(), "extrakt.abbruch");
+    // Vom Wächter beendet, nicht erst von der Zeitgrenze (20 s) oder dem Sicherheitsnetz des Haken.
+    assert!(
+        start.elapsed() < Duration::from_secs(10),
+        "{:?}",
+        start.elapsed()
+    );
+    // Das Kind ist weder am Leben noch ein ungeernteter Zombie (`kill(pid, 0)` trifft beide).
+    let pid: libc::pid_t = fs::read_to_string(&pid_datei)
+        .expect("Kind hat seine PID nicht abgelegt")
+        .trim()
+        .parse()
+        .unwrap();
+    let rc = unsafe { libc::kill(pid, 0) };
+    assert_eq!(rc, -1, "Kind {pid} existiert noch (lebend oder Zombie)");
+    assert_eq!(
+        std::io::Error::last_os_error().raw_os_error(),
+        Some(libc::ESRCH)
+    );
+}
+
+/// lva#462: Wächter gegen Fehlalarm. Kurzlebige Kinder (enden oft zwischen `try_wait` und Messung) und
+/// Kinder mit gewöhnlichem Speicherbedarf unter der Standardgrenze dürfen nie als `extrakt.abbruch` oder
+/// `extrakt.schutz` enden, auch bei vielen Läufen hintereinander und nebeneinander.
+#[cfg(target_os = "macos")]
+#[test]
+fn mac_waechter_gibt_keinen_fehlalarm_bei_kurzlebigen_kindern() {
+    let threads: Vec<_> = (0..4)
+        .map(|t| {
+            std::thread::spawn(move || {
+                for i in 0..10 {
+                    let r = im_kind("k.txt", "txt", b"Hallo Welt", None, TEST_GRENZEN);
+                    assert!(r.is_ok(), "Thread {t}, Lauf {i}: {r:?}");
+                }
+            })
+        })
+        .collect();
+    for t in threads {
+        t.join().unwrap();
+    }
+}
+
 #[test]
 fn uebergrosses_xlsx_endet_an_der_grenze() {
     // Vorab aus der Blatt-XML erkannt, bevor calamine den Range anlegt.
