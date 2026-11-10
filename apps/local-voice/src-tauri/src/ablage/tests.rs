@@ -1616,6 +1616,7 @@ fn zaehler_ueberlauf_beim_schreiben_ist_ein_fehler_und_schreibt_nichts() {
     let e = env();
     let o = e.standard();
     let dat = e.ablegen("a.txt", "a", &o);
+    let fas = e.a.fassungen(&dat).unwrap()[0].fas.clone();
     zaehler_setzen(&e, &o, u64::MAX);
     let b = e.a.sync_bestand().unwrap();
     assert_eq!(naechster_zaehler(&b.ordner, &b.dateien), None);
@@ -1629,7 +1630,7 @@ fn zaehler_ueberlauf_beim_schreiben_ist_ein_fehler_und_schreibt_nichts() {
     assert_eq!(code(e.a.datei_umbenennen(&dat, "b.txt")), erschoepft);
     assert_eq!(code(e.a.ordner_umbenennen(&o, "Anders")), erschoepft);
     assert_eq!(code(e.a.in_papierkorb(AblageArt::Datei, &dat)), erschoepft);
-    assert_eq!(code(e.a.fassung_waehlen(&dat, "fas_x")), erschoepft);
+    assert_eq!(code(e.a.fassung_waehlen(&dat, &fas)), erschoepft);
     // Import: nichts landet auf der Platte, die Zeile trägt den Fehlercode.
     let q = e.quelle("zweite.txt", "zweite");
     let z = e.a.importieren(&q, &o, None).unwrap();
@@ -1645,16 +1646,49 @@ fn zaehler_ueberlauf_beim_schreiben_ist_ein_fehler_und_schreibt_nichts() {
 }
 
 #[test]
-fn zaehler_knapp_unter_dem_maximum_laeuft_noch_und_erschoepft_dann() {
+fn lokal_wird_nie_ueber_zaehler_max_vergeben() {
+    use super::zusammenfuehren::{naechster_zaehler, ZAEHLER_MAX};
     let e = env();
     let o = e.standard();
-    zaehler_setzen(&e, &o, u64::MAX - 2);
+    zaehler_setzen(&e, &o, ZAEHLER_MAX - 2);
     e.a.ordner_anlegen(Some(&o), "Eins").unwrap(); // MAX - 1
     e.a.ordner_anlegen(Some(&o), "Zwei").unwrap(); // MAX
+    let b = e.a.sync_bestand().unwrap();
+    assert_eq!(
+        b.ordner.values().map(|o| o.name.zaehler).max(),
+        Some(ZAEHLER_MAX)
+    );
+    assert_eq!(naechster_zaehler(&b.ordner, &b.dateien), None);
     let f = e.a.ordner_anlegen(Some(&o), "Drei").unwrap_err();
     assert_eq!(f.code, "ablage.zaehler_erschoepft");
     let namen: Vec<String> = e.sicht().ordner.iter().map(|o| o.name.clone()).collect();
     assert!(namen.contains(&"Zwei".to_string()) && !namen.contains(&"Drei".to_string()));
+}
+
+#[test]
+fn wiederanlauf_haelt_den_journaleintrag_bei_erschoepftem_zaehler() {
+    let e = env();
+    let o = abbruch_import(&e, Schritt::NachJournal);
+    assert_eq!(journal_json(&e)["journal"].as_array().unwrap().len(), 1);
+    let dat = alle_dateien_unter_dirs(&e.wurzel.join("dateien"));
+    zaehler_setzen(&e, &o, u64::MAX);
+    // Wartung scheitert am Zähler: Eintrag bleibt im Journal, das Original bleibt liegen, kein Fund.
+    let s = e.sicht();
+    assert!(s.dateien.is_empty() && s.gefunden.is_empty());
+    assert_eq!(journal_json(&e)["journal"].as_array().unwrap().len(), 1);
+    assert_eq!(e.dateien_in(&dat).len(), 1);
+    let original = e
+        .wurzel
+        .join("dateien")
+        .join(&dat)
+        .join(&e.dateien_in(&dat)[0]);
+    assert_eq!(fs::read_to_string(&original).unwrap(), GEHEIM);
+    // Mit freiem Zähler trägt der nächste Lauf nach.
+    zaehler_setzen(&e, &o, 1);
+    let s = e.sicht();
+    assert_eq!(namen(&s), vec!["Angebot.pdf".to_string()]);
+    assert!(journal_json(&e)["journal"].as_array().unwrap().is_empty());
+    assert_eq!(fs::read_to_string(e.original(&dat)).unwrap(), GEHEIM);
 }
 
 #[test]
@@ -1689,7 +1723,8 @@ fn sync_nimmt_zaehler_genau_an_der_obergrenze_an_und_verwirft_darueber() {
     let s = e.sicht();
     assert_ne!(s.ordner[0].name, "Zu hoch");
     assert_eq!(namen(&s), vec!["a.txt".to_string()]);
-    // Genau auf der Grenze: gültig, und lokale Schreibvorgänge laufen weiter (Zähler Grenze + 1).
+    // Genau auf der Grenze: gültig. Die Kette ist dann ausgeschöpft: lokal gibt es nie mehr als
+    // `ZAEHLER_MAX`, Schreibvorgänge scheitern sichtbar und ändern nichts.
     let r =
         e.a.sync_einspielen(&[
             ordner(ZAEHLER_MAX, "An der Grenze"),
@@ -1699,10 +1734,13 @@ fn sync_nimmt_zaehler_genau_an_der_obergrenze_an_und_verwirft_darueber() {
     assert!(r.verworfen.is_empty(), "{r:?}");
     assert_eq!(r.geaendert, vec![o.clone(), dat.clone()]);
     assert_eq!(e.sicht().ordner[0].name, "An der Grenze");
-    e.a.datei_umbenennen(&dat, "lokal.txt").unwrap();
-    assert_eq!(namen(&e.sicht()), vec!["lokal.txt".to_string()]);
+    let vorher = fs::read(e.wurzel.join(JOURNAL)).unwrap();
+    let f = e.a.datei_umbenennen(&dat, "lokal.txt").unwrap_err();
+    assert_eq!(f.code, "ablage.zaehler_erschoepft");
+    assert_eq!(fs::read(e.wurzel.join(JOURNAL)).unwrap(), vorher);
+    assert_eq!(namen(&e.sicht()), vec!["grenze.txt".to_string()]);
     let b = e.a.sync_bestand().unwrap();
-    assert_eq!(b.dateien[&dat].name.zaehler, ZAEHLER_MAX + 1);
+    assert_eq!(b.dateien[&dat].name.zaehler, ZAEHLER_MAX);
     // Eine Wahl über der Grenze verwirft die Datei ebenfalls.
     let mut x = b.dateien[&dat].clone();
     x.wahlen.push(super::zusammenfuehren::Wahl {

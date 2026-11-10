@@ -307,8 +307,8 @@ impl Stand {
         self.befreit.retain(|b| lebend.contains(b));
     }
 
-    /// Nächster Lamport-Zähler: größter bekannter Wert + 1. Ist der Wertebereich erschöpft, gibt es
-    /// einen Fehler und es wird nichts geschrieben (nie ein Umlauf auf 0).
+    /// Nächster Lamport-Zähler: größter bekannter Wert + 1, höchstens `ZAEHLER_MAX`. Ist die Kette
+    /// erschöpft, gibt es einen Fehler und es wird nichts geschrieben (nie ein Umlauf auf 0).
     fn zaehler(&self) -> Res<u64> {
         zf::naechster_zaehler(&self.ordner, &self.dateien).ok_or_else(zaehler_erschoepft)
     }

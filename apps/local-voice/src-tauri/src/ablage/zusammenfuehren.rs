@@ -631,9 +631,10 @@ pub fn wirksam_nur_geraet(
         .any(|g| ordner.get(g).is_some_and(|o| o.nur_geraet.wert))
 }
 
-/// Obergrenze für Zähler aus synchronisierten Datensätzen (`ordner_zaehler_ok`, `datei_zaehler_ok`):
-/// Ein einzelner Datensatz (beschädigt oder manipuliert) kann die Zählerkette so nie erschöpfen; die
-/// untere Hälfte des Wertebereichs bleibt für lokale Schreibvorgänge frei. Genau `ZAEHLER_MAX` gilt noch.
+/// Obergrenze für Zähler (`ordner_zaehler_ok`, `datei_zaehler_ok`, `naechster_zaehler`): Datensätze
+/// darüber gelten beim Sync als ungültig, und lokal wird nie mehr als `ZAEHLER_MAX` vergeben. Ein einzelner
+/// Datensatz (beschädigt oder manipuliert) kann die Kette so nicht erschöpfen. Genau `ZAEHLER_MAX` gilt noch;
+/// danach ist die Kette ausgeschöpft (`ablage.zaehler_erschoepft`).
 pub const ZAEHLER_MAX: u64 = u64::MAX / 2;
 
 /// Größter Zähler in den Registern eines Ordners.
@@ -679,13 +680,16 @@ pub fn groesster_zaehler(
     o.chain(d).max().unwrap_or(0)
 }
 
-/// Nächster Lamport-Zähler: größter bekannter Wert + 1; `None` bei Überlauf (nie ein Umlauf auf 0,
-/// der jeden späteren Stand die Wahl verlieren ließe).
+/// Nächster Lamport-Zähler: größter bekannter Wert + 1; `None`, wenn das Ergebnis über `ZAEHLER_MAX`
+/// läge (und damit erst recht bei Überlauf von `u64`, nie ein Umlauf auf 0). Lokal wird nie ein Zähler
+/// über `ZAEHLER_MAX` vergeben: andere Geräte hielten solche Datensätze an (`datei_zaehler_ok`).
 pub fn naechster_zaehler(
     ordner: &BTreeMap<String, Ordner>,
     dateien: &BTreeMap<String, Datei>,
 ) -> Option<u64> {
-    groesster_zaehler(ordner, dateien).checked_add(1)
+    groesster_zaehler(ordner, dateien)
+        .checked_add(1)
+        .filter(|z| *z <= ZAEHLER_MAX)
 }
 
 #[cfg(test)]

@@ -1607,17 +1607,25 @@ fn zaehler_ueber_der_obergrenze_haelt_an_und_an_der_grenze_gilt() {
         ZAEHLER_MAX,
         "Grenzwert wird eingespielt"
     );
-    // Lokale Schreibvorgänge laufen weiter und überschreiben das ruhende Objekt nicht.
-    b.a.datei_umbenennen(&hoch, "Hoch2.txt").unwrap();
-    b.a.datei_umbenennen(&grenze, "Grenze2.txt").unwrap();
+    // B hat `ZAEHLER_MAX` angenommen: die Kette ist ausgeschöpft, jeder lokale Schreibvorgang scheitert
+    // sichtbar und ändert nichts (es entsteht nie ein Zähler, den andere Geräte anhalten müssten).
+    let f = b.a.datei_umbenennen(&grenze, "Grenze2.txt").unwrap_err();
+    assert_eq!(f.code, "ablage.zaehler_erschoepft");
+    let f = b.a.datei_umbenennen(&hoch, "Hoch2.txt").unwrap_err();
+    assert_eq!(f.code, "ablage.zaehler_erschoepft");
     b.sync(&hub);
+    assert_eq!(b.datei(&grenze).unwrap().name.wert, "Grenze.txt");
+    assert_eq!(b.datei(&grenze).unwrap().name.zaehler, ZAEHLER_MAX);
+    assert_eq!(b.datei(&hoch).unwrap().name.wert, "Hoch.txt");
     assert_eq!(
         hub.objekt(SAMMLUNG_DATEI, &hoch).unwrap().payload,
         vorher.payload,
         "angehaltenes Objekt nicht überschrieben"
     );
-    // Der erste lokale Schreibvorgang nimmt Grenze + 1, der zweite Grenze + 2.
-    assert_eq!(b.datei(&grenze).unwrap().name.zaehler, ZAEHLER_MAX + 2);
+    // A gleicht ab: der Grenzwert-Datensatz kommt unverändert an, das angehaltene Objekt ruht auch dort.
+    a.sync(&hub);
+    assert_eq!(a.datei(&grenze).unwrap().name.zaehler, ZAEHLER_MAX);
+    assert_eq!(a.zustand_von(&hoch), Some(AblageSyncZustand::Angehalten));
 }
 
 /// Befund 6: Zwei Geräte mit je eigenem Standardordner haben nach dem ersten Abgleich ein „Allgemein“.
