@@ -7488,6 +7488,30 @@
     }
   },
   "voiceCall": {
+    "projekt": {
+      "chip": "Projekt: {{name}}",
+      "chipOhneName": "Projekt",
+      "chipTitel": "Projekt öffnen",
+      "chipText": "Die Antworten stützen sich auf die Auswahl im Projekt.",
+      "schliessen": "Hinweis schließen",
+      "uebernehmen": "Auswahl übernehmen",
+      "titel": {
+        "stopp": "Nicht gesendet",
+        "info": "Hinweis",
+        "widerrufen": "Antwort entfernt"
+      },
+      "hinweis": {
+        "budget": "Zu viel Kontext für das Modell: Nötig sind {{benoetigt}} von {{fenster}} Token (Kontext {{kontext}}, Verlauf {{historie}}, Auszüge {{auszuege}}, Frage {{frage}}, Ausgabe {{ausgabe}}). Es wurde nichts gesendet und nichts gekürzt. Einträge im Projekt ausschalten oder ein Modell mit größerem Fenster wählen.",
+        "stand_veraltet": "Die Auswahl im Projekt hat sich seit der Anzeige geändert. Es wurde nichts gesendet. Die aktuelle Auswahl übernehmen und die Frage erneut stellen.",
+        "zurueckgesetzt": "Der bisherige Verlauf wurde nicht übernommen. Die Antwort beruht nur auf der letzten Frage und der aktuellen Auswahl im Projekt.",
+        "entzogen_one": "Eine frühere Antwort beruhte auf Inhalten, die nicht mehr freigegeben sind, und wurde ersetzt.",
+        "entzogen_other": "{{count}} frühere Antworten beruhten auf Inhalten, die nicht mehr freigegeben sind, und wurden ersetzt.",
+        "widerrufen": "Die Auswahl im Projekt hat sich geändert, während die Antwort entstand. Die Antwort wurde entfernt.",
+        "ki_gesperrt": "Die KI im Projekt ist noch nicht freigegeben. Es wurde nichts gesendet.",
+        "klasse_ziel": "Ein Projektinhalt ist für dieses Modell zu schutzbedürftig. Ein lokales Modell wählen oder den Eintrag ausschalten. Es wurde nichts gesendet.",
+        "andere": "Im Projekt konnte nichts gesendet werden. Es wurde nichts gesendet. Kennung: {{code}}."
+      }
+    },
     "tool": {
       "generic": "Nutze das Werkzeug „{{name}}“ …",
       "meetings_list": "Schaue in Besprechungen nach …",
@@ -8832,7 +8856,10 @@
     "ki": {
       "titel": "KI im Projekt",
       "text": "Chat und Sprachgespräch nutzen diese Auswahl, sobald sie für Projekte freigegeben sind.",
-      "gesperrt": "Gesperrt: KI-Aufrufe im Projekt folgen mit dem nächsten Schritt."
+      "gesperrt": "Gesperrt: KI-Aufrufe im Projekt folgen mit dem nächsten Schritt.",
+      "start": "Gespräch im Projekt beginnen",
+      "startGesperrt": "Gespräch im Projekt: gesperrt, bis die KI im Projekt freigegeben ist.",
+      "startHinweis": "Öffnet ein neues Gespräch, das nur diese Auswahl als Kontext nutzt."
     },
     "banner": {
       "reset": "Die Kontextauswahl dieses Geräts war nicht lesbar. Zur Sicherheit sind alle Einträge ausgeschaltet. Schalte ein, was die KI nutzen soll.",

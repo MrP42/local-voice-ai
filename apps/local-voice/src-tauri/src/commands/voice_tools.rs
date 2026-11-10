@@ -318,6 +318,11 @@ pub async fn voice_tool_call(
     args: String,
     conversation_id: Option<String>,
 ) -> Result<String, String> {
+    // Projektgespräch: Werkzeuge sind aus (lva#365 P4c-2, `projekt.werkzeuge_aus`). Das gilt vor allem
+    // anderen, auch vor der Begrenzung; ist die Bindung des Gesprächs nicht lesbar, ebenfalls.
+    crate::voice_call::projekt::werkzeuge_erlaubt(
+        &crate::voice_call::projekt::bindung(&app, conversation_id.as_deref()).await,
+    )?;
     let (bridge, store) = parts(&app)?;
     let opts = options(&app);
     let freigabe = crate::settings::get_settings(&app).voice_call_notebook_sections;

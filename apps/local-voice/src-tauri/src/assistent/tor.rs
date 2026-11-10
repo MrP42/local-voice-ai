@@ -105,6 +105,19 @@ fn fehlertext(sprache: Sprache) -> String {
     (if de(sprache) { FEHLER_DE } else { FEHLER_EN }).to_string()
 }
 
+/// Ist das eine vom Orchestrator eingestreute Nachricht (Werkzeugergebnis, Denker) und kein Beitrag der
+/// Person?
+pub(crate) fn gerahmt(inhalt: &str) -> bool {
+    let t = inhalt.trim_start();
+    GERAHMT.iter().any(|g| t.starts_with(g))
+}
+
+/// Ist das ein Werkzeugergebnis (Daten aus Notizbuch, Wissen)? Im Projekt gibt es keine Werkzeuge.
+pub(crate) fn werkzeugdaten(inhalt: &str) -> bool {
+    let t = inhalt.trim_start();
+    t.starts_with(RAHMEN) || t.starts_with("Ergebnisse aus Werkzeugen:")
+}
+
 /// Der letzte Nutzerbeitrag (ohne eingestreute Werkzeug- und Denkernachrichten).
 pub fn menschentext<'a>(
     nachrichten: impl DoubleEndedIterator<Item = (&'a str, &'a str)>,

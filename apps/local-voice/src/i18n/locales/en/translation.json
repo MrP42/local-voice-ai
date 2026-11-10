@@ -7488,6 +7488,30 @@
     }
   },
   "voiceCall": {
+    "projekt": {
+      "chip": "Project: {{name}}",
+      "chipOhneName": "Project",
+      "chipTitel": "Open project",
+      "chipText": "Answers are based on the selection in the project.",
+      "schliessen": "Dismiss notice",
+      "uebernehmen": "Use current selection",
+      "titel": {
+        "stopp": "Not sent",
+        "info": "Notice",
+        "widerrufen": "Answer removed"
+      },
+      "hinweis": {
+        "budget": "Too much context for the model: {{benoetigt}} of {{fenster}} tokens needed (context {{kontext}}, history {{historie}}, excerpts {{auszuege}}, question {{frage}}, output {{ausgabe}}). Nothing was sent and nothing was trimmed. Turn off entries in the project or choose a model with a larger window.",
+        "stand_veraltet": "The selection in the project changed since it was shown. Nothing was sent. Use the current selection and ask the question again.",
+        "zurueckgesetzt": "The earlier history was not carried over. The answer is based only on the last question and the current selection in the project.",
+        "entzogen_one": "An earlier answer was based on content that is no longer enabled and was replaced.",
+        "entzogen_other": "{{count}} earlier answers were based on content that is no longer enabled and were replaced.",
+        "widerrufen": "The selection in the project changed while the answer was being written. The answer was removed.",
+        "ki_gesperrt": "AI in the project is not enabled yet. Nothing was sent.",
+        "klasse_ziel": "A project item is too sensitive for this model. Choose a local model or turn the item off. Nothing was sent.",
+        "andere": "Nothing could be sent in the project. Nothing was sent. Code: {{code}}."
+      }
+    },
     "tool": {
       "generic": "Using the tool \"{{name}}\" …",
       "meetings_list": "Looking through meetings …",
@@ -8832,7 +8856,10 @@
     "ki": {
       "titel": "AI in the project",
       "text": "Chat and voice conversation use this selection as soon as they are enabled for projects.",
-      "gesperrt": "Locked: AI calls in the project follow with the next step."
+      "gesperrt": "Locked: AI calls in the project follow with the next step.",
+      "start": "Start a conversation in the project",
+      "startGesperrt": "Conversation in the project: locked until AI in the project is enabled.",
+      "startHinweis": "Opens a new conversation that uses only this selection as context."
     },
     "banner": {
       "reset": "The context selection of this device could not be read. For safety all entries are switched off. Switch on what the AI should use.",

@@ -132,6 +132,24 @@ pub struct ConversationScope {
     pub sovereignty: Option<String>,
 }
 
+/// Der Teil von `scope`, den `project_binding` liest.
+#[derive(Deserialize)]
+struct NurBindung {
+    #[serde(default)]
+    project_id: Option<String>,
+}
+
+/// Projektbindung eines Gesprächs (`scope.project_id`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProjectBinding {
+    /// Das Gespräch gibt es (noch) nicht.
+    Missing,
+    /// Gespräch ohne Projekt.
+    None,
+    /// Gespräch im Projekt.
+    Project(String),
+}
+
 /// Teilnehmer (Vertrag `ConversationParticipant`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
 pub struct ConversationParticipant {
@@ -780,6 +798,20 @@ impl ConversationStore {
     }
 
     pub fn create(&self, title: Option<String>) -> Result<Conversation> {
+        self.create_in(title, None)
+    }
+
+    /// Legt ein Gespräch an, das an ein Suite-Projekt gebunden ist (`scope.project_id`, lva#365 P4c-2).
+    /// Die Bindung wird nur hier gesetzt und von keinem Pfad geändert (`update`, `append_entry`).
+    pub fn create_in_project(
+        &self,
+        title: Option<String>,
+        project_id: &str,
+    ) -> Result<Conversation> {
+        self.create_in(title, Some(project_id.to_string()))
+    }
+
+    fn create_in(&self, title: Option<String>, project_id: Option<String>) -> Result<Conversation> {
         let title = match title.as_deref().map(str::trim) {
             None | Some("") => DEFAULT_TITLE.to_string(),
             Some(t) => clean_title(t)?,
@@ -797,7 +829,7 @@ impl ConversationStore {
             scope: ConversationScope {
                 data_class: DEFAULT_DATA_CLASS.to_string(),
                 special_category: false,
-                project_id: None,
+                project_id,
                 knowledge_area: None,
                 sovereignty: None,
             },
@@ -900,6 +932,36 @@ impl ConversationStore {
             bail!("Das Gespräch gibt es nicht (mehr).");
         }
         Ok(())
+    }
+
+    /// Projektbindung eines Gesprächs, aus dem Speicher gelesen (nie aus der Oberfläche). Ein Fehler
+    /// beim Lesen ist ein `Err`: Wer die Bindung braucht, behandelt ihn als „nicht sicher“ und
+    /// sendet nichts.
+    pub fn project_binding(&self, id: &str) -> Result<ProjectBinding> {
+        // Eine Kennung, die keine Gesprächskennung ist, steht nie im Speicher und gehört damit zu keinem
+        // Projektgespräch (deren Kennungen erzeugt der Speicher selbst). Das ist kein Lesefehler.
+        if !valid_id(id) {
+            return Ok(ProjectBinding::Missing);
+        }
+        let conn = self.lock();
+        let raw: Option<String> = conn
+            .query_row(
+                "SELECT scope FROM conversations WHERE id = ?1",
+                params![id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let Some(raw) = raw else {
+            return Ok(ProjectBinding::Missing);
+        };
+        // Nur die Bindung wird gelesen: Ein Gespräch aus einer älteren Fassung, dessen `scope` die
+        // übrigen Felder nicht kennt, ist ein gewöhnliches Gespräch. Kein gültiges JSON oder eine
+        // `project_id` falschen Typs ist ein Fehler (fail-closed).
+        let scope: NurBindung = from_json(&raw)?;
+        Ok(match scope.project_id {
+            Some(p) => ProjectBinding::Project(p),
+            None => ProjectBinding::None,
+        })
     }
 
     pub fn append_entry(

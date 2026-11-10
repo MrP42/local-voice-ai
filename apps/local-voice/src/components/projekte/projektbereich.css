@@ -111,6 +111,10 @@
 .pb-btn--gefahr {
   color: var(--color-status-red);
 }
+.pb-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
 .pb :focus-visible,
 .pb-btn:focus-visible,
 .pb-menue :focus-visible,

@@ -112,6 +112,7 @@ pub async fn voice_call_turn(
     stufe: String,
     for_function: Option<String>,
     conversation_id: Option<String>,
+    expected_stand: Option<String>,
 ) -> Result<String, String> {
     // Ein vorgezogener Abbruch wird zuerst eingelöst, auch wenn unten etwas scheitert.
     if EARLY_CANCELS
@@ -120,6 +121,27 @@ pub async fn voice_call_turn(
         .remove(&request_id)
     {
         return Ok(String::new());
+    }
+    // Projektgespräch (lva#365 P4c-2): ausschließlich über das Versandtor, vor dem Notizbuchschutz.
+    // `model_id` und `stufe` wählen nur unter den aktivierten Modellen und verschärfen; die Einstufung
+    // kommt aus dem Tor. Die Souveränitätsstufe prüft vorab dieselbe Regel wie im gewöhnlichen Weg
+    // (Länder der Verbindung); das Tor bestimmt das Ziel danach selbst aus der Konfiguration.
+    if let Some(projekt) = super::projekt::bindung(&app, conversation_id.as_deref()).await? {
+        let settings = crate::settings::get_settings(&app);
+        resolve(&settings, &model_id, &stufe, for_function.as_deref())?;
+        let gespraech = conversation_id.unwrap_or_default();
+        return super::projekt::durchgang(
+            &app,
+            request_id,
+            messages,
+            model_id,
+            stufe,
+            for_function,
+            projekt,
+            gespraech,
+            expected_stand,
+        )
+        .await;
     }
     // Notizbuchdaten (Codex lva#414): Widerruf nachpruefen, entzogene Inhalte ersetzen, geschuetzte
     // Inhalte erkennen. Sind welche dabei, ist nur ein lokales Modell zulaessig, gleich welche Stufe.

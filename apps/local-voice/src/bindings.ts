@@ -1468,6 +1468,13 @@ async projektKontextUebersicht(suiteId: string) : Promise<Result<KontextUebersic
 }
 },
 /**
+ * Stand der Sperre der KI im Projekt (lva#365 P4c). Die Oberfläche richtet „Gespräch im Projekt
+ * beginnen“ danach aus. Es ist die feste Sperre aus `dienst.rs`, kein Laufzeitschalter.
+ */
+async projektKiStatus() : Promise<ProjektKiStatus> {
+    return await TAURI_INVOKE("projekt_ki_status");
+},
+/**
  * Schaltet „Als Kontext“ eines Eintrags. `form` ändert die Form, `edition` die Fassung eines
  * Buchs (leer = Hauptfassung); fehlt eines, bleibt es, wie es ist. `expected_stand`: der `stand` der
  * angezeigten Übersicht; hat sich die Auswahl seitdem geändert, kommt `projekte.stand_veraltet` und es
@@ -12860,6 +12867,11 @@ unsupported_entries: number }
  */
 export type ProjectMinutesSummary = { id: string; folder_id: string; kind: ProjectKind; title: string; created_at: number; recordings: number; template_title: string; incomplete: boolean }
 export type ProjectSection = { id: string; title: string; kind: SectionKind; entries: ProjectEntry[] }
+/**
+ * Stand der Sperre der KI im Projekt (lva#365 P4c). Die Oberfläche richtet „Gespräch im Projekt
+ * beginnen“ danach aus. Es ist die feste Sperre aus `dienst.rs`, kein Laufzeitschalter.
+ */
+export type ProjektKiStatus = { freigegeben: boolean }
 /**
  * Der Ablauf hinter einer Bitte um Einwilligung (B2).
  */

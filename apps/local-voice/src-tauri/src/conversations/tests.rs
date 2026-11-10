@@ -529,3 +529,71 @@ fn migration_adds_pinned_at_idempotently_and_backfills() {
     assert_eq!(again.list(false).unwrap().len(), 2);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn create_in_project_binds_once_and_stays_bound() {
+    let s = store();
+    let p = "prj_01HZZZZZZZZZZZZZZZZZZZZZZZ";
+    let plain = s.create(None).unwrap();
+    assert_eq!(plain.scope.project_id, None);
+    assert_eq!(s.project_binding(&plain.id).unwrap(), ProjectBinding::None);
+
+    let c = s.create_in_project(Some("Im Projekt".into()), p).unwrap();
+    assert_eq!(c.scope.project_id.as_deref(), Some(p));
+    assert_eq!(c.scope.data_class, "INTERNAL");
+    assert_eq!(
+        s.project_binding(&c.id).unwrap(),
+        ProjectBinding::Project(p.into())
+    );
+    // Die Bindung steht im gespeicherten Gespräch, nicht nur in der Rückgabe.
+    assert_eq!(
+        s.get(&c.id)
+            .unwrap()
+            .conversation
+            .scope
+            .project_id
+            .as_deref(),
+        Some(p)
+    );
+
+    // Weder Umbenennen, Anheften, Archivieren noch ein neuer Beitrag ändert sie.
+    s.update(&c.id, Some("Anders".into()), Some(true), Some(true))
+        .unwrap();
+    s.append_entry(&c.id, entry("user", "Frage")).unwrap();
+    s.append_entry(&c.id, entry("assistant", "Antwort"))
+        .unwrap();
+    assert_eq!(
+        s.project_binding(&c.id).unwrap(),
+        ProjectBinding::Project(p.into())
+    );
+
+    // Die Liste der Gespräche trägt die Bindung nicht als eigenes Feld; das Gespräch bleibt gewöhnlich
+    // auffindbar und löschbar.
+    assert!(s.list(true).unwrap().iter().any(|x| x.id == c.id));
+    s.delete(&c.id).unwrap();
+    assert_eq!(s.project_binding(&c.id).unwrap(), ProjectBinding::Missing);
+}
+
+#[test]
+fn project_binding_is_missing_for_unknown_and_malformed_ids() {
+    let s = store();
+    assert_eq!(
+        s.project_binding("conv_00000000000000000000000000")
+            .unwrap(),
+        ProjectBinding::Missing
+    );
+    // Keine Gesprächskennung: nie im Speicher, also kein Projektgespräch und kein Lesefehler.
+    for id in [
+        "",
+        "x",
+        "conv_",
+        "CONV_00000000000000000000000000",
+        "a' OR '1'='1",
+    ] {
+        assert_eq!(
+            s.project_binding(id).unwrap(),
+            ProjectBinding::Missing,
+            "{id}"
+        );
+    }
+}

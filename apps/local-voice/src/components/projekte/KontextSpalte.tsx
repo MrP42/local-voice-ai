@@ -2,7 +2,8 @@ import React from "react";
 import { useTranslation } from "react-i18next";
 import type { KontextUebersicht } from "@/bindings";
 import { nichtImKontext, zahl } from "@/lib/projekteKontext";
-import type { Modellfenster } from "./useProjekte";
+import { useVoiceCallStore } from "@/stores/voiceCallStore";
+import { useProjektKiFreigegeben, type Modellfenster } from "./useProjekte";
 
 const anteil = (u: KontextUebersicht | null, f: Modellfenster): number =>
   u && f.tokens > 0
@@ -51,11 +52,64 @@ export const KontextSumme: React.FC<{
   );
 };
 
+/**
+ * „Gespräch im Projekt beginnen“ (lva#365 P4c-2). Gesperrt, solange die KI im Projekt nicht freigegeben
+ * ist (feste Sperre in Rust, P4c-4 hebt sie auf). Das Gespräch merkt sich den `stand` der Übersicht, die die
+ * Person gesehen hat; weicht er beim Senden ab, stoppt das Tor mit `projekt.stand_veraltet`.
+ */
+const GespraechBeginnen: React.FC<{
+  projektId: string;
+  stand: string | null;
+}> = ({ projektId, stand }) => {
+  const { t } = useTranslation();
+  const frei = useProjektKiFreigegeben() === true;
+  const [busy, setBusy] = React.useState(false);
+  const beginnen = async () => {
+    setBusy(true);
+    try {
+      await useVoiceCallStore
+        .getState()
+        .newProjectConversation(projektId, stand);
+      window.dispatchEvent(
+        new CustomEvent("lv-navigate", { detail: { section: "home" } }),
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <>
+      <button
+        type="button"
+        className="pb-btn pb-btn--pri"
+        style={{ marginTop: 8 }}
+        disabled={!frei || busy || stand === null}
+        aria-describedby="pb-ki-start-hinweis"
+        title={frei ? t("projektBereich.ki.startHinweis") : undefined}
+        data-testid="projekt-gespraech-beginnen"
+        onClick={() => void beginnen()}
+      >
+        {t("projektBereich.ki.start")}
+      </button>
+      <p
+        id="pb-ki-start-hinweis"
+        className="pb-note"
+        style={{ margin: "6px 0 0" }}
+      >
+        {frei
+          ? t("projektBereich.ki.startHinweis")
+          : t("projektBereich.ki.startGesperrt")}
+      </p>
+    </>
+  );
+};
+
 /** Inhalt der rechten Spalte „Kontext im Projekt“ (auch im Dialog „Details“ unter 999 px). */
 export const KontextInhalt: React.FC<{
+  projektId?: string;
   uebersicht: KontextUebersicht | null;
   fenster: Modellfenster;
-}> = ({ uebersicht, fenster }) => {
+}> = ({ projektId, uebersicht, fenster }) => {
   const { t } = useTranslation();
   const fehlt = nichtImKontext(uebersicht);
   return (
@@ -83,6 +137,12 @@ export const KontextInhalt: React.FC<{
         <p className="pb-note" style={{ margin: "6px 0 0" }}>
           {t("projektBereich.ki.gesperrt")}
         </p>
+        {projektId && (
+          <GespraechBeginnen
+            projektId={projektId}
+            stand={uebersicht?.stand ?? null}
+          />
+        )}
       </section>
     </>
   );
