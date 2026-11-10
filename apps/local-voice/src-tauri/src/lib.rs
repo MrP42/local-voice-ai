@@ -48,6 +48,7 @@ mod memory_guard;
 mod overlay;
 mod paste_guard;
 mod paste_session;
+mod pdf_text; // lva#149: PDF-Zeilen mit Schriftgröße und Lesezeichen
 pub mod portable;
 pub mod portable_parts;
 mod process_guard;

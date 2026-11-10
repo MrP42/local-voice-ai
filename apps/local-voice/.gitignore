@@ -50,4 +50,6 @@ __pycache__/
 # (M2/M3) and scripts/make-m8-fixtures.ps1 (M8) rebuild them idempotently. The
 # WAVs were already covered by the root *.wav rule; the mp4/vtt/json fixtures
 # of the M8 import matrix are the same artefacts in other containers.
-src-tauri/tests/fixtures/
+src-tauri/tests/fixtures/*
+# Buchimport (lva#476): kleine synthetische PDFs und Skripte, eingecheckt.
+!src-tauri/tests/fixtures/buchimport/
