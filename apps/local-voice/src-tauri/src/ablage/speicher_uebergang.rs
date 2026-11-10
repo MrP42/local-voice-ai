@@ -135,8 +135,8 @@ fn uebergang_fehler() -> Fehler {
 }
 
 /// Stand umschreiben (rein, wiederholbar). `true`, wenn sich etwas geändert hat.
-fn stand_umziehen(st: &mut Stand, m: &BTreeMap<String, String>) -> bool {
-    let (z, g) = (st.zaehler(), st.geraet.clone());
+fn stand_umziehen(st: &mut Stand, m: &BTreeMap<String, String>) -> Res<bool> {
+    let (z, g) = (st.zaehler()?, st.geraet.clone());
     let mut geaendert = false;
     for (alt, neu) in m {
         if let Some(mut o) = st.ordner.remove(alt) {
@@ -210,7 +210,7 @@ fn stand_umziehen(st: &mut Stand, m: &BTreeMap<String, String>) -> bool {
             geaendert = true;
         }
     }
-    geaendert
+    Ok(geaendert)
 }
 
 impl Stand {
@@ -308,7 +308,7 @@ impl Ablage {
             self.ordner_umziehen(TEXT, alt, neu)?;
         }
         st.vorher = None;
-        if stand_umziehen(st, &u.zuordnung) {
+        if stand_umziehen(st, &u.zuordnung)? {
             self.sichern(st)?;
         }
         u.schritt = Stufe::Umgezogen;

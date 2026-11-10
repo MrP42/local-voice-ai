@@ -307,9 +307,10 @@ impl Stand {
         self.befreit.retain(|b| lebend.contains(b));
     }
 
-    /// Nächster Lamport-Zähler: größter bekannter Wert + 1.
-    fn zaehler(&self) -> u64 {
-        zf::groesster_zaehler(&self.ordner, &self.dateien) + 1
+    /// Nächster Lamport-Zähler: größter bekannter Wert + 1. Ist der Wertebereich erschöpft, gibt es
+    /// einen Fehler und es wird nichts geschrieben (nie ein Umlauf auf 0).
+    fn zaehler(&self) -> Res<u64> {
+        zf::naechster_zaehler(&self.ordner, &self.dateien).ok_or_else(zaehler_erschoepft)
     }
 
     fn eltern(&self) -> BTreeMap<String, Eltern> {
@@ -1015,7 +1016,8 @@ impl Ablage {
         self.graeber_loeschen(jetzt_ms());
         self.texte_raeumen(&st);
         if st.ordner.is_empty() && st.dateien.is_empty() && st.begraben.is_empty() {
-            let z = st.zaehler();
+            // Ohne Ordner und Dateien ist der größte Zähler 0: der Überlauf ist hier ausgeschlossen.
+            let z = st.zaehler().unwrap_or(1);
             let o = neuer_ordner(st.geraet(), None, STANDARD_ORDNER, z);
             st.ordner.insert(o.id.clone(), o);
             geaendert = true;
@@ -1210,7 +1212,12 @@ impl Ablage {
                             .is_ok_and(|m| m.is_file() && m.len() == *groesse)
                         && sha256_datei(&pfad).is_ok_and(|s| &s == sha256);
                     if ok {
-                        anwenden_abgelegt(st, &e);
+                        if let Err(x) = anwenden_abgelegt(st, &e) {
+                            fehler = Some(x);
+                            rest.push(e);
+                            rest.extend(it);
+                            break;
+                        }
                         continue;
                     }
                     let vorhanden = fs::symlink_metadata(&pfad)
@@ -1544,7 +1551,7 @@ impl Ablage {
             self.ordner_lebend(&st, &eltern, e)?;
         }
         gleichnamig_pruefen(&st, &eltern, eltern_id, &name, None)?;
-        let z = st.zaehler();
+        let z = st.zaehler()?;
         let o = neuer_ordner(st.geraet(), eltern_id, &name, z);
         let id = o.id.clone();
         st.ordner.insert(id.clone(), o);
@@ -1595,7 +1602,7 @@ impl Ablage {
             _ => None,
         };
         gleichnamig_pruefen(&st, &eltern, e.as_deref(), &name, Some(id))?;
-        let (z, g) = (st.zaehler(), st.geraet().to_string());
+        let (z, g) = (st.zaehler()?, st.geraet().to_string());
         let o = st.ordner.get_mut(id).ok_or_else(nicht_gefunden)?;
         o.name = Register::neu(name, z, &g);
         self.sichern(&mut st)
@@ -1626,7 +1633,7 @@ impl Ablage {
             .wert
             .clone();
         gleichnamig_pruefen(&st, &eltern, neu_eltern, &name, Some(id))?;
-        let (z, g) = (st.zaehler(), st.geraet().to_string());
+        let (z, g) = (st.zaehler()?, st.geraet().to_string());
         let o = st.ordner.get_mut(id).ok_or_else(nicht_gefunden)?;
         o.eltern = Register::neu(neu_eltern.map(str::to_string), z, &g);
         self.sichern(&mut st)
@@ -1661,7 +1668,7 @@ impl Ablage {
                 ));
             }
         }
-        let (z, g) = (st.zaehler(), st.geraet().to_string());
+        let (z, g) = (st.zaehler()?, st.geraet().to_string());
         let o = st.ordner.get_mut(id).ok_or_else(nicht_gefunden)?;
         let mut klasse_gewechselt = false;
         if let Some(k) = &e.datenklasse {
@@ -1738,7 +1745,7 @@ impl Ablage {
                 "Der Name ist in diesem Ordner schon vergeben.",
             ));
         }
-        let (z, g) = (st.zaehler(), st.geraet().to_string());
+        let (z, g) = (st.zaehler()?, st.geraet().to_string());
         let d = st.dateien.get_mut(id).ok_or_else(nicht_gefunden)?;
         d.name = Register::neu(name, z, &g);
         self.sichern(&mut st)
@@ -1762,7 +1769,7 @@ impl Ablage {
                 "Der Name ist in diesem Ordner schon vergeben.",
             ));
         }
-        let (z, g) = (st.zaehler(), st.geraet().to_string());
+        let (z, g) = (st.zaehler()?, st.geraet().to_string());
         let d = st.dateien.get_mut(id).ok_or_else(nicht_gefunden)?;
         d.ordner = Register::neu(ordner.to_string(), z, &g);
         self.sichern(&mut st)
@@ -1910,7 +1917,7 @@ impl Ablage {
         }) {
             return Ok(o.id.clone());
         }
-        let z = st.zaehler();
+        let z = st.zaehler()?;
         let o = neuer_ordner(st.geraet(), Some(eltern_id), &name, z);
         let id = o.id.clone();
         st.ordner.insert(id.clone(), o);
@@ -2016,6 +2023,8 @@ impl Ablage {
             }
             (None, _) => (neue_id(PRAEFIX_DATEI), name.clone(), None, true),
         };
+        // Vor dem ersten Schreiben: ohne nächsten Zähler kommt nichts auf die Platte (fail-closed).
+        st.zaehler()?;
         let fas = neue_id(PRAEFIX_FASSUNG);
         let typ = typ_aus(&endname);
         ohne_umweg(&self.dir, DATEIEN)?;
@@ -2061,7 +2070,7 @@ impl Ablage {
         // Scheitert das Vermerken, liegt das Original ohne Eintrag da: der Wiederanlauf findet es.
         self.sichern(&mut st)?;
         haken_journal()?;
-        anwenden_abgelegt(&mut st, &eintrag);
+        anwenden_abgelegt(&mut st, &eintrag)?;
         st.journal.retain(|e| e != &eintrag);
         self.sichern(&mut st)?;
         Ok(AblageImportZeile {
@@ -2116,7 +2125,7 @@ impl Ablage {
         let _g = sperren();
         let mut st = self.laden()?;
         let eltern = st.eltern();
-        let (z, g, jetzt) = (st.zaehler(), st.geraet().to_string(), jetzt_ms());
+        let (z, g, jetzt) = (st.zaehler()?, st.geraet().to_string(), jetzt_ms());
         match art {
             AblageArt::Datei => {
                 datei_id_pruefen(id)?;
@@ -2144,7 +2153,7 @@ impl Ablage {
         let _g = sperren();
         let mut st = self.laden()?;
         let eltern = st.eltern();
-        let (z, g) = (st.zaehler(), st.geraet().to_string());
+        let (z, g) = (st.zaehler()?, st.geraet().to_string());
         match art {
             AblageArt::Datei => {
                 datei_id_pruefen(id)?;
@@ -2548,7 +2557,7 @@ impl Ablage {
                 .take()
                 .filter(|v| *v != f.fas && bekannt.contains(v));
         }
-        let (z, ger) = (st.zaehler(), st.geraet().to_string());
+        let (z, ger) = (st.zaehler()?, st.geraet().to_string());
         match st.dateien.get_mut(dat) {
             Some(d) => {
                 d.fassungen.extend(neue);
@@ -3012,6 +3021,13 @@ fn sha2_digest(b: &[u8]) -> Vec<u8> {
 // Hilfen ohne Zustand
 // ---------------------------------------------------------------------------
 
+fn zaehler_erschoepft() -> Fehler {
+    Fehler::neu(
+        "ablage.zaehler_erschoepft",
+        "Die Ablage kann gerade keine Änderungen mehr aufnehmen.",
+    )
+}
+
 fn nicht_gefunden() -> Fehler {
     Fehler::neu("ablage.nicht_gefunden", "Nicht gefunden.")
 }
@@ -3162,7 +3178,7 @@ fn datei_sicht(
 }
 
 /// Trägt eine abgelegte Fassung in den Baum ein (idempotent).
-fn anwenden_abgelegt(st: &mut Stand, e: &Eintrag) {
+fn anwenden_abgelegt(st: &mut Stand, e: &Eintrag) -> Res<()> {
     let Eintrag::Abgelegt {
         dat,
         fas,
@@ -3178,9 +3194,9 @@ fn anwenden_abgelegt(st: &mut Stand, e: &Eintrag) {
         ..
     } = e
     else {
-        return;
+        return Ok(());
     };
-    let z = st.zaehler();
+    let z = st.zaehler()?;
     let g = st.geraet().to_string();
     let fassung = Fassung {
         fas: fas.clone(),
@@ -3211,7 +3227,7 @@ fn anwenden_abgelegt(st: &mut Stand, e: &Eintrag) {
                     ms: *zeit,
                     vorgaenger: vorgaenger.clone(),
                 });
-                return;
+                return Ok(());
             }
             st.dateien.insert(
                 dat.clone(),
@@ -3235,6 +3251,7 @@ fn anwenden_abgelegt(st: &mut Stand, e: &Eintrag) {
             );
         }
     }
+    Ok(())
 }
 
 #[cfg(test)]

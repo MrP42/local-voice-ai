@@ -9479,6 +9479,7 @@
       "nicht_erreichbar": "Der Ordner ist nicht erreichbar.",
       "hartlink": "Hartlinks werden nicht gelesen.",
       "allgemein": "Das hat nicht geklappt.",
+      "zaehler_erschoepft": "Die Ablage kann gerade keine Änderungen mehr aufnehmen.",
       "name_vorhanden": "Dieser Name ist schon vergeben.",
       "name_ungueltig": "Dieser Name ist nicht erlaubt.",
       "journal_defekt": "Das Verzeichnis der Ablage ist beschädigt.",

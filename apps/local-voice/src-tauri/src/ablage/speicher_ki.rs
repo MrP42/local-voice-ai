@@ -287,7 +287,7 @@ impl Ablage {
                 o.papierkorb.wert.is_none() && vergleichsschluessel(&o.name.wert) == schluessel
             })
             .map(|o| o.id.clone());
-        let (z, g) = (st.zaehler(), st.geraet().to_string());
+        let (z, g) = (st.zaehler()?, st.geraet().to_string());
         let (id, mut geaendert) = match gefunden {
             Some(id) => (id, false),
             None => {

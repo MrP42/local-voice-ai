@@ -631,32 +631,61 @@ pub fn wirksam_nur_geraet(
         .any(|g| ordner.get(g).is_some_and(|o| o.nur_geraet.wert))
 }
 
+/// Obergrenze für Zähler aus synchronisierten Datensätzen (`ordner_zaehler_ok`, `datei_zaehler_ok`):
+/// Ein einzelner Datensatz (beschädigt oder manipuliert) kann die Zählerkette so nie erschöpfen; die
+/// untere Hälfte des Wertebereichs bleibt für lokale Schreibvorgänge frei. Genau `ZAEHLER_MAX` gilt noch.
+pub const ZAEHLER_MAX: u64 = u64::MAX / 2;
+
+/// Größter Zähler in den Registern eines Ordners.
+pub fn ordner_zaehler_max(o: &Ordner) -> u64 {
+    o.eltern
+        .zaehler
+        .max(o.name.zaehler)
+        .max(o.datenklasse.zaehler)
+        .max(o.nur_geraet.zaehler)
+        .max(o.zielordner_ki.zaehler)
+        .max(o.papierkorb.zaehler)
+}
+
+/// Größter Zähler in den Registern einer Datei (samt `wahlen`).
+pub fn datei_zaehler_max(d: &Datei) -> u64 {
+    d.wahlen.iter().map(|w| w.zaehler).fold(
+        d.ordner
+            .zaehler
+            .max(d.name.zaehler)
+            .max(d.klasse_min.zaehler)
+            .max(d.papierkorb.zaehler),
+        u64::max,
+    )
+}
+
+/// Trägt kein Register des Ordners einen Zähler über `ZAEHLER_MAX`?
+pub fn ordner_zaehler_ok(o: &Ordner) -> bool {
+    ordner_zaehler_max(o) <= ZAEHLER_MAX
+}
+
+/// Trägt kein Register der Datei (und keine Wahl) einen Zähler über `ZAEHLER_MAX`?
+pub fn datei_zaehler_ok(d: &Datei) -> bool {
+    datei_zaehler_max(d) <= ZAEHLER_MAX
+}
+
 /// Größter bekannter Zähler über alle Register: der nächste Schreibvorgang nimmt diesen Wert + 1.
 pub fn groesster_zaehler(
     ordner: &BTreeMap<String, Ordner>,
     dateien: &BTreeMap<String, Datei>,
 ) -> u64 {
-    let mut m = 0u64;
-    for o in ordner.values() {
-        m = m
-            .max(o.eltern.zaehler)
-            .max(o.name.zaehler)
-            .max(o.datenklasse.zaehler)
-            .max(o.nur_geraet.zaehler)
-            .max(o.zielordner_ki.zaehler)
-            .max(o.papierkorb.zaehler);
-    }
-    for d in dateien.values() {
-        m = m
-            .max(d.ordner.zaehler)
-            .max(d.name.zaehler)
-            .max(d.klasse_min.zaehler)
-            .max(d.papierkorb.zaehler);
-        for w in &d.wahlen {
-            m = m.max(w.zaehler);
-        }
-    }
-    m
+    let o = ordner.values().map(ordner_zaehler_max);
+    let d = dateien.values().map(datei_zaehler_max);
+    o.chain(d).max().unwrap_or(0)
+}
+
+/// Nächster Lamport-Zähler: größter bekannter Wert + 1; `None` bei Überlauf (nie ein Umlauf auf 0,
+/// der jeden späteren Stand die Wahl verlieren ließe).
+pub fn naechster_zaehler(
+    ordner: &BTreeMap<String, Ordner>,
+    dateien: &BTreeMap<String, Datei>,
+) -> Option<u64> {
+    groesster_zaehler(ordner, dateien).checked_add(1)
 }
 
 #[cfg(test)]
