@@ -52,6 +52,12 @@ final class AblageZwischenRegister: @unchecked Sendable {
     func istAktiv(_ pfad: String) -> Bool { lock.lock(); defer { lock.unlock() }; return aktiv.contains(pfad) }
 }
 
+/// Größe und SHA-256 (hex) einer heruntergeladenen Datei, vor der Sperre des Speichers berechnet.
+public struct AblageOriginalPruefsumme: Equatable, Sendable {
+    public let groesse: UInt64
+    public let sha256Hex: String
+}
+
 public final class AblageSpeicher: @unchecked Sendable {
     public static let zustandsdatei = "ablage-zustand.json"
     static let dateienOrdner = "dateien"
@@ -61,6 +67,8 @@ public final class AblageSpeicher: @unchecked Sendable {
     public let wurzel: URL
     private let fm = FileManager.default
     private let bestandSperre = NSLock()
+    private let wartendeSperre = NSLock()
+    private var wartende = 0
 
     public init(wurzel: URL) { self.wurzel = wurzel }
 
@@ -70,10 +78,15 @@ public final class AblageSpeicher: @unchecked Sendable {
     /// Original einer begrabenen Datei ab, das niemand mehr wegräumt. Beide Seiten halten die Sperre über ihren ganzen
     /// Schritt. Nur kurze, synchrone Dateizugriffe darin, nie ein `await`; nicht wiedereintrittsfähig.
     func exklusiv<T>(_ body: () throws -> T) rethrows -> T {
+        wartendeSperre.withLock { wartende += 1 }
         bestandSperre.lock()
+        wartendeSperre.withLock { wartende -= 1 }
         defer { bestandSperre.unlock() }
         return try body()
     }
+
+    /// Aufrufer von `exklusiv`, die gerade an der Sperre warten (damit Tests auf „wartet“ warten können, statt zu schlafen).
+    var wartetAufExklusiv: Int { wartendeSperre.withLock { wartende } }
 
     // MARK: Dateisystem-Hilfen
 
@@ -236,11 +249,22 @@ public final class AblageSpeicher: @unchecked Sendable {
         return true
     }
 
+    /// Größe und SHA-256 einer Zwischendatei, streamend und ohne Sperre des Speichers (`originalEinlegen` übernimmt das
+    /// Ergebnis, statt unter der Sperre noch einmal über die ganze Datei zu lesen). Wirft `passtNicht`, wenn die Datei nicht
+    /// lesbar ist.
+    public func pruefsumme(zwischen: URL) throws -> AblageOriginalPruefsumme {
+        guard istDatei(zwischen), let size = (try? fm.attributesOfItem(atPath: zwischen.path)[.size] as? NSNumber)?.uint64Value,
+              let sha = try? Self.sha256Hex(datei: zwischen) else { throw AblageSpeicherFehler.passtNicht }
+        return AblageOriginalPruefsumme(groesse: size, sha256Hex: sha)
+    }
+
     /// Legt ein heruntergeladenes Original ohne Ersetzen an seinen Platz (`original_einlegen`). Größe und SHA-256 (streamend)
     /// müssen zur Fassung passen. `false`: Datei oder Fassung gibt es nicht mehr. Die Zwischendatei ist danach in jedem
-    /// Fall weg (verschoben oder entfernt).
+    /// Fall weg (verschoben oder entfernt). `vorgeprueft`: Größe und Hash, die der Aufrufer schon vor der Sperre berechnet hat
+    /// (`pruefsumme`); ohne sie wird hier gelesen. Die Größe wird immer frisch von der Datei genommen.
     @discardableResult
-    public func originalEinlegen(bestand: AblageBestand, dat: String, fas: String, zwischen: URL) throws -> Bool {
+    public func originalEinlegen(bestand: AblageBestand, dat: String, fas: String, zwischen: URL,
+                                 vorgeprueft: AblageOriginalPruefsumme? = nil) throws -> Bool {
         var fertig = false
         defer {
             if !fertig { try? fm.removeItem(at: zwischen) }
@@ -252,7 +276,9 @@ public final class AblageSpeicher: @unchecked Sendable {
         guard let d = bestand.dateien[dat], let f = d.fassungen.first(where: { AblageBytes.equal($0.fas, fas) }) else { return false }
         guard let ziel = originalURL(dat: dat, fas: fas, typ: f.typ) else { throw AblageSpeicherFehler.ungueltigeKennung }
         guard istDatei(zwischen), let size = (try? fm.attributesOfItem(atPath: zwischen.path)[.size] as? NSNumber)?.uint64Value,
-              size == f.size, try Self.sha256Hex(datei: zwischen) == f.blob else { throw AblageSpeicherFehler.passtNicht }
+              size == f.size else { throw AblageSpeicherFehler.passtNicht }
+        let sha = try vorgeprueft?.sha256Hex ?? Self.sha256Hex(datei: zwischen)
+        guard sha == f.blob else { throw AblageSpeicherFehler.passtNicht }
         let dir = try ordnerSichern(Self.dateienOrdner, dat)
         if art(ziel) != nil { return true }          // liegt schon: nicht ersetzen (die Zwischendatei räumt `defer`)
         do { try fm.moveItem(at: zwischen, to: dir.appendingPathComponent(ziel.lastPathComponent)) } catch {

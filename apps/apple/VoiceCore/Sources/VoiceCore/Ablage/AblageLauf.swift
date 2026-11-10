@@ -131,10 +131,24 @@ public struct AblageBericht: Equatable, Sendable {
     /// nächsten Lauf vor. Nicht darin: Unbekanntes, Begrabenes, Angehaltenes und was an einer einzelnen Datei scheiterte
     /// (Blob fehlt, Prüfung fehlgeschlagen): das würde in jedem Lauf wiederkehren.
     public var offeneAnforderungen: [AblageOriginalAnforderung] = []
+    /// Angeforderte Originale, die an der einzelnen Datei scheiterten (Blob fehlt am Hub, Antwort unlesbar, Größe oder Hash
+    /// passen nicht): der Lauf hat sie gezählt und gewarnt, stellt sie aber nicht wieder an (sie würden in jedem Lauf
+    /// wiederkehren). Die Oberfläche zeigt sie als „nicht geladen, erneut antippen“. Ohne Doppelte, in der Reihenfolge des Plans.
+    public var fehlgeschlageneAnforderungen: [AblageOriginalAnforderung] = []
 
     public init() {}
 
     mutating func warne(_ w: AblageWarnung) { if !warnungen.contains(w) { warnungen.append(w) } }
+
+    /// Ein angefordertes Original ist an seiner Datei gescheitert: zählen und warnen (nie still verschlucken).
+    mutating func fehlgeschlagen(_ a: AblageAuftrag) {
+        guard a.art == .original else { return }
+        let anf = AblageOriginalAnforderung(dat: a.dat, fas: a.fas)
+        if !fehlgeschlageneAnforderungen.contains(where: { AblageBytes.equal($0.dat, anf.dat) && AblageBytes.equal($0.fas, anf.fas) }) {
+            fehlgeschlageneAnforderungen.append(anf)
+        }
+        warne(.originalNichtGeladen)
+    }
 }
 
 /// Höchstens ein Lauf je Speicherordner im Prozess. Wird nie über ein `await` gehalten (nur Mitgliedschaft).
@@ -330,7 +344,8 @@ public enum AblageLauf {
                 offen += plan[i...]
                 return
             } catch is AblageHubFehler {
-                continue                          // Blob fehlt oder beschädigt: nur diese Datei bleibt offen
+                bericht.fehlgeschlagen(a)         // Blob fehlt oder beschädigt: nur diese Datei bleibt offen, gezählt und gemeldet
+                continue
             }
             try Task.checkCancellation()        // abgebrochen (z. B. Abmelden): nichts mehr ablegen
             budget.verbraucht(groesse: a.groesse)
@@ -356,6 +371,7 @@ public enum AblageLauf {
                 return
             } catch is AblageSpeicherFehler {
                 bericht.warne(.dateiPasstNicht)
+                bericht.fehlgeschlagen(a)
             }
         }
     }
@@ -384,14 +400,20 @@ public enum AblageLauf {
             throw fehler(e)
         }
         try Task.checkCancellation()            // abgebrochen (z. B. Abmelden): nichts mehr ablegen
+        // Die SHA-256 über das ganze Original (bei großen Dateien Sekunden) VOR der Sperre: unter ihr stünden sonst gleichzeitige
+        // Läufe und Abmeldungen so lange still. Die Zwischendatei liegt im eigenen `eingang/` und ändert sich nicht mehr.
+        let geprueft: AblageOriginalPruefsumme
+        do { geprueft = try speicher.pruefsumme(zwischen: ziel) } catch { throw AblageLaufFehler.passtNicht }
+        try Task.checkCancellation()
         // Mit dem aktuellen Stand prüfen und ablegen, in einem Schritt unter der Sperre des Speichers (siehe `exklusiv`): wurde
         // die Datei inzwischen begraben, angehalten oder gibt es sie nicht mehr, wird nichts abgelegt (nie ein Original einer
-        // begrabenen, angehaltenen oder unbekannten Kennung behalten); die Zwischendatei räumt das `defer` oben.
+        // begrabenen, angehaltenen oder unbekannten Kennung behalten); die Zwischendatei räumt das `defer` oben. Unter der
+        // Sperre bleiben nur die Planprüfung gegen den frischen Stand und das Verschieben.
         do {
             try speicher.exklusiv {
                 let frisch = speicher.laden(konto: konto.kennung).zustand
                 guard AblageDownloadPlan.original(zustand: frisch, dat: dat, fas: fas, key: konto.key) != nil,
-                      try speicher.originalEinlegen(bestand: frisch.bestand, dat: dat, fas: fas, zwischen: ziel) else {
+                      try speicher.originalEinlegen(bestand: frisch.bestand, dat: dat, fas: fas, zwischen: ziel, vorgeprueft: geprueft) else {
                     throw AblageLaufFehler.nichtLadbar
                 }
             }
