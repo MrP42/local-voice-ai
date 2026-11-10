@@ -47,6 +47,8 @@ mod tests_d2;
 mod tests_d3;
 #[cfg(test)]
 mod tests_d7;
+#[cfg(test)]
+mod tests_index_paritaet;
 
 use serde::Serialize;
 use std::fmt;

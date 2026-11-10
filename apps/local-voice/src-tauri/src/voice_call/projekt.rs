@@ -27,6 +27,7 @@
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use once_cell::sync::Lazy;
@@ -55,6 +56,11 @@ pub const CODE_BINDUNG: &str = "projekt.bindung";
 pub const CODE_MODELL: &str = "projekt.modell";
 const MODELL_FEHLER: &str =
     "projekt.modell: Das Modell hat nicht geantwortet. Es wurde keine Antwort übernommen.";
+
+/// Abstand des Lebenszeichens („läuft“) an die Oberfläche, solange das Tor die Antwort puffert. Das
+/// Ereignis trägt nur `kind` und `request_id`: weder Text noch Längen oder Zähler. Die Oberfläche
+/// verlängert damit ihre Frist bis zur harten Obergrenze (lva#459).
+pub const HERZSCHLAG: Duration = Duration::from_secs(5);
 
 /// Höchstzahl gemerkter gelöschter Projektgespräche (Grabsteine, siehe [`gespraech_geloescht`]).
 const MAX_GRABSTEINE: usize = 256;
@@ -480,6 +486,44 @@ pub async fn durchlauf(
     bote: &dyn Bote,
     a: Anfrage,
 ) -> Result<String, String> {
+    durchlauf_mit(tor, weg, bote, a, HERZSCHLAG).await
+}
+
+/// Wie [`durchlauf`] mit wählbarem Abstand des Lebenszeichens (Tests). Das Lebenszeichen läuft über den
+/// **ganzen** Lauf (Tor vor dem Versand, Modell, Urteil des Tors mit der Ablage-Prüfung): Es wird nur
+/// gesendet, solange der Kern noch wartet, und endet mit ihm.
+pub async fn durchlauf_mit(
+    tor: &ProjektTor,
+    weg: &dyn Modellweg,
+    bote: &dyn Bote,
+    a: Anfrage,
+    herzschlag: Duration,
+) -> Result<String, String> {
+    let id = a.request_id.clone();
+    tokio::select! {
+        biased;
+        r = durchlauf_kern(tor, weg, bote, a) => r,
+        nie = lebenszeichen(bote, &id, herzschlag) => match nie {},
+    }
+}
+
+/// Meldet in festem Abstand „läuft“, ohne Inhalt: nur `kind` und `request_id`, keine Längen, keine Zähler.
+/// Die Oberfläche verlängert damit ihre Frist (bis zur eigenen Obergrenze).
+async fn lebenszeichen(bote: &dyn Bote, id: &str, abstand: Duration) -> std::convert::Infallible {
+    let mut takt = tokio::time::interval_at(tokio::time::Instant::now() + abstand, abstand);
+    takt.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        takt.tick().await;
+        bote.melden(serde_json::json!({"kind": "laeuft", "request_id": id}));
+    }
+}
+
+async fn durchlauf_kern(
+    tor: &ProjektTor,
+    weg: &dyn Modellweg,
+    bote: &dyn Bote,
+    a: Anfrage,
+) -> Result<String, String> {
     let id = a.request_id.clone();
     // Abbruch und Widerruf zuerst eintragen, dann prüfen: Was dazwischen kommt, trifft die Anfrage.
     // Keine Meldung bei einer doppelten Kennung: Sie gälte dem schon laufenden Aufruf.
@@ -576,13 +620,14 @@ pub async fn durchlauf(
 
     let (ausgang, erfasst) = usage::with_capture(async {
         let call = weg.senden(&ziel, strom_nachrichten, &on_delta);
+        tokio::pin!(call);
         // Abbruch zuerst: Ein schon vorliegender Widerruf verhindert den Versand, statt mit ihm zu
         // wetteifern.
         let r = tokio::select! {
             biased;
             _ = abbruch.notified() => Ausgang::Widerrufen,
             _ = cancel.notified() => Ausgang::Abgebrochen,
-            r = call => Ausgang::Fertig(r),
+            r = &mut call => Ausgang::Fertig(r),
         };
         (r, usage::captured_calls().0)
     })
@@ -619,6 +664,12 @@ pub async fn durchlauf(
                 std::mem::take(&mut *stuecke.lock().unwrap_or_else(|e| e.into_inner()));
             stuecke.extend(rest.into_iter().filter(|s| !s.is_empty()));
             match tor.abschliessen(schein, &text).await {
+                Ok(()) if super::was_cancelled(&id) => {
+                    // Der Abbruch kam, während das Tor urteilte (nur im `select!` wirkt er sonst): Der
+                    // Eintrag im Register wird zurückgenommen, nichts wird gemerkt oder gemeldet.
+                    tor.antwort_vergessen(&a.gespraech, &text);
+                    Ok(String::new())
+                }
                 Ok(()) => {
                     anmeldung.markierung_behalten = true;
                     rueckfrage_merken(&a.gespraech, &text);
