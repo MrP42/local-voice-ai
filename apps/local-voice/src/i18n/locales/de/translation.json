@@ -9107,7 +9107,8 @@
       "recherche.unavailable": "Die Recherche ist nicht eingerichtet.",
       "recherche.storage": "Die Recherche konnte nicht gespeichert werden.",
       "projekte.storage": "Das Projektverzeichnis konnte nicht gelesen oder geschrieben werden.",
-      "projekte.not_found": "Nicht gefunden."
+      "projekte.not_found": "Nicht gefunden.",
+      "projekte.stand_veraltet": "Die Auswahl hat sich seit der Anzeige geändert. Bitte neu laden."
     },
     "ergebnis": {
       "modus": "Schnell",
@@ -9479,6 +9480,7 @@
       "nicht_erreichbar": "Der Ordner ist nicht erreichbar.",
       "hartlink": "Hartlinks werden nicht gelesen.",
       "allgemein": "Das hat nicht geklappt.",
+      "zaehler_erschoepft": "Die Ablage kann gerade keine Änderungen mehr aufnehmen.",
       "name_vorhanden": "Dieser Name ist schon vergeben.",
       "name_ungueltig": "Dieser Name ist nicht erlaubt.",
       "journal_defekt": "Das Verzeichnis der Ablage ist beschädigt.",

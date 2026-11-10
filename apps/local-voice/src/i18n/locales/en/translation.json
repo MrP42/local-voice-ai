@@ -9107,7 +9107,8 @@
       "recherche.unavailable": "Research is not set up.",
       "recherche.storage": "The research could not be saved.",
       "projekte.storage": "The project directory could not be read or written.",
-      "projekte.not_found": "Not found."
+      "projekte.not_found": "Not found.",
+      "projekte.stand_veraltet": "The selection changed since it was displayed. Please reload."
     },
     "ergebnis": {
       "modus": "Quick",
@@ -9479,6 +9480,7 @@
       "nicht_erreichbar": "The folder is not reachable.",
       "hartlink": "Hard links are not read.",
       "allgemein": "That did not work.",
+      "zaehler_erschoepft": "The file store cannot accept any more changes right now.",
       "name_vorhanden": "This name is already taken.",
       "name_ungueltig": "This name is not allowed.",
       "journal_defekt": "The file index is damaged.",

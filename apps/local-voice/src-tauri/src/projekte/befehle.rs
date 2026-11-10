@@ -264,7 +264,9 @@ pub async fn projekt_kontext_uebersicht(
 }
 
 /// Schaltet „Als Kontext“ eines Eintrags. `form` ändert die Form, `edition` die Fassung eines
-/// Buchs (leer = Hauptfassung); fehlt eines, bleibt es, wie es ist.
+/// Buchs (leer = Hauptfassung); fehlt eines, bleibt es, wie es ist. `expected_stand`: der `stand` der
+/// angezeigten Übersicht; hat sich die Auswahl seitdem geändert, kommt `projekte.stand_veraltet` und es
+/// ändert sich nichts (P4c-1).
 #[tauri::command]
 #[specta::specta]
 pub async fn projekt_kontext_schalten(
@@ -274,12 +276,20 @@ pub async fn projekt_kontext_schalten(
     on: bool,
     form: Option<KontextForm>,
     edition: Option<String>,
+    expected_stand: Option<String>,
 ) -> Antwort<KontextUebersicht> {
     let fassung = edition.map(|e| (!e.is_empty()).then_some(e));
     Ok(z.dienste()
         .await?
         .projekte
-        .kontext_schalten(&suite_id, &eintrag_id, on, form, fassung)
+        .kontext_schalten_mit_stand(
+            &suite_id,
+            &eintrag_id,
+            on,
+            form,
+            fassung,
+            expected_stand.as_deref(),
+        )
         .await?)
 }
 

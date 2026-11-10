@@ -838,15 +838,15 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
         }
         if coll == SAMMLUNG_ORDNER {
             let o: Ordner = serde_json::from_value(roh).ok()?;
-            if o.id != id || !refs.is_empty() {
-                return None;
+            if o.id != id || !refs.is_empty() || !zf::ordner_zaehler_ok(&o) {
+                return None; // Zähler über `ZAEHLER_MAX`: wie unlesbar, das Objekt ruht
             }
             let h = hash_ordner(&o);
             Some((Eingang::Ordner(o), h))
         } else {
             let d: Datei = serde_json::from_value(roh).ok()?;
-            if d.id != id || hub_refs(self.konto.key, &d) != refs {
-                return None;
+            if d.id != id || hub_refs(self.konto.key, &d) != refs || !zf::datei_zaehler_ok(&d) {
+                return None; // auch bei Zähler über `ZAEHLER_MAX` (siehe Ordner)
             }
             let h = hash_datei(&d);
             Some((Eingang::Datei(d), h))

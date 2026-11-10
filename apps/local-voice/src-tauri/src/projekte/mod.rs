@@ -5,6 +5,9 @@
 //! * [`dienst`]: Suite-Projekte, Verknuepfung Besprechungsordner und Buecher, Abgleich der Loeschung.
 //! * [`recherche`]: Recherche im Modus Schnell ueber `wai-recherche` mit Halt und Freigabe.
 //! * [`audit`]: Protokoll ohne Inhalte.
+//! * [`tor`], [`tor_herkunft`], [`tor_ziel`]: Versandtor der Projekt-KI (lva#365 P4c-1): Ziel aus der
+//!   Konfiguration, frischer Kontext, Klassen, Bereinigung des Verlaufs, Budget, Widerruf und
+//!   Antwortregister. Noch kein Weg angeschlossen; die Sperre `PROJEKT_KI_FREIGEGEBEN` bleibt.
 //! * [`befehle`]: die Tauri-Befehle.
 //!
 //! Das Projektverzeichnis (`projekte.db`) und die Recherche-Dokumente (`recherche.db`) liegen im
@@ -32,12 +35,17 @@ pub mod kontext;
 pub mod quellen;
 pub mod recherche;
 pub mod texte;
+pub mod tor;
+pub mod tor_herkunft;
+pub mod tor_ziel;
 pub mod zustand;
 
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod tests_p4;
+#[cfg(test)]
+mod tests_p4c;
 
 use std::fmt;
 use wai_security::{
