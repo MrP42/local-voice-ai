@@ -170,7 +170,8 @@ pub fn rueckstellung_vergessen(fas: &str) {
     }
 }
 
-/// Gibt es Aufträge, die dieser Prozess noch bearbeiten würde (ohne Rückstellungen)?
+/// Gibt es Aufträge, die dieser Prozess noch bearbeiten würde (ohne Rückstellungen)? Schließt die
+/// verknüpften Ordner ein (D7).
 pub fn offen(a: &Ablage) -> bool {
     let zurueck = uebersprungen();
     a.text_auftraege()
@@ -179,6 +180,7 @@ pub fn offen(a: &Ablage) -> bool {
                 .any(|x| !zurueck.contains(&(x.fas.clone(), x.textrev.clone())))
         })
         .unwrap_or(false)
+        || super::verknuepft::offen(a, super::ocr::extraktor())
 }
 
 /// Arbeitet alle offenen Aufträge ab und gleicht danach den Index ab. `melden` wird nach jedem
@@ -239,6 +241,16 @@ pub fn lauf(
             let _ = super::index::abgleichen(a);
             melden();
         }
+    }
+    // D7: danach die verknüpften Ordner (Momentkopie, Text, OCR), einmal je Lauf.
+    let v = super::verknuepft::lauf(a, prog, grenzen, abbrechen, melden, super::ocr::extraktor())?;
+    l.ok += v.ok;
+    l.kein_text += v.kein_text;
+    l.fehler += v.fehler;
+    if v.abgebrochen {
+        l.abgebrochen = true;
+        let _ = super::index::abgleichen(a);
+        return Ok(l);
     }
     super::index::abgleichen(a)?;
     Ok(l)
@@ -398,6 +410,8 @@ fn arbeiter() {
             }
         };
         let a = Ablage::neu(dir);
+        // Kopien verknüpfter Dateien, die ein Absturz hinterlassen hat (Kopien dieses Laufs bleiben).
+        super::verknuepft::zwischen_raeumen(a.dir());
         match lauf(
             &a,
             &prog,

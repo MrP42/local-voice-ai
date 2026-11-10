@@ -250,6 +250,14 @@ impl Ablage {
     pub fn cloud_ausnahme_setzen(&self, ordner: &str, anbieter: &str, an: bool) -> Res<()> {
         ordner_id_pruefen(ordner)?;
         let _g = sperren();
+        // D7: verknüpfte Ordner sind für die KI nie erreichbar; eine Cloud-Ausnahme dafür wäre
+        // wirkungslos und täuschte Erreichbarkeit vor. Erteilen wird abgewiesen, Entziehen bleibt möglich.
+        if crate::ablage::verknuepft::ist_verknuepft(&self.dir, ordner) {
+            if an {
+                return Err(crate::ablage::verknuepft::nur_lesen());
+            }
+            return freigabe::ausnahme_setzen(&self.dir, ordner, anbieter, false).map(|_| ());
+        }
         let st = self.laden()?;
         let eltern = st.eltern();
         self.ordner_lebend(&st, &eltern, ordner)?;

@@ -220,9 +220,62 @@ function leereSicht() {
   };
 }
 
+// D7: verknüpfter Ordner (nur lesen, nur dieses Gerät) mit drei Dateien (eine nur online) und einem
+// Unterordner, der nur online liegt.
+const verknuepftOrdner = (id: string, name: string, dateien: number) =>
+  ordner(id, name, null, dateien, {
+    datenklasse: "confidential",
+    klasse: "confidential",
+    nur_geraet: true,
+    nur_geraet_wirksam: true,
+    verknuepft: true,
+  });
+
+function verknuepfteSicht() {
+  return {
+    ...demoSicht(),
+    verknuepft: [
+      {
+        ordner: verknuepftOrdner("ord_v1", "Projektunterlagen", 3),
+        erreichbar: true,
+        ausgelassen: 2,
+        nur_online: 2,
+        zu_viele: false,
+        abgetastet: T0,
+      },
+    ],
+    verknuepft_dateien: [
+      datei("dat_v1", "Berichte/Prüfbericht 2026.pdf", "ord_v1", "pdf", 1, 2, {
+        klasse: "confidential",
+        nur_geraet: true,
+        verknuepft: true,
+      }),
+      datei("dat_v2", "Scan Lageplan.png", "ord_v1", "png", 2, 4, {
+        klasse: "confidential",
+        nur_geraet: true,
+        verknuepft: true,
+        text: "fehler",
+        text_code: "extrakt.ocr_nicht_verfuegbar",
+      }),
+      datei("dat_v3", "Wolke/Nur online.docx", "ord_v1", "docx", 48_200, 6, {
+        klasse: "confidential",
+        nur_geraet: true,
+        verknuepft: true,
+        text: "nur_online",
+      }),
+    ],
+  };
+}
+
 async function installMock(
   page: Page,
-  opts: { theme: Theme; leer?: boolean; wahl?: string[]; sync?: unknown },
+  opts: {
+    theme: Theme;
+    leer?: boolean;
+    wahl?: string[] | string;
+    sync?: unknown;
+    verknuepft?: boolean;
+  },
 ) {
   page.on("pageerror", (error) => {
     throw error;
@@ -297,6 +350,53 @@ async function installMock(
             if (cmd === "plugin:event|unlisten") return null;
             if (cmd === "plugin:dialog|open") return w.__pick ?? null;
             if (cmd === "ablage_stand") return JSON.parse(JSON.stringify(s));
+            // D7: Ordner verknüpfen und lösen (nur der Stand im Mock ändert sich).
+            if (cmd === "ablage_verknuepfen") {
+              const v = s as unknown as { verknuepft?: any[] };
+              const liste = (v.verknuepft ??= []);
+              const id = `ord_neu${liste.length}`;
+              const name = String(args?.pfad).split(/[\\/]/).pop() ?? "";
+              liste.push({
+                ordner: {
+                  id,
+                  name,
+                  eltern: null,
+                  wiederhergestellt: false,
+                  datenklasse: "confidential",
+                  klasse: "confidential",
+                  nur_geraet: true,
+                  nur_geraet_wirksam: true,
+                  zielordner_ki: false,
+                  ki: {
+                    zustand: "aus",
+                    von: null,
+                    von_name: null,
+                    vorgabe: true,
+                  },
+                  dateien: 0,
+                  verknuepft: true,
+                },
+                erreichbar: true,
+                ausgelassen: 0,
+                nur_online: 0,
+                zu_viele: false,
+                abgetastet: Date.now(),
+              });
+              return id;
+            }
+            if (cmd === "ablage_verknuepfung_loesen") {
+              const v = s as unknown as {
+                verknuepft?: any[];
+                verknuepft_dateien?: any[];
+              };
+              v.verknuepft = (v.verknuepft ?? []).filter(
+                (x) => x.ordner.id !== args?.id,
+              );
+              v.verknuepft_dateien = (v.verknuepft_dateien ?? []).filter(
+                (d) => d.ordner !== args?.id,
+              );
+              return null;
+            }
             // D4: Sync-Zustand (ohne Angabe: kein Konto).
             if (cmd === "ablage_sync_stand")
               return (
@@ -494,7 +594,11 @@ async function installMock(
       });
     },
     {
-      sicht: opts.leer ? leereSicht() : demoSicht(),
+      sicht: opts.leer
+        ? leereSicht()
+        : opts.verknuepft
+          ? verknuepfteSicht()
+          : demoSicht(),
       theme: opts.theme,
       wahl: opts.wahl ?? null,
       sync: opts.sync ?? null,
@@ -1158,4 +1262,227 @@ test("1440 px: Sync-Zustand je Datei und Kontingent im Fuß (D4)", async ({
     "Abgleich unvollständig",
   );
   await page.screenshot({ path: join(SHOT_DIR, "d4-sync-1440-light.png") });
+});
+
+// D7 (lva#395): verknüpfte Ordner – eigener Bereich, nur lesen, nur dieses Gerät.
+for (const breite of BREITEN) {
+  test(`${breite} px: verknüpfter Ordner – Hinweis, nur lesen, keine Hochladen-Knöpfe`, async ({
+    page,
+  }) => {
+    await installMock(page, { theme: "light", verknuepft: true });
+    await offne(page, breite, "light");
+    await waehle(page, "ord_v1");
+    await expect(page.getByTestId("ablage-ordnername")).toHaveText(
+      "Projektunterlagen",
+    );
+    const hinweis = page.getByTestId("ablage-verknuepft-hinweis");
+    await expect(hinweis).toContainText("Nur lesen, nur dieses Gerät");
+    // Die KI erreicht verknüpfte Ordner nie: der Hinweis verspricht nichts anderes.
+    await expect(hinweis).toContainText(
+      "Die KI greift auf verknüpfte Ordner nicht zu.",
+    );
+    await expect(hinweis).not.toContainText("für Suche und KI");
+    await expect(
+      page.getByTestId("ablage-verknuepft-ausgelassen"),
+    ).toContainText("2 Einträge");
+    await expect(page.getByTestId("ablage-hochladen")).toHaveCount(0);
+    await expect(page.getByTestId("ablage-ordner-hochladen")).toHaveCount(0);
+    await expect(page.getByTestId("ablage-ordner-umbenennen")).toHaveCount(0);
+    await expect(page.getByTestId("ablage-ordner-papierkorb")).toHaveCount(0);
+    await expect(page.getByTestId("ablage-verknuepft-einlesen")).toBeVisible();
+    await expect(page.getByTestId("ablage-verknuepfung-loesen")).toBeVisible();
+    await page.getByTestId("ablage-datei-dat_v2").click();
+    const details =
+      breite >= 1024
+        ? page.getByTestId("ablage-seite-details")
+        : page.getByRole("dialog");
+    await expect(details.getByTestId("ablage-details-verknuepft")).toHaveText(
+      "Verknüpft – nur lesen, nur dieses Gerät",
+    );
+    await expect(details.getByTestId("ablage-textfehler")).toContainText(
+      "Texterkennung (OCR) ist auf diesem Gerät nicht verfügbar.",
+    );
+    await expect(details.getByTestId("ablage-umbenennen")).toHaveCount(0);
+    await expect(details.getByTestId("ablage-datei-papierkorb")).toHaveCount(0);
+    if (breite >= 1024)
+      await aufnahme(
+        page,
+        "verknuepft",
+        breite,
+        "light",
+        `[data-testid="ablage-seite"]`,
+      );
+    else await breiteOk(page);
+  });
+}
+
+// D7: Cloud-Dateien, die nur online liegen (Windows/OneDrive): sichtbar, nie gelesen.
+for (const breite of BREITEN) {
+  test(`${breite} px: verknüpfter Ordner – nur online: Zählung, Hinweis, Status ohne Text`, async ({
+    page,
+  }) => {
+    await installMock(page, { theme: "light", verknuepft: true });
+    await offne(page, breite, "light");
+    await waehle(page, "ord_v1");
+    const meldung = page.getByTestId("ablage-verknuepft-nur-online");
+    await expect(meldung).toContainText(
+      "2 Einträge liegen nur online und werden nicht gelesen.",
+    );
+    await expect(meldung).toContainText(
+      "In OneDrive „Immer auf diesem Gerät behalten“ wählen, damit der Text erfasst wird.",
+    );
+    // Die Übersprungenen nennen „nur online“ nicht mehr (eigene Zählung).
+    await expect(
+      page.getByTestId("ablage-verknuepft-ausgelassen"),
+    ).not.toContainText("online");
+    await page.getByTestId("ablage-datei-dat_v3").click();
+    const details =
+      breite >= 1024
+        ? page.getByTestId("ablage-seite-details")
+        : page.getByRole("dialog");
+    await expect(
+      details.getByTestId("ablage-nur-online-hinweis"),
+    ).toContainText("Immer auf diesem Gerät behalten");
+    await expect(details).toContainText("Nur online");
+    await expect(details.getByTestId("ablage-textfehler")).toHaveCount(0);
+  });
+
+  test(`${breite} px: verknüpfte Datei und Ordner – kein KI-Schalter, nur der Hinweis`, async ({
+    page,
+  }) => {
+    await installMock(page, { theme: "light", verknuepft: true });
+    await offne(page, breite, "light");
+    await waehle(page, "ord_v1");
+    // Liste und Ordnerbaum: kein KI-Chip, kein KI-Zeichen.
+    await expect(
+      page.getByTestId("ablage-datei-dat_v2").locator("xpath=ancestor::tr"),
+    ).not.toContainText("KI an");
+    await page.getByTestId("ablage-datei-dat_v2").click();
+    const details =
+      breite >= 1024
+        ? page.getByTestId("ablage-seite-details")
+        : page.getByRole("dialog");
+    await expect(details.getByTestId("ablage-ki-nicht-verfuegbar")).toHaveText(
+      "Nicht verfügbar (verknüpfter Ordner)",
+    );
+    await expect(details.getByTestId("ablage-ki-aendern")).toHaveCount(0);
+    // Datenklasse bleibt sichtbar.
+    await expect(details).toContainText("Vertraulich");
+    // Einstellungen des verknüpften Ordners: Datenklasse ja, KI-Schalter nein.
+    if (breite >= 1024)
+      await page
+        .getByTestId("ablage-seite-details")
+        .getByRole("button", { name: "Details schließen" })
+        .click();
+    else await page.keyboard.press("Escape");
+    await page.getByTestId("ablage-ordner-einstellungen").click();
+    const dlg = page.getByRole("dialog");
+    await expect(dlg.getByTestId("ablage-ki-nicht-verfuegbar")).toBeVisible();
+    await expect(dlg.getByTestId("ablage-ki-an")).toHaveCount(0);
+    await expect(dlg.getByTestId("ablage-ki-aus")).toHaveCount(0);
+    await expect(dlg.getByTestId("ablage-ki-gesperrt")).toHaveCount(0);
+    await expect(dlg.getByTestId("ablage-ki-erben")).toHaveCount(0);
+    await expect(
+      dlg.getByTestId("ablage-einstellungen-verknuepft"),
+    ).toContainText("die KI greift darauf nicht zu");
+    await expect(dlg).toContainText("Datenklasse");
+  });
+}
+
+// 390 px: das Blatt trägt Titel und Schließen-Knopf, der Inhalt hat keinen zweiten Kopf.
+test("390 px: Dateiblatt – genau ein Schließen-Knopf und der Titel genau einmal", async ({
+  page,
+}) => {
+  await installMock(page, { theme: "light", verknuepft: true });
+  await offne(page, 390, "light");
+  const pruefen = async (name: string) => {
+    const dlg = page.getByRole("dialog");
+    await expect(dlg).toBeVisible();
+    await expect(dlg.getByRole("button", { name: /schließen/i })).toHaveCount(
+      1,
+    );
+    await expect(dlg.getByText(name, { exact: true })).toHaveCount(1);
+    await expect(dlg.getByRole("heading", { name })).toHaveCount(1);
+    await dlg.getByRole("button", { name: /schließen/i }).click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+  };
+  // Verknüpfte Datei.
+  await waehle(page, "ord_v1");
+  await page.getByTestId("ablage-datei-dat_v2").click();
+  await pruefen("Scan Lageplan.png");
+  // Normale Ablage-Datei.
+  await waehle(page, "o_allg");
+  await page.getByTestId("ablage-datei-d1").click();
+  await pruefen("Protokoll Jour fixe 2026-11.docx");
+});
+
+test("390 px: Hochladeblatt – genau ein Schließen-Knopf und der Titel genau einmal", async ({
+  page,
+}) => {
+  await installMock(page, {
+    theme: "light",
+    wahl: ["C:/Eingang/Angebot Wartung 2027.pdf"],
+  });
+  await offne(page, 390, "light");
+  await waehle(page, "o_allg");
+  await page.getByTestId("ablage-hochladen").click();
+  const dlg = page.getByRole("dialog");
+  await expect(dlg).toBeVisible();
+  await expect(dlg.getByRole("button", { name: /schließen/i })).toHaveCount(1);
+  await expect(
+    dlg.getByRole("heading", { name: /hochladen|Datei/i }),
+  ).toHaveCount(1);
+});
+
+test("1440 px: Desktopdetails behalten ihren Kopf mit Titel und Schließen-Knopf", async ({
+  page,
+}) => {
+  await installMock(page, { theme: "light" });
+  await offne(page, 1440, "light");
+  await waehle(page, "o_allg");
+  await page.getByTestId("ablage-datei-d1").click();
+  const details = page.getByTestId("ablage-seite-details");
+  await expect(
+    details.getByRole("heading", { name: "Protokoll Jour fixe 2026-11.docx" }),
+  ).toHaveCount(1);
+  await expect(details.getByRole("button", { name: /schließen/i })).toHaveCount(
+    1,
+  );
+});
+
+test("1440 px: Ordner verknüpfen, neu einlesen und Verknüpfung lösen", async ({
+  page,
+}) => {
+  await installMock(page, {
+    theme: "light",
+    verknuepft: true,
+    wahl: "C:\\Daten\\Bauakten",
+  });
+  await offne(page, 1440, "light");
+  await expect(page.getByTestId("ablage-verknuepft-gruppe")).toHaveText(
+    "Verknüpfte Ordner (nur lesen)",
+  );
+  await page.getByTestId("ablage-verknuepfen").click();
+  await expect(page.getByTestId("ablage-ordnername")).toHaveText("Bauakten");
+  await expect(page.getByTestId("ablage-verknuepft-hinweis")).toBeVisible();
+  await waehle(page, "ord_v1");
+  await page.getByTestId("ablage-verknuepft-einlesen").click();
+  await page.getByTestId("ablage-verknuepfung-loesen").click();
+  const dlg = page.getByRole("dialog");
+  await expect(dlg).toContainText(
+    "Die Dateien im Ordner selbst bleiben unverändert.",
+  );
+  await dlg.getByTestId("ablage-bestaetigen").click();
+  await expect(page.getByTestId("ablage-ordner-ord_v1")).toHaveCount(0);
+  const aufrufe = (await page.evaluate(
+    () => (window as unknown as { __calls: [string, unknown][] }).__calls,
+  )) as [string, Record<string, unknown> | undefined][];
+  const je = (c: string) => aufrufe.filter(([cmd]) => cmd === c);
+  expect(je("ablage_verknuepfen")[0]?.[1]).toEqual({
+    pfad: "C:\\Daten\\Bauakten",
+  });
+  expect(je("ablage_verknuepft_abtasten")[0]?.[1]).toEqual({ id: "ord_v1" });
+  expect(je("ablage_verknuepfung_loesen")[0]?.[1]).toEqual({ id: "ord_v1" });
+  // Nichts davon darf hochladen oder abgleichen.
+  expect(je("ablage_importieren")).toHaveLength(0);
 });

@@ -206,6 +206,8 @@ export interface EinstellungenAenderung {
 /**
  * Ordnereinstellungen: KI-Freigabe (gerätelokal), Datenklasse, Nur dieses Gerät, KI-Entwürfe.
  * Ein Wechsel von „Nur dieses Gerät“ braucht eine Bestätigung mit Folge im selben Dialog.
+ * D7: Bei einem verknüpften Ordner nur KI-Freigabe und Datenklasse (ohne „Erben“); „Nur dieses
+ * Gerät“ gilt dort immer, KI-Entwürfe landen nie dort.
  */
 export const OrdnerEinstellungen: React.FC<{
   open: boolean;
@@ -239,12 +241,19 @@ export const OrdnerEinstellungen: React.FC<{
   const unklar = ordner?.ki.zustand === "unklar";
   if (!ordner) return null;
   const hatEltern = !!ordner.eltern;
+  const verknuepft = ordner.verknuepft;
   const mindest = geerbteKlasse(alle, ordner.id);
   const klassenOptionen: SelectOption[] = [
-    {
-      value: "erbt",
-      label: hatEltern ? t("ablage.klasse.erbt") : t("ablage.klasse.standard"),
-    },
+    ...(verknuepft
+      ? []
+      : [
+          {
+            value: "erbt",
+            label: hatEltern
+              ? t("ablage.klasse.erbt")
+              : t("ablage.klasse.standard"),
+          },
+        ]),
     ...KLASSEN.map((k) => ({
       value: k,
       label: t(`ablage.klasse.lang.${k}`),
@@ -252,7 +261,9 @@ export const OrdnerEinstellungen: React.FC<{
     })),
   ];
   const nurGeaendert = nur !== ordner.nur_geraet;
+  // Die KI erreicht verknüpfte Ordner nie: dort gibt es keine KI-Einstellung (nur einen Hinweis).
   const kiGeaendert =
+    !verknuepft &&
     !unklar &&
     (ki !== ordner.ki.zustand ||
       eigeneKi !== (!ordner.ki.von && !ordner.ki.vorgabe));
@@ -275,7 +286,7 @@ export const OrdnerEinstellungen: React.FC<{
       onOpenChange={(o) => !o && !busy && onClose()}
       title={t("ablage.einstellungen.titel", { name: ordner.name })}
       closeLabel={t("ablage.schliessen")}
-      initialFocusRef={unklar || bestaetigen ? undefined : kiRef}
+      initialFocusRef={unklar || bestaetigen || verknuepft ? undefined : kiRef}
       footer={
         bestaetigen ? (
           <>
@@ -334,32 +345,53 @@ export const OrdnerEinstellungen: React.FC<{
         </div>
       ) : (
         <div>
-          <div
-            className="ablage-grp"
-            style={{ padding: "0 0 4px" }}
-            id="ablage-ki-label"
-          >
-            {t("ablage.ki.titel")}
-          </div>
-          {unklar && (
-            <p className="ablage-mut" role="status">
-              {t("ablage.ki.unklarHinweis")}
-            </p>
+          {verknuepft ? (
+            <>
+              <div
+                className="ablage-grp"
+                style={{ padding: "0 0 4px" }}
+                id="ablage-ki-label"
+              >
+                {t("ablage.ki.fuerDieKi")}
+              </div>
+              <p
+                className="ablage-mut"
+                style={{ margin: "0 0 8px" }}
+                data-testid="ablage-ki-nicht-verfuegbar"
+              >
+                {t("ablage.ki.verknuepftNichtVerfuegbar")}
+              </p>
+            </>
+          ) : (
+            <>
+              <div
+                className="ablage-grp"
+                style={{ padding: "0 0 4px" }}
+                id="ablage-ki-label"
+              >
+                {t("ablage.ki.titel")}
+              </div>
+              {unklar && (
+                <p className="ablage-mut" role="status">
+                  {t("ablage.ki.unklarHinweis")}
+                </p>
+              )}
+              <KiWahl
+                wert={ki}
+                disabled={unklar}
+                labelledBy="ablage-ki-label"
+                fokusRef={kiRef}
+                onChange={(w) => {
+                  setKi(w);
+                  setEigeneKi(true);
+                }}
+              />
+              <p className="ablage-mut" style={{ margin: "6px 0 8px" }}>
+                {t("ablage.ki.erklaerung")}
+              </p>
+            </>
           )}
-          <KiWahl
-            wert={ki}
-            disabled={unklar}
-            labelledBy="ablage-ki-label"
-            fokusRef={kiRef}
-            onChange={(w) => {
-              setKi(w);
-              setEigeneKi(true);
-            }}
-          />
-          <p className="ablage-mut" style={{ margin: "6px 0 8px" }}>
-            {t("ablage.ki.erklaerung")}
-          </p>
-          {hatEltern && eigeneKi && !unklar && (
+          {!verknuepft && hatEltern && eigeneKi && !unklar && (
             <Button
               type="button"
               variant="ghost"
@@ -385,37 +417,49 @@ export const OrdnerEinstellungen: React.FC<{
             ariaLabel={t("ablage.klasse.titel")}
             onChange={(v) => v && setKlasse(v)}
           />
-          <div className="ablage-sw">
-            <span>
-              {t("ablage.nurGeraet.titel")}
-              <br />
-              <span className="ablage-mut">
-                {nurGeerbt
-                  ? t("ablage.nurGeraet.geerbt")
-                  : t("ablage.nurGeraet.hinweis")}
-              </span>
-            </span>
-            <Schalter
-              an={nur || nurGeerbt}
-              disabled={nurGeerbt}
-              label={t("ablage.nurGeraet.titel")}
-              onChange={setNur}
-            />
-          </div>
-          <div className="ablage-sw">
-            <span>
-              {t("ablage.entwuerfe.titel")}
-              <br />
-              <span className="ablage-mut">
-                {t("ablage.entwuerfe.hinweis")}
-              </span>
-            </span>
-            <Schalter
-              an={entwuerfe}
-              label={t("ablage.entwuerfe.titel")}
-              onChange={setEntwuerfe}
-            />
-          </div>
+          {verknuepft ? (
+            <p
+              className="ablage-mut"
+              style={{ margin: "8px 0 0" }}
+              data-testid="ablage-einstellungen-verknuepft"
+            >
+              {t("ablage.verknuepft.einstellungenHinweis")}
+            </p>
+          ) : (
+            <>
+              <div className="ablage-sw">
+                <span>
+                  {t("ablage.nurGeraet.titel")}
+                  <br />
+                  <span className="ablage-mut">
+                    {nurGeerbt
+                      ? t("ablage.nurGeraet.geerbt")
+                      : t("ablage.nurGeraet.hinweis")}
+                  </span>
+                </span>
+                <Schalter
+                  an={nur || nurGeerbt}
+                  disabled={nurGeerbt}
+                  label={t("ablage.nurGeraet.titel")}
+                  onChange={setNur}
+                />
+              </div>
+              <div className="ablage-sw">
+                <span>
+                  {t("ablage.entwuerfe.titel")}
+                  <br />
+                  <span className="ablage-mut">
+                    {t("ablage.entwuerfe.hinweis")}
+                  </span>
+                </span>
+                <Schalter
+                  an={entwuerfe}
+                  label={t("ablage.entwuerfe.titel")}
+                  onChange={setEntwuerfe}
+                />
+              </div>
+            </>
+          )}
         </div>
       )}
     </Dialog>

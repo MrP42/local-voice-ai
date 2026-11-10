@@ -112,6 +112,11 @@ pub(crate) fn leser_fuer(q: &IndexQuelle) -> Vec<String> {
         return vec![];
     }
     let mut l = vec![LESER_SUCHE.to_string()];
+    // D7: Dateien verknüpfter Ordner sind für die KI nie erreichbar (`ki::auszuege` kennt sie nicht,
+    // fail-closed). Ohne KI-Leser belegen sie auch keine Plätze im Kandidatenpool.
+    if q.verknuepft {
+        return l;
+    }
     let Some(klasse) = Klasse::aus_text(&q.klasse) else {
         return l;
     };
@@ -385,7 +390,7 @@ pub fn stuecke(text: &str, max: usize, ueber: usize) -> Vec<String> {
     aus
 }
 
-fn stempel(q: &IndexQuelle) -> String {
+pub(crate) fn stempel(q: &IndexQuelle) -> String {
     let mut h = Sha256::new();
     for teil in [
         q.fas.as_str(),
@@ -401,6 +406,11 @@ fn stempel(q: &IndexQuelle) -> String {
     ] {
         h.update(teil.as_bytes());
         h.update([0u8]);
+    }
+    // D7: verknüpfte Dateien tragen keine KI-Leser (anderes Quellrecht, also anderer Stempel). Der
+    // Stempel eigener Dateien bleibt unverändert, ihr Index wird nicht neu aufgebaut.
+    if q.verknuepft {
+        h.update(b"verknuepft\0");
     }
     super::extrakt::hex(&h.finalize())
 }
@@ -496,8 +506,13 @@ fn index_pfad(a: &Ablage) -> Res<PathBuf> {
 /// Textfassung lesen und prüfen (passende `textrev`); `None` bei fehlender oder fremder Datei.
 /// Der zweite Wert ist `true`, wenn die Fassung über [`MAX_TEXTFASSUNG`] lag und nur ihr Anfang (volle
 /// Abschnitte) gelesen wurde.
-fn textfassung_lesen(a: &Ablage, dat: &str, textrev: &str) -> Option<(Textfassung, bool)> {
-    begrenzt_lesen(&a.text_pfad(dat, textrev), textrev, MAX_TEXTFASSUNG)
+fn textfassung_lesen(a: &Ablage, q: &IndexQuelle, textrev: &str) -> Option<(Textfassung, bool)> {
+    let p = if q.verknuepft {
+        super::verknuepft::text_pfad(a.dir(), &q.dat, textrev)
+    } else {
+        a.text_pfad(&q.dat, textrev)
+    };
+    begrenzt_lesen(&p, textrev, MAX_TEXTFASSUNG)
 }
 
 pub(crate) fn begrenzt_lesen(p: &Path, textrev: &str, max: u64) -> Option<(Textfassung, bool)> {
@@ -608,7 +623,9 @@ pub fn nachholen(a: &Ablage) -> Res<Option<AblageIndexBericht>> {
 }
 
 fn abgleichen_gesperrt(a: &Ablage, emb: &AblageEinbettung) -> Res<AblageIndexBericht> {
-    let quellen = a.index_quellen()?;
+    let mut quellen = a.index_quellen()?;
+    // D7: Dateien verknüpfter Ordner (gerätelokal, nie synchronisiert) gehören in denselben Index.
+    quellen.extend(super::verknuepft::index_quellen(a)?);
     let pfad = index_pfad(a)?;
     std::fs::create_dir_all(a.dir()).map_err(|_| fehler())?;
     let mut c = verbinden(&pfad)?;
@@ -724,7 +741,7 @@ async fn schreiben(
                 let text = q
                     .textrev
                     .as_deref()
-                    .and_then(|rev| textfassung_lesen(a, &q.dat, rev))
+                    .and_then(|rev| textfassung_lesen(a, q, rev))
                     .map(|(t, gekuerzt)| {
                         if gekuerzt {
                             log::info!("ablage: Textfassung gekürzt indiziert ({})", q.dat);
@@ -982,7 +999,8 @@ pub fn suchen_mit(
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect();
-    let infos = a.treffer_infos(&dats)?;
+    let mut infos = a.treffer_infos(&dats)?;
+    infos.extend(super::verknuepft::treffer_infos(a, &dats));
     let mut je_datei: BTreeMap<String, AblageSuchtreffer> = BTreeMap::new();
     let mut reihenfolge: Vec<String> = Vec::new();
     for z in &antwort.citations {

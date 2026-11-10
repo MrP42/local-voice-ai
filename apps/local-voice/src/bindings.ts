@@ -1223,6 +1223,41 @@ async ablageSemantikLoeschen() : Promise<Result<AblageSemantik, string>> {
 }
 },
 /**
+ * D7: verknüpft einen Ordner des Geräts (nur lesen, nur dieses Gerät, nie hochgeladen). Liefert die
+ * Kennung; danach wird er gleich abgetastet, der Index abgeglichen und der Textarbeiter angestoßen.
+ */
+async ablageVerknuepfen(pfad: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_verknuepfen", { pfad }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * D7: löst eine Verknüpfung. Der Ordner und seine Dateien bleiben unberührt; Textfassungen, Index und
+ * Freigabe dieses Geräts zu ihm verschwinden.
+ */
+async ablageVerknuepfungLoesen(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_verknuepfung_loesen", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * D7: „Neu einlesen“: einen (oder ohne Kennung alle) verknüpften Ordner sofort abtasten.
+ */
+async ablageVerknuepftAbtasten(id: string | null) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_verknuepft_abtasten", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Stuft eine Aeusserung lokal ein (ADR-0028 E4.1) fuer Ansagen und S0-Vorlagen. `None`, wenn
  * diese abgeschaltet sind (`assistent_einstufung_aktiv`); das Tor vor dem Modell bleibt davon
  * unberuehrt. Der Text wird nicht protokolliert.
@@ -8520,7 +8555,11 @@ text: string | null;
 /**
  * Fehlercode bei `fehler` (z. B. `extrakt.zeit`, `extrakt.zip_grenze`); nie Inhalt.
  */
-text_code: string | null }
+text_code: string | null; 
+/**
+ * D7: Datei eines verknüpften Ordners (nur lesen; Name = Pfad im verknüpften Ordner).
+ */
+verknuepft: boolean }
 export type AblageEinstellungen = { datenklasse: string | null; nur_geraet: boolean | null; zielordner_ki: boolean | null }
 /**
  * Ergebnis von `ablage_entwurf_anlegen`.
@@ -8614,7 +8653,11 @@ datenklasse: string;
 /**
  * Wirksame Klasse (`public` … `personal`, `unbekannt`).
  */
-klasse: string; nur_geraet: boolean; nur_geraet_wirksam: boolean; zielordner_ki: boolean; ki: AblageKi; dateien: number }
+klasse: string; nur_geraet: boolean; nur_geraet_wirksam: boolean; zielordner_ki: boolean; ki: AblageKi; dateien: number; 
+/**
+ * D7: verknüpfter Ordner (nur lesen, nur dieses Gerät).
+ */
+verknuepft: boolean }
 /**
  * Zustand der semantischen Suche für die Seite „Ablage“.
  */
@@ -8688,7 +8731,11 @@ belegt: number;
  * KI-Freigaben wurden automatisch aus der Sicherung wiederhergestellt: Ordner ohne eigenen oder
  * geerbten Eintrag sind gesperrt, bis die Bedienung sie neu setzt oder den Stand bestätigt.
  */
-freigabe_wiederhergestellt: boolean }
+freigabe_wiederhergestellt: boolean; 
+/**
+ * D7: verknüpfte Ordner (gerätelokal, nur lesen) und ihre Dateien.
+ */
+verknuepft: AblageVerknuepft[]; verknuepft_dateien: AblageDatei[] }
 /**
  * Suchtreffer: Name und/oder Inhalt einer lebenden Datei.
  */
@@ -8714,6 +8761,27 @@ belegt: number | null; kontingent: number | null; eintraege: AblageSyncEintrag[]
  * Sync-Zustand eines Ordners oder einer Datei.
  */
 export type AblageSyncZustand = "synchronisiert" | "ausstehend" | "konflikt" | "wartet_auf_text" | "nur_geraet" | "angehalten"
+/**
+ * Ein verknüpfter Ordner für die Oberfläche.
+ */
+export type AblageVerknuepft = { ordner: AblageOrdner; erreichbar: boolean; 
+/**
+ * Übersprungene Einträge (Verknüpfungen, Hartlinks, zu tief).
+ */
+ausgelassen: number; 
+/**
+ * Dateien und Ordner, die nur online liegen (OneDrive „Dateien bei Bedarf“): die Dateien stehen mit Name
+ * und Größe in der Liste, werden aber nie gelesen; Ordner werden nicht betreten.
+ */
+nur_online: number; 
+/**
+ * Mehr als [`MAX_DATEIEN`] Dateien: nur die ersten sind erfasst.
+ */
+zu_viele: boolean; 
+/**
+ * Letztes Abtasten (ms), 0 = noch nie.
+ */
+abgetastet: number }
 export type AccountState = "not_configured" | "no_capabilities" | "needs_sign_in" | "needs_consent" | "ready"
 /**
  * Eine Aufgabe (Zeile in `action_items`). `assignee_label` ist Freitext, die
