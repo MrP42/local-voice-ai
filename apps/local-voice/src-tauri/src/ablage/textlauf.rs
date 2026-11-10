@@ -17,6 +17,9 @@
 //!   lebenden Kindes mehrfach hintereinander nicht lesen, endet der Lauf geschlossen mit
 //!   `extrakt.schutz` (wie unter Windows, wenn das Job-Objekt fehlt). Rest-Risiko: gemessen wird nur das
 //!   Kind selbst, nicht dessen Enkel (der Extraktor startet keine; die Zeitgrenze fängt den Rest ab).
+//!   Weiche Grenze: anders als `RLIMIT_AS` greift der Wächter erst bei der nächsten Messung; ein sehr
+//!   schnell belegendes Kind kann die Grenze um Belegungsrate × 20 ms überschreiten (bis einige hundert
+//!   MiB). Außerdem misst macOS physischen Speicher, Linux virtuellen; die 1-GiB-Grenze ist am Mac also laxer.
 //! * Kein Netz: der Extraktor enthält keinen Netzcode und bekommt nur den Pfad der einen Fassung. Eine
 //!   Netzsperre des Betriebssystems (Namensräume, Firewall-Regel) setzt diese Stufe nicht.
 //! * Ausgabe: stdout höchstens [`MAX_AUSGABE`] (mehr → `extrakt.zu_gross`, der Prozess wird sofort
@@ -332,7 +335,8 @@ fn antwort_lesen(b: &[u8]) -> Option<Antwort> {
 mod mac_waechter {
     /// So viele aufeinanderfolgende Fehlmessungen bei lebendem Kind (je ein Durchlauf der Warteschleife,
     /// rund 20 ms) gelten als „nicht messbar“; erst dann bricht der Lauf geschlossen ab. Eine einzelne
-    /// Fehlmessung ist normal: das Kind kann zwischen `try_wait` und der Messung enden.
+    /// Fehlmessung ist unschädlich (z. B. vorübergehender Fehler der API); ein zwischen `try_wait` und
+    /// Messung beendetes Kind ist als Zombie weiter messbar (`proc_pid_rusage` liefert dann den Endstand).
     pub(super) const MAX_FEHLMESSUNGEN: u32 = 10;
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
