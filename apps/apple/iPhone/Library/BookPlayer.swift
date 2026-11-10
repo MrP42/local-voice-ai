@@ -292,7 +292,7 @@ struct SourceMenu: View {
     @MainActor static var languagesOffered: Bool {
         let playback = LibraryPlayback.shared
         guard let book = playback.book, let raw = PhoneLibrary.shared.rawBook(book.id) else { return false }
-        return BookEditions(book: raw).hasLanguages || LiveLanguageSections.offered
+        return BookEditions(book: raw).hasLanguages || LiveLanguageModel.offered
     }
 
     @MainActor static var offered: Bool { sourcesOffered || languagesOffered }

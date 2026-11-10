@@ -37,63 +37,95 @@ struct LiveStatusLine: View {
     }
 }
 
+/// Zustand der Live-Auswahl. Liegt beim Blatt, damit `.task` und `.translationTask` genau einmal an der `List`
+/// hängen (an einer `Section` verteilten sie sich auf die Zeilen und rissen beim Scrollen ab).
+@MainActor final class LiveLanguageModel: ObservableObject {
+    @Published var states: [String: LiveLanguageState] = [:]
+    @Published var loading: String?
+    @Published var download: TranslationSession.Configuration?
+    @Published var message: String?
+    private let playback = LibraryPlayback.shared
+
+    /// Live geht nur mit Text des offenen Buchs (Quellsprache bekannt, Absätze geladen).
+    static var offered: Bool { LibraryPlayback.shared.liveSource != nil }
+
+    func languages(excluding editions: Set<String>) -> [(code: String, name: String)] {
+        let source = playback.liveSource.map(LiveTranslation.base)
+        return LiveLanguages.offered.filter { $0.code != source && !editions.contains($0.code) }
+    }
+
+    func refresh() async {
+        for lang in languages(excluding: []) { states[lang.code] = await playback.liveLanguageState(lang.code) }
+    }
+
+    /// `true`, wenn gleich umgestellt wurde (Blatt schließen); sonst läuft das Laden des Pakets.
+    func choose(_ code: String) -> Bool {
+        message = nil
+        switch states[code] ?? .unknown {
+        case .installed: apply(code); return true
+        case .downloadable:
+            guard let source = playback.liveSource else { return false }
+            loading = code
+            download = TranslationSession.Configuration(source: LiveTranslationSupport.language(source),
+                                                        target: LiveTranslationSupport.language(code))
+            return false
+        case .unsupported, .unknown: return false
+        }
+    }
+
+    /// Nur für fehlende Pakete: Systemblatt mit Zustimmung, dann laden (Spez §3). `true`, wenn danach live.
+    func finishDownload(_ session: TranslationSession) async -> Bool {
+        guard let code = loading else { return false }
+        defer { loading = nil; download = nil }
+        do {
+            try await session.prepareTranslation()
+            await refresh()
+            if states[code] == .installed { apply(code); return true }
+            message = "Die Sprache ist noch nicht geladen. Bitte erneut versuchen."
+        } catch is CancellationError {
+            message = "Laden abgelehnt. Die Sprache bleibt ungeladen."
+        } catch {
+            message = "Laden fehlgeschlagen. Zum Laden ist eine Internetverbindung nötig."
+        }
+        return false
+    }
+
+    /// Aus dem Hörbuch: an derselben Stelle zur Vorlesestimme wechseln, dann live (Spez §5).
+    private func apply(_ code: String) {
+        if playback.source == .audiobook { playback.switchSource(to: .voice) }
+        playback.setLive(code)
+    }
+}
+
 /// Abschnitte „Buchsprache“ (nur ohne Angabe am Buch) und „Live übersetzen“ für das Blatt „Sprache“.
 /// `editionLanguages`: Sprachen, die das Buch als eigene Fassung hat; sie stehen oben und werden hier nicht
 /// noch einmal als Live-Sprache angeboten. Pakete laden nur auf ausdrücklichen Tipp (Systemzustimmung).
 struct LiveLanguageSections: View {
+    @ObservedObject var model: LiveLanguageModel
     var editionLanguages: Set<String> = []
     @ObservedObject var playback = LibraryPlayback.shared
     @Environment(\.dismiss) private var dismiss
-    @State private var states: [String: LiveLanguageState] = [:]
-    @State private var loading: String?
-    @State private var download: TranslationSession.Configuration?
-    @State private var message: String?
-
-    /// Live geht nur mit Text (Quellsprache bekannt).
-    @MainActor static var offered: Bool { LibraryPlayback.shared.liveSource != nil }
-
-    private var languages: [(code: String, name: String)] {
-        let source = playback.liveSource.map(LiveTranslation.base)
-        return LiveLanguages.offered.filter { $0.code != source && !editionLanguages.contains($0.code) }
-    }
 
     var body: some View {
-        if Self.offered {
+        if LiveLanguageModel.offered {
             sourceSection
             Section {
-                ForEach(languages, id: \.code) { lang in
-                    let state = states[lang.code] ?? .unknown
-                    Button { choose(lang.code, state) } label: {
+                ForEach(model.languages(excluding: editionLanguages), id: \.code) { lang in
+                    let state = model.states[lang.code] ?? .unknown
+                    Button { if model.choose(lang.code) { dismiss() } } label: {
                         row(title: lang.name, detail: detail(lang.code, state), selected: playback.liveTarget == lang.code)
                     }
                     .buttonStyle(.plain)
-                    .disabled(state == .unsupported || loading != nil || !playback.liveSourceConfirmed)
+                    .disabled(state == .unsupported || model.loading != nil || !playback.liveSourceConfirmed)
                     .accessibilityHint("Liest das Buch live in dieser Sprache vor, die Stelle im Buch bleibt")
                 }
             } header: {
                 Text("Live übersetzen")
             } footer: {
                 VStack(alignment: .leading, spacing: 6) {
-                    if let message { Text(message).foregroundStyle(.orange) }
+                    if let message = model.message { Text(message).foregroundStyle(.orange) }
                     Text("Liest die gewählte Fassung in einer anderen Sprache vor. Übersetzt wird auf dem iPhone, nur die gerade gelesene Stelle mit kurzem Vorlauf, ohne Kosten. Apple kann Nutzungs- und Leistungsdaten ohne Textinhalt erheben. Maschinelle Übersetzung, Fehler sind möglich. Zurück zum Original: oben die aktuelle Sprache antippen.")
                 }
-            }
-            .task(id: playback.liveSource) { await refresh() }
-            .translationTask(download) { session in
-                // Nur für fehlende Pakete: Systemblatt mit Zustimmung, dann laden (Spez §3).
-                guard let code = loading else { return }
-                do {
-                    try await session.prepareTranslation()
-                    await refresh()
-                    if states[code] == .installed { apply(code) }
-                    else { message = "Die Sprache ist noch nicht geladen. Bitte erneut versuchen." }
-                } catch is CancellationError {
-                    message = "Laden abgelehnt. Die Sprache bleibt ungeladen."
-                } catch {
-                    message = "Laden fehlgeschlagen. Zum Laden ist eine Internetverbindung nötig."
-                }
-                loading = nil
-                download = nil
             }
         }
     }
@@ -109,7 +141,7 @@ struct LiveLanguageSections: View {
                     Spacer(minLength: 8)
                     Menu("Ändern") {
                         ForEach(LiveLanguages.offered, id: \.code) { lang in
-                            Button(lang.name) { message = nil; playback.confirmLiveSource(lang.code) }
+                            Button(lang.name) { model.message = nil; playback.confirmLiveSource(lang.code) }
                         }
                     }
                     .frame(minHeight: 44)
@@ -146,36 +178,12 @@ struct LiveLanguageSections: View {
     }
 
     private func detail(_ code: String, _ state: LiveLanguageState) -> String? {
-        if loading == code { return "Live · Sprachpaket wird geladen …" }
+        if model.loading == code { return "Live · Sprachpaket wird geladen …" }
         switch state {
         case .installed: return nil
         case .downloadable: return "Live · Antippen lädt das Sprachpaket"
         case .unsupported: return "Live · auf diesem iPhone nicht verfügbar"
         case .unknown: return "Live · wird geprüft …"
         }
-    }
-
-    private func choose(_ code: String, _ state: LiveLanguageState) {
-        message = nil
-        switch state {
-        case .installed: apply(code)
-        case .downloadable:
-            guard let source = playback.liveSource else { return }
-            loading = code
-            download = TranslationSession.Configuration(source: LiveTranslationSupport.language(source),
-                                                        target: LiveTranslationSupport.language(code))
-        case .unsupported, .unknown: break
-        }
-    }
-
-    /// Aus dem Hörbuch: an derselben Stelle zur Vorlesestimme wechseln, dann live (Spez §5).
-    private func apply(_ code: String) {
-        if playback.source == .audiobook { playback.switchSource(to: .voice) }
-        playback.setLive(code)
-        dismiss()
-    }
-
-    private func refresh() async {
-        for lang in languages { states[lang.code] = await playback.liveLanguageState(lang.code) }
     }
 }

@@ -1,4 +1,5 @@
 import SwiftUI
+import Translation
 
 // Sprachfassungen eines Buchs auf dem iPhone (lva#344), nach der abgenommenen Vorschau
 // `apps/local-voice/docs/vorschau/sprachfassungen/` (sf-09 Blatt „Sprache und Quelle“, sf-10 Regal).
@@ -16,6 +17,7 @@ struct LanguageSourceSheet: View {
     @ObservedObject var downloads = AudioDownloads.shared
     @ObservedObject var sync = LibrarySync.shared
     @Environment(\.dismiss) private var dismiss
+    @StateObject private var live = LiveLanguageModel()
 
     private var raw: LibraryBook? { playback.book.flatMap { library.rawBook($0.id) } }
     private var editions: BookEditions? { raw.map { BookEditions(book: $0) } }
@@ -38,7 +40,7 @@ struct LanguageSourceSheet: View {
                     // Nur eine Fassung: das Original als Rückweg aus der Live-Übersetzung (lva#358).
                     Section("Sprache") { originalRow(source) }
                 }
-                LiveLanguageSections(editionLanguages: editionLanguages)
+                LiveLanguageSections(model: live, editionLanguages: editionLanguages)
                 if showsSources {
                     Section("Quelle") { sourceRows }
                 }
@@ -46,6 +48,11 @@ struct LanguageSourceSheet: View {
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Fertig") { dismiss() } } }
+            // Einmal an der Liste, nicht an einer Section (lva#358).
+            .task(id: playback.liveSource) { await live.refresh() }
+            .translationTask(live.download) { session in
+                if await live.finishDownload(session) { dismiss() }
+            }
         }
         .presentationDetents([.medium, .large])
     }
@@ -57,7 +64,7 @@ struct LanguageSourceSheet: View {
     }
 
     private var title: String {
-        switch (showsLanguages || LiveLanguageSections.offered, showsSources) {
+        switch (showsLanguages || LiveLanguageModel.offered, showsSources) {
         case (true, true): return "Sprache und Quelle"
         case (true, false): return "Sprache"
         default: return "Quelle"
@@ -122,7 +129,7 @@ struct LanguageSourceSheet: View {
         let name = edition.languageName.isEmpty ? "Sprache unbekannt" : edition.languageName
         Button {
             switch act {
-            case .current: playback.setLive(nil); dismiss()  // zurück zum Original, falls live übersetzt wird
+            case .current: if playback.liveTarget != nil { playback.setLive(nil) }; dismiss()  // zurück zum Original
             case .switchTo: playback.switchLanguage(to: edition.id); dismiss()
             case .download: playback.downloadThenSwitch(view)
             case .unavailable: break
@@ -130,7 +137,7 @@ struct LanguageSourceSheet: View {
         } label: {
             HStack(spacing: 12) {
                 Image(systemName: "checkmark").font(.body.weight(.semibold)).frame(width: 22)
-                    .opacity(act == .current ? 1 : 0).accessibilityHidden(true)
+                    .opacity(act == .current && playback.liveTarget == nil ? 1 : 0).accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(name).font(.body)
                     Text(media(edition)).font(.footnote).foregroundStyle(VoicePalette.secondaryText)
@@ -152,7 +159,7 @@ struct LanguageSourceSheet: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(name), \(media(edition))")
         .accessibilityValue(act == .current ? (playback.liveTarget == nil ? "Aktuell. \(state)" : state) : state)
-        .accessibilityAddTraits(act == .current ? [.isButton, .isSelected] : .isButton)
+        .accessibilityAddTraits(act == .current && playback.liveTarget == nil ? [.isButton, .isSelected] : .isButton)
         .accessibilityHint(hint(act))
     }
 
@@ -235,7 +242,7 @@ struct LanguageButton: View {
     var body: some View {
         if let book = playback.book, let raw = library.rawBook(book.id) {
             let editions = BookEditions(book: raw)
-            if editions.hasLanguages || LiveLanguageSections.offered {
+            if editions.hasLanguages || LiveLanguageModel.offered {
                 let current = editions.hasLanguages ? (editions.edition(playback.editionId) ?? editions.readingEdition) : nil
                 let short = playback.liveTarget.map(LiveLanguages.short)
                     ?? current?.languageShort ?? playback.liveSource.map(LiveLanguages.short) ?? "–"

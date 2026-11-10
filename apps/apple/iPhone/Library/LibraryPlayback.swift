@@ -766,6 +766,9 @@ final class LibraryPlayback: NSObject, ObservableObject {
 
     /// Quellsprache: Angabe am Buch, sonst die bestätigte, sonst aus dem Text erkannt (unbestätigt).
     private func resolveLiveSource(_ book: LibraryBook) {
+        defer { liveSwitch = LiveSwitch(source: liveSource) }
+        // Ohne Text keine Live-Übersetzung (reines Hörbuch): kein Angebot im Blatt.
+        guard !text.isEmpty else { liveSource = nil; liveSourceDeclared = false; liveSourceConfirmed = false; return }
         if let declared = LiveTranslation.declared(book.language) {
             liveSource = declared; liveSourceDeclared = true; liveSourceConfirmed = true
         } else if let confirmed = UserDefaults.standard.string(forKey: Self.liveSourceKey(book)) {
@@ -774,7 +777,6 @@ final class LibraryPlayback: NSObject, ObservableObject {
             liveSource = text.isEmpty ? nil : LiveTranslationSupport.sourceLanguage(declared: nil, text: text)
             liveSourceDeclared = false; liveSourceConfirmed = false
         }
-        liveSwitch = LiveSwitch(source: liveSource)
     }
 
     /// Erkannte Buchsprache bestätigen oder ändern (je Buch gemerkt). Eine laufende Live-Übersetzung aus der
@@ -804,7 +806,10 @@ final class LibraryPlayback: NSObject, ObservableObject {
         let id = book.id
         Task { [weak self] in
             guard await LiveTranslationSupport.state(from: source, to: saved) == .installed,
-                  let self, self.book?.id == id, self.mode == .readAloud else { return }
+                  let self, self.book?.id == id, self.mode == .readAloud,
+                  // Eine Wahl des Nutzers während der Prüfung hat Vorrang; der Merker wird nach dem Warten neu gelesen.
+                  self.liveTarget == nil, self.liveSwitch.wantedTarget == nil,
+                  UserDefaults.standard.string(forKey: Self.liveKey(id)) == saved else { return }
             self.setLive(saved)
         }
     }
