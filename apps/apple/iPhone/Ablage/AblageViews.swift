@@ -33,6 +33,11 @@ enum AblageAnzeigeText {
         }
     }
 
+    /// Ordnerpfad zum Vorlesen: „Verträge › Miete“ wird „Verträge, Miete“ (das Zeichen › liest VoiceOver nicht sinnvoll).
+    static func pfadGesprochen(_ pfad: String) -> String {
+        pfad.replacingOccurrences(of: " › ", with: ", ")
+    }
+
     static func groesse(_ bytes: UInt64?) -> String? {
         bytes.map { ByteCountFormatter.string(fromByteCount: Int64(clamping: $0), countStyle: .file) }
     }
@@ -107,7 +112,8 @@ struct AblageDateiZeile: View {
         }
         .padding(.vertical, 4)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(([datei.name, AblageAnzeigeText.zustand(datei.zustand, imKorb: datei.imKorb).text, AblageAnzeigeText.typ(datei.typ), AblageAnzeigeText.groesse(datei.groesse),
+        .accessibilityLabel(([datei.name, pfad.flatMap { $0.isEmpty ? nil : "in Ordner \(AblageAnzeigeText.pfadGesprochen($0))" },
+                              AblageAnzeigeText.zustand(datei.zustand, imKorb: datei.imKorb).text, AblageAnzeigeText.typ(datei.typ), AblageAnzeigeText.groesse(datei.groesse),
                               nichtGeladen ? "Original nicht geladen, erneut antippen" : nil].compactMap { $0 }).joined(separator: ", "))
     }
 }
@@ -131,6 +137,8 @@ struct AblageStart: View {
     @State private var eingeklappt: Set<String> = []
     @State private var korbOffen = false
     @State private var showSync = false
+    /// Zeilen und Papierkorb des Baums, nur bei neuer Übersicht oder neuem Klappstand berechnet (nicht bei jeder Auswertung des Körpers).
+    @State private var baumStand = AblageBaumZwischenspeicher()
     @ScaledMetric(relativeTo: .body) private var einzug: CGFloat = 16
     @Environment(\.dynamicTypeSize) private var typeSize
 
@@ -181,8 +189,8 @@ struct AblageStart: View {
 
     @ViewBuilder private var baum: some View {
         if let u = ablage.uebersicht {
-            let zeilen = AblageBaum.zeilen(u, eingeklappt: eingeklappt)
-            let korb = AblageBaum.papierkorb(u)
+            let ansicht = baumStand.ansicht(u, version: ablage.indexVersion, eingeklappt: eingeklappt)
+            let zeilen = ansicht.zeilen, korb = ansicht.korb
             if zeilen.isEmpty && korb.isEmpty {
                 leer
             }
@@ -226,10 +234,20 @@ struct AblageStart: View {
         .buttonStyle(.plain)
         .listRowInsets(EdgeInsets(top: 2, leading: 16 + min(CGFloat(tiefe), typeSize.isAccessibilitySize ? 1 : 4) * einzug, bottom: 2, trailing: 16))
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(name), Ordner, \(anzahl) \(anzahl == 1 ? "Datei" : "Dateien"), \(AblageAnzeigeText.klasse(klasse)), \(offen ? "geöffnet" : "geschlossen")")
+        .accessibilityLabel(ordnerBeschriftung(id: id, name: name, klasse: klasse, zustand: zustand, anzahl: anzahl, offen: offen))
         .accessibilityHint(offen ? "Doppeltippen zum Schließen" : "Doppeltippen zum Öffnen")
         .accessibilityAddTraits(.isButton)
         .accessibilityIdentifier("ablageOrdner")
+    }
+
+    /// VoiceOver-Text der Ordnerzeile: dasselbe, was sie zeigt, samt Zustand („Nur Gerät“, „Angehalten“); die Klasse fehlt wie auf dem
+    /// Bildschirm bei „Ohne Ordner“.
+    private func ordnerBeschriftung(id: String, name: String, klasse: AblageKlasse, zustand: AblageSyncZustand, anzahl: Int, offen: Bool) -> String {
+        var teile = [name, "Ordner", "\(anzahl) \(anzahl == 1 ? "Datei" : "Dateien")"]
+        if klasse != .unbekannt || id != AblageBaum.ohneOrdner { teile.append(AblageAnzeigeText.klasse(klasse)) }
+        if zustand == .nurGeraet || zustand == .angehalten { teile.append(AblageAnzeigeText.zustand(zustand).text) }
+        teile.append(offen ? "geöffnet" : "geschlossen")
+        return teile.joined(separator: ", ")
     }
 
     @ViewBuilder private func papierkorb(_ korb: [AblageDateiEintrag]) -> some View {
@@ -298,7 +316,7 @@ struct AblageStart: View {
                                 Text(AblageAnzeigeText.hervorgehoben(s.auszug, woerter: woerter)).font(.body).foregroundStyle(VoicePalette.text).lineLimit(4)
                             }
                             .accessibilityElement(children: .ignore)
-                            .accessibilityLabel("Fundstelle in \(r.eintrag.name), \(AblageAnker.beschreibung(s.anker)): \(s.auszug)")
+                            .accessibilityLabel("Fundstelle in \(r.eintrag.name)\(r.ordnerPfad.isEmpty ? "" : ", Ordner \(AblageAnzeigeText.pfadGesprochen(r.ordnerPfad))"), \(AblageAnker.beschreibung(s.anker)): \(s.auszug)")
                         }
                         .accessibilityIdentifier("ablageFundstelle")
                         .listRowInsets(EdgeInsets(top: 2, leading: 16 + einzug, bottom: 2, trailing: 16))

@@ -15,7 +15,12 @@ import Foundation
 //   `idf · f·(k1+1) / (f + k1·(1 − b + b·D/avgdl))` mit k1 = 1,2, b = 0,75, `idf = ln((N − n + 0,5)/(n + 0,5))` (≤ 0 wird 1e-6),
 //   N = alle Stücke, n = Stücke mit der Phrase, D = Wörter des Stücks, avgdl = Wörter aller Stücke / N. Sortierung: bm25
 //   aufsteigend (also Punkte absteigend), dann Stück-Kennung; höchstens 3000 Zeilen (`LIMIT`), höchstens 3 Stellen je Datei,
-//   höchstens 60 Kandidaten. Kennung = Reihenfolge im Index (Dateien nach Kennung (Bytes), Stücke nach `seite`).
+//   höchstens 60 Kandidaten. Stück-Kennung = Reihenfolge im Index (Dateien nach Kennung (Bytes), Stücke nach `seite`).
+//   Gleichstand im Rang (gleicher Rohrang): der Desktop bricht ihn nach `c.id` auf, der Reihenfolge, in der sein Index die Stücke
+//   angelegt hat (er führt den Index nach: neue und geänderte Dateien kommen später, nicht nach Kennung geordnet); Swift baut den
+//   Index jedes Mal aus dem Zustand neu und bricht nach Dateikennung (Bytes), dann `seite` auf. Reihenfolge und Rohrang sind also
+//   nur OHNE Gleichstand gleich (der Normalfall bei echten Texten); bei gleichem Rohrang kann die Reihenfolge dieser Treffer vom
+//   Desktop abweichen (die Vektoren in `ablage-index-vektoren.json` prüfen den Fall ohne Gleichstand und die Rohränge).
 // - Gruppierung wie `index::suchen_mit`: je Datei die besten Stellen (höchstens 3, nie zwei mit gleichem Anker), Dateien in
 //   der Reihenfolge ihrer besten Stelle.
 //
@@ -76,30 +81,48 @@ public final class AblageIndex: Sendable {
 
     // MARK: Vorbereitung (je Textfassung, lässt sich zwischenspeichern)
 
-    /// Ein Stück mit seinen Wörtern.
+    /// Ein Stück mit seinen Wörtern, als Nummern in `Vorbereitet.begriffe` (nicht als Zeichenketten: der Zwischenspeicher hält die
+    /// Stücke aller Dateien dauerhaft, und ein Wort kommt in einer Datei viele Male vor).
     public struct VorbereitetesStueck: Sendable {
         let abschnitt: Int
         let anker: String
         let pfad: [String]
         let text: String
-        let woerter: [String]
+        let woerter: [Int32]
     }
 
     /// Die Stücke einer Textfassung samt Wörtern. Hängt nur von der Textfassung ab (Kennung, `textrev`), nicht vom Rest des Index.
+    /// Die Wörter der Stücke sind Nummern in `begriffe` (die verschiedenen Wörter der Datei, in der Reihenfolge ihres ersten
+    /// Vorkommens); der Index bildet sie beim Aufbau auf seine eigenen Nummern ab.
     public struct Vorbereitet: Sendable {
         public let dat: String
         let stuecke: [VorbereitetesStueck]
+        let begriffe: [String]
         public var anzahlStuecke: Int { stuecke.count }
     }
 
     public static func vorbereiten(dat: String, abschnitte: [AblageAbschnitt]) -> Vorbereitet {
         var aus: [VorbereitetesStueck] = []
+        var nummern: [String: Int32] = [:]
+        var begriffe: [String] = []
         for (i, ab) in abschnitte.enumerated() {
             for s in AblageSuchtext.stuecke(ab.text) {
-                aus.append(VorbereitetesStueck(abschnitt: i, anker: ab.anker, pfad: ab.pfad, text: s, woerter: AblageSuchtext.fts5Woerter(s)))
+                let woerter = AblageSuchtext.fts5Woerter(s)
+                var ids: [Int32] = []
+                ids.reserveCapacity(woerter.count)
+                for w in woerter {
+                    if let id = nummern[w] { ids.append(id) } else {
+                        // Höchstens so viele verschiedene Wörter, wie der Text Zeichen hat (Textfassung höchstens 32 MiB): passt in Int32.
+                        let id = Int32(begriffe.count)
+                        nummern[w] = id
+                        begriffe.append(w)
+                        ids.append(id)
+                    }
+                }
+                aus.append(VorbereitetesStueck(abschnitt: i, anker: ab.anker, pfad: ab.pfad, text: s, woerter: ids))
             }
         }
-        return Vorbereitet(dat: dat, stuecke: aus)
+        return Vorbereitet(dat: dat, stuecke: aus, begriffe: begriffe)
     }
 
     // MARK: Aufbau
@@ -126,8 +149,8 @@ public final class AblageIndex: Sendable {
     private let postings: [[Posting]]
     private let gesamtWoerter: Int
 
-    /// Baut den Index. Die Dateien werden nach Kennung (Bytes) geordnet, wie der Desktop sie aus seinem Bestand liest; die
-    /// Reihenfolge entscheidet nur bei Gleichstand im Rang.
+    /// Baut den Index. Die Dateien werden nach Kennung (Bytes) geordnet (wie der Desktop sie bei einem Neuaufbau aus seinem
+    /// Bestand liest); die Reihenfolge entscheidet nur bei Gleichstand im Rang.
     public init(_ dokumente: [Vorbereitet]) {
         let geordnet = AblageBytes.sorted(dokumente, by: \.dat)
         var dateien: [String] = []
@@ -136,18 +159,20 @@ public final class AblageIndex: Sendable {
         var woerterGesamt = 0
         for (d, dok) in geordnet.enumerated() {
             dateien.append(dok.dat)
+            // Nummern der Datei auf Nummern des Index abbilden (ein Nachschlagen je verschiedenem Wort der Datei, nicht je Vorkommen).
+            var abbildung: [Int32] = []
+            abbildung.reserveCapacity(dok.begriffe.count)
+            for w in dok.begriffe {
+                if let id = begriffe[w] { abbildung.append(id) } else {
+                    let id = Int32(begriffe.count)
+                    begriffe[w] = id
+                    abbildung.append(id)
+                }
+            }
             var seite = 0
             for st in dok.stuecke {
                 seite += 1
-                var ids: [Int32] = []
-                ids.reserveCapacity(st.woerter.count)
-                for w in st.woerter {
-                    if let id = begriffe[w] { ids.append(id) } else {
-                        let id = Int32(begriffe.count)
-                        begriffe[w] = id
-                        ids.append(id)
-                    }
-                }
+                let ids = st.woerter.map { abbildung[Int($0)] }
                 woerterGesamt += ids.count
                 chunks.append(Chunk(dok: Int32(d), seite: Int32(seite), abschnitt: Int32(st.abschnitt), anker: st.anker, pfad: st.pfad,
                                     text: st.text, woerter: ids))

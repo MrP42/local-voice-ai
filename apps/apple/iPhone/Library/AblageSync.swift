@@ -106,6 +106,9 @@ final class AblageSync: ObservableObject {
     private let dienst: AblageDienst
     private let suchdienst = AblageSuchdienst()
     private let sync: LibrarySync
+    /// Nummer, Epoche und Konto jeder Aktualisierung der Ansicht: nur die neueste setzt ihr Ergebnis, nach Abmelden und Neuanmelden
+    /// nichts Altes mehr (`AblageStandsfolge`, VoiceCore, mit Tests). Nur auf dem Hauptthread.
+    private var standsfolge = AblageStandsfolge()
 
     /// `Application Support/Ablage` im App-Container.
     static var standardWurzel: URL {
@@ -135,6 +138,9 @@ final class AblageSync: ObservableObject {
     private func konto(_ acc: LibrarySync.Account) -> AblageKonto {
         AblageKonto(key: [UInt8](acc.key), userId: acc.userId, hubUrl: acc.url)
     }
+
+    /// Kennung des Kontos, das jetzt angemeldet ist (`nil` ohne Konto); dieselbe Kennung bindet den Zustand auf der Platte.
+    private var aktuelleKennung: String? { sync.account.map { konto($0).kennung } }
 
     // MARK: Abgleich
 
@@ -167,7 +173,7 @@ final class AblageSync: ObservableObject {
             for a in angefordert { fehlgeschlageneOriginale.remove(Self.schluessel(dat: a.dat, fas: a.fas)) }
             for a in b.fehlgeschlageneAnforderungen { fehlgeschlageneOriginale.insert(Self.schluessel(dat: a.dat, fas: a.fas)) }
             let nicht = b.fehlgeschlageneAnforderungen.count
-            await kontingentHolen(acc)
+            kontingentAnstossen(acc)
             status = b.downloadsRuhen ? "Ablage: abgeglichen, Dateien warten"
                 : b.downloadsUnterbrochen ? "Ablage: abgeglichen, Dateien unvollständig"
                 : nicht > 0 ? "Ablage: abgeglichen, \(nicht) \(nicht == 1 ? "Datei" : "Dateien") nicht geladen"
@@ -185,10 +191,17 @@ final class AblageSync: ObservableObject {
         }
     }
 
-    /// Belegung und Kontingent am Hub; ein Fehler ist nicht schlimm (die Zeile fehlt dann).
-    private func kontingentHolen(_ acc: LibrarySync.Account) async {
-        guard let (code, data) = try? await LibrarySync.send(acc.url + "/api/v1/voice/blobs", method: "GET", token: acc.token), code == 200 else { return }
-        kontingent = AblageKontingent(antwort: data)
+    /// Belegung und Kontingent am Hub, in eigener Aufgabe: die Anfrage kann bis zur Zeitüberschreitung (60 s) hängen und darf weder
+    /// die Aktualisierung der Seite noch den Lauf aufhalten (`running`). Ein Fehler ist nicht schlimm (die Zeile fehlt dann). Das
+    /// Ergebnis wird nur übernommen, wenn Konto und Epoche noch dieselben sind (nicht nach Abmelden oder Kontowechsel).
+    private func kontingentAnstossen(_ acc: LibrarySync.Account) {
+        let marke = standsfolge.kontoMarke(konto: konto(acc).kennung)
+        let url = acc.url + "/api/v1/voice/blobs", token = acc.token
+        Task { [weak self] in
+            guard let (code, data) = try? await LibrarySync.send(url, method: "GET", token: token), code == 200 else { return }
+            guard let self, self.standsfolge.kontoGilt(marke, konto: self.aktuelleKennung) else { return }
+            self.kontingent = AblageKontingent(antwort: data)
+        }
     }
 
     /// Lädt ein Original auf ausdrückliche Anforderung (Vorschau, Öffnen, Teilen) und gibt den Pfad zurück. Gilt die Regel
@@ -220,19 +233,25 @@ final class AblageSync: ObservableObject {
         return v?.volumeAvailableCapacityForImportantUsage.flatMap { $0 >= 0 ? UInt64($0) : nil }
     }
 
-    /// Liest die Übersicht neu (abseits des Haupt-Threads).
-    /// Übersicht und Suchindex neu (abseits des Haupt-Threads). Nach einem Abmelden während des Lesens wird nichts mehr gesetzt.
+    /// Übersicht, Abdeckung und Suchindex neu aus dem Zustand auf der Platte (abseits des Haupt-Threads). Läuft mehr als eine
+    /// Aktualisierung gleichzeitig (Lauf, Laden eines Originals), setzt nur die zuletzt begonnene ihr Ergebnis; ein Ergebnis aus
+    /// der Zeit vor einem Abmelden oder für ein anderes Konto wird verworfen (`AblageStandsfolge`). Der Suchdienst liest den
+    /// Zustand selbst, wenn er an der Reihe ist, und weist ältere Aufrufe ab: auch der Index fällt nie auf einen älteren Stand zurück.
     func aktualisiere() async {
-        guard let acc = sync.account else { uebersicht = nil; abdeckung = nil; return }
-        let speicher = self.speicher, kennung = konto(acc).kennung, such = suchdienst
-        let (u, ab) = await Task.detached(priority: .utility) { () -> (AblageUebersicht, AblageAbdeckung) in
-            let z = speicher.laden(konto: kennung).zustand
-            let ab = await such.aktualisieren(zustand: z, speicher: speicher)
-            return (AblageAnzeige.uebersicht(z, vorhanden: speicher.vorhanden(z.bestand)), ab)
+        guard let acc = sync.account else {
+            standsfolge.verwerfen()
+            uebersicht = nil; abdeckung = nil
+            return
+        }
+        let kennung = konto(acc).kennung
+        let marke = standsfolge.beginnen(konto: kennung)
+        let speicher = self.speicher, such = suchdienst
+        let ansicht = await Task.detached(priority: .utility) {
+            await such.ansichtAktualisieren(speicher: speicher, konto: kennung, nummer: marke.nummer)
         }.value
-        guard sync.account != nil else { return }
-        uebersicht = u
-        abdeckung = ab
+        guard let ansicht, standsfolge.gilt(marke, konto: aktuelleKennung) else { return }
+        uebersicht = ansicht.uebersicht
+        abdeckung = ansicht.abdeckung
         indexVersion += 1
     }
 
@@ -279,8 +298,11 @@ final class AblageSync: ObservableObject {
     /// Bricht laufende Läufe und Downloads ab und WARTET, bis sie beendet sind, bevor es löscht (`AblageDienst.verlassen`):
     /// sonst könnte ein Lauf nach dem Löschen den Zustand des alten Kontos neu schreiben.
     func kontoVerlassen() async {
+        // Sofort, vor jedem Warten: nichts, was bis jetzt zu aktualisieren begann, wird noch übernommen (auch nicht nach einer
+        // Neuanmeldung mit demselben Konto); der Suchdienst weist alles unter der Schwelle ab.
+        let schwelle = standsfolge.verwerfen()
         await dienst.verlassen()
-        await suchdienst.leeren()
+        await suchdienst.leeren(nummer: schwelle)
         bericht = nil; uebersicht = nil; lastRun = nil; error = nil; fehlgeschlageneOriginale = []
         abdeckung = nil; kontingent = nil; indexVersion += 1
         status = "Ablage: noch nicht abgeglichen"

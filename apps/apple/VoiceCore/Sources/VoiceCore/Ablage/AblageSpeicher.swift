@@ -261,7 +261,9 @@ public final class AblageSpeicher: @unchecked Sendable {
     /// Legt ein heruntergeladenes Original ohne Ersetzen an seinen Platz (`original_einlegen`). Größe und SHA-256 (streamend)
     /// müssen zur Fassung passen. `false`: Datei oder Fassung gibt es nicht mehr. Die Zwischendatei ist danach in jedem
     /// Fall weg (verschoben oder entfernt). `vorgeprueft`: Größe und Hash, die der Aufrufer schon vor der Sperre berechnet hat
-    /// (`pruefsumme`); ohne sie wird hier gelesen. Die Größe wird immer frisch von der Datei genommen.
+    /// (`pruefsumme`); ohne sie wird hier gelesen. Die Größe wird immer frisch von der Datei genommen; passt die Größe der
+    /// Vorprüfsumme nicht dazu (die Datei hat sich seit der Prüfung geändert), gilt sie als veraltet, und der Hash wird hier
+    /// neu berechnet.
     @discardableResult
     public func originalEinlegen(bestand: AblageBestand, dat: String, fas: String, zwischen: URL,
                                  vorgeprueft: AblageOriginalPruefsumme? = nil) throws -> Bool {
@@ -277,7 +279,8 @@ public final class AblageSpeicher: @unchecked Sendable {
         guard let ziel = originalURL(dat: dat, fas: fas, typ: f.typ) else { throw AblageSpeicherFehler.ungueltigeKennung }
         guard istDatei(zwischen), let size = (try? fm.attributesOfItem(atPath: zwischen.path)[.size] as? NSNumber)?.uint64Value,
               size == f.size else { throw AblageSpeicherFehler.passtNicht }
-        let sha = try vorgeprueft?.sha256Hex ?? Self.sha256Hex(datei: zwischen)
+        let sha: String
+        if let v = vorgeprueft, v.groesse == size { sha = v.sha256Hex } else { sha = try Self.sha256Hex(datei: zwischen) }
         guard sha == f.blob else { throw AblageSpeicherFehler.passtNicht }
         let dir = try ordnerSichern(Self.dateienOrdner, dat)
         if art(ziel) != nil { return true }          // liegt schon: nicht ersetzen (die Zwischendatei räumt `defer`)

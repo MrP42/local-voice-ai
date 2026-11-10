@@ -86,10 +86,17 @@ public enum AblageSuche {
 /// gelesen und zerlegt, wenn ihre `textrev` neu ist; ein Wechsel der zugelassenen Dateien oder Texte baut den Index aus den
 /// zwischengespeicherten Stücken neu auf. Fehlerfälle: ein Text, der nicht lesbar ist oder nicht zu seiner `textrev` passt,
 /// bleibt draußen (die Datei zählt „ohne Text“, nie ein Absturz); beim Abmelden `leeren`. Kein I/O im Echtzeitpfad, kein
-/// Kindprozess; Speicher: Stücke und Wörter aller zugelassenen Texte (bei sehr großen Ablagen Sekunden und einige zehn MB).
+/// Kindprozess; Speicher: Stücke aller zugelassenen Texte und je Datei die Wörter einmal, die Stücke tragen nur Nummern (bei sehr
+/// großen Ablagen Sekunden und einige zehn MB).
+///
+/// Gleichzeitige Aktualisierungen (`ansichtAktualisieren`): jeder Aufruf trägt eine Nummer der Seite. Der Akteur arbeitet die Aufrufe
+/// nacheinander ab, liest den Zustand erst, wenn der Aufruf an der Reihe ist, und weist einen Aufruf ab, dessen Nummer unter der
+/// des zuletzt bearbeiteten liegt: ein älterer Aufruf, der später eintrifft, setzt den Index nie auf einen älteren Stand zurück.
 public actor AblageSuchdienst {
     private var vorbereitet: [String: AblageIndex.Vorbereitet] = [:]
     private var stand: [String] = []
+    /// Höchste Nummer, die schon bearbeitet wurde (oder die Schwelle des letzten Abmeldens).
+    private var hoechsteNummer = 0
     public private(set) var index = AblageIndex([])
     public private(set) var abdeckung = AblageAbdeckung()
 
@@ -131,6 +138,17 @@ public actor AblageSuchdienst {
         return abdeckung
     }
 
+    /// Liest den Zustand des Kontos, bringt den Index auf seinen Stand und baut die Übersicht für die Seite. `nummer` ist die der
+    /// Aktualisierung (`AblageStandsfolge`). `nil`: ein neuerer Aufruf oder ein Abmelden war schon dran, nichts wurde geändert.
+    /// Ein fehlender, unlesbarer oder fremder Zustand ergibt eine leere Ansicht (`AblageSpeicher.laden`), nie einen Absturz.
+    public func ansichtAktualisieren(speicher: AblageSpeicher, konto kennung: String, nummer: Int) -> AblageAnsicht? {
+        guard nummer >= hoechsteNummer else { return nil }
+        hoechsteNummer = nummer
+        let z = speicher.laden(konto: kennung).zustand
+        let ab = aktualisieren(zustand: z, speicher: speicher)
+        return AblageAnsicht(uebersicht: AblageAnzeige.uebersicht(z, vorhanden: speicher.vorhanden(z.bestand)), abdeckung: ab)
+    }
+
     public func suche(_ frage: String) -> [AblageTreffer] { index.suche(frage) }
 
     /// Beim Abmelden: nichts behalten.
@@ -139,6 +157,15 @@ public actor AblageSuchdienst {
         stand = []
         index = AblageIndex([])
         abdeckung = AblageAbdeckung()
+    }
+
+    /// Beim Abmelden mit Schwelle (`AblageStandsfolge.verwerfen`): leert und weist danach jeden Aufruf mit kleinerer Nummer ab, auch
+    /// wenn er erst jetzt eintrifft. Hat schon ein Aufruf mit größerer Nummer gearbeitet (das neue Konto war schneller als dieses
+    /// späte Abmelden), bleibt dessen Index stehen.
+    public func leeren(nummer: Int) {
+        guard nummer >= hoechsteNummer else { return }
+        hoechsteNummer = nummer
+        leeren()
     }
 }
 #endif
