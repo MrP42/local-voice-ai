@@ -483,7 +483,7 @@ fn the_hash_refuses_a_handle_that_became_online() {
     eintrag::naht::handle_setzen(&p, 0x50_0020, 0);
     let err = sha256_file(&p).expect_err("nicht lesen");
     assert_eq!(err.kind(), std::io::ErrorKind::Other);
-    assert!(open_no_recall(&p).is_err());
+    assert!(open_checked(&p).is_err());
     eintrag::naht::handle_setzen(&p, 0x50_1620, ONEDRIVE_TAG);
     assert!(sha256_file(&p).is_err());
     eintrag::naht::leeren();
@@ -572,6 +572,114 @@ fn a_file_that_grows_before_the_hash_is_not_taken_until_it_is_quiet_again() {
     }
     assert_eq!(after.started.len(), 1, "danach ruhig: {after:?}");
     assert_eq!(context_of(&w.runs()[0])["trigger"]["size"], 11);
+}
+
+// ---------------------------------------------------------------------------
+// Zweistufiges Oeffnen: Urteil vor dem Lesezugriff, Kennung zwischen den Stufen
+// ---------------------------------------------------------------------------
+
+fn art() -> eintrag::OeffnenArt {
+    eintrag::OeffnenArt {
+        folgen: true,
+        teilen: 7,
+    }
+}
+
+#[test]
+fn the_read_stage_is_never_reached_for_a_placeholder() {
+    use eintrag::{oeffnen_ohne_abruf, OeffnenFehler};
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path().join("w.wav");
+    fs::write(&p, b"inhalt").unwrap();
+    // Lokal: beide Stufen.
+    assert!(oeffnen_ohne_abruf(&p, art(), trigger_urteil).is_ok());
+    assert_eq!(eintrag::naht::stufe2_aufrufe(&p), 1);
+    // Stufe 1 meldet „nur online“ (0x500020 und 0x501620): Stufe 2 (Lesezugriff) wird nie gerufen.
+    for (attrs, tag) in [
+        (0x50_0020, 0),
+        (0x50_1620, ONEDRIVE_TAG),
+        (0x4_0000, 0),
+        (0x1000, 0),
+    ] {
+        eintrag::naht::handle_setzen(&p, attrs, tag);
+        match oeffnen_ohne_abruf(&p, art(), trigger_urteil) {
+            Err(OeffnenFehler::Urteil(Urteil::NurOnline)) => {}
+            other => panic!("{attrs:#x}: {other:?}"),
+        }
+        assert_eq!(
+            eintrag::naht::stufe2_aufrufe(&p),
+            1,
+            "{attrs:#x}: kein Lesezugriff"
+        );
+    }
+    // Auch ein Umweg erreicht Stufe 2 nie.
+    eintrag::naht::handle_setzen(&p, ATTR_REPARSE, 0xA000_000C);
+    assert!(matches!(
+        oeffnen_ohne_abruf(&p, art(), trigger_urteil),
+        Err(OeffnenFehler::Urteil(Urteil::Umweg))
+    ));
+    assert_eq!(eintrag::naht::stufe2_aufrufe(&p), 1);
+    eintrag::naht::leeren();
+}
+
+#[test]
+fn a_file_that_goes_online_between_the_stages_is_judged_again_after_the_read_open() {
+    use eintrag::{oeffnen_ohne_abruf, OeffnenFehler};
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path().join("w.wav");
+    fs::write(&p, b"inhalt").unwrap();
+    // Erste Abfrage (Stufe 1): lokal; zweite (Stufe 2): nur online: es wird nichts geliefert.
+    eintrag::naht::handle_folge(&p, &[(ATTR_ARCHIV, 0), (0x50_0020, 0)]);
+    assert!(matches!(
+        oeffnen_ohne_abruf(&p, art(), trigger_urteil),
+        Err(OeffnenFehler::Urteil(Urteil::NurOnline))
+    ));
+    assert_eq!(
+        eintrag::naht::stufe2_aufrufe(&p),
+        1,
+        "Stufe 2 lief, geliefert wurde nichts"
+    );
+    eintrag::naht::leeren();
+}
+
+#[test]
+fn a_swapped_file_between_the_stages_is_refused() {
+    use eintrag::{oeffnen_ohne_abruf, OeffnenFehler};
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path().join("w.wav");
+    fs::write(&p, b"inhalt").unwrap();
+    eintrag::naht::id_folge(&p, &[(1, 100), (1, 200)]);
+    assert!(matches!(
+        oeffnen_ohne_abruf(&p, art(), trigger_urteil),
+        Err(OeffnenFehler::Getauscht)
+    ));
+    // Gleiche Kennung: geliefert.
+    eintrag::naht::id_folge(&p, &[(1, 100), (1, 100)]);
+    assert!(oeffnen_ohne_abruf(&p, art(), trigger_urteil).is_ok());
+    // Ueber `open_checked` (Hash) ebenso: Err, nichts gelesen.
+    eintrag::naht::id_folge(&p, &[(1, 100), (2, 100)]);
+    assert!(sha256_file(&p).is_err());
+    eintrag::naht::leeren();
+}
+
+#[test]
+fn the_ablage_judgement_keeps_its_stricter_rule_in_the_same_helper() {
+    use eintrag::{oeffnen_ohne_abruf, OeffnenArt, OeffnenFehler};
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path().join("w.wav");
+    fs::write(&p, b"inhalt").unwrap();
+    let ablage = OeffnenArt {
+        folgen: false,
+        teilen: 7,
+    };
+    // WOF: fuer den Ausloeser lokal, fuer die Ablage (Roh-Oeffnen mit Reparse-Flag) ein Umweg.
+    eintrag::naht::handle_setzen(&p, ATTR_REPARSE | ATTR_ARCHIV, 0x8000_0017);
+    assert!(oeffnen_ohne_abruf(&p, art(), trigger_urteil).is_ok());
+    assert!(matches!(
+        oeffnen_ohne_abruf(&p, ablage, eintrag::reparse_urteil),
+        Err(OeffnenFehler::Urteil(Urteil::Umweg))
+    ));
+    eintrag::naht::leeren();
 }
 
 // ---------------------------------------------------------------------------

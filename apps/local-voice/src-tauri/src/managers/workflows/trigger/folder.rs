@@ -35,8 +35,9 @@
 //!    liefert dann Attribute ohne `REPARSE_POINT`/`OFFLINE`), sondern aus `ablage::eintrag::roh`
 //!    (`FindFirstFileExW`, oeffnet nichts). Entschieden wird vor jedem Oeffnen, auch vor der
 //!    Pfadaufloesung der Sandbox ([`entry_state`], rein). Wo der Ausloeser danach doch oeffnet
-//!    (Sperrpruefung, Hash), geschieht es mit `FILE_FLAG_OPEN_NO_RECALL` und das Handle wird vor dem
-//!    ersten Lesen erneut geprueft ([`open_no_recall`]).
+//!    (Sperrpruefung, Hash), geschieht es zweistufig (erst nur Attribute am Handle, dann der Lesezugriff;
+//!    `FILE_FLAG_OPEN_NO_RECALL` allein verhindert den Abruf nicht), und das Handle wird vor dem
+//!    ersten Lesen erneut geprueft ([`open_checked`]).
 //! 4. **Nicht voruebergehend**: Namen wie `~$x.docx`, `.tmp`, `.part`, `.crdownload`,
 //!    `desktop.ini` und Punkt-Dateien zaehlen nicht.
 //! Unterordner werden nicht abgesucht (der Ordner ist der Eingang, `subfolder` waehlt einen
@@ -308,12 +309,17 @@ impl FileProbe for SystemProbe {
 
     #[cfg(windows)]
     fn locked(&self, path: &Path) -> bool {
-        // Teilen wie ein Leser (`FILE_SHARE_READ`): scheitert, solange ein anderer Prozess
-        // Schreibzugriff hat. Nie einen Abruf ausloesen (`FILE_FLAG_OPEN_NO_RECALL`).
-        match open_no_recall_with(path, 1) {
+        // Teilen wie ein Leser (`FILE_SHARE_READ`): Stufe 2 scheitert, solange ein anderer Prozess
+        // Schreibzugriff hat. Zweistufig: ein Platzhalter erreicht den Lesezugriff nie.
+        let art = eintrag::OeffnenArt {
+            folgen: true,
+            teilen: 1,
+        };
+        match eintrag::oeffnen_ohne_abruf(path, art, trigger_urteil) {
             Ok(_) => false,
             // ERROR_SHARING_VIOLATION (32), ERROR_LOCK_VIOLATION (33)
-            Err(e) => matches!(e.raw_os_error(), Some(32) | Some(33)),
+            Err(eintrag::OeffnenFehler::Io(e)) => matches!(e.raw_os_error(), Some(32) | Some(33)),
+            Err(_) => false,
         }
     }
 
@@ -323,33 +329,21 @@ impl FileProbe for SystemProbe {
     }
 }
 
-/// Oeffnet `path` zum Lesen, ohne dass das Oeffnen einen OneDrive-Abruf ausloest
-/// (Windows: `FILE_FLAG_OPEN_NO_RECALL`).
-#[cfg(windows)]
-fn open_no_recall_with(path: &Path, share: u32) -> std::io::Result<fs::File> {
-    use std::os::windows::fs::OpenOptionsExt;
-    const FILE_FLAG_OPEN_NO_RECALL: u32 = 0x0010_0000;
-    fs::OpenOptions::new()
-        .read(true)
-        .share_mode(share)
-        .custom_flags(FILE_FLAG_OPEN_NO_RECALL)
-        .open(path)
-}
-
-/// Oeffnet `path` zum Lesen ohne Abruf und prueft das Handle VOR dem ersten Lesen: meldet es „nur
-/// online“ (die Datei wurde seit der Abtastung wieder ausgelagert) oder laesst sich nicht
-/// bestimmen, wird nichts gelesen (`Err`, Art `Other`).
-pub fn open_no_recall(path: &Path) -> std::io::Result<fs::File> {
-    #[cfg(windows)]
-    let file = open_no_recall_with(path, 1 | 2 | 4)?;
-    #[cfg(not(windows))]
-    let file = fs::File::open(path)?;
-    let lesbar = eintrag::offen_daten(&file, path)
-        .is_some_and(|(attribute, tag)| trigger_urteil(tag, attribute) == Urteil::Lesbar);
-    if !lesbar {
-        return Err(std::io::Error::other("nur online oder Verknüpfung"));
-    }
-    Ok(file)
+/// Oeffnet `path` zum Lesen ueber das zweistufige Oeffnen der Ablage ([`eintrag::oeffnen_ohne_abruf`]):
+/// erst nur Attribute und Urteil am Handle, nur bei „lokal“ der Lesezugriff, dann erneut Urteil und
+/// Datei-Kennung. `FILE_FLAG_OPEN_NO_RECALL` allein verhindert den Abruf NICHT; der Schutz ist das Urteil
+/// vor dem Lesezugriff (Restrisiko: Auslagern im Fenster zwischen den Stufen, Millisekunden). Wird nichts
+/// gelesen, ist das Ergebnis `Err` (Art `Other`, ausser bei Fehlern des Oeffnens selbst).
+pub fn open_checked(path: &Path) -> std::io::Result<fs::File> {
+    let art = eintrag::OeffnenArt {
+        folgen: true,
+        teilen: 1 | 2 | 4,
+    };
+    eintrag::oeffnen_ohne_abruf(path, art, trigger_urteil).map_err(|e| match e {
+        eintrag::OeffnenFehler::Io(e) => e,
+        eintrag::OeffnenFehler::Urteil(_) => std::io::Error::other("nur online oder Verknüpfung"),
+        eintrag::OeffnenFehler::Getauscht => std::io::Error::other("Datei ausgetauscht"),
+    })
 }
 
 /// Ergebnis des Hashens: Hash und Groesse/Zeit, wie das geprueft-geoeffnete Handle sie NACH dem Lesen
@@ -363,7 +357,7 @@ pub struct Hashed {
 
 /// SHA-256 des Inhalts, in Bloecken (kein Laden der ganzen Datei), ueber ein No-Recall-Handle.
 pub fn hash_file(path: &Path) -> std::io::Result<Hashed> {
-    let mut file = open_no_recall(path)?;
+    let mut file = open_checked(path)?;
     let mut hasher = Sha256::new();
     let mut buf = vec![0u8; HASH_BLOCK];
     loop {
