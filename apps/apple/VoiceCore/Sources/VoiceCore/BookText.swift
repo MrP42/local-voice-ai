@@ -116,12 +116,30 @@ public enum BookText {
         for attrs in items { if let id = attrs["id"], let href = attrs["href"] { manifest[id] = href } }
         var seen = Set<String>()
         let spine = XMLScan.attributes(in: opf, element: "itemref").compactMap { $0["idref"] }.filter { seen.insert($0).inserted }
+        // Inhaltsverzeichnis (lva#476): EPUB-3-nav, sonst die NCX aus `<spine toc>`.
+        func resolved(_ href: String) -> String {
+            let decoded = href.removingPercentEncoding ?? href
+            return normalize(dir.isEmpty ? decoded : dir + "/" + decoded)
+        }
+        func folder(_ path: String) -> String { (path as NSString).deletingLastPathComponent }
+        let navPath = items.first { ($0["properties"] ?? "").split(separator: " ").contains("nav") }?["href"].map(resolved)
+        var toc: [EpubToc.Entry] = []
+        if let navPath, let data = try? zip.read(navPath) {
+            toc = EpubToc.nav(String(decoding: data, as: UTF8.self), baseDir: folder(navPath))
+        }
+        if toc.isEmpty, let ncxId = XMLScan.attributes(in: opf, element: "spine").first?["toc"],
+           let href = manifest[ncxId], let data = try? zip.read(resolved(href)) {
+            toc = EpubToc.ncx(String(decoding: data, as: UTF8.self), baseDir: folder(resolved(href)))
+        }
         var parts: [String] = []
         for id in spine {
-            guard let href = manifest[id]?.removingPercentEncoding ?? manifest[id] else { continue }
-            let path = dir.isEmpty ? href : dir + "/" + href
-            guard let xhtml = try? zip.read(normalize(path)) else { continue }
-            let text = XHTMLText.paragraphs(xhtml)
+            guard let href = manifest[id] else { continue }
+            let path = resolved(href)
+            // Das EPUB-3-Inhaltsverzeichnis ist kein Lesetext.
+            if path == navPath { continue }
+            guard let xhtml = try? zip.read(path) else { continue }
+            let entries = toc.filter { $0.path.lowercased() == path.lowercased() }
+            let text = EpubToc.promoteChapterLines(EpubToc.apply(XHTMLText.paragraphs(xhtml), entries: entries))
             if !text.isEmpty { parts.append(text) }
         }
         let text = parts.joined(separator: "\n\n")
@@ -270,5 +288,187 @@ enum XHTMLText {
         return replaceEntities(stripped, keepXML: false).components(separatedBy: "\n\n").map {
             $0.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression).trimmingCharacters(in: .whitespaces)
         }.filter { !$0.isEmpty && $0 != "#" }.joined(separator: "\n\n")
+    }
+}
+
+/// Kapitel aus dem Inhaltsverzeichnis eines EPUBs (lva#476, wie `ebook.rs` am Desktop): EPUB-3-`nav`,
+/// sonst die NCX. Absätze, die wörtlich ein Verzeichnistitel sind, werden Überschriften; dazu Kapitelzeilen
+/// wie „Erstes Kapitel“ oder „Chapter IV“. Lieber keine Überschrift als eine falsche.
+enum EpubToc {
+    struct Entry: Equatable {
+        /// Tiefe, 0 = oberste Ebene.
+        var depth: Int
+        var title: String
+        /// Datei im Archiv (aufgelöst) und Sprungmarke.
+        var path: String
+        var fragment: String?
+    }
+
+    static func re(_ p: String) -> NSRegularExpression { try! NSRegularExpression(pattern: p) }
+    static let navStart = re(#"(?is)<nav\b[^>]*\btype\s*=\s*["']toc["'][^>]*>"#)
+    static let navPart = re(#"(?is)</?ol\b[^>]*>|<a\b[^>]*>.*?</a\s*>"#)
+    static let navLink = re(#"(?is)^<a\b([^>]*)>(.*?)</a\s*>$"#)
+    static let ncxPart = re(#"(?is)</?navPoint\b[^>]*>|<text\b[^>]*>.*?</text\s*>|<content\b[^>]*>"#)
+    static let attr = re(#"([A-Za-z_:][\w:.-]*)\s*=\s*(?:"([^"]*)"|'([^']*)')"#)
+    static let tag = re(#"<[^>]*>"#)
+    static let chapterHead = re(#"(?i)^(?:(?:kapitel|chapter|teil|part|buch|book)\s+(?:\d{1,3}|(?-i:[IVXLCDM]{1,8})|(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty)(?:[- ](?:one|two|three|four|five|six|seven|eight|nine))?)|\p{L}{3,}(?:tes|ter|te)\s+(?:kapitel|buch|teil|abschnitt|gesang))\.?$"#)
+    static let specialHead = re(#"(?i)^(?:prolog|epilog|vorwort|nachwort|einleitung|prologue|epilogue|preface|foreword|afterword|introduction)$"#)
+
+    static func matches(_ r: NSRegularExpression, _ s: String) -> Bool {
+        r.firstMatch(in: s, range: NSRange(location: 0, length: (s as NSString).length)) != nil
+    }
+
+    static func attributes(_ s: String) -> [String: String] {
+        let ns = s as NSString
+        var out: [String: String] = [:]
+        for m in attr.matches(in: s, range: NSRange(location: 0, length: ns.length)) {
+            let name = ns.substring(with: m.range(at: 1)).lowercased()
+            let local = name.split(separator: ":").last.map(String.init) ?? name
+            let value = m.range(at: 2).location != NSNotFound ? ns.substring(with: m.range(at: 2)) : ns.substring(with: m.range(at: 3))
+            out[local] = value
+        }
+        return out
+    }
+
+    /// Klartext eines Verzeichnistitels: ohne Tags, Entitäten aufgelöst, Leerraum zusammengefasst.
+    static func plainText(_ raw: String) -> String {
+        let noTags = tag.stringByReplacingMatches(in: raw, range: NSRange(location: 0, length: (raw as NSString).length), withTemplate: "")
+        return XHTMLText.replaceEntities(noTags, keepXML: false).split(whereSeparator: \.isWhitespace).joined(separator: " ")
+    }
+
+    static func push(_ out: inout [Entry], depth: Int, title: String, href: String, baseDir: String) {
+        guard !title.isEmpty, !href.isEmpty, !href.contains("://") else { return }
+        let parts = href.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
+        let file = parts[0].removingPercentEncoding ?? parts[0]
+        let fragment = parts.count > 1 ? (parts[1].removingPercentEncoding ?? parts[1]) : nil
+        let path = BookText.normalize(baseDir.isEmpty ? file : baseDir + "/" + file)
+        out.append(Entry(depth: depth, title: title, path: path, fragment: fragment?.isEmpty == false ? fragment : nil))
+    }
+
+    /// Inhaltsverzeichnis aus `<nav epub:type="toc">`: Tiefe über `<ol>`, Einträge sind die Links.
+    static func nav(_ xhtml: String, baseDir: String) -> [Entry] {
+        let ns = xhtml as NSString
+        guard let start = navStart.firstMatch(in: xhtml, range: NSRange(location: 0, length: ns.length)) else { return [] }
+        var body = ns.substring(from: NSMaxRange(start.range))
+        if let end = body.range(of: "</nav", options: .caseInsensitive) { body = String(body[..<end.lowerBound]) }
+        let b = body as NSString
+        var depth = 0
+        var out: [Entry] = []
+        for m in navPart.matches(in: body, range: NSRange(location: 0, length: b.length)) {
+            let piece = b.substring(with: m.range)
+            let lower = piece.lowercased()
+            if lower.hasPrefix("<ol") { depth += 1 }
+            else if lower.hasPrefix("</ol") { depth = max(0, depth - 1) }
+            else if let l = navLink.firstMatch(in: piece, range: NSRange(location: 0, length: (piece as NSString).length)) {
+                let p = piece as NSString
+                let href = attributes(p.substring(with: l.range(at: 1)))["href"] ?? ""
+                push(&out, depth: max(0, depth - 1), title: plainText(p.substring(with: l.range(at: 2))), href: href, baseDir: baseDir)
+            }
+        }
+        return out
+    }
+
+    /// Inhaltsverzeichnis aus einer NCX (`navPoint`, verschachtelt).
+    static func ncx(_ ncx: String, baseDir: String) -> [Entry] {
+        let ns = ncx as NSString
+        var depth = 0
+        var title: String?
+        var out: [Entry] = []
+        for m in ncxPart.matches(in: ncx, range: NSRange(location: 0, length: ns.length)) {
+            let piece = ns.substring(with: m.range)
+            let lower = piece.lowercased()
+            if lower.hasPrefix("<navpoint") { depth += 1; title = nil }
+            else if lower.hasPrefix("</navpoint") { depth = max(0, depth - 1) }
+            else if lower.hasPrefix("<text") { if title == nil { title = plainText(piece) } }
+            else if lower.hasPrefix("<content"), let t = title {
+                push(&out, depth: max(0, depth - 1), title: t, href: attributes(piece)["src"] ?? "", baseDir: baseDir)
+                title = nil
+            }
+        }
+        return out
+    }
+
+    /// Text eines Absatzes ohne Überschriften- und Betonungszeichen.
+    static func blockPlain(_ block: String) -> String {
+        var s = block.trimmingCharacters(in: .whitespacesAndNewlines)
+        while s.hasPrefix("#") { s.removeFirst() }
+        return s.trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "*_ "))
+    }
+
+    static func titleNorm(_ s: String) -> String {
+        s.lowercased().replacingOccurrences(of: "ß", with: "ss")
+            .map { $0.isLetter || $0.isNumber ? String($0) : " " }.joined()
+            .split(separator: " ").joined(separator: " ")
+    }
+
+    /// Ist der Absatz der ganze Titel (höchstens ein paar Zeichen mehr, etwa ein Fußnotenstern)?
+    static func isTitle(_ line: String, _ title: String) -> Bool {
+        let l = titleNorm(line), t = titleNorm(title)
+        guard t.filter(\.isLetter).count >= 2, !l.isEmpty else { return false }
+        return l == t || (l.hasPrefix(t) && l.utf8.count <= t.utf8.count + 3)
+    }
+
+    /// Überschriften eines Kapitels nach dem Inhaltsverzeichnis setzen (`##`, darunter `###`), in
+    /// Reihenfolge der Einträge. Ein Eintrag ohne Sprungmarke für eine Datei, die ohne Überschrift
+    /// beginnt, kommt davor.
+    static func apply(_ md: String, entries: [Entry]) -> String {
+        guard !entries.isEmpty else { return md }
+        var blocks = md.components(separatedBy: "\n\n")
+        var cursor = 0
+        var prepend: String?
+        for e in entries {
+            let level = String(repeating: "#", count: min(e.depth + 2, 3))
+            let found = blocks.indices.dropFirst(cursor).first { blocks[$0].count <= 200 && isTitle(blockPlain(blocks[$0]), e.title) }
+            if let i = found {
+                if !blocks[i].trimmingCharacters(in: .whitespaces).hasPrefix("#") { blocks[i] = "\(level) \(blockPlain(blocks[i]))" }
+                cursor = i + 1
+            } else if e.fragment == nil, cursor == 0, prepend == nil {
+                let first = blocks.first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                if first?.trimmingCharacters(in: .whitespaces).hasPrefix("#") != true { prepend = "\(level) \(e.title)" }
+            }
+        }
+        let text = blocks.joined(separator: "\n\n")
+        return prepend.map { "\($0)\n\n\(text)" } ?? text
+    }
+
+    static func looksLikeChapterTitle(_ line: String) -> Bool {
+        let n = line.count
+        return (2...60).contains(n)
+            && line.split(whereSeparator: \.isWhitespace).count <= 9
+            && line.first?.isUppercase == true
+            && line.filter(\.isLetter).count >= 2
+            && !line.hasSuffix(".") && !line.hasSuffix(",") && !line.hasSuffix(";") && !line.hasSuffix(":")
+            && !line.hasSuffix("-") && !line.hasSuffix("–")
+            && !line.allSatisfy({ $0.isNumber || $0.isWhitespace })
+            && !matches(chapterHead, line) && !matches(specialHead, line)
+    }
+
+    /// Kapitelzeilen als Überschrift: „Erstes Kapitel“, „Kapitel 3“, „Prolog“ … (auch fett) werden `##`;
+    /// ein kurzer Titel danach gehört dazu, außer bei Vorwort & Co. und bei Ausruf oder Zitat.
+    static func promoteChapterLines(_ md: String) -> String {
+        let blocks = md.components(separatedBy: "\n\n")
+        var out: [String] = []
+        var i = 0
+        while i < blocks.count {
+            let b = blocks[i]
+            var plain = blockPlain(b)
+            while plain.hasSuffix(".") { plain.removeLast() }
+            let isHead = !b.trimmingCharacters(in: .whitespaces).hasPrefix("#") && !plain.contains("\n")
+                && (matches(chapterHead, plain) || matches(specialHead, plain))
+            guard isHead else { out.append(b); i += 1; continue }
+            if i + 1 < blocks.count, !matches(specialHead, plain) {
+                let next = blocks[i + 1]
+                let t = blockPlain(next)
+                let ending = t.last.map { "!?…\"“”»«".contains($0) } ?? false
+                if !next.trimmingCharacters(in: .whitespaces).hasPrefix("#"), !t.contains("\n"), !ending, looksLikeChapterTitle(t) {
+                    out.append("## \(plain): \(t)")
+                    i += 2
+                    continue
+                }
+            }
+            out.append("## \(plain)")
+            i += 1
+        }
+        return out.joined(separator: "\n\n")
     }
 }
