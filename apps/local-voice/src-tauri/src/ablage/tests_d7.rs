@@ -1186,6 +1186,44 @@ fn momentkopie_prueft_am_handle_und_in_jedem_pfadglied_auf_nur_online() {
 }
 
 #[test]
+fn momentkopie_zweistufiges_oeffnen_ordnet_online_und_tausch_den_codes_zu() {
+    let _n = naht_sauber();
+    let e = env();
+    let datei = e.schreiben(
+        "Akte/brief.txt",
+        format!("vertraulich {KONTROLLE}").as_bytes(),
+    );
+    e.verknuepfen();
+    let auf = verknuepft::auftraege(&e.a, None).unwrap().remove(0);
+    // Stufe 1 (nur Attribute) sieht eine hydrierte Datei, der Lesezugriff (Stufe 2) trifft sie schon
+    // wieder nur online: nichts wird kopiert, Code „cloud“.
+    eintrag::naht::handle_folge(
+        &datei,
+        &[(0x420, 0x9000_001A), (NUR_ONLINE_DATEI, ONEDRIVE_TAG)],
+    );
+    assert_eq!(
+        verknuepft::momentkopie(&e.a, &auf).unwrap_err(),
+        "verknuepft.cloud"
+    );
+    assert!(!e.a.dir().join("verknuepft").join("zwischen").exists());
+    eintrag::naht::leeren();
+    // Zwei verschiedene Kennungen zwischen den Stufen: die Datei wurde getauscht, Code „geaendert“.
+    eintrag::naht::id_folge(&datei, &[(1, 1), (1, 2)]);
+    assert_eq!(
+        verknuepft::momentkopie(&e.a, &auf).unwrap_err(),
+        "verknuepft.geaendert"
+    );
+    assert!(!e.a.dir().join("verknuepft").join("zwischen").exists());
+    eintrag::naht::leeren();
+    // Gleiche Kennung: unauffaellig, wird gelesen.
+    eintrag::naht::id_folge(&datei, &[(1, 1), (1, 1)]);
+    let (kopie, _sha) = verknuepft::momentkopie(&e.a, &auf).unwrap();
+    assert!(kopie.is_file());
+    fs::remove_file(&kopie).unwrap();
+    eintrag::naht::leeren();
+}
+
+#[test]
 fn hydrierte_datei_wird_beim_naechsten_lauf_aufgenommen_und_online_wieder_ausgeblendet() {
     let _n = naht_sauber();
     let e = env();

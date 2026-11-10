@@ -9,6 +9,7 @@ use std::sync::Mutex;
 use serde_json::{json, Value};
 
 use super::*;
+use crate::ablage::eintrag::naht;
 use crate::managers::integrations::model::{Capability, GrantMode, NewIntegration};
 use crate::managers::integrations::store as integrations;
 use crate::managers::workflows::engine::{EnqueueRequest, RunOutcome};
@@ -91,7 +92,7 @@ impl YoutubeControl for FakeYoutube {
 struct CloudProbe(&'static str);
 
 impl FileProbe for CloudProbe {
-    fn cloud_only(&self, path: &Path, _meta: &fs::Metadata) -> bool {
+    fn cloud_only(&self, path: &Path, _roh: &eintrag::Roh) -> bool {
         path.file_name().is_some_and(|n| n == self.0)
     }
     fn locked(&self, _path: &Path) -> bool {
@@ -413,6 +414,86 @@ fn a_cloud_only_file_is_not_read_and_not_enqueued() {
         last_error(&steps)
     );
     assert!(w.import.calls.lock().unwrap().is_empty());
+}
+
+#[test]
+fn a_placeholder_by_its_find_attributes_is_refused_before_any_path_resolution() {
+    let w = world_with_probe(Arc::new(SystemProbe));
+    fs::create_dir_all(w.inbox.path().join("sub")).unwrap();
+    for (name, attrs) in [
+        ("a.wav", 0x50_0020),
+        ("b.wav", 0x50_1620),
+        ("c.wav", 0x4_0000),
+    ] {
+        let file = w.put(name, b"inhalt");
+        // Der Eingabepfad ist NICHT kanonisch (`sub/..`): die Naht gilt nur fuer ihn. Nur die
+        // Vorpruefung kann den Platzhalter sehen, nicht die Pruefung des kanonischen Pfades.
+        let given = w.inbox.path().join("sub").join("..").join(name);
+        assert_ne!(given.canonicalize().unwrap(), given);
+        naht::setzen(&given, attrs, 0);
+        let (run, steps, _) = w.run(
+            vec![import_step(
+                json!({"via": "eingang", "path": "{{trigger.path}}"}),
+            )],
+            trigger_for(&given),
+        );
+        assert_eq!(run.state, RunState::Failed, "{name}");
+        assert!(
+            last_error(&steps).contains("nur in der Cloud"),
+            "{name}: {}",
+            last_error(&steps)
+        );
+        let _ = file;
+    }
+    assert!(w.import.calls.lock().unwrap().is_empty());
+    naht::leeren();
+}
+
+#[test]
+fn unreadable_raw_data_and_detours_are_refused_before_the_path_is_resolved() {
+    let w = world_with_probe(Arc::new(SystemProbe));
+    // Fehlt die Datei, sind die Rohdaten nicht lesbar: abweisen, nicht oeffnen.
+    let gone = w.inbox.path().join("gibtsnicht.wav");
+    let (run, steps, _) = w.run(
+        vec![import_step(
+            json!({"via": "eingang", "path": "{{trigger.path}}"}),
+        )],
+        trigger_for(&gone),
+    );
+    assert_eq!(run.state, RunState::Failed);
+    assert!(
+        last_error(&steps).contains("gibt es nicht"),
+        "{}",
+        last_error(&steps)
+    );
+    // Verknuepfung oder fremder Reparse-Point: nie folgen.
+    fs::create_dir_all(w.inbox.path().join("sub")).unwrap();
+    let file = w.put("link.wav", b"inhalt");
+    let given = w.inbox.path().join("sub").join("..").join("link.wav");
+    naht::setzen(&given, 0x400, 0xA000_000C);
+    let (run, steps, _) = w.run(
+        vec![import_step(
+            json!({"via": "eingang", "path": "{{trigger.path}}"}),
+        )],
+        trigger_for(&given),
+    );
+    assert_eq!(run.state, RunState::Failed);
+    assert!(
+        last_error(&steps).contains("Verknüpfung"),
+        "{}",
+        last_error(&steps)
+    );
+    // Datentransparent (WOF): lokal, wird importiert.
+    naht::setzen(&given, 0x420, 0x8000_0017);
+    let (run, _, _) = w.run(
+        vec![import_step(
+            json!({"via": "eingang", "path": "{{trigger.path}}"}),
+        )],
+        trigger_for(&given),
+    );
+    assert_eq!(run.state, RunState::Done);
+    let _ = file;
+    naht::leeren();
 }
 
 #[test]
