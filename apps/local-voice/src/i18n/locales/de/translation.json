@@ -132,7 +132,8 @@
         "count_other": "{{count}} Treffer",
         "countMore": "{{count}} Treffer, die ersten {{shown}} angezeigt",
         "allWords_one": "{{count}} Absatz mit allen Wörtern",
-        "allWords_other": "{{count}} Absätze mit allen Wörtern"
+        "allWords_other": "{{count}} Absätze mit allen Wörtern",
+        "position": "Treffer {{n}} von {{total}}"
       },
       "startHere": "Start",
       "startHint": "Hier beginnt das Vorlesen, solange keine Stelle gemerkt ist.",

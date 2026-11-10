@@ -859,6 +859,40 @@ test("Im Buch suchen: Treffer mit Kapitel, Klick blättert und markiert, Strg+F"
   await expect(search).toHaveCount(0);
 });
 
+test("Im Buch suchen: Strg+F wird nur bei sichtbarem Leser abgefangen", async ({
+  page,
+}) => {
+  await open(page, "## Kapitel\n\nDa kam der Wolf über die Straße.");
+  const search = page.getByTestId("reader-search");
+  const ctrlF = () =>
+    page.evaluate(() => {
+      const ev = new KeyboardEvent("keydown", {
+        key: "f",
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true,
+      });
+      document.body.dispatchEvent(ev);
+      return ev.defaultPrevented;
+    });
+  await expect(search).toBeVisible();
+  expect(await ctrlF()).toBe(true);
+  // Verborgener Leser (andere Sektion, eingeklappte Spalte): nicht abfangen.
+  await search.evaluate((el) => ((el as HTMLElement).style.display = "none"));
+  expect(await ctrlF()).toBe(false);
+  await search.evaluate((el) => ((el as HTMLElement).style.display = ""));
+  expect(await ctrlF()).toBe(true);
+  // Fremder modaler Dialog offen: nicht abfangen.
+  await page.evaluate(() => {
+    const d = document.createElement("div");
+    d.id = "lva476-modal";
+    d.setAttribute("aria-modal", "true");
+    document.body.appendChild(d);
+  });
+  expect(await ctrlF()).toBe(false);
+  await page.evaluate(() => document.getElementById("lva476-modal")?.remove());
+});
+
 test("EPUB auf leerer Seite: Seite heißt wie das Buch, Titel steht im Inhalt", async ({
   page,
 }) => {

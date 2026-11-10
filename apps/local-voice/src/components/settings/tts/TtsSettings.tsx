@@ -3127,8 +3127,12 @@ export const TtsSettings = () => {
    * der Block, der direkt hinter ihm beginnt.
    */
   const readerMarks = useMemo<ReaderMark[]>(() => {
-    const out: ReaderMark[] = findHit ? [{ ...findHit, find: true }] : [];
-    if (!scriptCheckOn) return out;
+    const out: ReaderMark[] = [];
+    const withFind = () => {
+      if (findHit) out.push({ ...findHit, find: true });
+      return out;
+    };
+    if (!scriptCheckOn) return withFind();
     for (const f of scriptFindings) {
       if (isHintFinding(f.kind)) continue;
       const block = readerBlocks.find((b) => b.end > f.start && b.runs.length);
@@ -3145,7 +3149,7 @@ export const TtsSettings = () => {
           revealed.end >= f.start,
       });
     }
-    return out;
+    return withFind();
   }, [scriptCheckOn, scriptFindings, readerBlocks, revealed, findHit]);
 
   // Begriffe (lva#185): nur im Originaltext und in der Leseansicht.
@@ -4110,6 +4114,7 @@ export const TtsSettings = () => {
         <ReaderSearch
           blocks={readerBlocks}
           contents={contents}
+          active={sectionActive && viewMode === "read"}
           onGo={goToSearchHit}
         />
       )}

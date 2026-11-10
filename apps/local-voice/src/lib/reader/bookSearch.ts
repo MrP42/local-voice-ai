@@ -6,8 +6,9 @@
  * Seitenmarken), gefaltet wie die Volltextsuche der Ablage: klein, ohne
  * Diakritika (ä → a, é → e) und mit der Ersatztabelle `FTS_FALTUNG` aus
  * wai-retrieval (ß → ss, æ → ae, ø → o …). „strasse“ findet „Straße“,
- * „Marchen“ findet „Märchen“. Leerraum zählt als ein Leerzeichen, auch über
- * Absatzgrenzen nicht hinweg (jeder Block endet mit einem Leerzeichen).
+ * „Marchen“ findet „Märchen“. Leerraum zählt als ein Leerzeichen; jeder Block
+ * endet mit einem Leerzeichen, eine Wortfolge darf also über Absatzgrenzen
+ * hinweg treffen („…Wald. Es war…“).
  *
  * Jeder Treffer trägt seine Quell-Offsets im Seitentext, damit die Buchansicht
  * dorthin blättern und ihn markieren kann, und einen kurzen Ausschnitt aus dem
@@ -36,6 +37,7 @@ const FALTUNG: Record<string, string> = {
   ħ: "h",
   Ħ: "h",
   ı: "i",
+  ς: "σ",
   ĳ: "ij",
   Ĳ: "ij",
 };
@@ -43,6 +45,8 @@ const FALTUNG: Record<string, string> = {
 const MARKS = /\p{M}/gu;
 /** Unsichtbare Zeichen, die beim Suchen nicht zählen (weiches Trennzeichen, Nullbreite). */
 const INVISIBLE = /[­​-‍⁠﻿]/;
+/** Kombinationszeichen (NFD-Text): bleiben im sichtbaren Text, nicht im Suchstrom. */
+const COMBINING = /^\p{M}$/u;
 
 /** Ein Zeichen falten; das Ergebnis kann leer oder länger sein. */
 export function foldChar(c: string): string {
@@ -58,6 +62,7 @@ export function foldText(text: string): string {
   let out = "";
   let space = true;
   for (const c of text) {
+    if (INVISIBLE.test(c)) continue;
     if (/\s/.test(c)) {
       if (!space) out += " ";
       space = true;
@@ -129,8 +134,21 @@ export function buildSearchIndex(blocks: ReaderBlock[]): SearchIndex {
               : text[at - run.start];
         } else {
           const c = text.slice(i - n, i);
+          if (INVISIBLE.test(c)) continue;
           if (/\s/.test(c)) {
             if (!lastSpace) space(at, at + n, bi);
+            continue;
+          }
+          if (COMBINING.test(c)) {
+            // NFD-Kombinationszeichen („a“ + U+0308): nur im sichtbaren Text,
+            // nicht im Suchstrom; der Treffer auf dem Grundzeichen umfasst es.
+            shownParts.push(c);
+            for (let k = 0; k < n; k++) {
+              start.push(at);
+              end.push(at + n);
+              block.push(bi);
+            }
+            shownLen += n;
             continue;
           }
           let cached = cache.get(c);
@@ -193,8 +211,13 @@ function hitAt(index: SearchIndex, from: number, to: number): SearchHit {
   // ganze Zeichen.
   const s0 = index.shownAt[from];
   let s1 = index.shownAt[to - 1] + 1;
-  // Nie zwischen den Hälften eines Ersatzpaars (Emoji) schneiden.
-  if (/[\udc00-\udfff]/.test(index.shown[s1] ?? "")) s1++;
+  // Nie zwischen den Hälften eines Ersatzpaars (Emoji) schneiden und
+  // Kombinationszeichen hinter dem Grundzeichen mitnehmen („a“ + U+0308).
+  while (s1 < index.shown.length) {
+    const next = index.shown[s1];
+    if (/[\udc00-\udfff]/.test(next) || COMBINING.test(next)) s1++;
+    else break;
+  }
   let b = Math.max(0, s0 - CONTEXT);
   let a = Math.min(index.shown.length, s1 + CONTEXT);
   // Ausschnitt an Wortgrenzen.

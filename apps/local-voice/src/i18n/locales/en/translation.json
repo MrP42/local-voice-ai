@@ -132,7 +132,8 @@
         "count_other": "{{count}} hits",
         "countMore": "{{count}} hits, first {{shown}} shown",
         "allWords_one": "{{count}} paragraph with all words",
-        "allWords_other": "{{count}} paragraphs with all words"
+        "allWords_other": "{{count}} paragraphs with all words",
+        "position": "Hit {{n}} of {{total}}"
       },
       "startHere": "Start",
       "startHint": "Reading aloud starts here unless a position is saved.",

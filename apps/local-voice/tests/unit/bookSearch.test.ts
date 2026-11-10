@@ -137,3 +137,30 @@ test("Zeichen außerhalb der BMP (Emoji) verschieben nichts", () => {
   assert.equal(emoji.match, "🐸 F");
   assert.equal(d.text.slice(emoji.start, emoji.end), "🐸 F");
 });
+
+test("NFD-Text („a“ + Trema): Treffer und Ausschnitt behalten das Kombinationszeichen", () => {
+  const d = doc(["Das Märchen vom Frösch"]);
+  const index = buildSearchIndex(d.blocks);
+  const r = searchBook(index, "ma");
+  assert.equal(r.total, 1);
+  const hit = r.hits[0];
+  assert.equal(hit.match, "Mä");
+  assert.equal(d.text.slice(hit.start, hit.end), "Mä");
+  assert.equal(hit.after, "rchen vom Frösch");
+  const frosch = searchBook(index, "frosch").hits[0];
+  assert.equal(frosch.match, "Frösch");
+  assert.equal(d.text.slice(frosch.start, frosch.end), "Frösch");
+  // Wortfolge über das Kombinationszeichen hinweg.
+  assert.equal(searchBook(index, "marchen vom").hits[0].match, "Märchen vom");
+});
+
+test("Schluss-Sigma findet Sigma, U+FEFF zählt nicht als Leerraum", () => {
+  assert.equal(foldText("ΟΔΥΣΣΕΥΣ"), foldText("οδυσσευς"));
+  assert.equal(foldText("a﻿b"), "ab");
+  assert.equal(foldText("a ﻿ b"), "a b");
+  const d = doc(["Ha﻿us und Ος Hof"]);
+  const index = buildSearchIndex(d.blocks);
+  assert.equal(searchBook(index, "haus").total, 1);
+  assert.equal(searchBook(index, "\u03BF\u03C3").total, 1);
+  assert.equal(searchBook(index, "haus und").total, 1);
+});
