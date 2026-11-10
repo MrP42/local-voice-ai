@@ -17,6 +17,9 @@ export interface StartErgebnis {
  * Startet eine Recherche (Modus Schnell) in einem Suite-Projekt und meldet das Ergebnis über den
  * Bus: ein Halt an den Freigabe-Wächter, ein fertiges Dokument an die Projektseite. `besprechung`
  * ist die Besprechung, aus der gefragt wird; das Backend prüft, dass das Projekt zu ihr gehört.
+ * Mit `mitKontext` nimmt das Backend den Kontext des Projekts hinzu (lva#365 P4c-3): Das Versandtor
+ * liest ihn frisch, und der Lauf hält vor der Suche immer an. Ob das erlaubt ist, entscheidet das
+ * Backend (feste Sperre bis P4c-4), nie die Oberfläche.
  */
 export function useRechercheStart() {
   const { t } = useTranslation();
@@ -27,11 +30,17 @@ export function useRechercheStart() {
       frage: string,
       suiteProjekt: string,
       besprechung: string | null = null,
+      mitKontext = false,
     ): Promise<StartErgebnis> => {
       setBusy(true);
       try {
         const a = auspacken(
-          await commands.rechercheStarten(frage, suiteProjekt, besprechung),
+          await commands.rechercheStarten(
+            frage,
+            suiteProjekt,
+            besprechung,
+            mitKontext ? true : null,
+          ),
         );
         if (a.status === "fertig" && a.rechercheId) {
           meldeProjekte("recherche", a.rechercheId);

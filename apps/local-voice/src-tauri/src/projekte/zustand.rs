@@ -113,11 +113,8 @@ impl ProjekteZustand {
         .with_widerruf({
             // Das Tor entsteht erst nach dem Dienst (es liest ihn als Kontextquelle): bis dahin gibt
             // es keinen Lauf, den ein Widerruf treffen koennte.
-            let (zelle, rzelle, app) = (
-                tor_zelle.clone(),
-                recherche_zelle.clone(),
-                self.app.clone(),
-            );
+            let (zelle, rzelle, app) =
+                (tor_zelle.clone(), recherche_zelle.clone(), self.app.clone());
             Arc::new(move |projekt: &str| {
                 if let Some(tor) = zelle.get() {
                     widerruf_melden(&app, &tor.widerrufen(projekt));

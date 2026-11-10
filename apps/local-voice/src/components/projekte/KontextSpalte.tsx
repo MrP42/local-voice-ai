@@ -1,6 +1,12 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
-import type { KontextUebersicht } from "@/bindings";
+import {
+  commands,
+  type DokumentErgebnis,
+  type KontextUebersicht,
+} from "@/bindings";
+import { auspacken, fehlerText, klassenName } from "@/lib/projekte";
+import { meldeProjekte } from "@/lib/projekteBus";
 import { nichtImKontext, zahl } from "@/lib/projekteKontext";
 import { useVoiceCallStore } from "@/stores/voiceCallStore";
 import { useProjektKiFreigegeben, type Modellfenster } from "./useProjekte";
@@ -104,6 +110,149 @@ const GespraechBeginnen: React.FC<{
   );
 };
 
+/**
+ * „KI-Dokument erstellen“ (lva#365 P4c-3). Die KI schreibt aus der Auswahl im Projekt ein Dokument und legt
+ * es als Entwurf in der Dokumentenablage ab; im Projekt bleibt es ausgeschaltet, bis die Person es
+ * einschaltet. Klasse und Quellen bestimmt das Backend (die Oberfläche kann die Klasse nicht senken).
+ * Gesperrt, solange die KI im Projekt nicht freigegeben ist; der Grund steht einmal im Hinweis unter
+ * „Gespräch im Projekt beginnen“.
+ */
+const DokumentErstellen: React.FC<{
+  projektId: string;
+  stand: string | null;
+  frei: boolean;
+}> = ({ projektId, stand, frei }) => {
+  const { t } = useTranslation();
+  const [offen, setOffen] = React.useState(false);
+  const [auftrag, setAuftrag] = React.useState("");
+  const [name, setName] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+  const [fehler, setFehler] = React.useState<string | null>(null);
+  const [fertig, setFertig] = React.useState<DokumentErgebnis | null>(null);
+  const bereit =
+    !busy && auftrag.trim() !== "" && name.trim() !== "" && stand !== null;
+  const erstellen = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!bereit) return;
+    setBusy(true);
+    setFehler(null);
+    setFertig(null);
+    try {
+      const r = auspacken(
+        await commands.projektKiDokumentErstellen(
+          projektId,
+          auftrag.trim(),
+          null,
+          name.trim(),
+          stand,
+        ),
+      );
+      setFertig(r);
+      setOffen(false);
+      setAuftrag("");
+      setName("");
+      meldeProjekte("projekte");
+    } catch (err) {
+      setFehler(fehlerText(err, t));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <>
+      <button
+        type="button"
+        className="pb-btn"
+        style={{ marginTop: 8 }}
+        disabled={!frei || busy || stand === null}
+        aria-describedby={frei ? undefined : "pb-ki-start-hinweis"}
+        aria-expanded={frei ? offen : undefined}
+        title={frei ? t("projektBereich.ki.dokumentHinweis") : undefined}
+        data-testid="projekt-dokument-erstellen"
+        onClick={() => setOffen((o) => !o)}
+      >
+        {t("projektBereich.ki.dokument")}
+      </button>
+      {frei && offen && (
+        <form
+          className="pb-dok"
+          data-testid="projekt-dokument-formular"
+          onSubmit={(e) => void erstellen(e)}
+        >
+          <label>
+            {t("projektBereich.ki.dokumentAuftrag")}
+            <textarea
+              value={auftrag}
+              maxLength={4000}
+              rows={4}
+              onChange={(e) => setAuftrag(e.target.value)}
+              data-testid="projekt-dokument-auftrag"
+            />
+          </label>
+          <label>
+            {t("projektBereich.ki.dokumentName")}
+            <input
+              type="text"
+              value={name}
+              maxLength={200}
+              onChange={(e) => setName(e.target.value)}
+              data-testid="projekt-dokument-name"
+            />
+          </label>
+          <p className="pb-note" style={{ margin: 0 }}>
+            {t("projektBereich.ki.dokumentRegel")}
+          </p>
+          <div className="pb-dok__acts">
+            <button
+              type="submit"
+              className="pb-btn pb-btn--pri"
+              disabled={!bereit}
+              data-testid="projekt-dokument-senden"
+            >
+              {busy
+                ? t("projektBereich.ki.dokumentLaeuft")
+                : t("projektBereich.ki.dokumentSenden")}
+            </button>
+            <button
+              type="button"
+              className="pb-btn"
+              disabled={busy}
+              onClick={() => setOffen(false)}
+            >
+              {t("projektBereich.abbrechen")}
+            </button>
+          </div>
+        </form>
+      )}
+      {fehler && (
+        <p
+          role="alert"
+          className="pb-note"
+          style={{ margin: "6px 0 0" }}
+          data-testid="projekt-dokument-fehler"
+        >
+          {fehler}
+        </p>
+      )}
+      {fertig && (
+        <p
+          role="status"
+          className="pb-note"
+          style={{ margin: "6px 0 0" }}
+          data-testid="projekt-dokument-fertig"
+        >
+          {t(
+            fertig.imProjekt
+              ? "projektBereich.ki.dokumentFertig"
+              : "projektBereich.ki.dokumentNurAblage",
+            { name: fertig.name, klasse: klassenName(fertig.klasse, t) },
+          )}
+        </p>
+      )}
+    </>
+  );
+};
+
 /** Inhalt der rechten Spalte „Kontext im Projekt“ (auch im Dialog „Details“ unter 999 px). */
 export const KontextInhalt: React.FC<{
   projektId?: string;
@@ -136,11 +285,18 @@ export const KontextInhalt: React.FC<{
         <h3>{t("projektBereich.ki.titel")}</h3>
         <p style={{ margin: 0 }}>{t("projektBereich.ki.text")}</p>
         {projektId ? (
-          <GespraechBeginnen
-            projektId={projektId}
-            stand={uebersicht?.stand ?? null}
-            frei={frei}
-          />
+          <>
+            <GespraechBeginnen
+              projektId={projektId}
+              stand={uebersicht?.stand ?? null}
+              frei={frei}
+            />
+            <DokumentErstellen
+              projektId={projektId}
+              stand={uebersicht?.stand ?? null}
+              frei={frei}
+            />
+          </>
         ) : (
           !frei && (
             <p className="pb-note" style={{ margin: "6px 0 0" }}>

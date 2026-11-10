@@ -26,7 +26,7 @@ use super::audit::{AuditEreignis, AuditSenke};
 use super::dienst::{klasse_text, ProjektDienst};
 use super::herkunft::{recherche_link, LvaHerkunft};
 use super::tor::{
-    budget_mit_reserve, Abbruch, Bindung, Budgetbeleg, Freigabe, Fortsetzung, ProjektTor,
+    budget_mit_reserve, Abbruch, Bindung, Budgetbeleg, Fortsetzung, Freigabe, ProjektTor,
     PromptTeile, Versandauftrag, Versandschein, Weg, Ziel, WEB_RESERVE_TOKEN,
 };
 use super::{Fehler, Res};
@@ -1570,16 +1570,7 @@ impl RechercheDienst {
             ZugeordnetDurch::Person
         };
         match self
-            .auswerten(
-                r,
-                &frage,
-                kontext,
-                &model_id,
-                suite,
-                start,
-                durch,
-                schein,
-            )
+            .auswerten(r, &frage, kontext, &model_id, suite, start, durch, schein)
             .await
         {
             Ok(LaufErgebnis::Fertig { recherche, .. }) => Ok(LaufAntwort {

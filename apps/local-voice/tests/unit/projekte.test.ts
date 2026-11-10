@@ -186,6 +186,7 @@ const INFO = {
     { id: "a1", text: "frist waermeplanung", hintClass: "PERSONAL" },
     { id: "a2", text: "frist gemeinden", hintClass: null },
   ],
+  withContext: false,
 };
 
 test("Der Freigabedialog nennt die Frage und die Datenklasse; nichts ist vorgewählt", () => {

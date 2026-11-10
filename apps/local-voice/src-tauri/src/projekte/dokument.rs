@@ -195,8 +195,48 @@ fn eingabe_gueltig(a: &DokumentAuftrag) -> bool {
         && a.ordner.as_deref().is_none_or(|o| !o.trim().is_empty())
 }
 
+/// Trägt den Lauf aus dem Antwortregister aus, auch wenn der Aufruf abgebrochen wird (das Future wird
+/// fallen gelassen): Der Eintrag war nur die Grundlage der Mindestklasse und darf nie über den Lauf
+/// hinaus stehen bleiben. Im Normalfall geschieht es mit [`Self::abgeben`] vor der Rückkehr; fällt das
+/// Future vorher, übernimmt `Drop` und trägt auf einem Blockierungsthread aus (nie auf dem Async-Thread).
+struct LaufEintrag {
+    tor: Arc<ProjektTor>,
+    lauf: String,
+    offen: bool,
+}
+
+impl LaufEintrag {
+    fn neu(tor: &Arc<ProjektTor>, lauf: &str) -> Self {
+        Self {
+            tor: tor.clone(),
+            lauf: lauf.to_string(),
+            offen: true,
+        }
+    }
+
+    async fn abgeben(mut self) {
+        self.offen = false;
+        let (t, l) = (self.tor.clone(), self.lauf.clone());
+        let _ = tokio::task::spawn_blocking(move || t.gespraech_vergessen(&l)).await;
+    }
+}
+
+impl Drop for LaufEintrag {
+    fn drop(&mut self) {
+        if !self.offen {
+            return;
+        }
+        let (t, l) = (self.tor.clone(), self.lauf.clone());
+        match tokio::runtime::Handle::try_current() {
+            Ok(h) => drop(h.spawn_blocking(move || t.gespraech_vergessen(&l))),
+            Err(_) => t.gespraech_vergessen(&l),
+        }
+    }
+}
+
 /// Erstellt das KI-Dokument (Ablauf siehe Modulkopf). Das Antwortregister behält nach dem Lauf nichts:
-/// Der Lauf hat kein Gespräch, das einen Verlauf führte.
+/// Der Lauf hat kein Gespräch, das einen Verlauf führte. Das gilt auch für jeden Fehler und für einen
+/// Abbruch des Aufrufs.
 pub async fn erstellen(
     tor: &Arc<ProjektTor>,
     versand: &dyn Versand,
@@ -212,11 +252,9 @@ pub async fn erstellen(
         projekt: a.projekt.clone(),
         gespraech: Some(lauf.clone()),
     };
+    let eintrag = LaufEintrag::neu(tor, &lauf);
     let ergebnis = lauf_und_entwurf(tor, versand, projekte, ablage, &a, &lauf, &bindung).await;
-    // Der Eintrag im Antwortregister war nur die Grundlage der Mindestklasse. Die Datei wird nie auf dem
-    // Async-Thread berührt.
-    let (t, l) = (tor.clone(), lauf);
-    let _ = tokio::task::spawn_blocking(move || t.gespraech_vergessen(&l)).await;
+    eintrag.abgeben().await;
     ergebnis
 }
 

@@ -51,7 +51,10 @@ export function fehlerText(e: unknown, t?: T): string {
   const m = /^([a-z_]+\.[a-z_]+): ([\s\S]*)$/.exec(roh);
   if (!m) return roh;
   if (!t) return m[2];
-  return t(`projekte.fehlercode.${m[1]}`, { defaultValue: m[2] });
+  // Die Codes des Versandtors (`projekt.*`) stehen unter `projekte.code`, die der Befehle hier.
+  return t(`projekte.fehlercode.${m[1]}`, {
+    defaultValue: t(`projekte.code.${m[1]}`, { defaultValue: m[2] }),
+  });
 }
 
 /** Text zu einem Lauf-Ergebnis des Backends (`code` übersetzt, `message` als Rückfall). */

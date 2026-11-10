@@ -13,7 +13,8 @@ import type { Page } from "@playwright/test";
  * - Fehler lassen sich einspielen: `__suite.failFreigaben` (Lesen der Halte scheitert),
  *   `__suite.entscheidenMs` (Entscheidung dauert), `__suite.entscheidenFehler` (Entscheidung scheitert).
  * - `recherche_starten` liefert bei INTERNAL sofort ein Ergebnis, ab PERSONAL einen Halt
- *   (`status: "freigabe"`) mit zwei Suchanfragen; `recherche_freigabe_entscheiden` sendet nur, was
+ *   (`status: "freigabe"`) mit zwei Suchanfragen; mit `mitKontext` (lva#365 P4c-3) immer einen Halt
+ *   (`withContext: true`) und nur, wenn die KI im Projekt frei ist (`__kiFrei`, sonst `projekt.ki_gesperrt`); `recherche_freigabe_entscheiden` sendet nur, was
  *   gewaehlt wurde. Ein Projekt ohne Web-Freigabe lehnt mit `fehler` ab.
  */
 export const installProjekteMock = async (page: Page) => {
@@ -238,9 +239,20 @@ export const installProjekteMock = async (page: Page) => {
             searxngUrl: "https://suche.example.org",
             canConfigure: true,
           };
+        case "projekt_ki_status":
+          return { freigegeben: !!w.__kiFrei };
         case "recherche_starten": {
           w.__calls?.push({ cmd, args });
           const p = s.projekte.find((x: any) => x.id === args.suiteProjekt);
+          if (args.mitKontext && !w.__kiFrei) {
+            return {
+              status: "fehler",
+              rechercheId: null,
+              message: "Die KI im Projekt ist noch nicht freigegeben.",
+              code: "projekt.ki_gesperrt",
+              haltBleibt: false,
+            };
+          }
           if (!p?.webResearchEnabled) {
             return {
               status: "fehler",
@@ -251,7 +263,10 @@ export const installProjekteMock = async (page: Page) => {
               haltBleibt: false,
             };
           }
-          if (p.dataClass === "INTERNAL" || p.dataClass === "PUBLIC") {
+          if (
+            !args.mitKontext &&
+            (p.dataClass === "INTERNAL" || p.dataClass === "PUBLIC")
+          ) {
             return {
               status: "fertig",
               rechercheId: speichern(args.frage, p.id),
@@ -266,6 +281,7 @@ export const installProjekteMock = async (page: Page) => {
             dataClass: p.dataClass,
             projectId: p.id,
             expiresInSecs: 900,
+            withContext: !!args.mitKontext,
             queries: [
               {
                 id: "q1",
@@ -651,6 +667,22 @@ export const installProjekteKontextMock = async (page: Page) => {
           return (K.entries[args.suiteId] ?? []).map((e: any) =>
             sicht(args.suiteId, e),
           );
+        case "projekt_ki_status":
+          return { freigegeben: !!w.__kiFrei };
+        case "projekt_ki_dokument_erstellen": {
+          w.__calls?.push({ cmd, args });
+          if (K.dokumentFehler) throw new Error(K.dokumentFehler);
+          if (K.dokumentMs)
+            await new Promise((r) => setTimeout(r, K.dokumentMs));
+          return {
+            dat: "dat_01TESTDOKUMENT",
+            name: `${args.name}.md`,
+            ordner: "KI-Entwürfe",
+            klasse: K.dokumentKlasse ?? "internal",
+            nurGeraet: false,
+            imProjekt: K.dokumentImProjekt !== false,
+          };
+        }
         case "projekt_kontext_uebersicht":
           w.__calls?.push({ cmd, args });
           return uebersicht(args.suiteId);

@@ -1471,6 +1471,21 @@ async projektKiStatus() : Promise<ProjektKiStatus> {
     return await TAURI_INVOKE("projekt_ki_status");
 },
 /**
+ * Die KI schreibt aus dem Kontext des Projekts ein Dokument und legt es als Entwurf in der Ablage ab
+ * (Ablauf und Regeln: `dokument.rs`). Kontext, Klassen und Modell bestimmt das Versandtor; der Befehl
+ * nimmt bewusst **keine** Mindestklasse und keine Quellen entgegen, die Oberflaeche kann die Klasse des
+ * Entwurfs also nicht senken. Der Entwurf ist im Projekt ausgeschaltet. Bis zur Freischaltung (P4c-4)
+ * antwortet das Tor mit `projekt.ki_gesperrt`.
+ */
+async projektKiDokumentErstellen(suiteId: string, auftrag: string, ordner: string | null, name: string, expectedStand: string | null) : Promise<Result<DokumentErgebnis, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("projekt_ki_dokument_erstellen", { suiteId, auftrag, ordner, name, expectedStand }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Schaltet „Als Kontext“ eines Eintrags. `form` ändert die Form, `edition` die Fassung eines
  * Buchs (leer = Hauptfassung); fehlt eines, bleibt es, wie es ist. `expected_stand`: der `stand` der
  * angezeigten Übersicht; hat sich die Auswahl seitdem geändert, kommt `projekte.stand_veraltet` und es
@@ -1542,10 +1557,15 @@ async rechercheAdresseSetzen(adresse: string | null) : Promise<Result<RechercheS
  * Chat-Werkzeug "recherche" (Modus Schnell). Der Kontext einer Besprechung ist mindestens
  * `PERSONAL`; die Klasse des Projekts hebt sie an. Ab `PERSONAL` haelt der Lauf an
  * (`status` = "freigabe") und wartet auf die Entscheidung in `recherche_freigabe_entscheiden`.
+ * 
+ * `mit_kontext` (lva#365 P4c-3): Die Recherche nimmt den Kontext des Projekts hinzu. Den liest das
+ * Versandtor frisch, ebenso Klassen und Modell; die Oberflaeche bestimmt davon nichts. Der Lauf haelt
+ * dann immer vor dem ersten Webzugriff an. Bis zur Freischaltung (P4c-4) antwortet das Tor mit
+ * `projekt.ki_gesperrt`.
  */
-async rechercheStarten(frage: string, suiteProjekt: string | null, besprechung: string | null) : Promise<Result<LaufAntwort, string>> {
+async rechercheStarten(frage: string, suiteProjekt: string | null, besprechung: string | null, mitKontext: boolean | null) : Promise<Result<LaufAntwort, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("recherche_starten", { frage, suiteProjekt, besprechung }) };
+    return { status: "ok", data: await TAURI_INVOKE("recherche_starten", { frage, suiteProjekt, besprechung, mitKontext }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -4411,7 +4431,9 @@ async conversationGet(id: string) : Promise<Result<ConversationDetail, string>> 
 /**
  * Legt eine leere Unterhaltung an (`kind` = `voice`, Datenklasse INTERNAL). Mit `project_id` gehört
  * sie zu einem Suite-Projekt (`scope.project_id`, lva#365 P4c-2): Das Projekt muss es geben und darf
- * nicht archiviert sein. Die Bindung wird nur hier gesetzt; kein Befehl ändert sie danach.
+ * nicht archiviert sein, und das Gespräch trägt die Datenklasse des Projekts (Momentaufnahme, das
+ * Versandtor liest sie bei jedem Versand frisch). Die Bindung wird nur hier gesetzt; kein Befehl
+ * ändert sie danach.
  */
 async conversationCreate(title: string | null, projectId: string | null) : Promise<Result<Conversation, string>> {
     try {
@@ -10669,6 +10691,20 @@ output_language: string | null }
  */
 export type DocumentEvent = { kind: "progress"; meeting_id: string; doc_type: string; phase: MinutesPhase; done: number; total: number } | { kind: "done"; meeting_id: string; doc_type: string; document_id: string } | { kind: "failed"; meeting_id: string; doc_type: string; code: string }
 /**
+ * Ergebnis für die Oberfläche. Name und Ordner sind die der Ablage (die Person hat sie selbst
+ * angegeben); der Inhalt des Dokuments ist nicht dabei.
+ */
+export type DokumentErgebnis = { dat: string; name: string; ordner: string; 
+/**
+ * Wirksame Klasse des Entwurfs (`public` … `personal`).
+ */
+klasse: string; nurGeraet: boolean; 
+/**
+ * Ist der Entwurf Mitglied des Projekts (als Eintrag, ausgeschaltet)? `false`, wenn nur die
+ * Mitgliedschaft scheiterte: Der Entwurf liegt dann in der Ablage.
+ */
+imProjekt: boolean }
+/**
  * Eine Sprachfassung: Text und/oder Hörbuch in einer Sprache.
  */
 export type Edition = { 
@@ -10942,7 +10978,12 @@ export type FreigabeInfo = { id: string; question: string; dataClass: string;
 /**
  * Frist des Halts in Sekunden (Rest ab jetzt).
  */
-expiresInSecs: number; projectId: string | null; queries: FreigabeZeile[] }
+expiresInSecs: number; projectId: string | null; queries: FreigabeZeile[]; 
+/**
+ * Die Anfragen entstanden mit dem Kontext des Projekts (Recherche mit Projektkontext): Die Person
+ * sieht, was aus ihrem Projekt in die Suche eingeht.
+ */
+withContext: boolean }
 export type FreigabeZeile = { id: string; text: string; 
 /**
  * Datenklasse (`PERSONAL` ...) der Anfrage, wenn sie eine Freigabe verlangt; die Oberflaeche
