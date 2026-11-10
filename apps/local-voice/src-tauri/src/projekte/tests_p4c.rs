@@ -688,16 +688,14 @@ async fn register_defekt_setzt_zurueck() {
 
 #[tokio::test]
 async fn register_ordner_unlesbar_bricht_den_turn_vor_dem_versand_ab() {
-    // Der Ordner des Registers liegt unter einer Datei: Lesen scheitert mit einem anderen Fehler als
-    // „fehlt“. Das Register wird weder als leer angenommen noch angefasst; der Turn geht nicht raus.
+    // An der Stelle der Registerdatei liegt ein Verzeichnis: Lesen scheitert auf allen Plattformen mit
+    // einem anderen Fehler als „fehlt“. Das Register wird weder als leer angenommen noch angefasst; der
+    // Turn geht nicht raus.
     let tmp = tempfile::tempdir().unwrap();
-    let datei = tmp.path().join("datei");
-    std::fs::write(&datei, b"x").unwrap();
-    let s = szene_mit(
-        suite_projekt("INTERNAL"),
-        ziel(false),
-        Some(datei.join("unter")),
-    );
+    let ordner = tmp.path().join("register");
+    let im_weg = ordner.join(tor_herkunft::DATEI);
+    std::fs::create_dir_all(&im_weg).unwrap();
+    let s = szene_mit(suite_projekt("INTERNAL"), ziel(false), Some(ordner.clone()));
     assert_eq!(
         s.tor
             .vor_versand(auftrag("r1", "g1", vec![], "Frage"))
@@ -706,7 +704,8 @@ async fn register_ordner_unlesbar_bricht_den_turn_vor_dem_versand_ab() {
         Some(Abbruch::RegisterDefekt)
     );
     assert_eq!(s.tor.offene_laeufe(), 0);
-    assert_eq!(std::fs::read(&datei).unwrap(), b"x");
+    assert!(im_weg.is_dir());
+    assert_eq!(std::fs::read_dir(&im_weg).unwrap().count(), 0);
 }
 
 /// Schreibfehler beim Abschluss (voller oder gesperrter Datenträger): Das Lesen gelingt, das Anlegen des
@@ -2625,7 +2624,9 @@ fn quelltext(rel: &str) -> String {
     let pfad = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("src")
         .join(rel);
-    std::fs::read_to_string(&pfad).unwrap_or_else(|e| panic!("{rel}: {e}"))
+    std::fs::read_to_string(&pfad)
+        .unwrap_or_else(|e| panic!("{rel}: {e}"))
+        .replace("\r\n", "\n")
 }
 
 fn rust_dateien(dir: &std::path::Path, aus: &mut Vec<PathBuf>) {

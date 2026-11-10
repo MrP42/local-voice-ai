@@ -1571,6 +1571,63 @@ fn unlesbarer_stand_haelt_an_und_unbekannte_felder_reisen_mit() {
     );
 }
 
+/// #450: Ein Stand vom Hub mit Zähler über `ZAEHLER_MAX` ruht wie ein unlesbarer (angehalten, nie
+/// überschrieben, keine Panik); genau `ZAEHLER_MAX` gilt noch und wird eingespielt.
+#[test]
+fn zaehler_ueber_der_obergrenze_haelt_an_und_an_der_grenze_gilt() {
+    use crate::ablage::zusammenfuehren::ZAEHLER_MAX;
+    let hub = FakeHub::neu();
+    let (a, b) = (geraet("a"), geraet("b"));
+    let key = schluessel_konto();
+    let kid = crypto::key_id(&key);
+    let ord = a.ordner("Zaehler");
+    let hoch = a.ablegen("Hoch.txt", "Inhalt hoch", &ord);
+    let grenze = a.ablegen("Grenze.txt", "Inhalt Grenze", &ord);
+    a.sync(&hub);
+    b.sync(&hub);
+    let setzen = |coll: &str, id: &str, o: &mut HubObj, z: u64| {
+        let aad = crypto::aad_ablage(USER, coll, id, &o.refs, &kid, false);
+        let mut v: Value =
+            serde_json::from_slice(&crypto::open(&key, &aad, &o.payload).unwrap()).unwrap();
+        v["name"]["zaehler"] = serde_json::json!(z);
+        o.payload = crypto::seal(&key, &aad, collect::canonical(&v).as_bytes()).unwrap();
+    };
+    hub.faelschen(SAMMLUNG_DATEI, &hoch, |o| {
+        setzen(SAMMLUNG_DATEI, &hoch, o, u64::MAX)
+    });
+    hub.faelschen(SAMMLUNG_DATEI, &grenze, |o| {
+        setzen(SAMMLUNG_DATEI, &grenze, o, ZAEHLER_MAX)
+    });
+    let vorher = hub.objekt(SAMMLUNG_DATEI, &hoch).unwrap();
+    b.sync(&hub);
+    assert_eq!(b.zustand_von(&hoch), Some(AblageSyncZustand::Angehalten));
+    assert_eq!(b.datei(&hoch).unwrap().name.wert, "Hoch.txt");
+    assert_eq!(
+        b.datei(&grenze).unwrap().name.zaehler,
+        ZAEHLER_MAX,
+        "Grenzwert wird eingespielt"
+    );
+    // B hat `ZAEHLER_MAX` angenommen: die Kette ist ausgeschöpft, jeder lokale Schreibvorgang scheitert
+    // sichtbar und ändert nichts (es entsteht nie ein Zähler, den andere Geräte anhalten müssten).
+    let f = b.a.datei_umbenennen(&grenze, "Grenze2.txt").unwrap_err();
+    assert_eq!(f.code, "ablage.zaehler_erschoepft");
+    let f = b.a.datei_umbenennen(&hoch, "Hoch2.txt").unwrap_err();
+    assert_eq!(f.code, "ablage.zaehler_erschoepft");
+    b.sync(&hub);
+    assert_eq!(b.datei(&grenze).unwrap().name.wert, "Grenze.txt");
+    assert_eq!(b.datei(&grenze).unwrap().name.zaehler, ZAEHLER_MAX);
+    assert_eq!(b.datei(&hoch).unwrap().name.wert, "Hoch.txt");
+    assert_eq!(
+        hub.objekt(SAMMLUNG_DATEI, &hoch).unwrap().payload,
+        vorher.payload,
+        "angehaltenes Objekt nicht überschrieben"
+    );
+    // A gleicht ab: der Grenzwert-Datensatz kommt unverändert an, das angehaltene Objekt ruht auch dort.
+    a.sync(&hub);
+    assert_eq!(a.datei(&grenze).unwrap().name.zaehler, ZAEHLER_MAX);
+    assert_eq!(a.zustand_von(&hoch), Some(AblageSyncZustand::Angehalten));
+}
+
 /// Befund 6: Zwei Geräte mit je eigenem Standardordner haben nach dem ersten Abgleich ein „Allgemein“.
 #[test]
 fn zwei_geraete_ein_allgemein() {

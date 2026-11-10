@@ -9507,6 +9507,7 @@
       "nicht_erreichbar": "The folder is not reachable.",
       "hartlink": "Hard links are not read.",
       "allgemein": "That did not work.",
+      "zaehler_erschoepft": "The file store cannot accept any more changes right now.",
       "name_vorhanden": "This name is already taken.",
       "name_ungueltig": "This name is not allowed.",
       "journal_defekt": "The file index is damaged.",

@@ -211,6 +211,10 @@ fn lesen_roh(ordner: &Path) -> Roh {
             Ok(d) if d.v == VERSION && !d.salz.is_empty() => Roh::Gelesen(d),
             _ => Roh::Kaputt,
         },
+        // „Fehlt“ heißt hier nur, dass das Betriebssystem `NotFound` meldet. Unter Windows gilt das auch,
+        // wenn ein Elternglied eine Datei ist (ERROR_PATH_NOT_FOUND). Das bleibt fail-closed: Ein leeres
+        // Register kennt keine Antwort, Antworten im Verlauf werden ersetzt, und das spätere Schreiben
+        // scheitert mit `RegisterDefekt`.
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Roh::Fehlt,
         Err(_) => Roh::Unlesbar,
     }
