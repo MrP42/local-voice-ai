@@ -41,6 +41,14 @@ struct LanguageSourceSheet: View {
                     Section("Sprache") { originalRow(source) }
                 }
                 LiveLanguageSections(model: live, editionLanguages: editionLanguages)
+                if playback.source == .voice {
+                    // Alles zur Sprache an einem Ort (Globus): auch die Vorlesestimme, vorgefiltert nach Lesesprache.
+                    Section("Vorlesestimme") {
+                        NavigationLink { VoiceListContent() } label: {
+                            LabeledContent("Stimme", value: playback.voiceName).frame(minHeight: 44)
+                        }
+                    }
+                }
                 if showsSources {
                     Section("Quelle") { sourceRows }
                 }

@@ -1031,69 +1031,114 @@ struct PlayButton: View {
 }
 
 struct VoiceList: View {
-    @ObservedObject var playback = LibraryPlayback.shared
-    @ObservedObject var phonon = PhononEngine.shared
     @Environment(\.dismiss) private var dismiss
     var body: some View {
         NavigationStack {
-            List {
-                // Wofür die Wahl gilt (lva#352): alle Bücher der Sprache oder nur dieses Buch.
-                if let lang = playback.voiceLanguage {
-                    let name = Locale.current.localizedString(forLanguageCode: lang) ?? lang
-                    Section {
-                        Toggle("Nur für dieses Buch", isOn: Binding(
-                            get: { playback.voiceScope == .book },
-                            set: { playback.setBookOnlyVoice($0) }))
-                        .frame(minHeight: 44)
-                    } footer: {
-                        Text(playback.voiceLanguageMissing ? "Für \(name) ist auf dem iPhone keine Stimme installiert. Es liest eine Stimme einer anderen Sprache."
-                             : playback.voiceScope != .book ? "Standardstimme für Bücher auf \(name)."
-                             : playback.bookVoiceMissing
-                             ? "Die eigene Stimme dieses Buchs fehlt auf dem iPhone. Es liest die Standardstimme für \(name)."
-                             : "Eigene Stimme für dieses Buch (\(name)).")
-                    }
-                }
-                ForEach(PhononEngine.languages, id: \.self) { language in
-                    if let names = phonon.voices[language] {
-                        Section {
-                            ForEach(names, id: \.self) { name in
-                                let id = PhononEngine.identifier(language: language, voice: name)
-                                Button { playback.chooseVoice(id); dismiss() } label: {
-                                    HStack {
-                                        Text(name)
-                                        Spacer()
-                                        if id == playback.voiceIdentifier { Image(systemName: "checkmark") }
-                                    }.frame(minHeight: 44).contentShape(Rectangle())
-                                }.buttonStyle(.plain)
-                            }
-                        } header: { Text(PhononEngine.sectionTitle(language)) } footer: {
-                            Text("Läuft auf dem iPhone. Markiert wird der Satz statt des Worts. Die erste Nutzung einer Sprache dauert einige Sekunden.")
-                        }
-                    }
-                }
+            VoiceListContent()
+                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Fertig") { dismiss() } } }
+        }
+    }
+}
+
+/// Stimmenwahl, vorgefiltert nach der Lesesprache (Buchsprache bzw. Live-Zielsprache): oben die Stimmen dieser
+/// Sprache, Stimmen anderer Sprachen eingeklappt darunter. Auch im Blatt „Sprache“ (Globus) eingebettet.
+struct VoiceListContent: View {
+    @ObservedObject var playback = LibraryPlayback.shared
+    @ObservedObject var phonon = PhononEngine.shared
+    /// Nach einer Wahl: als eigenes Blatt schließen, im Blatt „Sprache“ zurück (dieselbe Umgebung).
+    @Environment(\.dismiss) private var dismiss
+    @State private var othersShown = false
+
+    private var lang: String? { playback.voiceLanguage }
+    private var ownPhonon: [String] { PhononEngine.languages.filter { lang == nil || $0 == lang } }
+    private var otherPhonon: [String] { lang == nil ? [] : PhononEngine.languages.filter { $0 != lang } }
+
+    var body: some View {
+        List {
+            // Wofür die Wahl gilt (lva#352): alle Bücher der Sprache oder nur dieses Buch.
+            if let lang {
+                let name = Locale.current.localizedString(forLanguageCode: lang) ?? lang
                 Section {
-                    ForEach(playback.systemVoices, id: \.identifier) { v in
-                        Button {
-                            playback.chooseVoice(v.identifier); dismiss()
-                        } label: {
-                            HStack {
-                                VStack(alignment: .leading) {
-                                    Text(v.name)
-                                    Text(v.quality == .premium ? "Premium" : v.quality == .enhanced ? "Erweitert" : "Standard").font(.caption).foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                if v.identifier == playback.voiceIdentifier { Image(systemName: "checkmark") }
-                            }.frame(minHeight: 44).contentShape(Rectangle())
-                        }.buttonStyle(.plain)
-                    }
+                    Toggle("Nur für dieses Buch", isOn: Binding(
+                        get: { playback.voiceScope == .book },
+                        set: { playback.setBookOnlyVoice($0) }))
+                    .frame(minHeight: 44)
+                } header: {
+                    Text("Stimmen für \(name)")
                 } footer: {
-                    Text("Bessere Stimmen (Premium) lädst du kostenlos unter Einstellungen › Bedienungshilfen › Gesprochene Inhalte › Stimmen.")
+                    Text(playback.voiceLanguageMissing ? "Für \(name) ist auf dem iPhone keine Stimme installiert. Es liest eine Stimme einer anderen Sprache."
+                         : playback.voiceScope != .book ? "Standardstimme für Bücher auf \(name). Ohne eigene Wahl nimmt das iPhone automatisch eine Stimme dieser Sprache."
+                         : playback.bookVoiceMissing
+                         ? "Die eigene Stimme dieses Buchs fehlt auf dem iPhone. Es liest die Standardstimme für \(name)."
+                         : "Eigene Stimme für dieses Buch (\(name)).")
                 }
             }
-            .navigationTitle("Stimme").navigationBarTitleDisplayMode(.inline)
-            .task { await phonon.refresh() }
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Fertig") { dismiss() } } }
+            ForEach(ownPhonon, id: \.self) { language in phononSection(language) }
+            Section {
+                ForEach(playback.systemVoices, id: \.identifier) { v in systemRow(v) }
+            } header: {
+                Text("Systemstimmen")
+            } footer: {
+                Text("Bessere Stimmen (Premium) lädst du kostenlos unter Einstellungen › Bedienungshilfen › Gesprochene Inhalte › Stimmen.")
+            }
+            if !otherPhonon.isEmpty {
+                Section {
+                    DisclosureGroup("Stimmen anderer Sprachen", isExpanded: $othersShown) {
+                        ForEach(otherPhonon, id: \.self) { language in
+                            ForEach(phonon.voices[language] ?? [], id: \.self) { name in
+                                phononRow(language, name, caption: PhononEngine.sectionTitle(language))
+                            }
+                        }
+                    }
+                    .frame(minHeight: 44)
+                } footer: {
+                    Text("Eine Stimme einer anderen Sprache liest den Text mit fremder Aussprache.")
+                }
+            }
         }
+        .navigationTitle("Stimme").navigationBarTitleDisplayMode(.inline)
+        .task { await phonon.refresh() }
+    }
+
+    @ViewBuilder private func phononSection(_ language: String) -> some View {
+        if let names = phonon.voices[language] {
+            Section {
+                ForEach(names, id: \.self) { name in phononRow(language, name, caption: nil) }
+            } header: { Text(PhononEngine.sectionTitle(language)) } footer: {
+                Text("Läuft auf dem iPhone. Markiert wird der Satz statt des Worts. Die erste Nutzung einer Sprache dauert einige Sekunden.")
+            }
+        }
+    }
+
+    private func phononRow(_ language: String, _ name: String, caption: String?) -> some View {
+        let id = PhononEngine.identifier(language: language, voice: name)
+        return Button { playback.chooseVoice(id); dismiss() } label: {
+            HStack {
+                VStack(alignment: .leading) {
+                    Text(name)
+                    if let caption { Text(caption).font(.caption).foregroundStyle(.secondary) }
+                }
+                Spacer()
+                if id == playback.voiceIdentifier { Image(systemName: "checkmark") }
+            }.frame(minHeight: 44).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(id == playback.voiceIdentifier ? [.isButton, .isSelected] : .isButton)
+    }
+
+    private func systemRow(_ v: AVSpeechSynthesisVoice) -> some View {
+        Button { playback.chooseVoice(v.identifier); dismiss() } label: {
+            HStack {
+                VStack(alignment: .leading) {
+                    Text(v.name)
+                    Text(v.quality == .premium ? "Premium" : v.quality == .enhanced ? "Erweitert" : "Standard").font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                if v.identifier == playback.voiceIdentifier { Image(systemName: "checkmark") }
+            }.frame(minHeight: 44).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(v.identifier == playback.voiceIdentifier ? [.isButton, .isSelected] : .isButton)
     }
 }
 

@@ -699,8 +699,10 @@ final class LibraryPlayback: NSObject, ObservableObject {
     private func fallbackVoice(_ lang: String?) -> String? {
         guard let lang else { return nil }
         // Phonon nur, wenn der Katalog die Stimme kennt; sonst bliebe eine ungültige Kennung aktiv.
-        if let id = voiceIdentifier, voiceMatches(id, lang) { return nil }
-        if let name = PhononEngine.shared.voices[lang]?.first { return PhononEngine.identifier(language: lang, voice: name) }
+        // Ohne eigene Wahl: Phonon vor Systemstimme, auch wenn der Phonon-Katalog erst nach dem Öffnen geladen ist.
+        let phononName = phononFailed ? nil : PhononEngine.shared.voices[lang]?.first
+        if let id = voiceIdentifier, voiceMatches(id, lang), PhononEngine.voiceName(id) != nil || phononName == nil { return nil }
+        if let name = phononName { return PhononEngine.identifier(language: lang, voice: name) }
         return AVSpeechSynthesisVoice.speechVoices().filter { $0.language.hasPrefix(lang) }
             .max { $0.quality.rawValue < $1.quality.rawValue }?.identifier
     }
