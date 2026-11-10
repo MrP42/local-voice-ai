@@ -183,6 +183,9 @@ final class LibrarySync: ObservableObject {
             self.error = error.localizedDescription
             status = "Abgleich unterbrochen"
         }
+        // Die Ablage hängt am selben Konto: nach jedem Bibliothek-Abgleich anstoßen (in eigener Aufgabe, damit dieser Lauf nicht auf
+        // Downloads der Ablage wartet; ein laufender Ablage-Lauf nimmt den Anstoß als Folgelauf).
+        if account != nil { Task { await AblageSync.shared.run() } }
     }
 
     private func pull(_ acc: Account) async throws {

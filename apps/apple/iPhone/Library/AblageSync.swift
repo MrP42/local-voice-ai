@@ -16,8 +16,9 @@ import Security
 /// - Die Ablage liegt im App-Container (Application Support), nie im Bibliothek-Ordner. Kein Logging und keine Fehlertexte
 ///   mit Namen oder Inhalten (Spec §10).
 /// - Kein Push, keine Blob-Löschung: das iPhone liest in D5a nur.
-/// Die Seite „Ablage“ und der automatische Lauf nach dem Bibliothek-Abgleich folgen mit D5a-4; bis dahin startet
-/// niemand `run()` von selbst (Debug-Startargument `--ablage-test`).
+/// Die Seite „Ablage“ (`iPhone/Ablage/AblageViews.swift`, D5a-4) startet `run()` beim Öffnen, `LibrarySync.run()` am Ende jedes Laufs.
+/// Der Index der Suche (`AblageSuchdienst`, VoiceCore) wird nach jedem Lauf und jedem Laden eines Originals aus dem Zustand neu
+/// abgeglichen; was den Index-Tor nicht passiert (Papierkorb, nur Gerät, angehalten, begraben), kommt nie hinein.
 
 /// Der HTTP-Weg des lesenden Abgleichs.
 struct AblageHubHTTP: AblageHub {
@@ -91,9 +92,19 @@ final class AblageSync: ObservableObject {
     @Published private(set) var error: String?
     /// Ordner und Dateien mit Zustand für die Seite „Ablage“ (D5a-4).
     @Published private(set) var uebersicht: AblageUebersicht?
+    /// Originale (`<dat>/<fas>`), die am Hub fehlten oder nicht passten, als der Nutzer oder ein Lauf sie angefordert hat. Die Seite
+    /// zeigt sie als „nicht geladen, erneut antippen“; ein späterer Erfolg nimmt sie wieder heraus.
+    @Published private(set) var fehlgeschlageneOriginale: Set<String> = []
+    /// Abdeckung der Suche (Dateien im Bereich, durchsucht, ohne Text, im Konflikt), Spec §5.3.
+    @Published private(set) var abdeckung: AblageAbdeckung?
+    /// Belegung am Hub, wenn der Hub sie nennt (`GET /api/v1/voice/blobs`); sonst fehlt die Zeile im Fuß.
+    @Published private(set) var kontingent: AblageKontingent?
+    /// Zählt jede neue Übersicht (für Ansichten, die davon abhängen).
+    @Published private(set) var indexVersion = 0
 
     let speicher: AblageSpeicher
     private let dienst: AblageDienst
+    private let suchdienst = AblageSuchdienst()
     private let sync: LibrarySync
 
     /// `Application Support/Ablage` im App-Container.
@@ -117,6 +128,9 @@ final class AblageSync: ObservableObject {
         var url = speicher.wurzel
         try? url.setResourceValues(werte)
     }
+
+    /// Schlüssel eines Originals in `fehlgeschlageneOriginale`.
+    static func schluessel(dat: String, fas: String) -> String { dat + "/" + fas }
 
     private func konto(_ acc: LibrarySync.Account) -> AblageKonto {
         AblageKonto(key: [UInt8](acc.key), userId: acc.userId, hubUrl: acc.url)
@@ -150,8 +164,13 @@ final class AblageSync: ObservableObject {
             }
             bericht = b
             lastRun = Date()
+            for a in angefordert { fehlgeschlageneOriginale.remove(Self.schluessel(dat: a.dat, fas: a.fas)) }
+            for a in b.fehlgeschlageneAnforderungen { fehlgeschlageneOriginale.insert(Self.schluessel(dat: a.dat, fas: a.fas)) }
+            let nicht = b.fehlgeschlageneAnforderungen.count
+            await kontingentHolen(acc)
             status = b.downloadsRuhen ? "Ablage: abgeglichen, Dateien warten"
                 : b.downloadsUnterbrochen ? "Ablage: abgeglichen, Dateien unvollständig"
+                : nicht > 0 ? "Ablage: abgeglichen, \(nicht) \(nicht == 1 ? "Datei" : "Dateien") nicht geladen"
                 : b.wartetAufWLAN > 0 ? "Ablage: abgeglichen, \(b.wartetAufWLAN) Dateien warten auf WLAN" : "Ablage: abgeglichen"
             await aktualisiere()
         } catch let e as AblageLaufFehler {
@@ -166,15 +185,33 @@ final class AblageSync: ObservableObject {
         }
     }
 
+    /// Belegung und Kontingent am Hub; ein Fehler ist nicht schlimm (die Zeile fehlt dann).
+    private func kontingentHolen(_ acc: LibrarySync.Account) async {
+        guard let (code, data) = try? await LibrarySync.send(acc.url + "/api/v1/voice/blobs", method: "GET", token: acc.token), code == 200 else { return }
+        kontingent = AblageKontingent(antwort: data)
+    }
+
     /// Lädt ein Original auf ausdrückliche Anforderung (Vorschau, Öffnen, Teilen) und gibt den Pfad zurück. Gilt die Regel
     /// „nur im WLAN“ und das Gerät ist im teuren Netz (Mobilfunk), wird nichts geladen (`AblageLaufFehler.wlanRegel`).
     func originalLaden(dat: String, fas: String) async throws -> URL {
         guard let acc = sync.account else { throw AblageLaufFehler.abgemeldet }
         if sync.wifiOnly && sync.expensiveNetwork { throw AblageLaufFehler.wlanRegel }
-        let url = try await dienst.originalLaden(hub: AblageHubHTTP(account: acc, sync: sync), konto: konto(acc), dat: dat, fas: fas,
-                                                 bulk: sync.wifiOnly, freierPlatz: { Self.freierPlatz() })
-        await aktualisiere()
-        return url
+        let schluessel = Self.schluessel(dat: dat, fas: fas)
+        do {
+            let url = try await dienst.originalLaden(hub: AblageHubHTTP(account: acc, sync: sync), konto: konto(acc), dat: dat, fas: fas,
+                                                     bulk: sync.wifiOnly, freierPlatz: { Self.freierPlatz() })
+            fehlgeschlageneOriginale.remove(schluessel)
+            await aktualisiere()
+            return url
+        } catch let e as AblageLaufFehler {
+            // Ein Fehler an der einzelnen Datei (fehlt am Hub, passt nicht, nicht speicherbar): „erneut antippen“. Netz,
+            // WLAN-Regel und Abmeldung sind keine Fehler der Datei.
+            switch e {
+            case .hub(.netz), .wlanRegel, .abgemeldet: break
+            default: fehlgeschlageneOriginale.insert(schluessel)
+            }
+            throw e
+        }
     }
 
     /// Freier Platz für wichtige Nutzung in Bytes (`nil`: unbekannt).
@@ -184,12 +221,56 @@ final class AblageSync: ObservableObject {
     }
 
     /// Liest die Übersicht neu (abseits des Haupt-Threads).
+    /// Übersicht und Suchindex neu (abseits des Haupt-Threads). Nach einem Abmelden während des Lesens wird nichts mehr gesetzt.
     func aktualisiere() async {
-        guard let acc = sync.account else { uebersicht = nil; return }
-        let speicher = self.speicher, kennung = konto(acc).kennung
-        uebersicht = await Task.detached(priority: .utility) { () -> AblageUebersicht in
+        guard let acc = sync.account else { uebersicht = nil; abdeckung = nil; return }
+        let speicher = self.speicher, kennung = konto(acc).kennung, such = suchdienst
+        let (u, ab) = await Task.detached(priority: .utility) { () -> (AblageUebersicht, AblageAbdeckung) in
             let z = speicher.laden(konto: kennung).zustand
-            return AblageAnzeige.uebersicht(z, vorhanden: speicher.vorhanden(z.bestand))
+            let ab = await such.aktualisieren(zustand: z, speicher: speicher)
+            return (AblageAnzeige.uebersicht(z, vorhanden: speicher.vorhanden(z.bestand)), ab)
+        }.value
+        guard sync.account != nil else { return }
+        uebersicht = u
+        abdeckung = ab
+        indexVersion += 1
+    }
+
+    // MARK: Für die Seite „Ablage“
+
+    /// Detail einer Datei (Fassungen, Konflikt, Textstand) aus dem Zustand auf der Platte.
+    func detail(dat: String) async -> AblageDetail? {
+        guard let acc = sync.account else { return nil }
+        let speicher = self.speicher, kennung = konto(acc).kennung
+        return await Task.detached(priority: .userInitiated) { () -> AblageDetail? in
+            let z = speicher.laden(konto: kennung).zustand
+            return AblageAnzeige.detail(z, dat: dat, vorhanden: speicher.vorhanden(z.bestand))
+        }.value
+    }
+
+    /// Suche im lokalen Index; Ergebnisse tragen Name, Ordner und Zustand der Datei. Nichts verlässt das Gerät.
+    func suchen(_ frage: String) async -> [AblageSuchErgebnis] {
+        let treffer = await suchdienst.suche(frage)
+        guard let u = uebersicht else { return [] }
+        var je: [String: AblageDateiEintrag] = [:]
+        for d in u.dateien { je[d.id] = d }
+        return treffer.compactMap { t in
+            guard let d = je[t.dat], !d.imKorb else { return nil }
+            return AblageSuchErgebnis(eintrag: d, ordnerPfad: AblageBaum.ordnerPfad(u, ordner: d.ordner).joined(separator: " › "), stellen: t.stellen)
+        }
+    }
+
+    /// Die Abschnitte der Textfassung, die durchsucht wird (die der aktuellen Fassung), nur für Dateien, die der Index-Tor zulässt.
+    func textfassung(dat: String) async -> [AblageAbschnitt]? {
+        guard let acc = sync.account else { return nil }
+        let speicher = self.speicher, kennung = konto(acc).kennung
+        return await Task.detached(priority: .userInitiated) { () -> [AblageAbschnitt]? in
+            let z = speicher.laden(konto: kennung).zustand
+            guard AblageAnzeige.darfIndiziert(z, dat: dat), let d = z.bestand.dateien[dat],
+                  let q = AblageSuche.gewaehlterText(d, vorhanden: speicher.vorhanden(z.bestand)),
+                  let bytes = speicher.textLesen(dat: q.dat, textrev: q.textrev), let tf = try? AblageTextfassung(bytes: bytes),
+                  AblageBytes.equal(tf.textrev, q.textrev) else { return nil }
+            return tf.abschnitte
         }.value
     }
 
@@ -199,7 +280,9 @@ final class AblageSync: ObservableObject {
     /// sonst könnte ein Lauf nach dem Löschen den Zustand des alten Kontos neu schreiben.
     func kontoVerlassen() async {
         await dienst.verlassen()
-        bericht = nil; uebersicht = nil; lastRun = nil; error = nil
+        await suchdienst.leeren()
+        bericht = nil; uebersicht = nil; lastRun = nil; error = nil; fehlgeschlageneOriginale = []
+        abdeckung = nil; kontingent = nil; indexVersion += 1
         status = "Ablage: noch nicht abgeglichen"
     }
 
@@ -262,4 +345,13 @@ final class AblageSync: ObservableObject {
         if let data = try? JSONSerialization.data(withJSONObject: obj, options: [.sortedKeys, .prettyPrinted]) { try? data.write(to: url, options: .atomic) }
     }
     #endif
+}
+
+/// Ein Suchergebnis der Seite „Ablage“: die Datei und ihre Fundstellen.
+struct AblageSuchErgebnis: Identifiable {
+    let eintrag: AblageDateiEintrag
+    let ordnerPfad: String
+    let stellen: [AblageFundstelle]
+    var id: String { eintrag.id }
+    var dat: String { eintrag.id }
 }

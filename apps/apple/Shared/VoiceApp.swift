@@ -80,7 +80,8 @@ private struct VoiceHome: View {
     @FocusState private var searchFocused: Bool
     #if DEBUG
     @State private var tab = ProcessInfo.processInfo.arguments.contains("--meeting-import-probe") ? 2
-        : ProcessInfo.processInfo.arguments.contains("--library-tab") ? 3 : 0
+        : ProcessInfo.processInfo.arguments.contains("--library-tab") ? 3
+        : ProcessInfo.processInfo.arguments.contains("--ablage-tab") ? 4 : 0
     #else
     @State private var tab = 0
     #endif
@@ -210,6 +211,7 @@ private struct VoiceHome: View {
 
             }.tabItem { Label("Verlauf", systemImage: "clock.arrow.circlepath") }.tag(1)
             LibraryTab().tabItem { Label("Bibliothek", systemImage: "books.vertical") }.tag(3)
+            AblageTab().tabItem { Label("Ablage", systemImage: "folder") }.tag(4)
         }
         .sheet(isPresented: $settings.shown) { ModelPanel(model: model) }
         .task { await PhononEngine.shared.refresh() }
