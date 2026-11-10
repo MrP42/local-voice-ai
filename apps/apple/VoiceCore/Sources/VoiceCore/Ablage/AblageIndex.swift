@@ -10,10 +10,17 @@ import Foundation
 // - Stücke je Abschnitt: `AblageSuchtext.stuecke` (220 Zeichen, 40 Überlappung). Jedes Stück ist beim Desktop genau ein Chunk
 //   (`chunk_page` fügt die Sätze eines höchstens 220 Zeichen langen Stücks zu einem Chunk zusammen); `seite` zählt die Stücke
 //   einer Datei ab 1 über alle Abschnitte wie `ablage_stueck.seite`.
+// - Faltung (lva#463): Der FTS-Text jedes Stücks UND jedes Anfragewort durchlaufen `AblageSuchtext.ftsNormalisieren` (ß/ẞ → ss, æ → ae,
+//   œ → oe, ø → o, ł → l, đ/ð → d, þ → th, ħ → h, ı → i, ĳ → ij), bevor der Tokenizer sie zerlegt; so findet „Strasse“ „Straße“. Anzeigetext,
+//   Stück und Auszug bleiben das Original. Anfrage: `content_tokens` (klein, Stoppwörter), dann Faltung, dann Tokenizer (wie `rank` am Desktop).
+//   Kein persistierter Index: Dieser Index und die Vorbereitung (`AblageSuchdienst.vorbereitet`) liegen nur im Speicher und entstehen
+//   bei jedem Start aus den Textfassungen neu, ein Altbestand mit ungefaltetem FTS-Text kann also nie existieren. Die einmalige Umstellung des
+//   Desktops (`meta.fts_fmt`, `fts_umstellen`) entfällt hier deshalb; wer je etwas davon auf die Platte legt, braucht eine Fassungsmarke und
+//   eine atomare Umstellung (Test `testIndexUndVorbereitungSindNurImSpeicher` erinnert daran).
 // - Ranking wie `bm25(chunks_fts)` von FTS5: je Wort der Anfrage (`content_tokens`, auf 200 Zeichen gekürzt, Doppelte bleiben)
 //   eine Phrase aus den Wörtern des Tokenizers (`unicode61 remove_diacritics 2`), Oder-Verknüpfung. Punkte nach der FTS5-Formel
 //   `idf · f·(k1+1) / (f + k1·(1 − b + b·D/avgdl))` mit k1 = 1,2, b = 0,75, `idf = ln((N − n + 0,5)/(n + 0,5))` (≤ 0 wird 1e-6),
-//   N = alle Stücke, n = Stücke mit der Phrase, D = Wörter des Stücks, avgdl = Wörter aller Stücke / N. Sortierung: bm25
+//   N = alle Stücke des Index (= die lesbaren, siehe unten), n = Stücke mit der Phrase, D = Wörter des Stücks, avgdl = Wörter aller Stücke / N. Sortierung: bm25
 //   aufsteigend (also Punkte absteigend), dann Stück-Kennung; höchstens 3000 Zeilen (`LIMIT`), höchstens 3 Stellen je Datei,
 //   höchstens 60 Kandidaten. Stück-Kennung = Reihenfolge im Index (Dateien nach Kennung (Bytes), Stücke nach `seite`).
 //   Gleichstand im Rang (gleicher Rohrang): der Desktop bricht ihn nach `c.id` auf, der Reihenfolge, in der sein Index die Stücke
@@ -24,9 +31,12 @@ import Foundation
 // - Gruppierung wie `index::suchen_mit`: je Datei die besten Stellen (höchstens 3, nie zwei mit gleichem Anker), Dateien in
 //   der Reihenfolge ihrer besten Stelle.
 //
-// Abweichung, die bleibt: N, n und avgdl zählen hier nur die Stücke, die der Index-Tor zulässt (der Desktop zählt alle Stücke
-// seines Index, auch Papierkorb, nur gerätelokale Dateien und nichts, was der Hub nie liefert). Rangzahlen können deshalb
-// abweichen; bei gleichem Bestand sind Reihenfolge und Rohrang gleich (Test gegen `ablage-index-vektoren.json`).
+// Abweichung, die bleibt: N, n und avgdl zählen hier nur die Stücke, die der Index-Tor zulässt. Der Desktop zählt seit lva#463 ebenfalls
+// nur Stücke, die der Leser des Aufrufs lesen darf (Papierkorb und gesperrte Dateien zählen nie; Fixture `gesperrt`: gleicher Rohrang wie
+// ohne sie, Test `testGesperrterBestandGleichRohrang`). Ein Unterschied der Rangzahlen bleibt daher nur bei Dateien, die nur der Desktop im
+// Index hat: lebende Dateien, die der Tor hier ausschließt (nur Gerät, `personal`/`confidential`, `Halten`, angehalten) oder die der Hub nie
+// liefert; der Desktop liest sie für seine Oberfläche mit. Bei gleichem Bestand sind Reihenfolge und Rohrang gleich (Test gegen
+// `ablage-index-vektoren.json`).
 //
 // Der Index ist nach dem Aufbau unveränderlich (`Sendable`). Kein Logging; Namen und Inhalte verlassen den Prozess nie.
 
@@ -107,7 +117,8 @@ public final class AblageIndex: Sendable {
         var begriffe: [String] = []
         for (i, ab) in abschnitte.enumerated() {
             for s in AblageSuchtext.stuecke(ab.text) {
-                let woerter = AblageSuchtext.fts5Woerter(s)
+                // lva#463: der FTS-Text ist gefaltet (ß → ss, …); `text` (Anzeige, Auszug) bleibt das Original.
+                let woerter = AblageSuchtext.fts5Woerter(AblageSuchtext.ftsNormalisieren(s))
                 var ids: [Int32] = []
                 ids.reserveCapacity(woerter.count)
                 for w in woerter {
@@ -225,9 +236,11 @@ public final class AblageIndex: Sendable {
         return AblageSuchtext.inhaltsWoerter(String(v))
     }
 
-    /// Eine Phrase der Anfrage: die Wörter, in die der Tokenizer ein Anfragewort zerlegt (meist eins).
+    /// Eine Phrase der Anfrage: die Wörter, in die der Tokenizer ein Anfragewort zerlegt (meist eins). Reihenfolge wie `wai-retrieval`
+    /// (`rank`, `phrasen_zerlegen`): `anfrageWoerter` (`content_tokens`: Kleinschreibung, Stoppwörter), dann die Faltung (lva#463:
+    /// „Strasse“ trifft „Straße“), dann der Tokenizer.
     private func phrasen(_ woerter: [String]) -> [[String]] {
-        woerter.map { AblageSuchtext.fts5Woerter($0) }
+        woerter.map { AblageSuchtext.fts5Woerter(AblageSuchtext.ftsNormalisieren($0)) }
     }
 
     /// Alle Zeilen der lexikalischen Abfrage, beste zuerst (bm25 aufsteigend, dann Stück-Kennung), höchstens `sqlZeilen`.
