@@ -508,11 +508,20 @@ pub(crate) mod tests_kind {
                 std::process::exit(0);
             }
             Ok("speicher") if typ == "txt" => {
+                // Optional: eigene PID ablegen, damit ein Test nach dem Lauf prüfen kann, dass das Kind
+                // weder läuft noch als Zombie liegt (lva#462).
+                if let Some(p) = std::env::var_os("LVA_EXTRAKT_PIDDATEI") {
+                    let _ = std::fs::write(p, std::process::id().to_string());
+                }
                 let mut v: Vec<Vec<u8>> = Vec::new();
-                loop {
+                // Sicherheitsnetz für die Testmaschine: versagt die Speichergrenze des Elternprozesses,
+                // endet der Haken nach 4 GiB ohne Antwort (der Test sieht dann `extrakt.programm`
+                // statt eines Abbruchs und wird rot), statt den Rechner leerzufressen.
+                for _ in 0..64 {
                     v.push(vec![1u8; 64 * 1024 * 1024]);
                     std::hint::black_box(&v);
                 }
+                std::process::exit(0);
             }
             _ => {}
         }

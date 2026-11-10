@@ -413,15 +413,41 @@
       "treffer_gesamt": 1
     },
     {
-      "bm25": [],
-      "bm25_anzahl": 0,
-      "dateien": [],
+      "bm25": [
+        {
+          "name": "Cafe.txt",
+          "seite": 2,
+          "wert": -3.4908310593598575
+        }
+      ],
+      "bm25_anzahl": 1,
+      "dateien": [
+        {
+          "name": "Cafe.txt",
+          "rang": 0.5,
+          "stellen": [
+            {
+              "anker": "zeile=4",
+              "auszug": "Unsere Adresse: Straße der Pariser Kommune 5. Inhaber: Müller und Mueller GbR.",
+              "pfad": []
+            }
+          ],
+          "typ": "txt"
+        }
+      ],
       "frage": "Strasse",
-      "stellen": [],
+      "stellen": [
+        {
+          "anker": "zeile=4",
+          "name": "Cafe.txt",
+          "rang": 0.5,
+          "seite": 2
+        }
+      ],
       "tokens": [
         "strasse"
       ],
-      "treffer_gesamt": 0
+      "treffer_gesamt": 1
     },
     {
       "bm25": [
@@ -1434,6 +1460,194 @@
         "kündigung"
       ],
       "treffer_gesamt": 3
+    },
+    {
+      "bm25": [
+        {
+          "name": "Cafe.txt",
+          "seite": 2,
+          "wert": -3.4908310593598575
+        }
+      ],
+      "bm25_anzahl": 1,
+      "dateien": [
+        {
+          "name": "Cafe.txt",
+          "rang": 0.5,
+          "stellen": [
+            {
+              "anker": "zeile=4",
+              "auszug": "Unsere Adresse: Straße der Pariser Kommune 5. Inhaber: Müller und Mueller GbR.",
+              "pfad": []
+            }
+          ],
+          "typ": "txt"
+        }
+      ],
+      "frage": "STRASSE",
+      "stellen": [
+        {
+          "anker": "zeile=4",
+          "name": "Cafe.txt",
+          "rang": 0.5,
+          "seite": 2
+        }
+      ],
+      "tokens": [
+        "strasse"
+      ],
+      "treffer_gesamt": 1
+    },
+    {
+      "bm25": [
+        {
+          "name": "Cafe.txt",
+          "seite": 2,
+          "wert": -6.981662118719715
+        }
+      ],
+      "bm25_anzahl": 1,
+      "dateien": [
+        {
+          "name": "Cafe.txt",
+          "rang": 0.5,
+          "stellen": [
+            {
+              "anker": "zeile=4",
+              "auszug": "Unsere Adresse: Straße der Pariser Kommune 5. Inhaber: Müller und Mueller GbR.",
+              "pfad": []
+            }
+          ],
+          "typ": "txt"
+        }
+      ],
+      "frage": "Pariser Strasse",
+      "stellen": [
+        {
+          "anker": "zeile=4",
+          "name": "Cafe.txt",
+          "rang": 0.5,
+          "seite": 2
+        }
+      ],
+      "tokens": [
+        "pariser",
+        "strasse"
+      ],
+      "treffer_gesamt": 1
+    },
+    {
+      "bm25": [
+        {
+          "name": "Mietvertrag.docx",
+          "seite": 1,
+          "wert": -4.920539390267526
+        }
+      ],
+      "bm25_anzahl": 1,
+      "dateien": [
+        {
+          "name": "Mietvertrag.docx",
+          "rang": 0.5,
+          "stellen": [
+            {
+              "anker": "absatz=1",
+              "auszug": "Mietvertrag Beispielstraße 12",
+              "pfad": []
+            }
+          ],
+          "typ": "docx"
+        }
+      ],
+      "frage": "Beispielstrasse",
+      "stellen": [
+        {
+          "anker": "absatz=1",
+          "name": "Mietvertrag.docx",
+          "rang": 0.5,
+          "seite": 1
+        }
+      ],
+      "tokens": [
+        "beispielstrasse"
+      ],
+      "treffer_gesamt": 1
+    },
+    {
+      "bm25": [
+        {
+          "name": "Cafe.txt",
+          "seite": 3,
+          "wert": -5.848727465388337
+        }
+      ],
+      "bm25_anzahl": 1,
+      "dateien": [
+        {
+          "name": "Cafe.txt",
+          "rang": 0.5,
+          "stellen": [
+            {
+              "anker": "zeile=6",
+              "auszug": "Gäste aus Łódź, Gdańsk, Ærø und Ørsted-Allee: naïve Résumé-Mappe mit ﬁnal-Preis. İstanbul-Gebäck ab 3 €.",
+              "pfad": []
+            }
+          ],
+          "typ": "txt"
+        }
+      ],
+      "frage": "Lodz Gdansk",
+      "stellen": [
+        {
+          "anker": "zeile=6",
+          "name": "Cafe.txt",
+          "rang": 0.5,
+          "seite": 3
+        }
+      ],
+      "tokens": [
+        "lodz",
+        "gdansk"
+      ],
+      "treffer_gesamt": 1
+    },
+    {
+      "bm25": [
+        {
+          "name": "Cafe.txt",
+          "seite": 3,
+          "wert": -5.848727465388337
+        }
+      ],
+      "bm25_anzahl": 1,
+      "dateien": [
+        {
+          "name": "Cafe.txt",
+          "rang": 0.5,
+          "stellen": [
+            {
+              "anker": "zeile=6",
+              "auszug": "Gäste aus Łódź, Gdańsk, Ærø und Ørsted-Allee: naïve Résumé-Mappe mit ﬁnal-Preis. İstanbul-Gebäck ab 3 €.",
+              "pfad": []
+            }
+          ],
+          "typ": "txt"
+        }
+      ],
+      "frage": "Aero Orsted",
+      "stellen": [
+        {
+          "anker": "zeile=6",
+          "name": "Cafe.txt",
+          "rang": 0.5,
+          "seite": 3
+        }
+      ],
+      "tokens": [
+        "aero",
+        "orsted"
+      ],
+      "treffer_gesamt": 1
     }
   ],
   "fts5": {
@@ -1442,6 +1656,469 @@
     "folge_zeichen": "300-304,306-30c,30f,311,31b,323-328,32d-32e,330-331",
     "hinweis": "Verhalten von FTS5 unicode61 remove_diacritics 2 je Code-Punkt (SQLite des Index). token_zeichen: beginnen und setzen ein Wort fort (Hex-Bereiche). folge_zeichen: setzen nur ein Wort fort (Diakritika). falten: Läufe start:anzahl:schritt:delta (dezimal) vom Code-Punkt zum gefalteten. entfernen: Zeichen, die im Wort verschwinden (Hex-Bereiche). Alle anderen Code-Punkte trennen Wörter; nicht aufgeführte Zeichen falten auf sich selbst.",
     "token_zeichen": "30-39,41-5a,61-7a,aa,b2-b3,b5,b9-ba,bc-be,c0-d6,d8-f6,f8-2c1,2c6-2d1,2e0-2e4,2ec,2ee,370-374,376-37d,37f-383,386,388-3f5,3f7-481,48a-559,560-588,58b-58e,590,5c8-5f2,5f5-5ff,605,61c-61d,620-64a,660-669,66e-66f,671-6d3,6d5,6e5-6e6,6ee-6fc,6ff,70e,710,712-72f,74b-7a5,7b1-7ea,7f4-7f5,7fa-815,81a,824,828,82e-82f,83f-858,85c-85d,85f-8e3,8ff,904-939,93d,950,958-961,966-96f,971-980,984-9bb,9bd,9c5-9c6,9c9-9ca,9ce-9d6,9d8-9e1,9e4-9f1,9f4-9f9,9fc-a00,a04-a3b,a3d,a43-a46,a49-a4a,a4e-a50,a52-a6f,a72-a74,a76-a80,a84-abb,abd,ac6,aca,ace-ae1,ae4-aef,af2-b00,b04-b3b,b3d,b45-b46,b49-b4a,b4e-b55,b58-b61,b64-b6f,b71-b81,b83-bbd,bc3-bc5,bc9,bce-bd6,bd8-bf2,bfb-c00,c04-c3d,c45,c49,c4e-c54,c57-c61,c64-c7e,c80-c81,c84-cbb,cbd,cc5,cc9,cce-cd4,cd7-ce1,ce4-d01,d04-d3d,d45,d49,d4e-d56,d58-d61,d64-d78,d7a-d81,d84-dc9,dcb-dce,dd5,dd7,de0-df1,df5-e30,e32-e33,e3b-e3e,e40-e46,e50-e59,e5c-eb0,eb2-eb3,eba,ebd-ec7,ece-f00,f20-f33,f40-f70,f88-f8c,f98,fbd,fcd,fdb-102a,103f-1049,1050-1055,105a-105d,1061,1065-1066,106e-1070,1075-1081,108e,1090-1099,10a0-10fa,10fc-135c,1369-138f,139a-13ff,1401-166c,166f-167f,1681-169a,169d-16ea,16ee-1711,1715-1731,1737-1751,1754-1771,1774-17b3,17d7,17dc,17de-17ff,180f-18a8,18aa-191f,192c-192f,193c-193f,1941-1943,1946-19af,19c1-19c7,19ca-19dd,1a00-1a16,1a1c-1a1d,1a20-1a54,1a5f,1a7d-1a7e,1a80-1a9f,1aa7,1aae-1aff,1b05-1b33,1b45-1b59,1b7d-1b7f,1b83-1ba0,1bae-1be5,1bf4-1bfb,1c00-1c23,1c38-1c3a,1c40-1c7d,1c80-1cbf,1cc8-1ccf,1ce9-1cec,1cee-1cf1,1cf5-1dbf,1de7-1dfb,1e00-1fbc,1fbe,1fc2-1fcc,1fd0-1fdc,1fe0-1fec,1ff0-1ffc,1fff,2065-2069,2070-2079,207f-2089,208f-209f,20ba-20cf,20f1-20ff,2102,2107,210a-2113,2115,2119-211d,2124,2126,2128,212a-212d,212f-2139,213c-213f,2145-2149,214e,2150-218f,23f4-23ff,2427-243f,244b-249b,24ea-24ff,2700,2776-2793,2b4d-2b4f,2b5a-2ce4,2ceb-2cee,2cf2-2cf8,2cfd,2d00-2d6f,2d71-2d7e,2d80-2ddf,2e2f,2e3c-2e7f,2e9a,2ef4-2eff,2fd6-2fef,2ffc-2fff,3005-3007,3021-3029,3031-3035,3038-303c,3040-3098,309d-309f,30a1-30fa,30fc-318f,3192-3195,31a0-31bf,31e4-31ff,321f-3229,3248-324f,3251-325f,3280-3289,32b1-32bf,32ff,3400-4dbf,4e00-a48f,a4c7-a4fd,a500-a60c,a610-a66e,a67f-a69e,a6a0-a6ef,a6f8-a6ff,a717-a71f,a722-a788,a78b-a801,a803-a805,a807-a80a,a80c-a822,a82c-a835,a83a-a873,a878-a87f,a882-a8b3,a8c5-a8cd,a8d0-a8df,a8f2-a8f7,a8fb-a925,a930-a946,a954-a95e,a960-a97f,a984-a9b2,a9ce-a9dd,a9e0-aa28,aa37-aa42,aa44-aa4b,aa4e-aa5b,aa60-aa76,aa7a,aa7c-aaaf,aab1,aab5-aab6,aab9-aabd,aac0,aac2-aadd,aae0-aaea,aaf2-aaf4,aaf7-abe2,abee-d7ff,e000-fb1d,fb1f-fb28,fb2a-fbb1,fbc2-fd3d,fd40-fdfb,fdfe-fdff,fe1a-fe1f,fe27-fe2f,fe53,fe67,fe6c-fefe,ff00,ff10-ff19,ff21-ff3a,ff41-ff5a,ff66-ffdf,ffe7,ffef-fff8,10000-100ff,10103-10136,10140-10178,1018a-1018f,1019c-101cf,101fe-1039e,103a0-103cf,103d1-10856,10858-1091e,10920-1093e,10940-10a00,10a04,10a07-10a0b,10a10-10a37,10a3b-10a3e,10a40-10a4f,10a59-10a7e,10a80-10b38,10b40-10fff,11003-11037,1104e-1107f,11083-110af,110c2-110ff,11103-11126,11135-1113f,11144-1117f,11183-111b2,111c1-111c4,111c9-116aa,116b8-1246f,12474-16f50,16f7f-16f8e,16f93-1cfff,1d0f6-1d0ff,1d127-1d128,1d1de-1d1ff,1d246-1d2ff,1d357-1d6c0,1d6c2-1d6da,1d6dc-1d6fa,1d6fc-1d714,1d716-1d734,1d736-1d74e,1d750-1d76e,1d770-1d788,1d78a-1d7a8,1d7aa-1d7c2,1d7c4-1eeef,1eef2-1efff,1f02c-1f02f,1f094-1f09f,1f0af-1f0b0,1f0bf-1f0c0,1f0d0,1f0e0-1f10f,1f12f,1f16c-1f16f,1f19b-1f1e5,1f203-1f20f,1f23b-1f23f,1f249-1f24f,1f252-1f2ff,1f321-1f32f,1f336,1f37d-1f37f,1f394-1f39f,1f3c5,1f3cb-1f3df,1f3f1-1f3ff,1f43f,1f441,1f4f8,1f4fd-1f4ff,1f53e-1f53f,1f544-1f54f,1f568-1f5fa,1f641-1f644,1f650-1f67f,1f6c6-1f6ff,1f774-e0000,e0002-e001f,e0080-e00ff,e01f0-10ffff"
+  },
+  "gesperrt": {
+    "dateien": [
+      {
+        "grund": "papierkorb",
+        "name": "Gesperrt-Vertrag.txt",
+        "text": "Kündigung Kündigungsfrist Vertrag Laufzeit Straße Strasse Budget Fassade Angebot Vorstand. Kündigung Kündigungsfrist Vertrag Laufzeit Straße Strasse Budget Fassade Angebot Vorstand. Kündigung Kündigungsfrist Vertrag Laufzeit Straße Strasse Budget Fassade Angebot Vorstand. Kündigung Kündigungsfrist Vertrag Laufzeit Straße Strasse Budget Fassade Angebot Vorstand. Kündigung Kündigungsfrist Vertrag Laufzeit Straße Strasse Budget Fassade Angebot Vorstand. Kündigung Kündigungsfrist Vertrag Laufzeit Straße Strasse Budget Fassade Angebot Vorstand. Kündigung Kündigungsfrist Vertrag Laufzeit Straße Strasse Budget Fassade Angebot Vorstand. Kündigung Kündigungsfrist Vertrag Laufzeit Straße Strasse Budget Fassade Angebot Vorstand. "
+      },
+      {
+        "grund": "papierkorb",
+        "name": "Gesperrt-Haus.txt",
+        "text": "Ruhezeiten Haus Müll Tonnen Säcke Treppenhaus Nachtruhe Zugvogel Mieter Genossenschaft. Ruhezeiten Haus Müll Tonnen Säcke Treppenhaus Nachtruhe Zugvogel Mieter Genossenschaft. Ruhezeiten Haus Müll Tonnen Säcke Treppenhaus Nachtruhe Zugvogel Mieter Genossenschaft. Ruhezeiten Haus Müll Tonnen Säcke Treppenhaus Nachtruhe Zugvogel Mieter Genossenschaft. Ruhezeiten Haus Müll Tonnen Säcke Treppenhaus Nachtruhe Zugvogel Mieter Genossenschaft. Ruhezeiten Haus Müll Tonnen Säcke Treppenhaus Nachtruhe Zugvogel Mieter Genossenschaft. Ruhezeiten Haus Müll Tonnen Säcke Treppenhaus Nachtruhe Zugvogel Mieter Genossenschaft. Ruhezeiten Haus Müll Tonnen Säcke Treppenhaus Nachtruhe Zugvogel Mieter Genossenschaft. "
+      },
+      {
+        "grund": "papierkorb",
+        "name": "Gesperrt-Cafe.txt",
+        "text": "Café crème brûlée Zoë Müller Mueller Lodz Gdansk Ærø Ørsted Straße Pariser Kommune. Café crème brûlée Zoë Müller Mueller Lodz Gdansk Ærø Ørsted Straße Pariser Kommune. Café crème brûlée Zoë Müller Mueller Lodz Gdansk Ærø Ørsted Straße Pariser Kommune. Café crème brûlée Zoë Müller Mueller Lodz Gdansk Ærø Ørsted Straße Pariser Kommune. Café crème brûlée Zoë Müller Mueller Lodz Gdansk Ærø Ørsted Straße Pariser Kommune. Café crème brûlée Zoë Müller Mueller Lodz Gdansk Ærø Ørsted Straße Pariser Kommune. Café crème brûlée Zoë Müller Mueller Lodz Gdansk Ærø Ørsted Straße Pariser Kommune. Café crème brûlée Zoë Müller Mueller Lodz Gdansk Ærø Ørsted Straße Pariser Kommune. "
+      }
+    ],
+    "fragen": [
+      {
+        "bm25": [
+          {
+            "name": "Hausordnung.txt",
+            "seite": 2,
+            "wert": -2.0411161108832117
+          }
+        ],
+        "bm25_anzahl": 1,
+        "frage": "Wann gelten die Ruhezeiten im Haus?"
+      },
+      {
+        "bm25": [
+          {
+            "name": "Mietvertrag.docx",
+            "seite": 6,
+            "wert": -2.4834768372574776
+          },
+          {
+            "name": "Protokoll.txt",
+            "seite": 6,
+            "wert": -2.207341268661672
+          },
+          {
+            "name": "Nebenkosten.txt",
+            "seite": 1,
+            "wert": -1.8057760258041908
+          }
+        ],
+        "bm25_anzahl": 3,
+        "frage": "Kündigungsfrist"
+      },
+      {
+        "bm25": [
+          {
+            "name": "Mietvertrag.docx",
+            "seite": 5,
+            "wert": -3.0183316401476725
+          },
+          {
+            "name": "Kuendigung.md",
+            "seite": 1,
+            "wert": -2.8809770860798167
+          },
+          {
+            "name": "Mietvertrag.docx",
+            "seite": 6,
+            "wert": -1.979960717348489
+          },
+          {
+            "name": "Kuendigung.md",
+            "seite": 3,
+            "wert": -1.9199159597998596
+          },
+          {
+            "name": "Protokoll.txt",
+            "seite": 6,
+            "wert": -1.7598106558378888
+          }
+        ],
+        "bm25_anzahl": 5,
+        "frage": "KUNDIGUNG"
+      },
+      {
+        "bm25": [
+          {
+            "name": "Mietvertrag.docx",
+            "seite": 2,
+            "wert": -2.8452962314815076
+          },
+          {
+            "name": "Kuendigung.md",
+            "seite": 3,
+            "wert": -2.759009104228737
+          },
+          {
+            "name": "Mietvertrag.docx",
+            "seite": 6,
+            "wert": -2.4834768372574776
+          },
+          {
+            "name": "Protokoll.txt",
+            "seite": 6,
+            "wert": -2.207341268661672
+          },
+          {
+            "name": "Nebenkosten.txt",
+            "seite": 1,
+            "wert": -1.8057760258041908
+          }
+        ],
+        "bm25_anzahl": 5,
+        "frage": "Kündigungsfrist Vertrag Laufzeit"
+      },
+      {
+        "bm25": [
+          {
+            "name": "Cafe.txt",
+            "seite": 2,
+            "wert": -3.4908310593598575
+          }
+        ],
+        "bm25_anzahl": 1,
+        "frage": "Straße"
+      },
+      {
+        "bm25": [
+          {
+            "name": "Cafe.txt",
+            "seite": 2,
+            "wert": -3.4908310593598575
+          }
+        ],
+        "bm25_anzahl": 1,
+        "frage": "Strasse"
+      },
+      {
+        "bm25": [
+          {
+            "name": "Cafe.txt",
+            "seite": 1,
+            "wert": -6.981662118719715
+          }
+        ],
+        "bm25_anzahl": 1,
+        "frage": "creme brulee"
+      },
+      {
+        "bm25": [
+          {
+            "name": "Cafe.txt",
+            "seite": 1,
+            "wert": -6.981662118719715
+          }
+        ],
+        "bm25_anzahl": 1,
+        "frage": "Zoe Chloe cafe"
+      },
+      {
+        "bm25": [
+          {
+            "name": "Cafe.txt",
+            "seite": 2,
+            "wert": -6.981662118719715
+          }
+        ],
+        "bm25_anzahl": 1,
+        "frage": "Mueller Müller"
+      },
+      {
+        "bm25": [
+          {
+            "name": "Handbuch.html",
+            "seite": 6,
+            "wert": -13.95067617029438
+          },
+          {
+            "name": "Invoice.txt",
+            "seite": 1,
+            "wert": -3.0476626975532257
+          },
+          {
+            "name": "Rezepte.md",
+            "seite": 2,
+            "wert": -2.3372813819945133
+          }
+        ],
+        "bm25_anzahl": 3,
+        "frage": "reset the device power button"
+      },
+      {
+        "bm25": [
+          {
+            "name": "Invoice.txt",
+            "seite": 1,
+            "wert": -7.817453627811567
+          }
+        ],
+        "bm25_anzahl": 1,
+        "frage": "payment terms invoice"
+      },
+      {
+        "bm25": [
+          {
+            "name": "Hausordnung.txt",
+            "seite": 3,
+            "wert": -10.252937367036234
+          },
+          {
+            "name": "Hausordnung.txt",
+            "seite": 4,
+            "wert": -2.27587750366512
+          }
+        ],
+        "bm25_anzahl": 2,
+        "frage": "Müll Tonnen Säcke Treppenhaus"
+      },
+      {
+        "bm25": [
+          {
+            "name": "Protokoll.txt",
+            "seite": 2,
+            "wert": -11.167166673457308
+          },
+          {
+            "name": "Protokoll.txt",
+            "seite": 3,
+            "wert": -10.18963162525281
+          }
+        ],
+        "bm25_anzahl": 2,
+        "frage": "Budget Budget Budget"
+      },
+      {
+        "bm25": [
+          {
+            "name": "Invoice.txt",
+            "seite": 1,
+            "wert": -5.2554864458314565
+          },
+          {
+            "name": "Rezepte.md",
+            "seite": 2,
+            "wert": -5.015082844980901
+          },
+          {
+            "name": "Rezepte.md",
+            "seite": 4,
+            "wert": -3.9928118012876923
+          },
+          {
+            "name": "Handbuch.html",
+            "seite": 6,
+            "wert": -3.395139679697061
+          }
+        ],
+        "bm25_anzahl": 4,
+        "frage": "the and of der die das"
+      },
+      {
+        "bm25": [
+          {
+            "name": "Angebot.eml",
+            "seite": 2,
+            "wert": -7.079552295090948
+          },
+          {
+            "name": "Angebot.eml",
+            "seite": 1,
+            "wert": -4.55175500733024
+          }
+        ],
+        "bm25_anzahl": 2,
+        "frage": "Angebot Fähre Überfahrt"
+      },
+      {
+        "bm25": [
+          {
+            "name": "Griechisch.txt",
+            "seite": 1,
+            "wert": -9.02012508407584
+          }
+        ],
+        "bm25_anzahl": 1,
+        "frage": "ЁЛКА привет"
+      },
+      {
+        "bm25": [
+          {
+            "name": "Griechisch.txt",
+            "seite": 2,
+            "wert": -4.162797372555708
+          }
+        ],
+        "bm25_anzahl": 1,
+        "frage": "όσος σισυφος"
+      },
+      {
+        "bm25": [],
+        "bm25_anzahl": 0,
+        "frage": "Ruhe-Zeiten l'étage"
+      },
+      {
+        "bm25": [
+          {
+            "name": "Hausordnung.txt",
+            "seite": 2,
+            "wert": -8.03009629830229
+          }
+        ],
+        "bm25_anzahl": 1,
+        "frage": "Nachtruhe 22 Uhr"
+      },
+      {
+        "bm25": [
+          {
+            "name": "Stopwoerter.txt",
+            "seite": 2,
+            "wert": -5.303261552403765
+          }
+        ],
+        "bm25_anzahl": 1,
+        "frage": "Zugvogel"
+      },
+      {
+        "bm25": [
+          {
+            "name": "Hausordnung.txt",
+            "seite": 1,
+            "wert": -15.193135902017179
+          },
+          {
+            "name": "Hausordnung.txt",
+            "seite": 2,
+            "wert": -12.246696665299272
+          },
+          {
+            "name": "Mietvertrag.docx",
+            "seite": 2,
+            "wert": -9.380143964422928
+          },
+          {
+            "name": "Kuendigung.md",
+            "seite": 3,
+            "wert": -6.558207041523665
+          },
+          {
+            "name": "Protokoll.txt",
+            "seite": 1,
+            "wert": -5.677159002230399
+          },
+          {
+            "name": "Mietvertrag.docx",
+            "seite": 8,
+            "wert": -4.707650838316323
+          },
+          {
+            "name": "Mietvertrag.docx",
+            "seite": 6,
+            "wert": -4.4131902899079725
+          }
+        ],
+        "bm25_anzahl": 7,
+        "frage": "Ruhezeiten im Haus und Nachtruhe für alle Mieter der Genossenschaft bitte beachten Ruhezeiten im Haus und Nachtruhe für alle Mieter der Genossenschaft bitte beachten Ruhezeiten im Haus und Nachtruhe für alle Mieter der Genossenschaft bitte beachten  Zugvogel"
+      },
+      {
+        "bm25": [
+          {
+            "name": "Protokoll.txt",
+            "seite": 4,
+            "wert": -6.80361226251021
+          },
+          {
+            "name": "Protokoll.txt",
+            "seite": 2,
+            "wert": -3.153755157553805
+          },
+          {
+            "name": "Mietvertrag.docx",
+            "seite": 5,
+            "wert": -3.0183316401476725
+          },
+          {
+            "name": "Kuendigung.md",
+            "seite": 1,
+            "wert": -2.8809770860798167
+          },
+          {
+            "name": "Mietvertrag.docx",
+            "seite": 6,
+            "wert": -1.979960717348489
+          },
+          {
+            "name": "Kuendigung.md",
+            "seite": 3,
+            "wert": -1.9199159597998596
+          },
+          {
+            "name": "Protokoll.txt",
+            "seite": 6,
+            "wert": -1.7598106558378888
+          }
+        ],
+        "bm25_anzahl": 7,
+        "frage": "Fassade Angebote Vorstand Kündigung"
+      },
+      {
+        "bm25": [
+          {
+            "name": "Cafe.txt",
+            "seite": 2,
+            "wert": -3.4908310593598575
+          }
+        ],
+        "bm25_anzahl": 1,
+        "frage": "STRASSE"
+      },
+      {
+        "bm25": [
+          {
+            "name": "Cafe.txt",
+            "seite": 2,
+            "wert": -6.981662118719715
+          }
+        ],
+        "bm25_anzahl": 1,
+        "frage": "Pariser Strasse"
+      },
+      {
+        "bm25": [
+          {
+            "name": "Mietvertrag.docx",
+            "seite": 1,
+            "wert": -4.920539390267526
+          }
+        ],
+        "bm25_anzahl": 1,
+        "frage": "Beispielstrasse"
+      },
+      {
+        "bm25": [
+          {
+            "name": "Cafe.txt",
+            "seite": 3,
+            "wert": -5.848727465388337
+          }
+        ],
+        "bm25_anzahl": 1,
+        "frage": "Lodz Gdansk"
+      },
+      {
+        "bm25": [
+          {
+            "name": "Cafe.txt",
+            "seite": 3,
+            "wert": -5.848727465388337
+          }
+        ],
+        "bm25_anzahl": 1,
+        "frage": "Aero Orsted"
+      }
+    ],
+    "hinweis": "Gemischter Bestand (lva#463): zusätzlich zum Korpus liegen diese Dateien im Papierkorb des Desktops (für den Leser der Suche gesperrt). Der Desktop zählt sie nicht in N, n (IDF) und avgdl; der Rohrang `bm25` je Frage ist deshalb derselbe wie ohne sie und gleich dem Rohrang von `fragen`. Der iPhone-Index enthält sie nie (Index-Tor)."
   },
   "hinweis": "Paritätsvektoren des lexikalischen Index der Dokumentenablage (D5a-4). Erzeugt von ablage::tests_index_paritaet::json_passt_zum_code aus den echten Desktop-Wegen (Import, Textwarteschlange, index.db, FTS5). Neu schreiben nur mit LVA_VEKTOREN_SCHREIBEN=1 (cargo test --lib ablage::tests_index_paritaet::json_passt_zum_code); ohne die Variable prüft der Test nur. Nicht von Hand ändern. Alle Inhalte sind synthetisch (example.*).",
   "konstanten": {
@@ -2184,6 +2861,259 @@
       "typ": "txt"
     }
   ],
+  "normalisierung": {
+    "hinweis": "lva#463: Vor dem Indexieren UND bei der Anfrage ersetzt der Desktop die Zeichen aus `zeichen` (ß/ẞ → ss, æ → ae, …); danach zerlegt `unicode61 remove_diacritics 2`. Der Anfragetext durchläuft zuerst `content_tokens` (Kleinschreibung, Stoppwörter), dann die Faltung, dann den Tokenizer. Gespeicherter Text und Zitat bleiben unverändert. `proben`: Eingabe → `normalisiert` (Ergebnis der Faltung) → `fts5` (Wörter des Tokenizers dazu, in Reihenfolge).",
+    "proben": [
+      {
+        "fts5": [
+          "strasse"
+        ],
+        "normalisiert": "Strasse",
+        "text": "Straße"
+      },
+      {
+        "fts5": [
+          "strasse"
+        ],
+        "normalisiert": "STRASSE",
+        "text": "STRASSE"
+      },
+      {
+        "fts5": [
+          "strasse"
+        ],
+        "normalisiert": "Strasse",
+        "text": "Strasse"
+      },
+      {
+        "fts5": [
+          "grosse"
+        ],
+        "normalisiert": "GROssE",
+        "text": "GROẞE"
+      },
+      {
+        "fts5": [
+          "mass",
+          "fuss",
+          "ball",
+          "weiss",
+          "sussigkeit"
+        ],
+        "normalisiert": "Mass Fuss-Ball weiss Süssigkeit",
+        "text": "Maß Fuß-Ball weiß Süßigkeit"
+      },
+      {
+        "fts5": [
+          "ssss",
+          "ss"
+        ],
+        "normalisiert": "ssss ss",
+        "text": "ßß ẞ"
+      },
+      {
+        "fts5": [
+          "aether",
+          "aero",
+          "oeuvre",
+          "coeur"
+        ],
+        "normalisiert": "aether aero oeuvre coeur",
+        "text": "Æther Ærø Œuvre cœur"
+      },
+      {
+        "fts5": [
+          "orsted",
+          "oresund",
+          "lodz",
+          "lukasz"
+        ],
+        "normalisiert": "orsted oresund lódź lukasz",
+        "text": "Ørsted Øresund Łódź Łukasz"
+      },
+      {
+        "fts5": [
+          "dorde",
+          "thor",
+          "dora",
+          "hal"
+        ],
+        "normalisiert": "dorde thór dóra hal",
+        "text": "Đorđe Þór Ðóra Ħal"
+      },
+      {
+        "fts5": [
+          "istanbul",
+          "istanbul",
+          "ijssel",
+          "ijs"
+        ],
+        "normalisiert": "istanbul İstanbul ijssel ijs",
+        "text": "ıstanbul İstanbul Ĳssel ĳs"
+      },
+      {
+        "fts5": [
+          "naive",
+          "resume",
+          "cafe"
+        ],
+        "normalisiert": "naïve Résumé café",
+        "text": "naïve Résumé café"
+      },
+      {
+        "fts5": [
+          "muller",
+          "mueller"
+        ],
+        "normalisiert": "Müller Mueller",
+        "text": "Müller Mueller"
+      },
+      {
+        "fts5": [
+          "s",
+          "ǆ",
+          "ﬁnal",
+          "ŉ",
+          "ŋ",
+          "ŧ",
+          "ŀ",
+          "ĸ"
+        ],
+        "normalisiert": "ſ ǅ ﬁnal ŉ ŋ ŧ ŀ ĸ",
+        "text": "ſ ǅ ﬁnal ŉ ŋ ŧ ŀ ĸ"
+      },
+      {
+        "fts5": [
+          "x²",
+          "1",
+          "000"
+        ],
+        "normalisiert": "x²  1,000",
+        "text": "x²  1,000"
+      },
+      {
+        "fts5": [],
+        "normalisiert": "",
+        "text": ""
+      },
+      {
+        "fts5": [
+          "ascii",
+          "only",
+          "123"
+        ],
+        "normalisiert": "ASCII only 123",
+        "text": "ASCII only 123"
+      }
+    ],
+    "zeichen": [
+      {
+        "codepunkt": 223,
+        "nach": "ss",
+        "von": "ß"
+      },
+      {
+        "codepunkt": 7838,
+        "nach": "ss",
+        "von": "ẞ"
+      },
+      {
+        "codepunkt": 230,
+        "nach": "ae",
+        "von": "æ"
+      },
+      {
+        "codepunkt": 198,
+        "nach": "ae",
+        "von": "Æ"
+      },
+      {
+        "codepunkt": 339,
+        "nach": "oe",
+        "von": "œ"
+      },
+      {
+        "codepunkt": 338,
+        "nach": "oe",
+        "von": "Œ"
+      },
+      {
+        "codepunkt": 248,
+        "nach": "o",
+        "von": "ø"
+      },
+      {
+        "codepunkt": 216,
+        "nach": "o",
+        "von": "Ø"
+      },
+      {
+        "codepunkt": 322,
+        "nach": "l",
+        "von": "ł"
+      },
+      {
+        "codepunkt": 321,
+        "nach": "l",
+        "von": "Ł"
+      },
+      {
+        "codepunkt": 273,
+        "nach": "d",
+        "von": "đ"
+      },
+      {
+        "codepunkt": 272,
+        "nach": "d",
+        "von": "Đ"
+      },
+      {
+        "codepunkt": 240,
+        "nach": "d",
+        "von": "ð"
+      },
+      {
+        "codepunkt": 208,
+        "nach": "d",
+        "von": "Ð"
+      },
+      {
+        "codepunkt": 254,
+        "nach": "th",
+        "von": "þ"
+      },
+      {
+        "codepunkt": 222,
+        "nach": "th",
+        "von": "Þ"
+      },
+      {
+        "codepunkt": 295,
+        "nach": "h",
+        "von": "ħ"
+      },
+      {
+        "codepunkt": 294,
+        "nach": "h",
+        "von": "Ħ"
+      },
+      {
+        "codepunkt": 305,
+        "nach": "i",
+        "von": "ı"
+      },
+      {
+        "codepunkt": 307,
+        "nach": "ij",
+        "von": "ĳ"
+      },
+      {
+        "codepunkt": 306,
+        "nach": "ij",
+        "von": "Ĳ"
+      }
+    ]
+  },
   "papierkorb": {
     "frage": "Zebrafink",
     "treffer_nachher": 0,

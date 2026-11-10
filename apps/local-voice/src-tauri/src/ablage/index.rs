@@ -4,6 +4,13 @@
 //! * Textstellen und Ranking (FTS5/BM25) liegen im vendorten `wai-retrieval` (Mandant `ablage`, Quelle =
 //!   `dat_…`). Jede Textstelle ist eine „Seite“ des Dokuments, damit Stücke und Anker hier bestimmt
 //!   werden: Stücke von höchstens [`STUECK`] Zeichen je Abschnitt mit [`UEBERLAPPUNG`] Zeichen Überlappung.
+//!   lva#463: Der FTS-Text ist gefaltet (`wai_retrieval::fts_normalisieren`: ß → ss, æ, œ, ø, ł, …; das
+//!   Zitat bleibt der Originaltext; ein Altbestand wird beim Öffnen einmalig umgestellt, ohne Neu-Einbetten).
+//!   BM25 zählt Stückzahl, mittlere Länge und IDF nur über Stücke, die der LESER des Aufrufs lesen darf, also
+//!   je Leser: Oberfläche ([`LESER_SUCHE`], alles außer Papierkorb) bzw. je KI-Weg und Klassenprofil
+//!   ([`ki_leser`]). Beim Projektweg ist das der Leser „projekt“ (alle Dateien, die dafür freigegeben sind),
+//!   nicht die Mitgliederliste des Projekts; diese Feinprüfung macht danach `ki`. Papierkorb und für den
+//!   Leser gesperrte Dateien zählen nie.
 //! * Begleittabellen `ablage_dok` (Felder je Datei: Fassung, `textrev`, Ordnerkette, Klasse,
 //!   `nur_geraet`, Papierkorb, Stand, Stempel) und `ablage_stueck` (Seite → Abschnitt, Anker, Pfad).
 //! * Filter vor dem Ranking: das Quellrecht von `wai-retrieval` wird in derselben SQL-Abfrage geprüft.
@@ -402,6 +409,8 @@ pub(crate) fn stempel(q: &IndexQuelle) -> String {
         if q.papierkorb { "1" } else { "0" },
         &q.stand,
         // v2 (D3): Leser je KI-Weg und Klassenprofil im Quellrecht.
+        // Unverändert v2 (lva#463): die Faltung im FTS-Text stellt `wai-retrieval` einmalig im Index um
+        // (Marke `fts_fmt`, ohne Neu-Einbetten); ein neuer Stempel würde alle Stücke neu einbetten.
         "v2",
     ] {
         h.update(teil.as_bytes());
@@ -461,6 +470,32 @@ pub(crate) fn dateisperre_uebergabe() -> (usize, usize) {
     let nachher = SCHRITTE_BEGONNEN.load(Ordering::SeqCst);
     drop(g);
     (vorher, nachher)
+}
+
+/// Test: die lexikalische Rangliste (Rohrang wie `bm25(chunks_fts)`) für einen Leser, beste zuerst.
+#[cfg(test)]
+pub(crate) fn lexikalisch_zeilen(
+    a: &Ablage,
+    anfrage: &str,
+    leser: &str,
+    limit: usize,
+) -> Res<Vec<wai_retrieval::LexZeile>> {
+    let pfad = index_pfad(a)?;
+    if !pfad.is_file() {
+        return Ok(vec![]);
+    }
+    let _d = DATEIEN_SPERRE.read().unwrap_or_else(|e| e.into_inner());
+    laufzeit()?.block_on(async {
+        let r = Retriever::open(&pfad, AblageEinbettung::Keine)
+            .await
+            .map_err(|_| fehler())?;
+        let erg = r
+            .lexikalisch(&principal(leser), anfrage, limit)
+            .await
+            .map_err(|_| fehler());
+        r.close().await;
+        erg
+    })
 }
 
 /// `PRAGMA secure_delete` der eigenen Verbindung und der von `wai-retrieval` (Test).
