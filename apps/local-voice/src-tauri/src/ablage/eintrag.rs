@@ -290,15 +290,24 @@ pub type UrteilFn = fn(tag: u32, attribute: u32) -> Urteil;
 /// Schutz ist das Urteil davor. Restrisiko: Auslagern im Fenster zwischen Stufe 1 und 2 (Millisekunden);
 /// unter macOS fängt es die Abrufsperre ([`abruf_sperren`], hier für beide Stufen gesetzt) ab: Fehler statt
 /// Download. Auch ein Vorab-Urteil am Pfad ([`roh`]) ersetzt das nicht, es spart nur Öffnungen.
-/// Wer aus dem Ergebnis liest, hält [`abruf_sperren`] über das Lesen und meldet [`ist_abruf_gesperrt`] als
-/// „nur online“.
+///
+/// **Aufrufer MÜSSEN [`abruf_sperren`] über das Lesen halten** und [`ist_abruf_gesperrt`] als „nur online“
+/// melden: die Sperre in dieser Funktion endet mit der Rückgabe und schützt das spätere Lesen aus der
+/// zurückgegebenen Datei NICHT (unter macOS lädt erst der `read` herunter). Kann die Sperre unter macOS nicht
+/// gesetzt werden, öffnet diese Funktion nichts (fail-closed, [`OeffnenFehler::Io`]).
 pub fn oeffnen_ohne_abruf(
     p: &Path,
     art: OeffnenArt,
     urteil: UrteilFn,
 ) -> Result<fs::File, OeffnenFehler> {
-    // macOS: auch ein Zugriff im Fenster nach dem Urteil lädt nichts herunter (Fehler statt Abruf).
-    let _sperre = abruf_sperren();
+    // macOS: auch ein Zugriff im Fenster nach dem Urteil lädt nichts herunter (Fehler statt Abruf). Ohne die
+    // Sperre wird nicht geöffnet.
+    let sperre = abruf_sperren();
+    if sperre.fehlt() {
+        return Err(OeffnenFehler::Io(io::Error::other(
+            "Abrufsperre nicht setzbar",
+        )));
+    }
     let eins = system::stufe1(p, art).map_err(oeffnen_io)?;
     let Some((attribute, tag)) = offen_daten(&eins, p) else {
         return Err(OeffnenFehler::Urteil(Urteil::Umweg));
@@ -388,6 +397,17 @@ pub fn abruf_sperren() -> AbrufSperre {
     }
 }
 
+/// Führt `f` (ein Zugriff, der einen Platzhalter laden könnte, z. B. `read_dir` auf einem Ordner) unter der
+/// [`abruf_sperren`] aus. Kann die Sperre unter macOS nicht gesetzt werden, läuft `f` nicht (fail-closed,
+/// Fehler `Other`); sonst und außerhalb von macOS läuft `f` immer.
+pub fn unter_abrufsperre<T>(f: impl FnOnce() -> io::Result<T>) -> io::Result<T> {
+    let sperre = abruf_sperren();
+    if sperre.fehlt() {
+        return Err(io::Error::other("Abrufsperre nicht setzbar"));
+    }
+    f()
+}
+
 /// Siehe [`abruf_sperren`].
 #[derive(Debug)]
 #[must_use = "die Sperre gilt nur, solange der Wert lebt"]
@@ -401,8 +421,16 @@ pub struct AbrufSperre {
 
 impl AbrufSperre {
     /// Hat das System die Richtlinie angenommen? (Nur macOS; sonst `false`: dort gibt es nichts abzurufen.)
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn wirksam(&self) -> bool {
         self.wirksam
+    }
+
+    /// Wäre die Sperre nötig (macOS), das System hat sie aber nicht angenommen? Dann liest oder listet der
+    /// Aufrufer nicht (fail-closed): das Urteil vor dem Öffnen bliebe sonst der einzige Schutz. Praktisch
+    /// ausgeschlossen (die Richtlinie gibt es seit macOS 10.15, der Mindestversion der App), aber nie still.
+    pub fn fehlt(&self) -> bool {
+        cfg!(target_os = "macos") && !self.wirksam
     }
 }
 
@@ -420,6 +448,7 @@ mod mac_abruf {
     use super::AbrufSperre;
     use std::marker::PhantomData;
     use std::os::raw::c_int;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     extern "C" {
         fn getiopolicy_np(iotype: c_int, scope: c_int) -> c_int;
@@ -434,11 +463,32 @@ mod mac_abruf {
     const STANDARD: c_int = 0;
     const GRUNDMASKE: c_int = 3;
 
+    /// Meldet höchstens einmal je Prozess (kein Pfad, kein Name), dass die Richtlinie nicht gesetzt werden kann.
+    static GEMELDET: AtomicBool = AtomicBool::new(false);
+
+    fn melden(was: &str, fehler: c_int) {
+        if !GEMELDET.swap(true, Ordering::Relaxed) {
+            log::warn!("ablage: Abrufsperre nicht setzbar ({was}, errno {fehler}); verknüpfte Ordner werden nicht gelesen");
+        }
+    }
+
     pub fn sperren() -> AbrufSperre {
+        #[cfg(test)]
+        if super::naht::sperre_verweigert() {
+            return AbrufSperre {
+                vorher: None,
+                wirksam: false,
+                _faden: PhantomData,
+            };
+        }
         // SAFETY: `getiopolicy_np` liest nur die E/A-Richtlinie des aufrufenden Fadens.
         let vorher = unsafe { getiopolicy_np(TYP, FADEN) };
         let grund = vorher & GRUNDMASKE;
         let (wirksam, wiederherstellen) = if vorher < 0 {
+            melden(
+                "getiopolicy_np",
+                std::io::Error::last_os_error().raw_os_error().unwrap_or(0),
+            );
             (false, None)
         } else if grund == AUS {
             // Schon aus (eine äußere Sperre): nichts zu setzen, nichts zurückzugeben.
@@ -446,6 +496,10 @@ mod mac_abruf {
         } else if setzen(AUS) {
             (true, Some(grund))
         } else {
+            melden(
+                "setiopolicy_np",
+                std::io::Error::last_os_error().raw_os_error().unwrap_or(0),
+            );
             (false, None)
         };
         AbrufSperre {
@@ -528,6 +582,9 @@ mod system {
         #[cfg(target_os = "macos")]
         let _sperre = {
             let sperre = super::abruf_sperren();
+            if sperre.fehlt() {
+                return Err(io::Error::other("Abrufsperre nicht setzbar"));
+            }
             if super::online_urteil(super::attribute_aus_stat_flags(stat_flags_pfad(p)?)) {
                 return Err(io::Error::other("nur online"));
             }
@@ -852,6 +909,8 @@ pub(crate) mod naht {
     type Karte = RefCell<BTreeMap<PathBuf, (u32, u32)>>;
 
     thread_local! {
+        /// Die Abrufsperre lässt sich nicht setzen (Fehlerfall von `setiopolicy_np`).
+        static SPERRE_VERWEIGERT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
         /// Pfad → `st_flags` (macOS), wie `lstat` sie für den Pfad liefert.
         static STAT_FLAGS: RefCell<BTreeMap<PathBuf, u32>> = const { RefCell::new(BTreeMap::new()) };
         /// Pfad → `st_flags` (macOS), wie `fstat` sie am offenen Handle liefert.
@@ -897,6 +956,17 @@ pub(crate) mod naht {
         ID_FOLGE.with(|k| k.borrow_mut().get_mut(p).and_then(VecDeque::pop_front))
     }
 
+    /// Das System verweigert in diesem Faden die Abrufsperre (macOS; wie ein Fehler von `setiopolicy_np`).
+    #[cfg(target_os = "macos")]
+    pub fn sperre_verweigern(an: bool) {
+        SPERRE_VERWEIGERT.with(|c| c.set(an));
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(super) fn sperre_verweigert() -> bool {
+        SPERRE_VERWEIGERT.with(std::cell::Cell::get)
+    }
+
     /// `lstat` dieses Pfades meldet diese `st_flags` (z. B. [`super::SF_DATALESS`]); sie werden wie unter macOS
     /// über [`super::attribute_aus_stat_flags`] abgebildet.
     pub fn stat_flags_setzen(p: &Path, flags: u32) {
@@ -929,6 +999,7 @@ pub(crate) mod naht {
     }
 
     pub fn leeren() {
+        SPERRE_VERWEIGERT.with(|c| c.set(false));
         STAT_FLAGS.with(|k| k.borrow_mut().clear());
         HANDLE_STAT_FLAGS.with(|k| k.borrow_mut().clear());
         FIND.with(|k| k.borrow_mut().clear());

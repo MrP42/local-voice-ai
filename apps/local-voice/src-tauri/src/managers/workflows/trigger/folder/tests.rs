@@ -440,6 +440,58 @@ fn placeholders_reported_by_the_find_data_never_fire_and_are_never_hashed() {
 }
 
 #[test]
+fn a_watched_folder_that_is_online_only_is_not_listed_and_comes_back_when_local() {
+    let mut w = world();
+    let root = fs::canonicalize(w.inbox.path()).unwrap();
+    w.put("a.wav", b"inhalt");
+    // macOS: `lstat` des Ordners meldet `SF_DATALESS` (die Naht speist es ein wie ein File Provider).
+    eintrag::naht::stat_flags_setzen(&root, eintrag::SF_DATALESS);
+    let mut all = TickReport::default();
+    for _ in 0..4 {
+        all.absorb(w.tick_with(&SystemProbe));
+    }
+    assert!(all.started.is_empty(), "{all:?}");
+    assert_eq!(all.skipped.len(), 1, "einmal gemeldet: {all:?}");
+    assert!(all.skipped[0].contains("nur in der Cloud"), "{all:?}");
+    assert!(!all.skipped[0].contains("a.wav"), "kein Dateiname: {all:?}");
+    assert_eq!(w.state.waiting(), 0, "nichts wurde aufgelistet");
+    assert!(w.state.cloud_only().is_empty());
+    // Wieder lokal: die Datei wird wie jede andere aufgenommen.
+    eintrag::naht::leeren();
+    let mut all = TickReport::default();
+    for _ in 0..3 {
+        all.absorb(w.tick_with(&SystemProbe));
+    }
+    assert_eq!(all.started.len(), 1, "{all:?}");
+    eintrag::naht::leeren();
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn without_the_download_lock_nothing_is_listed_or_hashed() {
+    // Fail-closed: laesst sich die Abrufsperre nicht setzen (macOS), wird weder aufgelistet noch gelesen.
+    let mut w = world();
+    let p = w.put("a.wav", b"inhalt");
+    eintrag::naht::sperre_verweigern(true);
+    let mut all = TickReport::default();
+    for _ in 0..4 {
+        all.absorb(w.tick_with(&SystemProbe));
+    }
+    assert!(all.started.is_empty(), "{all:?}");
+    assert_eq!(all.skipped.len(), 1, "einmal gemeldet: {all:?}");
+    assert!(sha256_file(&p).is_err());
+    assert_eq!(w.state.waiting(), 0);
+    eintrag::naht::leeren();
+    // Mit der Sperre geht alles wie sonst.
+    let mut all = TickReport::default();
+    for _ in 0..3 {
+        all.absorb(w.tick_with(&SystemProbe));
+    }
+    assert_eq!(all.started.len(), 1, "{all:?}");
+    assert!(sha256_file(&p).is_ok());
+}
+
+#[test]
 fn a_placeholder_that_comes_down_is_taken_like_any_file() {
     let mut w = world();
     let root = fs::canonicalize(w.inbox.path()).unwrap();

@@ -13,7 +13,9 @@
 //! - Kein neuer Thread, keine Abhaengigkeit, kein Dauerbetrieb bei ungenutztem Ablauf: ohne
 //!   eingeschalteten Ablauf mit diesem Ausloeser liest nichts den Datentraeger.
 //!   Der Scan kostet je Ordner ein `read_dir` ohne Unterordner (hoechstens
-//!   [`MAX_ENTRIES`] Eintraege).
+//!   [`MAX_ENTRIES`] Eintraege). Liegt der Ordner selbst nur online (macOS „dataless“, Windows
+//!   `RECALL_*`), wird er vorher per Rohdaten erkannt und nicht aufgelistet; das Auflisten laeuft unter
+//!   der Abrufsperre (`ablage::eintrag::abruf_sperren`).
 //! Preis: Reaktionszeit 15 s bis `stable_seconds` + 15 s statt Millisekunden; fuer
 //! Eingangsordner ist das ohne Belang.
 //!
@@ -596,6 +598,9 @@ pub fn on_tick(
     report
 }
 
+/// Meldung, wenn der ueberwachte Ordner selbst nur in der Cloud liegt (nicht aufgelistet). Kein Name, kein Pfad.
+const FOLDER_CLOUD_ONLY: &str = "Der überwachte Ordner liegt nur in der Cloud und wird nicht gelesen; \"Immer auf diesem Gerät behalten\" holt ihn.";
+
 /// Meldet ein Problem einmal je Aenderung (`skipped` mit dem Namen des Ablaufs).
 fn problem(state: &State, report: &mut TickReport, a: &Armed, text: &str) {
     if state.note_problem(&a.row.id, text) {
@@ -698,8 +703,34 @@ fn scan_workflow(
             return;
         }
     };
-    let entries = match fs::read_dir(&dir) {
-        Ok(rd) => rd,
+    // Der Ordner selbst zuerst, ohne ihn zu oeffnen (macOS `lstat`: `SF_DATALESS`, Windows Find-Daten): liegt er
+    // nur online, wird er nicht aufgelistet (das Auflisten kann ihn laden oder synchronisieren). Ist sein
+    // Zustand nicht bestimmbar (z. B. eine Laufwerkswurzel unter Windows), entscheidet das Auflisten selbst.
+    if eintrag::roh(&dir).is_ok_and(|r| r.urteil() == Urteil::NurOnline) {
+        problem(state, report, a, FOLDER_CLOUD_ONLY);
+        return;
+    }
+    // Unter der Abrufsperre (macOS): ein Ordner, der im Fenster nach dem Urteil ausgelagert wird, scheitert
+    // beim Auflisten (`EDEADLK`), statt geladen zu werden. Die Eintraege werden hier gesammelt, damit alle
+    // `readdir`-Aufrufe unter der Sperre liegen; ein Fehler mitten im Auflisten, der „nur online“ heisst,
+    // gilt fuer den ganzen Ordner (nie eine Teilliste), alles andere ueberspringt den Eintrag wie bisher.
+    let entries = match eintrag::unter_abrufsperre(|| {
+        let mut v: Vec<fs::DirEntry> = Vec::new();
+        for e in fs::read_dir(&dir)? {
+            match e {
+                Ok(e) if v.len() < MAX_ENTRIES => v.push(e),
+                Ok(_) => break,
+                Err(e) if eintrag::ist_abruf_gesperrt(&e) => return Err(e),
+                Err(_) => {}
+            }
+        }
+        Ok(v)
+    }) {
+        Ok(v) => v,
+        Err(e) if eintrag::ist_abruf_gesperrt(&e) => {
+            problem(state, report, a, FOLDER_CLOUD_ONLY);
+            return;
+        }
         Err(e) => {
             problem(
                 state,
@@ -716,7 +747,7 @@ fn scan_workflow(
     let mut keep: HashSet<String> = HashSet::new();
     let mut hashed = 0usize;
     let mut wrote = false;
-    for entry in entries.flatten().take(MAX_ENTRIES) {
+    for entry in entries {
         let name = entry.file_name().to_string_lossy().into_owned();
         if is_ignored_name(&name) {
             continue;

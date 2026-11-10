@@ -71,6 +71,12 @@ impl Env {
         verknuepft::abtasten(&self.a, &id).unwrap();
         id
     }
+
+    fn zwischen_leer(&self) -> bool {
+        fs::read_dir(self.a.dir().join("verknuepft").join("zwischen"))
+            .map(|r| r.count() == 0)
+            .unwrap_or(true)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -448,6 +454,48 @@ mod mac {
         )
         .is_err());
         assert_eq!(thread_richtlinie(), STANDARD, "Datei fehlt");
+    }
+
+    #[test]
+    fn ohne_abrufsperre_wird_nichts_geoeffnet_aufgelistet_oder_kopiert() {
+        // Fail-closed: laesst sich die Richtlinie nicht setzen, liest die Ablage nicht.
+        let _n = naht_sauber();
+        let e = env();
+        let p = e.schreiben("Akte/brief.txt", b"vertraulich");
+        let id = e.verknuepfen();
+        let auf = verknuepft::auftraege(&e.a, None).unwrap().remove(0);
+        eintrag::naht::sperre_verweigern(true);
+        assert!(!eintrag::abruf_sperren().wirksam());
+        assert!(eintrag::abruf_sperren().fehlt());
+        assert!(matches!(
+            eintrag::oeffnen_ohne_abruf(&p, art(false), eintrag::reparse_urteil),
+            Err(OeffnenFehler::Io(_))
+        ));
+        assert_eq!(eintrag::naht::stufe2_aufrufe(&p), 0, "nichts geoeffnet");
+        assert!(eintrag::verzeichnis(&e.quelle).is_err());
+        let mut gelaufen = false;
+        assert!(eintrag::unter_abrufsperre(|| {
+            gelaufen = true;
+            Ok(())
+        })
+        .is_err());
+        assert!(!gelaufen, "der Zugriff laeuft nicht ohne Sperre");
+        assert_eq!(
+            verknuepft::momentkopie(&e.a, &auf).unwrap_err(),
+            "verknuepft.lesen"
+        );
+        assert!(e.zwischen_leer());
+        // Die Abtastung scheitert fuer den ganzen Ordner (der Bestand bleibt), statt eine Teilliste zu liefern.
+        let v = verknuepft::liste(e.a.dir()).unwrap().remove(0);
+        assert!(verknuepft::abtasten_roh(&v).is_err());
+        assert!(verknuepft::bestand(e.a.dir(), &id)
+            .dateien
+            .contains_key("Akte/brief.txt"));
+        // Wieder erlaubt: alles geht.
+        eintrag::naht::sperre_verweigern(false);
+        assert!(eintrag::abruf_sperren().wirksam());
+        let (kopie, _) = verknuepft::momentkopie(&e.a, &auf).unwrap();
+        fs::remove_file(kopie).unwrap();
     }
 
     #[test]
