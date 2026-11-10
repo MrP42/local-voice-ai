@@ -523,6 +523,126 @@ test.describe("Gespräch im Projekt", () => {
     await expect(leiste).toContainText("Die Antwort wurde entfernt.");
   });
 
+  // lva#459: Das Tor puffert die ganze Antwort. Die Frist von 30 s gilt im Projekt nur ohne
+  // Lebenszeichen („laeuft“, ohne Inhalt); dazu eine harte Obergrenze von fünf Minuten.
+  const vorlageText = "Das kann ich gerade nicht sicher beantworten.";
+  const laeuft = (page: Page, id: string) =>
+    page.evaluate(
+      (rid) =>
+        (window as any).__emit("voice-call", {
+          kind: "laeuft",
+          request_id: rid,
+        }),
+      id,
+    );
+
+  test("Projekt: Lebenszeichen verlängern die Frist über 30 s, die Antwort kommt an", async ({
+    page,
+  }) => {
+    await page.clock.install();
+    await setup(page);
+    await beginne(page);
+    const id = await frage(page, "Was kostet ein ETF?");
+    await page.waitForFunction(
+      () => (window as any).__listening?.("voice-call") !== 0,
+    );
+    // 90 s gepuffert, alle 10 s ein Lebenszeichen: weder Abbruch noch Vorlage noch Hinweis.
+    for (let i = 0; i < 9; i++) {
+      await page.clock.fastForward(10_000);
+      await laeuft(page, id);
+    }
+    expect(await aufrufe(page, "voice_call_cancel")).toHaveLength(0);
+    await expect(page.getByText(vorlageText)).toHaveCount(0);
+    await expect(hinweis(page)).toHaveCount(0);
+    await page.evaluate((rid) => {
+      const w = window as any;
+      w.__emit("voice-call", {
+        kind: "sentence",
+        request_id: rid,
+        index: 0,
+        text: "Ein ETF kostet je nach Anbieter wenig.",
+      });
+      w.__emit("voice-call", { kind: "done", request_id: rid });
+      w.__chat.resolve("Ein ETF kostet je nach Anbieter wenig.");
+    }, id);
+    await expect(
+      page.getByRole("log").getByText("Ein ETF kostet je nach Anbieter wenig."),
+    ).toBeVisible();
+    await expect(hinweis(page)).toHaveCount(0);
+  });
+
+  test("Projekt: ohne Lebenszeichen nach 30 s und trotz Lebenszeichen nach fünf Minuten kein Vorlagentext, Hinweis mit eigenem Code", async ({
+    page,
+  }) => {
+    await page.clock.install();
+    await setup(page);
+    await beginne(page);
+
+    // (a) Das Modell meldet sich gar nicht: nach der Frist verwerfen.
+    await frage(page, "Frage ohne Lebenszeichen");
+    await page.clock.fastForward(31_000);
+    let leiste = hinweis(page);
+    await expect(leiste).toHaveAttribute(
+      "data-code",
+      "projekt.zeitueberschreitung",
+    );
+    await expect(leiste).toContainText("Keine Antwort");
+    await expect(leiste).toContainText("Das Modell hat zu lange gebraucht");
+    await expect(leiste).not.toContainText("Kennung");
+    await expect(page.getByText(vorlageText)).toHaveCount(0);
+    expect(await aufrufe(page, "voice_call_cancel")).toHaveLength(1);
+    await page.getByTestId("projekt-hinweis-schliessen").click();
+
+    // (b) Es meldet sich dauernd, antwortet aber nie: die harte Obergrenze greift.
+    const id = await frage(page, "Frage mit Dauer-Lebenszeichen");
+    await page.waitForFunction(
+      () => (window as any).__listening?.("voice-call") !== 0,
+    );
+    for (let i = 0; i < 55; i++) {
+      await page.clock.fastForward(5_000);
+      await laeuft(page, id);
+    }
+    // 275 s: noch kein Abbruch.
+    expect(await aufrufe(page, "voice_call_cancel")).toHaveLength(1);
+    await expect(hinweis(page)).toHaveCount(0);
+    await page.clock.fastForward(30_000);
+    leiste = hinweis(page);
+    await expect(leiste).toHaveAttribute(
+      "data-code",
+      "projekt.zeitueberschreitung",
+    );
+    await expect(page.getByText(vorlageText)).toHaveCount(0);
+    expect(await aufrufe(page, "voice_call_cancel")).toHaveLength(2);
+    // Weder Vorlage noch Antwort im gespeicherten Gespräch.
+    const gespeichert = await aufrufe(page, "conversation_append_entry");
+    expect(JSON.stringify(gespeichert)).not.toContain("sicher beantworten");
+    expect(
+      gespeichert.filter((c: any) => c.args.entry?.role === "assistant"),
+    ).toHaveLength(0);
+  });
+
+  test("Ohne Projekt gilt die feste Frist weiter: Vorlage nach 30 s, Lebenszeichen ändern nichts (Gegenprobe)", async ({
+    page,
+  }) => {
+    await page.clock.install();
+    await setup(page);
+    await beginne(page);
+    await page
+      .getByRole("button", { name: "Neues Gespräch", exact: true })
+      .click();
+    await expect(page.getByTestId("projekt-chip")).toHaveCount(0);
+    const id = await frage(page, "Ganz gewöhnliche Frage");
+    await page.waitForFunction(
+      () => (window as any).__listening?.("voice-call") !== 0,
+    );
+    await page.clock.fastForward(20_000);
+    await laeuft(page, id);
+    await page.clock.fastForward(11_000);
+    await expect(page.getByRole("log").getByText(vorlageText)).toBeVisible();
+    await expect(hinweis(page)).toHaveCount(0);
+    expect(await aufrufe(page, "voice_call_cancel")).toHaveLength(1);
+  });
+
   test("Ein neuer Verlauf trägt die Bindung nicht weiter", async ({ page }) => {
     await setup(page);
     await beginne(page);

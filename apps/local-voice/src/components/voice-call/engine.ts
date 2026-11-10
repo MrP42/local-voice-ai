@@ -225,22 +225,52 @@ const MAX_HISTORY = 24;
 export const TUNING = {
   /** So lange darf das Modell ohne ersten Inhalt bleiben, bevor die feste Vorlage kommt (ms). */
   modelFristMs: 30_000,
+  /**
+   * Im Projekt puffert das Tor die ganze Antwort: Das erste Stück kommt erst nach Erzeugung und Urteil.
+   * Jedes Lebenszeichen („laeuft“) verlängert die Frist; diese Obergrenze gilt trotzdem (ms, lva#459).
+   */
+  projektObergrenzeMs: 300_000,
 };
 /** Was ein Häppchen ist: Inhalt (Modell, S0-Antwort), Ansage (Ab S1, Überbrückung) oder feste Vorlage. */
 type PieceKind = "inhalt" | "ansage" | "vorlage";
 
 const FRIST = Symbol("frist");
 
-/** Frist bis zum ersten Modellinhalt: `abgelaufen` löst nur aus, wenn `stop` vorher nicht kam. */
-function ersteFrist(ms: number): {
+/**
+ * Frist bis zum ersten Modellinhalt: `abgelaufen` löst nur aus, wenn `stop` vorher nicht kam.
+ * Mit `maxMs` (Projekt) verlängert jedes `lebenszeichen` die Frist um `ms`, aber nie über `maxMs`
+ * seit dem Start hinaus; ohne `maxMs` bleibt die Frist fest.
+ */
+function ersteFrist(
+  ms: number,
+  maxMs?: number,
+): {
   abgelaufen: Promise<typeof FRIST>;
   stop: () => void;
+  lebenszeichen: () => void;
 } {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let deckel: ReturnType<typeof setTimeout> | undefined;
+  let gestoppt = false;
+  let ablaufen: (f: typeof FRIST) => void = () => undefined;
   const abgelaufen = new Promise<typeof FRIST>((r) => {
+    ablaufen = r;
     timer = setTimeout(() => r(FRIST), ms);
+    if (maxMs !== undefined) deckel = setTimeout(() => r(FRIST), maxMs);
   });
-  return { abgelaufen, stop: () => clearTimeout(timer) };
+  return {
+    abgelaufen,
+    stop: () => {
+      gestoppt = true;
+      clearTimeout(timer);
+      clearTimeout(deckel);
+    },
+    lebenszeichen: () => {
+      if (maxMs === undefined || gestoppt) return;
+      clearTimeout(timer);
+      timer = setTimeout(() => ablaufen(FRIST), ms);
+    },
+  };
 }
 
 /** Wartet auf `p`, höchstens `ms`; der Zeitgeber wird immer abgeräumt. */
@@ -1083,7 +1113,10 @@ export class VoiceCallEngine {
         onPiece(plan.text, "ansage");
       const gctx = await this.contextFor(id, text, side);
       if (stale()) return;
-      const frist = ersteFrist(TUNING.modelFristMs);
+      const frist = ersteFrist(
+        TUNING.modelFristMs,
+        this.projekt() ? TUNING.projektObergrenzeMs : undefined,
+      );
       let timedOut = false;
       // Das Tor im Projekt hat die Anfrage mit einem Code abgelehnt: Die Hinweisleiste sagt den Grund.
       let projektStopp = false;
@@ -1119,6 +1152,11 @@ export class VoiceCallEngine {
           if (stale()) return;
           if (e.kind === "projekt") {
             this.meldeProjekt(hinweisAusEreignis(e));
+            return;
+          }
+          if (e.kind === "laeuft") {
+            // Lebenszeichen ohne Inhalt: das Tor puffert noch; die Frist läuft weiter.
+            frist.lebenszeichen();
             return;
           }
           if (e.kind === "revoked") {
@@ -1165,6 +1203,11 @@ export class VoiceCallEngine {
         const r = await Promise.race([chat, frist.abgelaufen]);
         if (r === FRIST) {
           timedOut = true;
+          // Im Projekt: verwerfen über das Tor, keine Vorlagenzeile, der Hinweis sagt den Grund.
+          if (projekt) {
+            projektStopp = true;
+            this.meldeProjekt({ code: "projekt.zeitueberschreitung" });
+          }
           void invoke("voice_call_cancel", { requestId: id }).catch(
             () => undefined,
           );
@@ -1404,7 +1447,10 @@ export class VoiceCallEngine {
       this.dropTurn(turn);
       return;
     }
-    const frist = ersteFrist(TUNING.modelFristMs);
+    const frist = ersteFrist(
+      TUNING.modelFristMs,
+      this.projekt() ? TUNING.projektObergrenzeMs : undefined,
+    );
     let timedOut = false;
     // Das Tor im Projekt hat die Anfrage mit einem Code abgelehnt: Die Hinweisleiste sagt den Grund.
     let projektStopp = false;
@@ -1459,6 +1505,11 @@ export class VoiceCallEngine {
           this.meldeProjekt(hinweisAusEreignis(e));
           return;
         }
+        if (e.kind === "laeuft") {
+          // Lebenszeichen ohne Inhalt: das Tor puffert noch; die Frist läuft weiter.
+          frist.lebenszeichen();
+          return;
+        }
         if (e.kind === "revoked") {
           // Freigabe entzogen: Antwort und Sprachausgabe sofort beenden.
           if (projekt) this.meldeProjekt({ code: "projekt.widerrufen" });
@@ -1500,6 +1551,11 @@ export class VoiceCallEngine {
       );
       if ((await Promise.race([chat, frist.abgelaufen])) === FRIST) {
         timedOut = true;
+        // Im Projekt: verwerfen über das Tor, keine Vorlagenzeile, der Hinweis sagt den Grund.
+        if (projekt) {
+          projektStopp = true;
+          this.meldeProjekt({ code: "projekt.zeitueberschreitung" });
+        }
         finishStream();
         void invoke("voice_call_cancel", { requestId: turn.id }).catch(
           () => undefined,

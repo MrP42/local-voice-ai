@@ -27,6 +27,7 @@
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use once_cell::sync::Lazy;
@@ -55,6 +56,11 @@ pub const CODE_BINDUNG: &str = "projekt.bindung";
 pub const CODE_MODELL: &str = "projekt.modell";
 const MODELL_FEHLER: &str =
     "projekt.modell: Das Modell hat nicht geantwortet. Es wurde keine Antwort übernommen.";
+
+/// Abstand des Lebenszeichens („läuft“) an die Oberfläche, solange das Tor die Antwort puffert. Das
+/// Ereignis trägt nur `kind` und `request_id`: weder Text noch Längen oder Zähler. Die Oberfläche
+/// verlängert damit ihre Frist bis zur harten Obergrenze (lva#459).
+pub const HERZSCHLAG: Duration = Duration::from_secs(5);
 
 /// Höchstzahl gemerkter gelöschter Projektgespräche (Grabsteine, siehe [`gespraech_geloescht`]).
 const MAX_GRABSTEINE: usize = 256;
@@ -480,6 +486,17 @@ pub async fn durchlauf(
     bote: &dyn Bote,
     a: Anfrage,
 ) -> Result<String, String> {
+    durchlauf_mit(tor, weg, bote, a, HERZSCHLAG).await
+}
+
+/// Wie [`durchlauf`] mit wählbarem Abstand des Lebenszeichens (Tests).
+pub async fn durchlauf_mit(
+    tor: &ProjektTor,
+    weg: &dyn Modellweg,
+    bote: &dyn Bote,
+    a: Anfrage,
+    herzschlag: Duration,
+) -> Result<String, String> {
     let id = a.request_id.clone();
     // Abbruch und Widerruf zuerst eintragen, dann prüfen: Was dazwischen kommt, trifft die Anfrage.
     // Keine Meldung bei einer doppelten Kennung: Sie gälte dem schon laufenden Aufruf.
@@ -576,13 +593,24 @@ pub async fn durchlauf(
 
     let (ausgang, erfasst) = usage::with_capture(async {
         let call = weg.senden(&ziel, strom_nachrichten, &on_delta);
+        tokio::pin!(call);
+        // Lebenszeichen ohne Inhalt: Das Tor puffert die ganze Antwort, bis dahin sähe die Oberfläche
+        // sonst keinen Fortschritt.
+        let mut takt =
+            tokio::time::interval_at(tokio::time::Instant::now() + herzschlag, herzschlag);
+        takt.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         // Abbruch zuerst: Ein schon vorliegender Widerruf verhindert den Versand, statt mit ihm zu
         // wetteifern.
-        let r = tokio::select! {
-            biased;
-            _ = abbruch.notified() => Ausgang::Widerrufen,
-            _ = cancel.notified() => Ausgang::Abgebrochen,
-            r = call => Ausgang::Fertig(r),
+        let r = loop {
+            tokio::select! {
+                biased;
+                _ = abbruch.notified() => break Ausgang::Widerrufen,
+                _ = cancel.notified() => break Ausgang::Abgebrochen,
+                r = &mut call => break Ausgang::Fertig(r),
+                _ = takt.tick() => {
+                    bote.melden(serde_json::json!({"kind": "laeuft", "request_id": id}));
+                }
+            }
         };
         (r, usage::captured_calls().0)
     })
