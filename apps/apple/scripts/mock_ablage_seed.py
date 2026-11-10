@@ -81,9 +81,15 @@ def ordner_nutzlast(oid, name, eltern=None, klasse="erbt", nur_geraet=False, kor
             "zielordner_ki": reg(False), "papierkorb": reg(korb)}
 
 def textfassung_bytes(rev, original, abschnitte):
-    """`serde_json` von `Textfassung`: Felder in Strukturreihenfolge (nicht sortiert), `pfad` fehlt, wenn leer."""
+    """`serde_json` von `Textfassung`: Felder in Strukturreihenfolge (nicht sortiert), `pfad` fehlt, wenn leer.
+    Abschnitte sind (Anker, Text) oder (Anker, Text, Pfad)."""
+    def abschnitt(a):
+        d = {"anker": a[0]}
+        if len(a) > 2 and a[2]: d["pfad"] = a[2]
+        d["text"] = a[1]
+        return d
     return json.dumps({"marken_version": 1, "textrev": rev, "original_sha256": original, "extraktor": EXTRAKTOR[0],
-                       "extraktor_version": EXTRAKTOR[1], "abschnitte": [{"anker": a, "text": t} for a, t in abschnitte]},
+                       "extraktor_version": EXTRAKTOR[1], "abschnitte": [abschnitt(a) for a in abschnitte]},
                       separators=(",", ":"), ensure_ascii=False).encode("utf-8")
 
 class Welt:
@@ -214,6 +220,47 @@ def seed(key, user_id, objects, blobs, seq):
     ids["e5"] = feste_id("dat_", "e5")
     d5 = w.datei_nutzlast(ids["e5"], allgemein, "FalscheRefs.pdf", [w.fassung(feste_id("fas_", "e5"), None, b"refs", text=None)])
     w.datei(d5, refs=["ab" * 32])                                                                    # blob_refs passen nicht zur Nutzlast
+    return ids
+
+
+def seed_suche(key, user_id, objects, blobs, seq, ids):
+    """D5a-4: zusätzliche Dateien mit mehreren Abschnitten, Überschriftenpfaden und Originalen, die der Schnellblick zeigt (Text).
+    Nur synthetische Inhalte; die Zusatzdateien liegen in den Ordnern „Allgemein“ und „Verträge“ des Grundseeds."""
+    w = Welt(key, user_id, objects, blobs, seq)
+    allgemein, vertraege, miete = ids["allgemein"], ids["vertraege"], ids["miete"]
+    hausordnung = ("Hausordnung der Beispiel-Genossenschaft\n\n"
+                   "Ruhezeiten: Die Nachtruhe gilt täglich von 22 Uhr bis 6 Uhr. Auch mittags zwischen 13 und 15 Uhr ist auf die Nachbarn Rücksicht zu nehmen.\n\n"
+                   "Müll und Wertstoffe: Müll gehört in die Tonnen im Hof, Wertstoffe in die gelben Säcke. Sperrmüll darf nicht im Treppenhaus abgestellt werden.\n\n"
+                   "Fahrräder: Fahrräder werden im Fahrradkeller abgestellt, nicht im Treppenhaus.\n").encode("utf-8")
+    f1 = w.fassung(feste_id("fas_", "s1"), None, hausordnung, typ="txt", zeit=ZEIT + 10, text=[
+        ("zeile=1", "Hausordnung der Beispiel-Genossenschaft"),
+        ("zeile=3", "Ruhezeiten: Die Nachtruhe gilt täglich von 22 Uhr bis 6 Uhr. Auch mittags zwischen 13 und 15 Uhr ist auf die Nachbarn Rücksicht zu nehmen."),
+        ("zeile=5", "Müll und Wertstoffe: Müll gehört in die Tonnen im Hof, Wertstoffe in die gelben Säcke. Sperrmüll darf nicht im Treppenhaus abgestellt werden."),
+        ("zeile=7", "Fahrräder: Fahrräder werden im Fahrradkeller abgestellt, nicht im Treppenhaus."),
+    ])
+    ids["s1"] = feste_id("dat_", "s1")
+    w.datei(w.datei_nutzlast(ids["s1"], allgemein, "Hausordnung.txt", [f1]))
+    f2 = w.fassung(feste_id("fas_", "s2"), None, b"Rahmenvertrag Beispiel (Platzhalter)", typ="docx", zeit=ZEIT + 20, text=[
+        ("absatz=1", "Rahmenvertrag Beispiel", ["Rahmenvertrag Beispiel"]),
+        ("absatz=2", "Zwischen der Example GmbH und der Muster AG wird folgender Vertrag geschlossen.", ["Rahmenvertrag Beispiel"]),
+        ("absatz=4", "Die Kündigungsfrist beträgt drei Monate zum Quartalsende. Eine Kündigung muss schriftlich erfolgen.", ["Rahmenvertrag Beispiel", "§ 4 Laufzeit"]),
+        ("absatz=6", "Die Vergütung wird jährlich überprüft und bei Bedarf angepasst.", ["Rahmenvertrag Beispiel", "§ 5 Vergütung"]),
+    ])
+    ids["s2"] = feste_id("dat_", "s2")
+    w.datei(w.datei_nutzlast(ids["s2"], vertraege, "Rahmenvertrag.docx", [f2]))
+    kuendigung = ("# Kündigung des Mietvertrags\n\nSehr geehrte Damen und Herren,\nhiermit kündige ich den Mietvertrag zum nächstmöglichen Termin.\n").encode("utf-8")
+    f3 = w.fassung(feste_id("fas_", "s3"), None, kuendigung, typ="md", zeit=ZEIT + 30, text=[
+        ("zeile=1", "# Kündigung des Mietvertrags"),
+        ("zeile=3", "Sehr geehrte Damen und Herren, hiermit kündige ich den Mietvertrag zum nächstmöglichen Termin."),
+    ])
+    ids["s3"] = feste_id("dat_", "s3")
+    w.datei(w.datei_nutzlast(ids["s3"], miete, "Kündigung.md", [f3]))
+    # S1 (Nachtrag zu D5a-3): Text vorhanden, aber das Original fehlt am Hub: „Original nicht geladen, erneut antippen“.
+    fehlt = b"Dieses Original liegt nicht am Hub."
+    f4 = w.fassung(feste_id("fas_", "s4"), None, fehlt, typ="pdf", zeit=ZEIT + 40, text=[("seite=1", "Die Seite fehlt dem Hub: das Original wurde nie hochgeladen.")])
+    blobs.pop(hub_blob(key, sha_hex(fehlt)), None)
+    ids["s4"] = feste_id("dat_", "s4")
+    w.datei(w.datei_nutzlast(ids["s4"], allgemein, "Fehlt.pdf", [f4]))
     return ids
 
 
