@@ -1123,7 +1123,11 @@ struct VoiceListContent: View {
                     .frame(minHeight: 44)
                     .accessibilityHint("Fragt einmal, ob die App deine eigene Stimme nutzen darf")
             case .authorized:
-                ForEach(own, id: \.identifier) { v in systemRow(v, caption: "Eigene Stimme") }
+                // Alle eigenen Stimmen, auch in anderer Sprache (Patrick 10.11.): die Wahl bleibt, die Aussprache ist fremd.
+                ForEach(own + others, id: \.identifier) { v in
+                    systemRow(v, caption: own.contains(v) ? "Eigene Stimme"
+                              : "Eigene Stimme · \(Locale.current.localizedString(forIdentifier: v.language) ?? v.language)")
+                }
             default:
                 EmptyView()
             }
@@ -1140,7 +1144,7 @@ struct VoiceListContent: View {
             default:
                 if own.isEmpty, let first = others.first {
                     let name = Locale.current.localizedString(forIdentifier: first.language) ?? first.language
-                    Text("Deine eigene Stimme spricht \(name) und erscheint bei Büchern in dieser Sprache oder bei Live-Übersetzung in diese Sprache.")
+                    Text("Deine eigene Stimme ist auf \(name) aufgenommen. Andere Sprachen liest sie mit dieser Aussprache. Die App wählt sie nie von selbst.")
                 } else if own.isEmpty, others.isEmpty {
                     Text("Keine eigene Stimme gefunden. Aufnehmen unter Einstellungen › Bedienungshilfen › Eigene Stimme.")
                 } else {
