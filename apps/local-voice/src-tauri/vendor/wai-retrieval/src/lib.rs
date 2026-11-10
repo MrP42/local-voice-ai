@@ -320,6 +320,166 @@ pub fn content_tokens(text: &str) -> Vec<String> {
         .collect()
 }
 
+/// Zeichen, die `unicode61 remove_diacritics 2` nicht auf Buchstaben des Grundalphabets faltet, und ihre
+/// ASCII-Entsprechung (lva#463). Gemessen am SQLite des Index (Test
+/// `ablage::tests_index_paritaet::faltung_ergaenzt_nur_was_fts5_nicht_faltet`): ohne diese Tabelle findet
+/// „Strasse“ kein „Straße“. Gilt vor dem Indexieren UND bei der Anfrage; der gespeicherte Text und das
+/// Zitat bleiben unverändert. Die Swift-Seite (iPhone) führt dieselbe Tabelle (`ablage-index-vektoren.json`,
+/// Abschnitt `normalisierung`).
+pub const FTS_FALTUNG: &[(char, &str)] = &[
+    ('ß', "ss"),
+    ('ẞ', "ss"),
+    ('æ', "ae"),
+    ('Æ', "ae"),
+    ('œ', "oe"),
+    ('Œ', "oe"),
+    ('ø', "o"),
+    ('Ø', "o"),
+    ('ł', "l"),
+    ('Ł', "l"),
+    ('đ', "d"),
+    ('Đ', "d"),
+    ('ð', "d"),
+    ('Ð', "d"),
+    ('þ', "th"),
+    ('Þ', "th"),
+    ('ħ', "h"),
+    ('Ħ', "h"),
+    ('ı', "i"),
+    ('ĳ', "ij"),
+    ('Ĳ', "ij"),
+];
+
+/// Text für den FTS5-Index und die Anfrage: ersetzt die Zeichen aus [`FTS_FALTUNG`] (ß → ss usw.); alles
+/// andere bleibt (Groß-/Kleinschreibung und Diakritika faltet der Tokenizer selbst).
+pub fn fts_normalisieren(text: &str) -> String {
+    let mut aus = String::with_capacity(text.len());
+    for c in text.chars() {
+        let ersatz = if c.is_ascii() {
+            None
+        } else {
+            FTS_FALTUNG.iter().find(|(z, _)| *z == c).map(|(_, e)| *e)
+        };
+        match ersatz {
+            Some(e) => aus.push_str(e),
+            None => aus.push(c),
+        }
+    }
+    aus
+}
+
+/// BM25-Konstanten von FTS5 (`bm25()`).
+const BM25_K1: f64 = 1.2;
+const BM25_B: f64 = 0.75;
+
+/// Eine Zeile der lexikalischen Rangliste: ein Stück mit seinem Rohrang (`bm25`, negativ, kleiner = besser).
+#[derive(Debug, Clone, PartialEq)]
+pub struct LexZeile {
+    pub chunk_id: i64,
+    pub source_id: String,
+    pub page: u32,
+    pub bm25: f64,
+}
+
+/// Länge eines Stücks in Wörtern aus `chunks_fts_docsize.sz` (erstes SQLite-Varint).
+fn docsize_laenge(b: &[u8]) -> i64 {
+    let mut n: i64 = 0;
+    for (i, x) in b.iter().enumerate() {
+        if i == 8 {
+            return (n << 8) | *x as i64;
+        }
+        n = (n << 7) | (*x & 0x7f) as i64;
+        if *x & 0x80 == 0 {
+            break;
+        }
+    }
+    n
+}
+
+/// Zerlegt die Wörter der Anfrage (nach [`fts_normalisieren`]) mit dem Tokenizer des Index in Phrasen: ein
+/// Anfragewort kann in mehrere FTS5-Wörter zerfallen (z. B. Schriften mit Vokalzeichen). Ein Wort ohne
+/// Zerlegung liefert eine leere Phrase (zählt nicht).
+async fn phrasen_zerlegen(
+    c: &mut sqlx::SqliteConnection,
+    toks: &[String],
+) -> Result<Vec<Vec<String>>> {
+    sqlx::query("CREATE VIRTUAL TABLE IF NOT EXISTS temp.wai_tok USING fts5(text, tokenize='unicode61 remove_diacritics 2')")
+        .execute(&mut *c)
+        .await?;
+    sqlx::query(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS temp.wai_tok_v USING fts5vocab(wai_tok, 'instance')",
+    )
+    .execute(&mut *c)
+    .await?;
+    sqlx::query("DELETE FROM temp.wai_tok")
+        .execute(&mut *c)
+        .await?;
+    for (i, t) in toks.iter().enumerate() {
+        sqlx::query("INSERT INTO temp.wai_tok(rowid, text) VALUES(?, ?)")
+            .bind(i as i64 + 1)
+            .bind(fts_normalisieren(t))
+            .execute(&mut *c)
+            .await?;
+    }
+    let rows =
+        sqlx::query("SELECT doc, \"offset\", term FROM temp.wai_tok_v ORDER BY doc, \"offset\"")
+            .fetch_all(&mut *c)
+            .await?;
+    let mut phrasen: Vec<Vec<String>> = vec![Vec::new(); toks.len()];
+    for r in rows {
+        let doc: i64 = r.get(0);
+        phrasen[doc as usize - 1].push(r.get(2));
+    }
+    sqlx::query("DELETE FROM temp.wai_tok")
+        .execute(&mut *c)
+        .await?;
+    Ok(phrasen)
+}
+
+/// Stücke, die die Phrase enthalten (nur Stücke, die der Akteur lesen darf), mit der Zahl ihrer Vorkommen.
+async fn phrase_treffer(
+    c: &mut sqlx::SqliteConnection,
+    actor: &Actor,
+    phrase: &[String],
+) -> Result<HashMap<i64, u32>> {
+    let sql = format!(
+        "SELECT v.doc, v.\"offset\" FROM chunks_fts_v v JOIN chunks c ON c.id = v.doc JOIN docs d ON d.source_id = c.source_id WHERE v.term = ?3 AND {ACL_SQL}"
+    );
+    let mut lagen: Vec<HashMap<i64, Vec<i64>>> = Vec::with_capacity(phrase.len());
+    for wort in phrase {
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
+            .bind(&actor.tenant)
+            .bind(&actor.principal)
+            .bind(wort)
+            .fetch_all(&mut *c)
+            .await?;
+        let mut je: HashMap<i64, Vec<i64>> = HashMap::new();
+        for r in rows {
+            je.entry(r.get(0)).or_default().push(r.get(1));
+        }
+        if je.is_empty() {
+            return Ok(HashMap::new());
+        }
+        lagen.push(je);
+    }
+    let mut aus: HashMap<i64, u32> = HashMap::new();
+    for (doc, starts) in &lagen[0] {
+        let f = starts
+            .iter()
+            .filter(|p| {
+                lagen[1..].iter().enumerate().all(|(k, l)| {
+                    l.get(doc)
+                        .is_some_and(|v| v.contains(&(**p + k as i64 + 1)))
+                })
+            })
+            .count() as u32;
+        if f > 0 {
+            aus.insert(*doc, f);
+        }
+    }
+    Ok(aus)
+}
+
 /// Wer fragt: intern aus dem authentisierten `Principal` abgeleitet, nie frei konstruierbar.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Actor {
@@ -428,6 +588,8 @@ const SCHEMA: &[&str] = &[
     "CREATE TABLE IF NOT EXISTS chunks(id INTEGER PRIMARY KEY, source_id TEXT NOT NULL, page INTEGER NOT NULL, start_off INTEGER NOT NULL, end_off INTEGER NOT NULL, text TEXT NOT NULL)",
     "CREATE INDEX IF NOT EXISTS chunks_src ON chunks(source_id)",
     "CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(text, tokenize='unicode61 remove_diacritics 2')",
+    // Lokale Abweichung (lva#463): Wortvorkommen je Stück für das eigene BM25 (IDF nur über lesbare Stücke).
+    "CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts_v USING fts5vocab(chunks_fts, 'instance')",
     "CREATE TABLE IF NOT EXISTS vectors(chunk_id INTEGER PRIMARY KEY, vec BLOB NOT NULL)",
     "CREATE TABLE IF NOT EXISTS qcache(key TEXT PRIMARY KEY, tenant TEXT NOT NULL, ranked TEXT NOT NULL)",
     "CREATE TABLE IF NOT EXISTS qcache_src(key TEXT NOT NULL, source_id TEXT NOT NULL)",
@@ -646,7 +808,9 @@ const RRF_MAX: f64 = 2.0 / (RRF_K + 1.0);
 impl<E: Embedder> Retriever<E> {
     /// In-Memory-Datenbank (eine Verbindung).
     pub async fn open_memory(embedder: E) -> Result<Self> {
-        let opts = SqliteConnectOptions::new().filename(":memory:");
+        let opts = SqliteConnectOptions::new()
+            .filename(":memory:")
+            .pragma("temp_store", "MEMORY");
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
             .connect_with(opts)
@@ -661,7 +825,9 @@ impl<E: Embedder> Retriever<E> {
             .filename(path)
             .create_if_missing(true)
             .busy_timeout(std::time::Duration::from_secs(10))
-            .pragma("secure_delete", "ON");
+            .pragma("secure_delete", "ON")
+            // Lokale Abweichung (lva#463): die Hilfstabelle der Anfragezerlegung bleibt im Arbeitsspeicher.
+            .pragma("temp_store", "MEMORY");
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
             .connect_with(opts)
@@ -685,10 +851,10 @@ impl<E: Embedder> Retriever<E> {
             .await
             .is_ok();
         // Altbestand: Cache-Zeilen ohne Generation im Schluessel koennen veraltet sein.
-        if meta_get(&pool, "cache_fmt").await?.as_deref() != Some("2") {
+        if meta_get(&pool, "cache_fmt").await?.as_deref() != Some("3") {
             sqlx::query("DELETE FROM qcache").execute(&pool).await?;
             sqlx::query("DELETE FROM qcache_src").execute(&pool).await?;
-            meta_set(&pool, "cache_fmt", "2").await?;
+            meta_set(&pool, "cache_fmt", "3").await?;
         }
         // Jeder Mandant traegt die Kennung des Embedders seiner Vektoren (N2); ein Mandant mit
         // anderer Kennung braucht Reindex. Global erst aktuell, wenn kein Mandant offen ist.
@@ -1062,9 +1228,10 @@ impl<E: Embedder> Retriever<E> {
             .execute(&mut *tx)
             .await?
             .last_insert_rowid();
+            // Lokale Abweichung (lva#463): der Index sieht den gefalteten Text (ß → ss, …), chunks.text bleibt.
             sqlx::query("INSERT INTO chunks_fts(rowid, text) VALUES(?,?)")
                 .bind(id)
-                .bind(text)
+                .bind(fts_normalisieren(text))
                 .execute(&mut *tx)
                 .await?;
             if let Some(v) = vecs.as_ref().and_then(|v| v.get(i)) {
@@ -1246,35 +1413,136 @@ impl<E: Embedder> Retriever<E> {
         Ok(())
     }
 
+    /// Lexikalische Rangliste (BM25 wie `bm25(chunks_fts)` von FTS5, k1 = 1,2, b = 0,75), beste zuerst, höchstens
+    /// `limit` Zeilen; Gleichstand nach Stück-Kennung. Lokale Abweichung (lva#463): Stückzahl, mittlere Länge und
+    /// Dokumenthäufigkeit (IDF) zählen nur Stücke, die der Akteur lesen darf, nie Papierkorb oder für ihn gesperrte
+    /// Dateien; FTS5 selbst zählt über die ganze Tabelle. Anfragewörter werden wie der Text gefaltet
+    /// ([`fts_normalisieren`]). Mit Stücken, die der Akteur lesen darf, und denselben Wörtern ist der Rohrang
+    /// gleich dem von FTS5.
+    pub async fn lexikalisch(
+        &self,
+        principal: &Principal,
+        text: &str,
+        limit: usize,
+    ) -> Result<Vec<LexZeile>> {
+        let actor = Actor::from_principal(principal);
+        self.lex_zeilen(&actor, &content_tokens(text), limit).await
+    }
+
+    async fn lex_zeilen(
+        &self,
+        actor: &Actor,
+        toks: &[String],
+        limit: usize,
+    ) -> Result<Vec<LexZeile>> {
+        if toks.is_empty() {
+            return Ok(vec![]);
+        }
+        let mut conn = self.pool.acquire().await?;
+        let phrasen = phrasen_zerlegen(&mut conn, toks).await?;
+        let mut treffer: HashMap<&[String], HashMap<i64, u32>> = HashMap::new();
+        for p in phrasen.iter().filter(|p| !p.is_empty()) {
+            if !treffer.contains_key(p.as_slice()) {
+                let t = phrase_treffer(&mut conn, actor, p).await?;
+                treffer.insert(p.as_slice(), t);
+            }
+        }
+        if treffer.values().all(|t| t.is_empty()) {
+            return Ok(vec![]);
+        }
+        // Stückzahl und Wörter aller lesbaren Stücke (N und avgdl), Länge je Stück (D).
+        let mut kandidaten: HashMap<i64, i64> = HashMap::new();
+        for t in treffer.values() {
+            for id in t.keys() {
+                kandidaten.insert(*id, 0);
+            }
+        }
+        let sql = format!(
+            "SELECT s.id, s.sz FROM chunks_fts_docsize s JOIN chunks c ON c.id = s.id JOIN docs d ON d.source_id = c.source_id WHERE {ACL_SQL}"
+        );
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
+            .bind(&actor.tenant)
+            .bind(&actor.principal)
+            .fetch_all(&mut *conn)
+            .await?;
+        let mut n_gesamt = 0f64;
+        let mut woerter = 0f64;
+        for r in &rows {
+            let laenge = docsize_laenge(r.get::<&[u8], _>(1));
+            n_gesamt += 1.0;
+            woerter += laenge as f64;
+            if let Some(d) = kandidaten.get_mut(&r.get::<i64, _>(0)) {
+                *d = laenge;
+            }
+        }
+        let avgdl = woerter / n_gesamt;
+        let mut punkte: HashMap<i64, f64> = HashMap::new();
+        for p in phrasen.iter().filter(|p| !p.is_empty()) {
+            let t = &treffer[p.as_slice()];
+            if t.is_empty() {
+                continue;
+            }
+            let n_hit = t.len() as f64;
+            let mut idf = ((n_gesamt - n_hit + 0.5) / (n_hit + 0.5)).ln();
+            if idf <= 0.0 {
+                idf = 1e-6;
+            }
+            for (id, f) in t {
+                let f = *f as f64;
+                let d = kandidaten[id] as f64;
+                *punkte.entry(*id).or_default() += idf
+                    * ((f * (BM25_K1 + 1.0)) / (f + BM25_K1 * (1.0 - BM25_B + BM25_B * d / avgdl)));
+            }
+        }
+        let mut rang: Vec<(i64, f64)> = punkte.into_iter().map(|(i, s)| (i, -1.0 * s)).collect();
+        rang.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
+        rang.truncate(limit);
+        let ids = format!(
+            "[{}]",
+            rang.iter()
+                .map(|(i, _)| i.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        let rows = sqlx::query(
+            "SELECT id, source_id, page FROM chunks WHERE id IN (SELECT value FROM json_each(?))",
+        )
+        .bind(ids)
+        .fetch_all(&mut *conn)
+        .await?;
+        let mut herkunft: HashMap<i64, (String, u32)> = HashMap::new();
+        for r in rows {
+            herkunft.insert(r.get(0), (r.get(1), r.get::<i64, _>(2) as u32));
+        }
+        Ok(rang
+            .into_iter()
+            .filter_map(|(id, bm25)| {
+                herkunft.remove(&id).map(|(source_id, page)| LexZeile {
+                    chunk_id: id,
+                    source_id,
+                    page,
+                    bm25,
+                })
+            })
+            .collect())
+    }
+
     /// Hybrid-Ranking (RRF) ausschliesslich ueber autorisierte Chunks; Score normiert auf 0..=1.
     async fn rank(&self, actor: &Actor, text: &str, k: usize) -> Result<(Vec<(i64, f64)>, bool)> {
         let mut rrf: HashMap<i64, f64> = HashMap::new();
         let toks = content_tokens(text);
         if !toks.is_empty() {
-            let m = toks
-                .iter()
-                .map(|t| format!("\"{}\"", t.replace('"', "")))
-                .collect::<Vec<_>>()
-                .join(" OR ");
             // Mit Kappung je Quelle mehr Zeilen holen und danach je Quelle kürzen (lva#426).
             let limit = match self.max_per_source {
                 Some(_) => k.max(CANDIDATES) * 50,
                 None => CANDIDATES,
             };
-            let sql = format!(
-                "SELECT c.id, c.source_id FROM chunks_fts f JOIN chunks c ON c.id = f.rowid JOIN docs d ON d.source_id = c.source_id WHERE chunks_fts MATCH ?3 AND {ACL_SQL} ORDER BY bm25(chunks_fts), c.id LIMIT {limit}"
-            );
-            let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
-                .bind(&actor.tenant)
-                .bind(&actor.principal)
-                .bind(m)
-                .fetch_all(&self.pool)
-                .await?;
+            let rows = self.lex_zeilen(actor, &toks, limit).await?;
             let mut je_quelle: HashMap<String, usize> = HashMap::new();
             let mut r = 0usize;
             for row in rows.iter() {
                 if let Some(max) = self.max_per_source {
-                    let n = je_quelle.entry(row.get::<String, _>(1)).or_default();
+                    let n = je_quelle.entry(row.source_id.clone()).or_default();
                     if *n >= max {
                         continue;
                     }
@@ -1283,7 +1551,7 @@ impl<E: Embedder> Retriever<E> {
                         break;
                     }
                 }
-                *rrf.entry(row.get(0)).or_default() += 1.0 / (RRF_K + 1.0 + r as f64);
+                *rrf.entry(row.chunk_id).or_default() += 1.0 / (RRF_K + 1.0 + r as f64);
                 r += 1;
             }
         }
