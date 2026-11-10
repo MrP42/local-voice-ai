@@ -255,7 +255,9 @@ final class AblageIndexParitaetTests: XCTestCase {
         XCTAssertEqual(ix.suche("Ruhe-Zeiten l'étage"), [])
     }
 
-    /// lva#463: Die Fragen, die erst durch die Faltung treffen, treffen in der Fixture UND am iPhone (kein Leerlauf: ohne Faltung wären es 0).
+    /// lva#463: Die Fragen, die erst durch die Faltung treffen, treffen in der Fixture UND am iPhone. Ohne Faltung (Stand vor diesem Paket)
+    /// fanden „Strasse“, „STRASSE“, „Beispielstrasse“ und „Aero Orsted“ nichts; bei „Pariser Strasse“ und „Lodz Gdansk“ trug nur ein Wort
+    /// bei (halber Rohrang, siehe Summe unten: beide Wörter tragen jetzt bei).
     func testFaltungsfragenTreffenBeiderseits() throws {
         let ix = index(try korpus())
         let fragen = try liste("fragen")
@@ -269,10 +271,27 @@ final class AblageIndexParitaetTests: XCTestCase {
         XCTAssertFalse(a.isEmpty)
         XCTAssertEqual(a.map(\.dat), b.map(\.dat)); XCTAssertEqual(a.map(\.seite), b.map(\.seite)); XCTAssertEqual(a.map(\.bm25), b.map(\.bm25))
         XCTAssertEqual(a.map(\.bm25), c.map(\.bm25))
+        // Zwei Wörter, von denen eines nur durch die Faltung trifft (ß, ł): der Rohrang ist die Summe beider Einzelwörter an derselben Stelle,
+        // also trägt das gefaltete Wort bei (vor der Faltung fehlte sein Anteil, der Rohrang war nur der des anderen Worts).
+        for (ganz, teile) in [("Pariser Strasse", ["Pariser", "Strasse"]), ("Lodz Gdansk", ["Lodz", "Gdansk"])] {
+            let zeilen = ix.rohzeilen(ganz)
+            XCTAssertEqual(zeilen.count, 1, ganz)
+            for z in zeilen {
+                var summe = 0.0
+                for t in teile {
+                    let r = ix.rohzeilen(t).first { $0.dat == z.dat && $0.seite == z.seite }
+                    XCTAssertNotNil(r, "\(t) trägt zu „\(ganz)“ bei")
+                    XCTAssertLessThan(r?.bm25 ?? 0, 0, t)
+                    summe += r?.bm25 ?? 0
+                }
+                gleichGenau(z.bm25, summe, "Summe der Wörter von „\(ganz)“")
+            }
+        }
     }
 
     /// Gemischter Bestand (Fixture `gesperrt`): der Papierkorb des Desktops zählt nicht in N, n und avgdl, der Rohrang ist der des
-    /// Korpus allein. Das iPhone hat die gesperrten Dateien nie im Index (Index-Tor) und liefert denselben Rohrang.
+    /// Korpus allein, also gleich dem Rohrang der Fragen ohne gesperrte Dateien und gleich dem des iPhone-Index über den Korpus. Dass die
+    /// gesperrten Dateien durch den echten Index-Tor nie in den iPhone-Index kommen, prüft `AblageSucheTests.testGesperrterBestandDurchDenTorGleichRohrangWieDesktop`.
     func testGesperrterBestandGleichRohrang() throws {
         let g = try XCTUnwrap(root["gesperrt"] as? [String: Any])
         let dateien = try liste("dateien", in: g)
@@ -298,8 +317,6 @@ final class AblageIndexParitaetTests: XCTestCase {
                 gleichGenau(roh[i].bm25, s["wert"] as! Double, "gesperrt bm25 \(frage) #\(i)")
             }
         }
-        // Die gesperrten Dateien stehen nicht im Korpus des iPhone.
-        for d in dateien { XCTAssertEqual(ix.stuecke(dat: d["name"] as! String).count, 0, d["name"] as? String ?? "") }
     }
 
     /// Der Papierkorb des Desktops: Kontrolltext erst gefunden, dann 0 Treffer. (Die Gegenprobe am iPhone steht in `AblageSucheTests`.)

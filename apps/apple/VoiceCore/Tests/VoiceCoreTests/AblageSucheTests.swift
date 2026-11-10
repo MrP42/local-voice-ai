@@ -449,11 +449,15 @@ final class AblageSucheTests: XCTestCase {
     }
 
     /// Große Eingabe (voller Speicher): das Ergebnis ist in UTF-8 nie länger als die Eingabe (ß → ss, þ → th gleich lang, ẞ → ss und ø → o
-    /// kürzer), höchstens zwei Skalare je Ersatz; 1,2 Millionen Skalare laufen in Sekundenbruchteilen (kein überlineares Anhängen).
+    /// kürzer), höchstens zwei Skalare je Ersatz. Die Zeit wird nur großzügig begrenzt (20 s; gemessen etwa 0,3 s im Debug-Bau): der Test soll
+    /// ein überlineares Anhängen an eine `UnicodeScalarView` fangen (das brauchte hier 110 s), kein Tempo prüfen.
     func testFtsNormalisierenGrosseEingabeNieLaenger() {
         let n = 400_000
         let gross = String(repeating: "\u{DF}\u{FE}x", count: n)
+        let t0 = ContinuousClock.now
         let aus = AblageSuchtext.ftsNormalisieren(gross)
+        let dauer = ContinuousClock.now - t0
+        XCTAssertLessThan(dauer, .seconds(20), "1,2 Millionen Skalare dürfen nicht überlinear werden: \(dauer)")
         XCTAssertEqual(aus.unicodeScalars.count, n * 5)
         XCTAssertEqual(aus.utf8.count, n * 5)
         XCTAssertLessThanOrEqual(aus.utf8.count, gross.utf8.count)
@@ -503,20 +507,84 @@ final class AblageSucheTests: XCTestCase {
 
     /// Migration (lva#463): Der iPhone-Index liegt nur im Speicher (D5a-4: Neuaufbau bei jedem Start aus den Textfassungen), es gibt keinen
     /// persistierten FTS-Text und keinen Zwischenspeicher auf der Platte, also keine Umstellung wie `meta.fts_fmt` am Desktop. Dieser Test
-    /// hält das fest: Wer den Index oder die Vorbereitung je auf die Platte legt, muss eine Fassungsmarke (Faltung v2) einführen und
-    /// den Altbestand atomar umstellen (erst schreiben, dann umbenennen), sonst findet ein alter Cache „Strasse“ nie.
-    func testIndexUndVorbereitungSindNurImSpeicher() throws {
-        var url = URL(fileURLWithPath: #filePath).resolvingSymlinksInPath()
-        for _ in 0..<3 { url.deleteLastPathComponent() }   // Datei, VoiceCoreTests, Tests: übrig bleibt das Paket VoiceCore
-        let quellen = url.appendingPathComponent("Sources/VoiceCore/Ablage")
-        for datei in ["AblageIndex.swift", "AblageSuche.swift", "AblageSuchtext.swift"] {
-            let text = try String(contentsOf: quellen.appendingPathComponent(datei), encoding: .utf8)
-            // Nur Code zählt: Kommentarzeilen (auch Doku) nennen diese Wörter absichtlich.
-            let code = text.split(separator: "\n", omittingEmptySubsequences: false).filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }.joined(separator: "\n")
-            for verboten in ["FileManager", "UserDefaults", ".write(to", "Data(contentsOf", "NSKeyedArchiver", "Codable", "sqlite3", "createFile"] {
-                XCTAssertFalse(code.contains(verboten), "\(datei) nutzt \(verboten): Index/Vorbereitung persistiert? Dann Fassungsmarke und Umstellung nötig (lva#463)")
+    /// hält das über die Typen fest: Index, Vorbereitung und Suchdienst (der Zwischenspeicher) sind weder `Encodable` noch `Decodable`. Wer
+    /// sie je auf die Platte legt (meist beginnt das mit `Codable`), stolpert hier und muss eine Fassungsmarke (Faltung v2) einführen und den
+    /// Altbestand atomar umstellen (erst schreiben, dann umbenennen), sonst findet ein alter Cache „Strasse“ nie. Grenze: Wer ohne
+    /// `Codable` von Hand schreibt, wird hier nicht erkannt; der Kommentar an `AblageSuchdienst` und `AblageIndex` nennt die Pflicht ebenfalls.
+    func testIndexUndVorbereitungSindNichtSerialisierbar() {
+        func codierbar<T>(_ typ: T.Type) -> Bool { typ is any Encodable.Type || typ is any Decodable.Type }
+        XCTAssertTrue(codierbar(String.self), "Kontrolle: die Prüfung erkennt Codable")
+        XCTAssertFalse(codierbar(AblageIndex.self), "AblageIndex ist codierbar: Index persistiert? Dann Fassungsmarke und Umstellung nötig (lva#463)")
+        XCTAssertFalse(codierbar(AblageIndex.Vorbereitet.self), "Vorbereitet ist codierbar: Zwischenspeicher persistiert? Dann Fassungsmarke und Umstellung nötig (lva#463)")
+        XCTAssertFalse(codierbar(AblageIndex.VorbereitetesStueck.self), "VorbereitetesStueck ist codierbar: Zwischenspeicher persistiert? Fassungsmarke nötig (lva#463)")
+        XCTAssertFalse(codierbar(AblageSuchdienst.self), "AblageSuchdienst ist codierbar: Zwischenspeicher persistiert? Fassungsmarke nötig (lva#463)")
+    }
+
+    /// Gemischter Bestand wie in der Fixture (`gesperrt`), durch den echten Index-Tor: die zwölf Korpusdateien leben, die drei Dateien des
+    /// Desktop-Papierkorbs liegen mit ihrem Text auf der Platte, sind aber als Papierkorb markiert. Der Tor lässt sie nie in den Index; N, n
+    /// und avgdl, damit jeder Rohrang, sind die des Korpus allein und gleich dem, was der Desktop für seinen Leser rechnet.
+    func testGesperrterBestandDurchDenTorGleichRohrangWieDesktop() async throws {
+        let data = try Data(contentsOf: AblageIndexParitaetTests.fixtureURL())
+        let root = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let korpus = try XCTUnwrap(root["korpus"] as? [[String: Any]])
+        let stat = try XCTUnwrap(root["statistik"] as? [String: Any])
+        let gesperrt = try XCTUnwrap(root["gesperrt"] as? [String: Any])
+        let gDateien = try XCTUnwrap(gesperrt["dateien"] as? [[String: Any]])
+        let gFragen = try XCTUnwrap(gesperrt["fragen"] as? [[String: Any]])
+        XCTAssertEqual(korpus.count, 12)
+        XCTAssertEqual(gDateien.count, 3)
+
+        var a = Aufbau()
+        var namen: [String: String] = [:]
+        // Nummern in der Reihenfolge der Dateinamen (Bytes), wie der Parität-Test: die Kennung entscheidet nur bei Gleichstand im Rang.
+        for (i, k) in korpus.sorted(by: { Array(($0["name"] as! String).utf8).lexicographicallyPrecedes(Array(($1["name"] as! String).utf8)) }).enumerated() {
+            let n = i + 1, name = k["name"] as! String
+            let ab = (k["abschnitte"] as! [[String: Any]]).map { (anker: $0["anker"] as! String, text: $0["text"] as! String) }
+            datei(&a, n, name: name, fassungen: [fassungMitAbschnitten(n, ab)])
+            namen[W.datId(n)] = name
+        }
+        for (i, g) in gDateien.enumerated() {
+            datei(&a, 20 + i, name: g["name"] as! String, fassungen: [fassungMitAbschnitten(20 + i, [("zeile=1", g["text"] as! String)])], korb: 5_000)
+        }
+        let (z, v) = try einspielen(a)
+        for i in gDateien.indices {   // Kontrolle: der Text der gesperrten Dateien liegt wirklich auf der Platte (Altlast), der Tor hält ihn fern.
+            let t = try XCTUnwrap(z.bestand.dateien[W.datId(20 + i)]?.fassungen[0].texte[0])
+            XCTAssertTrue(v.text(W.datId(20 + i), t.textrev), "Text von Gesperrt \(i) liegt auf der Platte")
+            XCTAssertFalse(AblageAnzeige.darfIndiziert(z, dat: W.datId(20 + i)), "Papierkorb: nie zugelassen")
+        }
+
+        let d = AblageSuchdienst()
+        let abdeckung = await d.aktualisieren(zustand: z, speicher: speicher)
+        let ix = await d.index
+        XCTAssertEqual(abdeckung.imBereich, korpus.count, "der Papierkorb ist nicht im Bereich")
+        XCTAssertEqual(abdeckung.durchsucht, korpus.count)
+        XCTAssertEqual(ix.anzahlDateien, korpus.count)
+        for i in gDateien.indices { XCTAssertEqual(ix.stuecke(dat: W.datId(20 + i)).count, 0, "gesperrte Datei \(i) ist nie ein Stück") }
+        // Dieselben Zahlen wie der Index des Desktops über den Korpus (N und Wörter, Grundlage von idf und avgdl).
+        XCTAssertEqual(ix.anzahlStuecke, stat["stuecke"] as? Int)
+        XCTAssertEqual(ix.anzahlWoerter, stat["tokens"] as? Int)
+
+        XCTAssertGreaterThanOrEqual(gFragen.count, 27)
+        for f in gFragen {
+            let frage = try XCTUnwrap(f["frage"] as? String)
+            let soll = try XCTUnwrap(f["bm25"] as? [[String: Any]])
+            let roh = ix.rohzeilen(frage)
+            XCTAssertEqual(roh.count, f["bm25_anzahl"] as? Int, "Zeilen \(frage)")
+            for (i, s) in soll.enumerated() where i < roh.count {
+                XCTAssertEqual(namen[roh[i].dat], s["name"] as? String, "Reihenfolge \(frage) #\(i)")
+                XCTAssertEqual(roh[i].seite, s["seite"] as? Int, "Seite \(frage) #\(i)")
+                let w = s["wert"] as! Double
+                XCTAssertLessThanOrEqual(abs(roh[i].bm25 - w), 1e-9 * max(abs(roh[i].bm25), abs(w), 1e-300), "bm25 \(frage) #\(i): \(roh[i].bm25) statt \(w)")
             }
         }
+    }
+
+    /// Eine Fassung mit mehreren Abschnitten (Anker wie in der Fixture), für den gemischten Bestand.
+    private func fassungMitAbschnitten(_ n: Int, _ abschnitte: [(anker: String, text: String)]) -> (AblageFassung, [UInt8]) {
+        var f = W.fassung(n, nil, inhalt: "Original \(n)", typ: "txt", zeit: 1_000)
+        let t = W.text(zu: f, abschnitte: abschnitte)
+        f.texte = [t.eintrag]
+        return (f, t.bytes)
     }
 }
 #endif
