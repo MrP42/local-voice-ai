@@ -90,7 +90,7 @@ fn projektzweig_kennt_weder_app_kontext_noch_notizbuch_noch_werkzeuge() {
 #[test]
 fn versand_steht_hinter_dem_tor_und_vor_dem_abschluss() {
     let p = ohne_tests(PROJEKT);
-    let r = rumpf(PROJEKT, "durchlauf");
+    let r = rumpf(PROJEKT, "durchlauf_kern");
     let _ = p;
     let vor = r.find(".vor_versand(").expect("vor_versand fehlt");
     let senden = r.find("weg.senden(").expect("Versand fehlt");
@@ -194,7 +194,7 @@ fn gespraech_im_projekt_wird_nur_beim_anlegen_gebunden() {
 
 #[test]
 fn ipc_waehlt_nur_aus_und_das_tor_bestimmt_das_ziel() {
-    let r = rumpf(PROJEKT, "durchlauf");
+    let r = rumpf(PROJEKT, "durchlauf_kern");
     assert!(r.contains("modell: a.modell.as_deref()"));
     assert!(r.contains("erwarteter_stand: a.erwarteter_stand.as_deref()"));
     assert!(r.contains("stufe_zulaessig(s, &ziel)"));
@@ -210,7 +210,7 @@ fn ipc_waehlt_nur_aus_und_das_tor_bestimmt_das_ziel() {
 
 #[test]
 fn nichts_wird_vor_dem_urteil_des_tors_gemeldet() {
-    let r = rumpf(PROJEKT, "durchlauf");
+    let r = rumpf(PROJEKT, "durchlauf_kern");
     let on_delta = r.find("let on_delta").expect("on_delta fehlt");
     let select = r.find("tokio::select!").expect("select fehlt");
     let kopf = &r[on_delta..select];
@@ -225,7 +225,7 @@ fn nichts_wird_vor_dem_urteil_des_tors_gemeldet() {
 
 #[test]
 fn der_fehlertext_des_anbieters_geht_nie_weiter() {
-    let r = code_ohne_kommentare(&rumpf(PROJEKT, "durchlauf"));
+    let r = code_ohne_kommentare(&rumpf(PROJEKT, "durchlauf_kern"));
     let arm = r
         .find("Ausgang::Fertig(Err(")
         .expect("Fehlerzweig des Modells fehlt");
@@ -273,4 +273,17 @@ fn stopp_im_projekt_zeigt_und_spricht_keine_vorlage() {
     }
     // Der Stopp zählt nur mit Code aus dem Projekt (`hinweisAusFehler`), nie für gewöhnliche Fehler.
     assert!(e.contains("const h = projekt ? hinweisAusFehler(e) : null;"));
+}
+
+#[test]
+fn lebenszeichen_deckt_den_ganzen_lauf_und_traegt_keinen_inhalt() {
+    let r = rumpf(PROJEKT, "durchlauf_mit");
+    assert!(r.contains("durchlauf_kern(") && r.contains("lebenszeichen("));
+    assert!(r.find("durchlauf_kern(").unwrap() < r.find("lebenszeichen(").unwrap());
+    let l = rumpf(PROJEKT, "lebenszeichen");
+    assert!(l.contains("\"laeuft\"") && l.contains("\"request_id\""));
+    assert_eq!(l.matches("json!").count(), 1);
+    // Nur zwei Felder: weder Text noch Längen noch Zähler.
+    let json = &l[l.find("json!").unwrap()..];
+    assert_eq!(json[..json.find(')').unwrap()].matches(':').count(), 2);
 }

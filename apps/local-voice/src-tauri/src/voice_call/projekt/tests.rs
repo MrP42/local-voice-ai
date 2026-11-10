@@ -106,6 +106,11 @@ struct FakeWeg {
     haken: Mutex<Option<Haken>>,
     fehler: Mutex<Option<String>>,
     haengt: AtomicBool,
+    /// Wartezeit nach den Textstücken, vor der Rückgabe (langsames Modell).
+    verzoegerung: Mutex<Option<Duration>>,
+    /// Löst kurz vor der Rückgabe den Abbruch dieser Anfrage aus (im selben Poll, ohne Abgabe): Er
+    /// trifft den Lauf erst nach dem `select!`, während das Tor urteilt.
+    abbruch_am_ende: Mutex<Option<String>>,
     aufrufe: AtomicU32,
     gesehen: Mutex<Vec<Gesehen>>,
 }
@@ -168,8 +173,16 @@ impl Modellweg for FakeWeg {
                 tokio::task::yield_now().await;
             }
         }
+        let warten = *self.verzoegerung.lock().unwrap();
+        if let Some(d) = warten {
+            tokio::time::sleep(d).await;
+        }
         if self.haengt.load(Ordering::SeqCst) {
             std::future::pending::<()>().await;
+        }
+        let abbruch = self.abbruch_am_ende.lock().unwrap().clone();
+        if let Some(id) = abbruch {
+            voice_call_cancel(id);
         }
         match self.fehler.lock().unwrap().clone() {
             Some(f) => Err(f),
@@ -640,6 +653,101 @@ fn abbruch_der_oberflaeche_sendet_nichts_und_registriert_nichts() {
             assert_eq!(e.tor.offene_laeufe(), 0);
             assert!(!laeuft(&id));
         }
+    });
+}
+
+#[test]
+fn langsames_modell_sendet_inhaltsfreie_lebenszeichen_und_nichts_vor_dem_urteil() {
+    lauf(async {
+        for art in ARTEN {
+            let e = env().await;
+            let p = projekt_mit(&e, Klasse::Internal, &[("s1", BELEG)]).await;
+            let weg = FakeWeg::mit(&[ANTWORT]);
+            *weg.verzoegerung.lock().unwrap() = Some(Duration::from_millis(400));
+            let bote = FakeBote::default();
+            let id = format!("pt-h1-{art:?}");
+            let r = durchlauf_mit(
+                &e.tor,
+                &*weg,
+                &bote,
+                anfrage(&p, "g1", art, &id, verlauf(FRAGE)),
+                Duration::from_millis(40),
+            )
+            .await;
+            assert_eq!(r, Ok(FREIGEGEBEN.to_string()), "{art:?}");
+            let herz: Vec<Value> = bote
+                .alle()
+                .into_iter()
+                .filter(|e| e["kind"] == "laeuft")
+                .collect();
+            assert!(
+                herz.len() >= 3,
+                "{art:?}: mehrere Lebenszeichen, war {}",
+                herz.len()
+            );
+            for h in &herz {
+                let felder: Vec<&String> = h.as_object().unwrap().keys().collect();
+                assert_eq!(felder.len(), 2, "{art:?}: nur kind und request_id: {h}");
+                assert_eq!(h["request_id"], id.as_str());
+            }
+            // Nichts Inhaltliches vor dem Urteil: Alle Lebenszeichen stehen vor der ersten Antwort.
+            let alle = bote.alle();
+            let erste_antwort = alle
+                .iter()
+                .position(|e| e["kind"] == "sentence" || e["kind"] == "delta")
+                .expect("die Antwort kommt nach dem Urteil");
+            assert!(
+                alle[..erste_antwort].iter().all(|e| e["kind"] == "laeuft"),
+                "{art:?}: vor dem Urteil nur Lebenszeichen"
+            );
+            assert!(
+                herz.iter()
+                    .all(|h| !h.to_string().contains("Ausschreibung")),
+                "{art:?}: kein Inhalt im Lebenszeichen"
+            );
+            assert_eq!(e.tor.offene_laeufe(), 0);
+        }
+    });
+}
+
+#[test]
+fn abbruch_waehrend_des_urteils_des_tors_registriert_und_meldet_nichts() {
+    lauf(async {
+        for art in ARTEN {
+            let e = env().await;
+            let p = projekt_mit(&e, Klasse::Internal, &[("s1", BELEG)]).await;
+            let id = format!("pt-c9-{art:?}");
+            let weg = FakeWeg::mit(&[ANTWORT]);
+            *weg.abbruch_am_ende.lock().unwrap() = Some(id.clone());
+            let bote = FakeBote::default();
+            let r = durch(&e, &weg, &bote, anfrage(&p, "g1", art, &id, verlauf(FRAGE))).await;
+            assert_eq!(r, Ok(String::new()), "{art:?}");
+            assert_eq!(weg.aufrufe(), 1, "{art:?}: der Versand lief");
+            assert!(!bote.geliefert(), "{art:?}: nichts gezeigt");
+            assert!(!bote.gab("revoked") && !bote.gab("failed"), "{art:?}");
+            assert_eq!(register_anzahl(&e), 0, "{art:?}: nichts registriert");
+            assert!(!im_register(&e, "g1", FREIGEGEBEN), "{art:?}");
+            assert_eq!(e.tor.offene_laeufe(), 0);
+            assert!(!laeuft(&id) && !markiert(&id), "{art:?}");
+        }
+    });
+}
+
+#[test]
+fn schneller_lauf_braucht_kein_lebenszeichen() {
+    lauf(async {
+        let e = env().await;
+        let p = projekt_mit(&e, Klasse::Internal, &[("s1", BELEG)]).await;
+        let (weg, bote) = (FakeWeg::mit(&[ANTWORT]), FakeBote::default());
+        let r = durch(
+            &e,
+            &weg,
+            &bote,
+            anfrage(&p, "g1", Art::Chat, "pt-h2", verlauf(FRAGE)),
+        )
+        .await;
+        assert_eq!(r, Ok(FREIGEGEBEN.to_string()));
+        assert!(!bote.gab("laeuft"), "der Takt (5 s) wird nicht erreicht");
     });
 }
 

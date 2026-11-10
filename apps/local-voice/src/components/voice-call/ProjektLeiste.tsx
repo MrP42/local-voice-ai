@@ -92,7 +92,7 @@ const Hinweis: React.FC<{ hinweis: ProjektHinweis; projektId: string }> = ({
   const titel =
     name === "widerrufen"
       ? t("voiceCall.projekt.titel.widerrufen")
-      : name === "modell"
+      : name === "modell" || name === "zeitueberschreitung"
         ? t("voiceCall.projekt.titel.modell")
         : info
           ? t("voiceCall.projekt.titel.info")

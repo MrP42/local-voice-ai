@@ -1471,6 +1471,14 @@ impl ProjektTor {
         }
     }
 
+    /// Nimmt den Registereintrag einer Antwort zurück, die nach dem Urteil des Tors doch nicht gezeigt
+    /// wird (Abbruch während `abschliessen`).
+    pub fn antwort_vergessen(&self, gespraech: &str, antwort: &str) {
+        if self.register.antwort_vergessen(gespraech, antwort).is_err() {
+            log::warn!("projekte: Antwortregister konnte eine Antwort nicht zurücknehmen");
+        }
+    }
+
     /// Zahl der eingetragenen Läufe (Tests, Diagnose).
     pub fn offene_laeufe(&self) -> usize {
         self.laeufe.sperren().len()

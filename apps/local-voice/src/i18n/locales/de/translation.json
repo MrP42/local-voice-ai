@@ -7522,6 +7522,8 @@
         "ziel_fenster": "Für dieses Modell ist die Größe des Kontextfensters nicht bekannt. Es wurde nichts gesendet. Unter Einstellungen > KI-Modelle & Anbieter das Kontextlimit des Modells eintragen.",
         "ziel_lokal": "Das lokale Modell ist gerade nicht bereit. Es wurde nichts gesendet. Einen Moment warten und noch einmal fragen oder ein anderes Modell wählen.",
         "modell": "Das Modell hat nicht geantwortet. Es wurde keine Antwort übernommen. Die Frage noch einmal stellen oder ein anderes Modell wählen.",
+        "verspaetet": "Die Antwort kam zu spät: Die Auswahl im Projekt hat sich geändert, während sie entstand. Es wurde nichts übernommen.",
+        "zeitueberschreitung": "Das Modell hat zu lange gebraucht (mehr als fünf Minuten). Die Antwort wurde verworfen und nichts gesprochen. Die Frage noch einmal stellen, einen kleineren Projektkontext wählen oder ein schnelleres Modell nutzen.",
         "andere": "Im Projekt ist ein unerwarteter Fehler aufgetreten. Es wurde keine Antwort übernommen. Kennung: {{code}}."
       }
     },
