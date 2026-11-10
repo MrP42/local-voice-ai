@@ -9,7 +9,7 @@ import CryptoKit
 // textrev, Textfassung, Nutzlast von Datei und Ordner) steht in AblageVectorTests.
 //
 // Gruppen: escapes, zahlen, umlaut_schluessel, serde_lesefaelle, id_gueltig, tiefe_127, hub_hex,
-// grabstein_benutzer, zusammenfuehren. Das Zusammenführen selbst folgt in D5a-2; hier wird geprüft, dass Swift
+// grabstein_benutzer, zusammenfuehren. Das Zusammenführen selbst prüft AblageZusammenfuehrenVektorTests (D5a-2); hier wird geprüft, dass Swift
 // Eingaben und Ergebnis liest und byte-identisch zurückschreibt.
 
 private func bytes(_ s: String) -> [UInt8] { Array(s.utf8) }
@@ -244,7 +244,7 @@ final class AblageRustZusatzTests: XCTestCase {
             XCTAssertEqual(text(try AblageOrdner(nutzlast: bytes(kanon)).kanonischeNutzlast()), kanon, "ordner.\(k)")
         }
         XCTAssertEqual(try AblageOrdner(nutzlast: bytes(try str(o, "ergebnis"))).hash(), try str(o, "ergebnis_hash"))
-        // Das Zusammenführen selbst (a, b -> ergebnis, kommutativ und idempotent) folgt in D5a-2.
+        // Das Zusammenführen selbst (a, b -> ergebnis, kommutativ und idempotent): AblageZusammenfuehrenVektorTests.
     }
 
     func testUnsortierteDateiTreuUndGeordnetWieDesktop() throws {
@@ -275,7 +275,8 @@ final class AblageRustZusatzTests: XCTestCase {
     func testGleicheKennungVerdichtetErstDasZusammenfuehren() throws {
         // Zwei Einträge mit gleicher `fas` / Wahl-`id`, aber anderem Inhalt: `zusammenfuehren_datei` behält je
         // Kennung das Größere (`verdichtet_*`), `hash_datei` ohne Zusammenführen verdichtet nichts (`treu_*`).
-        // `geordnet()` ordnet und fasst nur genau gleiche Einträge zusammen; die Verdichtung folgt in D5a-2.
+        // `geordnet()` ordnet und fasst nur genau gleiche Einträge zusammen; die Verdichtung leistet `AblageZusammenfuehren`
+        // (AblageZusammenfuehrenVektorTests.testGleicheKennungWirdVerdichtetWieDesktop).
         let g = try XCTUnwrap(try gruppe("zusammenfuehren")["gleiche_kennung"])
         let d = try AblageDatei(nutzlast: bytes(try str(g, "serde_roh")))
         XCTAssertEqual(text(d.kanonischeNutzlast(ordnen: false)), try str(g, "treu_kanonisch"))
