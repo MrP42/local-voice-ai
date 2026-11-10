@@ -40,7 +40,9 @@ use super::eintrag::{self, Gattung, Urteil};
 use super::extrakt;
 use super::freigabe::{self, KiStufe};
 use super::ocr::{self, Kennung};
-use super::speicher::{Ablage, AblageDatei, AblageKi, AblageOrdner, IndexQuelle, TrefferInfo};
+use super::speicher::{
+    Ablage, AblageCloud, AblageDatei, AblageKi, AblageOrdner, IndexQuelle, TrefferInfo,
+};
 use super::textlauf::{self, Grenzen, Programm};
 use super::{
     datei_hartverknuepft, id_gueltig, ist_umweg, jetzt_ms, neue_id, ordner_sync, schreibe_atomar,
@@ -66,6 +68,8 @@ pub const STANDARD_KLASSE: &str = "confidential";
 const KLASSEN: [&str; 4] = ["public", "internal", "confidential", "personal"];
 pub const MAX_TIEFE: usize = 24;
 pub const MAX_DATEIEN: usize = 20_000;
+/// Höchstzahl der erfassten Unterordner je verknüpftem Ordner (Baum der Oberfläche); darüber `zu_viele`.
+pub const MAX_ORDNER: usize = 5_000;
 pub const MAX_VERKNUEPFT: usize = 32;
 /// Abfragetakt des Dateibeobachters.
 pub const TAKT: Duration = Duration::from_secs(20);
@@ -178,6 +182,13 @@ pub struct Bestand {
     /// einzeln; Dateien, die nur online liegen, stehen mit dem Stand `nur_online` in `dateien`).
     #[serde(default)]
     pub nur_online_ordner: u32,
+    /// Unterordner (relativer Pfad mit `/`), die betreten wurden; nur Pfade, nie Inhalte. Alte Bestände
+    /// kennen das Feld nicht: die Sicht leitet den Baum dann aus den Dateipfaden ab.
+    #[serde(default)]
+    pub ordner: BTreeSet<String>,
+    /// Unterordner, die nur online liegen und nicht betreten wurden.
+    #[serde(default)]
+    pub online_ordner: BTreeSet<String>,
     #[serde(default)]
     pub zu_viele: bool,
     /// Der Ordner war beim letzten Abtasten nicht erreichbar (entfernt, getauscht, Laufwerk fehlt).
@@ -472,9 +483,10 @@ pub fn klasse_setzen(a: &Ablage, id: &str, klasse: &str) -> Res<()> {
         return Ok(());
     }
     v.klasse = klasse.to_string();
-    liste_schreiben(a.dir(), &l)?;
-    // Cloud-Ausnahmen gelten nur für `confidential` und verfallen beim Klassenwechsel (wie bei Ordnern).
-    freigabe::ausnahmen_entziehen(a.dir(), &[id.to_string()])
+    // Cloud-Ausnahmen gelten nur für `confidential` und verfallen beim Klassenwechsel (wie bei Ordnern);
+    // vor dem Schreiben, fail-closed.
+    freigabe::ausnahmen_entziehen(a.dir(), &[id.to_string()])?;
+    liste_schreiben(a.dir(), &l)
 }
 
 /// Einstellungen eines verknüpften Ordners: nur die Klasse; „nur dieses Gerät“ gilt immer, Entwürfe der KI
@@ -553,6 +565,10 @@ pub struct Abtastung {
     pub ausgelassen: u32,
     /// Unterordner, die nur online liegen und nicht betreten wurden.
     pub nur_online_ordner: u32,
+    /// Betretene Unterordner (relativer Pfad).
+    pub ordner: BTreeSet<String>,
+    /// Unterordner, die nur online liegen (nicht betreten).
+    pub online_ordner: BTreeSet<String>,
     pub zu_viele: bool,
     /// Unterordner (relativer Pfad), die sich nicht lesen ließen: ihre bekannten Dateien bleiben im Bestand
     /// (nicht lesbar heißt nicht gelöscht).
@@ -573,6 +589,14 @@ impl Abtastung {
         h.update(self.ausgelassen.to_le_bytes());
         h.update(self.nur_online_ordner.to_le_bytes());
         h.update([u8::from(self.zu_viele)]);
+        // Neue und verschwundene Ordner (auch leere) sind eine Änderung des Baums.
+        for (marke, liste) in [(b'o', &self.ordner), (b'n', &self.online_ordner)] {
+            for o in liste {
+                h.update([marke]);
+                h.update(o.as_bytes());
+                h.update([0u8]);
+            }
+        }
         extrakt::hex(&h.finalize())
     }
 }
@@ -593,6 +617,8 @@ impl Bestand {
                 .collect(),
             ausgelassen: self.ausgelassen,
             nur_online_ordner: self.nur_online_ordner,
+            ordner: self.ordner.clone(),
+            online_ordner: self.online_ordner.clone(),
             zu_viele: self.zu_viele,
             unlesbar: Vec::new(),
         }
@@ -660,9 +686,14 @@ pub fn abtasten_roh(v: &Verknuepfung) -> Res<Abtastung> {
             };
             if urteil == Urteil::NurOnline {
                 if r.ist_ordner() {
-                    // Auflisten kann eine Synchronisierung anstoßen: nicht betreten. Bekannte Dateien darin
-                    // bleiben im Bestand (nicht lesbar heißt nicht gelöscht).
+                    // Auflisten kann eine Synchronisierung anstoßen: nicht betreten. Bekannte Dateien und
+                    // Unterordner darin bleiben im Bestand (nicht lesbar heißt nicht gelöscht).
+                    if ordner_voll(&ab) {
+                        ab.zu_viele = true;
+                        return Ok(ab);
+                    }
                     ab.nur_online_ordner += 1;
+                    ab.online_ordner.insert(rel_neu.clone());
                     ab.unlesbar.push(rel_neu);
                 } else if r.ist_datei() {
                     if ab.dateien.len() >= MAX_DATEIEN {
@@ -680,7 +711,11 @@ pub fn abtasten_roh(v: &Verknuepfung) -> Res<Abtastung> {
             if r.ist_ordner() {
                 if tiefe + 1 >= MAX_TIEFE {
                     ab.ausgelassen += 1;
+                } else if ordner_voll(&ab) {
+                    ab.zu_viele = true;
+                    return Ok(ab);
                 } else {
+                    ab.ordner.insert(rel_neu.clone());
                     stapel.push((dir.join(&e.name), rel_neu, tiefe + 1));
                 }
                 continue;
@@ -698,6 +733,19 @@ pub fn abtasten_roh(v: &Verknuepfung) -> Res<Abtastung> {
         }
     }
     Ok(ab)
+}
+
+/// Ist die Höchstzahl der erfassten Unterordner ([`MAX_ORDNER`]) erreicht?
+fn ordner_voll(ab: &Abtastung) -> bool {
+    ab.ordner.len() + ab.online_ordner.len() >= MAX_ORDNER
+}
+
+/// Liegt `pfad` unter einem der Ordner in `ordner` (echt darunter, nicht gleich)?
+fn liegt_unter(pfad: &str, ordner: &[String]) -> bool {
+    ordner.iter().any(|u| {
+        pfad.strip_prefix(u.as_str())
+            .is_some_and(|r| r.starts_with('/'))
+    })
 }
 
 fn anfangsstand(typ: &str) -> &'static str {
@@ -731,6 +779,8 @@ pub fn uebernehmen(a: &Ablage, id: &str, ab: Option<&Abtastung>) -> Res<bool> {
         dateien: BTreeMap::new(),
         ausgelassen: ab.ausgelassen,
         nur_online_ordner: ab.nur_online_ordner,
+        ordner: ab.ordner.clone(),
+        online_ordner: ab.online_ordner.clone(),
         zu_viele: ab.zu_viele,
         nicht_erreichbar: false,
         abgetastet: jetzt_ms(),
@@ -804,12 +854,20 @@ pub fn uebernehmen(a: &Ablage, id: &str, ab: Option<&Abtastung>) -> Res<bool> {
         }
     }
     for (rel, e) in &alt.dateien {
-        let unlesbar = ab.unlesbar.iter().any(|u| {
-            rel.strip_prefix(u.as_str())
-                .is_some_and(|r| r.starts_with('/'))
-        });
-        if unlesbar && !neu.dateien.contains_key(rel) {
+        if liegt_unter(rel, &ab.unlesbar) && !neu.dateien.contains_key(rel) {
             neu.dateien.insert(rel.clone(), e.clone());
+        }
+    }
+    // Ebenso die bekannten Unterordner nicht lesbarer oder nur online liegender Ordner. Ein Altbestand ohne
+    // Ordnerliste liefert sie aus den Dateipfaden.
+    for o in bekannte_ordner(&alt) {
+        if liegt_unter(&o, &ab.unlesbar) {
+            neu.ordner.insert(o);
+        }
+    }
+    for o in &alt.online_ordner {
+        if liegt_unter(o, &ab.unlesbar) {
+            neu.online_ordner.insert(o.clone());
         }
     }
     let lebend: BTreeSet<&str> = neu.dateien.values().map(|e| e.dat.as_str()).collect();
@@ -821,6 +879,8 @@ pub fn uebernehmen(a: &Ablage, id: &str, ab: Option<&Abtastung>) -> Res<bool> {
     let geaendert = alt.dateien != neu.dateien
         || alt.ausgelassen != neu.ausgelassen
         || alt.nur_online_ordner != neu.nur_online_ordner
+        || alt.ordner != neu.ordner
+        || alt.online_ordner != neu.online_ordner
         || alt.zu_viele != neu.zu_viele
         || alt.nicht_erreichbar;
     // Jede übernommene Abtastung schreibt den Zeitpunkt („zuletzt abgetastet“) mit.
@@ -1638,6 +1698,47 @@ pub fn treffer_infos(a: &Ablage, dats: &[String]) -> BTreeMap<String, TrefferInf
     aus
 }
 
+/// Der Ordner und alle seine Vorfahren (`a/b/c` → `a`, `a/b`, `a/b/c`) in `aus`.
+fn mit_vorfahren(pfad: &str, aus: &mut BTreeSet<String>) {
+    if pfad.is_empty() {
+        return;
+    }
+    for (i, _) in pfad.match_indices('/').filter(|(i, _)| *i > 0) {
+        aus.insert(pfad[..i].to_string());
+    }
+    aus.insert(pfad.to_string());
+}
+
+/// Alle bekannten Unterordner eines Bestands (relativer Pfad): die erfassten, die nur online liegenden und
+/// die Ordner der Dateipfade, jeweils samt Vorfahren. Ein Altbestand ohne Ordnerliste liefert so wenigstens
+/// die Ordner, in denen Dateien liegen.
+fn bekannte_ordner(b: &Bestand) -> BTreeSet<String> {
+    let mut aus = BTreeSet::new();
+    for o in b.ordner.iter().chain(b.online_ordner.iter()) {
+        mit_vorfahren(o, &mut aus);
+    }
+    for rel in b.dateien.keys() {
+        if let Some((ordner, _)) = rel.rsplit_once('/') {
+            mit_vorfahren(ordner, &mut aus);
+        }
+    }
+    aus
+}
+
+/// Unterordner eines Bestands für die Sicht: sortiert, `nur_online` auch durch einen Vorfahren geerbt.
+fn unterordner_sicht(b: &Bestand) -> Vec<AblageUnterordner> {
+    bekannte_ordner(b)
+        .into_iter()
+        .map(|pfad| {
+            let nur_online = b.online_ordner.contains(&pfad)
+                || pfad
+                    .match_indices('/')
+                    .any(|(i, _)| b.online_ordner.contains(&pfad[..i]));
+            AblageUnterordner { pfad, nur_online }
+        })
+        .collect()
+}
+
 /// Ein verknüpfter Ordner für die Oberfläche.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
 pub struct AblageVerknuepft {
@@ -1652,6 +1753,17 @@ pub struct AblageVerknuepft {
     pub zu_viele: bool,
     /// Letztes Abtasten (ms), 0 = noch nie.
     pub abgetastet: i64,
+    /// Unterordner (sortiert), auch leere; nur Pfade relativ zum verknüpften Ordner.
+    pub unterordner: Vec<AblageUnterordner>,
+}
+
+/// Ein Unterordner eines verknüpften Ordners für den Baum der Oberfläche (nur lesen).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
+pub struct AblageUnterordner {
+    /// Relativer Pfad mit `/`.
+    pub pfad: String,
+    /// Liegt nur online (er selbst oder ein Vorfahr): wird nie betreten.
+    pub nur_online: bool,
 }
 
 fn textstand(e: &Eintrag, ocr: Option<Kennung>) -> Option<String> {
@@ -1708,6 +1820,8 @@ pub fn sicht(a: &Ablage, lage: &freigabe::Lage) -> (Vec<AblageVerknuepft>, Vec<A
                 text: textstand(e, ocr),
                 text_code: e.code.clone(),
                 verknuepft: true,
+                // Verknüpfte Ordner sind für die KI nie erreichbar: keine Cloud-Ausnahme (Spec §5.1).
+                cloud: AblageCloud::default(),
             });
         }
         ordner.push(AblageVerknuepft {
@@ -1724,12 +1838,14 @@ pub fn sicht(a: &Ablage, lage: &freigabe::Lage) -> (Vec<AblageVerknuepft>, Vec<A
                 ki,
                 dateien: anzahl,
                 verknuepft: true,
+                cloud: AblageCloud::default(),
             },
             erreichbar: !b.nicht_erreichbar,
             ausgelassen: b.ausgelassen.saturating_add(abgewiesen),
             nur_online,
             zu_viele: b.zu_viele,
             abgetastet: b.abgetastet,
+            unterordner: unterordner_sicht(&b),
         });
     }
     dateien.sort_by_key(|d| crate::library_layout::vergleichsschluessel(&d.name));

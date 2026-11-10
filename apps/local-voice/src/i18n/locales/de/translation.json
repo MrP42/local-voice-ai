@@ -9278,7 +9278,12 @@
       "label": "Ordner",
       "meine": "Meine Ordner",
       "wiederhergestellt": "Wiederhergestellt",
-      "weitere": "Weitere Ordner"
+      "weitere": "Weitere Ordner",
+      "aufklappen": "{{name}} aufklappen",
+      "zuklappen": "{{name}} zuklappen",
+      "nurLesen": "Nur lesen",
+      "nurOnline": "Nur online",
+      "unterordner": "Unterordner von {{name}}"
     },
     "ordner": {
       "neu": "Neuer Ordner",
@@ -9299,7 +9304,11 @@
       "dateien_other": "{{count}} Dateien"
     },
     "stand": {
-      "konflikt": "Konflikt"
+      "konflikt": "Konflikt",
+      "imIndex": "Im Index",
+      "nurOnline": "Nur online",
+      "zuletztBekannt": "Zuletzt bekannt",
+      "imIndexLabel": "Im Suchindex"
     },
     "leer": {
       "titel": "Noch keine Dateien",
@@ -9504,7 +9513,8 @@
       "nurBestaetigen": "Nur auf diesem Gerät",
       "syncFrage": "Wieder mit anderen Geräten abgleichen?",
       "syncFolge": "Bereits abgelegte Kopien in der Cloud können danach nicht zurückgeholt werden.",
-      "syncBestaetigen": "Abgleich erlauben"
+      "syncBestaetigen": "Abgleich erlauben",
+      "weiter": "Weiter"
     },
     "lage": {
       "titel": "Die Ablage kann nicht geöffnet werden",
@@ -9530,6 +9540,61 @@
       "geloescht": "Endgültig gelöscht",
       "geleert": "Papierkorb geleert"
     },
+    "cloud": {
+      "titel": "Cloud-Ausnahme",
+      "schalter": "KI darf diesen Ordner über einen Cloud-Anbieter nutzen",
+      "schalterHinweis": "Nur für vertrauliche Ordner. Ohne Ausnahme bleibt er lokalen Modellen vorbehalten.",
+      "info": "Die KI darf Auszüge aus diesem Ordner und seinen Unterordnern an die gewählten Anbieter senden. Das gilt nur auf diesem Gerät und nur bei der Datenklasse „Vertraulich“. Unterordner mit „Personenbezogen“ sind ausgenommen: Sie gehen nie an einen Cloud-Anbieter.",
+      "anbieter": "Anbieter (Regelwerk „{{regelwerk}}“)",
+      "regelwerk": {
+        "eu": "EU",
+        "nur_lokal": "Nur lokal",
+        "keines": "Keine Einschränkung"
+      },
+      "gesperrt": "gesperrt",
+      "grund": {
+        "regelwerk": "Erfüllt das Regelwerk „{{regelwerk}}“ nicht.",
+        "klasse": "Nimmt höchstens „Intern“ an.",
+        "unbekannt": "Nicht mehr verfügbar. Die Ausnahme lässt sich entziehen."
+      },
+      "keinAnbieter": "Wählen Sie mindestens einen Anbieter.",
+      "nichtGeladen": "Die Anbieterliste ließ sich nicht laden. Bestehende Ausnahmen lassen sich trotzdem entziehen.",
+      "verwalten": "Regelwerk und Anbieter verwalten",
+      "sperre": {
+        "nur_lokal": "Das Regelwerk „Nur lokal“ lässt keine Cloud-Anbieter zu. Vertrauliche Ordner bleiben lokalen Modellen vorbehalten.",
+        "keines": "Das Regelwerk „Keine Einschränkung“ gibt vertrauliche Daten nicht für Cloud-Anbieter frei. Dafür ist das Regelwerk „EU“ nötig.",
+        "eu": "Kein konfigurierter Anbieter erfüllt das Regelwerk „EU“ für vertrauliche Daten. Nötig sind Verarbeitung in der EU, ein Auftragsverarbeitungsvertrag und kein Training mit Ihren Daten.",
+        "ki": "Die KI-Freigabe ist „Gesperrt“. Solange sie gilt, lässt sich keine Cloud-Ausnahme erteilen. Eine bestehende Ausnahme bleibt bestehen und lässt sich entziehen."
+      },
+      "geerbt": "Für diesen Ordner gilt außerdem eine Ausnahme von einem übergeordneten Ordner ({{anbieter}}).",
+      "braucht": "Für „{{klasse}}“ braucht es keine Ausnahme: Auszüge dürfen an freigegebene Cloud-Modelle gehen, soweit das Regelwerk es erlaubt.",
+      "personal": "Personenbezogene Dateien gehen nur an lokale Modelle. Eine Cloud-Ausnahme gibt es dafür nicht.",
+      "verfaellt": "Die Cloud-Ausnahme ({{anbieter}}) verfällt mit dem Speichern. Bei einem späteren Wechsel zurück zu „Vertraulich“ muss sie neu erteilt werden.",
+      "erstSpeichern": "Speichern Sie zuerst die Datenklasse „Vertraulich“. Danach lässt sich hier eine Cloud-Ausnahme erteilen.",
+      "chip": "Cloud-Ausnahme",
+      "chipGeerbt": "Cloud-Ausnahme (geerbt)",
+      "chipLabel": "Cloud-Ausnahme: Die KI darf diesen Ordner über {{anbieter}} nutzen. Ordnereinstellungen öffnen",
+      "chipLabelGeerbt": "Cloud-Ausnahme von einem übergeordneten Ordner: Die KI darf diesen Ordner über {{anbieter}} nutzen. Ordnereinstellungen öffnen",
+      "baum": "Cloud-Ausnahme",
+      "details": "Cloud",
+      "detailsWert": "Ausnahme",
+      "detailsQuelle": "{{anbieter}} · geerbt von {{ordner}}",
+      "frage": "Cloud-Ausnahme für „{{name}}“ erteilen?",
+      "umfang_one": "Auszüge aus {{count}} vertraulichen Datei in „{{name}}“ und seinen Unterordnern dürfen gesendet werden an:",
+      "umfang_other": "Auszüge aus {{count}} vertraulichen Dateien in „{{name}}“ und seinen Unterordnern dürfen gesendet werden an:",
+      "umfangNull": "In „{{name}}“ und seinen Unterordnern liegen aktuell keine vertraulichen Dateien. Die Ausnahme gilt auch für später abgelegte. Auszüge dürfen gesendet werden an:",
+      "ausgenommen": "Ausgenommen sind Unterordner mit der Datenklasse „Personenbezogen“: {{namen}}. Sie gehen nie an einen Cloud-Anbieter.",
+      "anbieterZeile": "{{name}} (Regelwerk „{{regelwerk}}“)",
+      "bedeutet": "Das bedeutet",
+      "punkt1": "Die KI sieht nur Auszüge, nie die Originale. Die Ausnahme gilt für den Assistenten (KI-Freigabe „An“) und für Projekte, in denen der Ordner eingeschaltet ist. „Gesperrt“ schließt beides aus.",
+      "punkt2": "Die Ausnahme gilt nur auf diesem Gerät und verfällt, wenn die Datenklasse geändert wird.",
+      "punkt3": "Sie lässt sich jederzeit entziehen. Bereits gesendete Auszüge lassen sich nicht zurückholen.",
+      "punkt4": "Personenbezogene Daten gehören nicht in diesen Ordner. Stufen Sie sie als „Personenbezogen“ ein; sie gehen nie an einen Cloud-Anbieter.",
+      "erteilen": "Ausnahme erteilen",
+      "verlassenTitel": "Ungespeicherte Änderungen verwerfen?",
+      "verlassenText": "Sie haben Änderungen an den Ordnereinstellungen nicht gespeichert. Wenn Sie jetzt zu „KI-Modelle & Anbieter“ wechseln, gehen sie verloren.",
+      "verlassenAktion": "Verwerfen und wechseln"
+    },
     "verknuepft": {
       "gruppe": "Verknüpfte Ordner (nur lesen)",
       "verknuepfen": "Ordner verknüpfen",
@@ -9538,13 +9603,13 @@
       "hinweisKurz": "Nur lesen, nur dieses Gerät",
       "angabe": "Verknüpft – nur lesen, nur dieses Gerät",
       "nichtErreichbar": "Nicht erreichbar",
-      "nichtErreichbarText": "Der verknüpfte Ordner ist gerade nicht erreichbar oder wurde verschoben. Die bekannten Dateien bleiben in der Liste, bis er wieder da ist.",
+      "nichtErreichbarText": "Der verknüpfte Ordner ist gerade nicht erreichbar oder wurde verschoben. Die zuletzt bekannten Dateien und Unterordner bleiben in der Liste, bis er wieder da ist.",
       "ausgelassen_one": "{{count}} Eintrag wurde ausgelassen (Verknüpfung oder Hartlink).",
       "ausgelassen_other": "{{count}} Einträge wurden ausgelassen (Verknüpfungen oder Hartlinks).",
-      "nurOnline_one": "{{count}} Eintrag liegt nur online und wird nicht gelesen.",
-      "nurOnline_other": "{{count}} Einträge liegen nur online und werden nicht gelesen.",
+      "nurOnline_one": "{{count}} Eintrag liegt nur online beim Cloud-Anbieter (z. B. OneDrive) und wird nicht gelesen.",
+      "nurOnline_other": "{{count}} Einträge liegen nur online beim Cloud-Anbieter (z. B. OneDrive) und werden nicht gelesen.",
       "nurOnlineHinweis": "In OneDrive „Immer auf diesem Gerät behalten“ wählen, damit der Text erfasst wird.",
-      "zuViele": "Der Ordner ist sehr groß; nur die ersten 20 000 Dateien werden gelesen.",
+      "zuViele": "Der Ordner ist sehr groß: Es sind höchstens 20 000 Dateien und 5 000 Unterordner erfasst.",
       "leer": "Keine lesbaren Dateien in diesem Ordner",
       "neuEinlesen": "Neu einlesen",
       "loesen": "Verknüpfung lösen",
@@ -9554,7 +9619,19 @@
       "einstellungenHinweis": "Verknüpfter Ordner: nur lesen, nur dieses Gerät. Er wird nie hochgeladen oder abgeglichen; die KI greift darauf nicht zu. Die Datenklasse bleibt einstellbar.",
       "toastVerknuepft": "Ordner verknüpft",
       "toastEingelesen": "Ordner neu eingelesen",
-      "toastGeloest": "Verknüpfung gelöst"
+      "toastGeloest": "Verknüpfung gelöst",
+      "nurLesenChip": "Nur lesen",
+      "keineKi": "Die KI greift auf verknüpfte Ordner nie zu – weder mit lokalen Modellen noch über einen Cloud-Anbieter. Darum gibt es hier weder eine KI-Freigabe noch eine Cloud-Ausnahme.",
+      "keineKi2": "Soll die KI bestimmte Dateien nutzen, legen Sie Kopien in einen eigenen Ablage-Ordner und geben Sie diesen frei.",
+      "nurOnlineTipp": "Die Datei liegt nur online beim Cloud-Anbieter (z. B. OneDrive), nicht auf diesem Gerät. Sie wird nicht gelesen und nicht durchsucht. Wählen Sie in OneDrive „Immer auf diesem Gerät behalten“, dann wird sie lesbar – die App lädt selbst nie herunter.",
+      "behaltenTitel": "Auf diesem Gerät behalten",
+      "behaltenText": "Diese Datei liegt nur online beim Cloud-Anbieter (z. B. OneDrive). Die App lädt nie selbst herunter; solange die Datei nicht auf dem Gerät liegt, bleibt sie ungelesen und fehlt in der Suche.",
+      "behaltenSchritt1": "Im Datei-Explorer die Datei mit der rechten Maustaste anklicken.",
+      "behaltenSchritt2": "„Immer auf diesem Gerät behalten“ wählen.",
+      "behaltenDanach": "Sobald die Datei auf dem Gerät liegt, liest die Ablage sie in der Regel innerhalb einer Minute selbst ein. Sonst hilft „Neu einlesen“.",
+      "keineVorschau": "Keine Vorschau – die Datei liegt nur online.",
+      "keineVorschauLabel": "Keine Vorschau: Die Datei liegt nur online",
+      "unterordnerLeer": "Keine Unterordner und keine Dateien in diesem Ordner"
     },
     "fehler": {
       "verknuepft_defekt": "Die Liste der verknüpften Ordner ist beschädigt.",
@@ -9592,7 +9669,9 @@
       "datenstrom": "Alternative Datenströme werden nicht übernommen.",
       "nicht_neu_aufbaubar": "Der Bestand lässt sich nicht neu aufbauen.",
       "loeschen_offen": "Ein endgültiges Löschen ist noch nicht abgeschlossen. Bitte später erneut versuchen.",
-      "datei_im_papierkorb": "Die Datei liegt im Papierkorb."
+      "datei_im_papierkorb": "Die Datei liegt im Papierkorb.",
+      "ausnahme_klasse": "Cloud-Ausnahmen gibt es nur für vertrauliche Ordner.",
+      "anbieter_nicht_zugelassen": "Dieser Anbieter ist für vertrauliche Ordner nicht zugelassen."
     }
   }
 }

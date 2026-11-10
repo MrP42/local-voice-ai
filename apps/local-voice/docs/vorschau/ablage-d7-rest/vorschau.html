@@ -1,0 +1,502 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ablage D7 Rest</title>
+<style>
+:root{
+  --bg:#f5f5f5;--pane:#fff;--pane2:#fafafa;--line:#e0e0e0;--text:#242424;--muted:#616161;
+  --accent:#0f6cbd;--accent-soft:#ebf3fc;--sel:#e6eef8;--ok:#0e700e;--warn:#a33f06;--warn-soft:#fdf3ec;--chip:#f0f0f0;--drop:#cfe4fa;--on-accent:#fff;--focus:#0f6cbd;
+}
+:root[data-theme="dark"]{
+  --bg:#1f1f1f;--pane:#292929;--pane2:#2e2e2e;--line:#3d3d3d;--text:#fff;--muted:#c7c7c7;
+  --accent:#479ef5;--accent-soft:#1a2c40;--sel:#243447;--ok:#6ccb6c;--warn:#f1a35c;--warn-soft:#3a2a1c;--chip:#383838;--drop:#1d3550;--on-accent:#0b1a2a;--focus:#8cc4ff;
+}
+*{box-sizing:border-box}
+html,body,#app{margin:0;height:100%;overflow:hidden}
+body{font:14px/1.45 "Segoe UI",system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text)}
+button,input,select{font:inherit;color:inherit}
+a{color:inherit;text-decoration:none}
+:focus-visible{outline:2px solid var(--focus);outline-offset:-2px;border-radius:6px}
+svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.app{display:grid;grid-template-rows:44px 1fr 32px;height:100%}
+.top{display:flex;align-items:center;gap:12px;padding:0 12px;border-bottom:1px solid var(--line);background:var(--pane);min-width:0}
+.top h1{font-size:15px;font-weight:600;margin:0;white-space:nowrap}
+.top .be{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.main{display:grid;grid-template-columns:60px 1fr;min-height:0}
+.nav{display:flex;flex-direction:column;gap:4px;padding:8px;border-right:1px solid var(--line);background:var(--pane)}
+.nav a{display:grid;place-items:center;width:44px;height:44px;border-radius:6px;color:var(--muted)}
+.nav a.on{background:var(--sel);color:var(--accent);box-shadow:inset 3px 0 0 var(--accent)}
+.status{display:flex;align-items:center;gap:16px;padding:0 12px;font-size:12px;color:var(--muted);border-top:1px solid var(--line);background:var(--pane);white-space:nowrap;overflow:hidden}
+.bar{display:inline-block;width:120px;height:6px;border-radius:3px;background:var(--chip);vertical-align:middle;overflow:hidden}
+.bar i{display:block;height:100%;width:14%;background:var(--accent)}
+.work{display:grid;grid-template-columns:240px minmax(0,1fr) 340px;gap:12px;padding:12px;min-height:0}
+.work.zwei{grid-template-columns:240px minmax(0,1fr)}
+.col{background:var(--pane);border:1px solid var(--line);border-radius:8px;min-height:0;overflow:auto;display:flex;flex-direction:column;position:relative}
+.col>*{flex:none}
+.colhead{display:flex;align-items:center;gap:8px;padding:2px 4px 2px 12px;border-bottom:1px solid var(--line);font-weight:600;min-height:48px;flex-wrap:wrap}
+.colhead h2{font-size:14px;margin:0;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.colhead .sp{margin-left:auto;display:flex;gap:2px;align-items:center}
+.colhead .sp.tools{flex:1 1 auto;min-width:0;justify-content:flex-end}
+.ib{flex:none;display:grid;place-items:center;width:44px;height:44px;border-radius:6px;color:var(--muted);border:0;background:none;cursor:pointer}
+.btn{flex:none;display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:44px;min-width:44px;padding:0 14px;border-radius:6px;border:1px solid var(--line);background:var(--pane);cursor:pointer;white-space:nowrap}
+.btn.pri{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.grp{padding:12px 12px 4px;font-size:12px;font-weight:600;color:var(--muted)}
+.row{display:flex;align-items:center;gap:10px;padding:0 12px;min-height:44px;border-radius:6px;margin:0 6px}
+.row.on{background:var(--sel)}
+.row.on .nm{font-weight:600}
+.row .nm{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .ct{font-size:12px;color:var(--muted)}
+.row.sub{padding-left:30px}
+.crumb{display:flex;align-items:center;gap:4px;min-width:0;font-weight:600}
+.crumb span{white-space:nowrap}
+.crumb .sep{color:var(--muted);font-weight:400}
+.search{display:flex;align-items:center;gap:8px;height:44px;border:1px solid var(--line);border-radius:6px;padding:0 10px;background:var(--pane2);color:var(--muted);min-width:0;flex:1 1 260px;max-width:420px}
+.search input{border:0;background:none;outline:none;min-width:0;width:0;flex:1;height:44px;margin:-1px 0;color:var(--text)}
+.search input::placeholder{color:var(--muted)}
+.search:focus-within{border-color:var(--accent);outline:2px solid var(--focus);outline-offset:-2px}
+table{width:100%;border-collapse:collapse}
+th{font-size:12px;font-weight:600;color:var(--muted);text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:0 10px;height:48px;border-bottom:1px solid var(--line);white-space:nowrap}
+tr.on td{background:var(--sel)}
+td.nm{max-width:0;width:100%;overflow:hidden}
+.lnk{display:flex;align-items:center;gap:10px;min-width:0;min-height:44px;width:100%}
+.lnk span{overflow:hidden;text-overflow:ellipsis}
+.ic{width:34px;height:28px;border-radius:4px;display:grid;place-items:center;font-size:10px;font-weight:700;color:#fff;flex:none}
+.pdf{background:#c4314b}.doc{background:#185abd}.ppt{background:#c43e1c}.xls{background:#107c41}.md{background:#5c5c5c}.dir{background:none;color:var(--accent)}.eml{background:#0f6cbd}.img{background:#8764b8}
+.mut{color:var(--muted);font-size:12px}
+.chip{display:inline-flex;align-items:center;gap:4px;height:24px;padding:0 8px;border-radius:12px;background:var(--chip);font-size:12px;color:var(--muted);white-space:nowrap}
+.chip.ki{background:var(--accent-soft);color:var(--accent)}
+.chip.ok{color:var(--ok)}
+.sync svg{width:16px;height:16px}
+.sec{padding:12px 16px;border-bottom:1px solid var(--line)}
+.sec h3{margin:0 0 8px;font-size:13px}
+.prev{margin:12px 16px;border:1px solid var(--line);border-radius:6px;background:var(--pane2);padding:16px;font-size:12px;line-height:1.55;color:var(--muted);height:220px;overflow:hidden}
+.prev b{color:var(--text)}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-size:13px}
+.kv span:nth-child(odd){color:var(--muted)}
+.sw{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:44px}
+.tg{position:relative;flex:none;width:52px;height:44px;border:0;background:none;cursor:pointer;border-radius:6px}
+.tg::before{content:"";position:absolute;left:6px;top:12px;width:40px;height:20px;border-radius:10px;border:1px solid var(--muted);box-sizing:border-box}
+.tg::after{content:"";position:absolute;width:12px;height:12px;border-radius:50%;background:var(--muted);top:16px;left:10px}
+.tg[aria-checked="true"]::before{background:var(--accent);border-color:var(--accent)}
+.tg[aria-checked="true"]::after{left:30px;background:var(--on-accent)}
+select.sel{width:100%;min-height:44px;border:1px solid var(--line);border-radius:6px;padding:0 10px;background:var(--pane2)}
+.seg{display:flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.seg button{flex:1;min-height:44px;border:0;background:var(--pane2);cursor:pointer}
+.seg button[aria-checked="true"]{background:var(--accent);color:var(--on-accent);font-weight:600}
+.note{margin:12px 16px;padding:10px 12px;border-radius:6px;background:var(--accent-soft);color:var(--text);font-size:12px}
+.note.w{background:var(--warn-soft)}
+.drop{position:absolute;inset:56px 8px 8px;border:2px dashed var(--accent);border-radius:8px;background:color-mix(in srgb,var(--drop) 85%,transparent);display:grid;place-items:center;text-align:center;font-weight:600;color:var(--accent)}
+.up{padding:8px 16px}
+.up .l{display:flex;justify-content:space-between;font-size:13px;margin:8px 0 4px;gap:8px}
+.up .l span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pb{height:4px;border-radius:2px;background:var(--chip);overflow:hidden}.pb i{display:block;height:100%;background:var(--accent)}
+.hit{padding:8px 16px;border-bottom:1px solid var(--line);display:block}
+.hit .t{display:flex;align-items:center;gap:8px;font-weight:600;min-height:28px}
+.hit p{margin:4px 0 0;color:var(--muted);font-size:13px}
+.hit mark{background:var(--accent-soft);color:var(--text);border-radius:2px;padding:0 1px}
+.empty{flex:1 1 auto !important;display:grid;place-items:center;text-align:center;color:var(--muted);padding:24px}
+.empty .big{font-size:18px;color:var(--text);font-weight:600;margin:12px 0 4px}
+.tabs{display:flex;gap:4px;padding:0 12px;border-bottom:1px solid var(--line)}
+.tabs button{min-height:44px;min-width:44px;display:flex;align-items:center;padding:0 10px;color:var(--muted);border:0;border-bottom:2px solid transparent;background:none;cursor:pointer;white-space:nowrap}
+.tabs button[aria-selected="true"]{color:var(--text);border-color:var(--accent);font-weight:600}
+.dlg{position:fixed;inset:0;background:rgba(0,0,0,.35);display:grid;place-items:center;padding:16px;z-index:5}
+.dlg[hidden],.sheet[hidden]{display:none !important}
+.dlg .box{background:var(--pane);border-radius:8px;max-width:480px;width:100%;max-height:100%;overflow:auto;box-shadow:0 8px 32px rgba(0,0,0,.3)}
+.dlg h2{font-size:16px;margin:0;padding:16px 16px 4px}
+.dlg .ft{display:flex;justify-content:flex-end;gap:8px;padding:12px 16px}
+.sheet{display:none}
+.vbtn{display:flex;flex-direction:column;gap:8px}
+@media (max-width:1279px){.work{grid-template-columns:200px minmax(0,1fr) 300px}}
+@media (max-width:1023px){
+  .work,.work.zwei{grid-template-columns:minmax(0,1fr)}.tree,.side{display:none}.c-size{display:none}
+  .sheet{display:block;position:fixed;inset:0;z-index:4;background:rgba(0,0,0,.3)}
+  .sheet>.col{position:absolute;left:0;right:0;bottom:0;max-height:66%;border-radius:12px 12px 0 0;box-shadow:0 -8px 24px rgba(0,0,0,.25)}
+}
+@media (max-width:620px){
+  .main{grid-template-columns:1fr}.nav{display:none}.work{padding:0;gap:0}.col{border-radius:0;border-left:0;border-right:0}
+  .c-date,.c-class{display:none}.top .be{display:none}.hide-s{display:none}.search{max-width:none}
+  .colhead .sp.tools{flex:1 1 100%;min-width:0;margin-left:0;padding-right:4px}
+  .drop{display:none}
+  .status .bar{width:64px}
+}
+@media (min-width:2000px){.work{grid-template-columns:300px minmax(0,1fr) 440px}.prev{height:420px}}
+.sheet.immer:not([hidden]){display:block;position:fixed;inset:0;z-index:4;background:rgba(0,0,0,.3)}
+.sheet.immer>.col{position:absolute;right:0;top:0;bottom:0;width:min(400px,100%);border-radius:0}
+@media (max-width:1023px){.sheet.immer>.col{top:auto;left:0;width:auto;max-height:66%;border-radius:12px 12px 0 0}}
+.grip{width:36px;height:4px;border-radius:2px;background:var(--line);margin:8px auto}
+
+/* ---- D7-Rest: Ergänzungen zur D1-Grundlage ---- */
+.nur-schmal{display:none}
+.chipbtn{display:inline-flex;align-items:center;justify-content:center;flex:none;min-height:44px;min-width:44px;padding:0 2px;border:0;background:none;cursor:pointer;border-radius:6px}
+.chip.cloud{background:var(--accent-soft);color:var(--accent)}
+.chip.w{background:var(--warn-soft);color:var(--warn)}
+.chip svg{width:14px;height:14px}
+.crumb h2{font-size:14px;margin:0;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.crumb .sep{white-space:nowrap}
+.mut a,.lnkrow{color:var(--accent)}
+.lnkrow{display:flex;align-items:center;gap:6px;min-height:44px;width:100%;border:0;background:none;cursor:pointer;text-align:left;border-radius:6px}
+.lnkrow svg{width:16px;height:16px}
+/* Baum: aufklappbar */
+.tl{list-style:none;margin:0;padding:0}
+.tl ul{list-style:none;margin:0;padding:0}
+.tl ul[hidden]{display:none}
+.trow{display:flex;align-items:center;margin:0 6px;border-radius:6px;padding-left:calc(var(--lv,0)*14px)}
+.trow.on{background:var(--sel)}
+.trow.on .nm{font-weight:600}
+.trow .tw,.trow .tsp{flex:none;width:28px}
+.trow .tw{width:44px;height:44px;margin-right:-16px;display:grid;place-items:center;border:0;background:none;color:var(--muted);cursor:pointer;border-radius:6px;position:relative;z-index:1}
+.trow .tw svg{width:16px;height:16px}
+.trow .rm{flex:1;min-width:0;display:flex;align-items:center;gap:10px;min-height:44px;padding:0 12px 0 16px;border-radius:6px}
+.trow .nm{flex:1;min-width:0;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.3;overflow-wrap:anywhere}
+.trow .ct{font-size:12px;color:var(--muted);flex:none}
+.trow.weg .nm{color:var(--muted)}
+.trow svg{flex:none}
+.trow .rm svg{width:20px;height:20px}
+.trow .rm .kl{width:16px;height:16px}
+.vkdim{color:var(--muted)}
+/* Listen als Karten (≤ 620 px) */
+.meta{display:none}
+/* Dateisymbol „nur online“ */
+.ic.off{opacity:.55}
+.stn{display:inline-flex;align-items:center;gap:6px;font-size:12px}
+.stn.ok{color:var(--ok)}
+.stn .mut{font-size:12px}
+.tipw{position:relative;display:inline-block}
+.tip{display:none;position:absolute;right:0;bottom:calc(100% + 4px);z-index:6;width:300px;max-width:calc(100vw - 32px);padding:10px 12px;border:1px solid var(--line);border-radius:6px;background:var(--pane);color:var(--text);box-shadow:0 6px 20px rgba(0,0,0,.25);font-size:12px;line-height:1.4;white-space:normal;text-align:left}
+.tip b{display:block;margin-bottom:2px;font-size:13px}
+.tipw:hover .tip,.tipw:focus-within .tip{display:block}
+/* Hinweisblock „Auf diesem Gerät behalten“ */
+.hint{margin:12px 16px;padding:12px;border-radius:6px;background:var(--accent-soft);border-left:3px solid var(--accent);font-size:13px}
+.hint .hh{display:flex;align-items:center;gap:8px;color:var(--text);margin-bottom:6px}
+.hint .hh svg{color:var(--accent)}
+.hint p{margin:0 0 6px}
+.hint ol{margin:0 0 10px;padding-left:20px}
+.hint li{margin:2px 0}
+.prev.leer{display:grid;place-items:center;text-align:center;color:var(--muted)}
+.prev.leer svg{width:36px;height:36px;margin-bottom:6px}
+/* Optionsfelder (Anbieter) */
+.cb{display:flex;align-items:flex-start;gap:12px;width:100%;min-height:56px;padding:8px 10px;margin:0 0 6px;text-align:left;border:1px solid var(--line);border-radius:6px;background:var(--pane2);cursor:pointer}
+.cb .bx{flex:none;width:20px;height:20px;margin-top:2px;border:1.5px solid var(--muted);border-radius:4px;display:grid;place-items:center;background:var(--pane)}
+.cb .bx svg{width:14px;height:14px;stroke-width:2.4;opacity:0}
+.cb[aria-checked="true"]{border-color:var(--accent);background:var(--accent-soft)}
+.cb[aria-checked="true"] .bx{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.cb[aria-checked="true"] .bx svg{opacity:1}
+.cb[aria-disabled="true"]{cursor:not-allowed;border-style:dashed;background:none}
+.cb .tx{display:flex;flex-direction:column;min-width:0}
+.cb .tx b{font-weight:600}
+.cb .tx .mut{font-size:12px}
+.cb[aria-disabled="true"] .tx .w{color:var(--warn)}
+.fold{margin:8px 0 0;padding:10px 12px;border-radius:6px;background:var(--accent-soft);font-size:12px}
+.fold.w{background:var(--warn-soft)}
+.fold p{margin:0}
+.fold p+p{margin-top:6px}
+.dlg .box{display:flex;flex-direction:column;max-width:520px;overflow:hidden;max-height:calc(100dvh - 32px)}
+.dlg .bd{overflow:auto;min-height:0;flex:1 1 auto}
+.dlg .ft{flex:none;border-top:1px solid var(--line);background:var(--pane)}
+.dlg h2{flex:none}
+.dlg ul.fl{margin:8px 0 0;padding-left:18px;font-size:13px}
+.dlg ul.fl li{margin:4px 0}
+.dlg .hd{display:flex;align-items:center;justify-content:space-between;flex:none}
+.dlg .hd h2{padding-right:0}
+.dlg .hd .ib{margin:6px 6px 0 0}
+.bsec{padding:12px 16px;border-bottom:1px solid var(--line)}
+.bsec:last-child{border-bottom:0}
+.dlg .box.tb{max-width:420px}
+.tb .bd .tl{padding-bottom:8px}
+@media (max-width:1023px){
+  .nur-schmal{display:grid}
+}
+@media (max-width:620px){
+  .karten thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+  .karten,.karten tbody{display:block}
+  .karten tr{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;column-gap:8px;padding:2px 12px 6px;border-bottom:1px solid var(--line)}
+  .karten td{display:block;height:auto;padding:0;border:0;white-space:normal}
+  .karten td.nm{grid-column:1/-1;max-width:none;width:auto}
+  .karten td.c-date,.karten td.c-size,.karten td.c-class{display:none}
+  .karten td.meta{display:block;grid-column:1;font-size:12px;color:var(--muted);align-self:center}
+  .karten td.stand{grid-column:2;justify-self:end}
+  .karten tr.on td{background:none}
+  .karten tr.on{background:var(--sel)}
+  .tip{right:auto;left:0}
+  .tipw .tip{right:0;left:auto}
+}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+const P=new URLSearchParams(location.search);const S=P.get('s')||'cloud-aus';
+document.documentElement.dataset.theme=P.get('t')==='dunkel'?'dark':'light';
+const SCHMAL=innerWidth<=1023;
+const sv=(k,st)=>I[k].replace('<svg','<svg aria-hidden="true"'+(st?` style="${st}"`:''));
+const I={
+ home:'<svg viewBox="0 0 24 24"><path d="M4 11l8-7 8 7v9H4z"/></svg>',
+ lib:'<svg viewBox="0 0 24 24"><path d="M5 4h4v16H5zM10 4h4v16h-4zM15 5l3.5-1 3 15-3.5 1z"/></svg>',
+ abl:'<svg viewBox="0 0 24 24"><path d="M3 7h6l2 2h10v10H3z"/><path d="M14 15a2.5 2.5 0 0 1 .5-5 3 3 0 0 1 5.5 1.5 2 2 0 0 1 0 3.5z"/></svg>',
+ mic:'<svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
+ proj:'<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/></svg>',
+ set:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2"/></svg>',
+ dir:'<svg viewBox="0 0 24 24"><path d="M3 6h6l2 2h10v11H3z"/></svg>',
+ linkdir:'<svg viewBox="0 0 24 24"><path d="M3 6h6l2 2h10v11H3z"/><path d="M8 14h7M12.5 11.5L15 14l-2.5 2.5"/></svg>',
+ up:'<svg viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5M4 20h16"/></svg>',
+ plus:'<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
+ srch:'<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4-4"/></svg>',
+ list:'<svg viewBox="0 0 24 24"><path d="M8 6h12M8 12h12M8 18h12M4 6h0M4 12h0M4 18h0"/></svg>',
+ cloud:'<svg viewBox="0 0 24 24"><path d="M7 18a4 4 0 0 1-.5-8 6 6 0 0 1 11.5 2 3 3 0 0 1 0 6z"/></svg>',
+ cloudok:'<svg viewBox="0 0 24 24"><path d="M7 18a4 4 0 0 1-.5-8 6 6 0 0 1 11.5 2 3 3 0 0 1 0 6z"/><path d="M9.5 13l2 2 3.5-4"/></svg>',
+ ok:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8 12l3 3 5-6"/></svg>',
+ check:'<svg viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></svg>',
+ arr:'<svg viewBox="0 0 24 24"><path d="M12 5v14M6 13l6 6 6-6"/></svg>',
+ warn:'<svg viewBox="0 0 24 24"><path d="M12 3l10 18H2z"/><path d="M12 10v4M12 17v0"/></svg>',
+ dev:'<svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="12" rx="1"/><path d="M8 21h8"/></svg>',
+ ki:'<svg viewBox="0 0 24 24"><path d="M12 3l2 5 5 2-5 2-2 5-2-5-5-2 5-2z"/></svg>',
+ trash:'<svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg>',
+ x:'<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+ back:'<svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg>',
+ chevR:'<svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>',
+ chevD:'<svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>',
+ eye:'<svg viewBox="0 0 24 24"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>',
+ tree:'<svg viewBox="0 0 24 24"><path d="M3 3v13a2 2 0 0 0 2 2h3M3 5a2 2 0 0 0 2 2h3"/><rect x="12" y="3" width="9" height="6" rx="1"/><rect x="12" y="15" width="9" height="6" rx="1"/></svg>',
+ refresh:'<svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 0-14-4M4 4v4h4M4 13a8 8 0 0 0 14 4M20 20v-4h-4"/></svg>',
+ info:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8v0"/></svg>',
+ gear:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2"/></svg>'
+};
+const SEL=({'cloud-chip':'v','baum':'pr','baum-weg':'ar','nur-online':'pa','nur-online-tipp':'pa','nur-online-details':'pa'})[S]||'v';
+const OPEN={od:S!=='baum-weg',pa:true,ar:S==='baum-weg'};
+const G={a:S==='cloud-chip'||S==='cloud-klassenwechsel',anb:['Beispiel-Cloud EU']};
+const D={step:S==='cloud-bestaetigen'?'confirm':'form',klasse:S==='cloud-klassenwechsel'?'internal':'confidential',a:S==='cloud-anbieter'||S==='cloud-bestaetigen',
+ anb:S==='cloud-anbieter'||S==='cloud-bestaetigen'?{b1:true}:{},err:false,fok:null};
+if(S==='cloud-klassenwechsel'){D.a=false}
+const ANB=[
+ {k:'b1',n:'Beispiel-Cloud EU',s:'Frankfurt · AVV vorhanden · kein Training'},
+ {k:'b2',n:'Muster-KI Europa',s:'Irland · AVV vorhanden · kein Training'},
+ {k:'b3',n:'Demo-Anbieter USA',s:'Server in den USA – Regelwerk „EU“ nicht erfüllt',weg:true}];
+const syncI={ok:['ok','Synchronisiert'],arr:['arr','Wird hochgeladen'],cloud:['cloud','Nur in der Cloud'],dev:['dev','Nur dieses Gerät'],warn:['warn','Konflikt']};
+const tg=(on,label,extra)=>`<button class="tg" role="switch" aria-checked="${on}" aria-label="${label}" ${extra||''}></button>`;
+
+function nav(){return `<nav class="nav" aria-label="Bereiche"><a href="#" aria-label="Start">${sv('home')}</a><a href="#" aria-label="Aufnahmen">${sv('mic')}</a><a href="#" aria-label="Bibliothek">${sv('lib')}</a><a class="on" href="#" aria-label="Ablage" aria-current="page">${sv('abl')}</a><a href="#" aria-label="Projekte">${sv('proj')}</a><a href="#" aria-label="Einstellungen" style="margin-top:auto">${sv('set')}</a></nav>`}
+
+/* ---------- Ordnerbaum ---------- */
+const VK=[
+ {id:'od',n:'OneDrive – Dokumente',kids:[
+   {id:'pa',n:'Projektakten 2026',kids:[{id:'an',n:'Angebote'},{id:'pr',n:'Protokolle'}]},
+   {id:'re',n:'Rechnungen 2025',online:true},
+   {id:'vo',n:'Vorlagen'}]},
+ {id:'ar',n:'Archiv (Netzlaufwerk)',weg:true,kids:[{id:'ja',n:'Jahresabschlüsse'},{id:'va',n:'Verträge alt'}]}];
+function vli(k,lv,pre){
+ const has=!!(k.kids&&k.kids.length),exp=has&&OPEN[k.id],cur=SEL===k.id;
+ const tr=[];
+ if(lv===0)tr.push(`<span role="img" aria-label="Nur lesen" style="color:var(--muted);display:inline-flex">${sv('eye','width:16px;height:16px')}</span>`);
+ if(k.weg)tr.push(`<span role="img" aria-label="Nicht erreichbar" style="color:var(--warn);display:inline-flex">${sv('warn','width:16px;height:16px')}</span>`);
+ if(k.online)tr.push(`<span role="img" aria-label="Nur online" style="color:var(--muted);display:inline-flex">${sv('cloud','width:16px;height:16px')}</span>`);
+ if(k.ct)tr.push(`<span class="ct">${k.ct}</span>`);
+ const tgl=has?`<button class="tw" type="button" aria-expanded="${exp}" aria-controls="k-${pre}${k.id}" aria-label="${k.n} ${exp?'zuklappen':'aufklappen'}" data-tw="${k.id}" data-n="${k.n}">${sv(exp?'chevD':'chevR')}</button>`:'<span class="tsp"></span>';
+ return `<li><div class="trow ${cur?'on':''} ${k.weg?'weg':''}" style="--lv:${lv}">${tgl}<a href="#" class="rm" ${cur?'aria-current="true"':''} ${lv===0?'title="Verknüpft – nur lesen, nur dieses Gerät"':''}>${sv(lv===0?'linkdir':'dir')}<span class="nm">${k.n}</span>${tr.join('')}</a></div>${has?`<ul id="k-${pre}${k.id}" ${exp?'':'hidden'}>${k.kids.map(c=>vli(c,lv+1,pre)).join('')}</ul>`:''}</li>`}
+function row(cls,ic,nm,ct,cur,extra){return `<a href="#" class="row ${cls} ${cur?'on':''}" ${cur?'aria-current="true"':''}>${sv(ic)}<span class="nm">${nm}</span>${extra||`<span class="ct">${ct}</span>`}</a>`}
+function baumInhalt(pre){
+ const kiIc=`<span style="color:var(--accent);display:inline-flex" role="img" aria-label="Für KI freigegeben">${sv('ki')}</span>`;
+ const cl=G.a?`<span style="color:var(--accent);display:inline-flex" role="img" aria-label="Cloud-Ausnahme">${sv('cloudok')}</span>`:'';
+ return `<div class="grp">Meine Ablage</div>
+${row('','dir','Allgemein','42')}
+${row('','dir','Verträge','',SEL==='v',`<span class="ctw" style="display:inline-flex;gap:6px">${kiIc}${cl}</span>`)}
+${row('sub','dir','Wartung IT','8')}
+${row('sub','dir','Miete','5')}
+${row('','dir','Steuer 2026','',false,`<span class="ct" role="img" aria-label="Nur dieses Gerät">${sv('dev')}</span>`)}
+${row('','dir','KI-Entwürfe','3')}
+<div class="grp" id="${pre}vkgrp">Verknüpfte Ordner (nur lesen)</div>
+<ul class="tl">${VK.map(k=>vli(k,0,pre)).join('')}</ul>
+<a href="#" class="row mut">${sv('plus')}<span class="nm">Ordner verknüpfen …</span></a>
+<div class="grp">Weitere</div>
+${row('','trash','Papierkorb','4')}`}
+function baum(){return `<nav class="col tree" aria-label="Ordner"><div class="colhead"><h2>Ablage</h2><div class="sp"><button class="ib" aria-label="Neuer Ordner">${sv('plus')}</button></div></div>${baumInhalt('b')}</nav>`}
+function baumBlatt(offen){return `<div class="dlg" id="mtree" ${offen?'':'hidden'} data-ausloeser="btntree" role="dialog" aria-modal="true" aria-labelledby="th"><div class="box tb"><div class="hd"><h2 id="th">Ordner</h2><button class="ib js-close" aria-label="Ordner schließen">${sv('x')}</button></div><div class="bd" id="tbd"><nav aria-label="Ordner">${baumInhalt('s')}</nav></div></div></div>`}
+
+/* ---------- Kopf, Liste ---------- */
+function srch(v){return `<label class="search">${sv('srch')}<span class="sr">In der Ablage suchen</span><input type="search" placeholder="In der Ablage suchen" value="${v||''}"></label>`}
+function chipCloud(){return G.a?`<button class="chipbtn" type="button" data-oeffnet="mord" aria-haspopup="dialog" title="KI darf diesen Ordner über ${G.anb.join(', ')} nutzen" aria-label="Cloud-Ausnahme: KI darf diesen Ordner über ${G.anb.join(', ')} nutzen. Ordnereinstellungen öffnen"><span class="chip cloud">${sv('cloudok')}Cloud-Ausnahme EU</span></button>`:''}
+const treeBtn=`<button class="ib nur-schmal" id="btntree" data-oeffnet="mtree" aria-haspopup="dialog" aria-label="Ordner wählen">${sv('tree')}</button>`;
+function kopf(o){return `<div class="colhead"><div class="crumb"><button class="ib hide-s" aria-label="Zurück">${sv('back')}</button>${o.crumb||''}<h2>${o.titel}</h2><span id="chiphost" style="display:inline-flex">${o.chip||''}</span></div><div class="sp tools">${srch()}${o.tools}</div></div>`}
+const kopfEigen=(titel,crumb,chip)=>kopf({titel,crumb,chip,tools:`${treeBtn}<button class="btn pri" id="btnup" aria-label="Dateien hochladen">${sv('up')}<span class="hide-s">Hochladen</span></button><button class="ib" aria-label="Ansicht wechseln">${sv('list')}</button><button class="ib" id="opener" data-oeffnet="mord" aria-haspopup="dialog" aria-label="Ordnereinstellungen">${sv('gear')}</button>`});
+const kopfVk=(titel,crumb,chip)=>kopf({titel,crumb,chip,tools:`${treeBtn}<button class="ib" aria-label="Neu einlesen">${sv('refresh')}</button><button class="ib" id="opener" data-oeffnet="mord" aria-haspopup="dialog" aria-label="Ordnereinstellungen">${sv('gear')}</button>`});
+const sep='<span class="sep hide-s" aria-hidden="true">›</span>';
+const chipLesen=`<span class="chip" style="margin-left:4px">${sv('eye')}Nur lesen</span>`;
+const klChip=k=>k==='confidential'?'<span class="chip">vertraulich</span>':'<span class="chip">intern</span>';
+function tabelle(rows,mode,cap,wegbek){
+ const vk=mode==='vk';
+ let tip=0;
+ const stand=r=>{
+  if(!vk){const si=syncI[r.st];return r.st?`<span role="img" aria-label="${si[1]}">${sv(si[0])}</span><span class="hide-s mut" style="margin-left:4px">${r.st==='warn'?'Konflikt':''}</span>`:''}
+  if(r.a==='dir')return '<span class="mut">—</span>';
+  if(wegbek)return '<span class="mut">Zuletzt bekannt</span>';
+  if(r.st==='on'){const id='tip'+(++tip);return `<span class="tipw"><button type="button" class="chipbtn" id="chip${tip}" aria-describedby="${id}" data-oeffnet="msd"><span class="chip">${sv('cloud')}Nur online</span></button><span role="tooltip" class="tip" id="${id}"><b>Nur online</b>Die Datei liegt in OneDrive, nicht auf diesem Gerät. Sie wird nicht gelesen und nicht durchsucht. „Auf diesem Gerät behalten“ in OneDrive macht sie lesbar – die App lädt selbst nie herunter.</span></span>`}
+  return `<span class="stn ok"><span role="img" aria-label="Im Suchindex">${sv('ok','width:16px;height:16px')}</span>Im Index</span>`};
+ return `<table class="karten${wegbek?' weg':''}"><caption class="sr">${cap}</caption><thead><tr><th scope="col">Name</th><th scope="col" class="c-date">Geändert</th><th scope="col" class="c-size">Größe</th><th scope="col" class="c-class">${vk?'Klasse':'KI / Klasse'}</th><th scope="col">${vk?'Stand':'Sync'}</th></tr></thead><tbody>`+
+ rows.map(r=>{const dir=r.a==='dir';
+  const ki=r.ki?`<span class="chip ki">${sv('ki','width:14px;height:14px')}KI</span> `:'';
+  const typ=dir?'':r.a.toUpperCase().replace('DOC','DOCX').replace('XLS','XLSX').replace('PPT','PPTX').replace('IMG','JPG');
+  const meta=dir?r.g:`${typ} · ${r.g} · ${r.d}`;
+  return `<tr class="${r.sel?'on':''}"><td class="nm"><a href="#" class="lnk" ${r.sel?'aria-current="true" id="selfile"':''}><span class="ic ${r.a} ${r.st==='on'?'off':''}" aria-hidden="true">${dir?I.dir:typ}</span><span>${r.n}</span></a></td><td class="meta">${meta}</td><td class="c-date mut">${r.d}</td><td class="c-size mut">${r.g}</td><td class="c-class">${vk?'':ki}${klChip(r.k)}</td><td class="stand sync" style="color:${r.st==='warn'?'var(--warn)':r.st==='ok'&&!vk?'var(--ok)':'var(--muted)'}">${stand(r)}</td></tr>`}).join('')+'</tbody></table>'}
+
+const ROWS_V=[
+ {a:'dir',n:'Wartung IT',d:'—',g:'8 Dateien',k:'confidential',st:'ok'},
+ {a:'dir',n:'Miete',d:'—',g:'5 Dateien',k:'confidential',st:'ok'},
+ {a:'xls',n:'Vertragsübersicht 2026.xlsx',d:'02.11.',g:'48 KB',k:'confidential',ki:1,st:'ok'},
+ {a:'pdf',n:'Rahmenvereinbarung Muster GmbH.pdf',d:'Gestern 16:42',g:'812 KB',k:'confidential',ki:1,st:'ok',sel:1}];
+const ROWS_PA=[
+ {a:'dir',n:'Angebote',d:'—',g:'41 Dateien',k:'confidential'},
+ {a:'dir',n:'Protokolle',d:'—',g:'96 Dateien',k:'confidential'},
+ {a:'pdf',n:'Angebot Muster GmbH.pdf',d:'02.11.',g:'812 KB',k:'confidential',st:'idx'},
+ {a:'pdf',n:'Baubesprechung 14.pdf',d:'28.10.',g:'2,3 MB',k:'confidential',st:'on',sel:S==='nur-online-details'},
+ {a:'xls',n:'Zeitplan Phase 2.xlsx',d:'27.10.',g:'148 KB',k:'confidential',st:'idx'},
+ {a:'doc',n:'Kostenschätzung Variante B.docx',d:'24.10.',g:'96 KB',k:'confidential',st:'on'},
+ {a:'img',n:'Plan Grundriss EG.jpg',d:'21.10.',g:'4,6 MB',k:'confidential',st:'on'},
+ {a:'md',n:'Notizen Begehung.md',d:'20.10.',g:'3 KB',k:'confidential',st:'idx'}];
+const ROWS_PR=[
+ {a:'doc',n:'Protokoll Kick-off.docx',d:'05.01.',g:'64 KB',k:'confidential',st:'idx'},
+ {a:'pdf',n:'Protokoll Lenkungskreis 1.pdf',d:'02.02.',g:'210 KB',k:'confidential',st:'idx'},
+ {a:'pdf',n:'Protokoll Lenkungskreis 2.pdf',d:'09.03.',g:'188 KB',k:'confidential',st:'on'},
+ {a:'pdf',n:'Protokoll Begehung.pdf',d:'12.04.',g:'1,1 MB',k:'confidential',st:'idx'}];
+const ROWS_AR=[
+ {a:'pdf',n:'Jahresabschluss 2023.pdf',d:'14.03.2024',g:'3,2 MB',k:'confidential',st:'idx'},
+ {a:'xls',n:'Anlagenverzeichnis.xlsx',d:'14.03.2024',g:'420 KB',k:'confidential',st:'idx'},
+ {a:'pdf',n:'Prüfbericht 2023.pdf',d:'02.05.2024',g:'1,9 MB',k:'confidential',st:'idx'}];
+
+function meldung(txt,warn,extra){return `<div class="note ${warn?'w':''}" role="${warn?'status':'note'}"><div style="display:flex;gap:8px;align-items:flex-start">${sv(warn?'warn':'info','width:16px;height:16px;margin-top:2px')}<div>${txt}</div></div>${extra||''}</div>`}
+
+/* ---------- Details ---------- */
+function detailsEigen(id){return `<div class="colhead"><h2 id="${id}">Rahmenvereinbarung Muster GmbH.pdf</h2><div class="sp"><button class="ib js-close" aria-label="Details schließen">${sv('x')}</button></div></div>
+<div class="prev" role="img" aria-label="Vorschau"><b>Rahmenvereinbarung</b><br><br>§ 1 Gegenstand – Die Musterbehörde (example.org) beauftragt den Auftragnehmer mit Wartung und Pflege …<br><br>§ 4 Laufzeit – 36 Monate ab 01.01.2026 …</div>
+<div class="sec"><h3>Für die KI</h3><div class="sw"><span>KI-Freigabe: An<br><span class="mut">geerbt von „Verträge“ · nur Auszüge mit Beleg</span></span><button class="btn">Ändern</button></div>
+<div class="sw"><span>Datenklasse</span><span class="chip">vertraulich</span></div>
+<div class="sw"><span>Cloud<br><span class="mut">geerbt von „Verträge“</span></span><span class="chip cloud">${sv('cloudok')}Ausnahme EU</span></div>
+<div class="sw"><span>Textfassung</span><span class="chip ok">bereit · 12 Seiten</span></div></div>
+<div class="sec"><h3>Details</h3><div class="kv"><span>Größe</span><span>812 KB</span><span>Ordner</span><span>Verträge</span><span>Sync</span><span>auf 3 Geräten</span></div></div>`}
+function detailsVk(id){return `<div class="colhead"><h2 id="${id}">Baubesprechung 14.pdf</h2><div class="sp"><button class="ib js-close" aria-label="Details schließen">${sv('x')}</button></div></div>
+<div class="prev leer" role="img" aria-label="Keine Vorschau: Die Datei liegt nur online">${sv('cloud')}<div>Keine Vorschau – die Datei liegt nur online.</div></div>
+<div class="hint" role="note"><div class="hh">${sv('cloud')}<b>Auf diesem Gerät behalten, um zu indizieren</b></div>
+<p>Diese Datei liegt nur in OneDrive. Die App lädt nie selbst herunter; solange sie nicht auf dem Gerät liegt, bleibt sie ungelesen und fehlt in der Suche.</p>
+<ol><li>Im Datei-Explorer die Datei mit der rechten Maustaste anklicken.</li><li>„Immer auf diesem Gerät behalten“ wählen.</li></ol>
+<p>Sobald die Datei auf dem Gerät liegt, liest die Ablage sie ein – sonst hilft „Neu einlesen“.</p>
+<button class="btn" type="button">${sv('refresh')}Neu einlesen</button></div>
+<div class="sec"><h3>Für die KI</h3><div class="sw"><span class="mut">Nicht verfügbar (verknüpfter Ordner)</span></div>
+<div class="sw"><span>Datenklasse</span><span class="chip">vertraulich</span></div>
+<div class="sw"><span>Textfassung</span><span class="chip">${sv('cloud')}nur online</span></div></div>
+<div class="sec" style="border:0"><h3>Angaben</h3><div class="kv"><span>Größe</span><span>2,3 MB</span><span>Ordner</span><span>OneDrive – Dokumente › Projektakten 2026</span><span>Ablage</span><span>Verknüpft – nur lesen, nur dieses Gerät</span></div></div>`}
+function seitenblatt(fn,aus,id,zu){return `<section class="col side" aria-labelledby="sd">${fn('sd')}</section><div class="sheet" id="${id}" ${zu?'hidden':''} data-ausloeser="${aus}" role="dialog" aria-modal="true" aria-labelledby="sh"><section class="col"><div class="grip" aria-hidden="true"></div>${fn('sh')}</section></div>`}
+
+/* ---------- Dialog Ordnereinstellungen „Verträge“ ---------- */
+function anbieterListe(){return `<div role="group" aria-labelledby="al" style="margin-top:10px"><div class="grp" id="al" style="padding:0 0 6px">Erlaubte Anbieter (Regelwerk „EU“)</div>`+
+ ANB.map(a=>`<button type="button" class="cb" role="checkbox" aria-checked="${!!D.anb[a.k]}" ${a.weg?'aria-disabled="true"':''} data-act="anb" data-k="${a.k}"><span class="bx">${sv('check')}</span><span class="tx"><b>${a.n}</b><span class="mut ${a.weg?'w':''}">${a.s}</span></span></button>`).join('')+
+ (D.err?`<div role="alert" class="mut" style="color:var(--warn);margin:0 0 6px">Wählen Sie mindestens einen Anbieter.</div>`:'')+
+ `<div class="mut">Angaben der Anbieter geprüft am 02.11.2026.</div><button type="button" class="lnkrow">${sv('set')}Regelwerk und Anbieter verwalten</button></div>`}
+function cloudSec(){
+ const k=D.klasse;
+ const verfall=G.a?`<div class="fold w" role="status"><p><b>Die Cloud-Ausnahme (${G.anb.join(', ')}) verfällt mit dem Speichern.</b> Bei einem späteren Wechsel zurück zu „Vertraulich“ muss sie neu erteilt werden.</p></div>`:'';
+ if(k==='confidential')return `<div id="cloudsec"><div class="grp" style="padding:12px 0 4px">Cloud-Ausnahme</div>
+<div class="sw"><span id="cs">KI darf diesen Ordner über einen EU-Cloud-Anbieter nutzen<br><span class="mut">Nur für vertrauliche Ordner. Ohne Ausnahme bleibt er lokalen Modellen vorbehalten.</span></span>${tg(D.a,'KI darf diesen Ordner über einen EU-Cloud-Anbieter nutzen','data-act="cloud" aria-describedby="cinfo"')}</div>
+<div class="fold" id="cinfo"><p>Die KI darf <b>Auszüge</b> aus diesem Ordner und seinen Unterordnern an einen Anbieter senden, der das Regelwerk „EU“ erfüllt: Verarbeitung in der EU, Auftragsverarbeitungsvertrag, kein Training mit Ihren Daten. Gilt nur auf diesem Gerät und nur bei Datenklasse „Vertraulich“.</p></div>${D.a?anbieterListe():''}</div>`;
+ if(k==='personal')return `<div id="cloudsec"><div class="grp" style="padding:12px 0 4px">Cloud-Ausnahme</div><div class="fold"><p>Personenbezogene Dateien gehen nur an lokale Modelle. Eine Cloud-Ausnahme gibt es dafür nicht.</p></div>${verfall}</div>`;
+ return `<div id="cloudsec"><div class="grp" style="padding:12px 0 4px">Cloud-Ausnahme</div><div class="fold"><p>Für „${k==='internal'?'Intern':'Öffentlich'}“ braucht es keine Ausnahme: Auszüge dürfen an freigegebene Cloud-Modelle gehen, soweit das Regelwerk es erlaubt.</p></div>${verfall}</div>`}
+function formular(){const o=(v,l)=>`<option value="${v}" ${D.klasse===v?'selected':''}>${l}</option>`;
+ return `<div class="bsec"><div class="grp" style="padding:0 0 4px" id="kil">Für die KI</div><div class="seg" role="radiogroup" aria-labelledby="kil"><button role="radio" aria-checked="true" tabindex="0">An</button><button role="radio" aria-checked="false" tabindex="-1">Aus</button><button role="radio" aria-checked="false" tabindex="-1">Gesperrt</button></div>
+<div class="mut" style="margin:6px 0 8px">An: Assistent nutzt passende Auszüge mit Beleg. Aus: nur über Projekte. Gesperrt: nie, auch nicht in Projekten. Unterordner erben; „Gesperrt“ gewinnt immer. Gilt nur auf diesem Gerät.</div>
+<label class="grp" style="padding:8px 0 4px;display:block" for="dk">Datenklasse</label><select id="dk" class="sel">${o('public','Öffentlich')}${o('internal','Intern')}${o('confidential','Vertraulich – nur lokale Modelle, Cloud nur mit Ausnahme')}${o('personal','Personenbezogen – nur lokale Modelle')}</select>
+${cloudSec()}
+<div class="sw"><span>Nur auf diesem Gerät<br><span class="mut">nicht in die Cloud, nicht auf andere Geräte</span></span>${tg(false,'Nur auf diesem Gerät')}</div>
+<div class="sw"><span>KI darf hier Entwürfe ablegen<br><span class="mut">nur neue Dateien, nie überschreiben oder löschen</span></span>${tg(false,'KI darf hier Entwürfe ablegen')}</div></div>`}
+function bestaetigung(){const w=ANB.filter(a=>D.anb[a.k]);
+ return `<div class="bsec" role="alert"><div style="font-weight:600;font-size:14px;margin-bottom:6px">Cloud-Ausnahme für „Verträge“ erteilen?</div>
+<div class="mut" style="font-size:13px">Auszüge aus 13 vertraulichen Dateien („Verträge“, „Wartung IT“, „Miete“) dürfen gesendet werden an:</div>
+<ul class="fl">${w.map(a=>`<li><b>${a.n}</b> (${a.s.split(' · ')[0]}, Regelwerk „EU“)</li>`).join('')}</ul>
+<div class="grp" style="padding:12px 0 0">Das bedeutet</div>
+<ul class="fl"><li>Die KI sieht nur Auszüge, nie die Originale. Voraussetzung bleibt die KI-Freigabe des Ordners.</li><li>Die Ausnahme gilt nur auf diesem Gerät und verfällt, wenn die Datenklasse geändert wird.</li><li>Sie lässt sich jederzeit entziehen. Bereits gesendete Auszüge lassen sich nicht zurückholen.</li><li>Dienstliche personenbezogene Daten gehören erst nach einer Datenschutz-Folgenabschätzung in diesen Ordner.</li></ul></div>`}
+function dlgVertraege(){const c=D.step==='confirm';
+ const ft=c?`<button class="btn pri" data-act="erteilen">Ausnahme erteilen</button><button class="btn" data-act="zurueck" data-fokus>Zurück</button>`:`<button class="btn js-close">Abbrechen</button><button class="btn pri" data-act="speichern">Speichern</button>`;
+ return `<div class="box"><h2 id="dh">Ordner „Verträge“</h2><div class="bd" id="dbd">${c?bestaetigung():formular()}</div><div class="ft">${ft}</div></div>`}
+function dlgVerknuepft(){return `<div class="box"><h2 id="dh">Ordner „OneDrive – Dokumente“</h2><div class="bd" id="dbd"><div class="bsec">
+<div style="margin-bottom:8px"><span class="chip">${sv('eye')}Verknüpft – nur lesen, nur dieses Gerät</span></div>
+<div class="grp" style="padding:8px 0 4px">Für die KI</div>
+<div class="sw"><span class="mut" data-testid="ki-nv">Nicht verfügbar (verknüpfter Ordner)</span></div>
+<div class="fold"><p>Die KI greift auf verknüpfte Ordner nie zu – weder mit lokalen Modellen noch über einen Cloud-Anbieter. Darum gibt es hier weder eine KI-Freigabe noch eine Cloud-Ausnahme.</p><p>Soll die KI bestimmte Dateien nutzen, legen Sie Kopien in einen eigenen Ablage-Ordner und geben Sie diesen frei.</p></div>
+<label class="grp" style="padding:12px 0 4px;display:block" for="dk">Datenklasse</label><select id="dk" class="sel"><option>Öffentlich</option><option>Intern</option><option selected>Vertraulich</option><option>Personenbezogen</option></select>
+<div class="mut" style="margin:8px 0 0">Verknüpfter Ordner: nur lesen, nur dieses Gerät. Er wird nie hochgeladen oder abgeglichen. Die Datenklasse bleibt einstellbar.</div></div></div>
+<div class="ft"><button class="btn js-close">Abbrechen</button><button class="btn pri">Speichern</button></div></div>`}
+
+/* ---------- Seiten ---------- */
+function shell(work,after){return `<div class="app"><header class="top"><h1>Ablage</h1><span class="be">Dokumente auf allen Geräten, Ende-zu-Ende verschlüsselt</span></header><div class="main">${nav()}<main style="display:contents">${work}</main></div>
+<footer class="status"><span>${sv('ok','width:14px;height:14px;vertical-align:-3px;color:var(--ok)')} Synchronisiert vor 1 Min.</span><span>4,2 GB von 30 GB <span class="bar" aria-hidden="true"><i></i></span></span><span class="hide-s">Index: 1 263 Dateien, aktuell</span></footer></div>${after||''}`}
+const dlgHuelle=(id,inhalt,offen,aus)=>`<div class="dlg" id="${id}" ${offen?'':'hidden'} data-ausloeser="${aus}" role="dialog" aria-modal="true" aria-labelledby="dh">${inhalt}</div>`;
+const BLATT_SD=(zu)=>`<div class="sheet immer" id="msd" ${zu?'hidden':''} data-ausloeser="selfile" role="dialog" aria-modal="true" aria-labelledby="sh"><section class="col"><div class="grip" aria-hidden="true"></div>${detailsVk('sh')}</section></div>`;
+const NURONLINE_HINWEIS=meldung('<b>3 Einträge liegen nur online und werden nicht gelesen.</b> In OneDrive „Immer auf diesem Gerät behalten“ wählen, damit der Text erfasst wird. Einen Eintrag wählen, um zu sehen, wie.');
+let html='';
+const wegText='Der verknüpfte Ordner ist gerade nicht erreichbar oder wurde verschoben. Die bekannten Dateien bleiben in der Liste, bis er wieder da ist.';
+if(['cloud-aus','cloud-anbieter','cloud-bestaetigen','cloud-klassenwechsel'].includes(S)){
+ G.a=S==='cloud-klassenwechsel';
+ html=shell(`<div class="work zwei">${baum()}<section class="col" aria-label="Dateien">${kopfEigen('Verträge','',chipCloud())}${tabelle(ROWS_V,'sync','Dateien in Verträge')}</section></div>`,dlgHuelle('mord',dlgVertraege(),true,'opener')+baumBlatt(false));
+}else if(S==='cloud-chip'){
+ html=shell(`<div class="work">${baum()}<section class="col" aria-label="Dateien">${kopfEigen('Verträge','',chipCloud())}${tabelle(ROWS_V,'sync','Dateien in Verträge')}</section>${seitenblatt(detailsEigen,'selfile','msh',true)}</div>`,dlgHuelle('mord',dlgVertraege(),false,'opener')+baumBlatt(false));
+}else if(S==='verknuepft-eigenschaften'){
+ html=shell(`<div class="work zwei">${baum()}<section class="col" aria-label="Dateien">${kopfVk('OneDrive – Dokumente','',chipLesen)}${tabelle(ROWS_PA.slice(2),'vk','Dateien in OneDrive – Dokumente')}</section></div>`,dlgHuelle('mord',dlgVerknuepft(),true,'opener')+baumBlatt(false));
+}else if(S==='baum'){
+ html=shell(`<div class="work zwei">${baum()}<section class="col" aria-label="Dateien">${kopfVk('Protokolle',`<span class="hide-s mut" style="white-space:nowrap">OneDrive – Dokumente › Projektakten 2026</span>${sep}`,chipLesen)}${tabelle(ROWS_PR,'vk','Dateien in Protokolle')}</section></div>`,baumBlatt(SCHMAL)+dlgHuelle('mord',dlgVerknuepft(),false,'opener'));
+}else if(S==='baum-weg'){
+ html=shell(`<div class="work zwei">${baum()}<section class="col" aria-label="Dateien">${kopfVk('Archiv (Netzlaufwerk)','',`<span class="chip w" style="margin-left:4px">${sv('warn')}Nicht erreichbar</span>`)}${meldung(wegText,true,`<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><button class="btn">${sv('refresh')}Erneut prüfen</button><button class="btn">Verknüpfung lösen …</button></div>`)}${tabelle(ROWS_AR,'vk','Zuletzt bekannte Dateien in Archiv (Netzlaufwerk)',true)}</section></div>`,baumBlatt(SCHMAL)+dlgHuelle('mord',dlgVerknuepft(),false,'opener'));
+}else if(S==='nur-online'||S==='nur-online-tipp'){
+ html=shell(`<div class="work zwei">${baum()}<section class="col" aria-label="Dateien">${kopfVk('Projektakten 2026',`<span class="hide-s mut" style="white-space:nowrap">OneDrive – Dokumente</span>${sep}`,chipLesen)}${NURONLINE_HINWEIS}${tabelle(ROWS_PA,'vk','Dateien in Projektakten 2026')}</section>${BLATT_SD(true)}</div>`,baumBlatt(false)+dlgHuelle('mord',dlgVerknuepft(),false,'opener'));
+}else if(S==='nur-online-details'){
+ html=shell(`<div class="work">${baum()}<section class="col" aria-label="Dateien">${kopfVk('Projektakten 2026',`<span class="hide-s mut" style="white-space:nowrap">OneDrive – Dokumente</span>${sep}`,chipLesen)}${NURONLINE_HINWEIS}${tabelle(ROWS_PA,'vk','Dateien in Projektakten 2026')}</section>${seitenblatt(detailsVk,'selfile','msd',false)}</div>`,baumBlatt(false)+dlgHuelle('mord',dlgVerknuepft(),false,'opener'));
+}
+document.getElementById('app').innerHTML=html;
+
+/* ---------- Dialog-Zustand ---------- */
+const dlgEl=()=>document.getElementById('mord');
+function renderDlg(){const el=dlgEl();el.innerHTML=el.dataset.art==='vk'?dlgVerknuepft():dlgVertraege();
+ const f=(D.fok&&el.querySelector(D.fok))||el.querySelector('[data-fokus]');if(f)f.focus();D.fok=null}
+if(['verknuepft-eigenschaften','baum','baum-weg','nur-online','nur-online-tipp','nur-online-details'].includes(S))dlgEl().dataset.art='vk';
+function chipAktualisieren(){const h=document.getElementById('chiphost');if(h)h.innerHTML=chipCloud();}
+
+/* ---------- Tastatur und Fokus (wie D1) ---------- */
+const FOC='a[href],button:not([disabled]),input,select,[tabindex]:not([tabindex="-1"])';
+const visible=e=>!!(e.offsetWidth||e.offsetHeight||e.getClientRects().length)&&getComputedStyle(e).visibility!=='hidden';
+const activeModal=()=>[...document.querySelectorAll('[aria-modal="true"]')].find(m=>!m.hidden&&visible(m));
+let ausloeser=null;
+function openModal(m){const f=[...m.querySelectorAll(FOC)].filter(visible);const z=m.querySelector('[data-fokus]')||m.querySelector('[role="radio"][aria-checked="true"]')||m.querySelector('.tl a[aria-current]')||f[0];if(z)z.focus()}
+function closeModal(m){m.hidden=true;const o=ausloeser||document.getElementById(m.dataset.ausloeser);ausloeser=null;if(o&&visible(o))o.focus()}
+function showModal(m,von){if(m.id==='mord'&&m.dataset.art!=='vk'){D.step='form';D.err=false;D.klasse='confidential';D.a=G.a;D.anb=G.a?{b1:true}:{};m.innerHTML=dlgVertraege()}m.hidden=false;ausloeser=von;openModal(m)}
+function choose(r){const g=r.closest('[role="tablist"],[role="radiogroup"]');g.querySelectorAll('[role="tab"],[role="radio"]').forEach(x=>{const on=x===r;x.tabIndex=on?0:-1;x.setAttribute(x.getAttribute('role')==='tab'?'aria-selected':'aria-checked',String(on))})}
+document.addEventListener('keydown',e=>{const m=activeModal();
+ if(m&&e.key==='Escape'){e.preventDefault();closeModal(m);return}
+ if(m&&e.key==='Tab'){const f=[...m.querySelectorAll(FOC)].filter(visible);if(!f.length)return;const i=f.indexOf(document.activeElement);
+  if(e.shiftKey&&i<=0){e.preventDefault();f[f.length-1].focus()}else if(!e.shiftKey&&i===f.length-1){e.preventDefault();f[0].focus()}}
+ const a=document.activeElement,grp=a&&a.closest('[role="radiogroup"]');
+ if(grp&&['ArrowLeft','ArrowRight','Home','End'].includes(e.key)){e.preventDefault();const it=[...grp.querySelectorAll('[role="radio"]')];let i=it.indexOf(a);
+  i=e.key==='Home'?0:e.key==='End'?it.length-1:(i+(e.key==='ArrowRight'?1:-1)+it.length)%it.length;choose(it[i]);it[i].focus()}
+});
+document.addEventListener('change',e=>{if(e.target.id==='dk'&&dlgEl().dataset.art!=='vk'){D.klasse=e.target.value;if(D.klasse!=='confidential'){D.a=false;D.anb={}}D.fok='#dk';renderDlg()}});
+document.addEventListener('click',e=>{
+ const tw=e.target.closest('[data-tw]');
+ if(tw){const id=tw.dataset.tw,ul=document.getElementById(tw.getAttribute('aria-controls')),ex=tw.getAttribute('aria-expanded')!=='true';OPEN[id]=ex;ul.hidden=!ex;tw.setAttribute('aria-expanded',String(ex));tw.setAttribute('aria-label',tw.dataset.n+(ex?' zuklappen':' aufklappen'));tw.innerHTML=sv(ex?'chevD':'chevR');return}
+ const act=e.target.closest('[data-act]');
+ if(act){const a=act.dataset.act;
+  if(a==='cloud'){D.a=!D.a;if(!D.a){D.anb={};D.err=false}D.fok='[data-act="cloud"]';renderDlg()}
+  else if(a==='anb'){if(act.getAttribute('aria-disabled')==='true')return;D.anb[act.dataset.k]=!D.anb[act.dataset.k];D.err=false;D.fok=`[data-k="${act.dataset.k}"]`;renderDlg()}
+  else if(a==='speichern'){const w=ANB.filter(x=>D.anb[x.k]);
+   if(D.klasse==='confidential'&&D.a&&!G.a){if(!w.length){D.err=true;D.fok='[data-k="b1"]';renderDlg();return}D.step='confirm';renderDlg();return}
+   if(D.klasse!=='confidential'||!D.a)G.a=false;chipAktualisieren();closeModal(dlgEl())}
+  else if(a==='erteilen'){G.a=true;G.anb=ANB.filter(x=>D.anb[x.k]).map(x=>x.n);chipAktualisieren();closeModal(dlgEl())}
+  else if(a==='zurueck'){D.step='form';D.fok='[data-act="speichern"]';renderDlg()}
+  return}
+ const op=e.target.closest('[data-oeffnet]');if(op){const m=document.getElementById(op.dataset.oeffnet);if(m){e.preventDefault();showModal(m,op);return}}
+ const t=e.target.closest('[role="switch"]:not([data-act])');if(t)t.setAttribute('aria-checked',String(t.getAttribute('aria-checked')!=='true'));
+ const c=e.target.closest('.js-close');if(c){const m=c.closest('[aria-modal="true"]');if(m)closeModal(m)}
+ const r=e.target.closest('[role="radio"],[role="tab"]');if(r)choose(r)});
+const m0=activeModal();if(m0)openModal(m0);
+const z=P.get('z');if(z){const el=document.getElementById(z);const sc=activeModal()?.querySelector('.bd');if(el&&sc){sc.scrollTop+=el.getBoundingClientRect().top-sc.getBoundingClientRect().top-8}}
+
+</script>
+</body>
+</html>

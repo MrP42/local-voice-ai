@@ -1017,6 +1017,13 @@ async ablageCloudAusnahmeSetzen(ordner: string, anbieter: string, an: boolean) :
 }
 },
 /**
+ * Anbieterliste für die Cloud-Ausnahme (D7-Rest): konfigurierte Verbindungen, gefiltert nach Regelwerk
+ * und Datenklasse; nicht wählbare stehen mit Grund darin.
+ */
+async ablageCloudAnbieter() : Promise<AblageAnbieterListe> {
+    return await TAURI_INVOKE("ablage_cloud_anbieter");
+},
+/**
  * Einziges schreibendes KI-Werkzeug (D3, Spec §5.5): legt einen Entwurf (Markdown) als neue Datei in
  * „KI-Entwürfe“ oder in einem Zielordner mit `zielordner_ki` ab. Klasse = Maximum aus Zielordner und
  * Quellen; ist eine Quelle „nur dieses Gerät“, landet er in „KI-Entwürfe (nur dieses Gerät)“. `quellen`:
@@ -8572,7 +8579,50 @@ ttsProviderVoiceSample: "tts-provider-voice-sample"
 
 /** user-defined types **/
 
+/**
+ * Eine Anbieterart für Cloud-Ausnahmen (D7-Rest): konfigurierte Verbindung, gefiltert nach Regelwerk und
+ * Datenklasse.
+ */
+export type AblageAnbieter = { 
+/**
+ * Kennung wie in `freigabe.json` (Vorlagenkennung der Verbindung).
+ */
+id: string; 
+/**
+ * Bezeichnung der Verbindung (Anzeige).
+ */
+name: string; 
+/**
+ * Für „Vertraulich“ wählbar: Regelwerk erlaubt den Anbieter und er nimmt `confidential` an.
+ */
+waehlbar: boolean; 
+/**
+ * Warum nicht wählbar: `regelwerk` (der Anbieter erfüllt das Regelwerk nicht) oder `klasse` (er nimmt
+ * höchstens „Intern“ an); sonst `null`.
+ */
+grund: string | null }
+/**
+ * Anbieterliste für die Cloud-Ausnahme eines Ordners.
+ */
+export type AblageAnbieterListe = { 
+/**
+ * Aktives Regelwerk: `eu`, `nur_lokal` oder `keines`.
+ */
+regelwerk: string; anbieter: AblageAnbieter[] }
 export type AblageArt = "datei" | "ordner"
+/**
+ * Cloud-Ausnahmen (D3/D7-Rest, Spec §5.1) in der Sicht. Nur, was gilt: der Ordner, an dem die Ausnahme
+ * hängt, ist wirksam „Vertraulich“. Anbieter-Kennungen wie in `freigabe.json`, sortiert.
+ */
+export type AblageCloud = { 
+/**
+ * Ausnahmen an diesem Ordner selbst (bei Dateien immer leer).
+ */
+anbieter: string[]; 
+/**
+ * Ausnahmen, die von einem übergeordneten Ordner gelten (bei Dateien auch vom eigenen Ordner).
+ */
+geerbt: string[] }
 export type AblageDatei = { id: string; name: string; ordner: string; typ: string; groesse: number; geaendert: number; fassungen: number; konflikt: boolean; klasse: string; ki: AblageKi; nur_geraet: boolean; 
 /**
  * Stand der Textfassung der aktuellen Fassung: `ausstehend`, `ok`, `kein_text` oder `fehler`;
@@ -8586,7 +8636,11 @@ text_code: string | null;
 /**
  * D7: Datei eines verknüpften Ordners (nur lesen; Name = Pfad im verknüpften Ordner).
  */
-verknuepft: boolean }
+verknuepft: boolean; 
+/**
+ * D7-Rest: Cloud-Ausnahmen, die für diese Datei gelten (alle geerbt).
+ */
+cloud: AblageCloud }
 export type AblageEinstellungen = { datenklasse: string | null; nur_geraet: boolean | null; zielordner_ki: boolean | null }
 /**
  * Ergebnis von `ablage_entwurf_anlegen`.
@@ -8684,7 +8738,11 @@ klasse: string; nur_geraet: boolean; nur_geraet_wirksam: boolean; zielordner_ki:
 /**
  * D7: verknüpfter Ordner (nur lesen, nur dieses Gerät).
  */
-verknuepft: boolean }
+verknuepft: boolean; 
+/**
+ * D7-Rest: Cloud-Ausnahmen (nur an vertraulichen Ordnern).
+ */
+cloud: AblageCloud }
 /**
  * Zustand der semantischen Suche für die Seite „Ablage“.
  */
@@ -8789,6 +8847,18 @@ belegt: number | null; kontingent: number | null; eintraege: AblageSyncEintrag[]
  */
 export type AblageSyncZustand = "synchronisiert" | "ausstehend" | "konflikt" | "wartet_auf_text" | "nur_geraet" | "angehalten"
 /**
+ * Ein Unterordner eines verknüpften Ordners für den Baum der Oberfläche (nur lesen).
+ */
+export type AblageUnterordner = { 
+/**
+ * Relativer Pfad mit `/`.
+ */
+pfad: string; 
+/**
+ * Liegt nur online (er selbst oder ein Vorfahr): wird nie betreten.
+ */
+nur_online: boolean }
+/**
  * Ein verknüpfter Ordner für die Oberfläche.
  */
 export type AblageVerknuepft = { ordner: AblageOrdner; erreichbar: boolean; 
@@ -8808,7 +8878,11 @@ zu_viele: boolean;
 /**
  * Letztes Abtasten (ms), 0 = noch nie.
  */
-abgetastet: number }
+abgetastet: number; 
+/**
+ * Unterordner (sortiert), auch leere; nur Pfade relativ zum verknüpften Ordner.
+ */
+unterordner: AblageUnterordner[] }
 export type AccountState = "not_configured" | "no_capabilities" | "needs_sign_in" | "needs_consent" | "ready"
 /**
  * Eine Aufgabe (Zeile in `action_items`). `assignee_label` ist Freitext, die

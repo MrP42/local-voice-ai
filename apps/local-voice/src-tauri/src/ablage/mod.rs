@@ -19,11 +19,13 @@
 //! * [`verknuepft`]: D7, verknüpfte Ordner des Geräts (nur lesen, nie synchronisiert), Dateibeobachter.
 //! * [`eintrag`]: D7, Einträge ohne Öffnen lesen (Windows: `FindFirstFileExW`, macOS: `lstat`) und beurteilen (Cloud-Platzhalter, nur online).
 //! * [`ocr`]: D7, lokale Texterkennung für Bild-PDFs und Bilder (Windows.Media.Ocr; macOS noch nicht).
+//! * [`anbieter`]: D7-Rest, welche Anbieter für eine Cloud-Ausnahme in Frage kommen (Regelwerk, Datenklasse).
 //! * [`befehle`]: die Tauri-Befehle.
 //!
 //! Datenschutz: nie Datei- oder Ordnernamen, Pfade oder Inhalte in Log oder Fehlertext; Fehler tragen
 //! nur einen stabilen Code und einen allgemeinen Text.
 
+pub mod anbieter;
 pub mod aufbewahrung;
 pub mod befehle;
 pub mod eintrag;
