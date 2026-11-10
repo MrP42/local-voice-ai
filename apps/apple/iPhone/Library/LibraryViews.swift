@@ -1074,6 +1074,7 @@ struct VoiceListContent: View {
                 }
             }
             ForEach(ownPhonon, id: \.self) { language in phononSection(language) }
+            personalSection
             Section {
                 ForEach(playback.systemVoices, id: \.identifier) { v in systemRow(v) }
             } header: {
@@ -1111,6 +1112,44 @@ struct VoiceListContent: View {
         }
     }
 
+    /// „Eigene Stimme“ (Apple Personal Voice): nur auf Tipp freigeben, dann die Stimmen der Lesesprache.
+    @ViewBuilder private var personalSection: some View {
+        let own = playback.personalVoices.filter { lang == nil || $0.language.hasPrefix(lang!) }
+        let others = playback.personalVoices.filter { v in own.allSatisfy { $0.identifier != v.identifier } }
+        Section {
+            switch playback.personalVoiceStatus {
+            case .notDetermined:
+                Button("Eigene Stimme verwenden") { playback.requestPersonalVoice() }
+                    .frame(minHeight: 44)
+                    .accessibilityHint("Fragt einmal, ob die App deine eigene Stimme nutzen darf")
+            case .authorized:
+                ForEach(own, id: \.identifier) { v in systemRow(v, caption: "Eigene Stimme") }
+            default:
+                EmptyView()
+            }
+        } header: {
+            Text("Eigene Stimme")
+        } footer: {
+            switch playback.personalVoiceStatus {
+            case .notDetermined:
+                Text("Liest mit der Stimme, die du unter Einstellungen › Bedienungshilfen › Eigene Stimme aufgenommen hast. Sie bleibt auf dem iPhone.")
+            case .denied:
+                Text("Nicht freigegeben. Einschalten unter Einstellungen › Bedienungshilfen › Eigene Stimme › Apps erlauben, Verwendung anzufordern.")
+            case .unsupported:
+                Text("Auf diesem iPhone nicht verfügbar.")
+            default:
+                if own.isEmpty, let first = others.first {
+                    let name = Locale.current.localizedString(forIdentifier: first.language) ?? first.language
+                    Text("Deine eigene Stimme spricht \(name) und erscheint bei Büchern in dieser Sprache oder bei Live-Übersetzung in diese Sprache.")
+                } else if own.isEmpty, others.isEmpty {
+                    Text("Keine eigene Stimme gefunden. Aufnehmen unter Einstellungen › Bedienungshilfen › Eigene Stimme.")
+                } else {
+                    Text("Siri-Stimmen gibt Apple für Apps nicht frei.")
+                }
+            }
+        }
+    }
+
     @ViewBuilder private func phononSection(_ language: String) -> some View {
         if let names = phonon.voices[language] {
             Section {
@@ -1137,12 +1176,12 @@ struct VoiceListContent: View {
         .accessibilityAddTraits(id == playback.voiceIdentifier ? [.isButton, .isSelected] : .isButton)
     }
 
-    private func systemRow(_ v: AVSpeechSynthesisVoice) -> some View {
+    private func systemRow(_ v: AVSpeechSynthesisVoice, caption: String? = nil) -> some View {
         Button { playback.chooseVoice(v.identifier); dismiss() } label: {
             HStack {
                 VStack(alignment: .leading) {
                     Text(v.name)
-                    Text(v.quality == .premium ? "Premium" : v.quality == .enhanced ? "Erweitert" : "Standard").font(.caption).foregroundStyle(.secondary)
+                    Text(caption ?? (v.quality == .premium ? "Premium" : v.quality == .enhanced ? "Erweitert" : "Standard")).font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
                 if v.identifier == playback.voiceIdentifier { Image(systemName: "checkmark").accessibilityHidden(true) }

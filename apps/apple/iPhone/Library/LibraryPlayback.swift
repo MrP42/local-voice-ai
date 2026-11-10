@@ -60,6 +60,9 @@ final class LibraryPlayback: NSObject, ObservableObject {
     @Published private(set) var bookVoiceMissing = false
     /// Für die Lesesprache gibt es keine Stimme auf dem iPhone: es liest weiter die bisherige (Hinweis in der Auswahl).
     @Published private(set) var voiceLanguageMissing = false
+    /// Freigabe für „Eigene Stimme“ (Einstellungen › Bedienungshilfen › Eigene Stimme). Siri-Stimmen gibt Apple für
+    /// Apps nicht frei.
+    @Published private(set) var personalVoiceStatus = AVSpeechSynthesizer.personalVoiceAuthorizationStatus
     private var applyingVoicePref = false
     private var catalogWatch: AnyCancellable?
     @Published var error: String?
@@ -720,9 +723,10 @@ final class LibraryPlayback: NSObject, ObservableObject {
         return best?.identifier
     }
 
-    /// Beste installierte Systemstimme der Sprache (Premium vor Erweitert vor Standard).
+    /// Beste installierte Systemstimme der Sprache (Premium vor Erweitert vor Standard). Die eigene Stimme wählt die
+    /// App nie von selbst, nur auf Tipp.
     static func bestSystemVoice(_ lang: String) -> AVSpeechSynthesisVoice? {
-        AVSpeechSynthesisVoice.speechVoices().filter { $0.language.hasPrefix(lang) }
+        AVSpeechSynthesisVoice.speechVoices().filter { $0.language.hasPrefix(lang) && !$0.isPersonal }
             .max { ($0.quality.rawValue, $1.name) < ($1.quality.rawValue, $0.name) }
     }
 
@@ -768,10 +772,26 @@ final class LibraryPlayback: NSObject, ObservableObject {
         }
     }
 
-    /// Systemstimmen in der Sprache des Buchs (sonst Deutsch), beste zuerst.
+    /// Eigene Stimmen (alle Sprachen); leer ohne Freigabe.
+    var personalVoices: [AVSpeechSynthesisVoice] {
+        personalVoiceStatus == .authorized ? AVSpeechSynthesisVoice.speechVoices().filter(\.isPersonal) : []
+    }
+
+    /// Fragt einmal nach der Freigabe der eigenen Stimme (Systemdialog); danach steht sie in der Stimmenliste.
+    func requestPersonalVoice() {
+        AVSpeechSynthesizer.requestPersonalVoiceAuthorization { status in
+            Task { @MainActor in
+                let shared = LibraryPlayback.shared
+                shared.personalVoiceStatus = status
+                if shared.mode == .readAloud, let book = shared.book { shared.applyVoicePref(book, live: true) }
+            }
+        }
+    }
+
+    /// Systemstimmen in der Sprache des Buchs (sonst Deutsch), beste zuerst; ohne eigene Stimmen (eigener Abschnitt).
     var systemVoices: [AVSpeechSynthesisVoice] {
         let lang = voiceLanguage ?? "de"
-        let list = AVSpeechSynthesisVoice.speechVoices().filter { $0.language.hasPrefix(lang) }
+        let list = AVSpeechSynthesisVoice.speechVoices().filter { $0.language.hasPrefix(lang) && !$0.isPersonal }
             .sorted { ($0.quality.rawValue, $0.name) > ($1.quality.rawValue, $1.name) }
         return list.isEmpty ? Self.germanVoices : list
     }
@@ -1340,12 +1360,12 @@ final class LibraryPlayback: NSObject, ObservableObject {
     }
 
     static func defaultVoice() -> AVSpeechSynthesisVoice? {
-        let german = AVSpeechSynthesisVoice.speechVoices().filter { $0.language.hasPrefix("de") }
+        let german = AVSpeechSynthesisVoice.speechVoices().filter { $0.language.hasPrefix("de") && !$0.isPersonal }
         return german.max { $0.quality.rawValue < $1.quality.rawValue } ?? AVSpeechSynthesisVoice(language: "de-DE")
     }
 
     static var germanVoices: [AVSpeechSynthesisVoice] {
-        AVSpeechSynthesisVoice.speechVoices().filter { $0.language.hasPrefix("de") }
+        AVSpeechSynthesisVoice.speechVoices().filter { $0.language.hasPrefix("de") && !$0.isPersonal }
             .sorted { ($0.quality.rawValue, $0.name) > ($1.quality.rawValue, $1.name) }
     }
 
@@ -1571,3 +1591,7 @@ extension LibraryPlayback: AVSpeechSynthesizerDelegate {
     }
 }
 
+extension AVSpeechSynthesisVoice {
+    /// Mit „Eigene Stimme“ aufgenommen (nur nach Freigabe sichtbar).
+    var isPersonal: Bool { voiceTraits.contains(.isPersonalVoice) }
+}
