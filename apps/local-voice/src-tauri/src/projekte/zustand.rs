@@ -151,6 +151,8 @@ impl ProjekteZustand {
         // einen Sendeweg der Projekt-KI.
         .with_projekt_ki(tor.clone(), Arc::new(LlmWeg));
         let recherche = Arc::new(recherche);
+        // Halte mit Projekttexten verfallen auch dann, wenn niemand die Oberfläche öffnet.
+        recherche.aufraeumen_aktivieren();
         let _ = recherche_zelle.set(recherche.clone());
         Ok(Arc::new(Dienste {
             projekte,

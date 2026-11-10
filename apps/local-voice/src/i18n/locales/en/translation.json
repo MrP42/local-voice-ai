@@ -8870,7 +8870,7 @@
     },
     "ki": {
       "titel": "AI in the project",
-      "text": "Chat and voice conversation use this selection as soon as they are enabled for projects.",
+      "text": "Chat, voice conversation, research and AI document use this selection as soon as they are enabled for projects.",
       "gesperrt": "Locked: AI calls in the project follow with the next step.",
       "start": "Start a conversation in the project",
       "startGesperrt": "Locked: AI calls in the project follow with the next step. The conversation can only be started after that.",

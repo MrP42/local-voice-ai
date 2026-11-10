@@ -25,6 +25,8 @@ const DUNKEL = process.env.LVA_THEME === "dark";
 const aufnehmen = async (page: Page, name: string) => {
   if (!BILDER) return;
   fs.mkdirSync(SHOT_DIR, { recursive: true });
+  // Kein Knopf liegt unter dem Zeiger (sonst zeigt das Bild einen Hover-Zustand).
+  await page.mouse.move(0, 0);
   await page.addStyleTag({
     content:
       "*,*::before,*::after{transition:none!important;animation:none!important}",
@@ -129,6 +131,12 @@ for (const [breite, hoehe] of [
     await expect(dialog).toContainText(
       "Die Anfragen entstanden mit Inhalten aus Ihrem Projekt",
     );
+    // Kopf und Anfragehinweise nennen dieselbe Klasse (das Projekt ist intern).
+    await expect(dialog).toContainText("(intern)");
+    await expect(
+      dialog.getByText("Kontext intern: Freigabe nötig"),
+    ).toHaveCount(2);
+    await expect(dialog.getByText(/personenbezogen/)).toHaveCount(0);
     await expect(eingabe).toHaveValue("");
     await aufnehmen(page, "freigabe-mit-kontext");
     // Gesendet wird nur, was die Person ankreuzt.
@@ -239,6 +247,17 @@ for (const [breite, hoehe] of [
       .fill("Fasse die Auswahl im Projekt in einer Seite zusammen.");
     await formular.getByTestId("projekt-dokument-name").fill("Zusammenfassung");
     await expect(senden).toBeEnabled();
+    // Senden und Abbrechen sind Touchziele; bei 390 px stehen sie in einer Zeile.
+    const abbrechen = formular.getByRole("button", { name: "Abbrechen" });
+    await senden.scrollIntoViewIfNeeded();
+    const [bs, ba] = [
+      await senden.boundingBox(),
+      await abbrechen.boundingBox(),
+    ];
+    expect(bs && ba).toBeTruthy();
+    // Die schmale Spalte bei 1440 px darf umbrechen; der Dialog bei 390 px hat Platz für eine Zeile.
+    if (breite === 390) expect(Math.abs(bs!.y - ba!.y)).toBeLessThan(2);
+    expect(ba!.height).toBeGreaterThanOrEqual(44);
     await senden.scrollIntoViewIfNeeded();
     await aufnehmen(page, "dokument-formular");
     await senden.click();

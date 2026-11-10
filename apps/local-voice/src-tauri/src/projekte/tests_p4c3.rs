@@ -25,6 +25,7 @@
 //! 7. Eingeschleuste Anweisungen im Projekttext: Halt, nichts geht vor der Freigabe hinaus
 //!    (`injektion_im_projekttext…`).
 
+use super::befehle::{frage_klasse, recherche_mit};
 use super::dokument::{
     self, DokumentAuftrag, DokumentErgebnis, DokumentFehler, Entwurfsablage, WegVersand,
     CODE_ABLAGE, CODE_EINGABE, CODE_LEER,
@@ -410,6 +411,34 @@ async fn aufbau(klasse: Klasse) -> R {
 }
 
 async fn bauen(e: Env, klasse: Klasse, web: bool, adresse: bool) -> R {
+    bauen_mit(e, klasse, web, adresse, None).await
+}
+
+/// Wie `aufbau`, aber mit eingeschaltetem Aufräumtimer im gegebenen Takt.
+async fn aufbau_mit_timer(klasse: Klasse) -> R {
+    bauen_mit(
+        env().await,
+        klasse,
+        true,
+        true,
+        Some(Duration::from_millis(20)),
+    )
+    .await
+}
+
+/// Wartet, bis die Bedingung gilt (höchstens zehn Sekunden); `false`, wenn nicht.
+async fn warte_bis(mut bedingung: impl FnMut() -> bool) -> bool {
+    let frist = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < frist {
+        if bedingung() {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    bedingung()
+}
+
+async fn bauen_mit(e: Env, klasse: Klasse, web: bool, adresse: bool, timer: Option<Duration>) -> R {
     tls_anbieter();
     let p = projekt(&e, klasse).await;
     seite(&e, "s1", "Erlaubter Text");
@@ -438,19 +467,24 @@ async fn bauen(e: Env, klasse: Klasse, web: bool, adresse: bool) -> R {
     let zeit = Arc::new(Mutex::new(Duration::ZERO));
     let uhr = zeit.clone();
     let principal = lokaler_principal();
-    let dienst = Arc::new(
-        RechercheDienst::open(
-            e.rstore.clone(),
-            e.dienst.clone(),
-            modelle.clone(),
-            zugang,
-            principal.clone(),
-        )
-        .await
-        .unwrap()
-        .with_projekt_ki(e.tor.clone(), weg.clone())
-        .with_uhr(Arc::new(move || start + *uhr.lock().unwrap())),
-    );
+    let mut roh = RechercheDienst::open(
+        e.rstore.clone(),
+        e.dienst.clone(),
+        modelle.clone(),
+        zugang,
+        principal.clone(),
+    )
+    .await
+    .unwrap()
+    .with_projekt_ki(e.tor.clone(), weg.clone())
+    .with_uhr(Arc::new(move || start + *uhr.lock().unwrap()));
+    if let Some(takt) = timer {
+        roh = roh.with_aufraeumintervall(takt);
+    }
+    let dienst = Arc::new(roh);
+    if timer.is_some() {
+        dienst.aufraeumen_aktivieren();
+    }
     if adresse {
         dienst
             .konfigurieren(&principal, Some(ADRESSE))
@@ -651,6 +685,136 @@ async fn gesperrte_projekt_ki_sendet_nichts_und_startet_kein_modell() {
     assert_eq!(r.e.tor.offene_laeufe(), 0);
 }
 
+#[test]
+fn frage_klasse_folgt_besprechung_und_kontext() {
+    assert_eq!(frage_klasse(None, false), Datenklasse::Personal);
+    assert_eq!(frage_klasse(Some("m1"), false), Datenklasse::Personal);
+    assert_eq!(
+        frage_klasse(Some("m1"), true),
+        Datenklasse::Personal,
+        "eine Frage aus einer Besprechung bleibt personenbezogen"
+    );
+    assert_eq!(
+        frage_klasse(None, true),
+        Datenklasse::Public,
+        "ohne Besprechung bestimmen Projekt und Inhalte die Klasse"
+    );
+}
+
+#[tokio::test]
+async fn befehlsweg_mit_kontext_ohne_besprechung_laeuft_bei_internem_projekt_mit_cloud_ziel() {
+    let r = aufbau(Klasse::Internal).await;
+    let a = recherche_mit(&r.dienst, FRAGE, Some(r.p.clone()), None, true).await;
+    assert_eq!(a.status, "freigabe", "{a:?}");
+    let id = a.recherche_id.expect("Kennung des Halts");
+    let f = r.senden(&id, &["a1", "a2"]).await.unwrap();
+    assert_eq!(f.status, "fertig", "{f:?}");
+    assert!(r.weg.zaehl() >= 2);
+    for i in 0..r.weg.zaehl() {
+        assert!(!r.weg.aufruf(i).lokal, "Aufruf {i} ging an das Cloud-Ziel");
+    }
+    assert_eq!(r.e.tor.offene_laeufe(), 0);
+}
+
+#[tokio::test]
+async fn befehlsweg_ohne_besprechung_bei_persoenlichem_projekt_scheitert_vor_dem_halt_mit_klasse_ziel(
+) {
+    let r = aufbau(Klasse::Personal).await;
+    let a = recherche_mit(&r.dienst, FRAGE, Some(r.p.clone()), None, true).await;
+    assert_eq!(a.code.as_deref(), Some(CODE_KLASSE), "{a:?}");
+    assert_ne!(a.status, "freigabe");
+    assert_eq!(r.weg.zaehl(), 0);
+    assert_eq!(r.suche.anzahl(), 0);
+    assert_eq!(r.dienst.offene_halte(), 0);
+    assert_eq!(r.e.tor.offene_laeufe(), 0);
+}
+
+#[tokio::test]
+async fn frage_aus_einer_besprechung_weist_ein_cloud_ziel_vor_dem_versand_mit_klasse_ziel_ab() {
+    // Was `recherche_mit` bei einer Besprechung an den Dienst gibt: die Klasse PERSONAL.
+    let r = aufbau(Klasse::Internal).await;
+    let a = r
+        .dienst
+        .starten_mit_kontext(
+            FRAGE,
+            "m",
+            frage_klasse(Some("m1"), true),
+            Some(r.p.clone()),
+        )
+        .await;
+    assert_eq!(a.code.as_deref(), Some(CODE_KLASSE), "{a:?}");
+    assert_ne!(a.status, "freigabe");
+    assert_eq!(
+        r.weg.zaehl(),
+        0,
+        "weder der Plan noch die Frage gingen an die Cloud"
+    );
+    assert_eq!(r.suche.anzahl(), 0);
+    assert_eq!(r.dienst.offene_halte(), 0);
+    assert_eq!(r.e.tor.offene_laeufe(), 0);
+}
+
+#[tokio::test]
+async fn frage_aus_einer_besprechung_laeuft_mit_lokalem_ziel_bis_zum_halt() {
+    let r = aufbau(Klasse::Internal).await;
+    r.e.ziele.setzen(ziel(true));
+    let a = r
+        .dienst
+        .starten_mit_kontext(
+            FRAGE,
+            "m",
+            frage_klasse(Some("m1"), true),
+            Some(r.p.clone()),
+        )
+        .await;
+    assert_eq!(a.status, "freigabe", "{a:?}");
+    let id = a.recherche_id.expect("Kennung des Halts");
+    let f = r.senden(&id, &["a1"]).await.unwrap();
+    assert_eq!(f.status, "fertig", "{f:?}");
+    for i in 0..r.weg.zaehl() {
+        assert!(r.weg.aufruf(i).lokal, "Aufruf {i}");
+    }
+}
+
+#[tokio::test]
+async fn zielwechsel_auf_eine_cloud_trifft_auch_die_klasse_der_frage() {
+    let r = aufbau(Klasse::Internal).await;
+    r.e.ziele.setzen(ziel(true));
+    let a = r
+        .dienst
+        .starten_mit_kontext(
+            FRAGE,
+            "m",
+            frage_klasse(Some("m1"), true),
+            Some(r.p.clone()),
+        )
+        .await;
+    let id = a.recherche_id.expect("Halt mit lokalem Ziel");
+    let vor = r.weg.zaehl();
+    r.e.ziele.setzen(ziel(false));
+    let b = r.senden(&id, &["a1", "a2"]).await.unwrap();
+    assert_eq!(b.code.as_deref(), Some(CODE_KLASSE), "{b:?}");
+    assert_eq!(r.weg.zaehl(), vor, "nichts ging an die Cloud");
+    assert_eq!(r.suche.anzahl(), 0);
+    assert_eq!(r.e.tor.offene_laeufe(), 0);
+    assert_eq!(r.dienst.offene_halte(), 0, "der Halt ist verbraucht");
+}
+
+#[test]
+fn recherche_starten_geht_ueber_den_geprueften_befehlsweg() {
+    let befehle = include_str!("befehle.rs");
+    let b = zwischen(
+        befehle,
+        "pub async fn recherche_starten(",
+        "/// Klasse der Frage beim Aufruf",
+    );
+    assert!(b.contains("recherche_mit("));
+    assert!(
+        !b.contains("Datenklasse::Personal"),
+        "die Klasse bestimmt `frage_klasse`, nicht der Befehl"
+    );
+}
+
 #[tokio::test]
 async fn persoenliches_projekt_mit_cloud_ziel_scheitert_im_tor_ohne_aufruf() {
     let r = aufbau(Klasse::Personal).await;
@@ -843,6 +1007,111 @@ async fn abgelaufener_halt_gibt_den_lauf_frei() {
     let f = r.senden(&id, &["a1"]).await;
     assert_eq!(f.unwrap_err().code, "recherche.not_found");
     assert_eq!(r.suche.anzahl(), 0);
+}
+
+#[tokio::test]
+async fn aufraeumtimer_gibt_abgelaufene_halte_ohne_zugriff_der_oberflaeche_frei() {
+    let r = aufbau_mit_timer(Klasse::Internal).await;
+    let _id = r.halt().await;
+    assert_eq!(r.dienst.offene_halte(), 1);
+    assert_eq!(r.e.tor.offene_laeufe(), 1);
+    assert!(
+        r.dienst.timer_laeuft(),
+        "ein offener Halt startet den Timer"
+    );
+    // Vor dem Ablauf bleibt der Halt: Der Timer räumt nur, was abgelaufen ist.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(r.dienst.offene_halte(), 1);
+    assert_eq!(r.e.tor.offene_laeufe(), 1);
+    // Die Uhr springt über die Frist. Ab hier ruft niemand `freigaben()` oder `freigabe_entscheiden()`.
+    *r.zeit.lock().unwrap() = FREIGABE_FRIST + Duration::from_secs(1);
+    assert!(
+        warte_bis(|| r.dienst.offene_halte() == 0).await,
+        "der Timer hat den abgelaufenen Halt entfernt"
+    );
+    assert_eq!(
+        r.e.tor.offene_laeufe(),
+        0,
+        "mit dem Halt ist auch der Schein frei"
+    );
+    assert!(
+        warte_bis(|| !r.dienst.timer_laeuft()).await,
+        "ohne offenen Halt endet der Timer"
+    );
+    // Der nächste Halt startet ihn neu.
+    let _zweiter = r.halt().await;
+    assert!(r.dienst.timer_laeuft());
+    assert_eq!(r.suche.anzahl(), 0, "nichts ging hinaus");
+}
+
+#[tokio::test]
+async fn aufraeumtimer_entkernt_widerrufene_halte_ohne_zugriff_der_oberflaeche() {
+    let r = aufbau_mit_timer(Klasse::Internal).await;
+    let id = r.halt().await;
+    r.ausschalten().await;
+    assert!(
+        warte_bis(|| r.e.tor.offene_laeufe() == 0).await,
+        "der Timer hat den widerrufenen Halt entkernt und den Schein freigegeben"
+    );
+    assert_eq!(
+        r.dienst.offene_halte(),
+        1,
+        "der Halt bleibt, damit die Antwort kontext_geaendert lautet"
+    );
+    assert!(
+        r.dienst.freigaben().is_empty(),
+        "die Anzeige zeigt ihn nicht mehr"
+    );
+    let a = r.senden(&id, &["a1", "a2"]).await.unwrap();
+    assert_eq!(a.code.as_deref(), Some(CODE_KONTEXT_GEAENDERT), "{a:?}");
+    assert_eq!(r.suche.anzahl(), 0);
+}
+
+#[tokio::test]
+async fn ohne_aktivierung_laeuft_kein_aufraeumtimer() {
+    let r = aufbau(Klasse::Internal).await;
+    let _id = r.halt().await;
+    assert!(!r.dienst.timer_laeuft());
+    *r.zeit.lock().unwrap() = FREIGABE_FRIST + Duration::from_secs(1);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(
+        r.dienst.offene_halte(),
+        1,
+        "ohne Timer wird bei einem Zugriff geräumt, nicht von allein"
+    );
+    assert!(r.dienst.freigaben().is_empty());
+    assert_eq!(r.dienst.offene_halte(), 0);
+}
+
+#[test]
+fn abgelaufene_halte_fallen_ausserhalb_der_sperre() {
+    let recherche = include_str!("recherche.rs");
+    let raeumen = zwischen(
+        recherche,
+        "fn abgelaufene_raeumen(",
+        "/// Entkernt die Halte, deren Lauf",
+    );
+    // Ein entfernter Halt wird gesammelt und fällt erst nach dem Block der Sperre.
+    assert!(raeumen.contains("Vec<(String, Offen)>"), "{raeumen}");
+    assert!(
+        !raeumen.contains("offen.remove(id);"),
+        "kein Halt darf unter der Sperre fallen"
+    );
+    let sperre_ende = raeumen.find("drop(scheine);").expect("Scheine fallen");
+    let fallen = raeumen.find("drop(halt);").expect("Halte fallen");
+    let sammeln = raeumen
+        .find("offen.remove(&id)")
+        .expect("Halt wird gesammelt");
+    assert!(sammeln < sperre_ende && sperre_ende < fallen);
+    // Ein verbrauchter, entkernter Halt fällt ebenfalls erst nach der Sperre.
+    let entscheiden = zwischen(
+        recherche,
+        "pub async fn freigabe_entscheiden(",
+        "// ---- Dokumente",
+    );
+    assert!(entscheiden.contains("let _verbraucht ="));
+    // Der Dienst startet den Timer in der Produktion.
+    assert!(include_str!("zustand.rs").contains("recherche.aufraeumen_aktivieren()"));
 }
 
 #[tokio::test]

@@ -21,13 +21,25 @@
 //!   Quellen oder Adressen.
 //! - **Modell.** Lokale Modelle bearbeiten jede Klasse; ein Cloud-Modell nur bis `INTERNAL`. Die
 //!   Regeln der App (Compliance, Budget) gelten im Aufruf zusaetzlich.
+//! - **Mit Projektkontext (lva#365 P4c-3).** Kontext, Klassen und Ziel bestimmt das Versandtor, nicht die
+//!   Oberflaeche. Der Lauf haelt vor dem ersten Webzugriff immer an. Die Klasse der Frage und die der
+//!   Kontextstuecke muessen vom Ziel getragen werden (`projekt.klasse_ziel` vor dem Versand, auch nach
+//!   einem Zielwechsel zwischen Halt und Freigabe). Ein Halt haelt Texte und Schein hoechstens
+//!   `FREIGABE_FRIST` im Speicher; der Aufraeumtimer (`aufraeumen_aktivieren`) raeumt auch ohne
+//!   offene Oberflaeche.
+//! - **Grenze des Widerrufs.** Der Widerruf gilt bis zum Urteil des Tors (`abschliessen`). Trifft er erst
+//!   danach ein, also zwischen dem bestandenen Urteil und dem Speichern, entsteht die Recherche noch: Sie
+//!   liegt in der Liste der Recherchen und im Projekt ausgeschaltet (Automation), und die Person kann
+//!   sie loeschen. Ein zweites Urteil nach dem Speichern braeuchte einen zweiten Rueckweg, der
+//!   schlechter pruefbar waere als diese kurze, bekannte Luecke.
 
 use super::audit::{AuditEreignis, AuditSenke};
 use super::dienst::{klasse_text, ProjektDienst};
 use super::herkunft::{recherche_link, LvaHerkunft};
 use super::tor::{
-    budget_mit_reserve, Abbruch, Bindung, Budgetbeleg, Fortsetzung, Freigabe, ProjektTor,
-    PromptTeile, Versandauftrag, Versandschein, Weg, Ziel, WEB_RESERVE_TOKEN,
+    budget_mit_reserve, klasse_zulaessig, Abbruch, Bindung, Budgetbeleg, Fortsetzung, Freigabe,
+    ProjektTor, PromptTeile, Versandauftrag, Versandschein, Weg, Ziel, CODE_KLASSE,
+    WEB_RESERVE_TOKEN,
 };
 use super::{Fehler, Res};
 use crate::ablage::zusammenfuehren::Klasse as AblageKlasse;
@@ -39,7 +51,8 @@ use specta::Type;
 use std::collections::HashMap;
 use std::future::Future;
 use std::path::Path;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock, RwLock, Weak};
 use std::time::{Duration, Instant};
 use tokio::sync::Notify;
 use wai_projekte::{Klasse, ZugeordnetDurch};
@@ -74,6 +87,10 @@ const MAX_FRAGE: usize = 1000;
 /// mit Projektkontext haelt dessen Texte hoechstens `FREIGABE_FRIST` im Speicher; die Menge je Halt
 /// begrenzt das Budget des Tors (Kontext plus Reserve passen ins Fenster des Modells).
 pub const MAX_OFFEN: usize = 20;
+/// So oft raeumt der Aufraeumtimer, solange Halte offen sind (`aufraeumen_aktivieren`). Er sorgt dafuer,
+/// dass Projekttexte und Schein eines Halts auch ohne offene Oberflaeche nicht ueber `FREIGABE_FRIST`
+/// hinaus im Speicher bleiben.
+pub const AUFRAEUM_INTERVALL: Duration = Duration::from_secs(60);
 /// Funktion, deren Konfiguration das Ziel einer Recherche mit Projektkontext bestimmt. Eine Funktion
 /// ohne eigene Modellwahl faellt auf das Standardmodell zurueck (`AppSettings::for_function`).
 pub const FUNKTION_RECHERCHE: &str = "projekt_recherche";
@@ -653,6 +670,12 @@ pub struct RechercheDienst {
     offen: Mutex<HashMap<String, Offen>>,
     uhr: Uhr,
     projekt_ki: Option<ProjektKi>,
+    /// Der Dienst selbst, schwach: Der Aufraeumtimer haelt ihn nicht am Leben. Ohne Eintrag (nie
+    /// `aufraeumen_aktivieren` gerufen) gibt es keinen Timer; geraeumt wird dann bei jedem Zugriff.
+    selbst: OnceLock<Weak<RechercheDienst>>,
+    /// Laeuft der Aufraeumtimer? Er endet, sobald kein Halt mehr offen ist.
+    timer: AtomicBool,
+    aufraeumintervall: Duration,
 }
 
 /// Anschluss der Recherche an die Projekt-KI: das Versandtor (Kontext, Klassen, Ziel, Widerruf) und der
@@ -693,6 +716,9 @@ impl RechercheDienst {
             offen: Mutex::new(HashMap::new()),
             uhr: Arc::new(Instant::now),
             projekt_ki: None,
+            selbst: OnceLock::new(),
+            timer: AtomicBool::new(false),
+            aufraeumintervall: AUFRAEUM_INTERVALL,
         })
     }
 
@@ -716,8 +742,88 @@ impl RechercheDienst {
         self
     }
 
+    /// Ersetzt das Intervall des Aufraeumtimers (Tests: kurze Takte statt 60 Sekunden).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn with_aufraeumintervall(mut self, intervall: Duration) -> Self {
+        self.aufraeumintervall = intervall;
+        self
+    }
+
     fn jetzt(&self) -> Instant {
         (self.uhr)()
+    }
+
+    /// Schaltet den Aufraeumtimer ein (nach `Arc::new`). Sobald ein Halt offen ist, raeumt er alle
+    /// `AUFRAEUM_INTERVALL` abgelaufene und widerrufene Halte und endet, wenn keiner mehr offen ist.
+    /// So bleiben Projekttexte und Schein auch dann nicht ueber `FREIGABE_FRIST` im Speicher, wenn
+    /// niemand die Oberflaeche oeffnet. Der Timer haelt den Dienst nicht am Leben.
+    pub fn aufraeumen_aktivieren(self: &Arc<Self>) {
+        let _ = self.selbst.set(Arc::downgrade(self));
+    }
+
+    /// Startet den Aufraeumtimer, falls er eingeschaltet ist und nicht schon laeuft. Aufgerufen, nachdem
+    /// ein Halt eingetragen wurde (ausserhalb der Sperre).
+    fn timer_starten(&self) {
+        let Some(selbst) = self.selbst.get().cloned() else {
+            return;
+        };
+        if self.timer.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let Ok(laufzeit) = tokio::runtime::Handle::try_current() else {
+            self.timer.store(false, Ordering::Release);
+            return;
+        };
+        let intervall = self.aufraeumintervall;
+        laufzeit.spawn(async move {
+            loop {
+                tokio::time::sleep(intervall).await;
+                let Some(dienst) = selbst.upgrade() else {
+                    break;
+                };
+                // Das Raeumen schreibt Audit-Eintraege (SQLite) und gibt Scheine frei: nicht auf dem Executor.
+                let weiter =
+                    tokio::task::spawn_blocking(move || dienst.aufraeumen_durchgang()).await;
+                match weiter {
+                    Ok(true) => {}
+                    Ok(false) => break,
+                    Err(_) => {
+                        if let Some(dienst) = selbst.upgrade() {
+                            dienst.timer.store(false, Ordering::Release);
+                        }
+                        break;
+                    }
+                }
+            }
+        });
+    }
+
+    /// Ein Durchgang des Aufraeumtimers. `false`, wenn kein Halt mehr offen ist: Der Timer endet dann,
+    /// und der naechste Halt startet ihn neu. Das Merken des Endes geschieht unter der Sperre, damit
+    /// kein Halt zwischen Pruefung und Ende ohne Timer bleibt.
+    fn aufraeumen_durchgang(&self) -> bool {
+        self.abgelaufene_raeumen();
+        let Ok(offen) = self.offen.lock() else {
+            self.timer.store(false, Ordering::Release);
+            return false;
+        };
+        if offen.is_empty() {
+            self.timer.store(false, Ordering::Release);
+            return false;
+        }
+        true
+    }
+
+    /// Zahl der offenen Halte (Tests, Diagnose).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn offene_halte(&self) -> usize {
+        self.offen.lock().map_or(0, |o| o.len())
+    }
+
+    /// Laeuft der Aufraeumtimer? (Tests, Diagnose)
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn timer_laeuft(&self) -> bool {
+        self.timer.load(Ordering::Acquire)
     }
 
     pub fn principal(&self) -> &Principal {
@@ -894,6 +1000,13 @@ impl RechercheDienst {
                     .map_err(|a| abbruch_aus(&a))?;
                 let stufe = kontext_klasse(&schein);
                 let art9 = schein.art9();
+                // Die Frage selbst kann hoeher sein als der Kontext (aus einer Besprechung: PERSONAL).
+                // Das Ziel muss die hoechste Klasse tragen; sonst scheiterte der Lauf erst im Modell, ohne
+                // den Code des Tors, und nach dem Versand der Frage.
+                if !klasse_zulaessig(klasse_von(wirksame_klasse(klasse, stufe, besonders)), &ziel) {
+                    self.protokoll("lauf", "ohne_lauf", "abgelehnt", CODE_KLASSE, 0);
+                    return Err(abbruch_aus(&Abbruch::Klasse { code: CODE_KLASSE }));
+                }
                 let mut stuecke: Vec<Kontextstueck> = quellen
                     .into_iter()
                     .map(|(_, text)| Kontextstueck {
@@ -1126,6 +1239,7 @@ impl RechercheDienst {
                         },
                     );
                 }
+                self.timer_starten();
                 self.protokoll(
                     "lauf",
                     &id,
@@ -1306,9 +1420,13 @@ impl RechercheDienst {
 
     /// Entfernt abgelaufene Halte und protokolliert jeden (`freigabe_abgelaufen`, ohne Inhalte). Entkernt
     /// ausserdem die Halte mit Projektkontext, deren Lauf widerrufen wurde (`halte_widerrufen`).
+    ///
+    /// Was dabei aus dem Speicher faellt, faellt **ausserhalb** der Sperre `offen`: Ein Schein traegt
+    /// seinen Lauf beim Freigeben aus (`Wache::drop` nimmt die Sperre der Laeufe im Tor). Unter `offen`
+    /// darf also nichts fallen, das einen Schein haelt.
     fn abgelaufene_raeumen(&self) {
         let jetzt = self.jetzt();
-        let (ids, widerrufen, scheine) = {
+        let (abgelaufen, widerrufen, scheine) = {
             let Ok(mut offen) = self.offen.lock() else {
                 return;
             };
@@ -1317,9 +1435,10 @@ impl RechercheDienst {
                 .filter(|(_, o)| o.bis <= jetzt)
                 .map(|(id, _)| id.clone())
                 .collect();
-            for id in &ids {
-                offen.remove(id);
-            }
+            let abgelaufen: Vec<(String, Offen)> = ids
+                .into_iter()
+                .filter_map(|id| offen.remove(&id).map(|o| (id, o)))
+                .collect();
             // Ein widerrufener Halt behaelt weder Texte noch Anfragen im Speicher; er bleibt nur, damit
             // die Entscheidung mit `kontext_geaendert` antwortet statt mit "nicht gefunden".
             let mut widerrufen: Vec<String> = Vec::new();
@@ -1334,11 +1453,11 @@ impl RechercheDienst {
                     widerrufen.push(id.clone());
                 }
             }
-            (ids, widerrufen, scheine)
+            (abgelaufen, widerrufen, scheine)
         };
-        // Die Scheine fallen ausserhalb der Sperre: Das Tor traegt dabei die Laeufe aus.
         drop(scheine);
-        for id in ids {
+        for (id, halt) in abgelaufen {
+            drop(halt);
             self.protokoll("lauf", &id, "abgelaufen", "freigabe_abgelaufen", 0);
         }
         for id in widerrufen {
@@ -1450,7 +1569,9 @@ impl RechercheDienst {
         // Der Lauf wurde widerrufen, solange der Halt wartete: Es geht nichts hinaus, und der Halt ist
         // verbraucht (seine Texte sind schon aus dem Speicher).
         if entkernt {
-            self.offen
+            // Der Halt fällt erst nach dem Loslassen der Sperre.
+            let _verbraucht = self
+                .offen
                 .lock()
                 .map_err(|_| fehler("recherche.storage", "Interner Fehler."))?
                 .remove(id);
@@ -1533,6 +1654,19 @@ impl RechercheDienst {
                     }
                     Err(a) => return Ok(self.abgelehnt(id, &a)),
                 };
+                // Das frische Ziel muss auch die Klasse der Frage tragen (Wechsel auf eine Cloud nach dem Halt).
+                let stufe = kontext
+                    .stuecke
+                    .iter()
+                    .map(|s| s.data_class)
+                    .fold(Datenklasse::Public, Datenklasse::max);
+                let besonders = kontext.stuecke.iter().any(|s| s.special_category);
+                if !klasse_zulaessig(
+                    klasse_von(wirksame_klasse(kontext.frage_klasse, stufe, besonders)),
+                    &ziel,
+                ) {
+                    return Ok(self.abgelehnt(id, &Abbruch::Klasse { code: CODE_KLASSE }));
+                }
                 let budget = match budget_mit_reserve(h.budget, &ziel, 0) {
                     Ok(b) => b,
                     Err(a) => return Ok(self.abgelehnt(id, &a)),
@@ -1715,6 +1849,17 @@ fn kontext_klasse(s: &Versandschein) -> Datenklasse {
         Some(AblageKlasse::Unbekannt) => Datenklasse::Restricted,
     };
     daten_von_klasse(s.klasse_projekt()).max(ablage)
+}
+
+/// Hoechste Klasse eines Laufs mit Projektkontext: die der Frage (mit Projektklasse als Untergrenze),
+/// die der Kontextstuecke und mit Art.-9-Kennzeichen mindestens `SPECIAL`.
+fn wirksame_klasse(frage: Datenklasse, stufe: Datenklasse, besonders: bool) -> Datenklasse {
+    let k = frage.max(stufe);
+    if besonders {
+        k.max(Datenklasse::Special)
+    } else {
+        k
+    }
 }
 
 /// Text der belegten Saetze eines Dokuments (fuer das Urteil des Tors; dort ohne Eintrag im Register).

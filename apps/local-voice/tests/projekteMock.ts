@@ -283,15 +283,17 @@ export const installProjekteMock = async (page: Page) => {
             expiresInSecs: 900,
             withContext: !!args.mitKontext,
             queries: [
+              // Mit Projektkontext tragen Kopf und Anfragen dieselbe Klasse (wie das Backend: jede
+              // Anfrage meldet ihre Klasse); ohne Kontext markiert nur die zweite Anfrage.
               {
                 id: "q1",
                 text: "Netzentgelte Lastgangmessung Berechnung",
-                hintClass: null,
+                hintClass: args.mitKontext ? p.dataClass : null,
               },
               {
                 id: "q2",
                 text: "Netzentgelte Lastgangmessung Stadtwerke Kaiserslautern",
-                hintClass: "PERSONAL",
+                hintClass: args.mitKontext ? p.dataClass : "PERSONAL",
               },
             ],
           });

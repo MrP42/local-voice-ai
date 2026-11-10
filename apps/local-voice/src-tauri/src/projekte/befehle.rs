@@ -10,7 +10,8 @@ use super::dienst::{
 use super::dokument::{self, DokumentAuftrag, DokumentErgebnis, WegVersand};
 use super::kontext::{KontextForm, KontextUebersicht};
 use super::recherche::{
-    FreigabeAktion, FreigabeInfo, LaufAntwort, RechercheKurz, RechercheSicht, RechercheStatus,
+    FreigabeAktion, FreigabeInfo, LaufAntwort, RechercheDienst, RechercheKurz, RechercheSicht,
+    RechercheStatus,
 };
 use super::zustand::{modell_bereit, AppEntwurf, ProjekteZustand};
 use crate::voice_call::projekt::LlmWeg;
@@ -409,16 +410,49 @@ pub async fn recherche_starten(
             });
         }
     }
-    Ok(d.recherche
+    Ok(recherche_mit(
+        &d.recherche,
+        &frage,
+        suite_projekt,
+        besprechung.as_deref(),
+        mit_kontext,
+    )
+    .await)
+}
+
+/// Klasse der Frage beim Aufruf aus der Oberflaeche. Eine Frage aus einer Besprechung ist mindestens
+/// `PERSONAL` (ihr Chat kennt das Transkript); ohne Besprechung traegt sie ohne Projektkontext
+/// ebenfalls `PERSONAL` (unveraendert). Mit Projektkontext und ohne Besprechung traegt die Frage selbst
+/// keine Klasse: Dann gelten die Klassen des Projekts und seiner Inhalte, und das Tor bestimmt das Ziel
+/// danach. Ein Internal-Projekt laeuft so mit einem Cloud-Ziel; ein hoeher eingestuftes scheitert vor
+/// dem Halt mit `projekt.klasse_ziel`, nicht erst im Modell.
+pub(super) fn frage_klasse(besprechung: Option<&str>, mit_kontext: bool) -> Datenklasse {
+    if mit_kontext && besprechung.is_none() {
+        Datenklasse::Public
+    } else {
+        Datenklasse::Personal
+    }
+}
+
+/// Der Weg des Befehls `recherche_starten` ab der Pruefung des Modells: Klasse der Frage bestimmen und
+/// die Recherche starten (mit oder ohne Projektkontext).
+pub(super) async fn recherche_mit(
+    recherche: &RechercheDienst,
+    frage: &str,
+    suite_projekt: Option<String>,
+    besprechung: Option<&str>,
+    mit_kontext: bool,
+) -> LaufAntwort {
+    recherche
         .starten_fuer_mit(
-            besprechung.as_deref(),
-            &frage,
+            besprechung,
+            frage,
             MODELL,
-            Datenklasse::Personal,
+            frage_klasse(besprechung, mit_kontext),
             suite_projekt,
             mit_kontext,
         )
-        .await)
+        .await
 }
 
 #[tauri::command]

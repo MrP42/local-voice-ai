@@ -8870,7 +8870,7 @@
     },
     "ki": {
       "titel": "KI im Projekt",
-      "text": "Chat und Sprachgespräch nutzen diese Auswahl, sobald sie für Projekte freigegeben sind.",
+      "text": "Chat, Sprachgespräch, Recherche und KI-Dokument nutzen diese Auswahl, sobald sie für Projekte freigegeben sind.",
       "gesperrt": "Gesperrt: KI-Aufrufe im Projekt folgen mit dem nächsten Schritt.",
       "start": "Gespräch im Projekt beginnen",
       "startGesperrt": "Gesperrt: KI-Aufrufe im Projekt folgen mit dem nächsten Schritt. Das Gespräch lässt sich erst danach beginnen.",

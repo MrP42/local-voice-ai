@@ -20,6 +20,13 @@
 //! bestehen, und das Ergebnis meldet `im_projekt = false`: Er ist eine Datei der Person, kein
 //! Projektinhalt, und ein halber Zustand wird gemeldet statt verborgen.
 //!
+//! **Grenze des Widerrufs.** Der Widerruf (Eintrag ausgeschaltet, Freigabe der Ablage geändert, Projekt
+//! gelöscht) gilt bis zum Urteil von `abschliessen`. Trifft er erst danach ein, also zwischen dem
+//! bestandenen Urteil und dem Anlegen des Entwurfs, entsteht der Entwurf noch: Er trägt die Mindestklasse
+//! des Laufs, ist im Projekt ausgeschaltet und liegt als Datei der Person in der Ablage, wo sie ihn
+//! löschen kann. Ein zweites Urteil nach dem Anlegen bräuchte einen zweiten Rückweg (Entwurf wieder
+//! entfernen), der schlechter prüfbar wäre als diese kurze, bekannte Lücke.
+//!
 //! Der Kern kennt weder `AppHandle` noch Netz: Sendeweg ([`Versand`] über [`WegVersand`]) und Ablage
 //! ([`Entwurfsablage`]) sind austauschbar. Fehlertexte und Meldungen enthalten nie Inhalte, Titel oder
 //! Namen; es gehen nur Codes heraus.
