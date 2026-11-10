@@ -33,7 +33,11 @@ const FALTUNG: Record<string, string> = {
   Ð: "d",
   þ: "th",
   Þ: "th",
+  ħ: "h",
+  Ħ: "h",
   ı: "i",
+  ĳ: "ij",
+  Ĳ: "ij",
 };
 
 const MARKS = /\p{M}/gu;
