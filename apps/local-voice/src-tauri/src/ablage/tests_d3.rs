@@ -405,6 +405,32 @@ fn konflikt_nutzt_gemeinsame_vorgaengerin_ohne_sie_die_datei_nicht() {
     assert_eq!(a.abdeckung.durchsucht, 1);
 }
 
+/// lva#463: Die direkte Suche in der Vorgängerfassung einer Konfliktdatei faltet wie der Index (ß → ss).
+#[test]
+fn konflikt_direkte_suche_faltet_ss() {
+    let e = env();
+    let o = e.ordner("Frei");
+    e.a.ki_setzen(&o, Some(KiStufe::An)).unwrap();
+    let dat = e.ablegen("Plan.txt", "Grundfassung Straße Kranich", &o);
+    e.lauf();
+    let basis = e.a.fassungen(&dat).unwrap()[0].fas.clone();
+    e.ablegen_wahl(
+        "Plan.txt",
+        "Gerät A Reiher",
+        &o,
+        Some(AblageKollisionswahl::NeueFassung),
+    );
+    fassung_anhaengen(&e, &dat, Some(&basis), "Gerät B Storch");
+    e.lauf();
+    assert!(e.a.ansicht().unwrap().dateien[0].konflikt);
+    for frage in ["Strasse", "STRASSE", "Straße"] {
+        let a = e.global(frage);
+        assert_eq!(a.auszuege.len(), 1, "{frage}: {:?}", a.abdeckung);
+        assert_eq!(a.auszuege[0].fas, basis);
+        assert!(a.auszuege[0].text.contains("Straße"));
+    }
+}
+
 #[test]
 fn datenklasse_gegen_anbieter() {
     let e = env();

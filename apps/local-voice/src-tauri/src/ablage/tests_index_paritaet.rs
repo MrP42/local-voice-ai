@@ -14,12 +14,17 @@
 //! Toleranz 1e-9, wegen `log` je Plattform); mit `LVA_VEKTOREN_SCHREIBEN=1` schreibt derselbe Test sie neu:
 //! `LVA_VEKTOREN_SCHREIBEN=1 cargo test --lib ablage::tests_index_paritaet::json_passt_zum_code`.
 //!
+//! lva#463: Abschnitt `normalisierung` (Faltung ß → ss usw. vor Index und Anfrage) und `gesperrt` (Rohrang bei gemischtem
+//! Bestand: Papierkorb zählt nicht in N, n und avgdl) in derselben Datei.
+//!
 //! Die FTS5-Tabellen (Token-Zeichen, Faltung) stammen aus dem gebündelten SQLite (Cargo.lock) und sind damit unabhängig
 //! von der Rust-Version; Eigenschaften der Rust-Standardbibliothek (`is_alphanumeric`, `to_lowercase`) stehen nur als
 //! Proben in der Datei, die Swift mit den Unicode-Eigenschaften des Systems nachbildet.
 
 use super::extrakt::{self, Textfassung};
+use super::freigabe::KiStufe;
 use super::index;
+use super::index::{KiProfil, KiWeg};
 use super::semantik::AblageEinbettung;
 use super::speicher::{Ablage, AblageArt, AblageImportStand};
 use super::zusammenfuehren::Text;
@@ -214,6 +219,11 @@ fn fragen() -> Vec<String> {
         "Zugvogel".into(),
         lang,
         "Fassade Angebote Vorstand Kündigung".into(),
+        "STRASSE".into(),
+        "Pariser Strasse".into(),
+        "Beispielstrasse".into(),
+        "Lodz Gdansk".into(),
+        "Aero Orsted".into(),
     ]
 }
 
@@ -627,14 +637,30 @@ fn stuecke_lesen(e: &Env) -> Vec<Stueck> {
     aus
 }
 
-/// Zeilen der lexikalischen Abfrage von `wai-retrieval::rank` (mit Rohrang), beste zuerst.
-fn bm25_zeilen(c: &Connection, tokens: &[String]) -> Vec<(i64, String, i64, f64)> {
+/// Zeilen der lexikalischen Rangliste von `wai-retrieval::rank` (mit Rohrang), beste zuerst, für den Leser der Suche.
+fn bm25_zeilen(a: &Ablage, anfrage: &str) -> Vec<(i64, String, i64, f64)> {
+    index::lexikalisch_zeilen(a, anfrage, index::LESER_SUCHE, SQL_ZEILEN)
+        .unwrap()
+        .into_iter()
+        .map(|z| (z.chunk_id, z.source_id, z.page as i64, z.bm25))
+        .collect()
+}
+
+/// Gegenprobe: `bm25(chunks_fts)` von FTS5 (Zählung über ALLE Stücke der Tabelle) für dieselben gefalteten Wörter, mit dem
+/// Rechtefilter des Lesers der Suche.
+fn fts5_bm25_zeilen(c: &Connection, anfrage: &str) -> Vec<(i64, String, i64, f64)> {
+    let tokens = wai_retrieval::content_tokens(anfrage);
     if tokens.is_empty() {
         return vec![];
     }
     let m = tokens
         .iter()
-        .map(|t| format!("\"{}\"", t.replace('"', "")))
+        .map(|t| {
+            format!(
+                "\"{}\"",
+                wai_retrieval::fts_normalisieren(t).replace('"', "")
+            )
+        })
         .collect::<Vec<_>>()
         .join(" OR ");
     let sql = format!(
@@ -730,7 +756,6 @@ fn alle() -> Value {
     assert_eq!(zeilen_gesamt as usize, gesamt_stuecke);
 
     // Fragen.
-    let c = e.db();
     let namen = e.namen();
     let leser_name = |dat: &str| namen[dat].clone();
     let seite_von = |dat: &str, text: &str| -> i64 {
@@ -744,7 +769,7 @@ fn alle() -> Value {
     for frage in fragen() {
         let abgeschnitten: String = frage.chars().take(200).collect();
         let tokens = wai_retrieval::content_tokens(&abgeschnitten);
-        let zeilen = bm25_zeilen(&c, &tokens);
+        let zeilen = bm25_zeilen(&e.a, &abgeschnitten);
         // Gleichstand im Rohrang würde von der (zufälligen) Reihenfolge der Kennungen abhängen: nicht erlaubt.
         for w in zeilen.windows(2) {
             let (a, b) = (w[0].3, w[1].3);
@@ -828,6 +853,35 @@ fn alle() -> Value {
         "Papierkorb: 0 Treffer"
     );
 
+    // lva#463: Gemischter Bestand. Dateien im Papierkorb (für den Leser der Suche gesperrt) tragen viele Wörter der Fragen;
+    // ihre Stücke zählen weder in N noch in n noch in avgdl: der Rohrang bleibt der des Bestands ohne sie.
+    let gesperrt_dateien = gesperrte_dateien();
+    for (name, text) in &gesperrt_dateien {
+        let dat = e.ablegen(name, text.as_bytes());
+        e.text_und_index();
+        e.a.in_papierkorb(AblageArt::Datei, &dat).unwrap();
+    }
+    index::abgleichen_mit(&e.a, &AblageEinbettung::Keine).unwrap();
+    let mut gesperrt_fragen: Vec<Value> = Vec::new();
+    for (f, j) in fragen().iter().zip(&fragen_json) {
+        let abgeschnitten: String = f.chars().take(200).collect();
+        let zeilen = bm25_zeilen(&e.a, &abgeschnitten);
+        let namen = e.namen();
+        let ist: Vec<Value> = zeilen
+            .iter()
+            .take(12)
+            .map(|z| json!({"name": namen[&z.1].clone(), "seite": z.2, "wert": z.3}))
+            .collect();
+        let mut abw = Vec::new();
+        abweichungen(&j["bm25"], &Value::Array(ist.clone()), "$", &mut abw);
+        assert!(
+            abw.is_empty(),
+            "gemischter Bestand ändert den Rohrang bei {f:?}: {abw:?}"
+        );
+        assert_eq!(zeilen.len() as u64, j["bm25_anzahl"].as_u64().unwrap());
+        gesperrt_fragen.push(json!({"frage": f, "bm25_anzahl": zeilen.len(), "bm25": ist}));
+    }
+
     // Proben.
     let proben = proben();
     let c5 = fts5_verbindung();
@@ -851,6 +905,12 @@ fn alle() -> Value {
             "bm25_b": 0.75,
         },
         "stop": stop_liste(),
+        "normalisierung": normalisierung_json(&c5),
+        "gesperrt": json!({
+            "hinweis": "Gemischter Bestand (lva#463): zusätzlich zum Korpus liegen diese Dateien im Papierkorb des Desktops (für den Leser der Suche gesperrt). Der Desktop zählt sie nicht in N, n (IDF) und avgdl; der Rohrang `bm25` je Frage ist deshalb derselbe wie ohne sie und gleich dem Rohrang von `fragen`. Der iPhone-Index enthält sie nie (Index-Tor).",
+            "dateien": gesperrt_dateien.iter().map(|(n, t)| json!({"name": n, "text": t, "grund": "papierkorb"})).collect::<Vec<_>>(),
+            "fragen": gesperrt_fragen,
+        }),
         "proben": proben_json,
         "stuecke_proben": stuecke_proben(),
         "fts5": fts5_tabellen(),
@@ -902,6 +962,582 @@ fn abweichungen(soll: &Value, ist: &Value, pfad: &str, aus: &mut Vec<String>) {
                 aus.push(format!("{pfad}: {soll} != {ist}"));
             }
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// lva#463: Faltung (ß → ss usw.) und IDF nur über lesbare Stücke
+// ---------------------------------------------------------------------------
+
+/// Texte für die Normalisierung (Eingabe → gefaltete Form → Wörter des FTS5-Tokenizers).
+fn normalisierung_proben() -> Vec<String> {
+    [
+        "Straße",
+        "STRASSE",
+        "Strasse",
+        "GROẞE",
+        "Maß Fuß-Ball weiß Süßigkeit",
+        "ßß ẞ",
+        "Æther Ærø Œuvre cœur",
+        "Ørsted Øresund Łódź Łukasz",
+        "Đorđe Þór Ðóra Ħal",
+        "ıstanbul İstanbul Ĳssel ĳs",
+        "naïve Résumé café",
+        "Müller Mueller",
+        "ſ ǅ ﬁnal ŉ ŋ ŧ ŀ ĸ",
+        "x²  1,000",
+        "",
+        "ASCII only 123",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect()
+}
+
+fn normalisierung_json(c5: &Connection) -> Value {
+    let proben = normalisierung_proben();
+    let norm: Vec<String> = proben
+        .iter()
+        .map(|p| wai_retrieval::fts_normalisieren(p))
+        .collect();
+    let zerlegt = fts5_zerlegen(c5, &norm);
+    json!({
+        "hinweis": "lva#463: Vor dem Indexieren UND bei der Anfrage ersetzt der Desktop die Zeichen aus `zeichen` (ß/ẞ → ss, æ → ae, …); danach zerlegt `unicode61 remove_diacritics 2`. Der Anfragetext durchläuft zuerst `content_tokens` (Kleinschreibung, Stoppwörter), dann die Faltung, dann den Tokenizer. Gespeicherter Text und Zitat bleiben unverändert. `proben`: Eingabe → `normalisiert` (Ergebnis der Faltung) → `fts5` (Wörter des Tokenizers dazu, in Reihenfolge).",
+        "zeichen": wai_retrieval::FTS_FALTUNG
+            .iter()
+            .map(|(von, nach)| json!({"von": von.to_string(), "nach": nach, "codepunkt": *von as u32}))
+            .collect::<Vec<_>>(),
+        "proben": proben
+            .iter()
+            .zip(norm.iter().zip(&zerlegt))
+            .map(|(p, (n, z))| json!({"text": p, "normalisiert": n, "fts5": z}))
+            .collect::<Vec<_>>(),
+    })
+}
+
+/// Dateien, die der Test in den Papierkorb legt: viele Wörter der Fragen, damit eine Zählung über sie den Rohrang
+/// sichtbar verschieben würde (synthetisch).
+fn gesperrte_dateien() -> Vec<(&'static str, String)> {
+    vec![
+        (
+            "Gesperrt-Vertrag.txt",
+            "Kündigung Kündigungsfrist Vertrag Laufzeit Straße Strasse Budget Fassade Angebot Vorstand. "
+                .repeat(8),
+        ),
+        (
+            "Gesperrt-Haus.txt",
+            "Ruhezeiten Haus Müll Tonnen Säcke Treppenhaus Nachtruhe Zugvogel Mieter Genossenschaft. "
+                .repeat(8),
+        ),
+        (
+            "Gesperrt-Cafe.txt",
+            "Café crème brûlée Zoë Müller Mueller Lodz Gdansk Ærø Ørsted Straße Pariser Kommune. "
+                .repeat(8),
+        ),
+    ]
+}
+
+fn korpus_env() -> (Env, BTreeMap<String, String>) {
+    let e = env();
+    let mut dats: BTreeMap<String, String> = BTreeMap::new();
+    for (name, bytes) in korpus() {
+        let dat = e.ablegen(name, &bytes);
+        dats.insert(name.to_string(), dat);
+    }
+    e.text_und_index();
+    (e, dats)
+}
+
+fn nahe(a: f64, b: f64) -> bool {
+    (a - b).abs() <= 1e-9 * a.abs().max(b.abs()).max(1e-300)
+}
+
+/// Der Tokenizer (SQLite des Index) hinterlässt bei diesen Zeichen Nicht-ASCII; nach der Faltung bleibt nichts mehr übrig.
+#[test]
+fn faltung_ergaenzt_nur_was_fts5_nicht_faltet() {
+    let c = fts5_verbindung();
+    // Gemessen: im Latein-1-Block und in Latein erweitert-A (U+00C0..U+017F) lässt `remove_diacritics 2` genau diese
+    // Buchstaben auf Nicht-ASCII stehen (Kleinschreibung zählt nicht als Faltung).
+    let mut proben: Vec<char> = Vec::new();
+    for n in 0xC0u32..=0x17F {
+        let Some(ch) = char::from_u32(n) else {
+            continue;
+        };
+        if ch == '×' || ch == '÷' {
+            continue;
+        }
+        proben.push(ch);
+    }
+    let text: Vec<String> = proben.iter().map(|ch| format!("q{ch}q")).collect();
+    let zerlegt = fts5_zerlegen(&c, &text);
+    let mut ungefaltet: Vec<char> = Vec::new();
+    for (ch, z) in proben.iter().zip(&zerlegt) {
+        // Ein einzelnes Wort aus Buchstaben des Grundalphabets: gefaltet. Sonst bleibt Nicht-ASCII übrig.
+        if z.len() == 1 && z[0].is_ascii() {
+            continue;
+        }
+        ungefaltet.push(*ch);
+    }
+    let erfasst: Vec<char> = wai_retrieval::FTS_FALTUNG.iter().map(|(c, _)| *c).collect();
+    // Bewusst nicht aufgenommen: Zeichen ohne gebräuchliche ASCII-Schreibung im Deutschen/Europa (ŀ Katalanisch mit Mittelpunkt,
+    // ŉ Afrikaans, ĸ Grönländisch, ŋ/ŧ Samisch) und Großbuchstaben, die der Tokenizer schon klein faltet.
+    let bewusst: Vec<char> = "ŀĿŉĸŋŊŧŦ".chars().collect();
+    for ch in &ungefaltet {
+        let klein_vorhanden = erfasst.contains(ch) || bewusst.contains(ch);
+        assert!(
+            klein_vorhanden,
+            "U+{:04X} {ch} wird nicht gefaltet und fehlt in FTS_FALTUNG",
+            *ch as u32
+        );
+    }
+    // Und jedes aufgenommene Zeichen wird tatsächlich nicht gefaltet (sonst überflüssig) und nach der Faltung ASCII.
+    for (ch, nach) in wai_retrieval::FTS_FALTUNG {
+        assert!(
+            ungefaltet.contains(ch) || *ch == 'ẞ',
+            "{ch} wird schon von FTS5 gefaltet"
+        );
+        let roh = fts5_zerlegen(&c, &[format!("q{ch}q")]);
+        assert!(!roh[0][0].is_ascii(), "{ch}: FTS5 faltet selbst: {roh:?}");
+        let gefaltet = fts5_zerlegen(
+            &c,
+            &[format!(
+                "q{}q",
+                wai_retrieval::fts_normalisieren(&ch.to_string())
+            )],
+        );
+        assert_eq!(gefaltet[0].len(), 1);
+        assert!(gefaltet[0][0].is_ascii(), "{ch} → {nach}: {gefaltet:?}");
+        assert_eq!(gefaltet[0][0], format!("q{nach}q"));
+    }
+}
+
+#[test]
+fn normalisieren_beispiele() {
+    use wai_retrieval::fts_normalisieren as n;
+    assert_eq!(n("Straße"), "Strasse");
+    assert_eq!(n("GROẞE"), "GROssE");
+    assert_eq!(n("Æther Œuvre Ørsted Łódź"), "aether oeuvre orsted lódź");
+    assert_eq!(n("Þór Đorđe ıstanbul Ĳssel"), "thór dorde istanbul ijssel");
+    assert_eq!(n("Müller café 123"), "Müller café 123");
+}
+
+/// Eigenes BM25 gleicht `bm25(chunks_fts)` von FTS5 (ohne gesperrte Stücke im Bestand), für alle Musterfragen und für
+/// Anfragewörter, die der Tokenizer in mehrere Wörter zerlegt (Schriften mit Vokalzeichen).
+#[test]
+fn eigenes_bm25_gleicht_fts5() {
+    let (e, _) = korpus_env();
+    e.ablegen(
+        "Schriften.txt",
+        "हिन्दी हिंदी ไทย ภาษาไทย Hindi lernen. हिन्दी ist eine Sprache, ภาษาไทย auch.".as_bytes(),
+    );
+    e.ablegen(
+        "Wiederholung.txt",
+        "Wald Wald Wald Fuchs Wald im Wald; Fuchs und Hase im Wald.".as_bytes(),
+    );
+    e.text_und_index();
+    let c = e.db();
+    let mut fragen = fragen();
+    fragen.extend(
+        [
+            "हिन्दी",
+            "हिंदी ภาษาไทย",
+            "Wald Wald Fuchs",
+            "Wald",
+            "Hase Wald Müller",
+        ]
+        .map(String::from),
+    );
+    let mut gesehen = 0usize;
+    for f in &fragen {
+        let a: String = f.chars().take(200).collect();
+        let fts = fts5_bm25_zeilen(&c, &a);
+        let eigen = bm25_zeilen(&e.a, &a);
+        assert_eq!(fts.len(), eigen.len(), "{f:?}: Zahl der Zeilen");
+        for (x, y) in fts.iter().zip(&eigen) {
+            assert_eq!((x.0, &x.1, x.2), (y.0, &y.1, y.2), "{f:?}: Reihenfolge");
+            assert!(nahe(x.3, y.3), "{f:?}: {} != {}", x.3, y.3);
+        }
+        gesehen += fts.len();
+    }
+    assert!(gesehen > 50, "die Probe soll Treffer liefern: {gesehen}");
+}
+
+/// ß findet ss und umgekehrt, am echten Weg (Index, Suche, KI-Suche); das Zitat bleibt der Originaltext.
+#[test]
+fn strasse_findet_strasse_und_umgekehrt() {
+    let e = env();
+    e.ablegen(
+        "Eins.txt",
+        "Die Straße vor dem Haus ist gesperrt.".as_bytes(),
+    );
+    e.ablegen(
+        "Zwei.txt",
+        "Hauptstrasse 5, GROSSE Baustelle, Fußweg gesperrt.".as_bytes(),
+    );
+    e.ablegen("Drei.txt", "Der Hund bellt im Garten.".as_bytes());
+    e.text_und_index();
+    let namen = e.namen();
+    let treffer = |frage: &str| -> Vec<String> {
+        let mut v: Vec<String> = index::suchen_mit(&e.a, frage, &AblageEinbettung::Keine)
+            .unwrap()
+            .iter()
+            .map(|t| namen[&t.dat].clone())
+            .collect();
+        v.sort();
+        v
+    };
+    for frage in ["Strasse", "STRASSE", "Straße", "straße", "STRAẞE"] {
+        assert_eq!(treffer(frage), vec!["Eins.txt"], "{frage}");
+    }
+    for frage in [
+        "Hauptstrasse",
+        "Hauptstraße",
+        "große",
+        "grosse",
+        "Fussweg",
+        "Fußweg",
+    ] {
+        assert_eq!(treffer(frage), vec!["Zwei.txt"], "{frage}");
+    }
+    assert!(treffer("Straßen").is_empty());
+    // Der Auszug ist der Originaltext, nicht die gefaltete Form.
+    let t = index::suchen_mit(&e.a, "Strasse", &AblageEinbettung::Keine).unwrap();
+    assert!(
+        t[0].stellen[0].auszug.contains("Straße"),
+        "{:?}",
+        t[0].stellen[0].auszug
+    );
+    assert!(!t[0].stellen[0].auszug.contains("Strasse"));
+    // KI-Suche (derselbe Rangweg).
+    let ki = index::ki_suchen(
+        &e.a,
+        "Strasse",
+        &AblageEinbettung::Keine,
+        index::LESER_SUCHE,
+        KANDIDATEN,
+    )
+    .unwrap();
+    assert_eq!(ki.stellen.len(), 1);
+    assert!(ki.stellen[0].text.contains("Straße"));
+}
+
+/// Zählt Einbettungsaufrufe (Spion): die Umstellung eines Altbestands darf nie einbetten.
+struct Spion(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+
+impl wai_retrieval::Embedder for Spion {
+    fn id(&self) -> String {
+        "spion".into()
+    }
+
+    async fn embed(&self, _text: &str) -> wai_retrieval::Result<Vec<f32>> {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Err(wai_retrieval::RetrievalError::Embedding("spion".into()))
+    }
+
+    async fn embed_batch(&self, texts: &[String]) -> wai_retrieval::Result<Vec<Vec<f32>>> {
+        self.0
+            .fetch_add(texts.len().max(1), std::sync::atomic::Ordering::SeqCst);
+        Err(wai_retrieval::RetrievalError::Embedding("spion".into()))
+    }
+}
+
+/// Bestehender Index (ungefalteter FTS-Text, keine Marke `fts_fmt`) wird beim Öffnen einmalig umgestellt: ohne
+/// Einbetten (Spion), ohne den Stempel anzufassen (der Abgleich schreibt nichts), danach Treffer; ausdrücklicher
+/// Neuaufbau funktioniert weiter. (Eine Transaktion, die Marke steht erst am Ende: Abbruch lässt den alten Stand.)
+#[test]
+fn alter_index_wird_ohne_einbetten_umgestellt() {
+    let e = env();
+    e.ablegen(
+        "Eins.txt",
+        "Die Straße vor dem Haus ist gesperrt.".as_bytes(),
+    );
+    e.ablegen("Zwei.txt", "Der Hund bellt im Garten.".as_bytes());
+    e.text_und_index();
+    let suche = |f: &str| {
+        index::suchen_mit(&e.a, f, &AblageEinbettung::Keine)
+            .unwrap()
+            .len()
+    };
+    assert_eq!(suche("Strasse"), 1);
+    let marke = |c: &Connection| -> Option<String> {
+        c.query_row("SELECT value FROM meta WHERE key = 'fts_fmt'", [], |r| {
+            r.get(0)
+        })
+        .ok()
+    };
+    assert_eq!(marke(&e.db()).as_deref(), Some("2"));
+
+    // Zustand der Version davor: FTS-Text ungefaltet, keine Marke.
+    let altstand = |e: &Env| {
+        let c = e.db();
+        let zeilen: Vec<(i64, String)> = {
+            let mut q = c.prepare("SELECT id, text FROM chunks").unwrap();
+            q.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+                .unwrap()
+                .map(|r| r.unwrap())
+                .collect()
+        };
+        for (id, text) in &zeilen {
+            c.execute("DELETE FROM chunks_fts WHERE rowid = ?1", params![id])
+                .unwrap();
+            c.execute(
+                "INSERT INTO chunks_fts(rowid, text) VALUES(?1, ?2)",
+                params![id, text],
+            )
+            .unwrap();
+        }
+        c.execute("DELETE FROM meta WHERE key = 'fts_fmt'", [])
+            .unwrap();
+        c.execute("DELETE FROM qcache", []).unwrap();
+        c.execute("DELETE FROM lexstat", []).unwrap();
+    };
+    altstand(&e);
+    assert!(marke(&e.db()).is_none());
+
+    // Öffnen mit dem Spion stellt um, ohne einen Einbettungsaufruf.
+    let aufrufe = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let pfad = e.a.dir().join(index::INDEX);
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async {
+        let r = wai_retrieval::Retriever::open(&pfad, Spion(aufrufe.clone()))
+            .await
+            .unwrap();
+        r.close().await;
+    });
+    assert_eq!(aufrufe.load(std::sync::atomic::Ordering::SeqCst), 0);
+    assert_eq!(marke(&e.db()).as_deref(), Some("2"));
+    assert_eq!(suche("Strasse"), 1);
+    assert_eq!(suche("Straße"), 1);
+    let b = index::abgleichen_mit(&e.a, &AblageEinbettung::Keine).unwrap();
+    assert_eq!(
+        b.geschrieben, 0,
+        "der Stempel bleibt: nichts wird neu eingebettet"
+    );
+
+    // Ausdrücklicher Neuaufbau (index.db weg).
+    let b = index::neu_aufbauen_mit(&e.a, &AblageEinbettung::Keine).unwrap();
+    assert_eq!(b.geschrieben, 2);
+    assert_eq!(suche("Strasse"), 1);
+}
+
+/// Stückzahl und Wörter der lesbaren Stücke werden je (Leser, Generation) einmal gezählt, unabhängig von `k`
+/// (wachsender Kandidatenpool der KI-Suche), und mit jeder Änderung des Index oder der Freigabe neu.
+#[test]
+fn zaehlung_je_leser_und_generation_einmal() {
+    let e = env();
+    let w = e.standard();
+    let frei = e.a.ordner_anlegen(Some(&w), "Frei").unwrap();
+    let zu = e.a.ordner_anlegen(Some(&w), "Zu").unwrap();
+    e.a.ki_setzen(&frei, Some(KiStufe::An)).unwrap();
+    e.a.ki_setzen(&zu, Some(KiStufe::Gesperrt)).unwrap();
+    e.ablegen_in(
+        "Frei-1.txt",
+        "Der Kuckuck ruft im Wald. Ein Fuchs im Wald.",
+        &frei,
+    );
+    e.ablegen_in("Frei-2.txt", "Im Garten blüht der Flieder.", &frei);
+    e.ablegen_in("Zu-1.txt", "Wald Wald Wald Eule Fuchs Wald.", &zu);
+    e.text_und_index();
+    let leser = index::ki_leser(KiWeg::Global, KiProfil::Lokal);
+    let zaehlungen = |e: &Env| -> i64 {
+        e.db()
+            .query_row(
+                "SELECT value FROM meta WHERE key = 'lexstat_zaehlungen'",
+                [],
+                |r| r.get::<_, String>(0),
+            )
+            .map(|v| v.parse().unwrap())
+            .unwrap_or(0)
+    };
+    let ki = |e: &Env, f: &str, k: usize| {
+        index::ki_suchen(&e.a, f, &AblageEinbettung::Keine, &leser, k).unwrap()
+    };
+    assert_eq!(zaehlungen(&e), 0);
+    let erste = ki(&e, "Wald", 20);
+    assert_eq!(erste.stellen.len(), 1);
+    assert_eq!(zaehlungen(&e), 1);
+    // Wachsender Pool und andere Wörter: nicht neu gezählt.
+    for k in [40, 160, 640] {
+        ki(&e, "Wald", k);
+    }
+    ki(&e, "Fuchs Garten", 20);
+    assert_eq!(zaehlungen(&e), 1, "je (Leser, Generation) einmal");
+    // Anderer Leser: eigene Zählung (er sieht mehr).
+    let ui = index::lexikalisch_zeilen(&e.a, "Wald", index::LESER_SUCHE, 100).unwrap();
+    assert_eq!(ui.len(), 2);
+    assert_eq!(zaehlungen(&e), 2);
+
+    // Neue Datei: neue Generation, neu gezählt, Ränge ändern sich.
+    let vorher = index::lexikalisch_zeilen(&e.a, "Wald", &leser, 100).unwrap()[0].bm25;
+    assert_eq!(zaehlungen(&e), 2);
+    e.ablegen_in("Frei-3.txt", "Wald und Wiese.", &frei);
+    e.text_und_index();
+    let danach = index::lexikalisch_zeilen(&e.a, "Wald", &leser, 100).unwrap();
+    assert_eq!(zaehlungen(&e), 3);
+    assert!(!nahe(vorher, danach.iter().find(|z| z.page == 1).unwrap().bm25) || danach.len() > 1);
+
+    // Freigabeänderung: der gesperrte Ordner wird freigegeben; er zählt ab jetzt mit.
+    let namen = e.namen();
+    assert!(danach
+        .iter()
+        .all(|z| namen[&z.source_id].starts_with("Frei")));
+    e.a.ki_setzen(&zu, Some(KiStufe::An)).unwrap();
+    e.text_und_index();
+    let frei_gegeben = index::lexikalisch_zeilen(&e.a, "Wald", &leser, 100).unwrap();
+    assert_eq!(zaehlungen(&e), 4);
+    let namen = e.namen();
+    assert!(frei_gegeben
+        .iter()
+        .any(|z| namen[&z.source_id].starts_with("Zu")));
+}
+
+/// Eine Datei im Papierkorb beeinflusst den Rohrang der übrigen nicht (UI-Leser), auch nicht nach dem Zurückholen
+/// umgekehrt: erst dann zählt sie wieder.
+#[test]
+fn papierkorb_zaehlt_nicht_in_die_idf() {
+    let (e, _) = korpus_env();
+    let roh = |f: &str| -> Vec<(String, i64, f64)> {
+        let namen = e.namen();
+        bm25_zeilen(&e.a, f)
+            .iter()
+            .map(|z| (namen[&z.1].clone(), z.2, z.3))
+            .collect()
+    };
+    let fragen = [
+        "Kündigung",
+        "Kündigungsfrist Vertrag",
+        "Straße",
+        "Ruhezeiten Haus",
+    ];
+    let vorher: Vec<_> = fragen.iter().map(|f| roh(f)).collect();
+    let mut korb = Vec::new();
+    for (name, text) in gesperrte_dateien() {
+        let dat = e.ablegen(name, text.as_bytes());
+        e.text_und_index();
+        e.a.in_papierkorb(AblageArt::Datei, &dat).unwrap();
+        korb.push(dat);
+    }
+    index::abgleichen_mit(&e.a, &AblageEinbettung::Keine).unwrap();
+    for (f, v) in fragen.iter().zip(&vorher) {
+        let nachher = roh(f);
+        assert_eq!(v.len(), nachher.len(), "{f}");
+        for (x, y) in v.iter().zip(&nachher) {
+            assert_eq!((&x.0, x.1), (&y.0, y.1), "{f}");
+            assert!(nahe(x.2, y.2), "{f}: {} != {}", x.2, y.2);
+        }
+    }
+    // Kontrolle: FTS5 selbst zählt über die ganze Tabelle; mit ihm verschöbe der Papierkorb den Rohrang.
+    let fts = fts5_bm25_zeilen(&e.db(), "Kündigungsfrist Vertrag");
+    let eigen = bm25_zeilen(&e.a, "Kündigungsfrist Vertrag");
+    assert_eq!(fts.len(), eigen.len());
+    assert!(
+        fts.iter().zip(&eigen).any(|(x, y)| !nahe(x.3, y.3)),
+        "die gesperrten Dateien müssten bm25(chunks_fts) verschieben"
+    );
+    // Zurückgeholt zählen sie wieder: der Rohrang ändert sich.
+    for d in &korb {
+        e.a.wiederherstellen(AblageArt::Datei, d).unwrap();
+    }
+    index::abgleichen_mit(&e.a, &AblageEinbettung::Keine).unwrap();
+    let danach = roh("Kündigungsfrist Vertrag");
+    assert!(danach.len() > vorher[1].len());
+}
+
+impl Env {
+    fn ablegen_in(&self, name: &str, text: &str, ordner: &str) -> String {
+        let q = self
+            .d
+            .path()
+            .join("q")
+            .join(ulid::Ulid::new().to_string())
+            .join(name);
+        fs::create_dir_all(q.parent().unwrap()).unwrap();
+        fs::write(&q, text).unwrap();
+        let z = self.a.importieren(&q, ordner, None).unwrap();
+        assert_eq!(z[0].stand, AblageImportStand::Abgelegt, "{:?}", z[0]);
+        z[0].dat.clone().unwrap()
+    }
+}
+
+/// KI-Leser: Dateien eines für die KI gesperrten Ordners zählen weder in N noch in n noch in avgdl; der Rohrang der
+/// freigegebenen Stücke ist mit und ohne sie derselbe (Keine Statistik gesperrter Inhalte fließt in Ränge ein).
+#[test]
+fn ki_leser_zaehlt_gesperrte_dateien_nicht() {
+    let frei_texte = [
+        (
+            "Frei-1.txt",
+            "Der Kuckuck ruft im Wald. Ein Fuchs schleicht durch den Wald.",
+        ),
+        (
+            "Frei-2.txt",
+            "Im Garten blüht der Flieder; die Amsel singt.",
+        ),
+        (
+            "Frei-3.txt",
+            "Wald und Wiese, Bach und Brücke, Fuchs und Hase.",
+        ),
+    ];
+    let gesperrt_texte = [
+        (
+            "Zu-1.txt",
+            "Wald Wald Wald Wald Fuchs Fuchs Kuckuck Eule Wald.",
+        ),
+        ("Zu-2.txt", "Wald im Nebel, Wald im Regen, Eule im Wald."),
+        ("Zu-3.txt", "Eule Eule Eule Eule Eule Wald Fuchs."),
+        ("Zu-4.txt", "Eule im Turm. Eule und Fuchs. Wald."),
+    ];
+    let leser = index::ki_leser(KiWeg::Global, KiProfil::Lokal);
+    let roh = |mit_gesperrten: bool| -> Vec<(String, i64, f64)> {
+        let e = env();
+        let w = e.standard();
+        let frei = e.a.ordner_anlegen(Some(&w), "Frei").unwrap();
+        let zu = e.a.ordner_anlegen(Some(&w), "Zu").unwrap();
+        e.a.ki_setzen(&frei, Some(KiStufe::An)).unwrap();
+        e.a.ki_setzen(&zu, Some(KiStufe::Gesperrt)).unwrap();
+        for (n, t) in frei_texte {
+            e.ablegen_in(n, t, &frei);
+        }
+        if mit_gesperrten {
+            for (n, t) in gesperrt_texte {
+                e.ablegen_in(n, t, &zu);
+            }
+        }
+        e.text_und_index();
+        let namen = e.namen();
+        let mut aus = Vec::new();
+        for f in ["Wald", "Wald Eule", "Fuchs Kuckuck Wald"] {
+            let z = index::lexikalisch_zeilen(&e.a, f, &leser, 100).unwrap();
+            assert!(
+                z.iter().all(|z| namen[&z.source_id].starts_with("Frei")),
+                "{f}: nur Freigegebenes"
+            );
+            aus.extend(z.iter().map(|z| {
+                (
+                    format!("{f}|{}", namen[&z.source_id]),
+                    z.page as i64,
+                    z.bm25,
+                )
+            }));
+        }
+        // Der UI-Leser sieht alle (Kontrolle, dass die gesperrten Dateien wirklich im Index liegen).
+        if mit_gesperrten {
+            let ui = index::lexikalisch_zeilen(&e.a, "Eule", index::LESER_SUCHE, 100).unwrap();
+            assert!(ui.iter().any(|z| namen[&z.source_id].starts_with("Zu")));
+            let ki = index::lexikalisch_zeilen(&e.a, "Eule", &leser, 100).unwrap();
+            assert!(ki.is_empty());
+        }
+        aus
+    };
+    let ohne = roh(false);
+    let mit = roh(true);
+    assert!(!ohne.is_empty());
+    assert_eq!(ohne.len(), mit.len());
+    for (x, y) in ohne.iter().zip(&mit) {
+        assert_eq!((&x.0, x.1), (&y.0, y.1));
+        assert!(nahe(x.2, y.2), "{}: {} != {}", x.0, x.2, y.2);
     }
 }
 
