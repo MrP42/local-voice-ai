@@ -1098,6 +1098,11 @@ struct VoiceListContent: View {
         }
         .navigationTitle("Stimme").navigationBarTitleDisplayMode(.inline)
         .task { await phonon.refresh() }
+        .onAppear {
+            // Liest gerade eine Phonon-Stimme einer anderen Sprache, den Block mit dem Haken aufklappen.
+            if let current = PhononEngine.voiceName(playback.voiceIdentifier),
+               otherPhonon.contains(where: { current.hasPrefix($0 + ":") }) { othersShown = true }
+        }
     }
 
     @ViewBuilder private func phononSection(_ language: String) -> some View {
@@ -1119,7 +1124,7 @@ struct VoiceListContent: View {
                     if let caption { Text(caption).font(.caption).foregroundStyle(.secondary) }
                 }
                 Spacer()
-                if id == playback.voiceIdentifier { Image(systemName: "checkmark") }
+                if id == playback.voiceIdentifier { Image(systemName: "checkmark").accessibilityHidden(true) }
             }.frame(minHeight: 44).contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -1134,7 +1139,7 @@ struct VoiceListContent: View {
                     Text(v.quality == .premium ? "Premium" : v.quality == .enhanced ? "Erweitert" : "Standard").font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
-                if v.identifier == playback.voiceIdentifier { Image(systemName: "checkmark") }
+                if v.identifier == playback.voiceIdentifier { Image(systemName: "checkmark").accessibilityHidden(true) }
             }.frame(minHeight: 44).contentShape(Rectangle())
         }
         .buttonStyle(.plain)
