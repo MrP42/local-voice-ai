@@ -122,7 +122,7 @@ extension AblageJSON {
 
 // MARK: - Register
 
-/// `{"wert": …, "zaehler": u64, "geraet": "g_…"}`. Das höhere `(zaehler, geraet)` gewinnt (D5a-2).
+/// `{"wert": …, "zaehler": u64, "geraet": "g_…"}`. Das höhere `(zaehler, geraet)` gewinnt (`AblageZusammenfuehren.gewinner`).
 public struct AblageRegister<T: AblageWert>: AblageWert {
     public var wert: T
     public var zaehler: UInt64

@@ -49,8 +49,11 @@ public struct AblageKarte<Wert: Sendable>: Sendable, ExpressibleByDictionaryLite
 
 extension AblageKarte: Equatable where Wert: Equatable {
     public static func == (a: Self, b: Self) -> Bool {
-        a.nachBytes.count == b.nachBytes.count
-            && a.nachBytes.allSatisfy { b.nachBytes[$0.key].map { e in e.value == $0.value.value } ?? false }
+        guard a.nachBytes.count == b.nachBytes.count else { return false }
+        for (k, links) in a.nachBytes {
+            guard let rechts = b.nachBytes[k], rechts.value == links.value else { return false }
+        }
+        return true
     }
 }
 
