@@ -345,6 +345,23 @@ public struct TextParagraph: Equatable, Sendable {
     public var heading: Bool
 }
 
+/// Sortierung der Bibliothek, dieselben Werte und Texte wie am Desktop (`library.sort.*`, lva#474).
+/// Der Rohwert wird gemerkt (`@AppStorage`) und darf deshalb nicht umbenannt werden.
+public enum LibrarySort: String, CaseIterable, Identifiable, Sendable {
+    case recent, added, title, author
+    public var id: String { rawValue }
+    public var label: String {
+        switch self {
+        case .recent: return "Zuletzt gehört"
+        case .added: return "Zuletzt hinzugefügt"
+        case .title: return "Titel"
+        case .author: return "Autor"
+        }
+    }
+    /// Gemerkter Wert; Unbekanntes (z. B. aus einer neueren Version) fällt auf den Standard zurück.
+    public static func stored(_ raw: String) -> LibrarySort { LibrarySort(rawValue: raw) ?? .recent }
+}
+
 public enum LibraryText {
     /// Absätze (durch Leerzeilen getrennt) samt Beginn, wie `splitParagraphs` am Desktop.
     public static func paragraphs(_ text: String) -> [TextParagraph] {
@@ -501,6 +518,50 @@ public enum LibraryText {
     /// Favoriten zuerst, sonst bleibt die Reihenfolge, wie `sortViews` am Desktop.
     public static func favoritesFirst(_ books: [LibraryBook]) -> [LibraryBook] {
         books.filter(\.favorite) + books.filter { !$0.favorite }
+    }
+
+    /// Sortiert wie die Desktop-Bibliothek (`sortViews`, lva#474): Favoriten davor, untereinander in derselben
+    /// Ordnung. `lastUsed` liefert den jüngsten Fortschrittsstempel eines Buchs (0 = nie geöffnet).
+    /// Gleichstand fällt auf das Importdatum und dann den Titel zurück, damit die Reihenfolge stabil bleibt
+    /// (Altbestand ohne `added_ms` liest sich als 0 und steht bei „Zuletzt hinzugefügt“ am Ende).
+    public static func sorted(_ books: [LibraryBook], by sort: LibrarySort,
+                              lastUsed: (LibraryBook) -> Double = { _ in 0 }) -> [LibraryBook] {
+        let used = sort == .recent ? Dictionary(books.map { ($0.id, lastUsed($0)) }, uniquingKeysWith: max) : [:]
+        func byTitle(_ a: LibraryBook, _ b: LibraryBook) -> Bool? {
+            let r = sortKey(a.title).compare(sortKey(b.title), locale: Locale(identifier: "de"))
+            return r == .orderedSame ? nil : r == .orderedAscending
+        }
+        func byAdded(_ a: LibraryBook, _ b: LibraryBook) -> Bool? { a.addedMs == b.addedMs ? nil : a.addedMs > b.addedMs }
+        func before(_ a: LibraryBook, _ b: LibraryBook) -> Bool {
+            if a.favorite != b.favorite { return a.favorite }
+            switch sort {
+            case .title:
+                return byTitle(a, b) ?? (a.id < b.id)
+            case .author:
+                let r = surname(a.authors).compare(surname(b.authors), locale: Locale(identifier: "de"))
+                if r != .orderedSame { return r == .orderedAscending }
+                return byTitle(a, b) ?? (a.id < b.id)
+            case .added:
+                return byAdded(a, b) ?? byTitle(a, b) ?? (a.id < b.id)
+            case .recent:
+                let ua = used[a.id] ?? 0, ub = used[b.id] ?? 0
+                if ua != ub { return ua > ub }
+                return byAdded(a, b) ?? byTitle(a, b) ?? (a.id < b.id)
+            }
+        }
+        return books.sorted(by: before)
+    }
+
+    /// Vergleichsschlüssel ohne Groß-/Kleinschreibung und Akzente (wie `fold` am Desktop).
+    static func sortKey(_ s: String) -> String {
+        s.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "de"))
+    }
+
+    /// Nachname zum Sortieren: „Theodor Fontane“ → „fontane“, „Kafka, Franz“ → „kafka“.
+    static func surname(_ authors: [String]) -> String {
+        let a = authors.first ?? ""
+        let name = a.contains(",") ? String(a.split(separator: ",").first ?? "") : String(a.split(whereSeparator: \.isWhitespace).last ?? "")
+        return sortKey(name.trimmingCharacters(in: .whitespaces))
     }
 
     /// Index des Absatzes, in dem `chars` liegt (der letzte davor, falls dazwischen).

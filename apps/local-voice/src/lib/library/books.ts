@@ -220,9 +220,15 @@ export function sortViews(
           byTitle(a, b)
         );
       case "added":
-        return b.book.added_ms - a.book.added_ms;
+        // Gleichstand (z. B. Altbestand ohne Importdatum) nach Titel, damit die
+        // Reihenfolge nicht von der Ladefolge abhängt.
+        return b.book.added_ms - a.book.added_ms || byTitle(a, b);
       default:
-        return b.lastUsed - a.lastUsed || b.book.added_ms - a.book.added_ms;
+        return (
+          b.lastUsed - a.lastUsed ||
+          b.book.added_ms - a.book.added_ms ||
+          byTitle(a, b)
+        );
     }
   };
   const favorite = (v: BookView) => (favoritesFirst && isFavorite(v) ? 0 : 1);

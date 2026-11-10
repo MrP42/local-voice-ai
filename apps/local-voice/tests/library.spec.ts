@@ -791,6 +791,26 @@ test("Vorlesen: Buch ablegen öffnet es, Hörbuch geht in die Bibliothek", async
   await page.screenshot({ path: shot("vorlesen-drop-hoerbuch-toast-1440.png") });
 });
 
+test("Sortierung „Zuletzt hinzugefügt“: neueste zuerst, Wahl bleibt nach Neuladen (lva#474)", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  const titles = page.getByTestId("library-card").locator(".library-title");
+  // Standard „Zuletzt gehört“: Effi (40 % gehört) vor den übrigen.
+  await expect(titles).toHaveText(["Effi Briest", "Die Verwandlung", "Der Schimmelreiter"]);
+  await page.locator(".library-sort .app-select__control").click();
+  await page.locator(".app-select__option", { hasText: "Zuletzt hinzugefügt" }).click();
+  // Importdatum (added_ms 3, 2, 1), neueste zuerst – unabhängig vom Fortschritt.
+  await expect(titles).toHaveText(["Die Verwandlung", "Effi Briest", "Der Schimmelreiter"]);
+  await expect
+    .poll(() => page.evaluate(() => window.localStorage.getItem("lva.ui.library.sort")))
+    .toBe("added");
+  await page.reload();
+  await expect(page.locator(".library-sort")).toContainText("Zuletzt hinzugefügt");
+  await expect(titles).toHaveText(["Die Verwandlung", "Effi Briest", "Der Schimmelreiter"]);
+});
+
 test("390 px: Filter-Chips, Sortierung und Menüknöpfe haben Trefferflächen ≥ 44 px", async ({
   page,
 }) => {
