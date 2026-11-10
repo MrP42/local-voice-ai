@@ -6,6 +6,8 @@ import {
   Clock,
   FileText,
   Folder,
+  FolderSymlink,
+  Link as LinkSymbol,
   Monitor,
   PauseCircle,
   Plus,
@@ -26,6 +28,7 @@ import type {
   AblageOrdner,
   AblageKollisionswahl,
   AblageSyncZustand,
+  AblageVerknuepft,
 } from "@/bindings";
 import { IconButton } from "../ui/IconButton";
 import { Button } from "../ui/Button";
@@ -116,7 +119,18 @@ export const OrdnerBaum: React.FC<{
   korbAnzahl: number;
   onWahl(id: string): void;
   onNeu(): void;
-}> = ({ ordner, gewaehlt, korbAnzahl, onWahl, onNeu }) => {
+  /** D7: verknüpfte Ordner (nur lesen, nur dieses Gerät). */
+  verknuepft?: AblageVerknuepft[];
+  onVerknuepfen?: () => void;
+}> = ({
+  ordner,
+  gewaehlt,
+  korbAnzahl,
+  onWahl,
+  onNeu,
+  verknuepft = [],
+  onVerknuepfen,
+}) => {
   const { t } = useTranslation();
   const { wurzeln, wiederhergestellt } = baumBauen(ordner);
   const zeile = (k: BaumKnoten): React.ReactNode => (
@@ -184,6 +198,47 @@ export const OrdnerBaum: React.FC<{
           <div className="ablage-grp">{t("ablage.baum.wiederhergestellt")}</div>
           {wiederhergestellt.map(zeile)}
         </>
+      )}
+      <div className="ablage-grp" data-testid="ablage-verknuepft-gruppe">
+        {t("ablage.verknuepft.gruppe")}
+      </div>
+      {verknuepft.map((v) => (
+        <button
+          key={v.ordner.id}
+          type="button"
+          className="ablage-row"
+          aria-current={gewaehlt === v.ordner.id ? "true" : undefined}
+          onClick={() => onWahl(v.ordner.id)}
+          title={t("ablage.verknuepft.hinweisKurz")}
+          data-testid={`ablage-ordner-${v.ordner.id}`}
+        >
+          <FolderSymlink size={20} aria-hidden="true" />
+          <span className="ablage-row__name">{v.ordner.name}</span>
+          {!v.erreichbar && (
+            <span
+              role="img"
+              aria-label={t("ablage.verknuepft.nichtErreichbar")}
+              style={{ color: "var(--abl-warn)" }}
+            >
+              <AlertTriangle size={16} aria-hidden="true" />
+            </span>
+          )}
+          <span className="ablage-row__ct">{v.ordner.dateien}</span>
+        </button>
+      ))}
+      {onVerknuepfen && (
+        <button
+          type="button"
+          className="ablage-row ablage-mut"
+          onClick={onVerknuepfen}
+          aria-haspopup="dialog"
+          data-testid="ablage-verknuepfen"
+        >
+          <LinkSymbol size={20} aria-hidden="true" />
+          <span className="ablage-row__name">
+            {t("ablage.verknuepft.verknuepfen")}
+          </span>
+        </button>
       )}
       <div className="ablage-grp">{t("ablage.baum.weitere")}</div>
       <button
@@ -295,7 +350,10 @@ export const DateiTabelle: React.FC<{
               {formatBytes(d.groesse, i18n.language)}
             </td>
             <td className="ablage-spalte-klasse">
-              <KiKlasseChips ki={d.ki} klasse={d.klasse} />
+              <KiKlasseChips
+                ki={d.verknuepft ? { ...d.ki, zustand: "aus" } : d.ki}
+                klasse={d.klasse}
+              />
             </td>
             {sync?.get(d.id) && !d.konflikt ? (
               <td>
@@ -439,6 +497,8 @@ export const Details: React.FC<{
   /** D2: Fundstelle aus der Inhaltssuche (Anker, Pfad, Auszug). */
   fundstelle?: AblageFundstelle | null;
   anfrage?: string;
+  /** Im Blatt (schmales Fenster) trägt der Dialog Titel und Schließen-Knopf: kein zweiter Kopf. */
+  imBlatt?: boolean;
 }> = ({
   datei,
   pfad,
@@ -451,11 +511,12 @@ export const Details: React.FC<{
   ueberschriftId,
   fundstelle,
   anfrage,
+  imBlatt = false,
 }) => {
   const { t, i18n } = useTranslation();
   const textFehler = datei.text_code
     ? t(
-        `ablage.details.textFehler.${datei.text_code.replace(/^extrakt\./, "")}`,
+        `ablage.details.textFehler.${datei.text_code.replace(/^(extrakt|ablage|verknuepft)\./, "")}`,
         {
           defaultValue: t("ablage.details.textFehler.allgemein"),
         },
@@ -470,21 +531,23 @@ export const Details: React.FC<{
           : "");
   return (
     <>
-      <div className="ablage-head">
-        <h2 id={ueberschriftId} title={datei.name}>
-          {datei.name}
-        </h2>
-        {onSchliessen && (
-          <div className="ablage-head__tools">
-            <IconButton
-              icon={<X size={20} aria-hidden="true" />}
-              label={t("ablage.details.schliessen")}
-              size="md"
-              onClick={onSchliessen}
-            />
-          </div>
-        )}
-      </div>
+      {!imBlatt && (
+        <div className="ablage-head">
+          <h2 id={ueberschriftId} title={datei.name}>
+            {datei.name}
+          </h2>
+          {onSchliessen && (
+            <div className="ablage-head__tools">
+              <IconButton
+                icon={<X size={20} aria-hidden="true" />}
+                label={t("ablage.details.schliessen")}
+                size="md"
+                onClick={onSchliessen}
+              />
+            </div>
+          )}
+        </div>
+      )}
       {fundstelle && (
         <div
           className="ablage-sec ablage-fundstelle"
@@ -508,20 +571,32 @@ export const Details: React.FC<{
       </div>
       <div className="ablage-sec">
         <h3>{t("ablage.ki.fuerDieKi")}</h3>
-        <div className="ablage-sw">
-          <span>
-            {kiText(datei.ki)}
-            <br />
-            <span className="ablage-mut">{t("ablage.ki.nurAuszuege")}</span>
-          </span>
-          <Button
-            onClick={onKi}
-            disabled={busy}
-            data-testid="ablage-ki-aendern"
-          >
-            {t("ablage.ki.aendern")}
-          </Button>
-        </div>
+        {datei.verknuepft ? (
+          // Die KI erreicht verknüpfte Ordner nie: nur ein Hinweis, kein Schalter.
+          <div className="ablage-sw">
+            <span
+              className="ablage-mut"
+              data-testid="ablage-ki-nicht-verfuegbar"
+            >
+              {t("ablage.ki.verknuepftNichtVerfuegbar")}
+            </span>
+          </div>
+        ) : (
+          <div className="ablage-sw">
+            <span>
+              {kiText(datei.ki)}
+              <br />
+              <span className="ablage-mut">{t("ablage.ki.nurAuszuege")}</span>
+            </span>
+            <Button
+              onClick={onKi}
+              disabled={busy}
+              data-testid="ablage-ki-aendern"
+            >
+              {t("ablage.ki.aendern")}
+            </Button>
+          </div>
+        )}
         <div className="ablage-sw">
           <span>{t("ablage.klasse.titel")}</span>
           <KiKlasseChips
@@ -544,32 +619,39 @@ export const Details: React.FC<{
             {textFehler}
           </div>
         )}
+        {datei.text === "nur_online" && (
+          <div className="ablage-mut" data-testid="ablage-nur-online-hinweis">
+            {t("ablage.verknuepft.nurOnlineHinweis")}
+          </div>
+        )}
       </div>
-      <div className="ablage-sec">
-        <h3>{t("ablage.details.fassungen")}</h3>
-        <dl className="ablage-kv">
-          {fassungen.map((f) => (
-            <React.Fragment key={f.fas}>
-              <dt>
-                {f.aktuell
-                  ? t("ablage.details.fassungAktuell", { nummer: f.nummer })
-                  : f.nummer}
-              </dt>
-              <dd>
-                {new Date(f.zeit).toLocaleString(i18n.language, {
-                  day: "2-digit",
-                  month: "2-digit",
-                  hour: "2-digit",
-                  minute: "2-digit",
-                })}
-                {" · "}
-                {formatBytes(f.groesse, i18n.language)}
-                {f.abgeloest && ` · ${t("ablage.details.abgeloest")}`}
-              </dd>
-            </React.Fragment>
-          ))}
-        </dl>
-      </div>
+      {!datei.verknuepft && (
+        <div className="ablage-sec">
+          <h3>{t("ablage.details.fassungen")}</h3>
+          <dl className="ablage-kv">
+            {fassungen.map((f) => (
+              <React.Fragment key={f.fas}>
+                <dt>
+                  {f.aktuell
+                    ? t("ablage.details.fassungAktuell", { nummer: f.nummer })
+                    : f.nummer}
+                </dt>
+                <dd>
+                  {new Date(f.zeit).toLocaleString(i18n.language, {
+                    day: "2-digit",
+                    month: "2-digit",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
+                  {" · "}
+                  {formatBytes(f.groesse, i18n.language)}
+                  {f.abgeloest && ` · ${t("ablage.details.abgeloest")}`}
+                </dd>
+              </React.Fragment>
+            ))}
+          </dl>
+        </div>
+      )}
       <div className="ablage-sec">
         <h3>{t("ablage.details.angaben")}</h3>
         <dl className="ablage-kv">
@@ -578,29 +660,39 @@ export const Details: React.FC<{
           <dt>{t("ablage.details.ordner")}</dt>
           <dd>{pfad}</dd>
           <dt>{t("ablage.details.ablage")}</dt>
-          <dd>{t("ablage.details.nurDiesesGeraet")}</dd>
+          <dd
+            data-testid={
+              datei.verknuepft ? "ablage-details-verknuepft" : undefined
+            }
+          >
+            {datei.verknuepft
+              ? t("ablage.verknuepft.angabe")
+              : t("ablage.details.nurDiesesGeraet")}
+          </dd>
         </dl>
       </div>
-      <div
-        className="ablage-sec"
-        style={{ display: "flex", flexWrap: "wrap", gap: 8, borderBottom: 0 }}
-      >
-        <Button
-          onClick={onUmbenennen}
-          disabled={busy}
-          data-testid="ablage-umbenennen"
+      {!datei.verknuepft && (
+        <div
+          className="ablage-sec"
+          style={{ display: "flex", flexWrap: "wrap", gap: 8, borderBottom: 0 }}
         >
-          {t("ablage.details.umbenennen")}
-        </Button>
-        <Button
-          onClick={onPapierkorb}
-          disabled={busy}
-          icon={<Trash2 size={16} aria-hidden="true" />}
-          data-testid="ablage-datei-papierkorb"
-        >
-          {t("ablage.details.papierkorb")}
-        </Button>
-      </div>
+          <Button
+            onClick={onUmbenennen}
+            disabled={busy}
+            data-testid="ablage-umbenennen"
+          >
+            {t("ablage.details.umbenennen")}
+          </Button>
+          <Button
+            onClick={onPapierkorb}
+            disabled={busy}
+            icon={<Trash2 size={16} aria-hidden="true" />}
+            data-testid="ablage-datei-papierkorb"
+          >
+            {t("ablage.details.papierkorb")}
+          </Button>
+        </div>
+      )}
     </>
   );
 };
@@ -631,6 +723,8 @@ export const Hochladeliste: React.FC<{
   onWahl(z: UploadZeile, wahl: AblageKollisionswahl | null): void;
   onSchliessen(): void;
   fehlerText(code: string | null): string;
+  /** Im Blatt (schmales Fenster) trägt der Dialog Titel und Schließen-Knopf: kein zweiter Kopf. */
+  imBlatt?: boolean;
 }> = ({
   zeilen,
   ordnerName,
@@ -638,23 +732,26 @@ export const Hochladeliste: React.FC<{
   onWahl,
   onSchliessen,
   fehlerText,
+  imBlatt = false,
 }) => {
   const { t } = useTranslation();
   return (
     <>
-      <div className="ablage-head">
-        <h2 id={ueberschriftId}>
-          {t("ablage.hochladen.titel", { count: zeilen.length })}
-        </h2>
-        <div className="ablage-head__tools">
-          <IconButton
-            icon={<X size={20} aria-hidden="true" />}
-            label={t("ablage.hochladen.schliessen")}
-            size="md"
-            onClick={onSchliessen}
-          />
+      {!imBlatt && (
+        <div className="ablage-head">
+          <h2 id={ueberschriftId}>
+            {t("ablage.hochladen.titel", { count: zeilen.length })}
+          </h2>
+          <div className="ablage-head__tools">
+            <IconButton
+              icon={<X size={20} aria-hidden="true" />}
+              label={t("ablage.hochladen.schliessen")}
+              size="md"
+              onClick={onSchliessen}
+            />
+          </div>
         </div>
-      </div>
+      )}
       <div className="ablage-up" aria-live="polite">
         {zeilen.map((z) => (
           <div key={z.key} data-testid={`ablage-upload-${z.stand}`}>

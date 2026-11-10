@@ -51,4 +51,8 @@ export const api = {
   semantikLaden: () => ok(commands.ablageSemantikLaden()),
   semantikAbbrechen: () => ok(commands.ablageSemantikAbbrechen()),
   semantikLoeschen: () => ok(commands.ablageSemantikLoeschen()),
+  verknuepfen: (pfad: string) => ok(commands.ablageVerknuepfen(pfad)),
+  verknuepfungLoesen: (id: string) => ok(commands.ablageVerknuepfungLoesen(id)),
+  verknuepftAbtasten: (id: string | null) =>
+    ok(commands.ablageVerknuepftAbtasten(id)),
 };

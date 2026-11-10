@@ -283,6 +283,8 @@ windows = { version = "0.61.3", features = [
   "Graphics_Imaging",
   "Storage",
   "Storage_Streams",
+  # lva#395 D7 (Ablage-OCR): Bild-PDFs seitenweise rendern (Windows.Data.Pdf).
+  "Data_Pdf",
   # B4 (Workflow-Baustein notify.local): Windows-Mitteilung (Toast) mit XML-Text.
   "UI_Notifications",
   "Data_Xml_Dom",

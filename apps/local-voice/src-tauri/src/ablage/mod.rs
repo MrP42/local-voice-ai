@@ -1,5 +1,5 @@
-//! Dokumentenablage, Stufen D1, D2, D6 und Vorbau D3 (Epic local-voice-ai#395, Issues #407/#408, wai-sdk
-//! ADR-0029).
+//! Dokumentenablage, Stufen D1, D2, D6, D7 und Vorbau D3 (Epic local-voice-ai#395, Issues #407/#408,
+//! wai-sdk ADR-0029).
 //!
 //! Lokale Ablage im Datenordner der App: Ordner, Dateien mit Fassungen, Papierkorb, sichere Ablage mit
 //! Journal und Wiederanlauf, gerätelokale KI-Freigaben (D1); Textfassungen im begrenzten Unterprozess,
@@ -16,6 +16,9 @@
 //! * [`index`]: `index.db` über `wai-retrieval`, Abgleich und Suche.
 //! * [`ki`]: D3, Form `auszuege`, Herkunftsmarken, Widerrufsprüfung, `ablage_entwurf_anlegen`.
 //! * [`semantik`]: D6, lokale Vektoren (`multilingual-e5-small`, ONNX) für die hybride Suche (Opt-in).
+//! * [`verknuepft`]: D7, verknüpfte Ordner des Geräts (nur lesen, nie synchronisiert), Dateibeobachter.
+//! * [`eintrag`]: D7, Einträge ohne Öffnen lesen (Windows: `FindFirstFileExW`) und beurteilen (Cloud-Dateien, nur online).
+//! * [`ocr`]: D7, lokale Texterkennung für Bild-PDFs und Bilder (Windows.Media.Ocr; macOS noch nicht).
 //! * [`befehle`]: die Tauri-Befehle.
 //!
 //! Datenschutz: nie Datei- oder Ordnernamen, Pfade oder Inhalte in Log oder Fehlertext; Fehler tragen
@@ -23,14 +26,17 @@
 
 pub mod aufbewahrung;
 pub mod befehle;
+pub mod eintrag;
 pub mod extrakt;
 pub mod freigabe;
 pub mod index;
 pub mod ki;
+pub mod ocr;
 pub mod semantik;
 pub mod speicher;
 pub mod textfassung;
 pub mod textlauf;
+pub mod verknuepft;
 pub mod zusammenfuehren;
 
 #[cfg(test)]
@@ -39,6 +45,8 @@ mod tests;
 mod tests_d2;
 #[cfg(test)]
 mod tests_d3;
+#[cfg(test)]
+mod tests_d7;
 
 use serde::Serialize;
 use std::fmt;
@@ -135,6 +143,8 @@ pub fn ist_umweg(meta: &fs::Metadata) -> bool {
     }
     false
 }
+
+// Urteile über Einträge im verknüpften Baum (Windows: Cloud-Platzhalter, Reparse-Tags) stehen in [`eintrag`].
 
 /// Hat die offene Datei mehr als einen Verzeichniseintrag (Hartlink)? Ein Hartlink kann auf eine Datei
 /// außerhalb der Ablage zeigen (oder von dort kommen) und wird deshalb nicht gelesen, aufgenommen oder

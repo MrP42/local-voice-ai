@@ -948,6 +948,83 @@ fn nur_geraet_und_personal_erscheinen_nie_im_hub() {
     assert_eq!(a.zustand_von(&p3), Some(AblageSyncZustand::NurGeraet));
 }
 
+/// D7 (Spec §8): verknüpfte Ordner sind gerätelokal und werden nie synchronisiert: weder Ordner noch
+/// Dateien noch Namen noch Inhalte erreichen den Hub, auch nach Abtasten, Freigabe und Klassenwechsel.
+#[test]
+fn verknuepfte_ordner_erscheinen_nie_im_hub() {
+    use crate::ablage::freigabe::KiStufe;
+    use crate::ablage::verknuepft;
+    let hub = FakeHub::neu();
+    let a = geraet("a");
+    let offen = a.ordner("Offen");
+    a.ablegen("Notiz.txt", "darf zum Hub", &offen);
+    // Außerhalb des Datenordners (der Datenordner selbst lässt sich nicht verknüpfen).
+    let aussen = tempfile::tempdir().unwrap();
+    let draussen = aussen.path().join("Projektordner");
+    std::fs::create_dir_all(draussen.join("Unterlagen")).unwrap();
+    std::fs::write(
+        draussen.join("Unterlagen/Gehaltsliste.txt"),
+        "GEHEIM-verknuepft",
+    )
+    .unwrap();
+    std::fs::write(draussen.join("Vertrag.txt"), "GEHEIM-verknuepft-2").unwrap();
+    let draussen = std::fs::canonicalize(draussen).unwrap();
+    let id = verknuepft::verknuepfen(&a.a, &draussen).unwrap();
+    verknuepft::abtasten(&a.a, &id).unwrap();
+    a.a.ki_setzen(&id, Some(KiStufe::An)).unwrap();
+    a.a.ordner_einstellungen(
+        &id,
+        &AblageEinstellungen {
+            datenklasse: Some("internal".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let dats: Vec<String> = verknuepft::bestand(a.a.dir(), &id)
+        .dateien
+        .values()
+        .map(|e| e.dat.clone())
+        .collect();
+    assert_eq!(dats.len(), 2);
+    a.sync(&hub);
+    a.sync(&hub);
+    let ids: BTreeSet<String> =
+        hub.mit(|i| i.mitschnitt.iter().map(|o| o.object_id.clone()).collect());
+    assert!(ids.contains(&offen), "der Abgleich lief");
+    assert!(!ids.contains(&id), "verknüpfter Ordner nie am Hub");
+    for d in &dats {
+        assert!(
+            !ids.contains(d),
+            "Datei eines verknüpften Ordners nie am Hub"
+        );
+    }
+    for (_, _, klar) in mitschnitt_klartexte(&hub) {
+        assert!(
+            !klar.contains("Projektordner")
+                && !klar.contains("Gehaltsliste")
+                && !klar.contains("Vertrag.txt")
+                && !klar.contains(&id),
+            "kein Name und keine Kennung im Klartext"
+        );
+    }
+    for inhalt in ["GEHEIM-verknuepft", "GEHEIM-verknuepft-2"] {
+        assert!(
+            hub.mit(|i| !i.hochgeladen.contains(&hid(inhalt))),
+            "{inhalt}"
+        );
+    }
+    // Der Sync-Zustand führt sie nicht; die Quelle ist unverändert.
+    let st = stand(&a.a, Some(&test_konto())).unwrap();
+    assert!(st
+        .eintraege
+        .iter()
+        .all(|e| e.id != id && !dats.contains(&e.id)));
+    assert_eq!(
+        std::fs::read_to_string(draussen.join("Vertrag.txt")).unwrap(),
+        "GEHEIM-verknuepft-2"
+    );
+}
+
 #[test]
 fn wechsel_zu_nur_geraet_entfernt_cloud_kopien_und_behaelt_lokale() {
     let hub = FakeHub::neu();

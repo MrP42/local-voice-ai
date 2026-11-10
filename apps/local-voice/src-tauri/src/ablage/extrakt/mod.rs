@@ -344,6 +344,18 @@ pub(crate) fn datei_lesen(pfad: &std::path::Path, max: u64) -> Result<Vec<u8>, E
 }
 
 fn ausfuehren(pfad: &std::path::Path, sha: &str, typ: &str) -> Result<Textfassung, ExtraktFehler> {
+    // D7: `ocr:<typ>` liest Bild-PDFs und Bilder mit der lokalen Texterkennung (nach derselben Prüfung).
+    if let Some(innen) = typ.strip_prefix(super::ocr::PRAEFIX) {
+        if !super::ocr::ocr_typ(innen) {
+            return Err(ExtraktFehler::neu("format"));
+        }
+        let bytes = datei_lesen(pfad, MAX_EINGABE)?;
+        if hex(&Sha256::digest(&bytes)) != sha.to_ascii_lowercase() {
+            return Err(ExtraktFehler::neu("pruefsumme"));
+        }
+        drop(bytes);
+        return super::ocr::textfassung(pfad, &sha.to_ascii_lowercase(), innen);
+    }
     let f = format_aus_typ(typ).ok_or(ExtraktFehler::neu("format"))?;
     let bytes = datei_lesen(pfad, MAX_EINGABE)?;
     #[cfg(test)]
