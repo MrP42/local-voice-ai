@@ -13,7 +13,9 @@
 //! - Kein neuer Thread, keine Abhaengigkeit, kein Dauerbetrieb bei ungenutztem Ablauf: ohne
 //!   eingeschalteten Ablauf mit diesem Ausloeser liest nichts den Datentraeger.
 //!   Der Scan kostet je Ordner ein `read_dir` ohne Unterordner (hoechstens
-//!   [`MAX_ENTRIES`] Eintraege).
+//!   [`MAX_ENTRIES`] Eintraege). Liegt der Ordner selbst nur online (macOS „dataless“, Windows
+//!   `RECALL_*`), wird er vorher per Rohdaten erkannt und nicht aufgelistet; das Auflisten laeuft unter
+//!   der Abrufsperre (`ablage::eintrag::abruf_sperren`).
 //! Preis: Reaktionszeit 15 s bis `stable_seconds` + 15 s statt Millisekunden; fuer
 //! Eingangsordner ist das ohne Belang.
 //!
@@ -214,8 +216,8 @@ pub fn is_ignored_name(name: &str) -> bool {
     .any(|e| n.ends_with(e))
 }
 
-/// Dateiattribute (Windows), die einen Platzhalter ohne lokalen Inhalt kennzeichnen:
-/// `OFFLINE`, `RECALL_ON_OPEN`, `RECALL_ON_DATA_ACCESS` (dieselbe Regel wie in der Ablage).
+/// Dateiattribute (Windows; macOS: `SF_DATALESS` als `OFFLINE`), die einen Platzhalter ohne lokalen Inhalt
+/// kennzeichnen: `OFFLINE`, `RECALL_ON_OPEN`, `RECALL_ON_DATA_ACCESS` (dieselbe Regel wie in der Ablage).
 pub fn attributes_cloud_only(attrs: u32) -> bool {
     eintrag::online_urteil(attrs)
 }
@@ -304,8 +306,8 @@ pub struct SystemProbe;
 
 impl FileProbe for SystemProbe {
     fn cloud_only(&self, _path: &Path, roh: &Roh) -> bool {
-        // Unter Windows kommen die Attribute aus `FindFirstFileExW`; anderswo sind sie 0
-        // (macOS kennt „dataless“-Dateien, die App ist auf Windows ausgelegt).
+        // Unter Windows kommen die Attribute aus `FindFirstFileExW`, unter macOS aus `lstat`
+        // (`SF_DATALESS`, siehe `ablage::eintrag`); sonst sind sie 0.
         attributes_cloud_only(roh.attribute)
     }
 
@@ -359,11 +361,20 @@ pub struct Hashed {
 
 /// SHA-256 des Inhalts, in Bloecken (kein Laden der ganzen Datei), ueber ein No-Recall-Handle.
 pub fn hash_file(path: &Path) -> std::io::Result<Hashed> {
+    // macOS: wird die Datei nach dem Urteil doch noch ausgelagert, scheitert das Lesen (`EDEADLK`), statt
+    // sie herunterzuladen; die Sperre gilt fuer diesen Faden bis zum Ende des Hashens.
+    let _abrufsperre = eintrag::abruf_sperren();
     let mut file = open_checked(path)?;
     let mut hasher = Sha256::new();
     let mut buf = vec![0u8; HASH_BLOCK];
     loop {
-        let n = file.read(&mut buf)?;
+        let n = file.read(&mut buf).map_err(|e| {
+            if eintrag::ist_abruf_gesperrt(&e) {
+                std::io::Error::other("nur online oder Verknüpfung")
+            } else {
+                e
+            }
+        })?;
         if n == 0 {
             break;
         }
@@ -587,6 +598,9 @@ pub fn on_tick(
     report
 }
 
+/// Meldung, wenn der ueberwachte Ordner selbst nur in der Cloud liegt (nicht aufgelistet). Kein Name, kein Pfad.
+const FOLDER_CLOUD_ONLY: &str = "Der überwachte Ordner liegt nur in der Cloud und wird nicht gelesen; \"Immer auf diesem Gerät behalten\" holt ihn.";
+
 /// Meldet ein Problem einmal je Aenderung (`skipped` mit dem Namen des Ablaufs).
 fn problem(state: &State, report: &mut TickReport, a: &Armed, text: &str) {
     if state.note_problem(&a.row.id, text) {
@@ -689,8 +703,34 @@ fn scan_workflow(
             return;
         }
     };
-    let entries = match fs::read_dir(&dir) {
-        Ok(rd) => rd,
+    // Der Ordner selbst zuerst, ohne ihn zu oeffnen (macOS `lstat`: `SF_DATALESS`, Windows Find-Daten): liegt er
+    // nur online, wird er nicht aufgelistet (das Auflisten kann ihn laden oder synchronisieren). Ist sein
+    // Zustand nicht bestimmbar (z. B. eine Laufwerkswurzel unter Windows), entscheidet das Auflisten selbst.
+    if eintrag::roh(&dir).is_ok_and(|r| r.urteil() == Urteil::NurOnline) {
+        problem(state, report, a, FOLDER_CLOUD_ONLY);
+        return;
+    }
+    // Unter der Abrufsperre (macOS): ein Ordner, der im Fenster nach dem Urteil ausgelagert wird, scheitert
+    // beim Auflisten (`EDEADLK`), statt geladen zu werden. Die Eintraege werden hier gesammelt, damit alle
+    // `readdir`-Aufrufe unter der Sperre liegen; ein Fehler mitten im Auflisten, der „nur online“ heisst,
+    // gilt fuer den ganzen Ordner (nie eine Teilliste), alles andere ueberspringt den Eintrag wie bisher.
+    let entries = match eintrag::unter_abrufsperre(|| {
+        let mut v: Vec<fs::DirEntry> = Vec::new();
+        for e in fs::read_dir(&dir)? {
+            match e {
+                Ok(e) if v.len() < MAX_ENTRIES => v.push(e),
+                Ok(_) => break,
+                Err(e) if eintrag::ist_abruf_gesperrt(&e) => return Err(e),
+                Err(_) => {}
+            }
+        }
+        Ok(v)
+    }) {
+        Ok(v) => v,
+        Err(e) if eintrag::ist_abruf_gesperrt(&e) => {
+            problem(state, report, a, FOLDER_CLOUD_ONLY);
+            return;
+        }
         Err(e) => {
             problem(
                 state,
@@ -707,7 +747,7 @@ fn scan_workflow(
     let mut keep: HashSet<String> = HashSet::new();
     let mut hashed = 0usize;
     let mut wrote = false;
-    for entry in entries.flatten().take(MAX_ENTRIES) {
+    for entry in entries {
         let name = entry.file_name().to_string_lossy().into_owned();
         if is_ignored_name(&name) {
             continue;

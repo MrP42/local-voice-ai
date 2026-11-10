@@ -29,7 +29,26 @@
 //! * Unbekannte oder künftige Tags und Attribute: Tags nur über die Cloud-Maske zugelassen, jedes andere
 //!   Reparse-Tag abgewiesen; jedes der drei Online-Bits genügt.
 //!
-//! Plattformneutral getestet wird über die Test-Naht [`naht`], die Attribute und Tags einspeist.
+//! macOS (lva#472): Cloud-Platzhalter von OneDrive und iCloud („Dateien bei Bedarf“, File Provider) sind
+//! „dataless“: `st_flags` trägt `SF_DATALESS`, die Größe bleibt sichtbar, Blöcke und Inhalt fehlen. `lstat`
+//! und `fstat` lösen keinen Abruf aus (gemessen 10.11.2026, macOS 15.8.1, OneDrive), ebenso ein `open` mit
+//! `O_EVTONLY`; auch ein einfaches `open` zum Lesen tat es dort nicht, doch der erste `read` lädt die Datei
+//! herunter. Deshalb dieselbe Folge wie unter Windows: Rohdaten aus `lstat` ([`attribute_aus_stat_flags`]
+//! bildet `SF_DATALESS` auf [`ATTR_OFFLINE`] ab, derselbe Zustand und Code „nur online“ wie unter Windows),
+//! Urteil VOR jedem Öffnen; Stufe 1 öffnet mit `O_EVTONLY` (kein Lesezugriff, [`oeffnen_ohne_abruf`]) und urteilt
+//! am Handle (`fstat`); nur bei „lesbar“ folgt Stufe 2 mit Lesezugriff, erneutes Urteil, Kennung (Gerät,
+//! Inode) verglichen. Zusätzlich schaltet [`abruf_sperren`] für den lesenden Faden die Materialisierung aus
+//! (`setiopolicy_np(IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES, IOPOL_SCOPE_THREAD, …_OFF)`): ein Lesezugriff
+//! auf einen Platzhalter, der im Fenster nach dem Urteil ausgelagert wird, scheitert dann mit `EDEADLK`
+//! ([`ist_abruf_gesperrt`]) statt eines Downloads. Ordner, die „dataless“ sind, werden weder betreten noch
+//! aufgelistet (`readdir` kann sie materialisieren). Ohne `O_NOFOLLOW_ANY` könnte ein Zwischenglied des Pfades
+//! zwischen Prüfung und Öffnen durch einen Symlink ersetzt werden; deshalb öffnet macOS ohne Folgen mit
+//! `O_NOFOLLOW_ANY` (kein Symlink in keinem Glied). Grenzen: ein echter „dataless“-Ordner lässt sich ohne File
+//! Provider nicht herstellen (nur über die Naht geprüft); die Thread-Richtlinie wirkt nur im eigenen Faden
+//! (ein Kindprozess liest nie die Quelle, nur die Momentkopie); iCloud vor macOS 14 legte `.Name.icloud`-Stubs an
+//! (Punktdateien, werden ohnehin übersprungen).
+//!
+//! Plattformneutral getestet wird über die Test-Naht [`naht`], die Attribute, Tags und `st_flags` einspeist.
 
 use std::ffi::OsString;
 use std::fs;
@@ -53,6 +72,22 @@ pub const ATTR_RECALL_ON_OPEN: u32 = 0x4_0000;
 pub const ATTR_RECALL_ON_DATA_ACCESS: u32 = 0x40_0000;
 /// Jedes dieser Bits heißt: nur online, nie lesen, öffnen oder betreten.
 pub const ATTR_NUR_ONLINE: u32 = ATTR_OFFLINE | ATTR_RECALL_ON_OPEN | ATTR_RECALL_ON_DATA_ACCESS;
+
+/// macOS: `SF_DATALESS` in `st_flags` (`sys/stat.h`, nur lesbar, setzt der Kernel für File-Provider-Platzhalter):
+/// die Datei oder der Ordner ist ein Platzhalter ohne lokalen Inhalt.
+pub const SF_DATALESS: u32 = 0x4000_0000;
+
+/// Bildet die `st_flags` eines Eintrags (macOS) auf das Attributfeld ab: `SF_DATALESS` wird [`ATTR_OFFLINE`]
+/// (derselbe Zustand „nur online“ wie unter Windows, alle Verbraucher urteilen über [`online_urteil`]); alle
+/// anderen Flags (versteckt, komprimiert, verfolgt, …) haben mit „nur online“ nichts zu tun und fallen weg.
+#[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
+pub fn attribute_aus_stat_flags(flags: u32) -> u32 {
+    if flags & SF_DATALESS != 0 {
+        ATTR_OFFLINE
+    } else {
+        0
+    }
+}
 
 /// Reparse-Tag: Symlink.
 pub const REPARSE_TAG_SYMLINK: u32 = 0xA000_000C;
@@ -117,7 +152,8 @@ pub enum Gattung {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Roh {
     pub gattung: Gattung,
-    /// Windows-Dateiattribute (`dwFileAttributes`); außerhalb von Windows 0.
+    /// Windows-Dateiattribute (`dwFileAttributes`); macOS: [`ATTR_OFFLINE`] für einen Platzhalter
+    /// (`SF_DATALESS`, siehe [`attribute_aus_stat_flags`]); sonst 0.
     pub attribute: u32,
     /// Reparse-Tag bei gesetztem `REPARSE_POINT`, sonst 0.
     pub tag: u32,
@@ -219,7 +255,8 @@ pub fn datei_id(f: &fs::File, p: &Path) -> io::Result<(u64, u64)> {
 #[derive(Debug, Clone, Copy)]
 pub struct OeffnenArt {
     /// `false`: keiner Verknüpfung und keinem Reparse-Point folgen (Windows: `FILE_FLAG_OPEN_REPARSE_POINT`,
-    /// Unix: `O_NOFOLLOW`). `true`: normal öffnen (WOF und Dedup liefern dann den Inhalt).
+    /// Unix: `O_NOFOLLOW`, macOS: `O_NOFOLLOW_ANY`, auch kein Zwischenglied). `true`: normal öffnen (WOF und
+    /// Dedup liefern dann den Inhalt).
     pub folgen: bool,
     /// Windows: Freigabe (`FILE_SHARE_*`) der Lesestufe; Stufe 1 gibt alles frei.
     #[cfg_attr(not(windows), allow(dead_code))]
@@ -244,20 +281,34 @@ pub type UrteilFn = fn(tag: u32, attribute: u32) -> Urteil;
 /// auslöst:
 ///
 /// 1. Öffnen nur mit `FILE_READ_ATTRIBUTES` (Windows, ohne Lesezugriff; mit `FILE_FLAG_OPEN_REPARSE_POINT`
-///    und `FILE_FLAG_OPEN_NO_RECALL`), Urteil und Datei-Kennung am Handle. Nicht „lesbar“: Ende, Stufe 2
-///    wird nie aufgerufen.
+///    und `FILE_FLAG_OPEN_NO_RECALL`; macOS: `O_EVTONLY`, ohne Lesezugriff und ohne Abruf), Urteil und
+///    Datei-Kennung am Handle (macOS: `fstat`). Nicht „lesbar“: Ende, Stufe 2 wird nie aufgerufen.
 /// 2. Nur bei „lesbar“: Öffnen mit Lesezugriff nach `art`, erneut am Handle urteilen und die Kennung mit
 ///    Stufe 1 vergleichen (Tausch dazwischen: [`OeffnenFehler::Getauscht`]).
 ///
 /// Das Öffnen mit Lesezugriff ist nicht abrufsicher (`FILE_FLAG_OPEN_NO_RECALL` allein genügt nicht); der
-/// Schutz ist das Urteil davor. Restrisiko: Auslagern im Fenster zwischen Stufe 1 und 2 (Millisekunden).
-/// Auch ein Vorab-Urteil am Pfad ([`roh`]) ersetzt das nicht, es spart nur Öffnungen.
+/// Schutz ist das Urteil davor. Restrisiko: Auslagern im Fenster zwischen Stufe 1 und 2 (Millisekunden);
+/// unter macOS fängt es die Abrufsperre ([`abruf_sperren`], hier für beide Stufen gesetzt) ab: Fehler statt
+/// Download. Auch ein Vorab-Urteil am Pfad ([`roh`]) ersetzt das nicht, es spart nur Öffnungen.
+///
+/// **Aufrufer MÜSSEN [`abruf_sperren`] über das Lesen halten** und [`ist_abruf_gesperrt`] als „nur online“
+/// melden: die Sperre in dieser Funktion endet mit der Rückgabe und schützt das spätere Lesen aus der
+/// zurückgegebenen Datei NICHT (unter macOS lädt erst der `read` herunter). Kann die Sperre unter macOS nicht
+/// gesetzt werden, öffnet diese Funktion nichts (fail-closed, [`OeffnenFehler::Io`]).
 pub fn oeffnen_ohne_abruf(
     p: &Path,
     art: OeffnenArt,
     urteil: UrteilFn,
 ) -> Result<fs::File, OeffnenFehler> {
-    let eins = system::stufe1(p, art).map_err(OeffnenFehler::Io)?;
+    // macOS: auch ein Zugriff im Fenster nach dem Urteil lädt nichts herunter (Fehler statt Abruf). Ohne die
+    // Sperre wird nicht geöffnet.
+    let sperre = abruf_sperren();
+    if sperre.fehlt() {
+        return Err(OeffnenFehler::Io(io::Error::other(
+            "Abrufsperre nicht setzbar",
+        )));
+    }
+    let eins = system::stufe1(p, art).map_err(oeffnen_io)?;
     let Some((attribute, tag)) = offen_daten(&eins, p) else {
         return Err(OeffnenFehler::Urteil(Urteil::Umweg));
     };
@@ -268,7 +319,7 @@ pub fn oeffnen_ohne_abruf(
     let id1 = datei_id(&eins, p).map_err(OeffnenFehler::Io)?;
     #[cfg(test)]
     naht::stufe2_gezaehlt(p);
-    let zwei = system::stufe2(p, art).map_err(OeffnenFehler::Io)?;
+    let zwei = system::stufe2(p, art).map_err(oeffnen_io)?;
     let Some((attribute, tag)) = offen_daten(&zwei, p) else {
         return Err(OeffnenFehler::Urteil(Urteil::Umweg));
     };
@@ -283,12 +334,206 @@ pub fn oeffnen_ohne_abruf(
     Ok(zwei)
 }
 
+/// Fehler eines Öffnens: „Abruf verweigert“ (macOS `EDEADLK`) heißt nur online, ein Symlink im Pfad (macOS
+/// `ELOOP` bei `O_NOFOLLOW_ANY`) ein Umweg, alles andere ist ein E/A-Fehler.
+fn oeffnen_io(e: io::Error) -> OeffnenFehler {
+    if ist_abruf_gesperrt(&e) {
+        OeffnenFehler::Urteil(Urteil::NurOnline)
+    } else if ist_symlink_im_pfad(&e) {
+        OeffnenFehler::Urteil(Urteil::Umweg)
+    } else {
+        OeffnenFehler::Io(e)
+    }
+}
+
+/// macOS: das Öffnen ohne Folgen (`O_NOFOLLOW_ANY`) traf einen Symlink in einem Glied des Pfades (`ELOOP`).
+/// Anderswo ändert sich der Fehlercode nicht.
+fn ist_symlink_im_pfad(e: &io::Error) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        e.raw_os_error() == Some(libc::ELOOP)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = e;
+        false
+    }
+}
+
+/// Hat das System den Zugriff verweigert, weil er einen Platzhalter herunterladen müsste? macOS: `EDEADLK`
+/// (so antwortet ein Lesezugriff auf einen „dataless“-Platzhalter, solange [`abruf_sperren`] gilt, gemessen);
+/// sonst nie. Aufrufer, die nach [`oeffnen_ohne_abruf`] lesen, melden das als „nur online“.
+pub fn ist_abruf_gesperrt(e: &io::Error) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        e.raw_os_error() == Some(libc::EDEADLK)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = e;
+        false
+    }
+}
+
+/// Schaltet für den aufrufenden Faden die Materialisierung von Platzhaltern aus, solange der Wert lebt (macOS:
+/// `setiopolicy_np` mit `IOPOL_SCOPE_THREAD`; der alte Wert kommt beim Drop zurück, auch bei einer Panik,
+/// verschachtelt gilt die äußere Sperre weiter). Ein Lesezugriff auf einen Platzhalter scheitert dann mit
+/// `EDEADLK` ([`ist_abruf_gesperrt`]) statt einen Download auszulösen. Das ist die Sicherung für das Fenster
+/// nach dem Urteil; das Urteil VOR dem Öffnen bleibt der eigentliche Schutz. Wer eine Datei aus
+/// [`oeffnen_ohne_abruf`] liest, hält die Sperre über das Lesen. Ohne Allokation, ohne Sperre, ohne E/A;
+/// nicht `Send` (gilt nur für den Faden, der sie setzt). Außerhalb von macOS ohne Wirkung.
+#[must_use = "die Sperre gilt nur, solange der Wert lebt"]
+pub fn abruf_sperren() -> AbrufSperre {
+    #[cfg(target_os = "macos")]
+    {
+        mac_abruf::sperren()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        AbrufSperre {
+            wirksam: false,
+            _faden: std::marker::PhantomData,
+        }
+    }
+}
+
+/// Führt `f` (ein Zugriff, der einen Platzhalter laden könnte, z. B. `read_dir` auf einem Ordner) unter der
+/// [`abruf_sperren`] aus. Kann die Sperre unter macOS nicht gesetzt werden, läuft `f` nicht (fail-closed,
+/// Fehler `Other`); sonst und außerhalb von macOS läuft `f` immer.
+pub fn unter_abrufsperre<T>(f: impl FnOnce() -> io::Result<T>) -> io::Result<T> {
+    let sperre = abruf_sperren();
+    if sperre.fehlt() {
+        return Err(io::Error::other("Abrufsperre nicht setzbar"));
+    }
+    f()
+}
+
+/// Siehe [`abruf_sperren`].
+#[derive(Debug)]
+#[must_use = "die Sperre gilt nur, solange der Wert lebt"]
+pub struct AbrufSperre {
+    /// Der Wert vor dem Setzen, falls beim Drop wiederherzustellen (macOS).
+    #[cfg(target_os = "macos")]
+    vorher: Option<i32>,
+    wirksam: bool,
+    _faden: std::marker::PhantomData<*const ()>,
+}
+
+impl AbrufSperre {
+    /// Hat das System die Richtlinie angenommen? (Nur macOS; sonst `false`: dort gibt es nichts abzurufen.)
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn wirksam(&self) -> bool {
+        self.wirksam
+    }
+
+    /// Wäre die Sperre nötig (macOS), das System hat sie aber nicht angenommen? Dann liest oder listet der
+    /// Aufrufer nicht (fail-closed): das Urteil vor dem Öffnen bliebe sonst der einzige Schutz. Praktisch
+    /// ausgeschlossen (die Richtlinie gibt es seit macOS 10.15, der Mindestversion der App), aber nie still.
+    pub fn fehlt(&self) -> bool {
+        cfg!(target_os = "macos") && !self.wirksam
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl Drop for AbrufSperre {
+    fn drop(&mut self) {
+        if let Some(v) = self.vorher {
+            mac_abruf::wiederherstellen(v);
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+mod mac_abruf {
+    use super::AbrufSperre;
+    use std::marker::PhantomData;
+    use std::os::raw::c_int;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    extern "C" {
+        fn getiopolicy_np(iotype: c_int, scope: c_int) -> c_int;
+        fn setiopolicy_np(iotype: c_int, scope: c_int, policy: c_int) -> c_int;
+    }
+
+    /// `IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES`, `IOPOL_SCOPE_THREAD` (`sys/resource.h`).
+    const TYP: c_int = 3;
+    const FADEN: c_int = 1;
+    /// `IOPOL_MATERIALIZE_DATALESS_FILES_OFF`; `_DEFAULT` ist 0, die Grundmaske (ohne `_ORIG`) 3.
+    const AUS: c_int = 1;
+    const STANDARD: c_int = 0;
+    const GRUNDMASKE: c_int = 3;
+
+    /// Meldet höchstens einmal je Prozess (kein Pfad, kein Name), dass die Richtlinie nicht gesetzt werden kann.
+    static GEMELDET: AtomicBool = AtomicBool::new(false);
+
+    fn melden(was: &str, fehler: c_int) {
+        if !GEMELDET.swap(true, Ordering::Relaxed) {
+            log::warn!("ablage: Abrufsperre nicht setzbar ({was}, errno {fehler}); verknüpfte Ordner werden nicht gelesen");
+        }
+    }
+
+    pub fn sperren() -> AbrufSperre {
+        #[cfg(test)]
+        if super::naht::sperre_verweigert() {
+            return AbrufSperre {
+                vorher: None,
+                wirksam: false,
+                _faden: PhantomData,
+            };
+        }
+        // SAFETY: `getiopolicy_np` liest nur die E/A-Richtlinie des aufrufenden Fadens.
+        let vorher = unsafe { getiopolicy_np(TYP, FADEN) };
+        let grund = vorher & GRUNDMASKE;
+        let (wirksam, wiederherstellen) = if vorher < 0 {
+            melden(
+                "getiopolicy_np",
+                std::io::Error::last_os_error().raw_os_error().unwrap_or(0),
+            );
+            (false, None)
+        } else if grund == AUS {
+            // Schon aus (eine äußere Sperre): nichts zu setzen, nichts zurückzugeben.
+            (true, None)
+        } else if setzen(AUS) {
+            (true, Some(grund))
+        } else {
+            melden(
+                "setiopolicy_np",
+                std::io::Error::last_os_error().raw_os_error().unwrap_or(0),
+            );
+            (false, None)
+        };
+        AbrufSperre {
+            vorher: wiederherstellen,
+            wirksam,
+            _faden: PhantomData,
+        }
+    }
+
+    fn setzen(wert: c_int) -> bool {
+        // SAFETY: `setiopolicy_np` setzt nur die E/A-Richtlinie des aufrufenden Fadens.
+        unsafe { setiopolicy_np(TYP, FADEN, wert) == 0 }
+    }
+
+    pub fn wiederherstellen(vorher: c_int) {
+        if !setzen(vorher) {
+            let _ = setzen(STANDARD);
+        }
+    }
+}
+
 #[cfg(not(windows))]
 mod system {
     use super::{Eintrag, Gattung, OeffnenArt, Roh};
     use std::fs;
     use std::io;
     use std::path::Path;
+
+    /// macOS: `st_flags` des Eintrags (aus `lstat`/`fstat`, öffnet nichts).
+    #[cfg(target_os = "macos")]
+    fn flags_von(m: &fs::Metadata) -> u32 {
+        use std::os::macos::fs::MetadataExt;
+        m.st_flags()
+    }
 
     fn aus_meta(m: &fs::Metadata) -> Roh {
         let t = m.file_type();
@@ -308,9 +553,13 @@ mod system {
         };
         #[cfg(not(unix))]
         let nlink = 1;
+        #[cfg(target_os = "macos")]
+        let attribute = super::attribute_aus_stat_flags(flags_von(m));
+        #[cfg(not(target_os = "macos"))]
+        let attribute = 0;
         Roh {
             gattung,
-            attribute: 0,
+            attribute,
             tag: 0,
             groesse: m.len(),
             zeit: m
@@ -327,6 +576,20 @@ mod system {
     }
 
     pub fn alle(p: &Path) -> io::Result<Vec<Eintrag>> {
+        // macOS: ein Ordner, der nur online liegt, wird nie aufgelistet (`readdir` kann ihn materialisieren);
+        // der Aufrufer urteilt zwar schon vorher, doch der Ordner kann im Fenster davor ausgelagert worden
+        // sein. Dazu die Abrufsperre über das ganze Auflisten.
+        #[cfg(target_os = "macos")]
+        let _sperre = {
+            let sperre = super::abruf_sperren();
+            if sperre.fehlt() {
+                return Err(io::Error::other("Abrufsperre nicht setzbar"));
+            }
+            if super::online_urteil(super::attribute_aus_stat_flags(stat_flags_pfad(p)?)) {
+                return Err(io::Error::other("nur online"));
+            }
+            sperre
+        };
         let mut aus = Vec::new();
         for e in fs::read_dir(p)? {
             let Ok(e) = e else {
@@ -345,30 +608,88 @@ mod system {
         Ok(aus)
     }
 
-    pub fn offen(_f: &fs::File) -> io::Result<(u32, u32)> {
-        Ok((0, 0))
-    }
-
-    fn oeffnen(p: &Path, art: OeffnenArt) -> io::Result<fs::File> {
-        let mut o = fs::OpenOptions::new();
-        o.read(true);
-        #[cfg(unix)]
-        if !art.folgen {
-            use std::os::unix::fs::OpenOptionsExt;
-            o.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    /// macOS: `st_flags` eines Pfades (`lstat`, folgt keinem Symlink, öffnet nichts).
+    #[cfg(target_os = "macos")]
+    fn stat_flags_pfad(p: &Path) -> io::Result<u32> {
+        #[cfg(test)]
+        if let Some(f) = super::naht::stat_flags(p) {
+            return Ok(f);
         }
-        #[cfg(not(unix))]
-        let _ = art;
-        o.open(p)
+        Ok(flags_von(&fs::symlink_metadata(p)?))
     }
 
-    /// Außerhalb von Windows gibt es keinen Abruf: beide Stufen öffnen gleich.
+    /// Attribute am offenen Handle: macOS aus `fstat` (`SF_DATALESS`), sonst keine.
+    pub fn offen(f: &fs::File) -> io::Result<(u32, u32)> {
+        #[cfg(target_os = "macos")]
+        {
+            Ok((
+                super::attribute_aus_stat_flags(flags_von(&f.metadata()?)),
+                0,
+            ))
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = f;
+            Ok((0, 0))
+        }
+    }
+
+    /// Öffnen zum Lesen. `nur_ereignisse` (macOS, Stufe 1): `O_EVTONLY`, kein Lesezugriff und kein Abruf.
+    /// Ohne Folgen: `O_NOFOLLOW`, macOS `O_NOFOLLOW_ANY` (kein Symlink in keinem Glied; ab macOS 11, sonst
+    /// `EINVAL` und dann `O_NOFOLLOW`).
+    fn oeffnen(p: &Path, art: OeffnenArt, nur_ereignisse: bool) -> io::Result<fs::File> {
+        #[cfg(not(target_os = "macos"))]
+        let _ = nur_ereignisse;
+        let versuch = |ohne_any: bool| -> io::Result<fs::File> {
+            let _ = ohne_any;
+            let mut o = fs::OpenOptions::new();
+            o.read(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                let mut fl: libc::c_int = 0;
+                if !art.folgen {
+                    #[cfg(target_os = "macos")]
+                    {
+                        fl |= if ohne_any {
+                            libc::O_NOFOLLOW
+                        } else {
+                            libc::O_NOFOLLOW_ANY
+                        };
+                    }
+                    #[cfg(not(target_os = "macos"))]
+                    {
+                        fl |= libc::O_NOFOLLOW;
+                    }
+                    fl |= libc::O_NONBLOCK;
+                }
+                #[cfg(target_os = "macos")]
+                if nur_ereignisse {
+                    fl |= libc::O_EVTONLY;
+                }
+                if fl != 0 {
+                    o.custom_flags(fl);
+                }
+            }
+            #[cfg(not(unix))]
+            let _ = art;
+            o.open(p)
+        };
+        match versuch(false) {
+            #[cfg(target_os = "macos")]
+            Err(e) if !art.folgen && e.raw_os_error() == Some(libc::EINVAL) => versuch(true),
+            r => r,
+        }
+    }
+
+    /// Stufe 1: macOS nur für Ereignisse (`O_EVTONLY`, löst keinen Abruf aus); sonst wie Stufe 2 (außerhalb
+    /// von Windows und macOS gibt es keinen Abruf).
     pub fn stufe1(p: &Path, art: OeffnenArt) -> io::Result<fs::File> {
-        oeffnen(p, art)
+        oeffnen(p, art, true)
     }
 
     pub fn stufe2(p: &Path, art: OeffnenArt) -> io::Result<fs::File> {
-        oeffnen(p, art)
+        oeffnen(p, art, false)
     }
 
     pub fn id(f: &fs::File) -> io::Result<(u64, u64)> {
@@ -588,6 +909,12 @@ pub(crate) mod naht {
     type Karte = RefCell<BTreeMap<PathBuf, (u32, u32)>>;
 
     thread_local! {
+        /// Die Abrufsperre lässt sich nicht setzen (Fehlerfall von `setiopolicy_np`).
+        static SPERRE_VERWEIGERT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+        /// Pfad → `st_flags` (macOS), wie `lstat` sie für den Pfad liefert.
+        static STAT_FLAGS: RefCell<BTreeMap<PathBuf, u32>> = const { RefCell::new(BTreeMap::new()) };
+        /// Pfad → `st_flags` (macOS), wie `fstat` sie am offenen Handle liefert.
+        static HANDLE_STAT_FLAGS: RefCell<BTreeMap<PathBuf, u32>> = const { RefCell::new(BTreeMap::new()) };
         /// Pfad → (Attribute, Tag) der Find-Daten.
         static FIND: Karte = const { RefCell::new(BTreeMap::new()) };
         /// Pfad → (Attribute, Tag) am offenen Handle.
@@ -629,6 +956,38 @@ pub(crate) mod naht {
         ID_FOLGE.with(|k| k.borrow_mut().get_mut(p).and_then(VecDeque::pop_front))
     }
 
+    /// Das System verweigert in diesem Faden die Abrufsperre (macOS; wie ein Fehler von `setiopolicy_np`).
+    #[cfg(target_os = "macos")]
+    pub fn sperre_verweigern(an: bool) {
+        SPERRE_VERWEIGERT.with(|c| c.set(an));
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(super) fn sperre_verweigert() -> bool {
+        SPERRE_VERWEIGERT.with(std::cell::Cell::get)
+    }
+
+    /// `lstat` dieses Pfades meldet diese `st_flags` (z. B. [`super::SF_DATALESS`]); sie werden wie unter macOS
+    /// über [`super::attribute_aus_stat_flags`] abgebildet.
+    pub fn stat_flags_setzen(p: &Path, flags: u32) {
+        STAT_FLAGS.with(|k| k.borrow_mut().insert(p.to_path_buf(), flags));
+    }
+
+    /// `fstat` am offenen Handle dieser Datei meldet diese `st_flags`.
+    pub fn handle_stat_flags_setzen(p: &Path, flags: u32) {
+        HANDLE_STAT_FLAGS.with(|k| k.borrow_mut().insert(p.to_path_buf(), flags));
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(super) fn stat_flags(p: &Path) -> Option<u32> {
+        STAT_FLAGS.with(|k| k.borrow().get(p).copied())
+    }
+
+    /// Öffnet wie Stufe 1 von [`super::oeffnen_ohne_abruf`] (Test: Öffnungsflags prüfen).
+    pub fn stufe1_fuer_test(p: &Path, art: super::OeffnenArt) -> std::io::Result<std::fs::File> {
+        super::system::stufe1(p, art)
+    }
+
     /// Find-Daten dieses Pfades (Attribute, Tag) vortäuschen.
     pub fn setzen(p: &Path, attribute: u32, tag: u32) {
         FIND.with(|k| k.borrow_mut().insert(p.to_path_buf(), (attribute, tag)));
@@ -640,6 +999,9 @@ pub(crate) mod naht {
     }
 
     pub fn leeren() {
+        SPERRE_VERWEIGERT.with(|c| c.set(false));
+        STAT_FLAGS.with(|k| k.borrow_mut().clear());
+        HANDLE_STAT_FLAGS.with(|k| k.borrow_mut().clear());
         FIND.with(|k| k.borrow_mut().clear());
         HANDLE.with(|k| k.borrow_mut().clear());
         HANDLE_FOLGE.with(|k| k.borrow_mut().clear());
@@ -652,6 +1014,9 @@ pub(crate) mod naht {
             r.attribute = attribute;
             r.tag = tag;
         }
+        if let Some(f) = STAT_FLAGS.with(|k| k.borrow().get(p).copied()) {
+            r.attribute |= super::attribute_aus_stat_flags(f);
+        }
     }
 
     pub(super) fn handle(p: &Path) -> Option<(u32, u32)> {
@@ -659,6 +1024,9 @@ pub(crate) mod naht {
             HANDLE_FOLGE.with(|k| k.borrow_mut().get_mut(p).and_then(VecDeque::pop_front))
         {
             return Some(x);
+        }
+        if let Some(f) = HANDLE_STAT_FLAGS.with(|k| k.borrow().get(p).copied()) {
+            return Some((super::attribute_aus_stat_flags(f), 0));
         }
         HANDLE.with(|k| k.borrow().get(p).copied())
     }

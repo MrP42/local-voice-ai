@@ -20,7 +20,10 @@
 //! (`RECALL_ON_DATA_ACCESS`, `RECALL_ON_OPEN` oder `OFFLINE`), erscheint sie mit Name, Pfad und Größe und dem
 //! Stand [`NUR_ONLINE`] (kein Text, kein Index, keine Kopie), ein solcher Ordner wird nicht betreten; nie wird
 //! ein Download ausgelöst. Attribute und Tag kommen unter Windows nur aus `FindFirstFileExW` ([`eintrag`]),
-//! nie aus `fs::symlink_metadata`. Die Momentkopie prüft vor dem Öffnen
+//! nie aus `fs::symlink_metadata`. macOS (lva#472): derselbe Ablauf mit demselben Stand und Code; ein
+//! Platzhalter von OneDrive oder iCloud ist „dataless“ (`SF_DATALESS` in `st_flags`, aus `lstat`/`fstat`, nie
+//! aus einem Öffnen); Stufe 1 öffnet mit `O_EVTONLY`, der lesende Faden hält die Abrufsperre (siehe
+//! [`eintrag`]). Die Momentkopie prüft vor dem Öffnen
 //! die Wurzel und jede Komponente des relativen Pfades (nicht nur die letzte), öffnet die Datei ohne Folgen
 //! von Verknüpfungen, prüft am offenen Handle erneut auf „nur online“ (dann wird nicht gelesen), vergleicht
 //! Größe und Änderungszeit am offenen Handle mit dem Bestand, hasht beim
@@ -76,8 +79,9 @@ pub const AUSSTEHEND: &str = "ausstehend";
 pub const KEIN_FORMAT: &str = "kein_format";
 /// Hartlink (erst beim Lesen erkannt): wie ausgeschlossen, nie gelesen, nicht im Index.
 pub const ABGEWIESEN: &str = "abgewiesen";
-/// Windows: die Datei liegt nur online (OneDrive „Dateien bei Bedarf“). Sie ist in der Liste sichtbar (Name,
-/// Pfad, Größe aus den Find-Daten), wird aber nie gelesen, geöffnet oder kopiert: kein Text, kein Index.
+/// Windows und macOS: die Datei liegt nur online (OneDrive „Dateien bei Bedarf“, macOS iCloud und OneDrive über
+/// File Provider: „dataless“). Sie ist in der Liste sichtbar (Name, Pfad, Größe aus den Find-Daten bzw. `lstat`),
+/// wird aber nie gelesen, geöffnet oder kopiert: kein Text, kein Index.
 pub const NUR_ONLINE: &str = "nur_online";
 
 static SPERRE: Mutex<()> = Mutex::new(());
@@ -1099,6 +1103,9 @@ pub fn zwischen_raeumen(dir: &Path) {
 /// Kopie mit `create_new` unter `verknuepft/zwischen/`, beim Kopieren gehasht, Quelle danach unverändert,
 /// Kopie erneut gehasht. Liefert Kopie und Prüfsumme; Fehler als Code.
 pub fn momentkopie(a: &Ablage, auf: &Auftrag) -> Result<(PathBuf, String), &'static str> {
+    // macOS: Wird die Quelle nach dem Urteil doch noch ausgelagert, scheitert der Lesezugriff (`EDEADLK`,
+    // Code „cloud“), statt die Datei herunterzuladen. Die Sperre gilt für diesen Faden bis zum Ende.
+    let _abrufsperre = eintrag::abruf_sperren();
     let quelle = quelle_pruefen(&auf.wurzel, &auf.rel)?;
     // Vor dem Öffnen: Attribute der Quelle ohne zu öffnen (Windows: `FindFirstFileExW`).
     let vor = eintrag::roh(&quelle).map_err(|_| "verknuepft.lesen")?;
@@ -1151,7 +1158,13 @@ pub fn momentkopie(a: &Ablage, auf: &Auftrag) -> Result<(PathBuf, String), &'sta
         let mut puffer = vec![0u8; 1024 * 1024];
         let mut n_ges: u64 = 0;
         loop {
-            let n = von.read(&mut puffer).map_err(|_| "verknuepft.lesen")?;
+            let n = von.read(&mut puffer).map_err(|e| {
+                if eintrag::ist_abruf_gesperrt(&e) {
+                    "verknuepft.cloud"
+                } else {
+                    "verknuepft.lesen"
+                }
+            })?;
             if n == 0 {
                 break;
             }
