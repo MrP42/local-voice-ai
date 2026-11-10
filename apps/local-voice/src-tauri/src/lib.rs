@@ -28,7 +28,6 @@ mod context_menu;
 mod conversations; // U3: Sprachgespräche dauerhaft speichern
 mod cover_art; // Eingebettete Cover aus Hörbuch-Dateien
 mod ebook; // lva#149: EPUB-Import, PDF-Reflow
-mod pdf_text; // lva#149: PDF-Zeilen mit Schriftgröße und Lesezeichen
 mod helpers;
 mod hoersync_live; // Hörbuch-Sync Stufe 2: Live-Abgleich
 mod input;
@@ -49,6 +48,7 @@ mod memory_guard;
 mod overlay;
 mod paste_guard;
 mod paste_session;
+mod pdf_text; // lva#149: PDF-Zeilen mit Schriftgröße und Lesezeichen
 pub mod portable;
 pub mod portable_parts;
 mod process_guard;
