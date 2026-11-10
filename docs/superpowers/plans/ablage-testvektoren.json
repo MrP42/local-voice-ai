@@ -185,15 +185,51 @@
         },
         {
           "aus": "\"😀\"",
-          "ein": "\"😀\"",
+          "ein": "\"\\ud83d\\ude00\"",
           "gueltig": true,
           "name": "ersatzpaar"
         },
         {
+          "aus": "\"😀\"",
+          "ein": "\"\\uD83D\\uDE00\"",
+          "gueltig": true,
+          "name": "ersatzpaar_grossbuchstaben"
+        },
+        {
           "aus": "\"éÜ\"",
-          "ein": "\"éÜ\"",
+          "ein": "\"\\u00E9\\u00DC\"",
           "gueltig": true,
           "name": "hexziffern_grossbuchstaben"
+        },
+        {
+          "aus": "\"éÜ\"",
+          "ein": "\"\\u00e9\\u00dc\"",
+          "gueltig": true,
+          "name": "hexziffern_kleinbuchstaben"
+        },
+        {
+          "aus": "\"éÜ￠\"",
+          "ein": "\"\\u00E9\\u00dc\\uFfE0\"",
+          "gueltig": true,
+          "name": "hexziffern_gemischt"
+        },
+        {
+          "aus": "{\"😀\":1}",
+          "ein": "{\"\\ud83d\\ude00\":1}",
+          "gueltig": true,
+          "name": "schluessel_ersatzpaar_escape"
+        },
+        {
+          "aus": "{\"é\":2,\"é\":1}",
+          "ein": "{\"\\u00e9\":1,\"e\\u0301\":2}",
+          "gueltig": true,
+          "name": "schluessel_zusammengesetzt_zerlegt_escape"
+        },
+        {
+          "aus": "{\"é\":2}",
+          "ein": "{\"\\u00e9\":1,\"é\":2}",
+          "gueltig": true,
+          "name": "schluessel_gleich_roh_und_escape"
         },
         {
           "aus": "{\"a\":{},\"b\":[1,2]}",
@@ -324,7 +360,7 @@
         }
       ]
     },
-    "hinweis": "Zusatzvektoren der Dokumentenablage (D5). Erzeugt von sync::ablage::vektoren_zusatz::json_passt_zum_code (LVA_VEKTOREN_SCHREIBEN=1). Nicht von Hand ändern. Gruppen: escapes, zahlen, umlaut_schluessel, serde_lesefaelle, id_gueltig, tiefe_127, hub_hex, grabstein_benutzer, zusammenfuehren.",
+    "hinweis": "Zusatzvektoren der Dokumentenablage (D5). Erzeugt von sync::ablage::vektoren_zusatz::json_passt_zum_code. Neu schreiben nur mit LVA_VEKTOREN_SCHREIBEN=1 (z. B. LVA_VEKTOREN_SCHREIBEN=1 cargo test --lib sync::ablage::vektoren_zusatz::json_passt_zum_code); ohne die Variable prüft der Test nur. Nicht von Hand ändern. Gruppen: escapes, zahlen, umlaut_schluessel, serde_lesefaelle, id_gueltig, tiefe_127, hub_hex, grabstein_benutzer, zusammenfuehren.",
     "hub_hex": {
       "faelle": [
         {
@@ -859,6 +895,18 @@
           "name": "leer_emoji_und_grenzen"
         },
         {
+          "aus": "{\"a\":4,\"\":3,\"￠\":2,\"😀\":1}",
+          "ein": "{\"😀\":1,\"￠\":2,\"\":3,\"a\":4}",
+          "gueltig": true,
+          "name": "bmp_ueber_ersatzbereich_roh"
+        },
+        {
+          "aus": "{\"a\":4,\"\":3,\"￠\":2,\"😀\":1}",
+          "ein": "{\"\\ud83d\\ude00\":1,\"\\uffe0\":2,\"\\ue000\":3,\"a\":4}",
+          "gueltig": true,
+          "name": "bmp_ueber_ersatzbereich_escape"
+        },
+        {
           "aus": "{\"a\\nb\":3,\"a\\\"b\":1,\"a/b\":4,\"a\\\\b\":2}",
           "ein": "{\"a\\\"b\":1,\"a\\\\b\":2,\"a\\nb\":3,\"a/b\":4}",
           "gueltig": true,
@@ -1104,6 +1152,48 @@
           "ein": "[1.0,-0.0,1e20,0.1]",
           "gueltig": true,
           "name": "[1.0,-0.0,1e20,0.1]"
+        },
+        {
+          "aus": "0.00001",
+          "ein": "1e-5",
+          "gueltig": true,
+          "name": "1e-5"
+        },
+        {
+          "aus": "1e-6",
+          "ein": "1e-6",
+          "gueltig": true,
+          "name": "1e-6"
+        },
+        {
+          "aus": "1.5e-6",
+          "ein": "1.5e-6",
+          "gueltig": true,
+          "name": "1.5e-6"
+        },
+        {
+          "aus": "9.99e-7",
+          "ein": "9.99e-7",
+          "gueltig": true,
+          "name": "9.99e-7"
+        },
+        {
+          "aus": "9007199254740992.0",
+          "ein": "9007199254740992.0",
+          "gueltig": true,
+          "name": "9007199254740992.0"
+        },
+        {
+          "aus": "1e+22",
+          "ein": "1e22",
+          "gueltig": true,
+          "name": "1e22"
+        },
+        {
+          "aus": "4.35",
+          "ein": "4.35",
+          "gueltig": true,
+          "name": "4.35"
         },
         {
           "aus": null,
