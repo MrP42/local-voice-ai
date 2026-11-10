@@ -205,6 +205,12 @@ final class AblageSync: ObservableObject {
 
     // MARK: Diagnose für Simulator-Proben
 
+    // Release-Schutz: `debugLauf`, seine Helfer und der Aufruf (LibraryViews.swift, Startargument `--ablage-test`) stehen alle in
+    // `#if DEBUG` und fehlen im Release-Bau ganz (Release-Bau gelaufen, kein `ablage-testbericht` im Programm). Der Bericht
+    // enthält Namen und liegt in Documents/; die App gibt Documents nie frei (kein UIFileSharingEnabled,
+    // LSSupportsOpeningDocumentsInPlace = false, siehe scripts/generate_project.py), die Datei ist weder in „Dateien“ noch über
+    // die iTunes-Dateifreigabe sichtbar. `AblageDebugSchutzTests` (VoiceCore) prüft beides. Bleibt: Documents ist Teil von
+    // Gerätesicherungen, im Debug-Bau also auch dieser Bericht (nur synthetische Testdaten, nie ein Produktpfad).
     #if DEBUG
     /// `--ablage-test`: wartet auf das Konto (Kopplung oder `--sync-test`), gleicht ab und schreibt
     /// `Documents/ablage-testbericht.json`. Mit `--ablage-test-original` wird zusätzlich das Original der ersten lebenden Datei

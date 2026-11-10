@@ -125,6 +125,12 @@ public struct AblageBericht: Equatable, Sendable {
     public var wartetAufWLAN = 0
     /// Downloads brachen ab (Netz weg, Speicher voll); der nächste Lauf versucht es erneut.
     public var downloadsUnterbrochen = false
+    /// Angeforderte Originale, die dieser Lauf nicht erledigt hat, obwohl sie ladbar sind: sie warten auf WLAN
+    /// (`mobil`), das Budget war aufgebraucht, die Downloads brachen ab oder liefen nicht (`downloadsRuhen`), oder der Lauf
+    /// war `uebersprungen`. In der Reihenfolge der Anforderung, ohne Doppelte. Der Aufrufer (`AblageDienst`) merkt sie für den
+    /// nächsten Lauf vor. Nicht darin: Unbekanntes, Begrabenes, Angehaltenes und was an einer einzelnen Datei scheiterte
+    /// (Blob fehlt, Prüfung fehlgeschlagen): das würde in jedem Lauf wiederkehren.
+    public var offeneAnforderungen: [AblageOriginalAnforderung] = []
 
     public init() {}
 
@@ -172,6 +178,7 @@ public enum AblageLauf {
         guard AblageLaufSperre.shared.betreten(pfad) else {
             var b = AblageBericht()
             b.uebersprungen = true
+            b.offeneAnforderungen = Self.ohneDoppelte(optionen.angefordert)      // nichts davon wurde angefasst
             return b
         }
         defer { AblageLaufSperre.shared.verlassen(pfad) }
@@ -217,8 +224,25 @@ public enum AblageLauf {
             try await herunterladen(hub: hub, speicher: speicher, konto: konto, optionen: optionen, z: z, bericht: &bericht)
         } else {
             bericht.downloadsRuhen = true
+            // Nichts geladen: alle ladbaren Anforderungen warten auf den nächsten Lauf mit Downloads.
+            let plan = AblageDownloadPlan.auftraege(zustand: z, vorhanden: speicher.vorhanden(z.bestand), key: konto.key,
+                                                    angefordert: optionen.angefordert)
+            bericht.offeneAnforderungen = Self.anforderungen(aus: plan, reihenfolge: optionen.angefordert)
         }
         return bericht
+    }
+
+    /// Die Anforderungen ohne Doppelte, in der Reihenfolge des Aufrufs.
+    private static func ohneDoppelte(_ liste: [AblageOriginalAnforderung]) -> [AblageOriginalAnforderung] {
+        var aus: [AblageOriginalAnforderung] = []
+        for a in liste where !aus.contains(where: { AblageBytes.equal($0.dat, a.dat) && AblageBytes.equal($0.fas, a.fas) }) { aus.append(a) }
+        return aus
+    }
+
+    /// Welche der Anforderungen (in ihrer Reihenfolge) zu einem der Originale im Plan gehören.
+    private static func anforderungen(aus plan: [AblageAuftrag], reihenfolge: [AblageOriginalAnforderung]) -> [AblageOriginalAnforderung] {
+        let originale = plan.filter { $0.art == .original }
+        return ohneDoppelte(reihenfolge).filter { a in originale.contains { AblageBytes.equal($0.dat, a.dat) && AblageBytes.equal($0.fas, a.fas) } }
     }
 
     /// Eine Sammlung bis zum Ende ziehen (`pull`): Cursor aus dem Zustand, 410 genau einmal von 0 neu, kein `more` ohne
@@ -251,10 +275,16 @@ public enum AblageLauf {
             let b = AblagePullVerarbeitung.seite(sammlung: coll, objekte: seite.objects, konto: konto, zustand: &z)
             // Dateien begrabener Dateien gehen vor dem Speichern des Zustands weg: bricht es dazwischen ab, läuft die Seite
             // erneut (Cursor nicht vorgerückt) und der Grabstein wirkt noch einmal, ohne Schaden.
-            speicher.entfernen(dateien: b.begraben)
             since = max(seite.cursor, since)
             z.ledger.cursor[coll] = since
-            do { try speicher.speichern(z) } catch { throw AblageLaufFehler.speicher }
+            // Beides unter der Sperre des Speichers: ein gleichzeitiger Original-Download (`originalLaden`) liest den Zustand
+            // und legt ab entweder davor (dann geht seine Datei hier mit weg) oder danach (dann sieht er den Grabstein).
+            do {
+                try speicher.exklusiv {
+                    speicher.entfernen(dateien: b.begraben)
+                    try speicher.speichern(z)
+                }
+            } catch { throw AblageLaufFehler.speicher }
             bericht.seiten += 1
             seitenBericht.zusammenfuehren(b)
             if !seite.more { break }
@@ -269,15 +299,20 @@ public enum AblageLauf {
                                       z: AblageZustand, bericht: inout AblageBericht) async throws {
         var plan = AblageDownloadPlan.auftraege(zustand: z, vorhanden: speicher.vorhanden(z.bestand), key: konto.key,
                                                 angefordert: optionen.angefordert)
+        // Originale, die dieser Lauf nicht erledigt, aber noch ladbar sind: der Aufrufer merkt sie für den nächsten Lauf vor
+        // (sonst gingen sie mit dem Lauf verloren). Eine Datei, die einzeln scheitert, gehört nicht dazu.
+        var offen: [AblageAuftrag] = []
+        defer { bericht.offeneAnforderungen = Self.anforderungen(aus: offen, reihenfolge: optionen.angefordert) }
         if optionen.mobil {
             let teil = AblageDownloadPlan.mobilAufteilen(plan, textBudget: optionen.mobilTextBudget)
             plan = teil.jetzt
+            offen += teil.wartet
             bericht.wartetAufWLAN = teil.wartet.count
         }
         var budget = AblageDownloadBudget(rest: optionen.downloadBudget)
-        for a in plan {
+        for (i, a) in plan.enumerated() {
             try Task.checkCancellation()
-            guard budget.darfStarten(groesse: a.groesse) else { break }
+            guard budget.darfStarten(groesse: a.groesse) else { offen += plan[i...]; break }
             let ziel = speicher.zwischenpfad()
             defer { speicher.zwischenEntfernen(ziel) }
             do {
@@ -287,10 +322,12 @@ public enum AblageLauf {
                 throw AblageLaufFehler.abgemeldet
             } catch AblageHubFehler.netz, AblageHubFehler.wlanRegel {
                 bericht.downloadsUnterbrochen = true
+                offen += plan[i...]
                 return
             } catch AblageHubFehler.speicherVoll {
                 bericht.warne(.dateiNichtSpeicherbar)
                 bericht.downloadsUnterbrochen = true
+                offen += plan[i...]
                 return
             } catch is AblageHubFehler {
                 continue                          // Blob fehlt oder beschädigt: nur diese Datei bleibt offen
@@ -315,6 +352,7 @@ public enum AblageLauf {
             } catch AblageSpeicherFehler.schreiben {
                 bericht.warne(.dateiNichtSpeicherbar)
                 bericht.downloadsUnterbrochen = true
+                offen += plan[i...]
                 return
             } catch is AblageSpeicherFehler {
                 bericht.warne(.dateiPasstNicht)
@@ -346,11 +384,16 @@ public enum AblageLauf {
             throw fehler(e)
         }
         try Task.checkCancellation()            // abgebrochen (z. B. Abmelden): nichts mehr ablegen
-        // Mit frischem Stand ablegen: wurde die Datei inzwischen begraben, wird nichts abgelegt.
-        let frisch = speicher.laden(konto: konto.kennung).zustand
+        // Mit dem aktuellen Stand prüfen und ablegen, in einem Schritt unter der Sperre des Speichers (siehe `exklusiv`): wurde
+        // die Datei inzwischen begraben, angehalten oder gibt es sie nicht mehr, wird nichts abgelegt (nie ein Original einer
+        // begrabenen, angehaltenen oder unbekannten Kennung behalten); die Zwischendatei räumt das `defer` oben.
         do {
-            guard try speicher.originalEinlegen(bestand: frisch.bestand, dat: dat, fas: fas, zwischen: ziel) else {
-                throw AblageLaufFehler.nichtLadbar
+            try speicher.exklusiv {
+                let frisch = speicher.laden(konto: konto.kennung).zustand
+                guard AblageDownloadPlan.original(zustand: frisch, dat: dat, fas: fas, key: konto.key) != nil,
+                      try speicher.originalEinlegen(bestand: frisch.bestand, dat: dat, fas: fas, zwischen: ziel) else {
+                    throw AblageLaufFehler.nichtLadbar
+                }
             }
         } catch AblageSpeicherFehler.passtNicht {
             throw AblageLaufFehler.passtNicht
