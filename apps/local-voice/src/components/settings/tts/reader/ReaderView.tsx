@@ -25,6 +25,8 @@ import "./reader.css";
 /** Eine markierte Stelle (Befund) im Seitentext. */
 export interface ReaderMark extends SourceRange {
   selected?: boolean;
+  /** Fundstelle der Suche im Buch (lva#476): hinterlegt statt rot unterstrichen. */
+  find?: boolean;
 }
 
 export interface ReaderPageInfo {
@@ -281,8 +283,8 @@ const Runs: React.FC<{
           const cls = [
             p.cur ? "reader-cur" : "",
             p.word ? "reader-word" : "",
-            p.mark ? "reader-mark" : "",
-            p.mark?.selected ? "reader-mark--sel" : "",
+            p.mark ? (p.mark.find ? "reader-find" : "reader-mark") : "",
+            p.mark?.selected && !p.mark.find ? "reader-mark--sel" : "",
             p.term ? "reader-term" : "",
           ]
             .filter(Boolean)

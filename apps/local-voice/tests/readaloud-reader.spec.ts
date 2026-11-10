@@ -797,6 +797,68 @@ test("Inhaltsverzeichnis: Kapitel links, aktuelles hervorgehoben, Klick blätter
   await expect(toc).toHaveCount(0);
 });
 
+test("Im Buch suchen: Treffer mit Kapitel, Klick blättert und markiert, Strg+F", async ({
+  page,
+}) => {
+  const text = [
+    "## Der Froschkönig",
+    "",
+    ...Array.from({ length: 14 }, (_, i) => `Absatz ${i + 1}: Die Königstochter spielte am Brunnen mit der goldenen Kugel.`),
+    "",
+    "## Rotkäppchen",
+    "",
+    ...Array.from({ length: 14 }, (_, i) => `Zeile ${i + 1}: Das Mädchen ging durch den Wald zur Großmutter.`),
+    "",
+    "Da kam der Wolf über die Straße.",
+  ].join("\n\n");
+  await open(page, text);
+  const search = page.getByTestId("reader-search");
+  const input = search.getByTestId("reader-search-input");
+  // Strg+F setzt den Fokus ins Suchfeld.
+  await page.getByTestId("reader-book").click({ position: { x: 5, y: 5 } });
+  await page.keyboard.press("Control+f");
+  await expect(input).toBeFocused();
+  // Gefaltet: „strasse“ findet „Straße“.
+  await input.fill("strasse");
+  await expect(search.getByTestId("reader-search-summary")).toHaveText("1 Treffer");
+  const hit = search.getByTestId("reader-search-hit");
+  await expect(hit).toHaveCount(1);
+  await expect(hit).toContainText("Rotkäppchen");
+  await expect(hit.locator("mark")).toHaveText("Straße");
+  await hit.click();
+  await expect(page.getByTestId("reader-book")).not.toHaveAttribute("data-page", "0");
+  const found = page.getByTestId("reader-flow").locator(".reader-find");
+  await expect(found).toHaveText("Straße");
+  await expect(found).toBeInViewport();
+  // Mehrere Treffer: Enter springt weiter, die Liste nennt das Kapitel.
+  await input.fill("goldenen kugel");
+  await expect(search.getByTestId("reader-search-summary")).toHaveText("14 Treffer");
+  await expect(found).toHaveCount(0);
+  await input.press("Enter");
+  await expect(hit.first()).toHaveAttribute("aria-current", "location");
+  await expect(hit.first()).toContainText("Der Froschkönig");
+  await input.press("Enter");
+  await expect(hit.nth(1)).toHaveAttribute("aria-current", "location");
+  await expect(found).toHaveText("goldenen Kugel");
+  // Keine Wortfolge: Absätze mit allen Wörtern.
+  await input.fill("wolf straße kam");
+  await expect(search.getByTestId("reader-search-summary")).toHaveText(
+    "1 Absatz mit allen Wörtern",
+  );
+  await input.fill("kugel wolf");
+  await expect(search.getByTestId("reader-search-summary")).toHaveText("Keine Treffer");
+  // Esc leert die Suche, die Markierung verschwindet.
+  await input.fill("Straße");
+  await hit.first().click();
+  await expect(found).toHaveCount(1);
+  await input.press("Escape");
+  await expect(input).toHaveValue("");
+  await expect(found).toHaveCount(0);
+  // In der Bearbeiten-Ansicht keine Buchsuche (Strg+F gehört dem Editor).
+  await page.getByTestId("reader-mode-edit").click();
+  await expect(search).toHaveCount(0);
+});
+
 test("EPUB auf leerer Seite: Seite heißt wie das Buch, Titel steht im Inhalt", async ({
   page,
 }) => {

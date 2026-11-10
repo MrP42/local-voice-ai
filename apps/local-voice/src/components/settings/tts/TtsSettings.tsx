@@ -170,6 +170,7 @@ import {
 import { ReaderPlayerBar } from "./reader/ReaderPlayerBar";
 import { ReaderBookmarks } from "./reader/ReaderBookmarks";
 import { ReaderContents } from "./reader/ReaderContents";
+import { ReaderSearch } from "./reader/ReaderSearch";
 import { bookStart, skipHeadingMark } from "../../../lib/reader/bookStart";
 import { useKiDocuments } from "./kidocs/useKiDocuments";
 import { KiDocumentsPanel } from "./kidocs/KiDocumentsPanel";
@@ -2381,6 +2382,14 @@ export const TtsSettings = () => {
     setFollow(false);
     readerApiRef.current?.revealOffset(entry.start);
   };
+  // Suche im Buch (lva#476): zur Fundstelle blättern und sie markieren.
+  const [findHit, setFindHit] = useState<SourceRange | null>(null);
+  const goToSearchHit = useCallback((hit: SourceRange | null) => {
+    setFindHit(hit ? { start: hit.start, end: hit.end } : null);
+    if (!hit) return;
+    setFollow(false);
+    readerApiRef.current?.revealOffset(hit.start);
+  }, []);
   // Lesezeichen je Seite und Reiter.
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
   useEffect(() => {
@@ -3118,8 +3127,8 @@ export const TtsSettings = () => {
    * der Block, der direkt hinter ihm beginnt.
    */
   const readerMarks = useMemo<ReaderMark[]>(() => {
-    if (!scriptCheckOn) return [];
-    const out: ReaderMark[] = [];
+    const out: ReaderMark[] = findHit ? [{ ...findHit, find: true }] : [];
+    if (!scriptCheckOn) return out;
     for (const f of scriptFindings) {
       if (isHintFinding(f.kind)) continue;
       const block = readerBlocks.find((b) => b.end > f.start && b.runs.length);
@@ -3137,7 +3146,7 @@ export const TtsSettings = () => {
       });
     }
     return out;
-  }, [scriptCheckOn, scriptFindings, readerBlocks, revealed]);
+  }, [scriptCheckOn, scriptFindings, readerBlocks, revealed, findHit]);
 
   // Begriffe (lva#185): nur im Originaltext und in der Leseansicht.
   const [termsShown, setTermsShown] = usePersistentState<"1" | "0">(
@@ -4096,6 +4105,14 @@ export const TtsSettings = () => {
   // oder vom Buch-Gespräch belegt, steht es wie bisher links unter der Liste.
   const tocElement =
     viewMode === "read" ? (
+      <>
+      {spokenText.trim() && (
+        <ReaderSearch
+          blocks={readerBlocks}
+          contents={contents}
+          onGo={goToSearchHit}
+        />
+      )}
       <ReaderContents
         entries={contents}
         current={chapterIndex}
@@ -4109,6 +4126,7 @@ export const TtsSettings = () => {
             : undefined
         }
       />
+      </>
     ) : null;
   const tocRightVisible = !talkShown && filesCollapsed !== "1";
 
