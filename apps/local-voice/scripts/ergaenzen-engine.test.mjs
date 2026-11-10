@@ -42,6 +42,7 @@ const chatSagt =
 
 const S1 = "Morgen wird es sonnig.";
 const S2 = "Es sind zwanzig Grad.";
+const S3 = "Nachmittags kann es regnen.";
 
 function neu(handlers = {}) {
   tauri.calls = [];
@@ -57,7 +58,14 @@ function neu(handlers = {}) {
     assistent_messung_melden: () => null,
     ...handlers,
   };
-  const log = { user: [], assistant: [], errors: [], states: [] };
+  const log = {
+    user: [],
+    assistant: [],
+    errors: [],
+    states: [],
+    metrics: [],
+    verworfen: [],
+  };
   const engine = new VoiceCallEngine(
     {
       onState: (s) => log.states.push(s),
@@ -65,7 +73,8 @@ function neu(handlers = {}) {
       onUser: (t) => log.user.push(t),
       onAssistant: (t, final, interrupted) =>
         log.assistant.push({ t, final, interrupted }),
-      onMetrics() {},
+      onMetrics: (m) => log.metrics.push(m),
+      onMetricsVerwerfen: (id) => log.verworfen.push(id),
       onError: (e) => log.errors.push(e),
       conversationId: () => "c1",
     },
@@ -242,7 +251,11 @@ test("„Moment“ allein: anhalten, kein neuer Beitrag, der Verlauf behält das
   assert.equal(t.player.stopped >= 1, true);
   assert.equal(t.engine.turn, null);
   assert.equal(t.log.assistant.at(-1).interrupted, true);
-  assert.equal(t.verlauf()[1], `assistant:${S1} ${S2} …`);
+  assert.equal(
+    t.verlauf()[1],
+    `assistant:${S1} …`,
+    "nur der angespielte Satz, S2 wurde nie gehört",
+  );
 });
 
 // -- Zusammenführen (1a) ---------------------------------------------------------
@@ -374,7 +387,10 @@ test("Fertig erzeugte Antwort bleibt bis zum Ende des ersten Satzes ungespeicher
 
 test("Spätes Unterbrechen nach dem ersten Satz: neuer Beitrag, abgeschnittene Antwort, Hinweis ans Modell", async () => {
   const stt = deferred();
-  const t = neu({ voice_call_transcribe: () => stt.promise });
+  const t = neu({
+    voice_call_transcribe: () => stt.promise,
+    voice_call_chat: chatSagt(S1, S2, S3),
+  });
   const alt = await t.start("Wie wird das Wetter morgen?");
   t.player.finishPiece();
   t.barge();
@@ -393,13 +409,18 @@ test("Spätes Unterbrechen nach dem ersten Satz: neuer Beitrag, abgeschnittene A
     true,
     "die erste Antwort wurde nach dem ersten Satz regulär gemeldet",
   );
-  // Verlauf: zwei Beiträge, der erste abgeschnitten.
+  // Verlauf: zwei Beiträge, der erste nur bis zum angespielten Satz (S1 gespielt, S2 läuft, S3 nie gehört).
   assert.deepEqual(t.verlauf(), [
     "user:Wie wird das Wetter morgen?",
     `assistant:${S1} ${S2} …`,
     "user:und in Köln?",
-    `assistant:${S1} ${S2}`,
+    `assistant:${S1} ${S2} ${S3}`,
   ]);
+  assert.equal(
+    t.log.assistant.find((a) => a.interrupted).t,
+    `${S1} ${S2}`,
+    "auch die Anzeige zeigt nur das Gehörte",
+  );
   const system = t.letzterChat().messages[0];
   assert.equal(system.role, "system");
   assert.match(system.content, /^sys\n\n/);
@@ -451,4 +472,341 @@ test("S0-Vorlage wird nie zusammengeführt (sie wirkt und steht schon im Verlauf
   await settle(20);
   assert.equal(alt.cancelled, true);
   assert.equal(t.log.user.at(-1), "und wie ist das Wetter");
+});
+
+// -- Fixrunde lva#486 ---------------------------------------------------------------
+
+test("Abbruch nach dem Hörbarwerden, aber vor dem ersten Ton: nichts Gehörtes im Verlauf", async () => {
+  const stt = deferred();
+  const t = neu({ voice_call_transcribe: () => stt.promise });
+  // Der Player kommt erst nach der Pause dazu: das erste Häppchen war noch nicht zu hören.
+  const orig = t.player.enqueue.bind(t.player);
+  const tor = deferred();
+  t.player.enqueue = async (...a) => {
+    await tor.promise;
+    return orig(...a);
+  };
+  const turn = t.engine.newTurn(0, performance.now());
+  turn.fromSpeech = true;
+  t.engine.turn = turn;
+  turn.committed = true;
+  turn.commit();
+  void t.engine.respond(turn, "Wie wird das Wetter morgen?", 0);
+  await settle(20);
+  assert.equal(turn.audible, true);
+  t.barge();
+  t.fruehEnde();
+  stt.resolve("Moment");
+  await settle(20);
+  assert.equal(t.engine.turn, null);
+  assert.deepEqual(
+    t.verlauf(),
+    [],
+    "nichts war zu hören, also nichts im Verlauf",
+  );
+  tor.resolve();
+});
+
+test("Verlorene Äußerung: spricht der Nutzer nach fertiger Erkennung weiter, bleibt der Vortext erhalten", async () => {
+  const texte = ["zweitens", "zweitens drittens", "zweitens drittens viertens"];
+  let n = 0;
+  const t = neu({ voice_call_transcribe: () => texte[n++] });
+  await t.start("Erstens");
+  t.barge();
+  t.fruehEnde();
+  await settle(10);
+  assert.equal(t.log.user.at(-1), "Erstens zweitens");
+  // Weiter sprechen, bevor das sichere Satzende kam: der Schritt fällt, der Vortext „Erstens“ bleibt.
+  t.engine.onResume();
+  assert.equal(t.engine.turn, null);
+  t.fruehEnde();
+  await settle(10);
+  assert.equal(t.log.user.at(-1), "Erstens zweitens drittens");
+  // Als Kette: noch einmal weitersprechen.
+  t.engine.onResume();
+  t.fruehEnde();
+  await settle(10);
+  assert.equal(t.log.user.at(-1), "Erstens zweitens drittens viertens");
+  t.engine.onEnd();
+  await settle(10);
+  const messages = t.letzterChat().messages;
+  assert.equal(messages.at(-1).content, "Erstens zweitens drittens viertens");
+  assert.equal(t.engine.turn.userText, "Erstens zweitens drittens viertens");
+});
+
+test(
+  "Verlorene Äußerung: neuer Sprechbeginn nach dem Satzende verwirft den Schritt nicht ohne Vortext",
+  mitModellfrist(async () => {
+    const texte = ["zweitens", "zweitens drittens"];
+    let n = 0;
+    let chats = 0;
+    const t = neu({
+      voice_call_transcribe: () => texte[n++],
+      // Der zweite Schritt hängt noch beim Modell: er ist noch nicht hörbar.
+      voice_call_chat: (a) =>
+        chats++ === 0 ? chatSagt(S1, S2)(a) : new Promise(() => undefined),
+    });
+    await t.start("Erstens");
+    t.barge();
+    t.fruehEnde();
+    t.engine.onEnd();
+    await settle(10);
+    assert.equal(t.log.user.at(-1), "Erstens zweitens");
+    t.engine.onSpeechStart(4000, false);
+    assert.equal(t.engine.turn, null);
+    t.fruehEnde();
+    await settle(10);
+    assert.equal(t.log.user.at(-1), "Erstens zweitens drittens");
+  }),
+);
+
+test("Fehler der Erkennung beim Anhalten: Wiedergabe läuft weiter, der Fehler wird gemeldet", async () => {
+  const t = neu({ voice_call_transcribe: () => Promise.reject("kaputt") });
+  await t.start("Wie wird das Wetter morgen?");
+  t.barge();
+  t.fruehEnde();
+  await settle(10);
+  assert.equal(t.player.paused, false);
+  assert.equal(t.player.resumes, 1);
+  assert.equal(t.log.errors.length, 1);
+  assert.match(t.log.errors[0], /notUnderstood/);
+});
+
+function mitModellfrist(fn) {
+  return async () => {
+    const alt = TUNING.modelFristMs;
+    TUNING.modelFristMs = 150;
+    try {
+      await fn();
+      await settle(200);
+    } finally {
+      TUNING.modelFristMs = alt;
+    }
+  };
+}
+
+function mitFrist(fn) {
+  return async () => {
+    const alt = TUNING.holdSttMaxMs;
+    TUNING.holdSttMaxMs = 25;
+    try {
+      await fn();
+    } finally {
+      TUNING.holdSttMaxMs = alt;
+    }
+  };
+}
+
+test(
+  "Frist der Erkennung: Wiedergabe läuft weiter; kommt der Text später, gilt er als spätes Unterbrechen",
+  mitFrist(async () => {
+    const stt = deferred();
+    const t = neu({ voice_call_transcribe: () => stt.promise });
+    const alt = await t.start("Wie wird das Wetter morgen?");
+    t.barge();
+    t.fruehEnde();
+    await settle(60);
+    assert.equal(t.player.paused, false);
+    assert.equal(alt.cancelled, false);
+    stt.resolve("und in Köln");
+    await settle(20);
+    assert.equal(alt.cancelled, true, "nicht verworfen: der Text wirkt");
+    assert.equal(t.log.user.at(-1), "und in Köln");
+    // Spätes Unterbrechen: kein Zusammenführen, der Anfang bleibt mit „ …“.
+    assert.equal(t.verlauf()[1], `assistant:${S1} …`);
+  }),
+);
+
+test(
+  "Frist der Erkennung: ein spät eintreffendes „mhm“ ändert nichts, „stopp“ hält an",
+  mitFrist(async () => {
+    for (const [text, abgebrochen] of [
+      ["mhm", false],
+      ["Stopp", true],
+    ]) {
+      const stt = deferred();
+      const t = neu({ voice_call_transcribe: () => stt.promise });
+      const alt = await t.start("Wie wird das Wetter morgen?");
+      t.barge();
+      t.fruehEnde();
+      await settle(60);
+      stt.resolve(text);
+      await settle(20);
+      assert.equal(alt.cancelled, abgebrochen, text);
+      assert.deepEqual(t.log.user, ["Wie wird das Wetter morgen?"]);
+    }
+  }),
+);
+
+test(
+  "Frist der Erkennung: kommt der Text nach dem Ende des Schritts, ist er ein normaler neuer Beitrag",
+  mitFrist(async () => {
+    const stt = deferred();
+    const t = neu({ voice_call_transcribe: () => stt.promise });
+    await t.start("Wie wird das Wetter morgen?");
+    t.barge();
+    t.fruehEnde();
+    await settle(60);
+    t.player.finish();
+    assert.equal(t.engine.turn, null);
+    stt.resolve("ja");
+    await settle(20);
+    assert.equal(
+      t.log.user.at(-1),
+      "ja",
+      "auch ein „ja“ ist jetzt ein Beitrag",
+    );
+    assert.equal(t.aufrufe("voice_call_chat").length, 2);
+  }),
+);
+
+test("Fehlerweg nach dem Hörbarwerden: dropTurn räumt das Anhalten und die wartenden Häppchen weg", async () => {
+  const t = neu({ voice_call_transcribe: () => new Promise(() => undefined) });
+  const turn = await t.start("Wie wird das Wetter morgen?");
+  t.barge();
+  assert.equal(t.player.paused, true);
+  t.engine.dropTurn(turn);
+  assert.equal(t.engine.held, null);
+  assert.equal(
+    t.player.stopped >= 1,
+    true,
+    "verwaiste Häppchen werden nie gespielt",
+  );
+  assert.equal(t.player.paused, false);
+});
+
+test("dropTurn bei laufender Erkennung: die Äußerung wird ein normaler Beitrag", async () => {
+  const stt = deferred();
+  const t = neu({ voice_call_transcribe: () => stt.promise });
+  const turn = await t.start("Wie wird das Wetter morgen?");
+  t.barge();
+  t.fruehEnde();
+  t.engine.dropTurn(turn);
+  stt.resolve("und in Köln");
+  await settle(20);
+  assert.equal(t.log.user.at(-1), "und in Köln");
+  assert.equal(t.aufrufe("voice_call_chat").length, 2);
+});
+
+test("Stopp und neuer Beitrag stoppen den Player auch ohne laufenden Schritt", async () => {
+  for (const text of ["Moment", "und in Köln"]) {
+    const stt = deferred();
+    const t = neu({ voice_call_transcribe: () => stt.promise });
+    await t.start("Wie wird das Wetter morgen?");
+    t.barge();
+    t.fruehEnde();
+    t.engine.turn = null;
+    const vorher = t.player.stopped;
+    stt.resolve(text);
+    await settle(20);
+    assert.equal(t.player.stopped > vorher, true, text);
+  }
+});
+
+test("Haltezeit zählt nicht zur Zeit bis zum ersten Ton", async () => {
+  const stt = deferred();
+  const t = neu({ voice_call_transcribe: () => stt.promise });
+  const orig = t.player.enqueue.bind(t.player);
+  const tor = deferred();
+  t.player.enqueue = async (...a) => {
+    await tor.promise;
+    return orig(...a);
+  };
+  const turn = t.engine.newTurn(0, performance.now());
+  turn.fromSpeech = true;
+  t.engine.turn = turn;
+  turn.committed = true;
+  turn.commit();
+  void t.engine.respond(turn, "Wie wird das Wetter morgen?", 0);
+  await settle(20);
+  t.barge();
+  t.fruehEnde();
+  await settle(150);
+  stt.resolve("mhm");
+  await settle(10);
+  tor.resolve();
+  await settle(20);
+  assert.equal(t.log.metrics.length >= 1, true);
+  assert.equal(
+    t.log.metrics[0].firstSoundMs < 120,
+    true,
+    `firstSoundMs ${t.log.metrics[0].firstSoundMs} enthält die Haltezeit`,
+  );
+});
+
+test("Zusammengeführter Schritt: seine Metrik wird zurückgenommen, die Ausgabe vergessen", async () => {
+  const stt = deferred();
+  const t = neu({ voice_call_transcribe: () => stt.promise });
+  const alt = await t.start("Wie wird das Wetter");
+  assert.equal(t.log.metrics.length, 1);
+  t.barge();
+  t.fruehEnde();
+  t.engine.onEnd();
+  stt.resolve("morgen");
+  await settle(20);
+  assert.deepEqual(t.log.verworfen, [alt.id]);
+  assert.equal(t.aufrufe("assistent_ausgabe_vergessen").length >= 1, true);
+});
+
+test("Widerruf während der Pause: nichts wird mehr gesprochen", async () => {
+  const chat = deferred();
+  const ids = [];
+  const t = neu({
+    voice_call_chat: ({ requestId }) => {
+      ids.push(requestId);
+      emit({ kind: "sentence", request_id: requestId, text: S1 });
+      return chat.promise;
+    },
+    voice_call_transcribe: () => new Promise(() => undefined),
+  });
+  const turn = t.engine.newTurn(0, performance.now());
+  turn.fromSpeech = true;
+  t.engine.turn = turn;
+  turn.committed = true;
+  turn.commit();
+  void t.engine.respond(turn, "Wie wird das Wetter morgen?", 0);
+  await settle(20);
+  t.barge();
+  assert.equal(t.player.paused, true);
+  emit({ kind: "revoked", request_id: ids[0] });
+  await settle(5);
+  assert.equal(turn.cancelled, true);
+  assert.equal(t.engine.held, null);
+  assert.equal(t.player.stopped >= 1, true);
+  assert.equal(t.player.paused, false);
+  chat.resolve("");
+});
+
+test("Gesprächsende während der Pause: nichts bleibt gehalten, die späte Erkennung bewirkt nichts", async () => {
+  const stt = deferred();
+  const t = neu({ voice_call_transcribe: () => stt.promise });
+  await t.start("Wie wird das Wetter morgen?");
+  t.barge();
+  t.fruehEnde();
+  await t.engine.stop();
+  assert.equal(t.engine.held, null);
+  stt.resolve("und in Köln");
+  await settle(20);
+  assert.deepEqual(t.log.user, ["Wie wird das Wetter morgen?"]);
+  assert.equal(t.aufrufe("voice_call_chat").length, 1);
+});
+
+test("Zweites Barge-in, während die Erkennung läuft: kein zweites Anhalten, eine Entscheidung", async () => {
+  const stt = deferred();
+  let aufrufe = 0;
+  const t = neu({
+    voice_call_transcribe: () => {
+      aufrufe++;
+      return stt.promise;
+    },
+  });
+  await t.start("Wie wird das Wetter");
+  t.barge();
+  t.fruehEnde();
+  t.engine.onBargeIn();
+  assert.equal(t.player.pauses, 1);
+  stt.resolve("morgen");
+  await settle(20);
+  assert.equal(aufrufe, 1);
+  assert.equal(t.log.user.at(-1), "Wie wird das Wetter morgen");
 });

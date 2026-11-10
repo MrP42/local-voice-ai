@@ -7,8 +7,8 @@ import type { Sprache } from "./assistentPlan";
  * entscheidet erst mit dem Text.
  */
 
-/** Rückmeldelaute: kein Beitrag, die Antwort läuft weiter. */
-const RUECKMELDUNGEN = new Set([
+/** Rückmeldelaute (Deutsch und Englisch; auch mehrere Wörter): kein Beitrag, die Antwort läuft weiter. */
+const RUECKMELDUNGEN: readonly string[] = [
   "mhm",
   "mhmm",
   "mmhm",
@@ -24,11 +24,39 @@ const RUECKMELDUNGEN = new Set([
   "genau",
   "stimmt",
   "verstehe",
-]);
+  "yeah",
+  "yes",
+  "yep",
+  "right",
+  "sure",
+  "uh huh",
+  "got it",
+  "i see",
+];
 
 /** Stoppwörter: die Antwort hält an, nichts geht ans Modell. */
-const STOPP_KERN = new Set(["stopp", "stop", "halt", "warte", "moment"]);
-const STOPP_FUELL = new Set(["mal", "kurz", "bitte", "einen", "ein", "eine"]);
+const STOPP_KERN: readonly string[] = [
+  "stopp",
+  "stop",
+  "halt",
+  "warte",
+  "moment",
+  "wait",
+  "hold on",
+  "pause",
+];
+const STOPP_FUELL: readonly string[] = [
+  "mal",
+  "kurz",
+  "bitte",
+  "einen",
+  "ein",
+  "eine",
+  "okay",
+  "ja",
+  "please",
+  "just",
+];
 
 /** Längste Kette aus Rückmeldelauten („ja genau okay“), die noch als Rückmeldung gilt. */
 const MAX_RUECKMELDUNG = 3;
@@ -39,36 +67,54 @@ export function falte(text: string): string {
   return text
     .toLowerCase()
     .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
+    .replace(/[\u0300-\u036f]/g, "")
     .replace(/[^\p{L}\p{N}\s]+/gu, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
 
-function woerter(text: string): string[] {
-  const f = falte(text);
-  return f === "" ? [] : f.split(" ");
+/**
+ * Lässt sich der gefaltete Text lückenlos in höchstens `max` Einträge der Liste zerlegen
+ * (Einträge dürfen aus mehreren Wörtern bestehen)? `kern`: mindestens einer davon muss aus dieser Liste sein.
+ */
+function zerlegbar(
+  text: string,
+  liste: readonly string[],
+  max: number,
+  kern?: readonly string[],
+): boolean {
+  const w = text === "" ? [] : text.split(" ");
+  if (w.length === 0) return false;
+  const geh = (i: number, n: number, hatKern: boolean): boolean => {
+    if (i === w.length) return hatKern;
+    if (n === max) return false;
+    return liste.some((e) => {
+      const ew = e.split(" ");
+      if (ew.some((x, k) => w[i + k] !== x)) return false;
+      return geh(i + ew.length, n + 1, hatKern || !!kern?.includes(e));
+    });
+  };
+  return geh(0, 0, kern === undefined);
 }
 
-/** Besteht die Äußerung nur aus Rückmeldelauten („mhm“, „ja“, „okay“ …)? */
+/** Besteht die Äußerung nur aus Rückmeldelauten („mhm“, „ja“, „okay“, „yeah“ …)? */
 export function istRueckmeldung(text: string): boolean {
-  const w = woerter(text);
-  return (
-    w.length > 0 &&
-    w.length <= MAX_RUECKMELDUNG &&
-    w.every((x) => RUECKMELDUNGEN.has(x))
+  return zerlegbar(falte(text), RUECKMELDUNGEN, MAX_RUECKMELDUNG);
+}
+
+/** Besteht die Äußerung nur aus einem Stoppwort („stopp“, „halt“, „warte“, „moment“, „stop“, „wait“ …) samt Füllwörtern? */
+export function istStoppwort(text: string): boolean {
+  return zerlegbar(
+    falte(text),
+    [...STOPP_KERN, ...STOPP_FUELL],
+    MAX_STOPP,
+    STOPP_KERN,
   );
 }
 
-/** Besteht die Äußerung nur aus einem Stoppwort („stopp“, „halt“, „warte“, „moment“)? */
-export function istStoppwort(text: string): boolean {
-  const w = woerter(text);
-  return (
-    w.length > 0 &&
-    w.length <= MAX_STOPP &&
-    w.some((x) => STOPP_KERN.has(x)) &&
-    w.every((x) => STOPP_KERN.has(x) || STOPP_FUELL.has(x))
-  );
+/** Endet der Satz auf eine Frage (auch mit Anführungszeichen oder Klammer dahinter)? */
+export function istFrage(satz: string): boolean {
+  return /\?["'“”„»«)\]\s]*$/.test(satz.trim());
 }
 
 /** Was die Engine vom laufenden Schritt weiß. */
@@ -109,17 +155,21 @@ export type Entscheidung =
  * Entscheidung, sobald der Text einer Äußerung vorliegt, die während der Antwort begann.
  * `stand` ist `null`, wenn keine Antwort mehr läuft (sie ist zwischenzeitlich zu Ende gegangen):
  * dann ist jede Äußerung ein gewöhnlicher neuer Beitrag. `vorherig` ist die Nutzeräußerung, zu
- * der die laufende Antwort gehört.
+ * der die laufende Antwort gehört; `satz` der Satz der Antwort, der gerade läuft oder zuletzt
+ * gesprochen wurde: war er eine Frage, ist „ja“ darauf eine Antwort und kein Rückmeldelaut.
  */
 export function entscheide(
   text: string,
   stand: TurnStand | null,
   vorherig = "",
+  satz = "",
 ): Entscheidung {
   if (stand === null) return { art: "neu", text, abbrechen: false };
-  if (istRueckmeldung(text)) return { art: "weiter" };
+  const frage = istFrage(satz);
+  if (!frage && istRueckmeldung(text)) return { art: "weiter" };
   if (istStoppwort(text)) return { art: "stopp" };
-  if (darfZusammenfuehren(stand))
+  // Die Antwort auf eine Frage gehört nicht in die Äußerung, auf die die Frage folgte.
+  if (!frage && darfZusammenfuehren(stand))
     return { art: "zusammenfuehren", text: fuegeZusammen(vorherig, text) };
   return { art: "neu", text, abbrechen: true };
 }

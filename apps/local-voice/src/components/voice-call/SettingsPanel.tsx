@@ -29,7 +29,12 @@ import {
 } from "./orchestration";
 import { useKnowledgeEditor } from "./useKnowledge";
 import { NotebookAccess } from "./NotebookAccess";
-import { alleFrei, schalteAllesEin, type Zugriff } from "./alleBereiche";
+import {
+  alleFrei,
+  schalteAllesEin,
+  type Ergebnis,
+  type Zugriff,
+} from "./alleBereiche";
 import { useSettings } from "@/hooks/useSettings";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useComplianceStore } from "@/stores/complianceStore";
@@ -243,13 +248,13 @@ const GlobalKnowledge: React.FC<{
   const llm = useActiveLlm();
   const knowledgeChanged = useVoiceCallStore((s) => s.knowledgeChanged);
   const [busy, setBusy] = useState(false);
-  const [failed, setFailed] = useState(false);
+  const [failed, setFailed] = useState<Ergebnis | null>(null);
   const allOn = alleFrei({ enabled, areas, transcripts });
   // Inhalte gehen nur an das eingebaute lokale Modell (kein Ollama, kein Relay, kein Cloud-Modell).
   const noContent = llm.label !== null && !llm.local;
   const enableAll = async () => {
     setBusy(true);
-    setFailed(false);
+    setFailed(null);
     const store: Zugriff = {
       lies: (key) =>
         (
@@ -258,10 +263,15 @@ const GlobalKnowledge: React.FC<{
       setze: (key, value) =>
         useSettingsStore.getState().updateSetting(key as never, value as never),
     };
-    const ok = await schalteAllesEin(store);
-    setBusy(false);
-    setFailed(!ok);
-    knowledgeChanged();
+    try {
+      const result = await schalteAllesEin(store);
+      setFailed(result === "ein" ? null : result);
+    } catch {
+      setFailed("teilweise");
+    } finally {
+      setBusy(false);
+      knowledgeChanged();
+    }
   };
   return (
     <section
@@ -304,7 +314,11 @@ const GlobalKnowledge: React.FC<{
       )}
       {failed && (
         <p role="alert" className="m-0 text-xs text-red-600 dark:text-red-400">
-          {t("voiceCall.knowledge.global.enableAllError")}
+          {t(
+            failed === "teilweise"
+              ? "voiceCall.knowledge.global.enableAllPartial"
+              : "voiceCall.knowledge.global.enableAllError",
+          )}
         </p>
       )}
       {noContent && (
@@ -320,6 +334,7 @@ const GlobalKnowledge: React.FC<{
         label={t("voiceCall.knowledge.global.switch")}
         hint={t("voiceCall.knowledge.global.hint")}
         checked={enabled}
+        disabled={busy}
         onChange={(on) =>
           void updateSetting(
             "voice_global_context_enabled" as never,
@@ -335,7 +350,7 @@ const GlobalKnowledge: React.FC<{
           label={t(`voiceCall.knowledge.areas.${area}.label`)}
           hint={t(`voiceCall.knowledge.areas.${area}.hint`)}
           checked={areas.includes(area)}
-          disabled={!enabled}
+          disabled={!enabled || busy}
           onChange={(on) => toggle(area, on)}
         />
       ))}

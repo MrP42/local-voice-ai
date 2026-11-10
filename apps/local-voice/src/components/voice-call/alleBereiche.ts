@@ -62,13 +62,17 @@ function gleich(a: unknown, b: ZugriffWert): boolean {
   );
 }
 
+/** `ein`: alles eingeschaltet · `zurueck`: nichts geändert (Fehlschlag, sauber zurückgerollt) · `teilweise`: Fehlschlag, und das Zurückrollen gelang nicht ganz. */
+export type Ergebnis = "ein" | "zurueck" | "teilweise";
+
 /**
  * Schaltet den Zugriff ein: erst die Bereiche und die Transkripte, zuletzt der Hauptschalter (bricht
  * etwas ab, wirkt der Zugriff nie halb). Der Speicher wirft bei einem Fehler nicht, er rollt den
- * Schlüssel zurück; deshalb zählt nach jedem Schritt der gelesene Wert. Scheitert ein Schritt, gehen
- * die schon geschriebenen Schlüssel auf ihren alten Wert zurück. `true`: alles ist eingeschaltet.
+ * Schlüssel zurück; deshalb zählt nach jedem Schritt der gelesene Wert (ein Werfen gilt ebenso als
+ * Fehlschlag). Scheitert ein Schritt, gehen die schon geschriebenen Schlüssel auf ihren alten Wert
+ * zurück, alle, auch wenn einer davon scheitert; das Ergebnis meldet, ob das ganz gelang.
  */
-export async function schalteAllesEin(io: Zugriff): Promise<boolean> {
+export async function schalteAllesEin(io: Zugriff): Promise<Ergebnis> {
   const alt = io.lies("voice_call_knowledge");
   const ziel: Record<ZugriffSchluessel, ZugriffWert> = {
     voice_call_knowledge: alleBereiche(Array.isArray(alt) ? alt : []),
@@ -76,26 +80,33 @@ export async function schalteAllesEin(io: Zugriff): Promise<boolean> {
     voice_global_context_enabled: true,
   };
   const vorher = new Map(ZUGRIFF_SCHLUESSEL.map((k) => [k, io.lies(k)]));
+  const frueher = (key: ZugriffSchluessel): ZugriffWert => {
+    const v = vorher.get(key);
+    if (key === "voice_call_knowledge") return Array.isArray(v) ? v : [];
+    return v === true;
+  };
   const geschrieben: ZugriffSchluessel[] = [];
   for (const key of ZUGRIFF_SCHLUESSEL) {
     if (gleich(vorher.get(key), ziel[key])) continue;
-    await io.setze(key, ziel[key]);
+    try {
+      await io.setze(key, ziel[key]);
+    } catch {
+      /* zählt als Fehlschlag: der gelesene Wert entscheidet */
+    }
     if (gleich(io.lies(key), ziel[key])) {
       geschrieben.push(key);
       continue;
     }
-    for (const done of geschrieben.reverse()) {
-      const frueher = vorher.get(done);
-      await io.setze(
-        done,
-        done === "voice_call_knowledge"
-          ? Array.isArray(frueher)
-            ? frueher
-            : []
-          : frueher === true,
-      );
+    let sauber = true;
+    for (const done of [...geschrieben].reverse()) {
+      try {
+        await io.setze(done, frueher(done));
+      } catch {
+        /* weiter mit dem nächsten Schlüssel */
+      }
+      if (!gleich(io.lies(done), frueher(done))) sauber = false;
     }
-    return false;
+    return sauber ? "zurueck" : "teilweise";
   }
-  return true;
+  return "ein";
 }

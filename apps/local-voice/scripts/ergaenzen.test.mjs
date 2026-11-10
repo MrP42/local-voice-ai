@@ -194,3 +194,109 @@ test("Unterbrechungshinweis: nur nach unterbrochener Antwort, Sprache folgt der 
   assert.equal(systemMitHinweis("sys", false, "de"), "sys");
   assert.match(systemMitHinweis("sys", true, "de"), /^sys\n\n.*unterbrochen/s);
 });
+
+// -- Fixrunde lva#486 ---------------------------------------------------------------
+
+test("Rückmeldelaut nach einer Frage der KI ist eine Antwort, kein Rückmeldelaut", () => {
+  const stand = { ...laufend, ersterSatzFertig: true };
+  for (const satz of [
+    "Soll ich das für dich notieren?",
+    "Soll ich das notieren? ",
+    "Möchtest du mehr hören?“",
+  ])
+    for (const text of ["ja", "genau", "okay", "Mhm."]) {
+      const d = entscheide(text, stand, "Notiere das", satz);
+      assert.equal(d.art, "neu", `${text} nach „${satz}“`);
+      assert.equal(d.text, text);
+      assert.equal(d.abbrechen, true);
+    }
+  // Keine Frage: wie bisher.
+  assert.deepEqual(entscheide("ja", stand, "x", "Das war es."), {
+    art: "weiter",
+  });
+  assert.deepEqual(entscheide("ja", stand, "x", ""), { art: "weiter" });
+});
+
+test("Frage als erster Satz: die Antwort darauf wird ein eigener Beitrag, nicht zusammengeführt", () => {
+  const d = entscheide("ja", laufend, "Notiere das", "Soll ich das notieren?");
+  assert.equal(d.art, "neu");
+});
+
+test("Stoppwort bleibt ein Stoppwort, auch nach einer Frage", () => {
+  assert.deepEqual(
+    entscheide("Moment", laufend, "x", "Soll ich das notieren?"),
+    { art: "stopp" },
+  );
+});
+
+test("Englische Rückmeldelaute", () => {
+  for (const w of [
+    "yeah",
+    "Yes.",
+    "yep",
+    "Right",
+    "sure",
+    "Uh huh",
+    "uh-huh",
+    "mhm",
+    "Got it.",
+    "I see",
+    "okay",
+    "OK",
+    "yeah right",
+  ])
+    assert.equal(istRueckmeldung(w), true, w);
+  for (const w of [
+    "yes but I meant tomorrow",
+    "right now please",
+    "I see a problem",
+    "got it wrong",
+    "sure thing, but",
+  ])
+    assert.equal(istRueckmeldung(w), false, w);
+});
+
+test("Englische Stoppwörter, auch mit Füllwort", () => {
+  for (const w of [
+    "stop",
+    "Wait",
+    "Hold on",
+    "hold on please",
+    "Pause",
+    "stop please",
+    "okay stop",
+  ])
+    assert.equal(istStoppwort(w), true, w);
+  for (const w of [
+    "wait, I meant tomorrow",
+    "stop the music and play jazz",
+    "hold the line",
+    "please",
+    "okay",
+  ])
+    assert.equal(istStoppwort(w), false, w);
+});
+
+test("Stoppwörter mit Füllwörtern: „okay stopp“, „ja stopp“, „stopp bitte“, „bitte warte“", () => {
+  for (const w of [
+    "okay stopp",
+    "Ja, stopp",
+    "stopp bitte",
+    "bitte warte",
+    "okay warte mal kurz",
+    "mal kurz halt",
+  ])
+    assert.equal(istStoppwort(w), true, w);
+});
+
+test("„ja, aber …“ und „warte mal kurz, ich meine …“ bleiben weder Rückmeldelaut noch Stoppwort", () => {
+  for (const w of [
+    "ja, aber das stimmt so nicht",
+    "ja aber",
+    "warte mal kurz, ich meine morgen",
+    "okay und dann",
+  ]) {
+    assert.equal(istRueckmeldung(w), false, w);
+    assert.equal(istStoppwort(w), false, w);
+  }
+});
