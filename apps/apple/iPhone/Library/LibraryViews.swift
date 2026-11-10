@@ -149,7 +149,7 @@ struct LibraryShelf: View {
     @ObservedObject var playback = LibraryPlayback.shared
     @State private var query = ""
     @State private var filter = ShelfFilter.all
-    /// Sortierung, gemerkt wie am Desktop (`lva.ui.library.sort`, lva#474).
+    /// Sortierung, gerätelokal gemerkt; gleiche Werte wie am Desktop (dort `lva.ui.library.sort`, lva#474).
     @AppStorage("library.sort") private var sortRaw = LibrarySort.recent.rawValue
     @Environment(\.dynamicTypeSize) private var typeSize
     @State private var importing = false

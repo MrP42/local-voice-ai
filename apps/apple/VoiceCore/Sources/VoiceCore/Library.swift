@@ -526,7 +526,8 @@ public enum LibraryText {
     /// (Altbestand ohne `added_ms` liest sich als 0 und steht bei „Zuletzt hinzugefügt“ am Ende).
     public static func sorted(_ books: [LibraryBook], by sort: LibrarySort,
                               lastUsed: (LibraryBook) -> Double = { _ in 0 }) -> [LibraryBook] {
-        let used = sort == .recent ? Dictionary(books.map { ($0.id, lastUsed($0)) }, uniquingKeysWith: max) : [:]
+        var used: [String: Double] = [:]
+        if sort == .recent { for b in books { used[b.id] = max(used[b.id] ?? 0, lastUsed(b)) } }
         func byTitle(_ a: LibraryBook, _ b: LibraryBook) -> Bool? {
             let r = sortKey(a.title).compare(sortKey(b.title), locale: Locale(identifier: "de"))
             return r == .orderedSame ? nil : r == .orderedAscending
