@@ -1,6 +1,8 @@
-//! D3 KI-Zugriff auf die Ablage (Spec §5, Epic lva#395, wai-sdk ADR-0029 E6). Vorbau ohne lva#365 P4c:
-//! die Funktionen sind fertig und getestet, eingehängt in Assistent und Projekt-KI werden sie erst mit
-//! P4c (Tor, Budget, Widerruf im Verlauf).
+//! D3 KI-Zugriff auf die Ablage (Spec §5, Epic lva#395, wai-sdk ADR-0029 E6). Seit lva#365 P4c ist er
+//! in die Projekt-KI eingehängt: das Versandtor (`projekte::tor`) ruft [`auszuege`],
+//! [`herkunft_pruefen`], [`bereinigen`] und [`als_text`], das KI-Dokument legt über [`entwurf_anlegen`]
+//! seinen Entwurf an. Der globale Weg ([`KiBereich::Global`], [`KiBereich::Ordner`]) hat noch keinen
+//! Aufrufer in der App.
 //!
 //! * [`auszuege`]: Form `auszuege` (§5.3). Je Frage Top-k ([`TOP_K`]) mit `[Q<k>]`, maskiertem Titel,
 //!   Anker, Deep-Link `wai://lva/ablage/<dat>?fas=<fas>&textrev=<rev>#<anker>` und Herkunftsmarke
@@ -21,10 +23,6 @@
 //!
 //! Inhalte aus der Ablage sind unvertrauenswürdig: [`als_text`] grenzt sie als Daten ab; spitze
 //! Klammern werden ersetzt, damit keine Grenze nachbildbar ist. Nie Namen oder Inhalte im Log.
-
-// Vorbau: Abruf, Widerrufsprüfung und Bereinigung haben bis lva#365 P4c keinen Aufrufer außer den Tests
-// (einzig `entwurf_anlegen` ist schon als Tauri-Befehl erreichbar).
-#![allow(dead_code)]
 
 use super::freigabe::{self, Lage};
 use super::index::{self, KiProfil, KiWeg};
@@ -60,9 +58,12 @@ pub const GESPERRT_UNKLAR: &str = "ablage.freigabe_unklar";
 /// Wo gesucht wird und über welchen Weg.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum KiBereich {
-    /// Globaler Weg (Assistent, lva#325): alle Unterbäume mit `an`.
+    /// Globaler Weg (Assistent, lva#325): alle Unterbäume mit `an`. Hat noch keinen Aufrufer in der App
+    /// (die Tests bauen ihn); der Assistent hängt sich in einem eigenen Paket ein.
+    #[cfg_attr(not(test), allow(dead_code))]
     Global,
     /// Globaler Weg, auf einen Ordner (mit Unterordnern) beschränkt; es gilt weiter nur `an`.
+    #[cfg_attr(not(test), allow(dead_code))]
     Ordner(String),
     /// Projektweg: Verweise der eingeschalteten Mitgliedschaften (`wai://lva/ablage/<dat|ord>`).
     /// Der Mitgliedschaftsschalter ist schon geprüft (P4a/P4c); hier gilt: `gesperrt` und unklar

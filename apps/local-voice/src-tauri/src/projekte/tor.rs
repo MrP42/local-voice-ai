@@ -13,8 +13,9 @@
 //! Quellen dieses Turns, denen aller behaltenen Texte und den berechtigten Marken aus den übrigen
 //! Texten; die Klassen sind das Maximum daraus. `abschliessen` prüft diese ganze Menge neu.
 //!
-//! P4c-1 schließt **keinen** Weg an: Die Sperre `PROJEKT_KI_FREIGEGEBEN` bleibt `false`. Das Tor ist mit
-//! Attrappen für Ziel, Kontext und Ablage getestet.
+//! Angeschlossen sind Chat und Sprache (`voice_call/projekt.rs`), Recherche (`recherche.rs`), KI-Dokument
+//! (`dokument.rs`) und die Einzelläufe des Stapels (`einzellauf`). Seit P4c-4 ist die Sperre
+//! `PROJEKT_KI_FREIGEGEBEN` aufgehoben; sie bleibt als Rückbau (ein Wert) bestehen.
 //!
 //! Sicherheitsregeln:
 //! - Fail-closed: Jeder Fehler, jede unlesbare Quelle und jede unklare Lage führt zu einem Abbruch oder
@@ -24,7 +25,10 @@
 //! - Nichts im Tor wartet auf eine Sperre über einen `await` hinweg (die Läufetabelle ist ein
 //!   `std::sync::Mutex`, dessen Wächter nicht `Send` ist: der Übersetzer erzwingt das).
 
-#![allow(dead_code)] // Vorbau: Aufrufer sind die Wege ab P4c-2/-3 und die Tests.
+// Die Stapel-Schnittstelle (`stapel`, `StapelAuftrag`, `Element`) hat bis P5 keine Oberfläche und darum
+// keinen Aufrufer in der App (E5, nur Tests); dazu Zugriffe für die Tests und das Siegel der Belege.
+// Alle App-Wege (Chat, Sprache, Recherche, KI-Dokument) laufen über `vor_versand` und `fortsetzen`.
+#![allow(dead_code)]
 
 use super::dienst::{ki_freigegeben, klasse_aus_text, proj_aus, ProjektDienst, SuiteProjekt};
 use super::herkunft::suite_id_gueltig;
@@ -274,6 +278,11 @@ pub struct Freigabe {
 }
 
 impl Freigabe {
+    /// Das Ziel als Beleg des Tors, siehe [`FreigegebenesZiel`].
+    pub fn freigegebenes_ziel(&self) -> FreigegebenesZiel {
+        FreigegebenesZiel(self.ziel.clone())
+    }
+
     /// Wurde der Lauf inzwischen widerrufen? (Zusätzlich zum `abbruch`, für synchrone Prüfungen.)
     pub fn ist_widerrufen(&self) -> bool {
         self.schein.wache.veraltet()
@@ -361,7 +370,7 @@ impl fmt::Debug for Versandschein {
 /// Warum das Tor nicht freigibt oder eine Antwort nicht übernimmt. Enthält nie Inhalte.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Abbruch {
-    /// Die Sperre der Projekt-KI ist nicht aufgehoben (bis P4c-4).
+    /// Die Sperre der Projekt-KI ist gesetzt (Rückbau, `PROJEKT_KI_FREIGEGEBEN` in `dienst.rs`).
     Gesperrt,
     /// Das Projekt gibt es nicht, ist archiviert oder die Kennung ist ungültig.
     ProjektUngueltig,
@@ -412,7 +421,10 @@ impl Abbruch {
     /// Verständlicher Text ohne Inhalte, Titel oder Namen.
     pub fn text(&self) -> String {
         match self {
-            Abbruch::Gesperrt => "Die KI im Projekt ist noch nicht freigegeben.".into(),
+            Abbruch::Gesperrt => {
+                "Die KI im Projekt ist in dieser Version abgeschaltet. Es wurde nichts gesendet."
+                    .into()
+            }
             Abbruch::ProjektUngueltig => "Das Projekt ist nicht verfügbar.".into(),
             Abbruch::Anfrage => "Die Anfrage ist ungültig.".into(),
             Abbruch::StandVeraltet => {
@@ -1513,6 +1525,30 @@ pub struct Fortsetzung {
     pub ziel: Ziel,
     /// Wird ausgelöst, sobald der Lauf widerrufen wird (wie `Freigabe::abbruch`).
     pub abbruch: Arc<Notify>,
+    /// Privat: Eine Fortsetzung baut allein [`ProjektTor::fortsetzen`]; außerhalb dieses Moduls gibt es
+    /// kein Literal (und ein Muster braucht `..`).
+    siegel: (),
+}
+
+impl Fortsetzung {
+    /// Das Ziel als Beleg des Tors, siehe [`FreigegebenesZiel`].
+    pub fn freigegebenes_ziel(&self) -> FreigegebenesZiel {
+        FreigegebenesZiel(self.ziel.clone())
+    }
+}
+
+/// Ein Ziel mit dem Beleg, dass das Tor es freigegeben hat. Das Feld ist privat zu diesem Modul: Einen Wert
+/// gibt es nur aus einer [`Freigabe`] (deren Schein nur das Tor ausstellt) oder einer [`Fortsetzung`]. Wer
+/// über ein Ziel sendet und das Tor nicht selbst durchläuft (die Recherche: `weg_modell`), nimmt dieses Gewand
+/// statt eines freien [`Ziel`]; der Compiler hält so einen Versand ohne Tor fern, ohne dass ein Test auf
+/// Dateipositionen achten müsste.
+#[derive(Clone)]
+pub struct FreigegebenesZiel(Ziel);
+
+impl FreigegebenesZiel {
+    pub fn ziel(&self) -> &Ziel {
+        &self.0
+    }
 }
 
 impl fmt::Debug for Fortsetzung {
@@ -1626,7 +1662,11 @@ impl ProjektTor {
             .filter(|l| l.nr == s.wache.nr)
             .map(|l| l.notify.clone())
             .ok_or(Abbruch::Widerrufen)?;
-        Ok(Fortsetzung { ziel, abbruch })
+        Ok(Fortsetzung {
+            ziel,
+            abbruch,
+            siegel: (),
+        })
     }
 
     /// Ein vollständiger Lauf ohne Gespräch und ohne Oberfläche: Tor, Versand, Urteil. Für das

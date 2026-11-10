@@ -30,6 +30,7 @@ use super::dokument::{
     self, DokumentAuftrag, DokumentErgebnis, DokumentFehler, Entwurfsablage, WegVersand,
     CODE_ABLAGE, CODE_EINGABE, CODE_LEER,
 };
+use super::kontext::KontextForm;
 use super::lokaler_principal;
 use super::recherche::{
     FreigabeAktion, LaufAntwort, ModellQuelle, RechercheDienst, RueckrufModell, Webzugang,
@@ -37,8 +38,8 @@ use super::recherche::{
 };
 use super::tests::server;
 use super::tests_p4c::{
-    ablage_verweis, auszug, env, env_mit, env_mit_ablage, projekt, seite, seite_text, szene, ziel,
-    Env, GEHEIM, P,
+    ablage_verweis, auszug, buch, env, env_echt, env_echt_mit_ablage, env_mit, env_mit_ablage,
+    freigeschaltet, projekt, seite, seite_text, szene, ziel, Env, GEHEIM, P,
 };
 use super::tor::{Abbruch, Element, StapelAuftrag, Ziel, CODE_KLASSE};
 use super::tor_herkunft;
@@ -675,7 +676,7 @@ async fn ohne_suchadresse_ist_die_recherche_mit_kontext_aus() {
 }
 
 #[tokio::test]
-async fn gesperrte_projekt_ki_sendet_nichts_und_startet_kein_modell() {
+async fn gesetzte_sperre_laesst_die_recherche_nichts_senden_und_startet_kein_modell() {
     let r = bauen(env_mit(false).await, Klasse::Internal, true, true).await;
     let a = r.start().await;
     assert_eq!(a.code.as_deref(), Some("projekt.ki_gesperrt"), "{a:?}");
@@ -1308,7 +1309,7 @@ async fn mindestklasse_folgt_dem_projekt_auch_wenn_das_modell_keine_quelle_nennt
 #[tokio::test]
 async fn mindestklasse_umfasst_ablage_auszuege_und_gibt_ihre_marken_weiter() {
     let s = szene();
-    let e = env_mit(false).await;
+    let e = env().await;
     s.ziele.setzen(ziel(true));
     let (aus, marke) = auszug("confidential", "Vertraulich");
     *s.ablage.auszuege.lock().unwrap() = aus;
@@ -1474,7 +1475,7 @@ async fn veralteter_stand_im_dokument_sendet_nichts() {
 }
 
 #[tokio::test]
-async fn gesperrte_projekt_ki_erstellt_kein_dokument() {
+async fn gesetzte_sperre_erstellt_kein_dokument() {
     let d = d_bauen(env_mit(false).await, Klasse::Internal).await;
     let fehler = d.erstellen().await.unwrap_err();
     assert_eq!(fehler, DokumentFehler::Tor(Abbruch::Gesperrt));
@@ -1679,7 +1680,7 @@ async fn parallele_stapel_stoeren_sich_nicht() {
 }
 
 #[tokio::test]
-async fn gesperrter_stapel_und_modellfehler_beenden_den_stapel() {
+async fn gesetzte_sperre_und_modellfehler_beenden_den_stapel() {
     let d = d_bauen(env_mit(false).await, Klasse::Internal).await;
     let aus =
         d.e.tor
@@ -1802,4 +1803,237 @@ fn recherche_mit_kontext_beruehrt_weder_audiopfad_noch_neue_prozesse() {
             assert!(!q.contains(verboten), "{name}: {verboten}");
         }
     }
+}
+
+// ---------------------------------------------------------------- Abnahme Spec §9 „Kontext“ (P4c-4)
+//
+// Je Weg: Der Kontrolltext eines ausgeschalteten Eintrags erscheint nie (auch nicht nach dem Ausschalten
+// mitten in der Arbeit), und ein fehlendes Kurzbuch liefert keinen Rohtext. Chat und Sprache:
+// `voice_call/projekt/tests.rs`. Recherche, KI-Dokument und Stapel: hier.
+//
+// Jede Prüfung läuft zweimal: als `abnahme_9_*` gegen den echten Dienst als Kontextquelle (mit der Sperre,
+// nur bei `freigeschaltet()`; bei gesetztem Rückbau gilt stattdessen `gesetzte_sperre_*`) und als
+// `kontext_*` gegen die Testquelle, die vom Wert der Sperre nicht abhängt. So ändert der Rückbau (ein
+// Wert) nur die Abnahme, nie die Funktionstests.
+
+/// Der Rohtext eines Buchs, das kein Kurzbuch hat.
+const ROHTEXT: &str = "ROHTEXT-BUCH-4d21";
+
+/// Ein Buch ohne Kurzbuch im Projekt; liefert die Kennung des Eintrags.
+async fn buch_ohne_kurzbuch(e: &Env, p: &str) -> String {
+    buch(e, "b1", None, ROHTEXT);
+    e.dienst.buch_zuordnen(p, "b1").await.unwrap();
+    eintrag_zu(e, p, "wai://lva/buch/b1").await
+}
+
+/// Der Eintrag liefert ab jetzt seinen Volltext (ausdrückliche Wahl): die Gegenprobe der Abnahme.
+async fn volltext_waehlen(e: &Env, p: &str, eintrag: &str) {
+    e.dienst
+        .kontext_schalten(p, eintrag, true, Some(KontextForm::Volltext), None)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn abnahme_9_recherche_fehlendes_kurzbuch_liefert_keinen_rohtext() {
+    if freigeschaltet() {
+        recherche_fehlendes_kurzbuch(env_echt().await).await;
+    }
+}
+
+#[tokio::test]
+async fn kontext_recherche_fehlendes_kurzbuch_liefert_keinen_rohtext() {
+    recherche_fehlendes_kurzbuch(env().await).await;
+}
+
+async fn recherche_fehlendes_kurzbuch(e: Env) {
+    let r = bauen(e, Klasse::Internal, true, true).await;
+    let eintrag = buch_ohne_kurzbuch(&r.e, &r.p).await;
+    let id = r.halt().await;
+    assert!(!format!("{:?}", r.dienst.freigaben()).contains(ROHTEXT));
+    assert!(!r.weg.alles().contains(ROHTEXT), "nicht in der Planung");
+    let a = r.senden(&id, &["a1", "a2"]).await.unwrap();
+    assert_eq!(a.status, "fertig", "{a:?}");
+    assert!(!r.weg.alles().contains(ROHTEXT), "in keiner Modelleingabe");
+    assert!(!r.suche.texte().contains(ROHTEXT), "in keiner Suchanfrage");
+    let d = r.dienst.lesen(&a.recherche_id.unwrap()).await.unwrap();
+    assert!(!format!("{d:?}").contains(ROHTEXT), "nicht im Dokument");
+    // Gegenprobe: Mit dem Volltext steht er in der Planung des nächsten Laufs.
+    volltext_waehlen(&r.e, &r.p, &eintrag).await;
+    r.halt().await;
+    assert!(r.weg.alles().contains(ROHTEXT));
+}
+
+#[tokio::test]
+async fn abnahme_9_recherche_kontrolltext_nach_dem_ausschalten_nie_mehr() {
+    if freigeschaltet() {
+        recherche_kontrolltext_nach_dem_ausschalten(env_echt().await).await;
+    }
+}
+
+#[tokio::test]
+async fn kontext_recherche_kontrolltext_nach_dem_ausschalten_nie_mehr() {
+    recherche_kontrolltext_nach_dem_ausschalten(env().await).await;
+}
+
+async fn recherche_kontrolltext_nach_dem_ausschalten(e: Env) {
+    let r = bauen(e, Klasse::Internal, true, true).await;
+    seite(&r.e, "s2", GEHEIM);
+    r.e.dienst.seite_zuordnen(&r.p, "s2").await.unwrap();
+    // Eingeschaltet geht er in die Planung (die Abnahme sieht ihn also) …
+    let id1 = r.halt().await;
+    assert!(r.weg.alles().contains(GEHEIM));
+    // … nach dem Ausschalten mitten im Lauf ist der Halt widerrufen, und der nächste Lauf kennt ihn nicht.
+    let id2 = eintrag_zu(&r.e, &r.p, "wai://lva/seite/s2").await;
+    r.e.dienst
+        .kontext_schalten(&r.p, &id2, false, None, None)
+        .await
+        .unwrap();
+    let a = r.senden(&id1, &["a1"]).await.unwrap();
+    assert_eq!(a.code.as_deref(), Some(CODE_KONTEXT_GEAENDERT), "{a:?}");
+    assert_eq!(r.suche.anzahl(), 0, "nichts verließ das Haus");
+    let vorher = r.weg.zaehl();
+    let id3 = r.halt().await;
+    let neu = (vorher..r.weg.zaehl())
+        .map(|i| r.weg.aufruf(i))
+        .map(|c| format!("{}\n{}", c.system, c.user))
+        .collect::<String>();
+    assert!(!neu.contains(GEHEIM), "der neue Lauf kennt den Text nicht");
+    let b = r.senden(&id3, &["a1", "a2"]).await.unwrap();
+    assert_eq!(b.status, "fertig", "{b:?}");
+    assert!(!r.suche.texte().contains(GEHEIM));
+}
+
+#[tokio::test]
+async fn abnahme_9_dokument_kontrolltext_und_fehlendes_kurzbuch() {
+    if freigeschaltet() {
+        dokument_kontrolltext_und_fehlendes_kurzbuch(env_echt_mit_ablage().await).await;
+    }
+}
+
+#[tokio::test]
+async fn kontext_dokument_kontrolltext_und_fehlendes_kurzbuch() {
+    dokument_kontrolltext_und_fehlendes_kurzbuch(env_mit_ablage().await).await;
+}
+
+async fn dokument_kontrolltext_und_fehlendes_kurzbuch(e: Env) {
+    let d = d_bauen(e, Klasse::Internal).await;
+    // Ausgeschaltet von Anfang an: nie im Prompt.
+    seite(&d.e, "s2", GEHEIM);
+    d.e.dienst.seite_zuordnen(&d.p, "s2").await.unwrap();
+    let s2 = eintrag_zu(&d.e, &d.p, "wai://lva/seite/s2").await;
+    d.e.dienst
+        .kontext_schalten(&d.p, &s2, false, None, None)
+        .await
+        .unwrap();
+    let eintrag = buch_ohne_kurzbuch(&d.e, &d.p).await;
+    d.erstellen().await.unwrap();
+    assert!(!d.weg.alles().contains(GEHEIM), "ausgeschaltet: nie");
+    assert!(
+        !d.weg.alles().contains(ROHTEXT),
+        "kein Kurzbuch: kein Rohtext"
+    );
+    // Eingeschaltet kommt er an (Gegenprobe), nach dem Ausschalten im nächsten Dokument nicht mehr.
+    d.e.dienst
+        .kontext_schalten(&d.p, &s2, true, None, None)
+        .await
+        .unwrap();
+    volltext_waehlen(&d.e, &d.p, &eintrag).await;
+    d.erstellen_mit(DokumentAuftrag {
+        name: "Zweites".into(),
+        ..d.auftrag()
+    })
+    .await
+    .unwrap();
+    let zweites = d.weg.aufruf(1);
+    let zweites = format!("{}\n{}", zweites.system, zweites.user);
+    assert!(zweites.contains(GEHEIM) && zweites.contains(ROHTEXT));
+    d.e.dienst
+        .kontext_schalten(&d.p, &s2, false, None, None)
+        .await
+        .unwrap();
+    d.erstellen_mit(DokumentAuftrag {
+        name: "Drittes".into(),
+        ..d.auftrag()
+    })
+    .await
+    .unwrap();
+    let drittes = d.weg.aufruf(2);
+    let drittes = format!("{}\n{}", drittes.system, drittes.user);
+    assert!(!drittes.contains(GEHEIM), "nach dem Ausschalten nie mehr");
+    assert!(drittes.contains(ROHTEXT), "der Rest bleibt");
+    assert_eq!(d.e.tor.offene_laeufe(), 0);
+}
+
+#[tokio::test]
+async fn abnahme_9_stapel_kontrolltext_und_fehlendes_kurzbuch() {
+    if freigeschaltet() {
+        stapel_kontrolltext_und_fehlendes_kurzbuch(env_echt().await).await;
+    }
+}
+
+#[tokio::test]
+async fn kontext_stapel_kontrolltext_und_fehlendes_kurzbuch() {
+    stapel_kontrolltext_und_fehlendes_kurzbuch(env().await).await;
+}
+
+async fn stapel_kontrolltext_und_fehlendes_kurzbuch(e: Env) {
+    let d = d_bauen(e, Klasse::Internal).await;
+    seite(&d.e, "s2", GEHEIM);
+    d.e.dienst.seite_zuordnen(&d.p, "s2").await.unwrap();
+    let s2 = eintrag_zu(&d.e, &d.p, "wai://lva/seite/s2").await;
+    d.e.dienst
+        .kontext_schalten(&d.p, &s2, false, None, None)
+        .await
+        .unwrap();
+    let eintrag = buch_ohne_kurzbuch(&d.e, &d.p).await;
+    let vorher = d.weg.zaehl();
+    let aus =
+        d.e.tor
+            .stapel(
+                stapel("stp1", &d.p, &["F1", "F2"]),
+                &WegVersand(d.weg.clone()),
+            )
+            .await;
+    assert!(aus.iter().all(fertig), "{aus:?}");
+    assert_eq!(d.weg.zaehl() - vorher, 2);
+    assert!(!d.weg.alles().contains(GEHEIM), "ausgeschaltet: nie");
+    assert!(
+        !d.weg.alles().contains(ROHTEXT),
+        "kein Kurzbuch: kein Rohtext"
+    );
+    // Gegenprobe und Ausschalten zwischen zwei Stapeln.
+    d.e.dienst
+        .kontext_schalten(&d.p, &s2, true, None, None)
+        .await
+        .unwrap();
+    volltext_waehlen(&d.e, &d.p, &eintrag).await;
+    let aus =
+        d.e.tor
+            .stapel(stapel("stp2", &d.p, &["F3"]), &WegVersand(d.weg.clone()))
+            .await;
+    assert!(aus.iter().all(fertig), "{aus:?}");
+    let c = d.weg.aufruf(d.weg.zaehl() - 1);
+    assert!(format!("{}\n{}", c.system, c.user).contains(GEHEIM));
+    d.e.dienst
+        .kontext_schalten(&d.p, &s2, false, None, None)
+        .await
+        .unwrap();
+    let von = d.weg.zaehl();
+    let aus =
+        d.e.tor
+            .stapel(
+                stapel("stp3", &d.p, &["F4", "F5"]),
+                &WegVersand(d.weg.clone()),
+            )
+            .await;
+    assert!(aus.iter().all(fertig), "{aus:?}");
+    for i in von..d.weg.zaehl() {
+        let c = d.weg.aufruf(i);
+        assert!(
+            !format!("{}\n{}", c.system, c.user).contains(GEHEIM),
+            "Element {i}: nach dem Ausschalten nie mehr"
+        );
+    }
+    assert_eq!(d.e.tor.offene_laeufe(), 0);
 }

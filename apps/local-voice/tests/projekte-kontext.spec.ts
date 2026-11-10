@@ -133,7 +133,13 @@ test.describe("Projekte mit Als Kontext", () => {
     await expect(
       page.getByText(/Die Auswahl gilt auf diesem Gerät/),
     ).toBeVisible();
-    await expect(page.getByTestId("ki-im-projekt")).toContainText("Gesperrt");
+    // Seit P4c-4 ist die KI im Projekt freigeschaltet: kein Sperrtext, dafür die Regel in einem Satz.
+    const ki = page.getByTestId("ki-im-projekt");
+    await expect(ki).toContainText("KI im Projekt");
+    await expect(ki).toContainText(
+      "Vor jedem Senden prüft die App Datenklasse, Größe und Ziel",
+    );
+    await expect(ki).not.toContainText("Gesperrt");
   });
 
   test("Eintrag: Token, Hinweis statt Inhalt, Formathinweis mit gesperrtem Schalter", async ({

@@ -38,7 +38,7 @@ use super::dienst::{klasse_text, ProjektDienst};
 use super::herkunft::{recherche_link, LvaHerkunft};
 use super::tor::{
     budget_mit_reserve, klasse_zulaessig, Abbruch, Bindung, Budgetbeleg, Fortsetzung, Freigabe,
-    ProjektTor, PromptTeile, Versandauftrag, Versandschein, Weg, Ziel, CODE_KLASSE,
+    FreigegebenesZiel, ProjektTor, PromptTeile, Versandauftrag, Versandschein, Weg, CODE_KLASSE,
     WEB_RESERVE_TOKEN,
 };
 use super::{Fehler, Res};
@@ -988,6 +988,8 @@ impl RechercheDienst {
                         "Die Recherche mit Projektkontext ist nicht verfügbar. Es wurde nichts gesendet.",
                     ));
                 };
+                // Das Ziel des Modells ist ein Beleg des Tors (`FreigegebenesZiel`), nie ein freies Ziel.
+                let freigegeben = f.freigegebenes_ziel();
                 let Freigabe {
                     schein,
                     ziel,
@@ -1023,7 +1025,7 @@ impl RechercheDienst {
                     ..SchnellOptionen::default()
                 };
                 (
-                    Arc::new(weg_modell(ki.weg.clone(), ziel)) as Arc<dyn Modell>,
+                    Arc::new(weg_modell(ki.weg.clone(), freigegeben)) as Arc<dyn Modell>,
                     stuecke,
                     optionen,
                     Some((schein, budget, notify)),
@@ -1647,13 +1649,15 @@ impl RechercheDienst {
                     return Ok(self.kontext_geaendert(id, 0));
                 };
                 let fortsetzung = ki.tor.fortsetzen(&schein, FUNKTION_RECHERCHE, None).await;
-                let Fortsetzung { ziel, abbruch } = match fortsetzung {
+                let fortsetzung = match fortsetzung {
                     Ok(f) => f,
                     Err(Abbruch::Verspaetet | Abbruch::Widerrufen) => {
                         return Ok(self.kontext_geaendert(id, 0));
                     }
                     Err(a) => return Ok(self.abgelehnt(id, &a)),
                 };
+                let freigegeben = fortsetzung.freigegebenes_ziel();
+                let Fortsetzung { ziel, abbruch, .. } = fortsetzung;
                 // Das frische Ziel muss auch die Klasse der Frage tragen (Wechsel auf eine Cloud nach dem Halt).
                 let stufe = kontext
                     .stuecke
@@ -1672,7 +1676,7 @@ impl RechercheDienst {
                     Err(a) => return Ok(self.abgelehnt(id, &a)),
                 };
                 (
-                    Arc::new(weg_modell(ki.weg.clone(), ziel)) as Arc<dyn Modell>,
+                    Arc::new(weg_modell(ki.weg.clone(), freigegeben)) as Arc<dyn Modell>,
                     Some((schein, budget)),
                     Some(abbruch),
                 )
@@ -1875,7 +1879,10 @@ fn antwort_text(d: &Recherchedokument) -> String {
 /// Das Modell der Recherche mit Projektkontext: das Ziel des Tors, versendet ueber `weg` (ein lokales
 /// Ziel nur an die gebundene Adresse). Der Fehlertext des Anbieters wird nie weitergegeben
 /// (`RueckrufModell` macht daraus `ModellFehler`); die Klassenregel von `modell_erlaubt` gilt zusaetzlich.
-fn weg_modell(weg: Arc<dyn Modellweg>, ziel: Ziel) -> RueckrufModell {
+/// Das Ziel kommt als [`FreigegebenesZiel`]: Es entsteht nur aus einer Freigabe oder Fortsetzung des Tors,
+/// ein Versand ohne Tor ist also eine Typfrage und kein Reihenfolge-Test.
+fn weg_modell(weg: Arc<dyn Modellweg>, ziel: FreigegebenesZiel) -> RueckrufModell {
+    let ziel = ziel.ziel().clone();
     let (name, lokal) = (ziel.modell.clone(), ziel.anbieter.lokal);
     let ziel = Arc::new(ziel);
     RueckrufModell::neu(&name, lokal, move |anweisung, eingabe| {

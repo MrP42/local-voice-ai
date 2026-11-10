@@ -11,9 +11,9 @@ import { calls, openRecordings, pickMeeting } from "./recLayoutMock";
 
 // lva#365 P4c-3: Recherche mit Projektkontext (W3) und KI-Dokument im Projekt (W4a). Die Regeln des
 // Kerns (Halt immer, Kontrolltext, Widerruf, Mindestklasse, Stapel) prüfen die Rust-Tests in
-// `src-tauri/src/projekte/tests_p4c3.rs`; hier die Oberfläche gegen die Attrappe. Die Sperre der KI im
-// Projekt steht fest in Rust (`PROJEKT_KI_FREIGEGEBEN = false`); die Attrappe stellt sie über
-// `projekt_ki_status` nach (`window.__kiFrei`), die App selbst kennt keinen Schalter.
+// `src-tauri/src/projekte/tests_p4c3.rs`; hier die Oberfläche gegen die Attrappe. Seit P4c-4 ist die KI im
+// Projekt frei (`PROJEKT_KI_FREIGEGEBEN = true`); die Oberfläche kennt keinen Schalter. Nur der Rückbau
+// lässt sich in der Attrappe nachstellen (`window.__kiAus`): Dann lehnt das Tor mit `projekt.ki_gesperrt` ab.
 
 test.use({ timezoneId: "Europe/Berlin", locale: "de-DE" });
 
@@ -43,25 +43,14 @@ const aufnehmen = async (page: Page, name: string) => {
 
 const FRAGE = "Wie werden Netzentgelte für die Lastgangmessung berechnet?";
 
-const kiFrei = (frei: boolean) => (page: Page) =>
-  page.addInitScript((f) => {
-    (window as any).__kiFrei = f;
-  }, frei);
-
 // ---------------------------------------------------------------- Chat-Spalte: Recherche mit Projektkontext
 
-const chatSetup = async (
-  page: Page,
-  breite: number,
-  hoehe: number,
-  frei: boolean,
-) => {
+const chatSetup = async (page: Page, breite: number, hoehe: number) => {
   page.on("pageerror", (error) => {
     throw error;
   });
   await installLiveMock(page);
   await installProjekteMock(page);
-  await kiFrei(frei)(page);
   if (DUNKEL)
     await page.addInitScript(() => {
       (window as any).__settings.theme = "dark";
@@ -82,22 +71,19 @@ for (const [breite, hoehe] of [
   [1440, 900],
   [390, 844],
 ] as const) {
-  test(`Chat-Spalte: Projektkontext ist gesperrt, der Grund steht einmal da (${breite} px)`, async ({
+  test(`Chat-Spalte: Projektkontext ist wählbar, ohne Sperrtext, und standardmäßig aus (${breite} px)`, async ({
     page,
   }) => {
-    const panel = await chatSetup(page, breite, hoehe, false);
+    const panel = await chatSetup(page, breite, hoehe);
     const schalter = panel.getByTestId("chat-recherche-kontext");
-    await expect(schalter).toBeDisabled();
+    await expect(schalter).toBeEnabled();
     await expect(schalter).not.toBeChecked();
-    // Der Grund steht genau einmal da, nicht an Schalter und Zeile doppelt.
-    await expect(panel.getByText(/Gesperrt/)).toHaveCount(1);
+    await expect(panel.getByText(/Gesperrt/)).toHaveCount(0);
     await expect(
       panel.getByTestId("chat-recherche-kontext-zeile"),
-    ).toContainText(
-      "Gesperrt: KI-Aufrufe im Projekt folgen mit dem nächsten Schritt.",
-    );
-    await aufnehmen(page, "chat-kontext-gesperrt");
-    // Ohne den Schalter geht die Recherche wie bisher an das Backend, ohne Kontext.
+    ).toContainText("Vor der Suche zeigt ein Dialog sie zur Freigabe.");
+    await aufnehmen(page, "chat-kontext-aus");
+    // Ohne den Haken geht die Recherche wie bisher an das Backend, ohne Kontext.
     const eingabe = panel.locator("textarea");
     await eingabe.fill(FRAGE);
     await panel.getByTestId("chat-recherche").click();
@@ -110,13 +96,12 @@ for (const [breite, hoehe] of [
   test(`Chat-Spalte: mit Projektkontext hält die Recherche an und zeigt, woher die Anfragen kommen (${breite} px)`, async ({
     page,
   }) => {
-    const panel = await chatSetup(page, breite, hoehe, true);
+    const panel = await chatSetup(page, breite, hoehe);
     const schalter = panel.getByTestId("chat-recherche-kontext");
     await expect(schalter).toBeEnabled();
-    await expect(panel.getByText(/Gesperrt/)).toHaveCount(0);
     await schalter.check();
     await expect(schalter).toBeChecked();
-    await aufnehmen(page, "chat-kontext-frei");
+    await aufnehmen(page, "chat-kontext-an");
     const eingabe = panel.locator("textarea");
     await eingabe.fill(FRAGE);
     await panel.getByTestId("chat-recherche").click();
@@ -149,19 +134,19 @@ for (const [breite, hoehe] of [
   });
 }
 
-test("Chat-Spalte: Die Sperre des Backends gilt auch, wenn die Oberfläche sie nicht kennt", async ({
+test("Chat-Spalte: Der Rückbau des Backends gilt auch, wenn die Oberfläche ihn nicht kennt", async ({
   page,
 }) => {
-  const panel = await chatSetup(page, 1440, 900, true);
+  const panel = await chatSetup(page, 1440, 900);
   await panel.getByTestId("chat-recherche-kontext").check();
   // Das Backend sperrt inzwischen: Der Lauf geht nicht weiter, die Frage bleibt stehen.
-  await page.evaluate(() => ((window as any).__kiFrei = false));
+  await page.evaluate(() => ((window as any).__kiAus = true));
   const eingabe = panel.locator("textarea");
   await eingabe.fill(FRAGE);
   await panel.getByTestId("chat-recherche").click();
   await panel.getByRole("button", { name: "Geschäftlich" }).click();
   await expect(panel).toContainText(
-    "Die KI im Projekt ist noch nicht freigegeben. Es wurde nichts gesendet.",
+    "Die KI im Projekt ist in dieser Version abgeschaltet. Es wurde nichts gesendet.",
   );
   await expect(eingabe).toHaveValue(FRAGE);
   await expect(page.getByRole("alertdialog")).toHaveCount(0);
@@ -171,15 +156,14 @@ test("Chat-Spalte: Die Sperre des Backends gilt auch, wenn die Oberfläche sie n
 
 const dokSetup = async (
   page: Page,
-  opts: { frei: boolean; width?: number; height?: number } = { frei: true },
+  opts: { width?: number; height?: number } = {},
 ) => {
-  const { frei, width = 1440, height = 900 } = opts;
+  const { width = 1440, height = 900 } = opts;
   page.on("pageerror", (error) => {
     throw error;
   });
   await installLiveMock(page);
   await installProjekteKontextMock(page);
-  await kiFrei(frei)(page);
   if (DUNKEL)
     await page.addInitScript(() => {
       (window as any).__settings.theme = "dark";
@@ -217,24 +201,24 @@ for (const [breite, hoehe] of [
   [1440, 900],
   [390, 844],
 ] as const) {
-  test(`KI-Dokument: gesperrt, solange die KI im Projekt nicht freigegeben ist (${breite} px)`, async ({
+  test(`KI-Dokument: Der Knopf ist aktiv, ohne Sperrtext, und das Formular öffnet erst auf Klick (${breite} px)`, async ({
     page,
   }) => {
-    await dokSetup(page, { frei: false, width: breite, height: hoehe });
+    await dokSetup(page, { width: breite, height: hoehe });
     const knopf = await dokKnopf(page);
-    await expect(knopf).toBeDisabled();
-    // Der Grund steht genau einmal da (unter „Gespräch im Projekt beginnen“).
-    await expect(bereich(page).getByText(/Gesperrt/)).toHaveCount(1);
+    await expect(knopf).toBeEnabled();
+    await expect(knopf).toHaveAttribute("aria-expanded", "false");
+    await expect(bereich(page).getByText(/Gesperrt/)).toHaveCount(0);
     await expect(page.getByTestId("projekt-dokument-formular")).toHaveCount(0);
     await knopf.scrollIntoViewIfNeeded();
-    await aufnehmen(page, "dokument-gesperrt");
+    await aufnehmen(page, "dokument-knopf");
     expect(await calls(page, "projekt_ki_dokument_erstellen")).toHaveLength(0);
   });
 
   test(`KI-Dokument: Auftrag und Name, Stand der Übersicht, Entwurf bleibt im Projekt aus (${breite} px)`, async ({
     page,
   }) => {
-    await dokSetup(page, { frei: true, width: breite, height: hoehe });
+    await dokSetup(page, { width: breite, height: hoehe });
     const knopf = await dokKnopf(page);
     await expect(knopf).toBeEnabled();
     await knopf.click();
@@ -283,7 +267,7 @@ for (const [breite, hoehe] of [
 test("KI-Dokument: Fehler des Backends erscheinen mit festem Text, ohne Inhalte", async ({
   page,
 }) => {
-  await dokSetup(page, { frei: true });
+  await dokSetup(page);
   await page.evaluate(
     () =>
       ((window as any).__kontext.dokumentFehler =
@@ -318,7 +302,7 @@ test("KI-Dokument: Fehler des Backends erscheinen mit festem Text, ohne Inhalte"
 test("KI-Dokument: Mitgliedschaft gescheitert wird gemeldet, der Entwurf bleibt in der Ablage", async ({
   page,
 }) => {
-  await dokSetup(page, { frei: true });
+  await dokSetup(page);
   await page.evaluate(
     () => ((window as any).__kontext.dokumentImProjekt = false),
   );
@@ -337,7 +321,7 @@ test("KI-Dokument: Mitgliedschaft gescheitert wird gemeldet, der Entwurf bleibt 
 test("KI-Dokument: Doppelklick sendet einmal, während der Lauf dauert", async ({
   page,
 }) => {
-  await dokSetup(page, { frei: true });
+  await dokSetup(page);
   await page.evaluate(() => ((window as any).__kontext.dokumentMs = 400));
   await (await dokKnopf(page)).click();
   const formular = page.getByTestId("projekt-dokument-formular");
@@ -351,10 +335,10 @@ test("KI-Dokument: Doppelklick sendet einmal, während der Lauf dauert", async (
   expect(await calls(page, "projekt_ki_dokument_erstellen")).toHaveLength(1);
 });
 
-test("Barrierefreiheit: Formular KI-Dokument und gesperrter Schalter ohne serious/critical", async ({
+test("Barrierefreiheit: Formular KI-Dokument und Schalter ohne serious/critical", async ({
   page,
 }) => {
-  await dokSetup(page, { frei: true });
+  await dokSetup(page);
   await (await dokKnopf(page)).click();
   await expect(page.getByTestId("projekt-dokument-formular")).toBeVisible();
   const r = await new AxeBuilder({ page })
@@ -369,7 +353,7 @@ test("Barrierefreiheit: Formular KI-Dokument und gesperrter Schalter ohne seriou
 test("390 px: Touchziele des KI-Dokuments mindestens 44 px", async ({
   page,
 }) => {
-  await dokSetup(page, { frei: true, width: 390, height: 844 });
+  await dokSetup(page, { width: 390, height: 844 });
   await (await dokKnopf(page)).click();
   const formular = page.getByTestId("projekt-dokument-formular");
   await expect(formular).toBeVisible();

@@ -44,8 +44,18 @@ use wai_security::Principal;
 
 /// Hoechstlaenge von Titeln in Eintraegen (Vertrag `project-entry.title`).
 const MAX_TITEL: usize = 300;
-/// Projekt-KI erst nach P4c (Codex-Auflage 3): bis dahin liefert `kontext_fuer_ki` nichts.
-const PROJEKT_KI_FREIGEGEBEN: bool = false;
+/// Freischaltung der KI im Projekt (lva#365 P4c-4, Codex-Auflage 3). Alle Wege (Chat, Sprache,
+/// Recherche, KI-Dokument, Stapel) laufen über das Versandtor (`tor.rs`); erst damit ist die Sperre
+/// aufgehoben.
+///
+/// **Rückbau:** Dieser eine Wert. Mit `false` liefert `kontext_fuer_ki` nichts, und das Tor bricht jeden
+/// Weg vor dem Versand mit `projekt.ki_gesperrt` ab („in dieser Version abgeschaltet“); die Daten bleiben
+/// unverändert. Die Oberfläche fragt den Wert nicht ab: Die Einstiege bleiben bedienbar und melden die
+/// Abschaltung beim Senden mit dem Text dieses Codes. Die Tests bleiben dabei grün: Die Funktionstests
+/// laufen über eine Testquelle (`tests_p4c::TestQuelle`) und kennen den Wert nicht; die Abnahme gegen den
+/// echten Dienst (`abnahme_9_*`, `ohne_tor_kein_kontext`) setzt `true` voraus und prüft bei `false` stattdessen,
+/// dass nichts herauskommt; den Rückbau stellen die Tests `gesetzte_sperre_*` je Weg nach.
+const PROJEKT_KI_FREIGEGEBEN: bool = true;
 
 /// Ist die Sperre der Projekt-KI aufgehoben? Das Versandtor (`tor.rs`) fragt vor allem anderen.
 pub(super) const fn ki_freigegeben() -> bool {
@@ -1151,27 +1161,27 @@ impl ProjektDienst {
     }
 
     /// Einziger Zugang der KI-Wege zum Projektkontext (`projekt_kontext`, Spec §5.2). Nur das
-    /// Versandtor (`tor.rs`) ruft ihn; ein Quelltest in `tests_p4c` hält das fest. Bis P4c-4 gesperrt:
-    /// liefert dann nichts, nur einen Fehler.
+    /// Versandtor (`tor.rs`) ruft ihn; Quelltests in `tests_p4` und `tests_p4c` halten das fest. Ist die
+    /// Sperre `PROJEKT_KI_FREIGEGEBEN` gesetzt, liefert er nichts, nur einen Fehler.
     pub(super) async fn kontext_fuer_ki(&self, suite_id: &str) -> Res<Kontext> {
         Self::projekt_pruefen(suite_id)?;
         if !PROJEKT_KI_FREIGEGEBEN {
             return Err(Fehler::neu(
                 "projekte.ki_gesperrt",
-                "Die KI im Projekt ist noch nicht freigegeben.",
+                "Die KI im Projekt ist in dieser Version abgeschaltet.",
             ));
         }
         self.kontext_bauen(suite_id).await
     }
 
-    /// Nur für Tests: der Kontext mit Inhalten, ohne die P4c-Sperre.
+    /// Nur für Tests: der Kontext mit Inhalten, auch bei gesetzter Sperre (sie stellen den Rückbau nach).
     #[cfg(test)]
     pub(super) async fn kontext_fuer_test(&self, suite_id: &str) -> Res<Kontext> {
         self.kontext_bauen(suite_id).await
     }
 
     /// Der KI-Kontext eines Projekts (Spec §5.2) mit Inhalten. Privat: aufgerufen nur aus
-    /// `kontext_fuer_ki` (KI-Wege, gesperrt bis P4c), `kontext_uebersicht` (nur die Übersicht ohne
+    /// `kontext_fuer_ki` (KI-Wege, nur über das Tor), `kontext_uebersicht` (nur die Übersicht ohne
     /// Inhalte) und dem Testzugang; ein Allowlist-Test in `tests_p4` prüft das.
     async fn kontext_bauen(&self, suite_id: &str) -> Res<Kontext> {
         Self::projekt_pruefen(suite_id)?;
