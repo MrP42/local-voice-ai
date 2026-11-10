@@ -1881,3 +1881,7 @@ mod tests;
 #[cfg(test)]
 #[path = "ablage_vektoren.rs"]
 mod vektoren;
+
+#[cfg(test)]
+#[path = "ablage_vektoren_zusatz.rs"]
+mod vektoren_zusatz;
