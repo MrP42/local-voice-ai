@@ -125,6 +125,7 @@ public enum AblageZusammenfuehren {
     /// `blob_refs` neu abgeleitet, alles nach UTF-8-Bytes. Gleiche `fas`, `id` oder `textrev` werden verdichtet,
     /// das Größere nach der abgeleiteten Ordnung gewinnt.
     public static func zusammenfuehrenDatei(_ a: AblageDatei, _ b: AblageDatei) -> AblageDatei {
+        assert(AblageBytes.equal(a.id, b.id), "nur Stände derselben Datei zusammenführen")
         let entfernt = AblageBytes.sortedUnique(a.entfernt + b.entfernt)
         var weg = AblageMenge()
         weg.formUnion(entfernt)
@@ -162,7 +163,8 @@ public enum AblageZusammenfuehren {
 
     /// Führt zwei Stände desselben Ordners zusammen (`zusammenfuehren_ordner`); `id` stammt von `a`.
     public static func zusammenfuehrenOrdner(_ a: AblageOrdner, _ b: AblageOrdner) -> AblageOrdner {
-        AblageOrdner(
+        assert(AblageBytes.equal(a.id, b.id), "nur Stände desselben Ordners zusammenführen")
+        return AblageOrdner(
             id: a.id,
             eltern: gewinner(a.eltern, b.eltern),
             name: gewinner(a.name, b.name),
@@ -187,8 +189,6 @@ public enum AblageZusammenfuehren {
 // MARK: - Wahlen, Köpfe, Konflikt
 
 extension AblageZusammenfuehren {
-    private static func rang(_ w: AblageWahl) -> (UInt64, String) { (w.zaehler, w.geraet) }
-
     /// Rang `(zaehler, geraet)` zweier Wahlen: -1, 0 oder 1 (Gerät nach Bytes).
     private static func rangVergleich(_ a: AblageWahl, _ b: AblageWahl) -> Int {
         a.zaehler != b.zaehler ? (a.zaehler < b.zaehler ? -1 : 1) : AblageBytes.compare(a.geraet, b.geraet)
