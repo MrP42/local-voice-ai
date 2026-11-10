@@ -214,8 +214,8 @@ pub fn is_ignored_name(name: &str) -> bool {
     .any(|e| n.ends_with(e))
 }
 
-/// Dateiattribute (Windows), die einen Platzhalter ohne lokalen Inhalt kennzeichnen:
-/// `OFFLINE`, `RECALL_ON_OPEN`, `RECALL_ON_DATA_ACCESS` (dieselbe Regel wie in der Ablage).
+/// Dateiattribute (Windows; macOS: `SF_DATALESS` als `OFFLINE`), die einen Platzhalter ohne lokalen Inhalt
+/// kennzeichnen: `OFFLINE`, `RECALL_ON_OPEN`, `RECALL_ON_DATA_ACCESS` (dieselbe Regel wie in der Ablage).
 pub fn attributes_cloud_only(attrs: u32) -> bool {
     eintrag::online_urteil(attrs)
 }
@@ -304,8 +304,8 @@ pub struct SystemProbe;
 
 impl FileProbe for SystemProbe {
     fn cloud_only(&self, _path: &Path, roh: &Roh) -> bool {
-        // Unter Windows kommen die Attribute aus `FindFirstFileExW`; anderswo sind sie 0
-        // (macOS kennt „dataless“-Dateien, die App ist auf Windows ausgelegt).
+        // Unter Windows kommen die Attribute aus `FindFirstFileExW`, unter macOS aus `lstat`
+        // (`SF_DATALESS`, siehe `ablage::eintrag`); sonst sind sie 0.
         attributes_cloud_only(roh.attribute)
     }
 
@@ -359,11 +359,20 @@ pub struct Hashed {
 
 /// SHA-256 des Inhalts, in Bloecken (kein Laden der ganzen Datei), ueber ein No-Recall-Handle.
 pub fn hash_file(path: &Path) -> std::io::Result<Hashed> {
+    // macOS: wird die Datei nach dem Urteil doch noch ausgelagert, scheitert das Lesen (`EDEADLK`), statt
+    // sie herunterzuladen; die Sperre gilt fuer diesen Faden bis zum Ende des Hashens.
+    let _abrufsperre = eintrag::abruf_sperren();
     let mut file = open_checked(path)?;
     let mut hasher = Sha256::new();
     let mut buf = vec![0u8; HASH_BLOCK];
     loop {
-        let n = file.read(&mut buf)?;
+        let n = file.read(&mut buf).map_err(|e| {
+            if eintrag::ist_abruf_gesperrt(&e) {
+                std::io::Error::other("nur online oder Verknüpfung")
+            } else {
+                e
+            }
+        })?;
         if n == 0 {
             break;
         }

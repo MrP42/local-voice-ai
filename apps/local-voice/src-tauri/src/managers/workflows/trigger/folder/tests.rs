@@ -666,7 +666,9 @@ fn a_swapped_file_between_the_stages_is_refused() {
 fn the_ablage_judgement_keeps_its_stricter_rule_in_the_same_helper() {
     use eintrag::{oeffnen_ohne_abruf, OeffnenArt, OeffnenFehler};
     let dir = tempfile::tempdir().unwrap();
-    let p = dir.path().join("w.wav");
+    // Kanonisch (macOS: /var -> /private/var): die Ablage oeffnet ohne Folgen und lehnt dort jeden
+    // Symlink im Pfad ab (`O_NOFOLLOW_ANY`); ihre Pfade sind immer kanonisch.
+    let p = fs::canonicalize(dir.path()).unwrap().join("w.wav");
     fs::write(&p, b"inhalt").unwrap();
     let ablage = OeffnenArt {
         folgen: false,
