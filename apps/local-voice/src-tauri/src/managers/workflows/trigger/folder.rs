@@ -27,9 +27,16 @@
 //!    (Windows: Oeffnen mit `FILE_SHARE_READ` scheitert, solange ein Schreiber sie haelt).
 //! 3. **Lokal da**: OneDrive-Platzhalter, die nur in der Cloud liegen
 //!    (`RECALL_ON_DATA_ACCESS`/`RECALL_ON_OPEN`/`OFFLINE`), werden NICHT gelesen (jeder Zugriff
-//!    wuerde den Download anstossen), sondern gemeldet (`TickReport::skipped`, Log, und
+//!    wuerde den Download anstossen), sondern gemeldet (`TickReport::skipped`, Log ohne Namen, und
 //!    [`State::cloud_only`] fuer die Oberflaeche). Sobald der Nutzer sie herunterlaedt
 //!    („Immer auf diesem Gerät behalten“), wird sie wie jede andere Datei behandelt.
+//!    Die Attribute kommen unter Windows NICHT aus `fs::metadata`/`symlink_metadata` (Rust oeffnet
+//!    einen Reparse-Point, der kein Symlink ist, ohne `FILE_FLAG_OPEN_REPARSE_POINT` noch einmal und
+//!    liefert dann Attribute ohne `REPARSE_POINT`/`OFFLINE`), sondern aus `ablage::eintrag::roh`
+//!    (`FindFirstFileExW`, oeffnet nichts). Entschieden wird vor jedem Oeffnen, auch vor der
+//!    Pfadaufloesung der Sandbox ([`entry_state`], rein). Wo der Ausloeser danach doch oeffnet
+//!    (Sperrpruefung, Hash), geschieht es mit `FILE_FLAG_OPEN_NO_RECALL` und das Handle wird vor dem
+//!    ersten Lesen erneut geprueft ([`open_no_recall`]).
 //! 4. **Nicht voruebergehend**: Namen wie `~$x.docx`, `.tmp`, `.part`, `.crdownload`,
 //!    `desktop.ini` und Punkt-Dateien zaehlen nicht.
 //! Unterordner werden nicht abgesucht (der Ordner ist der Eingang, `subfolder` waehlt einen
@@ -70,6 +77,7 @@ use std::sync::Mutex;
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 
+use crate::ablage::eintrag::{self, Roh, Urteil};
 use crate::managers::integrations::folder::{self as sandbox_folder, FolderConfig, Sandbox};
 use crate::managers::integrations::grants;
 use crate::managers::integrations::model::{Caller, Capability, GrantMode, Kind};
@@ -206,16 +214,35 @@ pub fn is_ignored_name(name: &str) -> bool {
 }
 
 /// Dateiattribute (Windows), die einen Platzhalter ohne lokalen Inhalt kennzeichnen:
-/// `OFFLINE`, `RECALL_ON_OPEN`, `RECALL_ON_DATA_ACCESS`.
+/// `OFFLINE`, `RECALL_ON_OPEN`, `RECALL_ON_DATA_ACCESS` (dieselbe Regel wie in der Ablage).
 pub fn attributes_cloud_only(attrs: u32) -> bool {
-    const FILE_ATTRIBUTE_OFFLINE: u32 = 0x0000_1000;
-    const FILE_ATTRIBUTE_RECALL_ON_OPEN: u32 = 0x0004_0000;
-    const FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS: u32 = 0x0040_0000;
-    attrs
-        & (FILE_ATTRIBUTE_OFFLINE
-            | FILE_ATTRIBUTE_RECALL_ON_OPEN
-            | FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS)
-        != 0
+    eintrag::online_urteil(attrs)
+}
+
+/// Was der Takt mit einem Eintrag des Ordners tut (Entscheidung aus den Rohdaten, ohne zu oeffnen).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EntryState {
+    /// Keine Datei (Ordner, Verknuepfung, Geraet): ignorieren.
+    NotAFile,
+    /// Nur in der Cloud: nie oeffnen, lesen oder hashen; melden.
+    CloudOnly,
+    /// Verknuepfung oder unbekannter Reparse-Point: nie folgen, ignorieren.
+    Detour,
+    /// Lokal vorhanden: darf geprueft und gehasht werden.
+    Local,
+}
+
+/// Reine Entscheidung „ausloesen ja/nein“ aus den Rohdaten (`ablage::eintrag::roh`). Nur
+/// [`EntryState::Local`] darf den Ausloeser anstossen; „nur online“ gilt unabhaengig vom Reparse-Bit.
+pub fn entry_state(roh: &Roh) -> EntryState {
+    if !roh.ist_datei() {
+        return EntryState::NotAFile;
+    }
+    match roh.urteil() {
+        Urteil::NurOnline => EntryState::CloudOnly,
+        Urteil::Umweg => EntryState::Detour,
+        Urteil::Lesbar => EntryState::Local,
+    }
 }
 
 /// Ein Zustand einer Datei ueber mehrere Takte.
@@ -239,8 +266,9 @@ impl Seen {
 /// Was das System ueber eine Datei sagt. Tests setzen eine Attrappe (Platzhalter,
 /// Sperre), die Anwendung `SystemProbe`.
 pub trait FileProbe: Send + Sync {
-    /// Liegt die Datei nur in der Cloud? Der Aufruf darf den Inhalt NICHT lesen.
-    fn cloud_only(&self, path: &Path, meta: &fs::Metadata) -> bool;
+    /// Liegt die Datei nur in der Cloud? `roh` stammt aus `ablage::eintrag::roh`. Der Aufruf darf die
+    /// Datei NICHT oeffnen.
+    fn cloud_only(&self, path: &Path, roh: &Roh) -> bool;
     /// Haelt ein anderer Prozess die Datei zum Schreiben offen?
     fn locked(&self, path: &Path) -> bool;
 }
@@ -248,23 +276,17 @@ pub trait FileProbe: Send + Sync {
 pub struct SystemProbe;
 
 impl FileProbe for SystemProbe {
-    #[cfg(windows)]
-    fn cloud_only(&self, _path: &Path, meta: &fs::Metadata) -> bool {
-        use std::os::windows::fs::MetadataExt;
-        attributes_cloud_only(meta.file_attributes())
-    }
-
-    #[cfg(not(windows))]
-    fn cloud_only(&self, _path: &Path, _meta: &fs::Metadata) -> bool {
-        // macOS kennt „dataless“-Dateien (SF_DATALESS); die App ist auf Windows ausgelegt.
-        false
+    fn cloud_only(&self, _path: &Path, roh: &Roh) -> bool {
+        // Unter Windows kommen die Attribute aus `FindFirstFileExW`; anderswo sind sie 0
+        // (macOS kennt „dataless“-Dateien, die App ist auf Windows ausgelegt).
+        attributes_cloud_only(roh.attribute)
     }
 
     #[cfg(windows)]
     fn locked(&self, path: &Path) -> bool {
-        use std::os::windows::fs::OpenOptionsExt;
-        // FILE_SHARE_READ: scheitert, solange ein anderer Prozess Schreibzugriff hat.
-        match fs::OpenOptions::new().read(true).share_mode(1).open(path) {
+        // Teilen wie ein Leser (`FILE_SHARE_READ`): scheitert, solange ein anderer Prozess
+        // Schreibzugriff hat. Nie einen Abruf ausloesen (`FILE_FLAG_OPEN_NO_RECALL`).
+        match open_no_recall_with(path, 1) {
             Ok(_) => false,
             // ERROR_SHARING_VIOLATION (32), ERROR_LOCK_VIOLATION (33)
             Err(e) => matches!(e.raw_os_error(), Some(32) | Some(33)),
@@ -277,9 +299,36 @@ impl FileProbe for SystemProbe {
     }
 }
 
+/// Oeffnet `path` zum Lesen, ohne dass das Oeffnen einen OneDrive-Abruf ausloest
+/// (Windows: `FILE_FLAG_OPEN_NO_RECALL`).
+#[cfg(windows)]
+fn open_no_recall_with(path: &Path, share: u32) -> std::io::Result<fs::File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    const FILE_FLAG_OPEN_NO_RECALL: u32 = 0x0010_0000;
+    fs::OpenOptions::new()
+        .read(true)
+        .share_mode(share)
+        .custom_flags(FILE_FLAG_OPEN_NO_RECALL)
+        .open(path)
+}
+
+/// Oeffnet `path` zum Lesen ohne Abruf und prueft das Handle VOR dem ersten Lesen: meldet es „nur
+/// online“ (die Datei wurde seit der Abtastung wieder ausgelagert) oder laesst sich nicht
+/// bestimmen, wird nichts gelesen (`Err`, Art `Other`).
+pub fn open_no_recall(path: &Path) -> std::io::Result<fs::File> {
+    #[cfg(windows)]
+    let file = open_no_recall_with(path, 1 | 2 | 4)?;
+    #[cfg(not(windows))]
+    let file = fs::File::open(path)?;
+    if eintrag::offen_urteil(&file, path) != Urteil::Lesbar {
+        return Err(std::io::Error::other("nur online oder Verknüpfung"));
+    }
+    Ok(file)
+}
+
 /// SHA-256 des Inhalts als Kleinbuchstaben-Hex, in Bloecken (kein Laden der ganzen Datei).
 pub fn sha256_file(path: &Path) -> std::io::Result<String> {
-    let mut file = fs::File::open(path)?;
+    let mut file = open_no_recall(path)?;
     let mut hasher = Sha256::new();
     let mut buf = vec![0u8; HASH_BLOCK];
     loop {
@@ -305,14 +354,6 @@ pub fn display_path(p: &Path) -> String {
         }
     }
     s.into_owned()
-}
-
-fn mtime_ms(meta: &fs::Metadata) -> i64 {
-    meta.modified()
-        .ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
 }
 
 // ---------------------------------------------------------------------------
@@ -635,22 +676,25 @@ fn scan_workflow(
         if !spec.wants(&extension) {
             continue;
         }
-        // Weder Ordner noch Verknuepfung: `symlink_metadata` folgt ihr nicht.
-        let Ok(meta) = fs::symlink_metadata(&path) else {
+        // Rohdaten OHNE zu oeffnen (unter Windows `FindFirstFileExW`; `fs::metadata` liefert fuer
+        // OneDrive-Platzhalter falsche Attribute). Vor allem anderen entscheiden: schon die
+        // Pfadaufloesung der Sandbox oeffnet die Datei.
+        let Ok(roh) = eintrag::roh(&path) else {
             continue;
         };
-        if !meta.is_file() {
+        let kind = entry_state(&roh);
+        if matches!(kind, EntryState::NotAFile | EntryState::Detour) {
             continue;
         }
         let rel = sandbox.rel_of(&path);
-        if rel.is_empty() || sandbox.resolve_file(&rel, false).is_err() {
+        if rel.is_empty() {
             continue;
         }
-        let key = format!("{wf}|{}", rel.to_lowercase());
-        keep.insert(key.clone());
 
         // Nur in der Cloud: nicht anfassen, melden.
-        if probe.cloud_only(&path, &meta) {
+        if kind == EntryState::CloudOnly || probe.cloud_only(&path, &roh) {
+            let key = format!("{wf}|{}", rel.to_lowercase());
+            keep.insert(key.clone());
             let first = state.note_cloud(
                 &key,
                 CloudFile {
@@ -660,7 +704,7 @@ fn scan_workflow(
             );
             if first {
                 log::info!(
-                    "workflows: „{}“: „{name}“ liegt nur in OneDrive und wird nicht heruntergeladen",
+                    "workflows: „{}“: eine Datei liegt nur in OneDrive und wird nicht heruntergeladen",
                     a.row.name
                 );
                 report.skipped.push(format!(
@@ -671,10 +715,15 @@ fn scan_workflow(
             state.reset(&key);
             continue;
         }
+        if sandbox.resolve_file(&rel, false).is_err() {
+            continue;
+        }
+        let key = format!("{wf}|{}", rel.to_lowercase());
+        keep.insert(key.clone());
         state.clear_cloud(&key);
 
-        let size = meta.len();
-        let modified = mtime_ms(&meta);
+        let size = roh.groesse;
+        let modified = roh.zeit;
         let seen = state.observe(&key, size, modified, now_ms);
         if !seen.is_stable(now_ms, spec.stable_ms) {
             continue;
@@ -702,14 +751,17 @@ fn scan_workflow(
             Ok(h) => h,
             Err(e) => {
                 // Gesperrt oder verschwunden: beim naechsten Takt erneut.
-                log::debug!("workflows: „{name}“ nicht gelesen: {e}");
+                log::debug!("workflows: Datei nicht gelesen ({})", e.kind());
                 state.reset(&key);
                 continue;
             }
         };
         // Waehrend des Hashens veraendert? Dann war sie nicht fertig.
-        match fs::metadata(&path) {
-            Ok(m) if m.len() == size && mtime_ms(&m) == modified => {}
+        match eintrag::roh(&path) {
+            Ok(r)
+                if entry_state(&r) == EntryState::Local
+                    && r.groesse == size
+                    && r.zeit == modified => {}
             _ => {
                 state.reset(&key);
                 continue;

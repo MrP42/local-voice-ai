@@ -63,6 +63,29 @@ fn a_file_inside_an_enabled_folder_is_checked_and_read_once() {
 }
 
 #[test]
+fn a_placeholder_is_refused_by_its_find_attributes_before_anything_is_opened() {
+    use crate::ablage::eintrag::naht;
+    let w = w();
+    for (name, attrs) in [
+        ("a.docx", 0x50_0020),
+        ("b.docx", 0x50_1620),
+        ("c.docx", 0x4_0000),
+    ] {
+        let path = write(&w.root, name, b"inhalt");
+        naht::setzen(Path::new(&path), attrs, 0);
+        match check(&w.fx.conn(), &[path]) {
+            Err(AttachError::NotAFile(_, why)) => assert!(why.contains("Cloud"), "{name}: {why}"),
+            other => panic!("{name}: {other:?}"),
+        }
+    }
+    naht::leeren();
+    let ok = write(&w.root, "lokal.docx", b"inhalt");
+    naht::setzen(Path::new(&ok), 0x20, 0);
+    assert_eq!(check(&w.fx.conn(), &[ok]).unwrap().len(), 1);
+    naht::leeren();
+}
+
+#[test]
 fn the_checksum_follows_the_content() {
     let w = w();
     let path = write(&w.root, "a.txt", b"eins");

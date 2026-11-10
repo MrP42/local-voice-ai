@@ -61,7 +61,8 @@ use std::sync::Arc;
 use rusqlite::Connection;
 use serde_json::{json, Value};
 
-use crate::managers::integrations::folder::{FolderConfig, Sandbox};
+use crate::ablage::eintrag;
+use crate::managers::integrations::folder::{self as sandbox_folder, FolderConfig, Sandbox};
 use crate::managers::integrations::model::Kind;
 use crate::managers::integrations::store as register;
 use crate::managers::meetings::queue::title_from_path;
@@ -201,6 +202,8 @@ pub struct Source {
     pub name: String,
 }
 
+const CLOUD_ONLY_MESSAGE: &str = "Die Datei liegt nur in der Cloud (OneDrive) und wird nicht heruntergeladen: „Immer auf diesem Gerät behalten“ wählen und den Lauf wiederholen.";
+
 fn permanent(m: impl Into<String>) -> StepError {
     StepError::Permanent(m.into())
 }
@@ -227,6 +230,22 @@ pub fn resolve_source(
     let sandbox = Sandbox::open(&config.path).map_err(|e| permanent(e.to_string()))?;
 
     let given = Path::new(raw_path);
+    // Cloud-Platzhalter VOR jeder Pfadaufloesung abweisen: `canonicalize` oeffnet die Datei. Die
+    // Rohdaten kommen ohne Oeffnen (`FindFirstFileExW`), nicht aus `fs::metadata`.
+    let candidate = if given.is_absolute() {
+        Some(given.to_path_buf())
+    } else {
+        sandbox_folder::check_relative(raw_path)
+            .ok()
+            .map(|_| sandbox.root().join(raw_path))
+    };
+    if let Some(c) = candidate {
+        if let Ok(roh) = eintrag::roh(&c) {
+            if roh.ist_datei() && probe.cloud_only(&c, &roh) {
+                return Err(permanent(CLOUD_ONLY_MESSAGE));
+            }
+        }
+    }
     let canonical = if given.is_absolute() {
         std::fs::canonicalize(given)
             .map_err(|_| permanent("Die Datei gibt es nicht (mehr) oder sie ist nicht lesbar."))?
@@ -248,9 +267,9 @@ pub fn resolve_source(
     sandbox
         .resolve_file(&rel, false)
         .map_err(|e| permanent(e.to_string()))?;
-    let meta = std::fs::symlink_metadata(&canonical)
+    let roh = eintrag::roh(&canonical)
         .map_err(|_| permanent("Die Datei gibt es nicht (mehr) oder sie ist nicht lesbar."))?;
-    if !meta.is_file() {
+    if !roh.ist_datei() {
         return Err(permanent("Der Pfad ist keine Datei."));
     }
     let extension = canonical
@@ -263,12 +282,10 @@ pub fn resolve_source(
             "Dateien vom Typ „.{extension}“ lassen sich nicht importieren (Audio, Video, VTT, SRT)."
         )));
     }
-    if probe.cloud_only(&canonical, &meta) {
-        return Err(permanent(
-            "Die Datei liegt nur in der Cloud (OneDrive) und wird nicht heruntergeladen: „Immer auf diesem Gerät behalten“ wählen und den Lauf wiederholen.",
-        ));
+    if probe.cloud_only(&canonical, &roh) {
+        return Err(permanent(CLOUD_ONLY_MESSAGE));
     }
-    if meta.len() == 0 {
+    if roh.groesse == 0 {
         return Err(permanent("Die Datei ist leer."));
     }
     let name = canonical

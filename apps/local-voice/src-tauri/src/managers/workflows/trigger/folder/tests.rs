@@ -14,6 +14,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::{json, Value};
 
 use super::*;
+use crate::ablage::eintrag::{self, Gattung};
 use crate::managers::integrations::model::{Capability, GrantMode, NewIntegration};
 use crate::managers::integrations::store as integrations;
 use crate::managers::workflows::engine::Engine;
@@ -56,7 +57,7 @@ impl TestProbe {
 }
 
 impl FileProbe for TestProbe {
-    fn cloud_only(&self, path: &Path, _meta: &fs::Metadata) -> bool {
+    fn cloud_only(&self, path: &Path, _roh: &Roh) -> bool {
         self.cloud.lock().unwrap().contains(&Self::name(path))
     }
     fn locked(&self, path: &Path) -> bool {
@@ -134,6 +135,13 @@ impl World {
             &self.probe,
             self.now,
         )
+    }
+
+    /// Ein Takt mit einer anderen Auskunft des Systems (z. B. `SystemProbe` mit Test-Naht).
+    fn tick_with(&mut self, probe: &dyn FileProbe) -> TickReport {
+        self.now += TICK;
+        self.clock.set(self.now);
+        on_tick(&self.engine, &self.state, &self.fx.db_path, probe, self.now)
     }
 
     /// Mehrere Takte; fasst die Berichte zusammen.
@@ -264,11 +272,200 @@ fn the_system_probe_sees_a_writer_on_windows() {
     assert!(probe.locked(&p), "ein Schreiber haelt sie offen");
     drop(writer);
     assert!(!probe.locked(&p), "wieder frei");
-    let meta = fs::symlink_metadata(&p).unwrap();
+    let roh = eintrag::roh(&p).unwrap();
     assert!(
-        !probe.cloud_only(&p, &meta),
+        !probe.cloud_only(&p, &roh),
         "eine gewoehnliche Datei ist lokal"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Attribute aus `ablage::eintrag` (Issue 451): Entscheidung rein, Windows-Werte ueber die Test-Naht
+// ---------------------------------------------------------------------------
+
+const ATTR_ARCHIV: u32 = 0x20;
+const ATTR_REPARSE: u32 = 0x400;
+const ATTR_SPARSE: u32 = 0x200;
+const ATTR_UNPINNED: u32 = 0x10_0000;
+const ONEDRIVE_TAG: u32 = 0x9000_701A;
+
+fn roh_with(gattung: Gattung, attribute: u32, tag: u32) -> Roh {
+    Roh {
+        gattung,
+        attribute,
+        tag,
+        groesse: 10,
+        zeit: 1,
+        nlink: 1,
+    }
+}
+
+#[test]
+fn the_decision_to_fire_comes_from_the_attributes_alone() {
+    use EntryState::*;
+    let datei = |a, t| entry_state(&roh_with(Gattung::Datei, a, t));
+    // Wie Windows einen nur-online-Platzhalter liefert: mit und ohne REPARSE_POINT/OFFLINE.
+    assert_eq!(
+        datei(0x50_0020, 0),
+        CloudOnly,
+        "0x500020 (ohne Reparse/Offline)"
+    );
+    assert_eq!(
+        datei(0x50_1620, ONEDRIVE_TAG),
+        CloudOnly,
+        "0x501620 (mit Reparse/Offline)"
+    );
+    assert_eq!(datei(0x40_0000, 0), CloudOnly, "nur RECALL_ON_DATA_ACCESS");
+    assert_eq!(datei(0x4_0000, 0), CloudOnly, "nur RECALL_ON_OPEN");
+    assert_eq!(datei(0x1000, 0), CloudOnly, "nur OFFLINE");
+    assert_eq!(
+        datei(0x1000 | ATTR_REPARSE, 0xA000_000C),
+        CloudOnly,
+        "nur online schlaegt den Tag"
+    );
+    // Lokal: gewoehnlich, angeheftet, „Platz freigeben“ ohne Abruf-Bit, hydrierter Platzhalter.
+    assert_eq!(datei(ATTR_ARCHIV, 0), Local);
+    assert_eq!(datei(0, 0), Local);
+    assert_eq!(datei(0x8_0000 | ATTR_ARCHIV, 0), Local, "PINNED");
+    assert_eq!(
+        datei(ATTR_UNPINNED | ATTR_ARCHIV, 0),
+        Local,
+        "UNPINNED allein"
+    );
+    assert_eq!(
+        datei(ATTR_REPARSE | ATTR_SPARSE | ATTR_ARCHIV, ONEDRIVE_TAG),
+        Local,
+        "hydrierter Cloud-Platzhalter"
+    );
+    // Verknuepfungen und unbekannte Reparse-Points: nie.
+    assert_eq!(datei(ATTR_REPARSE, 0xA000_000C), Detour, "Symlink");
+    assert_eq!(datei(ATTR_REPARSE, 0xA000_0003), Detour, "Junction");
+    assert_eq!(datei(ATTR_REPARSE, 0x8000_0017), Detour, "unbekanntes Tag");
+    // Keine Datei.
+    assert_eq!(entry_state(&roh_with(Gattung::Ordner, 0x10, 0)), NotAFile);
+    assert_eq!(entry_state(&roh_with(Gattung::Link, 0, 0)), NotAFile);
+    assert_eq!(entry_state(&roh_with(Gattung::Anderes, 0, 0)), NotAFile);
+}
+
+#[test]
+fn the_system_probe_judges_the_find_data_attributes() {
+    let p = Path::new("x.wav");
+    for (attrs, cloud) in [
+        (0x50_0020, true),
+        (0x50_1620, true),
+        (0x4_0000, true),
+        (0x1000, true),
+        (ATTR_ARCHIV, false),
+        (0, false),
+        (0x8_0000, false),
+        (ATTR_UNPINNED, false),
+    ] {
+        let roh = roh_with(Gattung::Datei, attrs, 0);
+        assert_eq!(SystemProbe.cloud_only(p, &roh), cloud, "{attrs:#x}");
+    }
+}
+
+#[test]
+fn placeholders_reported_by_the_find_data_never_fire_and_are_never_hashed() {
+    let mut w = world();
+    let root = fs::canonicalize(w.inbox.path()).unwrap();
+    for (name, attrs, tag) in [
+        ("a-ohne-bits.wav", 0x50_0020, 0),
+        ("b-voll.wav", 0x50_1620, ONEDRIVE_TAG),
+        ("c-open.wav", 0x4_0000, 0),
+        ("d-offline.wav", 0x1000, 0),
+    ] {
+        w.put(name, b"inhalt");
+        eintrag::naht::setzen(&root.join(name), attrs, tag);
+    }
+    w.put("lokal.wav", b"lokal");
+    eintrag::naht::setzen(&root.join("lokal.wav"), ATTR_ARCHIV, 0);
+    // Wuerde eine der vier gehasht, laege ihr Inhalt im Ledger; ein Handle, das „nur online“ meldet,
+    // lehnt `sha256_file` ausserdem ab (`the_hash_refuses_a_handle_that_became_online`).
+    let mut all = TickReport::default();
+    for _ in 0..6 {
+        all.absorb(w.tick_with(&SystemProbe));
+    }
+    assert_eq!(all.started.len(), 1, "nur die lokale Datei: {all:?}");
+    assert_eq!(all.skipped.len(), 4, "jede einmal gemeldet: {all:?}");
+    assert_eq!(w.state.cloud_only().len(), 4);
+    let runs = w.runs();
+    assert_eq!(runs.len(), 1);
+    assert_eq!(context_of(&runs[0])["trigger"]["name"], "lokal.wav");
+    assert_eq!(
+        w.state.waiting(),
+        1,
+        "nur die lokale Datei hat eine Stabilitaetsuhr"
+    );
+    eintrag::naht::leeren();
+}
+
+#[test]
+fn a_placeholder_that_comes_down_is_taken_like_any_file() {
+    let mut w = world();
+    let root = fs::canonicalize(w.inbox.path()).unwrap();
+    let p = w.put("spaeter.wav", b"inhalt");
+    eintrag::naht::setzen(&root.join("spaeter.wav"), 0x50_0020, 0);
+    assert!(w.tick_with(&SystemProbe).started.is_empty());
+    assert_eq!(w.state.cloud_only().len(), 1);
+    eintrag::naht::setzen(&p, ATTR_ARCHIV, 0);
+    eintrag::naht::setzen(&root.join("spaeter.wav"), ATTR_ARCHIV, 0);
+    let mut all = TickReport::default();
+    for _ in 0..3 {
+        all.absorb(w.tick_with(&SystemProbe));
+    }
+    assert_eq!(all.started.len(), 1, "{all:?}");
+    assert!(w.state.cloud_only().is_empty());
+    eintrag::naht::leeren();
+}
+
+#[test]
+fn a_detour_is_ignored_silently() {
+    let mut w = world();
+    let root = fs::canonicalize(w.inbox.path()).unwrap();
+    w.put("link.wav", b"inhalt");
+    eintrag::naht::setzen(&root.join("link.wav"), ATTR_REPARSE, 0xA000_000C);
+    let mut all = TickReport::default();
+    for _ in 0..4 {
+        all.absorb(w.tick_with(&SystemProbe));
+    }
+    assert!(all.started.is_empty() && all.skipped.is_empty(), "{all:?}");
+    assert_eq!(w.state.waiting(), 0);
+    eintrag::naht::leeren();
+}
+
+#[test]
+fn the_hash_refuses_a_handle_that_became_online() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path().join("x.wav");
+    fs::write(&p, b"inhalt").unwrap();
+    assert_eq!(sha256_file(&p).unwrap().len(), 64, "lokal: wird gehasht");
+    // Zwischen Abtastung und Oeffnen wieder ausgelagert: das Handle meldet „nur online“.
+    eintrag::naht::handle_setzen(&p, 0x50_0020, 0);
+    let err = sha256_file(&p).expect_err("nicht lesen");
+    assert_eq!(err.kind(), std::io::ErrorKind::Other);
+    assert!(open_no_recall(&p).is_err());
+    eintrag::naht::handle_setzen(&p, 0x50_1620, ONEDRIVE_TAG);
+    assert!(sha256_file(&p).is_err());
+    eintrag::naht::leeren();
+    assert!(sha256_file(&p).is_ok(), "wieder lokal");
+}
+
+#[test]
+fn a_file_that_goes_online_while_it_is_hashed_is_not_taken() {
+    let mut w = world();
+    let root = fs::canonicalize(w.inbox.path()).unwrap();
+    w.put("fluechtig.wav", b"inhalt");
+    // Die Abtastung sieht eine lokale Datei, das Handle beim Hashen „nur online“.
+    eintrag::naht::handle_setzen(&root.join("fluechtig.wav"), 0x50_0020, 0);
+    let mut all = TickReport::default();
+    for _ in 0..4 {
+        all.absorb(w.tick_with(&SystemProbe));
+    }
+    assert!(all.started.is_empty(), "{all:?}");
+    assert!(w.runs().is_empty());
+    eintrag::naht::leeren();
+    assert_eq!(w.ticks(2).started.len(), 1);
 }
 
 // ---------------------------------------------------------------------------
